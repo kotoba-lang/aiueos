@@ -124,6 +124,27 @@ fn read_limit(l: &EdnValue, key: &str, id: &str, min: i64, max: i64, default: i6
     }
 }
 
+/// The device a driver binds to (`:aiueos/device`). Phase-0 captures the binding
+/// identity (bus + vendor/device ids); the richer schema (queues, interrupts,
+/// dma) stays as data in the manifest for later phases. `bus`/`vendor`/`device`
+/// accept either string or keyword form in EDN.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Device {
+    pub bus: Option<String>,
+    pub vendor: Option<String>,
+    pub device: Option<String>,
+}
+
+impl Device {
+    fn from_edn(d: &EdnValue) -> Device {
+        Device {
+            bus: edn::get_bare(d, "bus").and_then(edn::scalar_string),
+            vendor: edn::get_bare(d, "vendor").and_then(edn::scalar_string),
+            device: edn::get_bare(d, "device").and_then(edn::scalar_string),
+        }
+    }
+}
+
 /// Resource limits enforced at run time. Defaults are deliberately small.
 #[derive(Debug, Clone, Copy)]
 pub struct Limits {
@@ -165,6 +186,8 @@ pub struct Manifest {
     pub entry: String,
     /// i64 arguments passed to `entry`.
     pub args: Vec<i64>,
+    /// The device this (driver) component binds to, if declared.
+    pub device: Option<Device>,
 }
 
 impl Manifest {
@@ -268,6 +291,7 @@ impl Manifest {
             limits,
             entry: edn::get_str(v, "aiueos", "entry").unwrap_or_else(|| "main".to_string()),
             args,
+            device: edn::get(v, "aiueos", "device").map(Device::from_edn),
         })
     }
 

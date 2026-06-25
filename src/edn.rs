@@ -54,3 +54,14 @@ pub fn get_str(m: &EdnValue, ns: &str, name: &str) -> Option<String> {
 pub fn get_kw(m: &EdnValue, ns: &str, name: &str) -> Option<String> {
     get(m, ns, name).and_then(kw_string)
 }
+
+/// Render a scalar value as a string whether it's written as a string (`"pci"`)
+/// or a keyword (`:pci`). Used for open schemas (e.g. device fields) that accept
+/// either form.
+pub fn scalar_string(v: &EdnValue) -> Option<String> {
+    match v {
+        EdnValue::String(s) => Some(s.clone()),
+        EdnValue::Keyword(_) => kw_string(v),
+        _ => None,
+    }
+}

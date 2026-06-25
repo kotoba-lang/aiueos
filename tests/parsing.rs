@@ -168,6 +168,26 @@ fn manifest_rejects_malformed_args() {
 }
 
 #[test]
+fn manifest_parses_device_binding() {
+    let m = Manifest::parse_str(
+        r#"{:aiueos/component :driver/blk :aiueos/kind :driver
+            :aiueos/device {:bus :pci :vendor "0x1af4" :device "0x1001"
+                            :queues [{:name :request}]}}"#,
+    )
+    .unwrap();
+    let d = m.device.expect("device captured");
+    assert_eq!(d.bus.as_deref(), Some("pci"));
+    assert_eq!(d.vendor.as_deref(), Some("0x1af4"));
+    assert_eq!(d.device.as_deref(), Some("0x1001"));
+}
+
+#[test]
+fn manifest_without_device_has_none() {
+    let m = Manifest::parse_str("{:aiueos/component :app/x :aiueos/kind :app}").unwrap();
+    assert!(m.device.is_none());
+}
+
+#[test]
 fn manifest_accepts_integer_args_and_empty() {
     let m = Manifest::parse_str("{:aiueos/component :a/x :aiueos/kind :app :aiueos/args [1 2 -3]}")
         .unwrap();

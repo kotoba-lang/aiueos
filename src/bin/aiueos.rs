@@ -145,6 +145,17 @@ fn cmd_inspect(args: &[String]) -> aiueos::Result<()> {
             c.trust.label(),
             c.effects.join(" ")
         );
+        if let Some(d) = &c.device {
+            let id = match (&d.vendor, &d.device) {
+                (Some(v), Some(dev)) => format!(" {v}:{dev}"),
+                _ => String::new(),
+            };
+            println!(
+                "      device: bus={}{}",
+                d.bus.as_deref().unwrap_or("?"),
+                id
+            );
+        }
     }
 
     println!("\ncapability graph (capability → providers):");

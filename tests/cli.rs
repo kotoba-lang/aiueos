@@ -160,6 +160,9 @@ fn inspect_prints_the_capability_graph() {
     assert!(out.contains("capability graph"));
     assert!(out.contains("driver/virtio-blk"));
     assert!(out.contains("log/write"));
+    // the driver's device binding is surfaced
+    assert!(out.contains("device: bus=pci"));
+    assert!(out.contains("0x1af4:0x1001"));
 }
 
 #[test]
