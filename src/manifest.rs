@@ -100,6 +100,30 @@ impl Trust {
     }
 }
 
+/// Upper bound on declared linear-memory pages: 65536 × 64 KiB = 4 GiB, the
+/// wasm32 address-space ceiling.
+const MAX_MEMORY_PAGES: i64 = 65_536;
+
+/// Read a `:aiueos/limits` sub-key, validating it's an integer in `[min, max]`.
+/// Absent → `default`. A non-integer or out-of-range value is a hard error (this
+/// is also what stops a negative value from wrapping when cast to u32/u64).
+fn read_limit(l: &EdnValue, key: &str, id: &str, min: i64, max: i64, default: i64) -> Result<i64> {
+    match edn::get_bare(l, key) {
+        None => Ok(default),
+        Some(v) => {
+            let n = v.as_integer().ok_or_else(|| {
+                AiueosError::Schema(format!("{id}: :aiueos/limits {key} must be an integer"))
+            })?;
+            if n < min || n > max {
+                return Err(AiueosError::Schema(format!(
+                    "{id}: :aiueos/limits {key}={n} out of range [{min}, {max}]"
+                )));
+            }
+            Ok(n)
+        }
+    }
+}
+
 /// Resource limits enforced at run time. Defaults are deliberately small.
 #[derive(Debug, Clone, Copy)]
 pub struct Limits {
@@ -187,15 +211,24 @@ impl Manifest {
         };
 
         let limits = match edn::get(v, "aiueos", "limits") {
-            Some(l) => Limits {
-                memory_pages: edn::get_bare(l, "memory-pages")
-                    .and_then(|x| x.as_integer())
-                    .unwrap_or(Limits::default().memory_pages as i64)
-                    as u32,
-                fuel: edn::get_bare(l, "fuel")
-                    .and_then(|x| x.as_integer())
-                    .unwrap_or(Limits::default().fuel as i64) as u64,
-            },
+            Some(l) => {
+                let d = Limits::default();
+                Limits {
+                    // ≥1 page (a component needs memory for its own instance) and
+                    // ≤4 GiB. Rejecting <1 also prevents a negative value silently
+                    // wrapping to a huge u32.
+                    memory_pages: read_limit(
+                        l,
+                        "memory-pages",
+                        &id,
+                        1,
+                        MAX_MEMORY_PAGES,
+                        d.memory_pages as i64,
+                    )? as u32,
+                    // ≥1 fuel unit (0 fuel can't execute anything).
+                    fuel: read_limit(l, "fuel", &id, 1, i64::MAX, d.fuel as i64)? as u64,
+                }
+            }
             None => Limits::default(),
         };
 

@@ -118,6 +118,51 @@ fn manifest_ignores_non_aiueos_namespaced_keys() {
 }
 
 #[test]
+fn manifest_rejects_zero_and_negative_limits() {
+    // 0 pages would trap at runtime; a negative value would silently wrap to a
+    // huge u32 — both must be rejected at parse time.
+    for bad in [
+        "{:aiueos/component :a/x :aiueos/kind :app :aiueos/limits {:memory-pages 0}}",
+        "{:aiueos/component :a/x :aiueos/kind :app :aiueos/limits {:memory-pages -1}}",
+        "{:aiueos/component :a/x :aiueos/kind :app :aiueos/limits {:fuel 0}}",
+        "{:aiueos/component :a/x :aiueos/kind :app :aiueos/limits {:fuel -5}}",
+    ] {
+        assert!(
+            matches!(Manifest::parse_str(bad), Err(AiueosError::Schema(_))),
+            "should reject: {bad}"
+        );
+    }
+}
+
+#[test]
+fn manifest_rejects_absurd_and_non_integer_memory() {
+    // Above the wasm32 4 GiB ceiling (65536 pages).
+    assert!(matches!(
+        Manifest::parse_str(
+            "{:aiueos/component :a/x :aiueos/kind :app :aiueos/limits {:memory-pages 70000}}"
+        ),
+        Err(AiueosError::Schema(_))
+    ));
+    // Non-integer limit value.
+    assert!(matches!(
+        Manifest::parse_str(
+            "{:aiueos/component :a/x :aiueos/kind :app :aiueos/limits {:memory-pages \"lots\"}}"
+        ),
+        Err(AiueosError::Schema(_))
+    ));
+}
+
+#[test]
+fn manifest_accepts_limits_at_the_boundaries() {
+    let m = Manifest::parse_str(
+        "{:aiueos/component :a/x :aiueos/kind :app :aiueos/limits {:memory-pages 1 :fuel 1}}",
+    )
+    .expect("min limits are valid");
+    assert_eq!(m.limits.memory_pages, 1);
+    assert_eq!(m.limits.fuel, 1);
+}
+
+#[test]
 fn manifest_partial_limits_keep_defaults_for_missing_keys() {
     // Only memory-pages given → fuel falls back to the default.
     let m = Manifest::parse_str(
