@@ -278,6 +278,18 @@ impl Manifest {
             }
         };
 
+        // Entry defaults to "main"; an explicit empty string is rejected (it would
+        // silently fail to resolve an exported function at run time).
+        let entry = match edn::get_str(v, "aiueos", "entry") {
+            None => "main".to_string(),
+            Some(e) if e.is_empty() => {
+                return Err(AiueosError::Schema(format!(
+                    "{id}: :aiueos/entry must not be empty"
+                )))
+            }
+            Some(e) => e,
+        };
+
         Ok(Manifest {
             id,
             kind,
@@ -289,7 +301,7 @@ impl Manifest {
             effects: edn::kw_collection(edn::get(v, "aiueos", "effects")),
             requires: edn::kw_collection(edn::get(v, "aiueos", "requires")),
             limits,
-            entry: edn::get_str(v, "aiueos", "entry").unwrap_or_else(|| "main".to_string()),
+            entry,
             args,
             device: edn::get(v, "aiueos", "device").map(Device::from_edn),
         })

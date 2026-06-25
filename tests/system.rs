@@ -119,6 +119,20 @@ fn drivers_binding_distinct_devices_pass() {
 }
 
 #[test]
+fn a_component_cannot_satisfy_its_own_import() {
+    // It imports and exports the same capability. Exports serve *other*
+    // components (via the broker), so a component can't satisfy its own import —
+    // with no other provider this is an unresolved capability, denied.
+    let c = m(r#"{:aiueos/component :svc/x :aiueos/kind :service
+                  :aiueos/imports #{:a/b} :aiueos/exports #{:a/b}}"#);
+    let g = CapabilityGraph::build(std::slice::from_ref(&c));
+    assert!(
+        aiueos::policy::verify_component(&c, &g, &Policy::default()).is_err(),
+        "self-export must not satisfy self-import"
+    );
+}
+
+#[test]
 fn partial_device_bindings_do_not_conflict() {
     // Two drivers that only name a bus (no vendor/device) don't claim exclusive
     // ownership, so they don't conflict.

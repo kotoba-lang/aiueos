@@ -182,6 +182,14 @@ fn manifest_parses_device_binding() {
 }
 
 #[test]
+fn manifest_rejects_empty_entry() {
+    assert!(matches!(
+        Manifest::parse_str(r#"{:aiueos/component :a/x :aiueos/kind :app :aiueos/entry ""}"#),
+        Err(AiueosError::Schema(_))
+    ));
+}
+
+#[test]
 fn manifest_without_device_has_none() {
     let m = Manifest::parse_str("{:aiueos/component :app/x :aiueos/kind :app}").unwrap();
     assert!(m.device.is_none());
