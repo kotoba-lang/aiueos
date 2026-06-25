@@ -143,6 +143,35 @@ fn verify_unresolved_import_is_denied() {
     assert!(err.contains("unresolved-capability"));
 }
 
+#[test]
+fn verify_edn_emits_machine_readable_verdict() {
+    // pass: with the IOMMU policy → verified true, output is valid EDN.
+    let (code, out, _e) = aiueos(&[
+        "verify",
+        "examples/system.aiueos.edn",
+        "--policy",
+        "examples/policy/default.edn",
+        "--edn",
+    ]);
+    assert_eq!(code, 0);
+    let v = kotoba_edn::parse(out.trim()).expect("verdict is valid EDN");
+    assert_eq!(
+        aiueos::edn::get(&v, "aiueos", "verified").and_then(|x| x.as_bool()),
+        Some(true)
+    );
+    assert!(aiueos::edn::get(&v, "aiueos", "grants").is_some());
+
+    // deny: no policy → verified false + violations, exit 1, still valid EDN.
+    let (code, out, _e) = aiueos(&["verify", "examples/system.aiueos.edn", "--edn"]);
+    assert_eq!(code, 1, "denial → exit 1 even in --edn mode");
+    let v = kotoba_edn::parse(out.trim()).expect("denial verdict is valid EDN");
+    assert_eq!(
+        aiueos::edn::get(&v, "aiueos", "verified").and_then(|x| x.as_bool()),
+        Some(false)
+    );
+    assert!(aiueos::edn::get(&v, "aiueos", "violations").is_some());
+}
+
 // ---------------------------------------------------------------------------
 // inspect — pure (no wasm), reads the bundled example system
 // ---------------------------------------------------------------------------

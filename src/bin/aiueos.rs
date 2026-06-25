@@ -1,6 +1,6 @@
 //! `aiueos` — the Phase-0 aiueos command line.
 //!
-//!   aiueos verify  <manifest|system>.edn [--policy p.edn]   capability + policy check
+//!   aiueos verify  <manifest|system>.edn [--policy p.edn] [--edn]   capability + policy check
 //!   aiueos inspect <system>.edn          [--policy p.edn]   print the capability graph
 //!   aiueos run     <manifest>.edn        [--policy p.edn] [--system s.edn]
 //!   aiueos compile <source.clj|manifest> [-o out.wasm]      CLJ/Kotoba → wasm
@@ -11,7 +11,7 @@ use aiueos::audit::AuditLog;
 use aiueos::broker::Broker;
 use aiueos::graph::{CapabilityGraph, System};
 use aiueos::manifest::Manifest;
-use aiueos::policy::{self, Policy};
+use aiueos::policy::{self, Grant, Policy, Violation};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
@@ -50,7 +50,7 @@ fn print_usage() {
     eprintln!(
         "aiueos — capability-secure wasm component OS (Phase-0)\n\n\
          USAGE:\n  \
-         aiueos verify  <manifest|system>.edn [--policy p.edn]\n  \
+         aiueos verify  <manifest|system>.edn [--policy p.edn] [--edn]\n  \
          aiueos inspect <system>.edn          [--policy p.edn]\n  \
          aiueos up      <system>.edn          [--policy p.edn]   boot the whole system\n  \
          aiueos run     <manifest>.edn        [--policy p.edn] [--system s.edn]\n  \
@@ -94,38 +94,88 @@ fn is_system(path: &Path) -> bool {
 }
 
 fn cmd_verify(args: &[String]) -> aiueos::Result<()> {
+    let edn_mode = args.iter().any(|a| a == "--edn");
     let target = positional(args).ok_or_else(|| schema("verify needs a file"))?;
     let path = PathBuf::from(target);
     let policy = load_policy(args)?;
     let broker = Broker::new(policy, audit_for(&path)?);
 
-    if is_system(&path) {
-        let sys = System::load(&path)?;
-        let grants = broker.verify_system(&sys)?;
-        println!(
-            "✓ system `{}` verified — {} component(s):",
-            sys.name,
-            grants.len()
-        );
-        for g in &grants {
-            println!(
-                "  ✓ {}  caps: {}",
-                g.component,
-                g.capabilities.iter().cloned().collect::<Vec<_>>().join(" ")
-            );
-        }
-    } else {
-        let m = Manifest::load(&path)?;
-        let graph = CapabilityGraph::build(std::slice::from_ref(&m));
-        let g = broker.verify_one(&m, &graph)?;
-        println!(
-            "✓ component `{}` ({}) verified — caps: {}",
-            g.component,
-            m.kind.label(),
-            g.capabilities.iter().cloned().collect::<Vec<_>>().join(" ")
-        );
+    // Collapse to (name, Ok(grants) | Err(violations)); structural errors (bad
+    // file, schema) still propagate as before.
+    let denied = |e: aiueos::AiueosError| match e {
+        aiueos::AiueosError::Denied(vs) => Ok(Err(vs)),
+        other => Err(other),
+    };
+    let (name, result): (String, std::result::Result<Vec<Grant>, Vec<Violation>>) =
+        if is_system(&path) {
+            let sys = System::load(&path)?;
+            let r = broker.verify_system(&sys).map(Ok).or_else(denied)?;
+            (sys.name, r)
+        } else {
+            let m = Manifest::load(&path)?;
+            let graph = CapabilityGraph::build(std::slice::from_ref(&m));
+            let r = broker
+                .verify_one(&m, &graph)
+                .map(|g| Ok(vec![g]))
+                .or_else(denied)?;
+            (m.id.clone(), r)
+        };
+
+    if edn_mode {
+        // Machine-readable verdict for tooling / AI agents; exit code still
+        // reflects pass (0) / fail (1).
+        println!("{}", verdict_edn(&name, &result));
+        return match result {
+            Ok(_) => Ok(()),
+            Err(_) => std::process::exit(1),
+        };
     }
-    Ok(())
+
+    match result {
+        Ok(grants) => {
+            println!("✓ `{name}` verified — {} component(s):", grants.len());
+            for g in &grants {
+                println!(
+                    "  ✓ {}  caps: {}",
+                    g.component,
+                    g.capabilities.iter().cloned().collect::<Vec<_>>().join(" ")
+                );
+            }
+            Ok(())
+        }
+        Err(vs) => Err(aiueos::AiueosError::Denied(vs)),
+    }
+}
+
+/// Build a machine-readable EDN verdict (consistent with the EDN audit log).
+fn verdict_edn(name: &str, result: &std::result::Result<Vec<Grant>, Vec<Violation>>) -> String {
+    use kotoba_edn::EdnValue as E;
+    let mut entries = vec![
+        (E::kw("aiueos", "system"), E::string(name)),
+        (E::kw("aiueos", "verified"), E::bool(result.is_ok())),
+    ];
+    match result {
+        Ok(grants) => {
+            let g = grants.iter().map(|g| {
+                (
+                    E::string(g.component.clone()),
+                    E::set(g.capabilities.iter().map(|c| E::string(c.clone()))),
+                )
+            });
+            entries.push((E::kw("aiueos", "grants"), E::map(g)));
+        }
+        Err(vs) => {
+            let v = vs.iter().map(|v| {
+                E::map([
+                    (E::kw_bare("component"), E::string(v.component.clone())),
+                    (E::kw_bare("kind"), E::kw_bare(v.kind.label())),
+                    (E::kw_bare("message"), E::string(v.message.clone())),
+                ])
+            });
+            entries.push((E::kw("aiueos", "violations"), E::vector(v)));
+        }
+    }
+    kotoba_edn::to_string(&E::map(entries))
 }
 
 fn cmd_inspect(args: &[String]) -> aiueos::Result<()> {
