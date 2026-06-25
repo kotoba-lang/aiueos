@@ -1,7 +1,7 @@
 //! `aiueos` — the Phase-0 aiueos command line.
 //!
 //!   aiueos verify  <manifest|system>.edn [--policy p.edn] [--edn]   capability + policy check
-//!   aiueos inspect <system>.edn          [--policy p.edn] [--edn]   print the capability graph
+//!   aiueos inspect <system>.edn          [--policy p.edn] [--edn] [--dot]   print the capability graph
 //!   aiueos run     <manifest>.edn        [--policy p.edn] [--system s.edn] [--edn]
 //!   aiueos compile <source.clj|manifest> [-o out.wasm]      CLJ/Kotoba → wasm
 //!   aiueos check   <source.clj>                             safe-kotoba subset gate
@@ -235,6 +235,34 @@ fn verdict_edn(name: &str, result: &std::result::Result<Vec<Grant>, Vec<Violatio
     kotoba_edn::to_string(&E::map(entries))
 }
 
+/// The component dependency graph as Graphviz DOT: an edge `provider → consumer`
+/// for each import a consumer resolves to another component's export, labeled
+/// with the capability. Render with `aiueos inspect <sys> --dot | dot -Tsvg`.
+fn dot_graph(sys: &System, graph: &CapabilityGraph) -> String {
+    use std::collections::BTreeSet;
+    use std::fmt::Write;
+    let mut s = String::from("digraph aiueos {\n  rankdir=LR;\n");
+    for c in &sys.components {
+        let _ = writeln!(s, "  {:?};", c.id);
+    }
+    // De-duplicated provider→consumer edges labeled by capability.
+    let mut edges: BTreeSet<(String, String, String)> = BTreeSet::new();
+    for c in &sys.components {
+        for imp in &c.imports {
+            for p in graph.providers(imp) {
+                if p != &c.id {
+                    edges.insert((p.clone(), c.id.clone(), imp.clone()));
+                }
+            }
+        }
+    }
+    for (p, c, cap) in edges {
+        let _ = writeln!(s, "  {p:?} -> {c:?} [label={cap:?}];");
+    }
+    s.push_str("}\n");
+    s
+}
+
 fn cmd_inspect(args: &[String]) -> aiueos::Result<()> {
     let target = positional(args).ok_or_else(|| schema("inspect needs a system file"))?;
     let path = PathBuf::from(target);
@@ -242,6 +270,10 @@ fn cmd_inspect(args: &[String]) -> aiueos::Result<()> {
     let graph = sys.graph();
     let policy = load_policy(args)?;
 
+    if args.iter().any(|a| a == "--dot") {
+        println!("{}", dot_graph(&sys, &graph));
+        return Ok(());
+    }
     if args.iter().any(|a| a == "--edn") {
         println!("{}", inspect_edn(&sys, &graph, &policy));
         return Ok(());

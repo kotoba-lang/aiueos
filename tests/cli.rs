@@ -331,6 +331,16 @@ fn inspect_edn_emits_structured_snapshot() {
 }
 
 #[test]
+fn inspect_dot_emits_a_graphviz_digraph() {
+    let (code, out, _e) = aiueos(&["inspect", "examples/system.aiueos.edn", "--dot"]);
+    assert_eq!(code, 0);
+    assert!(out.contains("digraph aiueos"));
+    assert!(out.contains("->"), "has at least one dependency edge");
+    // the driver provides block/* to the fs service
+    assert!(out.contains(r#""driver/virtio-blk" -> "service/fs""#));
+}
+
+#[test]
 fn inspect_renders_policy_violations() {
     // No --policy → default policy grants no IOMMU → the driver's DMA is denied.
     // inspect reports (it doesn't gate), so it still exits 0 but shows the ✗ line.
