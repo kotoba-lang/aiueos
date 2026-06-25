@@ -83,7 +83,7 @@ fn print_usage() {
          USAGE:\n  \
          aiueos verify  <manifest|system>.edn [--policy p.edn] [--edn]\n  \
          aiueos inspect <system>.edn          [--policy p.edn] [--edn]\n  \
-         aiueos up      <system>.edn          [--policy p.edn] [--edn]   boot the whole system\n  \
+         aiueos up      <system>.edn          [--policy p.edn] [--edn] [--rounds N]   boot the whole system\n  \
          aiueos run     <manifest>.edn        [--policy p.edn] [--system s.edn] [--edn]\n  \
          aiueos compile <source.clj|manifest> [-o out.wasm]\n  \
          aiueos check   <source.clj>\n  \
@@ -93,7 +93,7 @@ fn print_usage() {
 }
 
 /// Flags that consume the following argument as their value.
-const VALUE_FLAGS: &[&str] = &["--policy", "--system", "--log", "-o", "--out"];
+const VALUE_FLAGS: &[&str] = &["--policy", "--system", "--log", "-o", "--out", "--rounds"];
 
 /// Tiny flag reader: pull `--name <value>` (or `-o <value>`) out of args.
 fn flag(args: &[String], name: &str) -> Option<String> {
@@ -447,41 +447,61 @@ fn cmd_up(args: &[String]) -> aiueos::Result<()> {
             }
         }
 
-        // Stages 3–4: verify + launch in order (audited inside the broker).
-        let report = broker.boot(&sys, &base)?;
+        // Stages 3–4: verify + launch in order, for `--rounds` rounds on a shared
+        // bus (a periodic control loop). Default 1 round.
+        let rounds: usize = flag(args, "--rounds")
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(1)
+            .max(1);
+        let reports = broker.boot_rounds(&sys, &base, rounds)?;
 
         if edn_mode {
             use kotoba_edn::EdnValue as E;
-            let launched = E::vector(report.launched.iter().map(|o| {
-                let mut f = vec![
-                    (E::kw_bare("component"), E::string(o.component.clone())),
-                    (E::kw_bare("kind"), E::kw_bare(o.kind)),
-                ];
-                match o.result {
-                    Some(r) => f.push((E::kw_bare("result"), E::int(r))),
-                    None => f.push((E::kw_bare("resident"), E::bool(true))),
-                }
-                E::map(f)
-            }));
-            println!(
-                "{}",
-                kotoba_edn::to_string(&E::map([
-                    (E::kw("aiueos", "system"), E::string(report.system.clone())),
-                    (E::kw("aiueos", "launched"), launched),
-                ]))
-            );
+            let round_edn = |r: &aiueos::broker::BootReport| {
+                E::vector(r.launched.iter().map(|o| {
+                    let mut f = vec![
+                        (E::kw_bare("component"), E::string(o.component.clone())),
+                        (E::kw_bare("kind"), E::kw_bare(o.kind)),
+                    ];
+                    match o.result {
+                        Some(v) => f.push((E::kw_bare("result"), E::int(v))),
+                        None => f.push((E::kw_bare("resident"), E::bool(true))),
+                    }
+                    E::map(f)
+                }))
+            };
+            let mut top = vec![
+                (E::kw("aiueos", "system"), E::string(sys.name.clone())),
+                // last (or only) round, for the single-round contract
+                (
+                    E::kw("aiueos", "launched"),
+                    round_edn(reports.last().unwrap()),
+                ),
+            ];
+            if rounds > 1 {
+                top.push((
+                    E::kw("aiueos", "rounds"),
+                    E::vector(reports.iter().map(round_edn)),
+                ));
+            }
+            println!("{}", kotoba_edn::to_string(&E::map(top)));
             return Ok(());
         }
 
-        for o in &report.launched {
-            match o.result {
-                Some(v) => println!("  ✓ {:24} ({:<8}) → {}", o.component, o.kind, v),
-                None => println!("  ✓ {:24} ({:<8})   resident", o.component, o.kind),
+        for (ri, report) in reports.iter().enumerate() {
+            if rounds > 1 {
+                println!("  round {}:", ri + 1);
+            }
+            for o in &report.launched {
+                match o.result {
+                    Some(v) => println!("    ✓ {:24} ({:<8}) → {}", o.component, o.kind, v),
+                    None => println!("    ✓ {:24} ({:<8})   resident", o.component, o.kind),
+                }
             }
         }
+        let launched = reports.first().map_or(0, |r| r.launched.len());
         println!(
-            "✓ system up — {}/{} components launched",
-            report.launched.len(),
+            "✓ system up — {launched}/{} components launched × {rounds} round(s)",
             sys.components.len()
         );
         println!("  audit: {}", broker.audit.path().display());

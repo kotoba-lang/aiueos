@@ -45,6 +45,66 @@ fn boots_the_example_system_in_dependency_order() {
 }
 
 #[test]
+fn boot_rounds_threads_one_bus_across_rounds() {
+    // A producer publishes one sample per round; a consumer returns count(scan).
+    // Across 3 rounds on a shared bus the count grows 1 → 2 → 3 — proving the
+    // topic bus persists between rounds (a periodic control loop).
+    let dir = std::env::temp_dir().join("aiueos-rounds-test");
+    std::fs::create_dir_all(&dir).unwrap();
+    let prod = dir.join("prod.wat");
+    std::fs::write(
+        &prod,
+        r#"(module (import "aiueos:host" "publish" (func $p (param i32 i64)))
+            (func (export "tick") (result i64) (call $p (i32.const 1) (i64.const 5)) (i64.const 0)))"#,
+    )
+    .unwrap();
+    let cons = dir.join("cons.wat");
+    std::fs::write(
+        &cons,
+        r#"(module (import "aiueos:host" "count" (func $c (param i32) (result i64)))
+            (func (export "tick") (result i64) (call $c (i32.const 1))))"#,
+    )
+    .unwrap();
+
+    let producer = Manifest::parse_str(&format!(
+        r#"{{:aiueos/component :driver/prod :aiueos/kind :driver :aiueos/wasm "{}"
+            :aiueos/entry "tick" :aiueos/imports #{{:topic/publish}} :aiueos/exports #{{:topic/scan}}}}"#,
+        prod.display()
+    ))
+    .unwrap();
+    let consumer = Manifest::parse_str(&format!(
+        r#"{{:aiueos/component :driver/cons :aiueos/kind :driver :aiueos/wasm "{}"
+            :aiueos/entry "tick" :aiueos/imports #{{:topic/subscribe :topic/scan}}}}"#,
+        cons.display()
+    ))
+    .unwrap();
+
+    let sys = System::from_manifests("rounds", vec![producer, consumer]);
+    let broker = Broker::new(Policy::default(), scratch_audit("aiueos-rounds.edn"));
+    let reports = broker
+        .boot_rounds(&sys, Path::new("."), 3)
+        .expect("boots 3 rounds");
+    assert_eq!(reports.len(), 3);
+
+    let counts: Vec<i64> = reports
+        .iter()
+        .map(|r| {
+            r.launched
+                .iter()
+                .find(|o| o.component == "driver/cons")
+                .unwrap()
+                .result
+                .unwrap()
+        })
+        .collect();
+    assert_eq!(
+        counts,
+        vec![1, 2, 3],
+        "publish count persists across rounds"
+    );
+}
+
+#[test]
 fn resident_component_with_no_code_launches_as_resident() {
     // A pure manifest (no :aiueos/source / :aiueos/wasm) passes the gate but has
     // nothing to execute — it boots as a resident with no result.

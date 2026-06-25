@@ -114,54 +114,69 @@ impl Broker {
     /// capability provider before any consumer). The whole sequence is audited;
     /// any denial or cycle aborts the boot before anything runs.
     #[cfg(feature = "wasm-runtime")]
-    pub fn boot(&self, system: &System, _base: &Path) -> Result<BootReport> {
+    pub fn boot(&self, system: &System, base: &Path) -> Result<BootReport> {
+        let mut reports = self.boot_rounds(system, base, 1)?;
+        Ok(reports.pop().expect("one round → one report"))
+    }
+
+    /// Boot the system for `rounds` rounds, threading **one** topic bus across all
+    /// of them — a periodic control loop. Capabilities are linked and verified
+    /// once; then each round launches every coded component in dependency order,
+    /// so a producer's samples in one round are visible (e.g. via `take`) to a
+    /// consumer in the same or a later round. Returns one [`BootReport`] per round.
+    #[cfg(feature = "wasm-runtime")]
+    pub fn boot_rounds(
+        &self,
+        system: &System,
+        _base: &Path,
+        rounds: usize,
+    ) -> Result<Vec<BootReport>> {
         // Stage 1–2: capability link → topological boot order.
         let order = system.boot_order().map_err(|cycle| {
             AiueosError::Schema(format!("dependency cycle: {}", cycle.join(" → ")))
         })?;
 
         // Stage 3: policy verification of the whole system (audits each grant/deny).
-        // The grants are the per-component conferred capability sets the host ABI
-        // will enforce at run time.
         let grants = self.verify_system(system)?;
         let caps_of: std::collections::BTreeMap<String, _> = grants
             .into_iter()
             .map(|g| (g.component, g.capabilities))
             .collect();
 
-        // Stage 4: launch in order. A single topic bus is threaded through every
-        // component so a producer's publish is visible to a later consumer's poll
-        // — the running ROS-style dataflow over capability-gated components.
+        // Stage 4: launch in order, once per round, on a shared bus.
         let empty = std::collections::BTreeSet::new();
         let mut bus = TopicBus::new();
-        let mut launched = Vec::new();
-        for i in order {
-            let m = &system.components[i];
-            let base = &system.bases[i];
-            if m.source.is_none() && m.wasm.is_none() {
-                // A pure manifest with no code is a declaration-only/resident
-                // component (e.g. a policy or a not-yet-implemented service): it
-                // passes the gate but has nothing to execute.
+        let mut reports = Vec::with_capacity(rounds.max(1));
+        for _round in 0..rounds.max(1) {
+            let mut launched = Vec::new();
+            for &i in &order {
+                let m = &system.components[i];
+                let base = &system.bases[i];
+                if m.source.is_none() && m.wasm.is_none() {
+                    // A pure manifest with no code is a declaration-only/resident
+                    // component: it passes the gate but has nothing to execute.
+                    launched.push(LaunchOutcome {
+                        component: m.id.clone(),
+                        kind: m.kind.label(),
+                        result: None,
+                    });
+                    continue;
+                }
+                let caps = caps_of.get(&m.id).unwrap_or(&empty);
+                let (result, next_bus) = self.materialize_and_run(m, base, caps, bus)?;
+                bus = next_bus;
                 launched.push(LaunchOutcome {
                     component: m.id.clone(),
                     kind: m.kind.label(),
-                    result: None,
+                    result: Some(result),
                 });
-                continue;
             }
-            let caps = caps_of.get(&m.id).unwrap_or(&empty);
-            let (result, next_bus) = self.materialize_and_run(m, base, caps, bus)?;
-            bus = next_bus;
-            launched.push(LaunchOutcome {
-                component: m.id.clone(),
-                kind: m.kind.label(),
-                result: Some(result),
+            reports.push(BootReport {
+                system: system.name.clone(),
+                launched,
             });
         }
-        Ok(BootReport {
-            system: system.name.clone(),
-            launched,
-        })
+        Ok(reports)
     }
 
     /// Shared tail of launch/boot: safe-check source, compile (or load wasm), and
