@@ -28,6 +28,8 @@ const MANIFEST_KEYS: &[&str] = &[
     "publishes",
     "subscribes",
     "topics",
+    "signer",
+    "signature",
 ];
 
 /// Parse `:aiueos/topics {:name id …}` (name→topic-id map). Absent → empty.
@@ -294,6 +296,11 @@ pub struct Manifest {
     /// capabilities to the runtime ids; `publishes`/`subscribes` are derived from
     /// it when not given explicitly.
     pub topics: std::collections::BTreeMap<String, i32>,
+    /// Key id of the signer that vouches for this component (`:aiueos/signer`),
+    /// resolved to a public key via the policy signer registry. See ADR-0003.
+    pub signer: Option<String>,
+    /// Hex ed25519 signature (`:aiueos/signature`) over [`Manifest::signed_message`].
+    pub signature: Option<String>,
 }
 
 impl Manifest {
@@ -430,7 +437,18 @@ impl Manifest {
             publishes,
             subscribes,
             topics,
+            signer: edn::get_str(v, "aiueos", "signer"),
+            signature: edn::get_str(v, "aiueos", "signature"),
         })
+    }
+
+    /// The canonical message a signature covers: `"<id>\n<wasm-sha256>"` — binds
+    /// the component identity to its exact artifact (ADR-0003). `None` if the
+    /// manifest has no artifact hash to bind (nothing to sign).
+    pub fn signed_message(&self) -> Option<String> {
+        self.wasm_sha256
+            .as_ref()
+            .map(|h| format!("{}\n{}", self.id, h))
     }
 
     /// Parse a single component manifest from EDN.

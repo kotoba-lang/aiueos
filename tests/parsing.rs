@@ -103,11 +103,13 @@ fn manifest_accepts_all_known_keys() {
             :aiueos/effects #{:dma} :aiueos/requires #{:iommu}
             :aiueos/limits {:memory-pages 8 :fuel 99} :aiueos/entry "go" :aiueos/args [1 2]
             :aiueos/device {:bus :pci} :aiueos/publishes #{1} :aiueos/subscribes #{2}
-            :aiueos/topics {:scan 1}}"#,
+            :aiueos/topics {:scan 1} :aiueos/signer "alice" :aiueos/signature "9c2e"}"#,
     )
     .expect("all recognized keys parse");
     assert_eq!(m.id, "driver/full");
     assert_eq!(m.topics.get("scan"), Some(&1));
+    assert_eq!(m.signer.as_deref(), Some("alice"));
+    assert_eq!(m.signature.as_deref(), Some("9c2e"));
     assert_eq!(m.args, vec![1, 2]);
     assert_eq!(m.wasm_sha256.as_deref(), Some("abc"));
     assert!(m.publishes.unwrap().contains(&1));
@@ -208,6 +210,21 @@ fn manifest_parses_topic_id_sets() {
     // absent → unrestricted (None)
     let n = Manifest::parse_str("{:aiueos/component :d/y :aiueos/kind :driver}").unwrap();
     assert!(n.publishes.is_none() && n.subscribes.is_none());
+}
+
+#[test]
+fn signed_message_binds_id_and_artifact_hash() {
+    // The signed message is "<id>\n<wasm-sha256>" — present only with a hash.
+    let signed = Manifest::parse_str(
+        r#"{:aiueos/component :driver/s :aiueos/kind :driver :aiueos/wasm-sha256 "abc123"}"#,
+    )
+    .unwrap();
+    assert_eq!(signed.signed_message().as_deref(), Some("driver/s\nabc123"));
+
+    // No artifact hash → nothing to sign.
+    let unhashed =
+        Manifest::parse_str("{:aiueos/component :driver/s :aiueos/kind :driver}").unwrap();
+    assert_eq!(unhashed.signed_message(), None);
 }
 
 #[test]
