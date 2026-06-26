@@ -199,6 +199,18 @@ fn random_requires_cap_and_is_deterministic() {
 }
 
 #[test]
+fn random_varies_across_calls_in_one_run() {
+    // Two consecutive random() calls use distinct call indices → distinct values;
+    // their XOR is non-zero. (Determinism across runs is a separate test.)
+    const TWO: &str = r#"(module
+      (import "aiueos:host" "random" (func $r (result i64)))
+      (func (export "run") (result i64) (i64.xor (call $r) (call $r))))"#;
+    let o = run(TWO, &[], &caps(&["random/bytes"])).expect("granted");
+    assert_ne!(o.result, 0, "consecutive random() calls differ");
+    assert_eq!(o.host_calls, 2);
+}
+
+#[test]
 fn capability_attenuation_traps_on_the_missing_one() {
     // Granted subscribe (poll succeeds) but NOT publish → the publish traps even
     // though the component got partway. A capability you weren't given can't be
