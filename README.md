@@ -254,7 +254,8 @@ a call without it **traps**.
 | import              | capability        | meaning                          |
 |---------------------|-------------------|----------------------------------|
 | `log(i64)`          | `log/write`       | emit a log sample                |
-| `clock() -> i64`    | `clock/monotonic` | monotonic tick                   |
+| `clock() -> i64`    | `clock/monotonic` | monotonic control-loop cycle     |
+| `random() -> i64`   | `random/bytes`    | deterministic pseudo-random      |
 | `publish(i32,i64)`  | `topic/publish`   | publish a sample to a topic      |
 | `poll(i32) -> i64`  | `topic/subscribe` | latest sample (peek)             |
 | `take(i32) -> i64`  | `topic/subscribe` | pop oldest unread sample (FIFO)  |

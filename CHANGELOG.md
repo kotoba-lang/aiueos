@@ -24,7 +24,7 @@ The Phase-0 substrate plus the runtime/robotics/agent work built on top of it.
 
 ### Runtime + robotics
 - Broker-mediated **`aiueos:host` ABI**, capability-gated per call:
-  `log` / `clock` / `publish` / `poll` / `take` / `count`.
+  `log` / `clock` / `random` / `publish` / `poll` / `take` / `count`.
 - **Topic bus**: latest-value (`poll`) + per-topic **FIFO** queue (`take`) +
   publish `count`; the ROS-topic analogue.
 - **Per-topic isolation**: `:aiueos/publishes` / `:aiueos/subscribes` confine a
