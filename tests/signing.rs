@@ -218,3 +218,50 @@ fn require_signed_policy_denies_unsigned_but_allows_signed() {
 fn require_signed_must_be_a_boolean() {
     assert!(Policy::from_edn(&kotoba_edn::parse("{:aiueos/require-signed 1}").unwrap()).is_err());
 }
+
+#[cfg(feature = "wasm-runtime")]
+#[test]
+fn a_signature_cannot_rescue_swapped_artifact_bytes() {
+    // Signing attests the (id, wasm-sha256) binding; integrity checks the actual
+    // bytes against that hash at launch. Together: a signer vouches for *specific*
+    // bytes, and swapping them is rejected even with a valid signature.
+    use aiueos::runtime::sha256_hex;
+    let dir = std::env::temp_dir().join("aiueos-sign-integrity");
+    std::fs::create_dir_all(&dir).unwrap();
+    let wat = br#"(module (func (export "main") (result i64) (i64.const 7)))"#;
+    std::fs::write(dir.join("c.wat"), wat).unwrap();
+    let hash = sha256_hex(wat);
+
+    let key = keypair();
+    let sig = key.sign(format!("app/c\n{hash}").as_bytes());
+    std::fs::write(
+        dir.join("c.edn"),
+        format!(
+            r#"{{:aiueos/component :app/c :aiueos/kind :app :aiueos/wasm "c.wat"
+                :aiueos/entry "main" :aiueos/wasm-sha256 "{hash}"
+                :aiueos/signer "alice" :aiueos/signature "{}"}}"#,
+            hex(&sig.to_bytes())
+        ),
+    )
+    .unwrap();
+
+    let m = Manifest::load(&dir.join("c.edn")).unwrap();
+    let g = CapabilityGraph::build(std::slice::from_ref(&m));
+    let policy = policy_with_signer("alice", &hex(key.verifying_key().as_bytes()));
+    let broker = Broker::new(policy, AuditLog::new(dir.join("audit.edn")));
+
+    // signed + bytes match the declared hash → launches
+    assert_eq!(broker.launch(&m, &dir, &g).unwrap(), 7);
+
+    // swap the artifact for different bytes — the signature is still "valid" for
+    // the declared hash, but integrity now fails.
+    std::fs::write(
+        dir.join("c.wat"),
+        br#"(module (func (export "main") (result i64) (i64.const 9)))"#,
+    )
+    .unwrap();
+    assert!(
+        broker.launch(&m, &dir, &g).is_err(),
+        "swapped bytes rejected despite a valid signature"
+    );
+}
