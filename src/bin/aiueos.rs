@@ -167,25 +167,30 @@ fn cmd_verify(args: &[String]) -> aiueos::Result<()> {
         aiueos::AiueosError::Denied(vs) => Ok(Err(vs)),
         other => Err(other),
     };
-    let (name, result): (String, std::result::Result<Vec<Grant>, Vec<Violation>>) =
-        if is_system(&path) {
-            let sys = System::load(&path)?;
-            let r = broker.verify_system(&sys).map(Ok).or_else(denied)?;
-            (sys.name, r)
-        } else {
-            let m = Manifest::load(&path)?;
-            let graph = CapabilityGraph::build(std::slice::from_ref(&m));
-            let r = broker
-                .verify_one(&m, &graph)
-                .map(|g| Ok(vec![g]))
-                .or_else(denied)?;
-            (m.id.clone(), r)
-        };
+    let (name, manifests, result): (
+        String,
+        Vec<Manifest>,
+        std::result::Result<Vec<Grant>, Vec<Violation>>,
+    ) = if is_system(&path) {
+        let sys = System::load(&path)?;
+        let r = broker.verify_system(&sys).map(Ok).or_else(denied)?;
+        (sys.name.clone(), sys.components, r)
+    } else {
+        let m = Manifest::load(&path)?;
+        let graph = CapabilityGraph::build(std::slice::from_ref(&m));
+        let r = broker
+            .verify_one(&m, &graph)
+            .map(|g| Ok(vec![g]))
+            .or_else(denied)?;
+        (m.id.clone(), vec![m], r)
+    };
 
     if edn_mode {
         // Machine-readable verdict for tooling / AI agents; exit code still
-        // reflects pass (0) / fail (1).
-        println!("{}", verdict_edn(&name, &result));
+        // reflects pass (0) / fail (1). Authenticity (signed/unsigned/denied) is
+        // surfaced per component so an agent sees provenance too.
+        let auth = authenticity_of(&manifests, &broker.policy);
+        println!("{}", verdict_edn(&name, &result, &auth));
         return match result {
             Ok(_) => Ok(()),
             Err(_) => std::process::exit(1),
@@ -208,13 +213,48 @@ fn cmd_verify(args: &[String]) -> aiueos::Result<()> {
     }
 }
 
+/// Per-component authenticity status (ADR-0003): `"verified:<signer>"`,
+/// `"unsigned"`, or `"denied"`. Empty without the `signing` feature.
+#[cfg(feature = "signing")]
+fn authenticity_of(manifests: &[Manifest], policy: &Policy) -> Vec<(String, String)> {
+    manifests
+        .iter()
+        .map(|m| {
+            let status = match aiueos::signing::verify(m, policy) {
+                Ok(aiueos::signing::SigStatus::Unsigned) => "unsigned".to_string(),
+                Ok(aiueos::signing::SigStatus::Verified(s)) => format!("verified:{s}"),
+                Err(_) => "denied".to_string(),
+            };
+            (m.id.clone(), status)
+        })
+        .collect()
+}
+#[cfg(not(feature = "signing"))]
+fn authenticity_of(_manifests: &[Manifest], _policy: &Policy) -> Vec<(String, String)> {
+    Vec::new()
+}
+
 /// Build a machine-readable EDN verdict (consistent with the EDN audit log).
-fn verdict_edn(name: &str, result: &std::result::Result<Vec<Grant>, Vec<Violation>>) -> String {
+fn verdict_edn(
+    name: &str,
+    result: &std::result::Result<Vec<Grant>, Vec<Violation>>,
+    authenticity: &[(String, String)],
+) -> String {
     use kotoba_edn::EdnValue as E;
     let mut entries = vec![
         (E::kw("aiueos", "system"), E::string(name)),
         (E::kw("aiueos", "verified"), E::bool(result.is_ok())),
     ];
+    if !authenticity.is_empty() {
+        entries.push((
+            E::kw("aiueos", "authenticity"),
+            E::map(
+                authenticity
+                    .iter()
+                    .map(|(id, st)| (E::string(id.clone()), E::string(st.clone()))),
+            ),
+        ));
+    }
     match result {
         Ok(grants) => {
             let g = grants.iter().map(|g| {

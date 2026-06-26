@@ -442,6 +442,35 @@ fn hash_missing_file_errors() {
 
 #[cfg(feature = "signing")]
 #[test]
+fn verify_edn_surfaces_authenticity_per_component() {
+    // An agent verifying a component should see provenance in --edn, not just pass/fail.
+    let (code, out, _e) = aiueos(&[
+        "verify",
+        "examples/signed/demo.edn",
+        "--policy",
+        "examples/signed/policy.edn",
+        "--edn",
+    ]);
+    assert_eq!(code, 0);
+    let v = kotoba_edn::parse(out.trim()).expect("valid EDN");
+    let auth = aiueos::edn::get(&v, "aiueos", "authenticity").expect("authenticity present");
+    // authenticity is a {component-id-string status-string} map
+    let status = match auth {
+        kotoba_edn::EdnValue::Map(m) => m
+            .iter()
+            .find(|(k, _)| k.as_string() == Some("app/signed-demo"))
+            .and_then(|(_, val)| val.as_string()),
+        _ => None,
+    };
+    assert_eq!(
+        status,
+        Some("verified:demo"),
+        "names the signer that vouched for the component"
+    );
+}
+
+#[cfg(feature = "signing")]
+#[test]
 fn the_signed_example_verifies_only_with_its_signer_policy() {
     // The bundled signed example verifies under the policy that registers its
     // signer, and is denied without it (unregistered signer). Keeps the example
