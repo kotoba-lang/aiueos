@@ -309,6 +309,24 @@ fn cmd_inspect(args: &[String]) -> aiueos::Result<()> {
                 id
             );
         }
+        if c.publishes.is_some() || c.subscribes.is_some() {
+            let fmt = |s: &Option<std::collections::BTreeSet<i32>>| {
+                s.as_ref().map_or_else(
+                    || "*".to_string(),
+                    |set| {
+                        set.iter()
+                            .map(|i| i.to_string())
+                            .collect::<Vec<_>>()
+                            .join(",")
+                    },
+                )
+            };
+            println!(
+                "      topics: pub[{}] sub[{}]",
+                fmt(&c.publishes),
+                fmt(&c.subscribes)
+            );
+        }
     }
 
     println!("\ncapability graph (capability → providers):");

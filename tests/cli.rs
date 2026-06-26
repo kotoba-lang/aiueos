@@ -341,6 +341,18 @@ fn inspect_on_a_single_manifest_gives_a_helpful_error() {
 }
 
 #[test]
+fn inspect_human_shows_topic_confinement() {
+    // The robot nodes derive publishes/subscribes — the human view shows them
+    // like it shows device bindings.
+    let (code, out, _e) = aiueos(&["inspect", "examples/robot/robot.aiueos.edn"]);
+    assert_eq!(code, 0);
+    assert!(
+        out.contains("topics: pub["),
+        "per-component topic confinement shown"
+    );
+}
+
+#[test]
 fn inspect_edn_includes_per_topic_isolation() {
     // The robot components declare/derive publishes/subscribes — inspect --edn
     // should expose them so an agent sees the topic confinement.
