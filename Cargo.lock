@@ -30,7 +30,7 @@ dependencies = [
  "anyhow",
  "ed25519-dalek",
  "kotoba-clj",
- "kotoba-edn 0.1.0 (git+https://github.com/com-junkawasaki/kotoba?branch=main)",
+ "kotoba-edn",
  "sha2",
  "wasmtime",
 ]
@@ -692,8 +692,9 @@ dependencies = [
 [[package]]
 name = "kotoba-clj"
 version = "0.1.0"
+source = "git+https://github.com/com-junkawasaki/kotoba?branch=main#acef08d14891f52142c12fee2f8f1f7b83430087"
 dependencies = [
- "kotoba-edn 0.1.0",
+ "kotoba-edn",
  "thiserror 1.0.69",
  "wasm-encoder 0.221.3",
 ]
@@ -701,15 +702,7 @@ dependencies = [
 [[package]]
 name = "kotoba-edn"
 version = "0.1.0"
-dependencies = [
- "ordered-float",
- "thiserror 1.0.69",
-]
-
-[[package]]
-name = "kotoba-edn"
-version = "0.1.0"
-source = "git+https://github.com/com-junkawasaki/kotoba?branch=main#f9133312ed7815c0a98f0925646eb16c94c24e4f"
+source = "git+https://github.com/com-junkawasaki/kotoba?branch=main#acef08d14891f52142c12fee2f8f1f7b83430087"
 dependencies = [
  "ordered-float",
  "thiserror 1.0.69",

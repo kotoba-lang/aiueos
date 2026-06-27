@@ -17,8 +17,10 @@ kotoba-edn = { git = "https://github.com/com-junkawasaki/kotoba", branch = "main
 # CLJ/Kotoba source compiler. The feature is still named `kototama` for the
 # public aiueos surface, but the implementation is the maintained kotoba-clj
 # compiler crate. Optional so standalone users can keep the lightweight WAT/wasm
-# runtime without pulling the compiler.
-kotoba-clj = { path = "../kotoba/crates/kotoba-clj", default-features = false, optional = true }
+# runtime without pulling the compiler. Git dependency (same as kotoba-edn) so a
+# standalone clone resolves it without a sibling checkout; local dev can override
+# to the in-tree copy via .cargo/config.toml (paths override).
+kotoba-clj = { git = "https://github.com/com-junkawasaki/kotoba", branch = "main", package = "kotoba-clj", default-features = false, optional = true }
 # Execution engine — the broker enforces fuel + memory-page limits here. Version
 # pinned to kotoba's workspace (22) so the build is shared, not duplicated.
 wasmtime = { version = "22", optional = true }
