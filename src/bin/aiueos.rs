@@ -64,20 +64,10 @@ fn main() -> ExitCode {
 /// A structural error rendered as EDN (for --edn mode): `{:aiueos/error "..."
 /// :aiueos/kind :io|:edn|:schema|:denied|:unsafe|:compile|:run}`.
 fn error_edn(e: &aiueos::AiueosError) -> String {
-    use aiueos::AiueosError as Err;
     use kotoba_edn::EdnValue as E;
-    let kind = match e {
-        Err::Io(_) => "io",
-        Err::Edn(_) => "edn",
-        Err::Schema(_) => "schema",
-        Err::Denied(_) => "denied",
-        Err::Unsafe(_) => "unsafe",
-        Err::Compile(_) => "compile",
-        Err::Run(_) => "run",
-    };
     kotoba_edn::to_string(&E::map([
         (E::kw("aiueos", "error"), E::string(e.to_string())),
-        (E::kw("aiueos", "kind"), E::kw_bare(kind)),
+        (E::kw("aiueos", "kind"), E::kw_bare(e.kind())),
     ]))
 }
 
@@ -707,6 +697,9 @@ fn cmd_admit(args: &[String]) -> aiueos::Result<()> {
             ];
             if let Some(r) = outcome.result {
                 fields.push((E::kw("aiueos", "result"), E::int(r)));
+            }
+            if let Some(code) = outcome.reason_code {
+                fields.push((E::kw("aiueos", "reason-code"), E::kw_bare(code)));
             }
             if let Some(reason) = &outcome.reason {
                 fields.push((E::kw("aiueos", "reason"), E::string(reason.clone())));

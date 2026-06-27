@@ -43,8 +43,11 @@ pub struct AdmitOutcome {
     pub admitted: bool,
     /// The entry's return value when admitted.
     pub result: Option<i64>,
-    /// Why it was rejected (unsafe source, denial, or runtime trap), else `None`.
+    /// Human-readable rejection detail, else `None`.
     pub reason: Option<String>,
+    /// Stable machine-readable rejection code (`denied` / `unsafe` / `run` / …)
+    /// so an agent can branch on *why* without parsing `reason`; `None` if admitted.
+    pub reason_code: Option<&'static str>,
 }
 
 impl Broker {
@@ -177,11 +180,13 @@ impl Broker {
                 admitted: true,
                 result: Some(result),
                 reason: None,
+                reason_code: None,
             },
             Err(e) => AdmitOutcome {
                 component: floored.id,
                 admitted: false,
                 result: None,
+                reason_code: Some(e.kind()),
                 reason: Some(e.to_string()),
             },
         }

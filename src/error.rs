@@ -24,6 +24,24 @@ pub enum AiueosError {
 
 pub type Result<T> = std::result::Result<T, AiueosError>;
 
+impl AiueosError {
+    /// A stable, machine-readable kind tag — `io` / `edn` / `schema` / `denied` /
+    /// `unsafe` / `compile` / `run`. Used by the `--edn` surfaces (and the
+    /// code-as-data admit verdict) so a tool/agent can branch on *why* without
+    /// parsing the human message.
+    pub fn kind(&self) -> &'static str {
+        match self {
+            AiueosError::Io(_) => "io",
+            AiueosError::Edn(_) => "edn",
+            AiueosError::Schema(_) => "schema",
+            AiueosError::Denied(_) => "denied",
+            AiueosError::Unsafe(_) => "unsafe",
+            AiueosError::Compile(_) => "compile",
+            AiueosError::Run(_) => "run",
+        }
+    }
+}
+
 impl fmt::Display for AiueosError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {

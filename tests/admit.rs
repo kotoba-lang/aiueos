@@ -46,6 +46,7 @@ fn admit_floors_trust_so_code_cannot_escalate_itself() {
         !outcome.admitted,
         "self-claimed :trusted must not bypass the floor"
     );
+    assert_eq!(outcome.reason_code, Some("denied"), "stable reason code");
     assert!(
         outcome.reason.as_deref().unwrap_or("").contains("network"),
         "reason explains the forbidden effect: {:?}",
@@ -103,5 +104,10 @@ fn admit_rejects_a_runtime_trap_with_a_reason() {
 
     let outcome = broker().admit(&m, &dir, &g);
     assert!(!outcome.admitted);
+    assert_eq!(
+        outcome.reason_code,
+        Some("run"),
+        "a trap is a run-kind rejection"
+    );
     assert!(outcome.reason.is_some(), "a trap carries a reason");
 }

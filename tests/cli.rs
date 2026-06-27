@@ -476,6 +476,11 @@ fn admit_cli_runs_clean_code_and_blocks_self_escalation() {
         aiueos::edn::get(&v, "aiueos", "admitted").and_then(|x| x.as_bool()),
         Some(false)
     );
+    assert_eq!(
+        aiueos::edn::get_kw(&v, "aiueos", "reason-code").as_deref(),
+        Some("denied"),
+        "stable machine-readable reason code for agent branching"
+    );
     assert!(aiueos::edn::get_str(&v, "aiueos", "reason")
         .unwrap_or_default()
         .contains("network"));
