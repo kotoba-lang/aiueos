@@ -980,6 +980,151 @@ fn run_kotoba_source_manifest_executes_to_42() {
 
 #[cfg(feature = "kototama")]
 #[test]
+fn run_kotoba_source_manifest_binds_kqe_host_imports_from_policy() {
+    let dir = std::env::temp_dir().join("aiueos-cli-test");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("kqe_source.kotoba"),
+        r#"(defn main []
+             (if (kqe-assert! "kg" "alice" "kg/name" "v") 42 0))"#,
+    )
+    .unwrap();
+    let manifest = dir.join("kqe_source.edn");
+    std::fs::write(
+        &manifest,
+        r#"{:aiueos/component :app/kqe-src
+            :aiueos/kind :app
+            :aiueos/trust :untrusted
+            :aiueos/imports #{:kotoba.graph-write/kg}
+            :aiueos/source "kqe_source.kotoba"
+            :aiueos/entry "main"}"#,
+    )
+    .unwrap();
+    let policy = dir.join("kqe_policy.edn");
+    std::fs::write(
+        &policy,
+        r#"{:aiueos/grants {:app/kqe-src #{:kotoba.graph-write/kg}}}"#,
+    )
+    .unwrap();
+
+    let (code, out, err) = aiueos(&[
+        "run",
+        manifest.to_str().unwrap(),
+        "--policy",
+        policy.to_str().unwrap(),
+    ]);
+    assert_eq!(code, 0, "stderr: {err}");
+    assert!(out.contains("= 42"), "stdout: {out}");
+}
+
+#[cfg(feature = "kototama")]
+#[test]
+fn run_kotoba_kqe_source_without_policy_grant_is_denied() {
+    let dir = std::env::temp_dir().join("aiueos-cli-test");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("kqe_denied.kotoba"),
+        r#"(defn main []
+             (if (kqe-assert! "kg" "alice" "kg/name" "v") 42 0))"#,
+    )
+    .unwrap();
+    let manifest = dir.join("kqe_denied.edn");
+    std::fs::write(
+        &manifest,
+        r#"{:aiueos/component :app/kqe-denied
+            :aiueos/kind :app
+            :aiueos/imports #{:kotoba.graph-write/kg}
+            :aiueos/source "kqe_denied.kotoba"
+            :aiueos/entry "main"}"#,
+    )
+    .unwrap();
+
+    let (code, _out, err) = aiueos(&["run", manifest.to_str().unwrap()]);
+    assert_eq!(code, 1);
+    assert!(
+        err.contains("unresolved-capability") && err.contains("kotoba.graph-write/kg"),
+        "stderr: {err}"
+    );
+}
+
+#[cfg(feature = "kototama")]
+#[test]
+fn up_threads_kqe_store_between_kotoba_components() {
+    let dir = std::env::temp_dir().join("aiueos-cli-test-kqe-system");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("writer.kotoba"),
+        r#"(defn main []
+             (if (kqe-assert! "kg" "alice" "kg/name" "v") 1 0))"#,
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("reader.kotoba"),
+        r#"(defn main []
+             (kqe-count (kqe-get-objects "kg" "alice" "kg/name")))"#,
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("writer.edn"),
+        r#"{:aiueos/component :app/kqe-writer
+            :aiueos/kind :app
+            :aiueos/imports #{:kotoba.graph-write/kg}
+            :aiueos/exports #{:kotoba.graph-read/kg}
+            :aiueos/source "writer.kotoba"
+            :aiueos/entry "main"}"#,
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("reader.edn"),
+        r#"{:aiueos/component :app/kqe-reader
+            :aiueos/kind :app
+            :aiueos/imports #{:kotoba.graph-read/kg}
+            :aiueos/source "reader.kotoba"
+            :aiueos/entry "main"}"#,
+    )
+    .unwrap();
+    let system = dir.join("system.aiueos.edn");
+    std::fs::write(
+        &system,
+        r#"{:aiueos/system :kqe-flow
+            :aiueos/components ["writer.edn" "reader.edn"]}"#,
+    )
+    .unwrap();
+    let policy = dir.join("policy.edn");
+    std::fs::write(
+        &policy,
+        r#"{:aiueos/grants {:app/kqe-writer #{:kotoba.graph-write/kg}}}"#,
+    )
+    .unwrap();
+
+    let (code, out, err) = aiueos(&[
+        "up",
+        system.to_str().unwrap(),
+        "--policy",
+        policy.to_str().unwrap(),
+        "--edn",
+    ]);
+    assert_eq!(code, 0, "stderr: {err}");
+    let v = kotoba_edn::parse(out.trim()).expect("valid EDN");
+    let launched = aiueos::edn::get(&v, "aiueos", "launched")
+        .and_then(|x| x.as_vector())
+        .expect("launched vector");
+    let reader = launched
+        .iter()
+        .find(|c| {
+            aiueos::edn::get_bare(c, "component").and_then(|x| x.as_string())
+                == Some("app/kqe-reader")
+        })
+        .expect("reader launched");
+    assert_eq!(
+        aiueos::edn::get_bare(reader, "result").and_then(|x| x.as_integer()),
+        Some(1),
+        "reader sees writer's KQE assertion"
+    );
+}
+
+#[cfg(feature = "kototama")]
+#[test]
 fn compile_manifest_reads_its_source() {
     let dir = std::env::temp_dir().join("aiueos-cli-test");
     std::fs::create_dir_all(&dir).unwrap();
