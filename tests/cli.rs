@@ -435,6 +435,54 @@ fn hash_prints_sha256_matching_the_library() {
 
 #[cfg(feature = "wasm-runtime")]
 #[test]
+fn admit_cli_runs_clean_code_and_blocks_self_escalation() {
+    // The agent code-as-data gate from the CLI: a clean component is admitted
+    // (exit 0, result in the verdict); a manifest claiming :trusted with a
+    // :network effect is rejected (exit 1) because trust is floored to
+    // :ai-generated — the agent can't grant itself trust.
+    write(
+        "adm.wat",
+        r#"(module (func (export "main") (result i64) (i64.const 7)))"#,
+    );
+    let ok = write(
+        "adm-ok.edn",
+        r#"{:aiueos/component :agent/ok :aiueos/kind :app :aiueos/wasm "adm.wat"
+            :aiueos/entry "main"}"#,
+    );
+    let (code, out, _e) = aiueos(&["admit", ok.to_str().unwrap(), "--edn"]);
+    assert_eq!(code, 0, "clean agent code is admitted");
+    let v = kotoba_edn::parse(out.trim()).unwrap();
+    assert_eq!(
+        aiueos::edn::get(&v, "aiueos", "admitted").and_then(|x| x.as_bool()),
+        Some(true)
+    );
+    assert_eq!(
+        aiueos::edn::get(&v, "aiueos", "result").and_then(|x| x.as_integer()),
+        Some(7)
+    );
+
+    let evil = write(
+        "adm-evil.edn",
+        r#"{:aiueos/component :agent/evil :aiueos/kind :app :aiueos/trust :trusted
+            :aiueos/wasm "adm.wat" :aiueos/entry "main" :aiueos/effects #{:network}}"#,
+    );
+    let (code, out, _e) = aiueos(&["admit", evil.to_str().unwrap(), "--edn"]);
+    assert_eq!(
+        code, 1,
+        "self-claimed :trusted is floored → :network rejected"
+    );
+    let v = kotoba_edn::parse(out.trim()).unwrap();
+    assert_eq!(
+        aiueos::edn::get(&v, "aiueos", "admitted").and_then(|x| x.as_bool()),
+        Some(false)
+    );
+    assert!(aiueos::edn::get_str(&v, "aiueos", "reason")
+        .unwrap_or_default()
+        .contains("network"));
+}
+
+#[cfg(feature = "wasm-runtime")]
+#[test]
 fn run_executes_a_component_and_emits_edn() {
     // The robot sensor launches standalone (imports only the kernel topic cap) and
     // returns 21. Exercises the `run` CLI surface end-to-end, human and --edn.

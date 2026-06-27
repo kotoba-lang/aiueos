@@ -3,6 +3,7 @@
 //!   aiueos verify  <manifest|system>.edn [--policy p.edn] [--edn]   capability + policy check
 //!   aiueos inspect <system>.edn          [--policy p.edn] [--edn] [--dot]   print the capability graph
 //!   aiueos run     <manifest>.edn        [--policy p.edn] [--system s.edn] [--edn]
+//!   aiueos admit   <manifest>.edn        [--policy p.edn] [--system s.edn] [--edn]   agent code-as-data gate
 //!   aiueos compile <source.clj|manifest> [-o out.wasm]      CLJ/Kotoba → wasm
 //!   aiueos check   <source.clj>                             safe-kotoba subset gate
 //!   aiueos hash    <file> [--edn]                           sha256 for :aiueos/wasm-sha256
@@ -26,6 +27,7 @@ fn main() -> ExitCode {
         "inspect" => cmd_inspect(rest),
         "up" => cmd_up(rest),
         "run" => cmd_run(rest),
+        "admit" => cmd_admit(rest),
         "compile" => cmd_compile(rest),
         "check" => cmd_check(rest),
         "hash" => cmd_hash(rest),
@@ -48,7 +50,7 @@ fn main() -> ExitCode {
             // so an agent consuming the machine-readable surface never has to fall
             // back to parsing human prose.
             let edn = rest.iter().any(|a| a == "--edn")
-                && matches!(cmd, "verify" | "inspect" | "up" | "run");
+                && matches!(cmd, "verify" | "inspect" | "up" | "run" | "admit");
             if edn {
                 println!("{}", error_edn(&e));
             } else {
@@ -87,6 +89,7 @@ fn print_usage() {
          aiueos inspect <system>.edn          [--policy p.edn] [--edn]\n  \
          aiueos up      <system>.edn          [--policy p.edn] [--edn] [--rounds N] [--dry-run]   boot the whole system\n  \
          aiueos run     <manifest>.edn        [--policy p.edn] [--system s.edn] [--edn]\n  \
+         aiueos admit   <manifest>.edn        [--policy p.edn] [--system s.edn] [--edn]   agent code-as-data gate\n  \
          aiueos compile <source.clj|manifest> [-o out.wasm]\n  \
          aiueos check   <source.clj>\n  \
          aiueos hash    <file> [--edn]\n  \
@@ -664,6 +667,72 @@ fn cmd_up(args: &[String]) -> aiueos::Result<()> {
         );
         println!("  audit: {}", broker.audit.path().display());
         Ok(())
+    }
+}
+
+/// `aiueos admit <manifest>` — the code-as-data gate (ADR-0004). Runs the
+/// component through admission (trust floored to :ai-generated) and prints a
+/// structured verdict; exit 0 if admitted, 1 if rejected.
+fn cmd_admit(args: &[String]) -> aiueos::Result<()> {
+    #[cfg(not(feature = "wasm-runtime"))]
+    {
+        let _ = args;
+        return Err(run_err("built without `wasm-runtime` feature"));
+    }
+    #[cfg(feature = "wasm-runtime")]
+    {
+        let target = positional(args).ok_or_else(|| schema("admit needs a manifest"))?;
+        let path = PathBuf::from(target);
+        let base = path
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .to_path_buf();
+        let m = Manifest::load(&path)?;
+        let policy = load_policy(args)?;
+        let broker = Broker::new(policy, audit_for(&path)?);
+        let graph = match flag(args, "--system") {
+            Some(s) => System::load(Path::new(&s))?.graph(),
+            None => CapabilityGraph::build(std::slice::from_ref(&m)),
+        };
+
+        let outcome = broker.admit(&m, &base, &graph);
+        if args.iter().any(|a| a == "--edn") {
+            use kotoba_edn::EdnValue as E;
+            let mut fields = vec![
+                (
+                    E::kw("aiueos", "component"),
+                    E::string(outcome.component.clone()),
+                ),
+                (E::kw("aiueos", "admitted"), E::bool(outcome.admitted)),
+            ];
+            if let Some(r) = outcome.result {
+                fields.push((E::kw("aiueos", "result"), E::int(r)));
+            }
+            if let Some(reason) = &outcome.reason {
+                fields.push((E::kw("aiueos", "reason"), E::string(reason.clone())));
+            }
+            println!("{}", kotoba_edn::to_string(&E::map(fields)));
+        } else if outcome.admitted {
+            println!(
+                "✓ admitted `{}` (trust floored to :ai-generated) = {}",
+                outcome.component,
+                outcome
+                    .result
+                    .map_or_else(|| "(resident)".into(), |r| r.to_string())
+            );
+        } else {
+            println!(
+                "✗ rejected `{}`: {}",
+                outcome.component,
+                outcome.reason.as_deref().unwrap_or("(no reason)")
+            );
+        }
+        // Exit code reflects the verdict so an agent loop can branch on it.
+        if outcome.admitted {
+            Ok(())
+        } else {
+            std::process::exit(1);
+        }
     }
 }
 
