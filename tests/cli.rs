@@ -457,6 +457,50 @@ fn run_executes_a_component_and_emits_edn() {
 
 #[cfg(feature = "wasm-runtime")]
 #[test]
+fn run_system_flag_resolves_imports_against_the_graph() {
+    // `run --system` resolves a component's imports against the declared system
+    // graph: an import with no provider is denied alone, but resolves when a
+    // sibling in the system exports it.
+    write(
+        "rs-consumer.wat",
+        r#"(module (func (export "main") (result i64) (i64.const 5)))"#,
+    );
+    let consumer = write(
+        "rs-consumer.edn",
+        r#"{:aiueos/component :app/consumer :aiueos/kind :app :aiueos/wasm "rs-consumer.wat"
+            :aiueos/entry "main" :aiueos/imports #{:topic/scan}}"#,
+    );
+    write(
+        "rs-provider.edn",
+        "{:aiueos/component :driver/provider :aiueos/kind :driver :aiueos/exports #{:topic/scan}}",
+    );
+    let system = write(
+        "rs-system.edn",
+        r#"{:aiueos/system :rs :aiueos/components ["rs-consumer.edn" "rs-provider.edn"]}"#,
+    );
+
+    // alone: :topic/scan has no provider → denied
+    let (code, _o, _e) = aiueos(&["run", consumer.to_str().unwrap()]);
+    assert_eq!(code, 1, "unresolved import denied without the system graph");
+
+    // with --system: the provider exports :topic/scan → resolves → runs
+    let (code, out, _e) = aiueos(&[
+        "run",
+        consumer.to_str().unwrap(),
+        "--system",
+        system.to_str().unwrap(),
+        "--edn",
+    ]);
+    assert_eq!(code, 0, "import resolves against the system graph");
+    let v = kotoba_edn::parse(out.trim()).unwrap();
+    assert_eq!(
+        aiueos::edn::get(&v, "aiueos", "result").and_then(|x| x.as_integer()),
+        Some(5)
+    );
+}
+
+#[cfg(feature = "wasm-runtime")]
+#[test]
 fn hash_missing_file_errors() {
     let (code, _o, _e) = aiueos(&["hash", "/no/such/artifact.wasm"]);
     assert_eq!(code, 1);
