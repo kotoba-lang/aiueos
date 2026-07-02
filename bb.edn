@@ -1,13 +1,33 @@
 {:paths ["src" "resources" "test"]
  :tasks
- {test
+  {test
   {:doc "Run the pure CLJC authority contract tests."
    :task (do
-           (require 'aiueos.contract-test 'aiueos.surface-test 'aiueos.graph-test 'aiueos.policy-test)
-           (clojure.test/run-tests 'aiueos.contract-test 'aiueos.surface-test 'aiueos.graph-test 'aiueos.policy-test))}
+           (require 'aiueos.audit-test
+                    'aiueos.contract-test
+                    'aiueos.graph-test
+                    'aiueos.policy-test
+                    'aiueos.surface-test
+                    'aiueos.topic-test)
+           (clojure.test/run-tests 'aiueos.audit-test
+                                   'aiueos.contract-test
+                                   'aiueos.graph-test
+                                   'aiueos.policy-test
+                                   'aiueos.surface-test
+                                   'aiueos.topic-test))}
 
   test:cljc
   {:doc "Run the pure CLJC authority contract tests."
    :task (do
-           (require 'aiueos.contract-test 'aiueos.surface-test 'aiueos.graph-test 'aiueos.policy-test)
-           (clojure.test/run-tests 'aiueos.contract-test 'aiueos.surface-test 'aiueos.graph-test 'aiueos.policy-test))}}}
+           (require 'aiueos.audit-test
+                    'aiueos.contract-test
+                    'aiueos.graph-test
+                    'aiueos.policy-test
+                    'aiueos.surface-test
+                    'aiueos.topic-test)
+           (clojure.test/run-tests 'aiueos.audit-test
+                                   'aiueos.contract-test
+                                   'aiueos.graph-test
+                                   'aiueos.policy-test
+                                   'aiueos.surface-test
+                                   'aiueos.topic-test))}}}
