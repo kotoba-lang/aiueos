@@ -1,0 +1,49 @@
+{:paths ["src" "resources" "test"]
+ :tasks
+ {test
+  {:doc "Run the pure CLJC authority contract tests."
+   :task (do
+           (require 'aiueos.audit-test
+                    'aiueos.broker-test
+                    'aiueos.cli-test
+                    'aiueos.contract-test
+                    'aiueos.graph-test
+                    'aiueos.manifest-test
+                    'aiueos.policy-test
+                    'aiueos.signing-test
+                    'aiueos.surface-test
+                    'aiueos.topic-test)
+           (clojure.test/run-tests 'aiueos.audit-test
+                                   'aiueos.broker-test
+                                   'aiueos.cli-test
+                                   'aiueos.contract-test
+                                   'aiueos.graph-test
+                                   'aiueos.manifest-test
+                                   'aiueos.policy-test
+                                   'aiueos.signing-test
+                                   'aiueos.surface-test
+                                   'aiueos.topic-test))}
+
+  test:cljc
+  {:doc "Run the pure CLJC authority contract tests."
+   :task (do
+           (require 'aiueos.audit-test
+                    'aiueos.broker-test
+                    'aiueos.cli-test
+                    'aiueos.contract-test
+                    'aiueos.graph-test
+                    'aiueos.manifest-test
+                    'aiueos.policy-test
+                    'aiueos.signing-test
+                    'aiueos.surface-test
+                    'aiueos.topic-test)
+           (clojure.test/run-tests 'aiueos.audit-test
+                                   'aiueos.broker-test
+                                   'aiueos.cli-test
+                                   'aiueos.contract-test
+                                   'aiueos.graph-test
+                                   'aiueos.manifest-test
+                                   'aiueos.policy-test
+                                   'aiueos.signing-test
+                                   'aiueos.surface-test
+                                   'aiueos.topic-test))}}}
