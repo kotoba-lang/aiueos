@@ -88,6 +88,22 @@
          (f)))))
 
 #?(:clj
+   (defn- assert-topic-allowed!
+     "The topic-id allow-set gate `aiueos.manifest/normalize` derives into
+     `:aiueos/publishes`/`:aiueos/subscribes` (`nil` = unrestricted, a set
+     = restricted to exactly those numeric topic ids -- see
+     `aiueos.manifest/derive-topic-ids`'s docstring) was previously
+     validated/derived but never enforced anywhere: a granted component
+     could publish to or read from ANY topic id, not just its declared
+     ones. Throws ex-info tagged `:aiueos.execute/topic-forbidden` (same
+     abort convention as quota/fuel) when ALLOWED-IDS is a set and
+     TOPIC-ID isn't in it; a no-op when ALLOWED-IDS is nil (unrestricted)."
+     [op topic-id allowed-ids]
+     (when (and allowed-ids (not (contains? allowed-ids topic-id)))
+       (throw (ex-info (str "aiueos topic " (name op) " forbidden: topic " topic-id)
+                        {:aiueos.execute/topic-forbidden {:op op :topic-id topic-id}})))))
+
+#?(:clj
    (defn- fuel-listener
      "`:aiueos/limits :fuel` (ADR-0001) enforcement: an ExecutionListener
      that increments FUEL-ATOM on every Wasm instruction executed and
@@ -136,10 +152,21 @@
      (`:aiueos/quota :publishes`) -- exceeding either throws
      (`count-and-check!`), aborting the run.
 
+     Every topic-* call also checks its topic-id argument against
+     PUBLISHES-ALLOWED (`topic_publish`) or SUBSCRIBES-ALLOWED
+     (`topic_poll`/`topic_take`/`topic_count`) -- the manifest's declared
+     `:aiueos/publishes`/`:aiueos/subscribes` allow-set (`nil` =
+     unrestricted; see `assert-topic-allowed!`). A component granted
+     `:topic/publish` could otherwise publish to or read from ANY topic
+     id, not just its declared ones -- this was a real, silent gap
+     (`:aiueos/publishes`/`:aiueos/subscribes` were validated/derived by
+     `aiueos.manifest` but never enforced anywhere) until this check.
+
      Returns a seq of HostFunction for `instantiate`. LOG-ATOM and
      TOPIC-BUS-ATOM are supplied by the caller (see `execute`) so a run's
      log/topic state is inspectable afterward and independent across runs."
-     [log-atom topic-bus-atom host-calls-atom host-calls-limit publishes-atom publishes-limit]
+     [log-atom topic-bus-atom host-calls-atom host-calls-limit publishes-atom publishes-limit
+      publishes-allowed subscribes-allowed]
      [(host-fn "log_write" [:i32 :i32] :i32
                (fn [instance args]
                  (count-and-check!
@@ -169,26 +196,36 @@
                     (count-and-check!
                      publishes-atom publishes-limit :publishes
                      (fn []
-                       (swap! topic-bus-atom topic/publish (int (aget args 0)) (aget args 1))
-                       0))))))
+                       (let [topic-id (int (aget args 0))]
+                         (assert-topic-allowed! :publish topic-id publishes-allowed)
+                         (swap! topic-bus-atom topic/publish topic-id (aget args 1))
+                         0)))))))
       (host-fn "topic_poll" [:i32] :i64
                (fn [_instance args]
                  (count-and-check!
                   host-calls-atom host-calls-limit :host-calls
-                  (fn [] (or (topic/latest @topic-bus-atom (int (aget args 0))) 0)))))
+                  (fn []
+                    (let [topic-id (int (aget args 0))]
+                      (assert-topic-allowed! :subscribe topic-id subscribes-allowed)
+                      (or (topic/latest @topic-bus-atom topic-id) 0))))))
       (host-fn "topic_take" [:i32] :i64
                (fn [_instance args]
                  (count-and-check!
                   host-calls-atom host-calls-limit :host-calls
                   (fn []
-                    (let [[bus' v] (topic/take-sample @topic-bus-atom (int (aget args 0)))]
-                      (reset! topic-bus-atom bus')
-                      (or v 0))))))
+                    (let [topic-id (int (aget args 0))]
+                      (assert-topic-allowed! :subscribe topic-id subscribes-allowed)
+                      (let [[bus' v] (topic/take-sample @topic-bus-atom topic-id)]
+                        (reset! topic-bus-atom bus')
+                        (or v 0)))))))
       (host-fn "topic_count" [:i32] :i64
                (fn [_instance args]
                  (count-and-check!
                   host-calls-atom host-calls-limit :host-calls
-                  (fn [] (topic/topic-count @topic-bus-atom (int (aget args 0)))))))]))
+                  (fn []
+                    (let [topic-id (int (aget args 0))]
+                      (assert-topic-allowed! :subscribe topic-id subscribes-allowed)
+                      (topic/topic-count @topic-bus-atom topic-id))))))]))
 
 #?(:clj
    (defn device-access-stubs
@@ -211,8 +248,11 @@
      (`{:host-calls N :publishes N}`, ADR-0006) -- `has_capability` itself
      is NOT quota-counted (a link-time permission check, not a resource-
      consuming action). FUEL-LIMIT (`:aiueos/limits :fuel`, ADR-0001) is
-     wired via `fuel-listener` (see namespace docstring)."
-     [wasm-bytes log-atom topic-bus-atom quota fuel-limit]
+     wired via `fuel-listener` (see namespace docstring). TOPIC-ALLOWED is
+     `{:publishes <set-or-nil> :subscribes <set-or-nil>}` -- the manifest's
+     `:aiueos/publishes`/`:aiueos/subscribes` topic-id allow-sets (`nil` =
+     unrestricted), enforced via `assert-topic-allowed!`."
+     [wasm-bytes log-atom topic-bus-atom quota fuel-limit topic-allowed]
      (let [host-calls-atom (atom 0)
            publishes-atom (atom 0)
            fuel-atom (atom 0)
@@ -220,7 +260,8 @@
            fns (concat [has-capability]
                        (aiueos-host-functions log-atom topic-bus-atom
                                                host-calls-atom (:host-calls quota)
-                                               publishes-atom (:publishes quota))
+                                               publishes-atom (:publishes quota)
+                                               (:publishes topic-allowed) (:subscribes topic-allowed))
                        (device-access-stubs host-calls-atom (:host-calls quota)))
            imports (-> (ImportValues/builder)
                        (.addFunction (into-array ImportFunction fns))
@@ -258,7 +299,18 @@
        (cond
          (contains? d :aiueos.execute/quota-exceeded) [:aiueos.execute/quota-exceeded (:aiueos.execute/quota-exceeded d)]
          (contains? d :aiueos.execute/fuel-exceeded) [:aiueos.execute/fuel-exceeded (:aiueos.execute/fuel-exceeded d)]
+         (contains? d :aiueos.execute/topic-forbidden) [:aiueos.execute/topic-forbidden (:aiueos.execute/topic-forbidden d)]
          :else nil))))
+
+#?(:clj
+   (defn- topic-allowed-for
+     "`m`'s `:aiueos/publishes`/`:aiueos/subscribes` (see
+     `aiueos.manifest/normalize`'s docstring) as `instantiate`'s
+     TOPIC-ALLOWED shape. An unnormalized `m` simply has neither key, so
+     both come back `nil` -- exactly the correct \"unrestricted\" default,
+     unlike quota/fuel which need an explicit generous default."
+     [m]
+     {:publishes (:aiueos/publishes m) :subscribes (:aiueos/subscribes m)}))
 
 #?(:clj
    (defn- run-if-granted
@@ -269,17 +321,20 @@
      `default-quota`) caps host-call/publish counts (ADR-0006); FUEL-LIMIT
      (`:aiueos/limits :fuel`, defaults to `default-fuel`) caps Wasm
      instructions executed (ADR-0001, prototype -- see namespace
-     docstring). Exceeding either aborts the run; the result carries
-     `:aiueos.execute/quota-exceeded` or `:aiueos.execute/fuel-exceeded`
-     instead of `:aiueos.execute/result`, with whatever log/topic-bus state
-     accumulated before the abort still attached. An unrelated exception
-     still propagates uncaught."
-     ([decision wasm-bytes] (run-if-granted decision wasm-bytes default-quota default-fuel))
-     ([decision wasm-bytes quota fuel-limit]
+     docstring); TOPIC-ALLOWED (`topic-allowed-for`) restricts topic-*
+     calls to the manifest's declared topic ids. Exceeding/violating any
+     of these aborts the run; the result carries
+     `:aiueos.execute/quota-exceeded`, `:aiueos.execute/fuel-exceeded`, or
+     `:aiueos.execute/topic-forbidden` instead of `:aiueos.execute/result`,
+     with whatever log/topic-bus state accumulated before the abort still
+     attached. An unrelated exception still propagates uncaught."
+     ([decision wasm-bytes]
+      (run-if-granted decision wasm-bytes default-quota default-fuel {:publishes nil :subscribes nil}))
+     ([decision wasm-bytes quota fuel-limit topic-allowed]
       (if (= :grant (:aiueos/decision decision))
         (let [log-atom (atom [])
               topic-bus-atom (atom topic/empty-bus)
-              instance (instantiate wasm-bytes log-atom topic-bus-atom quota fuel-limit)]
+              instance (instantiate wasm-bytes log-atom topic-bus-atom quota fuel-limit topic-allowed)]
           (try
             (let [result (call-main instance)]
               (assoc decision
@@ -300,20 +355,23 @@
      "The end-to-end path: verify `m` (a normalized manifest) against
      `graph`/`policy` via `aiueos.broker/verify-one`; only if granted,
      instantiate WASM-BYTES on Chicory and call its exported `main`, capped
-     by `m`'s `:aiueos/quota` (`default-quota` if unnormalized) and
-     `:aiueos/limits :fuel` (`default-fuel` if unnormalized).
+     by `m`'s `:aiueos/quota` (`default-quota` if unnormalized),
+     `:aiueos/limits :fuel` (`default-fuel` if unnormalized), and
+     `:aiueos/publishes`/`:aiueos/subscribes` (unrestricted if unnormalized).
 
      Returns `{:aiueos/decision :deny ...}` (the broker's denial, unexecuted),
      `{:aiueos/decision :grant ... :aiueos.execute/result <long>
      :aiueos.execute/log [<string>...] :aiueos.execute/topic-bus <bus>}` on a
      completed run, or the same shape with `:aiueos.execute/quota-exceeded
-     {:kind :host-calls|:publishes :limit N :count N}` or
-     `:aiueos.execute/fuel-exceeded {:limit N :count N}` instead of `:result`
-     when the run aborted mid-execution."
+     {:kind :host-calls|:publishes :limit N :count N}`,
+     `:aiueos.execute/fuel-exceeded {:limit N :count N}`, or
+     `:aiueos.execute/topic-forbidden {:op :publish|:subscribe :topic-id N}`
+     instead of `:result` when the run aborted mid-execution."
      [m graph policy wasm-bytes]
      (run-if-granted (broker/verify-one m graph policy) wasm-bytes
                       (or (:aiueos/quota m) default-quota)
-                      (get-in m [:aiueos/limits :fuel] default-fuel))))
+                      (get-in m [:aiueos/limits :fuel] default-fuel)
+                      (topic-allowed-for m))))
 
 #?(:clj
    (defn execute-admission
@@ -326,4 +384,5 @@
      [m graph policy wasm-bytes]
      (run-if-granted (broker/verify-admission m graph policy) wasm-bytes
                       (or (:aiueos/quota m) default-quota)
-                      (get-in m [:aiueos/limits :fuel] default-fuel))))
+                      (get-in m [:aiueos/limits :fuel] default-fuel)
+                      (topic-allowed-for m))))

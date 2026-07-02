@@ -219,3 +219,49 @@
              result (execute/execute m empty-graph policy* topic-publish-wasm)]
          (is (contains? result :aiueos.execute/quota-exceeded))
          (is (not (contains? result :aiueos.execute/fuel-exceeded)))))))
+
+;; ───────── topic-id allow-set enforcement (:aiueos/publishes /
+;; :aiueos/subscribes, derived by aiueos.manifest but previously never
+;; enforced anywhere -- a real, silent capability-gating gap) ─────────
+
+#?(:clj
+   (deftest execute-aborts-when-publishing-to-a-topic-id-outside-the-allow-set
+     (testing "the fixture publishes to topic 1; declaring :aiueos/publishes
+     #{2} (topic 1 NOT included) proves the check runs against the REAL
+     argument the guest passed through Chicory, not a static analysis"
+       (let [policy* (policy/parse-policy {:aiueos/grants {:app/topic-publish #{:topic/publish}}})
+             m {:aiueos/component :app/topic-publish :aiueos/kind :app :aiueos/trust :verified
+                :aiueos/imports #{:topic/publish}
+                :aiueos/publishes #{2}}
+             result (execute/execute m empty-graph policy* topic-publish-wasm)]
+         (is (= :grant (:aiueos/decision result))
+             "the CAPABILITY decision is still :grant -- the topic-id allow-set is a separate, run-time-only check")
+         (is (not (contains? result :aiueos.execute/result))
+             "no :result -- the run aborted before main returned normally")
+         (is (= {:op :publish :topic-id 1} (:aiueos.execute/topic-forbidden result)))
+         (is (= (topic/topic-count topic/empty-bus 1) (topic/topic-count (:aiueos.execute/topic-bus result) 1))
+             "the offending publish's own effect never landed -- checked before the swap!")))))
+
+#?(:clj
+   (deftest execute-allows-publishing-when-the-topic-id-is-in-the-allow-set
+     (let [policy* (policy/parse-policy {:aiueos/grants {:app/topic-publish #{:topic/publish}}})
+           m {:aiueos/component :app/topic-publish :aiueos/kind :app :aiueos/trust :verified
+              :aiueos/imports #{:topic/publish}
+              :aiueos/publishes #{1}}
+           result (execute/execute m empty-graph policy* topic-publish-wasm)]
+       (is (= :grant (:aiueos/decision result)))
+       (is (not (contains? result :aiueos.execute/topic-forbidden)))
+       (is (= 42 (topic/latest (:aiueos.execute/topic-bus result) 1))))))
+
+#?(:clj
+   (deftest execute-with-no-declared-publishes-is-unrestricted
+     (testing "an unnormalized manifest (no :aiueos/publishes key at all)
+     falls back to nil -- unrestricted -- exactly like before this
+     enforcement existed; same fixture as
+     execute-grants-and-actually-runs-on-chicory above"
+       (let [policy* (policy/parse-policy {:aiueos/grants {:app/topic-publish #{:topic/publish}}})
+             m {:aiueos/component :app/topic-publish :aiueos/kind :app :aiueos/trust :verified
+                :aiueos/imports #{:topic/publish}}
+             result (execute/execute m empty-graph policy* topic-publish-wasm)]
+         (is (not (contains? result :aiueos.execute/topic-forbidden)))
+         (is (= 42 (topic/latest (:aiueos.execute/topic-bus result) 1)))))))

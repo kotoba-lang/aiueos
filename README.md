@@ -45,7 +45,12 @@ contracts as adapters/providers elsewhere, but they are not authority here.
   thread-interrupt timeout, not this) — treat fuel enforcement as a working
   prototype on an unofficial API, not a permanent guarantee. It also only fires
   in Chicory's interpreter path; a future switch to Chicory's AOT compiler would
-  bypass it entirely.
+  bypass it entirely. Also enforces `:aiueos/publishes`/`:aiueos/subscribes`
+  (the topic-id allow-set `aiueos.manifest/normalize` derives) — a granted
+  component's `topic_publish`/`topic_poll`/`topic_take`/`topic_count` calls are
+  restricted to its declared topic ids (`nil` = unrestricted); this was
+  previously validated/derived by `aiueos.manifest` but never actually enforced
+  anywhere, letting a granted component access any topic id.
   **JVM-only** — needs `clojure -M:test`, not `bb` (Chicory isn't in babashka's
   class allowlist).
 - `src/aiueos/launcher.cljc` is a real, runnable CLI: the retired Rust
