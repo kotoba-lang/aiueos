@@ -9,6 +9,15 @@ decisions, grants, audit events, run plans, run receipts, and the
 Rust, JavaScript, Python, Svelte, or host-specific code may consume these
 contracts as adapters/providers elsewhere, but they are not authority here.
 
+**This repository owns decisions, never execution — permanently, by
+design.** `kotoba-lang/kototama`'s `kototama.tender` (JVM/Chicory) and
+browser-native `actor-host.js` are the native host adapters that
+actually run Wasm; `kototama.aiueos-adapter` is the one sanctioned
+boundary that calls into this repo's `aiueos.cli/command-result` and
+translates the answer into what kototama enforces. See
+[ADR-2607072400](https://github.com/com-junkawasaki/root/blob/main/90-docs/adr/2607072400-aiueos-kototama-decision-execution-boundary.md)
+for the full decision/execution split, stated once.
+
 ## Contract Data
 
 - `src/aiueos/contract.cljc` validates the pure aiueos data contracts.
