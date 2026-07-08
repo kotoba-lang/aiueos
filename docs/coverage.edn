@@ -1,5 +1,5 @@
 {:aiueos.coverage/version 1
- :maturity :m5
+ :maturity :m6
  ;; M0-M6 template borrowed from kotoba-lang/kotoba-lang's docs/lang/coverage.edn.
  :stages
  [{:stage :m0
@@ -56,9 +56,12 @@
               "orgs/kotoba-lang/kototama/deps.edn: io.github.kotoba-lang/aiueos"]}
   {:stage :m6
    :name "compatibility-policy"
-   :status :not-yet
-   :note "No versioning.md-equivalent exists. CHANGELOG.md self-labels
-          pre-1.0 (Phase-0); several ADRs (0005, 0006) are explicitly
-          not-yet-implemented phases, so a compatibility policy would be
-          premature until those land."
-   :evidence []}]}
+   :note "docs/versioning.md defines patch/minor/major rules over the
+          `:aiueos/*` EDN contract data (manifests, policy/grants, the
+          component boundary, the CLI contract) rather than a CLJC-code
+          semver, since the surface is data consumed by multiple host
+          adapters. Still pre-1.0 (Phase-0) per CHANGELOG.md, and several
+          ADRs (0005, 0006) remain explicitly not-yet-implemented phases
+          -- the policy documents how those will be versioned once they
+          land, not a claim that they already have."
+   :evidence ["docs/versioning.md"]}]}
