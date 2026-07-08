@@ -21,6 +21,8 @@ jobs:
           bb: latest
       - name: Test CLJC contract
         run: clojure -M:test
+      - name: Lint
+        run: clojure -M:lint
       - name: Babashka smoke
         run: bb test
 
