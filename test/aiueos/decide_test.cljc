@@ -1,7 +1,9 @@
 (ns aiueos.decide-test
   (:require [aiueos.cli :as cli]
             [aiueos.decide :as decide]
-            [clojure.test :refer [deftest is testing]]))
+            [clojure.test :refer [deftest is testing]]
+            #?(:clj [clojure.edn :as edn]
+               :cljs [cljs.reader :as edn])))
 
 (def contract (cli/read-contract))
 
@@ -30,12 +32,12 @@
   (let [m {:aiueos/component :service/log :aiueos/kind :service :aiueos/trust :verified
            :aiueos/imports #{:log/write}}
         line (pr-str {:aiueos.decide/command :verify :aiueos.decide/request {:aiueos/manifest m}})
-        response (read-string (decide/handle-line contract line))]
+        response (edn/read-string (decide/handle-line contract line))]
     (is (= :grant (:aiueos/decision response)))))
 
 (deftest handle-line-never-throws-on-malformed-edn
   (testing "unreadable EDN text becomes an error response, not an exception"
-    (let [response (read-string (decide/handle-line contract "not valid edn ("))]
+    (let [response (edn/read-string (decide/handle-line contract "not valid edn ("))]
       (is (= :malformed-request (:aiueos.decide/error response))))))
 
 #?(:clj
