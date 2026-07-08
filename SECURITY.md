@@ -116,6 +116,21 @@ If a deployment needs any of the above, it must add it above aiueos — the desi
 makes room for these (signing hooks, per-surface providers, scheduler) but
 Phase-0 does not ship them.
 
+## Deployment profiles
+
+Security claims are deployment-profile specific. The default profile is
+`research`: capability containment, Wasm limits, and audit, with no FIPS,
+side-channel, hard-real-time, or formal-verification claim.
+
+Profile definitions live in [`docs/deployment-profiles.md`](docs/deployment-profiles.md):
+
+- `research`: local experiments and demos;
+- `sensitive-local`: single-tenant local systems with host hardening and
+  encrypted audit/data requirements;
+- `regulated`: evidence, key lifecycle, SBOM/SLSA, monitoring, and provider
+  policy requirements;
+- `high-assurance`: blocked until formal and side-channel evidence exists.
+
 ## Reporting
 
 This is a research substrate under active development. If you find a flaw in the

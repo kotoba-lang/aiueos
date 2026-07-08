@@ -6,20 +6,21 @@ on:
   pull_request:
 
 jobs:
-  test:
-    name: CLJC contract tests
+  edn-contracts:
+    name: EDN examples and docs
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: "21"
       - uses: DeLaGuardo/setup-clojure@13.4
         with:
-          cli: latest
           bb: latest
-      - name: Test CLJC contract
-        run: clojure -M:test
-      - name: Babashka smoke
-        run: bb test
+      - name: Read EDN examples
+        run: |
+          bb -e '
+          (require (quote [clojure.edn :as edn])
+                   (quote [clojure.java.io :as io]))
+          (doseq [f (file-seq (io/file "examples"))
+                  :when (and (.isFile f)
+                             (.endsWith (.getName f) ".edn"))]
+            (edn/read-string (slurp f)))
+          '

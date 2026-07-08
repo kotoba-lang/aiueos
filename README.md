@@ -2,60 +2,31 @@
   <img src="docs/assets/header.png" alt="aiueos" width="480">
 </p>
 
-# aiueos-cljc-contract
+# aiueos
 
-CLJC/EDN authority contracts for aiueos.
+AI-agent-native capability OS examples and documentation, expressed as Kotoba
+EDN/CLJ data.
 
-This repository owns the semantic shapes for aiueos manifests, policy
-decisions, grants, audit events, run plans, run receipts, and the
-`aiueos/component` Wasm Component Model boundary.
+`aiueos` no longer owns a Rust runtime crate. The semantic authority for
+manifests, policy decisions, broker plans, audit receipts, and the
+`aiueos/component` Wasm Component Model boundary lives in
+`../aiueos-cljc-contract`.
 
-Rust, JavaScript, Python, Svelte, or host-specific code may consume these
-contracts as adapters/providers elsewhere, but they are not authority here.
+This repository keeps examples, deployment notes, incident exercises, and
+portable distribution metadata that consume that CLJC/EDN authority. New runtime
+or host work should be expressed through Kotoba/CLJ contracts and Wasm Component
+Model boundaries rather than reintroducing Rust adapters.
 
-**This repository owns decisions, never execution — permanently, by
-design.** `kotoba-lang/kototama`'s `kototama.tender` (JVM/Chicory) and
-browser-native `actor-host.js` are the native host adapters that
-actually run Wasm; `kototama.aiueos-adapter` is the one sanctioned
-boundary that calls into this repo's `aiueos.cli/command-result` and
-translates the answer into what kototama enforces. See
-[ADR-2607072400](https://github.com/com-junkawasaki/root/blob/main/90-docs/adr/2607072400-aiueos-kototama-decision-execution-boundary.md)
-for the full decision/execution split, stated once.
+## Authority
 
-## Contract Data
-
-- `src/aiueos/contract.cljc` validates the pure aiueos data contracts.
-- `src/aiueos/graph.cljc` derives capability providers, boot order, and dependency depth.
-- `src/aiueos/policy.cljc` resolves grants, surface policy, and component admission.
-- `src/aiueos/surface.cljc` owns the known deployment surface/provider registry.
-- `src/aiueos/manifest.cljc` normalizes a manifest's trust/limits/quota/schedule/topic defaults.
-- `src/aiueos/signing.cljc` verifies ed25519 manifest signatures (JDK-native, no external crypto dep).
-- `src/aiueos/audit.cljc` builds and (JVM-)appends/reads append-only audit log entries.
-- `src/aiueos/topic.cljc` is the pure, immutable in-process pub/sub topic bus.
-- `src/aiueos/broker.cljc` composes the above into grant/deny decisions, the ADR-0004
-  admission gate, and `:aiueos/run-plan`/`:aiueos/run-receipt` shaping. Execution itself
-  stays a native host-adapter concern (ADR-2607022200 Layer 3) — never ported here.
-- `src/aiueos/cli.cljc` is the CLJC authority for the aiueos CLI command contract
-  (mirrors `kotoba-lang/kotoba-lang`'s `kotoba.cli` pattern).
-- `src/aiueos/decide.cljc` is the decision subprocess bridge (ADR-2607022700): a
-  native host adapter shells out to this instead of ever computing capability
-  decisions itself (`bb decide`, newline-delimited EDN over stdio).
-- `resources/aiueos/component_boundary.edn` owns the component imports/exports.
-- `resources/aiueos/policy_contract.edn` / `broker_contract.edn` own the policy/broker decision tables.
-- `resources/aiueos/cli.edn` owns the CLI command/option contract.
-- `test/aiueos/*_test.cljc` checks every CLJC validator/reasoner/contract above.
-
-Everything the retired Rust `aiueos` crate did that is NOT here (wasmtime hosting,
-the CLI binary's execution path, the virtio driver, VM/initramfs provisioning) is
-permanently native/host-adapter territory per ADR-2607022200 — `.kotoba` compiles
-TO Wasm and cannot itself host other Wasm components. The one exception worth
-naming: the retired `safe.rs` (safe-kotoba subset gate) was NOT ported because it
-is redundant — that check already lives in `kotoba-lang/kotoba`'s
-`kototama`/`kotoba-clj` layer (see `aiueos.broker`'s namespace docstring).
+- `../aiueos-cljc-contract/src/aiueos/contract.cljc`
+- `../aiueos-cljc-contract/resources/aiueos/*.edn`
+- `examples/**/*.edn`
+- `examples/**/*.clj`
 
 ## Verify
 
 ```bash
-clojure -M:test
+cd ../aiueos-cljc-contract
 bb test:cljc
 ```
