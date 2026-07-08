@@ -3,3 +3,4 @@
 .aiueos/
 **/.aiueos/
 *.wasm
+dist/

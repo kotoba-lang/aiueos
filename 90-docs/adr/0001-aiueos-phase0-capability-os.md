@@ -2,6 +2,7 @@
 
 - Status: accepted
 - Date: 2026-06-25
+- Related: `orgs/kawasakijun/docs/adr/0024-kotoba-stack-accountability-boundaries.md`
 
 ## Context
 
@@ -9,8 +10,19 @@ The design calls for **aiueos**: an OS where *“everything is a word (a declara
 structure)”* and *“everything is a Wasm component (an isolated unit of
 execution).”* Two pieces already exist in the superproject:
 
-- **kototama** compiles a Clojure/EDN subset to real wasm and runs it on
-  `wasmtime` with a fuel budget (`kotoba-clj`’s `run`).
+- **kototama** is the common host facade that makes Kotoba/CLJ execution
+  accountable across browser, local and server hosts. It defines the host-facing
+  contract (`HostCaps`, `RuntimeLimits`, import-surface validation). The current
+  compiler implementation behind that boundary is still `kotoba-clj`: it
+  compiles a Clojure/EDN subset to real wasm.
+
+Vocabulary:
+
+```text
+kotoba   = language + database + semantic substrate
+kototama = Kotoba/CLJ host contract + safe execution facade
+aiueos   = OS / component supervisor + authority broker
+```
 - **kotoba-edn** is the single source-of-truth EDN reader.
 
 The temptation is to start at the bottom — write the microkernel and drivers in
@@ -23,14 +35,17 @@ mythical AI agent does.”* The design’s own recommendation is to start at Pha
 
 Build Phase 0 as a single Rust crate `aiueos` that depends on `kotoba-edn`
 (manifests/policy/audit as EDN) and, behind a default `wasm-runtime` feature, on
-`kototama` + `wasmtime` (compile + execute). The OS is modeled as a **graph of
-capability components**, not processes.
+the kototama execution contract (`kotoba-clj` compiler today) + `wasmtime`
+(execute). The OS is modeled as a **graph of capability components**, not
+processes.
 
 1. **Manifests are kotoba.** `:aiueos/...` EDN describes each component’s kind,
    trust, imports, exports, effects, requirements and limits. A manifest is
    *data the OS reasons over*.
 2. **The broker is the only thing that confers capabilities**, and it audits
-   every grant/deny/compile/run as one EDN map per line.
+   every grant/deny/compile/run as one EDN map per line. kototama can describe
+   and validate the host import surface, but aiueos decides whether the surface
+   is allowed in this system.
 3. **Three policy rules are enforced now**: capability linking (imports must
    resolve), effect-vs-trust (AI-generated/untrusted lockdown), and the
    driver-DMA rule (`:dma` ⇒ `:requires #{:iommu}` + an `:iommu` grant).
@@ -44,15 +59,38 @@ capability components**, not processes.
    reader are trusted. Drivers are components precisely so they can be evicted
    from the TCB — DMA is the one residual escape, hence the mandatory IOMMU gate.
 
+### Language runtimes are components
+
+Kotoba is the preferred language substrate, but aiueos does not give any
+non-kotoba language a native escape hatch. JavaScript, Python, Lua, Ruby, Scheme,
+and future guest languages run as **WASM components** with explicit imports and
+exports. A runtime may provide `eval`, `call`, module loading, or job draining,
+but those exports are just component functions. Network, storage, DOM, timers,
+HID, filesystem, process, GPU, and clipboard access remain capability imports
+granted by policy and supplied by the active surface.
+
+This keeps language choice out of the TCB boundary:
+
+```text
+language runtime
+  -> wasm component
+  -> aiueos manifest imports/exports
+  -> surface offered-set gate
+  -> audited capability providers
+```
+
+JS compatibility in `kotoba-lang/browser` is therefore one runtime adapter
+(`QuickJS/QuickJS-NG` first), not a special browser-core execution privilege.
+
 ### Native vs kotoba split (deferred but pre-modeled)
 
 The microkernel will be native (Rust/Zig); services/drivers/apps will be
-kototama→wasm components; the lowest MMIO/DMA/IRQ layer will be tiny kernel-
-provided unsafe adapters. Phase 0 does not build the kernel, but it already
-models its seams: kernel-provided capabilities (`dma/map`, `irq/subscribe`,
-`mmio/map`, `pci/config`, `clock/monotonic`, …) and the `:requires #{:iommu}`
-device-binding requirement. Later phases supply real implementations behind the
-same capability names without reshaping the core.
+kototama-hosted CLJ/Kotoba→wasm components; the lowest MMIO/DMA/IRQ layer will
+be tiny kernel-provided unsafe adapters. Phase 0 does not build the kernel, but it
+already models its seams: kernel-provided capabilities (`dma/map`,
+`irq/subscribe`, `mmio/map`, `pci/config`, `clock/monotonic`, …) and the
+`:requires #{:iommu}` device-binding requirement. Later phases supply real
+implementations behind the same capability names without reshaping the core.
 
 ## Consequences
 

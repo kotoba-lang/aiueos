@@ -79,4 +79,4 @@ The Phase-0 substrate plus the runtime/robotics/agent work built on top of it.
 - **CI** (GitHub Actions): core + exec-only + rustfmt.
 - **193 tests + 3 doctests** green across the core / exec-only / full configs.
 
-[Unreleased]: https://github.com/com-junkawasaki/aiueos/commits/main
+[Unreleased]: https://github.com/kotoba-lang/aiueos/commits/main

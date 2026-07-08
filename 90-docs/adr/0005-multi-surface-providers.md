@@ -110,6 +110,21 @@ unchanged* to the next: its imports are its portable contract. The next surface
 either offers providers for all of them (it runs, identically gated) or denies it
 up front (a missing provider, surfaced loudly), never a silent degradation.
 
+### Language runtime components
+
+Language runtimes are ordinary components on top of this same rule. A QuickJS,
+Boa, CPython, Lua, Ruby, Scheme, or other runtime component declares imports for
+the effects its standard library or host shims need, and exports runtime
+entrypoints such as `runtime/eval`, `runtime/call`, `runtime/module-load`, or
+`runtime/job-drain`. The active surface decides whether those imports are backed.
+
+For example, a browser JavaScript adapter may import `dom/query`, `dom/mutate`,
+`event/listen`, `net/fetch`, `storage/get`, `storage/put`, and
+`timer/schedule`. A cloud Python adapter may import `net/fetch`, `storage/kv`,
+`clock/monotonic`, and `log/write`. Neither gets ambient network/filesystem/DOM
+access from being a language runtime; each gets only the capabilities its
+manifest imports and the active surface offers.
+
 ### Declaring / requiring a target surface in the manifest
 
 A component may pin the surface(s) it is written for, consistent with the existing
@@ -147,7 +162,7 @@ fail-loud stance. Surface ids themselves are a closed set the broker knows;
 | surface   | offered capabilities (providers)                                  | backing impl                          |
 |-----------|-------------------------------------------------------------------|---------------------------------------|
 | `robot`   | `topic/publish`, `topic/subscribe`, `clock/monotonic`, `log/write`, `random/bytes`, `pci/config`, `dma/map`, `irq/subscribe`, `mmio/map` | the in-process bus + device brokers — **exists today** |
-| `browser` | `dom/render`, `dom/event`, `net/fetch`, `log/write`, `clock/monotonic` | DOM/fetch shims over the host page    |
+| `browser` | `dom/render`, `dom/event`, `input/event`, `net/fetch`, `log/write`, `clock/monotonic` | DOM/input/fetch shims over the host page    |
 | `cloud`   | `storage/kv`, `net/fetch`, `log/write`, `clock/monotonic`, `random/bytes` | a KV store broker + a socket/HTTP broker |
 | `edge`    | `topic/*`, `storage/kv`, `clock/monotonic`, `log/write`           | a constrained subset of robot ∪ cloud |
 | `client`  | `dom/render`, `storage/kv`, `log/write`                           | local UI + local persistence          |

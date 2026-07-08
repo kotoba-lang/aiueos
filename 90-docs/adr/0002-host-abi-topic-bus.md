@@ -41,21 +41,24 @@ matching calls and traps the rest.
 
 ## Decouple execution from compilation (feature split)
 
-Calling host functions requires the component to *import* them, which the
-kototama CLJ compiler does not emit for arbitrary aiueos capabilities. So
-host-calling components are authored as **WAT** (or precompiled wasm) referenced
-via `:aiueos/wasm`, which wasmtime loads directly — no kototama needed.
+Calling host functions requires the component to *import* them. The kototama
+layer (currently `kotoba-clj`) emits the Kotoba/kotoba-runtime host imports it
+knows about, but does not yet emit arbitrary `aiueos:host` imports for every
+aiueos capability. So Phase-0 host-calling components are authored as **WAT** (or
+precompiled wasm) referenced via `:aiueos/wasm`, which wasmtime loads directly —
+no kototama needed.
 
 This motivated splitting the old `wasm-runtime` feature in two:
 
 - **`wasm-runtime`** — *execute* wasm (binary/WAT) under fuel + memory limits with
   the `aiueos:host` ABI. Needs only wasmtime.
-- **`kototama`** — *compile* CLJ → wasm; implies `wasm-runtime`.
+- **`kototama`** — *compile* CLJ/Kotoba → wasm via the Kotoba executable layer
+  (`kotoba-clj` today); implies `wasm-runtime`.
 
 Besides being cleaner, the split let the host ABI / robotics work build and test
-(`--features wasm-runtime`) while the kototama toolchain was temporarily broken by
-an unrelated in-progress edit in the `kami-engine-clj` submodule — execution does
-not depend on the compiler.
+(`--features wasm-runtime`) while the kototama/kotoba-clj toolchain was
+temporarily broken by an unrelated in-progress edit in the `kami-engine-clj`
+submodule — execution does not depend on the compiler.
 
 ## Consequences
 
