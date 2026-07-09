@@ -1,0 +1,126 @@
+(ns aiueos.image
+  "`aiueos image build` -- ports the retired Rust `InitramfsPlan`
+  (`bin/aiueos.rs`, ADR-0008) to CLJC per ADR-0011: stage a directory
+  (`/init`, `/etc/aiueos/boot.edn`, the system graph, an optional policy, and
+  -- new in this JVM port, since `/init` can no longer be a single native
+  binary -- a jlink-produced minimal JRE and the aiueos jar), then shell out
+  to `cpio`/`gzip` exactly like the old binary did (staging + packaging is
+  ordinary file I/O; there's no reason to hand-roll a `newc` cpio encoder
+  when the OS already ships one).
+
+  NOT carried over from the retired Rust: `InitramfsPlan::verify` (which
+  re-ran the SAME broker/policy verification `aiueos.launcher/verify-command`
+  already does elsewhere in this CLJC port) is not re-wired here yet --
+  calling `aiueos.launcher/verify-command`/`up-command` on the system before
+  `build-initramfs!` is a documented follow-up, not silently skipped
+  forever, but also not duplicated inline in this namespace.
+
+  JVM-only (`#?(:clj ...)` throughout) -- file I/O, same as `aiueos.launcher`."
+  (:require [clojure.string :as str]
+            #?(:clj [clojure.java.io :as io])
+            #?(:clj [clojure.java.shell :as shell])))
+
+(def default-guest-policy-path "/etc/aiueos/policy.edn")
+
+#?(:clj
+   (defn- guest-system-path [system-file] (str "/etc/aiueos/system/" system-file)))
+
+#?(:clj
+   (defn plan
+     "Pure planning step: validate inputs and compute every guest/host path
+     `build-initramfs!` needs, without touching the filesystem. `opts`:
+     `:system` (required, host path to the system `.edn`), `:policy`
+     (optional host path), `:jre-dir` (optional, a jlink custom-runtime
+     directory to stage as `/jre`), `:jar` (optional, the aiueos standalone
+     jar to stage as `/aiueos.jar`), `:out` (output `.cpio.gz` path; defaults
+     to `<system-dir>/.aiueos/image/<system-basename>.initramfs.cpio.gz`)."
+     [opts]
+     (when-not (:system opts)
+       (throw (ex-info "image build needs :system (a system graph .edn path)" {:opts opts})))
+     (let [system (io/file (:system opts))
+           system-dir (or (.getParentFile system) (io/file "."))
+           system-file (.getName system)
+           policy (some-> (:policy opts) io/file)
+           out (io/file (or (:out opts)
+                             (io/file system-dir ".aiueos" "image"
+                                      (str (str/replace system-file #"\.edn$" "") ".initramfs.cpio.gz"))))]
+       {:system system
+        :system-dir system-dir
+        :system-file system-file
+        :policy policy
+        :jre-dir (some-> (:jre-dir opts) io/file)
+        :jar (some-> (:jar opts) io/file)
+        :out out
+        :guest-system (guest-system-path system-file)
+        :guest-policy (when policy default-guest-policy-path)})))
+
+#?(:clj
+   (defn- copy-dir-filtered!
+     "Recursively copy `src` into `dst`, skipping `.git`, prior `.stage-*`
+     scratch dirs, and this namespace's own `.aiueos/image`/`.aiueos/vm`
+     output dirs (mirrors the retired Rust `copy_dir_filtered`, which
+     existed so a system dir containing a previous build's own output
+     doesn't get recursively embedded into the new initramfs)."
+     [^java.io.File src ^java.io.File dst]
+     (.mkdirs dst)
+     (doseq [^java.io.File entry (.listFiles src)]
+       (let [name (.getName entry)]
+         (when-not (or (= name ".git")
+                       (str/starts-with? name ".stage-")
+                       (str/ends-with? (.getPath entry) ".aiueos/image")
+                       (str/ends-with? (.getPath entry) ".aiueos/vm"))
+           (let [target (io/file dst name)]
+             (cond
+               (.isDirectory entry) (copy-dir-filtered! entry target)
+               (.isFile entry) (io/copy entry target))))))))
+
+#?(:clj
+   (defn- boot-edn [p]
+     (pr-str (cond-> {:aiueos/system (:guest-system p)}
+               (:guest-policy p) (assoc :aiueos/policy (:guest-policy p))))))
+
+#?(:clj
+   (defn- init-script
+     "The `/init` shell script -- Linux's `binfmt_script` handles `#!`
+     shebangs for PID 1 the same as any other exec, so a wrapper script that
+     execs the staged JRE against the staged jar is a valid `/init` (unlike
+     the retired Rust binary, `/init` here can't be the JVM's own binary --
+     there isn't one -- so it execs into `/jre/bin/java`)."
+     []
+     "#!/jre/bin/java -cp /aiueos.jar clojure.main -m aiueos.launcher\n"))
+
+#?(:clj
+   (defn build-initramfs!
+     "Stage `p` (from `plan`) into a scratch directory next to `:out`, then
+     `cpio -o -H newc | gzip -1` it into `:out`. Returns `p` with the built
+     file's length added as `:out-bytes`. Throws (via `ex-info`) if `cpio`/
+     `gzip` fails; the scratch directory is always cleaned up, success or
+     failure (mirrors the retired Rust: `cleanup` ran regardless of the
+     shell status, and a cleanup failure after a successful build was still
+     surfaced -- not the reverse)."
+     [p]
+     (let [out ^java.io.File (:out p)
+           _ (.mkdirs (.getParentFile out))
+           stage (io/file (.getParentFile out) (str ".stage-" (.pid (java.lang.ProcessHandle/current))
+                                                      "-" (:system-file p)))]
+       (when (.exists stage) (throw (ex-info (str "stage dir already exists: " stage) {:stage stage})))
+       (try
+         (copy-dir-filtered! (:system-dir p) (io/file stage "etc" "aiueos" "system"))
+         (when-let [policy (:policy p)]
+           (io/copy policy (io/file stage "etc" "aiueos" "policy.edn")))
+         (spit (io/file stage "etc" "aiueos" "boot.edn") (boot-edn p))
+         (let [init-file (io/file stage "init")]
+           (spit init-file (init-script))
+           (.setExecutable init-file true false))
+         (when-let [jre-dir (:jre-dir p)] (copy-dir-filtered! jre-dir (io/file stage "jre")))
+         (when-let [jar (:jar p)] (io/copy jar (io/file stage "aiueos.jar")))
+         (let [{:keys [exit err]}
+               (shell/sh "sh" "-c"
+                         (str "cd " (pr-str (.getPath stage))
+                              " && find . | cpio -o -H newc | gzip -1 > " (pr-str (.getPath out))))]
+           (when-not (zero? exit)
+             (throw (ex-info (str "cpio initramfs build failed: " err) {:exit exit :err err}))))
+         (assoc p :out-bytes (.length out))
+         (finally
+           (when (.exists stage)
+             (doseq [^java.io.File f (reverse (file-seq stage))] (.delete f))))))))

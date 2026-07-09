@@ -22,8 +22,11 @@
             [aiueos.contract :as contract]
             [aiueos.execute :as execute]
             [aiueos.graph :as graph]
+            [aiueos.image :as image]
             [aiueos.manifest :as manifest]
+            [aiueos.pid1 :as pid1]
             [aiueos.policy :as policy]
+            [aiueos.vm :as vm]
             #?(:clj [clojure.edn :as edn])
             #?(:clj [clojure.java.io :as io])
             #?(:clj [clojure.string :as str])))
@@ -281,6 +284,49 @@
        :else (println (pr-str result)))))
 
 #?(:clj
+   (defn- image-command
+     "`image build <system-path> [--policy <p>] [--out <p>] [--jre-dir <d>]
+     [--jar <j>] [--edn]` -- ADR-0011, replacing the retired Rust
+     `InitramfsPlan`/`cmd_image_build`. `--edn` prints the plan without
+     building; otherwise stages and packages the initramfs and prints the
+     output path."
+     [positionals options edn?]
+     (case (first positionals)
+       "build"
+       (let [p (image/plan {:system (second positionals) :policy (:policy options)
+                             :out (:out options) :jre-dir (:jre-dir options) :jar (:jar options)})]
+         (if edn?
+           (println (pr-str p))
+           (println (str "initramfs: " (:out (image/build-initramfs! p))))))
+       (do (binding [*out* *err*]
+             (println "aiueos image: supported subcommand: build <system-path>"))
+           (System/exit 2)))))
+
+#?(:clj
+   (defn- vm-command
+     "`vm boot --kernel <Image> --initramfs <cpio.gz> [--memory <M>]
+     [--cpus <N>] [--cmdline <s>] [--graphics none|virtio-gpu] [--display <d>]
+     [--block <raw-image>] [--console pl011|virtio-console]
+     [--console-socket <path>] [--qemu-binary <bin>] [--edn]` -- ADR-0011,
+     replacing the retired Rust `QemuBootPlan`/`cmd_vm_boot`. `--edn` prints
+     the plan without booting; otherwise execs QEMU and blocks until it
+     exits."
+     [positionals options edn?]
+     (case (first positionals)
+       "boot"
+       (let [p (vm/plan {:kernel (:kernel options) :initramfs (:initramfs options)
+                          :memory (:memory options) :cpus (:cpus options) :cmdline (:cmdline options)
+                          :graphics (:graphics options) :display (:display options)
+                          :block (:block options) :console (:console options)
+                          :console-socket (:console-socket options) :qemu-binary (:qemu-binary options)})]
+         (if edn?
+           (println (pr-str p))
+           (vm/boot! p)))
+       (do (binding [*out* *err*]
+             (println "aiueos vm: supported subcommand: boot --kernel <path> --initramfs <path>"))
+           (System/exit 2)))))
+
+#?(:clj
    (defn dispatch
      "Run one aiueos CLI invocation. ARGV[0] is the command name; the rest
      are positionals/flags, shaped via `aiueos.cli/parse-argv`.
@@ -297,11 +343,12 @@
      components due at cycle N (default 0, ADR-0006; see `up-command`) in
      priority-aware dependency order, executing each as it's reached;
      stops at the first denied/quota-or-fuel-exceeded DUE component.
-
-     The adapter-only six (`sign`/`check`/`compile`/`hash`/`image`/`vm`)
-     are not wired here -- `check`/`compile` delegate to
-     kototama/kotoba-clj, `sign` is key-custody tooling, `image`/`vm` are
-     native provisioning (see `aiueos.cli`'s namespace docstring)."
+     `image build <system-path> [...]` / `vm boot [...]` -- ADR-0011: build
+     a bootable initramfs / boot it under QEMU (see `image-command`/
+     `vm-command`'s docstrings). Restores two of the previously-adapter-only
+     six (`sign`/`check`/`compile`/`hash` remain unwired -- `check`/`compile`
+     delegate to kototama/kotoba-clj, `sign` is key-custody tooling; see
+     `aiueos.cli`'s namespace docstring)."
      [argv]
      (let [command (some-> (first argv) keyword)
            {:keys [positionals options]} (cli/parse-argv (rest argv))
@@ -316,11 +363,23 @@
          :up (print-result (up-command (first positionals) (:policy options)
                                         (if-let [c (:cycle options)] (Long/parseLong c) 0))
                             edn?)
+         :image (image-command positionals options edn?)
+         :vm (vm-command positionals options edn?)
          (do (binding [*out* *err*]
                (println (str "aiueos: unsupported or not-yet-wired command `" (name command) "`"))
-               (println "supported: verify, run, admit, inspect, surface, audit, up"))
+               (println "supported: verify, run, admit, inspect, surface, audit, up, image, vm"))
              #?(:clj (System/exit 2)))))))
 
 #?(:clj
-   (defn -main [& argv]
-     (dispatch argv)))
+   (defn -main
+     "If running as PID 1 with `/etc/aiueos/boot.edn` present (ADR-0011),
+     enter PID-1 mode instead of the ordinary one-shot CLI dispatch: boot the
+     configured system, then serve as init (reap zombies, wait for shutdown,
+     power off) via `aiueos.pid1/boot!` -- this call never returns. Otherwise,
+     ordinary CLI dispatch (unchanged)."
+     [& argv]
+     (if (pid1/pid1-mode?)
+       (let [boot-config (pid1/load-boot-config pid1/boot-edn-path)]
+         (with-open [arena (java.lang.foreign.Arena/ofConfined)]
+           (pid1/boot! boot-config up-command (fn [] (pid1/power-off!)) arena)))
+       (dispatch argv))))
