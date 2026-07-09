@@ -1,0 +1,92 @@
+(ns aiueos.vm
+  "`aiueos vm boot` -- ports the retired Rust `QemuBootPlan` (`bin/aiueos.rs`,
+  ADR-0008) to CLJC per ADR-0011: build a QEMU argv and (optionally) run it.
+  Same device-flag shape as the retired binary (`--graphics virtio-gpu`,
+  `--block`, `--console virtio-console`); the `aiueos.vfio` VFIO-backed real
+  raw-MMIO/DMA/PCI/IRQ access this ADR adds happens INSIDE the booted guest
+  (the tender doing VFIO ioctls against a device QEMU exposes), not in this
+  namespace, which only launches QEMU itself.
+
+  JVM-only (`#?(:clj ...)` throughout) -- process I/O, same as
+  `aiueos.image`/`aiueos.launcher`."
+  (:require [clojure.string :as str]))
+
+(def known-graphics #{"none" "virtio-gpu"})
+(def known-console #{"pl011" "virtio-console"})
+
+(defn plan
+  "Pure planning step: validate and default every QEMU flag. `opts`:
+  `:kernel`/`:initramfs` (required, host paths), `:memory` (default
+  `\"1024M\"`), `:cpus` (default `\"2\"`), `:cmdline` (default
+  `\"console=ttyAMA0 panic=0 rdinit=/init\"`), `:graphics` (`\"none\"` or
+  `\"virtio-gpu\"`, default `\"none\"`), `:display` (default `\"cocoa\"` when
+  `:graphics` is `virtio-gpu`, else `\"none\"`), `:block` (optional raw disk
+  image path -> `virtio-blk-pci`), `:console` (`\"pl011\"` or
+  `\"virtio-console\"`, default `\"pl011\"`), `:console-socket` (default
+  `\"aiueos-console.sock\"`, only used when `:console` is `virtio-console`),
+  `:qemu-binary` (default `\"qemu-system-aarch64\"` -- override to
+  `\"qemu-system-x86_64\"` for an x86_64 host/guest)."
+  [opts]
+  (when-not (:kernel opts) (throw (ex-info "vm boot needs :kernel" {:opts opts})))
+  (when-not (:initramfs opts) (throw (ex-info "vm boot needs :initramfs" {:opts opts})))
+  (let [graphics (or (:graphics opts) "none")
+        _ (when-not (contains? known-graphics graphics)
+            (throw (ex-info (str "unknown :graphics `" graphics "` (known: " known-graphics ")") {:graphics graphics})))
+        display (or (:display opts) (if (= graphics "virtio-gpu") "cocoa" "none"))
+        _ (when (and (= graphics "none") (not= display "none"))
+            (throw (ex-info "`:display` requires `:graphics \"virtio-gpu\"`" {:display display})))
+        console (or (:console opts) "pl011")
+        _ (when-not (contains? known-console console)
+            (throw (ex-info (str "unknown :console `" console "` (known: " known-console ")") {:console console})))]
+    {:kernel (:kernel opts)
+     :initramfs (:initramfs opts)
+     :memory (or (:memory opts) "1024M")
+     :cpus (or (:cpus opts) "2")
+     :cmdline (or (:cmdline opts) "console=ttyAMA0 panic=0 rdinit=/init")
+     :graphics graphics
+     :display display
+     :block (:block opts)
+     :console console
+     :console-socket (or (:console-socket opts) "aiueos-console.sock")
+     :qemu-binary (or (:qemu-binary opts) "qemu-system-aarch64")}))
+
+(defn argv
+  "The full QEMU argv (a vector of strings) for `p` (from `plan`)."
+  [p]
+  (vec
+   (concat
+    [(:qemu-binary p) "-machine" "virt,accel=hvf" "-cpu" "host"
+     "-smp" (:cpus p) "-m" (:memory p)]
+    (if (= (:graphics p) "virtio-gpu")
+      ["-display" (:display p) "-device" "virtio-gpu-pci"]
+      ["-nographic"])
+    (when-let [block (:block p)]
+      ["-drive" (str "file=" block ",if=none,format=raw,id=aiueosblk")
+       "-device" "virtio-blk-pci,drive=aiueosblk"])
+    (when (= (:console p) "virtio-console")
+      ["-device" "virtio-serial-pci"
+       "-chardev" (str "socket,id=aiueoscon,path=" (:console-socket p) ",server=on,wait=off")
+       "-device" "virtconsole,chardev=aiueoscon,name=aiueos.console.0"])
+    ["-kernel" (str (:kernel p)) "-initrd" (str (:initramfs p)) "-append" (:cmdline p)])))
+
+(defn command-line
+  "`argv` joined into one shell-quotable-ish string, for `--dry-run`/logging
+  display only (never actually shelled out to -- `boot!` execs `argv`
+  directly, avoiding a shell entirely)."
+  [p]
+  (str/join " " (map #(if (re-find #"\s" %) (pr-str %) %) (argv p))))
+
+#?(:clj
+   (defn boot!
+     "Exec QEMU with `p`'s argv via `ProcessBuilder` (inherits this process's
+     stdio -- `-nographic`'s serial console reads/writes the calling
+     terminal directly, matching the retired Rust's `std::process::Command`
+     use). Blocks until QEMU exits; throws if it exits non-zero."
+     [p]
+     (let [pb (ProcessBuilder. ^java.util.List (argv p))
+           _ (.inheritIO pb)
+           process (.start pb)
+           exit-code (.waitFor process)]
+       (when-not (zero? exit-code)
+         (throw (ex-info (str (:qemu-binary p) " exited with code " exit-code) {:exit-code exit-code})))
+       nil)))
