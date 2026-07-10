@@ -248,3 +248,42 @@
       (is (= 0 (virtio/blk-service-pending-len svc'')))
       (is (= 1 (virtio/blk-service-last-used-idx svc'')))
       (is (= 7 (:sector (:request completed)))))))
+
+;; ---------------------------------------------------------------------------
+;; virtio-console
+
+(deftest plan-console-receive-and-transmit-shapes
+  (let [dma (virtio/dma-map [(virtio/dma-range 0x4000 64 virtio/dma-perm-read-write)])
+        rx (virtio/plan-console-receive 4 0 0x4000 64 dma)
+        tx (virtio/plan-console-transmit 4 1 0x4000 64 dma)]
+    (is (= :receive (:kind rx)))
+    (is (= :transmit (:kind tx)))
+    (is (= 1 (count (:descriptors (virtio/console-plan-chain rx 4 dma)))))
+    (is (= 1 (count (:descriptors (virtio/console-plan-chain tx 4 dma)))))))
+
+(deftest plan-console-request-rejects-zero-length
+  (let [dma (virtio/dma-map [])]
+    (is (thrown? #?(:clj Exception :cljs js/Error)
+                 (virtio/plan-console-receive 4 0 0x4000 0 dma)))))
+
+(deftest console-service-submit-and-complete
+  (let [dma (virtio/dma-map [(virtio/dma-range 0x4000 64 virtio/dma-perm-read-write)])
+        svc (virtio/make-console-service 4)
+        [svc' _plan] (virtio/console-service-submit-receive svc 0 0x4000 64 dma)]
+    (is (= 1 (virtio/console-service-pending-len svc')))
+    (is (= 1 (virtio/console-service-available-idx svc')))
+    (testing "duplicate head while pending throws"
+      (is (thrown? #?(:clj Exception :cljs js/Error)
+                   (virtio/console-service-submit-receive svc' 0 0x4000 64 dma))))
+    (let [[svc'' completed] (virtio/console-service-complete-used-element svc' 0 {:id 0 :len 12})]
+      (is (= 0 (virtio/console-service-pending-len svc'')))
+      (is (= 1 (virtio/console-service-last-used-idx svc'')))
+      (is (= 0x4000 (:data-addr (:request completed))))
+      (is (= 12 (:len (:used completed)))))))
+
+(deftest console-service-completion-rejects-overlong-length
+  (let [dma (virtio/dma-map [(virtio/dma-range 0x4000 64 virtio/dma-perm-read-write)])
+        svc (virtio/make-console-service 4)
+        [svc' _plan] (virtio/console-service-submit-receive svc 0 0x4000 64 dma)]
+    (is (thrown? #?(:clj Exception :cljs js/Error)
+                 (virtio/console-service-complete-used-element svc' 0 {:id 0 :len 65})))))
