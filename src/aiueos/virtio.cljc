@@ -21,10 +21,12 @@
   `aiueos.launcher`/`aiueos.signing`'s convention for what the Rust modeled as
   `Result::Err`.
 
-  NOT ported in this pass (tracked as follow-up in ADR-0011): virtio-console
-  and virtio-gpu request planners/backends, and PCI-capability/BAR scanning
-  (the VFIO seam gets BAR info from `VFIO_DEVICE_GET_REGION_INFO` directly, so
-  PCI config-space capability walking is not on the critical path for Phase 0's
+  virtio-console (single-descriptor receive/transmit buffers) is ALSO ported,
+  same shape as virtio-blk's service core. NOT ported: virtio-gpu (the old
+  Rust never had more than the `DeviceType::Gpu` enum case for it either --
+  greenfield, not a port), and PCI-capability/BAR scanning (the VFIO seam
+  gets BAR info from `VFIO_DEVICE_GET_REGION_INFO` directly, so PCI
+  config-space capability walking is not on the critical path for Phase 0's
   virtio-mmio-shaped transport).")
 
 ;; ---------------------------------------------------------------------------
@@ -627,6 +629,106 @@
       (when-not request
         (throw (ex-info (str "virtio-blk completion for unknown descriptor head " head) {:head head})))
       (decode-block-status status-byte)
+      [(-> svc
+           (update :aiueos.virtio/pending dissoc head)
+           (update :aiueos.virtio/last-used-idx #(mod (inc %) 65536)))
+       {:request request :used used-element}])))
+
+;; ---------------------------------------------------------------------------
+;; VirtioConsoleServiceCore -- console queues use a single descriptor per
+;; buffer (receive = device-writable, transmit = device-readable), unlike
+;; virtio-blk's fixed 3-descriptor chain. Mirrors the blk service's shape
+;; (planning, available-ring submission, pending tracking, used-ring
+;; consumption) -- ADR-0011 follow-up (virtio-gpu remains unported: the old
+;; Rust never had more than the `DeviceType::Gpu` enum case for it either).
+
+(defn- plan-console-request
+  "Plan a one-descriptor virtio-console buffer. `device-writes?` true =
+  receive (device writes into `data-addr`); false = transmit (device reads
+  from `data-addr`). Returns `{:kind :descriptors :head :data-addr
+  :data-len}`, or throws."
+  [qsize head data-addr data-len kind device-writes? dma]
+  (when (zero? data-len)
+    (throw (ex-info "virtio-console data length must be non-zero" {:data-len data-len})))
+  (when (>= head qsize)
+    (throw (ex-info (str "virtio-console descriptor head " head " outside queue size " qsize)
+                     {:head head :queue-size qsize})))
+  (let [desc (if device-writes? (desc-write data-addr data-len) (desc-read data-addr data-len))
+        descriptors (assoc (vec (repeat qsize (desc-read 0 1))) head desc)]
+    (validate-descriptor-chain-for-dma qsize descriptors head 0 dma)
+    {:kind kind :descriptors descriptors :head head :data-addr data-addr :data-len data-len}))
+
+(defn plan-console-receive
+  "Plan a virtio-console receive buffer: device writes into `data-addr`."
+  [qsize head data-addr data-len dma]
+  (plan-console-request qsize head data-addr data-len :receive true dma))
+
+(defn plan-console-transmit
+  "Plan a virtio-console transmit buffer: device reads from `data-addr`."
+  [qsize head data-addr data-len dma]
+  (plan-console-request qsize head data-addr data-len :transmit false dma))
+
+(defn console-plan-chain
+  "Re-validate a planned console request's descriptor chain against `dma`
+  (mirrors the Rust `ConsoleRequestPlan::chain`)."
+  [plan qsize dma]
+  (validate-descriptor-chain-for-dma qsize (:descriptors plan) (:head plan) 0 dma))
+
+(defn make-console-service [qsize]
+  {:aiueos.virtio/queue-size qsize
+   :aiueos.virtio/avail (make-avail-ring qsize)
+   :aiueos.virtio/pending {}
+   :aiueos.virtio/last-used-idx 0})
+
+(defn console-service-available-idx [svc] (avail-ring-idx (:aiueos.virtio/avail svc)))
+(defn console-service-last-used-idx [svc] (:aiueos.virtio/last-used-idx svc))
+(defn console-service-pending-len [svc] (count (:aiueos.virtio/pending svc)))
+
+(defn- console-service-submit-plan
+  "[svc' plan]"
+  [svc plan]
+  (when (contains? (:aiueos.virtio/pending svc) (:head plan))
+    (throw (ex-info (str "virtio-console descriptor head " (:head plan) " is already pending") {:plan plan})))
+  (let [[avail' available-slot] (avail-ring-push (:aiueos.virtio/avail svc) (:head plan))]
+    [(-> svc
+         (assoc :aiueos.virtio/avail avail')
+         (assoc-in [:aiueos.virtio/pending (:head plan)]
+                   {:kind (:kind plan) :head (:head plan) :data-addr (:data-addr plan)
+                    :data-len (:data-len plan) :available-slot available-slot}))
+     plan]))
+
+(defn console-service-submit-receive
+  "[svc' plan]"
+  [svc head data-addr data-len dma]
+  (console-service-submit-plan svc (plan-console-receive (:aiueos.virtio/queue-size svc) head data-addr data-len dma)))
+
+(defn console-service-submit-transmit
+  "[svc' plan]"
+  [svc head data-addr data-len dma]
+  (console-service-submit-plan svc (plan-console-transmit (:aiueos.virtio/queue-size svc) head data-addr data-len dma)))
+
+(defn console-service-complete-used-element
+  "Consume one used-ring completion at the service's expected index; throws if
+  the completion reports more bytes than the buffer it was submitted with
+  declared (`used-element`'s `:len` > the pending request's `:data-len`).
+  [svc' completed-or-nil]"
+  [svc used-idx used-element]
+  (let [qsize (:aiueos.virtio/queue-size svc)]
+    (when-not (= used-idx (:aiueos.virtio/last-used-idx svc))
+      (throw (ex-info (str "virtio-console completion idx " used-idx " does not match expected idx "
+                            (:aiueos.virtio/last-used-idx svc))
+                       {:used-idx used-idx})))
+    (when (>= (:id used-element) qsize)
+      (throw (ex-info (str "virtio-console used id " (:id used-element) " outside queue size " qsize)
+                       {:used-element used-element})))
+    (let [head (:id used-element)
+          request (get-in svc [:aiueos.virtio/pending head])]
+      (when-not request
+        (throw (ex-info (str "virtio-console completion for unknown descriptor head " head) {:head head})))
+      (when (> (:len used-element) (:data-len request))
+        (throw (ex-info (str "virtio-console completion length " (:len used-element)
+                              " exceeds buffer length " (:data-len request))
+                         {:used-element used-element :request request})))
       [(-> svc
            (update :aiueos.virtio/pending dissoc head)
            (update :aiueos.virtio/last-used-idx #(mod (inc %) 65536)))
