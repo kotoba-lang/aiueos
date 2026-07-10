@@ -282,20 +282,44 @@
        :else (println (pr-str result)))))
 
 #?(:clj
+   (defn verify-system-for-image!
+     "Load SYSTEM-PATH/POLICY-PATH and run `aiueos.broker/verify-system` --
+     the same whole-system decision `verify-command`/`up-command` make,
+     just without executing anything. Mirrors the retired Rust
+     `InitramfsPlan::verify` (which built a `Broker` and called
+     `verify_system` before staging): nothing gets baked into an initramfs
+     unless the WHOLE system it declares would actually be grantable.
+     Throws `ex-info` (tagged `:aiueos.image/denied`) on `:deny`, carrying
+     the violations -- `image-command` reports them and exits non-zero
+     instead of building on top of a system that would never boot."
+     [system-path policy-path]
+     (let [decision (broker/verify-system (load-system system-path) (load-policy policy-path))]
+       (when (= :deny (:aiueos/decision decision))
+         (throw (ex-info (str system-path ": system would not be grantable as a whole")
+                          {:aiueos.image/denied true :aiueos/violations (:aiueos/violations decision)})))
+       decision)))
+
+#?(:clj
    (defn- image-command
      "`image build <system-path> [--policy <p>] [--out <p>] [--jre-dir <d>]
      [--jar <j>] [--edn]` -- ADR-0011, replacing the retired Rust
-     `InitramfsPlan`/`cmd_image_build`. `--edn` prints the plan without
-     building; otherwise stages and packages the initramfs and prints the
+     `InitramfsPlan`/`cmd_image_build`. Verifies the whole system (see
+     `verify-system-for-image!`) before staging/building, same as the
+     retired Rust's `plan.verify()?` -> `plan.build()?` sequencing.
+     `--edn` prints the plan without verifying or building; otherwise
+     verifies, then stages and packages the initramfs and prints the
      output path."
      [positionals options edn?]
      (case (first positionals)
        "build"
-       (let [p (image/plan {:system (second positionals) :policy (:policy options)
+       (let [system-path (second positionals)
+             p (image/plan {:system system-path :policy (:policy options)
                              :out (:out options) :jre-dir (:jre-dir options) :jar (:jar options)})]
          (if edn?
            (println (pr-str p))
-           (println (str "initramfs: " (:out (image/build-initramfs! p))))))
+           (do
+             (verify-system-for-image! system-path (:policy options))
+             (println (str "initramfs: " (:out (image/build-initramfs! p)))))))
        (do (binding [*out* *err*]
              (println "aiueos image: supported subcommand: build <system-path>"))
            (System/exit 2)))))

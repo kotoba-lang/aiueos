@@ -308,3 +308,60 @@
          (launcher/dispatch ["up" system-path "--cycle" "1" "--edn"]))
        (let [printed (read-string (str/trim (str out)))]
          (is (= 1 (count (:aiueos/boot-results printed))))))))
+
+;; ───────── image build: pre-build whole-system verification (ADR-0011) ─────────
+
+#?(:clj
+   (deftest verify-system-for-image-passes-a-grantable-system
+     (let [dir (temp-dir)
+           system-path (write-two-component-system! dir)
+           decision (launcher/verify-system-for-image! system-path nil)]
+       (is (= :grant (:aiueos/decision decision))))))
+
+#?(:clj
+   (deftest verify-system-for-image-throws-on-an-unresolved-import
+     (let [dir (temp-dir)
+           fs-manifest (io/file dir "fs.edn")
+           app-manifest (io/file dir "app.edn")
+           system-file (io/file dir "system.edn")]
+       (spit fs-manifest (pr-str {:aiueos/component :service/fs :aiueos/kind :service
+                                   :aiueos/exports #{:fs/read}
+                                   :aiueos/imports #{:custom/nobody-provides-this}}))
+       (spit app-manifest (pr-str {:aiueos/component :app/notes :aiueos/kind :app
+                                    :aiueos/imports #{:fs/read} :aiueos/exports #{}}))
+       (spit system-file (pr-str {:aiueos/system :demo :aiueos/components ["fs.edn" "app.edn"]}))
+       (let [ex (try (launcher/verify-system-for-image! (.getPath system-file) nil)
+                      nil
+                      (catch clojure.lang.ExceptionInfo e e))]
+         (is (some? ex))
+         (is (true? (:aiueos.image/denied (ex-data ex))))
+         (is (= [:unresolved-capability] (mapv :aiueos/kind (:aiueos/violations (ex-data ex)))))))))
+
+#?(:clj
+   (deftest dispatch-drives-image-build-and-verifies-before-building
+     (let [dir (temp-dir)
+           system-path (write-two-component-system! dir)
+           out-path (.getPath (io/file dir "out.initramfs.cpio.gz"))
+           out (java.io.StringWriter.)]
+       (binding [*out* out]
+         (launcher/dispatch ["image" "build" system-path "--out" out-path]))
+       (is (.exists (io/file out-path)))
+       (is (re-find #"initramfs:" (str out))))))
+
+#?(:clj
+   (deftest dispatch-image-build-refuses-to-build-a-non-grantable-system
+     (let [dir (temp-dir)
+           fs-manifest (io/file dir "fs.edn")
+           app-manifest (io/file dir "app.edn")
+           system-file (io/file dir "system.edn")
+           out-path (.getPath (io/file dir "out.initramfs.cpio.gz"))]
+       (spit fs-manifest (pr-str {:aiueos/component :service/fs :aiueos/kind :service
+                                   :aiueos/exports #{:fs/read}
+                                   :aiueos/imports #{:custom/nobody-provides-this}}))
+       (spit app-manifest (pr-str {:aiueos/component :app/notes :aiueos/kind :app
+                                    :aiueos/imports #{:fs/read} :aiueos/exports #{}}))
+       (spit system-file (pr-str {:aiueos/system :demo :aiueos/components ["fs.edn" "app.edn"]}))
+       (is (thrown? clojure.lang.ExceptionInfo
+                    (launcher/dispatch ["image" "build" (.getPath system-file) "--out" out-path])))
+       (is (not (.exists (io/file out-path)))
+           "verification ran BEFORE staging/building -- no initramfs was ever produced"))))
