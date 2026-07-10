@@ -44,16 +44,45 @@
 (def coverage-kinds #{:full :decision-only :adapter-only})
 
 #?(:clj
+   (defn- unblob-value
+     "Undo edn-datomize.bb's pr-str blobbing of a non-scalar attribute value
+     (nested map / vector-of-maps). Scalars pass through unchanged."
+     [v]
+     (if (string? v)
+       (try (let [parsed (edn/read-string v)]
+              (if (coll? parsed) parsed v))
+            (catch Exception _ v))
+       v)))
+
+#?(:clj
+   (defn- reconstitute-keep-ns
+     "Undo edn-datomize.bb's `wrap-map-keep-ns` transform on TX-DATA
+     (`[{:db/id -1 ...}]`): drop the :db/id wrapper and edn/read-string any
+     pr-str'd blob values, returning the original plain EDN map. Every key in
+     `resources/aiueos/cli.edn` was already namespaced (:aiueos.cli.contract/*)
+     before the transform, so `wrap-map-keep-ns` never renamed anything --
+     this is a pure unwrap, not a namespace strip."
+     [tx-data]
+     (into {} (map (fn [[k v]] [k (unblob-value v)]))
+           (dissoc (first tx-data) :db/id))))
+
+#?(:clj
    (defn read-contract
      "Load the aiueos CLI contract EDN from the classpath. CLJS callers
      should parse `resources/aiueos/cli.edn` themselves and pass the map to
-     `validate-contract`/`command-result`."
+     `validate-contract`/`command-result`.
+
+     `resources/aiueos/cli.edn` on disk is Datomic/Datascript tx-data
+     (edn-datomize.bb `wrap-map-keep-ns`); this reconstitutes the original
+     `:aiueos.cli.contract/*`-keyed map so `validate-contract`/
+     `command-specs`/`commands-by-coverage` keep working against the same
+     shape as before the transform."
      []
      (let [resource (io/resource default-contract-resource)]
        (when-not resource
          (throw (ex-info "missing aiueos CLI contract resource"
                          {:resource default-contract-resource})))
-       (-> resource slurp edn/read-string))))
+       (-> resource slurp edn/read-string reconstitute-keep-ns))))
 
 (defn- duplicate-set [xs]
   (->> xs frequencies (filter (fn [[_ n]] (> n 1))) (map first) set))
