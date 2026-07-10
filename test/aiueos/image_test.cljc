@@ -80,5 +80,7 @@
                                        (str "gzip -dc " (pr-str (.getPath out)) " | cpio -it")))]
            (is (re-find #"etc/aiueos/boot\.edn" listing))
            (is (re-find #"etc/aiueos/system/system\.edn" listing))
-           (is (re-find #"(?m)^\./init$" listing)))
+           ;; GNU cpio (Linux CI) lists `find .`'s entries without the `./`
+           ;; prefix bsdcpio (macOS) keeps -- accept either.
+           (is (re-find #"(?m)^\.?/?init$" listing)))
          (finally (delete-tree! dir))))))
