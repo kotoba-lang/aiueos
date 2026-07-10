@@ -204,6 +204,32 @@ project-scale ADR of its own — not attempted in this pass.
   still depends on Linux for boot, scheduling, and owning the PCI bus/IOMMU
   setup that VFIO rides on top of.
 
+## Verification maturity
+
+Per-component, using this repo's own M0-M6 ladder (`docs/coverage.edn`,
+`:subsystems`) rather than one summary number — the sub-parts sit at very
+different levels, and averaging them would hide the real gap:
+
+| component | stage |
+|---|---|
+| `aiueos.virtio` protocol (blk+console) | M4 — positive+negative fixtures, CI-gated |
+| `aiueos.vfio` ioctl encoding / struct layouts (pure) | M4 — cross-checked against known `linux/vfio.h` values |
+| `aiueos.vfio` open/ioctl/mmap against a real device | **M1** — contract only, zero test coverage |
+| `aiueos.pid1` detection/reaping/signal-driven shutdown | M3 — real `waitpid`/`SIGTERM` exercised, fakes for boot/poweroff |
+| `aiueos.pid1` real production path (real `up-command` + real `reboot(2)`) | **M0** — never run once |
+| `aiueos.image` staging/cpio/verify-gating | M4 — real cpio/gzip round-trip tested |
+| `aiueos.image` `:jre-dir`/`:jar` staging | **M0** — nothing to point it at yet |
+| `aiueos.vm` plan/argv construction | M4 |
+| `aiueos.vm` booting a real kernel | **M0** — no kernel available in the authoring sandbox |
+| **whole pipeline** (genuinely boots as PID 1 in a running VM) | **M0** | 
+
+The bolded M0/M1 rows are the honest state as of this ADR's initial
+implementation: every individual piece is unit-tested, but nothing has ever
+proven they compose into an actual boot. Closing that — a jlink custom-JRE +
+jar build task so `:jre-dir`/`:jar` have something real to point at, and an
+end-to-end QEMU smoke test against a real kernel — is tracked as explicit
+follow-up work, not silently assumed done.
+
 ## References
 
 - `90-docs/adr/0008-bootable-image-and-virtio-guest-drivers.md` (superseded in

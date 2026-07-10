@@ -1,5 +1,13 @@
 {:aiueos.coverage/version 1
  :maturity :m6
+ :note "This top-level ladder tracks the capability-decision layer only
+        (manifests/policy/broker/graph/audit/execute -- everything
+        `verify-command`/`up-command` decide). ADR-0011's PID1-boot +
+        VFIO + virtio subsystem is a DIFFERENT surface (native process
+        orchestration / real hardware access, not capability decisions)
+        that this ladder never covered even before ADR-0011 (ADR-0008's
+        retired Rust boot path had no coverage.edn entry either) -- see
+        `:subsystems` below for its own, much lower, maturity."
  ;; M0-M6 template borrowed from kotoba-lang/kotoba-lang's docs/lang/coverage.edn.
  :stages
  [{:stage :m0
@@ -64,4 +72,75 @@
           ADRs (0005, 0006) remain explicitly not-yet-implemented phases
           -- the policy documents how those will be versioned once they
           land, not a claim that they already have."
-   :evidence ["docs/versioning.md"]}]}
+   :evidence ["docs/versioning.md"]}]
+
+ :subsystems
+ [{:name "adr-0011-pid1-boot-vfio-virtio"
+   :note "Per-component maturity, not one number -- the sub-parts are at
+          very different levels and averaging them would hide the real
+          gap. `:maturity` below is the SUBSYSTEM's, i.e. the level at
+          which its weakest still-claimed-working part sits; components
+          rated below that are named explicitly, not silently included."
+   :maturity :m1
+   :components
+   [{:name "aiueos.virtio (blk+console protocol)"
+     :stage :m4
+     :evidence ["test/aiueos/virtio_test.cljc (24+ tests: feature negotiation,
+                descriptor-chain validation, DMA/IOMMU accounting, blk/console
+                service cores -- positive AND negative fixtures)"
+                ".github/workflows/ci.yml (CI-gated, part of the standard suite)"]}
+    {:name "aiueos.vfio -- ioctl encoding / struct layouts (pure)"
+     :stage :m4
+     :evidence ["test/aiueos/vfio_test.cljc (ioctl numbers cross-checked
+                against known linux/vfio.h UAPI values; struct-layout
+                offset self-consistency)"]}
+    {:name "aiueos.vfio -- open/ioctl/mmap against a real device"
+     :stage :m1
+     :note "Only a contract (function signatures + FFM downcall handles
+            that load and resolve on a real libc) -- ZERO test coverage
+            of the actual syscall sequence, because this sandbox has no
+            VFIO device to exercise it against. This is the weakest
+            link and sets the subsystem's overall :maturity above."
+     :evidence ["src/aiueos/vfio.cljc"]}
+    {:name "aiueos.pid1 -- argv0/PID/boot-config detection, zombie
+            reaping, signal-driven shutdown loop"
+     :stage :m3
+     :evidence ["test/aiueos/pid1_test.cljc (real waitpid calls, a real
+                SIGTERM raised and handled, `boot!`'s full loop driven
+                with fake up-fn/poweroff-fn)"]}
+    {:name "aiueos.pid1 -- the real production path (real up-command +
+            real reboot(2))"
+     :stage :m0
+     :note "Never exercised even once -- every test fakes both the
+            boot-fn and the poweroff-fn. Calling the real reboot(2) in a
+            test would attempt to reboot the host, so this can only be
+            proven inside an actual disposable VM (item 6)."
+     :evidence []}
+    {:name "aiueos.image -- staging/cpio/gzip/verify-then-build gating"
+     :stage :m4
+     :evidence ["test/aiueos/image_test.cljc (real cpio/gzip round-trip,
+                gzip magic bytes, archive listing)"
+                "test/aiueos/launcher_test.cljc (verify-system-for-image!
+                grant/deny, end-to-end via dispatch)"]}
+    {:name "aiueos.image -- :jre-dir/:jar staging"
+     :stage :m0
+     :note "Accepted as plan options but never exercised with a real
+            jlink runtime or jar -- nothing produces one yet (item 5)."
+     :evidence []}
+    {:name "aiueos.vm -- plan/argv construction, fail-loudly on bad exit"
+     :stage :m4
+     :evidence ["test/aiueos/vm_test.cljc"]}
+    {:name "aiueos.vm -- actually booting a real kernel"
+     :stage :m0
+     :note "No Linux kernel binary available in this sandbox -- boot!
+            has never been called against a real kernel/initramfs pair
+            (item 6)."
+     :evidence []}
+    {:name "whole pipeline: aiueos genuinely boots as PID 1 inside a
+            running VM and does something"
+     :stage :m0
+     :note "The actual claim ADR-0011 makes. Zero end-to-end evidence --
+            every piece above is unit-tested in isolation with fakes at
+            the real-hardware/real-kernel boundary; nothing has proven
+            they compose. This is what items 5+6 would close."
+     :evidence []}]}]}
