@@ -21,34 +21,71 @@
   "aiueos/broker_contract.edn")
 
 #?(:clj
+   (defn- unblob-value
+     "Undo edn-datomize.bb's pr-str blobbing of a non-scalar attribute value
+     (nested map / vector-of-maps). Scalars pass through unchanged."
+     [v]
+     (if (string? v)
+       (try (let [parsed (edn/read-string v)]
+              (if (coll? parsed) parsed v))
+            (catch Exception _ v))
+       v)))
+
+#?(:clj
+   (defn- reconstitute-keep-ns
+     "Undo edn-datomize.bb's `wrap-map-keep-ns` transform on TX-DATA
+     (`[{:db/id -1 ...}]`): drop the :db/id wrapper and edn/read-string any
+     pr-str'd blob values, returning the original plain EDN map. Every key in
+     these three resources was already namespaced (:aiueos/*,
+     :aiueos.policy/*, :aiueos.broker/*) before the transform, so
+     `wrap-map-keep-ns` never renamed anything -- this is a pure unwrap, not
+     a namespace strip (contrast with the ADR-generic transform's bare-key
+     promotion, which a consumer there would need to reverse)."
+     [tx-data]
+     (into {} (map (fn [[k v]] [k (unblob-value v)]))
+           (dissoc (first tx-data) :db/id))))
+
+#?(:clj
    (defn load-component-boundary
-     "Load the EDN authority for the aiueos/component boundary."
+     "Load the EDN authority for the aiueos/component boundary.
+
+     `resources/aiueos/component_boundary.edn` on disk is Datomic/Datascript
+     tx-data (edn-datomize.bb `wrap-map-keep-ns`); this reconstitutes the
+     original `:aiueos/*`-keyed map so `validate-component-boundary` and
+     every other caller keep working against the same shape as before the
+     transform."
      []
      (let [resource (io/resource component-boundary-resource)]
        (when-not resource
          (throw (ex-info "missing aiueos component boundary resource"
                          {:resource component-boundary-resource})))
-       (-> resource slurp edn/read-string))))
+       (-> resource slurp edn/read-string reconstitute-keep-ns))))
 
 #?(:clj
    (defn load-policy-contract
-     "Load the EDN authority for aiueos policy contracts."
+     "Load the EDN authority for aiueos policy contracts.
+
+     See `load-component-boundary`'s docstring -- same tx-data-on-disk /
+     reconstituted-map-in-memory convention."
      []
      (let [resource (io/resource policy-contract-resource)]
        (when-not resource
          (throw (ex-info "missing aiueos policy contract resource"
                          {:resource policy-contract-resource})))
-       (-> resource slurp edn/read-string))))
+       (-> resource slurp edn/read-string reconstitute-keep-ns))))
 
 #?(:clj
    (defn load-broker-contract
-     "Load the EDN authority for aiueos broker flow contracts."
+     "Load the EDN authority for aiueos broker flow contracts.
+
+     See `load-component-boundary`'s docstring -- same tx-data-on-disk /
+     reconstituted-map-in-memory convention."
      []
      (let [resource (io/resource broker-contract-resource)]
        (when-not resource
          (throw (ex-info "missing aiueos broker contract resource"
                          {:resource broker-contract-resource})))
-       (-> resource slurp edn/read-string))))
+       (-> resource slurp edn/read-string reconstitute-keep-ns))))
 
 (def manifest-kinds
   #{:app :service :driver :broker :agent :kernel-extension :compat})
