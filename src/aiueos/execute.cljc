@@ -40,8 +40,10 @@
   (not just per Chicory's docs) that this genuinely blocks growth: a
   module instantiated with a capped `MemoryLimits` sees `Memory/grow`
   return -1 past the cap, its page count unchanged."
-  (:require [aiueos.broker :as broker]
+  (:require [aiueos.audit :as audit]
+            [aiueos.broker :as broker]
             [aiueos.manifest :as manifest]
+            [aiueos.signing :as signing]
             [aiueos.topic :as topic]
             #?(:clj [clojure.edn :as edn]))
   #?(:clj
@@ -537,16 +539,46 @@
                                         :audit-events audit-events))))))))
 
 #?(:clj
-   (defn execute
-     "The end-to-end path: verify `m` (a normalized manifest) against
-     `graph`/`policy` via `aiueos.broker/verify-one`; only if granted,
-     instantiate WASM-BYTES on Chicory and call its exported `main`, capped
-     by `m`'s `:aiueos/quota` (`default-quota` if unnormalized),
-     `:aiueos/limits :fuel`/`:memory-pages` (`default-fuel`/
-     `default-memory-pages` if unnormalized), and
-     `:aiueos/publishes`/`:aiueos/subscribes` (unrestricted if unnormalized).
+   (defn- integrity-denial
+     "Build a `:deny` decision -- same shape `aiueos.broker/verify-one`'s
+     own deny path produces (`:aiueos/violations` +
+     `:aiueos.broker/audit-entries` + an ADDITIVE `:aiueos/run-receipt`,
+     status `:denied`, matching `run-if-granted`'s deny branch) -- for an
+     `aiueos.manifest/verify-wasm-integrity` VIOLATION. Used by `execute`/
+     `execute-admission` to short-circuit BEFORE `aiueos.broker/verify-one`
+     ever runs: a tampered artifact is denied on its own, independent of
+     whatever capability grant its (possibly forged) declared hash would
+     otherwise have unlocked."
+     [component violation]
+     (let [now (System/currentTimeMillis)
+           entry (audit/audit-entry component :deny (str "[artifact-mismatch] " (:aiueos/message violation)))]
+       {:aiueos/decision :deny
+        :aiueos/component component
+        :aiueos/violations [violation]
+        :aiueos.broker/audit-entries [entry]
+        :aiueos/run-receipt (broker/run-receipt component :denied
+                                                 :started-at now :finished-at now
+                                                 :audit-events [entry])})))
 
-     Returns `{:aiueos/decision :deny ...}` (the broker's denial, unexecuted),
+#?(:clj
+   (defn execute
+     "The end-to-end path: first, an ADR-0003 artifact-integrity check --
+     recompute SHA-256 of the actual WASM-BYTES (`aiueos.signing/sha256-hex`)
+     and compare against `m`'s declared `:aiueos/wasm-sha256`
+     (`aiueos.manifest/verify-wasm-integrity`; a no-op when `m` declares no
+     hash at all). A mismatch denies outright (`integrity-denial`) without
+     ever reaching `aiueos.broker/verify-one` -- fail closed, tampered bytes
+     never even get a capability decision computed for them. Only past that
+     gate: verify `m` (a normalized manifest) against `graph`/`policy` via
+     `aiueos.broker/verify-one`; only if granted, instantiate WASM-BYTES on
+     Chicory and call its exported `main`, capped by `m`'s `:aiueos/quota`
+     (`default-quota` if unnormalized), `:aiueos/limits :fuel`/
+     `:memory-pages` (`default-fuel`/`default-memory-pages` if
+     unnormalized), and `:aiueos/publishes`/`:aiueos/subscribes`
+     (unrestricted if unnormalized).
+
+     Returns `{:aiueos/decision :deny ...}` (an integrity mismatch OR the
+     broker's capability denial, unexecuted either way),
      `{:aiueos/decision :grant ... :aiueos.execute/result <long>
      :aiueos.execute/log [<string>...] :aiueos.execute/topic-bus <bus>}` on a
      completed run, or the same shape with `:aiueos.execute/quota-exceeded
@@ -559,23 +591,29 @@
      mid-execution (`:memory-pages` never aborts -- see `run-if-granted`'s
      docstring)."
      [m graph policy wasm-bytes]
-     (run-if-granted (broker/verify-one m graph policy) wasm-bytes
-                      (or (:aiueos/quota m) default-quota)
-                      (get-in m [:aiueos/limits :fuel] default-fuel)
-                      (get-in m [:aiueos/limits :memory-pages] default-memory-pages)
-                      (topic-allowed-for m))))
+     (if-let [violation (manifest/verify-wasm-integrity m (signing/sha256-hex wasm-bytes))]
+       (integrity-denial (:aiueos/component m) violation)
+       (run-if-granted (broker/verify-one m graph policy) wasm-bytes
+                        (or (:aiueos/quota m) default-quota)
+                        (get-in m [:aiueos/limits :fuel] default-fuel)
+                        (get-in m [:aiueos/limits :memory-pages] default-memory-pages)
+                        (topic-allowed-for m)))))
 
 #?(:clj
    (defn execute-admission
      "The execution half of the retired Rust `Broker::admit` (ADR-0004),
-     now actually runnable: floors `m`'s trust to `:ai-generated`
+     now actually runnable: the SAME artifact-integrity gate `execute`
+     applies (see its docstring) runs FIRST, before the trust floor even
+     matters -- then floors `m`'s trust to `:ai-generated`
      (`broker/floor-trust-for-admission`) before verification -- an
      agent-submitted component can never grant itself trust -- then, only
      if still granted after the floor, instantiates and executes WASM-BYTES
      on Chicory exactly like `execute`. Same return shape as `execute`."
      [m graph policy wasm-bytes]
-     (run-if-granted (broker/verify-admission m graph policy) wasm-bytes
-                      (or (:aiueos/quota m) default-quota)
-                      (get-in m [:aiueos/limits :fuel] default-fuel)
-                      (get-in m [:aiueos/limits :memory-pages] default-memory-pages)
-                      (topic-allowed-for m))))
+     (if-let [violation (manifest/verify-wasm-integrity m (signing/sha256-hex wasm-bytes))]
+       (integrity-denial (:aiueos/component m) violation)
+       (run-if-granted (broker/verify-admission m graph policy) wasm-bytes
+                        (or (:aiueos/quota m) default-quota)
+                        (get-in m [:aiueos/limits :fuel] default-fuel)
+                        (get-in m [:aiueos/limits :memory-pages] default-memory-pages)
+                        (topic-allowed-for m)))))

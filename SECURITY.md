@@ -28,9 +28,20 @@ explicit grant, and that whatever does happen is **audited**.
    primitive, or an explicit policy grant; anything else is an
    `unresolved-capability` denial before launch.
 2. **Runtime-enforced gates, not convention.** Capabilities aren't just a static
-   claim — the `aiueos:host` ABI checks the conferred set on **every host call**.
-   A call to an ungranted capability *traps*; holding some capabilities never
-   leaks the ones you weren't given (capability attenuation is tested).
+   claim — the `aiueos:host` ABI only links a host function for a capability the
+   broker actually granted (`aiueos.execute/instantiate`, JVM/Chicory adapter);
+   an ungranted capability's import is never linked, so `Instance.Builder/build`
+   fails to link and the component never even starts running. This is coarser
+   than a per-call runtime check (the gate fires once, at module-link time, not
+   per invocation) but functionally equivalent under Wasm's own semantics: a
+   component can only ever call a function it successfully imported, so an
+   ungranted capability can never be reached, on any code path. (Fixed
+   2026-07-13 — a prior version of this JVM adapter linked all kernel-cap host
+   functions unconditionally for every component, with only quota counting and
+   the per-topic-id check below actually gated per call; see
+   `90-docs/adr/0011-link-time-capability-enforcement.md`.)
+   Holding some capabilities never leaks the ones you weren't given (capability
+   attenuation is tested).
    Enforcement reaches **individual data channels**: a manifest declares the
    topic ids it may publish to / read (`:aiueos/publishes` / `:aiueos/subscribes`),
    and a publish/read to an undeclared topic traps even with the coarse

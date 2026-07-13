@@ -61,6 +61,26 @@
      (is (thrown-with-msg? clojure.lang.ExceptionInfo #"invalid hex digit"
                             (signing/hex-decode "zz")))))
 
+;; ───────── sha256-hex (ADR-0003 artifact integrity, security fix
+;; 2607131500) -- JVM-only, MessageDigest ─────────
+
+#?(:clj
+   (deftest sha256-hex-matches-a-known-vector
+     (testing "empty input's SHA-256 is a well-known constant -- confirms
+     this isn't accidentally MD5/SHA-1/some other digest"
+       (is (= "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+              (signing/sha256-hex (byte-array 0)))))))
+
+#?(:clj
+   (deftest sha256-hex-is-deterministic-and-sensitive-to-every-byte
+     (let [a (byte-array (map byte [1 2 3]))
+           b (byte-array (map byte [1 2 3]))
+           c (byte-array (map byte [1 2 4]))]
+       (is (= (signing/sha256-hex a) (signing/sha256-hex b))
+           "same bytes -> same hash, every time")
+       (is (not= (signing/sha256-hex a) (signing/sha256-hex c))
+           "one differing byte -> a completely different hash"))))
+
 ;; ───────── verify: pure (host-neutral) deny paths ─────────
 
 (deftest unsigned-manifest-is-unsigned

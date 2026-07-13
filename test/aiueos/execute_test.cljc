@@ -534,3 +534,79 @@
          (is (= #{:topic/publish} (:aiueos/capabilities result)))
          (is (not (contains? result :aiueos.execute/result)))
          (is (contains? result :aiueos.execute/capability-unlinked))))))
+
+;; ───────── security fix (2607131500): `:aiueos/wasm-sha256` artifact
+;; integrity is now actually enforced before execution/admission
+;; (ADR-0003: "the broker rejects the component if the loaded bytes don't
+;; match"). Previously the hash was used ONLY as an input string to the
+;; signed-message construction -- never recomputed from or compared
+;; against the actual WASM-BYTES `execute`/`execute-admission` loaded ─────────
+
+;; The real SHA-256 of topic-publish-wasm, cross-checked independently via
+;; `python3 -c "import hashlib; print(hashlib.sha256(...).hexdigest())"`
+;; against the same base64-decoded bytes -- not just re-derived from the
+;; implementation under test.
+(def ^:private topic-publish-wasm-sha256
+  "e4722eb2f0f64f94cfd50a85b9675d7f8d4959b031202624c6b52932d89b7ee7")
+
+#?(:clj
+   (deftest execute-runs-normally-when-the-declared-hash-matches-the-actual-bytes
+     (testing "a correct :aiueos/wasm-sha256 alongside matching bytes runs
+     exactly like before this fix -- no regression on the legitimate path"
+       (let [policy* (policy/parse-policy {:aiueos/grants {:app/topic-publish #{:topic/publish}}})
+             m {:aiueos/component :app/topic-publish :aiueos/kind :app :aiueos/trust :verified
+                :aiueos/imports #{:topic/publish}
+                :aiueos/wasm-sha256 topic-publish-wasm-sha256}
+             result (execute/execute m empty-graph policy* topic-publish-wasm)]
+         (is (= :grant (:aiueos/decision result)))
+         (is (= 0 (:aiueos.execute/result result)))
+         (is (not (contains? result :aiueos/violations)))))))
+
+#?(:clj
+   (deftest execute-denies-when-the-declared-hash-does-not-match-the-actual-bytes
+     (testing "ADVERSARIAL: a well-formed-looking but WRONG
+     :aiueos/wasm-sha256 (simulates a tampered/swapped .wasm file --
+     bytes-on-disk no longer match the pinned hash the manifest declares).
+     Denied outright, fail-closed, BEFORE any capability decision is even
+     attempted -- the manifest's own :topic/publish import would otherwise
+     have been granted (see the sibling execute-grants-and-actually-runs-
+     on-chicory test with the identical grant/imports), so a :grant here
+     would prove the integrity check never ran."
+       (let [policy* (policy/parse-policy {:aiueos/grants {:app/topic-publish #{:topic/publish}}})
+             wrong-hash (str "ff" (subs topic-publish-wasm-sha256 2))
+             m {:aiueos/component :app/topic-publish :aiueos/kind :app :aiueos/trust :verified
+                :aiueos/imports #{:topic/publish}
+                :aiueos/wasm-sha256 wrong-hash}
+             result (execute/execute m empty-graph policy* topic-publish-wasm)]
+         (is (= :deny (:aiueos/decision result)))
+         (is (= [:artifact-mismatch] (mapv :aiueos/kind (:aiueos/violations result))))
+         (is (not (contains? result :aiueos.execute/result)))
+         (is (not (contains? result :aiueos/capabilities))
+             "never reached aiueos.broker/verify-one -- no capability decision was computed")
+         (let [receipt (:aiueos/run-receipt result)]
+           (is (= :denied (:aiueos/status receipt))))))))
+
+#?(:clj
+   (deftest execute-with-no-declared-hash-is-unaffected
+     (testing "no :aiueos/wasm-sha256 at all -- integrity pinning is opt-in
+     per manifest, exactly like before this fix existed; same fixture/grant
+     as execute-grants-and-actually-runs-on-chicory above"
+       (let [policy* (policy/parse-policy {:aiueos/grants {:app/topic-publish #{:topic/publish}}})
+             m {:aiueos/component :app/topic-publish :aiueos/kind :app :aiueos/trust :verified
+                :aiueos/imports #{:topic/publish}}
+             result (execute/execute m empty-graph policy* topic-publish-wasm)]
+         (is (= :grant (:aiueos/decision result)))
+         (is (not (contains? result :aiueos/violations)))))))
+
+#?(:clj
+   (deftest execute-admission-also-enforces-artifact-integrity
+     (testing "the admission path (ADR-0004) applies the same integrity
+     gate as execute, before the trust floor even matters"
+       (let [policy* (policy/parse-policy {:aiueos/grants {:app/topic-publish #{:topic/publish}}})
+             wrong-hash (str "ff" (subs topic-publish-wasm-sha256 2))
+             m {:aiueos/component :app/topic-publish :aiueos/kind :app :aiueos/trust :trusted
+                :aiueos/imports #{:topic/publish}
+                :aiueos/wasm-sha256 wrong-hash}
+             result (execute/execute-admission m empty-graph policy* topic-publish-wasm)]
+         (is (= :deny (:aiueos/decision result)))
+         (is (= [:artifact-mismatch] (mapv :aiueos/kind (:aiueos/violations result))))))))
