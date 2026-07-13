@@ -54,9 +54,12 @@ decisions needed to close it.
    `aiueos.policy/verify-component`/`granted-to`. `verify-component`'s
    arity grows to `[m graph policy signer]` (or a single opts map, matching
    this codebase's general preference for explicit positional args over
-   growing option maps for a Pretty small, stable set of parameters — see
-   existing 3-arg call sites); `broker/verify-one` already computes `signer`
-   via `authenticate`, so this is a threading change, not new computation.
+   growing option maps for a pretty small, stable set of parameters — see
+   existing 3-arg call sites, including `policy/verify-system`'s own
+   `verify-component` call and the ~20 call sites in
+   `test/aiueos/policy_test.cljc`); `broker/verify-one` already computes
+   `signer` via `authenticate`, so this is a threading change, not new
+   computation.
 3. In `granted-to`, when `id` has an entry in `:aiueos.policy/component-signers`
    (a *bound* id), only apply the id-specific `extra` grant when `signer` is
    a member of that entry's set; a bound id claimed by an unregistered or
@@ -128,8 +131,16 @@ binding-table approach proves operationally painful to maintain at scale
   ids bound, matching option A's open default for anyone not opting in).
 - If option 1's recommendation is adopted, a new
   `:aiueos.policy/require-signer-binding` policy field (default `false`).
-- `resources/aiueos/policy_contract.edn` and `aiueos.contract`'s
-  policy-shape validation need the new field(s) added.
+- `src/aiueos/contract.cljc`'s `deployment-policy-optional-keys` and
+  `validate-deployment-policy` (the `:aiueos/*` overlay's field-name
+  validation) need the new field(s) added. NOT `resources/aiueos/
+  policy_contract.edn`/`aiueos.contract`'s `validate-policy-contract` —
+  that's a different contract (decision-level enumerations: kernel-cap
+  values, forbid-effects, `:aiueos.policy/decision-shapes`, `:aiueos.policy/
+  violation-kinds`, the grant record's own field names) that this ADR's
+  mechanism doesn't touch, since it adds no new violation kind (a
+  binding-mismatch is "no elevated grant," not a hard deny) and doesn't
+  change the grant record shape.
 - No change to `aiueos.execute`/ADR-0011's link-time enforcement — this ADR
   only affects which capabilities `verify-component` decides to grant in the
   first place, not how a granted set is subsequently enforced at the wasm
