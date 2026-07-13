@@ -96,7 +96,30 @@
   restricted to those the surface can actually back — an import that maps to
   an unoffered kernel cap becomes :unresolved-capability (the host refuses
   to provide what this surface shouldn't). Explicit grants are never
-  surface-gated."
+  surface-gated.
+
+  KNOWN GAP, NOT FIXED (security audit 2026-07-13, tracked as a follow-up
+  requiring an owner design decision -- see PR description /
+  90-docs/adr/0011-link-time-capability-enforcement.md's closing note; do
+  NOT invent a binding scheme here without that decision): `extra` below is
+  looked up by `id` (`m`'s bare, self-declared `:aiueos/component`) alone,
+  with NO binding to signer identity, even when `:aiueos.policy/require-signed`
+  is true and `m` carries a valid `:aiueos/signature`
+  (`aiueos.broker/authenticate` resolves a valid signature to a `signer` id,
+  but that `signer` never flows into this lookup). `:aiueos.policy/signers`
+  is a flat registry: ANY registered signer can produce a validly-signed
+  manifest claiming ANY `:aiueos/component` id, including one this policy's
+  `:aiueos.policy/grants` map has elevated privileges for — a compromised or
+  malicious registered signer (not necessarily the one 'intended' to own
+  that component id) can sign a manifest claiming a privileged id and
+  receive that id's full grant. Signing today proves 'some registered
+  signer vouches for these exact bytes under this id', not 'the signer
+  authorized to speak for this id vouches for it'. A correct fix needs a
+  new policy shape binding component ids to authorized signer ids (with a
+  real decision on default behavior for ids with no such binding declared,
+  and interaction with unsigned components under a non-require-signed
+  policy) -- multiple reasonable shapes exist and picking one without owner
+  input risks encoding the wrong default into every existing policy file."
   [policy m]
   (let [active-surface (:aiueos.policy/surface policy)
         kernel-caps (:aiueos.policy/kernel-caps policy)
