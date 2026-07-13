@@ -111,13 +111,32 @@
   ([component kind message]
    {:aiueos/component component :aiueos/kind kind :aiueos/message message}))
 
+(def dma-family-imports
+  "Kernel-cap import ids that structurally require the ADR-0001 DMA/IOMMU
+  gate -- the device-access quartet from `default-kernel-caps`
+  (`:pci/config`/`:dma/map`/`:irq/subscribe`/`:mmio/map`). A component whose
+  `:aiueos/imports` contains ANY of these needs the gate, REGARDLESS of
+  whether it also self-declares `:aiueos/effects #{:dma}` -- see
+  `verify-component`'s `dma?` for why: `:aiueos/effects` alone was a
+  self-declared, unenforced field with no structural link to the actual
+  capability being requested (security audit, 2026-07-13) -- a manifest
+  could import e.g. `:dma/map` while simply omitting
+  `:aiueos/effects #{:dma}`, silently skipping the gate."
+  #{:pci/config :dma/map :irq/subscribe :mmio/map})
+
 (defn verify-component
   "Verify one component manifest `m` against `graph` (an `aiueos.graph/build`
   result) and `policy` (an effective policy from `parse-policy`). Returns a
   policy-decision map matching `aiueos.contract/validate-policy-decision`:
   `{:aiueos/decision :grant :aiueos/component id :aiueos/capabilities #{...}}`
   on success, or `{:aiueos/decision :deny :aiueos/component id
-  :aiueos/violations [...]}` listing every violation (never just the first)."
+  :aiueos/violations [...]}` listing every violation (never just the first).
+
+  The ADR-0001 DMA/IOMMU gate (`:dma-without-iommu`) fires when EITHER `m`
+  self-declares `:aiueos/effects #{:dma}` OR `:aiueos/imports` contains any
+  `dma-family-imports` id -- not effects alone. A manifest cannot skip the
+  gate by simply omitting `:aiueos/effects #{:dma}` while still importing
+  `:dma/map`/`:pci/config`/`:mmio/map`/`:irq/subscribe`."
   [m graph policy]
   (let [id (:aiueos/component m)
         granted (granted-to policy m)
@@ -151,13 +170,21 @@
           (violation id :forbidden-effect
                      (str "effect " eff " is forbidden for " (name trust) " components")))
         requires (as-kw-set (:aiueos/requires m))
-        dma? (contains? effects :dma)
+        dma-by-effect? (contains? effects :dma)
+        dma-by-import? (boolean (seq (set/intersection imports dma-family-imports)))
+        dma? (or dma-by-effect? dma-by-import?)
         requires-iommu? (contains? requires :iommu)
         has-iommu? (or (contains? granted :iommu) (contains? resolved :iommu))
         dma-violations
         (if (and dma? (not (and requires-iommu? has-iommu?)))
           [(violation id :dma-without-iommu
-                      "DMA requires `:requires #{:iommu}` and an :iommu grant")]
+                      (if dma-by-import?
+                        (str "DMA-family import(s) "
+                             (set/intersection imports dma-family-imports)
+                             " require `:requires #{:iommu}` and an :iommu grant"
+                             (when-not dma-by-effect?
+                               " (this manifest never declared :aiueos/effects #{:dma} either)"))
+                        "DMA requires `:requires #{:iommu}` and an :iommu grant"))]
           [])
         violations (vec (concat surface-violations import-violations effect-violations dma-violations))]
     (if (seq violations)

@@ -55,8 +55,15 @@ explicit grant, and that whatever does happen is **audited**.
    memory under a **fuel** budget (bounds CPU) and a **memory-page cap** (bounds
    RAM). A runaway traps instead of hanging or starving the host.
 5. **The IOMMU/DMA rule.** DMA is the one residual way a driver could escape its
-   sandbox, so any component with the `:dma` effect *must* declare
-   `:requires #{:iommu}` **and** be granted `:iommu`, or it is denied.
+   sandbox, so any component with the `:dma` effect, OR whose `:aiueos/imports`
+   requests any of the device-access quartet (`:dma/map`/`:pci/config`/
+   `:mmio/map`/`:irq/subscribe` — `aiueos.policy/dma-family-imports`), *must*
+   declare `:requires #{:iommu}` **and** be granted `:iommu`, or it is denied.
+   (Fixed 2026-07-13: the gate previously fired ONLY off the self-declared,
+   unenforced `:aiueos/effects #{:dma}` field, with no structural link to the
+   actual capability requested — a manifest could import `:dma/map` while
+   simply omitting `:aiueos/effects #{:dma}` and skip the gate entirely; see
+   `90-docs/adr/0011-link-time-capability-enforcement.md`.)
 6. **Safe-kotoba subset.** Source-built components are screened for escape
    hatches (`eval`, runtime `require`, `slurp`/`spit`, reflection, dotted host
    classes like `java.util.*`) *before* compilation — a security-shaped error,

@@ -156,7 +156,14 @@
      same as topic/publish above. Each stub always returns 0 (see
      aiueos.execute/device-access-stub); this proves that return value
      really comes back through a live Chicory call, not just a static
-     assumption."
+     assumption.
+
+     Each ALSO now requires + is granted :iommu (aiueos.policy's
+     `dma-family-imports` gate, security fix 2607131500: importing any of
+     this quartet triggers the DMA/IOMMU gate regardless of whether
+     :aiueos/effects #{:dma} is separately declared -- these demos
+     deliberately do NOT declare :aiueos/effects at all, to prove the gate
+     fires purely off the import)."
      [{:component :app/irq :capability :irq/subscribe :wasm (b64->bytes irq-subscribe-wasm-b64)}
       {:component :app/mmio :capability :mmio/map :wasm (b64->bytes mmio-map-wasm-b64)}
       {:component :app/dma :capability :dma/map :wasm (b64->bytes dma-map-wasm-b64)}
@@ -165,9 +172,11 @@
 #?(:clj
    (deftest device-access-quartet-executes-through-chicory-and-stub-returns-zero
      (doseq [{:keys [component capability wasm]} device-access-execute-demos]
-       (let [m {:aiueos/component component :aiueos/kind :app :aiueos/trust :verified
-                :aiueos/imports #{capability}}
-             result (execute/execute m empty-graph policy/default-policy wasm)]
+       (let [policy* (policy/parse-policy {:aiueos/grants {component #{:iommu}}})
+             m {:aiueos/component component :aiueos/kind :app :aiueos/trust :verified
+                :aiueos/imports #{capability}
+                :aiueos/requires #{:iommu}}
+             result (execute/execute m empty-graph policy* wasm)]
          (is (= :grant (:aiueos/decision result)) component)
          (is (= 0 (:aiueos.execute/result result))
              (str component ": device-access stub must return 0 through a real Chicory call"))))))
