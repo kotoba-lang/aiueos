@@ -48,6 +48,38 @@
 (def ^:private pci-config-wasm-b64
   "AGFzbQEAAAABCwJgAn9/AX9gAAF/AhUBBmtvdG9iYQpwY2lfY29uZmlnAAADAgEBBQMBAAEGBwF/\nAUGAEAsHEQIEbWFpbgABBm1lbW9yeQIACgoBCABBAEEQEAAL")
 
+;; ───────── link-time capability-gating fixtures (2607131500 security fix)
+;; -- kotoba-clj does not (yet) emit imports for log_write/random_bytes/
+;; has_capability (ADR-0002: "the kototama CLJ compiler does not emit for
+;; arbitrary aiueos capabilities"), so these are hand-authored WAT compiled
+;; directly via `wasm-tools parse`, same convention as memory-grow-wasm-b64
+;; below.
+
+;; (module
+;;   (import "kotoba" "log_write" (func $log_write (param i32 i32) (result i32)))
+;;   (memory (export "memory") 1)
+;;   (data (i32.const 0) "hi")
+;;   (func (export "main") (result i32)
+;;     i32.const 0 i32.const 2 call $log_write))
+(def ^:private log-write-wasm-b64
+  "AGFzbQEAAAABCwJgAn9/AX9gAAF/AhQBBmtvdG9iYQlsb2dfd3JpdGUAAAMCAQEFAwEAAQcRAgRtYWluAAEGbWVtb3J5AgAKCgEIAEEAQQIQAAsLCAEAQQALAmhp")
+
+;; (module
+;;   (import "kotoba" "random_bytes" (func $random_bytes (param i32 i32) (result i32)))
+;;   (memory (export "memory") 1)
+;;   (func (export "main") (result i32)
+;;     i32.const 0 i32.const 8 call $random_bytes))
+(def ^:private random-bytes-wasm-b64
+  "AGFzbQEAAAABCwJgAn9/AX9gAAF/AhcBBmtvdG9iYQxyYW5kb21fYnl0ZXMAAAMCAQEFAwEAAQcRAgRtYWluAAEGbWVtb3J5AgAKCgEIAEEAQQgQAAs=")
+
+;; (module
+;;   (import "kotoba" "has_capability" (func $has_capability (param i32) (result i32)))
+;;   (memory (export "memory") 1)
+;;   (func (export "main") (result i32)
+;;     i32.const 42 call $has_capability))
+(def ^:private has-capability-wasm-b64
+  "AGFzbQEAAAABCgJgAX8Bf2AAAX8CGQEGa290b2JhDmhhc19jYXBhYmlsaXR5AAADAgEBBQMBAAEHEQIEbWFpbgABBm1lbW9yeQIACggBBgBBKhAACw==")
+
 ;; No aiueos host imports at all -- built directly from WAT via wasm-tools,
 ;; not kotoba-clj (kotoba-clj's `memory-grow` primitive exists but this
 ;; module doesn't need any kotoba:* import surface, just raw Wasm
@@ -68,6 +100,15 @@
 
 #?(:clj
    (def memory-grow-wasm (b64->bytes memory-grow-wasm-b64)))
+
+#?(:clj
+   (def log-write-wasm (b64->bytes log-write-wasm-b64)))
+
+#?(:clj
+   (def random-bytes-wasm (b64->bytes random-bytes-wasm-b64)))
+
+#?(:clj
+   (def has-capability-wasm (b64->bytes has-capability-wasm-b64)))
 
 (def empty-graph (graph/build []))
 
@@ -384,3 +425,112 @@
            receipt (:aiueos/run-receipt result)]
        (is (:valid? (contract/validate-run-receipt receipt))
            "the receipt execute produces really satisfies aiueos.contract's own shape validator"))))
+
+;; ───────── security fix (2607131500): `instantiate` links host functions
+;; ONLY for the component's actually-granted capability set, not
+;; unconditionally for every component. Before this fix, ALL 11 kernel-cap
+;; host imports (7 real + 4 device-access stubs) were always linked
+;; regardless of what the broker decision actually granted -- only quota
+;; counting and topic-id allow-listing were real per-call gates; capability
+;; POSSESSION itself was never checked at the host-import boundary. These
+;; tests construct the adversarial case directly: a wasm module whose only
+;; import is a capability the component was never granted -- proving that
+;; case now fails to instantiate (`:aiueos.execute/capability-unlinked`),
+;; and that the legitimate path (a component granted exactly what its wasm
+;; imports) still works unchanged ─────────
+
+#?(:clj
+   (deftest execute-links-only-granted-host-functions-legitimate-log-write-succeeds
+     (testing "a component granted ONLY :log/write, running a wasm module
+     that imports ONLY log_write, succeeds exactly as before this fix --
+     no regression on the legitimate single-capability path"
+       (let [m {:aiueos/component :app/log-write :aiueos/kind :app :aiueos/trust :verified
+                :aiueos/imports #{:log/write}}
+             result (execute/execute m empty-graph policy/default-policy log-write-wasm)]
+         (is (= :grant (:aiueos/decision result)))
+         (is (= #{:log/write} (:aiueos/capabilities result)))
+         (is (= 0 (:aiueos.execute/result result))
+             "log_write's own host import returns i32 status 0 on success")
+         (is (= ["hi"] (:aiueos.execute/log result))
+             "the component's log_write(0,2) call really landed in the log atom")
+         (is (not (contains? result :aiueos.execute/capability-unlinked)))))))
+
+#?(:clj
+   (deftest execute-denies-linking-a-wasm-import-outside-the-granted-set
+     (testing "ADVERSARIAL: the component's manifest declares/is granted
+     ONLY :topic/publish -- never :random/bytes -- but the actual wasm
+     binary's ONLY import is random_bytes. Before this fix (verified
+     empirically against the pre-fix code, see PR description),
+     random_bytes was ALWAYS linked regardless of the manifest, so this
+     exact case would have instantiated and executed successfully -- a
+     component could reach ANY of the 11 kernel-cap host functions no
+     matter what it was actually granted, as long as the POLICY decision
+     for whatever it DID declare was :grant. After this fix, random_bytes
+     has no matching host function in the ImportValues Chicory links
+     against (only :topic/publish's -- topic_publish -- does), so
+     Instance.Builder/build throws UnlinkableException and main never runs."
+       (let [policy* (policy/parse-policy {:aiueos/grants {:app/adversarial #{:topic/publish}}})
+             m {:aiueos/component :app/adversarial :aiueos/kind :app :aiueos/trust :verified
+                :aiueos/imports #{:topic/publish}}
+             result (execute/execute m empty-graph policy* random-bytes-wasm)]
+         (is (= :grant (:aiueos/decision result))
+             "the CAPABILITY decision is :grant -- the manifest's declared imports
+             (:topic/publish) are all resolved; the vulnerability is that this used
+             to be enough to let a wasm module reach a completely different,
+             ungranted host function")
+         (is (= #{:topic/publish} (:aiueos/capabilities result)))
+         (is (not (contains? result :aiueos.execute/result))
+             "no :result -- instantiation itself failed, main never ran")
+         (is (contains? result :aiueos.execute/capability-unlinked))
+         (is (string? (:message (:aiueos.execute/capability-unlinked result))))
+         (let [receipt (:aiueos/run-receipt result)]
+           (is (= :failed (:aiueos/status receipt)))
+           (is (string? (:aiueos/error receipt))))))))
+
+#?(:clj
+   (deftest execute-allows-random-bytes-when-actually-granted
+     (testing "the SAME random-bytes-wasm fixture, but now the component is
+     actually granted :random/bytes (imports it too) -- the legitimate path
+     for a real, previously-untested kernel-cap host function still works
+     after filtering by granted-caps"
+       (let [m {:aiueos/component :app/rand :aiueos/kind :app :aiueos/trust :verified
+                :aiueos/imports #{:random/bytes}}
+             result (execute/execute m empty-graph policy/default-policy random-bytes-wasm)]
+         (is (= :grant (:aiueos/decision result)))
+         (is (= #{:random/bytes} (:aiueos/capabilities result)))
+         (is (= 8 (:aiueos.execute/result result))
+             "random_bytes(0,8) succeeded -- write-bytes! returns the byte count written")
+         (is (not (contains? result :aiueos.execute/capability-unlinked)))))))
+
+#?(:clj
+   (deftest execute-still-links-has-capability-regardless-of-granted-set
+     (testing "has_capability stays a permissive, ALWAYS-linked stub even
+     under this fix's filtering -- it is deliberately not gated by
+     granted-caps (see aiueos.execute/instantiate's docstring for why this
+     is safe: the real per-capability host functions are now gated at
+     link-time regardless of what has_capability reports, so its
+     permissiveness can no longer let anything ungranted actually execute)"
+       (let [m {:aiueos/component :app/hascap :aiueos/kind :app :aiueos/trust :verified
+                :aiueos/imports #{:log/write}}
+             result (execute/execute m empty-graph policy/default-policy has-capability-wasm)]
+         (is (= :grant (:aiueos/decision result)))
+         (is (= #{:log/write} (:aiueos/capabilities result))
+             "has_capability itself is not a declared import/capability -- the
+             component's granted set is unaffected by calling it")
+         (is (= 1 (:aiueos.execute/result result))
+             "the stub's permissive `1` answer, unaffected by the minimal granted set")
+         (is (not (contains? result :aiueos.execute/capability-unlinked)))))))
+
+#?(:clj
+   (deftest execute-admission-also-denies-linking-outside-the-granted-set
+     (testing "the admission path (execute-admission, ADR-0004) applies the
+     same link-time gate as execute -- floored :ai-generated trust doesn't
+     change which capabilities were actually granted"
+       (let [policy* (policy/parse-policy {:aiueos/grants {:app/adversarial-admit #{:topic/publish}}})
+             m {:aiueos/component :app/adversarial-admit :aiueos/kind :app :aiueos/trust :trusted
+                :aiueos/imports #{:topic/publish}}
+             result (execute/execute-admission m empty-graph policy* random-bytes-wasm)]
+         (is (= :grant (:aiueos/decision result)))
+         (is (= #{:topic/publish} (:aiueos/capabilities result)))
+         (is (not (contains? result :aiueos.execute/result)))
+         (is (contains? result :aiueos.execute/capability-unlinked))))))
