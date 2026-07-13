@@ -123,7 +123,7 @@ effort:
 A fourth finding — policy grants keyed by a bare, unauthenticated
 `:aiueos/component` id with no binding to signer identity even under
 `:aiueos.policy/require-signed` (the signer registry is flat: any registered
-signer can sign for any component id) — was NOT fixed here. It is a bigger
-design change (per-id authorization binding for signers) that needs an owner
-decision on the binding scheme, not a guess; see the code comment on
-`aiueos.policy/granted-to` and the PR description for the deferred writeup.
+signer can sign for any component id) — was NOT fixed here; it needed an
+owner decision on the binding scheme, not a guess. That decision was made
+and implemented separately: see **ADR-0012 — Binding `:aiueos/component`
+ids to authorized signers**.
