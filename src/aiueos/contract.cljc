@@ -256,6 +256,7 @@
     :aiueos/forbid
     :aiueos/net-allow
     :aiueos/signers
+    :aiueos/component-signers
     :aiueos/require-signed})
 
 (def deployment-policy-keys
@@ -556,7 +557,9 @@
 
   The built-in policy contract owns core decision semantics. Deployment policy
   data can add host kernel capabilities, per-component grants, surface scope,
-  network allow-lists, and signer catalogs without becoming runtime code."
+  network allow-lists, signer catalogs, and component-signer bindings
+  (ADR-0012: which registered signer(s) are authorized to claim a given
+  component id) without becoming runtime code."
   [policy]
   (let [errors
         (if-not (map? policy)
@@ -577,6 +580,8 @@
                         ":aiueos/net-allow must be a set of origin strings")
            (field-error policy :aiueos/signers keyword-map-to-string?
                         ":aiueos/signers must map signer keywords to public key strings")
+           (field-error policy :aiueos/component-signers keyword-map-to-keyword-set?
+                        ":aiueos/component-signers must map component keywords to signer-keyword sets")
            (field-error policy :aiueos/require-signed boolean?
                         ":aiueos/require-signed must be boolean")))]
     (valid-result errors)))

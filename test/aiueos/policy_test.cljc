@@ -8,14 +8,14 @@
 (deftest grants-a-kernel-capability-import
   (let [m {:aiueos/component :service/log :aiueos/kind :service :aiueos/trust :verified
            :aiueos/imports #{:log/write} :aiueos/exports #{}}
-        decision (policy/verify-component m empty-graph policy/default-policy)]
+        decision (policy/verify-component m empty-graph policy/default-policy nil)]
     (is (= :grant (:aiueos/decision decision)))
     (is (contains? (:aiueos/capabilities decision) :log/write))))
 
 (deftest denies-an-unresolved-import
   (let [m {:aiueos/component :app/notes :aiueos/kind :app :aiueos/trust :verified
            :aiueos/imports #{:net/fetch} :aiueos/exports #{}}
-        decision (policy/verify-component m empty-graph policy/default-policy)]
+        decision (policy/verify-component m empty-graph policy/default-policy nil)]
     (is (= :deny (:aiueos/decision decision)))
     (is (= [:unresolved-capability]
            (mapv :aiueos/kind (:aiueos/violations decision))))))
@@ -26,7 +26,7 @@
         notes-app {:aiueos/component :app/notes :aiueos/kind :app :aiueos/trust :verified
                    :aiueos/imports #{:fs/read} :aiueos/exports #{}}
         g (graph/build [fs-service notes-app])
-        decision (policy/verify-component notes-app g policy/default-policy)]
+        decision (policy/verify-component notes-app g policy/default-policy nil)]
     (is (= :grant (:aiueos/decision decision)))
     (is (contains? (:aiueos/capabilities decision) :fs/read))))
 
@@ -34,14 +34,14 @@
   (let [m {:aiueos/component :app/self :aiueos/kind :app :aiueos/trust :verified
            :aiueos/imports #{:custom/thing} :aiueos/exports #{:custom/thing}}
         g (graph/build [m])
-        decision (policy/verify-component m g policy/default-policy)]
+        decision (policy/verify-component m g policy/default-policy nil)]
     (is (= :deny (:aiueos/decision decision)))
     (is (= [:unresolved-capability] (mapv :aiueos/kind (:aiueos/violations decision))))))
 
 (deftest ai-generated-lockdown-forbids-network-secrets-persistent-write
   (let [m {:aiueos/component :agent/researcher :aiueos/kind :agent :aiueos/trust :ai-generated
            :aiueos/effects #{:network :secrets}}
-        decision (policy/verify-component m empty-graph policy/default-policy)]
+        decision (policy/verify-component m empty-graph policy/default-policy nil)]
     (is (= :deny (:aiueos/decision decision)))
     (is (= 2 (count (:aiueos/violations decision))))
     (is (every? #(= :forbidden-effect %) (map :aiueos/kind (:aiueos/violations decision))))))
@@ -49,20 +49,20 @@
 (deftest untrusted-forbids-secrets-but-not-network
   (let [m {:aiueos/component :app/plain :aiueos/kind :app :aiueos/trust :untrusted
            :aiueos/effects #{:network}}
-        decision (policy/verify-component m empty-graph policy/default-policy)]
+        decision (policy/verify-component m empty-graph policy/default-policy nil)]
     (is (= :grant (:aiueos/decision decision)))))
 
 (deftest missing-trust-defaults-to-untrusted
   (let [m {:aiueos/component :app/no-trust :aiueos/kind :app
            :aiueos/effects #{:secrets}}
-        decision (policy/verify-component m empty-graph policy/default-policy)]
+        decision (policy/verify-component m empty-graph policy/default-policy nil)]
     (is (= :deny (:aiueos/decision decision)))
     (is (= [:forbidden-effect] (mapv :aiueos/kind (:aiueos/violations decision))))))
 
 (deftest dma-without-iommu-is-denied
   (let [m {:aiueos/component :driver/virtio-blk :aiueos/kind :driver :aiueos/trust :verified
            :aiueos/effects #{:dma}}
-        decision (policy/verify-component m empty-graph policy/default-policy)]
+        decision (policy/verify-component m empty-graph policy/default-policy nil)]
     (is (= :deny (:aiueos/decision decision)))
     (is (= [:dma-without-iommu] (mapv :aiueos/kind (:aiueos/violations decision))))))
 
@@ -70,7 +70,7 @@
   (let [policy* (policy/parse-policy {:aiueos/grants {:driver/virtio-blk #{:iommu}}})
         m {:aiueos/component :driver/virtio-blk :aiueos/kind :driver :aiueos/trust :verified
            :aiueos/effects #{:dma} :aiueos/requires #{:iommu}}
-        decision (policy/verify-component m empty-graph policy*)]
+        decision (policy/verify-component m empty-graph policy* nil)]
     (is (= :grant (:aiueos/decision decision)))
     (is (contains? (:aiueos/capabilities decision) :iommu))))
 
@@ -78,7 +78,7 @@
   (let [policy* (policy/parse-policy {:aiueos/grants {:driver/virtio-blk #{:iommu}}})
         m {:aiueos/component :driver/virtio-blk :aiueos/kind :driver :aiueos/trust :verified
            :aiueos/effects #{:dma}}
-        decision (policy/verify-component m empty-graph policy*)]
+        decision (policy/verify-component m empty-graph policy* nil)]
     (is (= :deny (:aiueos/decision decision)))
     (is (= [:dma-without-iommu] (mapv :aiueos/kind (:aiueos/violations decision))))))
 
@@ -97,7 +97,7 @@
   ADR-0001/SECURITY.md's IOMMU rule was supposed to close"
     (let [m {:aiueos/component :driver/sneaky :aiueos/kind :driver :aiueos/trust :verified
              :aiueos/imports #{:dma/map}}
-          decision (policy/verify-component m empty-graph policy/default-policy)]
+          decision (policy/verify-component m empty-graph policy/default-policy nil)]
       (is (= :deny (:aiueos/decision decision)))
       (is (= [:dma-without-iommu] (mapv :aiueos/kind (:aiueos/violations decision)))))))
 
@@ -105,7 +105,7 @@
   (let [policy* (policy/parse-policy {:aiueos/grants {:driver/sneaky #{:iommu}}})
         m {:aiueos/component :driver/sneaky :aiueos/kind :driver :aiueos/trust :verified
            :aiueos/imports #{:dma/map} :aiueos/requires #{:iommu}}
-        decision (policy/verify-component m empty-graph policy*)]
+        decision (policy/verify-component m empty-graph policy* nil)]
     (is (= :grant (:aiueos/decision decision)))
     (is (contains? (:aiueos/capabilities decision) :iommu))
     (is (contains? (:aiueos/capabilities decision) :dma/map))))
@@ -116,7 +116,7 @@
     (doseq [cap #{:pci/config :dma/map :irq/subscribe :mmio/map}]
       (let [m {:aiueos/component :driver/quartet :aiueos/kind :driver :aiueos/trust :verified
                :aiueos/imports #{cap}}
-            decision (policy/verify-component m empty-graph policy/default-policy)]
+            decision (policy/verify-component m empty-graph policy/default-policy nil)]
         (is (= :deny (:aiueos/decision decision)) cap)
         (is (= [:dma-without-iommu] (mapv :aiueos/kind (:aiueos/violations decision))) cap)))))
 
@@ -126,7 +126,7 @@
   every import"
     (let [m {:aiueos/component :app/logger :aiueos/kind :app :aiueos/trust :verified
              :aiueos/imports #{:log/write}}
-          decision (policy/verify-component m empty-graph policy/default-policy)]
+          decision (policy/verify-component m empty-graph policy/default-policy nil)]
       (is (= :grant (:aiueos/decision decision)))
       (is (not (contains? decision :aiueos/violations))))))
 
@@ -134,14 +134,14 @@
   (let [policy* (policy/parse-policy {:aiueos/surface :browser})
         m {:aiueos/component :app/robot-only :aiueos/kind :app :aiueos/trust :verified
            :aiueos/surface #{:robot}}
-        decision (policy/verify-component m empty-graph policy*)]
+        decision (policy/verify-component m empty-graph policy* nil)]
     (is (= :deny (:aiueos/decision decision)))
     (is (= [:surface-mismatch] (mapv :aiueos/kind (:aiueos/violations decision))))))
 
 (deftest surface-gate-allows-a-portable-component
   (let [policy* (policy/parse-policy {:aiueos/surface :browser})
         m {:aiueos/component :app/portable :aiueos/kind :app :aiueos/trust :verified}
-        decision (policy/verify-component m empty-graph policy*)]
+        decision (policy/verify-component m empty-graph policy* nil)]
     (is (= :grant (:aiueos/decision decision)))))
 
 (deftest surface-restricts-kernel-caps-to-the-offered-set
@@ -151,7 +151,7 @@
         ;; this test's single concern) isn't in browser's offered set either.
         m {:aiueos/component :app/needs-random :aiueos/kind :app :aiueos/trust :verified
            :aiueos/imports #{:random/bytes}}
-        decision (policy/verify-component m empty-graph policy*)]
+        decision (policy/verify-component m empty-graph policy* nil)]
     (is (= :deny (:aiueos/decision decision)))
     (is (= [:unresolved-capability] (mapv :aiueos/kind (:aiueos/violations decision))))))
 
@@ -171,7 +171,7 @@
           victim {:aiueos/component :app/needs-random :aiueos/kind :app :aiueos/trust :verified
                   :aiueos/imports #{:random/bytes} :aiueos/exports #{}}
           g (graph/build [spoofer victim])
-          decision (policy/verify-component victim g policy*)]
+          decision (policy/verify-component victim g policy* nil)]
       (is (= :deny (:aiueos/decision decision))
           "browser's surface doesn't offer :random/bytes -- the spoofed export must NOT
            let this resolve anyway")
@@ -187,7 +187,7 @@
           notes-app {:aiueos/component :app/notes :aiueos/kind :app :aiueos/trust :verified
                      :aiueos/imports #{:fs/read} :aiueos/exports #{}}
           g (graph/build [fs-service notes-app])
-          decision (policy/verify-component notes-app g policy*)]
+          decision (policy/verify-component notes-app g policy* nil)]
       (is (= :grant (:aiueos/decision decision)))
       (is (contains? (:aiueos/capabilities decision) :fs/read)))))
 
@@ -195,7 +195,7 @@
   (let [policy* (policy/parse-policy {:aiueos/forbid {:untrusted #{}}})
         m {:aiueos/component :app/wants-secrets :aiueos/kind :app :aiueos/trust :untrusted
            :aiueos/effects #{:secrets}}
-        decision (policy/verify-component m empty-graph policy*)]
+        decision (policy/verify-component m empty-graph policy* nil)]
     (is (= :grant (:aiueos/decision decision)))))
 
 (deftest verify-system-returns-one-decision-per-component-in-order
@@ -206,3 +206,45 @@
         decisions (policy/verify-system [fs-service notes-app] policy/default-policy)]
     (is (= [:service/fs :app/notes] (mapv :aiueos/component decisions)))
     (is (every? #(= :grant (:aiueos/decision %)) decisions))))
+
+;; ── ADR-0012: component-signer binding ──────────────────────────────────────
+;; :fs/admin (not one of default-kernel-caps) is used as the "elevated,
+;; custom, privileged" capability throughout -- unlike :log/write et al.,
+;; nothing grants it via `base`, so its presence/absence in `granted-to`'s
+;; result cleanly isolates whether the `extra` (:aiueos.policy/grants) path
+;; fired.
+
+(deftest bound-id-authorized-signer-gets-the-elevated-grant
+  (let [policy* (policy/parse-policy {:aiueos/grants {:driver/privileged #{:fs/admin}}
+                                      :aiueos/component-signers {:driver/privileged #{:owner}}})
+        m {:aiueos/component :driver/privileged}]
+    (is (contains? (policy/granted-to policy* m :owner) :fs/admin))))
+
+(deftest bound-id-wrong-signer-does-not-get-the-elevated-grant
+  (testing "even though the wrong signer is otherwise validly registered/signed --
+            component-signers enforcement doesn't depend on require-signed"
+    (let [policy* (policy/parse-policy {:aiueos/grants {:driver/privileged #{:fs/admin}}
+                                        :aiueos/component-signers {:driver/privileged #{:owner}}})
+          m {:aiueos/component :driver/privileged}]
+      (is (not (contains? (policy/granted-to policy* m :attacker) :fs/admin)))
+      (is (not (contains? (policy/granted-to policy* m nil) :fs/admin))
+          "presented unsigned against a bound id -- also no elevated grant"))))
+
+(deftest unbound-id-permissive-policy-still-gets-the-elevated-grant
+  (testing "require-signed false: unchanged, bare-id lookup regardless of signer"
+    (let [policy* (policy/parse-policy {:aiueos/grants {:driver/open #{:fs/admin}}})
+          m {:aiueos/component :driver/open}]
+      (is (contains? (policy/granted-to policy* m nil) :fs/admin))
+      (is (contains? (policy/granted-to policy* m :anyone) :fs/admin)))))
+
+(deftest unbound-id-under-require-signed-does-not-get-the-elevated-grant
+  (testing "ADR-0012's actual decision: require-signed true closes the ambient-authority
+            gap for ids nobody bothered to bind, even for a signer that's otherwise
+            validly registered/authenticated"
+    (let [policy* (policy/parse-policy {:aiueos/grants {:driver/unbound-under-strict #{:fs/admin}}
+                                        :aiueos/require-signed true})
+          m {:aiueos/component :driver/unbound-under-strict}]
+      (is (not (contains? (policy/granted-to policy* m :some-registered-signer) :fs/admin)))
+      (is (contains? (policy/granted-to policy* m :some-registered-signer)
+                      :log/write)
+          "base (kernel-caps) is still granted -- this is 'no elevated grant', not a hard deny"))))
