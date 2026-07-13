@@ -91,6 +91,13 @@ explicit grant, and that whatever does happen is **audited**.
    `:verified` and records the signer in the audit log (provenance); a forged or
    unregistered signature is a hard denial — never downgraded to "unsigned". A
    `:aiueos/require-signed` policy rejects unsigned components outright. (ADR-0003.)
+   Authenticity alone only proves *some* registered signer vouches for these
+   bytes under this id, not that they're the signer *authorized* to claim that
+   id — `:aiueos.policy/component-signers` binds specific component ids to
+   authorized signer sets, enforced unconditionally for any id that declares a
+   binding, and (under `:aiueos/require-signed`) by default for any id that
+   doesn't: an unbound id's elevated grant no longer applies to *any* signer
+   once a policy requires signatures at all. (ADR-0012.)
 
 ## Per-surface notes
 

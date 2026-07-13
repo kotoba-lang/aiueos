@@ -37,6 +37,7 @@
    :aiueos.policy/grants {}
    :aiueos.policy/forbid-effects default-forbid-effects
    :aiueos.policy/signers {}
+   :aiueos.policy/component-signers {}
    :aiueos.policy/require-signed false
    :aiueos.policy/surface nil
    :aiueos.policy/net-allow #{}})
@@ -52,10 +53,10 @@
   "Parse a deployment policy overlay (the `:aiueos/*` EDN validated by
   `aiueos.contract/validate-deployment-policy`) into an effective policy.
   Everything is optional and *extends* the default policy: kernel-caps and
-  net-allow are unioned, grants are merged per-component, forbid is
-  *replaced* per-trust (an explicit `:aiueos/forbid` entry for a trust level
-  overrides — not adds to — the default lockdown for that level, matching
-  the retired `Policy::from_edn`), signers are merged.
+  net-allow are unioned, grants and component-signers are merged
+  per-component, forbid is *replaced* per-trust (an explicit `:aiueos/forbid`
+  entry for a trust level overrides — not adds to — the default lockdown for
+  that level, matching the retired `Policy::from_edn`), signers are merged.
 
   Callers should validate the overlay shape with
   `aiueos.contract/validate-deployment-policy` first; this function does not
@@ -81,6 +82,14 @@
        (:aiueos/signers overlay)
        (update :aiueos.policy/signers merge (:aiueos/signers overlay))
 
+       (:aiueos/component-signers overlay)
+       (update :aiueos.policy/component-signers
+               (fn [component-signers]
+                 (reduce-kv (fn [acc id signers]
+                              (update acc id set/union (as-kw-set signers)))
+                            component-signers
+                            (:aiueos/component-signers overlay))))
+
        (contains? overlay :aiueos/require-signed)
        (assoc :aiueos.policy/require-signed (boolean (:aiueos/require-signed overlay)))
 
@@ -91,43 +100,51 @@
        (update :aiueos.policy/net-allow set/union (as-kw-set (:aiueos/net-allow overlay)))))))
 
 (defn granted-to
-  "Capabilities available to manifest `m`: kernel primitives ∪ explicit
-  grants. With an active surface (ADR-0005), the kernel primitives are
-  restricted to those the surface can actually back — an import that maps to
-  an unoffered kernel cap becomes :unresolved-capability (the host refuses
-  to provide what this surface shouldn't). Explicit grants are never
-  surface-gated.
+  "Capabilities available to manifest `m`, presented by `signer` (the
+  `:aiueos.broker/signer` `aiueos.broker/authenticate` resolved a valid
+  signature to, or `nil` for an unsigned component / a caller with no
+  authentication context): kernel primitives ∪ explicit grants. With an
+  active surface (ADR-0005), the kernel primitives are restricted to those
+  the surface can actually back — an import that maps to an unoffered
+  kernel cap becomes :unresolved-capability (the host refuses to provide
+  what this surface shouldn't). Explicit grants are never surface-gated.
 
-  KNOWN GAP, NOT FIXED (security audit 2026-07-13, tracked as a follow-up
-  requiring an owner design decision -- see PR description /
-  90-docs/adr/0011-link-time-capability-enforcement.md's closing note; do
-  NOT invent a binding scheme here without that decision): `extra` below is
-  looked up by `id` (`m`'s bare, self-declared `:aiueos/component`) alone,
-  with NO binding to signer identity, even when `:aiueos.policy/require-signed`
-  is true and `m` carries a valid `:aiueos/signature`
-  (`aiueos.broker/authenticate` resolves a valid signature to a `signer` id,
-  but that `signer` never flows into this lookup). `:aiueos.policy/signers`
-  is a flat registry: ANY registered signer can produce a validly-signed
-  manifest claiming ANY `:aiueos/component` id, including one this policy's
-  `:aiueos.policy/grants` map has elevated privileges for — a compromised or
-  malicious registered signer (not necessarily the one 'intended' to own
-  that component id) can sign a manifest claiming a privileged id and
-  receive that id's full grant. Signing today proves 'some registered
-  signer vouches for these exact bytes under this id', not 'the signer
-  authorized to speak for this id vouches for it'. A correct fix needs a
-  new policy shape binding component ids to authorized signer ids (with a
-  real decision on default behavior for ids with no such binding declared,
-  and interaction with unsigned components under a non-require-signed
-  policy) -- multiple reasonable shapes exist and picking one without owner
-  input risks encoding the wrong default into every existing policy file."
-  [policy m]
+  ADR-0012 (2026-07-13): `id`'s elevated grant (`extra`, from
+  `:aiueos.policy/grants`) is gated against `:aiueos.policy/component-signers`
+  ({component-id -> #{authorized signer-id ...}}), fixing the prior gap
+  where ANY registered signer could claim ANY component id's grants (`:aiueos.policy/signers`
+  is a flat registry with no per-id restriction on its own).
+
+  - `id` BOUND (has a `component-signers` entry): `extra` applies only when
+    `signer` is a member of that entry's set — enforced unconditionally,
+    independent of `:aiueos.policy/require-signed` (an explicit binding
+    declaration is meant to be honored, not silently inert under a
+    permissive policy).
+  - `id` UNBOUND (no `component-signers` entry): under
+    `:aiueos.policy/require-signed` false, `extra` applies via the bare-id
+    lookup unchanged (today's behavior — no identity to bind against is
+    ever established for callers who don't require one). Under
+    `require-signed` true, `extra` does NOT apply (capability-security
+    default: no ambient authority — an operator who wants cryptographic
+    identity guarantees does not get them undermined by an id nobody
+    bothered to bind).
+
+  Either way, failing the check means `base` only (no elevated grant), the
+  same non-hard-deny shape an unrecognized id already gets — not a new
+  denial kind."
+  [policy m signer]
   (let [active-surface (:aiueos.policy/surface policy)
         kernel-caps (:aiueos.policy/kernel-caps policy)
         base (if-let [offered (and active-surface (surface/offered-by-id active-surface))]
                (set/intersection kernel-caps offered)
                kernel-caps)
         id (:aiueos/component m)
-        extra (get (:aiueos.policy/grants policy) id #{})]
+        bound-signers (get (:aiueos.policy/component-signers policy) id)
+        authorized? (cond
+                      (some? bound-signers) (contains? bound-signers signer)
+                      (:aiueos.policy/require-signed policy) false
+                      :else true)
+        extra (if authorized? (get (:aiueos.policy/grants policy) id #{}) #{})]
     (set/union base extra)))
 
 (defn- violation
@@ -149,8 +166,11 @@
 
 (defn verify-component
   "Verify one component manifest `m` against `graph` (an `aiueos.graph/build`
-  result) and `policy` (an effective policy from `parse-policy`). Returns a
-  policy-decision map matching `aiueos.contract/validate-policy-decision`:
+  result) and `policy` (an effective policy from `parse-policy`), presented
+  by `signer` (see `granted-to`'s docstring — the resolved
+  `:aiueos.broker/signer`, or `nil` for unsigned/no-auth-context callers).
+  Returns a policy-decision map matching
+  `aiueos.contract/validate-policy-decision`:
   `{:aiueos/decision :grant :aiueos/component id :aiueos/capabilities #{...}}`
   on success, or `{:aiueos/decision :deny :aiueos/component id
   :aiueos/violations [...]}` listing every violation (never just the first).
@@ -160,9 +180,9 @@
   `dma-family-imports` id -- not effects alone. A manifest cannot skip the
   gate by simply omitting `:aiueos/effects #{:dma}` while still importing
   `:dma/map`/`:pci/config`/`:mmio/map`/`:irq/subscribe`."
-  [m graph policy]
+  [m graph policy signer]
   (let [id (:aiueos/component m)
-        granted (granted-to policy m)
+        granted (granted-to policy m signer)
         active-surface (:aiueos.policy/surface policy)
         targets-present? (contains? m :aiueos/surface)
         targets (as-kw-set (:aiueos/surface m))
@@ -235,7 +255,14 @@
 (defn verify-system
   "Verify every component in `components` (a vector of manifest maps) against
   a shared capability graph built from all of them. Returns a vector of
-  policy-decision maps, one per component, in input order."
+  policy-decision maps, one per component, in input order.
+
+  Pure policy check, no signature-authentication context -- every component
+  is verified as unsigned (`signer` nil in `verify-component`/`granted-to`).
+  A caller with real per-component signer identities (i.e. one that already
+  ran `aiueos.broker/authenticate` on each manifest) should call
+  `aiueos.broker/verify-system` instead, which threads the real resolved
+  signer through."
   [components policy]
   (let [g (graph/build components)]
-    (mapv #(verify-component % g policy) components)))
+    (mapv #(verify-component % g policy nil) components)))

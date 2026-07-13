@@ -73,6 +73,52 @@
        (is (= :deny (:aiueos/decision decision)))
        (is (= [:bad-signature] (mapv :aiueos/kind (:aiueos/violations decision)))))))
 
+#?(:clj
+   (deftest component-signers-binding-closes-the-any-registered-signer-can-claim-any-id-gap
+     (testing "ADR-0012: the ORIGINAL vulnerability, end to end -- a compromised/
+               malicious but VALIDLY REGISTERED signer (:attacker, not the intended
+               :owner) signs a manifest claiming a privileged id it isn't bound to.
+               The signature itself is genuinely valid (require-signed's own
+               authenticity check has nothing to complain about) -- but since the
+               component DECLARES an import (:fs/admin) that only resolves via the
+               id-specific grant this signer isn't authorized for, and nothing else
+               in this graph exports it, the component is denied outright
+               (:unresolved-capability) rather than silently running with less than
+               it declared needing. :owner, the signer this id IS explicitly bound
+               to, presenting the SAME manifest shape with their own valid
+               signature, is granted with :fs/admin resolved."
+       (let [owner-kp (gen-keypair)
+             attacker-kp (gen-keypair)
+             owner-pub-hex (raw-public-key-hex (.getPublic owner-kp))
+             attacker-pub-hex (raw-public-key-hex (.getPublic attacker-kp))
+             policy* (policy/parse-policy
+                      {:aiueos/grants {:driver/privileged #{:fs/admin}}
+                       :aiueos/signers {:owner owner-pub-hex :attacker attacker-pub-hex}
+                       :aiueos/component-signers {:driver/privileged #{:owner}}
+                       :aiueos/require-signed true})
+             unsigned-m {:aiueos/component :driver/privileged :aiueos/kind :driver
+                        :aiueos/wasm-sha256 "deadbeef" :aiueos/imports #{:fs/admin}}
+             msg (signing/signed-message unsigned-m)
+             attacker-sig (sign-hex (.getPrivate attacker-kp) msg)
+             attacker-m (assoc unsigned-m
+                               :aiueos/signer :attacker :aiueos/signature attacker-sig)
+             attacker-decision (broker/verify-one attacker-m empty-graph policy*)
+             owner-sig (sign-hex (.getPrivate owner-kp) msg)
+             owner-m (assoc unsigned-m
+                            :aiueos/signer :owner :aiueos/signature owner-sig)
+             owner-decision (broker/verify-one owner-m empty-graph policy*)]
+         (is (= :deny (:aiueos/decision attacker-decision))
+             "the elevated :fs/admin import this id carries must NOT resolve for a
+              registered-but-unauthorized-for-THIS-id signer, even though their
+              signature itself is genuinely valid")
+         (is (= [:unresolved-capability] (mapv :aiueos/kind (:aiueos/violations attacker-decision)))
+             "denied for the right reason -- an unresolvable import, not a bad
+              signature (require-signed's authenticity check passed)")
+         (is (= :grant (:aiueos/decision owner-decision)))
+         (is (contains? (:aiueos/capabilities owner-decision) :fs/admin)
+             "the signer this id IS bound to still gets the elevated grant --
+              the fix denies the unauthorized claimant, it doesn't deny everyone")))))
+
 (deftest verify-one-honors-require-signed
   (let [policy* (policy/parse-policy {:aiueos/require-signed true})
         m {:aiueos/component :app/plain :aiueos/kind :app :aiueos/trust :verified}

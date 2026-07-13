@@ -72,17 +72,10 @@
     policy, or the signature is missing context / unregistered / forged.
     A bad signature is NEVER downgraded to unsigned.
 
-  KNOWN GAP, NOT FIXED (security audit 2026-07-13; see
-  `aiueos.policy/granted-to`'s docstring for the full writeup, and the
-  security-fix PR description for why this needs an owner design decision
-  rather than a guessed-at binding scheme): the `signer-id` this function
-  resolves is returned to the caller (`verify-one`) but never threaded into
-  `aiueos.policy/granted-to`'s per-component `:aiueos.policy/grants` lookup
-  — any signer registered in `:aiueos.policy/signers` can validly sign a
-  manifest claiming any `:aiueos/component` id, including one
-  `:aiueos.policy/grants` elevates. `:aiueos.policy/require-signed` proves
-  authenticity of the BYTES under a claimed id, not that the specific
-  signer is the one authorized to claim that id."
+  The `signer-id` this function resolves is threaded by `verify-one` into
+  `aiueos.policy/verify-component`/`granted-to`, which (ADR-0012) checks it
+  against `:aiueos.policy/component-signers` for ids that declare one — see
+  `granted-to`'s docstring for the full binding semantics."
   [m policy]
   (let [status (signing/verify m policy)]
     (cond
@@ -142,7 +135,7 @@
         (assoc decision :aiueos.broker/audit-entries (deny-audit-entries decision)))
       (let [signer (:aiueos.broker/signer auth)
             m-eff (elevate-for-signature m signer)
-            decision (policy/verify-component m-eff graph policy)
+            decision (policy/verify-component m-eff graph policy signer)
             entries (if (= :grant (:aiueos/decision decision))
                       (grant-audit-entries decision signer)
                       (deny-audit-entries decision))]
