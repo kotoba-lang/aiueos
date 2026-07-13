@@ -28,9 +28,30 @@ explicit grant, and that whatever does happen is **audited**.
    primitive, or an explicit policy grant; anything else is an
    `unresolved-capability` denial before launch.
 2. **Runtime-enforced gates, not convention.** Capabilities aren't just a static
-   claim — the `aiueos:host` ABI checks the conferred set on **every host call**.
-   A call to an ungranted capability *traps*; holding some capabilities never
-   leaks the ones you weren't given (capability attenuation is tested).
+   claim — the `aiueos:host` ABI only links a host function for a capability the
+   broker actually granted (`aiueos.execute/instantiate`, JVM/Chicory adapter);
+   an ungranted capability's import is never linked, so `Instance.Builder/build`
+   fails to link and the component never even starts running. This is coarser
+   than a per-call runtime check (the gate fires once, at module-link time, not
+   per invocation) but functionally equivalent under Wasm's own semantics: a
+   component can only ever call a function it successfully imported, so an
+   ungranted capability can never be reached, on any code path. (Fixed
+   2026-07-13 — a prior version of this JVM adapter linked all kernel-cap host
+   functions unconditionally for every component, with only quota counting and
+   the per-topic-id check below actually gated per call; see
+   `90-docs/adr/0011-link-time-capability-enforcement.md`.)
+   Holding some capabilities never leaks the ones you weren't given (capability
+   attenuation is tested). Kernel-primitive imports (`:random/bytes`,
+   `:log/write`, the DMA-family quartet, ...) resolve ONLY through the
+   broker's own grant decision (`aiueos.policy/granted-to`), never through a
+   co-located component's self-declared `:aiueos/exports` — an exporter can
+   still provide any non-reserved capability name it likes, but it cannot
+   spoof a kernel primitive to smuggle it past a surface/kernel-caps
+   restriction in a multi-component boot. (Fixed 2026-07-13 alongside the
+   link-time gate above; found by independent review of that same fix —
+   `aiueos.policy/verify-component`'s import resolution previously let ANY
+   co-located component's export claim resolve ANY import, with zero
+   authenticity check, including reserved kernel-primitive names.)
    Enforcement reaches **individual data channels**: a manifest declares the
    topic ids it may publish to / read (`:aiueos/publishes` / `:aiueos/subscribes`),
    and a publish/read to an undeclared topic traps even with the coarse
@@ -44,8 +65,15 @@ explicit grant, and that whatever does happen is **audited**.
    memory under a **fuel** budget (bounds CPU) and a **memory-page cap** (bounds
    RAM). A runaway traps instead of hanging or starving the host.
 5. **The IOMMU/DMA rule.** DMA is the one residual way a driver could escape its
-   sandbox, so any component with the `:dma` effect *must* declare
-   `:requires #{:iommu}` **and** be granted `:iommu`, or it is denied.
+   sandbox, so any component with the `:dma` effect, OR whose `:aiueos/imports`
+   requests any of the device-access quartet (`:dma/map`/`:pci/config`/
+   `:mmio/map`/`:irq/subscribe` — `aiueos.policy/dma-family-imports`), *must*
+   declare `:requires #{:iommu}` **and** be granted `:iommu`, or it is denied.
+   (Fixed 2026-07-13: the gate previously fired ONLY off the self-declared,
+   unenforced `:aiueos/effects #{:dma}` field, with no structural link to the
+   actual capability requested — a manifest could import `:dma/map` while
+   simply omitting `:aiueos/effects #{:dma}` and skip the gate entirely; see
+   `90-docs/adr/0011-link-time-capability-enforcement.md`.)
 6. **Safe-kotoba subset.** Source-built components are screened for escape
    hatches (`eval`, runtime `require`, `slurp`/`spit`, reflection, dotted host
    classes like `java.util.*`) *before* compilation — a security-shaped error,

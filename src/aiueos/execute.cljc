@@ -40,14 +40,16 @@
   (not just per Chicory's docs) that this genuinely blocks growth: a
   module instantiated with a capped `MemoryLimits` sees `Memory/grow`
   return -1 past the cap, its page count unchanged."
-  (:require [aiueos.broker :as broker]
+  (:require [aiueos.audit :as audit]
+            [aiueos.broker :as broker]
             [aiueos.manifest :as manifest]
+            [aiueos.signing :as signing]
             [aiueos.topic :as topic]
             #?(:clj [clojure.edn :as edn]))
   #?(:clj
      (:import (com.dylibso.chicory.runtime ExecutionListener HostFunction ImportFunction
                                            ImportValues Instance WasmFunctionHandle)
-              (com.dylibso.chicory.wasm Parser)
+              (com.dylibso.chicory.wasm Parser UnlinkableException)
               (com.dylibso.chicory.wasm.types FunctionType MemoryLimits ValType))))
 
 #?(:clj
@@ -69,6 +71,49 @@
 
 #?(:clj
    (def ^:private valtype {:i32 ValType/I32 :i64 ValType/I64}))
+
+#?(:clj
+   (def ^:private host-field->capability
+     "Reverse lookup: each `\"kotoba\"`-module host-import FIELD name (the
+     name Chicory links a Wasm `(import \"kotoba\" \"<field>\" ...)` against)
+     to the single `aiueos.policy/default-kernel-caps` keyword that
+     authorizes it. `instantiate` uses this to link ONLY the host functions
+     whose capability is in the component's actually-granted set
+     (`aiueos.broker/verify-one`'s `:aiueos/capabilities`, computed by
+     `aiueos.policy/verify-component`) -- an ungranted capability's import is
+     simply never added to the `ImportValues` Chicory links against, so
+     `Instance.Builder/build` throws `UnlinkableException` at instantiation
+     time instead of silently succeeding. This is the SAME \"unresolved
+     import fails to link\" mechanism `kotoba-lang/kototama` already relies
+     on for its own capability gating (a proven-sound pattern in this org,
+     not a novel design) -- see this namespace's `instantiate` docstring for
+     the full rationale.
+
+     `topic_poll`/`topic_take`/`topic_count` all share `:topic/subscribe` --
+     `aiueos.policy/default-kernel-caps` has no finer-grained read-vs-count
+     capability, so there is nothing finer to gate them on."
+     {"log_write" :log/write
+      "clock_monotonic" :clock/monotonic
+      "random_bytes" :random/bytes
+      "topic_publish" :topic/publish
+      "topic_poll" :topic/subscribe
+      "topic_take" :topic/subscribe
+      "topic_count" :topic/subscribe
+      "pci_config" :pci/config
+      "dma_map" :dma/map
+      "irq_subscribe" :irq/subscribe
+      "mmio_map" :mmio/map}))
+
+#?(:clj
+   (defn- host-function-granted?
+     "True if HF (an `ImportFunction`/`HostFunction`) backs a capability
+     present in GRANTED-CAPS, per `host-field->capability`. A field with no
+     entry in that map (there is none today -- every real/stub host function
+     this namespace builds has a capability) is treated as NOT granted --
+     fail closed, never silently link an unrecognized host function."
+     [granted-caps hf]
+     (let [field (.name ^ImportFunction hf)]
+       (contains? granted-caps (get host-field->capability field)))))
 
 #?(:clj
    (defn- host-fn
@@ -268,33 +313,75 @@
 
 #?(:clj
    (defn instantiate
-     "Parse WASM-BYTES and build a Chicory Instance with all 11 aiueos
-     kernel-cap host imports bound (7 real + 4 device-access stubs) plus a
-     permissive `has_capability` stub (the static capability gate already
-     ran at compile/broker-decision time; a denied component never reaches
-     execution -- see `execute`). LOG-ATOM/TOPIC-BUS-ATOM per
-     `aiueos-host-functions`; QUOTA is a normalized `:aiueos/quota` map
-     (`{:host-calls N :publishes N}`, ADR-0006) -- `has_capability` itself
-     is NOT quota-counted (a link-time permission check, not a resource-
-     consuming action). FUEL-LIMIT (`:aiueos/limits :fuel`, ADR-0001) is
-     wired via `fuel-listener` (see namespace docstring). MEMORY-PAGES-LIMIT
-     (`:aiueos/limits :memory-pages`, ADR-0001) is wired via
+     "Parse WASM-BYTES and build a Chicory Instance, linking ONLY the host
+     functions whose capability is in GRANTED-CAPS (the component's
+     actually-granted capability set, e.g. `aiueos.broker/verify-one`'s
+     `:aiueos/capabilities` -- see `host-field->capability`) plus a
+     permissive `has_capability` stub, ALWAYS linked regardless of
+     GRANTED-CAPS.
+
+     This is the fix for a real gap (found by security audit, 2026-07-13):
+     this function used to link ALL 11 kernel-cap host imports (7 real +
+     4 device-access stubs) unconditionally, for every component, with no
+     parameter representing what was actually granted -- so SECURITY.md's
+     claim that 'the aiueos:host ABI checks the conferred set on every host
+     call' did not hold for this JVM/Chicory execution path (only quota
+     counting and topic-id allow-listing were real per-call gates; capability
+     possession itself was never checked at the host-import boundary). Now,
+     a capability outside GRANTED-CAPS simply has no matching host function
+     in the `ImportValues` Chicory links against -- if WASM-BYTES imports it
+     anyway, `Instance.Builder/build` throws `UnlinkableException` and this
+     function never returns an Instance, so `main` never runs. This mirrors
+     wasmtime-Linker-style capability gating (ADR-0002's original design
+     intent) and the same 'unresolved import fails to link' mechanism
+     `kotoba-lang/kototama` already relies on -- a proven-sound pattern in
+     this org, not a novel one. It is coarser than a per-call runtime check
+     (the gate fires once, at link time, for the whole module) but
+     functionally equivalent for Wasm: a component can only ever call
+     functions it successfully imported, so an ungranted capability can
+     never be called, full stop -- not just on some code paths.
+
+     `has_capability` stays a permissive stub (returns 1 unconditionally)
+     regardless of GRANTED-CAPS -- deliberately NOT gated here. Its
+     docstring previously justified the permissive stub as safe because 'the
+     static capability gate already ran at compile/broker-decision time'; as
+     of this fix that's even more true operationally: this function's own
+     link-time gate means a component's `has_capability` answer can no
+     longer matter for whether an ungranted call actually succeeds (an
+     ungranted import fails to link before `main` ever runs, regardless of
+     what `has_capability` reported), so `has_capability` returning a false
+     'yes' cannot let anything ungranted actually execute. Making it consult
+     GRANTED-CAPS for real would require a numeric capability-id encoding
+     for its single i32 argument, which no ADR or caller in this codebase
+     defines today -- left as a documented follow-up rather than invented
+     here (see PR description).
+
+     LOG-ATOM/TOPIC-BUS-ATOM per `aiueos-host-functions`; QUOTA is a
+     normalized `:aiueos/quota` map (`{:host-calls N :publishes N}`,
+     ADR-0006) -- `has_capability` itself is NOT quota-counted (a link-time
+     permission check, not a resource-consuming action). FUEL-LIMIT
+     (`:aiueos/limits :fuel`, ADR-0001) is wired via `fuel-listener` (see
+     namespace docstring). MEMORY-PAGES-LIMIT (`:aiueos/limits
+     :memory-pages`, ADR-0001) is wired via
      `memory-limits-for`/`withMemoryLimits` (see namespace docstring).
      TOPIC-ALLOWED is `{:publishes <set-or-nil> :subscribes <set-or-nil>}`
      -- the manifest's `:aiueos/publishes`/`:aiueos/subscribes` topic-id
-     allow-sets (`nil` = unrestricted), enforced via
-     `assert-topic-allowed!`."
-     [wasm-bytes log-atom topic-bus-atom quota fuel-limit memory-pages-limit topic-allowed]
+     allow-sets (`nil` = unrestricted), enforced via `assert-topic-allowed!`.
+     GRANTED-CAPS defaults to `#{}` (deny-by-default, not 'allow all') when
+     nil."
+     [wasm-bytes log-atom topic-bus-atom quota fuel-limit memory-pages-limit topic-allowed granted-caps]
      (let [host-calls-atom (atom 0)
            publishes-atom (atom 0)
            fuel-atom (atom 0)
+           granted-caps (or granted-caps #{})
            has-capability (host-fn "has_capability" [:i32] :i32 (fn [_instance _args] 1))
-           fns (concat [has-capability]
-                       (aiueos-host-functions log-atom topic-bus-atom
-                                               host-calls-atom (:host-calls quota)
-                                               publishes-atom (:publishes quota)
-                                               (:publishes topic-allowed) (:subscribes topic-allowed))
-                       (device-access-stubs host-calls-atom (:host-calls quota)))
+           candidate-fns (concat (aiueos-host-functions log-atom topic-bus-atom
+                                                          host-calls-atom (:host-calls quota)
+                                                          publishes-atom (:publishes quota)
+                                                          (:publishes topic-allowed) (:subscribes topic-allowed))
+                                  (device-access-stubs host-calls-atom (:host-calls quota)))
+           fns (cons has-capability
+                     (filter #(host-function-granted? granted-caps %) candidate-fns))
            imports (-> (ImportValues/builder)
                        (.addFunction (into-array ImportFunction fns))
                        .build)
@@ -371,6 +458,15 @@
      with whatever log/topic-bus state accumulated before the abort still
      attached. An unrelated exception still propagates uncaught.
 
+     `instantiate` links host functions only for DECISION's
+     `:aiueos/capabilities` (the actually-granted set -- see `instantiate`'s
+     docstring); if WASM-BYTES declares a Wasm-level import for a capability
+     outside that set, Chicory's `Instance.Builder/build` throws
+     `UnlinkableException` and NOTHING executes (not even `main` starts) --
+     caught here the same way quota/fuel/topic-allowed aborts are, and
+     surfaced as `:aiueos.execute/capability-unlinked {:message \"...\"}`
+     instead of `:aiueos.execute/result`.
+
      MEMORY-PAGES-LIMIT does NOT abort the run this way -- unlike
      quota/fuel/topic-allowed (host-side policy checks), a `memory.grow`
      beyond the cap is real WebAssembly semantics: Chicory's `Memory/grow`
@@ -384,9 +480,9 @@
      tested `aiueos.broker` contract this namespace previously never
      adopted, now wired in alongside the `:aiueos.execute/*` shape rather
      than replacing it): `:succeeded` on normal completion, `:failed` on a
-     quota/fuel/topic-forbidden abort (`:aiueos/error` set to the
-     exception's message), or `:denied` when DECISION itself was `:deny`
-     (no execution attempted). `:aiueos/started-at`/`:finished-at` are
+     quota/fuel/topic-forbidden/capability-unlinked abort (`:aiueos/error`
+     set to the exception's message), or `:denied` when DECISION itself was
+     `:deny` (no execution attempted). `:aiueos/started-at`/`:finished-at` are
      epoch milliseconds; `:aiueos/audit-events` mirrors the same
      `:aiueos.broker/audit-entries` DECISION already carried."
      ([decision wasm-bytes]
@@ -398,11 +494,12 @@
         (if (= :grant (:aiueos/decision decision))
           (let [log-atom (atom [])
                 topic-bus-atom (atom topic/empty-bus)
-                instance (instantiate wasm-bytes log-atom topic-bus-atom quota fuel-limit
-                                       memory-pages-limit topic-allowed)
+                granted-caps (:aiueos/capabilities decision)
                 started-at (System/currentTimeMillis)]
             (try
-              (let [result (call-main instance)
+              (let [instance (instantiate wasm-bytes log-atom topic-bus-atom quota fuel-limit
+                                           memory-pages-limit topic-allowed granted-caps)
+                    result (call-main instance)
                     finished-at (System/currentTimeMillis)]
                 (assoc decision
                        :aiueos.execute/result result
@@ -423,7 +520,17 @@
                            (broker/run-receipt component :failed
                                                 :error (ex-message e) :started-at started-at
                                                 :finished-at finished-at :audit-events audit-events))
-                    (throw e))))))
+                    (throw e))))
+              (catch UnlinkableException e
+                (let [finished-at (System/currentTimeMillis)]
+                  (assoc decision
+                         :aiueos.execute/capability-unlinked {:message (ex-message e)}
+                         :aiueos.execute/log @log-atom
+                         :aiueos.execute/topic-bus @topic-bus-atom
+                         :aiueos/run-receipt
+                         (broker/run-receipt component :failed
+                                              :error (ex-message e) :started-at started-at
+                                              :finished-at finished-at :audit-events audit-events))))))
           (let [now (System/currentTimeMillis)]
             (assoc decision
                    :aiueos/run-receipt
@@ -432,42 +539,81 @@
                                         :audit-events audit-events))))))))
 
 #?(:clj
-   (defn execute
-     "The end-to-end path: verify `m` (a normalized manifest) against
-     `graph`/`policy` via `aiueos.broker/verify-one`; only if granted,
-     instantiate WASM-BYTES on Chicory and call its exported `main`, capped
-     by `m`'s `:aiueos/quota` (`default-quota` if unnormalized),
-     `:aiueos/limits :fuel`/`:memory-pages` (`default-fuel`/
-     `default-memory-pages` if unnormalized), and
-     `:aiueos/publishes`/`:aiueos/subscribes` (unrestricted if unnormalized).
+   (defn- integrity-denial
+     "Build a `:deny` decision -- same shape `aiueos.broker/verify-one`'s
+     own deny path produces (`:aiueos/violations` +
+     `:aiueos.broker/audit-entries` + an ADDITIVE `:aiueos/run-receipt`,
+     status `:denied`, matching `run-if-granted`'s deny branch) -- for an
+     `aiueos.manifest/verify-wasm-integrity` VIOLATION. Used by `execute`/
+     `execute-admission` to short-circuit BEFORE `aiueos.broker/verify-one`
+     ever runs: a tampered artifact is denied on its own, independent of
+     whatever capability grant its (possibly forged) declared hash would
+     otherwise have unlocked."
+     [component violation]
+     (let [now (System/currentTimeMillis)
+           entry (audit/audit-entry component :deny (str "[artifact-mismatch] " (:aiueos/message violation)))]
+       {:aiueos/decision :deny
+        :aiueos/component component
+        :aiueos/violations [violation]
+        :aiueos.broker/audit-entries [entry]
+        :aiueos/run-receipt (broker/run-receipt component :denied
+                                                 :started-at now :finished-at now
+                                                 :audit-events [entry])})))
 
-     Returns `{:aiueos/decision :deny ...}` (the broker's denial, unexecuted),
+#?(:clj
+   (defn execute
+     "The end-to-end path: first, an ADR-0003 artifact-integrity check --
+     recompute SHA-256 of the actual WASM-BYTES (`aiueos.signing/sha256-hex`)
+     and compare against `m`'s declared `:aiueos/wasm-sha256`
+     (`aiueos.manifest/verify-wasm-integrity`; a no-op when `m` declares no
+     hash at all). A mismatch denies outright (`integrity-denial`) without
+     ever reaching `aiueos.broker/verify-one` -- fail closed, tampered bytes
+     never even get a capability decision computed for them. Only past that
+     gate: verify `m` (a normalized manifest) against `graph`/`policy` via
+     `aiueos.broker/verify-one`; only if granted, instantiate WASM-BYTES on
+     Chicory and call its exported `main`, capped by `m`'s `:aiueos/quota`
+     (`default-quota` if unnormalized), `:aiueos/limits :fuel`/
+     `:memory-pages` (`default-fuel`/`default-memory-pages` if
+     unnormalized), and `:aiueos/publishes`/`:aiueos/subscribes`
+     (unrestricted if unnormalized).
+
+     Returns `{:aiueos/decision :deny ...}` (an integrity mismatch OR the
+     broker's capability denial, unexecuted either way),
      `{:aiueos/decision :grant ... :aiueos.execute/result <long>
      :aiueos.execute/log [<string>...] :aiueos.execute/topic-bus <bus>}` on a
      completed run, or the same shape with `:aiueos.execute/quota-exceeded
      {:kind :host-calls|:publishes :limit N :count N}`,
-     `:aiueos.execute/fuel-exceeded {:limit N :count N}`, or
-     `:aiueos.execute/topic-forbidden {:op :publish|:subscribe :topic-id N}`
-     instead of `:result` when the run aborted mid-execution
-     (`:memory-pages` never aborts -- see `run-if-granted`'s docstring)."
+     `:aiueos.execute/fuel-exceeded {:limit N :count N}`,
+     `:aiueos.execute/topic-forbidden {:op :publish|:subscribe :topic-id N}`,
+     or `:aiueos.execute/capability-unlinked {:message \"...\"}` (WASM-BYTES
+     imports a capability outside `:aiueos/decision`'s granted set -- see
+     `instantiate`'s docstring) instead of `:result` when the run aborted
+     mid-execution (`:memory-pages` never aborts -- see `run-if-granted`'s
+     docstring)."
      [m graph policy wasm-bytes]
-     (run-if-granted (broker/verify-one m graph policy) wasm-bytes
-                      (or (:aiueos/quota m) default-quota)
-                      (get-in m [:aiueos/limits :fuel] default-fuel)
-                      (get-in m [:aiueos/limits :memory-pages] default-memory-pages)
-                      (topic-allowed-for m))))
+     (if-let [violation (manifest/verify-wasm-integrity m (signing/sha256-hex wasm-bytes))]
+       (integrity-denial (:aiueos/component m) violation)
+       (run-if-granted (broker/verify-one m graph policy) wasm-bytes
+                        (or (:aiueos/quota m) default-quota)
+                        (get-in m [:aiueos/limits :fuel] default-fuel)
+                        (get-in m [:aiueos/limits :memory-pages] default-memory-pages)
+                        (topic-allowed-for m)))))
 
 #?(:clj
    (defn execute-admission
      "The execution half of the retired Rust `Broker::admit` (ADR-0004),
-     now actually runnable: floors `m`'s trust to `:ai-generated`
+     now actually runnable: the SAME artifact-integrity gate `execute`
+     applies (see its docstring) runs FIRST, before the trust floor even
+     matters -- then floors `m`'s trust to `:ai-generated`
      (`broker/floor-trust-for-admission`) before verification -- an
      agent-submitted component can never grant itself trust -- then, only
      if still granted after the floor, instantiates and executes WASM-BYTES
      on Chicory exactly like `execute`. Same return shape as `execute`."
      [m graph policy wasm-bytes]
-     (run-if-granted (broker/verify-admission m graph policy) wasm-bytes
-                      (or (:aiueos/quota m) default-quota)
-                      (get-in m [:aiueos/limits :fuel] default-fuel)
-                      (get-in m [:aiueos/limits :memory-pages] default-memory-pages)
-                      (topic-allowed-for m))))
+     (if-let [violation (manifest/verify-wasm-integrity m (signing/sha256-hex wasm-bytes))]
+       (integrity-denial (:aiueos/component m) violation)
+       (run-if-granted (broker/verify-admission m graph policy) wasm-bytes
+                        (or (:aiueos/quota m) default-quota)
+                        (get-in m [:aiueos/limits :fuel] default-fuel)
+                        (get-in m [:aiueos/limits :memory-pages] default-memory-pages)
+                        (topic-allowed-for m)))))

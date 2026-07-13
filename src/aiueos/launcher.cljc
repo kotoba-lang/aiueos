@@ -173,8 +173,8 @@
      with no `:aiueos/wasm` (a pure capability provider with nothing to
      run) only gets a decision, matching `verify-command`.
 
-     Stops at the FIRST denied/quota-or-fuel-exceeded DUE component -- a
-     system doesn't boot past a component that can't run, since later
+     Stops at the FIRST denied/quota-or-fuel-exceeded/capability-unlinked
+     DUE component -- a system doesn't boot past a component that can't run, since later
      components may depend on it. Returns `{:aiueos.cli/ok? true
      :aiueos/boot-results [...]}` on a clean boot (every due component
      reached) or `{:aiueos.cli/ok? false :aiueos/boot-results [...]
@@ -212,7 +212,8 @@
                         results' (conj results result)
                         booted? (and (= :grant (:aiueos/decision result))
                                      (not (contains? result :aiueos.execute/quota-exceeded))
-                                     (not (contains? result :aiueos.execute/fuel-exceeded)))]
+                                     (not (contains? result :aiueos.execute/fuel-exceeded))
+                                     (not (contains? result :aiueos.execute/capability-unlinked)))]
                     (if booted?
                       (recur (rest indices) results')
                       {:aiueos.cli/command :up :aiueos.cli/ok? false :aiueos/boot-results results'
@@ -269,7 +270,8 @@
        (do (doseq [r (:aiueos/boot-results result)]
              (println (str (name (:aiueos/decision r)) " " (name (:aiueos/component r))
                             (when (contains? r :aiueos.execute/quota-exceeded) " (quota exceeded)")
-                            (when (contains? r :aiueos.execute/fuel-exceeded) " (fuel exceeded)"))))
+                            (when (contains? r :aiueos.execute/fuel-exceeded) " (fuel exceeded)")
+                            (when (contains? r :aiueos.execute/capability-unlinked) " (capability unlinked)"))))
            (when (:aiueos/stopped-at result)
              (println (str "boot stopped at " (name (:aiueos/stopped-at result))))))
 

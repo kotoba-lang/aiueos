@@ -96,7 +96,30 @@
   restricted to those the surface can actually back — an import that maps to
   an unoffered kernel cap becomes :unresolved-capability (the host refuses
   to provide what this surface shouldn't). Explicit grants are never
-  surface-gated."
+  surface-gated.
+
+  KNOWN GAP, NOT FIXED (security audit 2026-07-13, tracked as a follow-up
+  requiring an owner design decision -- see PR description /
+  90-docs/adr/0011-link-time-capability-enforcement.md's closing note; do
+  NOT invent a binding scheme here without that decision): `extra` below is
+  looked up by `id` (`m`'s bare, self-declared `:aiueos/component`) alone,
+  with NO binding to signer identity, even when `:aiueos.policy/require-signed`
+  is true and `m` carries a valid `:aiueos/signature`
+  (`aiueos.broker/authenticate` resolves a valid signature to a `signer` id,
+  but that `signer` never flows into this lookup). `:aiueos.policy/signers`
+  is a flat registry: ANY registered signer can produce a validly-signed
+  manifest claiming ANY `:aiueos/component` id, including one this policy's
+  `:aiueos.policy/grants` map has elevated privileges for — a compromised or
+  malicious registered signer (not necessarily the one 'intended' to own
+  that component id) can sign a manifest claiming a privileged id and
+  receive that id's full grant. Signing today proves 'some registered
+  signer vouches for these exact bytes under this id', not 'the signer
+  authorized to speak for this id vouches for it'. A correct fix needs a
+  new policy shape binding component ids to authorized signer ids (with a
+  real decision on default behavior for ids with no such binding declared,
+  and interaction with unsigned components under a non-require-signed
+  policy) -- multiple reasonable shapes exist and picking one without owner
+  input risks encoding the wrong default into every existing policy file."
   [policy m]
   (let [active-surface (:aiueos.policy/surface policy)
         kernel-caps (:aiueos.policy/kernel-caps policy)
@@ -111,13 +134,32 @@
   ([component kind message]
    {:aiueos/component component :aiueos/kind kind :aiueos/message message}))
 
+(def dma-family-imports
+  "Kernel-cap import ids that structurally require the ADR-0001 DMA/IOMMU
+  gate -- the device-access quartet from `default-kernel-caps`
+  (`:pci/config`/`:dma/map`/`:irq/subscribe`/`:mmio/map`). A component whose
+  `:aiueos/imports` contains ANY of these needs the gate, REGARDLESS of
+  whether it also self-declares `:aiueos/effects #{:dma}` -- see
+  `verify-component`'s `dma?` for why: `:aiueos/effects` alone was a
+  self-declared, unenforced field with no structural link to the actual
+  capability being requested (security audit, 2026-07-13) -- a manifest
+  could import e.g. `:dma/map` while simply omitting
+  `:aiueos/effects #{:dma}`, silently skipping the gate."
+  #{:pci/config :dma/map :irq/subscribe :mmio/map})
+
 (defn verify-component
   "Verify one component manifest `m` against `graph` (an `aiueos.graph/build`
   result) and `policy` (an effective policy from `parse-policy`). Returns a
   policy-decision map matching `aiueos.contract/validate-policy-decision`:
   `{:aiueos/decision :grant :aiueos/component id :aiueos/capabilities #{...}}`
   on success, or `{:aiueos/decision :deny :aiueos/component id
-  :aiueos/violations [...]}` listing every violation (never just the first)."
+  :aiueos/violations [...]}` listing every violation (never just the first).
+
+  The ADR-0001 DMA/IOMMU gate (`:dma-without-iommu`) fires when EITHER `m`
+  self-declares `:aiueos/effects #{:dma}` OR `:aiueos/imports` contains any
+  `dma-family-imports` id -- not effects alone. A manifest cannot skip the
+  gate by simply omitting `:aiueos/effects #{:dma}` while still importing
+  `:dma/map`/`:pci/config`/`:mmio/map`/`:irq/subscribe`."
   [m graph policy]
   (let [id (:aiueos/component m)
         granted (granted-to policy m)
@@ -133,7 +175,23 @@
         imports (as-kw-set (:aiueos/imports m))
         {:keys [resolved import-violations]}
         (reduce (fn [acc imp]
-                  (let [by-graph (some #(not= % id) (graph/providers graph imp))
+                  (let [;; A kernel-primitive keyword (default-kernel-caps --
+                        ;; :random/bytes, :log/write, the DMA-family quartet,
+                        ;; ...) must NEVER resolve via a co-located peer's
+                        ;; self-declared :aiueos/exports: `by-graph` trusts
+                        ;; ANY other component's export claim with no
+                        ;; authenticity check at all (security audit,
+                        ;; 2026-07-13) -- a component merely declaring
+                        ;; `:aiueos/exports #{:random/bytes}` would let a
+                        ;; sibling's kernel-cap import resolve through this
+                        ;; path, bypassing surface/kernel-caps restriction
+                        ;; entirely for any multi-component system.aiueos.edn
+                        ;; boot. Kernel primitives are the kernel's own to
+                        ;; grant (via `granted-to`/by-grant below); an
+                        ;; exporter can still provide any NON-reserved
+                        ;; capability name it likes.
+                        by-graph (and (not (contains? default-kernel-caps imp))
+                                     (some #(not= % id) (graph/providers graph imp)))
                         by-grant (contains? granted imp)]
                     (if (or by-graph by-grant)
                       (update acc :resolved conj imp)
@@ -151,13 +209,21 @@
           (violation id :forbidden-effect
                      (str "effect " eff " is forbidden for " (name trust) " components")))
         requires (as-kw-set (:aiueos/requires m))
-        dma? (contains? effects :dma)
+        dma-by-effect? (contains? effects :dma)
+        dma-by-import? (boolean (seq (set/intersection imports dma-family-imports)))
+        dma? (or dma-by-effect? dma-by-import?)
         requires-iommu? (contains? requires :iommu)
         has-iommu? (or (contains? granted :iommu) (contains? resolved :iommu))
         dma-violations
         (if (and dma? (not (and requires-iommu? has-iommu?)))
           [(violation id :dma-without-iommu
-                      "DMA requires `:requires #{:iommu}` and an :iommu grant")]
+                      (if dma-by-import?
+                        (str "DMA-family import(s) "
+                             (set/intersection imports dma-family-imports)
+                             " require `:requires #{:iommu}` and an :iommu grant"
+                             (when-not dma-by-effect?
+                               " (this manifest never declared :aiueos/effects #{:dma} either)"))
+                        "DMA requires `:requires #{:iommu}` and an :iommu grant"))]
           [])
         violations (vec (concat surface-violations import-violations effect-violations dma-violations))]
     (if (seq violations)

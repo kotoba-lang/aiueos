@@ -248,6 +248,34 @@
     (is (= :driver/sensor (:aiueos/component elevated)))))
 
 ;; -----------------------------------------------------------------------
+;; verify-wasm-integrity (ADR-0003's artifact-integrity enforcement,
+;; security fix 2607131500 -- pure comparison; `aiueos.execute`/
+;; `aiueos.signing/sha256-hex` supply the actual host-computed hash)
+;; -----------------------------------------------------------------------
+
+(deftest verify-wasm-integrity-nil-without-a-declared-hash
+  (is (nil? (manifest/verify-wasm-integrity {:aiueos/component :driver/sensor} "anything"))
+      "nothing to check -- integrity pinning is opt-in per manifest"))
+
+(deftest verify-wasm-integrity-nil-when-the-hashes-match
+  (is (nil? (manifest/verify-wasm-integrity
+             {:aiueos/component :driver/sensor :aiueos/wasm-sha256 "3b1f"}
+             "3b1f"))))
+
+(deftest verify-wasm-integrity-nil-when-the-hashes-match-case-insensitively
+  (is (nil? (manifest/verify-wasm-integrity
+             {:aiueos/component :driver/sensor :aiueos/wasm-sha256 "3B1F"}
+             "3b1f"))))
+
+(deftest verify-wasm-integrity-violation-on-mismatch
+  (let [v (manifest/verify-wasm-integrity
+           {:aiueos/component :driver/sensor :aiueos/wasm-sha256 "3b1f"}
+           "ffff")]
+    (is (= :driver/sensor (:aiueos/component v)))
+    (is (= :artifact-mismatch (:aiueos/kind v)))
+    (is (string? (:aiueos/message v)))))
+
+;; -----------------------------------------------------------------------
 ;; normalize — integration
 ;; -----------------------------------------------------------------------
 

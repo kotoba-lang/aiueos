@@ -38,7 +38,7 @@
   and the unsigned/no-signer/unregistered-signer/no-wasm-sha256 deny paths
   are pure CLJC and work on every host."
   #?(:clj
-     (:import [java.security KeyFactory Signature]
+     (:import [java.security KeyFactory MessageDigest Signature]
               [java.security.spec X509EncodedKeySpec])))
 
 ;; ───────── hex codec (pure, portable to every CLJC host) ─────────
@@ -85,6 +85,27 @@
                      [(nth hex-digits (bit-shift-right v 4))
                       (nth hex-digits (bit-and v 0xf))]))
                  bs)))
+
+;; ───────── artifact integrity (ADR-0003's other half; sha256, JVM-only --
+;; the comparison itself is pure and lives in `aiueos.manifest/
+;; verify-wasm-integrity`, mirroring the hex-codec/Ed25519 split above)
+;; ─────────
+
+#?(:clj
+   (defn sha256-hex
+     "Hex-encoded SHA-256 digest of BS (a JVM byte-array of actually-loaded
+     wasm bytes). The same hash `resources/aiueos/cli.edn`'s `hash` command
+     describes computing over file bytes for `:aiueos/wasm-sha256` pinning
+     (that command has no existing implementation anywhere in this repo to
+     literally call into -- it is declared `:coverage :adapter-only` in the
+     CLI contract but never wired in `aiueos.launcher/dispatch` -- so this
+     is the canonical implementation going forward, not a duplicate of one).
+     `aiueos.execute` calls this before every run/admission and compares
+     against `:aiueos/wasm-sha256` via `aiueos.manifest/verify-wasm-integrity`
+     -- the actual enforcement side of ADR-0003's integrity claim. JVM-only
+     (`java.security.MessageDigest`)."
+     [^bytes bs]
+     (hex-encode (.digest (MessageDigest/getInstance "SHA-256") bs))))
 
 ;; ───────── canonical signed message ─────────
 

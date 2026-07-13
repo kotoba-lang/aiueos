@@ -30,7 +30,16 @@
     explicitly.
 
   `signed-message` and `with-trust` are the small ADR-0003 signing helpers
-  the retired `Manifest` struct carried as methods.")
+  the retired `Manifest` struct carried as methods.
+
+  `verify-wasm-integrity` is the ADR-0003 artifact-integrity check
+  (\"Phase-0 gives integrity: a manifest may declare `:aiueos/wasm-sha256`
+  and the broker rejects the component if the loaded bytes don't match\")
+  -- a pure string comparison against an already-computed hash, so it stays
+  host-neutral even though the SHA-256 computation itself (over the actual
+  loaded wasm bytes) is necessarily a JVM/host-adapter concern (see
+  `aiueos.signing/sha256-hex`, consumed by `aiueos.execute`)."
+  (:require [clojure.string :as str]))
 
 ;; -----------------------------------------------------------------------
 ;; error shape (reused from aiueos.contract's `{:path [...] :message "..."}`)
@@ -293,6 +302,42 @@
   Purely a data update; the caller decides whether elevation applies."
   [m trust]
   (assoc m :aiueos/trust trust))
+
+;; -----------------------------------------------------------------------
+;; artifact integrity (ADR-0003's other half: `:aiueos/wasm-sha256`
+;; actually checked, not just carried as an opaque signing input)
+;; -----------------------------------------------------------------------
+
+(defn verify-wasm-integrity
+  "Compare manifest `m`'s declared `:aiueos/wasm-sha256` against
+  ACTUAL-SHA256-HEX -- a hex SHA-256 digest the CALLER already computed
+  from the actual loaded wasm bytes (e.g. `aiueos.signing/sha256-hex`,
+  JVM-only; this function itself is pure string comparison, portable to
+  every CLJC host, matching the `signed-message`/`hex-encode` split
+  elsewhere in this repo between 'pure comparison/formatting' and
+  'host-specific crypto primitive').
+
+  Returns `nil` when `m` declares no `:aiueos/wasm-sha256` (nothing to
+  check -- integrity pinning is opt-in per manifest, same as signing has
+  nothing to bind without a declared hash, see `signed-message`) or when
+  the hashes match (case-insensitive hex compare). Returns a violation map
+  (the same `{:aiueos/component :aiueos/kind :aiueos/message}` shape
+  `aiueos.policy`'s violations and `aiueos.signing`'s bad-signature
+  violations use, so a caller can fold it into the same
+  `:aiueos/violations` vector) on mismatch, tagged `:artifact-mismatch` --
+  this is the enforcement side of ADR-0003's 'Phase-0 gives integrity: ...
+  the broker rejects the component if the loaded bytes don't match' claim,
+  which previously had no code actually performing this comparison
+  anywhere in the execution path (`:aiueos/wasm-sha256` was used only as
+  an input string to `signed-message`, never recomputed from or compared
+  against the bytes that actually got executed)."
+  [m actual-sha256-hex]
+  (when-let [declared (:aiueos/wasm-sha256 m)]
+    (when-not (= (str/lower-case declared) (str/lower-case (str actual-sha256-hex)))
+      {:aiueos/component (:aiueos/component m)
+       :aiueos/kind :artifact-mismatch
+       :aiueos/message (str "wasm bytes do not match declared :aiueos/wasm-sha256 (declared "
+                             declared ", actual " actual-sha256-hex ")")})))
 
 ;; -----------------------------------------------------------------------
 ;; normalize — the main entry point
