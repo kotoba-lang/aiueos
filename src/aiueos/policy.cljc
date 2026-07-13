@@ -175,7 +175,23 @@
         imports (as-kw-set (:aiueos/imports m))
         {:keys [resolved import-violations]}
         (reduce (fn [acc imp]
-                  (let [by-graph (some #(not= % id) (graph/providers graph imp))
+                  (let [;; A kernel-primitive keyword (default-kernel-caps --
+                        ;; :random/bytes, :log/write, the DMA-family quartet,
+                        ;; ...) must NEVER resolve via a co-located peer's
+                        ;; self-declared :aiueos/exports: `by-graph` trusts
+                        ;; ANY other component's export claim with no
+                        ;; authenticity check at all (security audit,
+                        ;; 2026-07-13) -- a component merely declaring
+                        ;; `:aiueos/exports #{:random/bytes}` would let a
+                        ;; sibling's kernel-cap import resolve through this
+                        ;; path, bypassing surface/kernel-caps restriction
+                        ;; entirely for any multi-component system.aiueos.edn
+                        ;; boot. Kernel primitives are the kernel's own to
+                        ;; grant (via `granted-to`/by-grant below); an
+                        ;; exporter can still provide any NON-reserved
+                        ;; capability name it likes.
+                        by-graph (and (not (contains? default-kernel-caps imp))
+                                     (some #(not= % id) (graph/providers graph imp)))
                         by-grant (contains? granted imp)]
                     (if (or by-graph by-grant)
                       (update acc :resolved conj imp)

@@ -41,7 +41,17 @@ explicit grant, and that whatever does happen is **audited**.
    the per-topic-id check below actually gated per call; see
    `90-docs/adr/0011-link-time-capability-enforcement.md`.)
    Holding some capabilities never leaks the ones you weren't given (capability
-   attenuation is tested).
+   attenuation is tested). Kernel-primitive imports (`:random/bytes`,
+   `:log/write`, the DMA-family quartet, ...) resolve ONLY through the
+   broker's own grant decision (`aiueos.policy/granted-to`), never through a
+   co-located component's self-declared `:aiueos/exports` — an exporter can
+   still provide any non-reserved capability name it likes, but it cannot
+   spoof a kernel primitive to smuggle it past a surface/kernel-caps
+   restriction in a multi-component boot. (Fixed 2026-07-13 alongside the
+   link-time gate above; found by independent review of that same fix —
+   `aiueos.policy/verify-component`'s import resolution previously let ANY
+   co-located component's export claim resolve ANY import, with zero
+   authenticity check, including reserved kernel-primitive names.)
    Enforcement reaches **individual data channels**: a manifest declares the
    topic ids it may publish to / read (`:aiueos/publishes` / `:aiueos/subscribes`),
    and a publish/read to an undeclared topic traps even with the coarse

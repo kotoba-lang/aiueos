@@ -155,6 +155,42 @@
     (is (= :deny (:aiueos/decision decision)))
     (is (= [:unresolved-capability] (mapv :aiueos/kind (:aiueos/violations decision))))))
 
+(deftest a-co-located-components-export-cannot-spoof-a-kernel-primitive-name
+  (testing "CONFIRMED BUG regression (independent review of PR #26): by-graph
+            resolution trusted ANY co-located component's self-declared
+            :aiueos/exports with no authenticity check at all -- a component
+            merely claiming to export a KERNEL-PRIMITIVE keyword
+            (:random/bytes, one of default-kernel-caps) let a sibling's
+            import of that same name resolve via the graph path, bypassing
+            a surface restriction that would otherwise deny it entirely.
+            Kernel primitives must only ever resolve via granted-to
+            (by-grant), never via an untrusted peer's export claim."
+    (let [policy* (policy/parse-policy {:aiueos/surface :browser})
+          spoofer {:aiueos/component :app/malicious :aiueos/kind :app :aiueos/trust :ai-generated
+                   :aiueos/exports #{:random/bytes} :aiueos/imports #{}}
+          victim {:aiueos/component :app/needs-random :aiueos/kind :app :aiueos/trust :verified
+                  :aiueos/imports #{:random/bytes} :aiueos/exports #{}}
+          g (graph/build [spoofer victim])
+          decision (policy/verify-component victim g policy*)]
+      (is (= :deny (:aiueos/decision decision))
+          "browser's surface doesn't offer :random/bytes -- the spoofed export must NOT
+           let this resolve anyway")
+      (is (= [:unresolved-capability] (mapv :aiueos/kind (:aiueos/violations decision)))))))
+
+(deftest a-co-located-components-export-still-resolves-a-non-kernel-capability
+  (testing "the fix above must not be over-broad -- a genuine, non-reserved capability
+            name (the resolves-an-import-via-a-provider-component case, just under a
+            surface-restricted policy too) must still resolve via a peer's export"
+    (let [policy* (policy/parse-policy {:aiueos/surface :browser})
+          fs-service {:aiueos/component :service/fs :aiueos/kind :service :aiueos/trust :verified
+                      :aiueos/exports #{:fs/read} :aiueos/imports #{}}
+          notes-app {:aiueos/component :app/notes :aiueos/kind :app :aiueos/trust :verified
+                     :aiueos/imports #{:fs/read} :aiueos/exports #{}}
+          g (graph/build [fs-service notes-app])
+          decision (policy/verify-component notes-app g policy*)]
+      (is (= :grant (:aiueos/decision decision)))
+      (is (contains? (:aiueos/capabilities decision) :fs/read)))))
+
 (deftest explicit-forbid-overlay-replaces-the-default-for-that-trust
   (let [policy* (policy/parse-policy {:aiueos/forbid {:untrusted #{}}})
         m {:aiueos/component :app/wants-secrets :aiueos/kind :app :aiueos/trust :untrusted
