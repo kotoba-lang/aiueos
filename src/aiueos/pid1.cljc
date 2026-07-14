@@ -179,12 +179,18 @@
      ([boot-config up-fn poweroff-fn arena]
       (boot! boot-config up-fn poweroff-fn arena 1000))
      ([boot-config up-fn poweroff-fn arena reap-interval-ms]
-      (up-fn (:aiueos/system boot-config) (:aiueos/policy boot-config))
-      (let [shutdown (promise)]
-        (install-shutdown-handler! shutdown)
-        (loop []
-          (reap-all-zombies! arena)
-          (if (realized? shutdown)
-            (poweroff-fn)
-            (do (Thread/sleep ^long reap-interval-ms)
-                (recur))))))))
+      (let [result (up-fn (:aiueos/system boot-config) (:aiueos/policy boot-config))]
+        (when (and (map? result) (false? (:aiueos.cli/ok? result)))
+          (throw (ex-info "aiueos component boot failed" {:result result}))))
+      (println "AIUEOS_BOOT_OK")
+      (flush)
+      (if (:aiueos/shutdown-after-boot? boot-config)
+        (do (poweroff-fn) :shutdown-after-boot)
+        (let [shutdown (promise)]
+          (install-shutdown-handler! shutdown)
+          (loop []
+            (reap-all-zombies! arena)
+            (if (realized? shutdown)
+              (poweroff-fn)
+              (do (Thread/sleep ^long reap-interval-ms)
+                  (recur)))))))))

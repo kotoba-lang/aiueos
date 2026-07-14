@@ -306,7 +306,9 @@
        "build"
        (let [system-path (second positionals)
              p (image/plan {:system system-path :policy (:policy options)
-                             :out (:out options) :jre-dir (:jre-dir options) :jar (:jar options)})]
+                             :out (:out options) :jre-dir (:jre-dir options) :jar (:jar options)
+                             :runtime-root (:runtime-root options)
+                             :shutdown-after-boot? (:shutdown-after-boot options)})]
          (if edn?
            (println (pr-str p))
            (do
@@ -329,6 +331,7 @@
      (case (first positionals)
        "boot"
        (let [p (vm/plan {:kernel (:kernel options) :initramfs (:initramfs options)
+                          :arch (:arch options) :accel (:accel options)
                           :memory (:memory options) :cpus (:cpus options) :cmdline (:cmdline options)
                           :graphics (:graphics options) :display (:display options)
                           :block (:block options) :console (:console options)

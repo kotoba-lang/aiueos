@@ -70,3 +70,22 @@
                      10))
        (is (= [["/etc/aiueos/system" nil]] @up-calls))
        (is (= 1 @poweroff-calls)))))
+
+#?(:clj
+   (deftest boot-smoke-mode-powers-off-immediately-after-success
+     (let [poweroff-calls (atom 0)]
+       (with-open [arena (Arena/ofConfined)]
+         (is (= :shutdown-after-boot
+                (pid1/boot! {:aiueos/system "/system"
+                             :aiueos/shutdown-after-boot? true}
+                            (fn [_ _] {:aiueos.cli/ok? true})
+                            (fn [] (swap! poweroff-calls inc)) arena 1))))
+       (is (= 1 @poweroff-calls)))))
+
+#?(:clj
+   (deftest boot-refuses-failed-component-graph
+     (with-open [arena (Arena/ofConfined)]
+       (is (thrown? Exception
+                    (pid1/boot! {:aiueos/system "/system"}
+                                (fn [_ _] {:aiueos.cli/ok? false})
+                                (fn [] nil) arena 1))))))

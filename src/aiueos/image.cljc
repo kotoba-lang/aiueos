@@ -50,6 +50,8 @@
         :policy policy
         :jre-dir (some-> (:jre-dir opts) io/file)
         :jar (some-> (:jar opts) io/file)
+        :runtime-root (some-> (:runtime-root opts) io/file)
+        :shutdown-after-boot? (boolean (:shutdown-after-boot? opts))
         :out out
         :guest-system (guest-system-path system-file)
         :guest-policy (when policy default-guest-policy-path)})))
@@ -77,7 +79,8 @@
 #?(:clj
    (defn- boot-edn [p]
      (pr-str (cond-> {:aiueos/system (:guest-system p)}
-               (:guest-policy p) (assoc :aiueos/policy (:guest-policy p))))))
+               (:guest-policy p) (assoc :aiueos/policy (:guest-policy p))
+               (:shutdown-after-boot? p) (assoc :aiueos/shutdown-after-boot? true)))))
 
 #?(:clj
    (defn- init-script
@@ -87,7 +90,35 @@
      the retired Rust binary, `/init` here can't be the JVM's own binary --
      there isn't one -- so it execs into `/jre/bin/java`)."
      []
-     "#!/jre/bin/java -cp /aiueos.jar clojure.main -m aiueos.launcher\n"))
+     "#!/jre/bin/java @/aiueos.args\n"))
+
+#?(:clj
+   (defn- elf-file? [f]
+     (when (and f (.isFile ^java.io.File f))
+       (with-open [in (java.io.FileInputStream. ^java.io.File f)]
+         (let [b (byte-array 4)]
+           (and (= 4 (.read in b))
+                (= [0x7f (int \E) (int \L) (int \F)]
+                   (mapv #(bit-and 0xff %) b))))))))
+
+#?(:clj
+   (defn validate-boot-inputs!
+     "Fail before packaging an initramfs which cannot execute `/init`."
+     [p]
+     (doseq [[kind f] [[:system (:system p)] [:jre-dir (:jre-dir p)] [:jar (:jar p)]]]
+       (when-not (and f (.exists ^java.io.File f))
+         (throw (ex-info (str "missing boot input " (name kind)) {:kind kind :path (some-> f .getPath)}))))
+     (let [java (io/file (:jre-dir p) "bin" "java")]
+       (when-not (.canExecute java)
+         (throw (ex-info "staged JRE has no executable bin/java" {:path (.getPath java)})))
+       (when-not (elf-file? java)
+         (throw (ex-info "guest JRE bin/java must be a Linux ELF executable" {:path (.getPath java)}))))
+     (when-not (and (:runtime-root p) (.isDirectory ^java.io.File (:runtime-root p)))
+       (throw (ex-info "Linux runtime root with ELF loader/shared libraries is required"
+                       {:path (some-> (:runtime-root p) .getPath)})))
+     (when-not (.isFile ^java.io.File (:jar p))
+       (throw (ex-info "aiueos jar is not a regular file" {:path (.getPath ^java.io.File (:jar p))})))
+     p))
 
 #?(:clj
    (defn build-initramfs!
@@ -99,6 +130,7 @@
      shell status, and a cleanup failure after a successful build was still
      surfaced -- not the reverse)."
      [p]
+     (validate-boot-inputs! p)
      (let [out ^java.io.File (:out p)
            _ (.mkdirs (.getParentFile out))
            stage (io/file (.getParentFile out) (str ".stage-" (.pid (java.lang.ProcessHandle/current))
@@ -112,7 +144,10 @@
          (let [init-file (io/file stage "init")]
            (spit init-file (init-script))
            (.setExecutable init-file true false))
+         (spit (io/file stage "aiueos.args")
+               "--enable-native-access=ALL-UNNAMED\n-cp\n/aiueos.jar\nclojure.main\n-m\naiueos.launcher\n")
          (when-let [jre-dir (:jre-dir p)] (copy-dir-filtered! jre-dir (io/file stage "jre")))
+         (when-let [runtime-root (:runtime-root p)] (copy-dir-filtered! runtime-root stage))
          (when-let [jar (:jar p)] (io/copy jar (io/file stage "aiueos.jar")))
          (let [{:keys [exit err]}
                (shell/sh "sh" "-c"
