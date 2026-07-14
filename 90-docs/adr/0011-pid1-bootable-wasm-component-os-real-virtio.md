@@ -77,7 +77,7 @@ directly in `.kotoba` today.
 
 ## Decision
 
-### Phase 0 (this ADR, in progress): PID-1 under a Linux-kernel guest VM, with real virtio device access via VFIO
+### Phase 0 (this ADR, in progress): PID-1 under a Linux-kernel guest VM, with an experimental VFIO provider
 
 Keep Linux as the boot kernel and virtqueue-owning driver stack for the *guest
 VM as a whole* (matching ADR-0008 — this is not the bare-metal microkernel
@@ -132,12 +132,14 @@ VM firmware -> Linux kernel -> initramfs -> /init = aiueos tender (JVM/kototama,
   express (see prerequisite below). virtio-gpu request planning did not exist
   even in the old Rust (only the `DeviceType::Gpu` enum case) and is greenfield
   in this port, same as the VFIO binding itself.
-- Capability manifests gate real hardware access exactly as they already gate
+- Capability manifests define how hardware access will be gated
   everything else: a component needs `:aiueos/imports #{:mmio/map :dma/map
   :irq/subscribe :pci/config}` and `:aiueos/requires #{:iommu}` granted by
-  policy before the tender will hand it a live VFIO-backed handle — this is
-  not new design, it's `kotoba-core-contracts`' existing IDs 215-218 finally
-  getting a real backend instead of the deterministic stub.
+  policy before the tender may hand it a live VFIO-backed handle. In this
+  implementation `aiueos.vfio` is a provider primitive only: `aiueos.execute`
+  still binds IDs 215-218 to deterministic stubs and no production path passes
+  a VFIO handle to a Wasm component. Wiring that boundary and testing
+  revocation/teardown is required before claiming a component-visible backend.
 - `aiueos.image` (cpio `newc` initramfs builder + `boot.edn` generation) and
   `aiueos.vm` (QEMU invocation: kernel/initramfs/cmdline, `--block`/`--console`/
   `--graphics virtio-gpu` device flags) replace `launcher.cljc`'s two
@@ -188,9 +190,9 @@ project-scale ADR of its own — not attempted in this pass.
 - (+) Directly executes the specific unstarted follow-up ADR-2607022400 named
   ("kototama actually running as a tender"), scoped to what's reachable without
   a bare-metal boot stub, rather than inventing a new architecture.
-- (+) `kotoba-core-contracts`' capability IDs 215-218 go from deterministic
-  stubs to real, capability-gated hardware access without any new policy/gate
-  machinery — the manifest model already anticipated this.
+- (+) `kotoba-core-contracts`' capability IDs 215-218 already supply the policy
+  vocabulary needed to wire the VFIO provider later; they remain deterministic
+  stubs at the component execution boundary in this phase.
 - (+) ~85% of the retired `virtio.rs` protocol logic is a near-mechanical port,
   not new design, because it was already trait-abstracted over register I/O.
 - (−) Real MMIO/DMA/PCI/IRQ access (the VFIO binding) is greenfield in every
@@ -207,9 +209,8 @@ project-scale ADR of its own — not attempted in this pass.
 ## References
 
 - `90-docs/adr/0008-bootable-image-and-virtio-guest-drivers.md` (superseded in
-  part by this ADR: the boot-image path is restored in CLJC; the virtio guest
-  driver stance is superseded — VFIO gives real hardware access this ADR
-  commits to, where 0008 left it a stub).
+  part by this ADR: image/QEMU planning and virtio protocol logic are restored;
+  an end-to-end VFIO-backed component path is not yet implemented).
 - `com-junkawasaki/90-docs/adr/2607022400-kototama-unikernel-tender-runtime-vocabulary.md`
   (tender/guest split this ADR implements against).
 - `resources/kotoba/runtime/capability_contract.edn` (capability IDs 215-218).

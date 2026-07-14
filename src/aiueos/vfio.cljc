@@ -68,16 +68,16 @@
 (def vfio-base 100)
 
 (def ioctl-get-api-version (io- vfio-type (+ vfio-base 0)))
-(def ioctl-check-extension (iow vfio-type (+ vfio-base 1) 4))
-(def ioctl-set-iommu (iow vfio-type (+ vfio-base 2) 4))
-(def ioctl-group-get-status (ior vfio-type (+ vfio-base 3) 8))
-(def ioctl-group-set-container (iow vfio-type (+ vfio-base 4) 4))
+(def ioctl-check-extension (io- vfio-type (+ vfio-base 1)))
+(def ioctl-set-iommu (io- vfio-type (+ vfio-base 2)))
+(def ioctl-group-get-status (io- vfio-type (+ vfio-base 3)))
+(def ioctl-group-set-container (io- vfio-type (+ vfio-base 4)))
 (def ioctl-group-get-device-fd (io- vfio-type (+ vfio-base 6)))
-(def ioctl-device-get-info (ior vfio-type (+ vfio-base 7) 32))
-(def ioctl-device-get-region-info (iowr vfio-type (+ vfio-base 8) 32))
-(def ioctl-device-set-irqs-base (iow vfio-type (+ vfio-base 10) 20))
-(def ioctl-iommu-map-dma (iow vfio-type (+ vfio-base 13) 32))
-(def ioctl-iommu-unmap-dma (iowr vfio-type (+ vfio-base 14) 24))
+(def ioctl-device-get-info (io- vfio-type (+ vfio-base 7)))
+(def ioctl-device-get-region-info (io- vfio-type (+ vfio-base 8)))
+(def ioctl-device-set-irqs-base (io- vfio-type (+ vfio-base 10)))
+(def ioctl-iommu-map-dma (io- vfio-type (+ vfio-base 13)))
+(def ioctl-iommu-unmap-dma (io- vfio-type (+ vfio-base 14)))
 
 (def vfio-type1-iommu 1)
 (def vfio-pci-config-region-index 7)
@@ -143,6 +143,8 @@
        (lib-fn "close" (fdesc ValueLayout/JAVA_INT [ValueLayout/JAVA_INT])))
      (def ^:private c-ioctl-ptr
        (lib-fn "ioctl" (fdesc ValueLayout/JAVA_INT [ValueLayout/JAVA_INT ValueLayout/JAVA_LONG ValueLayout/ADDRESS])))
+     (def ^:private c-ioctl-value
+       (lib-fn "ioctl" (fdesc ValueLayout/JAVA_INT [ValueLayout/JAVA_INT ValueLayout/JAVA_LONG ValueLayout/JAVA_LONG])))
      (def ^:private c-mmap
        (lib-fn "mmap" (fdesc ValueLayout/ADDRESS [ValueLayout/ADDRESS ValueLayout/JAVA_LONG
                                                    ValueLayout/JAVA_INT ValueLayout/JAVA_INT ValueLayout/JAVA_INT ValueLayout/JAVA_LONG])))
@@ -191,6 +193,15 @@
              (throw (ex-info "ioctl (int arg) failed" {:fd fd :request request :value value})))
            rc)))
 
+     (defn- ioctl-value
+       "Invoke a VFIO ioctl whose third argument is an integer value."
+       [fd request value]
+       (let [rc (int (invoke-h c-ioctl-value (int fd) (long request) (long value)))]
+         (when (neg? rc)
+           (throw (ex-info "ioctl (value arg) failed"
+                           {:fd fd :request request :value value})))
+         rc))
+
      (defn- ioctl-struct
        "`ioctl(fd, request, buf)` where `buf` is `size` bytes, pre-populated by
        `init!` (a `(fn [seg])`, may be a no-op); returns the raw `MemorySegment`
@@ -225,7 +236,9 @@
              version (int (invoke-h c-ioctl-ptr (int fd) (long ioctl-get-api-version) MemorySegment/NULL))]
          (when (neg? version)
            (throw (ex-info "VFIO_GET_API_VERSION failed" {})))
-         (ioctl-int arena fd ioctl-check-extension vfio-type1-iommu)
+         (when (zero? (ioctl-value fd ioctl-check-extension vfio-type1-iommu))
+           (vfio-close fd)
+           (throw (ex-info "VFIO TYPE1 IOMMU extension is unavailable" {})))
          fd))
 
      (defn open-group
@@ -242,7 +255,7 @@
            (throw (ex-info (str "VFIO group " group-id " is not viable -- not every device in it is bound to vfio-pci")
                             {:group-id group-id :flags flags})))
          (ioctl-int arena fd ioctl-group-set-container container-fd)
-         (ioctl-int arena container-fd ioctl-set-iommu vfio-type1-iommu)
+         (ioctl-value container-fd ioctl-set-iommu vfio-type1-iommu)
          fd))
 
      (defn get-device-fd
@@ -272,6 +285,9 @@
        (let [addr (invoke-h c-mmap MemorySegment/NULL (long size)
                             (int (bit-or prot-read prot-write)) (int map-shared)
                             (int device-fd) (long mmap-offset))]
+         (when (= -1 (.address ^MemorySegment addr))
+           (throw (ex-info "mmap VFIO region failed"
+                           {:device-fd device-fd :size size :offset mmap-offset})))
          (.reinterpret ^MemorySegment addr arena size)))
 
      (defn unmap-region!
@@ -331,7 +347,7 @@
        [^Arena arena device-fd index eventfd-fd]
        (let [header (:header-size irq-set-header-layout)
              total (+ header 4)
-             request (iow vfio-type (+ vfio-base 10) total)]
+             request ioctl-device-set-irqs-base]
          (ioctl-struct arena device-fd request total
                        (fn [s]
                          (seg-set-i32 s (:argsz irq-set-header-layout) total)

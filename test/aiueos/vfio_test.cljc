@@ -10,24 +10,19 @@
 (deftest ioctl-numbers-match-real-linux-vfio-uapi
   (testing "VFIO_GET_API_VERSION = _IO(';', 100)"
     (is (= 0x3b64 vfio/ioctl-get-api-version)))
-  (testing "VFIO_CHECK_EXTENSION = _IOW(';', 101, __u32)"
-    (is (= 0x40043b65 vfio/ioctl-check-extension)))
-  (testing "VFIO_SET_IOMMU = _IOW(';', 102, __s32)"
-    (is (= 0x40043b66 vfio/ioctl-set-iommu)))
-  (testing "VFIO_GROUP_GET_STATUS = _IOR(';', 103, struct vfio_group_status[8])"
-    (is (= 0x80083b67 vfio/ioctl-group-get-status)))
-  (testing "VFIO_GROUP_SET_CONTAINER = _IOW(';', 104, __s32)"
-    (is (= 0x40043b68 vfio/ioctl-group-set-container)))
+  (testing "VFIO extensible argsz requests all use _IO in linux/vfio.h"
+    (is (= 0x3b65 vfio/ioctl-check-extension))
+    (is (= 0x3b66 vfio/ioctl-set-iommu))
+    (is (= 0x3b67 vfio/ioctl-group-get-status))
+    (is (= 0x3b68 vfio/ioctl-group-set-container)))
   (testing "VFIO_GROUP_GET_DEVICE_FD = _IO(';', 106)"
     (is (= 0x3b6a vfio/ioctl-group-get-device-fd)))
-  (testing "VFIO_DEVICE_GET_INFO = _IOR(';', 107, struct vfio_device_info[32])"
-    (is (= 0x80203b6b vfio/ioctl-device-get-info)))
-  (testing "VFIO_DEVICE_GET_REGION_INFO = _IOWR(';', 108, struct vfio_region_info[32])"
-    (is (= 0xc0203b6c vfio/ioctl-device-get-region-info)))
-  (testing "VFIO_IOMMU_MAP_DMA = _IOW(';', 113, struct vfio_iommu_type1_dma_map[32])"
-    (is (= 0x40203b71 vfio/ioctl-iommu-map-dma)))
-  (testing "VFIO_IOMMU_UNMAP_DMA = _IOWR(';', 114, struct vfio_iommu_type1_dma_unmap[24])"
-    (is (= 0xc0183b72 vfio/ioctl-iommu-unmap-dma))))
+  (testing "struct requests also use _IO; argsz carries the versioned size"
+    (is (= 0x3b6b vfio/ioctl-device-get-info))
+    (is (= 0x3b6c vfio/ioctl-device-get-region-info))
+    (is (= 0x3b6e vfio/ioctl-device-set-irqs-base))
+    (is (= 0x3b71 vfio/ioctl-iommu-map-dma))
+    (is (= 0x3b72 vfio/ioctl-iommu-unmap-dma))))
 
 (deftest ioc-helper-shapes
   (is (= (vfio/io- 59 100) (vfio/ioc 0 59 100 0)))

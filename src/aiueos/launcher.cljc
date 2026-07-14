@@ -284,6 +284,17 @@
        :else (println (pr-str result)))))
 
 #?(:clj
+   (defn verify-system-for-image!
+     "Refuse to package a system which the broker would deny."
+     [system-path policy-path]
+     (let [decision (broker/verify-system (load-system system-path) (load-policy policy-path))]
+       (when (= :deny (:aiueos/decision decision))
+         (throw (ex-info (str system-path ": system would not be grantable as a whole")
+                         {:aiueos.image/denied true
+                          :aiueos/violations (:aiueos/violations decision)})))
+       decision)))
+
+#?(:clj
    (defn- image-command
      "`image build <system-path> [--policy <p>] [--out <p>] [--jre-dir <d>]
      [--jar <j>] [--edn]` -- ADR-0011, replacing the retired Rust
@@ -293,11 +304,14 @@
      [positionals options edn?]
      (case (first positionals)
        "build"
-       (let [p (image/plan {:system (second positionals) :policy (:policy options)
+       (let [system-path (second positionals)
+             p (image/plan {:system system-path :policy (:policy options)
                              :out (:out options) :jre-dir (:jre-dir options) :jar (:jar options)})]
          (if edn?
            (println (pr-str p))
-           (println (str "initramfs: " (:out (image/build-initramfs! p))))))
+           (do
+             (verify-system-for-image! system-path (:policy options))
+             (println (str "initramfs: " (:out (image/build-initramfs! p)))))))
        (do (binding [*out* *err*]
              (println "aiueos image: supported subcommand: build <system-path>"))
            (System/exit 2)))))
