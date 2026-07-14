@@ -12,9 +12,11 @@ repository.
 
 `aiueos` no longer owns a Rust runtime crate — Chicory (a pure-JVM Wasm
 runtime) lets the decision *and* Wasm-execution layers both live here in
-CLJC, for everything except real hardware access (the device-access quartet's
-raw MMIO/DMA/PCI/IRQ handling, the retired `virtio.rs` driver, and
-VM/initramfs provisioning stay genuinely out of scope). Rust, JavaScript,
+CLJC. Linux-hosted PID-1/initramfs planning, QEMU launch planning, portable
+virtio protocol logic, and an experimental JVM-FFM VFIO provider live here.
+The VFIO provider is not yet wired into the component host-import quartet, so
+component-visible raw MMIO/DMA/PCI/IRQ remains stubbed. Bare-metal boot and a
+native kernel remain out of scope for this repository. Rust, JavaScript,
 Python, Svelte, or host-specific code may consume this contract as
 adapters/providers elsewhere (e.g. `kotoba-lang/kototama`'s
 `kototama.aiueos-adapter`), but they are not authority here — this repo
@@ -85,7 +87,8 @@ decides, it does not host other systems' execution.
   aiueos.launcher up <system>.edn --cycle 3 --edn`. **`:aiueos/schedule`'s
   `:deadline-cycles` is NOT enforced** — see `aiueos.manifest/due-this-cycle?`'s
   docstring for why. **JVM-only**, same reason as `aiueos.execute`. Not wired:
-  the adapter-only six (`sign`/`check`/`compile`/`hash`/`image`/`vm`).
+  four adapter-only commands (`sign`/`check`/`compile`/`hash`). `image` and
+  `vm` are wired for the experimental Linux-hosted PID-1 profile (ADR-0011).
 - `resources/aiueos/component_boundary.edn` owns the component imports/exports.
 - `resources/aiueos/policy_contract.edn` / `broker_contract.edn` own the policy/broker decision tables.
 - `resources/aiueos/cli.edn` owns the CLI command/option contract.
