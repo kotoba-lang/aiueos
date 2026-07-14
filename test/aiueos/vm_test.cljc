@@ -12,6 +12,13 @@
     (is (= "pl011" (:console p)))
     (is (= "qemu-system-aarch64" (:qemu-binary p)))))
 
+(deftest x86-profile-has-q35-and-serial-console
+  (let [p (vm/plan {:kernel "bzImage" :initramfs "init.cpio.gz" :arch "x86_64" :accel "tcg"})
+        a (vm/argv p)]
+    (is (= "qemu-system-x86_64" (:qemu-binary p)))
+    (is (= "console=ttyS0 panic=0 rdinit=/init" (:cmdline p)))
+    (is (some #{"q35,accel=tcg"} a))))
+
 (deftest plan-requires-kernel-and-initramfs
   (is (thrown? #?(:clj Exception :cljs js/Error) (vm/plan {:initramfs "init.cpio.gz"})))
   (is (thrown? #?(:clj Exception :cljs js/Error) (vm/plan {:kernel "Image"}))))
@@ -32,7 +39,7 @@
 
 (deftest argv-shape-minimal
   (let [p (vm/plan {:kernel "Image" :initramfs "init.cpio.gz"})]
-    (is (= ["qemu-system-aarch64" "-machine" "virt,accel=hvf" "-cpu" "host"
+    (is (= ["qemu-system-aarch64" "-machine" (str "virt,accel=" (#'vm/accel-name p)) "-cpu" "host"
             "-smp" "2" "-m" "1024M" "-nographic"
             "-kernel" "Image" "-initrd" "init.cpio.gz"
             "-append" "console=ttyAMA0 panic=0 rdinit=/init"]
@@ -58,5 +65,11 @@
 #?(:clj
    (deftest boot-throws-on-nonzero-exit
      (testing "qemu-binary overridden to a command guaranteed to fail fast"
-       (is (thrown? Exception
-                    (vm/boot! (assoc (vm/plan {:kernel "Image" :initramfs "i.gz"}) :qemu-binary "false")))))))
+       (let [kernel (java.io.File/createTempFile "kernel" "")
+             initrd (java.io.File/createTempFile "initrd" "")]
+         (try
+           (is (thrown? Exception
+                        (vm/boot! (assoc (vm/plan {:kernel (.getPath kernel)
+                                                   :initramfs (.getPath initrd)})
+                                         :qemu-binary "false"))))
+           (finally (.delete kernel) (.delete initrd)))))))

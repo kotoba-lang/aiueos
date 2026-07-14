@@ -24,6 +24,24 @@
   (is (thrown? #?(:clj Exception :cljs js/Error) (image/plan {}))))
 
 #?(:clj
+   (defn- boot-plan [^File dir out]
+     (let [jre (File. dir "jre")
+           java (File. jre "bin/java")
+           jar (File. dir "aiueos.jar")
+           runtime-root (File. dir "runtime-root")]
+       (.mkdirs (.getParentFile java))
+       (with-open [out (java.io.FileOutputStream. java)]
+         (.write out (byte-array [(byte 0x7f) (byte (int \E)) (byte (int \L)) (byte (int \F))])))
+       (.setExecutable java true false)
+       (spit jar "fake-jar")
+       (.mkdirs runtime-root)
+       (image/plan {:system (.getPath (File. dir "system.edn"))
+                    :jre-dir (.getPath jre)
+                    :jar (.getPath jar)
+                    :runtime-root (.getPath runtime-root)
+                    :out (.getPath out)}))))
+
+#?(:clj
    (deftest plan-defaults-guest-paths-and-out
      (let [dir (temp-dir!)]
        (try
@@ -51,8 +69,7 @@
        (try
          (spit (File. dir "system.edn") "{:aiueos/components []}")
          (let [out (File. dir "out.initramfs.cpio.gz")
-               p (image/plan {:system (.getPath (File. dir "system.edn"))
-                               :out (.getPath out)})
+               p (boot-plan dir out)
                result (image/build-initramfs! p)]
            (testing "the gzip file exists and is non-trivially sized"
              (is (.exists out))
@@ -73,8 +90,7 @@
        (try
          (spit (File. dir "system.edn") "{:aiueos/components []}")
          (let [out (File. dir "out.initramfs.cpio.gz")
-               p (image/plan {:system (.getPath (File. dir "system.edn"))
-                               :out (.getPath out)})
+               p (boot-plan dir out)
                _ (image/build-initramfs! p)
                listing (:out (shell/sh "sh" "-c"
                                        (str "gzip -dc " (pr-str (.getPath out)) " | cpio -it")))]
@@ -82,5 +98,17 @@
            (is (re-find #"etc/aiueos/system/system\.edn" listing))
            ;; GNU cpio (Linux CI) lists `find .`'s entries without the `./`
            ;; prefix bsdcpio (macOS) keeps -- accept either.
-           (is (re-find #"(?m)^\.?/?init$" listing)))
+           (is (re-find #"(?m)^\.?/?init$" listing))
+           (is (re-find #"(?m)^\.?/?aiueos\.args$" listing)))
+         (finally (delete-tree! dir))))))
+
+#?(:clj
+   (deftest build-refuses-missing-jre-and-jar
+     (let [dir (temp-dir!)]
+       (try
+         (spit (File. dir "system.edn") "{:aiueos/components []}")
+         (is (thrown? Exception
+                      (image/build-initramfs!
+                       (image/plan {:system (.getPath (File. dir "system.edn"))
+                                    :out (.getPath (File. dir "bad.cpio.gz"))}))))
          (finally (delete-tree! dir))))))

@@ -115,6 +115,32 @@ clojure -M:test   # full suite, including aiueos.execute-test (Chicory, JVM-only
 bb test:cljc      # everything except aiueos.execute-test
 ```
 
+## Linux-hosted VM bundle
+
+The VM image needs a Linux JRE and its ELF loader/shared libraries; a macOS
+`jlink` runtime cannot run in the guest. Build the cross-host bundle with:
+
+```bash
+scripts/build-linux-bundle.sh aarch64   # or x86_64
+```
+
+Then provide a matching Linux kernel and system graph:
+
+```bash
+AIUEOS_ARCH=aarch64 \
+AIUEOS_KERNEL=/path/to/Linux/Image \
+AIUEOS_SYSTEM=/path/to/system.aiueos.edn \
+scripts/vm-smoke.sh
+```
+
+The smoke image embeds `/jre`, `/aiueos.jar`, the Linux dynamic loader/libs,
+and an argfile-based `/init`. PID 1 prints `AIUEOS_BOOT_OK` after the component
+graph starts and powers the disposable VM off. `image build` rejects missing
+JRE/JAR/runtime-root inputs and rejects a non-ELF guest Java executable.
+
+This is the ADR-0011 Linux-hosted profile, not the bare-metal kernel described
+by the product integration ADR in `kotoba-lang/kotoba`.
+
 ## Maturity
 
 Tracked M0-M6 in `docs/coverage.edn` (template borrowed from

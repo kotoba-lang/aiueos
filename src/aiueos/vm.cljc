@@ -13,6 +13,10 @@
 
 (def known-graphics #{"none" "virtio-gpu"})
 (def known-console #{"pl011" "virtio-console"})
+(def known-architectures #{"aarch64" "x86_64"})
+
+(defn- default-qemu [arch]
+  (str "qemu-system-" arch))
 
 (defn plan
   "Pure planning step: validate and default every QEMU flag. `opts`:
@@ -29,7 +33,11 @@
   [opts]
   (when-not (:kernel opts) (throw (ex-info "vm boot needs :kernel" {:opts opts})))
   (when-not (:initramfs opts) (throw (ex-info "vm boot needs :initramfs" {:opts opts})))
-  (let [graphics (or (:graphics opts) "none")
+  (let [arch (or (:arch opts) "aarch64")
+        _ (when-not (contains? known-architectures arch)
+            (throw (ex-info (str "unknown architecture " arch) {:arch arch})))
+        accel (or (:accel opts) "auto")
+        graphics (or (:graphics opts) "none")
         _ (when-not (contains? known-graphics graphics)
             (throw (ex-info (str "unknown :graphics `" graphics "` (known: " known-graphics ")") {:graphics graphics})))
         display (or (:display opts) (if (= graphics "virtio-gpu") "cocoa" "none"))
@@ -40,22 +48,45 @@
             (throw (ex-info (str "unknown :console `" console "` (known: " known-console ")") {:console console})))]
     {:kernel (:kernel opts)
      :initramfs (:initramfs opts)
+     :arch arch
+     :accel accel
      :memory (or (:memory opts) "1024M")
      :cpus (or (:cpus opts) "2")
-     :cmdline (or (:cmdline opts) "console=ttyAMA0 panic=0 rdinit=/init")
+     :cmdline (or (:cmdline opts) (if (= arch "x86_64")
+                                    "console=ttyS0 panic=0 rdinit=/init"
+                                    "console=ttyAMA0 panic=0 rdinit=/init"))
      :graphics graphics
      :display display
      :block (:block opts)
      :console console
      :console-socket (or (:console-socket opts) "aiueos-console.sock")
-     :qemu-binary (or (:qemu-binary opts) "qemu-system-aarch64")}))
+     :qemu-binary (or (:qemu-binary opts) (default-qemu arch))}))
+
+(defn- accel-name [p]
+  (if (= "auto" (:accel p))
+    (case #?(:clj (System/getProperty "os.name") :cljs "other")
+      "Mac OS X" "hvf"
+      "Linux" "kvm:tcg"
+      "tcg")
+    (:accel p)))
+
+#?(:clj
+   (defn validate-boot-inputs! [p]
+     (doseq [[kind path] [[:kernel (:kernel p)] [:initramfs (:initramfs p)]]]
+       (when-not (.isFile (java.io.File. ^String path))
+         (throw (ex-info (str "missing VM boot input " (name kind)) {:kind kind :path path}))))
+     p))
 
 (defn argv
   "The full QEMU argv (a vector of strings) for `p` (from `plan`)."
   [p]
   (vec
    (concat
-    [(:qemu-binary p) "-machine" "virt,accel=hvf" "-cpu" "host"
+    [(:qemu-binary p) "-machine" (str (if (= "x86_64" (:arch p)) "q35" "virt")
+                                        ",accel=" (accel-name p))
+     "-cpu" (if (= "tcg" (accel-name p))
+              (if (= "x86_64" (:arch p)) "max" "max")
+              "host")
      "-smp" (:cpus p) "-m" (:memory p)]
     (if (= (:graphics p) "virtio-gpu")
       ["-display" (:display p) "-device" "virtio-gpu-pci"]
@@ -83,6 +114,7 @@
      terminal directly, matching the retired Rust's `std::process::Command`
      use). Blocks until QEMU exits; throws if it exits non-zero."
      [p]
+     (validate-boot-inputs! p)
      (let [pb (ProcessBuilder. ^java.util.List (argv p))
            _ (.inheritIO pb)
            process (.start pb)
