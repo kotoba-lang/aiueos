@@ -120,6 +120,12 @@ transaction and journal metadata and checksums with bounded stores. The native
 virtio-blk substrate supplies the observed states, commits the journal before
 materialization, and verifies readback/replay. Its pinned object SHA-256 is
 `70eee5d4dd599ea2049261e92a656931768b355eefc0fb6d83deee192a3a05f0`.
+After the common Kotoba transaction checksum validator passes,
+`service-registry-state` validates the complete `SRV1` routing/schema contract
+and returns either indexed state.
+Its fixed-stack object SHA-256 is
+`d73f13de0d86a4af46e33516b8b0f6358b5d477307c61d40624b971f34c15f3e`,
+so the native substrate no longer parses service registry payload bytes.
 
 `user-object-journal-build` defines the compiler-checked journal schema for
 domain-owned objects. User tasks submit capability 4 writes and read capability

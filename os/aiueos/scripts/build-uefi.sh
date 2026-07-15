@@ -45,6 +45,7 @@ kotoba_copy_in_object=${AIUEOS_KOTOBA_COPY_IN_OBJECT:-"$aiueos/kotoba/copy-in.o"
 kotoba_capability_object=${AIUEOS_KOTOBA_CAPABILITY_OBJECT:-"$aiueos/kotoba/capability-plan.o"}
 kotoba_service_lifecycle_object=${AIUEOS_KOTOBA_SERVICE_LIFECYCLE_OBJECT:-"$aiueos/kotoba/service-lifecycle.o"}
 kotoba_service_registry_object=${AIUEOS_KOTOBA_SERVICE_REGISTRY_OBJECT:-"$aiueos/kotoba/service-registry-build.o"}
+kotoba_service_registry_state_object=${AIUEOS_KOTOBA_SERVICE_REGISTRY_STATE_OBJECT:-"$aiueos/kotoba/service-registry-state.o"}
 kotoba_user_object_journal_object=${AIUEOS_KOTOBA_USER_OBJECT_JOURNAL_OBJECT:-"$aiueos/kotoba/user-object-journal-build.o"}
 kotoba_user_object_journal_valid_object=${AIUEOS_KOTOBA_USER_OBJECT_JOURNAL_VALID_OBJECT:-"$aiueos/kotoba/user-object-journal-valid.o"}
 kotoba_user_object_journal_value_object=${AIUEOS_KOTOBA_USER_OBJECT_JOURNAL_VALUE_OBJECT:-"$aiueos/kotoba/user-object-journal-value.o"}
@@ -119,6 +120,9 @@ python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_service_lifecy
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_service_registry_object" \
   70eee5d4dd599ea2049261e92a656931768b355eefc0fb6d83deee192a3a05f0 \
   kotoba_aiueos_service_registry_build
+python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_service_registry_state_object" \
+  d73f13de0d86a4af46e33516b8b0f6358b5d477307c61d40624b971f34c15f3e \
+  kotoba_aiueos_service_registry_state
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_user_object_journal_object" \
   994d8a296d17afa67a8c9267cafa6079edca5068aeed46e78d8f455a40df1cfd \
   kotoba_aiueos_user_object_journal_build
@@ -195,7 +199,8 @@ zig ld.lld -nostdlib -static -z max-page-size=0x1000 \
   "$kotoba_extent_valid_object" "$kotoba_region_valid_object" \
   "$kotoba_syscall_range_object" "$kotoba_copy_in_object" \
   "$kotoba_capability_object" "$kotoba_service_lifecycle_object" \
-  "$kotoba_service_registry_object" "$kotoba_user_object_journal_object" \
+  "$kotoba_service_registry_object" "$kotoba_service_registry_state_object" \
+  "$kotoba_user_object_journal_object" \
   "$kotoba_user_object_journal_valid_object" \
   "$kotoba_user_object_journal_value_object"
 python3 - "$kernel" "$identity_source" <<'PY'
