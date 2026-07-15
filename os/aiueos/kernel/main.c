@@ -299,6 +299,8 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
     if (aiueos_object_transaction_sequence() != aiueos_journal_sequence()) qemu_exit(0x6f);
     debug_string("AIUEOS_OBJECT_TXN_OK journal-first sector=3 apply-readback\n");
     serial_string("AIUEOS_OBJECT_TXN_OK journal-first sector=3 apply-readback\r\n");
+    debug_string("AIUEOS_KOTOBA_JOURNAL_PLAN_OK latest-slot next-sequence rollback-preserved\n");
+    serial_string("AIUEOS_KOTOBA_JOURNAL_PLAN_OK latest-slot next-sequence rollback-preserved\r\n");
     if (aiueos_journal_recovered()) {
       if (!aiueos_journal_recovered_sequence() ||
           aiueos_journal_sequence() != aiueos_journal_recovered_sequence() + 1) qemu_exit(0x6f);

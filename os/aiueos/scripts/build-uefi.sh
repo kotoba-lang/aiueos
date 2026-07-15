@@ -27,6 +27,11 @@ kernel_trampoline_object="$out/kernel-ap-trampoline.o"
 kernel_ioapic_object="$out/kernel-ioapic.o"
 kernel_framebuffer_object="$out/kernel-framebuffer.o"
 kotoba_kernel_object=${AIUEOS_KOTOBA_KERNEL_OBJECT:-"$aiueos/kotoba/kernel-probe.o"}
+kotoba_journal_object=${AIUEOS_KOTOBA_JOURNAL_OBJECT:-"$aiueos/kotoba/journal-plan.o"}
+kotoba_journal_sha=
+if [ -z "${AIUEOS_KOTOBA_JOURNAL_OBJECT:-}" ]; then
+  kotoba_journal_sha=c24c7bdab170d65624c1ee2cb939b949c94750b651f59b5aa7d4bc192ec62df6
+fi
 kotoba_kernel_sha=
 if [ -z "${AIUEOS_KOTOBA_KERNEL_OBJECT:-}" ]; then
   kotoba_kernel_sha=10d91712fccd887e68f9caa25413c8fa2c783968e72b1bead4025c6a294ffa42
@@ -43,6 +48,8 @@ command -v zig >/dev/null 2>&1 || {
 
 mkdir -p "$(dirname -- "$efi")" "$kernel_dir"
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_kernel_object" "$kotoba_kernel_sha"
+python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_journal_object" \
+  "$kotoba_journal_sha" kotoba_aiueos_journal_plan
 zig cc -target x86_64-freestanding-none -std=c11 -O2 \
   -ffreestanding -fno-stack-protector -mno-red-zone \
   -c -o "$kernel_object" "$aiueos/kernel/main.c"
@@ -93,7 +100,8 @@ zig ld.lld -nostdlib -static -z max-page-size=0x1000 \
   "$kernel_acpi_object" "$kernel_vtd_object" "$kernel_apic_object" "$kernel_memory_object" \
   "$kernel_pci_object" "$kernel_scheduler_object" "$kernel_syscall_object" \
   "$kernel_process_object" "$kernel_smp_object" "$kernel_trampoline_object" \
-  "$kernel_ioapic_object" "$kernel_framebuffer_object" "$kotoba_kernel_object"
+  "$kernel_ioapic_object" "$kernel_framebuffer_object" "$kotoba_kernel_object" \
+  "$kotoba_journal_object"
 python3 - "$kernel" "$identity_source" <<'PY'
 import hashlib, pathlib, sys
 digest = hashlib.sha256(pathlib.Path(sys.argv[1]).read_bytes()).digest()
