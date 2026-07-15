@@ -122,4 +122,7 @@ domain-owned objects. User tasks submit capability 4 writes and read capability
 5 receipts; the kernel task commits domains 4/5 through independent dual slots
 44–47 into objects 42/43. Recovery replays each domain's highest valid sequence
 before new user code is admitted. Its pinned object SHA-256 is
-`fd6e25f0c01ba57efcd89ad14904527d5a6d4c5b9f2454a1e7ccb201967a313e`.
+`994d8a296d17afa67a8c9267cafa6079edca5068aeed46e78d8f455a40df1cfd`.
+The paired fixed-stack validator is
+`0f2015e53ed083741687abfbaff72edf8a525947b9fc753cacc7a1bf10faf46f`;
+both use bounded loads/stores without recursive calls.

@@ -79,6 +79,9 @@ import sys
 p = Path(sys.argv[1])
 d = bytearray(p.read_bytes())
 d[1024 + 12] ^= 0x80
+# Corrupt domain 4's latest journal payload checksum as an independent
+# fixed-stack Kotoba validator rejection gate.
+d[45*512 + 24] ^= 0x40
 p.write_bytes(d)
 PY
 AIUEOS_PRESERVE_BLK_IMAGE=1 "$aiueos/scripts/smoke-qemu-uefi.sh"
@@ -106,5 +109,10 @@ def fnv(b):
 registry = b'SRV1\x01\x02\x00\x00\x01\x02\x01\x02\x01\x00\x00\x00'
 assert (magic, version, sequence, length) == (b'AIUOBJ1\0', 2, 2, 16)
 assert o[24:40] == registry and fnv(o[24:40]) == checksum
+u = d[42*512:43*512]
+magic, version, sequence, length, checksum = struct.unpack_from('<8s4I', u)
+assert (magic, version, sequence, length) == (b'AIUOB1\0\0', 3, 2, 16)
+assert struct.unpack_from('<I', u, 32)[0] == 42 and fnv(u[24:40]) == checksum
 PY
 echo "AIUEOS_SERVICE_REGISTRY_ROLLBACK_REDO_OK fallback=1 object=2"
+echo "AIUEOS_KOTOBA_USER_JOURNAL_REJECTION_OK domain=4 fallback=1 rewritten=2"
