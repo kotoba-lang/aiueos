@@ -239,6 +239,10 @@ grep -F "AIUEOS_KOTOBA_STORAGE_WRITE_OK journal mutable-object bounded-store" "$
   echo "error: Kotoba-native storage write evidence was not observed" >&2
   exit 1
 }
+grep -F "AIUEOS_KOTOBA_PCI_PLANNER_OK cap extent msix-region" "$serial_log" >/dev/null || {
+  echo "error: Kotoba-native PCI planner evidence was not observed" >&2
+  exit 1
+}
 grep -F "AIUEOS_VIRTIO_INPUT_OK modern-pci eventq configured synthetic-smoke" "$serial_log" >/dev/null || {
   echo "error: modern virtio-input configuration/synthetic transport evidence was not observed" >&2; exit 1;
 }

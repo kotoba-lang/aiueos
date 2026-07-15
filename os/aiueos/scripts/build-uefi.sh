@@ -35,6 +35,9 @@ kotoba_mutable_valid_object=${AIUEOS_KOTOBA_MUTABLE_VALID_OBJECT:-"$aiueos/kotob
 kotoba_superblock_valid_object=${AIUEOS_KOTOBA_SUPERBLOCK_VALID_OBJECT:-"$aiueos/kotoba/superblock-valid.o"}
 kotoba_journal_build_object=${AIUEOS_KOTOBA_JOURNAL_BUILD_OBJECT:-"$aiueos/kotoba/journal-record-build.o"}
 kotoba_mutable_build_object=${AIUEOS_KOTOBA_MUTABLE_BUILD_OBJECT:-"$aiueos/kotoba/mutable-object-build.o"}
+kotoba_cap_valid_object=${AIUEOS_KOTOBA_CAP_VALID_OBJECT:-"$aiueos/kotoba/virtio-cap-valid.o"}
+kotoba_extent_valid_object=${AIUEOS_KOTOBA_EXTENT_VALID_OBJECT:-"$aiueos/kotoba/pci-extent-valid.o"}
+kotoba_region_valid_object=${AIUEOS_KOTOBA_REGION_VALID_OBJECT:-"$aiueos/kotoba/pci-region-valid.o"}
 kotoba_fnv_sha=
 if [ -z "${AIUEOS_KOTOBA_FNV_OBJECT:-}" ]; then
   kotoba_fnv_sha=9d447888daf2c5065b3caf98ee348b426296c95781d0651989bd2025ac7ba52d
@@ -81,6 +84,15 @@ python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_journal_build_
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_mutable_build_object" \
   22b54f50d63e5ff0a1563acef324a53adacd824ebc98768ac614fb41ec415f1c \
   kotoba_aiueos_mutable_object_build
+python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_cap_valid_object" \
+  f03487d441ca9af4da636bcf6a9c983e23de86eb60ab70fe7533fa558f4262d4 \
+  kotoba_aiueos_virtio_cap_valid
+python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_extent_valid_object" \
+  345d52917447ddedd21fcee1e7c1143395132828deade02e29896a3829bafdbb \
+  kotoba_aiueos_pci_extent_valid
+python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_region_valid_object" \
+  824abbe8509d43eb5276a612bd38e9b472ebba1b4bd71f416671062e4b523123 \
+  kotoba_aiueos_pci_region_valid
 zig cc -target x86_64-freestanding-none -std=c11 -O2 \
   -ffreestanding -fno-stack-protector -mno-red-zone \
   -c -o "$kernel_object" "$aiueos/kernel/main.c"
@@ -135,7 +147,8 @@ zig ld.lld -nostdlib -static -z max-page-size=0x1000 \
   "$kotoba_journal_object" "$kotoba_fnv_object" "$kotoba_journal_valid_object" \
   "$kotoba_transaction_valid_object" "$kotoba_mutable_valid_object" \
   "$kotoba_superblock_valid_object" "$kotoba_journal_build_object" \
-  "$kotoba_mutable_build_object"
+  "$kotoba_mutable_build_object" "$kotoba_cap_valid_object" \
+  "$kotoba_extent_valid_object" "$kotoba_region_valid_object"
 python3 - "$kernel" "$identity_source" <<'PY'
 import hashlib, pathlib, sys
 digest = hashlib.sha256(pathlib.Path(sys.argv[1]).read_bytes()).digest()

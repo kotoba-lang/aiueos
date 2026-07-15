@@ -175,6 +175,11 @@ metadata/payload/checksums and mutable-object materialization are emitted by
 Kotoba builders. The native storage boundary is now sector clearing and
 virtio-blk queue/DMA submission/readback.
 
+PCI/virtio validation is entering the same boundary. Kotoba validates parsed
+vendor capability shape, BAR extent power-of-two requirements, and rng/blk
+MSI-X table/PBA containment. Native C retains config-space and MMIO access but
+cannot map a derived capability region unless the Kotoba planner admits it.
+
 ### Driver, UI, and persistence split
 
 ```text
