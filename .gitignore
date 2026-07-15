@@ -1,7 +1,1 @@
-/target
-# audit logs written by `aiueos run/verify`
-.aiueos/
-**/.aiueos/
-*.wasm
-dist/
-.cpcache/
+/build/
