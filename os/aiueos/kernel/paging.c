@@ -35,14 +35,21 @@ static uint32_t pci_directory_owner[PCI_DIRECTORY_SLOTS];
 struct process_address_space {
   uint64_t *pml4, *pdpt, *directory, *low;
   uint8_t *private_page;
+  uint16_t generation;
+  uint8_t active;
 };
-static struct process_address_space process_spaces[2];
+#define PROCESS_SLOT_COUNT 8U
+#define PROCESS_PRIVATE_BASE 0x1f4000ULL
+static struct process_address_space process_spaces[PROCESS_SLOT_COUNT];
 extern void *aiueos_allocate_physical_page(void);
 extern int aiueos_free_physical_page(void *page);
+int aiueos_address_space_reclaim(unsigned process);
+void *aiueos_address_space_private_backing(unsigned process);
 static uint64_t kernel_cr3;
 
-#define PROCESS_PRIVATE_0 0x1fc000ULL
-#define PROCESS_PRIVATE_1 0x1fd000ULL
+static uint64_t process_private_va(unsigned process) {
+  return process < PROCESS_SLOT_COUNT ? PROCESS_PRIVATE_BASE + process * PAGE_SIZE : 0;
+}
 
 static uint64_t read_cr0(void) {
   uint64_t value; __asm__ volatile("mov %%cr0, %0" : "=r"(value)); return value;
@@ -140,11 +147,13 @@ static void release_process_space(struct process_address_space *space) {
   if (space->directory) aiueos_free_physical_page(space->directory);
   if (space->pdpt) aiueos_free_physical_page(space->pdpt);
   if (space->pml4) aiueos_free_physical_page(space->pml4);
-  *space=(struct process_address_space){0,0,0,0,0};
+  uint16_t generation=space->generation;
+  *space=(struct process_address_space){0,0,0,0,0,generation,0};
 }
 static int initialize_process_space(unsigned process) {
+    if (process>=PROCESS_SLOT_COUNT) return 0;
     struct process_address_space *space=&process_spaces[process];
-    uint64_t private_va=process==0?PROCESS_PRIVATE_0:PROCESS_PRIVATE_1;
+    uint64_t private_va=process_private_va(process);
     if (!space->pml4) space->pml4=aiueos_allocate_physical_page();
     if (!space->pdpt) space->pdpt=aiueos_allocate_physical_page();
     if (!space->directory) space->directory=aiueos_allocate_physical_page();
@@ -167,11 +176,14 @@ static int initialize_process_space(unsigned process) {
     space->directory[0] = (uint64_t)(uintptr_t)space->low |
       PTE_PRESENT | PTE_WRITABLE | PTE_USER;
     /* Neither process can name the other's page. */
-    space->low[PROCESS_PRIVATE_0 / PAGE_SIZE] = 0;
-    space->low[PROCESS_PRIVATE_1 / PAGE_SIZE] = 0;
+    for (unsigned slot=0;slot<PROCESS_SLOT_COUNT;slot++)
+      space->low[process_private_va(slot) / PAGE_SIZE] = 0;
     space->low[private_va / PAGE_SIZE] =
       (uint64_t)(uintptr_t)space->private_page |
       PTE_PRESENT | PTE_USER | PTE_WRITABLE | PTE_NX;
+    space->active=1;
+    space->generation++;
+    if (!space->generation) space->generation=1;
     return 1;
 }
 int aiueos_address_spaces_initialize(void) {
@@ -180,12 +192,36 @@ int aiueos_address_spaces_initialize(void) {
   }
   return (uint64_t)(uintptr_t)process_spaces[0].pml4 !=
       (uint64_t)(uintptr_t)process_spaces[1].pml4 &&
-    process_spaces[0].low[PROCESS_PRIVATE_1 / PAGE_SIZE] == 0 &&
-    process_spaces[1].low[PROCESS_PRIVATE_0 / PAGE_SIZE] == 0;
+    process_spaces[0].low[process_private_va(1) / PAGE_SIZE] == 0 &&
+    process_spaces[1].low[process_private_va(0) / PAGE_SIZE] == 0;
+}
+
+int aiueos_address_space_allocate(void) {
+  for (unsigned process=0;process<PROCESS_SLOT_COUNT;process++)
+    if (!process_spaces[process].active)
+      return initialize_process_space(process) ? (int)process : -1;
+  return -1;
+}
+unsigned aiueos_address_space_capacity(void) { return PROCESS_SLOT_COUNT; }
+uint16_t aiueos_address_space_generation(unsigned process) {
+  return process<PROCESS_SLOT_COUNT ? process_spaces[process].generation : 0;
+}
+int aiueos_address_space_slot_self_test(void) {
+  for (unsigned expected=2;expected<PROCESS_SLOT_COUNT;expected++)
+    if (aiueos_address_space_allocate()!=(int)expected) return 0;
+  if (aiueos_address_space_allocate()!=-1) return 0;
+  for (unsigned slot=2;slot<PROCESS_SLOT_COUNT;slot++)
+    if (!aiueos_address_space_reclaim(slot)) return 0;
+  int reused=aiueos_address_space_allocate();
+  if (reused!=2 || aiueos_address_space_generation(2)!=2) return 0;
+  uint8_t *page=aiueos_address_space_private_backing(2);
+  if (!page) return 0;
+  for (uint64_t i=0;i<PAGE_SIZE;i++) if (page[i]) return 0;
+  return aiueos_address_space_reclaim(2);
 }
 
 uint64_t aiueos_address_space_enter(unsigned process) {
-  if (process >= 2) return 0;
+  if (process >= PROCESS_SLOT_COUNT || !process_spaces[process].active) return 0;
   write_cr3((uint64_t)(uintptr_t)process_spaces[process].pml4);
   return read_cr3();
 }
@@ -193,23 +229,25 @@ uint64_t aiueos_address_space_enter(unsigned process) {
 void aiueos_address_space_leave(void) { write_cr3(kernel_cr3); }
 uint64_t aiueos_address_space_kernel_cr3(void) { return kernel_cr3; }
 uint64_t aiueos_address_space_cr3(unsigned process) {
-  return process < 2 ? (uint64_t)(uintptr_t)process_spaces[process].pml4 : 0;
+  return process < PROCESS_SLOT_COUNT && process_spaces[process].active ?
+    (uint64_t)(uintptr_t)process_spaces[process].pml4 : 0;
 }
 uint64_t aiueos_address_space_current_cr3(void) { return read_cr3(); }
 void aiueos_address_space_switch(uint64_t cr3) { if (cr3) write_cr3(cr3); }
 uint64_t aiueos_address_space_private_va(unsigned process) {
-  return process == 0 ? PROCESS_PRIVATE_0 : process == 1 ? PROCESS_PRIVATE_1 : 0;
+  return process_private_va(process);
 }
 void *aiueos_address_space_private_backing(unsigned process) {
-  return process < 2 ? process_spaces[process].private_page : 0;
+  return process < PROCESS_SLOT_COUNT && process_spaces[process].active ?
+    process_spaces[process].private_page : 0;
 }
 int aiueos_address_space_reclaim(unsigned process) {
-  if (process>=2) return 0;
+  if (process>=PROCESS_SLOT_COUNT || !process_spaces[process].active) return 0;
   release_process_space(&process_spaces[process]);
   return 1;
 }
 int aiueos_address_space_reuse(unsigned process) {
-  if (process>=2) return 0;
+  if (process>=PROCESS_SLOT_COUNT || process_spaces[process].active) return 0;
   if (!initialize_process_space(process)) return 0;
   for (uint64_t i=0;i<PAGE_SIZE;i++) if (process_spaces[process].private_page[i]) return 0;
   return 1;

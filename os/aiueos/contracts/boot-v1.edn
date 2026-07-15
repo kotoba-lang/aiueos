@@ -213,6 +213,9 @@
                                :owner-capabilities :generation-revoked
                                :address-space-pages [:pml4 :pdpt :directory :page-table :private]
                                :allocator-pages-per-process 5
+                               :address-space-slots 8
+                               :slot-generation-reuse true
+                               :full-table-rejection true
                                :private-pages :free-zero-reallocate
                                :allocator-free :validated-no-double-free
                                :kernel-stacks :zero-after-kernel-return}
