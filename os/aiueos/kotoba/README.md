@@ -2,7 +2,7 @@
 
 `kernel-probe.o` is the byte-for-byte output of the merged
 `kotoba-lang/compiler` commit
-`2781b3edd233c7de0c4ae603ce167da4f145165c` for the checked-in Kotoba sources:
+`624d8f4e8adb2596b1151f22f843a9a73e797cb3` for the checked-in Kotoba sources:
 
 ```clojure
 (defn main [] 42)
@@ -32,10 +32,10 @@ Kotoba. Its five-argument kernel ABI accepts the message, its length, a
 admits at most 16 KiB while the public function narrows application input to
 12 KiB; the function requires 352 bytes from its caller-owned workspace and
 workspace/output stores retain the ordinary 512-byte compiler
-bound. The wrapper replenishes one million fuel units and compiler-lowered
+bound. The wrapper replenishes ten million fuel units and compiler-lowered
 tail recursion reuses a fixed native stack frame across blocks and rounds.
 Its pinned SHA-256 is
-`76e6befa8d796f27950a8ccdc6bc791779ae697f7bf03a1766f857749abf974d`.
+`ad28e7d83d6e582df2dacf802e915fc9532fc99e141e174e7bf8642191db2c29`.
 
 `journal-plan.o` is produced by the same compiler revision from
 `journal-plan.kotoba`. It exports the four-argument SysV function

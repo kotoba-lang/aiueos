@@ -3,7 +3,7 @@ set -eu
 
 aiueos=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 compiler=${1:?usage: reproduce-kotoba-kernel-object.sh /path/to/compiler}
-expected=2781b3edd233c7de0c4ae603ce167da4f145165c
+expected=624d8f4e8adb2596b1151f22f843a9a73e797cb3
 actual=$(git -C "$compiler" rev-parse HEAD)
 
 [ "$actual" = "$expected" ] || {
@@ -165,7 +165,7 @@ python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$user_object_journal_v
   --target x86_64-aiueos-kernel-v1 --output "$sha256_tmp"
 cmp "$aiueos/kotoba/sha256.o" "$sha256_tmp"
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$sha256_tmp" \
-  76e6befa8d796f27950a8ccdc6bc791779ae697f7bf03a1766f857749abf974d \
+  ad28e7d83d6e582df2dacf802e915fc9532fc99e141e174e7bf8642191db2c29 \
   kotoba_aiueos_sha256
 "$compiler/bin/kotoba-compiler" compile "$aiueos/kotoba/user-smoke.kotoba" \
   --target x86_64-aiueos-user-v1 --policy "$aiueos/kotoba/user-runtime-policy.edn" \
