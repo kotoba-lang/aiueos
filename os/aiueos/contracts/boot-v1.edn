@@ -181,6 +181,8 @@
                    :persistence {:medium :virtio-blk-object-store
                                  :commit :journal-first
                                  :recovery :redo-before-append
+                                 :bootstrap :registry-replay-before-user-processes
+                                 :scheduler-restore :kotoba-terminate-spawn
                                  :fields [:id :generation :restart-count]}
                    :lifecycle {:policy :kotoba
                                :events [:spawn :restart :terminate]

@@ -1,6 +1,10 @@
 (defn aiueos-service-lifecycle [generation restarts event budget]
-  (if (and (= generation 0) (= event 2))
-    (+ 1 4294967296)
+  (if (= event 2)
+    (if (= generation 0)
+      (+ 1 4294967296)
+      (if (and (> generation 0) (< generation 65535))
+        (+ (+ generation (* restarts 65536)) 4294967296)
+        0))
     (if (and (> generation 0)
              (< generation 65535)
              (= event 1)
