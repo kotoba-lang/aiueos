@@ -249,32 +249,9 @@ static int user_object_decode(const struct aiuefs_object_transaction *transactio
 }
 static int user_journal_valid(const struct aiuefs_journal_record *journal,
     unsigned expected_index) {
-  unsigned index;uint64_t value;
-  const struct aiuefs_object_transaction *transaction=(const void *)journal->payload;
-  return journal->magic[0]=='A'&&journal->magic[1]=='I'&&journal->magic[2]=='U'&&
-    journal->magic[3]=='J'&&journal->magic[4]=='R'&&journal->magic[5]=='N'&&
-    journal->magic[6]=='2'&&!journal->magic[7]&&journal->version==2&&
-    journal->sequence>0&&journal->sequence<1000&&journal->state==2&&
-    journal->payload_length==32&&journal->payload_checksum==fnv1a(journal->payload,32)&&
-    journal->header_checksum==fnv1a((const uint8_t *)journal,28)&&
-    user_object_decode(transaction,&index,&value)&&index==expected_index&&
-    transaction->object_checksum==fnv1a(transaction->object,16);
-}
-static void build_user_journal(struct aiuefs_journal_record *journal,uint32_t sequence,
-    uint16_t domain,uint32_t value) {
-  for(unsigned i=0;i<512;i++)((uint8_t *)journal)[i]=0;
-  journal->magic[0]='A';journal->magic[1]='I';journal->magic[2]='U';journal->magic[3]='J';
-  journal->magic[4]='R';journal->magic[5]='N';journal->magic[6]='2';
-  journal->version=2;journal->sequence=sequence;journal->state=2;journal->payload_length=32;
-  struct aiuefs_object_transaction *transaction=(void *)journal->payload;
-  transaction->target_sector=domain+38;transaction->object_version=3;transaction->object_length=16;
-  transaction->object[0]='U';transaction->object[1]='S';transaction->object[2]='R';transaction->object[3]='1';
-  transaction->object[4]=1;transaction->object[5]=(uint8_t)domain;
-  transaction->object[8]=(uint8_t)value;transaction->object[9]=(uint8_t)(value>>8);
-  transaction->object[10]=(uint8_t)(value>>16);transaction->object[11]=(uint8_t)(value>>24);
-  transaction->object_checksum=fnv1a(transaction->object,16);
-  journal->payload_checksum=fnv1a(journal->payload,32);
-  journal->header_checksum=fnv1a((const uint8_t *)journal,28);
+  extern uint64_t kotoba_aiueos_user_object_journal_valid(const void *,uint64_t,uint64_t);
+  return expected_index<2 && kotoba_aiueos_user_object_journal_valid(
+    journal,sizeof(*journal),expected_index+4);
 }
 
 static int virtio_blk_sector_io(struct virtio_blk_request *request, uint8_t *sector,
@@ -398,7 +375,10 @@ static uint64_t commit_user_object_write(uint16_t domain,uint64_t value) {
   uint32_t target=user_object_slot[index]==first_slot ? first_slot+1 : first_slot;
   if (!sequence || sequence>999 || target>=blk_backend.capacity) { blk_unlock(); return 0; }
   for(unsigned i=0;i<512;i++)blk_backend.sector[i]=0;
-  build_user_journal((void *)blk_backend.sector,sequence,domain,(uint32_t)value);
+  extern uint64_t kotoba_aiueos_user_object_journal_build(
+    void *,uint64_t,uint64_t,uint64_t,uint64_t);
+  if(!kotoba_aiueos_user_object_journal_build(
+      blk_backend.sector,512,sequence,domain,value)) { blk_unlock();return 0; }
   if (!virtio_blk_sector_io(blk_backend.request,blk_backend.sector,blk_backend.status,
         blk_backend.desc,blk_backend.avail,blk_backend.used,blk_backend.doorbell,
         &blk_backend.submitted,VIRTIO_BLK_T_OUT,target)) { blk_unlock(); return 0; }
