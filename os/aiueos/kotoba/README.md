@@ -2,7 +2,7 @@
 
 `kernel-probe.o` is the byte-for-byte output of the merged
 `kotoba-lang/compiler` commit
-`0e3532fb7afb84f5917468fde7814ab70d6da1ad` for `kernel-probe.kotoba`:
+`2781b3edd233c7de0c4ae603ce167da4f145165c` for the checked-in Kotoba sources:
 
 ```clojure
 (defn main [] 42)
@@ -25,6 +25,16 @@ objects byte-for-byte. This pinned object is temporary cross-repository CI
 input and may only be updated from a reviewed compiler artifact. The aiueos
 verifier validates every supplied object before link and forbids host imports
 or dynamic/runtime dependencies.
+
+`sha256.o` implements the complete application-admission SHA-256 path in
+Kotoba. Its five-argument kernel ABI accepts the message, its length, a
+32-byte output, and a caller-owned bounded workspace. `kernel-load-u8-16k`
+admits at most 16 KiB while the public function narrows application input to
+12 KiB; workspace and output stores retain the ordinary 512-byte compiler
+bound. The wrapper replenishes one million fuel units and compiler-lowered
+tail recursion reuses a fixed native stack frame across blocks and rounds.
+Its pinned SHA-256 is
+`09a3f73b2aed420d50c046b8df6b4b62abbf32acce63ca380d63494b9cc1d094`.
 
 `journal-plan.o` is produced by the same compiler revision from
 `journal-plan.kotoba`. It exports the four-argument SysV function

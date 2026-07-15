@@ -23,7 +23,7 @@ kernel_scheduler_object="$out/kernel-scheduler.o"
 kernel_syscall_object="$out/kernel-syscall.o"
 kernel_process_object="$out/kernel-process.o"
 kernel_loader_object="$out/kernel-loader.o"
-kernel_sha256_object="$out/kernel-sha256.o"
+kernel_rsa2048_object="$out/kernel-rsa2048.o"
 kernel_smp_object="$out/kernel-smp.o"
 kernel_trampoline_object="$out/kernel-ap-trampoline.o"
 kernel_ioapic_object="$out/kernel-ioapic.o"
@@ -50,6 +50,7 @@ kotoba_service_registry_state_object=${AIUEOS_KOTOBA_SERVICE_REGISTRY_STATE_OBJE
 kotoba_user_object_journal_object=${AIUEOS_KOTOBA_USER_OBJECT_JOURNAL_OBJECT:-"$aiueos/kotoba/user-object-journal-build.o"}
 kotoba_user_object_journal_valid_object=${AIUEOS_KOTOBA_USER_OBJECT_JOURNAL_VALID_OBJECT:-"$aiueos/kotoba/user-object-journal-valid.o"}
 kotoba_user_object_journal_value_object=${AIUEOS_KOTOBA_USER_OBJECT_JOURNAL_VALUE_OBJECT:-"$aiueos/kotoba/user-object-journal-value.o"}
+kotoba_sha256_object=${AIUEOS_KOTOBA_SHA256_OBJECT:-"$aiueos/kotoba/sha256.o"}
 kotoba_user_elf=${AIUEOS_KOTOBA_USER_ELF:-"$aiueos/kotoba/user-smoke.elf"}
 kotoba_fnv_sha=
 if [ -z "${AIUEOS_KOTOBA_FNV_OBJECT:-}" ]; then
@@ -136,6 +137,9 @@ python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_user_object_jo
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_user_object_journal_value_object" \
   bd1de2777d75e02968939d2b7bc74e84dc16a8a9431fe36bd2c2170d6866fad3 \
   kotoba_aiueos_user_object_journal_value
+python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_sha256_object" \
+  09a3f73b2aed420d50c046b8df6b4b62abbf32acce63ca380d63494b9cc1d094 \
+  kotoba_aiueos_sha256
 python3 "$aiueos/scripts/verify-kotoba-user-elf.py" "$kotoba_user_elf" \
   1f0e5897831d0de6bbcb15eec82a6e0c4b402b436689cec051bc6de3b5c4e905
 zig cc -target x86_64-freestanding-none -std=c11 -O2 \
@@ -176,7 +180,7 @@ zig cc -target x86_64-freestanding-none -std=c11 -O2 \
   -c -o "$kernel_loader_object" "$aiueos/kernel/loader.c"
 zig cc -target x86_64-freestanding-none -std=c11 -O2 \
   -ffreestanding -fno-stack-protector -mno-red-zone \
-  -c -o "$kernel_sha256_object" "$aiueos/kernel/sha256.c"
+  -c -o "$kernel_rsa2048_object" "$aiueos/kernel/rsa2048.c"
 zig cc -target x86_64-freestanding-none -std=c11 -O2 \
   -ffreestanding -fno-stack-protector -mno-red-zone \
   -c -o "$kernel_smp_object" "$aiueos/kernel/smp.c"
@@ -193,7 +197,7 @@ zig ld.lld -nostdlib -static -z max-page-size=0x1000 \
   "$kernel_entry_object" "$kernel_object" "$kernel_paging_object" \
   "$kernel_acpi_object" "$kernel_vtd_object" "$kernel_apic_object" "$kernel_memory_object" \
   "$kernel_pci_object" "$kernel_scheduler_object" "$kernel_syscall_object" \
-  "$kernel_process_object" "$kernel_loader_object" "$kernel_sha256_object" \
+  "$kernel_process_object" "$kernel_loader_object" "$kernel_rsa2048_object" \
   "$kernel_smp_object" "$kernel_trampoline_object" \
   "$kernel_ioapic_object" "$kernel_framebuffer_object" "$kotoba_kernel_object" \
   "$kotoba_journal_object" "$kotoba_fnv_object" "$kotoba_journal_valid_object" \
@@ -207,7 +211,7 @@ zig ld.lld -nostdlib -static -z max-page-size=0x1000 \
   "$kotoba_service_registry_object" "$kotoba_service_registry_state_object" \
   "$kotoba_user_object_journal_object" \
   "$kotoba_user_object_journal_valid_object" \
-  "$kotoba_user_object_journal_value_object"
+  "$kotoba_user_object_journal_value_object" "$kotoba_sha256_object"
 python3 - "$kernel" "$identity_source" <<'PY'
 import hashlib, pathlib, sys
 digest = hashlib.sha256(pathlib.Path(sys.argv[1]).read_bytes()).digest()
