@@ -240,7 +240,7 @@ grep -F "AIUEOS_JOURNAL_OK dual-slot committed append-readback" "$serial_log" >/
   echo "error: journal write/readback evidence was not observed" >&2
   exit 1
 }
-grep -F "AIUEOS_OBJECT_TXN_OK journal-first sector=3 apply-readback" "$serial_log" >/dev/null || {
+grep -F "AIUEOS_OBJECT_TXN_OK journal-first sector=3 apply-readback route=kotoba fixed-stack" "$serial_log" >/dev/null || {
   echo "error: journal-backed object transaction evidence was not observed" >&2
   exit 1
 }

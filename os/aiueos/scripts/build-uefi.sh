@@ -33,6 +33,7 @@ kotoba_journal_object=${AIUEOS_KOTOBA_JOURNAL_OBJECT:-"$aiueos/kotoba/journal-pl
 kotoba_fnv_object=${AIUEOS_KOTOBA_FNV_OBJECT:-"$aiueos/kotoba/fnv1a.o"}
 kotoba_journal_valid_object=${AIUEOS_KOTOBA_JOURNAL_VALID_OBJECT:-"$aiueos/kotoba/journal-record-valid.o"}
 kotoba_transaction_valid_object=${AIUEOS_KOTOBA_TRANSACTION_VALID_OBJECT:-"$aiueos/kotoba/object-transaction-valid.o"}
+kotoba_transaction_route_object=${AIUEOS_KOTOBA_TRANSACTION_ROUTE_OBJECT:-"$aiueos/kotoba/object-transaction-route.o"}
 kotoba_mutable_valid_object=${AIUEOS_KOTOBA_MUTABLE_VALID_OBJECT:-"$aiueos/kotoba/mutable-object-valid.o"}
 kotoba_superblock_valid_object=${AIUEOS_KOTOBA_SUPERBLOCK_VALID_OBJECT:-"$aiueos/kotoba/superblock-valid.o"}
 kotoba_journal_build_object=${AIUEOS_KOTOBA_JOURNAL_BUILD_OBJECT:-"$aiueos/kotoba/journal-record-build.o"}
@@ -84,6 +85,9 @@ python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_journal_valid_
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_transaction_valid_object" \
   ee9079df77755d7d540c4e974265da10f51c1c239f5cce7edaa24edf0b047b77 \
   kotoba_aiueos_object_transaction_valid
+python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_transaction_route_object" \
+  b2d8c72642733d6ce84ac21516aa523d598fcd99f56cb84a1bca06a4b7ea547b \
+  kotoba_aiueos_object_transaction_route
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_mutable_valid_object" \
   53513e67ae900ce2de971aea92ccecc976d361beeaedc8a633b14ef1f873fc73 \
   kotoba_aiueos_mutable_object_valid
@@ -193,7 +197,8 @@ zig ld.lld -nostdlib -static -z max-page-size=0x1000 \
   "$kernel_smp_object" "$kernel_trampoline_object" \
   "$kernel_ioapic_object" "$kernel_framebuffer_object" "$kotoba_kernel_object" \
   "$kotoba_journal_object" "$kotoba_fnv_object" "$kotoba_journal_valid_object" \
-  "$kotoba_transaction_valid_object" "$kotoba_mutable_valid_object" \
+  "$kotoba_transaction_valid_object" "$kotoba_transaction_route_object" \
+  "$kotoba_mutable_valid_object" \
   "$kotoba_superblock_valid_object" "$kotoba_journal_build_object" \
   "$kotoba_mutable_build_object" "$kotoba_cap_valid_object" \
   "$kotoba_extent_valid_object" "$kotoba_region_valid_object" \

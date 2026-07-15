@@ -48,6 +48,11 @@ little-endian 32-bit fields from checked byte loads and perform magic,
 version/state, length, sequence, and checksum validation in Kotoba. C supplies
 only the address of its packed record and the exact structure size; invalid
 records return false before replay or mutation.
+`object-transaction-route.o` additionally returns the checksum-validated object
+class and target sector as one route receipt. Native virtio-blk code consumes
+that receipt for service/domain apply and recovery instead of branching on raw
+transaction fields. Its SHA-256 is
+`b2d8c72642733d6ce84ac21516aa523d598fcd99f56cb84a1bca06a4b7ea547b`.
 
 `superblock-valid.o` owns filesystem magic, header shape, object bounds, and
 payload checksum validation. `mutable-object-valid.o` owns materialized object
