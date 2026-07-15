@@ -301,7 +301,7 @@ static int apply_object_transaction(struct virtio_blk_request *request, uint8_t 
                             VIRTIO_BLK_T_IN,transaction->target_sector)) return 0;
   object = (void *)sector;
   if (!mutable_object_valid(object,sequence,transaction)) return 0;
-  object_transaction_sequence = sequence;
+  if (transaction->target_sector==3) object_transaction_sequence = sequence;
   if (recovery) {
     uint64_t states[2];
     if (service_registry_decode(transaction,states)) {
@@ -337,36 +337,6 @@ static void blk_unlock(void) {
   __atomic_clear(&blk_backend.lock,__ATOMIC_RELEASE);
 }
 
-static int apply_user_object_transaction(uint32_t sequence,
-    const struct aiuefs_object_transaction *transaction) {
-  unsigned index;uint64_t value;
-  if(!user_object_decode(transaction,&index,&value) ||
-      transaction->object_checksum!=fnv1a(transaction->object,16)) return 0;
-  for(unsigned i=0;i<512;i++)blk_backend.sector[i]=0;
-  struct aiuefs_mutable_object *object=(void *)blk_backend.sector;
-  object->magic[0]='A';object->magic[1]='I';object->magic[2]='U';object->magic[3]='O';
-  object->magic[4]='B';object->magic[5]='1';object->magic[6]=object->magic[7]=0;
-  object->version=transaction->object_version;object->sequence=sequence;
-  object->object_length=16;object->object_checksum=transaction->object_checksum;
-  for(unsigned i=0;i<16;i++)object->object[i]=transaction->object[i];
-  if(!virtio_blk_sector_io(blk_backend.request,blk_backend.sector,blk_backend.status,
-      blk_backend.desc,blk_backend.avail,blk_backend.used,blk_backend.doorbell,
-      &blk_backend.submitted,VIRTIO_BLK_T_OUT,transaction->target_sector)) return 0;
-  for(unsigned i=0;i<512;i++)blk_backend.sector[i]=0;
-  if(!virtio_blk_sector_io(blk_backend.request,blk_backend.sector,blk_backend.status,
-      blk_backend.desc,blk_backend.avail,blk_backend.used,blk_backend.doorbell,
-      &blk_backend.submitted,VIRTIO_BLK_T_IN,transaction->target_sector)) return 0;
-  object=(void *)blk_backend.sector;
-  if(object->magic[0]!='A'||object->magic[1]!='I'||object->magic[2]!='U'||
-      object->magic[3]!='O'||object->magic[4]!='B'||object->magic[5]!='1'||
-      object->magic[6]||object->magic[7]||object->version!=3||
-      object->sequence!=sequence||object->object_length!=16||
-      object->object_checksum!=transaction->object_checksum) return 0;
-  for(unsigned i=0;i<16;i++)if(object->object[i]!=transaction->object[i])return 0;
-  user_object_value[index]=value;user_object_ready|=1U<<index;
-  return 1;
-}
-
 static uint64_t commit_user_object_write(uint16_t domain,uint64_t value) {
   if (!blk_backend.ready || domain<4 || domain>5 || !value || value>0xffffffffU) return 0;
   unsigned index=domain-4; blk_lock();
@@ -392,7 +362,10 @@ static uint64_t commit_user_object_write(uint16_t domain,uint64_t value) {
     *(const struct aiuefs_object_transaction *)(const void *)journal->payload;
   unsigned decoded;uint64_t decoded_value;
   if (!user_object_decode(&transaction,&decoded,&decoded_value)||decoded!=index||
-      decoded_value!=value || !apply_user_object_transaction(sequence,&transaction)) {
+      decoded_value!=value || !apply_object_transaction(blk_backend.request,
+        blk_backend.sector,blk_backend.status,blk_backend.desc,blk_backend.avail,
+        blk_backend.used,blk_backend.doorbell,&blk_backend.submitted,sequence,
+        &transaction,0)) {
     blk_unlock();return 0;
   }
   user_object_sequence[index]=sequence;user_object_slot[index]=target;
@@ -863,7 +836,8 @@ static int virtio_blk(uint8_t b, uint8_t d, uint8_t f) {
           const struct aiuefs_object_transaction *replay=(const void *)user_slots[user_selected].payload;
           blk_backend=(struct aiueos_blk_backend){request,sector,status,desc,avail,used,
             doorbell,submitted,capacity,0,1};
-          if(!apply_user_object_transaction(user_slots[user_selected].sequence,replay))return 0;
+          if(!apply_object_transaction(request,sector,status,desc,avail,used,doorbell,
+              &blk_backend.submitted,user_slots[user_selected].sequence,replay,1))return 0;
           submitted=blk_backend.submitted;user_object_replay_evidence|=1U<<user;
           user_object_sequence[user]=user_slots[user_selected].sequence;
           user_object_slot[user]=first+(uint32_t)user_selected;

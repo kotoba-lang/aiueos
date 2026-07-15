@@ -54,12 +54,16 @@ payload checksum validation. `mutable-object-valid.o` owns materialized object
 magic/metadata/checksum validation and bounded byte equality against the
 committed transaction. Together these complete the storage read-side
 validation path in Kotoba; C retains sector I/O and passes exact buffer sizes.
+The validator uses a non-recursive fixed-stack FNV and unrolled 16-byte
+comparison, including the user-object readback and boot replay paths.
 
 `journal-record-build.o` and `mutable-object-build.o` use the checked
 `kernel-store-u8` lowering. Null, oversized, and out-of-bounds writes trap
 before mutation. Kotoba now serializes journal/transaction metadata, sequence
 payloads, checksums, mutable-object metadata, and transaction bytes. C clears
 the sector, invokes the builder, and owns only the subsequent virtio-blk I/O.
+The mutable builder copies the committed payload with fixed-stack unrolled
+stores, so service and user transactions share the same Kotoba materializer.
 
 The PCI planners validate real hardware-derived inputs: vendor capability
 length/BAR/32-bit range, probed BAR extent shape, and MSI-X table/PBA regions.

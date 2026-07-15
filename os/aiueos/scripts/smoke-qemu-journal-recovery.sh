@@ -63,7 +63,7 @@ for first, target, domain in ((44, 42, 4), (46, 43, 5)):
     u = d[target*512:(target+1)*512]
     magic, version, sequence, length, checksum = struct.unpack_from('<8s4I', u)
     payload = u[24:40]
-    assert (magic, version, sequence, length) == (b'AIUOB1\0\0', 3, 2, 16)
+    assert (magic, version, sequence, length) == (b'AIUOBJ1\0', 3, 2, 16)
     assert payload[:6] == b'USR1\x01' + bytes([domain])
     assert struct.unpack_from('<I', payload, 8)[0] == 42
     assert fnv(payload) == checksum
@@ -111,7 +111,7 @@ assert (magic, version, sequence, length) == (b'AIUOBJ1\0', 2, 2, 16)
 assert o[24:40] == registry and fnv(o[24:40]) == checksum
 u = d[42*512:43*512]
 magic, version, sequence, length, checksum = struct.unpack_from('<8s4I', u)
-assert (magic, version, sequence, length) == (b'AIUOB1\0\0', 3, 2, 16)
+assert (magic, version, sequence, length) == (b'AIUOBJ1\0', 3, 2, 16)
 assert struct.unpack_from('<I', u, 32)[0] == 42 and fnv(u[24:40]) == checksum
 PY
 echo "AIUEOS_SERVICE_REGISTRY_ROLLBACK_REDO_OK fallback=1 object=2"

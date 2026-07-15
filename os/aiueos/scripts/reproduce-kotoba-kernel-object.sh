@@ -65,7 +65,7 @@ python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$transaction_valid_tmp
   --target x86_64-aiueos-kernel-v1 --output "$mutable_valid_tmp"
 cmp "$aiueos/kotoba/mutable-object-valid.o" "$mutable_valid_tmp"
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$mutable_valid_tmp" \
-  cbbd06c9d4805d36d79d3fe2d17e0769f077d3a6699693825a45a1d17620ae5d \
+  53513e67ae900ce2de971aea92ccecc976d361beeaedc8a633b14ef1f873fc73 \
   kotoba_aiueos_mutable_object_valid
 "$compiler/bin/kotoba-compiler" compile "$aiueos/kotoba/superblock-valid.kotoba" \
   --target x86_64-aiueos-kernel-v1 --output "$superblock_valid_tmp"
@@ -83,7 +83,7 @@ python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$journal_build_tmp" \
   --target x86_64-aiueos-kernel-v1 --output "$mutable_build_tmp"
 cmp "$aiueos/kotoba/mutable-object-build.o" "$mutable_build_tmp"
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$mutable_build_tmp" \
-  22b54f50d63e5ff0a1563acef324a53adacd824ebc98768ac614fb41ec415f1c \
+  d593a4db905cac264c67732983bf0b62de783011b46e505257a51d94d820eafd \
   kotoba_aiueos_mutable_object_build
 "$compiler/bin/kotoba-compiler" compile "$aiueos/kotoba/virtio-cap-valid.kotoba" \
   --target x86_64-aiueos-kernel-v1 --output "$cap_valid_tmp"
