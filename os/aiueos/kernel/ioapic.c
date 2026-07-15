@@ -10,6 +10,7 @@ volatile uint64_t aiueos_external_timer_ticks;
 static inline void out8(uint16_t port, uint8_t value) {
   __asm__ volatile("outb %0, %1" : : "a"(value), "Nd"(port));
 }
+
 static uint32_t ioapic_read(volatile uint32_t *base, uint8_t reg) {
   base[0] = reg; return base[4];
 }
