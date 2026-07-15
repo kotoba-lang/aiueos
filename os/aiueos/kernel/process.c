@@ -45,6 +45,8 @@ extern uint64_t aiueos_capability_revoke_owner(uint16_t owner);
 extern int aiueos_address_space_reclaim(unsigned process);
 extern int aiueos_address_space_reuse(unsigned process);
 extern uint64_t aiueos_physical_allocator_reuse_count(void);
+extern unsigned aiueos_address_space_capacity(void);
+extern int aiueos_address_space_slot_self_test(void);
 extern void aiueos_probe_cross_process(const void *address);
 extern volatile uint64_t aiueos_page_fault_stage, aiueos_page_fault_error;
 static struct tss64 tss;
@@ -85,9 +87,9 @@ static void user_run(struct user_result *r, const void *foreign_page) {
   for (;;) { r->scheduled_runs++; __asm__ volatile("pause"); }
 }
 __attribute__((section(".user.text"), noreturn))
-static void user_entry0(void) { user_run((void *)0x1fc000ULL,(void *)0x1fd000ULL); }
+static void user_entry0(void) { user_run((void *)0x1f4000ULL,(void *)0x1f5000ULL); }
 __attribute__((section(".user.text"), noreturn))
-static void user_entry1(void) { user_run((void *)0x1fd000ULL,(void *)0x1fc000ULL); }
+static void user_entry1(void) { user_run((void *)0x1f5000ULL,(void *)0x1f4000ULL); }
 
 int aiueos_process_initialize(void) {
   int mappings=aiueos_user_mapping_verify();
@@ -135,9 +137,11 @@ void aiueos_process_enter(void) {
       aiueos_address_space_reuse(0) && aiueos_address_space_reuse(1) &&
       aiueos_physical_allocator_reuse_count()-allocator_reuse_before>=10)
     process_lifecycle_evidence|=2;
+  if (aiueos_address_space_capacity()==8 && aiueos_address_space_slot_self_test())
+    process_lifecycle_evidence|=4;
 }
 int aiueos_process_lifecycle_evidence_ready(void) {
-  return process_lifecycle_evidence==3 && aiueos_scheduler_reap_evidence_ready();
+  return process_lifecycle_evidence==7 && aiueos_scheduler_reap_evidence_ready();
 }
 int aiueos_process_result(void) {
   if (process_results_valid) return 1;

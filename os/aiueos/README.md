@@ -85,6 +85,10 @@ allocator-owned rather than a static kernel array: each process consumes five
 physical pages (PML4, PDPT, page directory, page table, and private backing).
 Exit returns all ten pages through a validated, double-free-rejecting free list;
 recreation must reuse at least ten freed pages and observe them zeroed.
+Address spaces are assigned from an eight-slot generation table rather than
+being identified by two permanent roots. Boot fills every remaining slot,
+rejects allocation when full, reaps the temporary generation, and proves that
+the lowest free slot is recreated with a new generation and zero backing.
 
 The pointer/length window admission for both bootstrap and CPL3
 calls is compiler-emitted Kotoba code and is exercised at both valid boundaries
