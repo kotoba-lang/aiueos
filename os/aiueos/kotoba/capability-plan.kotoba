@@ -1,8 +1,10 @@
 (defn aiueos-capability-plan [slot generation type state-rights request]
   (let [rights (bit-and state-rights 65535)
         active (bit-and state-rights 65536)
+        owner (bit-and (quot state-rights 131072) 65535)
         required-rights (bit-and request 65535)
-        required-type (quot request 65536)]
+        required-type (bit-and (quot request 65536) 65535)
+        requester (bit-and (quot request 4294967296) 65535)]
     (if (and (> slot 0)
              (<= slot 65535)
              (> generation 0)
@@ -10,6 +12,8 @@
              (> type 0)
              (<= type 65535)
              (= active 65536)
+             (> owner 0)
+             (= owner requester)
              (> rights 0)
              (<= rights 32767)
              (= type required-type)
