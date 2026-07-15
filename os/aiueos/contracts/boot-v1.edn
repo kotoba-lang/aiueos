@@ -206,7 +206,12 @@
                                :events [:spawn :restart :terminate]
                                :task-entry :descriptor-driven
                                :restart-budget :bounded}
-                   :ipc {:transport :bounded-mailbox
+                   :ipc {:transport [:service-to-service-mailbox
+                                     :user-to-service-mailboxes]
+                         :user-mailbox-capacity 2
+                         :user-routing {4 0 5 1}
+                         :user-payload :bounded-u32
+                         :concurrency :services-remain-scheduled-with-users
                          :admission :owner-domain-capability
                          :address-spaces :cross-cr3}
                    :registry {:format :service-registry-v1 :services 2}}
@@ -232,12 +237,16 @@
                             :syscall-number 5
                             :context-handle-offset 80
                             :handle {:type :kotoba-runtime
-                                     :right :object-read
+                                     :rights [:object-read :service-send]
                                      :owner :process-domain}
-                            :compiler-policy {:allow #{[:cap/call 2]}}
+                            :compiler-policy {:allow #{[:cap/call 2]
+                                                       [:cap/call 3]}}
                             :capabilities {2 {:operation :object-read
                                               :object :service-registry
-                                              :indices [0 1]}}
+                                              :indices [0 1]}
+                                           3 {:operation :service-send
+                                              :routing :caller-domain
+                                              :payload :bounded-u32}}
                             :loader-validation [:context-size :fuel
                                                 :least-privilege-bitmap
                                                 :rx-trampoline :zero-handle]
@@ -251,6 +260,8 @@
                                  :escalation :rejected}
            :process-lifecycle {:exit :scheduler-request
                                :reap :inactive-task-skip
+                               :persistent-service-tasks 2
+                               :service-address-space-roots [0 1]
                                :owner-capabilities :recursive-generation-revoked
                                :address-space-pages [:pml4 :pdpt :directory :page-table :private]
                                :allocator-pages-per-process 5

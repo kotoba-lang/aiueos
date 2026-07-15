@@ -76,6 +76,7 @@ extern int aiueos_process_initialize(void);
 extern void aiueos_process_enter(void);
 extern int aiueos_process_result(void);
 extern int aiueos_process_lifecycle_evidence_ready(void);
+extern int aiueos_kotoba_service_ipc_evidence_ready(void);
 extern int aiueos_catalog_lookup_rejection_evidence_ready(void);
 extern int aiueos_syscall_transport_evidence_ready(void);
 extern int aiueos_kotoba_runtime_evidence_ready(void);
@@ -119,8 +120,10 @@ static void serial_string(const char *text) {
 static void debug_string(const char *text) {
   while (*text) debug_byte((uint8_t)*text++);
 }
-static inline void qemu_exit(uint32_t value) {
+__attribute__((noreturn)) static void qemu_exit(uint32_t value) {
   __asm__ volatile("outl %0, $0xf4" : : "a"(value));
+  __asm__ volatile("cli");
+  for (;;) __asm__ volatile("hlt");
 }
 
 static void set_idt_gate(uint8_t vector, void (*handler)(void)) {
@@ -443,8 +446,11 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
     }
     if (!aiueos_syscall_transport_evidence_ready()) qemu_exit(0x71);
     if (!aiueos_kotoba_runtime_evidence_ready()) qemu_exit(0x71);
-    debug_string("AIUEOS_KOTOBA_USER_RUNTIME_OK abi=v2 transport=syscall capability=2 object=service-registry domains=4,5 result=42\n");
-    serial_string("AIUEOS_KOTOBA_USER_RUNTIME_OK abi=v2 transport=syscall capability=2 object=service-registry domains=4,5 result=42\r\n");
+    debug_string("AIUEOS_KOTOBA_USER_RUNTIME_OK abi=v2 transport=syscall capabilities=2,3 object=service-registry service-ipc=mailbox domains=4,5 result=42\n");
+    serial_string("AIUEOS_KOTOBA_USER_RUNTIME_OK abi=v2 transport=syscall capabilities=2,3 object=service-registry service-ipc=mailbox domains=4,5 result=42\r\n");
+    if (!aiueos_kotoba_service_ipc_evidence_ready()) qemu_exit(0x71);
+    debug_string("AIUEOS_KOTOBA_SERVICE_IPC_OK senders=4,5 recipients=service0,service1 payload=42 sequence=1 bounded=2 persistent-services=2\n");
+    serial_string("AIUEOS_KOTOBA_SERVICE_IPC_OK senders=4,5 recipients=service0,service1 payload=42 sequence=1 bounded=2 persistent-services=2\r\n");
     debug_string("AIUEOS_RING3_OK processes=2 preemptive roots=2 domains=2,3 kernel-stacks=2 syscall-sysret\n");
     serial_string("AIUEOS_RING3_OK processes=2 preemptive roots=2 domains=2,3 kernel-stacks=2 syscall-sysret\r\n");
     debug_string("AIUEOS_SYSRET_OK star-lstar-fmask canonical-rip-rsp rflags-sanitized per-task-stack\n");
@@ -455,8 +461,8 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
     if (!aiueos_catalog_lookup_rejection_evidence_ready()) qemu_exit(0x71);
     debug_string("AIUEOS_APP_CATALOG_LOOKUP_OK ids=app/hello,app/worker unknown=denied extents=nonoverlap\n");
     serial_string("AIUEOS_APP_CATALOG_LOOKUP_OK ids=app/hello,app/worker unknown=denied extents=nonoverlap\r\n");
-    debug_string("AIUEOS_PROCESS_REAP_OK tasks=4 process-slots=8 task-slots=8 generations=reused owner-caps-revoked allocator-pages=24 stack-pages=reused zero-reused\n");
-    serial_string("AIUEOS_PROCESS_REAP_OK tasks=4 process-slots=8 task-slots=8 generations=reused owner-caps-revoked allocator-pages=24 stack-pages=reused zero-reused\r\n");
+    debug_string("AIUEOS_PROCESS_REAP_OK tasks=4 services=2-persistent process-slots=8 task-slots=8 generations=reused owner-caps-revoked allocator-pages=24 stack-pages=reused zero-reused\n");
+    serial_string("AIUEOS_PROCESS_REAP_OK tasks=4 services=2-persistent process-slots=8 task-slots=8 generations=reused owner-caps-revoked allocator-pages=24 stack-pages=reused zero-reused\r\n");
     debug_string("AIUEOS_USER_SYSCALL_OK valid-log copied-payload too-big stale-generation foreign-owner wrong-type no-rights invalid-pointer\n");
     serial_string("AIUEOS_USER_SYSCALL_OK valid-log copied-payload too-big stale-generation foreign-owner wrong-type no-rights invalid-pointer\r\n");
     if (!aiueos_address_space_self_test()) {

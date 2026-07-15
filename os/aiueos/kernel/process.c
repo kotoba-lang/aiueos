@@ -59,6 +59,7 @@ extern int aiueos_address_space_claim(void);
 extern int aiueos_address_space_user_entry_valid(unsigned process,uint64_t entry);
 extern int aiueos_load_object_store_kotoba_process(unsigned process,const uint8_t app_id[16],uint64_t *entry,uint64_t **result);
 extern int aiueos_kotoba_process_loader_evidence_ready(void);
+extern int aiueos_kotoba_service_ipc_evidence_ready(void);
 extern uint8_t aiueos_user_text_start[],aiueos_user_text_end[];
 extern void aiueos_probe_cross_process(const void *address);
 extern volatile uint64_t aiueos_page_fault_stage, aiueos_page_fault_error;
@@ -245,7 +246,8 @@ void aiueos_process_enter(void) {
   kernel_results[1]->foreign_page=processes[first].argument;
   __asm__ volatile("sti");
   while (!aiueos_process_result() || !aiueos_user_scheduler_evidence_ready() ||
-         *kotoba_result!=42 || *worker_result!=42)
+         *kotoba_result!=42 || *worker_result!=42 ||
+         !aiueos_kotoba_service_ipc_evidence_ready())
     __asm__ volatile("hlt");
   aiueos_scheduler_request_user_exit(2); aiueos_scheduler_request_user_exit(3);
   aiueos_scheduler_request_user_exit(4);
@@ -272,6 +274,7 @@ void aiueos_process_enter(void) {
       aiueos_address_space_reclaim(space2) &&
       aiueos_address_space_reclaim(space3) &&
       aiueos_address_space_reuse(space0) && aiueos_address_space_reuse(space1) &&
+      aiueos_address_space_reclaim(space0) && aiueos_address_space_reclaim(space1) &&
       aiueos_address_space_reuse(space2) && aiueos_load_object_store_kotoba_process(
         space2,hello_app_id,&recreated_entry,&recreated_result) && recreated_entry==0x1e1000ULL &&
       recreated_result && *recreated_result==0 && aiueos_address_space_reclaim(space2) &&
@@ -307,17 +310,21 @@ int aiueos_process_result(void) {
 }
 
 int aiueos_address_space_self_test(void) {
-  if (!aiueos_address_spaces_initialize()) return 0;
-  uint64_t first=aiueos_address_space_private_va(0), second=aiueos_address_space_private_va(1);
-  uint64_t cr3_first=aiueos_address_space_enter(0);
+  int first_space=aiueos_address_space_claim(),second_space=aiueos_address_space_claim();
+  if (first_space<2 || second_space<2 || first_space==second_space) return 0;
+  uint64_t first=aiueos_address_space_private_va((unsigned)first_space);
+  uint64_t second=aiueos_address_space_private_va((unsigned)second_space);
+  uint64_t cr3_first=aiueos_address_space_enter((unsigned)first_space);
   *(volatile uint64_t *)(uintptr_t)first=0x1111111111111111ULL;
   aiueos_page_fault_stage=3; aiueos_probe_cross_process((const void *)(uintptr_t)second);
   if (aiueos_page_fault_stage!=0x103 || (aiueos_page_fault_error&1)) { aiueos_address_space_leave(); return 0; }
-  uint64_t cr3_second=aiueos_address_space_enter(1);
+  uint64_t cr3_second=aiueos_address_space_enter((unsigned)second_space);
   if (*(volatile uint64_t *)(uintptr_t)second!=0) { aiueos_address_space_leave(); return 0; }
   *(volatile uint64_t *)(uintptr_t)second=0x2222222222222222ULL;
   aiueos_page_fault_stage=3; aiueos_probe_cross_process((const void *)(uintptr_t)first);
   int isolated=aiueos_page_fault_stage==0x103 && !(aiueos_page_fault_error&1) && cr3_first!=cr3_second;
-  if (isolated) { aiueos_address_space_enter(0); isolated=*(volatile uint64_t *)(uintptr_t)first==0x1111111111111111ULL; }
-  aiueos_address_space_leave(); return isolated;
+  if (isolated) { aiueos_address_space_enter((unsigned)first_space); isolated=*(volatile uint64_t *)(uintptr_t)first==0x1111111111111111ULL; }
+  aiueos_address_space_leave();
+  return isolated && aiueos_address_space_reclaim((unsigned)first_space) &&
+    aiueos_address_space_reclaim((unsigned)second_space);
 }

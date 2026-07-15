@@ -133,7 +133,7 @@ cmp "$aiueos/kotoba/service-registry-build.o" "$service_registry_tmp"
   --output "$user_elf_tmp"
 cmp "$aiueos/kotoba/user-smoke.elf" "$user_elf_tmp"
 python3 "$aiueos/scripts/verify-kotoba-user-elf.py" "$user_elf_tmp" \
-  eb3e44fa8fb02aca6637306534af9911ed4ac9f371b354907a552e31f7a2a08f
+  94cf491d797b7b799d87ba2c75f0ec835bd325cc4aeef894984ab66154076f44
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$service_registry_tmp" \
   70eee5d4dd599ea2049261e92a656931768b355eefc0fb6d83deee192a3a05f0 \
   kotoba_aiueos_service_registry_build

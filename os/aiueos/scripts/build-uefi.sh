@@ -117,7 +117,7 @@ python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_service_regist
   70eee5d4dd599ea2049261e92a656931768b355eefc0fb6d83deee192a3a05f0 \
   kotoba_aiueos_service_registry_build
 python3 "$aiueos/scripts/verify-kotoba-user-elf.py" "$kotoba_user_elf" \
-  eb3e44fa8fb02aca6637306534af9911ed4ac9f371b354907a552e31f7a2a08f
+  94cf491d797b7b799d87ba2c75f0ec835bd325cc4aeef894984ab66154076f44
 zig cc -target x86_64-freestanding-none -std=c11 -O2 \
   -ffreestanding -fno-stack-protector -mno-red-zone \
   -c -o "$kernel_object" "$aiueos/kernel/main.c"

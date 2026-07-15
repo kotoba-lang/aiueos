@@ -14,6 +14,9 @@ enum { AIUEOS_SYSCALL_ABI = 0, AIUEOS_SYSCALL_LOG_WRITE = 1,
 #define AIUEOS_CAPABILITY_TYPE_KOTOBA_RUNTIME 2U
 #define AIUEOS_CAPABILITY_RIGHT_LOG_WRITE 1U
 #define AIUEOS_CAPABILITY_RIGHT_OBJECT_READ 1U
+#define AIUEOS_CAPABILITY_RIGHT_SERVICE_SEND 2U
+#define AIUEOS_CAPABILITY_RIGHT_RUNTIME \
+  (AIUEOS_CAPABILITY_RIGHT_OBJECT_READ|AIUEOS_CAPABILITY_RIGHT_SERVICE_SEND)
 #define AIUEOS_DOMAIN_KERNEL 1U
 #define AIUEOS_DOMAIN_USER_PROCESS 2U
 volatile uint16_t aiueos_current_user_domain;
@@ -247,13 +250,13 @@ uint64_t aiueos_capability_ensure_runtime_handle(uint16_t owner) {
     if (entry->owner==owner && entry->type==AIUEOS_CAPABILITY_TYPE_KOTOBA_RUNTIME &&
         (entry->state_rights&AIUEOS_CAPABILITY_ACTIVE)) {
       uint64_t handle=capability_plan(slot,AIUEOS_CAPABILITY_TYPE_KOTOBA_RUNTIME,
-        AIUEOS_CAPABILITY_RIGHT_OBJECT_READ,owner);
+        AIUEOS_CAPABILITY_RIGHT_RUNTIME,owner);
       capability_lock_release(); return handle;
     }
   }
   capability_lock_release();
   return capability_allocate(AIUEOS_CAPABILITY_TYPE_KOTOBA_RUNTIME,
-    AIUEOS_CAPABILITY_RIGHT_OBJECT_READ,owner);
+    AIUEOS_CAPABILITY_RIGHT_RUNTIME,owner);
 }
 uint64_t aiueos_capability_revoke_owner(uint16_t owner) {
   uint64_t revoked=0;
@@ -285,7 +288,7 @@ uint64_t aiueos_syscall_dispatch(uint64_t number, uint64_t handle,
   }
   if (number == AIUEOS_SYSCALL_RUNTIME_CALL) {
     if (!capability_admit(handle,AIUEOS_CAPABILITY_TYPE_KOTOBA_RUNTIME,
-                          AIUEOS_CAPABILITY_RIGHT_OBJECT_READ,requester))
+                          AIUEOS_CAPABILITY_RIGHT_RUNTIME,requester))
       return AIUEOS_ERR_BAD_HANDLE;
     /* Capability 2 is the bounded service-registry object read. The compiler
        admits the literal ID, and the kernel still checks both the domain-owned
@@ -296,6 +299,10 @@ uint64_t aiueos_syscall_dispatch(uint64_t number, uint64_t handle,
       if (state && requester>=4 && requester<=5)
         kotoba_runtime_evidence|=1ULL<<(requester-4);
       return state ? state : AIUEOS_ERR_BAD_HANDLE;
+    }
+    if (pointer==3 && requester>=4 && requester<=5) {
+      extern uint64_t aiueos_kotoba_service_send(uint16_t domain,uint64_t payload);
+      return aiueos_kotoba_service_send(requester,length) ? 1 : AIUEOS_ERR_BAD_HANDLE;
     }
     return AIUEOS_ERR_NO_SYSCALL;
   }
