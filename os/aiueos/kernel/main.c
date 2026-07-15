@@ -416,8 +416,8 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
       serial_string("AIUEOS_RING3_FAIL syscall-results\r\n");
       qemu_exit(0x71);
     }
-    debug_string("AIUEOS_RING3_OK cpl3-int80 tss-rsp0 return-kernel\n");
-    serial_string("AIUEOS_RING3_OK cpl3-int80 tss-rsp0 return-kernel\r\n");
+    debug_string("AIUEOS_RING3_OK processes=2 roots=2 domains=2,3 private-pages int80 return-kernel\n");
+    serial_string("AIUEOS_RING3_OK processes=2 roots=2 domains=2,3 private-pages int80 return-kernel\r\n");
     debug_string("AIUEOS_USER_SYSCALL_OK valid-log copied-payload too-big stale-generation foreign-owner wrong-type no-rights invalid-pointer\n");
     serial_string("AIUEOS_USER_SYSCALL_OK valid-log copied-payload too-big stale-generation foreign-owner wrong-type no-rights invalid-pointer\r\n");
     if (!aiueos_address_space_self_test()) {

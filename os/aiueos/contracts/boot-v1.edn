@@ -191,6 +191,8 @@
  :syscall {:version 1
            :transport :interrupt-0x80
            :current-privilege :cpl3
+           :processes {:count 2 :roots 2 :private-pages 2
+                       :domains [2 3] :cross-process-read :non-present}
            :user-mode true
            :registers {:number :rax :handle :rdi :pointer :rsi :length :rdx
                        :result :rax}

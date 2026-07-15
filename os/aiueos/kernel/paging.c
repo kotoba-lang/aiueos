@@ -181,6 +181,9 @@ void aiueos_address_space_switch(uint64_t cr3) { if (cr3) write_cr3(cr3); }
 uint64_t aiueos_address_space_private_va(unsigned process) {
   return process == 0 ? PROCESS_PRIVATE_0 : process == 1 ? PROCESS_PRIVATE_1 : 0;
 }
+void *aiueos_address_space_private_backing(unsigned process) {
+  return process < 2 ? process_private_pages[process] : 0;
+}
 
 /* GOP memory is mapped supervisor-only, non-executable and uncached.  Its
  * dedicated directory prevents a display capability from replacing RAM or
