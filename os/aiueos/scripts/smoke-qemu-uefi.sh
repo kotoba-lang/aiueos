@@ -201,6 +201,7 @@ grep -F "AIUEOS_SMP_OK cpus=2 init-sipi-v1 per-cpu-stack" "$serial_log" >/dev/nu
 }
 grep -F "AIUEOS_PCI_OK bounded-scan virtio-vendor=1af4" "$serial_log" >/dev/null || {
   echo "error: bounded PCI/virtio discovery evidence was not observed" >&2
+  test -f "$serial_log" && sed -n '1,160p' "$serial_log" >&2
   exit 1
 }
 grep -F "AIUEOS_VIRTIO_RNG_OK modern-pci caps-bounded dma=4pages completion=32" "$serial_log" >/dev/null || {
