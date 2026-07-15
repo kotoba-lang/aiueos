@@ -216,22 +216,16 @@ static int mutable_object_valid(const struct aiuefs_mutable_object *object, uint
     object, sizeof(*object), sequence, transaction, sizeof(*transaction));
 }
 
-static int service_registry_decode(const struct aiuefs_object_transaction *transaction,
+static int service_registry_states(const struct aiuefs_object_transaction *transaction,
     uint64_t states[2]) {
-  const uint8_t *p=transaction->object;
-  if (transaction->object_version!=2 || transaction->object_length!=16 ||
-      p[0]!='S' || p[1]!='R' || p[2]!='V' || p[3]!='1' || p[4]!=1 || p[5]!=2 ||
-      !p[8] || !p[9] || !p[11] || !p[12]) return 0;
-  states[0]=(uint64_t)p[8] | ((uint64_t)p[9]<<16) | ((uint64_t)p[10]<<32);
-  states[1]=(uint64_t)p[11] | ((uint64_t)p[12]<<16) | ((uint64_t)p[13]<<32);
-  return 1;
+  extern uint64_t kotoba_aiueos_service_registry_state(const void *,uint64_t,uint64_t);
+  states[0]=kotoba_aiueos_service_registry_state(transaction,sizeof(*transaction),0);
+  states[1]=kotoba_aiueos_service_registry_state(transaction,sizeof(*transaction),1);
+  return states[0]!=0 && states[1]!=0;
 }
-static int service_registry_matches(const struct aiuefs_object_transaction *transaction) {
-  uint64_t state0 = aiueos_service_registry_state(0);
-  uint64_t state1 = aiueos_service_registry_state(1);
-  uint64_t states[2];
-  return service_registry_decode(transaction,states) &&
-    states[0]==state0 && states[1]==state1;
+static int service_registry_matches(const uint64_t states[2]) {
+  return states[0]==aiueos_service_registry_state(0) &&
+    states[1]==aiueos_service_registry_state(1);
 }
 static uint64_t user_journal_value(const struct aiuefs_journal_record *journal,
     unsigned expected_index) {
@@ -290,20 +284,19 @@ static int apply_object_transaction(struct virtio_blk_request *request, uint8_t 
   object = (void *)sector;
   if (!mutable_object_valid(object,sequence,transaction)) return 0;
   if (transaction->target_sector==3) object_transaction_sequence = sequence;
+  uint64_t states[2];
+  int registry=transaction->target_sector==3 && service_registry_states(transaction,states);
   if (recovery) {
-    uint64_t states[2];
-    if (service_registry_decode(transaction,states)) {
+    if (registry) {
       object_transaction_replayed = 1;
       recovered_service_registry_states[0]=states[0];
       recovered_service_registry_states[1]=states[1];
       recovered_service_registry_ready=1;
     }
-    if (service_registry_matches(transaction)) service_registry_replayed = 1;
+    if (registry && service_registry_matches(states)) service_registry_replayed = 1;
   }
-  if (service_registry_matches(transaction)) {
+  if (registry && service_registry_matches(states)) {
     service_registry_ready = 1;
-    uint64_t states[2];
-    if (!service_registry_decode(transaction,states)) return 0;
     persisted_service_registry_states[0]=states[0];
     persisted_service_registry_states[1]=states[1];
   }
