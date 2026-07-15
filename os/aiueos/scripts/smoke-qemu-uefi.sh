@@ -356,13 +356,16 @@ grep -F "AIUEOS_KOTOBA_ELF_PROCESS_OK source=catalog apps=2 et-exec segments=rx,
   echo "Kotoba ELF process evidence missing" >&2
   exit 1
 }
-grep -F "AIUEOS_KOTOBA_USER_RUNTIME_OK abi=v2 transport=syscall capabilities=2,3 object=service-registry service-ipc=mailbox domains=4,5 result=42" "$serial_log" >/dev/null || {
+grep -F "AIUEOS_KOTOBA_USER_RUNTIME_OK abi=v2 transport=syscall capabilities=2,3,4,5 object=service-registry,user-store service-ipc=mailbox domains=4,5 result=42" "$serial_log" >/dev/null || {
   echo "error: Kotoba user runtime syscall evidence was not observed" >&2
   exit 1
 }
 grep -F "AIUEOS_KOTOBA_SERVICE_IPC_OK senders=4,5 recipients=service0,service1 payload=42 sequence=1 bounded=2 persistent-services=2" "$serial_log" >/dev/null || {
   echo "error: Kotoba to persistent service IPC evidence was not observed" >&2
   exit 1
+}
+grep -F "AIUEOS_KOTOBA_OBJECT_WRITE_OK domains=4,5 journals=44-47 objects=42,43 value=42 receipt=readback transaction=journal-first" "$serial_log" >/dev/null || {
+  echo "error: Kotoba user object transaction evidence was not observed" >&2; exit 1;
 }
 grep -F "AIUEOS_APP_CATALOG_LOOKUP_OK ids=app/hello,app/worker unknown=denied extents=nonoverlap" "$serial_log" >/dev/null || {
   echo "catalog lookup evidence missing" >&2

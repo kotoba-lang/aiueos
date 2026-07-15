@@ -1,0 +1,62 @@
+(defn write-u32 [base length index value]
+  (let [b0 (bit-and value 255)
+        b1 (bit-and (quot value 256) 255)
+        b2 (bit-and (quot value 65536) 255)
+        b3 (bit-and (quot value 16777216) 255)]
+    (and (= (kernel-store-u8 base length index b0) b0)
+         (= (kernel-store-u8 base length (+ index 1) b1) b1)
+         (= (kernel-store-u8 base length (+ index 2) b2) b2)
+         (= (kernel-store-u8 base length (+ index 3) b3) b3))))
+
+(defn fnv-step [base length index hash]
+  (if (= index length) hash
+    (fnv-step base length (+ index 1)
+      (* (bit-xor hash (kernel-load-u8 base length index)) 16777619))))
+
+(defn fnv [base length]
+  (bit-and (fnv-step base length 0 2166136261) 4294967295))
+
+(defn value-byte [value index]
+  (bit-and (quot value
+    (if (= index 0) 1
+      (if (= index 1) 256
+        (if (= index 2) 65536 16777216)))) 255))
+
+(defn object-byte [domain value index]
+  (if (= index 0) 85
+    (if (= index 1) 83
+      (if (= index 2) 82
+        (if (= index 3) 49
+          (if (= index 4) 1
+            (if (= index 5) domain
+              (if (< index 8) 0
+                (if (< index 12) (value-byte value (- index 8)) 0)))))))))
+
+(defn write-object [base length domain value index]
+  (if (= index 16) 1
+    (let [byte (object-byte domain value index)]
+      (if (= (kernel-store-u8 base length (+ 48 index) byte) byte)
+        (write-object base length domain value (+ index 1)) 0))))
+
+(defn write-metadata [base length sequence domain]
+  (and (write-u32 base length 0 1247103297)
+       (write-u32 base length 4 3296850)
+       (write-u32 base length 8 2)
+       (write-u32 base length 12 sequence)
+       (write-u32 base length 16 2)
+       (write-u32 base length 20 32)
+       (write-u32 base length 32 (+ domain 38))
+       (write-u32 base length 36 3)
+       (write-u32 base length 40 16)))
+
+(defn aiueos-user-object-journal-build [base length sequence domain value]
+  (if (and (= length 512) (> sequence 0) (< sequence 1000)
+           (or (= domain 4) (= domain 5)) (> value 0)
+           (write-metadata base length sequence domain)
+           (write-object base length domain value 0))
+    (if (write-u32 base length 44 (fnv (+ base 48) 16))
+      (if (write-u32 base length 24 (fnv (+ base 32) 32))
+        (write-u32 base length 28 (fnv base 28)) 0) 0)
+    0))
+
+(defn main [] 0)

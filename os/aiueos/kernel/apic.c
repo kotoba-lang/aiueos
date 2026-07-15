@@ -24,6 +24,12 @@ static void write_register(uint32_t offset, uint32_t value) {
 static uint32_t read_register(uint32_t offset) {
   return aiueos_apic_mmio_base[offset / 4];
 }
+void aiueos_apic_timer_mask(void) {
+  write_register(0x320,read_register(0x320)|(1U<<16));
+}
+void aiueos_apic_timer_unmask(void) {
+  write_register(0x320,read_register(0x320)&~(1U<<16));
+}
 
 int aiueos_apic_timer_initialize(void) {
   uint64_t base = read_msr(IA32_APIC_BASE_MSR);

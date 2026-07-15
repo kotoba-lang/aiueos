@@ -59,6 +59,7 @@ extern int aiueos_service_registry_ready(void);
 extern int aiueos_service_registry_replayed(void);
 extern int aiueos_recovered_service_registry_ready(void);
 extern uint64_t aiueos_recovered_service_registry_state(unsigned service);
+extern int aiueos_user_object_replay_evidence_ready(void);
 extern uint32_t aiueos_gpu_scanout_width(void);
 extern uint32_t aiueos_gpu_scanout_height(void);
 extern void aiueos_scheduler_initialize(void);
@@ -369,6 +370,10 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
       serial_string("AIUEOS_OBJECT_TXN_REPLAY_OK committed-redo idempotent-before-append\r\n");
       debug_string("AIUEOS_PERSISTENT_SERVICE_BOOTSTRAP_OK registry=replayed kotoba-spawn=2 generation=2,1\n");
       serial_string("AIUEOS_PERSISTENT_SERVICE_BOOTSTRAP_OK registry=replayed kotoba-spawn=2 generation=2,1\r\n");
+      if (aiueos_user_object_replay_evidence_ready()) {
+        debug_string("AIUEOS_KOTOBA_OBJECT_REPLAY_OK domains=4,5 journals=44-47 objects=42,43\n");
+        serial_string("AIUEOS_KOTOBA_OBJECT_REPLAY_OK domains=4,5 journals=44-47 objects=42,43\r\n");
+      }
     }
     /* The input result bit is set only after a validated event has been copied
        into the browser envelope; no second mutable readiness check is needed. */
@@ -446,8 +451,10 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
     }
     if (!aiueos_syscall_transport_evidence_ready()) qemu_exit(0x71);
     if (!aiueos_kotoba_runtime_evidence_ready()) qemu_exit(0x71);
-    debug_string("AIUEOS_KOTOBA_USER_RUNTIME_OK abi=v2 transport=syscall capabilities=2,3 object=service-registry service-ipc=mailbox domains=4,5 result=42\n");
-    serial_string("AIUEOS_KOTOBA_USER_RUNTIME_OK abi=v2 transport=syscall capabilities=2,3 object=service-registry service-ipc=mailbox domains=4,5 result=42\r\n");
+    debug_string("AIUEOS_KOTOBA_USER_RUNTIME_OK abi=v2 transport=syscall capabilities=2,3,4,5 object=service-registry,user-store service-ipc=mailbox domains=4,5 result=42\n");
+    serial_string("AIUEOS_KOTOBA_USER_RUNTIME_OK abi=v2 transport=syscall capabilities=2,3,4,5 object=service-registry,user-store service-ipc=mailbox domains=4,5 result=42\r\n");
+    debug_string("AIUEOS_KOTOBA_OBJECT_WRITE_OK domains=4,5 journals=44-47 objects=42,43 value=42 receipt=readback transaction=journal-first\n");
+    serial_string("AIUEOS_KOTOBA_OBJECT_WRITE_OK domains=4,5 journals=44-47 objects=42,43 value=42 receipt=readback transaction=journal-first\r\n");
     if (!aiueos_kotoba_service_ipc_evidence_ready()) qemu_exit(0x71);
     debug_string("AIUEOS_KOTOBA_SERVICE_IPC_OK senders=4,5 recipients=service0,service1 payload=42 sequence=1 bounded=2 persistent-services=2\n");
     serial_string("AIUEOS_KOTOBA_SERVICE_IPC_OK senders=4,5 recipients=service0,service1 payload=42 sequence=1 bounded=2 persistent-services=2\r\n");

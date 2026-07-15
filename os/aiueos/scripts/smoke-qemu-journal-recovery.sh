@@ -33,6 +33,11 @@ grep -F "AIUEOS_PERSISTENT_SERVICE_BOOTSTRAP_OK registry=replayed kotoba-spawn=2
   echo "error: replayed service registry did not drive scheduler bootstrap" >&2
   exit 1
 }
+grep -F "AIUEOS_KOTOBA_OBJECT_REPLAY_OK domains=4,5 journals=44-47 objects=42,43" \
+  "$out/kernel-serial.log" >/dev/null || {
+  echo "error: domain-owned object journals were not replayed" >&2
+  exit 1
+}
 python3 - "$out/virtio-blk-smoke.img" <<'PY'
 from pathlib import Path
 import struct, sys
@@ -53,8 +58,18 @@ magic, version, sequence, length, checksum = struct.unpack_from('<8s4I', o)
 registry = b'SRV1\x01\x02\x00\x00\x01\x02\x01\x02\x01\x00\x00\x00'
 assert (magic, version, sequence, length) == (b'AIUOBJ1\0', 2, 2, 16)
 assert o[24:40] == registry and fnv(o[24:40]) == checksum
+for first, target, domain in ((44, 42, 4), (46, 43, 5)):
+    assert [record(first), record(first + 1)] == [1, 2]
+    u = d[target*512:(target+1)*512]
+    magic, version, sequence, length, checksum = struct.unpack_from('<8s4I', u)
+    payload = u[24:40]
+    assert (magic, version, sequence, length) == (b'AIUOB1\0\0', 3, 2, 16)
+    assert payload[:6] == b'USR1\x01' + bytes([domain])
+    assert struct.unpack_from('<I', payload, 8)[0] == 42
+    assert fnv(payload) == checksum
 PY
 echo "AIUEOS_SERVICE_REGISTRY_REPLAY_OK journal=2 object=2 generation=2,1"
+echo "AIUEOS_KOTOBA_OBJECT_REPLAY_OK journals=44-47 objects=42,43 sequence=2 value=42"
 
 # Corrupt the latest slot (sector 2, sequence 2). Boot must reject it, select
 # sector 1 sequence 1, and recreate sequence 2 in the alternate slot.

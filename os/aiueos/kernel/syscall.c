@@ -15,8 +15,10 @@ enum { AIUEOS_SYSCALL_ABI = 0, AIUEOS_SYSCALL_LOG_WRITE = 1,
 #define AIUEOS_CAPABILITY_RIGHT_LOG_WRITE 1U
 #define AIUEOS_CAPABILITY_RIGHT_OBJECT_READ 1U
 #define AIUEOS_CAPABILITY_RIGHT_SERVICE_SEND 2U
+#define AIUEOS_CAPABILITY_RIGHT_OBJECT_WRITE 4U
 #define AIUEOS_CAPABILITY_RIGHT_RUNTIME \
-  (AIUEOS_CAPABILITY_RIGHT_OBJECT_READ|AIUEOS_CAPABILITY_RIGHT_SERVICE_SEND)
+  (AIUEOS_CAPABILITY_RIGHT_OBJECT_READ|AIUEOS_CAPABILITY_RIGHT_SERVICE_SEND| \
+   AIUEOS_CAPABILITY_RIGHT_OBJECT_WRITE)
 #define AIUEOS_DOMAIN_KERNEL 1U
 #define AIUEOS_DOMAIN_USER_PROCESS 2U
 volatile uint16_t aiueos_current_user_domain;
@@ -303,6 +305,16 @@ uint64_t aiueos_syscall_dispatch(uint64_t number, uint64_t handle,
     if (pointer==3 && requester>=4 && requester<=5) {
       extern uint64_t aiueos_kotoba_service_send(uint16_t domain,uint64_t payload);
       return aiueos_kotoba_service_send(requester,length) ? 1 : AIUEOS_ERR_BAD_HANDLE;
+    }
+    if (pointer==4 && requester>=4 && requester<=5) {
+      extern uint64_t aiueos_user_object_write(uint16_t domain,uint64_t value);
+      uint64_t sequence=aiueos_user_object_write(requester,length);
+      return sequence ? sequence : AIUEOS_ERR_BAD_HANDLE;
+    }
+    if (pointer==5 && !length && requester>=4 && requester<=5) {
+      extern uint64_t aiueos_user_object_receipt(uint16_t domain);
+      uint64_t value=aiueos_user_object_receipt(requester);
+      return value ? value : AIUEOS_ERR_BAD_HANDLE;
     }
     return AIUEOS_ERR_NO_SYSCALL;
   }

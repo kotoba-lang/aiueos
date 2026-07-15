@@ -281,6 +281,12 @@ programs use the freestanding target contract in the separately versioned
 `kotoba-lang/compiler` repository; moving
 the remaining bootstrap into compiler-emitted PE/COFF is tracked by the ADR.
 
+Kotoba user processes persist bounded object-store transactions without a
+Linux host. Capability calls enqueue domain-owned writes, and the kernel task
+commits them journal-first through native virtio-blk MSI-X. Domains 4 and 5 use
+journal pairs 44/45 and 46/47, object sectors 42/43, readback receipts, and
+boot-time highest-sequence replay.
+
 This tree was first developed at `kotoba-lang/kotoba/os/aiueos` and imported
 from commit `bfcf31458ecc51d8a3e7f5896a32e719885f984b`. That compatibility copy
 is not deleted by this change; aiueos is authoritative from this import onward.
