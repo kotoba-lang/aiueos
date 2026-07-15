@@ -71,6 +71,15 @@ CPL0 bootstrap and CPL3 log-write syscalls. It rejects empty, out-of-window,
 high-half, and wrapping pointer/length pairs before the native syscall layer
 can consume user memory. Interrupt entry and capability dispatch remain native.
 
+`user-smoke.kotoba` is compiled with the least-privilege
+`user-runtime-policy.edn`. Its admitted `cap-call 2` lowers to the compiler's
+aiueos runtime-v2 trampoline and native syscall 5. The loader installs a
+domain-owned object-read handle at context offset 80 only after authenticating
+the ELF; the static context otherwise contains no handle or kernel address.
+Both catalog processes read service-registry object 0 through this path before
+returning 42. The kernel independently checks type, rights, owner, operation,
+and object index on every call.
+
 `copy-in` then transfers an admitted payload into a 256-byte kernel-owned
 buffer. Both source and destination accesses use the compiler's trapping
 bounded-byte operations, recursion consumes replenished freestanding fuel, and

@@ -1,1 +1,1 @@
-(defn main [] (+ 40 2))
+(defn main [] (if (> (cap-call 2 0) 0) (+ 40 2) 0))

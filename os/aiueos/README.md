@@ -89,7 +89,12 @@ rejected. The loader then admits exactly two bounded `PT_LOAD`
 segments, rejects every unexpected header, address, flag, size, and range,
 copies text and context into allocator-owned pages, and maps them RX and RW+NX
 respectively in that process root. The generic scheduler enters the ELF entry
-at CPL3; the compiler shim runs Kotoba `main`, publishes result 42 in the
+at CPL3. The authenticated runtime-v2 context admits only Kotoba capability 2,
+contains an RX syscall trampoline, and receives a domain-owned runtime handle
+from the kernel loader. Kotoba `main` uses that capability to read the persisted
+service-registry object through native syscall 5; the kernel rechecks handle
+type, rights, owner domain, capability ID, and bounded object index before
+returning a scalar state. The compiler shim then publishes result 42 in the
 context page. The boot slice launches catalog entries `app/hello` and
 `app/worker` as separate CPL3 processes in domains 4 and 5; both remain
 preemptible until normal domain teardown. Recreating either image must reuse

@@ -139,6 +139,7 @@ static int service_registry_ready;
 static int service_registry_replayed;
 static int recovered_service_registry_ready;
 static uint64_t recovered_service_registry_states[2];
+static uint64_t persisted_service_registry_states[2];
 extern uint64_t kotoba_aiueos_journal_plan(uint64_t valid0, uint64_t sequence0,
                                            uint64_t valid1, uint64_t sequence1);
 volatile uint64_t aiueos_virtio_blk_irq_count;
@@ -165,6 +166,9 @@ int aiueos_recovered_service_registry_ready(void) { return recovered_service_reg
 uint64_t aiueos_recovered_service_registry_state(unsigned service) {
   return service<2 && recovered_service_registry_ready ?
     recovered_service_registry_states[service] : 0;
+}
+uint64_t aiueos_object_store_service_state(unsigned service) {
+  return service<2 && service_registry_ready ? persisted_service_registry_states[service] : 0;
 }
 extern uint64_t aiueos_service_registry_state(unsigned service);
 extern uint64_t kotoba_aiueos_fnv1a(const uint8_t *bytes, uint64_t length);
@@ -273,6 +277,12 @@ static int apply_object_transaction(struct virtio_blk_request *request, uint8_t 
     if (service_registry_matches(transaction)) service_registry_replayed = 1;
   }
   if (service_registry_matches(transaction)) service_registry_ready = 1;
+  if (service_registry_ready) {
+    uint64_t states[2];
+    if (!service_registry_decode(transaction,states)) return 0;
+    persisted_service_registry_states[0]=states[0];
+    persisted_service_registry_states[1]=states[1];
+  }
   return 1;
 }
 
@@ -802,6 +812,7 @@ int aiueos_pci_enumerate(void) {
   service_registry_replayed = 0;
   recovered_service_registry_ready=0;
   recovered_service_registry_states[0]=recovered_service_registry_states[1]=0;
+  persisted_service_registry_states[0]=persisted_service_registry_states[1]=0;
   gpu_scanout_width = gpu_scanout_height = 0;
   if (!aiueos_dma_test_policy_allows_unisolated()) return 0;
   if (!cap_selftest()) return 0;

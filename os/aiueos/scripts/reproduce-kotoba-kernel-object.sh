@@ -3,7 +3,7 @@ set -eu
 
 aiueos=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 compiler=${1:?usage: reproduce-kotoba-kernel-object.sh /path/to/compiler}
-expected=2aae14084f41a819d6893c2447317435ddd248da
+expected=6d6ae97fb2c0ee72b0f214073ffab5ef5efbff9f
 actual=$(git -C "$compiler" rev-parse HEAD)
 
 [ "$actual" = "$expected" ] || {
@@ -129,10 +129,11 @@ python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$service_lifecycle_tmp
   --target x86_64-aiueos-kernel-v1 --output "$service_registry_tmp"
 cmp "$aiueos/kotoba/service-registry-build.o" "$service_registry_tmp"
 "$compiler/bin/kotoba-compiler" compile "$aiueos/kotoba/user-smoke.kotoba" \
-  --target x86_64-aiueos-user-v1 --output "$user_elf_tmp"
+  --target x86_64-aiueos-user-v1 --policy "$aiueos/kotoba/user-runtime-policy.edn" \
+  --output "$user_elf_tmp"
 cmp "$aiueos/kotoba/user-smoke.elf" "$user_elf_tmp"
 python3 "$aiueos/scripts/verify-kotoba-user-elf.py" "$user_elf_tmp" \
-  a4050d7c7e3feca1e66eeff188240b9bff3c91dbea02ff0aafb5d1b09c63089a
+  eb3e44fa8fb02aca6637306534af9911ed4ac9f371b354907a552e31f7a2a08f
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$service_registry_tmp" \
   70eee5d4dd599ea2049261e92a656931768b355eefc0fb6d83deee192a3a05f0 \
   kotoba_aiueos_service_registry_build

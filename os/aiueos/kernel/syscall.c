@@ -1,7 +1,8 @@
 #include <stdint.h>
 
 enum { AIUEOS_SYSCALL_ABI = 0, AIUEOS_SYSCALL_LOG_WRITE = 1,
-       AIUEOS_SYSCALL_CAP_TRANSFER = 3, AIUEOS_SYSCALL_CAP_CLAIM = 4 };
+       AIUEOS_SYSCALL_CAP_TRANSFER = 3, AIUEOS_SYSCALL_CAP_CLAIM = 4,
+       AIUEOS_SYSCALL_RUNTIME_CALL = 5 };
 #define AIUEOS_SYSCALL_ABI_V1 0x00010000ULL
 #define AIUEOS_ERR_NO_SYSCALL ((uint64_t)-38)
 #define AIUEOS_ERR_BAD_HANDLE ((uint64_t)-9)
@@ -10,7 +11,9 @@ enum { AIUEOS_SYSCALL_ABI = 0, AIUEOS_SYSCALL_LOG_WRITE = 1,
 #define AIUEOS_SYSCALL_COPY_MAX 256ULL
 #define AIUEOS_CAPABILITY_ACTIVE 0x10000U
 #define AIUEOS_CAPABILITY_TYPE_LOG 1U
+#define AIUEOS_CAPABILITY_TYPE_KOTOBA_RUNTIME 2U
 #define AIUEOS_CAPABILITY_RIGHT_LOG_WRITE 1U
+#define AIUEOS_CAPABILITY_RIGHT_OBJECT_READ 1U
 #define AIUEOS_DOMAIN_KERNEL 1U
 #define AIUEOS_DOMAIN_USER_PROCESS 2U
 volatile uint16_t aiueos_current_user_domain;
@@ -32,6 +35,7 @@ static uint64_t dynamic_capability_evidence;
 static uint64_t capability_derivation_evidence;
 static uint64_t pending_transfer_handle;
 static uint16_t pending_transfer_owner;
+static uint64_t kotoba_runtime_evidence;
 extern void *aiueos_allocate_physical_page(void);
 
 static void capability_lock_acquire(void) {
@@ -166,6 +170,7 @@ int aiueos_capability_table_initialize(void) {
   dynamic_capability_evidence = 0;
   capability_derivation_evidence = 0;
   pending_transfer_handle = 0; pending_transfer_owner = 0;
+  kotoba_runtime_evidence = 0;
   for (uint16_t slot = 1; slot < capability_capacity; slot++)
     capability_table[slot].generation = 1;
   return capability_capacity >= 256 &&
@@ -235,6 +240,21 @@ uint64_t aiueos_capability_ensure_log_handle(uint16_t owner) {
   return handle ? handle : capability_allocate(AIUEOS_CAPABILITY_TYPE_LOG,
     AIUEOS_CAPABILITY_RIGHT_LOG_WRITE,owner);
 }
+uint64_t aiueos_capability_ensure_runtime_handle(uint16_t owner) {
+  capability_lock_acquire();
+  for (uint16_t slot=1;slot<capability_capacity;slot++) {
+    struct capability_slot *entry=&capability_table[slot];
+    if (entry->owner==owner && entry->type==AIUEOS_CAPABILITY_TYPE_KOTOBA_RUNTIME &&
+        (entry->state_rights&AIUEOS_CAPABILITY_ACTIVE)) {
+      uint64_t handle=capability_plan(slot,AIUEOS_CAPABILITY_TYPE_KOTOBA_RUNTIME,
+        AIUEOS_CAPABILITY_RIGHT_OBJECT_READ,owner);
+      capability_lock_release(); return handle;
+    }
+  }
+  capability_lock_release();
+  return capability_allocate(AIUEOS_CAPABILITY_TYPE_KOTOBA_RUNTIME,
+    AIUEOS_CAPABILITY_RIGHT_OBJECT_READ,owner);
+}
 uint64_t aiueos_capability_revoke_owner(uint16_t owner) {
   uint64_t revoked=0;
   capability_lock_acquire();
@@ -263,6 +283,22 @@ uint64_t aiueos_syscall_dispatch(uint64_t number, uint64_t handle,
     uint64_t claimed=capability_claim_transfer(requester);
     return claimed ? claimed : AIUEOS_ERR_BAD_HANDLE;
   }
+  if (number == AIUEOS_SYSCALL_RUNTIME_CALL) {
+    if (!capability_admit(handle,AIUEOS_CAPABILITY_TYPE_KOTOBA_RUNTIME,
+                          AIUEOS_CAPABILITY_RIGHT_OBJECT_READ,requester))
+      return AIUEOS_ERR_BAD_HANDLE;
+    /* Capability 2 is the bounded service-registry object read. The compiler
+       admits the literal ID, and the kernel still checks both the domain-owned
+       handle and the scalar object index on every transition. */
+    if (pointer==2 && length<2) {
+      extern uint64_t aiueos_object_store_service_state(unsigned service);
+      uint64_t state=aiueos_object_store_service_state((unsigned)length);
+      if (state && requester>=4 && requester<=5)
+        kotoba_runtime_evidence|=1ULL<<(requester-4);
+      return state ? state : AIUEOS_ERR_BAD_HANDLE;
+    }
+    return AIUEOS_ERR_NO_SYSCALL;
+  }
   if (number != AIUEOS_SYSCALL_LOG_WRITE) return AIUEOS_ERR_NO_SYSCALL;
   if (!capability_admit(handle,AIUEOS_CAPABILITY_TYPE_LOG,
                         AIUEOS_CAPABILITY_RIGHT_LOG_WRITE,requester))
@@ -277,6 +313,9 @@ uint64_t aiueos_syscall_dispatch(uint64_t number, uint64_t handle,
   aiueos_syscall_last_copy_length = length;
   aiueos_syscall_last_copy_hash = kotoba_aiueos_fnv1a(syscall_copy_buffer,length);
   return length;
+}
+int aiueos_kotoba_runtime_evidence_ready(void) {
+  return kotoba_runtime_evidence==3;
 }
 
 static uint64_t invoke(uint64_t number, uint64_t handle,
