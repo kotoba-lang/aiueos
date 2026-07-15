@@ -72,7 +72,7 @@ high-half, and wrapping pointer/length pairs before the native syscall layer
 can consume user memory. Interrupt entry and capability dispatch remain native.
 
 `user-smoke.kotoba` is compiled with the least-privilege
-`user-runtime-policy.edn`. Its admitted `cap-call 2` and `cap-call 3` lower to the compiler's
+`user-runtime-policy.edn`. Its admitted `cap-call 2` through `cap-call 5` lower to the compiler's
 aiueos runtime-v2 trampoline and native syscall 5. The loader installs a
 domain-owned object-read/service-send handle at context offset 80 only after authenticating
 the ELF; the static context otherwise contains no handle or kernel address.
@@ -116,3 +116,10 @@ transaction and journal metadata and checksums with bounded stores. The native
 virtio-blk substrate supplies the observed states, commits the journal before
 materialization, and verifies readback/replay. Its pinned object SHA-256 is
 `70eee5d4dd599ea2049261e92a656931768b355eefc0fb6d83deee192a3a05f0`.
+
+`user-object-journal-build` defines the compiler-checked journal schema for
+domain-owned objects. User tasks submit capability 4 writes and read capability
+5 receipts; the kernel task commits domains 4/5 through independent dual slots
+44–47 into objects 42/43. Recovery replays each domain's highest valid sequence
+before new user code is admitted. Its pinned object SHA-256 is
+`fd6e25f0c01ba57efcd89ad14904527d5a6d4c5b9f2454a1e7ccb201967a313e`.

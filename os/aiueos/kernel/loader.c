@@ -55,7 +55,7 @@ int aiueos_load_object_store_kotoba_process(unsigned process,const uint8_t app_i
   uint64_t callback=*(const uint64_t *)(const void *)(context+48);
   uint64_t runtime_handle=*(const uint64_t *)(const void *)(context+80);
   if (*(const uint64_t *)(const void *)context!=0 ||
-      *(const uint64_t *)(const void *)(context+8)!=256 || context[16]!=12 ||
+      *(const uint64_t *)(const void *)(context+8)!=256 || context[16]!=60 ||
       callback!=USER_RUNTIME_CALLBACK || runtime_handle!=0) return 0;
   for (unsigned i=17;i<48;i++) if (context[i]) return 0;
   for (unsigned i=56;i<80;i++) if (context[i]) return 0;

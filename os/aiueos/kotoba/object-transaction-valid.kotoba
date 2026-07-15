@@ -15,9 +15,12 @@
 
 (defn aiueos-object-transaction-valid [base length]
   (and (= length 32)
-       (= (read-u32 base length 0) 3)
-       (or (= (read-u32 base length 4) 1)
-           (= (read-u32 base length 4) 2))
+       (or (and (= (read-u32 base length 0) 3)
+                (or (= (read-u32 base length 4) 1)
+                    (= (read-u32 base length 4) 2)))
+           (and (or (= (read-u32 base length 0) 42)
+                    (= (read-u32 base length 0) 43))
+                (= (read-u32 base length 4) 3)))
        (= (read-u32 base length 8) 16)
        (= (fnv (+ base 16) 16) (read-u32 base length 12))))
 

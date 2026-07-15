@@ -39,6 +39,8 @@ extern void *aiueos_address_space_private_backing(unsigned process);
 extern uint64_t aiueos_capability_log_handle(uint16_t owner);
 extern uint64_t aiueos_capability_ensure_log_handle(uint16_t owner);
 extern uint64_t aiueos_capability_ensure_runtime_handle(uint16_t owner);
+extern int aiueos_user_object_write_evidence_ready(void);
+extern int aiueos_user_object_flush_pending(void);
 extern int aiueos_scheduler_begin_user_runtime(void);
 extern int aiueos_scheduler_create_user_task(unsigned address_space,uint16_t domain,
   void (*entry)(uint64_t),uint64_t argument,uint64_t user_stack);
@@ -247,8 +249,11 @@ void aiueos_process_enter(void) {
   __asm__ volatile("sti");
   while (!aiueos_process_result() || !aiueos_user_scheduler_evidence_ready() ||
          *kotoba_result!=42 || *worker_result!=42 ||
-         !aiueos_kotoba_service_ipc_evidence_ready())
-    __asm__ volatile("hlt");
+         !aiueos_kotoba_service_ipc_evidence_ready() ||
+         !aiueos_user_object_write_evidence_ready()) {
+    __asm__ volatile("cli");aiueos_user_object_flush_pending();
+    __asm__ volatile("sti; hlt");
+  }
   aiueos_scheduler_request_user_exit(2); aiueos_scheduler_request_user_exit(3);
   aiueos_scheduler_request_user_exit(4);
   aiueos_scheduler_request_user_exit(5);
