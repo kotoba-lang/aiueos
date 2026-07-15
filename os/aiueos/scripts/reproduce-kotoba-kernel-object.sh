@@ -3,7 +3,7 @@ set -eu
 
 aiueos=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 compiler=${1:?usage: reproduce-kotoba-kernel-object.sh /path/to/compiler}
-expected=e87a963fc693aa5c71ed8563b4d20d3ae68a8b9c
+expected=4bc925f58cff6b4ce57f8171d3477252884c3a81
 actual=$(git -C "$compiler" rev-parse HEAD)
 
 [ "$actual" = "$expected" ] || {
@@ -16,6 +16,7 @@ journal_tmp=${TMPDIR:-/tmp}/aiueos-kotoba-journal-plan.$$
 fnv_tmp=${TMPDIR:-/tmp}/aiueos-kotoba-fnv1a.$$
 journal_valid_tmp=${TMPDIR:-/tmp}/aiueos-kotoba-journal-valid.$$
 transaction_valid_tmp=${TMPDIR:-/tmp}/aiueos-kotoba-transaction-valid.$$
+transaction_route_tmp=${TMPDIR:-/tmp}/aiueos-kotoba-transaction-route.$$
 mutable_valid_tmp=${TMPDIR:-/tmp}/aiueos-kotoba-mutable-valid.$$
 superblock_valid_tmp=${TMPDIR:-/tmp}/aiueos-kotoba-superblock-valid.$$
 journal_build_tmp=${TMPDIR:-/tmp}/aiueos-kotoba-journal-build.$$
@@ -33,7 +34,7 @@ user_object_journal_tmp=${TMPDIR:-/tmp}/aiueos-kotoba-user-object-journal.$$
 user_object_journal_valid_tmp=${TMPDIR:-/tmp}/aiueos-kotoba-user-object-journal-valid.$$
 user_object_journal_value_tmp=${TMPDIR:-/tmp}/aiueos-kotoba-user-object-journal-value.$$
 user_elf_tmp=${TMPDIR:-/tmp}/aiueos-kotoba-user-smoke.$$
-trap 'rm -f "$tmp" "$journal_tmp" "$fnv_tmp" "$journal_valid_tmp" "$transaction_valid_tmp" "$mutable_valid_tmp" "$superblock_valid_tmp" "$journal_build_tmp" "$mutable_build_tmp" "$cap_valid_tmp" "$extent_valid_tmp" "$region_valid_tmp" "$syscall_range_tmp" "$copy_in_tmp" "$capability_tmp" "$service_lifecycle_tmp" "$service_registry_tmp" "$service_registry_state_tmp" "$user_object_journal_tmp" "$user_object_journal_valid_tmp" "$user_object_journal_value_tmp" "$user_elf_tmp"' EXIT HUP INT TERM
+trap 'rm -f "$tmp" "$journal_tmp" "$fnv_tmp" "$journal_valid_tmp" "$transaction_valid_tmp" "$transaction_route_tmp" "$mutable_valid_tmp" "$superblock_valid_tmp" "$journal_build_tmp" "$mutable_build_tmp" "$cap_valid_tmp" "$extent_valid_tmp" "$region_valid_tmp" "$syscall_range_tmp" "$copy_in_tmp" "$capability_tmp" "$service_lifecycle_tmp" "$service_registry_tmp" "$service_registry_state_tmp" "$user_object_journal_tmp" "$user_object_journal_valid_tmp" "$user_object_journal_value_tmp" "$user_elf_tmp"' EXIT HUP INT TERM
 "$compiler/bin/kotoba-compiler" compile "$aiueos/kotoba/kernel-probe.kotoba" \
   --target x86_64-aiueos-kernel-v1 --output "$tmp"
 cmp "$aiueos/kotoba/kernel-probe.o" "$tmp"
@@ -63,6 +64,12 @@ cmp "$aiueos/kotoba/object-transaction-valid.o" "$transaction_valid_tmp"
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$transaction_valid_tmp" \
   ee9079df77755d7d540c4e974265da10f51c1c239f5cce7edaa24edf0b047b77 \
   kotoba_aiueos_object_transaction_valid
+"$compiler/bin/kotoba-compiler" compile "$aiueos/kotoba/object-transaction-route.kotoba" \
+  --target x86_64-aiueos-kernel-v1 --output "$transaction_route_tmp"
+cmp "$aiueos/kotoba/object-transaction-route.o" "$transaction_route_tmp"
+python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$transaction_route_tmp" \
+  b2d8c72642733d6ce84ac21516aa523d598fcd99f56cb84a1bca06a4b7ea547b \
+  kotoba_aiueos_object_transaction_route
 "$compiler/bin/kotoba-compiler" compile "$aiueos/kotoba/mutable-object-valid.kotoba" \
   --target x86_64-aiueos-kernel-v1 --output "$mutable_valid_tmp"
 cmp "$aiueos/kotoba/mutable-object-valid.o" "$mutable_valid_tmp"

@@ -203,11 +203,6 @@ static int journal_record_valid(const struct aiuefs_journal_record *journal) {
   return (int)kotoba_aiueos_journal_record_valid(journal, sizeof(*journal));
 }
 
-static int object_transaction_valid(const struct aiuefs_object_transaction *transaction) {
-  extern uint64_t kotoba_aiueos_object_transaction_valid(const void *, uint64_t);
-  return (int)kotoba_aiueos_object_transaction_valid(transaction, sizeof(*transaction));
-}
-
 static int mutable_object_valid(const struct aiuefs_mutable_object *object, uint32_t sequence,
     const struct aiuefs_object_transaction *transaction) {
   extern uint64_t kotoba_aiueos_mutable_object_valid(
@@ -269,7 +264,11 @@ static int apply_object_transaction(struct virtio_blk_request *request, uint8_t 
     struct virtq_used *used, volatile uint16_t *doorbell, uint16_t *submitted,
     uint32_t sequence, const struct aiuefs_object_transaction *transaction,
     int recovery) {
-  if (!object_transaction_valid(transaction)) return 0;
+  extern uint64_t kotoba_aiueos_object_transaction_route(const void *,uint64_t);
+  uint64_t route_plan=kotoba_aiueos_object_transaction_route(
+    transaction,sizeof(*transaction));
+  uint32_t route=(uint32_t)route_plan,target_sector=(uint32_t)(route_plan>>32);
+  if (route<1 || route>3) return 0;
   for (uint32_t i = 0; i < 512; i++) sector[i] = 0;
   struct aiuefs_mutable_object *object = (void *)sector;
   extern uint64_t kotoba_aiueos_mutable_object_build(
@@ -277,15 +276,15 @@ static int apply_object_transaction(struct virtio_blk_request *request, uint8_t 
   if (!kotoba_aiueos_mutable_object_build(
         object, 512, sequence, transaction, sizeof(*transaction))) return 0;
   if (!virtio_blk_sector_io(request,sector,status,desc,avail,used,doorbell,submitted,
-                            VIRTIO_BLK_T_OUT,transaction->target_sector)) return 0;
+                            VIRTIO_BLK_T_OUT,target_sector)) return 0;
   for (uint32_t i = 0; i < 512; i++) sector[i] = 0;
   if (!virtio_blk_sector_io(request,sector,status,desc,avail,used,doorbell,submitted,
-                            VIRTIO_BLK_T_IN,transaction->target_sector)) return 0;
+                            VIRTIO_BLK_T_IN,target_sector)) return 0;
   object = (void *)sector;
   if (!mutable_object_valid(object,sequence,transaction)) return 0;
-  if (transaction->target_sector==3) object_transaction_sequence = sequence;
+  if (route==1) object_transaction_sequence = sequence;
   uint64_t states[2];
-  int registry=transaction->target_sector==3 && service_registry_states(transaction,states);
+  int registry=route==1 && service_registry_states(transaction,states);
   if (recovery) {
     if (registry) {
       object_transaction_replayed = 1;

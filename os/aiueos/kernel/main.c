@@ -338,8 +338,8 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
     debug_string("AIUEOS_JOURNAL_OK dual-slot committed append-readback\n");
     serial_string("AIUEOS_JOURNAL_OK dual-slot committed append-readback\r\n");
     if (aiueos_object_transaction_sequence() != aiueos_journal_sequence()) qemu_exit(0x6f);
-    debug_string("AIUEOS_OBJECT_TXN_OK journal-first sector=3 apply-readback\n");
-    serial_string("AIUEOS_OBJECT_TXN_OK journal-first sector=3 apply-readback\r\n");
+    debug_string("AIUEOS_OBJECT_TXN_OK journal-first sector=3 apply-readback route=kotoba fixed-stack\n");
+    serial_string("AIUEOS_OBJECT_TXN_OK journal-first sector=3 apply-readback route=kotoba fixed-stack\r\n");
     debug_string("AIUEOS_KOTOBA_JOURNAL_PLAN_OK latest-slot next-sequence rollback-preserved\n");
     serial_string("AIUEOS_KOTOBA_JOURNAL_PLAN_OK latest-slot next-sequence rollback-preserved\r\n");
     debug_string("AIUEOS_KOTOBA_FNV_OK bounded-load journal-object-validation\n");
