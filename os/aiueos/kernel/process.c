@@ -24,6 +24,8 @@ struct user_result {
 
 extern uint64_t aiueos_gdt_tss[2];
 extern uint8_t aiueos_kernel_stack_top[];
+extern void aiueos_syscall_entry(void);
+extern uint64_t aiueos_sysret_count, aiueos_sysret_validation_count;
 extern void aiueos_enter_user(void (*entry)(void), void *stack);
 extern int aiueos_user_mapping_verify(void);
 extern uint64_t aiueos_syscall_from_user;
@@ -52,18 +54,53 @@ extern int aiueos_address_space_slot_self_test(void);
 extern void aiueos_probe_cross_process(const void *address);
 extern volatile uint64_t aiueos_page_fault_stage, aiueos_page_fault_error;
 static struct tss64 tss;
-static uint8_t syscall_stack[16384] __attribute__((aligned(4096)));
+uint64_t aiueos_syscall_kernel_stack_top;
+static uint64_t syscall_transport_evidence;
 __attribute__((section(".user.data"), aligned(4096), used))
 static uint8_t user_mapping_anchor[4096];
 static struct user_result *kernel_results[2];
 static uint64_t process_lifecycle_evidence;
 static int process_results_valid;
 int aiueos_process_result(void);
-void aiueos_process_set_kernel_stack(uint64_t top) { tss.rsp0=top; }
+void aiueos_process_set_kernel_stack(uint64_t top) {
+  tss.rsp0=top; aiueos_syscall_kernel_stack_top=top;
+}
+
+static uint64_t read_msr(uint32_t msr) {
+  uint32_t lo,hi; __asm__ volatile("rdmsr":"=a"(lo),"=d"(hi):"c"(msr));
+  return ((uint64_t)hi<<32)|lo;
+}
+static void write_msr(uint32_t msr,uint64_t value) {
+  __asm__ volatile("wrmsr"::"c"(msr),"a"((uint32_t)value),"d"((uint32_t)(value>>32)));
+}
+static int syscall_transport_initialize(void) {
+  uint32_t eax=0x80000000U,ebx,ecx,edx;
+  __asm__ volatile("cpuid":"+a"(eax),"=b"(ebx),"=c"(ecx),"=d"(edx));
+  if (eax<0x80000001U) return 0;
+  eax=0x80000001U;
+  __asm__ volatile("cpuid":"+a"(eax),"=b"(ebx),"=c"(ecx),"=d"(edx));
+  if (!(edx&(1U<<11))) return 0;
+  uint64_t star=(0x10ULL<<48)|(0x08ULL<<32);
+  write_msr(0xc0000080U,read_msr(0xc0000080U)|1U);
+  write_msr(0xc0000081U,star);
+  write_msr(0xc0000082U,(uint64_t)(uintptr_t)aiueos_syscall_entry);
+  write_msr(0xc0000084U,0x47700U);
+  aiueos_sysret_count=aiueos_sysret_validation_count=0;
+  syscall_transport_evidence=(read_msr(0xc0000080U)&1U) &&
+    read_msr(0xc0000081U)==star &&
+    read_msr(0xc0000082U)==(uint64_t)(uintptr_t)aiueos_syscall_entry &&
+    read_msr(0xc0000084U)==0x47700U;
+  return (int)syscall_transport_evidence;
+}
+int aiueos_syscall_transport_evidence_ready(void) {
+  return syscall_transport_evidence && aiueos_sysret_count>=18 &&
+    aiueos_sysret_validation_count==aiueos_sysret_count;
+}
 
 static inline uint64_t call(uint64_t n, uint64_t h, const void *p, uint64_t l) {
   register uint64_t a __asm__("rax")=n;
-  __asm__ volatile("int $0x80" : "+a"(a) : "D"(h), "S"(p), "d"(l) : "memory");
+  __asm__ volatile("syscall" : "+a"(a) : "D"(h), "S"(p), "d"(l) :
+                   "rcx","r11","r8","r9","r10","memory");
   return a;
 }
 
@@ -98,7 +135,10 @@ int aiueos_process_initialize(void) {
   /* Scheduler initialization already created both roots. Rebuilding them here
    * would clear live private pages after service execution. */
   if (mappings != 7) return 0x10 | mappings;
-  tss.rsp0=(uint64_t)(uintptr_t)(syscall_stack + sizeof(syscall_stack)); tss.iomap=sizeof(tss);
+  tss.rsp0=(uint64_t)(uintptr_t)aiueos_kernel_stack_top;
+  aiueos_syscall_kernel_stack_top=tss.rsp0;
+  tss.iomap=sizeof(tss);
+  if (!syscall_transport_initialize()) return 0x20;
   uint64_t b=(uint64_t)(uintptr_t)&tss, limit=sizeof(tss)-1;
   aiueos_gdt_tss[0]=(limit & 0xffff) | ((b & 0xffffff)<<16) |
     (0x89ULL<<40) | ((limit & 0xf0000)<<32) | ((b & 0xff000000)<<32);

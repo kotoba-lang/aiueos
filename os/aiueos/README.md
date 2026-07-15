@@ -46,15 +46,18 @@ resumed at least twice, producing `AIUEOS_SCHEDULER_OK` and
 `AIUEOS_SCHEDULER_CR3_OK`. Interrupt and kernel mappings remain shared and
 supervisor-only in every root.
 
-The Phase 3 bootstrap installs an `int 0x80` syscall gate that preserves the
-same integer context and returns through `iretq`. A tagged, generation-bearing
+The Phase 3 bootstrap retains a DPL0 `int 0x80` gate for kernel self-tests, but
+CPL3 uses the architectural `SYSCALL`/`SYSRETQ` path. STAR/LSTAR/EFER/FMASK are
+read back before user entry; entry validates the lower-half canonical RIP and
+RSP, switches to the scheduler-published per-task kernel stack, and sanitizes
+return flags before `SYSRETQ`. A tagged, generation-bearing
 capability handle is required by the log-write admission path. The QEMU gate
 proves that a stale generation, a non-canonical pointer, and a range crossing
 the bootstrap mapping are denied before dereference. The process foundation reserves distinct U/S pages
 for RX user text and RW+NX user data, leaves an unmapped guard page, and builds
 a loaded 64-bit TSS descriptor with a dedicated kernel-entry stack. A one-shot
-CPL3 processes enter through `iretq` and exercise valid and rejected `int 0x80`
-requests through the TSS `rsp0` path. Per-process
+CPL3 processes enter through `iretq` and exercise valid and rejected native
+syscalls through the current task's allocator-owned kernel stack. Per-process
 address-space groundwork then constructs two distinct CR3 roots. Each root
 clones the low kernel page-table path, shares the kernel/MMIO branches, maps a
 different private user page, and leaves the other process's page non-present.
@@ -103,8 +106,7 @@ calls is compiler-emitted Kotoba code and is exercised at both valid boundaries
 and rejected overflow/empty inputs. An admitted log payload is copied by Kotoba
 bounded load/store operations into a fixed 256-byte kernel buffer and verified
 by a Kotoba FNV receipt for both CPL0 and CPL3 calls; oversize requests fail
-before memory access. General page-fault-recoverable copy-in and the
-`syscall`/`sysret` transport remain later work.
+before memory access. General page-fault-recoverable copy-in remains later work.
 
 The log capability is backed by a native slot table rather than a fixed magic
 constant. A compiler-emitted Kotoba planner encodes and admits handles from the

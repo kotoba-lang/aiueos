@@ -179,8 +179,8 @@ static uint64_t *initial_user_context(uint8_t *stack, void (*entry)(void),
   struct aiueos_interrupt_context *context =
     (struct aiueos_interrupt_context *)(top - sizeof(*context));
   for (uint64_t *word=(uint64_t *)context; word!=(uint64_t *)(context+1); ++word) *word=0;
-  context->rip=(uint64_t)(uintptr_t)entry; context->cs=0x1bU;
-  context->rflags=AIUEOS_INTERRUPT_FLAG|2U; context->rsp=user_stack; context->ss=0x23U;
+  context->rip=(uint64_t)(uintptr_t)entry; context->cs=0x23U;
+  context->rflags=AIUEOS_INTERRUPT_FLAG|2U; context->rsp=user_stack; context->ss=0x1bU;
   return (uint64_t *)context;
 }
 static int apply_service_event(unsigned service, uint64_t event) {
