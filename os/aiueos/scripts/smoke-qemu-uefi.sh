@@ -311,6 +311,10 @@ grep -F "AIUEOS_ADDRESS_SPACE_OK processes=2 distinct-cr3 private-pages cross-ac
 grep -F "AIUEOS_RING3_OK processes=2 preemptive roots=2 domains=2,3 kernel-stacks=2 int80" "$serial_log" >/dev/null || {
   echo "error: CPL3 syscall and kernel-return evidence was not observed" >&2; exit 1;
 }
+grep -F "AIUEOS_CAPABILITY_TRANSFER_OK source=2 target=3 attenuated atomic-claim transferred-use" "$serial_log" >/dev/null || {
+  echo "error: atomic process capability transfer evidence was not observed" >&2
+  exit 1
+}
 grep -F "AIUEOS_USER_SYSCALL_OK valid-log copied-payload too-big stale-generation foreign-owner wrong-type no-rights invalid-pointer" "$serial_log" >/dev/null || {
   echo "error: CPL3 syscall positive/negative evidence was not observed" >&2; exit 1;
 }

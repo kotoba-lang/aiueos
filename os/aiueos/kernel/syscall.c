@@ -1,6 +1,7 @@
 #include <stdint.h>
 
-enum { AIUEOS_SYSCALL_ABI = 0, AIUEOS_SYSCALL_LOG_WRITE = 1 };
+enum { AIUEOS_SYSCALL_ABI = 0, AIUEOS_SYSCALL_LOG_WRITE = 1,
+       AIUEOS_SYSCALL_CAP_TRANSFER = 3, AIUEOS_SYSCALL_CAP_CLAIM = 4 };
 #define AIUEOS_SYSCALL_ABI_V1 0x00010000ULL
 #define AIUEOS_ERR_NO_SYSCALL ((uint64_t)-38)
 #define AIUEOS_ERR_BAD_HANDLE ((uint64_t)-9)
@@ -25,6 +26,8 @@ static struct capability_slot *capability_table;
 static uint16_t capability_capacity;
 static volatile uint8_t capability_lock;
 static uint64_t dynamic_capability_evidence;
+static uint64_t pending_transfer_handle;
+static uint16_t pending_transfer_owner;
 extern void *aiueos_allocate_physical_page(void);
 
 static void capability_lock_acquire(void) {
@@ -126,6 +129,7 @@ int aiueos_capability_table_initialize(void) {
   capability_capacity = (uint16_t)(4096U / sizeof(*capability_table));
   capability_lock = 0;
   dynamic_capability_evidence = 0;
+  pending_transfer_handle = 0; pending_transfer_owner = 0;
   for (uint16_t slot = 1; slot < capability_capacity; slot++)
     capability_table[slot].generation = 1;
   return capability_capacity >= 256 &&
@@ -133,6 +137,35 @@ int aiueos_capability_table_initialize(void) {
       AIUEOS_CAPABILITY_RIGHT_LOG_WRITE,AIUEOS_DOMAIN_KERNEL) &&
     capability_issue(2,AIUEOS_CAPABILITY_TYPE_LOG,
       AIUEOS_CAPABILITY_RIGHT_LOG_WRITE,AIUEOS_DOMAIN_USER_PROCESS);
+}
+
+static uint64_t capability_transfer_publish(uint64_t source_handle,
+    uint16_t source_owner, uint16_t target_owner, uint16_t rights) {
+  if (!target_owner || target_owner == source_owner || !rights) return 0;
+  capability_lock_acquire();
+  if (pending_transfer_handle) { capability_lock_release(); return 0; }
+  uint16_t source_slot=(uint16_t)source_handle;
+  uint64_t admitted=capability_plan(source_slot,AIUEOS_CAPABILITY_TYPE_LOG,
+                                    rights,source_owner);
+  if (!admitted || admitted!=source_handle) { capability_lock_release(); return 0; }
+  for (uint16_t slot=1; slot<capability_capacity; slot++) {
+    struct capability_slot *entry=&capability_table[slot];
+    if (entry->generation && !(entry->state_rights&AIUEOS_CAPABILITY_ACTIVE)) {
+      uint64_t target=capability_issue(slot,AIUEOS_CAPABILITY_TYPE_LOG,rights,target_owner);
+      if (target) { pending_transfer_handle=target; pending_transfer_owner=target_owner; }
+      capability_lock_release(); return target;
+    }
+  }
+  capability_lock_release(); return 0;
+}
+
+static uint64_t capability_claim_transfer(uint16_t owner) {
+  capability_lock_acquire();
+  uint64_t handle=0;
+  if (pending_transfer_owner==owner) {
+    handle=pending_transfer_handle; pending_transfer_handle=0; pending_transfer_owner=0;
+  }
+  capability_lock_release(); return handle;
 }
 
 uint16_t aiueos_capability_table_capacity(void) { return capability_capacity; }
@@ -159,9 +192,18 @@ uint64_t aiueos_syscall_dispatch(uint64_t number, uint64_t handle,
                                  uint64_t pointer, uint64_t length) {
   if (number == AIUEOS_SYSCALL_ABI) return AIUEOS_SYSCALL_ABI_V1;
   if (number == 2) return 2; /* assembly consumes this completion token */
-  if (number != AIUEOS_SYSCALL_LOG_WRITE) return AIUEOS_ERR_NO_SYSCALL;
   uint16_t requester = aiueos_syscall_from_user == 3 ?
     aiueos_current_user_domain : AIUEOS_DOMAIN_KERNEL;
+  if (number == AIUEOS_SYSCALL_CAP_TRANSFER) {
+    uint64_t transferred=capability_transfer_publish(handle,requester,
+      (uint16_t)pointer,(uint16_t)length);
+    return transferred ? transferred : AIUEOS_ERR_BAD_HANDLE;
+  }
+  if (number == AIUEOS_SYSCALL_CAP_CLAIM) {
+    uint64_t claimed=capability_claim_transfer(requester);
+    return claimed ? claimed : AIUEOS_ERR_BAD_HANDLE;
+  }
+  if (number != AIUEOS_SYSCALL_LOG_WRITE) return AIUEOS_ERR_NO_SYSCALL;
   if (!capability_admit(handle,AIUEOS_CAPABILITY_TYPE_LOG,
                         AIUEOS_CAPABILITY_RIGHT_LOG_WRITE,requester))
     return AIUEOS_ERR_BAD_HANDLE;
