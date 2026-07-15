@@ -4,19 +4,21 @@
 
 # aiueos
 
-AI-agent-native capability OS, expressed as Kotoba EDN/CLJ data: the CLJC/EDN
-semantic authority (manifests, policy decisions, grants, audit events, run
-plans/receipts, the `aiueos/component` Wasm Component Model boundary) plus the
-examples, deployment docs, and incident exercises that exercise it, in one
-repository.
+AI-agent-native capability OS built with Kotoba. This repository is the
+canonical authority for the complete OS: component semantics and policy,
+native loader/kernel/drivers, bootable images, and machine evidence.
+
+`kotoba-lang/kotoba` is the language apex. aiueos consumes separately
+versioned compiler/runtime/freestanding ABI repositories, composed through
+west; the language repository does not own this OS implementation.
 
 `aiueos` no longer owns a Rust runtime crate — Chicory (a pure-JVM Wasm
 runtime) lets the decision *and* Wasm-execution layers both live here in
 CLJC. Linux-hosted PID-1/initramfs planning, QEMU launch planning, portable
 virtio protocol logic, and an experimental JVM-FFM VFIO provider live here.
 The VFIO provider is not yet wired into the component host-import quartet, so
-component-visible raw MMIO/DMA/PCI/IRQ remains stubbed. Bare-metal boot and a
-native kernel remain out of scope for this repository. Rust, JavaScript,
+component-visible raw MMIO/DMA/PCI/IRQ remains stubbed in that hosted profile.
+The `os/aiueos` bare-metal profile owns the native implementation. Rust, JavaScript,
 Python, Svelte, or host-specific code may consume this contract as
 adapters/providers elsewhere (e.g. `kotoba-lang/kototama`'s
 `kototama.aiueos-adapter`), but they are not authority here — this repo
@@ -113,7 +115,11 @@ already lives in `kotoba-lang/kotoba`'s `kototama`/`kotoba-clj` layer.
 ```bash
 clojure -M:test   # full suite, including aiueos.execute-test (Chicory, JVM-only)
 bb test:cljc      # everything except aiueos.execute-test
+./os/aiueos/scripts/smoke-qemu-journal-recovery.sh # no-Linux OVMF gate
 ```
+
+See `90-docs/adr/0013-native-os-ownership-and-boot.md` for the repository
+boundary and `os/aiueos/README.md` for native build requirements.
 
 ## Linux-hosted VM bundle
 
