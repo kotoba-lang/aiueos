@@ -12,6 +12,7 @@ def fail(message: str) -> None:
 
 
 blob = Path(sys.argv[1]).read_bytes()
+expected_symbol = sys.argv[3] if len(sys.argv) > 3 else "kotoba_aiueos_probe"
 if len(sys.argv) > 2 and sys.argv[2] and hashlib.sha256(blob).hexdigest() != sys.argv[2]:
     fail("fixture digest does not match the pinned compiler output")
 if len(blob) < 64 or blob[:16] != b"\x7fELF\x02\x01\x01\x00" + b"\0" * 8:
@@ -67,12 +68,12 @@ symbols = []
 for offset in range(0, len(section_bytes(sym_index)), 24):
     name, info, other, shndx, value, size = struct.unpack_from("<IBBHQQ", section_bytes(sym_index), offset)
     symbols.append((string_at(symbol_strings, name), info, other, shndx, value, size))
-probes = [item for item in symbols if item[0] == "kotoba_aiueos_probe"]
+probes = [item for item in symbols if item[0] == expected_symbol]
 if len(probes) != 1:
-    fail("requires exactly one kotoba_aiueos_probe symbol")
+    fail(f"requires exactly one {expected_symbol} symbol")
 _, info, other, shndx, _, size = probes[0]
 if info != 0x12 or other != 0 or shndx != by_name[".text"] or size == 0:
-    fail("probe must be a default-visibility GLOBAL FUNC defined in .text")
+    fail("export must be a default-visibility GLOBAL FUNC defined in .text")
 if any(item[3] == 0 and item[0] for item in symbols):
     fail("undefined/imported symbols are forbidden")
 rela = sections[by_name[".rela.text"]]
@@ -86,4 +87,4 @@ if symbols[symbol_index][3] != by_name[".data"]:
     fail("relocation target must be defined in .data")
 if rel_offset + 4 > len(section_bytes(by_name[".text"])):
     fail("relocation offset exceeds .text")
-print("AIUEOS_KOTOBA_OBJECT_OK target=x86_64-aiueos-kernel-v1 imports=0 relocations=1")
+print(f"AIUEOS_KOTOBA_OBJECT_OK target=x86_64-aiueos-kernel-v1 export={expected_symbol} imports=0 relocations=1")

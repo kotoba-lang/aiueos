@@ -139,6 +139,15 @@ before link. The kernel calls the emitted function and requires result `42` as
 boot evidence. This is the first Kotoba-generated vertical slice, not evidence
 that the remaining C and assembly substrate has been replaced.
 
+The next boundary exports
+`uint64_t kotoba_aiueos_journal_plan(valid0, sequence0, valid1, sequence1)`.
+Kotoba now owns selection of the latest valid journal commit, the monotonically
+next sequence, and the alternate slot that preserves the rollback record. The
+native substrate still owns record validation and bounded virtio-blk I/O; it
+rejects an inconsistent Kotoba plan before replay or mutation. Multi-boot QEMU
+tests cover initial append, committed redo, corrupt-latest fallback, and
+rollback preservation.
+
 ### Driver, UI, and persistence split
 
 ```text

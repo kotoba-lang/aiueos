@@ -126,6 +126,8 @@ static uint32_t journal_recovered_sequence;
 static uint32_t journal_slot;
 static int object_transaction_replayed;
 static uint32_t object_transaction_sequence;
+extern uint64_t kotoba_aiueos_journal_plan(uint64_t valid0, uint64_t sequence0,
+                                           uint64_t valid1, uint64_t sequence1);
 volatile uint64_t aiueos_virtio_blk_irq_count;
 static int blk_msix_active;
 int aiueos_object_store_ready(void) { return object_store_ready; }
@@ -555,18 +557,22 @@ static int virtio_blk(uint8_t b, uint8_t d, uint8_t f) {
           if (selected < 0 || slots[slot].sequence > slots[selected].sequence) selected = slot;
         }
       }
-      uint32_t next_sequence = 1;
-      uint32_t target_slot = 0;
-      if (selected >= 0) {
+      uint64_t plan = kotoba_aiueos_journal_plan(
+        (uint64_t)valid[0], valid[0] ? slots[0].sequence : 0,
+        (uint64_t)valid[1], valid[1] ? slots[1].sequence : 0);
+      uint32_t next_sequence = (uint32_t)plan;
+      uint32_t target_slot = (uint32_t)(plan >> 32) & 1U;
+      int kotoba_recovered = (int)((plan >> 33) & 1U);
+      if (!next_sequence || target_slot > 1 || kotoba_recovered != (selected >= 0)) return 0;
+      if (kotoba_recovered) {
+        selected = (int)(target_slot ^ 1U);
         journal_recovered = 1;
         journal_recovered_sequence = slots[selected].sequence;
         const struct aiuefs_object_transaction *replay = (const void *)slots[selected].payload;
         if (!apply_object_transaction(request,sector,status,desc,avail,used,doorbell,
                                       &submitted,slots[selected].sequence,replay,1)) return 0;
-        next_sequence = slots[selected].sequence + 1;
-        if (!next_sequence || next_sequence > 999) return 0;
-        target_slot = (uint32_t)selected ^ 1U;
       }
+      if (next_sequence > 999) return 0;
       for (uint32_t i = 0; i < 512; i++) sector[i] = 0;
       journal = (void *)sector;
       for (uint32_t i = 0; i < 8; i++) journal->magic[i] = journal_magic[i];

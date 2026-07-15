@@ -2,7 +2,7 @@
 
 `kernel-probe.o` is the byte-for-byte output of the merged
 `kotoba-lang/compiler` commit
-`b3bbec460dd344a69aa000c2760c138d7afbb8a6` for `kernel-probe.kotoba`:
+`eea427f730e3ef390c7e37259d8953686ce0144a` for `kernel-probe.kotoba`:
 
 ```clojure
 (defn main [] 42)
@@ -25,3 +25,12 @@ objects byte-for-byte. This pinned object is temporary cross-repository CI
 input and may only be updated from a reviewed compiler artifact. The aiueos
 verifier validates every supplied object before link and forbids host imports
 or dynamic/runtime dependencies.
+
+`journal-plan.o` is produced by the same compiler revision from
+`journal-plan.kotoba`. It exports the four-argument SysV function
+`kotoba_aiueos_journal_plan`. Given validity and sequence values for both
+bounded journal slots, Kotoba selects the latest committed slot and returns the
+next sequence, alternate write slot, and recovery flag as a packed 64-bit plan.
+The C substrate retains bounded virtio I/O and validates the returned plan
+before replay or mutation. Its pinned SHA-256 is
+`c24c7bdab170d65624c1ee2cb939b949c94750b651f59b5aa7d4bc192ec62df6`.
