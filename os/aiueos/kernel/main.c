@@ -355,8 +355,8 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
     debug_string("AIUEOS_SCHEDULER_CR3_OK roots=3 private-pages=2 kernel-return\n");
     serial_string("AIUEOS_SCHEDULER_CR3_OK roots=3 private-pages=2 kernel-return\r\n");
     if (!aiueos_service_runtime_evidence_ready()) qemu_exit(0x6f);
-    debug_string("AIUEOS_SERVICE_RUNTIME_OK services=2 generations=stable heartbeats=persistent\n");
-    serial_string("AIUEOS_SERVICE_RUNTIME_OK services=2 generations=stable heartbeats=persistent\r\n");
+    debug_string("AIUEOS_SERVICE_RUNTIME_OK services=2 kotoba-policy restart=context generation=2 budget=bounded\n");
+    serial_string("AIUEOS_SERVICE_RUNTIME_OK services=2 kotoba-policy restart=context generation=2 budget=bounded\r\n");
     if (!aiueos_ioapic_route_legacy_timer()) {
       debug_string("AIUEOS_IOAPIC_FAIL route-legacy-timer\n");
       serial_string("AIUEOS_IOAPIC_FAIL route-legacy-timer\r\n");
