@@ -318,8 +318,10 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
       serial_string("AIUEOS_OBJECT_STORE_FAIL superblock-or-object\r\n");
       qemu_exit(0x70);
     }
-    debug_string("AIUEOS_OBJECT_STORE_OK aiuefs-v1 objects=1 checksum=fnv1a\n");
-    serial_string("AIUEOS_OBJECT_STORE_OK aiuefs-v1 objects=1 checksum=fnv1a\r\n");
+    debug_string("AIUEOS_OBJECT_STORE_OK aiuefs-v2 objects=2 app=sha256+rsa2048\n");
+    serial_string("AIUEOS_OBJECT_STORE_OK aiuefs-v2 objects=2 app=sha256+rsa2048\r\n");
+    debug_string("AIUEOS_KOTOBA_APP_ADMISSION_OK source=object-store digest=sha256 signature=rsa2048-pkcs1 policy=public-key\n");
+    serial_string("AIUEOS_KOTOBA_APP_ADMISSION_OK source=object-store digest=sha256 signature=rsa2048-pkcs1 policy=public-key\r\n");
     if (!aiueos_journal_ready()) {
       debug_string("AIUEOS_JOURNAL_FAIL write-readback\n");
       serial_string("AIUEOS_JOURNAL_FAIL write-readback\r\n");
@@ -428,8 +430,8 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
     serial_string("AIUEOS_PROCESS_FOUNDATION_OK tss-descriptor user-wx guard-page\r\n");
     debug_string("AIUEOS_PROCESS_CREATE_OK descriptors=8 entry-argument-stack domain-address-space-task\n");
     serial_string("AIUEOS_PROCESS_CREATE_OK descriptors=8 entry-argument-stack domain-address-space-task\r\n");
-    debug_string("AIUEOS_KOTOBA_ELF_PROCESS_OK et-exec segments=rx,rw result=42 domain=4\n");
-    serial_string("AIUEOS_KOTOBA_ELF_PROCESS_OK et-exec segments=rx,rw result=42 domain=4\r\n");
+    debug_string("AIUEOS_KOTOBA_ELF_PROCESS_OK source=object-store et-exec segments=rx,rw result=42 domain=4\n");
+    serial_string("AIUEOS_KOTOBA_ELF_PROCESS_OK source=object-store et-exec segments=rx,rw result=42 domain=4\r\n");
     aiueos_load_task_register();
     aiueos_process_enter();
     if (!aiueos_process_result()) {

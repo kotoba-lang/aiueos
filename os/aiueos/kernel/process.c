@@ -56,7 +56,7 @@ extern unsigned aiueos_address_space_capacity(void);
 extern int aiueos_address_space_slot_self_test(void);
 extern int aiueos_address_space_claim(void);
 extern int aiueos_address_space_user_entry_valid(unsigned process,uint64_t entry);
-extern int aiueos_load_embedded_kotoba_process(unsigned process,uint64_t *entry,uint64_t **result);
+extern int aiueos_load_object_store_kotoba_process(unsigned process,uint64_t *entry,uint64_t **result);
 extern int aiueos_kotoba_process_loader_evidence_ready(void);
 extern uint8_t aiueos_user_text_start[],aiueos_user_text_end[];
 extern void aiueos_probe_cross_process(const void *address);
@@ -190,7 +190,7 @@ static int process_create(void (*entry)(uint64_t),uint16_t domain) {
 static int process_create_kotoba_elf(uint16_t domain,uint64_t **result) {
   int address_space=aiueos_address_space_claim();
   uint64_t entry=0;
-  if (address_space<0 || !aiueos_load_embedded_kotoba_process(
+  if (address_space<0 || !aiueos_load_object_store_kotoba_process(
       (unsigned)address_space,&entry,result)) {
     if (address_space>=0) aiueos_address_space_reclaim((unsigned)address_space);
     return -1;
@@ -253,7 +253,7 @@ void aiueos_process_enter(void) {
   if (aiueos_address_space_reclaim(space0) && aiueos_address_space_reclaim(space1) &&
       aiueos_address_space_reclaim(space2) &&
       aiueos_address_space_reuse(space0) && aiueos_address_space_reuse(space1) &&
-      aiueos_address_space_reuse(space2) && aiueos_load_embedded_kotoba_process(
+      aiueos_address_space_reuse(space2) && aiueos_load_object_store_kotoba_process(
         space2,&recreated_entry,&recreated_result) && recreated_entry==0x1e1000ULL &&
       recreated_result && *recreated_result==0 && aiueos_address_space_reclaim(space2) &&
       aiueos_physical_allocator_reuse_count()-allocator_reuse_before>=17)

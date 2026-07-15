@@ -105,6 +105,9 @@ const struct aiueos_desktop_input_event *aiueos_desktop_input_event(void) {
 struct aiuefs_superblock {
   uint8_t magic[8]; uint32_t version, header_size, object_count, reserved;
   uint32_t object_offset, object_length, object_checksum;
+  uint32_t app_sector, app_length;
+  uint8_t app_sha256[32]; uint32_t app_signature_sector, signer_id;
+  uint8_t auth_reserved[24];
 } __attribute__((packed));
 struct aiuefs_journal_record {
   uint8_t magic[8]; uint32_t version, sequence, state, payload_length, payload_checksum, header_checksum;
@@ -119,6 +122,9 @@ struct aiuefs_mutable_object {
   uint8_t object[16];
 } __attribute__((packed));
 static int object_store_ready;
+static int kotoba_app_ready;
+static uint32_t kotoba_app_length;
+static uint8_t kotoba_app_object[12288];
 static int journal_ready;
 static int journal_recovered;
 static uint32_t journal_sequence;
@@ -135,6 +141,10 @@ extern uint64_t kotoba_aiueos_journal_plan(uint64_t valid0, uint64_t sequence0,
 volatile uint64_t aiueos_virtio_blk_irq_count;
 static int blk_msix_active;
 int aiueos_object_store_ready(void) { return object_store_ready; }
+int aiueos_kotoba_app_object(const uint8_t **data,uint64_t *length) {
+  if (!kotoba_app_ready || !data || !length) return 0;
+  *data=kotoba_app_object; *length=kotoba_app_length; return 1;
+}
 int aiueos_journal_ready(void) { return journal_ready; }
 int aiueos_journal_recovered(void) { return journal_recovered; }
 uint32_t aiueos_journal_sequence(void) { return journal_sequence; }
@@ -151,8 +161,14 @@ uint64_t aiueos_recovered_service_registry_state(unsigned service) {
 }
 extern uint64_t aiueos_service_registry_state(unsigned service);
 extern uint64_t kotoba_aiueos_fnv1a(const uint8_t *bytes, uint64_t length);
+extern void aiueos_sha256(const uint8_t *,uint64_t,uint8_t[32]);
+extern int aiueos_rsa2048_sha256_verify(const uint8_t[256],const uint8_t[32]);
 static uint32_t fnv1a(const uint8_t *bytes, uint32_t length) {
   return (uint32_t)kotoba_aiueos_fnv1a(bytes, length);
+}
+static int bytes_equal_constant_time(const uint8_t *a,const uint8_t *b,uint32_t length) {
+  uint8_t difference=0; for(uint32_t i=0;i<length;i++) difference|=a[i]^b[i];
+  return difference==0;
 }
 
 static int journal_record_valid(const struct aiuefs_journal_record *journal) {
@@ -559,10 +575,34 @@ static int virtio_blk(uint8_t b, uint8_t d, uint8_t f) {
       const struct aiuefs_superblock *superblock = (const void *)sector;
       extern uint64_t kotoba_aiueos_superblock_valid(const void *, uint64_t);
       if (!kotoba_aiueos_superblock_valid(superblock, 512)) return 0;
+      uint32_t app_sector=superblock->app_sector,app_length=superblock->app_length;
+      uint32_t signature_sector=superblock->app_signature_sector;
+      uint8_t expected_sha[32],actual_sha[32],signature[256];
+      for(unsigned i=0;i<32;i++) expected_sha[i]=superblock->app_sha256[i];
+      if (app_sector<4 || !app_length || app_length>sizeof(kotoba_app_object) ||
+          app_sector+(app_length+511)/512>capacity ||
+          signature_sector<app_sector+(app_length+511)/512 || signature_sector>=capacity ||
+          superblock->signer_id!=1) return 0;
+      uint32_t copied=0;
+      for(uint32_t index=0;copied<app_length;index++) {
+        for(uint32_t i=0;i<512;i++) sector[i]=0;
+        if (!virtio_blk_sector_io(request,sector,status,desc,avail,used,doorbell,
+                                  &submitted,VIRTIO_BLK_T_IN,app_sector+index)) return 0;
+        uint32_t take=app_length-copied; if(take>512) take=512;
+        for(uint32_t i=0;i<take;i++) kotoba_app_object[copied+i]=sector[i];
+        copied+=take;
+      }
+      for(uint32_t i=0;i<512;i++) sector[i]=0;
+      if (!virtio_blk_sector_io(request,sector,status,desc,avail,used,doorbell,
+                                &submitted,VIRTIO_BLK_T_IN,signature_sector)) return 0;
+      for(unsigned i=0;i<256;i++) signature[i]=sector[i];
+      aiueos_sha256(kotoba_app_object,app_length,actual_sha);
+      if (!bytes_equal_constant_time(expected_sha,actual_sha,32) ||
+          !aiueos_rsa2048_sha256_verify(signature,actual_sha)) return 0;
+      kotoba_app_length=app_length; kotoba_app_ready=1;
       object_store_ready = 1;
       struct aiuefs_journal_record slots[2];
       struct aiuefs_journal_record *journal = (void *)sector;
-      uint16_t submitted = 1;
       int valid[2] = {0, 0}, selected = -1;
       /* Validate both bounded slots before mutation and choose the greatest
          committed sequence. The other slot remains the rollback record. */
@@ -715,6 +755,7 @@ static int virtio_gpu(uint8_t b, uint8_t d, uint8_t f) {
 
 int aiueos_pci_enumerate(void) {
   object_store_ready = 0;
+  kotoba_app_ready=0; kotoba_app_length=0;
   journal_ready = 0;
   journal_recovered = 0;
   journal_sequence = 0;

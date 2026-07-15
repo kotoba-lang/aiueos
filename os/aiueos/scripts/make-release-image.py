@@ -249,6 +249,7 @@ def main():
     sub = parser.add_subparsers(dest="command", required=True)
     build = sub.add_parser("build")
     build.add_argument("--efi", required=True); build.add_argument("--kernel", required=True)
+    build.add_argument("--data")
     build.add_argument("--output", required=True); build.add_argument("--receipt", required=True)
     verify = sub.add_parser("verify")
     verify.add_argument("--image", required=True); verify.add_argument("--efi"); verify.add_argument("--kernel")
@@ -270,6 +271,9 @@ def main():
             "EFI/AIUEOS/KERNEL.ELF": {"bytes": Path(args.kernel).stat().st_size, "sha256": sha256(args.kernel)},
         },
     }
+    if args.data:
+        receipt["artifacts"]["AIUEOS-DATA.IMG"] = {
+            "bytes": Path(args.data).stat().st_size, "sha256": sha256(args.data)}
     Path(args.receipt).write_text(json.dumps(receipt, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     print(args.output)
 

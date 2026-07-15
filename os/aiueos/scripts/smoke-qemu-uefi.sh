@@ -42,21 +42,23 @@ fi
 
 rm -f "$log" "$serial_log"
 if [ "${AIUEOS_PRESERVE_BLK_IMAGE:-0}" != 1 ] || [ ! -f "$blk_image" ]; then
+python3 "$aiueos/scripts/make-aiuefs-image.py" \
+  --app "$aiueos/kotoba/user-smoke.elf" \
+  --signature "$aiueos/kotoba/user-smoke.sig" --output "$blk_image"
+fi
+if [ "${AIUEOS_CORRUPT_KOTOBA_APP:-0}" = 1 ]; then
 python3 - "$blk_image" <<'PY'
-import pathlib
-import struct
+from pathlib import Path
 import sys
-
-path = pathlib.Path(sys.argv[1])
-payload = bytearray(1024 * 1024)
-obj = b"KOTOBASE-ROOT-V1"
-checksum = 2166136261
-for byte in obj:
-    checksum = ((checksum ^ byte) * 16777619) & 0xffffffff
-header = struct.pack("<8s7I", b"AIUEFS1\0", 1, 36, 1, 0, 64, len(obj), checksum)
-payload[:len(header)] = header
-payload[64:64 + len(obj)] = obj
-path.write_bytes(payload)
+p=Path(sys.argv[1]); b=bytearray(p.read_bytes()); b[4*512+64]^=1; p.write_bytes(b)
+PY
+fi
+if [ "${AIUEOS_CORRUPT_KOTOBA_SIGNATURE:-0}" = 1 ]; then
+python3 - "$blk_image" <<'PY'
+from pathlib import Path
+import struct, sys
+p=Path(sys.argv[1]); b=bytearray(p.read_bytes()); sector=struct.unpack_from('<I',b,76)[0]
+b[sector*512+17]^=1; p.write_bytes(b)
 PY
 fi
 if [ -n "${AIUEOS_DISK_IMAGE:-}" ]; then
@@ -105,6 +107,14 @@ fi
 
 # The #UD handler writes 0x30; isa-debug-exit maps it to (0x30 << 1) | 1 = 97.
 [ "$status" -eq 97 ] || {
+  if { [ "${AIUEOS_CORRUPT_KOTOBA_APP:-0}" = 1 ] ||
+       [ "${AIUEOS_CORRUPT_KOTOBA_SIGNATURE:-0}" = 1 ]; } && [ "$status" -eq 227 ]; then
+    ! grep -F "AIUEOS_KOTOBA_APP_ADMISSION_OK" "$serial_log" >/dev/null || {
+      echo "error: corrupted Kotoba app reached admission" >&2; exit 1;
+    }
+    echo "AIUEOS_KOTOBA_APP_AUTH_REJECTION_OK digest-or-signature"
+    exit 0
+  fi
   echo "error: unexpected QEMU exit status $status" >&2
   test -f "$log" && sed -n '1,80p' "$log" >&2
   exit 1
@@ -207,8 +217,12 @@ if [ "${AIUEOS_TEST_DMAR:-0}" = 1 ]; then
     echo "error: VT-d interrupt-remapped MSI-X evidence was not observed" >&2; exit 1;
   }
 fi
-grep -F "AIUEOS_OBJECT_STORE_OK aiuefs-v1 objects=1 checksum=fnv1a" "$serial_log" >/dev/null || {
+grep -F "AIUEOS_OBJECT_STORE_OK aiuefs-v2 objects=2 app=sha256+rsa2048" "$serial_log" >/dev/null || {
   echo "error: bounded read-only object-store evidence was not observed" >&2
+  exit 1
+}
+grep -F "AIUEOS_KOTOBA_APP_ADMISSION_OK source=object-store digest=sha256 signature=rsa2048-pkcs1 policy=public-key" "$serial_log" >/dev/null || {
+  echo "error: authenticated object-store Kotoba app admission was not observed" >&2
   exit 1
 }
 grep -F "AIUEOS_JOURNAL_OK dual-slot committed append-readback" "$serial_log" >/dev/null || {
@@ -327,7 +341,7 @@ grep -F "AIUEOS_PROCESS_REAP_OK tasks=3 process-slots=8 task-slots=8 generations
   echo "error: process exit/reap/reuse evidence was not observed" >&2
   exit 1
 }
-grep -F "AIUEOS_KOTOBA_ELF_PROCESS_OK et-exec segments=rx,rw result=42 domain=4" "$serial_log" >/dev/null || {
+grep -F "AIUEOS_KOTOBA_ELF_PROCESS_OK source=object-store et-exec segments=rx,rw result=42 domain=4" "$serial_log" >/dev/null || {
   echo "Kotoba ELF process evidence missing" >&2
   exit 1
 }
