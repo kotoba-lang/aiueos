@@ -159,6 +159,16 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
       qemu_exit(0x6f);
     }
     serial_string("AIUEOS_KOTOBA_FNV_VECTOR_OK abc\r\n");
+    extern uint64_t kotoba_aiueos_journal_record_build(void *, uint64_t, uint64_t);
+    extern uint64_t kotoba_aiueos_journal_record_valid(const void *, uint64_t);
+    static uint8_t journal_vector[512];
+    for (uint32_t i = 0; i < sizeof(journal_vector); i++) journal_vector[i] = 0;
+    if (!kotoba_aiueos_journal_record_build(journal_vector, sizeof(journal_vector), 1) ||
+        !kotoba_aiueos_journal_record_valid(journal_vector, 64)) {
+      serial_string("AIUEOS_KOTOBA_STORE_FAIL journal-vector\r\n");
+      qemu_exit(0x6f);
+    }
+    serial_string("AIUEOS_KOTOBA_STORE_VECTOR_OK journal-sequence=1\r\n");
     aiueos_load_gdt();
     set_idt_gate(6, aiueos_isr_invalid_opcode);
     set_idt_gate(14, aiueos_isr_page_fault);
@@ -312,6 +322,7 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
     serial_string("AIUEOS_KOTOBA_FNV_OK bounded-load journal-object-validation\r\n");
     serial_string("AIUEOS_KOTOBA_RECORD_VALIDATION_OK journal transaction bounded-u32\r\n");
     serial_string("AIUEOS_KOTOBA_STORAGE_READ_VALIDATION_OK superblock mutable-object\r\n");
+    serial_string("AIUEOS_KOTOBA_STORAGE_WRITE_OK journal mutable-object bounded-store\r\n");
     if (aiueos_journal_recovered()) {
       if (!aiueos_journal_recovered_sequence() ||
           aiueos_journal_sequence() != aiueos_journal_recovered_sequence() + 1) qemu_exit(0x6f);

@@ -194,16 +194,13 @@ static int apply_object_transaction(struct virtio_blk_request *request, uint8_t 
     struct virtq_used *used, volatile uint16_t *doorbell, uint16_t *submitted,
     uint32_t sequence, const struct aiuefs_object_transaction *transaction,
     int recovery) {
-  static const uint8_t magic[8] = {'A','I','U','O','B','J','1',0};
   if (!object_transaction_valid(transaction)) return 0;
   for (uint32_t i = 0; i < 512; i++) sector[i] = 0;
   struct aiuefs_mutable_object *object = (void *)sector;
-  for (uint32_t i = 0; i < sizeof(magic); i++) object->magic[i] = magic[i];
-  object->version = transaction->object_version;
-  object->sequence = sequence;
-  object->object_length = transaction->object_length;
-  object->object_checksum = transaction->object_checksum;
-  for (uint32_t i = 0; i < transaction->object_length; i++) object->object[i] = transaction->object[i];
+  extern uint64_t kotoba_aiueos_mutable_object_build(
+    void *, uint64_t, uint64_t, const void *, uint64_t);
+  if (!kotoba_aiueos_mutable_object_build(
+        object, 512, sequence, transaction, sizeof(*transaction))) return 0;
   if (!virtio_blk_sector_io(request,sector,status,desc,avail,used,doorbell,submitted,
                             VIRTIO_BLK_T_OUT,transaction->target_sector)) return 0;
   for (uint32_t i = 0; i < 512; i++) sector[i] = 0;
@@ -522,7 +519,6 @@ static int virtio_blk(uint8_t b, uint8_t d, uint8_t f) {
       object_store_ready = 1;
       struct aiuefs_journal_record slots[2];
       struct aiuefs_journal_record *journal = (void *)sector;
-      static const uint8_t journal_magic[8] = {'A','I','U','J','R','N','2',0};
       uint16_t submitted = 1;
       int valid[2] = {0, 0}, selected = -1;
       /* Validate both bounded slots before mutation and choose the greatest
@@ -556,21 +552,9 @@ static int virtio_blk(uint8_t b, uint8_t d, uint8_t f) {
       if (next_sequence > 999) return 0;
       for (uint32_t i = 0; i < 512; i++) sector[i] = 0;
       journal = (void *)sector;
-      for (uint32_t i = 0; i < 8; i++) journal->magic[i] = journal_magic[i];
-      journal->version = 2; journal->sequence = next_sequence; journal->state = 2;
-      journal->payload_length = sizeof(struct aiuefs_object_transaction);
+      extern uint64_t kotoba_aiueos_journal_record_build(void *, uint64_t, uint64_t);
+      if (!kotoba_aiueos_journal_record_build(journal, 512, next_sequence)) return 0;
       struct aiuefs_object_transaction *transaction = (void *)journal->payload;
-      transaction->target_sector = 3;
-      transaction->object_version = 1;
-      transaction->object_length = sizeof(transaction->object);
-      static const uint8_t object_prefix[13] = "KOTOBASE-OBJ-";
-      for (uint32_t i = 0; i < sizeof(object_prefix); i++) transaction->object[i] = object_prefix[i];
-      transaction->object[13] = (uint8_t)('0' + (next_sequence / 100) % 10);
-      transaction->object[14] = (uint8_t)('0' + (next_sequence / 10) % 10);
-      transaction->object[15] = (uint8_t)('0' + next_sequence % 10);
-      transaction->object_checksum = fnv1a(transaction->object, transaction->object_length);
-      journal->payload_checksum = fnv1a(journal->payload, journal->payload_length);
-      journal->header_checksum = fnv1a((const uint8_t *)journal, 28);
       if (!virtio_blk_sector_io(request,sector,status,desc,avail,used,doorbell,
                                 &submitted,VIRTIO_BLK_T_OUT,target_slot + 1)) return 0;
       for (uint32_t i = 0; i < 512; i++) sector[i] = 0;

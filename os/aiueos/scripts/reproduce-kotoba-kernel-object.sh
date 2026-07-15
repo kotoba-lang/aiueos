@@ -3,7 +3,7 @@ set -eu
 
 aiueos=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 compiler=${1:?usage: reproduce-kotoba-kernel-object.sh /path/to/compiler}
-expected=01f3ce2fe21ea002b38f346b4139604eb0f747e5
+expected=94fe1b4f5de0cae90ea8cf1603b285f279914d52
 actual=$(git -C "$compiler" rev-parse HEAD)
 
 [ "$actual" = "$expected" ] || {
@@ -18,7 +18,9 @@ journal_valid_tmp=${TMPDIR:-/tmp}/aiueos-kotoba-journal-valid.$$
 transaction_valid_tmp=${TMPDIR:-/tmp}/aiueos-kotoba-transaction-valid.$$
 mutable_valid_tmp=${TMPDIR:-/tmp}/aiueos-kotoba-mutable-valid.$$
 superblock_valid_tmp=${TMPDIR:-/tmp}/aiueos-kotoba-superblock-valid.$$
-trap 'rm -f "$tmp" "$journal_tmp" "$fnv_tmp" "$journal_valid_tmp" "$transaction_valid_tmp" "$mutable_valid_tmp" "$superblock_valid_tmp"' EXIT HUP INT TERM
+journal_build_tmp=${TMPDIR:-/tmp}/aiueos-kotoba-journal-build.$$
+mutable_build_tmp=${TMPDIR:-/tmp}/aiueos-kotoba-mutable-build.$$
+trap 'rm -f "$tmp" "$journal_tmp" "$fnv_tmp" "$journal_valid_tmp" "$transaction_valid_tmp" "$mutable_valid_tmp" "$superblock_valid_tmp" "$journal_build_tmp" "$mutable_build_tmp"' EXIT HUP INT TERM
 "$compiler/bin/kotoba-compiler" compile "$aiueos/kotoba/kernel-probe.kotoba" \
   --target x86_64-aiueos-kernel-v1 --output "$tmp"
 cmp "$aiueos/kotoba/kernel-probe.o" "$tmp"
@@ -60,4 +62,16 @@ cmp "$aiueos/kotoba/superblock-valid.o" "$superblock_valid_tmp"
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$superblock_valid_tmp" \
   3e53077d751eadb01195a6a0b375fb8e8680c98a0a28dadae29ebb4426d6aee7 \
   kotoba_aiueos_superblock_valid
+"$compiler/bin/kotoba-compiler" compile "$aiueos/kotoba/journal-record-build.kotoba" \
+  --target x86_64-aiueos-kernel-v1 --output "$journal_build_tmp"
+cmp "$aiueos/kotoba/journal-record-build.o" "$journal_build_tmp"
+python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$journal_build_tmp" \
+  1f1dedd438d523c7f92bde90f8bf07c92768fd9dd7cfc73a27f9dc895eb3bca7 \
+  kotoba_aiueos_journal_record_build
+"$compiler/bin/kotoba-compiler" compile "$aiueos/kotoba/mutable-object-build.kotoba" \
+  --target x86_64-aiueos-kernel-v1 --output "$mutable_build_tmp"
+cmp "$aiueos/kotoba/mutable-object-build.o" "$mutable_build_tmp"
+python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$mutable_build_tmp" \
+  22b54f50d63e5ff0a1563acef324a53adacd824ebc98768ac614fb41ec415f1c \
+  kotoba_aiueos_mutable_object_build
 echo "AIUEOS_KOTOBA_REPRODUCIBLE_OK compiler=$actual"
