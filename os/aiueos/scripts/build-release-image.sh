@@ -12,8 +12,9 @@ data_image="$out/aiueos-x86_64-data.img"
 
 "$aiueos/scripts/build-uefi.sh" >/dev/null
 python3 "$aiueos/scripts/make-aiuefs-image.py" \
-  --app "$aiueos/kotoba/user-smoke.elf" \
-  --signature "$aiueos/kotoba/user-smoke.sig" --output "$data_image"
+  --entry "app/hello,$aiueos/kotoba/user-smoke.elf,$aiueos/kotoba/user-smoke.sig" \
+  --entry "app/worker,$aiueos/kotoba/user-smoke.elf,$aiueos/kotoba/user-smoke.sig" \
+  --catalog-signature "$aiueos/kotoba/app-catalog.sig" --output "$data_image"
 python3 "$aiueos/scripts/make-release-image.py" build \
   --efi "$efi" --kernel "$kernel" --data "$data_image" \
   --output "$image" --receipt "$receipt"

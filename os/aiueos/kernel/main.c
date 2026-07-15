@@ -76,6 +76,7 @@ extern int aiueos_process_initialize(void);
 extern void aiueos_process_enter(void);
 extern int aiueos_process_result(void);
 extern int aiueos_process_lifecycle_evidence_ready(void);
+extern int aiueos_catalog_lookup_rejection_evidence_ready(void);
 extern int aiueos_syscall_transport_evidence_ready(void);
 extern int aiueos_address_space_self_test(void);
 extern void aiueos_load_task_register(void);
@@ -318,10 +319,10 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
       serial_string("AIUEOS_OBJECT_STORE_FAIL superblock-or-object\r\n");
       qemu_exit(0x70);
     }
-    debug_string("AIUEOS_OBJECT_STORE_OK aiuefs-v2 objects=2 app=sha256+rsa2048\n");
-    serial_string("AIUEOS_OBJECT_STORE_OK aiuefs-v2 objects=2 app=sha256+rsa2048\r\n");
-    debug_string("AIUEOS_KOTOBA_APP_ADMISSION_OK source=object-store digest=sha256 signature=rsa2048-pkcs1 policy=public-key\n");
-    serial_string("AIUEOS_KOTOBA_APP_ADMISSION_OK source=object-store digest=sha256 signature=rsa2048-pkcs1 policy=public-key\r\n");
+    debug_string("AIUEOS_OBJECT_STORE_OK aiuefs-v3 objects=3 catalog=2apps\n");
+    serial_string("AIUEOS_OBJECT_STORE_OK aiuefs-v3 objects=3 catalog=2apps\r\n");
+    debug_string("AIUEOS_KOTOBA_APP_ADMISSION_OK catalog=rsa2048 apps=2 digest=sha256 signature=rsa2048-pkcs1 policy=public-key\n");
+    serial_string("AIUEOS_KOTOBA_APP_ADMISSION_OK catalog=rsa2048 apps=2 digest=sha256 signature=rsa2048-pkcs1 policy=public-key\r\n");
     if (!aiueos_journal_ready()) {
       debug_string("AIUEOS_JOURNAL_FAIL write-readback\n");
       serial_string("AIUEOS_JOURNAL_FAIL write-readback\r\n");
@@ -430,8 +431,8 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
     serial_string("AIUEOS_PROCESS_FOUNDATION_OK tss-descriptor user-wx guard-page\r\n");
     debug_string("AIUEOS_PROCESS_CREATE_OK descriptors=8 entry-argument-stack domain-address-space-task\n");
     serial_string("AIUEOS_PROCESS_CREATE_OK descriptors=8 entry-argument-stack domain-address-space-task\r\n");
-    debug_string("AIUEOS_KOTOBA_ELF_PROCESS_OK source=object-store et-exec segments=rx,rw result=42 domain=4\n");
-    serial_string("AIUEOS_KOTOBA_ELF_PROCESS_OK source=object-store et-exec segments=rx,rw result=42 domain=4\r\n");
+    debug_string("AIUEOS_KOTOBA_ELF_PROCESS_OK source=catalog apps=2 et-exec segments=rx,rw result=42 domains=4,5\n");
+    serial_string("AIUEOS_KOTOBA_ELF_PROCESS_OK source=catalog apps=2 et-exec segments=rx,rw result=42 domains=4,5\r\n");
     aiueos_load_task_register();
     aiueos_process_enter();
     if (!aiueos_process_result()) {
@@ -447,8 +448,11 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
     debug_string("AIUEOS_CAPABILITY_TRANSFER_OK source=2 target=3 attenuated atomic-claim transferred-use owner-exit=descendants-revoked\n");
     serial_string("AIUEOS_CAPABILITY_TRANSFER_OK source=2 target=3 attenuated atomic-claim transferred-use owner-exit=descendants-revoked\r\n");
     if (!aiueos_process_lifecycle_evidence_ready()) qemu_exit(0x71);
-    debug_string("AIUEOS_PROCESS_REAP_OK tasks=3 process-slots=8 task-slots=8 generations=reused owner-caps-revoked allocator-pages=17 stack-pages=reused zero-reused\n");
-    serial_string("AIUEOS_PROCESS_REAP_OK tasks=3 process-slots=8 task-slots=8 generations=reused owner-caps-revoked allocator-pages=17 stack-pages=reused zero-reused\r\n");
+    if (!aiueos_catalog_lookup_rejection_evidence_ready()) qemu_exit(0x71);
+    debug_string("AIUEOS_APP_CATALOG_LOOKUP_OK ids=app/hello,app/worker unknown=denied extents=nonoverlap\n");
+    serial_string("AIUEOS_APP_CATALOG_LOOKUP_OK ids=app/hello,app/worker unknown=denied extents=nonoverlap\r\n");
+    debug_string("AIUEOS_PROCESS_REAP_OK tasks=4 process-slots=8 task-slots=8 generations=reused owner-caps-revoked allocator-pages=24 stack-pages=reused zero-reused\n");
+    serial_string("AIUEOS_PROCESS_REAP_OK tasks=4 process-slots=8 task-slots=8 generations=reused owner-caps-revoked allocator-pages=24 stack-pages=reused zero-reused\r\n");
     debug_string("AIUEOS_USER_SYSCALL_OK valid-log copied-payload too-big stale-generation foreign-owner wrong-type no-rights invalid-pointer\n");
     serial_string("AIUEOS_USER_SYSCALL_OK valid-log copied-payload too-big stale-generation foreign-owner wrong-type no-rights invalid-pointer\r\n");
     if (!aiueos_address_space_self_test()) {

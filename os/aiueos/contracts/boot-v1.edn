@@ -146,17 +146,28 @@
            :completion {:transport :msix :vector 35 :irq-required true
                         :table-pba-bounded-by-probed-bar true
                         :wait :interrupt-halt}
-           :object-store {:format :aiuefs-v2
+           :object-store {:format :aiuefs-v3
                           :superblock-sector 0
                           :metadata-bounded true
                           :object-checksum :fnv1a
-                          :objects 2
-                          :kotoba-app {:extent-start-sector 4
+                          :objects 3
+                          :kotoba-app-catalog {:capacity 4
+                                               :entries 2
+                                               :id-width-bytes 16
+                                               :digest :sha256
+                                               :authentication :rsa2048-pkcs1-v1_5-sha256
+                                               :unknown-id-policy :reject}
+                          :kotoba-app {:lookup :signed-catalog-id
                                        :maximum-bytes 12288
+                                       :extent-policy :distinct-bounded
                                        :digest :sha256
                                        :authentication :rsa2048-pkcs1-v1_5-sha256
                                        :policy-key :kernel-boot-app-public-key
-                                       :negative-evidence :mutated-object-denied}
+                                       :negative-evidence [:mutated-catalog-denied
+                                                           :mutated-object-denied
+                                                           :mutated-signature-denied]
+                                       :processes [{:id "app/hello" :domain 4}
+                                                   {:id "app/worker" :domain 5}]}
                           :mutable-object-sector 3
                           :transaction-mode :journal-first-idempotent-redo
                           :write-verification :readback}

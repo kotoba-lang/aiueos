@@ -76,21 +76,25 @@ as APIC-timer-preempted scheduler tasks. Each task has its own supervisor-only
 interrupt stack; every switch updates CR3, TSS.RSP0, and the syscall owner
 domain before `iretq`. Boot requires both tasks and the kernel task to be
 preempted at least twice.
-Boot reads a compiler-emitted `x86_64-aiueos-user-v1` ELF64 object from the
-virtio-blk aiuefs-v2 extent before creating domain 4. The superblock binds its
-bounded sector range and length to a SHA-256 digest and an RSA-2048 PKCS#1 v1.5
-signature under the boot application public-key policy. The private key is not
+Boot reads a signed aiuefs-v3 application catalog from virtio-blk, then looks
+up compiler-emitted `x86_64-aiueos-user-v1` ELF64 objects by their bounded
+16-byte application IDs. The catalog and every application bind their distinct
+sector ranges and lengths to SHA-256 digests and RSA-2048 PKCS#1 v1.5
+signatures under the boot application public-key policy. The private key is not
 present in the repository or image builder. Digest comparison and the complete
-encoded-message comparison are constant-time and must
-pass before bytes reach the loader; the negative QEMU gate mutates the stored
-ELF and requires admission failure. The loader then admits exactly two bounded `PT_LOAD`
+encoded-message comparison are constant-time and must pass before bytes reach
+the loader. Negative QEMU gates mutate the catalog, an ELF, and an application
+signature and require admission failure; an unknown application ID is also
+rejected. The loader then admits exactly two bounded `PT_LOAD`
 segments, rejects every unexpected header, address, flag, size, and range,
 copies text and context into allocator-owned pages, and maps them RX and RW+NX
 respectively in that process root. The generic scheduler enters the ELF entry
 at CPL3; the compiler shim runs Kotoba `main`, publishes result 42 in the
-context page, and remains preemptible until normal domain teardown. Recreating
-the image must reuse zeroed text/context pages. The kernel no longer embeds the
-ELF bytes. The release build emits a deterministic `aiueos-x86_64-data.img`
+context page. The boot slice launches catalog entries `app/hello` and
+`app/worker` as separate CPL3 processes in domains 4 and 5; both remain
+preemptible until normal domain teardown. Recreating either image must reuse
+zeroed text/context pages. The kernel no longer embeds ELF bytes. The release
+build emits a deterministic `aiueos-x86_64-data.img`
 alongside the GPT boot image.
 The first process also transfers an attenuated log handle to domain 3 while the
 capability-table lock covers source revalidation, target-slot issuance, and

@@ -14,7 +14,7 @@ struct __attribute__((packed)) elf_header {
 struct __attribute__((packed)) program_header {
   uint32_t type,flags; uint64_t offset,vaddr,paddr,filesz,memsz,align;
 };
-extern int aiueos_kotoba_app_object(const uint8_t **data,uint64_t *length);
+extern int aiueos_kotoba_app_object(const uint8_t id[16],const uint8_t **data,uint64_t *length);
 extern int aiueos_address_space_map_user_image(unsigned process,
   const uint8_t *text,uint64_t text_size,const uint8_t *data,uint64_t data_size);
 extern void *aiueos_address_space_user_data_backing(unsigned process);
@@ -23,10 +23,10 @@ static uint64_t loader_evidence;
 static int range(uint64_t offset,uint64_t length,uint64_t size) {
   return offset<=size && length<=size-offset;
 }
-int aiueos_load_object_store_kotoba_process(unsigned process,uint64_t *entry,
+int aiueos_load_object_store_kotoba_process(unsigned process,const uint8_t app_id[16],uint64_t *entry,
                                          uint64_t **result) {
   const uint8_t *image=0; uint64_t size=0;
-  if (!aiueos_kotoba_app_object(&image,&size)) return 0;
+  if (!aiueos_kotoba_app_object(app_id,&image,&size)) return 0;
   if (size<sizeof(struct elf_header)) return 0;
   const struct elf_header *header=(const struct elf_header *)image;
   if (header->ident[0]!=0x7f || header->ident[1]!='E' || header->ident[2]!='L' ||

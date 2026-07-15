@@ -56,7 +56,7 @@ extern unsigned aiueos_address_space_capacity(void);
 extern int aiueos_address_space_slot_self_test(void);
 extern int aiueos_address_space_claim(void);
 extern int aiueos_address_space_user_entry_valid(unsigned process,uint64_t entry);
-extern int aiueos_load_object_store_kotoba_process(unsigned process,uint64_t *entry,uint64_t **result);
+extern int aiueos_load_object_store_kotoba_process(unsigned process,const uint8_t app_id[16],uint64_t *entry,uint64_t **result);
 extern int aiueos_kotoba_process_loader_evidence_ready(void);
 extern uint8_t aiueos_user_text_start[],aiueos_user_text_end[];
 extern void aiueos_probe_cross_process(const void *address);
@@ -77,6 +77,10 @@ struct process_descriptor {
 static struct process_descriptor processes[PROCESS_CAPACITY];
 static uint64_t process_lifecycle_evidence;
 static int process_results_valid;
+static int catalog_lookup_rejection_evidence;
+static const uint8_t hello_app_id[16]="app/hello";
+static const uint8_t worker_app_id[16]="app/worker";
+static const uint8_t missing_app_id[16]="app/missing";
 int aiueos_process_result(void);
 void aiueos_process_set_kernel_stack(uint64_t top) {
   tss.rsp0=top; aiueos_syscall_kernel_stack_top=top;
@@ -187,11 +191,11 @@ static int process_create_in_space(void (*entry)(uint64_t),uint16_t domain,int s
 static int process_create(void (*entry)(uint64_t),uint16_t domain) {
   return process_create_in_space(entry,domain,-1);
 }
-static int process_create_kotoba_elf(uint16_t domain,uint64_t **result) {
+static int process_create_kotoba_elf(const uint8_t app_id[16],uint16_t domain,uint64_t **result) {
   int address_space=aiueos_address_space_claim();
   uint64_t entry=0;
   if (address_space<0 || !aiueos_load_object_store_kotoba_process(
-      (unsigned)address_space,&entry,result)) {
+      (unsigned)address_space,app_id,&entry,result)) {
     if (address_space>=0) aiueos_address_space_reclaim((unsigned)address_space);
     return -1;
   }
@@ -218,12 +222,16 @@ int aiueos_process_initialize(void) {
 }
 void aiueos_process_enter(void) {
   uint64_t allocator_reuse_before;
-  uint64_t recreated_entry=0,*recreated_result=0;
+  uint64_t recreated_entry=0,*recreated_result=0,*worker_result=0;
   if (!aiueos_scheduler_begin_user_runtime()) return;
   uint64_t *kotoba_result=0;
   int first=process_create(user_entry,2),second=process_create(user_entry,3);
-  int kotoba=process_create_kotoba_elf(4,&kotoba_result);
-  if (first<0 || second<0 || kotoba<0 || !kotoba_result) return;
+  int kotoba=process_create_kotoba_elf(hello_app_id,4,&kotoba_result);
+  int worker=process_create_kotoba_elf(worker_app_id,5,&worker_result);
+  uint64_t *missing_result=0;
+  catalog_lookup_rejection_evidence=process_create_kotoba_elf(missing_app_id,6,&missing_result)<0;
+  if (first<0 || second<0 || kotoba<0 || worker<0 || !kotoba_result || !worker_result ||
+      !catalog_lookup_rejection_evidence) return;
   kernel_results[0]=processes[first].result; kernel_results[1]=processes[second].result;
   kernel_results[0]->foreign_handle=kernel_results[1]->handle;
   kernel_results[1]->foreign_handle=kernel_results[0]->handle;
@@ -231,10 +239,11 @@ void aiueos_process_enter(void) {
   kernel_results[1]->foreign_page=processes[first].argument;
   __asm__ volatile("sti");
   while (!aiueos_process_result() || !aiueos_user_scheduler_evidence_ready() ||
-         *kotoba_result!=42)
+         *kotoba_result!=42 || *worker_result!=42)
     __asm__ volatile("hlt");
   aiueos_scheduler_request_user_exit(2); aiueos_scheduler_request_user_exit(3);
   aiueos_scheduler_request_user_exit(4);
+  aiueos_scheduler_request_user_exit(5);
   while (!aiueos_scheduler_users_reaped()) __asm__ volatile("hlt");
   __asm__ volatile("cli");
   if (aiueos_scheduler_finalize_user_stacks() &&
@@ -243,20 +252,27 @@ void aiueos_process_enter(void) {
       aiueos_capability_revoke_owner(2)>=2 &&
       aiueos_capability_revoke_owner(3)>=1 &&
       aiueos_capability_revoke_owner(4)>=1 &&
+      aiueos_capability_revoke_owner(5)>=1 &&
       !aiueos_capability_log_handle(2) && !aiueos_capability_log_handle(3) &&
-      !aiueos_capability_log_handle(4) && aiueos_kotoba_process_loader_evidence_ready())
+      !aiueos_capability_log_handle(4) && !aiueos_capability_log_handle(5) &&
+      aiueos_kotoba_process_loader_evidence_ready())
     process_lifecycle_evidence|=1;
   allocator_reuse_before=aiueos_physical_allocator_reuse_count();
   unsigned space0=processes[first].address_space,space1=processes[second].address_space;
   unsigned space2=processes[kotoba].address_space;
-  processes[first].active=processes[second].active=processes[kotoba].active=0;
+  unsigned space3=processes[worker].address_space;
+  processes[first].active=processes[second].active=processes[kotoba].active=processes[worker].active=0;
   if (aiueos_address_space_reclaim(space0) && aiueos_address_space_reclaim(space1) &&
       aiueos_address_space_reclaim(space2) &&
+      aiueos_address_space_reclaim(space3) &&
       aiueos_address_space_reuse(space0) && aiueos_address_space_reuse(space1) &&
       aiueos_address_space_reuse(space2) && aiueos_load_object_store_kotoba_process(
-        space2,&recreated_entry,&recreated_result) && recreated_entry==0x1e1000ULL &&
+        space2,hello_app_id,&recreated_entry,&recreated_result) && recreated_entry==0x1e1000ULL &&
       recreated_result && *recreated_result==0 && aiueos_address_space_reclaim(space2) &&
-      aiueos_physical_allocator_reuse_count()-allocator_reuse_before>=17)
+      aiueos_address_space_reuse(space3) && aiueos_load_object_store_kotoba_process(
+        space3,worker_app_id,&recreated_entry,&recreated_result) && recreated_entry==0x1e1000ULL &&
+      recreated_result && *recreated_result==0 && aiueos_address_space_reclaim(space3) &&
+      aiueos_physical_allocator_reuse_count()-allocator_reuse_before>=24)
     process_lifecycle_evidence|=2;
   if (aiueos_address_space_capacity()==8 && aiueos_address_space_slot_self_test())
     process_lifecycle_evidence|=4;
@@ -264,6 +280,7 @@ void aiueos_process_enter(void) {
 int aiueos_process_lifecycle_evidence_ready(void) {
   return process_lifecycle_evidence==7 && aiueos_scheduler_reap_evidence_ready();
 }
+int aiueos_catalog_lookup_rejection_evidence_ready(void) { return catalog_lookup_rejection_evidence; }
 int aiueos_process_result(void) {
   if (process_results_valid) return 1;
   for (unsigned p=0; p<2; p++) {
