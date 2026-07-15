@@ -14,11 +14,27 @@
         (if (= (kernel-store-u8 base length (+ index 2) b2) b2)
           (if (= (kernel-store-u8 base length (+ index 3) b3) b3) 1 0) 0) 0) 0)))
 
-(defn copy-bytes [target source length index]
-  (if (= index length) 1
-    (let [value (kernel-load-u8 source length index)]
-      (if (= (kernel-store-u8 target length index value) value)
-        (copy-bytes target source length (+ index 1)) 0))))
+(defn copy-byte [target source length index]
+  (let [value (kernel-load-u8 source length index)]
+    (= (kernel-store-u8 target length index value) value)))
+
+(defn copy-16 [target source]
+  (and (copy-byte target source 16 0)
+       (copy-byte target source 16 1)
+       (copy-byte target source 16 2)
+       (copy-byte target source 16 3)
+       (copy-byte target source 16 4)
+       (copy-byte target source 16 5)
+       (copy-byte target source 16 6)
+       (copy-byte target source 16 7)
+       (copy-byte target source 16 8)
+       (copy-byte target source 16 9)
+       (copy-byte target source 16 10)
+       (copy-byte target source 16 11)
+       (copy-byte target source 16 12)
+       (copy-byte target source 16 13)
+       (copy-byte target source 16 14)
+       (copy-byte target source 16 15)))
 
 (defn write-object-metadata [object object-length sequence transaction transaction-length]
   (if (write-u32 object object-length 0 1330989377)
@@ -31,6 +47,6 @@
 
 (defn aiueos-mutable-object-build [object object-length sequence transaction transaction-length]
   (if (write-object-metadata object object-length sequence transaction transaction-length)
-    (copy-bytes (+ object 24) (+ transaction 16) 16 0) 0))
+    (copy-16 (+ object 24) (+ transaction 16)) 0))
 
 (defn main [] 0)

@@ -83,7 +83,7 @@ python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_transaction_va
   ee9079df77755d7d540c4e974265da10f51c1c239f5cce7edaa24edf0b047b77 \
   kotoba_aiueos_object_transaction_valid
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_mutable_valid_object" \
-  cbbd06c9d4805d36d79d3fe2d17e0769f077d3a6699693825a45a1d17620ae5d \
+  53513e67ae900ce2de971aea92ccecc976d361beeaedc8a633b14ef1f873fc73 \
   kotoba_aiueos_mutable_object_valid
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_superblock_valid_object" \
   5b6ae0a1fe186c8530a7b63dd80abd31fd460c3c3e0f441e0ef45340a4ca28a0 \
@@ -92,7 +92,7 @@ python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_journal_build_
   1f1dedd438d523c7f92bde90f8bf07c92768fd9dd7cfc73a27f9dc895eb3bca7 \
   kotoba_aiueos_journal_record_build
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_mutable_build_object" \
-  22b54f50d63e5ff0a1563acef324a53adacd824ebc98768ac614fb41ec415f1c \
+  d593a4db905cac264c67732983bf0b62de783011b46e505257a51d94d820eafd \
   kotoba_aiueos_mutable_object_build
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_cap_valid_object" \
   f03487d441ca9af4da636bcf6a9c983e23de86eb60ab70fe7533fa558f4262d4 \

@@ -4,20 +4,40 @@
      (* (kernel-load-u8 base length (+ index 2)) 65536)
      (* (kernel-load-u8 base length (+ index 3)) 16777216)))
 
-(defn fnv-step [base length index hash]
-  (if (= index length) hash
-    (fnv-step base length (+ index 1)
-      (* (bit-xor hash (kernel-load-u8 base length index)) 16777619))))
+(defn fnv-byte [hash byte]
+  (bit-and (* (bit-xor hash byte) 16777619) 4294967295))
 
-(defn fnv [base length]
-  (bit-and (fnv-step base length 0 2166136261) 4294967295))
+(defn fnv16 [base length]
+  (let [h0 2166136261
+        h1 (fnv-byte h0 (kernel-load-u8 base length 0))
+        h2 (fnv-byte h1 (kernel-load-u8 base length 1))
+        h3 (fnv-byte h2 (kernel-load-u8 base length 2))
+        h4 (fnv-byte h3 (kernel-load-u8 base length 3))
+        h5 (fnv-byte h4 (kernel-load-u8 base length 4))
+        h6 (fnv-byte h5 (kernel-load-u8 base length 5))
+        h7 (fnv-byte h6 (kernel-load-u8 base length 6))
+        h8 (fnv-byte h7 (kernel-load-u8 base length 7))
+        h9 (fnv-byte h8 (kernel-load-u8 base length 8))
+        h10 (fnv-byte h9 (kernel-load-u8 base length 9))
+        h11 (fnv-byte h10 (kernel-load-u8 base length 10))
+        h12 (fnv-byte h11 (kernel-load-u8 base length 11))
+        h13 (fnv-byte h12 (kernel-load-u8 base length 12))
+        h14 (fnv-byte h13 (kernel-load-u8 base length 13))
+        h15 (fnv-byte h14 (kernel-load-u8 base length 14))]
+    (fnv-byte h15 (kernel-load-u8 base length 15))))
 
-(defn bytes-equal [left right length index]
-  (if (= index length) 1
-    (if (= (kernel-load-u8 left length index)
-           (kernel-load-u8 right length index))
-      (bytes-equal left right length (+ index 1))
-      0)))
+(defn byte-equal [left right index]
+  (= (kernel-load-u8 left 16 index) (kernel-load-u8 right 16 index)))
+
+(defn bytes-equal-16 [left right]
+  (and (byte-equal left right 0) (byte-equal left right 1)
+       (byte-equal left right 2) (byte-equal left right 3)
+       (byte-equal left right 4) (byte-equal left right 5)
+       (byte-equal left right 6) (byte-equal left right 7)
+       (byte-equal left right 8) (byte-equal left right 9)
+       (byte-equal left right 10) (byte-equal left right 11)
+       (byte-equal left right 12) (byte-equal left right 13)
+       (byte-equal left right 14) (byte-equal left right 15)))
 
 (defn aiueos-mutable-object-valid [object object-length sequence transaction transaction-length]
   (and (= object-length 40)
@@ -29,7 +49,7 @@
        (= (read-u32 object object-length 16) 16)
        (= (read-u32 object object-length 16) (read-u32 transaction transaction-length 8))
        (= (read-u32 object object-length 20) (read-u32 transaction transaction-length 12))
-       (= (fnv (+ object 24) 16) (read-u32 object object-length 20))
-       (bytes-equal (+ object 24) (+ transaction 16) 16 0)))
+       (= (fnv16 (+ object 24) 16) (read-u32 object object-length 20))
+       (bytes-equal-16 (+ object 24) (+ transaction 16))))
 
 (defn main [] 0)
