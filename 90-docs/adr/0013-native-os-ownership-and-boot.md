@@ -180,6 +180,11 @@ vendor capability shape, BAR extent power-of-two requirements, and rng/blk
 MSI-X table/PBA containment. Native C retains config-space and MMIO access but
 cannot map a derived capability region unless the Kotoba planner admits it.
 
+Syscall pointer admission follows the same split. A Kotoba half-open range
+planner validates non-empty bootstrap and user windows without overflow before
+the native `int 0x80` dispatcher accepts a buffer. Native code still owns trap
+entry, capability lookup, and the eventual copy-in operation.
+
 ### Driver, UI, and persistence split
 
 ```text

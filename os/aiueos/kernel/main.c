@@ -374,6 +374,8 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
     }
     debug_string("AIUEOS_SYSCALL_OK int80-cpl0 abi-v1\n");
     serial_string("AIUEOS_SYSCALL_OK int80-cpl0 abi-v1\r\n");
+    debug_string("AIUEOS_KOTOBA_SYSCALL_PLANNER_OK bootstrap user overflow\n");
+    serial_string("AIUEOS_KOTOBA_SYSCALL_PLANNER_OK bootstrap user overflow\r\n");
     debug_string("AIUEOS_CAPABILITY_OK handle-v1 invalid-handle-denied\n");
     serial_string("AIUEOS_CAPABILITY_OK handle-v1 invalid-handle-denied\r\n");
     debug_string("AIUEOS_COPYIN_OK noncanonical-and-unmapped-denied\n");

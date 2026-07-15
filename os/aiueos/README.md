@@ -60,8 +60,10 @@ clones the low kernel page-table path, shares the kernel/MMIO branches, maps a
 different private user page, and leaves the other process's page non-present.
 The smoke switches CR3 sequentially, proves independent contents, and requires
 real non-present page faults for both cross-process reads before restoring the
-kernel CR3. Actual copy-in and the `syscall`/`sysret` transport remain later
-work.
+kernel CR3. The pointer/length window admission for both bootstrap and CPL3
+calls is compiler-emitted Kotoba code and is exercised at both valid boundaries
+and rejected overflow/empty inputs. Actual copy-in and the `syscall`/`sysret`
+transport remain later work.
 
 The PCI path performs a bounded configuration-space scan and validates modern
 virtio vendor capabilities, including a cycle-limited capability chain, BAR

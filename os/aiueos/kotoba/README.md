@@ -2,7 +2,7 @@
 
 `kernel-probe.o` is the byte-for-byte output of the merged
 `kotoba-lang/compiler` commit
-`606b7428e00cfcc197ef6a94fbc7e26f612c06fc` for `kernel-probe.kotoba`:
+`71dd75d1e8cff9ec47607309106ebeda9fffea83` for `kernel-probe.kotoba`:
 
 ```clojure
 (defn main [] 42)
@@ -65,3 +65,8 @@ The PCI planners validate real hardware-derived inputs: vendor capability
 length/BAR/32-bit range, probed BAR extent shape, and MSI-X table/PBA regions.
 Config-space reads, BAR probing writes, MMIO mapping, and interrupt programming
 remain in C; their derived bounds must pass Kotoba before use.
+
+`syscall-range-valid` owns the bounded half-open range decision used by both
+CPL0 bootstrap and CPL3 log-write syscalls. It rejects empty, out-of-window,
+high-half, and wrapping pointer/length pairs before the native syscall layer
+can consume user memory. Interrupt entry and capability dispatch remain native.

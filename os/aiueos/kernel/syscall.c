@@ -10,26 +10,15 @@ enum { AIUEOS_SYSCALL_ABI = 0, AIUEOS_SYSCALL_LOG_WRITE = 1 };
 /* index 1, generation 1, type tag in the high 32 bits */
 static const uint64_t log_handle = 0xa105ca7e00010001ULL;
 
-static int canonical(uint64_t address) {
-  uint64_t high = address >> 48;
-  return high == 0 || high == 0xffff;
-}
-
-static int readable_bootstrap_range(uint64_t pointer, uint64_t length) {
-  uint64_t end;
-  if (!length || !canonical(pointer) || pointer < 0x1000 ||
-      __builtin_add_overflow(pointer, length - 1, &end) || !canonical(end))
-    return 0;
-  return end < 0x40000000ULL;
-}
+extern uint64_t kotoba_aiueos_syscall_range_valid(
+  uint64_t pointer, uint64_t length, uint64_t lower, uint64_t upper);
 
 extern uint8_t aiueos_user_data_start[], aiueos_user_data_end[];
 extern uint64_t aiueos_syscall_from_user;
 static int readable_user_range(uint64_t pointer, uint64_t length) {
-  uint64_t end;
-  return length && pointer >= (uint64_t)(uintptr_t)aiueos_user_data_start &&
-    !__builtin_add_overflow(pointer, length, &end) &&
-    end <= (uint64_t)(uintptr_t)aiueos_user_data_end;
+  return (int)kotoba_aiueos_syscall_range_valid(
+    pointer, length, (uint64_t)(uintptr_t)aiueos_user_data_start,
+    (uint64_t)(uintptr_t)aiueos_user_data_end);
 }
 
 uint64_t aiueos_syscall_dispatch(uint64_t number, uint64_t handle,
@@ -40,7 +29,8 @@ uint64_t aiueos_syscall_dispatch(uint64_t number, uint64_t handle,
   if (handle != log_handle || (handle & 0xffffULL) != AIUEOS_CAP_LOG_WRITE)
     return AIUEOS_ERR_BAD_HANDLE;
   if (aiueos_syscall_from_user ? !readable_user_range(pointer,length) :
-                 !readable_bootstrap_range(pointer,length)) return AIUEOS_ERR_BAD_POINTER;
+      !kotoba_aiueos_syscall_range_valid(pointer,length,0x1000,0x40000000ULL))
+    return AIUEOS_ERR_BAD_POINTER;
   return length;
 }
 
@@ -68,5 +58,9 @@ int aiueos_syscall_self_test(void) {
   if (invoke(AIUEOS_SYSCALL_LOG_WRITE, log_handle,
              (const void *)0x3fffffffULL, 2) != AIUEOS_ERR_BAD_POINTER)
     return 0;
+  if (invoke(AIUEOS_SYSCALL_LOG_WRITE, log_handle,
+             (const void *)0x3fffffffULL, 1) != 1) return 0;
+  if (invoke(AIUEOS_SYSCALL_LOG_WRITE, log_handle, message, 0) !=
+      AIUEOS_ERR_BAD_POINTER) return 0;
   return 1;
 }
