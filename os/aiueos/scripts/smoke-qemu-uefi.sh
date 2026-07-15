@@ -265,7 +265,7 @@ grep -F "AIUEOS_SCHEDULER_CR3_OK roots=3 private-pages=2 kernel-return" "$serial
   echo "error: scheduler-driven address-space switching evidence was not observed" >&2
   exit 1
 }
-grep -F "AIUEOS_SERVICE_RUNTIME_OK services=2 kotoba-policy restart=context generation=2 budget=bounded" "$serial_log" >/dev/null || {
+grep -F "AIUEOS_SERVICE_RUNTIME_OK services=2 descriptors=8 kotoba-policy spawn-restart-terminate task=generic generation=2 budget=bounded" "$serial_log" >/dev/null || {
   echo "error: persistent service runtime evidence was not observed" >&2
   exit 1
 }

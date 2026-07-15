@@ -2,6 +2,7 @@
 
 #define AIUEOS_TASK_SLOT_COUNT 9U
 #define AIUEOS_USER_TASK_CAPACITY 8U
+#define AIUEOS_SERVICE_CAPACITY 8U
 #define AIUEOS_TASK_STACK_BYTES 4096U
 #define AIUEOS_KERNEL_CODE_SELECTOR 0x08U
 #define AIUEOS_INTERRUPT_FLAG (1ULL << 9)
@@ -34,7 +35,7 @@ struct aiueos_task {
   uint64_t *saved_stack;
   uint8_t *kernel_stack;
   uint64_t switches, cr3;
-  uint16_t generation;
+  uint16_t generation, service;
   uint8_t active;
 };
 static struct aiueos_task tasks[AIUEOS_TASK_SLOT_COUNT];
@@ -44,14 +45,16 @@ volatile uint64_t aiueos_user_scheduler_switches;
 static volatile uint8_t user_exit_requested[2];
 static uint64_t user_tasks_reaped;
 static uint64_t user_kernel_stacks_zeroed;
-volatile uint64_t aiueos_scheduler_task_a_runs;
-volatile uint64_t aiueos_scheduler_task_b_runs;
+static volatile uint64_t service_runs[AIUEOS_SERVICE_CAPACITY];
 volatile uint64_t aiueos_scheduler_context_switches;
 volatile uint64_t aiueos_scheduler_address_space_failures;
 struct aiueos_service_slot {
   uint64_t id, generation, heartbeats, restarts, restart_requested;
+  volatile uint64_t *runs;
+  uint16_t task_slot, process_slot;
+  uint8_t marker, active;
 };
-static struct aiueos_service_slot services[2];
+static struct aiueos_service_slot services[AIUEOS_SERVICE_CAPACITY];
 struct aiueos_service_mailbox {
   volatile uint64_t sequence, sender_id, sender_generation, recipient_id;
   volatile uint64_t payload, full;
@@ -62,6 +65,7 @@ static volatile uint64_t service_ipc_received_sequence;
 static volatile uint64_t service_ipc_received_payload;
 static volatile uint64_t service_ipc_foreign_rejections;
 static uint64_t dynamic_task_evidence;
+static uint64_t kotoba_lifecycle_evidence;
 
 static int allocate_task_slot(uint64_t cr3) {
   for (unsigned slot=1;slot<AIUEOS_TASK_SLOT_COUNT;slot++) {
@@ -72,6 +76,7 @@ static int allocate_task_slot(uint64_t cr3) {
     tasks[slot].saved_stack=0;
     tasks[slot].switches=0;
     tasks[slot].cr3=cr3;
+    tasks[slot].service=0xffffU;
     tasks[slot].generation++;
     if (!tasks[slot].generation) tasks[slot].generation=1;
     tasks[slot].active=1;
@@ -87,6 +92,7 @@ static int release_task_slot(unsigned slot) {
   tasks[slot].saved_stack=0;
   tasks[slot].switches=0;
   tasks[slot].cr3=0;
+  tasks[slot].service=0xffffU;
   return 1;
 }
 
@@ -142,13 +148,15 @@ static void task_loop(volatile uint64_t *runs, uint8_t marker, unsigned process)
     __asm__ volatile("hlt");
   }
 }
-__attribute__((noreturn)) static void task_a(void) {
-  task_loop(&aiueos_scheduler_task_a_runs, 'A', 0); __builtin_unreachable();
+__attribute__((noreturn)) static void service_task_entry(uint64_t service) {
+  if (service>=AIUEOS_SERVICE_CAPACITY || !services[service].active)
+    for (;;) __asm__ volatile("hlt");
+  if (!services[service].runs) for (;;) __asm__ volatile("hlt");
+  task_loop(services[service].runs,services[service].marker,
+    services[service].process_slot);
+  __builtin_unreachable();
 }
-__attribute__((noreturn)) static void task_b(void) {
-  task_loop(&aiueos_scheduler_task_b_runs, 'B', 1); __builtin_unreachable();
-}
-static uint64_t *initial_context(uint8_t *stack, void (*entry)(void)) {
+static uint64_t *initial_context(uint8_t *stack, void (*entry)(uint64_t), uint64_t argument) {
   /* iret enters a C function directly, so model the stack position normally
    * produced by call (RSP % 16 == 8 at function entry). */
   uintptr_t top = (((uintptr_t)stack + AIUEOS_TASK_STACK_BYTES) & ~(uintptr_t)15) - 8;
@@ -157,6 +165,7 @@ static uint64_t *initial_context(uint8_t *stack, void (*entry)(void)) {
   for (uint64_t *word = (uint64_t *)context;
        word != (uint64_t *)(context + 1); ++word) *word = 0;
   context->rip = (uint64_t)(uintptr_t)entry;
+  context->rdi = argument;
   context->cs = AIUEOS_KERNEL_CODE_SELECTOR;
   context->rflags = AIUEOS_INTERRUPT_FLAG | 2U;
   context->rsp = top;
@@ -173,26 +182,78 @@ static uint64_t *initial_user_context(uint8_t *stack, void (*entry)(void),
   context->rflags=AIUEOS_INTERRUPT_FLAG|2U; context->rsp=user_stack; context->ss=0x23U;
   return (uint64_t *)context;
 }
+static int apply_service_event(unsigned service, uint64_t event) {
+  if (service>=AIUEOS_SERVICE_CAPACITY) return 0;
+  struct aiueos_service_slot *descriptor=&services[service];
+  uint64_t plan=kotoba_aiueos_service_lifecycle(
+    descriptor->generation,descriptor->restarts,event,3);
+  uint64_t action=plan>>32;
+  if (!plan && event) return 0;
+  if (action==1) {
+    if (descriptor->active) return 0;
+    uint64_t cr3=descriptor->process_slot<8 ?
+      aiueos_address_space_cr3(descriptor->process_slot) :
+      aiueos_address_space_kernel_cr3();
+    int slot=allocate_task_slot(cr3);
+    if (slot<1) return 0;
+    descriptor->generation=plan&65535U;
+    descriptor->restarts=(plan>>16)&65535U;
+    descriptor->task_slot=(uint16_t)slot;
+    tasks[slot].service=(uint16_t)service;
+    descriptor->heartbeats=descriptor->restart_requested=0;
+    descriptor->active=1;
+    tasks[slot].saved_stack=initial_context(tasks[slot].kernel_stack,
+      service_task_entry,service);
+    return 1;
+  }
+  if (action==2) {
+    if (!descriptor->active || descriptor->task_slot<1) return 0;
+    descriptor->generation=plan&65535U;
+    descriptor->restarts=(plan>>16)&65535U;
+    descriptor->heartbeats=descriptor->restart_requested=0;
+    tasks[descriptor->task_slot].saved_stack=initial_context(
+      tasks[descriptor->task_slot].kernel_stack,service_task_entry,service);
+    return 1;
+  }
+  if (action==3) {
+    unsigned slot=descriptor->task_slot;
+    if (!descriptor->active || slot<1 || slot==current_task) return 0;
+    tasks[slot].active=0;
+    if (!release_task_slot(slot)) return 0;
+    descriptor->active=0; descriptor->task_slot=0;
+    return 1;
+  }
+  return event==0 && descriptor->active;
+}
 void aiueos_scheduler_initialize(void) {
   if (!aiueos_address_spaces_initialize()) {
     aiueos_scheduler_address_space_failures = 1;
     return;
   }
-  for (uint32_t i=0;i<AIUEOS_TASK_SLOT_COUNT;i++) tasks[i]=(struct aiueos_task){0,0,0,0,0,0};
+  for (uint32_t i=0;i<AIUEOS_TASK_SLOT_COUNT;i++) tasks[i]=(struct aiueos_task){0,0,0,0,0,0xffffU,0};
   tasks[0].cr3=aiueos_address_space_kernel_cr3(); tasks[0].active=1;
-  int slot_a=allocate_task_slot(aiueos_address_space_cr3(0));
-  int slot_b=allocate_task_slot(aiueos_address_space_cr3(1));
-  if (slot_a!=1 || slot_b!=2) { aiueos_scheduler_address_space_failures=1; return; }
-  tasks[1].saved_stack=initial_context(tasks[1].kernel_stack,task_a);
-  tasks[2].saved_stack=initial_context(tasks[2].kernel_stack,task_b);
+  for (unsigned service=0;service<AIUEOS_SERVICE_CAPACITY;service++)
+    services[service]=(struct aiueos_service_slot){0,0,0,0,0,0,0,0,0,0};
+  services[0].id=1; services[0].runs=&service_runs[0];
+  services[0].process_slot=0; services[0].marker='A';
+  services[1].id=2; services[1].runs=&service_runs[1];
+  services[1].process_slot=1; services[1].marker='B';
+  if (!apply_service_event(0,2) || !apply_service_event(1,2) ||
+      services[0].task_slot!=1 || services[1].task_slot!=2) {
+    aiueos_scheduler_address_space_failures=1; return;
+  }
+  services[2].id=3; services[2].process_slot=0xffffU; services[2].marker='C';
+  if (!apply_service_event(2,2) || services[2].task_slot!=3 ||
+      !apply_service_event(2,3) || services[2].active) {
+    aiueos_scheduler_address_space_failures=1; return;
+  }
+  kotoba_lifecycle_evidence=1;
   current_task = 0;
   scheduler_user_mode = 0;
   aiueos_user_scheduler_switches = 0;
-  aiueos_scheduler_task_a_runs = aiueos_scheduler_task_b_runs = 0;
+  for (unsigned service=0;service<AIUEOS_SERVICE_CAPACITY;service++) service_runs[service]=0;
   aiueos_scheduler_context_switches = 0;
   aiueos_scheduler_address_space_failures = 0;
-  services[0] = (struct aiueos_service_slot){1, 1, 0, 0, 0};
-  services[1] = (struct aiueos_service_slot){2, 1, 0, 0, 0};
   service_mailbox = (struct aiueos_service_mailbox){0,0,0,0,0,0};
   service_ipc_received_sequence = service_ipc_received_payload = 0;
   service_ipc_send_handle = ipc_capability_plan(1);
@@ -200,8 +261,7 @@ void aiueos_scheduler_initialize(void) {
 }
 void aiueos_scheduler_start_user_processes(void (*entry0)(void), void (*entry1)(void),
     uint64_t user_stack0, uint64_t user_stack1) {
-  tasks[1].active=tasks[2].active=0;
-  if (!release_task_slot(1) || !release_task_slot(2)) {
+  if (!apply_service_event(0,3) || !apply_service_event(1,3)) {
     aiueos_scheduler_address_space_failures=1; return;
   }
   int slot0=allocate_task_slot(aiueos_address_space_cr3(0));
@@ -216,10 +276,12 @@ void aiueos_scheduler_start_user_processes(void (*entry0)(void), void (*entry1)(
   aiueos_current_user_domain=0;
 }
 int aiueos_service_runtime_evidence_ready(void) {
-  return services[0].id == 1 && services[1].id == 2 &&
+  return kotoba_lifecycle_evidence && services[0].id == 1 && services[1].id == 2 &&
     services[0].generation == 2 && services[0].restarts == 1 &&
     services[0].restart_requested == 0 && services[1].generation == 1 &&
-    services[0].heartbeats >= 2 && services[1].heartbeats >= 2;
+    services[0].heartbeats >= 2 && services[1].heartbeats >= 2 &&
+    services[0].active && services[1].active &&
+    services[2].generation==1 && !services[2].active;
 }
 int aiueos_service_ipc_evidence_ready(void) {
   return service_ipc_send_handle != 0 && service_ipc_foreign_rejections == 1 &&
@@ -240,18 +302,10 @@ uint64_t *aiueos_scheduler_on_timer(uint64_t *interrupted_stack) {
     tasks[current_task].active=0; user_tasks_reaped++;
   }
   if (!scheduler_user_mode && current_task > 0) {
-    unsigned service = (unsigned)(current_task - 1);
-    if (services[service].restart_requested) {
-      uint64_t plan = kotoba_aiueos_service_lifecycle(
-        services[service].generation, services[service].restarts, 1, 3);
-      if (plan) {
-        services[service].generation = plan & 65535U;
-        services[service].restarts = (plan >> 16) & 65535U;
-        services[service].heartbeats = 0;
-        services[service].restart_requested = 0;
-        tasks[current_task].saved_stack = initial_context(
-          tasks[current_task].kernel_stack, service == 0 ? task_a : task_b);
-      }
+    unsigned service=tasks[current_task].service;
+    if (service<AIUEOS_SERVICE_CAPACITY && services[service].restart_requested) {
+      if (!apply_service_event(service,1))
+        aiueos_scheduler_address_space_failures++;
     }
   }
   do { current_task = (current_task + 1U) % AIUEOS_TASK_SLOT_COUNT; }
@@ -309,7 +363,7 @@ int aiueos_user_scheduler_evidence_ready(void) {
     aiueos_address_space_current_cr3() == tasks[0].cr3;
 }
 int aiueos_scheduler_evidence_ready(void) {
-  return aiueos_scheduler_task_a_runs >= 2 && aiueos_scheduler_task_b_runs >= 2 &&
+  return service_runs[0] >= 2 && service_runs[1] >= 2 &&
          aiueos_scheduler_context_switches >= 6 && tasks[0].switches >= 2 &&
          tasks[1].switches >= 2 && tasks[2].switches >= 2 &&
          aiueos_scheduler_address_space_failures == 0 &&

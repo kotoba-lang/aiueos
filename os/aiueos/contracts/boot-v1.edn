@@ -175,15 +175,17 @@
                               :return-root :kernel}
              :context [:general-purpose-registers :instruction-pointer
                        :stack-pointer :flags]}
- :service-runtime {:version 1 :slots 2 :identity :stable-id
+ :service-runtime {:version 1 :descriptor-slots 8 :live-services 2 :identity :stable-id
                    :generation :restart-advances
                    :liveness :scheduler-heartbeat
                    :persistence {:medium :virtio-blk-object-store
                                  :commit :journal-first
                                  :recovery :redo-before-append
                                  :fields [:id :generation :restart-count]}
-                   :restart {:policy :kotoba :budget :bounded
-                             :effect :replace-saved-context}
+                   :lifecycle {:policy :kotoba
+                               :events [:spawn :restart :terminate]
+                               :task-entry :descriptor-driven
+                               :restart-budget :bounded}
                    :ipc {:transport :bounded-mailbox
                          :admission :owner-domain-capability
                          :address-spaces :cross-cr3}
