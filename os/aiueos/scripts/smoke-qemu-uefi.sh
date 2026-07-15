@@ -315,6 +315,10 @@ grep -F "AIUEOS_CAPABILITY_TRANSFER_OK source=2 target=3 attenuated atomic-claim
   echo "error: atomic process capability transfer evidence was not observed" >&2
   exit 1
 }
+grep -F "AIUEOS_PROCESS_REAP_OK tasks=2 owner-caps-revoked private-pages=zero-reused kernel-stacks=zero" "$serial_log" >/dev/null || {
+  echo "error: process exit/reap/reuse evidence was not observed" >&2
+  exit 1
+}
 grep -F "AIUEOS_USER_SYSCALL_OK valid-log copied-payload too-big stale-generation foreign-owner wrong-type no-rights invalid-pointer" "$serial_log" >/dev/null || {
   echo "error: CPL3 syscall positive/negative evidence was not observed" >&2; exit 1;
 }

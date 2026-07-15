@@ -70,6 +70,7 @@ extern int aiueos_dynamic_capability_evidence_ready(void);
 extern int aiueos_process_initialize(void);
 extern void aiueos_process_enter(void);
 extern int aiueos_process_result(void);
+extern int aiueos_process_lifecycle_evidence_ready(void);
 extern int aiueos_address_space_self_test(void);
 extern void aiueos_load_task_register(void);
 extern int aiueos_smp_start_application_processor(void);
@@ -420,6 +421,9 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
     serial_string("AIUEOS_RING3_OK processes=2 preemptive roots=2 domains=2,3 kernel-stacks=2 int80\r\n");
     debug_string("AIUEOS_CAPABILITY_TRANSFER_OK source=2 target=3 attenuated atomic-claim transferred-use\n");
     serial_string("AIUEOS_CAPABILITY_TRANSFER_OK source=2 target=3 attenuated atomic-claim transferred-use\r\n");
+    if (!aiueos_process_lifecycle_evidence_ready()) qemu_exit(0x71);
+    debug_string("AIUEOS_PROCESS_REAP_OK tasks=2 owner-caps-revoked private-pages=zero-reused kernel-stacks=zero\n");
+    serial_string("AIUEOS_PROCESS_REAP_OK tasks=2 owner-caps-revoked private-pages=zero-reused kernel-stacks=zero\r\n");
     debug_string("AIUEOS_USER_SYSCALL_OK valid-log copied-payload too-big stale-generation foreign-owner wrong-type no-rights invalid-pointer\n");
     serial_string("AIUEOS_USER_SYSCALL_OK valid-log copied-payload too-big stale-generation foreign-owner wrong-type no-rights invalid-pointer\r\n");
     if (!aiueos_address_space_self_test()) {

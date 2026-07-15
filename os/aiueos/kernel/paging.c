@@ -184,6 +184,22 @@ uint64_t aiueos_address_space_private_va(unsigned process) {
 void *aiueos_address_space_private_backing(unsigned process) {
   return process < 2 ? process_private_pages[process] : 0;
 }
+int aiueos_address_space_reclaim(unsigned process) {
+  if (process>=2) return 0;
+  uint64_t va=process==0?PROCESS_PRIVATE_0:PROCESS_PRIVATE_1;
+  process_spaces[process].low[va/PAGE_SIZE]=0;
+  for (uint64_t i=0;i<PAGE_SIZE;i++) process_private_pages[process][i]=0;
+  return 1;
+}
+int aiueos_address_space_reuse(unsigned process) {
+  if (process>=2) return 0;
+  uint64_t va=process==0?PROCESS_PRIVATE_0:PROCESS_PRIVATE_1;
+  process_spaces[process].low[va/PAGE_SIZE]=
+    (uint64_t)(uintptr_t)process_private_pages[process]|
+    PTE_PRESENT|PTE_USER|PTE_WRITABLE|PTE_NX;
+  for (uint64_t i=0;i<PAGE_SIZE;i++) if (process_private_pages[process][i]) return 0;
+  return 1;
+}
 
 /* GOP memory is mapped supervisor-only, non-executable and uncached.  Its
  * dedicated directory prevents a display capability from replacing RAM or
