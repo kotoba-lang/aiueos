@@ -130,6 +130,10 @@ grep -F "AIUEOS_SERIAL_OK stack-v1 memory-map-v1" "$serial_log" >/dev/null || {
   test -f "$serial_log" && sed -n '1,80p' "$serial_log" >&2
   exit 1
 }
+grep -F "AIUEOS_KOTOBA_NATIVE_OK elf64-relocatable sysv-v1 result=42" "$serial_log" >/dev/null || {
+  echo "error: Kotoba compiler-emitted native probe did not execute" >&2
+  exit 1
+}
 grep -F "AIUEOS_DESCRIPTOR_TABLES_OK gdt-v1 idt-v1" "$serial_log" >/dev/null || {
   echo "error: kernel descriptor-table evidence was not observed" >&2
   exit 1

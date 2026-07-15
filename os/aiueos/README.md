@@ -18,6 +18,13 @@ host initramfs in the guest. The smoke test writes to text and attempts to
 execute a byte in rodata; both must raise vector 14 with the expected x86 page
 fault error-code bits before execution can continue.
 
+The kernel link also consumes `kotoba/kernel-probe.o`, emitted by the Kotoba
+compiler target `x86_64-aiueos-kernel-v1`. A fail-closed verifier permits only
+the versioned freestanding ELF object ABI, and the VM gate requires the kernel
+to call `kotoba_aiueos_probe` and observe result `42`. Set
+`AIUEOS_KOTOBA_KERNEL_OBJECT` only to test another compiler output under the
+same verifier; a hosted or import-bearing object is rejected before link.
+
 The loader also selects the ACPI 2.0 configuration-table GUID. The kernel
 validates both RSDP checksums, the XSDT and MADT checksums and lengths, and every
 MADT subtable boundary. The QEMU gate starts two vCPUs and requires both to be

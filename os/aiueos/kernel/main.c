@@ -144,6 +144,14 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
   } else {
     debug_string("AIUEOS_KERNEL_OK memory-map-v1\n");
     serial_string("AIUEOS_SERIAL_OK stack-v1 memory-map-v1\r\n");
+    extern uint64_t kotoba_aiueos_probe(void);
+    if (kotoba_aiueos_probe() != 42u) {
+      debug_string("AIUEOS_KOTOBA_NATIVE_FAIL probe-result\n");
+      serial_string("AIUEOS_KOTOBA_NATIVE_FAIL probe-result\r\n");
+      qemu_exit(0x67);
+    }
+    debug_string("AIUEOS_KOTOBA_NATIVE_OK elf64-relocatable sysv-v1 result=42\n");
+    serial_string("AIUEOS_KOTOBA_NATIVE_OK elf64-relocatable sysv-v1 result=42\r\n");
     aiueos_load_gdt();
     set_idt_gate(6, aiueos_isr_invalid_opcode);
     set_idt_gate(14, aiueos_isr_page_fault);

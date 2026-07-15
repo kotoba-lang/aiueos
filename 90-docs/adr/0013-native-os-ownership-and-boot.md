@@ -129,6 +129,16 @@ migration issue, and no ambient authority above the capability boundary.
 Hosted KEXE targets are not kernel targets. A target is freestanding only when
 it has no supervisor, libc, JVM, or host syscall dependency.
 
+The first native compiler boundary is `x86_64-aiueos-kernel-v1`. The compiler
+emits an ELF64 little-endian `ET_REL`/`EM_X86_64` object and exports the SysV
+function `uint64_t kotoba_aiueos_probe(void)`. The initial object is deliberately
+closed: `.text`, `.data`, one `.rela.text` `R_X86_64_PC32` relocation to `.data`,
+and the ELF string/symbol tables are the only sections; undefined symbols,
+program headers, dynamic linkage, interpreters, and host imports are rejected
+before link. The kernel calls the emitted function and requires result `42` as
+boot evidence. This is the first Kotoba-generated vertical slice, not evidence
+that the remaining C and assembly substrate has been replaced.
+
 ### Driver, UI, and persistence split
 
 ```text
