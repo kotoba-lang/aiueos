@@ -364,7 +364,7 @@ grep -F "AIUEOS_KOTOBA_SERVICE_IPC_OK senders=4,5 recipients=service0,service1 p
   echo "error: Kotoba to persistent service IPC evidence was not observed" >&2
   exit 1
 }
-grep -F "AIUEOS_KOTOBA_OBJECT_WRITE_OK domains=4,5 journals=44-47 objects=42,43 value=42 receipt=readback transaction=journal-first serializer=kotoba validator=kotoba materializer=kotoba fixed-stack" "$serial_log" >/dev/null || {
+grep -F "AIUEOS_KOTOBA_OBJECT_WRITE_OK domains=4,5 journals=44-47 objects=42,43 value=42 receipt=readback transaction=journal-first serializer=kotoba validator=kotoba decoder=kotoba materializer=kotoba fixed-stack" "$serial_log" >/dev/null || {
   echo "error: Kotoba user object transaction evidence was not observed" >&2; exit 1;
 }
 grep -F "AIUEOS_APP_CATALOG_LOOKUP_OK ids=app/hello,app/worker unknown=denied extents=nonoverlap" "$serial_log" >/dev/null || {

@@ -233,25 +233,13 @@ static int service_registry_matches(const struct aiuefs_object_transaction *tran
   return service_registry_decode(transaction,states) &&
     states[0]==state0 && states[1]==state1;
 }
-static int user_object_decode(const struct aiuefs_object_transaction *transaction,
-    unsigned *index,uint64_t *value) {
-  if (!transaction || transaction->object_version!=3 || transaction->object_length!=16 ||
-      transaction->target_sector<42 || transaction->target_sector>43 ||
-      transaction->object[0]!='U'||transaction->object[1]!='S'||
-      transaction->object[2]!='R'||transaction->object[3]!='1'||
-      transaction->object[4]!=1 || transaction->object[5]!=transaction->target_sector-38 ||
-      transaction->object[6]||transaction->object[7]||transaction->object[12]||
-      transaction->object[13]||transaction->object[14]||transaction->object[15]) return 0;
-  *index=transaction->target_sector-42;
-  *value=(uint64_t)transaction->object[8]|((uint64_t)transaction->object[9]<<8)|
-    ((uint64_t)transaction->object[10]<<16)|((uint64_t)transaction->object[11]<<24);
-  return *value!=0;
-}
-static int user_journal_valid(const struct aiuefs_journal_record *journal,
+static uint64_t user_journal_value(const struct aiuefs_journal_record *journal,
     unsigned expected_index) {
   extern uint64_t kotoba_aiueos_user_object_journal_valid(const void *,uint64_t,uint64_t);
-  return expected_index<2 && kotoba_aiueos_user_object_journal_valid(
-    journal,sizeof(*journal),expected_index+4);
+  extern uint64_t kotoba_aiueos_user_object_journal_value(const void *,uint64_t);
+  if (expected_index>=2 || !kotoba_aiueos_user_object_journal_valid(
+      journal,sizeof(*journal),expected_index+4)) return 0;
+  return kotoba_aiueos_user_object_journal_value(journal,sizeof(*journal));
 }
 
 static int virtio_blk_sector_io(struct virtio_blk_request *request, uint8_t *sector,
@@ -319,11 +307,6 @@ static int apply_object_transaction(struct virtio_blk_request *request, uint8_t 
     persisted_service_registry_states[0]=states[0];
     persisted_service_registry_states[1]=states[1];
   }
-  unsigned user_index; uint64_t value;
-  if (user_object_decode(transaction,&user_index,&value)) {
-    user_object_value[user_index]=value; user_object_ready|=1U<<user_index;
-    if (recovery) user_object_replay_evidence|=1U<<user_index;
-  }
   return 1;
 }
 
@@ -357,17 +340,17 @@ static uint64_t commit_user_object_write(uint16_t domain,uint64_t value) {
         blk_backend.desc,blk_backend.avail,blk_backend.used,blk_backend.doorbell,
         &blk_backend.submitted,VIRTIO_BLK_T_IN,target)) { blk_unlock(); return 0; }
   struct aiuefs_journal_record *journal=(void *)blk_backend.sector;
-  if (!user_journal_valid(journal,index)||journal->sequence!=sequence) { blk_unlock();return 0; }
+  uint64_t decoded_value=user_journal_value(journal,index);
+  if (decoded_value!=value||journal->sequence!=sequence) { blk_unlock();return 0; }
   struct aiuefs_object_transaction transaction=
     *(const struct aiuefs_object_transaction *)(const void *)journal->payload;
-  unsigned decoded;uint64_t decoded_value;
-  if (!user_object_decode(&transaction,&decoded,&decoded_value)||decoded!=index||
-      decoded_value!=value || !apply_object_transaction(blk_backend.request,
+  if (!apply_object_transaction(blk_backend.request,
         blk_backend.sector,blk_backend.status,blk_backend.desc,blk_backend.avail,
         blk_backend.used,blk_backend.doorbell,&blk_backend.submitted,sequence,
         &transaction,0)) {
     blk_unlock();return 0;
   }
+  user_object_value[index]=decoded_value;user_object_ready|=1U<<index;
   user_object_sequence[index]=sequence;user_object_slot[index]=target;
   user_object_write_evidence|=1U<<index;blk_unlock();return sequence;
 }
@@ -815,21 +798,19 @@ static int virtio_blk(uint8_t b, uint8_t d, uint8_t f) {
          domain before admitting user code; malformed or cross-domain records
          are ignored, while the highest valid sequence is replayed. */
       for (unsigned user=0;user<2;user++) {
-        struct aiuefs_journal_record user_slots[2]; int user_selected=-1;
+        struct aiuefs_journal_record user_slots[2];uint64_t user_values[2]={0,0};
+        int user_selected=-1;
         uint32_t first=44+user*2;
         for (unsigned slot=0;slot<2;slot++) {
           for(unsigned i=0;i<512;i++)sector[i]=0;
           if(!virtio_blk_sector_io(request,sector,status,desc,avail,used,doorbell,
               &submitted,VIRTIO_BLK_T_IN,first+slot)) return 0;
           const struct aiuefs_journal_record *candidate=(const void *)sector;
-          if (user_journal_valid(candidate,user)) {
-            const struct aiuefs_object_transaction *candidate_tx=(const void *)candidate->payload;
-            unsigned decoded;uint64_t decoded_value;
-            if (user_object_decode(candidate_tx,&decoded,&decoded_value) && decoded==user) {
-              user_slots[slot]=*candidate;
-              if(user_selected<0 || user_slots[slot].sequence>user_slots[user_selected].sequence)
-                user_selected=(int)slot;
-            }
+          uint64_t decoded_value=user_journal_value(candidate,user);
+          if (decoded_value) {
+            user_slots[slot]=*candidate;user_values[slot]=decoded_value;
+            if(user_selected<0 || user_slots[slot].sequence>user_slots[user_selected].sequence)
+              user_selected=(int)slot;
           }
         }
         if(user_selected>=0) {
@@ -839,6 +820,7 @@ static int virtio_blk(uint8_t b, uint8_t d, uint8_t f) {
           if(!apply_object_transaction(request,sector,status,desc,avail,used,doorbell,
               &blk_backend.submitted,user_slots[user_selected].sequence,replay,1))return 0;
           submitted=blk_backend.submitted;user_object_replay_evidence|=1U<<user;
+          user_object_value[user]=user_values[user_selected];user_object_ready|=1U<<user;
           user_object_sequence[user]=user_slots[user_selected].sequence;
           user_object_slot[user]=first+(uint32_t)user_selected;
         }

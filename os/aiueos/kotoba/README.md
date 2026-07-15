@@ -128,5 +128,9 @@ domain-owned objects. User tasks submit capability 4 writes and read capability
 before new user code is admitted. Its pinned object SHA-256 is
 `994d8a296d17afa67a8c9267cafa6079edca5068aeed46e78d8f455a40df1cfd`.
 The paired fixed-stack validator is
-`0f2015e53ed083741687abfbaff72edf8a525947b9fc753cacc7a1bf10faf46f`;
-both use bounded loads/stores without recursive calls.
+`0f2015e53ed083741687abfbaff72edf8a525947b9fc753cacc7a1bf10faf46f` and
+the value decoder is
+`bd1de2777d75e02968939d2b7bc74e84dc16a8a9431fe36bd2c2170d6866fad3`;
+all three use bounded loads/stores without recursive calls. The decoder is
+called only after the complete domain-routed journal contract passes, so C no
+longer parses user payloads.
