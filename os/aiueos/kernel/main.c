@@ -76,6 +76,7 @@ extern int aiueos_process_initialize(void);
 extern void aiueos_process_enter(void);
 extern int aiueos_process_result(void);
 extern int aiueos_process_lifecycle_evidence_ready(void);
+extern int aiueos_syscall_transport_evidence_ready(void);
 extern int aiueos_address_space_self_test(void);
 extern void aiueos_load_task_register(void);
 extern int aiueos_smp_start_application_processor(void);
@@ -189,7 +190,6 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
     set_idt_gate(34, aiueos_isr_virtio_rng);
     set_idt_gate(35, aiueos_isr_virtio_blk);
     set_idt_gate(128, aiueos_isr_syscall);
-    idt[128].attributes = 0xee; /* present, DPL3, interrupt gate */
     const struct descriptor_pointer idtr = {
       .limit = (uint16_t)(sizeof(idt) - 1),
       .base = (uint64_t)(uintptr_t)idt
@@ -433,8 +433,11 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
       serial_string("AIUEOS_RING3_FAIL syscall-results\r\n");
       qemu_exit(0x71);
     }
-    debug_string("AIUEOS_RING3_OK processes=2 preemptive roots=2 domains=2,3 kernel-stacks=2 int80\n");
-    serial_string("AIUEOS_RING3_OK processes=2 preemptive roots=2 domains=2,3 kernel-stacks=2 int80\r\n");
+    if (!aiueos_syscall_transport_evidence_ready()) qemu_exit(0x71);
+    debug_string("AIUEOS_RING3_OK processes=2 preemptive roots=2 domains=2,3 kernel-stacks=2 syscall-sysret\n");
+    serial_string("AIUEOS_RING3_OK processes=2 preemptive roots=2 domains=2,3 kernel-stacks=2 syscall-sysret\r\n");
+    debug_string("AIUEOS_SYSRET_OK star-lstar-fmask canonical-rip-rsp rflags-sanitized per-task-stack\n");
+    serial_string("AIUEOS_SYSRET_OK star-lstar-fmask canonical-rip-rsp rflags-sanitized per-task-stack\r\n");
     debug_string("AIUEOS_CAPABILITY_TRANSFER_OK source=2 target=3 attenuated atomic-claim transferred-use owner-exit=descendants-revoked\n");
     serial_string("AIUEOS_CAPABILITY_TRANSFER_OK source=2 target=3 attenuated atomic-claim transferred-use owner-exit=descendants-revoked\r\n");
     if (!aiueos_process_lifecycle_evidence_ready()) qemu_exit(0x71);

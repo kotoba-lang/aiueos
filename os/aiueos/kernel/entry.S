@@ -7,6 +7,9 @@
 .extern aiueos_syscall_dispatch
 .global aiueos_syscall_from_user
 .global aiueos_saved_kernel_rsp
+.global aiueos_syscall_entry
+.global aiueos_sysret_count
+.global aiueos_sysret_validation_count
 
 aiueos_kernel_entry:
   cli
@@ -181,6 +184,59 @@ aiueos_isr_syscall:
   pop %rax
   iretq
 
+/* Native x86-64 CPL3 syscall path. FMASK enters with interrupts and direction
+ * flags cleared; the scheduler publishes the current task's kernel stack. */
+.type aiueos_syscall_entry,@function
+aiueos_syscall_entry:
+  mov %rcx, %r10
+  shl $16, %r10
+  sar $16, %r10
+  cmp %rcx, %r10
+  jne aiueos_sysret_reject
+  mov %rsp, %r10
+  shl $16, %r10
+  sar $16, %r10
+  cmp %rsp, %r10
+  jne aiueos_sysret_reject
+  movabs $0x0000800000000000, %r10
+  cmp %r10, %rcx
+  jae aiueos_sysret_reject
+  cmp %r10, %rsp
+  jae aiueos_sysret_reject
+  incq aiueos_sysret_validation_count(%rip)
+  mov %rsp, aiueos_syscall_user_rsp(%rip)
+  mov aiueos_syscall_kernel_stack_top(%rip), %rsp
+  test %rsp, %rsp
+  jz aiueos_sysret_reject
+  push %rcx
+  push %r11
+  push %rdi
+  push %rsi
+  push %rdx
+  movq $3, aiueos_syscall_from_user(%rip)
+  mov %rdx, %rcx
+  mov %rsi, %rdx
+  mov %rdi, %rsi
+  mov %rax, %rdi
+  call aiueos_syscall_dispatch
+  mov 0(%rsp), %rdx
+  mov 8(%rsp), %rsi
+  mov 16(%rsp), %rdi
+  mov 24(%rsp), %r11
+  mov 32(%rsp), %rcx
+  movabs $0xfffffffffff88fff, %r10
+  and %r10, %r11
+  or $2, %r11
+  mov aiueos_syscall_user_rsp(%rip), %rsp
+  incq aiueos_sysret_count(%rip)
+  sysretq
+aiueos_sysret_reject:
+  mov $0x7b, %eax
+  outl %eax, $0xf4
+  cli
+10: hlt
+  jmp 10b
+
 .global aiueos_page_fault_stage
 .global aiueos_page_fault_error
 .global aiueos_isr_page_fault
@@ -259,8 +315,8 @@ aiueos_gdt:
   .quad 0x0000000000000000
   .quad 0x00af9a000000ffff
   .quad 0x00cf92000000ffff
-  .quad 0x00affa000000ffff /* ring 3 64-bit code */
-  .quad 0x00cff2000000ffff /* ring 3 data */
+  .quad 0x00cff2000000ffff /* ring 3 data; SYSRET SS = STAR + 8 */
+  .quad 0x00affa000000ffff /* ring 3 code; SYSRET CS = STAR + 16 */
 .global aiueos_gdt_tss
 aiueos_gdt_tss:
   .quad 0
@@ -282,13 +338,13 @@ aiueos_load_task_register:
 .type aiueos_enter_user,@function
 aiueos_enter_user:
   mov %rsp, aiueos_saved_kernel_rsp(%rip)
-  pushq $0x23
+  pushq $0x1b
   pushq %rsi
   pushfq
   pop %rax
   and $-513, %rax
   push %rax
-  pushq $0x1b
+  pushq $0x23
   push %rdi
   iretq
 
@@ -296,6 +352,9 @@ aiueos_enter_user:
 .balign 8
 aiueos_syscall_from_user: .skip 8
 aiueos_saved_kernel_rsp: .skip 8
+aiueos_syscall_user_rsp: .skip 8
+aiueos_sysret_count: .skip 8
+aiueos_sysret_validation_count: .skip 8
 
 .section .rodata.nx-probe,"a",@progbits
 .global aiueos_nx_probe_target

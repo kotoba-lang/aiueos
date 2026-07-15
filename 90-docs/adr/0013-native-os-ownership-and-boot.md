@@ -182,7 +182,10 @@ cannot map a derived capability region unless the Kotoba planner admits it.
 
 Syscall pointer admission follows the same split. A Kotoba half-open range
 planner validates non-empty bootstrap and user windows without overflow before
-the native `int 0x80` dispatcher accepts a buffer. Kotoba then copies at most
+the native syscall dispatcher accepts a buffer. CPL3 enters through
+STAR/LSTAR/FMASK-configured `SYSCALL`, switches to an allocator-owned per-task
+kernel stack, validates canonical lower-half return RIP/RSP, and returns through
+sanitized `SYSRETQ`; `int 0x80` remains DPL0-only for bootstrap tests. Kotoba then copies at most
 256 bytes into kernel-owned storage using trapping bounded loads/stores and
 produces the payload hash receipt. Native code still owns trap entry,
 capability lookup, buffer lifetime, and page-fault recovery.
@@ -238,7 +241,7 @@ virtio-blk/NVMe -> block service -> filesystem/object store
 | 0 | Linux PID-1/initramfs/QEMU/virtio/VFIO prototype | PR #29 merged; unit CI green; whole boot still unproven |
 | 1 | UEFI loader + serial kernel | In progress: OVMF hands off to a bounded ELF64 kernel with its own stack and COM1 serial output; signature verification remains |
 | 2 | paging, exceptions, ACPI, APIC, SMP | In progress: GDT/IDT, CR3/W^X, ACPI discovery, and BSP Local APIC timer vector 32 pass; IOAPIC and AP startup remain |
-| 3 | scheduler, VM, syscall, capability handles | In progress: preemptive CR3-isolated kernel tasks and two APIC-timer-preempted CPL3 processes with distinct roots/private pages/domains; switch-time CR3/TSS.RSP0/owner updates; syscall/copy-in and cross-process rejection; W^X; page-backed capability table with generation reuse/retirement and atomic attenuated transfer/claim; parent-slot/generation derivation graph with multi-hop recursive revocation; scheduler exit/reap and owner-wide descendant revocation; allocator-owned PML4/PDPT/PD/PT/private pages returned through a validated free list, zeroed and reused; separate eight-slot generation-tracked address-space and scheduler-task allocation with full-table rejection and lowest-slot reuse; allocator-owned interrupt stacks returned and zero-reused; Kotoba-planned descriptor-driven service spawn/restart/terminate; journal-replayed service generation/restart state drives task recreation before user processes; IPC and registry. `syscall`/`sysret`, arbitrary process creation ABI, and per-CPU scheduler queues remain |
+| 3 | scheduler, VM, syscall, capability handles | In progress: preemptive CR3-isolated kernel tasks and two APIC-timer-preempted CPL3 processes with distinct roots/private pages/domains; switch-time CR3/TSS.RSP0/owner updates; STAR/LSTAR/FMASK `SYSCALL`/validated `SYSRETQ`; syscall/copy-in and cross-process rejection; W^X; page-backed capability table with generation reuse/retirement and atomic attenuated transfer/claim; parent-slot/generation derivation graph with multi-hop recursive revocation; scheduler exit/reap and owner-wide descendant revocation; allocator-owned PML4/PDPT/PD/PT/private pages returned through a validated free list, zeroed and reused; separate eight-slot generation-tracked address-space and scheduler-task allocation with full-table rejection and lowest-slot reuse; allocator-owned interrupt stacks returned and zero-reused; Kotoba-planned descriptor-driven service spawn/restart/terminate; journal-replayed service generation/restart state drives task recreation before user processes; IPC and registry. Arbitrary process creation ABI and per-CPU scheduler queues remain |
 | 4 | PCI/MMIO/DMA/IOMMU/IRQ + virtio | In progress: QEMU intel-iommu root/context/second-level translation reaches `GSTS.TES`; domain 1 is bounded to 128 MiB and virtio queue completions pass through it; multi-segment/scoped DRHD and per-device domains remain |
 | 5 | ISO/GPT/raw image, recovery, signed update | reproducible UEFI and GRUB boots |
 | 6 | browser shell, compositor, input, kotobase | desktop session persists and restores state |

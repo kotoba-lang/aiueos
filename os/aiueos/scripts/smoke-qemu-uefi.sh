@@ -308,8 +308,12 @@ grep -F "AIUEOS_ADDRESS_SPACE_OK processes=2 distinct-cr3 private-pages cross-ac
   echo "error: per-process address-space isolation evidence was not observed" >&2
   exit 1
 }
-grep -F "AIUEOS_RING3_OK processes=2 preemptive roots=2 domains=2,3 kernel-stacks=2 int80" "$serial_log" >/dev/null || {
+grep -F "AIUEOS_RING3_OK processes=2 preemptive roots=2 domains=2,3 kernel-stacks=2 syscall-sysret" "$serial_log" >/dev/null || {
   echo "error: CPL3 syscall and kernel-return evidence was not observed" >&2; exit 1;
+}
+grep -F "AIUEOS_SYSRET_OK star-lstar-fmask canonical-rip-rsp rflags-sanitized per-task-stack" "$serial_log" >/dev/null || {
+  echo "error: native syscall/sysret evidence missing" >&2
+  exit 1
 }
 grep -F "AIUEOS_CAPABILITY_TRANSFER_OK source=2 target=3 attenuated atomic-claim transferred-use owner-exit=descendants-revoked" "$serial_log" >/dev/null || {
   echo "error: atomic process capability transfer evidence was not observed" >&2

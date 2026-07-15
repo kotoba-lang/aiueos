@@ -240,9 +240,13 @@
                       :user-text #{:present :user :read :execute}
                       :user-data #{:present :user :read :write :no-execute}
                       :guard-page :unmapped
-                      :tss #{:descriptor-loaded :rsp0-syscall-stack}
-                      :transition [:iretq-to-cpl3 :int80-to-cpl0
-                                   :one-shot-exit-to-kernel]
+                      :tss #{:descriptor-loaded :rsp0-interrupt-stack}
+                      :transition [:iretq-to-cpl3 :syscall-to-cpl0 :sysretq-to-cpl3]
+                      :syscall-msrs {:efer :sce :star :kernel-user-selectors
+                                     :lstar :native-entry
+                                     :fmask [:interrupt :trap :direction :iopl :nested-task :alignment-check]}
+                      :sysret-validation [:canonical-lower-rip :canonical-lower-rsp
+                                          :sanitized-rflags :per-task-kernel-stack]
                       :address-spaces {:processes 2
                                        :cr3 :distinct
                                        :kernel-branches :shared
@@ -250,8 +254,7 @@
                                        :cross-process-page :non-present
                                        :switch :scheduler-and-sequential-smoke}
                       :negative-evidence #{:invalid-handle :invalid-user-pointer
-                                           :cross-process-page-fault}
-                      :not-yet #{:syscall-sysret}}
+                                           :cross-process-page-fault}}
  :phase-1-evidence {:console-prefix "AIUEOS_KERNEL_OK"
                     :qemu-exit-port 244
                     :qemu-exit-value 48}}
