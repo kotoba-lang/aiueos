@@ -41,6 +41,8 @@ extern void aiueos_scheduler_request_user_exit(uint16_t domain);
 extern int aiueos_scheduler_users_reaped(void);
 extern int aiueos_scheduler_finalize_user_stacks(void);
 extern int aiueos_scheduler_reap_evidence_ready(void);
+extern unsigned aiueos_scheduler_task_capacity(void);
+extern int aiueos_scheduler_task_slot_self_test(void);
 extern uint64_t aiueos_capability_revoke_owner(uint16_t owner);
 extern int aiueos_address_space_reclaim(unsigned process);
 extern int aiueos_address_space_reuse(unsigned process);
@@ -128,6 +130,8 @@ void aiueos_process_enter(void) {
   while (!aiueos_scheduler_users_reaped()) __asm__ volatile("hlt");
   __asm__ volatile("cli");
   if (aiueos_scheduler_finalize_user_stacks() &&
+      aiueos_scheduler_task_capacity()==8 &&
+      aiueos_scheduler_task_slot_self_test() &&
       aiueos_capability_revoke_owner(2)>=1 &&
       aiueos_capability_revoke_owner(3)>=2 &&
       !aiueos_capability_log_handle(2) && !aiueos_capability_log_handle(3))

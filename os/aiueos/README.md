@@ -78,7 +78,8 @@ After both processes complete their evidence, the kernel requests scheduler
 exit and waits until each task is removed while the kernel task remains
 runnable. Every capability owned by domains 2 and 3—including the transferred
 handle—is revoked with generation advancement. Only after returning to the
-kernel context are both supervisor interrupt stacks zeroed. Private mappings
+kernel context are both allocator-owned supervisor interrupt stack pages
+returned to the physical free list. Private mappings
 are removed, their backing pages are zeroed, and the bounded process slots are
 remapped to prove clean reuse. The complete per-process mapping path is now
 allocator-owned rather than a static kernel array: each process consumes five
@@ -89,6 +90,10 @@ Address spaces are assigned from an eight-slot generation table rather than
 being identified by two permanent roots. Boot fills every remaining slot,
 rejects allocation when full, reaps the temporary generation, and proves that
 the lowest free slot is recreated with a new generation and zero backing.
+Scheduler tasks use a separate eight-slot generation table. Boot fills the
+task table, verifies exhaustion, reaps every temporary task, and recreates the
+lowest slot from a zeroed physical stack page; no per-task interrupt stack is
+statically reserved in the kernel image.
 
 The pointer/length window admission for both bootstrap and CPL3
 calls is compiler-emitted Kotoba code and is exercised at both valid boundaries
