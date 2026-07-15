@@ -138,10 +138,9 @@ uint32_t aiueos_journal_recovered_sequence(void) { return journal_recovered_sequ
 uint32_t aiueos_journal_slot(void) { return journal_slot; }
 int aiueos_object_transaction_replayed(void) { return object_transaction_replayed; }
 uint32_t aiueos_object_transaction_sequence(void) { return object_transaction_sequence; }
+extern uint64_t kotoba_aiueos_fnv1a(const uint8_t *bytes, uint64_t length);
 static uint32_t fnv1a(const uint8_t *bytes, uint32_t length) {
-  uint32_t hash = 2166136261U;
-  for (uint32_t i = 0; i < length; i++) { hash ^= bytes[i]; hash *= 16777619U; }
-  return hash;
+  return (uint32_t)kotoba_aiueos_fnv1a(bytes, length);
 }
 
 static int journal_record_valid(const struct aiuefs_journal_record *journal) {

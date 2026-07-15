@@ -152,6 +152,13 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
     }
     debug_string("AIUEOS_KOTOBA_NATIVE_OK elf64-relocatable sysv-v1 result=42\n");
     serial_string("AIUEOS_KOTOBA_NATIVE_OK elf64-relocatable sysv-v1 result=42\r\n");
+    extern uint64_t kotoba_aiueos_fnv1a(const uint8_t *, uint64_t);
+    static const uint8_t fnv_vector[3] = {'a', 'b', 'c'};
+    if ((uint32_t)kotoba_aiueos_fnv1a(fnv_vector, 3) != 0x1a47e90bU) {
+      serial_string("AIUEOS_KOTOBA_FNV_FAIL known-vector\r\n");
+      qemu_exit(0x6f);
+    }
+    serial_string("AIUEOS_KOTOBA_FNV_VECTOR_OK abc\r\n");
     aiueos_load_gdt();
     set_idt_gate(6, aiueos_isr_invalid_opcode);
     set_idt_gate(14, aiueos_isr_page_fault);
@@ -301,6 +308,8 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
     serial_string("AIUEOS_OBJECT_TXN_OK journal-first sector=3 apply-readback\r\n");
     debug_string("AIUEOS_KOTOBA_JOURNAL_PLAN_OK latest-slot next-sequence rollback-preserved\n");
     serial_string("AIUEOS_KOTOBA_JOURNAL_PLAN_OK latest-slot next-sequence rollback-preserved\r\n");
+    debug_string("AIUEOS_KOTOBA_FNV_OK bounded-load journal-object-validation\n");
+    serial_string("AIUEOS_KOTOBA_FNV_OK bounded-load journal-object-validation\r\n");
     if (aiueos_journal_recovered()) {
       if (!aiueos_journal_recovered_sequence() ||
           aiueos_journal_sequence() != aiueos_journal_recovered_sequence() + 1) qemu_exit(0x6f);

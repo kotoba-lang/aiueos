@@ -148,6 +148,14 @@ rejects an inconsistent Kotoba plan before replay or mutation. Multi-boot QEMU
 tests cover initial append, committed redo, corrupt-latest fallback, and
 rollback preservation.
 
+The bounded-memory boundary is `kernel-load-u8(base, length, index)`. It is
+available only to the aiueos kernel target and traps before access when the
+base is null, length exceeds one disk sector (512 bytes), or the unsigned index
+is outside that length. The first consumer is Kotoba FNV-1a, replacing the C
+checksum loop for superblock, journal header/payload, transaction, and mutable
+object validation. Firmware and device I/O remain outside this pure bounded
+function.
+
 ### Driver, UI, and persistence split
 
 ```text
