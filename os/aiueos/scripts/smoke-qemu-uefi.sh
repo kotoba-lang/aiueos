@@ -323,8 +323,12 @@ grep -F "AIUEOS_CAPABILITY_TRANSFER_OK source=2 target=3 attenuated atomic-claim
   echo "error: atomic process capability transfer evidence was not observed" >&2
   exit 1
 }
-grep -F "AIUEOS_PROCESS_REAP_OK tasks=2 process-slots=8 task-slots=8 generations=reused owner-caps-revoked allocator-pages=10 stack-pages=reused zero-reused" "$serial_log" >/dev/null || {
+grep -F "AIUEOS_PROCESS_REAP_OK tasks=3 process-slots=8 task-slots=8 generations=reused owner-caps-revoked allocator-pages=17 stack-pages=reused zero-reused" "$serial_log" >/dev/null || {
   echo "error: process exit/reap/reuse evidence was not observed" >&2
+  exit 1
+}
+grep -F "AIUEOS_KOTOBA_ELF_PROCESS_OK et-exec segments=rx,rw result=42 domain=4" "$serial_log" >/dev/null || {
+  echo "Kotoba ELF process evidence missing" >&2
   exit 1
 }
 grep -F "AIUEOS_USER_SYSCALL_OK valid-log copied-payload too-big stale-generation foreign-owner wrong-type no-rights invalid-pointer" "$serial_log" >/dev/null || {

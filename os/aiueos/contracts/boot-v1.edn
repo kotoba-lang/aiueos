@@ -247,12 +247,21 @@
                                      :fmask [:interrupt :trap :direction :iopl :nested-task :alignment-check]}
                       :sysret-validation [:canonical-lower-rip :canonical-lower-rsp
                                           :sanitized-rflags :per-task-kernel-stack]
-                      :address-spaces {:processes 2
+                      :address-spaces {:processes 3
                                        :cr3 :distinct
                                        :kernel-branches :shared
                                        :user-private-page :per-process
                                        :cross-process-page :non-present
                                        :switch :scheduler-and-sequential-smoke}
+                      :kotoba-user-loader {:target :x86_64-aiueos-user-v1
+                                           :format :elf64-et-exec
+                                           :program-headers 2
+                                           :segments [:rx-text :rw-nx-context]
+                                           :allocator-owned-pages true
+                                           :entry 1970176
+                                           :result 42
+                                           :domain 4
+                                           :source :embedded-vertical-slice}
                       :negative-evidence #{:invalid-handle :invalid-user-pointer
                                            :cross-process-page-fault}}
  :phase-1-evidence {:console-prefix "AIUEOS_KERNEL_OK"
