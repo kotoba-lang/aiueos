@@ -60,6 +60,7 @@ extern uint32_t aiueos_gpu_scanout_height(void);
 extern void aiueos_scheduler_initialize(void);
 extern int aiueos_scheduler_evidence_ready(void);
 extern int aiueos_service_runtime_evidence_ready(void);
+extern int aiueos_service_ipc_evidence_ready(void);
 extern int aiueos_syscall_self_test(void);
 extern int aiueos_process_initialize(void);
 extern void aiueos_process_enter(void);
@@ -357,6 +358,9 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
     if (!aiueos_service_runtime_evidence_ready()) qemu_exit(0x6f);
     debug_string("AIUEOS_SERVICE_RUNTIME_OK services=2 kotoba-policy restart=context generation=2 budget=bounded\n");
     serial_string("AIUEOS_SERVICE_RUNTIME_OK services=2 kotoba-policy restart=context generation=2 budget=bounded\r\n");
+    if (!aiueos_service_ipc_evidence_ready()) qemu_exit(0x6f);
+    debug_string("AIUEOS_SERVICE_IPC_OK mailbox=bounded capability=owner-domain cross-cr3 sequence=1\n");
+    serial_string("AIUEOS_SERVICE_IPC_OK mailbox=bounded capability=owner-domain cross-cr3 sequence=1\r\n");
     if (!aiueos_ioapic_route_legacy_timer()) {
       debug_string("AIUEOS_IOAPIC_FAIL route-legacy-timer\n");
       serial_string("AIUEOS_IOAPIC_FAIL route-legacy-timer\r\n");

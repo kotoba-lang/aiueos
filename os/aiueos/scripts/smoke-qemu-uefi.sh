@@ -269,6 +269,10 @@ grep -F "AIUEOS_SERVICE_RUNTIME_OK services=2 kotoba-policy restart=context gene
   echo "error: persistent service runtime evidence was not observed" >&2
   exit 1
 }
+grep -F "AIUEOS_SERVICE_IPC_OK mailbox=bounded capability=owner-domain cross-cr3 sequence=1" "$serial_log" >/dev/null || {
+  echo "error: capability-checked cross-address-space service IPC evidence was not observed" >&2
+  exit 1
+}
 grep -F "AIUEOS_IOAPIC_OK pit-gsi vector=33 eoi-v1" "$serial_log" >/dev/null || {
   echo "error: IOAPIC external timer IRQ evidence was not observed" >&2
   exit 1

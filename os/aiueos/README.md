@@ -174,7 +174,10 @@ restart counts, and heartbeats across preemption and CR3 switches. A
 compiler-emitted Kotoba lifecycle planner applies the restart budget and advances
 the generation; the timer path then discards and reconstructs the failed task's
 saved context. The QEMU smoke injects one deterministic failure and requires the
-restarted service to become live again. IPC and a durable service registry remain
+restarted service to become live again. A single-entry bounded mailbox then
+transfers a scalar envelope from the restarted service to the other service
+across distinct CR3 roots. Kotoba capability admission checks the sender owner
+domain; a foreign-domain send is rejected. A durable service registry remains
 future work.
 
 The EFI application is deliberately a small native bootstrap substrate. Kotoba

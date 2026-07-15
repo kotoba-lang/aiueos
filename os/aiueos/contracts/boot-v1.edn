@@ -176,10 +176,15 @@
              :context [:general-purpose-registers :instruction-pointer
                        :stack-pointer :flags]}
  :service-runtime {:version 1 :slots 2 :identity :stable-id
-                   :generation :stable-across-preemption
+                   :generation :restart-advances
                    :liveness :scheduler-heartbeat
                    :persistence :kernel-lifetime
-                   :not-yet [:restart-policy :ipc :durable-registry]}
+                   :restart {:policy :kotoba :budget :bounded
+                             :effect :replace-saved-context}
+                   :ipc {:transport :bounded-mailbox
+                         :admission :owner-domain-capability
+                         :address-spaces :cross-cr3}
+                   :not-yet [:durable-registry]}
  :syscall {:version 1
            :transport :interrupt-0x80
            :current-privilege :cpl3
