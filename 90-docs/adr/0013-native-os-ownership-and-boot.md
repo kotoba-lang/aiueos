@@ -156,6 +156,12 @@ checksum loop for superblock, journal header/payload, transaction, and mutable
 object validation. Firmware and device I/O remain outside this pure bounded
 function.
 
+Journal-record and object-transaction validation are also Kotoba-owned. Their
+little-endian `u32` reader is expressed from four bounded byte loads, avoiding
+unaligned native loads and hidden packed-structure authority. C retains the
+physical record address and exact size but no longer decides journal magic,
+version/state, transaction target/length, or checksum validity.
+
 ### Driver, UI, and persistence split
 
 ```text
