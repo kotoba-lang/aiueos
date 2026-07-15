@@ -17,6 +17,7 @@ struct aiueos_interrupt_context {
 };
 
 extern int aiueos_address_spaces_initialize(void);
+extern int aiueos_address_space_claim(void);
 extern uint64_t aiueos_address_space_kernel_cr3(void);
 extern uint64_t aiueos_address_space_cr3(unsigned process);
 extern uint64_t aiueos_address_space_current_cr3(void);
@@ -64,6 +65,12 @@ static uint64_t service_ipc_send_handle;
 static volatile uint64_t service_ipc_received_sequence;
 static volatile uint64_t service_ipc_received_payload;
 static volatile uint64_t service_ipc_foreign_rejections;
+struct aiueos_user_service_mailbox {
+  volatile uint64_t sender_domain, recipient_service, sequence, payload, full;
+};
+static struct aiueos_user_service_mailbox user_service_mailboxes[2];
+static volatile uint64_t user_service_ipc_received_domains;
+static volatile uint64_t user_service_ipc_received_payloads[2];
 static uint64_t dynamic_task_evidence;
 static uint64_t kotoba_lifecycle_evidence;
 static uint64_t persistent_restore_evidence;
@@ -107,6 +114,16 @@ static uint64_t ipc_capability_plan(uint16_t requester) {
 }
 
 static void service_ipc_step(unsigned process) {
+  if (process<2 && user_service_mailboxes[process].full) {
+    struct aiueos_user_service_mailbox *mailbox=&user_service_mailboxes[process];
+    __asm__ volatile("" ::: "memory");
+    if (mailbox->sender_domain==process+4 && mailbox->recipient_service==process &&
+        mailbox->sequence==1 && mailbox->payload==42) {
+      user_service_ipc_received_payloads[process]=mailbox->payload;
+      user_service_ipc_received_domains|=1ULL<<process;
+      mailbox->full=0;
+    }
+  }
   if (process == 0 && services[0].generation == 2 &&
       services[0].heartbeats == 1 && !service_mailbox.full) {
     if (ipc_capability_plan(1) != service_ipc_send_handle) return;
@@ -234,6 +251,11 @@ void aiueos_scheduler_initialize(void) {
   }
   for (uint32_t i=0;i<AIUEOS_TASK_SLOT_COUNT;i++) tasks[i]=(struct aiueos_task){0};
   tasks[0].cr3=aiueos_address_space_kernel_cr3(); tasks[0].active=1;
+  /* Service roots are persistent scheduler-owned address spaces. Reserve them
+     before any user process can claim a root. */
+  if (aiueos_address_space_claim()!=0 || aiueos_address_space_claim()!=1) {
+    aiueos_scheduler_address_space_failures=1; return;
+  }
   for (unsigned service=0;service<AIUEOS_SERVICE_CAPACITY;service++)
     services[service]=(struct aiueos_service_slot){0,0,0,0,0,0,0,0,0,0};
   services[0].id=1; services[0].runs=&service_runs[0];
@@ -260,11 +282,14 @@ void aiueos_scheduler_initialize(void) {
   service_ipc_received_sequence = service_ipc_received_payload = 0;
   service_ipc_send_handle = ipc_capability_plan(1);
   service_ipc_foreign_rejections = ipc_capability_plan(2) == 0 ? 1 : 0;
+  for (unsigned i=0;i<2;i++) {
+    user_service_mailboxes[i]=(struct aiueos_user_service_mailbox){0,0,0,0,0};
+    user_service_ipc_received_payloads[i]=0;
+  }
+  user_service_ipc_received_domains=0;
 }
 int aiueos_scheduler_begin_user_runtime(void) {
-  if (!apply_service_event(0,3) || !apply_service_event(1,3)) {
-    aiueos_scheduler_address_space_failures=1; return 0;
-  }
+  if (!services[0].active || !services[1].active) return 0;
   tasks[0].saved_stack=0; tasks[0].switches=0;
   current_task=0; scheduler_user_mode=1; aiueos_user_scheduler_switches=0;
   user_tasks_reaped=0; user_tasks_expected=0; user_kernel_stacks_zeroed=0;
@@ -295,6 +320,22 @@ int aiueos_service_ipc_evidence_ready(void) {
     service_ipc_received_sequence == 1 &&
     service_ipc_received_payload == 0x4b4f544f42414950ULL &&
     service_mailbox.full == 0;
+}
+uint64_t aiueos_kotoba_service_send(uint16_t domain,uint64_t payload) {
+  if (domain<4 || domain>5 || !payload || payload>0xffffffffU) return 0;
+  unsigned service=domain-4;
+  struct aiueos_user_service_mailbox *mailbox=&user_service_mailboxes[service];
+  if (mailbox->full || user_service_ipc_received_payloads[service]) return 0;
+  mailbox->sender_domain=domain; mailbox->recipient_service=service;
+  mailbox->sequence=1; mailbox->payload=payload;
+  __asm__ volatile("" ::: "memory"); mailbox->full=1;
+  return 1;
+}
+int aiueos_kotoba_service_ipc_evidence_ready(void) {
+  return user_service_ipc_received_domains==3 &&
+    user_service_ipc_received_payloads[0]==42 &&
+    user_service_ipc_received_payloads[1]==42 &&
+    !user_service_mailboxes[0].full && !user_service_mailboxes[1].full;
 }
 uint64_t aiueos_service_registry_state(unsigned service) {
   if (service >= 2 || services[service].id > 255 ||
@@ -361,33 +402,35 @@ void aiueos_scheduler_request_user_exit(uint16_t domain) {
 int aiueos_scheduler_users_reaped(void) { return user_tasks_expected && user_tasks_reaped==user_tasks_expected; }
 int aiueos_scheduler_finalize_user_stacks(void) {
   if (!aiueos_scheduler_users_reaped() || current_task!=0) return 0;
-  for (unsigned slot=1;slot<AIUEOS_TASK_SLOT_COUNT;slot++)
+  for (unsigned slot=1;slot<AIUEOS_TASK_SLOT_COUNT;slot++) {
+    if (tasks[slot].service<AIUEOS_SERVICE_CAPACITY) continue;
     if (tasks[slot].active || (tasks[slot].kernel_stack && !release_task_slot(slot))) return 0;
+  }
   user_kernel_stacks_zeroed=user_tasks_expected; scheduler_user_mode=0;
   return 1;
 }
 unsigned aiueos_scheduler_task_capacity(void) { return AIUEOS_USER_TASK_CAPACITY; }
 int aiueos_scheduler_task_slot_self_test(void) {
-  uint16_t generation_before=tasks[1].generation;
-  for (unsigned expected=1;expected<AIUEOS_TASK_SLOT_COUNT;expected++)
+  uint16_t generation_before=tasks[3].generation;
+  for (unsigned expected=3;expected<AIUEOS_TASK_SLOT_COUNT;expected++)
     if (allocate_task_slot(aiueos_address_space_kernel_cr3())!=(int)expected) return 0;
   if (allocate_task_slot(aiueos_address_space_kernel_cr3())!=-1) return 0;
-  for (unsigned slot=1;slot<AIUEOS_TASK_SLOT_COUNT;slot++) tasks[slot].active=0;
-  for (unsigned slot=1;slot<AIUEOS_TASK_SLOT_COUNT;slot++)
+  for (unsigned slot=3;slot<AIUEOS_TASK_SLOT_COUNT;slot++) tasks[slot].active=0;
+  for (unsigned slot=3;slot<AIUEOS_TASK_SLOT_COUNT;slot++)
     if (!release_task_slot(slot)) return 0;
-  if (allocate_task_slot(aiueos_address_space_kernel_cr3())!=1 ||
-      tasks[1].generation<=generation_before) return 0;
+  if (allocate_task_slot(aiueos_address_space_kernel_cr3())!=3 ||
+      tasks[3].generation<=generation_before) return 0;
   for (unsigned i=0;i<AIUEOS_TASK_STACK_BYTES;i++)
-    if (tasks[1].kernel_stack[i]) return 0;
-  tasks[1].active=0;
-  if (!release_task_slot(1)) return 0;
+    if (tasks[3].kernel_stack[i]) return 0;
+  tasks[3].active=0;
+  if (!release_task_slot(3)) return 0;
   dynamic_task_evidence=1;
   return 1;
 }
 int aiueos_scheduler_reap_evidence_ready(void) {
   return user_tasks_reaped==user_tasks_expected && user_kernel_stacks_zeroed==user_tasks_expected &&
-    !tasks[1].active && !tasks[2].active && !tasks[1].kernel_stack &&
-    !tasks[2].kernel_stack && dynamic_task_evidence && current_task==0;
+    services[0].active && services[1].active && tasks[1].active && tasks[2].active &&
+    dynamic_task_evidence && current_task==0;
 }
 int aiueos_user_scheduler_evidence_ready(void) {
   return scheduler_user_mode && aiueos_user_scheduler_switches >= 4 &&

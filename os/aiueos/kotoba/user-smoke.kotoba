@@ -1,1 +1,4 @@
-(defn main [] (if (> (cap-call 2 0) 0) (+ 40 2) 0))
+(defn main []
+  (let [state (cap-call 2 0)
+        sent (cap-call 3 42)]
+    (if (> (bit-and state sent) 0) (+ 40 2) 0)))

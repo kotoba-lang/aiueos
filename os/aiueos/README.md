@@ -89,12 +89,18 @@ rejected. The loader then admits exactly two bounded `PT_LOAD`
 segments, rejects every unexpected header, address, flag, size, and range,
 copies text and context into allocator-owned pages, and maps them RX and RW+NX
 respectively in that process root. The generic scheduler enters the ELF entry
-at CPL3. The authenticated runtime-v2 context admits only Kotoba capability 2,
+at CPL3. The authenticated runtime-v2 context admits only Kotoba capabilities
+2 and 3,
 contains an RX syscall trampoline, and receives a domain-owned runtime handle
 from the kernel loader. Kotoba `main` uses that capability to read the persisted
 service-registry object through native syscall 5; the kernel rechecks handle
 type, rights, owner domain, capability ID, and bounded object index before
-returning a scalar state. The compiler shim then publishes result 42 in the
+returning a scalar state. Capability 3 places a scalar message into one of two
+bounded mailboxes: domain 4 targets persistent service 0 and domain 5 targets
+persistent service 1. Those scheduler service tasks retain their reserved CR3,
+consume and validate sender, recipient, sequence, and payload while user tasks
+remain preemptible, and survive user-process reap. The compiler shim then
+publishes result 42 in the
 context page. The boot slice launches catalog entries `app/hello` and
 `app/worker` as separate CPL3 processes in domains 4 and 5; both remain
 preemptible until normal domain teardown. Recreating either image must reuse
@@ -109,9 +115,10 @@ publication. Each derived slot records the parent slot and the parent's exact
 generation. Revoking a parent walks that generation-safe graph and advances
 every live descendant before releasing the table lock.
 
-After both processes complete their evidence, the kernel requests scheduler
-exit and waits until each task is removed while the kernel task remains
-runnable. Owner teardown of domain 2 recursively revokes its domain-3
+After all four user processes and both service deliveries complete their
+evidence, the kernel requests user-task exit and waits until each user task is
+removed while the kernel and two persistent service tasks remain runnable.
+Owner teardown of domain 2 recursively revokes its domain-3
 descendant before domain 3's remaining root is revoked, all with generation
 advancement. Only after returning to the
 kernel context are both allocator-owned supervisor interrupt stack pages
