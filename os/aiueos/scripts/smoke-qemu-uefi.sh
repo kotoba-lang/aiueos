@@ -273,6 +273,10 @@ grep -F "AIUEOS_SERVICE_IPC_OK mailbox=bounded capability=owner-domain cross-cr3
   echo "error: capability-checked cross-address-space service IPC evidence was not observed" >&2
   exit 1
 }
+grep -F "AIUEOS_SERVICE_REGISTRY_OK journal-object ids=2 generation=2,1 restart=1,0" "$serial_log" >/dev/null || {
+  echo "error: durable service registry transaction evidence was not observed" >&2
+  exit 1
+}
 grep -F "AIUEOS_IOAPIC_OK pit-gsi vector=33 eoi-v1" "$serial_log" >/dev/null || {
   echo "error: IOAPIC external timer IRQ evidence was not observed" >&2
   exit 1

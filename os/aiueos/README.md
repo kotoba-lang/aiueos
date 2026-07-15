@@ -177,8 +177,12 @@ saved context. The QEMU smoke injects one deterministic failure and requires the
 restarted service to become live again. A single-entry bounded mailbox then
 transfers a scalar envelope from the restarted service to the other service
 across distinct CR3 roots. Kotoba capability admission checks the sender owner
-domain; a foreign-domain send is rejected. A durable service registry remains
-future work.
+domain; a foreign-domain send is rejected. After scheduler convergence, a
+compiler-emitted Kotoba serializer records both service IDs, generations, and
+restart counts in the journal-first object-store transaction. The recovery
+smoke clears the materialized object, boots again, requires redo before append,
+and checks the exact registry bytes; latest-slot corruption must also restore
+the prior registry and rewrite the alternate slot.
 
 The EFI application is deliberately a small native bootstrap substrate. Kotoba
 programs use the freestanding target contract in the separately versioned

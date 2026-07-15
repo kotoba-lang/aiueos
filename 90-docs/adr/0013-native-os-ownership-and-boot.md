@@ -361,9 +361,11 @@ space switches. A compiler-emitted Kotoba lifecycle planner bounds restart and
 advances generation before the timer path replaces the saved task context. A
 bounded mailbox carries a scalar envelope across the two CR3 roots only after
 the existing Kotoba capability planner admits the sender owner domain; the
-foreign-domain negative path is required boot evidence. Persistence currently
-means kernel lifetime, not reboot durability. Durable registry replay remains
-an explicit gap.
+foreign-domain negative path is required boot evidence. Once both services are
+live, a compiler-emitted Kotoba serializer places their IDs, generations, and
+restart counts into the existing journal-first object transaction. Recovery
+replays that registry before the next append, and the smoke verifies both a
+torn materialization and latest-slot corruption against exact on-disk bytes.
 
 - full POSIX/Linux ABI compatibility;
 - every x86 chipset or GPU;
