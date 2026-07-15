@@ -310,6 +310,7 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
     serial_string("AIUEOS_KOTOBA_JOURNAL_PLAN_OK latest-slot next-sequence rollback-preserved\r\n");
     debug_string("AIUEOS_KOTOBA_FNV_OK bounded-load journal-object-validation\n");
     serial_string("AIUEOS_KOTOBA_FNV_OK bounded-load journal-object-validation\r\n");
+    serial_string("AIUEOS_KOTOBA_RECORD_VALIDATION_OK journal transaction bounded-u32\r\n");
     if (aiueos_journal_recovered()) {
       if (!aiueos_journal_recovered_sequence() ||
           aiueos_journal_sequence() != aiueos_journal_recovered_sequence() + 1) qemu_exit(0x6f);

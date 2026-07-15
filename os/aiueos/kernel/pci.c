@@ -144,20 +144,13 @@ static uint32_t fnv1a(const uint8_t *bytes, uint32_t length) {
 }
 
 static int journal_record_valid(const struct aiuefs_journal_record *journal) {
-  static const uint8_t magic[8] = {'A','I','U','J','R','N','2',0};
-  if (journal->version != 2 || !journal->sequence || journal->state != 2 ||
-      journal->payload_length != sizeof(struct aiuefs_object_transaction) ||
-      journal->payload_length > sizeof(journal->payload) ||
-      fnv1a((const uint8_t *)journal, 28) != journal->header_checksum ||
-      fnv1a(journal->payload, journal->payload_length) != journal->payload_checksum) return 0;
-  for (uint32_t i = 0; i < sizeof(magic); i++) if (journal->magic[i] != magic[i]) return 0;
-  return 1;
+  extern uint64_t kotoba_aiueos_journal_record_valid(const void *, uint64_t);
+  return (int)kotoba_aiueos_journal_record_valid(journal, sizeof(*journal));
 }
 
 static int object_transaction_valid(const struct aiuefs_object_transaction *transaction) {
-  return transaction->target_sector == 3 && transaction->object_version == 1 &&
-    transaction->object_length == sizeof(transaction->object) &&
-    fnv1a(transaction->object, transaction->object_length) == transaction->object_checksum;
+  extern uint64_t kotoba_aiueos_object_transaction_valid(const void *, uint64_t);
+  return (int)kotoba_aiueos_object_transaction_valid(transaction, sizeof(*transaction));
 }
 
 static int mutable_object_valid(const struct aiuefs_mutable_object *object, uint32_t sequence,

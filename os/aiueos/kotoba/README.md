@@ -2,7 +2,7 @@
 
 `kernel-probe.o` is the byte-for-byte output of the merged
 `kotoba-lang/compiler` commit
-`5a99ae46af749271d50895c51325658fcc15d9bd` for `kernel-probe.kotoba`:
+`b6466cf6a02adb4868b505b561371bf2130494a5` for `kernel-probe.kotoba`:
 
 ```clojure
 (defn main [] 42)
@@ -42,3 +42,9 @@ lowering rejects null bases, lengths above 512 bytes, and unsigned indices at
 or beyond the supplied length before touching memory. Invalid access traps;
 there is no host import or ambient address-space API. Each public call receives
 an independent 1024-fuel budget, sufficient for the admitted 512-byte maximum.
+
+`journal-record-valid.o` and `object-transaction-valid.o` construct
+little-endian 32-bit fields from checked byte loads and perform magic,
+version/state, length, sequence, and checksum validation in Kotoba. C supplies
+only the address of its packed record and the exact structure size; invalid
+records return false before replay or mutation.
