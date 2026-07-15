@@ -308,7 +308,7 @@ grep -F "AIUEOS_ADDRESS_SPACE_OK processes=2 distinct-cr3 private-pages cross-ac
   echo "error: per-process address-space isolation evidence was not observed" >&2
   exit 1
 }
-grep -F "AIUEOS_RING3_OK cpl3-int80 tss-rsp0 return-kernel" "$serial_log" >/dev/null || {
+grep -F "AIUEOS_RING3_OK processes=2 roots=2 domains=2,3 private-pages int80 return-kernel" "$serial_log" >/dev/null || {
   echo "error: CPL3 syscall and kernel-return evidence was not observed" >&2; exit 1;
 }
 grep -F "AIUEOS_USER_SYSCALL_OK valid-log copied-payload too-big stale-generation foreign-owner wrong-type no-rights invalid-pointer" "$serial_log" >/dev/null || {

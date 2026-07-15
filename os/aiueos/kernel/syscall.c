@@ -12,6 +12,7 @@ enum { AIUEOS_SYSCALL_ABI = 0, AIUEOS_SYSCALL_LOG_WRITE = 1 };
 #define AIUEOS_CAPABILITY_RIGHT_LOG_WRITE 1U
 #define AIUEOS_DOMAIN_KERNEL 1U
 #define AIUEOS_DOMAIN_USER_PROCESS 2U
+volatile uint16_t aiueos_current_user_domain;
 
 struct capability_slot {
   uint16_t generation;
@@ -51,6 +52,11 @@ uint64_t aiueos_syscall_last_copy_hash;
 extern uint8_t aiueos_user_data_start[], aiueos_user_data_end[];
 extern uint64_t aiueos_syscall_from_user;
 static int readable_user_range(uint64_t pointer, uint64_t length) {
+  if (aiueos_current_user_domain >= 2 && aiueos_current_user_domain <= 3) {
+    extern uint64_t aiueos_address_space_private_va(unsigned process);
+    uint64_t lower = aiueos_address_space_private_va(aiueos_current_user_domain - 2);
+    return (int)kotoba_aiueos_syscall_range_valid(pointer,length,lower,lower + 4096);
+  }
   return (int)kotoba_aiueos_syscall_range_valid(
     pointer, length, (uint64_t)(uintptr_t)aiueos_user_data_start,
     (uint64_t)(uintptr_t)aiueos_user_data_end);
@@ -133,6 +139,21 @@ uint16_t aiueos_capability_table_capacity(void) { return capability_capacity; }
 int aiueos_dynamic_capability_evidence_ready(void) {
   return dynamic_capability_evidence == 3;
 }
+uint64_t aiueos_capability_log_handle(uint16_t owner) {
+  capability_lock_acquire();
+  for (uint16_t slot = 1; slot < capability_capacity; slot++) {
+    struct capability_slot *entry = &capability_table[slot];
+    if (entry->owner == owner && entry->type == AIUEOS_CAPABILITY_TYPE_LOG &&
+        (entry->state_rights & AIUEOS_CAPABILITY_ACTIVE)) {
+      uint64_t handle = capability_plan(slot,AIUEOS_CAPABILITY_TYPE_LOG,
+        AIUEOS_CAPABILITY_RIGHT_LOG_WRITE,owner);
+      capability_lock_release();
+      return handle;
+    }
+  }
+  capability_lock_release();
+  return 0;
+}
 
 uint64_t aiueos_syscall_dispatch(uint64_t number, uint64_t handle,
                                  uint64_t pointer, uint64_t length) {
@@ -140,7 +161,7 @@ uint64_t aiueos_syscall_dispatch(uint64_t number, uint64_t handle,
   if (number == 2) return 2; /* assembly consumes this completion token */
   if (number != AIUEOS_SYSCALL_LOG_WRITE) return AIUEOS_ERR_NO_SYSCALL;
   uint16_t requester = aiueos_syscall_from_user == 3 ?
-    AIUEOS_DOMAIN_USER_PROCESS : AIUEOS_DOMAIN_KERNEL;
+    aiueos_current_user_domain : AIUEOS_DOMAIN_KERNEL;
   if (!capability_admit(handle,AIUEOS_CAPABILITY_TYPE_LOG,
                         AIUEOS_CAPABILITY_RIGHT_LOG_WRITE,requester))
     return AIUEOS_ERR_BAD_HANDLE;

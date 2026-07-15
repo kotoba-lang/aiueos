@@ -286,7 +286,10 @@ aiueos_enter_user:
   pushq %rsi
   pushfq
   pop %rax
-  or $0x200, %rax
+  /* The bootstrap CPL3 probes run synchronously. Scheduler-owned user tasks
+   * get an interruptible frame separately; do not let the APIC timer replace
+   * this kernel return context while a process root is active. */
+  and $-513, %rax
   push %rax
   pushq $0x1b
   push %rdi

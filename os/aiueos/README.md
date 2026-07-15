@@ -53,14 +53,18 @@ proves that a stale generation, a non-canonical pointer, and a range crossing
 the bootstrap mapping are denied before dereference. The process foundation reserves distinct U/S pages
 for RX user text and RW+NX user data, leaves an unmapped guard page, and builds
 a loaded 64-bit TSS descriptor with a dedicated kernel-entry stack. A one-shot
-CPL3 task enters through `iretq`, exercises valid and rejected `int 0x80`
+CPL3 processes enter through `iretq`, exercise valid and rejected `int 0x80`
 requests, and exits back to the kernel through the TSS `rsp0` path. Per-process
 address-space groundwork then constructs two distinct CR3 roots. Each root
 clones the low kernel page-table path, shares the kernel/MMIO branches, maps a
 different private user page, and leaves the other process's page non-present.
 The smoke switches CR3 sequentially, proves independent contents, and requires
 real non-present page faults for both cross-process reads before restoring the
-kernel CR3. The pointer/length window admission for both bootstrap and CPL3
+kernel CR3. Two process roots map distinct private pages used for each process's
+result, message, and user stack. Domains 2 and 3 receive separate runtime
+capabilities, successfully call the same syscall, reject each other's handles,
+and reject the other process's unmapped private address. The pointer/length
+window admission for both bootstrap and CPL3
 calls is compiler-emitted Kotoba code and is exercised at both valid boundaries
 and rejected overflow/empty inputs. An admitted log payload is copied by Kotoba
 bounded load/store operations into a fixed 256-byte kernel buffer and verified
