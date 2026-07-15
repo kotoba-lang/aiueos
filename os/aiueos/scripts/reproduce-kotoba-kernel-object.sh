@@ -3,7 +3,7 @@ set -eu
 
 aiueos=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 compiler=${1:?usage: reproduce-kotoba-kernel-object.sh /path/to/compiler}
-expected=606b7428e00cfcc197ef6a94fbc7e26f612c06fc
+expected=71dd75d1e8cff9ec47607309106ebeda9fffea83
 actual=$(git -C "$compiler" rev-parse HEAD)
 
 [ "$actual" = "$expected" ] || {
@@ -23,7 +23,8 @@ mutable_build_tmp=${TMPDIR:-/tmp}/aiueos-kotoba-mutable-build.$$
 cap_valid_tmp=${TMPDIR:-/tmp}/aiueos-kotoba-cap-valid.$$
 extent_valid_tmp=${TMPDIR:-/tmp}/aiueos-kotoba-extent-valid.$$
 region_valid_tmp=${TMPDIR:-/tmp}/aiueos-kotoba-region-valid.$$
-trap 'rm -f "$tmp" "$journal_tmp" "$fnv_tmp" "$journal_valid_tmp" "$transaction_valid_tmp" "$mutable_valid_tmp" "$superblock_valid_tmp" "$journal_build_tmp" "$mutable_build_tmp" "$cap_valid_tmp" "$extent_valid_tmp" "$region_valid_tmp"' EXIT HUP INT TERM
+syscall_range_tmp=${TMPDIR:-/tmp}/aiueos-kotoba-syscall-range.$$
+trap 'rm -f "$tmp" "$journal_tmp" "$fnv_tmp" "$journal_valid_tmp" "$transaction_valid_tmp" "$mutable_valid_tmp" "$superblock_valid_tmp" "$journal_build_tmp" "$mutable_build_tmp" "$cap_valid_tmp" "$extent_valid_tmp" "$region_valid_tmp" "$syscall_range_tmp"' EXIT HUP INT TERM
 "$compiler/bin/kotoba-compiler" compile "$aiueos/kotoba/kernel-probe.kotoba" \
   --target x86_64-aiueos-kernel-v1 --output "$tmp"
 cmp "$aiueos/kotoba/kernel-probe.o" "$tmp"
@@ -95,4 +96,10 @@ cmp "$aiueos/kotoba/pci-region-valid.o" "$region_valid_tmp"
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$region_valid_tmp" \
   824abbe8509d43eb5276a612bd38e9b472ebba1b4bd71f416671062e4b523123 \
   kotoba_aiueos_pci_region_valid
+"$compiler/bin/kotoba-compiler" compile "$aiueos/kotoba/syscall-range-valid.kotoba" \
+  --target x86_64-aiueos-kernel-v1 --output "$syscall_range_tmp"
+cmp "$aiueos/kotoba/syscall-range-valid.o" "$syscall_range_tmp"
+python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$syscall_range_tmp" \
+  c65aa4b0b2b47891f2b1340a289157625262156733d85195d0449a2050aa18b8 \
+  kotoba_aiueos_syscall_range_valid
 echo "AIUEOS_KOTOBA_REPRODUCIBLE_OK compiler=$actual"

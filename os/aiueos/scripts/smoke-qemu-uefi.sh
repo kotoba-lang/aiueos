@@ -277,6 +277,10 @@ grep -F "AIUEOS_SYSCALL_OK int80-cpl0 abi-v1" "$serial_log" >/dev/null || {
   echo "error: CPL0 syscall evidence was not observed" >&2
   exit 1
 }
+grep -F "AIUEOS_KOTOBA_SYSCALL_PLANNER_OK bootstrap user overflow" "$serial_log" >/dev/null || {
+  echo "error: Kotoba syscall range planner evidence was not observed" >&2
+  exit 1
+}
 grep -F "AIUEOS_CAPABILITY_OK handle-v1 invalid-handle-denied" "$serial_log" >/dev/null || {
   echo "error: capability negative evidence was not observed" >&2
   exit 1
