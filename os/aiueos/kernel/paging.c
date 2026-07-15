@@ -36,7 +36,7 @@ struct process_address_space {
   uint64_t *pml4, *pdpt, *directory, *low;
   uint8_t *private_page;
   uint16_t generation;
-  uint8_t active;
+  uint8_t active, claimed;
 };
 #define PROCESS_SLOT_COUNT 8U
 #define PROCESS_PRIVATE_BASE 0x1f4000ULL
@@ -148,7 +148,7 @@ static void release_process_space(struct process_address_space *space) {
   if (space->pdpt) aiueos_free_physical_page(space->pdpt);
   if (space->pml4) aiueos_free_physical_page(space->pml4);
   uint16_t generation=space->generation;
-  *space=(struct process_address_space){0,0,0,0,0,generation,0};
+  *space=(struct process_address_space){0,0,0,0,0,generation,0,0};
 }
 static int initialize_process_space(unsigned process) {
     if (process>=PROCESS_SLOT_COUNT) return 0;
@@ -182,6 +182,7 @@ static int initialize_process_space(unsigned process) {
       (uint64_t)(uintptr_t)space->private_page |
       PTE_PRESENT | PTE_USER | PTE_WRITABLE | PTE_NX;
     space->active=1;
+    space->claimed=0;
     space->generation++;
     if (!space->generation) space->generation=1;
     return 1;
@@ -201,6 +202,16 @@ int aiueos_address_space_allocate(void) {
     if (!process_spaces[process].active)
       return initialize_process_space(process) ? (int)process : -1;
   return -1;
+}
+int aiueos_address_space_claim(void) {
+  for (unsigned process=0;process<PROCESS_SLOT_COUNT;process++)
+    if (process_spaces[process].active && !process_spaces[process].claimed) {
+      process_spaces[process].claimed=1;
+      return (int)process;
+    }
+  int process=aiueos_address_space_allocate();
+  if (process>=0) process_spaces[process].claimed=1;
+  return process;
 }
 unsigned aiueos_address_space_capacity(void) { return PROCESS_SLOT_COUNT; }
 uint16_t aiueos_address_space_generation(unsigned process) {

@@ -19,6 +19,7 @@ struct user_result {
   uint64_t abi, valid, too_big, stale, foreign_owner, wrong_type, no_rights;
   uint64_t bad_pointer, transfer, transfer_escalation, claimed;
   uint64_t transferred_valid, completed, scheduled_runs;
+  uint64_t foreign_page;
   char message[8];
 };
 
@@ -36,8 +37,10 @@ extern void aiueos_address_space_leave(void);
 extern uint64_t aiueos_address_space_private_va(unsigned process);
 extern void *aiueos_address_space_private_backing(unsigned process);
 extern uint64_t aiueos_capability_log_handle(uint16_t owner);
-extern void aiueos_scheduler_start_user_processes(void (*entry0)(void),void (*entry1)(void),
-  uint64_t user_stack0,uint64_t user_stack1);
+extern uint64_t aiueos_capability_ensure_log_handle(uint16_t owner);
+extern int aiueos_scheduler_begin_user_runtime(void);
+extern int aiueos_scheduler_create_user_task(unsigned address_space,uint16_t domain,
+  void (*entry)(uint64_t),uint64_t argument,uint64_t user_stack);
 extern int aiueos_user_scheduler_evidence_ready(void);
 extern void aiueos_scheduler_request_user_exit(uint16_t domain);
 extern int aiueos_scheduler_users_reaped(void);
@@ -51,6 +54,8 @@ extern int aiueos_address_space_reuse(unsigned process);
 extern uint64_t aiueos_physical_allocator_reuse_count(void);
 extern unsigned aiueos_address_space_capacity(void);
 extern int aiueos_address_space_slot_self_test(void);
+extern int aiueos_address_space_claim(void);
+extern uint8_t aiueos_user_text_start[],aiueos_user_text_end[];
 extern void aiueos_probe_cross_process(const void *address);
 extern volatile uint64_t aiueos_page_fault_stage, aiueos_page_fault_error;
 static struct tss64 tss;
@@ -59,6 +64,14 @@ static uint64_t syscall_transport_evidence;
 __attribute__((section(".user.data"), aligned(4096), used))
 static uint8_t user_mapping_anchor[4096];
 static struct user_result *kernel_results[2];
+#define PROCESS_CAPACITY 8U
+struct process_descriptor {
+  uint64_t entry, argument, user_stack;
+  uint16_t generation, domain, address_space, task_slot;
+  uint8_t active;
+  struct user_result *result;
+};
+static struct process_descriptor processes[PROCESS_CAPACITY];
 static uint64_t process_lifecycle_evidence;
 static int process_results_valid;
 int aiueos_process_result(void);
@@ -126,9 +139,45 @@ static void user_run(struct user_result *r, const void *foreign_page) {
   for (;;) { r->scheduled_runs++; __asm__ volatile("pause"); }
 }
 __attribute__((section(".user.text"), noreturn))
-static void user_entry0(void) { user_run((void *)0x1f4000ULL,(void *)0x1f5000ULL); }
-__attribute__((section(".user.text"), noreturn))
-static void user_entry1(void) { user_run((void *)0x1f5000ULL,(void *)0x1f4000ULL); }
+static void user_entry(uint64_t argument) {
+  struct user_result *result=(struct user_result *)(uintptr_t)argument;
+  user_run(result,(const void *)(uintptr_t)result->foreign_page);
+}
+
+int aiueos_process_address_space_for_domain(uint16_t domain) {
+  for (unsigned slot=0;slot<PROCESS_CAPACITY;slot++)
+    if (processes[slot].active && processes[slot].domain==domain)
+      return processes[slot].address_space;
+  return -1;
+}
+static int process_create(void (*entry)(uint64_t),uint16_t domain) {
+  uint64_t address=(uint64_t)(uintptr_t)entry;
+  if (domain<2 || address<(uint64_t)(uintptr_t)aiueos_user_text_start ||
+      address>=(uint64_t)(uintptr_t)aiueos_user_text_end ||
+      aiueos_process_address_space_for_domain(domain)>=0) return -1;
+  unsigned descriptor;
+  for (descriptor=0;descriptor<PROCESS_CAPACITY;descriptor++)
+    if (!processes[descriptor].active) break;
+  if (descriptor==PROCESS_CAPACITY) return -1;
+  int address_space=aiueos_address_space_claim();
+  if (address_space<0) return -1;
+  struct user_result *result=aiueos_address_space_private_backing((unsigned)address_space);
+  uint64_t private_va=aiueos_address_space_private_va((unsigned)address_space);
+  uint64_t handle=aiueos_capability_ensure_log_handle(domain);
+  if (!result || !private_va || !handle) { aiueos_address_space_reclaim((unsigned)address_space); return -1; }
+  result->handle=handle; result->domain=domain;
+  result->message[0]='r'; result->message[1]='i'; result->message[2]='n';
+  result->message[3]='g'; result->message[4]=(char)('1'+descriptor); result->message[5]=0;
+  struct process_descriptor *p=&processes[descriptor];
+  p->generation++; if (!p->generation) p->generation=1;
+  p->entry=address; p->argument=private_va; p->user_stack=private_va+4096;
+  p->domain=domain; p->address_space=(uint16_t)address_space; p->result=result; p->active=1;
+  int task=aiueos_scheduler_create_user_task((unsigned)address_space,domain,entry,
+    p->argument,p->user_stack);
+  if (task<1) { p->active=0; aiueos_address_space_reclaim((unsigned)address_space); return -1; }
+  p->task_slot=(uint16_t)task;
+  return (int)descriptor;
+}
 
 int aiueos_process_initialize(void) {
   int mappings=aiueos_user_mapping_verify();
@@ -143,26 +192,21 @@ int aiueos_process_initialize(void) {
   aiueos_gdt_tss[0]=(limit & 0xffff) | ((b & 0xffffff)<<16) |
     (0x89ULL<<40) | ((limit & 0xf0000)<<32) | ((b & 0xff000000)<<32);
   aiueos_gdt_tss[1]=b>>32;
-  for (unsigned p=0; p<2; p++) {
-    kernel_results[p] = aiueos_address_space_private_backing(p);
-    if (!kernel_results[p]) return 0;
-    kernel_results[p]->handle = aiueos_capability_log_handle((uint16_t)(p+2));
-    if (!kernel_results[p]->handle) return 0;
-    kernel_results[p]->message[0]='r'; kernel_results[p]->message[1]='i';
-    kernel_results[p]->message[2]='n'; kernel_results[p]->message[3]='g';
-    kernel_results[p]->message[4]=(char)('3'+p); kernel_results[p]->message[5]=0;
-    kernel_results[p]->domain=p+2;
-  }
-  kernel_results[0]->foreign_handle=kernel_results[1]->handle;
-  kernel_results[1]->foreign_handle=kernel_results[0]->handle;
+  for (unsigned p=0;p<PROCESS_CAPACITY;p++) processes[p]=(struct process_descriptor){0};
   process_lifecycle_evidence=0;
   process_results_valid=0;
   return 1;
 }
 void aiueos_process_enter(void) {
   uint64_t allocator_reuse_before;
-  aiueos_scheduler_start_user_processes(user_entry0,user_entry1,
-    aiueos_address_space_private_va(0)+4096,aiueos_address_space_private_va(1)+4096);
+  if (!aiueos_scheduler_begin_user_runtime()) return;
+  int first=process_create(user_entry,2),second=process_create(user_entry,3);
+  if (first<0 || second<0) return;
+  kernel_results[0]=processes[first].result; kernel_results[1]=processes[second].result;
+  kernel_results[0]->foreign_handle=kernel_results[1]->handle;
+  kernel_results[1]->foreign_handle=kernel_results[0]->handle;
+  kernel_results[0]->foreign_page=processes[second].argument;
+  kernel_results[1]->foreign_page=processes[first].argument;
   __asm__ volatile("sti");
   while (!aiueos_process_result() || !aiueos_user_scheduler_evidence_ready())
     __asm__ volatile("hlt");
@@ -177,8 +221,10 @@ void aiueos_process_enter(void) {
       !aiueos_capability_log_handle(2) && !aiueos_capability_log_handle(3))
     process_lifecycle_evidence|=1;
   allocator_reuse_before=aiueos_physical_allocator_reuse_count();
-  if (aiueos_address_space_reclaim(0) && aiueos_address_space_reclaim(1) &&
-      aiueos_address_space_reuse(0) && aiueos_address_space_reuse(1) &&
+  unsigned space0=processes[first].address_space,space1=processes[second].address_space;
+  processes[first].active=processes[second].active=0;
+  if (aiueos_address_space_reclaim(space0) && aiueos_address_space_reclaim(space1) &&
+      aiueos_address_space_reuse(space0) && aiueos_address_space_reuse(space1) &&
       aiueos_physical_allocator_reuse_count()-allocator_reuse_before>=10)
     process_lifecycle_evidence|=2;
   if (aiueos_address_space_capacity()==8 && aiueos_address_space_slot_self_test())
