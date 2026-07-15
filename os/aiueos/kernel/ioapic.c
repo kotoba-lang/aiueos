@@ -16,6 +16,7 @@ static uint32_t ioapic_read(volatile uint32_t *base, uint8_t reg) {
 static void ioapic_write(volatile uint32_t *base, uint8_t reg, uint32_t value) {
   base[0] = reg; base[4] = value; (void)base[4];
 }
+
 int aiueos_ioapic_route_legacy_timer(void) {
   uint32_t address = aiueos_acpi_ioapic_address();
   uint32_t base_gsi = aiueos_acpi_ioapic_gsi_base();
