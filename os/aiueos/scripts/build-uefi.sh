@@ -103,7 +103,7 @@ python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_copy_in_object
   f3b8ae90a2d77ca821c82dfd03f0b6ffc080ffe2b78195a334a4265fbec518e4 \
   kotoba_aiueos_copy_in
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_capability_object" \
-  cd31e40b99176383889e996c7bbfb5a489abe756be9ed2d0bfbf1a626b6396d4 \
+  006f509119d39298a1a64093f9b49f48f808445d251e96505c4c03e3abc068bb \
   kotoba_aiueos_capability_plan
 zig cc -target x86_64-freestanding-none -std=c11 -O2 \
   -ffreestanding -fno-stack-protector -mno-red-zone \

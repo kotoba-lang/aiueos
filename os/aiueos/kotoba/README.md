@@ -83,3 +83,6 @@ planner issues and checks handles. Revocation clears active state and advances
 the generation before reissue, so stale, wrong-type, and insufficient-rights
 handles cannot alias the live slot.
 Generation exhaustion retires a slot instead of wrapping to an older identity.
+The state also carries a 16-bit owner domain and each request carries its
+caller domain. Owner equality is decided inside the planner, before payload
+copy, so kernel and user slots cannot be used across their security domains.

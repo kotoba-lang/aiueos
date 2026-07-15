@@ -189,9 +189,10 @@ capability lookup, buffer lifetime, and page-fault recovery.
 
 Capability identity is no longer a single hard-coded equality. Native storage
 holds bounded slots, while a Kotoba planner derives the canonical handle from
-slot, generation, type, active state, rights, and requested rights. Revocation
-clears active state and increments generation before reissue; CPL0 and CPL3
-gates require stale/type/rights failures without changing the copied payload.
+slot, generation, type, active state, rights, owner domain, and the caller's
+requested rights/domain. Revocation clears active state and increments
+generation before reissue; CPL0 and CPL3 gates require foreign-owner plus
+stale/type/rights failures without changing the copied payload.
 
 ### Driver, UI, and persistence split
 

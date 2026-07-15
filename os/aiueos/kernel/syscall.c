@@ -10,18 +10,24 @@ enum { AIUEOS_SYSCALL_ABI = 0, AIUEOS_SYSCALL_LOG_WRITE = 1 };
 #define AIUEOS_CAPABILITY_ACTIVE 0x10000U
 #define AIUEOS_CAPABILITY_TYPE_LOG 1U
 #define AIUEOS_CAPABILITY_RIGHT_LOG_WRITE 1U
-#define AIUEOS_CAPABILITY_REQUEST_LOG 0x10001ULL
 #define AIUEOS_CAPABILITY_SLOTS 4U
+#define AIUEOS_DOMAIN_KERNEL 1U
+#define AIUEOS_DOMAIN_USER_PROCESS 2U
 
 struct capability_slot {
   uint16_t generation;
   uint16_t type;
   uint32_t state_rights;
+  uint16_t owner;
 };
 
 static struct capability_slot capability_table[AIUEOS_CAPABILITY_SLOTS] = {
   [1] = {1, AIUEOS_CAPABILITY_TYPE_LOG,
-         AIUEOS_CAPABILITY_ACTIVE | AIUEOS_CAPABILITY_RIGHT_LOG_WRITE}
+         AIUEOS_CAPABILITY_ACTIVE | AIUEOS_CAPABILITY_RIGHT_LOG_WRITE,
+         AIUEOS_DOMAIN_KERNEL},
+  [2] = {1, AIUEOS_CAPABILITY_TYPE_LOG,
+         AIUEOS_CAPABILITY_ACTIVE | AIUEOS_CAPABILITY_RIGHT_LOG_WRITE,
+         AIUEOS_DOMAIN_USER_PROCESS}
 };
 
 extern uint64_t kotoba_aiueos_syscall_range_valid(
@@ -46,16 +52,21 @@ static int readable_user_range(uint64_t pointer, uint64_t length) {
     (uint64_t)(uintptr_t)aiueos_user_data_end);
 }
 
-static uint64_t capability_plan(uint16_t slot, uint64_t request) {
+static uint64_t capability_plan(uint16_t slot, uint16_t type, uint16_t rights,
+                                uint16_t requester) {
   if (!slot || slot >= AIUEOS_CAPABILITY_SLOTS) return 0;
   struct capability_slot *entry = &capability_table[slot];
+  uint64_t state = entry->state_rights | ((uint64_t)entry->owner << 17);
+  uint64_t request = rights | ((uint64_t)type << 16) |
+    ((uint64_t)requester << 32);
   return kotoba_aiueos_capability_plan(slot, entry->generation, entry->type,
-                                      entry->state_rights, request);
+                                      state, request);
 }
 
-static int capability_admit(uint64_t handle, uint64_t request) {
+static int capability_admit(uint64_t handle, uint16_t type, uint16_t rights,
+                            uint16_t requester) {
   uint16_t slot = (uint16_t)handle;
-  uint64_t planned = capability_plan(slot, request);
+  uint64_t planned = capability_plan(slot,type,rights,requester);
   return planned && planned == handle;
 }
 
@@ -67,13 +78,15 @@ static int capability_revoke(uint16_t slot) {
   return 1;
 }
 
-static uint64_t capability_issue(uint16_t slot, uint16_t type, uint16_t rights) {
-  if (!slot || slot >= AIUEOS_CAPABILITY_SLOTS || !type || !rights) return 0;
+static uint64_t capability_issue(uint16_t slot, uint16_t type, uint16_t rights,
+                                 uint16_t owner) {
+  if (!slot || slot >= AIUEOS_CAPABILITY_SLOTS || !type || !rights || !owner) return 0;
   struct capability_slot *entry = &capability_table[slot];
   if (!entry->generation) return 0; /* exhausted/uninitialized slots fail closed */
   entry->type = type;
   entry->state_rights = AIUEOS_CAPABILITY_ACTIVE | rights;
-  return capability_plan(slot, ((uint64_t)type << 16) | rights);
+  entry->owner = owner;
+  return capability_plan(slot,type,rights,owner);
 }
 
 uint64_t aiueos_syscall_dispatch(uint64_t number, uint64_t handle,
@@ -81,7 +94,10 @@ uint64_t aiueos_syscall_dispatch(uint64_t number, uint64_t handle,
   if (number == AIUEOS_SYSCALL_ABI) return AIUEOS_SYSCALL_ABI_V1;
   if (number == 2) return 2; /* assembly consumes this completion token */
   if (number != AIUEOS_SYSCALL_LOG_WRITE) return AIUEOS_ERR_NO_SYSCALL;
-  if (!capability_admit(handle,AIUEOS_CAPABILITY_REQUEST_LOG))
+  uint16_t requester = aiueos_syscall_from_user == 3 ?
+    AIUEOS_DOMAIN_USER_PROCESS : AIUEOS_DOMAIN_KERNEL;
+  if (!capability_admit(handle,AIUEOS_CAPABILITY_TYPE_LOG,
+                        AIUEOS_CAPABILITY_RIGHT_LOG_WRITE,requester))
     return AIUEOS_ERR_BAD_HANDLE;
   if (length > AIUEOS_SYSCALL_COPY_MAX) return AIUEOS_ERR_TOO_BIG;
   if (aiueos_syscall_from_user ? !readable_user_range(pointer,length) :
@@ -108,7 +124,8 @@ static uint64_t invoke(uint64_t number, uint64_t handle,
 
 int aiueos_syscall_self_test(void) {
   static const char message[] = "capability-bound";
-  uint64_t log_handle = capability_plan(1,AIUEOS_CAPABILITY_REQUEST_LOG);
+  uint64_t log_handle = capability_plan(1,AIUEOS_CAPABILITY_TYPE_LOG,
+    AIUEOS_CAPABILITY_RIGHT_LOG_WRITE,AIUEOS_DOMAIN_KERNEL);
   if (log_handle != 0x0001000100010001ULL) return 0;
   if (invoke(AIUEOS_SYSCALL_ABI, 0, 0, 0) != AIUEOS_SYSCALL_ABI_V1) return 0;
   if (invoke(AIUEOS_SYSCALL_LOG_WRITE, log_handle, message,
@@ -128,15 +145,26 @@ int aiueos_syscall_self_test(void) {
       invoke(AIUEOS_SYSCALL_LOG_WRITE, log_handle, message, 1) !=
         AIUEOS_ERR_BAD_HANDLE) return 0;
   log_handle = capability_issue(1,AIUEOS_CAPABILITY_TYPE_LOG,
-                                AIUEOS_CAPABILITY_RIGHT_LOG_WRITE);
+    AIUEOS_CAPABILITY_RIGHT_LOG_WRITE,AIUEOS_DOMAIN_KERNEL);
   if (log_handle != 0x0001000100020001ULL ||
       invoke(AIUEOS_SYSCALL_LOG_WRITE, log_handle, message, 1) != 1) return 0;
-  capability_table[2].generation = 0xffffU;
-  capability_table[2].type = AIUEOS_CAPABILITY_TYPE_LOG;
-  capability_table[2].state_rights =
+  uint64_t user_handle = capability_plan(2,AIUEOS_CAPABILITY_TYPE_LOG,
+    AIUEOS_CAPABILITY_RIGHT_LOG_WRITE,AIUEOS_DOMAIN_USER_PROCESS);
+  if (user_handle != 0x0001000100010002ULL ||
+      invoke(AIUEOS_SYSCALL_LOG_WRITE,user_handle,message,1) !=
+        AIUEOS_ERR_BAD_HANDLE || !capability_revoke(2)) return 0;
+  user_handle = capability_issue(2,AIUEOS_CAPABILITY_TYPE_LOG,
+    AIUEOS_CAPABILITY_RIGHT_LOG_WRITE,AIUEOS_DOMAIN_USER_PROCESS);
+  if (user_handle != 0x0001000100020002ULL ||
+      invoke(AIUEOS_SYSCALL_LOG_WRITE,user_handle,message,1) !=
+        AIUEOS_ERR_BAD_HANDLE) return 0;
+  capability_table[3].generation = 0xffffU;
+  capability_table[3].type = AIUEOS_CAPABILITY_TYPE_LOG;
+  capability_table[3].state_rights =
     AIUEOS_CAPABILITY_ACTIVE | AIUEOS_CAPABILITY_RIGHT_LOG_WRITE;
-  if (!capability_revoke(2) || capability_issue(2,AIUEOS_CAPABILITY_TYPE_LOG,
-      AIUEOS_CAPABILITY_RIGHT_LOG_WRITE) != 0) return 0;
+  capability_table[3].owner = AIUEOS_DOMAIN_KERNEL;
+  if (!capability_revoke(3) || capability_issue(3,AIUEOS_CAPABILITY_TYPE_LOG,
+      AIUEOS_CAPABILITY_RIGHT_LOG_WRITE,AIUEOS_DOMAIN_KERNEL) != 0) return 0;
   if (invoke(AIUEOS_SYSCALL_LOG_WRITE, log_handle,
              (const void *)0x0000800000000000ULL, 1) != AIUEOS_ERR_BAD_POINTER)
     return 0;

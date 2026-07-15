@@ -70,10 +70,11 @@ before memory access. General page-fault-recoverable copy-in and the
 
 The log capability is backed by a native slot table rather than a fixed magic
 constant. A compiler-emitted Kotoba planner encodes and admits handles from the
-slot generation, object type, active state, and rights. Boot revokes generation
-1, proves the stale handle fails, reissues generation 2, and exercises stale,
-wrong-type, and no-rights rejection again from CPL3. Table allocation,
-concurrency, and per-process ownership remain later work.
+slot generation, object type, active state, rights, and owner domain. Kernel
+and CPL3 receive distinct slots. Boot proves each caller rejects the other
+domain's handle, revokes generation 1, reissues generation 2, and exercises
+stale, foreign-owner, wrong-type, and no-rights rejection again from CPL3.
+Dynamic table allocation and concurrent transfer remain later work.
 An exhausted generation retires its slot rather than wrapping and reviving an
 old handle.
 

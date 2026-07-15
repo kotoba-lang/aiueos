@@ -114,6 +114,6 @@ python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$copy_in_tmp" \
   --target x86_64-aiueos-kernel-v1 --output "$capability_tmp"
 cmp "$aiueos/kotoba/capability-plan.o" "$capability_tmp"
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$capability_tmp" \
-  cd31e40b99176383889e996c7bbfb5a489abe756be9ed2d0bfbf1a626b6396d4 \
+  006f509119d39298a1a64093f9b49f48f808445d251e96505c4c03e3abc068bb \
   kotoba_aiueos_capability_plan
 echo "AIUEOS_KOTOBA_REPRODUCIBLE_OK compiler=$actual"
