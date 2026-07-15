@@ -2,7 +2,7 @@
 
 `kernel-probe.o` is the byte-for-byte output of the merged
 `kotoba-lang/compiler` commit
-`eea427f730e3ef390c7e37259d8953686ce0144a` for `kernel-probe.kotoba`:
+`5a99ae46af749271d50895c51325658fcc15d9bd` for `kernel-probe.kotoba`:
 
 ```clojure
 (defn main [] 42)
@@ -34,3 +34,11 @@ next sequence, alternate write slot, and recovery flag as a packed 64-bit plan.
 The C substrate retains bounded virtio I/O and validates the returned plan
 before replay or mutation. Its pinned SHA-256 is
 `c24c7bdab170d65624c1ee2cb939b949c94750b651f59b5aa7d4bc192ec62df6`.
+
+`fnv1a.o` moves every checksum used by the superblock, journal record,
+transaction payload, and mutable object validators into Kotoba. Its
+`kotoba_aiueos_fnv1a(base, length)` export uses `kernel-load-u8`, whose compiler
+lowering rejects null bases, lengths above 512 bytes, and unsigned indices at
+or beyond the supplied length before touching memory. Invalid access traps;
+there is no host import or ambient address-space API. Each public call receives
+an independent 1024-fuel budget, sufficient for the admitted 512-byte maximum.
