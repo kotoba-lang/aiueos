@@ -204,6 +204,10 @@
                                :synchronization :spinlock
                                :owner-domains :multiple
                                :generation-exhaustion :retire-slot}
+           :capability-transfer {:source-owner 2 :target-owner 3
+                                 :rights :attenuated
+                                 :publication :atomic-claim
+                                 :escalation :rejected}
            :copy-in {:current-map :bootstrap-identity
                      :validation [:nonzero-length :canonical-address
                                   :overflow :mapped-bound]

@@ -3,6 +3,8 @@
 #define ABI 0
 #define LOG 1
 #define EXIT 2
+#define TRANSFER 3
+#define CLAIM 4
 #define ABI_V1 0x00010000ULL
 #define BAD_HANDLE ((uint64_t)-9)
 #define BAD_POINTER ((uint64_t)-14)
@@ -13,9 +15,10 @@ struct __attribute__((packed)) tss64 {
   uint64_t ist[7]; uint64_t reserved2; uint16_t reserved3, iomap;
 };
 struct user_result {
-  uint64_t handle, foreign_handle;
+  uint64_t handle, foreign_handle, domain;
   uint64_t abi, valid, too_big, stale, foreign_owner, wrong_type, no_rights;
-  uint64_t bad_pointer, completed, scheduled_runs;
+  uint64_t bad_pointer, transfer, transfer_escalation, claimed;
+  uint64_t transferred_valid, completed, scheduled_runs;
   char message[8];
 };
 
@@ -60,6 +63,14 @@ static void user_run(struct user_result *r, const void *foreign_page) {
   r->wrong_type = call(LOG,r->handle ^ 0x100000000ULL,r->message,1);
   r->no_rights = call(LOG,r->handle ^ 0x1000000000000ULL,r->message,1);
   r->bad_pointer = call(LOG,r->handle,foreign_page,1);
+  if (r->domain==2) {
+    r->transfer_escalation=call(TRANSFER,r->handle,(void *)3,2);
+    r->transfer=call(TRANSFER,r->handle,(void *)3,1);
+  } else {
+    do { r->claimed=call(CLAIM,0,0,0); }
+    while (r->claimed==BAD_HANDLE);
+    r->transferred_valid=call(LOG,r->claimed,r->message,5);
+  }
   r->completed = 1;
   for (;;) { r->scheduled_runs++; __asm__ volatile("pause"); }
 }
@@ -86,6 +97,7 @@ int aiueos_process_initialize(void) {
     kernel_results[p]->message[0]='r'; kernel_results[p]->message[1]='i';
     kernel_results[p]->message[2]='n'; kernel_results[p]->message[3]='g';
     kernel_results[p]->message[4]=(char)('3'+p); kernel_results[p]->message[5]=0;
+    kernel_results[p]->domain=p+2;
   }
   kernel_results[0]->foreign_handle=kernel_results[1]->handle;
   kernel_results[1]->foreign_handle=kernel_results[0]->handle;
@@ -108,6 +120,11 @@ int aiueos_process_result(void) {
         r->no_rights!=BAD_HANDLE || r->bad_pointer!=BAD_POINTER ||
         r->scheduled_runs<2) return 0;
   }
+  if (!kernel_results[0]->transfer ||
+      kernel_results[0]->transfer==BAD_HANDLE ||
+      kernel_results[0]->transfer_escalation!=BAD_HANDLE ||
+      kernel_results[1]->claimed!=kernel_results[0]->transfer ||
+      kernel_results[1]->transferred_valid!=5) return 0;
   return aiueos_syscall_from_user==3;
 }
 

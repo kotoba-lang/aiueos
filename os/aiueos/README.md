@@ -53,8 +53,8 @@ proves that a stale generation, a non-canonical pointer, and a range crossing
 the bootstrap mapping are denied before dereference. The process foundation reserves distinct U/S pages
 for RX user text and RW+NX user data, leaves an unmapped guard page, and builds
 a loaded 64-bit TSS descriptor with a dedicated kernel-entry stack. A one-shot
-CPL3 processes enter through `iretq`, exercise valid and rejected `int 0x80`
-requests, and exits back to the kernel through the TSS `rsp0` path. Per-process
+CPL3 processes enter through `iretq` and exercise valid and rejected `int 0x80`
+requests through the TSS `rsp0` path. Per-process
 address-space groundwork then constructs two distinct CR3 roots. Each root
 clones the low kernel page-table path, shares the kernel/MMIO branches, maps a
 different private user page, and leaves the other process's page non-present.
@@ -67,8 +67,14 @@ and reject the other process's unmapped private address. Both are then installed
 as APIC-timer-preempted scheduler tasks. Each task has its own supervisor-only
 interrupt stack; every switch updates CR3, TSS.RSP0, and the syscall owner
 domain before `iretq`. Boot requires both tasks and the kernel task to be
-preempted at least twice. The pointer/length
-window admission for both bootstrap and CPL3
+preempted at least twice.
+The first process also transfers an attenuated log handle to domain 3 while the
+capability-table lock covers source revalidation, target-slot issuance, and
+publication. Domain 3 atomically claims and uses that handle. A request for a
+right absent from the source handle is rejected by the Kotoba planner before
+publication.
+
+The pointer/length window admission for both bootstrap and CPL3
 calls is compiler-emitted Kotoba code and is exercised at both valid boundaries
 and rejected overflow/empty inputs. An admitted log payload is copied by Kotoba
 bounded load/store operations into a fixed 256-byte kernel buffer and verified
