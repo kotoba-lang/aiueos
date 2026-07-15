@@ -31,14 +31,16 @@
         s0 (kernel-store-u8 base 512 offset (bit-and (quot value 16777216) 255))
         s1 (kernel-store-u8 base 512 (+ offset 1) (bit-and (quot value 65536) 255))
         s2 (kernel-store-u8 base 512 (+ offset 2) (bit-and (quot value 256) 255))]
-    (kernel-store-u8 base 512 (+ offset 3) (bit-and value 255))))
+    (+ (kernel-store-u8 base 512 (+ offset 3) (bit-and value 255))
+       (* 0 (+ s0 (+ s1 s2))))))
 
 (defn store-output32 [base word value]
   (let [offset (* word 4)
         s0 (kernel-store-u8 base 32 offset (bit-and (quot value 16777216) 255))
         s1 (kernel-store-u8 base 32 (+ offset 1) (bit-and (quot value 65536) 255))
         s2 (kernel-store-u8 base 32 (+ offset 2) (bit-and (quot value 256) 255))]
-    (kernel-store-u8 base 32 (+ offset 3) (bit-and value 255))))
+    (+ (kernel-store-u8 base 32 (+ offset 3) (bit-and value 255))
+       (* 0 (+ s0 (+ s1 s2))))))
 
 (defn round-k [i]
   (if (= i 0) 1116352408 (if (= i 1) 1899447441 (if (= i 2) 3049323471 (if (= i 3) 3921009573
@@ -89,7 +91,7 @@
                       (+ (* (block-byte input input-length base (+ j 2)) 256)
                          (block-byte input input-length base (+ j 3)))))
           stored (store32 workspace i value)]
-      (prepare input input-length workspace base (+ i 1)))))
+      (prepare input input-length workspace base (+ i 1 (* 0 stored))))))
 
 (defn extend [workspace i]
   (if (= i 64) 1
@@ -100,12 +102,17 @@
           value (u32 (+ (load32 workspace (- i 16))
                         (+ s0 (+ (load32 workspace (- i 7)) s1))))
           stored (store32 workspace i value)]
-      (extend workspace (+ i 1)))))
+      (extend workspace (+ i 1 (* 0 stored))))))
 
 (defn copy-working [workspace i]
   (if (= i 8) 1
     (let [stored (store32 workspace (+ 72 i) (load32 workspace (+ 64 i)))]
-      (copy-working workspace (+ i 1)))))
+      (copy-working workspace (+ i 1 (* 0 stored))))))
+
+(defn copy-round [workspace i]
+  (if (= i 8) 1
+    (let [stored (store32 workspace (+ 72 i) (load32 workspace (+ 80 i)))]
+      (copy-round workspace (+ i 1 (* 0 stored))))))
 
 (defn round-block [workspace i]
   (if (= i 64) 1
@@ -119,18 +126,20 @@
           sum0 (bxor3 (rotr2 a) (rotr13 a) (rotr22 a))
           majority (bxor3 (bit-and a b) (bit-and a c) (bit-and b c))
           temp2 (u32 (+ sum0 majority))
-          s7 (store32 workspace 79 g) s6 (store32 workspace 78 f)
-          s5 (store32 workspace 77 e) s4 (store32 workspace 76 (u32 (+ d temp1)))
-          s3 (store32 workspace 75 c) s2 (store32 workspace 74 b)
-          s1 (store32 workspace 73 a) s0 (store32 workspace 72 (u32 (+ temp1 temp2)))]
-      (round-block workspace (+ i 1)))))
+          s7 (store32 workspace 87 g) s6 (store32 workspace 86 f)
+          s5 (store32 workspace 85 e) s4 (store32 workspace 84 (u32 (+ d temp1)))
+          s3 (store32 workspace 83 c) s2 (store32 workspace 82 b)
+          s1 (store32 workspace 81 a) s0 (store32 workspace 80 (u32 (+ temp1 temp2)))
+          copied (copy-round workspace 0)]
+      (round-block workspace
+                   (+ i 1 (* 0 (+ s7 (+ s6 (+ s5 (+ s4 (+ s3 (+ s2 (+ s1 (+ s0 copied))))))))))))))
 
 (defn add-state [workspace i]
   (if (= i 8) 1
     (let [stored (store32 workspace (+ 64 i)
                           (u32 (+ (load32 workspace (+ 64 i))
                                   (load32 workspace (+ 72 i)))))]
-      (add-state workspace (+ i 1)))))
+      (add-state workspace (+ i 1 (* 0 stored))))))
 
 (defn process-blocks [input input-length workspace block total]
   (if (= block total) 1
@@ -139,27 +148,29 @@
           copied (copy-working workspace 0)
           rounded (round-block workspace 0)
           added (add-state workspace 0)]
-      (process-blocks input input-length workspace (+ block 1) total))))
+      (process-blocks input input-length workspace
+                      (+ block 1 (* 0 (+ prepared (+ extended (+ copied (+ rounded added))))))
+                      total))))
 
 (defn initialize [workspace]
   (let [s0 (store32 workspace 64 1779033703) s1 (store32 workspace 65 3144134277)
         s2 (store32 workspace 66 1013904242) s3 (store32 workspace 67 2773480762)
         s4 (store32 workspace 68 1359893119) s5 (store32 workspace 69 2600822924)
         s6 (store32 workspace 70 528734635) s7 (store32 workspace 71 1541459225)]
-    1))
+    (+ 1 (* 0 (+ s0 (+ s1 (+ s2 (+ s3 (+ s4 (+ s5 (+ s6 s7)))))))))))
 
 (defn emit-output [workspace output i]
   (if (= i 8) 1
     (let [stored (store-output32 output i (load32 workspace (+ 64 i)))]
-      (emit-output workspace output (+ i 1)))))
+      (emit-output workspace output (+ i 1 (* 0 stored))))))
 
 (defn aiueos-sha256 [input input-length output workspace workspace-length]
   (if (> input-length 12288) 0
-    (if (< workspace-length 320) 0
+    (if (< workspace-length 352) 0
       (let [initialized (initialize workspace)
             processed (process-blocks input input-length workspace 0
                                       (quot (+ input-length 72) 64))
             emitted (emit-output workspace output 0)]
-        1))))
+        (+ 1 (* 0 (+ initialized (+ processed emitted))))))))
 
 (defn main [] 0)

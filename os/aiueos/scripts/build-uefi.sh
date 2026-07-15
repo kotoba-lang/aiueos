@@ -138,7 +138,7 @@ python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_user_object_jo
   bd1de2777d75e02968939d2b7bc74e84dc16a8a9431fe36bd2c2170d6866fad3 \
   kotoba_aiueos_user_object_journal_value
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_sha256_object" \
-  09a3f73b2aed420d50c046b8df6b4b62abbf32acce63ca380d63494b9cc1d094 \
+  76e6befa8d796f27950a8ccdc6bc791779ae697f7bf03a1766f857749abf974d \
   kotoba_aiueos_sha256
 python3 "$aiueos/scripts/verify-kotoba-user-elf.py" "$kotoba_user_elf" \
   1f0e5897831d0de6bbcb15eec82a6e0c4b402b436689cec051bc6de3b5c4e905

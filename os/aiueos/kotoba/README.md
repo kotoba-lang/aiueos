@@ -30,11 +30,12 @@ or dynamic/runtime dependencies.
 Kotoba. Its five-argument kernel ABI accepts the message, its length, a
 32-byte output, and a caller-owned bounded workspace. `kernel-load-u8-16k`
 admits at most 16 KiB while the public function narrows application input to
-12 KiB; workspace and output stores retain the ordinary 512-byte compiler
+12 KiB; the function requires 352 bytes from its caller-owned workspace and
+workspace/output stores retain the ordinary 512-byte compiler
 bound. The wrapper replenishes one million fuel units and compiler-lowered
 tail recursion reuses a fixed native stack frame across blocks and rounds.
 Its pinned SHA-256 is
-`09a3f73b2aed420d50c046b8df6b4b62abbf32acce63ca380d63494b9cc1d094`.
+`76e6befa8d796f27950a8ccdc6bc791779ae697f7bf03a1766f857749abf974d`.
 
 `journal-plan.o` is produced by the same compiler revision from
 `journal-plan.kotoba`. It exports the four-argument SysV function

@@ -165,7 +165,7 @@ python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$user_object_journal_v
   --target x86_64-aiueos-kernel-v1 --output "$sha256_tmp"
 cmp "$aiueos/kotoba/sha256.o" "$sha256_tmp"
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$sha256_tmp" \
-  09a3f73b2aed420d50c046b8df6b4b62abbf32acce63ca380d63494b9cc1d094 \
+  76e6befa8d796f27950a8ccdc6bc791779ae697f7bf03a1766f857749abf974d \
   kotoba_aiueos_sha256
 "$compiler/bin/kotoba-compiler" compile "$aiueos/kotoba/user-smoke.kotoba" \
   --target x86_64-aiueos-user-v1 --policy "$aiueos/kotoba/user-runtime-policy.edn" \
