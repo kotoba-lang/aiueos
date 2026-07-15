@@ -55,6 +55,9 @@ extern uint64_t aiueos_physical_allocator_reuse_count(void);
 extern unsigned aiueos_address_space_capacity(void);
 extern int aiueos_address_space_slot_self_test(void);
 extern int aiueos_address_space_claim(void);
+extern int aiueos_address_space_user_entry_valid(unsigned process,uint64_t entry);
+extern int aiueos_load_embedded_kotoba_process(unsigned process,uint64_t *entry,uint64_t **result);
+extern int aiueos_kotoba_process_loader_evidence_ready(void);
 extern uint8_t aiueos_user_text_start[],aiueos_user_text_end[];
 extern void aiueos_probe_cross_process(const void *address);
 extern volatile uint64_t aiueos_page_fault_stage, aiueos_page_fault_error;
@@ -150,17 +153,20 @@ int aiueos_process_address_space_for_domain(uint16_t domain) {
       return processes[slot].address_space;
   return -1;
 }
-static int process_create(void (*entry)(uint64_t),uint16_t domain) {
+static int process_create_in_space(void (*entry)(uint64_t),uint16_t domain,int supplied_space) {
   uint64_t address=(uint64_t)(uintptr_t)entry;
-  if (domain<2 || address<(uint64_t)(uintptr_t)aiueos_user_text_start ||
-      address>=(uint64_t)(uintptr_t)aiueos_user_text_end ||
-      aiueos_process_address_space_for_domain(domain)>=0) return -1;
+  if (domain<2 || aiueos_process_address_space_for_domain(domain)>=0) return -1;
   unsigned descriptor;
   for (descriptor=0;descriptor<PROCESS_CAPACITY;descriptor++)
     if (!processes[descriptor].active) break;
   if (descriptor==PROCESS_CAPACITY) return -1;
-  int address_space=aiueos_address_space_claim();
+  int address_space=supplied_space>=0 ? supplied_space : aiueos_address_space_claim();
   if (address_space<0) return -1;
+  int linked_entry=address>=(uint64_t)(uintptr_t)aiueos_user_text_start &&
+    address<(uint64_t)(uintptr_t)aiueos_user_text_end;
+  if (!linked_entry && !aiueos_address_space_user_entry_valid((unsigned)address_space,address)) {
+    aiueos_address_space_reclaim((unsigned)address_space); return -1;
+  }
   struct user_result *result=aiueos_address_space_private_backing((unsigned)address_space);
   uint64_t private_va=aiueos_address_space_private_va((unsigned)address_space);
   uint64_t handle=aiueos_capability_ensure_log_handle(domain);
@@ -177,6 +183,19 @@ static int process_create(void (*entry)(uint64_t),uint16_t domain) {
   if (task<1) { p->active=0; aiueos_address_space_reclaim((unsigned)address_space); return -1; }
   p->task_slot=(uint16_t)task;
   return (int)descriptor;
+}
+static int process_create(void (*entry)(uint64_t),uint16_t domain) {
+  return process_create_in_space(entry,domain,-1);
+}
+static int process_create_kotoba_elf(uint16_t domain,uint64_t **result) {
+  int address_space=aiueos_address_space_claim();
+  uint64_t entry=0;
+  if (address_space<0 || !aiueos_load_embedded_kotoba_process(
+      (unsigned)address_space,&entry,result)) {
+    if (address_space>=0) aiueos_address_space_reclaim((unsigned)address_space);
+    return -1;
+  }
+  return process_create_in_space((void (*)(uint64_t))(uintptr_t)entry,domain,address_space);
 }
 
 int aiueos_process_initialize(void) {
@@ -199,18 +218,23 @@ int aiueos_process_initialize(void) {
 }
 void aiueos_process_enter(void) {
   uint64_t allocator_reuse_before;
+  uint64_t recreated_entry=0,*recreated_result=0;
   if (!aiueos_scheduler_begin_user_runtime()) return;
+  uint64_t *kotoba_result=0;
   int first=process_create(user_entry,2),second=process_create(user_entry,3);
-  if (first<0 || second<0) return;
+  int kotoba=process_create_kotoba_elf(4,&kotoba_result);
+  if (first<0 || second<0 || kotoba<0 || !kotoba_result) return;
   kernel_results[0]=processes[first].result; kernel_results[1]=processes[second].result;
   kernel_results[0]->foreign_handle=kernel_results[1]->handle;
   kernel_results[1]->foreign_handle=kernel_results[0]->handle;
   kernel_results[0]->foreign_page=processes[second].argument;
   kernel_results[1]->foreign_page=processes[first].argument;
   __asm__ volatile("sti");
-  while (!aiueos_process_result() || !aiueos_user_scheduler_evidence_ready())
+  while (!aiueos_process_result() || !aiueos_user_scheduler_evidence_ready() ||
+         *kotoba_result!=42)
     __asm__ volatile("hlt");
   aiueos_scheduler_request_user_exit(2); aiueos_scheduler_request_user_exit(3);
+  aiueos_scheduler_request_user_exit(4);
   while (!aiueos_scheduler_users_reaped()) __asm__ volatile("hlt");
   __asm__ volatile("cli");
   if (aiueos_scheduler_finalize_user_stacks() &&
@@ -218,14 +242,21 @@ void aiueos_process_enter(void) {
       aiueos_scheduler_task_slot_self_test() &&
       aiueos_capability_revoke_owner(2)>=2 &&
       aiueos_capability_revoke_owner(3)>=1 &&
-      !aiueos_capability_log_handle(2) && !aiueos_capability_log_handle(3))
+      aiueos_capability_revoke_owner(4)>=1 &&
+      !aiueos_capability_log_handle(2) && !aiueos_capability_log_handle(3) &&
+      !aiueos_capability_log_handle(4) && aiueos_kotoba_process_loader_evidence_ready())
     process_lifecycle_evidence|=1;
   allocator_reuse_before=aiueos_physical_allocator_reuse_count();
   unsigned space0=processes[first].address_space,space1=processes[second].address_space;
-  processes[first].active=processes[second].active=0;
+  unsigned space2=processes[kotoba].address_space;
+  processes[first].active=processes[second].active=processes[kotoba].active=0;
   if (aiueos_address_space_reclaim(space0) && aiueos_address_space_reclaim(space1) &&
+      aiueos_address_space_reclaim(space2) &&
       aiueos_address_space_reuse(space0) && aiueos_address_space_reuse(space1) &&
-      aiueos_physical_allocator_reuse_count()-allocator_reuse_before>=10)
+      aiueos_address_space_reuse(space2) && aiueos_load_embedded_kotoba_process(
+        space2,&recreated_entry,&recreated_result) && recreated_entry==0x1e1000ULL &&
+      recreated_result && *recreated_result==0 && aiueos_address_space_reclaim(space2) &&
+      aiueos_physical_allocator_reuse_count()-allocator_reuse_before>=17)
     process_lifecycle_evidence|=2;
   if (aiueos_address_space_capacity()==8 && aiueos_address_space_slot_self_test())
     process_lifecycle_evidence|=4;

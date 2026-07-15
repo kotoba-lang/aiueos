@@ -22,6 +22,8 @@ kernel_pci_object="$out/kernel-pci.o"
 kernel_scheduler_object="$out/kernel-scheduler.o"
 kernel_syscall_object="$out/kernel-syscall.o"
 kernel_process_object="$out/kernel-process.o"
+kernel_loader_object="$out/kernel-loader.o"
+kernel_user_image_object="$out/kernel-user-image.o"
 kernel_smp_object="$out/kernel-smp.o"
 kernel_trampoline_object="$out/kernel-ap-trampoline.o"
 kernel_ioapic_object="$out/kernel-ioapic.o"
@@ -43,6 +45,7 @@ kotoba_copy_in_object=${AIUEOS_KOTOBA_COPY_IN_OBJECT:-"$aiueos/kotoba/copy-in.o"
 kotoba_capability_object=${AIUEOS_KOTOBA_CAPABILITY_OBJECT:-"$aiueos/kotoba/capability-plan.o"}
 kotoba_service_lifecycle_object=${AIUEOS_KOTOBA_SERVICE_LIFECYCLE_OBJECT:-"$aiueos/kotoba/service-lifecycle.o"}
 kotoba_service_registry_object=${AIUEOS_KOTOBA_SERVICE_REGISTRY_OBJECT:-"$aiueos/kotoba/service-registry-build.o"}
+kotoba_user_elf=${AIUEOS_KOTOBA_USER_ELF:-"$aiueos/kotoba/user-smoke.elf"}
 kotoba_fnv_sha=
 if [ -z "${AIUEOS_KOTOBA_FNV_OBJECT:-}" ]; then
   kotoba_fnv_sha=9d447888daf2c5065b3caf98ee348b426296c95781d0651989bd2025ac7ba52d
@@ -113,6 +116,8 @@ python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_service_lifecy
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_service_registry_object" \
   70eee5d4dd599ea2049261e92a656931768b355eefc0fb6d83deee192a3a05f0 \
   kotoba_aiueos_service_registry_build
+python3 "$aiueos/scripts/verify-kotoba-user-elf.py" "$kotoba_user_elf" \
+  a4050d7c7e3feca1e66eeff188240b9bff3c91dbea02ff0aafb5d1b09c63089a
 zig cc -target x86_64-freestanding-none -std=c11 -O2 \
   -ffreestanding -fno-stack-protector -mno-red-zone \
   -c -o "$kernel_object" "$aiueos/kernel/main.c"
@@ -148,6 +153,12 @@ zig cc -target x86_64-freestanding-none -std=c11 -O2 \
   -c -o "$kernel_process_object" "$aiueos/kernel/process.c"
 zig cc -target x86_64-freestanding-none -std=c11 -O2 \
   -ffreestanding -fno-stack-protector -mno-red-zone \
+  -c -o "$kernel_loader_object" "$aiueos/kernel/loader.c"
+zig cc -target x86_64-freestanding-none -x assembler-with-cpp \
+  -DAIUEOS_USER_ELF="\"$kotoba_user_elf\"" \
+  -c -o "$kernel_user_image_object" "$aiueos/kernel/user_image.S"
+zig cc -target x86_64-freestanding-none -std=c11 -O2 \
+  -ffreestanding -fno-stack-protector -mno-red-zone \
   -c -o "$kernel_smp_object" "$aiueos/kernel/smp.c"
 zig cc -target x86_64-freestanding-none \
   -c -o "$kernel_trampoline_object" "$aiueos/kernel/ap_trampoline.S"
@@ -162,7 +173,8 @@ zig ld.lld -nostdlib -static -z max-page-size=0x1000 \
   "$kernel_entry_object" "$kernel_object" "$kernel_paging_object" \
   "$kernel_acpi_object" "$kernel_vtd_object" "$kernel_apic_object" "$kernel_memory_object" \
   "$kernel_pci_object" "$kernel_scheduler_object" "$kernel_syscall_object" \
-  "$kernel_process_object" "$kernel_smp_object" "$kernel_trampoline_object" \
+  "$kernel_process_object" "$kernel_loader_object" "$kernel_user_image_object" \
+  "$kernel_smp_object" "$kernel_trampoline_object" \
   "$kernel_ioapic_object" "$kernel_framebuffer_object" "$kotoba_kernel_object" \
   "$kotoba_journal_object" "$kotoba_fnv_object" "$kotoba_journal_valid_object" \
   "$kotoba_transaction_valid_object" "$kotoba_mutable_valid_object" \

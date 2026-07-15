@@ -3,7 +3,7 @@ set -eu
 
 aiueos=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 compiler=${1:?usage: reproduce-kotoba-kernel-object.sh /path/to/compiler}
-expected=0e3532fb7afb84f5917468fde7814ab70d6da1ad
+expected=2aae14084f41a819d6893c2447317435ddd248da
 actual=$(git -C "$compiler" rev-parse HEAD)
 
 [ "$actual" = "$expected" ] || {
@@ -28,7 +28,8 @@ copy_in_tmp=${TMPDIR:-/tmp}/aiueos-kotoba-copy-in.$$
 capability_tmp=${TMPDIR:-/tmp}/aiueos-kotoba-capability.$$
 service_lifecycle_tmp=${TMPDIR:-/tmp}/aiueos-kotoba-service-lifecycle.$$
 service_registry_tmp=${TMPDIR:-/tmp}/aiueos-kotoba-service-registry.$$
-trap 'rm -f "$tmp" "$journal_tmp" "$fnv_tmp" "$journal_valid_tmp" "$transaction_valid_tmp" "$mutable_valid_tmp" "$superblock_valid_tmp" "$journal_build_tmp" "$mutable_build_tmp" "$cap_valid_tmp" "$extent_valid_tmp" "$region_valid_tmp" "$syscall_range_tmp" "$copy_in_tmp" "$capability_tmp" "$service_lifecycle_tmp" "$service_registry_tmp"' EXIT HUP INT TERM
+user_elf_tmp=${TMPDIR:-/tmp}/aiueos-kotoba-user-smoke.$$
+trap 'rm -f "$tmp" "$journal_tmp" "$fnv_tmp" "$journal_valid_tmp" "$transaction_valid_tmp" "$mutable_valid_tmp" "$superblock_valid_tmp" "$journal_build_tmp" "$mutable_build_tmp" "$cap_valid_tmp" "$extent_valid_tmp" "$region_valid_tmp" "$syscall_range_tmp" "$copy_in_tmp" "$capability_tmp" "$service_lifecycle_tmp" "$service_registry_tmp" "$user_elf_tmp"' EXIT HUP INT TERM
 "$compiler/bin/kotoba-compiler" compile "$aiueos/kotoba/kernel-probe.kotoba" \
   --target x86_64-aiueos-kernel-v1 --output "$tmp"
 cmp "$aiueos/kotoba/kernel-probe.o" "$tmp"
@@ -127,6 +128,11 @@ python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$service_lifecycle_tmp
 "$compiler/bin/kotoba-compiler" compile "$aiueos/kotoba/service-registry-build.kotoba" \
   --target x86_64-aiueos-kernel-v1 --output "$service_registry_tmp"
 cmp "$aiueos/kotoba/service-registry-build.o" "$service_registry_tmp"
+"$compiler/bin/kotoba-compiler" compile "$aiueos/kotoba/user-smoke.kotoba" \
+  --target x86_64-aiueos-user-v1 --output "$user_elf_tmp"
+cmp "$aiueos/kotoba/user-smoke.elf" "$user_elf_tmp"
+python3 "$aiueos/scripts/verify-kotoba-user-elf.py" "$user_elf_tmp" \
+  a4050d7c7e3feca1e66eeff188240b9bff3c91dbea02ff0aafb5d1b09c63089a
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$service_registry_tmp" \
   70eee5d4dd599ea2049261e92a656931768b355eefc0fb6d83deee192a3a05f0 \
   kotoba_aiueos_service_registry_build

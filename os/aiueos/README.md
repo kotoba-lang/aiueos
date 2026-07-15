@@ -76,6 +76,16 @@ as APIC-timer-preempted scheduler tasks. Each task has its own supervisor-only
 interrupt stack; every switch updates CR3, TSS.RSP0, and the syscall owner
 domain before `iretq`. Boot requires both tasks and the kernel task to be
 preempted at least twice.
+Boot also validates a compiler-emitted `x86_64-aiueos-user-v1` ELF64 image
+before creating domain 4. The loader admits exactly two bounded `PT_LOAD`
+segments, rejects every unexpected header, address, flag, size, and range,
+copies text and context into allocator-owned pages, and maps them RX and RW+NX
+respectively in that process root. The generic scheduler enters the ELF entry
+at CPL3; the compiler shim runs Kotoba `main`, publishes result 42 in the
+context page, and remains preemptible until normal domain teardown. Recreating
+the image must reuse zeroed text/context pages. The smoke artifact is embedded
+in the kernel for this vertical slice; object-store lookup and signature-bound
+admission remain the next loader boundary.
 The first process also transfers an attenuated log handle to domain 3 while the
 capability-table lock covers source revalidation, target-slot issuance, and
 publication. Domain 3 atomically claims and uses that handle. A request for a
@@ -95,8 +105,10 @@ are removed, their backing pages are zeroed, and the bounded process slots are
 remapped to prove clean reuse. The complete per-process mapping path is now
 allocator-owned rather than a static kernel array: each process consumes five
 physical pages (PML4, PDPT, page directory, page table, and private backing).
-Exit returns all ten pages through a validated, double-free-rejecting free list;
-recreation must reuse at least ten freed pages and observe them zeroed.
+The two syscall test processes return ten mapping pages; the Kotoba ELF process
+adds its allocator-owned RX and RW pages for seventeen pages total. Exit returns
+them through a validated, double-free-rejecting free list; recreation reloads
+the ELF and must observe its writable result context zeroed.
 Address spaces are assigned from an eight-slot generation table rather than
 being identified by two permanent roots. Boot fills every remaining slot,
 rejects allocation when full, reaps the temporary generation, and proves that

@@ -428,6 +428,8 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
     serial_string("AIUEOS_PROCESS_FOUNDATION_OK tss-descriptor user-wx guard-page\r\n");
     debug_string("AIUEOS_PROCESS_CREATE_OK descriptors=8 entry-argument-stack domain-address-space-task\n");
     serial_string("AIUEOS_PROCESS_CREATE_OK descriptors=8 entry-argument-stack domain-address-space-task\r\n");
+    debug_string("AIUEOS_KOTOBA_ELF_PROCESS_OK et-exec segments=rx,rw result=42 domain=4\n");
+    serial_string("AIUEOS_KOTOBA_ELF_PROCESS_OK et-exec segments=rx,rw result=42 domain=4\r\n");
     aiueos_load_task_register();
     aiueos_process_enter();
     if (!aiueos_process_result()) {
@@ -443,8 +445,8 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
     debug_string("AIUEOS_CAPABILITY_TRANSFER_OK source=2 target=3 attenuated atomic-claim transferred-use owner-exit=descendants-revoked\n");
     serial_string("AIUEOS_CAPABILITY_TRANSFER_OK source=2 target=3 attenuated atomic-claim transferred-use owner-exit=descendants-revoked\r\n");
     if (!aiueos_process_lifecycle_evidence_ready()) qemu_exit(0x71);
-    debug_string("AIUEOS_PROCESS_REAP_OK tasks=2 process-slots=8 task-slots=8 generations=reused owner-caps-revoked allocator-pages=10 stack-pages=reused zero-reused\n");
-    serial_string("AIUEOS_PROCESS_REAP_OK tasks=2 process-slots=8 task-slots=8 generations=reused owner-caps-revoked allocator-pages=10 stack-pages=reused zero-reused\r\n");
+    debug_string("AIUEOS_PROCESS_REAP_OK tasks=3 process-slots=8 task-slots=8 generations=reused owner-caps-revoked allocator-pages=17 stack-pages=reused zero-reused\n");
+    serial_string("AIUEOS_PROCESS_REAP_OK tasks=3 process-slots=8 task-slots=8 generations=reused owner-caps-revoked allocator-pages=17 stack-pages=reused zero-reused\r\n");
     debug_string("AIUEOS_USER_SYSCALL_OK valid-log copied-payload too-big stale-generation foreign-owner wrong-type no-rights invalid-pointer\n");
     serial_string("AIUEOS_USER_SYSCALL_OK valid-log copied-payload too-big stale-generation foreign-owner wrong-type no-rights invalid-pointer\r\n");
     if (!aiueos_address_space_self_test()) {

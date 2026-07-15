@@ -34,7 +34,7 @@ static uint32_t pci_directory_owner[PCI_DIRECTORY_SLOTS];
  * while each process owns the complete low-2MiB page-table path. */
 struct process_address_space {
   uint64_t *pml4, *pdpt, *directory, *low;
-  uint8_t *private_page;
+  uint8_t *private_page, *user_text_page, *user_data_page;
   uint16_t generation;
   uint8_t active, claimed;
 };
@@ -143,12 +143,14 @@ int aiueos_paging_initialize(void) {
 
 static void release_process_space(struct process_address_space *space) {
   if (space->private_page) aiueos_free_physical_page(space->private_page);
+  if (space->user_text_page) aiueos_free_physical_page(space->user_text_page);
+  if (space->user_data_page) aiueos_free_physical_page(space->user_data_page);
   if (space->low) aiueos_free_physical_page(space->low);
   if (space->directory) aiueos_free_physical_page(space->directory);
   if (space->pdpt) aiueos_free_physical_page(space->pdpt);
   if (space->pml4) aiueos_free_physical_page(space->pml4);
   uint16_t generation=space->generation;
-  *space=(struct process_address_space){0,0,0,0,0,generation,0,0};
+  *space=(struct process_address_space){0,0,0,0,0,0,0,generation,0,0};
 }
 static int initialize_process_space(unsigned process) {
     if (process>=PROCESS_SLOT_COUNT) return 0;
@@ -218,13 +220,14 @@ uint16_t aiueos_address_space_generation(unsigned process) {
   return process<PROCESS_SLOT_COUNT ? process_spaces[process].generation : 0;
 }
 int aiueos_address_space_slot_self_test(void) {
+  uint16_t generation_before=aiueos_address_space_generation(2);
   for (unsigned expected=2;expected<PROCESS_SLOT_COUNT;expected++)
     if (aiueos_address_space_allocate()!=(int)expected) return 0;
   if (aiueos_address_space_allocate()!=-1) return 0;
   for (unsigned slot=2;slot<PROCESS_SLOT_COUNT;slot++)
     if (!aiueos_address_space_reclaim(slot)) return 0;
   int reused=aiueos_address_space_allocate();
-  if (reused!=2 || aiueos_address_space_generation(2)!=2) return 0;
+  if (reused!=2 || aiueos_address_space_generation(2)<=generation_before) return 0;
   uint8_t *page=aiueos_address_space_private_backing(2);
   if (!page) return 0;
   for (uint64_t i=0;i<PAGE_SIZE;i++) if (page[i]) return 0;
@@ -251,6 +254,33 @@ uint64_t aiueos_address_space_private_va(unsigned process) {
 void *aiueos_address_space_private_backing(unsigned process) {
   return process < PROCESS_SLOT_COUNT && process_spaces[process].active ?
     process_spaces[process].private_page : 0;
+}
+int aiueos_address_space_map_user_image(unsigned process,const uint8_t *text,
+    uint64_t text_size,const uint8_t *data,uint64_t data_size) {
+  if (process>=PROCESS_SLOT_COUNT || !process_spaces[process].active ||
+      !text || !data || !text_size || !data_size || text_size>PAGE_SIZE ||
+      data_size>PAGE_SIZE) return 0;
+  struct process_address_space *space=&process_spaces[process];
+  if (space->user_text_page || space->user_data_page) return 0;
+  space->user_text_page=aiueos_allocate_physical_page();
+  space->user_data_page=aiueos_allocate_physical_page();
+  if (!space->user_text_page || !space->user_data_page) {
+    if (space->user_text_page) aiueos_free_physical_page(space->user_text_page);
+    if (space->user_data_page) aiueos_free_physical_page(space->user_data_page);
+    space->user_text_page=space->user_data_page=0; return 0;
+  }
+  for (uint64_t i=0;i<text_size;i++) space->user_text_page[i]=text[i];
+  for (uint64_t i=0;i<data_size;i++) space->user_data_page[i]=data[i];
+  space->low[0x1e1000ULL/PAGE_SIZE]=(uint64_t)(uintptr_t)space->user_text_page|PTE_PRESENT|PTE_USER;
+  space->low[0x1e2000ULL/PAGE_SIZE]=(uint64_t)(uintptr_t)space->user_data_page|PTE_PRESENT|PTE_USER|PTE_WRITABLE|PTE_NX;
+  return 1;
+}
+void *aiueos_address_space_user_data_backing(unsigned process) {
+  return process<PROCESS_SLOT_COUNT ? process_spaces[process].user_data_page : 0;
+}
+int aiueos_address_space_user_entry_valid(unsigned process,uint64_t entry) {
+  return process<PROCESS_SLOT_COUNT && process_spaces[process].active &&
+    process_spaces[process].user_text_page && entry>=0x1e1000ULL && entry<0x1e2000ULL;
 }
 int aiueos_address_space_reclaim(unsigned process) {
   if (process>=PROCESS_SLOT_COUNT || !process_spaces[process].active) return 0;
