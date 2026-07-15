@@ -3,7 +3,7 @@ set -eu
 
 aiueos=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 compiler=${1:?usage: reproduce-kotoba-kernel-object.sh /path/to/compiler}
-expected=f8beaea438ab9634d29e15d40daf733a3e2334f6
+expected=d83e05830e19f7ed19abe3707cf9481df42f36b5
 actual=$(git -C "$compiler" rev-parse HEAD)
 
 [ "$actual" = "$expected" ] || {
@@ -30,8 +30,9 @@ service_lifecycle_tmp=${TMPDIR:-/tmp}/aiueos-kotoba-service-lifecycle.$$
 service_registry_tmp=${TMPDIR:-/tmp}/aiueos-kotoba-service-registry.$$
 user_object_journal_tmp=${TMPDIR:-/tmp}/aiueos-kotoba-user-object-journal.$$
 user_object_journal_valid_tmp=${TMPDIR:-/tmp}/aiueos-kotoba-user-object-journal-valid.$$
+user_object_journal_value_tmp=${TMPDIR:-/tmp}/aiueos-kotoba-user-object-journal-value.$$
 user_elf_tmp=${TMPDIR:-/tmp}/aiueos-kotoba-user-smoke.$$
-trap 'rm -f "$tmp" "$journal_tmp" "$fnv_tmp" "$journal_valid_tmp" "$transaction_valid_tmp" "$mutable_valid_tmp" "$superblock_valid_tmp" "$journal_build_tmp" "$mutable_build_tmp" "$cap_valid_tmp" "$extent_valid_tmp" "$region_valid_tmp" "$syscall_range_tmp" "$copy_in_tmp" "$capability_tmp" "$service_lifecycle_tmp" "$service_registry_tmp" "$user_object_journal_tmp" "$user_object_journal_valid_tmp" "$user_elf_tmp"' EXIT HUP INT TERM
+trap 'rm -f "$tmp" "$journal_tmp" "$fnv_tmp" "$journal_valid_tmp" "$transaction_valid_tmp" "$mutable_valid_tmp" "$superblock_valid_tmp" "$journal_build_tmp" "$mutable_build_tmp" "$cap_valid_tmp" "$extent_valid_tmp" "$region_valid_tmp" "$syscall_range_tmp" "$copy_in_tmp" "$capability_tmp" "$service_lifecycle_tmp" "$service_registry_tmp" "$user_object_journal_tmp" "$user_object_journal_valid_tmp" "$user_object_journal_value_tmp" "$user_elf_tmp"' EXIT HUP INT TERM
 "$compiler/bin/kotoba-compiler" compile "$aiueos/kotoba/kernel-probe.kotoba" \
   --target x86_64-aiueos-kernel-v1 --output "$tmp"
 cmp "$aiueos/kotoba/kernel-probe.o" "$tmp"
@@ -142,6 +143,12 @@ cmp "$aiueos/kotoba/user-object-journal-valid.o" "$user_object_journal_valid_tmp
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$user_object_journal_valid_tmp" \
   0f2015e53ed083741687abfbaff72edf8a525947b9fc753cacc7a1bf10faf46f \
   kotoba_aiueos_user_object_journal_valid
+"$compiler/bin/kotoba-compiler" compile "$aiueos/kotoba/user-object-journal-value.kotoba" \
+  --target x86_64-aiueos-kernel-v1 --output "$user_object_journal_value_tmp"
+cmp "$aiueos/kotoba/user-object-journal-value.o" "$user_object_journal_value_tmp"
+python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$user_object_journal_value_tmp" \
+  bd1de2777d75e02968939d2b7bc74e84dc16a8a9431fe36bd2c2170d6866fad3 \
+  kotoba_aiueos_user_object_journal_value
 "$compiler/bin/kotoba-compiler" compile "$aiueos/kotoba/user-smoke.kotoba" \
   --target x86_64-aiueos-user-v1 --policy "$aiueos/kotoba/user-runtime-policy.edn" \
   --output "$user_elf_tmp"
