@@ -209,12 +209,15 @@ boot-image magic, and byte-for-byte embedded artifact contents.
 Requirements are Zig 0.14 or newer and `qemu-system-x86_64` with an edk2/OVMF
 firmware image. Override firmware discovery with `OVMF_CODE=/path/to/code.fd`.
 
-The scheduler maintains two bounded service slots with stable IDs, generations,
-restart counts, and heartbeats across preemption and CR3 switches. A
-compiler-emitted Kotoba lifecycle planner applies the restart budget and advances
-the generation; the timer path then discards and reconstructs the failed task's
-saved context. The QEMU smoke injects one deterministic failure and requires the
-restarted service to become live again. A single-entry bounded mailbox then
+The scheduler maintains an eight-slot descriptor table; two services are live
+in the boot evidence with stable IDs, generations, restart counts, and
+heartbeats across preemption and CR3 switches. A compiler-emitted Kotoba
+lifecycle planner now emits spawn, restart, and terminate actions. Those
+actions allocate or release task slots and reconstruct a single generic task
+entry from descriptor state; the C scheduler no longer selects `task_a` or
+`task_b`. Boot also spawns and terminates a temporary third descriptor before
+timer preemption. The QEMU smoke injects one deterministic failure and requires
+the restarted service to become live again. A single-entry bounded mailbox then
 transfers a scalar envelope from the restarted service to the other service
 across distinct CR3 roots. Kotoba capability admission checks the sender owner
 domain; a foreign-domain send is rejected. After scheduler convergence, a

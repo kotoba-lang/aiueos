@@ -122,7 +122,7 @@ python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$capability_tmp" \
   --target x86_64-aiueos-kernel-v1 --output "$service_lifecycle_tmp"
 cmp "$aiueos/kotoba/service-lifecycle.o" "$service_lifecycle_tmp"
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$service_lifecycle_tmp" \
-  20251d96186775cda64c79b4118c0fb539c013b97ddc0b5d0c1e34e1b0f3b255 \
+  1e219090c782f909a4135173cfa4d728fa50c364981b794860aec59e8813a491 \
   kotoba_aiueos_service_lifecycle
 "$compiler/bin/kotoba-compiler" compile "$aiueos/kotoba/service-registry-build.kotoba" \
   --target x86_64-aiueos-kernel-v1 --output "$service_registry_tmp"

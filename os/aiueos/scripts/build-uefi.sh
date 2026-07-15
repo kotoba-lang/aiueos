@@ -108,7 +108,7 @@ python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_capability_obj
   006f509119d39298a1a64093f9b49f48f808445d251e96505c4c03e3abc068bb \
   kotoba_aiueos_capability_plan
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_service_lifecycle_object" \
-  20251d96186775cda64c79b4118c0fb539c013b97ddc0b5d0c1e34e1b0f3b255 \
+  1e219090c782f909a4135173cfa4d728fa50c364981b794860aec59e8813a491 \
   kotoba_aiueos_service_lifecycle
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_service_registry_object" \
   70eee5d4dd599ea2049261e92a656931768b355eefc0fb6d83deee192a3a05f0 \

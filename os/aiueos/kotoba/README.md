@@ -87,12 +87,13 @@ The state also carries a 16-bit owner domain and each request carries its
 caller domain. Owner equality is decided inside the planner, before payload
 copy, so kernel and user slots cannot be used across their security domains.
 
-`service-lifecycle` owns the supervisor's restart admission policy. A failure
-advances the generation and restart count only while both remain bounded and
-the configured budget is not exhausted. The native timer path consumes the
-packed plan and replaces the failed task's saved context; it does not duplicate
-the generation or budget decision in C. The pinned object SHA-256 is
-`20251d96186775cda64c79b4118c0fb539c013b97ddc0b5d0c1e34e1b0f3b255`.
+`service-lifecycle` owns supervisor spawn, restart, and termination decisions.
+It emits a packed action plus generation/restart state; a failure advances the
+generation and restart count only while both remain bounded and the configured
+budget is not exhausted. The native scheduler consumes that plan to allocate,
+replace, or release a generic descriptor-driven task context; it does not
+duplicate lifecycle admission in C. The pinned object SHA-256 is
+`1e219090c782f909a4135173cfa4d728fa50c364981b794860aec59e8813a491`.
 
 `service-registry-build` serializes the two bounded scheduler service states
 into a versioned 16-byte registry inside the journal transaction. It writes all
