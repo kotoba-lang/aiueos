@@ -2,7 +2,7 @@
 
 `kernel-probe.o` is the byte-for-byte output of the merged
 `kotoba-lang/compiler` commit
-`71dd75d1e8cff9ec47607309106ebeda9fffea83` for `kernel-probe.kotoba`:
+`5826568ebdec4f29840d5e85accd77347ff6fbd7` for `kernel-probe.kotoba`:
 
 ```clojure
 (defn main [] 42)
@@ -70,3 +70,9 @@ remain in C; their derived bounds must pass Kotoba before use.
 CPL0 bootstrap and CPL3 log-write syscalls. It rejects empty, out-of-window,
 high-half, and wrapping pointer/length pairs before the native syscall layer
 can consume user memory. Interrupt entry and capability dispatch remain native.
+
+`copy-in` then transfers an admitted payload into a 256-byte kernel-owned
+buffer. Both source and destination accesses use the compiler's trapping
+bounded-byte operations, recursion consumes replenished freestanding fuel, and
+the syscall records a Kotoba FNV hash of only the copied bytes. Oversized calls
+are rejected before either buffer is touched.

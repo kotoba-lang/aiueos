@@ -62,8 +62,11 @@ The smoke switches CR3 sequentially, proves independent contents, and requires
 real non-present page faults for both cross-process reads before restoring the
 kernel CR3. The pointer/length window admission for both bootstrap and CPL3
 calls is compiler-emitted Kotoba code and is exercised at both valid boundaries
-and rejected overflow/empty inputs. Actual copy-in and the `syscall`/`sysret`
-transport remain later work.
+and rejected overflow/empty inputs. An admitted log payload is copied by Kotoba
+bounded load/store operations into a fixed 256-byte kernel buffer and verified
+by a Kotoba FNV receipt for both CPL0 and CPL3 calls; oversize requests fail
+before memory access. General page-fault-recoverable copy-in and the
+`syscall`/`sysret` transport remain later work.
 
 The PCI path performs a bounded configuration-space scan and validates modern
 virtio vendor capabilities, including a cycle-limited capability chain, BAR
