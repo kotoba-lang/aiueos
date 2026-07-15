@@ -162,6 +162,12 @@ unaligned native loads and hidden packed-structure authority. C retains the
 physical record address and exact size but no longer decides journal magic,
 version/state, transaction target/length, or checksum validity.
 
+Superblock and mutable-object validation are Kotoba-owned as well. Superblock
+object bounds are checked before deriving the bounded payload view. Mutable
+objects are compared byte-for-byte with the committed transaction after magic,
+version, sequence, length, and checksum agreement. The remaining C storage
+boundary is queue/DMA I/O plus serialization of a newly committed record.
+
 ### Driver, UI, and persistence split
 
 ```text

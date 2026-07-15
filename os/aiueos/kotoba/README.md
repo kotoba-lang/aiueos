@@ -2,7 +2,7 @@
 
 `kernel-probe.o` is the byte-for-byte output of the merged
 `kotoba-lang/compiler` commit
-`b6466cf6a02adb4868b505b561371bf2130494a5` for `kernel-probe.kotoba`:
+`01f3ce2fe21ea002b38f346b4139604eb0f747e5` for `kernel-probe.kotoba`:
 
 ```clojure
 (defn main [] 42)
@@ -48,3 +48,9 @@ little-endian 32-bit fields from checked byte loads and perform magic,
 version/state, length, sequence, and checksum validation in Kotoba. C supplies
 only the address of its packed record and the exact structure size; invalid
 records return false before replay or mutation.
+
+`superblock-valid.o` owns filesystem magic, header shape, object bounds, and
+payload checksum validation. `mutable-object-valid.o` owns materialized object
+magic/metadata/checksum validation and bounded byte equality against the
+committed transaction. Together these complete the storage read-side
+validation path in Kotoba; C retains sector I/O and passes exact buffer sizes.
