@@ -219,12 +219,15 @@ struct virtio_caps {
   uint8_t msix_pointer;
 };
 
-static int range_valid(uint32_t offset, uint32_t length) {
-  return length && offset + length >= offset;
-}
+extern uint64_t kotoba_aiueos_virtio_cap_valid(
+  uint64_t pointer, uint64_t cap_length, uint64_t bar, uint64_t offset, uint64_t length);
+extern uint64_t kotoba_aiueos_pci_extent_valid(uint64_t value, uint64_t size);
+extern uint64_t kotoba_aiueos_pci_region_valid(
+  uint64_t offset, uint64_t bytes, uint64_t bar_length);
 static int cap_selftest(void) {
-  return range_valid(0x1000, 0x38) && !range_valid(0xfffffff0U, 0x40) &&
-         !range_valid(0, 0);
+  return kotoba_aiueos_virtio_cap_valid(0x40,20,0,0x1000,0x38) &&
+         !kotoba_aiueos_virtio_cap_valid(0x40,20,0,0xfffffff0U,0x40) &&
+         !kotoba_aiueos_virtio_cap_valid(0x40,20,0,0,0);
 }
 static int read_bar(uint8_t b, uint8_t d, uint8_t f, uint8_t index, uint64_t *base) {
   if (index >= 6 || !base) return 0;
@@ -242,12 +245,12 @@ static int read_bar(uint8_t b, uint8_t d, uint8_t f, uint8_t index, uint64_t *ba
 static int parse_cap(uint8_t b, uint8_t d, uint8_t f, uint8_t pointer,
                      struct virtio_pci_cap *cap) {
   uint8_t cap_len = config8(b,d,f,pointer + 2);
-  if (cap_len < 16 || (uint16_t)pointer + cap_len > 256) return 0;
   cap->bar = config8(b,d,f,pointer + 4);
   cap->offset = config_read(b,d,f,pointer + 8);
   cap->length = config_read(b,d,f,pointer + 12);
   cap->notify_multiplier = cap_len >= 20 ? config_read(b,d,f,pointer + 16) : 0;
-  return cap->bar < 6 && range_valid(cap->offset, cap->length);
+  return (int)kotoba_aiueos_virtio_cap_valid(
+    pointer,cap_len,cap->bar,cap->offset,cap->length);
 }
 
 static int find_virtio_caps(uint8_t b, uint8_t d, uint8_t f,
@@ -304,7 +307,7 @@ static int bar_extent(uint8_t b, uint8_t d, uint8_t f, uint8_t index,
   config_write(b,d,f,0x04,command);
   uint64_t value = (uint64_t)(low & ~0xfU) | ((uint64_t)high << 32);
   uint64_t size = wide ? (~mask) + 1 : (uint64_t)(~(uint32_t)mask + 1U);
-  if (!value || !size || (size & (size - 1)) || value + size < value) return 0;
+  if (!kotoba_aiueos_pci_extent_valid(value,size) || value + size < value) return 0;
   *base = value; *length = size; return 1;
 }
 
@@ -330,8 +333,8 @@ static int setup_rng_msix(uint8_t b, uint8_t d, uint8_t f,
   if (vectors > 2048 || table_bar >= 6 || pba_bar >= 6) return 0;
   if (!bar_extent(b,d,f,table_bar,&table_base,&table_bar_length) ||
       !bar_extent(b,d,f,pba_bar,&pba_base,&pba_bar_length)) return 0;
-  if (table_offset > table_bar_length || table_bytes > table_bar_length - table_offset ||
-      pba_offset > pba_bar_length || pba_bytes > pba_bar_length - pba_offset) return 0;
+  if (!kotoba_aiueos_pci_region_valid(table_offset,table_bytes,table_bar_length) ||
+      !kotoba_aiueos_pci_region_valid(pba_offset,pba_bytes,pba_bar_length)) return 0;
   if (!aiueos_map_pci_mmio(table_base + table_offset,table_bytes) ||
       !aiueos_map_pci_mmio(pba_base + pba_offset,pba_bytes)) return 0;
   struct msix_entry *entry = (void *)(uintptr_t)(table_base + table_offset);
@@ -371,8 +374,8 @@ static int setup_blk_msix(uint8_t b, uint8_t d, uint8_t f,
   if (vectors < 2 || vectors > 2048 || table_bar >= 6 || pba_bar >= 6) return 0;
   if (!bar_extent(b,d,f,table_bar,&table_base,&table_bar_length) ||
       !bar_extent(b,d,f,pba_bar,&pba_base,&pba_bar_length)) return 0;
-  if (table_offset > table_bar_length || table_bytes > table_bar_length - table_offset ||
-      pba_offset > pba_bar_length || pba_bytes > pba_bar_length - pba_offset) return 0;
+  if (!kotoba_aiueos_pci_region_valid(table_offset,table_bytes,table_bar_length) ||
+      !kotoba_aiueos_pci_region_valid(pba_offset,pba_bytes,pba_bar_length)) return 0;
   if (!aiueos_map_pci_mmio(table_base + table_offset,table_bytes) ||
       !aiueos_map_pci_mmio(pba_base + pba_offset,pba_bytes)) return 0;
   struct msix_entry *entry = (void *)(uintptr_t)(table_base + table_offset);

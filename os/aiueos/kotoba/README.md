@@ -2,7 +2,7 @@
 
 `kernel-probe.o` is the byte-for-byte output of the merged
 `kotoba-lang/compiler` commit
-`94fe1b4f5de0cae90ea8cf1603b285f279914d52` for `kernel-probe.kotoba`:
+`606b7428e00cfcc197ef6a94fbc7e26f612c06fc` for `kernel-probe.kotoba`:
 
 ```clojure
 (defn main [] 42)
@@ -60,3 +60,8 @@ validation path in Kotoba; C retains sector I/O and passes exact buffer sizes.
 before mutation. Kotoba now serializes journal/transaction metadata, sequence
 payloads, checksums, mutable-object metadata, and transaction bytes. C clears
 the sector, invokes the builder, and owns only the subsequent virtio-blk I/O.
+
+The PCI planners validate real hardware-derived inputs: vendor capability
+length/BAR/32-bit range, probed BAR extent shape, and MSI-X table/PBA regions.
+Config-space reads, BAR probing writes, MMIO mapping, and interrupt programming
+remain in C; their derived bounds must pass Kotoba before use.

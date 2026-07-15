@@ -3,7 +3,7 @@ set -eu
 
 aiueos=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 compiler=${1:?usage: reproduce-kotoba-kernel-object.sh /path/to/compiler}
-expected=94fe1b4f5de0cae90ea8cf1603b285f279914d52
+expected=606b7428e00cfcc197ef6a94fbc7e26f612c06fc
 actual=$(git -C "$compiler" rev-parse HEAD)
 
 [ "$actual" = "$expected" ] || {
@@ -20,7 +20,10 @@ mutable_valid_tmp=${TMPDIR:-/tmp}/aiueos-kotoba-mutable-valid.$$
 superblock_valid_tmp=${TMPDIR:-/tmp}/aiueos-kotoba-superblock-valid.$$
 journal_build_tmp=${TMPDIR:-/tmp}/aiueos-kotoba-journal-build.$$
 mutable_build_tmp=${TMPDIR:-/tmp}/aiueos-kotoba-mutable-build.$$
-trap 'rm -f "$tmp" "$journal_tmp" "$fnv_tmp" "$journal_valid_tmp" "$transaction_valid_tmp" "$mutable_valid_tmp" "$superblock_valid_tmp" "$journal_build_tmp" "$mutable_build_tmp"' EXIT HUP INT TERM
+cap_valid_tmp=${TMPDIR:-/tmp}/aiueos-kotoba-cap-valid.$$
+extent_valid_tmp=${TMPDIR:-/tmp}/aiueos-kotoba-extent-valid.$$
+region_valid_tmp=${TMPDIR:-/tmp}/aiueos-kotoba-region-valid.$$
+trap 'rm -f "$tmp" "$journal_tmp" "$fnv_tmp" "$journal_valid_tmp" "$transaction_valid_tmp" "$mutable_valid_tmp" "$superblock_valid_tmp" "$journal_build_tmp" "$mutable_build_tmp" "$cap_valid_tmp" "$extent_valid_tmp" "$region_valid_tmp"' EXIT HUP INT TERM
 "$compiler/bin/kotoba-compiler" compile "$aiueos/kotoba/kernel-probe.kotoba" \
   --target x86_64-aiueos-kernel-v1 --output "$tmp"
 cmp "$aiueos/kotoba/kernel-probe.o" "$tmp"
@@ -74,4 +77,22 @@ cmp "$aiueos/kotoba/mutable-object-build.o" "$mutable_build_tmp"
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$mutable_build_tmp" \
   22b54f50d63e5ff0a1563acef324a53adacd824ebc98768ac614fb41ec415f1c \
   kotoba_aiueos_mutable_object_build
+"$compiler/bin/kotoba-compiler" compile "$aiueos/kotoba/virtio-cap-valid.kotoba" \
+  --target x86_64-aiueos-kernel-v1 --output "$cap_valid_tmp"
+cmp "$aiueos/kotoba/virtio-cap-valid.o" "$cap_valid_tmp"
+python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$cap_valid_tmp" \
+  f03487d441ca9af4da636bcf6a9c983e23de86eb60ab70fe7533fa558f4262d4 \
+  kotoba_aiueos_virtio_cap_valid
+"$compiler/bin/kotoba-compiler" compile "$aiueos/kotoba/pci-extent-valid.kotoba" \
+  --target x86_64-aiueos-kernel-v1 --output "$extent_valid_tmp"
+cmp "$aiueos/kotoba/pci-extent-valid.o" "$extent_valid_tmp"
+python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$extent_valid_tmp" \
+  345d52917447ddedd21fcee1e7c1143395132828deade02e29896a3829bafdbb \
+  kotoba_aiueos_pci_extent_valid
+"$compiler/bin/kotoba-compiler" compile "$aiueos/kotoba/pci-region-valid.kotoba" \
+  --target x86_64-aiueos-kernel-v1 --output "$region_valid_tmp"
+cmp "$aiueos/kotoba/pci-region-valid.o" "$region_valid_tmp"
+python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$region_valid_tmp" \
+  824abbe8509d43eb5276a612bd38e9b472ebba1b4bd71f416671062e4b523123 \
+  kotoba_aiueos_pci_region_valid
 echo "AIUEOS_KOTOBA_REPRODUCIBLE_OK compiler=$actual"
