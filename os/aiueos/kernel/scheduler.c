@@ -27,13 +27,16 @@ extern uint64_t kotoba_aiueos_capability_plan(uint64_t slot,
 extern void aiueos_process_set_kernel_stack(uint64_t top);
 extern volatile uint16_t aiueos_current_user_domain;
 
-struct aiueos_task { uint64_t *saved_stack; uint64_t switches; uint64_t cr3; };
+struct aiueos_task { uint64_t *saved_stack; uint64_t switches; uint64_t cr3; uint8_t active; };
 static uint8_t task_stacks[2][AIUEOS_TASK_STACK_BYTES]
     __attribute__((aligned(4096)));
 static struct aiueos_task tasks[AIUEOS_TASK_COUNT];
 static uint64_t current_task;
 static int scheduler_user_mode;
 volatile uint64_t aiueos_user_scheduler_switches;
+static volatile uint8_t user_exit_requested[2];
+static uint64_t user_tasks_reaped;
+static uint64_t user_kernel_stacks_zeroed;
 volatile uint64_t aiueos_scheduler_task_a_runs;
 volatile uint64_t aiueos_scheduler_task_b_runs;
 volatile uint64_t aiueos_scheduler_context_switches;
@@ -146,7 +149,7 @@ void aiueos_scheduler_initialize(void) {
   tasks[0].cr3 = aiueos_address_space_kernel_cr3();
   tasks[1].cr3 = aiueos_address_space_cr3(0);
   tasks[2].cr3 = aiueos_address_space_cr3(1);
-  for (uint32_t i = 0; i < AIUEOS_TASK_COUNT; ++i) tasks[i].switches = 0;
+  for (uint32_t i = 0; i < AIUEOS_TASK_COUNT; ++i) { tasks[i].switches = 0; tasks[i].active=1; }
   current_task = 0;
   scheduler_user_mode = 0;
   aiueos_user_scheduler_switches = 0;
@@ -167,8 +170,10 @@ void aiueos_scheduler_start_user_processes(void (*entry0)(void), void (*entry1)(
   tasks[2].saved_stack=initial_user_context(task_stacks[1],entry1,user_stack1);
   tasks[0].cr3=aiueos_address_space_kernel_cr3();
   tasks[1].cr3=aiueos_address_space_cr3(0); tasks[2].cr3=aiueos_address_space_cr3(1);
-  for (uint32_t i=0;i<AIUEOS_TASK_COUNT;i++) tasks[i].switches=0;
+  for (uint32_t i=0;i<AIUEOS_TASK_COUNT;i++) { tasks[i].switches=0; tasks[i].active=1; }
   current_task=0; scheduler_user_mode=1; aiueos_user_scheduler_switches=0;
+  user_exit_requested[0]=user_exit_requested[1]=0;
+  user_tasks_reaped=0; user_kernel_stacks_zeroed=0;
   aiueos_current_user_domain=0;
 }
 int aiueos_service_runtime_evidence_ready(void) {
@@ -192,6 +197,9 @@ uint64_t aiueos_service_registry_state(unsigned service) {
 uint64_t *aiueos_scheduler_on_timer(uint64_t *interrupted_stack) {
   tasks[current_task].saved_stack = interrupted_stack;
   tasks[current_task].switches++;
+  if (scheduler_user_mode && current_task>0 && user_exit_requested[current_task-1]) {
+    tasks[current_task].active=0; user_tasks_reaped++;
+  }
   if (!scheduler_user_mode && current_task > 0) {
     unsigned service = (unsigned)(current_task - 1);
     if (services[service].restart_requested) {
@@ -207,7 +215,8 @@ uint64_t *aiueos_scheduler_on_timer(uint64_t *interrupted_stack) {
       }
     }
   }
-  current_task = (current_task + 1U) % AIUEOS_TASK_COUNT;
+  do { current_task = (current_task + 1U) % AIUEOS_TASK_COUNT; }
+  while (!tasks[current_task].active);
   aiueos_scheduler_context_switches++;
   if (scheduler_user_mode) {
     aiueos_current_user_domain = current_task ? (uint16_t)(current_task + 1) : 0;
@@ -221,6 +230,22 @@ uint64_t *aiueos_scheduler_on_timer(uint64_t *interrupted_stack) {
    * saving the outgoing frame, immediately before iret resumes the task. */
   aiueos_address_space_switch(tasks[current_task].cr3);
   return tasks[current_task].saved_stack;
+}
+void aiueos_scheduler_request_user_exit(uint16_t domain) {
+  if (domain>=2 && domain<=3) user_exit_requested[domain-2]=1;
+}
+int aiueos_scheduler_users_reaped(void) { return user_tasks_reaped==2; }
+int aiueos_scheduler_finalize_user_stacks(void) {
+  if (user_tasks_reaped!=2 || current_task!=0) return 0;
+  for (uint32_t stack=0;stack<2;stack++)
+    for (uint32_t i=0;i<AIUEOS_TASK_STACK_BYTES;i++) task_stacks[stack][i]=0;
+  tasks[1].saved_stack=tasks[2].saved_stack=0;
+  user_kernel_stacks_zeroed=2; scheduler_user_mode=0;
+  return 1;
+}
+int aiueos_scheduler_reap_evidence_ready(void) {
+  return user_tasks_reaped==2 && user_kernel_stacks_zeroed==2 &&
+    !tasks[1].active && !tasks[2].active && current_task==0;
 }
 int aiueos_user_scheduler_evidence_ready(void) {
   return scheduler_user_mode && aiueos_user_scheduler_switches >= 4 &&

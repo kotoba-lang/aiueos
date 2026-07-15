@@ -208,6 +208,11 @@
                                  :rights :attenuated
                                  :publication :atomic-claim
                                  :escalation :rejected}
+           :process-lifecycle {:exit :scheduler-request
+                               :reap :inactive-task-skip
+                               :owner-capabilities :generation-revoked
+                               :private-pages :zero-remap
+                               :kernel-stacks :zero-after-kernel-return}
            :copy-in {:current-map :bootstrap-identity
                      :validation [:nonzero-length :canonical-address
                                   :overflow :mapped-bound]

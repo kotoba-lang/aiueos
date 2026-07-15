@@ -187,6 +187,20 @@ uint64_t aiueos_capability_log_handle(uint16_t owner) {
   capability_lock_release();
   return 0;
 }
+uint64_t aiueos_capability_revoke_owner(uint16_t owner) {
+  uint64_t revoked=0;
+  capability_lock_acquire();
+  for (uint16_t slot=1;slot<capability_capacity;slot++) {
+    struct capability_slot *entry=&capability_table[slot];
+    if (entry->owner==owner && (entry->state_rights&AIUEOS_CAPABILITY_ACTIVE)) {
+      entry->state_rights&=~AIUEOS_CAPABILITY_ACTIVE;
+      entry->generation=entry->generation==0xffffU?0:entry->generation+1;
+      revoked++;
+    }
+  }
+  if (pending_transfer_owner==owner) { pending_transfer_handle=0; pending_transfer_owner=0; }
+  capability_lock_release(); return revoked;
+}
 
 uint64_t aiueos_syscall_dispatch(uint64_t number, uint64_t handle,
                                  uint64_t pointer, uint64_t length) {

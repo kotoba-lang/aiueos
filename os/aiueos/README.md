@@ -74,6 +74,14 @@ publication. Domain 3 atomically claims and uses that handle. A request for a
 right absent from the source handle is rejected by the Kotoba planner before
 publication.
 
+After both processes complete their evidence, the kernel requests scheduler
+exit and waits until each task is removed while the kernel task remains
+runnable. Every capability owned by domains 2 and 3—including the transferred
+handle—is revoked with generation advancement. Only after returning to the
+kernel context are both supervisor interrupt stacks zeroed. Private mappings
+are removed, their backing pages are zeroed, and the bounded process slots are
+remapped to prove clean reuse.
+
 The pointer/length window admission for both bootstrap and CPL3
 calls is compiler-emitted Kotoba code and is exercised at both valid boundaries
 and rejected overflow/empty inputs. An admitted log payload is copied by Kotoba

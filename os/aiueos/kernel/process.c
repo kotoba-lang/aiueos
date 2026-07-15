@@ -37,6 +37,13 @@ extern uint64_t aiueos_capability_log_handle(uint16_t owner);
 extern void aiueos_scheduler_start_user_processes(void (*entry0)(void),void (*entry1)(void),
   uint64_t user_stack0,uint64_t user_stack1);
 extern int aiueos_user_scheduler_evidence_ready(void);
+extern void aiueos_scheduler_request_user_exit(uint16_t domain);
+extern int aiueos_scheduler_users_reaped(void);
+extern int aiueos_scheduler_finalize_user_stacks(void);
+extern int aiueos_scheduler_reap_evidence_ready(void);
+extern uint64_t aiueos_capability_revoke_owner(uint16_t owner);
+extern int aiueos_address_space_reclaim(unsigned process);
+extern int aiueos_address_space_reuse(unsigned process);
 extern void aiueos_probe_cross_process(const void *address);
 extern volatile uint64_t aiueos_page_fault_stage, aiueos_page_fault_error;
 static struct tss64 tss;
@@ -44,6 +51,8 @@ static uint8_t syscall_stack[16384] __attribute__((aligned(4096)));
 __attribute__((section(".user.data"), aligned(4096), used))
 static uint8_t user_mapping_anchor[4096];
 static struct user_result *kernel_results[2];
+static uint64_t process_lifecycle_evidence;
+static int process_results_valid;
 int aiueos_process_result(void);
 void aiueos_process_set_kernel_stack(uint64_t top) { tss.rsp0=top; }
 
@@ -101,6 +110,8 @@ int aiueos_process_initialize(void) {
   }
   kernel_results[0]->foreign_handle=kernel_results[1]->handle;
   kernel_results[1]->foreign_handle=kernel_results[0]->handle;
+  process_lifecycle_evidence=0;
+  process_results_valid=0;
   return 1;
 }
 void aiueos_process_enter(void) {
@@ -109,9 +120,23 @@ void aiueos_process_enter(void) {
   __asm__ volatile("sti");
   while (!aiueos_process_result() || !aiueos_user_scheduler_evidence_ready())
     __asm__ volatile("hlt");
+  aiueos_scheduler_request_user_exit(2); aiueos_scheduler_request_user_exit(3);
+  while (!aiueos_scheduler_users_reaped()) __asm__ volatile("hlt");
   __asm__ volatile("cli");
+  if (aiueos_scheduler_finalize_user_stacks() &&
+      aiueos_capability_revoke_owner(2)>=1 &&
+      aiueos_capability_revoke_owner(3)>=2 &&
+      !aiueos_capability_log_handle(2) && !aiueos_capability_log_handle(3))
+    process_lifecycle_evidence|=1;
+  if (aiueos_address_space_reclaim(0) && aiueos_address_space_reclaim(1) &&
+      aiueos_address_space_reuse(0) && aiueos_address_space_reuse(1))
+    process_lifecycle_evidence|=2;
+}
+int aiueos_process_lifecycle_evidence_ready(void) {
+  return process_lifecycle_evidence==3 && aiueos_scheduler_reap_evidence_ready();
 }
 int aiueos_process_result(void) {
+  if (process_results_valid) return 1;
   for (unsigned p=0; p<2; p++) {
     struct user_result *r=kernel_results[p];
     if (!r || !r->completed || r->abi!=ABI_V1 || r->valid!=5 ||
@@ -125,7 +150,8 @@ int aiueos_process_result(void) {
       kernel_results[0]->transfer_escalation!=BAD_HANDLE ||
       kernel_results[1]->claimed!=kernel_results[0]->transfer ||
       kernel_results[1]->transferred_valid!=5) return 0;
-  return aiueos_syscall_from_user==3;
+  process_results_valid=aiueos_syscall_from_user==3;
+  return process_results_valid;
 }
 
 int aiueos_address_space_self_test(void) {
