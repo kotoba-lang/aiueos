@@ -4,6 +4,8 @@
 #define AIUEOS_TASK_STACK_BYTES 16384U
 #define AIUEOS_KERNEL_CODE_SELECTOR 0x08U
 #define AIUEOS_INTERRUPT_FLAG (1ULL << 9)
+#define AIUEOS_IPC_CAPABILITY_TYPE 2U
+#define AIUEOS_IPC_SEND_RIGHT 1U
 
 /* A saved stack pointer is the complete kernel-task context. */
 struct aiueos_interrupt_context {
@@ -20,6 +22,8 @@ extern void aiueos_address_space_switch(uint64_t cr3);
 extern uint64_t aiueos_address_space_private_va(unsigned process);
 extern uint64_t kotoba_aiueos_service_lifecycle(uint64_t generation,
   uint64_t restarts, uint64_t event, uint64_t budget);
+extern uint64_t kotoba_aiueos_capability_plan(uint64_t slot,
+  uint64_t generation, uint64_t type, uint64_t state_rights, uint64_t request);
 
 struct aiueos_task { uint64_t *saved_stack; uint64_t switches; uint64_t cr3; };
 static uint8_t task_stacks[2][AIUEOS_TASK_STACK_BYTES]
@@ -34,6 +38,45 @@ struct aiueos_service_slot {
   uint64_t id, generation, heartbeats, restarts, restart_requested;
 };
 static struct aiueos_service_slot services[2];
+struct aiueos_service_mailbox {
+  volatile uint64_t sequence, sender_id, sender_generation, recipient_id;
+  volatile uint64_t payload, full;
+};
+static struct aiueos_service_mailbox service_mailbox;
+static uint64_t service_ipc_send_handle;
+static volatile uint64_t service_ipc_received_sequence;
+static volatile uint64_t service_ipc_received_payload;
+static volatile uint64_t service_ipc_foreign_rejections;
+
+static uint64_t ipc_capability_plan(uint16_t requester) {
+  uint64_t state = AIUEOS_IPC_SEND_RIGHT | 65536U | ((uint64_t)1 << 17);
+  uint64_t request = AIUEOS_IPC_SEND_RIGHT |
+    ((uint64_t)AIUEOS_IPC_CAPABILITY_TYPE << 16) |
+    ((uint64_t)requester << 32);
+  return kotoba_aiueos_capability_plan(4,1,AIUEOS_IPC_CAPABILITY_TYPE,state,request);
+}
+
+static void service_ipc_step(unsigned process) {
+  if (process == 0 && services[0].generation == 2 &&
+      services[0].heartbeats == 1 && !service_mailbox.full) {
+    if (ipc_capability_plan(1) != service_ipc_send_handle) return;
+    service_mailbox.sender_id = services[0].id;
+    service_mailbox.sender_generation = services[0].generation;
+    service_mailbox.recipient_id = services[1].id;
+    service_mailbox.payload = 0x4b4f544f42414950ULL;
+    service_mailbox.sequence = 1;
+    __asm__ volatile("" ::: "memory");
+    service_mailbox.full = 1;
+  } else if (process == 1 && service_mailbox.full) {
+    __asm__ volatile("" ::: "memory");
+    if (service_mailbox.recipient_id != services[1].id ||
+        service_mailbox.sender_id != services[0].id ||
+        service_mailbox.sender_generation != services[0].generation) return;
+    service_ipc_received_payload = service_mailbox.payload;
+    service_ipc_received_sequence = service_mailbox.sequence;
+    service_mailbox.full = 0;
+  }
+}
 
 static inline void debug_byte(uint8_t value) {
   __asm__ volatile("outb %0, $0xe9" : : "a"(value));
@@ -47,6 +90,7 @@ static void task_loop(volatile uint64_t *runs, uint8_t marker, unsigned process)
     ++*private_word;
     *runs = *private_word;
     services[process].heartbeats++;
+    service_ipc_step(process);
     /* Deterministic fault injection proves that the scheduler replaces the
      * task context instead of merely changing lifecycle metadata. */
     if (process == 0 && services[process].generation == 1 &&
@@ -95,12 +139,22 @@ void aiueos_scheduler_initialize(void) {
   aiueos_scheduler_address_space_failures = 0;
   services[0] = (struct aiueos_service_slot){1, 1, 0, 0, 0};
   services[1] = (struct aiueos_service_slot){2, 1, 0, 0, 0};
+  service_mailbox = (struct aiueos_service_mailbox){0,0,0,0,0,0};
+  service_ipc_received_sequence = service_ipc_received_payload = 0;
+  service_ipc_send_handle = ipc_capability_plan(1);
+  service_ipc_foreign_rejections = ipc_capability_plan(2) == 0 ? 1 : 0;
 }
 int aiueos_service_runtime_evidence_ready(void) {
   return services[0].id == 1 && services[1].id == 2 &&
     services[0].generation == 2 && services[0].restarts == 1 &&
     services[0].restart_requested == 0 && services[1].generation == 1 &&
     services[0].heartbeats >= 2 && services[1].heartbeats >= 2;
+}
+int aiueos_service_ipc_evidence_ready(void) {
+  return service_ipc_send_handle != 0 && service_ipc_foreign_rejections == 1 &&
+    service_ipc_received_sequence == 1 &&
+    service_ipc_received_payload == 0x4b4f544f42414950ULL &&
+    service_mailbox.full == 0;
 }
 uint64_t *aiueos_scheduler_on_timer(uint64_t *interrupted_stack) {
   tasks[current_task].saved_stack = interrupted_stack;

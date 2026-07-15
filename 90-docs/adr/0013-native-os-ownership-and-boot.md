@@ -355,11 +355,15 @@ capability or failure to retain either enable state is fail-closed.
 
 ## Initial non-goals
 
-The first persistent service-runtime slice registers two stable service IDs and
-requires their generation and heartbeat state to survive repeated timer-driven
-preemption/address-space switches. Persistence currently means kernel lifetime,
-not reboot durability. IPC, supervision/restart, and durable registry replay
-remain explicit gaps.
+The native service runtime registers two stable service IDs and requires their
+generation and heartbeat state to survive timer-driven preemption and address-
+space switches. A compiler-emitted Kotoba lifecycle planner bounds restart and
+advances generation before the timer path replaces the saved task context. A
+bounded mailbox carries a scalar envelope across the two CR3 roots only after
+the existing Kotoba capability planner admits the sender owner domain; the
+foreign-domain negative path is required boot evidence. Persistence currently
+means kernel lifetime, not reboot durability. Durable registry replay remains
+an explicit gap.
 
 - full POSIX/Linux ABI compatibility;
 - every x86 chipset or GPU;
