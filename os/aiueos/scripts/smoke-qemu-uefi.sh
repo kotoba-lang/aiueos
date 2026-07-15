@@ -356,6 +356,10 @@ grep -F "AIUEOS_KOTOBA_ELF_PROCESS_OK source=catalog apps=2 et-exec segments=rx,
   echo "Kotoba ELF process evidence missing" >&2
   exit 1
 }
+grep -F "AIUEOS_KOTOBA_USER_RUNTIME_OK abi=v2 transport=syscall capability=2 object=service-registry domains=4,5 result=42" "$serial_log" >/dev/null || {
+  echo "error: Kotoba user runtime syscall evidence was not observed" >&2
+  exit 1
+}
 grep -F "AIUEOS_APP_CATALOG_LOOKUP_OK ids=app/hello,app/worker unknown=denied extents=nonoverlap" "$serial_log" >/dev/null || {
   echo "catalog lookup evidence missing" >&2
   exit 1

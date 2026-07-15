@@ -210,11 +210,11 @@
                          :admission :owner-domain-capability
                          :address-spaces :cross-cr3}
                    :registry {:format :service-registry-v1 :services 2}}
- :syscall {:version 1
-           :transport :interrupt-0x80
+ :syscall {:version 2
+           :transport {:bootstrap :interrupt-0x80 :user :syscall-sysret}
            :current-privilege :cpl3
-           :processes {:count 2 :roots 2 :private-pages 2 :kernel-stacks 2
-                       :domains [2 3] :cross-process-read :non-present
+           :processes {:count 4 :roots 4 :private-pages 4 :kernel-stacks 4
+                       :domains [2 3 4 5] :cross-process-read :non-present
                        :scheduling :apic-timer-preemptive
                        :switch-state [:cr3 :tss-rsp0 :owner-domain]}
            :user-mode true
@@ -228,6 +228,21 @@
                                :derivation-key [:parent-slot :parent-generation]
                                :revocation :recursive-descendants
                                :generation-exhaustion :retire-slot}
+           :kotoba-runtime {:version 2
+                            :syscall-number 5
+                            :context-handle-offset 80
+                            :handle {:type :kotoba-runtime
+                                     :right :object-read
+                                     :owner :process-domain}
+                            :compiler-policy {:allow #{[:cap/call 2]}}
+                            :capabilities {2 {:operation :object-read
+                                              :object :service-registry
+                                              :indices [0 1]}}
+                            :loader-validation [:context-size :fuel
+                                                :least-privilege-bitmap
+                                                :rx-trampoline :zero-handle]
+                            :processes [{:app "app/hello" :domain 4}
+                                        {:app "app/worker" :domain 5}]}
            :capability-transfer {:source-owner 2 :target-owner 3
                                  :rights :attenuated
                                  :publication :atomic-claim
@@ -265,7 +280,7 @@
                                      :fmask [:interrupt :trap :direction :iopl :nested-task :alignment-check]}
                       :sysret-validation [:canonical-lower-rip :canonical-lower-rsp
                                           :sanitized-rflags :per-task-kernel-stack]
-                      :address-spaces {:processes 3
+                      :address-spaces {:processes 4
                                        :cr3 :distinct
                                        :kernel-branches :shared
                                        :user-private-page :per-process
@@ -277,8 +292,12 @@
                                            :segments [:rx-text :rw-nx-context]
                                            :allocator-owned-pages true
                                            :entry 1970176
+                                           :context-abi :kotoba-sysv-context-r9-aiueos-runtime-v2
+                                           :runtime-handle-offset 80
+                                           :capability 2
+                                           :operation :service-registry-object-read
                                            :result 42
-                                           :domain 4
+                                           :domains [4 5]
                                            :source :authenticated-object-store}
                       :negative-evidence #{:invalid-handle :invalid-user-pointer
                                            :cross-process-page-fault}}

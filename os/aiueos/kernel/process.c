@@ -38,6 +38,7 @@ extern uint64_t aiueos_address_space_private_va(unsigned process);
 extern void *aiueos_address_space_private_backing(unsigned process);
 extern uint64_t aiueos_capability_log_handle(uint16_t owner);
 extern uint64_t aiueos_capability_ensure_log_handle(uint16_t owner);
+extern uint64_t aiueos_capability_ensure_runtime_handle(uint16_t owner);
 extern int aiueos_scheduler_begin_user_runtime(void);
 extern int aiueos_scheduler_create_user_task(unsigned address_space,uint16_t domain,
   void (*entry)(uint64_t),uint64_t argument,uint64_t user_stack);
@@ -199,6 +200,11 @@ static int process_create_kotoba_elf(const uint8_t app_id[16],uint16_t domain,ui
     if (address_space>=0) aiueos_address_space_reclaim((unsigned)address_space);
     return -1;
   }
+  uint64_t runtime_handle=aiueos_capability_ensure_runtime_handle(domain);
+  if (!runtime_handle || !*result) {
+    aiueos_address_space_reclaim((unsigned)address_space); return -1;
+  }
+  (*result)[10]=runtime_handle;
   return process_create_in_space((void (*)(uint64_t))(uintptr_t)entry,domain,address_space);
 }
 

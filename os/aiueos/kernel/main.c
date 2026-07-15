@@ -78,6 +78,7 @@ extern int aiueos_process_result(void);
 extern int aiueos_process_lifecycle_evidence_ready(void);
 extern int aiueos_catalog_lookup_rejection_evidence_ready(void);
 extern int aiueos_syscall_transport_evidence_ready(void);
+extern int aiueos_kotoba_runtime_evidence_ready(void);
 extern int aiueos_address_space_self_test(void);
 extern void aiueos_load_task_register(void);
 extern int aiueos_smp_start_application_processor(void);
@@ -441,6 +442,9 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
       qemu_exit(0x71);
     }
     if (!aiueos_syscall_transport_evidence_ready()) qemu_exit(0x71);
+    if (!aiueos_kotoba_runtime_evidence_ready()) qemu_exit(0x71);
+    debug_string("AIUEOS_KOTOBA_USER_RUNTIME_OK abi=v2 transport=syscall capability=2 object=service-registry domains=4,5 result=42\n");
+    serial_string("AIUEOS_KOTOBA_USER_RUNTIME_OK abi=v2 transport=syscall capability=2 object=service-registry domains=4,5 result=42\r\n");
     debug_string("AIUEOS_RING3_OK processes=2 preemptive roots=2 domains=2,3 kernel-stacks=2 syscall-sysret\n");
     serial_string("AIUEOS_RING3_OK processes=2 preemptive roots=2 domains=2,3 kernel-stacks=2 syscall-sysret\r\n");
     debug_string("AIUEOS_SYSRET_OK star-lstar-fmask canonical-rip-rsp rflags-sanitized per-task-stack\n");

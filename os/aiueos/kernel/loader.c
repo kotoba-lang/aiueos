@@ -5,6 +5,8 @@
 #define ELF_TEXT_VA 0x1e1000ULL
 #define ELF_DATA_VA 0x1e2000ULL
 #define PAGE_SIZE 4096ULL
+#define USER_CONTEXT_SIZE 88ULL
+#define USER_RUNTIME_CALLBACK 0x1e1020ULL
 
 struct __attribute__((packed)) elf_header {
   uint8_t ident[16]; uint16_t type,machine; uint32_t version;
@@ -46,9 +48,17 @@ int aiueos_load_object_store_kotoba_process(unsigned process,const uint8_t app_i
     else if (segment->vaddr==ELF_DATA_VA && segment->flags==6 && !data) data=segment;
     else return 0;
   }
-  if (!text || !data || !text->filesz || !data->filesz ||
+  if (!text || !data || !text->filesz || data->filesz!=USER_CONTEXT_SIZE ||
       !aiueos_address_space_map_user_image(process,image+text->offset,text->filesz,
         image+data->offset,data->filesz)) return 0;
+  const uint8_t *context=image+data->offset;
+  uint64_t callback=*(const uint64_t *)(const void *)(context+48);
+  uint64_t runtime_handle=*(const uint64_t *)(const void *)(context+80);
+  if (*(const uint64_t *)(const void *)context!=0 ||
+      *(const uint64_t *)(const void *)(context+8)!=256 || context[16]!=4 ||
+      callback!=USER_RUNTIME_CALLBACK || runtime_handle!=0) return 0;
+  for (unsigned i=17;i<48;i++) if (context[i]) return 0;
+  for (unsigned i=56;i<80;i++) if (context[i]) return 0;
   *entry=header->entry;
   *result=aiueos_address_space_user_data_backing(process);
   loader_evidence=*result!=0;
