@@ -422,8 +422,8 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
     debug_string("AIUEOS_CAPABILITY_TRANSFER_OK source=2 target=3 attenuated atomic-claim transferred-use\n");
     serial_string("AIUEOS_CAPABILITY_TRANSFER_OK source=2 target=3 attenuated atomic-claim transferred-use\r\n");
     if (!aiueos_process_lifecycle_evidence_ready()) qemu_exit(0x71);
-    debug_string("AIUEOS_PROCESS_REAP_OK tasks=2 owner-caps-revoked private-pages=zero-reused kernel-stacks=zero\n");
-    serial_string("AIUEOS_PROCESS_REAP_OK tasks=2 owner-caps-revoked private-pages=zero-reused kernel-stacks=zero\r\n");
+    debug_string("AIUEOS_PROCESS_REAP_OK tasks=2 owner-caps-revoked allocator-pages=10 zero-reused kernel-stacks=zero\n");
+    serial_string("AIUEOS_PROCESS_REAP_OK tasks=2 owner-caps-revoked allocator-pages=10 zero-reused kernel-stacks=zero\r\n");
     debug_string("AIUEOS_USER_SYSCALL_OK valid-log copied-payload too-big stale-generation foreign-owner wrong-type no-rights invalid-pointer\n");
     serial_string("AIUEOS_USER_SYSCALL_OK valid-log copied-payload too-big stale-generation foreign-owner wrong-type no-rights invalid-pointer\r\n");
     if (!aiueos_address_space_self_test()) {

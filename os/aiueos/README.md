@@ -80,7 +80,11 @@ runnable. Every capability owned by domains 2 and 3—including the transferred
 handle—is revoked with generation advancement. Only after returning to the
 kernel context are both supervisor interrupt stacks zeroed. Private mappings
 are removed, their backing pages are zeroed, and the bounded process slots are
-remapped to prove clean reuse.
+remapped to prove clean reuse. The complete per-process mapping path is now
+allocator-owned rather than a static kernel array: each process consumes five
+physical pages (PML4, PDPT, page directory, page table, and private backing).
+Exit returns all ten pages through a validated, double-free-rejecting free list;
+recreation must reuse at least ten freed pages and observe them zeroed.
 
 The pointer/length window admission for both bootstrap and CPL3
 calls is compiler-emitted Kotoba code and is exercised at both valid boundaries

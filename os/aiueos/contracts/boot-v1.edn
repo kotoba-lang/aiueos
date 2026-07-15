@@ -211,7 +211,10 @@
            :process-lifecycle {:exit :scheduler-request
                                :reap :inactive-task-skip
                                :owner-capabilities :generation-revoked
-                               :private-pages :zero-remap
+                               :address-space-pages [:pml4 :pdpt :directory :page-table :private]
+                               :allocator-pages-per-process 5
+                               :private-pages :free-zero-reallocate
+                               :allocator-free :validated-no-double-free
                                :kernel-stacks :zero-after-kernel-return}
            :copy-in {:current-map :bootstrap-identity
                      :validation [:nonzero-length :canonical-address
