@@ -216,9 +216,12 @@
                                :address-space-slots 8
                                :slot-generation-reuse true
                                :full-table-rejection true
+                               :scheduler-task-slots 8
+                               :task-stack-backing :physical-allocator
+                               :task-stack-reuse :zeroed
                                :private-pages :free-zero-reallocate
                                :allocator-free :validated-no-double-free
-                               :kernel-stacks :zero-after-kernel-return}
+                               :kernel-stacks :free-after-kernel-return}
            :copy-in {:current-map :bootstrap-identity
                      :validation [:nonzero-length :canonical-address
                                   :overflow :mapped-bound]
