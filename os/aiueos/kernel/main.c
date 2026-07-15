@@ -376,6 +376,8 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
     serial_string("AIUEOS_SYSCALL_OK int80-cpl0 abi-v1\r\n");
     debug_string("AIUEOS_KOTOBA_SYSCALL_PLANNER_OK bootstrap user overflow\n");
     serial_string("AIUEOS_KOTOBA_SYSCALL_PLANNER_OK bootstrap user overflow\r\n");
+    debug_string("AIUEOS_KOTOBA_COPY_IN_OK cpl0 hash bounded-256\n");
+    serial_string("AIUEOS_KOTOBA_COPY_IN_OK cpl0 hash bounded-256\r\n");
     debug_string("AIUEOS_CAPABILITY_OK handle-v1 invalid-handle-denied\n");
     serial_string("AIUEOS_CAPABILITY_OK handle-v1 invalid-handle-denied\r\n");
     debug_string("AIUEOS_COPYIN_OK noncanonical-and-unmapped-denied\n");
@@ -395,8 +397,8 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
     }
     debug_string("AIUEOS_RING3_OK cpl3-int80 tss-rsp0 return-kernel\n");
     serial_string("AIUEOS_RING3_OK cpl3-int80 tss-rsp0 return-kernel\r\n");
-    debug_string("AIUEOS_USER_SYSCALL_OK valid-log invalid-handle invalid-pointer\n");
-    serial_string("AIUEOS_USER_SYSCALL_OK valid-log invalid-handle invalid-pointer\r\n");
+    debug_string("AIUEOS_USER_SYSCALL_OK valid-log copied-payload too-big invalid-handle invalid-pointer\n");
+    serial_string("AIUEOS_USER_SYSCALL_OK valid-log copied-payload too-big invalid-handle invalid-pointer\r\n");
     if (!aiueos_address_space_self_test()) {
       debug_string("AIUEOS_ADDRESS_SPACE_FAIL cr3-or-isolation\n");
       serial_string("AIUEOS_ADDRESS_SPACE_FAIL cr3-or-isolation\r\n");

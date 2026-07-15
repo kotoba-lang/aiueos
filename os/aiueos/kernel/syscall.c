@@ -6,12 +6,22 @@ enum { AIUEOS_SYSCALL_ABI = 0, AIUEOS_SYSCALL_LOG_WRITE = 1 };
 #define AIUEOS_ERR_NO_SYSCALL ((uint64_t)-38)
 #define AIUEOS_ERR_BAD_HANDLE ((uint64_t)-9)
 #define AIUEOS_ERR_BAD_POINTER ((uint64_t)-14)
+#define AIUEOS_ERR_TOO_BIG ((uint64_t)-7)
+#define AIUEOS_SYSCALL_COPY_MAX 256ULL
 
 /* index 1, generation 1, type tag in the high 32 bits */
 static const uint64_t log_handle = 0xa105ca7e00010001ULL;
 
 extern uint64_t kotoba_aiueos_syscall_range_valid(
   uint64_t pointer, uint64_t length, uint64_t lower, uint64_t upper);
+extern uint64_t kotoba_aiueos_copy_in(
+  const void *source, uint64_t source_length, void *destination,
+  uint64_t destination_length, uint64_t count);
+extern uint64_t kotoba_aiueos_fnv1a(const uint8_t *bytes, uint64_t length);
+
+static uint8_t syscall_copy_buffer[AIUEOS_SYSCALL_COPY_MAX];
+uint64_t aiueos_syscall_last_copy_length;
+uint64_t aiueos_syscall_last_copy_hash;
 
 extern uint8_t aiueos_user_data_start[], aiueos_user_data_end[];
 extern uint64_t aiueos_syscall_from_user;
@@ -28,9 +38,15 @@ uint64_t aiueos_syscall_dispatch(uint64_t number, uint64_t handle,
   if (number != AIUEOS_SYSCALL_LOG_WRITE) return AIUEOS_ERR_NO_SYSCALL;
   if (handle != log_handle || (handle & 0xffffULL) != AIUEOS_CAP_LOG_WRITE)
     return AIUEOS_ERR_BAD_HANDLE;
+  if (length > AIUEOS_SYSCALL_COPY_MAX) return AIUEOS_ERR_TOO_BIG;
   if (aiueos_syscall_from_user ? !readable_user_range(pointer,length) :
       !kotoba_aiueos_syscall_range_valid(pointer,length,0x1000,0x40000000ULL))
     return AIUEOS_ERR_BAD_POINTER;
+  if (!kotoba_aiueos_copy_in((const void *)(uintptr_t)pointer, length,
+                             syscall_copy_buffer, sizeof(syscall_copy_buffer), length))
+    return AIUEOS_ERR_BAD_POINTER;
+  aiueos_syscall_last_copy_length = length;
+  aiueos_syscall_last_copy_hash = kotoba_aiueos_fnv1a(syscall_copy_buffer,length);
   return length;
 }
 
@@ -58,9 +74,12 @@ int aiueos_syscall_self_test(void) {
   if (invoke(AIUEOS_SYSCALL_LOG_WRITE, log_handle,
              (const void *)0x3fffffffULL, 2) != AIUEOS_ERR_BAD_POINTER)
     return 0;
-  if (invoke(AIUEOS_SYSCALL_LOG_WRITE, log_handle,
-             (const void *)0x3fffffffULL, 1) != 1) return 0;
   if (invoke(AIUEOS_SYSCALL_LOG_WRITE, log_handle, message, 0) !=
       AIUEOS_ERR_BAD_POINTER) return 0;
-  return 1;
+  if (invoke(AIUEOS_SYSCALL_LOG_WRITE, log_handle, message, 257) !=
+      AIUEOS_ERR_TOO_BIG) return 0;
+  if (invoke(AIUEOS_SYSCALL_LOG_WRITE, log_handle, message,
+             sizeof(message) - 1) != sizeof(message) - 1) return 0;
+  return aiueos_syscall_last_copy_length == sizeof(message) - 1 &&
+    (uint32_t)aiueos_syscall_last_copy_hash == 0x51bda436U;
 }

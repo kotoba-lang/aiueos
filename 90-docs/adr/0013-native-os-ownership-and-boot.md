@@ -182,8 +182,10 @@ cannot map a derived capability region unless the Kotoba planner admits it.
 
 Syscall pointer admission follows the same split. A Kotoba half-open range
 planner validates non-empty bootstrap and user windows without overflow before
-the native `int 0x80` dispatcher accepts a buffer. Native code still owns trap
-entry, capability lookup, and the eventual copy-in operation.
+the native `int 0x80` dispatcher accepts a buffer. Kotoba then copies at most
+256 bytes into kernel-owned storage using trapping bounded loads/stores and
+produces the payload hash receipt. Native code still owns trap entry,
+capability lookup, buffer lifetime, and page-fault recovery.
 
 ### Driver, UI, and persistence split
 
