@@ -105,10 +105,12 @@ const struct aiueos_desktop_input_event *aiueos_desktop_input_event(void) {
 struct aiuefs_superblock {
   uint8_t magic[8]; uint32_t version, header_size, object_count, reserved;
   uint32_t object_offset, object_length, object_checksum;
-  uint32_t app_sector, app_length;
-  uint8_t app_sha256[32]; uint32_t app_signature_sector, signer_id;
+  uint32_t catalog_sector, catalog_length;
+  uint8_t catalog_sha256[32]; uint32_t catalog_signature_sector, signer_id;
   uint8_t auth_reserved[24];
 } __attribute__((packed));
+struct aiuefs_app_catalog { uint8_t magic[8]; uint32_t version,count; } __attribute__((packed));
+struct aiuefs_app_entry { uint8_t id[16]; uint32_t sector,length; uint8_t sha256[32]; uint32_t signature_sector,signer_id; } __attribute__((packed));
 struct aiuefs_journal_record {
   uint8_t magic[8]; uint32_t version, sequence, state, payload_length, payload_checksum, header_checksum;
   uint8_t payload[32];
@@ -122,9 +124,10 @@ struct aiuefs_mutable_object {
   uint8_t object[16];
 } __attribute__((packed));
 static int object_store_ready;
-static int kotoba_app_ready;
-static uint32_t kotoba_app_length;
-static uint8_t kotoba_app_object[12288];
+#define KOTOBA_APP_CAPACITY 4U
+static struct { uint8_t id[16]; uint32_t length; uint8_t ready; } kotoba_apps[KOTOBA_APP_CAPACITY];
+static uint8_t kotoba_app_objects[KOTOBA_APP_CAPACITY][12288];
+static uint32_t kotoba_app_count;
 static int journal_ready;
 static int journal_recovered;
 static uint32_t journal_sequence;
@@ -141,9 +144,13 @@ extern uint64_t kotoba_aiueos_journal_plan(uint64_t valid0, uint64_t sequence0,
 volatile uint64_t aiueos_virtio_blk_irq_count;
 static int blk_msix_active;
 int aiueos_object_store_ready(void) { return object_store_ready; }
-int aiueos_kotoba_app_object(const uint8_t **data,uint64_t *length) {
-  if (!kotoba_app_ready || !data || !length) return 0;
-  *data=kotoba_app_object; *length=kotoba_app_length; return 1;
+int aiueos_kotoba_app_object(const uint8_t id[16],const uint8_t **data,uint64_t *length) {
+  if (!id || !data || !length) return 0;
+  for(unsigned app=0;app<kotoba_app_count;app++) { uint8_t difference=0;
+    for(unsigned i=0;i<16;i++) difference|=id[i]^kotoba_apps[app].id[i];
+    if (!difference && kotoba_apps[app].ready) { *data=kotoba_app_objects[app];*length=kotoba_apps[app].length;return 1; }
+  }
+  return 0;
 }
 int aiueos_journal_ready(void) { return journal_ready; }
 int aiueos_journal_recovered(void) { return journal_recovered; }
@@ -575,31 +582,59 @@ static int virtio_blk(uint8_t b, uint8_t d, uint8_t f) {
       const struct aiuefs_superblock *superblock = (const void *)sector;
       extern uint64_t kotoba_aiueos_superblock_valid(const void *, uint64_t);
       if (!kotoba_aiueos_superblock_valid(superblock, 512)) return 0;
-      uint32_t app_sector=superblock->app_sector,app_length=superblock->app_length;
-      uint32_t signature_sector=superblock->app_signature_sector;
-      uint8_t expected_sha[32],actual_sha[32],signature[256];
-      for(unsigned i=0;i<32;i++) expected_sha[i]=superblock->app_sha256[i];
-      if (app_sector<4 || !app_length || app_length>sizeof(kotoba_app_object) ||
-          app_sector+(app_length+511)/512>capacity ||
-          signature_sector<app_sector+(app_length+511)/512 || signature_sector>=capacity ||
+      uint32_t catalog_sector=superblock->catalog_sector,catalog_length=superblock->catalog_length;
+      uint32_t catalog_signature_sector=superblock->catalog_signature_sector;
+      uint8_t expected_catalog_sha[32],actual_sha[32],signature[256],catalog_bytes[272];
+      for(unsigned i=0;i<32;i++) expected_catalog_sha[i]=superblock->catalog_sha256[i];
+      if (catalog_sector<4 || catalog_length<80 || catalog_length>sizeof(catalog_bytes) ||
+          catalog_signature_sector<=catalog_sector || catalog_signature_sector>=capacity ||
           superblock->signer_id!=1) return 0;
-      uint32_t copied=0;
-      for(uint32_t index=0;copied<app_length;index++) {
-        for(uint32_t i=0;i<512;i++) sector[i]=0;
-        if (!virtio_blk_sector_io(request,sector,status,desc,avail,used,doorbell,
-                                  &submitted,VIRTIO_BLK_T_IN,app_sector+index)) return 0;
-        uint32_t take=app_length-copied; if(take>512) take=512;
-        for(uint32_t i=0;i<take;i++) kotoba_app_object[copied+i]=sector[i];
-        copied+=take;
-      }
       for(uint32_t i=0;i<512;i++) sector[i]=0;
       if (!virtio_blk_sector_io(request,sector,status,desc,avail,used,doorbell,
-                                &submitted,VIRTIO_BLK_T_IN,signature_sector)) return 0;
+                                &submitted,VIRTIO_BLK_T_IN,catalog_sector)) return 0;
+      for(uint32_t i=0;i<catalog_length;i++) catalog_bytes[i]=sector[i];
+      for(uint32_t i=0;i<512;i++) sector[i]=0;
+      if (!virtio_blk_sector_io(request,sector,status,desc,avail,used,doorbell,
+                                &submitted,VIRTIO_BLK_T_IN,catalog_signature_sector)) return 0;
       for(unsigned i=0;i<256;i++) signature[i]=sector[i];
-      aiueos_sha256(kotoba_app_object,app_length,actual_sha);
-      if (!bytes_equal_constant_time(expected_sha,actual_sha,32) ||
+      aiueos_sha256(catalog_bytes,catalog_length,actual_sha);
+      if (!bytes_equal_constant_time(expected_catalog_sha,actual_sha,32) ||
           !aiueos_rsa2048_sha256_verify(signature,actual_sha)) return 0;
-      kotoba_app_length=app_length; kotoba_app_ready=1;
+      const struct aiuefs_app_catalog *catalog=(const void *)catalog_bytes;
+      if (catalog->magic[0]!='A'||catalog->magic[1]!='I'||catalog->magic[2]!='U'||
+          catalog->magic[3]!='C'||catalog->magic[4]!='A'||catalog->magic[5]!='T'||
+          catalog->magic[6]!='1'||catalog->magic[7]!=0||catalog->version!=1||
+          !catalog->count||catalog->count>KOTOBA_APP_CAPACITY||
+          catalog_length!=sizeof(*catalog)+catalog->count*sizeof(struct aiuefs_app_entry)) return 0;
+      const struct aiuefs_app_entry *entries=(const void *)(catalog_bytes+sizeof(*catalog));
+      for(unsigned app=0;app<catalog->count;app++) {
+        const struct aiuefs_app_entry *entry=&entries[app];
+        uint32_t end=entry->sector+(entry->length+511)/512;
+        if (!entry->id[0]||entry->id[15]||entry->sector<4||!entry->length||
+            entry->length>sizeof(kotoba_app_objects[app])||end>capacity||
+            entry->signature_sector<end||entry->signature_sector>=capacity||entry->signer_id!=1||
+            (catalog_sector>=entry->sector&&catalog_sector<end)||
+            (catalog_signature_sector>=entry->sector&&catalog_signature_sector<end)||
+            entry->signature_sector==catalog_sector||entry->signature_sector==catalog_signature_sector) return 0;
+        for(unsigned prior=0;prior<app;prior++) {
+          const struct aiuefs_app_entry *p=&entries[prior];uint32_t p_end=p->sector+(p->length+511)/512;
+          uint8_t same=0;for(unsigned i=0;i<16;i++)same|=entry->id[i]^p->id[i];
+          if (!same||(entry->sector<p_end&&p->sector<end)||entry->signature_sector==p->signature_sector||
+              (entry->signature_sector>=p->sector&&entry->signature_sector<p_end)||
+              (p->signature_sector>=entry->sector&&p->signature_sector<end)) return 0;
+        }
+        uint32_t copied=0;for(uint32_t index=0;copied<entry->length;index++) {
+          for(uint32_t i=0;i<512;i++)sector[i]=0;
+          if(!virtio_blk_sector_io(request,sector,status,desc,avail,used,doorbell,&submitted,VIRTIO_BLK_T_IN,entry->sector+index))return 0;
+          uint32_t take=entry->length-copied;if(take>512)take=512;for(uint32_t i=0;i<take;i++)kotoba_app_objects[app][copied+i]=sector[i];copied+=take;
+        }
+        for(uint32_t i=0;i<512;i++)sector[i]=0;
+        if(!virtio_blk_sector_io(request,sector,status,desc,avail,used,doorbell,&submitted,VIRTIO_BLK_T_IN,entry->signature_sector))return 0;
+        for(unsigned i=0;i<256;i++)signature[i]=sector[i];aiueos_sha256(kotoba_app_objects[app],entry->length,actual_sha);
+        if(!bytes_equal_constant_time(entry->sha256,actual_sha,32)||!aiueos_rsa2048_sha256_verify(signature,actual_sha))return 0;
+        for(unsigned i=0;i<16;i++)kotoba_apps[app].id[i]=entry->id[i];kotoba_apps[app].length=entry->length;kotoba_apps[app].ready=1;
+      }
+      kotoba_app_count=catalog->count;
       object_store_ready = 1;
       struct aiuefs_journal_record slots[2];
       struct aiuefs_journal_record *journal = (void *)sector;
@@ -755,7 +790,7 @@ static int virtio_gpu(uint8_t b, uint8_t d, uint8_t f) {
 
 int aiueos_pci_enumerate(void) {
   object_store_ready = 0;
-  kotoba_app_ready=0; kotoba_app_length=0;
+  kotoba_app_count=0; for(unsigned app=0;app<KOTOBA_APP_CAPACITY;app++)kotoba_apps[app].ready=0;
   journal_ready = 0;
   journal_recovered = 0;
   journal_sequence = 0;

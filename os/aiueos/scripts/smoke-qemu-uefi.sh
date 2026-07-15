@@ -43,8 +43,9 @@ fi
 rm -f "$log" "$serial_log"
 if [ "${AIUEOS_PRESERVE_BLK_IMAGE:-0}" != 1 ] || [ ! -f "$blk_image" ]; then
 python3 "$aiueos/scripts/make-aiuefs-image.py" \
-  --app "$aiueos/kotoba/user-smoke.elf" \
-  --signature "$aiueos/kotoba/user-smoke.sig" --output "$blk_image"
+  --entry "app/hello,$aiueos/kotoba/user-smoke.elf,$aiueos/kotoba/user-smoke.sig" \
+  --entry "app/worker,$aiueos/kotoba/user-smoke.elf,$aiueos/kotoba/user-smoke.sig" \
+  --catalog-signature "$aiueos/kotoba/app-catalog.sig" --output "$blk_image"
 fi
 if [ "${AIUEOS_CORRUPT_KOTOBA_APP:-0}" = 1 ]; then
 python3 - "$blk_image" <<'PY'
@@ -57,8 +58,17 @@ if [ "${AIUEOS_CORRUPT_KOTOBA_SIGNATURE:-0}" = 1 ]; then
 python3 - "$blk_image" <<'PY'
 from pathlib import Path
 import struct, sys
-p=Path(sys.argv[1]); b=bytearray(p.read_bytes()); sector=struct.unpack_from('<I',b,76)[0]
-b[sector*512+17]^=1; p.write_bytes(b)
+p=Path(sys.argv[1]); b=bytearray(p.read_bytes()); catalog_sector=struct.unpack_from('<I',b,36)[0]
+signature_sector=struct.unpack_from('<I',b,catalog_sector*512+16+56)[0]
+b[signature_sector*512+17]^=1; p.write_bytes(b)
+PY
+fi
+if [ "${AIUEOS_CORRUPT_KOTOBA_CATALOG:-0}" = 1 ]; then
+python3 - "$blk_image" <<'PY'
+from pathlib import Path
+import struct,sys
+p=Path(sys.argv[1]);b=bytearray(p.read_bytes());sector=struct.unpack_from('<I',b,36)[0]
+b[sector*512+20]^=1;p.write_bytes(b)
 PY
 fi
 if [ -n "${AIUEOS_DISK_IMAGE:-}" ]; then
@@ -108,7 +118,8 @@ fi
 # The #UD handler writes 0x30; isa-debug-exit maps it to (0x30 << 1) | 1 = 97.
 [ "$status" -eq 97 ] || {
   if { [ "${AIUEOS_CORRUPT_KOTOBA_APP:-0}" = 1 ] ||
-       [ "${AIUEOS_CORRUPT_KOTOBA_SIGNATURE:-0}" = 1 ]; } && [ "$status" -eq 227 ]; then
+       [ "${AIUEOS_CORRUPT_KOTOBA_SIGNATURE:-0}" = 1 ] ||
+       [ "${AIUEOS_CORRUPT_KOTOBA_CATALOG:-0}" = 1 ]; } && [ "$status" -eq 227 ]; then
     ! grep -F "AIUEOS_KOTOBA_APP_ADMISSION_OK" "$serial_log" >/dev/null || {
       echo "error: corrupted Kotoba app reached admission" >&2; exit 1;
     }
@@ -217,11 +228,11 @@ if [ "${AIUEOS_TEST_DMAR:-0}" = 1 ]; then
     echo "error: VT-d interrupt-remapped MSI-X evidence was not observed" >&2; exit 1;
   }
 fi
-grep -F "AIUEOS_OBJECT_STORE_OK aiuefs-v2 objects=2 app=sha256+rsa2048" "$serial_log" >/dev/null || {
+grep -F "AIUEOS_OBJECT_STORE_OK aiuefs-v3 objects=3 catalog=2apps" "$serial_log" >/dev/null || {
   echo "error: bounded read-only object-store evidence was not observed" >&2
   exit 1
 }
-grep -F "AIUEOS_KOTOBA_APP_ADMISSION_OK source=object-store digest=sha256 signature=rsa2048-pkcs1 policy=public-key" "$serial_log" >/dev/null || {
+grep -F "AIUEOS_KOTOBA_APP_ADMISSION_OK catalog=rsa2048 apps=2 digest=sha256 signature=rsa2048-pkcs1 policy=public-key" "$serial_log" >/dev/null || {
   echo "error: authenticated object-store Kotoba app admission was not observed" >&2
   exit 1
 }
@@ -337,12 +348,16 @@ grep -F "AIUEOS_CAPABILITY_TRANSFER_OK source=2 target=3 attenuated atomic-claim
   echo "error: atomic process capability transfer evidence was not observed" >&2
   exit 1
 }
-grep -F "AIUEOS_PROCESS_REAP_OK tasks=3 process-slots=8 task-slots=8 generations=reused owner-caps-revoked allocator-pages=17 stack-pages=reused zero-reused" "$serial_log" >/dev/null || {
+grep -F "AIUEOS_PROCESS_REAP_OK tasks=4 process-slots=8 task-slots=8 generations=reused owner-caps-revoked allocator-pages=24 stack-pages=reused zero-reused" "$serial_log" >/dev/null || {
   echo "error: process exit/reap/reuse evidence was not observed" >&2
   exit 1
 }
-grep -F "AIUEOS_KOTOBA_ELF_PROCESS_OK source=object-store et-exec segments=rx,rw result=42 domain=4" "$serial_log" >/dev/null || {
+grep -F "AIUEOS_KOTOBA_ELF_PROCESS_OK source=catalog apps=2 et-exec segments=rx,rw result=42 domains=4,5" "$serial_log" >/dev/null || {
   echo "Kotoba ELF process evidence missing" >&2
+  exit 1
+}
+grep -F "AIUEOS_APP_CATALOG_LOOKUP_OK ids=app/hello,app/worker unknown=denied extents=nonoverlap" "$serial_log" >/dev/null || {
+  echo "catalog lookup evidence missing" >&2
   exit 1
 }
 grep -F "AIUEOS_USER_SYSCALL_OK valid-log copied-payload too-big stale-generation foreign-owner wrong-type no-rights invalid-pointer" "$serial_log" >/dev/null || {
