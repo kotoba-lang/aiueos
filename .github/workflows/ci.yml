@@ -20,6 +20,12 @@ jobs:
         run: os/aiueos/scripts/build-uefi.sh
       - name: Boot and recover the committed journal (no Linux guest)
         run: os/aiueos/scripts/smoke-qemu-journal-recovery.sh
+      - name: Reject a corrupted Kotoba app digest
+        run: AIUEOS_CORRUPT_KOTOBA_APP=1 os/aiueos/scripts/smoke-qemu-uefi.sh
+      - name: Reject a corrupted Kotoba app signature
+        run: AIUEOS_CORRUPT_KOTOBA_SIGNATURE=1 os/aiueos/scripts/smoke-qemu-uefi.sh
+      - name: Reject a corrupted Kotoba catalog
+        run: AIUEOS_CORRUPT_KOTOBA_CATALOG=1 os/aiueos/scripts/smoke-qemu-uefi.sh
       - name: Reject a corrupted kernel before ELF parsing
         run: AIUEOS_CORRUPT_KERNEL=1 os/aiueos/scripts/smoke-qemu-uefi.sh
 
