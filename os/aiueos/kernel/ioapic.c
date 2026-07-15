@@ -10,13 +10,13 @@ volatile uint64_t aiueos_external_timer_ticks;
 static inline void out8(uint16_t port, uint8_t value) {
   __asm__ volatile("outb %0, %1" : : "a"(value), "Nd"(port));
 }
-
 static uint32_t ioapic_read(volatile uint32_t *base, uint8_t reg) {
   base[0] = reg; return base[4];
 }
 static void ioapic_write(volatile uint32_t *base, uint8_t reg, uint32_t value) {
   base[0] = reg; base[4] = value; (void)base[4];
 }
+
 int aiueos_ioapic_route_legacy_timer(void) {
   uint32_t address = aiueos_acpi_ioapic_address();
   uint32_t base_gsi = aiueos_acpi_ioapic_gsi_base();
