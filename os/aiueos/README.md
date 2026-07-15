@@ -68,6 +68,15 @@ by a Kotoba FNV receipt for both CPL0 and CPL3 calls; oversize requests fail
 before memory access. General page-fault-recoverable copy-in and the
 `syscall`/`sysret` transport remain later work.
 
+The log capability is backed by a native slot table rather than a fixed magic
+constant. A compiler-emitted Kotoba planner encodes and admits handles from the
+slot generation, object type, active state, and rights. Boot revokes generation
+1, proves the stale handle fails, reissues generation 2, and exercises stale,
+wrong-type, and no-rights rejection again from CPL3. Table allocation,
+concurrency, and per-process ownership remain later work.
+An exhausted generation retires its slot rather than wrapping and reviving an
+old handle.
+
 The PCI path performs a bounded configuration-space scan and validates modern
 virtio vendor capabilities, including a cycle-limited capability chain, BAR
 kind and width, and overflow-safe capability ranges. PCI MMIO is identity

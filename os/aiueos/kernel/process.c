@@ -4,7 +4,10 @@
 #define LOG 1
 #define EXIT 2
 #define ABI_V1 0x00010000ULL
-#define LOG_HANDLE 0xa105ca7e00010001ULL
+#define LOG_HANDLE 0x0001000100020001ULL
+#define STALE_LOG_HANDLE 0x0001000100010001ULL
+#define WRONG_TYPE_HANDLE 0x0001000000020001ULL
+#define NO_RIGHTS_HANDLE 0x0000000100020001ULL
 #define BAD_HANDLE ((uint64_t)-9)
 #define BAD_POINTER ((uint64_t)-14)
 #define TOO_BIG ((uint64_t)-7)
@@ -28,7 +31,9 @@ extern volatile uint64_t aiueos_page_fault_stage, aiueos_page_fault_error;
 static struct tss64 tss;
 static uint8_t syscall_stack[16384] __attribute__((aligned(4096)));
 
-struct user_result { uint64_t abi, valid, too_big, bad_handle, bad_pointer, completed; };
+struct user_result {
+  uint64_t abi, valid, too_big, stale, wrong_type, no_rights, bad_pointer, completed;
+};
 __attribute__((section(".user.data"), aligned(4096)))
 static volatile struct user_result result;
 __attribute__((section(".user.data"))) static uint8_t user_stack[2048];
@@ -44,7 +49,9 @@ static void user_entry(void) {
   result.abi = call(ABI,0,0,0);
   result.valid = call(LOG,LOG_HANDLE,user_message,5);
   result.too_big = call(LOG,LOG_HANDLE,user_stack,257);
-  result.bad_handle = call(LOG,LOG_HANDLE ^ 0x10000,user_message,1);
+  result.stale = call(LOG,STALE_LOG_HANDLE,user_message,1);
+  result.wrong_type = call(LOG,WRONG_TYPE_HANDLE,user_message,1);
+  result.no_rights = call(LOG,NO_RIGHTS_HANDLE,user_message,1);
   result.bad_pointer = call(LOG,LOG_HANDLE,(void *)0x180000,1); /* RX, not readable user data policy */
   result.completed = 1;
   call(EXIT,0,0,0);
@@ -69,7 +76,8 @@ int aiueos_process_result(void) {
   extern uint64_t aiueos_syscall_last_copy_hash;
   return aiueos_syscall_from_user == 3 && result.completed &&
     result.abi==ABI_V1 && result.valid==5 && result.too_big==TOO_BIG &&
-    result.bad_handle==BAD_HANDLE && result.bad_pointer==BAD_POINTER &&
+    result.stale==BAD_HANDLE && result.wrong_type==BAD_HANDLE &&
+    result.no_rights==BAD_HANDLE && result.bad_pointer==BAD_POINTER &&
     aiueos_syscall_last_copy_length==5 &&
     (uint32_t)aiueos_syscall_last_copy_hash==0xbc39ab88U;
 }
