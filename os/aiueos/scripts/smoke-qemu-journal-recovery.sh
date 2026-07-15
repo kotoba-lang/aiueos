@@ -45,10 +45,11 @@ def record(sector):
 assert [record(1), record(2)] == [1, 2]
 o = d[3*512:4*512]
 magic, version, sequence, length, checksum = struct.unpack_from('<8s4I', o)
-assert (magic, version, sequence, length) == (b'AIUOBJ1\0', 1, 2, 16)
-assert o[24:40] == b'KOTOBASE-OBJ-002' and fnv(o[24:40]) == checksum
+registry = b'SRV1\x01\x02\x00\x00\x01\x02\x01\x02\x01\x00\x00\x00'
+assert (magic, version, sequence, length) == (b'AIUOBJ1\0', 2, 2, 16)
+assert o[24:40] == registry and fnv(o[24:40]) == checksum
 PY
-echo "AIUEOS_OBJECT_STORE_TRANSACTION_OK journal=2 object=2 payload=KOTOBASE-OBJ-002"
+echo "AIUEOS_SERVICE_REGISTRY_REPLAY_OK journal=2 object=2 generation=2,1"
 
 # Corrupt the latest slot (sector 2, sequence 2). Boot must reject it, select
 # sector 1 sequence 1, and recreate sequence 2 in the alternate slot.
@@ -77,7 +78,8 @@ def fnv(b):
     h = 2166136261
     for v in b: h = ((h ^ v) * 16777619) & 0xffffffff
     return h
-assert (magic, version, sequence, length) == (b'AIUOBJ1\0', 1, 2, 16)
-assert o[24:40] == b'KOTOBASE-OBJ-002' and fnv(o[24:40]) == checksum
+registry = b'SRV1\x01\x02\x00\x00\x01\x02\x01\x02\x01\x00\x00\x00'
+assert (magic, version, sequence, length) == (b'AIUOBJ1\0', 2, 2, 16)
+assert o[24:40] == registry and fnv(o[24:40]) == checksum
 PY
-echo "AIUEOS_OBJECT_STORE_ROLLBACK_REDO_OK fallback=1 object=2"
+echo "AIUEOS_SERVICE_REGISTRY_ROLLBACK_REDO_OK fallback=1 object=2"

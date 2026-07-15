@@ -178,13 +178,16 @@
  :service-runtime {:version 1 :slots 2 :identity :stable-id
                    :generation :restart-advances
                    :liveness :scheduler-heartbeat
-                   :persistence :kernel-lifetime
+                   :persistence {:medium :virtio-blk-object-store
+                                 :commit :journal-first
+                                 :recovery :redo-before-append
+                                 :fields [:id :generation :restart-count]}
                    :restart {:policy :kotoba :budget :bounded
                              :effect :replace-saved-context}
                    :ipc {:transport :bounded-mailbox
                          :admission :owner-domain-capability
                          :address-spaces :cross-cr3}
-                   :not-yet [:durable-registry]}
+                   :registry {:format :service-registry-v1 :services 2}}
  :syscall {:version 1
            :transport :interrupt-0x80
            :current-privilege :cpl3

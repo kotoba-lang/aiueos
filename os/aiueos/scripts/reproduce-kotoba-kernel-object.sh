@@ -3,7 +3,7 @@ set -eu
 
 aiueos=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 compiler=${1:?usage: reproduce-kotoba-kernel-object.sh /path/to/compiler}
-expected=946079ad0ccaed8fa8035091f0af35157a4b5b3d
+expected=0e3532fb7afb84f5917468fde7814ab70d6da1ad
 actual=$(git -C "$compiler" rev-parse HEAD)
 
 [ "$actual" = "$expected" ] || {
@@ -27,7 +27,8 @@ syscall_range_tmp=${TMPDIR:-/tmp}/aiueos-kotoba-syscall-range.$$
 copy_in_tmp=${TMPDIR:-/tmp}/aiueos-kotoba-copy-in.$$
 capability_tmp=${TMPDIR:-/tmp}/aiueos-kotoba-capability.$$
 service_lifecycle_tmp=${TMPDIR:-/tmp}/aiueos-kotoba-service-lifecycle.$$
-trap 'rm -f "$tmp" "$journal_tmp" "$fnv_tmp" "$journal_valid_tmp" "$transaction_valid_tmp" "$mutable_valid_tmp" "$superblock_valid_tmp" "$journal_build_tmp" "$mutable_build_tmp" "$cap_valid_tmp" "$extent_valid_tmp" "$region_valid_tmp" "$syscall_range_tmp" "$copy_in_tmp" "$capability_tmp" "$service_lifecycle_tmp"' EXIT HUP INT TERM
+service_registry_tmp=${TMPDIR:-/tmp}/aiueos-kotoba-service-registry.$$
+trap 'rm -f "$tmp" "$journal_tmp" "$fnv_tmp" "$journal_valid_tmp" "$transaction_valid_tmp" "$mutable_valid_tmp" "$superblock_valid_tmp" "$journal_build_tmp" "$mutable_build_tmp" "$cap_valid_tmp" "$extent_valid_tmp" "$region_valid_tmp" "$syscall_range_tmp" "$copy_in_tmp" "$capability_tmp" "$service_lifecycle_tmp" "$service_registry_tmp"' EXIT HUP INT TERM
 "$compiler/bin/kotoba-compiler" compile "$aiueos/kotoba/kernel-probe.kotoba" \
   --target x86_64-aiueos-kernel-v1 --output "$tmp"
 cmp "$aiueos/kotoba/kernel-probe.o" "$tmp"
@@ -55,7 +56,7 @@ python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$journal_valid_tmp" \
   --target x86_64-aiueos-kernel-v1 --output "$transaction_valid_tmp"
 cmp "$aiueos/kotoba/object-transaction-valid.o" "$transaction_valid_tmp"
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$transaction_valid_tmp" \
-  3daa4b0b43f58bd9b42005cf3bc41c35a24b35c82a466313cb954f854e75429e \
+  1d2bc2c52b48c6743877901fe9bd208cc39a0a20efc7dd7b1997eb3981079a1f \
   kotoba_aiueos_object_transaction_valid
 "$compiler/bin/kotoba-compiler" compile "$aiueos/kotoba/mutable-object-valid.kotoba" \
   --target x86_64-aiueos-kernel-v1 --output "$mutable_valid_tmp"
@@ -123,4 +124,10 @@ cmp "$aiueos/kotoba/service-lifecycle.o" "$service_lifecycle_tmp"
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$service_lifecycle_tmp" \
   20251d96186775cda64c79b4118c0fb539c013b97ddc0b5d0c1e34e1b0f3b255 \
   kotoba_aiueos_service_lifecycle
+"$compiler/bin/kotoba-compiler" compile "$aiueos/kotoba/service-registry-build.kotoba" \
+  --target x86_64-aiueos-kernel-v1 --output "$service_registry_tmp"
+cmp "$aiueos/kotoba/service-registry-build.o" "$service_registry_tmp"
+python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$service_registry_tmp" \
+  70eee5d4dd599ea2049261e92a656931768b355eefc0fb6d83deee192a3a05f0 \
+  kotoba_aiueos_service_registry_build
 echo "AIUEOS_KOTOBA_REPRODUCIBLE_OK compiler=$actual"

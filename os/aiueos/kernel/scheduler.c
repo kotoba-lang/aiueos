@@ -156,6 +156,12 @@ int aiueos_service_ipc_evidence_ready(void) {
     service_ipc_received_payload == 0x4b4f544f42414950ULL &&
     service_mailbox.full == 0;
 }
+uint64_t aiueos_service_registry_state(unsigned service) {
+  if (service >= 2 || services[service].id > 255 ||
+      services[service].generation > 255 || services[service].restarts > 255) return 0;
+  return services[service].id | (services[service].generation << 16) |
+    (services[service].restarts << 32);
+}
 uint64_t *aiueos_scheduler_on_timer(uint64_t *interrupted_stack) {
   tasks[current_task].saved_stack = interrupted_stack;
   tasks[current_task].switches++;

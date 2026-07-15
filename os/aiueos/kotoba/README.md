@@ -2,7 +2,7 @@
 
 `kernel-probe.o` is the byte-for-byte output of the merged
 `kotoba-lang/compiler` commit
-`946079ad0ccaed8fa8035091f0af35157a4b5b3d` for `kernel-probe.kotoba`:
+`0e3532fb7afb84f5917468fde7814ab70d6da1ad` for `kernel-probe.kotoba`:
 
 ```clojure
 (defn main [] 42)
@@ -93,3 +93,10 @@ the configured budget is not exhausted. The native timer path consumes the
 packed plan and replaces the failed task's saved context; it does not duplicate
 the generation or budget decision in C. The pinned object SHA-256 is
 `20251d96186775cda64c79b4118c0fb539c013b97ddc0b5d0c1e34e1b0f3b255`.
+
+`service-registry-build` serializes the two bounded scheduler service states
+into a versioned 16-byte registry inside the journal transaction. It writes all
+transaction and journal metadata and checksums with bounded stores. The native
+virtio-blk substrate supplies the observed states, commits the journal before
+materialization, and verifies readback/replay. Its pinned object SHA-256 is
+`70eee5d4dd599ea2049261e92a656931768b355eefc0fb6d83deee192a3a05f0`.

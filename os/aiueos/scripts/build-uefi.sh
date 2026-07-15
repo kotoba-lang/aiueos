@@ -42,6 +42,7 @@ kotoba_syscall_range_object=${AIUEOS_KOTOBA_SYSCALL_RANGE_OBJECT:-"$aiueos/kotob
 kotoba_copy_in_object=${AIUEOS_KOTOBA_COPY_IN_OBJECT:-"$aiueos/kotoba/copy-in.o"}
 kotoba_capability_object=${AIUEOS_KOTOBA_CAPABILITY_OBJECT:-"$aiueos/kotoba/capability-plan.o"}
 kotoba_service_lifecycle_object=${AIUEOS_KOTOBA_SERVICE_LIFECYCLE_OBJECT:-"$aiueos/kotoba/service-lifecycle.o"}
+kotoba_service_registry_object=${AIUEOS_KOTOBA_SERVICE_REGISTRY_OBJECT:-"$aiueos/kotoba/service-registry-build.o"}
 kotoba_fnv_sha=
 if [ -z "${AIUEOS_KOTOBA_FNV_OBJECT:-}" ]; then
   kotoba_fnv_sha=9d447888daf2c5065b3caf98ee348b426296c95781d0651989bd2025ac7ba52d
@@ -74,7 +75,7 @@ python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_journal_valid_
   f06982540d9516409888a759659b7dc75a30972960f567535b47a57d97399c95 \
   kotoba_aiueos_journal_record_valid
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_transaction_valid_object" \
-  3daa4b0b43f58bd9b42005cf3bc41c35a24b35c82a466313cb954f854e75429e \
+  1d2bc2c52b48c6743877901fe9bd208cc39a0a20efc7dd7b1997eb3981079a1f \
   kotoba_aiueos_object_transaction_valid
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_mutable_valid_object" \
   cbbd06c9d4805d36d79d3fe2d17e0769f077d3a6699693825a45a1d17620ae5d \
@@ -109,6 +110,9 @@ python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_capability_obj
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_service_lifecycle_object" \
   20251d96186775cda64c79b4118c0fb539c013b97ddc0b5d0c1e34e1b0f3b255 \
   kotoba_aiueos_service_lifecycle
+python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_service_registry_object" \
+  70eee5d4dd599ea2049261e92a656931768b355eefc0fb6d83deee192a3a05f0 \
+  kotoba_aiueos_service_registry_build
 zig cc -target x86_64-freestanding-none -std=c11 -O2 \
   -ffreestanding -fno-stack-protector -mno-red-zone \
   -c -o "$kernel_object" "$aiueos/kernel/main.c"
@@ -166,7 +170,8 @@ zig ld.lld -nostdlib -static -z max-page-size=0x1000 \
   "$kotoba_mutable_build_object" "$kotoba_cap_valid_object" \
   "$kotoba_extent_valid_object" "$kotoba_region_valid_object" \
   "$kotoba_syscall_range_object" "$kotoba_copy_in_object" \
-  "$kotoba_capability_object" "$kotoba_service_lifecycle_object"
+  "$kotoba_capability_object" "$kotoba_service_lifecycle_object" \
+  "$kotoba_service_registry_object"
 python3 - "$kernel" "$identity_source" <<'PY'
 import hashlib, pathlib, sys
 digest = hashlib.sha256(pathlib.Path(sys.argv[1]).read_bytes()).digest()
