@@ -207,14 +207,18 @@
                                :minimum-slots 256
                                :synchronization :spinlock
                                :owner-domains :multiple
+                               :derivation-key [:parent-slot :parent-generation]
+                               :revocation :recursive-descendants
                                :generation-exhaustion :retire-slot}
            :capability-transfer {:source-owner 2 :target-owner 3
                                  :rights :attenuated
                                  :publication :atomic-claim
+                                 :multi-hop true
+                                 :parent-revoke :all-descendants
                                  :escalation :rejected}
            :process-lifecycle {:exit :scheduler-request
                                :reap :inactive-task-skip
-                               :owner-capabilities :generation-revoked
+                               :owner-capabilities :recursive-generation-revoked
                                :address-space-pages [:pml4 :pdpt :directory :page-table :private]
                                :allocator-pages-per-process 5
                                :address-space-slots 8

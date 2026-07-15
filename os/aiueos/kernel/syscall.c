@@ -20,12 +20,16 @@ struct capability_slot {
   uint16_t type;
   uint32_t state_rights;
   uint16_t owner;
+  uint16_t parent_slot;
+  uint16_t parent_generation;
 };
+_Static_assert(sizeof(struct capability_slot)==16,"capability table must retain 256 slots");
 
 static struct capability_slot *capability_table;
 static uint16_t capability_capacity;
 static volatile uint8_t capability_lock;
 static uint64_t dynamic_capability_evidence;
+static uint64_t capability_derivation_evidence;
 static uint64_t pending_transfer_handle;
 static uint16_t pending_transfer_owner;
 extern void *aiueos_allocate_physical_page(void);
@@ -86,14 +90,42 @@ static int capability_admit(uint64_t handle, uint16_t type, uint16_t rights,
   return admitted;
 }
 
+static uint64_t capability_revoke_graph_locked(uint16_t root) {
+  uint16_t slots[256],generations[256],head=0,tail=0;
+  if (!root || root>=capability_capacity ||
+      !(capability_table[root].state_rights&AIUEOS_CAPABILITY_ACTIVE)) return 0;
+  slots[tail]=root; generations[tail++]=capability_table[root].generation;
+  capability_table[root].state_rights&=~AIUEOS_CAPABILITY_ACTIVE;
+  capability_table[root].generation=capability_table[root].generation==0xffffU ?
+    0 : capability_table[root].generation+1;
+  capability_table[root].parent_slot=capability_table[root].parent_generation=0;
+  while (head<tail) {
+    uint16_t parent=slots[head],generation=generations[head++];
+    if ((uint16_t)pending_transfer_handle==parent &&
+        (uint16_t)(pending_transfer_handle>>16)==generation) {
+      pending_transfer_handle=0; pending_transfer_owner=0;
+    }
+    for (uint16_t slot=1;slot<capability_capacity;slot++) {
+      struct capability_slot *entry=&capability_table[slot];
+      if ((entry->state_rights&AIUEOS_CAPABILITY_ACTIVE) &&
+          entry->parent_slot==parent && entry->parent_generation==generation) {
+        if (tail>=256) return 0;
+        slots[tail]=slot; generations[tail++]=entry->generation;
+        entry->state_rights&=~AIUEOS_CAPABILITY_ACTIVE;
+        entry->generation=entry->generation==0xffffU ? 0 : entry->generation+1;
+        entry->parent_slot=entry->parent_generation=0;
+      }
+    }
+  }
+  return tail;
+}
+
 static int capability_revoke(uint16_t slot) {
   if (!capability_table || !slot || slot >= capability_capacity) return 0;
   capability_lock_acquire();
-  struct capability_slot *entry = &capability_table[slot];
-  entry->state_rights &= ~AIUEOS_CAPABILITY_ACTIVE;
-  entry->generation = entry->generation == 0xffffU ? 0 : entry->generation + 1;
+  uint64_t revoked=capability_revoke_graph_locked(slot);
   capability_lock_release();
-  return 1;
+  return revoked!=0;
 }
 
 static uint64_t capability_issue(uint16_t slot, uint16_t type, uint16_t rights,
@@ -105,6 +137,7 @@ static uint64_t capability_issue(uint16_t slot, uint16_t type, uint16_t rights,
   entry->type = type;
   entry->state_rights = AIUEOS_CAPABILITY_ACTIVE | rights;
   entry->owner = owner;
+  entry->parent_slot=entry->parent_generation=0;
   return capability_plan(slot,type,rights,owner);
 }
 
@@ -129,6 +162,7 @@ int aiueos_capability_table_initialize(void) {
   capability_capacity = (uint16_t)(4096U / sizeof(*capability_table));
   capability_lock = 0;
   dynamic_capability_evidence = 0;
+  capability_derivation_evidence = 0;
   pending_transfer_handle = 0; pending_transfer_owner = 0;
   for (uint16_t slot = 1; slot < capability_capacity; slot++)
     capability_table[slot].generation = 1;
@@ -152,7 +186,11 @@ static uint64_t capability_transfer_publish(uint64_t source_handle,
     struct capability_slot *entry=&capability_table[slot];
     if (entry->generation && !(entry->state_rights&AIUEOS_CAPABILITY_ACTIVE)) {
       uint64_t target=capability_issue(slot,AIUEOS_CAPABILITY_TYPE_LOG,rights,target_owner);
-      if (target) { pending_transfer_handle=target; pending_transfer_owner=target_owner; }
+      if (target) {
+        entry->parent_slot=source_slot;
+        entry->parent_generation=(uint16_t)(source_handle>>16);
+        pending_transfer_handle=target; pending_transfer_owner=target_owner;
+      }
       capability_lock_release(); return target;
     }
   }
@@ -171,6 +209,9 @@ static uint64_t capability_claim_transfer(uint16_t owner) {
 uint16_t aiueos_capability_table_capacity(void) { return capability_capacity; }
 int aiueos_dynamic_capability_evidence_ready(void) {
   return dynamic_capability_evidence == 3;
+}
+int aiueos_capability_derivation_evidence_ready(void) {
+  return capability_derivation_evidence==3;
 }
 uint64_t aiueos_capability_log_handle(uint16_t owner) {
   capability_lock_acquire();
@@ -193,9 +234,7 @@ uint64_t aiueos_capability_revoke_owner(uint16_t owner) {
   for (uint16_t slot=1;slot<capability_capacity;slot++) {
     struct capability_slot *entry=&capability_table[slot];
     if (entry->owner==owner && (entry->state_rights&AIUEOS_CAPABILITY_ACTIVE)) {
-      entry->state_rights&=~AIUEOS_CAPABILITY_ACTIVE;
-      entry->generation=entry->generation==0xffffU?0:entry->generation+1;
-      revoked++;
+      revoked+=capability_revoke_graph_locked(slot);
     }
   }
   if (pending_transfer_owner==owner) { pending_transfer_handle=0; pending_transfer_owner=0; }
@@ -303,6 +342,33 @@ int aiueos_syscall_self_test(void) {
   if (!capability_revoke(exhausted) || capability_issue(exhausted,AIUEOS_CAPABILITY_TYPE_LOG,
       AIUEOS_CAPABILITY_RIGHT_LOG_WRITE,AIUEOS_DOMAIN_KERNEL) != 0) return 0;
   dynamic_capability_evidence |= 2;
+  uint64_t graph_root=capability_allocate(AIUEOS_CAPABILITY_TYPE_LOG,
+    AIUEOS_CAPABILITY_RIGHT_LOG_WRITE,AIUEOS_DOMAIN_KERNEL);
+  uint64_t graph_child=capability_transfer_publish(graph_root,AIUEOS_DOMAIN_KERNEL,2,
+    AIUEOS_CAPABILITY_RIGHT_LOG_WRITE);
+  if (!graph_root || !graph_child || capability_claim_transfer(2)!=graph_child) return 0;
+  uint64_t graph_grandchild=capability_transfer_publish(graph_child,2,3,
+    AIUEOS_CAPABILITY_RIGHT_LOG_WRITE);
+  if (!graph_grandchild || capability_claim_transfer(3)!=graph_grandchild ||
+      !capability_plan((uint16_t)graph_grandchild,AIUEOS_CAPABILITY_TYPE_LOG,
+        AIUEOS_CAPABILITY_RIGHT_LOG_WRITE,3)) return 0;
+  capability_lock_acquire();
+  uint64_t graph_revoked=capability_revoke_graph_locked((uint16_t)graph_root);
+  capability_lock_release();
+  if (graph_revoked!=3 || capability_plan((uint16_t)graph_root,
+        AIUEOS_CAPABILITY_TYPE_LOG,AIUEOS_CAPABILITY_RIGHT_LOG_WRITE,1) ||
+      capability_plan((uint16_t)graph_child,AIUEOS_CAPABILITY_TYPE_LOG,
+        AIUEOS_CAPABILITY_RIGHT_LOG_WRITE,2) ||
+      capability_plan((uint16_t)graph_grandchild,AIUEOS_CAPABILITY_TYPE_LOG,
+        AIUEOS_CAPABILITY_RIGHT_LOG_WRITE,3)) return 0;
+  capability_derivation_evidence|=1;
+  uint64_t graph_reissued=capability_issue((uint16_t)graph_root,
+    AIUEOS_CAPABILITY_TYPE_LOG,AIUEOS_CAPABILITY_RIGHT_LOG_WRITE,1);
+  if (!graph_reissued || graph_reissued==graph_root ||
+      capability_table[(uint16_t)graph_child].parent_slot ||
+      capability_table[(uint16_t)graph_grandchild].parent_slot ||
+      !capability_revoke((uint16_t)graph_reissued)) return 0;
+  capability_derivation_evidence|=2;
   if (invoke(AIUEOS_SYSCALL_LOG_WRITE, log_handle,
              (const void *)0x0000800000000000ULL, 1) != AIUEOS_ERR_BAD_POINTER)
     return 0;

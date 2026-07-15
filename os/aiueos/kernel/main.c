@@ -71,6 +71,7 @@ extern int aiueos_syscall_self_test(void);
 extern int aiueos_capability_table_initialize(void);
 extern uint16_t aiueos_capability_table_capacity(void);
 extern int aiueos_dynamic_capability_evidence_ready(void);
+extern int aiueos_capability_derivation_evidence_ready(void);
 extern int aiueos_process_initialize(void);
 extern void aiueos_process_enter(void);
 extern int aiueos_process_result(void);
@@ -405,6 +406,7 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
       qemu_exit(0x73);
     }
     if (!aiueos_dynamic_capability_evidence_ready() ||
+        !aiueos_capability_derivation_evidence_ready() ||
         aiueos_capability_table_capacity() < 256) qemu_exit(0x73);
     debug_string("AIUEOS_DYNAMIC_CAPABILITY_OK page-backed slots>=256 owner=3 reuse generation retirement\n");
     serial_string("AIUEOS_DYNAMIC_CAPABILITY_OK page-backed slots>=256 owner=3 reuse generation retirement\r\n");
@@ -414,8 +416,8 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
     serial_string("AIUEOS_KOTOBA_SYSCALL_PLANNER_OK bootstrap user overflow\r\n");
     debug_string("AIUEOS_KOTOBA_COPY_IN_OK cpl0 hash bounded-256\n");
     serial_string("AIUEOS_KOTOBA_COPY_IN_OK cpl0 hash bounded-256\r\n");
-    debug_string("AIUEOS_KOTOBA_CAPABILITY_OK table owner generation type rights revoke reissue\n");
-    serial_string("AIUEOS_KOTOBA_CAPABILITY_OK table owner generation type rights revoke reissue\r\n");
+    debug_string("AIUEOS_KOTOBA_CAPABILITY_OK table owner generation type rights revoke reissue derivation=multi-hop recursive-revoke\n");
+    serial_string("AIUEOS_KOTOBA_CAPABILITY_OK table owner generation type rights revoke reissue derivation=multi-hop recursive-revoke\r\n");
     debug_string("AIUEOS_COPYIN_OK noncanonical-and-unmapped-denied\n");
     serial_string("AIUEOS_COPYIN_OK noncanonical-and-unmapped-denied\r\n");
     int process_init = aiueos_process_initialize();
@@ -433,8 +435,8 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
     }
     debug_string("AIUEOS_RING3_OK processes=2 preemptive roots=2 domains=2,3 kernel-stacks=2 int80\n");
     serial_string("AIUEOS_RING3_OK processes=2 preemptive roots=2 domains=2,3 kernel-stacks=2 int80\r\n");
-    debug_string("AIUEOS_CAPABILITY_TRANSFER_OK source=2 target=3 attenuated atomic-claim transferred-use\n");
-    serial_string("AIUEOS_CAPABILITY_TRANSFER_OK source=2 target=3 attenuated atomic-claim transferred-use\r\n");
+    debug_string("AIUEOS_CAPABILITY_TRANSFER_OK source=2 target=3 attenuated atomic-claim transferred-use owner-exit=descendants-revoked\n");
+    serial_string("AIUEOS_CAPABILITY_TRANSFER_OK source=2 target=3 attenuated atomic-claim transferred-use owner-exit=descendants-revoked\r\n");
     if (!aiueos_process_lifecycle_evidence_ready()) qemu_exit(0x71);
     debug_string("AIUEOS_PROCESS_REAP_OK tasks=2 process-slots=8 task-slots=8 generations=reused owner-caps-revoked allocator-pages=10 stack-pages=reused zero-reused\n");
     serial_string("AIUEOS_PROCESS_REAP_OK tasks=2 process-slots=8 task-slots=8 generations=reused owner-caps-revoked allocator-pages=10 stack-pages=reused zero-reused\r\n");
