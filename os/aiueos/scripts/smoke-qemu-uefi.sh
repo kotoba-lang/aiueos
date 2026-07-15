@@ -285,7 +285,7 @@ grep -F "AIUEOS_KOTOBA_COPY_IN_OK cpl0 hash bounded-256" "$serial_log" >/dev/nul
   echo "error: Kotoba bounded copy-in evidence was not observed" >&2
   exit 1
 }
-grep -F "AIUEOS_CAPABILITY_OK handle-v1 invalid-handle-denied" "$serial_log" >/dev/null || {
+grep -F "AIUEOS_KOTOBA_CAPABILITY_OK table generation type rights revoke reissue" "$serial_log" >/dev/null || {
   echo "error: capability negative evidence was not observed" >&2
   exit 1
 }
@@ -299,7 +299,7 @@ grep -F "AIUEOS_ADDRESS_SPACE_OK processes=2 distinct-cr3 private-pages cross-ac
 grep -F "AIUEOS_RING3_OK cpl3-int80 tss-rsp0 return-kernel" "$serial_log" >/dev/null || {
   echo "error: CPL3 syscall and kernel-return evidence was not observed" >&2; exit 1;
 }
-grep -F "AIUEOS_USER_SYSCALL_OK valid-log copied-payload too-big invalid-handle invalid-pointer" "$serial_log" >/dev/null || {
+grep -F "AIUEOS_USER_SYSCALL_OK valid-log copied-payload too-big stale-generation wrong-type no-rights invalid-pointer" "$serial_log" >/dev/null || {
   echo "error: CPL3 syscall positive/negative evidence was not observed" >&2; exit 1;
 }
 grep -F "AIUEOS_COPYIN_OK noncanonical-and-unmapped-denied" "$serial_log" >/dev/null || {

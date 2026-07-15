@@ -3,7 +3,7 @@ set -eu
 
 aiueos=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 compiler=${1:?usage: reproduce-kotoba-kernel-object.sh /path/to/compiler}
-expected=5826568ebdec4f29840d5e85accd77347ff6fbd7
+expected=2f8fc5ee2ba7bceeb6acd22f6f10e7adca4d0633
 actual=$(git -C "$compiler" rev-parse HEAD)
 
 [ "$actual" = "$expected" ] || {
@@ -25,7 +25,8 @@ extent_valid_tmp=${TMPDIR:-/tmp}/aiueos-kotoba-extent-valid.$$
 region_valid_tmp=${TMPDIR:-/tmp}/aiueos-kotoba-region-valid.$$
 syscall_range_tmp=${TMPDIR:-/tmp}/aiueos-kotoba-syscall-range.$$
 copy_in_tmp=${TMPDIR:-/tmp}/aiueos-kotoba-copy-in.$$
-trap 'rm -f "$tmp" "$journal_tmp" "$fnv_tmp" "$journal_valid_tmp" "$transaction_valid_tmp" "$mutable_valid_tmp" "$superblock_valid_tmp" "$journal_build_tmp" "$mutable_build_tmp" "$cap_valid_tmp" "$extent_valid_tmp" "$region_valid_tmp" "$syscall_range_tmp" "$copy_in_tmp"' EXIT HUP INT TERM
+capability_tmp=${TMPDIR:-/tmp}/aiueos-kotoba-capability.$$
+trap 'rm -f "$tmp" "$journal_tmp" "$fnv_tmp" "$journal_valid_tmp" "$transaction_valid_tmp" "$mutable_valid_tmp" "$superblock_valid_tmp" "$journal_build_tmp" "$mutable_build_tmp" "$cap_valid_tmp" "$extent_valid_tmp" "$region_valid_tmp" "$syscall_range_tmp" "$copy_in_tmp" "$capability_tmp"' EXIT HUP INT TERM
 "$compiler/bin/kotoba-compiler" compile "$aiueos/kotoba/kernel-probe.kotoba" \
   --target x86_64-aiueos-kernel-v1 --output "$tmp"
 cmp "$aiueos/kotoba/kernel-probe.o" "$tmp"
@@ -109,4 +110,10 @@ cmp "$aiueos/kotoba/copy-in.o" "$copy_in_tmp"
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$copy_in_tmp" \
   f3b8ae90a2d77ca821c82dfd03f0b6ffc080ffe2b78195a334a4265fbec518e4 \
   kotoba_aiueos_copy_in
+"$compiler/bin/kotoba-compiler" compile "$aiueos/kotoba/capability-plan.kotoba" \
+  --target x86_64-aiueos-kernel-v1 --output "$capability_tmp"
+cmp "$aiueos/kotoba/capability-plan.o" "$capability_tmp"
+python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$capability_tmp" \
+  cd31e40b99176383889e996c7bbfb5a489abe756be9ed2d0bfbf1a626b6396d4 \
+  kotoba_aiueos_capability_plan
 echo "AIUEOS_KOTOBA_REPRODUCIBLE_OK compiler=$actual"

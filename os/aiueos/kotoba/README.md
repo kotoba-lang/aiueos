@@ -2,7 +2,7 @@
 
 `kernel-probe.o` is the byte-for-byte output of the merged
 `kotoba-lang/compiler` commit
-`5826568ebdec4f29840d5e85accd77347ff6fbd7` for `kernel-probe.kotoba`:
+`2f8fc5ee2ba7bceeb6acd22f6f10e7adca4d0633` for `kernel-probe.kotoba`:
 
 ```clojure
 (defn main [] 42)
@@ -76,3 +76,10 @@ buffer. Both source and destination accesses use the compiler's trapping
 bounded-byte operations, recursion consumes replenished freestanding fuel, and
 the syscall records a Kotoba FNV hash of only the copied bytes. Oversized calls
 are rejected before either buffer is touched.
+
+`capability-plan` derives the only admissible 63-bit handle from a table slot,
+generation, type, active bit, rights, and the requested type/rights. The same
+planner issues and checks handles. Revocation clears active state and advances
+the generation before reissue, so stale, wrong-type, and insufficient-rights
+handles cannot alias the live slot.
+Generation exhaustion retires a slot instead of wrapping to an older identity.
