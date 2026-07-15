@@ -69,7 +69,7 @@ python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$mutable_valid_tmp" \
   --target x86_64-aiueos-kernel-v1 --output "$superblock_valid_tmp"
 cmp "$aiueos/kotoba/superblock-valid.o" "$superblock_valid_tmp"
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$superblock_valid_tmp" \
-  3e53077d751eadb01195a6a0b375fb8e8680c98a0a28dadae29ebb4426d6aee7 \
+  ef261661e6ae622f58ad406ed44408db1bf5fcd5f72cea672f4190894a9f9df1 \
   kotoba_aiueos_superblock_valid
 "$compiler/bin/kotoba-compiler" compile "$aiueos/kotoba/journal-record-build.kotoba" \
   --target x86_64-aiueos-kernel-v1 --output "$journal_build_tmp"

@@ -23,7 +23,7 @@ kernel_scheduler_object="$out/kernel-scheduler.o"
 kernel_syscall_object="$out/kernel-syscall.o"
 kernel_process_object="$out/kernel-process.o"
 kernel_loader_object="$out/kernel-loader.o"
-kernel_user_image_object="$out/kernel-user-image.o"
+kernel_sha256_object="$out/kernel-sha256.o"
 kernel_smp_object="$out/kernel-smp.o"
 kernel_trampoline_object="$out/kernel-ap-trampoline.o"
 kernel_ioapic_object="$out/kernel-ioapic.o"
@@ -84,7 +84,7 @@ python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_mutable_valid_
   cbbd06c9d4805d36d79d3fe2d17e0769f077d3a6699693825a45a1d17620ae5d \
   kotoba_aiueos_mutable_object_valid
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_superblock_valid_object" \
-  3e53077d751eadb01195a6a0b375fb8e8680c98a0a28dadae29ebb4426d6aee7 \
+  ef261661e6ae622f58ad406ed44408db1bf5fcd5f72cea672f4190894a9f9df1 \
   kotoba_aiueos_superblock_valid
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_journal_build_object" \
   1f1dedd438d523c7f92bde90f8bf07c92768fd9dd7cfc73a27f9dc895eb3bca7 \
@@ -154,9 +154,9 @@ zig cc -target x86_64-freestanding-none -std=c11 -O2 \
 zig cc -target x86_64-freestanding-none -std=c11 -O2 \
   -ffreestanding -fno-stack-protector -mno-red-zone \
   -c -o "$kernel_loader_object" "$aiueos/kernel/loader.c"
-zig cc -target x86_64-freestanding-none -x assembler-with-cpp \
-  -DAIUEOS_USER_ELF="\"$kotoba_user_elf\"" \
-  -c -o "$kernel_user_image_object" "$aiueos/kernel/user_image.S"
+zig cc -target x86_64-freestanding-none -std=c11 -O2 \
+  -ffreestanding -fno-stack-protector -mno-red-zone \
+  -c -o "$kernel_sha256_object" "$aiueos/kernel/sha256.c"
 zig cc -target x86_64-freestanding-none -std=c11 -O2 \
   -ffreestanding -fno-stack-protector -mno-red-zone \
   -c -o "$kernel_smp_object" "$aiueos/kernel/smp.c"
@@ -173,7 +173,7 @@ zig ld.lld -nostdlib -static -z max-page-size=0x1000 \
   "$kernel_entry_object" "$kernel_object" "$kernel_paging_object" \
   "$kernel_acpi_object" "$kernel_vtd_object" "$kernel_apic_object" "$kernel_memory_object" \
   "$kernel_pci_object" "$kernel_scheduler_object" "$kernel_syscall_object" \
-  "$kernel_process_object" "$kernel_loader_object" "$kernel_user_image_object" \
+  "$kernel_process_object" "$kernel_loader_object" "$kernel_sha256_object" \
   "$kernel_smp_object" "$kernel_trampoline_object" \
   "$kernel_ioapic_object" "$kernel_framebuffer_object" "$kotoba_kernel_object" \
   "$kotoba_journal_object" "$kotoba_fnv_object" "$kotoba_journal_valid_object" \
