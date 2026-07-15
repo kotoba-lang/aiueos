@@ -57,9 +57,13 @@ extern int aiueos_object_transaction_replayed(void);
 extern uint32_t aiueos_object_transaction_sequence(void);
 extern int aiueos_service_registry_ready(void);
 extern int aiueos_service_registry_replayed(void);
+extern int aiueos_recovered_service_registry_ready(void);
+extern uint64_t aiueos_recovered_service_registry_state(unsigned service);
 extern uint32_t aiueos_gpu_scanout_width(void);
 extern uint32_t aiueos_gpu_scanout_height(void);
 extern void aiueos_scheduler_initialize(void);
+extern int aiueos_scheduler_restore_service_registry(uint64_t state0, uint64_t state1);
+extern int aiueos_scheduler_persistent_restore_evidence_ready(void);
 extern int aiueos_scheduler_evidence_ready(void);
 extern int aiueos_service_runtime_evidence_ready(void);
 extern int aiueos_service_ipc_evidence_ready(void);
@@ -345,8 +349,18 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
       serial_string("AIUEOS_JOURNAL_RECOVERY_OK highest-valid selected alternate-slot-append\r\n");
       if (!aiueos_object_transaction_replayed()) qemu_exit(0x6f);
       if (!aiueos_service_registry_replayed()) qemu_exit(0x6f);
+      if (!aiueos_recovered_service_registry_ready() ||
+          !aiueos_scheduler_restore_service_registry(
+            aiueos_recovered_service_registry_state(0),
+            aiueos_recovered_service_registry_state(1))) qemu_exit(0x6f);
+      __asm__ volatile("sti");
+      while (!aiueos_service_runtime_evidence_ready()) __asm__ volatile("hlt");
+      __asm__ volatile("cli");
+      if (!aiueos_scheduler_persistent_restore_evidence_ready()) qemu_exit(0x6f);
       debug_string("AIUEOS_OBJECT_TXN_REPLAY_OK committed-redo idempotent-before-append\n");
       serial_string("AIUEOS_OBJECT_TXN_REPLAY_OK committed-redo idempotent-before-append\r\n");
+      debug_string("AIUEOS_PERSISTENT_SERVICE_BOOTSTRAP_OK registry=replayed kotoba-spawn=2 generation=2,1\n");
+      serial_string("AIUEOS_PERSISTENT_SERVICE_BOOTSTRAP_OK registry=replayed kotoba-spawn=2 generation=2,1\r\n");
     }
     /* The input result bit is set only after a validated event has been copied
        into the browser envelope; no second mutable readiness check is needed. */

@@ -28,6 +28,11 @@ grep -F "AIUEOS_OBJECT_TXN_REPLAY_OK committed-redo idempotent-before-append" \
   echo "error: committed object transaction was not replayed before append" >&2
   exit 1
 }
+grep -F "AIUEOS_PERSISTENT_SERVICE_BOOTSTRAP_OK registry=replayed kotoba-spawn=2 generation=2,1" \
+  "$out/kernel-serial.log" >/dev/null || {
+  echo "error: replayed service registry did not drive scheduler bootstrap" >&2
+  exit 1
+}
 python3 - "$out/virtio-blk-smoke.img" <<'PY'
 from pathlib import Path
 import struct, sys
@@ -67,6 +72,11 @@ if ! grep -F "AIUEOS_JOURNAL_RECOVERY_OK highest-valid selected alternate-slot-a
   echo "error: prior committed slot was not selected after latest-slot corruption" >&2
   exit 1
 fi
+grep -F "AIUEOS_PERSISTENT_SERVICE_BOOTSTRAP_OK registry=replayed kotoba-spawn=2 generation=2,1" \
+  "$out/kernel-serial.log" >/dev/null || {
+  echo "error: fallback registry did not drive scheduler bootstrap" >&2
+  exit 1
+}
 echo "AIUEOS_JOURNAL_LATEST_SLOT_FALLBACK_OK recovered=1 rewritten=2"
 python3 - "$out/virtio-blk-smoke.img" <<'PY'
 from pathlib import Path

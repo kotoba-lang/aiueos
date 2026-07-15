@@ -128,6 +128,8 @@ static int object_transaction_replayed;
 static uint32_t object_transaction_sequence;
 static int service_registry_ready;
 static int service_registry_replayed;
+static int recovered_service_registry_ready;
+static uint64_t recovered_service_registry_states[2];
 extern uint64_t kotoba_aiueos_journal_plan(uint64_t valid0, uint64_t sequence0,
                                            uint64_t valid1, uint64_t sequence1);
 volatile uint64_t aiueos_virtio_blk_irq_count;
@@ -142,6 +144,11 @@ int aiueos_object_transaction_replayed(void) { return object_transaction_replaye
 uint32_t aiueos_object_transaction_sequence(void) { return object_transaction_sequence; }
 int aiueos_service_registry_ready(void) { return service_registry_ready; }
 int aiueos_service_registry_replayed(void) { return service_registry_replayed; }
+int aiueos_recovered_service_registry_ready(void) { return recovered_service_registry_ready; }
+uint64_t aiueos_recovered_service_registry_state(unsigned service) {
+  return service<2 && recovered_service_registry_ready ?
+    recovered_service_registry_states[service] : 0;
+}
 extern uint64_t aiueos_service_registry_state(unsigned service);
 extern uint64_t kotoba_aiueos_fnv1a(const uint8_t *bytes, uint64_t length);
 static uint32_t fnv1a(const uint8_t *bytes, uint32_t length) {
@@ -166,15 +173,22 @@ static int mutable_object_valid(const struct aiuefs_mutable_object *object, uint
     object, sizeof(*object), sequence, transaction, sizeof(*transaction));
 }
 
+static int service_registry_decode(const struct aiuefs_object_transaction *transaction,
+    uint64_t states[2]) {
+  const uint8_t *p=transaction->object;
+  if (transaction->object_version!=2 || transaction->object_length!=16 ||
+      p[0]!='S' || p[1]!='R' || p[2]!='V' || p[3]!='1' || p[4]!=1 || p[5]!=2 ||
+      !p[8] || !p[9] || !p[11] || !p[12]) return 0;
+  states[0]=(uint64_t)p[8] | ((uint64_t)p[9]<<16) | ((uint64_t)p[10]<<32);
+  states[1]=(uint64_t)p[11] | ((uint64_t)p[12]<<16) | ((uint64_t)p[13]<<32);
+  return 1;
+}
 static int service_registry_matches(const struct aiuefs_object_transaction *transaction) {
   uint64_t state0 = aiueos_service_registry_state(0);
   uint64_t state1 = aiueos_service_registry_state(1);
-  const uint8_t *p = transaction->object;
-  return transaction->object_version == 2 && p[0] == 'S' && p[1] == 'R' &&
-    p[2] == 'V' && p[3] == '1' && p[4] == 1 && p[5] == 2 &&
-    p[8] == (uint8_t)state0 && p[9] == (uint8_t)(state0 >> 16) &&
-    p[10] == (uint8_t)(state0 >> 32) && p[11] == (uint8_t)state1 &&
-    p[12] == (uint8_t)(state1 >> 16) && p[13] == (uint8_t)(state1 >> 32);
+  uint64_t states[2];
+  return service_registry_decode(transaction,states) &&
+    states[0]==state0 && states[1]==state1;
 }
 
 static int virtio_blk_sector_io(struct virtio_blk_request *request, uint8_t *sector,
@@ -227,6 +241,12 @@ static int apply_object_transaction(struct virtio_blk_request *request, uint8_t 
   object_transaction_sequence = sequence;
   if (recovery) {
     object_transaction_replayed = 1;
+    uint64_t states[2];
+    if (service_registry_decode(transaction,states)) {
+      recovered_service_registry_states[0]=states[0];
+      recovered_service_registry_states[1]=states[1];
+      recovered_service_registry_ready=1;
+    }
     if (service_registry_matches(transaction)) service_registry_replayed = 1;
   }
   if (service_registry_matches(transaction)) service_registry_ready = 1;
@@ -704,6 +724,8 @@ int aiueos_pci_enumerate(void) {
   object_transaction_sequence = 0;
   service_registry_ready = 0;
   service_registry_replayed = 0;
+  recovered_service_registry_ready=0;
+  recovered_service_registry_states[0]=recovered_service_registry_states[1]=0;
   gpu_scanout_width = gpu_scanout_height = 0;
   if (!aiueos_dma_test_policy_allows_unisolated()) return 0;
   if (!cap_selftest()) return 0;

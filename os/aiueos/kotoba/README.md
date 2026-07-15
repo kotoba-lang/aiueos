@@ -93,7 +93,10 @@ generation and restart count only while both remain bounded and the configured
 budget is not exhausted. The native scheduler consumes that plan to allocate,
 replace, or release a generic descriptor-driven task context; it does not
 duplicate lifecycle admission in C. The pinned object SHA-256 is
-`1e219090c782f909a4135173cfa4d728fa50c364981b794860aec59e8813a491`.
+`cd6d9c57cd4dd94839ef1a255c6d82b6c1b231c08aa1f7de86ab8c0029720816`.
+Spawn accepts both a new zero-generation descriptor and a validated persisted
+generation, allowing journal replay to recreate service tasks without resetting
+their durable lifecycle counters.
 
 `service-registry-build` serializes the two bounded scheduler service states
 into a versioned 16-byte registry inside the journal transaction. It writes all

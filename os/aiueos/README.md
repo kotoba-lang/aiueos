@@ -225,7 +225,11 @@ compiler-emitted Kotoba serializer records both service IDs, generations, and
 restart counts in the journal-first object-store transaction. The recovery
 smoke clears the materialized object, boots again, requires redo before append,
 and checks the exact registry bytes; latest-slot corruption must also restore
-the prior registry and rewrite the alternate slot.
+the prior registry and rewrite the alternate slot. On either recovery path the
+validated registry states are decoded independently of the live scheduler,
+the bootstrap service tasks are terminated, and Kotoba spawn actions recreate
+their descriptors with the persisted generation and restart counts. Boot waits
+for both restored heartbeats before starting ring-3 processes.
 
 The EFI application is deliberately a small native bootstrap substrate. Kotoba
 programs use the freestanding target contract in the separately versioned

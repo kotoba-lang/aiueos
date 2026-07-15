@@ -66,6 +66,7 @@ static volatile uint64_t service_ipc_received_payload;
 static volatile uint64_t service_ipc_foreign_rejections;
 static uint64_t dynamic_task_evidence;
 static uint64_t kotoba_lifecycle_evidence;
+static uint64_t persistent_restore_evidence;
 
 static int allocate_task_slot(uint64_t cr3) {
   for (unsigned slot=1;slot<AIUEOS_TASK_SLOT_COUNT;slot++) {
@@ -294,6 +295,29 @@ uint64_t aiueos_service_registry_state(unsigned service) {
       services[service].generation > 255 || services[service].restarts > 255) return 0;
   return services[service].id | (services[service].generation << 16) |
     (services[service].restarts << 32);
+}
+int aiueos_scheduler_restore_service_registry(uint64_t state0, uint64_t state1) {
+  uint64_t states[2]={state0,state1};
+  if (current_task!=0 || scheduler_user_mode) return 0;
+  for (unsigned service=0;service<2;service++) {
+    uint64_t id=states[service]&255U;
+    uint64_t generation=(states[service]>>16)&255U;
+    uint64_t restarts=(states[service]>>32)&255U;
+    if (id!=service+1 || !generation || restarts>3) return 0;
+  }
+  if (!apply_service_event(0,3) || !apply_service_event(1,3)) return 0;
+  for (unsigned service=0;service<2;service++) {
+    services[service].generation=(states[service]>>16)&255U;
+    services[service].restarts=(states[service]>>32)&255U;
+  }
+  if (!apply_service_event(0,2) || !apply_service_event(1,2)) return 0;
+  persistent_restore_evidence=services[0].task_slot==1 &&
+    services[1].task_slot==2 && services[0].generation==((state0>>16)&255U) &&
+    services[1].generation==((state1>>16)&255U);
+  return (int)persistent_restore_evidence;
+}
+int aiueos_scheduler_persistent_restore_evidence_ready(void) {
+  return (int)persistent_restore_evidence;
 }
 uint64_t *aiueos_scheduler_on_timer(uint64_t *interrupted_stack) {
   tasks[current_task].saved_stack = interrupted_stack;

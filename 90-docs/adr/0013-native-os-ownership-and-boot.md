@@ -238,7 +238,7 @@ virtio-blk/NVMe -> block service -> filesystem/object store
 | 0 | Linux PID-1/initramfs/QEMU/virtio/VFIO prototype | PR #29 merged; unit CI green; whole boot still unproven |
 | 1 | UEFI loader + serial kernel | In progress: OVMF hands off to a bounded ELF64 kernel with its own stack and COM1 serial output; signature verification remains |
 | 2 | paging, exceptions, ACPI, APIC, SMP | In progress: GDT/IDT, CR3/W^X, ACPI discovery, and BSP Local APIC timer vector 32 pass; IOAPIC and AP startup remain |
-| 3 | scheduler, VM, syscall, capability handles | In progress: preemptive CR3-isolated kernel tasks and two APIC-timer-preempted CPL3 processes with distinct roots/private pages/domains; switch-time CR3/TSS.RSP0/owner updates; syscall/copy-in and cross-process rejection; W^X; page-backed capability table with generation reuse/retirement and atomic attenuated transfer/claim; scheduler exit/reap and owner-wide revocation; allocator-owned PML4/PDPT/PD/PT/private pages returned through a validated free list, zeroed and reused; separate eight-slot generation-tracked address-space and scheduler-task allocation with full-table rejection and lowest-slot reuse; allocator-owned interrupt stacks returned and zero-reused; Kotoba-planned descriptor-driven service spawn/restart/terminate, IPC, and registry. Persistent spawn requests and revocation propagation to downstream derived handles remain |
+| 3 | scheduler, VM, syscall, capability handles | In progress: preemptive CR3-isolated kernel tasks and two APIC-timer-preempted CPL3 processes with distinct roots/private pages/domains; switch-time CR3/TSS.RSP0/owner updates; syscall/copy-in and cross-process rejection; W^X; page-backed capability table with generation reuse/retirement and atomic attenuated transfer/claim; scheduler exit/reap and owner-wide revocation; allocator-owned PML4/PDPT/PD/PT/private pages returned through a validated free list, zeroed and reused; separate eight-slot generation-tracked address-space and scheduler-task allocation with full-table rejection and lowest-slot reuse; allocator-owned interrupt stacks returned and zero-reused; Kotoba-planned descriptor-driven service spawn/restart/terminate; journal-replayed service generation/restart state drives task recreation before user processes; IPC and registry. Revocation propagation to downstream derived handles remains |
 | 4 | PCI/MMIO/DMA/IOMMU/IRQ + virtio | In progress: QEMU intel-iommu root/context/second-level translation reaches `GSTS.TES`; domain 1 is bounded to 128 MiB and virtio queue completions pass through it; multi-segment/scoped DRHD and per-device domains remain |
 | 5 | ISO/GPT/raw image, recovery, signed update | reproducible UEFI and GRUB boots |
 | 6 | browser shell, compositor, input, kotobase | desktop session persists and restores state |
@@ -365,8 +365,10 @@ the existing Kotoba capability planner admits the sender owner domain; the
 foreign-domain negative path is required boot evidence. Once both services are
 live, a compiler-emitted Kotoba serializer places their IDs, generations, and
 restart counts into the existing journal-first object transaction. Recovery
-replays that registry before the next append, and the smoke verifies both a
-torn materialization and latest-slot corruption against exact on-disk bytes.
+replays that registry before the next append, feeds its validated lifecycle
+states back into Kotoba-planned terminate/spawn, waits for restored heartbeats,
+and only then admits user processes. The smoke verifies both a torn
+materialization and latest-slot corruption against exact on-disk bytes.
 
 - full POSIX/Linux ABI compatibility;
 - every x86 chipset or GPU;
