@@ -72,12 +72,15 @@ The first process also transfers an attenuated log handle to domain 3 while the
 capability-table lock covers source revalidation, target-slot issuance, and
 publication. Domain 3 atomically claims and uses that handle. A request for a
 right absent from the source handle is rejected by the Kotoba planner before
-publication.
+publication. Each derived slot records the parent slot and the parent's exact
+generation. Revoking a parent walks that generation-safe graph and advances
+every live descendant before releasing the table lock.
 
 After both processes complete their evidence, the kernel requests scheduler
 exit and waits until each task is removed while the kernel task remains
-runnable. Every capability owned by domains 2 and 3—including the transferred
-handle—is revoked with generation advancement. Only after returning to the
+runnable. Owner teardown of domain 2 recursively revokes its domain-3
+descendant before domain 3's remaining root is revoked, all with generation
+advancement. Only after returning to the
 kernel context are both allocator-owned supervisor interrupt stack pages
 returned to the physical free list. Private mappings
 are removed, their backing pages are zeroed, and the bounded process slots are
@@ -113,8 +116,9 @@ The table is allocated as a zeroed physical page after memory-map admission,
 providing at least 256 slots instead of a compiled four-entry array. Allocation
 and admission are spinlock-serialized. Boot allocates a third owner domain,
 reuses its revoked slot only with an advanced generation, and rejects the same
-handle from another domain. Concurrent cross-task handle transfer remains later
-work.
+handle from another domain. A kernel self-test constructs a two-hop derivation,
+revokes its root, rejects both stale descendants, and proves root-slot reuse
+cannot reconnect children from the prior generation.
 An exhausted generation retires its slot rather than wrapping and reviving an
 old handle.
 

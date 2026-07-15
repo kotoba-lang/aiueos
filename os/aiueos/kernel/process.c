@@ -132,8 +132,8 @@ void aiueos_process_enter(void) {
   if (aiueos_scheduler_finalize_user_stacks() &&
       aiueos_scheduler_task_capacity()==8 &&
       aiueos_scheduler_task_slot_self_test() &&
-      aiueos_capability_revoke_owner(2)>=1 &&
-      aiueos_capability_revoke_owner(3)>=2 &&
+      aiueos_capability_revoke_owner(2)>=2 &&
+      aiueos_capability_revoke_owner(3)>=1 &&
       !aiueos_capability_log_handle(2) && !aiueos_capability_log_handle(3))
     process_lifecycle_evidence|=1;
   allocator_reuse_before=aiueos_physical_allocator_reuse_count();
