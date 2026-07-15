@@ -169,10 +169,13 @@ boot-image magic, and byte-for-byte embedded artifact contents.
 Requirements are Zig 0.14 or newer and `qemu-system-x86_64` with an edk2/OVMF
 firmware image. Override firmware discovery with `OVMF_CODE=/path/to/code.fd`.
 
-The scheduler also maintains two bounded service slots with stable IDs,
-generations, and heartbeats across repeated preemption and CR3 switches. This
-proves kernel-lifetime service liveness; restart policy, IPC, and a durable
-service registry remain future work.
+The scheduler maintains two bounded service slots with stable IDs, generations,
+restart counts, and heartbeats across preemption and CR3 switches. A
+compiler-emitted Kotoba lifecycle planner applies the restart budget and advances
+the generation; the timer path then discards and reconstructs the failed task's
+saved context. The QEMU smoke injects one deterministic failure and requires the
+restarted service to become live again. IPC and a durable service registry remain
+future work.
 
 The EFI application is deliberately a small native bootstrap substrate. Kotoba
 programs use the freestanding target contract in the separately versioned

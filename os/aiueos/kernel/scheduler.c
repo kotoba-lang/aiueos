@@ -18,6 +18,8 @@ extern uint64_t aiueos_address_space_cr3(unsigned process);
 extern uint64_t aiueos_address_space_current_cr3(void);
 extern void aiueos_address_space_switch(uint64_t cr3);
 extern uint64_t aiueos_address_space_private_va(unsigned process);
+extern uint64_t kotoba_aiueos_service_lifecycle(uint64_t generation,
+  uint64_t restarts, uint64_t event, uint64_t budget);
 
 struct aiueos_task { uint64_t *saved_stack; uint64_t switches; uint64_t cr3; };
 static uint8_t task_stacks[2][AIUEOS_TASK_STACK_BYTES]
@@ -28,7 +30,9 @@ volatile uint64_t aiueos_scheduler_task_a_runs;
 volatile uint64_t aiueos_scheduler_task_b_runs;
 volatile uint64_t aiueos_scheduler_context_switches;
 volatile uint64_t aiueos_scheduler_address_space_failures;
-struct aiueos_service_slot { uint64_t id, generation, heartbeats; };
+struct aiueos_service_slot {
+  uint64_t id, generation, heartbeats, restarts, restart_requested;
+};
 static struct aiueos_service_slot services[2];
 
 static inline void debug_byte(uint8_t value) {
@@ -43,6 +47,11 @@ static void task_loop(volatile uint64_t *runs, uint8_t marker, unsigned process)
     ++*private_word;
     *runs = *private_word;
     services[process].heartbeats++;
+    /* Deterministic fault injection proves that the scheduler replaces the
+     * task context instead of merely changing lifecycle metadata. */
+    if (process == 0 && services[process].generation == 1 &&
+        services[process].heartbeats == 2)
+      services[process].restart_requested = 1;
     if (*runs == 1) debug_byte(marker);
     __asm__ volatile("hlt");
   }
@@ -84,17 +93,33 @@ void aiueos_scheduler_initialize(void) {
   aiueos_scheduler_task_a_runs = aiueos_scheduler_task_b_runs = 0;
   aiueos_scheduler_context_switches = 0;
   aiueos_scheduler_address_space_failures = 0;
-  services[0] = (struct aiueos_service_slot){1, 1, 0};
-  services[1] = (struct aiueos_service_slot){2, 1, 0};
+  services[0] = (struct aiueos_service_slot){1, 1, 0, 0, 0};
+  services[1] = (struct aiueos_service_slot){2, 1, 0, 0, 0};
 }
 int aiueos_service_runtime_evidence_ready(void) {
   return services[0].id == 1 && services[1].id == 2 &&
-    services[0].generation == 1 && services[1].generation == 1 &&
+    services[0].generation == 2 && services[0].restarts == 1 &&
+    services[0].restart_requested == 0 && services[1].generation == 1 &&
     services[0].heartbeats >= 2 && services[1].heartbeats >= 2;
 }
 uint64_t *aiueos_scheduler_on_timer(uint64_t *interrupted_stack) {
   tasks[current_task].saved_stack = interrupted_stack;
   tasks[current_task].switches++;
+  if (current_task > 0) {
+    unsigned service = (unsigned)(current_task - 1);
+    if (services[service].restart_requested) {
+      uint64_t plan = kotoba_aiueos_service_lifecycle(
+        services[service].generation, services[service].restarts, 1, 3);
+      if (plan) {
+        services[service].generation = plan & 65535U;
+        services[service].restarts = (plan >> 16) & 65535U;
+        services[service].heartbeats = 0;
+        services[service].restart_requested = 0;
+        tasks[current_task].saved_stack = initial_context(
+          task_stacks[service], service == 0 ? task_a : task_b);
+      }
+    }
+  }
   current_task = (current_task + 1U) % AIUEOS_TASK_COUNT;
   aiueos_scheduler_context_switches++;
   /* Interrupt code is mapped supervisor-only in every root.  Switch after

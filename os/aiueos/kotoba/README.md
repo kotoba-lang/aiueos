@@ -2,7 +2,7 @@
 
 `kernel-probe.o` is the byte-for-byte output of the merged
 `kotoba-lang/compiler` commit
-`2f8fc5ee2ba7bceeb6acd22f6f10e7adca4d0633` for `kernel-probe.kotoba`:
+`946079ad0ccaed8fa8035091f0af35157a4b5b3d` for `kernel-probe.kotoba`:
 
 ```clojure
 (defn main [] 42)
@@ -86,3 +86,10 @@ Generation exhaustion retires a slot instead of wrapping to an older identity.
 The state also carries a 16-bit owner domain and each request carries its
 caller domain. Owner equality is decided inside the planner, before payload
 copy, so kernel and user slots cannot be used across their security domains.
+
+`service-lifecycle` owns the supervisor's restart admission policy. A failure
+advances the generation and restart count only while both remain bounded and
+the configured budget is not exhausted. The native timer path consumes the
+packed plan and replaces the failed task's saved context; it does not duplicate
+the generation or budget decision in C. The pinned object SHA-256 is
+`20251d96186775cda64c79b4118c0fb539c013b97ddc0b5d0c1e34e1b0f3b255`.

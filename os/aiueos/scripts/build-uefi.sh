@@ -41,6 +41,7 @@ kotoba_region_valid_object=${AIUEOS_KOTOBA_REGION_VALID_OBJECT:-"$aiueos/kotoba/
 kotoba_syscall_range_object=${AIUEOS_KOTOBA_SYSCALL_RANGE_OBJECT:-"$aiueos/kotoba/syscall-range-valid.o"}
 kotoba_copy_in_object=${AIUEOS_KOTOBA_COPY_IN_OBJECT:-"$aiueos/kotoba/copy-in.o"}
 kotoba_capability_object=${AIUEOS_KOTOBA_CAPABILITY_OBJECT:-"$aiueos/kotoba/capability-plan.o"}
+kotoba_service_lifecycle_object=${AIUEOS_KOTOBA_SERVICE_LIFECYCLE_OBJECT:-"$aiueos/kotoba/service-lifecycle.o"}
 kotoba_fnv_sha=
 if [ -z "${AIUEOS_KOTOBA_FNV_OBJECT:-}" ]; then
   kotoba_fnv_sha=9d447888daf2c5065b3caf98ee348b426296c95781d0651989bd2025ac7ba52d
@@ -105,6 +106,9 @@ python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_copy_in_object
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_capability_object" \
   006f509119d39298a1a64093f9b49f48f808445d251e96505c4c03e3abc068bb \
   kotoba_aiueos_capability_plan
+python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_service_lifecycle_object" \
+  20251d96186775cda64c79b4118c0fb539c013b97ddc0b5d0c1e34e1b0f3b255 \
+  kotoba_aiueos_service_lifecycle
 zig cc -target x86_64-freestanding-none -std=c11 -O2 \
   -ffreestanding -fno-stack-protector -mno-red-zone \
   -c -o "$kernel_object" "$aiueos/kernel/main.c"
@@ -162,7 +166,7 @@ zig ld.lld -nostdlib -static -z max-page-size=0x1000 \
   "$kotoba_mutable_build_object" "$kotoba_cap_valid_object" \
   "$kotoba_extent_valid_object" "$kotoba_region_valid_object" \
   "$kotoba_syscall_range_object" "$kotoba_copy_in_object" \
-  "$kotoba_capability_object"
+  "$kotoba_capability_object" "$kotoba_service_lifecycle_object"
 python3 - "$kernel" "$identity_source" <<'PY'
 import hashlib, pathlib, sys
 digest = hashlib.sha256(pathlib.Path(sys.argv[1]).read_bytes()).digest()
