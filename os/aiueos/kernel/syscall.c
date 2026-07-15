@@ -58,10 +58,12 @@ uint64_t aiueos_syscall_last_copy_hash;
 
 extern uint8_t aiueos_user_data_start[], aiueos_user_data_end[];
 extern uint64_t aiueos_syscall_from_user;
+extern int aiueos_process_address_space_for_domain(uint16_t domain);
 static int readable_user_range(uint64_t pointer, uint64_t length) {
-  if (aiueos_current_user_domain >= 2 && aiueos_current_user_domain <= 3) {
+  int process=aiueos_process_address_space_for_domain(aiueos_current_user_domain);
+  if (process>=0) {
     extern uint64_t aiueos_address_space_private_va(unsigned process);
-    uint64_t lower = aiueos_address_space_private_va(aiueos_current_user_domain - 2);
+    uint64_t lower = aiueos_address_space_private_va((unsigned)process);
     return (int)kotoba_aiueos_syscall_range_valid(pointer,length,lower,lower + 4096);
   }
   return (int)kotoba_aiueos_syscall_range_valid(
@@ -227,6 +229,11 @@ uint64_t aiueos_capability_log_handle(uint16_t owner) {
   }
   capability_lock_release();
   return 0;
+}
+uint64_t aiueos_capability_ensure_log_handle(uint16_t owner) {
+  uint64_t handle=aiueos_capability_log_handle(owner);
+  return handle ? handle : capability_allocate(AIUEOS_CAPABILITY_TYPE_LOG,
+    AIUEOS_CAPABILITY_RIGHT_LOG_WRITE,owner);
 }
 uint64_t aiueos_capability_revoke_owner(uint16_t owner) {
   uint64_t revoked=0;

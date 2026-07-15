@@ -63,8 +63,13 @@ clones the low kernel page-table path, shares the kernel/MMIO branches, maps a
 different private user page, and leaves the other process's page non-present.
 The smoke switches CR3 sequentially, proves independent contents, and requires
 real non-present page faults for both cross-process reads before restoring the
-kernel CR3. Two process roots map distinct private pages used for each process's
-result, message, and user stack. Domains 2 and 3 receive separate runtime
+kernel CR3. A bounded eight-entry process-create table now owns each user
+entry, initial argument, stack top, domain, address-space slot, task slot, and
+generation. It claims an available address-space root and creates the scheduler
+task through a generic ABI; the kernel no longer wires two fixed entry functions
+to roots 0 and 1. The boot slice creates two descriptors whose roots map distinct
+private pages used for each process's result, message, and user stack. Domains 2
+and 3 receive separate runtime
 capabilities, successfully call the same syscall, reject each other's handles,
 and reject the other process's unmapped private address. Both are then installed
 as APIC-timer-preempted scheduler tasks. Each task has its own supervisor-only

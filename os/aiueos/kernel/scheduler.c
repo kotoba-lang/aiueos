@@ -35,15 +35,15 @@ struct aiueos_task {
   uint64_t *saved_stack;
   uint8_t *kernel_stack;
   uint64_t switches, cr3;
-  uint16_t generation, service;
-  uint8_t active;
+  uint16_t generation, service, domain;
+  uint8_t active, exit_requested;
 };
 static struct aiueos_task tasks[AIUEOS_TASK_SLOT_COUNT];
 static uint64_t current_task;
 static int scheduler_user_mode;
 volatile uint64_t aiueos_user_scheduler_switches;
-static volatile uint8_t user_exit_requested[2];
 static uint64_t user_tasks_reaped;
+static uint64_t user_tasks_expected;
 static uint64_t user_kernel_stacks_zeroed;
 static volatile uint64_t service_runs[AIUEOS_SERVICE_CAPACITY];
 volatile uint64_t aiueos_scheduler_context_switches;
@@ -78,6 +78,7 @@ static int allocate_task_slot(uint64_t cr3) {
     tasks[slot].switches=0;
     tasks[slot].cr3=cr3;
     tasks[slot].service=0xffffU;
+    tasks[slot].domain=0; tasks[slot].exit_requested=0;
     tasks[slot].generation++;
     if (!tasks[slot].generation) tasks[slot].generation=1;
     tasks[slot].active=1;
@@ -173,13 +174,13 @@ static uint64_t *initial_context(uint8_t *stack, void (*entry)(uint64_t), uint64
   context->ss = 0x10U;
   return (uint64_t *)context;
 }
-static uint64_t *initial_user_context(uint8_t *stack, void (*entry)(void),
-                                      uint64_t user_stack) {
+static uint64_t *initial_user_context(uint8_t *stack, void (*entry)(uint64_t),
+                                      uint64_t argument, uint64_t user_stack) {
   uintptr_t top = ((uintptr_t)stack + AIUEOS_TASK_STACK_BYTES) & ~(uintptr_t)15;
   struct aiueos_interrupt_context *context =
     (struct aiueos_interrupt_context *)(top - sizeof(*context));
   for (uint64_t *word=(uint64_t *)context; word!=(uint64_t *)(context+1); ++word) *word=0;
-  context->rip=(uint64_t)(uintptr_t)entry; context->cs=0x23U;
+  context->rip=(uint64_t)(uintptr_t)entry; context->rdi=argument; context->cs=0x23U;
   context->rflags=AIUEOS_INTERRUPT_FLAG|2U; context->rsp=user_stack; context->ss=0x1bU;
   return (uint64_t *)context;
 }
@@ -231,7 +232,7 @@ void aiueos_scheduler_initialize(void) {
     aiueos_scheduler_address_space_failures = 1;
     return;
   }
-  for (uint32_t i=0;i<AIUEOS_TASK_SLOT_COUNT;i++) tasks[i]=(struct aiueos_task){0,0,0,0,0,0xffffU,0};
+  for (uint32_t i=0;i<AIUEOS_TASK_SLOT_COUNT;i++) tasks[i]=(struct aiueos_task){0};
   tasks[0].cr3=aiueos_address_space_kernel_cr3(); tasks[0].active=1;
   for (unsigned service=0;service<AIUEOS_SERVICE_CAPACITY;service++)
     services[service]=(struct aiueos_service_slot){0,0,0,0,0,0,0,0,0,0};
@@ -260,21 +261,26 @@ void aiueos_scheduler_initialize(void) {
   service_ipc_send_handle = ipc_capability_plan(1);
   service_ipc_foreign_rejections = ipc_capability_plan(2) == 0 ? 1 : 0;
 }
-void aiueos_scheduler_start_user_processes(void (*entry0)(void), void (*entry1)(void),
-    uint64_t user_stack0, uint64_t user_stack1) {
+int aiueos_scheduler_begin_user_runtime(void) {
   if (!apply_service_event(0,3) || !apply_service_event(1,3)) {
-    aiueos_scheduler_address_space_failures=1; return;
+    aiueos_scheduler_address_space_failures=1; return 0;
   }
-  int slot0=allocate_task_slot(aiueos_address_space_cr3(0));
-  int slot1=allocate_task_slot(aiueos_address_space_cr3(1));
-  if (slot0!=1 || slot1!=2) { aiueos_scheduler_address_space_failures=1; return; }
   tasks[0].saved_stack=0; tasks[0].switches=0;
-  tasks[1].saved_stack=initial_user_context(tasks[1].kernel_stack,entry0,user_stack0);
-  tasks[2].saved_stack=initial_user_context(tasks[2].kernel_stack,entry1,user_stack1);
   current_task=0; scheduler_user_mode=1; aiueos_user_scheduler_switches=0;
-  user_exit_requested[0]=user_exit_requested[1]=0;
-  user_tasks_reaped=0; user_kernel_stacks_zeroed=0;
+  user_tasks_reaped=0; user_tasks_expected=0; user_kernel_stacks_zeroed=0;
   aiueos_current_user_domain=0;
+  return 1;
+}
+int aiueos_scheduler_create_user_task(unsigned address_space, uint16_t domain,
+    void (*entry)(uint64_t), uint64_t argument, uint64_t user_stack) {
+  uint64_t cr3=aiueos_address_space_cr3(address_space);
+  if (!scheduler_user_mode || !domain || !entry || !cr3 || !user_stack) return -1;
+  int slot=allocate_task_slot(cr3);
+  if (slot<1) return -1;
+  tasks[slot].domain=domain;
+  tasks[slot].saved_stack=initial_user_context(tasks[slot].kernel_stack,entry,argument,user_stack);
+  user_tasks_expected++;
+  return slot;
 }
 int aiueos_service_runtime_evidence_ready(void) {
   return kotoba_lifecycle_evidence && services[0].id == 1 && services[1].id == 2 &&
@@ -322,7 +328,7 @@ int aiueos_scheduler_persistent_restore_evidence_ready(void) {
 uint64_t *aiueos_scheduler_on_timer(uint64_t *interrupted_stack) {
   tasks[current_task].saved_stack = interrupted_stack;
   tasks[current_task].switches++;
-  if (scheduler_user_mode && current_task>0 && user_exit_requested[current_task-1]) {
+  if (scheduler_user_mode && current_task>0 && tasks[current_task].exit_requested) {
     tasks[current_task].active=0; user_tasks_reaped++;
   }
   if (!scheduler_user_mode && current_task > 0) {
@@ -336,7 +342,7 @@ uint64_t *aiueos_scheduler_on_timer(uint64_t *interrupted_stack) {
   while (!tasks[current_task].active);
   aiueos_scheduler_context_switches++;
   if (scheduler_user_mode) {
-    aiueos_current_user_domain = current_task ? (uint16_t)(current_task + 1) : 0;
+    aiueos_current_user_domain = current_task ? tasks[current_task].domain : 0;
     if (current_task) {
       aiueos_process_set_kernel_stack((uint64_t)(uintptr_t)
         (tasks[current_task].kernel_stack + AIUEOS_TASK_STACK_BYTES));
@@ -349,13 +355,15 @@ uint64_t *aiueos_scheduler_on_timer(uint64_t *interrupted_stack) {
   return tasks[current_task].saved_stack;
 }
 void aiueos_scheduler_request_user_exit(uint16_t domain) {
-  if (domain>=2 && domain<=3) user_exit_requested[domain-2]=1;
+  for (unsigned slot=1;slot<AIUEOS_TASK_SLOT_COUNT;slot++)
+    if (tasks[slot].active && tasks[slot].domain==domain) tasks[slot].exit_requested=1;
 }
-int aiueos_scheduler_users_reaped(void) { return user_tasks_reaped==2; }
+int aiueos_scheduler_users_reaped(void) { return user_tasks_expected && user_tasks_reaped==user_tasks_expected; }
 int aiueos_scheduler_finalize_user_stacks(void) {
-  if (user_tasks_reaped!=2 || current_task!=0) return 0;
-  if (!release_task_slot(1) || !release_task_slot(2)) return 0;
-  user_kernel_stacks_zeroed=2; scheduler_user_mode=0;
+  if (!aiueos_scheduler_users_reaped() || current_task!=0) return 0;
+  for (unsigned slot=1;slot<AIUEOS_TASK_SLOT_COUNT;slot++)
+    if (tasks[slot].active || (tasks[slot].kernel_stack && !release_task_slot(slot))) return 0;
+  user_kernel_stacks_zeroed=user_tasks_expected; scheduler_user_mode=0;
   return 1;
 }
 unsigned aiueos_scheduler_task_capacity(void) { return AIUEOS_USER_TASK_CAPACITY; }
@@ -377,7 +385,7 @@ int aiueos_scheduler_task_slot_self_test(void) {
   return 1;
 }
 int aiueos_scheduler_reap_evidence_ready(void) {
-  return user_tasks_reaped==2 && user_kernel_stacks_zeroed==2 &&
+  return user_tasks_reaped==user_tasks_expected && user_kernel_stacks_zeroed==user_tasks_expected &&
     !tasks[1].active && !tasks[2].active && !tasks[1].kernel_stack &&
     !tasks[2].kernel_stack && dynamic_task_evidence && current_task==0;
 }
