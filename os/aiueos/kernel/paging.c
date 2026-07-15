@@ -33,13 +33,12 @@ static uint32_t pci_directory_owner[PCI_DIRECTORY_SLOTS];
 /* Phase-3 address-space vertical slice.  Kernel/MMIO branches stay shared,
  * while each process owns the complete low-2MiB page-table path. */
 struct process_address_space {
-  uint64_t pml4[ENTRY_COUNT] __attribute__((aligned(PAGE_SIZE)));
-  uint64_t pdpt[ENTRY_COUNT] __attribute__((aligned(PAGE_SIZE)));
-  uint64_t directory[ENTRY_COUNT] __attribute__((aligned(PAGE_SIZE)));
-  uint64_t low[ENTRY_COUNT] __attribute__((aligned(PAGE_SIZE)));
+  uint64_t *pml4, *pdpt, *directory, *low;
+  uint8_t *private_page;
 };
 static struct process_address_space process_spaces[2];
-static uint8_t process_private_pages[2][PAGE_SIZE] __attribute__((aligned(PAGE_SIZE)));
+extern void *aiueos_allocate_physical_page(void);
+extern int aiueos_free_physical_page(void *page);
 static uint64_t kernel_cr3;
 
 #define PROCESS_PRIVATE_0 0x1fc000ULL
@@ -135,17 +134,32 @@ int aiueos_paging_initialize(void) {
          ((uint64_t)(uintptr_t)aiueos_kernel_end < 0x200000ULL);
 }
 
-int aiueos_address_spaces_initialize(void) {
-  const uint64_t private_va[2] = {PROCESS_PRIVATE_0, PROCESS_PRIVATE_1};
-  for (uint64_t process = 0; process < 2; process++) {
-    struct process_address_space *space = &process_spaces[process];
+static void release_process_space(struct process_address_space *space) {
+  if (space->private_page) aiueos_free_physical_page(space->private_page);
+  if (space->low) aiueos_free_physical_page(space->low);
+  if (space->directory) aiueos_free_physical_page(space->directory);
+  if (space->pdpt) aiueos_free_physical_page(space->pdpt);
+  if (space->pml4) aiueos_free_physical_page(space->pml4);
+  *space=(struct process_address_space){0,0,0,0,0};
+}
+static int initialize_process_space(unsigned process) {
+    struct process_address_space *space=&process_spaces[process];
+    uint64_t private_va=process==0?PROCESS_PRIVATE_0:PROCESS_PRIVATE_1;
+    if (!space->pml4) space->pml4=aiueos_allocate_physical_page();
+    if (!space->pdpt) space->pdpt=aiueos_allocate_physical_page();
+    if (!space->directory) space->directory=aiueos_allocate_physical_page();
+    if (!space->low) space->low=aiueos_allocate_physical_page();
+    if (!space->private_page) space->private_page=aiueos_allocate_physical_page();
+    if (!space->pml4 || !space->pdpt || !space->directory || !space->low || !space->private_page) {
+      release_process_space(space); return 0;
+    }
     for (uint64_t i = 0; i < ENTRY_COUNT; i++) {
       space->pml4[i] = pml4[i];
       space->pdpt[i] = pdpt[i];
       space->directory[i] = page_directory[i];
       space->low[i] = low_page_table[i];
     }
-    for (uint64_t i = 0; i < PAGE_SIZE; i++) process_private_pages[process][i] = 0;
+    for (uint64_t i = 0; i < PAGE_SIZE; i++) space->private_page[i] = 0;
     space->pml4[0] = (uint64_t)(uintptr_t)space->pdpt |
       PTE_PRESENT | PTE_WRITABLE | PTE_USER;
     space->pdpt[0] = (uint64_t)(uintptr_t)space->directory |
@@ -155,9 +169,14 @@ int aiueos_address_spaces_initialize(void) {
     /* Neither process can name the other's page. */
     space->low[PROCESS_PRIVATE_0 / PAGE_SIZE] = 0;
     space->low[PROCESS_PRIVATE_1 / PAGE_SIZE] = 0;
-    space->low[private_va[process] / PAGE_SIZE] =
-      (uint64_t)(uintptr_t)process_private_pages[process] |
+    space->low[private_va / PAGE_SIZE] =
+      (uint64_t)(uintptr_t)space->private_page |
       PTE_PRESENT | PTE_USER | PTE_WRITABLE | PTE_NX;
+    return 1;
+}
+int aiueos_address_spaces_initialize(void) {
+  for (unsigned process=0;process<2;process++) {
+    if (!initialize_process_space(process)) return 0;
   }
   return (uint64_t)(uintptr_t)process_spaces[0].pml4 !=
       (uint64_t)(uintptr_t)process_spaces[1].pml4 &&
@@ -182,22 +201,17 @@ uint64_t aiueos_address_space_private_va(unsigned process) {
   return process == 0 ? PROCESS_PRIVATE_0 : process == 1 ? PROCESS_PRIVATE_1 : 0;
 }
 void *aiueos_address_space_private_backing(unsigned process) {
-  return process < 2 ? process_private_pages[process] : 0;
+  return process < 2 ? process_spaces[process].private_page : 0;
 }
 int aiueos_address_space_reclaim(unsigned process) {
   if (process>=2) return 0;
-  uint64_t va=process==0?PROCESS_PRIVATE_0:PROCESS_PRIVATE_1;
-  process_spaces[process].low[va/PAGE_SIZE]=0;
-  for (uint64_t i=0;i<PAGE_SIZE;i++) process_private_pages[process][i]=0;
+  release_process_space(&process_spaces[process]);
   return 1;
 }
 int aiueos_address_space_reuse(unsigned process) {
   if (process>=2) return 0;
-  uint64_t va=process==0?PROCESS_PRIVATE_0:PROCESS_PRIVATE_1;
-  process_spaces[process].low[va/PAGE_SIZE]=
-    (uint64_t)(uintptr_t)process_private_pages[process]|
-    PTE_PRESENT|PTE_USER|PTE_WRITABLE|PTE_NX;
-  for (uint64_t i=0;i<PAGE_SIZE;i++) if (process_private_pages[process][i]) return 0;
+  if (!initialize_process_space(process)) return 0;
+  for (uint64_t i=0;i<PAGE_SIZE;i++) if (process_spaces[process].private_page[i]) return 0;
   return 1;
 }
 

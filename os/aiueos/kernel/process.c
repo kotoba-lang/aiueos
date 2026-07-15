@@ -44,6 +44,7 @@ extern int aiueos_scheduler_reap_evidence_ready(void);
 extern uint64_t aiueos_capability_revoke_owner(uint16_t owner);
 extern int aiueos_address_space_reclaim(unsigned process);
 extern int aiueos_address_space_reuse(unsigned process);
+extern uint64_t aiueos_physical_allocator_reuse_count(void);
 extern void aiueos_probe_cross_process(const void *address);
 extern volatile uint64_t aiueos_page_fault_stage, aiueos_page_fault_error;
 static struct tss64 tss;
@@ -115,6 +116,7 @@ int aiueos_process_initialize(void) {
   return 1;
 }
 void aiueos_process_enter(void) {
+  uint64_t allocator_reuse_before;
   aiueos_scheduler_start_user_processes(user_entry0,user_entry1,
     aiueos_address_space_private_va(0)+4096,aiueos_address_space_private_va(1)+4096);
   __asm__ volatile("sti");
@@ -128,8 +130,10 @@ void aiueos_process_enter(void) {
       aiueos_capability_revoke_owner(3)>=2 &&
       !aiueos_capability_log_handle(2) && !aiueos_capability_log_handle(3))
     process_lifecycle_evidence|=1;
+  allocator_reuse_before=aiueos_physical_allocator_reuse_count();
   if (aiueos_address_space_reclaim(0) && aiueos_address_space_reclaim(1) &&
-      aiueos_address_space_reuse(0) && aiueos_address_space_reuse(1))
+      aiueos_address_space_reuse(0) && aiueos_address_space_reuse(1) &&
+      aiueos_physical_allocator_reuse_count()-allocator_reuse_before>=10)
     process_lifecycle_evidence|=2;
 }
 int aiueos_process_lifecycle_evidence_ready(void) {
