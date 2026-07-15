@@ -33,6 +33,8 @@ kotoba_journal_valid_object=${AIUEOS_KOTOBA_JOURNAL_VALID_OBJECT:-"$aiueos/kotob
 kotoba_transaction_valid_object=${AIUEOS_KOTOBA_TRANSACTION_VALID_OBJECT:-"$aiueos/kotoba/object-transaction-valid.o"}
 kotoba_mutable_valid_object=${AIUEOS_KOTOBA_MUTABLE_VALID_OBJECT:-"$aiueos/kotoba/mutable-object-valid.o"}
 kotoba_superblock_valid_object=${AIUEOS_KOTOBA_SUPERBLOCK_VALID_OBJECT:-"$aiueos/kotoba/superblock-valid.o"}
+kotoba_journal_build_object=${AIUEOS_KOTOBA_JOURNAL_BUILD_OBJECT:-"$aiueos/kotoba/journal-record-build.o"}
+kotoba_mutable_build_object=${AIUEOS_KOTOBA_MUTABLE_BUILD_OBJECT:-"$aiueos/kotoba/mutable-object-build.o"}
 kotoba_fnv_sha=
 if [ -z "${AIUEOS_KOTOBA_FNV_OBJECT:-}" ]; then
   kotoba_fnv_sha=9d447888daf2c5065b3caf98ee348b426296c95781d0651989bd2025ac7ba52d
@@ -73,6 +75,12 @@ python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_mutable_valid_
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_superblock_valid_object" \
   3e53077d751eadb01195a6a0b375fb8e8680c98a0a28dadae29ebb4426d6aee7 \
   kotoba_aiueos_superblock_valid
+python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_journal_build_object" \
+  1f1dedd438d523c7f92bde90f8bf07c92768fd9dd7cfc73a27f9dc895eb3bca7 \
+  kotoba_aiueos_journal_record_build
+python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_mutable_build_object" \
+  22b54f50d63e5ff0a1563acef324a53adacd824ebc98768ac614fb41ec415f1c \
+  kotoba_aiueos_mutable_object_build
 zig cc -target x86_64-freestanding-none -std=c11 -O2 \
   -ffreestanding -fno-stack-protector -mno-red-zone \
   -c -o "$kernel_object" "$aiueos/kernel/main.c"
@@ -126,7 +134,8 @@ zig ld.lld -nostdlib -static -z max-page-size=0x1000 \
   "$kernel_ioapic_object" "$kernel_framebuffer_object" "$kotoba_kernel_object" \
   "$kotoba_journal_object" "$kotoba_fnv_object" "$kotoba_journal_valid_object" \
   "$kotoba_transaction_valid_object" "$kotoba_mutable_valid_object" \
-  "$kotoba_superblock_valid_object"
+  "$kotoba_superblock_valid_object" "$kotoba_journal_build_object" \
+  "$kotoba_mutable_build_object"
 python3 - "$kernel" "$identity_source" <<'PY'
 import hashlib, pathlib, sys
 digest = hashlib.sha256(pathlib.Path(sys.argv[1]).read_bytes()).digest()

@@ -2,7 +2,7 @@
 
 `kernel-probe.o` is the byte-for-byte output of the merged
 `kotoba-lang/compiler` commit
-`01f3ce2fe21ea002b38f346b4139604eb0f747e5` for `kernel-probe.kotoba`:
+`94fe1b4f5de0cae90ea8cf1603b285f279914d52` for `kernel-probe.kotoba`:
 
 ```clojure
 (defn main [] 42)
@@ -54,3 +54,9 @@ payload checksum validation. `mutable-object-valid.o` owns materialized object
 magic/metadata/checksum validation and bounded byte equality against the
 committed transaction. Together these complete the storage read-side
 validation path in Kotoba; C retains sector I/O and passes exact buffer sizes.
+
+`journal-record-build.o` and `mutable-object-build.o` use the checked
+`kernel-store-u8` lowering. Null, oversized, and out-of-bounds writes trap
+before mutation. Kotoba now serializes journal/transaction metadata, sequence
+payloads, checksums, mutable-object metadata, and transaction bytes. C clears
+the sector, invokes the builder, and owns only the subsequent virtio-blk I/O.

@@ -168,6 +168,13 @@ objects are compared byte-for-byte with the committed transaction after magic,
 version, sequence, length, and checksum agreement. The remaining C storage
 boundary is queue/DMA I/O plus serialization of a newly committed record.
 
+Write-side serialization is Kotoba-owned through
+`kernel-store-u8(base,length,index,value)`, which applies the same null,
+512-byte, and unsigned-index bounds as checked loads before mutation. Journal
+metadata/payload/checksums and mutable-object materialization are emitted by
+Kotoba builders. The native storage boundary is now sector clearing and
+virtio-blk queue/DMA submission/readback.
+
 ### Driver, UI, and persistence split
 
 ```text
