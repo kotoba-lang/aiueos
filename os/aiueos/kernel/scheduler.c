@@ -24,12 +24,16 @@ extern uint64_t kotoba_aiueos_service_lifecycle(uint64_t generation,
   uint64_t restarts, uint64_t event, uint64_t budget);
 extern uint64_t kotoba_aiueos_capability_plan(uint64_t slot,
   uint64_t generation, uint64_t type, uint64_t state_rights, uint64_t request);
+extern void aiueos_process_set_kernel_stack(uint64_t top);
+extern volatile uint16_t aiueos_current_user_domain;
 
 struct aiueos_task { uint64_t *saved_stack; uint64_t switches; uint64_t cr3; };
 static uint8_t task_stacks[2][AIUEOS_TASK_STACK_BYTES]
     __attribute__((aligned(4096)));
 static struct aiueos_task tasks[AIUEOS_TASK_COUNT];
 static uint64_t current_task;
+static int scheduler_user_mode;
+volatile uint64_t aiueos_user_scheduler_switches;
 volatile uint64_t aiueos_scheduler_task_a_runs;
 volatile uint64_t aiueos_scheduler_task_b_runs;
 volatile uint64_t aiueos_scheduler_context_switches;
@@ -121,6 +125,16 @@ static uint64_t *initial_context(uint8_t *stack, void (*entry)(void)) {
   context->ss = 0x10U;
   return (uint64_t *)context;
 }
+static uint64_t *initial_user_context(uint8_t *stack, void (*entry)(void),
+                                      uint64_t user_stack) {
+  uintptr_t top = ((uintptr_t)stack + AIUEOS_TASK_STACK_BYTES) & ~(uintptr_t)15;
+  struct aiueos_interrupt_context *context =
+    (struct aiueos_interrupt_context *)(top - sizeof(*context));
+  for (uint64_t *word=(uint64_t *)context; word!=(uint64_t *)(context+1); ++word) *word=0;
+  context->rip=(uint64_t)(uintptr_t)entry; context->cs=0x1bU;
+  context->rflags=AIUEOS_INTERRUPT_FLAG|2U; context->rsp=user_stack; context->ss=0x23U;
+  return (uint64_t *)context;
+}
 void aiueos_scheduler_initialize(void) {
   if (!aiueos_address_spaces_initialize()) {
     aiueos_scheduler_address_space_failures = 1;
@@ -134,6 +148,8 @@ void aiueos_scheduler_initialize(void) {
   tasks[2].cr3 = aiueos_address_space_cr3(1);
   for (uint32_t i = 0; i < AIUEOS_TASK_COUNT; ++i) tasks[i].switches = 0;
   current_task = 0;
+  scheduler_user_mode = 0;
+  aiueos_user_scheduler_switches = 0;
   aiueos_scheduler_task_a_runs = aiueos_scheduler_task_b_runs = 0;
   aiueos_scheduler_context_switches = 0;
   aiueos_scheduler_address_space_failures = 0;
@@ -143,6 +159,17 @@ void aiueos_scheduler_initialize(void) {
   service_ipc_received_sequence = service_ipc_received_payload = 0;
   service_ipc_send_handle = ipc_capability_plan(1);
   service_ipc_foreign_rejections = ipc_capability_plan(2) == 0 ? 1 : 0;
+}
+void aiueos_scheduler_start_user_processes(void (*entry0)(void), void (*entry1)(void),
+    uint64_t user_stack0, uint64_t user_stack1) {
+  tasks[0].saved_stack=0;
+  tasks[1].saved_stack=initial_user_context(task_stacks[0],entry0,user_stack0);
+  tasks[2].saved_stack=initial_user_context(task_stacks[1],entry1,user_stack1);
+  tasks[0].cr3=aiueos_address_space_kernel_cr3();
+  tasks[1].cr3=aiueos_address_space_cr3(0); tasks[2].cr3=aiueos_address_space_cr3(1);
+  for (uint32_t i=0;i<AIUEOS_TASK_COUNT;i++) tasks[i].switches=0;
+  current_task=0; scheduler_user_mode=1; aiueos_user_scheduler_switches=0;
+  aiueos_current_user_domain=0;
 }
 int aiueos_service_runtime_evidence_ready(void) {
   return services[0].id == 1 && services[1].id == 2 &&
@@ -165,7 +192,7 @@ uint64_t aiueos_service_registry_state(unsigned service) {
 uint64_t *aiueos_scheduler_on_timer(uint64_t *interrupted_stack) {
   tasks[current_task].saved_stack = interrupted_stack;
   tasks[current_task].switches++;
-  if (current_task > 0) {
+  if (!scheduler_user_mode && current_task > 0) {
     unsigned service = (unsigned)(current_task - 1);
     if (services[service].restart_requested) {
       uint64_t plan = kotoba_aiueos_service_lifecycle(
@@ -182,10 +209,23 @@ uint64_t *aiueos_scheduler_on_timer(uint64_t *interrupted_stack) {
   }
   current_task = (current_task + 1U) % AIUEOS_TASK_COUNT;
   aiueos_scheduler_context_switches++;
+  if (scheduler_user_mode) {
+    aiueos_current_user_domain = current_task ? (uint16_t)(current_task + 1) : 0;
+    if (current_task) {
+      aiueos_process_set_kernel_stack((uint64_t)(uintptr_t)
+        (task_stacks[current_task-1] + AIUEOS_TASK_STACK_BYTES));
+      aiueos_user_scheduler_switches++;
+    }
+  }
   /* Interrupt code is mapped supervisor-only in every root.  Switch after
    * saving the outgoing frame, immediately before iret resumes the task. */
   aiueos_address_space_switch(tasks[current_task].cr3);
   return tasks[current_task].saved_stack;
+}
+int aiueos_user_scheduler_evidence_ready(void) {
+  return scheduler_user_mode && aiueos_user_scheduler_switches >= 4 &&
+    tasks[0].switches >= 2 && tasks[1].switches >= 2 && tasks[2].switches >= 2 &&
+    aiueos_address_space_current_cr3() == tasks[0].cr3;
 }
 int aiueos_scheduler_evidence_ready(void) {
   return aiueos_scheduler_task_a_runs >= 2 && aiueos_scheduler_task_b_runs >= 2 &&

@@ -15,7 +15,7 @@ struct __attribute__((packed)) tss64 {
 struct user_result {
   uint64_t handle, foreign_handle;
   uint64_t abi, valid, too_big, stale, foreign_owner, wrong_type, no_rights;
-  uint64_t bad_pointer, completed;
+  uint64_t bad_pointer, completed, scheduled_runs;
   char message[8];
 };
 
@@ -31,6 +31,9 @@ extern void aiueos_address_space_leave(void);
 extern uint64_t aiueos_address_space_private_va(unsigned process);
 extern void *aiueos_address_space_private_backing(unsigned process);
 extern uint64_t aiueos_capability_log_handle(uint16_t owner);
+extern void aiueos_scheduler_start_user_processes(void (*entry0)(void),void (*entry1)(void),
+  uint64_t user_stack0,uint64_t user_stack1);
+extern int aiueos_user_scheduler_evidence_ready(void);
 extern void aiueos_probe_cross_process(const void *address);
 extern volatile uint64_t aiueos_page_fault_stage, aiueos_page_fault_error;
 static struct tss64 tss;
@@ -38,6 +41,8 @@ static uint8_t syscall_stack[16384] __attribute__((aligned(4096)));
 __attribute__((section(".user.data"), aligned(4096), used))
 static uint8_t user_mapping_anchor[4096];
 static struct user_result *kernel_results[2];
+int aiueos_process_result(void);
+void aiueos_process_set_kernel_stack(uint64_t top) { tss.rsp0=top; }
 
 static inline uint64_t call(uint64_t n, uint64_t h, const void *p, uint64_t l) {
   register uint64_t a __asm__("rax")=n;
@@ -56,8 +61,7 @@ static void user_run(struct user_result *r, const void *foreign_page) {
   r->no_rights = call(LOG,r->handle ^ 0x1000000000000ULL,r->message,1);
   r->bad_pointer = call(LOG,r->handle,foreign_page,1);
   r->completed = 1;
-  call(EXIT,0,0,0);
-  for (;;) __asm__ volatile("ud2");
+  for (;;) { r->scheduled_runs++; __asm__ volatile("pause"); }
 }
 __attribute__((section(".user.text"), noreturn))
 static void user_entry0(void) { user_run((void *)0x1fc000ULL,(void *)0x1fd000ULL); }
@@ -88,13 +92,12 @@ int aiueos_process_initialize(void) {
   return 1;
 }
 void aiueos_process_enter(void) {
-  void (*entries[2])(void)={user_entry0,user_entry1};
-  for (unsigned p=0; p<2; p++) {
-    if (!aiueos_address_space_enter(p)) return;
-    aiueos_current_user_domain=(uint16_t)(p+2);
-    aiueos_enter_user(entries[p],(void *)(uintptr_t)(aiueos_address_space_private_va(p)+4096));
-    aiueos_address_space_leave();
-  }
+  aiueos_scheduler_start_user_processes(user_entry0,user_entry1,
+    aiueos_address_space_private_va(0)+4096,aiueos_address_space_private_va(1)+4096);
+  __asm__ volatile("sti");
+  while (!aiueos_process_result() || !aiueos_user_scheduler_evidence_ready())
+    __asm__ volatile("hlt");
+  __asm__ volatile("cli");
 }
 int aiueos_process_result(void) {
   for (unsigned p=0; p<2; p++) {
@@ -102,9 +105,10 @@ int aiueos_process_result(void) {
     if (!r || !r->completed || r->abi!=ABI_V1 || r->valid!=5 ||
         r->too_big!=TOO_BIG || r->stale!=BAD_HANDLE ||
         r->foreign_owner!=BAD_HANDLE || r->wrong_type!=BAD_HANDLE ||
-        r->no_rights!=BAD_HANDLE || r->bad_pointer!=BAD_POINTER) return 0;
+        r->no_rights!=BAD_HANDLE || r->bad_pointer!=BAD_POINTER ||
+        r->scheduled_runs<2) return 0;
   }
-  return aiueos_syscall_from_user==3 && aiueos_current_user_domain==3;
+  return aiueos_syscall_from_user==3;
 }
 
 int aiueos_address_space_self_test(void) {

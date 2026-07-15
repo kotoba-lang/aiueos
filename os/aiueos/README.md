@@ -63,7 +63,11 @@ real non-present page faults for both cross-process reads before restoring the
 kernel CR3. Two process roots map distinct private pages used for each process's
 result, message, and user stack. Domains 2 and 3 receive separate runtime
 capabilities, successfully call the same syscall, reject each other's handles,
-and reject the other process's unmapped private address. The pointer/length
+and reject the other process's unmapped private address. Both are then installed
+as APIC-timer-preempted scheduler tasks. Each task has its own supervisor-only
+interrupt stack; every switch updates CR3, TSS.RSP0, and the syscall owner
+domain before `iretq`. Boot requires both tasks and the kernel task to be
+preempted at least twice. The pointer/length
 window admission for both bootstrap and CPL3
 calls is compiler-emitted Kotoba code and is exercised at both valid boundaries
 and rejected overflow/empty inputs. An admitted log payload is copied by Kotoba
