@@ -194,7 +194,12 @@
            :user-mode true
            :registers {:number :rax :handle :rdi :pointer :rsi :length :rdx
                        :result :rax}
-           :capability-handle {:index-bits 16 :generation-bits 16 :tag-bits 32}
+           :capability-handle {:index-bits 16 :generation-bits 16 :tag-bits 32
+                               :table :physical-page-backed
+                               :minimum-slots 256
+                               :synchronization :spinlock
+                               :owner-domains :multiple
+                               :generation-exhaustion :retire-slot}
            :copy-in {:current-map :bootstrap-identity
                      :validation [:nonzero-length :canonical-address
                                   :overflow :mapped-bound]

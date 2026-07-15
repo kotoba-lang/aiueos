@@ -64,6 +64,9 @@ extern int aiueos_scheduler_evidence_ready(void);
 extern int aiueos_service_runtime_evidence_ready(void);
 extern int aiueos_service_ipc_evidence_ready(void);
 extern int aiueos_syscall_self_test(void);
+extern int aiueos_capability_table_initialize(void);
+extern uint16_t aiueos_capability_table_capacity(void);
+extern int aiueos_dynamic_capability_evidence_ready(void);
 extern int aiueos_process_initialize(void);
 extern void aiueos_process_enter(void);
 extern int aiueos_process_result(void);
@@ -221,6 +224,10 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
     }
     debug_string("AIUEOS_PHYSICAL_ALLOCATOR_OK pages=2 zeroed\n");
     serial_string("AIUEOS_PHYSICAL_ALLOCATOR_OK pages=2 zeroed\r\n");
+    if (!aiueos_capability_table_initialize()) {
+      serial_string("AIUEOS_CAPABILITY_TABLE_FAIL page-allocation\r\n");
+      qemu_exit(0x75);
+    }
     if (!aiueos_acpi_initialize(boot->acpi_rsdp)) {
       debug_string("AIUEOS_ACPI_FAIL rsdp-xsdt-madt\n");
       serial_string("AIUEOS_ACPI_FAIL rsdp-xsdt-madt\r\n");
@@ -382,6 +389,10 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
       serial_string("AIUEOS_SYSCALL_FAIL abi-capability-pointer\r\n");
       qemu_exit(0x73);
     }
+    if (!aiueos_dynamic_capability_evidence_ready() ||
+        aiueos_capability_table_capacity() < 256) qemu_exit(0x73);
+    debug_string("AIUEOS_DYNAMIC_CAPABILITY_OK page-backed slots>=256 owner=3 reuse generation retirement\n");
+    serial_string("AIUEOS_DYNAMIC_CAPABILITY_OK page-backed slots>=256 owner=3 reuse generation retirement\r\n");
     debug_string("AIUEOS_SYSCALL_OK int80-cpl0 abi-v1\n");
     serial_string("AIUEOS_SYSCALL_OK int80-cpl0 abi-v1\r\n");
     debug_string("AIUEOS_KOTOBA_SYSCALL_PLANNER_OK bootstrap user overflow\n");

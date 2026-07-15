@@ -74,7 +74,12 @@ slot generation, object type, active state, rights, and owner domain. Kernel
 and CPL3 receive distinct slots. Boot proves each caller rejects the other
 domain's handle, revokes generation 1, reissues generation 2, and exercises
 stale, foreign-owner, wrong-type, and no-rights rejection again from CPL3.
-Dynamic table allocation and concurrent transfer remain later work.
+The table is allocated as a zeroed physical page after memory-map admission,
+providing at least 256 slots instead of a compiled four-entry array. Allocation
+and admission are spinlock-serialized. Boot allocates a third owner domain,
+reuses its revoked slot only with an advanced generation, and rejects the same
+handle from another domain. Concurrent cross-task handle transfer remains later
+work.
 An exhausted generation retires its slot rather than wrapping and reviving an
 old handle.
 

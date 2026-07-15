@@ -297,6 +297,10 @@ grep -F "AIUEOS_KOTOBA_CAPABILITY_OK table owner generation type rights revoke r
   echo "error: capability negative evidence was not observed" >&2
   exit 1
 }
+grep -F "AIUEOS_DYNAMIC_CAPABILITY_OK page-backed slots>=256 owner=3 reuse generation retirement" "$serial_log" >/dev/null || {
+  echo "error: dynamic page-backed capability table evidence was not observed" >&2
+  exit 1
+}
 grep -F "AIUEOS_PROCESS_FOUNDATION_OK tss-descriptor user-wx guard-page" "$serial_log" >/dev/null || {
   echo "error: process isolation foundation evidence was not observed" >&2; exit 1;
 }
