@@ -155,15 +155,10 @@ static int object_transaction_valid(const struct aiuefs_object_transaction *tran
 
 static int mutable_object_valid(const struct aiuefs_mutable_object *object, uint32_t sequence,
     const struct aiuefs_object_transaction *transaction) {
-  static const uint8_t magic[8] = {'A','I','U','O','B','J','1',0};
-  for (uint32_t i = 0; i < sizeof(magic); i++) if (object->magic[i] != magic[i]) return 0;
-  if (object->version != transaction->object_version || object->sequence != sequence ||
-      object->object_length != transaction->object_length ||
-      object->object_checksum != transaction->object_checksum ||
-      fnv1a(object->object, object->object_length) != object->object_checksum) return 0;
-  for (uint32_t i = 0; i < object->object_length; i++)
-    if (object->object[i] != transaction->object[i]) return 0;
-  return 1;
+  extern uint64_t kotoba_aiueos_mutable_object_valid(
+    const void *, uint64_t, uint64_t, const void *, uint64_t);
+  return (int)kotoba_aiueos_mutable_object_valid(
+    object, sizeof(*object), sequence, transaction, sizeof(*transaction));
 }
 
 static int virtio_blk_sector_io(struct virtio_blk_request *request, uint8_t *sector,
@@ -478,7 +473,6 @@ static int virtio_rng(uint8_t b, uint8_t d, uint8_t f) {
 }
 
 static int virtio_blk(uint8_t b, uint8_t d, uint8_t f) {
-  static const uint8_t magic[8] = {'A','I','U','E','F','S','1',0};
   struct virtio_caps caps;
   volatile struct virtio_common_cfg *cfg;
   uint64_t notify_base, device_bar;
@@ -523,13 +517,8 @@ static int virtio_blk(uint8_t b, uint8_t d, uint8_t f) {
       if (used->ring[0].id != 0 || used->ring[0].length != 513 || *status != VIRTIO_BLK_S_OK)
         return 0;
       const struct aiuefs_superblock *superblock = (const void *)sector;
-      for (unsigned i = 0; i < sizeof(magic); i++) if (superblock->magic[i] != magic[i]) return 0;
-      if (superblock->version != 1 || superblock->header_size != sizeof(*superblock) ||
-          superblock->object_count != 1 || !superblock->object_length ||
-          superblock->object_offset < superblock->header_size ||
-          superblock->object_offset > 512 || superblock->object_length > 512 - superblock->object_offset ||
-          fnv1a(sector + superblock->object_offset, superblock->object_length) != superblock->object_checksum)
-        return 0;
+      extern uint64_t kotoba_aiueos_superblock_valid(const void *, uint64_t);
+      if (!kotoba_aiueos_superblock_valid(superblock, 512)) return 0;
       object_store_ready = 1;
       struct aiuefs_journal_record slots[2];
       struct aiuefs_journal_record *journal = (void *)sector;

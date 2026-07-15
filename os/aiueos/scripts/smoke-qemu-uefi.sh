@@ -231,6 +231,10 @@ grep -F "AIUEOS_KOTOBA_RECORD_VALIDATION_OK journal transaction bounded-u32" "$s
   echo "error: Kotoba-native record validation evidence was not observed" >&2
   exit 1
 }
+grep -F "AIUEOS_KOTOBA_STORAGE_READ_VALIDATION_OK superblock mutable-object" "$serial_log" >/dev/null || {
+  echo "error: Kotoba-native storage read validation evidence was not observed" >&2
+  exit 1
+}
 grep -F "AIUEOS_VIRTIO_INPUT_OK modern-pci eventq configured synthetic-smoke" "$serial_log" >/dev/null || {
   echo "error: modern virtio-input configuration/synthetic transport evidence was not observed" >&2; exit 1;
 }

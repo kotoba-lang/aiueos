@@ -1,0 +1,35 @@
+(defn read-u32 [base length index]
+  (+ (kernel-load-u8 base length index)
+     (* (kernel-load-u8 base length (+ index 1)) 256)
+     (* (kernel-load-u8 base length (+ index 2)) 65536)
+     (* (kernel-load-u8 base length (+ index 3)) 16777216)))
+
+(defn fnv-step [base length index hash]
+  (if (= index length) hash
+    (fnv-step base length (+ index 1)
+      (* (bit-xor hash (kernel-load-u8 base length index)) 16777619))))
+
+(defn fnv [base length]
+  (bit-and (fnv-step base length 0 2166136261) 4294967295))
+
+(defn bytes-equal [left right length index]
+  (if (= index length) 1
+    (if (= (kernel-load-u8 left length index)
+           (kernel-load-u8 right length index))
+      (bytes-equal left right length (+ index 1))
+      0)))
+
+(defn aiueos-mutable-object-valid [object object-length sequence transaction transaction-length]
+  (and (= object-length 40)
+       (= transaction-length 32)
+       (= (read-u32 object object-length 0) 1330989377)
+       (= (read-u32 object object-length 4) 3230274)
+       (= (read-u32 object object-length 8) (read-u32 transaction transaction-length 4))
+       (= (read-u32 object object-length 12) sequence)
+       (= (read-u32 object object-length 16) 16)
+       (= (read-u32 object object-length 16) (read-u32 transaction transaction-length 8))
+       (= (read-u32 object object-length 20) (read-u32 transaction transaction-length 12))
+       (= (fnv (+ object 24) 16) (read-u32 object object-length 20))
+       (bytes-equal (+ object 24) (+ transaction 16) 16 0)))
+
+(defn main [] 0)
