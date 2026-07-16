@@ -9,6 +9,12 @@
 #define AIUEOS_INTERRUPT_FLAG (1ULL << 9)
 #define AIUEOS_IPC_CAPABILITY_TYPE 2U
 #define AIUEOS_IPC_SEND_RIGHT 1U
+#define AIUEOS_SERVICE_MUTATE_STATE 1U
+#define AIUEOS_SERVICE_MUTATE_CONTEXT 2U
+#define AIUEOS_SERVICE_MUTATE_TASK_BIND 4U
+#define AIUEOS_SERVICE_MUTATE_TASK_DEACTIVATE 8U
+#define AIUEOS_SERVICE_MUTATE_TASK_RELEASE 16U
+#define AIUEOS_SERVICE_MUTATE_CLEAR 32U
 
 /* A saved stack pointer is the complete kernel-task context. */
 struct aiueos_interrupt_context {
@@ -229,36 +235,54 @@ static int apply_service_event(unsigned service, uint64_t event) {
     tasks[state_slot].active : 0;
   uint64_t commit=kotoba_aiueos_service_task_transition(candidate,
     descriptor->active,state_slot,current_task,task_active);
-  uint64_t commit_action=commit>>32;
+  uint64_t commit_action=(commit>>32)&255U;
+  uint64_t recipe=commit>>40;
   if (commit_action==1) {
+    if (recipe!=(AIUEOS_SERVICE_MUTATE_STATE|AIUEOS_SERVICE_MUTATE_CONTEXT|
+        AIUEOS_SERVICE_MUTATE_TASK_BIND)) return 0;
     uint64_t cr3=descriptor->process_slot<8 ?
       aiueos_address_space_cr3(descriptor->process_slot) :
       aiueos_address_space_kernel_cr3();
     int slot=allocate_task_slot(cr3);
     if (slot<1) return 0;
-    descriptor->generation=commit&65535U;
-    descriptor->restarts=(commit>>16)&65535U;
-    descriptor->task_slot=(uint16_t)slot;
-    tasks[slot].service=(uint16_t)service;
-    descriptor->heartbeats=descriptor->restart_requested=0;
-    descriptor->active=1;
-    tasks[slot].saved_stack=initial_context(tasks[slot].kernel_stack,
-      service_task_entry,service);
+    if (recipe&AIUEOS_SERVICE_MUTATE_STATE) {
+      descriptor->generation=commit&65535U;
+      descriptor->restarts=(commit>>16)&65535U;
+      descriptor->heartbeats=descriptor->restart_requested=0;
+      descriptor->active=1;
+    }
+    if (recipe&AIUEOS_SERVICE_MUTATE_TASK_BIND) {
+      descriptor->task_slot=(uint16_t)slot;
+      tasks[slot].service=(uint16_t)service;
+    }
+    if (recipe&AIUEOS_SERVICE_MUTATE_CONTEXT)
+      tasks[slot].saved_stack=initial_context(tasks[slot].kernel_stack,
+        service_task_entry,service);
     return 1;
   }
   if (commit_action==2) {
-    descriptor->generation=commit&65535U;
-    descriptor->restarts=(commit>>16)&65535U;
-    descriptor->heartbeats=descriptor->restart_requested=0;
-    tasks[descriptor->task_slot].saved_stack=initial_context(
-      tasks[descriptor->task_slot].kernel_stack,service_task_entry,service);
+    if (recipe!=(AIUEOS_SERVICE_MUTATE_STATE|AIUEOS_SERVICE_MUTATE_CONTEXT))
+      return 0;
+    if (recipe&AIUEOS_SERVICE_MUTATE_STATE) {
+      descriptor->generation=commit&65535U;
+      descriptor->restarts=(commit>>16)&65535U;
+      descriptor->heartbeats=descriptor->restart_requested=0;
+    }
+    if (recipe&AIUEOS_SERVICE_MUTATE_CONTEXT)
+      tasks[descriptor->task_slot].saved_stack=initial_context(
+        tasks[descriptor->task_slot].kernel_stack,service_task_entry,service);
     return 1;
   }
   if (commit_action==3) {
+    if (recipe!=(AIUEOS_SERVICE_MUTATE_TASK_DEACTIVATE|
+        AIUEOS_SERVICE_MUTATE_TASK_RELEASE|AIUEOS_SERVICE_MUTATE_CLEAR)) return 0;
     unsigned task_slot=descriptor->task_slot;
-    tasks[task_slot].active=0;
-    if (!release_task_slot(task_slot)) return 0;
-    descriptor->active=0; descriptor->task_slot=0;
+    if (recipe&AIUEOS_SERVICE_MUTATE_TASK_DEACTIVATE) tasks[task_slot].active=0;
+    if ((recipe&AIUEOS_SERVICE_MUTATE_TASK_RELEASE) &&
+        !release_task_slot(task_slot)) return 0;
+    if (recipe&AIUEOS_SERVICE_MUTATE_CLEAR) {
+      descriptor->active=0; descriptor->task_slot=0;
+    }
     return 1;
   }
   return event==0 && commit_action==4;
