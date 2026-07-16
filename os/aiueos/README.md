@@ -279,19 +279,24 @@ the end of the disk, byte-identical to the ISO's El Torito boot image and
 holding known-good copies of both boot artifacts. When the primary loader
 fails firmware `LoadImage` admission (its PE image is corrupted), the UEFI
 boot manager falls back to the recovery partition and the complete evidence
-gate must still pass. A corrupted primary *kernel* is instead rejected
-fail-closed by the running loader and does not silently fall back; loader-owned
-kernel-level recovery selection is a separate gap. The verifier validates the
-recovery GPT entry, FAT16 chains, and byte-for-byte artifact contents, and the
-receipt records the partition extent, GUID, and digest.
+gate must still pass. When the primary *kernel* fails the loader's compiled-in
+SHA-256 admission, the loader emits the rejection marker and retries the same
+kernel path on every other filesystem volume under the identical digest
+requirement, so a fallback can only ever load the expected kernel bytes; it
+announces `AIUEOS_LOADER_RECOVERY_OK` and fails closed when no volume passes.
+The verifier validates the recovery GPT entry, FAT16 chains, and byte-for-byte
+artifact contents, and the receipt records the partition extent, GUID, and
+digest.
 
 The release smoke first requires the verifier to reject a one-byte kernel
 mutation inside the ISO and inside the recovery partition, then boots the GPT
-disk, the ISO, and a primary-loader-corrupted disk (recovery fallback) through
-OVMF, requiring the complete UEFI evidence gate on each boot. The
-`corrupt` subcommand of `make-release-image.py` produces those deterministic
-mutations. A BIOS/GRUB compatibility path, the update partition/flow, and
-release signing remain separate Phase 5 gaps.
+disk, the ISO, a primary-loader-corrupted disk (firmware fallback), and a
+primary-kernel-corrupted disk (loader digest fallback) through OVMF, requiring
+the complete UEFI evidence gate on each boot. The `corrupt` subcommand of
+`make-release-image.py` produces those deterministic mutations. This recovery
+selection lives in the reference C loader; re-expressing it in the
+compiler-emitted C-free loader, a BIOS/GRUB compatibility path, the update
+partition/flow, and release signing remain separate Phase 5 gaps.
 
 Requirements are Zig 0.14 or newer and `qemu-system-x86_64` with an edk2/OVMF
 firmware image. Override firmware discovery with `OVMF_CODE=/path/to/code.fd`.

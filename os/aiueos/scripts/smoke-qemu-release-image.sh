@@ -73,4 +73,25 @@ AIUEOS_DISK_IMAGE="$out/corrupt-primary-loader.img" \
   "$aiueos/scripts/smoke-qemu-uefi.sh"
 rm -f "$out/corrupt-primary-loader.img"
 echo "AIUEOS_RECOVERY_FALLBACK_OK primary-loader-corrupt firmware-fallback full-evidence"
-echo "AIUEOS_RELEASE_MEDIA_SMOKE_OK gpt iso recovery"
+
+# Loader-level kernel recovery: with the primary kernel corrupted, the loader
+# must reject it by digest, admit the identical kernel from the recovery
+# volume, and still pass the complete evidence gate.
+python3 "$aiueos/scripts/make-release-image.py" corrupt \
+  --image "$out/aiueos-x86_64-gpt.img" \
+  --output "$out/corrupt-primary-kernel.img" --target primary-kernel >/dev/null
+cp "$out/aiueos-x86_64-data.img" "$out/virtio-blk-smoke.img"
+AIUEOS_DISK_IMAGE="$out/corrupt-primary-kernel.img" \
+  AIUEOS_PRESERVE_BLK_IMAGE=1 \
+  "$aiueos/scripts/smoke-qemu-uefi.sh"
+grep -F "AIUEOS_LOADER_FAIL kernel-sha256" "$out/uefi-debug.log" >/dev/null || {
+  echo "error: corrupted primary kernel was not rejected before recovery" >&2
+  exit 1
+}
+grep -F "AIUEOS_LOADER_RECOVERY_OK kernel-from-alternate-volume sha256-v1" "$out/uefi-debug.log" >/dev/null || {
+  echo "error: loader kernel recovery evidence was not observed" >&2
+  exit 1
+}
+rm -f "$out/corrupt-primary-kernel.img"
+echo "AIUEOS_RECOVERY_KERNEL_FALLBACK_OK primary-kernel-corrupt loader-fallback digest-admitted full-evidence"
+echo "AIUEOS_RELEASE_MEDIA_SMOKE_OK gpt iso recovery loader-kernel-recovery"
