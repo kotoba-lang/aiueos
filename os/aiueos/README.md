@@ -89,7 +89,10 @@ the compiler-emitted `kotoba_aiueos_rsa2048_sha256_verify` object with a
 caller-owned 1284-byte workspace, compiler-enforced 4 KiB memory ceiling, and
 250-million-unit fuel ceiling. The fixed-work 32-byte digest comparison runs
 in `kotoba_aiueos_digest_equal`; the C substrate contains neither digest nor
-signature verification. The private key is not
+signature verification. Canonical IDs, extent bounds, signer policy, and every
+catalog/application/signature sector collision are admitted by
+`kotoba_aiueos_app_catalog_valid`; C performs only the resulting bounded block
+I/O. The private key is not
 present in the repository or image builder. Digest comparison and the complete
 encoded-message comparison are constant-time and must pass before bytes reach
 the loader. Negative QEMU gates mutate the catalog, an ELF, and an application

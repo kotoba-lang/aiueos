@@ -9,7 +9,8 @@ serial_log="$out/kernel-serial.log"
 blk_image="$out/virtio-blk-smoke.img"
 qemu=${QEMU_SYSTEM_X86_64:-qemu-system-x86_64}
 
-AIUEOS_INPUT_SMOKE_SYNTHETIC=1 "$aiueos/scripts/build-uefi.sh" >/dev/null
+AIUEOS_INPUT_SMOKE_SYNTHETIC=1 AIUEOS_CATALOG_POLICY_SELFTEST=1 \
+  "$aiueos/scripts/build-uefi.sh" >/dev/null
 if [ "${AIUEOS_CORRUPT_KERNEL:-0}" = 1 ]; then
   python3 - "$out/esp/EFI/AIUEOS/KERNEL.ELF" <<'PY'
 from pathlib import Path
@@ -235,6 +236,11 @@ grep -F "AIUEOS_OBJECT_STORE_OK aiuefs-v3 objects=3 catalog=2apps" "$serial_log"
 }
 grep -F "AIUEOS_KOTOBA_APP_ADMISSION_OK catalog=rsa2048 apps=2 digest=kotoba-sha256 signature=kotoba-rsa2048-pkcs1 policy=public-key" "$serial_log" >/dev/null || {
   echo "error: authenticated object-store Kotoba app admission was not observed" >&2
+  exit 1
+}
+grep -F "AIUEOS_KOTOBA_CATALOG_POLICY_SELFTEST_OK malformed=6" "$serial_log" >/dev/null || {
+  echo "error: Kotoba catalog policy malformed-input evidence missing" >&2
+  cat "$serial_log" >&2
   exit 1
 }
 grep -F "AIUEOS_JOURNAL_OK dual-slot committed append-readback" "$serial_log" >/dev/null || {

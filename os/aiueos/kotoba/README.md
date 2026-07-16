@@ -43,6 +43,13 @@ compiler's 512-byte bounded load primitive, and exports
 `kotoba_aiueos_digest_equal`. Its pinned SHA-256 is
 `6d005bf596ff10343377d9c243d473437fa272559b7f9130cba47cc4cd80d3aa`.
 
+`app-catalog-valid.o` validates the authenticated aiuefs application catalog
+in Kotoba: canonical header and IDs, one-to-four entries, 12 KiB extent bounds,
+signer policy, capacity, and all data/signature/catalog collision pairs. Its
+five-argument ABI receives catalog bytes, capacity, and an 8-byte routing
+receipt containing the already-bounded catalog sectors. Its pinned SHA-256 is
+`bf990c3775bd1351627daa669a124adad8e194710dc41d93f0c1b2ccfdacd927`.
+
 `rsa2048.o` implements RSA-2048 public exponent 65537 and the complete
 PKCS#1 v1.5 SHA-256 encoded-message comparison in Kotoba. Its five-argument
 kernel ABI accepts a 256-byte signature, 32-byte digest, and caller-owned
