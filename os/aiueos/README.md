@@ -351,6 +351,21 @@ written with readback, and the next boot must consume it, report
 `AIUEOS_CRASH_RECEIPT_OK reason=6 fault-context consumed readback`, and still
 pass the complete evidence gate.
 
+The release also carries a `newc` initramfs (`EFI/AIUEOS/INITRD.IMG`,
+deterministic bytes from `make-initramfs.py`: fixed mode/mtime, sequential
+inodes) holding early-component and recovery materials — the signed user
+application and its RSA signatures. Volume admission in the loader requires
+both the kernel and the initramfs to match their compiled-in SHA-256 digests
+(the recovery fallback admits both from the same volume), and the versioned
+boot-info ABI moves to v2 to hand the archive's base and size to the kernel.
+Before replacing the firmware page tables the kernel walks the archive with a
+bounded `newc` parser — per-entry magic, hex-only size fields, 4-byte
+alignment, in-bounds extents, at most 64 entries within 1 MiB, and the
+TRAILER!!! terminator — and requires exactly the expected entry count. The
+smoke gates the evidence marker and a corrupted-initramfs loader rejection;
+the release verifier checks the archive byte-for-byte on every medium and the
+receipt records its digest.
+
 This recovery selection lives in the reference C loader; re-expressing it in
 the compiler-emitted C-free loader and a GRUB/Multiboot2 compatibility path
 remain separate Phase 5 gaps.

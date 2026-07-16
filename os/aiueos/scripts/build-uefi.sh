@@ -294,12 +294,22 @@ zig ld.lld -nostdlib -static -z max-page-size=0x1000 \
   "$kotoba_service_task_object" \
   "$kotoba_rsa2048_object"
 fi
-python3 - "$kernel" "$identity_source" <<'PY'
+initramfs="$kernel_dir/INITRD.IMG"
+python3 "$aiueos/scripts/make-initramfs.py" \
+  --entry "recovery/user-smoke.elf,$aiueos/kotoba/user-smoke.elf" \
+  --entry "recovery/user-smoke.sig,$aiueos/kotoba/user-smoke.sig" \
+  --entry "recovery/app-catalog.sig,$aiueos/kotoba/app-catalog.sig" \
+  --output "$initramfs" >/dev/null
+python3 - "$kernel" "$initramfs" "$identity_source" <<'PY'
 import hashlib, pathlib, sys
-digest = hashlib.sha256(pathlib.Path(sys.argv[1]).read_bytes()).digest()
-values = ",".join(f"0x{byte:02x}" for byte in digest)
-pathlib.Path(sys.argv[2]).write_text(
-    "#include <stdint.h>\nconst uint8_t aiueos_expected_kernel_sha256[32]={" + values + "};\n",
+kernel_digest = hashlib.sha256(pathlib.Path(sys.argv[1]).read_bytes()).digest()
+initramfs_digest = hashlib.sha256(pathlib.Path(sys.argv[2]).read_bytes()).digest()
+def values(digest):
+    return ",".join(f"0x{byte:02x}" for byte in digest)
+pathlib.Path(sys.argv[3]).write_text(
+    "#include <stdint.h>\n"
+    "const uint8_t aiueos_expected_kernel_sha256[32]={" + values(kernel_digest) + "};\n"
+    "const uint8_t aiueos_expected_initramfs_sha256[32]={" + values(initramfs_digest) + "};\n",
     encoding="ascii")
 PY
 zig cc -target x86_64-windows-gnu -std=c11 -O2 -ffreestanding \

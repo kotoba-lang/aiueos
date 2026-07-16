@@ -21,6 +21,16 @@ data[-1] ^= 0x01
 path.write_bytes(data)
 PY
 fi
+if [ "${AIUEOS_CORRUPT_INITRAMFS:-0}" = 1 ]; then
+  python3 - "$out/esp/EFI/AIUEOS/INITRD.IMG" <<'PYC'
+from pathlib import Path
+import sys
+path = Path(sys.argv[1])
+data = bytearray(path.read_bytes())
+data[-1] ^= 0x01
+path.write_bytes(data)
+PYC
+fi
 command -v "$qemu" >/dev/null 2>&1 || {
   echo "error: qemu-system-x86_64 is required" >&2
   exit 1
@@ -123,6 +133,19 @@ if [ "${AIUEOS_CORRUPT_KERNEL:-0}" = 1 ]; then
   exit 0
 fi
 
+if [ "${AIUEOS_CORRUPT_INITRAMFS:-0}" = 1 ]; then
+  [ "$status" -eq 255 ] || {
+    echo "error: corrupted initramfs produced unexpected QEMU status $status" >&2
+    exit 1
+  }
+  grep -F "AIUEOS_LOADER_FAIL initramfs-sha256" "$log" >/dev/null || {
+    echo "error: corrupted initramfs was not rejected by loader" >&2
+    exit 1
+  }
+  echo "AIUEOS_INITRAMFS_INTEGRITY_REJECTION_OK"
+  exit 0
+fi
+
 if [ "${AIUEOS_EXPECT_FAULT:-0}" = 1 ]; then
   # The unexpected-exception path writes 0x7d; isa-debug-exit maps it to 251.
   [ "$status" -eq 251 ] || {
@@ -190,6 +213,10 @@ grep -F "AIUEOS_LOADER_INTEGRITY_OK sha256-v1" "$log" >/dev/null || {
 }
 grep -F "AIUEOS_KERNEL_OK memory-map-v1" "$log" >/dev/null || {
   echo "error: kernel handoff was not observed" >&2
+  exit 1
+}
+grep -F "AIUEOS_INITRAMFS_OK newc entries=3 sha256-admitted bounded" "$serial_log" >/dev/null || {
+  echo "error: bounded initramfs validation evidence was not observed" >&2
   exit 1
 }
 grep -F "AIUEOS_SERIAL_OK stack-v1 memory-map-v1" "$serial_log" >/dev/null || {

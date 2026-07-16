@@ -6,7 +6,57 @@ struct aiueos_boot_info {
   void *acpi_rsdp;
   uint64_t framebuffer_base, framebuffer_size;
   uint32_t framebuffer_width, framebuffer_height, framebuffer_stride, framebuffer_format;
+  uint64_t initramfs_base, initramfs_size;
 };
+
+/* Bounded `newc` cpio validation. The archive was already bound to a
+   compiled-in SHA-256 by the loader; this walk proves the structure: magic
+   per entry, hex-only size fields, 4-byte alignment, in-bounds extents, a
+   bounded entry count, and the TRAILER!!! terminator. Runs before the kernel
+   replaces the firmware page tables, while the loader-pool buffer is still
+   identity-mapped. */
+static int initramfs_hex_field(const uint8_t *field, uint64_t *value) {
+  uint64_t result = 0;
+  for (uint32_t i = 0; i < 8; i++) {
+    uint8_t c = field[i]; uint64_t digit;
+    if (c >= '0' && c <= '9') digit = c - '0';
+    else if (c >= 'a' && c <= 'f') digit = c - 'a' + 10;
+    else if (c >= 'A' && c <= 'F') digit = c - 'A' + 10;
+    else return 0;
+    result = (result << 4) | digit;
+  }
+  *value = result;
+  return 1;
+}
+
+static int initramfs_validate(uint64_t base, uint64_t size, uint64_t *files) {
+  static const char trailer[11] = "TRAILER!!!";
+  const uint8_t *archive = (const uint8_t *)(uintptr_t)base;
+  uint64_t offset = 0, count = 0;
+  if (!base || !size || size > 1024ULL * 1024ULL || (base & 3)) return 0;
+  for (;;) {
+    if (count > 64 || offset + 110 > size) return 0;
+    const uint8_t *header = archive + offset;
+    if (header[0] != '0' || header[1] != '7' || header[2] != '0' ||
+        header[3] != '7' || header[4] != '0' || header[5] != '1') return 0;
+    uint64_t filesize, namesize;
+    if (!initramfs_hex_field(header + 54, &filesize) ||
+        !initramfs_hex_field(header + 94, &namesize)) return 0;
+    if (!namesize || namesize > 256 || filesize > size) return 0;
+    uint64_t name_offset = offset + 110;
+    if (name_offset + namesize > size) return 0;
+    if (namesize == sizeof(trailer)) {
+      int is_trailer = 1;
+      for (uint32_t i = 0; i < sizeof(trailer); i++)
+        if (archive[name_offset + i] != (uint8_t)trailer[i]) { is_trailer = 0; break; }
+      if (is_trailer) { *files = count; return 1; }
+    }
+    uint64_t data_offset = (name_offset + namesize + 3) & ~3ULL;
+    if (data_offset > size || filesize > size - data_offset) return 0;
+    offset = (data_offset + filesize + 3) & ~3ULL;
+    count++;
+  }
+}
 
 struct __attribute__((packed)) idt_entry {
   uint16_t offset_low, selector;
@@ -170,7 +220,7 @@ void aiueos_exception_dispatch(uint64_t vector) {
 __attribute__((noreturn))
 void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
   serial_init();
-  if (!boot || boot->magic != 0x414955454f53424fULL || boot->version != 1 ||
+  if (!boot || boot->magic != 0x414955454f53424fULL || boot->version != 2 ||
       !boot->memory_map || !boot->memory_map_size || !boot->descriptor_size) {
     debug_string("AIUEOS_KERNEL_FAIL boot-info\n");
     serial_string("AIUEOS_KERNEL_FAIL boot-info\r\n");
@@ -193,6 +243,15 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
       qemu_exit(0x6f);
     }
     serial_string("AIUEOS_KOTOBA_FNV_VECTOR_OK abc\r\n");
+    uint64_t initramfs_files = 0;
+    if (!initramfs_validate(boot->initramfs_base, boot->initramfs_size,
+                            &initramfs_files) || initramfs_files != 3) {
+      debug_string("AIUEOS_INITRAMFS_FAIL newc-structure\n");
+      serial_string("AIUEOS_INITRAMFS_FAIL newc-structure\r\n");
+      qemu_exit(0x68);
+    }
+    debug_string("AIUEOS_INITRAMFS_OK newc entries=3 sha256-admitted bounded\n");
+    serial_string("AIUEOS_INITRAMFS_OK newc entries=3 sha256-admitted bounded\r\n");
     extern uint64_t kotoba_aiueos_journal_record_build(void *, uint64_t, uint64_t);
     extern uint64_t kotoba_aiueos_journal_record_valid(const void *, uint64_t);
     static uint8_t journal_vector[512];

@@ -8,6 +8,7 @@
 #define EFI_INVALID_PARAMETER ((uint64_t)0x8000000000000002ULL)
 #define PAGE_SIZE 4096ULL
 #define KERNEL_BUFFER_SIZE (1024ULL * 1024ULL)
+#define INITRAMFS_BUFFER_SIZE (1024ULL * 1024ULL)
 #define MEMORY_MAP_BUFFER_SIZE (128ULL * 1024ULL)
 
 typedef uint64_t efi_status;
@@ -97,9 +98,11 @@ struct aiueos_boot_info {
   void *acpi_rsdp;
   uint64_t framebuffer_base, framebuffer_size;
   uint32_t framebuffer_width, framebuffer_height, framebuffer_stride, framebuffer_format;
+  uint64_t initramfs_base, initramfs_size;
 };
 typedef void(SYSVABI *kernel_entry)(const struct aiueos_boot_info *);
 extern const uint8_t aiueos_expected_kernel_sha256[32];
+extern const uint8_t aiueos_expected_initramfs_sha256[32];
 
 static const struct efi_guid loaded_image_guid =
   {0x5b1b31a1, 0x9562, 0x11d2, {0x8e,0x3f,0x00,0xa0,0xc9,0x69,0x72,0x3b}};
@@ -201,48 +204,73 @@ static void debug_string(const char *text) { while (*text) debug_byte((uint8_t)*
 static inline void fail_exit(void) { __asm__ volatile("outl %0, $0xf4" : : "a"(0x7f)); }
 static efi_status fail(const char *message) { debug_string(message); debug_byte('\n'); fail_exit(); return EFI_INVALID_PARAMETER; }
 
-/* One admission candidate: open the volume on this device, read the kernel,
-   and require the compiled-in SHA-256. Emits the failure marker but does not
-   terminate, so the caller can fall back to another volume. */
+static efi_status read_verified_file(struct efi_file *root, const char16 *path,
+                                     const char *kind_open, const char *kind_read,
+                                     const char *kind_sha,
+                                     const uint8_t expected_sha256[32],
+                                     uint8_t *buffer, uint64_t buffer_size,
+                                     uint64_t *size) {
+  struct efi_file *file = 0;
+  if (root->open(root, &file, path, 1, 0) != EFI_SUCCESS || !file) {
+    debug_string(kind_open); return EFI_INVALID_PARAMETER;
+  }
+  *size = buffer_size;
+  if (file->read(file, size, buffer) != EFI_SUCCESS) {
+    file->close(file);
+    debug_string(kind_read); return EFI_INVALID_PARAMETER;
+  }
+  file->close(file);
+  uint8_t digest[32];
+  sha256(buffer, *size, digest);
+  for (uint32_t i = 0; i < 32; i++) {
+    if (digest[i] != expected_sha256[i]) {
+      debug_string(kind_sha); return EFI_INVALID_PARAMETER;
+    }
+  }
+  return EFI_SUCCESS;
+}
+
+/* One admission candidate: open the volume on this device and require both
+   the kernel and the initramfs to match their compiled-in SHA-256 digests.
+   Emits the failure marker but does not terminate, so the caller can fall
+   back to another volume. */
 static efi_status read_verified_kernel(struct efi_boot_services *bs, efi_handle device,
                                        const char16 *kernel_path,
-                                       uint8_t *kernel_file, uint64_t *kernel_size) {
+                                       const char16 *initramfs_path,
+                                       uint8_t *kernel_file, uint64_t *kernel_size,
+                                       uint8_t *initramfs_file, uint64_t *initramfs_size) {
   struct efi_simple_file_system *fs = 0;
-  struct efi_file *root = 0, *file = 0;
+  struct efi_file *root = 0;
   if (bs->handle_protocol(device, &simple_fs_guid, (void **)&fs) != EFI_SUCCESS || !fs) {
     debug_string("AIUEOS_LOADER_FAIL filesystem\n"); return EFI_INVALID_PARAMETER;
   }
   if (fs->open_volume(fs, &root) != EFI_SUCCESS || !root) {
     debug_string("AIUEOS_LOADER_FAIL volume\n"); return EFI_INVALID_PARAMETER;
   }
-  if (root->open(root, &file, kernel_path, 1, 0) != EFI_SUCCESS || !file) {
-    root->close(root);
-    debug_string("AIUEOS_LOADER_FAIL kernel-open\n"); return EFI_INVALID_PARAMETER;
-  }
-  *kernel_size = KERNEL_BUFFER_SIZE;
-  if (file->read(file, kernel_size, kernel_file) != EFI_SUCCESS) {
-    file->close(file); root->close(root);
-    debug_string("AIUEOS_LOADER_FAIL kernel-read\n"); return EFI_INVALID_PARAMETER;
-  }
-  file->close(file); root->close(root);
-  uint8_t kernel_digest[32];
-  sha256(kernel_file, *kernel_size, kernel_digest);
-  for (uint32_t i = 0; i < 32; i++) {
-    if (kernel_digest[i] != aiueos_expected_kernel_sha256[i]) {
-      debug_string("AIUEOS_LOADER_FAIL kernel-sha256\n"); return EFI_INVALID_PARAMETER;
-    }
-  }
-  return EFI_SUCCESS;
+  efi_status status = read_verified_file(root, kernel_path,
+      "AIUEOS_LOADER_FAIL kernel-open\n", "AIUEOS_LOADER_FAIL kernel-read\n",
+      "AIUEOS_LOADER_FAIL kernel-sha256\n",
+      aiueos_expected_kernel_sha256, kernel_file, KERNEL_BUFFER_SIZE, kernel_size);
+  if (status == EFI_SUCCESS)
+    status = read_verified_file(root, initramfs_path,
+        "AIUEOS_LOADER_FAIL initramfs-open\n", "AIUEOS_LOADER_FAIL initramfs-read\n",
+        "AIUEOS_LOADER_FAIL initramfs-sha256\n",
+        aiueos_expected_initramfs_sha256, initramfs_file, INITRAMFS_BUFFER_SIZE,
+        initramfs_size);
+  root->close(root);
+  return status;
 }
 
 efi_status EFIAPI efi_main(efi_handle image, struct efi_system_table *system) {
   static const char16 console_message[] = u"AIUEOS_LOADER_OK loading kernel.elf\r\n";
   static const char16 kernel_path[] = u"\\EFI\\AIUEOS\\KERNEL.ELF";
+  static const char16 initramfs_path[] = u"\\EFI\\AIUEOS\\INITRD.IMG";
   struct efi_boot_services *bs;
   struct efi_loaded_image *loaded = 0;
-  uint8_t *kernel_file = 0;
+  uint8_t *kernel_file = 0, *initramfs_file = 0;
   void *memory_map = 0;
   uint64_t kernel_size = KERNEL_BUFFER_SIZE;
+  uint64_t initramfs_size = INITRAMFS_BUFFER_SIZE;
   uint64_t memory_map_size, map_key, descriptor_size;
   uint32_t descriptor_version;
   struct aiueos_boot_info info;
@@ -257,8 +285,11 @@ efi_status EFIAPI efi_main(efi_handle image, struct efi_system_table *system) {
     return fail("AIUEOS_LOADER_FAIL loaded-image");
   if (bs->allocate_pool(2, KERNEL_BUFFER_SIZE, (void **)&kernel_file) != EFI_SUCCESS)
     return fail("AIUEOS_LOADER_FAIL kernel-buffer");
+  if (bs->allocate_pool(2, INITRAMFS_BUFFER_SIZE, (void **)&initramfs_file) != EFI_SUCCESS)
+    return fail("AIUEOS_LOADER_FAIL initramfs-buffer");
   efi_status admitted = read_verified_kernel(bs, loaded->device_handle, kernel_path,
-                                             kernel_file, &kernel_size);
+                                             initramfs_path, kernel_file, &kernel_size,
+                                             initramfs_file, &initramfs_size);
   if (admitted != EFI_SUCCESS) {
     /* Bounded recovery: every other filesystem volume may carry the same
        kernel path; admission still requires the identical compiled-in
@@ -270,7 +301,8 @@ efi_status EFIAPI efi_main(efi_handle image, struct efi_system_table *system) {
       for (uint64_t i = 0; i < count && admitted != EFI_SUCCESS; i++) {
         if (handles[i] == loaded->device_handle) continue;
         admitted = read_verified_kernel(bs, handles[i], kernel_path,
-                                        kernel_file, &kernel_size);
+                                        initramfs_path, kernel_file, &kernel_size,
+                                        initramfs_file, &initramfs_size);
       }
     }
     if (admitted != EFI_SUCCESS)
@@ -315,7 +347,10 @@ efi_status EFIAPI efi_main(efi_handle image, struct efi_system_table *system) {
   efi_status status = bs->get_memory_map(&memory_map_size, memory_map, &map_key,
                                          &descriptor_size, &descriptor_version);
   if (status != EFI_SUCCESS) return fail("AIUEOS_LOADER_FAIL memory-map");
-  info.magic = 0x414955454f53424fULL; info.version = 1;
+  info.magic = 0x414955454f53424fULL; info.version = 2;
+  info.initramfs_base = (uint64_t)(uintptr_t)initramfs_file;
+  info.initramfs_size = initramfs_size;
+  if (!initramfs_size) return fail("AIUEOS_LOADER_FAIL initramfs-empty");
   info.memory_map = memory_map; info.memory_map_size = memory_map_size;
   info.descriptor_size = descriptor_size; info.descriptor_version = descriptor_version;
   info.acpi_rsdp = 0;
