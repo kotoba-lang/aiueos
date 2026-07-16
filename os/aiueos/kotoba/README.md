@@ -101,6 +101,12 @@ against the post-reap table state. C saves/restores contexts, updates evidence,
 and switches CR3 to the admitted task. Its pinned SHA-256 is
 `19f1dc06e4c6c276e3a7ebb14c9e30a85cbf5c225e7fbae187a7ad4e32a5542a`.
 
+`task-exit-route.o` performs a complete bounded task-table scan for a requested
+user domain, rejects kernel/invalid domains and duplicate active owners, and
+returns the unique task slot eligible for an exit request. C only commits the
+exit-request bit on that admitted slot. Its pinned SHA-256 is
+`dbf1dacb2d4a2fc0adf49134cbd6b973fa3a85e780f3d2b242a9baacb28799d2`.
+
 `rsa2048.o` implements RSA-2048 public exponent 65537 and the complete
 PKCS#1 v1.5 SHA-256 encoded-message comparison in Kotoba. Its five-argument
 kernel ABI accepts a 256-byte signature, 32-byte digest, and caller-owned

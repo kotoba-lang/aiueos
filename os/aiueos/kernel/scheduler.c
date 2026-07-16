@@ -51,6 +51,8 @@ extern uint64_t kotoba_aiueos_task_slot_plan(const void *table,uint64_t length,
   uint64_t count,uint64_t stride,uint64_t request);
 extern uint64_t kotoba_aiueos_scheduler_dispatch_plan(const void *table,
   uint64_t length,uint64_t count,uint64_t stride,uint64_t state);
+extern uint64_t kotoba_aiueos_task_exit_route(const void *table,uint64_t length,
+  uint64_t count,uint64_t stride,uint64_t domain);
 static uint64_t current_task;
 static int scheduler_user_mode;
 volatile uint64_t aiueos_user_scheduler_switches;
@@ -418,8 +420,11 @@ uint64_t *aiueos_scheduler_on_timer(uint64_t *interrupted_stack) {
   return tasks[current_task].saved_stack;
 }
 void aiueos_scheduler_request_user_exit(uint16_t domain) {
-  for (unsigned slot=1;slot<AIUEOS_TASK_SLOT_COUNT;slot++)
-    if (tasks[slot].active && tasks[slot].domain==domain) tasks[slot].exit_requested=1;
+  uint64_t route=kotoba_aiueos_task_exit_route(tasks,sizeof(tasks),
+    AIUEOS_TASK_SLOT_COUNT,sizeof(tasks[0]),domain);
+  unsigned slot=(unsigned)(route-1U);
+  if (route && slot<AIUEOS_TASK_SLOT_COUNT && tasks[slot].active &&
+      tasks[slot].domain==domain) tasks[slot].exit_requested=1;
 }
 int aiueos_scheduler_users_reaped(void) { return user_tasks_expected && user_tasks_reaped==user_tasks_expected; }
 int aiueos_scheduler_finalize_user_stacks(void) {
