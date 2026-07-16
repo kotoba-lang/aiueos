@@ -245,11 +245,21 @@ grep -F "AIUEOS_KOTOBA_APP_ADMISSION_OK catalog=rsa2048 apps=2 digest=kotoba-sha
   echo "error: authenticated object-store Kotoba app admission was not observed" >&2
   exit 1
 }
-grep -F "AIUEOS_KOTOBA_CATALOG_POLICY_SELFTEST_OK malformed=6" "$serial_log" >/dev/null || {
-  echo "error: Kotoba catalog policy malformed-input evidence missing" >&2
-  cat "$serial_log" >&2
-  exit 1
-}
+# The catalog-policy self-test is a test-only compile gate. The update-flow
+# smoke boots a previous-version image built without it and asserts the
+# marker's absence to prove which version booted.
+if [ "${AIUEOS_EXPECT_CATALOG_POLICY_SELFTEST:-1}" = 1 ]; then
+  grep -F "AIUEOS_KOTOBA_CATALOG_POLICY_SELFTEST_OK malformed=6" "$serial_log" >/dev/null || {
+    echo "error: Kotoba catalog policy malformed-input evidence missing" >&2
+    cat "$serial_log" >&2
+    exit 1
+  }
+else
+  ! grep -F "AIUEOS_KOTOBA_CATALOG_POLICY_SELFTEST_OK" "$serial_log" >/dev/null || {
+    echo "error: unexpected catalog-policy self-test evidence in previous-version boot" >&2
+    exit 1
+  }
+fi
 grep -F "AIUEOS_JOURNAL_OK dual-slot committed append-readback" "$serial_log" >/dev/null || {
   echo "error: journal write/readback evidence was not observed" >&2
   exit 1

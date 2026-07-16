@@ -5,6 +5,13 @@ repo=$(CDPATH= cd -- "$(dirname -- "$0")/../../.." && pwd)
 aiueos="$repo/os/aiueos"
 out=${AIUEOS_OUT:-"$repo/build/aiueos"}
 
+# Previous-version pair for the update-flow gate: built first, without the
+# catalog-policy self-test compile gate, so its kernel digest and serial
+# evidence are distinguishable from the current version below.
+AIUEOS_INPUT_SMOKE_SYNTHETIC=1 "$aiueos/scripts/build-uefi.sh" >/dev/null
+cp "$out/esp/EFI/BOOT/BOOTX64.EFI" "$out/update-previous-bootx64.efi"
+cp "$out/esp/EFI/AIUEOS/KERNEL.ELF" "$out/update-previous-kernel.elf"
+
 # The release-image smoke uses the same explicitly test-only input event and
 # catalog-policy self-test as the direct UEFI smoke. Normal release builds
 # leave both compile gates disabled.
@@ -121,4 +128,46 @@ grep -F "AIUEOS_BIOS_STUB uefi-required" "$bios_log" >/dev/null || {
   exit 1
 }
 echo "AIUEOS_BIOS_STUB_OK uefi-required deterministic-exit"
-echo "AIUEOS_RELEASE_MEDIA_SMOKE_OK gpt iso recovery loader-kernel-recovery bios-stub"
+
+# Update flow: a previous-version release image receives the current
+# loader/kernel pair on its primary ESP only; the recovery partition keeps the
+# previous version. The updated image must boot the new version (self-test
+# marker present, no recovery fallback involved).
+python3 "$aiueos/scripts/make-release-image.py" build \
+  --efi "$out/update-previous-bootx64.efi" \
+  --kernel "$out/update-previous-kernel.elf" \
+  --output "$out/update-base.img" --receipt "$out/update-base-receipt.json" >/dev/null
+python3 "$aiueos/scripts/make-release-image.py" apply-update \
+  --image "$out/update-base.img" \
+  --efi "$out/esp/EFI/BOOT/BOOTX64.EFI" \
+  --kernel "$out/esp/EFI/AIUEOS/KERNEL.ELF" \
+  --output "$out/update-applied.img" --receipt "$out/update-receipt.json" >/dev/null
+python3 "$aiueos/scripts/make-release-image.py" verify \
+  --image "$out/update-applied.img" \
+  --efi "$out/esp/EFI/BOOT/BOOTX64.EFI" \
+  --kernel "$out/esp/EFI/AIUEOS/KERNEL.ELF" \
+  --recovery-efi "$out/update-previous-bootx64.efi" \
+  --recovery-kernel "$out/update-previous-kernel.elf" >/dev/null
+cp "$out/aiueos-x86_64-data.img" "$out/virtio-blk-smoke.img"
+AIUEOS_DISK_IMAGE="$out/update-applied.img" \
+  AIUEOS_PRESERVE_BLK_IMAGE=1 \
+  "$aiueos/scripts/smoke-qemu-uefi.sh"
+! grep -F "AIUEOS_LOADER_RECOVERY_OK" "$out/uefi-debug.log" >/dev/null || {
+  echo "error: updated image booted through recovery instead of its primary" >&2
+  exit 1
+}
+echo "AIUEOS_UPDATE_APPLY_OK new-version-booted recovery-preserved receipt=update-receipt.json"
+
+# Rollback: corrupting the updated primary loader must boot the preserved
+# previous version from the recovery partition (self-test marker absent).
+python3 "$aiueos/scripts/make-release-image.py" corrupt \
+  --image "$out/update-applied.img" \
+  --output "$out/update-rollback.img" --target primary-loader >/dev/null
+cp "$out/aiueos-x86_64-data.img" "$out/virtio-blk-smoke.img"
+AIUEOS_DISK_IMAGE="$out/update-rollback.img" \
+  AIUEOS_PRESERVE_BLK_IMAGE=1 \
+  AIUEOS_EXPECT_CATALOG_POLICY_SELFTEST=0 \
+  "$aiueos/scripts/smoke-qemu-uefi.sh"
+rm -f "$out/update-base.img" "$out/update-applied.img" "$out/update-rollback.img"
+echo "AIUEOS_UPDATE_ROLLBACK_OK previous-version-recovered firmware-fallback full-evidence"
+echo "AIUEOS_RELEASE_MEDIA_SMOKE_OK gpt iso recovery loader-kernel-recovery bios-stub update-rollback"
