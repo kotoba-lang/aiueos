@@ -53,6 +53,7 @@ kotoba_sha256_object=${AIUEOS_KOTOBA_SHA256_OBJECT:-"$aiueos/kotoba/sha256.o"}
 kotoba_digest_equal_object=${AIUEOS_KOTOBA_DIGEST_EQUAL_OBJECT:-"$aiueos/kotoba/digest-equal.o"}
 kotoba_catalog_valid_object=${AIUEOS_KOTOBA_CATALOG_VALID_OBJECT:-"$aiueos/kotoba/app-catalog-valid.o"}
 kotoba_app_lookup_object=${AIUEOS_KOTOBA_APP_LOOKUP_OBJECT:-"$aiueos/kotoba/app-lookup-plan.o"}
+kotoba_user_elf_valid_object=${AIUEOS_KOTOBA_USER_ELF_VALID_OBJECT:-"$aiueos/kotoba/user-elf-valid.o"}
 kotoba_rsa2048_object=${AIUEOS_KOTOBA_RSA2048_OBJECT:-"$aiueos/kotoba/rsa2048.o"}
 kotoba_user_elf=${AIUEOS_KOTOBA_USER_ELF:-"$aiueos/kotoba/user-smoke.elf"}
 kotoba_fnv_sha=
@@ -155,6 +156,9 @@ python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_catalog_valid_
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_app_lookup_object" \
   aa8ecea382820707638aa24e49226dbab243c95dc2a28ebfe3fac3a4dffe1a6c \
   kotoba_aiueos_app_lookup_plan
+python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_user_elf_valid_object" \
+  b363aa7608f95c5fee37ddb95961c7e7524ca307f4d7407c4c25ca05435426ab \
+  kotoba_aiueos_user_elf_valid
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_rsa2048_object" \
   97a6c6b1f4c3f3569bf8d40423db924d291aa0b6f10cd7bace79f54e193387a6 \
   kotoba_aiueos_rsa2048_sha256_verify
@@ -229,6 +233,7 @@ zig ld.lld -nostdlib -static -z max-page-size=0x1000 \
   "$kotoba_user_object_journal_value_object" "$kotoba_sha256_object" \
   "$kotoba_digest_equal_object" "$kotoba_catalog_valid_object" \
   "$kotoba_app_lookup_object" \
+  "$kotoba_user_elf_valid_object" \
   "$kotoba_rsa2048_object"
 python3 - "$kernel" "$identity_source" <<'PY'
 import hashlib, pathlib, sys
