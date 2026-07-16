@@ -27,6 +27,8 @@ extern uint64_t kotoba_aiueos_service_lifecycle(uint64_t generation,
   uint64_t restarts, uint64_t event, uint64_t budget);
 extern uint64_t kotoba_aiueos_capability_plan(uint64_t slot,
   uint64_t generation, uint64_t type, uint64_t state_rights, uint64_t request);
+extern uint64_t *kotoba_aiueos_user_context_build(uint8_t *stack,
+  uint64_t entry,uint64_t argument,uint64_t user_stack);
 extern void aiueos_process_set_kernel_stack(uint64_t top);
 extern volatile uint16_t aiueos_current_user_domain;
 extern void *aiueos_allocate_physical_page(void);
@@ -193,13 +195,13 @@ static uint64_t *initial_context(uint8_t *stack, void (*entry)(uint64_t), uint64
 }
 static uint64_t *initial_user_context(uint8_t *stack, void (*entry)(uint64_t),
                                       uint64_t argument, uint64_t user_stack) {
-  uintptr_t top = ((uintptr_t)stack + AIUEOS_TASK_STACK_BYTES) & ~(uintptr_t)15;
-  struct aiueos_interrupt_context *context =
-    (struct aiueos_interrupt_context *)(top - sizeof(*context));
-  for (uint64_t *word=(uint64_t *)context; word!=(uint64_t *)(context+1); ++word) *word=0;
-  context->rip=(uint64_t)(uintptr_t)entry; context->rdi=argument; context->cs=0x23U;
-  context->rflags=AIUEOS_INTERRUPT_FLAG|2U; context->rsp=user_stack; context->ss=0x1bU;
-  return (uint64_t *)context;
+  uint64_t *frame=kotoba_aiueos_user_context_build(stack,(uint64_t)(uintptr_t)entry,
+    argument,user_stack);
+  struct aiueos_interrupt_context *context=(struct aiueos_interrupt_context *)frame;
+  if (!context || context->rip!=(uint64_t)(uintptr_t)entry ||
+      context->rdi!=argument || context->cs!=0x23U || context->rflags!=514U ||
+      context->rsp!=user_stack || context->ss!=0x1bU) return 0;
+  return frame;
 }
 static int apply_service_event(unsigned service, uint64_t event) {
   if (service>=AIUEOS_SERVICE_CAPACITY) return 0;
@@ -304,6 +306,11 @@ int aiueos_scheduler_create_user_task(unsigned address_space, uint16_t domain,
   if (slot<1) return -1;
   tasks[slot].domain=domain;
   tasks[slot].saved_stack=initial_user_context(tasks[slot].kernel_stack,entry,argument,user_stack);
+  if (!tasks[slot].saved_stack) {
+    tasks[slot].active=0;
+    release_task_slot((unsigned)slot);
+    return -1;
+  }
   user_tasks_expected++;
   return slot;
 }

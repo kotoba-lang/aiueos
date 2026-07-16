@@ -62,6 +62,12 @@ runtime context ABI. C only copies the admitted fixed-layout segments into a
 new address space and maps them. Its pinned SHA-256 is
 `b363aa7608f95c5fee37ddb95961c7e7524ca307f4d7407c4c25ca05435426ab`.
 
+`user-context-build.o` constructs the complete 160-byte ring-3 interrupt
+return frame in the final bytes of a bounded 4 KiB kernel stack. Kotoba owns
+zeroed registers, RIP/RDI, user CS/SS, IF and user RSP; the C scheduler stores
+only the returned frame pointer. Its pinned SHA-256 is
+`8e743cba708c79e6800d5c0f26c68dfefe055179f2bef8e24753012a4bc21e5b`.
+
 `rsa2048.o` implements RSA-2048 public exponent 65537 and the complete
 PKCS#1 v1.5 SHA-256 encoded-message comparison in Kotoba. Its five-argument
 kernel ABI accepts a 256-byte signature, 32-byte digest, and caller-owned
