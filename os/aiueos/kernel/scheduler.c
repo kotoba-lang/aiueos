@@ -1,4 +1,5 @@
 #include <stdint.h>
+#include <stddef.h>
 
 #define AIUEOS_TASK_SLOT_COUNT 9U
 #define AIUEOS_USER_TASK_CAPACITY 8U
@@ -42,6 +43,12 @@ struct aiueos_task {
   uint8_t active, exit_requested;
 };
 static struct aiueos_task tasks[AIUEOS_TASK_SLOT_COUNT];
+_Static_assert(sizeof(struct aiueos_task)==40,"task descriptor ABI");
+_Static_assert(offsetof(struct aiueos_task,kernel_stack)==8,"task stack ABI");
+_Static_assert(offsetof(struct aiueos_task,generation)==32,"task generation ABI");
+_Static_assert(offsetof(struct aiueos_task,active)==38,"task active ABI");
+extern uint64_t kotoba_aiueos_task_slot_plan(const void *table,uint64_t length,
+  uint64_t count,uint64_t stride,uint64_t request);
 static uint64_t current_task;
 static int scheduler_user_mode;
 volatile uint64_t aiueos_user_scheduler_switches;
@@ -78,26 +85,27 @@ static uint64_t kotoba_lifecycle_evidence;
 static uint64_t persistent_restore_evidence;
 
 static int allocate_task_slot(uint64_t cr3) {
-  for (unsigned slot=1;slot<AIUEOS_TASK_SLOT_COUNT;slot++) {
-    if (tasks[slot].active || tasks[slot].kernel_stack) continue;
-    uint8_t *stack=aiueos_allocate_physical_page();
-    if (!stack) return -1;
-    tasks[slot].kernel_stack=stack;
-    tasks[slot].saved_stack=0;
-    tasks[slot].switches=0;
-    tasks[slot].cr3=cr3;
-    tasks[slot].service=0xffffU;
-    tasks[slot].domain=0; tasks[slot].exit_requested=0;
-    tasks[slot].generation++;
-    if (!tasks[slot].generation) tasks[slot].generation=1;
-    tasks[slot].active=1;
-    return (int)slot;
-  }
-  return -1;
+  uint64_t plan=kotoba_aiueos_task_slot_plan(tasks,sizeof(tasks),
+    AIUEOS_TASK_SLOT_COUNT,sizeof(tasks[0]),0);
+  unsigned slot=(unsigned)(plan&255U);
+  uint16_t generation=(uint16_t)(plan>>8);
+  if (!plan || slot<1 || slot>=AIUEOS_TASK_SLOT_COUNT || !generation ||
+      tasks[slot].active || tasks[slot].kernel_stack) return -1;
+  uint8_t *stack=aiueos_allocate_physical_page();
+  if (!stack) return -1;
+  tasks[slot].kernel_stack=stack;
+  tasks[slot].saved_stack=0;
+  tasks[slot].switches=0;
+  tasks[slot].cr3=cr3;
+  tasks[slot].service=0xffffU;
+  tasks[slot].domain=0; tasks[slot].exit_requested=0;
+  tasks[slot].generation=generation;
+  tasks[slot].active=1;
+  return (int)slot;
 }
 static int release_task_slot(unsigned slot) {
-  if (!slot || slot>=AIUEOS_TASK_SLOT_COUNT || tasks[slot].active ||
-      !tasks[slot].kernel_stack) return 0;
+  if (!kotoba_aiueos_task_slot_plan(tasks,sizeof(tasks),AIUEOS_TASK_SLOT_COUNT,
+      sizeof(tasks[0]),slot+1U)) return 0;
   if (!aiueos_free_physical_page(tasks[slot].kernel_stack)) return 0;
   tasks[slot].kernel_stack=0;
   tasks[slot].saved_stack=0;
