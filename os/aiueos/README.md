@@ -272,11 +272,26 @@ within the entry's 16-bit field. The verifier checks the primary volume
 descriptor, the El Torito boot record and validation-entry checksum, the boot
 catalog extent, the `ESP.IMG;1` directory record, FAT16 chains, and
 byte-for-byte embedded artifact contents; the receipt records the ISO digest
-and catalog geometry. The release smoke first requires the verifier to reject
-a one-byte kernel mutation inside the ISO, then boots both the GPT disk and
-the ISO through OVMF and requires the complete UEFI evidence gate on each
-medium. A BIOS/GRUB compatibility path, the recovery partition, and release
-signing remain separate Phase 5 gaps.
+and catalog geometry.
+
+The GPT disk also carries a second, independent 16 MiB FAT16 recovery ESP at
+the end of the disk, byte-identical to the ISO's El Torito boot image and
+holding known-good copies of both boot artifacts. When the primary loader
+fails firmware `LoadImage` admission (its PE image is corrupted), the UEFI
+boot manager falls back to the recovery partition and the complete evidence
+gate must still pass. A corrupted primary *kernel* is instead rejected
+fail-closed by the running loader and does not silently fall back; loader-owned
+kernel-level recovery selection is a separate gap. The verifier validates the
+recovery GPT entry, FAT16 chains, and byte-for-byte artifact contents, and the
+receipt records the partition extent, GUID, and digest.
+
+The release smoke first requires the verifier to reject a one-byte kernel
+mutation inside the ISO and inside the recovery partition, then boots the GPT
+disk, the ISO, and a primary-loader-corrupted disk (recovery fallback) through
+OVMF, requiring the complete UEFI evidence gate on each boot. The
+`corrupt` subcommand of `make-release-image.py` produces those deterministic
+mutations. A BIOS/GRUB compatibility path, the update partition/flow, and
+release signing remain separate Phase 5 gaps.
 
 Requirements are Zig 0.14 or newer and `qemu-system-x86_64` with an edk2/OVMF
 firmware image. Override firmware discovery with `OVMF_CODE=/path/to/code.fd`.

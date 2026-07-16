@@ -32,6 +32,21 @@ fi
 rm -f "$out/corrupt-release.iso"
 echo "AIUEOS_RELEASE_ISO_REJECTION_OK corrupted-kernel-byte"
 
+# Fail-closed: a flipped byte inside the recovery partition's kernel must be
+# rejected by the same verifier.
+python3 "$aiueos/scripts/make-release-image.py" corrupt \
+  --image "$out/aiueos-x86_64-gpt.img" \
+  --output "$out/corrupt-recovery.img" --target recovery-kernel >/dev/null
+if python3 "$aiueos/scripts/make-release-image.py" verify \
+  --image "$out/corrupt-recovery.img" \
+  --efi "$out/esp/EFI/BOOT/BOOTX64.EFI" \
+  --kernel "$out/esp/EFI/AIUEOS/KERNEL.ELF" >/dev/null 2>&1; then
+  echo "error: corrupted recovery partition was not rejected by the verifier" >&2
+  exit 1
+fi
+rm -f "$out/corrupt-recovery.img"
+echo "AIUEOS_RECOVERY_PARTITION_REJECTION_OK corrupted-kernel-byte"
+
 # GPT raw-disk boot. The journal smoke mutates the virtio-blk data disk, so a
 # pristine copy is staged before each boot.
 cp "$out/aiueos-x86_64-data.img" "$out/virtio-blk-smoke.img"
@@ -44,4 +59,18 @@ cp "$out/aiueos-x86_64-data.img" "$out/virtio-blk-smoke.img"
 AIUEOS_CDROM_IMAGE="$out/aiueos-x86_64.iso" \
   AIUEOS_PRESERVE_BLK_IMAGE=1 \
   "$aiueos/scripts/smoke-qemu-uefi.sh"
-echo "AIUEOS_RELEASE_MEDIA_SMOKE_OK gpt iso"
+
+# Recovery fallback: with the primary loader's PE magic corrupted, firmware
+# LoadImage fails on the primary ESP and falls back to the recovery ESP. The
+# only valid loader/kernel pair is on the recovery partition, so the complete
+# evidence gate below proves the recovery boot path.
+python3 "$aiueos/scripts/make-release-image.py" corrupt \
+  --image "$out/aiueos-x86_64-gpt.img" \
+  --output "$out/corrupt-primary-loader.img" --target primary-loader >/dev/null
+cp "$out/aiueos-x86_64-data.img" "$out/virtio-blk-smoke.img"
+AIUEOS_DISK_IMAGE="$out/corrupt-primary-loader.img" \
+  AIUEOS_PRESERVE_BLK_IMAGE=1 \
+  "$aiueos/scripts/smoke-qemu-uefi.sh"
+rm -f "$out/corrupt-primary-loader.img"
+echo "AIUEOS_RECOVERY_FALLBACK_OK primary-loader-corrupt firmware-fallback full-evidence"
+echo "AIUEOS_RELEASE_MEDIA_SMOKE_OK gpt iso recovery"
