@@ -50,6 +50,12 @@ five-argument ABI receives catalog bytes, capacity, and an 8-byte routing
 receipt containing the already-bounded catalog sectors. Its pinned SHA-256 is
 `bf990c3775bd1351627daa669a124adad8e194710dc41d93f0c1b2ccfdacd927`.
 
+`app-lookup-plan.o` scans every admitted packed metadata record for a 16-byte
+application ID, validates `ready` and the 12 KiB length bound, and returns only
+a packed one-based index/length plan. C dereferences the selected object after
+rechecking that plan's public bounds. Its pinned SHA-256 is
+`aa8ecea382820707638aa24e49226dbab243c95dc2a28ebfe3fac3a4dffe1a6c`.
+
 `rsa2048.o` implements RSA-2048 public exponent 65537 and the complete
 PKCS#1 v1.5 SHA-256 encoded-message comparison in Kotoba. Its five-argument
 kernel ABI accepts a 256-byte signature, 32-byte digest, and caller-owned

@@ -92,7 +92,8 @@ in `kotoba_aiueos_digest_equal`; the C substrate contains neither digest nor
 signature verification. Canonical IDs, extent bounds, signer policy, and every
 catalog/application/signature sector collision are admitted by
 `kotoba_aiueos_app_catalog_valid`; C performs only the resulting bounded block
-I/O. The private key is not
+I/O. Loader ID lookup and ready/length selection execute through the fixed-scan
+`kotoba_aiueos_app_lookup_plan` object. The private key is not
 present in the repository or image builder. Digest comparison and the complete
 encoded-message comparison are constant-time and must pass before bytes reach
 the loader. Negative QEMU gates mutate the catalog, an ELF, and an application
