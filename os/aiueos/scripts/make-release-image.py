@@ -161,6 +161,28 @@ def make_fat32(efi, kernel):
     return bytes(image)
 
 
+# Legacy-BIOS stage-1 test fixture placed in the protective MBR's boot-code
+# area. aiueos does not support BIOS boot; this stub makes the legacy path an
+# explicit, deterministic refusal instead of a firmware hang. Real-mode
+# disassembly (org 0x7C00, message at 0x7C1E):
+#   FA                cli
+#   FC                cld
+#   31 C0             xor  ax, ax
+#   8E D8             mov  ds, ax
+#   BE 1E 7C          mov  si, 0x7C1E
+#   AC                lodsb                 ; loop
+#   84 C0             test al, al
+#   74 04             jz   done
+#   E6 E9             out  0xE9, al         ; QEMU isa-debugcon
+#   EB F7             jmp  loop
+#   66 B8 0B 00 00 00 mov  eax, 0x0B        ; done
+#   66 E7 F4          out  0xF4, eax        ; QEMU isa-debug-exit -> status 23
+#   F4                hlt                   ; no debug-exit device: halt forever
+#   EB FD             jmp  hlt
+BIOS_STUB_MESSAGE = b"AIUEOS_BIOS_STUB uefi-required\n\x00"
+BIOS_STUB = (bytes.fromhex("fafc31c08ed8be1e7cac84c07404e6e9ebf7"
+                           "66b80b00000066e7f4f4ebfd") + BIOS_STUB_MESSAGE)
+
 FAT16_RESERVED = 4
 FAT16_FATS = 2
 FAT16_FAT_SECTORS = 32
@@ -440,6 +462,7 @@ def build_image(output, efi, kernel):
     recovery = make_fat16(efi, kernel)
     disk = bytearray(DISK_SECTORS * SECTOR)
     mbr = bytearray(SECTOR)
+    mbr[:len(BIOS_STUB)] = BIOS_STUB
     mbr[446 + 4] = 0xEE
     struct.pack_into("<II", mbr, 446 + 8, 1, DISK_SECTORS - 1)
     mbr[510:512] = b"\x55\xaa"
@@ -471,6 +494,8 @@ def verify_image(path, expected_efi=None, expected_kernel=None):
     disk = Path(path).read_bytes()
     if len(disk) != DISK_SECTORS * SECTOR or disk[510:512] != b"\x55\xaa":
         raise ValueError("invalid disk size or protective MBR")
+    if disk[:len(BIOS_STUB)] != BIOS_STUB:
+        raise ValueError("missing legacy-BIOS stage-1 refusal stub")
     header = disk[SECTOR:2 * SECTOR]
     if header[:8] != b"EFI PART":
         raise ValueError("missing GPT header")

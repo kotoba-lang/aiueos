@@ -293,10 +293,20 @@ mutation inside the ISO and inside the recovery partition, then boots the GPT
 disk, the ISO, a primary-loader-corrupted disk (firmware fallback), and a
 primary-kernel-corrupted disk (loader digest fallback) through OVMF, requiring
 the complete UEFI evidence gate on each boot. The `corrupt` subcommand of
-`make-release-image.py` produces those deterministic mutations. This recovery
-selection lives in the reference C loader; re-expressing it in the
-compiler-emitted C-free loader, a BIOS/GRUB compatibility path, the update
-partition/flow, and release signing remain separate Phase 5 gaps.
+`make-release-image.py` produces those deterministic mutations.
+
+The protective MBR carries a 62-byte real-mode stage-1 stub as the legacy-BIOS
+test fixture. BIOS is not a supported boot path: under SeaBIOS the stub prints
+`AIUEOS_BIOS_STUB uefi-required` on the debug console and terminates
+deterministically through isa-debug-exit (halting forever when that test
+device is absent), so legacy firmware gets an explicit refusal instead of a
+hang. The release smoke boots the GPT image under SeaBIOS and requires that
+marker and exit status. The stub's disassembly is documented next to its bytes
+in `make-release-image.py`, and the verifier requires it byte-for-byte.
+
+This recovery selection lives in the reference C loader; re-expressing it in
+the compiler-emitted C-free loader, a GRUB/Multiboot2 compatibility path, the
+update partition/flow, and release signing remain separate Phase 5 gaps.
 
 Requirements are Zig 0.14 or newer and `qemu-system-x86_64` with an edk2/OVMF
 firmware image. Override firmware discovery with `OVMF_CODE=/path/to/code.fd`.
