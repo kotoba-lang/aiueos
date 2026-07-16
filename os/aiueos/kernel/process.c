@@ -73,6 +73,16 @@ __attribute__((section(".user.data"), aligned(4096), used))
 static uint8_t user_mapping_anchor[4096];
 static struct user_result *kernel_results[2];
 #define PROCESS_CAPACITY 8U
+#define AIUEOS_PROCESS_CREATE_IDENTITY 1U
+#define AIUEOS_PROCESS_CREATE_EXECUTION 2U
+#define AIUEOS_PROCESS_CREATE_RESULT 4U
+#define AIUEOS_PROCESS_CREATE_TASK 8U
+#define AIUEOS_PROCESS_CREATE_ACTIVE 16U
+#define AIUEOS_PROCESS_CLEAR_EXECUTION 1U
+#define AIUEOS_PROCESS_CLEAR_OWNERSHIP 2U
+#define AIUEOS_PROCESS_CLEAR_TASK 4U
+#define AIUEOS_PROCESS_CLEAR_ACTIVE 8U
+#define AIUEOS_PROCESS_CLEAR_RESULT 16U
 struct process_descriptor {
   uint64_t entry, argument, user_stack;
   uint16_t generation, domain, address_space, task_slot;
@@ -176,8 +186,12 @@ static int process_create_in_space(void (*entry)(uint64_t),uint16_t domain,int s
     domain,PROCESS_CAPACITY,sizeof(processes[0]));
   if (!plan) return -1;
   unsigned descriptor=(unsigned)((plan&255U)-1U);
-  uint16_t generation=(uint16_t)(plan>>8);
-  if (descriptor>=PROCESS_CAPACITY || !generation || processes[descriptor].active) return -1;
+  uint16_t generation=(uint16_t)((plan>>8)&65535U);
+  uint64_t recipe=plan>>32;
+  if (descriptor>=PROCESS_CAPACITY || !generation ||
+      recipe!=(AIUEOS_PROCESS_CREATE_IDENTITY|AIUEOS_PROCESS_CREATE_EXECUTION|
+        AIUEOS_PROCESS_CREATE_RESULT|AIUEOS_PROCESS_CREATE_TASK|
+        AIUEOS_PROCESS_CREATE_ACTIVE) || processes[descriptor].active) return -1;
   int address_space=supplied_space>=0 ? supplied_space : aiueos_address_space_claim();
   if (address_space<0) return -1;
   int linked_entry=address>=(uint64_t)(uintptr_t)aiueos_user_text_start &&
@@ -193,13 +207,23 @@ static int process_create_in_space(void (*entry)(uint64_t),uint16_t domain,int s
   result->message[0]='r'; result->message[1]='i'; result->message[2]='n';
   result->message[3]='g'; result->message[4]=(char)('1'+descriptor); result->message[5]=0;
   struct process_descriptor *p=&processes[descriptor];
-  p->generation=generation;
-  p->entry=address; p->argument=private_va; p->user_stack=private_va+4096;
-  p->domain=domain; p->address_space=(uint16_t)address_space; p->result=result; p->active=1;
+  if (recipe&AIUEOS_PROCESS_CREATE_IDENTITY) {
+    p->generation=generation; p->domain=domain;
+    p->address_space=(uint16_t)address_space;
+  }
+  if (recipe&AIUEOS_PROCESS_CREATE_EXECUTION) {
+    p->entry=address; p->argument=private_va; p->user_stack=private_va+4096;
+  }
+  if (recipe&AIUEOS_PROCESS_CREATE_RESULT) p->result=result;
   int task=aiueos_scheduler_create_user_task((unsigned)address_space,domain,entry,
     p->argument,p->user_stack);
-  if (task<1) { p->active=0; aiueos_address_space_reclaim((unsigned)address_space); return -1; }
-  p->task_slot=(uint16_t)task;
+  if (task<1) {
+    p->entry=p->argument=p->user_stack=0;
+    p->domain=p->address_space=p->task_slot=0; p->result=0; p->active=0;
+    aiueos_address_space_reclaim((unsigned)address_space); return -1;
+  }
+  if (recipe&AIUEOS_PROCESS_CREATE_TASK) p->task_slot=(uint16_t)task;
+  if (recipe&AIUEOS_PROCESS_CREATE_ACTIVE) p->active=1;
   return (int)descriptor;
 }
 static int process_create(void (*entry)(uint64_t),uint16_t domain) {
@@ -228,10 +252,21 @@ static int process_teardown(unsigned descriptor,int reaped) {
   uint64_t revoked=aiueos_capability_revoke_owner(p->domain);
   if (kotoba_aiueos_process_teardown_plan(p->domain,reaped,revoked,0,1)!=2)
     return 0;
-  if (!aiueos_address_space_reclaim(p->address_space) ||
-      kotoba_aiueos_process_teardown_plan(p->domain,reaped,revoked,1,2)!=3)
-    return 0;
-  p->active=0;
+  uint64_t commit=kotoba_aiueos_process_teardown_plan(
+    p->domain,reaped,revoked,1,2);
+  uint64_t recipe=commit>>32;
+  if ((uint32_t)commit!=3U ||
+      recipe!=(AIUEOS_PROCESS_CLEAR_EXECUTION|AIUEOS_PROCESS_CLEAR_OWNERSHIP|
+        AIUEOS_PROCESS_CLEAR_TASK|AIUEOS_PROCESS_CLEAR_ACTIVE|
+        AIUEOS_PROCESS_CLEAR_RESULT)) return 0;
+  if (!aiueos_address_space_reclaim(p->address_space)) return 0;
+  if (recipe&AIUEOS_PROCESS_CLEAR_EXECUTION)
+    p->entry=p->argument=p->user_stack=0;
+  if (recipe&AIUEOS_PROCESS_CLEAR_OWNERSHIP)
+    p->domain=p->address_space=0;
+  if (recipe&AIUEOS_PROCESS_CLEAR_TASK) p->task_slot=0;
+  if (recipe&AIUEOS_PROCESS_CLEAR_ACTIVE) p->active=0;
+  if (recipe&AIUEOS_PROCESS_CLEAR_RESULT) p->result=0;
   return 1;
 }
 

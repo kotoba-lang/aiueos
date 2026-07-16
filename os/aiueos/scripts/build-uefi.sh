@@ -174,10 +174,10 @@ python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_mapping_plan_o
   c492472360f4632a5f4e0457ef3f2dd867306a36ea8ba3415cdb4463c78106b5 \
   kotoba_aiueos_page_mapping_plan
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_process_plan_object" \
-  a1931ab0058a322f728203e1441cd93848d2661b639c600d8049f33056260ddf \
+  487d01555529e78c2df4321c467c807886b7ec7fa7a8f073701aed6e1ebf5f57 \
   kotoba_aiueos_process_create_plan
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_teardown_plan_object" \
-  0a34d448348f366d6bd41560a1a62ea4fb9d317c281beec14656af65976182b9 \
+  0a82d0757a24557e6b82de2ef195a712b5f489e0fb9acbe227ed2d9f62aecb13 \
   kotoba_aiueos_process_teardown_plan
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_task_plan_object" \
   084118840d07e6e4db568215dac1e7c064b437de78f9c9043aa98a67469e077f \

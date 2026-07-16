@@ -220,13 +220,13 @@ python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$mapping_plan_tmp" \
   --target x86_64-aiueos-kernel-v1 --output "$process_plan_tmp"
 cmp "$aiueos/kotoba/process-create-plan.o" "$process_plan_tmp"
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$process_plan_tmp" \
-  a1931ab0058a322f728203e1441cd93848d2661b639c600d8049f33056260ddf \
+  487d01555529e78c2df4321c467c807886b7ec7fa7a8f073701aed6e1ebf5f57 \
   kotoba_aiueos_process_create_plan
 "$compiler/bin/kotoba-compiler" compile "$aiueos/kotoba/process-teardown-plan.kotoba" \
   --target x86_64-aiueos-kernel-v1 --output "$teardown_plan_tmp"
 cmp "$aiueos/kotoba/process-teardown-plan.o" "$teardown_plan_tmp"
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$teardown_plan_tmp" \
-  0a34d448348f366d6bd41560a1a62ea4fb9d317c281beec14656af65976182b9 \
+  0a82d0757a24557e6b82de2ef195a712b5f489e0fb9acbe227ed2d9f62aecb13 \
   kotoba_aiueos_process_teardown_plan
 "$compiler/bin/kotoba-compiler" compile "$aiueos/kotoba/task-slot-plan.kotoba" \
   --target x86_64-aiueos-kernel-v1 --output "$task_plan_tmp"

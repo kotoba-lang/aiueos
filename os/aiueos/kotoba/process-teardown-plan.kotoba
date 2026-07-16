@@ -11,7 +11,11 @@
         (if (= stage 1)
           (if (and (>= revoked minimum) (= reclaimed 0)) 2 0)
           (if (= stage 2)
-            (if (and (>= revoked minimum) (= reclaimed 1)) 3 0)
+            ;; Final commit recipe 31 clears execution, ownership/address
+            ;; space, task binding, active publication, and result binding.
+            ;; Generation remains for stale descriptor rejection.
+            (if (and (>= revoked minimum) (= reclaimed 1))
+              (+ 3 (* 31 4294967296)) 0)
             0))))))
 
 (defn main [] 0)
