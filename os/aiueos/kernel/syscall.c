@@ -21,6 +21,12 @@ enum { AIUEOS_SYSCALL_ABI = 0, AIUEOS_SYSCALL_LOG_WRITE = 1,
    AIUEOS_CAPABILITY_RIGHT_OBJECT_WRITE)
 #define AIUEOS_DOMAIN_KERNEL 1U
 #define AIUEOS_DOMAIN_USER_PROCESS 2U
+#define AIUEOS_CAP_MUTATE_TYPE 1U
+#define AIUEOS_CAP_MUTATE_STATE 2U
+#define AIUEOS_CAP_MUTATE_OWNER 4U
+#define AIUEOS_CAP_MUTATE_PARENT 8U
+#define AIUEOS_CAP_MUTATE_GENERATION 16U
+#define AIUEOS_CAP_MUTATE_PENDING 32U
 volatile uint16_t aiueos_current_user_domain;
 
 struct capability_slot {
@@ -60,6 +66,9 @@ extern uint64_t kotoba_aiueos_fnv1a(const uint8_t *bytes, uint64_t length);
 extern uint64_t kotoba_aiueos_capability_plan(
   uint64_t slot, uint64_t generation, uint64_t type,
   uint64_t state_rights, uint64_t request);
+extern uint64_t kotoba_aiueos_capability_mutation_plan(
+  uint64_t action,uint64_t generation,uint64_t type,
+  uint64_t state_rights,uint64_t request);
 
 static uint8_t syscall_copy_buffer[AIUEOS_SYSCALL_COPY_MAX];
 uint64_t aiueos_syscall_last_copy_length;
@@ -101,30 +110,53 @@ static int capability_admit(uint64_t handle, uint16_t type, uint16_t rights,
   return admitted;
 }
 
+static uint64_t capability_mutation_plan(uint64_t action,
+    const struct capability_slot *entry,uint16_t type,uint16_t rights,
+    uint16_t owner) {
+  uint64_t state=entry->state_rights|((uint64_t)entry->owner<<17);
+  uint64_t request=rights|((uint64_t)type<<16)|((uint64_t)owner<<32);
+  return kotoba_aiueos_capability_mutation_plan(action,entry->generation,
+    entry->type,state,request);
+}
+
+static uint16_t capability_revoke_slot_locked(uint16_t slot) {
+  struct capability_slot *entry=&capability_table[slot];
+  uint16_t old_generation=entry->generation;
+  uint64_t plan=capability_mutation_plan(2,entry,0,0,0);
+  uint64_t action=(plan>>16)&255U, recipe=plan>>24;
+  if (!plan || action!=2 ||
+      recipe!=(AIUEOS_CAP_MUTATE_STATE|AIUEOS_CAP_MUTATE_PARENT|
+        AIUEOS_CAP_MUTATE_GENERATION|AIUEOS_CAP_MUTATE_PENDING)) return 0;
+  if ((recipe&AIUEOS_CAP_MUTATE_PENDING) &&
+      (uint16_t)pending_transfer_handle==slot &&
+      (uint16_t)(pending_transfer_handle>>16)==old_generation) {
+    pending_transfer_handle=0; pending_transfer_owner=0;
+  }
+  if (recipe&AIUEOS_CAP_MUTATE_STATE)
+    entry->state_rights&=~AIUEOS_CAPABILITY_ACTIVE;
+  if (recipe&AIUEOS_CAP_MUTATE_GENERATION) entry->generation=(uint16_t)plan;
+  if (recipe&AIUEOS_CAP_MUTATE_PARENT)
+    entry->parent_slot=entry->parent_generation=0;
+  return old_generation;
+}
+
 static uint64_t capability_revoke_graph_locked(uint16_t root) {
   uint16_t slots[256],generations[256],head=0,tail=0;
   if (!root || root>=capability_capacity ||
       !(capability_table[root].state_rights&AIUEOS_CAPABILITY_ACTIVE)) return 0;
-  slots[tail]=root; generations[tail++]=capability_table[root].generation;
-  capability_table[root].state_rights&=~AIUEOS_CAPABILITY_ACTIVE;
-  capability_table[root].generation=capability_table[root].generation==0xffffU ?
-    0 : capability_table[root].generation+1;
-  capability_table[root].parent_slot=capability_table[root].parent_generation=0;
+  uint16_t root_generation=capability_revoke_slot_locked(root);
+  if (!root_generation) return 0;
+  slots[tail]=root; generations[tail++]=root_generation;
   while (head<tail) {
     uint16_t parent=slots[head],generation=generations[head++];
-    if ((uint16_t)pending_transfer_handle==parent &&
-        (uint16_t)(pending_transfer_handle>>16)==generation) {
-      pending_transfer_handle=0; pending_transfer_owner=0;
-    }
     for (uint16_t slot=1;slot<capability_capacity;slot++) {
       struct capability_slot *entry=&capability_table[slot];
       if ((entry->state_rights&AIUEOS_CAPABILITY_ACTIVE) &&
           entry->parent_slot==parent && entry->parent_generation==generation) {
         if (tail>=256) return 0;
-        slots[tail]=slot; generations[tail++]=entry->generation;
-        entry->state_rights&=~AIUEOS_CAPABILITY_ACTIVE;
-        entry->generation=entry->generation==0xffffU ? 0 : entry->generation+1;
-        entry->parent_slot=entry->parent_generation=0;
+        uint16_t child_generation=capability_revoke_slot_locked(slot);
+        if (!child_generation) return 0;
+        slots[tail]=slot; generations[tail++]=child_generation;
       }
     }
   }
@@ -145,10 +177,17 @@ static uint64_t capability_issue(uint16_t slot, uint16_t type, uint16_t rights,
       !type || !rights || !owner) return 0;
   struct capability_slot *entry = &capability_table[slot];
   if (!entry->generation) return 0; /* exhausted/uninitialized slots fail closed */
-  entry->type = type;
-  entry->state_rights = AIUEOS_CAPABILITY_ACTIVE | rights;
-  entry->owner = owner;
-  entry->parent_slot=entry->parent_generation=0;
+  uint64_t plan=capability_mutation_plan(1,entry,type,rights,owner);
+  uint64_t action=(plan>>16)&255U, recipe=plan>>24;
+  if (!plan || (uint16_t)plan!=entry->generation || action!=1 ||
+      recipe!=(AIUEOS_CAP_MUTATE_TYPE|AIUEOS_CAP_MUTATE_STATE|
+        AIUEOS_CAP_MUTATE_OWNER|AIUEOS_CAP_MUTATE_PARENT)) return 0;
+  if (recipe&AIUEOS_CAP_MUTATE_TYPE) entry->type=type;
+  if (recipe&AIUEOS_CAP_MUTATE_STATE)
+    entry->state_rights=AIUEOS_CAPABILITY_ACTIVE|rights;
+  if (recipe&AIUEOS_CAP_MUTATE_OWNER) entry->owner=owner;
+  if (recipe&AIUEOS_CAP_MUTATE_PARENT)
+    entry->parent_slot=entry->parent_generation=0;
   return capability_plan(slot,type,rights,owner);
 }
 
@@ -199,8 +238,19 @@ static uint64_t capability_transfer_publish(uint64_t source_handle,
     if (entry->generation && !(entry->state_rights&AIUEOS_CAPABILITY_ACTIVE)) {
       uint64_t target=capability_issue(slot,AIUEOS_CAPABILITY_TYPE_LOG,rights,target_owner);
       if (target) {
+        uint16_t parent_generation=(uint16_t)(source_handle>>16);
+        uint64_t state=entry->state_rights|((uint64_t)entry->owner<<17);
+        uint64_t request=source_slot|((uint64_t)parent_generation<<16);
+        uint64_t parent_plan=kotoba_aiueos_capability_mutation_plan(3,
+          entry->generation,entry->type,state,request);
+        if (!parent_plan || (uint16_t)parent_plan!=entry->generation ||
+            ((parent_plan>>16)&255U)!=3 ||
+            (parent_plan>>24)!=AIUEOS_CAP_MUTATE_PARENT) {
+          capability_revoke_slot_locked(slot);
+          capability_lock_release(); return 0;
+        }
         entry->parent_slot=source_slot;
-        entry->parent_generation=(uint16_t)(source_handle>>16);
+        entry->parent_generation=parent_generation;
         pending_transfer_handle=target; pending_transfer_owner=target_owner;
       }
       capability_lock_release(); return target;
