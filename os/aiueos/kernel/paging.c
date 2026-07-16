@@ -43,12 +43,21 @@ struct process_address_space {
 static struct process_address_space process_spaces[PROCESS_SLOT_COUNT];
 extern void *aiueos_allocate_physical_page(void);
 extern int aiueos_free_physical_page(void *page);
+extern uint64_t kotoba_aiueos_page_mapping_plan(uint64_t process,uint64_t kind,
+  uint64_t size,uint64_t active,uint64_t existing);
 int aiueos_address_space_reclaim(unsigned process);
 void *aiueos_address_space_private_backing(unsigned process);
 static uint64_t kernel_cr3;
 
 static uint64_t process_private_va(unsigned process) {
-  return process < PROCESS_SLOT_COUNT ? PROCESS_PRIVATE_BASE + process * PAGE_SIZE : 0;
+  uint64_t plan=kotoba_aiueos_page_mapping_plan(process,1,PAGE_SIZE,1,0);
+  return plan ? (plan>>2)*PAGE_SIZE : 0;
+}
+
+static uint64_t user_mapping_flags(uint64_t permission) {
+  if (permission==1) return PTE_PRESENT|PTE_USER;
+  if (permission==2) return PTE_PRESENT|PTE_USER|PTE_WRITABLE|PTE_NX;
+  return 0;
 }
 
 static uint64_t read_cr0(void) {
@@ -156,6 +165,8 @@ static int initialize_process_space(unsigned process) {
     if (process>=PROCESS_SLOT_COUNT) return 0;
     struct process_address_space *space=&process_spaces[process];
     uint64_t private_va=process_private_va(process);
+    uint64_t private_plan=kotoba_aiueos_page_mapping_plan(process,1,PAGE_SIZE,1,0);
+    if (!private_va || !private_plan) return 0;
     if (!space->pml4) space->pml4=aiueos_allocate_physical_page();
     if (!space->pdpt) space->pdpt=aiueos_allocate_physical_page();
     if (!space->directory) space->directory=aiueos_allocate_physical_page();
@@ -182,7 +193,7 @@ static int initialize_process_space(unsigned process) {
       space->low[process_private_va(slot) / PAGE_SIZE] = 0;
     space->low[private_va / PAGE_SIZE] =
       (uint64_t)(uintptr_t)space->private_page |
-      PTE_PRESENT | PTE_USER | PTE_WRITABLE | PTE_NX;
+      user_mapping_flags(private_plan&3U);
     space->active=1;
     space->claimed=0;
     space->generation++;
@@ -257,11 +268,14 @@ void *aiueos_address_space_private_backing(unsigned process) {
 }
 int aiueos_address_space_map_user_image(unsigned process,const uint8_t *text,
     uint64_t text_size,const uint8_t *data,uint64_t data_size) {
-  if (process>=PROCESS_SLOT_COUNT || !process_spaces[process].active ||
-      !text || !data || !text_size || !data_size || text_size>PAGE_SIZE ||
-      data_size>PAGE_SIZE) return 0;
+  if (process>=PROCESS_SLOT_COUNT || !text || !data) return 0;
   struct process_address_space *space=&process_spaces[process];
-  if (space->user_text_page || space->user_data_page) return 0;
+  uint64_t existing=space->user_text_page || space->user_data_page;
+  uint64_t text_plan=kotoba_aiueos_page_mapping_plan(process,2,text_size,
+    space->active,existing);
+  uint64_t data_plan=kotoba_aiueos_page_mapping_plan(process,3,data_size,
+    space->active,existing);
+  if (!text_plan || !data_plan) return 0;
   space->user_text_page=aiueos_allocate_physical_page();
   space->user_data_page=aiueos_allocate_physical_page();
   if (!space->user_text_page || !space->user_data_page) {
@@ -271,16 +285,19 @@ int aiueos_address_space_map_user_image(unsigned process,const uint8_t *text,
   }
   for (uint64_t i=0;i<text_size;i++) space->user_text_page[i]=text[i];
   for (uint64_t i=0;i<data_size;i++) space->user_data_page[i]=data[i];
-  space->low[0x1e1000ULL/PAGE_SIZE]=(uint64_t)(uintptr_t)space->user_text_page|PTE_PRESENT|PTE_USER;
-  space->low[0x1e2000ULL/PAGE_SIZE]=(uint64_t)(uintptr_t)space->user_data_page|PTE_PRESENT|PTE_USER|PTE_WRITABLE|PTE_NX;
+  space->low[text_plan>>2]=(uint64_t)(uintptr_t)space->user_text_page|
+    user_mapping_flags(text_plan&3U);
+  space->low[data_plan>>2]=(uint64_t)(uintptr_t)space->user_data_page|
+    user_mapping_flags(data_plan&3U);
   return 1;
 }
 void *aiueos_address_space_user_data_backing(unsigned process) {
   return process<PROCESS_SLOT_COUNT ? process_spaces[process].user_data_page : 0;
 }
 int aiueos_address_space_user_entry_valid(unsigned process,uint64_t entry) {
-  return process<PROCESS_SLOT_COUNT && process_spaces[process].active &&
-    process_spaces[process].user_text_page && entry>=0x1e1000ULL && entry<0x1e2000ULL;
+  if (process>=PROCESS_SLOT_COUNT) return 0;
+  return (int)kotoba_aiueos_page_mapping_plan(process,4,entry,
+    process_spaces[process].active,process_spaces[process].user_text_page!=0);
 }
 int aiueos_address_space_reclaim(unsigned process) {
   if (process>=PROCESS_SLOT_COUNT || !process_spaces[process].active) return 0;

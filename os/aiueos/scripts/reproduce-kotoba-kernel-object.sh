@@ -3,7 +3,7 @@ set -eu
 
 aiueos=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 compiler=${1:?usage: reproduce-kotoba-kernel-object.sh /path/to/compiler}
-expected=9687d60449749e3d0c638f16b9fc2dce1f155b82
+expected=010ca8998d27845ae76b180c27c2cdd7ce94c55f
 actual=$(git -C "$compiler" rev-parse HEAD)
 
 [ "$actual" = "$expected" ] || {
@@ -39,9 +39,10 @@ catalog_valid_tmp=${TMPDIR:-/tmp}/aiueos-kotoba-app-catalog-valid.$$
 app_lookup_tmp=${TMPDIR:-/tmp}/aiueos-kotoba-app-lookup-plan.$$
 user_elf_valid_tmp=${TMPDIR:-/tmp}/aiueos-kotoba-user-elf-valid.$$
 user_context_tmp=${TMPDIR:-/tmp}/aiueos-kotoba-user-context.$$
+mapping_plan_tmp=${TMPDIR:-/tmp}/aiueos-kotoba-mapping-plan.$$
 rsa2048_tmp=${TMPDIR:-/tmp}/aiueos-kotoba-rsa2048.$$
 user_elf_tmp=${TMPDIR:-/tmp}/aiueos-kotoba-user-smoke.$$
-trap 'rm -f "$tmp" "$journal_tmp" "$fnv_tmp" "$journal_valid_tmp" "$transaction_valid_tmp" "$transaction_route_tmp" "$mutable_valid_tmp" "$superblock_valid_tmp" "$journal_build_tmp" "$mutable_build_tmp" "$cap_valid_tmp" "$extent_valid_tmp" "$region_valid_tmp" "$syscall_range_tmp" "$copy_in_tmp" "$capability_tmp" "$service_lifecycle_tmp" "$service_registry_tmp" "$service_registry_state_tmp" "$user_object_journal_tmp" "$user_object_journal_valid_tmp" "$user_object_journal_value_tmp" "$sha256_tmp" "$digest_equal_tmp" "$catalog_valid_tmp" "$app_lookup_tmp" "$user_elf_valid_tmp" "$user_context_tmp" "$rsa2048_tmp" "$user_elf_tmp"' EXIT HUP INT TERM
+trap 'rm -f "$tmp" "$journal_tmp" "$fnv_tmp" "$journal_valid_tmp" "$transaction_valid_tmp" "$transaction_route_tmp" "$mutable_valid_tmp" "$superblock_valid_tmp" "$journal_build_tmp" "$mutable_build_tmp" "$cap_valid_tmp" "$extent_valid_tmp" "$region_valid_tmp" "$syscall_range_tmp" "$copy_in_tmp" "$capability_tmp" "$service_lifecycle_tmp" "$service_registry_tmp" "$service_registry_state_tmp" "$user_object_journal_tmp" "$user_object_journal_valid_tmp" "$user_object_journal_value_tmp" "$sha256_tmp" "$digest_equal_tmp" "$catalog_valid_tmp" "$app_lookup_tmp" "$user_elf_valid_tmp" "$user_context_tmp" "$mapping_plan_tmp" "$rsa2048_tmp" "$user_elf_tmp"' EXIT HUP INT TERM
 "$compiler/bin/kotoba-compiler" compile "$aiueos/kotoba/kernel-probe.kotoba" \
   --target x86_64-aiueos-kernel-v1 --output "$tmp"
 cmp "$aiueos/kotoba/kernel-probe.o" "$tmp"
@@ -203,6 +204,12 @@ cmp "$aiueos/kotoba/user-context-build.o" "$user_context_tmp"
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$user_context_tmp" \
   8e743cba708c79e6800d5c0f26c68dfefe055179f2bef8e24753012a4bc21e5b \
   kotoba_aiueos_user_context_build
+"$compiler/bin/kotoba-compiler" compile "$aiueos/kotoba/page-mapping-plan.kotoba" \
+  --target x86_64-aiueos-kernel-v1 --output "$mapping_plan_tmp"
+cmp "$aiueos/kotoba/page-mapping-plan.o" "$mapping_plan_tmp"
+python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$mapping_plan_tmp" \
+  c492472360f4632a5f4e0457ef3f2dd867306a36ea8ba3415cdb4463c78106b5 \
+  kotoba_aiueos_page_mapping_plan
 "$compiler/bin/kotoba-compiler" compile "$aiueos/kotoba/rsa2048.kotoba" \
   --target x86_64-aiueos-kernel-v1 --output "$rsa2048_tmp"
 cmp "$aiueos/kotoba/rsa2048.o" "$rsa2048_tmp"

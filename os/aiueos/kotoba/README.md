@@ -68,6 +68,13 @@ zeroed registers, RIP/RDI, user CS/SS, IF and user RSP; the C scheduler stores
 only the returned frame pointer. Its pinned SHA-256 is
 `8e743cba708c79e6800d5c0f26c68dfefe055179f2bef8e24753012a4bc21e5b`.
 
+`page-mapping-plan.o` owns per-process virtual-page selection, private-page
+isolation, user RX versus RW+NX permission classes, bounded image-page sizes,
+duplicate-map rejection, and executable-entry admission. C translates the
+admitted permission class to x86-64 PTE bits and installs physical pages. Its
+pinned SHA-256 is
+`c492472360f4632a5f4e0457ef3f2dd867306a36ea8ba3415cdb4463c78106b5`.
+
 `rsa2048.o` implements RSA-2048 public exponent 65537 and the complete
 PKCS#1 v1.5 SHA-256 encoded-message comparison in Kotoba. Its five-argument
 kernel ABI accepts a 256-byte signature, 32-byte digest, and caller-owned
