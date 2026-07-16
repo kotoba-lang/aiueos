@@ -56,6 +56,12 @@ a packed one-based index/length plan. C dereferences the selected object after
 rechecking that plan's public bounds. Its pinned SHA-256 is
 `aa8ecea382820707638aa24e49226dbab243c95dc2a28ebfe3fac3a4dffe1a6c`.
 
+`user-elf-valid.o` owns user-process ELF admission: the ELF64/x86-64 header,
+the fixed RX and RW+NX load segments, all image bounds, and the 88-byte native
+runtime context ABI. C only copies the admitted fixed-layout segments into a
+new address space and maps them. Its pinned SHA-256 is
+`b363aa7608f95c5fee37ddb95961c7e7524ca307f4d7407c4c25ca05435426ab`.
+
 `rsa2048.o` implements RSA-2048 public exponent 65537 and the complete
 PKCS#1 v1.5 SHA-256 encoded-message comparison in Kotoba. Its five-argument
 kernel ABI accepts a 256-byte signature, 32-byte digest, and caller-owned
