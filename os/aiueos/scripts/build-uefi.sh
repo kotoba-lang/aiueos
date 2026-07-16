@@ -189,7 +189,7 @@ python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_exit_route_obj
   dbf1dacb2d4a2fc0adf49134cbd6b973fa3a85e780f3d2b242a9baacb28799d2 \
   kotoba_aiueos_task_exit_route
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_service_task_object" \
-  bb6d548eca4abaa475f0a206db2a8af9350aaae7d2804a3f4dfd48cc29d54510 \
+  768365cf5a66a60e666f6e5b4e0478b4e8a4ca738325c509aeec067e41d3b5f9 \
   kotoba_aiueos_service_task_transition
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_rsa2048_object" \
   97a6c6b1f4c3f3569bf8d40423db924d291aa0b6f10cd7bace79f54e193387a6 \

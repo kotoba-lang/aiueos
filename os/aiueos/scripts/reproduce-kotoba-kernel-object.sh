@@ -250,7 +250,7 @@ python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$exit_route_tmp" \
   --target x86_64-aiueos-kernel-v1 --output "$service_task_tmp"
 cmp "$aiueos/kotoba/service-task-transition.o" "$service_task_tmp"
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$service_task_tmp" \
-  bb6d548eca4abaa475f0a206db2a8af9350aaae7d2804a3f4dfd48cc29d54510 \
+  768365cf5a66a60e666f6e5b4e0478b4e8a4ca738325c509aeec067e41d3b5f9 \
   kotoba_aiueos_service_task_transition
 "$compiler/bin/kotoba-compiler" compile "$aiueos/kotoba/rsa2048.kotoba" \
   --target x86_64-aiueos-kernel-v1 --output "$rsa2048_tmp"
