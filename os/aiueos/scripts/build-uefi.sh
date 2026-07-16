@@ -180,7 +180,7 @@ python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_teardown_plan_
   0a34d448348f366d6bd41560a1a62ea4fb9d317c281beec14656af65976182b9 \
   kotoba_aiueos_process_teardown_plan
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_task_plan_object" \
-  da4e6d51f2bc5ed6f0120513bb2d8be60ab1efae8e7020fee3b27ea1df1cc47e \
+  084118840d07e6e4db568215dac1e7c064b437de78f9c9043aa98a67469e077f \
   kotoba_aiueos_task_slot_plan
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_dispatch_plan_object" \
   19f1dc06e4c6c276e3a7ebb14c9e30a85cbf5c225e7fbae187a7ad4e32a5542a \
