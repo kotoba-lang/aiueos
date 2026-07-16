@@ -190,11 +190,17 @@ extern uint64_t aiueos_service_registry_state(unsigned service);
 extern uint64_t kotoba_aiueos_fnv1a(const uint8_t *bytes, uint64_t length);
 extern uint64_t kotoba_aiueos_sha256(
   const uint8_t *,uint64_t,uint8_t[32],uint8_t *,uint64_t);
-extern int aiueos_rsa2048_sha256_verify(const uint8_t[256],const uint8_t[32]);
+extern uint64_t kotoba_aiueos_rsa2048_sha256_verify(
+  const uint8_t[256],const uint8_t[32],uint8_t*,uint64_t,uint64_t);
 static uint8_t sha256_workspace[512];
+static uint8_t rsa2048_workspace[1284];
 static int sha256(const uint8_t *bytes,uint64_t length,uint8_t digest[32]) {
   return (int)kotoba_aiueos_sha256(
     bytes,length,digest,sha256_workspace,sizeof(sha256_workspace));
+}
+static int rsa2048_sha256_verify(const uint8_t signature[256],const uint8_t digest[32]) {
+  return (int)kotoba_aiueos_rsa2048_sha256_verify(
+    signature,digest,rsa2048_workspace,sizeof(rsa2048_workspace),0);
 }
 static uint32_t fnv1a(const uint8_t *bytes, uint32_t length) {
   return (uint32_t)kotoba_aiueos_fnv1a(bytes, length);
@@ -701,7 +707,7 @@ static int virtio_blk(uint8_t b, uint8_t d, uint8_t f) {
       for(unsigned i=0;i<256;i++) signature[i]=sector[i];
       if (!sha256(catalog_bytes,catalog_length,actual_sha) ||
           !bytes_equal_constant_time(expected_catalog_sha,actual_sha,32) ||
-          !aiueos_rsa2048_sha256_verify(signature,actual_sha)) return 0;
+          !rsa2048_sha256_verify(signature,actual_sha)) return 0;
       const struct aiuefs_app_catalog *catalog=(const void *)catalog_bytes;
       if (catalog->magic[0]!='A'||catalog->magic[1]!='I'||catalog->magic[2]!='U'||
           catalog->magic[3]!='C'||catalog->magic[4]!='A'||catalog->magic[5]!='T'||
@@ -735,7 +741,7 @@ static int virtio_blk(uint8_t b, uint8_t d, uint8_t f) {
         for(unsigned i=0;i<256;i++)signature[i]=sector[i];
         if(!sha256(kotoba_app_objects[app],entry->length,actual_sha)||
            !bytes_equal_constant_time(entry->sha256,actual_sha,32)||
-           !aiueos_rsa2048_sha256_verify(signature,actual_sha))return 0;
+           !rsa2048_sha256_verify(signature,actual_sha))return 0;
         for(unsigned i=0;i<16;i++)kotoba_apps[app].id[i]=entry->id[i];kotoba_apps[app].length=entry->length;kotoba_apps[app].ready=1;
       }
       kotoba_app_count=catalog->count;

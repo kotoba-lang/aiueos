@@ -23,7 +23,6 @@ kernel_scheduler_object="$out/kernel-scheduler.o"
 kernel_syscall_object="$out/kernel-syscall.o"
 kernel_process_object="$out/kernel-process.o"
 kernel_loader_object="$out/kernel-loader.o"
-kernel_rsa2048_object="$out/kernel-rsa2048.o"
 kernel_smp_object="$out/kernel-smp.o"
 kernel_trampoline_object="$out/kernel-ap-trampoline.o"
 kernel_ioapic_object="$out/kernel-ioapic.o"
@@ -51,10 +50,11 @@ kotoba_user_object_journal_object=${AIUEOS_KOTOBA_USER_OBJECT_JOURNAL_OBJECT:-"$
 kotoba_user_object_journal_valid_object=${AIUEOS_KOTOBA_USER_OBJECT_JOURNAL_VALID_OBJECT:-"$aiueos/kotoba/user-object-journal-valid.o"}
 kotoba_user_object_journal_value_object=${AIUEOS_KOTOBA_USER_OBJECT_JOURNAL_VALUE_OBJECT:-"$aiueos/kotoba/user-object-journal-value.o"}
 kotoba_sha256_object=${AIUEOS_KOTOBA_SHA256_OBJECT:-"$aiueos/kotoba/sha256.o"}
+kotoba_rsa2048_object=${AIUEOS_KOTOBA_RSA2048_OBJECT:-"$aiueos/kotoba/rsa2048.o"}
 kotoba_user_elf=${AIUEOS_KOTOBA_USER_ELF:-"$aiueos/kotoba/user-smoke.elf"}
 kotoba_fnv_sha=
 if [ -z "${AIUEOS_KOTOBA_FNV_OBJECT:-}" ]; then
-  kotoba_fnv_sha=9d447888daf2c5065b3caf98ee348b426296c95781d0651989bd2025ac7ba52d
+  kotoba_fnv_sha=c924ac51de16c3120a6fd227eb49a14ab1874e4e365e1bdf3a1bfe7fca7672f3
 fi
 kotoba_journal_sha=
 if [ -z "${AIUEOS_KOTOBA_JOURNAL_OBJECT:-}" ]; then
@@ -81,22 +81,22 @@ python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_journal_object
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_fnv_object" \
   "$kotoba_fnv_sha" kotoba_aiueos_fnv1a
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_journal_valid_object" \
-  f06982540d9516409888a759659b7dc75a30972960f567535b47a57d97399c95 \
+  7c3a5b581c99daa5282d963efb9162dc0a2af25185523ce031270204e213e3f0 \
   kotoba_aiueos_journal_record_valid
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_transaction_valid_object" \
-  ee9079df77755d7d540c4e974265da10f51c1c239f5cce7edaa24edf0b047b77 \
+  fb8d3cd1b1b9c13cfd3e6f80cac15f568d13327cac76b47b54ca60ad3fd09d86 \
   kotoba_aiueos_object_transaction_valid
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_transaction_route_object" \
-  b2d8c72642733d6ce84ac21516aa523d598fcd99f56cb84a1bca06a4b7ea547b \
+  ab98299f535a2d0752135032b960d7830cca8aee4cdfff8a2f4952d897cfe3dd \
   kotoba_aiueos_object_transaction_route
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_mutable_valid_object" \
   53513e67ae900ce2de971aea92ccecc976d361beeaedc8a633b14ef1f873fc73 \
   kotoba_aiueos_mutable_object_valid
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_superblock_valid_object" \
-  5b6ae0a1fe186c8530a7b63dd80abd31fd460c3c3e0f441e0ef45340a4ca28a0 \
+  c7181af2d2ff2713b1e7e5979d2fb0b4bc989ace280858d7afd478c3739a980e \
   kotoba_aiueos_superblock_valid
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_journal_build_object" \
-  1f1dedd438d523c7f92bde90f8bf07c92768fd9dd7cfc73a27f9dc895eb3bca7 \
+  9691f9dda0899b70fa2853f07da2a974cefd957bdb7c6fee3235301f6a3143dc \
   kotoba_aiueos_journal_record_build
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_mutable_build_object" \
   d593a4db905cac264c67732983bf0b62de783011b46e505257a51d94d820eafd \
@@ -114,7 +114,7 @@ python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_syscall_range_
   c65aa4b0b2b47891f2b1340a289157625262156733d85195d0449a2050aa18b8 \
   kotoba_aiueos_syscall_range_valid
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_copy_in_object" \
-  f3b8ae90a2d77ca821c82dfd03f0b6ffc080ffe2b78195a334a4265fbec518e4 \
+  ab367b1ac46461f6228080ee909415b8825a429b47abb1edc8dbafc7083bba7c \
   kotoba_aiueos_copy_in
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_capability_object" \
   006f509119d39298a1a64093f9b49f48f808445d251e96505c4c03e3abc068bb \
@@ -123,7 +123,7 @@ python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_service_lifecy
   cd6d9c57cd4dd94839ef1a255c6d82b6c1b231c08aa1f7de86ab8c0029720816 \
   kotoba_aiueos_service_lifecycle
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_service_registry_object" \
-  70eee5d4dd599ea2049261e92a656931768b355eefc0fb6d83deee192a3a05f0 \
+  b0e9c90aaef5477fb5ababd6dd3067dd95a7eba93f3bb262cc49bace7e5a44ce \
   kotoba_aiueos_service_registry_build
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_service_registry_state_object" \
   d73f13de0d86a4af46e33516b8b0f6358b5d477307c61d40624b971f34c15f3e \
@@ -140,6 +140,9 @@ python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_user_object_jo
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_sha256_object" \
   ad28e7d83d6e582df2dacf802e915fc9532fc99e141e174e7bf8642191db2c29 \
   kotoba_aiueos_sha256
+python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_rsa2048_object" \
+  97a6c6b1f4c3f3569bf8d40423db924d291aa0b6f10cd7bace79f54e193387a6 \
+  kotoba_aiueos_rsa2048_sha256_verify
 python3 "$aiueos/scripts/verify-kotoba-user-elf.py" "$kotoba_user_elf" \
   1f0e5897831d0de6bbcb15eec82a6e0c4b402b436689cec051bc6de3b5c4e905
 zig cc -target x86_64-freestanding-none -std=c11 -O2 \
@@ -180,9 +183,6 @@ zig cc -target x86_64-freestanding-none -std=c11 -O2 \
   -c -o "$kernel_loader_object" "$aiueos/kernel/loader.c"
 zig cc -target x86_64-freestanding-none -std=c11 -O2 \
   -ffreestanding -fno-stack-protector -mno-red-zone \
-  -c -o "$kernel_rsa2048_object" "$aiueos/kernel/rsa2048.c"
-zig cc -target x86_64-freestanding-none -std=c11 -O2 \
-  -ffreestanding -fno-stack-protector -mno-red-zone \
   -c -o "$kernel_smp_object" "$aiueos/kernel/smp.c"
 zig cc -target x86_64-freestanding-none \
   -c -o "$kernel_trampoline_object" "$aiueos/kernel/ap_trampoline.S"
@@ -197,7 +197,7 @@ zig ld.lld -nostdlib -static -z max-page-size=0x1000 \
   "$kernel_entry_object" "$kernel_object" "$kernel_paging_object" \
   "$kernel_acpi_object" "$kernel_vtd_object" "$kernel_apic_object" "$kernel_memory_object" \
   "$kernel_pci_object" "$kernel_scheduler_object" "$kernel_syscall_object" \
-  "$kernel_process_object" "$kernel_loader_object" "$kernel_rsa2048_object" \
+  "$kernel_process_object" "$kernel_loader_object" \
   "$kernel_smp_object" "$kernel_trampoline_object" \
   "$kernel_ioapic_object" "$kernel_framebuffer_object" "$kotoba_kernel_object" \
   "$kotoba_journal_object" "$kotoba_fnv_object" "$kotoba_journal_valid_object" \
@@ -211,7 +211,8 @@ zig ld.lld -nostdlib -static -z max-page-size=0x1000 \
   "$kotoba_service_registry_object" "$kotoba_service_registry_state_object" \
   "$kotoba_user_object_journal_object" \
   "$kotoba_user_object_journal_valid_object" \
-  "$kotoba_user_object_journal_value_object" "$kotoba_sha256_object"
+  "$kotoba_user_object_journal_value_object" "$kotoba_sha256_object" \
+  "$kotoba_rsa2048_object"
 python3 - "$kernel" "$identity_source" <<'PY'
 import hashlib, pathlib, sys
 digest = hashlib.sha256(pathlib.Path(sys.argv[1]).read_bytes()).digest()

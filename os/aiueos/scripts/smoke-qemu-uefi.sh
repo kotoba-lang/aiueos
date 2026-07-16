@@ -233,7 +233,7 @@ grep -F "AIUEOS_OBJECT_STORE_OK aiuefs-v3 objects=3 catalog=2apps" "$serial_log"
   echo "error: bounded read-only object-store evidence was not observed" >&2
   exit 1
 }
-grep -F "AIUEOS_KOTOBA_APP_ADMISSION_OK catalog=rsa2048 apps=2 digest=kotoba-sha256 signature=rsa2048-pkcs1 policy=public-key" "$serial_log" >/dev/null || {
+grep -F "AIUEOS_KOTOBA_APP_ADMISSION_OK catalog=rsa2048 apps=2 digest=kotoba-sha256 signature=kotoba-rsa2048-pkcs1 policy=public-key" "$serial_log" >/dev/null || {
   echo "error: authenticated object-store Kotoba app admission was not observed" >&2
   exit 1
 }

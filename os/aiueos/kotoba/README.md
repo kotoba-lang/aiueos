@@ -37,6 +37,14 @@ tail recursion reuses a fixed native stack frame across blocks and rounds.
 Its pinned SHA-256 is
 `ad28e7d83d6e582df2dacf802e915fc9532fc99e141e174e7bf8642191db2c29`.
 
+`rsa2048.o` implements RSA-2048 public exponent 65537 and the complete
+PKCS#1 v1.5 SHA-256 encoded-message comparison in Kotoba. Its five-argument
+kernel ABI accepts a 256-byte signature, 32-byte digest, and caller-owned
+workspace. The public function requires 1284 bytes; compiler-emitted 4 KiB
+load/store guards and a 250-million-unit fuel receipt bound every access and
+loop. Its pinned SHA-256 is
+`97a6c6b1f4c3f3569bf8d40423db924d291aa0b6f10cd7bace79f54e193387a6`.
+
 `journal-plan.o` is produced by the same compiler revision from
 `journal-plan.kotoba`. It exports the four-argument SysV function
 `kotoba_aiueos_journal_plan`. Given validity and sequence values for both
@@ -63,7 +71,7 @@ records return false before replay or mutation.
 class and target sector as one route receipt. Native virtio-blk code consumes
 that receipt for service/domain apply and recovery instead of branching on raw
 transaction fields. Its SHA-256 is
-`b2d8c72642733d6ce84ac21516aa523d598fcd99f56cb84a1bca06a4b7ea547b`.
+`ab98299f535a2d0752135032b960d7830cca8aee4cdfff8a2f4952d897cfe3dd`.
 
 `superblock-valid.o` owns filesystem magic, header shape, object bounds, and
 payload checksum validation. `mutable-object-valid.o` owns materialized object
@@ -135,7 +143,7 @@ into a versioned 16-byte registry inside the journal transaction. It writes all
 transaction and journal metadata and checksums with bounded stores. The native
 virtio-blk substrate supplies the observed states, commits the journal before
 materialization, and verifies readback/replay. Its pinned object SHA-256 is
-`70eee5d4dd599ea2049261e92a656931768b355eefc0fb6d83deee192a3a05f0`.
+`b0e9c90aaef5477fb5ababd6dd3067dd95a7eba93f3bb262cc49bace7e5a44ce`.
 After the common Kotoba transaction checksum validator passes,
 `service-registry-state` validates the complete `SRV1` routing/schema contract
 and returns either indexed state.
