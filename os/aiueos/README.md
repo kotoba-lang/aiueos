@@ -277,10 +277,11 @@ artifacts, and emits a dependency receipt:
 ./os/aiueos/scripts/smoke-qemu-kotoba-native.sh /path/to/kotoba/compiler
 ```
 
-`AIUEOS_EXTERNAL_KERNEL_ELF=build/aiueos-native/KERNEL.ELF` lets the existing
-UEFI transition loader boot this payload. The loader remains migration work;
-the hard-flip kernel artifact itself has no C, CRT, linker, interpreter, or
-dynamic dependency.
+`build-kotoba-native-boot.sh` asks the Kotoba compiler to embed that ELF in a
+position-independent PE32+ UEFI application. The compiler-generated loader
+uses only AllocatePages, CopyMem, AllocatePool, GetMemoryMap, and
+ExitBootServices before entering the kernel. The hard-flip boot chain has no C,
+CRT, foreign object, linker, interpreter, import table, or dynamic dependency.
 
 The scheduler maintains an eight-slot descriptor table; two services are live
 in the boot evidence with stable IDs, generations, restart counts, and

@@ -203,7 +203,7 @@ python3 "$aiueos/scripts/verify-kotoba-user-elf.py" "$kotoba_user_elf" \
 if [ -n "${AIUEOS_EXTERNAL_KERNEL_ELF:-}" ]; then
   python3 "$aiueos/scripts/verify-kotoba-native-kernel.py" \
     "$AIUEOS_EXTERNAL_KERNEL_ELF" "$aiueos/native/kernel.kotoba" \
-    40736f280acb9d4b15d403b2767799ba4f6440a6 "$out/native-kernel-receipt.json"
+    2c722a5a15699f80de7b24ec60bb974fe46b0b19 "$out/native-kernel-receipt.json"
   cp "$AIUEOS_EXTERNAL_KERNEL_ELF" "$kernel"
 else
 zig cc -target x86_64-freestanding-none -std=c11 -O2 \
