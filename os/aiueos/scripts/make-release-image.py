@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build and verify the deterministic aiueos GPT/ESP release image."""
+"""Build and verify the deterministic aiueos GPT/ESP release image and ISO."""
 
 import argparse
 import binascii
@@ -25,6 +25,22 @@ NAMESPACE = uuid.UUID("18b3fb94-8713-54c4-9e3a-f0c78a88d192")
 DISK_GUID = uuid.uuid5(NAMESPACE, "aiueos-release-disk-v1")
 ESP_GUID = uuid.uuid5(NAMESPACE, "aiueos-esp-v1")
 VOLUME_ID = 0x41495545
+
+ISO_BLOCK = 2048
+# The El Torito EFI boot image is FAT16 so its 512-byte virtual sector count
+# (32768) stays inside the catalog entry's 16-bit field; the on-disk GPT ESP
+# stays FAT32.
+ISO_BOOT_SECTORS = 32768  # 16 MiB
+ISO_PVD_LBA = 16
+ISO_BRVD_LBA = 17
+ISO_TERMINATOR_LBA = 18
+ISO_CATALOG_LBA = 19
+ISO_ROOT_LBA = 20
+ISO_LPATH_LBA = 21
+ISO_MPATH_LBA = 22
+ISO_BOOT_IMAGE_LBA = 23
+ISO_BOOT_BLOCKS = ISO_BOOT_SECTORS * SECTOR // ISO_BLOCK
+ISO_VOLUME_BLOCKS = ISO_BOOT_IMAGE_LBA + ISO_BOOT_BLOCKS
 
 
 def sha256(path):
@@ -136,6 +152,264 @@ def make_fat32(efi, kernel):
         offset = (reserved + copy * fat_sectors) * SECTOR
         image[offset:offset + len(fat_bytes)] = fat_bytes
     return bytes(image)
+
+
+FAT16_RESERVED = 4
+FAT16_FATS = 2
+FAT16_FAT_SECTORS = 32
+FAT16_ROOT_SECTORS = 32
+FAT16_CLUSTER_SECTORS = 4
+FAT16_DATA_START = FAT16_RESERVED + FAT16_FATS * FAT16_FAT_SECTORS + FAT16_ROOT_SECTORS
+FAT16_CLUSTERS = (ISO_BOOT_SECTORS - FAT16_DATA_START) // FAT16_CLUSTER_SECTORS
+
+
+def make_fat16(efi, kernel):
+    if not 4085 <= FAT16_CLUSTERS <= 65524:
+        raise ValueError("boot image cluster count is not FAT16")
+    if (FAT16_CLUSTERS + 2) * 2 > FAT16_FAT_SECTORS * SECTOR:
+        raise ValueError("boot image FAT does not cover its clusters")
+    image = bytearray(ISO_BOOT_SECTORS * SECTOR)
+    boot = bytearray(SECTOR)
+    boot[:3] = b"\xeb\x3c\x90"
+    boot[3:11] = b"AIUEOS  "
+    struct.pack_into("<HBHBHHBHHHII", boot, 11, SECTOR, FAT16_CLUSTER_SECTORS,
+                     FAT16_RESERVED, FAT16_FATS, FAT16_ROOT_SECTORS * SECTOR // 32,
+                     ISO_BOOT_SECTORS, 0xF8, FAT16_FAT_SECTORS, 63, 255, 0, 0)
+    boot[36] = 0x80
+    boot[38] = 0x29
+    struct.pack_into("<I", boot, 39, VOLUME_ID)
+    boot[43:54] = b"AIUEOS ISO "
+    boot[54:62] = b"FAT16   "
+    boot[510:512] = b"\x55\xaa"
+    image[:SECTOR] = boot
+
+    fat = [0] * (FAT16_CLUSTERS + 2)
+    fat[0], fat[1] = 0xFFF8, 0xFFFF
+    next_cluster = 2
+
+    def allocate(payload, cluster_count=None):
+        nonlocal next_cluster
+        count = cluster_count or max(
+            1, (len(payload) + FAT16_CLUSTER_SECTORS * SECTOR - 1) // (FAT16_CLUSTER_SECTORS * SECTOR))
+        first = next_cluster
+        for index in range(count):
+            cluster = next_cluster + index
+            fat[cluster] = 0xFFFF if index == count - 1 else cluster + 1
+            offset = (FAT16_DATA_START + (cluster - 2) * FAT16_CLUSTER_SECTORS) * SECTOR
+            chunk = payload[index * FAT16_CLUSTER_SECTORS * SECTOR:(index + 1) * FAT16_CLUSTER_SECTORS * SECTOR]
+            image[offset:offset + len(chunk)] = chunk
+        next_cluster += count
+        return first
+
+    efi_bytes, kernel_bytes = Path(efi).read_bytes(), Path(kernel).read_bytes()
+    efi_dir = allocate(dirent(".", 0x10, 0) + dirent("..", 0x10, 0), 1)
+    boot_dir = allocate(dirent(".", 0x10, 0) + dirent("..", 0x10, efi_dir), 1)
+    aiueos_dir = allocate(dirent(".", 0x10, 0) + dirent("..", 0x10, efi_dir), 1)
+    efi_file = allocate(efi_bytes)
+    kernel_file = allocate(kernel_bytes)
+
+    def write_directory(cluster, payload):
+        offset = (FAT16_DATA_START + (cluster - 2) * FAT16_CLUSTER_SECTORS) * SECTOR
+        image[offset:offset + len(payload)] = payload
+
+    write_directory(efi_dir, dirent(".", 0x10, efi_dir) + dirent("..", 0x10, 0) +
+                    dirent("BOOT", 0x10, boot_dir) + dirent("AIUEOS", 0x10, aiueos_dir))
+    write_directory(boot_dir, dirent(".", 0x10, boot_dir) + dirent("..", 0x10, efi_dir) +
+                    dirent("BOOTX64.EFI", 0x20, efi_file, len(efi_bytes)))
+    write_directory(aiueos_dir, dirent(".", 0x10, aiueos_dir) + dirent("..", 0x10, efi_dir) +
+                    dirent("KERNEL.ELF", 0x20, kernel_file, len(kernel_bytes)))
+    root = dirent("EFI", 0x10, efi_dir)
+    root_offset = (FAT16_RESERVED + FAT16_FATS * FAT16_FAT_SECTORS) * SECTOR
+    image[root_offset:root_offset + len(root)] = root
+
+    fat_bytes = bytearray(FAT16_FAT_SECTORS * SECTOR)
+    for index, value in enumerate(fat):
+        struct.pack_into("<H", fat_bytes, index * 2, value)
+    for copy in range(FAT16_FATS):
+        offset = (FAT16_RESERVED + copy * FAT16_FAT_SECTORS) * SECTOR
+        image[offset:offset + len(fat_bytes)] = fat_bytes
+    return bytes(image)
+
+
+def both_endian_32(value):
+    return struct.pack("<I", value) + struct.pack(">I", value)
+
+
+def both_endian_16(value):
+    return struct.pack("<H", value) + struct.pack(">H", value)
+
+
+def iso_directory_record(name, extent, size, flags):
+    identifier = name if isinstance(name, bytes) else name.encode("ascii")
+    length = 33 + len(identifier)
+    length += length % 2
+    record = bytearray(length)
+    record[0] = length
+    record[2:10] = both_endian_32(extent)
+    record[10:18] = both_endian_32(size)
+    record[18:25] = bytes([80, 1, 1, 0, 0, 0, 0])  # fixed 1980-01-01 00:00 UTC
+    record[25] = flags
+    record[28:32] = both_endian_16(1)
+    record[32] = len(identifier)
+    record[33:33 + len(identifier)] = identifier
+    return bytes(record)
+
+
+def build_iso(output, efi, kernel):
+    boot_image = make_fat16(efi, kernel)
+    iso = bytearray(ISO_VOLUME_BLOCKS * ISO_BLOCK)
+
+    root_record = iso_directory_record(b"\x00", ISO_ROOT_LBA, ISO_BLOCK, 0x02)
+    pvd = bytearray(ISO_BLOCK)
+    pvd[0] = 1
+    pvd[1:6] = b"CD001"
+    pvd[6] = 1
+    pvd[8:40] = b"AIUEOS".ljust(32)
+    pvd[40:72] = b"AIUEOS".ljust(32)
+    pvd[80:88] = both_endian_32(ISO_VOLUME_BLOCKS)
+    pvd[120:124] = both_endian_16(1)
+    pvd[124:128] = both_endian_16(1)
+    pvd[128:132] = both_endian_16(ISO_BLOCK)
+    path_table = bytes([1, 0]) + struct.pack("<I", ISO_ROOT_LBA) + struct.pack("<H", 1) + b"\x00\x00"
+    pvd[132:140] = both_endian_32(len(path_table))
+    struct.pack_into("<I", pvd, 140, ISO_LPATH_LBA)
+    struct.pack_into(">I", pvd, 148, ISO_MPATH_LBA)
+    pvd[156:156 + len(root_record)] = root_record
+    for offset, width in ((190, 128), (318, 128), (446, 128), (574, 128),
+                          (702, 37), (739, 37), (776, 37)):
+        pvd[offset:offset + width] = b" " * width
+    # All-zero digit dates mean "not specified" and keep the image reproducible.
+    for offset in (813, 830, 847, 864):
+        pvd[offset:offset + 16] = b"0" * 16
+    pvd[881] = 1
+    iso[ISO_PVD_LBA * ISO_BLOCK:(ISO_PVD_LBA + 1) * ISO_BLOCK] = pvd
+
+    brvd = bytearray(ISO_BLOCK)
+    brvd[0] = 0
+    brvd[1:6] = b"CD001"
+    brvd[6] = 1
+    brvd[7:39] = b"EL TORITO SPECIFICATION".ljust(32, b"\x00")
+    struct.pack_into("<I", brvd, 71, ISO_CATALOG_LBA)
+    iso[ISO_BRVD_LBA * ISO_BLOCK:(ISO_BRVD_LBA + 1) * ISO_BLOCK] = brvd
+
+    terminator = bytearray(ISO_BLOCK)
+    terminator[0] = 255
+    terminator[1:6] = b"CD001"
+    terminator[6] = 1
+    iso[ISO_TERMINATOR_LBA * ISO_BLOCK:(ISO_TERMINATOR_LBA + 1) * ISO_BLOCK] = terminator
+
+    validation = bytearray(32)
+    validation[0] = 0x01
+    validation[1] = 0xEF  # EFI platform
+    validation[4:10] = b"AIUEOS"
+    validation[30:32] = b"\x55\xaa"
+    checksum = (-sum(struct.unpack_from("<16H", validation))) & 0xFFFF
+    struct.pack_into("<H", validation, 28, checksum)
+    default_entry = bytearray(32)
+    default_entry[0] = 0x88  # bootable
+    default_entry[1] = 0x00  # no emulation
+    struct.pack_into("<H", default_entry, 6, ISO_BOOT_SECTORS)
+    struct.pack_into("<I", default_entry, 8, ISO_BOOT_IMAGE_LBA)
+    catalog_offset = ISO_CATALOG_LBA * ISO_BLOCK
+    iso[catalog_offset:catalog_offset + 32] = validation
+    iso[catalog_offset + 32:catalog_offset + 64] = default_entry
+
+    root_dir = bytearray(ISO_BLOCK)
+    entries = (iso_directory_record(b"\x00", ISO_ROOT_LBA, ISO_BLOCK, 0x02) +
+               iso_directory_record(b"\x01", ISO_ROOT_LBA, ISO_BLOCK, 0x02) +
+               iso_directory_record("ESP.IMG;1", ISO_BOOT_IMAGE_LBA, len(boot_image), 0x00))
+    root_dir[:len(entries)] = entries
+    iso[ISO_ROOT_LBA * ISO_BLOCK:(ISO_ROOT_LBA + 1) * ISO_BLOCK] = root_dir
+
+    lpath = bytearray(ISO_BLOCK)
+    lpath[:len(path_table)] = path_table
+    iso[ISO_LPATH_LBA * ISO_BLOCK:(ISO_LPATH_LBA + 1) * ISO_BLOCK] = lpath
+    mpath = bytearray(ISO_BLOCK)
+    mpath[:len(path_table)] = (bytes([1, 0]) + struct.pack(">I", ISO_ROOT_LBA) +
+                               struct.pack(">H", 1) + b"\x00\x00")
+    iso[ISO_MPATH_LBA * ISO_BLOCK:(ISO_MPATH_LBA + 1) * ISO_BLOCK] = mpath
+
+    boot_offset = ISO_BOOT_IMAGE_LBA * ISO_BLOCK
+    iso[boot_offset:boot_offset + len(boot_image)] = boot_image
+    Path(output).write_bytes(iso)
+
+
+def verify_iso(path, expected_efi=None, expected_kernel=None):
+    iso = Path(path).read_bytes()
+    if len(iso) != ISO_VOLUME_BLOCKS * ISO_BLOCK:
+        raise ValueError("invalid ISO size")
+    pvd = iso[ISO_PVD_LBA * ISO_BLOCK:(ISO_PVD_LBA + 1) * ISO_BLOCK]
+    if pvd[0] != 1 or pvd[1:6] != b"CD001":
+        raise ValueError("missing ISO9660 primary volume descriptor")
+    if struct.unpack_from("<I", pvd, 80)[0] != ISO_VOLUME_BLOCKS:
+        raise ValueError("ISO volume space size mismatch")
+    brvd = iso[ISO_BRVD_LBA * ISO_BLOCK:(ISO_BRVD_LBA + 1) * ISO_BLOCK]
+    if brvd[0] != 0 or brvd[1:6] != b"CD001" or not brvd[7:30].startswith(b"EL TORITO SPECIFICATION"):
+        raise ValueError("missing El Torito boot record volume descriptor")
+    catalog_lba = struct.unpack_from("<I", brvd, 71)[0]
+    catalog = iso[catalog_lba * ISO_BLOCK:(catalog_lba + 1) * ISO_BLOCK]
+    if catalog[0] != 0x01 or catalog[1] != 0xEF or catalog[30:32] != b"\x55\xaa":
+        raise ValueError("invalid El Torito validation entry")
+    if sum(struct.unpack_from("<16H", catalog)) & 0xFFFF != 0:
+        raise ValueError("invalid El Torito validation checksum")
+    if catalog[32] != 0x88 or catalog[33] != 0x00:
+        raise ValueError("invalid El Torito default boot entry")
+    sectors = struct.unpack_from("<H", catalog, 38)[0]
+    image_lba = struct.unpack_from("<I", catalog, 40)[0]
+    if sectors != ISO_BOOT_SECTORS or image_lba != ISO_BOOT_IMAGE_LBA:
+        raise ValueError("El Torito boot image extent mismatch")
+    esp = iso[image_lba * ISO_BLOCK:image_lba * ISO_BLOCK + sectors * SECTOR]
+    if esp[54:62] != b"FAT16   " or esp[510:512] != b"\x55\xaa":
+        raise ValueError("invalid FAT16 boot image")
+
+    root_dir = iso[ISO_ROOT_LBA * ISO_BLOCK:(ISO_ROOT_LBA + 1) * ISO_BLOCK]
+    offset = root_dir[0] + root_dir[root_dir[0]]
+    record = root_dir[offset:offset + root_dir[offset]]
+    if record[33:33 + record[32]] != b"ESP.IMG;1":
+        raise ValueError("missing ESP.IMG directory record")
+    if (struct.unpack_from("<I", record, 2)[0] != image_lba or
+            struct.unpack_from("<I", record, 10)[0] != sectors * SECTOR):
+        raise ValueError("ESP.IMG directory record extent mismatch")
+
+    fat = esp[FAT16_RESERVED * SECTOR:(FAT16_RESERVED + FAT16_FAT_SECTORS) * SECTOR]
+
+    def cluster_bytes(cluster):
+        start = (FAT16_DATA_START + (cluster - 2) * FAT16_CLUSTER_SECTORS) * SECTOR
+        return esp[start:start + FAT16_CLUSTER_SECTORS * SECTOR]
+
+    def find(entries, name):
+        wanted = fat_name(name)
+        for entry_offset in range(0, len(entries), 32):
+            entry = entries[entry_offset:entry_offset + 32]
+            if entry[0] == 0:
+                break
+            if entry[:11] == wanted:
+                return struct.unpack_from("<H", entry, 26)[0], struct.unpack_from("<I", entry, 28)[0]
+        raise ValueError("missing boot-image path component: " + name)
+
+    def read_file(first, size):
+        output = bytearray()
+        cluster = first
+        while cluster < 0xFFF8 and len(output) < size:
+            output += cluster_bytes(cluster)
+            cluster = struct.unpack_from("<H", fat, cluster * 2)[0]
+        return bytes(output[:size])
+
+    root_offset = (FAT16_RESERVED + FAT16_FATS * FAT16_FAT_SECTORS) * SECTOR
+    root = esp[root_offset:root_offset + FAT16_ROOT_SECTORS * SECTOR]
+    efi_dir, _ = find(root, "EFI")
+    boot_dir, _ = find(cluster_bytes(efi_dir), "BOOT")
+    aiueos_dir, _ = find(cluster_bytes(efi_dir), "AIUEOS")
+    efi_cluster, efi_size = find(cluster_bytes(boot_dir), "BOOTX64.EFI")
+    kernel_cluster, kernel_size = find(cluster_bytes(aiueos_dir), "KERNEL.ELF")
+    embedded_efi = read_file(efi_cluster, efi_size)
+    embedded_kernel = read_file(kernel_cluster, kernel_size)
+    if embedded_efi[:2] != b"MZ" or embedded_kernel[:4] != b"\x7fELF":
+        raise ValueError("ISO boot artifacts have invalid magic")
+    if expected_efi and embedded_efi != Path(expected_efi).read_bytes():
+        raise ValueError("ISO BOOTX64.EFI content mismatch")
+    if expected_kernel and embedded_kernel != Path(expected_kernel).read_bytes():
+        raise ValueError("ISO KERNEL.ELF content mismatch")
 
 
 def gpt_header(current, backup, entries_lba, entries_crc):
@@ -250,16 +524,27 @@ def main():
     build = sub.add_parser("build")
     build.add_argument("--efi", required=True); build.add_argument("--kernel", required=True)
     build.add_argument("--data")
+    build.add_argument("--iso")
     build.add_argument("--output", required=True); build.add_argument("--receipt", required=True)
     verify = sub.add_parser("verify")
-    verify.add_argument("--image", required=True); verify.add_argument("--efi"); verify.add_argument("--kernel")
+    verify.add_argument("--image"); verify.add_argument("--iso")
+    verify.add_argument("--efi"); verify.add_argument("--kernel")
     args = parser.parse_args()
     if args.command == "verify":
-        verify_image(args.image, args.efi, args.kernel)
-        print("AIUEOS_RELEASE_IMAGE_OK")
+        if not args.image and not args.iso:
+            parser.error("verify requires --image or --iso")
+        if args.image:
+            verify_image(args.image, args.efi, args.kernel)
+            print("AIUEOS_RELEASE_IMAGE_OK")
+        if args.iso:
+            verify_iso(args.iso, args.efi, args.kernel)
+            print("AIUEOS_RELEASE_ISO_OK")
         return
     build_image(args.output, args.efi, args.kernel)
     verify_image(args.output, args.efi, args.kernel)
+    if args.iso:
+        build_iso(args.iso, args.efi, args.kernel)
+        verify_iso(args.iso, args.efi, args.kernel)
     epoch = int(os.environ.get("SOURCE_DATE_EPOCH", "0"))
     receipt = {
         "schema": "aiueos.build-receipt.v1",
@@ -274,6 +559,14 @@ def main():
     if args.data:
         receipt["artifacts"]["AIUEOS-DATA.IMG"] = {
             "bytes": Path(args.data).stat().st_size, "sha256": sha256(args.data)}
+    if args.iso:
+        receipt["iso"] = {
+            "bytes": Path(args.iso).stat().st_size,
+            "sha256": sha256(args.iso),
+            "el_torito": {"platform": "efi", "media": "no-emulation",
+                          "image_lba": ISO_BOOT_IMAGE_LBA,
+                          "virtual_sectors": ISO_BOOT_SECTORS},
+        }
     Path(args.receipt).write_text(json.dumps(receipt, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     print(args.output)
 

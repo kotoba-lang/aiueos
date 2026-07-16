@@ -72,7 +72,14 @@ p=Path(sys.argv[1]);b=bytearray(p.read_bytes());sector=struct.unpack_from('<I',b
 b[sector*512+20]^=1;p.write_bytes(b)
 PY
 fi
-if [ -n "${AIUEOS_DISK_IMAGE:-}" ]; then
+if [ -n "${AIUEOS_CDROM_IMAGE:-}" ]; then
+  [ -f "$AIUEOS_CDROM_IMAGE" ] || {
+    echo "error: AIUEOS_CDROM_IMAGE does not exist: $AIUEOS_CDROM_IMAGE" >&2
+    exit 1
+  }
+  # El Torito boot from the release ISO; cdrom media is opened read-only.
+  boot_drive="format=raw,media=cdrom,file=$AIUEOS_CDROM_IMAGE"
+elif [ -n "${AIUEOS_DISK_IMAGE:-}" ]; then
   [ -f "$AIUEOS_DISK_IMAGE" ] || {
     echo "error: AIUEOS_DISK_IMAGE does not exist: $AIUEOS_DISK_IMAGE" >&2
     exit 1
