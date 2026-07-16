@@ -108,11 +108,13 @@ exit-request bit on that admitted slot. Its pinned SHA-256 is
 `dbf1dacb2d4a2fc0adf49134cbd6b973fa3a85e780f3d2b242a9baacb28799d2`.
 
 `service-task-transition.o` connects lifecycle candidates to native task state.
-It returns the complete generation/restart/action commit plan, admitting spawn
+It returns the complete generation/restart/action commit plan plus an explicit
+state/context/task mutation recipe, admitting spawn
 only for inactive services with no assigned slot, restart/query only for a live task, and terminate
 only for a non-current live task. C executes the admitted allocation, context
-reset, or release without reconstructing lifecycle state. Its pinned SHA-256 is
-`768365cf5a66a60e666f6e5b4e0478b4e8a4ca738325c509aeec067e41d3b5f9`.
+reset, or release without reconstructing lifecycle state or mutation intent.
+Its pinned SHA-256 is
+`a6b70f28d7b63a64b9b0ff0b66eba0e465a65caa39b0413f34eef5245d32d466`.
 
 `rsa2048.o` implements RSA-2048 public exponent 65537 and the complete
 PKCS#1 v1.5 SHA-256 encoded-message comparison in Kotoba. Its five-argument
