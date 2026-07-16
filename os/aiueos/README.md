@@ -267,6 +267,21 @@ boot-image magic, and byte-for-byte embedded artifact contents.
 Requirements are Zig 0.14 or newer and `qemu-system-x86_64` with an edk2/OVMF
 firmware image. Override firmware discovery with `OVMF_CODE=/path/to/code.fd`.
 
+The hard-flip path builds a separate kernel payload directly from Kotoba. It
+invokes no C compiler or linker, admits privileged x86-64 intrinsics only for
+the kernel target, reproduces the ELF byte-for-byte, rejects dynamic/foreign/C
+artifacts, and emits a dependency receipt:
+
+```sh
+./os/aiueos/scripts/build-kotoba-native-kernel.sh /path/to/kotoba/compiler
+./os/aiueos/scripts/smoke-qemu-kotoba-native.sh /path/to/kotoba/compiler
+```
+
+`AIUEOS_EXTERNAL_KERNEL_ELF=build/aiueos-native/KERNEL.ELF` lets the existing
+UEFI transition loader boot this payload. The loader remains migration work;
+the hard-flip kernel artifact itself has no C, CRT, linker, interpreter, or
+dynamic dependency.
+
 The scheduler maintains an eight-slot descriptor table; two services are live
 in the boot evidence with stable IDs, generations, restart counts, and
 heartbeats across preemption and CR3 switches. A compiler-emitted Kotoba
