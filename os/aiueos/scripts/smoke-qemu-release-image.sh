@@ -170,4 +170,30 @@ AIUEOS_DISK_IMAGE="$out/update-rollback.img" \
   "$aiueos/scripts/smoke-qemu-uefi.sh"
 rm -f "$out/update-base.img" "$out/update-applied.img" "$out/update-rollback.img"
 echo "AIUEOS_UPDATE_ROLLBACK_OK previous-version-recovered firmware-fallback full-evidence"
-echo "AIUEOS_RELEASE_MEDIA_SMOKE_OK gpt iso recovery loader-kernel-recovery bios-stub update-rollback"
+
+# Release signing: prove the stdlib RSA-2048 PKCS#1 v1.5 SHA-256 verifier
+# accepts a signature over the build receipt and rejects a tampered receipt.
+# The CI key is ephemeral; the production key never enters the repository, so
+# real release signatures are produced offline against the same verifier.
+openssl genrsa -out "$out/release-ci-key.pem" 2048 2>/dev/null
+openssl rsa -in "$out/release-ci-key.pem" -pubout \
+  -out "$out/release-ci-pub.pem" 2>/dev/null
+openssl dgst -sha256 -sign "$out/release-ci-key.pem" \
+  -out "$out/aiueos-x86_64-build-receipt.sig" \
+  "$out/aiueos-x86_64-build-receipt.json"
+python3 "$aiueos/scripts/verify-release-signature.py" \
+  --receipt "$out/aiueos-x86_64-build-receipt.json" \
+  --signature "$out/aiueos-x86_64-build-receipt.sig" \
+  --public-key "$out/release-ci-pub.pem"
+cp "$out/aiueos-x86_64-build-receipt.json" "$out/tampered-receipt.json"
+printf '\n' >> "$out/tampered-receipt.json"
+if python3 "$aiueos/scripts/verify-release-signature.py" \
+  --receipt "$out/tampered-receipt.json" \
+  --signature "$out/aiueos-x86_64-build-receipt.sig" \
+  --public-key "$out/release-ci-pub.pem" >/dev/null 2>&1; then
+  echo "error: tampered receipt was not rejected by the signature verifier" >&2
+  exit 1
+fi
+rm -f "$out/release-ci-key.pem" "$out/tampered-receipt.json"
+echo "AIUEOS_RELEASE_SIGNING_OK rsa2048-pkcs1-sha256 receipt-signed tamper-rejected"
+echo "AIUEOS_RELEASE_MEDIA_SMOKE_OK gpt iso recovery loader-kernel-recovery bios-stub update-rollback signed-receipt"
