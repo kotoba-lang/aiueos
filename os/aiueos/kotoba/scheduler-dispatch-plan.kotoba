@@ -12,7 +12,8 @@
 
 (defn aiueos-scheduler-dispatch-plan [table length count stride state]
   (let [current (bit-and state 15)
-        user-mode (bit-and (quot state 16) 1)]
+        user-mode (bit-and (quot state 16) 1)
+        context-reset (bit-and (quot state 32) 1)]
     (if (not (and (= length 360) (= count 9) (= stride 40)
                   (< current 9))) 0
       (let [base (* current stride)
@@ -22,10 +23,13 @@
                           (= active 1) (= exit-requested 1)) 1 0)
             next (next-slot table length current reap 1)
             ;; Recipe bits: 1 current task, 2 switch count, 4 CR3,
-            ;; 8 user domain, 16 kernel stack, 32 user switch count, 64 reap.
+            ;; 8 user domain, 16 kernel stack, 32 user switch count, 64 reap,
+            ;; 128 save outgoing context, 256 outgoing task switch count.
             user-recipe (if (= user-mode 1)
                           (if (> next 1) 56 8) 0)
-            recipe (+ 7 user-recipe (if (= reap 1) 64 0))]
+            outgoing-recipe (+ 256 (if (= context-reset 0) 128 0))
+            recipe (+ 7 user-recipe outgoing-recipe
+                      (if (= reap 1) 64 0))]
         (if (= next 0) 0
           (+ next (* reap 256) (* recipe 4294967296)))))))
 

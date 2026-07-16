@@ -100,10 +100,11 @@ and transactionally applies the admitted recipe. Its pinned SHA-256 is
 `scheduler-dispatch-plan.o` owns timer-tick exit-to-reaped admission and the
 bounded round-robin selection of the next active task, including selection
 against the post-reap table state. Its recipe drives reap, current-task and
-switch counters, user-domain/kernel-stack publication, and CR3 switching. C
-saves/restores contexts and applies those admitted native mutations. Its
-pinned SHA-256 is
-`c944a19af70c124cf47ca0ca8dd0b56f47516d79af027571509f53c6c21c38a0`.
+switch counters, user-domain/kernel-stack publication, CR3 switching, and
+outgoing context/counter updates. A restarted service retains its reconstructed
+context instead of being overwritten by the interrupted frame. C applies those
+admitted native mutations. Its pinned SHA-256 is
+`b23dbea5125611ad041a16c548a083d94f0c4571ba68f5436e3feff16a099006`.
 
 `task-exit-route.o` performs a complete bounded task-table scan for a requested
 user domain, rejects kernel/invalid domains and duplicate active owners, and

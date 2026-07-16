@@ -32,6 +32,8 @@
 #define AIUEOS_DISPATCH_KERNEL_STACK 16U
 #define AIUEOS_DISPATCH_USER_SWITCH 32U
 #define AIUEOS_DISPATCH_REAP 64U
+#define AIUEOS_DISPATCH_SAVE_OUTGOING 128U
+#define AIUEOS_DISPATCH_OUTGOING_COUNT 256U
 
 /* A saved stack pointer is the complete kernel-task context. */
 struct aiueos_interrupt_context {
@@ -462,22 +464,24 @@ int aiueos_scheduler_persistent_restore_evidence_ready(void) {
   return (int)persistent_restore_evidence;
 }
 uint64_t *aiueos_scheduler_on_timer(uint64_t *interrupted_stack) {
-  tasks[current_task].saved_stack = interrupted_stack;
-  tasks[current_task].switches++;
+  int context_reset=0;
   if (!scheduler_user_mode && current_task > 0) {
     unsigned service=tasks[current_task].service;
     if (service<AIUEOS_SERVICE_CAPACITY && services[service].restart_requested) {
-      if (!apply_service_event(service,1))
+      if (apply_service_event(service,1)) context_reset=1;
+      else
         aiueos_scheduler_address_space_failures++;
     }
   }
-  uint64_t state=current_task|((uint64_t)(scheduler_user_mode!=0)<<4);
+  uint64_t state=current_task|((uint64_t)(scheduler_user_mode!=0)<<4)|
+    ((uint64_t)context_reset<<5);
   uint64_t plan=kotoba_aiueos_scheduler_dispatch_plan(tasks,sizeof(tasks),
     AIUEOS_TASK_SLOT_COUNT,sizeof(tasks[0]),state);
   unsigned next=(unsigned)((plan&255U)-1U);
   uint64_t recipe=plan>>32;
   uint64_t required=AIUEOS_DISPATCH_CURRENT|AIUEOS_DISPATCH_SWITCH_COUNT|
-    AIUEOS_DISPATCH_CR3;
+    AIUEOS_DISPATCH_CR3|AIUEOS_DISPATCH_OUTGOING_COUNT;
+  if (!context_reset) required|=AIUEOS_DISPATCH_SAVE_OUTGOING;
   if (scheduler_user_mode) {
     required|=AIUEOS_DISPATCH_USER_DOMAIN;
     if (next>0 && next<AIUEOS_TASK_SLOT_COUNT)
@@ -489,6 +493,9 @@ uint64_t *aiueos_scheduler_on_timer(uint64_t *interrupted_stack) {
     aiueos_scheduler_address_space_failures++;
     return interrupted_stack;
   }
+  if (recipe&AIUEOS_DISPATCH_SAVE_OUTGOING)
+    tasks[current_task].saved_stack=interrupted_stack;
+  if (recipe&AIUEOS_DISPATCH_OUTGOING_COUNT) tasks[current_task].switches++;
   if (recipe&AIUEOS_DISPATCH_REAP) {
     tasks[current_task].active=0; user_tasks_reaped++;
   }
