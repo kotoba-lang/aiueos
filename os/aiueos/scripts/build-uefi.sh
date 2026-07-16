@@ -84,6 +84,9 @@ fi
 if [ "${AIUEOS_CATALOG_POLICY_SELFTEST:-0}" = 1 ]; then
   input_smoke_cflags="$input_smoke_cflags -DAIUEOS_CATALOG_POLICY_SELFTEST=1"
 fi
+if [ "${AIUEOS_CRASH_RECEIPT_SMOKE:-0}" = 1 ]; then
+  input_smoke_cflags="$input_smoke_cflags -DAIUEOS_CRASH_RECEIPT_SMOKE=1"
+fi
 
 command -v zig >/dev/null 2>&1 || {
   echo "error: Zig is required to build the freestanding UEFI application" >&2
@@ -208,6 +211,7 @@ if [ -n "${AIUEOS_EXTERNAL_KERNEL_ELF:-}" ]; then
 else
 zig cc -target x86_64-freestanding-none -std=c11 -O2 \
   -ffreestanding -fno-stack-protector -mno-red-zone \
+  $input_smoke_cflags \
   -c -o "$kernel_object" "$aiueos/kernel/main.c"
 zig cc -target x86_64-freestanding-none \
   -c -o "$kernel_entry_object" "$aiueos/kernel/entry.S"

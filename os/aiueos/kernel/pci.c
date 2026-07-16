@@ -330,6 +330,76 @@ static void blk_unlock(void) {
   __atomic_clear(&blk_backend.lock,__ATOMIC_RELEASE);
 }
 
+/* Durable crash receipt. One bounded record in a dedicated sector far above
+   every aiuefs extent: magic, version, state (1 pending / 2 consumed), reason,
+   the journal sequence at crash time, and a Kotoba FNV checksum over the
+   preceding 24 bytes. Writes and consumption both require readback. */
+#define AIUEOS_CRASH_SECTOR 1033u
+struct aiueos_crash_record {
+  char magic[8]; uint32_t version, state, reason, sequence, checksum;
+} __attribute__((packed));
+static const char crash_magic[8] = {'A','I','U','E','C','R','S','1'};
+
+/* The synthetic panic fires from normal kernel context after the storage
+   plane is proven, so crash I/O reuses the standard interrupt-driven sector
+   path. Writing a receipt from a real fault context will additionally need a
+   polled transport; that remains an ADR gap. */
+static int crash_sector_io(uint32_t type) {
+  return virtio_blk_sector_io(blk_backend.request,blk_backend.sector,
+      blk_backend.status,blk_backend.desc,blk_backend.avail,blk_backend.used,
+      blk_backend.doorbell,&blk_backend.submitted,type,AIUEOS_CRASH_SECTOR);
+}
+static uint32_t crash_record_checksum(void) {
+  extern uint64_t kotoba_aiueos_fnv1a(const uint8_t *, uint64_t);
+  return (uint32_t)kotoba_aiueos_fnv1a(blk_backend.sector,24);
+}
+static int crash_record_valid(void) {
+  struct aiueos_crash_record *record=(void *)blk_backend.sector;
+  for (unsigned i=0;i<8;i++) if (record->magic[i]!=crash_magic[i]) return 0;
+  return record->version==1 && record->checksum==crash_record_checksum();
+}
+
+/* Crash receipt I/O runs from the boot task before user processes start, so
+   there is no concurrent block-queue user and no lock is taken; taking
+   blk_lock here masks the APIC timer and has been observed to prevent the
+   MSI-X wake from ever arriving at this boot phase. */
+int aiueos_crash_receipt_write(uint32_t reason) {
+  if (!blk_backend.ready || AIUEOS_CRASH_SECTOR >= blk_backend.capacity) return 0;
+  for (unsigned i=0;i<512;i++) blk_backend.sector[i]=0;
+  struct aiueos_crash_record *record=(void *)blk_backend.sector;
+  for (unsigned i=0;i<8;i++) record->magic[i]=crash_magic[i];
+  record->version=1; record->state=1; record->reason=reason;
+  record->sequence=journal_sequence;
+  record->checksum=crash_record_checksum();
+  uint32_t wanted=record->checksum;
+  if (!crash_sector_io(VIRTIO_BLK_T_OUT)) return 0;
+  for (unsigned i=0;i<512;i++) blk_backend.sector[i]=0;
+  if (!crash_sector_io(VIRTIO_BLK_T_IN)) return 0;
+  record=(void *)blk_backend.sector;
+  return crash_record_valid() && record->state==1 &&
+         record->reason==reason && record->checksum==wanted;
+}
+
+/* Returns 1 and marks the record consumed when a valid pending crash receipt
+   exists; 0 when the sector is empty, consumed, or invalid. */
+int aiueos_crash_receipt_consume(uint32_t *reason, uint32_t *sequence) {
+  if (!blk_backend.ready || !reason || !sequence ||
+      AIUEOS_CRASH_SECTOR >= blk_backend.capacity) return 0;
+  for (unsigned i=0;i<512;i++) blk_backend.sector[i]=0;
+  if (!crash_sector_io(VIRTIO_BLK_T_IN)) return 0;
+  struct aiueos_crash_record *record=(void *)blk_backend.sector;
+  if (!crash_record_valid() || record->state!=1) return 0;
+  *reason=record->reason; *sequence=record->sequence;
+  record->state=2;
+  record->checksum=crash_record_checksum();
+  uint32_t wanted=record->checksum;
+  if (!crash_sector_io(VIRTIO_BLK_T_OUT)) return 0;
+  for (unsigned i=0;i<512;i++) blk_backend.sector[i]=0;
+  if (!crash_sector_io(VIRTIO_BLK_T_IN)) return 0;
+  record=(void *)blk_backend.sector;
+  return crash_record_valid() && record->state==2 && record->checksum==wanted;
+}
+
 static uint64_t commit_user_object_write(uint16_t domain,uint64_t value) {
   if (!blk_backend.ready || domain<4 || domain>5 || !value || value>0xffffffffU) return 0;
   unsigned index=domain-4; blk_lock();

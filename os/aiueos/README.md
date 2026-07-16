@@ -325,9 +325,23 @@ the release smoke proves the mechanism with an ephemeral key and requires a
 tampered receipt to be rejected. Registering the production release key and
 binding its policy into the boot receipt remain owner-side work.
 
+The kernel owns a durable crash receipt: one bounded record in a dedicated
+virtio-blk sector far above every aiuefs extent, carrying magic, version,
+pending/consumed state, a reason code, the journal sequence at crash time, and
+a Kotoba FNV checksum; writes and consumption both require readback. A
+test-only synthetic panic (compile-gated, normal kernel context after the
+storage plane is proven) persists the record and terminates deterministically;
+the next boot consumes it, reports
+`AIUEOS_CRASH_RECEIPT_OK reason=42 journal-context consumed readback`, and
+must still pass the complete evidence gate. The journal-recovery smoke gates
+both boots. Crash I/O takes no queue lock — it runs from the boot task before
+user processes exist, and masking the APIC timer there was observed to block
+the MSI-X wake. Writing a receipt from a real fault context (polled transport,
+no interrupt dependence) remains a gap.
+
 This recovery selection lives in the reference C loader; re-expressing it in
 the compiler-emitted C-free loader, a GRUB/Multiboot2 compatibility path, and
-crash receipts remain separate Phase 5 gaps.
+fault-context crash capture remain separate Phase 5 gaps.
 
 Requirements are Zig 0.14 or newer and `qemu-system-x86_64` with an edk2/OVMF
 firmware image. Override firmware discovery with `OVMF_CODE=/path/to/code.fd`.
