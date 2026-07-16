@@ -49,6 +49,8 @@ _Static_assert(offsetof(struct aiueos_task,generation)==32,"task generation ABI"
 _Static_assert(offsetof(struct aiueos_task,active)==38,"task active ABI");
 extern uint64_t kotoba_aiueos_task_slot_plan(const void *table,uint64_t length,
   uint64_t count,uint64_t stride,uint64_t request);
+extern uint64_t kotoba_aiueos_scheduler_dispatch_plan(const void *table,
+  uint64_t length,uint64_t count,uint64_t stride,uint64_t state);
 static uint64_t current_task;
 static int scheduler_user_mode;
 volatile uint64_t aiueos_user_scheduler_switches;
@@ -384,9 +386,6 @@ int aiueos_scheduler_persistent_restore_evidence_ready(void) {
 uint64_t *aiueos_scheduler_on_timer(uint64_t *interrupted_stack) {
   tasks[current_task].saved_stack = interrupted_stack;
   tasks[current_task].switches++;
-  if (scheduler_user_mode && current_task>0 && tasks[current_task].exit_requested) {
-    tasks[current_task].active=0; user_tasks_reaped++;
-  }
   if (!scheduler_user_mode && current_task > 0) {
     unsigned service=tasks[current_task].service;
     if (service<AIUEOS_SERVICE_CAPACITY && services[service].restart_requested) {
@@ -394,8 +393,16 @@ uint64_t *aiueos_scheduler_on_timer(uint64_t *interrupted_stack) {
         aiueos_scheduler_address_space_failures++;
     }
   }
-  do { current_task = (current_task + 1U) % AIUEOS_TASK_SLOT_COUNT; }
-  while (!tasks[current_task].active);
+  uint64_t state=current_task|((uint64_t)(scheduler_user_mode!=0)<<4);
+  uint64_t plan=kotoba_aiueos_scheduler_dispatch_plan(tasks,sizeof(tasks),
+    AIUEOS_TASK_SLOT_COUNT,sizeof(tasks[0]),state);
+  unsigned next=(unsigned)((plan&255U)-1U);
+  if (!plan || next>=AIUEOS_TASK_SLOT_COUNT || !tasks[next].active) {
+    aiueos_scheduler_address_space_failures++;
+    return interrupted_stack;
+  }
+  if (plan&256U) { tasks[current_task].active=0; user_tasks_reaped++; }
+  current_task=next;
   aiueos_scheduler_context_switches++;
   if (scheduler_user_mode) {
     aiueos_current_user_domain = current_task ? tasks[current_task].domain : 0;
