@@ -94,4 +94,31 @@ grep -F "AIUEOS_LOADER_RECOVERY_OK kernel-from-alternate-volume sha256-v1" "$out
 }
 rm -f "$out/corrupt-primary-kernel.img"
 echo "AIUEOS_RECOVERY_KERNEL_FALLBACK_OK primary-kernel-corrupt loader-fallback digest-admitted full-evidence"
-echo "AIUEOS_RELEASE_MEDIA_SMOKE_OK gpt iso recovery loader-kernel-recovery"
+
+# Legacy-BIOS refusal fixture: SeaBIOS executes the protective-MBR stub, which
+# must print its marker and terminate deterministically through isa-debug-exit
+# (status 23 = (0x0b << 1) | 1). BIOS is not a supported boot path.
+qemu=${QEMU_SYSTEM_X86_64:-qemu-system-x86_64}
+bios_log="$out/bios-stub-debug.log"
+rm -f "$bios_log"
+set +e
+"$qemu" \
+  -machine q35,accel=tcg -cpu max -m 128M \
+  -drive "format=raw,snapshot=on,file=$out/aiueos-x86_64-gpt.img" \
+  -device isa-debugcon,iobase=0xe9,chardev=debug \
+  -chardev file,id=debug,path="$bios_log" \
+  -device isa-debug-exit,iobase=0xf4,iosize=0x04 \
+  -display none -serial none -monitor none -no-reboot
+bios_status=$?
+set -e
+[ "$bios_status" -eq 23 ] || {
+  echo "error: BIOS stub did not exit deterministically (status $bios_status)" >&2
+  test -f "$bios_log" && sed -n '1,20p' "$bios_log" >&2
+  exit 1
+}
+grep -F "AIUEOS_BIOS_STUB uefi-required" "$bios_log" >/dev/null || {
+  echo "error: BIOS stub refusal marker was not observed" >&2
+  exit 1
+}
+echo "AIUEOS_BIOS_STUB_OK uefi-required deterministic-exit"
+echo "AIUEOS_RELEASE_MEDIA_SMOKE_OK gpt iso recovery loader-kernel-recovery bios-stub"
