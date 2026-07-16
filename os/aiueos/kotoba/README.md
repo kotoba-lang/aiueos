@@ -95,6 +95,12 @@ admission. C only allocates/frees stack pages and commits the admitted task
 descriptor. Its pinned SHA-256 is
 `bc205162033a602366538c47a49ea7494cbbc2dc3b858614495d51c2adaf1cd9`.
 
+`scheduler-dispatch-plan.o` owns timer-tick exit-to-reaped admission and the
+bounded round-robin selection of the next active task, including selection
+against the post-reap table state. C saves/restores contexts, updates evidence,
+and switches CR3 to the admitted task. Its pinned SHA-256 is
+`19f1dc06e4c6c276e3a7ebb14c9e30a85cbf5c225e7fbae187a7ad4e32a5542a`.
+
 `rsa2048.o` implements RSA-2048 public exponent 65537 and the complete
 PKCS#1 v1.5 SHA-256 encoded-message comparison in Kotoba. Its five-argument
 kernel ABI accepts a 256-byte signature, 32-byte digest, and caller-owned
