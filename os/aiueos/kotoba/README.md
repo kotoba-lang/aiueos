@@ -75,6 +75,13 @@ admitted permission class to x86-64 PTE bits and installs physical pages. Its
 pinned SHA-256 is
 `c492472360f4632a5f4e0457ef3f2dd867306a36ea8ba3415cdb4463c78106b5`.
 
+`process-create-plan.o` scans the complete eight-slot native process table and
+owns domain validation and duplicate rejection, deterministic free-slot
+selection, and non-zero 16-bit generation advancement including wrap. C
+performs resource acquisition and commits only the admitted descriptor plan.
+Its pinned SHA-256 is
+`a1931ab0058a322f728203e1441cd93848d2661b639c600d8049f33056260ddf`.
+
 `rsa2048.o` implements RSA-2048 public exponent 65537 and the complete
 PKCS#1 v1.5 SHA-256 encoded-message comparison in Kotoba. Its five-argument
 kernel ABI accepts a 256-byte signature, 32-byte digest, and caller-owned
