@@ -1,0 +1,10 @@
+(ns aiueos.native.kernel)
+
+;; First hard-flip kernel payload: generated directly as freestanding ELF64.
+;; It proves privileged execution without a C object, linker, libc, or CRT.
+(defn main []
+  (let [cr3 (kernel-read-cr3)]
+    (if (> cr3 0)
+      (let [marker (kernel-out-u8 233 78)]
+        (kernel-out-u32 244 (if (= marker 78) 16 17)))
+      (kernel-out-u32 244 18))))

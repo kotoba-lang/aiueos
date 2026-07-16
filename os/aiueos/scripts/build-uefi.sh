@@ -200,6 +200,12 @@ python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_rsa2048_object
   kotoba_aiueos_rsa2048_sha256_verify
 python3 "$aiueos/scripts/verify-kotoba-user-elf.py" "$kotoba_user_elf" \
   1f0e5897831d0de6bbcb15eec82a6e0c4b402b436689cec051bc6de3b5c4e905
+if [ -n "${AIUEOS_EXTERNAL_KERNEL_ELF:-}" ]; then
+  python3 "$aiueos/scripts/verify-kotoba-native-kernel.py" \
+    "$AIUEOS_EXTERNAL_KERNEL_ELF" "$aiueos/native/kernel.kotoba" \
+    40736f280acb9d4b15d403b2767799ba4f6440a6 "$out/native-kernel-receipt.json"
+  cp "$AIUEOS_EXTERNAL_KERNEL_ELF" "$kernel"
+else
 zig cc -target x86_64-freestanding-none -std=c11 -O2 \
   -ffreestanding -fno-stack-protector -mno-red-zone \
   -c -o "$kernel_object" "$aiueos/kernel/main.c"
@@ -280,6 +286,7 @@ zig ld.lld -nostdlib -static -z max-page-size=0x1000 \
   "$kotoba_exit_route_object" \
   "$kotoba_service_task_object" \
   "$kotoba_rsa2048_object"
+fi
 python3 - "$kernel" "$identity_source" <<'PY'
 import hashlib, pathlib, sys
 digest = hashlib.sha256(pathlib.Path(sys.argv[1]).read_bytes()).digest()
