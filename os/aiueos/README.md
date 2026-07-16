@@ -80,7 +80,11 @@ Boot reads a signed aiuefs-v3 application catalog from virtio-blk, then looks
 up compiler-emitted `x86_64-aiueos-user-v1` ELF64 objects by their bounded
 16-byte application IDs. The catalog and every application bind their distinct
 sector ranges and lengths to SHA-256 digests and RSA-2048 PKCS#1 v1.5
-signatures under the boot application public-key policy. The private key is not
+signatures under the boot application public-key policy. SHA-256 padding,
+message scheduling, compression rounds, and digest emission execute in the
+compiler-emitted `kotoba_aiueos_sha256` object with a 12 KiB input bound,
+caller-owned 512-byte workspace, and metered stack-safe loops; the C substrate
+retains RSA verification but contains no SHA-256 implementation. The private key is not
 present in the repository or image builder. Digest comparison and the complete
 encoded-message comparison are constant-time and must pass before bytes reach
 the loader. Negative QEMU gates mutate the catalog, an ELF, and an application

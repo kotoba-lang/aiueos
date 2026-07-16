@@ -201,6 +201,7 @@ grep -F "AIUEOS_SMP_OK cpus=2 init-sipi-v1 per-cpu-stack" "$serial_log" >/dev/nu
 }
 grep -F "AIUEOS_PCI_OK bounded-scan virtio-vendor=1af4" "$serial_log" >/dev/null || {
   echo "error: bounded PCI/virtio discovery evidence was not observed" >&2
+  test -f "$serial_log" && sed -n '1,160p' "$serial_log" >&2
   exit 1
 }
 grep -F "AIUEOS_VIRTIO_RNG_OK modern-pci caps-bounded dma=4pages completion=32" "$serial_log" >/dev/null || {
@@ -232,7 +233,7 @@ grep -F "AIUEOS_OBJECT_STORE_OK aiuefs-v3 objects=3 catalog=2apps" "$serial_log"
   echo "error: bounded read-only object-store evidence was not observed" >&2
   exit 1
 }
-grep -F "AIUEOS_KOTOBA_APP_ADMISSION_OK catalog=rsa2048 apps=2 digest=sha256 signature=rsa2048-pkcs1 policy=public-key" "$serial_log" >/dev/null || {
+grep -F "AIUEOS_KOTOBA_APP_ADMISSION_OK catalog=rsa2048 apps=2 digest=kotoba-sha256 signature=rsa2048-pkcs1 policy=public-key" "$serial_log" >/dev/null || {
   echo "error: authenticated object-store Kotoba app admission was not observed" >&2
   exit 1
 }
