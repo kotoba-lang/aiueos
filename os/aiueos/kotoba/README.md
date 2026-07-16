@@ -88,6 +88,13 @@ reclaimed, and only then may its descriptor become inactive. It also enforces
 the domain-specific minimum revocation evidence. Its pinned SHA-256 is
 `0a34d448348f366d6bd41560a1a62ea4fb9d317c281beec14656af65976182b9`.
 
+`task-slot-plan.o` reads the complete nine-slot native scheduler table and
+owns deterministic non-kernel slot allocation, non-zero generation advance
+with wrap, stack-presence exclusion, and inactive-with-stack release
+admission. C only allocates/frees stack pages and commits the admitted task
+descriptor. Its pinned SHA-256 is
+`bc205162033a602366538c47a49ea7494cbbc2dc3b858614495d51c2adaf1cd9`.
+
 `rsa2048.o` implements RSA-2048 public exponent 65537 and the complete
 PKCS#1 v1.5 SHA-256 encoded-message comparison in Kotoba. Its five-argument
 kernel ABI accepts a 256-byte signature, 32-byte digest, and caller-owned
