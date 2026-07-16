@@ -77,7 +77,7 @@ def dirent(name, attr, cluster, size=0):
     return bytes(entry)
 
 
-def make_fat32(efi, kernel):
+def make_fat32(efi, kernel, initramfs):
     reserved, fats = 32, 2
     # Solve fat_sectors >= ceil((data_clusters + 2) * 4 / sector_size)
     # directly; a fixed-point iteration can oscillate between adjacent values.
@@ -134,8 +134,10 @@ def make_fat32(efi, kernel):
         fat[cluster] = 0x0FFFFFFF
     next_cluster = 6
     efi_bytes, kernel_bytes = Path(efi).read_bytes(), Path(kernel).read_bytes()
+    initramfs_bytes = Path(initramfs).read_bytes()
     efi_file_cluster = allocate(efi_bytes)
     kernel_file_cluster = allocate(kernel_bytes)
+    initramfs_file_cluster = allocate(initramfs_bytes)
 
     directories = {
         root_cluster: dirent("EFI", 0x10, efi_cluster),
@@ -144,7 +146,8 @@ def make_fat32(efi, kernel):
         boot_cluster: dirent(".", 0x10, boot_cluster) + dirent("..", 0x10, efi_cluster) +
                       dirent("BOOTX64.EFI", 0x20, efi_file_cluster, len(efi_bytes)),
         aiueos_cluster: dirent(".", 0x10, aiueos_cluster) + dirent("..", 0x10, efi_cluster) +
-                        dirent("KERNEL.ELF", 0x20, kernel_file_cluster, len(kernel_bytes)),
+                        dirent("KERNEL.ELF", 0x20, kernel_file_cluster, len(kernel_bytes)) +
+                        dirent("INITRD.IMG", 0x20, initramfs_file_cluster, len(initramfs_bytes)),
     }
     for cluster, payload in directories.items():
         offset = (data_start + cluster - 2) * SECTOR
@@ -192,7 +195,7 @@ FAT16_DATA_START = FAT16_RESERVED + FAT16_FATS * FAT16_FAT_SECTORS + FAT16_ROOT_
 FAT16_CLUSTERS = (ISO_BOOT_SECTORS - FAT16_DATA_START) // FAT16_CLUSTER_SECTORS
 
 
-def make_fat16(efi, kernel):
+def make_fat16(efi, kernel, initramfs):
     if not 4085 <= FAT16_CLUSTERS <= 65524:
         raise ValueError("boot image cluster count is not FAT16")
     if (FAT16_CLUSTERS + 2) * 2 > FAT16_FAT_SECTORS * SECTOR:
@@ -231,11 +234,13 @@ def make_fat16(efi, kernel):
         return first
 
     efi_bytes, kernel_bytes = Path(efi).read_bytes(), Path(kernel).read_bytes()
+    initramfs_bytes = Path(initramfs).read_bytes()
     efi_dir = allocate(dirent(".", 0x10, 0) + dirent("..", 0x10, 0), 1)
     boot_dir = allocate(dirent(".", 0x10, 0) + dirent("..", 0x10, efi_dir), 1)
     aiueos_dir = allocate(dirent(".", 0x10, 0) + dirent("..", 0x10, efi_dir), 1)
     efi_file = allocate(efi_bytes)
     kernel_file = allocate(kernel_bytes)
+    initramfs_file = allocate(initramfs_bytes)
 
     def write_directory(cluster, payload):
         offset = (FAT16_DATA_START + (cluster - 2) * FAT16_CLUSTER_SECTORS) * SECTOR
@@ -246,7 +251,8 @@ def make_fat16(efi, kernel):
     write_directory(boot_dir, dirent(".", 0x10, boot_dir) + dirent("..", 0x10, efi_dir) +
                     dirent("BOOTX64.EFI", 0x20, efi_file, len(efi_bytes)))
     write_directory(aiueos_dir, dirent(".", 0x10, aiueos_dir) + dirent("..", 0x10, efi_dir) +
-                    dirent("KERNEL.ELF", 0x20, kernel_file, len(kernel_bytes)))
+                    dirent("KERNEL.ELF", 0x20, kernel_file, len(kernel_bytes)) +
+                    dirent("INITRD.IMG", 0x20, initramfs_file, len(initramfs_bytes)))
     root = dirent("EFI", 0x10, efi_dir)
     root_offset = (FAT16_RESERVED + FAT16_FATS * FAT16_FAT_SECTORS) * SECTOR
     image[root_offset:root_offset + len(root)] = root
@@ -284,8 +290,8 @@ def iso_directory_record(name, extent, size, flags):
     return bytes(record)
 
 
-def build_iso(output, efi, kernel):
-    boot_image = make_fat16(efi, kernel)
+def build_iso(output, efi, kernel, initramfs):
+    boot_image = make_fat16(efi, kernel, initramfs)
     iso = bytearray(ISO_VOLUME_BLOCKS * ISO_BLOCK)
 
     root_record = iso_directory_record(b"\x00", ISO_ROOT_LBA, ISO_BLOCK, 0x02)
@@ -363,7 +369,7 @@ def build_iso(output, efi, kernel):
     Path(output).write_bytes(iso)
 
 
-def verify_iso(path, expected_efi=None, expected_kernel=None):
+def verify_iso(path, expected_efi=None, expected_kernel=None, expected_initramfs=None):
     iso = Path(path).read_bytes()
     if len(iso) != ISO_VOLUME_BLOCKS * ISO_BLOCK:
         raise ValueError("invalid ISO size")
@@ -397,7 +403,7 @@ def verify_iso(path, expected_efi=None, expected_kernel=None):
     if (struct.unpack_from("<I", record, 2)[0] != image_lba or
             struct.unpack_from("<I", record, 10)[0] != sectors * SECTOR):
         raise ValueError("ESP.IMG directory record extent mismatch")
-    verify_fat16_volume(esp, "ISO", expected_efi, expected_kernel)
+    verify_fat16_volume(esp, "ISO", expected_efi, expected_kernel, expected_initramfs)
 
 
 def fat16_locate(esp, name_path):
@@ -430,10 +436,12 @@ def fat16_locate(esp, name_path):
     return cluster, size, fat, cluster_bytes
 
 
-def verify_fat16_volume(esp, label, expected_efi=None, expected_kernel=None):
+def verify_fat16_volume(esp, label, expected_efi=None, expected_kernel=None,
+                        expected_initramfs=None):
     embedded = {}
     for name, path in (("BOOTX64.EFI", ("EFI", "BOOT", "BOOTX64.EFI")),
-                       ("KERNEL.ELF", ("EFI", "AIUEOS", "KERNEL.ELF"))):
+                       ("KERNEL.ELF", ("EFI", "AIUEOS", "KERNEL.ELF")),
+                       ("INITRD.IMG", ("EFI", "AIUEOS", "INITRD.IMG"))):
         cluster, size, fat, cluster_bytes = fat16_locate(esp, path)
         output = bytearray()
         while cluster < 0xFFF8 and len(output) < size:
@@ -442,10 +450,14 @@ def verify_fat16_volume(esp, label, expected_efi=None, expected_kernel=None):
         embedded[name] = bytes(output[:size])
     if embedded["BOOTX64.EFI"][:2] != b"MZ" or embedded["KERNEL.ELF"][:4] != b"\x7fELF":
         raise ValueError(label + " boot artifacts have invalid magic")
+    if embedded["INITRD.IMG"][:6] != b"070701":
+        raise ValueError(label + " initramfs is not a newc archive")
     if expected_efi and embedded["BOOTX64.EFI"] != Path(expected_efi).read_bytes():
         raise ValueError(label + " BOOTX64.EFI content mismatch")
     if expected_kernel and embedded["KERNEL.ELF"] != Path(expected_kernel).read_bytes():
         raise ValueError(label + " KERNEL.ELF content mismatch")
+    if expected_initramfs and embedded["INITRD.IMG"] != Path(expected_initramfs).read_bytes():
+        raise ValueError(label + " INITRD.IMG content mismatch")
 
 
 def gpt_header(current, backup, entries_lba, entries_crc):
@@ -457,9 +469,9 @@ def gpt_header(current, backup, entries_lba, entries_crc):
     return header
 
 
-def build_image(output, efi, kernel):
-    esp = make_fat32(efi, kernel)
-    recovery = make_fat16(efi, kernel)
+def build_image(output, efi, kernel, initramfs):
+    esp = make_fat32(efi, kernel, initramfs)
+    recovery = make_fat16(efi, kernel, initramfs)
     disk = bytearray(DISK_SECTORS * SECTOR)
     mbr = bytearray(SECTOR)
     mbr[:len(BIOS_STUB)] = BIOS_STUB
@@ -494,7 +506,9 @@ UNSET = object()
 
 
 def verify_image(path, expected_efi=None, expected_kernel=None,
-                 recovery_efi=UNSET, recovery_kernel=UNSET):
+                 expected_initramfs=None,
+                 recovery_efi=UNSET, recovery_kernel=UNSET,
+                 recovery_initramfs=UNSET):
     """Verify the release image. The recovery partition is compared against
     the primary expectations unless distinct recovery artifacts are given
     (an applied update leaves the previous version there); passing None
@@ -503,6 +517,8 @@ def verify_image(path, expected_efi=None, expected_kernel=None,
         recovery_efi = expected_efi
     if recovery_kernel is UNSET:
         recovery_kernel = expected_kernel
+    if recovery_initramfs is UNSET:
+        recovery_initramfs = expected_initramfs
     disk = Path(path).read_bytes()
     if len(disk) != DISK_SECTORS * SECTOR or disk[510:512] != b"\x55\xaa":
         raise ValueError("invalid disk size or protective MBR")
@@ -536,7 +552,8 @@ def verify_image(path, expected_efi=None, expected_kernel=None,
             struct.unpack_from("<QQ", entries, 160) != (RECOVERY_FIRST, RECOVERY_LAST)):
         raise ValueError("invalid recovery GPT entry")
     recovery = disk[RECOVERY_FIRST * SECTOR:(RECOVERY_LAST + 1) * SECTOR]
-    verify_fat16_volume(recovery, "recovery", recovery_efi, recovery_kernel)
+    verify_fat16_volume(recovery, "recovery", recovery_efi, recovery_kernel,
+                        recovery_initramfs)
 
     embedded_efi, embedded_kernel = read_primary_artifacts(disk)
     if embedded_efi[:2] != b"MZ" or embedded_kernel[:4] != b"\x7fELF":
@@ -588,7 +605,7 @@ def read_primary_artifacts(disk):
     return read_file(efi_cluster, efi_size), read_file(kernel_cluster, kernel_size)
 
 
-def apply_update(image, efi, kernel, output, receipt_path):
+def apply_update(image, efi, kernel, initramfs, output, receipt_path):
     """Write a new loader/kernel pair into the primary ESP only. The recovery
     partition keeps the previous known-good pair, so a failed update rolls
     back through the existing firmware/loader fallback paths."""
@@ -596,9 +613,10 @@ def apply_update(image, efi, kernel, output, receipt_path):
     disk = bytearray(Path(image).read_bytes())
     recovery_before = bytes(disk[RECOVERY_FIRST * SECTOR:(RECOVERY_LAST + 1) * SECTOR])
     previous_efi, previous_kernel = read_primary_artifacts(bytes(disk))
-    disk[ESP_FIRST * SECTOR:(ESP_LAST + 1) * SECTOR] = make_fat32(efi, kernel)
+    disk[ESP_FIRST * SECTOR:(ESP_LAST + 1) * SECTOR] = make_fat32(efi, kernel, initramfs)
     Path(output).write_bytes(disk)
-    verify_image(output, efi, kernel, recovery_efi=None, recovery_kernel=None)
+    verify_image(output, efi, kernel, initramfs,
+                 recovery_efi=None, recovery_kernel=None, recovery_initramfs=None)
     updated = Path(output).read_bytes()
     if updated[RECOVERY_FIRST * SECTOR:(RECOVERY_LAST + 1) * SECTOR] != recovery_before:
         raise ValueError("update touched the recovery partition")
@@ -673,16 +691,20 @@ def main():
     sub = parser.add_subparsers(dest="command", required=True)
     build = sub.add_parser("build")
     build.add_argument("--efi", required=True); build.add_argument("--kernel", required=True)
+    build.add_argument("--initramfs", required=True)
     build.add_argument("--data")
     build.add_argument("--iso")
     build.add_argument("--output", required=True); build.add_argument("--receipt", required=True)
     verify = sub.add_parser("verify")
     verify.add_argument("--image"); verify.add_argument("--iso")
     verify.add_argument("--efi"); verify.add_argument("--kernel")
+    verify.add_argument("--initramfs")
     verify.add_argument("--recovery-efi"); verify.add_argument("--recovery-kernel")
+    verify.add_argument("--recovery-initramfs")
     update = sub.add_parser("apply-update")
     update.add_argument("--image", required=True)
     update.add_argument("--efi", required=True); update.add_argument("--kernel", required=True)
+    update.add_argument("--initramfs", required=True)
     update.add_argument("--output", required=True); update.add_argument("--receipt", required=True)
     corrupt = sub.add_parser("corrupt")
     corrupt.add_argument("--image", required=True)
@@ -695,27 +717,28 @@ def main():
         corrupt_image(args.image, args.output, args.target)
         return
     if args.command == "apply-update":
-        apply_update(args.image, args.efi, args.kernel, args.output, args.receipt)
+        apply_update(args.image, args.efi, args.kernel, args.initramfs, args.output, args.receipt)
         return
     if args.command == "verify":
         if not args.image and not args.iso:
             parser.error("verify requires --image or --iso")
         if args.image:
             recovery_expectations = {}
-            if args.recovery_efi or args.recovery_kernel:
+            if args.recovery_efi or args.recovery_kernel or args.recovery_initramfs:
                 recovery_expectations = {"recovery_efi": args.recovery_efi,
-                                         "recovery_kernel": args.recovery_kernel}
-            verify_image(args.image, args.efi, args.kernel, **recovery_expectations)
+                                         "recovery_kernel": args.recovery_kernel,
+                                         "recovery_initramfs": args.recovery_initramfs}
+            verify_image(args.image, args.efi, args.kernel, args.initramfs, **recovery_expectations)
             print("AIUEOS_RELEASE_IMAGE_OK")
         if args.iso:
-            verify_iso(args.iso, args.efi, args.kernel)
+            verify_iso(args.iso, args.efi, args.kernel, args.initramfs)
             print("AIUEOS_RELEASE_ISO_OK")
         return
-    build_image(args.output, args.efi, args.kernel)
-    verify_image(args.output, args.efi, args.kernel)
+    build_image(args.output, args.efi, args.kernel, args.initramfs)
+    verify_image(args.output, args.efi, args.kernel, args.initramfs)
     if args.iso:
-        build_iso(args.iso, args.efi, args.kernel)
-        verify_iso(args.iso, args.efi, args.kernel)
+        build_iso(args.iso, args.efi, args.kernel, args.initramfs)
+        verify_iso(args.iso, args.efi, args.kernel, args.initramfs)
     epoch = int(os.environ.get("SOURCE_DATE_EPOCH", "0"))
     receipt = {
         "schema": "aiueos.build-receipt.v1",
@@ -730,6 +753,8 @@ def main():
         "artifacts": {
             "EFI/BOOT/BOOTX64.EFI": {"bytes": Path(args.efi).stat().st_size, "sha256": sha256(args.efi)},
             "EFI/AIUEOS/KERNEL.ELF": {"bytes": Path(args.kernel).stat().st_size, "sha256": sha256(args.kernel)},
+            "EFI/AIUEOS/INITRD.IMG": {"bytes": Path(args.initramfs).stat().st_size,
+                                      "sha256": sha256(args.initramfs)},
         },
     }
     if args.data:

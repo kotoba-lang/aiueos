@@ -11,6 +11,7 @@ out=${AIUEOS_OUT:-"$repo/build/aiueos"}
 AIUEOS_INPUT_SMOKE_SYNTHETIC=1 "$aiueos/scripts/build-uefi.sh" >/dev/null
 cp "$out/esp/EFI/BOOT/BOOTX64.EFI" "$out/update-previous-bootx64.efi"
 cp "$out/esp/EFI/AIUEOS/KERNEL.ELF" "$out/update-previous-kernel.elf"
+cp "$out/esp/EFI/AIUEOS/INITRD.IMG" "$out/update-previous-initrd.img"
 
 # The release-image smoke uses the same explicitly test-only input event and
 # catalog-policy self-test as the direct UEFI smoke. Normal release builds
@@ -136,18 +137,22 @@ echo "AIUEOS_BIOS_STUB_OK uefi-required deterministic-exit"
 python3 "$aiueos/scripts/make-release-image.py" build \
   --efi "$out/update-previous-bootx64.efi" \
   --kernel "$out/update-previous-kernel.elf" \
+  --initramfs "$out/update-previous-initrd.img" \
   --output "$out/update-base.img" --receipt "$out/update-base-receipt.json" >/dev/null
 python3 "$aiueos/scripts/make-release-image.py" apply-update \
   --image "$out/update-base.img" \
   --efi "$out/esp/EFI/BOOT/BOOTX64.EFI" \
   --kernel "$out/esp/EFI/AIUEOS/KERNEL.ELF" \
+  --initramfs "$out/esp/EFI/AIUEOS/INITRD.IMG" \
   --output "$out/update-applied.img" --receipt "$out/update-receipt.json" >/dev/null
 python3 "$aiueos/scripts/make-release-image.py" verify \
   --image "$out/update-applied.img" \
   --efi "$out/esp/EFI/BOOT/BOOTX64.EFI" \
   --kernel "$out/esp/EFI/AIUEOS/KERNEL.ELF" \
+  --initramfs "$out/esp/EFI/AIUEOS/INITRD.IMG" \
   --recovery-efi "$out/update-previous-bootx64.efi" \
-  --recovery-kernel "$out/update-previous-kernel.elf" >/dev/null
+  --recovery-kernel "$out/update-previous-kernel.elf" \
+  --recovery-initramfs "$out/update-previous-initrd.img" >/dev/null
 cp "$out/aiueos-x86_64-data.img" "$out/virtio-blk-smoke.img"
 AIUEOS_DISK_IMAGE="$out/update-applied.img" \
   AIUEOS_PRESERVE_BLK_IMAGE=1 \

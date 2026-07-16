@@ -21,6 +21,16 @@ data[-1] ^= 0x01
 path.write_bytes(data)
 PY
 fi
+if [ "${AIUEOS_CORRUPT_INITRAMFS:-0}" = 1 ]; then
+  python3 - "$out/esp/EFI/AIUEOS/INITRD.IMG" <<'PYC'
+from pathlib import Path
+import sys
+path = Path(sys.argv[1])
+data = bytearray(path.read_bytes())
+data[-1] ^= 0x01
+path.write_bytes(data)
+PYC
+fi
 command -v "$qemu" >/dev/null 2>&1 || {
   echo "error: qemu-system-x86_64 is required" >&2
   exit 1
@@ -92,8 +102,11 @@ fi
 set +e
 iommu_args=
 if [ "${AIUEOS_TEST_DMAR:-0}" = 1 ]; then iommu_args="-device intel-iommu,intremap=on"; fi
+# A hung guest must fail fast with diagnostics rather than pinning CI until
+# the job-level timeout. 124 from timeout(1) is handled below.
+qemu_timeout=${AIUEOS_QEMU_TIMEOUT:-600}
 # shellcheck disable=SC2086 # intentional optional pair of QEMU arguments
-"$qemu" \
+timeout "$qemu_timeout" "$qemu" \
   -machine q35,accel=tcg -cpu max -m 128M -smp 2 \
   -drive if=pflash,format=raw,readonly=on,file="$OVMF_CODE" \
   -drive "$boot_drive" \
@@ -110,6 +123,15 @@ if [ "${AIUEOS_TEST_DMAR:-0}" = 1 ]; then iommu_args="-device intel-iommu,intrem
 status=$?
 set -e
 
+if [ "$status" -eq 124 ]; then
+  echo "error: QEMU did not terminate within ${qemu_timeout}s (hung guest)" >&2
+  echo "--- debug log tail ---" >&2
+  test -f "$log" && tail -40 "$log" >&2
+  echo "--- serial log tail ---" >&2
+  test -f "$serial_log" && sed 's/\x1b\[[0-9;=]*[A-Za-z]//g' "$serial_log" | tail -40 >&2
+  exit 1
+fi
+
 if [ "${AIUEOS_CORRUPT_KERNEL:-0}" = 1 ]; then
   [ "$status" -eq 255 ] || {
     echo "error: corrupted kernel produced unexpected QEMU status $status" >&2
@@ -120,6 +142,19 @@ if [ "${AIUEOS_CORRUPT_KERNEL:-0}" = 1 ]; then
     exit 1
   }
   echo "AIUEOS_KERNEL_INTEGRITY_REJECTION_OK"
+  exit 0
+fi
+
+if [ "${AIUEOS_CORRUPT_INITRAMFS:-0}" = 1 ]; then
+  [ "$status" -eq 255 ] || {
+    echo "error: corrupted initramfs produced unexpected QEMU status $status" >&2
+    exit 1
+  }
+  grep -F "AIUEOS_LOADER_FAIL initramfs-sha256" "$log" >/dev/null || {
+    echo "error: corrupted initramfs was not rejected by loader" >&2
+    exit 1
+  }
+  echo "AIUEOS_INITRAMFS_INTEGRITY_REJECTION_OK"
   exit 0
 fi
 
@@ -190,6 +225,10 @@ grep -F "AIUEOS_LOADER_INTEGRITY_OK sha256-v1" "$log" >/dev/null || {
 }
 grep -F "AIUEOS_KERNEL_OK memory-map-v1" "$log" >/dev/null || {
   echo "error: kernel handoff was not observed" >&2
+  exit 1
+}
+grep -F "AIUEOS_INITRAMFS_OK newc entries=3 sha256-admitted bounded" "$serial_log" >/dev/null || {
+  echo "error: bounded initramfs validation evidence was not observed" >&2
   exit 1
 }
 grep -F "AIUEOS_SERIAL_OK stack-v1 memory-map-v1" "$serial_log" >/dev/null || {

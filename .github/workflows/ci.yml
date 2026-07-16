@@ -9,6 +9,7 @@ jobs:
   bare-metal-uefi:
     name: aiueos UEFI bare-metal smoke
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - uses: mlugg/setup-zig@v2
@@ -22,6 +23,8 @@ jobs:
         run: os/aiueos/scripts/smoke-qemu-journal-recovery.sh
       - name: Reject a corrupted kernel before ELF parsing
         run: AIUEOS_CORRUPT_KERNEL=1 os/aiueos/scripts/smoke-qemu-uefi.sh
+      - name: Reject a corrupted initramfs before kernel handoff
+        run: AIUEOS_CORRUPT_INITRAMFS=1 os/aiueos/scripts/smoke-qemu-uefi.sh
       - name: Boot the GPT raw disk and El Torito ISO release media
         run: os/aiueos/scripts/smoke-qemu-release-image.sh
 
