@@ -1,4 +1,5 @@
 #include <stdint.h>
+#include <stddef.h>
 
 #define ABI 0
 #define LOG 1
@@ -79,6 +80,12 @@ struct process_descriptor {
   struct user_result *result;
 };
 static struct process_descriptor processes[PROCESS_CAPACITY];
+_Static_assert(sizeof(struct process_descriptor)==48,"process descriptor ABI");
+_Static_assert(offsetof(struct process_descriptor,generation)==24,"process generation ABI");
+_Static_assert(offsetof(struct process_descriptor,domain)==26,"process domain ABI");
+_Static_assert(offsetof(struct process_descriptor,active)==32,"process active ABI");
+extern uint64_t kotoba_aiueos_process_create_plan(const void *table,
+  uint64_t length,uint64_t domain,uint64_t count,uint64_t stride);
 static uint64_t process_lifecycle_evidence;
 static int process_results_valid;
 static int catalog_lookup_rejection_evidence;
@@ -163,11 +170,12 @@ int aiueos_process_address_space_for_domain(uint16_t domain) {
 }
 static int process_create_in_space(void (*entry)(uint64_t),uint16_t domain,int supplied_space) {
   uint64_t address=(uint64_t)(uintptr_t)entry;
-  if (domain<2 || aiueos_process_address_space_for_domain(domain)>=0) return -1;
-  unsigned descriptor;
-  for (descriptor=0;descriptor<PROCESS_CAPACITY;descriptor++)
-    if (!processes[descriptor].active) break;
-  if (descriptor==PROCESS_CAPACITY) return -1;
+  uint64_t plan=kotoba_aiueos_process_create_plan(processes,sizeof(processes),
+    domain,PROCESS_CAPACITY,sizeof(processes[0]));
+  if (!plan) return -1;
+  unsigned descriptor=(unsigned)((plan&255U)-1U);
+  uint16_t generation=(uint16_t)(plan>>8);
+  if (descriptor>=PROCESS_CAPACITY || !generation || processes[descriptor].active) return -1;
   int address_space=supplied_space>=0 ? supplied_space : aiueos_address_space_claim();
   if (address_space<0) return -1;
   int linked_entry=address>=(uint64_t)(uintptr_t)aiueos_user_text_start &&
@@ -183,7 +191,7 @@ static int process_create_in_space(void (*entry)(uint64_t),uint16_t domain,int s
   result->message[0]='r'; result->message[1]='i'; result->message[2]='n';
   result->message[3]='g'; result->message[4]=(char)('1'+descriptor); result->message[5]=0;
   struct process_descriptor *p=&processes[descriptor];
-  p->generation++; if (!p->generation) p->generation=1;
+  p->generation=generation;
   p->entry=address; p->argument=private_va; p->user_stack=private_va+4096;
   p->domain=domain; p->address_space=(uint16_t)address_space; p->result=result; p->active=1;
   int task=aiueos_scheduler_create_user_task((unsigned)address_space,domain,entry,
