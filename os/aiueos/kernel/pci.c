@@ -190,6 +190,8 @@ extern uint64_t aiueos_service_registry_state(unsigned service);
 extern uint64_t kotoba_aiueos_fnv1a(const uint8_t *bytes, uint64_t length);
 extern uint64_t kotoba_aiueos_sha256(
   const uint8_t *,uint64_t,uint8_t[32],uint8_t *,uint64_t);
+extern uint64_t kotoba_aiueos_digest_equal(
+  const uint8_t[32],const uint8_t[32],uint64_t);
 extern uint64_t kotoba_aiueos_rsa2048_sha256_verify(
   const uint8_t[256],const uint8_t[32],uint8_t*,uint64_t,uint64_t);
 static uint8_t sha256_workspace[512];
@@ -205,11 +207,6 @@ static int rsa2048_sha256_verify(const uint8_t signature[256],const uint8_t dige
 static uint32_t fnv1a(const uint8_t *bytes, uint32_t length) {
   return (uint32_t)kotoba_aiueos_fnv1a(bytes, length);
 }
-static int bytes_equal_constant_time(const uint8_t *a,const uint8_t *b,uint32_t length) {
-  uint8_t difference=0; for(uint32_t i=0;i<length;i++) difference|=a[i]^b[i];
-  return difference==0;
-}
-
 static int journal_record_valid(const struct aiuefs_journal_record *journal) {
   extern uint64_t kotoba_aiueos_journal_record_valid(const void *, uint64_t);
   return (int)kotoba_aiueos_journal_record_valid(journal, sizeof(*journal));
@@ -706,7 +703,7 @@ static int virtio_blk(uint8_t b, uint8_t d, uint8_t f) {
                                 &submitted,VIRTIO_BLK_T_IN,catalog_signature_sector)) return 0;
       for(unsigned i=0;i<256;i++) signature[i]=sector[i];
       if (!sha256(catalog_bytes,catalog_length,actual_sha) ||
-          !bytes_equal_constant_time(expected_catalog_sha,actual_sha,32) ||
+          !kotoba_aiueos_digest_equal(expected_catalog_sha,actual_sha,32) ||
           !rsa2048_sha256_verify(signature,actual_sha)) return 0;
       const struct aiuefs_app_catalog *catalog=(const void *)catalog_bytes;
       if (catalog->magic[0]!='A'||catalog->magic[1]!='I'||catalog->magic[2]!='U'||
@@ -740,7 +737,7 @@ static int virtio_blk(uint8_t b, uint8_t d, uint8_t f) {
         if(!virtio_blk_sector_io(request,sector,status,desc,avail,used,doorbell,&submitted,VIRTIO_BLK_T_IN,entry->signature_sector))return 0;
         for(unsigned i=0;i<256;i++)signature[i]=sector[i];
         if(!sha256(kotoba_app_objects[app],entry->length,actual_sha)||
-           !bytes_equal_constant_time(entry->sha256,actual_sha,32)||
+           !kotoba_aiueos_digest_equal(entry->sha256,actual_sha,32)||
            !rsa2048_sha256_verify(signature,actual_sha))return 0;
         for(unsigned i=0;i<16;i++)kotoba_apps[app].id[i]=entry->id[i];kotoba_apps[app].length=entry->length;kotoba_apps[app].ready=1;
       }
