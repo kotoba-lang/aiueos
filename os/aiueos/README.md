@@ -304,9 +304,20 @@ hang. The release smoke boots the GPT image under SeaBIOS and requires that
 marker and exit status. The stub's disassembly is documented next to its bytes
 in `make-release-image.py`, and the verifier requires it byte-for-byte.
 
+The `apply-update` subcommand implements the update flow over those two
+partitions: it writes a new loader/kernel pair into the primary ESP only,
+requires the recovery partition to remain byte-identical (the previous
+known-good version), and emits an update receipt recording the previous,
+updated, and recovery digests. The release smoke proves both directions with
+distinguishable versions (the current pair carries the catalog-policy
+self-test marker, the previous pair does not): the updated image must boot the
+new version from its primary without touching recovery, and corrupting the
+updated primary loader must boot the preserved previous version through the
+firmware fallback — an executable rollback receipt.
+
 This recovery selection lives in the reference C loader; re-expressing it in
-the compiler-emitted C-free loader, a GRUB/Multiboot2 compatibility path, the
-update partition/flow, and release signing remain separate Phase 5 gaps.
+the compiler-emitted C-free loader, a GRUB/Multiboot2 compatibility path,
+crash receipts, and release signing remain separate Phase 5 gaps.
 
 Requirements are Zig 0.14 or newer and `qemu-system-x86_64` with an edk2/OVMF
 firmware image. Override firmware discovery with `OVMF_CODE=/path/to/code.fd`.

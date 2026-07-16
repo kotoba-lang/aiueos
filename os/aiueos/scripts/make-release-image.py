@@ -490,7 +490,19 @@ def build_image(output, efi, kernel):
     Path(output).write_bytes(disk)
 
 
-def verify_image(path, expected_efi=None, expected_kernel=None):
+UNSET = object()
+
+
+def verify_image(path, expected_efi=None, expected_kernel=None,
+                 recovery_efi=UNSET, recovery_kernel=UNSET):
+    """Verify the release image. The recovery partition is compared against
+    the primary expectations unless distinct recovery artifacts are given
+    (an applied update leaves the previous version there); passing None
+    checks the recovery volume structurally only."""
+    if recovery_efi is UNSET:
+        recovery_efi = expected_efi
+    if recovery_kernel is UNSET:
+        recovery_kernel = expected_kernel
     disk = Path(path).read_bytes()
     if len(disk) != DISK_SECTORS * SECTOR or disk[510:512] != b"\x55\xaa":
         raise ValueError("invalid disk size or protective MBR")
@@ -524,8 +536,20 @@ def verify_image(path, expected_efi=None, expected_kernel=None):
             struct.unpack_from("<QQ", entries, 160) != (RECOVERY_FIRST, RECOVERY_LAST)):
         raise ValueError("invalid recovery GPT entry")
     recovery = disk[RECOVERY_FIRST * SECTOR:(RECOVERY_LAST + 1) * SECTOR]
-    verify_fat16_volume(recovery, "recovery", expected_efi, expected_kernel)
+    verify_fat16_volume(recovery, "recovery", recovery_efi, recovery_kernel)
 
+    embedded_efi, embedded_kernel = read_primary_artifacts(disk)
+    if embedded_efi[:2] != b"MZ" or embedded_kernel[:4] != b"\x7fELF":
+        raise ValueError("ESP boot artifacts have invalid magic")
+    if expected_efi and embedded_efi != Path(expected_efi).read_bytes():
+        raise ValueError("BOOTX64.EFI content mismatch")
+    if expected_kernel and embedded_kernel != Path(expected_kernel).read_bytes():
+        raise ValueError("KERNEL.ELF content mismatch")
+
+
+def read_primary_artifacts(disk):
+    """Walk the primary FAT32 ESP and return the embedded
+    (BOOTX64.EFI, KERNEL.ELF) bytes."""
     esp = disk[ESP_FIRST * SECTOR:(ESP_LAST + 1) * SECTOR]
     if esp[82:90] != b"FAT32   " or esp[510:512] != b"\x55\xaa":
         raise ValueError("invalid FAT32 ESP")
@@ -561,13 +585,44 @@ def verify_image(path, expected_efi=None, expected_kernel=None):
     aiueos_dir, _ = find(efi_dir, "AIUEOS")
     efi_cluster, efi_size = find(boot_dir, "BOOTX64.EFI")
     kernel_cluster, kernel_size = find(aiueos_dir, "KERNEL.ELF")
-    embedded_efi, embedded_kernel = read_file(efi_cluster, efi_size), read_file(kernel_cluster, kernel_size)
-    if embedded_efi[:2] != b"MZ" or embedded_kernel[:4] != b"\x7fELF":
-        raise ValueError("ESP boot artifacts have invalid magic")
-    if expected_efi and embedded_efi != Path(expected_efi).read_bytes():
-        raise ValueError("BOOTX64.EFI content mismatch")
-    if expected_kernel and embedded_kernel != Path(expected_kernel).read_bytes():
-        raise ValueError("KERNEL.ELF content mismatch")
+    return read_file(efi_cluster, efi_size), read_file(kernel_cluster, kernel_size)
+
+
+def apply_update(image, efi, kernel, output, receipt_path):
+    """Write a new loader/kernel pair into the primary ESP only. The recovery
+    partition keeps the previous known-good pair, so a failed update rolls
+    back through the existing firmware/loader fallback paths."""
+    verify_image(image)
+    disk = bytearray(Path(image).read_bytes())
+    recovery_before = bytes(disk[RECOVERY_FIRST * SECTOR:(RECOVERY_LAST + 1) * SECTOR])
+    previous_efi, previous_kernel = read_primary_artifacts(bytes(disk))
+    disk[ESP_FIRST * SECTOR:(ESP_LAST + 1) * SECTOR] = make_fat32(efi, kernel)
+    Path(output).write_bytes(disk)
+    verify_image(output, efi, kernel, recovery_efi=None, recovery_kernel=None)
+    updated = Path(output).read_bytes()
+    if updated[RECOVERY_FIRST * SECTOR:(RECOVERY_LAST + 1) * SECTOR] != recovery_before:
+        raise ValueError("update touched the recovery partition")
+    epoch = int(os.environ.get("SOURCE_DATE_EPOCH", "0"))
+    receipt = {
+        "schema": "aiueos.update-receipt.v1",
+        "created": datetime.fromtimestamp(epoch, timezone.utc).isoformat().replace("+00:00", "Z"),
+        "disk": {"bytes": len(updated), "sha256": hashlib.sha256(updated).hexdigest()},
+        "previous": {
+            "EFI/BOOT/BOOTX64.EFI": {"bytes": len(previous_efi),
+                                     "sha256": hashlib.sha256(previous_efi).hexdigest()},
+            "EFI/AIUEOS/KERNEL.ELF": {"bytes": len(previous_kernel),
+                                      "sha256": hashlib.sha256(previous_kernel).hexdigest()},
+        },
+        "updated": {
+            "EFI/BOOT/BOOTX64.EFI": {"bytes": Path(efi).stat().st_size, "sha256": sha256(efi)},
+            "EFI/AIUEOS/KERNEL.ELF": {"bytes": Path(kernel).stat().st_size, "sha256": sha256(kernel)},
+        },
+        "recovery": {"unchanged": True,
+                     "sha256": hashlib.sha256(recovery_before).hexdigest()},
+    }
+    Path(receipt_path).write_text(json.dumps(receipt, indent=2, sort_keys=True) + "\n",
+                                  encoding="utf-8")
+    print(output)
 
 
 def corrupt_image(image, output, target):
@@ -624,6 +679,11 @@ def main():
     verify = sub.add_parser("verify")
     verify.add_argument("--image"); verify.add_argument("--iso")
     verify.add_argument("--efi"); verify.add_argument("--kernel")
+    verify.add_argument("--recovery-efi"); verify.add_argument("--recovery-kernel")
+    update = sub.add_parser("apply-update")
+    update.add_argument("--image", required=True)
+    update.add_argument("--efi", required=True); update.add_argument("--kernel", required=True)
+    update.add_argument("--output", required=True); update.add_argument("--receipt", required=True)
     corrupt = sub.add_parser("corrupt")
     corrupt.add_argument("--image", required=True)
     corrupt.add_argument("--output", required=True)
@@ -634,11 +694,18 @@ def main():
     if args.command == "corrupt":
         corrupt_image(args.image, args.output, args.target)
         return
+    if args.command == "apply-update":
+        apply_update(args.image, args.efi, args.kernel, args.output, args.receipt)
+        return
     if args.command == "verify":
         if not args.image and not args.iso:
             parser.error("verify requires --image or --iso")
         if args.image:
-            verify_image(args.image, args.efi, args.kernel)
+            recovery_expectations = {}
+            if args.recovery_efi or args.recovery_kernel:
+                recovery_expectations = {"recovery_efi": args.recovery_efi,
+                                         "recovery_kernel": args.recovery_kernel}
+            verify_image(args.image, args.efi, args.kernel, **recovery_expectations)
             print("AIUEOS_RELEASE_IMAGE_OK")
         if args.iso:
             verify_iso(args.iso, args.efi, args.kernel)
