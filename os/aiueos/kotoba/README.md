@@ -209,6 +209,12 @@ planner issues and checks handles. Revocation clears active state and advances
 the generation before reissue, so stale, wrong-type, and insufficient-rights
 handles cannot alias the live slot.
 Generation exhaustion retires a slot instead of wrapping to an older identity.
+
+`capability-mutation-plan.o` admits issue, recursive revoke, and derivation
+parent binding as explicit recipes. Native code applies type/state/owner/parent
+publication, generation retirement, and pending-transfer invalidation only
+after validating the complete recipe. Its pinned SHA-256 is
+`c3f09111a488919f53fec08623fef28ed99e714d2cc3e70f929d4cca61f2f277`.
 The state also carries a 16-bit owner domain and each request carries its
 caller domain. Owner equality is decided inside the planner, before payload
 copy, so kernel and user slots cannot be used across their security domains.

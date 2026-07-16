@@ -43,6 +43,7 @@ kotoba_region_valid_object=${AIUEOS_KOTOBA_REGION_VALID_OBJECT:-"$aiueos/kotoba/
 kotoba_syscall_range_object=${AIUEOS_KOTOBA_SYSCALL_RANGE_OBJECT:-"$aiueos/kotoba/syscall-range-valid.o"}
 kotoba_copy_in_object=${AIUEOS_KOTOBA_COPY_IN_OBJECT:-"$aiueos/kotoba/copy-in.o"}
 kotoba_capability_object=${AIUEOS_KOTOBA_CAPABILITY_OBJECT:-"$aiueos/kotoba/capability-plan.o"}
+kotoba_capability_mutation_object=${AIUEOS_KOTOBA_CAPABILITY_MUTATION_OBJECT:-"$aiueos/kotoba/capability-mutation-plan.o"}
 kotoba_service_lifecycle_object=${AIUEOS_KOTOBA_SERVICE_LIFECYCLE_OBJECT:-"$aiueos/kotoba/service-lifecycle.o"}
 kotoba_service_registry_object=${AIUEOS_KOTOBA_SERVICE_REGISTRY_OBJECT:-"$aiueos/kotoba/service-registry-build.o"}
 kotoba_service_registry_state_object=${AIUEOS_KOTOBA_SERVICE_REGISTRY_STATE_OBJECT:-"$aiueos/kotoba/service-registry-state.o"}
@@ -134,6 +135,9 @@ python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_copy_in_object
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_capability_object" \
   006f509119d39298a1a64093f9b49f48f808445d251e96505c4c03e3abc068bb \
   kotoba_aiueos_capability_plan
+python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_capability_mutation_object" \
+  c3f09111a488919f53fec08623fef28ed99e714d2cc3e70f929d4cca61f2f277 \
+  kotoba_aiueos_capability_mutation_plan
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_service_lifecycle_object" \
   cd6d9c57cd4dd94839ef1a255c6d82b6c1b231c08aa1f7de86ab8c0029720816 \
   kotoba_aiueos_service_lifecycle
@@ -258,7 +262,8 @@ zig ld.lld -nostdlib -static -z max-page-size=0x1000 \
   "$kotoba_mutable_build_object" "$kotoba_cap_valid_object" \
   "$kotoba_extent_valid_object" "$kotoba_region_valid_object" \
   "$kotoba_syscall_range_object" "$kotoba_copy_in_object" \
-  "$kotoba_capability_object" "$kotoba_service_lifecycle_object" \
+  "$kotoba_capability_object" "$kotoba_capability_mutation_object" \
+  "$kotoba_service_lifecycle_object" \
   "$kotoba_service_registry_object" "$kotoba_service_registry_state_object" \
   "$kotoba_user_object_journal_object" \
   "$kotoba_user_object_journal_valid_object" \
