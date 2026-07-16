@@ -18,12 +18,19 @@ GPT_ENTRY_COUNT = 128
 GPT_ENTRY_SIZE = 128
 GPT_ENTRY_SECTORS = GPT_ENTRY_COUNT * GPT_ENTRY_SIZE // SECTOR
 GPT_BACKUP_ENTRIES = DISK_SECTORS - 1 - GPT_ENTRY_SECTORS
-ESP_LAST = GPT_BACKUP_ENTRIES - 1
+# The recovery partition is a second, independent FAT16 ESP at the end of the
+# disk carrying known-good copies of the boot artifacts. Firmware falls back
+# to it when the primary ESP's kernel fails loader admission.
+RECOVERY_SECTORS = 32768  # 16 MiB, byte-identical to the ISO El Torito boot image
+RECOVERY_LAST = GPT_BACKUP_ENTRIES - 1
+RECOVERY_FIRST = RECOVERY_LAST - RECOVERY_SECTORS + 1
+ESP_LAST = RECOVERY_FIRST - 1
 ESP_SECTORS = ESP_LAST - ESP_FIRST + 1
 ESP_TYPE = uuid.UUID("c12a7328-f81f-11d2-ba4b-00a0c93ec93b")
 NAMESPACE = uuid.UUID("18b3fb94-8713-54c4-9e3a-f0c78a88d192")
 DISK_GUID = uuid.uuid5(NAMESPACE, "aiueos-release-disk-v1")
 ESP_GUID = uuid.uuid5(NAMESPACE, "aiueos-esp-v1")
+RECOVERY_GUID = uuid.uuid5(NAMESPACE, "aiueos-recovery-esp-v1")
 VOLUME_ID = 0x41495545
 
 ISO_BLOCK = 2048
@@ -359,8 +366,6 @@ def verify_iso(path, expected_efi=None, expected_kernel=None):
     if sectors != ISO_BOOT_SECTORS or image_lba != ISO_BOOT_IMAGE_LBA:
         raise ValueError("El Torito boot image extent mismatch")
     esp = iso[image_lba * ISO_BLOCK:image_lba * ISO_BLOCK + sectors * SECTOR]
-    if esp[54:62] != b"FAT16   " or esp[510:512] != b"\x55\xaa":
-        raise ValueError("invalid FAT16 boot image")
 
     root_dir = iso[ISO_ROOT_LBA * ISO_BLOCK:(ISO_ROOT_LBA + 1) * ISO_BLOCK]
     offset = root_dir[0] + root_dir[root_dir[0]]
@@ -370,7 +375,14 @@ def verify_iso(path, expected_efi=None, expected_kernel=None):
     if (struct.unpack_from("<I", record, 2)[0] != image_lba or
             struct.unpack_from("<I", record, 10)[0] != sectors * SECTOR):
         raise ValueError("ESP.IMG directory record extent mismatch")
+    verify_fat16_volume(esp, "ISO", expected_efi, expected_kernel)
 
+
+def fat16_locate(esp, name_path):
+    """Walk a FAT16 boot volume and return each path component's
+    (first_cluster, size). The final component must be a file."""
+    if esp[54:62] != b"FAT16   " or esp[510:512] != b"\x55\xaa":
+        raise ValueError("invalid FAT16 boot volume")
     fat = esp[FAT16_RESERVED * SECTOR:(FAT16_RESERVED + FAT16_FAT_SECTORS) * SECTOR]
 
     def cluster_bytes(cluster):
@@ -385,31 +397,33 @@ def verify_iso(path, expected_efi=None, expected_kernel=None):
                 break
             if entry[:11] == wanted:
                 return struct.unpack_from("<H", entry, 26)[0], struct.unpack_from("<I", entry, 28)[0]
-        raise ValueError("missing boot-image path component: " + name)
+        raise ValueError("missing boot-volume path component: " + name)
 
-    def read_file(first, size):
+    root_offset = (FAT16_RESERVED + FAT16_FATS * FAT16_FAT_SECTORS) * SECTOR
+    entries = esp[root_offset:root_offset + FAT16_ROOT_SECTORS * SECTOR]
+    cluster, size = 0, 0
+    for component in name_path:
+        cluster, size = find(entries, component)
+        entries = cluster_bytes(cluster)
+    return cluster, size, fat, cluster_bytes
+
+
+def verify_fat16_volume(esp, label, expected_efi=None, expected_kernel=None):
+    embedded = {}
+    for name, path in (("BOOTX64.EFI", ("EFI", "BOOT", "BOOTX64.EFI")),
+                       ("KERNEL.ELF", ("EFI", "AIUEOS", "KERNEL.ELF"))):
+        cluster, size, fat, cluster_bytes = fat16_locate(esp, path)
         output = bytearray()
-        cluster = first
         while cluster < 0xFFF8 and len(output) < size:
             output += cluster_bytes(cluster)
             cluster = struct.unpack_from("<H", fat, cluster * 2)[0]
-        return bytes(output[:size])
-
-    root_offset = (FAT16_RESERVED + FAT16_FATS * FAT16_FAT_SECTORS) * SECTOR
-    root = esp[root_offset:root_offset + FAT16_ROOT_SECTORS * SECTOR]
-    efi_dir, _ = find(root, "EFI")
-    boot_dir, _ = find(cluster_bytes(efi_dir), "BOOT")
-    aiueos_dir, _ = find(cluster_bytes(efi_dir), "AIUEOS")
-    efi_cluster, efi_size = find(cluster_bytes(boot_dir), "BOOTX64.EFI")
-    kernel_cluster, kernel_size = find(cluster_bytes(aiueos_dir), "KERNEL.ELF")
-    embedded_efi = read_file(efi_cluster, efi_size)
-    embedded_kernel = read_file(kernel_cluster, kernel_size)
-    if embedded_efi[:2] != b"MZ" or embedded_kernel[:4] != b"\x7fELF":
-        raise ValueError("ISO boot artifacts have invalid magic")
-    if expected_efi and embedded_efi != Path(expected_efi).read_bytes():
-        raise ValueError("ISO BOOTX64.EFI content mismatch")
-    if expected_kernel and embedded_kernel != Path(expected_kernel).read_bytes():
-        raise ValueError("ISO KERNEL.ELF content mismatch")
+        embedded[name] = bytes(output[:size])
+    if embedded["BOOTX64.EFI"][:2] != b"MZ" or embedded["KERNEL.ELF"][:4] != b"\x7fELF":
+        raise ValueError(label + " boot artifacts have invalid magic")
+    if expected_efi and embedded["BOOTX64.EFI"] != Path(expected_efi).read_bytes():
+        raise ValueError(label + " BOOTX64.EFI content mismatch")
+    if expected_kernel and embedded["KERNEL.ELF"] != Path(expected_kernel).read_bytes():
+        raise ValueError(label + " KERNEL.ELF content mismatch")
 
 
 def gpt_header(current, backup, entries_lba, entries_crc):
@@ -423,6 +437,7 @@ def gpt_header(current, backup, entries_lba, entries_crc):
 
 def build_image(output, efi, kernel):
     esp = make_fat32(efi, kernel)
+    recovery = make_fat16(efi, kernel)
     disk = bytearray(DISK_SECTORS * SECTOR)
     mbr = bytearray(SECTOR)
     mbr[446 + 4] = 0xEE
@@ -436,6 +451,11 @@ def build_image(output, efi, kernel):
     entries[16:32] = ESP_GUID.bytes_le
     struct.pack_into("<QQQ", entries, 32, ESP_FIRST, ESP_LAST, 0)
     entries[56:56 + len(name)] = name
+    recovery_name = "aiueos recovery".encode("utf-16le")
+    entries[128:144] = ESP_TYPE.bytes_le
+    entries[144:160] = RECOVERY_GUID.bytes_le
+    struct.pack_into("<QQQ", entries, 160, RECOVERY_FIRST, RECOVERY_LAST, 0)
+    entries[184:184 + len(recovery_name)] = recovery_name
     entries_crc = binascii.crc32(entries) & 0xFFFFFFFF
     disk[2 * SECTOR:(2 + GPT_ENTRY_SECTORS) * SECTOR] = entries
     backup_offset = GPT_BACKUP_ENTRIES * SECTOR
@@ -443,6 +463,7 @@ def build_image(output, efi, kernel):
     disk[SECTOR:2 * SECTOR] = gpt_header(1, DISK_SECTORS - 1, 2, entries_crc)
     disk[-SECTOR:] = gpt_header(DISK_SECTORS - 1, 1, GPT_BACKUP_ENTRIES, entries_crc)
     disk[ESP_FIRST * SECTOR:(ESP_LAST + 1) * SECTOR] = esp
+    disk[RECOVERY_FIRST * SECTOR:(RECOVERY_LAST + 1) * SECTOR] = recovery
     Path(output).write_bytes(disk)
 
 
@@ -473,6 +494,12 @@ def verify_image(path, expected_efi=None, expected_kernel=None):
         raise ValueError("primary and backup GPT entry arrays differ")
     if entries[:16] != ESP_TYPE.bytes_le or struct.unpack_from("<QQ", entries, 32) != (ESP_FIRST, ESP_LAST):
         raise ValueError("invalid ESP GPT entry")
+    if (entries[128:144] != ESP_TYPE.bytes_le or
+            entries[144:160] != RECOVERY_GUID.bytes_le or
+            struct.unpack_from("<QQ", entries, 160) != (RECOVERY_FIRST, RECOVERY_LAST)):
+        raise ValueError("invalid recovery GPT entry")
+    recovery = disk[RECOVERY_FIRST * SECTOR:(RECOVERY_LAST + 1) * SECTOR]
+    verify_fat16_volume(recovery, "recovery", expected_efi, expected_kernel)
 
     esp = disk[ESP_FIRST * SECTOR:(ESP_LAST + 1) * SECTOR]
     if esp[82:90] != b"FAT32   " or esp[510:512] != b"\x55\xaa":
@@ -518,6 +545,49 @@ def verify_image(path, expected_efi=None, expected_kernel=None):
         raise ValueError("KERNEL.ELF content mismatch")
 
 
+def corrupt_image(image, output, target):
+    """Copy the release image with one deterministic byte flipped inside the
+    selected boot artifact, for fail-closed and recovery-fallback gates."""
+    disk = bytearray(Path(image).read_bytes())
+    volume, component = target.split("-", 1)
+    path = {"loader": ("EFI", "BOOT", "BOOTX64.EFI"),
+            "kernel": ("EFI", "AIUEOS", "KERNEL.ELF")}[component]
+    if volume == "recovery":
+        recovery = disk[RECOVERY_FIRST * SECTOR:(RECOVERY_LAST + 1) * SECTOR]
+        cluster, _, _, _ = fat16_locate(recovery, path)
+        offset = (RECOVERY_FIRST + FAT16_DATA_START +
+                  (cluster - 2) * FAT16_CLUSTER_SECTORS) * SECTOR
+    else:
+        esp_offset = ESP_FIRST * SECTOR
+        reserved = struct.unpack_from("<H", disk, esp_offset + 14)[0]
+        fats = disk[esp_offset + 16]
+        fat_sectors = struct.unpack_from("<I", disk, esp_offset + 36)[0]
+        data_start = reserved + fats * fat_sectors
+
+        def cluster_offset(cluster):
+            return esp_offset + (data_start + cluster - 2) * SECTOR
+
+        def find(directory, name):
+            wanted = fat_name(name)
+            base = cluster_offset(directory)
+            for entry_offset in range(0, SECTOR, 32):
+                entry = disk[base + entry_offset:base + entry_offset + 32]
+                if entry[0] == 0:
+                    break
+                if entry[:11] == wanted:
+                    return (struct.unpack_from("<H", entry, 20)[0] << 16 |
+                            struct.unpack_from("<H", entry, 26)[0])
+            raise ValueError("missing primary ESP path component: " + name)
+
+        cluster = 2
+        for name in path:
+            cluster = find(cluster, name)
+        offset = cluster_offset(cluster)
+    disk[offset] ^= 1
+    Path(output).write_bytes(disk)
+    print("%s corrupted at byte %d" % (target, offset))
+
+
 def main():
     parser = argparse.ArgumentParser()
     sub = parser.add_subparsers(dest="command", required=True)
@@ -529,7 +599,16 @@ def main():
     verify = sub.add_parser("verify")
     verify.add_argument("--image"); verify.add_argument("--iso")
     verify.add_argument("--efi"); verify.add_argument("--kernel")
+    corrupt = sub.add_parser("corrupt")
+    corrupt.add_argument("--image", required=True)
+    corrupt.add_argument("--output", required=True)
+    corrupt.add_argument("--target", required=True,
+                         choices=["primary-loader", "primary-kernel",
+                                  "recovery-loader", "recovery-kernel"])
     args = parser.parse_args()
+    if args.command == "corrupt":
+        corrupt_image(args.image, args.output, args.target)
+        return
     if args.command == "verify":
         if not args.image and not args.iso:
             parser.error("verify requires --image or --iso")
@@ -551,6 +630,11 @@ def main():
         "created": datetime.fromtimestamp(epoch, timezone.utc).isoformat().replace("+00:00", "Z"),
         "disk": {"bytes": Path(args.output).stat().st_size, "sha256": sha256(args.output)},
         "esp": {"first_lba": ESP_FIRST, "last_lba": ESP_LAST, "type": str(ESP_TYPE)},
+        "recovery": {"first_lba": RECOVERY_FIRST, "last_lba": RECOVERY_LAST,
+                     "type": str(ESP_TYPE), "guid": str(RECOVERY_GUID),
+                     "sha256": hashlib.sha256(
+                         Path(args.output).read_bytes()[
+                             RECOVERY_FIRST * SECTOR:(RECOVERY_LAST + 1) * SECTOR]).hexdigest()},
         "artifacts": {
             "EFI/BOOT/BOOTX64.EFI": {"bytes": Path(args.efi).stat().st_size, "sha256": sha256(args.efi)},
             "EFI/AIUEOS/KERNEL.ELF": {"bytes": Path(args.kernel).stat().st_size, "sha256": sha256(args.kernel)},
