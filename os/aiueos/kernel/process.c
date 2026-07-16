@@ -86,6 +86,8 @@ _Static_assert(offsetof(struct process_descriptor,domain)==26,"process domain AB
 _Static_assert(offsetof(struct process_descriptor,active)==32,"process active ABI");
 extern uint64_t kotoba_aiueos_process_create_plan(const void *table,
   uint64_t length,uint64_t domain,uint64_t count,uint64_t stride);
+extern uint64_t kotoba_aiueos_process_teardown_plan(uint64_t domain,
+  uint64_t reaped,uint64_t revoked,uint64_t reclaimed,uint64_t stage);
 static uint64_t process_lifecycle_evidence;
 static int process_results_valid;
 static int catalog_lookup_rejection_evidence;
@@ -219,6 +221,20 @@ static int process_create_kotoba_elf(const uint8_t app_id[16],uint16_t domain,ui
   return process_create_in_space((void (*)(uint64_t))(uintptr_t)entry,domain,address_space);
 }
 
+static int process_teardown(unsigned descriptor,int reaped) {
+  if (descriptor>=PROCESS_CAPACITY || !processes[descriptor].active) return 0;
+  struct process_descriptor *p=&processes[descriptor];
+  if (kotoba_aiueos_process_teardown_plan(p->domain,reaped,0,0,0)!=1) return 0;
+  uint64_t revoked=aiueos_capability_revoke_owner(p->domain);
+  if (kotoba_aiueos_process_teardown_plan(p->domain,reaped,revoked,0,1)!=2)
+    return 0;
+  if (!aiueos_address_space_reclaim(p->address_space) ||
+      kotoba_aiueos_process_teardown_plan(p->domain,reaped,revoked,1,2)!=3)
+    return 0;
+  p->active=0;
+  return 1;
+}
+
 int aiueos_process_initialize(void) {
   int mappings=aiueos_user_mapping_verify();
   /* Scheduler initialization already created both roots. Rebuilding them here
@@ -267,25 +283,24 @@ void aiueos_process_enter(void) {
   aiueos_scheduler_request_user_exit(5);
   while (!aiueos_scheduler_users_reaped()) __asm__ volatile("hlt");
   __asm__ volatile("cli");
-  if (aiueos_scheduler_finalize_user_stacks() &&
-      aiueos_scheduler_task_capacity()==8 &&
-      aiueos_scheduler_task_slot_self_test() &&
-      aiueos_capability_revoke_owner(2)>=2 &&
-      aiueos_capability_revoke_owner(3)>=1 &&
-      aiueos_capability_revoke_owner(4)>=1 &&
-      aiueos_capability_revoke_owner(5)>=1 &&
-      !aiueos_capability_log_handle(2) && !aiueos_capability_log_handle(3) &&
-      !aiueos_capability_log_handle(4) && !aiueos_capability_log_handle(5) &&
-      aiueos_kotoba_process_loader_evidence_ready())
-    process_lifecycle_evidence|=1;
   allocator_reuse_before=aiueos_physical_allocator_reuse_count();
   unsigned space0=processes[first].address_space,space1=processes[second].address_space;
   unsigned space2=processes[kotoba].address_space;
   unsigned space3=processes[worker].address_space;
-  processes[first].active=processes[second].active=processes[kotoba].active=processes[worker].active=0;
-  if (aiueos_address_space_reclaim(space0) && aiueos_address_space_reclaim(space1) &&
-      aiueos_address_space_reclaim(space2) &&
-      aiueos_address_space_reclaim(space3) &&
+  int reaped=aiueos_scheduler_users_reaped();
+  if (aiueos_scheduler_finalize_user_stacks() &&
+      aiueos_scheduler_task_capacity()==8 &&
+      aiueos_scheduler_task_slot_self_test() &&
+      process_teardown((unsigned)first,reaped) &&
+      process_teardown((unsigned)second,reaped) &&
+      process_teardown((unsigned)kotoba,reaped) &&
+      process_teardown((unsigned)worker,reaped) &&
+      !aiueos_capability_log_handle(2) && !aiueos_capability_log_handle(3) &&
+      !aiueos_capability_log_handle(4) && !aiueos_capability_log_handle(5) &&
+      aiueos_kotoba_process_loader_evidence_ready())
+    process_lifecycle_evidence|=1;
+  if (!processes[first].active && !processes[second].active &&
+      !processes[kotoba].active && !processes[worker].active &&
       aiueos_address_space_reuse(space0) && aiueos_address_space_reuse(space1) &&
       aiueos_address_space_reclaim(space0) && aiueos_address_space_reclaim(space1) &&
       aiueos_address_space_reuse(space2) && aiueos_load_object_store_kotoba_process(

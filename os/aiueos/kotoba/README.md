@@ -82,6 +82,12 @@ performs resource acquisition and commits only the admitted descriptor plan.
 Its pinned SHA-256 is
 `a1931ab0058a322f728203e1441cd93848d2661b639c600d8049f33056260ddf`.
 
+`process-teardown-plan.o` enforces the native teardown state machine: a reaped
+task must revoke its owner's capabilities before its address space is
+reclaimed, and only then may its descriptor become inactive. It also enforces
+the domain-specific minimum revocation evidence. Its pinned SHA-256 is
+`0a34d448348f366d6bd41560a1a62ea4fb9d317c281beec14656af65976182b9`.
+
 `rsa2048.o` implements RSA-2048 public exponent 65537 and the complete
 PKCS#1 v1.5 SHA-256 encoded-message comparison in Kotoba. Its five-argument
 kernel ABI accepts a 256-byte signature, 32-byte digest, and caller-owned
