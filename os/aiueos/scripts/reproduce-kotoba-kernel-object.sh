@@ -238,7 +238,7 @@ python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$task_plan_tmp" \
   --target x86_64-aiueos-kernel-v1 --output "$dispatch_plan_tmp"
 cmp "$aiueos/kotoba/scheduler-dispatch-plan.o" "$dispatch_plan_tmp"
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$dispatch_plan_tmp" \
-  19f1dc06e4c6c276e3a7ebb14c9e30a85cbf5c225e7fbae187a7ad4e32a5542a \
+  c944a19af70c124cf47ca0ca8dd0b56f47516d79af027571509f53c6c21c38a0 \
   kotoba_aiueos_scheduler_dispatch_plan
 "$compiler/bin/kotoba-compiler" compile "$aiueos/kotoba/task-exit-route.kotoba" \
   --target x86_64-aiueos-kernel-v1 --output "$exit_route_tmp"

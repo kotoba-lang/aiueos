@@ -25,6 +25,13 @@
 #define AIUEOS_TASK_RELEASE_COUNTERS 2U
 #define AIUEOS_TASK_RELEASE_CR3 4U
 #define AIUEOS_TASK_RELEASE_SERVICE 8U
+#define AIUEOS_DISPATCH_CURRENT 1U
+#define AIUEOS_DISPATCH_SWITCH_COUNT 2U
+#define AIUEOS_DISPATCH_CR3 4U
+#define AIUEOS_DISPATCH_USER_DOMAIN 8U
+#define AIUEOS_DISPATCH_KERNEL_STACK 16U
+#define AIUEOS_DISPATCH_USER_SWITCH 32U
+#define AIUEOS_DISPATCH_REAP 64U
 
 /* A saved stack pointer is the complete kernel-task context. */
 struct aiueos_interrupt_context {
@@ -468,24 +475,36 @@ uint64_t *aiueos_scheduler_on_timer(uint64_t *interrupted_stack) {
   uint64_t plan=kotoba_aiueos_scheduler_dispatch_plan(tasks,sizeof(tasks),
     AIUEOS_TASK_SLOT_COUNT,sizeof(tasks[0]),state);
   unsigned next=(unsigned)((plan&255U)-1U);
-  if (!plan || next>=AIUEOS_TASK_SLOT_COUNT || !tasks[next].active) {
+  uint64_t recipe=plan>>32;
+  uint64_t required=AIUEOS_DISPATCH_CURRENT|AIUEOS_DISPATCH_SWITCH_COUNT|
+    AIUEOS_DISPATCH_CR3;
+  if (scheduler_user_mode) {
+    required|=AIUEOS_DISPATCH_USER_DOMAIN;
+    if (next>0 && next<AIUEOS_TASK_SLOT_COUNT)
+      required|=AIUEOS_DISPATCH_KERNEL_STACK|AIUEOS_DISPATCH_USER_SWITCH;
+  }
+  if (plan&256U) required|=AIUEOS_DISPATCH_REAP;
+  if (!plan || recipe!=required || next>=AIUEOS_TASK_SLOT_COUNT ||
+      !tasks[next].active) {
     aiueos_scheduler_address_space_failures++;
     return interrupted_stack;
   }
-  if (plan&256U) { tasks[current_task].active=0; user_tasks_reaped++; }
-  current_task=next;
-  aiueos_scheduler_context_switches++;
-  if (scheduler_user_mode) {
-    aiueos_current_user_domain = current_task ? tasks[current_task].domain : 0;
-    if (current_task) {
-      aiueos_process_set_kernel_stack((uint64_t)(uintptr_t)
-        (tasks[current_task].kernel_stack + AIUEOS_TASK_STACK_BYTES));
-      aiueos_user_scheduler_switches++;
-    }
+  if (recipe&AIUEOS_DISPATCH_REAP) {
+    tasks[current_task].active=0; user_tasks_reaped++;
   }
+  if (recipe&AIUEOS_DISPATCH_CURRENT) current_task=next;
+  if (recipe&AIUEOS_DISPATCH_SWITCH_COUNT) aiueos_scheduler_context_switches++;
+  if (recipe&AIUEOS_DISPATCH_USER_DOMAIN) {
+    aiueos_current_user_domain = current_task ? tasks[current_task].domain : 0;
+  }
+  if (recipe&AIUEOS_DISPATCH_KERNEL_STACK)
+    aiueos_process_set_kernel_stack((uint64_t)(uintptr_t)
+      (tasks[current_task].kernel_stack + AIUEOS_TASK_STACK_BYTES));
+  if (recipe&AIUEOS_DISPATCH_USER_SWITCH) aiueos_user_scheduler_switches++;
   /* Interrupt code is mapped supervisor-only in every root.  Switch after
    * saving the outgoing frame, immediately before iret resumes the task. */
-  aiueos_address_space_switch(tasks[current_task].cr3);
+  if (recipe&AIUEOS_DISPATCH_CR3)
+    aiueos_address_space_switch(tasks[current_task].cr3);
   return tasks[current_task].saved_stack;
 }
 void aiueos_scheduler_request_user_exit(uint16_t domain) {

@@ -183,7 +183,7 @@ python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_task_plan_obje
   084118840d07e6e4db568215dac1e7c064b437de78f9c9043aa98a67469e077f \
   kotoba_aiueos_task_slot_plan
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_dispatch_plan_object" \
-  19f1dc06e4c6c276e3a7ebb14c9e30a85cbf5c225e7fbae187a7ad4e32a5542a \
+  c944a19af70c124cf47ca0ca8dd0b56f47516d79af027571509f53c6c21c38a0 \
   kotoba_aiueos_scheduler_dispatch_plan
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_exit_route_object" \
   dbf1dacb2d4a2fc0adf49134cbd6b973fa3a85e780f3d2b242a9baacb28799d2 \
