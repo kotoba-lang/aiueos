@@ -15,6 +15,12 @@
 #define AIUEOS_SERVICE_MUTATE_TASK_DEACTIVATE 8U
 #define AIUEOS_SERVICE_MUTATE_TASK_RELEASE 16U
 #define AIUEOS_SERVICE_MUTATE_CLEAR 32U
+#define AIUEOS_TASK_INIT_POINTERS 1U
+#define AIUEOS_TASK_INIT_COUNTERS 2U
+#define AIUEOS_TASK_INIT_CR3 4U
+#define AIUEOS_TASK_INIT_SERVICE 8U
+#define AIUEOS_TASK_INIT_GENERATION 16U
+#define AIUEOS_TASK_INIT_ACTIVE 32U
 
 /* A saved stack pointer is the complete kernel-task context. */
 struct aiueos_interrupt_context {
@@ -100,19 +106,27 @@ static int allocate_task_slot(uint64_t cr3) {
   uint64_t plan=kotoba_aiueos_task_slot_plan(tasks,sizeof(tasks),
     AIUEOS_TASK_SLOT_COUNT,sizeof(tasks[0]),0);
   unsigned slot=(unsigned)(plan&255U);
-  uint16_t generation=(uint16_t)(plan>>8);
+  uint16_t generation=(uint16_t)((plan>>8)&65535U);
+  uint64_t recipe=plan>>32;
   if (!plan || slot<1 || slot>=AIUEOS_TASK_SLOT_COUNT || !generation ||
+      recipe!=(AIUEOS_TASK_INIT_POINTERS|AIUEOS_TASK_INIT_COUNTERS|
+        AIUEOS_TASK_INIT_CR3|AIUEOS_TASK_INIT_SERVICE|
+        AIUEOS_TASK_INIT_GENERATION|AIUEOS_TASK_INIT_ACTIVE) ||
       tasks[slot].active || tasks[slot].kernel_stack) return -1;
   uint8_t *stack=aiueos_allocate_physical_page();
   if (!stack) return -1;
-  tasks[slot].kernel_stack=stack;
-  tasks[slot].saved_stack=0;
-  tasks[slot].switches=0;
-  tasks[slot].cr3=cr3;
-  tasks[slot].service=0xffffU;
-  tasks[slot].domain=0; tasks[slot].exit_requested=0;
-  tasks[slot].generation=generation;
-  tasks[slot].active=1;
+  if (recipe&AIUEOS_TASK_INIT_POINTERS) {
+    tasks[slot].kernel_stack=stack;
+    tasks[slot].saved_stack=0;
+  }
+  if (recipe&AIUEOS_TASK_INIT_COUNTERS) {
+    tasks[slot].switches=0;
+    tasks[slot].domain=0; tasks[slot].exit_requested=0;
+  }
+  if (recipe&AIUEOS_TASK_INIT_CR3) tasks[slot].cr3=cr3;
+  if (recipe&AIUEOS_TASK_INIT_SERVICE) tasks[slot].service=0xffffU;
+  if (recipe&AIUEOS_TASK_INIT_GENERATION) tasks[slot].generation=generation;
+  if (recipe&AIUEOS_TASK_INIT_ACTIVE) tasks[slot].active=1;
   return (int)slot;
 }
 static int release_task_slot(unsigned slot) {
