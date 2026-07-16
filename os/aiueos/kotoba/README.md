@@ -77,16 +77,18 @@ pinned SHA-256 is
 
 `process-create-plan.o` scans the complete eight-slot native process table and
 owns domain validation and duplicate rejection, deterministic free-slot
-selection, and non-zero 16-bit generation advancement including wrap. C
-performs resource acquisition and commits only the admitted descriptor plan.
-Its pinned SHA-256 is
-`a1931ab0058a322f728203e1441cd93848d2661b639c600d8049f33056260ddf`.
+selection, and non-zero 16-bit generation advancement including wrap. Its
+recipe stages identity/address-space, execution, result, task binding, and
+active publication around native resource acquisition. Its pinned SHA-256 is
+`487d01555529e78c2df4321c467c807886b7ec7fa7a8f073701aed6e1ebf5f57`.
 
 `process-teardown-plan.o` enforces the native teardown state machine: a reaped
 task must revoke its owner's capabilities before its address space is
 reclaimed, and only then may its descriptor become inactive. It also enforces
-the domain-specific minimum revocation evidence. Its pinned SHA-256 is
-`0a34d448348f366d6bd41560a1a62ea4fb9d317c281beec14656af65976182b9`.
+the domain-specific minimum revocation evidence and returns the final
+execution/ownership/task/active/result clear recipe before reclaim is
+committed. Its pinned SHA-256 is
+`0a82d0757a24557e6b82de2ef195a712b5f489e0fb9acbe227ed2d9f62aecb13`.
 
 `task-slot-plan.o` reads the complete nine-slot native scheduler table and
 owns deterministic non-kernel slot allocation, non-zero generation advance

@@ -13,7 +13,10 @@
           next-generation (if (= generation 65535) 1 (+ generation 1))
           next-plan (if (= active 0)
                       (if (= plan 0)
-                        (+ (+ slot 1) (* next-generation 256)) plan)
+                        ;; Recipe 31: identity/address-space, execution frame,
+                        ;; result binding, task binding, and active publish.
+                        (+ (+ slot 1) (* next-generation 256)
+                           (* 31 4294967296)) plan)
                       plan)]
       (if (and (= active 1) (= owner domain)) 0
         (scan table length domain (+ slot 1) next-plan)))))
