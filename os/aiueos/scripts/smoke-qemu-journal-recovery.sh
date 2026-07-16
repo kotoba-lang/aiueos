@@ -124,3 +124,17 @@ AIUEOS_CORRUPT_KOTOBA_APP=1 "$aiueos/scripts/smoke-qemu-uefi.sh"
 AIUEOS_CORRUPT_KOTOBA_SIGNATURE=1 "$aiueos/scripts/smoke-qemu-uefi.sh"
 AIUEOS_CORRUPT_KOTOBA_CATALOG=1 "$aiueos/scripts/smoke-qemu-uefi.sh"
 echo "AIUEOS_KOTOBA_APP_CORRUPTION_GATES_OK digest signature catalog"
+
+# Crash receipt: a kernel with the test-only synthetic panic persists a
+# durable, checksummed crash record (write + readback) and terminates. The
+# next boot, built without the trigger, must consume that record, report it,
+# and still pass the complete evidence gate.
+AIUEOS_CRASH_RECEIPT_SMOKE=1 AIUEOS_EXPECT_CRASH=1 \
+  "$aiueos/scripts/smoke-qemu-uefi.sh"
+AIUEOS_PRESERVE_BLK_IMAGE=1 "$aiueos/scripts/smoke-qemu-uefi.sh"
+grep -F "AIUEOS_CRASH_RECEIPT_OK reason=42 journal-context consumed readback" \
+  "$out/kernel-serial.log" >/dev/null || {
+  echo "error: pending crash receipt was not consumed and reported on reboot" >&2
+  exit 1
+}
+echo "AIUEOS_CRASH_RECEIPT_SMOKE_OK panic-boot receipt-consumed full-evidence"

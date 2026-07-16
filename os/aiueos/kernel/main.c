@@ -351,6 +351,40 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
     serial_string("AIUEOS_KOTOBA_RECORD_VALIDATION_OK journal transaction bounded-u32\r\n");
     serial_string("AIUEOS_KOTOBA_STORAGE_READ_VALIDATION_OK superblock mutable-object\r\n");
     serial_string("AIUEOS_KOTOBA_STORAGE_WRITE_OK journal mutable-object bounded-store\r\n");
+    {
+      /* The storage plane and interrupt-driven block transport are proven at
+         this point, so a pending crash receipt is consumed and reported here. */
+      extern int aiueos_crash_receipt_consume(uint32_t *, uint32_t *);
+      uint32_t crash_reason = 0, crash_sequence = 0;
+      int crash_found = aiueos_crash_receipt_consume(&crash_reason, &crash_sequence);
+      if (crash_found) {
+        if (crash_reason != 42u || !crash_sequence) {
+          debug_string("AIUEOS_CRASH_RECEIPT_FAIL reason-or-sequence\n");
+          serial_string("AIUEOS_CRASH_RECEIPT_FAIL reason-or-sequence\r\n");
+          qemu_exit(0x5d);
+        }
+        debug_string("AIUEOS_CRASH_RECEIPT_OK reason=42 journal-context consumed readback\n");
+        serial_string("AIUEOS_CRASH_RECEIPT_OK reason=42 journal-context consumed readback\r\n");
+      }
+#ifdef AIUEOS_CRASH_RECEIPT_SMOKE
+      if (!crash_found) {
+        /* Test-only synthetic panic from normal kernel context: persist a
+           durable crash receipt, then terminate the way an unrecoverable
+           fault would. The next boot must consume and report it before
+           completing its evidence gate. */
+        extern int aiueos_crash_receipt_write(uint32_t);
+        serial_string("AIUEOS_PANIC synthetic reason=42\r\n");
+        if (!aiueos_crash_receipt_write(42u)) {
+          debug_string("AIUEOS_PANIC_RECEIPT_FAIL write-readback\n");
+          serial_string("AIUEOS_PANIC_RECEIPT_FAIL write-readback\r\n");
+          qemu_exit(0x5d);
+        }
+        debug_string("AIUEOS_PANIC_RECEIPT_OK synthetic reason=42 written readback pending\n");
+        serial_string("AIUEOS_PANIC_RECEIPT_OK synthetic reason=42 written readback pending\r\n");
+        qemu_exit(0x5c);
+      }
+#endif
+    }
     if (!aiueos_service_registry_ready()) qemu_exit(0x6f);
     debug_string("AIUEOS_SERVICE_REGISTRY_OK journal-object ids=2 generation=2,1 restart=1,0 decoder=kotoba fixed-stack\n");
     serial_string("AIUEOS_SERVICE_REGISTRY_OK journal-object ids=2 generation=2,1 restart=1,0 decoder=kotoba fixed-stack\r\n");

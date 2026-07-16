@@ -123,6 +123,25 @@ if [ "${AIUEOS_CORRUPT_KERNEL:-0}" = 1 ]; then
   exit 0
 fi
 
+if [ "${AIUEOS_EXPECT_CRASH:-0}" = 1 ]; then
+  # The synthetic panic writes 0x5c; isa-debug-exit maps it to (0x5c << 1) | 1.
+  [ "$status" -eq 185 ] || {
+    echo "error: synthetic panic produced unexpected QEMU status $status" >&2
+    test -f "$serial_log" && tail -20 "$serial_log" >&2
+    exit 1
+  }
+  grep -F "AIUEOS_PANIC synthetic reason=42" "$serial_log" >/dev/null || {
+    echo "error: synthetic panic marker was not observed" >&2
+    exit 1
+  }
+  grep -F "AIUEOS_PANIC_RECEIPT_OK synthetic reason=42 written readback pending" "$serial_log" >/dev/null || {
+    echo "error: durable crash receipt write evidence was not observed" >&2
+    exit 1
+  }
+  echo "AIUEOS_CRASH_PANIC_BOOT_OK synthetic-panic receipt-written"
+  exit 0
+fi
+
 # The #UD handler writes 0x30; isa-debug-exit maps it to (0x30 << 1) | 1 = 97.
 [ "$status" -eq 97 ] || {
   if { [ "${AIUEOS_CORRUPT_KOTOBA_APP:-0}" = 1 ] ||
