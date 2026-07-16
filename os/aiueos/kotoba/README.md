@@ -37,6 +37,12 @@ tail recursion reuses a fixed native stack frame across blocks and rounds.
 Its pinned SHA-256 is
 `ad28e7d83d6e582df2dacf802e915fc9532fc99e141e174e7bf8642191db2c29`.
 
+`digest-equal.o` performs the fixed 32-byte SHA-256 comparison in Kotoba. It
+always reads and accumulates all 32 byte differences before deciding, uses the
+compiler's 512-byte bounded load primitive, and exports
+`kotoba_aiueos_digest_equal`. Its pinned SHA-256 is
+`6d005bf596ff10343377d9c243d473437fa272559b7f9130cba47cc4cd80d3aa`.
+
 `rsa2048.o` implements RSA-2048 public exponent 65537 and the complete
 PKCS#1 v1.5 SHA-256 encoded-message comparison in Kotoba. Its five-argument
 kernel ABI accepts a 256-byte signature, 32-byte digest, and caller-owned
