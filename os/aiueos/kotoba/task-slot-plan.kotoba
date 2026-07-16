@@ -16,8 +16,11 @@
           active (kernel-load-u8 table length (+ base 38))
           stack-present (pointer-present table length (+ base 8) 0 0)
           next-generation (if (= generation 65535) 1 (+ generation 1))
+          ;; Allocation plan: slot[0..7], generation[8..23], and descriptor
+          ;; initialization recipe[32..]. Recipe 63 initializes pointers,
+          ;; counters, CR3, service sentinel, generation, and active state.
           next-plan (if (and (= plan 0) (= active 0) (not stack-present))
-                      (+ slot (* next-generation 256)) plan)]
+                      (+ slot (* next-generation 256) (* 63 4294967296)) plan)]
       (allocate-scan table length (+ slot 1) stride next-plan))))
 
 (defn release-plan [table length slot stride]

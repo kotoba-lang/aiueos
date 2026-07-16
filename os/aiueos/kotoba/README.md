@@ -91,9 +91,10 @@ the domain-specific minimum revocation evidence. Its pinned SHA-256 is
 `task-slot-plan.o` reads the complete nine-slot native scheduler table and
 owns deterministic non-kernel slot allocation, non-zero generation advance
 with wrap, stack-presence exclusion, and inactive-with-stack release
-admission. C only allocates/frees stack pages and commits the admitted task
-descriptor. Its pinned SHA-256 is
-`bc205162033a602366538c47a49ea7494cbbc2dc3b858614495d51c2adaf1cd9`.
+admission. Allocation plans also carry the pointer/counter/CR3/service/
+generation/active descriptor initialization recipe. C only allocates/frees
+stack pages and applies that recipe. Its pinned SHA-256 is
+`da4e6d51f2bc5ed6f0120513bb2d8be60ab1efae8e7020fee3b27ea1df1cc47e`.
 
 `scheduler-dispatch-plan.o` owns timer-tick exit-to-reaped admission and the
 bounded round-robin selection of the next active task, including selection
