@@ -366,6 +366,15 @@ smoke gates the evidence marker and a corrupted-initramfs loader rejection;
 the release verifier checks the archive byte-for-byte on every medium and the
 receipt records its digest.
 
+The carried recovery materials are proven usable, not just present: during the
+same early walk the kernel copies the recovery application ELF and its RSA
+signature into bounded kernel-owned buffers and admits them through the
+identical Kotoba SHA-256 + RSA-2048 public-key policy used for object-store
+application admission. A negative gate rebuilds the archive with a corrupted
+recovery signature and a recomputed archive digest, so the loader admits the
+archive and the kernel policy layer must be the one that rejects it —
+defense in depth past the loader's whole-archive digest.
+
 This recovery selection lives in the reference C loader; re-expressing it in
 the compiler-emitted C-free loader and a GRUB/Multiboot2 compatibility path
 remain separate Phase 5 gaps.

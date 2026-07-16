@@ -295,9 +295,23 @@ zig ld.lld -nostdlib -static -z max-page-size=0x1000 \
   "$kotoba_rsa2048_object"
 fi
 initramfs="$kernel_dir/INITRD.IMG"
+recovery_signature="$aiueos/kotoba/user-smoke.sig"
+if [ "${AIUEOS_CORRUPT_RECOVERY_SIG:-0}" = 1 ]; then
+  # Test-only: a structurally valid archive whose recovery signature fails
+  # the RSA policy. The archive digest is recomputed below, so the loader
+  # admits it and the kernel admission must be the layer that rejects.
+  recovery_signature="$out/corrupt-recovery.sig"
+  python3 - "$aiueos/kotoba/user-smoke.sig" "$recovery_signature" <<'PYSIG'
+from pathlib import Path
+import sys
+data = bytearray(Path(sys.argv[1]).read_bytes())
+data[17] ^= 1
+Path(sys.argv[2]).write_bytes(data)
+PYSIG
+fi
 python3 "$aiueos/scripts/make-initramfs.py" \
   --entry "recovery/user-smoke.elf,$aiueos/kotoba/user-smoke.elf" \
-  --entry "recovery/user-smoke.sig,$aiueos/kotoba/user-smoke.sig" \
+  --entry "recovery/user-smoke.sig,$recovery_signature" \
   --entry "recovery/app-catalog.sig,$aiueos/kotoba/app-catalog.sig" \
   --output "$initramfs" >/dev/null
 python3 - "$kernel" "$initramfs" "$identity_source" <<'PY'

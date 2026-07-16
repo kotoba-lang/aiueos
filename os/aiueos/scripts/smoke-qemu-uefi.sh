@@ -158,6 +158,21 @@ if [ "${AIUEOS_CORRUPT_INITRAMFS:-0}" = 1 ]; then
   exit 0
 fi
 
+if [ "${AIUEOS_CORRUPT_RECOVERY_SIG:-0}" = 1 ]; then
+  # The kernel policy rejection writes 0x68; isa-debug-exit maps it to 209.
+  [ "$status" -eq 209 ] || {
+    echo "error: corrupted recovery signature produced unexpected QEMU status $status" >&2
+    test -f "$serial_log" && tail -20 "$serial_log" >&2
+    exit 1
+  }
+  grep -F "AIUEOS_INITRAMFS_RECOVERY_ADMISSION_FAIL rsa2048-policy" "$serial_log" >/dev/null || {
+    echo "error: recovery payload with a bad signature was not rejected by the kernel policy" >&2
+    exit 1
+  }
+  echo "AIUEOS_INITRAMFS_RECOVERY_REJECTION_OK rsa2048-policy"
+  exit 0
+fi
+
 if [ "${AIUEOS_EXPECT_FAULT:-0}" = 1 ]; then
   # The unexpected-exception path writes 0x7d; isa-debug-exit maps it to 251.
   [ "$status" -eq 251 ] || {
@@ -229,6 +244,10 @@ grep -F "AIUEOS_KERNEL_OK memory-map-v1" "$log" >/dev/null || {
 }
 grep -F "AIUEOS_INITRAMFS_OK newc entries=3 sha256-admitted bounded" "$serial_log" >/dev/null || {
   echo "error: bounded initramfs validation evidence was not observed" >&2
+  exit 1
+}
+grep -F "AIUEOS_INITRAMFS_RECOVERY_ADMISSION_OK elf digest=kotoba-sha256 signature=kotoba-rsa2048-pkcs1 policy=public-key" "$serial_log" >/dev/null || {
+  echo "error: recovery payload admission evidence was not observed" >&2
   exit 1
 }
 grep -F "AIUEOS_SERIAL_OK stack-v1 memory-map-v1" "$serial_log" >/dev/null || {

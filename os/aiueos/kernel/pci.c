@@ -213,6 +213,18 @@ static int rsa2048_sha256_verify(const uint8_t signature[256],const uint8_t dige
   return (int)kotoba_aiueos_rsa2048_sha256_verify(
     signature,digest,rsa2048_workspace,sizeof(rsa2048_workspace),0);
 }
+/* Admit an initramfs recovery payload through the identical Kotoba SHA-256 +
+   RSA-2048 public-key policy used for object-store application admission.
+   Proves the carried recovery materials are usable, independent of the
+   loader's whole-archive digest. */
+int aiueos_recovery_payload_admission(const uint8_t *elf, uint64_t elf_length,
+                                      const uint8_t *signature) {
+  uint8_t digest[32];
+  if (!elf || !elf_length || elf_length > 12288 || !signature) return 0;
+  if (!sha256(elf, elf_length, digest)) return 0;
+  return rsa2048_sha256_verify(signature, digest);
+}
+
 static uint32_t fnv1a(const uint8_t *bytes, uint32_t length) {
   return (uint32_t)kotoba_aiueos_fnv1a(bytes, length);
 }
