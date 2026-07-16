@@ -1,19 +1,21 @@
 (ns aiueos.service-task-transition)
 
-;; Connects service lifecycle actions to native task state. Actions:
-;; 1 spawn, 2 restart in place, 3 terminate, 4 query-active.
-(defn aiueos-service-task-transition [action active slot current task-active]
-  (if (= action 1)
-    (if (and (= active 0) (= task-active 0)) 1 0)
-    (if (= action 2)
-      (if (and (= active 1) (>= slot 1) (< slot 9)
-               (= task-active 1)) 2 0)
-      (if (= action 3)
+;; Turns a lifecycle candidate into the commit plan admitted by native task
+;; state. The high word is the action: 1 spawn, 2 restart, 3 terminate,
+;; 4 query-active. The low word carries the lifecycle generation/restart state.
+(defn aiueos-service-task-transition [candidate active slot current task-active]
+  (let [action (quot candidate 4294967296)]
+    (if (= action 1)
+      (if (and (= active 0) (= slot 0)) candidate 0)
+      (if (= action 2)
         (if (and (= active 1) (>= slot 1) (< slot 9)
-                 (= task-active 1) (not (= slot current))) 3 0)
-        (if (= action 4)
+                 (= task-active 1)) candidate 0)
+        (if (= action 3)
           (if (and (= active 1) (>= slot 1) (< slot 9)
-                   (= task-active 1)) 4 0)
-          0)))))
+                   (= task-active 1) (not (= slot current))) candidate 0)
+          (if (= action 4)
+            (if (and (= active 1) (>= slot 1) (< slot 9)
+                     (= task-active 1)) candidate 0)
+            0))))))
 
 (defn main [] 0)

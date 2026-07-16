@@ -53,7 +53,7 @@ extern uint64_t kotoba_aiueos_scheduler_dispatch_plan(const void *table,
   uint64_t length,uint64_t count,uint64_t stride,uint64_t state);
 extern uint64_t kotoba_aiueos_task_exit_route(const void *table,uint64_t length,
   uint64_t count,uint64_t stride,uint64_t domain);
-extern uint64_t kotoba_aiueos_service_task_transition(uint64_t action,
+extern uint64_t kotoba_aiueos_service_task_transition(uint64_t candidate,
   uint64_t active,uint64_t slot,uint64_t current,uint64_t task_active);
 static uint64_t current_task;
 static int scheduler_user_mode;
@@ -222,23 +222,22 @@ static int apply_service_event(unsigned service, uint64_t event) {
   struct aiueos_service_slot *descriptor=&services[service];
   uint64_t plan=kotoba_aiueos_service_lifecycle(
     descriptor->generation,descriptor->restarts,event,3);
-  uint64_t action=plan>>32;
   if (!plan && event) return 0;
-  uint64_t requested=action ? action : 4;
+  uint64_t candidate=plan ? plan : 4ULL<<32;
   uint64_t state_slot=descriptor->task_slot;
-  uint64_t task_active=requested==1 ? 0 :
-    (state_slot<AIUEOS_TASK_SLOT_COUNT ? tasks[state_slot].active : 0);
-  uint64_t transition=kotoba_aiueos_service_task_transition(requested,
+  uint64_t task_active=state_slot<AIUEOS_TASK_SLOT_COUNT ?
+    tasks[state_slot].active : 0;
+  uint64_t commit=kotoba_aiueos_service_task_transition(candidate,
     descriptor->active,state_slot,current_task,task_active);
-  if (action==1) {
-    if (transition!=1) return 0;
+  uint64_t commit_action=commit>>32;
+  if (commit_action==1) {
     uint64_t cr3=descriptor->process_slot<8 ?
       aiueos_address_space_cr3(descriptor->process_slot) :
       aiueos_address_space_kernel_cr3();
     int slot=allocate_task_slot(cr3);
     if (slot<1) return 0;
-    descriptor->generation=plan&65535U;
-    descriptor->restarts=(plan>>16)&65535U;
+    descriptor->generation=commit&65535U;
+    descriptor->restarts=(commit>>16)&65535U;
     descriptor->task_slot=(uint16_t)slot;
     tasks[slot].service=(uint16_t)service;
     descriptor->heartbeats=descriptor->restart_requested=0;
@@ -247,24 +246,22 @@ static int apply_service_event(unsigned service, uint64_t event) {
       service_task_entry,service);
     return 1;
   }
-  if (action==2) {
-    if (transition!=2) return 0;
-    descriptor->generation=plan&65535U;
-    descriptor->restarts=(plan>>16)&65535U;
+  if (commit_action==2) {
+    descriptor->generation=commit&65535U;
+    descriptor->restarts=(commit>>16)&65535U;
     descriptor->heartbeats=descriptor->restart_requested=0;
     tasks[descriptor->task_slot].saved_stack=initial_context(
       tasks[descriptor->task_slot].kernel_stack,service_task_entry,service);
     return 1;
   }
-  if (action==3) {
-    if (transition!=3) return 0;
+  if (commit_action==3) {
     unsigned task_slot=descriptor->task_slot;
     tasks[task_slot].active=0;
     if (!release_task_slot(task_slot)) return 0;
     descriptor->active=0; descriptor->task_slot=0;
     return 1;
   }
-  return event==0 && transition==4;
+  return event==0 && commit_action==4;
 }
 void aiueos_scheduler_initialize(void) {
   if (!aiueos_address_spaces_initialize()) {
