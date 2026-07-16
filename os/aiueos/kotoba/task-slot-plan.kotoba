@@ -28,7 +28,11 @@
     (let [base (* slot stride)
           active (kernel-load-u8 table length (+ base 38))
           stack-present (pointer-present table length (+ base 8) 0 0)]
-      (if (and (= active 0) stack-present) 1 0))))
+      ;; Release result: admission marker[0..31] plus the descriptor clear
+      ;; recipe[32..]. Recipe 15 clears pointers, counters, CR3, and service.
+      ;; Generation remains intact so the next allocation advances it.
+      (if (and (= active 0) stack-present)
+        (+ 1 (* 15 4294967296)) 0))))
 
 (defn aiueos-task-slot-plan [table length count stride request]
   (if (not (and (= length 360) (= count 9) (= stride 40))) 0

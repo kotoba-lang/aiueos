@@ -232,7 +232,7 @@ python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$teardown_plan_tmp" \
   --target x86_64-aiueos-kernel-v1 --output "$task_plan_tmp"
 cmp "$aiueos/kotoba/task-slot-plan.o" "$task_plan_tmp"
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$task_plan_tmp" \
-  da4e6d51f2bc5ed6f0120513bb2d8be60ab1efae8e7020fee3b27ea1df1cc47e \
+  084118840d07e6e4db568215dac1e7c064b437de78f9c9043aa98a67469e077f \
   kotoba_aiueos_task_slot_plan
 "$compiler/bin/kotoba-compiler" compile "$aiueos/kotoba/scheduler-dispatch-plan.kotoba" \
   --target x86_64-aiueos-kernel-v1 --output "$dispatch_plan_tmp"

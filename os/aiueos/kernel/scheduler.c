@@ -21,6 +21,10 @@
 #define AIUEOS_TASK_INIT_SERVICE 8U
 #define AIUEOS_TASK_INIT_GENERATION 16U
 #define AIUEOS_TASK_INIT_ACTIVE 32U
+#define AIUEOS_TASK_RELEASE_POINTERS 1U
+#define AIUEOS_TASK_RELEASE_COUNTERS 2U
+#define AIUEOS_TASK_RELEASE_CR3 4U
+#define AIUEOS_TASK_RELEASE_SERVICE 8U
 
 /* A saved stack pointer is the complete kernel-task context. */
 struct aiueos_interrupt_context {
@@ -130,14 +134,23 @@ static int allocate_task_slot(uint64_t cr3) {
   return (int)slot;
 }
 static int release_task_slot(unsigned slot) {
-  if (!kotoba_aiueos_task_slot_plan(tasks,sizeof(tasks),AIUEOS_TASK_SLOT_COUNT,
-      sizeof(tasks[0]),slot+1U)) return 0;
+  uint64_t plan=kotoba_aiueos_task_slot_plan(tasks,sizeof(tasks),
+    AIUEOS_TASK_SLOT_COUNT,sizeof(tasks[0]),slot+1U);
+  uint64_t recipe=plan>>32;
+  if ((uint32_t)plan!=1U ||
+      recipe!=(AIUEOS_TASK_RELEASE_POINTERS|AIUEOS_TASK_RELEASE_COUNTERS|
+        AIUEOS_TASK_RELEASE_CR3|AIUEOS_TASK_RELEASE_SERVICE)) return 0;
   if (!aiueos_free_physical_page(tasks[slot].kernel_stack)) return 0;
-  tasks[slot].kernel_stack=0;
-  tasks[slot].saved_stack=0;
-  tasks[slot].switches=0;
-  tasks[slot].cr3=0;
-  tasks[slot].service=0xffffU;
+  if (recipe&AIUEOS_TASK_RELEASE_POINTERS) {
+    tasks[slot].kernel_stack=0;
+    tasks[slot].saved_stack=0;
+  }
+  if (recipe&AIUEOS_TASK_RELEASE_COUNTERS) {
+    tasks[slot].switches=0;
+    tasks[slot].domain=0; tasks[slot].exit_requested=0;
+  }
+  if (recipe&AIUEOS_TASK_RELEASE_CR3) tasks[slot].cr3=0;
+  if (recipe&AIUEOS_TASK_RELEASE_SERVICE) tasks[slot].service=0xffffU;
   return 1;
 }
 
@@ -293,7 +306,10 @@ static int apply_service_event(unsigned service, uint64_t event) {
     unsigned task_slot=descriptor->task_slot;
     if (recipe&AIUEOS_SERVICE_MUTATE_TASK_DEACTIVATE) tasks[task_slot].active=0;
     if ((recipe&AIUEOS_SERVICE_MUTATE_TASK_RELEASE) &&
-        !release_task_slot(task_slot)) return 0;
+        !release_task_slot(task_slot)) {
+      tasks[task_slot].active=1;
+      return 0;
+    }
     if (recipe&AIUEOS_SERVICE_MUTATE_CLEAR) {
       descriptor->active=0; descriptor->task_slot=0;
     }
@@ -324,8 +340,18 @@ void aiueos_scheduler_initialize(void) {
     aiueos_scheduler_address_space_failures=1; return;
   }
   services[2].id=3; services[2].process_slot=0xffffU; services[2].marker='C';
-  if (!apply_service_event(2,2) || services[2].task_slot!=3 ||
-      !apply_service_event(2,3) || services[2].active) {
+  if (!apply_service_event(2,2) || services[2].task_slot!=3) {
+    aiueos_scheduler_address_space_failures=1; return;
+  }
+  unsigned rollback_slot=services[2].task_slot;
+  uint8_t *rollback_stack=tasks[rollback_slot].kernel_stack;
+  tasks[rollback_slot].kernel_stack=(uint8_t *)(uintptr_t)1;
+  if (apply_service_event(2,3) || !services[2].active ||
+      !tasks[rollback_slot].active) {
+    aiueos_scheduler_address_space_failures=1; return;
+  }
+  tasks[rollback_slot].kernel_stack=rollback_stack;
+  if (!apply_service_event(2,3) || services[2].active) {
     aiueos_scheduler_address_space_failures=1; return;
   }
   kotoba_lifecycle_evidence=1;
