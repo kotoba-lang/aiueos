@@ -29,6 +29,22 @@ static int initramfs_hex_field(const uint8_t *field, uint64_t *value) {
   return 1;
 }
 
+/* Recovery materials copied out of the archive while the loader-pool buffer
+   is still identity-mapped, sized by the same bound as catalog applications. */
+static uint8_t initramfs_recovery_elf[12288];
+static uint8_t initramfs_recovery_signature[256];
+static uint64_t initramfs_recovery_elf_length;
+static int initramfs_recovery_signature_present;
+
+static int initramfs_name_is(const uint8_t *name, uint64_t namesize, const char *wanted) {
+  uint64_t length = 0;
+  while (wanted[length]) length++;
+  if (namesize != length + 1) return 0;
+  for (uint64_t i = 0; i < length; i++)
+    if (name[i] != (uint8_t)wanted[i]) return 0;
+  return name[length] == 0;
+}
+
 static int initramfs_validate(uint64_t base, uint64_t size, uint64_t *files) {
   static const char trailer[11] = "TRAILER!!!";
   const uint8_t *archive = (const uint8_t *)(uintptr_t)base;
@@ -53,6 +69,18 @@ static int initramfs_validate(uint64_t base, uint64_t size, uint64_t *files) {
     }
     uint64_t data_offset = (name_offset + namesize + 3) & ~3ULL;
     if (data_offset > size || filesize > size - data_offset) return 0;
+    if (initramfs_name_is(archive + name_offset, namesize, "recovery/user-smoke.elf") &&
+        filesize && filesize <= sizeof(initramfs_recovery_elf)) {
+      for (uint64_t i = 0; i < filesize; i++)
+        initramfs_recovery_elf[i] = archive[data_offset + i];
+      initramfs_recovery_elf_length = filesize;
+    }
+    if (initramfs_name_is(archive + name_offset, namesize, "recovery/user-smoke.sig") &&
+        filesize == sizeof(initramfs_recovery_signature)) {
+      for (uint64_t i = 0; i < filesize; i++)
+        initramfs_recovery_signature[i] = archive[data_offset + i];
+      initramfs_recovery_signature_present = 1;
+    }
     offset = (data_offset + filesize + 3) & ~3ULL;
     count++;
   }
@@ -252,6 +280,17 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
     }
     debug_string("AIUEOS_INITRAMFS_OK newc entries=3 sha256-admitted bounded\n");
     serial_string("AIUEOS_INITRAMFS_OK newc entries=3 sha256-admitted bounded\r\n");
+    extern int aiueos_recovery_payload_admission(const uint8_t *, uint64_t, const uint8_t *);
+    if (!initramfs_recovery_elf_length || !initramfs_recovery_signature_present ||
+        !aiueos_recovery_payload_admission(initramfs_recovery_elf,
+                                           initramfs_recovery_elf_length,
+                                           initramfs_recovery_signature)) {
+      debug_string("AIUEOS_INITRAMFS_RECOVERY_ADMISSION_FAIL rsa2048-policy\n");
+      serial_string("AIUEOS_INITRAMFS_RECOVERY_ADMISSION_FAIL rsa2048-policy\r\n");
+      qemu_exit(0x68);
+    }
+    debug_string("AIUEOS_INITRAMFS_RECOVERY_ADMISSION_OK elf digest=kotoba-sha256 signature=kotoba-rsa2048-pkcs1 policy=public-key\n");
+    serial_string("AIUEOS_INITRAMFS_RECOVERY_ADMISSION_OK elf digest=kotoba-sha256 signature=kotoba-rsa2048-pkcs1 policy=public-key\r\n");
     extern uint64_t kotoba_aiueos_journal_record_build(void *, uint64_t, uint64_t);
     extern uint64_t kotoba_aiueos_journal_record_valid(const void *, uint64_t);
     static uint8_t journal_vector[512];

@@ -25,6 +25,8 @@ jobs:
         run: AIUEOS_CORRUPT_KERNEL=1 os/aiueos/scripts/smoke-qemu-uefi.sh
       - name: Reject a corrupted initramfs before kernel handoff
         run: AIUEOS_CORRUPT_INITRAMFS=1 os/aiueos/scripts/smoke-qemu-uefi.sh
+      - name: Reject a recovery payload with a bad signature in the kernel policy
+        run: AIUEOS_CORRUPT_RECOVERY_SIG=1 os/aiueos/scripts/smoke-qemu-uefi.sh
       - name: Boot the GPT raw disk and El Torito ISO release media
         run: os/aiueos/scripts/smoke-qemu-release-image.sh
 
