@@ -139,15 +139,29 @@ static void set_idt_gate(uint8_t vector, void (*handler)(void)) {
   idt[vector].reserved = 0;
 }
 
+/* Set immediately before the deliberate end-of-boot ud2 probe. Any exception
+   arriving before then is an unexpected fault and receives a best-effort
+   durable crash receipt over the polled transport before termination. */
+volatile int aiueos_final_probe_expected;
+
 __attribute__((noreturn))
 void aiueos_exception_dispatch(uint64_t vector) {
-  if (vector == 6) {
+  if (vector == 6 && aiueos_final_probe_expected) {
     debug_string("AIUEOS_EXCEPTION_OK vector=6\n");
     serial_string("AIUEOS_EXCEPTION_OK vector=6 invalid-opcode\r\n");
     qemu_exit(0x30);
   } else {
+    extern int aiueos_crash_receipt_write_from_fault(uint32_t);
     debug_string("AIUEOS_EXCEPTION_FAIL unexpected-vector\n");
     serial_string("AIUEOS_EXCEPTION_FAIL unexpected-vector\r\n");
+    if (aiueos_crash_receipt_write_from_fault((uint32_t)vector)) {
+      debug_string("AIUEOS_FAULT_RECEIPT_OK polled try-lock written readback pending\n");
+      serial_string("AIUEOS_FAULT_RECEIPT_OK polled try-lock written readback pending\r\n");
+    } else {
+      /* Best effort: the storage plane may not be up yet, or the queue may
+         be held mid-operation by the faulted context. */
+      serial_string("AIUEOS_FAULT_RECEIPT_SKIPPED storage-unavailable-or-busy\r\n");
+    }
     qemu_exit(0x7d);
   }
   for (;;) __asm__ volatile("cli; hlt");
@@ -358,14 +372,27 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
       uint32_t crash_reason = 0, crash_sequence = 0;
       int crash_found = aiueos_crash_receipt_consume(&crash_reason, &crash_sequence);
       if (crash_found) {
-        if (crash_reason != 42u || !crash_sequence) {
+        if (crash_reason == 42u && crash_sequence) {
+          debug_string("AIUEOS_CRASH_RECEIPT_OK reason=42 journal-context consumed readback\n");
+          serial_string("AIUEOS_CRASH_RECEIPT_OK reason=42 journal-context consumed readback\r\n");
+        } else if (crash_reason == 6u && crash_sequence) {
+          debug_string("AIUEOS_CRASH_RECEIPT_OK reason=6 fault-context consumed readback\n");
+          serial_string("AIUEOS_CRASH_RECEIPT_OK reason=6 fault-context consumed readback\r\n");
+        } else {
           debug_string("AIUEOS_CRASH_RECEIPT_FAIL reason-or-sequence\n");
           serial_string("AIUEOS_CRASH_RECEIPT_FAIL reason-or-sequence\r\n");
           qemu_exit(0x5d);
         }
-        debug_string("AIUEOS_CRASH_RECEIPT_OK reason=42 journal-context consumed readback\n");
-        serial_string("AIUEOS_CRASH_RECEIPT_OK reason=42 journal-context consumed readback\r\n");
       }
+#ifdef AIUEOS_FAULT_RECEIPT_SMOKE
+      if (!crash_found) {
+        /* Test-only synthetic fault: an unexpected invalid opcode before the
+           end-of-boot probe is expected. The exception dispatcher must write
+           the fault receipt over the polled transport and terminate. */
+        serial_string("AIUEOS_FAULT_SMOKE synthetic unexpected-ud2\r\n");
+        __asm__ volatile("ud2");
+      }
+#endif
 #ifdef AIUEOS_CRASH_RECEIPT_SMOKE
       if (!crash_found) {
         /* Test-only synthetic panic from normal kernel context: persist a
@@ -538,6 +565,8 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
     }
     debug_string("AIUEOS_PAGE_FAULT_OK no-execute vector=14\n");
     serial_string("AIUEOS_PAGE_FAULT_OK no-execute vector=14\r\n");
+    extern volatile int aiueos_final_probe_expected;
+    aiueos_final_probe_expected = 1;
     __asm__ volatile("ud2");
   }
   for (;;) __asm__ volatile("cli; hlt");

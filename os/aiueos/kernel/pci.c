@@ -380,6 +380,59 @@ int aiueos_crash_receipt_write(uint32_t reason) {
          record->reason==reason && record->checksum==wanted;
 }
 
+/* Fault-context variant: never sleeps on an interrupt and never blocks on
+   the queue lock. A faulting kernel cannot assume a live interrupt subsystem,
+   so completion is polled from the used ring; if another context holds the
+   block queue mid-operation, the receipt is skipped rather than corrupting
+   queue state. The caller terminates immediately afterwards, so the skew this
+   leaves in the cumulative MSI-X counter is irrelevant. */
+static int crash_sector_io_polled(uint32_t type) {
+  struct aiueos_blk_backend *b = &blk_backend;
+  uint16_t old = b->submitted, target = old + 1;
+  b->request->type = type; b->request->reserved = 0;
+  b->request->sector = AIUEOS_CRASH_SECTOR; *b->status = 0xff;
+  b->desc[1].flags = VIRTQ_DESC_F_NEXT | (type == VIRTIO_BLK_T_IN ? VIRTQ_DESC_F_WRITE : 0);
+  b->avail->ring[old & 3] = 0; __asm__ volatile("" ::: "memory");
+  b->avail->index = target; *b->doorbell = 0;
+  for (uint32_t budget = 0; budget < 100000000U; budget++) {
+    __asm__ volatile("" ::: "memory");
+    if (b->used->index == target) {
+      struct virtq_used_element *completion = &b->used->ring[old & 3];
+      uint32_t expected = type == VIRTIO_BLK_T_IN ? 513 : 1;
+      if (completion->id != 0 || completion->length != expected ||
+          *b->status != VIRTIO_BLK_S_OK) return 0;
+      b->submitted = target;
+      return 1;
+    }
+    __asm__ volatile("pause");
+  }
+  return 0;
+}
+
+int aiueos_crash_receipt_write_from_fault(uint32_t reason) {
+  if (!blk_backend.ready || AIUEOS_CRASH_SECTOR >= blk_backend.capacity) return 0;
+  if (__atomic_test_and_set(&blk_backend.lock,__ATOMIC_ACQUIRE)) return 0;
+  for (unsigned i=0;i<512;i++) blk_backend.sector[i]=0;
+  struct aiueos_crash_record *record=(void *)blk_backend.sector;
+  for (unsigned i=0;i<8;i++) record->magic[i]=crash_magic[i];
+  record->version=1; record->state=1; record->reason=reason;
+  record->sequence=journal_sequence;
+  record->checksum=crash_record_checksum();
+  uint32_t wanted=record->checksum;
+  int ok = crash_sector_io_polled(VIRTIO_BLK_T_OUT);
+  if (ok) {
+    for (unsigned i=0;i<512;i++) blk_backend.sector[i]=0;
+    ok = crash_sector_io_polled(VIRTIO_BLK_T_IN);
+  }
+  if (ok) {
+    record=(void *)blk_backend.sector;
+    ok = crash_record_valid() && record->state==1 &&
+         record->reason==reason && record->checksum==wanted;
+  }
+  __atomic_clear(&blk_backend.lock,__ATOMIC_RELEASE);
+  return ok;
+}
+
 /* Returns 1 and marks the record consumed when a valid pending crash receipt
    exists; 0 when the sector is empty, consumed, or invalid. */
 int aiueos_crash_receipt_consume(uint32_t *reason, uint32_t *sequence) {

@@ -138,3 +138,17 @@ grep -F "AIUEOS_CRASH_RECEIPT_OK reason=42 journal-context consumed readback" \
   exit 1
 }
 echo "AIUEOS_CRASH_RECEIPT_SMOKE_OK panic-boot receipt-consumed full-evidence"
+
+# Fault-context crash capture: an unexpected exception before the end-of-boot
+# probe must write the crash receipt over the polled, try-lock transport and
+# terminate; the next boot must consume and report the fault reason while
+# still passing the complete evidence gate.
+AIUEOS_FAULT_RECEIPT_SMOKE=1 AIUEOS_EXPECT_FAULT=1 \
+  "$aiueos/scripts/smoke-qemu-uefi.sh"
+AIUEOS_PRESERVE_BLK_IMAGE=1 "$aiueos/scripts/smoke-qemu-uefi.sh"
+grep -F "AIUEOS_CRASH_RECEIPT_OK reason=6 fault-context consumed readback" \
+  "$out/kernel-serial.log" >/dev/null || {
+  echo "error: pending fault receipt was not consumed and reported on reboot" >&2
+  exit 1
+}
+echo "AIUEOS_FAULT_RECEIPT_SMOKE_OK fault-boot polled-receipt-consumed full-evidence"

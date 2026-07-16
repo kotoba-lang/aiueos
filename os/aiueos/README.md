@@ -336,12 +336,24 @@ the next boot consumes it, reports
 must still pass the complete evidence gate. The journal-recovery smoke gates
 both boots. Crash I/O takes no queue lock — it runs from the boot task before
 user processes exist, and masking the APIC timer there was observed to block
-the MSI-X wake. Writing a receipt from a real fault context (polled transport,
-no interrupt dependence) remains a gap.
+the MSI-X wake.
+
+Fault-context capture is owned by the unexpected-exception dispatcher. Any
+exception arriving before the deliberate end-of-boot probe (armed by an
+explicit flag, so a stray early `ud2` can no longer masquerade as the success
+path) writes the same crash record through a dedicated fault transport:
+try-lock only — if another context holds the block queue mid-operation the
+receipt is skipped rather than corrupting queue state — and completion is
+polled from the used ring with no interrupt dependence; the faulting kernel
+terminates immediately afterwards. The journal-recovery smoke gates a
+synthetic unexpected fault: the fault boot must show the polled receipt
+written with readback, and the next boot must consume it, report
+`AIUEOS_CRASH_RECEIPT_OK reason=6 fault-context consumed readback`, and still
+pass the complete evidence gate.
 
 This recovery selection lives in the reference C loader; re-expressing it in
-the compiler-emitted C-free loader, a GRUB/Multiboot2 compatibility path, and
-fault-context crash capture remain separate Phase 5 gaps.
+the compiler-emitted C-free loader and a GRUB/Multiboot2 compatibility path
+remain separate Phase 5 gaps.
 
 Requirements are Zig 0.14 or newer and `qemu-system-x86_64` with an edk2/OVMF
 firmware image. Override firmware discovery with `OVMF_CODE=/path/to/code.fd`.

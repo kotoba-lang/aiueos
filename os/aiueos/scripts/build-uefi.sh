@@ -87,6 +87,9 @@ fi
 if [ "${AIUEOS_CRASH_RECEIPT_SMOKE:-0}" = 1 ]; then
   input_smoke_cflags="$input_smoke_cflags -DAIUEOS_CRASH_RECEIPT_SMOKE=1"
 fi
+if [ "${AIUEOS_FAULT_RECEIPT_SMOKE:-0}" = 1 ]; then
+  input_smoke_cflags="$input_smoke_cflags -DAIUEOS_FAULT_RECEIPT_SMOKE=1"
+fi
 
 command -v zig >/dev/null 2>&1 || {
   echo "error: Zig is required to build the freestanding UEFI application" >&2
