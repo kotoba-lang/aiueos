@@ -47,6 +47,7 @@ extern volatile uint64_t aiueos_apic_timer_ticks;
 extern int aiueos_physical_allocator_initialize(const struct aiueos_boot_info *boot);
 extern void *aiueos_allocate_physical_page(void);
 extern int aiueos_pci_enumerate(void);
+extern int aiueos_catalog_policy_selftest_ok(void);
 extern int aiueos_object_store_ready(void);
 extern int aiueos_journal_ready(void);
 extern int aiueos_journal_recovered(void);
@@ -328,6 +329,9 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
     serial_string("AIUEOS_OBJECT_STORE_OK aiuefs-v3 objects=3 catalog=2apps\r\n");
     debug_string("AIUEOS_KOTOBA_APP_ADMISSION_OK catalog=rsa2048 apps=2 digest=kotoba-sha256 signature=kotoba-rsa2048-pkcs1 policy=public-key\n");
     serial_string("AIUEOS_KOTOBA_APP_ADMISSION_OK catalog=rsa2048 apps=2 digest=kotoba-sha256 signature=kotoba-rsa2048-pkcs1 policy=public-key\r\n");
+    if (aiueos_catalog_policy_selftest_ok()) {
+      serial_string("AIUEOS_KOTOBA_CATALOG_POLICY_SELFTEST_OK malformed=6\r\n");
+    }
     if (!aiueos_journal_ready()) {
       debug_string("AIUEOS_JOURNAL_FAIL write-readback\n");
       serial_string("AIUEOS_JOURNAL_FAIL write-readback\r\n");
