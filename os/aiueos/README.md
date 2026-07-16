@@ -375,6 +375,17 @@ recovery signature and a recomputed archive digest, so the loader admits the
 archive and the kernel policy layer must be the one that rejects it —
 defense in depth past the loader's whole-archive digest.
 
+The recovery materials also drive an actual restore path. When an object-store
+application fails digest or signature admission, the kernel restores it from
+the initramfs — but only when the carried ELF hashes to the catalog entry's
+digest and the carried signature verifies under the same RSA policy; the
+catalog stays the authority over acceptable content, and its own corruption
+remains fail-closed. Restored data and signature sectors are written through
+virtio-blk with per-sector readback, re-admitted from the in-memory copy, and
+reported as explicit restore evidence. The smoke's payload- and
+signature-corruption gates now require the restore and the complete evidence
+gate instead of a fatal stop.
+
 This recovery selection lives in the reference C loader; re-expressing it in
 the compiler-emitted C-free loader and a GRUB/Multiboot2 compatibility path
 remain separate Phase 5 gaps.

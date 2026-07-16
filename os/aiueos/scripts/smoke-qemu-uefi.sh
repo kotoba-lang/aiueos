@@ -213,19 +213,27 @@ fi
 
 # The #UD handler writes 0x30; isa-debug-exit maps it to (0x30 << 1) | 1 = 97.
 [ "$status" -eq 97 ] || {
-  if { [ "${AIUEOS_CORRUPT_KOTOBA_APP:-0}" = 1 ] ||
-       [ "${AIUEOS_CORRUPT_KOTOBA_SIGNATURE:-0}" = 1 ] ||
-       [ "${AIUEOS_CORRUPT_KOTOBA_CATALOG:-0}" = 1 ]; } && [ "$status" -eq 227 ]; then
+  if [ "${AIUEOS_CORRUPT_KOTOBA_CATALOG:-0}" = 1 ] && [ "$status" -eq 227 ]; then
     ! grep -F "AIUEOS_KOTOBA_APP_ADMISSION_OK" "$serial_log" >/dev/null || {
-      echo "error: corrupted Kotoba app reached admission" >&2; exit 1;
+      echo "error: corrupted Kotoba catalog reached admission" >&2; exit 1;
     }
-    echo "AIUEOS_KOTOBA_APP_AUTH_REJECTION_OK digest-or-signature"
+    echo "AIUEOS_KOTOBA_APP_AUTH_REJECTION_OK catalog"
     exit 0
   fi
   echo "error: unexpected QEMU exit status $status" >&2
   test -f "$log" && sed -n '1,80p' "$log" >&2
   exit 1
 }
+
+# A corrupted application payload or signature is no longer fatal: the kernel
+# must restore it from the initramfs recovery materials under the catalog
+# digest and RSA policy, then pass the complete evidence gate below.
+if [ "${AIUEOS_CORRUPT_KOTOBA_APP:-0}" = 1 ] || [ "${AIUEOS_CORRUPT_KOTOBA_SIGNATURE:-0}" = 1 ]; then
+  grep -F "AIUEOS_OBJECT_STORE_RESTORE_OK apps=1 source=initramfs catalog-digest-bound rsa2048 write-readback" "$serial_log" >/dev/null || {
+    echo "error: corrupted application was not restored from the initramfs" >&2
+    exit 1
+  }
+fi
 grep -F "AIUEOS_LOADER_OK" "$log" >/dev/null || {
   echo "error: loader identity was not observed" >&2
   exit 1
