@@ -7,6 +7,7 @@ out=${AIUEOS_OUT:-"$repo/build/aiueos"}
 efi="$out/esp/EFI/BOOT/BOOTX64.EFI"
 kernel="$out/esp/EFI/AIUEOS/KERNEL.ELF"
 image="$out/aiueos-x86_64-gpt.img"
+iso="$out/aiueos-x86_64.iso"
 receipt="$out/aiueos-x86_64-build-receipt.json"
 data_image="$out/aiueos-x86_64-data.img"
 
@@ -17,7 +18,7 @@ python3 "$aiueos/scripts/make-aiuefs-image.py" \
   --catalog-signature "$aiueos/kotoba/app-catalog.sig" --output "$data_image"
 python3 "$aiueos/scripts/make-release-image.py" build \
   --efi "$efi" --kernel "$kernel" --data "$data_image" \
-  --output "$image" --receipt "$receipt"
+  --output "$image" --iso "$iso" --receipt "$receipt"
 python3 "$aiueos/scripts/make-release-image.py" verify \
-  --image "$image" --efi "$efi" --kernel "$kernel"
+  --image "$image" --iso "$iso" --efi "$efi" --kernel "$kernel"
 echo "$receipt"

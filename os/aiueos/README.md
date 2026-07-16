@@ -264,6 +264,20 @@ making the disk image host-time-dependent. The image builder uses only Python's
 standard library; validation checks both GPT CRCs, the ESP layout, FAT chains,
 boot-image magic, and byte-for-byte embedded artifact contents.
 
+The same build also emits `aiueos-x86_64.iso`, a deterministic ISO9660 image
+with an El Torito EFI (no-emulation) boot entry. Its boot image is a 16 MiB
+FAT16 volume containing the same `EFI/BOOT/BOOTX64.EFI` and
+`EFI/AIUEOS/KERNEL.ELF`, so the catalog's 512-byte virtual sector count stays
+within the entry's 16-bit field. The verifier checks the primary volume
+descriptor, the El Torito boot record and validation-entry checksum, the boot
+catalog extent, the `ESP.IMG;1` directory record, FAT16 chains, and
+byte-for-byte embedded artifact contents; the receipt records the ISO digest
+and catalog geometry. The release smoke first requires the verifier to reject
+a one-byte kernel mutation inside the ISO, then boots both the GPT disk and
+the ISO through OVMF and requires the complete UEFI evidence gate on each
+medium. A BIOS/GRUB compatibility path, the recovery partition, and release
+signing remain separate Phase 5 gaps.
+
 Requirements are Zig 0.14 or newer and `qemu-system-x86_64` with an edk2/OVMF
 firmware image. Override firmware discovery with `OVMF_CODE=/path/to/code.fd`.
 
