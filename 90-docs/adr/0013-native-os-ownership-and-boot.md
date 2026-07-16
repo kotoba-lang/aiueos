@@ -1,14 +1,14 @@
-# ADR — aiueos boot, kernel, image, and OS integration
+# ADR-0013 — aiueos boot, kernel, image, and OS integration
 
-- **Status**: Accepted; ownership migrated
-- **Date**: 2026-07-15
+- **Status**: Accepted; ownership migrated; C-free hard flip in progress
+- **Date**: 2026-07-15 (gap ledger updated 2026-07-16)
 - **Owner**: `kotoba-lang/aiueos`
 - **Language dependency**: `kotoba-lang/compiler` (code generation and
   freestanding ABI)
 - **Imported from**: `kotoba-lang/kotoba` commit
   `bfcf31458ecc51d8a3e7f5896a32e719885f984b`
 - **Related implementation**: `kotoba-lang/aiueos#29`, the reviewed replacement
-  for PR #25
+  for PR #25; compiler PRs #42–#46; aiueos PRs #93–#95
 
 ## Context
 
@@ -80,6 +80,52 @@ UEFI or BIOS/GRUB
 
 No hosted result satisfies a bare-metal release gate.
 
+### C-free hard-flip release rule
+
+The production `bare-metal` profile does not compile, link, load, or execute C.
+It also does not depend on libc, a CRT, a JVM, Linux, a hosted supervisor, or a
+prebuilt foreign object. Assembly encoded by the compiler is permitted only as
+part of a named freestanding ABI; an independently assembled object is not.
+
+Earlier native C/assembly work remains valuable as executable specification and
+hardware-conformance evidence, but it is a reference profile, not cumulative
+evidence that the C-free kernel already implements the same mechanism. A
+mechanism moves to the production column only when all of these are true:
+
+1. its executable implementation is Kotoba source or compiler-owned target
+   emission;
+2. its artifact receipt has empty `c_sources`, `foreign_objects`, `imports`, and
+   `dynamic_dependencies`;
+3. positive and fail-closed QEMU gates exercise the production boot chain; and
+4. the compiler and aiueos merge commits are exact-pinned by west.
+
+The current production chain is:
+
+```text
+OVMF/UEFI
+  -> compiler-emitted PE32+ BOOTX64.EFI
+  -> compiler-emitted ELF64 ET_EXEC aiueos kernel
+  -> Kotoba main (ring 0)
+```
+
+The UEFI loader validates bounded `PT_LOAD` segments and entry containment,
+allocates and copies the kernel, obtains the final memory map, retries
+`ExitBootServices` with its current map key, and calls the kernel through the
+versioned boot-info ABI. The compiler-generated kernel entry preserves the
+SysV `rdi` boot-info pointer in its freestanding context. Kotoba obtains it with
+the kernel-only `kernel-boot-info` intrinsic and validates:
+
+- magic `AIUEBOOT` and ABI version 1;
+- non-null memory-map pointer and nonzero byte length;
+- descriptor size of at least 40 bytes; and
+- nonzero UEFI descriptor version.
+
+The kernel also reads CR3 and emits its QEMU success marker with privileged
+port I/O. The resulting receipts contain no C sources, foreign objects, imports,
+or dynamic dependencies. This proves firmware-to-Kotoba control transfer and a
+usable final firmware memory-map view. It does not yet prove that the C-free
+kernel allocates a physical page or owns its page tables.
+
 ### Required artifacts
 
 | Artifact | Purpose |
@@ -120,9 +166,11 @@ not the kernel authority.
 ### Compiler and native-substrate rule
 
 Policy, service, driver-protocol, and application code expressible in Kotoba is
-compiled by `kotoba-lang/compiler`. A small assembly/native substrate is
-allowed temporarily for reset entry, CPU mode transition, page-table
-activation, interrupt stubs, and context switch.
+compiled by `kotoba-lang/compiler`. The reference profile historically allowed
+a small assembly/native substrate for reset entry, CPU mode transition,
+page-table activation, interrupt stubs, and context switch. The production
+hard-flip profile instead requires those instruction sequences to be emitted by
+the compiler from a named target ABI, with no separately assembled or C object.
 
 Every exception requires a named ABI, QEMU positive/negative tests, a compiler
 migration issue, and no ambient authority above the capability boundary.
@@ -234,17 +282,39 @@ virtio-blk/NVMe -> block service -> filesystem/object store
                 -> kotobase IStore -> browser/profile/system datoms
 ```
 
-### Phases and exit gates
+### C-free status and remaining gap ledger
 
-| Phase | Deliverable | Exit gate |
+Only the following table determines production maturity. “Reference exists”
+means the older native substrate demonstrates a design or QEMU interaction but
+still must be re-expressed in Kotoba/compiler output.
+
+| Phase | C-free status at 2026-07-16 | Remaining exit gate |
 |---|---|---|
-| 0 | Linux PID-1/initramfs/QEMU/virtio/VFIO prototype | PR #29 merged; unit CI green; whole boot still unproven |
-| 1 | UEFI loader + serial kernel | In progress: OVMF hands off to a bounded ELF64 kernel with its own stack and COM1 serial output; signature verification remains |
-| 2 | paging, exceptions, ACPI, APIC, SMP | In progress: GDT/IDT, CR3/W^X, ACPI discovery, and BSP Local APIC timer vector 32 pass; IOAPIC and AP startup remain |
-| 3 | scheduler, VM, syscall, capability handles | In progress: preemptive CR3-isolated kernel tasks and two APIC-timer-preempted CPL3 processes with distinct roots/private pages/domains; switch-time CR3/TSS.RSP0/owner updates; STAR/LSTAR/FMASK `SYSCALL`/validated `SYSRETQ`; syscall/copy-in and cross-process rejection; W^X; page-backed capability table with generation reuse/retirement and atomic attenuated transfer/claim; parent-slot/generation derivation graph with multi-hop recursive revocation; scheduler exit/reap and owner-wide descendant revocation; allocator-owned PML4/PDPT/PD/PT/private pages returned through a validated free list, zeroed and reused; separate eight-slot generation-tracked address-space and scheduler-task allocation with full-table rejection and lowest-slot reuse; allocator-owned interrupt stacks returned and zero-reused; Kotoba-planned descriptor-driven service spawn/restart/terminate; journal-replayed service generation/restart state drives task recreation before user processes; IPC and registry. Arbitrary process creation ABI and per-CPU scheduler queues remain |
-| 4 | PCI/MMIO/DMA/IOMMU/IRQ + virtio | In progress: QEMU intel-iommu root/context/second-level translation reaches `GSTS.TES`; domain 1 is bounded to 128 MiB and virtio queue completions pass through it; multi-segment/scoped DRHD and per-device domains remain |
-| 5 | ISO/GPT/raw image, recovery, signed update | reproducible UEFI and GRUB boots |
-| 6 | browser shell, compositor, input, kotobase | desktop session persists and restores state |
+| 1 — compiler and UEFI boot | **Working:** direct ELF64 `ET_EXEC` kernel packaging; compiler-emitted PE32+ loader; bounded segment/entry admission; final UEFI memory-map boot-info; `ExitBootServices`; ring-0 Kotoba; CR3 and port-I/O evidence; reproducible no-foreign-code receipts | kernel/loader signature verification; Secure Boot key lifecycle; serial/panic receipt owned by the C-free kernel |
+| 2 — CPU and memory | Boot-info memory map is readable and structurally validated. Privileged intrinsics exist for CR2/CR3, `invlpg`, interrupt control, halt/pause, and port I/O. Reference implementations exist for allocator, GDT/IDT, page faults, ACPI, APIC/IOAPIC, timers, and IRQs | Kotoba physical page allocator and reclamation; dynamic four-level page tables; W^X/guard pages; full exception stubs and double-fault IST; ACPI validation; Local APIC/x2APIC and IOAPIC; timer/IRQ dispatch; AP trampoline, SMP startup, per-CPU GDT/TSS/stacks/state |
+| 3 — kernel execution | Compiler has a freestanding context ABI. Reference implementations exist for preemption, CPL3, syscall/copy, address spaces, capability generations, IPC, and service lifecycle | Kotoba context switch; preemptive per-CPU scheduler; process/address-space isolation; ring 3; syscall entry/exit; bounded copy-in/out with fault recovery; capability handle table; arbitrary process/service creation; persistent service supervisor |
+| 4 — hardware backend | Reference QEMU evidence exists for PCI discovery, BAR admission, virtio-blk MSI-X, VT-d translation/interrupt remapping, journaled storage, and initial virtio-gpu transport | Kotoba PCI config access and enumeration; validated BAR/MMIO provider; DMA allocator; VT-d/IOMMU per-device domains; MSI/MSI-X routing; production virtqueues; virtio-blk/net/gpu/input; NVMe and USB HID; real-machine evidence |
+| 5 — boot and release | C-free UEFI artifacts and receipts exist | compiler-owned relocation/section coverage sufficient for the full kernel; GPT raw disk; bootable ISO; GRUB/Multiboot2; BIOS fixture; initramfs/cpio and recovery/update partition; signed reproducible release; crash/update/rollback receipts |
+| 6 — OS and desktop | Capability/component contracts, browser desktop vocabulary, kototama/kotobase designs, and reference storage/GPU slices exist | native Kotoba component runtime; kototama integration; filesystem/object store and journal transaction plane; kotobase Datalog `IStore` persistence; compositor and virtio-gpu resources/scanout; browser shell as desktop UI; keyboard/IME/pointer/accessibility; permission broker; session restore |
+
+Implementation order is dependency-driven:
+
+```text
+physical allocator -> dynamic paging -> exceptions/ACPI/APIC/SMP
+  -> scheduler/address spaces/ring 3/syscalls/capabilities
+  -> PCI/MMIO/DMA/IOMMU/MSI-X/virtio
+  -> object store/kotobase + component services
+  -> virtio-gpu/input + browser desktop
+  -> signed ISO/GPT/recovery release and real-machine qualification
+```
+
+The immediate next gate is deliberately narrow: parse the variable-stride UEFI
+memory map in Kotoba, admit only usable page-aligned conventional memory while
+excluding loader/kernel/boot-info ranges, allocate and zero pages, reject
+exhaustion and overlap, and use those pages to construct and activate a new
+four-level page-table root. QEMU must prove allocation, mapping, W^X rejection,
+unmapping/`invlpg`, and deterministic failure paths without adding a foreign
+object.
 
 Contract M6 does not imply kernel/hardware M6. Every subsystem records maturity
 separately.
@@ -270,7 +340,12 @@ separately.
 - Parity with macOS, Windows, or Linux is not claimed until Phase 6 passes on a
   real-machine class as well as QEMU.
 
-## Implementation record
+## Reference native-substrate implementation record
+
+This section records the older C/assembly-backed path. It is retained as a
+porting specification and regression oracle. Unless a feature also appears as
+working in the C-free ledger above, it is not part of the production hard-flip
+kernel.
 
 The Phase 1 vertical slice lives in `os/aiueos`. It builds a real PE32+ EFI
 application and a separate static ELF64 kernel with a freestanding toolchain.
