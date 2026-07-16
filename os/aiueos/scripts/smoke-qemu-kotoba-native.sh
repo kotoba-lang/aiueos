@@ -34,7 +34,7 @@ python3 - "$log" <<'PY'
 from pathlib import Path
 import sys
 data=Path(sys.argv[1]).read_bytes()
-if not data.endswith(b"N"):
-    raise SystemExit("error: Kotoba-native privileged marker missing")
+if not data.endswith(b"M"):
+    raise SystemExit("error: Kotoba-native memory-map handoff marker missing")
 PY
-echo "AIUEOS_KOTOBA_NATIVE_QEMU_OK no-c-boot-chain exit-boot-services cr3 port-io"
+echo "AIUEOS_KOTOBA_NATIVE_QEMU_OK no-c-boot-chain memory-map-v1 exit-boot-services cr3"
