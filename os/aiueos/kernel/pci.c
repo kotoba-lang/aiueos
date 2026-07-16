@@ -261,6 +261,9 @@ static uint64_t user_journal_value(const struct aiuefs_journal_record *journal,
   return kotoba_aiueos_user_object_journal_value(journal,sizeof(*journal));
 }
 
+static unsigned object_store_restored_count;
+unsigned aiueos_object_store_restored_count(void) { return object_store_restored_count; }
+
 static int virtio_blk_sector_io(struct virtio_blk_request *request, uint8_t *sector,
     uint8_t *status, struct virtq_desc *desc, struct virtq_avail *avail,
     struct virtq_used *used, volatile uint16_t *doorbell, uint16_t *submitted,
@@ -893,7 +896,42 @@ static int virtio_blk(uint8_t b, uint8_t d, uint8_t f) {
         for(unsigned i=0;i<256;i++)signature[i]=sector[i];
         if(!sha256(kotoba_app_objects[app],entry->length,actual_sha)||
            !kotoba_aiueos_digest_equal(entry->sha256,actual_sha,32)||
-           !rsa2048_sha256_verify(signature,actual_sha))return 0;
+           !rsa2048_sha256_verify(signature,actual_sha)) {
+          /* Restore from the initramfs recovery payload. The catalog still
+             decides what content is acceptable: the carried ELF must hash to
+             the catalog entry's digest and its carried signature must verify
+             under the same RSA policy before a byte is written back. Catalog
+             corruption itself stays fatal. */
+          extern const uint8_t *aiueos_initramfs_recovery_elf(uint64_t *);
+          extern const uint8_t *aiueos_initramfs_recovery_signature(void);
+          uint64_t recovery_length=0;
+          const uint8_t *recovery_elf=aiueos_initramfs_recovery_elf(&recovery_length);
+          const uint8_t *recovery_signature=aiueos_initramfs_recovery_signature();
+          if(!recovery_elf||!recovery_signature||recovery_length!=entry->length)return 0;
+          if(!sha256(recovery_elf,recovery_length,actual_sha)||
+             !kotoba_aiueos_digest_equal(entry->sha256,actual_sha,32)||
+             !rsa2048_sha256_verify(recovery_signature,actual_sha))return 0;
+          for(uint32_t written=0,index=0;written<entry->length;index++) {
+            uint32_t take=entry->length-written;if(take>512)take=512;
+            for(uint32_t i=0;i<512;i++)sector[i]=i<take?recovery_elf[written+i]:0;
+            if(!virtio_blk_sector_io(request,sector,status,desc,avail,used,doorbell,&submitted,VIRTIO_BLK_T_OUT,entry->sector+index))return 0;
+            for(uint32_t i=0;i<512;i++)sector[i]=0;
+            if(!virtio_blk_sector_io(request,sector,status,desc,avail,used,doorbell,&submitted,VIRTIO_BLK_T_IN,entry->sector+index))return 0;
+            for(uint32_t i=0;i<take;i++)if(sector[i]!=recovery_elf[written+i])return 0;
+            written+=take;
+          }
+          for(uint32_t i=0;i<512;i++)sector[i]=i<256?recovery_signature[i]:0;
+          if(!virtio_blk_sector_io(request,sector,status,desc,avail,used,doorbell,&submitted,VIRTIO_BLK_T_OUT,entry->signature_sector))return 0;
+          for(uint32_t i=0;i<512;i++)sector[i]=0;
+          if(!virtio_blk_sector_io(request,sector,status,desc,avail,used,doorbell,&submitted,VIRTIO_BLK_T_IN,entry->signature_sector))return 0;
+          for(unsigned i=0;i<256;i++)if(sector[i]!=recovery_signature[i])return 0;
+          for(uint32_t i=0;i<entry->length;i++)kotoba_app_objects[app][i]=recovery_elf[i];
+          for(unsigned i=0;i<256;i++)signature[i]=recovery_signature[i];
+          if(!sha256(kotoba_app_objects[app],entry->length,actual_sha)||
+             !kotoba_aiueos_digest_equal(entry->sha256,actual_sha,32)||
+             !rsa2048_sha256_verify(signature,actual_sha))return 0;
+          object_store_restored_count++;
+        }
         for(unsigned i=0;i<16;i++)kotoba_apps[app].id[i]=entry->id[i];kotoba_apps[app].length=entry->length;kotoba_apps[app].ready=1;
       }
       kotoba_app_count=catalog->count;

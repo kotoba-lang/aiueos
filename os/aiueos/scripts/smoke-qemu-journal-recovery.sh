@@ -118,12 +118,12 @@ echo "AIUEOS_SERVICE_REGISTRY_ROLLBACK_REDO_OK fallback=1 object=2"
 echo "AIUEOS_KOTOBA_USER_JOURNAL_REJECTION_OK domain=4 fallback=1 rewritten=2"
 
 # Rebuild a clean signed fixture for each independent admission mutation.
-# These gates prove that the Kotoba SHA path rejects changed payload/catalog
-# bytes and that RSA verification still rejects a changed signature.
+# A changed payload or signature must be detected and restored from the
+# initramfs recovery materials; a changed catalog stays fail-closed.
 AIUEOS_CORRUPT_KOTOBA_APP=1 "$aiueos/scripts/smoke-qemu-uefi.sh"
 AIUEOS_CORRUPT_KOTOBA_SIGNATURE=1 "$aiueos/scripts/smoke-qemu-uefi.sh"
 AIUEOS_CORRUPT_KOTOBA_CATALOG=1 "$aiueos/scripts/smoke-qemu-uefi.sh"
-echo "AIUEOS_KOTOBA_APP_CORRUPTION_GATES_OK digest signature catalog"
+echo "AIUEOS_KOTOBA_APP_CORRUPTION_GATES_OK digest=restored signature=restored catalog=rejected"
 
 # Crash receipt: a kernel with the test-only synthetic panic persists a
 # durable, checksummed crash record (write + readback) and terminates. The

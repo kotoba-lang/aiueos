@@ -36,6 +36,14 @@ static uint8_t initramfs_recovery_signature[256];
 static uint64_t initramfs_recovery_elf_length;
 static int initramfs_recovery_signature_present;
 
+const uint8_t *aiueos_initramfs_recovery_elf(uint64_t *length) {
+  if (length) *length = initramfs_recovery_elf_length;
+  return initramfs_recovery_elf_length ? initramfs_recovery_elf : 0;
+}
+const uint8_t *aiueos_initramfs_recovery_signature(void) {
+  return initramfs_recovery_signature_present ? initramfs_recovery_signature : 0;
+}
+
 static int initramfs_name_is(const uint8_t *name, uint64_t namesize, const char *wanted) {
   uint64_t length = 0;
   while (wanted[length]) length++;
@@ -441,6 +449,17 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
     serial_string("AIUEOS_OBJECT_STORE_OK aiuefs-v3 objects=3 catalog=2apps\r\n");
     debug_string("AIUEOS_KOTOBA_APP_ADMISSION_OK catalog=rsa2048 apps=2 digest=kotoba-sha256 signature=kotoba-rsa2048-pkcs1 policy=public-key\n");
     serial_string("AIUEOS_KOTOBA_APP_ADMISSION_OK catalog=rsa2048 apps=2 digest=kotoba-sha256 signature=kotoba-rsa2048-pkcs1 policy=public-key\r\n");
+    {
+      extern unsigned aiueos_object_store_restored_count(void);
+      unsigned restored = aiueos_object_store_restored_count();
+      if (restored == 1) {
+        debug_string("AIUEOS_OBJECT_STORE_RESTORE_OK apps=1 source=initramfs catalog-digest-bound rsa2048 write-readback\n");
+        serial_string("AIUEOS_OBJECT_STORE_RESTORE_OK apps=1 source=initramfs catalog-digest-bound rsa2048 write-readback\r\n");
+      } else if (restored) {
+        debug_string("AIUEOS_OBJECT_STORE_RESTORE_OK apps=2 source=initramfs catalog-digest-bound rsa2048 write-readback\n");
+        serial_string("AIUEOS_OBJECT_STORE_RESTORE_OK apps=2 source=initramfs catalog-digest-bound rsa2048 write-readback\r\n");
+      }
+    }
     if (aiueos_catalog_policy_selftest_ok()) {
       serial_string("AIUEOS_KOTOBA_CATALOG_POLICY_SELFTEST_OK malformed=6\r\n");
     }
