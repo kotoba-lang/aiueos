@@ -125,7 +125,8 @@ struct aiuefs_mutable_object {
 } __attribute__((packed));
 static int object_store_ready;
 #define KOTOBA_APP_CAPACITY 4U
-static struct { uint8_t id[16]; uint32_t length; uint8_t ready; } kotoba_apps[KOTOBA_APP_CAPACITY];
+struct kotoba_app_metadata { uint8_t id[16]; uint32_t length; uint8_t ready; } __attribute__((packed));
+static struct kotoba_app_metadata kotoba_apps[KOTOBA_APP_CAPACITY];
 static uint8_t kotoba_app_objects[KOTOBA_APP_CAPACITY][12288];
 static uint32_t kotoba_app_count;
 static int journal_ready;
@@ -156,13 +157,17 @@ extern uint64_t kotoba_aiueos_journal_plan(uint64_t valid0, uint64_t sequence0,
 volatile uint64_t aiueos_virtio_blk_irq_count;
 static int blk_msix_active;
 int aiueos_object_store_ready(void) { return object_store_ready; }
+extern uint64_t kotoba_aiueos_app_lookup_plan(
+  const uint8_t[16],const struct kotoba_app_metadata*,uint64_t,uint64_t,uint64_t);
 int aiueos_kotoba_app_object(const uint8_t id[16],const uint8_t **data,uint64_t *length) {
   if (!id || !data || !length) return 0;
-  for(unsigned app=0;app<kotoba_app_count;app++) { uint8_t difference=0;
-    for(unsigned i=0;i<16;i++) difference|=id[i]^kotoba_apps[app].id[i];
-    if (!difference && kotoba_apps[app].ready) { *data=kotoba_app_objects[app];*length=kotoba_apps[app].length;return 1; }
-  }
-  return 0;
+  uint64_t plan=kotoba_aiueos_app_lookup_plan(
+    id,kotoba_apps,kotoba_app_count,sizeof(kotoba_apps[0]),
+    kotoba_app_count*sizeof(kotoba_apps[0]));
+  if (!plan) return 0;
+  uint64_t one_based=plan&7,length_plan=plan>>3;
+  if (!one_based||one_based>kotoba_app_count||!length_plan||length_plan>12288) return 0;
+  *data=kotoba_app_objects[one_based-1];*length=length_plan;return 1;
 }
 int aiueos_journal_ready(void) { return journal_ready; }
 int aiueos_journal_recovered(void) { return journal_recovered; }
