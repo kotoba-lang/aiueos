@@ -120,9 +120,14 @@
 (def ^:private kvm-reg-core-pc-idx 0x40)
 (def arm64-core-reg-pc
   (bit-or kvm-reg-arm64 kvm-reg-size-u64 kvm-reg-arm-core kvm-reg-core-pc-idx))
-;; SP (sp_el0) is at byte 248 in struct kvm_regs -> index 0x3E. A C guest needs
-;; a valid stack pointer; the tender sets SP to the top of the guest RAM window.
-(def ^:private kvm-reg-core-sp-idx 0x3E)
+;; The guest boots at EL1h (SPSel=1), so it uses **SP_EL1** -- the `sp_el1` field
+;; of struct kvm_regs (byte 272, after the 272-byte user_pt_regs) -> core-reg
+;; index 0x44. Setting `user_pt_regs.sp` (SP_EL0, index 0x3E) does NOT set the
+;; stack the guest actually uses; a stack-using guest would then fault on the
+;; first push. (Latent until a guest touched the stack: the earlier asm/C
+;; guests were leaf functions with no frame; a compiled `.kotoba` guest's
+;; prologue pushes fp/lr immediately.)
+(def ^:private kvm-reg-core-sp-idx 0x44)
 (def arm64-core-reg-sp
   (bit-or kvm-reg-arm64 kvm-reg-size-u64 kvm-reg-arm-core kvm-reg-core-sp-idx))
 

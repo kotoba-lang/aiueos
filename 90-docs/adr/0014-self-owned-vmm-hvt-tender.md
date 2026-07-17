@@ -402,6 +402,43 @@ Landed: `KVM_GET_MP_STATE`/`KVM_SET_MP_STATE` ioctls + `mp-state` constants
 a documented diagnostic, off by default). `aiueos.hvt-test` is 18 tests / 92
 assertions (adds the MP_STATE ioctl numbers and the SP core-reg id).
 
+### V1 progress — 2026-07-17 (kotoba-first guest: written in Kotoba, not asm/C)
+
+The earlier guests were AArch64 asm/C, with the reasoning "kotoba can't target
+this arch." That was **wrong** — `kotoba-lang/compiler` already has an AArch64
+backend; it only lacked a *bare-metal kernel* target. Rather than accept asm/C,
+the guest is now written in the **Kotoba language** and compiled to a
+freestanding AArch64 ELF, matching the repo's kotoba-first rule and the
+`.kotoba`-native ADR-0013 kernel.
+
+- **Compiler** (`kotoba-lang/compiler`, merged `e5e278a`): a new
+  `aarch64-aiueos-kernel-v1` target (mirrors `x86_64-aiueos-kernel-v1`) —
+  `kernel-store-u8`/`load-u8` bounded MMIO intrinsics in the AArch64 backend, an
+  `EM_AARCH64` ELF packager with an AArch64 entry-shim (sets the hidden `x7`
+  fuel/capability context, calls `main`, parks), and the verifier admitting the
+  kernel intrinsics for the target. Full compiler suite 187 tests / 3050
+  assertions green; x86_64 codegen unchanged (the three `os/aiueos` native build
+  scripts' pinned compiler SHA advanced to `e5e278a`, output byte-identical).
+- **Guest** `resources/hvt/guest-serial.kotoba` → `guest-serial.elf`
+  (reproducible via `scripts/build-hvt-kotoba-guest.cljs`): a `(defn main …)`
+  that writes `HI\n` to the serial MMIO port then the poweroff port. Because
+  Kotoba is pure, ordered side effects thread each store's return value into the
+  next store's index (`(- token value)` = 0) so none are dead-code-eliminated.
+- **Tender fix (load-bearing bug):** the guest boots at **EL1h**, so it uses
+  **SP_EL1**; the tender was setting **SP_EL0** (`user_pt_regs.sp`, core-reg
+  `0x3E`), which a stack-using guest never sees — its first `str x29,[sp]` faulted
+  and the vcpu spun. Fixed to set SP_EL1 (core-reg `0x44`). This was latent: the
+  asm/C guests were leaf functions with no frame; the compiled Kotoba prologue
+  pushes fp/lr immediately. (Also recorded: the AArch64 MMIO access must use
+  base-register addressing — register-offset `[x1,x3]` leaves ESR `ISV=0` so KVM
+  cannot emulate the device store — fixed in the compiler intrinsic.)
+
+Verified on real KVM: `clojure -M:hvt elf resources/hvt/guest-serial.elf` boots
+the Kotoba-compiled AArch64 guest and returns `{:serial "HI\n" :serial-ok? true
+:shutdown? true :halt :mmio-poweroff}`. The guest path is now kotoba-first; the
+remaining asm/C guests (virtio transport/tx/rx) can migrate to `.kotoba` on this
+foundation as follow-up.
+
 ## Non-goals (firm)
 
 - No from-scratch type-1 hypervisor; we always ride KVM/HVF.
