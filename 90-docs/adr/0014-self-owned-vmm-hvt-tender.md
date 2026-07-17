@@ -208,6 +208,36 @@ gate remain green. (Repo-wide `clojure -M:test` is 279 tests / 802 assertions;
 the single error is a pre-existing `decide-subprocess-smoke-test` shelling to
 `bb decide` on the host — untouched by this change and unrelated to `hvt`.)
 
+### V1 progress — 2026-07-17 (ELF64 direct-loader, the arch-independent half)
+
+Finding 1 above blocks booting the *x86_64* ADR-0013 kernel on this aarch64
+host, but the **loader itself is arch-independent and is now built and verified
+end-to-end** — the reusable half of "direct-load the kernel image."
+
+- **Pure ELF64 parser** (`parse-elf64` / `rd-le` / `elf-load-range`, testable on
+  any JVM host): validates the magic/`EI_CLASS`/`EI_DATA`, reads `e_machine`/
+  `e_entry`/`e_phoff`/`e_phentsize`/`e_phnum`, and returns the PT_LOAD segments
+  (`{:offset :vaddr :filesz :memsz}`) plus the page-aligned load window.
+- **`spike` generalized via `boot-plan`**: accepts `{:elf-bytes <byte[]>}` as an
+  alternative to `{:program …}`. It maps guest RAM at the ELF's load base (an
+  **arbitrary** GPA — the fixture links at `0x40000000`, exercising the
+  non-zero-base path the raw-word guest never did), copies each PT_LOAD segment
+  to its `vaddr`, and sets PC = `e_entry`.
+- **Real fixture, not synthetic**: `resources/hvt/guest-aarch64.elf` is a genuine
+  `ld`-produced aarch64 ELF (source `guest-aarch64.S` + `guest-aarch64.ld`,
+  reproducible via `scripts/build-hvt-guest.cljs` — nbb, `--build-id=none -s`
+  for a byte-deterministic blob, SHA pinned). It writes `HI\n` to the serial
+  MMIO port then the poweroff port, same as the raw guest.
+
+Verified on real KVM: `clojure -M:hvt elf resources/hvt/guest-aarch64.elf` boots
+the ELF and returns `{:serial "HI\n" :serial-ok? true :shutdown? true :steps 4}`.
+`scripts/hvt-smoke.cljs` now gates **both** cases (raw-word V0 + ELF V1) and the
+reproducibility build passes byte-identical. `aiueos.hvt-test` is 11 tests / 57
+assertions (adds `rd-le`, `elf-load-range`, a bad-magic rejection, and a parse
+of the real fixture). What remains for the kernel path is purely the x86_64 KVM
+host (Finding 1) and the kernel's own boot-info/entry contract; the ELF-loading
+mechanism is done.
+
 ## Non-goals (firm)
 
 - No from-scratch type-1 hypervisor; we always ride KVM/HVF.
