@@ -22,7 +22,7 @@
 
 #?(:clj
    (defn- unblob-value
-     "Undo edn-datomize.bb's pr-str blobbing of a non-scalar attribute value
+     "Undo edn-datomize.cljs's pr-str blobbing of a non-scalar attribute value
      (nested map / vector-of-maps). Scalars pass through unchanged."
      [v]
      (if (string? v)
@@ -33,7 +33,7 @@
 
 #?(:clj
    (defn- reconstitute-keep-ns
-     "Undo edn-datomize.bb's `wrap-map-keep-ns` transform on TX-DATA
+     "Undo edn-datomize.cljs's `wrap-map-keep-ns` transform on TX-DATA
      (`[{:db/id -1 ...}]`): drop the :db/id wrapper and edn/read-string any
      pr-str'd blob values, returning the original plain EDN map. Every key in
      these three resources was already namespaced (:aiueos/*,
@@ -50,7 +50,7 @@
      "Load the EDN authority for the aiueos/component boundary.
 
      `resources/aiueos/component_boundary.edn` on disk is Datomic/Datascript
-     tx-data (edn-datomize.bb `wrap-map-keep-ns`); this reconstitutes the
+     tx-data (edn-datomize.cljs `wrap-map-keep-ns`); this reconstitutes the
      original `:aiueos/*`-keyed map so `validate-component-boundary` and
      every other caller keep working against the same shape as before the
      transform."
