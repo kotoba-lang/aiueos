@@ -162,6 +162,52 @@ already proven working. A real PSCI clean shutdown moves to V1, where the
 guest is the ADR-0013 kernel (which sets up its own EL1 vector table and can
 issue PSCI properly), not this hand-written stub.
 
+### V1 progress — 2026-07-17 (two hard findings)
+
+Work continued toward V1's next items (real PSCI SYSTEM_OFF; ADR-0013 kernel
+direct-load). Two constraints were established empirically and shape the
+remaining V1 path.
+
+**Finding 1 — kernel direct-load needs an x86_64 KVM host, which the dev
+machine is not.** The ADR-0013 native kernel (`os/aiueos/kernel/`) is
+**x86_64-only**: AT&T x86 assembly (`%rsp`/`%rip`, `entry.S`), Intel VT-d
+(`vtd.c`), `BOOTX64.EFI`, and its smoke path is `qemu-system-x86_64 -machine
+q35 -cpu max` under **TCG** (emulation). KVM is arch-native — an **aarch64**
+host (Apple M4 → Lima) can only run **aarch64** guests, so it cannot boot the
+x86_64 kernel under `aiueos.hvt`. Direct-loading the real kernel therefore
+needs an x86_64 machine with `/dev/kvm` (a native x86 Linux box or an
+x86_64-KVM cloud instance). The tender's ELF-load + boot-info-handoff logic is
+arch-independent and can be authored now; only the live gate is gated on
+x86 hardware. (An `aarch64-aiueos-kernel` target is named as future work in
+ADR-0013 but not yet built; when it exists, this same aarch64 KVM host boots
+it directly.)
+
+**Finding 2 — PSCI SYSTEM_OFF does not fire for a hand-written bare guest;
+it needs a real-kernel guest.** Reproduced deterministically via the new
+`aiueos.hvt/guest-program-psci` diagnostic (serial `HI\n` → `hvc #0` with
+`0x84000008` → a poweroff-port *fall-through* reached only if PSCI is ignored):
+the guest emits the three serial bytes, then `KVM_RUN` blocks in-kernel at the
+`hvc` — **neither** a `KVM_EXIT_SYSTEM_EVENT` **nor** the fall-through poweroff
+exit appears, so KVM is injecting an exception into the guest (which spins in
+its zeroed EL1 vector table) rather than honoring SYSTEM_OFF. Forcing the
+`KVM_ARM_VCPU_PSCI_0_2` feature bit (`features[0] |= 1`) in `KVM_ARM_VCPU_INIT`
+did **not** help — it regressed further, blocking the *first* `KVM_RUN` before
+any serial (this KVM already defaults the guest to PSCI 0.2+, so the bit is
+counterproductive here), so the tender uses the recommended features unchanged.
+Conclusion: a working PSCI clean shutdown requires a guest that establishes its
+own EL1 exception vectors — i.e. the ADR-0013 kernel (Finding 1), not a bare
+stub. Until then V0/V1 halt via the MMIO poweroff port, which works.
+
+Landed this pass (verified on the aarch64 KVM host): `spike` parametrized over
+a guest program (`{:program …}`), the PSCI diagnostic guest + its
+encoding/feature-bit unit tests (`aiueos.hvt-test`: 7 tests / 41 assertions,
+all green on any JVM host), a `clojure -M:hvt psci` diagnostic entry (documented
+as intentionally blocking — run under `timeout`), and `KVM_ARM_VCPU_INIT`
+return-code checking. The default (poweroff) path and `scripts/hvt-smoke.cljs`
+gate remain green. (Repo-wide `clojure -M:test` is 279 tests / 802 assertions;
+the single error is a pre-existing `decide-subprocess-smoke-test` shelling to
+`bb decide` on the host — untouched by this change and unrelated to `hvt`.)
+
 ## Non-goals (firm)
 
 - No from-scratch type-1 hypervisor; we always ride KVM/HVF.
