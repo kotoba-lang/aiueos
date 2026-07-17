@@ -494,6 +494,47 @@ guest is now redundant, kept as a cross-check). The **virtqueue** guests
 guest-RAM struct writes, which the byte/u32 store intrinsics already cover — a
 mechanical follow-up.
 
+### V1 progress — 2026-07-17 (virtqueue tx/rx migrated to Kotoba — the guest path is fully kotoba-first)
+
+The mechanical follow-up above is done: `resources/hvt/guest-virtqueue-tx.kotoba`
+and `guest-virtqueue-rx.kotoba` are direct ports of `guest-virtqueue-aarch64.c`
+and `guest-virtqueue-rx-aarch64.c`, needing no new compiler primitives —
+`kernel-store-u32`/`kernel-load-u32`/`kernel-store-u8`/`kernel-load-u8` plus
+`do` cover the whole split-virtqueue setup (descriptor table, avail ring, used
+ring) in guest RAM.
+
+- **Sub-u32 struct fields packed via arithmetic, not bit-ops** (this language
+  has none): a descriptor's `flags`(u16)+`next`(u16) at one u32-aligned offset
+  is written as `flags + next*65536`; an avail/used ring's `flags`(u16)+
+  `idx`(u16) likewise. Reading the used-ring completion back uses
+  `(quot value 65536)` to recover the high half — exact since these values are
+  small and non-negative. The `u64` descriptor `addr` is two `u32` stores (low
+  at `+0`, high `+4` = `0`, since every guest-RAM address here fits in 32 bits).
+- **No polling loop needed**: the tender's virtqueue emulation is synchronous —
+  the `QueueNotify` MMIO write itself services the queue (reads the ring,
+  fills/drains the buffer, writes the used ring) before the guest resumes — so
+  a single post-notify read of the used-ring index proves completion; no
+  `loop`/`recur` or retry count required.
+- **Reused RAM layout**: `desc@0x110000 avail@0x120000 used@0x130000
+  buf@0x140000`, all inside the tender's 2 MiB window past the loaded ELF's own
+  text/context.
+
+Verified on real KVM: both guests' 25-step traces are **structurally identical**
+to their C counterparts (handshake → queue config → one `NOTIFY` → serial
+confirmation → poweroff). TX: `{:console "HI\n" :serial "HI\n" :serial-ok?
+true}` (bytes pulled from the guest's transmit buffer through the descriptor).
+RX: `{:serial "HI\n" :serial-ok? true}` (the guest echoes what the tender wrote
+into its receive buffer). `hvt-smoke.cljs` now gates **10 cases**; both ELF
+fixtures reproducible byte-identical.
+
+**The entire hvt guest path is now written in Kotoba** — serial, u32 MMIO
+device probing, the full virtio-mmio transport handshake, and both virtqueue
+directions. The original asm/C guests (`guest-virtio-aarch64.S`,
+`guest-virtqueue-aarch64.c`, `guest-virtqueue-rx-aarch64.c`) are kept as an
+independent cross-check of the tender's emulation, not deleted — they still
+pass and still gate in `hvt-smoke.cljs`, but they are no longer the reference
+implementation for anything.
+
 ## Non-goals (firm)
 
 - No from-scratch type-1 hypervisor; we always ride KVM/HVF.
