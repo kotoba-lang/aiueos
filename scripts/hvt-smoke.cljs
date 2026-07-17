@@ -23,6 +23,7 @@
 (def virtqueue-fixture "resources/hvt/guest-virtqueue-aarch64.elf")
 (def virtqueue-rx-fixture "resources/hvt/guest-virtqueue-rx-aarch64.elf")
 (def kotoba-fixture "resources/hvt/guest-serial.elf")   ; written in Kotoba, not asm/C
+(def kotoba-virtio-fixture "resources/hvt/guest-virtio-probe.elf")  ; Kotoba + u32 MMIO virtio probe
 
 (defn run-spike [argv]
   (let [res (cp/spawnSync "clojure" (clj->js (into ["-M:hvt"] argv))
@@ -79,9 +80,11 @@
         v1rx (check-case "V1 virtqueue receive (guest-virtqueue-rx-aarch64.elf, device->guest into serial)"
                          ["elf" virtqueue-rx-fixture] false)
         v1kt (check-case "V1 kotoba-first guest (guest-serial.elf: .kotoba -> aarch64 kernel ELF)"
-                         ["elf" kotoba-fixture] false)]
-    (if (and v0 v1 v1v v1q v1rx v1kt)
-      (do (println "[hvt-smoke] PASS -- self-owned VMM boots a raw guest, a direct-loaded ELF, a virtio-mmio transport handshake, a full virtqueue transmit (guest->device into :console), a virtqueue receive (device->guest), and a Kotoba-language guest compiled to a bare-metal aarch64 ELF; all halt cleanly.")
+                         ["elf" kotoba-fixture] false)
+        v1ktv (check-case "V1 kotoba virtio probe (guest-virtio-probe.elf: .kotoba u32 MMIO vs the virtio device)"
+                          ["elf" kotoba-virtio-fixture] false)]
+    (if (and v0 v1 v1v v1q v1rx v1kt v1ktv)
+      (do (println "[hvt-smoke] PASS -- self-owned VMM boots a raw guest, a direct-loaded ELF, a virtio-mmio transport handshake, a virtqueue transmit + receive, a Kotoba-language guest (serial), and a Kotoba virtio probe (u32 MMIO load/store against the emulated virtio device); all halt cleanly.")
           (js/process.exit 0))
       (do (println "[hvt-smoke] FAIL -- one or more cases did not meet the gate.")
           (js/process.exit 1)))))
