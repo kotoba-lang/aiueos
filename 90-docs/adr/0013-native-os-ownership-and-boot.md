@@ -34,7 +34,9 @@ host-import quartet; those imports remain deterministic stubs.
 
 `kotoba-lang/compiler` owns genuinely freestanding targets:
 
-- `x86_64-aiueos-kernel`, then `aarch64-aiueos-kernel`;
+- `x86_64-aiueos-kernel`, and `aarch64-aiueos-kernel-v1` (added 2026-07-17,
+  compiler `e5e278a`: a bare-metal AArch64 kernel target — `.kotoba` →
+  freestanding AArch64 ELF; first consumer is the ADR-0014 hvt-tender guest);
 - `x86_64-aiueos-uefi`;
 - PE/COFF and ELF emission;
 - relocation, sections, entry point, stack, TLS, and no-host-runtime contracts.

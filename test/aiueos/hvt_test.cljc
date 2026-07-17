@@ -44,8 +44,8 @@
 (deftest arm64-pc-register-id
   (testing "KVM_REG_ARM64 | SIZE_U64 | ARM_CORE | (offsetof(pc)/4 = 0x40)"
     (is (= 0x6030000000100040 hvt/arm64-core-reg-pc)))
-  (testing "SP core reg (offsetof(sp)/4 = 0x3E)"
-    (is (= 0x603000000010003E hvt/arm64-core-reg-sp))))
+  (testing "SP_EL1 core reg (offsetof(kvm_regs.sp_el1)=272 /4 = 0x44 -- the stack the EL1h guest uses)"
+    (is (= 0x6030000000100044 hvt/arm64-core-reg-sp))))
 
 (deftest struct-offsets
   (testing "kvm_userspace_memory_region field byte offsets"
