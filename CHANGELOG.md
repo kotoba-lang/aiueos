@@ -125,6 +125,19 @@ The Phase-0 substrate plus the runtime/robotics/agent work built on top of it.
   open V1 items (kernel direct-load, virtio device model) are now substantially
   delivered. Bug recorded: gcc `-O2` post-index `strb` MMIO stores fail
   `KVM_RUN` `ENOSYS` (no decodable syndrome) — write to a fixed register address.
+- **V1 progress (2026-07-17), virtqueue receiveq** (ADR-0014 "virtqueue
+  receiveq"): the virtio-console is now **bidirectional** — the device→guest
+  mirror of transmit. On a receiveq notify (queue 0) the device *fills* the
+  driver's device-**writable** buffers instead of reading them. Adds pure
+  receive servicing (`walk-writable-chain`/`fill-targets`/`virtqueue-rx-plan`,
+  host-tested incl. capacity truncation) + `process-virtqueue-rx!`, queue-index
+  routing (queue 1 = tx into `:console`, queue 0 = rx delivering
+  `virtio-console-rx-input`), and a real receive guest
+  (`guest-virtqueue-rx-aarch64.c` → `.elf`) that posts a writable buffer, is
+  filled by the tender, and echoes the received bytes to serial. Verified on
+  real KVM (31-step trace, `:serial "HI\n"` from the device→guest path).
+  `hvt-smoke.cljs` gates 5 cases; `aiueos.hvt-test` is 20 tests / 100 assertions.
+  The virtio-console device model is complete in both directions.
 - **V1 progress (2026-07-17), PSCI finding corrected + vcpu power-state control**
   (ADR-0014 "PSCI finding, corrected"): by reading the `hvc` return code in `x0`,
   established that this KVM environment answers **every** PSCI function id

@@ -332,6 +332,36 @@ model — are both substantially delivered: the ELF loader boots real images
 (kernel-specific boot waits only on x86_64 KVM hardware, Finding 1), and the
 virtio-console device now does transport **and** a full virtqueue transmit.
 
+### V1 progress — 2026-07-17 (virtqueue receiveq — the device→guest direction)
+
+The console is now **bidirectional**: the mirror of the transmit path. On a
+receiveq notify (queue 0, per the virtio-console port-0 layout) the device
+*fills* the driver's buffers instead of reading them — exercising the
+device-**writable** descriptors the transmit path deliberately skipped.
+
+- **Pure receive servicing** (`walk-writable-chain` / `fill-targets` /
+  `virtqueue-rx-plan`, host-tested): walks the chain collecting device-writable
+  `{:addr :len}` targets (WRITE flag set), spreads the input across them up to
+  capacity, and returns the guest-RAM byte writes plus the used-ring completion
+  carrying the count written. `process-virtqueue-rx!` applies the buffer writes
+  and the used ring back to guest RAM.
+- **Queue routing**: the notify handler dispatches by queue index — queue 1
+  (transmitq) reads into `:console` (prior milestone), queue 0 (receiveq)
+  delivers `virtio-console-rx-input` (`"HI\n"`, the stand-in for host→guest
+  console input) into the driver's writable buffer.
+- **Real receive guest** `guest-virtqueue-rx-aarch64.c` → `.elf`: posts one
+  device-writable buffer on queue 0, notifies, polls the used ring, reads the
+  delivered length, and echoes the received bytes to the serial port —
+  reproducible byte-identical (`build-hvt-guest.cljs` now builds four guests).
+
+Verified on real KVM (31-step trace): handshake → receiveq setup → one `NOTIFY`
+where the tender writes `HI\n` into the guest's buffer and completes it → the
+guest reads it back and echoes `HI\n` to serial → halt. `hvt-smoke.cljs` now
+gates five cases (raw / ELF / transport / tx / rx); `aiueos.hvt-test` is 20
+tests / 100 assertions (adds the writable-chain walk, `fill-targets`, and
+receive servicing incl. capacity truncation). The virtio-console device model
+is now complete in both directions.
+
 ### V1 progress — 2026-07-17 (PSCI finding, corrected with return-code evidence)
 
 A focused probe pass **corrected Finding 2**. The earlier explanation (KVM
