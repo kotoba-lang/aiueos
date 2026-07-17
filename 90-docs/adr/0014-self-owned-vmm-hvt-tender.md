@@ -439,6 +439,32 @@ the Kotoba-compiled AArch64 guest and returns `{:serial "HI\n" :serial-ok? true
 remaining asm/C guests (virtio transport/tx/rx) can migrate to `.kotoba` on this
 foundation as follow-up.
 
+### V1 progress — 2026-07-17 (Kotoba virtio probe: u32 MMIO in Kotoba)
+
+Migrating the virtio guests to Kotoba needs **32-bit** MMIO — virtio-mmio
+registers are `u32`, and the byte intrinsics can't drive them. So the compiler
+(`kotoba-lang/compiler`, merged `82543fa`) gained `kernel-load-u32` /
+`kernel-store-u32` bounded-MMIO intrinsics on the AArch64 kernel backend (same
+discipline as the byte ops, but the 4-byte access must fit: `index+4 ≤ length`).
+
+`resources/hvt/guest-virtio-probe.kotoba` → `.elf` is the first Kotoba guest to
+touch the **emulated virtio-console device** (reusing `aiueos.virtio`'s register
+map): it reads `MagicValue` (`u32`), and on `0x74726976` writes `Status = 0xf`
+(`u32`) and reads it back (`u32`), emitting `HI\n` iff both the magic and the
+status round-trip hold. Verified on real KVM (trace: `virtio READ reg 0x0 ->
+0x74726976`, `virtio WRITE/READ reg 0x70 = 0xf`, then `HI\n` + poweroff;
+receipt `:serial "HI\n" :serial-ok? true`). `hvt-smoke.cljs` now gates **7
+cases**; the compiler suite is 187 tests / 3058 assertions.
+
+Noted for follow-up: the compiler **inlines `let` bindings** (no CSE), so a
+binding referenced twice re-evaluates its expression — for a side-effecting MMIO
+op that means a duplicated access (the probe's status write/read runs twice,
+harmless because idempotent). A guest where duplication matters must reference
+each binding once, or the compiler needs binding materialization. And the full
+virtio *transport handshake / virtqueue* guests (feature negotiation, ring DMA)
+remain to migrate — they need this same u32 path plus ordered non-idempotent
+sequencing.
+
 ## Non-goals (firm)
 
 - No from-scratch type-1 hypervisor; we always ride KVM/HVF.
