@@ -115,21 +115,38 @@ int aiueos_acpi_initialize(const void *rsdp_pointer) {
   discovered_dmar_include_all = 0;
   vtd_translation_enabled = 0;
   const struct rsdp_v2 *rsdp = rsdp_pointer;
-  if (!bounded_address((uint64_t)(uintptr_t)rsdp, sizeof(*rsdp)) ||
-      !bytes_equal(rsdp->signature, "RSD PTR ", 8) || rsdp->revision < 2 ||
-      rsdp->length < sizeof(*rsdp) || rsdp->length > 4096 ||
-      !checksum_ok(rsdp, 20) || !checksum_ok(rsdp, rsdp->length)) return 0;
-  const struct sdt_header *xsdt = (const void *)(uintptr_t)rsdp->xsdt_address;
-  if (!valid_sdt(xsdt) || !bytes_equal(xsdt->signature, "XSDT", 4) ||
-      (xsdt->length - sizeof(*xsdt)) % 8 != 0) return 0;
+  if (!bounded_address((uint64_t)(uintptr_t)rsdp, 20) ||
+      !bytes_equal(rsdp->signature, "RSD PTR ", 8) || !checksum_ok(rsdp, 20)) return 0;
+  /* ACPI 2.0+ (UEFI handoff) walks the 64-bit XSDT; ACPI 1.0 (the RSDP a
+     firmware-less Multiboot boot finds in the BIOS window) walks the 32-bit
+     RSDT. The entry pointer width is the only difference; the table discovery
+     and MADT walk below are shared. */
+  const struct sdt_header *root;
+  uint32_t entry_width;
+  if (rsdp->revision >= 2) {
+    if (!bounded_address((uint64_t)(uintptr_t)rsdp, sizeof(*rsdp)) ||
+        rsdp->length < sizeof(*rsdp) || rsdp->length > 4096 ||
+        !checksum_ok(rsdp, rsdp->length)) return 0;
+    root = (const void *)(uintptr_t)rsdp->xsdt_address;
+    if (!valid_sdt(root) || !bytes_equal(root->signature, "XSDT", 4)) return 0;
+    entry_width = 8;
+  } else {
+    root = (const void *)(uintptr_t)rsdp->rsdt_address;
+    if (!valid_sdt(root) || !bytes_equal(root->signature, "RSDT", 4)) return 0;
+    entry_width = 4;
+  }
+  if ((root->length - sizeof(*root)) % entry_width != 0) return 0;
 
-  uint32_t entries = (xsdt->length - sizeof(*xsdt)) / 8;
-  const uint64_t *addresses = (const void *)((const uint8_t *)xsdt + sizeof(*xsdt));
+  uint32_t entries = (root->length - sizeof(*root)) / entry_width;
+  const uint8_t *entry_bytes = (const uint8_t *)root + sizeof(*root);
   const struct madt_header *madt = 0;
   const struct sdt_header *dmar = 0;
   for (uint32_t i = 0; i < entries; i++) {
-    const struct sdt_header *candidate = (const void *)(uintptr_t)addresses[i];
-    if (!bounded_address(addresses[i], sizeof(*candidate))) return 0;
+    uint64_t table_address = entry_width == 8
+      ? *(const uint64_t *)(const void *)(entry_bytes + (uint64_t)i * 8)
+      : *(const uint32_t *)(const void *)(entry_bytes + (uint64_t)i * 4);
+    const struct sdt_header *candidate = (const void *)(uintptr_t)table_address;
+    if (!bounded_address(table_address, sizeof(*candidate))) return 0;
     if (bytes_equal(candidate->signature, "APIC", 4)) {
       if (!valid_sdt(candidate) || candidate->length < sizeof(struct madt_header)) return 0;
       madt = (const struct madt_header *)candidate;

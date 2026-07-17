@@ -23,7 +23,7 @@ rm -f "$log" "$serial_log"
 # protected mode per the Multiboot spec.
 set +e
 timeout "$qemu_timeout" "$qemu" \
-  -machine q35,accel=tcg -cpu max -m 128M \
+  -machine q35,accel=tcg -cpu max -m 128M -smp 2 \
   -kernel "$kernel" \
   -device isa-debugcon,iobase=0xe9,chardev=debug \
   -chardev file,id=debug,path="$log" \
@@ -55,8 +55,12 @@ grep -F "AIUEOS_MULTIBOOT_RSDP_OK signature checksum firmware-independent" "$ser
   echo "error: Multiboot RSDP discovery evidence was not observed" >&2
   exit 1
 }
+grep -F "AIUEOS_MULTIBOOT_ACPI_OK rsdt-walk madt cpu>=2 ioapic" "$serial_log" >/dev/null || {
+  echo "error: Multiboot ACPI table-walk evidence was not observed" >&2
+  exit 1
+}
 grep -F "AIUEOS_MULTIBOOT_OK long-mode mmap-parsed kotoba-probe=42" "$serial_log" >/dev/null || {
   echo "error: Multiboot long-mode/Kotoba evidence was not observed" >&2
   exit 1
 }
-echo "AIUEOS_MULTIBOOT_SMOKE_OK qemu-multiboot-loader long-mode sse mmap rsdp kotoba-probe"
+echo "AIUEOS_MULTIBOOT_SMOKE_OK qemu-multiboot-loader long-mode sse mmap rsdp acpi-rsdt kotoba-probe"

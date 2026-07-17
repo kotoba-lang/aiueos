@@ -25,8 +25,13 @@ zig cc -target x86_64-freestanding-none \
 zig cc -target x86_64-freestanding-none -std=c11 -O2 \
   -ffreestanding -fno-stack-protector -mno-red-zone \
   -c -o "$mb/main.o" "$aiueos/multiboot/main.c"
+# Reuse the kernel's validated ACPI parser verbatim (self-contained: no other
+# kernel globals) so the Multiboot path walks tables through the same checks.
+zig cc -target x86_64-freestanding-none -std=c11 -O2 \
+  -ffreestanding -fno-stack-protector -mno-red-zone \
+  -c -o "$mb/acpi.o" "$aiueos/kernel/acpi.c"
 zig ld.lld -T "$aiueos/multiboot/linker.ld" -o "$kernel64" \
-  "$mb/entry.o" "$mb/main.o" "$probe"
+  "$mb/entry.o" "$mb/main.o" "$mb/acpi.o" "$probe"
 
 # QEMU's Multiboot loader wants an ELFCLASS32/EM_386 container; wrap the linked
 # x86_64 load image verbatim (the trampoline switches to long mode itself).
