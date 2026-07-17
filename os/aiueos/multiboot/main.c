@@ -12,6 +12,8 @@
 #define MULTIBOOT2_BOOTLOADER_MAGIC 0x36D76289u
 #define MULTIBOOT2_TAG_END 0u
 #define MULTIBOOT2_TAG_MMAP 6u
+#define MULTIBOOT2_TAG_ACPI_OLD 14u
+#define MULTIBOOT2_TAG_ACPI_NEW 15u
 
 struct multiboot_info {
   uint32_t flags;
@@ -113,12 +115,31 @@ static const void *find_rsdp(void) {
   return 0;
 }
 
+/* Install the minimal IDT (all vectors -> fail-fast default, vector 32 ->
+ * timer ISR) and bring up the Local APIC periodic timer through the shared
+ * apic.c, waiting for a real vector-32 hardware tick. Shared by both the
+ * QEMU-direct MB1 path and the GRUB MB2 path. Returns 1 on a tick. */
+static int install_idt_and_time_lapic(void) {
+  for (uint32_t vector = 0; vector < 256; vector++) set_gate(vector, aiueos_mb_isr_default);
+  set_gate(32, aiueos_mb_isr_timer);
+  struct idt_pointer idtr = { (uint16_t)(sizeof(multiboot_idt) - 1),
+                              (uint64_t)(uintptr_t)multiboot_idt };
+  aiueos_mb_load_idt(&idtr);
+  if (!aiueos_apic_timer_initialize()) return 0;
+  __asm__ volatile("sti");
+  for (uint32_t budget = 0; budget < 100000000u && aiueos_apic_timer_ticks == 0; budget++)
+    __asm__ volatile("pause");
+  __asm__ volatile("cli");
+  return aiueos_apic_timer_ticks != 0;
+}
+
 /* GRUB path: the same image is loaded by GRUB's `multiboot2` command, which
  * enters with the MB2 magic and a tag-list information structure. This is a
  * narrower landing than the QEMU-direct MB1 path — it proves GRUB boots the
  * kernel end-to-end (long mode, SSE, a bounded MB2 memory-map tag walk, and
- * the compiler-emitted Kotoba probe). Standing up ACPI/APIC under GRUB+OVMF is
- * deferred; those stay gated on the MB1 path. */
+ * the compiler-emitted Kotoba probe) and reaches the same ACPI + Local APIC
+ * timer evidence as the MB1 path, taking the RSDP from a Multiboot2 ACPI tag
+ * instead of a BIOS scan. */
 __attribute__((noreturn))
 static void multiboot2_landing(uint32_t info_addr) {
   const uint8_t *info = (const uint8_t *)(uintptr_t)info_addr;
@@ -128,6 +149,7 @@ static void multiboot2_landing(uint32_t info_addr) {
     qemu_exit(0x7d);
   }
   uint32_t offset = 8, usable = 0;
+  const void *rsdp = 0;
   while (offset + 8 <= total) {
     const uint8_t *tag = info + offset;
     uint32_t type = *(const uint32_t *)(const void *)tag;
@@ -147,6 +169,10 @@ static void multiboot2_landing(uint32_t info_addr) {
           if (mtype == 1 && len) usable++;
         }
       }
+    } else if (type == MULTIBOOT2_TAG_ACPI_NEW && size >= 8 + 36) {
+      rsdp = tag + 8;  /* ACPI 2.0 RSDP: prefer it (XSDT) */
+    } else if (type == MULTIBOOT2_TAG_ACPI_OLD && size >= 8 + 20 && !rsdp) {
+      rsdp = tag + 8;  /* ACPI 1.0 RSDP copy */
     }
     offset += (size + 7) & ~7u;  /* tags are 8-byte aligned */
   }
@@ -156,12 +182,29 @@ static void multiboot2_landing(uint32_t info_addr) {
   }
   debug_string("AIUEOS_MULTIBOOT2_MMAP_OK\n");
   serial_string("AIUEOS_MULTIBOOT2_MMAP_OK tag-walk usable-region\r\n");
+
+  /* Full evidence parity with the MB1 path: the RSDP arrives in a Multiboot2
+   * ACPI tag (no BIOS scan), then the same ACPI parser, IDT, and Local APIC
+   * timer as the QEMU-direct path. */
+  if (!rsdp || !aiueos_acpi_initialize(rsdp) || aiueos_acpi_cpu_count() < 2) {
+    serial_string("AIUEOS_MULTIBOOT2_FAIL acpi-validation\r\n");
+    qemu_exit(0x6e);
+  }
+  debug_string("AIUEOS_MULTIBOOT2_ACPI_OK\n");
+  serial_string("AIUEOS_MULTIBOOT2_ACPI_OK tag-rsdp madt cpu>=2 ioapic\r\n");
+  if (!install_idt_and_time_lapic()) {
+    serial_string("AIUEOS_MULTIBOOT2_FAIL apic-timer\r\n");
+    qemu_exit(0x6c);
+  }
+  debug_string("AIUEOS_MULTIBOOT2_APIC_TIMER_OK\n");
+  serial_string("AIUEOS_MULTIBOOT2_APIC_TIMER_OK idt lapic vector=32 eoi\r\n");
+
   if (kotoba_aiueos_probe() != 42u) {
     serial_string("AIUEOS_MULTIBOOT2_FAIL kotoba-probe\r\n");
     qemu_exit(0x67);
   }
   debug_string("AIUEOS_MULTIBOOT2_OK\n");
-  serial_string("AIUEOS_MULTIBOOT2_OK grub long-mode mmap-tag kotoba-probe=42\r\n");
+  serial_string("AIUEOS_MULTIBOOT2_OK grub long-mode acpi apic-timer kotoba-probe=42\r\n");
   qemu_exit(0x2a);
 }
 
@@ -233,21 +276,8 @@ void aiueos_multiboot_main(uint32_t magic, uint32_t info_addr) {
    * bring up the Local APIC periodic timer through the shared apic.c and wait
    * for a real hardware tick. The LAPIC MMIO at ~0xFEE00000 is reachable
    * because the trampoline now identity-maps the first 4 GiB. */
-  for (uint32_t vector = 0; vector < 256; vector++) set_gate(vector, aiueos_mb_isr_default);
-  set_gate(32, aiueos_mb_isr_timer);
-  struct idt_pointer idtr = { (uint16_t)(sizeof(multiboot_idt) - 1),
-                              (uint64_t)(uintptr_t)multiboot_idt };
-  aiueos_mb_load_idt(&idtr);
-  if (!aiueos_apic_timer_initialize()) {
-    serial_string("AIUEOS_MULTIBOOT_FAIL apic-timer-init\r\n");
-    qemu_exit(0x6d);
-  }
-  __asm__ volatile("sti");
-  for (uint32_t budget = 0; budget < 100000000u && aiueos_apic_timer_ticks == 0; budget++)
-    __asm__ volatile("pause");
-  __asm__ volatile("cli");
-  if (aiueos_apic_timer_ticks == 0) {
-    serial_string("AIUEOS_MULTIBOOT_FAIL apic-timer-no-tick\r\n");
+  if (!install_idt_and_time_lapic()) {
+    serial_string("AIUEOS_MULTIBOOT_FAIL apic-timer\r\n");
     qemu_exit(0x6c);
   }
   debug_string("AIUEOS_MULTIBOOT_APIC_TIMER_OK\n");
