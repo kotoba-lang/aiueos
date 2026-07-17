@@ -1,0 +1,361 @@
+(ns aiueos.hvt
+  "`aiueos.hvt` -- the self-owned VMM (\"hvt tender\") V0 spike, ADR-0014 option C.
+
+  Where `aiueos.vm` *launches QEMU* and `aiueos.vfio` gives the tender raw
+  access to a device QEMU exposes, this namespace is the monitor side itself:
+  it creates a VM through the host hypervisor facility (Linux **KVM**,
+  `/dev/kvm`), maps guest RAM, loads a guest image, runs the vcpu, and services
+  its exits -- the Solo5 `hvt` shape ADR-2607022400 named and ADR-0011 Phase 1
+  deferred. Every syscall (`open`/`close`/`ioctl`/`mmap`) goes through
+  `java.lang.foreign` (FFM), exactly like `aiueos.vfio` -- \"clj on clj,\" no new
+  Rust/C (ADR-0014 honors the 2026-07-10 owner rule without a waiver).
+
+  V0 scope (this file): boot a minimal in-repo test guest that writes bytes to
+  an MMIO address (trapping to this VMM, which reconstructs the serial string)
+  and then writes to a poweroff MMIO port (a sentinel this VMM treats as a
+  controlled halt). The `spike` fn returns a plan-as-data **run receipt**
+  (`:serial`/`:exits`/`:shutdown?`/`:halt`), the audit-shaped evidence ADR-0013
+  demands (no file-shaped or screenshot-only proof). A real PSCI SYSTEM_OFF
+  clean shutdown, direct-loading the ADR-0013 kernel image, and a virtio device
+  model reusing `aiueos.virtio`'s ported protocol logic are V1 (tracked in
+  #110); a macOS/HVF backend is V2 (deferred behind the
+  `com.apple.security.hypervisor` entitlement question).
+
+  Arch: the ARM64 guest program + core-register ids below target an **aarch64**
+  KVM host (the actual dev substrate: Apple M4 -> Lima vz nested-virt ->
+  aarch64 Linux `/dev/kvm`). x86_64 long-mode is the analogous V1+ target; its
+  guest stub and `KVM_SET_REGS` path are not in this pass.
+
+  Honesty about what's verified: the pure parts below (ioctl-number encoding,
+  struct-field offsets, and the fixed ARM64 guest program words) are unit
+  tested on any JVM host. The live `open`/`ioctl(KVM_RUN)` sequence needs a
+  real `/dev/kvm`; running it is `spike`/`-main`, gated exactly like
+  `aiueos.vfio`'s hardware note. Treat the FFM boot loop as new, unverified
+  systems code until exercised against real KVM (see #110's smoke gate).")
+
+;; ---------------------------------------------------------------------------
+;; ioctl number encoding (Linux `_IO`/`_IOW`/`_IOR` macros) -- pure,
+;; unit-tested without a hypervisor. Same scheme as `aiueos.vfio/ioc`.
+
+(def ^:private ioc-nrbits 8)
+(def ^:private ioc-typebits 8)
+(def ^:private ioc-sizebits 14)
+(def ^:private ioc-nrshift 0)
+(def ^:private ioc-typeshift (+ ioc-nrshift ioc-nrbits))
+(def ^:private ioc-sizeshift (+ ioc-typeshift ioc-typebits))
+(def ^:private ioc-dirshift (+ ioc-sizeshift ioc-sizebits))
+(def ^:private ioc-none 0)
+(def ^:private ioc-write 1)
+(def ^:private ioc-read 2)
+
+(defn ioc
+  "Encode a Linux ioctl request number: `_IOC(dir, type, nr, size)`."
+  [dir type nr size]
+  (bit-or (bit-shift-left dir ioc-dirshift)
+          (bit-shift-left type ioc-typeshift)
+          (bit-shift-left nr ioc-nrshift)
+          (bit-shift-left size ioc-sizeshift)))
+
+(defn io- [type nr] (ioc ioc-none type nr 0))
+(defn iow [type nr size] (ioc ioc-write type nr size))
+(defn ior [type nr size] (ioc ioc-read type nr size))
+
+;; KVMIO == 0xAE. The main ioctls are arch-independent; the ARM ones (0xae/
+;; 0xaf/0xac) are aarch64-relevant here.
+(def kvm-type 0xAE)
+
+;; struct sizes (bytes) for the _IOW/_IOR-sized ioctls.
+(def kvm-userspace-memory-region-size 32) ; slot,flags,gpa,size,uaddr
+(def kvm-vcpu-init-size 32)               ; target(u32) + features[7](u32)
+(def kvm-one-reg-size 16)                 ; id(u64) + addr(u64)
+
+(def get-api-version       (io-  kvm-type 0x00))
+(def create-vm             (io-  kvm-type 0x01))
+(def get-vcpu-mmap-size    (io-  kvm-type 0x04))
+(def create-vcpu           (io-  kvm-type 0x41))
+(def run                   (io-  kvm-type 0x80))
+(def set-user-memory-region (iow kvm-type 0x46 kvm-userspace-memory-region-size))
+(def set-one-reg           (iow  kvm-type 0xac kvm-one-reg-size))
+(def arm-vcpu-init         (iow  kvm-type 0xae kvm-vcpu-init-size))
+(def arm-preferred-target  (ior  kvm-type 0xaf kvm-vcpu-init-size))
+
+;; ---------------------------------------------------------------------------
+;; struct layouts (byte offsets), pure.
+
+;; struct kvm_userspace_memory_region
+(def mem-region-layout {:slot 0 :flags 4 :guest-phys-addr 8 :memory-size 16 :userspace-addr 24})
+
+;; struct kvm_run (the fields V0 reads). exit_reason @8; the trailing union @32.
+;;   KVM_EXIT_MMIO:         phys_addr@32 data[8]@40 len@48 is_write@52
+;;   KVM_EXIT_SYSTEM_EVENT: type@32 ndata@36 data[16]@40
+(def kvm-run-layout {:exit-reason 8
+                     :mmio-phys-addr 32 :mmio-data 40 :mmio-len 48 :mmio-is-write 52
+                     :sysevent-type 32})
+
+(def exit-reason {:unknown 0 :mmio 6 :fail-entry 9 :internal-error 17 :system-event 24})
+(def system-event-type {:shutdown 1 :reset 2 :crash 3})
+
+;; ---------------------------------------------------------------------------
+;; aarch64 core-register id for PC (KVM_SET_ONE_REG), pure.
+;;   KVM_REG_ARM64 | KVM_REG_SIZE_U64 | KVM_REG_ARM_CORE | (offsetof(pc)/4)
+;;   pc is at byte 256 in struct kvm_regs -> index 0x40.
+(def ^:private kvm-reg-arm64      0x6000000000000000)
+(def ^:private kvm-reg-size-u64   0x0030000000000000)
+(def ^:private kvm-reg-arm-core   0x0000000000100000)
+(def ^:private kvm-reg-core-pc-idx 0x40)
+(def arm64-core-reg-pc
+  (bit-or kvm-reg-arm64 kvm-reg-size-u64 kvm-reg-arm-core kvm-reg-core-pc-idx))
+
+;; ---------------------------------------------------------------------------
+;; The V0 guest program: fixed aarch64 machine code, pure data. Writes "HI\n"
+;; one byte at a time to MMIO base 0x09000000 (unbacked by RAM -> each strb
+;; traps out as KVM_EXIT_MMIO, which this VMM reconstructs into the serial
+;; string), then writes 0x01 to the poweroff MMIO port at base+8 (0x09000008)
+;; -- a sentinel this VMM treats as a controlled halt -- and parks in `b .`.
+;;
+;; Why an MMIO poweroff port and not PSCI SYSTEM_OFF (hvc #0 with 0x84000008):
+;; the PSCI path was observed on the aarch64 KVM host to *not* raise a
+;; KVM_EXIT_SYSTEM_EVENT for this bare (no vector table, MMU-off) guest -- the
+;; hvc returned into the guest, which then spun. An MMIO write to a poweroff
+;; port is the same shape kvmtool/QEMU's `sysreset`/test-devices use and gives
+;; a deterministic halt via the exit path already proven working (3 MMIO
+;; serial writes land first). Wiring a real PSCI SYSTEM_OFF clean shutdown is
+;; a V1 refinement (#110). See the ns docstring for per-instruction encodings.
+(def guest-mmio-base 0x09000000)
+(def guest-poweroff-addr 0x09000008)   ; base + 8; a write here halts the VMM
+(def guest-serial-expected "HI\n")
+
+(def guest-program-words
+  [0xD2A12001   ; movz x1, #0x0900, lsl #16   ; x1 = 0x09000000 (MMIO base)
+   0x52800900   ; movz w0, #0x48 ('H')
+   0x39000020   ; strb w0, [x1]
+   0x52800920   ; movz w0, #0x49 ('I')
+   0x39000020   ; strb w0, [x1]
+   0x52800140   ; movz w0, #0x0A ('\n')
+   0x39000020   ; strb w0, [x1]
+   0x52800020   ; movz w0, #0x01
+   0x39002020   ; strb w0, [x1, #8]           ; write 1 -> 0x09000008 (poweroff)
+   0x14000000]) ; b .  (park; the VMM has already halted on the poweroff write)
+
+(def guest-load-gpa 0x0)          ; guest-physical load address == initial PC
+(def guest-ram-size 0x200000)     ; 2 MiB backing RAM at GPA 0 (page-aligned)
+
+;; ---------------------------------------------------------------------------
+;; FFM (java.lang.foreign) KVM bindings -- JVM-only, needs a live /dev/kvm.
+
+#?(:clj
+   (do
+     (import '[java.lang.foreign Arena Linker Linker$Option FunctionDescriptor
+               ValueLayout MemoryLayout MemorySegment])
+
+     (def ^:private linker (Linker/nativeLinker))
+     (def ^:private lookup (.defaultLookup linker))
+     (def ^:private no-linker-options (make-array Linker$Option 0))
+
+     (defn- fdesc ^FunctionDescriptor [result args]
+       (FunctionDescriptor/of result (into-array MemoryLayout args)))
+
+     (defn- lib-fn [name ^FunctionDescriptor descriptor]
+       (delay
+        (.downcallHandle linker
+                         (.orElseThrow (.find lookup name)
+                                       #(ex-info (str "libc symbol not found: " name) {:name name}))
+                         descriptor no-linker-options)))
+
+     (def ^:private c-open
+       (lib-fn "open" (fdesc ValueLayout/JAVA_INT [ValueLayout/ADDRESS ValueLayout/JAVA_INT])))
+     (def ^:private c-close
+       (lib-fn "close" (fdesc ValueLayout/JAVA_INT [ValueLayout/JAVA_INT])))
+     (def ^:private c-ioctl-ptr
+       (lib-fn "ioctl" (fdesc ValueLayout/JAVA_INT [ValueLayout/JAVA_INT ValueLayout/JAVA_LONG ValueLayout/ADDRESS])))
+     (def ^:private c-ioctl-value
+       (lib-fn "ioctl" (fdesc ValueLayout/JAVA_INT [ValueLayout/JAVA_INT ValueLayout/JAVA_LONG ValueLayout/JAVA_LONG])))
+     (def ^:private c-mmap
+       (lib-fn "mmap" (fdesc ValueLayout/ADDRESS [ValueLayout/ADDRESS ValueLayout/JAVA_LONG
+                                                  ValueLayout/JAVA_INT ValueLayout/JAVA_INT
+                                                  ValueLayout/JAVA_INT ValueLayout/JAVA_LONG])))
+
+     (def ^:private o-rdwr 2)
+     (def ^:private o-cloexec 0x80000)
+     (def ^:private prot-read 1)
+     (def ^:private prot-write 2)
+     (def ^:private map-shared 1)
+
+     (defn- c-str [^Arena arena s] (.allocateFrom arena ^String s))
+
+     (defn- invoke-h [handle-delay & args]
+       (.invokeWithArguments ^java.lang.invoke.MethodHandle @handle-delay
+                             ^"[Ljava.lang.Object;" (into-array Object args)))
+
+     (defn- seg-get-i32 [seg offset] (.get ^MemorySegment seg ValueLayout/JAVA_INT (long offset)))
+     (defn- seg-set-i32 [seg offset v] (.set ^MemorySegment seg ValueLayout/JAVA_INT (long offset) (int v)))
+     (defn- seg-get-i64 [seg offset] (.get ^MemorySegment seg ValueLayout/JAVA_LONG (long offset)))
+     (defn- seg-set-i64 [seg offset v] (.set ^MemorySegment seg ValueLayout/JAVA_LONG (long offset) (long v)))
+     (defn- seg-get-u8 [seg offset] (bit-and (long (.get ^MemorySegment seg ValueLayout/JAVA_BYTE (long offset))) 0xff))
+
+     (defn- kvm-open
+       "open(\"/dev/kvm\", O_RDWR|O_CLOEXEC). Returns the fd."
+       [^Arena arena]
+       (let [fd (int (invoke-h c-open (c-str arena "/dev/kvm") (int (bit-or o-rdwr o-cloexec))))]
+         (when (neg? fd)
+           (throw (ex-info "open(/dev/kvm) failed -- no KVM, or not in the kvm group" {})))
+         fd))
+
+     (defn- ioctl-val
+       "ioctl(fd, request, value) -> return value (throws on negative)."
+       [fd request value]
+       (let [rc (int (invoke-h c-ioctl-value (int fd) (long request) (long value)))]
+         (when (neg? rc)
+           (throw (ex-info "KVM ioctl (value) failed" {:fd fd :request request :value value})))
+         rc))
+
+     (defn- ioctl-struct
+       "ioctl(fd, request, &buf); `init!` pre-populates the `size`-byte buffer.
+       Returns the buffer segment for reading result fields back."
+       [^Arena arena fd request size init!]
+       (let [seg (.allocate arena (long size))]
+         (when init! (init! seg))
+         (let [rc (int (invoke-h c-ioctl-ptr (int fd) (long request) seg))]
+           (when (neg? rc)
+             (throw (ex-info "KVM ioctl (struct) failed" {:fd fd :request request})))
+           seg)))
+
+     (defn- load-guest!
+       "Write the fixed guest program words into `ram` at `guest-load-gpa`
+       (little-endian, matching aarch64)."
+       [^MemorySegment ram]
+       (doseq [[i word] (map-indexed vector guest-program-words)]
+         (seg-set-i32 ram (+ guest-load-gpa (* 4 i)) (unchecked-int word)))
+       ram)
+
+     (defn- service-mmio!
+       "Read a KVM_EXIT_MMIO from the mmap'd kvm_run struct `run-seg`. Returns
+       `{:phys-addr :is-write :len :byte}` and (for writes to the serial base)
+       the emitted char is the low byte."
+       [^MemorySegment run-seg]
+       {:phys-addr (seg-get-i64 run-seg (:mmio-phys-addr kvm-run-layout))
+        :is-write (pos? (seg-get-u8 run-seg (:mmio-is-write kvm-run-layout)))
+        :len (seg-get-i32 run-seg (:mmio-len kvm-run-layout))
+        :byte (seg-get-u8 run-seg (:mmio-data kvm-run-layout))})
+
+     (defn spike
+       "Run the V0 KVM boot spike against the live `/dev/kvm`. Creates a VM,
+       maps `guest-ram-size` bytes of RAM at GPA 0, loads `guest-program-words`,
+       inits the vcpu (KVM_ARM_PREFERRED_TARGET -> KVM_ARM_VCPU_INIT), sets PC,
+       and runs the KVM_RUN loop servicing MMIO writes until PSCI SYSTEM_OFF.
+
+       Returns a run receipt map:
+         {:api-version N :serial \"HI\\n\" :serial-ok? true
+          :exits [{:reason :mmio :phys-addr .. :char \\H} ...]
+          :shutdown? true :steps N}
+       Throws on any KVM setup failure or an unexpected exit reason. JVM-only;
+       needs a real KVM host (see ns docstring)."
+       []
+       (with-open [arena (Arena/ofConfined)]
+         (let [kvm (kvm-open arena)
+               api (ioctl-val kvm get-api-version 0)
+               _ (when (not= api 12)
+                   (throw (ex-info "unexpected KVM_GET_API_VERSION" {:api api})))
+               vm (ioctl-val kvm create-vm 0)
+               ;; guest RAM: page-aligned native memory handed to KVM as slot 0.
+               ram (.allocate arena (long guest-ram-size) 4096)
+               _ (load-guest! ram)
+               _ (ioctl-struct arena vm set-user-memory-region kvm-userspace-memory-region-size
+                               (fn [s]
+                                 (seg-set-i32 s (:slot mem-region-layout) 0)
+                                 (seg-set-i32 s (:flags mem-region-layout) 0)
+                                 (seg-set-i64 s (:guest-phys-addr mem-region-layout) guest-load-gpa)
+                                 (seg-set-i64 s (:memory-size mem-region-layout) guest-ram-size)
+                                 (seg-set-i64 s (:userspace-addr mem-region-layout) (.address ^MemorySegment ram))))
+               vcpu (ioctl-val vm create-vcpu 0)
+               ;; ARM: ask the VM for the preferred target, init the vcpu with it.
+               init-seg (ioctl-struct arena vm arm-preferred-target kvm-vcpu-init-size nil)
+               _ (invoke-h c-ioctl-ptr (int vcpu) (long arm-vcpu-init) init-seg)
+               ;; set PC = guest load address via KVM_SET_ONE_REG.
+               pc-val (.allocate arena ValueLayout/JAVA_LONG)
+               _ (.set ^MemorySegment pc-val ValueLayout/JAVA_LONG 0 (long guest-load-gpa))
+               _ (ioctl-struct arena vcpu set-one-reg kvm-one-reg-size
+                               (fn [s]
+                                 (seg-set-i64 s 0 arm64-core-reg-pc)
+                                 (seg-set-i64 s 8 (.address ^MemorySegment pc-val))))
+               ;; mmap the per-vcpu kvm_run communication page.
+               mmap-size (ioctl-val kvm get-vcpu-mmap-size 0)
+               run-addr (invoke-h c-mmap MemorySegment/NULL (long mmap-size)
+                                  (int (bit-or prot-read prot-write)) (int map-shared)
+                                  (int vcpu) (long 0))
+               _ (when (= -1 (.address ^MemorySegment run-addr))
+                   (throw (ex-info "mmap(kvm_run) failed" {:vcpu vcpu :size mmap-size})))
+               ;; NB: bind the kvm_run segment to `run-seg`, not `run` -- the
+               ;; latter is the top-level KVM_RUN ioctl number and shadowing it
+               ;; here would pass the segment where the request number belongs.
+               run-seg (.reinterpret ^MemorySegment run-addr (long mmap-size))]
+           (loop [step 0, serial (StringBuilder.), exits []]
+             (when (> step 1000)
+               (throw (ex-info "KVM_RUN exceeded step budget without a halt"
+                               {:steps step :serial (str serial)})))
+             (ioctl-val vcpu run 0)
+             (let [reason (seg-get-i32 run-seg (:exit-reason kvm-run-layout))]
+               (condp = reason
+                 (:mmio exit-reason)
+                 (let [m (service-mmio! run-seg)
+                       addr (:phys-addr m)]
+                   (cond
+                     ;; poweroff port -> controlled VMM halt (the V0 shutdown).
+                     (and (:is-write m) (= addr guest-poweroff-addr))
+                     (let [s (str serial)]
+                       (binding [*out* *err*]
+                         (println (str "[hvt] exit " step ": MMIO poweroff write @0x"
+                                       (Long/toHexString addr) " -> halt")))
+                       {:api-version api
+                        :serial s
+                        :serial-ok? (= s guest-serial-expected)
+                        :exits (conj exits {:reason :poweroff :phys-addr addr})
+                        :shutdown? true
+                        :halt :mmio-poweroff
+                        :steps (inc step)})
+
+                     ;; serial port -> reconstruct one output byte.
+                     (and (:is-write m) (= addr guest-mmio-base))
+                     (let [ch (char (:byte m))]
+                       (binding [*out* *err*]
+                         (println (str "[hvt] exit " step ": MMIO serial write @0x"
+                                       (Long/toHexString addr) " byte=0x"
+                                       (Integer/toHexString (:byte m)) " (" (pr-str ch) ")")))
+                       (recur (inc step) (.append serial ch)
+                              (conj exits {:reason :mmio :phys-addr addr :char ch})))
+
+                     :else
+                     (do (binding [*out* *err*]
+                           (println (str "[hvt] exit " step ": MMIO @0x" (Long/toHexString addr)
+                                         " is-write=" (:is-write m) " (ignored)")))
+                         (recur (inc step) serial
+                                (conj exits {:reason :mmio :phys-addr addr :ignored true})))))
+
+                 (:system-event exit-reason)
+                 (let [t (seg-get-i32 run-seg (:sysevent-type kvm-run-layout))
+                       shutdown? (= t (:shutdown system-event-type))
+                       s (str serial)]
+                   {:api-version api
+                    :serial s
+                    :serial-ok? (= s guest-serial-expected)
+                    :exits (conj exits {:reason :system-event :type t :shutdown shutdown?})
+                    :shutdown? shutdown?
+                    :halt :psci-system-event
+                    :steps (inc step)})
+
+                 ;; any other exit is a spike failure -- surface it loudly.
+                 (throw (ex-info "unexpected KVM exit reason"
+                                 {:reason reason :steps step :serial (str serial)
+                                  :exits exits}))))))))
+
+     (defn -main
+       "Run the V0 spike and print the run receipt as EDN on stdout. Exit 0 iff
+       the guest emitted the expected serial AND requested SYSTEM_OFF (the #110
+       V0 gate). Meant to run inside the Linux/KVM VM:
+         clojure -M --enable-native-access=ALL-UNNAMED -m aiueos.hvt"
+       [& _]
+       (let [receipt (spike)]
+         (binding [*print-namespace-maps* false]
+           (prn receipt))
+         (flush)
+         (System/exit (if (and (:serial-ok? receipt) (:shutdown? receipt)) 0 1))))))

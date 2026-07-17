@@ -43,6 +43,31 @@ The Phase-0 substrate plus the runtime/robotics/agent work built on top of it.
   period-skipping (run every N cycles) + priority ordering *within* dependency
   depth, so an urgent node runs earlier without ever preceding its provider.
 
+### Self-owned VMM ("hvt tender", ADR-0014 V0)
+- **`aiueos.hvt`** — the monitor side of aiueos virtualization, complementing
+  `aiueos.vm` (which *launches QEMU*) and `aiueos.vfio` (raw access to a device
+  QEMU exposes). Creates a VM through Linux **KVM** (`/dev/kvm`), maps guest
+  RAM, loads a guest image, runs the vcpu, and services its exits — the Solo5
+  `hvt` shape ADR-2607022400 named and ADR-0011 Phase 1 deferred. Every syscall
+  (`open`/`ioctl`/`mmap`) goes through `java.lang.foreign` (FFM), "clj on clj,"
+  no new Rust/C (honors the 2026-07-10 owner rule without a waiver).
+- **V0 boot spike, verified end-to-end on real KVM**: a minimal aarch64 guest
+  writes `HI\n` byte-by-byte to an MMIO serial port (each `strb` traps out as
+  `KVM_EXIT_MMIO`, reconstructed by the VMM) then writes a poweroff MMIO port
+  for a controlled halt. `spike` returns an audit-shaped **run receipt**
+  (`:serial "HI\n" :serial-ok? true :shutdown? true :steps 4 :halt
+  :mmio-poweroff`). Exercised on Apple M4 → Lima vz nested-virt → aarch64
+  Ubuntu `/dev/kvm`. Pure parts (ioctl-number encoding, kvm_run/…-region
+  struct offsets, the aarch64 PC core-reg id, the fixed guest program) are
+  unit-tested on any JVM host; the live KVM loop is gated by
+  `scripts/hvt-smoke.cljs` (nbb) in a Linux/KVM VM (#110).
+- Deferred to V1+ (#110): real PSCI SYSTEM_OFF clean shutdown (the bare
+  MMU-off guest's `hvc` did not raise `KVM_EXIT_SYSTEM_EVENT`, so V0 halts via
+  the MMIO poweroff port), direct-loading the ADR-0013 kernel image, a virtio
+  device model reusing `aiueos.virtio`'s ported protocol logic, and an x86_64
+  long-mode guest. macOS/HVF backend is V2 (behind the
+  `com.apple.security.hypervisor` entitlement question).
+
 ### Security / supply chain
 - **Artifact integrity**: `:aiueos/wasm-sha256` is verified before run
   (tamper detection); `aiueos hash` computes it.

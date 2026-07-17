@@ -12,6 +12,13 @@
    :build {:deps {io.github.clojure/tools.build {:mvn/version "0.10.10"}}
            :ns-default build}
 
+  ;; ADR-0014 V0: run the self-owned VMM ("hvt tender") KVM boot spike.
+  ;; Needs a real /dev/kvm (Linux) and FFM native access. Prints an EDN run
+  ;; receipt on stdout; exit 0 iff the guest emitted "HI\n" and requested
+  ;; PSCI SYSTEM_OFF. Verified by `scripts/hvt-smoke.cljs`.
+  :hvt {:jvm-opts ["--enable-native-access=ALL-UNNAMED"]
+        :main-opts ["-m" "aiueos.hvt"]}
+
   ;; clj-kondo as a Clojars lib (no Homebrew/system install needed).
   :lint {:replace-deps {clj-kondo/clj-kondo {:mvn/version "2024.11.14"}}
          :main-opts ["-m" "clj-kondo.main" "--lint" "src" "test"

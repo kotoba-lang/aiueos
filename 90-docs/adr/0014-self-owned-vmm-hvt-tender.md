@@ -1,8 +1,8 @@
 # ADR-0014 — Self-owned VMM ("hvt tender"): owning the hypervisor side of aiueos virtualization
 
-- Status: **accepted** — 2026-07-17 owner decision; option C V0 authorized
-  (Linux/KVM, JVM-FFM, receipts required), options B/D stay live until the
-  V2 checkpoint
+- Status: **accepted** — 2026-07-17 owner decision; option C **V0 landed
+  2026-07-17** (`aiueos.hvt`, verified on real KVM — see "V0 — landed" below),
+  options B/D stay live until the V2 checkpoint
 - Date: 2026-07-17 (proposed and accepted same day)
 - Deciders: Jun Kawasaki
 - Scope-out origin: ADR-0011 Phase 1 ("a separate, multi-week project-scale
@@ -123,6 +123,44 @@ checkpointed alternatives:
 Verification harnesses are nbb `.cljs`; every phase lands with plan-as-data,
 run receipts, and audit events (no screenshot-only or file-shaped evidence,
 per ADR-0013's own standard).
+
+### V0 — landed 2026-07-17
+
+`src/aiueos/hvt.cljc` implements the option-C tender; `test/aiueos/hvt_test.cljc`
+unit-tests the pure parts (ioctl-number encoding, kvm_run/memory-region struct
+offsets, the aarch64 PC core-reg id `0x6030000000100040`, the fixed guest
+program) on any JVM host; `scripts/hvt-smoke.cljs` (nbb) is the live gate.
+
+Verified end-to-end on a **real** `/dev/kvm` (Apple M4 → Lima `vz`
+nested-virtualization → aarch64 Ubuntu 26.04). The VMM creates a VM, maps 2 MiB
+of guest RAM at GPA 0, loads a 10-word aarch64 guest, inits the vcpu
+(`KVM_ARM_PREFERRED_TARGET` → `KVM_ARM_VCPU_INIT`), sets PC via
+`KVM_SET_ONE_REG`, and runs the `KVM_RUN` loop. The guest writes `HI\n`
+byte-by-byte to an MMIO serial port — each `strb` traps out as
+`KVM_EXIT_MMIO`, reconstructed by the tender — then writes a poweroff MMIO port
+for a controlled halt. Run receipt:
+
+```edn
+{:api-version 12 :serial "HI\n" :serial-ok? true
+ :exits [{:reason :mmio :phys-addr 0x9000000 :char \H}
+         {:reason :mmio :phys-addr 0x9000000 :char \I}
+         {:reason :mmio :phys-addr 0x9000000 :char \newline}
+         {:reason :poweroff :phys-addr 0x9000008}]
+ :shutdown? true :halt :mmio-poweroff :steps 4}
+```
+
+Gate met: the self-owned VMM boots a guest, serial appears via MMIO traps to
+the tender, and it halts cleanly — no QEMU in the path.
+
+One finding worth recording: PSCI SYSTEM_OFF (`hvc #0` with `0x84000008`) did
+**not** raise a `KVM_EXIT_SYSTEM_EVENT` for this bare, MMU-off, no-vector-table
+guest — the `hvc` returned into the guest, which then spun with `KVM_RUN`
+blocking in-kernel (confirmed by `strace`: three `KVM_RUN`s returned for the
+serial writes, the fourth blocked). V0 therefore halts via an MMIO poweroff
+port (the shape kvmtool/QEMU test devices use), which rides the exit path
+already proven working. A real PSCI clean shutdown moves to V1, where the
+guest is the ADR-0013 kernel (which sets up its own EL1 vector table and can
+issue PSCI properly), not this hand-written stub.
 
 ## Non-goals (firm)
 
