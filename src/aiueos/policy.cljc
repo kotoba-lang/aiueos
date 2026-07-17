@@ -294,7 +294,20 @@
                                " (this manifest never declared :aiueos/effects #{:dma} either)"))
                         "DMA requires `:requires #{:iommu}` and an :iommu grant"))]
           [])
-        violations (vec (concat surface-violations import-violations effect-violations dma-violations))]
+        ;; net/fetch that would actually be granted without a non-empty
+        ;; :aiueos.policy/net-allow is fail-closed. Unresolved :net/fetch
+        ;; stays a pure :unresolved-capability (no double-count).
+        net-would-grant? (or (contains? resolved :net/fetch)
+                             (contains? granted :net/fetch))
+        net-allow (as-string-set (or (:aiueos.policy/net-allow policy)
+                                     (:aiueos/net-allow policy)))
+        net-violations
+        (if (and net-would-grant? (empty? net-allow))
+          [(violation id :net-allow-empty
+                      "granted :net/fetch requires a non-empty :aiueos/net-allow origin allowlist")]
+          [])
+        violations (vec (concat surface-violations import-violations effect-violations
+                                dma-violations net-violations))]
     (if (seq violations)
       {:aiueos/decision :deny :aiueos/component id :aiueos/violations violations}
       (let [caps (cond-> resolved
