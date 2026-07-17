@@ -397,18 +397,27 @@ no ESP:
 
 QEMU enters the image in 32-bit protected mode per the Multiboot spec; a
 trampoline (`multiboot/entry.S`) identity-maps the first GiB with 2 MiB pages,
-enables PAE/LME/paging, and far-jumps to long mode, emitting a byte on the
+enables PAE/LME/paging, far-jumps to long mode, and enables SSE (clearing
+CR0.EM, setting CR0.MP, CR4.OSFXSR and CR4.OSXMMEXCPT) — the freestanding C is
+compiled at `-O2`, which may vectorize byte loops into SSE instructions that
+would `#UD` and, with no IDT on this path, triple-fault. It emits a byte on the
 0xE9 debug port at each step so any hang localizes. The 64-bit landing verifies
 the bootloader magic, walks the variable-stride Multiboot memory map (bounded,
-requiring a usable region), and runs the same compiler-emitted Kotoba probe
+requiring a usable region), discovers the ACPI RSDP the firmware-independent
+way (there is no UEFI configuration table on this path: it scans the
+0xE0000-0xFFFFF BIOS window for a signature- and 20-byte-checksum-valid Root
+System Description Pointer — QEMU's built-in Multiboot loader still materializes
+a genuine ACPI 1.0 RSDP there), and runs the same compiler-emitted Kotoba probe
 object the UEFI path admits before a deterministic QEMU exit. The linked
 x86_64 image is wrapped verbatim in an ELFCLASS32/EM_386 container
 (`wrap-multiboot32.py`) because QEMU's Multiboot loader requires a 32-bit ELF;
-the machine code is unchanged and the image is byte-reproducible. This is the
-narrow first Multiboot slice: it deliberately does not stand up ACPI, virtio,
-GOP, or the full evidence gate, which the UEFI path owns. A GRUB rescue ISO and
-the Multiboot2 header (both needing `grub-mkrescue`/`xorriso`, absent here)
-remain a follow-up.
+the machine code is unchanged and the image is byte-reproducible. This is a
+narrow Multiboot slice: it deliberately does not stand up virtio, GOP, or the
+full evidence gate, which the UEFI path owns. Walking the tables the RSDP
+references would extend the kernel's ACPI parser to the ACPI 1.0 RSDT (it is
+currently ACPI-2.0/XSDT-only, matching the UEFI handoff); that, a GRUB rescue
+ISO, and the Multiboot2 header (both needing `grub-mkrescue`/`xorriso`, absent
+here) remain follow-ups.
 
 This recovery selection lives in the reference C loader; re-expressing it in
 the compiler-emitted C-free loader and a GRUB-driven Multiboot2 path remain
