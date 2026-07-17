@@ -27,7 +27,10 @@
     :sha "fb9d25b1614b5ba27edd02308085073bb196e76515ba7cb6734c140c46951512"}
    {:src "resources/hvt/guest-virtio-probe.kotoba"
     :elf "resources/hvt/guest-virtio-probe.elf"
-    :sha "81e26fdae0d607de4a02546451c08da83bf5c7f3173f37830117c6085d43b549"}])
+    :sha "81e26fdae0d607de4a02546451c08da83bf5c7f3173f37830117c6085d43b549"}
+   {:src "resources/hvt/guest-virtio-handshake.kotoba"
+    :elf "resources/hvt/guest-virtio-handshake.elf"
+    :sha "8cc0d4a32b2dc967efd836e22dc21eca9b10bb3ca87b14713e2a158edbab7479"}])
 
 (defn sha256 [path]
   (-> (crypto/createHash "sha256") (.update (fs/readFileSync path)) (.digest "hex")))
