@@ -271,6 +271,12 @@
 (def virtio-console-vendor 0x61697565)          ; "aiue" -- arbitrary non-zero
 (def virtio-console-queue-num-max 128)
 (def virtio-console-device-features vio/features-version-1)  ; VIRTIO_F_VERSION_1
+;; virtio-console port-0 queue layout: queue 0 = receiveq (device -> guest),
+;; queue 1 = transmitq (guest -> device). On a receiveq notify the device
+;; delivers this fixed "console input" into the driver's writable buffers.
+(def virtio-console-rx-queue 0)
+(def virtio-console-tx-queue 1)
+(def virtio-console-rx-input "HI\n")
 
 (defn virtio-window? [addr]
   (and (<= virtio-mmio-base addr) (< addr (+ virtio-mmio-base virtio-mmio-size))))
@@ -391,6 +397,64 @@
                  (into emitted bytes)
                  (conj used {:slot used-slot :id head :len len})
                  (inc added)))))))
+
+;; Receive-queue servicing (device -> guest): the mirror of `virtqueue-plan`.
+;; The driver posts device-*writable* buffers on the receiveq; the device fills
+;; them with input (here, a fixed "console input" string) and completes them.
+
+(defn walk-writable-chain
+  "Walk the chain from descriptor `head`, collecting the device-WRITABLE buffer
+  segments `{:addr :len}` (those WITH the WRITE flag) -- the receive targets."
+  [rd desc-gpa head]
+  (loop [d head, out [], guard 0]
+    (when (> guard 256)
+      (throw (ex-info "descriptor chain too long or cyclic" {:head head :guard guard})))
+    (let [{:keys [addr len flags next]} (read-descriptor rd desc-gpa d)
+          out' (if (pos? (bit-and flags (:write vio/desc-flag)))
+                 (conj out {:addr addr :len len}) out)]
+      (if (zero? (bit-and flags (:next vio/desc-flag)))
+        out'
+        (recur next out' (inc guard))))))
+
+(defn fill-targets
+  "Write `input` (a seq of bytes) into `targets` (each `{:addr :len}`) in order,
+  up to each target's capacity. Returns `[writes remaining-input total-written]`
+  where `writes` are `{:gpa :byte}`."
+  [targets input]
+  (loop [targets targets, input (vec input), writes [], written 0]
+    (if (or (empty? targets) (empty? input))
+      [writes input written]
+      (let [{:keys [addr len]} (first targets)
+            n (min len (count input))]
+        (recur (rest targets) (subvec input n)
+               (into writes (map-indexed (fn [i b] {:gpa (+ addr i) :byte b}) (take n input)))
+               (+ written n))))))
+
+(defn virtqueue-rx-plan
+  "Pure plan for servicing a receive-queue notify: for each available descriptor
+  chain, fill its device-writable buffer(s) with `input` bytes (up to capacity)
+  and push a used-ring completion carrying the byte count written. `rd` reads
+  guest RAM; `config` = `{:desc :driver :device :num}`; `avail-seen` is the last
+  processed avail idx. Returns `{:writes [{:gpa :byte}] :used [{:slot :id :len}]
+  :used-idx <new used idx> :seen <new avail idx>}` for the FFM caller to apply."
+  [rd config avail-seen input]
+  (let [{:keys [desc driver device num]} config
+        avail-idx (rd-le rd (+ driver 2) 2)
+        used-idx0 (rd-le rd (+ device 2) 2)]
+    (loop [seen avail-seen, writes [], used [], added 0, input (vec input)]
+      (if (or (= seen avail-idx) (>= added (max 1 num)) (empty? input))
+        {:writes writes :used used
+         :used-idx (bit-and (+ used-idx0 added) 0xffff) :seen seen}
+        (let [slot (mod seen num)
+              head (rd-le rd (+ driver 4 (* slot 2)) 2)
+              targets (walk-writable-chain rd desc head)
+              [ws remaining written] (fill-targets targets input)
+              used-slot (mod (+ used-idx0 added) num)]
+          (recur (bit-and (inc seen) 0xffff)
+                 (into writes ws)
+                 (conj used {:slot used-slot :id head :len written})
+                 (inc added)
+                 remaining))))))
 
 ;; ---------------------------------------------------------------------------
 ;; FFM (java.lang.foreign) KVM bindings -- JVM-only, needs a live /dev/kvm.
@@ -553,19 +617,36 @@
                (long (+ (- gpa ram-gpa) i))
                (unchecked-byte (bit-and (unsigned-bit-shift-right value (* 8 i)) 0xff)))))
 
+     (defn- write-used-ring!
+       "Apply used-ring element writes + the used-idx bump to guest RAM."
+       [^MemorySegment ram ram-gpa device used used-idx]
+       (doseq [{:keys [slot id len]} used]
+         (gram-set-le! ram ram-gpa (+ device 4 (* slot 8)) 4 id)
+         (gram-set-le! ram ram-gpa (+ device 4 (* slot 8) 4) 4 len))
+       (gram-set-le! ram ram-gpa (+ device 2) 2 used-idx))
+
      (defn- process-virtqueue!
-       "Service a queue notify against guest RAM: run the pure `virtqueue-plan`
-       reading `ram`, apply its used-ring element writes + used-idx bump back to
-       `ram`, and return `[emitted-string new-avail-seen]`."
+       "Service a transmit-queue notify against guest RAM: run the pure
+       `virtqueue-plan` reading `ram`, apply its used-ring writes back to `ram`,
+       and return `[emitted-string new-avail-seen]`."
        [^MemorySegment ram ram-gpa config avail-seen]
        (let [rd (gram-rd ram ram-gpa)
-             {:keys [emitted used used-idx seen]} (virtqueue-plan rd config avail-seen)
-             device (:device config)]
-         (doseq [{:keys [slot id len]} used]
-           (gram-set-le! ram ram-gpa (+ device 4 (* slot 8)) 4 id)
-           (gram-set-le! ram ram-gpa (+ device 4 (* slot 8) 4) 4 len))
-         (gram-set-le! ram ram-gpa (+ device 2) 2 used-idx)
+             {:keys [emitted used used-idx seen]} (virtqueue-plan rd config avail-seen)]
+         (write-used-ring! ram ram-gpa (:device config) used used-idx)
          [emitted seen]))
+
+     (defn- process-virtqueue-rx!
+       "Service a receive-queue notify against guest RAM: run the pure
+       `virtqueue-rx-plan` to fill the driver's device-writable buffers with
+       `input`, apply the buffer writes + used-ring writes back to `ram`, and
+       return `[filled-string new-avail-seen]`."
+       [^MemorySegment ram ram-gpa config avail-seen input]
+       (let [rd (gram-rd ram ram-gpa)
+             {:keys [writes used used-idx seen]} (virtqueue-rx-plan rd config avail-seen input)]
+         (doseq [{:keys [gpa byte]} writes]
+           (gram-set-le! ram ram-gpa gpa 1 (int byte)))
+         (write-used-ring! ram ram-gpa (:device config) used used-idx)
+         [(apply str (map #(char (:byte %)) writes)) seen]))
 
      (defn- service-mmio!
        "Read a KVM_EXIT_MMIO from the mmap'd kvm_run struct `run-seg`. Returns
@@ -716,18 +797,27 @@
                          (let [vstate' (virtio-console-write vstate off (:value m))]
                            (if (= off (:queue-notify vio/mmio-reg))
                              ;; queue notify -> service the virtqueue from guest RAM.
+                             ;; queue 1 = transmitq (guest -> device, into :console);
+                             ;; queue 0 = receiveq (device -> guest: fill the
+                             ;; driver's writable buffers with console input).
                              (let [qidx (:value m)
                                    config (queue-config vstate' qidx)
                                    seen0 (get-in vstate' [:seen qidx] 0)
-                                   [emitted seen'] (process-virtqueue! ram ram-gpa config seen0)]
-                               (.append console emitted)
+                                   rx? (= qidx virtio-console-rx-queue)
+                                   [moved seen'] (if rx?
+                                                   (process-virtqueue-rx! ram ram-gpa config seen0
+                                                                          virtio-console-rx-input)
+                                                   (process-virtqueue! ram ram-gpa config seen0))]
+                               (when-not rx? (.append console moved))
                                (binding [*out* *err*]
                                  (println (str "[hvt] exit " step ": virtio NOTIFY queue " qidx
-                                               " -> emitted " (pr-str emitted)
+                                               (if rx? " (rx) -> delivered " " (tx) -> emitted ")
+                                               (pr-str moved)
                                                " (desc 0x" (Long/toHexString (:desc config))
                                                " avail 0x" (Long/toHexString (:driver config)) ")")))
                                (recur (inc step) serial
-                                      (conj exits {:reason :virtio-notify :queue qidx :emitted emitted})
+                                      (conj exits {:reason (if rx? :virtio-notify-rx :virtio-notify)
+                                                   :queue qidx (if rx? :delivered :emitted) moved})
                                       (assoc-in vstate' [:seen qidx] seen') console))
                              (do
                                (binding [*out* *err*]

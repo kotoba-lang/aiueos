@@ -240,6 +240,59 @@
       (is (= "" (:emitted plan)))
       (is (= [] (:used plan))))))
 
+(defn- synthetic-receive-ram
+  "Guest RAM with one device-WRITABLE receive descriptor of capacity `cap` at
+  `desc`, avail idx 1 pointing at it, used idx 0."
+  [{:keys [desc driver device buf]} cap]
+  (as-> {} r
+    (ram-write-le r desc 8 buf)                          ; desc0.addr
+    (ram-write-le r (+ desc 8) 4 cap)                    ; desc0.len (capacity)
+    (ram-write-le r (+ desc 12) 2 (:write vio/desc-flag)) ; desc0.flags: WRITABLE
+    (ram-write-le r (+ desc 14) 2 0)                     ; desc0.next
+    (ram-write-le r driver 2 0)                          ; avail.flags
+    (ram-write-le r (+ driver 2) 2 1)                    ; avail.idx = 1
+    (ram-write-le r (+ driver 4) 2 0)                    ; avail.ring[0] = desc 0
+    (ram-write-le r device 2 0)                          ; used.flags
+    (ram-write-le r (+ device 2) 2 0)))                  ; used.idx = 0
+
+(deftest virtqueue-rx-plan-receive
+  (testing "servicing a receive queue plans writes of input into the writable buffer"
+    (let [cfg {:desc 0x1000 :driver 0x2000 :device 0x3000 :buf 0x4000}
+          ram (synthetic-receive-ram cfg 16)
+          rd (fn [gpa] (get ram gpa 0))
+          plan (hvt/virtqueue-rx-plan rd (assoc (dissoc cfg :buf) :num 8) 0 "HI\n")]
+      (is (= [{:gpa 0x4000 :byte \H} {:gpa 0x4001 :byte \I} {:gpa 0x4002 :byte \newline}]
+             (:writes plan)) "input bytes planned into the buffer at its addr")
+      (is (= [{:slot 0 :id 0 :len 3}] (:used plan)) "completion carries the byte count written")
+      (is (= 1 (:used-idx plan)))
+      (is (= 1 (:seen plan)))))
+  (testing "input is truncated to the buffer capacity"
+    (let [cfg {:desc 0x1000 :driver 0x2000 :device 0x3000 :buf 0x4000}
+          ram (synthetic-receive-ram cfg 2)   ; capacity 2, input 3
+          rd (fn [gpa] (get ram gpa 0))
+          plan (hvt/virtqueue-rx-plan rd (assoc (dissoc cfg :buf) :num 8) 0 "HI\n")]
+      (is (= 2 (count (:writes plan))) "only 2 bytes fit")
+      (is (= [{:slot 0 :id 0 :len 2}] (:used plan))))))
+
+(deftest fill-targets-and-writable-chain
+  (testing "fill-targets spreads input across targets up to capacity"
+    (is (= [[{:gpa 100 :byte \A} {:gpa 101 :byte \B} {:gpa 200 :byte \C}] [] 3]
+           (hvt/fill-targets [{:addr 100 :len 2} {:addr 200 :len 5}] "ABC"))))
+  (testing "walk-writable-chain collects only device-writable segments"
+    (let [ram (as-> {} r
+                ;; desc 0: readable, chains to desc 1 (writable)
+                (ram-write-le r 0x1000 8 0x5000)
+                (ram-write-le r 0x1008 4 2)
+                (ram-write-le r 0x100c 2 (:next vio/desc-flag))
+                (ram-write-le r 0x100e 2 1)
+                (ram-write-le r 0x1010 8 0x6000)
+                (ram-write-le r 0x1018 4 8)
+                (ram-write-le r 0x101c 2 (:write vio/desc-flag))
+                (ram-write-le r 0x101e 2 0))
+          rd (fn [gpa] (get ram gpa 0))]
+      (is (= [{:addr 0x6000 :len 8}] (hvt/walk-writable-chain rd 0x1000 0))
+          "only the writable descriptor is a receive target"))))
+
 (deftest walk-descriptor-chain-follows-next
   (testing "a two-descriptor chain concatenates both device-readable buffers"
     (let [ram (as-> {} r

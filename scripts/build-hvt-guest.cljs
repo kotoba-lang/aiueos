@@ -33,7 +33,10 @@
     :sha "4eb9664d67d8820fb25b146a4403f544edc7f90fc0cbea81405fb4b322aaa78c"}
    {:src "resources/hvt/guest-virtqueue-aarch64.c" :lang :c
     :elf "resources/hvt/guest-virtqueue-aarch64.elf"
-    :sha "e8a6ff8148f3efc2a40fe5b1739b021a178ea8e6299b50c52ae3fc5e82ceef3c"}])
+    :sha "e8a6ff8148f3efc2a40fe5b1739b021a178ea8e6299b50c52ae3fc5e82ceef3c"}
+   {:src "resources/hvt/guest-virtqueue-rx-aarch64.c" :lang :c
+    :elf "resources/hvt/guest-virtqueue-rx-aarch64.elf"
+    :sha "51cc5d480ffdc0d542f359cdc6b3bfdad1dadf922bb11cf1c02d9b0e86f9693b"}])
 
 (defn sh [& argv]
   (let [r (cp/spawnSync (first argv) (clj->js (rest argv)) #js {:encoding "utf8"})]

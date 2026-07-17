@@ -21,6 +21,7 @@
 (def elf-fixture "resources/hvt/guest-aarch64.elf")
 (def virtio-fixture "resources/hvt/guest-virtio-aarch64.elf")
 (def virtqueue-fixture "resources/hvt/guest-virtqueue-aarch64.elf")
+(def virtqueue-rx-fixture "resources/hvt/guest-virtqueue-rx-aarch64.elf")
 
 (defn run-spike [argv]
   (let [res (cp/spawnSync "clojure" (clj->js (into ["-M:hvt"] argv))
@@ -73,9 +74,11 @@
         v1v (check-case "V1 virtio-mmio transport handshake (guest-virtio-aarch64.elf)"
                         ["elf" virtio-fixture] false)
         v1q (check-case "V1 virtqueue transmit (guest-virtqueue-aarch64.elf, :console via virtqueue)"
-                        ["elf" virtqueue-fixture] true)]
-    (if (and v0 v1 v1v v1q)
-      (do (println "[hvt-smoke] PASS -- self-owned VMM boots a raw guest, a direct-loaded ELF, a virtio-mmio transport handshake, and a full virtqueue transmit (bytes pulled from guest RAM through the split queue into :console); all halt cleanly.")
+                        ["elf" virtqueue-fixture] true)
+        v1rx (check-case "V1 virtqueue receive (guest-virtqueue-rx-aarch64.elf, device->guest into serial)"
+                         ["elf" virtqueue-rx-fixture] false)]
+    (if (and v0 v1 v1v v1q v1rx)
+      (do (println "[hvt-smoke] PASS -- self-owned VMM boots a raw guest, a direct-loaded ELF, a virtio-mmio transport handshake, a full virtqueue transmit (guest->device into :console), and a virtqueue receive (device->guest: the tender fills the driver's writable buffer, the guest echoes it to serial); all halt cleanly.")
           (js/process.exit 0))
       (do (println "[hvt-smoke] FAIL -- one or more cases did not meet the gate.")
           (js/process.exit 1)))))
