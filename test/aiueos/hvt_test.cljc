@@ -6,6 +6,7 @@
   VM, not here (this suite runs on any JVM host, incl. macOS CI), mirroring
   `aiueos.vfio`'s hardware-honesty split."
   (:require [clojure.test :refer [deftest is testing]]
+            [clojure.java.io :as io]
             [aiueos.hvt :as hvt]))
 
 (deftest ioctl-numbers
@@ -90,3 +91,45 @@
   (testing "KVM_ARM_VCPU_PSCI_0_2 feature-bit layout (features[0] at struct offset 4, bit 0)"
     (is (= 4 hvt/vcpu-init-features0-offset))
     (is (= 1 hvt/vcpu-feature-psci-0-2) "KVM_ARM_VCPU_PSCI_0_2 == feature bit 0")))
+
+(defn- vec-accessor [v] (fn [off] (nth v off)))
+
+(deftest rd-le-reads-little-endian
+  (testing "rd-le assembles n little-endian bytes into a long"
+    (let [rd (vec-accessor [0x78 0x56 0x34 0x12 0xff 0xee])]
+      (is (= 0x12345678 (hvt/rd-le rd 0 4)))
+      (is (= 0x5678 (hvt/rd-le rd 0 2)))
+      (is (= 0xeeff (hvt/rd-le rd 4 2)))
+      (is (= 0xEEFF1234 (hvt/rd-le rd 2 4))))))
+
+(deftest elf-load-range-spans-segments
+  (testing "elf-load-range covers all PT_LOAD vaddr..vaddr+memsz, page-aligned"
+    ;; a single segment at 0x40000000, memsz 0x28 -> [0x40000000, 0x40001000)
+    (is (= [0x40000000 0x40001000]
+           (hvt/elf-load-range [{:vaddr 0x40000000 :memsz 0x28}] 4096)))
+    ;; two segments -> lo rounds down, hi rounds up across both
+    (is (= [0x40000000 0x40003000]
+           (hvt/elf-load-range [{:vaddr 0x40000100 :memsz 0x10}
+                                {:vaddr 0x40002000 :memsz 0x40}] 4096)))))
+
+(deftest parse-elf64-rejects-non-elf
+  (testing "a bad magic throws with a specific reason"
+    (is (thrown-with-msg? clojure.lang.ExceptionInfo #"bad magic"
+          (hvt/parse-elf64 (vec-accessor [0x00 0x01 0x02 0x03 0x04 0x05]))))))
+
+(deftest parse-elf64-on-real-fixture
+  (testing "parsing the checked-in aarch64 ELF fixture yields the expected load plan"
+    (let [bytes (with-open [in (io/input-stream (io/resource "hvt/guest-aarch64.elf"))]
+                  (.readAllBytes in))
+          rd (fn [off] (bit-and (long (aget bytes (int off))) 0xff))
+          {:keys [class machine entry segments]} (hvt/parse-elf64 rd)]
+      (is (= hvt/elf-class-64 class) "ELFCLASS64")
+      (is (= (:aarch64 hvt/elf-machine) machine) "EM_AARCH64 (0xB7)")
+      (is (= 0x40000000 entry) "e_entry")
+      (is (= 1 (count segments)) "one PT_LOAD")
+      (let [{:keys [offset vaddr filesz memsz]} (first segments)]
+        (is (= 0x1000 offset) "p_offset")
+        (is (= 0x40000000 vaddr) "p_vaddr")
+        (is (= 0x28 filesz) "p_filesz (10 aarch64 words)")
+        (is (= 0x28 memsz) "p_memsz"))
+      (is (= [0x40000000 0x40001000] (hvt/elf-load-range segments 4096))))))

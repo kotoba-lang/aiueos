@@ -82,6 +82,19 @@ The Phase-0 substrate plus the runtime/robotics/agent work built on top of it.
   (7 tests / 41 assertions), a `clojure -M:hvt psci` diagnostic entry
   (intentionally blocking — run under `timeout`), and `KVM_ARM_VCPU_INIT`
   return-code checking. Default poweroff path + smoke gate stay green.
+- **V1 progress (2026-07-17), ELF64 direct-loader** (ADR-0014 "V1 progress"):
+  the arch-independent half of kernel-direct-load, built and verified
+  end-to-end. Pure `parse-elf64`/`rd-le`/`elf-load-range` (host-testable);
+  `spike` generalized via `boot-plan` to accept `{:elf-bytes …}`, mapping guest
+  RAM at the ELF's load base (the fixture links at `0x40000000` — an arbitrary
+  non-zero GPA), copying PT_LOAD segments and setting PC = `e_entry`. Real
+  fixture `resources/hvt/guest-aarch64.elf` (genuine `ld` output; reproducible
+  byte-identical via `scripts/build-hvt-guest.cljs`, nbb, SHA-pinned). Verified
+  on real KVM: `clojure -M:hvt elf …` boots it to `{:serial "HI\n" :shutdown?
+  true}`. `scripts/hvt-smoke.cljs` now gates both the raw-word (V0) and ELF (V1)
+  cases; `aiueos.hvt-test` is 11 tests / 57 assertions. The remaining
+  kernel-boot gap is purely the x86_64 KVM host (Finding 1); the ELF-load
+  mechanism is done.
 
 ### Security / supply chain
 - **Artifact integrity**: `:aiueos/wasm-sha256` is verified before run

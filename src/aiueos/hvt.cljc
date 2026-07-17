@@ -172,6 +172,74 @@
 (def guest-ram-size 0x200000)     ; 2 MiB backing RAM at GPA 0 (page-aligned)
 
 ;; ---------------------------------------------------------------------------
+;; ELF64 loader -- pure parsing (host-testable). Lets the tender direct-load a
+;; real ELF image instead of a hand-packed word array: the arch-independent
+;; half of #110's "direct-load the ADR-0013 kernel image" (that kernel is
+;; x86_64, so its live boot waits on x86 KVM hardware, but the loader is
+;; arch-neutral and is exercised end-to-end here by the checked-in aarch64
+;; fixture `resources/hvt/guest-aarch64.elf`).
+
+(def elf-magic [0x7F 0x45 0x4C 0x46])       ; "\x7FELF"
+(def elf-class-64 2)                         ; EI_CLASS = ELFCLASS64
+(def elf-data-lsb 1)                         ; EI_DATA  = ELFDATA2LSB (little-endian)
+(def elf-machine {:aarch64 0xB7 :x86-64 0x3E})
+(def pt-load 1)                              ; p_type PT_LOAD
+
+;; ELF64 header field byte offsets.
+(def elf64-header {:ei-class 4 :ei-data 5 :e-machine 18 :e-entry 24
+                   :e-phoff 32 :e-phentsize 54 :e-phnum 56})
+;; ELF64 program-header field byte offsets (e_phentsize is usually 56).
+(def elf64-phdr {:p-type 0 :p-offset 8 :p-vaddr 16 :p-filesz 32 :p-memsz 40})
+
+(defn rd-le
+  "Read `n` bytes little-endian from accessor `rd` (a fn: offset -> unsigned
+  byte 0-255) at `off`, into a long."
+  [rd off n]
+  (loop [i 0 acc 0]
+    (if (= i n)
+      acc
+      (recur (inc i) (bit-or acc (bit-shift-left (long (rd (+ off i))) (* 8 i)))))))
+
+(defn parse-elf64
+  "Parse an ELF64 image via byte accessor `rd`. Returns
+  `{:class :data :machine :entry :phoff :phentsize :phnum :segments [...]}`
+  where `:segments` are the PT_LOAD program headers as
+  `{:type :offset :vaddr :filesz :memsz}`. Throws with a specific reason on a
+  non-ELF / non-ELF64 / big-endian image."
+  [rd]
+  (when-not (= elf-magic (mapv rd (range 4)))
+    (throw (ex-info "not an ELF image (bad magic)" {:magic (mapv rd (range 4))})))
+  (let [class (rd (:ei-class elf64-header))
+        data (rd (:ei-data elf64-header))]
+    (when-not (= class elf-class-64) (throw (ex-info "not ELF64 (EI_CLASS)" {:class class})))
+    (when-not (= data elf-data-lsb) (throw (ex-info "not little-endian (EI_DATA)" {:data data})))
+    (let [phoff (rd-le rd (:e-phoff elf64-header) 8)
+          phentsize (rd-le rd (:e-phentsize elf64-header) 2)
+          phnum (rd-le rd (:e-phnum elf64-header) 2)]
+      {:class class :data data
+       :machine (rd-le rd (:e-machine elf64-header) 2)
+       :entry (rd-le rd (:e-entry elf64-header) 8)
+       :phoff phoff :phentsize phentsize :phnum phnum
+       :segments (vec (for [i (range phnum)
+                            :let [base (+ phoff (* i phentsize))]
+                            :when (= pt-load (rd-le rd (+ base (:p-type elf64-phdr)) 4))]
+                        {:type pt-load
+                         :offset (rd-le rd (+ base (:p-offset elf64-phdr)) 8)
+                         :vaddr (rd-le rd (+ base (:p-vaddr elf64-phdr)) 8)
+                         :filesz (rd-le rd (+ base (:p-filesz elf64-phdr)) 8)
+                         :memsz (rd-le rd (+ base (:p-memsz elf64-phdr)) 8)}))})))
+
+(defn elf-load-range
+  "`[lo hi)` spanning every PT_LOAD segment's `vaddr..vaddr+memsz`, with `lo`
+  rounded down and `hi` up to a `page` boundary -- the guest-physical window
+  the tender must back with RAM."
+  [segments page]
+  (let [lo (reduce min (map :vaddr segments))
+        hi (reduce max (map #(+ (:vaddr %) (:memsz %)) segments))]
+    [(* page (quot lo page))
+     (* page (quot (+ hi (dec page)) page))]))
+
+;; ---------------------------------------------------------------------------
 ;; FFM (java.lang.foreign) KVM bindings -- JVM-only, needs a live /dev/kvm.
 
 #?(:clj
@@ -252,12 +320,47 @@
            seg)))
 
      (defn- load-guest!
-       "Write `program` (a seq of 32-bit words) into `ram` at `guest-load-gpa`
+       "Write `program` (a seq of 32-bit words) into `ram` at offset 0
        (little-endian, matching aarch64)."
        [^MemorySegment ram program]
        (doseq [[i word] (map-indexed vector program)]
-         (seg-set-i32 ram (+ guest-load-gpa (* 4 i)) (unchecked-int word)))
+         (seg-set-i32 ram (* 4 i) (unchecked-int word)))
        ram)
+
+     (defn read-file-bytes ^bytes [path]
+       (java.nio.file.Files/readAllBytes (java.nio.file.Path/of path (make-array String 0))))
+
+     (defn- boot-plan
+       "Compute `{:ram-gpa :ram-size :pc :machine :label :load!}` from `opts`:
+       either `{:elf-bytes <byte[]>}` (direct-load an ELF64 image -- RAM window
+       spans its PT_LOAD segments, PC = e_entry) or `{:program <words>}`
+       (default `guest-program-words` -- 2 MiB RAM at GPA 0, PC 0). `:load!` is
+       a `(fn [ram-seg])` that stages the guest into the mapped RAM."
+       [opts]
+       (if-let [^bytes elf (:elf-bytes opts)]
+         (let [rd (fn [off] (bit-and (long (aget elf (int off))) 0xff))
+               {:keys [machine entry segments] :as parsed} (parse-elf64 rd)
+               _ (when (empty? segments)
+                   (throw (ex-info "ELF has no PT_LOAD segments" {:parsed parsed})))
+               [lo hi] (elf-load-range segments 4096)]
+           {:ram-gpa lo
+            :ram-size (max guest-ram-size (- hi lo))
+            :pc entry
+            :machine machine
+            :label :elf
+            :load! (fn [^MemorySegment ram]
+                     (doseq [{:keys [offset vaddr filesz]} segments]
+                       (dotimes [i filesz]
+                         (.set ^MemorySegment ram ValueLayout/JAVA_BYTE
+                               (long (+ (- vaddr lo) i))
+                               (aget elf (int (+ offset i)))))))})
+         (let [program (:program opts guest-program-words)]
+           {:ram-gpa guest-load-gpa
+            :ram-size guest-ram-size
+            :pc guest-load-gpa
+            :machine (:aarch64 elf-machine)
+            :label :raw
+            :load! (fn [^MemorySegment ram] (load-guest! ram program))})))
 
      (defn- service-mmio!
        "Read a KVM_EXIT_MMIO from the mmap'd kvm_run struct `run-seg`. Returns
@@ -287,23 +390,25 @@
        needs a real KVM host (see ns docstring)."
        ([] (spike nil))
        ([opts]
-       (let [program (:program opts guest-program-words)
-             serial-expected (:serial-expected opts guest-serial-expected)]
+       (let [serial-expected (:serial-expected opts guest-serial-expected)
+             {:keys [ram-gpa ram-size pc load!]} (boot-plan opts)]
        (with-open [arena (Arena/ofConfined)]
          (let [kvm (kvm-open arena)
                api (ioctl-val kvm get-api-version 0)
                _ (when (not= api 12)
                    (throw (ex-info "unexpected KVM_GET_API_VERSION" {:api api})))
                vm (ioctl-val kvm create-vm 0)
-               ;; guest RAM: page-aligned native memory handed to KVM as slot 0.
-               ram (.allocate arena (long guest-ram-size) 4096)
-               _ (load-guest! ram program)
+               ;; guest RAM: page-aligned native memory handed to KVM as slot 0
+               ;; at `ram-gpa` (0 for a raw program; the ELF's load base for an
+               ;; ELF image), staged by the boot plan's `load!`.
+               ram (.allocate arena (long ram-size) 4096)
+               _ (load! ram)
                _ (ioctl-struct arena vm set-user-memory-region kvm-userspace-memory-region-size
                                (fn [s]
                                  (seg-set-i32 s (:slot mem-region-layout) 0)
                                  (seg-set-i32 s (:flags mem-region-layout) 0)
-                                 (seg-set-i64 s (:guest-phys-addr mem-region-layout) guest-load-gpa)
-                                 (seg-set-i64 s (:memory-size mem-region-layout) guest-ram-size)
+                                 (seg-set-i64 s (:guest-phys-addr mem-region-layout) ram-gpa)
+                                 (seg-set-i64 s (:memory-size mem-region-layout) ram-size)
                                  (seg-set-i64 s (:userspace-addr mem-region-layout) (.address ^MemorySegment ram))))
                vcpu (ioctl-val vm create-vcpu 0)
                ;; ARM: ask the VM for the preferred target, init the vcpu with
@@ -319,9 +424,10 @@
                _ (when (neg? init-rc)
                    (throw (ex-info "KVM_ARM_VCPU_INIT failed"
                                    {:rc init-rc :target (seg-get-i32 init-seg 0)})))
-               ;; set PC = guest load address via KVM_SET_ONE_REG.
+               ;; set PC = the boot plan's entry (0 for a raw program; e_entry
+               ;; for an ELF) via KVM_SET_ONE_REG.
                pc-val (.allocate arena ValueLayout/JAVA_LONG)
-               _ (.set ^MemorySegment pc-val ValueLayout/JAVA_LONG 0 (long guest-load-gpa))
+               _ (.set ^MemorySegment pc-val ValueLayout/JAVA_LONG 0 (long pc))
                _ (ioctl-struct arena vcpu set-one-reg kvm-one-reg-size
                                (fn [s]
                                  (seg-set-i64 s 0 arm64-core-reg-pc)
@@ -400,19 +506,24 @@
        "Run the spike and print the run receipt as EDN on stdout. Exit 0 iff the
        guest emitted the expected serial AND halted (the #110 gate). Meant to
        run inside the Linux/KVM VM:
-         clojure -M:hvt              ; default guest (MMIO poweroff halt) -- the
-                                     ;   working V0 path; exits 0.
-         clojure -M:hvt psci        ; PSCI diagnostic (V1, #110). BLOCKS: on
-                                     ;   this KVM the bare guest's `hvc` PSCI
-                                     ;   SYSTEM_OFF neither raises a system-event
-                                     ;   nor returns to the fall-through poweroff
-                                     ;   -- KVM_RUN spins in-kernel. Run under a
-                                     ;   `timeout`; it reproduces the finding
-                                     ;   that PSCI needs a real-kernel guest."
+         clojure -M:hvt              ; default raw-word guest (MMIO poweroff) --
+                                     ;   the working V0 path; exits 0.
+         clojure -M:hvt elf <path>  ; direct-load an ELF64 image (V1 loader) and
+                                     ;   boot it; exits 0 for a HI\\n+poweroff ELF
+                                     ;   like resources/hvt/guest-aarch64.elf.
+         clojure -M:hvt psci        ; PSCI diagnostic (V1, #110). BLOCKS: on this
+                                     ;   KVM the bare guest's `hvc` SYSTEM_OFF
+                                     ;   neither raises a system-event nor returns
+                                     ;   to the fall-through poweroff -- KVM_RUN
+                                     ;   spins in-kernel. Run under a `timeout`;
+                                     ;   reproduces the PSCI-needs-real-kernel
+                                     ;   finding."
        [& args]
-       (let [receipt (if (some #{"psci"} args)
-                       (spike {:program guest-program-psci})
-                       (spike))]
+       (let [receipt (cond
+                       (some #{"psci"} args) (spike {:program guest-program-psci})
+                       (some #{"elf"} args)  (spike {:elf-bytes (read-file-bytes
+                                                                 (last args))})
+                       :else (spike))]
          (binding [*print-namespace-maps* false]
            (prn receipt))
          (flush)
