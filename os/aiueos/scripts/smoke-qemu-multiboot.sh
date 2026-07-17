@@ -51,8 +51,12 @@ grep -F "AIUEOS_MULTIBOOT_MMAP_OK type1-regions bounded-walk" "$serial_log" >/de
   echo "error: Multiboot memory-map evidence was not observed" >&2
   exit 1
 }
+grep -F "AIUEOS_MULTIBOOT_RSDP_OK signature checksum firmware-independent" "$serial_log" >/dev/null || {
+  echo "error: Multiboot RSDP discovery evidence was not observed" >&2
+  exit 1
+}
 grep -F "AIUEOS_MULTIBOOT_OK long-mode mmap-parsed kotoba-probe=42" "$serial_log" >/dev/null || {
   echo "error: Multiboot long-mode/Kotoba evidence was not observed" >&2
   exit 1
 }
-echo "AIUEOS_MULTIBOOT_SMOKE_OK qemu-multiboot-loader long-mode mmap kotoba-probe"
+echo "AIUEOS_MULTIBOOT_SMOKE_OK qemu-multiboot-loader long-mode sse mmap rsdp kotoba-probe"

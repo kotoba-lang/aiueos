@@ -78,6 +78,18 @@ aiueos_multiboot_start:
   movq $aiueos_mb_stack_top, %rsp
   andq $-16, %rsp
 
+  /* Enable SSE: the freestanding C is compiled at -O2, which may vectorize
+     byte loops (an SSE instruction with SSE disabled would #UD, and with no
+     IDT that triple-faults). Clear CR0.EM, set CR0.MP, set CR4.OSFXSR and
+     CR4.OSXMMEXCPT. */
+  movq %cr0, %rax
+  andq $0xFFFFFFFFFFFFFFFB, %rax        /* clear EM (bit 2) */
+  orq  $0x2, %rax                       /* set MP (bit 1) */
+  movq %rax, %cr0
+  movq %cr4, %rax
+  orq  $0x600, %rax                     /* set OSFXSR (bit 9) | OSXMMEXCPT (bit 10) */
+  movq %rax, %cr4
+
   movb $0x34, %al                       /* '4' 64-bit reached */
   outb %al, $0xe9
 

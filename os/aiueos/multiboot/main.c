@@ -63,6 +63,26 @@ __attribute__((noreturn)) static void qemu_exit(uint32_t value) {
   for (;;) __asm__ volatile("hlt");
 }
 
+/* Locate the ACPI RSDP the firmware-independent way: the 8-byte "RSD PTR "
+ * signature on a 16-byte boundary in the 0xE0000-0xFFFFF BIOS area with a
+ * valid legacy 20-byte checksum. On the Multiboot path there is no UEFI
+ * configuration table to hand it over. The EBDA is not scanned: QEMU's
+ * built-in Multiboot loader runs no firmware, so the BDA EBDA pointer at
+ * 0x40E is unpopulated; QEMU places the RSDP in this ROM window. */
+static const void *find_rsdp(void) {
+  static const char sig[8] = {'R', 'S', 'D', ' ', 'P', 'T', 'R', ' '};
+  for (uint32_t addr = 0xE0000u; addr + 20 <= 0x100000u; addr += 16) {
+    const uint8_t *candidate = (const uint8_t *)(uintptr_t)addr;
+    int match = 1;
+    for (int i = 0; i < 8; i++) if (candidate[i] != (uint8_t)sig[i]) { match = 0; break; }
+    if (!match) continue;
+    uint8_t sum = 0;
+    for (int i = 0; i < 20; i++) sum = (uint8_t)(sum + candidate[i]);
+    if (sum == 0) return candidate;
+  }
+  return 0;
+}
+
 void aiueos_multiboot_main(uint32_t magic, uint32_t info_addr) {
   serial_init();
   if (magic != MULTIBOOT_BOOTLOADER_MAGIC) {
@@ -97,6 +117,20 @@ void aiueos_multiboot_main(uint32_t magic, uint32_t info_addr) {
   }
   debug_string("AIUEOS_MULTIBOOT_MMAP_OK\n");
   serial_string("AIUEOS_MULTIBOOT_MMAP_OK type1-regions bounded-walk\r\n");
+
+  /* Firmware-independent ACPI RSDP discovery: no UEFI configuration table
+   * hands the RSDP over on this path, so scan the BIOS window for a
+   * signature- and checksum-valid Root System Description Pointer. Walking
+   * the tables it references (an ACPI 1.0 RSDT here) reuses the kernel's
+   * validated ACPI parser, which is currently ACPI-2.0/XSDT-only to match the
+   * UEFI handoff; extending it to the RSDT is a follow-up. */
+  const void *rsdp = find_rsdp();
+  if (!rsdp) {
+    serial_string("AIUEOS_MULTIBOOT_FAIL rsdp-absent\r\n");
+    qemu_exit(0x6f);
+  }
+  debug_string("AIUEOS_MULTIBOOT_RSDP_OK\n");
+  serial_string("AIUEOS_MULTIBOOT_RSDP_OK signature checksum firmware-independent\r\n");
 
   if (kotoba_aiueos_probe() != 42u) {
     serial_string("AIUEOS_MULTIBOOT_FAIL kotoba-probe\r\n");
