@@ -35,6 +35,7 @@ timeout "$qemu_timeout" "$qemu" \
   -machine q35,accel=tcg -cpu max -m 128M -smp 2 \
   -drive if=pflash,format=raw,readonly=on,file="$OVMF_CODE" \
   -cdrom "$iso" \
+  -device VGA \
   -device isa-debugcon,iobase=0xe9,chardev=debug \
   -chardev file,id=debug,path="$log" \
   -device isa-debug-exit,iobase=0xf4,iosize=0x04 \
@@ -70,8 +71,12 @@ grep -F "AIUEOS_MULTIBOOT2_APIC_TIMER_OK" "$log" >/dev/null || {
   echo "error: Multiboot2 Local APIC timer evidence was not observed" >&2
   exit 1
 }
+grep -F "AIUEOS_MULTIBOOT2_FRAMEBUFFER_OK" "$log" >/dev/null || {
+  echo "error: Multiboot2 GRUB framebuffer evidence was not observed" >&2
+  exit 1
+}
 grep -F "AIUEOS_MULTIBOOT2_OK" "$log" >/dev/null || {
   echo "error: Multiboot2 long-mode/Kotoba evidence was not observed" >&2
   exit 1
 }
-echo "AIUEOS_GRUB_MULTIBOOT2_SMOKE_OK grub-efi multiboot2 long-mode mmap-tag acpi apic-timer kotoba-probe"
+echo "AIUEOS_GRUB_MULTIBOOT2_SMOKE_OK grub-efi multiboot2 long-mode mmap-tag acpi apic-timer framebuffer kotoba-probe"
