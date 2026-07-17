@@ -9,6 +9,9 @@
 
 #define MULTIBOOT_BOOTLOADER_MAGIC 0x2BADB002u
 #define MULTIBOOT_INFO_MMAP 0x00000040u
+#define MULTIBOOT2_BOOTLOADER_MAGIC 0x36D76289u
+#define MULTIBOOT2_TAG_END 0u
+#define MULTIBOOT2_TAG_MMAP 6u
 
 struct multiboot_info {
   uint32_t flags;
@@ -110,8 +113,64 @@ static const void *find_rsdp(void) {
   return 0;
 }
 
+/* GRUB path: the same image is loaded by GRUB's `multiboot2` command, which
+ * enters with the MB2 magic and a tag-list information structure. This is a
+ * narrower landing than the QEMU-direct MB1 path — it proves GRUB boots the
+ * kernel end-to-end (long mode, SSE, a bounded MB2 memory-map tag walk, and
+ * the compiler-emitted Kotoba probe). Standing up ACPI/APIC under GRUB+OVMF is
+ * deferred; those stay gated on the MB1 path. */
+__attribute__((noreturn))
+static void multiboot2_landing(uint32_t info_addr) {
+  const uint8_t *info = (const uint8_t *)(uintptr_t)info_addr;
+  uint32_t total = *(const uint32_t *)(const void *)info;
+  if (total < 8 || total > (1u << 20)) {
+    serial_string("AIUEOS_MULTIBOOT2_FAIL info-size\r\n");
+    qemu_exit(0x7d);
+  }
+  uint32_t offset = 8, usable = 0;
+  while (offset + 8 <= total) {
+    const uint8_t *tag = info + offset;
+    uint32_t type = *(const uint32_t *)(const void *)tag;
+    uint32_t size = *(const uint32_t *)(const void *)(tag + 4);
+    if (size < 8 || offset + size > total) {
+      serial_string("AIUEOS_MULTIBOOT2_FAIL tag-size\r\n");
+      qemu_exit(0x7c);
+    }
+    if (type == MULTIBOOT2_TAG_END) break;
+    if (type == MULTIBOOT2_TAG_MMAP) {
+      uint32_t entry_size = *(const uint32_t *)(const void *)(tag + 8);
+      if (entry_size >= 24 && entry_size <= 4096) {
+        for (uint32_t e = 16; e + entry_size <= size; e += entry_size) {
+          const uint8_t *m = tag + e;
+          uint64_t len = *(const uint64_t *)(const void *)(m + 8);
+          uint32_t mtype = *(const uint32_t *)(const void *)(m + 16);
+          if (mtype == 1 && len) usable++;
+        }
+      }
+    }
+    offset += (size + 7) & ~7u;  /* tags are 8-byte aligned */
+  }
+  if (!usable) {
+    serial_string("AIUEOS_MULTIBOOT2_FAIL no-usable-memory\r\n");
+    qemu_exit(0x7b);
+  }
+  debug_string("AIUEOS_MULTIBOOT2_MMAP_OK\n");
+  serial_string("AIUEOS_MULTIBOOT2_MMAP_OK tag-walk usable-region\r\n");
+  if (kotoba_aiueos_probe() != 42u) {
+    serial_string("AIUEOS_MULTIBOOT2_FAIL kotoba-probe\r\n");
+    qemu_exit(0x67);
+  }
+  debug_string("AIUEOS_MULTIBOOT2_OK\n");
+  serial_string("AIUEOS_MULTIBOOT2_OK grub long-mode mmap-tag kotoba-probe=42\r\n");
+  qemu_exit(0x2a);
+}
+
 void aiueos_multiboot_main(uint32_t magic, uint32_t info_addr) {
   serial_init();
+  if (magic == MULTIBOOT2_BOOTLOADER_MAGIC) {
+    debug_string("AIUEOS_MULTIBOOT2_ENTRY\n");
+    multiboot2_landing(info_addr);
+  }
   if (magic != MULTIBOOT_BOOTLOADER_MAGIC) {
     serial_string("AIUEOS_MULTIBOOT_FAIL magic\r\n");
     qemu_exit(0x7e);

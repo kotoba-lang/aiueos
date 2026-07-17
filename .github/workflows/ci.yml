@@ -15,8 +15,8 @@ jobs:
       - uses: mlugg/setup-zig@v2
         with:
           version: 0.14.1
-      - name: Install QEMU and OVMF
-        run: sudo apt-get update && sudo apt-get install -y qemu-system-x86 ovmf
+      - name: Install QEMU, OVMF, and GRUB
+        run: sudo apt-get update && sudo apt-get install -y qemu-system-x86 ovmf grub-pc-bin grub-efi-amd64-bin xorriso mtools
       - name: Build PE32+ loader and ELF64 kernel
         run: os/aiueos/scripts/build-uefi.sh
       - name: Boot and recover the committed journal (no Linux guest)
@@ -31,6 +31,8 @@ jobs:
         run: os/aiueos/scripts/smoke-qemu-release-image.sh
       - name: Boot the kernel through QEMU's Multiboot loader (no GRUB)
         run: os/aiueos/scripts/smoke-qemu-multiboot.sh
+      - name: Boot the kernel through GRUB via Multiboot2
+        run: GRUB_MKRESCUE=grub-mkrescue os/aiueos/scripts/smoke-qemu-grub-multiboot.sh
 
   test:
     name: CLJC contract tests

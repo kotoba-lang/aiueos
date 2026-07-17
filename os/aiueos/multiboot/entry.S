@@ -5,12 +5,28 @@
  * 0xE9 debug port so any hang localizes immediately. */
 
 .section .text.mbentry,"ax",@progbits
-.balign 4
+.balign 8
 .global aiueos_multiboot_header
 aiueos_multiboot_header:
   .long 0x1BADB002                      /* magic */
   .long 0x00000003                      /* flags: page-align modules + mem info */
   .long -(0x1BADB002 + 0x00000003)      /* checksum */
+
+/* Multiboot2 header, so GRUB's `multiboot2` command loads this same image.
+   8-byte aligned, within the first 32 KiB of the file. GRUB enters at the ELF
+   entry (the trampoline below) in 32-bit protected mode with eax = the MB2
+   magic 0x36D76289 and ebx = the MB2 information structure. */
+.balign 8
+aiueos_multiboot2_header:
+  .long 0xE85250D6                      /* MB2 magic */
+  .long 0                               /* architecture: i386 (32-bit) */
+  .long aiueos_multiboot2_header_end - aiueos_multiboot2_header
+  .long -(0xE85250D6 + 0 + (aiueos_multiboot2_header_end - aiueos_multiboot2_header))
+  /* end tag */
+  .short 0
+  .short 0
+  .long 8
+aiueos_multiboot2_header_end:
 
 .code32
 .global aiueos_multiboot_start
