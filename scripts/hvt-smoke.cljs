@@ -20,6 +20,7 @@
 (def expected-serial "HI\n")
 (def elf-fixture "resources/hvt/guest-aarch64.elf")
 (def virtio-fixture "resources/hvt/guest-virtio-aarch64.elf")
+(def virtqueue-fixture "resources/hvt/guest-virtqueue-aarch64.elf")
 
 (defn run-spike [argv]
   (let [res (cp/spawnSync "clojure" (clj->js (into ["-M:hvt"] argv))
@@ -39,8 +40,10 @@
        last))
 
 (defn check-case
-  "Run one spike case; return true iff it met the gate."
-  [label argv]
+  "Run one spike case; return true iff it met the gate. `require-console?` also
+  asserts the receipt's :console (the virtio-console output the tender pulled
+  from the virtqueue) equals the expected string."
+  [label argv require-console?]
   (println (str "[hvt-smoke] " label ": clojure -M:hvt " (str/join " " argv) " ..."))
   (let [{:keys [status stdout stderr]} (run-spike argv)
         line (last-edn-line stdout)
@@ -52,23 +55,27 @@
       (do (println "[hvt-smoke]   FAIL: no EDN receipt on stdout (KVM unavailable?).")
           (println stdout)
           false)
-      (let [{:keys [serial serial-ok? shutdown? steps exits]} receipt
-            ok? (and (= serial expected-serial) serial-ok? shutdown? (zero? status))]
+      (let [{:keys [serial serial-ok? shutdown? steps exits console]} receipt
+            console-ok? (or (not require-console?) (= console expected-serial))
+            ok? (and (= serial expected-serial) serial-ok? shutdown? console-ok? (zero? status))]
         (println (str "[hvt-smoke]   receipt: serial=" (pr-str serial)
-                      " serial-ok?=" serial-ok?
+                      " console=" (pr-str console)
                       " shutdown?=" shutdown?
                       " steps=" steps
-                      " mmio-exits=" (count (filter #(= :mmio (:reason %)) exits))))
+                      " mmio-exits=" (count (filter #(= :mmio (:reason %)) exits))
+                      " notify-exits=" (count (filter #(= :virtio-notify (:reason %)) exits))))
         (println (str "[hvt-smoke]   " (if ok? "PASS" "FAIL") " -- " label))
         ok?))))
 
 (defn -main []
-  (let [v0 (check-case "V0 raw-word guest (MMIO poweroff halt)" [])
-        v1 (check-case "V1 ELF direct-load (guest-aarch64.elf)" ["elf" elf-fixture])
+  (let [v0 (check-case "V0 raw-word guest (MMIO poweroff halt)" [] false)
+        v1 (check-case "V1 ELF direct-load (guest-aarch64.elf)" ["elf" elf-fixture] false)
         v1v (check-case "V1 virtio-mmio transport handshake (guest-virtio-aarch64.elf)"
-                        ["elf" virtio-fixture])]
-    (if (and v0 v1 v1v)
-      (do (println "[hvt-smoke] PASS -- self-owned VMM boots a raw guest, a direct-loaded ELF, and a virtio-mmio driver guest (transport handshake against the emulated console device), all serial-verified with a clean halt.")
+                        ["elf" virtio-fixture] false)
+        v1q (check-case "V1 virtqueue transmit (guest-virtqueue-aarch64.elf, :console via virtqueue)"
+                        ["elf" virtqueue-fixture] true)]
+    (if (and v0 v1 v1v v1q)
+      (do (println "[hvt-smoke] PASS -- self-owned VMM boots a raw guest, a direct-loaded ELF, a virtio-mmio transport handshake, and a full virtqueue transmit (bytes pulled from guest RAM through the split queue into :console); all halt cleanly.")
           (js/process.exit 0))
       (do (println "[hvt-smoke] FAIL -- one or more cases did not meet the gate.")
           (js/process.exit 1)))))

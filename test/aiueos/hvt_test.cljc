@@ -172,3 +172,89 @@
   (testing "feature/queue selectors are tracked"
     (is (= 1 (:device-features-sel (hvt/virtio-console-write {} (:device-features-sel vio/mmio-reg) 1))))
     (is (= 0 (:queue-sel (hvt/virtio-console-write {} (:queue-sel vio/mmio-reg) 0))))))
+
+(deftest queue-config-per-queue
+  (testing "queue-config registers route into the selected queue and resolve 64-bit addrs"
+    (let [prog (fn [st reg v] (hvt/virtio-console-write st reg v))
+          st (-> {}
+                 (prog (:queue-sel vio/mmio-reg) 1)
+                 (prog (:queue-num vio/mmio-reg) 8)
+                 (prog (:queue-desc-low vio/mmio-reg) 0x40010000)
+                 (prog (:queue-desc-high vio/mmio-reg) 0)
+                 (prog (:queue-driver-low vio/mmio-reg) 0x40020000)
+                 (prog (:queue-device-low vio/mmio-reg) 0x40030000)
+                 (prog (:queue-ready vio/mmio-reg) 1))]
+      (is (= {:desc 0x40010000 :driver 0x40020000 :device 0x40030000 :num 8}
+             (hvt/queue-config st 1)))
+      (is (= 1 (get-in st [:queues 1 :ready])))
+      (testing "a different queue is independent"
+        (is (= {:desc 0 :driver 0 :device 0 :num 0} (hvt/queue-config st 0)))))))
+
+;; A synthetic guest-RAM helper: build a byte map, then a gpa->byte accessor.
+(defn- ram-write-le [ram gpa n v]
+  (reduce (fn [m i] (assoc m (+ gpa i) (bit-and (unsigned-bit-shift-right v (* 8 i)) 0xff)))
+          ram (range n)))
+
+(defn- synthetic-transmit-ram
+  "Guest RAM with one transmit descriptor at `desc`, avail idx 1 pointing at it,
+  used idx 0, and `bytes` in a buffer at `buf`."
+  [{:keys [desc driver device buf]} byte-seq]
+  (let [n (count byte-seq)]
+    (as-> {} r
+      (ram-write-le r desc 8 buf)              ; desc0.addr
+      (ram-write-le r (+ desc 8) 4 n)          ; desc0.len
+      (ram-write-le r (+ desc 12) 2 0)         ; desc0.flags (device-readable)
+      (ram-write-le r (+ desc 14) 2 0)         ; desc0.next
+      (ram-write-le r driver 2 0)              ; avail.flags
+      (ram-write-le r (+ driver 2) 2 1)        ; avail.idx = 1
+      (ram-write-le r (+ driver 4) 2 0)        ; avail.ring[0] = desc 0
+      (ram-write-le r device 2 0)              ; used.flags
+      (ram-write-le r (+ device 2) 2 0)        ; used.idx = 0
+      (reduce (fn [m [i b]] (assoc m (+ buf i) (int b)))
+              r (map-indexed vector byte-seq)))))
+
+(deftest virtqueue-plan-transmit
+  (testing "servicing a transmit queue pulls the buffer bytes and plans the used ring"
+    (let [cfg {:desc 0x1000 :driver 0x2000 :device 0x3000 :buf 0x4000}
+          ram (synthetic-transmit-ram cfg [\H \I \newline])
+          rd (fn [gpa] (get ram gpa 0))
+          plan (hvt/virtqueue-plan rd (assoc (dissoc cfg :buf) :num 8) 0)]
+      (is (= "HI\n" (:emitted plan)) "device reads the transmit buffer out of guest RAM")
+      (is (= [{:slot 0 :id 0 :len 3}] (:used plan)) "one completion pushed to the used ring")
+      (is (= 1 (:used-idx plan)))
+      (is (= 1 (:seen plan)) "avail idx consumed")))
+  (testing "nothing available (avail idx == seen) emits nothing"
+    (let [ram (synthetic-transmit-ram {:desc 0x1000 :driver 0x2000 :device 0x3000 :buf 0x4000} [\X])
+          rd (fn [gpa] (get ram gpa 0))
+          plan (hvt/virtqueue-plan rd {:desc 0x1000 :driver 0x2000 :device 0x3000 :num 8} 1)]
+      (is (= "" (:emitted plan)))
+      (is (= [] (:used plan))))))
+
+(deftest walk-descriptor-chain-follows-next
+  (testing "a two-descriptor chain concatenates both device-readable buffers"
+    (let [ram (as-> {} r
+                ;; desc 0 -> "AB" @0x5000, chains to desc 1
+                (ram-write-le r 0x1000 8 0x5000)
+                (ram-write-le r 0x1008 4 2)
+                (ram-write-le r 0x100c 2 (:next vio/desc-flag))
+                (ram-write-le r 0x100e 2 1)
+                ;; desc 1 -> "C" @0x5002, no next
+                (ram-write-le r 0x1010 8 0x5002)
+                (ram-write-le r 0x1018 4 1)
+                (ram-write-le r 0x101c 2 0)
+                (ram-write-le r 0x101e 2 0)
+                (assoc r 0x5000 (int \A) 0x5001 (int \B) 0x5002 (int \C)))
+          rd (fn [gpa] (get ram gpa 0))
+          {:keys [bytes len]} (hvt/walk-descriptor-chain rd 0x1000 0)]
+      (is (= [(int \A) (int \B) (int \C)] bytes))
+      (is (= 3 len))))
+  (testing "a device-WRITABLE descriptor is not emitted (it's a receive buffer)"
+    (let [ram (as-> {} r
+                (ram-write-le r 0x1000 8 0x5000)
+                (ram-write-le r 0x1008 4 2)
+                (ram-write-le r 0x100c 2 (:write vio/desc-flag))
+                (ram-write-le r 0x100e 2 0)
+                (assoc r 0x5000 (int \Z) 0x5001 (int \Z)))
+          rd (fn [gpa] (get ram gpa 0))
+          {:keys [bytes]} (hvt/walk-descriptor-chain rd 0x1000 0)]
+      (is (= [] bytes) "device-writable buffers carry no transmit data"))))
