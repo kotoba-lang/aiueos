@@ -1,8 +1,10 @@
 # ADR-0014 — Self-owned VMM ("hvt tender"): owning the hypervisor side of aiueos virtualization
 
-- Status: **proposed** — owner decision required (see "Decision gate")
-- Date: 2026-07-17
-- Deciders: Jun Kawasaki (pending)
+- Status: **accepted** — 2026-07-17 owner decision; option C V0 authorized
+  (Linux/KVM, JVM-FFM, receipts required), options B/D stay live until the
+  V2 checkpoint
+- Date: 2026-07-17 (proposed and accepted same day)
+- Deciders: Jun Kawasaki
 - Scope-out origin: ADR-0011 Phase 1 ("a separate, multi-week project-scale
   ADR of its own — not attempted in this pass"). This is that ADR.
 
@@ -99,7 +101,7 @@ targets (ADR-0013) mature, a native *userspace* target is strictly smaller
 than a kernel target; the tender could eventually be kotoba-emitted. Farthest
 out; not startable today.
 
-## Proposed decision (subject to owner acceptance)
+## Decision (accepted 2026-07-17)
 
 Phased, Linux/KVM-first, with option C as the spike vehicle and B/D as
 checkpointed alternatives:
@@ -149,12 +151,18 @@ per ADR-0013's own standard).
 
 ## Decision gate
 
-This ADR is **proposed**, not accepted: per the 2026-07-10 owner rule, gaps
-that the sanctioned runtimes cannot obviously fill are escalated by ADR for
-owner judgment rather than self-granted. Accepting this ADR means: option C
-V0 may start (Linux/KVM, JVM-FFM, receipts required); options B/D stay live
-until the V2 checkpoint. Rejecting it means: option A stands, and
-`computer:vm` proceeds against Parallels/QEMU when scheduled.
+As proposed, this ADR was escalated for owner judgment per the 2026-07-10
+owner rule (gaps the sanctioned runtimes cannot obviously fill are not
+self-granted). Accepting it means: option C V0 may start (Linux/KVM, JVM-FFM,
+receipts required); options B/D stay live until the V2 checkpoint. Rejecting
+it means: option A stands, and `computer:vm` proceeds against Parallels/QEMU
+when scheduled.
+
+**Outcome — accepted by owner, 2026-07-17.** Option C V0 is authorized;
+tracked as kotoba-lang/aiueos#110. Practical note recorded there: V0 needs a
+Linux/KVM host — the primary dev machine is macOS, whose HVF backend is
+deliberately deferred to V2, so the spike runs on a Linux VM or remote Linux
+host with `/dev/kvm`.
 
 ## References
 
