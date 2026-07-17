@@ -19,6 +19,7 @@
 
 (def expected-serial "HI\n")
 (def elf-fixture "resources/hvt/guest-aarch64.elf")
+(def virtio-fixture "resources/hvt/guest-virtio-aarch64.elf")
 
 (defn run-spike [argv]
   (let [res (cp/spawnSync "clojure" (clj->js (into ["-M:hvt"] argv))
@@ -63,9 +64,11 @@
 
 (defn -main []
   (let [v0 (check-case "V0 raw-word guest (MMIO poweroff halt)" [])
-        v1 (check-case "V1 ELF direct-load (guest-aarch64.elf)" ["elf" elf-fixture])]
-    (if (and v0 v1)
-      (do (println "[hvt-smoke] PASS -- self-owned VMM boots both a raw guest and a direct-loaded ELF, serial via MMIO traps, clean halt.")
+        v1 (check-case "V1 ELF direct-load (guest-aarch64.elf)" ["elf" elf-fixture])
+        v1v (check-case "V1 virtio-mmio transport handshake (guest-virtio-aarch64.elf)"
+                        ["elf" virtio-fixture])]
+    (if (and v0 v1 v1v)
+      (do (println "[hvt-smoke] PASS -- self-owned VMM boots a raw guest, a direct-loaded ELF, and a virtio-mmio driver guest (transport handshake against the emulated console device), all serial-verified with a clean halt.")
           (js/process.exit 0))
       (do (println "[hvt-smoke] FAIL -- one or more cases did not meet the gate.")
           (js/process.exit 1)))))

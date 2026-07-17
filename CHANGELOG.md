@@ -95,6 +95,20 @@ The Phase-0 substrate plus the runtime/robotics/agent work built on top of it.
   cases; `aiueos.hvt-test` is 11 tests / 57 assertions. The remaining
   kernel-boot gap is purely the x86_64 KVM host (Finding 1); the ELF-load
   mechanism is done.
+- **V1 progress (2026-07-17), virtio-mmio device model** (ADR-0014 "virtio-mmio
+  device model"): the tender now emulates a device the guest can probe, the
+  first reuse of `aiueos.virtio`'s host-side logic. Adds **MMIO read
+  emulation** (`set-mmio-data!` answers guest register reads before re-entering
+  `KVM_RUN`) and a pure, host-tested **`virtio-console` device model**
+  (`virtio-console-read`/`-write` over `aiueos.virtio/mmio-reg` + magic/version/
+  status/feature constants) presenting device-id 3 with `VIRTIO_F_VERSION_1`.
+  A real aarch64 driver guest (`guest-virtio-aarch64.S` → `.elf`, loaded by the
+  V1 ELF loader) runs the full `ACKNOWLEDGE → DRIVER → feature-negotiate →
+  FEATURES_OK → DRIVER_OK` transport handshake and emits `HI\n` only on total
+  success. Verified on real KVM (21-step trace, `:virtio-status 15` = DRIVER_OK).
+  `hvt-smoke.cljs` now gates raw + ELF + virtio; `aiueos.hvt-test` is 14 tests /
+  75 assertions. The virtqueue data path (rings/descriptor DMA) is the next
+  milestone; queue-config writes are already tracked in device state.
 
 ### Security / supply chain
 - **Artifact integrity**: `:aiueos/wasm-sha256` is verified before run

@@ -1,14 +1,16 @@
 #!/usr/bin/env nbb
-;; Reproducibility recipe for the ADR-0014 V1 ELF-loader test fixture
-;; `resources/hvt/guest-aarch64.elf` (issue #110). Assembles the checked-in
-;; aarch64 source + linker script into the fixture ELF and verifies the SHA-256.
+;; Reproducibility recipe for the ADR-0014 V1 ELF-loader test-guest fixtures
+;; (issue #110). Assembles the checked-in aarch64 sources + shared linker script
+;; into the fixture ELFs and verifies each SHA-256.
 ;;
 ;; Runs inside the aarch64 Linux/KVM VM (needs GNU binutils `as`/`ld` targeting
 ;; aarch64 ELF -- the host is macOS/Mach-O, so this cannot build there):
 ;;   nbb scripts/build-hvt-guest.cljs
 ;;
-;; The .elf is checked in so tests need no toolchain; this script only
-;; regenerates it and confirms it is byte-identical (reproducible build).
+;; The .elf files are checked in so tests need no toolchain; this script only
+;; regenerates them and confirms they are byte-identical (reproducible build).
+;; --build-id=none + -s (strip) keep the output byte-deterministic and
+;; independent of the source path.
 
 (ns build-hvt-guest
   (:require ["child_process" :as cp]
@@ -16,15 +18,19 @@
             ["fs" :as fs]
             [clojure.string :as str]))
 
-(def src "resources/hvt/guest-aarch64.S")
-(def ld "resources/hvt/guest-aarch64.ld")
-(def elf "resources/hvt/guest-aarch64.elf")
-(def expected-sha
-  "e2456afed9c0b03b5be0eac4896eac008815471b0f1a99eabc1e3ce7fa794e44")
+(def ld-script "resources/hvt/guest-aarch64.ld")
+
+;; the checked-in guests: source .S -> output .elf, with the recorded sha256.
+(def guests
+  [{:src "resources/hvt/guest-aarch64.S"
+    :elf "resources/hvt/guest-aarch64.elf"
+    :sha "e2456afed9c0b03b5be0eac4896eac008815471b0f1a99eabc1e3ce7fa794e44"}
+   {:src "resources/hvt/guest-virtio-aarch64.S"
+    :elf "resources/hvt/guest-virtio-aarch64.elf"
+    :sha "4eb9664d67d8820fb25b146a4403f544edc7f90fc0cbea81405fb4b322aaa78c"}])
 
 (defn sh [& argv]
-  (let [r (cp/spawnSync (first argv) (clj->js (rest argv))
-                        #js {:encoding "utf8"})]
+  (let [r (cp/spawnSync (first argv) (clj->js (rest argv)) #js {:encoding "utf8"})]
     (when (not= 0 (.-status r))
       (println (str "[build-hvt-guest] command failed: " (str/join " " argv)))
       (println (.-stderr r))
@@ -32,27 +38,25 @@
     r))
 
 (defn sha256 [path]
-  (-> (crypto/createHash "sha256")
-      (.update (fs/readFileSync path))
-      (.digest "hex")))
+  (-> (crypto/createHash "sha256") (.update (fs/readFileSync path)) (.digest "hex")))
+
+(defn build-one [{:keys [src elf sha]} i]
+  (let [obj (str "/tmp/hvt-guest-" i ".o")]
+    (println "[build-hvt-guest] assembling" src "->" elf)
+    (sh "as" "-o" obj src)
+    (sh "ld" "--build-id=none" "-s" "-z" "max-page-size=0x1000" "-T" ld-script "-o" elf obj)
+    (let [actual (sha256 elf)]
+      (println "  sha256:" actual)
+      (if (= actual sha)
+        (do (println "  PASS -- byte-identical") true)
+        (do (println "  NOTE -- differs from recorded" sha "(update after review)") false)))))
 
 (defn -main []
-  (println "[build-hvt-guest] assembling" src "->" elf)
-  (sh "as" "-o" "/tmp/guest-hvt.o" src)
-  ;; --build-id=none + -s (strip) keep the output byte-deterministic and
-  ;; independent of the source path: the default build-id note varies run to
-  ;; run, and the assembler embeds the source filename as an STT_FILE symbol --
-  ;; stripping both removes every non-essential, non-reproducible byte, leaving
-  ;; just the ELF header, program header, and the 40-byte .text the tender loads.
-  (sh "ld" "--build-id=none" "-s" "-z" "max-page-size=0x1000" "-T" ld "-o" elf "/tmp/guest-hvt.o")
-  (let [actual (sha256 elf)]
-    (println "[build-hvt-guest] sha256:" actual)
-    (if (= actual expected-sha)
-      (do (println "[build-hvt-guest] PASS -- fixture is reproducible & byte-identical.")
+  (let [oks (doall (map-indexed (fn [i g] (build-one g i)) guests))]
+    (if (every? true? oks)
+      (do (println "[build-hvt-guest] PASS -- all fixtures reproducible & byte-identical.")
           (js/process.exit 0))
-      (do (println "[build-hvt-guest] NOTE -- sha differs from the recorded one.")
-          (println "  expected:" expected-sha)
-          (println "  If binutils changed, update expected-sha after review.")
+      (do (println "[build-hvt-guest] FAIL -- one or more fixtures differ.")
           (js/process.exit 1)))))
 
 (-main)
