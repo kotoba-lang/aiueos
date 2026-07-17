@@ -437,8 +437,11 @@ GRUB enters the kernel in 32-bit protected mode with the MB2 magic, and the
 multiboot2 ELF loader wants section headers, so the GRUB path takes the linked
 64-bit image directly while QEMU's built-in MB1 loader takes the 32-bit-wrapped
 one; both carry the same MB1 and MB2 headers (8-byte aligned in the file) and
-code. This GRUB path proves the loader-compatibility boot end to end but is
-deliberately narrow — ACPI/APIC under GRUB+OVMF stay gated on the MB1 path.
+code. The GRUB path reaches the same evidence as the QEMU-direct MB1 path — it takes
+the ACPI RSDP from a Multiboot2 ACPI tag (no BIOS scan), validates the tables
+through the shared ACPI parser, and brings up the Local APIC timer — so both
+loader entries prove long mode, SSE, ACPI, and interrupt handling before the
+Kotoba probe.
 
 This recovery selection lives in the reference C loader; re-expressing it in
 the compiler-emitted C-free loader and a GRUB-driven Multiboot2 path remain
