@@ -70,15 +70,21 @@
 (def kvm-vcpu-init-size 32)               ; target(u32) + features[7](u32)
 (def kvm-one-reg-size 16)                 ; id(u64) + addr(u64)
 
+(def kvm-mp-state-size 4)                 ; struct kvm_mp_state { __u32 mp_state; }
+
 (def get-api-version       (io-  kvm-type 0x00))
 (def create-vm             (io-  kvm-type 0x01))
 (def get-vcpu-mmap-size    (io-  kvm-type 0x04))
 (def create-vcpu           (io-  kvm-type 0x41))
 (def run                   (io-  kvm-type 0x80))
 (def set-user-memory-region (iow kvm-type 0x46 kvm-userspace-memory-region-size))
+(def get-mp-state          (ior  kvm-type 0x98 kvm-mp-state-size))
+(def set-mp-state          (iow  kvm-type 0x99 kvm-mp-state-size))
 (def set-one-reg           (iow  kvm-type 0xac kvm-one-reg-size))
 (def arm-vcpu-init         (iow  kvm-type 0xae kvm-vcpu-init-size))
 (def arm-preferred-target  (ior  kvm-type 0xaf kvm-vcpu-init-size))
+
+(def mp-state {:runnable 0 :stopped 5})   ; KVM_MP_STATE_RUNNABLE / _STOPPED
 
 ;; ---------------------------------------------------------------------------
 ;; struct layouts (byte offsets), pure.
@@ -613,19 +619,29 @@
                                  (seg-set-i64 s (:memory-size mem-region-layout) ram-size)
                                  (seg-set-i64 s (:userspace-addr mem-region-layout) (.address ^MemorySegment ram))))
                vcpu (ioctl-val vm create-vcpu 0)
-               ;; ARM: ask the VM for the preferred target, init the vcpu with
-               ;; the features KVM_ARM_PREFERRED_TARGET recommends. NB: this
-               ;; host's KVM already defaults the guest to PSCI 0.2+ (SYSTEM_OFF
-               ;; at 0x84000008), so we do NOT force the KVM_ARM_VCPU_PSCI_0_2
-               ;; feature bit -- empirically, forcing features[0]|=1 here makes
-               ;; the first KVM_RUN block before the guest emits any serial
-               ;; (regression vs. the recommended features). See #110's PSCI
-               ;; finding for why V0/V1 halt via the MMIO poweroff port instead.
+               ;; ARM: ask the VM for the preferred target and init the vcpu.
+               ;; `:psci-0-2?` additionally sets the KVM_ARM_VCPU_PSCI_0_2 feature
+               ;; bit -- but on this KVM that leaves the boot vcpu STOPPED (see
+               ;; the RUNNABLE force below) AND the standard PSCI function IDs
+               ;; still return NOT_SUPPORTED, so it is a diagnostic knob, not the
+               ;; default. See #110's PSCI finding for why V0/V1 halt via the
+               ;; MMIO poweroff port.
                init-seg (ioctl-struct arena vm arm-preferred-target kvm-vcpu-init-size nil)
+               _ (when (:psci-0-2? opts)
+                   (seg-set-i32 init-seg vcpu-init-features0-offset
+                                (bit-or (seg-get-i32 init-seg vcpu-init-features0-offset)
+                                        vcpu-feature-psci-0-2)))
                init-rc (int (invoke-h c-ioctl-ptr (int vcpu) (long arm-vcpu-init) init-seg))
                _ (when (neg? init-rc)
                    (throw (ex-info "KVM_ARM_VCPU_INIT failed"
                                    {:rc init-rc :target (seg-get-i32 init-seg 0)})))
+               ;; The KVM_ARM_VCPU_PSCI_0_2 feature leaves the boot vcpu in
+               ;; MP_STATE_STOPPED on this KVM; force it RUNNABLE so KVM_RUN
+               ;; doesn't block waiting for a power-on that never arrives.
+               _ (when (:psci-0-2? opts)
+                   (let [s (.allocate arena (long kvm-mp-state-size))]
+                     (seg-set-i32 s 0 (:runnable mp-state))
+                     (invoke-h c-ioctl-ptr (int vcpu) (long set-mp-state) s)))
                ;; set PC = the boot plan's entry (0 for a raw program; e_entry
                ;; for an ELF) via KVM_SET_ONE_REG.
                pc-val (.allocate arena ValueLayout/JAVA_LONG)

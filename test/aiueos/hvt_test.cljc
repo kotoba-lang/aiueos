@@ -25,7 +25,15 @@
     ;; _IOW(0xAE, 0xae, sizeof kvm_vcpu_init=32)
     (is (= 0x4020AEAE hvt/arm-vcpu-init))
     ;; _IOR(0xAE, 0xaf, sizeof kvm_vcpu_init=32)
-    (is (= 0x8020AEAF hvt/arm-preferred-target))))
+    (is (= 0x8020AEAF hvt/arm-preferred-target))
+    ;; _IOR(0xAE, 0x98, sizeof kvm_mp_state=4) / _IOW(0xAE, 0x99, 4)
+    (is (= 0x8004AE98 hvt/get-mp-state))
+    (is (= 0x4004AE99 hvt/set-mp-state))))
+
+(deftest mp-state-constants
+  (testing "KVM_MP_STATE values (linux/kvm.h)"
+    (is (= 0 (:runnable hvt/mp-state)))
+    (is (= 5 (:stopped hvt/mp-state)))))
 
 (deftest ioc-encoding
   (testing "the _IOC direction/type/nr/size bit layout"
@@ -35,7 +43,9 @@
 
 (deftest arm64-pc-register-id
   (testing "KVM_REG_ARM64 | SIZE_U64 | ARM_CORE | (offsetof(pc)/4 = 0x40)"
-    (is (= 0x6030000000100040 hvt/arm64-core-reg-pc))))
+    (is (= 0x6030000000100040 hvt/arm64-core-reg-pc)))
+  (testing "SP core reg (offsetof(sp)/4 = 0x3E)"
+    (is (= 0x603000000010003E hvt/arm64-core-reg-sp))))
 
 (deftest struct-offsets
   (testing "kvm_userspace_memory_region field byte offsets"

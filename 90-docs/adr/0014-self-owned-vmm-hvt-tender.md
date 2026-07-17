@@ -182,21 +182,15 @@ x86 hardware. (An `aarch64-aiueos-kernel` target is named as future work in
 ADR-0013 but not yet built; when it exists, this same aarch64 KVM host boots
 it directly.)
 
-**Finding 2 — PSCI SYSTEM_OFF does not fire for a hand-written bare guest;
-it needs a real-kernel guest.** Reproduced deterministically via the new
-`aiueos.hvt/guest-program-psci` diagnostic (serial `HI\n` → `hvc #0` with
-`0x84000008` → a poweroff-port *fall-through* reached only if PSCI is ignored):
-the guest emits the three serial bytes, then `KVM_RUN` blocks in-kernel at the
-`hvc` — **neither** a `KVM_EXIT_SYSTEM_EVENT` **nor** the fall-through poweroff
-exit appears, so KVM is injecting an exception into the guest (which spins in
-its zeroed EL1 vector table) rather than honoring SYSTEM_OFF. Forcing the
-`KVM_ARM_VCPU_PSCI_0_2` feature bit (`features[0] |= 1`) in `KVM_ARM_VCPU_INIT`
-did **not** help — it regressed further, blocking the *first* `KVM_RUN` before
-any serial (this KVM already defaults the guest to PSCI 0.2+, so the bit is
-counterproductive here), so the tender uses the recommended features unchanged.
-Conclusion: a working PSCI clean shutdown requires a guest that establishes its
-own EL1 exception vectors — i.e. the ADR-0013 kernel (Finding 1), not a bare
-stub. Until then V0/V1 halt via the MMIO poweroff port, which works.
+**Finding 2 — PSCI SYSTEM_OFF does not fire for a hand-written bare guest**
+(initial, partially-wrong hypothesis; corrected below). First observed via
+`aiueos.hvt/guest-program-psci` (serial `HI\n` → `hvc #0` with `0x84000008` →
+poweroff fall-through): the guest emits the three serial bytes, then `KVM_RUN`
+blocks in-kernel at the `hvc`, reaching **neither** a `KVM_EXIT_SYSTEM_EVENT`
+**nor** the fall-through poweroff. The first pass guessed KVM was injecting an
+exception the vector-table-less guest spun on, and that the `KVM_ARM_VCPU_PSCI_0_2`
+feature bit was counterproductive because "this KVM already defaults to PSCI
+0.2+." A later pass **disproved both parts of that guess** — see the correction.
 
 Landed this pass (verified on the aarch64 KVM host): `spike` parametrized over
 a guest program (`{:program …}`), the PSCI diagnostic guest + its
@@ -337,6 +331,46 @@ With this, the two open V1 items — kernel direct-load and the virtio device
 model — are both substantially delivered: the ELF loader boots real images
 (kernel-specific boot waits only on x86_64 KVM hardware, Finding 1), and the
 virtio-console device now does transport **and** a full virtqueue transmit.
+
+### V1 progress — 2026-07-17 (PSCI finding, corrected with return-code evidence)
+
+A focused probe pass **corrected Finding 2**. The earlier explanation (KVM
+injects an exception; the vcpu already has PSCI 0.2+) was wrong on both counts.
+By reading the `hvc` return value in `x0` (a minimal guest: `hvc #0` then
+`strb w0,[serial]`, so the receipt's first serial byte is the low byte of the
+PSCI return code) the actual behavior is now pinned down:
+
+- **KVM does not implement the standard PSCI function IDs on this environment.**
+  `PSCI_VERSION` (`0x84000000`), `SYSTEM_OFF` (`0x84000008`), `SYSTEM_RESET`
+  (`0x84000009`), and `CPU_OFF` (`0x84000002`) **all** return `0xFFFFFFFF`
+  (`PSCI_RET_NOT_SUPPORTED`, low byte `0xff`) and **resume** the guest. So the
+  `hvc` does *not* shut the VM down and does *not* raise `KVM_EXIT_SYSTEM_EVENT`
+  — it returns NOT_SUPPORTED and the guest runs on. (The original "block" was
+  just the bare guest running into zeros after that resume; a guest with a
+  poweroff instruction after the `hvc` halts cleanly in 1 step.)
+- **The `KVM_ARM_VCPU_PSCI_0_2` feature bit does not fix it, and has a side
+  effect.** With the bit set, `KVM_ARM_VCPU_INIT` succeeds but leaves the **boot
+  vcpu in `MP_STATE_STOPPED` (5)** — so `KVM_RUN` blocks (that was the earlier
+  "regression before any serial", now explained). Forcing `MP_STATE_RUNNABLE`
+  via `KVM_SET_MP_STATE` unblocks it, but `SYSTEM_OFF`/`PSCI_VERSION` **still**
+  return NOT_SUPPORTED. So the feature bit changes vcpu power state, not PSCI
+  support, on this KVM.
+
+**Corrected conclusion**: a clean PSCI `SYSTEM_OFF` shutdown-exit is
+**unavailable on this KVM environment** (Linux/KVM inside the Lima VM), not
+because the guest lacks EL1 vectors, but because KVM answers every PSCI call
+`NOT_SUPPORTED`. The MMIO poweroff port remains the correct, working halt
+mechanism for V0/V1. (A real x86_64 or a different aarch64 KVM may implement
+PSCI; that is the same hardware/environment gate as Finding 1, not a design
+gap.) One unresolved curiosity: a `hvc` that follows prior MMIO exits spins
+in-guest rather than resuming like a fresh `hvc` — noted, not load-bearing,
+since PSCI is NOT_SUPPORTED either way.
+
+Landed: `KVM_GET_MP_STATE`/`KVM_SET_MP_STATE` ioctls + `mp-state` constants
+(real vcpu power-state control — infrastructure for SMP later) and a
+`:psci-0-2?` spike option (sets the feature bit and forces the vcpu RUNNABLE;
+a documented diagnostic, off by default). `aiueos.hvt-test` is 18 tests / 92
+assertions (adds the MP_STATE ioctl numbers and the SP core-reg id).
 
 ## Non-goals (firm)
 
