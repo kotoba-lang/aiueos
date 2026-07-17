@@ -386,9 +386,33 @@ reported as explicit restore evidence. The smoke's payload- and
 signature-corruption gates now require the restore and the complete evidence
 gate instead of a fatal stop.
 
+Alongside the UEFI path, `os/aiueos/multiboot/` builds a Multiboot (v1) kernel
+that boots through QEMU's own built-in Multiboot loader — no GRUB install and
+no ESP:
+
+```sh
+./os/aiueos/scripts/build-multiboot.sh
+./os/aiueos/scripts/smoke-qemu-multiboot.sh
+```
+
+QEMU enters the image in 32-bit protected mode per the Multiboot spec; a
+trampoline (`multiboot/entry.S`) identity-maps the first GiB with 2 MiB pages,
+enables PAE/LME/paging, and far-jumps to long mode, emitting a byte on the
+0xE9 debug port at each step so any hang localizes. The 64-bit landing verifies
+the bootloader magic, walks the variable-stride Multiboot memory map (bounded,
+requiring a usable region), and runs the same compiler-emitted Kotoba probe
+object the UEFI path admits before a deterministic QEMU exit. The linked
+x86_64 image is wrapped verbatim in an ELFCLASS32/EM_386 container
+(`wrap-multiboot32.py`) because QEMU's Multiboot loader requires a 32-bit ELF;
+the machine code is unchanged and the image is byte-reproducible. This is the
+narrow first Multiboot slice: it deliberately does not stand up ACPI, virtio,
+GOP, or the full evidence gate, which the UEFI path owns. A GRUB rescue ISO and
+the Multiboot2 header (both needing `grub-mkrescue`/`xorriso`, absent here)
+remain a follow-up.
+
 This recovery selection lives in the reference C loader; re-expressing it in
-the compiler-emitted C-free loader and a GRUB/Multiboot2 compatibility path
-remain separate Phase 5 gaps.
+the compiler-emitted C-free loader and a GRUB-driven Multiboot2 path remain
+separate Phase 5 gaps.
 
 Requirements are Zig 0.14 or newer and `qemu-system-x86_64` with an edk2/OVMF
 firmware image. Override firmware discovery with `OVMF_CODE=/path/to/code.fd`.
