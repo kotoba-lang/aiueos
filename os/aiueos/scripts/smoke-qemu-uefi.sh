@@ -99,29 +99,51 @@ elif [ -n "${AIUEOS_DISK_IMAGE:-}" ]; then
 else
   boot_drive="format=raw,file=fat:rw:$out/esp"
 fi
-set +e
 iommu_args=
 if [ "${AIUEOS_TEST_DMAR:-0}" = 1 ]; then iommu_args="-device intel-iommu,intremap=on"; fi
 # A hung guest must fail fast with diagnostics rather than pinning CI until
 # the job-level timeout. 124 from timeout(1) is handled below.
 qemu_timeout=${AIUEOS_QEMU_TIMEOUT:-600}
-# shellcheck disable=SC2086 # intentional optional pair of QEMU arguments
-timeout "$qemu_timeout" "$qemu" \
-  -machine q35,accel=tcg -cpu max -m 128M -smp 2 \
-  -drive if=pflash,format=raw,readonly=on,file="$OVMF_CODE" \
-  -drive "$boot_drive" \
-  -device isa-debugcon,iobase=0xe9,chardev=debug \
-  -chardev file,id=debug,path="$log" \
-  -device isa-debug-exit,iobase=0xf4,iosize=0x04 \
-  $iommu_args \
-  -device virtio-rng-pci \
-  -drive if=none,id=aiueosblk,format=raw,file="$blk_image" \
-  -device virtio-blk-pci,drive=aiueosblk,disable-legacy=on \
-  -device virtio-keyboard-pci,disable-legacy=on \
-  -device virtio-vga,disable-legacy=on \
-  -display none -serial "file:$serial_log" -monitor none -no-reboot
-status=$?
-set -e
+# The ring-3 process phase has an occasional lost-wakeup hang on slow TCG
+# runners (kotoba-lang/aiueos#108) that clears on a fresh boot. Retry ONLY on
+# a timeout (status 124) — every deterministic exit status is a real result
+# and is never retried. Each attempt restarts from a pristine data disk so a
+# partially-written disk from a hung boot cannot change the retry's outcome.
+qemu_attempts=${AIUEOS_QEMU_ATTEMPTS:-3}
+pristine_blk=
+if [ -f "$blk_image" ]; then
+  pristine_blk="$blk_image.pristine"
+  cp "$blk_image" "$pristine_blk"
+fi
+attempt=1
+while :; do
+  [ -n "$pristine_blk" ] && cp "$pristine_blk" "$blk_image"
+  set +e
+  # shellcheck disable=SC2086 # intentional optional pair of QEMU arguments
+  timeout "$qemu_timeout" "$qemu" \
+    -machine q35,accel=tcg -cpu max -m 128M -smp 2 \
+    -drive if=pflash,format=raw,readonly=on,file="$OVMF_CODE" \
+    -drive "$boot_drive" \
+    -device isa-debugcon,iobase=0xe9,chardev=debug \
+    -chardev file,id=debug,path="$log" \
+    -device isa-debug-exit,iobase=0xf4,iosize=0x04 \
+    $iommu_args \
+    -device virtio-rng-pci \
+    -drive if=none,id=aiueosblk,format=raw,file="$blk_image" \
+    -device virtio-blk-pci,drive=aiueosblk,disable-legacy=on \
+    -device virtio-keyboard-pci,disable-legacy=on \
+    -device virtio-vga,disable-legacy=on \
+    -display none -serial "file:$serial_log" -monitor none -no-reboot
+  status=$?
+  set -e
+  if [ "$status" -eq 124 ] && [ "$attempt" -lt "$qemu_attempts" ]; then
+    echo "warning: QEMU hung on attempt ${attempt}/${qemu_attempts} (known flake kotoba-lang/aiueos#108); retrying" >&2
+    attempt=$((attempt + 1))
+    continue
+  fi
+  break
+done
+[ -n "$pristine_blk" ] && rm -f "$pristine_blk"
 
 if [ "$status" -eq 124 ]; then
   echo "error: QEMU did not terminate within ${qemu_timeout}s (hung guest)" >&2
