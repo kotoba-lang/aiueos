@@ -12,6 +12,7 @@
   a policy-decision map (`:aiueos/decision :grant` or `:deny`) — never a
   silent pass."
   (:require [clojure.set :as set]
+            [clojure.string :as str]
             [aiueos.graph :as graph]
             [aiueos.surface :as surface]))
 
@@ -48,6 +49,54 @@
     (set? x) x
     (coll? x) (set x)
     :else #{x}))
+
+(defn- as-string-set [x]
+  (cond
+    (nil? x) #{}
+    (set? x) (into #{} (map str) x)
+    (coll? x) (into #{} (map str) x)
+    (string? x) #{x}
+    :else #{}))
+
+(defn- url-host
+  "Portable host extraction for http(s) URLs without java.net (CLJC)."
+  [url]
+  (let [url (str url)
+        without-scheme (cond
+                         (str/starts-with? url "https://") (subs url 8)
+                         (str/starts-with? url "http://") (subs url 7)
+                         :else nil)]
+    (when without-scheme
+      (let [authority (first (str/split without-scheme #"[/?#]" 2))
+            host (first (str/split authority #":" 2))]
+        (when (seq host) host)))))
+
+(defn net-url-allowed?
+  "Whether URL is permitted by POLICY's `:aiueos.policy/net-allow` origin
+  allowlist (ADR-0010 scoped net/fetch).
+
+  Empty allowlist fails closed (deny all) — operators must opt in to network
+  origins. An entry matches when it equals the URL's host, is a suffix of the
+  host (`isekai.network` covers `api.isekai.network`), or is a full URL/prefix
+  of the request URL. Surface/host `fetch` providers should share this one
+  decision function rather than reimplementing SSRF checks."
+  [policy url]
+  (let [allow (as-string-set (or (:aiueos.policy/net-allow policy)
+                                 (:aiueos/net-allow policy)))
+        url (str url)
+        host (url-host url)]
+    (cond
+      (empty? allow) false
+      (contains? allow "*") true
+      :else
+      (boolean
+       (some (fn [entry]
+               (or (= entry url)
+                   (str/starts-with? url entry)
+                   (and (seq host)
+                        (or (= entry host)
+                            (str/ends-with? host (str "." entry))))))
+             allow)))))
 
 (defn parse-policy
   "Parse a deployment policy overlay (the `:aiueos/*` EDN validated by
