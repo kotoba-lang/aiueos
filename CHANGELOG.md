@@ -67,6 +67,21 @@ The Phase-0 substrate plus the runtime/robotics/agent work built on top of it.
   device model reusing `aiueos.virtio`'s ported protocol logic, and an x86_64
   long-mode guest. macOS/HVF backend is V2 (behind the
   `com.apple.security.hypervisor` entitlement question).
+- **V1 progress (2026-07-17), two hard findings** (ADR-0014 "V1 progress"):
+  (1) the ADR-0013 kernel is **x86_64-only**, so direct-loading it under the
+  tender needs an **x86_64 KVM host** — an aarch64 host (the dev machine) can
+  only run aarch64 guests, so the kernel-boot gate waits on x86 hardware; the
+  ELF-load logic itself is arch-independent and authorable now. (2) PSCI
+  SYSTEM_OFF does **not** fire for a hand-written bare guest — reproduced via
+  the new `guest-program-psci` diagnostic (serial → `hvc` → poweroff
+  fall-through): the `hvc` blocks `KVM_RUN` in-kernel with neither a
+  system-event nor the fall-through exit, so KVM injects an exception the
+  vector-table-less guest spins on; forcing `KVM_ARM_VCPU_PSCI_0_2` regressed
+  it further. A real PSCI shutdown needs a real-kernel guest (finding 1).
+  Landed: `spike` parametrized over `{:program …}`, the PSCI diagnostic + tests
+  (7 tests / 41 assertions), a `clojure -M:hvt psci` diagnostic entry
+  (intentionally blocking — run under `timeout`), and `KVM_ARM_VCPU_INIT`
+  return-code checking. Default poweroff path + smoke gate stay green.
 
 ### Security / supply chain
 - **Artifact integrity**: `:aiueos/wasm-sha256` is verified before run

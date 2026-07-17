@@ -70,3 +70,23 @@
         "one poweroff-port store")
     ;; every word fits in 32 bits.
     (is (every? #(<= 0 % 0xFFFFFFFF) hvt/guest-program-words))))
+
+(deftest psci-diagnostic-guest
+  (testing "the PSCI variant: serial HI\\n, then hvc PSCI SYSTEM_OFF, then a poweroff fall-through"
+    (is (= 13 (count hvt/guest-program-psci)))
+    (is (= 0x84000008 hvt/psci-system-off-fid) "PSCI 0.2 SYSTEM_OFF fid")
+    ;; movz x1 base, then the hvc, then the fall-through poweroff store + b .
+    (is (= 0xD2A12001 (first hvt/guest-program-psci)))
+    (is (= 1 (count (filter #(= 0xD4000002 %) hvt/guest-program-psci)))
+        "exactly one hvc #0")
+    (is (= 0x14000000 (last hvt/guest-program-psci)) "parks in b .")
+    ;; the diagnostic fall-through: a poweroff store reached only if PSCI did
+    ;; not fire, so :halt :mmio-poweroff in the receipt means PSCI was ignored.
+    (is (= 1 (count (filter #(= 0x39002020 %) hvt/guest-program-psci)))
+        "one poweroff fall-through store")
+    (is (every? #(<= 0 % 0xFFFFFFFF) hvt/guest-program-psci))))
+
+(deftest vcpu-init-psci-constants
+  (testing "KVM_ARM_VCPU_PSCI_0_2 feature-bit layout (features[0] at struct offset 4, bit 0)"
+    (is (= 4 hvt/vcpu-init-features0-offset))
+    (is (= 1 hvt/vcpu-feature-psci-0-2) "KVM_ARM_VCPU_PSCI_0_2 == feature bit 0")))

@@ -95,6 +95,14 @@
 (def exit-reason {:unknown 0 :mmio 6 :fail-entry 9 :internal-error 17 :system-event 24})
 (def system-event-type {:shutdown 1 :reset 2 :crash 3})
 
+;; struct kvm_vcpu_init { __u32 target; __u32 features[7]; } -- features[0] is
+;; at byte offset 4. KVM_ARM_VCPU_PSCI_0_2 is feature bit 0 -> set bit 0 of
+;; features[0] to move the guest off legacy PSCI 0.1 (no SYSTEM_OFF) onto PSCI
+;; 0.2+ (SYSTEM_OFF = 0x84000008 honored). See spike's use site.
+(def vcpu-init-features0-offset 4)
+(def vcpu-feature-psci-0-2 (bit-shift-left 1 0))   ; KVM_ARM_VCPU_PSCI_0_2 == 0
+(def psci-system-off-fid 0x84000008)               ; PSCI 0.2 SYSTEM_OFF function id
+
 ;; ---------------------------------------------------------------------------
 ;; aarch64 core-register id for PC (KVM_SET_ONE_REG), pure.
 ;;   KVM_REG_ARM64 | KVM_REG_SIZE_U64 | KVM_REG_ARM_CORE | (offsetof(pc)/4)
@@ -136,6 +144,29 @@
    0x52800020   ; movz w0, #0x01
    0x39002020   ; strb w0, [x1, #8]           ; write 1 -> 0x09000008 (poweroff)
    0x14000000]) ; b .  (park; the VMM has already halted on the poweroff write)
+
+;; PSCI variant (V1 diagnostic + real clean-shutdown path): write "HI\n" to the
+;; serial port, then `hvc #0` with x0 = PSCI SYSTEM_OFF (0x84000008). If KVM's
+;; in-kernel PSCI honors it, this exits as KVM_EXIT_SYSTEM_EVENT/SHUTDOWN and
+;; the receipt's `:halt` is `:psci-system-event`. If PSCI does NOT fire (returns
+;; NOT_SUPPORTED and resumes the guest), execution falls through to a poweroff
+;; MMIO write -- so `:halt :mmio-poweroff` in the receipt is the unambiguous
+;; signal that PSCI did not take. Either way the VMM halts deterministically.
+(def guest-program-psci
+  [0xD2A12001   ; movz x1, #0x0900, lsl #16   ; x1 = 0x09000000 (MMIO base)
+   0x52800900   ; movz w0, #0x48 ('H')
+   0x39000020   ; strb w0, [x1]
+   0x52800920   ; movz w0, #0x49 ('I')
+   0x39000020   ; strb w0, [x1]
+   0x52800140   ; movz w0, #0x0A ('\n')
+   0x39000020   ; strb w0, [x1]
+   0x52800100   ; movz w0, #0x0008
+   0x72B08000   ; movk w0, #0x8400, lsl #16   ; w0 = 0x84000008 (PSCI SYSTEM_OFF)
+   0xD4000002   ; hvc #0   -> PSCI SYSTEM_OFF (exits here if honored)
+   ;; fall-through (only reached if PSCI did NOT fire): poweroff diagnostic
+   0x52800020   ; movz w0, #0x01
+   0x39002020   ; strb w0, [x1, #8]           ; write 1 -> 0x09000008 (poweroff)
+   0x14000000]) ; b .
 
 (def guest-load-gpa 0x0)          ; guest-physical load address == initial PC
 (def guest-ram-size 0x200000)     ; 2 MiB backing RAM at GPA 0 (page-aligned)
@@ -221,10 +252,10 @@
            seg)))
 
      (defn- load-guest!
-       "Write the fixed guest program words into `ram` at `guest-load-gpa`
+       "Write `program` (a seq of 32-bit words) into `ram` at `guest-load-gpa`
        (little-endian, matching aarch64)."
-       [^MemorySegment ram]
-       (doseq [[i word] (map-indexed vector guest-program-words)]
+       [^MemorySegment ram program]
+       (doseq [[i word] (map-indexed vector program)]
          (seg-set-i32 ram (+ guest-load-gpa (* 4 i)) (unchecked-int word)))
        ram)
 
@@ -239,18 +270,25 @@
         :byte (seg-get-u8 run-seg (:mmio-data kvm-run-layout))})
 
      (defn spike
-       "Run the V0 KVM boot spike against the live `/dev/kvm`. Creates a VM,
-       maps `guest-ram-size` bytes of RAM at GPA 0, loads `guest-program-words`,
-       inits the vcpu (KVM_ARM_PREFERRED_TARGET -> KVM_ARM_VCPU_INIT), sets PC,
-       and runs the KVM_RUN loop servicing MMIO writes until PSCI SYSTEM_OFF.
+       "Run the KVM boot spike against the live `/dev/kvm`. Creates a VM, maps
+       `guest-ram-size` bytes of RAM at GPA 0, loads a guest program, inits the
+       vcpu (KVM_ARM_PREFERRED_TARGET -> KVM_ARM_VCPU_INIT), sets PC, and runs
+       the KVM_RUN loop servicing MMIO writes until the guest halts (MMIO
+       poweroff port or PSCI SYSTEM_OFF).
+
+       `opts` (optional): `:program` (default `guest-program-words`) and
+       `:serial-expected` (default `guest-serial-expected`) select the guest.
 
        Returns a run receipt map:
          {:api-version N :serial \"HI\\n\" :serial-ok? true
           :exits [{:reason :mmio :phys-addr .. :char \\H} ...]
-          :shutdown? true :steps N}
+          :shutdown? true :halt <:mmio-poweroff|:psci-system-event> :steps N}
        Throws on any KVM setup failure or an unexpected exit reason. JVM-only;
        needs a real KVM host (see ns docstring)."
-       []
+       ([] (spike nil))
+       ([opts]
+       (let [program (:program opts guest-program-words)
+             serial-expected (:serial-expected opts guest-serial-expected)]
        (with-open [arena (Arena/ofConfined)]
          (let [kvm (kvm-open arena)
                api (ioctl-val kvm get-api-version 0)
@@ -259,7 +297,7 @@
                vm (ioctl-val kvm create-vm 0)
                ;; guest RAM: page-aligned native memory handed to KVM as slot 0.
                ram (.allocate arena (long guest-ram-size) 4096)
-               _ (load-guest! ram)
+               _ (load-guest! ram program)
                _ (ioctl-struct arena vm set-user-memory-region kvm-userspace-memory-region-size
                                (fn [s]
                                  (seg-set-i32 s (:slot mem-region-layout) 0)
@@ -268,9 +306,19 @@
                                  (seg-set-i64 s (:memory-size mem-region-layout) guest-ram-size)
                                  (seg-set-i64 s (:userspace-addr mem-region-layout) (.address ^MemorySegment ram))))
                vcpu (ioctl-val vm create-vcpu 0)
-               ;; ARM: ask the VM for the preferred target, init the vcpu with it.
+               ;; ARM: ask the VM for the preferred target, init the vcpu with
+               ;; the features KVM_ARM_PREFERRED_TARGET recommends. NB: this
+               ;; host's KVM already defaults the guest to PSCI 0.2+ (SYSTEM_OFF
+               ;; at 0x84000008), so we do NOT force the KVM_ARM_VCPU_PSCI_0_2
+               ;; feature bit -- empirically, forcing features[0]|=1 here makes
+               ;; the first KVM_RUN block before the guest emits any serial
+               ;; (regression vs. the recommended features). See #110's PSCI
+               ;; finding for why V0/V1 halt via the MMIO poweroff port instead.
                init-seg (ioctl-struct arena vm arm-preferred-target kvm-vcpu-init-size nil)
-               _ (invoke-h c-ioctl-ptr (int vcpu) (long arm-vcpu-init) init-seg)
+               init-rc (int (invoke-h c-ioctl-ptr (int vcpu) (long arm-vcpu-init) init-seg))
+               _ (when (neg? init-rc)
+                   (throw (ex-info "KVM_ARM_VCPU_INIT failed"
+                                   {:rc init-rc :target (seg-get-i32 init-seg 0)})))
                ;; set PC = guest load address via KVM_SET_ONE_REG.
                pc-val (.allocate arena ValueLayout/JAVA_LONG)
                _ (.set ^MemorySegment pc-val ValueLayout/JAVA_LONG 0 (long guest-load-gpa))
@@ -308,7 +356,7 @@
                                        (Long/toHexString addr) " -> halt")))
                        {:api-version api
                         :serial s
-                        :serial-ok? (= s guest-serial-expected)
+                        :serial-ok? (= s serial-expected)
                         :exits (conj exits {:reason :poweroff :phys-addr addr})
                         :shutdown? true
                         :halt :mmio-poweroff
@@ -337,7 +385,7 @@
                        s (str serial)]
                    {:api-version api
                     :serial s
-                    :serial-ok? (= s guest-serial-expected)
+                    :serial-ok? (= s serial-expected)
                     :exits (conj exits {:reason :system-event :type t :shutdown shutdown?})
                     :shutdown? shutdown?
                     :halt :psci-system-event
@@ -346,15 +394,25 @@
                  ;; any other exit is a spike failure -- surface it loudly.
                  (throw (ex-info "unexpected KVM exit reason"
                                  {:reason reason :steps step :serial (str serial)
-                                  :exits exits}))))))))
+                                  :exits exits}))))))))))
 
      (defn -main
-       "Run the V0 spike and print the run receipt as EDN on stdout. Exit 0 iff
-       the guest emitted the expected serial AND requested SYSTEM_OFF (the #110
-       V0 gate). Meant to run inside the Linux/KVM VM:
-         clojure -M --enable-native-access=ALL-UNNAMED -m aiueos.hvt"
-       [& _]
-       (let [receipt (spike)]
+       "Run the spike and print the run receipt as EDN on stdout. Exit 0 iff the
+       guest emitted the expected serial AND halted (the #110 gate). Meant to
+       run inside the Linux/KVM VM:
+         clojure -M:hvt              ; default guest (MMIO poweroff halt) -- the
+                                     ;   working V0 path; exits 0.
+         clojure -M:hvt psci        ; PSCI diagnostic (V1, #110). BLOCKS: on
+                                     ;   this KVM the bare guest's `hvc` PSCI
+                                     ;   SYSTEM_OFF neither raises a system-event
+                                     ;   nor returns to the fall-through poweroff
+                                     ;   -- KVM_RUN spins in-kernel. Run under a
+                                     ;   `timeout`; it reproduces the finding
+                                     ;   that PSCI needs a real-kernel guest."
+       [& args]
+       (let [receipt (if (some #{"psci"} args)
+                       (spike {:program guest-program-psci})
+                       (spike))]
          (binding [*print-namespace-maps* false]
            (prn receipt))
          (flush)
