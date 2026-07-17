@@ -18,6 +18,29 @@
     (is (true? (policy/net-url-allowed? p "http://127.0.0.1:9/path")))
     (is (false? (policy/net-url-allowed? p "https://evil.example/steal")))))
 
+(deftest net-fetch-import-denied-without-net-allow
+  (testing "granting/importing :net/fetch with empty net-allow is a hard deny"
+    (let [;; cloud surface offers net/fetch; put it in kernel-caps so the
+          ;; import can resolve, then leave net-allow empty.
+          pol (policy/parse-policy
+               {:aiueos/kernel-caps #{:net/fetch}
+                :aiueos/net-allow #{}})
+          m {:aiueos/component :app/browserish :aiueos/kind :app :aiueos/trust :verified
+             :aiueos/imports #{:net/fetch} :aiueos/exports #{}}
+          decision (policy/verify-component m empty-graph pol nil)]
+      (is (= :deny (:aiueos/decision decision)))
+      (is (some #{:net-allow-empty}
+                (map :aiueos/kind (:aiueos/violations decision))))))
+  (testing "non-empty net-allow admits the same import when kernel offers it"
+    (let [pol (policy/parse-policy
+               {:aiueos/kernel-caps #{:net/fetch}
+                :aiueos/net-allow #{"example.com"}})
+          m {:aiueos/component :app/browserish :aiueos/kind :app :aiueos/trust :verified
+             :aiueos/imports #{:net/fetch} :aiueos/exports #{}}
+          decision (policy/verify-component m empty-graph pol nil)]
+      (is (= :grant (:aiueos/decision decision)))
+      (is (contains? (:aiueos/capabilities decision) :net/fetch)))))
+
 (deftest grants-a-kernel-capability-import
   (let [m {:aiueos/component :service/log :aiueos/kind :service :aiueos/trust :verified
            :aiueos/imports #{:log/write} :aiueos/exports #{}}
