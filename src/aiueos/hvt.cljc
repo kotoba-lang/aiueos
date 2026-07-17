@@ -31,7 +31,8 @@
   tested on any JVM host. The live `open`/`ioctl(KVM_RUN)` sequence needs a
   real `/dev/kvm`; running it is `spike`/`-main`, gated exactly like
   `aiueos.vfio`'s hardware note. Treat the FFM boot loop as new, unverified
-  systems code until exercised against real KVM (see #110's smoke gate).")
+  systems code until exercised against real KVM (see #110's smoke gate)."
+  (:require [aiueos.virtio :as vio]))
 
 ;; ---------------------------------------------------------------------------
 ;; ioctl number encoding (Linux `_IO`/`_IOW`/`_IOR` macros) -- pure,
@@ -240,6 +241,68 @@
      (* page (quot (+ hi (dec page)) page))]))
 
 ;; ---------------------------------------------------------------------------
+;; virtio-mmio device model (host/tender side) -- pure, host-testable. The
+;; guest driver programs a virtio-mmio register block via load/store to an
+;; unbacked MMIO window; each access traps to this tender as KVM_EXIT_MMIO,
+;; and this model answers as the *device* would. It reuses `aiueos.virtio`'s
+;; register map + magic/version/status/feature constants (the "host side of the
+;; same registers" ADR-0011 ported), presenting a virtio-console (device-id 3).
+;;
+;; V1 scope: the virtio-mmio *transport* -- magic/version/device-id probe,
+;; feature offer/accept, and the ACKNOWLEDGE->DRIVER->FEATURES_OK->DRIVER_OK
+;; status handshake. The virtqueue data path (avail/used rings + descriptor DMA,
+;; where `aiueos.virtio/split-queue-layout`/`*-ring`/`validate-descriptor-chain`
+;; come in) is the next milestone (#110); queue-config writes are tracked but
+;; not yet acted on.
+
+(def virtio-mmio-base 0x0a000000)   ; the guest's virtio-mmio register window
+(def virtio-mmio-size 0x200)
+(def virtio-console-vendor 0x61697565)          ; "aiue" -- arbitrary non-zero
+(def virtio-console-queue-num-max 128)
+(def virtio-console-device-features vio/features-version-1)  ; VIRTIO_F_VERSION_1
+
+(defn virtio-window? [addr]
+  (and (<= virtio-mmio-base addr) (< addr (+ virtio-mmio-base virtio-mmio-size))))
+
+(defn virtio-console-read
+  "Device-side read of the virtio-mmio register at word offset `off`. `state`
+  carries the driver-written selectors/status. Returns the u32 the device
+  presents (unimplemented registers read as 0)."
+  [state off]
+  (condp = off
+    (:magic-value vio/mmio-reg)   vio/mmio-magic
+    (:version vio/mmio-reg)       vio/mmio-version-2
+    (:device-id vio/mmio-reg)     (:console vio/device-type-id)   ; 3
+    (:vendor-id vio/mmio-reg)     virtio-console-vendor
+    (:queue-num-max vio/mmio-reg) virtio-console-queue-num-max
+    (:device-features vio/mmio-reg)
+    (let [f virtio-console-device-features]
+      (if (zero? (:device-features-sel state 0))
+        (bit-and f 0xffffffff)
+        (bit-and (unsigned-bit-shift-right f 32) 0xffffffff)))
+    (:status vio/mmio-reg)           (:status state 0)
+    (:interrupt-status vio/mmio-reg)  0
+    0))
+
+(defn virtio-console-write
+  "Device-side write of `value` to the virtio-mmio register at word offset
+  `off`. Returns the updated device `state`. Feature/queue selectors and status
+  are tracked; queue-config + notify are recorded but not acted on (no
+  virtqueue DMA in this milestone)."
+  [state off value]
+  (condp = off
+    (:device-features-sel vio/mmio-reg) (assoc state :device-features-sel value)
+    (:driver-features-sel vio/mmio-reg) (assoc state :driver-features-sel value)
+    (:driver-features vio/mmio-reg)
+    (assoc-in state [:driver-features (:driver-features-sel state 0)] value)
+    (:status vio/mmio-reg)              (assoc state :status value)
+    (:queue-sel vio/mmio-reg)           (assoc state :queue-sel value)
+    (:queue-num vio/mmio-reg)           (assoc state :queue-num value)
+    (:queue-ready vio/mmio-reg)         (assoc state :queue-ready value)
+    (:queue-notify vio/mmio-reg)        (update state :notifies (fnil conj []) value)
+    state))
+
+;; ---------------------------------------------------------------------------
 ;; FFM (java.lang.foreign) KVM bindings -- JVM-only, needs a live /dev/kvm.
 
 #?(:clj
@@ -362,15 +425,40 @@
             :label :raw
             :load! (fn [^MemorySegment ram] (load-guest! ram program))})))
 
+     (defn- mmio-data-value
+       "Read `len` little-endian bytes from the kvm_run mmio.data field into a
+       long (the value the guest wrote, for a KVM_EXIT_MMIO write)."
+       [^MemorySegment run-seg len]
+       (loop [i 0 acc 0]
+         (if (= i len)
+           acc
+           (recur (inc i)
+                  (bit-or acc (bit-shift-left
+                               (seg-get-u8 run-seg (+ (:mmio-data kvm-run-layout) i))
+                               (* 8 i)))))))
+
+     (defn- set-mmio-data!
+       "Write `value` as `len` little-endian bytes into the kvm_run mmio.data
+       field -- how the tender answers a guest MMIO *read* before re-entering
+       KVM_RUN."
+       [^MemorySegment run-seg len value]
+       (dotimes [i len]
+         (.set ^MemorySegment run-seg ValueLayout/JAVA_BYTE
+               (long (+ (:mmio-data kvm-run-layout) i))
+               (unchecked-byte (bit-and (unsigned-bit-shift-right value (* 8 i)) 0xff)))))
+
      (defn- service-mmio!
        "Read a KVM_EXIT_MMIO from the mmap'd kvm_run struct `run-seg`. Returns
-       `{:phys-addr :is-write :len :byte}` and (for writes to the serial base)
-       the emitted char is the low byte."
+       `{:phys-addr :is-write :len :byte :value}` -- `:byte` is the low data
+       byte (serial output), `:value` the full `len`-byte little-endian value
+       (virtio register writes)."
        [^MemorySegment run-seg]
-       {:phys-addr (seg-get-i64 run-seg (:mmio-phys-addr kvm-run-layout))
-        :is-write (pos? (seg-get-u8 run-seg (:mmio-is-write kvm-run-layout)))
-        :len (seg-get-i32 run-seg (:mmio-len kvm-run-layout))
-        :byte (seg-get-u8 run-seg (:mmio-data kvm-run-layout))})
+       (let [len (seg-get-i32 run-seg (:mmio-len kvm-run-layout))]
+         {:phys-addr (seg-get-i64 run-seg (:mmio-phys-addr kvm-run-layout))
+          :is-write (pos? (seg-get-u8 run-seg (:mmio-is-write kvm-run-layout)))
+          :len len
+          :byte (seg-get-u8 run-seg (:mmio-data kvm-run-layout))
+          :value (mmio-data-value run-seg len)}))
 
      (defn spike
        "Run the KVM boot spike against the live `/dev/kvm`. Creates a VM, maps
@@ -443,7 +531,7 @@
                ;; latter is the top-level KVM_RUN ioctl number and shadowing it
                ;; here would pass the segment where the request number belongs.
                run-seg (.reinterpret ^MemorySegment run-addr (long mmap-size))]
-           (loop [step 0, serial (StringBuilder.), exits []]
+           (loop [step 0, serial (StringBuilder.), exits [], vstate {}]
              (when (> step 1000)
                (throw (ex-info "KVM_RUN exceeded step budget without a halt"
                                {:steps step :serial (str serial)})))
@@ -466,6 +554,7 @@
                         :exits (conj exits {:reason :poweroff :phys-addr addr})
                         :shutdown? true
                         :halt :mmio-poweroff
+                        :virtio-status (:status vstate)
                         :steps (inc step)})
 
                      ;; serial port -> reconstruct one output byte.
@@ -476,14 +565,37 @@
                                        (Long/toHexString addr) " byte=0x"
                                        (Integer/toHexString (:byte m)) " (" (pr-str ch) ")")))
                        (recur (inc step) (.append serial ch)
-                              (conj exits {:reason :mmio :phys-addr addr :char ch})))
+                              (conj exits {:reason :mmio :phys-addr addr :char ch})
+                              vstate))
+
+                     ;; virtio-mmio register window -> emulate the console device.
+                     (virtio-window? addr)
+                     (let [off (- addr virtio-mmio-base)]
+                       (if (:is-write m)
+                         (let [vstate' (virtio-console-write vstate off (:value m))]
+                           (binding [*out* *err*]
+                             (println (str "[hvt] exit " step ": virtio WRITE reg 0x"
+                                           (Long/toHexString off) " = 0x"
+                                           (Long/toHexString (:value m)))))
+                           (recur (inc step) serial
+                                  (conj exits {:reason :virtio :op :write :reg off :value (:value m)})
+                                  vstate'))
+                         (let [v (virtio-console-read vstate off)]
+                           (set-mmio-data! run-seg (:len m) v)
+                           (binding [*out* *err*]
+                             (println (str "[hvt] exit " step ": virtio READ  reg 0x"
+                                           (Long/toHexString off) " -> 0x" (Long/toHexString v))))
+                           (recur (inc step) serial
+                                  (conj exits {:reason :virtio :op :read :reg off :value v})
+                                  vstate))))
 
                      :else
                      (do (binding [*out* *err*]
                            (println (str "[hvt] exit " step ": MMIO @0x" (Long/toHexString addr)
                                          " is-write=" (:is-write m) " (ignored)")))
                          (recur (inc step) serial
-                                (conj exits {:reason :mmio :phys-addr addr :ignored true})))))
+                                (conj exits {:reason :mmio :phys-addr addr :ignored true})
+                                vstate))))
 
                  (:system-event exit-reason)
                  (let [t (seg-get-i32 run-seg (:sysevent-type kvm-run-layout))
@@ -495,6 +607,7 @@
                     :exits (conj exits {:reason :system-event :type t :shutdown shutdown?})
                     :shutdown? shutdown?
                     :halt :psci-system-event
+                    :virtio-status (:status vstate)
                     :steps (inc step)})
 
                  ;; any other exit is a spike failure -- surface it loudly.

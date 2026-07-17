@@ -7,7 +7,8 @@
   `aiueos.vfio`'s hardware-honesty split."
   (:require [clojure.test :refer [deftest is testing]]
             [clojure.java.io :as io]
-            [aiueos.hvt :as hvt]))
+            [aiueos.hvt :as hvt]
+            [aiueos.virtio :as vio]))
 
 (deftest ioctl-numbers
   (testing "KVM ioctl request numbers match linux/kvm.h (KVMIO=0xAE)"
@@ -133,3 +134,41 @@
         (is (= 0x28 filesz) "p_filesz (10 aarch64 words)")
         (is (= 0x28 memsz) "p_memsz"))
       (is (= [0x40000000 0x40001000] (hvt/elf-load-range segments 4096))))))
+
+(deftest virtio-window
+  (testing "the virtio-mmio register window at 0x0a000000"
+    (is (hvt/virtio-window? hvt/virtio-mmio-base))
+    (is (hvt/virtio-window? (+ hvt/virtio-mmio-base 0x70)))
+    (is (not (hvt/virtio-window? (dec hvt/virtio-mmio-base))))
+    (is (not (hvt/virtio-window? (+ hvt/virtio-mmio-base hvt/virtio-mmio-size))))
+    (is (not (hvt/virtio-window? hvt/guest-mmio-base)) "the plain serial port is not virtio")))
+
+(deftest virtio-console-device-reads
+  (testing "the emulated console device presents the identity registers"
+    (is (= vio/mmio-magic (hvt/virtio-console-read {} (:magic-value vio/mmio-reg))))
+    (is (= vio/mmio-version-2 (hvt/virtio-console-read {} (:version vio/mmio-reg))))
+    (is (= (:console vio/device-type-id) (hvt/virtio-console-read {} (:device-id vio/mmio-reg)))
+        "device-id 3 = console")
+    (is (= hvt/virtio-console-queue-num-max
+           (hvt/virtio-console-read {} (:queue-num-max vio/mmio-reg))))
+    (is (= hvt/virtio-console-vendor (hvt/virtio-console-read {} (:vendor-id vio/mmio-reg)))))
+  (testing "VIRTIO_F_VERSION_1 is offered in the high feature word (bit 32)"
+    (is (= 0 (hvt/virtio-console-read {:device-features-sel 0} (:device-features vio/mmio-reg))))
+    (is (= 1 (hvt/virtio-console-read {:device-features-sel 1} (:device-features vio/mmio-reg)))))
+  (testing "an unimplemented register reads as 0"
+    (is (= 0 (hvt/virtio-console-read {} 0x1fc)))))
+
+(deftest virtio-console-status-handshake
+  (testing "status writes are tracked and read back (the FEATURES_OK-stuck check depends on this)"
+    (let [ack (bit-or (:acknowledge vio/device-status-bit) (:driver vio/device-status-bit)
+                      (:features-ok vio/device-status-bit))
+          s1 (hvt/virtio-console-write {} (:status vio/mmio-reg) ack)]
+      (is (= ack (:status s1)))
+      (is (= ack (hvt/virtio-console-read s1 (:status vio/mmio-reg)))
+          "reading Status returns what the driver last wrote")
+      (let [drv-ok (bit-or ack (:driver-ok vio/device-status-bit))
+            s2 (hvt/virtio-console-write s1 (:status vio/mmio-reg) drv-ok)]
+        (is (= drv-ok (:status s2))))))
+  (testing "feature/queue selectors are tracked"
+    (is (= 1 (:device-features-sel (hvt/virtio-console-write {} (:device-features-sel vio/mmio-reg) 1))))
+    (is (= 0 (:queue-sel (hvt/virtio-console-write {} (:queue-sel vio/mmio-reg) 0))))))

@@ -238,6 +238,50 @@ of the real fixture). What remains for the kernel path is purely the x86_64 KVM
 host (Finding 1) and the kernel's own boot-info/entry contract; the ELF-loading
 mechanism is done.
 
+### V1 progress — 2026-07-17 (virtio-mmio device model, transport handshake)
+
+The tender now **presents an emulated device to the guest**, not just serial
+and poweroff ports — the first reuse of `aiueos.virtio`'s host-side logic
+("direct-load the ADR-0013 kernel image" and "a virtio device model reusing
+`aiueos.virtio`" are the two open V1 items; this is the second).
+
+- **MMIO *read* emulation**: `service-mmio!` now also decodes the full
+  little-endian write value, and the loop answers guest MMIO *reads* by writing
+  the device's register value back into `kvm_run.mmio.data` before re-entering
+  `KVM_RUN` (`set-mmio-data!`). Previously the tender only observed writes
+  (serial/poweroff); a device the guest can *probe* needs reads.
+- **`virtio-console` device model** (`virtio-console-read`/`-write`, pure and
+  host-tested): a register state machine over `aiueos.virtio/mmio-reg` +
+  `mmio-magic`/`mmio-version-2`/`device-type-id`/`device-status-bit`/
+  `features-version-1`. It answers the identity registers (magic `0x74726976`,
+  version 2, device-id 3 = console, `VIRTIO_F_VERSION_1` offered), tracks the
+  feature selectors and the device `status`, and returns `status` on read so
+  the driver's FEATURES_OK-stuck check passes. The guest drives it through a
+  virtio-mmio register window at GPA `0x0a000000` (unbacked → every access
+  traps to the tender).
+- **Real driver guest** `resources/hvt/guest-virtio-aarch64.S` → `.elf`
+  (loaded by the V1 ELF loader): probes magic/version/device-id, runs the
+  `ACKNOWLEDGE → DRIVER → (feature offer/accept) → FEATURES_OK → DRIVER_OK`
+  handshake, and emits `HI\n` **only** if every step succeeds (else `E`) — so a
+  receipt serial of exactly `HI\n` is a self-verifying proof the whole
+  transport handshake ran. Reproducible byte-identical via
+  `scripts/build-hvt-guest.cljs` (now builds both guests, SHA-pinned).
+
+Verified on real KVM: the 21-step trace shows 17 virtio register accesses
+(3 identity reads, the status/feature writes, the FEATURES_OK read-back, and
+DRIVER_OK) then the `HI\n`+poweroff, returning `{:serial "HI\n" :serial-ok?
+true :virtio-status 15 :shutdown? true}` (`0xf` = DRIVER_OK). `hvt-smoke.cljs`
+now gates all three cases (raw / ELF / virtio); `aiueos.hvt-test` is 14 tests /
+75 assertions (adds the window predicate, device-read identity/feature, and the
+status-handshake read-back).
+
+**Scope line**: this is the virtio-mmio *transport* (registers + status +
+feature negotiation). The **virtqueue data path** — avail/used rings and
+descriptor-chain DMA, where `aiueos.virtio/split-queue-layout`/`*-ring`/
+`validate-descriptor-chain` and reading guest RAM come in — is the next
+milestone (#110). Queue-config register writes are already tracked in the
+device state, unacted-on, ready for it.
+
 ## Non-goals (firm)
 
 - No from-scratch type-1 hypervisor; we always ride KVM/HVF.
