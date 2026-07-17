@@ -12,6 +12,7 @@
 #define MULTIBOOT2_BOOTLOADER_MAGIC 0x36D76289u
 #define MULTIBOOT2_TAG_END 0u
 #define MULTIBOOT2_TAG_MMAP 6u
+#define MULTIBOOT2_TAG_FRAMEBUFFER 8u
 #define MULTIBOOT2_TAG_ACPI_OLD 14u
 #define MULTIBOOT2_TAG_ACPI_NEW 15u
 
@@ -150,6 +151,7 @@ static void multiboot2_landing(uint32_t info_addr) {
   }
   uint32_t offset = 8, usable = 0;
   const void *rsdp = 0;
+  uint64_t fb_addr = 0; uint32_t fb_pitch = 0, fb_width = 0, fb_height = 0; uint8_t fb_bpp = 0;
   while (offset + 8 <= total) {
     const uint8_t *tag = info + offset;
     uint32_t type = *(const uint32_t *)(const void *)tag;
@@ -173,6 +175,14 @@ static void multiboot2_landing(uint32_t info_addr) {
       rsdp = tag + 8;  /* ACPI 2.0 RSDP: prefer it (XSDT) */
     } else if (type == MULTIBOOT2_TAG_ACPI_OLD && size >= 8 + 20 && !rsdp) {
       rsdp = tag + 8;  /* ACPI 1.0 RSDP copy */
+    } else if (type == MULTIBOOT2_TAG_FRAMEBUFFER && size >= 8 + 22) {
+      fb_addr = *(const uint64_t *)(const void *)(tag + 8);
+      fb_pitch = *(const uint32_t *)(const void *)(tag + 16);
+      fb_width = *(const uint32_t *)(const void *)(tag + 20);
+      fb_height = *(const uint32_t *)(const void *)(tag + 24);
+      fb_bpp = tag[28];
+      /* framebuffer type at tag[29]: 1 = direct RGB, which is all we drive */
+      if (tag[29] != 1) fb_addr = 0;
     }
     offset += (size + 7) & ~7u;  /* tags are 8-byte aligned */
   }
@@ -198,6 +208,47 @@ static void multiboot2_landing(uint32_t info_addr) {
   }
   debug_string("AIUEOS_MULTIBOOT2_APIC_TIMER_OK\n");
   serial_string("AIUEOS_MULTIBOOT2_APIC_TIMER_OK idt lapic vector=32 eoi\r\n");
+
+  /* GRUB set a linear framebuffer in response to the MB2 framebuffer request
+   * tag (QEMU-direct MB1 has no framebuffer). Validate its geometry, write a
+   * bounded test pattern, and require it to read back — proving the Multiboot
+   * path can own a scanout surface, the GOP-equivalent the UEFI path drives. */
+  /* Accept the direct-RGB modes GRUB provides on this firmware (24 or 32 bpp).
+   * The test pattern is written and read byte-wise so both packings work. */
+  uint32_t bytes_per_pixel = fb_bpp / 8u;
+  if (!fb_addr || !fb_width || !fb_height || (fb_bpp != 24 && fb_bpp != 32) ||
+      fb_pitch < fb_width * bytes_per_pixel) {
+    serial_string("AIUEOS_MULTIBOOT2_FAIL framebuffer-geometry\r\n");
+    qemu_exit(0x6b);
+  }
+  {
+    volatile uint8_t *fb = (volatile uint8_t *)(uintptr_t)fb_addr;
+    uint32_t rows = fb_height < 64u ? fb_height : 64u;
+    uint32_t cols = fb_width < 64u ? fb_width : 64u;
+    for (uint32_t y = 0; y < rows; y++)
+      for (uint32_t x = 0; x < cols; x++) {
+        uint64_t base = (uint64_t)y * fb_pitch + (uint64_t)x * bytes_per_pixel;
+        uint8_t v = (uint8_t)(y * cols + x);
+        for (uint32_t b = 0; b < bytes_per_pixel; b++)
+          fb[base + b] = (uint8_t)(v + b * 0x33u);
+      }
+    uint32_t sum = 2166136261u, expect = 2166136261u;
+    for (uint32_t y = 0; y < rows; y++)
+      for (uint32_t x = 0; x < cols; x++) {
+        uint64_t base = (uint64_t)y * fb_pitch + (uint64_t)x * bytes_per_pixel;
+        uint8_t v = (uint8_t)(y * cols + x);
+        for (uint32_t b = 0; b < bytes_per_pixel; b++) {
+          sum = (sum ^ fb[base + b]) * 16777619u;
+          expect = (expect ^ (uint8_t)(v + b * 0x33u)) * 16777619u;
+        }
+      }
+    if (sum != expect) {
+      serial_string("AIUEOS_MULTIBOOT2_FAIL framebuffer-readback\r\n");
+      qemu_exit(0x6a);
+    }
+  }
+  debug_string("AIUEOS_MULTIBOOT2_FRAMEBUFFER_OK\n");
+  serial_string("AIUEOS_MULTIBOOT2_FRAMEBUFFER_OK grub-fb direct-rgb test-pattern readback\r\n");
 
   if (kotoba_aiueos_probe() != 42u) {
     serial_string("AIUEOS_MULTIBOOT2_FAIL kotoba-probe\r\n");

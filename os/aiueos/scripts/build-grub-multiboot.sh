@@ -27,6 +27,11 @@ cp "$mb/MULTIBOOT.x86_64.ELF" "$grub_root/boot/aiueos.elf"
 cat > "$grub_root/boot/grub/grub.cfg" <<'CFG'
 set timeout=0
 set default=0
+# Load every available video backend and set a linear graphics mode so GRUB
+# can honour the kernel's Multiboot2 framebuffer request tag.
+insmod all_video
+set gfxmode=1024x768x32
+set gfxpayload=keep
 menuentry "aiueos multiboot2" {
   multiboot2 /boot/aiueos.elf
   boot

@@ -437,11 +437,17 @@ GRUB enters the kernel in 32-bit protected mode with the MB2 magic, and the
 multiboot2 ELF loader wants section headers, so the GRUB path takes the linked
 64-bit image directly while QEMU's built-in MB1 loader takes the 32-bit-wrapped
 one; both carry the same MB1 and MB2 headers (8-byte aligned in the file) and
-code. The GRUB path reaches the same evidence as the QEMU-direct MB1 path — it takes
-the ACPI RSDP from a Multiboot2 ACPI tag (no BIOS scan), validates the tables
-through the shared ACPI parser, and brings up the Local APIC timer — so both
-loader entries prove long mode, SSE, ACPI, and interrupt handling before the
-Kotoba probe.
+code. The GRUB path reaches the same evidence as the QEMU-direct MB1 path and then
+some — it takes the ACPI RSDP from a Multiboot2 ACPI tag (no BIOS scan),
+validates the tables through the shared ACPI parser, and brings up the Local
+APIC timer, so both loader entries prove long mode, SSE, ACPI, and interrupt
+handling before the Kotoba probe. Additionally, the kernel's Multiboot2 header
+carries a framebuffer request tag, so GRUB (told to load its video backends and
+set a graphics mode in `grub.cfg`) hands over a linear framebuffer; the kernel
+validates its geometry, writes a bounded direct-RGB test pattern (24- or
+32-bpp), and requires it to read back — a GOP-equivalent scanout surface the
+QEMU-direct path cannot provide (no firmware framebuffer). The GRUB smoke adds
+a `-device VGA` so OVMF's GOP has a real mode to offer.
 
 This recovery selection lives in the reference C loader; re-expressing it in
 the compiler-emitted C-free loader and a GRUB-driven Multiboot2 path remain

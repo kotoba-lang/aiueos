@@ -22,7 +22,18 @@ aiueos_multiboot2_header:
   .long 0                               /* architecture: i386 (32-bit) */
   .long aiueos_multiboot2_header_end - aiueos_multiboot2_header
   .long -(0xE85250D6 + 0 + (aiueos_multiboot2_header_end - aiueos_multiboot2_header))
+  /* framebuffer request tag (type 5): ask GRUB to set a linear framebuffer.
+     0/0/0 = let GRUB pick the mode. Kept 8-byte aligned with 4 bytes pad. */
+  .balign 8
+  .short 5
+  .short 0
+  .long 20
+  .long 0                               /* width  (0 = no preference) */
+  .long 0                               /* height */
+  .long 0                               /* depth  */
+  .long 0                               /* pad to 8-byte alignment */
   /* end tag */
+  .balign 8
   .short 0
   .short 0
   .long 8
