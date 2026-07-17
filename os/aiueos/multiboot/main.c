@@ -30,6 +30,31 @@ struct multiboot_mmap_entry {
 extern uint64_t kotoba_aiueos_probe(void);
 extern int aiueos_acpi_initialize(const void *rsdp_pointer);
 extern uint32_t aiueos_acpi_cpu_count(void);
+extern int aiueos_apic_timer_initialize(void);
+extern volatile uint64_t aiueos_apic_timer_ticks;
+extern void aiueos_mb_isr_timer(void);
+extern void aiueos_mb_isr_default(void);
+extern void aiueos_mb_load_idt(const void *pointer);
+
+struct __attribute__((packed)) idt_gate {
+  uint16_t offset_low, selector;
+  uint8_t ist, attributes;
+  uint16_t offset_middle;
+  uint32_t offset_high, reserved;
+};
+struct __attribute__((packed)) idt_pointer { uint16_t limit; uint64_t base; };
+static struct idt_gate multiboot_idt[256];
+
+static void set_gate(uint32_t vector, void (*handler)(void)) {
+  uint64_t address = (uint64_t)(uintptr_t)handler;
+  multiboot_idt[vector].offset_low = (uint16_t)address;
+  multiboot_idt[vector].selector = 0x08;   /* 64-bit code segment in the Multiboot GDT */
+  multiboot_idt[vector].ist = 0;
+  multiboot_idt[vector].attributes = 0x8E; /* present, DPL0, interrupt gate */
+  multiboot_idt[vector].offset_middle = (uint16_t)(address >> 16);
+  multiboot_idt[vector].offset_high = (uint32_t)(address >> 32);
+  multiboot_idt[vector].reserved = 0;
+}
 
 static inline void out8(uint16_t port, uint8_t value) {
   __asm__ volatile("outb %0, %1" : : "a"(value), "Nd"(port));
@@ -143,6 +168,31 @@ void aiueos_multiboot_main(uint32_t magic, uint32_t info_addr) {
   }
   debug_string("AIUEOS_MULTIBOOT_ACPI_OK\n");
   serial_string("AIUEOS_MULTIBOOT_ACPI_OK rsdt-walk madt cpu>=2 ioapic\r\n");
+
+  /* Interrupt handling on the Multiboot path: install a minimal IDT (all
+   * vectors trap to a fail-fast default, vector 32 to the timer ISR), then
+   * bring up the Local APIC periodic timer through the shared apic.c and wait
+   * for a real hardware tick. The LAPIC MMIO at ~0xFEE00000 is reachable
+   * because the trampoline now identity-maps the first 4 GiB. */
+  for (uint32_t vector = 0; vector < 256; vector++) set_gate(vector, aiueos_mb_isr_default);
+  set_gate(32, aiueos_mb_isr_timer);
+  struct idt_pointer idtr = { (uint16_t)(sizeof(multiboot_idt) - 1),
+                              (uint64_t)(uintptr_t)multiboot_idt };
+  aiueos_mb_load_idt(&idtr);
+  if (!aiueos_apic_timer_initialize()) {
+    serial_string("AIUEOS_MULTIBOOT_FAIL apic-timer-init\r\n");
+    qemu_exit(0x6d);
+  }
+  __asm__ volatile("sti");
+  for (uint32_t budget = 0; budget < 100000000u && aiueos_apic_timer_ticks == 0; budget++)
+    __asm__ volatile("pause");
+  __asm__ volatile("cli");
+  if (aiueos_apic_timer_ticks == 0) {
+    serial_string("AIUEOS_MULTIBOOT_FAIL apic-timer-no-tick\r\n");
+    qemu_exit(0x6c);
+  }
+  debug_string("AIUEOS_MULTIBOOT_APIC_TIMER_OK\n");
+  serial_string("AIUEOS_MULTIBOOT_APIC_TIMER_OK idt lapic vector=32 eoi\r\n");
 
   if (kotoba_aiueos_probe() != 42u) {
     serial_string("AIUEOS_MULTIBOOT_FAIL kotoba-probe\r\n");

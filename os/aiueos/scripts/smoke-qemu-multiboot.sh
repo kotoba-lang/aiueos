@@ -59,8 +59,12 @@ grep -F "AIUEOS_MULTIBOOT_ACPI_OK rsdt-walk madt cpu>=2 ioapic" "$serial_log" >/
   echo "error: Multiboot ACPI table-walk evidence was not observed" >&2
   exit 1
 }
+grep -F "AIUEOS_MULTIBOOT_APIC_TIMER_OK idt lapic vector=32 eoi" "$serial_log" >/dev/null || {
+  echo "error: Multiboot Local APIC timer evidence was not observed" >&2
+  exit 1
+}
 grep -F "AIUEOS_MULTIBOOT_OK long-mode mmap-parsed kotoba-probe=42" "$serial_log" >/dev/null || {
   echo "error: Multiboot long-mode/Kotoba evidence was not observed" >&2
   exit 1
 }
-echo "AIUEOS_MULTIBOOT_SMOKE_OK qemu-multiboot-loader long-mode sse mmap rsdp acpi-rsdt kotoba-probe"
+echo "AIUEOS_MULTIBOOT_SMOKE_OK qemu-multiboot-loader long-mode sse mmap rsdp acpi-rsdt idt apic-timer kotoba-probe"

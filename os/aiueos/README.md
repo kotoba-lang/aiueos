@@ -410,14 +410,17 @@ System Description Pointer — QEMU's built-in Multiboot loader still materializ
 a genuine ACPI 1.0 RSDP there), walks the tables it references through the
 kernel's validated ACPI parser (now handling both the ACPI 1.0 RSDT with
 32-bit table pointers and the ACPI 2.0 XSDT with 64-bit pointers; the MADT
-walk, CPU enumeration, and the >=2-CPU/IOAPIC invariant are shared), and runs
-the same compiler-emitted Kotoba probe
+walk, CPU enumeration, and the >=2-CPU/IOAPIC invariant are shared), installs a
+minimal IDT and brings up the Local APIC periodic timer through the shared
+apic.c — waiting for a real vector-32 hardware tick (the trampoline identity-maps
+the first 4 GiB with 1 GiB pages so the ~0xFEE00000 LAPIC MMIO is reachable) —
+and runs the same compiler-emitted Kotoba probe
 object the UEFI path admits before a deterministic QEMU exit. The linked
 x86_64 image is wrapped verbatim in an ELFCLASS32/EM_386 container
 (`wrap-multiboot32.py`) because QEMU's Multiboot loader requires a 32-bit ELF;
 the machine code is unchanged and the image is byte-reproducible. This is a
 narrow Multiboot slice: it deliberately does not stand up virtio, GOP, or the
-full evidence gate, which the UEFI path owns. A GRUB rescue ISO and the
+rest of the evidence gate, which the UEFI path owns. A GRUB rescue ISO and the
 Multiboot2 header (both needing `grub-mkrescue`/`xorriso`, absent here) remain
 follow-ups.
 
