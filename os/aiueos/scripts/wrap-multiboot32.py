@@ -52,7 +52,11 @@ def main():
             data[p_offset:p_offset + p_filesz]
 
     ehsize, phentsize32 = 52, 32
-    data_offset = ehsize + phentsize32
+    # Round the load data up to an 8-byte file offset so the embedded Multiboot
+    # and Multiboot2 headers keep their 8-byte alignment in the file (GRUB
+    # searches for the MB2 header at 8-byte-aligned file offsets).
+    data_offset = (ehsize + phentsize32 + 7) & ~7
+    pad = data_offset - (ehsize + phentsize32)
     header = bytearray(ehsize)
     header[0:4] = b"\x7fELF"
     header[4], header[5], header[6] = 1, 1, 1  # ELFCLASS32, ELFDATA2LSB, version
@@ -61,7 +65,7 @@ def main():
                      ehsize, phentsize32, 1, 0, 0, 0)
     phdr = struct.pack("<IIIIIIII", PT_LOAD, data_offset, load_base, load_base,
                        len(image), len(image), 7, 0x1000)
-    Path(output).write_bytes(bytes(header) + phdr + bytes(image))
+    Path(output).write_bytes(bytes(header) + phdr + bytes(pad) + bytes(image))
     print("wrapped 32-bit multiboot ELF: entry=0x%x load=0x%x-0x%x" %
           (entry, load_base, load_end))
 

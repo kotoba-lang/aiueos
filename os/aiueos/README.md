@@ -420,9 +420,25 @@ x86_64 image is wrapped verbatim in an ELFCLASS32/EM_386 container
 (`wrap-multiboot32.py`) because QEMU's Multiboot loader requires a 32-bit ELF;
 the machine code is unchanged and the image is byte-reproducible. This is a
 narrow Multiboot slice: it deliberately does not stand up virtio, GOP, or the
-rest of the evidence gate, which the UEFI path owns. A GRUB rescue ISO and the
-Multiboot2 header (both needing `grub-mkrescue`/`xorriso`, absent here) remain
-follow-ups.
+rest of the evidence gate, which the UEFI path owns.
+
+The same kernel also carries a Multiboot2 header, so GRUB boots it end to end:
+
+```sh
+./os/aiueos/scripts/build-grub-multiboot.sh
+./os/aiueos/scripts/smoke-qemu-grub-multiboot.sh
+```
+
+`grub-mkrescue` (from `x86_64-elf-grub`/`xorriso`/`mtools` locally, or
+`grub-pc-bin`/`grub-efi-amd64-bin` on CI) builds a GRUB rescue ISO whose
+`grub.cfg` loads the kernel with the `multiboot2` command; OVMF boots the ISO,
+GRUB enters the kernel in 32-bit protected mode with the MB2 magic, and the
+64-bit landing walks the MB2 memory-map tag and runs the Kotoba probe. GRUB's
+multiboot2 ELF loader wants section headers, so the GRUB path takes the linked
+64-bit image directly while QEMU's built-in MB1 loader takes the 32-bit-wrapped
+one; both carry the same MB1 and MB2 headers (8-byte aligned in the file) and
+code. This GRUB path proves the loader-compatibility boot end to end but is
+deliberately narrow — ACPI/APIC under GRUB+OVMF stay gated on the MB1 path.
 
 This recovery selection lives in the reference C loader; re-expressing it in
 the compiler-emitted C-free loader and a GRUB-driven Multiboot2 path remain
