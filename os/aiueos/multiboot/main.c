@@ -28,6 +28,8 @@ struct multiboot_mmap_entry {
 } __attribute__((packed));
 
 extern uint64_t kotoba_aiueos_probe(void);
+extern int aiueos_acpi_initialize(const void *rsdp_pointer);
+extern uint32_t aiueos_acpi_cpu_count(void);
 
 static inline void out8(uint16_t port, uint8_t value) {
   __asm__ volatile("outb %0, %1" : : "a"(value), "Nd"(port));
@@ -131,6 +133,16 @@ void aiueos_multiboot_main(uint32_t magic, uint32_t info_addr) {
   }
   debug_string("AIUEOS_MULTIBOOT_RSDP_OK\n");
   serial_string("AIUEOS_MULTIBOOT_RSDP_OK signature checksum firmware-independent\r\n");
+
+  /* Walk the tables the RSDP references through the kernel's validated ACPI
+   * parser (ACPI 1.0 RSDT here; the UEFI path uses the 2.0 XSDT). Require the
+   * enumerated CPU count the parser's own >=2 SMP invariant guarantees. */
+  if (!aiueos_acpi_initialize(rsdp) || aiueos_acpi_cpu_count() < 2) {
+    serial_string("AIUEOS_MULTIBOOT_FAIL acpi-validation\r\n");
+    qemu_exit(0x6e);
+  }
+  debug_string("AIUEOS_MULTIBOOT_ACPI_OK\n");
+  serial_string("AIUEOS_MULTIBOOT_ACPI_OK rsdt-walk madt cpu>=2 ioapic\r\n");
 
   if (kotoba_aiueos_probe() != 42u) {
     serial_string("AIUEOS_MULTIBOOT_FAIL kotoba-probe\r\n");

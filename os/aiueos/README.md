@@ -407,17 +407,19 @@ requiring a usable region), discovers the ACPI RSDP the firmware-independent
 way (there is no UEFI configuration table on this path: it scans the
 0xE0000-0xFFFFF BIOS window for a signature- and 20-byte-checksum-valid Root
 System Description Pointer — QEMU's built-in Multiboot loader still materializes
-a genuine ACPI 1.0 RSDP there), and runs the same compiler-emitted Kotoba probe
+a genuine ACPI 1.0 RSDP there), walks the tables it references through the
+kernel's validated ACPI parser (now handling both the ACPI 1.0 RSDT with
+32-bit table pointers and the ACPI 2.0 XSDT with 64-bit pointers; the MADT
+walk, CPU enumeration, and the >=2-CPU/IOAPIC invariant are shared), and runs
+the same compiler-emitted Kotoba probe
 object the UEFI path admits before a deterministic QEMU exit. The linked
 x86_64 image is wrapped verbatim in an ELFCLASS32/EM_386 container
 (`wrap-multiboot32.py`) because QEMU's Multiboot loader requires a 32-bit ELF;
 the machine code is unchanged and the image is byte-reproducible. This is a
 narrow Multiboot slice: it deliberately does not stand up virtio, GOP, or the
-full evidence gate, which the UEFI path owns. Walking the tables the RSDP
-references would extend the kernel's ACPI parser to the ACPI 1.0 RSDT (it is
-currently ACPI-2.0/XSDT-only, matching the UEFI handoff); that, a GRUB rescue
-ISO, and the Multiboot2 header (both needing `grub-mkrescue`/`xorriso`, absent
-here) remain follow-ups.
+full evidence gate, which the UEFI path owns. A GRUB rescue ISO and the
+Multiboot2 header (both needing `grub-mkrescue`/`xorriso`, absent here) remain
+follow-ups.
 
 This recovery selection lives in the reference C loader; re-expressing it in
 the compiler-emitted C-free loader and a GRUB-driven Multiboot2 path remain
