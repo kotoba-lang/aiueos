@@ -465,6 +465,35 @@ virtio *transport handshake / virtqueue* guests (feature negotiation, ring DMA)
 remain to migrate — they need this same u32 path plus ordered non-idempotent
 sequencing.
 
+### V1 progress — 2026-07-17 (`do` sequencing → full virtio handshake in Kotoba)
+
+The sequencing blocker above is resolved. The compiler (`kotoba-lang/compiler`,
+merged `6d14f1a`) gained a **`do` form**: evaluate each subexpression in order,
+discard all but the last. Unlike `let` (which inlines/substitutes, so a
+side-effecting binding used 0 times is DCE-dropped and one used >1 times is
+duplicated), `do` runs each subexpression's side effects **exactly once, in
+order** — the missing primitive for MMIO sequencing. Added across desugar /
+validate / verifier / IR oracle / all four backends (aarch64+x86_64 emit each
+and keep the last result; wasm drops all but last; cljs → Clojure `do`).
+
+With it, the **entire virtio-mmio transport handshake is now written in Kotoba**:
+`resources/hvt/guest-virtio-handshake.kotoba` → `.elf` probes magic/version/
+device-id (u32 reads), then `do`-sequences reset → `ACKNOWLEDGE` → `DRIVER` →
+feature negotiate (sel 0/1, read offered, write accepted) → `FEATURES_OK` → a
+`Status` read-back check → `DRIVER_OK`, emitting `HI\n` iff the whole handshake
+holds (else `E`). It also exercises a **kernel-mode function call** (an
+`emit-ok` helper). Verified on real KVM — the 21-step trace is **identical to
+the asm/C virtio guest** (each store runs exactly once, in order), receipt
+`{:serial "HI\n" :serial-ok? true :virtio-status 15 :shutdown? true}` (`0xf` =
+DRIVER_OK). `hvt-smoke.cljs` now gates **8 cases**; the compiler suite is 188
+tests / 3062 assertions.
+
+This makes the virtio *transport* fully kotoba-first (the asm `guest-virtio`
+guest is now redundant, kept as a cross-check). The **virtqueue** guests
+(tx/rx, ring DMA) still use C; migrating them needs the same `do`/u32 path plus
+guest-RAM struct writes, which the byte/u32 store intrinsics already cover — a
+mechanical follow-up.
+
 ## Non-goals (firm)
 
 - No from-scratch type-1 hypervisor; we always ride KVM/HVF.
