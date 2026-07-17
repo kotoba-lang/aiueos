@@ -125,6 +125,18 @@ The Phase-0 substrate plus the runtime/robotics/agent work built on top of it.
   open V1 items (kernel direct-load, virtio device model) are now substantially
   delivered. Bug recorded: gcc `-O2` post-index `strb` MMIO stores fail
   `KVM_RUN` `ENOSYS` (no decodable syndrome) — write to a fixed register address.
+- **V1 progress (2026-07-17), PSCI finding corrected + vcpu power-state control**
+  (ADR-0014 "PSCI finding, corrected"): by reading the `hvc` return code in `x0`,
+  established that this KVM environment answers **every** PSCI function id
+  (`PSCI_VERSION`/`SYSTEM_OFF`/`SYSTEM_RESET`/`CPU_OFF`) with `NOT_SUPPORTED`
+  (`0xFFFFFFFF`) and resumes — so no PSCI shutdown-exit exists here (correcting
+  the earlier, wrong "guest spins in a zeroed vector table" explanation). The
+  `KVM_ARM_VCPU_PSCI_0_2` feature bit doesn't help and leaves the boot vcpu
+  `MP_STATE_STOPPED` (the earlier "regression"). Adds real vcpu power-state
+  control (`KVM_GET_MP_STATE`/`KVM_SET_MP_STATE` + `mp-state` constants) and a
+  `:psci-0-2?` diagnostic option (sets the feature + forces RUNNABLE). MMIO
+  poweroff remains the halt mechanism. `aiueos.hvt-test` is 18 tests / 92
+  assertions.
 
 ### Security / supply chain
 - **Artifact integrity**: `:aiueos/wasm-sha256` is verified before run
