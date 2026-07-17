@@ -282,6 +282,62 @@ descriptor-chain DMA, where `aiueos.virtio/split-queue-layout`/`*-ring`/
 milestone (#110). Queue-config register writes are already tracked in the
 device state, unacted-on, ready for it.
 
+### V1 progress — 2026-07-17 (virtqueue data path — a guest transmits through the split queue)
+
+The device now moves **data**, not just handshake registers: a guest driver
+sets up a split virtqueue in guest RAM and transmits `HI\n` through the
+virtio-console transmitq; the tender reads the ring + descriptor chain out of
+guest RAM and pulls the bytes. This completes the virtio device model and is
+the first time the tender reads/writes **guest RAM**.
+
+- **Guest-RAM access** in the tender: `gram-rd` (a `gpa -> byte` accessor over
+  the mapped `ram` segment) and `gram-set-le!` (write N little-endian bytes to
+  a GPA). The KVM loop passes `ram`/`ram-gpa` into the notify handler.
+- **Pure split-queue servicing** (`read-descriptor` / `walk-descriptor-chain` /
+  `virtqueue-plan`, host-tested with synthetic RAM): parses 16-byte descriptors,
+  walks `next`-chains collecting the device-*readable* buffers (skipping
+  device-writable/receive buffers via `aiueos.virtio/desc-flag`), and returns a
+  plan — the emitted bytes, the used-ring elements `{:slot :id :len}`, and the
+  new used/avail indices — for the FFM side to apply. `process-virtqueue!` runs
+  the plan against real guest RAM and writes the used ring back.
+- **Per-queue config**: `virtio-console-write` now routes the queue-address
+  registers (`QueueDesc/Driver/Device` low+high, `QueueNum`) into the selected
+  queue's sub-map keyed by `QueueSel`; `queue-config` resolves the 64-bit ring
+  addresses on notify.
+- **A stack for C guests**: the tender now sets SP (core reg `0x3E`) to the top
+  of the guest RAM window, so the driver guest could be written in freestanding
+  C (`guest-virtqueue-aarch64.c`) rather than hand assembly — the virtqueue
+  setup is far clearer in C. Built via `scripts/build-hvt-guest.cljs` (now
+  handles both `as` and `gcc`; the C guest's SHA is pinned for gcc 15).
+- **Two-way RAM coherency confirmed**: the guest writes the rings/buffer with
+  its MMU off (non-cacheable), the tender reads them (`emitted "HI\n"`), the
+  tender writes the used ring, and the guest reads the completion back — both
+  directions coherent on this KVM (the earlier dcache worry did not materialize;
+  KVM's stage-2 flush-on-fault handles it).
+
+Verified on real KVM (31-step trace): transport handshake, queue-1 setup
+(desc/avail/used addresses, `QueueReady`), one `NOTIFY` where the tender emits
+`HI\n` pulled from the transmit buffer via the descriptor, then the guest — on
+seeing the used-ring completion — confirms on the plain serial port and halts.
+Receipt: `{:console "HI\n"` (data through the virtqueue) `:serial "HI\n"` (guest
+saw completion) `:virtio-status 15 :shutdown? true}`. `hvt-smoke.cljs` now gates
+four cases (raw / ELF / virtio transport / virtqueue), the virtqueue one
+asserting `:console`; `aiueos.hvt-test` is 17 tests / 87 assertions (adds
+per-queue config, descriptor-chain walk incl. writable-buffer skip, and
+transmit servicing on synthetic RAM).
+
+One instructive bug: gcc `-O2` first emitted the guest's serial write as a
+**post-index** `strb w,[x],#1` — an MMIO store whose access has no decodable
+instruction syndrome on aarch64, so `KVM_RUN` failed `ENOSYS`. Writing each byte
+to the single serial-register address (as a data port is used, and as the asm
+guests already did) restored a plain `strb w,[x]` KVM can emulate. Recorded
+because it will recur for any C guest doing MMIO through advancing pointers.
+
+With this, the two open V1 items — kernel direct-load and the virtio device
+model — are both substantially delivered: the ELF loader boots real images
+(kernel-specific boot waits only on x86_64 KVM hardware, Finding 1), and the
+virtio-console device now does transport **and** a full virtqueue transmit.
+
 ## Non-goals (firm)
 
 - No from-scratch type-1 hypervisor; we always ride KVM/HVF.

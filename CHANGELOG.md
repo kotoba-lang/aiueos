@@ -109,6 +109,22 @@ The Phase-0 substrate plus the runtime/robotics/agent work built on top of it.
   `hvt-smoke.cljs` now gates raw + ELF + virtio; `aiueos.hvt-test` is 14 tests /
   75 assertions. The virtqueue data path (rings/descriptor DMA) is the next
   milestone; queue-config writes are already tracked in device state.
+- **V1 progress (2026-07-17), virtqueue data path** (ADR-0014 "virtqueue data
+  path"): the virtio-console device now moves **data**, not just handshake
+  registers — a freestanding guest driver sets up a split virtqueue in guest RAM
+  and transmits `HI\n` through the transmitq; the tender reads the avail ring +
+  descriptor chain out of guest RAM and pulls the bytes into the receipt's
+  `:console`. Adds guest-RAM access (`gram-rd`/`gram-set-le!`), pure split-queue
+  servicing (`read-descriptor`/`walk-descriptor-chain`/`virtqueue-plan`,
+  host-tested with synthetic RAM, reusing `aiueos.virtio/desc-flag`), per-queue
+  config tracking + `queue-config`, and SP-register setup so guests can be
+  written in freestanding C (`guest-virtqueue-aarch64.c`). Verified on real KVM
+  (31-step trace, `:console "HI\n"` via the virtqueue + `:serial "HI\n"` guest
+  confirmation, `:virtio-status 15`). `hvt-smoke.cljs` gates 4 cases (raw / ELF
+  / transport / virtqueue); `aiueos.hvt-test` is 17 tests / 87 assertions. Both
+  open V1 items (kernel direct-load, virtio device model) are now substantially
+  delivered. Bug recorded: gcc `-O2` post-index `strb` MMIO stores fail
+  `KVM_RUN` `ENOSYS` (no decodable syndrome) — write to a fixed register address.
 
 ### Security / supply chain
 - **Artifact integrity**: `:aiueos/wasm-sha256` is verified before run

@@ -20,14 +20,20 @@
 
 (def ld-script "resources/hvt/guest-aarch64.ld")
 
-;; the checked-in guests: source .S -> output .elf, with the recorded sha256.
+;; the checked-in guests: source (.S = assembler, .c = freestanding gcc) ->
+;; output .elf, with the recorded sha256. The two asm guests are toolchain-
+;; independent; the C guest's sha is for gcc 15 (a different gcc may differ,
+;; which the check flags rather than silently accepting).
 (def guests
-  [{:src "resources/hvt/guest-aarch64.S"
+  [{:src "resources/hvt/guest-aarch64.S" :lang :asm
     :elf "resources/hvt/guest-aarch64.elf"
     :sha "e2456afed9c0b03b5be0eac4896eac008815471b0f1a99eabc1e3ce7fa794e44"}
-   {:src "resources/hvt/guest-virtio-aarch64.S"
+   {:src "resources/hvt/guest-virtio-aarch64.S" :lang :asm
     :elf "resources/hvt/guest-virtio-aarch64.elf"
-    :sha "4eb9664d67d8820fb25b146a4403f544edc7f90fc0cbea81405fb4b322aaa78c"}])
+    :sha "4eb9664d67d8820fb25b146a4403f544edc7f90fc0cbea81405fb4b322aaa78c"}
+   {:src "resources/hvt/guest-virtqueue-aarch64.c" :lang :c
+    :elf "resources/hvt/guest-virtqueue-aarch64.elf"
+    :sha "e8a6ff8148f3efc2a40fe5b1739b021a178ea8e6299b50c52ae3fc5e82ceef3c"}])
 
 (defn sh [& argv]
   (let [r (cp/spawnSync (first argv) (clj->js (rest argv)) #js {:encoding "utf8"})]
@@ -40,10 +46,16 @@
 (defn sha256 [path]
   (-> (crypto/createHash "sha256") (.update (fs/readFileSync path)) (.digest "hex")))
 
-(defn build-one [{:keys [src elf sha]} i]
+(defn compile-obj [lang src obj]
+  (case lang
+    :asm (sh "as" "-o" obj src)
+    :c   (sh "gcc" "-ffreestanding" "-fno-stack-protector" "-fno-pic" "-fno-pie"
+             "-O2" "-c" src "-o" obj)))
+
+(defn build-one [{:keys [src elf sha lang]} i]
   (let [obj (str "/tmp/hvt-guest-" i ".o")]
-    (println "[build-hvt-guest] assembling" src "->" elf)
-    (sh "as" "-o" obj src)
+    (println "[build-hvt-guest] building" src "->" elf (str "(" (name lang) ")"))
+    (compile-obj lang src obj)
     (sh "ld" "--build-id=none" "-s" "-z" "max-page-size=0x1000" "-T" ld-script "-o" elf obj)
     (let [actual (sha256 elf)]
       (println "  sha256:" actual)
