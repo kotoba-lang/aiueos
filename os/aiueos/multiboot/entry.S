@@ -25,23 +25,22 @@ aiueos_multiboot_start:
   movb $0x31, %al                       /* '1' entered 32-bit */
   outb %al, $0xe9
 
-  /* PML4[0] -> PDPT[0] -> PD (512 x 2 MiB identity, first GiB) */
+  /* PML4[0] -> PDPT (4 x 1 GiB identity pages, first 4 GiB) so the LAPIC and
+     IOAPIC MMIO windows (~0xFEE00000 / 0xFEC00000, just below 4 GiB) are
+     mapped along with RAM. 1 GiB pages need PDPE1GB, which QEMU -cpu max has. */
   movl $aiueos_mb_pdpt, %eax
   orl  $0x3, %eax
   movl %eax, aiueos_mb_pml4
-  movl $aiueos_mb_pd, %eax
-  orl  $0x3, %eax
-  movl %eax, aiueos_mb_pdpt
-  movl $aiueos_mb_pd, %edi
-  movl $0x83, %eax                      /* present + write + 2 MiB page, base 0 */
+  movl $aiueos_mb_pdpt, %edi
+  movl $0x83, %eax                      /* present + write + 1 GiB page, base 0 */
   movl $0, %ecx
 1:
   movl %eax, (%edi)
   movl $0, 4(%edi)
-  addl $0x200000, %eax
+  addl $0x40000000, %eax
   addl $8, %edi
   incl %ecx
-  cmpl $512, %ecx
+  cmpl $4, %ecx
   jne 1b
 
   movb $0x32, %al                       /* '2' page tables built */
@@ -102,6 +101,39 @@ aiueos_multiboot_start:
   cli
   hlt
   jmp 3b
+
+/* Minimal APIC-timer ISR for the Multiboot path: bump the tick counter the
+   shared apic.c increments elsewhere, acknowledge EOI through the LAPIC MMIO
+   base apic.c published, and return. */
+.global aiueos_mb_isr_timer
+.type aiueos_mb_isr_timer,@function
+aiueos_mb_isr_timer:
+  push %rax
+  incq aiueos_apic_timer_ticks(%rip)
+  mov aiueos_apic_mmio_base(%rip), %rax
+  movl $0, 0xb0(%rax)
+  pop %rax
+  iretq
+
+/* Any unexpected vector before the timer test is a fault: emit a marker on the
+   debug port and terminate deterministically (0x6d -> isa-debug-exit 219). */
+.global aiueos_mb_isr_default
+.type aiueos_mb_isr_default,@function
+aiueos_mb_isr_default:
+  movb $0x58, %al                       /* 'X' unexpected vector */
+  outb %al, $0xe9
+  movl $0x6d, %eax
+  outl %eax, $0xf4
+  cli
+4:
+  hlt
+  jmp 4b
+
+.global aiueos_mb_load_idt
+.type aiueos_mb_load_idt,@function
+aiueos_mb_load_idt:
+  lidt (%rdi)
+  ret
 
 .section .data.mbgdt,"aw",@progbits
 .balign 8
