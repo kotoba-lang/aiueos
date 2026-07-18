@@ -47,6 +47,7 @@
             [aiueos.audit :as audit]
             [aiueos.graph :as graph]
             [aiueos.manifest :as manifest]
+            [aiueos.kagi-policy :as kagi-policy]
             [aiueos.policy :as policy]
             [aiueos.signing :as signing]))
 
@@ -127,19 +128,34 @@
   maps the caller should append. Every grant and every denial is audited,
   exactly like the retired Rust broker's `verify_one`/`deny`."
   [m graph policy]
-  (let [auth (authenticate m policy)]
+  (let [auth (authenticate m policy)
+        kagi-decision (kagi-policy/decide-all
+                       (:aiueos/component m)
+                       (or (:aiueos/kagi-requests m) [])
+                       {:grants (:aiueos.policy/kagi-grants policy)})]
     (if (signature-violation? auth)
       (let [decision {:aiueos/decision :deny
                        :aiueos/component (:aiueos/component m)
                        :aiueos/violations [auth]}]
         (assoc decision :aiueos.broker/audit-entries (deny-audit-entries decision)))
-      (let [signer (:aiueos.broker/signer auth)
+      (if (= :deny (:decision kagi-decision))
+        (let [decision {:aiueos/decision :deny
+                        :aiueos/component (:aiueos/component m)
+                        :aiueos/violations
+                        [{:aiueos/component (:aiueos/component m)
+                          :aiueos/kind :kagi-secret-denied
+                          :aiueos/message (str "kagi request denied: "
+                                               (name (:reason kagi-decision)))}]}]
+          (assoc decision :aiueos.broker/audit-entries (deny-audit-entries decision)))
+        (let [signer (:aiueos.broker/signer auth)
             m-eff (elevate-for-signature m signer)
             decision (policy/verify-component m-eff graph policy signer)
             entries (if (= :grant (:aiueos/decision decision))
                       (grant-audit-entries decision signer)
                       (deny-audit-entries decision))]
-        (assoc decision :aiueos.broker/audit-entries entries)))))
+          (cond-> (assoc decision :aiueos.broker/audit-entries entries)
+            (seq (:requests kagi-decision))
+            (assoc :aiueos.broker/kagi-decisions (:requests kagi-decision))))))))
 
 (defn verify-system
   "Verify every component in `components` against a shared capability graph
