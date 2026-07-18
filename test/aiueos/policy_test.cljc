@@ -3,6 +3,19 @@
             [aiueos.graph :as graph]
             [clojure.test :refer [deftest is testing]]))
 
+(deftest net-url-allowed-fails-closed-without-allowlist
+  (is (false? (policy/net-url-allowed? policy/default-policy
+                                       "https://example.com/x")))
+  (is (false? (policy/net-url-allowed? {:aiueos.policy/net-allow #{}}
+                                       "https://example.com/x"))))
+
+(deftest net-url-allowed-matches-host-and-prefix
+  (let [p {:aiueos.policy/net-allow #{"isekai.network" "http://127.0.0.1:9/"}}]
+    (is (true? (policy/net-url-allowed? p "https://isekai.network/gftd/orbs")))
+    (is (true? (policy/net-url-allowed? p "https://api.isekai.network/v1")))
+    (is (true? (policy/net-url-allowed? p "http://127.0.0.1:9/path")))
+    (is (false? (policy/net-url-allowed? p "https://evil.example/steal")))))
+
 (def empty-graph (graph/build []))
 
 (deftest net-url-allowed-fails-closed-without-allowlist
