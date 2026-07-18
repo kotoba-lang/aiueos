@@ -45,6 +45,22 @@
     (is (= 2 (count (:aiueos.broker/audit-entries decision))))
     (is (every? #(= :deny (:aiueos/event %)) (:aiueos.broker/audit-entries decision)))))
 
+(deftest verify-one-enforces-kagi-reference-policy
+  (let [m {:aiueos/component :service/log :aiueos/kind :service :aiueos/trust :verified
+           :aiueos/imports #{:log/write} :aiueos/exports #{}
+           :aiueos/kagi-requests [{:secret-ref "kagi://ops/log-key" :purpose :logging
+                                   :operation :sign}]}
+        denied (broker/verify-one m empty-graph policy/default-policy)
+        granted (broker/verify-one
+                 m empty-graph
+                 (assoc policy/default-policy :aiueos.policy/kagi-grants
+                        {:service/log #{[:kagi/sign :logging]}}))]
+    (is (= :deny (:aiueos/decision denied)))
+    (is (= [:kagi-secret-denied] (mapv :aiueos/kind (:aiueos/violations denied))))
+    (is (= :grant (:aiueos/decision granted)))
+    (is (= "kagi://ops/log-key"
+           (get-in granted [:aiueos.broker/kagi-decisions 0 :secret-ref])))))
+
 #?(:clj
    (deftest verify-one-elevates-trust-on-valid-signature
      (let [kp (gen-keypair)

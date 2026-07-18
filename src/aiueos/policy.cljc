@@ -36,6 +36,7 @@
   AI-generated/untrusted lockdown."
   {:aiueos.policy/kernel-caps default-kernel-caps
    :aiueos.policy/grants {}
+   :aiueos.policy/kagi-grants {}
    :aiueos.policy/forbid-effects default-forbid-effects
    :aiueos.policy/signers {}
    :aiueos.policy/component-signers {}
@@ -78,7 +79,7 @@
   Empty allowlist fails closed (deny all) — operators must opt in to network
   origins. An entry matches when it equals the URL's host, is a suffix of the
   host (`isekai.network` covers `api.isekai.network`), or is a full URL/prefix
-  of the request URL. Surface/host `fetch` providers should share this one
+  of the request URL. Designed so surface/host `fetch` providers can share one
   decision function rather than reimplementing SSRF checks."
   [policy url]
   (let [allow (as-string-set (or (:aiueos.policy/net-allow policy)
@@ -124,6 +125,14 @@
                               (update acc id set/union (as-kw-set caps)))
                             grants
                             (:aiueos/grants overlay))))
+
+       (:aiueos/kagi-grants overlay)
+       (update :aiueos.policy/kagi-grants
+               (fn [grants]
+                 (reduce-kv (fn [acc id capabilities]
+                              (update acc id set/union (set capabilities)))
+                            grants
+                            (:aiueos/kagi-grants overlay))))
 
        (:aiueos/forbid overlay)
        (update :aiueos.policy/forbid-effects merge (:aiueos/forbid overlay))
