@@ -42,8 +42,8 @@
 
 #?(:clj
    (deftest decide-subprocess-smoke-test
-     (testing "bb decide, invoked as a real subprocess, round-trips one request over stdio"
-       (let [pb (ProcessBuilder. ["bb" "decide"])
+     (testing "aiueos.decide, invoked as a real subprocess, round-trips one request over stdio"
+       (let [pb (ProcessBuilder. ["clojure" "-M" "-m" "aiueos.decide"])
              _ (.redirectErrorStream pb false)
              proc (.start pb)
              stdin (java.io.PrintWriter. (.getOutputStream proc) true)

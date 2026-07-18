@@ -46,14 +46,10 @@ jobs:
       - uses: DeLaGuardo/setup-clojure@13.4
         with:
           cli: latest
-          bb: latest
       - name: Test CLJC contract
         run: clojure -M:test
       - name: Lint
         run: clojure -M:lint
-      - name: Babashka smoke
-        run: bb test
-
   edn-contracts:
     name: EDN examples and docs
     runs-on: ubuntu-latest

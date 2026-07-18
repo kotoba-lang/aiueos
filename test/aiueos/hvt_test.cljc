@@ -6,7 +6,7 @@
   VM, not here (this suite runs on any JVM host, incl. macOS CI), mirroring
   `aiueos.vfio`'s hardware-honesty split."
   (:require [clojure.test :refer [deftest is testing]]
-            [clojure.java.io :as io]
+            #?(:clj [clojure.java.io :as io])
             [aiueos.hvt :as hvt]
             [aiueos.virtio :as vio]))
 
@@ -123,27 +123,29 @@
            (hvt/elf-load-range [{:vaddr 0x40000100 :memsz 0x10}
                                 {:vaddr 0x40002000 :memsz 0x40}] 4096)))))
 
-(deftest parse-elf64-rejects-non-elf
-  (testing "a bad magic throws with a specific reason"
-    (is (thrown-with-msg? clojure.lang.ExceptionInfo #"bad magic"
-          (hvt/parse-elf64 (vec-accessor [0x00 0x01 0x02 0x03 0x04 0x05]))))))
+#?(:clj
+   (do
+     (deftest parse-elf64-rejects-non-elf
+       (testing "a bad magic throws with a specific reason"
+         (is (thrown-with-msg? clojure.lang.ExceptionInfo #"bad magic"
+               (hvt/parse-elf64 (vec-accessor [0x00 0x01 0x02 0x03 0x04 0x05]))))))
 
-(deftest parse-elf64-on-real-fixture
-  (testing "parsing the checked-in aarch64 ELF fixture yields the expected load plan"
-    (let [bytes (with-open [in (io/input-stream (io/resource "hvt/guest-aarch64.elf"))]
-                  (.readAllBytes in))
-          rd (fn [off] (bit-and (long (aget bytes (int off))) 0xff))
-          {:keys [class machine entry segments]} (hvt/parse-elf64 rd)]
-      (is (= hvt/elf-class-64 class) "ELFCLASS64")
-      (is (= (:aarch64 hvt/elf-machine) machine) "EM_AARCH64 (0xB7)")
-      (is (= 0x40000000 entry) "e_entry")
-      (is (= 1 (count segments)) "one PT_LOAD")
-      (let [{:keys [offset vaddr filesz memsz]} (first segments)]
-        (is (= 0x1000 offset) "p_offset")
-        (is (= 0x40000000 vaddr) "p_vaddr")
-        (is (= 0x28 filesz) "p_filesz (10 aarch64 words)")
-        (is (= 0x28 memsz) "p_memsz"))
-      (is (= [0x40000000 0x40001000] (hvt/elf-load-range segments 4096))))))
+     (deftest parse-elf64-on-real-fixture
+       (testing "parsing the checked-in aarch64 ELF fixture yields the expected load plan"
+         (let [bytes (with-open [in (io/input-stream (io/resource "hvt/guest-aarch64.elf"))]
+                       (.readAllBytes in))
+               rd (fn [off] (bit-and (long (aget bytes (int off))) 0xff))
+               {:keys [class machine entry segments]} (hvt/parse-elf64 rd)]
+           (is (= hvt/elf-class-64 class) "ELFCLASS64")
+           (is (= (:aarch64 hvt/elf-machine) machine) "EM_AARCH64 (0xB7)")
+           (is (= 0x40000000 entry) "e_entry")
+           (is (= 1 (count segments)) "one PT_LOAD")
+           (let [{:keys [offset vaddr filesz memsz]} (first segments)]
+             (is (= 0x1000 offset) "p_offset")
+             (is (= 0x40000000 vaddr) "p_vaddr")
+             (is (= 0x28 filesz) "p_filesz (10 aarch64 words)")
+             (is (= 0x28 memsz) "p_memsz"))
+           (is (= [0x40000000 0x40001000] (hvt/elf-load-range segments 4096))))))))
 
 (deftest virtio-window
   (testing "the virtio-mmio register window at 0x0a000000"
