@@ -402,3 +402,28 @@
     (is (= :hybrid-pqc
            (-> (decision (assoc envelope :envelope/hybrid? false))
                :aiueos/violations first :aiueos/kind)))))
+
+(deftest production-deployment-requires-nonexportable-hardware-signing
+  (let [manifest {:aiueos/component :service/signed}
+        evidence {:provider-id :apple-secure-enclave
+                  :hardware-backed? true :provider-origin-verified? true
+                  :private-exported? false :sign-verified? true
+                  :unavailable-failed-closed? true}
+        decide (fn [e]
+                 (policy/verify-component
+                  manifest empty-graph
+                  (policy/parse-policy
+                   {:aiueos/hardware-signing
+                    {:service/signed {:required? true :evidence e}}})
+                  nil))]
+    (is (= :grant (:aiueos/decision (decide evidence))))
+    (is (true? (get-in (decide evidence)
+                       [:aiueos/detail :hardware-signing
+                        :hardware-signing/qualified?])))
+    (doseq [bad [(assoc evidence :private-exported? true)
+                 (assoc evidence :provider-origin-verified? false)
+                 (assoc evidence :unavailable-failed-closed? false)]]
+      (let [decision (decide bad)]
+        (is (= :deny (:aiueos/decision decision)))
+        (is (= :hardware-signing
+               (-> decision :aiueos/violations first :aiueos/kind)))))))
