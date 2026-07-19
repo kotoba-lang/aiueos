@@ -378,3 +378,27 @@
       (is (contains? (policy/granted-to policy* m :some-registered-signer)
                       :log/write)
           "base (kernel-caps) is still granted -- this is 'no elevated grant', not a hard deny"))))
+
+(deftest production-deployment-requires-real-hybrid-pqc-envelope
+  (let [manifest {:aiueos/component :service/pqc}
+        crypto-policy {:kotoba.security/crypto-policy-version 1
+                       :mode :hybrid-required :hybrid-epoch-floor 1}
+        envelope {:envelope/provider {:provider/id :kagi
+                                      :provider/fips-validated false}
+                  :envelope/kem? true :envelope/hybrid? true
+                  :envelope/epoch 2
+                  :envelope/algorithms [:x25519 :ml-kem-768]}
+        decision (fn [e]
+                   (policy/verify-component
+                    manifest empty-graph
+                    (policy/parse-policy
+                     {:aiueos/crypto
+                      {:service/pqc {:required? true :policy crypto-policy
+                                     :envelope e}}})
+                    nil))]
+    (is (= :grant (:aiueos/decision (decision envelope))))
+    (is (= :deny (:aiueos/decision
+                  (decision (assoc envelope :envelope/algorithms [:x25519])))))
+    (is (= :hybrid-pqc
+           (-> (decision (assoc envelope :envelope/hybrid? false))
+               :aiueos/violations first :aiueos/kind)))))
