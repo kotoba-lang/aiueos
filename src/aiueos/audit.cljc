@@ -18,6 +18,7 @@
   concern -- not portable to CLJS/kotoba-Wasm -- so it is `#?(:clj ...)`
   gated, following the `aiueos.contract/load-component-boundary` pattern."
   (:require [clojure.string :as str]
+            [kotoba.security.redaction :as redaction]
             #?(:clj [clojure.edn :as edn])
             #?(:clj [clojure.java.io :as io])))
 
@@ -61,7 +62,7 @@
    {:aiueos/ts ts
     :aiueos/event event
     :aiueos/component component
-    :aiueos/detail detail}))
+    :aiueos/detail (redaction/redact-text detail)}))
 
 #?(:clj
    (defn log-path

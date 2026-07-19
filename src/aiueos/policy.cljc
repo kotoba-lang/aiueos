@@ -14,7 +14,10 @@
   (:require [clojure.set :as set]
             [clojure.string :as str]
             [aiueos.graph :as graph]
-            [aiueos.surface :as surface]))
+            [aiueos.surface :as surface]
+            [kotoba.security.abac :as abac]
+            [kotoba.security.information-flow :as flow]
+            [kotoba.security.transport :as transport]))
 
 (def default-kernel-caps
   "Primitive capabilities the kernel/broker hands out directly (no exporter
@@ -40,6 +43,9 @@
    :aiueos.policy/forbid-effects default-forbid-effects
    :aiueos.policy/signers {}
    :aiueos.policy/component-signers {}
+   :aiueos.policy/abac {}
+   :aiueos.policy/information-flow {}
+   :aiueos.policy/transport {}
    :aiueos.policy/require-signed false
    :aiueos.policy/surface nil
    :aiueos.policy/net-allow #{}})
@@ -148,6 +154,16 @@
                             component-signers
                             (:aiueos/component-signers overlay))))
 
+       (:aiueos/abac overlay)
+       (update :aiueos.policy/abac merge (:aiueos/abac overlay))
+
+       (:aiueos/information-flow overlay)
+       (update :aiueos.policy/information-flow merge
+               (:aiueos/information-flow overlay))
+
+       (:aiueos/transport overlay)
+       (update :aiueos.policy/transport merge (:aiueos/transport overlay))
+
        (contains? overlay :aiueos/require-signed)
        (assoc :aiueos.policy/require-signed (boolean (:aiueos/require-signed overlay)))
 
@@ -209,6 +225,46 @@
   ([component kind message]
    {:aiueos/component component :aiueos/kind kind :aiueos/message message}))
 
+(defn- abac-violations
+  "Evaluate signer(subject), manifest(resource), imports(action) and active
+  surface(environment). A declared rule fails closed on a missing attribute."
+  [id m policy signer imports]
+  (when-let [rule (get (:aiueos.policy/abac policy) id)]
+    (let [result (abac/evaluate
+                  {:subject {:signer signer}
+                   :resource {:id id :trust (:aiueos/trust m)
+                              :effects (as-kw-set (:aiueos/effects m))}
+                   :action {:id :component/launch :capabilities imports}
+                   :environment {:surface (some-> (:aiueos.policy/surface policy) keyword)}}
+                  rule)]
+      (mapv
+       (fn [{:abac/keys [control message]}]
+         (violation id
+                    (case control
+                      :subject-signer :abac-subject
+                      :resource-trust :abac-resource
+                      :resource-effects :abac-resource
+                      :action-id :abac-action
+                      :action-capabilities :abac-action
+                      :environment-surface :abac-environment
+                      :abac-resource)
+                    message))
+       (:abac/violations result)))))
+
+(defn- information-flow-decision [id m policy signer]
+  (when-let [rule (get (:aiueos.policy/information-flow policy) id)]
+    (flow/evaluate-egress
+     (merge {:subject signer
+             :input-classifications (or (:aiueos/input-classifications m)
+                                        [(:aiueos/classification m)])
+             :output-classification (or (:aiueos/output-classification m)
+                                        (:aiueos/classification m))}
+            rule))))
+
+(defn- transport-decision [id policy]
+  (when-let [profile (get (:aiueos.policy/transport policy) id)]
+    (transport/evaluate profile)))
+
 (def dma-family-imports
   "Kernel-cap import ids that structurally require the ADR-0001 DMA/IOMMU
   gate -- the device-access quartet from `default-kernel-caps`
@@ -251,6 +307,17 @@
                            " but the active surface is " active-surface))]
           [])
         imports (as-kw-set (:aiueos/imports m))
+        abac-violations* (abac-violations id m policy signer imports)
+        flow-decision (information-flow-decision id m policy signer)
+        flow-violations
+        (mapv (fn [{:information-flow/keys [message]}]
+                (violation id :information-flow message))
+              (:information-flow/violations flow-decision))
+        transport-decision* (transport-decision id policy)
+        transport-violations
+        (mapv (fn [{:transport/keys [message]}]
+                (violation id :transport-security message))
+              (:transport/violations transport-decision*))
         {:keys [resolved import-violations]}
         (reduce (fn [acc imp]
                   (let [;; A kernel-primitive keyword (default-kernel-caps --
@@ -315,13 +382,19 @@
           [(violation id :net-allow-empty
                       "granted :net/fetch requires a non-empty :aiueos/net-allow origin allowlist")]
           [])
-        violations (vec (concat surface-violations import-violations effect-violations
-                                dma-violations net-violations))]
+        violations (vec (concat surface-violations abac-violations* flow-violations
+                                transport-violations import-violations
+                                effect-violations dma-violations net-violations))]
     (if (seq violations)
       {:aiueos/decision :deny :aiueos/component id :aiueos/violations violations}
       (let [caps (cond-> resolved
                    (and requires-iommu? (contains? granted :iommu)) (conj :iommu))]
-        {:aiueos/decision :grant :aiueos/component id :aiueos/capabilities caps}))))
+        (cond-> {:aiueos/decision :grant :aiueos/component id :aiueos/capabilities caps}
+          (or flow-decision transport-decision*)
+          (assoc :aiueos/detail
+                 (cond-> {}
+                   flow-decision (assoc :information-flow flow-decision)
+                   transport-decision* (assoc :transport transport-decision*))))))))
 
 (defn verify-system
   "Verify every component in `components` (a vector of manifest maps) against
