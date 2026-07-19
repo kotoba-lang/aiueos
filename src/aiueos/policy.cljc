@@ -17,6 +17,7 @@
             [aiueos.surface :as surface]
             [kotoba.security.abac :as abac]
             [kotoba.security.crypto-policy :as crypto]
+            [kotoba.security.hardware :as hardware]
             [kotoba.security.information-flow :as flow]
             [kotoba.security.transport :as transport]))
 
@@ -48,6 +49,7 @@
    :aiueos.policy/information-flow {}
    :aiueos.policy/transport {}
    :aiueos.policy/crypto {}
+   :aiueos.policy/hardware-signing {}
    :aiueos.policy/require-signed false
    :aiueos.policy/surface nil
    :aiueos.policy/net-allow #{}})
@@ -169,6 +171,10 @@
        (:aiueos/crypto overlay)
        (update :aiueos.policy/crypto merge (:aiueos/crypto overlay))
 
+       (:aiueos/hardware-signing overlay)
+       (update :aiueos.policy/hardware-signing merge
+               (:aiueos/hardware-signing overlay))
+
        (contains? overlay :aiueos/require-signed)
        (assoc :aiueos.policy/require-signed (boolean (:aiueos/require-signed overlay)))
 
@@ -275,6 +281,12 @@
     (let [result (crypto/check-production-envelope policy envelope)]
       (assoc result :crypto/required? required?))))
 
+(defn- hardware-signing-decision [id policy]
+  (when-let [{:keys [required? evidence]}
+             (get (:aiueos.policy/hardware-signing policy) id)]
+    (assoc (hardware/evaluate-signing evidence)
+           :hardware-signing/required? required?)))
+
 (def dma-family-imports
   "Kernel-cap import ids that structurally require the ADR-0001 DMA/IOMMU
   gate -- the device-access quartet from `default-kernel-caps`
@@ -333,6 +345,17 @@
         (if (and (:crypto/required? crypto-decision*)
                  (not (:valid? crypto-decision*)))
           [(violation id :hybrid-pqc (:message crypto-decision*))]
+          [])
+        hardware-signing-decision*
+        (hardware-signing-decision id policy)
+        hardware-signing-violations
+        (if (and (:hardware-signing/required? hardware-signing-decision*)
+                 (not (:hardware-signing/qualified?
+                       hardware-signing-decision*)))
+          [(violation id :hardware-signing
+                      (str "hardware signing qualification failed: "
+                           (:hardware-signing/violations
+                            hardware-signing-decision*)))]
           [])
         {:keys [resolved import-violations]}
         (reduce (fn [acc imp]
@@ -399,19 +422,24 @@
                       "granted :net/fetch requires a non-empty :aiueos/net-allow origin allowlist")]
           [])
         violations (vec (concat surface-violations abac-violations* flow-violations
-                                transport-violations crypto-violations import-violations
+                                transport-violations crypto-violations
+                                hardware-signing-violations import-violations
                                 effect-violations dma-violations net-violations))]
     (if (seq violations)
       {:aiueos/decision :deny :aiueos/component id :aiueos/violations violations}
       (let [caps (cond-> resolved
                    (and requires-iommu? (contains? granted :iommu)) (conj :iommu))]
         (cond-> {:aiueos/decision :grant :aiueos/component id :aiueos/capabilities caps}
-          (or flow-decision transport-decision* crypto-decision*)
+          (or flow-decision transport-decision* crypto-decision*
+              hardware-signing-decision*)
           (assoc :aiueos/detail
                  (cond-> {}
                    flow-decision (assoc :information-flow flow-decision)
                    transport-decision* (assoc :transport transport-decision*)
-                   crypto-decision* (assoc :crypto crypto-decision*))))))))
+                   crypto-decision* (assoc :crypto crypto-decision*)
+                   hardware-signing-decision*
+                   (assoc :hardware-signing
+                          hardware-signing-decision*))))))))
 
 (defn verify-system
   "Verify every component in `components` (a vector of manifest maps) against
