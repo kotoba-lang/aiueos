@@ -16,6 +16,7 @@
             [aiueos.graph :as graph]
             [aiueos.surface :as surface]
             [kotoba.security.abac :as abac]
+            [kotoba.security.crypto-policy :as crypto]
             [kotoba.security.information-flow :as flow]
             [kotoba.security.transport :as transport]))
 
@@ -46,6 +47,7 @@
    :aiueos.policy/abac {}
    :aiueos.policy/information-flow {}
    :aiueos.policy/transport {}
+   :aiueos.policy/crypto {}
    :aiueos.policy/require-signed false
    :aiueos.policy/surface nil
    :aiueos.policy/net-allow #{}})
@@ -164,6 +166,9 @@
        (:aiueos/transport overlay)
        (update :aiueos.policy/transport merge (:aiueos/transport overlay))
 
+       (:aiueos/crypto overlay)
+       (update :aiueos.policy/crypto merge (:aiueos/crypto overlay))
+
        (contains? overlay :aiueos/require-signed)
        (assoc :aiueos.policy/require-signed (boolean (:aiueos/require-signed overlay)))
 
@@ -265,6 +270,11 @@
   (when-let [profile (get (:aiueos.policy/transport policy) id)]
     (transport/evaluate profile)))
 
+(defn- crypto-decision [id policy]
+  (when-let [{:keys [required? policy envelope]} (get (:aiueos.policy/crypto policy) id)]
+    (let [result (crypto/check-production-envelope policy envelope)]
+      (assoc result :crypto/required? required?))))
+
 (def dma-family-imports
   "Kernel-cap import ids that structurally require the ADR-0001 DMA/IOMMU
   gate -- the device-access quartet from `default-kernel-caps`
@@ -318,6 +328,12 @@
         (mapv (fn [{:transport/keys [message]}]
                 (violation id :transport-security message))
               (:transport/violations transport-decision*))
+        crypto-decision* (crypto-decision id policy)
+        crypto-violations
+        (if (and (:crypto/required? crypto-decision*)
+                 (not (:valid? crypto-decision*)))
+          [(violation id :hybrid-pqc (:message crypto-decision*))]
+          [])
         {:keys [resolved import-violations]}
         (reduce (fn [acc imp]
                   (let [;; A kernel-primitive keyword (default-kernel-caps --
@@ -383,18 +399,19 @@
                       "granted :net/fetch requires a non-empty :aiueos/net-allow origin allowlist")]
           [])
         violations (vec (concat surface-violations abac-violations* flow-violations
-                                transport-violations import-violations
+                                transport-violations crypto-violations import-violations
                                 effect-violations dma-violations net-violations))]
     (if (seq violations)
       {:aiueos/decision :deny :aiueos/component id :aiueos/violations violations}
       (let [caps (cond-> resolved
                    (and requires-iommu? (contains? granted :iommu)) (conj :iommu))]
         (cond-> {:aiueos/decision :grant :aiueos/component id :aiueos/capabilities caps}
-          (or flow-decision transport-decision*)
+          (or flow-decision transport-decision* crypto-decision*)
           (assoc :aiueos/detail
                  (cond-> {}
                    flow-decision (assoc :information-flow flow-decision)
-                   transport-decision* (assoc :transport transport-decision*))))))))
+                   transport-decision* (assoc :transport transport-decision*)
+                   crypto-decision* (assoc :crypto crypto-decision*))))))))
 
 (defn verify-system
   "Verify every component in `components` (a vector of manifest maps) against
