@@ -26,6 +26,14 @@
           (str "expected " entry " to validate, errors: "
                (:errors (contract/validate-audit-event entry)))))))
 
+(deftest audit-entry-redacts-secret-bearing-detail
+  (let [entry (audit/audit-entry :service/auth :deny
+                                 "user=a password=hunter2 token=abc" 0)
+        serialized (pr-str entry)]
+    (is (= "user=a password=[REDACTED] token=[REDACTED]"
+           (:aiueos/detail entry)))
+    (is (not (re-find #"hunter2|abc" serialized)))))
+
 #?(:clj
    (defn- temp-dir []
      (str (java.nio.file.Files/createTempDirectory

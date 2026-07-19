@@ -1,5 +1,6 @@
 {:paths ["src" "resources"]
- :deps {com.dylibso.chicory/wasm {:mvn/version "1.4.0"}
+ :deps {io.github.kotoba-lang/security {:local/root "../security"}
+        com.dylibso.chicory/wasm {:mvn/version "1.4.0"}
         com.dylibso.chicory/runtime {:mvn/version "1.4.0"}}
  :aliases
   {:test {:extra-paths ["test"]
