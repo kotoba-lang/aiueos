@@ -256,7 +256,88 @@
     (is (= [:service/fs :app/notes] (mapv :aiueos/component decisions)))
     (is (every? #(= :grant (:aiueos/decision %)) decisions))))
 
+(deftest four-axis-abac-grants-only-the-exact-declared-context
+  (let [rule {:subject/signers #{:release-signer}
+              :resource/trust #{:verified}
+              :resource/effects #{:storage}
+              :action/capabilities #{:log/write}
+              :environment/surfaces #{:cloud}}
+        policy* (policy/parse-policy
+                 {:aiueos/surface :cloud
+                  :aiueos/abac {:service/log rule}})
+        manifest {:aiueos/component :service/log :aiueos/kind :service
+                  :aiueos/trust :verified :aiueos/effects #{:storage}
+                  :aiueos/imports #{:log/write}}
+        decision (policy/verify-component manifest empty-graph policy* :release-signer)]
+    (is (= :grant (:aiueos/decision decision)))
+    (doseq [[label changed expected]
+            [[:subject {:signer :attacker} :abac-subject]
+             [:resource {:manifest (assoc manifest :aiueos/trust :untrusted)} :abac-resource]
+             [:action {:manifest (assoc manifest :aiueos/imports #{:random/bytes})} :abac-action]
+             [:environment {:policy (policy/parse-policy
+                                     {:aiueos/surface :browser
+                                      :aiueos/abac {:service/log rule}})}
+              :abac-environment]]]
+      (testing (name label)
+        (let [result (policy/verify-component (or (:manifest changed) manifest)
+                                              empty-graph
+                                              (or (:policy changed) policy*)
+                                              (get changed :signer :release-signer))]
+          (is (= :deny (:aiueos/decision result)))
+          (is (some #(= expected (:aiueos/kind %)) (:aiueos/violations result))))))))
+
 ;; ── ADR-0012: component-signer binding ──────────────────────────────────────
+(deftest deployment-denies-implicit-classification-downgrade
+  (let [manifest {:aiueos/component :service/export :aiueos/kind :service
+                  :aiueos/trust :verified
+                  :aiueos/classification :confidential
+                  :aiueos/output-classification :public}
+        rule {:subject :release-signer :purpose :release
+              :now "2026-07-19T12:00:00Z"}
+        policy* (policy/parse-policy
+                 {:aiueos/information-flow {:service/export rule}})
+        denied (policy/verify-component manifest empty-graph policy* :release-signer)
+        grant {:id :release-redaction :subject :release-signer :purpose :release
+               :from :confidential :to :public
+               :expires-at "2026-07-20T00:00:00Z"}
+        allowed (policy/verify-component
+                 manifest empty-graph
+                 (policy/parse-policy
+                  {:aiueos/information-flow
+                   {:service/export (assoc rule :declassification-grant grant)}})
+                 :release-signer)]
+    (is (= :deny (:aiueos/decision denied)))
+    (is (= :information-flow
+           (get-in denied [:aiueos/violations 0 :aiueos/kind])))
+    (is (= :grant (:aiueos/decision allowed)))
+    (is (true? (get-in allowed [:aiueos/detail :information-flow
+                                :information-flow/allowed?])))))
+
+(deftest deployment-requires-qualified-mutual-transport-profile
+  (let [manifest {:aiueos/component :service/remote :aiueos/kind :service
+                  :aiueos/trust :verified}
+        profile {:protocol :tls-1.3 :mutual-auth? true
+                 :peer-id "did:web:api.example" :expected-peer-id "did:web:api.example"
+                 :certificate-fingerprint "sha256:current"
+                 :trusted-fingerprints #{"sha256:current" "sha256:next"}
+                 :revocation-checked? true :now "2026-07-19T12:00:00Z"
+                 :certificate-expires-at "2026-08-01T00:00:00Z"
+                 :require-rotation-overlap? true
+                 :next-certificate-fingerprint "sha256:next"}
+        allowed (policy/verify-component
+                 manifest empty-graph
+                 (policy/parse-policy {:aiueos/transport {:service/remote profile}}) nil)
+        denied (policy/verify-component
+                manifest empty-graph
+                (policy/parse-policy
+                 {:aiueos/transport {:service/remote (assoc profile :mutual-auth? false)}})
+                nil)]
+    (is (= :grant (:aiueos/decision allowed)))
+    (is (true? (get-in allowed [:aiueos/detail :transport :transport/allowed?])))
+    (is (= :deny (:aiueos/decision denied)))
+    (is (= :transport-security
+           (get-in denied [:aiueos/violations 0 :aiueos/kind])))))
+
 ;; :fs/admin (not one of default-kernel-caps) is used as the "elevated,
 ;; custom, privileged" capability throughout -- unlike :log/write et al.,
 ;; nothing grants it via `base`, so its presence/absence in `granted-to`'s

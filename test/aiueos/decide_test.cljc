@@ -42,7 +42,10 @@
 
 #?(:clj
    (deftest decide-subprocess-smoke-test
-     (testing "aiueos.decide, invoked as a real subprocess, round-trips one request over stdio"
+     (testing "the supported Clojure entry point round-trips one request over stdio"
+       ;; Do not rely on an undeclared Babashka task.  The repository has no
+       ;; bb.edn; production callers and CI can invoke the namespace through
+       ;; the same deps.edn classpath used by the application.
        (let [pb (ProcessBuilder. ["clojure" "-M" "-m" "aiueos.decide"])
              _ (.redirectErrorStream pb false)
              proc (.start pb)

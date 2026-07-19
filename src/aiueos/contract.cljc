@@ -101,7 +101,13 @@
     :forbidden-effect
     :dma-without-iommu
     :bad-signature
-    :surface-mismatch})
+    :surface-mismatch
+    :abac-subject
+    :abac-resource
+    :abac-action
+    :abac-environment
+    :information-flow
+    :transport-security})
 
 (def audit-events
   #{:grant :deny :compile :run :reject})
@@ -159,6 +165,9 @@
     :aiueos/signature
     :aiueos/quota
     :aiueos/schedule
+    :aiueos/classification
+    :aiueos/input-classifications
+    :aiueos/output-classification
     :aiueos/surface})
 
 (def manifest-keys
@@ -257,6 +266,9 @@
     :aiueos/net-allow
     :aiueos/signers
     :aiueos/component-signers
+    :aiueos/abac
+    :aiueos/information-flow
+    :aiueos/transport
     :aiueos/require-signed})
 
 (def deployment-policy-keys
@@ -582,6 +594,12 @@
                         ":aiueos/signers must map signer keywords to public key strings")
            (field-error policy :aiueos/component-signers keyword-map-to-keyword-set?
                         ":aiueos/component-signers must map component keywords to signer-keyword sets")
+           (field-error policy :aiueos/abac map?
+                        ":aiueos/abac must map component ids to ABAC rule maps")
+           (field-error policy :aiueos/information-flow map?
+                        ":aiueos/information-flow must map component ids to flow rule maps")
+           (field-error policy :aiueos/transport map?
+                        ":aiueos/transport must map component ids to transport profiles")
            (field-error policy :aiueos/require-signed boolean?
                         ":aiueos/require-signed must be boolean")))]
     (valid-result errors)))
