@@ -1,6 +1,6 @@
 {:paths ["src" "resources"]
  :deps {io.github.kotoba-lang/security {:git/url "https://github.com/kotoba-lang/security.git"
-                                        :git/sha "795d770ed410ff953b61b23d7353bbfc69d0e675"}
+                                        :git/sha "65811c9d6878e881357e98f9f9fe6a60aeff7070"}
         com.dylibso.chicory/wasm {:mvn/version "1.4.0"}
         com.dylibso.chicory/runtime {:mvn/version "1.4.0"}}
  :aliases
