@@ -1,0 +1,5 @@
+{:adoption/version 1 :consumer/id :aiueos
+ :security/git-sha "9316629ed15437ef1cf0f93b7f98e7cb31ef91d2"
+ :required-control-namespaces [kotoba.security.approval kotoba.security.information-flow]
+ :security-sensitive-entrypoints [aiueos.policy aiueos.audit]
+ :exceptions []}
