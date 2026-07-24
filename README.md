@@ -24,6 +24,18 @@ adapters/providers elsewhere (e.g. `kotoba-lang/kototama`'s
 `kototama.aiueos-adapter`), but they are not authority here — this repo
 decides, it does not host other systems' execution.
 
+## Stack topology & the C mechanism boundary
+
+aiueos is the stack's **capability broker**: dependency-minimal by invariant
+(deps.edn carries `security` + Chicory only; enforcement layers like
+`kototama` import aiueos, never the reverse), consuming the Kotoba compiler
+as **verified artifacts** (freestanding ELF objects), not as a library. The
+bare-metal split — C/asm owns mechanism only, every decision (crypto
+verification, admission, capability planning, dispatch planning) is
+compiler-emitted Kotoba — is stated honestly, with measured line counts, in
+[`90-docs/adr/0015-stack-topology-and-honest-c-boundary.md`](90-docs/adr/0015-stack-topology-and-honest-c-boundary.md)
+(root authority: `com-junkawasaki/root` ADR-2607241100).
+
 ## Contract Data
 
 - `src/aiueos/contract.cljc` validates the pure aiueos data contracts.
