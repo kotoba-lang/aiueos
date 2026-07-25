@@ -19,6 +19,18 @@
                (component-abi/requested-capabilities!
                 #{:aiueos.component/unknown}))))
 
+(deftest every-published-kotoba-component-import-has-one-aiueos-authority-name
+  (is (= #{:identity/sign :identity/verify :hash/sha256 :http/post :log/read
+           :log/write :clock/monotonic}
+         (component-abi/requested-capabilities!
+          #{:aiueos.component/aiueos-identity-sign
+            :aiueos.component/aiueos-identity-verify
+            :aiueos.component/aiueos-hash-sha256
+            :aiueos.component/aiueos-http-post
+            :aiueos.component/aiueos-log-read
+            :aiueos.component/aiueos-log-append
+            :aiueos.component/aiueos-clock-now}))))
+
 (deftest component-lease-expires-and-is-revoked-by-epoch
   (let [import :aiueos.component/aiueos-clock-now
         ability {:target "clock://monotonic" :operation :clock/now

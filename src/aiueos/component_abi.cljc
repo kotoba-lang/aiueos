@@ -8,7 +8,15 @@
   (:require [kotoba.abi.contract :as abi]))
 
 (def component-import->capability
-  {(abi/component-import-key 6) :log/write
+  "Closed, one-to-one authority vocabulary for every v1 Kotoba Component
+  import.  A capability that is not offered by the deployment graph remains a
+  denial; this map never supplies a fallback or ambient host implementation."
+  {(abi/component-import-key 1) :identity/sign
+   (abi/component-import-key 2) :identity/verify
+   (abi/component-import-key 3) :hash/sha256
+   (abi/component-import-key 4) :http/post
+   (abi/component-import-key 5) :log/read
+   (abi/component-import-key 6) :log/write
    (abi/component-import-key 7) :clock/monotonic})
 
 (declare decision-grants-imports?)
