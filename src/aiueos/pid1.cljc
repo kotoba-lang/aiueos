@@ -20,7 +20,8 @@
 
   JVM-only (`#?(:clj ...)` throughout, same reason as `aiueos.execute`/
   `aiueos.vfio`: FFM + file I/O)."
-  (:require [clojure.string :as str]
+  (:require [aiueos.deployment-profile :as deployment-profile]
+            [clojure.string :as str]
             #?(:clj [clojure.edn :as edn])))
 
 (def boot-edn-path "/etc/aiueos/boot.edn")
@@ -67,7 +68,7 @@
      (let [config (edn/read-string (slurp boot-path))]
        (when-not (:aiueos/system config)
          (throw (ex-info (str boot-path ": missing :aiueos/system") {:boot-path boot-path :config config})))
-       config)))
+       (deployment-profile/enforce! config))))
 
 ;; ---------------------------------------------------------------------------
 ;; libc bindings (waitpid/reboot) -- same FFM pattern as `aiueos.vfio`; see
@@ -179,7 +180,8 @@
      ([boot-config up-fn poweroff-fn arena]
       (boot! boot-config up-fn poweroff-fn arena 1000))
      ([boot-config up-fn poweroff-fn arena reap-interval-ms]
-      (let [result (up-fn (:aiueos/system boot-config) (:aiueos/policy boot-config))]
+      (let [boot-config (deployment-profile/enforce! boot-config)
+            result (up-fn (:aiueos/system boot-config) (:aiueos/policy boot-config))]
         (when (and (map? result) (false? (:aiueos.cli/ok? result)))
           (throw (ex-info "aiueos component boot failed" {:result result}))))
       (println "AIUEOS_BOOT_OK")

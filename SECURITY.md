@@ -57,10 +57,12 @@ explicit grant, and that whatever does happen is **audited**.
    and a publish/read to an undeclared topic traps even with the coarse
    `topic/*` capability held — so a compromised sensor cannot command the
    actuator's topic.
-3. **Small TCB.** Only the broker, the wasm runtime/host ABI, the safe-subset
-   checker and the manifest reader are trusted. Apps, services, drivers and
-   agents live *outside* the TCB. Drivers are Wasm components precisely so they
-   can be evicted from it.
+3. **Enumerated TCB.** The broker, policy/signing/manifest authority, Wasm
+   runtime/host ABI, production admission/audit path and hardware adapters are
+   trusted. Apps, services, Wasm drivers and agents live outside it. The
+   versioned file/role/external-dependency inventory is SHA-256 drift checked
+   by `clojure -M:tcb-check`; regulated admission binds its digest. See
+   `docs/tcb-inventory.md`.
 4. **Wasm isolation + resource limits.** Each component runs in its own linear
    memory under a **fuel** budget (bounds CPU) and a **memory-page cap** (bounds
    RAM). A runaway traps instead of hanging or starving the host.
@@ -110,42 +112,65 @@ refuses to provide what that surface shouldn't.
 
 ## What aiueos does NOT defend (yet) — honest limitations
 
-- **Side channels.** Timing, cache, Spectre-class and power side channels are
-  *not* addressed. Capability isolation is about explicit information flow, not
-  microarchitectural leakage.
+- **Side-channel assurance remains bounded.** Production admission now requires
+  a versioned decision covering timing, cache and Spectre classes, baseline
+  mitigations appropriate to the profile, and named residual-risk acceptance.
+  This prevents silent omission but does not prove that host firmware,
+  operating-system controls or hardware applied those mitigations. Power,
+  electromagnetic, physical-probe and privileged-host attacks remain outside
+  the software-only profile; `high-assurance` remains blocked.
 - **The TCB itself.** A bug in wasmtime, the host adapters, or the broker is
   game over. The TCB is small by design, but it is trusted, not verified — there
   is no formal proof yet.
-- **Signing key lifecycle (rotation / revocation / expiry / chains).** Manifest
-  *authenticity* now exists — ed25519 signatures over the identity↔artifact
-  binding, verified against a trusted-signer registry (defense layer 9). What is
-  *not* yet present is the key **lifecycle**: the registry is a flat list with no
-  expiry, no revocation, and no certificate chains / delegation. A compromised
-  signer key can only be handled by editing the policy. CID-addressed
-  supply-chain integrity is also still future work.
-- **Preemptive / hard real-time scheduling.** Per-cycle **IO quotas** now bound
+- **Signing authority is epoch distributed.** Regulated deployments use
+  root-signed, predecessor-chained lifecycle epochs. Delegation scope and
+  parent validity are checked; rotation can overlap keys; revoked,
+  compromised, suspended, retired, expired and not-yet-valid signers receive
+  no authority. Nodes accept exactly the next signed epoch, so replay,
+  rollback, gaps and forks fail closed, and convergence is observable by epoch
+  digest. The node checkpoint still depends on sealed monotonic storage and
+  the root key on offline/HSM custody. Legacy bare-key entries remain available
+  only for research compatibility. See `docs/key-lifecycle.md`.
+- **Not a hard-real-time scheduler.** Per-cycle **IO quotas** now bound
   host-call rate (`:aiueos/quota {:host-calls N :publishes N}` — an over-budget
   call traps like any other), and a **deterministic cooperative scheduler**
   (`:aiueos/schedule`, ADR-0006) gives period-skipping and priority ordering
-  within dependency depth. What is *not* present is **preemption**: execution is
-  cooperative (a component runs to completion or to a fuel/quota trap), so a
-  deadline is an audited service-level signal, not an enforced one. True
-  preemptive hard-real-time needs the Phase-6 microkernel.
+  within dependency depth. Every Chicory instantiation and run is now placed
+  on a dedicated daemon worker with a bounded wall deadline; timeout interrupts
+  the worker and is reported only after termination is observed. An infinite
+  Wasm loop is covered by an end-to-end overrun test. This provides hard
+  termination, not deterministic response latency: JVM scheduling, GC and host
+  adapters remain non-real-time. True preemptive hard-real-time scheduling
+  still needs the Phase-6 microkernel.
 - **Lowest-level drivers.** Real MMIO/DMA/IRQ adapters (Phase 7) will contain
   small `unsafe` code; that code, once written, is part of the TCB and must be
   audited as such.
-- **The topic bus is in-process.** Per-topic *isolation* by id-set is enforced
-  (a node can only touch the topics it declared), but **cross-machine messaging**
-  and **publisher authentication** are not — within one process the bus trusts
-  the broker, and topics are still numeric ids rather than named, graph-wired
-  capabilities.
-- **No confidentiality/crypto** of audit logs or component state at rest.
-- **`random()` is deterministic, not a CSPRNG.** The `aiueos:host` `random()` call
-  is a reproducible pseudo-random stream (splitmix64 over the run signature +
-  control-loop cycle + call index) — chosen for deterministic, replayable boots,
-  with distinct components drawing independent streams. It is **predictable** and
-  must **not** be used for keys, nonces, tokens, or any security-sensitive value.
-  A real entropy source is future work.
+- **Network topic payload confidentiality is transport-dependent.** The local
+  topic bus remains in-process, while `aiueos.network-topic` supplies bounded
+  Ed25519-authenticated wire envelopes for cross-machine carriage. Channel and
+  publisher identity, per-topic authorization, durable sequence anti-replay,
+  and atomic partition/rejoin backlogs are enforced. The envelope is
+  authenticated but not encrypted; deployments requiring traffic secrecy must
+  use an authenticated encrypted carrier.
+- **At-rest protection depends on external key custody.** Production profiles
+  require AES-256-GCM sealed audit and component-state stores with external
+  per-purpose keys. Audit records are predecessor chained and checked against
+  an externally retained Ed25519-signed head, including valid-prefix
+  truncation detection. Component snapshots bind identity and monotonic
+  version. Both paths cover authenticated backup/restore, retention or
+  deletion, and crypto-erasure. Software enforces the KMS/HSM adapter contract;
+  deployment evidence must still identify the real custody provider. See
+  `docs/sealed-storage.md`.
+- **Entropy is profile-qualified, not universally FIPS validated.** The typed
+  `:random/bytes` / `random_bytes(ptr,len)` capability is backed by the JVM
+  strong OS entropy selection, is capability-gated and quota counted, and
+  rejects zero, negative, or greater-than-4096-byte requests before allocation.
+  Provider identity is attestable and each sample must pass continuous
+  duplicate, repetition-count and adaptive-proportion checks before reaching
+  guest memory. A FIPS claim remains forbidden without named module,
+  cryptographic-boundary and provider-validation evidence. See
+  `docs/entropy-profile.md`. Deterministic simulation PRNGs are visibly outside
+  this ABI and are not security entropy.
 
 If a deployment needs any of the above, it must add it above aiueos — the design
 makes room for these (signing hooks, per-surface providers, scheduler) but
@@ -156,6 +181,13 @@ Phase-0 does not ship them.
 Security claims are deployment-profile specific. The default profile is
 `research`: capability containment, Wasm limits, and audit, with no FIPS,
 side-channel, hard-real-time, or formal-verification claim.
+
+PID-1 resolves and admits the profile before starting the component graph.
+Explicit profiles require versioned evidence; `sensitive-local` and
+`regulated` reject every omitted required-control assertion, unknown profiles
+are rejected, and `high-assurance` is unconditionally blocked. These assertions
+are boot admission inputs, not cryptographic proof of the underlying controls;
+signed evidence receipts and independent deployment verification remain open.
 
 Profile definitions live in [`docs/deployment-profiles.md`](docs/deployment-profiles.md):
 

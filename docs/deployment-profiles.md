@@ -1,6 +1,6 @@
 # aiueos Deployment Profiles
 
-Status: proposed baseline
+Status: enforced baseline
 Date: 2026-07-01
 
 aiueos is a containment architecture. A deployment profile states which
@@ -39,9 +39,22 @@ Required:
 - all `research` controls;
 - no untrusted co-tenant execution on the host;
 - encrypted audit logs or encrypted audit storage;
+- sealed audit format version, external audit key id, positive retention
+  period, and a dated successful restore exercise;
+- externally retained signed audit chain head and truncation exercise;
+- sealed component-state format, per-component key separation, monotonic
+  version, bounded snapshots, restore and deletion exercises;
+- bounded Chicory interrupt watchdog configuration and dated infinite-loop
+  overrun evidence;
+- authenticated network-topic protocol v1, bounded wire size, sealed durable
+  replay checkpoint and dated partition/rejoin evidence;
+- strong OS entropy provider identity, exact health-test set, 4096-byte API
+  bound and dated provider attestation;
 - no deterministic `random()` for secrets, keys, nonces, or tokens;
 - explicit operator review of granted `:network`, `:secrets`, and
   `:persistent-write` capabilities.
+- a versioned side-channel decision covering timing, cache and Spectre classes,
+  with enforced baseline mitigations and named residual-risk acceptance.
 
 Not claimed:
 
@@ -55,8 +68,11 @@ Required:
 - all `sensitive-local` controls;
 - key lifecycle register with active/retired/revoked/compromised states;
 - signer expiry and revocation checks;
+- root-signed monotonic lifecycle epoch, sealed checkpoint, delegation scope,
+  convergence exercise and compromise-recovery exercise;
 - SBOM and SLSA/in-toto provenance for release artifacts;
 - package/component verification evidence;
+- the digest of the versioned TCB inventory and a successful drift check;
 - monitoring and incident-response exercise evidence;
 - FIPS provider policy when a FIPS claim is made.
 
@@ -84,3 +100,45 @@ Every release note or deployment report must name one profile and list the
 non-claims that remain true for that profile. If the profile is omitted, the
 deployment defaults to `research`.
 
+PID-1 enforces this policy before invoking the component launcher. Explicit
+profiles use `:aiueos/deployment-profile` and a
+`:aiueos/profile-evidence` map with `:profile/version 1`. Missing controls,
+unknown profiles, unsupported evidence versions, and every
+`high-assurance` request fail closed. This admission record asserts that
+required controls were supplied; independent evidence verification remains a
+release-gate responsibility.
+
+Production at-rest storage is defined in `docs/sealed-storage.md`. Audit
+records and component snapshots are AES-256-GCM sealed under external,
+purpose-separated keys. Signed external audit heads prove completeness;
+component identity and monotonic state versions prevent substitution and
+rollback.
+
+The side-channel decision schema is enforced at the same PID-1 boundary.
+`sensitive-local` requires single tenancy and constant-time cryptography;
+`regulated` additionally requires SMT disablement, core isolation, and
+speculation controls. The normative baseline and residual risks are recorded
+in `docs/threat-models/side-channels-v1.md`.
+
+Execution remains explicitly non-real-time, but it is no longer unbounded:
+the normalized manifest retains a wall deadline (maximum 30 seconds), and the
+host wraps both Chicory instantiation and `main` in a dedicated interruptible
+worker. A timeout is a failed run and boot cannot proceed. Production evidence
+must name this engine, bound its deadline and termination grace, and date a
+successful overrun test.
+
+Cross-machine topic samples use `aiueos.network-topic` protocol v1. Ed25519
+binds channel, publisher, topic, sequence, epoch and value. Registry topic
+allow-lists authorize publishers; sequence checkpoints prevent replay across
+restart; partition backlogs apply contiguously and atomically. See
+`docs/network-topic-protocol.md`.
+
+Security entropy uses the versioned profile in `docs/entropy-profile.md`.
+Production admission requires the strong OS source, concrete provider and
+algorithm names, all three online health checks, and the exact request bound.
+FIPS claims additionally bind this provider to the named validated boundary.
+
+Regulated signing authority uses `docs/key-lifecycle.md`. The deployment binds
+the root fingerprint and current epoch digest; the launcher refuses unsigned,
+rolled-back, skipped, forked, expired or delegation-invalid lifecycle updates
+before manifest verification.

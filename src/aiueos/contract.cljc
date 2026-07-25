@@ -269,6 +269,7 @@
     :aiueos/abac
     :aiueos/information-flow
     :aiueos/transport
+    :aiueos/key-lifecycle
     :aiueos/require-signed})
 
 (def deployment-policy-keys
@@ -600,6 +601,8 @@
                         ":aiueos/information-flow must map component ids to flow rule maps")
            (field-error policy :aiueos/transport map?
                         ":aiueos/transport must map component ids to transport profiles")
+           (field-error policy :aiueos/key-lifecycle map?
+                        ":aiueos/key-lifecycle must be a signed lifecycle configuration map")
            (field-error policy :aiueos/require-signed boolean?
                         ":aiueos/require-signed must be boolean")))]
     (valid-result errors)))
