@@ -232,6 +232,17 @@
      :aiueos/component :service/log
      :aiueos/detail "component completed"}]})
 
+(def portable-execution-identity
+  {:format :kotoba.execution-identity/v1
+   :plan-cid "bafy-plan" :code-closure-cid "bafy-closure"
+   :artifact-cid "bafy-artifact" :compiler-contract "bafy-compiler"
+   :component-cid "bafy-component" :wit-world-cid "bafy-world"
+   :package-lock-cid "bafy-lock" :policy-cid "bafy-policy"
+   :policy-decision-cid "bafy-decision" :db-basis "bafy-basis"
+   :grant-cids ["bafy-grant"] :approval-cids [] :runtime-identity "bafy-runtime"
+   :input-cid "bafy-input" :outcome-cid "bafy-outcome"
+   :host-receipt-cids ["bafy-receipt"]})
+
 (deftest grant-contract
   (testing "validates normalized Kotoba Grant data before local materialization"
     (is (contract/grant? normalized-grant))
@@ -260,6 +271,15 @@
                             :maybe))]
       (is (false? (:valid? result)))
       (is (some #(= [:aiueos/decision :aiueos/decision] (:path %)) (:errors result))))))
+
+(deftest portable-execution-identity-is-closed-at-broker-boundaries
+  (is (contract/run-plan? (assoc run-plan :kotoba/execution-identity portable-execution-identity)))
+  (is (contract/run-receipt? (assoc run-receipt :kotoba/execution-identity portable-execution-identity)))
+  (let [result (contract/validate-run-plan
+                (assoc run-plan :kotoba/execution-identity
+                       (assoc portable-execution-identity :unexpected true)))]
+    (is (false? (:valid? result)))
+    (is (some #(= [:kotoba/execution-identity] (:path %)) (:errors result)))))
 
 (deftest run-receipt-contract
   (testing "validates provider-produced receipts"
