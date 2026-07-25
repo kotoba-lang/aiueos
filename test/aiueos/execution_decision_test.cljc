@@ -36,4 +36,7 @@
                                                      :aiueos/kind :agent})
                                              :result :permit))
               nil
-              (catch clojure.lang.ExceptionInfo e (:reason (ex-data e)))))))
+              (catch #?(:clj clojure.lang.ExceptionInfo
+                        :cljs cljs.core.ExceptionInfo)
+                  e
+                (:reason (ex-data e)))))))

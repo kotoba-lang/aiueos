@@ -14,7 +14,8 @@
               imports)))))
 
 (deftest unknown-component-import-fails-closed
-  (is (thrown? clojure.lang.ExceptionInfo
+  (is (thrown? #?(:clj clojure.lang.ExceptionInfo
+                  :cljs cljs.core.ExceptionInfo)
                (component-abi/requested-capabilities!
                 #{:aiueos.component/unknown}))))
 
