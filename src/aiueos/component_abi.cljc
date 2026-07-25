@@ -11,6 +11,8 @@
   {(abi/component-import-key 6) :log/write
    (abi/component-import-key 7) :clock/monotonic})
 
+(declare decision-grants-imports?)
+
 (defn capability-for-import [component-import]
   (get component-import->capability component-import))
 
@@ -27,7 +29,44 @@
       (throw (ex-info "Component import has no Aiueos authority mapping"
                       {:phase :aiueos-component-abi
                        :imports imports})))
-    (set capabilities)))
+   (set capabilities)))
+
+(def lease-keys
+  #{:aiueos/lease-id :aiueos/epoch :aiueos/not-before :aiueos/expires-at
+    :aiueos/capabilities :aiueos/component-imports :aiueos/abilities})
+
+(defn issue-lease
+  "Issue the authority-side, short-lived Component lease after a grant.
+  The caller is responsible for transporting/signing this exact data when it
+  crosses a process boundary; Kototama must never synthesize it."
+  [{:keys [decision imports abilities now epoch ttl-ms lease-id]}]
+  (when-not (and (= :grant (:aiueos/decision decision))
+                 (set? imports) (map? abilities)
+                 (= imports (set (keys abilities)))
+                 (every? abi/valid-ability? (vals abilities))
+                 (integer? now) (not (neg? now))
+                 (pos-int? epoch) (pos-int? ttl-ms)
+                 (string? lease-id) (seq lease-id)
+                 (decision-grants-imports? decision imports))
+    (throw (ex-info "Aiueos cannot issue an invalid Component lease"
+                    {:phase :aiueos-component-lease})))
+  {:aiueos/lease-id lease-id :aiueos/epoch epoch
+   :aiueos/not-before now :aiueos/expires-at (+ now ttl-ms)
+   :aiueos/capabilities (requested-capabilities! imports)
+   :aiueos/component-imports imports :aiueos/abilities abilities})
+
+(defn lease-authorizes?
+  "Check a lease at every provider invocation. Epoch mismatch is revocation:
+  Murakumo can advance the epoch without trusting the guest or runtime."
+  [lease current-epoch now import ability]
+  (and (map? lease) (= lease-keys (set (keys lease)))
+       (pos-int? current-epoch) (integer? now)
+       (= current-epoch (:aiueos/epoch lease))
+       (<= (:aiueos/not-before lease) now)
+       (< now (:aiueos/expires-at lease))
+       (contains? (:aiueos/component-imports lease) import)
+       (= ability (get (:aiueos/abilities lease) import))
+       (contains? (:aiueos/capabilities lease) (capability-for-import import))))
 
 (defn decision-grants-imports?
   "True only when a grant decision contains every authority needed by IMPORTS.
