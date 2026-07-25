@@ -5,6 +5,7 @@
   runtime host. Rust, JS, Python, Svelte, and host-specific code may provide
   adapters elsewhere, but this namespace owns the data authority."
   (:require [clojure.set :as set]
+            [kotoba.abi.contract :as abi]
             #?(:clj [clojure.edn :as edn])
             #?(:clj [clojure.java.io :as io])))
 
@@ -217,7 +218,8 @@
     :aiueos/limits
     :aiueos/imports
     :aiueos/audit-events
-    :aiueos/detail})
+    :aiueos/detail
+    :kotoba/execution-identity})
 
 (def run-plan-keys
   (set/union run-plan-required-keys run-plan-optional-keys))
@@ -233,6 +235,7 @@
     :aiueos/run-cid
     :aiueos/input-cid
     :aiueos/output-cid
+    :kotoba/execution-identity
     :aiueos/detail})
 
 (def run-receipt-keys
@@ -747,6 +750,10 @@
            (when (contains? plan :aiueos/component-boundary)
              (prefix-errors [:aiueos/component-boundary]
                             (:errors (validate-component-boundary (:aiueos/component-boundary plan)))))
+           (when (contains? plan :kotoba/execution-identity)
+             (when-not (abi/valid-execution-identity? (:kotoba/execution-identity plan))
+               [(err [:kotoba/execution-identity]
+                     "execution identity must be an exact portable ABI descriptor")]))
            (field-error plan :aiueos/entry string?
                         ":aiueos/entry must be a string")
            (field-error plan :aiueos/args int-vector?
@@ -795,6 +802,10 @@
                         ":aiueos/input-cid must be a string")
            (field-error receipt :aiueos/output-cid string?
                         ":aiueos/output-cid must be a string")
+           (when (contains? receipt :kotoba/execution-identity)
+             (when-not (abi/valid-execution-identity? (:kotoba/execution-identity receipt))
+               [(err [:kotoba/execution-identity]
+                     "execution identity must be an exact portable ABI descriptor")]))
            (field-error receipt :aiueos/detail string?
                         ":aiueos/detail must be a string")
            (field-error receipt :aiueos/audit-events vector?

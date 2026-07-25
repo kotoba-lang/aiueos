@@ -4,7 +4,7 @@
          :git/sha "b13c5e12b488c6e5438f2a2a647f1853ebebd4bf"}
         io.github.kotoba-lang/abi
         {:git/url "https://github.com/kotoba-lang/abi.git"
-         :git/sha "9663bf2aeff735b568a3f6cf80591856f11277d3"}
+         :git/sha "e63fb3086a41b5709e7f778467f8ce394dc391ee"}
         com.dylibso.chicory/wasm {:mvn/version "1.4.0"}
         com.dylibso.chicory/runtime {:mvn/version "1.4.0"}}
  :aliases
