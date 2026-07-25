@@ -8,9 +8,12 @@ AI-agent-native capability OS built with Kotoba. This repository is the
 canonical authority for the complete OS: component semantics and policy,
 native loader/kernel/drivers, bootable images, and machine evidence.
 
-`kotoba-lang/kotoba` is the language apex. aiueos consumes separately
-versioned compiler/runtime/freestanding ABI repositories, composed through
-west; the language repository does not own this OS implementation.
+`kotoba-lang/kotoba` and `compiler` produce the guest artifact;
+[`kotoba-lang/abi`](https://github.com/kotoba-lang/abi) defines the shared WIT
+and admission contract; `kototama` executes Components; and `murakumo` places
+them in a fleet. Aiueos is the authority in that arrangement: it decides
+grants and supplies the named providers, but does not own another system's
+compiler or fleet scheduler.
 
 `aiueos` no longer owns a Rust runtime crate — Chicory (a pure-JVM Wasm
 runtime) lets the decision *and* Wasm-execution layers both live here in
