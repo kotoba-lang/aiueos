@@ -208,7 +208,9 @@
   but does not execute anything. `:aiueos/grant` is present only when
   `:aiueos/decision` is `:grant`; a host adapter must refuse to execute a
   `:deny` plan."
-  [m graph policy component-boundary]
+  ([m graph policy component-boundary]
+   (run-plan m graph policy component-boundary nil))
+  ([m graph policy component-boundary execution-identity]
   (let [decision (verify-one m graph policy)
         audit-entries (:aiueos.broker/audit-entries decision)
         pure-decision (dissoc decision :aiueos.broker/audit-entries)
@@ -220,12 +222,13 @@
               :aiueos/component-boundary component-boundary
               :aiueos/audit-events audit-entries}]
     (cond-> base
+      execution-identity (assoc :kotoba/execution-identity execution-identity)
       (= :grant (:aiueos/decision pure-decision))
       (assoc :aiueos/grant
              {:aiueos/subject (:aiueos/component m)
               :aiueos/audience :aiueos/broker
               :aiueos/component (:aiueos/component m)
-              :aiueos/capabilities (:aiueos/capabilities pure-decision)}))))
+              :aiueos/capabilities (:aiueos/capabilities pure-decision)})))))
 
 (defn run-receipt
   "Shape a `:aiueos/run-receipt` (matches `aiueos.contract/validate-run-receipt`)
@@ -234,7 +237,7 @@
   flow) is a native host-adapter concern (ADR-2607022200 Layer 3). Call this
   AFTER running a `:grant` run-plan, to produce the audited receipt the
   broker_contract's `:audit/receipt` step describes."
-  [component status & {:keys [result error started-at finished-at audit-events]
+  [component status & {:keys [result error started-at finished-at audit-events execution-identity]
                         :or {audit-events []}}]
   (cond-> {:aiueos/component component
            :aiueos/status status
@@ -242,4 +245,5 @@
     (some? result) (assoc :aiueos/result result)
     (some? error) (assoc :aiueos/error error)
     (some? started-at) (assoc :aiueos/started-at started-at)
-    (some? finished-at) (assoc :aiueos/finished-at finished-at)))
+    (some? finished-at) (assoc :aiueos/finished-at finished-at)
+    execution-identity (assoc :kotoba/execution-identity execution-identity)))
