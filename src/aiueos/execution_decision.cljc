@@ -53,3 +53,33 @@
     (when-not (abi/valid-policy-decision? decision)
       (reject :invalid-decision))
     decision))
+
+(defn- instant-ms [value]
+  (try
+    #?(:clj (.toEpochMilli (java.time.Instant/parse value))
+       :cljs (.parse js/Date value))
+    (catch #?(:clj Exception :cljs :default) _ nil)))
+
+(defn authorize-approval!
+  "Validate one immutable approval witness against the exact admitted plan and
+  basis-bound permit decision. This never widens a plan: resource scope,
+  policy, basis and input must all match, and the witness must be live at
+  NOW-ISO. Any authority change therefore requires a new plan and approval."
+  [plan decision approval now-iso]
+  (when-not (and (abi/valid-plan? plan)
+                 (abi/valid-policy-decision? decision)
+                 (abi/valid-approval? approval))
+    (reject :invalid-approval-input))
+  (let [now (instant-ms now-iso)
+        issued (instant-ms (:issued-at approval))
+        expires (instant-ms (:expires-at approval))]
+    (when-not (and (= :permit (:result decision))
+                   (= (:plan-cid plan) (:plan-cid decision) (:plan-cid approval))
+                   (= (:policy-cid decision) (:policy-cid approval))
+                   (= (:db-basis decision) (:db-basis approval))
+                   (= (:input-cid plan) (:input-cid approval))
+                   (= (:requested-resources plan) (:resources approval))
+                   (number? now) (number? issued) (number? expires)
+                   (<= issued now) (< now expires))
+      (reject :approval-binding-mismatch))
+    approval))

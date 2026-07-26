@@ -40,3 +40,30 @@
                         :cljs cljs.core.ExceptionInfo)
                   e
                 (:reason (ex-data e)))))))
+
+(deftest approvals-are-bound-to-the-exact-permitted-world
+  (let [permit (decision/decide-plan!
+                (input {:aiueos/component :agent/clean :aiueos/kind :agent
+                        :aiueos/imports #{:log/write}}))
+        approval-plan (assoc plan :requested-resources #{:production/write})
+        approval {:format :kotoba.approval/v1
+                  :approval-cid cid :plan-cid cid :policy-cid cid :db-basis cid
+                  :resources #{:production/write} :input-cid cid :approver-cid cid
+                  :issued-at "2026-07-25T00:00:00Z"
+                  :expires-at "2026-07-25T00:01:00Z"}]
+    (is (= approval
+           (decision/authorize-approval!
+            approval-plan permit approval "2026-07-25T00:00:30Z")))
+    (doseq [mutated [(assoc approval :plan-cid "bafy-other-plan")
+                     (assoc approval :policy-cid "bafy-other-policy")
+                     (assoc approval :db-basis "bafy-other-basis")
+                     (assoc approval :input-cid "bafy-other-input")
+                     (assoc approval :resources #{:different/write})]]
+      (is (thrown? #?(:clj clojure.lang.ExceptionInfo
+                      :cljs cljs.core.ExceptionInfo)
+                   (decision/authorize-approval!
+                    approval-plan permit mutated "2026-07-25T00:00:30Z"))))
+    (is (thrown? #?(:clj clojure.lang.ExceptionInfo
+                    :cljs cljs.core.ExceptionInfo)
+                 (decision/authorize-approval!
+                  approval-plan permit approval "2026-07-25T00:01:00Z")))))
