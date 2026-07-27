@@ -176,6 +176,8 @@
 
 (def default-cycle-ms 1)
 (def default-priority 100)
+(def default-wall-deadline-ms 30000)
+(def max-wall-deadline-ms 30000)
 
 (defn normalize-schedule
   "Derive `:aiueos/schedule {:period-ms :deadline-ms :priority :cycle-ms}`
@@ -193,19 +195,26 @@
     computed with exact integer division (`quot`, never float — a `float`
     ceil would risk rounding drift across hosts).
 
-  Returns `{:aiueos.manifest/period-cycles N :aiueos.manifest/deadline-cycles N
-  :aiueos.manifest/priority N}` — namespaced to mark these as *derived*, and
-  intentionally dropping `:cycle-ms` (like the retired Rust `Schedule`
-  struct, which only ever carried the derived cycle counts + priority)."
+  Returns `{:aiueos.manifest/period-cycles N
+  :aiueos.manifest/deadline-cycles N :aiueos.manifest/deadline-ms N
+  :aiueos.manifest/priority N}`. Exact deadline milliseconds are retained for
+  the host watchdog; `:cycle-ms` itself is dropped."
   [m]
   (let [sched (or (:aiueos/schedule m) {})
         cycle-ms (max 1 (or (:cycle-ms sched) default-cycle-ms))
         period-ms (max 1 (or (:period-ms sched) cycle-ms))
         deadline-ms (max 1 (or (:deadline-ms sched) period-ms))
+        wall-deadline-ms (if (contains? m :aiueos/schedule)
+                           deadline-ms
+                           default-wall-deadline-ms)
         priority (max 0 (or (:priority sched) default-priority))
         ceil-cycles (fn [ms] (max 1 (quot (+ ms cycle-ms -1) cycle-ms)))]
+    (when (> wall-deadline-ms max-wall-deadline-ms)
+      (fail! [:aiueos/schedule :deadline-ms]
+             (str ":deadline-ms must be at most " max-wall-deadline-ms)))
     {:aiueos.manifest/period-cycles (ceil-cycles period-ms)
      :aiueos.manifest/deadline-cycles (ceil-cycles deadline-ms)
+     :aiueos.manifest/deadline-ms wall-deadline-ms
      :aiueos.manifest/priority priority}))
 
 (defn due-this-cycle?
@@ -216,17 +225,9 @@
   period (a component always runs at least once, at boot); afterward a
   component with `:period-cycles N` is due every Nth cycle.
 
-  NOTE what this does NOT do: `:aiueos.manifest/deadline-cycles` (how many
-  cycles a run may take once started) is NOT enforced here or anywhere in
-  this codebase yet -- ADR-0006 deliberately keeps the control loop
-  wall-clock-free, but `aiueos.execute`'s Chicory calls are synchronous
-  and non-preemptible (a component's `main` runs to completion in one
-  call; there's no mechanism to pause it mid-execution at a cycle
-  boundary and check elapsed cycles against a deadline). Enforcing
-  `:deadline-cycles` for real would need either true incremental/
-  interruptible execution or a wall-clock proxy that violates ADR-0006's
-  own \"no wall clock in the control loop\" principle -- this is a real,
-  currently-unaddressed gap, not silently treated as solved."
+  This pure predicate only decides release timing. Once released,
+  `aiueos.execute` enforces the normalized millisecond deadline through an
+  interrupting host watchdog and confirms worker termination."
   [schedule cycle]
   (zero? (mod cycle (:aiueos.manifest/period-cycles schedule))))
 

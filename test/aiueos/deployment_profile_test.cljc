@@ -1,0 +1,235 @@
+(ns aiueos.deployment-profile-test
+  (:require [aiueos.deployment-profile :as profile]
+            [clojure.test :refer [deftest is testing]]))
+
+(def research-evidence
+  {:profile/version 1
+   :deny-by-default? true
+   :bounded-wasm? true
+   :append-only-audit? true
+   :non-claims-declared? true})
+
+(def sensitive-evidence
+  (merge research-evidence
+         {:single-tenant? true
+          :encrypted-audit? true
+          :encrypted-data? true
+          :secure-entropy? true
+          :privileged-grants-reviewed? true
+          :audit-store :sealed-aes-256-gcm
+          :audit-format/version 1
+          :audit-key-id :kms/aiueos-audit
+          :audit-retention-secs 2592000
+          :audit-restore-tested-at "2026-07-23T00:00:00Z"
+          :audit-signed-chain-head? true
+          :audit-chain-head-storage :external-durable
+          :audit-chain-head-key-fingerprint
+          "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+          :audit-truncation-tested-at "2026-07-23T00:00:00Z"
+          :component-state-store :sealed-aes-256-gcm
+          :component-state-format/version 1
+          :component-state-key-separation :external-per-component
+          :component-state-monotonic-version? true
+          :component-state-max-bytes 1048576
+          :component-state-restore-tested-at "2026-07-23T00:00:00Z"
+          :component-state-deletion-tested-at "2026-07-23T00:00:00Z"
+          :hard-watchdog? true
+          :watchdog-engine :chicory-thread-interrupt
+          :watchdog-max-deadline-ms 30000
+          :watchdog-termination-grace-ms 1000
+          :watchdog-overrun-tested-at "2026-07-23T00:00:00Z"
+          :network-topic-authenticated? true
+          :network-topic-protocol-version 1
+          :network-topic-max-wire-bytes 65536
+          :network-topic-replay-state :sealed-durable
+          :network-topic-partition-tested-at "2026-07-23T00:00:00Z"
+          :entropy-source :os-strong
+          :entropy-algorithm "NativePRNGBlocking"
+          :entropy-provider "SUN"
+          :entropy-health-tests #{:continuous-duplicate
+                                  :repetition-count
+                                  :adaptive-proportion}
+          :entropy-max-request-bytes 4096
+          :entropy-provider-attested-at "2026-07-23T00:00:00Z"
+          :side-channel-decision
+          {:version 1
+           :threat-model-digest
+           "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+           :classes #{:timing :cache :spectre}
+           :mitigations #{:single-tenant :constant-time-crypto}
+           :residual-risk :accepted
+           :approved-by "security@example.invalid"
+           :approved-at "2026-07-23T00:00:00Z"}}))
+
+(def regulated-evidence
+  (merge sensitive-evidence
+         {:key-lifecycle? true
+          :signer-expiry-revocation? true
+          :package-verification? true
+          :monitoring? true
+          :incident-exercise? true
+          :sbom-digest "sha256:sbom"
+          :provenance-digest "sha256:provenance"
+          :key-lifecycle-version 1
+          :key-root-id :authority/root
+          :key-root-public-key-fingerprint
+          "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+          :key-epoch 42
+          :key-epoch-digest
+          "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+          :key-checkpoint-storage :sealed-monotonic
+          :key-convergence-tested-at "2026-07-23T00:00:00Z"
+          :key-compromise-recovery-tested-at "2026-07-23T00:00:00Z"
+          :tcb-inventory-digest
+          "sha256:5a5b4092bbd4f5451d8548a406e34a92c256d323a83fb57d0a192a141b5195f3"
+          :tcb-drift-check? true
+          :side-channel-decision
+          (update (:side-channel-decision sensitive-evidence)
+                  :mitigations into
+                  #{:smt-disabled :core-isolation :speculation-controls})}))
+
+(deftest omitted-profile-resolves-to-research
+  (is (= :research
+         (:aiueos/deployment-profile
+          (profile/enforce! {:aiueos/system "/system"})))))
+
+(deftest explicit-profiles-require-versioned-complete-evidence
+  (testing "explicit research evidence is versioned"
+    (is (= [:unsupported-profile-evidence-version]
+           (profile/profile-violations
+            {:aiueos/deployment-profile :research}))))
+  (testing "production profile reports every missing control"
+    (is (= [:encrypted-data? :secure-entropy?]
+           (profile/profile-violations
+            {:aiueos/deployment-profile :sensitive-local
+             :aiueos/profile-evidence
+             (dissoc sensitive-evidence :encrypted-data? :secure-entropy?)}))))
+  (is (empty?
+       (profile/profile-violations
+        {:aiueos/deployment-profile :regulated
+         :aiueos/profile-evidence regulated-evidence}))))
+
+(deftest regulated-fips-claim-requires-certificate-and-boundary
+  (is (= [:fips-module-certificate
+          :fips-boundary
+          :entropy-fips-validated?]
+         (profile/profile-violations
+          {:aiueos/deployment-profile :regulated
+           :aiueos/profile-evidence (assoc regulated-evidence :fips-claim? true)}))))
+
+(deftest regulated-profile-requires-pinned-drift-checked-tcb
+  (is (= [:tcb-inventory-digest :tcb-drift-check?]
+         (filterv #{:tcb-inventory-digest :tcb-drift-check?}
+                  (profile/profile-violations
+                   {:aiueos/deployment-profile :regulated
+                    :aiueos/profile-evidence
+                    (dissoc regulated-evidence
+                            :tcb-inventory-digest :tcb-drift-check?)})))))
+
+(deftest regulated-profile-requires-monotonic-converged-key-lifecycle
+  (let [evidence (-> regulated-evidence
+                     (assoc :key-epoch 0)
+                     (assoc :key-checkpoint-storage :plain-file)
+                     (dissoc :key-compromise-recovery-tested-at))]
+    (is (= [:key-epoch
+            :key-checkpoint-storage
+            :key-compromise-recovery-tested-at]
+           (filterv #{:key-epoch
+                      :key-checkpoint-storage
+                      :key-compromise-recovery-tested-at}
+                    (profile/profile-violations
+                     {:aiueos/deployment-profile :regulated
+                      :aiueos/profile-evidence evidence}))))))
+
+(deftest production-profile-requires-complete-side-channel-decision
+  (let [evidence (-> sensitive-evidence
+                     (assoc-in [:side-channel-decision :residual-risk] :pending)
+                     (update-in [:side-channel-decision :classes] disj :spectre))]
+    (is (= [:side-channel-decision/classes
+            :side-channel-decision/residual-risk]
+           (filterv #(= "side-channel-decision" (namespace %))
+                    (profile/profile-violations
+                     {:aiueos/deployment-profile :sensitive-local
+                      :aiueos/profile-evidence evidence}))))))
+
+(deftest production-profile-requires-bounded-tested-hard-watchdog
+  (let [evidence (-> sensitive-evidence
+                     (assoc :hard-watchdog? false)
+                     (assoc :watchdog-max-deadline-ms 30001)
+                     (dissoc :watchdog-overrun-tested-at))]
+    (is (= [:hard-watchdog?
+            :watchdog-max-deadline-ms
+            :watchdog-overrun-tested-at]
+           (filterv #{:hard-watchdog?
+                      :watchdog-max-deadline-ms
+                      :watchdog-overrun-tested-at}
+                    (profile/profile-violations
+                     {:aiueos/deployment-profile :sensitive-local
+                      :aiueos/profile-evidence evidence}))))))
+
+(deftest production-profile-requires-authenticated-durable-network-topics
+  (let [evidence (-> sensitive-evidence
+                     (assoc :network-topic-authenticated? false)
+                     (assoc :network-topic-replay-state :memory-only)
+                     (dissoc :network-topic-partition-tested-at))]
+    (is (= [:network-topic-authenticated?
+            :network-topic-replay-state
+            :network-topic-partition-tested-at]
+           (filterv #{:network-topic-authenticated?
+                      :network-topic-replay-state
+                      :network-topic-partition-tested-at}
+                    (profile/profile-violations
+                     {:aiueos/deployment-profile :sensitive-local
+                      :aiueos/profile-evidence evidence}))))))
+
+(deftest production-profile-requires-attested-health-checked-os-entropy
+  (let [evidence (-> sensitive-evidence
+                     (assoc :entropy-source :deterministic)
+                     (assoc :entropy-health-tests #{})
+                     (dissoc :entropy-provider-attested-at))]
+    (is (= [:entropy-source
+            :entropy-health-tests
+            :entropy-provider-attested-at]
+           (filterv #{:entropy-source
+                      :entropy-health-tests
+                      :entropy-provider-attested-at}
+                    (profile/profile-violations
+                     {:aiueos/deployment-profile :sensitive-local
+                      :aiueos/profile-evidence evidence}))))))
+
+(deftest production-profile-requires-sealed-state-and-signed-audit-head
+  (let [evidence (-> sensitive-evidence
+                     (assoc :audit-signed-chain-head? false)
+                     (assoc :component-state-store :plaintext)
+                     (dissoc :component-state-deletion-tested-at))]
+    (is (= [:audit-signed-chain-head?
+            :component-state-store
+            :component-state-deletion-tested-at]
+           (filterv #{:audit-signed-chain-head?
+                      :component-state-store
+                      :component-state-deletion-tested-at}
+                    (profile/profile-violations
+                     {:aiueos/deployment-profile :sensitive-local
+                      :aiueos/profile-evidence evidence}))))))
+
+(deftest unknown-and-high-assurance-profiles-are-blocked
+  (is (= [:unknown-deployment-profile]
+         (profile/profile-violations
+          {:aiueos/deployment-profile :unknown})))
+  (is (= [:high-assurance-profile-blocked]
+         (profile/profile-violations
+          {:aiueos/deployment-profile :high-assurance}))))
+
+(deftest admission-failure-is-structured
+  (let [failure (try
+                  (profile/enforce!
+                   {:aiueos/deployment-profile :sensitive-local
+                    :aiueos/profile-evidence
+                    (dissoc sensitive-evidence :encrypted-data?)})
+                  nil
+                  (catch #?(:clj Exception :cljs :default) error
+                    (ex-data error)))]
+    (is (= :deployment-profile-admission-failed (:type failure)))
+    (is (= :sensitive-local (:profile failure)))
+    (is (= 1 (:profile/version failure)))
+    (is (= [:encrypted-data?] (:violations failure)))))

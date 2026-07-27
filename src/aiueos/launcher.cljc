@@ -23,6 +23,7 @@
             [aiueos.execute :as execute]
             [aiueos.graph :as graph]
             [aiueos.image :as image]
+            #?(:clj [aiueos.key-lifecycle :as key-lifecycle])
             [aiueos.manifest :as manifest]
             [aiueos.pid1 :as pid1]
             [aiueos.policy :as policy]
@@ -78,9 +79,33 @@
      policy via `aiueos.policy/parse-policy`; `aiueos.policy/default-policy`
      when POLICY-PATH is nil (no `--policy` given)."
      [policy-path]
-     (if policy-path
-       (policy/parse-policy (read-edn-file policy-path))
-       policy/default-policy)))
+     (if-not policy-path
+       policy/default-policy
+       (let [overlay (read-edn-file policy-path)
+             validation (contract/validate-deployment-policy overlay)]
+         (when-not (:valid? validation)
+           (throw (ex-info (str policy-path ": invalid deployment policy")
+                           validation)))
+         (let [effective (policy/parse-policy overlay)]
+           (if-let [{:keys [root-public-key node-state bundle now-ms]}
+                    (:aiueos/key-lifecycle overlay)]
+             (let [required? (and (string? root-public-key)
+                                  (map? node-state)
+                                  (map? bundle)
+                                  (nat-int? now-ms))
+                   _ (when-not required?
+                       (throw
+                        (ex-info "invalid key lifecycle configuration"
+                                 {:type :invalid-key-lifecycle-configuration})))
+                   result (key-lifecycle/apply-bundle
+                           node-state root-public-key bundle now-ms)]
+               (when-not (:ok? result)
+                 (throw
+                  (ex-info "key lifecycle epoch admission failed"
+                           (dissoc result :state))))
+               (key-lifecycle/apply-to-policy
+                effective (:state result) now-ms))
+             effective))))))
 
 #?(:clj
    (defn run-command
@@ -186,10 +211,9 @@
      `{:aiueos.cli/ok? false :aiueos.cli/code :graph/cycle :aiueos/cycle
      [component-ids...]}` before anything executes.
 
-     NOTE: `:aiueos/schedule`'s `:aiueos.manifest/deadline-cycles` is NOT
-     enforced -- see `aiueos.manifest/due-this-cycle?`'s docstring for why
-     (Chicory's synchronous, non-preemptible execution has no mechanism
-     to check elapsed cycles mid-run)."
+     The normalized `:aiueos.manifest/deadline-ms` is enforced as a wall
+     watchdog around Chicory instantiation and execution. Timeout interrupts
+     the dedicated worker; boot stops after termination is observed."
      ([system-path policy-path] (up-command system-path policy-path 0))
      ([system-path policy-path sched-cycle]
       (let [entries (load-system-entries system-path)
@@ -216,6 +240,7 @@
                         booted? (and (= :grant (:aiueos/decision result))
                                      (not (contains? result :aiueos.execute/quota-exceeded))
                                      (not (contains? result :aiueos.execute/fuel-exceeded))
+                                     (not (contains? result :aiueos.execute/watchdog-exceeded))
                                      (not (contains? result :aiueos.execute/capability-unlinked)))]
                     (if booted?
                       (recur (rest indices) results')

@@ -1,0 +1,68 @@
+{:tcb/version 1
+ :tcb/as-of "2026-07-28"
+ :tcb/scope
+ "Code whose compromise can grant authority, escape Wasm isolation, falsify
+  production admission/audit evidence, or access hardware outside a component."
+ :tcb/files
+  [{:path "src/aiueos/contract.cljc" :role :authority-schema
+   :sha256 "752bd5e606cc500be23729c8eb785d50a6349139ae7319563b3c1152f3e83202"}
+  {:path "src/aiueos/manifest.cljc" :role :component-identity
+   :sha256 "59a8354404cccdb648fd378ae03c9add7438cd7eecd22cc1ae26d2d729739ecf"}
+  {:path "src/aiueos/signing.cljc" :role :manifest-authenticity
+   :sha256 "d28c119b3fa05d86da2b22355ee928e8e7d166dd936eef4c3223e204d4f1cfe2"}
+  {:path "src/aiueos/key_lifecycle.clj" :role :signer-lifecycle-authority
+   :sha256 "5dc40d2b967e7e39834ac10c7786816467aef87d016170dee6111d5a10408646"}
+  {:path "src/aiueos/policy.cljc" :role :policy-decision
+   :sha256 "84c772257cc8c6744b5700b0d11c82fd40992213364269f03726d00070b188a9"}
+  {:path "src/aiueos/broker.cljc" :role :capability-authority
+   :sha256 "fd1ab3c624b18478515141d2fae35fd7be33c046160807af572befaada790337"}
+  {:path "src/aiueos/execute.cljc" :role :wasm-host-abi
+   :sha256 "9d642c2efb3183a4ff94afaa66b7fa9f39187bf22d8dfcbfc5ba6c89daee50b4"}
+  {:path "src/aiueos/entropy.clj" :role :security-entropy-provider
+   :sha256 "9598756ca4093a0fe8756d7c2bf878729a34545f2dfbe264f9a806d71f067323"}
+  {:path "src/aiueos/watchdog.clj" :role :execution-deadline-containment
+   :sha256 "e6d3c257e09c1ea8968520ba735e5a2fa7320bf45411e3c11c3db7c2a48fd76b"}
+  {:path "src/aiueos/topic.cljc" :role :data-channel-isolation
+   :sha256 "984e9235043e601f860772e54ecd5f621fd566f03ff6b8ef90acef61da4ef05a"}
+  {:path "src/aiueos/network_topic.clj" :role :cross-machine-channel-authentication
+   :sha256 "2741526461b7fc6baaa0c6d64b874b0016a7ee428c9819709125e59f9247b0b3"}
+  {:path "src/aiueos/graph.cljc" :role :component-graph-admission
+   :sha256 "cf99c248c17d4da1a16abb9048478598893da03bfa82abb9d5eb3d93e5a37919"}
+  {:path "src/aiueos/surface.cljc" :role :host-provider-surface
+   :sha256 "5d0e4e1a242d8c221e839c422e39dea8bd189042e6aa686b71dc066f5873497e"}
+  {:path "src/aiueos/deployment_profile.cljc" :role :production-admission
+   :sha256 "42368ef83846160af5bda5687c80c1206bb031091a55c2dcc82b9e3365c37be3"}
+  {:path "src/aiueos/launcher.cljc" :role :component-launch-control
+   :sha256 "6cf6689d74dc40a12430ad82ae70c56b07d6e4b9bdacdeaad21947da97ff8f87"}
+  {:path "src/aiueos/pid1.cljc" :role :boot-root
+   :sha256 "1e6ff3436f957c421e2e4d03e9be2e6eb57f2c6cc904f0e322aee770c92811de"}
+  {:path "src/aiueos/audit.cljc" :role :audit-emission
+   :sha256 "8e2c47608810192dd4f6a4e3ed2cbb41ec249a41506cfd81464120c546ba082c"}
+  {:path "src/aiueos/sealed_audit.clj" :role :audit-confidentiality-integrity
+   :sha256 "0ec696fa61a66dc4fdef5b0a418a51ee59ccc4ebed7998be8d46fd693c6bec17"}
+  {:path "src/aiueos/sealed_state.clj" :role :component-state-confidentiality-integrity
+   :sha256 "6eb5f146b30ab16ed07d40e1f32b92f1e1338acf1f4a299e9b9d013fa055828d"}
+  {:path "src/aiueos/hvt.cljc" :role :hypervisor-boundary
+   :sha256 "aa2560a0c1b0ef050f31cf73d1b34652b9340cfd05648f7962840a32559bb23e"}
+  {:path "src/aiueos/vfio.cljc" :role :iommu-device-boundary
+   :sha256 "cc23676494ae007c8e7b34a7fd5581afac3b55306aa32834e82f5b10d32f7c32"}
+  {:path "src/aiueos/virtio.cljc" :role :guest-device-boundary
+   :sha256 "16a95631480219a9070c55acd40cad2ca238032849d45b1df0a428a981c3242c"}
+  {:path "src/aiueos/vm.cljc" :role :vm-launch
+   :sha256 "b26a7df51a943863e1e5da09a5507af1e15b1a796db2a3e3cb23500fd3c71060"}
+  {:path "src/aiueos/image.cljc" :role :boot-image-construction
+   :sha256 "b7610090878e6e1f355f8740578e3e613facfd30ed97dca90377e7160510c67b"}]
+ :tcb/external
+ [{:coordinate "com.dylibso.chicory/wasm" :version "1.4.0"
+   :role :wasm-parser}
+  {:coordinate "com.dylibso.chicory/runtime" :version "1.4.0"
+   :role :wasm-runtime}
+  {:coordinate "io.github.kotoba-lang/security" :source :local-root
+   :path "../security" :role :shared-security-primitives
+   :assurance-gap :content-not-release-pinned}
+  {:coordinate "java.base" :minimum-version 25
+   :role :crypto-ffi-process-runtime}]
+ :tcb/excluded
+ [{:scope "Wasm components and their manifests" :reason :untrusted-workload}
+  {:scope "CLI presentation and documentation" :reason :no-authority}
+  {:scope "tests and qualification fixtures" :reason :evidence-not-runtime}]}
