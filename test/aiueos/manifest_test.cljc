@@ -93,7 +93,8 @@
 ;; -----------------------------------------------------------------------
 
 (deftest schedule-defaults-to-every-cycle-priority-100
-  (is (= #:aiueos.manifest{:period-cycles 1 :deadline-cycles 1 :priority 100}
+  (is (= #:aiueos.manifest{:period-cycles 1 :deadline-cycles 1
+                            :deadline-ms 30000 :priority 100}
          (manifest/normalize-schedule {}))))
 
 (deftest schedule-period-cycles-divides-evenly
@@ -126,6 +127,11 @@
 (deftest schedule-priority-explicit-is-preserved
   (is (= 10 (:aiueos.manifest/priority
              (manifest/normalize-schedule {:aiueos/schedule {:priority 10}})))))
+
+(deftest schedule-rejects-a-deadline-beyond-hard-watchdog-maximum
+  (is (thrown? #?(:clj clojure.lang.ExceptionInfo :cljs cljs.core.ExceptionInfo)
+               (manifest/normalize-schedule
+                {:aiueos/schedule {:deadline-ms 30001}}))))
 
 (deftest due-this-cycle-is-always-due-at-cycle-zero
   (testing "a component always runs at least once, at boot, regardless of period"
@@ -286,7 +292,8 @@
     (is (= :ai-generated (:aiueos/trust n)))
     (is (= {:memory-pages 16 :fuel 10000000} (:aiueos/limits n)))
     (is (= {:host-calls 1024 :publishes 256} (:aiueos/quota n)))
-    (is (= #:aiueos.manifest{:period-cycles 1 :deadline-cycles 1 :priority 100}
+    (is (= #:aiueos.manifest{:period-cycles 1 :deadline-cycles 1
+                              :deadline-ms 30000 :priority 100}
            (:aiueos/schedule n)))
     (is (= {} (:aiueos/topics n)))
     (is (nil? (:aiueos/publishes n)))
@@ -306,7 +313,8 @@
     (is (= :verified (:aiueos/trust n)))
     (is (= {:memory-pages 32 :fuel 999} (:aiueos/limits n)))
     (is (= {:host-calls 5 :publishes 1} (:aiueos/quota n)))
-    (is (= #:aiueos.manifest{:period-cycles 2 :deadline-cycles 1 :priority 10}
+    (is (= #:aiueos.manifest{:period-cycles 2 :deadline-cycles 1
+                              :deadline-ms 10 :priority 10}
            (:aiueos/schedule n)))
     (is (= {:bus "pci" :vendor "1af4" :device "1001"} (:aiueos/device n)))))
 

@@ -152,6 +152,46 @@
   [result]
   (= :verified (:aiueos.signing/status result)))
 
+(defn signer-key-decision
+  "Resolve a signer registry entry to an active public key.
+
+  Legacy string entries remain active for research compatibility. A
+  lifecycle-aware entry is
+  `{:public-key hex :status :active :not-before-ms n :expires-at-ms n}`.
+  Every non-active status and every missing/out-of-window policy clock fails
+  closed. This function performs lifecycle admission before crypto verify."
+  [signer entry now-ms]
+  (cond
+    (string? entry)
+    {:allowed? true :public-key entry :legacy? true}
+
+    (not (map? entry))
+    {:allowed? false :reason :unregistered}
+
+    (not= :active (:status entry))
+    {:allowed? false :reason (or (:status entry) :missing-status)}
+
+    (not (string? (:public-key entry)))
+    {:allowed? false :reason :missing-public-key}
+
+    (and (or (contains? entry :not-before-ms)
+             (contains? entry :expires-at-ms))
+         (not (nat-int? now-ms)))
+    {:allowed? false :reason :missing-policy-clock}
+
+    (and (contains? entry :not-before-ms)
+         (or (not (nat-int? (:not-before-ms entry)))
+             (< now-ms (:not-before-ms entry))))
+    {:allowed? false :reason :not-yet-valid}
+
+    (and (contains? entry :expires-at-ms)
+         (or (not (nat-int? (:expires-at-ms entry)))
+             (>= now-ms (:expires-at-ms entry))))
+    {:allowed? false :reason :expired}
+
+    :else
+    {:allowed? true :public-key (:public-key entry) :legacy? false}))
+
 (defn- bad-signature
   "Build a `:bad-signature` violation -- the same shape `aiueos.policy`'s
   private `violation` helper builds: `{:aiueos/component c :aiueos/kind k
@@ -269,9 +309,15 @@
          (or
           (when (nil? msg)
             (bad-signature component "signed manifest must declare :aiueos/wasm-sha256"))
-          (let [key-hex (get (:aiueos.policy/signers policy) signer)]
+          (let [entry (get (:aiueos.policy/signers policy) signer)
+                key-decision
+                (signer-key-decision signer entry
+                                     (:aiueos.policy/now-ms policy))
+                key-hex (:public-key key-decision)]
             (or
-             (when (nil? key-hex)
+             (when-not (:allowed? key-decision)
                (bad-signature component
-                               (str "signer `" (id->str signer) "` is not a registered signer")))
+                              (str "signer `" (id->str signer)
+                                   "` is not active: "
+                                   (name (:reason key-decision)))))
              (verify-signature-bytes component signer key-hex sig-hex msg)))))))))

@@ -42,9 +42,11 @@
   return -1 past the cap, its page count unchanged."
   (:require [aiueos.audit :as audit]
             [aiueos.broker :as broker]
+            #?(:clj [aiueos.entropy :as entropy])
             [aiueos.manifest :as manifest]
             [aiueos.signing :as signing]
             [aiueos.topic :as topic]
+            #?(:clj [aiueos.watchdog :as watchdog])
             #?(:clj [clojure.edn :as edn]))
   #?(:clj
      (:import (com.dylibso.chicory.runtime ExecutionListener HostFunction ImportFunction
@@ -142,6 +144,18 @@
          (throw (ex-info (str "aiueos quota exceeded: " (name kind))
                           {:aiueos.execute/quota-exceeded {:kind kind :limit limit :count n}}))
          (f)))))
+
+#?(:clj
+   (do
+     (def ^:const max-secure-random-bytes
+       "Per-call host-heap bound for the security entropy capability."
+       entropy/max-request-bytes)
+
+     (defn secure-random-bytes
+       "Return N bytes from the JVM CSPRNG for the typed :random/bytes
+       capability. Invalid or abusive requests fail before host allocation."
+       [n]
+       (entropy/random-bytes n))))
 
 #?(:clj
    (defn- assert-topic-allowed!
@@ -259,8 +273,7 @@
                   host-calls-atom host-calls-limit :host-calls
                   (fn []
                     (let [len (int (aget args 1))
-                          bs (byte-array len)]
-                      (.nextBytes (java.security.SecureRandom.) bs)
+                          bs (secure-random-bytes len)]
                       (write-bytes! instance (aget args 0) len bs))))))
       (host-fn "topic_publish" [:i32 :i64] :i32
                (fn [_instance args]
@@ -420,12 +433,19 @@
      manifest/default-memory-pages))
 
 #?(:clj
+   (def default-watchdog-ms
+     "Fail-closed wall deadline when a normalized manifest does not carry an
+     explicit schedule deadline."
+     manifest/default-wall-deadline-ms))
+
+#?(:clj
    (defn- exceeded-key [e]
      (let [d (ex-data e)]
        (cond
          (contains? d :aiueos.execute/quota-exceeded) [:aiueos.execute/quota-exceeded (:aiueos.execute/quota-exceeded d)]
          (contains? d :aiueos.execute/fuel-exceeded) [:aiueos.execute/fuel-exceeded (:aiueos.execute/fuel-exceeded d)]
          (contains? d :aiueos.execute/topic-forbidden) [:aiueos.execute/topic-forbidden (:aiueos.execute/topic-forbidden d)]
+         (contains? d :aiueos.execute/watchdog-exceeded) [:aiueos.execute/watchdog-exceeded (:aiueos.execute/watchdog-exceeded d)]
          :else nil))))
 
 #?(:clj
@@ -487,8 +507,8 @@
      `:aiueos.broker/audit-entries` DECISION already carried."
      ([decision wasm-bytes]
       (run-if-granted decision wasm-bytes default-quota default-fuel default-memory-pages
-                       {:publishes nil :subscribes nil}))
-     ([decision wasm-bytes quota fuel-limit memory-pages-limit topic-allowed]
+                       {:publishes nil :subscribes nil} default-watchdog-ms))
+     ([decision wasm-bytes quota fuel-limit memory-pages-limit topic-allowed watchdog-ms]
       (let [component (:aiueos/component decision)
             audit-events (:aiueos.broker/audit-entries decision)]
         (if (= :grant (:aiueos/decision decision))
@@ -497,9 +517,23 @@
                 granted-caps (:aiueos/capabilities decision)
                 started-at (System/currentTimeMillis)]
             (try
-              (let [instance (instantiate wasm-bytes log-atom topic-bus-atom quota fuel-limit
-                                           memory-pages-limit topic-allowed granted-caps)
-                    result (call-main instance)
+              (let [outcome
+                    (watchdog/run!
+                     watchdog-ms
+                     (fn []
+                       (let [instance
+                             (instantiate wasm-bytes log-atom topic-bus-atom
+                                          quota fuel-limit memory-pages-limit
+                                          topic-allowed granted-caps)]
+                         (call-main instance))))
+                    _ (when (= :timed-out (:status outcome))
+                        (throw
+                         (ex-info "aiueos watchdog deadline exceeded"
+                                  {:aiueos.execute/watchdog-exceeded
+                                   (select-keys outcome
+                                                [:deadline-ms :elapsed-ms
+                                                 :terminated?])})))
+                    result (:value outcome)
                     finished-at (System/currentTimeMillis)]
                 (assoc decision
                        :aiueos.execute/result result
@@ -597,7 +631,10 @@
                         (or (:aiueos/quota m) default-quota)
                         (get-in m [:aiueos/limits :fuel] default-fuel)
                         (get-in m [:aiueos/limits :memory-pages] default-memory-pages)
-                        (topic-allowed-for m)))))
+                        (topic-allowed-for m)
+                        (get-in m [:aiueos/schedule
+                                   :aiueos.manifest/deadline-ms]
+                                default-watchdog-ms)))))
 
 #?(:clj
    (defn execute-admission
@@ -616,4 +653,7 @@
                         (or (:aiueos/quota m) default-quota)
                         (get-in m [:aiueos/limits :fuel] default-fuel)
                         (get-in m [:aiueos/limits :memory-pages] default-memory-pages)
-                        (topic-allowed-for m)))))
+                        (topic-allowed-for m)
+                        (get-in m [:aiueos/schedule
+                                   :aiueos.manifest/deadline-ms]
+                                default-watchdog-ms)))))

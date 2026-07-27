@@ -111,7 +111,7 @@
         result (signing/verify m {:aiueos.policy/signers {}})]
     (is (signing/violation? result))
     (is (= :bad-signature (:aiueos/kind result)))
-    (is (re-find #"not a registered signer" (:aiueos/message result)))))
+    (is (re-find #"not active: unregistered" (:aiueos/message result)))))
 
 ;; ───────── verify: JVM crypto paths (real Ed25519 keypairs) ─────────
 
@@ -126,6 +126,38 @@
            result (signing/verify m policy)]
        (is (signing/verified? result))
        (is (= {:aiueos.signing/status :verified :aiueos.signing/signer :signer/alice} result)))))
+
+#?(:clj
+   (deftest lifecycle-aware-signer-rotation-revocation-and-expiry-fail-closed
+     (let [kp (gen-keypair)
+           pub-hex (raw-public-key-hex (.getPublic kp))
+           base {:aiueos/component :app/notes :aiueos/wasm-sha256 "deadbeef"
+                 :aiueos/signer :signer/alice}
+           manifest (assoc base :aiueos/signature
+                           (sign-hex (.getPrivate kp)
+                                     (signing/signed-message base)))
+           active {:public-key pub-hex :status :active
+                   :not-before-ms 1000 :expires-at-ms 2000}
+           verify-at (fn [entry now]
+                       (signing/verify
+                        manifest
+                        {:aiueos.policy/signers {:signer/alice entry}
+                         :aiueos.policy/now-ms now}))]
+       (is (signing/verified? (verify-at active 1500)))
+       (doseq [[entry now reason]
+               [[(assoc active :status :revoked) 1500 "revoked"]
+                [(assoc active :status :compromised) 1500 "compromised"]
+                [(assoc active :status :suspended) 1500 "suspended"]
+                [active 999 "not-yet-valid"]
+                [active 2000 "expired"]]]
+         (let [result (verify-at entry now)]
+           (is (signing/violation? result))
+           (is (re-find (re-pattern reason) (:aiueos/message result)))))
+       (is (re-find #"missing-policy-clock"
+                    (:aiueos/message
+                     (signing/verify
+                      manifest
+                      {:aiueos.policy/signers {:signer/alice active}})))))))
 
 #?(:clj
    (deftest a-tampered-manifest-fails-verification-not-downgraded-to-unsigned

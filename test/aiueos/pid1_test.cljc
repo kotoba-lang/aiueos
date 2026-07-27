@@ -36,7 +36,9 @@
      (let [tmp (java.io.File/createTempFile "aiueos-boot" ".edn")]
        (try
          (spit tmp (pr-str {:aiueos/system "/etc/aiueos/system" :aiueos/policy "/etc/aiueos/policy.edn"}))
-         (is (= {:aiueos/system "/etc/aiueos/system" :aiueos/policy "/etc/aiueos/policy.edn"}
+         (is (= {:aiueos/system "/etc/aiueos/system"
+                 :aiueos/policy "/etc/aiueos/policy.edn"
+                 :aiueos/deployment-profile :research}
                 (pid1/load-boot-config (.getPath tmp))))
          (finally (.delete tmp))))))
 
@@ -83,9 +85,26 @@
        (is (= 1 @poweroff-calls)))))
 
 #?(:clj
-   (deftest boot-refuses-failed-component-graph
+(deftest boot-refuses-failed-component-graph
      (with-open [arena (Arena/ofConfined)]
        (is (thrown? Exception
                     (pid1/boot! {:aiueos/system "/system"}
                                 (fn [_ _] {:aiueos.cli/ok? false})
                                 (fn [] nil) arena 1))))))
+
+#?(:clj
+   (deftest boot-refuses-incomplete-production-profile-before-up
+     (let [up-called? (atom false)
+           failure (with-open [arena (Arena/ofConfined)]
+                     (try
+                       (pid1/boot!
+                        {:aiueos/system "/system"
+                         :aiueos/deployment-profile :sensitive-local
+                         :aiueos/profile-evidence {:profile/version 1}}
+                        (fn [_ _] (reset! up-called? true))
+                        (fn [] nil) arena 1)
+                       nil
+                       (catch Exception error (ex-data error))))]
+       (is (false? @up-called?))
+       (is (= :deployment-profile-admission-failed (:type failure)))
+       (is (some #{:deny-by-default?} (:violations failure))))))

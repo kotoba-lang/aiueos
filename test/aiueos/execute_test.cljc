@@ -7,7 +7,9 @@
   (:require [aiueos.contract :as contract]
             [aiueos.execute :as execute]
             [aiueos.graph :as graph]
+            [aiueos.manifest :as manifest]
             [aiueos.policy :as policy]
+            #?(:clj [aiueos.signing :as signing])
             [aiueos.topic :as topic]
             [clojure.test :refer [deftest is testing]]
             #?(:clj [clojure.string :as str])))
@@ -106,6 +108,19 @@
 
 #?(:clj
    (def random-bytes-wasm (b64->bytes random-bytes-wasm-b64)))
+
+#?(:clj
+   (deftest secure-entropy-capability-is-bounded-and-nondeterministic
+     (let [a (execute/secure-random-bytes 32)
+           b (execute/secure-random-bytes 32)]
+       (is (= 32 (alength a)))
+       (is (= 32 (alength b)))
+       (is (not= (vec a) (vec b)))
+       (doseq [bad [0 -1 (inc execute/max-secure-random-bytes)]]
+         (is (thrown-with-msg?
+              clojure.lang.ExceptionInfo
+              #"secure entropy request out of bounds"
+              (execute/secure-random-bytes bad)))))))
 
 #?(:clj
    (def has-capability-wasm (b64->bytes has-capability-wasm-b64)))
@@ -619,3 +634,35 @@
              result (execute/execute-admission m empty-graph policy* topic-publish-wasm)]
          (is (= :deny (:aiueos/decision result)))
          (is (= [:artifact-mismatch] (mapv :aiueos/kind (:aiueos/violations result))))))))
+
+#?(:clj
+   (deftest execute-hard-watchdog-terminates-an-infinite-wasm-loop
+     (let [infinite-loop-wasm
+           (byte-array
+            (map unchecked-byte
+                 (signing/hex-decode
+                  (str "0061736d01000000"
+                       "0105016000017e"
+                       "03020100"
+                       "050401010101"
+                       "070801046d61696e0000"
+                       "0a0b01090003400c000b42000b"))))
+           m (manifest/normalize
+              {:aiueos/component :app/infinite
+               :aiueos/kind :app
+               :aiueos/trust :verified
+               :aiueos/imports #{}
+               :aiueos/exports #{}
+               :aiueos/limits {:memory-pages 1
+                               :fuel 9223372036854775807}
+               :aiueos/schedule {:deadline-ms 25}})
+           result (execute/execute m empty-graph
+                                   (policy/parse-policy {})
+                                   infinite-loop-wasm)]
+       (is (= :grant (:aiueos/decision result)))
+       (is (= 25 (get-in result
+                         [:aiueos.execute/watchdog-exceeded :deadline-ms])))
+       (is (true? (get-in result
+                          [:aiueos.execute/watchdog-exceeded :terminated?])))
+       (is (= :failed (get-in result [:aiueos/run-receipt :aiueos/status])))
+       (is (not (contains? result :aiueos.execute/result))))))
