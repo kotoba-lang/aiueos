@@ -36,6 +36,21 @@
   (is (nil? (surface/provider-for-cap (surface/browser) :pci/config)))
   (is (nil? (surface/provider-for-cap (surface/cloud) :dom/event))))
 
+(deftest component-v03-providers-are-named-per-surface
+  (is (= "http-get-stream"
+         (:aiueos.surface/name
+          (surface/provider-for-cap (surface/browser) :http/get-stream))))
+  (let [cloud (surface/cloud)]
+    (doseq [[cap provider-name]
+            [[:http/get-stream "http-get-stream"]
+             [:object/get-stream "object-get-stream"]
+             [:object/put-block "object-put-block"]
+             [:object/compare-and-set-ref "object-compare-and-set-ref"]]]
+      (is (= provider-name
+             (:aiueos.surface/name (surface/provider-for-cap cloud cap))))))
+  (is (nil? (surface/provider-for-cap (surface/robot) :http/get-stream)))
+  (is (nil? (surface/provider-for-cap (surface/browser) :object/get-stream))))
+
 (deftest computer-virtual-backs-synthetic-input-but-not-the-host-hid
   (let [v (surface/computer-virtual)]
     (is (some? (surface/provider-for-cap v :pointer/move)))
