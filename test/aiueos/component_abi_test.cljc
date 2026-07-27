@@ -19,6 +19,23 @@
                (component-abi/requested-capabilities!
                 #{:aiueos.component/unknown}))))
 
+(deftest every-published-kotoba-component-import-has-one-aiueos-authority-name
+  (is (= #{:identity/sign :identity/verify :hash/sha256 :http/post :log/read
+           :log/write :clock/monotonic :http/get-stream :object/get-stream
+           :object/put-block :object/compare-and-set-ref}
+         (component-abi/requested-capabilities!
+          #{:aiueos.component/aiueos-identity-sign
+            :aiueos.component/aiueos-identity-verify
+            :aiueos.component/aiueos-hash-sha256
+            :aiueos.component/aiueos-http-post
+            :aiueos.component/aiueos-log-read
+            :aiueos.component/aiueos-log-append
+            :aiueos.component/aiueos-clock-now
+            :aiueos.component/aiueos-http-get-stream
+            :aiueos.component/aiueos-object-get-stream
+            :aiueos.component/aiueos-object-put-block
+            :aiueos.component/aiueos-object-compare-and-set-ref}))))
+
 (deftest component-lease-expires-and-is-revoked-by-epoch
   (let [import :aiueos.component/aiueos-clock-now
         ability {:target "clock://monotonic" :operation :clock/now
@@ -30,3 +47,45 @@
     (is (component-abi/lease-authorizes? lease 7 105 import ability))
     (is (not (component-abi/lease-authorizes? lease 8 105 import ability)))
     (is (not (component-abi/lease-authorizes? lease 7 110 import ability)))))
+
+(deftest aiueos-policy-can-only-shrink-component-abilities
+  (let [import :aiueos.component/aiueos-http-post
+        requested {:target "https://api.example.test/v1" :operation :http/post
+                   :max-bytes 4096 :max-items 20 :deadline-ms 5000
+                   :audit-id "artifact-request"}
+        ceiling {:target "https://api.example.test/v1" :operation :http/post
+                 :max-bytes 1024 :max-items 50 :deadline-ms 750
+                 :audit-id "policy-audit"}
+        effective (component-abi/narrow-ability requested ceiling)
+        lease (component-abi/issue-lease
+               {:decision {:aiueos/decision :grant
+                           :aiueos/capabilities #{:http/post}}
+                :imports #{import} :abilities {import requested}
+                :ability-policy {import ceiling}
+                :now 100 :epoch 7 :ttl-ms 10 :lease-id "lease-narrow"})]
+    (is (= {:target "https://api.example.test/v1" :operation :http/post
+            :max-bytes 1024 :max-items 20 :deadline-ms 750
+            :audit-id "policy-audit"}
+           effective))
+    (is (= effective (get-in lease [:aiueos/abilities import])))
+    (is (component-abi/lease-authorizes? lease 7 105 import effective))
+    (is (not (component-abi/lease-authorizes? lease 7 105 import requested)))))
+
+(deftest ability-policy-is-closed-and-cannot-retarget
+  (let [import :aiueos.component/aiueos-http-post
+        requested {:target "https://api.example.test/v1" :operation :http/post
+                   :max-bytes 4096 :max-items 20 :deadline-ms 5000
+                   :audit-id "artifact-request"}]
+    (is (thrown? #?(:clj clojure.lang.ExceptionInfo
+                    :cljs cljs.core.ExceptionInfo)
+                 (component-abi/narrow-abilities #{import} {import requested} {})))
+    (is (thrown? #?(:clj clojure.lang.ExceptionInfo
+                    :cljs cljs.core.ExceptionInfo)
+                 (component-abi/narrow-ability
+                  requested
+                  (assoc requested :target "https://attacker.example"))))
+    (is (thrown? #?(:clj clojure.lang.ExceptionInfo
+                    :cljs cljs.core.ExceptionInfo)
+                 (component-abi/narrow-ability
+                  requested
+                  (assoc requested :operation :http/get))))))
