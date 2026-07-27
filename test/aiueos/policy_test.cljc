@@ -69,6 +69,27 @@
     (is (= [:unresolved-capability]
            (mapv :aiueos/kind (:aiueos/violations decision))))))
 
+(deftest component-provider-requires-explicit-grant-and-named-surface
+  (let [m {:aiueos/component :kototama/guest
+           :aiueos/kind :service
+           :aiueos/trust :verified
+           :aiueos/imports #{:http/get-stream}
+           :aiueos/exports #{}}
+        grant-only (policy/parse-policy
+                    {:aiueos/grants {:kototama/guest #{:http/get-stream}}})
+        wrong-surface (policy/parse-policy
+                       {:aiueos/surface :robot
+                        :aiueos/grants {:kototama/guest #{:http/get-stream}}})
+        provider-only (policy/parse-policy {:aiueos/surface :cloud})
+        both (policy/parse-policy
+              {:aiueos/surface :cloud
+               :aiueos/grants {:kototama/guest #{:http/get-stream}}})]
+    (doseq [p [grant-only wrong-surface provider-only]]
+      (is (= :deny (:aiueos/decision
+                    (policy/verify-component m empty-graph p nil)))))
+    (is (= :grant (:aiueos/decision
+                   (policy/verify-component m empty-graph both nil))))))
+
 (deftest resolves-an-import-via-a-provider-component
   (let [fs-service {:aiueos/component :service/fs :aiueos/kind :service :aiueos/trust :verified
                     :aiueos/exports #{:fs/read} :aiueos/imports #{}}

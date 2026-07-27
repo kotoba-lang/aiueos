@@ -36,6 +36,16 @@
   {:ai-generated #{:network :secrets :persistent-write}
    :untrusted #{:secrets}})
 
+(def surface-bound-provider-caps
+  "Component Model host capabilities whose authority is implemented by a
+  named deployment-surface provider. They require both an explicit
+  per-component grant and a provider on the active surface; neither half
+  creates ambient authority on its own."
+  #{:http/get-stream
+    :object/get-stream
+    :object/put-block
+    :object/compare-and-set-ref})
+
 (def default-policy
   "The default policy: a conservative set of kernel primitives, and the
   AI-generated/untrusted lockdown."
@@ -375,8 +385,15 @@
                         ;; exporter can still provide any NON-reserved
                         ;; capability name it likes.
                         by-graph (and (not (contains? default-kernel-caps imp))
+                                     (not (contains? surface-bound-provider-caps imp))
                                      (some #(not= % id) (graph/providers graph imp)))
-                        by-grant (contains? granted imp)]
+                        explicitly-granted? (contains? granted imp)
+                        surface-provider?
+                        (or (not (contains? surface-bound-provider-caps imp))
+                            (and active-surface
+                                 (contains? (or (surface/offered-by-id active-surface) #{})
+                                            imp)))
+                        by-grant (and explicitly-granted? surface-provider?)]
                     (if (or by-graph by-grant)
                       (update acc :resolved conj imp)
                       (update acc :import-violations conj

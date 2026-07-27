@@ -51,6 +51,7 @@
                (provider "input-event" :input/event)
                (provider "fb-present" :framebuffer/present)
                (provider "fetch" :net/fetch)
+               (provider "http-get-stream" :http/get-stream)
                (provider "log" :log/write)
                (provider "clock" :clock/monotonic)]))
 
@@ -61,6 +62,10 @@
               [(provider "kv-set" :storage/kv)
                (provider "kv-get" :storage/kv)
                (provider "fetch" :net/fetch)
+               (provider "http-get-stream" :http/get-stream)
+               (provider "object-get-stream" :object/get-stream)
+               (provider "object-put-block" :object/put-block)
+               (provider "object-compare-and-set-ref" :object/compare-and-set-ref)
                (provider "log" :log/write)
                (provider "clock" :clock/monotonic)
                (provider "random" :random/bytes)]))
