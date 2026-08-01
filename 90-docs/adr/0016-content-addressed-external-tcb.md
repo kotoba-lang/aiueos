@@ -99,11 +99,29 @@ a canonical SHA-256 tree digest, is not free: the `~/.gitlibs` checkout contains
 one needs a defined canonicalisation. Recorded as future work, not pretended
 away. It is also what Nix's own `fetchGit` does before `narHash`.
 
-### 3. Two limits are recorded rather than closed
+### 3. The transitive closure is recorded as `:tcb/classpath` (added 2026-08-01)
 
-- **transitive closure** — the inventory covers the *direct* runtime dependency
-  set. The shared security package pulls `org.clojure/clojure 1.12.4`, which no
-  entry names. Closing this needs the resolved basis, not `deps.edn`.
+`:tcb/external` records what this repository *declares*. It cannot see what
+those declarations drag in. `:tcb/classpath` records the jars actually loaded,
+each by SHA-256 — the closure `deps.edn` alone cannot express.
+
+Measured: `org.clojure/clojure`, `spec.alpha` and `core.specs.alpha` are on
+every runtime classpath here and are named by no `:deps` entry. And the version
+matters — the shared security package declares clojure **1.12.4** while
+**1.12.5** is what actually loads. A declaration-level record would have said
+1.12.4 and been wrong, which is the argument for recording the closure rather
+than inferring it.
+
+Verification is deliberately **asymmetric**: a jar on the classpath and not in
+the inventory is an error, and a recorded jar whose bytes changed is drift, but
+recorded-but-absent is *not* an error. The check runs under more than one alias
+(`:tcb-check` loads five jars, `:test` nine); requiring a bijection would force
+the inventory to describe one alias and fail under the other, which teaches
+people to skip the gate. `:scope :test` marks the jars that are classpath
+members only under `:test` and remain outside the TCB by `:tcb/excluded`.
+
+### 4. One limit is still recorded rather than closed
+
 - **`java.base`** — `:minimum-version 25`, uncheckable from inside this
   repository, now carrying `:assurance-gap
   :platform-runtime-not-content-addressed`. Noted while writing this:
@@ -112,7 +130,7 @@ away. It is also what Nix's own `fetchGit` does before `narHash`.
   is wrong is left to the owner; this ADR only refuses to keep the claim
   unmarked.
 
-### 4. What is deliberately not adopted
+### 5. What is deliberately not adopted
 
 The bare-metal object store stays **name-addressed**. `:kotoba-app-catalog`
 looks applications up by a 16-byte id (`"app/hello"`) and uses SHA-256 for

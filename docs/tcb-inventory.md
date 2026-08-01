@@ -1,7 +1,7 @@
 # Trusted computing base inventory
 
 Status: machine checked  
-Inventory version: 2  
+Inventory version: 3  
 Date: 2026-08-01
 
 The authoritative inventory is
@@ -65,6 +65,15 @@ Both are the classes of error the checks above now reject.
 The external TCB records the Chicory parser/runtime jars, the shared security
 package, the freestanding ABI contract, and `java.base`.
 
+`:tcb/classpath` records the transitive closure `:tcb/external` cannot express:
+every jar actually on the running classpath, by SHA-256. `org.clojure/clojure`,
+`spec.alpha` and `core.specs.alpha` reach it via dependencies and are named by
+no `:deps` entry — and the loaded clojure is 1.12.5 where the declaration says
+1.12.4. A jar on the classpath and not recorded is an error; recorded-but-absent
+is not, because the check runs under more than one alias. Regenerate digests
+with `clojure -M:test:tcb-check classpath`; roles are a human judgement and are
+not generated.
+
 ## Evidence still required
 
 Digest pinning detects unreviewed drift but does not establish correctness.
@@ -73,11 +82,8 @@ broker/grant/link invariants receive selected formal models, and the
 hypervisor/runtime boundary receives an escape-oriented penetration test and
 retest.
 
-Two scope limits are recorded rather than hidden (ADR-0016):
+One scope limit is recorded rather than hidden (ADR-0016):
 
-- the inventory covers the **direct** runtime dependency set, not its transitive
-  closure — the shared security package pulls `org.clojure/clojure`, which no
-  entry names;
 - `java.base` carries `:minimum-version 25` and cannot be content-addressed from
   inside this repository, so nothing verifies it. `.github/workflows/ci.yml`
   provisions temurin 21, which does not satisfy that floor; whether the floor or

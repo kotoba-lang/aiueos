@@ -24,9 +24,10 @@
 (def adoption-path "security-adoption.edn")
 
 (def inventory-version
-  "The only inventory shape this checker admits. Version 2 added content
-  addressing for `:tcb/external`; version 1 recorded it as unverified prose."
-  2)
+  "The only inventory shape this checker admits. Version 3 added
+  `:tcb/classpath`, the transitive closure; version 2 added content addressing
+  for `:tcb/external`; version 1 recorded it as unverified prose."
+  3)
 
 (def security-coordinate "io.github.kotoba-lang/security")
 
@@ -165,6 +166,52 @@
        {:kind :external-undeclared :coordinate coordinate})
      (adoption-errors entries adoption))))
 
+;; --- transitive closure ----------------------------------------------------
+;;
+;; `:tcb/external` records what this repository *declares*. It cannot see what
+;; those declarations drag in: `org.clojure/clojure`, `spec.alpha` and
+;; `core.specs.alpha` are on every runtime classpath here and are named by no
+;; declaration. `:tcb/classpath` records the jars that are actually loaded,
+;; which is the closure `deps.edn` alone cannot express.
+
+(defn classpath-jars
+  "Every jar on the running JVM's classpath, as `{:jar <file-name> :path
+  <absolute>}`, sorted by name. Directories are excluded: git dependencies and
+  this repository's own `src` reach the classpath as source directories, and
+  `:tcb/files` / `:tcb/external` already own those."
+  []
+  (->> (str/split (or (System/getProperty "java.class.path") "")
+                  (re-pattern (java.util.regex.Pattern/quote java.io.File/pathSeparator)))
+       (filter #(str/ends-with? % ".jar"))
+       (map (fn [path] {:jar (.getName (io/file path)) :path path}))
+       (sort-by :jar)
+       vec))
+
+(defn- classpath-errors
+  "A jar on the classpath and not in the inventory is an unrecorded member of
+  the TCB's closure; a recorded jar whose bytes changed is drift.
+
+  The reverse — recorded but absent — is deliberately *not* an error. The check
+  runs under more than one alias (`:tcb-check` loads five jars, `:test` nine),
+  so a narrower classpath is normal. Requiring a bijection would force the
+  inventory to describe one alias and fail under the other, which teaches
+  people to skip the gate."
+  [inventory]
+  (let [recorded (into {} (map (juxt :jar identity)) (:tcb/classpath inventory))]
+    (mapcat
+     (fn [{:keys [jar path]}]
+       (if-let [entry (get recorded jar)]
+         (let [actual (sha256-file (io/file path))]
+           (cond
+             (not (keyword? (:role entry)))
+             [{:kind :classpath-missing-role :jar jar}]
+             (not= (:sha256 entry) actual)
+             [{:kind :classpath-digest-drift :jar jar
+               :expected (:sha256 entry) :actual actual}]
+             :else []))
+         [{:kind :classpath-unrecorded :jar jar}]))
+     (classpath-jars))))
+
 (defn- file-errors [files]
   (mapcat
    (fn [{:keys [path role sha256]}]
@@ -199,14 +246,33 @@
                 (when-not (= (count paths) (count (set paths)))
                   [{:kind :duplicate-path}])
                 (file-errors files)
-                (external-errors inventory deps adoption)))]
+                (external-errors inventory deps adoption)
+                (classpath-errors inventory)))]
      {:valid? (empty? errors)
       :files (count files)
       :external (count (:tcb/external inventory))
+      :classpath (count (:tcb/classpath inventory))
       :errors errors})))
 
-(defn -main [& _]
-  (let [result (validate)]
-    (prn result)
-    (when-not (:valid? result)
-      (System/exit 1))))
+(defn print-classpath
+  "Print the `:tcb/classpath` entries for the current classpath, for pasting
+  into the inventory after review. Roles are a human judgement about what the
+  jar can do, so they are not generated — a fresh jar prints `:role nil` and
+  the reviewer names it."
+  []
+  (let [recorded (into {} (map (juxt :jar identity))
+                       (:tcb/classpath (read-inventory)))]
+    (doseq [{:keys [jar path]} (classpath-jars)]
+      (prn {:jar jar
+            :role (get-in recorded [jar :role])
+            :scope (get-in recorded [jar :scope])
+            :sha256 (sha256-file (io/file path))}))))
+
+(defn -main [& args]
+  (if (= "classpath" (first args))
+    (print-classpath)
+    (let [result (validate)]
+      (prn (dissoc result :errors))
+      (doseq [error (:errors result)] (prn error))
+      (when-not (:valid? result)
+        (System/exit 1)))))
