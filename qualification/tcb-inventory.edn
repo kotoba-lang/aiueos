@@ -1,5 +1,5 @@
-{:tcb/version 1
- :tcb/as-of "2026-07-28"
+{:tcb/version 2
+ :tcb/as-of "2026-08-01"
  :tcb/scope
  "Code whose compromise can grant authority, escape Wasm isolation, falsify
   production admission/audit evidence, or access hardware outside a component."
@@ -52,16 +52,34 @@
    :sha256 "b26a7df51a943863e1e5da09a5507af1e15b1a796db2a3e3cb23500fd3c71060"}
   {:path "src/aiueos/image.cljc" :role :boot-image-construction
    :sha256 "b7610090878e6e1f355f8740578e3e613facfd30ed97dca90377e7160510c67b"}]
+ ;; Content addresses, not paths or bare version strings: a Maven entry's
+ ;; `:sha256` is the digest of its resolved jar, a git entry's `:git-sha` is
+ ;; git's own content address for the tree. `aiueos.tcb` re-verifies both
+ ;; against `deps.edn` (and, for the shared security package, against
+ ;; `security-adoption.edn`) so the records cannot silently disagree, and
+ ;; rejects any runtime dependency that never reached this list.
  :tcb/external
  [{:coordinate "com.dylibso.chicory/wasm" :version "1.4.0"
-   :role :wasm-parser}
+   :role :wasm-parser :source :maven
+   :sha256 "a850df5e77f60411648fd970144f825517a2c076dbb807ff6de95c6cfa439968"}
   {:coordinate "com.dylibso.chicory/runtime" :version "1.4.0"
-   :role :wasm-runtime}
-  {:coordinate "io.github.kotoba-lang/security" :source :local-root
-   :path "../security" :role :shared-security-primitives
-   :assurance-gap :content-not-release-pinned}
+   :role :wasm-runtime :source :maven
+   :sha256 "81245b1f832afcf52169e655d2db6a07009864dba352b174b90a444bf096bf6e"}
+  {:coordinate "io.github.kotoba-lang/security" :source :git
+   :git-url "https://github.com/kotoba-lang/security.git"
+   :git-sha "49fc4ce359752e9fe6e547e9071b5b9b40da937a"
+   :role :shared-security-primitives}
+  {:coordinate "io.github.kotoba-lang/abi" :source :git
+   :git-url "https://github.com/kotoba-lang/abi.git"
+   :git-sha "129b0b2fe26ddd1a3917132515bf1b903c7b763d"
+   :role :freestanding-abi-contract}
   {:coordinate "java.base" :minimum-version 25
-   :role :crypto-ffi-process-runtime}]
+   :role :crypto-ffi-process-runtime :source :platform
+   ;; The host runtime cannot be content-addressed from inside this repository;
+   ;; recorded as a gap rather than pinned by a version string that nothing
+   ;; verifies. `.github/workflows/ci.yml` currently provisions temurin 21,
+   ;; which does not satisfy the declared floor — unresolved, see ADR-0016.
+   :assurance-gap :platform-runtime-not-content-addressed}]
  :tcb/excluded
  [{:scope "Wasm components and their manifests" :reason :untrusted-workload}
   {:scope "CLI presentation and documentation" :reason :no-authority}

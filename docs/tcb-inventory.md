@@ -1,8 +1,8 @@
 # Trusted computing base inventory
 
 Status: machine checked  
-Inventory version: 1  
-Date: 2026-07-23
+Inventory version: 2  
+Date: 2026-08-01
 
 The authoritative inventory is
 `qualification/tcb-inventory.edn`. It lists every in-repository source boundary
@@ -20,6 +20,36 @@ The check fails on missing files, duplicate paths, unsupported inventory
 versions, missing roles or any source digest drift. Regulated boot evidence
 must bind the inventory digest and assert that this check passed.
 
+## External dependencies are content-addressed (version 2)
+
+`:tcb/external` records the same kind of fact for code this repository does not
+contain. A dependency is pinned by *content*, never by a path or a bare version
+string:
+
+| source | content address | verified against |
+| --- | --- | --- |
+| `:maven` | SHA-256 of the resolved jar | the jar in the local Maven repository the running JVM resolved from |
+| `:git` | `:git-sha` (git's own content address for the tree) | `deps.edn`, and `security-adoption.edn` for the shared security package |
+| `:platform` | none possible from inside this repository | must carry an explicit `:assurance-gap` |
+
+Three checks make the record non-decorative, all fail-closed:
+
+1. **no unpinned dependency** — an entry with neither a content address nor a
+   declared `:assurance-gap` is an error;
+2. **no silent drift** — the inventory's version/commit must equal `deps.edn`'s,
+   and the shared security commit must also equal `security-adoption.edn`'s, so
+   the three records of one fact cannot disagree;
+3. **no dependency outside the inventory** — every coordinate in `deps.edn`'s
+   `:deps` must appear in `:tcb/external`.
+
+The digest check cannot be skipped by an unresolved environment: the jars must
+already be resolved for the JVM running the check to have started.
+
+Version 1 recorded the external TCB as unverified prose, and had drifted — the
+shared security package was recorded as a local-root path while `deps.edn` had
+moved to a commit pin, and `io.github.kotoba-lang/abi` was absent entirely.
+Both are the classes of error the checks above now reject.
+
 ## Included boundaries
 
 - authority schema, manifest identity, signing, signer lifecycle, policy and
@@ -32,10 +62,8 @@ must bind the inventory digest and assert that this check passed.
   storage;
 - HVT, VFIO/IOMMU, virtio, VM launch and boot-image construction.
 
-The external TCB records Chicory parser/runtime versions, `java.base`, and the
-shared security package. The shared package is currently a local-root
-dependency rather than a content-addressed release; the inventory records that
-fact as an assurance gap instead of hiding it.
+The external TCB records the Chicory parser/runtime jars, the shared security
+package, the freestanding ABI contract, and `java.base`.
 
 ## Evidence still required
 
@@ -44,3 +72,13 @@ A-02 remains incomplete until the inventory is independently reviewed, the
 broker/grant/link invariants receive selected formal models, and the
 hypervisor/runtime boundary receives an escape-oriented penetration test and
 retest.
+
+Two scope limits are recorded rather than hidden (ADR-0016):
+
+- the inventory covers the **direct** runtime dependency set, not its transitive
+  closure — the shared security package pulls `org.clojure/clojure`, which no
+  entry names;
+- `java.base` carries `:minimum-version 25` and cannot be content-addressed from
+  inside this repository, so nothing verifies it. `.github/workflows/ci.yml`
+  provisions temurin 21, which does not satisfy that floor; whether the floor or
+  the runner is wrong is unresolved.
