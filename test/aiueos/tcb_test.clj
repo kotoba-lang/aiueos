@@ -23,7 +23,7 @@
     "src/aiueos/vfio.cljc"})
 
 (deftest checked-in-tcb-inventory-has-no-drift
-  (is (= {:valid? true :files 24 :external 5 :errors []}
+  (is (= {:valid? true :files 24 :external 5 :classpath 9 :errors []}
          (tcb/validate))))
 
 (deftest authority-and-escape-boundaries-cannot-disappear-silently
@@ -48,11 +48,13 @@
 ;; --- external (dependency) half -------------------------------------------
 ;;
 ;; The synthetic inventories below carry no `:tcb/files`, so only the external
-;; checks can produce errors.
+;; checks can produce errors. They keep the real `:tcb/classpath`, because the
+;; classpath the test JVM is running on is real either way.
 
 (def git-dep-inventory
-  {:tcb/version 2
+  {:tcb/version 3
    :tcb/files []
+   :tcb/classpath (:tcb/classpath (tcb/read-inventory))
    :tcb/external [{:coordinate "io.github.example/lib" :source :git
                    :git-sha "aaaa000000000000000000000000000000000000"
                    :role :example}]})
@@ -118,3 +120,40 @@
         result (tcb/validate changed)]
     (is (false? (:valid? result)))
     (is (= :external-digest-drift (-> result :errors first :kind)))))
+
+;; --- transitive closure (classpath) half ----------------------------------
+
+(deftest every-classpath-jar-is-recorded-with-a-role
+  (let [recorded (into {} (map (juxt :jar identity))
+                       (:tcb/classpath (tcb/read-inventory)))]
+    (is (every? #(keyword? (:role (get recorded (:jar %)))) (tcb/classpath-jars))
+        "a jar loaded but unrecorded is an unreviewed member of the TCB closure")))
+
+(deftest the-closure-covers-what-no-declaration-names
+  (let [recorded (set (map :jar (:tcb/classpath (tcb/read-inventory))))]
+    (is (some #(re-matches #"clojure-.*\.jar" %) recorded)
+        "org.clojure/clojure reaches the classpath transitively and is named by
+         no :deps entry -- the gap :tcb/classpath exists to close")))
+
+(deftest classpath-digest-drift-is-fail-closed
+  (let [inventory (assoc-in (tcb/read-inventory) [:tcb/classpath 0 :sha256]
+                            (apply str (repeat 64 "0")))
+        result (tcb/validate inventory)]
+    (is (false? (:valid? result)))
+    (is (some #(= :classpath-digest-drift (:kind %)) (:errors result)))))
+
+(deftest an-unrecorded-classpath-jar-is-fail-closed
+  (let [inventory (update (tcb/read-inventory) :tcb/classpath
+                          (fn [entries] (vec (remove #(= "clojure-1.12.5.jar" (:jar %)) entries))))
+        result (tcb/validate inventory)]
+    (is (false? (:valid? result)))
+    (is (some #(and (= :classpath-unrecorded (:kind %))
+                    (= "clojure-1.12.5.jar" (:jar %)))
+              (:errors result)))))
+
+(deftest a-narrower-classpath-is-not-drift
+  (let [inventory (update (tcb/read-inventory) :tcb/classpath
+                          conj {:jar "not-on-this-classpath.jar" :role :example
+                                :scope :runtime :sha256 (apply str (repeat 64 "0"))})]
+    (is (true? (:valid? (tcb/validate inventory)))
+        "the check runs under more than one alias; recorded-but-absent is normal")))
