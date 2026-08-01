@@ -11,7 +11,7 @@
   {:path "src/aiueos/signing.cljc" :role :manifest-authenticity
    :sha256 "d28c119b3fa05d86da2b22355ee928e8e7d166dd936eef4c3223e204d4f1cfe2"}
   {:path "src/aiueos/key_lifecycle.clj" :role :signer-lifecycle-authority
-   :sha256 "5dc40d2b967e7e39834ac10c7786816467aef87d016170dee6111d5a10408646"}
+   :sha256 "f1e4475edef59527b11dbf39c950c6706e4fedea96c6f5dfb6e60707920371a5"}
   {:path "src/aiueos/policy.cljc" :role :policy-decision
    :sha256 "84c772257cc8c6744b5700b0d11c82fd40992213364269f03726d00070b188a9"}
   {:path "src/aiueos/broker.cljc" :role :capability-authority
@@ -36,6 +36,8 @@
    :sha256 "6cf6689d74dc40a12430ad82ae70c56b07d6e4b9bdacdeaad21947da97ff8f87"}
   {:path "src/aiueos/pid1.cljc" :role :boot-root
    :sha256 "1e6ff3436f957c421e2e4d03e9be2e6eb57f2c6cc904f0e322aee770c92811de"}
+  {:path "src/aiueos/sbom.clj" :role :release-attestation-authority
+   :sha256 "ada13627826c5f26c43ed991abfd43bb30e30b71f1b86b42dcb914bf98f58bea"}
   {:path "src/aiueos/audit.cljc" :role :audit-emission
    :sha256 "8e2c47608810192dd4f6a4e3ed2cbb41ec249a41506cfd81464120c546ba082c"}
   {:path "src/aiueos/sealed_audit.clj" :role :audit-confidentiality-integrity

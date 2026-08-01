@@ -15,6 +15,10 @@
 
    :tcb-check {:main-opts ["-m" "aiueos.tcb"]}
 
+   ;; Release attestations (SBOM + SLSA-style provenance) for a built artifact.
+   ;;   clojure -M:attest sha256:<disk-digest> <source-commit> <builder> --isolated
+   :attest {:main-opts ["-m" "aiueos.sbom"]}
+
    :build {:deps {io.github.clojure/tools.build {:mvn/version "0.10.10"}}
            :ns-default build}
 

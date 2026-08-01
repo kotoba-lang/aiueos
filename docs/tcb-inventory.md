@@ -74,6 +74,11 @@ is not, because the check runs under more than one alias. Regenerate digests
 with `clojure -M:test:tcb-check classpath`; roles are a human judgement and are
 not generated.
 
+The inventory is also the SBOM's component list — `aiueos.sbom` derives release
+attestations from it rather than scanning a second time (ADR-0017), so an
+inventory that fails its drift check produces evidence that reports
+`:tcb-drift-check? false` instead of a passing claim.
+
 ## Evidence still required
 
 Digest pinning detects unreviewed drift but does not establish correctness.

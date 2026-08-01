@@ -35,38 +35,65 @@
     (sequential? value) (mapv canonical value)
     :else value))
 
-(defn- payload-bytes [bundle]
-  (.getBytes (pr-str (canonical (dissoc bundle :signature)))
+(defn document-bytes
+  "Deterministic UTF-8 bytes a signature over DOCUMENT covers: the canonical
+  form with SIGNATURE-KEY removed.
+
+  Generalized from the lifecycle bundle's own `:signature` so that other signed
+  documents — release attestations use `:sbom/signature` and
+  `:provenance/signature` — sign the *same* canonical form. A second
+  canonicalizer would be a signature-confusion hazard, not a convenience."
+  [document signature-key]
+  (.getBytes (pr-str (canonical (dissoc document signature-key)))
              StandardCharsets/UTF_8))
 
-(defn bundle-digest [bundle]
-  (let [digest (.digest (java.security.MessageDigest/getInstance "SHA-256")
-                        (payload-bytes bundle))]
-    (signing/hex-encode digest)))
+(defn document-digest
+  "Hex SHA-256 of `document-bytes`. Unprefixed; callers that need a
+  `sha256:<hex>` reference add the prefix."
+  [document signature-key]
+  (signing/hex-encode
+   (.digest (java.security.MessageDigest/getInstance "SHA-256")
+            (document-bytes document signature-key))))
 
-(defn sign-bundle [bundle ^PrivateKey private-key]
+(defn sign-document
+  "DOCUMENT with a base64 Ed25519 signature over `document-bytes` at
+  SIGNATURE-KEY."
+  [document signature-key ^PrivateKey private-key]
   (let [signer (Signature/getInstance "Ed25519")]
     (.initSign signer private-key)
-    (.update signer (payload-bytes bundle))
-    (assoc bundle :signature
+    (.update signer (document-bytes document signature-key))
+    (assoc document signature-key
            (.encodeToString (Base64/getEncoder) (.sign signer)))))
+
+(defn bundle-digest [bundle]
+  (document-digest bundle :signature))
+
+(defn sign-bundle [bundle ^PrivateKey private-key]
+  (sign-document bundle :signature private-key))
 
 (defn- decode-public-key [encoded]
   (.generatePublic
    (KeyFactory/getInstance "Ed25519")
    (X509EncodedKeySpec. (.decode (Base64/getDecoder) ^String encoded))))
 
-(defn- signature-valid? [bundle root-public-key]
+(defn document-signature-valid?
+  "Whether DOCUMENT's signature at SIGNATURE-KEY verifies over
+  `document-bytes` under PUBLIC-KEY (a `PublicKey` or its base64 X.509 form).
+  Fail-closed: any decode or verification error is `false`."
+  [document signature-key public-key]
   (try
     (let [verifier (Signature/getInstance "Ed25519")]
       (.initVerify verifier
-                   (if (instance? PublicKey root-public-key)
-                     root-public-key
-                     (decode-public-key root-public-key)))
-      (.update verifier (payload-bytes bundle))
+                   (if (instance? PublicKey public-key)
+                     public-key
+                     (decode-public-key public-key)))
+      (.update verifier (document-bytes document signature-key))
       (.verify verifier
-               (.decode (Base64/getDecoder) ^String (:signature bundle))))
+               (.decode (Base64/getDecoder) ^String (get document signature-key))))
     (catch Exception _ false)))
+
+(defn- signature-valid? [bundle root-public-key]
+  (document-signature-valid? bundle :signature root-public-key))
 
 (defn initial-node-state []
   {:epoch 0 :bundle-digest nil :signers {} :component-signers {}})
