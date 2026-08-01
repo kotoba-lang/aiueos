@@ -69,9 +69,21 @@ Inventory version 2. Each entry declares a `:source` and is pinned by content:
 3. **no dependency outside the inventory** — every coordinate in `deps.edn`'s
    `:deps` must appear in `:tcb/external`.
 
-Running the pre-change inventory against the new checker reports exactly the two
-errors above (plus `:unsupported-version`), which is the evidence that these
-checks are load-bearing rather than decorative.
+Running the pre-change inventory against the new checker reports six errors.
+Three are consequences of the format change itself — the old entries declared no
+`:source` at all, so they cannot be content-addressed. The other three are the
+substantive ones, and are the evidence that these checks are load-bearing rather
+than decorative:
+
+```
+{:kind :external-unknown-source, :coordinate "io.github.kotoba-lang/security", :source :local-root}
+{:kind :external-undeclared,     :coordinate "io.github.kotoba-lang/abi"}
+{:kind :unsupported-version,     :actual 1}
+```
+
+The security entry surfaces as `:external-unknown-source` rather than as a
+commit mismatch because a `:local-root` path is rejected before any comparison
+with `deps.edn` — a path is not a weaker content address, it is not one.
 
 The jar digest check cannot be skipped by an unresolved environment: the jars
 must already be resolved for the JVM running the check to have started. This is
