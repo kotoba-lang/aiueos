@@ -70,7 +70,15 @@ Required:
 - signer expiry and revocation checks;
 - root-signed monotonic lifecycle epoch, sealed checkpoint, delegation scope,
   convergence exercise and compromise-recovery exercise;
-- SBOM and SLSA/in-toto provenance for release artifacts;
+- SBOM and SLSA/in-toto provenance for release artifacts, produced by
+  `clojure -M:attest <artifact-digest> <source-commit> [builder] [--isolated]`
+  (`aiueos.sbom`, ADR-0017). Components are derived from the TCB inventory
+  rather than a second scan, so the two cannot disagree; `:tcb-drift-check?` is
+  the inventory check's real verdict, and `:provenance/isolated-builder?` is
+  required from the caller rather than defaulted to true. The documents are
+  EDN matching `kotoba.security.supply-chain/evaluate-attestations`, not
+  in-toto/DSSE envelopes yet, and the release pipeline does not call the
+  generator automatically;
 - package/component verification evidence;
 - the digest of the versioned TCB inventory and a successful drift check;
 - monitoring and incident-response exercise evidence;

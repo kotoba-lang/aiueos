@@ -20,10 +20,11 @@
     "src/aiueos/sealed_audit.clj"
     "src/aiueos/sealed_state.clj"
     "src/aiueos/hvt.cljc"
-    "src/aiueos/vfio.cljc"})
+    "src/aiueos/vfio.cljc"
+    "src/aiueos/sbom.clj"})
 
 (deftest checked-in-tcb-inventory-has-no-drift
-  (is (= {:valid? true :files 24 :external 5 :classpath 9 :errors []}
+  (is (= {:valid? true :files 25 :external 5 :classpath 9 :errors []}
          (tcb/validate))))
 
 (deftest authority-and-escape-boundaries-cannot-disappear-silently
