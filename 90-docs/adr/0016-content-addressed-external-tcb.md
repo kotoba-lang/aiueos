@@ -120,15 +120,41 @@ the inventory to describe one alias and fail under the other, which teaches
 people to skip the gate. `:scope :test` marks the jars that are classpath
 members only under `:test` and remain outside the TCB by `:tcb/excluded`.
 
-### 4. One limit is still recorded rather than closed
+### 4. The platform floor is unpinnable, but the disagreement about it is checked (2026-08-03)
 
-- **`java.base`** — `:minimum-version 25`, uncheckable from inside this
-  repository, now carrying `:assurance-gap
-  :platform-runtime-not-content-addressed`. Noted while writing this:
-  `.github/workflows/ci.yml` provisions temurin 21, which does not satisfy that
-  floor, and nothing detects the contradiction. Whether the floor or the runner
-  is wrong is left to the owner; this ADR only refuses to keep the claim
-  unmarked.
+**`java.base`** cannot be content-addressed from inside this repository, so it
+carries `:minimum-version 25` and `:assurance-gap
+:platform-runtime-not-content-addressed`. That much is unchanged.
+
+What changed is the second-order problem this ADR originally only wrote down:
+`.github/workflows/ci.yml` provisions temurin 21, which does not satisfy the
+declared floor, and nothing detected it. **Whether the floor or the runner is
+wrong is still an owner decision** — the checker does not pick a side and does
+not turn CI red for the disagreement existing. It requires the disagreement to
+be *recorded accurately while it exists*:
+
+| state | `aiueos.tcb/validate` |
+| --- | --- |
+| runner below floor, `:floor-unmet-by-ci` absent | `:platform-floor-contradiction-unrecorded` |
+| runner meets floor, `:floor-unmet-by-ci` present | `:platform-floor-contradiction-stale` |
+| record names versions the workflow does not provision | `:platform-floor-contradiction-drift` |
+
+Raising the runner to ≥ 25 and lowering the floor to 21 both fail until the
+record is deleted, so the entry cannot rot into a comment about a contradiction
+someone already fixed. The versions are read from the workflow with a regex
+rather than a YAML parser: the value wanted is one scalar under a fixed key,
+and a YAML dependency would put a parser inside the TCB this inventory exists
+to bound.
+
+### 4b. The checker is in the inventory it checks (2026-08-03)
+
+`src/aiueos/tcb.clj` was not in `:tcb/files`. Every other authority in this
+repository — including `sbom.clj`, added a day earlier — is digest-recorded, so
+editing it requires an inventory update in the same commit. The one file
+exempt from that discipline was the file that *enforces* it: weakening a check
+left no trace anywhere. It is now recorded as `:tcb-inventory-authority`.
+There is no fixpoint problem, because the digest of the source lives in the
+sibling EDN rather than in the source.
 
 ### 5. What is deliberately not adopted
 

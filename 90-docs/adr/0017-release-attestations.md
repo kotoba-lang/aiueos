@@ -96,9 +96,22 @@ surface for no benefit.
   does not yet call `clojure -M:attest` with the receipt's digest, and no gate
   requires an attestation to exist for a release. The generator is ready; the
   pipeline edit and its QEMU-gated evidence are separate work.
-- **In-toto envelope format.** These are EDN documents matching the shared
-  evaluator's contract, not in-toto/DSSE statements. Emitting the standard
-  envelope is a serialization concern on top of the same content.
+- **In-toto envelope format — not queued, declined for now.** These are EDN
+  documents matching the shared evaluator's contract, not in-toto/DSSE
+  statements. The earlier wording ("a serialization concern on top of the same
+  content") made it sound merely pending. The reason it is not done is a
+  trade-off, and leaving it unstated invites someone to do it: DSSE payloads
+  are JSON, this repository has no JSON library, and both ways of getting one
+  are worse than the gap. Adding a dependency expands the TCB — which the
+  inventory would correctly force us to record — for a format nothing in this
+  workspace reads; hand-rolling a writer puts new serialization surface inside
+  a namespace that already refuses hand-rolled JSON *parsing* for the same
+  reason (`aiueos.sbom/-main`'s docstring). Emitting a standard envelope with
+  no verifier consuming it would be a second unexercised surface, which is the
+  exact shape of the placeholder problem this ADR exists to remove. Worth doing
+  when an actual external verifier (cosign, slsa-verifier) enters the release
+  path — and then with a round-trip verifier and the DSSE PAE test vector in
+  the same commit.
 - **`evaluate-reproducibility`.** The other half of
   `kotoba.security.supply-chain` still has no evidence here: it wants two
   artifact digests from independent builds. The release media are already
