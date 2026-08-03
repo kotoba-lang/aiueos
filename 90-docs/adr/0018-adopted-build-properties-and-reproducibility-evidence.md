@@ -116,6 +116,13 @@ qualify.
   reproduction of a different artifact.
 - Removing a mechanism from `:tcb/files`, deleting a property, or adding one
   with neither gate nor gap now fails `clojure -M:tcb-check`.
+- `aiueos.reproducibility` is the first namespace under `src/` to import
+  `kotoba.security.supply-chain`, so `security-adoption.edn` gains the control
+  namespace and the entrypoint edge. The adoption gate refused the commit until
+  it did (`:unregistered-security-importers`) — worth recording because it is
+  the mechanism this whole line of work is about, catching its own author: a
+  new edge into a security control cannot be added without the record of that
+  edge moving in the same commit.
 
 ## Not done
 
