@@ -134,17 +134,32 @@
   evidence, computed rather than asserted.
 
   `:tcb-drift-check?` is the inventory check's real verdict, so evidence for a
-  drifted tree reports false instead of claiming a check that did not pass."
-  [{sbom-document :sbom provenance-document :provenance}]
+  drifted tree reports false instead of claiming a check that did not pass.
+
+  `:artifact-digest` is carried through from the SBOM so the profile can bind
+  the reproduced artifact to the attested one. REPRODUCIBILITY, when given, is
+  `aiueos.reproducibility/profile-evidence`; it is merged rather than computed
+  here because judging two independent builds needs inputs — the second build's
+  digest above all — that this namespace has no way to obtain."
+  [{sbom-document :sbom provenance-document :provenance
+    reproducibility :reproducibility}]
   (let [validation (tcb/validate)]
-    {:sbom-digest (:sbom/digest sbom-document)
-     :provenance-digest (:provenance/digest provenance-document)
-     :tcb-inventory-digest (file-digest tcb/inventory-path)
-     :tcb-drift-check? (:valid? validation)}))
+    (merge
+     {:artifact-digest (:sbom/artifact-digest sbom-document)
+      :sbom-digest (:sbom/digest sbom-document)
+      :provenance-digest (:provenance/digest provenance-document)
+      :tcb-inventory-digest (file-digest tcb/inventory-path)
+      :tcb-drift-check? (:valid? validation)}
+     reproducibility)))
 
 (defn attestations
-  "Both documents plus the evidence map, for a built artifact."
-  [{:keys [artifact-digest source-commit builder invocation isolated-builder?]}]
+  "Both documents plus the evidence map, for a built artifact.
+
+  REPRODUCIBILITY is optional and, when absent, the resulting evidence fails
+  the regulated profile's reproducibility checks rather than omitting them —
+  an unattested claim is refused, not skipped."
+  [{:keys [artifact-digest source-commit builder invocation isolated-builder?
+           reproducibility]}]
   (let [s (sbom {:artifact-digest artifact-digest :source-commit source-commit})
         p (provenance {:artifact-digest artifact-digest
                        :source-commit source-commit
@@ -152,7 +167,9 @@
                        :builder builder
                        :invocation invocation
                        :isolated-builder? isolated-builder?})]
-    {:sbom s :provenance p :evidence (regulated-evidence {:sbom s :provenance p})}))
+    {:sbom s :provenance p
+     :evidence (regulated-evidence {:sbom s :provenance p
+                                    :reproducibility reproducibility})}))
 
 (defn -main
   "Emit unsigned attestations for a built artifact.

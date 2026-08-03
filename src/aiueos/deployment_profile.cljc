@@ -232,6 +232,21 @@
         (conj :tcb-inventory-digest)
         (not (true? (:tcb-drift-check? evidence)))
         (conj :tcb-drift-check?)
+        ;; `docs/deployment-profiles.md` has required a "reproducible, signed,
+        ;; independently verified release pipeline" for this profile since it
+        ;; was written. The signed half was checked here; the reproducible half
+        ;; was not checked anywhere, and the evaluator for it
+        ;; (`kotoba.security.supply-chain/evaluate-reproducibility`) had no
+        ;; caller. `aiueos.reproducibility` supplies these three keys.
+        (not (true? (:reproducibility-qualified? evidence)))
+        (conj :reproducibility-qualified?)
+        (not (sha256-ref? (:reproducibility-artifact-digest evidence)))
+        (conj :reproducibility-artifact-digest)
+        ;; The artifact reproduced twice must be the artifact that was
+        ;; attested. Without this, a qualified reproduction of *something* would
+        ;; satisfy a release of something else.
+        (not= (:artifact-digest evidence) (:reproducibility-artifact-digest evidence))
+        (conj :reproducibility-artifact-binding)
         (and (:fips-claim? evidence)
              (not (non-blank-string? (:fips-module-certificate evidence))))
         (conj :fips-module-certificate)

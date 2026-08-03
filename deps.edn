@@ -19,6 +19,12 @@
    ;;   clojure -M:attest sha256:<disk-digest> <source-commit> <builder> --isolated
    :attest {:main-opts ["-m" "aiueos.sbom"]}
 
+   ;; Judge two independent builds of the same source commit. The digests are
+   ;; two release build receipts' `disk.sha256`; the flags are assertions about
+   ;; the environment that produced them and are never defaulted true.
+   ;;   clojure -M:reproduce <source-commit> sha256:<d1> sha256:<d2> --fresh-clone --hermetic
+   :reproduce {:main-opts ["-m" "aiueos.reproducibility"]}
+
    :build {:deps {io.github.clojure/tools.build {:mvn/version "0.10.10"}}
            :ns-default build}
 

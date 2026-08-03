@@ -1,0 +1,132 @@
+;; Nix-shaped supply-chain properties, as an adopted contract rather than a
+;; coincidence.
+;;
+;; The properties below were reached from capability security and evidence
+;; gating, not from build purity, and for a long time nothing in this repository
+;; named them. That made them fragile in a specific way: a property nobody has
+;; written down is a property nobody notices losing. Naming them here — with the
+;; mechanism that implements each one and the gate that enforces it — is what
+;; turns "we happen to do this" into "this is a property of the build, and
+;; removing it breaks a check".
+;;
+;; `aiueos.tcb/validate` enforces the shape: every adopted property must name
+;; mechanisms that exist, must name at least one gate or an explicit assurance
+;; gap, and every mechanism under `src/` must be in `:tcb/files` so it cannot be
+;; edited without an inventory review. Same rule as `:tcb/external`: a claim
+;; that is neither enforced nor marked as a gap may not pass silently.
+;;
+;; Authority: com-junkawasaki/root `90-docs/adr/2608012050-nix-shaped-supply-chain-properties-aiueos.edn`.
+;; Sibling contract for the Unison-shaped half (definition identity):
+;; kotoba-lang/kotoba-lang `lang/code-identity.edn`.
+
+{:build-identity/version 1
+ :build-identity/status :adopted
+ :build-identity/as-of "2026-08-03"
+ :build-identity/authority
+ "com-junkawasaki/root 90-docs/adr/2608012050-nix-shaped-supply-chain-properties-aiueos.edn"
+
+ :build-identity/lineage
+ "Arrived at independently from capability security and evidence gating rather
+  than from build purity; adopted deliberately once the overlap was audited, so
+  that the properties are maintained on purpose instead of surviving by
+  accident."
+
+ :adopted
+ [{:property :content-addressed-dependency-closure
+   :statement
+   "Every input to the trusted computing base is pinned by content — the digest
+    of a resolved jar, git's own address for a tree, or the digest of an
+    in-repository file — and the closure that is actually loaded is recorded,
+    not just the closure that is declared."
+   :mechanism ["qualification/tcb-inventory.edn"
+               "src/aiueos/tcb.clj"
+               "deps.edn"
+               "security-adoption.edn"]
+   :gate ["test/aiueos/tcb_test.clj"]
+   :assurance-gaps [:git-commit-id-is-sha-1
+                    :platform-runtime-not-content-addressed]}
+
+  {:property :reproducible-build
+   :statement
+   "A build of the same source produces byte-identical output, and that claim is
+    judged by an evaluator rather than asserted in prose."
+   :mechanism ["scripts/build-hvt-guest.cljs"
+               "scripts/build-hvt-kotoba-guest.cljs"
+               "os/aiueos/scripts/build-release-image.sh"
+               "src/aiueos/reproducibility.clj"]
+   :gate ["test/aiueos/reproducibility_test.clj"]
+   ;; The guest fixtures are byte-compared by a gate that runs. The release
+   ;; media are deterministic (`SOURCE_DATE_EPOCH`) but no job builds them
+   ;; twice, so the second digest the evaluator wants is not produced yet.
+   :assurance-gaps [:release-media-second-build-not-produced]}
+
+  {:property :digest-gated-admission
+   :statement
+   "Nothing is admitted by name. A component is admitted by the digest of its
+    bytes bound to a signed identity, and a release image by a verified
+    signature over its digest."
+   :mechanism ["src/aiueos/manifest.cljc"
+               "src/aiueos/signing.cljc"
+               "src/aiueos/graph.cljc"
+               "os/aiueos/scripts/verify-release-signature.py"]
+   :gate ["test/aiueos/manifest_test.cljc"
+          "test/aiueos/signing_test.cljc"
+          "test/aiueos/graph_test.cljc"]}
+
+  {:property :declarative-configuration-deny-by-default
+   :statement
+   "Authority is a declared, reviewable value resolved by policy, and anything
+    not granted is denied. There is no ambient authority to configure away."
+   :mechanism ["src/aiueos/contract.cljc"
+               "src/aiueos/policy.cljc"
+               "src/aiueos/broker.cljc"]
+   :gate ["test/aiueos/policy_test.cljc"
+          "test/aiueos/broker_test.cljc"]}
+
+  {:property :atomic-update-and-rollback
+   :statement
+   "An update either takes effect whole or not at all, and the previous system
+    remains bootable — a byte-identical recovery partition, not a backup copy."
+   :mechanism ["os/aiueos/scripts/make-release-image.py"
+               "src/aiueos/image.cljc"]
+   :gate ["test/aiueos/image_test.cljc"
+          "os/aiueos/scripts/smoke-qemu-release-image.sh"]}
+
+  {:property :signed-supply-chain-attestation
+   :statement
+   "A release carries an SBOM and provenance derived from the same pinned
+    closure it was built from, signed, and judged by a shared evaluator."
+   :mechanism ["src/aiueos/sbom.clj"]
+   :gate ["test/aiueos/sbom_test.clj"]
+   :assurance-gaps [:documents-are-edn-not-in-toto-dsse
+                    :release-pipeline-not-wired]}]
+
+ ;; Properties nix has that this repository deliberately does not take. Listed
+ ;; so that "we do not have that" reads as a decision rather than an oversight,
+ ;; and so a future proposal argues against a recorded reason.
+ :non-goals
+ [{:property :store-and-derivation-language
+   :reason
+   "A build DSL and a store daemon are a second authority surface. Builds here
+    are ordinary scripts whose *outputs* are content-addressed and gated; the
+    guarantee wanted is on the artifact, not on the language that produced it."}
+  {:property :binary-cache-substitution
+   :reason
+   "Substituting a build output from a remote cache is trusting a publisher,
+    which is exactly the decision the digest-gated admission path exists to
+    make explicit. Not ruled out forever — it would need publisher trust and
+    revocation modelled as carefully as component admission already is."}
+  {:property :module-system-for-system-configuration
+   :reason
+   "System composition here is a component graph admitted by policy, not a
+    configuration language evaluated to a system closure."}
+  {:property :content-addressed-bare-metal-object-store
+   :reason
+   "ADR-2608012050 §4: multi-version coexistence would follow from it, but the
+    store is bounded by :capacity 4 and a 12 KiB application limit, so
+    addressing is not what constrains it today."}
+  {:property :in-toto-dsse-envelope
+   :reason
+   "ADR-0017: DSSE payloads are JSON, this repository has no JSON library, and
+    both ways of obtaining one are worse than the gap until an external verifier
+    is actually in the release path."}]}
