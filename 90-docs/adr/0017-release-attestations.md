@@ -92,10 +92,42 @@ surface for no benefit.
 
 ## Not done
 
-- **Wiring into the release pipeline.** `os/aiueos/scripts/build-release-image.sh`
-  does not yet call `clojure -M:attest` with the receipt's digest, and no gate
-  requires an attestation to exist for a release. The generator is ready; the
-  pipeline edit and its QEMU-gated evidence are separate work.
+- **Wiring into the release pipeline — blocked on a workflow edit, not on
+  design.** `os/aiueos/scripts/build-release-image.sh` does not call
+  `clojure -M:attest`, and no gate requires an attestation to exist for a
+  release. The generator is ready. The blocker is that the only job which
+  builds release media — `bare-metal-uefi` — provisions no JDK, and
+  `.github/workflows/` cannot be edited by a token without the `workflow`
+  scope. Writing the call into the shell script alone would produce a step that
+  never runs in CI, which is the unexercised-surface failure this ADR exists to
+  remove.
+
+  The edit is small enough to state exactly. In `bare-metal-uefi`, after the
+  release-media step:
+
+  ```yaml
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"        # or 25 — see ADR-0016 §4, unresolved
+      - uses: DeLaGuardo/setup-clojure@13.4
+        with:
+          cli: latest
+      - name: Attest the release media
+        run: |
+          receipt=$(os/aiueos/scripts/build-release-image.sh)
+          digest=$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["disk"]["sha256"])' "$receipt")
+          clojure -M:attest "sha256:$digest" "$GITHUB_SHA" "github-actions" --isolated \
+            > "$RUNNER_TEMP/release-attestation.edn"
+  ```
+
+  `--isolated` is only truthful on a hosted runner; a local build must omit it,
+  which is why `provenance` requires the flag rather than defaulting it.
+
+  Once that runs, `evaluate-reproducibility` (below) becomes reachable too: a
+  second invocation of the same script in the same job yields the second
+  artifact digest the evaluator wants, and `SOURCE_DATE_EPOCH` already makes the
+  media deterministic.
 - **In-toto envelope format — not queued, declined for now.** These are EDN
   documents matching the shared evaluator's contract, not in-toto/DSSE
   statements. The earlier wording ("a serialization concern on top of the same
