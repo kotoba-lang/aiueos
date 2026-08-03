@@ -31,7 +31,7 @@
          (<= (read-u32 base length 40) 272)
          (>= (read-u32 base length 76) 5)
          (= (read-u32 base length 80) 1)
-         (= (fnv (+ base object-offset) object-length)
+         (= (fnv (kernel-subregion base length object-offset object-length) object-length)
             (read-u32 base length 32)))))
 
 (defn main [] 0)

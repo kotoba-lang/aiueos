@@ -49,7 +49,8 @@
        (= (read-u32 object object-length 16) 16)
        (= (read-u32 object object-length 16) (read-u32 transaction transaction-length 8))
        (= (read-u32 object object-length 20) (read-u32 transaction transaction-length 12))
-       (= (fnv16 (+ object 24) 16) (read-u32 object object-length 20))
-       (bytes-equal-16 (+ object 24) (+ transaction 16))))
+       (= (fnv16 (kernel-subregion object object-length 24 16) 16) (read-u32 object object-length 20))
+       (bytes-equal-16 (kernel-subregion object object-length 24 16)
+                        (kernel-subregion transaction transaction-length 16 16))))
 
 (defn main [] 0)
