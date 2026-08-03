@@ -166,6 +166,72 @@
        {:kind :external-undeclared :coordinate coordinate})
      (adoption-errors entries adoption))))
 
+;; --- platform floor --------------------------------------------------------
+;;
+;; `java.base` carries `:minimum-version` and an `:assurance-gap`, because a
+;; host runtime cannot be content-addressed from inside this repository. That
+;; is honest about what cannot be pinned, but it left the *declared* floor
+;; unchecked against the one place in the repository that provisions a JDK, and
+;; the two disagreed: the floor says 25 and `.github/workflows/ci.yml`
+;; provisions temurin 21.
+;;
+;; Which of the two is wrong is a decision, not a fact this namespace can
+;; derive, so the check does not pick a side and does not turn CI red for
+;; having the disagreement. It requires the disagreement to be *recorded
+;; accurately while it exists* — and to be removed once it stops existing.
+;; Either resolution flips the same bit, so the record cannot rot into a stale
+;; comment about a contradiction someone already fixed.
+
+(def workflow-path ".github/workflows/ci.yml")
+
+(defn provisioned-java-versions
+  "Major versions provisioned by `actions/setup-java` steps in the CI
+  workflow, or nil when the workflow is not readable from here.
+
+  Read with a regex rather than a YAML parser on purpose: the value wanted is
+  one scalar under a fixed key, and adding a YAML dependency to satisfy it
+  would put a parser in the TCB this inventory exists to bound."
+  ([] (provisioned-java-versions workflow-path))
+  ([path]
+   (let [file (io/file path)]
+     (when (.exists file)
+       (->> (re-seq #"(?m)^\s*java-version:\s*\"?(\d+)" (slurp file))
+            (map (comp parse-long second))
+            distinct
+            sort
+            vec)))))
+
+(defn- platform-floor-errors [inventory]
+  (let [entry (first (filter #(and (= :platform (:source %)) (:minimum-version %))
+                             (:tcb/external inventory)))
+        provisioned (provisioned-java-versions)]
+    (when (and entry provisioned)
+      (let [floor (:minimum-version entry)
+            unmet (vec (remove #(>= % floor) provisioned))
+            recorded (:floor-unmet-by-ci entry)]
+        (cond
+          (empty? provisioned)
+          [{:kind :platform-floor-unmeasurable
+            :coordinate (:coordinate entry) :workflow workflow-path}]
+
+          (and (seq unmet) (nil? recorded))
+          [{:kind :platform-floor-contradiction-unrecorded
+            :coordinate (:coordinate entry) :minimum-version floor
+            :provisioned unmet :workflow workflow-path}]
+
+          (and (empty? unmet) (some? recorded))
+          [{:kind :platform-floor-contradiction-stale
+            :coordinate (:coordinate entry) :minimum-version floor
+            :provisioned provisioned :recorded recorded}]
+
+          (and (seq unmet)
+               (not= unmet (vec (:provisioned recorded))))
+          [{:kind :platform-floor-contradiction-drift
+            :coordinate (:coordinate entry)
+            :recorded (:provisioned recorded) :actual unmet}]
+
+          :else nil)))))
+
 ;; --- transitive closure ----------------------------------------------------
 ;;
 ;; `:tcb/external` records what this repository *declares*. It cannot see what
@@ -247,6 +313,7 @@
                   [{:kind :duplicate-path}])
                 (file-errors files)
                 (external-errors inventory deps adoption)
+                (platform-floor-errors inventory)
                 (classpath-errors inventory)))]
      {:valid? (empty? errors)
       :files (count files)

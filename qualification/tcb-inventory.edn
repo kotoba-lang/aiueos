@@ -38,6 +38,12 @@
    :sha256 "1e6ff3436f957c421e2e4d03e9be2e6eb57f2c6cc904f0e322aee770c92811de"}
   {:path "src/aiueos/sbom.clj" :role :release-attestation-authority
    :sha256 "ada13627826c5f26c43ed991abfd43bb30e30b71f1b86b42dcb914bf98f58bea"}
+  ;; The checker is in the inventory it checks. It was the one file whose
+  ;; content decides whether drift is reported and whose own content nothing
+  ;; recorded, so weakening a check left no trace here. No fixpoint problem:
+  ;; the digest of the source lives in this sibling EDN, not in the source.
+  {:path "src/aiueos/tcb.clj" :role :tcb-inventory-authority
+   :sha256 "ee96c177c4cd05631476318852a9a966289f815c40ee74881017c4bb120e9951"}
   {:path "src/aiueos/audit.cljc" :role :audit-emission
    :sha256 "8e2c47608810192dd4f6a4e3ed2cbb41ec249a41506cfd81464120c546ba082c"}
   {:path "src/aiueos/sealed_audit.clj" :role :audit-confidentiality-integrity
@@ -79,9 +85,18 @@
    :role :crypto-ffi-process-runtime :source :platform
    ;; The host runtime cannot be content-addressed from inside this repository;
    ;; recorded as a gap rather than pinned by a version string that nothing
-   ;; verifies. `.github/workflows/ci.yml` currently provisions temurin 21,
-   ;; which does not satisfy the declared floor — unresolved, see ADR-0016.
-   :assurance-gap :platform-runtime-not-content-addressed}]
+   ;; verifies.
+   :assurance-gap :platform-runtime-not-content-addressed
+   ;; The declared floor and the only place in this repository that provisions
+   ;; a JDK disagree. Which one is wrong is an owner decision, so this records
+   ;; the disagreement instead of picking a side — and `aiueos.tcb` checks the
+   ;; record against the workflow, so raising the runner to >= 25 or lowering
+   ;; the floor to 21 both make this entry fail until it is removed. It cannot
+   ;; rot into a comment about a contradiction someone already fixed.
+   :floor-unmet-by-ci {:workflow ".github/workflows/ci.yml"
+                       :provisioned [21]
+                       :decision :owner-pending
+                       :see "docs/adr/0016-content-addressed-external-tcb.md"}}]
  ;; The transitive closure `:tcb/external` cannot express. `org.clojure/clojure`,
  ;; `spec.alpha` and `core.specs.alpha` are on every runtime classpath here and
  ;; are named by no declaration in `deps.edn`. Note the version: the shared

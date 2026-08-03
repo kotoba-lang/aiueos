@@ -21,10 +21,14 @@
     "src/aiueos/sealed_state.clj"
     "src/aiueos/hvt.cljc"
     "src/aiueos/vfio.cljc"
-    "src/aiueos/sbom.clj"})
+    "src/aiueos/sbom.clj"
+    ;; The checker is in the inventory it checks. Without this, weakening a
+    ;; check leaves no digest trace anywhere -- the one file whose content
+    ;; decides whether drift is reported was the one file free to drift.
+    "src/aiueos/tcb.clj"})
 
 (deftest checked-in-tcb-inventory-has-no-drift
-  (is (= {:valid? true :files 25 :external 5 :classpath 9 :errors []}
+  (is (= {:valid? true :files 26 :external 5 :classpath 9 :errors []}
          (tcb/validate))))
 
 (deftest authority-and-escape-boundaries-cannot-disappear-silently
@@ -97,6 +101,63 @@
         result (tcb/validate inventory {:deps {}} nil)]
     (is (false? (:valid? result)))
     (is (= :external-unpinned (-> result :errors first :kind)))))
+
+;; --- platform floor --------------------------------------------------------
+;;
+;; The floor and the CI runner disagree today. These read the versions the
+;; workflow actually provisions rather than hardcoding 21, so raising the
+;; runner does not turn them into assertions about a number that moved.
+
+(def provisioned-versions (tcb/provisioned-java-versions))
+
+(defn- platform-inventory [entry]
+  (assoc git-dep-inventory :tcb/external [entry]))
+
+(defn- platform-errors [entry]
+  (:errors (tcb/validate (platform-inventory entry) {:deps {}} nil)))
+
+(deftest the-ci-workflow-java-version-is-readable
+  (is (seq provisioned-versions)
+      "the floor check is inert if no setup-java version can be read")
+  (is (every? int? provisioned-versions)))
+
+(deftest a-floor-the-runner-does-not-meet-must-be-recorded
+  (let [floor (inc (apply max provisioned-versions))
+        errors (platform-errors {:coordinate "java.base" :source :platform
+                                 :role :crypto-ffi-process-runtime
+                                 :minimum-version floor
+                                 :assurance-gap :platform-runtime-not-content-addressed})]
+    (is (= :platform-floor-contradiction-unrecorded (:kind (first errors))))
+    (is (= (vec provisioned-versions) (:provisioned (first errors))))))
+
+(deftest a-recorded-contradiction-that-no-longer-exists-is-fail-closed
+  (let [floor (apply min provisioned-versions)
+        errors (platform-errors {:coordinate "java.base" :source :platform
+                                 :role :crypto-ffi-process-runtime
+                                 :minimum-version floor
+                                 :assurance-gap :platform-runtime-not-content-addressed
+                                 :floor-unmet-by-ci {:provisioned [1]}})]
+    (is (= :platform-floor-contradiction-stale (:kind (first errors)))
+        "resolving the disagreement either way must delete the record, or the
+         record becomes a comment about a contradiction someone already fixed")))
+
+(deftest a-recorded-contradiction-must-name-the-right-versions
+  (let [floor (inc (apply max provisioned-versions))
+        errors (platform-errors {:coordinate "java.base" :source :platform
+                                 :role :crypto-ffi-process-runtime
+                                 :minimum-version floor
+                                 :assurance-gap :platform-runtime-not-content-addressed
+                                 :floor-unmet-by-ci {:provisioned [1]}})]
+    (is (= :platform-floor-contradiction-drift (:kind (first errors))))))
+
+(deftest setup-java-versions-are-read-from-the-workflow
+  (let [file (java.io.File/createTempFile "ci-workflow" ".yml")]
+    (try
+      (spit file "steps:\n  - uses: actions/setup-java@v4\n    with:\n      java-version: \"21\"\n  - uses: actions/setup-java@v4\n    with:\n      java-version: 25\n")
+      (is (= [21 25] (tcb/provisioned-java-versions (.getPath file))))
+      (finally (.delete file))))
+  (is (nil? (tcb/provisioned-java-versions "does/not/exist.yml"))
+      "an unreadable workflow reports nothing rather than an empty measurement"))
 
 (deftest the-security-adoption-record-must-agree-with-the-inventory
   (let [inventory (tcb/read-inventory)
