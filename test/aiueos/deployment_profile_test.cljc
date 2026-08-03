@@ -83,6 +83,15 @@
           :tcb-inventory-digest
           "sha256:5a5b4092bbd4f5451d8548a406e34a92c256d323a83fb57d0a192a141b5195f3"
           :tcb-drift-check? true
+          ;; "reproducible, signed, independently verified release pipeline"
+          ;; (docs/deployment-profiles.md) -- the reproducible half, supplied by
+          ;; `aiueos.reproducibility`. The reproduced artifact must be the
+          ;; attested one, so these two digests are deliberately equal.
+          :artifact-digest
+          "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+          :reproducibility-qualified? true
+          :reproducibility-artifact-digest
+          "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
           :side-channel-decision
           (update (:side-channel-decision sensitive-evidence)
                   :mitigations into
@@ -125,6 +134,24 @@
                     :aiueos/profile-evidence
                     (dissoc regulated-evidence
                             :tcb-inventory-digest :tcb-drift-check?)})))))
+
+(deftest regulated-profile-requires-a-reproduction-of-the-attested-artifact
+  (is (= [:reproducibility-qualified? :reproducibility-artifact-digest]
+         (filterv #{:reproducibility-qualified? :reproducibility-artifact-digest}
+                  (profile/profile-violations
+                   {:aiueos/deployment-profile :regulated
+                    :aiueos/profile-evidence
+                    (dissoc regulated-evidence
+                            :reproducibility-qualified?
+                            :reproducibility-artifact-digest)}))))
+  (is (= [:reproducibility-artifact-binding]
+         (filterv #{:reproducibility-artifact-binding}
+                  (profile/profile-violations
+                   {:aiueos/deployment-profile :regulated
+                    :aiueos/profile-evidence
+                    (assoc regulated-evidence :reproducibility-artifact-digest
+                           "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee")})))
+      "a qualified reproduction of something else must not satisfy this release"))
 
 (deftest regulated-profile-requires-monotonic-converged-key-lifecycle
   (let [evidence (-> regulated-evidence

@@ -22,6 +22,7 @@
 (def inventory-path "qualification/tcb-inventory.edn")
 (def deps-path "deps.edn")
 (def adoption-path "security-adoption.edn")
+(def build-identity-path "qualification/build-identity.edn")
 
 (def inventory-version
   "The only inventory shape this checker admits. Version 3 added
@@ -278,6 +279,71 @@
          [{:kind :classpath-unrecorded :jar jar}]))
      (classpath-jars))))
 
+;; --- adopted build properties ----------------------------------------------
+;;
+;; `qualification/build-identity.edn` names the supply-chain properties this
+;; repository holds on purpose. A list of properties is worth no more than the
+;; `:tcb/external` list was before it was checked, so the same rule applies:
+;; every claim must name a mechanism that exists and either a gate that enforces
+;; it or an explicit gap. A property with neither is a claim nothing carries.
+
+(def build-identity-version 1)
+
+(defn- property-errors [tcb-paths {:keys [property statement mechanism gate assurance-gaps]}]
+  (cond
+    (not (keyword? property)) [{:kind :property-missing-name}]
+    (not (and (string? statement) (not (str/blank? statement))))
+    [{:kind :property-missing-statement :property property}]
+    (empty? mechanism) [{:kind :property-without-mechanism :property property}]
+    (and (empty? gate) (empty? assurance-gaps))
+    ;; The whole point: an unenforced property must say so rather than read as
+    ;; an established one.
+    [{:kind :property-unenforced-and-ungapped :property property}]
+    (not (every? keyword? assurance-gaps))
+    [{:kind :property-malformed-gap :property property}]
+    :else
+    (concat
+     (for [path (concat mechanism gate)
+           :when (not (.exists (io/file path)))]
+       {:kind :property-path-missing :property property :path path})
+     ;; A mechanism inside `src/` is trusted code. Leaving it out of
+     ;; `:tcb/files` would let the implementation of a declared property change
+     ;; without the review the inventory exists to force.
+     (for [path mechanism
+           :when (and (str/starts-with? path "src/")
+                      (not (contains? tcb-paths path)))]
+       {:kind :property-mechanism-not-in-tcb :property property :path path}))))
+
+(defn validate-build-identity
+  "Errors in the adopted-property record, cross-checked against the checked-in
+  TCB inventory.
+
+  Both arguments default to the documents on disk, because this check is about
+  two *records* agreeing with each other — the same relationship
+  `security-adoption.edn` has with the inventory — rather than about whatever
+  inventory value a caller happens to be validating."
+  ([] (validate-build-identity (read-edn-file build-identity-path)))
+  ([document] (validate-build-identity document (read-inventory)))
+  ([document inventory]
+   (let [tcb-paths (into #{} (map :path) (:tcb/files inventory))]
+     (cond
+       (nil? document) [{:kind :build-identity-missing :path build-identity-path}]
+
+       (not= build-identity-version (:build-identity/version document))
+       [{:kind :build-identity-unsupported-version
+         :actual (:build-identity/version document)}]
+
+       (empty? (:adopted document)) [{:kind :build-identity-empty}]
+
+       :else
+       (concat
+        (mapcat #(property-errors tcb-paths %) (:adopted document))
+        (for [{:keys [property reason]} (:non-goals document)
+              :when (not (and (keyword? property)
+                              (string? reason)
+                              (not (str/blank? reason))))]
+          {:kind :non-goal-without-reason :property property}))))))
+
 (defn- file-errors [files]
   (mapcat
    (fn [{:keys [path role sha256]}]
@@ -314,11 +380,13 @@
                 (file-errors files)
                 (external-errors inventory deps adoption)
                 (platform-floor-errors inventory)
-                (classpath-errors inventory)))]
+                (classpath-errors inventory)
+                (validate-build-identity)))]
      {:valid? (empty? errors)
       :files (count files)
       :external (count (:tcb/external inventory))
       :classpath (count (:tcb/classpath inventory))
+      :properties (count (:adopted (read-edn-file build-identity-path)))
       :errors errors})))
 
 (defn print-classpath

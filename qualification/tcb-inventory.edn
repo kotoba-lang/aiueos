@@ -31,19 +31,27 @@
   {:path "src/aiueos/surface.cljc" :role :host-provider-surface
    :sha256 "5d0e4e1a242d8c221e839c422e39dea8bd189042e6aa686b71dc066f5873497e"}
   {:path "src/aiueos/deployment_profile.cljc" :role :production-admission
-   :sha256 "42368ef83846160af5bda5687c80c1206bb031091a55c2dcc82b9e3365c37be3"}
+   :sha256 "26145acb9a7351d47ab9587d6bc8c31cba840b581e5b0dab214148a44694ca3e"}
   {:path "src/aiueos/launcher.cljc" :role :component-launch-control
    :sha256 "6cf6689d74dc40a12430ad82ae70c56b07d6e4b9bdacdeaad21947da97ff8f87"}
   {:path "src/aiueos/pid1.cljc" :role :boot-root
    :sha256 "1e6ff3436f957c421e2e4d03e9be2e6eb57f2c6cc904f0e322aee770c92811de"}
   {:path "src/aiueos/sbom.clj" :role :release-attestation-authority
-   :sha256 "ada13627826c5f26c43ed991abfd43bb30e30b71f1b86b42dcb914bf98f58bea"}
+   :sha256 "0104609cc717daa4d060d36abaefecaf8b270cc84547c350a1eed2f66682fb03"}
+  {:path "src/aiueos/reproducibility.clj" :role :release-reproducibility-authority
+   :sha256 "55416e9d8effd4c4b5c0f56e858658297ed3ae4ce2fc1ef70a0163c018d65f32"}
   ;; The checker is in the inventory it checks. It was the one file whose
   ;; content decides whether drift is reported and whose own content nothing
   ;; recorded, so weakening a check left no trace here. No fixpoint problem:
   ;; the digest of the source lives in this sibling EDN, not in the source.
   {:path "src/aiueos/tcb.clj" :role :tcb-inventory-authority
-   :sha256 "ee96c177c4cd05631476318852a9a966289f815c40ee74881017c4bb120e9951"}
+   :sha256 "eb1638fc909b9034c3bbbc0925bdc4c02e9e61ed8296f9ece3225c15bbb797cc"}
+  ;; The record of which supply-chain properties this repository holds on
+  ;; purpose. Pinned for the same reason the checker is: a property quietly
+  ;; deleted from an unpinned list leaves no trace, and `aiueos.tcb` only
+  ;; checks the shape of what it finds there.
+  {:path "qualification/build-identity.edn" :role :adopted-property-record
+   :sha256 "1961cb4df57b2c5d10e5704fe5f0630303eddeb329f6dacabbc83a70de3948ec"}
   {:path "src/aiueos/audit.cljc" :role :audit-emission
    :sha256 "8e2c47608810192dd4f6a4e3ed2cbb41ec249a41506cfd81464120c546ba082c"}
   {:path "src/aiueos/sealed_audit.clj" :role :audit-confidentiality-integrity

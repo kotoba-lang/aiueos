@@ -28,7 +28,7 @@
     "src/aiueos/tcb.clj"})
 
 (deftest checked-in-tcb-inventory-has-no-drift
-  (is (= {:valid? true :files 26 :external 5 :classpath 9 :errors []}
+  (is (= {:valid? true :files 28 :external 5 :classpath 9 :properties 6 :errors []}
          (tcb/validate))))
 
 (deftest authority-and-escape-boundaries-cannot-disappear-silently
@@ -219,3 +219,62 @@
                                 :scope :runtime :sha256 (apply str (repeat 64 "0"))})]
     (is (true? (:valid? (tcb/validate inventory)))
         "the check runs under more than one alias; recorded-but-absent is normal")))
+
+;; --- adopted build properties ---------------------------------------------
+;;
+;; `qualification/build-identity.edn` names the supply-chain properties this
+;; repository holds on purpose. The list is worth what `:tcb/external` was worth
+;; before it was checked, so it is checked: a property must name a mechanism
+;; that exists and either a gate or an explicit gap.
+
+(def build-identity (edn/read-string (slurp tcb/build-identity-path)))
+
+(defn- with-property [entry]
+  (tcb/validate-build-identity (assoc build-identity :adopted [entry])))
+
+(def example-property
+  {:property :example
+   :statement "An example property."
+   :mechanism ["src/aiueos/tcb.clj"]
+   :gate ["test/aiueos/tcb_test.clj"]})
+
+(deftest the-checked-in-property-record-is-clean
+  (is (= [] (vec (tcb/validate-build-identity))))
+  (is (seq (:adopted build-identity)))
+  (is (seq (:non-goals build-identity))
+      "what is deliberately not taken is part of the record, not an omission"))
+
+(deftest example-property-baseline-is-clean
+  (is (= [] (vec (with-property example-property)))))
+
+(deftest a-property-with-neither-a-gate-nor-a-gap-cannot-pass-silently
+  (let [errors (with-property (dissoc example-property :gate))]
+    (is (= :property-unenforced-and-ungapped (:kind (first errors))))))
+
+(deftest an-unenforced-property-may-declare-its-gap-instead
+  (is (= [] (vec (with-property (-> example-property
+                                    (dissoc :gate)
+                                    (assoc :assurance-gaps [:not-yet-wired])))))))
+
+(deftest a-property-naming-a-mechanism-that-does-not-exist-is-fail-closed
+  (let [errors (with-property (assoc example-property :mechanism ["src/aiueos/gone.clj"]))]
+    (is (some #(= :property-path-missing (:kind %)) errors))))
+
+(deftest a-trusted-mechanism-outside-the-inventory-is-fail-closed
+  ;; Otherwise the implementation of a declared property could change without
+  ;; the review the inventory exists to force.
+  (let [errors (tcb/validate-build-identity
+                (assoc build-identity :adopted [example-property])
+                (assoc (tcb/read-inventory) :tcb/files []))]
+    (is (= :property-mechanism-not-in-tcb (:kind (first errors))))))
+
+(deftest a-non-goal-without-a-reason-is-fail-closed
+  (let [errors (tcb/validate-build-identity
+                (assoc build-identity :non-goals [{:property :something}]))]
+    (is (= :non-goal-without-reason (:kind (first errors))))))
+
+(deftest an-emptied-property-record-is-fail-closed
+  (is (= :build-identity-empty
+         (:kind (first (tcb/validate-build-identity (assoc build-identity :adopted []))))))
+  (is (= :build-identity-missing
+         (:kind (first (tcb/validate-build-identity nil))))))
