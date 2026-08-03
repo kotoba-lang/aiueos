@@ -22,6 +22,6 @@
                     (= (read-u32 base length 0) 43))
                 (= (read-u32 base length 4) 3)))
        (= (read-u32 base length 8) 16)
-       (= (fnv (+ base 16) 16) (read-u32 base length 12))))
+       (= (fnv (kernel-subregion base length 16 16) 16) (read-u32 base length 12))))
 
 (defn main [] 0)
