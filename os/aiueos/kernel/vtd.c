@@ -29,6 +29,18 @@ extern uint64_t aiueos_acpi_dmar_register_base(void);
 extern uint16_t aiueos_acpi_dmar_segment(void);
 extern int aiueos_acpi_dmar_include_all(void);
 extern void aiueos_acpi_set_vtd_translation_enabled(int enabled);
+/* Whether this DMAR topology may be programmed at all, whether the unit's
+   CAP/VER admit the tables built below, and WHERE its IOTLB register sits --
+   an offset derived from a hardware-reported ECAP field -- are decisions and
+   live in kotoba/vtd-admit.kotoba; everything below is mechanism. The object's
+   header documents the packed plan and why the caller asks twice. */
+extern uint64_t kotoba_aiueos_vtd_admit(uint64_t drhd_count, uint64_t segment,
+                                        uint64_t version, uint64_t cap,
+                                        uint64_t ecap);
+#define VTD_PLAN_ADMITTED 1ULL
+#define VTD_PLAN_ABSENT 2ULL
+#define VTD_PLAN_TOPOLOGY 4ULL
+#define VTD_PLAN_REMAPPING 8ULL
 
 static volatile uint8_t *registers;
 static uint64_t *root_table, *context_table, *sl_pml4, *sl_pdpt, *sl_pd, *ir_table;
@@ -68,16 +80,29 @@ int aiueos_vtd_initialize(void) {
   interrupt_remapping_supported = 0;
   interrupt_remapping_enabled = 0;
   aiueos_acpi_set_vtd_translation_enabled(0);
-  if (!aiueos_acpi_dmar_drhd_count()) return 1;
-  if (aiueos_acpi_dmar_drhd_count() != 1 || aiueos_acpi_dmar_segment() != 0) return 0;
+  /* Before the window is mapped only the ACPI topology is known, so the plan
+     is asked for with the three registers still unread. It answers ABSENT (no
+     remapping hardware, succeed) or TOPOLOGY (exactly one unit on segment 0,
+     you may map it) or refuses outright. */
+  uint64_t gate = kotoba_aiueos_vtd_admit(aiueos_acpi_dmar_drhd_count(),
+                                          aiueos_acpi_dmar_segment(), 0, 0, 0);
+  if (gate & VTD_PLAN_ABSENT) return 1;
+  if (!(gate & VTD_PLAN_TOPOLOGY)) return 0;
   uint64_t base = aiueos_acpi_dmar_register_base();
   if (!base || !aiueos_map_pci_mmio(base, 4096)) return 0;
   registers = (volatile uint8_t *)(uintptr_t)base;
   uint32_t version = read32(0);
   uint64_t cap = read64(VTD_CAP), ecap = read64(VTD_ECAP);
-  /* Legacy root/context format, 48-bit adjusted guest width, and 2 MiB leaves. */
-  if (!version || !(cap & (1ULL << (8 + 2))) || !(cap & (1ULL << 34))) return 0;
-  interrupt_remapping_supported = !!(ecap & (1ULL << 3));
+  /* The whole admission again, now against the registers: legacy root/context
+     format, 48-bit adjusted guest width, 2 MiB leaves, interrupt-remapping
+     support, and the bounded IOTLB register offset -- one plan, so none of
+     these was decided against a different ECAP than the others. */
+  uint64_t plan = kotoba_aiueos_vtd_admit(aiueos_acpi_dmar_drhd_count(),
+                                          aiueos_acpi_dmar_segment(),
+                                          version, cap, ecap);
+  if (!(plan & VTD_PLAN_ADMITTED)) return 0;
+  interrupt_remapping_supported = (plan & VTD_PLAN_REMAPPING) ? 1 : 0;
+  uint32_t iotlb = (uint32_t)(plan >> 4);
 
   root_table = aiueos_allocate_physical_page();
   context_table = aiueos_allocate_physical_page();
@@ -105,8 +130,6 @@ int aiueos_vtd_initialize(void) {
   if (!wait32(VTD_GSTS, VTD_GSTS_RTPS, VTD_GSTS_RTPS)) { vtd_error = 3; return 0; }
   write64(VTD_CCMD, (1ULL << 63) | (1ULL << 61));
   if (!wait64_clear(VTD_CCMD, 1ULL << 63)) { vtd_error = 4; return 0; }
-  uint32_t iotlb = (uint32_t)((ecap >> 8) & 0x3ffU) * 16U + 8U;
-  if (iotlb < 8 || iotlb > 0xff8) { vtd_error = 5; return 0; }
   write64(iotlb, (1ULL << 63) | (1ULL << 60));
   if (!wait64_clear(iotlb, 1ULL << 63)) { vtd_error = 6; return 0; }
   write32(VTD_GCMD, VTD_GCMD_TE);
