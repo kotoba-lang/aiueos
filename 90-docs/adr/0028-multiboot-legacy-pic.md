@@ -56,12 +56,19 @@ IF set, so it arrived after `sti`.
 `legacy_pic_disable()` at the top of `install_idt_and_time_lapic`, so both the
 MB1 and GRUB MB2 paths get it: ICW1–ICW4, then `OCW1 = 0xFF` on both chips.
 
-**The vector bases are moved to 0xF0/0xF8 before masking, deliberately.** A
-masked PIC delivers nothing, so the remap is not what fixes the bug — but if a
-line is ever unmasked later, the vector then reports as itself instead of
-aliasing onto a CPU exception vector or onto 32, which this path uses for the
-timer. IRQ0 masquerading as `#DF` is exactly what made this opaque for as long
-as it was.
+**The vector bases are moved before masking, deliberately.** A masked PIC
+delivers nothing, so the remap is not what fixes the bug — but if a line is ever
+unmasked later, the vector then reports as itself instead of aliasing onto a CPU
+exception vector or onto 32, which this path uses for the timer. IRQ0
+masquerading as `#DF` is exactly what made this opaque for as long as it was.
+
+> **Correction (ADR-0029): the bases chosen here were 0xF0/0xF8, and 0xF8 does
+> not meet that aim.** `0xF8 + 7 = 255`, which is the **LAPIC spurious vector**
+> (`apic.c` sets SVR to `0x100 | 0xff`) — so an unmasked IRQ15 would have been
+> indistinguishable from a spurious interrupt. The identical masquerade this
+> paragraph claims to prevent, one chip over. Both callers now pass 0xE0/0xE8,
+> and the Kotoba object that replaced this C **refuses 248** so the mistake
+> cannot be made again.
 
 Independently, the silent `aiueos_mb_isr_default` is replaced by 256 per-vector
 stubs reporting vector, error code, RIP, CS, RFLAGS, CR2 and the PIC ISR. The

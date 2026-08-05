@@ -21,6 +21,14 @@ kotoba_msr_write_object=${AIUEOS_KOTOBA_MSR_WRITE_OBJECT:-"$aiueos/kotoba/msr-wr
 # Same shape as the apic.c/MSR omission the comment above records.
 kotoba_acpi_checksum_object=${AIUEOS_KOTOBA_ACPI_CHECKSUM_OBJECT:-"$aiueos/kotoba/acpi-checksum-ok.o"}
 kotoba_acpi_table_valid_object=${AIUEOS_KOTOBA_ACPI_TABLE_VALID_OBJECT:-"$aiueos/kotoba/acpi-table-valid.o"}
+# multiboot/main.c's `legacy_pic_disable` is now a call into this object rather
+# than ten `out8`s -- the same object kernel/main.c calls on the UEFI path, which
+# is the point: ADR-0028's fix existed only here, and the UEFI path had the same
+# latent gap. Without it this link has one undefined symbol
+# (kotoba_aiueos_pic_disable). Same shape as the apic.c/MSR and acpi.c omissions
+# the two comments above record, which is why it is listed at the same time as
+# the C that needs it rather than after.
+kotoba_pic_disable_object=${AIUEOS_KOTOBA_PIC_DISABLE_OBJECT:-"$aiueos/kotoba/pic-disable.o"}
 # NOT linked here on purpose: kotoba/idt-gate-build.o. This path does not
 # include kernel/main.c -- it has its own multiboot/main.c, which keeps a
 # second copy of the same descriptor packing in C. Converting that copy would
@@ -50,6 +58,9 @@ python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_acpi_checksum_
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_acpi_table_valid_object" \
   441d326c311144b6a6b512e5a84c597c1052d903a0b7964d34ef8195baf2d241 \
   kotoba_aiueos_acpi_table_valid
+python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_pic_disable_object" \
+  65111cfab01b3981ec207cf1eee040b03dabebb0573a0e053e0b5d393568ab1e \
+  kotoba_aiueos_pic_disable
 
 zig cc -target x86_64-freestanding-none \
   -c -o "$mb/entry.o" "$aiueos/multiboot/entry.S"
@@ -68,7 +79,8 @@ zig cc -target x86_64-freestanding-none -std=c11 -O2 \
 zig ld.lld -T "$aiueos/multiboot/linker.ld" -o "$kernel64" \
   "$mb/entry.o" "$mb/main.o" "$mb/acpi.o" "$mb/apic.o" "$probe" \
   "$kotoba_msr_read_object" "$kotoba_msr_write_object" \
-  "$kotoba_acpi_checksum_object" "$kotoba_acpi_table_valid_object"
+  "$kotoba_acpi_checksum_object" "$kotoba_acpi_table_valid_object" \
+  "$kotoba_pic_disable_object"
 
 # QEMU's Multiboot loader wants an ELFCLASS32/EM_386 container; wrap the linked
 # x86_64 load image verbatim (the trampoline switches to long mode itself).
