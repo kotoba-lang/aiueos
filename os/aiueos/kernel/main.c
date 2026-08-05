@@ -335,6 +335,43 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
     }
     debug_string("AIUEOS_PAGING_OK cr3-owned wx-v1 nx-wp\n");
     serial_string("AIUEOS_PAGING_OK cr3-owned wx-v1 nx-wp\r\n");
+    /* Placed AFTER the kernel owns its own IDT and page tables, not beside the
+       other known-vector self-tests earlier in boot. Measured: running it there
+       faulted with the FIRMWARE's handler still installed, so the only output
+       was OVMF's "Can't find image information" dump -- no vector, no address,
+       nothing to act on. Here a fault reaches this kernel's own handler and
+       reports its vector, which is the difference between a diagnosable failure
+       and an opaque one.
+       X25519 against RFC 7748 §5.2's base-point vector, run here rather than
+       trusted from a transcription. The algorithm was checked by transcribing
+       the Kotoba into Python and running the published vectors; that proves the
+       ALGORITHM and says nothing about what the compiler emitted. This runs the
+       emitted object on the target and compares all 32 bytes, which is the only
+       evidence that covers the backend too.
+       The comparison reuses kotoba_aiueos_digest_equal -- the same fixed-work
+       32-byte compare the application catalog admits signatures with. */
+    {
+      extern uint64_t kotoba_aiueos_x25519(const uint8_t *, const uint8_t *,
+                                           uint8_t *, uint8_t *);
+      extern uint64_t kotoba_aiueos_digest_equal(const uint8_t *, const uint8_t *,
+                                                 uint64_t);
+      static const uint8_t x_scalar[32] = {
+        0x77,0x07,0x6d,0x0a,0x73,0x18,0xa5,0x7d,0x3c,0x16,0xc1,0x72,0x51,0xb2,0x66,0x45,
+        0xdf,0x4c,0x2f,0x87,0xeb,0xc0,0x99,0x2a,0xb1,0x77,0xfb,0xa5,0x1d,0xb9,0x2c,0x2a};
+      static const uint8_t x_base[32] = {9};
+      static const uint8_t x_expected[32] = {
+        0x85,0x20,0xf0,0x09,0x89,0x30,0xa7,0x54,0x74,0x8b,0x7d,0xdc,0xb4,0x3e,0xf7,0x5a,
+        0x0d,0xbf,0x3a,0x0d,0x26,0x38,0x1a,0xf4,0xeb,0xa4,0xa9,0x8e,0xaa,0x9b,0x4e,0x6a};
+      static uint8_t x_output[32];
+      static uint8_t x_workspace[646];
+      if (!kotoba_aiueos_x25519(x_scalar, x_base, x_output, x_workspace) ||
+          !kotoba_aiueos_digest_equal(x_output, x_expected, 32)) {
+        serial_string("AIUEOS_X25519_FAIL rfc7748-base-point\r\n");
+        qemu_exit(0x6f);
+      }
+      debug_string("AIUEOS_X25519_OK rfc7748-base-point 32-bytes\n");
+      serial_string("AIUEOS_X25519_OK rfc7748-base-point 32-bytes\r\n");
+    }
     if (!aiueos_framebuffer_initialize(boot)) {
       debug_string("AIUEOS_FRAMEBUFFER_FAIL gop-contract\n");
       serial_string("AIUEOS_FRAMEBUFFER_FAIL gop-contract\r\n");

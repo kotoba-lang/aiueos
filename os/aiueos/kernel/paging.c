@@ -45,6 +45,9 @@ extern void *aiueos_allocate_physical_page(void);
 extern int aiueos_free_physical_page(void *page);
 extern uint64_t kotoba_aiueos_page_mapping_plan(uint64_t process,uint64_t kind,
   uint64_t size,uint64_t active,uint64_t existing);
+/* Whether a physical range may be mapped at all is a decision and lives in
+   kotoba/mmio-map-admit.kotoba; everything below is mechanism. */
+extern uint64_t kotoba_aiueos_mmio_map_admit(uint64_t address, uint64_t length);
 int aiueos_address_space_reclaim(unsigned process);
 void *aiueos_address_space_private_backing(unsigned process);
 static uint64_t kernel_cr3;
@@ -387,10 +390,7 @@ static uint64_t *pci_known_directory(uint64_t entry) {
 }
 
 int aiueos_map_pci_mmio(uint64_t address, uint64_t length) {
-  if (!length || address < 0x40000000ULL || address >= 0x10000000000ULL ||
-      length > 0x40000000ULL || address + length < address ||
-      address + length > 0x10000000000ULL ||
-      (address >> 30) != ((address + length - 1) >> 30)) return 0;
+  if (!kotoba_aiueos_mmio_map_admit(address, length)) return 0;
   uint64_t pml4_index = address >> 39;
   uint64_t pdpt_index = (address >> 30) & 0x1ff;
   uint64_t *target_pdpt = pci_resolve_pdpt(pml4_index);
