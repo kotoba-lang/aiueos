@@ -1,8 +1,6 @@
 #include <stdint.h>
 #include <stddef.h>
 
-#define PCI_CONFIG_ADDRESS 0xcf8
-#define PCI_CONFIG_DATA 0xcfc
 #define VIRTIO_VENDOR_ID 0x1af4
 #define VIRTIO_RNG_MODERN_ID 0x1044
 #define VIRTIO_RNG_TRANSITIONAL_ID 0x1005
@@ -37,21 +35,27 @@ extern int aiueos_vtd_translation_enabled(void);
 extern int aiueos_vtd_program_msix(uint16_t source_id, uint16_t index, uint8_t vector,
                                    uint32_t apic_id, uint32_t *address, uint32_t *data);
 
-static inline void out32(uint16_t port, uint32_t value) {
-  __asm__ volatile("outl %0, %1" : : "a"(value), "Nd"(port));
-}
-static inline uint32_t in32(uint16_t port) {
-  uint32_t value; __asm__ volatile("inl %1, %0" : "=a"(value) : "Nd"(port)); return value;
-}
+/* PCI configuration space now lives in Kotoba (kotoba/pci-config-read.kotoba,
+   kotoba/pci-config-write.kotoba). The port numbers, the CONFIG_ADDRESS word
+   and both `out`/`in` instructions moved with it -- this file no longer names
+   0xcf8/0xcfc and no longer contains the inline asm that reached them.
+
+   These two wrappers remain because they keep every call site below unchanged
+   and keep the uint8_t typing at the boundary; they carry no decision. The
+   field-domain check that used to be implicit in `uint8_t` is made explicitly
+   on the Kotoba side, which is also where the refusal is defined: a read
+   refuses with 0xffffffff (the bus's own "nothing here"), a write refuses by
+   returning 0 and issuing no port write at all. */
+extern uint64_t kotoba_aiueos_pci_config_read(uint64_t bus, uint64_t dev,
+                                              uint64_t fn, uint64_t off);
+extern uint64_t kotoba_aiueos_pci_config_write(uint64_t bus, uint64_t dev,
+                                               uint64_t fn, uint64_t off,
+                                               uint64_t value);
 static uint32_t config_read(uint8_t bus, uint8_t dev, uint8_t fn, uint8_t off) {
-  uint32_t address = 0x80000000U | ((uint32_t)bus << 16) |
-    ((uint32_t)dev << 11) | ((uint32_t)fn << 8) | (off & 0xfcU);
-  out32(PCI_CONFIG_ADDRESS, address); return in32(PCI_CONFIG_DATA);
+  return (uint32_t)kotoba_aiueos_pci_config_read(bus, dev, fn, off);
 }
 static void config_write(uint8_t bus, uint8_t dev, uint8_t fn, uint8_t off, uint32_t value) {
-  uint32_t address = 0x80000000U | ((uint32_t)bus << 16) |
-    ((uint32_t)dev << 11) | ((uint32_t)fn << 8) | (off & 0xfcU);
-  out32(PCI_CONFIG_ADDRESS, address); out32(PCI_CONFIG_DATA, value);
+  (void)kotoba_aiueos_pci_config_write(bus, dev, fn, off, value);
 }
 static uint8_t config8(uint8_t b, uint8_t d, uint8_t f, uint8_t o) {
   return (uint8_t)(config_read(b,d,f,o) >> ((o & 3) * 8));
