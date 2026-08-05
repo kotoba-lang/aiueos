@@ -130,6 +130,15 @@ else
 fi
 iommu_args=
 if [ "${AIUEOS_TEST_DMAR:-0}" = 1 ]; then iommu_args="-device intel-iommu,intremap=on"; fi
+# A NIC is attached only when asked for, so every existing gate keeps booting
+# the exact machine it booted before. SLIRP ("-netdev user") is a real peer with
+# a fixed topology — it answers ARP for 10.0.2.2 — which is what lets the first
+# packet aiueos ever sends be checked against an actual reply rather than a
+# loopback of itself. No host network access is involved.
+net_args=
+if [ "${AIUEOS_TEST_NET:-0}" = 1 ]; then
+  net_args="-netdev user,id=aiueosnet -device virtio-net-pci,netdev=aiueosnet,disable-legacy=on"
+fi
 # A hung guest must fail fast with diagnostics rather than pinning CI until
 # the job-level timeout. 124 from timeout(1) is handled below.
 qemu_timeout=${AIUEOS_QEMU_TIMEOUT:-600}
@@ -158,6 +167,7 @@ while :; do
     -device isa-debug-exit,iobase=0xf4,iosize=0x04 \
     $iommu_args \
     $usb_args \
+    $net_args \
     -device virtio-rng-pci \
     -drive if=none,id=aiueosblk,format=raw,file="$blk_image" \
     -device virtio-blk-pci,drive=aiueosblk,disable-legacy=on \

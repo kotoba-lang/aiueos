@@ -12,6 +12,8 @@
 #define VIRTIO_INPUT_TRANSITIONAL_ID 0x1012
 #define VIRTIO_GPU_MODERN_ID 0x1050
 #define VIRTIO_GPU_TRANSITIONAL_ID 0x1010
+#define VIRTIO_NET_MODERN_ID 0x1041
+#define VIRTIO_NET_TRANSITIONAL_ID 0x1000
 #define PCI_STATUS_CAPABILITIES 0x10
 #define PCI_CAP_VENDOR 0x09
 #define PCI_CAP_MSIX 0x11
@@ -72,6 +74,11 @@ struct virtq_avail { uint16_t flags, index, ring[4], used_event; } __attribute__
 struct virtq_used_element { uint32_t id, length; } __attribute__((packed));
 struct virtq_used { uint16_t flags, index; struct virtq_used_element ring[4]; uint16_t avail_event; } __attribute__((packed));
 struct virtio_blk_request { uint32_t type, reserved; uint64_t sector; } __attribute__((packed));
+/* virtio 1.0 always carries `num_buffers`, so the header is 12 bytes on both
+   queues regardless of VIRTIO_NET_F_MRG_RXBUF, which is not negotiated here. */
+struct virtio_net_hdr {
+  uint8_t flags, gso_type; uint16_t hdr_len, gso_size, csum_start, csum_offset, num_buffers;
+} __attribute__((packed));
 struct virtio_input_event { uint16_t type, code; uint32_t value; } __attribute__((packed));
 struct virtio_gpu_ctrl_header {
   uint32_t type, flags; uint64_t fence_id; uint32_t context_id; uint8_t ring_index, padding[3];
@@ -742,13 +749,18 @@ static int negotiate(volatile struct virtio_common_cfg *cfg) {
   return 1;
 }
 
-static volatile uint16_t *prepare_queue(volatile struct virtio_common_cfg *cfg,
-                                        const struct virtio_caps *caps,
-                                        uint64_t notify_base, uint16_t size,
-                                        struct virtq_desc *desc,
-                                        struct virtq_avail *avail,
-                                        struct virtq_used *used) {
-  cfg->queue_select = 0;
+/* Every device before virtio-net used exactly one queue, so `prepare_queue`
+   selected queue 0 by construction. virtio-net needs two (0 = receive,
+   1 = transmit), and each has its own notify offset, so the index becomes a
+   parameter and the single-queue helper below keeps its old signature. */
+static volatile uint16_t *prepare_queue_index(volatile struct virtio_common_cfg *cfg,
+                                              const struct virtio_caps *caps,
+                                              uint64_t notify_base, uint16_t index,
+                                              uint16_t size,
+                                              struct virtq_desc *desc,
+                                              struct virtq_avail *avail,
+                                              struct virtq_used *used) {
+  cfg->queue_select = index;
   if (cfg->queue_size < size || cfg->queue_enable) return 0;
   cfg->queue_size = size;
   cfg->queue_desc = (uint64_t)(uintptr_t)desc;
@@ -758,6 +770,15 @@ static volatile uint16_t *prepare_queue(volatile struct virtio_common_cfg *cfg,
   uint64_t delta = (uint64_t)cfg->queue_notify_off * caps->notify.notify_multiplier;
   if (delta + 2 < delta || delta + 2 > caps->notify.length) return 0;
   return (volatile void *)(uintptr_t)(notify_base + delta);
+}
+
+static volatile uint16_t *prepare_queue(volatile struct virtio_common_cfg *cfg,
+                                        const struct virtio_caps *caps,
+                                        uint64_t notify_base, uint16_t size,
+                                        struct virtq_desc *desc,
+                                        struct virtq_avail *avail,
+                                        struct virtq_used *used) {
+  return prepare_queue_index(cfg,caps,notify_base,0,size,desc,avail,used);
 }
 
 static int virtio_rng(uint8_t b, uint8_t d, uint8_t f) {
@@ -1122,7 +1143,128 @@ static int virtio_gpu(uint8_t b, uint8_t d, uint8_t f) {
   return 0;
 }
 
+/* Frame admission is a decision, so it is a compiler-emitted Kotoba object;
+   this file only performs the bounded DMA and hands the bytes over. */
+extern uint64_t kotoba_aiueos_net_arp_reply_valid(uint64_t frame, uint64_t length,
+                                                  uint64_t expected_ip);
+
+static int net_ready;
+static uint32_t net_rx_length;
+int aiueos_virtio_net_ready(void) { return net_ready; }
+uint32_t aiueos_virtio_net_rx_length(void) { return net_rx_length; }
+
+/* SLIRP's fixed topology: the guest is 10.0.2.15 and the gateway that answers
+   ARP is 10.0.2.2. Nothing here depends on DHCP having run -- an ARP exchange
+   is the smallest thing that proves a real peer replied, and it needs no IP
+   stack at all, which is exactly why it is the first packet aiueos sends. */
+#define NET_GUEST_IP 0x0a00020fU
+#define NET_PEER_IP 0x0a000202U
+#define NET_FRAME_MAX 2048
+
+static void net_store_be16(uint8_t *at, uint16_t value) {
+  at[0] = (uint8_t)(value >> 8); at[1] = (uint8_t)value;
+}
+static void net_store_be32(uint8_t *at, uint32_t value) {
+  at[0] = (uint8_t)(value >> 24); at[1] = (uint8_t)(value >> 16);
+  at[2] = (uint8_t)(value >> 8); at[3] = (uint8_t)value;
+}
+
+/* A locally-administered address. The peer replies to whatever source it sees,
+   so this needs no VIRTIO_NET_F_MAC negotiation and reads nothing from the
+   device's own config space. */
+static const uint8_t net_mac[6] = {0x52,0x54,0x00,0xa1,0xe0,0x51};
+
+static uint32_t net_build_arp_request(uint8_t *frame) {
+  for (unsigned i = 0; i < 6; i++) frame[i] = 0xff;          /* broadcast */
+  for (unsigned i = 0; i < 6; i++) frame[6 + i] = net_mac[i];
+  net_store_be16(frame + 12, 0x0806);                        /* EtherType ARP */
+  net_store_be16(frame + 14, 1);                             /* Ethernet */
+  net_store_be16(frame + 16, 0x0800);                        /* IPv4 */
+  frame[18] = 6; frame[19] = 4;
+  net_store_be16(frame + 20, 1);                             /* request */
+  for (unsigned i = 0; i < 6; i++) frame[22 + i] = net_mac[i];
+  net_store_be32(frame + 28, NET_GUEST_IP);
+  for (unsigned i = 0; i < 6; i++) frame[32 + i] = 0;        /* unknown target */
+  net_store_be32(frame + 38, NET_PEER_IP);
+  return 42;
+}
+
+static int virtio_net(uint8_t b, uint8_t d, uint8_t f) {
+  struct virtio_caps caps;
+  volatile struct virtio_common_cfg *cfg;
+  uint64_t notify_base;
+  if (!find_virtio_caps(b,d,f,&caps) || !map_transport(b,d,f,&caps,&cfg,&notify_base) ||
+      !negotiate(cfg)) return 0;
+  if (cfg->num_queues < 2) return 0;
+  struct virtq_desc *rx_desc = aiueos_allocate_physical_page();
+  struct virtq_avail *rx_avail = aiueos_allocate_physical_page();
+  struct virtq_used *rx_used = aiueos_allocate_physical_page();
+  struct virtq_desc *tx_desc = aiueos_allocate_physical_page();
+  struct virtq_avail *tx_avail = aiueos_allocate_physical_page();
+  struct virtq_used *tx_used = aiueos_allocate_physical_page();
+  uint8_t *rx_page = aiueos_allocate_physical_page();
+  uint8_t *tx_page = aiueos_allocate_physical_page();
+  if (!rx_desc || !rx_avail || !rx_used || !tx_desc || !tx_avail || !tx_used ||
+      !rx_page || !tx_page) return 0;
+
+  /* The receive buffer is posted BEFORE the device is told it may run, so a
+     reply cannot arrive with no buffer to land in. */
+  rx_desc[0].address = (uint64_t)(uintptr_t)rx_page;
+  rx_desc[0].length = sizeof(struct virtio_net_hdr) + NET_FRAME_MAX;
+  rx_desc[0].flags = VIRTQ_DESC_F_WRITE; rx_desc[0].next = 0;
+  rx_avail->ring[0] = 0; __asm__ volatile("" ::: "memory"); rx_avail->index = 1;
+  volatile uint16_t *rx_doorbell =
+    prepare_queue_index(cfg,&caps,notify_base,0,1,rx_desc,rx_avail,rx_used);
+  if (!rx_doorbell) return 0;
+
+  uint32_t frame_length = net_build_arp_request(tx_page + sizeof(struct virtio_net_hdr));
+  for (unsigned i = 0; i < sizeof(struct virtio_net_hdr); i++) tx_page[i] = 0;
+  tx_desc[0].address = (uint64_t)(uintptr_t)tx_page;
+  tx_desc[0].length = sizeof(struct virtio_net_hdr) + frame_length;
+  tx_desc[0].flags = 0; tx_desc[0].next = 0;
+  tx_avail->ring[0] = 0; __asm__ volatile("" ::: "memory"); tx_avail->index = 1;
+  volatile uint16_t *tx_doorbell =
+    prepare_queue_index(cfg,&caps,notify_base,1,1,tx_desc,tx_avail,tx_used);
+  if (!tx_doorbell) return 0;
+
+  cfg->device_status |= VIRTIO_STATUS_DRIVER_OK;
+  *rx_doorbell = 0;
+  *tx_doorbell = 1;
+
+  /* A bounded SPIN, and specifically not `hlt`. This driver claims no MSI-X
+     vector -- unlike rng and blk, which install one before going live -- so
+     there is no interrupt to wake a sleeper, and the device's own unrouted
+     legacy interrupt stays harmlessly pending only for as long as interrupts
+     remain masked, which they are throughout enumeration. Measured: a variant
+     that waited with `sti; hlt; cli` (copied from the rng driver, which can
+     afford it because it HAS a vector) wedges the boot immediately after
+     AIUEOS_APIC_TIMER_OK.
+     The budget bounds the failure case: a completion that never arrives fails
+     the gate instead of parking the boot forever. It is never approached in the
+     success case, where the reply lands within microseconds of the doorbell. */
+  for (uint32_t budget = 0; budget < 200000000U; budget++) {
+    __asm__ volatile("" ::: "memory");
+    if (tx_used->index >= 1 && rx_used->index >= 1) break;
+  }
+  if (tx_used->index < 1 || rx_used->index < 1) return 0;
+  if (tx_used->ring[0].id != 0) return 0;
+
+  uint32_t received = rx_used->ring[0].length;
+  if (rx_used->ring[0].id != 0 ||
+      received <= sizeof(struct virtio_net_hdr) ||
+      received > sizeof(struct virtio_net_hdr) + NET_FRAME_MAX) return 0;
+  uint32_t payload = received - (uint32_t)sizeof(struct virtio_net_hdr);
+  if (!kotoba_aiueos_net_arp_reply_valid(
+        (uint64_t)(uintptr_t)(rx_page + sizeof(struct virtio_net_hdr)),
+        payload, NET_PEER_IP)) return 0;
+  net_rx_length = payload;
+  net_ready = 1;
+  return 1;
+}
+
 int aiueos_pci_enumerate(void) {
+  net_ready = 0;
+  net_rx_length = 0;
   object_store_ready = 0;
   kotoba_app_count=0; for(unsigned app=0;app<KOTOBA_APP_CAPACITY;app++)kotoba_apps[app].ready=0;
   journal_ready = 0;
@@ -1167,6 +1309,12 @@ int aiueos_pci_enumerate(void) {
             virtio_input((uint8_t)bus,dev,fn)) input_ok = 1;
         if ((device_id == VIRTIO_GPU_MODERN_ID || device_id == VIRTIO_GPU_TRANSITIONAL_ID) &&
             virtio_gpu((uint8_t)bus,dev,fn)) gpu_ok = 1;
+        /* Reported through `aiueos_virtio_net_ready` rather than the return
+           cascade below, which main.c reads bit by bit: a NIC is optional, and
+           folding it into that cascade would make every existing gate that
+           boots without one start failing. */
+        if (device_id == VIRTIO_NET_MODERN_ID || device_id == VIRTIO_NET_TRANSITIONAL_ID)
+          virtio_net((uint8_t)bus,dev,fn);
       }
     }
   }

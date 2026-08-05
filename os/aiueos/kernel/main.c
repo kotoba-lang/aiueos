@@ -147,6 +147,7 @@ extern int aiueos_service_registry_replayed(void);
 extern int aiueos_recovered_service_registry_ready(void);
 extern uint64_t aiueos_recovered_service_registry_state(unsigned service);
 extern int aiueos_user_object_replay_evidence_ready(void);
+extern int aiueos_virtio_net_ready(void);
 extern uint32_t aiueos_gpu_scanout_width(void);
 extern uint32_t aiueos_gpu_scanout_height(void);
 extern void aiueos_scheduler_initialize(void);
@@ -574,6 +575,16 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
     serial_string("AIUEOS_VIRTIO_GPU_OK modern-pci controlq display-info bounded\r\n");
     debug_string("AIUEOS_BROWSER_DESKTOP_TRANSPORT_OK surface-v1 gpu-scanout-bound input-v1\n");
     serial_string("AIUEOS_BROWSER_DESKTOP_TRANSPORT_OK surface-v1 gpu-scanout-bound input-v1\r\n");
+    /* The link layer is OPTIONAL: a boot with no NIC attached must stay green,
+       so this reports presence rather than gating on it. When a NIC IS present
+       the exchange has to have completed and been admitted, so an attached-but-
+       broken device cannot pass as "no network". */
+    if (aiueos_virtio_net_ready()) {
+      debug_string("AIUEOS_VIRTIO_NET_OK modern-pci rx/tx arp-reply kotoba-admitted\n");
+      serial_string("AIUEOS_VIRTIO_NET_OK modern-pci rx/tx arp-reply kotoba-admitted\r\n");
+    } else {
+      serial_string("AIUEOS_VIRTIO_NET_ABSENT no-nic-attached\r\n");
+    }
     debug_string("AIUEOS_SCHEDULER_OK tasks=2 policy=round-robin preemption=apic-timer\n");
     serial_string("AIUEOS_SCHEDULER_OK tasks=2 policy=round-robin preemption=apic-timer\r\n");
     debug_string("AIUEOS_SCHEDULER_CR3_OK roots=3 private-pages=2 kernel-return\n");
