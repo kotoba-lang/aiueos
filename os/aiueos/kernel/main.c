@@ -341,6 +341,37 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
     aiueos_load_idt(&idtr);
     debug_string("AIUEOS_DESCRIPTOR_TABLES_OK gdt-v1 idt-v1\n");
     serial_string("AIUEOS_DESCRIPTOR_TABLES_OK gdt-v1 idt-v1\r\n");
+    /* Quiet the legacy 8259 pair. ADR-0028 diagnosed this as a ~22% flaky boot
+       on the Multiboot path -- SeaBIOS leaves the PIC live with master base
+       0x08 and the 8254 ticking, so the first `sti` delivered IRQ0 as vector 8
+       and it masqueraded as #DF -- and fixed it only there. This path has the
+       same gap. Nothing here has ever programmed the 8259; the only masking on
+       the whole path is the out8(0x21,0xff)/out8(0xa1,0xff) pair inside
+       aiueos_ioapic_route_legacy_timer (ioapic.c:31), which does not run until
+       main.c:692, well past the first `sti` at main.c:456, and which masks
+       without remapping. This path is green because OVMF masks the PIC before
+       handoff -- that is a property of the firmware, not of this kernel.
+
+       Placed HERE, immediately after aiueos_load_idt, for the same reason the
+       X25519 self-test below is placed after the kernel owns its IDT rather
+       than beside the earlier self-tests: this is a Kotoba object, its prologue
+       guards fuel with `ud2`, and a #UD raised while the FIRMWARE's handler is
+       still installed produces an OVMF dump with no vector and no address.
+       After the `lidt` it reaches set_idt_gate(6, aiueos_isr_invalid_opcode)
+       and names itself. It is still 115 lines and one paging bring-up ahead of
+       the first `sti`, which is the only ordering the PIC actually requires.
+
+       0xe0/0xe8 rather than the multiboot C's old 0xf0/0xf8: the object refuses
+       0xf8 because 0xf8+7 is 255, the Local APIC spurious vector this kernel
+       programs in apic.c:42. 224..239 is clear of 32-35, 128 and 255. */
+    extern uint64_t kotoba_aiueos_pic_disable(uint64_t, uint64_t);
+    if (!kotoba_aiueos_pic_disable(0xe0, 0xe8)) {
+      debug_string("AIUEOS_PIC_FAIL base-refused\n");
+      serial_string("AIUEOS_PIC_FAIL base-refused\r\n");
+      qemu_exit(0x7b);
+    }
+    debug_string("AIUEOS_PIC_OK remapped=0xe0/0xe8 masked=both\n");
+    serial_string("AIUEOS_PIC_OK remapped=0xe0/0xe8 masked=both\r\n");
     if (!aiueos_paging_initialize()) {
       debug_string("AIUEOS_PAGING_FAIL ownership-or-wx\n");
       serial_string("AIUEOS_PAGING_FAIL ownership-or-wx\r\n");

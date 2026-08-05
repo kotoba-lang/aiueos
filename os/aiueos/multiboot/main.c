@@ -192,23 +192,28 @@ static const void *find_rsdp(void) {
  * timer's own vector-32 tick was a race, which is why this gate failed
  * intermittently (measured 1 in 8 at 85bb9f4) rather than every time.
  *
- * The vector bases are moved to 0xf0/0xf8 before masking: not because a masked
- * PIC delivers anything, but so that if a line is ever unmasked the resulting
- * vector is reported as itself instead of aliasing onto a CPU exception vector
- * (IRQ0 masquerading as #DF is what made this failure so opaque) or onto
- * vector 32, which this path uses for the Local APIC timer. */
-static void io_wait(void) { out8(0x80, 0); }
-static void legacy_pic_disable(void) {
-  out8(0x20, 0x11); io_wait();  /* ICW1: init, ICW4 to follow */
-  out8(0xa0, 0x11); io_wait();
-  out8(0x21, 0xf0); io_wait();  /* ICW2: master vector base 0xf0 */
-  out8(0xa1, 0xf8); io_wait();  /* ICW2: slave vector base 0xf8 */
-  out8(0x21, 0x04); io_wait();  /* ICW3: slave is wired to master IRQ2 */
-  out8(0xa1, 0x02); io_wait();
-  out8(0x21, 0x01); io_wait();  /* ICW4: 8086 mode */
-  out8(0xa1, 0x01); io_wait();
-  out8(0x21, 0xff); io_wait();  /* OCW1: mask every line on both chips */
-  out8(0xa1, 0xff); io_wait();
+ * The vector bases are moved before masking: not because a masked PIC delivers
+ * anything, but so that if a line is ever unmasked the resulting vector is
+ * reported as itself instead of aliasing onto a CPU exception vector (IRQ0
+ * masquerading as #DF is what made this failure so opaque) or onto a vector
+ * this kernel has already given a meaning.
+ *
+ * The sequence itself -- ICW1..ICW4, the port-0x80 delay between writes, and
+ * OCW1 -- is now kotoba/pic-disable.kotoba, called from here and from
+ * kernel/main.c on the UEFI path. It was C in only one of the two, and the
+ * UEFI path had the same latent gap: it never masks the PIC either, and is
+ * green only because OVMF does it before handoff. What is left here is
+ * mechanism with no authority over the decision.
+ *
+ * The bases are 0xe0/0xe8, not the 0xf0/0xf8 this function used to write. The
+ * object refuses 0xf8, and it is right to: 0xf8+7 is 255, which apic.c:42
+ * programs as the Local APIC's SPURIOUS vector, so an unmasked IRQ15 would
+ * have been indistinguishable from a spurious interrupt -- the same masquerade
+ * one chip over. 0xe0/0xe8 spans 224..239, clear of 32-35, 128 and 255. */
+extern uint64_t kotoba_aiueos_pic_disable(uint64_t master_base,
+                                          uint64_t slave_base);
+static int legacy_pic_disable(void) {
+  return kotoba_aiueos_pic_disable(0xe0, 0xe8) != 0;
 }
 
 /* Quiet the legacy PIC, install the minimal IDT (every vector -> its fail-fast
@@ -217,7 +222,13 @@ static void legacy_pic_disable(void) {
  * hardware tick. Shared by both the QEMU-direct MB1 path and the GRUB MB2
  * path. Returns 1 on a tick. */
 static int install_idt_and_time_lapic(void) {
-  legacy_pic_disable();
+  /* Reported here rather than folded into the caller's "apic-timer" failure:
+     a refused base pair is a build-time mistake in the two constants above,
+     and it must not arrive wearing the name of a timer that never ticked. */
+  if (!legacy_pic_disable()) {
+    serial_string("AIUEOS_MULTIBOOT_FAIL pic-disable-refused\r\n");
+    return 0;
+  }
   for (uint32_t vector = 0; vector < 256; vector++)
     set_gate(vector, (void (*)(void))(void *)
                      (aiueos_mb_isr_stubs + (uint64_t)vector * MB_ISR_STUB_STRIDE));
