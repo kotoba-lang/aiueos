@@ -8,6 +8,12 @@ mb="$out/multiboot"
 kernel64="$mb/MULTIBOOT.x86_64.ELF"
 kernel="$mb/MULTIBOOT.ELF"
 probe=${AIUEOS_KOTOBA_KERNEL_OBJECT:-"$aiueos/kotoba/kernel-probe.o"}
+# kernel/apic.c is reused verbatim below and no longer carries its own rdmsr /
+# wrmsr, so this path needs the same two MSR objects the UEFI path links. They
+# are the first Kotoba objects other than the probe to reach the Multiboot
+# kernel; without them apic.o has two undefined symbols and the link fails.
+kotoba_msr_read_object=${AIUEOS_KOTOBA_MSR_READ_OBJECT:-"$aiueos/kotoba/msr-read.o"}
+kotoba_msr_write_object=${AIUEOS_KOTOBA_MSR_WRITE_OBJECT:-"$aiueos/kotoba/msr-write.o"}
 
 command -v zig >/dev/null 2>&1 || {
   echo "error: Zig is required to build the Multiboot kernel" >&2
@@ -19,15 +25,21 @@ mkdir -p "$mb"
 # verifier the UEFI path uses; a hosted or import-bearing object is rejected.
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$probe" \
   10d91712fccd887e68f9caa25413c8fa2c783968e72b1bead4025c6a294ffa42
+python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_msr_read_object" \
+  9ad2ca19ad21f176d5a79b8ecf3b3ef7a4eec1bc31a620a5207da732f5ea360c \
+  kotoba_aiueos_msr_read
+python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_msr_write_object" \
+  217f1ca51d19d5c2364c1fba0aa14e0554682920fb07898a3aead524d7102d15 \
+  kotoba_aiueos_msr_write
 
 zig cc -target x86_64-freestanding-none \
   -c -o "$mb/entry.o" "$aiueos/multiboot/entry.S"
 zig cc -target x86_64-freestanding-none -std=c11 -O2 \
   -ffreestanding -fno-stack-protector -mno-red-zone \
   -c -o "$mb/main.o" "$aiueos/multiboot/main.c"
-# Reuse the kernel's validated ACPI parser and Local APIC timer verbatim
-# (both self-contained: no other kernel globals) so the Multiboot path uses
-# the same checks and interrupt bring-up.
+# Reuse the kernel's validated ACPI parser and Local APIC timer verbatim (no
+# other kernel globals; apic.c does now depend on the two MSR objects linked
+# below) so the Multiboot path uses the same checks and interrupt bring-up.
 zig cc -target x86_64-freestanding-none -std=c11 -O2 \
   -ffreestanding -fno-stack-protector -mno-red-zone \
   -c -o "$mb/acpi.o" "$aiueos/kernel/acpi.c"
@@ -35,7 +47,8 @@ zig cc -target x86_64-freestanding-none -std=c11 -O2 \
   -ffreestanding -fno-stack-protector -mno-red-zone \
   -c -o "$mb/apic.o" "$aiueos/kernel/apic.c"
 zig ld.lld -T "$aiueos/multiboot/linker.ld" -o "$kernel64" \
-  "$mb/entry.o" "$mb/main.o" "$mb/acpi.o" "$mb/apic.o" "$probe"
+  "$mb/entry.o" "$mb/main.o" "$mb/acpi.o" "$mb/apic.o" "$probe" \
+  "$kotoba_msr_read_object" "$kotoba_msr_write_object"
 
 # QEMU's Multiboot loader wants an ELFCLASS32/EM_386 container; wrap the linked
 # x86_64 load image verbatim (the trampoline switches to long mode itself).
