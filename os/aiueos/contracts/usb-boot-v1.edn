@@ -1,0 +1,78 @@
+;; What "aiueos boots from a USB stick" means, as checkable data (ADR-0019).
+;;
+;; The bare-metal profile already produced a GPT disk image that a firmware
+;; could boot; that is not the same claim. A physical USB stick is reached
+;; through the firmware's USB stack, presents itself as REMOVABLE media, and is
+;; booted through the removable-media fallback path -- none of which is
+;; exercised when the same image is attached as a fixed drive. This contract
+;; records the properties that separate the two, so the difference stays
+;; asserted rather than assumed.
+{:format :aiueos.usb-boot-contract/v1
+ :profile :bare-metal-uefi
+ :architecture :x86_64
+ :medium {:class :usb-mass-storage
+          :removable true
+          :image :aiueos-x86_64-gpt.img
+          :written-by "os/aiueos/scripts/flash-usb.cljs"
+          ;; Whole-disk only. A GPT image written into a partition leaves the
+          ;; partition table at the wrong offset and never boots.
+          :target :whole-disk}
+
+ ;; Removable media has no NVRAM boot entry pointing at it, so firmware falls
+ ;; back to this fixed path. It is the only reason a stick built on one machine
+ ;; boots on another.
+ :boot-path {:fallback "EFI/BOOT/BOOTX64.EFI"
+             :mechanism :removable-media-fallback
+             :nvram-entry :not-required
+             :secure-boot false}
+
+ :partitions {:scheme :gpt
+              :protective-mbr true
+              ;; The protective MBR stub refuses legacy BIOS deterministically
+              ;; rather than half-booting; asserted by the release smoke.
+              :legacy-bios :refused
+              :esp {:type "c12a7328-f81f-11d2-ba4b-00a0c93ec93b"
+                    :filesystem :fat32}
+              :recovery {:type "c12a7328-f81f-11d2-ba4b-00a0c93ec93b"
+                         :filesystem :fat16
+                         :role :independent-fallback-volume}}
+
+ ;; Both transports boot the SAME image file; only the attachment differs.
+ ;; Equivalence is what the gate proves, and it is proved by comparing the two
+ ;; runs' evidence rather than by each run passing separately -- a USB run that
+ ;; merely also passed could still have diverged silently.
+ :equivalence {:gate "os/aiueos/scripts/smoke-qemu-usb-boot.cljs"
+               :transports [:disk :usb]
+               :usb-attachment {:controller :qemu-xhci
+                                :device :usb-storage
+                                :removable true}
+               :asserts [:usb-run-booted-through-usb-device-path
+                         :disk-run-did-not
+                         :aiueos-evidence-byte-identical
+                         :terminal-state-equal]
+               ;; The firmware banner names the boot device, so it necessarily
+               ;; differs between transports; that difference is the positive
+               ;; proof, asserted separately, and excluded from the comparison.
+               :excluded-from-comparison [:firmware-boot-banner
+                                          :smp-application-processor-markers]}
+
+ ;; Writing to a raw block device is irreversible, so the flash tool is
+ ;; deny-by-default: it inspects unless the destination is stated twice, and
+ ;; every check below blocks a distinct way the wrong disk could be destroyed.
+ :flash-guards {:device-named-explicitly true
+                :device-auto-detection :never
+                :confirm-repeats-device true
+                :refuses [:internal-disk :non-removable-device :partition]
+                :removable-check-source :operating-system
+                :image-matches-build-receipt true
+                :readback-verified true}
+
+ ;; Named so they are not mistaken for solved. The bare-metal profile has no
+ ;; network stack of any kind, so a USB-booted node cannot yet reach
+ ;; murakumo.cloud; that work is the hosted profile's, not this contract's.
+ :gaps {:network :absent
+        :nic-driver :absent
+        :real-hardware-boot :unverified
+        :note "USB boot is proved under OVMF in QEMU. No physical machine has
+               booted this image; firmware quirks on real hardware (USB 2 vs 3
+               enumeration, per-vendor fallback-path handling) remain untested."}}

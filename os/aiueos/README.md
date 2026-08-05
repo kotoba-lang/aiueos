@@ -315,6 +315,70 @@ new version from its primary without touching recovery, and corrupting the
 updated primary loader must boot the preserved previous version through the
 firmware fallback — an executable rollback receipt.
 
+## USB removable-media boot
+
+The GPT release image above is what gets written to a USB stick, but producing
+a bootable image and being *reached the way a stick is reached* are different
+claims, and only the second one makes a stick boot on someone else's machine.
+A physical stick goes through the firmware's USB stack, reports itself as
+removable, and is booted through the removable-media fallback path
+`\EFI\BOOT\BOOTX64.EFI` — it has no NVRAM boot entry pointing at it. None of
+that is exercised when the same image is attached as a fixed drive.
+
+```sh
+./os/aiueos/scripts/build-release-image.sh
+nbb os/aiueos/scripts/smoke-qemu-usb-boot.cljs
+nbb os/aiueos/scripts/flash-usb.cljs --device /dev/diskN            # inspect
+nbb os/aiueos/scripts/flash-usb.cljs --device /dev/diskN --confirm /dev/diskN
+```
+
+`smoke-qemu-usb-boot.cljs` boots the **same image file** twice — once as a
+fixed drive, once behind `qemu-xhci` as a `usb-storage` device with
+`removable=on` — and requires the USB run to have booted through a USB device
+path, the disk run not to have, both runs' aiueos evidence to be byte-identical,
+and both to reach the same terminal state. The equality is the load-bearing
+assertion: a USB run that merely also passed could still have diverged
+silently, but identical evidence cannot. `AIUEOS_BOOT_TRANSPORT=usb` selects
+the transport on `smoke-qemu-uefi.sh` directly if you want a single run.
+
+Two things are deliberately excluded from that comparison, for reasons that are
+themselves asserted. The firmware's pre-handoff banner *names the boot device*,
+so it must differ — that difference is the positive proof, checked separately
+(`PciRoot(0x0)/Pci(0x2,0x0)/USB(0x0,0x0)` on the USB run). And each application
+processor writes a one-character liveness marker straight to the debug port
+while the bootstrap processor writes its evidence lines, so those characters
+land in a nondeterministic order relative to each other (`BAAIUEOS_…` on one
+boot, `ABAIUEOS_…` on the next, same transport). That race belongs to SMP
+bring-up, not to the boot medium, and the shared gate asserts the SMP evidence
+itself; comparison therefore starts at each line's own `AIUEOS_` marker.
+
+The gate does not hardcode a passing exit status, so it stays honest on a host
+where the shared UEFI suite fails for an unrelated reason. On QEMU 10.0.3 the
+suite fails at `AIUEOS_VIRTIO_INPUT_FAIL queue-or-envelope` — a virtio-input
+device-model difference that has nothing to do with boot transport — and the
+gate reports `AIUEOS_USB_BOOT_EQUIVALENT` with the shared status instead of
+claiming a pass neither transport earned. When the suite passes, it reports
+`AIUEOS_USB_BOOT_OK`.
+
+`flash-usb.cljs` writes the image to a physical stick. Because that is
+irreversible, it is deny-by-default: without `--confirm` it only inspects, and
+`--confirm` must repeat the same device path so the destination is stated twice
+independently. It refuses internal disks, non-removable devices, and partitions
+(a GPT image written into a partition leaves the partition table at the wrong
+offset and never boots), asks the OS whether a device is removable rather than
+pattern-matching its name, requires the image to match its build receipt, and
+re-reads the written bytes afterwards — cheap flash media can acknowledge a
+write and store something else, which is invisible without readback. There is
+deliberately no "find my USB stick" mode; the one time it guessed wrong it
+would destroy a disk.
+
+`contracts/usb-boot-v1.edn` carries these properties as checkable data,
+including the gaps: **USB boot is proved under OVMF in QEMU only**. No physical
+machine has booted this image, so real-hardware firmware quirks (USB 2 vs 3
+enumeration, per-vendor fallback-path handling) are untested. The bare-metal
+profile also has no network stack of any kind, so a USB-booted node cannot yet
+reach murakumo.cloud — see ADR-0019 for how that is split across profiles.
+
 `verify-release-signature.py` verifies an RSA-2048 PKCS#1 v1.5 SHA-256
 signature over the build receipt using only the Python standard library
 (public-key operation only, fixed-work encoded-message comparison, RSA-2048

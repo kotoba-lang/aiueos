@@ -1,0 +1,96 @@
+;; murakumo.cloud participation, as decided by an aiueos node (ADR-0019).
+;;
+;; `kotoba/murakumo-join-plan.kotoba` mirrors `murakumo.infer.join` so a node
+;; can decide its own fleet participation with no Node or JVM host present.
+;; Upstream expresses those decisions over typed records, `[:option :i64]` and
+;; `:string` work-kind names; the aiueos object ABI is scalar i64 only. This
+;; file is the authority for the encoding that bridges the two, so neither side
+;; can renumber unilaterally.
+;;
+;; Parity is checked, not asserted: `test/murakumo/aiueos_join_plan_parity_test.clj`
+;; in kotoba-lang/murakumo drives this object across the full tier x kind x
+;; memory x residency matrix and compares every result against the upstream
+;; namespace. The object's own `main` additionally re-checks five vectors, so
+;; it fails on the node too, not only in someone's CI.
+{:format :aiueos.murakumo-node-contract/v1
+ :mirrors {:repo "kotoba-lang/murakumo"
+           :namespace 'murakumo.infer.join
+           :source "kotoba/infer_join_core.kotoba"}
+
+ ;; Codes are the shared wire between a `:string` kind upstream and an i64
+ ;; argument here. NOT free to renumber: the parity test checks every code
+ ;; against its upstream string name.
+ :work-kinds {1 :media-postproc
+              2 :small-shard
+              3 :embarrassingly-parallel
+              4 :prompt-eval
+              5 :host-large-model
+              6 :low-latency-pipeline
+              7 :media-generate
+              8 :full-shard}
+
+ ;; Which kinds a tier answers for. Upstream reads as a surprise and is
+ ;; reproduced exactly rather than "fixed": a native-tier node answers from the
+ ;; NATIVE set only, so it does not accept swarm kinds such as :media-postproc
+ ;; (`(if (< tier 2) (swarm-can? kind) (native-can? kind))`).
+ :tiers {0 {:name :browser :swarm? true :max-resident-bytes 2147483648}
+         1 {:name :wasm :swarm? true :max-resident-bytes 4294967296}
+         2 {:name :native :swarm? false :max-resident-bytes 13958643712}}
+ :tier-kinds {:swarm #{1 2 3 4}
+              :native #{5 6 7 8}}
+ :unknown-tier :native  ; matches upstream `tier-code`'s default
+
+ ;; The kernel object ABI admits at most five parameters, so the two pairs that
+ ;; always travel together are packed rather than split across calls.
+ :call {:entry 'aiueos-murakumo-join-plan
+        :arity 4
+        :arguments [{:name :node
+                     :bits {0-1 :tier, 2 :inbound-reachable}}
+                    {:name :kind :domain :work-kinds}
+                    {:name :mem-request
+                     ;; `present` is packed INTO the request to keep upstream's
+                     ;; explicit "no -1 sentinel" property: absent memory is a
+                     ;; cleared flag, never a magic byte count, so a genuine
+                     ;; declaration of 0 bytes stays distinguishable from no
+                     ;; declaration at all.
+                     :bits {0 :declared-memory-present, :1.. :bytes}}
+                    {:name :resident :unit :bytes}]
+        :result {:bits {0 :eligible, 1 :needs-relay, :2.. :clamped-resident-bytes}}}
+
+ ;; Named so they are not mistaken for solved.
+ :gaps
+ {:kernel-object-export
+  {:state :blocked
+   :why "Kernel objects export through an explicit allow-list in
+         kotoba-lang/kotoba-native (`elf64.clj` `kernel-object-entries`).
+         Adding entries there is a deliberate, reviewed ABI change in a third
+         repo, and murakumo participation is application policy rather than
+         kernel mechanism, so it likely does not belong in that ABI at all."}
+  :app-catalog-admission
+  {:state :blocked
+   :blocked-by [:runtime-v2-context :offline-signer]
+   :why "The object compiles cleanly to `x86_64-aiueos-user-v1`, but a compiled
+         ELF is not yet an admissible application, for two independent reasons.
+
+         First, `scripts/verify-kotoba-user-elf.py` pins the runtime-v2 context
+         to the shape the existing smoke app has: fuel 256, the capability
+         allow-bitmap byte 60 (= cap-call 2,3,4,5 from
+         `kotoba/user-runtime-policy.edn`), and the cap-call trampoline at
+         0x1E1020. A pure decision object declares no capabilities, so it
+         produces an empty bitmap and no trampoline and is rejected -- measured,
+         not assumed: `error: invalid Kotoba aiueos runtime-v2 context`.
+         Admission would mean giving this object those capabilities and having
+         it report its plan through them, which is a design choice about what a
+         node may do with the decision, not a packaging detail.
+
+         Second, entering the signed catalog needs the RSA signer, which is
+         correctly absent from this repository -- release signatures are
+         produced offline.
+
+         Until both are settled this object is a verified artifact, not an
+         admitted application."}
+  :transport
+  {:state :absent
+   :why "Deciding to join is not joining. The bare-metal profile has no network
+         stack, so a node can compute its participation plan and cannot yet act
+         on it. Reaching murakumo.cloud belongs to the hosted profile."}}}
