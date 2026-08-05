@@ -1,3 +1,15 @@
-;; Auto-generated from bb.edn (ADR-2607173000).
 ;; nbb scripts/run-task.cljs <task> [args…]
-{}
+;;
+;; Originally generated from bb.edn (ADR-2607173000) and empty ever since; the
+;; USB boot profile (ADR-0019) is the first thing registered here. The
+;; bare-metal build/smoke chain under os/aiueos/scripts stays as it is — those
+;; are the OS's own dependency-minimal build tools (sh + python stdlib only),
+;; and pulling them behind nbb would put Node in the boot-evidence path.
+{:usb-boot-smoke
+ {:cmd ["nbb" "os/aiueos/scripts/smoke-qemu-usb-boot.cljs"]
+  :doc "Boot the release image over both transports and require identical evidence."}
+
+ :usb-flash
+ {:cmd ["nbb" "os/aiueos/scripts/flash-usb.cljs"]
+  :pass-args? true
+  :doc "Write the release image to a USB stick. Inspects unless --confirm repeats --device."}}

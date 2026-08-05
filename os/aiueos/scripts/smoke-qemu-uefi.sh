@@ -82,9 +82,29 @@ p=Path(sys.argv[1]);b=bytearray(p.read_bytes());sector=struct.unpack_from('<I',b
 b[sector*512+20]^=1;p.write_bytes(b)
 PY
 fi
+# Boot transport (ADR-0019): `disk` attaches the medium as a fixed drive the
+# firmware enumerates directly; `usb` attaches it behind an xHCI controller as
+# a REMOVABLE USB mass-storage device, which is the path a physical USB stick
+# actually takes — the firmware must run its USB stack, enumerate the device,
+# and boot the removable-media fallback `\EFI\BOOT\BOOTX64.EFI`. Only the
+# transport differs: every other device and every evidence assertion below is
+# identical, so the two runs' logs are directly comparable.
+boot_transport=${AIUEOS_BOOT_TRANSPORT:-disk}
+case "$boot_transport" in
+  disk|usb) ;;
+  *)
+    echo "error: AIUEOS_BOOT_TRANSPORT must be disk or usb: $boot_transport" >&2
+    exit 1
+    ;;
+esac
+usb_args=
 if [ -n "${AIUEOS_CDROM_IMAGE:-}" ]; then
   [ -f "$AIUEOS_CDROM_IMAGE" ] || {
     echo "error: AIUEOS_CDROM_IMAGE does not exist: $AIUEOS_CDROM_IMAGE" >&2
+    exit 1
+  }
+  [ "$boot_transport" = disk ] || {
+    echo "error: AIUEOS_BOOT_TRANSPORT=usb does not apply to an El Torito ISO" >&2
     exit 1
   }
   # El Torito boot from the release ISO; cdrom media is opened read-only.
@@ -95,8 +115,17 @@ elif [ -n "${AIUEOS_DISK_IMAGE:-}" ]; then
     exit 1
   }
   # OVMF may open the boot medium writable; snapshot keeps the release artifact immutable.
-  boot_drive="format=raw,snapshot=on,file=$AIUEOS_DISK_IMAGE"
+  if [ "$boot_transport" = usb ]; then
+    boot_drive="if=none,id=aiueosusb,format=raw,snapshot=on,file=$AIUEOS_DISK_IMAGE"
+    usb_args="-device qemu-xhci,id=xhci -device usb-storage,bus=xhci.0,drive=aiueosusb,removable=on"
+  else
+    boot_drive="format=raw,snapshot=on,file=$AIUEOS_DISK_IMAGE"
+  fi
 else
+  [ "$boot_transport" = disk ] || {
+    echo "error: AIUEOS_BOOT_TRANSPORT=usb requires AIUEOS_DISK_IMAGE" >&2
+    exit 1
+  }
   boot_drive="format=raw,file=fat:rw:$out/esp"
 fi
 iommu_args=
@@ -119,7 +148,7 @@ attempt=1
 while :; do
   [ -n "$pristine_blk" ] && cp "$pristine_blk" "$blk_image"
   set +e
-  # shellcheck disable=SC2086 # intentional optional pair of QEMU arguments
+  # shellcheck disable=SC2086 # intentional optional groups of QEMU arguments
   timeout "$qemu_timeout" "$qemu" \
     -machine q35,accel=tcg -cpu max -m 128M -smp 2 \
     -drive if=pflash,format=raw,readonly=on,file="$OVMF_CODE" \
@@ -128,6 +157,7 @@ while :; do
     -chardev file,id=debug,path="$log" \
     -device isa-debug-exit,iobase=0xf4,iosize=0x04 \
     $iommu_args \
+    $usb_args \
     -device virtio-rng-pci \
     -drive if=none,id=aiueosblk,format=raw,file="$blk_image" \
     -device virtio-blk-pci,drive=aiueosblk,disable-legacy=on \

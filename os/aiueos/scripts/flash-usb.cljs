@@ -1,0 +1,211 @@
+#!/usr/bin/env nbb
+;; Write the aiueos release image to a physical USB stick (ADR-0019).
+;;
+;;   nbb os/aiueos/scripts/flash-usb.cljs --device /dev/diskN
+;;   nbb os/aiueos/scripts/flash-usb.cljs --device /dev/diskN --confirm /dev/diskN
+;;
+;; Without `--confirm`, this only inspects and reports: it never opens the
+;; device for writing. `--confirm` must repeat the same device path, so the
+;; destination is stated twice, independently, before anything is destroyed.
+;;
+;; Flashing overwrites every byte of the target, so the guards below are not
+;; conveniences -- each one blocks a way this command could eat the wrong disk:
+;;
+;;   - the device must exist and be a whole disk, not a partition (writing a
+;;     GPT image into a partition silently produces an unbootable stick);
+;;   - the device must be REMOVABLE/EXTERNAL, checked against the OS rather
+;;     than inferred from its name (`/dev/disk0` is internal on macOS but
+;;     `/dev/sda` is often the system disk on Linux -- neither is safe to
+;;     pattern-match);
+;;   - the image must match its build receipt, so a truncated or half-written
+;;     build never reaches hardware;
+;;   - after writing, the same number of bytes is read back and digested. A
+;;     stick that reports success but stores something else is a real failure
+;;     mode of cheap flash media, and it is invisible without readback.
+;;
+;; This never picks a device on its own. There is deliberately no "find the
+;; USB stick" mode: the one-in-ten time it guesses wrong, it destroys a disk.
+
+(require '[clojure.string :as str])
+
+(def fs (js/require "node:fs"))
+(def path (js/require "node:path"))
+(def cp (js/require "node:child_process"))
+(def os (js/require "node:os"))
+(def crypto (js/require "node:crypto"))
+
+(def aiueos (.resolve path (.dirname path *file*) ".."))
+(def repo (.resolve path aiueos ".." ".."))
+(def out (or (.-AIUEOS_OUT js/process.env) (.join path repo "build" "aiueos")))
+(def image (.join path out "aiueos-x86_64-gpt.img"))
+(def receipt-path (.join path out "aiueos-x86_64-build-receipt.json"))
+
+(defn- die [& msg]
+  (binding [*out* *err*] (apply println (cons "error:" msg)))
+  (.exit js/process 1))
+
+(defn- arg [flag]
+  (let [a (vec *command-line-args*)
+        i (.indexOf (to-array a) flag)]
+    (when (>= i 0) (nth a (inc i) nil))))
+
+(defn- run [cmd args]
+  (let [r (.spawnSync cp cmd (to-array args) #js {:encoding "utf8" :shell false})]
+    {:status (or (.-status r) 1) :out (or (.-stdout r) "") :err (or (.-stderr r) "")}))
+
+(defn- sha256-file
+  "Digest at most LIMIT bytes of PATH, streaming in 4 MiB chunks so a device
+  read never has to fit in memory."
+  [p limit]
+  (let [fd (.openSync fs p "r")
+        chunk (js/Buffer.alloc (* 4 1024 1024))
+        h (.createHash crypto "sha256")]
+    (try
+      (loop [remaining limit]
+        (when (pos? remaining)
+          (let [want (min remaining (.-length chunk))
+                got (.readSync fs fd chunk 0 want)]
+            (when (pos? got)
+              (.update h (.subarray chunk 0 got))
+              (recur (- remaining got))))))
+      (finally (.closeSync fs fd)))
+    (.digest h "hex")))
+
+;; ---------------------------------------------------------------- device info
+
+(defn- macos-device-info [device]
+  (let [{:keys [status out]} (run "diskutil" ["info" "-plist" device])]
+    (when-not (zero? status) (die "diskutil could not read" device))
+    ;; Read the plist as text rather than adding an XML dependency: each of
+    ;; these keys is a self-closing <true/>/<false/> immediately after its
+    ;; <key>, so presence of the pair is the value.
+    (let [flag (fn [k]
+                 (when-let [i (str/index-of out (str "<key>" k "</key>"))]
+                   (str/includes? (subs out i (min (count out) (+ i 80))) "<true/>")))]
+      {:removable (boolean (or (flag "RemovableMedia") (flag "Ejectable")))
+       :internal (boolean (flag "Internal"))
+       :whole (boolean (flag "WholeDisk"))
+       :raw out})))
+
+(defn- linux-device-info [device]
+  (let [base (.basename path device)
+        sys (str "/sys/block/" base)]
+    (when-not (.existsSync fs sys)
+      (die device "is not a whole block device (no" sys ")"))
+    {:removable (= "1" (str/trim (.readFileSync fs (str sys "/removable") "utf8")))
+     :internal false
+     :whole true
+     :raw sys}))
+
+(def platform (.platform os))
+
+(defn- device-info [device]
+  (case platform
+    "darwin" (macos-device-info device)
+    "linux" (linux-device-info device)
+    (die "unsupported platform for flashing:" platform)))
+
+;; ---------------------------------------------------------------------- main
+
+(def device (arg "--device"))
+(def confirm (arg "--confirm"))
+
+(when-not device
+  (binding [*out* *err*]
+    (println "usage: flash-usb.cljs --device /dev/diskN [--confirm /dev/diskN]")
+    (println "       without --confirm this inspects and reports only"))
+  (.exit js/process 2))
+
+(when-not (.existsSync fs image)
+  (die "release image not built:" image
+       "\nhint: run os/aiueos/scripts/build-release-image.sh first"))
+
+;; The image must be exactly what the build receipt says it is. A stick flashed
+;; from an image that no longer matches its receipt has no provenance at all.
+(def receipt
+  (if (.existsSync fs receipt-path)
+    (js->clj (.parse js/JSON (.readFileSync fs receipt-path "utf8")) :keywordize-keys true)
+    (die "build receipt missing:" receipt-path)))
+
+(def image-bytes (.-size (.statSync fs image)))
+(def expected-digest (get-in receipt [:disk :sha256]))
+(def expected-bytes (get-in receipt [:disk :bytes]))
+
+(when-not (= image-bytes expected-bytes)
+  (die "image is" image-bytes "bytes but its receipt says" expected-bytes))
+
+(def actual-digest (sha256-file image image-bytes))
+(when-not (= actual-digest expected-digest)
+  (die "image digest" actual-digest "does not match receipt" expected-digest))
+
+(println "image     " image)
+(println "bytes     " image-bytes)
+(println "sha256    " actual-digest "(matches build receipt)")
+
+(def info (device-info device))
+(println "device    " device)
+(println "removable " (:removable info))
+
+(when (:internal info)
+  (die device "is an INTERNAL disk; refusing to flash it"))
+(when-not (:removable info)
+  (die device "is not removable/external; refusing to flash it."
+       "\n       If this really is the intended USB device, the OS is not"
+       "\n       reporting it as removable and this tool will not override that."))
+(when-not (:whole info)
+  (die device "is not a whole disk. Flash the whole disk (e.g. /dev/disk4),"
+       "\n       not a partition (/dev/disk4s1) -- a GPT image written into a"
+       "\n       partition produces an unbootable stick."))
+
+(when-not confirm
+  (println)
+  (println "dry run: nothing was written.")
+  (println (str "to flash, re-run with:  --device " device " --confirm " device))
+  (.exit js/process 0))
+
+(when-not (= confirm device)
+  (die "--confirm" confirm "does not match --device" device))
+
+;; macOS holds the device open through diskarbitration until it is unmounted;
+;; writing without this fails with "Resource busy" rather than corrupting.
+(when (= platform "darwin")
+  (let [{:keys [status err]} (run "diskutil" ["unmountDisk" device])]
+    (when-not (zero? status)
+      (die "could not unmount" device "--" (str/trim err)))))
+
+(def raw-device
+  ;; /dev/rdiskN is the unbuffered character device: on macOS it is roughly an
+  ;; order of magnitude faster for a whole-image write than the buffered node.
+  (if (and (= platform "darwin") (str/starts-with? device "/dev/disk"))
+    (str/replace device "/dev/disk" "/dev/rdisk")
+    device))
+
+(println)
+(println "writing" image-bytes "bytes to" raw-device "...")
+
+(def dd
+  (run "dd" [(str "if=" image) (str "of=" raw-device) "bs=4m"
+             (if (= platform "darwin") "conv=sync" "conv=fsync")]))
+
+(when-not (zero? (:status dd))
+  (die "dd failed:" (str/trim (:err dd))
+       (if (= platform "darwin")
+         "\n       (writing a raw device usually needs sudo)"
+         "\n       (writing a raw device usually needs root)")))
+
+(print (:err dd))
+
+;; Readback. Cheap flash media can acknowledge a write and store something
+;; else; only reading the bytes back proves what is actually on the stick.
+(println "verifying readback ...")
+(def readback (sha256-file raw-device image-bytes))
+
+(if (= readback actual-digest)
+  (do
+    (println (str "AIUEOS_USB_FLASH_OK device=" device " bytes=" image-bytes
+                  " sha256=" readback))
+    (when (= platform "darwin")
+      (run "diskutil" ["eject" device])
+      (println "ejected" device)))
+  (die "readback digest" readback "does not match image" actual-digest
+       "\n       The stick does NOT contain the release image. Do not boot it."))
