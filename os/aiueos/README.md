@@ -399,6 +399,37 @@ and 10.0.2.2 are SLIRP's fixed topology, written into the driver, and DHCP is
 what would stop hardcoding them. No TCP, no TLS, no HTTPS: a node still cannot
 reach murakumo.cloud.
 
+## Network: TCP
+
+One connection that completes (ADR-0022): three-way handshake, send a payload,
+admit the peer's echo, close.
+
+```sh
+AIUEOS_TEST_NET=1 ./os/aiueos/scripts/smoke-qemu-uefi.sh
+# AIUEOS_TCP_OK handshake echo close kotoba-admitted
+```
+
+The peer is QEMU's `guestfwd` piping the stream through `cat`, so a connection
+to 10.0.2.100:9000 echoes. That is what makes the gate mean something: sequence
+numbers, ACKs and both checksums all have to be right or nothing comes back, and
+the OS cannot satisfy it by echoing itself. No external network is involved.
+
+`tcp-segment-valid.kotoba` re-checks the IPv4 envelope, the IPv4 header
+checksum, the TCP checksum, the source, the ACK field and the flags byte,
+assuming nothing a caller might have checked. Flags are compared for **exact
+equality, not masked** — a SYN-ACK and a SYN-ACK-PSH are different events, and
+the caller has to say which one it expects. Failure names its stage
+(`AIUEOS_TCP_FAIL <reason>`, six of them) because there are four admissions in a
+row and a re-run costs many minutes on a loaded host.
+
+**This is a probe, not a stack.** No retransmission timers, no congestion
+control, no window management beyond a fixed advertised window, no out-of-order
+reassembly, no multiple connections, no options. The receive ring holds one
+buffer, so two segments arriving back to back drops the second and recovery
+depends on the peer resending. The echoed bytes are never compared with what was
+sent — the checksum proves the segment is intact, not that it carries our data.
+HTTPS will need more than this.
+
 ## USB removable-media boot
 
 The GPT release image above is what gets written to a USB stick, but producing

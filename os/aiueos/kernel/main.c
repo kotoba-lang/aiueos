@@ -149,6 +149,8 @@ extern uint64_t aiueos_recovered_service_registry_state(unsigned service);
 extern int aiueos_user_object_replay_evidence_ready(void);
 extern int aiueos_virtio_net_ready(void);
 extern int aiueos_ipv4_ready(void);
+extern int aiueos_tcp_ready(void);
+extern unsigned aiueos_tcp_stage(void);
 extern uint32_t aiueos_gpu_scanout_width(void);
 extern uint32_t aiueos_gpu_scanout_height(void);
 extern void aiueos_scheduler_initialize(void);
@@ -589,6 +591,32 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
       if (aiueos_ipv4_ready()) {
         debug_string("AIUEOS_IPV4_OK icmp-echo-reply kotoba-admitted\n");
         serial_string("AIUEOS_IPV4_OK icmp-echo-reply kotoba-admitted\r\n");
+        /* TCP rides on IPv4 exactly as IPv4 rides on the link layer, so it is
+           reported only where IPv4 succeeded: a boot whose echo never came back
+           says nothing about TCP rather than reporting a failure it never
+           reached. */
+        if (aiueos_tcp_ready()) {
+          debug_string("AIUEOS_TCP_OK handshake echo close kotoba-admitted\n");
+          serial_string("AIUEOS_TCP_OK handshake echo close kotoba-admitted\r\n");
+        } else {
+          /* Not silent, for the reason AIUEOS_IPV4_FAIL is not, and not a boot
+             failure either: whether a peer completes a connection is a property
+             of the network. Which phase it stopped at, because unlike the echo
+             this exchange has four admissions, and re-running a TCG boot under
+             load to find out which costs many minutes. tx-* are build faults
+             rather than network ones -- the segment was wrong before it left.
+             The numbers mirror NET_TCP_STAGE_* in kernel/pci.c, which is where
+             they are set; they are not shared through a header because this
+             kernel has none, and every other cross-file contract here is an
+             extern declaration written out the same way. */
+          unsigned stage = aiueos_tcp_stage();
+          if (stage == 5) serial_string("AIUEOS_TCP_FAIL tx-segment-checksum\r\n");
+          else if (stage == 6) serial_string("AIUEOS_TCP_FAIL tx-not-completed\r\n");
+          else if (stage == 2) serial_string("AIUEOS_TCP_FAIL no-admitted-echo\r\n");
+          else if (stage == 3) serial_string("AIUEOS_TCP_FAIL no-admitted-fin-ack\r\n");
+          else if (stage == 1) serial_string("AIUEOS_TCP_FAIL no-admitted-syn-ack\r\n");
+          else serial_string("AIUEOS_TCP_FAIL no-peer-mac\r\n");
+        }
       } else {
         /* Reached only with a NIC present and its link layer already OK, so
            this is a real IPv4 failure and says so. Staying silent would make a
