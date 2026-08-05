@@ -218,15 +218,28 @@ __attribute__((noreturn)) static void qemu_exit(uint32_t value) {
   for (;;) __asm__ volatile("hlt");
 }
 
+/* Splitting the 64-bit handler address across the descriptor's three offset
+ * fields is bit-packing whose failure mode is a well-formed gate pointing at
+ * the WRONG ring-0 address -- silent and exploitable rather than a crash -- so
+ * it lives in Kotoba. This wrapper keeps the C shape (vector, handler); the
+ * object owns the sixteen bytes and the selector/ist/attributes domains. The
+ * three constants below are passed rather than assumed: the object refuses
+ * anything but this kernel's single DPL-0 64-bit code selector, no IST (the
+ * TSS has none populated), and a present DPL-0 interrupt gate. */
+extern uint64_t kotoba_aiueos_idt_gate_build(uint64_t handler, uint64_t selector,
+                                             uint64_t ist, uint64_t attributes,
+                                             void *out);
+
 static void set_idt_gate(uint8_t vector, void (*handler)(void)) {
-  uint64_t address = (uint64_t)(uintptr_t)handler;
-  idt[vector].offset_low = (uint16_t)address;
-  idt[vector].selector = 0x08;
-  idt[vector].ist = 0;
-  idt[vector].attributes = 0x8e;
-  idt[vector].offset_middle = (uint16_t)(address >> 16);
-  idt[vector].offset_high = (uint32_t)(address >> 32);
-  idt[vector].reserved = 0;
+  /* A refusal writes nothing, so the entry would stay P=0 and every delivery
+   * on that vector would #GP with the fault pointing at the IDT. Fail here
+   * instead, where the vector is still known. */
+  if (!kotoba_aiueos_idt_gate_build((uint64_t)(uintptr_t)handler, 0x08, 0, 0x8e,
+                                    &idt[vector])) {
+    debug_string("AIUEOS_KOTOBA_IDT_GATE_FAIL refused\n");
+    serial_string("AIUEOS_KOTOBA_IDT_GATE_FAIL refused\r\n");
+    qemu_exit(0x69);
+  }
 }
 
 /* Set immediately before the deliberate end-of-boot ud2 probe. Any exception
