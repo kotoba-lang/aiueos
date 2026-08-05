@@ -64,6 +64,7 @@ kotoba_dispatch_plan_object=${AIUEOS_KOTOBA_DISPATCH_PLAN_OBJECT:-"$aiueos/kotob
 kotoba_exit_route_object=${AIUEOS_KOTOBA_EXIT_ROUTE_OBJECT:-"$aiueos/kotoba/task-exit-route.o"}
 kotoba_service_task_object=${AIUEOS_KOTOBA_SERVICE_TASK_OBJECT:-"$aiueos/kotoba/service-task-transition.o"}
 kotoba_rsa2048_object=${AIUEOS_KOTOBA_RSA2048_OBJECT:-"$aiueos/kotoba/rsa2048.o"}
+kotoba_net_arp_object=${AIUEOS_KOTOBA_NET_ARP_OBJECT:-"$aiueos/kotoba/net-arp-reply-valid.o"}
 kotoba_user_elf=${AIUEOS_KOTOBA_USER_ELF:-"$aiueos/kotoba/user-smoke.elf"}
 kotoba_fnv_sha=
 if [ -z "${AIUEOS_KOTOBA_FNV_OBJECT:-}" ]; then
@@ -204,6 +205,9 @@ python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_service_task_o
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_rsa2048_object" \
   97a6c6b1f4c3f3569bf8d40423db924d291aa0b6f10cd7bace79f54e193387a6 \
   kotoba_aiueos_rsa2048_sha256_verify
+python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_net_arp_object" \
+  63d9862b6a1b23561dd07bd79e76b65285c974b4d39a4cc56c676791a6dc1dfb \
+  kotoba_aiueos_net_arp_reply_valid
 python3 "$aiueos/scripts/verify-kotoba-user-elf.py" "$kotoba_user_elf" \
   1f0e5897831d0de6bbcb15eec82a6e0c4b402b436689cec051bc6de3b5c4e905
 if [ -n "${AIUEOS_EXTERNAL_KERNEL_ELF:-}" ]; then
@@ -292,7 +296,8 @@ zig ld.lld -nostdlib -static -z max-page-size=0x1000 \
   "$kotoba_dispatch_plan_object" \
   "$kotoba_exit_route_object" \
   "$kotoba_service_task_object" \
-  "$kotoba_rsa2048_object"
+  "$kotoba_rsa2048_object" \
+  "$kotoba_net_arp_object"
 fi
 initramfs="$kernel_dir/INITRD.IMG"
 recovery_signature="$aiueos/kotoba/user-smoke.sig"

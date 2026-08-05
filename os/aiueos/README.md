@@ -315,6 +315,47 @@ new version from its primary without touching recovery, and corrupting the
 updated primary loader must boot the preserved previous version through the
 firmware fallback — an executable rollback receipt.
 
+## Network: the link layer
+
+aiueos sends and receives real Ethernet frames (ADR-0020). This is the **link
+layer only** — a node cannot reach murakumo.cloud, or anything else, until
+ARP/IPv4, TCP and TLS are built on top of it.
+
+```sh
+AIUEOS_TEST_NET=1 ./os/aiueos/scripts/smoke-qemu-uefi.sh
+```
+
+The driver is a modern-PCI virtio-net with two virtqueues (0 receive,
+1 transmit), following the virtio-blk/rng pattern already in `kernel/pci.c`.
+`prepare_queue` gained an index parameter: every device before this one used
+exactly one queue, so it selected queue 0 by construction. The receive buffer is
+posted *before* `DRIVER_OK`, so a reply cannot arrive with no buffer to land in.
+
+The first packet aiueos ever sends is an **ARP request**, chosen because it is
+the smallest exchange that proves a real peer answered — 14 bytes of Ethernet,
+28 of ARP, no IP stack anywhere. Under QEMU's SLIRP the gateway 10.0.2.2
+answers; no host network access is involved.
+
+Whether the bytes that came back are the reply we asked for is a **decision**, so
+it is a Kotoba object, not C: `kotoba/net-arp-reply-valid.kotoba` compiles to
+`x86_64-aiueos-kernel-v1`, exports `kotoba_aiueos_net_arp_reply_valid`, and is
+admitted by the same fail-closed verifier as every other object (`imports=0
+relocations=1`). It checks every field of the reply rather than the opcode
+alone — a device model that echoed our own broadcast back would pass an
+opcode-only check, so admission requires opcode 2 (a reply, not the 1 we sent)
+*and* sender IPv4 10.0.2.2.
+
+A NIC is optional and stays optional. It is attached only under
+`AIUEOS_TEST_NET=1`, so every other gate boots the machine it booted before, and
+the kernel reports `AIUEOS_VIRTIO_NET_ABSENT no-nic-attached` rather than
+failing when none is present. Measured both ways: a no-NIC boot is green with
+`NET_ABSENT`, a NIC boot green with
+`AIUEOS_VIRTIO_NET_OK modern-pci rx/tx arp-reply kotoba-admitted`.
+
+The driver polls instead of taking an MSI-X interrupt, unlike blk and rng: this
+is the first packet the OS has ever sent, and a completion that never arrives
+must fail the gate rather than park the boot in `hlt` forever.
+
 ## USB removable-media boot
 
 The GPT release image above is what gets written to a USB stick, but producing
