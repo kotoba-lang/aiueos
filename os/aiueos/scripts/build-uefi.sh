@@ -48,6 +48,7 @@ kotoba_acpi_table_valid_object=${AIUEOS_KOTOBA_ACPI_TABLE_VALID_OBJECT:-"$aiueos
 kotoba_vtd_admit_object=${AIUEOS_KOTOBA_VTD_ADMIT_OBJECT:-"$aiueos/kotoba/vtd-admit.o"}
 kotoba_msr_read_object=${AIUEOS_KOTOBA_MSR_READ_OBJECT:-"$aiueos/kotoba/msr-read.o"}
 kotoba_msr_write_object=${AIUEOS_KOTOBA_MSR_WRITE_OBJECT:-"$aiueos/kotoba/msr-write.o"}
+kotoba_idt_gate_object=${AIUEOS_KOTOBA_IDT_GATE_OBJECT:-"$aiueos/kotoba/idt-gate-build.o"}
 kotoba_syscall_range_object=${AIUEOS_KOTOBA_SYSCALL_RANGE_OBJECT:-"$aiueos/kotoba/syscall-range-valid.o"}
 kotoba_copy_in_object=${AIUEOS_KOTOBA_COPY_IN_OBJECT:-"$aiueos/kotoba/copy-in.o"}
 kotoba_capability_object=${AIUEOS_KOTOBA_CAPABILITY_OBJECT:-"$aiueos/kotoba/capability-plan.o"}
@@ -170,6 +171,9 @@ python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_msr_read_objec
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_msr_write_object" \
   217f1ca51d19d5c2364c1fba0aa14e0554682920fb07898a3aead524d7102d15 \
   kotoba_aiueos_msr_write
+python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_idt_gate_object" \
+  ccde734fd89f25480ff96c501812a3d1fc0e021b9195f31e1575a7ebeb0fac5a \
+  kotoba_aiueos_idt_gate_build
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_syscall_range_object" \
   c65aa4b0b2b47891f2b1340a289157625262156733d85195d0449a2050aa18b8 \
   kotoba_aiueos_syscall_range_valid
@@ -336,6 +340,7 @@ zig ld.lld -nostdlib -static -z max-page-size=0x1000 \
   "$kotoba_acpi_checksum_object" "$kotoba_acpi_table_valid_object" \
   "$kotoba_vtd_admit_object" \
   "$kotoba_msr_read_object" "$kotoba_msr_write_object" \
+  "$kotoba_idt_gate_object" \
   "$kotoba_syscall_range_object" "$kotoba_copy_in_object" \
   "$kotoba_capability_object" "$kotoba_capability_mutation_object" \
   "$kotoba_service_lifecycle_object" \
