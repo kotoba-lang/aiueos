@@ -8,15 +8,15 @@
 volatile uint64_t aiueos_apic_timer_ticks;
 volatile uint32_t *aiueos_apic_mmio_base;
 
-static uint64_t read_msr(uint32_t msr) {
-  uint32_t low, high;
-  __asm__ volatile("rdmsr" : "=a"(low), "=d"(high) : "c"(msr));
-  return ((uint64_t)high << 32) | low;
-}
-static void write_msr(uint32_t msr, uint64_t value) {
-  __asm__ volatile("wrmsr" : : "c"(msr), "a"((uint32_t)value),
-                   "d"((uint32_t)(value >> 32)));
-}
+/* MSR access is mechanism and lives in kotoba/msr-read.kotoba and
+   kotoba/msr-write.kotoba. It carries a decision with it: those objects admit
+   only the five indices this kernel has a reason to touch -- IA32_APIC_BASE
+   here, EFER and the SYSCALL block elsewhere -- and a refused index performs
+   no rdmsr/wrmsr at all. The write reports 1 admitted / 0 refused; the read
+   cannot signal refusal, because every 64-bit pattern is a legal MSR value, so
+   0x1b's presence on the admitted list is what makes the read below sound. */
+extern uint64_t kotoba_aiueos_msr_read(uint64_t index);
+extern uint64_t kotoba_aiueos_msr_write(uint64_t index, uint64_t value);
 static void write_register(uint32_t offset, uint32_t value) {
   aiueos_apic_mmio_base[offset / 4] = value;
   (void)aiueos_apic_mmio_base[0x20 / 4];
@@ -32,9 +32,10 @@ void aiueos_apic_timer_unmask(void) {
 }
 
 int aiueos_apic_timer_initialize(void) {
-  uint64_t base = read_msr(IA32_APIC_BASE_MSR);
+  uint64_t base = kotoba_aiueos_msr_read(IA32_APIC_BASE_MSR);
   if ((base & APIC_BASE_MASK) != EXPECTED_APIC_BASE) return 0;
-  write_msr(IA32_APIC_BASE_MSR, base | APIC_GLOBAL_ENABLE);
+  if (!kotoba_aiueos_msr_write(IA32_APIC_BASE_MSR, base | APIC_GLOBAL_ENABLE))
+    return 0;
   aiueos_apic_mmio_base = (volatile uint32_t *)(uintptr_t)EXPECTED_APIC_BASE;
   aiueos_apic_timer_ticks = 0;
 

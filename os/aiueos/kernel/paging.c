@@ -48,6 +48,13 @@ extern uint64_t kotoba_aiueos_page_mapping_plan(uint64_t process,uint64_t kind,
 /* Whether a physical range may be mapped at all is a decision and lives in
    kotoba/mmio-map-admit.kotoba; everything below is mechanism. */
 extern uint64_t kotoba_aiueos_mmio_map_admit(uint64_t address, uint64_t length);
+/* Which model-specific registers this kernel may reach at all is likewise a
+   decision, and lives in kotoba/msr-read.kotoba and kotoba/msr-write.kotoba;
+   the rdmsr/wrmsr below them is mechanism. IA32_EFER (0xc0000080) is on the
+   admitted list because of the write immediately below: every entry this file
+   builds carries PTE_NX, which is a reserved bit until NXE is set. */
+extern uint64_t kotoba_aiueos_msr_read(uint64_t index);
+extern uint64_t kotoba_aiueos_msr_write(uint64_t index, uint64_t value);
 int aiueos_address_space_reclaim(unsigned process);
 void *aiueos_address_space_private_backing(unsigned process);
 static uint64_t kernel_cr3;
@@ -71,13 +78,6 @@ static uint64_t read_cr3(void) {
 }
 static void write_cr0(uint64_t value) { __asm__ volatile("mov %0, %%cr0" : : "r"(value) : "memory"); }
 static void write_cr3(uint64_t value) { __asm__ volatile("mov %0, %%cr3" : : "r"(value) : "memory"); }
-static uint64_t read_msr(uint32_t msr) {
-  uint32_t lo, hi; __asm__ volatile("rdmsr" : "=a"(lo), "=d"(hi) : "c"(msr));
-  return ((uint64_t)hi << 32) | lo;
-}
-static void write_msr(uint32_t msr, uint64_t value) {
-  __asm__ volatile("wrmsr" : : "c"(msr), "a"((uint32_t)value), "d"((uint32_t)(value >> 32)));
-}
 static int nx_supported(void) {
   uint32_t eax = 0x80000000, ebx, ecx, edx;
   __asm__ volatile("cpuid" : "+a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx));
@@ -137,7 +137,13 @@ int aiueos_paging_initialize(void) {
   }
   low_page_table[(uint64_t)(uintptr_t)aiueos_user_data_end / PAGE_SIZE] = 0;
 
-  write_msr(0xc0000080U, read_msr(0xc0000080U) | (1ULL << 11));
+  /* This is the one MSR read in the kernel whose result is not examined before
+     use -- it is ORed with NXE and written straight back -- so a refused read
+     returning 0 would clear LME and SCE here. That is why EFER is admitted, and
+     why the write's status is checked rather than discarded. */
+  if (!kotoba_aiueos_msr_write(0xc0000080ULL,
+                               kotoba_aiueos_msr_read(0xc0000080ULL) | (1ULL << 11)))
+    return 0;
   write_cr0(read_cr0() | (1ULL << 16));
   write_cr3((uint64_t)(uintptr_t)pml4);
   kernel_cr3 = (uint64_t)(uintptr_t)pml4;

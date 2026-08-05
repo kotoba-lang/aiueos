@@ -109,13 +109,16 @@ void aiueos_process_set_kernel_stack(uint64_t top) {
   tss.rsp0=top; aiueos_syscall_kernel_stack_top=top;
 }
 
-static uint64_t read_msr(uint32_t msr) {
-  uint32_t lo,hi; __asm__ volatile("rdmsr":"=a"(lo),"=d"(hi):"c"(msr));
-  return ((uint64_t)hi<<32)|lo;
-}
-static void write_msr(uint32_t msr,uint64_t value) {
-  __asm__ volatile("wrmsr"::"c"(msr),"a"((uint32_t)value),"d"((uint32_t)(value>>32)));
-}
+/* The SYSCALL MSRs are reached through kotoba/msr-read.kotoba and
+   kotoba/msr-write.kotoba, which admit 0xc0000080/81/82/84 and nothing else.
+   0xc0000083 (IA32_CSTAR) is deliberately NOT admitted: this kernel enters user
+   mode in 64-bit mode only and never programs the compatibility-mode entry
+   point, and an admitted "range" rather than a list would have let it through.
+   Writes return 1 admitted / 0 refused; reads cannot signal, so the evidence
+   check below stands as the read-back proof either way -- a refused read
+   returns 0 and fails all four comparisons. */
+extern uint64_t kotoba_aiueos_msr_read(uint64_t index);
+extern uint64_t kotoba_aiueos_msr_write(uint64_t index, uint64_t value);
 static int syscall_transport_initialize(void) {
   uint32_t eax=0x80000000U,ebx,ecx,edx;
   __asm__ volatile("cpuid":"+a"(eax),"=b"(ebx),"=c"(ecx),"=d"(edx));
@@ -124,15 +127,17 @@ static int syscall_transport_initialize(void) {
   __asm__ volatile("cpuid":"+a"(eax),"=b"(ebx),"=c"(ecx),"=d"(edx));
   if (!(edx&(1U<<11))) return 0;
   uint64_t star=(0x10ULL<<48)|(0x08ULL<<32);
-  write_msr(0xc0000080U,read_msr(0xc0000080U)|1U);
-  write_msr(0xc0000081U,star);
-  write_msr(0xc0000082U,(uint64_t)(uintptr_t)aiueos_syscall_entry);
-  write_msr(0xc0000084U,0x47700U);
+  if (!kotoba_aiueos_msr_write(0xc0000080ULL,
+        kotoba_aiueos_msr_read(0xc0000080ULL)|1U)) return 0;
+  if (!kotoba_aiueos_msr_write(0xc0000081ULL,star)) return 0;
+  if (!kotoba_aiueos_msr_write(0xc0000082ULL,
+        (uint64_t)(uintptr_t)aiueos_syscall_entry)) return 0;
+  if (!kotoba_aiueos_msr_write(0xc0000084ULL,0x47700U)) return 0;
   aiueos_sysret_count=aiueos_sysret_validation_count=0;
-  syscall_transport_evidence=(read_msr(0xc0000080U)&1U) &&
-    read_msr(0xc0000081U)==star &&
-    read_msr(0xc0000082U)==(uint64_t)(uintptr_t)aiueos_syscall_entry &&
-    read_msr(0xc0000084U)==0x47700U;
+  syscall_transport_evidence=(kotoba_aiueos_msr_read(0xc0000080ULL)&1U) &&
+    kotoba_aiueos_msr_read(0xc0000081ULL)==star &&
+    kotoba_aiueos_msr_read(0xc0000082ULL)==(uint64_t)(uintptr_t)aiueos_syscall_entry &&
+    kotoba_aiueos_msr_read(0xc0000084ULL)==0x47700U;
   return (int)syscall_transport_evidence;
 }
 int aiueos_syscall_transport_evidence_ready(void) {
