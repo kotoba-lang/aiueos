@@ -53,6 +53,19 @@ kotoba_idt_gate_object=${AIUEOS_KOTOBA_IDT_GATE_OBJECT:-"$aiueos/kotoba/idt-gate
 # `sti`. Until now this path never masked the PIC at all and was green only
 # because OVMF does it before handoff (ADR-0028 fixed the Multiboot path only).
 kotoba_pic_disable_object=${AIUEOS_KOTOBA_PIC_DISABLE_OBJECT:-"$aiueos/kotoba/pic-disable.o"}
+# The six hand-written `cpuid` sites in this kernel asked THREE questions, and
+# only two were feature tests, so they become three objects rather than one
+# generic accessor -- the knowledge of which leaf and which bit answers a
+# question is the decision, and a `(leaf, bit)` parameter pair would have left
+# it as magic numbers at the C call site. This path compiles all three of the C
+# files involved (paging.c, process.c, pci.c below), so it links all three:
+#   cpu-feature-nx       paging.c   leaf 0x80000001 EDX bit 20
+#   cpu-feature-syscall  process.c  leaf 0x80000001 EDX bit 11
+#   cpu-apic-id          pci.c      leaf 1 EBX 31:24 -- an ID, not a feature
+# The Multiboot path compiles NONE of those three files and links none of these.
+kotoba_cpu_feature_nx_object=${AIUEOS_KOTOBA_CPU_FEATURE_NX_OBJECT:-"$aiueos/kotoba/cpu-feature-nx.o"}
+kotoba_cpu_feature_syscall_object=${AIUEOS_KOTOBA_CPU_FEATURE_SYSCALL_OBJECT:-"$aiueos/kotoba/cpu-feature-syscall.o"}
+kotoba_cpu_apic_id_object=${AIUEOS_KOTOBA_CPU_APIC_ID_OBJECT:-"$aiueos/kotoba/cpu-apic-id.o"}
 kotoba_syscall_range_object=${AIUEOS_KOTOBA_SYSCALL_RANGE_OBJECT:-"$aiueos/kotoba/syscall-range-valid.o"}
 kotoba_copy_in_object=${AIUEOS_KOTOBA_COPY_IN_OBJECT:-"$aiueos/kotoba/copy-in.o"}
 kotoba_capability_object=${AIUEOS_KOTOBA_CAPABILITY_OBJECT:-"$aiueos/kotoba/capability-plan.o"}
@@ -181,6 +194,15 @@ python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_idt_gate_objec
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_pic_disable_object" \
   65111cfab01b3981ec207cf1eee040b03dabebb0573a0e053e0b5d393568ab1e \
   kotoba_aiueos_pic_disable
+python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_cpu_feature_nx_object" \
+  27dc9fbdf9ba54e78aa490f89290c8da158b24c89f23c12e3199ac156a50b83b \
+  kotoba_aiueos_cpu_feature_nx
+python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_cpu_feature_syscall_object" \
+  ecec6006b793a4210dc2b0f77438775f3fb52a808a8c46187a3075996c88413f \
+  kotoba_aiueos_cpu_feature_syscall
+python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_cpu_apic_id_object" \
+  8946c2ca48aff1d27a5082084625d3cb5139a6f722c2c657e325cefcf86429ce \
+  kotoba_aiueos_cpu_apic_id
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_syscall_range_object" \
   c65aa4b0b2b47891f2b1340a289157625262156733d85195d0449a2050aa18b8 \
   kotoba_aiueos_syscall_range_valid
@@ -348,6 +370,8 @@ zig ld.lld -nostdlib -static -z max-page-size=0x1000 \
   "$kotoba_vtd_admit_object" \
   "$kotoba_msr_read_object" "$kotoba_msr_write_object" \
   "$kotoba_idt_gate_object" "$kotoba_pic_disable_object" \
+  "$kotoba_cpu_feature_nx_object" "$kotoba_cpu_feature_syscall_object" \
+  "$kotoba_cpu_apic_id_object" \
   "$kotoba_syscall_range_object" "$kotoba_copy_in_object" \
   "$kotoba_capability_object" "$kotoba_capability_mutation_object" \
   "$kotoba_service_lifecycle_object" \

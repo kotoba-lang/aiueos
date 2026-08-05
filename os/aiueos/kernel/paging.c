@@ -55,6 +55,12 @@ extern uint64_t kotoba_aiueos_mmio_map_admit(uint64_t address, uint64_t length);
    builds carries PTE_NX, which is a reserved bit until NXE is set. */
 extern uint64_t kotoba_aiueos_msr_read(uint64_t index);
 extern uint64_t kotoba_aiueos_msr_write(uint64_t index, uint64_t value);
+/* WHICH cpuid leaf and WHICH bit answer "does this CPU support NX" is the
+   decision, and it lives in kotoba/cpu-feature-nx.kotoba -- leaf 0x80000001,
+   EDX bit 20, behind a max-extended-leaf guard on leaf 0x80000000. Leaving
+   those two numbers here as arguments to a generic accessor would have moved
+   the `cpuid` instruction out of C while leaving the whole decision in it. */
+extern uint64_t kotoba_aiueos_cpu_feature_nx(void);
 int aiueos_address_space_reclaim(unsigned process);
 void *aiueos_address_space_private_backing(unsigned process);
 static uint64_t kernel_cr3;
@@ -78,20 +84,12 @@ static uint64_t read_cr3(void) {
 }
 static void write_cr0(uint64_t value) { __asm__ volatile("mov %0, %%cr0" : : "r"(value) : "memory"); }
 static void write_cr3(uint64_t value) { __asm__ volatile("mov %0, %%cr3" : : "r"(value) : "memory"); }
-static int nx_supported(void) {
-  uint32_t eax = 0x80000000, ebx, ecx, edx;
-  __asm__ volatile("cpuid" : "+a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx));
-  if (eax < 0x80000001) return 0;
-  eax = 0x80000001;
-  __asm__ volatile("cpuid" : "+a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx));
-  return (edx & (1U << 20)) != 0;
-}
 static int within(uint64_t page, const uint8_t *start, const uint8_t *end) {
   return page >= (uint64_t)(uintptr_t)start && page < (uint64_t)(uintptr_t)end;
 }
 
 int aiueos_paging_initialize(void) {
-  if (!nx_supported()) return 0;
+  if (!kotoba_aiueos_cpu_feature_nx()) return 0;
 
   for (uint64_t i = 0; i < ENTRY_COUNT; i++) {
     pml4[i] = pdpt[i] = page_directory[i] = low_page_table[i] = 0;

@@ -29,6 +29,18 @@ kotoba_acpi_table_valid_object=${AIUEOS_KOTOBA_ACPI_TABLE_VALID_OBJECT:-"$aiueos
 # the two comments above record, which is why it is listed at the same time as
 # the C that needs it rather than after.
 kotoba_pic_disable_object=${AIUEOS_KOTOBA_PIC_DISABLE_OBJECT:-"$aiueos/kotoba/pic-disable.o"}
+# NOT linked here on purpose: kotoba/cpu-feature-nx.o, cpu-feature-syscall.o and
+# cpu-apic-id.o. Unlike the four omissions recorded above and below -- each of
+# which was a real missing link that broke this script -- this one is checked
+# rather than assumed: the three objects replace `cpuid` sites in kernel/paging.c
+# (NX), kernel/process.c (SYSCALL) and kernel/pci.c (MSI-X destination), and this
+# path compiles NONE of those three files. It builds multiboot/entry.S,
+# multiboot/main.c and reuses only kernel/acpi.c and kernel/apic.c, none of which
+# ever contained a `cpuid`. Verified by linking: this script's output has no
+# undefined kotoba_aiueos_cpu_* symbol. If this path ever reuses paging.c,
+# process.c or pci.c the corresponding object must be added here, exactly as the
+# MSR, ACPI and PIC omissions above had to be.
+#
 # NOT linked here on purpose: kotoba/idt-gate-build.o. This path does not
 # include kernel/main.c -- it has its own multiboot/main.c, which keeps a
 # second copy of the same descriptor packing in C. Converting that copy would

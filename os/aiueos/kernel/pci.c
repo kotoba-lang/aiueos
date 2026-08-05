@@ -51,6 +51,15 @@ extern uint64_t kotoba_aiueos_pci_config_read(uint64_t bus, uint64_t dev,
 extern uint64_t kotoba_aiueos_pci_config_write(uint64_t bus, uint64_t dev,
                                                uint64_t fn, uint64_t off,
                                                uint64_t value);
+/* The initial APIC ID, used below as the MSI-X message destination. Unlike the
+   NX and SYSCALL probes in paging.c and process.c this is NOT a feature test --
+   it extracts an 8-bit FIELD (leaf 1, EBX 31:24) rather than testing a bit, and
+   what it returns is an identifier rather than a predicate. That is why it is
+   its own object: the shift-and-mask is the part most likely to be got wrong,
+   and getting it wrong here does not fault -- it addresses a different, legal
+   message address and the interrupt is simply never delivered, which reads as a
+   dead device. See kotoba/cpu-apic-id.kotoba. */
+extern uint64_t kotoba_aiueos_cpu_apic_id(void);
 static uint32_t config_read(uint8_t bus, uint8_t dev, uint8_t fn, uint8_t off) {
   return (uint32_t)kotoba_aiueos_pci_config_read(bus, dev, fn, off);
 }
@@ -664,10 +673,9 @@ static int setup_rng_msix(uint8_t b, uint8_t d, uint8_t f,
   if (!aiueos_map_pci_mmio(table_base + table_offset,table_bytes) ||
       !aiueos_map_pci_mmio(pba_base + pba_offset,pba_bytes)) return 0;
   struct msix_entry *entry = (void *)(uintptr_t)(table_base + table_offset);
-  uint32_t eax, ebx, ecx, edx;
-  eax = 1; __asm__ volatile("cpuid" : "+a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx));
   entry[0].vector_control = 1;
-  entry[0].address_low = 0xfee00000U | (((ebx >> 24) & 0xffU) << 12);
+  entry[0].address_low =
+    0xfee00000U | ((uint32_t)kotoba_aiueos_cpu_apic_id() << 12);
   entry[0].address_high = 0;
   entry[0].data = 34;
   __asm__ volatile("" ::: "memory");
@@ -705,9 +713,10 @@ static int setup_blk_msix(uint8_t b, uint8_t d, uint8_t f,
   if (!aiueos_map_pci_mmio(table_base + table_offset,table_bytes) ||
       !aiueos_map_pci_mmio(pba_base + pba_offset,pba_bytes)) return 0;
   struct msix_entry *entry = (void *)(uintptr_t)(table_base + table_offset);
-  uint32_t eax = 1, ebx, ecx, edx;
-  __asm__ volatile("cpuid" : "+a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx));
-  uint32_t destination = (ebx >> 24) & 0xffU;
+  /* `destination` survives here, unlike in setup_rng_msix, because
+     aiueos_vtd_program_msix takes it as well -- with interrupt remapping on it
+     may rewrite both the address and the data below. */
+  uint32_t destination = (uint32_t)kotoba_aiueos_cpu_apic_id();
   uint32_t message_address = 0xfee00000U | (destination << 12), message_data = 35;
   if (aiueos_vtd_translation_enabled() &&
       !aiueos_vtd_program_msix(((uint16_t)b << 8) | ((uint16_t)d << 3) | f,

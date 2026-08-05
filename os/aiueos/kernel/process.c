@@ -119,13 +119,15 @@ void aiueos_process_set_kernel_stack(uint64_t top) {
    returns 0 and fails all four comparisons. */
 extern uint64_t kotoba_aiueos_msr_read(uint64_t index);
 extern uint64_t kotoba_aiueos_msr_write(uint64_t index, uint64_t value);
+/* Whether `syscall` decodes on this CPU at all is leaf 0x80000001 EDX bit 11,
+   behind a max-extended-leaf guard on leaf 0x80000000 -- and knowing that it is
+   THAT leaf and THAT bit is the decision, so it lives in
+   kotoba/cpu-feature-syscall.kotoba. Same leaf as the NX probe paging.c uses
+   and a different bit, which is exactly why they are two objects rather than
+   one taking the bit as an argument. */
+extern uint64_t kotoba_aiueos_cpu_feature_syscall(void);
 static int syscall_transport_initialize(void) {
-  uint32_t eax=0x80000000U,ebx,ecx,edx;
-  __asm__ volatile("cpuid":"+a"(eax),"=b"(ebx),"=c"(ecx),"=d"(edx));
-  if (eax<0x80000001U) return 0;
-  eax=0x80000001U;
-  __asm__ volatile("cpuid":"+a"(eax),"=b"(ebx),"=c"(ecx),"=d"(edx));
-  if (!(edx&(1U<<11))) return 0;
+  if (!kotoba_aiueos_cpu_feature_syscall()) return 0;
   uint64_t star=(0x10ULL<<48)|(0x08ULL<<32);
   if (!kotoba_aiueos_msr_write(0xc0000080ULL,
         kotoba_aiueos_msr_read(0xc0000080ULL)|1U)) return 0;
