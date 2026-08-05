@@ -1154,13 +1154,25 @@ extern uint64_t kotoba_aiueos_ipv4_checksum(uint64_t buffer, uint64_t length);
 extern uint64_t kotoba_aiueos_ipv4_icmp_reply_valid(uint64_t frame, uint64_t length,
                                                     uint64_t expected_src, uint64_t ident,
                                                     uint64_t sequence);
+extern uint64_t kotoba_aiueos_tcp_checksum_ok(uint64_t frame, uint64_t ip_total_length,
+                                              uint64_t src, uint64_t dst);
+extern uint64_t kotoba_aiueos_tcp_segment_valid(uint64_t frame, uint64_t length,
+                                                uint64_t expected_src, uint64_t expected_ack,
+                                                uint64_t expected_flags);
 
 static int net_ready;
 static uint32_t net_rx_length;
 static int ipv4_ready;
+static int tcp_ready;
+/* How far the connection got, so a failed run says where to look. One bit would
+   not: the exchange has four admissions and a TCG boot under load costs many
+   minutes, so narrowing it to a phase is worth an accessor. */
+static unsigned tcp_stage;
 int aiueos_virtio_net_ready(void) { return net_ready; }
 uint32_t aiueos_virtio_net_rx_length(void) { return net_rx_length; }
 int aiueos_ipv4_ready(void) { return ipv4_ready; }
+int aiueos_tcp_ready(void) { return tcp_ready; }
+unsigned aiueos_tcp_stage(void) { return tcp_stage; }
 
 /* SLIRP's fixed topology: the guest is 10.0.2.15 and the gateway that answers
    ARP is 10.0.2.2. Nothing here depends on DHCP having run -- an ARP exchange
@@ -1181,6 +1193,18 @@ static void net_store_be16(uint8_t *at, uint16_t value) {
 static void net_store_be32(uint8_t *at, uint32_t value) {
   at[0] = (uint8_t)(value >> 24); at[1] = (uint8_t)(value >> 16);
   at[2] = (uint8_t)(value >> 8); at[3] = (uint8_t)value;
+}
+/* The inverse pair, needed only once TCP has to carry a number the PEER chose --
+   every field this driver sent before was one it had picked itself. Reading a
+   field is not admitting it: these are used only on frames a Kotoba object has
+   already accepted, the same rule under which the peer's MAC is lifted out of an
+   admitted ARP reply (ADR-0021). */
+static uint16_t net_load_be16(const uint8_t *at) {
+  return (uint16_t)(((uint32_t)at[0] << 8) | at[1]);
+}
+static uint32_t net_load_be32(const uint8_t *at) {
+  return ((uint32_t)at[0] << 24) | ((uint32_t)at[1] << 16) |
+         ((uint32_t)at[2] << 8) | at[3];
 }
 
 /* A locally-administered address. The peer replies to whatever source it sees,
@@ -1318,6 +1342,264 @@ static int net_ipv4_echo(struct net_ring *rx, struct net_ring *tx,
   return 0;
 }
 
+/* ------------------------------------------------------------------------- */
+/* TCP: one connection, opened, used once and closed.                        */
+/*                                                                           */
+/* This is a PROBE, not a stack, and the difference is worth being explicit   */
+/* about because everything below reads like the beginning of one. There is   */
+/* no retransmission timer -- a segment this OS sends and the peer drops is   */
+/* never sent again, and the run simply fails. No congestion control: there   */
+/* is one segment in flight at a time because the code waits for each reply,  */
+/* not because anything computes a window. No window management beyond a      */
+/* fixed advertised value. No out-of-order reassembly, no reassembly at all;  */
+/* a segment that is not the next one expected is discarded by the admission  */
+/* and looked past. One connection, whose endpoints are compiled in. No TCP   */
+/* options are sent (data offset 5), though the peer's are tolerated.         */
+/*                                                                           */
+/* What it proves is exactly one thing: a real peer completed a three-way     */
+/* handshake with aiueos, echoed bytes it sent, and closed, with every        */
+/* received segment admitted by compiler-emitted Kotoba. Anything that needs  */
+/* to survive loss, reorder or a second connection needs the state machine    */
+/* this deliberately is not.                                                  */
+/* ------------------------------------------------------------------------- */
+
+/* SLIRP's `guestfwd=tcp:10.0.2.100:9000-cmd:/bin/cat` endpoint, which pipes the
+   stream through `cat` and so echoes it. No ARP is sent for this address: the
+   ARP cache holds one entry, the gateway, and frames addressed to the gateway's
+   MAC reach SLIRP's IPv4 input regardless -- it does not filter inbound IPv4 on
+   the Ethernet destination. Note that 10.0.2.100 is INSIDE 10.0.2.0/24 and so
+   is on-link by netmask; a conforming stack would ARP for it, and SLIRP would
+   answer, because guestfwd addresses are in its exec list. Not doing so is a
+   property of this probe, not of the topology. */
+#define NET_TCP_PEER_IP 0x0a000264U
+#define NET_TCP_PEER_PORT 9000
+/* Both fixed, because there is exactly one connection per boot. A real stack
+   would allocate an ephemeral port and pick an unpredictable ISN (RFC 6528);
+   neither adds anything against a `cat` on the other side of a virtual switch,
+   and constants make a capture of a failed run readable at a glance. */
+#define NET_TCP_LOCAL_PORT 49152
+#define NET_TCP_ISN 0xa1e00000U
+/* Advertised once and never updated. Nothing here holds more than one segment,
+   so this is a constant rather than a variable that would have to shrink. */
+#define NET_TCP_WINDOW 2048
+#define NET_TCP_PAYLOAD 8
+
+#define NET_TCP_FIN 0x01
+#define NET_TCP_SYN 0x02
+#define NET_TCP_PSH 0x08
+#define NET_TCP_ACK 0x10
+
+/* Which admission was not reached. `TX_*` are build faults rather than network
+   ones and are reported apart for that reason: they mean the segment was wrong
+   before it left, which no amount of retrying the peer would fix. */
+#define NET_TCP_STAGE_IDLE 0
+#define NET_TCP_STAGE_SYN_ACK 1
+#define NET_TCP_STAGE_ECHO 2
+#define NET_TCP_STAGE_FIN_ACK 3
+#define NET_TCP_STAGE_DONE 4
+#define NET_TCP_STAGE_TX_CHECKSUM 5
+#define NET_TCP_STAGE_TX_STALLED 6
+
+/* Eight bytes: enough that the peer has to carry a real payload, few enough
+   that the sequence arithmetic below is checkable by eye against a capture. */
+static const uint8_t net_tcp_payload[NET_TCP_PAYLOAD] =
+  {'a','i','u','e','o','s','\r','\n'};
+
+/* The TCP checksum covers a 12-byte pseudo-header that cannot be overlaid on
+   the frame: to be contiguous with the TCP header it would have to start at
+   frame offset 22, which puts its address fields at 22..29, while the IPv4
+   header carries them at 26..33 -- four bytes off. So the two are laid out
+   contiguously here instead, and `aiueos-ipv4-checksum` sums them as one range.
+   Laying bytes out is mechanism; the arithmetic stays in the object that
+   already computes exactly this sum for the ICMP path.
+   Static rather than an allocated page because a failed allocation would have
+   to fail the whole NIC probe that ARP and IPv4 have already passed, and this
+   buffer is never touched by DMA -- only the CPU reads it. */
+static uint8_t net_tcp_scratch[4096] __attribute__((aligned(4096)));
+
+static uint16_t net_tcp_checksum(const uint8_t *frame, uint32_t tcp_length) {
+  net_store_be32(net_tcp_scratch, NET_GUEST_IP);
+  net_store_be32(net_tcp_scratch + 4, NET_TCP_PEER_IP);
+  net_tcp_scratch[8] = 0;
+  net_tcp_scratch[9] = 6;                                    /* protocol TCP */
+  net_store_be16(net_tcp_scratch + 10, (uint16_t)tcp_length);
+  for (uint32_t i = 0; i < tcp_length; i++) net_tcp_scratch[12 + i] = frame[34 + i];
+  return (uint16_t)kotoba_aiueos_ipv4_checksum(
+    (uint64_t)(uintptr_t)net_tcp_scratch, 12 + tcp_length);
+}
+
+static uint32_t net_build_tcp(uint8_t *frame, uint32_t sequence,
+                              uint32_t acknowledgement, uint8_t flags,
+                              uint32_t payload_length) {
+  uint32_t total = 40 + payload_length;                      /* 20 IPv4 + 20 TCP */
+  for (unsigned i = 0; i < 6; i++) frame[i] = net_peer_mac[i];
+  for (unsigned i = 0; i < 6; i++) frame[6 + i] = net_mac[i];
+  net_store_be16(frame + 12, 0x0800);                        /* EtherType IPv4 */
+  frame[14] = 0x45;                                          /* version 4, IHL 5 */
+  frame[15] = 0;
+  net_store_be16(frame + 16, (uint16_t)total);
+  /* Identification 0 with DF set, as for the echo: RFC 6864 permits it because
+     a datagram that may not be fragmented can never need reassembly. */
+  net_store_be16(frame + 18, 0);
+  net_store_be16(frame + 20, 0x4000);
+  frame[22] = 64;                                            /* TTL */
+  frame[23] = 6;                                             /* TCP */
+  net_store_be16(frame + 24, 0);                             /* checksum covers itself as 0 */
+  net_store_be32(frame + 26, NET_GUEST_IP);
+  net_store_be32(frame + 30, NET_TCP_PEER_IP);
+  net_store_be16(frame + 24,
+    (uint16_t)kotoba_aiueos_ipv4_checksum((uint64_t)(uintptr_t)(frame + 14), 20));
+  net_store_be16(frame + 34, NET_TCP_LOCAL_PORT);
+  net_store_be16(frame + 36, NET_TCP_PEER_PORT);
+  net_store_be32(frame + 38, sequence);
+  net_store_be32(frame + 42, acknowledgement);
+  frame[46] = 0x50;                                          /* data offset 5, no options */
+  frame[47] = flags;
+  net_store_be16(frame + 48, NET_TCP_WINDOW);
+  net_store_be16(frame + 50, 0);                             /* checksum covers itself as 0 */
+  net_store_be16(frame + 52, 0);                             /* no urgent data */
+  for (uint32_t i = 0; i < payload_length; i++) frame[54 + i] = net_tcp_payload[i];
+  net_store_be16(frame + 50, net_tcp_checksum(frame, 20 + payload_length));
+  /* 54 bytes without a payload, 62 with one. The first is under Ethernet's
+     60-byte minimum and is emitted unpadded, which the ARP request at 42 bytes
+     already showed this device and SLIRP both accept -- so nothing here depends
+     on padding that has never been exercised. A real NIC on a real wire pads it
+     itself, and the receiver ignores the difference because the IPv4 total
+     length, not the frame length, says where the datagram ends. */
+  return 14 + total;
+}
+
+static int net_tcp_send(struct net_ring *tx, uint8_t *tx_page, uint32_t sequence,
+                        uint32_t acknowledgement, uint8_t flags,
+                        uint32_t payload_length) {
+  uint8_t *frame = tx_page + sizeof(struct virtio_net_hdr);
+  for (unsigned i = 0; i < sizeof(struct virtio_net_hdr); i++) tx_page[i] = 0;
+  uint32_t frame_length =
+    net_build_tcp(frame, sequence, acknowledgement, flags, payload_length);
+  /* The segment is put to the same admission arithmetic that will judge the
+     peer's, by a different path -- from the frame, not from the scratch copy --
+     before the device ever sees it. It catches a scratch copy of the wrong
+     length or offset, a checksum field that was not zero while it was computed,
+     a field stored in the wrong place. It cannot catch an address that is wrong
+     the same way in both derivations; only the peer can, by dropping the
+     segment, and a dropped segment is indistinguishable from a peer that never
+     answered until a whole second boot has been spent finding out. */
+  if (!kotoba_aiueos_tcp_checksum_ok((uint64_t)(uintptr_t)frame,
+                                     40 + payload_length,
+                                     NET_GUEST_IP, NET_TCP_PEER_IP)) {
+    tcp_stage = NET_TCP_STAGE_TX_CHECKSUM;
+    return 0;
+  }
+  tx->desc[0].length = (uint32_t)sizeof(struct virtio_net_hdr) + frame_length;
+  net_post(tx);
+  if (!net_await(tx->used, tx->posted) || tx->used->ring[0].id != 0) {
+    tcp_stage = NET_TCP_STAGE_TX_STALLED;
+    return 0;
+  }
+  return 1;
+}
+
+/* The caller has already posted one receive buffer -- a segment must never
+   arrive with nowhere to land -- so the first attempt consumes that one and only
+   the retries post again. The queue holds exactly ONE buffer, which is the
+   sharpest limitation in this file: two segments arriving back to back means the
+   second is dropped, and recovery then depends entirely on the peer
+   retransmitting it, since nothing here does. Four attempts sufficed for ICMP,
+   where only the gateway's own ARP traffic competed; eight are allowed here
+   because a close can be preceded by a bare ACK and a retransmission both. */
+static int net_tcp_receive(struct net_ring *rx, uint8_t *rx_page,
+                           uint32_t expected_ack, uint8_t expected_flags) {
+  for (unsigned attempt = 0; attempt < 8; attempt++) {
+    if (attempt) net_post(rx);
+    if (!net_await(rx->used, rx->posted)) return 0;
+    uint32_t received = rx->used->ring[0].length;
+    if (rx->used->ring[0].id != 0 ||
+        received <= sizeof(struct virtio_net_hdr) ||
+        received > sizeof(struct virtio_net_hdr) + NET_FRAME_MAX) continue;
+    if (kotoba_aiueos_tcp_segment_valid(
+          (uint64_t)(uintptr_t)(rx_page + sizeof(struct virtio_net_hdr)),
+          received - (uint32_t)sizeof(struct virtio_net_hdr),
+          NET_TCP_PEER_IP, expected_ack, expected_flags)) return 1;
+  }
+  return 0;
+}
+
+/* How far the peer's stream has been seen, derived from a segment that has
+   already been admitted. Deriving is not admitting -- the same rule under which
+   the peer's MAC is lifted out of an admitted ARP reply -- but the derivation
+   has a domain, and a data offset outside it would produce an acknowledgement
+   number from an underflow rather than from the wire. The admission object has
+   no parameter left to constrain the data offset with, so the constraint lives
+   at the one place that actually depends on it. */
+static int net_tcp_peer_next(const uint8_t *frame, uint32_t *next) {
+  uint32_t total = net_load_be16(frame + 16);
+  uint32_t header = 4U * (uint32_t)(frame[46] >> 4);
+  if (header < 20 || header + 20 > total) return 0;
+  *next = net_load_be32(frame + 38) + (total - 20 - header);
+  return 1;
+}
+
+static int net_tcp_probe(struct net_ring *rx, struct net_ring *tx,
+                         uint8_t *rx_page, uint8_t *tx_page) {
+  const uint8_t *frame = rx_page + sizeof(struct virtio_net_hdr);
+  uint32_t peer_next;
+  if (!net_peer_mac_known) return 0;
+
+  /* --- three-way handshake ------------------------------------------------ */
+  net_post(rx);
+  if (!net_tcp_send(tx, tx_page, NET_TCP_ISN, 0, NET_TCP_SYN, 0)) return 0;
+  tcp_stage = NET_TCP_STAGE_SYN_ACK;
+  /* SYN|ACK exactly: a bare SYN would be a simultaneous open, which this cannot
+     complete, and a SYN|ACK|ECE would mean the peer negotiated ECN, which this
+     never requested. Either is a real segment and neither is the answer asked
+     for. The acknowledgement pins it to the SYN this boot sent. */
+  if (!net_tcp_receive(rx, rx_page, NET_TCP_ISN + 1, NET_TCP_SYN | NET_TCP_ACK))
+    return 0;
+  /* A SYN occupies one sequence number even though it carries no data, so the
+     peer's stream starts one past the ISN it just announced. */
+  peer_next = net_load_be32(frame + 38) + 1;
+  if (!net_tcp_send(tx, tx_page, NET_TCP_ISN + 1, peer_next, NET_TCP_ACK, 0))
+    return 0;
+
+  /* --- one payload out, the peer's echo of it back ------------------------ */
+  net_post(rx);
+  if (!net_tcp_send(tx, tx_page, NET_TCP_ISN + 1, peer_next,
+                    NET_TCP_PSH | NET_TCP_ACK, NET_TCP_PAYLOAD)) return 0;
+  tcp_stage = NET_TCP_STAGE_ECHO;
+  /* PSH|ACK, because a BSD-derived stack -- which SLIRP is -- sets PSH on a
+     segment that drains its send buffer, and eight echoed bytes always do. The
+     bare ACK that may precede it carries the same acknowledgement number, so
+     the flags are the only field that tells the two apart, which is why this
+     object compares flags for equality rather than masking.
+     Note what is NOT proved: that the bytes came back unchanged. The checksum
+     covers the payload, so the segment is intact, but nothing compares it with
+     what was sent -- that would need a third object, and the admission's arity
+     is spent. */
+  if (!net_tcp_receive(rx, rx_page, NET_TCP_ISN + 1 + NET_TCP_PAYLOAD,
+                       NET_TCP_PSH | NET_TCP_ACK)) return 0;
+  if (!net_tcp_peer_next(frame, &peer_next)) return 0;
+
+  /* --- close -------------------------------------------------------------- */
+  net_post(rx);
+  if (!net_tcp_send(tx, tx_page, NET_TCP_ISN + 1 + NET_TCP_PAYLOAD, peer_next,
+                    NET_TCP_FIN | NET_TCP_ACK, 0)) return 0;
+  tcp_stage = NET_TCP_STAGE_FIN_ACK;
+  /* A FIN occupies a sequence number too, so the peer acknowledges one past the
+     last payload byte. `cat` reaches EOF when its half closes and exits, and
+     SLIRP closes behind it -- the peer's FIN is a consequence of ours, which is
+     why waiting for it is a close and not just a shutdown. */
+  if (!net_tcp_receive(rx, rx_page, NET_TCP_ISN + 2 + NET_TCP_PAYLOAD,
+                       NET_TCP_FIN | NET_TCP_ACK)) return 0;
+  /* Courtesy, not evidence: the exchange is already proved by the admitted FIN.
+     It is sent so the peer's half closes instead of retransmitting into a boot
+     that has moved on, and its result is deliberately not checked -- failing
+     here would retract evidence that has already been earned. */
+  net_tcp_send(tx, tx_page, NET_TCP_ISN + 2 + NET_TCP_PAYLOAD, peer_next + 1,
+               NET_TCP_ACK, 0);
+  tcp_stage = NET_TCP_STAGE_DONE;
+  return 1;
+}
+
 static int virtio_net(uint8_t b, uint8_t d, uint8_t f) {
   struct virtio_caps caps;
   volatile struct virtio_common_cfg *cfg;
@@ -1388,6 +1670,11 @@ static int virtio_net(uint8_t b, uint8_t d, uint8_t f) {
   net_peer_mac_known = 1;
 
   ipv4_ready = net_ipv4_echo(&rx, &tx, rx_page, tx_page);
+  /* TCP rides on IPv4 the way IPv4 rides on the link layer, so it is attempted
+     only where the layer below produced evidence. It also matters mechanically:
+     a failed echo can return with a receive buffer still outstanding, and the
+     strict post-one-consume-one alternation below assumes none is. */
+  if (ipv4_ready) tcp_ready = net_tcp_probe(&rx, &tx, rx_page, tx_page);
   return 1;
 }
 
@@ -1396,6 +1683,8 @@ int aiueos_pci_enumerate(void) {
   net_rx_length = 0;
   net_peer_mac_known = 0;
   ipv4_ready = 0;
+  tcp_ready = 0;
+  tcp_stage = NET_TCP_STAGE_IDLE;
   object_store_ready = 0;
   kotoba_app_count=0; for(unsigned app=0;app<KOTOBA_APP_CAPACITY;app++)kotoba_apps[app].ready=0;
   journal_ready = 0;

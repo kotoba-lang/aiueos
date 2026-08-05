@@ -137,7 +137,12 @@ if [ "${AIUEOS_TEST_DMAR:-0}" = 1 ]; then iommu_args="-device intel-iommu,intrem
 # loopback of itself. No host network access is involved.
 net_args=
 if [ "${AIUEOS_TEST_NET:-0}" = 1 ]; then
-  net_args="-netdev user,id=aiueosnet -device virtio-net-pci,netdev=aiueosnet,disable-legacy=on"
+  # `guestfwd` gives the guest a TCP peer without any external network: QEMU
+  # accepts a connection to 10.0.2.100:9000 and pipes the stream through
+  # `cat`, so it echoes. That is what lets the TCP gate prove a real
+  # handshake -- sequence numbers, ACKs and both checksums all have to be
+  # right or nothing comes back -- rather than a self-echo the OS produced.
+  net_args="-netdev user,id=aiueosnet,guestfwd=tcp:10.0.2.100:9000-cmd:/bin/cat -device virtio-net-pci,netdev=aiueosnet,disable-legacy=on"
 fi
 # A hung guest must fail fast with diagnostics rather than pinning CI until
 # the job-level timeout. 124 from timeout(1) is handled below.

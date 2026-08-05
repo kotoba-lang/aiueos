@@ -67,6 +67,8 @@ kotoba_rsa2048_object=${AIUEOS_KOTOBA_RSA2048_OBJECT:-"$aiueos/kotoba/rsa2048.o"
 kotoba_net_arp_object=${AIUEOS_KOTOBA_NET_ARP_OBJECT:-"$aiueos/kotoba/net-arp-reply-valid.o"}
 kotoba_ipv4_checksum_object=${AIUEOS_KOTOBA_IPV4_CHECKSUM_OBJECT:-"$aiueos/kotoba/ipv4-checksum.o"}
 kotoba_ipv4_icmp_object=${AIUEOS_KOTOBA_IPV4_ICMP_OBJECT:-"$aiueos/kotoba/ipv4-icmp-reply-valid.o"}
+kotoba_tcp_checksum_object=${AIUEOS_KOTOBA_TCP_CHECKSUM_OBJECT:-"$aiueos/kotoba/tcp-checksum-ok.o"}
+kotoba_tcp_segment_object=${AIUEOS_KOTOBA_TCP_SEGMENT_OBJECT:-"$aiueos/kotoba/tcp-segment-valid.o"}
 kotoba_user_elf=${AIUEOS_KOTOBA_USER_ELF:-"$aiueos/kotoba/user-smoke.elf"}
 kotoba_fnv_sha=
 if [ -z "${AIUEOS_KOTOBA_FNV_OBJECT:-}" ]; then
@@ -216,6 +218,12 @@ python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_ipv4_checksum_
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_ipv4_icmp_object" \
   dab65d89d1ed0582c5be3d09653815c5cf9201102a8017c5e2ac939c2360b2b4 \
   kotoba_aiueos_ipv4_icmp_reply_valid
+python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_tcp_checksum_object" \
+  63cce586a7ea6e5af579399f18211d35eaf8796f68d1c3ff42f6175766242dd3 \
+  kotoba_aiueos_tcp_checksum_ok
+python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_tcp_segment_object" \
+  d690ae4fc9cc3e0e3f61b30fc1e7614619ad91d3ae6d176c0353e7c0851ddfd7 \
+  kotoba_aiueos_tcp_segment_valid
 python3 "$aiueos/scripts/verify-kotoba-user-elf.py" "$kotoba_user_elf" \
   1f0e5897831d0de6bbcb15eec82a6e0c4b402b436689cec051bc6de3b5c4e905
 if [ -n "${AIUEOS_EXTERNAL_KERNEL_ELF:-}" ]; then
@@ -307,7 +315,9 @@ zig ld.lld -nostdlib -static -z max-page-size=0x1000 \
   "$kotoba_rsa2048_object" \
   "$kotoba_net_arp_object" \
   "$kotoba_ipv4_checksum_object" \
-  "$kotoba_ipv4_icmp_object"
+  "$kotoba_ipv4_icmp_object" \
+  "$kotoba_tcp_checksum_object" \
+  "$kotoba_tcp_segment_object"
 fi
 initramfs="$kernel_dir/INITRD.IMG"
 recovery_signature="$aiueos/kotoba/user-smoke.sig"
