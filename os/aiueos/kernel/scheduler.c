@@ -5,8 +5,11 @@
 #define AIUEOS_USER_TASK_CAPACITY 8U
 #define AIUEOS_SERVICE_CAPACITY 8U
 #define AIUEOS_TASK_STACK_BYTES 4096U
-#define AIUEOS_KERNEL_CODE_SELECTOR 0x08U
-#define AIUEOS_INTERRUPT_FLAG (1ULL << 9)
+/* The kernel CS (0x08), SS (0x10) and the RFLAGS an initial frame carries
+ * (AIUEOS_INTERRUPT_FLAG | 2 == 514) moved into kotoba/kernel-context-build.o
+ * with the frame construction itself, so no macro for them survives here: a
+ * definition nothing reads is a definition someone can change without effect.
+ * The ring-3 selectors were never macros; see initial_user_context. */
 #define AIUEOS_IPC_CAPABILITY_TYPE 2U
 #define AIUEOS_IPC_SEND_RIGHT 1U
 #define AIUEOS_SERVICE_MUTATE_STATE 1U
@@ -55,6 +58,8 @@ extern uint64_t kotoba_aiueos_capability_plan(uint64_t slot,
   uint64_t generation, uint64_t type, uint64_t state_rights, uint64_t request);
 extern uint64_t *kotoba_aiueos_user_context_build(uint8_t *stack,
   uint64_t entry,uint64_t argument,uint64_t user_stack);
+extern uint64_t *kotoba_aiueos_kernel_context_build(uint8_t *stack,
+  uint64_t entry,uint64_t argument);
 extern void aiueos_process_set_kernel_stack(uint64_t top);
 extern volatile uint16_t aiueos_current_user_domain;
 extern void *aiueos_allocate_physical_page(void);
@@ -234,20 +239,15 @@ __attribute__((noreturn)) static void service_task_entry(uint64_t service) {
   __builtin_unreachable();
 }
 static uint64_t *initial_context(uint8_t *stack, void (*entry)(uint64_t), uint64_t argument) {
-  /* iret enters a C function directly, so model the stack position normally
-   * produced by call (RSP % 16 == 8 at function entry). */
-  uintptr_t top = (((uintptr_t)stack + AIUEOS_TASK_STACK_BYTES) & ~(uintptr_t)15) - 8;
-  struct aiueos_interrupt_context *context =
-      (struct aiueos_interrupt_context *)(top - sizeof(*context));
-  for (uint64_t *word = (uint64_t *)context;
-       word != (uint64_t *)(context + 1); ++word) *word = 0;
-  context->rip = (uint64_t)(uintptr_t)entry;
-  context->rdi = argument;
-  context->cs = AIUEOS_KERNEL_CODE_SELECTOR;
-  context->rflags = AIUEOS_INTERRUPT_FLAG | 2U;
-  context->rsp = top;
-  context->ss = 0x10U;
-  return (uint64_t *)context;
+  /* iret enters a C function directly, so the frame models the stack position
+   * normally produced by call (RSP % 16 == 8 at function entry) -- the Kotoba
+   * object owns that arithmetic, the zeroing and every field. Unlike the ring-3
+   * twin below, the result is NOT rechecked here: the two callers of this
+   * function store the pointer without testing it, so a gate could only turn a
+   * broken object into a null saved_stack. What guards this object is the
+   * pinned SHA-256 the build script verifies before linking it. */
+  return (uint64_t *)kotoba_aiueos_kernel_context_build(stack,
+    (uint64_t)(uintptr_t)entry,argument);
 }
 static uint64_t *initial_user_context(uint8_t *stack, void (*entry)(uint64_t),
                                       uint64_t argument, uint64_t user_stack) {

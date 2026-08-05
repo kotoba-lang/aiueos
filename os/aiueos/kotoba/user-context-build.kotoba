@@ -8,13 +8,21 @@
       (+ stored (zero-frame stack (+ index 1))))))
 
 (defn store64 [stack offset value]
-  (let [q1 (quot value 256)
-        q2 (quot q1 256)
-        q3 (quot q2 256)
-        q4 (quot q3 256)
-        q5 (quot q4 256)
-        q6 (quot q5 256)
-        q7 (quot q6 256)
+  ;; Mask the low byte off before each divide. `quot` is a signed idivq that
+  ;; truncates toward zero, NOT an arithmetic shift: for a value with bit 63
+  ;; set, (quot value 256) rounds the wrong way and every byte above the first
+  ;; comes out wrong. Masking first makes each division exact, and an exact
+  ;; division IS the shift. Proven by execution, not argument: without the
+  ;; mask, entry 0xFFFFFFFF80100000 stored 0x81100000. Harmless while every
+  ;; address stored here is below 2^63 -- which a higher-half kernel address
+  ;; is not.
+  (let [q1 (quot (bit-and value -256) 256)
+        q2 (quot (bit-and q1 -256) 256)
+        q3 (quot (bit-and q2 -256) 256)
+        q4 (quot (bit-and q3 -256) 256)
+        q5 (quot (bit-and q4 -256) 256)
+        q6 (quot (bit-and q5 -256) 256)
+        q7 (quot (bit-and q6 -256) 256)
         s0 (kernel-store-u8-4k stack 4096 offset (bit-and value 255))
         s1 (kernel-store-u8-4k stack 4096 (+ offset 1) (bit-and q1 255))
         s2 (kernel-store-u8-4k stack 4096 (+ offset 2) (bit-and q2 255))

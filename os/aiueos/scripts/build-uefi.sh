@@ -82,6 +82,14 @@ kotoba_catalog_valid_object=${AIUEOS_KOTOBA_CATALOG_VALID_OBJECT:-"$aiueos/kotob
 kotoba_app_lookup_object=${AIUEOS_KOTOBA_APP_LOOKUP_OBJECT:-"$aiueos/kotoba/app-lookup-plan.o"}
 kotoba_user_elf_valid_object=${AIUEOS_KOTOBA_USER_ELF_VALID_OBJECT:-"$aiueos/kotoba/user-elf-valid.o"}
 kotoba_user_context_object=${AIUEOS_KOTOBA_USER_CONTEXT_OBJECT:-"$aiueos/kotoba/user-context-build.o"}
+# The kernel-selector twin of the object above, for tasks `iret` enters at ring
+# 0. Same 160-byte frame in the same bounded 4 KiB stack; CS 0x08 / SS 0x10 and
+# an RSP that is the top of that very stack rather than a separate user stack,
+# eight bytes lower than the ring-3 frame because `iret` lands in an ordinary C
+# function and must reproduce the RSP % 16 == 8 that `call` would have left.
+# Both twins are linked here because this path is the one that compiles
+# kernel/scheduler.c, which owns both entry points.
+kotoba_kernel_context_object=${AIUEOS_KOTOBA_KERNEL_CONTEXT_OBJECT:-"$aiueos/kotoba/kernel-context-build.o"}
 kotoba_mapping_plan_object=${AIUEOS_KOTOBA_MAPPING_PLAN_OBJECT:-"$aiueos/kotoba/page-mapping-plan.o"}
 kotoba_process_plan_object=${AIUEOS_KOTOBA_PROCESS_PLAN_OBJECT:-"$aiueos/kotoba/process-create-plan.o"}
 kotoba_teardown_plan_object=${AIUEOS_KOTOBA_TEARDOWN_PLAN_OBJECT:-"$aiueos/kotoba/process-teardown-plan.o"}
@@ -249,8 +257,11 @@ python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_user_elf_valid
   b363aa7608f95c5fee37ddb95961c7e7524ca307f4d7407c4c25ca05435426ab \
   kotoba_aiueos_user_elf_valid
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_user_context_object" \
-  8e743cba708c79e6800d5c0f26c68dfefe055179f2bef8e24753012a4bc21e5b \
+  74d11f41cea74f8895743feff2a395a3a5fb3bb50c542b9edd9a0f7ecceebb9e \
   kotoba_aiueos_user_context_build
+python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_kernel_context_object" \
+  0f1364422887e9de0f40a084d4efc24ef670172926ffc63a3b0a7746145dc2a4 \
+  kotoba_aiueos_kernel_context_build
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_mapping_plan_object" \
   c492472360f4632a5f4e0457ef3f2dd867306a36ea8ba3415cdb4463c78106b5 \
   kotoba_aiueos_page_mapping_plan
@@ -383,6 +394,7 @@ zig ld.lld -nostdlib -static -z max-page-size=0x1000 \
   "$kotoba_app_lookup_object" \
   "$kotoba_user_elf_valid_object" \
   "$kotoba_user_context_object" \
+  "$kotoba_kernel_context_object" \
   "$kotoba_mapping_plan_object" \
   "$kotoba_process_plan_object" \
   "$kotoba_teardown_plan_object" \

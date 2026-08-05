@@ -41,6 +41,16 @@ kotoba_pic_disable_object=${AIUEOS_KOTOBA_PIC_DISABLE_OBJECT:-"$aiueos/kotoba/pi
 # process.c or pci.c the corresponding object must be added here, exactly as the
 # MSR, ACPI and PIC omissions above had to be.
 #
+# NOT linked here on purpose: kotoba/kernel-context-build.o (and its ring-3
+# twin kotoba/user-context-build.o, which this path has never linked either).
+# Checked the same way rather than assumed: both are called only from
+# kernel/scheduler.c -- `initial_context` and `initial_user_context` -- and the
+# C this script compiles is multiboot/entry.S, multiboot/main.c, kernel/acpi.c
+# and kernel/apic.c. scheduler.c is not among them, so there is no task
+# scheduling on this path at all and no reference to either symbol. Verified by
+# linking: this script's output has no undefined kotoba_aiueos_*_context_build.
+# If this path ever compiles scheduler.c, BOTH objects must be added here.
+#
 # NOT linked here on purpose: kotoba/idt-gate-build.o. This path does not
 # include kernel/main.c -- it has its own multiboot/main.c, which keeps a
 # second copy of the same descriptor packing in C. Converting that copy would

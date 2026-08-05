@@ -68,6 +68,15 @@ zeroed registers, RIP/RDI, user CS/SS, IF and user RSP; the C scheduler stores
 only the returned frame pointer. Its pinned SHA-256 is
 `8e743cba708c79e6800d5c0f26c68dfefe055179f2bef8e24753012a4bc21e5b`.
 
+`kernel-context-build.o` is the kernel-selector twin: the same 160-byte frame
+in the same bounded 4 KiB stack, for tasks `iret` enters at ring 0. CS 0x08,
+SS 0x10, and an RSP that is the top of that very stack rather than a separate
+user stack -- eight bytes below the ring-3 frame, because `iret` lands in an
+ordinary C function and must reproduce the `RSP % 16 == 8` that `call` leaves.
+It computes the 16-byte alignment rather than assuming it, and its byte split
+is exact over the whole unsigned range. Its pinned SHA-256 is
+`PENDING_DIGEST`.
+
 `page-mapping-plan.o` owns per-process virtual-page selection, private-page
 isolation, user RX versus RW+NX permission classes, bounded image-page sizes,
 duplicate-map rejection, and executable-entry admission. C translates the
