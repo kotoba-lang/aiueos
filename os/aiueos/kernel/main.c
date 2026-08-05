@@ -148,6 +148,7 @@ extern int aiueos_recovered_service_registry_ready(void);
 extern uint64_t aiueos_recovered_service_registry_state(unsigned service);
 extern int aiueos_user_object_replay_evidence_ready(void);
 extern int aiueos_virtio_net_ready(void);
+extern int aiueos_ipv4_ready(void);
 extern uint32_t aiueos_gpu_scanout_width(void);
 extern uint32_t aiueos_gpu_scanout_height(void);
 extern void aiueos_scheduler_initialize(void);
@@ -582,6 +583,21 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
     if (aiueos_virtio_net_ready()) {
       debug_string("AIUEOS_VIRTIO_NET_OK modern-pci rx/tx arp-reply kotoba-admitted\n");
       serial_string("AIUEOS_VIRTIO_NET_OK modern-pci rx/tx arp-reply kotoba-admitted\r\n");
+      /* IPv4 rides on the link layer, so it can only be reported where the link
+         layer was: a boot with no NIC says nothing about it at all rather than
+         reporting an absence it has no way to distinguish from a failure. */
+      if (aiueos_ipv4_ready()) {
+        debug_string("AIUEOS_IPV4_OK icmp-echo-reply kotoba-admitted\n");
+        serial_string("AIUEOS_IPV4_OK icmp-echo-reply kotoba-admitted\r\n");
+      } else {
+        /* Reached only with a NIC present and its link layer already OK, so
+           this is a real IPv4 failure and says so. Staying silent would make a
+           broken exchange indistinguishable from a build that never attempted
+           one -- the same trap AIUEOS_VIRTIO_NET_ABSENT exists to avoid one
+           layer down. It does not fail the boot: whether the peer answers ICMP
+           at all is a property of the network, not of this OS. */
+        serial_string("AIUEOS_IPV4_FAIL no-admitted-echo-reply\r\n");
+      }
     } else {
       serial_string("AIUEOS_VIRTIO_NET_ABSENT no-nic-attached\r\n");
     }
