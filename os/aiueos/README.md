@@ -360,6 +360,45 @@ copied from the rng driver, wedges the boot immediately after
 completion that never arrives still fails the gate rather than parking the boot
 forever.
 
+## Network: IPv4
+
+The ARP reply's MAC is now kept (ADR-0021), and aiueos sends an ICMP echo
+request to 10.0.2.2 and admits the reply — a full IPv4 round trip, with both
+checksums verified in Kotoba.
+
+```sh
+AIUEOS_TEST_NET=1 ./os/aiueos/scripts/smoke-qemu-uefi.sh
+# AIUEOS_VIRTIO_NET_OK modern-pci rx/tx arp-reply kotoba-admitted
+# AIUEOS_IPV4_OK icmp-echo-reply kotoba-admitted
+```
+
+ICMP echo is the smallest thing that exercises a full round trip — header
+construction, both checksums, and a peer that has to route the datagram back —
+without smuggling in anything above IPv4 to prove IPv4 works.
+
+Two Kotoba objects carry the decisions: `ipv4-checksum.kotoba` (RFC 1071, as a
+bounded tail recursion) and `ipv4-icmp-reply-valid.kotoba`, which admits a frame
+only if it is IPv4 with IHL 5, protocol ICMP, **both** checksums verifying, from
+the peer that was asked, type 0 (a reply — 8 is what was sent), and carrying the
+identifier and sequence *this boot* used. That last check is the point: an echo
+reply answering an earlier request is a real datagram and still not evidence
+that this exchange completed.
+
+A kernel memory base must **name** a region, not compute one. Passing
+`(+ frame 14)` to a bounded load is rejected outright, so summing a sub-range
+carries a base offset alongside the frame — which is what keeps a bounded load
+bounded, since a computed base could put the 2048-byte trap bound anywhere.
+
+Failure is not silent: with a NIC present and the link layer already OK, a
+failed exchange prints `AIUEOS_IPV4_FAIL no-admitted-echo-reply`. It does not
+fail the boot — whether a peer answers ICMP is a property of the network.
+
+**What this is not.** No fragmentation or reassembly (IHL ≠ 5 is rejected, not
+parsed). No routing table, no ARP expiry, no address configuration — 10.0.2.15
+and 10.0.2.2 are SLIRP's fixed topology, written into the driver, and DHCP is
+what would stop hardcoding them. No TCP, no TLS, no HTTPS: a node still cannot
+reach murakumo.cloud.
+
 ## USB removable-media boot
 
 The GPT release image above is what gets written to a USB stick, but producing

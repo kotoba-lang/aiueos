@@ -1144,14 +1144,23 @@ static int virtio_gpu(uint8_t b, uint8_t d, uint8_t f) {
 }
 
 /* Frame admission is a decision, so it is a compiler-emitted Kotoba object;
-   this file only performs the bounded DMA and hands the bytes over. */
+   this file only performs the bounded DMA and hands the bytes over. The
+   checksum is the same kind of thing in the other direction: what the field
+   ought to contain is decided about the bytes, so the object that verifies a
+   received header is also the one that computes the field in a sent one. */
 extern uint64_t kotoba_aiueos_net_arp_reply_valid(uint64_t frame, uint64_t length,
                                                   uint64_t expected_ip);
+extern uint64_t kotoba_aiueos_ipv4_checksum(uint64_t buffer, uint64_t length);
+extern uint64_t kotoba_aiueos_ipv4_icmp_reply_valid(uint64_t frame, uint64_t length,
+                                                    uint64_t expected_src, uint64_t ident,
+                                                    uint64_t sequence);
 
 static int net_ready;
 static uint32_t net_rx_length;
+static int ipv4_ready;
 int aiueos_virtio_net_ready(void) { return net_ready; }
 uint32_t aiueos_virtio_net_rx_length(void) { return net_rx_length; }
+int aiueos_ipv4_ready(void) { return ipv4_ready; }
 
 /* SLIRP's fixed topology: the guest is 10.0.2.15 and the gateway that answers
    ARP is 10.0.2.2. Nothing here depends on DHCP having run -- an ARP exchange
@@ -1160,6 +1169,11 @@ uint32_t aiueos_virtio_net_rx_length(void) { return net_rx_length; }
 #define NET_GUEST_IP 0x0a00020fU
 #define NET_PEER_IP 0x0a000202U
 #define NET_FRAME_MAX 2048
+/* Echoed back unchanged by the peer, so they are what ties a reply to the
+   request THIS boot sent. One outstanding echo means a constant sequence is
+   enough; a second one would need a counter. */
+#define NET_ICMP_IDENT 0xa1e0
+#define NET_ICMP_SEQUENCE 1
 
 static void net_store_be16(uint8_t *at, uint16_t value) {
   at[0] = (uint8_t)(value >> 8); at[1] = (uint8_t)value;
@@ -1187,6 +1201,121 @@ static uint32_t net_build_arp_request(uint8_t *frame) {
   for (unsigned i = 0; i < 6; i++) frame[32 + i] = 0;        /* unknown target */
   net_store_be32(frame + 38, NET_PEER_IP);
   return 42;
+}
+
+/* The ARP cache, which at this point in the stack's life holds exactly one
+   entry: the gateway. Storing bytes is mechanism, so it belongs here -- which
+   address a frame carries is not a decision about whether anything is valid.
+   It is what turns the exchange above from a self-contained proof into a
+   precondition: without it no unicast frame can be addressed at all. */
+static uint8_t net_peer_mac[6];
+static int net_peer_mac_known;
+
+static uint32_t net_build_icmp_echo(uint8_t *frame) {
+  for (unsigned i = 0; i < 6; i++) frame[i] = net_peer_mac[i];
+  for (unsigned i = 0; i < 6; i++) frame[6 + i] = net_mac[i];
+  net_store_be16(frame + 12, 0x0800);                        /* EtherType IPv4 */
+  frame[14] = 0x45;                                          /* version 4, IHL 5 */
+  frame[15] = 0;                                             /* no DSCP, no ECN */
+  net_store_be16(frame + 16, 28);                            /* 20 IPv4 + 8 ICMP */
+  /* Identification 0 with DF set: RFC 6864 permits it precisely because a
+     datagram that may not be fragmented can never need to be reassembled. */
+  net_store_be16(frame + 18, 0);
+  net_store_be16(frame + 20, 0x4000);
+  frame[22] = 64;                                            /* TTL */
+  frame[23] = 1;                                             /* ICMP */
+  net_store_be16(frame + 24, 0);                             /* checksum covers itself as 0 */
+  net_store_be32(frame + 26, NET_GUEST_IP);
+  net_store_be32(frame + 30, NET_PEER_IP);
+  net_store_be16(frame + 24,
+    (uint16_t)kotoba_aiueos_ipv4_checksum((uint64_t)(uintptr_t)(frame + 14), 20));
+  frame[34] = 8;                                             /* echo request */
+  frame[35] = 0;
+  net_store_be16(frame + 36, 0);
+  net_store_be16(frame + 38, NET_ICMP_IDENT);
+  net_store_be16(frame + 40, NET_ICMP_SEQUENCE);
+  net_store_be16(frame + 36,
+    (uint16_t)kotoba_aiueos_ipv4_checksum((uint64_t)(uintptr_t)(frame + 34), 8));
+  /* 42 bytes, the same length as the ARP request the device already accepted,
+     so nothing here depends on a minimum-frame rule that has not been tested. */
+  return 42;
+}
+
+/* Everything needed to drive one virtqueue, kept together because the IPv4
+   exchange posts and reaps on both queues several times and the parameter lists
+   were unreadable apart. `posted` is the free-running avail index; the ring slot
+   is always 0 because the queue size is 1. */
+struct net_ring {
+  struct virtq_desc *desc;
+  struct virtq_avail *avail;
+  struct virtq_used *used;
+  volatile uint16_t *doorbell;
+  uint16_t queue;
+  uint16_t posted;
+};
+
+static void net_post(struct net_ring *ring) {
+  ring->avail->ring[0] = 0;
+  __asm__ volatile("" ::: "memory");
+  ring->posted++;
+  ring->avail->index = ring->posted;
+  *ring->doorbell = ring->queue;
+}
+
+/* A bounded SPIN, and specifically not `hlt`. This driver claims no MSI-X
+   vector -- unlike rng and blk, which install one before going live -- so there
+   is no interrupt to wake a sleeper, and the device's own unrouted legacy
+   interrupt stays harmlessly pending only for as long as interrupts remain
+   masked, which they are throughout enumeration. Measured: a variant that
+   waited with `sti; hlt; cli` (copied from the rng driver, which can afford it
+   because it HAS a vector) wedges the boot immediately after
+   AIUEOS_APIC_TIMER_OK.
+   The budget bounds the failure case: a completion that never arrives fails the
+   gate instead of parking the boot forever. It is never approached in the
+   success case, where a completion lands within microseconds of the doorbell,
+   which is also why the exchanges below can afford to wait several times. */
+static int net_await(struct virtq_used *used, uint16_t target) {
+  for (uint32_t budget = 0; budget < 200000000U; budget++) {
+    __asm__ volatile("" ::: "memory");
+    if (used->index >= target) return 1;
+  }
+  return 0;
+}
+
+/* One echo request out, one admitted echo reply back. Layered strictly on top
+   of the link layer: it is called only after the ARP exchange was admitted, and
+   its result cannot retract that evidence. */
+static int net_ipv4_echo(struct net_ring *rx, struct net_ring *tx,
+                         uint8_t *rx_page, uint8_t *tx_page) {
+  if (!net_peer_mac_known) return 0;
+  /* The receive buffer goes back to the device before the request goes out, for
+     the same reason the first one was posted before DRIVER_OK: a reply must
+     never arrive with nowhere to land. */
+  net_post(rx);
+  for (unsigned i = 0; i < sizeof(struct virtio_net_hdr); i++) tx_page[i] = 0;
+  uint32_t frame_length = net_build_icmp_echo(tx_page + sizeof(struct virtio_net_hdr));
+  tx->desc[0].length = (uint32_t)sizeof(struct virtio_net_hdr) + frame_length;
+  net_post(tx);
+  if (!net_await(tx->used, tx->posted) || tx->used->ring[0].id != 0) return 0;
+
+  /* SLIRP answers the echo itself, but nothing promises that the next frame to
+     land is that answer -- the gateway's own ARP request arrives on this same
+     queue and is not an error. So a bounded number of frames are looked at, and
+     the object decides which of them counts. The budget above is only spent in
+     full on a queue that has gone quiet, which ends the loop immediately. */
+  for (unsigned attempt = 0; attempt < 4; attempt++) {
+    if (attempt) net_post(rx);
+    if (!net_await(rx->used, rx->posted)) return 0;
+    uint32_t received = rx->used->ring[0].length;
+    if (rx->used->ring[0].id == 0 &&
+        received > sizeof(struct virtio_net_hdr) &&
+        received <= sizeof(struct virtio_net_hdr) + NET_FRAME_MAX &&
+        kotoba_aiueos_ipv4_icmp_reply_valid(
+          (uint64_t)(uintptr_t)(rx_page + sizeof(struct virtio_net_hdr)),
+          received - (uint32_t)sizeof(struct virtio_net_hdr),
+          NET_PEER_IP, NET_ICMP_IDENT, NET_ICMP_SEQUENCE)) return 1;
+  }
+  return 0;
 }
 
 static int virtio_net(uint8_t b, uint8_t d, uint8_t f) {
@@ -1227,26 +1356,16 @@ static int virtio_net(uint8_t b, uint8_t d, uint8_t f) {
     prepare_queue_index(cfg,&caps,notify_base,1,1,tx_desc,tx_avail,tx_used);
   if (!tx_doorbell) return 0;
 
-  cfg->device_status |= VIRTIO_STATUS_DRIVER_OK;
-  *rx_doorbell = 0;
-  *tx_doorbell = 1;
+  /* Both rings were already filled and their avail index set to 1 above, so
+     they start life one buffer in. */
+  struct net_ring rx = {rx_desc, rx_avail, rx_used, rx_doorbell, 0, 1};
+  struct net_ring tx = {tx_desc, tx_avail, tx_used, tx_doorbell, 1, 1};
 
-  /* A bounded SPIN, and specifically not `hlt`. This driver claims no MSI-X
-     vector -- unlike rng and blk, which install one before going live -- so
-     there is no interrupt to wake a sleeper, and the device's own unrouted
-     legacy interrupt stays harmlessly pending only for as long as interrupts
-     remain masked, which they are throughout enumeration. Measured: a variant
-     that waited with `sti; hlt; cli` (copied from the rng driver, which can
-     afford it because it HAS a vector) wedges the boot immediately after
-     AIUEOS_APIC_TIMER_OK.
-     The budget bounds the failure case: a completion that never arrives fails
-     the gate instead of parking the boot forever. It is never approached in the
-     success case, where the reply lands within microseconds of the doorbell. */
-  for (uint32_t budget = 0; budget < 200000000U; budget++) {
-    __asm__ volatile("" ::: "memory");
-    if (tx_used->index >= 1 && rx_used->index >= 1) break;
-  }
-  if (tx_used->index < 1 || rx_used->index < 1) return 0;
+  cfg->device_status |= VIRTIO_STATUS_DRIVER_OK;
+  *rx.doorbell = rx.queue;
+  *tx.doorbell = tx.queue;
+
+  if (!net_await(tx.used, 1) || !net_await(rx.used, 1)) return 0;
   if (tx_used->ring[0].id != 0) return 0;
 
   uint32_t received = rx_used->ring[0].length;
@@ -1259,12 +1378,24 @@ static int virtio_net(uint8_t b, uint8_t d, uint8_t f) {
         payload, NET_PEER_IP)) return 0;
   net_rx_length = payload;
   net_ready = 1;
+
+  /* Bytes 22..27 of an ARP packet are the sender's hardware address. They are
+     read here and not earlier because only an ADMITTED reply is worth caching:
+     an unvalidated frame would put a sender-chosen address in the one slot that
+     every unicast frame this OS sends is addressed to. */
+  const uint8_t *arp = rx_page + sizeof(struct virtio_net_hdr);
+  for (unsigned i = 0; i < 6; i++) net_peer_mac[i] = arp[22 + i];
+  net_peer_mac_known = 1;
+
+  ipv4_ready = net_ipv4_echo(&rx, &tx, rx_page, tx_page);
   return 1;
 }
 
 int aiueos_pci_enumerate(void) {
   net_ready = 0;
   net_rx_length = 0;
+  net_peer_mac_known = 0;
+  ipv4_ready = 0;
   object_store_ready = 0;
   kotoba_app_count=0; for(unsigned app=0;app<KOTOBA_APP_CAPACITY;app++)kotoba_apps[app].ready=0;
   journal_ready = 0;
