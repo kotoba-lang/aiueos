@@ -69,10 +69,22 @@ loopback.**
   checksums), TCP (state machine, retransmit, windowing), TLS 1.3, HTTPS. Each
   needs its own evidence; none of it is claimed here.
 
-- The driver **polls** rather than taking an MSI-X interrupt, unlike blk and rng.
-  This is the first packet the OS has ever sent, and a completion that never
-  arrives must fail the gate instead of parking the boot in `hlt` forever.
-  Interrupt-driven receive is follow-on work.
+- The driver **spins** rather than taking an MSI-X interrupt, unlike blk and rng,
+  and specifically must not `hlt`. It claims no vector, so there is nothing to
+  wake a sleeper, and the device's own unrouted legacy interrupt stays harmlessly
+  pending only while interrupts remain masked — which they are throughout
+  enumeration. Measured, by building it: a variant that waited with
+  `sti; hlt; cli` (copied from the rng driver, which can afford it because it
+  HAS a vector) wedges the boot immediately after `AIUEOS_APIC_TIMER_OK`;
+  reverting to the spin reproduced the pass. Claiming a vector, and then being
+  able to sleep, is follow-on work.
+
+- Verification is slow and noisy on a loaded host. These runs were made at load
+  average ~250, where a TCG boot takes many minutes and a stall is
+  indistinguishable from contention at a glance — the `hlt` regression above was
+  first misread as contention, and only separated from it by reverting and
+  re-running. The gate's own 600 s timeout can fire spuriously under that load
+  and is retried as the known flake (kotoba-lang/aiueos#108).
 
 - The MAC is a fixed locally-administered address and `VIRTIO_NET_F_MAC` is not
   negotiated: the peer replies to whatever source it sees, so nothing is read

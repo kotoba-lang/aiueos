@@ -1231,9 +1231,17 @@ static int virtio_net(uint8_t b, uint8_t d, uint8_t f) {
   *rx_doorbell = 0;
   *tx_doorbell = 1;
 
-  /* Poll rather than take an interrupt: this is the first packet the OS has
-     ever sent, and a completion that never arrives must fail the gate instead
-     of parking the boot in `hlt` forever. */
+  /* A bounded SPIN, and specifically not `hlt`. This driver claims no MSI-X
+     vector -- unlike rng and blk, which install one before going live -- so
+     there is no interrupt to wake a sleeper, and the device's own unrouted
+     legacy interrupt stays harmlessly pending only for as long as interrupts
+     remain masked, which they are throughout enumeration. Measured: a variant
+     that waited with `sti; hlt; cli` (copied from the rng driver, which can
+     afford it because it HAS a vector) wedges the boot immediately after
+     AIUEOS_APIC_TIMER_OK.
+     The budget bounds the failure case: a completion that never arrives fails
+     the gate instead of parking the boot forever. It is never approached in the
+     success case, where the reply lands within microseconds of the doorbell. */
   for (uint32_t budget = 0; budget < 200000000U; budget++) {
     __asm__ volatile("" ::: "memory");
     if (tx_used->index >= 1 && rx_used->index >= 1) break;

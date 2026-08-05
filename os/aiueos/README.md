@@ -352,9 +352,13 @@ failing when none is present. Measured both ways: a no-NIC boot is green with
 `NET_ABSENT`, a NIC boot green with
 `AIUEOS_VIRTIO_NET_OK modern-pci rx/tx arp-reply kotoba-admitted`.
 
-The driver polls instead of taking an MSI-X interrupt, unlike blk and rng: this
-is the first packet the OS has ever sent, and a completion that never arrives
-must fail the gate rather than park the boot in `hlt` forever.
+The driver spins rather than taking an MSI-X interrupt, unlike blk and rng, and
+specifically must not `hlt`: it claims no vector, so nothing would wake a
+sleeper. Measured by building it — a variant that waited with `sti; hlt; cli`,
+copied from the rng driver, wedges the boot immediately after
+`AIUEOS_APIC_TIMER_OK`, and reverting to the spin reproduced the pass. A
+completion that never arrives still fails the gate rather than parking the boot
+forever.
 
 ## USB removable-media boot
 
