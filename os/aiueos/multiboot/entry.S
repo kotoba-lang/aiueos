@@ -142,20 +142,50 @@ aiueos_mb_isr_timer:
   pop %rax
   iretq
 
-/* Any unexpected vector before the timer test is a fault: emit a marker on the
-   debug port and terminate deterministically (0x6d -> isa-debug-exit 219). */
-.global aiueos_mb_isr_default
-.type aiueos_mb_isr_default,@function
-aiueos_mb_isr_default:
-  movb $0x58, %al                       /* 'X' unexpected vector */
-  outb %al, $0xe9
-  movl $0x6d, %eax
-  outl %eax, $0xf4
-  cli
-4:
-  hlt
-  jmp 4b
+/* Any unexpected vector before the timer test is a fault, and a fail-fast
+   handler that says only "something happened" is why this gate sat red and
+   undiagnosed. One stub per vector, so the handler knows WHICH vector: each
+   stub normalizes the frame to {vector, error, rip, cs, rflags} and tail-calls
+   the C reporter, which prints all of it before the deterministic exit
+   (0x6d -> isa-debug-exit 219).
 
+   Stubs are a uniform 16-byte stride so main.c can address stub N as
+   aiueos_mb_isr_stubs + 16*N without a 256-entry pointer table. The ten
+   vectors the CPU pushes an error code for (8, 10-14, 17, 21, 29, 30) skip
+   the dummy push, so the frame layout is the same for every vector. */
+.section .text.mbisr,"ax",@progbits
+.balign 16
+.global aiueos_mb_isr_stubs
+aiueos_mb_isr_stubs:
+.set vec, 0
+.rept 256
+  .balign 16
+  .if (vec == 8) || (vec == 10) || (vec == 11) || (vec == 12) || (vec == 13) || \
+      (vec == 14) || (vec == 17) || (vec == 21) || (vec == 29) || (vec == 30)
+    /* the CPU already pushed an error code */
+  .else
+    pushq $0                            /* dummy error code */
+  .endif
+  pushq $vec
+  jmp aiueos_mb_isr_common
+  .set vec, vec + 1
+.endr
+
+aiueos_mb_isr_common:
+  movq 0(%rsp), %rdi                    /* vector */
+  movq 8(%rsp), %rsi                    /* error code */
+  movq 16(%rsp), %rdx                   /* rip */
+  movq 24(%rsp), %rcx                   /* cs */
+  movq 32(%rsp), %r8                    /* rflags */
+  movq %cr2, %r9                        /* faulting address (meaningful for #PF) */
+  andq $-16, %rsp                       /* SysV: rsp%16==0 before the call */
+  call aiueos_mb_report_unexpected_vector
+5:
+  cli
+  hlt
+  jmp 5b
+
+.section .text.mbentry,"ax",@progbits
 .global aiueos_mb_load_idt
 .type aiueos_mb_load_idt,@function
 aiueos_mb_load_idt:

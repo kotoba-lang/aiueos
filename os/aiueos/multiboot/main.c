@@ -39,7 +39,8 @@ extern uint32_t aiueos_acpi_cpu_count(void);
 extern int aiueos_apic_timer_initialize(void);
 extern volatile uint64_t aiueos_apic_timer_ticks;
 extern void aiueos_mb_isr_timer(void);
-extern void aiueos_mb_isr_default(void);
+extern uint8_t aiueos_mb_isr_stubs[];  /* 256 stubs, 16-byte stride */
+#define MB_ISR_STUB_STRIDE 16u
 extern void aiueos_mb_load_idt(const void *pointer);
 
 struct __attribute__((packed)) idt_gate {
@@ -90,10 +91,70 @@ static void serial_string(const char *text) {
     else text++;
   }
 }
+static void serial_hex(uint64_t value, uint32_t digits) {
+  static const char hex[] = "0123456789abcdef";
+  char text[17];
+  if (digits > 16) digits = 16;
+  for (uint32_t i = 0; i < digits; i++)
+    text[digits - 1 - i] = hex[(value >> (4 * i)) & 0xfu];
+  text[digits] = 0;
+  serial_string(text);
+  debug_string(text);
+}
+static void serial_decimal(uint64_t value) {
+  char text[21];
+  uint32_t length = 0;
+  do { text[length++] = (char)('0' + (value % 10u)); value /= 10u; } while (value);
+  char reversed[21];
+  for (uint32_t i = 0; i < length; i++) reversed[i] = text[length - 1 - i];
+  reversed[length] = 0;
+  serial_string(reversed);
+  debug_string(reversed);
+}
 __attribute__((noreturn)) static void qemu_exit(uint32_t value) {
   __asm__ volatile("outl %0, $0xf4" : : "a"(value));
   __asm__ volatile("cli");
   for (;;) __asm__ volatile("hlt");
+}
+
+/* Every vector except the timer lands here through its per-vector stub in
+ * entry.S. Report what actually fired before the deterministic exit: without
+ * the vector number, an unexpected interrupt is indistinguishable from any
+ * other, which is exactly how this gate stayed red without a diagnosis.
+ *
+ * The stubs push a dummy error code for the vectors the CPU does not push one
+ * for. That rule is right for EXCEPTIONS but not for an external interrupt
+ * delivered on one of the ten error-code vectors, which pushes nothing -- and
+ * that is precisely the case this handler was written to catch, so it must not
+ * mis-report it. The frame is self-checking: the interrupted CS can only be the
+ * Multiboot GDT's code selector, so a CS that is not 0x08 means the frame is
+ * shifted by one slot and the pushed "error code" is really the RIP. */
+__attribute__((noreturn))
+void aiueos_mb_report_unexpected_vector(uint64_t vector, uint64_t error,
+                                        uint64_t rip, uint64_t cs,
+                                        uint64_t rflags, uint64_t cr2) {
+  int has_error = ((cs & 0xfff8u) == 0x08u);
+  if (!has_error) { rflags = cs; cs = rip; rip = error; error = 0; }
+  /* Which legacy 8259 line, if any, is in service -- OCW3 read of the ISR.
+     An external interrupt arriving here almost always came from there. */
+  out8(0x20, 0x0b); uint8_t pic_master_isr = in8(0x20);
+  out8(0xa0, 0x0b); uint8_t pic_slave_isr = in8(0xa0);
+
+  serial_string("AIUEOS_MULTIBOOT_FAIL unexpected-vector vector=");
+  debug_string("AIUEOS_MULTIBOOT_FAIL unexpected-vector vector=");
+  serial_decimal(vector);
+  if (has_error) { serial_string(" error=0x"); debug_string(" error=0x"); serial_hex(error, 8); }
+  else { serial_string(" error=none-external-interrupt");
+         debug_string(" error=none-external-interrupt"); }
+  serial_string(" rip=0x");    debug_string(" rip=0x");    serial_hex(rip, 16);
+  serial_string(" cs=0x");     debug_string(" cs=0x");     serial_hex(cs, 4);
+  serial_string(" rflags=0x"); debug_string(" rflags=0x"); serial_hex(rflags, 8);
+  serial_string(" cr2=0x");    debug_string(" cr2=0x");    serial_hex(cr2, 16);
+  serial_string(" pic-isr=0x");debug_string(" pic-isr=0x");
+  serial_hex(((uint64_t)pic_slave_isr << 8) | pic_master_isr, 4);
+  serial_string("\r\n");
+  debug_string("\n");
+  qemu_exit(0x6d);
 }
 
 /* Locate the ACPI RSDP the firmware-independent way: the 8-byte "RSD PTR "
@@ -116,12 +177,50 @@ static const void *find_rsdp(void) {
   return 0;
 }
 
-/* Install the minimal IDT (all vectors -> fail-fast default, vector 32 ->
- * timer ISR) and bring up the Local APIC periodic timer through the shared
- * apic.c, waiting for a real vector-32 hardware tick. Shared by both the
- * QEMU-direct MB1 path and the GRUB MB2 path. Returns 1 on a tick. */
+/* Quiet the legacy 8259 pair before any `sti`.
+ *
+ * Measured (2026-08-06, QEMU 10.0.3 q35): reaching this point the master PIC's
+ * mask is 0xb8 and the slave's is 0x8e -- IRQ0, 1, 2, 6, 8, 12, 13, 14 all
+ * UNMASKED, with the master's vector base at 0x08, and the Local APIC's LINT0
+ * is 0x8700: ExtINT delivery, not masked. Nothing on this path ever programmed
+ * any of that. QEMU's `-kernel` Multiboot support still runs SeaBIOS, which
+ * programs the 8259s and leaves the 8254 channel 0 ticking at ~18.2 Hz, then
+ * hands off; the Multiboot kernel inherits a live legacy interrupt controller
+ * and never touches it. So the first PIT tick after `sti` was delivered
+ * through LINT0 as an ExtINT and INTA-cycled to vector 0x08 + IRQ0 = 8, which
+ * the fail-fast handler correctly rejected. Whether that beat the Local APIC
+ * timer's own vector-32 tick was a race, which is why this gate failed
+ * intermittently (measured 1 in 8 at 85bb9f4) rather than every time.
+ *
+ * The vector bases are moved to 0xf0/0xf8 before masking: not because a masked
+ * PIC delivers anything, but so that if a line is ever unmasked the resulting
+ * vector is reported as itself instead of aliasing onto a CPU exception vector
+ * (IRQ0 masquerading as #DF is what made this failure so opaque) or onto
+ * vector 32, which this path uses for the Local APIC timer. */
+static void io_wait(void) { out8(0x80, 0); }
+static void legacy_pic_disable(void) {
+  out8(0x20, 0x11); io_wait();  /* ICW1: init, ICW4 to follow */
+  out8(0xa0, 0x11); io_wait();
+  out8(0x21, 0xf0); io_wait();  /* ICW2: master vector base 0xf0 */
+  out8(0xa1, 0xf8); io_wait();  /* ICW2: slave vector base 0xf8 */
+  out8(0x21, 0x04); io_wait();  /* ICW3: slave is wired to master IRQ2 */
+  out8(0xa1, 0x02); io_wait();
+  out8(0x21, 0x01); io_wait();  /* ICW4: 8086 mode */
+  out8(0xa1, 0x01); io_wait();
+  out8(0x21, 0xff); io_wait();  /* OCW1: mask every line on both chips */
+  out8(0xa1, 0xff); io_wait();
+}
+
+/* Quiet the legacy PIC, install the minimal IDT (every vector -> its fail-fast
+ * reporting stub, vector 32 -> the timer ISR), and bring up the Local APIC
+ * periodic timer through the shared apic.c, waiting for a real vector-32
+ * hardware tick. Shared by both the QEMU-direct MB1 path and the GRUB MB2
+ * path. Returns 1 on a tick. */
 static int install_idt_and_time_lapic(void) {
-  for (uint32_t vector = 0; vector < 256; vector++) set_gate(vector, aiueos_mb_isr_default);
+  legacy_pic_disable();
+  for (uint32_t vector = 0; vector < 256; vector++)
+    set_gate(vector, (void (*)(void))(void *)
+                     (aiueos_mb_isr_stubs + (uint64_t)vector * MB_ISR_STUB_STRIDE));
   set_gate(32, aiueos_mb_isr_timer);
   struct idt_pointer idtr = { (uint16_t)(sizeof(multiboot_idt) - 1),
                               (uint64_t)(uintptr_t)multiboot_idt };
