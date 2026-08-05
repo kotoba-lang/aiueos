@@ -12,4 +12,25 @@
  :usb-flash
  {:cmd ["nbb" "os/aiueos/scripts/flash-usb.cljs"]
   :pass-args? true
-  :doc "Write the release image to a USB stick. Inspects unless --confirm repeats --device."}}
+  :doc "Write the release image to a USB stick. Inspects unless --confirm repeats --device."}
+
+ ;; The multiboot path had a smoke that nothing invoked. That is how a build
+ ;; break reached main and sat there: `build-multiboot.sh` compiles
+ ;; `kernel/acpi.c`, which since ADR-0024 calls two Kotoba symbols the script did
+ ;; not link, so it could not link at all -- and the UEFI smoke never touches it.
+ ;; Registering them here does not make anything run them, but it does make them
+ ;; findable, which is strictly better than a script nobody knows exists.
+ ;;
+ ;; WARNING: `multiboot-smoke` is RED, and was red before the ADR-0024 break --
+ ;; reproduced at f91b903, which predates it. See ADR-0027.
+ :multiboot-build
+ {:cmd ["./os/aiueos/scripts/build-multiboot.sh"]
+  :doc "Build the Multiboot image. Links kernel/acpi.c and kernel/apic.c, so it needs the same Kotoba objects the UEFI path does."}
+
+ :multiboot-smoke
+ {:cmd ["./os/aiueos/scripts/smoke-qemu-multiboot.sh"]
+  :doc "Boot the Multiboot image under QEMU. KNOWN RED: dies in install_idt_and_time_lapic via the default ISR (exit 219). Pre-existing, not a regression."}
+
+ :grub-multiboot-smoke
+ {:cmd ["./os/aiueos/scripts/smoke-qemu-grub-multiboot.sh"]
+  :doc "Boot the Multiboot image through GRUB. Also never invoked by anything; status unmeasured."}}

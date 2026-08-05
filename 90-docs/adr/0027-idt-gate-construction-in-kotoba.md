@@ -73,8 +73,24 @@ none.
   the *same* shape as the `apic.c` near-miss one iteration earlier, which should
   have been the warning. Fixed here.
 
-  The lesson is not "remember to check multiboot": it is that a second build
-  path with no gate will keep breaking. It needs a smoke of its own.
+  **Correction, measured the following iteration.** The lesson above said this
+  path "has no gate" and "needs a smoke of its own". Both halves were wrong.
+  `smoke-qemu-multiboot.sh` and `smoke-qemu-grub-multiboot.sh` both exist —
+  **nothing invokes them**, and GitHub Actions was removed by ADR-2607300900, so
+  there is nowhere they were being run from.
+
+  Worse, running it revealed the multiboot smoke is **red on its own account,
+  and was red before the link break**: it dies with exit 219 after
+  `AIUEOS_MULTIBOOT_ACPI_OK`, inside `install_idt_and_time_lapic`, via
+  `aiueos_mb_isr_default` (`multiboot/entry.S:152`) — the fail-fast handler every
+  vector except 32 traps to, so an unexpected interrupt is being delivered.
+  Reproduced identically at f91b903, which predates ADR-0024 and every change in
+  this line of work.
+
+  So the accurate statement is narrower than the one first written: the link
+  break was mine and is fixed; the runtime failure is not mine and is not fixed.
+  The three scripts are now registered in `scripts/tasks.edn` so they are at
+  least findable, with the red one labelled red.
 
 - **`multiboot/main.c` keeps its own copy of the packing, deliberately.** It is
   a separate, textually identical `set_gate`, and `install_idt_and_time_lapic`
