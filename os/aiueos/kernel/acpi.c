@@ -44,23 +44,49 @@ uint16_t aiueos_acpi_dmar_segment(void) { return discovered_dmar_segment; }
 int aiueos_acpi_dmar_include_all(void) { return discovered_dmar_include_all; }
 void aiueos_acpi_set_vtd_translation_enabled(int enabled) { vtd_translation_enabled = enabled; }
 
+/* An ACPI table is firmware-supplied input this kernel otherwise takes on
+   trust, so whether its bytes are admissible is a decision and lives in
+   kotoba/acpi-checksum-ok.kotoba and kotoba/acpi-table-valid.kotoba. What
+   stays here is mechanism: reading a field in order to hand it to the
+   decision, and dispatching on which known table this is.
+
+   The two objects are separate because a kernel object exports exactly one
+   symbol and cannot call another, and because their fuel tiers differ -- the
+   checksum walks the table (4096) and the header check reads eight bytes
+   (1024). `valid_sdt` composes them; neither decides anything on its own. */
+extern uint64_t kotoba_aiueos_acpi_checksum_ok(uint64_t table, uint64_t length);
+extern uint64_t kotoba_aiueos_acpi_table_valid(uint64_t table, uint64_t length,
+                                               uint64_t expected_signature,
+                                               uint64_t max_length);
+
+/* Big-endian, first byte most significant, which is how the object reads the
+   four leading bytes and how the ACPI tables are spelled in prose. */
+#define ACPI_SIGNATURE_XSDT 0x58534454ULL /* 'X','S','D','T' */
+#define ACPI_SIGNATURE_RSDT 0x52534454ULL /* 'R','S','D','T' */
+#define ACPI_SIGNATURE_APIC 0x41504943ULL /* 'A','P','I','C' */
+#define ACPI_SIGNATURE_DMAR 0x444d4152ULL /* 'D','M','A','R' */
+
 static int bytes_equal(const char *a, const char *b, uint64_t count) {
   while (count--) if (*a++ != *b++) return 0; return 1;
 }
 static int checksum_ok(const void *table, uint32_t length) {
-  const uint8_t *bytes = table; uint8_t sum = 0;
-  for (uint32_t i = 0; i < length; i++) sum = (uint8_t)(sum + bytes[i]);
-  return sum == 0;
+  return kotoba_aiueos_acpi_checksum_ok((uint64_t)(uintptr_t)table, length) != 0;
 }
 static int bounded_address(uint64_t address, uint32_t length) {
   return address != 0 && length != 0 && address < BOOTSTRAP_IDENTITY_LIMIT &&
          length <= ACPI_MAX_TABLE_SIZE && address <= BOOTSTRAP_IDENTITY_LIMIT - length;
 }
-static int valid_sdt(const struct sdt_header *header) {
+/* The leading `bounded_address` is what makes reading `header->length` on the
+   next line legal; the object re-derives that field from the table itself and
+   refuses the table unless the two agree, so a truncating or mis-offset read
+   here becomes a rejection rather than a shorter checksum over a longer
+   table. */
+static int valid_sdt(const struct sdt_header *header, uint64_t signature) {
   uint64_t address = (uint64_t)(uintptr_t)header;
   return bounded_address(address, sizeof(*header)) &&
-         header->length >= sizeof(*header) &&
-         bounded_address(address, header->length) && checksum_ok(header, header->length);
+         kotoba_aiueos_acpi_table_valid(address, header->length, signature,
+                                        ACPI_MAX_TABLE_SIZE) != 0 &&
+         checksum_ok(header, header->length);
 }
 
 static int parse_dmar(const struct sdt_header *header) {
@@ -128,11 +154,13 @@ int aiueos_acpi_initialize(const void *rsdp_pointer) {
         rsdp->length < sizeof(*rsdp) || rsdp->length > 4096 ||
         !checksum_ok(rsdp, rsdp->length)) return 0;
     root = (const void *)(uintptr_t)rsdp->xsdt_address;
-    if (!valid_sdt(root) || !bytes_equal(root->signature, "XSDT", 4)) return 0;
+    /* The signature comparison that used to sit beside this call is now one of
+       the object's own clauses, so it is not repeated here. */
+    if (!valid_sdt(root, ACPI_SIGNATURE_XSDT)) return 0;
     entry_width = 8;
   } else {
     root = (const void *)(uintptr_t)rsdp->rsdt_address;
-    if (!valid_sdt(root) || !bytes_equal(root->signature, "RSDT", 4)) return 0;
+    if (!valid_sdt(root, ACPI_SIGNATURE_RSDT)) return 0;
     entry_width = 4;
   }
   if ((root->length - sizeof(*root)) % entry_width != 0) return 0;
@@ -147,11 +175,22 @@ int aiueos_acpi_initialize(const void *rsdp_pointer) {
       : *(const uint32_t *)(const void *)(entry_bytes + (uint64_t)i * 4);
     const struct sdt_header *candidate = (const void *)(uintptr_t)table_address;
     if (!bounded_address(table_address, sizeof(*candidate))) return 0;
+    /* `bytes_equal` stays here as DISPATCH -- which of the two tables this
+       kernel knows about is this? -- and is deliberately not the admission.
+       The object re-derives the signature from the table's own bytes, so a
+       dispatch that read the wrong offset or width cannot admit a table under
+       a name it does not carry. Keeping the two apart is also what preserves
+       the failure semantics below: a candidate that CLAIMS to be APIC or DMAR
+       and then fails validation is a hard failure, where a merged
+       dispatch-and-admit could only skip it -- and a skipped DMAR would leave
+       `discovered_dmar_drhd_count` at 0, which is the input to
+       `aiueos_dma_test_policy_allows_unisolated`. */
     if (bytes_equal(candidate->signature, "APIC", 4)) {
-      if (!valid_sdt(candidate) || candidate->length < sizeof(struct madt_header)) return 0;
+      if (!valid_sdt(candidate, ACPI_SIGNATURE_APIC) ||
+          candidate->length < sizeof(struct madt_header)) return 0;
       madt = (const struct madt_header *)candidate;
     } else if (bytes_equal(candidate->signature, "DMAR", 4)) {
-      if (dmar || !valid_sdt(candidate)) return 0;
+      if (dmar || !valid_sdt(candidate, ACPI_SIGNATURE_DMAR)) return 0;
       dmar = candidate;
     }
   }
