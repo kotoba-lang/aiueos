@@ -43,6 +43,8 @@ kotoba_region_valid_object=${AIUEOS_KOTOBA_REGION_VALID_OBJECT:-"$aiueos/kotoba/
 kotoba_pci_config_read_object=${AIUEOS_KOTOBA_PCI_CONFIG_READ_OBJECT:-"$aiueos/kotoba/pci-config-read.o"}
 kotoba_pci_config_write_object=${AIUEOS_KOTOBA_PCI_CONFIG_WRITE_OBJECT:-"$aiueos/kotoba/pci-config-write.o"}
 kotoba_mmio_map_admit_object=${AIUEOS_KOTOBA_MMIO_MAP_ADMIT_OBJECT:-"$aiueos/kotoba/mmio-map-admit.o"}
+kotoba_acpi_checksum_object=${AIUEOS_KOTOBA_ACPI_CHECKSUM_OBJECT:-"$aiueos/kotoba/acpi-checksum-ok.o"}
+kotoba_acpi_table_valid_object=${AIUEOS_KOTOBA_ACPI_TABLE_VALID_OBJECT:-"$aiueos/kotoba/acpi-table-valid.o"}
 kotoba_syscall_range_object=${AIUEOS_KOTOBA_SYSCALL_RANGE_OBJECT:-"$aiueos/kotoba/syscall-range-valid.o"}
 kotoba_copy_in_object=${AIUEOS_KOTOBA_COPY_IN_OBJECT:-"$aiueos/kotoba/copy-in.o"}
 kotoba_capability_object=${AIUEOS_KOTOBA_CAPABILITY_OBJECT:-"$aiueos/kotoba/capability-plan.o"}
@@ -150,6 +152,12 @@ python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_pci_config_wri
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_mmio_map_admit_object" \
   521dad9a10b3cc377cf0ede067dc0fef5c95328290d949211d5a311847a4defe \
   kotoba_aiueos_mmio_map_admit
+python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_acpi_checksum_object" \
+  ca592d688a60f29e60edd8eeeb905429ca75687921bc19bdb8042e7823f3a08c \
+  kotoba_aiueos_acpi_checksum_ok
+python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_acpi_table_valid_object" \
+  441d326c311144b6a6b512e5a84c597c1052d903a0b7964d34ef8195baf2d241 \
+  kotoba_aiueos_acpi_table_valid
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_syscall_range_object" \
   c65aa4b0b2b47891f2b1340a289157625262156733d85195d0449a2050aa18b8 \
   kotoba_aiueos_syscall_range_valid
@@ -313,6 +321,7 @@ zig ld.lld -nostdlib -static -z max-page-size=0x1000 \
   "$kotoba_pci_config_read_object" "$kotoba_pci_config_write_object" \
   "$kotoba_x25519_object" \
   "$kotoba_mmio_map_admit_object" \
+  "$kotoba_acpi_checksum_object" "$kotoba_acpi_table_valid_object" \
   "$kotoba_syscall_range_object" "$kotoba_copy_in_object" \
   "$kotoba_capability_object" "$kotoba_capability_mutation_object" \
   "$kotoba_service_lifecycle_object" \
