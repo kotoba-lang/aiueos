@@ -53,10 +53,17 @@ kotoba_pic_disable_object=${AIUEOS_KOTOBA_PIC_DISABLE_OBJECT:-"$aiueos/kotoba/pi
 #
 # NOT linked here on purpose: kotoba/idt-gate-build.o. This path does not
 # include kernel/main.c -- it has its own multiboot/main.c, which keeps a
-# second copy of the same descriptor packing in C. Converting that copy would
-# spend 257 of an unreplenished 512 fuel per boot (install_idt_and_time_lapic
-# sets all 256 vectors, then vector 32 again), against 7 on the kernel path, so
-# it waits on a fuel-tier decision in kotoba-native's `bounded-memory?`.
+# second copy of the same descriptor packing in C.
+#
+# The fuel objection to converting that copy is GONE. It used to be that
+# install_idt_and_time_lapic's 257 gates (all 256 vectors, then vector 32
+# again) would spend 257 of an unreplenished 512 across the whole boot, against
+# 7 on the kernel path, so the conversion waited on a fuel-tier decision in
+# kotoba-native's `bounded-memory?`. That predicate no longer exists: every
+# kernel object now replenishes on every call, so idt-gate-build gets 1024 per
+# call and costs a measured 1, and 257 gates cost 1 fuel each rather than 257
+# out of a single lifetime budget. Converting the copy is now an ordinary piece
+# of work, blocked by nothing here.
 
 command -v zig >/dev/null 2>&1 || {
   echo "error: Zig is required to build the Multiboot kernel" >&2
@@ -67,12 +74,12 @@ mkdir -p "$mb"
 # The compiler-emitted Kotoba probe object is admitted by the same fail-closed
 # verifier the UEFI path uses; a hosted or import-bearing object is rejected.
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$probe" \
-  1a22367ea8d30c64cb7ce5e6102ce675b49442d4fffc700d4ad1c5a4872d4edd
+  aad9e7ebe54f8a1509b8dabdd2ed2c90a4397871cf993bdb4893ff8c9338f7cc
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_msr_read_object" \
-  9ad2ca19ad21f176d5a79b8ecf3b3ef7a4eec1bc31a620a5207da732f5ea360c \
+  f9985d1504326f61040c4cb8418708764c42fd7d8d3c7ce9ddfca1ad9fa12c4c \
   kotoba_aiueos_msr_read
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_msr_write_object" \
-  217f1ca51d19d5c2364c1fba0aa14e0554682920fb07898a3aead524d7102d15 \
+  25b9ec1d0d789a2b21ba6624a40072d1733973c1d5d8bc74baef17f6ba8300db \
   kotoba_aiueos_msr_write
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_acpi_checksum_object" \
   ca592d688a60f29e60edd8eeeb905429ca75687921bc19bdb8042e7823f3a08c \
@@ -81,7 +88,7 @@ python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_acpi_table_val
   441d326c311144b6a6b512e5a84c597c1052d903a0b7964d34ef8195baf2d241 \
   kotoba_aiueos_acpi_table_valid
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_pic_disable_object" \
-  65111cfab01b3981ec207cf1eee040b03dabebb0573a0e053e0b5d393568ab1e \
+  9c36989f2807db1143b408bbc2a9f43e9d92863e8cc618280cb378aba8257eb7 \
   kotoba_aiueos_pic_disable
 
 zig cc -target x86_64-freestanding-none \
