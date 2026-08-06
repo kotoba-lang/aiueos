@@ -244,7 +244,7 @@ into a versioned 16-byte registry inside the journal transaction. It writes all
 transaction and journal metadata and checksums with bounded stores. The native
 virtio-blk substrate supplies the observed states, commits the journal before
 materialization, and verifies readback/replay. Its pinned object SHA-256 is
-`b0e9c90aaef5477fb5ababd6dd3067dd95a7eba93f3bb262cc49bace7e5a44ce`.
+`9ce4cef685204533e2fe92a5a08d1ec86f4c8299b1e39e16284484222fb1910c`.
 After the common Kotoba transaction checksum validator passes,
 `service-registry-state` validates the complete `SRV1` routing/schema contract
 and returns either indexed state.
@@ -257,7 +257,7 @@ domain-owned objects. User tasks submit capability 4 writes and read capability
 5 receipts; the kernel task commits domains 4/5 through independent dual slots
 44–47 into objects 42/43. Recovery replays each domain's highest valid sequence
 before new user code is admitted. Its pinned object SHA-256 is
-`994d8a296d17afa67a8c9267cafa6079edca5068aeed46e78d8f455a40df1cfd`.
+`c3e1b1090493ecc07c4e6c8839900abef2e8e7cdcdf900dfe605f478086853bf`.
 The paired fixed-stack validator is
 `0f2015e53ed083741687abfbaff72edf8a525947b9fc753cacc7a1bf10faf46f` and
 the value decoder is

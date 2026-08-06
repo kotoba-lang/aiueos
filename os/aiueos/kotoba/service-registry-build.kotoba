@@ -51,8 +51,8 @@
        (write-u32 base length 40 16)))
 
 (defn aiueos-service-registry-build [base length sequence state0 state1]
-  (if (and (= length 512)
-           (> sequence 0)
+  (if (and (if (= length 512) 1 0)
+           (if (> sequence 0) 1 0)
            (write-metadata base length sequence)
            (write-registry base length state0 state1 0))
     (if (write-u32 base length 44 (fnv (kernel-subregion base length 48 16) 16))
