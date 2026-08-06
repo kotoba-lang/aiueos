@@ -67,7 +67,7 @@ mkdir -p "$mb"
 # The compiler-emitted Kotoba probe object is admitted by the same fail-closed
 # verifier the UEFI path uses; a hosted or import-bearing object is rejected.
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$probe" \
-  10d91712fccd887e68f9caa25413c8fa2c783968e72b1bead4025c6a294ffa42
+  1a22367ea8d30c64cb7ce5e6102ce675b49442d4fffc700d4ad1c5a4872d4edd
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_msr_read_object" \
   9ad2ca19ad21f176d5a79b8ecf3b3ef7a4eec1bc31a620a5207da732f5ea360c \
   kotoba_aiueos_msr_read
