@@ -17,11 +17,12 @@
   (let [sector (read-u32 base length 0)
         version (read-u32 base length 4)
         route (if (= sector 3) 1 (if (= sector 42) 2 3))]
-    (* (and (= length 32)
-            (or (and (= sector 3) (or (= version 1) (= version 2)))
-                (and (or (= sector 42) (= sector 43)) (= version 3)))
-            (= (read-u32 base length 8) 16)
-            (= (fnv (kernel-subregion base length 16 16) 16) (read-u32 base length 12)))
+    (* (if (and (= length 32)
+                (or (and (= sector 3) (or (= version 1) (= version 2)))
+                    (and (or (= sector 42) (= sector 43)) (= version 3)))
+                (= (read-u32 base length 8) 16)
+                (= (fnv (kernel-subregion base length 16 16) 16) (read-u32 base length 12)))
+         1 0)
        (+ route (* sector 4294967296)))))
 
 (defn main [] 0)
