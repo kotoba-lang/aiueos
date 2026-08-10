@@ -448,3 +448,24 @@
         (is (= :deny (:aiueos/decision decision)))
         (is (= :hardware-signing
                (-> decision :aiueos/violations first :aiueos/kind)))))))
+
+;; An unknown surface id used to fall through to "no surface restriction" in
+;; granted-to while resolve-imports read the same nil as "offers nothing".
+;; A misspelled surface therefore restored the hardware kernel caps a browser
+;; or cloud surface deliberately does not back.
+(deftest unknown-surface-grants-nothing
+  (let [caps #{:log/write :mmio/map :dma/map}
+        base {:aiueos.policy/kernel-caps caps
+              :aiueos.policy/grants {}
+              :aiueos.policy/component-signers {}
+              :aiueos.policy/require-signed false}
+        m {:aiueos/component :c :aiueos/kind :app}]
+    (testing "no surface configured is unrestricted"
+      (is (= caps (policy/granted-to base m nil))))
+    (testing "a known surface intersects"
+      (is (= #{:log/write}
+             (policy/granted-to (assoc base :aiueos.policy/surface "browser") m nil))))
+    (testing "an unknown surface offers nothing"
+      (doseq [id ["cloudd" "teapot" ""]]
+        (is (= #{} (policy/granted-to (assoc base :aiueos.policy/surface id) m nil))
+            (str "surface " (pr-str id) " restored the kernel caps"))))))

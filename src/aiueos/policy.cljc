@@ -230,8 +230,16 @@
   [policy m signer]
   (let [active-surface (:aiueos.policy/surface policy)
         kernel-caps (:aiueos.policy/kernel-caps policy)
-        base (if-let [offered (and active-surface (surface/offered-by-id active-surface))]
-               (set/intersection kernel-caps offered)
+        ;; No surface configured means no surface restriction. A surface that
+        ;; is configured but not in the registry is a different thing, and
+        ;; used to land in the same branch -- `offered-by-id` returns nil for
+        ;; an id aiueos does not know, the `if-let` fell through, and a
+        ;; misspelled "cloudd" silently restored every kernel cap, hardware
+        ;; included. `resolve-imports` reads the same lookup as
+        ;; `(or ... #{})` eight lines down; these now agree.
+        base (if active-surface
+               (set/intersection kernel-caps
+                                 (or (surface/offered-by-id active-surface) #{}))
                kernel-caps)
         id (:aiueos/component m)
         bound-signers (get (:aiueos.policy/component-signers policy) id)
