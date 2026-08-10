@@ -1,5 +1,6 @@
 (ns aiueos.contract-test
   (:require [aiueos.contract :as contract]
+            [aiueos.manifest :as manifest]
             #?(:clj [clojure.edn :as edn])
             #?(:clj [clojure.java.io :as io])
             [clojure.test :refer [deftest is testing]]))
@@ -521,3 +522,23 @@
       (is (false? (:valid? (contract/validate-manifest
                             (assoc base-manifest :aiueos/device d))))
           (str (pr-str d) " validated clean and would skip the uniqueness check")))))
+
+;; --- validate(normalize(m)) --------------------------------------------------
+;; normalize REPLACES :aiueos/schedule with its cycle-derived form, whose keys
+;; are :aiueos.manifest/*. Nothing in this repo validates a manifest after
+;; normalizing it, so the closed nested-key check landed without noticing that
+;; it rejected the shape the system itself produces.
+
+(deftest validate-accepts-what-normalize-produces
+  (doseq [m [base-manifest
+             (assoc base-manifest
+                    :aiueos/limits {:memory-pages 4 :fuel 1000}
+                    :aiueos/quota {:host-calls 8 :publishes 2}
+                    :aiueos/schedule {:period-ms 10 :deadline-ms 10
+                                      :cycle-ms 2 :priority 3})
+             (assoc base-manifest :aiueos/schedule {:priority 0})]]
+    (let [normalized (manifest/normalize m)
+          result (contract/validate-manifest normalized)]
+      (is (:valid? result)
+          (str "normalized " (pr-str m) " failed validation: "
+               (pr-str (:errors result)))))))
