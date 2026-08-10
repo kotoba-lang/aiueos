@@ -273,6 +273,13 @@
     :aiueos/information-flow
     :aiueos/transport
     :aiueos/key-lifecycle
+    ;; Read by `aiueos.policy/parse-policy` and previously missing here, so a
+    ;; policy that set them was rejected as unknown while the parser honoured
+    ;; them. The two lists are the same vocabulary written twice; keep them
+    ;; together — `deployment-policy-overlay-keys-match-parse-policy` pins it.
+    :aiueos/kagi-grants
+    :aiueos/crypto
+    :aiueos/hardware-signing
     :aiueos/require-signed})
 
 (def deployment-policy-keys
@@ -582,6 +589,13 @@
           [(err [] "deployment policy must be a map")]
           (collect-errors
            (unknown-aiueos-key-errors policy deployment-policy-keys)
+           ;; An overlay speaks `:aiueos/*`. `parse-policy` reads nothing from
+           ;; the `:aiueos.policy/*` namespace, so writing an overlay key there
+           ;; -- easy, since that is the namespace of the *parsed* policy and
+           ;; `net-url-allowed?` accepts both spellings -- used to validate
+           ;; clean and then be dropped in silence. `:aiueos.policy/require-signed`
+           ;; parsed to false and admitted unsigned components.
+           (unknown-policy-key-errors policy #{})
            (field-error policy :aiueos/policy component-id?
                         ":aiueos/policy must be a keyword or non-empty string")
            (field-error policy :aiueos/surface component-id?
