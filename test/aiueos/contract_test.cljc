@@ -429,3 +429,45 @@
              failures (remove :valid? classified)]
          (is (= {:manifest 15 :system 4 :policy 4 :fixture 3} by-kind))
          (is (empty? failures) (pr-str failures))))))
+
+;; --- deployment policy overlay vocabulary -----------------------------------
+;; `aiueos.contract/deployment-policy-keys` and the `:aiueos/*` keys
+;; `aiueos.policy/parse-policy` reads are the same vocabulary written out
+;; twice, in two namespaces, with nothing checking that they agree. They had
+;; drifted in both directions at once.
+
+(def ^:private overlay-keys-parse-policy-reads
+  "Every `:aiueos/*` key `aiueos.policy/parse-policy` consults, transcribed
+  from its `cond->`. Update both this and `deployment-policy-keys` when the
+  parser learns a key."
+  #{:aiueos/kernel-caps :aiueos/grants :aiueos/kagi-grants :aiueos/forbid
+    :aiueos/signers :aiueos/component-signers :aiueos/abac
+    :aiueos/information-flow :aiueos/transport :aiueos/crypto
+    :aiueos/hardware-signing :aiueos/require-signed :aiueos/surface
+    :aiueos/net-allow})
+
+(deftest deployment-policy-overlay-keys-match-parse-policy
+  (testing "every key the parser honours is accepted by the validator"
+    (is (empty? (remove contract/deployment-policy-keys
+                        overlay-keys-parse-policy-reads))))
+  (testing "each one validates clean on its own"
+    (doseq [k overlay-keys-parse-policy-reads]
+      (let [v (case k
+                :aiueos/require-signed true
+                :aiueos/surface :host
+                :aiueos/net-allow #{"example.com"}
+                :aiueos/kernel-caps #{:log/write}
+                :aiueos/signers {:s "pk"}
+                (:aiueos/grants :aiueos/component-signers) {:c #{:x}}
+                {})]
+        (is (:valid? (contract/validate-deployment-policy {k v}))
+            (str k " was rejected as an unknown deployment policy key"))))))
+
+(deftest deployment-policy-rejects-the-parsed-policy-namespace
+  ;; parse-policy reads nothing from :aiueos.policy/*, so an overlay written
+  ;; there is dropped in silence -- and require-signed drops to false.
+  (doseq [k [:aiueos.policy/require-signed :aiueos.policy/forbid
+             :aiueos.policy/net-allow :aiueos.policy/grants]]
+    (is (false? (:valid?
+                 (contract/validate-deployment-policy {k {}})))
+        (str k " validated clean but is never read"))))
