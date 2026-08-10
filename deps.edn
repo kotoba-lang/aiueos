@@ -2,7 +2,7 @@
  :deps {io.github.kotoba-lang/security {:git/url "https://github.com/kotoba-lang/security.git"
                                         :git/sha "49fc4ce359752e9fe6e547e9071b5b9b40da937a"}
         io.github.kotoba-lang/abi {:git/url "https://github.com/kotoba-lang/abi.git"
-                                    :git/sha "129b0b2fe26ddd1a3917132515bf1b903c7b763d"}
+                                    :git/sha "32ee84b2efc92478c846629c8d8319280eed506c"}
         com.dylibso.chicory/wasm {:mvn/version "1.4.0"}
         com.dylibso.chicory/runtime {:mvn/version "1.4.0"}}
  :aliases

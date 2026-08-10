@@ -87,7 +87,7 @@
    :role :shared-security-primitives}
   {:coordinate "io.github.kotoba-lang/abi" :source :git
    :git-url "https://github.com/kotoba-lang/abi.git"
-   :git-sha "129b0b2fe26ddd1a3917132515bf1b903c7b763d"
+   :git-sha "32ee84b2efc92478c846629c8d8319280eed506c"
    :role :freestanding-abi-contract}
   {:coordinate "java.base" :minimum-version 25
    :role :crypto-ffi-process-runtime :source :platform
