@@ -194,9 +194,23 @@
   "Keys `aiueos.manifest/normalize-quota` reads from `:aiueos/quota`."
   #{:host-calls :publishes})
 
-(def schedule-keys
+(def schedule-input-keys
   "Keys `aiueos.manifest/normalize-schedule` reads from `:aiueos/schedule`."
   #{:period-ms :deadline-ms :cycle-ms :priority})
+
+(def schedule-derived-keys
+  "Keys `aiueos.manifest/normalize-schedule` writes back.
+
+  It REPLACES `:aiueos/schedule` rather than merging into it, so a normalized
+  manifest carries only these -- and `validate-manifest` has to accept the
+  shape this system produces, not only the shape an operator types. They are
+  accepted on input too, which costs nothing: normalize overwrites the whole
+  map, so a manifest that supplies them has them discarded."
+  #{:aiueos.manifest/period-cycles :aiueos.manifest/deadline-cycles
+    :aiueos.manifest/deadline-ms :aiueos.manifest/priority})
+
+(def schedule-keys
+  (set/union schedule-input-keys schedule-derived-keys))
 
 (def manifest-keys
   (set/union manifest-required-keys manifest-optional-keys))
