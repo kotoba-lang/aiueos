@@ -5,7 +5,7 @@
   production admission/audit evidence, or access hardware outside a component."
  :tcb/files
   [{:path "src/aiueos/contract.cljc" :role :authority-schema
-   :sha256 "12aa065b8031c0fb4644330f13041ce140d667c3a854b3b4826968bb55016d80"}
+   :sha256 "de822b477c6277156f6130a3ed2ee2fa4bd037496aef1c709e8b61325aa87dad"}
   {:path "src/aiueos/manifest.cljc" :role :component-identity
    :sha256 "59a8354404cccdb648fd378ae03c9add7438cd7eecd22cc1ae26d2d729739ecf"}
   {:path "src/aiueos/signing.cljc" :role :manifest-authenticity
