@@ -363,6 +363,28 @@
     {:addr (rd-le rd g 8) :len (rd-le rd (+ g 8) 4)
      :flags (rd-le rd (+ g 12) 2) :next (rd-le rd (+ g 14) 2)}))
 
+(defn assert-descriptor-index!
+  "A descriptor index has to be inside the `num`-entry table.
+
+  `:next` is a 16-bit field the guest writes, and `read-descriptor` turns it
+  into `desc-gpa + d*16` with no check, so a chain could step to any of 65536
+  slots -- roughly a megabyte past the table -- and read whatever guest RAM
+  is there as if it were a descriptor. The 256-hop guard bounded how far that
+  went, not where it went.
+
+  `aiueos.virtio/validate-descriptor-chain-with-features` has done this, and
+  more, all along: index bounds, an exact `seen` set instead of a hop count,
+  zero-length rejection, and an indirect-flag check against negotiated
+  features. This V0 walk reads descriptors straight out of guest RAM rather
+  than from a table vector, so it cannot call that function as it stands --
+  but reusing `aiueos.virtio`'s protocol logic is already what this
+  namespace's docstring says V1 is for, and this check is the one gap with
+  teeth in the meantime."
+  [d num]
+  (when (or (neg? d) (>= d num))
+    (throw (ex-info "descriptor index outside the queue"
+                    {:descriptor d :queue-size num}))))
+
 (def max-chain-bytes
   "Ceiling on the bytes one descriptor -- or one chain -- may ask this VMM to
   collect.
@@ -383,11 +405,13 @@
   (those WITHOUT the WRITE flag -- driver->device buffers). Returns
   `{:bytes [..] :len total}`. Guards against cyclic/over-long chains, and
   against a single descriptor or a chain claiming more bytes than guest RAM
-  holds (see `max-chain-bytes`)."
-  [rd desc-gpa head]
+  holds (see `max-chain-bytes`), and against an index outside the `num`-entry
+  descriptor table (see `assert-descriptor-index!`)."
+  [rd desc-gpa num head]
   (loop [d head, out [], total 0, guard 0]
     (when (> guard 256)
       (throw (ex-info "descriptor chain too long or cyclic" {:head head :guard guard})))
+    (assert-descriptor-index! d num)
     (let [{:keys [addr len flags next]} (read-descriptor rd desc-gpa d)
           _ (when (or (> len max-chain-bytes) (> (+ total len) max-chain-bytes))
               (throw (ex-info "descriptor length exceeds guest RAM"
@@ -417,7 +441,7 @@
          :seen seen}
         (let [slot (mod seen num)
               head (rd-le rd (+ driver 4 (* slot 2)) 2)
-              {:keys [bytes len]} (walk-descriptor-chain rd desc head)
+              {:keys [bytes len]} (walk-descriptor-chain rd desc num head)
               used-slot (mod (+ used-idx0 added) num)]
           (recur (bit-and (inc seen) 0xffff)
                  (into emitted bytes)
@@ -430,11 +454,13 @@
 
 (defn walk-writable-chain
   "Walk the chain from descriptor `head`, collecting the device-WRITABLE buffer
-  segments `{:addr :len}` (those WITH the WRITE flag) -- the receive targets."
-  [rd desc-gpa head]
+  segments `{:addr :len}` (those WITH the WRITE flag) -- the receive targets.
+  Bounds the index the same way `walk-descriptor-chain` does."
+  [rd desc-gpa num head]
   (loop [d head, out [], guard 0]
     (when (> guard 256)
       (throw (ex-info "descriptor chain too long or cyclic" {:head head :guard guard})))
+    (assert-descriptor-index! d num)
     (let [{:keys [addr len flags next]} (read-descriptor rd desc-gpa d)
           out' (if (pos? (bit-and flags (:write vio/desc-flag)))
                  (conj out {:addr addr :len len}) out)]
@@ -473,7 +499,7 @@
          :used-idx (bit-and (+ used-idx0 added) 0xffff) :seen seen}
         (let [slot (mod seen num)
               head (rd-le rd (+ driver 4 (* slot 2)) 2)
-              targets (walk-writable-chain rd desc head)
+              targets (walk-writable-chain rd desc num head)
               [ws remaining written] (fill-targets targets input)
               used-slot (mod (+ used-idx0 added) num)]
           (recur (bit-and (inc seen) 0xffff)
