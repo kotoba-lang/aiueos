@@ -171,6 +171,18 @@
     :aiueos/output-classification
     :aiueos/surface})
 
+(def limits-keys
+  "Keys `aiueos.manifest/normalize-limits` reads from `:aiueos/limits`."
+  #{:memory-pages :fuel})
+
+(def quota-keys
+  "Keys `aiueos.manifest/normalize-quota` reads from `:aiueos/quota`."
+  #{:host-calls :publishes})
+
+(def schedule-keys
+  "Keys `aiueos.manifest/normalize-schedule` reads from `:aiueos/schedule`."
+  #{:period-ms :deadline-ms :cycle-ms :priority})
+
 (def manifest-keys
   (set/union manifest-required-keys manifest-optional-keys))
 
@@ -363,6 +375,18 @@
   (mapv #(err [%] "unknown :aiueos.broker/* key")
         (sort (filter #(and (aiueos-broker-key? %) (not (contains? allowed %))) (keys m)))))
 
+(defn- unknown-nested-key-errors
+  "Unknown keys inside a manifest sub-map (`:aiueos/limits` and friends).
+
+  These maps hold resource ceilings and are read with `get` + a default, so a
+  key that is not recognised is not inert: `{:memory_pages 4}` validates, is
+  never read, and the component runs on the 16-page default instead. The
+  top-level manifest has rejected unknown `:aiueos/*` keys all along; the
+  discipline just stopped one level down."
+  [m allowed]
+  (mapv #(err [%] "unknown key")
+        (sort (remove allowed (keys m)))))
+
 (defn- field-error [m k pred message]
   (when (and (contains? m k) (not (pred (get m k))))
     (err [k] message)))
@@ -445,6 +469,7 @@
                (prefix-errors
                 [:aiueos/limits]
                 (collect-errors
+                 (unknown-nested-key-errors limits limits-keys)
                  (field-error limits :memory-pages positive-integer?
                               ":memory-pages must be a positive integer")
                  (field-error limits :fuel positive-integer?
@@ -454,6 +479,7 @@
                (prefix-errors
                 [:aiueos/quota]
                 (collect-errors
+                 (unknown-nested-key-errors quota quota-keys)
                  (field-error quota :host-calls positive-integer?
                               ":host-calls must be a positive integer")
                  (field-error quota :publishes non-negative-integer?
@@ -463,6 +489,7 @@
                (prefix-errors
                 [:aiueos/schedule]
                 (collect-errors
+                 (unknown-nested-key-errors schedule schedule-keys)
                  (field-error schedule :period-ms positive-integer?
                               ":period-ms must be a positive integer")
                  (field-error schedule :deadline-ms positive-integer?

@@ -471,3 +471,28 @@
     (is (false? (:valid?
                  (contract/validate-deployment-policy {k {}})))
         (str k " validated clean but is never read"))))
+
+;; --- nested manifest sub-maps ----------------------------------------------
+;; :aiueos/limits, :aiueos/quota and :aiueos/schedule hold resource ceilings
+;; and are read with `get` + a default, so an unrecognised key is not inert --
+;; the ceiling the operator wrote is never read and the generous default
+;; applies. The top-level manifest has always rejected unknown :aiueos/* keys.
+
+(def ^:private base-manifest
+  {:aiueos/component :c :aiueos/kind :app})
+
+(deftest nested-manifest-keys-are-closed
+  (testing "the keys the normalizers read are accepted"
+    (doseq [[k m] [[:aiueos/limits {:memory-pages 4 :fuel 1000}]
+                   [:aiueos/quota {:host-calls 8 :publishes 0}]
+                   [:aiueos/schedule {:period-ms 2 :deadline-ms 2
+                                      :cycle-ms 1 :priority 5}]]]
+      (is (:valid? (contract/validate-manifest (assoc base-manifest k m)))
+          (str k " rejected a key its normalizer reads"))))
+  (testing "a misspelling is an error, not a silent default"
+    (doseq [[k m] [[:aiueos/limits {:memory_pages 4}]
+                   [:aiueos/limits {:fuel 1000 :fule 1}]
+                   [:aiueos/quota {:host_calls 8}]
+                   [:aiueos/schedule {:deadline_ms 100}]]]
+      (is (false? (:valid? (contract/validate-manifest (assoc base-manifest k m))))
+          (str k " " (pr-str m) " validated clean")))))
