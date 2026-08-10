@@ -19,6 +19,24 @@
   protocol logic in `aiueos.virtio` drives REAL hardware through this
   namespace with no change to that logic.
 
+  The DMA side has the same seam and it is worth naming, because only the
+  MMIO one was. `iommu-map-dma!` below is the ioctl and nothing else: it
+  marshals a `vfio_iommu_type1_dma_map` and hands it to the kernel. What
+  decides whether a mapping is ALLOWED is `aiueos.virtio`'s pure model --
+  `make-checked-iommu`, `iommu-map-dma`, `iommu-unmap-dma` -- which enforces
+  the aperture, rejects overlapping mappings, and requires an exact match to
+  unmap. `iova` here is the same guest-physical address that model tracks.
+  Whoever wires this to real hardware should route through that model and
+  keep this function a mechanism, rather than growing a second set of checks
+  here. Neither side has a caller today.
+
+  This is written down because the failure has already happened once in this
+  repo: `aiueos.hvt` hand-rolled a descriptor-chain walk instead of using
+  `aiueos.virtio/validate-descriptor-chain-with-features`, and the copy was
+  missing the index bound, the exact cycle detection, the zero-length check
+  and the indirect-flag check. Two implementations of one structure diverge
+  in the direction of fewer checks.
+
   Honesty about what's verified: the ioctl-number encoding and struct-layout
   offset math (the `ioc-*`/`*-layout` functions below) are pure and unit
   tested. The actual `open`/`ioctl`/`mmap` sequence against a live

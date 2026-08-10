@@ -61,7 +61,7 @@
   {:path "src/aiueos/hvt.cljc" :role :hypervisor-boundary
    :sha256 "7e777214fdf483213c7a9378718ffff0ed9f96b05539d4973547c576db88d4b8"}
   {:path "src/aiueos/vfio.cljc" :role :iommu-device-boundary
-   :sha256 "cc23676494ae007c8e7b34a7fd5581afac3b55306aa32834e82f5b10d32f7c32"}
+   :sha256 "3ffc953a35e2ea2f8a258f7b85e91deb0aef2502e534806f2cb2978524f27371"}
   {:path "src/aiueos/virtio.cljc" :role :guest-device-boundary
    :sha256 "16a95631480219a9070c55acd40cad2ca238032849d45b1df0a428a981c3242c"}
   {:path "src/aiueos/vm.cljc" :role :vm-launch
