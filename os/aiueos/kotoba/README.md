@@ -265,3 +265,51 @@ the value decoder is
 all three use bounded loads/stores without recursive calls. The decoder is
 called only after the complete domain-routed journal contract passes, so C no
 longer parses user payloads.
+
+## Why these objects pack fields into one `i64`
+
+47 of the 59 objects here take apart an integer with `bit-and`/`quot` on the way
+in, or build one with `+`/`*` on the way out, or both. Read on its own that
+looks like the way one writes Kotoba. It is not. It is what **this ABI** is.
+
+The C kernel declares every one of them as a function of words:
+
+```c
+extern uint64_t kotoba_aiueos_capability_plan(uint64_t slot, uint64_t generation,
+                                              uint64_t type, uint64_t state,
+                                              uint64_t request);
+```
+
+One `uint64_t` comes back. A capability decision has more than one field in it —
+slot, generation, type, rights — so the fields are packed into that one word at
+the boundary, and the caller's fields are unpacked from theirs. The packing is
+**at the edge in both directions**: in `capability-plan`,
+`scheduler-dispatch-plan`, `task-slot-plan` and `journal-record-build`, read
+while writing this note, every `bit-and`/`quot` takes a parameter apart on entry
+and every `+`/`*` builds the return value on exit — nothing packs a word only to
+unpack it again inside. That was not checked across all 47.
+
+Two things follow, and they are easy to get backwards:
+
+- **This is not a backend gap.** The native admission gate
+  (`only-native-word-typed-features?` in `kotoba-lang/kotoba-kir`) admits sealed
+  scalar records, keywords and bools today. An object here *could* build a
+  record internally. It would still have to flatten it to one word to return it,
+  because the flattening is demanded by the C declaration, not by the compiler.
+- **So do not copy this shape into Kotoba that is not on this ABI.** Ordinary
+  Kotoba has maps, sets, records and recursive values, and the rest of the
+  workspace has already moved the other way — murakumo's T5.3 removed base-N
+  packing from its planners in favour of records. Code written to a constraint
+  has to say so, or the next reader mistakes it for the style
+  (superproject `ADR-2608650000`).
+
+**Removal condition.** These stop packing when the C↔Kotoba kernel ABI carries
+more than one word per call — a multi-word return convention, or an
+out-parameter written through a bounded store the way `sha256` already writes
+its 32-byte digest. That is a change to the ADR-0015 split between decision-free
+C mechanism and Kotoba decision, not a compiler upgrade to wait for.
+
+**Why one symbol per object, and hence the duplication.** A kernel object
+exports one symbol and cannot call another (ADR-0030), so shared guards are
+repeated rather than factored — the two IPv4 checksums (ADR-0021) and the three
+`cpuid` objects are the worked examples.
