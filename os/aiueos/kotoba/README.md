@@ -291,11 +291,17 @@ unpack it again inside. That was not checked across all 47.
 
 Two things follow, and they are easy to get backwards:
 
-- **This is not a backend gap.** The native admission gate
-  (`only-native-word-typed-features?` in `kotoba-lang/kotoba-kir`) admits sealed
-  scalar records, keywords and bools today. An object here *could* build a
-  record internally. It would still have to flatten it to one word to return it,
-  because the flattening is demanded by the C declaration, not by the compiler.
+- **This is not a backend gap — though the backend is narrower than "records
+  work now".** The native admission gate
+  (`only-native-word-typed-features?` in `kotoba-lang/kotoba-kir`) takes record
+  fields from `#{:i64 :bool :string :keyword}` and admits `record-new`/
+  `record-get` in exactly one shape: `record-get`'s value operand must be a
+  directly-nested `record-new` of the same schema. A record that escapes — is
+  returned, stored, or passed on — is not admitted, and neither are maps,
+  variants, typed sets, heterogeneous vectors, or generic options/results. So an
+  object here can name its fields at the point it projects them, and no further.
+  Even where a record does fit, the return still flattens to one word, because
+  the flattening is demanded by the C declaration and not by the compiler.
 - **So do not copy this shape into Kotoba that is not on this ABI.** Ordinary
   Kotoba has maps, sets, records and recursive values, and the rest of the
   workspace has already moved the other way — murakumo's T5.3 removed base-N
