@@ -292,7 +292,7 @@
                 (ram-write-le r 0x101c 2 (:write vio/desc-flag))
                 (ram-write-le r 0x101e 2 0))
           rd (fn [gpa] (get ram gpa 0))]
-      (is (= [{:addr 0x6000 :len 8}] (hvt/walk-writable-chain rd 0x1000 0))
+      (is (= [{:addr 0x6000 :len 8}] (hvt/walk-writable-chain rd 0x1000 8 0))
           "only the writable descriptor is a receive target"))))
 
 (deftest walk-descriptor-chain-follows-next
@@ -310,7 +310,7 @@
                 (ram-write-le r 0x101e 2 0)
                 (assoc r 0x5000 (int \A) 0x5001 (int \B) 0x5002 (int \C)))
           rd (fn [gpa] (get ram gpa 0))
-          {:keys [bytes len]} (hvt/walk-descriptor-chain rd 0x1000 0)]
+          {:keys [bytes len]} (hvt/walk-descriptor-chain rd 0x1000 8 0)]
       (is (= [(int \A) (int \B) (int \C)] bytes))
       (is (= 3 len))))
   (testing "a device-WRITABLE descriptor is not emitted (it's a receive buffer)"
@@ -321,7 +321,7 @@
                 (ram-write-le r 0x100e 2 0)
                 (assoc r 0x5000 (int \Z) 0x5001 (int \Z)))
           rd (fn [gpa] (get ram gpa 0))
-          {:keys [bytes]} (hvt/walk-descriptor-chain rd 0x1000 0)]
+          {:keys [bytes]} (hvt/walk-descriptor-chain rd 0x1000 8 0)]
       (is (= [] bytes) "device-writable buffers carry no transmit data"))))
 
 ;; The chain guard bounded how many descriptors were followed, not how big one
@@ -342,7 +342,7 @@
     (put-le! (+ desc-gpa 8) (inc hvt/guest-ram-size) 4)
     (put-le! (+ desc-gpa 12) 0 2)              ; flags: not writable, no next
     (put-le! (+ desc-gpa 14) 0 2)              ; next
-    (let [e (try (hvt/walk-descriptor-chain rd desc-gpa 0)
+    (let [e (try (hvt/walk-descriptor-chain rd desc-gpa 8 0)
                  (catch clojure.lang.ExceptionInfo e e))]
       (is (instance? clojure.lang.ExceptionInfo e)
           "a 4 GiB descriptor was collected instead of rejected")
@@ -354,4 +354,26 @@
       (swap! ram assoc 0x2000 72 0x2001 73)
       (dotimes [i 8] (swap! ram assoc (+ 0x1000 i) (if (= i 1) 0x20 0)))
       (swap! ram assoc 0x1008 2)
-      (is (= 2 (:len (hvt/walk-descriptor-chain rd 0x1000 0)))))))
+      (is (= 2 (:len (hvt/walk-descriptor-chain rd 0x1000 8 0)))))))
+
+(deftest a-descriptor-index-must-be-inside-the-queue
+  ;; :next is a 16-bit guest field and read-descriptor turned it straight into
+  ;; desc-gpa + d*16, so a chain could step a megabyte past the table and read
+  ;; whatever was there as a descriptor.
+  (let [ram (atom {})
+        rd (fn [addr] (get @ram addr 0))
+        put-le! (fn [addr n width]
+                  (dotimes [i width]
+                    (swap! ram assoc (+ addr i)
+                           (bit-and (bit-shift-right n (* 8 i)) 0xff))))]
+    ;; descriptor 0: len 1, NEXT set, next = 4000 (well outside an 8-slot table)
+    (put-le! 0x1000 0x2000 8)
+    (put-le! 0x1008 1 4)
+    (put-le! 0x100c (:next vio/desc-flag) 2)
+    (put-le! 0x100e 4000 2)
+    (let [e (try (hvt/walk-descriptor-chain rd 0x1000 8 0)
+                 (catch clojure.lang.ExceptionInfo e e))]
+      (is (instance? clojure.lang.ExceptionInfo e)
+          "a chain stepped outside the descriptor table")
+      (is (= 4000 (:descriptor (ex-data e))))
+      (is (= 8 (:queue-size (ex-data e)))))))

@@ -59,7 +59,7 @@
   {:path "src/aiueos/sealed_state.clj" :role :component-state-confidentiality-integrity
    :sha256 "6eb5f146b30ab16ed07d40e1f32b92f1e1338acf1f4a299e9b9d013fa055828d"}
   {:path "src/aiueos/hvt.cljc" :role :hypervisor-boundary
-   :sha256 "75707227275e75e4dd6528335a28b797c3f2e13bfa309292cdcf2320a08c8aeb"}
+   :sha256 "7e777214fdf483213c7a9378718ffff0ed9f96b05539d4973547c576db88d4b8"}
   {:path "src/aiueos/vfio.cljc" :role :iommu-device-boundary
    :sha256 "cc23676494ae007c8e7b34a7fd5581afac3b55306aa32834e82f5b10d32f7c32"}
   {:path "src/aiueos/virtio.cljc" :role :guest-device-boundary
