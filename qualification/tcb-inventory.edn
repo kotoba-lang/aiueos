@@ -13,7 +13,7 @@
   {:path "src/aiueos/key_lifecycle.clj" :role :signer-lifecycle-authority
    :sha256 "f1e4475edef59527b11dbf39c950c6706e4fedea96c6f5dfb6e60707920371a5"}
   {:path "src/aiueos/policy.cljc" :role :policy-decision
-   :sha256 "84c772257cc8c6744b5700b0d11c82fd40992213364269f03726d00070b188a9"}
+   :sha256 "b5b7d57da415a604cb7bd18729982c641af0bf80f2ae0b7fbb31b0216ee93897"}
   {:path "src/aiueos/broker.cljc" :role :capability-authority
    :sha256 "fd1ab3c624b18478515141d2fae35fd7be33c046160807af572befaada790337"}
   {:path "src/aiueos/execute.cljc" :role :wasm-host-abi
