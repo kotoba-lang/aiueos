@@ -74,3 +74,24 @@
            e2 (audit/audit-entry :service/log :reject "rejected" 201)]
        (spit path (str (pr-str e1) "\n\n   \n" (pr-str e2) "\n"))
        (is (= [e1 e2] (audit/read-log path))))))
+
+#?(:clj
+   (deftest a-detail-with-newlines-is-still-one-entry
+     ;; The file format is one EDN map per line and read-log splits on lines,
+     ;; so `pr-str` escaping newlines inside the string literal is what stops
+     ;; a detail from forging a second entry. Detail is not wholly the
+     ;; operator's text: deny-audit-entries builds it from violation messages,
+     ;; which carry ids and capability names off the manifest under judgement.
+     ;; Nothing pinned that, and the failure would look like a real log line.
+     (let [dir (temp-dir)
+           path (audit/log-path dir)
+           forged (pr-str {:aiueos/ts 0 :aiueos/event :grant
+                           :aiueos/component :attacker/app
+                           :aiueos/detail "caps: everything"})
+           entry (audit/audit-entry :app/notes :deny
+                                    (str "denied\n" forged "\nmore") 300)]
+       (audit/append! path entry)
+       (is (= 1 (count (audit/read-log path))))
+       (is (= [entry] (audit/read-log path)))
+       (is (= 1 (count (remove clojure.string/blank?
+                               (clojure.string/split-lines (slurp path)))))))))
