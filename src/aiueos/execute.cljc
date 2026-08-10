@@ -505,10 +505,17 @@
      `:deny` (no execution attempted). `:aiueos/started-at`/`:finished-at` are
      epoch milliseconds; `:aiueos/audit-events` mirrors the same
      `:aiueos.broker/audit-entries` DECISION already carried."
-     ([decision wasm-bytes]
-      (run-if-granted decision wasm-bytes default-quota default-fuel default-memory-pages
-                       {:publishes nil :subscribes nil} default-watchdog-ms))
-     ([decision wasm-bytes quota fuel-limit memory-pages-limit topic-allowed watchdog-ms]
+     ;; There was a 2-arity convenience form here that filled in
+     ;; default-quota / default-fuel / default-memory-pages and
+     ;; {:publishes nil :subscribes nil}. Nothing called it -- both real
+     ;; callers pass the manifest's own values -- and the topic-allowed
+     ;; default is the part that matters: nil means unrestricted, so
+     ;; reaching for the short form would have silently dropped the
+     ;; allow-set instead of using a conservative one. `assert-topic-allowed!`
+     ;; exists because that gate was once derived and never enforced; a
+     ;; private, unused arity that reintroduces exactly that is not worth
+     ;; keeping for the four arguments it saves.
+     [decision wasm-bytes quota fuel-limit memory-pages-limit topic-allowed watchdog-ms]
       (let [component (:aiueos/component decision)
             audit-events (:aiueos.broker/audit-entries decision)]
         (if (= :grant (:aiueos/decision decision))
@@ -570,7 +577,7 @@
                    :aiueos/run-receipt
                    (broker/run-receipt component :denied
                                         :started-at now :finished-at now
-                                        :audit-events audit-events))))))))
+                                        :audit-events audit-events)))))))
 
 #?(:clj
    (defn- integrity-denial
