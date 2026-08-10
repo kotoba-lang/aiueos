@@ -171,6 +171,21 @@
     :aiueos/output-classification
     :aiueos/surface})
 
+(def device-identity-keys
+  "The part of `:aiueos/device` that names the physical device.
+
+  `aiueos.graph/device-key` returns nil unless all three are present, and
+  `check-unique-devices` then skips that component -- so an incomplete or
+  misspelled binding does not fail, it opts out of the one-driver-per-device
+  invariant in silence. Requiring the triple is what makes that check
+  unconditional for a validated manifest.
+
+  The rest of the map is an OS-readable device schema (`:queues`,
+  `:interrupts`, `:dma` in `examples/drivers/virtio-blk.edn`). It is
+  deliberately NOT closed here: no document in this repo owns that
+  vocabulary, and guessing it from one driver would reject the next one."
+  #{:bus :vendor :device})
+
 (def limits-keys
   "Keys `aiueos.manifest/normalize-limits` reads from `:aiueos/limits`."
   #{:memory-pages :fuel})
@@ -458,6 +473,15 @@
                         ":aiueos/entry must be a string")
            (field-error m :aiueos/args int-vector?
                         ":aiueos/args must be a vector of integers")
+           (field-error m :aiueos/device map?
+                        ":aiueos/device must be a map")
+           (when-let [device (:aiueos/device m)]
+             (when (map? device)
+               (prefix-errors
+                [:aiueos/device]
+                (collect-errors
+                 (mapv #(err [%] "missing key")
+                       (sort (remove (set (keys device)) device-identity-keys)))))))
            (field-error m :aiueos/limits map?
                         ":aiueos/limits must be a map")
            (field-error m :aiueos/quota map?

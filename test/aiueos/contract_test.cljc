@@ -496,3 +496,28 @@
                    [:aiueos/schedule {:deadline_ms 100}]]]
       (is (false? (:valid? (contract/validate-manifest (assoc base-manifest k m))))
           (str k " " (pr-str m) " validated clean")))))
+
+;; --- device bindings -------------------------------------------------------
+;; `aiueos.graph/check-unique-devices` enforces one driver per device, but
+;; `device-key` returns nil unless bus, vendor and device are all present, so
+;; an incomplete binding skips the check rather than failing it. Nothing had
+;; ever constrained the field.
+
+(deftest device-binding-must-be-a-whole-triple
+  (testing "a complete triple validates, with or without the device schema"
+    (is (:valid? (contract/validate-manifest
+                  (assoc base-manifest :aiueos/device
+                         {:bus "pci" :vendor "1af4" :device "1001"}))))
+    (is (:valid? (contract/validate-manifest
+                  (assoc base-manifest :aiueos/device
+                         {:bus :pci :vendor "0x1af4" :device "0x1001"
+                          :queues [{:name :request}] :dma {:requires-iommu true}})))
+        "the OS-readable device schema is not a closed vocabulary"))
+  (testing "partial, misspelled and non-map bindings are errors"
+    (doseq [d [{:bus "pci" :vendor "1af4"}
+               {:bus "pci" :vendor "1af4" :dev "1001"}
+               {}
+               "pci:1af4:1001"]]
+      (is (false? (:valid? (contract/validate-manifest
+                            (assoc base-manifest :aiueos/device d))))
+          (str (pr-str d) " validated clean and would skip the uniqueness check")))))
