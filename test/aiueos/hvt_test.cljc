@@ -323,3 +323,35 @@
           rd (fn [gpa] (get ram gpa 0))
           {:keys [bytes]} (hvt/walk-descriptor-chain rd 0x1000 0)]
       (is (= [] bytes) "device-writable buffers carry no transmit data"))))
+
+;; The chain guard bounded how many descriptors were followed, not how big one
+;; was. :len is a 32-bit guest-written field and went straight into (range len).
+(deftest a-descriptor-cannot-claim-more-than-guest-ram
+  (let [desc-gpa 0x1000
+        ;; one descriptor, no NEXT flag, claiming the whole 32-bit range
+        ram (atom {})
+        put-le! (fn [addr n width]
+                  (dotimes [i width]
+                    (swap! ram assoc (+ addr i)
+                           (bit-and (bit-shift-right n (* 8 i)) 0xff))))
+        rd (fn [addr] (get @ram addr 0))]
+    (put-le! (+ desc-gpa 0) 0x2000 8)          ; addr
+    ;; one past the bound, not 0xffffffff: the field really does reach 4 GiB,
+    ;; but asking an unpatched build to allocate that is how you take the host
+    ;; down while checking that it would.
+    (put-le! (+ desc-gpa 8) (inc hvt/guest-ram-size) 4)
+    (put-le! (+ desc-gpa 12) 0 2)              ; flags: not writable, no next
+    (put-le! (+ desc-gpa 14) 0 2)              ; next
+    (let [e (try (hvt/walk-descriptor-chain rd desc-gpa 0)
+                 (catch clojure.lang.ExceptionInfo e e))]
+      (is (instance? clojure.lang.ExceptionInfo e)
+          "a 4 GiB descriptor was collected instead of rejected")
+      (is (= (inc hvt/guest-ram-size) (:len (ex-data e))))
+      (is (= hvt/guest-ram-size (:max (ex-data e))))))
+  (testing "a length within guest RAM still works"
+    (let [ram (atom {})
+          rd (fn [addr] (get @ram addr 0))]
+      (swap! ram assoc 0x2000 72 0x2001 73)
+      (dotimes [i 8] (swap! ram assoc (+ 0x1000 i) (if (= i 1) 0x20 0)))
+      (swap! ram assoc 0x1008 2)
+      (is (= 2 (:len (hvt/walk-descriptor-chain rd 0x1000 0)))))))
