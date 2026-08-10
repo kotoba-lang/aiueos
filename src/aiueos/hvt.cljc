@@ -363,15 +363,36 @@
     {:addr (rd-le rd g 8) :len (rd-le rd (+ g 8) 4)
      :flags (rd-le rd (+ g 12) 2) :next (rd-le rd (+ g 14) 2)}))
 
+(def max-chain-bytes
+  "Ceiling on the bytes one descriptor -- or one chain -- may ask this VMM to
+  collect.
+
+  `:len` is a 32-bit field the guest writes, and `walk-descriptor-chain`
+  turned it straight into `(range len)`, so a single descriptor claiming
+  0xffffffff asked the monitor for a four-billion-element vector. The chain
+  guard bounded how MANY descriptors were followed and said nothing about how
+  BIG each one was.
+
+  `guest-ram-size` is the bound rather than a number chosen here: a buffer
+  cannot be larger than the RAM it lives in, so anything above it is
+  malformed by construction and stays right if the RAM size changes."
+  guest-ram-size)
+
 (defn walk-descriptor-chain
   "Walk the chain from descriptor `head`, collecting device-readable bytes
   (those WITHOUT the WRITE flag -- driver->device buffers). Returns
-  `{:bytes [..] :len total}`. Guards against cyclic/over-long chains."
+  `{:bytes [..] :len total}`. Guards against cyclic/over-long chains, and
+  against a single descriptor or a chain claiming more bytes than guest RAM
+  holds (see `max-chain-bytes`)."
   [rd desc-gpa head]
   (loop [d head, out [], total 0, guard 0]
     (when (> guard 256)
       (throw (ex-info "descriptor chain too long or cyclic" {:head head :guard guard})))
     (let [{:keys [addr len flags next]} (read-descriptor rd desc-gpa d)
+          _ (when (or (> len max-chain-bytes) (> (+ total len) max-chain-bytes))
+              (throw (ex-info "descriptor length exceeds guest RAM"
+                              {:head head :descriptor d :len len :total total
+                               :max max-chain-bytes})))
           readable? (zero? (bit-and flags (:write vio/desc-flag)))
           out' (if readable? (into out (mapv #(rd (+ addr %)) (range len))) out)]
       (if (zero? (bit-and flags (:next vio/desc-flag)))
