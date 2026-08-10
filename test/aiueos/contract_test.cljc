@@ -4,6 +4,55 @@
             #?(:clj [clojure.java.io :as io])
             [clojure.test :refer [deftest is testing]]))
 
+;; --- identities ------------------------------------------------------------
+;; These were "bafy-plan", "bafy-artifact" and so on: readable labels that are
+;; not CIDs. `kotoba.abi.contract/cid?` used to be `#"b.+"`, so they passed —
+;; and a fixture that cannot be an identity cannot prove the contract accepts
+;; one (abi 32ee84b, com-junkawasaki ADR-2608100500).
+;;
+;; The labels survive because they are what makes the tests readable. Each is
+;; now a real CIDv1, derived so the value is reproducible rather than magic:
+;;
+;;   cidv1-raw(sha2-256("aiueos/" + label))
+;;
+;; Namespacing by repository is deliberate: several suites in this fleet use
+;; the same labels, and sharing a fixture value would hide a substitution bug
+;; where one identity is accepted for another.
+(def ^:private cids
+  {"artifact" "bafkreic6wtrsfonzv25l32xh2os7eoiw2i7jzzjri2y5ul77ndedxhwf64"
+   "basis" "bafkreifz5ish3s3nplgngfbwameix6ildz35q76rgqnmmq3fni2swtburu"
+   "closure" "bafkreigegixp6ihsz5hafr6jhhyblywdzk2sxjpniw43yzz4b2qvlmvn3m"
+   "compiler" "bafkreielkmjtoeelrj47cvixisxzozr3oo7wt2uw3mewhitxfg3ihbtr4a"
+   "component" "bafkreidff26yos43tb4wz57lsz4o4gc2ktymm6iilbebeyzpmzwhu2bxqa"
+   "decision" "bafkreih4ejkiofrqdhgzrqnxl3brc7ehsr7m7cuifith2wjnpwwqklwcni"
+   "grant" "bafkreigz444pirxkxhyuuhzhrxrtwekyf65wtlo6lnjzqzchixdb436geu"
+   "input" "bafkreihvbav3ycjqf7l6esvlfylph3ee6sk4okp7c3ryebstbrx7tezen4"
+   "lock" "bafkreie5x7dnawfuoaqvj4dbpcdhrllzvtaioxx5v3xj4gl3ghfzjx5qsy"
+   "manifest" "bafkreibqefbhuppoqd3tndkxghqdmvx5z7r4jfpijoph27we7pykzgb55a"
+   "other-basis" "bafkreiap4uc7ywgvba2xztu2uke74hry7lpfrniy36kcb3mzn3pn37r5je"
+   "other-input" "bafkreieu65qvt3m743i5ss63ug5mrlleenlzeqitszze7j4ejyyo4twmke"
+   "other-plan" "bafkreihgijhn2lotosladehr4xud2kx3pzoq3l2e3st6cf5dqd6d4m5aca"
+   "other-policy" "bafkreiapoic32qx7tud4ch5k3dohe3u6yorw32deezo3p7bmhjvu2pbyyy"
+   "outcome" "bafkreiaflmohzlbbbpzvhrbp3hiojmiwl2b62icahwxyazkoidrxj3p2ti"
+   "output" "bafkreiejpicr7cfa3dswwa3lr3pudi6mpbqnjh4efraori6l6uz7to4iwm"
+   "plan" "bafkreicgwx5thnotrw2ijcbkbk5zkmblzm5gmdj73hftqud4abpahze3g4"
+   "policy" "bafkreifknmd2b5ii2jdieudzqthrh4uxkl4thhz6pdmfsvs4jrxifrnjiy"
+   "portable-decision" "bafkreiattwltkoyyrkrm3wc2lkat2kst6a5ff5g2awfcmwmhcwg7jiq2vy"
+   "receipt" "bafkreibwydbopg2g4hlzjhdf45op3mn5mpfwchjx3bkmfath6g77b63tku"
+   "run" "bafkreib4xf2pjmbfaxanhzif75q5n7risxgdzoepirxghm3oyvy3orvm6m"
+   "runtime" "bafkreiatboo3f4wg4llmyr2af36vgvgzrlf6364tv5ckfsasc5u7q7h6ze"
+   "wasm" "bafkreidk3rysoh4adga2xunfqiobjbf7h4itdslffdsnfsnnq6qw6c4tgm"
+   "world" "bafkreiapltrdr2zxc5nle7gtvegalmaohcrt752hkq2m7noli5eeuzfq2i"})
+
+(defn- cid-of
+  "The real CIDv1 fixture for `label`. Named `cid-of` because this file
+  already binds `cid` to one particular identity. Unknown labels fail loudly rather than
+  returning nil, which `cid?` would then reject with a confusing message."
+  [label]
+  (or (get cids label)
+      (throw (ex-info "no CID fixture for label" {:label label}))))
+
+
 #?(:clj
    (defn- example-edn-files []
      (->> (file-seq (io/file "examples"))
@@ -188,8 +237,8 @@
   {:aiueos/subject "did:key:z6Mkoperator"
    :aiueos/audience :aiueos/component
    :aiueos/component :service/log
-   :aiueos/manifest-cid "bafy-manifest"
-   :aiueos/wasm-cid "bafy-wasm"
+   :aiueos/manifest-cid (cid-of "manifest")
+   :aiueos/wasm-cid (cid-of "wasm")
    :aiueos/capabilities #{:log/write}
    :aiueos/limits {:host-calls 2}
    :aiueos/not-before 1782748800
@@ -223,9 +272,9 @@
    :aiueos/result {:value 0}
    :aiueos/started-at 1782748802
    :aiueos/finished-at 1782748803
-   :aiueos/run-cid "bafy-run"
-   :aiueos/input-cid "bafy-input"
-   :aiueos/output-cid "bafy-output"
+   :aiueos/run-cid (cid-of "run")
+   :aiueos/input-cid (cid-of "input")
+   :aiueos/output-cid (cid-of "output")
    :aiueos/audit-events
    [{:aiueos/ts 1782748803
      :aiueos/event :run
@@ -234,14 +283,14 @@
 
 (def portable-execution-identity
   {:format :kotoba.execution-identity/v1
-   :plan-cid "bafy-plan" :code-closure-cid "bafy-closure"
-   :artifact-cid "bafy-artifact" :compiler-contract "bafy-compiler"
-   :component-cid "bafy-component" :wit-world-cid "bafy-world"
-   :package-lock-cid "bafy-lock" :policy-cid "bafy-policy"
-   :policy-decision-cid "bafy-decision" :db-basis "bafy-basis"
-   :grant-cids ["bafy-grant"] :approval-cids [] :runtime-identity "bafy-runtime"
-   :input-cid "bafy-input" :outcome-cid "bafy-outcome"
-   :host-receipt-cids ["bafy-receipt"]})
+   :plan-cid (cid-of "plan") :code-closure-cid (cid-of "closure")
+   :artifact-cid (cid-of "artifact") :compiler-contract (cid-of "compiler")
+   :component-cid (cid-of "component") :wit-world-cid (cid-of "world")
+   :package-lock-cid (cid-of "lock") :policy-cid (cid-of "policy")
+   :policy-decision-cid (cid-of "decision") :db-basis (cid-of "basis")
+   :grant-cids [(cid-of "grant")] :approval-cids [] :runtime-identity (cid-of "runtime")
+   :input-cid (cid-of "input") :outcome-cid (cid-of "outcome")
+   :host-receipt-cids [(cid-of "receipt")]})
 
 (deftest grant-contract
   (testing "validates normalized Kotoba Grant data before local materialization"
