@@ -46,9 +46,14 @@ payload = {
     "imports": [],
     "dynamic_dependencies": [],
     "fuel": {"initial": 4096, "replenishable": False},
-    "allocator": {"page_bytes": 4096, "published_pages": 2,
+    "allocator": {"page_bytes": 4096, "published_pages": 3,
                   "descriptor_limit": 410,
-                  "zero_before_publish": True},
+                  "zero_before_publish": True,
+                  "ownership_state": "boot-lifetime-three-slot-bitmap",
+                  "duplicate_claim_rejected": True,
+                  "double_free_rejected": True,
+                  "reclamation_reused": True,
+                  "page_table_root_allocated": True},
 }
 receipt.write_text(json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n", encoding="ascii")
-print("AIUEOS_KOTOBA_NATIVE_KERNEL_OK no-c no-crt no-linker imports=0 fuel=4096 allocator-pages=2 descriptors<=410 zero-before-publish")
+print("AIUEOS_KOTOBA_NATIVE_KERNEL_OK no-c no-crt no-linker imports=0 fuel=4096 allocator-pages=3 ownership-bitmap page-table-root reuse double-free-rejected descriptors<=410 zero-before-publish")

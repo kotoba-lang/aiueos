@@ -8,7 +8,7 @@ boot_out=${AIUEOS_NATIVE_BOOT_OUT:-"$repo/build/aiueos-native-boot"}
 qemu=${QEMU_SYSTEM_X86_64:-qemu-system-x86_64}
 qemu_timeout=${AIUEOS_QEMU_TIMEOUT:-300}
 expected_status=${AIUEOS_NATIVE_EXPECT_STATUS:-33}
-expected_marker=${AIUEOS_NATIVE_EXPECT_MARKER:-MP}
+expected_marker=${AIUEOS_NATIVE_EXPECT_MARKER:-MPR}
 "$aiueos/scripts/build-kotoba-native-boot.sh" "$compiler" >/dev/null
 if [ -z "${OVMF_CODE:-}" ]; then
   for candidate in /opt/homebrew/share/qemu/edk2-x86_64-code.fd \
@@ -54,8 +54,8 @@ expected=sys.argv[2].encode("ascii")
 if data != expected:
     raise SystemExit(f"error: Kotoba-native marker was {data!r}, expected {expected!r}")
 PY
-if [ "$expected_marker" = MP ]; then
-  echo "AIUEOS_KOTOBA_NATIVE_QEMU_OK no-c-boot-chain memory-map-v2 allocator-pages=2 zero-before-publish exit-boot-services cr3"
+if [ "$expected_marker" = MPR ]; then
+  echo "AIUEOS_KOTOBA_NATIVE_QEMU_OK no-c-boot-chain memory-map-v2 allocator-pages=3 ownership-bitmap page-table-root reuse double-free-rejected zero-before-publish exit-boot-services cr3"
 else
   echo "AIUEOS_KOTOBA_NATIVE_QEMU_REJECTION_OK marker=$expected_marker status=$expected_status"
 fi

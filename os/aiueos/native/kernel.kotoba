@@ -30,8 +30,9 @@
      (* (kernel-load-u8-16k base length (+ offset 3)) 16777216)))
 
 ;; UEFI type 7 is EfiConventionalMemory.  The compiler-emitted loader identity
-;; maps the first GiB, so this first allocator slice admits one aligned page in
-;; [2 MiB, 1 GiB).  Loader/kernel pages have non-conventional UEFI types.
+;; maps the first GiB, so this bounded allocator slice admits one aligned,
+;; contiguous three-page extent in [2 MiB, 1 GiB).  Loader/kernel pages have
+;; non-conventional UEFI types.
 (defn find-page [memory-map map-size descriptor-size offset remaining]
   (if (or (= remaining 0)
           (> (+ offset descriptor-size) map-size))
@@ -40,37 +41,13 @@
           physical-start (load64 memory-map map-size (+ offset 8))
           pages (load64 memory-map map-size (+ offset 24))]
       (if (and (= memory-type 7)
-               (> pages 0)
+               (> pages 2)
                (>= physical-start 2097152)
-               (< physical-start 1073741824)
+               (< physical-start 1073733632)
                (= (bit-and physical-start 4095) 0))
         physical-start
         (find-page memory-map map-size descriptor-size
                    (+ offset descriptor-size) (- remaining 1))))))
-
-;; The first published page is explicit ownership state for the second walk.
-;; Prefer the following page in the same descriptor, otherwise the first page
-;; of the next admitted descriptor.  map-size and the >=40-byte stride bound
-;; this walk independently of the native fuel ceiling.
-(defn find-page-after [memory-map map-size descriptor-size offset owned-page]
-  (if (> (+ offset descriptor-size) map-size)
-    0
-    (let [memory-type (load32 memory-map map-size offset)
-          physical-start (load64 memory-map map-size (+ offset 8))
-          pages (load64 memory-map map-size (+ offset 24))]
-      (if (and (= memory-type 7)
-               (> pages 0)
-               (>= physical-start 2097152)
-               (< physical-start 1073741824)
-               (= (bit-and physical-start 4095) 0))
-        (if (= physical-start owned-page)
-          (if (and (> pages 1) (< physical-start 1073737728))
-            (+ physical-start 4096)
-            (find-page-after memory-map map-size descriptor-size
-                             (+ offset descriptor-size) owned-page))
-          physical-start)
-        (find-page-after memory-map map-size descriptor-size
-                         (+ offset descriptor-size) owned-page)))))
 
 ;; Sixteen writes per tail call keep the recursive depth below the kernel fuel
 ;; ceiling while proving that every byte in the admitted page is writable and
@@ -97,6 +74,29 @@
       (if (= (+ s0 s1 s2 s3 s4 s5 s6 s7 s8 s9 sa sb sc sd se sf) 0)
         (zero-page page (+ offset 16))
         0))))
+
+;; One byte per bounded allocator slot is deliberately simple: zero means
+;; free, one means owned.  The state lives in an allocator page rather than in
+;; transient scalar control flow, so later claims observe earlier decisions.
+(defn claim-slot [state slot]
+  (let [current (kernel-load-u8-4k state 4096 slot)]
+    (if (= current 0)
+      (let [stored (kernel-store-u8-4k state 4096 slot 1)]
+        (if (and (= stored 1)
+                 (= (kernel-load-u8-4k state 4096 slot) 1))
+          1
+          0))
+      0)))
+
+(defn release-slot [state slot]
+  (let [current (kernel-load-u8-4k state 4096 slot)]
+    (if (= current 1)
+      (let [stored (kernel-store-u8-4k state 4096 slot 0)]
+        (if (and (= stored 0)
+                 (= (kernel-load-u8-4k state 4096 slot) 0))
+          1
+          0))
+      0)))
 
 (defn main []
   (let [boot (kernel-boot-info)
@@ -127,25 +127,47 @@
             ;; an unbounded walk.
             physical-start (find-page memory-map map-size descriptor-size 0 410)]
         (if (> physical-start 0)
-          (let [second-start (find-page-after memory-map map-size descriptor-size
-                                              0 physical-start)]
-            (if (and (> second-start 0) (not (= second-start physical-start)))
-              ;; The literal parent names the loader's identity-mapped physical
-              ;; window. Map values select only checked offsets inside it.
-              (let [page (kernel-subregion 4096 1073737728
-                                           (- physical-start 4096) 4096)
-                    second-page (kernel-subregion 4096 1073737728
-                                                  (- second-start 4096) 4096)]
-                (if (and (= map-marker 77)
-                         (= (zero-page page 0) 1)
-                         (= (zero-page second-page 0) 1)
-                         (= (kernel-load-u8-4k page 4096 0) 0)
-                         (= (kernel-load-u8-4k page 4096 4095) 0)
-                         (= (kernel-load-u8-4k second-page 4096 0) 0)
-                         (= (kernel-load-u8-4k second-page 4096 4095) 0))
-                  (let [page-marker (kernel-out-u8 233 80)]
-                    (kernel-out-u32 244 (if (= page-marker 80) 16 17)))
-                  (kernel-out-u32 244 19)))
+          (let [second-start (+ physical-start 4096)
+                third-start (+ physical-start 8192)]
+            (if (and (> second-start 0)
+                     (> third-start 0)
+                     (< third-start 1073741824)
+                     (not (= second-start physical-start))
+                     (not (= third-start physical-start))
+                     (not (= third-start second-start)))
+                  ;; The literal parent names the loader's identity-mapped
+                  ;; physical window. Map values select only checked offsets.
+                  (let [state (kernel-subregion 4096 1073737728
+                                                (- physical-start 4096) 4096)
+                        page-table-root (kernel-subregion 4096 1073737728
+                                                          (- second-start 4096) 4096)
+                        reusable-page (kernel-subregion 4096 1073737728
+                                                       (- third-start 4096) 4096)]
+                    (if (and (= map-marker 77)
+                             (= (zero-page state 0) 1)
+                             (= (zero-page page-table-root 0) 1)
+                             (= (zero-page reusable-page 0) 1)
+                             (= (kernel-load-u8-4k state 4096 4095) 0)
+                             (= (kernel-load-u8-4k page-table-root 4096 0) 0)
+                             (= (kernel-load-u8-4k page-table-root 4096 4095) 0)
+                             (= (kernel-load-u8-4k reusable-page 4096 4095) 0)
+                             (= (claim-slot state 0) 1)
+                             (= (claim-slot state 1) 1)
+                             (= (claim-slot state 2) 1)
+                             (= (claim-slot state 1) 0)
+                             (= (release-slot state 2) 1)
+                             (= (release-slot state 2) 0)
+                             (= (claim-slot state 2) 1)
+                             (= (kernel-load-u8-4k state 4096 0) 1)
+                             (= (kernel-load-u8-4k state 4096 1) 1)
+                             (= (kernel-load-u8-4k state 4096 2) 1))
+                      (let [page-marker (kernel-out-u8 233 80)
+                            root-marker (kernel-out-u8 233 82)]
+                        (kernel-out-u32 244
+                                        (if (and (= page-marker 80)
+                                                 (= root-marker 82))
+                                          16 17)))
+                      (kernel-out-u32 244 22)))
               (kernel-out-u32 244 20)))
           (kernel-out-u32 244 19)))
       (kernel-out-u32 244 18))))
