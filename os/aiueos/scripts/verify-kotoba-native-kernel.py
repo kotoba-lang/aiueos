@@ -22,7 +22,8 @@ if entry != 0x101000 or phentsize != 56 or phnum != 2:
 segments = [struct.unpack_from("<IIQQQQQQ", data, phoff + i * phentsize) for i in range(phnum)]
 if [segment[0] for segment in segments] != [1, 1] or [segment[1] for segment in segments] != [5, 6]:
     raise SystemExit("error: Kotoba-native kernel must contain only RX and RW PT_LOAD segments")
-if b"\x0f\x20\xd8" not in data or b"\xee" not in data or b"\xef" not in data:
+cr3_encodings = (b"\x0f\x20\xd8", b"\x41\x0f\x20\xda")
+if not any(encoding in data for encoding in cr3_encodings) or b"\xee" not in data or b"\xef" not in data:
     raise SystemExit("error: privileged CR3/debug-port lowering evidence is absent")
 if b"\x88" not in data:
     raise SystemExit("error: allocator zero-store lowering evidence is absent")
