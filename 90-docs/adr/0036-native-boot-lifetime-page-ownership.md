@@ -53,7 +53,7 @@ mutations remain separate failures.
 ## Consequences and next boundary
 
 The scalar exclusion is gone, and release/reuse is now an observed state
-transition. This is still a three-slot proof, not a production physical-memory
-manager. Next is a map-indexed bounded allocator, then four-level table
-population with explicit supervisor/RW/NX policy, CR3 activation, and TLB
-invalidation evidence.
+transition. This remains a three-slot proof, not a production physical-memory
+manager. ADR-0037 subsequently expands the bounded proof to five pages and
+activates a first-GiB identity map. A map-indexed allocator and explicit
+supervisor/RW/NX policy remain separate work.

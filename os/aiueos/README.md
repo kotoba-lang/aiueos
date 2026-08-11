@@ -666,17 +666,22 @@ ExitBootServices before entering the kernel. The hard-flip boot chain has no C,
 CRT, foreign object, linker, interpreter, import table, or dynamic dependency.
 Its final memory map resides in a compiler-owned bounded 16 KiB RW region.
 The kernel derives that region from boot-info rather than trusting a loaded
-pointer as authority, admits a contiguous three-page UEFI Conventional Memory
-extent inside the identity-mapped physical window, derives three non-overlapping
+pointer as authority, admits a contiguous five-page UEFI Conventional Memory
+extent inside the identity-mapped physical window, derives five non-overlapping
 authorities, and zeros all 4,096 bytes of each before use. The first page is a
-boot-lifetime three-slot ownership bitmap; the second is the allocated,
-zeroed page-table root; the third proves release and reuse. The success path
+boot-lifetime five-slot ownership bitmap; the next three are PML4, PDPT, and PD;
+the fifth proves release and reuse. Kotoba writes and reads back a 512-entry
+2 MiB-page identity map for the first GiB, loads its PML4 into CR3, reads CR3
+back, invalidates one mapped address, and continues executing under that map.
+The success path
 itself rejects a duplicate claim and a double-free, then requires the released
-slot to be claimed again before emitting `MPR`. This is persistent across
+slot to be claimed again before emitting `MPRC`. This is persistent across
 allocator operations during one boot, not durable across reboot, and it is not
-yet a general map-indexed allocator or an activated replacement CR3. Real QEMU
+yet a general map-indexed allocator. The first-GiB map is deliberately RW and
+executable, so this slice does not claim W^X. Real QEMU
 mutations reject a complete map with no admitted extent, an overlapping second
-authority, and a claim implementation that accepts the wrong ownership state.
+authority, a claim implementation that accepts the wrong ownership state, a
+non-present PML4 link, and a retained firmware CR3.
 
 The scheduler maintains an eight-slot descriptor table; two services are live
 in the boot evidence with stable IDs, generations, restart counts, and

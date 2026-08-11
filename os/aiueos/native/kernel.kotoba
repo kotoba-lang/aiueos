@@ -31,7 +31,7 @@
 
 ;; UEFI type 7 is EfiConventionalMemory.  The compiler-emitted loader identity
 ;; maps the first GiB, so this bounded allocator slice admits one aligned,
-;; contiguous three-page extent in [2 MiB, 1 GiB).  Loader/kernel pages have
+;; contiguous five-page extent in [2 MiB, 1 GiB).  Loader/kernel pages have
 ;; non-conventional UEFI types.
 (defn find-page [memory-map map-size descriptor-size offset remaining]
   (if (or (= remaining 0)
@@ -41,9 +41,9 @@
           physical-start (load64 memory-map map-size (+ offset 8))
           pages (load64 memory-map map-size (+ offset 24))]
       (if (and (= memory-type 7)
-               (> pages 2)
+               (> pages 4)
                (>= physical-start 2097152)
-               (< physical-start 1073733632)
+               (< physical-start 1073725440)
                (= (bit-and physical-start 4095) 0))
         physical-start
         (find-page memory-map map-size descriptor-size
@@ -98,6 +98,94 @@
           0))
       0)))
 
+(defn load64-page [page offset]
+  (+ (kernel-load-u8-4k page 4096 offset)
+     (* (kernel-load-u8-4k page 4096 (+ offset 1)) 256)
+     (* (kernel-load-u8-4k page 4096 (+ offset 2)) 65536)
+     (* (kernel-load-u8-4k page 4096 (+ offset 3)) 16777216)
+     (* (kernel-load-u8-4k page 4096 (+ offset 4)) 4294967296)
+     (* (kernel-load-u8-4k page 4096 (+ offset 5)) 1099511627776)
+     (* (kernel-load-u8-4k page 4096 (+ offset 6)) 281474976710656)
+     (* (kernel-load-u8-4k page 4096 (+ offset 7)) 72057594037927936)))
+
+;; Page-table entries are little-endian u64 values.  Keeping this in Kotoba
+;; avoids introducing a C helper or widening the privileged intrinsic surface.
+(defn store64-page [page offset value]
+  (let [s0 (kernel-store-u8-4k page 4096 offset (bit-and value 255))
+        s1 (kernel-store-u8-4k page 4096 (+ offset 1) (bit-and (quot value 256) 255))
+        s2 (kernel-store-u8-4k page 4096 (+ offset 2) (bit-and (quot value 65536) 255))
+        s3 (kernel-store-u8-4k page 4096 (+ offset 3) (bit-and (quot value 16777216) 255))
+        s4 (kernel-store-u8-4k page 4096 (+ offset 4) (bit-and (quot value 4294967296) 255))
+        s5 (kernel-store-u8-4k page 4096 (+ offset 5) (bit-and (quot value 1099511627776) 255))
+        s6 (kernel-store-u8-4k page 4096 (+ offset 6) (bit-and (quot value 281474976710656) 255))
+        s7 (kernel-store-u8-4k page 4096 (+ offset 7) (bit-and (quot value 72057594037927936) 255))]
+    (if (= (load64-page page offset) value)
+      (+ 1 (* 0 (+ s0 s1 s2 s3 s4 s5 s6 s7)))
+      0)))
+
+;; One 2 MiB PDE per call.  P|RW|PS = 0x83.  The resulting PD identity maps
+;; the first GiB, preserving the executing kernel, stack, boot-info, and all
+;; five allocator pages across the CR3 switch.
+(defn fill-identity-pd [page index]
+  (if (= index 512)
+    1
+    (let [value (+ (* index 2097152) 131)]
+      (if (= (store64-page page (* index 8) value) 1)
+        (fill-identity-pd page (+ index 1))
+        0))))
+
+(defn five-distinct [a b c d e]
+  (and (> a 0) (> b 0) (> c 0) (> d 0) (> e 0)
+       (< e 1073741824)
+       (not (= a b)) (not (= a c)) (not (= a d)) (not (= a e))
+       (not (= b c)) (not (= b d)) (not (= b e))
+       (not (= c d)) (not (= c e)) (not (= d e))))
+
+(defn zero-five [state pml4 pdpt pd reusable]
+  (and (= (zero-page state 0) 1)
+       (= (zero-page pml4 0) 1)
+       (= (zero-page pdpt 0) 1)
+       (= (zero-page pd 0) 1)
+       (= (zero-page reusable 0) 1)
+       (= (kernel-load-u8-4k state 4096 4095) 0)
+       (= (kernel-load-u8-4k pml4 4096 4095) 0)
+       (= (kernel-load-u8-4k pdpt 4096 4095) 0)
+       (= (kernel-load-u8-4k pd 4096 4095) 0)
+       (= (kernel-load-u8-4k reusable 4096 4095) 0)))
+
+(defn ownership-five [state]
+  (and (= (claim-slot state 0) 1)
+       (= (claim-slot state 1) 1)
+       (= (claim-slot state 2) 1)
+       (= (claim-slot state 3) 1)
+       (= (claim-slot state 4) 1)
+       (= (claim-slot state 1) 0)
+       (= (release-slot state 4) 1)
+       (= (release-slot state 4) 0)
+       (= (claim-slot state 4) 1)
+       (= (kernel-load-u8-4k state 4096 0) 1)
+       (= (kernel-load-u8-4k state 4096 1) 1)
+       (= (kernel-load-u8-4k state 4096 2) 1)
+       (= (kernel-load-u8-4k state 4096 3) 1)
+       (= (kernel-load-u8-4k state 4096 4) 1)))
+
+(defn prepare-page-tables [pml4 pdpt pd]
+  (and (= (store64-page pml4 0 (+ pdpt 3)) 1)
+       (= (store64-page pdpt 0 (+ pd 3)) 1)
+       (= (fill-identity-pd pd 0) 1)
+       (= (load64-page pml4 0) (+ pdpt 3))
+       (= (load64-page pdpt 0) (+ pd 3))
+       (= (load64-page pd 0) 131)
+       (= (load64-page pd 8) 2097283)
+       (= (load64-page pd 4088) 1071644803)))
+
+(defn activate-page-tables [pml4]
+  (let [written (kernel-write-cr3 pml4)
+        active (kernel-read-cr3)
+        flushed (kernel-invlpg 1048576)]
+    (and (= written pml4)
+         (= (+ active (* 0 flushed)) pml4))))
+
 (defn main []
   (let [boot (kernel-boot-info)
         cr3 (kernel-read-cr3)
@@ -128,45 +216,38 @@
             physical-start (find-page memory-map map-size descriptor-size 0 410)]
         (if (> physical-start 0)
           (let [second-start (+ physical-start 4096)
-                third-start (+ physical-start 8192)]
-            (if (and (> second-start 0)
-                     (> third-start 0)
-                     (< third-start 1073741824)
-                     (not (= second-start physical-start))
-                     (not (= third-start physical-start))
-                     (not (= third-start second-start)))
+                third-start (+ physical-start 8192)
+                fourth-start (+ physical-start 12288)
+                fifth-start (+ physical-start 16384)]
+            (if (five-distinct physical-start second-start third-start
+                               fourth-start fifth-start)
                   ;; The literal parent names the loader's identity-mapped
                   ;; physical window. Map values select only checked offsets.
                   (let [state (kernel-subregion 4096 1073737728
                                                 (- physical-start 4096) 4096)
                         page-table-root (kernel-subregion 4096 1073737728
                                                           (- second-start 4096) 4096)
+                        pdpt (kernel-subregion 4096 1073737728
+                                               (- third-start 4096) 4096)
+                        pd (kernel-subregion 4096 1073737728
+                                             (- fourth-start 4096) 4096)
                         reusable-page (kernel-subregion 4096 1073737728
-                                                       (- third-start 4096) 4096)]
+                                                       (- fifth-start 4096) 4096)]
                     (if (and (= map-marker 77)
-                             (= (zero-page state 0) 1)
-                             (= (zero-page page-table-root 0) 1)
-                             (= (zero-page reusable-page 0) 1)
-                             (= (kernel-load-u8-4k state 4096 4095) 0)
-                             (= (kernel-load-u8-4k page-table-root 4096 0) 0)
-                             (= (kernel-load-u8-4k page-table-root 4096 4095) 0)
-                             (= (kernel-load-u8-4k reusable-page 4096 4095) 0)
-                             (= (claim-slot state 0) 1)
-                             (= (claim-slot state 1) 1)
-                             (= (claim-slot state 2) 1)
-                             (= (claim-slot state 1) 0)
-                             (= (release-slot state 2) 1)
-                             (= (release-slot state 2) 0)
-                             (= (claim-slot state 2) 1)
-                             (= (kernel-load-u8-4k state 4096 0) 1)
-                             (= (kernel-load-u8-4k state 4096 1) 1)
-                             (= (kernel-load-u8-4k state 4096 2) 1))
-                      (let [page-marker (kernel-out-u8 233 80)
-                            root-marker (kernel-out-u8 233 82)]
-                        (kernel-out-u32 244
-                                        (if (and (= page-marker 80)
-                                                 (= root-marker 82))
-                                          16 17)))
+                             (zero-five state page-table-root pdpt pd reusable-page)
+                             (ownership-five state))
+                      (if (prepare-page-tables page-table-root pdpt pd)
+                          (if (activate-page-tables page-table-root)
+                            (let [page-marker (kernel-out-u8 233 80)
+                                  root-marker (kernel-out-u8 233 82)
+                                  cr3-marker (kernel-out-u8 233 67)]
+                              (kernel-out-u32 244
+                                              (if (and (= page-marker 80)
+                                                       (= root-marker 82)
+                                                       (= cr3-marker 67))
+                                                16 17)))
+                            (kernel-out-u32 244 24))
+                        (kernel-out-u32 244 23))
                       (kernel-out-u32 244 22)))
               (kernel-out-u32 244 20)))
           (kernel-out-u32 244 19)))

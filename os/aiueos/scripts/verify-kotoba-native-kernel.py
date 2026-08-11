@@ -23,11 +23,16 @@ segments = [struct.unpack_from("<IIQQQQQQ", data, phoff + i * phentsize) for i i
 if [segment[0] for segment in segments] != [1, 1] or [segment[1] for segment in segments] != [5, 6]:
     raise SystemExit("error: Kotoba-native kernel must contain only RX and RW PT_LOAD segments")
 context_offset = segments[1][2]
-if segments[1][5] < 16 or struct.unpack_from("<Q", data, context_offset + 8)[0] != 4096:
-    raise SystemExit("error: Kotoba-native kernel context does not carry sealed fuel 4096")
-cr3_encodings = (b"\x0f\x20\xd8", b"\x41\x0f\x20\xda")
-if not any(encoding in data for encoding in cr3_encodings) or b"\xee" not in data or b"\xef" not in data:
-    raise SystemExit("error: privileged CR3/debug-port lowering evidence is absent")
+if segments[1][5] < 16 or struct.unpack_from("<Q", data, context_offset + 8)[0] != 8192:
+    raise SystemExit("error: Kotoba-native kernel context does not carry sealed fuel 8192")
+cr3_read_encodings = (b"\x0f\x20\xd8", b"\x41\x0f\x20\xda")
+cr3_write_encodings = (b"\x0f\x22\xd8", b"\x41\x0f\x22\xda")
+invlpg_encodings = (b"\x0f\x01\x38", b"\x41\x0f\x01\x3a")
+if (not any(encoding in data for encoding in cr3_read_encodings)
+        or not any(encoding in data for encoding in cr3_write_encodings)
+        or not any(encoding in data for encoding in invlpg_encodings)
+        or b"\xee" not in data or b"\xef" not in data):
+    raise SystemExit("error: privileged CR3/invlpg/debug-port lowering evidence is absent")
 if b"\x88" not in data:
     raise SystemExit("error: allocator zero-store lowering evidence is absent")
 for forbidden in (b".interp", b".dynamic", b".dynsym", b"NEEDED", b"libc"):
@@ -45,15 +50,18 @@ payload = {
     "c_sources": [],
     "imports": [],
     "dynamic_dependencies": [],
-    "fuel": {"initial": 4096, "replenishable": False},
-    "allocator": {"page_bytes": 4096, "published_pages": 3,
+    "fuel": {"initial": 8192, "replenishable": False},
+    "allocator": {"page_bytes": 4096, "published_pages": 5,
                   "descriptor_limit": 410,
                   "zero_before_publish": True,
-                  "ownership_state": "boot-lifetime-three-slot-bitmap",
+                  "ownership_state": "boot-lifetime-five-slot-bitmap",
                   "duplicate_claim_rejected": True,
                   "double_free_rejected": True,
                   "reclamation_reused": True,
-                  "page_table_root_allocated": True},
+                  "page_table_root_allocated": True,
+                  "identity_map_bytes": 1073741824,
+                  "cr3_activated": True,
+                  "invlpg_executed": True},
 }
 receipt.write_text(json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n", encoding="ascii")
-print("AIUEOS_KOTOBA_NATIVE_KERNEL_OK no-c no-crt no-linker imports=0 fuel=4096 allocator-pages=3 ownership-bitmap page-table-root reuse double-free-rejected descriptors<=410 zero-before-publish")
+print("AIUEOS_KOTOBA_NATIVE_KERNEL_OK no-c no-crt no-linker imports=0 fuel=8192 allocator-pages=5 ownership-bitmap page-table-root identity-1g cr3-activated invlpg reuse double-free-rejected descriptors<=410 zero-before-publish")
