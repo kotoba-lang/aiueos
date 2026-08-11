@@ -1,6 +1,7 @@
 (ns aiueos.policy-test
   (:require [aiueos.policy :as policy]
             [aiueos.graph :as graph]
+            [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]))
 
 (deftest net-url-allowed-fails-closed-without-allowlist
@@ -81,8 +82,15 @@
                        {:aiueos/surface :robot
                         :aiueos/grants {:kototama/guest #{:http/get-stream}}})
         provider-only (policy/parse-policy {:aiueos/surface :cloud})
+        ;; `:aiueos/net-allow` became load-bearing here on 2026-08-11: this
+        ;; capability reaches the network, so admission now refuses it with an
+        ;; empty allowlist the same way it always refused `:net/fetch`
+        ;; (aiueos#144). Without the allowlist this case is a :net-allow-empty
+        ;; deny -- pinned by `network-reaching-caps-require-an-origin-allowlist`
+        ;; below -- so the grant case has to name an origin.
         both (policy/parse-policy
               {:aiueos/surface :cloud
+               :aiueos/net-allow #{"objects.example"}
                :aiueos/grants {:kototama/guest #{:http/get-stream}}})]
     (doseq [p [grant-only wrong-surface provider-only]]
       (is (= :deny (:aiueos/decision
@@ -469,3 +477,82 @@
       (doseq [id ["cloudd" "teapot" ""]]
         (is (= #{} (policy/granted-to (assoc base :aiueos.policy/surface id) m nil))
             (str "surface " (pr-str id) " restored the kernel caps"))))))
+
+;; aiueos#144. `net-would-grant?` tested one capability NAME (`:net/fetch`)
+;; while `surface-bound-provider-caps`, in the same file, named four more that
+;; reach the network. So the same component was confined to an origin
+;; allowlist when granted `:net/fetch` and not confined at all when granted
+;; `:http/get-stream`. These tests pin every member of the classification, not
+;; a representative one: a per-name gap is exactly what was wrong before, and
+;; a test that checks one name cannot see it.
+;;
+;; The cases come from `surface-bound-provider-caps` plus `:net/fetch` -- the
+;; INPUT to the classification -- and deliberately not from
+;; `network-reaching-caps`, which is the thing under test. Driving the loop
+;; from the output would make narrowing the classification also narrow the
+;; test, and the suite would stay green while the hole reopened.
+(deftest network-reaching-caps-require-an-origin-allowlist
+  (doseq [cap (sort (conj policy/surface-bound-provider-caps :net/fetch))]
+    (let [m {:aiueos/component :kototama/guest
+             :aiueos/kind :service
+             :aiueos/trust :verified
+             :aiueos/imports #{cap}
+             :aiueos/exports #{}}
+          grants {:kototama/guest #{cap}}
+          no-allow (policy/parse-policy {:aiueos/surface :cloud :aiueos/grants grants})
+          with-allow (policy/parse-policy {:aiueos/surface :cloud
+                                           :aiueos/grants grants
+                                           :aiueos/net-allow #{"objects.example"}})
+          denied (policy/verify-component m empty-graph no-allow nil)
+          allowed (policy/verify-component m empty-graph with-allow nil)]
+      (testing (str cap " without an allowlist")
+        (is (= :deny (:aiueos/decision denied))
+            (str cap " was granted with an empty :aiueos/net-allow"))
+        (is (some #(= :net-allow-empty (:aiueos/kind %)) (:aiueos/violations denied)))
+        (is (some #(str/includes? (str (:aiueos/message %)) (str cap))
+                  (:aiueos/violations denied))
+            "the violation does not name the capability that triggered it"))
+      (testing (str cap " with an allowlist")
+        (is (= :grant (:aiueos/decision allowed)))
+        (is (contains? (:aiueos/capabilities allowed) cap))))))
+
+;; The omission direction has to be fail-closed: a capability added to
+;; `surface-bound-provider-caps` is network-reaching until someone writes it
+;; into `local-only-provider-caps`. Today that holds by construction (the set
+;; is derived), and this pins the invariant so a later rewrite into a literal
+;; set cannot silently drop a member back out.
+(deftest network-capability-classification-is-total
+  (doseq [cap policy/surface-bound-provider-caps]
+    (is (or (contains? policy/network-reaching-caps cap)
+            (contains? policy/local-only-provider-caps cap))
+        (str cap " is in neither network-reaching-caps nor local-only-provider-caps")))
+  (is (empty? (filter policy/local-only-provider-caps policy/network-reaching-caps))
+      "a capability cannot be both network-reaching and local-only")
+  (is (contains? policy/network-reaching-caps :net/fetch)))
+
+;; A provider still has to check the URL of each request. It can only do that
+;; against the allowlist this grant was admitted under, so the decision carries
+;; it rather than making every host adapter re-read the policy.
+(deftest a-network-grant-carries-the-origin-scope-it-was-admitted-under
+  (let [m {:aiueos/component :kototama/guest
+           :aiueos/kind :service
+           :aiueos/trust :verified
+           :aiueos/imports #{:object/put-block}
+           :aiueos/exports #{}}
+        p (policy/parse-policy {:aiueos/surface :cloud
+                                :aiueos/grants {:kototama/guest #{:object/put-block}}
+                                :aiueos/net-allow #{"objects.example"}})
+        decision (policy/verify-component m empty-graph p nil)
+        net (get-in decision [:aiueos/detail :net])]
+    (is (= :grant (:aiueos/decision decision)))
+    (is (= #{"objects.example"} (:allow net)))
+    (is (= #{:object/put-block} (:capabilities net)))
+    (is (seq (:allow net)) "an admitted network grant can never carry an empty allowlist")
+    (is (true? (policy/net-url-allowed? p "https://objects.example/bucket/k")))
+    (is (false? (policy/net-url-allowed? p "https://evil.example/bucket/k"))))
+  (testing "a grant with no network-reaching capability carries no :net scope"
+    (let [m {:aiueos/component :app/notes :aiueos/kind :app :aiueos/trust :verified
+             :aiueos/imports #{:log/write} :aiueos/exports #{}}
+          decision (policy/verify-component m empty-graph policy/default-policy nil)]
+      (is (= :grant (:aiueos/decision decision)))
+      (is (nil? (get-in decision [:aiueos/detail :net]))))))

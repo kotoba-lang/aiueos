@@ -46,6 +46,45 @@
     :object/put-block
     :object/compare-and-set-ref})
 
+(def local-only-provider-caps
+  "Surface-bound provider capabilities whose authority cannot originate a
+  network request on ANY surface `aiueos.surface` offers. Empty today: every
+  capability in `surface-bound-provider-caps` is served over the network by at
+  least one surface, and a capability that is local on one surface and remote
+  on another belongs in `network-reaching-caps`, because the policy decision is
+  made before a surface is chosen.
+
+  `network-reaching-caps` is DERIVED by subtracting this set, so a capability
+  added to `surface-bound-provider-caps` is network-reaching until someone
+  writes it down here -- the omission direction is fail-closed. That is
+  deliberate: the defect this replaces was a hand-maintained classification
+  that drifted fail-open because nothing reconciled the two lists.
+  `network-capability-classification-is-total` pins the invariant so a later
+  rewrite back into a literal set cannot silently lose it."
+  #{})
+
+(def network-reaching-caps
+  "Capabilities whose grant lets a component originate network requests, and
+  which therefore require a non-empty `:aiueos.policy/net-allow` origin
+  allowlist before they can be granted.
+
+  Until 2026-08-11 only `:net/fetch` was treated as network here, while
+  `surface-bound-provider-caps` -- in this same file -- named four more
+  capabilities that reach the network. So one component granted `:net/fetch`
+  was confined to an allowlist and the same component granted
+  `:http/get-stream` was not confined at all (aiueos#144). The classification
+  was incomplete in the fail-open direction; this set closes it.
+
+  This is admission-time scoping. It decides WHETHER the grant may be made at
+  all with the operator's allowlist empty. It does not by itself check the URL
+  of a particular request: that is the provider's call to
+  `aiueos.net/url-allowed?`, and a granted component now receives the
+  allowlist it must be checked against in its decision's
+  `:aiueos/detail :net`."
+  (into #{:net/fetch}
+        (remove local-only-provider-caps)
+        surface-bound-provider-caps))
+
 (def default-policy
   "The default policy: a conservative set of kernel primitives, and the
   AI-generated/untrusted lockdown."
@@ -94,7 +133,8 @@
 
 (defn net-url-allowed?
   "Whether URL is permitted by POLICY's `:aiueos.policy/net-allow` origin
-  allowlist (ADR-0010 scoped net/fetch).
+  allowlist (ADR-0010, originally scoped to `net/fetch`; the admission-time
+  set is now `network-reaching-caps`).
 
   Empty allowlist fails closed (deny all) — operators must opt in to network
   origins. An entry matches when it equals the URL's host, is a suffix of the
@@ -434,17 +474,24 @@
                                " (this manifest never declared :aiueos/effects #{:dma} either)"))
                         "DMA requires `:requires #{:iommu}` and an :iommu grant"))]
           [])
-        ;; net/fetch that would actually be granted without a non-empty
-        ;; :aiueos.policy/net-allow is fail-closed. Unresolved :net/fetch
-        ;; stays a pure :unresolved-capability (no double-count).
-        net-would-grant? (or (contains? resolved :net/fetch)
-                             (contains? granted :net/fetch))
+        ;; A network-reaching capability that would actually be granted without
+        ;; a non-empty :aiueos.policy/net-allow is fail-closed. Unresolved ones
+        ;; stay a pure :unresolved-capability (no double-count).
+        ;;
+        ;; The set is `network-reaching-caps`, not the single name `:net/fetch`
+        ;; this used to test: the four `surface-bound-provider-caps` reach the
+        ;; network too, so testing one name confined one spelling and left the
+        ;; others unconfined (aiueos#144).
+        net-would-grant (set/intersection network-reaching-caps
+                                          (set/union resolved granted))
         net-allow (as-string-set (or (:aiueos.policy/net-allow policy)
                                      (:aiueos/net-allow policy)))
         net-violations
-        (if (and net-would-grant? (empty? net-allow))
+        (if (and (seq net-would-grant) (empty? net-allow))
           [(violation id :net-allow-empty
-                      "granted :net/fetch requires a non-empty :aiueos/net-allow origin allowlist")]
+                      (str "granted network-reaching capability "
+                           (vec (sort net-would-grant))
+                           " requires a non-empty :aiueos/net-allow origin allowlist"))]
           [])
         violations (vec (concat surface-violations abac-violations* flow-violations
                                 transport-violations crypto-violations
@@ -453,12 +500,22 @@
     (if (seq violations)
       {:aiueos/decision :deny :aiueos/component id :aiueos/violations violations}
       (let [caps (cond-> resolved
-                   (and requires-iommu? (contains? granted :iommu)) (conj :iommu))]
+                   (and requires-iommu? (contains? granted :iommu)) (conj :iommu))
+            ;; The origin scope this grant is confined to, carried on the
+            ;; decision so a provider binding does not have to re-read the
+            ;; policy to learn what `aiueos.net/url-allowed?` must be called
+            ;; with. Admission has already refused an empty allowlist above, so
+            ;; this is present exactly when a network-reaching capability was
+            ;; granted, and its `:allow` is never empty.
+            net-detail (let [granted-net (set/intersection network-reaching-caps caps)]
+                         (when (seq granted-net)
+                           {:capabilities granted-net :allow net-allow}))]
         (cond-> {:aiueos/decision :grant :aiueos/component id :aiueos/capabilities caps}
           (or flow-decision transport-decision* crypto-decision*
-              hardware-signing-decision*)
+              hardware-signing-decision* net-detail)
           (assoc :aiueos/detail
                  (cond-> {}
+                   net-detail (assoc :net net-detail)
                    flow-decision (assoc :information-flow flow-decision)
                    transport-decision* (assoc :transport transport-decision*)
                    crypto-decision* (assoc :crypto crypto-decision*)
