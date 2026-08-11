@@ -31,7 +31,7 @@
 
 ;; UEFI type 7 is EfiConventionalMemory.  The compiler-emitted loader identity
 ;; maps the first GiB, so this bounded allocator slice admits one aligned,
-;; contiguous five-page extent in [2 MiB, 1 GiB).  Loader/kernel pages have
+;; contiguous six-page extent in [2 MiB, 1 GiB).  Loader/kernel pages have
 ;; non-conventional UEFI types.
 (defn find-page [memory-map map-size descriptor-size offset remaining]
   (if (or (= remaining 0)
@@ -41,7 +41,7 @@
           physical-start (load64 memory-map map-size (+ offset 8))
           pages (load64 memory-map map-size (+ offset 24))]
       (if (and (= memory-type 7)
-               (> pages 4)
+               (> pages 5)
                (>= physical-start 2097152)
                (< physical-start 1073725440)
                (= (bit-and physical-start 4095) 0))
@@ -123,15 +123,37 @@
       (+ 1 (* 0 (+ s0 s1 s2 s3 s4 s5 s6 s7)))
       0)))
 
-;; One 2 MiB PDE per call.  P|RW|PS = 0x83.  The resulting PD identity maps
-;; the first GiB, preserving the executing kernel, stack, boot-info, and all
-;; five allocator pages across the CR3 switch.
+;; NX lives in byte 7, so it is installed without pretending signed i64
+;; literals are unsigned page-table entries.
+(defn store64-nx-page [page offset value]
+  (if (and (= (store64-page page offset value) 1)
+           (= (kernel-store-u8-4k page 4096 (+ offset 7) 128) 128)
+           (= (kernel-load-u8-4k page 4096 (+ offset 7)) 128))
+    1
+    0))
+
+;; PDE 0 points to a 4 KiB PT.  The remaining 2 MiB leaves preserve the first
+;; GiB identity map but are RW+NX rather than executable.
 (defn fill-identity-pd [page index]
   (if (= index 512)
     1
     (let [value (+ (* index 2097152) 131)]
-      (if (= (store64-page page (* index 8) value) 1)
+      (if (= (store64-nx-page page (* index 8) value) 1)
         (fill-identity-pd page (+ index 1))
+        0))))
+
+(defn fill-low-pt [page index]
+  (if (= index 512)
+    1
+    (let [physical (* index 4096)
+          offset (* index 8)
+          stored (if (= index 256)
+                   (store64-page page offset 0)
+                   (if (and (>= index 257) (<= index 265))
+                     (store64-page page offset (+ physical 1))
+                     (store64-nx-page page offset (+ physical 3))))]
+      (if (= stored 1)
+        (fill-low-pt page (+ index 1))
         0))))
 
 (defn five-distinct [a b c d e]
@@ -141,24 +163,25 @@
        (not (= b c)) (not (= b d)) (not (= b e))
        (not (= c d)) (not (= c e)) (not (= d e))))
 
-(defn zero-five [state pml4 pdpt pd reusable]
+(defn zero-five [state pml4 pdpt pd pt]
   (and (= (zero-page state 0) 1)
        (= (zero-page pml4 0) 1)
        (= (zero-page pdpt 0) 1)
        (= (zero-page pd 0) 1)
-       (= (zero-page reusable 0) 1)
+       (= (zero-page pt 0) 1)
        (= (kernel-load-u8-4k state 4096 4095) 0)
        (= (kernel-load-u8-4k pml4 4096 4095) 0)
        (= (kernel-load-u8-4k pdpt 4096 4095) 0)
        (= (kernel-load-u8-4k pd 4096 4095) 0)
-       (= (kernel-load-u8-4k reusable 4096 4095) 0)))
+       (= (kernel-load-u8-4k pt 4096 4095) 0)))
 
-(defn ownership-five [state]
+(defn ownership-six [state]
   (and (= (claim-slot state 0) 1)
        (= (claim-slot state 1) 1)
        (= (claim-slot state 2) 1)
        (= (claim-slot state 3) 1)
        (= (claim-slot state 4) 1)
+       (= (claim-slot state 5) 1)
        (= (claim-slot state 1) 0)
        (= (release-slot state 4) 1)
        (= (release-slot state 4) 0)
@@ -167,17 +190,39 @@
        (= (kernel-load-u8-4k state 4096 1) 1)
        (= (kernel-load-u8-4k state 4096 2) 1)
        (= (kernel-load-u8-4k state 4096 3) 1)
-       (= (kernel-load-u8-4k state 4096 4) 1)))
+       (= (kernel-load-u8-4k state 4096 4) 1)
+       (= (kernel-load-u8-4k state 4096 5) 1)))
 
-(defn prepare-page-tables [pml4 pdpt pd]
+(defn prepare-page-tables [pml4 pdpt pd pt]
   (and (= (store64-page pml4 0 (+ pdpt 3)) 1)
        (= (store64-page pdpt 0 (+ pd 3)) 1)
-       (= (fill-identity-pd pd 0) 1)
+       (= (store64-page pd 0 (+ pt 3)) 1)
+       (= (fill-identity-pd pd 1) 1)
+       (= (fill-low-pt pt 0) 1)
        (= (load64-page pml4 0) (+ pdpt 3))
        (= (load64-page pdpt 0) (+ pd 3))
-       (= (load64-page pd 0) 131)
-       (= (load64-page pd 8) 2097283)
-       (= (load64-page pd 4088) 1071644803)))
+       (= (load64-page pd 0) (+ pt 3))
+       (= (load64-page pt 2048) 0)
+       (= (load64-page pt 2056) 1052673)
+       (= (load64-page pt 2120) 1085441)
+       (= (kernel-load-u8-4k pt 4096 2135) 128)
+       (= (kernel-load-u8-4k pd 4096 15) 128)
+       (= (kernel-load-u8-4k pd 4096 4095) 128)))
+
+(defn enable-page-protection []
+  (if (and (>= (kernel-cpuid-eax 2147483648 0) 2147483649)
+           (not (= (bit-and (kernel-cpuid-edx 2147483649 0) 1048576) 0)))
+    (let [efer (kernel-read-msr 3221225600)
+          nxe (bit-or efer 2048)
+          efer-written (kernel-write-msr 3221225600 nxe)
+          cr0 (kernel-read-cr0)
+          wp (bit-or cr0 65536)
+          cr0-written (kernel-write-cr0 wp)]
+      (and (= efer-written nxe)
+           (= (bit-and (kernel-read-msr 3221225600) 2048) 2048)
+           (= cr0-written wp)
+           (= (bit-and (kernel-read-cr0) 65536) 65536)))
+    false))
 
 (defn activate-page-tables [pml4]
   (let [written (kernel-write-cr3 pml4)
@@ -218,9 +263,16 @@
           (let [second-start (+ physical-start 4096)
                 third-start (+ physical-start 8192)
                 fourth-start (+ physical-start 12288)
-                fifth-start (+ physical-start 16384)]
-            (if (five-distinct physical-start second-start third-start
-                               fourth-start fifth-start)
+                fifth-start (+ physical-start 16384)
+                sixth-start (+ physical-start 20480)]
+            (if (and (five-distinct physical-start second-start third-start
+                                    fourth-start fifth-start)
+                     (> sixth-start 0) (< sixth-start 1073741824)
+                     (not (= sixth-start physical-start))
+                     (not (= sixth-start second-start))
+                     (not (= sixth-start third-start))
+                     (not (= sixth-start fourth-start))
+                     (not (= sixth-start fifth-start)))
                   ;; The literal parent names the loader's identity-mapped
                   ;; physical window. Map values select only checked offsets.
                   (let [state (kernel-subregion 4096 1073737728
@@ -231,13 +283,18 @@
                                                (- third-start 4096) 4096)
                         pd (kernel-subregion 4096 1073737728
                                              (- fourth-start 4096) 4096)
+                        pt (kernel-subregion 4096 1073737728
+                                             (- fifth-start 4096) 4096)
                         reusable-page (kernel-subregion 4096 1073737728
-                                                       (- fifth-start 4096) 4096)]
+                                                       (- sixth-start 4096) 4096)]
                     (if (and (= map-marker 77)
-                             (zero-five state page-table-root pdpt pd reusable-page)
-                             (ownership-five state))
-                      (if (prepare-page-tables page-table-root pdpt pd)
-                          (if (activate-page-tables page-table-root)
+                             (zero-five state page-table-root pdpt pd pt)
+                             (= (zero-page reusable-page 0) 1)
+                             (= (kernel-load-u8-4k reusable-page 4096 4095) 0)
+                             (ownership-six state))
+                      (if (prepare-page-tables page-table-root pdpt pd pt)
+                          (if (and (enable-page-protection)
+                                   (activate-page-tables page-table-root))
                             (let [page-marker (kernel-out-u8 233 80)
                                   root-marker (kernel-out-u8 233 82)
                                   cr3-marker (kernel-out-u8 233 67)]
