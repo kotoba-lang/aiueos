@@ -23,13 +23,14 @@ if data.count(payload)!=1: raise SystemExit("error: embedded Kotoba kernel ident
 for forbidden in (b".idata",b".import",b"msvcrt",b"libc",b"NEEDED"):
     if forbidden in data: raise SystemExit("error: foreign runtime dependency found")
 value={
- "format":"aiueos-kotoba-native-boot-receipt/v1",
+ "format":"aiueos-kotoba-native-boot-receipt/v2",
  "compiler_commit":compiler,
  "boot_sha256":hashlib.sha256(data).hexdigest(),
  "boot_bytes":len(data),
  "kernel_sha256":hashlib.sha256(payload).hexdigest(),
  "kernel_bytes":len(payload),
  "c_sources":[],"foreign_objects":[],"imports":[],"dynamic_dependencies":[],
- "boot_services":["AllocatePages","CopyMem","AllocatePool","GetMemoryMap","ExitBootServices"]}
+ "boot_services":["AllocatePages","CopyMem","GetMemoryMap","ExitBootServices"],
+ "memory_map":{"storage":"loader-rw-inline","capacity_bytes":16384}}
 receipt.write_text(json.dumps(value,sort_keys=True,separators=(",",":"))+"\n",encoding="ascii")
 print("AIUEOS_KOTOBA_NATIVE_BOOT_OK no-c no-crt no-linker imports=0")

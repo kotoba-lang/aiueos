@@ -3,6 +3,20 @@
 This directory contains the Linux-independent aiueos boot path owned by the
 canonical `kotoba-lang/aiueos` OS repository.
 
+## Which path is production
+
+The production hard-flip input is `native/kernel.kotoba`, compiled and packaged
+by exact-pinned Amu into a C-free PE32+ loader and ELF64 kernel. It consumes
+the freestanding ABI and instruction semantics owned by `kotoba-native`; this
+directory owns OS policy, physical-memory admission, effects, and QEMU
+evidence. `aiueos.vm` is the hosted QEMU launcher and `aiueos.hvt` is a JVM/FFM
+experiment. Neither is the bare-metal provider.
+
+The larger C/assembly implementation below is retained as a reference profile
+and regression oracle. Its feature count must not be read as production C-free
+maturity. The exact dependency/evidence rule is in the repository `README.md`
+and `90-docs/adr/0013-native-os-ownership-and-boot.md`.
+
 The current Phase 1 slice builds a PE32+ `BOOTX64.EFI` and a separate ELF64
 `KERNEL.ELF`. OVMF starts the loader, which validates and places bounded ELF
 segments, captures the firmware memory map, exits UEFI boot services, and
@@ -647,9 +661,14 @@ artifacts, and emits a dependency receipt:
 
 `build-kotoba-native-boot.sh` asks the Kotoba compiler to embed that ELF in a
 position-independent PE32+ UEFI application. The compiler-generated loader
-uses only AllocatePages, CopyMem, AllocatePool, GetMemoryMap, and
+uses only AllocatePages, CopyMem, GetMemoryMap, and
 ExitBootServices before entering the kernel. The hard-flip boot chain has no C,
 CRT, foreign object, linker, interpreter, import table, or dynamic dependency.
+Its final memory map resides in a compiler-owned bounded 16 KiB RW region.
+The kernel derives that region from boot-info rather than trusting a loaded
+pointer as authority, selects one aligned UEFI Conventional Memory page inside
+the identity-mapped physical window, and zeros all 4,096 bytes before emitting
+the allocator evidence marker.
 
 The scheduler maintains an eight-slot descriptor table; two services are live
 in the boot evidence with stable IDs, generations, restart counts, and

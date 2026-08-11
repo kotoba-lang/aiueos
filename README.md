@@ -27,13 +27,36 @@ adapters/providers elsewhere (e.g. `kotoba-lang/kototama`'s
 `kototama.aiueos-adapter`), but they are not authority here — this repo
 decides, it does not host other systems' execution.
 
-## Stack topology & the C mechanism boundary
+## Native dependency and evidence boundary
+
+The production dependency is deliberately one-way:
+
+```text
+Kotoba semantics
+  -> kotoba-native instruction selection and freestanding ABI
+  -> Amu compiler/package emission and qualification
+  -> aiueos loader, kernel, effects, and machine evidence
+```
+
+`kotoba-native` does not own an OS provider, Amu does not own process or
+hardware isolation, and aiueos does not redefine language or instruction
+semantics. An effect is production-native only when the same exact-pinned
+chain reaches the compiler-emitted `BOOTX64.EFI` and `KERNEL.ELF`, carries an
+empty foreign-code receipt, and passes positive plus fail-closed QEMU evidence.
+Hosted `aiueos.vm`, experimental `aiueos.hvt`, and the older C/assembly kernel
+are useful oracles, but none qualify the C-free bare-metal profile.
+
+The ownership decision and gap ledger are
+[`ADR-0013`](90-docs/adr/0013-native-os-ownership-and-boot.md). Amu records the
+consumer/compiler boundary in ADR-0240; the root handoff is ADR-2608110400.
+
+## Reference stack topology and C mechanism boundary
 
 aiueos is the stack's **capability broker**: dependency-minimal by invariant
 (deps.edn carries `security` + Chicory only; enforcement layers like
 `kototama` import aiueos, never the reverse), consuming the Kotoba compiler
 as **verified artifacts** (freestanding ELF objects), not as a library. The
-bare-metal split — C/asm owns mechanism only, every decision (crypto
+historical bare-metal split — C/asm owns mechanism only, every decision (crypto
 verification, admission, capability planning, dispatch planning) is
 compiler-emitted Kotoba — is stated honestly, with measured line counts, in
 [`90-docs/adr/0015-stack-topology-and-honest-c-boundary.md`](90-docs/adr/0015-stack-topology-and-honest-c-boundary.md)
@@ -166,3 +189,10 @@ by the product integration ADR in `kotoba-lang/kotoba`.
 
 Tracked M0-M6 in `docs/coverage.edn` (template borrowed from
 `kotoba-lang/kotoba-lang`'s `docs/lang/coverage.edn`).
+
+Contract maturity and native-product maturity are separate. The C-free
+production chain currently boots through UEFI, validates a bounded final
+memory map, and has its first physical allocator slice; paging, interrupts,
+scheduling, CPL3/syscalls, capability tables, and native effect providers
+remain subsequent aiueos gates. The detailed, test-backed truth is the Phase
+table in ADR-0013, not the amount of reference C code present in this tree.

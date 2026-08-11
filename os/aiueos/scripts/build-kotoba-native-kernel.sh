@@ -4,24 +4,25 @@ set -eu
 repo=$(CDPATH= cd -- "$(dirname -- "$0")/../../.." && pwd)
 aiueos="$repo/os/aiueos"
 compiler=${1:?usage: build-kotoba-native-kernel.sh /path/to/compiler}
-expected=6d14f1ab0dc8c296a25a3b41a774423a829239eb
+expected=804f5d61d1b9d05a85f2593510609ae57244bc5f
 actual=$(git -C "$compiler" rev-parse HEAD)
 [ "$actual" = "$expected" ] || {
   echo "error: compiler HEAD is $actual; expected $expected" >&2; exit 1;
 }
 out=${AIUEOS_NATIVE_OUT:-"$repo/build/aiueos-native"}
 kernel="$out/KERNEL.ELF"
+source=${AIUEOS_NATIVE_KERNEL_SOURCE:-"$aiueos/native/kernel.kotoba"}
 second="$out/KERNEL.reproduced.ELF"
 receipt="$out/receipt.json"
 mkdir -p "$out"
-"$compiler/bin/kotoba-compiler" compile "$aiueos/native/kernel.kotoba" \
+"$compiler/bin/kotoba-compiler" compile "$source" \
   --target x86_64-aiueos-kernel-v1 --artifact image --output "$kernel"
-"$compiler/bin/kotoba-compiler" compile "$aiueos/native/kernel.kotoba" \
+"$compiler/bin/kotoba-compiler" compile "$source" \
   --target x86_64-aiueos-kernel-v1 --artifact image --output "$second"
 cmp "$kernel" "$second"
 rm -f "$second"
 python3 "$aiueos/scripts/verify-kotoba-native-kernel.py" \
-  "$kernel" "$aiueos/native/kernel.kotoba" "$expected" "$receipt"
+  "$kernel" "$source" "$expected" "$receipt"
 foreign=$(find "$out" -type f \( -name '*.c' -o -name '*.o' -o -name '*.obj' -o -name '*.a' -o -name '*.so' \) \
   -print -quit)
 [ -z "$foreign" ] || {

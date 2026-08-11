@@ -1,34 +1,114 @@
 (ns aiueos.native.kernel)
 
-;; Versioned loader handoff: "AIUEBOOT", version, memory-map pointer/size,
-;; descriptor size/version. All reads remain compiler-bounded.
-(defn load64 [base offset]
-  (+ (kernel-load-u8 base 48 offset)
-     (* (kernel-load-u8 base 48 (+ offset 1)) 256)
-     (* (kernel-load-u8 base 48 (+ offset 2)) 65536)
-     (* (kernel-load-u8 base 48 (+ offset 3)) 16777216)
-     (* (kernel-load-u8 base 48 (+ offset 4)) 4294967296)
-     (* (kernel-load-u8 base 48 (+ offset 5)) 1099511627776)
-     (* (kernel-load-u8 base 48 (+ offset 6)) 281474976710656)
-     (* (kernel-load-u8 base 48 (+ offset 7)) 72057594037927936)))
+;; The compiler-emitted loader keeps the final UEFI memory map in a bounded
+;; region directly after the 64-byte boot-info prefix.  The kernel derives that
+;; region; it never turns the pointer stored by firmware into authority.
+(defn load64 [base length offset]
+  (+ (kernel-load-u8-16k base length offset)
+     (* (kernel-load-u8-16k base length (+ offset 1)) 256)
+     (* (kernel-load-u8-16k base length (+ offset 2)) 65536)
+     (* (kernel-load-u8-16k base length (+ offset 3)) 16777216)
+     (* (kernel-load-u8-16k base length (+ offset 4)) 4294967296)
+     (* (kernel-load-u8-16k base length (+ offset 5)) 1099511627776)
+     (* (kernel-load-u8-16k base length (+ offset 6)) 281474976710656)
+     (* (kernel-load-u8-16k base length (+ offset 7)) 72057594037927936)))
+
+(defn load64-boot [base offset]
+  (+ (kernel-load-u8 base 64 offset)
+     (* (kernel-load-u8 base 64 (+ offset 1)) 256)
+     (* (kernel-load-u8 base 64 (+ offset 2)) 65536)
+     (* (kernel-load-u8 base 64 (+ offset 3)) 16777216)
+     (* (kernel-load-u8 base 64 (+ offset 4)) 4294967296)
+     (* (kernel-load-u8 base 64 (+ offset 5)) 1099511627776)
+     (* (kernel-load-u8 base 64 (+ offset 6)) 281474976710656)
+     (* (kernel-load-u8 base 64 (+ offset 7)) 72057594037927936)))
+
+(defn load32 [base length offset]
+  (+ (kernel-load-u8-16k base length offset)
+     (* (kernel-load-u8-16k base length (+ offset 1)) 256)
+     (* (kernel-load-u8-16k base length (+ offset 2)) 65536)
+     (* (kernel-load-u8-16k base length (+ offset 3)) 16777216)))
+
+;; UEFI type 7 is EfiConventionalMemory.  The compiler-emitted loader identity
+;; maps the first GiB, so this first allocator slice admits one aligned page in
+;; [2 MiB, 1 GiB).  Loader/kernel pages have non-conventional UEFI types.
+(defn find-page [memory-map map-size descriptor-size offset]
+  (if (> (+ offset descriptor-size) map-size)
+    0
+    (let [memory-type (load32 memory-map map-size offset)
+          physical-start (load64 memory-map map-size (+ offset 8))
+          pages (load64 memory-map map-size (+ offset 24))]
+      (if (and (= memory-type 7)
+               (> pages 0)
+               (>= physical-start 2097152)
+               (< physical-start 1073741824)
+               (= (bit-and physical-start 4095) 0))
+        physical-start
+        (find-page memory-map map-size descriptor-size
+                   (+ offset descriptor-size))))))
+
+;; Sixteen writes per tail call keep the recursive depth below the kernel fuel
+;; ceiling while proving that every byte in the admitted page is writable and
+;; zeroed before it can become allocator output.
+(defn zero-page [page offset]
+  (if (= offset 4096)
+    1
+    (let [s0 (kernel-store-u8-4k page 4096 offset 0)
+          s1 (kernel-store-u8-4k page 4096 (+ offset 1) 0)
+          s2 (kernel-store-u8-4k page 4096 (+ offset 2) 0)
+          s3 (kernel-store-u8-4k page 4096 (+ offset 3) 0)
+          s4 (kernel-store-u8-4k page 4096 (+ offset 4) 0)
+          s5 (kernel-store-u8-4k page 4096 (+ offset 5) 0)
+          s6 (kernel-store-u8-4k page 4096 (+ offset 6) 0)
+          s7 (kernel-store-u8-4k page 4096 (+ offset 7) 0)
+          s8 (kernel-store-u8-4k page 4096 (+ offset 8) 0)
+          s9 (kernel-store-u8-4k page 4096 (+ offset 9) 0)
+          sa (kernel-store-u8-4k page 4096 (+ offset 10) 0)
+          sb (kernel-store-u8-4k page 4096 (+ offset 11) 0)
+          sc (kernel-store-u8-4k page 4096 (+ offset 12) 0)
+          sd (kernel-store-u8-4k page 4096 (+ offset 13) 0)
+          se (kernel-store-u8-4k page 4096 (+ offset 14) 0)
+          sf (kernel-store-u8-4k page 4096 (+ offset 15) 0)]
+      (if (= (+ s0 s1 s2 s3 s4 s5 s6 s7 s8 s9 sa sb sc sd se sf) 0)
+        (zero-page page (+ offset 16))
+        0))))
 
 (defn main []
   (let [boot (kernel-boot-info)
-        cr3 (kernel-read-cr3)]
+        cr3 (kernel-read-cr3)
+        map-size (load64-boot boot 24)
+        descriptor-size (load64-boot boot 32)
+        memory-map (kernel-subregion boot 16448 64 16384)]
     (if (and (> boot 0) (> cr3 0)
-             (= (kernel-load-u8 boot 48 0) 65)
-             (= (kernel-load-u8 boot 48 1) 73)
-             (= (kernel-load-u8 boot 48 2) 85)
-             (= (kernel-load-u8 boot 48 3) 69)
-             (= (kernel-load-u8 boot 48 4) 66)
-             (= (kernel-load-u8 boot 48 5) 79)
-             (= (kernel-load-u8 boot 48 6) 79)
-             (= (kernel-load-u8 boot 48 7) 84)
-             (= (load64 boot 8) 1)
-             (> (load64 boot 16) 0)
-             (> (load64 boot 24) 0)
-             (>= (load64 boot 32) 40)
-             (> (load64 boot 40) 0))
-      (let [marker (kernel-out-u8 233 77)]
-        (kernel-out-u32 244 (if (= marker 77) 16 17)))
+             (= (kernel-load-u8 boot 64 0) 65)
+             (= (kernel-load-u8 boot 64 1) 73)
+             (= (kernel-load-u8 boot 64 2) 85)
+             (= (kernel-load-u8 boot 64 3) 69)
+             (= (kernel-load-u8 boot 64 4) 66)
+             (= (kernel-load-u8 boot 64 5) 79)
+             (= (kernel-load-u8 boot 64 6) 79)
+             (= (kernel-load-u8 boot 64 7) 84)
+             (= (load64-boot boot 8) 1)
+             (= (load64-boot boot 16) memory-map)
+             (> map-size 0)
+             (<= map-size 16384)
+             (>= descriptor-size 40)
+             (<= descriptor-size map-size)
+             (> (load64-boot boot 40) 0))
+      (let [map-marker (kernel-out-u8 233 77)
+            physical-start (find-page memory-map map-size descriptor-size 0)]
+        (if (> physical-start 0)
+          ;; The literal parent names the loader's identity-mapped physical
+          ;; window.  The map value selects only a checked offset inside it.
+          (let [page (kernel-subregion 4096 1073737728
+                                       (- physical-start 4096) 4096)]
+            (if (and (= map-marker 77)
+                     (= (zero-page page 0) 1)
+                     (= (kernel-load-u8-4k page 4096 0) 0)
+                     (= (kernel-load-u8-4k page 4096 2048) 0)
+                     (= (kernel-load-u8-4k page 4096 4095) 0))
+              (let [page-marker (kernel-out-u8 233 80)]
+                (kernel-out-u32 244 (if (= page-marker 80) 16 17)))
+              (kernel-out-u32 244 19)))
+          (kernel-out-u32 244 19)))
       (kernel-out-u32 244 18))))
