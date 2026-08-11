@@ -55,7 +55,7 @@ if data != expected:
     raise SystemExit(f"error: Kotoba-native marker was {data!r}, expected {expected!r}")
 PY
 if [ "$expected_marker" = MP ]; then
-  echo "AIUEOS_KOTOBA_NATIVE_QEMU_OK no-c-boot-chain memory-map-v2 allocator-page=4096 zero-before-publish exit-boot-services cr3"
+  echo "AIUEOS_KOTOBA_NATIVE_QEMU_OK no-c-boot-chain memory-map-v2 allocator-pages=2 zero-before-publish exit-boot-services cr3"
 else
   echo "AIUEOS_KOTOBA_NATIVE_QEMU_REJECTION_OK marker=$expected_marker status=$expected_status"
 fi

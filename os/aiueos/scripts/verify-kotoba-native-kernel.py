@@ -22,6 +22,9 @@ if entry != 0x101000 or phentsize != 56 or phnum != 2:
 segments = [struct.unpack_from("<IIQQQQQQ", data, phoff + i * phentsize) for i in range(phnum)]
 if [segment[0] for segment in segments] != [1, 1] or [segment[1] for segment in segments] != [5, 6]:
     raise SystemExit("error: Kotoba-native kernel must contain only RX and RW PT_LOAD segments")
+context_offset = segments[1][2]
+if segments[1][5] < 16 or struct.unpack_from("<Q", data, context_offset + 8)[0] != 4096:
+    raise SystemExit("error: Kotoba-native kernel context does not carry sealed fuel 4096")
 cr3_encodings = (b"\x0f\x20\xd8", b"\x41\x0f\x20\xda")
 if not any(encoding in data for encoding in cr3_encodings) or b"\xee" not in data or b"\xef" not in data:
     raise SystemExit("error: privileged CR3/debug-port lowering evidence is absent")
@@ -42,7 +45,10 @@ payload = {
     "c_sources": [],
     "imports": [],
     "dynamic_dependencies": [],
-    "allocator": {"page_bytes": 4096, "zero_before_publish": True},
+    "fuel": {"initial": 4096, "replenishable": False},
+    "allocator": {"page_bytes": 4096, "published_pages": 2,
+                  "descriptor_limit": 410,
+                  "zero_before_publish": True},
 }
 receipt.write_text(json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n", encoding="ascii")
-print("AIUEOS_KOTOBA_NATIVE_KERNEL_OK no-c no-crt no-linker imports=0 allocator-page=4096 zero-before-publish")
+print("AIUEOS_KOTOBA_NATIVE_KERNEL_OK no-c no-crt no-linker imports=0 fuel=4096 allocator-pages=2 descriptors<=410 zero-before-publish")

@@ -13,11 +13,13 @@ else
 fi
 source="$tmp/kernel-no-conventional.kotoba"
 
-# Mechanical mutation: make the bounded descriptor walk report exhaustion at
-# its first step. The allocator must emit only M and take its deterministic
-# no-page exit. Check both sides so source drift cannot make this vacuous.
-needle='(if (> (+ offset descriptor-size) map-size)'
-replacement='(if (> (+ offset descriptor-size) -1)'
+# Mechanical mutation: reject every Conventional Memory descriptor while
+# retaining the real map size, stride, loads, recursive bound, and fuel path.
+# The allocator must walk the complete map, emit only M, and take its
+# deterministic no-page exit. Check both sides so source drift cannot make
+# this vacuous.
+needle='(= memory-type 7)'
+replacement='(= memory-type 255)'
 grep -F "$needle" "$aiueos/native/kernel.kotoba" >/dev/null
 sed "s/$needle/$replacement/" \
   "$aiueos/native/kernel.kotoba" >"$source"

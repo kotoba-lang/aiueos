@@ -666,9 +666,12 @@ ExitBootServices before entering the kernel. The hard-flip boot chain has no C,
 CRT, foreign object, linker, interpreter, import table, or dynamic dependency.
 Its final memory map resides in a compiler-owned bounded 16 KiB RW region.
 The kernel derives that region from boot-info rather than trusting a loaded
-pointer as authority, selects one aligned UEFI Conventional Memory page inside
-the identity-mapped physical window, and zeros all 4,096 bytes before emitting
-the allocator evidence marker.
+pointer as authority, selects two distinct aligned UEFI Conventional Memory
+pages inside the identity-mapped physical window, and zeros all 4,096 bytes of
+each before emitting the allocator evidence marker. The first page is explicit
+ownership state for the second search. Real QEMU mutations reject a complete
+map with no admitted descriptor and reject an attempted reissue of the owned
+page before a second authority is derived.
 
 The scheduler maintains an eight-slot descriptor table; two services are live
 in the boot evidence with stable IDs, generations, restart counts, and

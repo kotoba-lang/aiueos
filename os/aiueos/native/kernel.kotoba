@@ -32,8 +32,9 @@
 ;; UEFI type 7 is EfiConventionalMemory.  The compiler-emitted loader identity
 ;; maps the first GiB, so this first allocator slice admits one aligned page in
 ;; [2 MiB, 1 GiB).  Loader/kernel pages have non-conventional UEFI types.
-(defn find-page [memory-map map-size descriptor-size offset]
-  (if (> (+ offset descriptor-size) map-size)
+(defn find-page [memory-map map-size descriptor-size offset remaining]
+  (if (or (= remaining 0)
+          (> (+ offset descriptor-size) map-size))
     0
     (let [memory-type (load32 memory-map map-size offset)
           physical-start (load64 memory-map map-size (+ offset 8))
@@ -45,7 +46,31 @@
                (= (bit-and physical-start 4095) 0))
         physical-start
         (find-page memory-map map-size descriptor-size
-                   (+ offset descriptor-size))))))
+                   (+ offset descriptor-size) (- remaining 1))))))
+
+;; The first published page is explicit ownership state for the second walk.
+;; Prefer the following page in the same descriptor, otherwise the first page
+;; of the next admitted descriptor.  map-size and the >=40-byte stride bound
+;; this walk independently of the native fuel ceiling.
+(defn find-page-after [memory-map map-size descriptor-size offset owned-page]
+  (if (> (+ offset descriptor-size) map-size)
+    0
+    (let [memory-type (load32 memory-map map-size offset)
+          physical-start (load64 memory-map map-size (+ offset 8))
+          pages (load64 memory-map map-size (+ offset 24))]
+      (if (and (= memory-type 7)
+               (> pages 0)
+               (>= physical-start 2097152)
+               (< physical-start 1073741824)
+               (= (bit-and physical-start 4095) 0))
+        (if (= physical-start owned-page)
+          (if (and (> pages 1) (< physical-start 1073737728))
+            (+ physical-start 4096)
+            (find-page-after memory-map map-size descriptor-size
+                             (+ offset descriptor-size) owned-page))
+          physical-start)
+        (find-page-after memory-map map-size descriptor-size
+                         (+ offset descriptor-size) owned-page)))))
 
 ;; Sixteen writes per tail call keep the recursive depth below the kernel fuel
 ;; ceiling while proving that every byte in the admitted page is writable and
@@ -96,19 +121,31 @@
              (<= descriptor-size map-size)
              (> (load64-boot boot 40) 0))
       (let [map-marker (kernel-out-u8 233 77)
-            physical-start (find-page memory-map map-size descriptor-size 0)]
+            ;; 16 KiB / the admitted 40-byte minimum is at most 409 complete
+            ;; descriptors.  Keep an independent recursive bound so corrupt
+            ;; arithmetic can never turn the firmware-controlled stride into
+            ;; an unbounded walk.
+            physical-start (find-page memory-map map-size descriptor-size 0 410)]
         (if (> physical-start 0)
-          ;; The literal parent names the loader's identity-mapped physical
-          ;; window.  The map value selects only a checked offset inside it.
-          (let [page (kernel-subregion 4096 1073737728
-                                       (- physical-start 4096) 4096)]
-            (if (and (= map-marker 77)
-                     (= (zero-page page 0) 1)
-                     (= (kernel-load-u8-4k page 4096 0) 0)
-                     (= (kernel-load-u8-4k page 4096 2048) 0)
-                     (= (kernel-load-u8-4k page 4096 4095) 0))
-              (let [page-marker (kernel-out-u8 233 80)]
-                (kernel-out-u32 244 (if (= page-marker 80) 16 17)))
-              (kernel-out-u32 244 19)))
+          (let [second-start (find-page-after memory-map map-size descriptor-size
+                                              0 physical-start)]
+            (if (and (> second-start 0) (not (= second-start physical-start)))
+              ;; The literal parent names the loader's identity-mapped physical
+              ;; window. Map values select only checked offsets inside it.
+              (let [page (kernel-subregion 4096 1073737728
+                                           (- physical-start 4096) 4096)
+                    second-page (kernel-subregion 4096 1073737728
+                                                  (- second-start 4096) 4096)]
+                (if (and (= map-marker 77)
+                         (= (zero-page page 0) 1)
+                         (= (zero-page second-page 0) 1)
+                         (= (kernel-load-u8-4k page 4096 0) 0)
+                         (= (kernel-load-u8-4k page 4096 4095) 0)
+                         (= (kernel-load-u8-4k second-page 4096 0) 0)
+                         (= (kernel-load-u8-4k second-page 4096 4095) 0))
+                  (let [page-marker (kernel-out-u8 233 80)]
+                    (kernel-out-u32 244 (if (= page-marker 80) 16 17)))
+                  (kernel-out-u32 244 19)))
+              (kernel-out-u32 244 20)))
           (kernel-out-u32 244 19)))
       (kernel-out-u32 244 18))))
