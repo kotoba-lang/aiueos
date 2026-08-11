@@ -37,6 +37,7 @@ payload = {
     "artifact_bytes": len(data),
     "foreign_objects": [],
     "c_sources": [],
+    "imports": [],
     "dynamic_dependencies": [],
 }
 receipt.write_text(json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n", encoding="ascii")
