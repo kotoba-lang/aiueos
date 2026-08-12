@@ -55,7 +55,7 @@ if data != expected:
     raise SystemExit(f"error: Kotoba-native marker was {data!r}, expected {expected!r}")
 PY
 if [ "$expected_marker" = MPRCD ]; then
-  echo "AIUEOS_KOTOBA_NATIVE_QEMU_OK no-c-boot-chain memory-map-v2 allocator-pages=6 ownership-bitmap page-table-root identity-1g guard-unmapped text-rx state-rw-nx nxe cr0-wp cr3-activated invlpg idt14-sidt-readback reuse double-free-rejected zero-before-publish exit-boot-services"
+  echo "AIUEOS_KOTOBA_NATIVE_QEMU_OK no-c-boot-chain memory-map-v2 allocator-pages=8 ownership-bitmap page-table-root identity-1g guard-unmapped text-rx state-rw-nx nxe cr0-wp cr3-activated invlpg idt14-sidt-readback recovery-frame dedicated-handler-stack reuse double-free-rejected zero-before-publish exit-boot-services"
 else
   echo "AIUEOS_KOTOBA_NATIVE_QEMU_REJECTION_OK marker=$expected_marker status=$expected_status"
 fi

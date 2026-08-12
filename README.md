@@ -49,7 +49,9 @@ are useful oracles, but none qualify the C-free bare-metal profile.
 The ownership decision and gap ledger are
 [`ADR-0013`](90-docs/adr/0013-native-os-ownership-and-boot.md); the current
 C-free W^X/guard and CPU-fault evidence is
-[`ADR-0039`](90-docs/adr/0039-c-free-page-fault-hardware-receipts.md). Amu
+[`ADR-0039`](90-docs/adr/0039-c-free-page-fault-hardware-receipts.md), with
+bounded recovery in
+[`ADR-0040`](90-docs/adr/0040-c-free-recoverable-page-fault-frame.md). Amu
 records the consumer/compiler boundary in ADR-0240; the root handoff is
 ADR-2608110400.
 

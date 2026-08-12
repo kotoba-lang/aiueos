@@ -15,7 +15,7 @@
   {:path "src/aiueos/policy.cljc" :role :policy-decision
    :sha256 "658f8f71916900ba5578bb4dcbd07b9d6eceb68fcf5bf2e0b30ace30cbbace3d"}
   {:path "src/aiueos/broker.cljc" :role :capability-authority
-   :sha256 "fd1ab3c624b18478515141d2fae35fd7be33c046160807af572befaada790337"}
+   :sha256 "f2d64515c8f647cb3c2f6c3c340753e82b426f5a30a15c46e4768cd8e57e50b8"}
   {:path "src/aiueos/execute.cljc" :role :wasm-host-abi
    :sha256 "2ebb77ee7905754036de22d58a4e8dd4a0a5b20471c97639372f9f22fb6326e0"}
   {:path "src/aiueos/entropy.clj" :role :security-entropy-provider

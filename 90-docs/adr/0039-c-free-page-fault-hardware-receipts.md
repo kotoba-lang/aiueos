@@ -80,3 +80,7 @@ Next, factor the non-returning evidence entry into a bounded exception-frame
 ABI with a dedicated fault stack and double-fault containment. Dynamic
 mapping/unmapping and TLB evidence follow; scheduler/CPL3/syscall and the first
 typed log provider remain separate dependency stages.
+
+ADR-0040 closes the bounded frame, dedicated software-selected handler stack,
+and one exact `iretq` recovery slice. Hardware TSS/IST switching and #DF remain
+open there rather than being implied by this ADR.
