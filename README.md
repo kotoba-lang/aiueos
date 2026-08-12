@@ -72,6 +72,13 @@ compiler-emitted Kotoba — is stated honestly, with measured line counts, in
   and `priority-boot-order` — same order with same-depth components sorted by
   `:aiueos/schedule` priority, ADR-0006), and dependency depth.
 - `src/aiueos/policy.cljc` resolves grants, surface policy, and component admission.
+- `src/aiueos/authority.cljc` is the pure Principal–Intent–Decision kernel. It
+  distinguishes verified principal, execution actor, effect, serializable grant,
+  runtime capability specification, and receipt; returns `:allow`, `:deny`, or
+  `:challenge`; and rejects unknown fields fail-closed. `broker/decide-authority`
+  first runs the existing code/capability admission gate, derives effects from the
+  admitted manifest, and only then invokes this kernel. Credential formats remain
+  edge adapters and raw credentials/secrets have no slot in the contract.
 - `src/aiueos/surface.cljc` owns the known deployment surface/provider registry.
 - `src/aiueos/manifest.cljc` normalizes a manifest's trust/limits/quota/schedule/topic defaults.
 - `src/aiueos/signing.cljc` verifies ed25519 manifest signatures (JDK-native, no external crypto dep).
