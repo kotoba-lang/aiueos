@@ -44,12 +44,21 @@
   `verify-one`/`verify-admission` — porting a second denylist here would
   duplicate, and risk drifting from, kototama's."
   (:require [clojure.string :as str]
+            [aiueos.authority :as authority]
             [aiueos.audit :as audit]
             [aiueos.graph :as graph]
             [aiueos.manifest :as manifest]
             [aiueos.kagi-policy :as kagi-policy]
             [aiueos.policy :as policy]
             [aiueos.signing :as signing]))
+
+(def authority-input-without-effects
+  "Canonical authority keys supplied by a credential/request adapter.
+
+  Effects are deliberately absent: `decide-authority` derives them from the
+  admitted manifest, so a caller cannot widen code authority by submitting a
+  second, more permissive effect declaration."
+  (disj authority/input-keys :authority/effects))
 
 (def ^:private trust-rank
   "Lower = more trusted. Mirrors the retired Rust `Trust` enum's derived
@@ -199,6 +208,32 @@
   call `run-receipt`) when `:aiueos/decision` is `:grant`."
   [m graph policy]
   (verify-one (floor-trust-for-admission m) graph policy))
+
+(defn decide-authority
+  "Run existing code/capability admission, then the canonical authority kernel.
+
+  INPUT contains every `aiueos.authority/input-keys` field except effects.
+  Effects come only from MANIFEST's declared effects and imports. A failed
+  admission short-circuits to deny; it can never be upgraded by identity,
+  payment, role, or another grant. On admission success, the authority kernel
+  evaluates principal, intent, resource, assurance, grants, tenant, audience,
+  nonce, and shared approvals and returns allow/deny/challenge.
+
+  This is an additive R0 adapter. Existing `verify-one`, `verify-admission`, and
+  run-plan wire shapes remain compatible while callers migrate to the canonical
+  Principal–Intent–Decision contract."
+  [manifest graph admission-policy input]
+  (if-not (= authority-input-without-effects (set (keys input)))
+    (authority/deny :authority/invalid-envelope)
+    (let [admission (verify-admission manifest graph admission-policy)]
+      (if (= :deny (:aiueos/decision admission))
+        (authority/deny
+         :authority/code-admission-denied
+         {:aiueos/violations (:aiueos/violations admission)})
+        (authority/decide
+         (assoc input :authority/effects
+                (into (set (:aiueos/effects manifest))
+                      (:aiueos/imports manifest))))))))
 
 (defn run-plan
   "Assemble a `:aiueos/run-plan` (matches `aiueos.contract/validate-run-plan`)
