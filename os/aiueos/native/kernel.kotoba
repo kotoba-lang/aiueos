@@ -31,7 +31,7 @@
 
 ;; UEFI type 7 is EfiConventionalMemory.  The compiler-emitted loader identity
 ;; maps the first GiB, so this bounded allocator slice admits one aligned,
-;; contiguous six-page extent in [2 MiB, 1 GiB).  Loader/kernel pages have
+;; contiguous eight-page extent in [2 MiB, 1 GiB).  Loader/kernel pages have
 ;; non-conventional UEFI types.
 (defn find-page [memory-map map-size descriptor-size offset remaining]
   (if (or (= remaining 0)
@@ -41,9 +41,9 @@
           physical-start (load64 memory-map map-size (+ offset 8))
           pages (load64 memory-map map-size (+ offset 24))]
       (if (and (= memory-type 7)
-               (> pages 5)
+               (> pages 7)
                (>= physical-start 2097152)
-               (< physical-start 1073725440)
+               (< physical-start 1073717248)
                (= (bit-and physical-start 4095) 0))
         physical-start
         (find-page memory-map map-size descriptor-size
@@ -149,7 +149,7 @@
           offset (* index 8)
           stored (if (= index 256)
                    (store64-page page offset 0)
-                   (if (and (>= index 257) (<= index 266))
+                   (if (and (>= index 257) (<= index 267))
                      (store64-page page offset (+ physical 1))
                      (store64-nx-page page offset (+ physical 3))))]
       (if (= stored 1)
@@ -175,13 +175,15 @@
        (= (kernel-load-u8-4k pd 4096 4095) 0)
        (= (kernel-load-u8-4k pt 4096 4095) 0)))
 
-(defn ownership-six [state]
+(defn ownership-eight [state]
   (and (= (claim-slot state 0) 1)
        (= (claim-slot state 1) 1)
        (= (claim-slot state 2) 1)
        (= (claim-slot state 3) 1)
        (= (claim-slot state 4) 1)
        (= (claim-slot state 5) 1)
+       (= (claim-slot state 6) 1)
+       (= (claim-slot state 7) 1)
        (= (claim-slot state 1) 0)
        (= (release-slot state 4) 1)
        (= (release-slot state 4) 0)
@@ -191,7 +193,9 @@
        (= (kernel-load-u8-4k state 4096 2) 1)
        (= (kernel-load-u8-4k state 4096 3) 1)
        (= (kernel-load-u8-4k state 4096 4) 1)
-       (= (kernel-load-u8-4k state 4096 5) 1)))
+       (= (kernel-load-u8-4k state 4096 5) 1)
+       (= (kernel-load-u8-4k state 4096 6) 1)
+       (= (kernel-load-u8-4k state 4096 7) 1)))
 
 (defn prepare-page-tables [pml4 pdpt pd pt]
   (and (= (store64-page pml4 0 (+ pdpt 3)) 1)
@@ -204,7 +208,7 @@
        (= (load64-page pd 0) (+ pt 3))
        (= (load64-page pt 2048) 0)
        (= (load64-page pt 2056) 1052673)
-       (= (load64-page pt 2128) 1089537)
+       (= (load64-page pt 2136) 1093633)
        (= (kernel-load-u8-4k pt 4096 2151) 128)
        (= (kernel-load-u8-4k pd 4096 15) 128)
        (= (kernel-load-u8-4k pd 4096 4095) 128)))
@@ -244,7 +248,7 @@
                     (* selector 65536)
                     (* 142 1099511627776)
                     (* handler-mid 281474976710656))]
-    (if (and (>= handler 1052672) (< handler 1093632)
+    (if (and (>= handler 1052672) (< handler 1097728)
              (> selector 0) (<= selector 65535)
              (= (store64-page idt-page 224 gate-low) 1)
              (= (store64-page idt-page 232 handler-high) 1)
@@ -257,6 +261,17 @@
              (= (load64-page idt-page 514) idt-page))
       (let [descriptor (kernel-subregion idt-page 4096 512 10)]
         (kernel-load-idt descriptor 10))
+      0)))
+
+(defn recoverable-frame-valid [frame-page stack-page probe]
+  (if (= probe 424242)
+    1
+    (if (and (= probe 0)
+             (= (load64-page frame-page 0) 1048576)
+             (= (bit-and (load64-page frame-page 8) 3) 2)
+             (> (load64-page frame-page 16) 1052672)
+             (= (load64-page frame-page 24) (+ stack-page 4080)))
+      (if (= (kernel-out-u8 233 69) 69) 1 0)
       0)))
 
 ;; Mutation scripts replace this exact body with one sealed hardware access.
@@ -298,7 +313,9 @@
                 third-start (+ physical-start 8192)
                 fourth-start (+ physical-start 12288)
                 fifth-start (+ physical-start 16384)
-                sixth-start (+ physical-start 20480)]
+                sixth-start (+ physical-start 20480)
+                seventh-start (+ physical-start 24576)
+                eighth-start (+ physical-start 28672)]
             (if (and (five-distinct physical-start second-start third-start
                                     fourth-start fifth-start)
                      (> sixth-start 0) (< sixth-start 1073741824)
@@ -306,7 +323,22 @@
                      (not (= sixth-start second-start))
                      (not (= sixth-start third-start))
                      (not (= sixth-start fourth-start))
-                     (not (= sixth-start fifth-start)))
+                     (not (= sixth-start fifth-start))
+                     (> seventh-start 0) (> eighth-start 0)
+                     (< eighth-start 1073741824)
+                     (not (= seventh-start physical-start))
+                     (not (= seventh-start second-start))
+                     (not (= seventh-start third-start))
+                     (not (= seventh-start fourth-start))
+                     (not (= seventh-start fifth-start))
+                     (not (= seventh-start sixth-start))
+                     (not (= eighth-start physical-start))
+                     (not (= eighth-start second-start))
+                     (not (= eighth-start third-start))
+                     (not (= eighth-start fourth-start))
+                     (not (= eighth-start fifth-start))
+                     (not (= eighth-start sixth-start))
+                     (not (= eighth-start seventh-start)))
                   ;; The literal parent names the loader's identity-mapped
                   ;; physical window. Map values select only checked offsets.
                   (let [state (kernel-subregion 4096 1073737728
@@ -324,11 +356,20 @@
                     (if (and (= map-marker 77)
                              (zero-five state page-table-root pdpt pd pt)
                              (= (zero-page reusable-page 0) 1)
+                             (= (zero-page (kernel-subregion 4096 1073737728
+                                                            (- seventh-start 4096) 4096) 0) 1)
+                             (= (zero-page (kernel-subregion 4096 1073737728
+                                                            (- eighth-start 4096) 4096) 0) 1)
                              (= (kernel-load-u8-4k reusable-page 4096 4095) 0)
-                             (ownership-six state))
+                             (ownership-eight state))
                       (if (prepare-page-tables page-table-root pdpt pd pt)
                           (if (and (enable-page-protection)
                                    (activate-page-tables page-table-root)
+                                   (= (kernel-configure-page-fault-recovery
+                                       (kernel-subregion 4096 1073737728
+                                                         (- seventh-start 4096) 4096)
+                                       (kernel-subregion 4096 1073737728
+                                                         (- eighth-start 4096) 4096)) 1)
                                    (= (install-page-fault-idt reusable-page) 1))
                             (let [page-marker (kernel-out-u8 233 80)
                                   root-marker (kernel-out-u8 233 82)
@@ -340,7 +381,12 @@
                                                        (= root-marker 82)
                                                        (= cr3-marker 67)
                                                        (= idt-marker 68)
-                                                       (= probe 424242))
+                                                       (= (recoverable-frame-valid
+                                                           (kernel-subregion 4096 1073737728
+                                                                             (- seventh-start 4096) 4096)
+                                                           (kernel-subregion 4096 1073737728
+                                                                             (- eighth-start 4096) 4096)
+                                                           probe) 1))
                                                 16 17)))
                             (kernel-out-u32 244 24))
                         (kernel-out-u32 244 23))
