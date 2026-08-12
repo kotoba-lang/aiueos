@@ -47,8 +47,11 @@ Hosted `aiueos.vm`, experimental `aiueos.hvt`, and the older C/assembly kernel
 are useful oracles, but none qualify the C-free bare-metal profile.
 
 The ownership decision and gap ledger are
-[`ADR-0013`](90-docs/adr/0013-native-os-ownership-and-boot.md). Amu records the
-consumer/compiler boundary in ADR-0240; the root handoff is ADR-2608110400.
+[`ADR-0013`](90-docs/adr/0013-native-os-ownership-and-boot.md); the current
+C-free W^X/guard and CPU-fault evidence is
+[`ADR-0039`](90-docs/adr/0039-c-free-page-fault-hardware-receipts.md). Amu
+records the consumer/compiler boundary in ADR-0240; the root handoff is
+ADR-2608110400.
 
 ## Reference stack topology and C mechanism boundary
 

@@ -286,9 +286,12 @@ virtio-blk/NVMe -> block service -> filesystem/object store
 
 ### C-free status and remaining gap ledger
 
-Only the following table determines production maturity. “Reference exists”
-means the older native substrate demonstrates a design or QEMU interaction but
-still must be re-expressed in Kotoba/compiler output.
+The following table is the baseline production maturity ledger. “Reference
+exists” means the older native substrate demonstrates a design or QEMU
+interaction but still must be re-expressed in Kotoba/compiler output. Its
+Phase-2 cell is superseded by ADR-0039: the 2026-08-12 six-page path has an
+activated W^X/guard map, a Kotoba-built vector-14 IDT, and independent CPU
+fault receipts for guard write, RX write, and NX execute.
 
 | Phase | C-free status | Remaining exit gate |
 |---|---|---|
