@@ -149,7 +149,7 @@
           offset (* index 8)
           stored (if (= index 256)
                    (store64-page page offset 0)
-                   (if (and (>= index 257) (<= index 265))
+                   (if (and (>= index 257) (<= index 266))
                      (store64-page page offset (+ physical 1))
                      (store64-nx-page page offset (+ physical 3))))]
       (if (= stored 1)
@@ -204,8 +204,8 @@
        (= (load64-page pd 0) (+ pt 3))
        (= (load64-page pt 2048) 0)
        (= (load64-page pt 2056) 1052673)
-       (= (load64-page pt 2120) 1085441)
-       (= (kernel-load-u8-4k pt 4096 2135) 128)
+       (= (load64-page pt 2128) 1089537)
+       (= (kernel-load-u8-4k pt 4096 2151) 128)
        (= (kernel-load-u8-4k pd 4096 15) 128)
        (= (kernel-load-u8-4k pd 4096 4095) 128)))
 
@@ -230,6 +230,40 @@
         flushed (kernel-invlpg 1048576)]
     (and (= written pml4)
          (= (+ active (* 0 flushed)) pml4))))
+
+;; The IDT storage is allocator-owned and remains RW+NX under the replacement
+;; map. The backend contributes only the address of its sealed non-returning
+;; entry; Kotoba constructs vector 14 and the pseudo-descriptor byte layout.
+(defn install-page-fault-idt [idt-page]
+  (let [handler (kernel-page-fault-handler-address)
+        selector (kernel-read-cs)
+        handler-low (bit-and handler 65535)
+        handler-mid (bit-and (quot handler 65536) 65535)
+        handler-high (bit-and (quot handler 4294967296) 4294967295)
+        gate-low (+ handler-low
+                    (* selector 65536)
+                    (* 142 1099511627776)
+                    (* handler-mid 281474976710656))]
+    (if (and (>= handler 1052672) (< handler 1093632)
+             (> selector 0) (<= selector 65535)
+             (= (store64-page idt-page 224 gate-low) 1)
+             (= (store64-page idt-page 232 handler-high) 1)
+             (= (kernel-store-u8-4k idt-page 4096 512 239) 239)
+             (= (kernel-store-u8-4k idt-page 4096 513 0) 0)
+             (= (store64-page idt-page 514 idt-page) 1)
+             (= (load64-page idt-page 224) gate-low)
+             (= (load64-page idt-page 232) handler-high)
+             (= (kernel-load-u8-4k idt-page 4096 512) 239)
+             (= (load64-page idt-page 514) idt-page))
+      (let [descriptor (kernel-subregion idt-page 4096 512 10)]
+        (kernel-load-idt descriptor 10))
+      0)))
+
+;; Mutation scripts replace this exact body with one sealed hardware access.
+;; Keeping the positive artifact free of a dormant arbitrary-address branch
+;; makes each fault receipt attributable to the compiled probe it contains.
+(defn page-fault-probe []
+  (+ 424200 42))
 
 (defn main []
   (let [boot (kernel-boot-info)
@@ -294,14 +328,19 @@
                              (ownership-six state))
                       (if (prepare-page-tables page-table-root pdpt pd pt)
                           (if (and (enable-page-protection)
-                                   (activate-page-tables page-table-root))
+                                   (activate-page-tables page-table-root)
+                                   (= (install-page-fault-idt reusable-page) 1))
                             (let [page-marker (kernel-out-u8 233 80)
                                   root-marker (kernel-out-u8 233 82)
-                                  cr3-marker (kernel-out-u8 233 67)]
+                                  cr3-marker (kernel-out-u8 233 67)
+                                  idt-marker (kernel-out-u8 233 68)
+                                  probe (page-fault-probe)]
                               (kernel-out-u32 244
                                               (if (and (= page-marker 80)
                                                        (= root-marker 82)
-                                                       (= cr3-marker 67))
+                                                       (= cr3-marker 67)
+                                                       (= idt-marker 68)
+                                                       (= probe 424242))
                                                 16 17)))
                             (kernel-out-u32 244 24))
                         (kernel-out-u32 244 23))

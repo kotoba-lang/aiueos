@@ -22,8 +22,8 @@ if entry != 0x101000 or phentsize != 56 or phnum != 2:
 segments = [struct.unpack_from("<IIQQQQQQ", data, phoff + i * phentsize) for i in range(phnum)]
 if [segment[0] for segment in segments] != [1, 1] or [segment[1] for segment in segments] != [5, 6]:
     raise SystemExit("error: Kotoba-native kernel must contain only RX and RW PT_LOAD segments")
-if (segments[0][3] != 0x101000 or segments[0][3] + segments[0][6] > 0x10A000
-        or segments[1][3] != 0x10A000):
+if (segments[0][3] != 0x101000 or segments[0][3] + segments[0][6] > 0x10B000
+        or segments[1][3] != 0x10B000):
     raise SystemExit("error: Kotoba-native RX/RW page boundary rejected")
 context_offset = segments[1][2]
 if segments[1][5] < 16 or struct.unpack_from("<Q", data, context_offset + 8)[0] != 8192:
@@ -40,6 +40,10 @@ if (not any(encoding in data for encoding in cr3_read_encodings)
         or not any(encoding in data for encoding in cr0_write_encodings)
         or b"\x0f\x32" not in data or b"\x0f\x30" not in data
         or b"\x0f\xa2" not in data
+        or b"\x66\x41\x8c\xca" not in data
+        or b"\x41\x0f\x01\x1a" not in data
+        or b"\x0f\x01\x0c\x24" not in data
+        or b"\x41\x0f\x20\xd2\x4c\x8b\x1c\x24" not in data
         or b"\xee" not in data or b"\xef" not in data):
     raise SystemExit("error: privileged paging/protection lowering evidence is absent")
 if b"\x88" not in data:
@@ -47,8 +51,16 @@ if b"\x88" not in data:
 for forbidden in (b".interp", b".dynamic", b".dynsym", b"NEEDED", b"libc"):
     if forbidden in data:
         raise SystemExit("error: dynamic/C runtime dependency found")
+probe_encodings = {
+    "guard-write": b"\xc6\x04\x25\x00\x00\x10\x00\x00",
+    "text-write": b"\xc6\x04\x25\x00\x10\x10\x00\x00",
+    "nx-execute": b"\x49\xba\x00\xb0\x10\x00\x00\x00\x00\x00\x41\xff\xd2",
+}
+present_probes = [name for name, encoding in probe_encodings.items() if encoding in data]
+if len(present_probes) > 1:
+    raise SystemExit("error: more than one sealed page-fault probe entered one artifact")
 payload = {
-    "format": "aiueos-kotoba-native-receipt/v3",
+    "format": "aiueos-kotoba-native-receipt/v4",
     "target": "x86_64-aiueos-kernel-v1",
     "entry": "aiueos_kernel_entry",
     "compiler_commit": compiler,
@@ -73,9 +85,13 @@ payload = {
                   "invlpg_executed": True},
     "protection": {"nxe_readback": True, "cr0_wp_readback": True,
                    "guard_page": "0x100000-unmapped",
-                   "kernel_text": "0x101000-0x109fff-rx",
-                   "kernel_state": "0x10a000-rw-nx",
+                   "kernel_text": "0x101000-0x10afff-rx",
+                   "kernel_state": "0x10b000-rw-nx",
                    "remaining_identity_map": "rw-nx"},
+    "exceptions": {"idt_vector": 14, "selector": "runtime-current-cs",
+                   "lidt": True, "sidt_readback": True,
+                   "handler": "non-returning-cr2-error-code-classifier",
+                   "sealed_probe": present_probes[0] if present_probes else None},
 }
 receipt.write_text(json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n", encoding="ascii")
-print("AIUEOS_KOTOBA_NATIVE_KERNEL_OK no-c no-crt no-linker imports=0 fuel=8192 allocator-pages=6 ownership-bitmap page-table-root identity-1g guard-unmapped text-rx state-rw-nx nxe cr0-wp cr3-activated invlpg reuse double-free-rejected descriptors<=410 zero-before-publish")
+print("AIUEOS_KOTOBA_NATIVE_KERNEL_OK no-c no-crt no-linker imports=0 fuel=8192 allocator-pages=6 ownership-bitmap page-table-root identity-1g guard-unmapped text-rx state-rw-nx nxe cr0-wp cr3-activated invlpg idt14-sidt-readback pf-cr2-error-code reuse double-free-rejected descriptors<=410 zero-before-publish")
