@@ -91,8 +91,10 @@ compiler-emitted Kotoba — is stated honestly, with measured line counts, in
 - `src/aiueos/cli.cljc` is the CLJC authority for the aiueos CLI command contract
   (mirrors `kotoba-lang/kotoba-lang`'s `kotoba.cli` pattern).
 - `src/aiueos/decide.cljc` is the decision subprocess bridge (ADR-2607022700):
-  `bb decide` reads EDN requests on stdin, dispatches through `aiueos.cli`, writes
-  EDN policy decisions on stdout — for host adapters that are not JVM processes.
+  the `decide` subprocess reads EDN requests on stdin, dispatches through
+  `aiueos.cli`, writes EDN policy decisions on stdout — for host adapters that
+  are not JVM processes. It was spelled `bb decide`; see Verify below for why
+  that no longer resolves.
 - `src/aiueos/execute.cljc` **actually executes** a compiled `.kotoba` Wasm
   component (ADR-2607022900), via [Chicory](https://github.com/dylibso/chicory).
   Verifies through `aiueos.broker/verify-one` first and refuses to run anything
@@ -125,8 +127,8 @@ compiler-emitted Kotoba — is stated honestly, with measured line counts, in
   also carries an ADDITIVE `:aiueos/run-receipt` (`aiueos.broker/run-receipt`,
   ADR-2607022900 follow-up 8): `:succeeded`/`:failed`/`:denied` status,
   `:started-at`/`:finished-at` (epoch ms), and the same audit events.
-  **JVM-only** — needs `clojure -M:test`, not `bb` (Chicory isn't in babashka's
-  class allowlist).
+  **JVM-only** — needs `clojure -M:test` (Chicory was never in babashka's class
+  allowlist, and babashka has since been retired outright).
 - `src/aiueos/launcher.cljc` is a real, runnable CLI: the retired Rust
   `bin/aiueos.rs`'s argv-parsing/file-I/O role, reimplemented as JVM Clojure.
   Ties `aiueos.cli` + `aiueos.manifest` + `aiueos.policy`/`aiueos.broker` +
@@ -164,9 +166,25 @@ already lives in `kotoba-lang/kotoba`'s `kototama`/`kotoba-clj` layer.
 
 ```bash
 clojure -M:test   # full suite, including aiueos.execute-test (Chicory, JVM-only)
-bb test:cljc      # everything except aiueos.execute-test
 ./os/aiueos/scripts/smoke-qemu-journal-recovery.sh # no-Linux OVMF gate
 ```
+
+`scripts/tasks.edn` additionally registers the boot/flash gates:
+`multiboot-build`, `multiboot-smoke`, `grub-multiboot-smoke`, `usb-boot-smoke`,
+`usb-flash` — run through `nbb scripts/run-task.cljs <task>`.
+
+**Two entrypoints this README used to document are unavailable.** babashka was
+retired as this workspace's script host by ADR-2607173000, and both bodies were
+babashka-hosted `(require …)` + `run-tests` / subprocess forms that the
+conversion could not express, so they were dropped (ADR-2608131600). The
+recovered forms are in `scripts/tasks-complex.edn`.
+
+- **`bb test:cljc`** — the pure CLJC authority contract tests, i.e. everything
+  except `aiueos.execute-test`. `clojure -M:test` above still runs those
+  assertions; what is gone is the ability to run them *without* the JVM.
+- **`bb decide`** — the decision subprocess described above. `aiueos.decide` and
+  `aiueos.cli` are unchanged, so a host adapter can still reach the same
+  contract, but there is no packaged task entrypoint for it today.
 
 See `90-docs/adr/0013-native-os-ownership-and-boot.md` for the repository
 boundary and `os/aiueos/README.md` for native build requirements.
