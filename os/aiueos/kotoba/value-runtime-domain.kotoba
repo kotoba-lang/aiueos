@@ -1,0 +1,12 @@
+(ns aiueos.value-runtime-domain
+  (:export [aiueos-value-runtime-publish-domain main]))
+
+;; The scheduler publishes identity, never location.  The privileged intrinsic
+;; writes this checked scalar to the kernel image's private context; the live
+;; SYSCALL entry will consume it when selecting the domain-owned arena.
+(defn aiueos-value-runtime-publish-domain [domain :i64] :i64
+  (if (and (> domain 0) (<= domain 32767))
+    (kernel-publish-current-domain domain)
+    0))
+
+(defn main [] :i64 0)

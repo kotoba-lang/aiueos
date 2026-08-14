@@ -1,0 +1,36 @@
+{:format :aiueos.value-runtime-cas-verify/v1
+ :identity {:cid-version 1 :codec :dag-cbor :multihash :sha2-256
+            :digest-bytes 32}
+ :graph {:root aiueos.value-runtime-cas-verify
+         :modules [aiueos.value-runtime-sha256
+                   aiueos.value-runtime-digest-equal
+                   aiueos.value-runtime-cas-verify]}
+ :input {:block-length {:minimum 1 :maximum 12288}
+         :expected-digest-bytes 32
+         :output-bytes 32 :workspace-bytes 352}
+ :result {1 :digest-match 0 :rejected}
+ :native {:target :x86_64-aiueos-kernel-v1
+          :export "kotoba_aiueos_value_runtime_cas_verify"
+          :imports []
+          :required-operations [kernel-load-u8-16k kernel-load-u8 kernel-store-u8]}
+ :trust-boundary {:integrity-verified true
+                  :canonical-value-validation false
+                  :queue-request-binding false
+                  :handle-installation false}
+ :vectors
+ [{:name :empty-rejected :input-hex "" :expected-digest-hex "" :expected 0}
+  {:name :abc-matches
+   :input-hex "616263"
+   :expected-digest-hex "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+   :expected 1}
+  {:name :abc-mismatch
+   :input-hex "616263"
+   :expected-digest-hex "bb7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+   :expected 0}
+  {:name :digest-length-rejected
+   :input-hex "616263" :expected-digest-hex "ba78" :expected 0}
+  {:name :maximum-bounded-length :generated-bytes 12288 :fill-byte 0
+   :expected-digest-hex "f3cc103136423a57975750907ebc1d367e2985ac6338976d4d5a439f50323f4a"
+   :expected 1}
+  {:name :oversize-rejected :generated-bytes 12289 :fill-byte 0
+   :expected-digest-hex "" :expected 0}]}
