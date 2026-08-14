@@ -1,4 +1,5 @@
-(ns aiueos.native.kernel)
+(ns aiueos.native.kernel
+  (:export [main]))
 
 ;; The compiler-emitted loader keeps the final UEFI memory map in a bounded
 ;; region directly after the 64-byte boot-info prefix.  The kernel derives that
