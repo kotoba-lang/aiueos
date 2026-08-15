@@ -29,8 +29,12 @@
        (= (u32 image length (+ base 48)) 4096)
        (zero32 image length (+ base 52)))))
 
-(defn context-zero [image length index end]
-  (if (= index end) 1
+(defn context-zero [image :i64 length :i64 index :i64 end :i64] :bool
+  ;; "every byte from index to end is zero" is a predicate, so the base case is
+  ;; `true` rather than `1`. The old emitter let 1 stand in for a bool; under
+  ;; the current type discipline the two branches must agree, and the branch
+  ;; that was already right is the recursive `and`.
+  (if (= index end) true
     (and (= (u8 image length index) 0)
          (context-zero image length (+ index 1) end))))
 
