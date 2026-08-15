@@ -4,7 +4,26 @@
  "Code whose compromise can grant authority, escape Wasm isolation, falsify
   production admission/audit evidence, or access hardware outside a component."
  :tcb/files
-  [{:path "src/aiueos/contract.cljc" :role :authority-schema
+  [;; Fleet onboarding and update admission. These decide who may claim a
+   ;; device, which release may become the running system, and whether an
+   ;; update step may advance -- authority decisions by the :tcb/scope
+   ;; definition above, so they are pinned here like every other one.
+   {:path "src/aiueos/enroll.cljc" :role :enrolment-admission
+   :sha256 "3257f779eb7c27dabdfb5206ebf25ff7dfe45f30fd86dbc29538515cc501d63c"}
+  {:path "src/aiueos/update.cljc" :role :update-admission
+   :sha256 "bd60a4f597af1ae1550ae8b9b37ffec25fe9f7037a215d6b8865a160cebe9f62"}
+  {:path "src/aiueos/publisher.cljc" :role :release-admission
+   :sha256 "7b9ad7a77e32737e81ae59febbb5e4e72a4871af409aee92e397bf5486dcdb39"}
+  {:path "src/aiueos/ota.cljc" :role :update-composition
+   :sha256 "1a7d14852f3e6edee70a275b62b34d18f2dd9f4179ccad27dafbc1d18d99ad83"}
+  ;; Trusted time: freshness is an admission input, so whatever answers
+  ;; "what time is it" can move a release from refused to admitted.
+  {:path "src/aiueos/clock.cljc" :role :trusted-time
+   :sha256 "71d1097a6ffde62c43cd82a7dcf257fae6456494f135e2d8bb0883a278699369"}
+  ;; Device key custody and possession proofs.
+  {:path "src/aiueos/provider/device.clj" :role :device-identity
+   :sha256 "25edbf48eb16f3b9d598ce7b40bb64947e29222caf77f1a78f88bad3898e916b"}
+  {:path "src/aiueos/contract.cljc" :role :authority-schema
    :sha256 "f8e008ccb8156b99115b72c4495775bff6ca3b0f7c1ea038e265a589180a3e60"}
   {:path "src/aiueos/manifest.cljc" :role :component-identity
    :sha256 "59a8354404cccdb648fd378ae03c9add7438cd7eecd22cc1ae26d2d729739ecf"}

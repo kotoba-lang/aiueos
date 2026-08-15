@@ -28,7 +28,12 @@
     "src/aiueos/tcb.clj"})
 
 (deftest checked-in-tcb-inventory-has-no-drift
-  (is (= {:valid? true :files 28 :external 5 :classpath 9 :properties 6 :errors []}
+  ;; 28 -> 34: fleet onboarding and update admission joined the TCB
+  ;; (enroll, update, publisher, ota, clock, provider/device). The count is
+  ;; asserted rather than derived on purpose -- deriving it would make the
+  ;; inventory grow silently, and a TCB that can grow unnoticed is the record
+  ;; ADR-0016 called "not evidence".
+  (is (= {:valid? true :files 34 :external 5 :classpath 9 :properties 6 :errors []}
          (tcb/validate))))
 
 (deftest authority-and-escape-boundaries-cannot-disappear-silently
