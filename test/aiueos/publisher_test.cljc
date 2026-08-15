@@ -1,5 +1,6 @@
 (ns aiueos.publisher-test
   (:require [aiueos.publisher :as p]
+            [aiueos.clock :as clock]
             [clojure.test :refer [deftest is testing]]))
 
 (def root {:keys #{"k1" "k2" "k3"} :threshold 2})
@@ -87,3 +88,23 @@
                        (assoc base :old-root-signatures [(sig "a" 0) (sig "b" 1)]
                               :new-root-signatures [(sig "c" 2)]))))
         "without the new root, a typo bricks the fleet's ability to update")))
+
+;; ── freshness through aiueos.clock ────────────────────────────────────────
+
+(deftest a-clockless-machine-refuses-a-new-release-rather-than-guessing
+  (let [clockless (clock/resolve-time {:build-stamp-ms 500})
+        v (p/admit-release release (-> state (dissoc :now-ms) (assoc :clock clockless)))]
+    (is (= :freshness-undecidable (:aiueos.publisher/reason v))
+        "neither fresh nor stale is not admitted, and is not reported as expiry")
+    (is (= :no-reading-only-a-bound (:aiueos.publisher/freshness-reason v)))))
+
+(deftest a-clockless-machine-can-still-reject-a-stale-release
+  (let [clockless (clock/resolve-time {:build-stamp-ms (+ 1000 (:freshness-ttl-ms p/default-policy) 1)})
+        v (p/admit-release release (-> state (dissoc :now-ms) (assoc :clock clockless)))]
+    (is (= :timestamp-expired (:aiueos.publisher/reason v)))
+    (is (= :older-than-lower-bound (:aiueos.publisher/freshness-reason v))
+        "the anti-freeze half survives with no clock at all")))
+
+(deftest a-signed-reading-lets-the-same-machine-accept
+  (let [ok (clock/resolve-time {:signed-ms 2000 :build-stamp-ms 500})]
+    (is (p/admitted? (p/admit-release release (-> state (dissoc :now-ms) (assoc :clock ok)))))))
