@@ -41,8 +41,19 @@
   This namespace decides. The revocation bitmap is a
   `org-w3-vc-bitstring-status-list` document; the release manifest and its
   artifacts are content-addressed blocks; ordering across publishers is inga's
-  job. None of those are reimplemented here."
-  (:require [clojure.set :as set]))
+  job. None of those are reimplemented here.
+
+  ## Freshness on a machine that may have no clock
+
+  `state` may carry a `:clock` from `aiueos.clock/resolve-time`. When it does,
+  freshness is decided there, and its third answer is honoured: a machine that
+  can neither accept nor reject **denies the release** with
+  `:freshness-undecidable`. It does not fall through to admitting one, and it
+  does not report `:timestamp-expired` as though a measurement had been taken.
+  Without a `:clock`, `:now-ms` is used directly — which is the hosted profile,
+  where a wall clock exists."
+  (:require [clojure.set :as set]
+            [aiueos.clock :as clock]))
 
 (def roles
   "TUF roles. `:root` names the keys and thresholds for every other role;
@@ -53,7 +64,7 @@
 (def deny-reasons
   #{:below-threshold :key-revoked :key-not-in-root :sequence-not-monotonic
     :timestamp-expired :timestamp-missing :digest-mismatch :unknown-role
-    :root-expired :no-signatures :threshold-unsatisfiable})
+    :root-expired :no-signatures :threshold-unsatisfiable :freshness-undecidable})
 
 (defn- deny [reason extra]
   (merge {:aiueos/decision :deny :aiueos.publisher/reason reason} extra))
@@ -156,13 +167,25 @@
 
        (nil? timestamp-ms) (deny :timestamp-missing {})
 
-       (and now-ms (> (- now-ms timestamp-ms) (:freshness-ttl-ms policy)))
-       (deny :timestamp-expired
-             {:aiueos.publisher/age-ms (- now-ms timestamp-ms)
-              :aiueos.publisher/ttl-ms (:freshness-ttl-ms policy)})
-
-       :else (admit (merge tally {:aiueos.publisher/sequence sequence
-                                  :aiueos.publisher/threshold threshold}))))))
+       :else
+       (let [ttl (:freshness-ttl-ms policy)
+             f (if-let [c (:clock state)]
+                 (clock/decide-freshness c timestamp-ms ttl)
+                 (when now-ms
+                   (if (> (- now-ms timestamp-ms) ttl)
+                     {:aiueos.clock/freshness :stale :aiueos.clock/reason :ttl-exceeded
+                      :aiueos.clock/age-ms (- now-ms timestamp-ms)}
+                     {:aiueos.clock/freshness :fresh})))]
+         (case (:aiueos.clock/freshness f)
+           :stale (deny :timestamp-expired
+                        {:aiueos.publisher/age-ms (:aiueos.clock/age-ms f)
+                         :aiueos.publisher/ttl-ms ttl
+                         :aiueos.publisher/freshness-reason (:aiueos.clock/reason f)})
+           :undecidable (deny :freshness-undecidable
+                              {:aiueos.publisher/freshness-reason (:aiueos.clock/reason f)})
+           (admit (merge tally {:aiueos.publisher/sequence sequence
+                                :aiueos.publisher/threshold threshold}))))
+))))
 
 (defn keep-running?
   "May a machine that cannot reach the publisher keep running what it already
