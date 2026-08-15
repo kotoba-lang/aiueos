@@ -4,7 +4,10 @@
   (+ (kernel-load-u8 table length offset)
      (* (kernel-load-u8 table length (+ offset 1)) 256)))
 
-(defn pointer-present [table length offset byte total]
+(defn pointer-present [table :i64 length :i64 offset :i64 byte :i64 total :i64] :bool
+  ;; The return type is stated because this predicate is recursive: the checker
+  ;; cannot infer bool for the else branch before the function's own type is
+  ;; known, and the two branches must agree.
   (if (= byte 8) (> total 0)
     (pointer-present table length offset (+ byte 1)
       (+ total (kernel-load-u8 table length (+ offset byte))))))

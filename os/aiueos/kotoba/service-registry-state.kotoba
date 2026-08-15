@@ -12,7 +12,10 @@
 (defn aiueos-service-registry-state [base length service]
   (let [start (if (= service 0) 24 27)
         state (service-state base length start)]
-    (* (and (= length 32)
+    ;; `and` is a bool, and bool is a type rather than a number, so it cannot
+    ;; be multiplied. The old emitter returned 0/1 from `and` and this read as
+    ;; arithmetic; `if` says the same thing under the current type discipline.
+    (if (and (= length 32)
             (or (= service 0) (= service 1))
             (= (read-u32 base length 0) 3)
             (= (read-u32 base length 4) 2)
@@ -27,6 +30,7 @@
             (> (kernel-load-u8 base length 25) 0)
             (> (kernel-load-u8 base length 27) 0)
             (> (kernel-load-u8 base length 28) 0))
-       state)))
+      state
+      0)))
 
 (defn main [] 0)
