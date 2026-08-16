@@ -66,10 +66,31 @@ the tuning does not hold.
 
 - **A2 is located, not closed.** 56 of 57 objects migrate and boot identically;
   one does not. The remaining work is a compiler question, not a packaging one.
-- **A lead, not a conclusion**: `kotoba-lang/kotoba-mir` carries a branch named
-  `agent/amu-constant-division`. That is suggestive and is **not** evidence —
-  nobody has diffed the emitted division sequence for this object. Do that
-  before believing it.
+- **The division lead was checked and does not hold.** `kotoba-lang/kotoba-mir`
+  carries a branch named `agent/amu-constant-division`, which was recorded here
+  as suggestive and explicitly not evidence. The emitted sequences have now been
+  read, and division is not what changed:
+
+  | | shipped | rebuilt |
+  |---|---|---|
+  | `idivq` / `cqto` / shift instructions | 14 | 14 |
+  | `andq` (the ADR-0031 mask) | 16 | 16 |
+  | fuel replenish immediate | `0x10000` | `0x10000` |
+  | `.data` | 0x50 | 0x50 |
+  | `.text` | 0x951 | **0x1062 (+76%)** |
+
+  Both still emit `andq` before `cqto; idivq`, so the ADR-0031 signedness fix
+  survives the rebuild intact. **What changed is register allocation**: the
+  shipped object is push/pop-heavy (108 `pushq`, 69 `popq`, 96 `movq`), the
+  rebuilt one spills to stack slots instead (348 `movq`, 21 `pushq`, 14
+  `popq`), and its deepest `%rsp` offset moves from 0x88 to 0xf8.
+
+  So the object is still not wrong and the compiler is still not obviously
+  wrong — the emitted code computes the same thing by a different discipline.
+  **The mechanism of the wedge remains unexplained**, and finding it needs the
+  boot debugged (a QEMU gdb stub through the timer path), not more static
+  reading. Recorded as unexplained rather than attributed to the nearest
+  plausible branch name.
 - `os/aiueos/scripts/bisect-object-migration.sh` makes this repeatable. It takes
   the control run's marker count as GOOD rather than hardcoding one, because a
   cold boot emits four fewer markers than a warm one and a constant would let an
