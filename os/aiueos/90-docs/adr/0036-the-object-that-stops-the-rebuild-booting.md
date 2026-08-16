@@ -64,8 +64,16 @@ the tuning does not hold.
 
 ## Consequences
 
-- **A2 is located, not closed.** 56 of 57 objects migrate and boot identically;
-  one does not. The remaining work is a compiler question, not a packaging one.
+- **A2 is located, and 56 of 57 are now landed.** The 52 objects that change
+  bytes without changing behaviour were migrated in a following commit and the
+  tree boots with evidence byte-identical to the pre-migration baseline (71
+  lines, compared warm to warm). `kernel-context-build` stays on the frozen
+  compiler until the wedge is explained.
+
+  What that buys: the dependency on a compiler 1,065 commits behind is no longer
+  57 objects wide. It is **one object**, and it is named. That is a smaller
+  surface to explain, and it means the next compiler change can be tested
+  against a tree that is otherwise current.
 - **The division lead was checked and does not hold.** `kotoba-lang/kotoba-mir`
   carries a branch named `agent/amu-constant-division`, which was recorded here
   as suggestive and explicitly not evidence. The emitted sequences have now been
