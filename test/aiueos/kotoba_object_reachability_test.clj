@@ -36,7 +36,17 @@
 
   Adding a name here is a claim about that object, not a way to quiet the test:
   say what does execute it, or that nothing does."
-  {"murakumo-join-plan"
+  {"tcp-seq-acceptable"
+   (str "RFC 9293 3.10.7.4, the window-acceptability decision. Nothing links "
+        "it because nothing calls it yet: tcp-segment-valid stops before this "
+        "question -- it says its own arity is spent -- and giving the probe in "
+        "kernel/pci.c a second call site is a change to the kernel rather than "
+        "to this object. It is driven through the KIR interpreter by "
+        "aiueos.tcp-seq-acceptable-parity-test and required to agree with "
+        "kotoba-lang/org-ietf-tcp's tcp.seq on every input, so the wrap "
+        "arithmetic it had to copy is checked rather than asserted.")
+
+   "murakumo-join-plan"
    (str "A node's own fleet-enrolment decision. It has no caller inside the "
         "kernel, so no build links it; kotoba-lang/murakumo drives it through "
         "the KIR interpreter in aiueos-join-plan-parity-test and compares every "
