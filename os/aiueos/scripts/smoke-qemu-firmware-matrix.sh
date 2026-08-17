@@ -22,9 +22,26 @@
 # enrolled PK/KEK/db in the variable store, and the store this script hands it
 # is the empty template -- which leaves the firmware in setup mode, where it
 # will load anything. So a pass here is NOT evidence that a Secure-Boot-enabled
-# machine would accept the image, and that question stays open. It matters:
-# business PCs ship with Secure Boot on by default, so an unsigned image means
-# the customer must turn it off in firmware before the stick will boot.
+# machine would accept the image.
+#
+# That question is now ANSWERED, and the answer is no. Measured 2026-08-17 with
+# PK/KEK/db enrolled into a copy of this same template (virt-fw-vars
+# --enroll-generate ... --secure-boot), booting the same ESP under the same
+# `secure` firmware:
+#
+#   setup mode  BdsDxe: starting Boot0002 ...        71 markers, exit 97
+#   enforcing   BdsDxe: failed to load Boot0002 ...: Access Denied
+#                                                     0 markers, timed out
+#
+# Same image, same firmware build, same boot entry; the only difference is the
+# variable store. EFI_ACCESS_DENIED is the Secure Boot rejection itself, so
+# this names the mechanism rather than inferring it from a failure to boot.
+#
+# It matters: business PCs ship with Secure Boot on by default, so an unsigned
+# image means the customer must turn it off in firmware before the stick will
+# boot -- which is the "power it on" promise, contradicted. Signing (shim via
+# the Microsoft UEFI CA, or the customer enrolling a key into db) is a
+# prerequisite for shipping, not a later refinement.
 #
 # THE ORDERING ARTIFACT THIS SCRIPT CONTROLS FOR
 #
@@ -49,7 +66,11 @@ esp="$build/esp"
 blk="$build/virtio-blk-smoke.img"
 
 [ -d "$esp" ] || { echo "error: $esp missing -- run build-uefi.sh first" >&2; exit 2; }
-[ -f "$blk" ] || { echo "error: $blk missing -- run build-uefi.sh first" >&2; exit 2; }
+# build-uefi.sh does NOT make this one -- smoke-qemu-uefi.sh does, and only
+# keeps it with AIUEOS_PRESERVE_BLK_IMAGE=1. Pointing at the wrong script cost
+# a measurement: two QEMU runs came back with zero markers and looked like a
+# firmware rejection, when both had simply been handed a missing block file.
+[ -f "$blk" ] || { echo "error: $blk missing -- run AIUEOS_PRESERVE_BLK_IMAGE=1 smoke-qemu-uefi.sh first" >&2; exit 2; }
 
 fwdir="${AIUEOS_FIRMWARE_DIR:-}"
 if [ -z "$fwdir" ]; then
