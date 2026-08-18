@@ -4,8 +4,9 @@ Date: 2026-08-18
 
 ## Status
 
-Accepted as positioning. It names an ordered gap ledger and implements none of
-it. Extends ADR-0019 (which split boot authority from workload authority) and
+Accepted as positioning. It names an ordered gap ledger. ADR-0042 implemented
+the decision layer for steps 6 and 7 and ADR-0043 the hosted mechanism for the
+read half of step 6; steps 1–5 remain untouched. Extends ADR-0019 (which split boot authority from workload authority) and
 ADR-0030 (origin allowlists). It does not decide install-to-internal-disk.
 
 ## Context
@@ -82,21 +83,32 @@ What has to exist for the bare-metal profile to actually reach the cloud. Each
 step ends in QEMU evidence; each has a spec owner already registered in this
 workspace, so none of it starts from a blank page.
 
-| # | Gap | Owner |
+| # | Gap | What actually exists (measured 2026-08-18) |
 |---|---|---|
-| 1 | Address configuration (DHCP, or static bound to the enrolment record) | unowned |
-| 2 | DNS resolver | `kotoba-lang/org-ietf-dns`, `org-ietf-dnssec` |
+| 1 | Address configuration (DHCP, or static bound to the enrolment record) | **nothing** |
+| 2 | DNS **stub resolver** | wire format only. `kotoba-lang/org-ietf-dns` is an authoritative *server* — `nameserver.resolver` is the server-side answer-plan seam, not a client — and `org-ietf-dnssec` is *zone signing*, not resolver-side validation. `nameserver.wire` (RFC 1035 encode/decode) is reusable; the client is not written |
 | 3 | TCP from one connection to a usable stream: retransmit, window, close | this repo (ADR-0022 continues) |
-| 4 | TLS 1.3 client and chain validation | `capability-crypto-tls`, `org-ietf-x509`; `kotoba/x25519.kotoba`, `sha256.kotoba`, `rsa2048.kotoba` already exist natively |
-| 5 | HTTP/1.1 client | `capability-http-fetch`, `capability-http-post` |
-| 6 | kotobase client: block get/put by CID, ref read | `net-kotobase`; CID verification stays the store's job |
-| 7 | murakumo client: alias resolve, then `/v1/messages` | `kotoba-lang/murakumo`; `murakumo-join-plan.kotoba` finally acts on its own decision |
+| 4 | TLS 1.3 client and chain validation | **no implementation anywhere in the workspace.** `capability-crypto-tls` is an authority package, `provider status: contract-only`, two files. Real: `org-ietf-x509` (RFC 5280 parsing, the subset a signature verifier needs) for part of chain validation, and `kotoba/x25519.kotoba`, `sha256.kotoba`, `rsa2048.kotoba` natively. **The handshake and record layer are unwritten** |
+| 5 | HTTP/1.1 client | data model only. `capability-http-fetch` / `-post` are `contract-only`; `kotoba-lang/http` is the request/response model + `parse-url` + an `IHttp` protocol the host injects, and says outright that **no client is baked in** |
+| 6 | kotobase client: block get/put by CID, ref read | read: **done for the hosted profile** (ADR-0043). Write: unwritten, and it needs CACAO auth. `kotoba-lang/kotobase-client` already has byte-exact CACAO plus CID/graph derivation and is the reference — aiueos cannot depend on it (dependency-minimal invariant), so what it owes is a port, not a design |
+| 7 | murakumo client: alias resolve, then `/v1/messages` | decision only (ADR-0042). The hosted provider performs `GET` and nothing else, so the POST plan has no mechanism behind it |
+
+**This column was corrected on 2026-08-18.** As first written it named a repo
+per row without opening any of them, and two rows were wrong in the direction
+that matters: `capability-*` repos are *authority contracts*, not providers,
+and the DNS repos are the authoritative-server side of the protocol, not the
+resolver side. A ledger that names an owner reads as though the work is
+half-done. Steps 2, 4 and 5 start closer to a blank page than that table
+claimed.
 
 Steps 1–5 are the whole of the work. Once TLS and HTTP exist, 6 and 7 are two
 small protocol clients over an already-proved transport. The hosted Linux PID-1
-profile (ADR-0011) has steps 1–5 for free and is where the two cloud clients
-should be proved first — the same split ADR-0019 made between boot authority
-and workload authority.
+profile (ADR-0011) has steps 1–5 from the platform and is where the two cloud
+clients are proved first — the same split ADR-0019 made between boot authority
+and workload authority. That is what ADR-0042 and ADR-0043 did: the decisions,
+and a hosted provider that performs a block read and judges the bytes. Nothing
+in steps 1–5 moved for the bare-metal profile, which is the only profile those
+steps were ever about.
 
 ## Non-decisions
 
