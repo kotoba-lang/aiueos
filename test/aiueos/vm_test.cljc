@@ -73,3 +73,68 @@
                                                    :initramfs (.getPath initrd)})
                                          :qemu-binary "false"))))
            (finally (.delete kernel) (.delete initrd)))))))
+
+;; ── the launcher refuses artifacts a signed manifest does not name ─────────
+
+#?(:clj
+   (defn- artifact-file! [content]
+     (let [f (java.io.File/createTempFile "aiueos-vm-artifact" ".bin")]
+       (.deleteOnExit f)
+       (spit f content)
+       f)))
+
+#?(:clj
+   (defn- signed-release [kernel-digest initramfs-digest]
+     {:manifest-id "release-42" :sequence 42 :timestamp-ms 1000
+      :signatures [{:key-id "k1" :verified? true :status-index 0}
+                   {:key-id "k2" :verified? true :status-index 1}]
+      :artifacts [{:kind :kernel :sha256 kernel-digest}
+                  {:kind :initramfs :sha256 initramfs-digest}]}))
+
+#?(:clj
+   (def publisher-state
+     {:now-ms 1000 :root {:keys #{"k1" "k2"} :threshold 2} :revocation-bits [0 0 0 0]}))
+
+#?(:clj
+   (deftest a-boot-with-no-release-records-that-it-was-not-checked
+     (let [k (artifact-file! "kernel") i (artifact-file! "initramfs")
+           p (vm/validate-boot-inputs!
+              (vm/plan {:kernel (.getPath k) :initramfs (.getPath i)}))]
+       (is (false? (:aiueos.boot/verified? p))
+           "unverified is written down, not inferred from the absence of a complaint"))))
+
+#?(:clj
+   (deftest artifacts-that-match-the-manifest-boot-and-the-plan-says-so
+     (let [k (artifact-file! "kernel") i (artifact-file! "initramfs")
+           measured (vm/measure-artifacts {:kernel (.getPath k) :initramfs (.getPath i)})
+           p (vm/validate-boot-inputs!
+              (vm/plan {:kernel (.getPath k) :initramfs (.getPath i)
+                        :release (signed-release (:kernel measured) (:initramfs measured))
+                        :publisher-state publisher-state}))]
+       (is (true? (:aiueos.boot/verified? p)))
+       (is (= "release-42" (:aiueos.boot/release-id p)))
+       (is (= measured (:aiueos.boot/observed p))))))
+
+#?(:clj
+   (deftest an-initramfs-changed-after-signing-never-reaches-qemu
+     (let [k (artifact-file! "kernel") i (artifact-file! "initramfs")
+           measured (vm/measure-artifacts {:kernel (.getPath k) :initramfs (.getPath i)})
+           release (signed-release (:kernel measured) (:initramfs measured))]
+       (spit i "initramfs-with-something-extra")
+       (is (thrown-with-msg?
+            Exception #"refusing to boot: artifact-digest-mismatch"
+            (vm/validate-boot-inputs!
+             (vm/plan {:kernel (.getPath k) :initramfs (.getPath i)
+                       :release release :publisher-state publisher-state})))))))
+
+#?(:clj
+   (deftest an-unsigned-release-never-reaches-qemu
+     (let [k (artifact-file! "kernel") i (artifact-file! "initramfs")
+           measured (vm/measure-artifacts {:kernel (.getPath k) :initramfs (.getPath i)})]
+       (is (thrown-with-msg?
+            Exception #"refusing to boot: no-signatures"
+            (vm/validate-boot-inputs!
+             (vm/plan {:kernel (.getPath k) :initramfs (.getPath i)
+                       :release (assoc (signed-release (:kernel measured) (:initramfs measured))
+                                       :signatures [])
+                       :publisher-state publisher-state})))))))

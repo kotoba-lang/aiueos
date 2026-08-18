@@ -100,8 +100,13 @@
    :sha256 "3ffc953a35e2ea2f8a258f7b85e91deb0aef2502e534806f2cb2978524f27371"}
   {:path "src/aiueos/virtio.cljc" :role :guest-device-boundary
    :sha256 "16a95631480219a9070c55acd40cad2ca238032849d45b1df0a428a981c3242c"}
+  ;; What the hosted launcher is allowed to execute. Every other link in the
+  ;; chain was checked and the artifact the machine actually boots was not
+  ;; (ADR-0049).
+  {:path "src/aiueos/boot_admission.cljc" :role :boot-artifact-admission
+   :sha256 "0fb5ead36df5fbe44cfa61849d093df4326cb63846fae83f158ba833cdc4ae77"}
   {:path "src/aiueos/vm.cljc" :role :vm-launch
-   :sha256 "b26a7df51a943863e1e5da09a5507af1e15b1a796db2a3e3cb23500fd3c71060"}
+   :sha256 "c7010a3a238bfe3da8f2bb073631939f8870c6b65fce7153a00c34298839565d"}
   {:path "src/aiueos/image.cljc" :role :boot-image-construction
    :sha256 "060bf6154316535509c7b7455fe8a61b3ab07ebb5068a0cf3d70dbf6067477b5"}]
  ;; Content addresses, not paths or bare version strings: a Maven entry's
