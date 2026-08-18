@@ -307,3 +307,19 @@
     (is (empty? (profile/profile-violations {:aiueos/system "/system"}))
         "the omitted-profile default is :research, and it carries no anchor
          requirement -- the rule is production-only on purpose")))
+
+;; ── host and guest profiles are comparable, one way (ADR-0071) ────────────
+
+(deftest a-launcher-may-be-stricter-than-the-image-but-not-weaker
+  (is (true? (profile/at-least-as-strict? :regulated :sensitive-local)))
+  (is (true? (profile/at-least-as-strict? :regulated :regulated)))
+  (is (true? (profile/at-least-as-strict? :sensitive-local :research)))
+  (is (false? (profile/at-least-as-strict? :research :regulated))
+      "the dangerous direction: the image expected its artifact to be checked
+       and the launcher did not know")
+  (is (false? (profile/at-least-as-strict? :sensitive-local :regulated))))
+
+(deftest an-unknown-profile-is-not-ordered-by-accident
+  (is (false? (profile/at-least-as-strict? :high-assurance :regulated)))
+  (is (false? (profile/at-least-as-strict? :regulated :something-new)))
+  (is (false? (profile/at-least-as-strict? nil :research))))

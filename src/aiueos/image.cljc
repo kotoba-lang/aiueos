@@ -65,6 +65,7 @@
         :out out
         :guest-system (guest-system-path system-file)
         :guest-policy (when policy default-guest-policy-path)
+        :deployment-profile (:deployment-profile opts)
         :anchors-document anchors-doc
         :guest-anchors (when anchors-doc default-guest-anchors-path)
         ;; The digest is of the canonical bytes, not of the map: the device
@@ -109,6 +110,13 @@
      (pr-str (cond-> {:aiueos/system (:guest-system p)}
                (:guest-policy p) (assoc :aiueos/policy (:guest-policy p))
                (:guest-anchors p) (assoc :aiueos/anchors (:guest-anchors p))
+               ;; Without this the guest always booted as :research, because
+               ;; that is what an omitted profile resolves to -- so ADR-0065's
+               ;; production anchor requirement could never fire on an image
+               ;; this builder produced. A requirement the only builder cannot
+               ;; reach is a requirement that does not exist (ADR-0071).
+               (:deployment-profile p) (assoc :aiueos/deployment-profile
+                                              (:deployment-profile p))
                (:shutdown-after-boot? p) (assoc :aiueos/shutdown-after-boot? true)))))
 
 #?(:clj

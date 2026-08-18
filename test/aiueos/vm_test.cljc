@@ -174,3 +174,26 @@
        (is (= :regulated (:deployment-profile p))
            "the plan carries the profile it was launched under, so a receipt can
             say which rule was in force"))))
+
+#?(:clj
+   (deftest a-launcher-weaker-than-the-image-refuses
+     (let [k (artifact-file! "kernel") i (artifact-file! "initramfs")]
+       (is (thrown-with-msg?
+            Exception #"the image declares regulated"
+            (vm/validate-boot-inputs!
+             (vm/plan {:kernel (.getPath k) :initramfs (.getPath i)
+                       :deployment-profile :research
+                       :image-profile :regulated})))))))
+
+#?(:clj
+   (deftest a-launcher-stricter-than-the-image-proceeds
+     (let [k (artifact-file! "kernel") i (artifact-file! "initramfs")
+           measured (vm/measure-artifacts {:kernel (.getPath k) :initramfs (.getPath i)})
+           p (vm/validate-boot-inputs!
+              (vm/plan {:kernel (.getPath k) :initramfs (.getPath i)
+                        :deployment-profile :regulated
+                        :image-profile :research
+                        :release (signed-release (:kernel measured) (:initramfs measured))
+                        :publisher-state publisher-state}))]
+       (is (true? (:aiueos.boot/verified? p))
+           "verifying more than the image asked for costs nothing"))))

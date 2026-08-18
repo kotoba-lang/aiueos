@@ -4,7 +4,7 @@
  ;; other field, so an entry cannot change without this date having to change
  ;; too. It said 2026-08-01 while the file was being edited that morning, and
  ;; nothing read it.
- :tcb/content-digest "cc4c69383828d3f154c718d726b413680c4b671203c5f16565ab3d02a75bb5cf"
+ :tcb/content-digest "acda9afac2543634be59d6228b0ad9884ee3f719e1848b0455bb9ec080f17c39"
  :tcb/scope
  "Code whose compromise can grant authority, escape Wasm isolation, falsify
   production admission/audit evidence, or access hardware outside a component."
@@ -72,7 +72,7 @@
   {:path "src/aiueos/surface.cljc" :role :host-provider-surface
    :sha256 "5d0e4e1a242d8c221e839c422e39dea8bd189042e6aa686b71dc066f5873497e"}
   {:path "src/aiueos/deployment_profile.cljc" :role :production-admission
-   :sha256 "f62ff62c01325507adfc94dfb5bb3efdb8b22ceed4bc0959d2a2b90e16de3537"}
+   :sha256 "1ba2ab9353c59a00051422de9868e17d8b427bf9c52eeff0f28db3c635023e20"}
   {:path "src/aiueos/launcher.cljc" :role :component-launch-control
    :sha256 "6cf6689d74dc40a12430ad82ae70c56b07d6e4b9bdacdeaad21947da97ff8f87"}
   {:path "src/aiueos/pid1.cljc" :role :boot-root
@@ -111,9 +111,9 @@
   {:path "src/aiueos/boot_admission.cljc" :role :boot-artifact-admission
    :sha256 "0fb5ead36df5fbe44cfa61849d093df4326cb63846fae83f158ba833cdc4ae77"}
   {:path "src/aiueos/vm.cljc" :role :vm-launch
-   :sha256 "1a4d0554ca238f14573e2d56febf135d0a903d7ea01370eeddfbb95d10215791"}
+   :sha256 "f8bae08675e299ee800b7ac8279e52ab7839754a64b4025b768019d635ba6e2c"}
   {:path "src/aiueos/image.cljc" :role :boot-image-construction
-   :sha256 "060bf6154316535509c7b7455fe8a61b3ab07ebb5068a0cf3d70dbf6067477b5"}]
+   :sha256 "eecd5ff80bf644332a48a15a336cc22ba41a1856271efe4cc1563e7372c4e323"}]
  ;; Content addresses, not paths or bare version strings: a Maven entry's
  ;; `:sha256` is the digest of its resolved jar, a git entry's `:git-sha` is
  ;; git's own content address for the tree. `aiueos.tcb` re-verifies both
