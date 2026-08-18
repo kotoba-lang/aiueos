@@ -1,10 +1,10 @@
 {:tcb/version 3
- :tcb/as-of "2026-08-18"
+ :tcb/as-of "2026-08-19"
  ;; Paired with :tcb/content-digest below (ADR-0067): the digest covers every
  ;; other field, so an entry cannot change without this date having to change
  ;; too. It said 2026-08-01 while the file was being edited that morning, and
  ;; nothing read it.
- :tcb/content-digest "e4a74a2100ed5b8860c9fadd498e32eb7961fbe97ad981f1f66c046a61001ca9"
+ :tcb/content-digest "a9ebe294e7b36a0f5eb9174b6cfe9f0e7986b94458b93ca173907dfee25a7f3b"
  :tcb/scope
  "Code whose compromise can grant authority, escape Wasm isolation, falsify
   production admission/audit evidence, or access hardware outside a component."
@@ -111,7 +111,7 @@
   {:path "src/aiueos/boot_admission.cljc" :role :boot-artifact-admission
    :sha256 "0fb5ead36df5fbe44cfa61849d093df4326cb63846fae83f158ba833cdc4ae77"}
   {:path "src/aiueos/vm.cljc" :role :vm-launch
-   :sha256 "c7010a3a238bfe3da8f2bb073631939f8870c6b65fce7153a00c34298839565d"}
+   :sha256 "1a4d0554ca238f14573e2d56febf135d0a903d7ea01370eeddfbb95d10215791"}
   {:path "src/aiueos/image.cljc" :role :boot-image-construction
    :sha256 "060bf6154316535509c7b7455fe8a61b3ab07ebb5068a0cf3d70dbf6067477b5"}]
  ;; Content addresses, not paths or bare version strings: a Maven entry's

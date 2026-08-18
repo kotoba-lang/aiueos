@@ -138,3 +138,39 @@
                        :release (assoc (signed-release (:kernel measured) (:initramfs measured))
                                        :signatures [])
                        :publisher-state publisher-state})))))))
+
+;; ── the host declares the profile it is launching under (ADR-0069) ────────
+
+#?(:clj
+   (deftest a-production-launch-refuses-an-unverified-artifact
+     (let [k (artifact-file! "kernel") i (artifact-file! "initramfs")]
+       (doseq [profile [:sensitive-local :regulated]]
+         (testing (name profile)
+           (is (thrown-with-msg?
+                Exception #"requires a signed release to verify against"
+                (vm/validate-boot-inputs!
+                 (vm/plan {:kernel (.getPath k) :initramfs (.getPath i)
+                           :deployment-profile profile})))))))))
+
+#?(:clj
+   (deftest research-launches-unverified-and-says-so
+     (let [k (artifact-file! "kernel") i (artifact-file! "initramfs")
+           p (vm/validate-boot-inputs!
+              (vm/plan {:kernel (.getPath k) :initramfs (.getPath i)
+                        :deployment-profile :research}))]
+       (is (false? (:aiueos.boot/verified? p))
+           "unchanged for development: recorded, not refused"))))
+
+#?(:clj
+   (deftest a-production-launch-with-a-matching-release-proceeds
+     (let [k (artifact-file! "kernel") i (artifact-file! "initramfs")
+           measured (vm/measure-artifacts {:kernel (.getPath k) :initramfs (.getPath i)})
+           p (vm/validate-boot-inputs!
+              (vm/plan {:kernel (.getPath k) :initramfs (.getPath i)
+                        :deployment-profile :regulated
+                        :release (signed-release (:kernel measured) (:initramfs measured))
+                        :publisher-state publisher-state}))]
+       (is (true? (:aiueos.boot/verified? p)))
+       (is (= :regulated (:deployment-profile p))
+           "the plan carries the profile it was launched under, so a receipt can
+            say which rule was in force"))))
