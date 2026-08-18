@@ -73,7 +73,7 @@
   {:path "src/aiueos/pid1.cljc" :role :boot-root
    :sha256 "77eb5bf060d99ada1ec928f4a3961042c4011fee9d6f91c5250159454d4705d7"}
   {:path "src/aiueos/sbom.clj" :role :release-attestation-authority
-   :sha256 "0104609cc717daa4d060d36abaefecaf8b270cc84547c350a1eed2f66682fb03"}
+   :sha256 "ced0430bdf3eb061a379d3221b42f5fa208c898e064fad19667021771108ee9a"}
   {:path "src/aiueos/reproducibility.clj" :role :release-reproducibility-authority
    :sha256 "55416e9d8effd4c4b5c0f56e858658297ed3ae4ce2fc1ef70a0163c018d65f32"}
   ;; The checker is in the inventory it checks. It was the one file whose
@@ -81,7 +81,7 @@
   ;; recorded, so weakening a check left no trace here. No fixpoint problem:
   ;; the digest of the source lives in this sibling EDN, not in the source.
   {:path "src/aiueos/tcb.clj" :role :tcb-inventory-authority
-   :sha256 "eb1638fc909b9034c3bbbc0925bdc4c02e9e61ed8296f9ece3225c15bbb797cc"}
+   :sha256 "88da7db455f9c56601c13f99471834099da8fbe35d3d89b9c8c5c56e81d59461"}
   ;; The record of which supply-chain properties this repository holds on
   ;; purpose. Pinned for the same reason the checker is: a property quietly
   ;; deleted from an unpinned list leaves no trace, and `aiueos.tcb` only

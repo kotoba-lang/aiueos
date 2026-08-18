@@ -367,7 +367,22 @@
   ([inventory]
    (validate inventory (read-edn-file deps-path) (read-edn-file adoption-path)))
   ([inventory deps adoption]
-   (let [files (:tcb/files inventory)
+   (validate inventory deps adoption {}))
+  ([inventory deps adoption opts]
+   (let [;; The classpath half asks "is every jar the JVM loaded recorded here",
+         ;; which only has an answer when the JVM was started with the
+         ;; classpath the inventory is about. Under `:test` it is not: the test
+         ;; runner, ClojureScript and their transitive jars are all loaded, and
+         ;; reporting them as :classpath-unrecorded is a check answering a
+         ;; question nobody asked -- seventeen false drifts that made every
+         ;; other assertion in aiueos.tcb-test red, and hid a real one behind
+         ;; them (ADR-0062).
+         ;;
+         ;; So the caller says whether the classpath is in scope, and the
+         ;; result says which it was. A skipped half and a passed half must not
+         ;; look the same.
+         classpath-scope (get opts :classpath :measured)
+         files (:tcb/files inventory)
          paths (mapv :path files)
          errors
          (into []
@@ -380,9 +395,10 @@
                 (file-errors files)
                 (external-errors inventory deps adoption)
                 (platform-floor-errors inventory)
-                (classpath-errors inventory)
+                (when (= :measured classpath-scope) (classpath-errors inventory))
                 (validate-build-identity)))]
      {:valid? (empty? errors)
+      :classpath-scope classpath-scope
       :files (count files)
       :external (count (:tcb/external inventory))
       :classpath (count (:tcb/classpath inventory))
