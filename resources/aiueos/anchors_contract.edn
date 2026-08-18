@@ -16,7 +16,9 @@
   :aiueos.anchors/decision-shapes #{:grant :deny}
   :aiueos.anchors/deny-reasons #{:set-id-missing :anchor-set-empty :no-current-set
                                  :disjoint-without-break-glass
-                                 :break-glass-below-threshold}
+                                 :break-glass-below-threshold
+                                 :no-anchors-artifact :anchors-for-another-release
+                                 :anchors-digest-mismatch}
   :aiueos.anchors/reasons-pass-through
   "aiueos.publisher reasons are returned unchanged; a caller reading a verdict
    should not have to guess which layer refused"
@@ -26,6 +28,22 @@
                                :drops-previous-immediately? true
                                :verdict-flag :aiueos.anchors/one-way?}
   :aiueos.anchors/first-set :in-the-image
+  :aiueos.anchors/release-borne
+  {:artifact-kind :anchors
+   :set-id :the-artifact-digest-the-manifest-binds
+   :bound-to-release-by :release-id
+   :bootstrap-decided-by :device-state-not-the-document
+   :bypasses-anchor-rules? false
+   :note "from-release builds a proposal; admit-set judges it. A release that
+          replaces every anchor is refused exactly as a standalone set is --
+          a perfectly signed release that strands the fleet is still a
+          stranded fleet."}
+  :aiueos.anchors/sequence-key :installed-anchor-sequence
+  :aiueos.anchors/sequence-key-note
+  "Anchor sets and releases are both sequenced and both checked by
+   aiueos.publisher, which reads :installed-sequence. One shared key means the
+   higher number silently blocks the other stream and a rollback arrives
+   looking like an upgrade, so anchor state carries its own."
   :aiueos.anchors/trust-on-first-use :refused
   :aiueos.anchors/overlap-window-ms 604800000
   :aiueos.anchors/freshness-gates :admission-only
@@ -37,10 +55,13 @@
    "Nothing here fetches or verifies a signature. :signatures carries the
     provider's per-signature :verified? answer, as everywhere else in this
     repository."
-   "The bootstrap set is not yet built into any image. Marking a set
-    :bootstrap? is admitted here; putting one in the release artifact, covered
-    by the release signature, is unimplemented -- so today a fresh device still
-    has no anchors and therefore reaches nothing."
+   "The decision path for a release-borne set is complete; the build is not.
+    No release image actually carries an :anchors artifact -- os/aiueos's
+    image build does not emit one and aiueos.image does not stage one -- so a
+    fresh device still has no anchors. What exists is the judgement that would
+    admit one."
+   "Nothing decodes the artifact. :carried is what a provider decoded from the
+    bytes; the encoding of an anchor-set document is unspecified."
    "No pin for kotobase.net or api.murakumo.cloud is recorded anywhere. This
     decides how a set changes, not what the first one contains."
    "Rotation is modelled, not exercised: no fleet has run add -> switch ->
