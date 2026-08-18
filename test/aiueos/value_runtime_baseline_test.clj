@@ -67,3 +67,19 @@
       (is (nil? message) (str object " passed and still carries a failure message")))
     (when (= :fail verdict)
       (is (seq message) (str object " failed with no reason recorded")))))
+
+(deftest every-failure-is-classified
+  (testing "a new failure mode must not be folded into an existing bucket"
+    (doseq [{:keys [object cause verdict]} (:value-runtime/results @receipt)]
+      (when (= :fail verdict)
+        (is (some? cause) (str object " failed with no cause recorded"))
+        (is (not= :unclassified cause)
+            (str object " failed in a way this receipt has no class for: "
+                 "add the class rather than widening an existing pattern"))))))
+
+(deftest the-causes-account-for-every-failure
+  (let [by-cause (:value-runtime/failing-by-cause @receipt)]
+    (is (seq by-cause))
+    (is (= (:value-runtime/failing @receipt) (reduce + (vals by-cause)))
+        "a cause histogram that does not sum to the failure count is describing
+         a different measurement than the one beside it")))
