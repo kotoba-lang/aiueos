@@ -9,11 +9,15 @@
 (def source-commit (apply str (repeat 40 "b")))
 
 (defn- built []
+  ;; This JVM's classpath is the `:test` alias's, not the one the inventory
+  ;; describes, and evidence about the wrong classpath is worse than evidence
+  ;; that says which one it looked at (ADR-0062).
   (sbom/attestations {:artifact-digest artifact-digest
                       :source-commit source-commit
                       :builder "github-actions/ubuntu-latest"
                       :invocation {:command "os/aiueos/scripts/build-release-image.sh"}
-                      :isolated-builder? true}))
+                      :isolated-builder? true
+                      :classpath-scope :not-in-scope}))
 
 (defn- signed [key-pair {:keys [sbom provenance] :as attestations}]
   (let [private (.getPrivate key-pair)]
@@ -53,7 +57,11 @@
     (is (re-matches #"sha256:[0-9a-f]{64}" (:sbom-digest evidence)))
     (is (re-matches #"sha256:[0-9a-f]{64}" (:provenance-digest evidence)))
     (is (true? (:tcb-drift-check? evidence))
-        "reports the inventory check's real verdict")))
+        "reports the inventory check's real verdict")
+    (is (= :not-in-scope (:tcb-classpath-scope evidence))
+        "and says which classpath question it answered -- under this alias the
+         loaded jars are the test runner's, not the ones the inventory is
+         about, so a verdict about them would be about the wrong classpath")))
 
 (deftest the-regulated-profile-accepts-this-supply-chain-evidence
   (let [{:keys [evidence]} (built)

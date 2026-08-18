@@ -24,6 +24,7 @@
   signing already uses."
   (:require [aiueos.key-lifecycle :as key-lifecycle]
             [aiueos.tcb :as tcb]
+            [clojure.edn :as edn]
             [clojure.java.io :as io])
   (:import [java.security MessageDigest]))
 
@@ -142,14 +143,25 @@
   here because judging two independent builds needs inputs — the second build's
   digest above all — that this namespace has no way to obtain."
   [{sbom-document :sbom provenance-document :provenance
-    reproducibility :reproducibility}]
-  (let [validation (tcb/validate)]
+    reproducibility :reproducibility
+    classpath-scope :classpath-scope}]
+  (let [;; The classpath half of the inventory check only has an answer when
+        ;; this JVM was started with the classpath the inventory describes.
+        ;; Release evidence is produced under the production alias, where it is;
+        ;; a caller running under another one gets `:tcb-classpath-scope` saying
+        ;; which question was answered, rather than a `false` that reads as
+        ;; drift (ADR-0062).
+        validation (tcb/validate (tcb/read-inventory)
+                                 (edn/read-string (slurp tcb/deps-path))
+                                 (edn/read-string (slurp tcb/adoption-path))
+                                 {:classpath (or classpath-scope :measured)})]
     (merge
      {:artifact-digest (:sbom/artifact-digest sbom-document)
       :sbom-digest (:sbom/digest sbom-document)
       :provenance-digest (:provenance/digest provenance-document)
       :tcb-inventory-digest (file-digest tcb/inventory-path)
-      :tcb-drift-check? (:valid? validation)}
+      :tcb-drift-check? (:valid? validation)
+      :tcb-classpath-scope (:classpath-scope validation)}
      reproducibility)))
 
 (defn attestations
@@ -159,7 +171,7 @@
   the regulated profile's reproducibility checks rather than omitting them —
   an unattested claim is refused, not skipped."
   [{:keys [artifact-digest source-commit builder invocation isolated-builder?
-           reproducibility]}]
+           reproducibility classpath-scope]}]
   (let [s (sbom {:artifact-digest artifact-digest :source-commit source-commit})
         p (provenance {:artifact-digest artifact-digest
                        :source-commit source-commit
@@ -169,7 +181,8 @@
                        :isolated-builder? isolated-builder?})]
     {:sbom s :provenance p
      :evidence (regulated-evidence {:sbom s :provenance p
-                                    :reproducibility reproducibility})}))
+                                    :reproducibility reproducibility
+                                    :classpath-scope classpath-scope})}))
 
 (defn -main
   "Emit unsigned attestations for a built artifact.

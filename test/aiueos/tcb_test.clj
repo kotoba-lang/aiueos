@@ -33,8 +33,18 @@
   ;; asserted rather than derived on purpose -- deriving it would make the
   ;; inventory grow silently, and a TCB that can grow unnoticed is the record
   ;; ADR-0016 called "not evidence".
-  (is (= {:valid? true :files 34 :external 5 :classpath 9 :properties 6 :errors []}
-         (tcb/validate))))
+  ;; `:classpath :not-in-scope` because this JVM was started with the `:test`
+  ;; alias, whose extra jars are not what the inventory is about (ADR-0062).
+  ;; The counts are asserted rather than derived on purpose; 34 -> 39 and
+  ;; 5 -> 6 are the cloud/anchors/boot-admission additions of ADR-0042 through
+  ;; ADR-0049, which nobody noticed at the time because this assertion was
+  ;; already red for the classpath reason and one red hides another.
+  (is (= {:valid? true :classpath-scope :not-in-scope
+          :files 39 :external 6 :classpath 9 :properties 6 :errors []}
+         (tcb/validate (tcb/read-inventory)
+                       (clojure.edn/read-string (slurp "deps.edn"))
+                       (clojure.edn/read-string (slurp "security-adoption.edn"))
+                       {:classpath :not-in-scope}))))
 
 (deftest authority-and-escape-boundaries-cannot-disappear-silently
   (let [inventory (tcb/read-inventory)
@@ -75,12 +85,13 @@
            :git/sha "aaaa000000000000000000000000000000000000"}}})
 
 (deftest synthetic-git-dependency-baseline-is-clean
-  (is (true? (:valid? (tcb/validate git-dep-inventory git-deps-edn nil)))))
+  (is (true? (:valid? (tcb/validate git-dep-inventory git-deps-edn nil
+                                    {:classpath :not-in-scope})))))
 
 (deftest runtime-dependency-missing-from-the-inventory-is-fail-closed
   (let [deps (assoc-in git-deps-edn [:deps 'io.github.example/unlisted]
                        {:mvn/version "1.0.0"})
-        result (tcb/validate git-dep-inventory deps nil)]
+        result (tcb/validate git-dep-inventory deps nil {:classpath :not-in-scope})]
     (is (false? (:valid? result)))
     (is (= [{:kind :external-undeclared
              :coordinate "io.github.example/unlisted"}]
@@ -89,13 +100,13 @@
 (deftest git-pin-drift-between-inventory-and-deps-is-fail-closed
   (let [deps (assoc-in git-deps-edn [:deps 'io.github.example/lib :git/sha]
                        "bbbb000000000000000000000000000000000000")
-        result (tcb/validate git-dep-inventory deps nil)]
+        result (tcb/validate git-dep-inventory deps nil {:classpath :not-in-scope})]
     (is (false? (:valid? result)))
     (is (= :external-git-sha-drift (-> result :errors first :kind)))))
 
 (deftest an-unpinned-external-dependency-cannot-pass-silently
   (let [inventory (update-in git-dep-inventory [:tcb/external 0] dissoc :git-sha)
-        result (tcb/validate inventory git-deps-edn nil)]
+        result (tcb/validate inventory git-deps-edn nil {:classpath :not-in-scope})]
     (is (false? (:valid? result)))
     (is (= :external-unpinned (-> result :errors first :kind)))))
 
@@ -103,7 +114,7 @@
   (let [inventory (assoc git-dep-inventory
                          :tcb/external [{:coordinate "java.base" :source :platform
                                          :role :crypto-ffi-process-runtime}])
-        result (tcb/validate inventory {:deps {}} nil)]
+        result (tcb/validate inventory {:deps {}} nil {:classpath :not-in-scope})]
     (is (false? (:valid? result)))
     (is (= :external-unpinned (-> result :errors first :kind)))))
 
@@ -119,7 +130,8 @@
   (assoc git-dep-inventory :tcb/external [entry]))
 
 (defn- platform-errors [entry]
-  (:errors (tcb/validate (platform-inventory entry) {:deps {}} nil)))
+  (:errors (tcb/validate (platform-inventory entry) {:deps {}} nil
+                         {:classpath :not-in-scope})))
 
 (deftest the-ci-workflow-java-version-is-readable
   (is (seq provisioned-versions)
@@ -168,7 +180,7 @@
   (let [inventory (tcb/read-inventory)
         deps (edn/read-string (slurp "deps.edn"))
         adoption {:security/git-sha (apply str (repeat 40 "f"))}
-        result (tcb/validate inventory deps adoption)]
+        result (tcb/validate inventory deps adoption {:classpath :not-in-scope})]
     (is (false? (:valid? result)))
     (is (= [{:kind :external-adoption-drift
              :coordinate "io.github.kotoba-lang/security"
@@ -190,11 +202,19 @@
 
 ;; --- transitive closure (classpath) half ----------------------------------
 
-(deftest every-classpath-jar-is-recorded-with-a-role
-  (let [recorded (into {} (map (juxt :jar identity))
-                       (:tcb/classpath (tcb/read-inventory)))]
-    (is (every? #(keyword? (:role (get recorded (:jar %)))) (tcb/classpath-jars))
-        "a jar loaded but unrecorded is an unreviewed member of the TCB closure")))
+(deftest every-recorded-classpath-entry-has-a-role
+  ;; The stronger claim -- every jar the JVM *loaded* is recorded -- cannot be
+  ;; answered under the `:test` alias, whose classpath is not the one the
+  ;; inventory describes. `clojure -M:tcb-check` asks it on the production
+  ;; classpath and is the only place it means anything; asserting it here
+  ;; produced seventeen false drifts (ADR-0062).
+  ;;
+  ;; What is checkable anywhere is the inventory's own side: an entry with no
+  ;; role is a jar nobody reviewed, recorded as though someone had.
+  (let [entries (:tcb/classpath (tcb/read-inventory))]
+    (is (<= 9 (count entries)) "an empty classpath section would pass vacuously")
+    (doseq [{:keys [jar role]} entries]
+      (is (keyword? role) (str jar " is recorded with no role")))))
 
 (deftest the-closure-covers-what-no-declaration-names
   (let [recorded (set (map :jar (:tcb/classpath (tcb/read-inventory))))]
@@ -222,7 +242,10 @@
   (let [inventory (update (tcb/read-inventory) :tcb/classpath
                           conj {:jar "not-on-this-classpath.jar" :role :example
                                 :scope :runtime :sha256 (apply str (repeat 64 "0"))})]
-    (is (true? (:valid? (tcb/validate inventory)))
+    (is (true? (:valid? (tcb/validate inventory
+                                      (clojure.edn/read-string (slurp "deps.edn"))
+                                      (clojure.edn/read-string (slurp "security-adoption.edn"))
+                                      {:classpath :not-in-scope})))
         "the check runs under more than one alias; recorded-but-absent is normal")))
 
 ;; --- adopted build properties ---------------------------------------------
