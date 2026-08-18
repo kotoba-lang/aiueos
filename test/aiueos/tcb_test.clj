@@ -1,6 +1,7 @@
 (ns aiueos.tcb-test
   (:require [aiueos.tcb :as tcb]
             [clojure.edn :as edn]
+            [clojure.java.io :as io]
             [clojure.test :refer [deftest is]]))
 
 (def required-tcb-paths
@@ -258,7 +259,11 @@
 (def build-identity (edn/read-string (slurp tcb/build-identity-path)))
 
 (defn- with-property [entry]
-  (tcb/validate-build-identity (assoc build-identity :adopted [entry])))
+  ;; A shape fixture, not a review artifact: the recorded digest describes the
+  ;; document on disk, and this one has a different :adopted list (ADR-0070).
+  (tcb/validate-build-identity (-> build-identity
+                                   (assoc :adopted [entry])
+                                   (dissoc :build-identity/content-digest))))
 
 (def example-property
   {:property :example
@@ -292,13 +297,17 @@
   ;; Otherwise the implementation of a declared property could change without
   ;; the review the inventory exists to force.
   (let [errors (tcb/validate-build-identity
-                (assoc build-identity :adopted [example-property])
+                (-> build-identity
+                    (assoc :adopted [example-property])
+                    (dissoc :build-identity/content-digest))
                 (assoc (tcb/read-inventory) :tcb/files []))]
     (is (= :property-mechanism-not-in-tcb (:kind (first errors))))))
 
 (deftest a-non-goal-without-a-reason-is-fail-closed
   (let [errors (tcb/validate-build-identity
-                (assoc build-identity :non-goals [{:property :something}]))]
+                (-> build-identity
+                    (assoc :non-goals [{:property :something}])
+                    (dissoc :build-identity/content-digest)))]
     (is (= :non-goal-without-reason (:kind (first errors))))))
 
 (deftest an-emptied-property-record-is-fail-closed
@@ -334,3 +343,37 @@
                              (edn/read-string (slurp "security-adoption.edn"))
                              {:classpath :not-in-scope})]
     (is (some #(= :content-digest-missing (:kind %)) (:errors result)))))
+
+;; --- build-identity has a review date too (ADR-0070) -----------------------
+
+(deftest the-adopted-contract-carries-its-own-review-digest
+  (let [doc (edn/read-string (slurp "qualification/build-identity.edn"))]
+    (is (= (:build-identity/content-digest doc)
+           (tcb/build-identity-content-digest doc))
+        "a property changed without the digest being re-recorded, so
+         :build-identity/as-of is claiming a review that did not cover it")
+    (is (re-matches #"\d{4}-\d{2}-\d{2}" (str (:build-identity/as-of doc))))))
+
+(deftest a-property-changed-without-re-review-is-stale
+  (let [doc (edn/read-string (slurp "qualification/build-identity.edn"))
+        ;; keeps the recorded digest, changes what it covers
+        changed (update doc :adopted (fn [ps] (assoc-in (vec ps) [0 :statement] "rewritten")))]
+    (is (some #(= :build-identity-as-of-stale (:kind %))
+              (tcb/validate-build-identity changed))
+        "rewriting a property's statement is a review question")))
+
+(deftest a-named-gate-with-no-tests-in-it-is-not-a-gate
+  (let [doc (edn/read-string (slurp "qualification/build-identity.edn"))
+        empty-gate "test/aiueos/__empty_gate_probe.cljc"]
+    (spit empty-gate ";; deliberately empty: written and deleted by this test\n")
+    (try
+      (let [changed (-> doc
+                        (update :adopted (fn [ps] (assoc-in (vec ps) [0 :gate] [empty-gate])))
+                        ;; no digest: this fixture is about the gate floor, and
+                        ;; a shape fixture is not a review artifact
+                        (dissoc :build-identity/content-digest))]
+        (is (some #(= :property-gate-has-no-tests (:kind %))
+                  (tcb/validate-build-identity changed))
+            "existence was already checked; an empty file passes an existence
+             check exactly as well as a full one"))
+      (finally (.delete (io/file empty-gate))))))
