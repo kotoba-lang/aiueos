@@ -7,6 +7,7 @@
 [{:db/id -1
   :aiueos.cloud/id :aiueos/default-cloud
   :aiueos.cloud/source-files ["src/aiueos/cloud.cljc"]
+  :aiueos.cloud/hosted-provider "src/aiueos/provider/cloud.clj"
   :aiueos.cloud/authorities
   {:storage {:default-origin "https://kotobase.net" :owner "net-kotobase"}
    :inference {:default-origin "https://api.murakumo.cloud"
@@ -14,7 +15,8 @@
                :alias "murakumo-main"}}
   :aiueos.cloud/decision-shapes #{:allow :deny}
   :aiueos.cloud/deny-reasons #{:cid-unparsable :cid-not-raw :cid-not-sha256
-                               :origin-not-allowed :plan-not-allowed
+                               :origin-not-allowed :insecure-transport
+                               :plan-not-allowed
                                :response-not-ok :digest-missing :digest-mismatch
                                :alias-unresolved :resolved-endpoint-not-allowed
                                :model-is-alias-target :messages-missing}
@@ -32,6 +34,12 @@
   :aiueos.cloud/request-model :alias
   :aiueos.cloud/override-equal-to-alias-target :refused
   :aiueos.cloud/url-checked-twice? true
+  :aiueos.cloud/transport-required :https
+  :aiueos.cloud/plaintext-escape-hatch :aiueos.cloud/allow-insecure-origins
+  :aiueos.cloud/provider-faults #{:plan-not-allowed :net-denied
+                                  :response-too-large :request-failed}
+  :aiueos.cloud/provider-follows-redirects? false
+  :aiueos.cloud/provider-body-ceiling-bytes 4194304
   :aiueos.cloud/assurance-gaps
   ["This namespace does not hash. `admit-block` compares the digest a provider
     reports against the digest the CID commits to; whether the provider really
@@ -45,4 +53,13 @@
     re-checked against the allowlist, but nothing here authenticates the
     resolver's answer -- that needs TLS, which is step 4."
    "Request bodies are data, not wire bytes. Whether a provider serialises
-    :body the way the murakumo API expects is untested here."]}]
+    :body the way the murakumo API expects is untested here."
+   "aiueos.policy/net-url-allowed? matches on host: it strips the scheme and the
+    port. The https requirement is enforced in aiueos.cloud rather than by the
+    allowlist, so an allowlist entry alone still does not distinguish
+    kotobase.net:443 from kotobase.net:8443."
+   "The hosted provider authenticates the endpoint with nothing beyond the JDK
+    default trust store, which this repository neither owns nor pins."
+   "There is no write path. PUT /ipfs/:cid needs a CACAO-authenticated caller
+    and no credential path exists here; plan-block-write is a decision with no
+    mechanism behind it yet."]}]

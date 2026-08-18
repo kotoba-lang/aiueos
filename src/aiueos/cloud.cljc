@@ -53,7 +53,7 @@
   "Reasons this namespace produces. `aiueos.net`'s own denial passes through
   `perform` unchanged."
   #{:cid-unparsable :cid-not-raw :cid-not-sha256
-    :origin-not-allowed :plan-not-allowed
+    :origin-not-allowed :insecure-transport :plan-not-allowed
     :response-not-ok :digest-missing :digest-mismatch
     :alias-unresolved :resolved-endpoint-not-allowed
     :model-is-alias-target :messages-missing})
@@ -156,13 +156,33 @@
   (str (if (str/ends-with? origin "/") (subs origin 0 (dec (count origin))) origin)
        path))
 
+(defn- insecure-permitted?
+  "Whether URL sits under an origin the operator explicitly marked as allowed
+  to be plaintext. The escape hatch exists because a loopback test server has
+  no certificate, and it is spelled out in policy so it is visible in the
+  deployment rather than hidden in the code."
+  [policy url]
+  (boolean (some #(str/starts-with? url (str %))
+                 (:aiueos.cloud/allow-insecure-origins policy))))
+
+(defn- secure? [policy url]
+  (or (str/starts-with? url "https://") (insecure-permitted? policy url)))
+
 (defn- with-allowed-url
-  "Gate URL through the same allowlist every provider shares, then hand it to
-  BUILD. One place, so a new request kind cannot forget."
+  "Gate URL through TLS and the same allowlist every provider shares, then hand
+  it to BUILD. One place, so a new request kind cannot forget either check.
+
+  `aiueos.policy/net-url-allowed?` matches on host: it strips the scheme and the
+  port before comparing, so an entry admitting `kotobase.net` admits plaintext
+  to `kotobase.net` just as readily. For a machine whose storage and inference
+  authorities are both remote, plaintext is not a degraded mode, it is a
+  different threat model — so the transport is checked here rather than left to
+  whoever wrote the allowlist entry."
   [policy url build]
-  (if (policy/net-url-allowed? policy url)
-    (allow (build url))
-    (deny :origin-not-allowed {:aiueos.cloud/url url})))
+  (cond
+    (not (secure? policy url)) (deny :insecure-transport {:aiueos.cloud/url url})
+    (not (policy/net-url-allowed? policy url)) (deny :origin-not-allowed {:aiueos.cloud/url url})
+    :else (allow (build url))))
 
 (defn plan-block-read
   "Plan a block read of CID from the storage authority. Any codec may be read;
@@ -260,6 +280,10 @@
     (cond
       (str/blank? endpoint)
       (deny :alias-unresolved {:aiueos.cloud/alias alias})
+
+      (not (secure? policy endpoint))
+      (deny :insecure-transport {:aiueos.cloud/alias alias
+                                 :aiueos.cloud/url endpoint})
 
       (not (policy/net-url-allowed? policy endpoint))
       (deny :resolved-endpoint-not-allowed {:aiueos.cloud/alias alias
