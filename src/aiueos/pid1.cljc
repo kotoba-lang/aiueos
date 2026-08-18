@@ -22,9 +22,34 @@
   `aiueos.vfio`: FFM + file I/O)."
   (:require [aiueos.deployment-profile :as deployment-profile]
             [clojure.string :as str]
+            #?(:clj [aiueos.anchors :as anchors])
             #?(:clj [clojure.edn :as edn])))
 
 (def boot-edn-path "/etc/aiueos/boot.edn")
+
+;; ── the anchors the image booted with ──────────────────────────────────────
+;;
+;; ADR-0047 put the bootstrap anchor set in the image and nothing read it. This
+;; reads it.
+;;
+;; **Where the trust comes from, stated plainly:** the document's integrity is
+;; the *image's* integrity. Re-checking a publisher signature over the file at
+;; PID-1 time would add nothing when the image was verified, and could not fix
+;; anything when it was not — PID 1 is already running code from that image. So
+;; this loads and validates the document; it does not re-admit it. What the
+;; hosted profile therefore inherits is whatever verified the image, which today
+;; is nothing (the bare-metal profile has measured Secure Boot; this one does
+;; not). That is a gap in the boot path, not something a later parse can repair.
+;;
+;; Three outcomes, deliberately distinct, because the difference between them
+;; is the difference between a safe machine and a broken one:
+;;
+;;   no `:aiueos/anchors`  -> boots with no pins. Existing images stay valid,
+;;                            and the boot config says the file was absent.
+;;   named and unreadable  -> **refuses to boot.** A machine that boots with a
+;;                            broken pin file reaches nothing and looks fine;
+;;                            failing here says which file and why.
+;;   named and valid       -> boots with `:aiueos.cloud/trust-anchors` set.
 
 (defn pid1-argv0?
   "`argv0`'s basename is exactly `\"init\"` -- the condition the kernel's
@@ -60,6 +85,41 @@
                     (.exists (java.io.File. ^String boot-path)))))))
 
 #?(:clj
+   (defn load-anchors
+     "Read and validate the anchor document CONFIG names, and return CONFIG with
+     `:aiueos.cloud/trust-anchors` plus a provenance note.
+
+     Absence is recorded, not inferred: `:aiueos.anchors/present?` distinguishes
+     an image that carries no anchors from one whose anchors did not load —
+     which would otherwise both look like a machine with no pins."
+     [config]
+     (if-let [path (:aiueos/anchors config)]
+       (let [file (java.io.File. ^String path)]
+         (when-not (.exists file)
+           (throw (ex-info (str path ": boot.edn names an anchor set that is not there")
+                           {:type :anchors-missing :path path})))
+         (let [doc (try (edn/read-string (slurp file))
+                        (catch Exception e
+                          (throw (ex-info (str path ": anchor set is not readable EDN")
+                                          {:type :anchors-unreadable :path path
+                                           :message (.getMessage e)}))))
+               verdict (anchors/read-document doc)]
+           (when-not (anchors/admitted? verdict)
+             (throw (ex-info (str path ": anchor set refused: "
+                                  (name (:aiueos.anchors/reason verdict)))
+                             {:type :anchors-refused :path path :verdict verdict})))
+           (let [carried (:aiueos.anchors/carried verdict)]
+             (assoc config
+                    :aiueos.anchors/present? true
+                    :aiueos.anchors/release-id (:release-id carried)
+                    :aiueos.anchors/sequence (:sequence carried)
+                    ;; The image is the authority here; say so where a reader of
+                    ;; the boot state will see it.
+                    :aiueos.anchors/provenance :image
+                    :aiueos.cloud/trust-anchors (:anchors carried)))))
+       (assoc config :aiueos.anchors/present? false))))
+
+#?(:clj
    (defn load-boot-config
      "Parse `boot-path` as EDN: `{:aiueos/system <path> :aiueos/policy
      <path-or-nil>}`. Throws ex-info if `:aiueos/system` is missing -- nothing
@@ -68,7 +128,7 @@
      (let [config (edn/read-string (slurp boot-path))]
        (when-not (:aiueos/system config)
          (throw (ex-info (str boot-path ": missing :aiueos/system") {:boot-path boot-path :config config})))
-       (deployment-profile/enforce! config))))
+       (-> config load-anchors deployment-profile/enforce!))))
 
 ;; ---------------------------------------------------------------------------
 ;; libc bindings (waitpid/reboot) -- same FFM pattern as `aiueos.vfio`; see
