@@ -313,7 +313,46 @@
      (for [path mechanism
            :when (and (str/starts-with? path "src/")
                       (not (contains? tcb-paths path)))]
-       {:kind :property-mechanism-not-in-tcb :property property :path path}))))
+       {:kind :property-mechanism-not-in-tcb :property property :path path})
+     ;; A named gate that contains no test is not a gate. Existence was already
+     ;; checked; emptiness was not, and an empty file passes an existence check
+     ;; exactly as well as a full one (ADR-0070).
+     ;;
+     ;; This is a floor, not a proof: a file with tests in it may still have
+     ;; stopped testing *this property*, and nothing here can tell. What it
+     ;; catches is the case where the gate was gutted rather than renamed.
+     (for [path gate
+           :when (and (.exists (io/file path))
+                      (re-find #"\.cljc?$" path)
+                      (not (str/includes? (slurp path) "(deftest")))]
+       {:kind :property-gate-has-no-tests :property property :path path}))))
+
+(defn build-identity-content-digest
+  "SHA-256 of `build-identity.edn` with its own date and digest removed. Same
+  mechanism as `inventory-content-digest`, applied after reading the document
+  rather than by reflex: its `:adopted` list is a contract about properties,
+  and `:build-identity/as-of` is the claim that someone reviewed them
+  (ADR-0070)."
+  ([] (build-identity-content-digest (read-edn-file build-identity-path)))
+  ([document]
+   (kl/document-digest (dissoc document :build-identity/as-of)
+                       :build-identity/content-digest)))
+
+(defn- build-identity-review-errors [document]
+  (let [recorded (:build-identity/content-digest document)]
+    (cond
+      (nil? document) []
+      ;; A document with no digest is out of scope, not a violation: synthetic
+      ;; documents built inside tests are shape fixtures, not review artifacts.
+      ;; That the document ON DISK carries one is asserted by
+      ;; aiueos.tcb-test/the-adopted-contract-carries-its-own-review-digest --
+      ;; two checks, and neither of them fail-open (ADR-0070).
+      (nil? recorded) []
+      (not= recorded (build-identity-content-digest document))
+      [{:kind :build-identity-as-of-stale :recorded recorded}]
+      (not (re-matches #"\d{4}-\d{2}-\d{2}" (str (:build-identity/as-of document))))
+      [{:kind :build-identity-as-of-malformed}]
+      :else [])))
 
 (defn validate-build-identity
   "Errors in the adopted-property record, cross-checked against the checked-in
@@ -338,6 +377,7 @@
 
        :else
        (concat
+        (build-identity-review-errors document)
         (mapcat #(property-errors tcb-paths %) (:adopted document))
         (for [{:keys [property reason]} (:non-goals document)
               :when (not (and (keyword? property)

@@ -4,7 +4,7 @@
  ;; other field, so an entry cannot change without this date having to change
  ;; too. It said 2026-08-01 while the file was being edited that morning, and
  ;; nothing read it.
- :tcb/content-digest "a9ebe294e7b36a0f5eb9174b6cfe9f0e7986b94458b93ca173907dfee25a7f3b"
+ :tcb/content-digest "cc4c69383828d3f154c718d726b413680c4b671203c5f16565ab3d02a75bb5cf"
  :tcb/scope
  "Code whose compromise can grant authority, escape Wasm isolation, falsify
   production admission/audit evidence, or access hardware outside a component."
@@ -86,13 +86,13 @@
   ;; recorded, so weakening a check left no trace here. No fixpoint problem:
   ;; the digest of the source lives in this sibling EDN, not in the source.
   {:path "src/aiueos/tcb.clj" :role :tcb-inventory-authority
-   :sha256 "183ce8bb72774830b2962d26e80a4dcf89331c4e7b85a49bbc66143d823d10e4"}
+   :sha256 "964ed5b6461a0441e2a2669058c375a208c0ce41305cc1abf79c7ef22af420ff"}
   ;; The record of which supply-chain properties this repository holds on
   ;; purpose. Pinned for the same reason the checker is: a property quietly
   ;; deleted from an unpinned list leaves no trace, and `aiueos.tcb` only
   ;; checks the shape of what it finds there.
   {:path "qualification/build-identity.edn" :role :adopted-property-record
-   :sha256 "1961cb4df57b2c5d10e5704fe5f0630303eddeb329f6dacabbc83a70de3948ec"}
+   :sha256 "9234b7e69602a403b3dd7357ea8558fad2093b7285968553fce4e8d0ccba83c5"}
   {:path "src/aiueos/audit.cljc" :role :audit-emission
    :sha256 "8e2c47608810192dd4f6a4e3ed2cbb41ec249a41506cfd81464120c546ba082c"}
   {:path "src/aiueos/sealed_audit.clj" :role :audit-confidentiality-integrity
