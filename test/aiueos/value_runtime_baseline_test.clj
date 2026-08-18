@@ -138,3 +138,12 @@
           (str cause " has failures and nothing says who was asked — the "
                "export class carries no rejected form, so the per-form floor "
                "alone would let it sit unreferenced")))))
+
+(deftest the-receipt-dates-itself-from-a-clock
+  (let [measured (:value-runtime/measured-at @receipt)]
+    (is (re-matches #"\d{4}-\d{2}-\d{2}" (str measured))
+        "a date the reader can compare with the compiler pin's age")
+    (is (not (pos? (compare (str measured) (str (java.time.LocalDate/now)))))
+        (str "the receipt claims it was measured on " measured
+             ", which is in the future — a broken clock or a hand-edited"
+             " receipt, and both mean the numbers beside it are unowned"))))

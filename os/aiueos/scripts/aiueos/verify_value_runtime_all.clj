@@ -74,6 +74,15 @@
    ["value-runtime-syscall-plan" [(k "value-runtime-syscall-plan")
                                   (c "value-runtime-syscall-plan")]]])
 
+(defn- measured-at
+  "Today, read from the clock. It was a literal string until 2026-08-18, which
+  meant a run in any later year would still have claimed that date — a field
+  reporting something it had not measured, in the instrument this whole series
+  uses to catch exactly that. Found by replicating the run from a fresh clone
+  (ADR-0059)."
+  []
+  (str (java.time.LocalDate/now)))
+
 (defn- compiler-sha
   "The compiler this measurement is about. A receipt without it is a number
   with no closure, which is the shape of a claim that cannot be rechecked."
@@ -154,7 +163,7 @@
                          (println (format "%-34s %s" object (name (:verdict r))))
                          r)))
         failed (filterv #(= :fail (:verdict %)) results)
-        receipt {:value-runtime/measured-at "2026-08-18"
+        receipt {:value-runtime/measured-at (measured-at)
                  :value-runtime/compiler-sha (compiler-sha)
                  :value-runtime/objects (count results)
                  :value-runtime/failing (count failed)
