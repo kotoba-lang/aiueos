@@ -9,7 +9,9 @@
 
   JVM-only (`#?(:clj ...)` throughout) -- process I/O, same as
   `aiueos.image`/`aiueos.launcher`."
-  (:require [clojure.string :as str]))
+  (:require [clojure.string :as str]
+            #?(:clj [aiueos.boot-admission :as boot-admission])
+            #?(:clj [aiueos.signing :as signing])))
 
 (def known-graphics #{"none" "virtio-gpu"})
 (def known-console #{"pl011" "virtio-console"})
@@ -48,6 +50,11 @@
             (throw (ex-info (str "unknown :console `" console "` (known: " known-console ")") {:console console})))]
     {:kernel (:kernel opts)
      :initramfs (:initramfs opts)
+     ;; The signed manifest these artifacts must match, and the publisher state
+     ;; to judge it against. Absent means unverified, and `verify-artifacts!`
+     ;; records that rather than implying it.
+     :release (:release opts)
+     :publisher-state (:publisher-state opts)
      :arch arch
      :accel accel
      :memory (or (:memory opts) "1024M")
@@ -71,11 +78,50 @@
     (:accel p)))
 
 #?(:clj
+   (defn measure-artifacts
+     "`{kind digest}` for the artifacts this plan would boot.
+
+     Reads each file whole. A launcher can afford that once; the alternative is
+     a third copy of \"SHA-256 of some bytes\" and `aiueos.signing/sha256-hex`
+     already declares itself the canonical one."
+     [p]
+     (into {}
+           (map (fn [[kind path]]
+                  [kind (signing/sha256-hex
+                         (java.nio.file.Files/readAllBytes
+                          (.toPath (java.io.File. ^String path))))]))
+           [[:kernel (:kernel p)] [:initramfs (:initramfs p)]])))
+
+#?(:clj
+   (defn verify-artifacts!
+     "Refuse to boot artifacts a signed release manifest does not name.
+
+     Called with no `:release`, this records `:aiueos.boot/verified? false` and
+     proceeds — every existing local workflow boots a kernel and an initramfs
+     it just built, and breaking that would be a way of not being used. But the
+     difference between *checked* and *not checked* is written into the plan
+     rather than left to be inferred from the absence of a complaint, so a
+     receipt, a profile rule, or a reader can tell them apart."
+     [p]
+     (if-let [release (:release p)]
+       (let [observed (measure-artifacts p)
+             verdict (boot-admission/admit-boot release observed (:publisher-state p))]
+         (when-not (boot-admission/admitted? verdict)
+           (throw (ex-info (str "refusing to boot: "
+                                (name (or (:aiueos.boot/reason verdict)
+                                          (:aiueos.publisher/reason verdict))))
+                           {:type :boot-admission-failed :verdict verdict})))
+         (assoc p :aiueos.boot/verified? true
+                  :aiueos.boot/release-id (:aiueos.boot/release-id verdict)
+                  :aiueos.boot/observed observed))
+       (assoc p :aiueos.boot/verified? false))))
+
+#?(:clj
    (defn validate-boot-inputs! [p]
      (doseq [[kind path] [[:kernel (:kernel p)] [:initramfs (:initramfs p)]]]
        (when-not (.isFile (java.io.File. ^String path))
          (throw (ex-info (str "missing VM boot input " (name kind)) {:kind kind :path path}))))
-     p))
+     (verify-artifacts! p)))
 
 (defn argv
   "The full QEMU argv (a vector of strings) for `p` (from `plan`)."
