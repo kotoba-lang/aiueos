@@ -70,6 +70,31 @@
   (get-in (edn/read-string (slurp "deps.edn"))
           [:aliases :test :extra-deps 'io.github.kotoba-lang/compiler :git/sha]))
 
+(def causes
+  "Failure classes, matched on the verifier's own message. Derived, not
+  asserted: a row's cause comes from what the compiler said, so a new failure
+  mode shows up as `:unclassified` rather than being folded into an existing
+  bucket.
+
+  Measured 2026-08-18, the ten failures are three classes, not one bug:
+
+  - `:native-slice-typed-values` — the object uses a typed value the
+    `x86_64-aiueos-kernel-v1` slice does not admit. The same wall
+    `kotoba-kir`'s `only-native-word-typed-features?` describes.
+  - `:native-slice-lowering` — admitted as a type, no lowering for the
+    operation.
+  - `:per-object-export-symbol` — the contract expects a symbol named after the
+    object; the pinned compiler emits `kotoba_aiueos_probe` for every kernel
+    object. Changing the contracts to match would give 57 linked objects one
+    symbol, so this class is upstream work, not a local edit."
+  [[#"no admitted type signature" :native-slice-typed-values]
+   [#"no admitted lowering" :native-slice-lowering]
+   [#"export mismatch|export is not exact" :per-object-export-symbol]])
+
+(defn classify [message]
+  (or (some (fn [[re cause]] (when (re-find re (str message)) cause)) causes)
+      :unclassified))
+
 (defn run-one [object args]
   (let [script (str "os/aiueos/scripts/aiueos/verify_"
                     (str/replace object "-" "_") ".clj")]
@@ -78,8 +103,9 @@
       (apply (resolve (symbol (str "aiueos.verify-" object) "-main")) args)
       {:object object :verdict :ok :args (vec args)}
       (catch Throwable t
-        {:object object :verdict :fail :args (vec args)
-         :message (or (ex-message t) (str t))}))))
+        (let [m (or (ex-message t) (str t))]
+          {:object object :verdict :fail :args (vec args)
+           :cause (classify m) :message m})))))
 
 (defn -main [& _]
   (let [results (vec (for [[object args] cases]
@@ -91,6 +117,7 @@
                  :value-runtime/compiler-sha (compiler-sha)
                  :value-runtime/objects (count results)
                  :value-runtime/failing (count failed)
+                 :value-runtime/failing-by-cause (frequencies (map :cause failed))
                  :value-runtime/results results
                  :value-runtime/no-verifier-of-their-own
                  {"value-runtime-sha256" "an input to cas-verify, dispatch, entry and provider-transport; compiled as part of them"
