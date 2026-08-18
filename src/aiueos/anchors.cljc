@@ -72,7 +72,8 @@
   through unchanged."
   #{:set-id-missing :anchor-set-empty :no-current-set
     :disjoint-without-break-glass :break-glass-below-threshold
-    :no-anchors-artifact :anchors-for-another-release :anchors-digest-mismatch})
+    :no-anchors-artifact :anchors-for-another-release :anchors-digest-mismatch
+    :document-malformed :document-version-unknown :document-pin-malformed})
 
 (def default-policy
   "`:overlap-window-ms` is how long the previous set stays usable after an
@@ -276,3 +277,66 @@
      (if-not (admitted? v)
        v
        (admit-set (:aiueos.anchors/proposed v) state policy)))))
+
+;; ── the document, as bytes someone can put in an image ─────────────────────
+;;
+;; ADR-0046 left this unspecified, which meant the release-borne path had a
+;; judgement and nothing to judge. The encoding is the canonical form
+;; `aiueos.key-lifecycle/document-bytes` already produces for every other
+;; signed document in this repository — a second canonicaliser would be a
+;; signature-confusion hazard, not a convenience — so this namespace supplies
+;; the *shape* and the JVM side supplies the bytes.
+
+(def document-version 1)
+
+(def document-signature-key
+  "Reserved. A release-borne set needs no signature of its own: the manifest
+  binds its digest and the manifest is signed. The key is named anyway so the
+  canonical bytes are the same with and without one, and a set delivered some
+  other way can carry it."
+  :anchors/signature)
+
+(defn document
+  "The anchor-set document, as data. Pins are sorted, because a set has no
+  order and a digest does."
+  [{:keys [release-id sequence anchors break-glass?]}]
+  {:anchors/version document-version
+   :anchors/release-id release-id
+   :anchors/sequence sequence
+   :anchors/anchors (vec (sort (map str anchors)))
+   :anchors/break-glass? (true? break-glass?)})
+
+(defn- pin-well-formed? [pin]
+  (boolean (re-matches #"[0-9a-f]{64}" (str pin))))
+
+(defn read-document
+  "Validate an already-read document map into the `carried` shape
+  `from-release` takes. Parsing text is the caller's; this decides.
+
+  Fail-closed, and one of the checks is load-bearing beyond the usual: **a pin
+  that is not 64 lowercase hex characters is refused rather than carried**. A
+  malformed pin can never match a measured key, so a set containing one is a
+  set that partly cannot work — and it would arrive looking entirely valid."
+  [doc]
+  (let [pins (:anchors/anchors doc)]
+    (cond
+      (not (map? doc))
+      (deny :document-malformed {})
+
+      (not= document-version (:anchors/version doc))
+      (deny :document-version-unknown {:aiueos.anchors/version (:anchors/version doc)})
+
+      (or (nil? (:anchors/release-id doc)) (nil? (:anchors/sequence doc))
+          (not (coll? pins)))
+      (deny :document-malformed {:aiueos.anchors/release-id (:anchors/release-id doc)})
+
+      (not (every? pin-well-formed? pins))
+      (deny :document-pin-malformed
+            {:aiueos.anchors/malformed (vec (remove pin-well-formed? pins))})
+
+      :else
+      (admit {:aiueos.anchors/carried
+              {:release-id (:anchors/release-id doc)
+               :sequence (:anchors/sequence doc)
+               :anchors (set pins)
+               :break-glass? (true? (:anchors/break-glass? doc))}}))))

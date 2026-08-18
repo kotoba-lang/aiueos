@@ -18,7 +18,9 @@
                                  :disjoint-without-break-glass
                                  :break-glass-below-threshold
                                  :no-anchors-artifact :anchors-for-another-release
-                                 :anchors-digest-mismatch}
+                                 :anchors-digest-mismatch
+                                 :document-malformed :document-version-unknown
+                                 :document-pin-malformed}
   :aiueos.anchors/reasons-pass-through
   "aiueos.publisher reasons are returned unchanged; a caller reading a verdict
    should not have to guess which layer refused"
@@ -38,6 +40,21 @@
           replaces every anchor is refused exactly as a standalone set is --
           a perfectly signed release that strands the fleet is still a
           stranded fleet."}
+  :aiueos.anchors/document
+  {:version 1
+   :fields [:anchors/version :anchors/release-id :anchors/sequence
+            :anchors/anchors :anchors/break-glass?]
+   :signature-key :anchors/signature
+   :canonicaliser "aiueos.key-lifecycle/document-bytes"
+   :canonicaliser-note "the one this repository already has; a second would be
+                        a signature-confusion hazard"
+   :pins :sorted
+   :pin-form "64 lowercase hex characters, refused otherwise -- a malformed pin
+              can never match a measured key, so it would arrive looking
+              entirely valid and partly not work"
+   :guest-path "/etc/aiueos/anchors.edn"
+   :named-in-boot-edn :aiueos/anchors
+   :staged-bytes :the-exact-bytes-that-were-digested}
   :aiueos.anchors/sequence-key :installed-anchor-sequence
   :aiueos.anchors/sequence-key-note
   "Anchor sets and releases are both sequenced and both checked by
@@ -55,13 +72,15 @@
    "Nothing here fetches or verifies a signature. :signatures carries the
     provider's per-signature :verified? answer, as everywhere else in this
     repository."
-   "The decision path for a release-borne set is complete; the build is not.
-    No release image actually carries an :anchors artifact -- os/aiueos's
-    image build does not emit one and aiueos.image does not stage one -- so a
-    fresh device still has no anchors. What exists is the judgement that would
-    admit one."
-   "Nothing decodes the artifact. :carried is what a provider decoded from the
-    bytes; the encoding of an anchor-set document is unspecified."
+   "The HOSTED image carries the set: aiueos.image stages it and names its
+    digest. The BARE-METAL release image does not -- os/aiueos's
+    build-release-image.sh emits no :anchors artifact -- so a bare-metal device
+    still has no anchors."
+   "Nothing consumes /etc/aiueos/anchors.edn at boot. aiueos.pid1 does not read
+    boot.edn's :aiueos/anchors, so the staged file is carried and not yet used."
+   "The document is not itself signed. A release-borne set does not need to be
+    -- the manifest binds its digest and the manifest is signed -- but a set
+    delivered any other way currently has no integrity of its own."
    "No pin for kotobase.net or api.murakumo.cloud is recorded anywhere. This
     decides how a set changes, not what the first one contains."
    "Rotation is modelled, not exercised: no fleet has run add -> switch ->
