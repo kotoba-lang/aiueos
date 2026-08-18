@@ -1,0 +1,92 @@
+#:value-runtime{:measured-at "2026-08-18",
+                :compiler-sha
+                "1e21a1f56613d7d4c7628af1945ebf1cf7862ff3",
+                :objects 10,
+                :failing 10,
+                :results
+                [{:object "value-handle-arena",
+                  :verdict :fail,
+                  :args
+                  ["os/aiueos/kotoba/value-handle-arena.kotoba"
+                   "os/aiueos/contracts/value-handle-arena-v1.edn"],
+                  :message "operation has no admitted type signature"}
+                 {:object "value-handle-plan",
+                  :verdict :fail,
+                  :args
+                  ["os/aiueos/kotoba/value-handle-plan.kotoba"
+                   "os/aiueos/contracts/value-handle-plan-v1.edn"],
+                  :message "planner object export is not exact"}
+                 {:object "value-runtime-capability-table",
+                  :verdict :fail,
+                  :args
+                  ["os/aiueos/kotoba/value-runtime-capability-table.kotoba"
+                   "os/aiueos/contracts/value-runtime-capability-table-v1.edn"],
+                  :message "operation has no admitted type signature"}
+                 {:object "value-runtime-cas-verify",
+                  :verdict :fail,
+                  :args
+                  ["os/aiueos/kotoba/value-runtime-sha256.kotoba"
+                   "os/aiueos/kotoba/value-runtime-digest-equal.kotoba"
+                   "os/aiueos/kotoba/value-runtime-cas-verify.kotoba"
+                   "os/aiueos/contracts/value-runtime-cas-verify-v1.edn"],
+                  :message "CAS verifier native export mismatch"}
+                 {:object "value-runtime-dispatch",
+                  :verdict :fail,
+                  :args
+                  ["os/aiueos/kotoba/value-handle-arena.kotoba"
+                   "os/aiueos/kotoba/value-runtime-sha256.kotoba"
+                   "os/aiueos/kotoba/value-runtime-digest-equal.kotoba"
+                   "os/aiueos/kotoba/value-runtime-cas-verify.kotoba"
+                   "os/aiueos/kotoba/value-runtime-provider-transport.kotoba"
+                   "os/aiueos/kotoba/value-runtime-dispatch.kotoba"
+                   "os/aiueos/contracts/value-runtime-dispatch-v1.edn"],
+                  :message "operation has no admitted type signature"}
+                 {:object "value-runtime-domain",
+                  :verdict :fail,
+                  :args
+                  ["os/aiueos/kotoba/value-runtime-domain.kotoba"
+                   "os/aiueos/contracts/value-runtime-domain-v1.edn"],
+                  :message "operation has no admitted lowering"}
+                 {:object "value-runtime-entry",
+                  :verdict :fail,
+                  :args
+                  ["os/aiueos/kotoba/value-handle-arena.kotoba"
+                   "os/aiueos/kotoba/value-runtime-sha256.kotoba"
+                   "os/aiueos/kotoba/value-runtime-digest-equal.kotoba"
+                   "os/aiueos/kotoba/value-runtime-cas-verify.kotoba"
+                   "os/aiueos/kotoba/value-runtime-provider-transport.kotoba"
+                   "os/aiueos/kotoba/value-runtime-dispatch.kotoba"
+                   "os/aiueos/kotoba/value-runtime-entry.kotoba"
+                   "os/aiueos/contracts/value-runtime-entry-v1.edn"],
+                  :message "operation has no admitted type signature"}
+                 {:object "value-runtime-provider-policy",
+                  :verdict :fail,
+                  :args
+                  ["os/aiueos/kotoba/value-runtime-capability-table.kotoba"
+                   "os/aiueos/kotoba/value-runtime-provider-policy.kotoba"
+                   "os/aiueos/contracts/value-runtime-provider-policy-v1.edn"],
+                  :message "operation has no admitted type signature"}
+                 {:object "value-runtime-provider-transport",
+                  :verdict :fail,
+                  :args
+                  ["os/aiueos/kotoba/value-handle-arena.kotoba"
+                   "os/aiueos/kotoba/value-runtime-sha256.kotoba"
+                   "os/aiueos/kotoba/value-runtime-digest-equal.kotoba"
+                   "os/aiueos/kotoba/value-runtime-cas-verify.kotoba"
+                   "os/aiueos/kotoba/value-runtime-provider-transport.kotoba"
+                   "os/aiueos/contracts/value-runtime-provider-transport-v1.edn"],
+                  :message "operation has no admitted type signature"}
+                 {:object "value-runtime-syscall-plan",
+                  :verdict :fail,
+                  :args
+                  ["os/aiueos/kotoba/value-runtime-syscall-plan.kotoba"
+                   "os/aiueos/contracts/value-runtime-syscall-plan-v1.edn"],
+                  :message "native export mismatch"}],
+                :no-verifier-of-their-own
+                {"value-runtime-sha256"
+                 "an input to cas-verify, dispatch, entry and provider-transport; compiled as part of them",
+                 "value-runtime-digest-equal"
+                 "same — an input, not an uncovered object"},
+                :verifier-without-source
+                {"verify_value_runtime_kernel_image.clj"
+                 "no value-runtime-kernel-image.kotoba exists; recorded rather than deleted, because which of the two is missing is not a thing this run can know"}}
