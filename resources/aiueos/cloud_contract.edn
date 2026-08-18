@@ -16,6 +16,7 @@
   :aiueos.cloud/decision-shapes #{:allow :deny}
   :aiueos.cloud/deny-reasons #{:cid-unparsable :cid-not-raw :cid-not-sha256
                                :origin-not-allowed :insecure-transport
+                               :no-trust-anchors :peer-unmeasured :peer-not-pinned
                                :plan-not-allowed
                                :response-not-ok :digest-missing :digest-mismatch
                                :alias-unresolved :resolved-endpoint-not-allowed
@@ -35,6 +36,16 @@
   :aiueos.cloud/override-equal-to-alias-target :refused
   :aiueos.cloud/url-checked-twice? true
   :aiueos.cloud/transport-required :https
+  :aiueos.cloud/peer-trust {:model :spki-pin
+                            :digest :sha2-256
+                            :pinned :subject-public-key-info
+                            :policy-key :aiueos.cloud/trust-anchors
+                            :empty-set :deny
+                            :platform-trust-store :not-consulted
+                            :note "The pin is over the key, so certificate renewal
+                                   with the same key is not an event and a key
+                                   change is. An https plan with no anchors is
+                                   refused before the socket."}
   :aiueos.cloud/plaintext-escape-hatch :aiueos.cloud/allow-insecure-origins
   :aiueos.cloud/provider-faults #{:plan-not-allowed :net-denied
                                   :response-too-large :request-failed}
@@ -58,8 +69,12 @@
     port. The https requirement is enforced in aiueos.cloud rather than by the
     allowlist, so an allowlist entry alone still does not distinguish
     kotobase.net:443 from kotobase.net:8443."
-   "The hosted provider authenticates the endpoint with nothing beyond the JDK
-    default trust store, which this repository neither owns nor pins."
+   "Peer trust is the policy's pin set and nothing else (ADR-0044); the JDK
+    default trust store is not consulted. What is unproved is the operational
+    half: no pin for the real kotobase.net or api.murakumo.cloud is recorded
+    anywhere, and how a pin reaches a device -- and how it rotates -- is not
+    decided. A pinning client with no pin distribution is a client that cannot
+    connect."
    "There is no write path. PUT /ipfs/:cid needs a CACAO-authenticated caller
     and no credential path exists here; plan-block-write is a decision with no
     mechanism behind it yet."]}]

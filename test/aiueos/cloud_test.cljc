@@ -1,5 +1,6 @@
 (ns aiueos.cloud-test
   (:require [aiueos.cloud :as cloud]
+            [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]))
 
 ;; CIDs and digests computed outside the code under test, so the decoder is
@@ -80,6 +81,34 @@
   (is (= :insecure-transport
          (:aiueos.cloud/reason (cloud/admit-model policy {:endpoint "http://api.murakumo.cloud"
                                                           :alias-for "qwen3.6-35b-a3b"}))))) 
+
+;; ── who is on the other end ───────────────────────────────────────────────
+
+(def pin-a "af696ad28431887358d6bbc84d02af910ce3fa246dbbcf4264efef8d34a9c083")
+(def pin-b (apply str (repeat 64 "b")))
+(def pinned (assoc policy :aiueos.cloud/trust-anchors #{pin-a}))
+
+(deftest nothing-declared-is-not-anything
+  (is (= :no-trust-anchors (:aiueos.cloud/reason (cloud/admit-peer policy {:spki-sha256 pin-a})))
+      "an empty pin set is an operator who has not said, not an operator who said yes")
+  (is (false? (cloud/anchors-declared? policy)))
+  (is (true? (cloud/anchors-declared? pinned))))
+
+(deftest nothing-measured-is-not-a-pass
+  (is (= :peer-unmeasured (:aiueos.cloud/reason (cloud/admit-peer pinned {}))))
+  (is (= :peer-unmeasured (:aiueos.cloud/reason (cloud/admit-peer pinned {:spki-sha256 ""})))))
+
+(deftest a-key-that-was-not-named-is-refused
+  (let [v (cloud/admit-peer pinned {:spki-sha256 pin-b})]
+    (is (= :peer-not-pinned (:aiueos.cloud/reason v)))
+    (is (= pin-b (:aiueos.cloud/observed-spki v)) "and it says which key it saw")))
+
+(deftest a-named-key-is-admitted-however-it-is-cased
+  (is (cloud/allowed? (cloud/admit-peer pinned {:spki-sha256 pin-a})))
+  (is (cloud/allowed? (cloud/admit-peer pinned {:spki-sha256 (str/upper-case pin-a)})))
+  (is (cloud/allowed? (cloud/admit-peer (assoc policy :aiueos.cloud/trust-anchors
+                                               #{(str/upper-case pin-a)})
+                                        {:spki-sha256 pin-a}))))
 
 ;; ── judging the response ──────────────────────────────────────────────────
 
@@ -217,7 +246,7 @@
 
 (deftest the-declared-reason-set-is-complete
   (doseq [r [:cid-unparsable :cid-not-raw :origin-not-allowed :plan-not-allowed
-             :insecure-transport
+             :insecure-transport :no-trust-anchors :peer-unmeasured :peer-not-pinned
              :response-not-ok :digest-missing :digest-mismatch
              :alias-unresolved :resolved-endpoint-not-allowed
              :model-is-alias-target :messages-missing]]
