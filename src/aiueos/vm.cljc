@@ -55,6 +55,9 @@
      ;; records that rather than implying it.
      :release (:release opts)
      :publisher-state (:publisher-state opts)
+     ;; The profile THIS LAUNCHER is running under, not the one the guest will
+     ;; declare for itself. See `verify-artifacts!` (ADR-0069).
+     :deployment-profile (:deployment-profile opts)
      :arch arch
      :accel accel
      :memory (or (:memory opts) "1024M")
@@ -68,6 +71,23 @@
      :console console
      :console-socket (or (:console-socket opts) "aiueos-console.sock")
      :qemu-binary (or (:qemu-binary opts) (default-qemu arch))}))
+
+(def production-profiles
+  "Profiles for which an unverified artifact is a refusal rather than a note.
+
+  ADR-0049 recorded `:aiueos.boot/verified? false` and said no profile turned it
+  into a requirement; ADR-0065 did the anchors half inside the guest and left
+  this one, because the fact lives on the launcher's plan and
+  `aiueos.deployment-profile` judges a boot config from inside the guest — the
+  two never meet.
+
+  They still do not. **What this adds is the host declaring its own intent**:
+  a launcher told it is starting a production machine refuses to boot artifacts
+  it could not check. It says nothing about whether the guest's own
+  `boot.edn` agrees, because the launcher does not read the guest's config, and
+  a rule that claimed agreement it never checked would be worse than the note it
+  replaced (ADR-0069)."
+  #{:sensitive-local :regulated})
 
 (defn- accel-name [p]
   (if (= "auto" (:accel p))
@@ -103,6 +123,13 @@
      rather than left to be inferred from the absence of a complaint, so a
      receipt, a profile rule, or a reader can tell them apart."
      [p]
+     (when (and (contains? production-profiles (:deployment-profile p))
+                (not (:release p)))
+       (throw (ex-info (str "refusing to boot: " (name (:deployment-profile p))
+                            " requires a signed release to verify against")
+                       {:type :boot-admission-failed
+                        :profile (:deployment-profile p)
+                        :reason :no-release})))
      (if-let [release (:release p)]
        (let [observed (measure-artifacts p)
              verdict (boot-admission/admit-boot release observed (:publisher-state p))]
