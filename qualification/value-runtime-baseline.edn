@@ -17,10 +17,11 @@
                    "os/aiueos/native/kernel.kotoba"
                    "os/aiueos/native/value-runtime-kernel.kotoba"
                    "os/aiueos/contracts/value-runtime-kernel-image-v1.edn"],
-                  :cause :project-module-missing-export,
-                  :message
-                  "project module requires an explicit :export vector",
-                  :compiler-phase :project-link}
+                  :cause :native-slice-typed-values,
+                  :message "operation has no admitted type signature",
+                  :rejected-form "kernel-compare-exchange-u32",
+                  :error-code :kotoba.error/subset-reject,
+                  :compiler-phase :subset}
                  {:object "value-handle-arena",
                   :verdict :fail,
                   :args
@@ -163,13 +164,12 @@
                  "value-runtime-digest-equal"
                  "same — an input, not an uncovered object"},
                 :rejected-forms
-                {"kernel-compare-exchange-u32" 4,
+                {"kernel-compare-exchange-u32" 5,
                  "kernel-value-runtime-capability-table" 2,
                  "(kernel-publish-current-domain domain)" 1},
                 :compiler-sha
                 "1e21a1f56613d7d4c7628af1945ebf1cf7862ff3",
                 :failing-by-cause
-                {:project-module-missing-export 1,
-                 :native-slice-typed-values 6,
+                {:native-slice-typed-values 7,
                  :per-object-export-symbol 3,
                  :native-slice-lowering 1}}

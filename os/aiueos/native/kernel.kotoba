@@ -1,4 +1,11 @@
-(ns aiueos.native.kernel)
+(ns aiueos.native.kernel
+  ;; `main` is the only name aiueos.native.value-runtime-kernel takes from this
+  ;; module, and `compile-project` refuses a module without an explicit export
+  ;; vector (ADR-0058). Adding it is inert for the production path: the
+  ;; single-source compile the build script runs emits byte-identical artifacts
+  ;; with and without it -- code sha c3bd9664…, binary sha b64afc94…, both
+  ;; unchanged, and the export symbol stays kotoba_aiueos_probe.
+  (:export [main]))
 
 ;; The compiler-emitted loader keeps the final UEFI memory map in a bounded
 ;; region directly after the 64-byte boot-info prefix.  The kernel derives that
