@@ -91,6 +91,14 @@
    [#"no admitted lowering" :native-slice-lowering]
    [#"export mismatch|export is not exact" :per-object-export-symbol]])
 
+(def upstream
+  "Where the work is, for each form the slice refuses. A rejected form with no
+  entry here is work nobody has asked for — the receipt would name a wall and
+  point at no one, which is how a measurement becomes a complaint."
+  {"kernel-compare-exchange-u32" "https://github.com/kotoba-lang/amu/issues/625"
+   "kernel-value-runtime-capability-table" "https://github.com/kotoba-lang/amu/issues/625"
+   "(kernel-publish-current-domain domain)" "https://github.com/kotoba-lang/amu/issues/625"})
+
 (defn classify [message]
   (or (some (fn [[re cause]] (when (re-find re (str message)) cause)) causes)
       :unclassified))
@@ -130,6 +138,7 @@
                  ;; between a bounded change and a programme.
                  :value-runtime/rejected-forms
                  (frequencies (keep :rejected-form failed))
+                 :value-runtime/upstream upstream
                  :value-runtime/results results
                  :value-runtime/no-verifier-of-their-own
                  {"value-runtime-sha256" "an input to cas-verify, dispatch, entry and provider-transport; compiled as part of them"
