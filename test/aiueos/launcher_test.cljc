@@ -183,12 +183,35 @@
        (.getPath system-file))))
 
 #?(:clj
+   (defn- boot-summary
+     "What `up-command` actually returned, small enough to read in a failure
+     message. A count assertion that fails saying `expected 2, got 1` names the
+     symptom and nothing else -- which component stopped, and whether the
+     broker denied it or an execution limit fired, is the whole of the
+     diagnosis and it is already in the result.
+
+     Added 2026-08-18 for a failure that appeared twice under load and never
+     under isolation (ADR-0051): 425 boots of this fixture in a row passed, so
+     the next occurrence has to explain itself in the run where it happens."
+     [result]
+     (pr-str {:ok? (:aiueos.cli/ok? result)
+              :stopped-at (:aiueos/stopped-at result)
+              :booted (mapv (fn [r]
+                              (into {:component (:aiueos/component r)
+                                     :decision (:aiueos/decision r)}
+                                    (filter (fn [[k _]]
+                                              (= "aiueos.execute" (namespace k))))
+                                    (dissoc r :aiueos.execute/topic-bus
+                                            :aiueos.execute/result)))
+                            (:aiueos/boot-results result))})))
+
+#?(:clj
    (deftest up-command-boots-a-provider-then-a-consumer-and-actually-executes-it
      (let [dir (temp-dir)
            system-path (write-two-component-system! dir)
            result (launcher/up-command system-path nil)]
-       (is (true? (:aiueos.cli/ok? result)))
-       (is (= 2 (count (:aiueos/boot-results result))))
+       (is (true? (:aiueos.cli/ok? result)) (boot-summary result))
+       (is (= 2 (count (:aiueos/boot-results result))) (boot-summary result))
        (is (= :service/fs (:aiueos/component (first (:aiueos/boot-results result))))
            "fs (the provider) boots before app (the consumer) -- boot-order, not declaration order, though here they're the same")
        (is (not (contains? (first (:aiueos/boot-results result)) :aiueos.execute/result))
@@ -248,7 +271,7 @@
 #?(:clj
    (defn- write-two-component-system-with-schedule!
      "Same fs/app system as write-two-component-system!, but app declares
-     :aiueos/schedule {:period-ms 3 :cycle-ms 1} -- due only every 3rd
+     :aiueos/schedule {:period-ms 3 :cycle-ms 1 :deadline-ms 5000} -- due only every 3rd
      cycle (0, 3, 6, ...). fs has no explicit schedule (default: due every
      cycle), matching a real system where an always-on capability
      provider coexists with a periodic consumer."
@@ -265,7 +288,7 @@
        (spit app-manifest (pr-str {:aiueos/component :app/topic-publish :aiueos/kind :app
                                     :aiueos/trust :verified :aiueos/wasm "topic_publish.wasm"
                                     :aiueos/imports #{:fs/read :topic/publish} :aiueos/exports #{}
-                                    :aiueos/schedule {:period-ms 3 :cycle-ms 1}}))
+                                    :aiueos/schedule {:period-ms 3 :cycle-ms 1 :deadline-ms 5000}}))
        (spit system-file (pr-str {:aiueos/system :demo :aiueos/components ["fs.edn" "app.edn"]}))
        (.getPath system-file))))
 
@@ -276,8 +299,8 @@
        (let [dir (temp-dir)
              system-path (write-two-component-system-with-schedule! dir)
              result (launcher/up-command system-path nil)]
-         (is (true? (:aiueos.cli/ok? result)))
-         (is (= 2 (count (:aiueos/boot-results result))))))))
+         (is (true? (:aiueos.cli/ok? result)) (boot-summary result))
+         (is (= 2 (count (:aiueos/boot-results result))) (boot-summary result))))))
 
 #?(:clj
    (deftest up-command-skips-a-component-not-due-this-cycle
@@ -286,8 +309,8 @@
        (let [dir (temp-dir)
              system-path (write-two-component-system-with-schedule! dir)
              result (launcher/up-command system-path nil 1)]
-         (is (true? (:aiueos.cli/ok? result)))
-         (is (= 1 (count (:aiueos/boot-results result))))
+         (is (true? (:aiueos.cli/ok? result)) (boot-summary result))
+         (is (= 1 (count (:aiueos/boot-results result))) (boot-summary result))
          (is (= :service/fs (:aiueos/component (first (:aiueos/boot-results result)))))))))
 
 #?(:clj
@@ -295,7 +318,7 @@
      (let [dir (temp-dir)
            system-path (write-two-component-system-with-schedule! dir)
            result (launcher/up-command system-path nil 3)]
-       (is (true? (:aiueos.cli/ok? result)))
+       (is (true? (:aiueos.cli/ok? result)) (boot-summary result))
        (is (= 2 (count (:aiueos/boot-results result)))
            "cycle 3 is due for app again (period-cycles 3), fs is always due"))))
 

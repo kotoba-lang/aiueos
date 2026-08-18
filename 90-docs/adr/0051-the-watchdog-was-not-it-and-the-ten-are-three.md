@@ -4,8 +4,27 @@ Date: 2026-08-18
 
 ## Status
 
-Accepted as a measurement. One hypothesis refuted with numbers, one cluster
-classified. No Kotoba object is fixed and the ratchet still reads ten.
+Accepted as a measurement, **with its first conclusion corrected by ADR-0055**.
+The classification stands. The refutation does not: it was the watchdog, and
+this ADR measured the wrong deadline.
+
+## Correction (2026-08-18, ADR-0055)
+
+Everything below about `default-wall-deadline-ms` being 30,000 with three
+orders of magnitude of headroom is true and irrelevant. The fixture declares
+`:aiueos/schedule {:period-ms 3 :cycle-ms 1}` and `aiueos.manifest/normalize-schedule`
+derives `deadline-ms (or (:deadline-ms sched) period-ms)` — so the wall
+deadline for that component was **3 ms**, not 30,000. The default never
+applied, because the manifest declared a schedule.
+
+Captured in the failing run once the assertion was made to say why:
+`:aiueos.execute/watchdog-exceeded {:deadline-ms 3, :elapsed-ms 7,
+:terminated? true}`.
+
+The 425 isolated boots that "refuted" it are also explained: they passed
+because the execution fitted in 3 ms on a quiet machine. The measurement was
+sound; the inference from it was not, and the number it should have read was
+in the fixture rather than the default.
 
 ## The watchdog hypothesis is refuted
 
