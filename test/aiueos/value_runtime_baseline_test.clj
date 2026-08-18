@@ -17,9 +17,25 @@
 (def ^:private receipt-path "qualification/value-runtime-baseline.edn")
 
 (def ^:private failing-ceiling
-  "Measured 2026-08-18: all ten. **This number may only be lowered.** Raising
-  it is how a ratchet becomes a record of decline."
-  10)
+  "Measured 2026-08-18: all eleven. **Lower it freely; raise it only together
+  with `objects-at-ceiling`, and only because a new object is being measured.**
+
+  It was ten until the composite image verifier was added to the run (ADR-0057)
+  and found an eleventh pre-existing failure. A ratchet that cannot tell *more
+  failures* from *more measurement* punishes measuring, which is the worse
+  failure of the two — so the pair moves together and the passing floor below
+  is what actually cannot go backwards."
+  11)
+
+(def ^:private objects-at-ceiling
+  "How many objects the ceiling above was measured over. Adding a measurement
+  raises both; a regression raises only `failing`."
+  11)
+
+(def ^:private passing-floor
+  "Passing objects, which genuinely may only increase. Zero today: nothing in
+  the value runtime compiles against the pinned compiler."
+  0)
 
 (def ^:private receipt (delay (edn/read-string (slurp receipt-path))))
 
@@ -56,6 +72,12 @@
 (deftest the-failure-count-has-not-grown
   (is (<= (:value-runtime/failing @receipt) failing-ceiling)
       "the ratchet only turns one way")
+  (is (<= objects-at-ceiling (:value-runtime/objects @receipt))
+      "the ceiling was set over this many objects; measuring fewer and keeping
+       the ceiling would hide a regression behind a shrunken scan")
+  (is (<= passing-floor (- (:value-runtime/objects @receipt)
+                           (:value-runtime/failing @receipt)))
+      "passing objects may only increase")
   (is (= (:value-runtime/failing @receipt)
          (count (filter #(= :fail (:verdict %)) (:value-runtime/results @receipt))))
       "the headline count is derived from the rows, not asserted beside them"))

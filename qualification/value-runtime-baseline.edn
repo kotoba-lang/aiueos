@@ -1,6 +1,27 @@
-#:value-runtime{:objects 10,
+#:value-runtime{:objects 11,
                 :results
-                [{:object "value-handle-arena",
+                [{:object "value-runtime-kernel-image",
+                  :verdict :fail,
+                  :args
+                  ["os/aiueos/kotoba/value-handle-arena.kotoba"
+                   "os/aiueos/kotoba/value-runtime-provider-transport.kotoba"
+                   "os/aiueos/kotoba/value-runtime-dispatch.kotoba"
+                   "os/aiueos/kotoba/value-runtime-entry.kotoba"
+                   "os/aiueos/kotoba/value-runtime-syscall-plan.kotoba"
+                   "os/aiueos/kotoba/value-runtime-domain.kotoba"
+                   "os/aiueos/kotoba/value-runtime-capability-table.kotoba"
+                   "os/aiueos/kotoba/value-runtime-provider-policy.kotoba"
+                   "os/aiueos/kotoba/value-runtime-sha256.kotoba"
+                   "os/aiueos/kotoba/value-runtime-digest-equal.kotoba"
+                   "os/aiueos/kotoba/value-runtime-cas-verify.kotoba"
+                   "os/aiueos/native/kernel.kotoba"
+                   "os/aiueos/native/value-runtime-kernel.kotoba"
+                   "os/aiueos/contracts/value-runtime-kernel-image-v1.edn"],
+                  :cause :project-module-missing-export,
+                  :message
+                  "project module requires an explicit :export vector",
+                  :compiler-phase :project-link}
+                 {:object "value-handle-arena",
                   :verdict :fail,
                   :args
                   ["os/aiueos/kotoba/value-handle-arena.kotoba"
@@ -129,8 +150,13 @@
                  :native-slice-lowering
                  "https://github.com/kotoba-lang/amu/issues/625",
                  :per-object-export-symbol
-                 "https://github.com/kotoba-lang/amu/issues/626"},
-                :failing 10,
+                 "https://github.com/kotoba-lang/amu/issues/626",
+                 :project-module-missing-export
+                 "90-docs/adr/0057-the-eleventh-verifier-was-never-missing-a-source.md"},
+                :composite-verifier
+                {"verify_value_runtime_kernel_image.clj"
+                 "the whole-image verifier: compile-project over eleven value modules plus aiueos.native.kernel and aiueos.native.value-runtime-kernel, against value-runtime-kernel-image-v1.edn"},
+                :failing 11,
                 :no-verifier-of-their-own
                 {"value-runtime-sha256"
                  "an input to cas-verify, dispatch, entry and provider-transport; compiled as part of them",
@@ -142,10 +168,8 @@
                  "(kernel-publish-current-domain domain)" 1},
                 :compiler-sha
                 "1e21a1f56613d7d4c7628af1945ebf1cf7862ff3",
-                :verifier-without-source
-                {"verify_value_runtime_kernel_image.clj"
-                 "no value-runtime-kernel-image.kotoba exists; recorded rather than deleted, because which of the two is missing is not a thing this run can know"},
                 :failing-by-cause
-                {:native-slice-typed-values 6,
+                {:project-module-missing-export 1,
+                 :native-slice-typed-values 6,
                  :per-object-export-symbol 3,
                  :native-slice-lowering 1}}
