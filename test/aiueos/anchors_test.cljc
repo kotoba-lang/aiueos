@@ -13,7 +13,7 @@
 (def all-sigs (conj sigs {:key-id "k3" :verified? true :status-index 2}))
 
 (defn- state [& {:as over}]
-  (merge {:installed-sequence 6 :now-ms 1000 :root root
+  (merge {:installed-anchor-sequence 6 :now-ms 1000 :root root
           :revocation-bits [0 0 0 0] :current-anchors #{pin-a}}
          over))
 
@@ -167,3 +167,89 @@
   (doseq [r [:set-id-missing :anchor-set-empty :no-current-set
              :disjoint-without-break-glass :break-glass-below-threshold]]
     (is (contains? anchors/deny-reasons r) (str r " is produced but not declared"))))
+
+;; ── two sequence spaces do not share one key ──────────────────────────────
+
+(deftest a-release-sequence-does-not-block-an-anchor-set
+  (let [s (state :installed-sequence 100)]
+    (is (anchors/admitted? (anchors/admit-set (proposed) s))
+        "releases are at 100 and anchor sets at 6; the higher number must not
+         silently block the other stream")))
+
+(deftest applying-a-set-advances-the-anchor-sequence-only
+  (let [s0 (state :installed-sequence 100)
+        s1 (anchors/apply-set s0 (anchors/admit-set (proposed) s0))]
+    (is (= 7 (:installed-anchor-sequence s1)))
+    (is (= 100 (:installed-sequence s1)) "the release stream is untouched")))
+
+;; ── the first set arrives in the image ────────────────────────────────────
+
+(def anchors-digest "sha256-of-the-anchor-artifact")
+
+(defn- release [& {:as over}]
+  (merge {:manifest-id "release-42" :sequence 42 :signatures sigs
+          :timestamp-ms 1000
+          :artifacts [{:kind :kernel :sha256 "kkk"}
+                      {:kind :anchors :sha256 anchors-digest}]}
+         over))
+
+(defn- carried [& {:as over}]
+  (merge {:release-id "release-42" :sequence 7 :anchors #{pin-a pin-b}}
+         over))
+
+(def observed {:kernel "kkk" :anchors anchors-digest})
+
+(deftest most-releases-carry-no-anchor-set-and-that-is-not-an-error
+  (is (true? (anchors/carries-anchors? (release))))
+  (is (false? (anchors/carries-anchors? (release :artifacts [{:kind :kernel :sha256 "kkk"}]))))
+  (is (= :no-anchors-artifact
+         (:aiueos.anchors/reason
+          (anchors/from-release (release :artifacts [{:kind :kernel :sha256 "kkk"}])
+                                (carried) observed (state))))))
+
+(deftest a-fresh-device-takes-its-first-set-from-the-release-it-boots
+  (let [v (anchors/admit-from-release (release) (carried) observed
+                                      (state :current-anchors #{}))]
+    (is (anchors/admitted? v))
+    (is (true? (:aiueos.anchors/bootstrap? v)))
+    (is (= #{pin-a pin-b} (:aiueos.anchors/anchors v)))
+    (is (= anchors-digest (:aiueos.anchors/set-id v))
+        "the set's identity is the artifact digest the manifest already binds")))
+
+(deftest an-anchor-set-must-name-the-release-it-was-made-for
+  (let [v (anchors/from-release (release) (carried :release-id "release-41")
+                                observed (state))]
+    (is (= :anchors-for-another-release (:aiueos.anchors/reason v)))
+    (is (= "release-42" (:aiueos.anchors/release-id v)))
+    (is (= "release-41" (:aiueos.anchors/carried-release-id v)))))
+
+(deftest bytes-that-are-not-the-artifact-the-manifest-named-are-refused
+  (let [v (anchors/from-release (release) (carried)
+                                (assoc observed :anchors "something-else") (state))]
+    (is (= :anchors-digest-mismatch (:aiueos.anchors/reason v)))
+    (is (= anchors-digest (:aiueos.anchors/expected v)))))
+
+(deftest bootstrap-is-a-fact-about-the-device-not-a-claim-in-the-document
+  (let [v (anchors/from-release (release) (carried) observed (state))]
+    (is (false? (:bootstrap? (:aiueos.anchors/proposed v)))
+        "this device already has anchors, whatever the release says")))
+
+;; ── the update channel gets no shortcut ───────────────────────────────────
+
+(deftest a-release-that-replaces-every-anchor-is-refused-like-any-other-set
+  (let [v (anchors/admit-from-release (release) (carried :anchors #{pin-b pin-c})
+                                      observed (state))]
+    (is (= :disjoint-without-break-glass (:aiueos.anchors/reason v))
+        "a perfectly signed release that strands the fleet is still a stranded fleet")))
+
+(deftest a-release-carrying-an-empty-set-is-refused
+  (is (= :anchor-set-empty
+         (:aiueos.anchors/reason
+          (anchors/admit-from-release (release) (carried :anchors #{}) observed (state))))))
+
+(deftest a-release-may-break-glass-with-every-root-key
+  (let [v (anchors/admit-from-release (release :signatures all-sigs)
+                                      (carried :anchors #{pin-b pin-c} :break-glass? true)
+                                      observed (state))]
+    (is (anchors/admitted? v))
+    (is (true? (:aiueos.anchors/one-way? v)))))

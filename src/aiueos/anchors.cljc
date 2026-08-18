@@ -57,11 +57,22 @@
   (:require [aiueos.publisher :as publisher]
             [clojure.set :as set]))
 
+;; ── two sequence spaces, two keys ──────────────────────────────────────────
+;;
+;; Anchor sets and releases are both sequenced, and both are checked by
+;; `aiueos.publisher`, which reads `:installed-sequence`. If a caller keeps one
+;; state map for both -- which is the obvious thing to do, since the root keys
+;; and revocation bitmap really are shared -- then the higher of the two
+;; numbers silently blocks the other stream, and a rollback arrives looking
+;; like an upgrade. So anchor state carries its own key and this namespace
+;; hands publisher the right one.
+
 (def deny-reasons
   "Reasons this namespace produces. Reasons from `aiueos.publisher` pass
   through unchanged."
   #{:set-id-missing :anchor-set-empty :no-current-set
-    :disjoint-without-break-glass :break-glass-below-threshold})
+    :disjoint-without-break-glass :break-glass-below-threshold
+    :no-anchors-artifact :anchors-for-another-release :anchors-digest-mismatch})
 
 (def default-policy
   "`:overlap-window-ms` is how long the previous set stays usable after an
@@ -107,13 +118,16 @@
 
   `proposed` — `{:set-id :sequence :anchors #{spki-hex} :signatures
                  :timestamp-ms :digest-matches? :break-glass? :bootstrap?}`
-  `state`    — `aiueos.publisher`'s state plus `:current-anchors`.
+  `state`    — `aiueos.publisher`'s state plus `:current-anchors` and
+               `:installed-anchor-sequence` (see above: not
+               `:installed-sequence`, which belongs to releases).
 
   Structural problems first, then publisher trust, then the two questions only
   an anchor set raises."
   ([proposed state] (admit-set proposed state default-policy))
   ([proposed state policy]
    (let [policy (merge default-policy policy)
+         state (assoc state :installed-sequence (:installed-anchor-sequence state))
          anchors (set (:anchors proposed))
          current (set (:current-anchors state))
          root-keys (count (:keys (:root state)))
@@ -177,8 +191,88 @@
            now (:now-ms state)]
        (merge state
               {:current-anchors (:aiueos.anchors/anchors verdict)
-               :installed-sequence (:aiueos.anchors/sequence verdict)
+               :installed-anchor-sequence (:aiueos.anchors/sequence verdict)
                :previous-anchors (if one-way? #{} (set (:current-anchors state)))
                :accept-previous-until-ms (when (and (not one-way?) now
                                                     (seq (:current-anchors state)))
                                            (+ now (:overlap-window-ms policy)))})))))
+
+;; ── the first set arrives in the image ─────────────────────────────────────
+;;
+;; A device with no anchors cannot fetch one: the connection that would deliver
+;; it is the connection the anchors exist to judge. The only channel it already
+;; trusts is the signed artifact it boots, so that is where the first set comes
+;; from — as a release artifact of kind `:anchors`, covered by the release
+;; signature that exists anyway.
+;;
+;; That makes every release a potential trust change, which is the reason the
+;; rules above are not bypassed here. `from-release` produces a *proposal*; it
+;; still goes through `admit-set`, so a release that replaces every anchor is
+;; refused exactly as a standalone set would be. **The update channel does not
+;; get a shortcut around the one-way door**, and the release being perfectly
+;; signed is not an argument, because a signed release that strands the fleet
+;; is still a stranded fleet.
+
+(def anchors-artifact-kind :anchors)
+
+(defn carries-anchors?
+  "Whether RELEASE names an anchor-set artifact at all. Most releases do not,
+  and that is not an error."
+  [release]
+  (boolean (some #(= anchors-artifact-kind (:kind %)) (:artifacts release))))
+
+(defn from-release
+  "The anchor set a release carries, as a proposal `admit-set` can judge.
+
+  `release`  — the release manifest: `{:manifest-id :sequence :signatures
+                :timestamp-ms :artifacts}`
+  `carried`  — what the provider decoded from the `:anchors` artifact:
+                `{:release-id :sequence :anchors :break-glass?}`
+  `observed` — `{kind digest}`, what the provider actually fetched and hashed
+  `state`    — this machine's anchor state
+
+  The carried set names the release it was made for, and that name is checked
+  against the release in hand. Without it, an anchor set extracted from one
+  release could be applied alongside another's bytes — the hole `aiueos.ota`
+  closes for admissions, in the one place where getting it wrong costs the
+  device its ability to be corrected."
+  [release carried observed state]
+  (let [want (some #(when (= anchors-artifact-kind (:kind %)) (:sha256 %))
+                   (:artifacts release))]
+    (cond
+      (nil? want)
+      (deny :no-anchors-artifact {:aiueos.anchors/release-id (:manifest-id release)})
+
+      (not= (:release-id carried) (:manifest-id release))
+      (deny :anchors-for-another-release
+            {:aiueos.anchors/release-id (:manifest-id release)
+             :aiueos.anchors/carried-release-id (:release-id carried)})
+
+      (not= want (get observed anchors-artifact-kind))
+      (deny :anchors-digest-mismatch
+            {:aiueos.anchors/release-id (:manifest-id release)
+             :aiueos.anchors/expected want
+             :aiueos.anchors/observed (get observed anchors-artifact-kind)})
+
+      :else
+      (admit {:aiueos.anchors/proposed
+              {:set-id want
+               :sequence (:sequence carried)
+               :anchors (set (:anchors carried))
+               :break-glass? (true? (:break-glass? carried))
+               ;; Not self-asserted: a set is the bootstrap because this device
+               ;; has nothing, never because the document said so.
+               :bootstrap? (empty? (set (:current-anchors state)))
+               :signatures (:signatures release)
+               :timestamp-ms (:timestamp-ms release)
+               :digest-matches? true}}))))
+
+(defn admit-from-release
+  "`from-release` then `admit-set`. The convenience does not skip a rule: the
+  proposal it builds is judged by the same function a standalone set is."
+  ([release carried observed state] (admit-from-release release carried observed state default-policy))
+  ([release carried observed state policy]
+   (let [v (from-release release carried observed state)]
+     (if-not (admitted? v)
+       v
+       (admit-set (:aiueos.anchors/proposed v) state policy)))))
