@@ -147,3 +147,28 @@
         (str "the receipt claims it was measured on " measured
              ", which is in the future — a broken clock or a hand-edited"
              " receipt, and both mean the numbers beside it are unowned"))))
+
+(deftest the-upstream-exclusion-is-still-justified
+  ;; A tripwire, and the only assertion here that fails on GOOD news.
+  ;;
+  ;; `:test-fleet` drops `every-kotoba-source-is-built-or-declared-unbuilt` via
+  ;; `^:upstream-blocked` (ADR-0063), and that exclusion is justified by exactly
+  ;; one fact: nothing in the value runtime compiles, because it needs an
+  ;; intrinsic and an export answer this repository does not own (amu#625,
+  ;; #626). The moment that stops being true, the exclusion becomes what this
+  ;; series has called decoration — a gate quietly not looking at something it
+  ;; could now see, with nobody assigned to notice.
+  ;;
+  ;; `passing-floor` bounds the same number from below: passing may only
+  ;; increase. This bounds it from above. **The day the two disagree is the day
+  ;; the exclusion must be revisited**, and the disagreement is the alarm.
+  (let [passing (- (:value-runtime/objects @receipt)
+                   (:value-runtime/failing @receipt))]
+    (is (zero? passing)
+        (str passing " value-runtime object(s) now pass. amu#625 or #626 has"
+             " moved, so: re-run aiueos.verify-value-runtime-all, wire the"
+             " objects that build into a build script, remove ^:upstream-blocked"
+             " from every-kotoba-source-is-built-or-declared-unbuilt in"
+             " kotoba_object_reachability_test.clj, drop `-e :upstream-blocked`"
+             " from the :test-fleet alias in deps.edn, and delete this"
+             " assertion. Raise passing-floor to the new number first."))))
