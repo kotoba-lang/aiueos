@@ -176,6 +176,31 @@
     (not (non-blank-string? (:key-compromise-recovery-tested-at evidence)))
     (conj :key-compromise-recovery-tested-at)))
 
+(defn- anchor-violations
+  "A production machine must boot knowing which keys it may talk to.
+
+  ADR-0048 made PID 1 load the image's anchor set and record the outcome on the
+  boot config; ADR-0049 did the same for the launcher's artifact check. Both
+  ADRs then said the same thing about their own work: **the fact is recorded
+  and no profile turns it into a requirement.** This is the anchors half of
+  turning that around (ADR-0065).
+
+  Two violations, not one, because they are different operator problems: an
+  image that carries no anchor set at all, and one that carries a set which
+  produced no keys. The second is a file someone shipped believing it did
+  something.
+
+  `:research` is untouched. A development machine that reaches nothing because
+  it has no pins is a development machine working normally."
+  [boot-config]
+  (cond-> []
+    (not (true? (:aiueos.anchors/present? boot-config)))
+    (conj :trust-anchors-absent)
+
+    (and (true? (:aiueos.anchors/present? boot-config))
+         (empty? (:aiueos.cloud/trust-anchors boot-config)))
+    (conj :trust-anchors-empty)))
+
 (defn profile-violations
   "Return stable violation keywords for a boot config.
 
@@ -212,7 +237,8 @@
                               (watchdog-violations evidence))
                         (network-topic-violations evidence))
                   (entropy-violations evidence))
-            (side-channel-violations profile evidence))
+            (into (side-channel-violations profile evidence)
+                  (anchor-violations boot-config)))
 
       (= profile :regulated)
       (cond-> (into (into (into (into (into (into (into
@@ -223,7 +249,8 @@
                                       (network-topic-violations evidence))
                                 (entropy-violations evidence))
                           (key-lifecycle-violations evidence))
-                    (side-channel-violations profile evidence))
+                    (into (side-channel-violations profile evidence)
+                          (anchor-violations boot-config)))
         (not (non-blank-string? (:sbom-digest evidence)))
         (conj :sbom-digest)
         (not (non-blank-string? (:provenance-digest evidence)))
