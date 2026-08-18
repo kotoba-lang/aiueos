@@ -1,0 +1,48 @@
+;; How the pin set of ADR-0044 reaches a device, and how it changes.
+;;
+;; An anchor set is a signed, sequenced document that changes what the machine
+;; will trust, so it is admitted by aiueos.publisher like a release -- same four
+;; attacks, same answers, no second weaker copy. What is added here is what is
+;; true of anchor sets and of nothing else: an empty set is a brick, replacing
+;; every anchor at once is a one-way door, and a device with no anchors cannot
+;; be handed one over a connection it has no way to judge.
+[{:db/id -1
+  :aiueos.anchors/id :aiueos/default-anchors
+  :aiueos.anchors/source-files ["src/aiueos/anchors.cljc"]
+  :aiueos.anchors/composes ["src/aiueos/publisher.cljc"]
+  :aiueos.anchors/consumed-by ["src/aiueos/cloud.cljc" "src/aiueos/provider/cloud.clj"]
+  :aiueos.anchors/set-fields [:set-id :sequence :anchors :signatures :timestamp-ms
+                              :digest-matches? :break-glass? :bootstrap?]
+  :aiueos.anchors/decision-shapes #{:grant :deny}
+  :aiueos.anchors/deny-reasons #{:set-id-missing :anchor-set-empty :no-current-set
+                                 :disjoint-without-break-glass
+                                 :break-glass-below-threshold}
+  :aiueos.anchors/reasons-pass-through
+  "aiueos.publisher reasons are returned unchanged; a caller reading a verdict
+   should not have to guess which layer refused"
+  :aiueos.anchors/empty-set :denied
+  :aiueos.anchors/disjoint-set :break-glass-only
+  :aiueos.anchors/break-glass {:threshold :every-root-key
+                               :drops-previous-immediately? true
+                               :verdict-flag :aiueos.anchors/one-way?}
+  :aiueos.anchors/first-set :in-the-image
+  :aiueos.anchors/trust-on-first-use :refused
+  :aiueos.anchors/overlap-window-ms 604800000
+  :aiueos.anchors/freshness-gates :admission-only
+  :aiueos.anchors/assurance-gaps
+  ["Identity is supplied, not computed. :set-id is a digest the caller made and
+    :digest-matches? is the caller's claim about it; this namespace guarantees
+    the same id flows through the decision, not that the id is right. Same
+    boundary as aiueos.ota's :manifest-id."
+   "Nothing here fetches or verifies a signature. :signatures carries the
+    provider's per-signature :verified? answer, as everywhere else in this
+    repository."
+   "The bootstrap set is not yet built into any image. Marking a set
+    :bootstrap? is admitted here; putting one in the release artifact, covered
+    by the release signature, is unimplemented -- so today a fresh device still
+    has no anchors and therefore reaches nothing."
+   "No pin for kotobase.net or api.murakumo.cloud is recorded anywhere. This
+    decides how a set changes, not what the first one contains."
+   "Rotation is modelled, not exercised: no fleet has run add -> switch ->
+    retire against a real endpoint, and the overlap window has never been
+    measured against how long convergence actually takes."]}]

@@ -41,6 +41,11 @@
   ;; (ADR-0041, ADR-0042).
   {:path "src/aiueos/net.cljc" :role :network-origin-gate
    :sha256 "183b2facb48d0b8d2e802b2c90cead767386bb3519306b856d5296a93d42b4a9"}
+  ;; What the machine will trust, and how that changes. An anchor set decides
+  ;; which keys aiueos.cloud will accept, so compromising this file is
+  ;; compromising every https connection the machine makes (ADR-0045).
+  {:path "src/aiueos/anchors.cljc" :role :peer-trust-lifecycle
+   :sha256 "06c868879557cfe8aedc88d3da2e233b643e15887a1153033c584ea9fc60fd5d"}
   {:path "src/aiueos/cloud.cljc" :role :remote-authority-decision
    :sha256 "313adb4fa6c1c0278f0950262e179a5671797f5b8dac3608761fd77cbdd90f81"}
   {:path "src/aiueos/provider/cloud.clj" :role :remote-authority-transport
