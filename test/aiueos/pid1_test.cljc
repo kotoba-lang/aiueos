@@ -196,3 +196,16 @@
                                :aiueos/anchors (.getPath af)})]
            (is (thrown-with-msg? Exception #"anchor set refused"
                                  (pid1/load-boot-config (.getPath bf)))))))))
+
+#?(:clj
+   (deftest the-host-claim-is-read-out-of-the-command-line
+     (is (= "release-42"
+            (pid1/host-verification-claim
+             "console=ttyS0 panic=0 rdinit=/init aiueos.boot.verified=release-42")))
+     (is (= "release-42"
+            (pid1/host-verification-claim "aiueos.boot.verified=release-42 quiet"))
+         "first token on the line, which a naive space-prefixed pattern misses")
+     (is (nil? (pid1/host-verification-claim "console=ttyS0 rdinit=/init")))
+     (is (nil? (pid1/host-verification-claim
+                "console=ttyS0 not-aiueos.boot.verified=release-42"))
+         "a suffix match would have accepted this")))

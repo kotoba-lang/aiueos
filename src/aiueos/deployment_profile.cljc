@@ -196,6 +196,18 @@
              (when-let [h (strictness host)]
                (>= h g)))))
 
+(defn- host-claim-violations
+  "A production guest wants to know its artifacts were checked before it
+  started. It cannot verify that itself — the check happened on the host,
+  before the guest existed — so the most it can do is refuse to run when the
+  launcher does not even claim it (ADR-0072).
+
+  Absent for `:research`, where booting what you just built is the normal case."
+  [boot-config]
+  (if (str/blank? (str (:aiueos.boot/host-verified-release boot-config)))
+    [:host-verification-unclaimed]
+    []))
+
 (defn- anchor-violations
   "A production machine must boot knowing which keys it may talk to.
 
@@ -257,8 +269,9 @@
                               (watchdog-violations evidence))
                         (network-topic-violations evidence))
                   (entropy-violations evidence))
-            (into (side-channel-violations profile evidence)
-                  (anchor-violations boot-config)))
+            (into (into (side-channel-violations profile evidence)
+                        (anchor-violations boot-config))
+                  (host-claim-violations boot-config)))
 
       (= profile :regulated)
       (cond-> (into (into (into (into (into (into (into
@@ -269,8 +282,9 @@
                                       (network-topic-violations evidence))
                                 (entropy-violations evidence))
                           (key-lifecycle-violations evidence))
-                    (into (side-channel-violations profile evidence)
-                          (anchor-violations boot-config)))
+                    (into (into (side-channel-violations profile evidence)
+                                (anchor-violations boot-config))
+                          (host-claim-violations boot-config)))
         (not (non-blank-string? (:sbom-digest evidence)))
         (conj :sbom-digest)
         (not (non-blank-string? (:provenance-digest evidence)))

@@ -27,6 +27,19 @@
 
 (def boot-edn-path "/etc/aiueos/boot.edn")
 
+(def cmdline-path "/proc/cmdline")
+
+(defn host-verification-claim
+  "The release id the launcher claims it verified, read out of a kernel command
+  line, or nil.
+
+  Pure so it is testable without a `/proc`: the caller supplies the string.
+  See `aiueos.vm/verified-cmdline-key` for why this is a misconfiguration
+  signal and not a security control (ADR-0072)."
+  [cmdline]
+  (when-let [m (re-find #"(?:^|\s)aiueos\.boot\.verified=([^\s]+)" (str cmdline))]
+    (second m)))
+
 ;; ── the anchors the image booted with ──────────────────────────────────────
 ;;
 ;; ADR-0047 put the bootstrap anchor set in the image and nothing read it. This

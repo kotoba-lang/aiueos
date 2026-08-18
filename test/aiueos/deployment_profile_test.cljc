@@ -9,6 +9,12 @@
    :append-only-audit? true
    :non-claims-declared? true})
 
+(def host-claim
+  "The launcher's claim that it verified these artifacts, as a production boot
+  config carries it (ADR-0072). In every production fixture for the same reason
+  the anchors are: a fixture that omits a requirement asserts its absence."
+  "release-42")
+
 (def anchor-set
   "What a production boot config must now carry alongside its evidence: PID 1
   loaded an anchor set and it produced keys (ADR-0065). Spelled into every
@@ -118,12 +124,14 @@
     (is (= [:encrypted-data? :secure-entropy?]
            (profile/profile-violations
             {:aiueos.anchors/present? true :aiueos.cloud/trust-anchors anchor-set
+             :aiueos.boot/host-verified-release host-claim
              :aiueos/deployment-profile :sensitive-local
              :aiueos/profile-evidence
              (dissoc sensitive-evidence :encrypted-data? :secure-entropy?)}))))
   (is (empty?
        (profile/profile-violations
         {:aiueos.anchors/present? true :aiueos.cloud/trust-anchors anchor-set
+             :aiueos.boot/host-verified-release host-claim
              :aiueos/deployment-profile :regulated
          :aiueos/profile-evidence regulated-evidence}))))
 
@@ -133,6 +141,7 @@
           :entropy-fips-validated?]
          (profile/profile-violations
           {:aiueos.anchors/present? true :aiueos.cloud/trust-anchors anchor-set
+             :aiueos.boot/host-verified-release host-claim
              :aiueos/deployment-profile :regulated
            :aiueos/profile-evidence (assoc regulated-evidence :fips-claim? true)}))))
 
@@ -141,6 +150,7 @@
          (filterv #{:tcb-inventory-digest :tcb-drift-check?}
                   (profile/profile-violations
                    {:aiueos.anchors/present? true :aiueos.cloud/trust-anchors anchor-set
+             :aiueos.boot/host-verified-release host-claim
              :aiueos/deployment-profile :regulated
                     :aiueos/profile-evidence
                     (dissoc regulated-evidence
@@ -151,6 +161,7 @@
          (filterv #{:reproducibility-qualified? :reproducibility-artifact-digest}
                   (profile/profile-violations
                    {:aiueos.anchors/present? true :aiueos.cloud/trust-anchors anchor-set
+             :aiueos.boot/host-verified-release host-claim
              :aiueos/deployment-profile :regulated
                     :aiueos/profile-evidence
                     (dissoc regulated-evidence
@@ -160,6 +171,7 @@
          (filterv #{:reproducibility-artifact-binding}
                   (profile/profile-violations
                    {:aiueos.anchors/present? true :aiueos.cloud/trust-anchors anchor-set
+             :aiueos.boot/host-verified-release host-claim
              :aiueos/deployment-profile :regulated
                     :aiueos/profile-evidence
                     (assoc regulated-evidence :reproducibility-artifact-digest
@@ -179,6 +191,7 @@
                       :key-compromise-recovery-tested-at}
                     (profile/profile-violations
                      {:aiueos.anchors/present? true :aiueos.cloud/trust-anchors anchor-set
+             :aiueos.boot/host-verified-release host-claim
              :aiueos/deployment-profile :regulated
                       :aiueos/profile-evidence evidence}))))))
 
@@ -191,6 +204,7 @@
            (filterv #(= "side-channel-decision" (namespace %))
                     (profile/profile-violations
                      {:aiueos.anchors/present? true :aiueos.cloud/trust-anchors anchor-set
+             :aiueos.boot/host-verified-release host-claim
              :aiueos/deployment-profile :sensitive-local
                       :aiueos/profile-evidence evidence}))))))
 
@@ -207,6 +221,7 @@
                       :watchdog-overrun-tested-at}
                     (profile/profile-violations
                      {:aiueos.anchors/present? true :aiueos.cloud/trust-anchors anchor-set
+             :aiueos.boot/host-verified-release host-claim
              :aiueos/deployment-profile :sensitive-local
                       :aiueos/profile-evidence evidence}))))))
 
@@ -223,6 +238,7 @@
                       :network-topic-partition-tested-at}
                     (profile/profile-violations
                      {:aiueos.anchors/present? true :aiueos.cloud/trust-anchors anchor-set
+             :aiueos.boot/host-verified-release host-claim
              :aiueos/deployment-profile :sensitive-local
                       :aiueos/profile-evidence evidence}))))))
 
@@ -239,6 +255,7 @@
                       :entropy-provider-attested-at}
                     (profile/profile-violations
                      {:aiueos.anchors/present? true :aiueos.cloud/trust-anchors anchor-set
+             :aiueos.boot/host-verified-release host-claim
              :aiueos/deployment-profile :sensitive-local
                       :aiueos/profile-evidence evidence}))))))
 
@@ -255,6 +272,7 @@
                       :component-state-deletion-tested-at}
                     (profile/profile-violations
                      {:aiueos.anchors/present? true :aiueos.cloud/trust-anchors anchor-set
+             :aiueos.boot/host-verified-release host-claim
              :aiueos/deployment-profile :sensitive-local
                       :aiueos/profile-evidence evidence}))))))
 
@@ -270,6 +288,7 @@
   (let [failure (try
                   (profile/enforce!
                    {:aiueos.anchors/present? true :aiueos.cloud/trust-anchors anchor-set
+             :aiueos.boot/host-verified-release host-claim
              :aiueos/deployment-profile :sensitive-local
                     :aiueos/profile-evidence
                     (dissoc sensitive-evidence :encrypted-data?)})
@@ -287,19 +306,22 @@
   (testing "an image that carries no anchor set"
     (is (= [:trust-anchors-absent]
            (profile/profile-violations
-            {:aiueos/deployment-profile :sensitive-local
+            {:aiueos.boot/host-verified-release host-claim
+             :aiueos/deployment-profile :sensitive-local
              :aiueos/profile-evidence sensitive-evidence}))))
   (testing "and one whose set produced no keys, which is a different mistake"
     (is (= [:trust-anchors-empty]
            (profile/profile-violations
             {:aiueos.anchors/present? true
              :aiueos.cloud/trust-anchors #{}
+             :aiueos.boot/host-verified-release host-claim
              :aiueos/deployment-profile :sensitive-local
              :aiueos/profile-evidence sensitive-evidence}))))
   (testing "regulated too"
     (is (= [:trust-anchors-absent]
            (profile/profile-violations
-            {:aiueos/deployment-profile :regulated
+            {:aiueos.boot/host-verified-release host-claim
+             :aiueos/deployment-profile :regulated
              :aiueos/profile-evidence regulated-evidence})))))
 
 (deftest research-still-boots-without-anchors
@@ -323,3 +345,15 @@
   (is (false? (profile/at-least-as-strict? :high-assurance :regulated)))
   (is (false? (profile/at-least-as-strict? :regulated :something-new)))
   (is (false? (profile/at-least-as-strict? nil :research))))
+
+(deftest a-production-guest-refuses-a-launcher-that-claims-nothing
+  (is (= [:host-verification-unclaimed]
+         (profile/profile-violations
+          {:aiueos.anchors/present? true :aiueos.cloud/trust-anchors anchor-set
+           :aiueos/deployment-profile :sensitive-local
+           :aiueos/profile-evidence sensitive-evidence}))
+      "the guest cannot verify its own artifacts -- that happened on the host,
+       before it existed -- so the most it can do is refuse to run when the
+       launcher does not even claim it")
+  (is (empty? (profile/profile-violations {:aiueos/system "/system"}))
+      ":research is untouched: booting what you just built is the normal case"))

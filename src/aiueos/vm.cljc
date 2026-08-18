@@ -166,6 +166,29 @@
          (throw (ex-info (str "missing VM boot input " (name kind)) {:kind kind :path path}))))
      (verify-artifacts! p)))
 
+(def verified-cmdline-key
+  "The kernel command-line token a launcher uses to tell the guest it checked
+  the artifacts before starting it.
+
+  **This is not a security control and must not be read as one.** The command
+  line is supplied by the same host that would be lying, so a compromised
+  launcher can claim a verification it never did. What it catches is
+  *misconfiguration*: a production guest started by a launcher that does not
+  even claim to have verified it — which, before this, the guest had no way to
+  notice at all (ADR-0072).
+
+  Writing the evidence into the image was the other option and is impossible:
+  the image's digest is the thing being verified, so mutating it invalidates
+  the claim being recorded."
+  "aiueos.boot.verified")
+
+(defn cmdline-with-evidence
+  "P's `:cmdline` plus the host's claim, when there is one to make."
+  [p]
+  (cond-> (:cmdline p)
+    (:aiueos.boot/release-id p)
+    (str " " verified-cmdline-key "=" (:aiueos.boot/release-id p))))
+
 (defn argv
   "The full QEMU argv (a vector of strings) for `p` (from `plan`)."
   [p]
@@ -187,7 +210,8 @@
       ["-device" "virtio-serial-pci"
        "-chardev" (str "socket,id=aiueoscon,path=" (:console-socket p) ",server=on,wait=off")
        "-device" "virtconsole,chardev=aiueoscon,name=aiueos.console.0"])
-    ["-kernel" (str (:kernel p)) "-initrd" (str (:initramfs p)) "-append" (:cmdline p)])))
+    ["-kernel" (str (:kernel p)) "-initrd" (str (:initramfs p))
+     "-append" (cmdline-with-evidence p)])))
 
 (defn command-line
   "`argv` joined into one shell-quotable-ish string, for `--dry-run`/logging

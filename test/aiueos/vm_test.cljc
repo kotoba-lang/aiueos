@@ -197,3 +197,25 @@
                         :publisher-state publisher-state}))]
        (is (true? (:aiueos.boot/verified? p))
            "verifying more than the image asked for costs nothing"))))
+
+#?(:clj
+   (deftest a-verified-launch-tells-the-guest-on-the-command-line
+     (let [k (artifact-file! "kernel") i (artifact-file! "initramfs")
+           measured (vm/measure-artifacts {:kernel (.getPath k) :initramfs (.getPath i)})
+           p (vm/validate-boot-inputs!
+              (vm/plan {:kernel (.getPath k) :initramfs (.getPath i)
+                        :release (signed-release (:kernel measured) (:initramfs measured))
+                        :publisher-state publisher-state}))
+           cmdline (vm/cmdline-with-evidence p)]
+       (is (.contains ^String cmdline "aiueos.boot.verified=release-42"))
+       (is (some #(and (string? %) (.contains ^String % "aiueos.boot.verified=release-42")) (vm/argv p))
+           "and it reaches the actual QEMU arguments, not just a helper"))))
+
+#?(:clj
+   (deftest an-unverified-launch-claims-nothing
+     (let [k (artifact-file! "kernel") i (artifact-file! "initramfs")
+           p (vm/validate-boot-inputs!
+              (vm/plan {:kernel (.getPath k) :initramfs (.getPath i)}))]
+       (is (not (.contains ^String (vm/cmdline-with-evidence p) "aiueos.boot.verified"))
+           "silence rather than an empty claim: a guest reading this must not
+            find a key with nothing after it and call that a verification"))))
