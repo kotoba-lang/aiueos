@@ -44,7 +44,7 @@
          (tcb/validate (tcb/read-inventory)
                        (clojure.edn/read-string (slurp "deps.edn"))
                        (clojure.edn/read-string (slurp "security-adoption.edn"))
-                       {:classpath :not-in-scope}))))
+                       {:classpath :not-in-scope :review :not-in-scope}))))
 
 (deftest authority-and-escape-boundaries-cannot-disappear-silently
   (let [inventory (tcb/read-inventory)
@@ -86,12 +86,12 @@
 
 (deftest synthetic-git-dependency-baseline-is-clean
   (is (true? (:valid? (tcb/validate git-dep-inventory git-deps-edn nil
-                                    {:classpath :not-in-scope})))))
+                                    {:classpath :not-in-scope :review :not-in-scope})))))
 
 (deftest runtime-dependency-missing-from-the-inventory-is-fail-closed
   (let [deps (assoc-in git-deps-edn [:deps 'io.github.example/unlisted]
                        {:mvn/version "1.0.0"})
-        result (tcb/validate git-dep-inventory deps nil {:classpath :not-in-scope})]
+        result (tcb/validate git-dep-inventory deps nil {:classpath :not-in-scope :review :not-in-scope})]
     (is (false? (:valid? result)))
     (is (= [{:kind :external-undeclared
              :coordinate "io.github.example/unlisted"}]
@@ -100,13 +100,13 @@
 (deftest git-pin-drift-between-inventory-and-deps-is-fail-closed
   (let [deps (assoc-in git-deps-edn [:deps 'io.github.example/lib :git/sha]
                        "bbbb000000000000000000000000000000000000")
-        result (tcb/validate git-dep-inventory deps nil {:classpath :not-in-scope})]
+        result (tcb/validate git-dep-inventory deps nil {:classpath :not-in-scope :review :not-in-scope})]
     (is (false? (:valid? result)))
     (is (= :external-git-sha-drift (-> result :errors first :kind)))))
 
 (deftest an-unpinned-external-dependency-cannot-pass-silently
   (let [inventory (update-in git-dep-inventory [:tcb/external 0] dissoc :git-sha)
-        result (tcb/validate inventory git-deps-edn nil {:classpath :not-in-scope})]
+        result (tcb/validate inventory git-deps-edn nil {:classpath :not-in-scope :review :not-in-scope})]
     (is (false? (:valid? result)))
     (is (= :external-unpinned (-> result :errors first :kind)))))
 
@@ -114,7 +114,7 @@
   (let [inventory (assoc git-dep-inventory
                          :tcb/external [{:coordinate "java.base" :source :platform
                                          :role :crypto-ffi-process-runtime}])
-        result (tcb/validate inventory {:deps {}} nil {:classpath :not-in-scope})]
+        result (tcb/validate inventory {:deps {}} nil {:classpath :not-in-scope :review :not-in-scope})]
     (is (false? (:valid? result)))
     (is (= :external-unpinned (-> result :errors first :kind)))))
 
@@ -131,7 +131,7 @@
 
 (defn- platform-errors [entry]
   (:errors (tcb/validate (platform-inventory entry) {:deps {}} nil
-                         {:classpath :not-in-scope})))
+                         {:classpath :not-in-scope :review :not-in-scope})))
 
 (deftest the-ci-workflow-java-version-is-readable
   (is (seq provisioned-versions)
@@ -180,7 +180,7 @@
   (let [inventory (tcb/read-inventory)
         deps (edn/read-string (slurp "deps.edn"))
         adoption {:security/git-sha (apply str (repeat 40 "f"))}
-        result (tcb/validate inventory deps adoption {:classpath :not-in-scope})]
+        result (tcb/validate inventory deps adoption {:classpath :not-in-scope :review :not-in-scope})]
     (is (false? (:valid? result)))
     (is (= [{:kind :external-adoption-drift
              :coordinate "io.github.kotoba-lang/security"
@@ -245,7 +245,7 @@
     (is (true? (:valid? (tcb/validate inventory
                                       (clojure.edn/read-string (slurp "deps.edn"))
                                       (clojure.edn/read-string (slurp "security-adoption.edn"))
-                                      {:classpath :not-in-scope})))
+                                      {:classpath :not-in-scope :review :not-in-scope})))
         "the check runs under more than one alias; recorded-but-absent is normal")))
 
 ;; --- adopted build properties ---------------------------------------------
@@ -306,3 +306,31 @@
          (:kind (first (tcb/validate-build-identity (assoc build-identity :adopted []))))))
   (is (= :build-identity-missing
          (:kind (first (tcb/validate-build-identity nil))))))
+
+;; --- the review date is checkable (ADR-0067) -------------------------------
+
+(deftest the-review-date-moves-with-the-inventory
+  (is (= (:tcb/content-digest (tcb/read-inventory))
+         (tcb/inventory-content-digest))
+      "an entry changed without the digest being re-recorded, which means
+       :tcb/as-of is claiming a review that did not cover it")
+  (is (re-matches #"\d{4}-\d{2}-\d{2}" (str (:tcb/as-of (tcb/read-inventory))))
+      "and the date is a date"))
+
+(deftest an-entry-changed-without-re-review-is-stale
+  (let [changed (update (tcb/read-inventory) :tcb/files
+                        (fn [files] (assoc-in (vec files) [0 :role] :something-else)))
+        result (tcb/validate changed
+                             (edn/read-string (slurp "deps.edn"))
+                             (edn/read-string (slurp "security-adoption.edn"))
+                             {:classpath :not-in-scope})]
+    (is (false? (:valid? result)))
+    (is (some #(= :as-of-stale (:kind %)) (:errors result))
+        "changing a role is a review question, and the date has to say it was asked")))
+
+(deftest an-inventory-with-no-content-digest-is-fail-closed
+  (let [result (tcb/validate (dissoc (tcb/read-inventory) :tcb/content-digest)
+                             (edn/read-string (slurp "deps.edn"))
+                             (edn/read-string (slurp "security-adoption.edn"))
+                             {:classpath :not-in-scope})]
+    (is (some #(= :content-digest-missing (:kind %)) (:errors result)))))
