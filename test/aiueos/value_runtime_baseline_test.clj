@@ -108,3 +108,11 @@
           (str "the slice refuses " form " and nothing says who was asked — "
                "a measurement that names a wall and points at no one is a "
                "complaint")))))
+
+(deftest every-failure-class-points-at-where-the-work-is
+  (let [by-cause (:value-runtime/upstream-by-cause @receipt)]
+    (doseq [cause (keys (:value-runtime/failing-by-cause @receipt))]
+      (is (seq (get by-cause cause))
+          (str cause " has failures and nothing says who was asked — the "
+               "export class carries no rejected form, so the per-form floor "
+               "alone would let it sit unreferenced")))))
