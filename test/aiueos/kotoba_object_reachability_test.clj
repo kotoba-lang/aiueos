@@ -79,7 +79,10 @@
       "source count only grows; a shrunk directory means sources were dropped"))
 
 (deftest ^:upstream-blocked every-kotoba-source-is-built-or-declared-unbuilt
-  ;; ^:upstream-blocked, so `:test-fleet` can leave it out. The twelve failures
+  ;; ^:upstream-blocked, so `:test-fleet` can leave it out. The tripwire that
+  ;; notices when that stops being justified is
+  ;; `aiueos.value-runtime-baseline-test/the-upstream-exclusion-is-still-justified`,
+  ;; which fails the moment any value-runtime object compiles. The twelve failures
   ;; are the value-* family, and ADR-0050 established that this red is CORRECT:
   ;; nothing builds those objects, and nothing here can, because they are
   ;; blocked on kotoba-lang/amu#625 and #626. A gate that cannot go green until
