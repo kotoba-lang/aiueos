@@ -10,6 +10,7 @@
   JVM-only (`#?(:clj ...)` throughout) -- process I/O, same as
   `aiueos.image`/`aiueos.launcher`."
   (:require [clojure.string :as str]
+            #?(:clj [aiueos.deployment-profile :as deployment-profile])
             #?(:clj [aiueos.boot-admission :as boot-admission])
             #?(:clj [aiueos.signing :as signing])))
 
@@ -58,6 +59,10 @@
      ;; The profile THIS LAUNCHER is running under, not the one the guest will
      ;; declare for itself. See `verify-artifacts!` (ADR-0069).
      :deployment-profile (:deployment-profile opts)
+     ;; What the image says about itself, when the caller knows it. The
+     ;; launcher does not read the initramfs, so this is supplied rather than
+     ;; discovered (ADR-0071).
+     :image-profile (:image-profile opts)
      :arch arch
      :accel accel
      :memory (or (:memory opts) "1024M")
@@ -130,6 +135,17 @@
                        {:type :boot-admission-failed
                         :profile (:deployment-profile p)
                         :reason :no-release})))
+     (when (and (:image-profile p)
+                (not (deployment-profile/at-least-as-strict?
+                      (:deployment-profile p) (:image-profile p))))
+       (throw (ex-info (str "refusing to boot: the image declares "
+                            (name (:image-profile p))
+                            " and this launcher is running "
+                            (pr-str (:deployment-profile p)))
+                       {:type :boot-admission-failed
+                        :reason :launcher-weaker-than-image
+                        :image-profile (:image-profile p)
+                        :launcher-profile (:deployment-profile p)})))
      (if-let [release (:release p)]
        (let [observed (measure-artifacts p)
              verdict (boot-admission/admit-boot release observed (:publisher-state p))]

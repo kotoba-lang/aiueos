@@ -103,6 +103,7 @@
                  :jre-dir (.getPath jre) :jar (.getPath jar)
                  :runtime-root (.getPath runtime-root)
                  :anchors anchors
+                 :deployment-profile :regulated
                  :out (.getPath out)})))
 
 (deftest the-packaged-initramfs-contains-the-bytes-the-manifest-names
@@ -126,10 +127,14 @@
                                    anchors/document-signature-key))
             "unpacked from the real image, it still measures to the digest the
              release manifest names")
-        (is (= "/etc/aiueos/anchors.edn"
-               (:aiueos/anchors (edn/read-string
-                                 (slurp (io/file extract "etc" "aiueos" "boot.edn")))))
-            "and boot.edn tells the guest where to find it"))
+        (let [boot (edn/read-string (slurp (io/file extract "etc" "aiueos" "boot.edn")))]
+          (is (= "/etc/aiueos/anchors.edn" (:aiueos/anchors boot))
+              "and boot.edn tells the guest where to find it")
+          ;; The plan carrying a profile is not the image declaring one: the
+          ;; guest reads this file, and asserting on the plan would pass with
+          ;; nothing written here at all (ADR-0071).
+          (is (= :regulated (:aiueos/deployment-profile boot))
+              "the packaged image declares the profile it was built for")))
       (finally (delete-tree! dir)))))
 
 ;; ── release signature → artifact digest → document → key → connection ─────

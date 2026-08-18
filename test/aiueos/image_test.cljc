@@ -112,3 +112,13 @@
                        (image/plan {:system (.getPath (File. dir "system.edn"))
                                     :out (.getPath (File. dir "bad.cpio.gz"))}))))
          (finally (delete-tree! dir))))))
+
+#?(:clj
+   (deftest an-image-declares-the-profile-it-was-built-for
+     (let [dir (temp-dir!)]
+       (try
+         (spit (File. dir "system.edn") "{:aiueos/components []}")
+         (let [p (image/plan {:system (.getPath (File. dir "system.edn"))
+                              :deployment-profile :regulated})]
+           (is (= :regulated (:deployment-profile p))))
+         (finally (delete-tree! dir))))))

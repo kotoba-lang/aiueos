@@ -176,6 +176,26 @@
     (not (non-blank-string? (:key-compromise-recovery-tested-at evidence)))
     (conj :key-compromise-recovery-tested-at)))
 
+(def strictness
+  "The profiles in order. `:high-assurance` is blocked rather than ranked --
+  it is not a stricter production profile, it is a refusal (ADR-0071)."
+  {:research 0 :sensitive-local 1 :regulated 2})
+
+(defn at-least-as-strict?
+  "Whether HOST's profile is no weaker than GUEST's.
+
+  The dangerous direction is one-sided: a guest that declares `:regulated` and
+  is launched by a host running `:research` had its artifact check skipped by a
+  launcher that did not know it was expected. The reverse -- a host verifying
+  more than the guest asked for -- costs nothing.
+
+  Unknown profiles are not comparable, and this says so with `false` rather
+  than ordering them by accident."
+  [host guest]
+  (boolean (when-let [g (strictness guest)]
+             (when-let [h (strictness host)]
+               (>= h g)))))
+
 (defn- anchor-violations
   "A production machine must boot knowing which keys it may talk to.
 
