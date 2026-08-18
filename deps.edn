@@ -45,10 +45,16 @@
                              io.github.kotoba-lang/compiler
                              {:git/url "https://github.com/kotoba-lang/amu.git"
                               :git/sha "1e21a1f56613d7d4c7628af1945ebf1cf7862ff3"}
-                             io.github.kotoba-lang/org-ietf-tcp
-                             {:git/url "https://github.com/kotoba-lang/org-ietf-tcp.git"
-                              :git/sha "73ace58d11e409bb387e26c2d99dccba79a99116"}}
-                :main-opts ["-m" "cognitect.test-runner" "-e" ":upstream-blocked"]}
+                             }
+                ;; No org-ietf-tcp here, and the parity test that needs it is
+                ;; not selected. **That repository is private**, and fleet nodes
+                ;; hold no credentials by invariant, so `clojure -P` on a node
+                ;; dies with "could not read Username for https://github.com"
+                ;; before a single test runs — which is how this alias failed
+                ;; its first real gate (ADR-0068).
+                :main-opts ["-m" "cognitect.test-runner"
+                            "-r" "^aiueos\\.(?!tcp-seq-acceptable-parity-test).*$"
+                            "-e" ":upstream-blocked"]}
 
    :tcb-check {:main-opts ["-m" "aiueos.tcb"]}
 
