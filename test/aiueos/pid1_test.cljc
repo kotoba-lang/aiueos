@@ -8,6 +8,8 @@
   disposition, which is safe to exercise (and IS exercised, via `boot!`'s own
   shutdown below, since `Signal.raise` is how the test triggers shutdown)."
   (:require [aiueos.pid1 :as pid1]
+            #?(:clj [aiueos.anchors :as anchors])
+            #?(:clj [aiueos.cloud :as cloud])
             [clojure.test :refer [deftest is testing]])
   #?(:clj (:import [java.lang.foreign Arena])))
 
@@ -38,6 +40,9 @@
          (spit tmp (pr-str {:aiueos/system "/etc/aiueos/system" :aiueos/policy "/etc/aiueos/policy.edn"}))
          (is (= {:aiueos/system "/etc/aiueos/system"
                  :aiueos/policy "/etc/aiueos/policy.edn"
+                 ;; A boot config always answers the anchors question, even
+                 ;; when the answer is "this image carries none" (ADR-0048).
+                 :aiueos.anchors/present? false
                  :aiueos/deployment-profile :research}
                 (pid1/load-boot-config (.getPath tmp))))
          (finally (.delete tmp))))))
@@ -108,3 +113,86 @@
        (is (false? @up-called?))
        (is (= :deployment-profile-admission-failed (:type failure)))
        (is (some #{:deny-by-default?} (:violations failure))))))
+
+;; ── the anchors the image booted with ─────────────────────────────────────
+
+#?(:clj
+   (defn- boot-file! [config]
+     (let [tmp (java.io.File/createTempFile "aiueos-boot" ".edn")]
+       (.deleteOnExit tmp)
+       (spit tmp (pr-str config))
+       tmp)))
+
+#?(:clj
+   (defn- anchors-file! [doc]
+     (let [tmp (java.io.File/createTempFile "aiueos-anchors" ".edn")]
+       (.deleteOnExit tmp)
+       (spit tmp (pr-str doc))
+       tmp)))
+
+(def pin-a (apply str (repeat 64 "a")))
+(def pin-b (apply str (repeat 64 "b")))
+
+#?(:clj
+   (deftest an-image-that-carries-anchors-boots-knowing-who-it-may-talk-to
+     (let [doc (anchors/document {:release-id "release-42" :sequence 7
+                                  :anchors #{pin-a pin-b}})
+           af (anchors-file! doc)
+           bf (boot-file! {:aiueos/system "/etc/aiueos/system/system.edn"
+                           :aiueos/anchors (.getPath af)})
+           config (pid1/load-boot-config (.getPath bf))]
+       (is (true? (:aiueos.anchors/present? config)))
+       (is (= #{pin-a pin-b} (:aiueos.cloud/trust-anchors config)))
+       (is (= "release-42" (:aiueos.anchors/release-id config)))
+       (is (= :image (:aiueos.anchors/provenance config))
+           "the image is the authority, and the boot state says so")
+       (testing "and the pins are the ones aiueos.cloud checks against"
+         (is (cloud/allowed? (cloud/admit-peer config {:spki-sha256 pin-a})))
+         (is (= :peer-not-pinned
+                (:aiueos.cloud/reason
+                 (cloud/admit-peer config {:spki-sha256 (apply str (repeat 64 "c"))}))))))))
+
+#?(:clj
+   (deftest an-image-that-carries-none-boots-and-says-so
+     (let [bf (boot-file! {:aiueos/system "/etc/aiueos/system/system.edn"})
+           config (pid1/load-boot-config (.getPath bf))]
+       (is (false? (:aiueos.anchors/present? config))
+           "absent is recorded, not inferred from an empty pin set")
+       (is (nil? (:aiueos.cloud/trust-anchors config)))
+       (is (= :no-trust-anchors
+              (:aiueos.cloud/reason (cloud/admit-peer config {:spki-sha256 pin-a})))
+           "so it reaches nothing, which is the safe half of the answer"))))
+
+#?(:clj
+   (deftest a-named-anchor-file-that-is-not-there-refuses-the-boot
+     (let [bf (boot-file! {:aiueos/system "/etc/aiueos/system/system.edn"
+                           :aiueos/anchors "/nonexistent/anchors.edn"})]
+       (is (thrown-with-msg? Exception #"not there"
+                             (pid1/load-boot-config (.getPath bf)))
+           "booting anyway would be a machine that reaches nothing and looks fine"))))
+
+#?(:clj
+   (deftest an-anchor-file-that-is-not-edn-refuses-the-boot
+     (let [af (java.io.File/createTempFile "aiueos-anchors" ".edn")
+           _ (.deleteOnExit af)
+           _ (spit af "{:anchors/version 1 :anchors/anchors [")
+           bf (boot-file! {:aiueos/system "/etc/aiueos/system/system.edn"
+                           :aiueos/anchors (.getPath af)})]
+       (is (thrown-with-msg? Exception #"not readable EDN"
+                             (pid1/load-boot-config (.getPath bf)))))))
+
+#?(:clj
+   (deftest an-anchor-file-the-reader-refuses-refuses-the-boot
+     (doseq [[label doc] [["a malformed pin"
+                           (anchors/document {:release-id "r" :sequence 1
+                                              :anchors #{"deadbeef"}})]
+                          ["a future version"
+                           (assoc (anchors/document {:release-id "r" :sequence 1
+                                                     :anchors #{pin-a}})
+                                  :anchors/version 99)]]]
+       (testing label
+         (let [af (anchors-file! doc)
+               bf (boot-file! {:aiueos/system "/etc/aiueos/system/system.edn"
+                               :aiueos/anchors (.getPath af)})]
+           (is (thrown-with-msg? Exception #"anchor set refused"
+                                 (pid1/load-boot-config (.getPath bf)))))))))

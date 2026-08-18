@@ -54,7 +54,17 @@
               entirely valid and partly not work"
    :guest-path "/etc/aiueos/anchors.edn"
    :named-in-boot-edn :aiueos/anchors
-   :staged-bytes :the-exact-bytes-that-were-digested}
+   :staged-bytes :the-exact-bytes-that-were-digested
+   :read-at-boot-by "src/aiueos/pid1.cljc"
+   :boot-outcomes {:absent "boots with no pins; :aiueos.anchors/present? false"
+                   :named-and-unreadable "refuses to boot"
+                   :named-and-valid ":aiueos.cloud/trust-anchors is set"}
+   :boot-provenance :image
+   :boot-provenance-note
+   "PID 1 loads and validates; it does not re-admit. The document's integrity
+    is the image's integrity -- re-checking a publisher signature at PID-1 time
+    adds nothing when the image was verified and cannot repair anything when it
+    was not, because PID 1 is already running that image's code."}
   :aiueos.anchors/sequence-key :installed-anchor-sequence
   :aiueos.anchors/sequence-key-note
   "Anchor sets and releases are both sequenced and both checked by
@@ -76,8 +86,9 @@
     digest. The BARE-METAL release image does not -- os/aiueos's
     build-release-image.sh emits no :anchors artifact -- so a bare-metal device
     still has no anchors."
-   "Nothing consumes /etc/aiueos/anchors.edn at boot. aiueos.pid1 does not read
-    boot.edn's :aiueos/anchors, so the staged file is carried and not yet used."
+   "The hosted boot path inherits whatever verified the image, which today is
+    nothing: the bare-metal profile has measured Secure Boot, the hosted one
+    does not. PID 1 reading the file correctly cannot substitute for that."
    "The document is not itself signed. A release-borne set does not need to be
     -- the manifest binds its digest and the manifest is signed -- but a set
     delivered any other way currently has no integrity of its own."
