@@ -99,6 +99,15 @@
    "kernel-value-runtime-capability-table" "https://github.com/kotoba-lang/amu/issues/625"
    "(kernel-publish-current-domain domain)" "https://github.com/kotoba-lang/amu/issues/625"})
 
+(def upstream-by-cause
+  "Where the work is for each failure class. A class with no entry is a class
+  nobody has been told about — the same floor as `upstream`, one level up, so
+  the three export failures cannot sit unreferenced merely because the compiler
+  named no form for them."
+  {:native-slice-typed-values "https://github.com/kotoba-lang/amu/issues/625"
+   :native-slice-lowering "https://github.com/kotoba-lang/amu/issues/625"
+   :per-object-export-symbol "https://github.com/kotoba-lang/amu/issues/626"})
+
 (defn classify [message]
   (or (some (fn [[re cause]] (when (re-find re (str message)) cause)) causes)
       :unclassified))
@@ -139,6 +148,7 @@
                  :value-runtime/rejected-forms
                  (frequencies (keep :rejected-form failed))
                  :value-runtime/upstream upstream
+                 :value-runtime/upstream-by-cause upstream-by-cause
                  :value-runtime/results results
                  :value-runtime/no-verifier-of-their-own
                  {"value-runtime-sha256" "an input to cas-verify, dispatch, entry and provider-transport; compiled as part of them"
