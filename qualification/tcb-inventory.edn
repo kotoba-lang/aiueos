@@ -45,7 +45,7 @@
   ;; which keys aiueos.cloud will accept, so compromising this file is
   ;; compromising every https connection the machine makes (ADR-0045).
   {:path "src/aiueos/anchors.cljc" :role :peer-trust-lifecycle
-   :sha256 "c41ecdc01519634276678afe2c380163eb2f47da2232dd832ad94b0b24e576b9"}
+   :sha256 "76fecdf853aadc467c4730ba431afe38709061a240405b116c98936d42d542a2"}
   {:path "src/aiueos/cloud.cljc" :role :remote-authority-decision
    :sha256 "313adb4fa6c1c0278f0950262e179a5671797f5b8dac3608761fd77cbdd90f81"}
   {:path "src/aiueos/provider/cloud.clj" :role :remote-authority-transport
@@ -103,7 +103,7 @@
   {:path "src/aiueos/vm.cljc" :role :vm-launch
    :sha256 "b26a7df51a943863e1e5da09a5507af1e15b1a796db2a3e3cb23500fd3c71060"}
   {:path "src/aiueos/image.cljc" :role :boot-image-construction
-   :sha256 "b7610090878e6e1f355f8740578e3e613facfd30ed97dca90377e7160510c67b"}]
+   :sha256 "060bf6154316535509c7b7455fe8a61b3ab07ebb5068a0cf3d70dbf6067477b5"}]
  ;; Content addresses, not paths or bare version strings: a Maven entry's
  ;; `:sha256` is the digest of its resolved jar, a git entry's `:git-sha` is
  ;; git's own content address for the tree. `aiueos.tcb` re-verifies both

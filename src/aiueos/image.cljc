@@ -17,10 +17,19 @@
 
   JVM-only (`#?(:clj ...)` throughout) -- file I/O, same as `aiueos.launcher`."
   (:require [clojure.string :as str]
+            #?(:clj [aiueos.anchors :as anchors])
+            #?(:clj [aiueos.key-lifecycle :as kl])
             #?(:clj [clojure.java.io :as io])
             #?(:clj [clojure.java.shell :as shell])))
 
 (def default-guest-policy-path "/etc/aiueos/policy.edn")
+
+(def default-guest-anchors-path
+  "Where the bootstrap anchor set lands in the guest. A fresh device has no
+  other way to learn which keys it may talk to (ADR-0046), so this file is the
+  first link of the chain: release signature over an artifact digest, over this
+  document, over a key, over a connection."
+  "/etc/aiueos/anchors.edn")
 
 #?(:clj
    (defn- guest-system-path [system-file] (str "/etc/aiueos/system/" system-file)))
@@ -41,6 +50,7 @@
            system-dir (or (.getParentFile system) (io/file "."))
            system-file (.getName system)
            policy (some-> (:policy opts) io/file)
+           anchors-doc (some-> (:anchors opts) anchors/document)
            out (io/file (or (:out opts)
                              (io/file system-dir ".aiueos" "image"
                                       (str (str/replace system-file #"\.edn$" "") ".initramfs.cpio.gz"))))]
@@ -54,7 +64,25 @@
         :shutdown-after-boot? (boolean (:shutdown-after-boot? opts))
         :out out
         :guest-system (guest-system-path system-file)
-        :guest-policy (when policy default-guest-policy-path)})))
+        :guest-policy (when policy default-guest-policy-path)
+        :anchors-document anchors-doc
+        :guest-anchors (when anchors-doc default-guest-anchors-path)
+        ;; The digest is of the canonical bytes, not of the map: the device
+        ;; re-measures the file, so the manifest has to name what the file
+        ;; will be.
+        :anchors-bytes (when anchors-doc
+                         (kl/document-bytes anchors-doc anchors/document-signature-key))
+        :anchors-digest (when anchors-doc
+                          (kl/document-digest anchors-doc anchors/document-signature-key))})))
+
+#?(:clj
+   (defn anchors-artifact
+     "The release-manifest entry for the staged anchor set, or nil when the
+     image carries none. The manifest names this digest; the device re-measures
+     the file and `aiueos.anchors/from-release` compares the two."
+     [p]
+     (when-let [digest (:anchors-digest p)]
+       {:kind anchors/anchors-artifact-kind :sha256 digest})))
 
 #?(:clj
    (defn- copy-dir-filtered!
@@ -80,6 +108,7 @@
    (defn- boot-edn [p]
      (pr-str (cond-> {:aiueos/system (:guest-system p)}
                (:guest-policy p) (assoc :aiueos/policy (:guest-policy p))
+               (:guest-anchors p) (assoc :aiueos/anchors (:guest-anchors p))
                (:shutdown-after-boot? p) (assoc :aiueos/shutdown-after-boot? true)))))
 
 #?(:clj
@@ -140,6 +169,11 @@
          (copy-dir-filtered! (:system-dir p) (io/file stage "etc" "aiueos" "system"))
          (when-let [policy (:policy p)]
            (io/copy policy (io/file stage "etc" "aiueos" "policy.edn")))
+         (when-let [bytes (:anchors-bytes p)]
+           ;; The exact bytes the digest was taken over. Writing the map again
+           ;; here would risk a second encoding, which is the whole hazard.
+           (with-open [out (io/output-stream (io/file stage "etc" "aiueos" "anchors.edn"))]
+             (.write out ^bytes bytes)))
          (spit (io/file stage "etc" "aiueos" "boot.edn") (boot-edn p))
          (let [init-file (io/file stage "init")]
            (spit init-file (init-script))
