@@ -14,7 +14,8 @@
   dependency's is its commit id (git's own content address for the tree). An
   entry that is neither content-addressable nor carrying an explicit
   `:assurance-gap` is an error — an unpinned dependency may not pass silently."
-  (:require [clojure.edn :as edn]
+  (:require [aiueos.key-lifecycle :as kl]
+            [clojure.edn :as edn]
             [clojure.java.io :as io]
             [clojure.string :as str])
   (:import [java.security MessageDigest]))
@@ -359,6 +360,41 @@
          :else [])))
    files))
 
+(defn inventory-content-digest
+  "SHA-256 of this inventory with its own two bookkeeping fields removed:
+  `:tcb/as-of` and `:tcb/content-digest`.
+
+  `:tcb/as-of` claimed to say when the inventory was last reviewed and was read
+  by **nothing** — measured 2026-08-18, no source, test or script in this
+  repository consulted it, and it said 2026-08-01 while the file had been
+  edited that morning. A date nobody reads is decoration; a stale one is a
+  claim about a review that did not happen (ADR-0067).
+
+  Pairing it with a digest of everything else makes it checkable without git:
+  change an entry and the digest moves, so the date has to move with it. The
+  canonical form is `aiueos.key-lifecycle/document-bytes`, the one canonicaliser
+  this repository has."
+  ([] (inventory-content-digest (read-inventory)))
+  ([inventory]
+   (kl/document-digest (dissoc inventory :tcb/as-of) :tcb/content-digest)))
+
+(defn- as-of-errors
+  ;; Scoped like the classpath half (ADR-0062): a synthetic inventory built
+  ;; inside a test is not a review artifact, and demanding it carry a review
+  ;; date would be asking a question about an object that has no answer.
+  "The recorded digest must match the inventory's content, and the date must be
+  a date. A mismatch means someone changed an entry without re-reviewing, which
+  is the thing `:tcb/as-of` was always supposed to be evidence of."
+  [inventory]
+  (let [recorded (:tcb/content-digest inventory)
+        actual (inventory-content-digest inventory)]
+    (cond
+      (nil? recorded) [{:kind :content-digest-missing}]
+      (not= recorded actual) [{:kind :as-of-stale :recorded recorded :actual actual}]
+      (not (re-matches #"\d{4}-\d{2}-\d{2}" (str (:tcb/as-of inventory))))
+      [{:kind :as-of-malformed :as-of (:tcb/as-of inventory)}]
+      :else [])))
+
 (defn validate
   "Return structured drift/errors. An inventory update must be an intentional
   review action; changing trusted code — in this repository or in a dependency
@@ -395,6 +431,8 @@
                 (file-errors files)
                 (external-errors inventory deps adoption)
                 (platform-floor-errors inventory)
+                (when (= :measured (get opts :review :measured))
+                  (as-of-errors inventory))
                 (when (= :measured classpath-scope) (classpath-errors inventory))
                 (validate-build-identity)))]
      {:valid? (empty? errors)

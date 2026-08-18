@@ -1,5 +1,10 @@
 {:tcb/version 3
- :tcb/as-of "2026-08-01"
+ :tcb/as-of "2026-08-18"
+ ;; Paired with :tcb/content-digest below (ADR-0067): the digest covers every
+ ;; other field, so an entry cannot change without this date having to change
+ ;; too. It said 2026-08-01 while the file was being edited that morning, and
+ ;; nothing read it.
+ :tcb/content-digest "e4a74a2100ed5b8860c9fadd498e32eb7961fbe97ad981f1f66c046a61001ca9"
  :tcb/scope
  "Code whose compromise can grant authority, escape Wasm isolation, falsify
   production admission/audit evidence, or access hardware outside a component."
@@ -81,7 +86,7 @@
   ;; recorded, so weakening a check left no trace here. No fixpoint problem:
   ;; the digest of the source lives in this sibling EDN, not in the source.
   {:path "src/aiueos/tcb.clj" :role :tcb-inventory-authority
-   :sha256 "88da7db455f9c56601c13f99471834099da8fbe35d3d89b9c8c5c56e81d59461"}
+   :sha256 "183ce8bb72774830b2962d26e80a4dcf89331c4e7b85a49bbc66143d823d10e4"}
   ;; The record of which supply-chain properties this repository holds on
   ;; purpose. Pinned for the same reason the checker is: a property quietly
   ;; deleted from an unpinned list leaves no trace, and `aiueos.tcb` only
