@@ -103,9 +103,16 @@
       (apply (resolve (symbol (str "aiueos.verify-" object) "-main")) args)
       {:object object :verdict :ok :args (vec args)}
       (catch Throwable t
-        (let [m (or (ex-message t) (str t))]
-          {:object object :verdict :fail :args (vec args)
-           :cause (classify m) :message m})))))
+        (let [m (or (ex-message t) (str t))
+              d (ex-data t)]
+          (cond-> {:object object :verdict :fail :args (vec args)
+                   :cause (classify m) :message m}
+            ;; The form the compiler named, when it named one. `:span` is
+            ;; dropped: a byte offset into a file this receipt does not pin is
+            ;; noise that would churn the diff on every unrelated edit.
+            (:form d) (assoc :rejected-form (str (:form d)))
+            (:kotoba.error/code d) (assoc :error-code (:kotoba.error/code d))
+            (:phase d) (assoc :compiler-phase (:phase d))))))))
 
 (defn -main [& _]
   (let [results (vec (for [[object args] cases]
@@ -118,6 +125,11 @@
                  :value-runtime/objects (count results)
                  :value-runtime/failing (count failed)
                  :value-runtime/failing-by-cause (frequencies (map :cause failed))
+                 ;; What the six typed-value failures are actually asking the
+                 ;; native slice for. One upstream ask or six is the difference
+                 ;; between a bounded change and a programme.
+                 :value-runtime/rejected-forms
+                 (frequencies (keep :rejected-form failed))
                  :value-runtime/results results
                  :value-runtime/no-verifier-of-their-own
                  {"value-runtime-sha256" "an input to cas-verify, dispatch, entry and provider-transport; compiled as part of them"

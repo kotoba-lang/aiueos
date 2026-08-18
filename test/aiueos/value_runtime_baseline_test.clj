@@ -83,3 +83,20 @@
     (is (= (:value-runtime/failing @receipt) (reduce + (vals by-cause)))
         "a cause histogram that does not sum to the failure count is describing
          a different measurement than the one beside it")))
+
+(deftest a-native-slice-rejection-names-the-form-it-rejected
+  (testing "'the slice does not admit this' with no form named is a report
+            nobody can act on, and would hide six asks behind one sentence"
+    (doseq [{:keys [object cause rejected-form verdict]} (:value-runtime/results @receipt)]
+      (when (and (= :fail verdict)
+                 (contains? #{:native-slice-typed-values :native-slice-lowering} cause))
+        (is (seq rejected-form)
+            (str object " was refused by the native slice with no form recorded"))))))
+
+(deftest the-rejected-forms-are-counted-from-the-rows
+  (let [forms (:value-runtime/rejected-forms @receipt)
+        from-rows (frequencies (keep :rejected-form (:value-runtime/results @receipt)))]
+    (is (= from-rows forms)
+        "the histogram is derived, not maintained beside the rows")
+    (is (<= (reduce + (vals forms)) (:value-runtime/failing @receipt))
+        "more named forms than failures would mean a row was counted twice")))
