@@ -115,6 +115,13 @@
                   :cause :per-object-export-symbol,
                   :message "native export mismatch",
                   :compiler-phase :aiueos-value-runtime-syscall-plan}],
+                :upstream
+                {"kernel-compare-exchange-u32"
+                 "https://github.com/kotoba-lang/amu/issues/625",
+                 "kernel-value-runtime-capability-table"
+                 "https://github.com/kotoba-lang/amu/issues/625",
+                 "(kernel-publish-current-domain domain)"
+                 "https://github.com/kotoba-lang/amu/issues/625"},
                 :measured-at "2026-08-18",
                 :failing 10,
                 :no-verifier-of-their-own

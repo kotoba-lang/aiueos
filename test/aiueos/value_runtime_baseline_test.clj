@@ -100,3 +100,11 @@
         "the histogram is derived, not maintained beside the rows")
     (is (<= (reduce + (vals forms)) (:value-runtime/failing @receipt))
         "more named forms than failures would mean a row was counted twice")))
+
+(deftest every-refused-form-points-at-where-the-work-is
+  (let [upstream (:value-runtime/upstream @receipt)]
+    (doseq [form (keys (:value-runtime/rejected-forms @receipt))]
+      (is (seq (get upstream form))
+          (str "the slice refuses " form " and nothing says who was asked — "
+               "a measurement that names a wall and points at no one is a "
+               "complaint")))))
