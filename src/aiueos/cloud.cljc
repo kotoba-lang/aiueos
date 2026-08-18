@@ -56,7 +56,8 @@
     :origin-not-allowed :insecure-transport :plan-not-allowed
     :response-not-ok :digest-missing :digest-mismatch
     :alias-unresolved :resolved-endpoint-not-allowed
-    :model-is-alias-target :messages-missing})
+    :model-is-alias-target :messages-missing
+    :no-trust-anchors :peer-unmeasured :peer-not-pinned})
 
 (defn- cfg [policy k]
   (get policy k (get default-config k)))
@@ -149,6 +150,52 @@
                                     (= mh-len 32)
                                     (= (count digest) 32))
                            (hex-of digest))}))))))
+
+;; ── who is on the other end ────────────────────────────────────────────────
+;;
+;; A cloud-premised machine's whole authority story rests on reaching the right
+;; host. Until now that rested on the platform's default trust store: several
+;; hundred anchors chosen by whoever packaged the runtime, any one of which
+;; could vouch for anything. That is a reasonable default for a browser, which
+;; must reach hosts nobody enumerated in advance. It is the wrong default here,
+;; because this machine talks to exactly two authorities and both are known
+;; before it boots.
+
+(defn trust-anchors
+  "The SPKI SHA-256 hex pins this policy will accept, as a set. Empty means the
+  operator has not said, which is not the same as \"anything\"."
+  [policy]
+  (set (map #(str/lower-case (str %)) (:aiueos.cloud/trust-anchors policy))))
+
+(defn anchors-declared?
+  "Whether this policy names any peer key at all. Checked before the socket,
+  so a machine with no anchors does not open a connection it could not have
+  judged."
+  [policy]
+  (boolean (seq (trust-anchors policy))))
+
+(defn admit-peer
+  "Judge the peer a connection reached. PEER is `{:spki-sha256 <hex>}` — the
+  SHA-256 of the leaf certificate's SubjectPublicKeyInfo, measured by the
+  provider.
+
+  The pin is over the **key**, not the certificate, so an authority that
+  renews its certificate with the same key keeps working and one that changes
+  key does not — which is the event worth noticing.
+
+  Three refusals, deliberately distinct: nothing was declared, nothing was
+  measured, and what was measured is not what was declared. Only the third is
+  an attack; the first two are a machine that must not proceed as though it
+  had checked."
+  [policy peer]
+  (let [pins (trust-anchors policy)
+        measured (str/lower-case (str (:spki-sha256 peer)))]
+    (cond
+      (empty? pins) (deny :no-trust-anchors {})
+      (str/blank? measured) (deny :peer-unmeasured {})
+      (not (contains? pins measured))
+      (deny :peer-not-pinned {:aiueos.cloud/observed-spki measured})
+      :else (allow {:aiueos.cloud/peer-spki measured}))))
 
 ;; ── storage: kotobase ──────────────────────────────────────────────────────
 
