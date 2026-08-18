@@ -42,7 +42,9 @@
   {:path "src/aiueos/net.cljc" :role :network-origin-gate
    :sha256 "183b2facb48d0b8d2e802b2c90cead767386bb3519306b856d5296a93d42b4a9"}
   {:path "src/aiueos/cloud.cljc" :role :remote-authority-decision
-   :sha256 "35904794baef15c87dd10fdff931dbf9d9b9b8c86ab6d190a567480e709030a6"}
+   :sha256 "f542a58a1f742f2b5668b246243339ea7793dd535ad01c8b7ea23d2a50dc6d9e"}
+  {:path "src/aiueos/provider/cloud.clj" :role :remote-authority-transport
+   :sha256 "f441b34df8c9f1db3579c2598da2a917568018e4a3f866c1d6324e7995878d5e"}
   {:path "src/aiueos/broker.cljc" :role :capability-authority
    :sha256 "f2d64515c8f647cb3c2f6c3c340753e82b426f5a30a15c46e4768cd8e57e50b8"}
   {:path "src/aiueos/execute.cljc" :role :wasm-host-abi
@@ -118,6 +120,14 @@
    :git-url "https://github.com/kotoba-lang/abi.git"
    :git-sha "32ee84b2efc92478c846629c8d8319280eed506c"
    :role :freestanding-abi-contract}
+  ;; The transport half of the cloud authorities runs on the platform HTTP
+  ;; client, and its TLS trust decisions are the platform's default trust
+  ;; store. That store is not content-addressed, not pinned, and not owned by
+  ;; this repository -- recorded rather than left implied, because for a
+  ;; cloud-premised OS it is what stands between the machine and whatever
+  ;; answers on the other end (ADR-0043).
+  {:coordinate "java.net.http" :role :remote-authority-tls-trust :source :platform
+   :assurance-gap :platform-trust-store-not-owned}
   {:coordinate "java.base" :minimum-version 25
    :role :crypto-ffi-process-runtime :source :platform
    ;; The host runtime cannot be content-addressed from inside this repository;

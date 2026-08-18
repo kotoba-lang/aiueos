@@ -13,6 +13,11 @@
 
 (def policy {:aiueos.policy/net-allow #{"kotobase.net" "api.murakumo.cloud"}})
 (def no-network {:aiueos.policy/net-allow #{}})
+(def plaintext {:aiueos.policy/net-allow #{"kotobase.net"}
+                :aiueos.cloud/storage-origin "http://kotobase.net"})
+(def loopback {:aiueos.policy/net-allow #{"127.0.0.1"}
+               :aiueos.cloud/storage-origin "http://127.0.0.1:8080"
+               :aiueos.cloud/allow-insecure-origins #{"http://127.0.0.1"}})
 
 ;; ── the CID says what the bytes must hash to ──────────────────────────────
 
@@ -53,6 +58,28 @@
   (let [plan (cloud/plan-block-read no-network raw-cid)]
     (is (not (cloud/allowed? plan)))
     (is (= :origin-not-allowed (:aiueos.cloud/reason plan)))))
+
+;; ── the transport is part of the decision ─────────────────────────────────
+
+(deftest plaintext-is-refused-even-to-an-allowed-host
+  (let [plan (cloud/plan-block-read plaintext raw-cid)]
+    (is (= :insecure-transport (:aiueos.cloud/reason plan))
+        "the allowlist matches on host and would have admitted this")
+    (is (:aiueos.policy/net-allow plaintext))))
+
+(deftest an-operator-can-mark-one-origin-plaintext
+  (is (cloud/allowed? (cloud/plan-block-read loopback raw-cid))
+      "spelled out in policy, so it is visible in the deployment")
+  (is (= :insecure-transport
+         (:aiueos.cloud/reason (cloud/plan-block-read
+                                (assoc loopback :aiueos.cloud/storage-origin "http://10.0.0.1")
+                                raw-cid)))
+      "the exemption is one origin, not plaintext in general"))
+
+(deftest an-alias-that-resolves-onto-plaintext-is-refused
+  (is (= :insecure-transport
+         (:aiueos.cloud/reason (cloud/admit-model policy {:endpoint "http://api.murakumo.cloud"
+                                                          :alias-for "qwen3.6-35b-a3b"}))))) 
 
 ;; ── judging the response ──────────────────────────────────────────────────
 
@@ -190,6 +217,7 @@
 
 (deftest the-declared-reason-set-is-complete
   (doseq [r [:cid-unparsable :cid-not-raw :origin-not-allowed :plan-not-allowed
+             :insecure-transport
              :response-not-ok :digest-missing :digest-mismatch
              :alias-unresolved :resolved-endpoint-not-allowed
              :model-is-alias-target :messages-missing]]
