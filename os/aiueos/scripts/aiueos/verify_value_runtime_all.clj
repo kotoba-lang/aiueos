@@ -16,6 +16,11 @@
   `value-runtime-digest-equal` — because they are *inputs* to the ones that do,
   and are compiled as part of them. They are covered, not missing.
 
+  The eleventh verifier, `verify_value_runtime_kernel_image`, is not a
+  per-object verifier: it composes every value module plus
+  `aiueos.native.kernel` and `aiueos.native.value-runtime-kernel` through
+  `compile-project`. It is measured like the rest (ADR-0057).
+
   Run (the scripts dir has to be on the classpath, and it has to be `-m`:
   `-M <file>` loads this namespace and calls nothing, which is the same silent
   no-op this receipt exists to expose):
@@ -47,7 +52,13 @@
   "Object -> the arguments its verifier's own usage string asks for. Getting
   these wrong reports a usage error as though it were a failing object, which
   is why they are written down rather than guessed per run."
-  [["value-handle-arena" [arena (c "value-handle-arena")]]
+  [["value-runtime-kernel-image"
+    [arena transport dispatch (k "value-runtime-entry") (k "value-runtime-syscall-plan")
+     (k "value-runtime-domain") table (k "value-runtime-provider-policy")
+     sha256 digest cas
+     "os/aiueos/native/kernel.kotoba" "os/aiueos/native/value-runtime-kernel.kotoba"
+     (c "value-runtime-kernel-image")]]
+   ["value-handle-arena" [arena (c "value-handle-arena")]]
    ["value-handle-plan" [(k "value-handle-plan") (c "value-handle-plan")]]
    ["value-runtime-capability-table" [table (c "value-runtime-capability-table")]]
    ["value-runtime-cas-verify" [sha256 digest cas (c "value-runtime-cas-verify")]]
@@ -87,7 +98,8 @@
     object; the pinned compiler emits `kotoba_aiueos_probe` for every kernel
     object. Changing the contracts to match would give 57 linked objects one
     symbol, so this class is upstream work, not a local edit."
-  [[#"no admitted type signature" :native-slice-typed-values]
+  [[#"requires an explicit :export vector" :project-module-missing-export]
+   [#"no admitted type signature" :native-slice-typed-values]
    [#"no admitted lowering" :native-slice-lowering]
    [#"export mismatch|export is not exact" :per-object-export-symbol]])
 
@@ -106,7 +118,12 @@
   named no form for them."
   {:native-slice-typed-values "https://github.com/kotoba-lang/amu/issues/625"
    :native-slice-lowering "https://github.com/kotoba-lang/amu/issues/625"
-   :per-object-export-symbol "https://github.com/kotoba-lang/amu/issues/626"})
+   :per-object-export-symbol "https://github.com/kotoba-lang/amu/issues/626"
+   ;; Local work, not upstream: native/kernel.kotoba is this repository's
+   ;; production hard-flip input and carries no :export vector, which
+   ;; compile-project requires of every module.
+   :project-module-missing-export
+   "90-docs/adr/0057-the-eleventh-verifier-was-never-missing-a-source.md"})
 
 (defn classify [message]
   (or (some (fn [[re cause]] (when (re-find re (str message)) cause)) causes)
@@ -153,9 +170,14 @@
                  :value-runtime/no-verifier-of-their-own
                  {"value-runtime-sha256" "an input to cas-verify, dispatch, entry and provider-transport; compiled as part of them"
                   "value-runtime-digest-equal" "same — an input, not an uncovered object"}
-                 :value-runtime/verifier-without-source
+                 ;; Resolved 2026-08-18 (ADR-0057): there was never a source to
+                 ;; miss. `git log --all --diff-filter=AD` shows that
+                 ;; value-runtime-kernel-image.kotoba has never existed on any
+                 ;; branch, and the verifier composes the other modules rather
+                 ;; than checking one of its own.
+                 :value-runtime/composite-verifier
                  {"verify_value_runtime_kernel_image.clj"
-                  "no value-runtime-kernel-image.kotoba exists; recorded rather than deleted, because which of the two is missing is not a thing this run can know"}}]
+                  "the whole-image verifier: compile-project over eleven value modules plus aiueos.native.kernel and aiueos.native.value-runtime-kernel, against value-runtime-kernel-image-v1.edn"}}]
     (io/make-parents receipt-path)
     (spit receipt-path (with-out-str (clojure.pprint/pprint receipt)))
     (println (format "%d objects, %d failing -> %s"
