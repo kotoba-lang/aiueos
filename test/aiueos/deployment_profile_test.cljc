@@ -9,6 +9,13 @@
    :append-only-audit? true
    :non-claims-declared? true})
 
+(def anchor-set
+  "What a production boot config must now carry alongside its evidence: PID 1
+  loaded an anchor set and it produced keys (ADR-0065). Spelled into every
+  production fixture below, because a fixture that omits it asserts the absence
+  of the requirement rather than the presence of whatever is under test."
+  #{(apply str (repeat 64 "a"))})
+
 (def sensitive-evidence
   (merge research-evidence
          {:single-tenant? true
@@ -110,12 +117,14 @@
   (testing "production profile reports every missing control"
     (is (= [:encrypted-data? :secure-entropy?]
            (profile/profile-violations
-            {:aiueos/deployment-profile :sensitive-local
+            {:aiueos.anchors/present? true :aiueos.cloud/trust-anchors anchor-set
+             :aiueos/deployment-profile :sensitive-local
              :aiueos/profile-evidence
              (dissoc sensitive-evidence :encrypted-data? :secure-entropy?)}))))
   (is (empty?
        (profile/profile-violations
-        {:aiueos/deployment-profile :regulated
+        {:aiueos.anchors/present? true :aiueos.cloud/trust-anchors anchor-set
+             :aiueos/deployment-profile :regulated
          :aiueos/profile-evidence regulated-evidence}))))
 
 (deftest regulated-fips-claim-requires-certificate-and-boundary
@@ -123,14 +132,16 @@
           :fips-boundary
           :entropy-fips-validated?]
          (profile/profile-violations
-          {:aiueos/deployment-profile :regulated
+          {:aiueos.anchors/present? true :aiueos.cloud/trust-anchors anchor-set
+             :aiueos/deployment-profile :regulated
            :aiueos/profile-evidence (assoc regulated-evidence :fips-claim? true)}))))
 
 (deftest regulated-profile-requires-pinned-drift-checked-tcb
   (is (= [:tcb-inventory-digest :tcb-drift-check?]
          (filterv #{:tcb-inventory-digest :tcb-drift-check?}
                   (profile/profile-violations
-                   {:aiueos/deployment-profile :regulated
+                   {:aiueos.anchors/present? true :aiueos.cloud/trust-anchors anchor-set
+             :aiueos/deployment-profile :regulated
                     :aiueos/profile-evidence
                     (dissoc regulated-evidence
                             :tcb-inventory-digest :tcb-drift-check?)})))))
@@ -139,7 +150,8 @@
   (is (= [:reproducibility-qualified? :reproducibility-artifact-digest]
          (filterv #{:reproducibility-qualified? :reproducibility-artifact-digest}
                   (profile/profile-violations
-                   {:aiueos/deployment-profile :regulated
+                   {:aiueos.anchors/present? true :aiueos.cloud/trust-anchors anchor-set
+             :aiueos/deployment-profile :regulated
                     :aiueos/profile-evidence
                     (dissoc regulated-evidence
                             :reproducibility-qualified?
@@ -147,7 +159,8 @@
   (is (= [:reproducibility-artifact-binding]
          (filterv #{:reproducibility-artifact-binding}
                   (profile/profile-violations
-                   {:aiueos/deployment-profile :regulated
+                   {:aiueos.anchors/present? true :aiueos.cloud/trust-anchors anchor-set
+             :aiueos/deployment-profile :regulated
                     :aiueos/profile-evidence
                     (assoc regulated-evidence :reproducibility-artifact-digest
                            "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee")})))
@@ -165,7 +178,8 @@
                       :key-checkpoint-storage
                       :key-compromise-recovery-tested-at}
                     (profile/profile-violations
-                     {:aiueos/deployment-profile :regulated
+                     {:aiueos.anchors/present? true :aiueos.cloud/trust-anchors anchor-set
+             :aiueos/deployment-profile :regulated
                       :aiueos/profile-evidence evidence}))))))
 
 (deftest production-profile-requires-complete-side-channel-decision
@@ -176,7 +190,8 @@
             :side-channel-decision/residual-risk]
            (filterv #(= "side-channel-decision" (namespace %))
                     (profile/profile-violations
-                     {:aiueos/deployment-profile :sensitive-local
+                     {:aiueos.anchors/present? true :aiueos.cloud/trust-anchors anchor-set
+             :aiueos/deployment-profile :sensitive-local
                       :aiueos/profile-evidence evidence}))))))
 
 (deftest production-profile-requires-bounded-tested-hard-watchdog
@@ -191,7 +206,8 @@
                       :watchdog-max-deadline-ms
                       :watchdog-overrun-tested-at}
                     (profile/profile-violations
-                     {:aiueos/deployment-profile :sensitive-local
+                     {:aiueos.anchors/present? true :aiueos.cloud/trust-anchors anchor-set
+             :aiueos/deployment-profile :sensitive-local
                       :aiueos/profile-evidence evidence}))))))
 
 (deftest production-profile-requires-authenticated-durable-network-topics
@@ -206,7 +222,8 @@
                       :network-topic-replay-state
                       :network-topic-partition-tested-at}
                     (profile/profile-violations
-                     {:aiueos/deployment-profile :sensitive-local
+                     {:aiueos.anchors/present? true :aiueos.cloud/trust-anchors anchor-set
+             :aiueos/deployment-profile :sensitive-local
                       :aiueos/profile-evidence evidence}))))))
 
 (deftest production-profile-requires-attested-health-checked-os-entropy
@@ -221,7 +238,8 @@
                       :entropy-health-tests
                       :entropy-provider-attested-at}
                     (profile/profile-violations
-                     {:aiueos/deployment-profile :sensitive-local
+                     {:aiueos.anchors/present? true :aiueos.cloud/trust-anchors anchor-set
+             :aiueos/deployment-profile :sensitive-local
                       :aiueos/profile-evidence evidence}))))))
 
 (deftest production-profile-requires-sealed-state-and-signed-audit-head
@@ -236,7 +254,8 @@
                       :component-state-store
                       :component-state-deletion-tested-at}
                     (profile/profile-violations
-                     {:aiueos/deployment-profile :sensitive-local
+                     {:aiueos.anchors/present? true :aiueos.cloud/trust-anchors anchor-set
+             :aiueos/deployment-profile :sensitive-local
                       :aiueos/profile-evidence evidence}))))))
 
 (deftest unknown-and-high-assurance-profiles-are-blocked
@@ -250,7 +269,8 @@
 (deftest admission-failure-is-structured
   (let [failure (try
                   (profile/enforce!
-                   {:aiueos/deployment-profile :sensitive-local
+                   {:aiueos.anchors/present? true :aiueos.cloud/trust-anchors anchor-set
+             :aiueos/deployment-profile :sensitive-local
                     :aiueos/profile-evidence
                     (dissoc sensitive-evidence :encrypted-data?)})
                   nil
@@ -260,3 +280,30 @@
     (is (= :sensitive-local (:profile failure)))
     (is (= 1 (:profile/version failure)))
     (is (= [:encrypted-data?] (:violations failure)))))
+
+;; ── a production machine boots knowing who it may talk to (ADR-0065) ───────
+
+(deftest production-profiles-require-trust-anchors
+  (testing "an image that carries no anchor set"
+    (is (= [:trust-anchors-absent]
+           (profile/profile-violations
+            {:aiueos/deployment-profile :sensitive-local
+             :aiueos/profile-evidence sensitive-evidence}))))
+  (testing "and one whose set produced no keys, which is a different mistake"
+    (is (= [:trust-anchors-empty]
+           (profile/profile-violations
+            {:aiueos.anchors/present? true
+             :aiueos.cloud/trust-anchors #{}
+             :aiueos/deployment-profile :sensitive-local
+             :aiueos/profile-evidence sensitive-evidence}))))
+  (testing "regulated too"
+    (is (= [:trust-anchors-absent]
+           (profile/profile-violations
+            {:aiueos/deployment-profile :regulated
+             :aiueos/profile-evidence regulated-evidence})))))
+
+(deftest research-still-boots-without-anchors
+  (testing "a development machine that reaches nothing is working normally"
+    (is (empty? (profile/profile-violations {:aiueos/system "/system"}))
+        "the omitted-profile default is :research, and it carries no anchor
+         requirement -- the rule is production-only on purpose")))

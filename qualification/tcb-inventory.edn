@@ -67,7 +67,7 @@
   {:path "src/aiueos/surface.cljc" :role :host-provider-surface
    :sha256 "5d0e4e1a242d8c221e839c422e39dea8bd189042e6aa686b71dc066f5873497e"}
   {:path "src/aiueos/deployment_profile.cljc" :role :production-admission
-   :sha256 "26145acb9a7351d47ab9587d6bc8c31cba840b581e5b0dab214148a44694ca3e"}
+   :sha256 "f62ff62c01325507adfc94dfb5bb3efdb8b22ceed4bc0959d2a2b90e16de3537"}
   {:path "src/aiueos/launcher.cljc" :role :component-launch-control
    :sha256 "6cf6689d74dc40a12430ad82ae70c56b07d6e4b9bdacdeaad21947da97ff8f87"}
   {:path "src/aiueos/pid1.cljc" :role :boot-root
