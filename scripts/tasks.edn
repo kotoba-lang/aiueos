@@ -34,4 +34,13 @@
 
  :grub-multiboot-smoke
  {:cmd ["./os/aiueos/scripts/smoke-qemu-grub-multiboot.sh"]
-  :doc "Boot the Multiboot image through GRUB. Also never invoked by anything; status unmeasured."}}
+  :doc "Boot the Multiboot image through GRUB. Also never invoked by anything; status unmeasured."}
+
+ ;; ADR-0060. The offline floor ADR-0041 asked for: the same image booted with
+ ;; the NIC absent and present, required to differ by exactly the network. It
+ ;; is registered here because it is nbb already -- the objection above, that
+ ;; putting the sh chain behind nbb would put Node in the boot-evidence path,
+ ;; does not apply to a gate that was written in nbb to begin with.
+ :offline-floor-smoke
+ {:cmd ["nbb" "os/aiueos/scripts/smoke-qemu-offline-floor.cljs"]
+  :doc "Boot with and without a NIC and require the difference to be exactly the three network markers. Needs KERNEL.ELF and BOOTX64.EFI built first."}}
