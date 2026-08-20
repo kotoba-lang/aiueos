@@ -36,9 +36,12 @@
   "Passing objects, which genuinely may only increase. Three since 2026-08-20:
   amu#626 answered the export question and amu#625 landed as a lock rather than
   a compare-exchange, so value-handle-arena, value-runtime-cas-verify and
-  value-runtime-syscall-plan compile and verify. Was zero, and the assertion
-  that watched for it to stop being zero has done its job and been removed."
-  3)
+  value-runtime-syscall-plan compile and verify. Four since later the same day:
+  value-handle-plan's contract gained the `:native` block it had always been
+  checked against, so amu's export table had a symbol to transcribe. Was zero,
+  and the assertion that watched for it to stop being zero has done its job and
+  been removed."
+  4)
 
 (def ^:private receipt (delay (edn/read-string (slurp receipt-path))))
 
