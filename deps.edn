@@ -19,7 +19,7 @@
                        :git/sha "6d08e3cffa09c003f8dbcdfaee964c4a1ea021ad"}
                       io.github.kotoba-lang/compiler
                       {:git/url "https://github.com/kotoba-lang/amu.git"
-                       :git/sha "a952370dc1c6b8ee88bb3d65e4b4a2f224e74fd1"}
+                       :git/sha "5df2bbe1bd81c5894edc7fa8e50fc27a5d0bd1ba"}
                       io.github.kotoba-lang/org-ietf-tcp
                       {:git/url "https://github.com/kotoba-lang/org-ietf-tcp.git"
                        :git/sha "73ace58d11e409bb387e26c2d99dccba79a99116"}}
@@ -45,7 +45,7 @@
                               :git/sha "6d08e3cffa09c003f8dbcdfaee964c4a1ea021ad"}
                              io.github.kotoba-lang/compiler
                              {:git/url "https://github.com/kotoba-lang/amu.git"
-                              :git/sha "a952370dc1c6b8ee88bb3d65e4b4a2f224e74fd1"}
+                              :git/sha "5df2bbe1bd81c5894edc7fa8e50fc27a5d0bd1ba"}
                              }
                 ;; No org-ietf-tcp here, and the parity test that needs it is
                 ;; not selected. **That repository is private**, and fleet nodes

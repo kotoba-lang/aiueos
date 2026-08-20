@@ -8,6 +8,19 @@
                  :next-handle [21 33]
                  :live-count [34 46]
                  :reject 0}
+ ;; The symbol was already required, just not declared. `verify-value-handle-plan`
+ ;; has always compared the compiled object's export against this exact string;
+ ;; the contract stayed silent, so amu's export allowlist had nothing to
+ ;; transcribe and -- once amu#626 made that table refuse an unlisted name
+ ;; instead of handing out `kotoba_aiueos_probe` -- the object could not be
+ ;; packaged at all. A requirement that lives only in the checker is a
+ ;; requirement no producer can read.
+ ;;
+ ;; No `:required-opcode` here, unlike the arena: this planner holds no lock.
+ ;; It is a pure decision over its five arguments.
+ :native {:target :x86_64-aiueos-kernel-v1
+          :export "kotoba_aiueos_value_handle_plan"
+          :imports []}
  :vectors
  [{:name :allocate-first :args [0 1 0 0 0] :expected 17184063745}
   {:name :resolve-live :args [1 2 1 1 1] :expected 17184063746}

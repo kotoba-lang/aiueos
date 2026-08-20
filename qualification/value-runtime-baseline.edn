@@ -28,13 +28,10 @@
                   ["os/aiueos/kotoba/value-handle-arena.kotoba"
                    "os/aiueos/contracts/value-handle-arena-v1.edn"]}
                  {:object "value-handle-plan",
-                  :verdict :fail,
+                  :verdict :ok,
                   :args
                   ["os/aiueos/kotoba/value-handle-plan.kotoba"
-                   "os/aiueos/contracts/value-handle-plan-v1.edn"],
-                  :cause :unlisted-kernel-export,
-                  :message
-                  "Kotoba kernel object declares an aiueos export with no admitted symbol"}
+                   "os/aiueos/contracts/value-handle-plan-v1.edn"]}
                  {:object "value-runtime-capability-table",
                   :verdict :fail,
                   :args
@@ -148,7 +145,7 @@
                 :composite-verifier
                 {"verify_value_runtime_kernel_image.clj"
                  "the whole-image verifier: compile-project over eleven value modules plus aiueos.native.kernel and aiueos.native.value-runtime-kernel, against value-runtime-kernel-image-v1.edn"},
-                :failing 8,
+                :failing 7,
                 :no-verifier-of-their-own
                 {"value-runtime-sha256"
                  "an input to cas-verify, dispatch, entry and provider-transport; compiled as part of them",
@@ -159,8 +156,7 @@
                  "kernel-value-runtime-capability-table" 2,
                  "(kernel-publish-current-domain domain)" 1},
                 :compiler-sha
-                "a952370dc1c6b8ee88bb3d65e4b4a2f224e74fd1",
+                "5df2bbe1bd81c5894edc7fa8e50fc27a5d0bd1ba",
                 :failing-by-cause
                 {:native-slice-typed-values 6,
-                 :unlisted-kernel-export 1,
                  :native-slice-lowering 1}}
