@@ -158,9 +158,9 @@
   (if (and (= arena-length 4096)
            (<= 0 operation)
            (<= operation 4)
-           (= (kernel-compare-exchange-u32 arena arena-length 0 0 1) 0))
+           (= (kernel-try-lock-u32 arena arena-length 0) 1))
     (let [result (dispatch-locked arena operation handle descriptor)
-          released (kernel-compare-exchange-u32 arena arena-length 0 1 0)]
+          released (kernel-unlock-u32 arena arena-length 0)]
       (if (= released 1) result 0))
     0))
 

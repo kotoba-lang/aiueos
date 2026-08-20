@@ -84,13 +84,13 @@
   (let [table (kernel-value-runtime-capability-table)]
     (if (and (> table 0) (> slot 0) (< slot 256)
              (<= 0 expected-generation) (<= expected-generation 65535)
-             (= (kernel-compare-exchange-u32 table 4096 0 0 1) 0))
+             (= (kernel-try-lock-u32 table 4096 0) 1))
       (let [result (if (= action 1)
                      (issue-locked table slot expected-generation grant owner)
                      (if (= action 2)
                        (revoke-locked table slot expected-generation grant owner)
                        0))
-            released (kernel-compare-exchange-u32 table 4096 0 1 0)]
+            released (kernel-unlock-u32 table 4096 0)]
         (if (= released 1) result 0))
       0)))
 

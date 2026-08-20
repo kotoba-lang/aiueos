@@ -90,10 +90,10 @@
 
 (defn capability-admitted?
   [table :i64 handle :i64 requester :i64 required-rights :i64] :bool
-  (if (= (kernel-compare-exchange-u32 table 4096 0 0 1) 0)
+  (if (= (kernel-try-lock-u32 table 4096 0) 1)
     (let [admitted (capability-admitted-locked?
                     table handle requester required-rights)
-          released (kernel-compare-exchange-u32 table 4096 0 1 0)]
+          released (kernel-unlock-u32 table 4096 0)]
       (and (= released 1) admitted))
     false))
 
