@@ -180,25 +180,34 @@
         decision (broker/verify-admission m empty-graph policy/default-policy)]
     (is (= :grant (:aiueos/decision decision)))))
 
-(def sample-boundary
-  (contract/load-component-boundary))
+;; JVM-only below: `contract/load-component-boundary` reads
+;; `resources/aiueos/component_boundary.edn` off the CLASSPATH, and aiueos has
+;; no portable resource seam (see `aiueos.cli/read-contract`'s docstring, which
+;; tells CLJS callers to parse the EDN themselves and pass the map in -- and
+;; nothing in this repository does that yet). Previously this `def` sat at the
+;; top level unguarded, so requiring this namespace on ClojureScript died
+;; during analysis and took ALL fifteen tests here with it, including the ten
+;; that need no resource at all.
+#?(:clj (def sample-boundary (contract/load-component-boundary)))
 
-(deftest run-plan-shapes-a-valid-plan-on-grant
-  (let [m {:aiueos/component :service/log :aiueos/kind :service :aiueos/trust :verified
-           :aiueos/imports #{:log/write} :aiueos/exports #{} :aiueos/entry "main"}
-        plan (broker/run-plan m empty-graph policy/default-policy sample-boundary)]
-    (is (true? (:valid? (contract/validate-run-plan plan))))
-    (is (= :grant (:aiueos/decision (:aiueos/decision plan))))
-    (is (some? (:aiueos/grant plan)))
-    (is (contains? (:aiueos/capabilities (:aiueos/grant plan)) :log/write))))
+#?(:clj
+   (deftest run-plan-shapes-a-valid-plan-on-grant
+     (let [m {:aiueos/component :service/log :aiueos/kind :service :aiueos/trust :verified
+              :aiueos/imports #{:log/write} :aiueos/exports #{} :aiueos/entry "main"}
+           plan (broker/run-plan m empty-graph policy/default-policy sample-boundary)]
+       (is (true? (:valid? (contract/validate-run-plan plan))))
+       (is (= :grant (:aiueos/decision (:aiueos/decision plan))))
+       (is (some? (:aiueos/grant plan)))
+       (is (contains? (:aiueos/capabilities (:aiueos/grant plan)) :log/write)))))
 
-(deftest run-plan-omits-grant-on-deny
-  (let [m {:aiueos/component :app/notes :aiueos/kind :app :aiueos/trust :verified
-           :aiueos/imports #{:net/fetch}}
-        plan (broker/run-plan m empty-graph policy/default-policy sample-boundary)]
-    (is (true? (:valid? (contract/validate-run-plan plan))))
-    (is (= :deny (:aiueos/decision (:aiueos/decision plan))))
-    (is (not (contains? plan :aiueos/grant)))))
+#?(:clj
+   (deftest run-plan-omits-grant-on-deny
+     (let [m {:aiueos/component :app/notes :aiueos/kind :app :aiueos/trust :verified
+              :aiueos/imports #{:net/fetch}}
+           plan (broker/run-plan m empty-graph policy/default-policy sample-boundary)]
+       (is (true? (:valid? (contract/validate-run-plan plan))))
+       (is (= :deny (:aiueos/decision (:aiueos/decision plan))))
+       (is (not (contains? plan :aiueos/grant))))))
 
 (deftest run-receipt-shapes-a-valid-succeeded-receipt
   (let [receipt (broker/run-receipt :service/log :succeeded

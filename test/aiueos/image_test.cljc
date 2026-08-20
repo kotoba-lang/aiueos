@@ -20,8 +20,18 @@
      (when (.isDirectory f) (doseq [c (.listFiles f)] (delete-tree! c)))
      (.delete f)))
 
-(deftest plan-requires-system
-  (is (thrown? #?(:clj Exception :cljs js/Error) (image/plan {}))))
+;; ENTIRELY JVM-only: `aiueos.image` is `#?(:clj ...)` throughout -- it stages
+;; files and shells out to cpio/gzip.
+;;
+;; `plan-requires-system` below was the one deftest here NOT wrapped, and it
+;; calls `image/plan`, which does not exist on ClojureScript. A single
+;; unguarded test in a file that is otherwise honestly JVM-only was enough to
+;; stop the whole namespace loading on the second runtime -- and a namespace
+;; that fails to load reports nothing at all, which reads like a file that is
+;; not there rather than one that needs a JVM.
+#?(:clj
+   (deftest plan-requires-system
+     (is (thrown? Exception (image/plan {})))))
 
 #?(:clj
    (defn- boot-plan [^File dir out]

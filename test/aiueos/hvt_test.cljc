@@ -10,42 +10,69 @@
             [aiueos.hvt :as hvt]
             [aiueos.virtio :as vio]))
 
-(deftest ioctl-numbers
-  (testing "KVM ioctl request numbers match linux/kvm.h (KVMIO=0xAE)"
-    ;; _IO(0xAE, nr)
-    (is (= 0xAE00 hvt/get-api-version))
-    (is (= 0xAE01 hvt/create-vm))
-    (is (= 0xAE04 hvt/get-vcpu-mmap-size))
-    (is (= 0xAE41 hvt/create-vcpu))
-    (is (= 0xAE80 hvt/run))
-    ;; _IOW(0xAE, 0x46, sizeof kvm_userspace_memory_region=32)
-    (is (= 0x4020AE46 hvt/set-user-memory-region))
-    ;; _IOW(0xAE, 0xac, sizeof kvm_one_reg=16)
-    (is (= 0x4010AEAC hvt/set-one-reg))
-    ;; _IOW(0xAE, 0xae, sizeof kvm_vcpu_init=32)
-    (is (= 0x4020AEAE hvt/arm-vcpu-init))
-    ;; _IOR(0xAE, 0xaf, sizeof kvm_vcpu_init=32)
-    (is (= 0x8020AEAF hvt/arm-preferred-target))
-    ;; _IOR(0xAE, 0x98, sizeof kvm_mp_state=4) / _IOW(0xAE, 0x99, 4)
-    (is (= 0x8004AE98 hvt/get-mp-state))
-    (is (= 0x4004AE99 hvt/set-mp-state))))
+;; ---------------------------------------------------------------------------
+;; JVM-only from here to the end of this block, and the reason is arithmetic,
+;; not I/O.
+;;
+;; KVM ioctl request numbers and ARM64 core-register ids are 64-bit values
+;; assembled with `bit-or`/`bit-shift-left` in `aiueos.hvt`. ClojureScript's
+;; bitwise operators are defined on 32-bit signed integers, so on the second
+;; runtime `KVM_ARM_PREFERRED_TARGET` (0x8020AEAF) comes back -2145341777,
+;; `KVM_REG_ARM64|SIZE_U64|ARM_CORE|pc` (0x6030000000100040) collapses to
+;; 1048640, `rd-le` cannot assemble a 4-byte word above 2^31, and
+;; `(bit-shift-left 1 32)` is 1 because JS masks the shift count -- which
+;; inverts which feature word VIRTIO_F_VERSION_1 appears in.
+;;
+;; These are guarded rather than fixed. `aiueos.hvt` is a KVM monitor: it
+;; drives /dev/kvm through java.lang.foreign, there is no ClojureScript
+;; deployment of it, and rewriting its constant algebra onto BigInt to satisfy
+;; a runtime that will never run it would add a second arithmetic to the one
+;; place where being off by a bit means the ioctl goes to the wrong device.
+;;
+;; Everything OUTSIDE these guards -- the virtqueue walk, the descriptor
+;; bounds checks, the ELF load range, the struct offsets -- is ordinary
+;; small-integer logic and does run on both runtimes.
+;; ---------------------------------------------------------------------------
+
+#?(:clj
+   (deftest ioctl-numbers
+     (testing "KVM ioctl request numbers match linux/kvm.h (KVMIO=0xAE)"
+       ;; _IO(0xAE, nr)
+       (is (= 0xAE00 hvt/get-api-version))
+       (is (= 0xAE01 hvt/create-vm))
+       (is (= 0xAE04 hvt/get-vcpu-mmap-size))
+       (is (= 0xAE41 hvt/create-vcpu))
+       (is (= 0xAE80 hvt/run))
+       ;; _IOW(0xAE, 0x46, sizeof kvm_userspace_memory_region=32)
+       (is (= 0x4020AE46 hvt/set-user-memory-region))
+       ;; _IOW(0xAE, 0xac, sizeof kvm_one_reg=16)
+       (is (= 0x4010AEAC hvt/set-one-reg))
+       ;; _IOW(0xAE, 0xae, sizeof kvm_vcpu_init=32)
+       (is (= 0x4020AEAE hvt/arm-vcpu-init))
+       ;; _IOR(0xAE, 0xaf, sizeof kvm_vcpu_init=32)
+       (is (= 0x8020AEAF hvt/arm-preferred-target))
+       ;; _IOR(0xAE, 0x98, sizeof kvm_mp_state=4) / _IOW(0xAE, 0x99, 4)
+       (is (= 0x8004AE98 hvt/get-mp-state))
+       (is (= 0x4004AE99 hvt/set-mp-state)))))
 
 (deftest mp-state-constants
   (testing "KVM_MP_STATE values (linux/kvm.h)"
     (is (= 0 (:runnable hvt/mp-state)))
     (is (= 5 (:stopped hvt/mp-state)))))
 
-(deftest ioc-encoding
-  (testing "the _IOC direction/type/nr/size bit layout"
-    (is (= 0xAE00 (hvt/io- 0xAE 0x00)))
-    (is (= 0x4020AE46 (hvt/iow 0xAE 0x46 32)))
-    (is (= 0x8020AEAF (hvt/ior 0xAE 0xaf 32)))))
+#?(:clj
+   (deftest ioc-encoding
+     (testing "the _IOC direction/type/nr/size bit layout"
+       (is (= 0xAE00 (hvt/io- 0xAE 0x00)))
+       (is (= 0x4020AE46 (hvt/iow 0xAE 0x46 32)))
+       (is (= 0x8020AEAF (hvt/ior 0xAE 0xaf 32))))))
 
-(deftest arm64-pc-register-id
-  (testing "KVM_REG_ARM64 | SIZE_U64 | ARM_CORE | (offsetof(pc)/4 = 0x40)"
-    (is (= 0x6030000000100040 hvt/arm64-core-reg-pc)))
-  (testing "SP_EL1 core reg (offsetof(kvm_regs.sp_el1)=272 /4 = 0x44 -- the stack the EL1h guest uses)"
-    (is (= 0x6030000000100044 hvt/arm64-core-reg-sp))))
+#?(:clj
+   (deftest arm64-pc-register-id
+     (testing "KVM_REG_ARM64 | SIZE_U64 | ARM_CORE | (offsetof(pc)/4 = 0x40)"
+       (is (= 0x6030000000100040 hvt/arm64-core-reg-pc)))
+     (testing "SP_EL1 core reg (offsetof(kvm_regs.sp_el1)=272 /4 = 0x44 -- the stack the EL1h guest uses)"
+       (is (= 0x6030000000100044 hvt/arm64-core-reg-sp)))))
 
 (deftest struct-offsets
   (testing "kvm_userspace_memory_region field byte offsets"
@@ -103,15 +130,28 @@
     (is (= 4 hvt/vcpu-init-features0-offset))
     (is (= 1 hvt/vcpu-feature-psci-0-2) "KVM_ARM_VCPU_PSCI_0_2 == feature bit 0")))
 
+(defn- code
+  "The character code of `c`, on both runtimes.
+
+  `(int \\A)` is 65 on the JVM and **0** on ClojureScript, where `\\A` reads as
+  the one-character string \"A\" and `int` coerces it. Three places here used
+  it on BOTH sides of an assertion -- filling synthetic guest RAM and then
+  comparing against it -- so on the second runtime the test wrote 0, read 0,
+  and passed while checking nothing. A test that goes green by being equally
+  wrong twice is worse than one that fails."
+  [c]
+  #?(:clj (int c) :cljs (.charCodeAt (str c) 0)))
+
 (defn- vec-accessor [v] (fn [off] (nth v off)))
 
-(deftest rd-le-reads-little-endian
-  (testing "rd-le assembles n little-endian bytes into a long"
-    (let [rd (vec-accessor [0x78 0x56 0x34 0x12 0xff 0xee])]
-      (is (= 0x12345678 (hvt/rd-le rd 0 4)))
-      (is (= 0x5678 (hvt/rd-le rd 0 2)))
-      (is (= 0xeeff (hvt/rd-le rd 4 2)))
-      (is (= 0xEEFF1234 (hvt/rd-le rd 2 4))))))
+#?(:clj
+   (deftest rd-le-reads-little-endian
+     (testing "rd-le assembles n little-endian bytes into a long"
+       (let [rd (vec-accessor [0x78 0x56 0x34 0x12 0xff 0xee])]
+         (is (= 0x12345678 (hvt/rd-le rd 0 4)))
+         (is (= 0x5678 (hvt/rd-le rd 0 2)))
+         (is (= 0xeeff (hvt/rd-le rd 4 2)))
+         (is (= 0xEEFF1234 (hvt/rd-le rd 2 4)))))))
 
 (deftest elf-load-range-spans-segments
   (testing "elf-load-range covers all PT_LOAD vaddr..vaddr+memsz, page-aligned"
@@ -155,20 +195,21 @@
     (is (not (hvt/virtio-window? (+ hvt/virtio-mmio-base hvt/virtio-mmio-size))))
     (is (not (hvt/virtio-window? hvt/guest-mmio-base)) "the plain serial port is not virtio")))
 
-(deftest virtio-console-device-reads
-  (testing "the emulated console device presents the identity registers"
-    (is (= vio/mmio-magic (hvt/virtio-console-read {} (:magic-value vio/mmio-reg))))
-    (is (= vio/mmio-version-2 (hvt/virtio-console-read {} (:version vio/mmio-reg))))
-    (is (= (:console vio/device-type-id) (hvt/virtio-console-read {} (:device-id vio/mmio-reg)))
-        "device-id 3 = console")
-    (is (= hvt/virtio-console-queue-num-max
-           (hvt/virtio-console-read {} (:queue-num-max vio/mmio-reg))))
-    (is (= hvt/virtio-console-vendor (hvt/virtio-console-read {} (:vendor-id vio/mmio-reg)))))
-  (testing "VIRTIO_F_VERSION_1 is offered in the high feature word (bit 32)"
-    (is (= 0 (hvt/virtio-console-read {:device-features-sel 0} (:device-features vio/mmio-reg))))
-    (is (= 1 (hvt/virtio-console-read {:device-features-sel 1} (:device-features vio/mmio-reg)))))
-  (testing "an unimplemented register reads as 0"
-    (is (= 0 (hvt/virtio-console-read {} 0x1fc)))))
+#?(:clj
+   (deftest virtio-console-device-reads
+     (testing "the emulated console device presents the identity registers"
+       (is (= vio/mmio-magic (hvt/virtio-console-read {} (:magic-value vio/mmio-reg))))
+       (is (= vio/mmio-version-2 (hvt/virtio-console-read {} (:version vio/mmio-reg))))
+       (is (= (:console vio/device-type-id) (hvt/virtio-console-read {} (:device-id vio/mmio-reg)))
+           "device-id 3 = console")
+       (is (= hvt/virtio-console-queue-num-max
+              (hvt/virtio-console-read {} (:queue-num-max vio/mmio-reg))))
+       (is (= hvt/virtio-console-vendor (hvt/virtio-console-read {} (:vendor-id vio/mmio-reg)))))
+     (testing "VIRTIO_F_VERSION_1 is offered in the high feature word (bit 32)"
+       (is (= 0 (hvt/virtio-console-read {:device-features-sel 0} (:device-features vio/mmio-reg))))
+       (is (= 1 (hvt/virtio-console-read {:device-features-sel 1} (:device-features vio/mmio-reg)))))
+     (testing "an unimplemented register reads as 0"
+       (is (= 0 (hvt/virtio-console-read {} 0x1fc))))))
 
 (deftest virtio-console-status-handshake
   (testing "status writes are tracked and read back (the FEATURES_OK-stuck check depends on this)"
@@ -222,7 +263,7 @@
       (ram-write-le r (+ driver 4) 2 0)        ; avail.ring[0] = desc 0
       (ram-write-le r device 2 0)              ; used.flags
       (ram-write-le r (+ device 2) 2 0)        ; used.idx = 0
-      (reduce (fn [m [i b]] (assoc m (+ buf i) (int b)))
+      (reduce (fn [m [i b]] (assoc m (+ buf i) (code b)))
               r (map-indexed vector byte-seq)))))
 
 (deftest virtqueue-plan-transmit
@@ -308,10 +349,10 @@
                 (ram-write-le r 0x1018 4 1)
                 (ram-write-le r 0x101c 2 0)
                 (ram-write-le r 0x101e 2 0)
-                (assoc r 0x5000 (int \A) 0x5001 (int \B) 0x5002 (int \C)))
+                (assoc r 0x5000 (code \A) 0x5001 (code \B) 0x5002 (code \C)))
           rd (fn [gpa] (get ram gpa 0))
           {:keys [bytes len]} (hvt/walk-descriptor-chain rd 0x1000 8 0)]
-      (is (= [(int \A) (int \B) (int \C)] bytes))
+      (is (= [(code \A) (code \B) (code \C)] bytes))
       (is (= 3 len))))
   (testing "a device-WRITABLE descriptor is not emitted (it's a receive buffer)"
     (let [ram (as-> {} r
@@ -319,7 +360,7 @@
                 (ram-write-le r 0x1008 4 2)
                 (ram-write-le r 0x100c 2 (:write vio/desc-flag))
                 (ram-write-le r 0x100e 2 0)
-                (assoc r 0x5000 (int \Z) 0x5001 (int \Z)))
+                (assoc r 0x5000 (code \Z) 0x5001 (code \Z)))
           rd (fn [gpa] (get ram gpa 0))
           {:keys [bytes]} (hvt/walk-descriptor-chain rd 0x1000 8 0)]
       (is (= [] bytes) "device-writable buffers carry no transmit data"))))
@@ -343,8 +384,8 @@
     (put-le! (+ desc-gpa 12) 0 2)              ; flags: not writable, no next
     (put-le! (+ desc-gpa 14) 0 2)              ; next
     (let [e (try (hvt/walk-descriptor-chain rd desc-gpa 8 0)
-                 (catch clojure.lang.ExceptionInfo e e))]
-      (is (instance? clojure.lang.ExceptionInfo e)
+                 (catch #?(:clj clojure.lang.ExceptionInfo :cljs :default) e e))]
+      (is (some? (ex-data e))
           "a 4 GiB descriptor was collected instead of rejected")
       (is (= (inc hvt/guest-ram-size) (:len (ex-data e))))
       (is (= hvt/guest-ram-size (:max (ex-data e))))))
@@ -372,8 +413,8 @@
     (put-le! 0x100c (:next vio/desc-flag) 2)
     (put-le! 0x100e 4000 2)
     (let [e (try (hvt/walk-descriptor-chain rd 0x1000 8 0)
-                 (catch clojure.lang.ExceptionInfo e e))]
-      (is (instance? clojure.lang.ExceptionInfo e)
+                 (catch #?(:clj clojure.lang.ExceptionInfo :cljs :default) e e))]
+      (is (some? (ex-data e))
           "a chain stepped outside the descriptor table")
       (is (= 4000 (:descriptor (ex-data e))))
       (is (= 8 (:queue-size (ex-data e)))))))

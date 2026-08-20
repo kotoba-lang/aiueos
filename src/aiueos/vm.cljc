@@ -94,7 +94,16 @@
   replaced (ADR-0069)."
   #{:sensitive-local :regulated})
 
-(defn- accel-name [p]
+(defn- accel-name
+  "The QEMU `accel=` value for `p`.
+
+  `\"auto\"` is resolved from the host OS on the JVM. On ClojureScript there is
+  no detection and it falls through to `\"tcg\"` -- deliberately, because this
+  namespace only shapes an argv and the process that would run it is started
+  by a JVM caller. It is written down because the two runtimes therefore
+  disagree about what `\"auto\"` means, and a test that leaves `:accel` at
+  `\"auto\"` is asserting about the machine it happens to run on."
+  [p]
   (if (= "auto" (:accel p))
     (case #?(:clj (System/getProperty "os.name") :cljs "other")
       "Mac OS X" "hvf"
@@ -196,9 +205,12 @@
    (concat
     [(:qemu-binary p) "-machine" (str (if (= "x86_64" (:arch p)) "q35" "virt")
                                         ",accel=" (accel-name p))
-     "-cpu" (if (= "tcg" (accel-name p))
-              (if (= "x86_64" (:arch p)) "max" "max")
-              "host")
+     ;; `host` passes the physical CPU through, which only a hardware
+     ;; accelerator can do; under pure emulation QEMU rejects it, so ask for
+     ;; the fullest model TCG implements. (This was written as a nested `if`
+     ;; on `:arch` whose two branches were both "max" -- it read as an
+     ;; architecture distinction and was not one.)
+     "-cpu" (if (= "tcg" (accel-name p)) "max" "host")
      "-smp" (:cpus p) "-m" (:memory p)]
     (if (= (:graphics p) "virtio-gpu")
       ["-display" (:display p) "-device" "virtio-gpu-pci"]

@@ -349,12 +349,23 @@
       (is (some #(= [:aiueos/status] (:path %)) (:errors result)))
       (is (some #(= [:aiueos/audit-events 0 :aiueos/ts] (:path %)) (:errors result))))))
 
+;; The three `contract/load-*` blocks below are guarded, not the whole tests.
+;;
+;; Those loaders read EDN off the CLASSPATH (`io/resource` + `slurp`), which
+;; aiueos has no ClojureScript equivalent for. Unguarded, the calls sat inside
+;; otherwise-portable deftests and the namespace failed to LOAD under SCI --
+;; costing all seventeen tests here, not the three assertions that actually
+;; need a resource. `aiueos-component-boundary` above already shows the other
+;; way out (inline the literal for CLJS); that is not repeated for the policy
+;; and broker contracts because a second inline copy of a file this test also
+;; validates would drift from it silently.
 (deftest policy-contract-authority
-  (testing "validates aiueos policy tables as CLJC/EDN authority"
-    (let [policy (contract/load-policy-contract)]
-      (is (contract/policy-contract? policy))
-      (is (= {:valid? true :errors []}
-             (contract/validate-policy-contract policy)))))
+  #?(:clj
+     (testing "validates aiueos policy tables as CLJC/EDN authority"
+       (let [policy (contract/load-policy-contract)]
+         (is (contract/policy-contract? policy))
+         (is (= {:valid? true :errors []}
+                (contract/validate-policy-contract policy))))))
   (testing "rejects Rust-owned policy authority"
     (let [result (contract/validate-policy-contract
                   {:aiueos.policy/id :aiueos/default-policy
@@ -375,11 +386,12 @@
       (is (some #(= [:aiueos.policy/grant-fields] (:path %)) (:errors result))))))
 
 (deftest broker-contract-authority
-  (testing "validates aiueos broker flows as CLJC/EDN authority"
-    (let [broker (contract/load-broker-contract)]
-      (is (contract/broker-contract? broker))
-      (is (= {:valid? true :errors []}
-             (contract/validate-broker-contract broker)))))
+  #?(:clj
+     (testing "validates aiueos broker flows as CLJC/EDN authority"
+       (let [broker (contract/load-broker-contract)]
+         (is (contract/broker-contract? broker))
+         (is (= {:valid? true :errors []}
+                (contract/validate-broker-contract broker))))))
   (testing "rejects runtime-owned broker flow authority"
     (let [result (contract/validate-broker-contract
                   {:aiueos.broker/id :aiueos/capability-broker
@@ -404,15 +416,18 @@
       (is (some #(= [:aiueos.broker/audit-events] (:path %)) (:errors result)))
       (is (some #(= [:aiueos.broker/run-statuses] (:path %)) (:errors result))))))
 
-(deftest aiueos-provider-filesystem-conformance
-  (testing "policy and broker source-files name real CLJC files in this repo, not Rust in ../aiueos"
+;; Wholly JVM-only: every assertion in it needs a loaded contract, so guarding
+;; the inner `testing` would leave a deftest that runs and asserts nothing.
+#?(:clj
+   (deftest aiueos-provider-filesystem-conformance
+   (testing "policy and broker source-files name real CLJC files in this repo, not Rust in ../aiueos"
     (let [contracts [(contract/load-policy-contract)
                      (contract/load-broker-contract)]]
       (is (seq (-> contracts first :aiueos.policy/source-files)))
       (is (seq (-> contracts second :aiueos.broker/source-files))
           "aiueos.broker ports verify-system/verify-one/run-plan/run-receipt-shaping (ADR-2607022200); :provider/execute stays a native adapter concern, not modeled here")
       (is (= {:valid? true :errors []}
-             (contract/validate-aiueos-provider-files contracts "."))))))
+             (contract/validate-aiueos-provider-files contracts ".")))))))
 
 #?(:clj
    (deftest example-fixtures-follow-authority-contracts

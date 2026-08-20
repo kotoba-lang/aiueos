@@ -82,7 +82,18 @@
 (defn iow [type nr size] (ioc ioc-write type nr size))
 (defn iowr [type nr size] (ioc (bit-or ioc-read ioc-write) type nr size))
 
-(def vfio-type (int \;))
+(def vfio-type
+  "`VFIO_TYPE` from linux/vfio.h: the ASCII code of `;`, 59.
+
+  Written as a reader conditional rather than `(int \\;)` because that
+  expression is not portable and does not fail when it stops working. On the
+  JVM `\\;` is a Character and `int` widens it to 59; on ClojureScript `\\;`
+  reads as the one-character STRING \";\" and `int` coerces it to 0 -- so
+  every ioctl number below silently lost its type field and became its bare
+  `nr`, e.g. `VFIO_GET_API_VERSION` came out 100 instead of 15204. Nothing
+  threw: the constants were simply wrong, and only a second runtime showed it."
+  #?(:clj (int \;) :cljs (.charCodeAt ";" 0)))
+
 (def vfio-base 100)
 
 (def ioctl-get-api-version (io- vfio-type (+ vfio-base 0)))

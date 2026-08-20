@@ -2,6 +2,13 @@
   (:require [clojure.test :refer [deftest is]]
             [aiueos.component-abi :as component-abi]))
 
+;; `cljs.core.ExceptionInfo` does not resolve under SCI (nbb), so a
+;; reader conditional naming it makes the whole namespace fail to LOAD on the
+;; second runtime -- every test here vanished rather than failed. `js/Error` is
+;; what an ex-info is an instance of on both ClojureScript and SCI; where the
+;; distinction between "an ex-info" and "any Error" carries weight, assert on
+;; `ex-data` instead, which is portable.
+
 (deftest component-imports-map-to-explicit-aiueos-authority
   (let [imports #{:aiueos.component/aiueos-clock-now}]
     (is (= #{:clock/monotonic}
@@ -15,7 +22,7 @@
 
 (deftest unknown-component-import-fails-closed
   (is (thrown? #?(:clj clojure.lang.ExceptionInfo
-                  :cljs cljs.core.ExceptionInfo)
+                  :cljs js/Error)
                (component-abi/requested-capabilities!
                 #{:aiueos.component/unknown}))))
 
@@ -77,15 +84,15 @@
                    :max-bytes 4096 :max-items 20 :deadline-ms 5000
                    :audit-id "artifact-request"}]
     (is (thrown? #?(:clj clojure.lang.ExceptionInfo
-                    :cljs cljs.core.ExceptionInfo)
+                    :cljs js/Error)
                  (component-abi/narrow-abilities #{import} {import requested} {})))
     (is (thrown? #?(:clj clojure.lang.ExceptionInfo
-                    :cljs cljs.core.ExceptionInfo)
+                    :cljs js/Error)
                  (component-abi/narrow-ability
                   requested
                   (assoc requested :target "https://attacker.example"))))
     (is (thrown? #?(:clj clojure.lang.ExceptionInfo
-                    :cljs cljs.core.ExceptionInfo)
+                    :cljs js/Error)
                  (component-abi/narrow-ability
                   requested
                   (assoc requested :operation :http/get))))))

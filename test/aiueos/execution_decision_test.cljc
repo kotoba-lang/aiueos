@@ -5,6 +5,13 @@
             [aiueos.policy :as policy]
             [kotoba.abi.contract :as abi]))
 
+;; `cljs.core.ExceptionInfo` does not resolve under SCI (nbb), so a
+;; reader conditional naming it makes the whole namespace fail to LOAD on the
+;; second runtime -- every test here vanished rather than failed. `js/Error` is
+;; what an ex-info is an instance of on both ClojureScript and SCI; where the
+;; distinction between "an ex-info" and "any Error" carries weight, assert on
+;; `ex-data` instead, which is portable.
+
 ;; --- identities ------------------------------------------------------------
 ;; These were "bafy-plan", "bafy-artifact" and so on: readable labels that are
 ;; not CIDs. `kotoba.abi.contract/cid?` used to be `#"b.+"`, so they passed —
@@ -86,7 +93,7 @@
                                              :result :permit))
               nil
               (catch #?(:clj clojure.lang.ExceptionInfo
-                        :cljs cljs.core.ExceptionInfo)
+                        :cljs js/Error)
                   e
                 (:reason (ex-data e)))))))
 
@@ -109,10 +116,10 @@
                      (assoc approval :input-cid (cid-of "other-input"))
                      (assoc approval :resources #{:different/write})]]
       (is (thrown? #?(:clj clojure.lang.ExceptionInfo
-                      :cljs cljs.core.ExceptionInfo)
+                      :cljs js/Error)
                    (decision/authorize-approval!
                     approval-plan permit mutated "2026-07-25T00:00:30Z"))))
     (is (thrown? #?(:clj clojure.lang.ExceptionInfo
-                    :cljs cljs.core.ExceptionInfo)
+                    :cljs js/Error)
                  (decision/authorize-approval!
                   approval-plan permit approval "2026-07-25T00:01:00Z")))))
