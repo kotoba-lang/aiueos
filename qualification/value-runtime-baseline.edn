@@ -32,7 +32,7 @@
                   :args
                   ["os/aiueos/kotoba/value-handle-plan.kotoba"
                    "os/aiueos/contracts/value-handle-plan-v1.edn"],
-                  :cause :unclassified,
+                  :cause :unlisted-kernel-export,
                   :message
                   "Kotoba kernel object declares an aiueos export with no admitted symbol"}
                  {:object "value-runtime-capability-table",
@@ -127,7 +127,7 @@
                   ["os/aiueos/kotoba/value-runtime-syscall-plan.kotoba"
                    "os/aiueos/contracts/value-runtime-syscall-plan-v1.edn"]}],
                 :upstream
-                {"kernel-compare-exchange-u32"
+                {"kernel-value-provider-queue"
                  "https://github.com/kotoba-lang/amu/issues/625",
                  "kernel-value-runtime-capability-table"
                  "https://github.com/kotoba-lang/amu/issues/625",
@@ -142,7 +142,9 @@
                  :per-object-export-symbol
                  "https://github.com/kotoba-lang/amu/issues/626",
                  :project-module-missing-export
-                 "90-docs/adr/0057-the-eleventh-verifier-was-never-missing-a-source.md"},
+                 "90-docs/adr/0057-the-eleventh-verifier-was-never-missing-a-source.md",
+                 :unlisted-kernel-export
+                 "os/aiueos/contracts/value-handle-plan-v1.edn"},
                 :composite-verifier
                 {"verify_value_runtime_kernel_image.clj"
                  "the whole-image verifier: compile-project over eleven value modules plus aiueos.native.kernel and aiueos.native.value-runtime-kernel, against value-runtime-kernel-image-v1.edn"},
@@ -160,5 +162,5 @@
                 "a952370dc1c6b8ee88bb3d65e4b4a2f224e74fd1",
                 :failing-by-cause
                 {:native-slice-typed-values 6,
-                 :unclassified 1,
+                 :unlisted-kernel-export 1,
                  :native-slice-lowering 1}}

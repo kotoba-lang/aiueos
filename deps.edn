@@ -26,10 +26,11 @@
          :main-opts ["-m" "cognitect.test-runner"]
          :exec-fn cognitect.test-runner.api/test}
 
-   ;; The fleet's suite: everything `:test` runs except what is blocked on an
-   ;; upstream answer. `-e :upstream-blocked` drops exactly the tests carrying
-   ;; that metadata -- today one, `every-kotoba-source-is-built-or-declared-unbuilt`,
-   ;; whose twelve failures ADR-0050 established as correct and #625/#626 own.
+   ;; The fleet's suite. It used to be `:test` minus `-e :upstream-blocked`,
+   ;; which dropped exactly one test whose twelve failures ADR-0050 established
+   ;; as correct and amu#625/#626 owned. Both are answered as of 2026-08-20 --
+   ;; #625 landed as a lock rather than a compare-exchange -- so the twelve are
+   ;; declared rather than silently unbuilt and nothing is excluded here.
    ;;
    ;; It exists so a murakumo fleet gate can be green when the repository is
    ;; healthy. Lowering a threshold to get there would have been the other
@@ -53,8 +54,7 @@
                 ;; before a single test runs — which is how this alias failed
                 ;; its first real gate (ADR-0068).
                 :main-opts ["-m" "cognitect.test-runner"
-                            "-r" "^aiueos\\.(?!tcp-seq-acceptable-parity-test).*$"
-                            "-e" ":upstream-blocked"]}
+                            "-r" "^aiueos\\.(?!tcp-seq-acceptable-parity-test).*$"]}
 
    :tcb-check {:main-opts ["-m" "aiueos.tcb"]}
 
