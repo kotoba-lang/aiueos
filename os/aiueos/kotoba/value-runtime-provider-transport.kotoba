@@ -72,9 +72,9 @@
 (defn aiueos-value-runtime-provider-submit
   [route :i64 domain :i64 cap-handle :i64 digest :i64] :i64
   (let [q (kernel-value-provider-queue)]
-    (if (= (kernel-compare-exchange-u32 q 512 0 0 1) 0)
+    (if (= (kernel-try-lock-u32 q 512 0) 1)
       (let [result (submit-locked q route domain cap-handle digest)
-            released (kernel-compare-exchange-u32 q 512 0 1 0)]
+            released (kernel-unlock-u32 q 512 0)]
         (if (= released 1) result 0)) 0)))
 
 (defn claim-locked [q]
@@ -91,9 +91,9 @@
 
 (defn aiueos-value-runtime-provider-claim [] :i64
   (let [q (kernel-value-provider-queue)]
-    (if (= (kernel-compare-exchange-u32 q 512 0 0 1) 0)
+    (if (= (kernel-try-lock-u32 q 512 0) 1)
       (let [result (claim-locked q)
-            released (kernel-compare-exchange-u32 q 512 0 1 0)]
+            released (kernel-unlock-u32 q 512 0)]
         (if (= released 1) result 0)) 0)))
 
 (defn complete-locked [ticket route-domain block block-length descriptor]
@@ -127,9 +127,9 @@
   [ticket :i64 route-domain :i64 block :i64
    block-length :i64 descriptor :i64] :i64
   (let [q (kernel-value-provider-queue)]
-    (if (= (kernel-compare-exchange-u32 q 512 0 0 1) 0)
+    (if (= (kernel-try-lock-u32 q 512 0) 1)
       (let [result (complete-locked ticket route-domain block block-length descriptor)
-            released (kernel-compare-exchange-u32 q 512 0 1 0)]
+            released (kernel-unlock-u32 q 512 0)]
         (if (= released 1) result 0)) 0)))
 
 (defn main [] :i64 0)

@@ -19,27 +19,22 @@
                    "os/aiueos/contracts/value-runtime-kernel-image-v1.edn"],
                   :cause :native-slice-typed-values,
                   :message "operation has no admitted type signature",
-                  :rejected-form "kernel-compare-exchange-u32",
+                  :rejected-form "kernel-value-provider-queue",
                   :error-code :kotoba.error/subset-reject,
                   :compiler-phase :subset}
                  {:object "value-handle-arena",
-                  :verdict :fail,
+                  :verdict :ok,
                   :args
                   ["os/aiueos/kotoba/value-handle-arena.kotoba"
-                   "os/aiueos/contracts/value-handle-arena-v1.edn"],
-                  :cause :native-slice-typed-values,
-                  :message "operation has no admitted type signature",
-                  :rejected-form "kernel-compare-exchange-u32",
-                  :error-code :kotoba.error/subset-reject,
-                  :compiler-phase :subset}
+                   "os/aiueos/contracts/value-handle-arena-v1.edn"]}
                  {:object "value-handle-plan",
                   :verdict :fail,
                   :args
                   ["os/aiueos/kotoba/value-handle-plan.kotoba"
                    "os/aiueos/contracts/value-handle-plan-v1.edn"],
-                  :cause :per-object-export-symbol,
-                  :message "planner object export is not exact",
-                  :compiler-phase :aiueos-value-handle-plan}
+                  :cause :unlisted-kernel-export,
+                  :message
+                  "Kotoba kernel object declares an aiueos export with no admitted symbol"}
                  {:object "value-runtime-capability-table",
                   :verdict :fail,
                   :args
@@ -52,15 +47,12 @@
                   :error-code :kotoba.error/subset-reject,
                   :compiler-phase :subset}
                  {:object "value-runtime-cas-verify",
-                  :verdict :fail,
+                  :verdict :ok,
                   :args
                   ["os/aiueos/kotoba/value-runtime-sha256.kotoba"
                    "os/aiueos/kotoba/value-runtime-digest-equal.kotoba"
                    "os/aiueos/kotoba/value-runtime-cas-verify.kotoba"
-                   "os/aiueos/contracts/value-runtime-cas-verify-v1.edn"],
-                  :cause :per-object-export-symbol,
-                  :message "CAS verifier native export mismatch",
-                  :compiler-phase :aiueos-value-runtime-cas-verify}
+                   "os/aiueos/contracts/value-runtime-cas-verify-v1.edn"]}
                  {:object "value-runtime-dispatch",
                   :verdict :fail,
                   :args
@@ -73,7 +65,7 @@
                    "os/aiueos/contracts/value-runtime-dispatch-v1.edn"],
                   :cause :native-slice-typed-values,
                   :message "operation has no admitted type signature",
-                  :rejected-form "kernel-compare-exchange-u32",
+                  :rejected-form "kernel-value-provider-queue",
                   :error-code :kotoba.error/subset-reject,
                   :compiler-phase :subset}
                  {:object "value-runtime-domain",
@@ -100,7 +92,7 @@
                    "os/aiueos/contracts/value-runtime-entry-v1.edn"],
                   :cause :native-slice-typed-values,
                   :message "operation has no admitted type signature",
-                  :rejected-form "kernel-compare-exchange-u32",
+                  :rejected-form "kernel-value-provider-queue",
                   :error-code :kotoba.error/subset-reject,
                   :compiler-phase :subset}
                  {:object "value-runtime-provider-policy",
@@ -126,25 +118,22 @@
                    "os/aiueos/contracts/value-runtime-provider-transport-v1.edn"],
                   :cause :native-slice-typed-values,
                   :message "operation has no admitted type signature",
-                  :rejected-form "kernel-compare-exchange-u32",
+                  :rejected-form "kernel-value-provider-queue",
                   :error-code :kotoba.error/subset-reject,
                   :compiler-phase :subset}
                  {:object "value-runtime-syscall-plan",
-                  :verdict :fail,
+                  :verdict :ok,
                   :args
                   ["os/aiueos/kotoba/value-runtime-syscall-plan.kotoba"
-                   "os/aiueos/contracts/value-runtime-syscall-plan-v1.edn"],
-                  :cause :per-object-export-symbol,
-                  :message "native export mismatch",
-                  :compiler-phase :aiueos-value-runtime-syscall-plan}],
+                   "os/aiueos/contracts/value-runtime-syscall-plan-v1.edn"]}],
                 :upstream
-                {"kernel-compare-exchange-u32"
+                {"kernel-value-provider-queue"
                  "https://github.com/kotoba-lang/amu/issues/625",
                  "kernel-value-runtime-capability-table"
                  "https://github.com/kotoba-lang/amu/issues/625",
                  "(kernel-publish-current-domain domain)"
                  "https://github.com/kotoba-lang/amu/issues/625"},
-                :measured-at "2026-08-18",
+                :measured-at "2026-08-20",
                 :upstream-by-cause
                 {:native-slice-typed-values
                  "https://github.com/kotoba-lang/amu/issues/625",
@@ -153,23 +142,25 @@
                  :per-object-export-symbol
                  "https://github.com/kotoba-lang/amu/issues/626",
                  :project-module-missing-export
-                 "90-docs/adr/0057-the-eleventh-verifier-was-never-missing-a-source.md"},
+                 "90-docs/adr/0057-the-eleventh-verifier-was-never-missing-a-source.md",
+                 :unlisted-kernel-export
+                 "os/aiueos/contracts/value-handle-plan-v1.edn"},
                 :composite-verifier
                 {"verify_value_runtime_kernel_image.clj"
                  "the whole-image verifier: compile-project over eleven value modules plus aiueos.native.kernel and aiueos.native.value-runtime-kernel, against value-runtime-kernel-image-v1.edn"},
-                :failing 11,
+                :failing 8,
                 :no-verifier-of-their-own
                 {"value-runtime-sha256"
                  "an input to cas-verify, dispatch, entry and provider-transport; compiled as part of them",
                  "value-runtime-digest-equal"
                  "same — an input, not an uncovered object"},
                 :rejected-forms
-                {"kernel-compare-exchange-u32" 5,
+                {"kernel-value-provider-queue" 4,
                  "kernel-value-runtime-capability-table" 2,
                  "(kernel-publish-current-domain domain)" 1},
                 :compiler-sha
-                "1e21a1f56613d7d4c7628af1945ebf1cf7862ff3",
+                "a952370dc1c6b8ee88bb3d65e4b4a2f224e74fd1",
                 :failing-by-cause
-                {:native-slice-typed-values 7,
-                 :per-object-export-symbol 3,
+                {:native-slice-typed-values 6,
+                 :unlisted-kernel-export 1,
                  :native-slice-lowering 1}}

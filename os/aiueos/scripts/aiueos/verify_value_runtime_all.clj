@@ -110,13 +110,25 @@
   [[#"requires an explicit :export vector" :project-module-missing-export]
    [#"no admitted type signature" :native-slice-typed-values]
    [#"no admitted lowering" :native-slice-lowering]
-   [#"export mismatch|export is not exact" :per-object-export-symbol]])
+   [#"export mismatch|export is not exact" :per-object-export-symbol]
+   ;; A different failure from `:per-object-export-symbol`, and it must not be
+   ;; folded into it. That class was "the compiler emits kotoba_aiueos_probe for
+   ;; every kernel object"; this one is the compiler REFUSING because the name
+   ;; is not in its export allowlist (amu#626's fix). The fixes differ: the old
+   ;; one needed the compiler changed, this one needs either a row in that table
+   ;; or a `:native` block in the contract that declares the symbol to put there.
+   [#"declares an aiueos export with no admitted symbol" :unlisted-kernel-export]])
 
 (def upstream
   "Where the work is, for each form the slice refuses. A rejected form with no
   entry here is work nobody has asked for — the receipt would name a wall and
   point at no one, which is how a measurement becomes a complaint."
-  {"kernel-compare-exchange-u32" "https://github.com/kotoba-lang/amu/issues/625"
+  ;; `kernel-compare-exchange-u32` is gone from this map because it is gone
+  ;; from the sources: #625 landed as `kernel-try-lock-u32`/`kernel-unlock-u32`
+  ;; and the twelve call sites were rewritten. `kernel-value-provider-queue`
+  ;; takes its place here -- it was refused all along, behind the CAS, and only
+  ;; became visible once the first rejection stopped happening.
+  {"kernel-value-provider-queue" "https://github.com/kotoba-lang/amu/issues/625"
    "kernel-value-runtime-capability-table" "https://github.com/kotoba-lang/amu/issues/625"
    "(kernel-publish-current-domain domain)" "https://github.com/kotoba-lang/amu/issues/625"})
 
@@ -132,7 +144,13 @@
    ;; production hard-flip input and carries no :export vector, which
    ;; compile-project requires of every module.
    :project-module-missing-export
-   "90-docs/adr/0057-the-eleventh-verifier-was-never-missing-a-source.md"})
+   "90-docs/adr/0057-the-eleventh-verifier-was-never-missing-a-source.md"
+   ;; Local work, not upstream: value-handle-plan's contract carries no
+   ;; `:native` block, so there is no declared symbol for amu's export table to
+   ;; transcribe, and that table will not invent one. The answer is a contract
+   ;; here, not a change there.
+   :unlisted-kernel-export
+   "os/aiueos/contracts/value-handle-plan-v1.edn"})
 
 (defn classify [message]
   (or (some (fn [[re cause]] (when (re-find re (str message)) cause)) causes)

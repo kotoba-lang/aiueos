@@ -31,12 +31,29 @@
 (def ^:private kotoba-dir (io/file "os" "aiueos" "kotoba"))
 (def ^:private scripts-dir (io/file "os" "aiueos" "scripts"))
 
+(def ^:private value-runtime-reason
+  (str "The process-local ValueRuntime. No build links any of the twelve, "
+       "because the thing they would be linked INTO does not build: "
+       "`value-runtime-kernel-image` is one of them, and it is still refused -- "
+       "kernel-value-provider-queue, kernel-value-runtime-capability-table and "
+       "kernel-publish-current-domain are three facilities the kernel would "
+       "have to publish through hidden-context slots it does not have yet. "
+       "What executes them is os/aiueos/scripts/aiueos/verify-<name>.clj, one "
+       "per object, driven by aiueos.verify-value-runtime-all: it compiles each "
+       "against the pinned compiler and checks it against its contract, and the "
+       "receipt is qualification/value-runtime-baseline.edn. Three of the twelve "
+       "now compile and verify (arena, cas-verify, syscall-plan). They are "
+       "declared here rather than wired into a build because linking an object "
+       "into the kernel image is a decision about the kernel, not a way to "
+       "satisfy this test."))
+
 (def ^:private not-built-here
   "Sources no script in this repo compiles, and why.
 
   Adding a name here is a claim about that object, not a way to quiet the test:
   say what does execute it, or that nothing does."
-  {"tcp-seq-acceptable"
+  (merge
+   {"tcp-seq-acceptable"
    (str "RFC 9293 3.10.7.4, the window-acceptability decision. Nothing links "
         "it because nothing calls it yet: tcp-segment-valid stops before this "
         "question -- it says its own arity is spent -- and giving the probe in "
@@ -51,7 +68,14 @@
         "kernel, so no build links it; kotoba-lang/murakumo drives it through "
         "the KIR interpreter in aiueos-join-plan-parity-test and compares every "
         "result against murakumo.infer.join. The encoding both sides share is "
-        "pinned by contracts/murakumo-node-v1.edn.")})
+        "pinned by contracts/murakumo-node-v1.edn.")}
+   (zipmap ["value-handle-arena" "value-handle-plan"
+            "value-runtime-capability-table" "value-runtime-cas-verify"
+            "value-runtime-digest-equal" "value-runtime-dispatch"
+            "value-runtime-domain" "value-runtime-entry"
+            "value-runtime-provider-policy" "value-runtime-provider-transport"
+            "value-runtime-sha256" "value-runtime-syscall-plan"]
+           (repeat value-runtime-reason))))
 
 (defn- basenames []
   (->> (.listFiles kotoba-dir)
@@ -78,17 +102,19 @@
   (is (<= 59 (count (basenames)))
       "source count only grows; a shrunk directory means sources were dropped"))
 
-(deftest ^:upstream-blocked every-kotoba-source-is-built-or-declared-unbuilt
-  ;; ^:upstream-blocked, so `:test-fleet` can leave it out. The tripwire that
-  ;; notices when that stops being justified is
-  ;; `aiueos.value-runtime-baseline-test/the-upstream-exclusion-is-still-justified`,
-  ;; which fails the moment any value-runtime object compiles. The twelve failures
-  ;; are the value-* family, and ADR-0050 established that this red is CORRECT:
-  ;; nothing builds those objects, and nothing here can, because they are
-  ;; blocked on kotoba-lang/amu#625 and #626. A gate that cannot go green until
-  ;; someone else answers is not a gate for this fleet -- but the assertion is
-  ;; still right, so it stays in `clojure -M:test` where a person looks, rather
-  ;; than being deleted or having its list quietly widened (ADR-0063).
+(deftest every-kotoba-source-is-built-or-declared-unbuilt
+  ;; This carried ^:upstream-blocked until 2026-08-20, and `:test-fleet` left it
+  ;; out, because the twelve value-* objects were red and nothing here could fix
+  ;; them: they were blocked on kotoba-lang/amu#625 and #626, and a gate that
+  ;; cannot go green until someone else answers is not a gate for this fleet
+  ;; (ADR-0050, ADR-0063).
+  ;;
+  ;; #626 is answered and #625 landed as a lock, so three of the twelve now
+  ;; compile and verify. The tripwire that watched for exactly that -- the one
+  ;; assertion in this repository that failed on GOOD news -- fired, and its
+  ;; instruction was to stop excluding this. The twelve are now DECLARED rather
+  ;; than silently unbuilt, which is the answer this test was always asking for,
+  ;; and the exclusion is gone rather than left as decoration.
   (doseq [base (basenames)]
     (is (or (built-here? base) (contains? not-built-here base))
         (str base ".kotoba is compiled by no script in os/aiueos/scripts and is"
