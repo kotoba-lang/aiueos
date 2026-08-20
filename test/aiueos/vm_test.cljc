@@ -38,12 +38,36 @@
                (vm/plan {:kernel "Image" :initramfs "init.cpio.gz" :display "cocoa"}))))
 
 (deftest argv-shape-minimal
-  (let [p (vm/plan {:kernel "Image" :initramfs "init.cpio.gz"})]
-    (is (= ["qemu-system-aarch64" "-machine" (str "virt,accel=" (#'vm/accel-name p)) "-cpu" "host"
+  ;; `:accel` is PINNED here rather than left at the "auto" default.
+  ;;
+  ;; The previous version of this test derived the `-machine` string from
+  ;; `(#'vm/accel-name p)` -- which resolves "auto" from the host OS -- while
+  ;; hardcoding `-cpu host` next to it. That pair only holds on a host whose
+  ;; auto-accel is NOT tcg, so it asserted a property of the machine running
+  ;; it. On ClojureScript, where "auto" falls through to tcg, the very same
+  ;; expression produced `-cpu max` and the test failed for a reason that had
+  ;; nothing to do with the argv shape. The accel -> cpu rule it was half
+  ;; checking is now checked directly, in both directions, below.
+  (let [p (vm/plan {:kernel "Image" :initramfs "init.cpio.gz" :accel "hvf"})]
+    (is (= ["qemu-system-aarch64" "-machine" "virt,accel=hvf" "-cpu" "host"
             "-smp" "2" "-m" "1024M" "-nographic"
             "-kernel" "Image" "-initrd" "init.cpio.gz"
             "-append" "console=ttyAMA0 panic=0 rdinit=/init"]
            (vm/argv p)))))
+
+(deftest cpu-model-follows-the-accelerator
+  (let [cpu-of (fn [accel]
+                 (nth (vm/argv (vm/plan {:kernel "Image" :initramfs "init.cpio.gz"
+                                         :accel accel}))
+                      4))]
+    (testing "pure emulation cannot pass the physical CPU through"
+      (is (= "max" (cpu-of "tcg"))))
+    (testing "a hardware accelerator does"
+      (doseq [accel ["hvf" "kvm" "kvm:tcg"]]
+        (is (= "host" (cpu-of accel)) accel)))
+    (testing "the argv position asserted above really is -cpu's value"
+      (is (= "-cpu" (nth (vm/argv (vm/plan {:kernel "Image" :initramfs "init.cpio.gz"}))
+                         3))))))
 
 (deftest argv-with-virtio-gpu-block-and-console
   (let [p (vm/plan {:kernel "Image" :initramfs "init.cpio.gz" :graphics "virtio-gpu"

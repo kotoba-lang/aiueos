@@ -1,0 +1,141 @@
+#!/usr/bin/env nbb
+;; run-tests.cljs -- the aiueos suite on a SECOND runtime (nbb / SCI).
+;;
+;; `clojure -M:test` on the JVM is the primary suite and this does not replace
+;; it. What it adds is the class of defect that only a second runtime can see:
+;; portable `.cljc` that is correct under Clojure and quietly wrong, or
+;; unloadable, under ClojureScript. Measured on 1c11fcb, before any of it was
+;; fixed:
+;;
+;;   - `aiueos.vfio` computed EVERY VFIO ioctl number wrong, because
+;;     `(int \;)` is 59 on the JVM and 0 on ClojureScript. Nothing threw.
+;;   - Nine of the thirty-three `.cljc` test namespaces would not LOAD, so
+;;     they reported no failures by reporting nothing.
+;;   - `aiueos.execute-test` and `aiueos.launcher-test` LOADED and ran zero
+;;     tests -- every deftest in both is inside `#?(:clj ...)`.
+;;   - Two tests in `aiueos.hvt-test` filled synthetic guest RAM with
+;;     `(int \A)` and then compared against `(int \A)`: on ClojureScript they
+;;     wrote 0, read 0, and passed while checking nothing.
+;;
+;; Three floors follow from that, and they are the point of this file:
+;;
+;;   1. The namespace list is DISCOVERED from `test/aiueos/*.cljc`, not typed
+;;      out here. A list that has to be maintained is a list that silently
+;;      stops covering new files.
+;;   2. An included namespace that contributes zero tests FAILS. "No tests" is
+;;      not "nothing broken".
+;;   3. A namespace on the `jvm-only` list that turns out to define tests on
+;;      ClojureScript ALSO fails. The exclusions below are claims about the
+;;      code, and a claim nothing rechecks is how a temporary exclusion becomes
+;;      permanent.
+;;
+;; Usage (matches fleet-ci's `nbb-cross-runtime` gate, which passes
+;; `--classpath src:test:<git-dep srcs>` and runs this file):
+;;
+;;   npx nbb@1.4.210 --classpath src:test run-tests.cljs
+
+(ns run-tests
+  (:require ["node:fs" :as fs]
+            ["node:path" :as path]
+            [clojure.string :as str]
+            [clojure.test :as t]
+            [nbb.core :refer [await]]))
+
+(def jvm-only
+  "Namespaces that are JVM-only, each with the reason it cannot run here.
+
+  Every one of these is REQUIRED below even though it is not run: loading is
+  the part that must keep working, and it is what nine of them were failing
+  at. They must then define zero tests -- see floor 3 in the header."
+  {'aiueos.execute-test
+   "drives a real Wasm binary on Chicory (com.dylibso.chicory), a JVM Wasm
+    runtime. Every deftest is inside #?(:clj ...) already."
+
+   'aiueos.launcher-test
+   "reads manifests and .wasm off disk and executes them on Chicory. Every
+    deftest is inside #?(:clj ...) already."
+
+   'aiueos.image-test
+   "aiueos.image is #?(:clj ...) throughout: it stages files and shells out to
+    cpio/gzip."
+
+   'aiueos.cli-test
+   "needs cli/read-contract, which loads resources/aiueos/cli.edn off the
+    CLASSPATH. aiueos has no portable resource seam -- read-contract's own
+    docstring says CLJS callers should parse the EDN and pass the map in, and
+    nothing in this repository does. cli/command-result, cli/parse-argv and
+    cli/dispatch are pure and portable; only their ARGUMENT is unreachable.
+    This is the one exclusion here that a design decision would remove."
+
+   'aiueos.decide-test
+   "same single cause as aiueos.cli-test: every test needs cli/read-contract."})
+
+(defn- ns-of [file]
+  (symbol (str "aiueos." (str/replace (subs file 0 (- (count file) 5)) "_" "-"))))
+
+(def discovered
+  (->> (.readdirSync fs (path/join "test" "aiueos"))
+       (filter #(str/ends-with? % ".cljc"))
+       sort
+       (mapv ns-of)))
+
+(defn- test-count [n]
+  (count (filter #(:test (meta %)) (vals (ns-publics n)))))
+
+(def failures (atom 0))
+(def errors (atom 0))
+
+(defmethod t/report [:cljs.test/default :summary] [m]
+  (reset! failures (:fail m))
+  (reset! errors (:error m))
+  (println)
+  (println (str "Ran " (:test m) " tests containing "
+                (+ (:pass m) (:fail m) (:error m)) " assertions."))
+  (println (str (:fail m) " failures, " (:error m) " errors.")))
+
+;; Sequential and awaited: nbb's runtime `require` returns a promise, so a
+;; plain `doseq` hands back nil while the loads are still in flight and every
+;; `ns-publics` below then throws "No namespace found" -- which looks exactly
+;; like a broken test file.
+(await (reduce (fn [p n] (.then p (fn [_] (require n))))
+               (js/Promise.resolve)
+               discovered))
+
+(let [counts (into {} (map (juxt identity test-count)) discovered)
+      excluded (filterv jvm-only discovered)
+      included (filterv (complement jvm-only) discovered)
+      ;; A jvm-only entry naming a file that no longer exists is also a stale
+      ;; claim, and the cheapest one to leave behind after a rename.
+      phantom (remove (set discovered) (keys jvm-only))
+      silent (filterv #(zero? (counts %)) included)
+      stale (filterv #(pos? (counts %)) excluded)]
+  (println (str "SCANNED\t" (count discovered) "\t.cljc test namespaces under test/aiueos"))
+  (println (str "INCLUDED\t" (count included) "\tRUN on nbb"))
+  (println (str "JVM-ONLY\t" (count excluded) "\tloaded, not run (reasons in run-tests.cljs)"))
+  (doseq [n excluded]
+    (println (str "  " n " -- " (str/join " " (map str/trim (str/split-lines (jvm-only n)))))))
+
+  (cond
+    (seq phantom)
+    (do (println (str "FAIL: jvm-only names a namespace that does not exist: "
+                      (str/join ", " phantom)
+                      " -- a stale exclusion is an exclusion nothing rechecks"))
+        (set! (.-exitCode js/process) 1))
+
+    (seq silent)
+    (do (println (str "FAIL: these namespaces loaded and defined zero tests: "
+                      (str/join ", " silent)
+                      " -- either make them run here or put them on jvm-only "
+                      "with a reason. Silence is not a pass."))
+        (set! (.-exitCode js/process) 1))
+
+    (seq stale)
+    (do (println (str "FAIL: these are on jvm-only but DO define tests on nbb: "
+                      (str/join ", " (map #(str % " (" (counts %) ")") stale))
+                      " -- the exclusion is out of date; move them to the run set"))
+        (set! (.-exitCode js/process) 1))
+
+    :else
+    (do (apply t/run-tests included)
+        (when (or (pos? @failures) (pos? @errors))
+          (set! (.-exitCode js/process) 1)))))
