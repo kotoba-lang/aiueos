@@ -1,6 +1,6 @@
 (ns aiueos.provider.device-test
   (:require [aiueos.provider.device :as dev]
-            [aiueos.enroll :as enroll]
+            [grant.enroll :as enroll]
             [clojure.test :refer [deftest is testing]]))
 
 (def kp (dev/generate-operational-keypair!))

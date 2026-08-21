@@ -1,8 +1,18 @@
 {:paths ["src" "resources"]
- :deps {io.github.kotoba-lang/security {:git/url "https://github.com/kotoba-lang/security.git"
+ ;; The decision plane left this repository on 2026-08-21 (root
+ ;; ADR-2608219500). `grant` decides whether a component may run; what is
+ ;; still here is the machine that runs it. The edge is one-way and the
+ ;; require graph is checkable: nothing in `grant` requires `aiueos`.
+ ;;
+ ;; `abi` is no longer a direct dependency -- `grant.component-abi` and
+ ;; `grant.contract` were the only namespaces that used it, and they moved.
+ ;; It still arrives transitively through `grant`; it is not restated here,
+ ;; because a dependency nothing in this repository requires is a claim
+ ;; about the wrong repository.
+ :deps {io.github.kotoba-lang/grant {:git/url "https://github.com/kotoba-lang/grant.git"
+                                     :git/sha "7ed742ba1982a60c3140638343dfc02061f979c9"}
+        io.github.kotoba-lang/security {:git/url "https://github.com/kotoba-lang/security.git"
                                         :git/sha "49fc4ce359752e9fe6e547e9071b5b9b40da937a"}
-        io.github.kotoba-lang/abi {:git/url "https://github.com/kotoba-lang/abi.git"
-                                    :git/sha "32ee84b2efc92478c846629c8d8319280eed506c"}
         com.dylibso.chicory/wasm {:mvn/version "1.4.0"}
         com.dylibso.chicory/runtime {:mvn/version "1.4.0"}}
  :aliases

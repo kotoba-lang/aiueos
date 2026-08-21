@@ -1,64 +1,44 @@
 {:tcb/version 3
- :tcb/as-of "2026-08-20"
+ :tcb/as-of "2026-08-21"
  ;; Paired with :tcb/content-digest below (ADR-0067): the digest covers every
  ;; other field, so an entry cannot change without this date having to change
  ;; too. It said 2026-08-01 while the file was being edited that morning, and
  ;; nothing read it.
- :tcb/content-digest "e5cb0e6643cccdfa4a13a67d4295b21b77cc3b5d6040680db7ac471546753058"
+ :tcb/content-digest "b81f37633e32f603974ba3e7e7386a2939dd0eed40e6b00fa262c86b8c952df8"
  :tcb/scope
  "Code whose compromise can grant authority, escape Wasm isolation, falsify
   production admission/audit evidence, or access hardware outside a component."
  :tcb/files
-  [;; Fleet onboarding and update admission. These decide who may claim a
-   ;; device, which release may become the running system, and whether an
-   ;; update step may advance -- authority decisions by the :tcb/scope
-   ;; definition above, so they are pinned here like every other one.
-   {:path "src/aiueos/enroll.cljc" :role :enrolment-admission
-   :sha256 "3257f779eb7c27dabdfb5206ebf25ff7dfe45f30fd86dbc29538515cc501d63c"}
-  {:path "src/aiueos/update.cljc" :role :update-admission
-   :sha256 "bd60a4f597af1ae1550ae8b9b37ffec25fe9f7037a215d6b8865a160cebe9f62"}
-  {:path "src/aiueos/publisher.cljc" :role :release-admission
-   :sha256 "7b9ad7a77e32737e81ae59febbb5e4e72a4871af409aee92e397bf5486dcdb39"}
-  {:path "src/aiueos/ota.cljc" :role :update-composition
-   :sha256 "1a7d14852f3e6edee70a275b62b34d18f2dd9f4179ccad27dafbc1d18d99ad83"}
-  ;; Trusted time: freshness is an admission input, so whatever answers
-  ;; "what time is it" can move a release from refused to admitted.
-  {:path "src/aiueos/clock.cljc" :role :trusted-time
-   :sha256 "71d1097a6ffde62c43cd82a7dcf257fae6456494f135e2d8bb0883a278699369"}
-  ;; Device key custody and possession proofs.
+  [;; The decision plane left this repository on 2026-08-21 (root
+   ;; ADR-2608219500). Nineteen entries went with it -- enrolment, update and
+   ;; release admission, trusted time, the authority schema, the policy
+   ;; reasoner, the capability broker, manifest identity and signing, signer
+   ;; lifecycle, the network origin gate, the anchor set, the remote-authority
+   ;; decision, the component graph, the provider surface, deployment-profile
+   ;; admission, audit emission and boot-artifact admission.
+   ;;
+   ;; They did not stop being TCB. They became TCB in another repository, and
+   ;; the way this inventory says so is the pinned `io.github.kotoba-lang/grant`
+   ;; git SHA under :tcb/external. Deleting them without that entry would have
+   ;; shrunk the recorded TCB while the real one stayed the same size.
+   ;;
+   ;; What is left here is the machine: the thing that executes an admitted
+   ;; component, and the hardware and boot surfaces it executes it on.
+
+   ;; Device key custody and possession proofs.
   {:path "src/aiueos/provider/device.clj" :role :device-identity
-   :sha256 "25edbf48eb16f3b9d598ce7b40bb64947e29222caf77f1a78f88bad3898e916b"}
-  {:path "src/aiueos/contract.cljc" :role :authority-schema
-   :sha256 "f8e008ccb8156b99115b72c4495775bff6ca3b0f7c1ea038e265a589180a3e60"}
-  {:path "src/aiueos/manifest.cljc" :role :component-identity
-   :sha256 "59a8354404cccdb648fd378ae03c9add7438cd7eecd22cc1ae26d2d729739ecf"}
-  {:path "src/aiueos/signing.cljc" :role :manifest-authenticity
-   :sha256 "d28c119b3fa05d86da2b22355ee928e8e7d166dd936eef4c3223e204d4f1cfe2"}
-  {:path "src/aiueos/key_lifecycle.clj" :role :signer-lifecycle-authority
-   :sha256 "f1e4475edef59527b11dbf39c950c6706e4fedea96c6f5dfb6e60707920371a5"}
-  {:path "src/aiueos/policy.cljc" :role :policy-decision
-   :sha256 "658f8f71916900ba5578bb4dcbd07b9d6eceb68fcf5bf2e0b30ace30cbbace3d"}
-  ;; The network origin gate, and the two remote authorities that go through
-  ;; it. aiueos.net is the per-URL check every fetch provider shares, so
-  ;; compromising it grants reach the operator's allowlist was meant to bound;
-  ;; aiueos.cloud decides which storage and inference requests that gate ever
-  ;; sees, and whether a block that came back is the block that was asked for
-  ;; (ADR-0041, ADR-0042).
-  {:path "src/aiueos/net.cljc" :role :network-origin-gate
-   :sha256 "183b2facb48d0b8d2e802b2c90cead767386bb3519306b856d5296a93d42b4a9"}
-  ;; What the machine will trust, and how that changes. An anchor set decides
-  ;; which keys aiueos.cloud will accept, so compromising this file is
-  ;; compromising every https connection the machine makes (ADR-0045).
-  {:path "src/aiueos/anchors.cljc" :role :peer-trust-lifecycle
-   :sha256 "76fecdf853aadc467c4730ba431afe38709061a240405b116c98936d42d542a2"}
-  {:path "src/aiueos/cloud.cljc" :role :remote-authority-decision
-   :sha256 "313adb4fa6c1c0278f0950262e179a5671797f5b8dac3608761fd77cbdd90f81"}
+   :sha256 "616f1aa9cde0f97c92a11b9379b0809e9a38539454a962185ec98b7b051432f5"}
+  ;; The transport half of the remote authorities. `grant.net` decides which
+  ;; URLs may be reached and `grant.cloud` decides which storage and inference
+  ;; requests are asked for at all (ADR-0041, ADR-0042); `grant.anchors` decides
+  ;; which keys an https peer may present (ADR-0045). All three moved. What is
+  ;; still here is the code that opens the connection once those three have
+  ;; said yes -- which is TCB for a different reason: it is the last place that
+  ;; could ignore them.
   {:path "src/aiueos/provider/cloud.clj" :role :remote-authority-transport
-   :sha256 "de2364f8e70f261e77b34d0f40a637594632033e74984957224f7121fa477ba8"}
-  {:path "src/aiueos/broker.cljc" :role :capability-authority
-   :sha256 "f2d64515c8f647cb3c2f6c3c340753e82b426f5a30a15c46e4768cd8e57e50b8"}
+   :sha256 "4102ab4144851fe62f5c2b76795f51c7c623f43d4ec0137c688f4bbc72db86bd"}
   {:path "src/aiueos/execute.cljc" :role :wasm-host-abi
-   :sha256 "2ebb77ee7905754036de22d58a4e8dd4a0a5b20471c97639372f9f22fb6326e0"}
+   :sha256 "0312c7c06bb2b4d9c2d704be73ebafdca794e3fe5aada5c3cd431d2bc7c2b438"}
   {:path "src/aiueos/entropy.clj" :role :security-entropy-provider
    :sha256 "9598756ca4093a0fe8756d7c2bf878729a34545f2dfbe264f9a806d71f067323"}
   {:path "src/aiueos/watchdog.clj" :role :execution-deadline-containment
@@ -67,34 +47,26 @@
    :sha256 "984e9235043e601f860772e54ecd5f621fd566f03ff6b8ef90acef61da4ef05a"}
   {:path "src/aiueos/network_topic.clj" :role :cross-machine-channel-authentication
    :sha256 "2741526461b7fc6baaa0c6d64b874b0016a7ee428c9819709125e59f9247b0b3"}
-  {:path "src/aiueos/graph.cljc" :role :component-graph-admission
-   :sha256 "cf99c248c17d4da1a16abb9048478598893da03bfa82abb9d5eb3d93e5a37919"}
-  {:path "src/aiueos/surface.cljc" :role :host-provider-surface
-   :sha256 "5d0e4e1a242d8c221e839c422e39dea8bd189042e6aa686b71dc066f5873497e"}
-  {:path "src/aiueos/deployment_profile.cljc" :role :production-admission
-   :sha256 "2fa660b1bce722187373e53c50bd39504151a38352b04ca5ba72bb7af1fa60f7"}
   {:path "src/aiueos/launcher.cljc" :role :component-launch-control
-   :sha256 "6cf6689d74dc40a12430ad82ae70c56b07d6e4b9bdacdeaad21947da97ff8f87"}
+   :sha256 "f628769a572a09bf40e36623c5fa4f1163509456476b70694cab3046665393da"}
   {:path "src/aiueos/pid1.cljc" :role :boot-root
-   :sha256 "9ba8783bdc85656584914384df85a834251031f76b56adfd2c5f8cf8944ce9d3"}
+   :sha256 "0da8bf4f556b5e0d1be9601749248713556ea24e9e4d01c4b49741e068923fc0"}
   {:path "src/aiueos/sbom.clj" :role :release-attestation-authority
-   :sha256 "ced0430bdf3eb061a379d3221b42f5fa208c898e064fad19667021771108ee9a"}
+   :sha256 "7289834de3c447f37ab614d79a981fbba77ffb99124816fa92663354da42e61f"}
   {:path "src/aiueos/reproducibility.clj" :role :release-reproducibility-authority
-   :sha256 "55416e9d8effd4c4b5c0f56e858658297ed3ae4ce2fc1ef70a0163c018d65f32"}
+   :sha256 "fc227e69c03bcbe8856d1f6a0ab696ed1f78d58775735303c4c463f73f19ca02"}
   ;; The checker is in the inventory it checks. It was the one file whose
   ;; content decides whether drift is reported and whose own content nothing
   ;; recorded, so weakening a check left no trace here. No fixpoint problem:
   ;; the digest of the source lives in this sibling EDN, not in the source.
   {:path "src/aiueos/tcb.clj" :role :tcb-inventory-authority
-   :sha256 "964ed5b6461a0441e2a2669058c375a208c0ce41305cc1abf79c7ef22af420ff"}
+   :sha256 "b537e0982800231af16715951c8eaa2a75a22e9a0534049a8843f2bdb56b04f6"}
   ;; The record of which supply-chain properties this repository holds on
   ;; purpose. Pinned for the same reason the checker is: a property quietly
   ;; deleted from an unpinned list leaves no trace, and `aiueos.tcb` only
   ;; checks the shape of what it finds there.
   {:path "qualification/build-identity.edn" :role :adopted-property-record
-   :sha256 "9234b7e69602a403b3dd7357ea8558fad2093b7285968553fce4e8d0ccba83c5"}
-  {:path "src/aiueos/audit.cljc" :role :audit-emission
-   :sha256 "8e2c47608810192dd4f6a4e3ed2cbb41ec249a41506cfd81464120c546ba082c"}
+   :sha256 "2317adb97a0abe8539c52090cdac310c4ab8deb0243b81f0078d0dd4e702fbc1"}
   {:path "src/aiueos/sealed_audit.clj" :role :audit-confidentiality-integrity
    :sha256 "0ec696fa61a66dc4fdef5b0a418a51ee59ccc4ebed7998be8d46fd693c6bec17"}
   {:path "src/aiueos/sealed_state.clj" :role :component-state-confidentiality-integrity
@@ -104,16 +76,14 @@
   {:path "src/aiueos/vfio.cljc" :role :iommu-device-boundary
    :sha256 "f96a9bb917b23d428f03667fbba1ccaec518a25dc7c9a4ccaceee9f43a19a77f"}
   {:path "src/aiueos/virtio.cljc" :role :guest-device-boundary
-   :sha256 "16a95631480219a9070c55acd40cad2ca238032849d45b1df0a428a981c3242c"}
+   :sha256 "336d14a46314aa09441eb2f14ad24ada18679a80a56bde76f80efe46f92f2320"}
   ;; What the hosted launcher is allowed to execute. Every other link in the
   ;; chain was checked and the artifact the machine actually boots was not
   ;; (ADR-0049).
-  {:path "src/aiueos/boot_admission.cljc" :role :boot-artifact-admission
-   :sha256 "0fb5ead36df5fbe44cfa61849d093df4326cb63846fae83f158ba833cdc4ae77"}
   {:path "src/aiueos/vm.cljc" :role :vm-launch
-   :sha256 "3fd8d43bfb4f7cc4ba3892cf6fc521d6fd0b67060b0ed188f39a064a8e0470bf"}
+   :sha256 "d87ffc7440a58c7a8afd0b6436d683c5912c4c1a0beac92cb9bc0aa15991cd32"}
   {:path "src/aiueos/image.cljc" :role :boot-image-construction
-   :sha256 "eecd5ff80bf644332a48a15a336cc22ba41a1856271efe4cc1563e7372c4e323"}]
+   :sha256 "64aa845b025309365e4ed94639548ef936ea3e11716156fd9e71b42e029687e6"}]
  ;; Content addresses, not paths or bare version strings: a Maven entry's
  ;; `:sha256` is the digest of its resolved jar, a git entry's `:git-sha` is
  ;; git's own content address for the tree. `aiueos.tcb` re-verifies both
@@ -131,10 +101,19 @@
    :git-url "https://github.com/kotoba-lang/security.git"
    :git-sha "49fc4ce359752e9fe6e547e9071b5b9b40da937a"
    :role :shared-security-primitives}
-  {:coordinate "io.github.kotoba-lang/abi" :source :git
-   :git-url "https://github.com/kotoba-lang/abi.git"
-   :git-sha "32ee84b2efc92478c846629c8d8319280eed506c"
-   :role :freestanding-abi-contract}
+  ;; The decision plane. Everything this machine is allowed to do is decided
+  ;; there, so it is the largest single external entry in this inventory --
+  ;; nineteen files that used to be listed above, pinned by one SHA instead.
+  ;;
+  ;; `abi` is no longer listed: `grant.component-abi` and `grant.contract` were
+  ;; the only namespaces here that required it, and they moved. It is still on
+  ;; the classpath transitively through grant, and grant's own record is where
+  ;; it is now pinned. Restating it here would be this repository making a
+  ;; claim about a dependency none of its own files reach.
+  {:coordinate "io.github.kotoba-lang/grant" :source :git
+   :git-url "https://github.com/kotoba-lang/grant.git"
+   :git-sha "7ed742ba1982a60c3140638343dfc02061f979c9"
+   :role :capability-authority}
   ;; The transport half of the cloud authorities runs on the platform HTTP
   ;; client. Since ADR-0044 the trust DECISION is no longer the platform's:
   ;; the default trust store is not consulted and an https peer is accepted

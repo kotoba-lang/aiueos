@@ -3,9 +3,9 @@
 
   A real HTTP server on loopback, a real request, real SHA-256 over what
   arrived. What is proved here is the seam: the provider reports what it
-  received, and `aiueos.cloud` decides whether that was what was asked for —
+  received, and `grant.cloud` decides whether that was what was asked for —
   including when it was not."
-  (:require [aiueos.cloud :as cloud]
+  (:require [grant.cloud :as cloud]
             [aiueos.provider.cloud :as provider]
             [clojure.test :refer [deftest is testing]])
   (:import [com.sun.net.httpserver HttpExchange HttpHandler HttpServer]

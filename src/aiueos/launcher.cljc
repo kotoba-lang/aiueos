@@ -1,32 +1,32 @@
 (ns aiueos.launcher
   "The aiueos CLI binary itself, per ADR-2607022700/2607022900: the retired
   Rust `bin/aiueos.rs` argv-parsing/file-I/O role, reimplemented as JVM
-  Clojure. Ties together `aiueos.cli` (command/request shaping),
-  `aiueos.manifest` (normalization), `aiueos.policy`/`aiueos.broker`
+  Clojure. Ties together `grant.cli` (command/request shaping),
+  `grant.manifest` (normalization), `grant.policy`/`grant.broker`
   (decisions), and `aiueos.execute` (real Chicory execution) into a single
   runnable entry point.
 
-  This is deliberately NOT the same thing as `aiueos.decide` (the
+  This is deliberately NOT the same thing as `grant.decide` (the
   bb-runnable, decision-only EDN-over-stdio subprocess for host adapters
   without Chicory available). `aiueos.launcher` is the JVM-specific,
   execution-capable launcher: `run`/`admit` here ACTUALLY EXECUTE a granted
   component via `aiueos.execute`, not just report `:host-action
-  :adapter-required` like `aiueos.cli/command-result` does generically for
+  :adapter-required` like `grant.cli/command-result` does generically for
   a host-neutral caller.
 
   JVM-only (`#?(:clj ...)` throughout) -- file I/O and `aiueos.execute`'s
   Chicory dependency both require it; not runnable under babashka."
-  (:require [aiueos.audit :as audit]
-            [aiueos.broker :as broker]
-            [aiueos.cli :as cli]
-            [aiueos.contract :as contract]
+  (:require [grant.audit :as audit]
+            [grant.broker :as broker]
+            [grant.cli :as cli]
+            [grant.contract :as contract]
             [aiueos.execute :as execute]
-            [aiueos.graph :as graph]
+            [grant.graph :as graph]
             [aiueos.image :as image]
-            #?(:clj [aiueos.key-lifecycle :as key-lifecycle])
-            [aiueos.manifest :as manifest]
+            #?(:clj [grant.key-lifecycle :as key-lifecycle])
+            [grant.manifest :as manifest]
             [aiueos.pid1 :as pid1]
-            [aiueos.policy :as policy]
+            [grant.policy :as policy]
             [aiueos.vm :as vm]
             #?(:clj [clojure.edn :as edn])
             #?(:clj [clojure.java.io :as io])
@@ -64,7 +64,7 @@
 #?(:clj
    (defn load-manifest
      "Read MANIFEST-PATH, validate its shape, and normalize it
-     (`aiueos.manifest/normalize`). Throws ex-info on an invalid manifest
+     (`grant.manifest/normalize`). Throws ex-info on an invalid manifest
      shape (fail loud, matching the rest of this repo's manifest handling)."
      [manifest-path]
      (let [raw (read-edn-file manifest-path)
@@ -76,7 +76,7 @@
 #?(:clj
    (defn load-policy
      "POLICY-PATH's deployment-policy overlay, parsed into an effective
-     policy via `aiueos.policy/parse-policy`; `aiueos.policy/default-policy`
+     policy via `grant.policy/parse-policy`; `grant.policy/default-policy`
      when POLICY-PATH is nil (no `--policy` given)."
      [policy-path]
      (if-not policy-path
@@ -129,8 +129,8 @@
 #?(:clj
    (defn verify-command
      "The `verify` command body: load MANIFEST-PATH (+ POLICY-PATH) and
-     return `aiueos.broker/verify-one`'s decision -- no execution, matching
-     `aiueos.cli.edn`'s `:full` coverage for `verify`."
+     return `grant.broker/verify-one`'s decision -- no execution, matching
+     `grant.cli.edn`'s `:full` coverage for `verify`."
      [manifest-path policy-path]
      (let [m (load-manifest manifest-path)
            policy* (load-policy policy-path)
@@ -176,7 +176,7 @@
 #?(:clj
    (defn inspect-command
      "The `inspect` command body: load SYSTEM-PATH's components and return
-     `aiueos.cli`'s `:inspect` result (capability providers, boot order,
+     `grant.cli`'s `:inspect` result (capability providers, boot order,
      dependency depths) -- no execution, `:full` coverage."
      [system-path]
      (cli/command-result (cli/read-contract) :inspect
@@ -186,10 +186,10 @@
    (defn up-command
      "The `up` command body: boot the components of SYSTEM-PATH that are
      DUE at SCHED-CYCLE (a non-negative ADR-0006 cycle counter, defaulting
-     to 0 -- see `aiueos.manifest/due-this-cycle?`; cycle 0 is always due
+     to 0 -- see `grant.manifest/due-this-cycle?`; cycle 0 is always due
      for every component, so the default invocation boots everyone, same
      as before scheduling existed). Boot order is
-     `aiueos.graph/priority-boot-order` -- dependency order (providers
+     `grant.graph/priority-boot-order` -- dependency order (providers
      before consumers) with same-depth components ordered by
      `:aiueos/schedule`'s `:priority` (lower = more urgent). A component
      not due this cycle is simply skipped (omitted from
@@ -258,10 +258,10 @@
 #?(:clj
    (defn audit-command
      "The `audit` command body: read the log at LOG-PATH (defaulting to
-     `aiueos.audit/log-path` under the current directory when nil, matching
-     the retired Rust `AuditLog::under` default) via `aiueos.audit/read-log`,
+     `grant.audit/log-path` under the current directory when nil, matching
+     the retired Rust `AuditLog::under` default) via `grant.audit/read-log`,
      then delegate the pure event/component filtering to
-     `aiueos.cli`'s `:audit` handler."
+     `grant.cli`'s `:audit` handler."
      [log-path event-str component-str]
      (let [path (or log-path (.getPath (audit/log-path ".")))
            events (audit/read-log path)]
@@ -371,7 +371,7 @@
 #?(:clj
    (defn dispatch
      "Run one aiueos CLI invocation. ARGV[0] is the command name; the rest
-     are positionals/flags, shaped via `aiueos.cli/parse-argv`.
+     are positionals/flags, shaped via `grant.cli/parse-argv`.
 
      `verify`/`run`/`admit <manifest-path> [--policy <path>] [--edn]` --
      `run`/`admit` actually execute a granted component via `aiueos.execute`.
@@ -390,7 +390,7 @@
      `vm-command`'s docstrings). Restores two of the previously-adapter-only
      six (`sign`/`check`/`compile`/`hash` remain unwired -- `check`/`compile`
      delegate to kototama/kotoba-clj, `sign` is key-custody tooling; see
-     `aiueos.cli`'s namespace docstring)."
+     `grant.cli`'s namespace docstring)."
      [argv]
      (let [command (some-> (first argv) keyword)
            {:keys [positionals options]} (cli/parse-argv (rest argv))

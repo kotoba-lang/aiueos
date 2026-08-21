@@ -5,7 +5,7 @@
   a release's reproducibility for as long as it has existed, and nothing in this
   repository ever called it. `docs/deployment-profiles.md` names \"reproducible,
   signed, independently verified release pipeline\" as a `:regulated`
-  requirement, and `aiueos.deployment-profile` checked the signed half and not
+  requirement, and `grant.deployment-profile` checked the signed half and not
   the reproducible half.
 
   That is the same shape ADR-0016 and ADR-0017 each removed once already: a
@@ -109,7 +109,7 @@
   (supply-chain/evaluate-reproducibility (evidence options)))
 
 (defn profile-evidence
-  "The reproducibility half of `aiueos.deployment-profile`'s `:regulated`
+  "The reproducibility half of `grant.deployment-profile`'s `:regulated`
   evidence. The violation list travels with the verdict so a refusal names its
   cause instead of only reporting a false."
   [qualification]

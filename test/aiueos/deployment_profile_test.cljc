@@ -1,5 +1,5 @@
 (ns aiueos.deployment-profile-test
-  (:require [aiueos.deployment-profile :as profile]
+  (:require [grant.deployment-profile :as profile]
             [clojure.test :refer [deftest is testing]]))
 
 (def research-evidence

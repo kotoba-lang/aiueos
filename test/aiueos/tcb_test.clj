@@ -5,18 +5,22 @@
             [clojure.test :refer [deftest is]]))
 
 (def required-tcb-paths
-  #{"src/aiueos/contract.cljc"
-    "src/aiueos/manifest.cljc"
-    "src/aiueos/signing.cljc"
-    "src/aiueos/key_lifecycle.clj"
-    "src/aiueos/policy.cljc"
-    "src/aiueos/broker.cljc"
-    "src/aiueos/execute.cljc"
+  "Boundaries that may not quietly leave the inventory.
+
+  Seven names left this set on 2026-08-21 -- contract, manifest, signing,
+  key-lifecycle, policy, broker and deployment-profile -- because the decision plane moved to
+  kotoba-lang/grant (root ADR-2608219500). They were removed one at a time
+  against a measured reason, not swept: this deftest went red first, which is
+  what it is for.
+
+  What replaces them is `required-external-tcb-coordinates` below. Dropping a
+  boundary from here without adding it there is the exact move this set exists
+  to prevent, and the two are asserted together."
+  #{"src/aiueos/execute.cljc"
     "src/aiueos/entropy.clj"
     "src/aiueos/watchdog.clj"
     "src/aiueos/launcher.cljc"
     "src/aiueos/network_topic.clj"
-    "src/aiueos/deployment_profile.cljc"
     "src/aiueos/pid1.cljc"
     "src/aiueos/sealed_audit.clj"
     "src/aiueos/sealed_state.clj"
@@ -27,6 +31,14 @@
     ;; check leaves no digest trace anywhere -- the one file whose content
     ;; decides whether drift is reported was the one file free to drift.
     "src/aiueos/tcb.clj"})
+
+(def required-external-tcb-coordinates
+  "Boundaries that are still TCB but are now pinned as another repository.
+
+  A file digest and a git SHA are both content addresses; what changes across
+  the repository boundary is the granularity, not whether the code is pinned.
+  What must not change is that the boundary is named somewhere."
+  #{"io.github.kotoba-lang/grant"})
 
 (deftest checked-in-tcb-inventory-has-no-drift
   ;; 28 -> 34: fleet onboarding and update admission joined the TCB
@@ -41,7 +53,12 @@
   ;; ADR-0049, which nobody noticed at the time because this assertion was
   ;; already red for the classpath reason and one red hides another.
   (is (= {:valid? true :classpath-scope :not-in-scope
-          :files 39 :external 6 :classpath 9 :properties 6 :errors []}
+          ;; 39 before the grant split (root ADR-2608219500); 19 file entries
+          ;; became one external coordinate, so :external stays 6 -- abi left
+          ;; and grant arrived. The count is asserted rather than bounded
+          ;; because an inventory that silently shrinks is the failure this
+          ;; whole namespace is about.
+          :files 20 :external 6 :classpath 9 :properties 6 :errors []}
          (tcb/validate (tcb/read-inventory)
                        (clojure.edn/read-string (slurp "deps.edn"))
                        (clojure.edn/read-string (slurp "security-adoption.edn"))
@@ -51,7 +68,12 @@
   (let [inventory (tcb/read-inventory)
         paths (set (map :path (:tcb/files inventory)))]
     (is (every? paths required-tcb-paths))
-    (is (every? (comp keyword? :role) (:tcb/files inventory)))))
+    (is (every? (comp keyword? :role) (:tcb/files inventory)))
+    ;; The other half of the same claim. Without this, moving a boundary into
+    ;; a dependency and deleting it from `required-tcb-paths` would shrink the
+    ;; recorded TCB and still pass.
+    (let [coordinates (set (map :coordinate (:tcb/external inventory)))]
+      (is (every? coordinates required-external-tcb-coordinates)))))
 
 (deftest every-external-dependency-is-content-addressed-or-declares-its-gap
   (is (every? (fn [{:keys [sha256 git-sha assurance-gap]}]

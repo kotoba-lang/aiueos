@@ -7,7 +7,7 @@
   here, same as it was in the retired Rust host.rs and in kotoba.wasm-exec).
 
   This namespace never grants a capability itself -- `execute` always calls
-  `aiueos.broker/verify-one` first and refuses to run anything the broker
+  `grant.broker/verify-one` first and refuses to run anything the broker
   denies. Chicory host-import closures back the 7 non-hardware aiueos
   kernel capabilities with real behavior; `aiueos.topic`'s pure bus is
   threaded through an atom so the imperative Chicory boundary can mutate it
@@ -15,7 +15,7 @@
 
   JVM-only (`#?(:clj ...)` throughout): Chicory is a Java library, and this
   is exactly the kind of host/adapter code the rest of this repo already
-  keeps `:clj`-gated (see `aiueos.signing`'s crypto, `aiueos.audit`'s file
+  keeps `:clj`-gated (see `grant.signing`'s crypto, `grant.audit`'s file
   I/O).
 
   `:aiueos/limits :fuel` (ADR-0001) IS instruction-level metering, unlike
@@ -40,11 +40,11 @@
   (not just per Chicory's docs) that this genuinely blocks growth: a
   module instantiated with a capped `MemoryLimits` sees `Memory/grow`
   return -1 past the cap, its page count unchanged."
-  (:require [aiueos.audit :as audit]
-            [aiueos.broker :as broker]
+  (:require [grant.audit :as audit]
+            [grant.broker :as broker]
             #?(:clj [aiueos.entropy :as entropy])
-            [aiueos.manifest :as manifest]
-            [aiueos.signing :as signing]
+            [grant.manifest :as manifest]
+            [grant.signing :as signing]
             [aiueos.topic :as topic]
             #?(:clj [aiueos.watchdog :as watchdog])
             #?(:clj [clojure.edn :as edn]))
@@ -78,11 +78,11 @@
    (def ^:private host-field->capability
      "Reverse lookup: each `\"kotoba\"`-module host-import FIELD name (the
      name Chicory links a Wasm `(import \"kotoba\" \"<field>\" ...)` against)
-     to the single `aiueos.policy/default-kernel-caps` keyword that
+     to the single `grant.policy/default-kernel-caps` keyword that
      authorizes it. `instantiate` uses this to link ONLY the host functions
      whose capability is in the component's actually-granted set
-     (`aiueos.broker/verify-one`'s `:aiueos/capabilities`, computed by
-     `aiueos.policy/verify-component`) -- an ungranted capability's import is
+     (`grant.broker/verify-one`'s `:aiueos/capabilities`, computed by
+     `grant.policy/verify-component`) -- an ungranted capability's import is
      simply never added to the `ImportValues` Chicory links against, so
      `Instance.Builder/build` throws `UnlinkableException` at instantiation
      time instead of silently succeeding. This is the SAME \"unresolved
@@ -92,7 +92,7 @@
      the full rationale.
 
      `topic_poll`/`topic_take`/`topic_count` all share `:topic/subscribe` --
-     `aiueos.policy/default-kernel-caps` has no finer-grained read-vs-count
+     `grant.policy/default-kernel-caps` has no finer-grained read-vs-count
      capability, so there is nothing finer to gate them on."
      {"log_write" :log/write
       "clock_monotonic" :clock/monotonic
@@ -120,7 +120,7 @@
 #?(:clj
    (defn- host-fn
      "One (module \"kotoba\") host import -- FIELD, param/result keyword
-     types (:i32/:i64, matching aiueos.policy's kernel-cap :params/:result
+     types (:i32/:i64, matching grant.policy's kernel-cap :params/:result
      shapes), and a Clojure fn [instance long-args] -> long."
      [field params result f]
      (HostFunction. "kotoba" field
@@ -159,10 +159,10 @@
 
 #?(:clj
    (defn- assert-topic-allowed!
-     "The topic-id allow-set gate `aiueos.manifest/normalize` derives into
+     "The topic-id allow-set gate `grant.manifest/normalize` derives into
      `:aiueos/publishes`/`:aiueos/subscribes` (`nil` = unrestricted, a set
      = restricted to exactly those numeric topic ids -- see
-     `aiueos.manifest/derive-topic-ids`'s docstring) was previously
+     `grant.manifest/derive-topic-ids`'s docstring) was previously
      validated/derived but never enforced anywhere: a granted component
      could publish to or read from ANY topic id, not just its declared
      ones. Throws ex-info tagged `:aiueos.execute/topic-forbidden` (same
@@ -248,7 +248,7 @@
      `:topic/publish` could otherwise publish to or read from ANY topic
      id, not just its declared ones -- this was a real, silent gap
      (`:aiueos/publishes`/`:aiueos/subscribes` were validated/derived by
-     `aiueos.manifest` but never enforced anywhere) until this check.
+     `grant.manifest` but never enforced anywhere) until this check.
 
      Returns a seq of HostFunction for `instantiate`. LOG-ATOM and
      TOPIC-BUS-ATOM are supplied by the caller (see `execute`) so a run's
@@ -328,7 +328,7 @@
    (defn instantiate
      "Parse WASM-BYTES and build a Chicory Instance, linking ONLY the host
      functions whose capability is in GRANTED-CAPS (the component's
-     actually-granted capability set, e.g. `aiueos.broker/verify-one`'s
+     actually-granted capability set, e.g. `grant.broker/verify-one`'s
      `:aiueos/capabilities` -- see `host-field->capability`) plus a
      permissive `has_capability` stub, ALWAYS linked regardless of
      GRANTED-CAPS.
@@ -415,7 +415,7 @@
 #?(:clj
    (def default-quota
      "Used when `m` (the manifest passed to `execute`/`execute-admission`)
-     wasn't run through `aiueos.manifest/normalize` first, so it has no
+     wasn't run through `grant.manifest/normalize` first, so it has no
      `:aiueos/quota` -- same generous defaults `normalize-quota` applies
      (1024 host-calls / 256 publishes per run)."
      {:host-calls manifest/default-host-calls :publishes manifest/default-quota-publishes}))
@@ -451,7 +451,7 @@
 #?(:clj
    (defn- topic-allowed-for
      "`m`'s `:aiueos/publishes`/`:aiueos/subscribes` (see
-     `aiueos.manifest/normalize`'s docstring) as `instantiate`'s
+     `grant.manifest/normalize`'s docstring) as `instantiate`'s
      TOPIC-ALLOWED shape. An unnormalized `m` simply has neither key, so
      both come back `nil` -- exactly the correct \"unrestricted\" default,
      unlike quota/fuel which need an explicit generous default."
@@ -497,7 +497,7 @@
 
      Every result also carries an ADDITIVE `:aiueos/run-receipt`
      (`broker/run-receipt`, ADR-2607022900 follow-up 8 -- the pre-existing,
-     tested `aiueos.broker` contract this namespace previously never
+     tested `grant.broker` contract this namespace previously never
      adopted, now wired in alongside the `:aiueos.execute/*` shape rather
      than replacing it): `:succeeded` on normal completion, `:failed` on a
      quota/fuel/topic-forbidden/capability-unlinked abort (`:aiueos/error`
@@ -581,12 +581,12 @@
 
 #?(:clj
    (defn- integrity-denial
-     "Build a `:deny` decision -- same shape `aiueos.broker/verify-one`'s
+     "Build a `:deny` decision -- same shape `grant.broker/verify-one`'s
      own deny path produces (`:aiueos/violations` +
      `:aiueos.broker/audit-entries` + an ADDITIVE `:aiueos/run-receipt`,
      status `:denied`, matching `run-if-granted`'s deny branch) -- for an
-     `aiueos.manifest/verify-wasm-integrity` VIOLATION. Used by `execute`/
-     `execute-admission` to short-circuit BEFORE `aiueos.broker/verify-one`
+     `grant.manifest/verify-wasm-integrity` VIOLATION. Used by `execute`/
+     `execute-admission` to short-circuit BEFORE `grant.broker/verify-one`
      ever runs: a tampered artifact is denied on its own, independent of
      whatever capability grant its (possibly forged) declared hash would
      otherwise have unlocked."
@@ -604,14 +604,14 @@
 #?(:clj
    (defn execute
      "The end-to-end path: first, an ADR-0003 artifact-integrity check --
-     recompute SHA-256 of the actual WASM-BYTES (`aiueos.signing/sha256-hex`)
+     recompute SHA-256 of the actual WASM-BYTES (`grant.signing/sha256-hex`)
      and compare against `m`'s declared `:aiueos/wasm-sha256`
-     (`aiueos.manifest/verify-wasm-integrity`; a no-op when `m` declares no
+     (`grant.manifest/verify-wasm-integrity`; a no-op when `m` declares no
      hash at all). A mismatch denies outright (`integrity-denial`) without
-     ever reaching `aiueos.broker/verify-one` -- fail closed, tampered bytes
+     ever reaching `grant.broker/verify-one` -- fail closed, tampered bytes
      never even get a capability decision computed for them. Only past that
      gate: verify `m` (a normalized manifest) against `graph`/`policy` via
-     `aiueos.broker/verify-one`; only if granted, instantiate WASM-BYTES on
+     `grant.broker/verify-one`; only if granted, instantiate WASM-BYTES on
      Chicory and call its exported `main`, capped by `m`'s `:aiueos/quota`
      (`default-quota` if unnormalized), `:aiueos/limits :fuel`/
      `:memory-pages` (`default-fuel`/`default-memory-pages` if

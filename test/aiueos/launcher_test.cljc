@@ -4,7 +4,7 @@
   through `aiueos.launcher/verify-command`/`run-command`/`dispatch` exactly
   as a shell invocation of the CLI would -- genuine file I/O, not
   in-memory-only shortcuts."
-  (:require [aiueos.audit :as audit]
+  (:require [grant.audit :as audit]
             [aiueos.launcher :as launcher]
             [aiueos.topic :as topic]
             [clojure.test :refer [deftest is testing]]

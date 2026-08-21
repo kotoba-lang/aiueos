@@ -8,8 +8,8 @@
   disposition, which is safe to exercise (and IS exercised, via `boot!`'s own
   shutdown below, since `Signal.raise` is how the test triggers shutdown)."
   (:require [aiueos.pid1 :as pid1]
-            #?(:clj [aiueos.anchors :as anchors])
-            #?(:clj [aiueos.cloud :as cloud])
+            #?(:clj [grant.anchors :as anchors])
+            #?(:clj [grant.cloud :as cloud])
             [clojure.test :refer [deftest is testing]])
   #?(:clj (:import [java.lang.foreign Arena])))
 
@@ -146,7 +146,7 @@
        (is (= "release-42" (:aiueos.anchors/release-id config)))
        (is (= :image (:aiueos.anchors/provenance config))
            "the image is the authority, and the boot state says so")
-       (testing "and the pins are the ones aiueos.cloud checks against"
+       (testing "and the pins are the ones grant.cloud checks against"
          (is (cloud/allowed? (cloud/admit-peer config {:spki-sha256 pin-a})))
          (is (= :peer-not-pinned
                 (:aiueos.cloud/reason

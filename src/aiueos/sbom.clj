@@ -2,7 +2,7 @@
   "Release supply-chain attestations: an SBOM and SLSA-style provenance for a
   built artifact.
 
-  `aiueos.deployment-profile` has required `:sbom-digest` and
+  `grant.deployment-profile` has required `:sbom-digest` and
   `:provenance-digest` from `:regulated` evidence since it was written, and
   `kotoba.security.supply-chain/evaluate-attestations` has been able to judge
   those documents for just as long. Nothing produced them: the only values that
@@ -18,11 +18,11 @@
   fail-closed drift check is what keeps the SBOM honest.
 
   Signing is Ed25519 over the canonical document form owned by
-  `aiueos.key-lifecycle`, so an attestation and a lifecycle bundle sign the
+  `grant.key-lifecycle`, so an attestation and a lifecycle bundle sign the
   same way. The production key stays offline; `-main` emits unsigned documents
   and the caller signs them, which is the same split the release-receipt
   signing already uses."
-  (:require [aiueos.key-lifecycle :as key-lifecycle]
+  (:require [grant.key-lifecycle :as key-lifecycle]
             [aiueos.tcb :as tcb]
             [clojure.edn :as edn]
             [clojure.java.io :as io])
@@ -131,7 +131,7 @@
      (assoc document signature-key signature) signature-key public-key)))
 
 (defn regulated-evidence
-  "The supply-chain half of `aiueos.deployment-profile`'s `:regulated`
+  "The supply-chain half of `grant.deployment-profile`'s `:regulated`
   evidence, computed rather than asserted.
 
   `:tcb-drift-check?` is the inventory check's real verdict, so evidence for a

@@ -1,12 +1,12 @@
 (ns aiueos.provider.cloud
-  "The hosted-profile mechanism behind `aiueos.cloud`: the part that actually
+  "The hosted-profile mechanism behind `grant.cloud`: the part that actually
   opens the connection.
 
-  `aiueos.cloud` decides which request this policy would allow and whether a
+  `grant.cloud` decides which request this policy would allow and whether a
   response is the one that was asked for. This namespace does neither. It takes
   an allowed plan, performs it, and reports **what arrived** — status, byte
   count, and the SHA-256 of the bytes it received. The comparison against the
-  digest the CID commits to stays in `aiueos.cloud/admit-block`, because the
+  digest the CID commits to stays in `grant.cloud/admit-block`, because the
   question \"what did I get\" and the question \"is that what was asked for\"
   have different answers and must not be answered by the same code.
 
@@ -18,7 +18,7 @@
   **Redirects are not followed.** The allowlist checked the URL *we* chose, not
   the one the server names next. A followed 302 would leave the allowlist behind
   while still looking like a successful fetch — the same shape as the murakumo
-  alias redirect that `aiueos.cloud/admit-model` re-checks, arriving one layer
+  alias redirect that `grant.cloud/admit-model` re-checks, arriving one layer
   lower. A redirect is returned as its status and refused by `admit-block`.
 
   **The body is read against a ceiling.** A hostile or broken endpoint that
@@ -39,7 +39,7 @@
   reasonable default for a browser reaching hosts nobody enumerated in advance,
   and the wrong one for a machine that talks to two authorities known before it
   boots. The measurement is this namespace's; the verdict is
-  `aiueos.cloud/admit-peer`'s.
+  `grant.cloud/admit-peer`'s.
 
   ## What this does not do
 
@@ -47,7 +47,7 @@
   a CACAO-authenticated caller and no credential path exists here. And it is the
   *hosted* profile only; the bare-metal profile still has no TLS or HTTP client
   (ADR-0041 gap ledger, steps 1–5)."
-  (:require [aiueos.cloud :as cloud]
+  (:require [grant.cloud :as cloud]
             [clojure.string :as str])
   (:import [java.io InputStream]
            [java.net URI]
@@ -68,9 +68,9 @@
 
 (def errors
   "Faults this namespace produces. They are distinct from
-  `aiueos.cloud/deny-reasons` on purpose: a decision refused the request, a
+  `grant.cloud/deny-reasons` on purpose: a decision refused the request, a
   fault means there was nothing to decide about. The peer refusals are
-  `aiueos.cloud` reasons reported through a fault, because a TLS handshake that
+  `grant.cloud` reasons reported through a fault, because a TLS handshake that
   is refused mid-flight surfaces as an I/O failure and would otherwise be
   reported as one."
   #{:plan-not-allowed :net-denied :response-too-large :request-failed
@@ -86,7 +86,7 @@
     (apply str (map #(format "%02x" (bit-and (int %) 0xff)) digest))))
 
 (defn- pinning-trust-manager
-  "A trust manager whose only question is `aiueos.cloud/admit-peer`. The
+  "A trust manager whose only question is `grant.cloud/admit-peer`. The
   verdict is also recorded in VERDICT so the caller can report which refusal
   happened: the handshake failure it causes arrives as an I/O exception that
   says nothing about pins."
@@ -177,7 +177,7 @@
 (defn perform!
   "Execute an allowed PLAN and report what arrived.
 
-  The URL is taken from `aiueos.cloud/perform`, which re-checks it against the
+  The URL is taken from `grant.cloud/perform`, which re-checks it against the
   allowlist at call time; a plan whose URL stopped being allowed never reaches
   the socket."
   [policy plan opts]
@@ -208,7 +208,7 @@
              :aiueos.net/url (:aiueos.net/url outcome)}))))))
 
 (defn read-block!
-  "Fetch CID from the storage authority and return `aiueos.cloud/admit-block`'s
+  "Fetch CID from the storage authority and return `grant.cloud/admit-block`'s
   verdict about what came back, with the bytes attached when it allows.
 
   A fault short-circuits: if the request could not complete there is nothing to

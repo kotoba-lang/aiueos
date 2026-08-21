@@ -3,7 +3,7 @@
 
   ## Why this gate exists
 
-  `aiueos.manifest/normalize-schedule` derives
+  `grant.manifest/normalize-schedule` derives
 
       cycle-ms    (or (:cycle-ms sched) 1)
       period-ms   (or (:period-ms sched) cycle-ms)
@@ -45,12 +45,16 @@
         "schedule maps as prose -- there is no manifest in this file and "
         "nothing here is normalized or executed. It is listed rather than "
         "skipped silently, so the scan has exactly one kind of hole.")
+})
 
-   "test/aiueos/contract_test.cljc"
-   (str "contract validation, including a deliberately misspelled :deadline_ms "
-        "as a negative fixture and a {:priority 0} schedule that carries no "
-        "timing at all. These are checked as data by aiueos.contract; no "
-        "manifest here reaches aiueos.execute, so no watchdog runs against them.")})
+;; `test/aiueos/contract_test.cljc` was exempted here until 2026-08-21, when the
+;; decision plane moved to kotoba-lang/grant (root ADR-2608219500) and took the
+;; file with it. The exemption is removed rather than repointed: this gate scans
+;; THIS repository, and an entry naming a file in another one would be a hole
+;; that no scan here can open or close. Grant's copy of those fixtures is
+;; covered by grant's own suite. This test noticing is the reason the removal
+;; is deliberate -- `the-exemptions-still-exist-and-still-need-exempting`
+;; refused to pass with a name that no longer resolves.
 
 (defn- source-files []
   (->> scanned-roots

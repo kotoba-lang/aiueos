@@ -1,6 +1,6 @@
 (ns aiueos.sbom-test
-  (:require [aiueos.deployment-profile :as profile]
-            [aiueos.key-lifecycle :as key-lifecycle]
+  (:require [grant.deployment-profile :as profile]
+            [grant.key-lifecycle :as key-lifecycle]
             [aiueos.sbom :as sbom]
             [clojure.test :refer [deftest is]]
             [kotoba.security.supply-chain :as supply-chain]))

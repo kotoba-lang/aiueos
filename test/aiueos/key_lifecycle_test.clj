@@ -1,7 +1,7 @@
 (ns aiueos.key-lifecycle-test
-  (:require [aiueos.key-lifecycle :as lifecycle]
+  (:require [grant.key-lifecycle :as lifecycle]
             [aiueos.launcher :as launcher]
-            [aiueos.signing :as signing]
+            [grant.signing :as signing]
             [clojure.test :refer [deftest is]])
   (:import [java.nio.charset StandardCharsets]
            [java.security Signature]))
