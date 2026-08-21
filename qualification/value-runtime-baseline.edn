@@ -130,7 +130,7 @@
                  "https://github.com/kotoba-lang/amu/issues/625",
                  "(kernel-publish-current-domain domain)"
                  "https://github.com/kotoba-lang/amu/issues/625"},
-                :measured-at "2026-08-20",
+                :measured-at "2026-08-22",
                 :upstream-by-cause
                 {:native-slice-typed-values
                  "https://github.com/kotoba-lang/amu/issues/625",
@@ -156,7 +156,7 @@
                  "kernel-value-runtime-capability-table" 2,
                  "(kernel-publish-current-domain domain)" 1},
                 :compiler-sha
-                "5df2bbe1bd81c5894edc7fa8e50fc27a5d0bd1ba",
+                "6889fa736750348863d2b98d69e688131a2ca515",
                 :failing-by-cause
                 {:native-slice-typed-values 6,
                  :native-slice-lowering 1}}

@@ -21,7 +21,7 @@
   way if it is wrong."
   #{'io.github.cognitect-labs/test-runner
     'io.github.kotoba-lang/kotoba-kir
-    'io.github.kotoba-lang/compiler
+    'io.github.kotoba-lang/amu
     'io.github.kotoba-lang/security
     'io.github.kotoba-lang/abi})
 

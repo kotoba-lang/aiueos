@@ -60,7 +60,7 @@
 (deftest the-receipt-is-about-the-compiler-this-repo-pins
   (let [pinned (get-in (edn/read-string (slurp "deps.edn"))
                        [:aliases :test :extra-deps
-                        'io.github.kotoba-lang/compiler :git/sha])]
+                        'io.github.kotoba-lang/amu :git/sha])]
     (is (= pinned (:value-runtime/compiler-sha @receipt))
         (str "the receipt was measured against "
              (:value-runtime/compiler-sha @receipt)

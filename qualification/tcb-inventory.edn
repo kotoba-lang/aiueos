@@ -1,10 +1,10 @@
 {:tcb/version 3
- :tcb/as-of "2026-08-21"
+ :tcb/as-of "2026-08-22"
  ;; Paired with :tcb/content-digest below (ADR-0067): the digest covers every
  ;; other field, so an entry cannot change without this date having to change
  ;; too. It said 2026-08-01 while the file was being edited that morning, and
  ;; nothing read it.
- :tcb/content-digest "b81f37633e32f603974ba3e7e7386a2939dd0eed40e6b00fa262c86b8c952df8"
+ :tcb/content-digest "35ae1fcde63a95dc28175a3dcbc0d0cd4747ef993e220b88cfa518c90dfa4d3c"
  :tcb/scope
  "Code whose compromise can grant authority, escape Wasm isolation, falsify
   production admission/audit evidence, or access hardware outside a component."
@@ -36,7 +36,17 @@
   ;; said yes -- which is TCB for a different reason: it is the last place that
   ;; could ignore them.
   {:path "src/aiueos/provider/cloud.clj" :role :remote-authority-transport
-   :sha256 "4102ab4144851fe62f5c2b76795f51c7c623f43d4ec0137c688f4bbc72db86bd"}
+   :sha256 "0fb2c94b8a2df0ee929be9959cb3870b1bc4e848b84df7cde381eed3213271f4"}
+  ;; The operator gate that leaves this machine (ADR-0073). Pinned because it
+  ;; carries a trust manager that accepts ANY peer -- `pin` has to look at a key
+  ;; before anyone can decide to trust it -- and a change that let `check` reach
+  ;; that code would remove the pinning `grant.cloud/admit-peer` exists for.
+  ;;
+  ;; `resources/aiueos/cloud_live.edn` is deliberately NOT pinned here: it is
+  ;; deployment configuration, it is meant to change, and every key in it
+  ;; carries the date and method it was measured by.
+  {:path "src/aiueos/cloud_live.cljc" :role :remote-authority-live-gate
+   :sha256 "af63063a1c19cdda9b8ebb3e7de89fd2cce1982bfcc438ecf9ea6416d112944a"}
   {:path "src/aiueos/execute.cljc" :role :wasm-host-abi
    :sha256 "0312c7c06bb2b4d9c2d704be73ebafdca794e3fe5aada5c3cd431d2bc7c2b438"}
   {:path "src/aiueos/entropy.clj" :role :security-entropy-provider
@@ -99,7 +109,7 @@
    :sha256 "81245b1f832afcf52169e655d2db6a07009864dba352b174b90a444bf096bf6e"}
   {:coordinate "io.github.kotoba-lang/security" :source :git
    :git-url "https://github.com/kotoba-lang/security.git"
-   :git-sha "49fc4ce359752e9fe6e547e9071b5b9b40da937a"
+   :git-sha "74235d1cdf8034334f01dcb2f6faaff0c731146e"
    :role :shared-security-primitives}
   ;; The decision plane. Everything this machine is allowed to do is decided
   ;; there, so it is the largest single external entry in this inventory --
@@ -112,7 +122,7 @@
   ;; claim about a dependency none of its own files reach.
   {:coordinate "io.github.kotoba-lang/grant" :source :git
    :git-url "https://github.com/kotoba-lang/grant.git"
-   :git-sha "7ed742ba1982a60c3140638343dfc02061f979c9"
+   :git-sha "a8ed303b63951a704c7be7b4469920be684fd469"
    :role :capability-authority}
   ;; The transport half of the cloud authorities runs on the platform HTTP
   ;; client. Since ADR-0044 the trust DECISION is no longer the platform's:

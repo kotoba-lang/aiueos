@@ -6,7 +6,14 @@ Date: 2026-08-18
 
 Accepted and executable for the hosted profile. It is the mechanism behind
 ADR-0042's decisions. It does not advance ADR-0041's gap ledger steps 1–5 for
-the bare-metal profile, and it has still never contacted `kotobase.net`.
+the bare-metal profile.
+
+**Superseded in two places by ADR-0073** (2026-08-21), which should be read
+first for anything about writing or about the real hosts. The provider is no
+longer `GET`-only — it performs the `:post` and `:put` its plans emit, through
+an injected credential seam — and it has now contacted `kotobase.net`, so this
+ADR's closing line about the trust store being a recorded gap was answered by
+ADR-0044 and the pins were measured by ADR-0073.
 
 ## Context
 
@@ -103,8 +110,9 @@ answers on the other end. Recorded rather than left implied.
 - **Loopback, plaintext, and one process.** No certificate was validated,
   because the exemption that let the test run is exactly the one that skips it.
   What is proved is the seam and the digest, not TLS.
-- **No write path.** `PUT /ipfs/:cid` needs a CACAO-authenticated caller;
-  `plan-block-write` remains a decision with no mechanism behind it.
+- ~~**No write path.**~~ Closed by ADR-0073: `write-block!` performs the `PUT`.
+  The credential it needs turned out to be a **bearer token**, not a CACAO —
+  and this machine holds none, so the live write answers 401.
 - **The bare-metal profile is untouched.** It still has no DHCP, DNS, TLS or
   HTTP client. This provider is the hosted profile's, exactly as ADR-0019 split
   boot authority from workload authority.

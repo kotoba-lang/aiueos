@@ -5,9 +5,24 @@ Date: 2026-08-18
 ## Status
 
 Accepted as positioning. It names an ordered gap ledger. ADR-0042 implemented
-the decision layer for steps 6 and 7 and ADR-0043 the hosted mechanism for the
-read half of step 6; steps 1–5 remain untouched. Extends ADR-0019 (which split boot authority from workload authority) and
-ADR-0030 (origin allowlists). It does not decide install-to-internal-disk.
+the decision layer for steps 6 and 7, ADR-0043 the hosted mechanism for the read
+half of step 6, and **ADR-0073 the rest of both rows for the hosted profile**:
+on 2026-08-22 this machine reached `kotobase.net`, `api.murakumo.cloud` and
+`infer.murakumo.cloud` over TLS with pinned peer keys, read a block whose bytes
+hash to its CID, refused one the store does not hold, resolved the
+`murakumo-main` alias, **obtained and judged a completion**, and performed a
+real `PUT`. Row 7 is closed end to end for that profile; row 6 has both halves
+built and its write answers 401 for want of a bearer token.
+
+**Steps 1–5 remain untouched**, so the bare-metal profile has still reached
+nothing — and that gap is now the whole of the remaining distance rather than
+part of it.
+
+Since 2026-08-21 the decision half of rows 6 and 7 lives in `kotoba-lang/grant`
+(root ADR-2608219500) and the mechanism half here; `aiueos` requires `grant`,
+never the reverse. Extends ADR-0019 (which split boot authority from workload
+authority) and ADR-0030 (origin allowlists). It does not decide
+install-to-internal-disk.
 
 ## Context
 
@@ -90,8 +105,8 @@ workspace, so none of it starts from a blank page.
 | 3 | TCP from one connection to a usable stream: retransmit, window, close | this repo (ADR-0022 continues) |
 | 4 | TLS 1.3 client and chain validation | **no implementation anywhere in the workspace.** `capability-crypto-tls` is an authority package, `provider status: contract-only`, two files. Real: `org-ietf-x509` (RFC 5280 parsing, the subset a signature verifier needs) for part of chain validation, and `kotoba/x25519.kotoba`, `sha256.kotoba`, `rsa2048.kotoba` natively. **The handshake and record layer are unwritten** |
 | 5 | HTTP/1.1 client | data model only. `capability-http-fetch` / `-post` are `contract-only`; `kotoba-lang/http` is the request/response model + `parse-url` + an `IHttp` protocol the host injects, and says outright that **no client is baked in** |
-| 6 | kotobase client: block get/put by CID, ref read | read: **done for the hosted profile** (ADR-0043). Write: unwritten, and it needs CACAO auth. `kotoba-lang/kotobase-client` already has byte-exact CACAO plus CID/graph derivation and is the reference — aiueos cannot depend on it (dependency-minimal invariant), so what it owes is a port, not a design |
-| 7 | murakumo client: alias resolve, then `/v1/messages` | decision only (ADR-0042). The hosted provider performs `GET` and nothing else, so the POST plan has no mechanism behind it |
+| 6 | kotobase client: block get/put by CID, ref read | read **and write both exist for the hosted profile** (ADR-0043, ADR-0073). The read is proved live: 200 with bytes that hash to the CID, and a 404 refused. The write performs a real `PUT` with the caller's bytes and refuses bytes that do not hash to the CID before the socket; against the live store it answers **401**, because this machine holds no credential. **Corrected 2026-08-21: it does not need CACAO.** kotobase's block plane admits `Authorization: Bearer <token>` compared string-equal against an operator secret — no signature, no scope, no DID, no verifier on that path. CACAO is the *tenant datom* plane. What this row owed was a bearer seam, which exists; what it lacks is a token. Ref read is still unwritten |
+| 7 | murakumo client: alias resolve, then `/v1/messages` | **closed end to end for the hosted profile** (ADR-0073). Live on 2026-08-22: the alias resolves (200), `/ready` answers 200, and a `POST` to the endpoint it names returns a completion that `grant.cloud/admit-inference` admits — four characters, `finish_reason: "stop"`, shape `:chat-completions-v1`, from a peer whose key is pinned. The gate exits 0. **Two corrections**: the resolved endpoint names a *third* host (`infer.murakumo.cloud`) and already carries a path, so appending `/v1/messages` was wrong and admitting that host is an explicit operator decision; and there are **two** answer shapes, so the plan declares which one it expects rather than a reader sniffing the body. What is *not* covered: `api.murakumo.cloud/v1/messages` still answers 401 and no token for it is reachable here, so the credentialed surface is proved on loopback only |
 
 **This column was corrected on 2026-08-18.** As first written it named a repo
 per row without opening any of them, and two rows were wrong in the direction
@@ -105,10 +120,12 @@ Steps 1–5 are the whole of the work. Once TLS and HTTP exist, 6 and 7 are two
 small protocol clients over an already-proved transport. The hosted Linux PID-1
 profile (ADR-0011) has steps 1–5 from the platform and is where the two cloud
 clients are proved first — the same split ADR-0019 made between boot authority
-and workload authority. That is what ADR-0042 and ADR-0043 did: the decisions,
-and a hosted provider that performs a block read and judges the bytes. Nothing
-in steps 1–5 moved for the bare-metal profile, which is the only profile those
-steps were ever about.
+and workload authority. That is what ADR-0042, ADR-0043 and ADR-0073 did: the
+decisions, a hosted provider that performs the methods those decisions emit, and
+an operator gate that ran them against the real hosts. **Nothing in steps 1–5
+moved for the bare-metal profile, which is the only profile those steps were
+ever about** — and rows 6 and 7 being answerable for the hosted profile makes
+that gap larger in relative terms, not smaller.
 
 ## Non-decisions
 
@@ -125,10 +142,15 @@ steps were ever about.
 
 ## Consequences
 
-- Read every cloud claim about aiueos against this ADR. Today the machine can
+- Read every cloud claim about aiueos against this ADR, and read it per
+  profile, because the two answers now differ. **Bare metal**: the machine can
   boot from a stick, decide its participation, and speak TCP to a peer on its
   own segment. It cannot resolve a name, cannot open a TLS connection, and has
-  never contacted `kotobase.net` or `api.murakumo.cloud`.
+  never contacted `kotobase.net` or `api.murakumo.cloud`. **Hosted**: it has
+  contacted both, over TLS, accepting each peer only because its key was one the
+  policy named; it has read a block, refused a missing one, and obtained and
+  judged an inference completion. It has not stored a block, for want of a
+  bearer token (ADR-0073).
 - The local plane's scope is now bounded from above: work that would put a
   durable authority or an inference runtime on the machine needs an ADR that
   argues against this one, rather than arriving as an implementation detail.

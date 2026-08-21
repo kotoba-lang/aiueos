@@ -6,7 +6,9 @@
   received, and `grant.cloud` decides whether that was what was asked for —
   including when it was not."
   (:require [grant.cloud :as cloud]
+            [grant.json :as json]
             [aiueos.provider.cloud :as provider]
+            [clojure.string :as str]
             [clojure.test :refer [deftest is testing]])
   (:import [com.sun.net.httpserver HttpExchange HttpHandler HttpServer]
            [java.net InetSocketAddress]))
@@ -27,15 +29,29 @@
 
 (defn- start! [handler]
   (let [server (HttpServer/create (InetSocketAddress. "127.0.0.1" 0) 0)
-        hits (atom [])]
+        hits (atom [])
+        ;; What the server actually received, not what the client meant to
+        ;; send. A method dispatch checked against the client's own record
+        ;; would be the client agreeing with itself.
+        requests (atom [])]
     (.createContext server "/"
                     (reify HttpHandler
                       (handle [_ exchange]
-                        (swap! hits conj (str (.getPath (.getRequestURI ^HttpExchange exchange))))
+                        (let [^HttpExchange ex exchange]
+                          (swap! hits conj (str (.getPath (.getRequestURI ex))))
+                          (swap! requests conj
+                                 {:path (str (.getPath (.getRequestURI ex)))
+                                  :method (.getRequestMethod ex)
+                                  :body (slurp (.getRequestBody ex))
+                                  :authorization (.getFirst (.getRequestHeaders ex)
+                                                            "Authorization")
+                                  :content-type (.getFirst (.getRequestHeaders ex)
+                                                           "Content-Type")}))
                         (handler exchange))))
     (.start server)
     {:server server
      :hits hits
+     :requests requests
      :origin (str "http://127.0.0.1:" (.getPort (.getAddress server)))}))
 
 (defn- with-server
@@ -161,3 +177,201 @@
           r (provider/perform! {} plan {})]
       (is (= :plan-not-allowed (:aiueos.provider.cloud/error r)))
       (is (= :origin-not-allowed (:aiueos.cloud/reason r))))))
+
+
+;; -- the methods the plans emit ------------------------------------------
+;;
+;; Until now perform! hardcoded .GET, so a plan that said :put was performed as
+;; a read: a 200 came back, nothing was stored, and the receipt looked like a
+;; success. What follows checks the method the SERVER saw, because the client
+;; agreeing with itself is what that defect looked like.
+
+(defn- murakumo-policy [origin]
+  {:aiueos.policy/net-allow #{"127.0.0.1"}
+   :aiueos.cloud/allow-insecure-origins #{"http://127.0.0.1"}
+   :aiueos.cloud/inference-origin origin
+   :aiueos.cloud/model-alias "murakumo-main"})
+
+(def alias-body
+  "{\"alias-for\":\"qwen3.8-27b\",\"id\":\"murakumo-main\",\"endpoint\":\"")
+
+(def completion-body
+  ;; The loopback endpoint is a bare origin, so the plan appends /v1/messages
+  ;; and declares :messages-v1. The body matches the shape that was asked for;
+  ;; a-shape-the-plan-did-not-ask-for below is the other half of that.
+  (str "{\"stop_reason\":\"end_turn\",\"content\":"
+       "[{\"type\":\"text\",\"text\":\"pong\"}]}"))
+
+(def chat-completion-body
+  (str "{\"choices\":[{\"finish_reason\":\"stop\",\"message\":"
+       "{\"role\":\"assistant\",\"content\":\"pong\"}}]}"))
+
+(deftest an-alias-resolves-end-to-end-over-a-real-socket
+  (with-server (fn [ex] (respond! ex 200 (str alias-body "http://127.0.0.1/v1/chat/completions\"}")))
+    (fn [s]
+      (let [v (provider/resolve-model! (murakumo-policy (:origin s)))]
+        (is (cloud/allowed? v))
+        (is (= "qwen3.8-27b" (get-in v [:aiueos.cloud/model :alias-for])))
+        (is (= :resolved (:aiueos.cloud/endpoint-source v)))
+        (is (= ["/infer/models/murakumo-main"] @(:hits s)))
+        (is (= "GET" (:method (first @(:requests s)))))))))
+
+(deftest an-inference-request-arrives-as-a-post-with-a-json-body
+  (with-server (fn [ex] (respond! ex 200 completion-body))
+    (fn [s]
+      (let [model {:alias "murakumo-main" :endpoint (:origin s) :alias-for "qwen3.8-27b"}
+            v (provider/infer! (murakumo-policy (:origin s)) model
+                               {:messages [{:role "user" :content "hi"}] :max-tokens 8})
+            sent (first @(:requests s))]
+        (is (cloud/allowed? v))
+        (is (= "pong" (:aiueos.cloud/completion v)))
+        (is (= "POST" (:method sent)) "the plan said :post and the server saw POST")
+        (is (= "/v1/messages" (:path sent)))
+        (is (= "application/json" (:content-type sent)))
+        (let [body (json/read-json (:body sent))]
+          (is (= "murakumo-main" (get body "model"))
+              "the request carries the alias, not the id it resolved to")
+          (is (= 8 (get body "max_tokens")))
+          (is (= [{"role" "user" "content" "hi"}] (get body "messages"))))))))
+
+(deftest a-credential-arrives-when-it-is-injected-and-not-otherwise
+  (with-server (fn [ex] (respond! ex 200 completion-body))
+    (fn [s]
+      (let [policy (murakumo-policy (:origin s))
+            model {:alias "murakumo-main" :endpoint (:origin s) :alias-for "qwen3.8-27b"}
+            opts {:messages [{:role "user" :content "hi"}]}]
+        (provider/infer! policy model opts opts)
+        (provider/infer! policy model opts (assoc opts :headers {"authorization" "Bearer t0ken"}))
+        (let [[without with] @(:requests s)]
+          (is (nil? (:authorization without))
+              "nothing is defaulted: with no header injected, none is sent")
+          (is (= "Bearer t0ken" (:authorization with))))))))
+
+(deftest a-credential-does-not-travel-onto-the-verdict
+  (with-server (fn [ex] (respond! ex 200 completion-body))
+    (fn [s]
+      (let [model {:alias "murakumo-main" :endpoint (:origin s) :alias-for "qwen3.8-27b"}
+            v (provider/infer! (murakumo-policy (:origin s)) model
+                               {:messages [{:role "user" :content "hi"}]}
+                               {:messages [{:role "user" :content "hi"}]
+                                :headers {"authorization" "Bearer s3cret"}})]
+        (is (cloud/allowed? v))
+        (is (not (str/includes? (pr-str v) "s3cret"))
+            "a receipt prints this map; the credential must not be in it")))))
+
+(deftest an-uncredentialed-inference-request-is-refused-as-its-status
+  (with-server (fn [ex] (respond! ex 401 "{\"type\":\"error\"}"))
+    (fn [s]
+      (let [model {:alias "murakumo-main" :endpoint (:origin s) :alias-for "qwen3.8-27b"}
+            v (provider/infer! (murakumo-policy (:origin s)) model
+                               {:messages [{:role "user" :content "hi"}]})]
+        (is (= :response-not-ok (:aiueos.cloud/reason v)))
+        (is (= 401 (:aiueos.cloud/status v)))
+        (is (= 401 (:aiueos.provider.cloud/status v)))))))
+
+(deftest the-shape-the-plan-declared-is-the-shape-that-is-read
+  (testing "a body in the other shape is a mismatch, not an empty answer"
+    (with-server (fn [ex] (respond! ex 200 chat-completion-body))
+      (fn [s]
+        (let [model {:alias "murakumo-main" :endpoint (:origin s) :alias-for "qwen3.8-27b"}
+              v (provider/infer! (murakumo-policy (:origin s)) model
+                                 {:messages [{:role "user" :content "hi"}]})]
+          (is (= :response-shape-mismatch (:aiueos.cloud/reason v)))
+          (is (= :messages-v1 (:aiueos.cloud/response-shape v)))))))
+  (testing "and an operator who says which shape the endpoint speaks is obeyed"
+    (with-server (fn [ex] (respond! ex 200 chat-completion-body))
+      (fn [s]
+        (let [policy (assoc (murakumo-policy (:origin s))
+                            :aiueos.cloud/response-shape :chat-completions-v1)
+              model {:alias "murakumo-main" :endpoint (:origin s) :alias-for "qwen3.8-27b"}
+              v (provider/infer! policy model {:messages [{:role "user" :content "hi"}]})]
+          (is (cloud/allowed? v))
+          (is (= "pong" (:aiueos.cloud/completion v)))
+          (is (= :chat-completions-v1 (:aiueos.cloud/response-shape v))))))))
+
+(deftest liveness-is-a-get-and-says-nothing-about-completions
+  (with-server (fn [ex] (respond! ex 200 "{\"ok\":true}"))
+    (fn [s]
+      (let [v (provider/ready! (murakumo-policy (:origin s)))]
+        (is (cloud/allowed? v))
+        (is (true? (:aiueos.cloud/live? v)))
+        (is (nil? (:aiueos.cloud/completion v)))
+        (is (= "/ready" (:path (first @(:requests s)))))
+        (is (= "GET" (:method (first @(:requests s))))))))
+  (with-server (fn [ex] (respond! ex 502 "down"))
+    (fn [s]
+      (is (= :response-not-ok (:aiueos.cloud/reason (provider/ready! (murakumo-policy (:origin s)))))))))
+
+;; -- writing a block -----------------------------------------------------
+
+(deftest a-block-write-arrives-as-a-put-carrying-the-bytes
+  (with-server (fn [ex] (respond! ex 200 "stored"))
+    (fn [s]
+      (let [v (provider/write-block! (policy-for (:origin s)) raw-cid
+                                     (.getBytes hello "UTF-8")
+                                     {:headers {"authorization" "Bearer t0ken"}})
+            sent (first @(:requests s))]
+        (is (cloud/allowed? v))
+        (is (= 200 (:aiueos.cloud/status v)))
+        (is (= "PUT" (:method sent)) "a PUT performed as a GET would store nothing
+                                      and report a 200")
+        (is (= cid-path (:path sent)))
+        (is (= hello (:body sent)) "the caller's bytes, not a re-serialisation")
+        (is (= "Bearer t0ken" (:authorization sent)))))))
+
+(deftest a-write-with-no-credential-is-refused-by-the-authority
+  (with-server (fn [ex] (respond! ex 401 "{\"error\":\"unauthorized\"}"))
+    (fn [s]
+      (let [v (provider/write-block! (policy-for (:origin s)) raw-cid
+                                     (.getBytes hello "UTF-8"))]
+        (is (= :write-unauthorized (:aiueos.cloud/reason v))
+            "which is what the live kotobase.net answered on 2026-08-21")
+        (is (= 401 (:aiueos.cloud/status v)))
+        (is (nil? (:authorization (first @(:requests s)))))))))
+
+(deftest bytes-that-do-not-hash-to-the-cid-never-reach-the-socket
+  (with-server (fn [ex] (respond! ex 200 "stored"))
+    (fn [s]
+      (let [v (provider/write-block! (policy-for (:origin s)) raw-cid
+                                     (.getBytes "other bytes" "UTF-8"))]
+        (is (= :payload-digest-mismatch (:aiueos.cloud/reason v)))
+        (is (= [] @(:hits s))
+            "the store would have answered 422; refusing first means the wrong
+             bytes never left the machine")))))
+
+(deftest a-dag-cbor-cid-is-refused-before-the-socket-here-too
+  (with-server (fn [ex] (respond! ex 200 "stored"))
+    (fn [s]
+      (let [v (provider/write-block! (policy-for (:origin s))
+                                     "bafyreifzjut3te2nhyekklss27nh3k72ysco7y32koao5eei66wof36n5e"
+                                     (.getBytes hello "UTF-8"))]
+        (is (= :cid-not-raw (:aiueos.cloud/reason v)))
+        (is (= [] @(:hits s)))))))
+
+;; -- a request that could not be built is a fault -------------------------
+
+(deftest a-method-the-provider-has-no-verb-for-is-a-fault-not-a-get
+  (with-server (serve hello)
+    (fn [s]
+      (let [plan (assoc-in (cloud/plan-block-read (policy-for (:origin s)) raw-cid)
+                           [:aiueos.cloud/request :method] :delete)
+            r (provider/perform! (policy-for (:origin s)) plan {})]
+        (is (= :method-unsupported (:aiueos.provider.cloud/error r)))
+        (is (= [] @(:hits s))
+            "a write quietly performed as a read would report a 200 and store nothing")))))
+
+(deftest a-body-that-cannot-be-encoded-is-a-fault
+  (with-server (serve hello)
+    (fn [s]
+      (let [plan (assoc-in (cloud/plan-block-read (policy-for (:origin s)) raw-cid)
+                           [:aiueos.cloud/request :body] {:messages #{1 2}})
+            plan (assoc-in plan [:aiueos.cloud/request :method] :post)
+            r (provider/perform! (policy-for (:origin s)) plan {})]
+        (is (= :body-unencodable (:aiueos.provider.cloud/error r)))
+        (is (= [] @(:hits s)) "a request whose body could not be built was never made")))))
+
+(deftest every-fault-this-namespace-produces-is-declared
+  (doseq [f [:plan-not-allowed :net-denied :response-too-large :request-failed
+             :method-unsupported :body-unencodable
+             :no-trust-anchors :peer-not-pinned :peer-unmeasured]]
+    (is (contains? provider/errors f) (str f " is produced but not declared"))))

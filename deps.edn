@@ -10,9 +10,9 @@
  ;; because a dependency nothing in this repository requires is a claim
  ;; about the wrong repository.
  :deps {io.github.kotoba-lang/grant {:git/url "https://github.com/kotoba-lang/grant.git"
-                                     :git/sha "7ed742ba1982a60c3140638343dfc02061f979c9"}
+                                     :git/sha "a8ed303b63951a704c7be7b4469920be684fd469"}
         io.github.kotoba-lang/security {:git/url "https://github.com/kotoba-lang/security.git"
-                                        :git/sha "49fc4ce359752e9fe6e547e9071b5b9b40da937a"}
+                                        :git/sha "74235d1cdf8034334f01dcb2f6faaff0c731146e"}
         com.dylibso.chicory/wasm {:mvn/version "1.4.0"}
         com.dylibso.chicory/runtime {:mvn/version "1.4.0"}}
  :aliases
@@ -26,13 +26,17 @@
                       {:git/tag "v0.5.1" :git/sha "dfb30dd"}
                       io.github.kotoba-lang/kotoba-kir
                       {:git/url "https://github.com/kotoba-lang/kotoba-kir.git"
-                       :git/sha "6d08e3cffa09c003f8dbcdfaee964c4a1ea021ad"}
-                      io.github.kotoba-lang/compiler
+                       :git/sha "136a62e0ad93585c5ecfa6755c82aa4ac2637e14"}
+                      ;; The repository was renamed compiler -> amu. One
+                      ;; repository reachable under two coordinates is what the
+                      ;; workspace's dep-coordinate-identity detector exists to
+                      ;; catch, so the coordinate follows the name.
+                      io.github.kotoba-lang/amu
                       {:git/url "https://github.com/kotoba-lang/amu.git"
-                       :git/sha "5df2bbe1bd81c5894edc7fa8e50fc27a5d0bd1ba"}
+                       :git/sha "6889fa736750348863d2b98d69e688131a2ca515"}
                       io.github.kotoba-lang/org-ietf-tcp
                       {:git/url "https://github.com/kotoba-lang/org-ietf-tcp.git"
-                       :git/sha "73ace58d11e409bb387e26c2d99dccba79a99116"}}
+                       :git/sha "d8c15e23b6c169a4ed044cd7764923ecbb789be4"}}
          :main-opts ["-m" "cognitect.test-runner"]
          :exec-fn cognitect.test-runner.api/test}
 
@@ -52,10 +56,10 @@
                              {:git/tag "v0.5.1" :git/sha "dfb30dd"}
                              io.github.kotoba-lang/kotoba-kir
                              {:git/url "https://github.com/kotoba-lang/kotoba-kir.git"
-                              :git/sha "6d08e3cffa09c003f8dbcdfaee964c4a1ea021ad"}
-                             io.github.kotoba-lang/compiler
+                              :git/sha "136a62e0ad93585c5ecfa6755c82aa4ac2637e14"}
+                             io.github.kotoba-lang/amu
                              {:git/url "https://github.com/kotoba-lang/amu.git"
-                              :git/sha "5df2bbe1bd81c5894edc7fa8e50fc27a5d0bd1ba"}
+                              :git/sha "6889fa736750348863d2b98d69e688131a2ca515"}
                              }
                 ;; No org-ietf-tcp here, and the parity test that needs it is
                 ;; not selected. **That repository is private**, and fleet nodes
@@ -67,6 +71,17 @@
                             "-r" "^aiueos\\.(?!tcp-seq-acceptable-parity-test).*$"]}
 
    :tcb-check {:main-opts ["-m" "aiueos.tcb"]}
+
+   ;; The gate that leaves this machine (ADR-0073). An OPERATOR runs this, not
+   ;; the murakumo fleet: fleet nodes hold no credentials by invariant and
+   ;; their egress is not uniform, so a gate that needs an open path to three
+   ;; named hosts cannot be a fleet gate.
+   ;;   clojure -M:cloud-live check
+   ;;   clojure -M:cloud-live pin https://kotobase.net https://api.murakumo.cloud
+   ;;   clojure -M:cloud-live write
+   ;; Exit 0 = every attempted leg admitted, 1 = a leg was refused,
+   ;; 3 = a leg could not be answered (no network, nothing to ask).
+   :cloud-live {:main-opts ["-m" "aiueos.cloud-live"]}
 
    ;; Release attestations (SBOM + SLSA-style provenance) for a built artifact.
    ;;   clojure -M:attest sha256:<disk-digest> <source-commit> <builder> --isolated
