@@ -219,6 +219,139 @@ the generation before reissue, so stale, wrong-type, and insufficient-rights
 handles cannot alias the live slot.
 Generation exhaustion retires a slot instead of wrapping to an older identity.
 
+`value-handle-plan` is the C-free decision core for the future CPL3
+ValueRuntime table. It admits only four closed operations (allocate, resolve,
+cid-of, release), caps the table at 4,096 live handles, requires an observed
+entry to be exactly live before access or release, and advances allocation
+monotonically through handle 4,096. Release never rewinds `next-handle`, so a
+stale word cannot acquire a new meaning. The returned packed recipe contains
+the selected handle, next monotonic handle, and post-operation live count; the
+process-local mechanism must recheck and apply it under one lock. This planner
+does not read CAS blocks and does not grant object authority. Persistence and
+hydration remain behind the typed aiueos capability broker.
+
+`value-handle-arena` is the first stateful mechanism behind that decision. It
+owns one process RW/NX 4 KiB page, a versioned 64-byte header, and 63 physical
+slots. Logical handles still advance monotonically from 1 through 4,096;
+released physical slots may be recycled only because every lookup compares
+the newly stored logical handle, so an old word remains invalid. The object
+initializes, installs, resolves, returns a CID token, and releases under its
+own bounded u32 lock. Lock acquisition and release compile to the new Kotoba
+`kernel-compare-exchange-u32` intrinsic, whose x86 implementation checks the
+complete base/length/index window before emitting `LOCK CMPXCHG`. The exported
+object has no imports. Its value/CID tokens are opaque provider descriptors,
+not pointers and not capabilities.
+
+`value-runtime-dispatch` links that arena, the bounded SHA-256/digest verifier,
+and the sealed provider transport into a C-free Kotoba object.
+It accepts only a fixed 96-byte normalized request plus a trusted transport
+profile, validates the exact 4 KiB capability-table entry (slot, generation,
+type, active state, rights, owner domain, and reconstructed handle), and routes
+local operations directly to the arena. Persistence requests enqueue the
+existing typed provider routes—wire 15 for `intern`, wire 14 for `hydrate`—and
+retain the request-originated expected digest from bytes 24..55 before returning
+only a bounded ticket. Local operations require that digest range to be zero.
+User phase=1 completion is rejected.
+Its exact native export has no imports and retains the arena's bounded
+`LOCK CMPXCHG` state transition.
+
+`value-runtime-entry` closes the next boundary without C. Assembly supplies a
+trusted packed profile containing the current process domain and request
+offset. Kotoba admits a 104-byte subregion of the current process's private
+4 KiB page, rejects offsets beyond 3,992 and non-zero reserved suffix bytes,
+copies request bytes 0..55 into a kernel-owned 96-byte scratch envelope, and
+zeroes bytes 56..95. The expected digest occupies raw bytes 24..55 and the
+presented capability handle at raw bytes 56..63 is
+decoded as a separate scalar and is never copied into the normalized request.
+The closed seven-module object then enters `value-runtime-dispatch`; it has one
+exact export, no imports, bounded loads/stores, and the arena atomic operation.
+
+`native/value-runtime-kernel.kotoba` links that complete graph into the pure
+Kotoba native kernel image beside its boot entry. The transport-only
+deterministic ELF64 image has ten closed modules. Linking ValueRuntime-owned
+copies of the already qualified pure-Kotoba SHA-256 and fixed-work digest
+comparison with
+`value-runtime-cas-verify` produces a thirteen-module image with an
+`aiueos_kernel_entry` boot entry, the ValueRuntime entry/domain/provider/CAS
+exports, no imports, and no C/foreign object receipt. This is
+the production ownership direction; the larger C kernel remains a QEMU
+compatibility/regression fixture and is not evidence for this image.
+
+`value-runtime-syscall-plan` owns the return-state decision required before a
+pure-kernel `SYSCALL` shim may call that entry. It admits only syscall 5, a
+trusted domain 1..32767, a canonical low-half user pointer whose 104-byte
+envelope stays within one page, and canonical low-half user RIP/RSP. Its only
+positive result is the packed trusted entry profile; assembly need not repeat
+or reinterpret those security predicates.
+
+The x86 pure-kernel packager now supplies the privilege substrate that planner
+will return through: a closed GDT, TSS with RSP0, and page-aligned 64 KiB
+kernel stack in the image's sole RW segment. Its boot shim switches to that
+stack, reloads the GDT and all segment selectors, loads TR, and only then calls
+Kotoba `main`. The C-free ELF/embedded-UEFI image traverses this path under
+OVMF/QEMU and reaches the existing `M` marker.
+
+`value-runtime-domain` gives the scheduler a narrow publication boundary. It
+accepts only domains 1..32767 and invokes the kernel-only
+`kernel-publish-current-domain` intrinsic, which writes the scalar to private
+context offset `0x110`. Kotoba code is not given the context address or a raw
+unbounded store. This domain is authority ownership used to choose runtime
+state; it is deliberately distinct from ValueCID, Handle, and RAM address.
+
+The closed x86 image now installs EFER.SCE, STAR, LSTAR and FMASK when—and only
+when—the artifact exports both the five-word planner and five-word normalized
+entry. LSTAR saves user return state, switches to TSS.RSP0, calls the compiled
+Kotoba planner, skips the entry on rejection, or supplies the image-owned
+scratch/capability-table/arena regions on admission. Before `sysretq` it
+whitelists user arithmetic flags and IF and clears privileged RFLAGS state.
+The verifier independently decodes both native call displacements and proves
+they name the compiled Kotoba exports.
+
+The current `kernel/syscall.c` dispatcher remains unqualified and unchanged.
+The remaining native work is canonical value/descriptor binding after digest
+verification and positive/negative CPL3 QEMU semantic vectors. Until those
+identity and execution vectors exist, production native
+ValueRuntime admission remains closed.
+
+The live capability table is no longer a permanently zeroed placeholder.
+`value-runtime-capability-table` derives its address through a zero-argument
+kernel intrinsic, so mutation callers cannot redirect writes. Slot zero is an
+atomic table lock shared with dispatch admission; issue publishes active last,
+revoke clears it first, and generation/type/rights/owner plus the exact handle
+are checked under the same lock. This closes torn reissue/stale-generation
+races without turning a capability into a CID, Handle, or pointer.
+
+The integrated image exports only the policy boundary, not that raw mutator.
+Provider status is a private active+generation word at context `0x138`.
+Scheduler grants admit exactly hydrate=1, intern=4, or their union=5 and bind
+the current provider generation into each table record. Dispatch compares it
+again, so provider stop/restart invalidates prior authority immediately.
+
+`value-runtime-provider-transport` owns an image-private 512-byte queue at
+context offset `0x400`. Seven fixed 64-byte slots move atomically through free,
+pending, and claimed states. Submit stores ticket, route, trusted domain,
+capability handle, and the request-originated 32-byte digest, then publishes
+state last. The trusted provider claim export
+returns packed ticket/route/domain metadata; completion succeeds only for that
+claimed triple, hashes the returned block in the image-private CAS scratch at
+`0x600`, compares all digest bytes, and only then installs into the
+image-private arena at `0x2000`.
+Wrong-route/domain completion leaves the claim live, lock contention and queue
+exhaustion fail closed, tickets never wrap or reuse, and no user pointer enters
+the queue. A digest mismatch also leaves the claim live. The next boundary must
+parse the verified block as canonical `kotoba.value.v1` and bind the opaque
+completion descriptor to that decoded value.
+
+`value-runtime-cas-verify` is the next C-free mechanism. It hashes a bounded
+1..12,288-byte provider block with `value-runtime-sha256.kotoba`, compares all
+32 digest bytes with `value-runtime-digest-equal.kotoba`, and is linked into the
+kernel root as an exact
+five-word native export. The 160,024-byte image has no imports or foreign-code
+receipt. The 104-byte request envelope supplies the expectation, entry and
+queue retain it, and completion must pass this verifier before Handle install.
+Canonical `kotoba.value.v1` validation and descriptor binding remain mandatory
+after this request-bound integrity gate.
+
 `capability-mutation-plan.o` admits issue, recursive revoke, and derivation
 parent binding as explicit recipes. Native code applies type/state/owner/parent
 publication, generation retirement, and pending-transfer invalidation only
