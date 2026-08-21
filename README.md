@@ -138,7 +138,7 @@ compiler-emitted Kotoba — is stated honestly, with measured line counts, in
   components due at a given ADR-0006 cycle (`--cycle N`, default 0) in
   `aiueos.graph/priority-boot-order`, stopping at the first
   denied/quota-or-fuel-exceeded DUE component). Try it: `clojure -M -m
-  aiueos.launcher up <system>.edn --cycle 3 --edn`. **`:aiueos/schedule`'s
+  aiueos.launcher up <system>.edn --policy examples/policy/default.edn --cycle 3 --edn`. **`:aiueos/schedule`'s
   `:deadline-cycles` is NOT enforced** — see `aiueos.manifest/due-this-cycle?`'s
   docstring for why. **JVM-only**, same reason as `aiueos.execute`. Not wired:
   four adapter-only commands (`sign`/`check`/`compile`/`hash`). `image` and
