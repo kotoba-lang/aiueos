@@ -58,7 +58,10 @@
           ;; and grant arrived. The count is asserted rather than bounded
           ;; because an inventory that silently shrinks is the failure this
           ;; whole namespace is about.
-          :files 20 :external 6 :classpath 9 :properties 6 :errors []}
+          ;;
+          ;; 20 -> 21: the operator gate that leaves this machine, which carries
+          ;; the one trust manager here that accepts any peer (ADR-0073).
+          :files 21 :external 6 :classpath 9 :properties 6 :errors []}
          (tcb/validate (tcb/read-inventory)
                        (clojure.edn/read-string (slurp "deps.edn"))
                        (clojure.edn/read-string (slurp "security-adoption.edn"))
@@ -200,14 +203,21 @@
       "an unreadable workflow reports nothing rather than an empty measurement"))
 
 (deftest the-security-adoption-record-must-agree-with-the-inventory
+  ;; `:expected` is read from the inventory rather than written down here. The
+  ;; property is that a disagreement is reported, not that the pin is any
+  ;; particular commit -- and a literal makes advancing the pin fail this test
+  ;; for a reason that has nothing to do with what it checks.
   (let [inventory (tcb/read-inventory)
         deps (edn/read-string (slurp "deps.edn"))
+        pinned (some #(when (= "io.github.kotoba-lang/security" (:coordinate %)) (:git-sha %))
+                     (:tcb/external inventory))
         adoption {:security/git-sha (apply str (repeat 40 "f"))}
         result (tcb/validate inventory deps adoption {:classpath :not-in-scope :review :not-in-scope})]
+    (is (string? pinned) "the inventory records the shared security package at all")
     (is (false? (:valid? result)))
     (is (= [{:kind :external-adoption-drift
              :coordinate "io.github.kotoba-lang/security"
-             :expected "49fc4ce359752e9fe6e547e9071b5b9b40da937a"
+             :expected pinned
              :actual (:security/git-sha adoption)}]
            (:errors result)))))
 

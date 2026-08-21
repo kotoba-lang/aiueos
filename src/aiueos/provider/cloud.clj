@@ -31,6 +31,16 @@
   never a status. `admit-block` must not be handed something it could mistake
   for a measurement.
 
+  ## Credentials arrive; they are never held
+
+  Any authorization header is an **injected value** in `opts`. This namespace
+  has no default, reads no environment variable, and holds no credential of its
+  own. Headers are applied to the request and are not carried onto the result,
+  so a credential cannot reach a receipt, a log line or an exception message by
+  travelling with the thing that was measured. `:post` and `:put` exist here
+  because plans emit them; the authority to use them is somebody else's to
+  supply.
+
   ## The platform trust store is replaced, not extended
 
   An https connection is trusted because its leaf key is one the policy named,
@@ -43,16 +53,26 @@
 
   ## What this does not do
 
-  It does not write: `PUT /ipfs/:cid` needs
-  a CACAO-authenticated caller and no credential path exists here. And it is the
-  *hosted* profile only; the bare-metal profile still has no TLS or HTTP client
-  (ADR-0041 gap ledger, steps 1–5)."
+  It is the *hosted* profile only; the bare-metal profile still has no TLS or
+  HTTP client (ADR-0041 gap ledger, steps 1–5).
+
+  `write-block!` performs the `PUT` that `grant.cloud/plan-block-write`
+  plans, and the credential it needs is a **bearer token**, not a CACAO:
+  kotobase's block plane admits `Authorization: Bearer <token>` against a
+  static operator secret, while CACAO belongs to its tenant datom plane. This
+  machine holds no such token, and the live endpoint answers **401** without
+  one — measured 2026-08-21. The mechanism exists and is proved against a
+  loopback server in both directions; the live write is unauthorised, which is
+  a different sentence from unimplemented."
   (:require [grant.cloud :as cloud]
+            [grant.json :as json]
             [clojure.string :as str])
   (:import [java.io InputStream]
            [java.net URI]
            [java.net.http HttpClient HttpClient$Redirect HttpClient$Version
-                          HttpRequest HttpResponse$BodyHandlers]
+                          HttpRequest HttpRequest$BodyPublisher
+                          HttpRequest$BodyPublishers HttpRequest$Builder
+                          HttpResponse$BodyHandlers]
            [java.security MessageDigest]
            [java.security.cert CertificateException X509Certificate]
            [java.time Duration]
@@ -74,6 +94,7 @@
   is refused mid-flight surfaces as an I/O failure and would otherwise be
   reported as one."
   #{:plan-not-allowed :net-denied :response-too-large :request-failed
+    :method-unsupported :body-unencodable
     :no-trust-anchors :peer-not-pinned :peer-unmeasured})
 
 (defn spki-sha256-hex
@@ -162,6 +183,12 @@
                        :bytes read
                        :byte-count (alength ^bytes read)
                        :digest-hex (sha256-hex read)}
+                ;; Only when the caller asked. A block is bytes and decoding
+                ;; four megabytes of them as text to satisfy a key nobody reads
+                ;; is work this machine does not need to do.
+                (:decode-body? opts)
+                (assoc :body (String. ^bytes read "UTF-8"))
+
                 (:aiueos.cloud/peer-spki @verdict)
                 (assoc :peer-spki (:aiueos.cloud/peer-spki @verdict)))))))
       (catch Exception e
@@ -173,6 +200,58 @@
             {:aiueos.provider.cloud/error :request-failed
              :exception (.getSimpleName (class e))
              :message (.getMessage e)}))))))
+
+(defn- body-publisher
+  "The publisher for this request's body, or an error map.
+
+  `:body-bytes` in OPTS is the caller's own bytes and is sent verbatim -- a
+  block write must not be reshaped by a serialiser. Otherwise a plan's `:body`
+  is data, and `grant.json` turns it into bytes; a value it refuses to encode
+  is a fault, because a request whose body could not be built was never made."
+  [request opts]
+  (cond
+    (contains? opts :body-bytes)
+    {:publisher (HttpRequest$BodyPublishers/ofByteArray ^bytes (:body-bytes opts))
+     :has-body? true}
+
+    (contains? request :body)
+    (let [encoded (json/write-json (:body request))]
+      (if (json/failed? encoded)
+        {:error (json/error-of encoded)}
+        {:publisher (HttpRequest$BodyPublishers/ofString ^String encoded)
+         :has-body? true}))
+
+    :else {:publisher (HttpRequest$BodyPublishers/noBody) :has-body? false}))
+
+(defn- build-request
+  "An `HttpRequest` for REQUEST, or an error map.
+
+  The method comes from the plan, so a plan this namespace has no verb for is
+  a fault rather than a silent `GET` -- a write quietly performed as a read
+  would report a 200 and store nothing."
+  [request opts]
+  (let [body (body-publisher request opts)]
+    (if (:error body)
+      {:error :body-unencodable :detail (:error body)}
+      (let [^HttpRequest$BodyPublisher publisher (:publisher body)
+            base (-> (HttpRequest/newBuilder)
+                     (.uri (URI/create (:url request)))
+                     (.timeout (Duration/ofMillis (limit opts :request-timeout-ms))))
+            headers (:headers opts)
+            with-type (if (and (:has-body? body)
+                               (not (some #(= "content-type" (str/lower-case (str %)))
+                                          (keys headers))))
+                        (.header ^HttpRequest$Builder base "content-type" "application/json")
+                        base)
+            ^HttpRequest$Builder built
+            (reduce (fn [^HttpRequest$Builder acc [k v]] (.header acc (str k) (str v)))
+                    with-type
+                    headers)]
+        (case (:method request)
+          :get {:request (.build (.GET built))}
+          :post {:request (.build (.POST built publisher))}
+          :put {:request (.build (.PUT built publisher))}
+          {:error :method-unsupported :detail (:method request)})))))
 
 (defn perform!
   "Execute an allowed PLAN and report what arrived.
@@ -196,11 +275,11 @@
               outcome (cloud/perform
                        policy plan
                        (fn [request]
-                         (let [builder (-> (HttpRequest/newBuilder)
-                                           (.uri (URI/create (:url request)))
-                                           (.timeout (Duration/ofMillis (limit opts :request-timeout-ms)))
-                                           (.GET))]
-                           (send-request http (.build builder) opts verdict))))]
+                         (let [built (build-request request opts)]
+                           (if-let [error (:error built)]
+                             {:aiueos.provider.cloud/error error
+                              :detail (:detail built)}
+                             (send-request http (:request built) opts verdict)))))]
           (if (:ok? outcome)
             (:aiueos.net/result outcome)
             {:aiueos.provider.cloud/error :net-denied
@@ -225,7 +304,98 @@
            (let [verdict (cloud/admit-block plan arrived)]
              (cond-> verdict
                (cloud/allowed? verdict)
-               (assoc :aiueos.provider.cloud/bytes (:bytes arrived)
-                      :aiueos.provider.cloud/byte-count (:byte-count arrived))
+               (assoc :aiueos.provider.cloud/bytes (:bytes arrived))
+
+               ;; What arrived, on the refusals too. A receipt that shows the
+               ;; status and the byte count only when the answer was yes makes
+               ;; a refusal harder to read than a pass, which is backwards.
+               (:status arrived) (assoc :aiueos.provider.cloud/status (:status arrived))
+               (:byte-count arrived)
+               (assoc :aiueos.provider.cloud/byte-count (:byte-count arrived))
                (:peer-spki arrived)
                (assoc :aiueos.provider.cloud/peer-spki (:peer-spki arrived))))))))))
+
+;; ── the two clients ────────────────────────────────────────────────────────
+;;
+;; Each of these is the same three steps: `grant.cloud` plans, this namespace
+;; performs, `grant.cloud` judges. The provider adds nothing to the verdict
+;; except what it *observed* -- which peer key it saw, what status arrived, how
+;; many bytes -- so a receipt can report the measurement next to the decision
+;; without either one having been derived from the other.
+
+(defn- judged
+  "Perform PLAN and hand what arrived to ADMIT-FN, carrying this namespace's
+  own observations onto the verdict.
+
+  A fault reaches ADMIT-FN as a response with **no status**, which every
+  admission in `grant.cloud` refuses as `:response-unmeasured`. That is the
+  point: a request that could not complete must not arrive looking like one
+  that completed and said nothing."
+  [policy plan opts admit-fn]
+  (if-not (cloud/allowed? plan)
+    plan
+    (let [arrived (perform! policy plan opts)
+          verdict (admit-fn arrived)]
+      (cond-> verdict
+        (:aiueos.provider.cloud/error arrived)
+        (assoc :aiueos.provider.cloud/error (:aiueos.provider.cloud/error arrived)
+               :aiueos.provider.cloud/message (:message arrived))
+
+        (:status arrived) (assoc :aiueos.provider.cloud/status (:status arrived))
+        (:byte-count arrived) (assoc :aiueos.provider.cloud/byte-count (:byte-count arrived))
+        (:peer-spki arrived) (assoc :aiueos.provider.cloud/peer-spki (:peer-spki arrived))))))
+
+(defn resolve-model!
+  "Resolve the model alias and return `grant.cloud/admit-resolution`'s verdict.
+
+  What is admitted is an *endpoint*, not a model id. The alias is the thing
+  this machine keeps saying; the id behind it is the fleet's business
+  (root ADR-2607173100)."
+  ([policy] (resolve-model! policy {}))
+  ([policy opts]
+   (let [plan (cloud/plan-model-resolve policy)]
+     (judged policy plan (assoc opts :decode-body? true)
+             #(cloud/admit-resolution policy plan %)))))
+
+(defn ready!
+  "Ask the inference authority whether it is answering. Liveness, not
+  inference: the verdict carries `:aiueos.cloud/live?` and never a completion."
+  ([policy] (ready! policy {}))
+  ([policy opts]
+   (let [plan (cloud/plan-liveness policy)]
+     (judged policy plan opts #(cloud/admit-liveness plan %)))))
+
+(defn infer!
+  "POST an inference request for an already-admitted MODEL.
+
+  OPTS is `grant.cloud/plan-inference`'s (`:messages`, `:max-tokens`,
+  `:model-override`) plus this namespace's (`:headers` for the credential).
+  The credential is the caller's to supply and is never defaulted here."
+  ([policy model opts] (infer! policy model opts opts))
+  ([policy model plan-opts opts]
+   (let [plan (cloud/plan-inference policy model plan-opts)]
+     (judged policy plan (assoc opts :decode-body? true)
+             #(cloud/admit-inference plan %)))))
+
+(defn write-block!
+  "Write BYTES to the storage authority under CID.
+
+  Two decisions, in this order and for a reason. `admit-write-payload` judges
+  the bytes *before* the socket: a CID is a claim about bytes and this request
+  is the machine making that claim, so bytes that hash to something else never
+  leave. Only then does `admit-write` judge what the authority answered.
+
+  The credential is `Authorization: Bearer <token>` and arrives in
+  `(:headers opts)`. This namespace mints nothing and defaults nothing; with no
+  header the live authority answers 401, which `admit-write` reports as
+  `:write-unauthorized`."
+  ([policy cid bytes] (write-block! policy cid bytes {}))
+  ([policy cid bytes opts]
+   (let [plan (cloud/plan-block-write policy cid)]
+     (if-not (cloud/allowed? plan)
+       plan
+       (let [payload (cloud/admit-write-payload plan (sha256-hex bytes))]
+         (if-not (cloud/allowed? payload)
+           payload
+           (judged policy plan (assoc opts :body-bytes bytes)
+                   #(cloud/admit-write plan %))))))))

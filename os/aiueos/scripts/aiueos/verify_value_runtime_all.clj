@@ -26,7 +26,7 @@
   no-op this receipt exists to expose):
 
     clojure -Sdeps '{:paths [\"os/aiueos/scripts\"]
-                     :deps {io.github.kotoba-lang/compiler
+                     :deps {io.github.kotoba-lang/amu
                             {:git/url \"https://github.com/kotoba-lang/amu.git\"
                              :git/sha \"<the sha in deps.edn>\"}}}' \\
       -M -m aiueos.verify-value-runtime-all"
@@ -88,7 +88,7 @@
   with no closure, which is the shape of a claim that cannot be rechecked."
   []
   (get-in (edn/read-string (slurp "deps.edn"))
-          [:aliases :test :extra-deps 'io.github.kotoba-lang/compiler :git/sha]))
+          [:aliases :test :extra-deps 'io.github.kotoba-lang/amu :git/sha]))
 
 (def causes
   "Failure classes, matched on the verifier's own message. Derived, not

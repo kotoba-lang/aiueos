@@ -13,7 +13,7 @@
 ;; entrypoints here: a record that lists namespaces this repository no longer
 ;; contains would pass nothing and claim everything.
 {:adoption/version 2 :consumer/id :aiueos
- :security/git-sha "49fc4ce359752e9fe6e547e9071b5b9b40da937a"
+ :security/git-sha "74235d1cdf8034334f01dcb2f6faaff0c731146e"
  :required-control-namespaces [kotoba.security.supply-chain]
  :security-sensitive-entrypoints
  {aiueos.reproducibility [kotoba.security.supply-chain]}
