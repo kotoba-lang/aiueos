@@ -4,28 +4,99 @@
 
 # aiueos
 
-AI-agent-native capability OS built with Kotoba. This repository is the
-canonical authority for the complete OS: component semantics and policy,
-native loader/kernel/drivers, bootable images, and machine evidence.
+**An operating system.** Same category as Linux, Windows and macOS: it owns
+firmware handoff, page tables, interrupts, scheduling, address spaces,
+syscalls and device drivers, and it boots on real hardware architecture from
+a signed image it builds itself. It is written in Kotoba, and the code that
+makes decisions is compiled from Kotoba source rather than hand-written in C.
 
-`kotoba-lang/kotoba` and `compiler` produce the guest artifact;
-[`kotoba-lang/abi`](https://github.com/kotoba-lang/abi) defines the shared WIT
-and admission contract; `kototama` executes Components; and `murakumo` places
-them in a fleet. Aiueos is the authority in that arrangement: it decides
-grants and supplies the named providers, but does not own another system's
-compiler or fleet scheduler.
+**It does not decide who may do what.** That moved to
+[`kotoba-lang/grant`](https://github.com/kotoba-lang/grant) on 2026-08-21
+(root ADR-2608219500). Aiueos asks; grant answers; aiueos enforces the answer.
+Before that split this repository named an authority and a machine at once,
+and the two were nearly the same size.
 
-`aiueos` no longer owns a Rust runtime crate — Chicory (a pure-JVM Wasm
-runtime) lets the decision *and* Wasm-execution layers both live here in
-CLJC. Linux-hosted PID-1/initramfs planning, QEMU launch planning, portable
-virtio protocol logic, and an experimental JVM-FFM VFIO provider live here.
-The VFIO provider is not yet wired into the component host-import quartet, so
-component-visible raw MMIO/DMA/PCI/IRQ remains stubbed in that hosted profile.
-The `os/aiueos` bare-metal profile owns the native implementation. Rust, JavaScript,
-Python, Svelte, or host-specific code may consume this contract as
-adapters/providers elsewhere (e.g. `kotoba-lang/kototama`'s
-`kototama.aiueos-adapter`), but they are not authority here — this repo
-decides, it does not host other systems' execution.
+## Where it actually is
+
+An operating system is a claim with a lot of surface, so here is the measured
+state rather than the ambition. The production profile is **C-free bare
+metal**: the loader and kernel are compiler-emitted, and an effect counts as
+native only when its artifact receipt has empty `c_sources`,
+`foreign_objects`, `imports` and `dynamic_dependencies` (ADR-0013).
+
+| | Status |
+|---|---|
+| Firmware to ring-0 Kotoba | **working** — compiler-emitted PE32+ `BOOTX64.EFI` and ELF64 `KERNEL.ELF`, bounded segment admission, final UEFI memory map, `ExitBootServices`, CR3 and port-I/O evidence |
+| CPU and memory | **partial** — a bounded six-page C-free slice: Kotoba-derived physical allocator, a 512-entry first-GiB identity map loaded into CR3, W^X and guard pages, a Kotoba-built vector-14 IDT and real CPU fault receipts (ADR-0039/0040). A general allocator, dynamic mapping, ACPI, APIC, IRQ dispatch and SMP are not C-free yet |
+| Kernel execution | **not yet** — context switch, preemptive scheduler, ring 3, syscall entry/exit, capability handle table all still reference-profile only |
+| Hardware | **not yet** — PCI, DMA, IOMMU, MSI-X, virtio, NVMe, USB HID are reference C with QEMU evidence, not compiler-emitted |
+| Boot and release | **working** — deterministic GPT disk and El Torito ISO from one builder, byte-identical recovery ESP with proven firmware fallback, update and rollback receipts, RSA-2048 release-signature verification, durable crash receipts, initramfs, Multiboot2/GRUB |
+| Desktop | **not yet** — one virtio-gpu scanout read against the OVMF GOP aperture. No compositor, no shell |
+
+**Every gate above is QEMU/OVMF. There is no real-machine qualification yet**,
+and parity with Linux, Windows or macOS is not claimed until there is
+(ADR-0013).
+
+## What it is not
+
+- **Not a desktop, not a phone, not an embedded target.** The only ISA with a
+  bare-metal kernel is x86-64. The AArch64 artifacts under `resources/hvt/`
+  are hypervisor-guest spikes, not a second port. There is no Android, iOS,
+  Raspberry Pi or IoT profile, and nothing here claims one.
+- **Not POSIX.** The first syscall ABI is capability-handle based. POSIX is an
+  optional service, not the kernel authority (ADR-0013).
+- **Not the authority.** `grant` decides admission, policy, signing, surfaces
+  and profiles. What is here is the machine that carries out the decision --
+  and the last place that could ignore it, which is why so much of it is still
+  in the TCB inventory.
+
+## The C boundary, stated as it is
+
+`os/aiueos/kernel/` carries about 7,000 lines of C and assembly. That is not a
+crt0 shim; it is a real mechanism kernel, and ADR-0015 says so rather than
+repeating the older "minimal entry shim" story.
+
+The reviewable property is **decision-free C**: C and assembly own registers,
+MMIO, GDT/IDT, paging primitives, APIC/SMP bring-up, virtqueue plumbing and
+context switch. Every *decision* -- SHA-256 and RSA-2048 verification,
+ELF/catalog/journal admission, capability encode/admit/derive/revoke planning,
+scheduler dispatch planning, pointer/length window admission, syscall-range
+validation -- is compiler-emitted Kotoba. The C substrate contains no digest,
+signature, admission or capability logic.
+
+That reference kernel is an oracle and a porting specification. It is **not**
+cumulative evidence that the C-free kernel implements the same mechanism;
+only the C-free ledger in ADR-0013 is.
+
+## Runtime dependencies
+
+No Rust: the runtime crate and `bin/aiueos.rs` were retired and reimplemented
+in CLJC, and `safe.rs` was dropped as redundant. There are zero `.rs` files
+here.
+
+No JVM **in what boots**: the C-free rule forbids libc, a CRT, a JVM, Linux
+and any hosted supervisor in the bare-metal profile, and the artifact receipt
+is what enforces it.
+
+A JVM **in the hosted profiles and in the toolchain**: `aiueos.execute` hosts
+compiled Kotoba Wasm through Chicory and is JVM-only, as is
+`aiueos.launcher`. Fuel metering rides Chicory's `withUnsafeExecutionListener`
+-- documented unsafe, experimental, interpreter-path-only -- so treat it as a
+working prototype on an unofficial API rather than a guarantee. Memory limits
+use a stable API.
+
+## Position in the stack
+
+```text
+kotoba semantics -> amu -> kotoba-native freestanding ABI -> aiueos boot images
+                                                     grant -> aiueos (decides)
+                                                     aiueos -> kototama (executes)
+```
+
+`kototama` executes Components and `murakumo` places them in a fleet. Aiueos
+supplies the named providers and the machine underneath them; it does not own
+another system's compiler or fleet scheduler, and since the split it does not
+own the grant vocabulary either.
 
 ## Native dependency and evidence boundary
 
@@ -67,37 +138,25 @@ compiler-emitted Kotoba — is stated honestly, with measured line counts, in
 [`90-docs/adr/0015-stack-topology-and-honest-c-boundary.md`](90-docs/adr/0015-stack-topology-and-honest-c-boundary.md)
 (root authority: `com-junkawasaki/root` ADR-2607241100).
 
-## Contract Data
+## What is here
 
-- `src/aiueos/contract.cljc` validates the pure aiueos data contracts.
-- `src/aiueos/graph.cljc` derives capability providers, boot order (`boot-order`,
-  and `priority-boot-order` — same order with same-depth components sorted by
-  `:aiueos/schedule` priority, ADR-0006), and dependency depth.
-- `src/aiueos/policy.cljc` resolves grants, surface policy, and component admission.
-- `src/aiueos/authority.cljc` is the pure Principal–Intent–Decision kernel. It
-  distinguishes verified principal, execution actor, effect, serializable grant,
-  runtime capability specification, and receipt; returns `:allow`, `:deny`, or
-  `:challenge`; and rejects unknown fields fail-closed. `broker/decide-authority`
-  first runs the existing code/capability admission gate, derives effects from the
-  admitted manifest, and only then invokes this kernel. Credential formats remain
-  edge adapters and raw credentials/secrets have no slot in the contract.
-- `src/aiueos/surface.cljc` owns the known deployment surface/provider registry.
-- `src/aiueos/manifest.cljc` normalizes a manifest's trust/limits/quota/schedule/topic defaults.
-- `src/aiueos/signing.cljc` verifies ed25519 manifest signatures (JDK-native, no external crypto dep).
-- `src/aiueos/audit.cljc` builds and (JVM-)appends/reads append-only audit log entries.
-- `src/aiueos/topic.cljc` is the pure, immutable in-process pub/sub topic bus.
-- `src/aiueos/broker.cljc` composes the above into grant/deny decisions, the ADR-0004
-  admission gate, and `:aiueos/run-plan`/`:aiueos/run-receipt` shaping.
-- `src/aiueos/cli.cljc` is the CLJC authority for the aiueos CLI command contract
-  (mirrors `kotoba-lang/kotoba-lang`'s `kotoba.cli` pattern).
-- `src/aiueos/decide.cljc` is the decision subprocess bridge (ADR-2607022700):
-  the `decide` subprocess reads EDN requests on stdin, dispatches through
-  `aiueos.cli`, writes EDN policy decisions on stdout — for host adapters that
-  are not JVM processes. It was spelled `bb decide`; see Verify below for why
-  that no longer resolves.
+The decision namespaces that used to be listed under this heading moved to
+[`kotoba-lang/grant`](https://github.com/kotoba-lang/grant) on 2026-08-21 --
+`contract`, `graph`, `policy`, `authority`, `surface`, `manifest`, `signing`,
+`audit`, `broker`, `cli`, `decide` and fourteen more. They are reached here as
+`grant.*` and pinned by git SHA in `deps.edn`; grant's README is where they are
+documented now.
+
+`aiueos.topic` stayed: the in-process pub/sub bus is a substrate, not a
+decision. Which topics a component may publish to is decided in
+`grant.manifest`; carrying the messages is this repository's job.
+
+What is left here executes, boots and drives hardware.
+
+
 - `src/aiueos/execute.cljc` **actually executes** a compiled `.kotoba` Wasm
   component (ADR-2607022900), via [Chicory](https://github.com/dylibso/chicory).
-  Verifies through `aiueos.broker/verify-one` first and refuses to run anything
+  Verifies through `grant.broker/verify-one` first and refuses to run anything
   denied; the 7 non-hardware kernel capabilities (`log-write`/`clock-monotonic`/
   `random-bytes`/`topic-*`) get real Clojure-backed host functions, the
   device-access quartet (`pci-config`/`dma-map`/`irq-subscribe`/`mmio-map`) stays
@@ -121,31 +180,33 @@ compiler-emitted Kotoba — is stated honestly, with measured line counts, in
   `memory.grow` can reach; unlike quota/fuel/topic-forbidden, this does NOT
   abort the run — `memory.grow` past the cap returns Wasm's own `-1` failure
   sentinel to the guest. Also enforces `:aiueos/publishes`/`:aiueos/subscribes`
-  (the topic-id allow-set `aiueos.manifest/normalize` derives) — a granted
+  (the topic-id allow-set `grant.manifest/normalize` derives) — a granted
   component's `topic_publish`/`topic_poll`/`topic_take`/`topic_count` calls are
   restricted to its declared topic ids (`nil` = unrestricted). Every result
-  also carries an ADDITIVE `:aiueos/run-receipt` (`aiueos.broker/run-receipt`,
+  also carries an ADDITIVE `:aiueos/run-receipt` (`grant.broker/run-receipt`,
   ADR-2607022900 follow-up 8): `:succeeded`/`:failed`/`:denied` status,
   `:started-at`/`:finished-at` (epoch ms), and the same audit events.
   **JVM-only** — needs `clojure -M:test` (Chicory was never in babashka's class
   allowlist, and babashka has since been retired outright).
 - `src/aiueos/launcher.cljc` is a real, runnable CLI: the retired Rust
   `bin/aiueos.rs`'s argv-parsing/file-I/O role, reimplemented as JVM Clojure.
-  Ties `aiueos.cli` + `aiueos.manifest` + `aiueos.policy`/`aiueos.broker` +
+  Ties `grant.cli` + `grant.manifest` + `grant.policy`/`grant.broker` +
   `aiueos.execute`/`aiueos.audit` together. `verify`/`run`/`admit`/`inspect`/
   `surface`/`audit`/`up` are wired today (`run`/`admit` actually execute a
   granted component's declared `:aiueos/wasm`, not just decide; `up` boots the
   components due at a given ADR-0006 cycle (`--cycle N`, default 0) in
-  `aiueos.graph/priority-boot-order`, stopping at the first
+  `grant.graph/priority-boot-order`, stopping at the first
   denied/quota-or-fuel-exceeded DUE component). Try it: `clojure -M -m
   aiueos.launcher up <system>.edn --cycle 3 --edn`. **`:aiueos/schedule`'s
-  `:deadline-cycles` is NOT enforced** — see `aiueos.manifest/due-this-cycle?`'s
+  `:deadline-cycles` is NOT enforced** — see `grant.manifest/due-this-cycle?`'s
   docstring for why. **JVM-only**, same reason as `aiueos.execute`. Not wired:
   four adapter-only commands (`sign`/`check`/`compile`/`hash`). `image` and
   `vm` are wired for the experimental Linux-hosted PID-1 profile (ADR-0011).
-- `resources/aiueos/component_boundary.edn` owns the component imports/exports.
-- `resources/aiueos/policy_contract.edn` / `broker_contract.edn` own the policy/broker decision tables.
-- `resources/aiueos/cli.edn` owns the CLI command/option contract.
+- The contract EDN under `resources/aiueos/` moved to grant with the code that
+  reads it. The keys did not change: `:aiueos.policy/*`, `:aiueos.broker/*` and
+  `:aiueos/*` are on the wire, read by `kototama`'s adapter and by stored
+  decisions, so only the namespaces were renamed. They still load from the
+  same classpath paths, now shipped by the grant dependency.
 - `test/aiueos/*_test.cljc` checks every CLJC validator/reasoner/contract above.
 
 The one exception worth naming on the language side: the retired `safe.rs`
@@ -183,7 +244,7 @@ recovered forms are in `scripts/tasks-complex.edn`.
   except `aiueos.execute-test`. `clojure -M:test` above still runs those
   assertions; what is gone is the ability to run them *without* the JVM.
 - **`bb decide`** — the decision subprocess described above. `aiueos.decide` and
-  `aiueos.cli` are unchanged, so a host adapter can still reach the same
+  `grant.cli` are unchanged, so a host adapter can still reach the same
   contract, but there is no packaged task entrypoint for it today.
 
 See `90-docs/adr/0013-native-os-ownership-and-boot.md` for the repository
