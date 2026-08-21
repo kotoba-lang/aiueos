@@ -2,14 +2,14 @@
   "The chain, end to end and with real bytes: an anchor set staged into an
   image, its digest named by a release manifest, the staged file read back and
   re-measured, admitted as this device's first set, and then used by
-  `aiueos.cloud/admit-peer` to accept one key and refuse another.
+  `grant.cloud/admit-peer` to accept one key and refuse another.
 
   Every earlier test in this series checked one link. This one checks that the
   links are the same links."
-  (:require [aiueos.anchors :as anchors]
-            [aiueos.cloud :as cloud]
+  (:require [grant.anchors :as anchors]
+            [grant.cloud :as cloud]
             [aiueos.image :as image]
-            [aiueos.key-lifecycle :as kl]
+            [grant.key-lifecycle :as kl]
             [clojure.edn :as edn]
             [clojure.java.io :as io]
             [clojure.java.shell :as shell]

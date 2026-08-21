@@ -1,5 +1,5 @@
 (ns aiueos.sealed-audit-test
-  (:require [aiueos.audit :as audit]
+  (:require [grant.audit :as audit]
             [aiueos.sealed-audit :as sealed]
             [clojure.edn :as edn]
             [clojure.java.io :as io]

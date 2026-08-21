@@ -5,7 +5,7 @@
   set in its policy** and nothing else: the same certificate that the JDK's
   default trust store rejects is accepted when its key is pinned, and rejected
   when it is not."
-  (:require [aiueos.cloud :as cloud]
+  (:require [grant.cloud :as cloud]
             [aiueos.provider.cloud :as provider]
             [clojure.java.io :as io]
             [clojure.test :refer [deftest is]])

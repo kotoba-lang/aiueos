@@ -21,13 +21,13 @@
 
 {:build-identity/version 1
  :build-identity/status :adopted
- :build-identity/as-of "2026-08-19"
+ :build-identity/as-of "2026-08-21"
  ;; Paired with :build-identity/content-digest (ADR-0070), for the reason
  ;; ADR-0067 gave the inventory: a review date nothing checks and nobody reads
  ;; is decoration, and this document's whole claim is that its properties are
  ;; maintained on purpose rather than surviving by accident. The digest covers
  ;; every other field, so a property cannot change without this date changing.
- :build-identity/content-digest "26520e8d7319b6ed1a014f0d074a22cb7ee9241b35ef46a79ea65cc8a720355e"
+ :build-identity/content-digest "953f7d7c95af1a3a1a6b5b0632f82af00e3a99d652c6de13e8d51c5dff8f0742"
  :build-identity/authority
  "com-junkawasaki/root 90-docs/adr/2608012050-nix-shaped-supply-chain-properties-aiueos.edn"
 
@@ -71,23 +71,39 @@
    "Nothing is admitted by name. A component is admitted by the digest of its
     bytes bound to a signed identity, and a release image by a verified
     signature over its digest."
-   :mechanism ["src/aiueos/manifest.cljc"
-               "src/aiueos/signing.cljc"
-               "src/aiueos/graph.cljc"
-               "os/aiueos/scripts/verify-release-signature.py"]
-   :gate ["test/aiueos/manifest_test.cljc"
-          "test/aiueos/signing_test.cljc"
-          "test/aiueos/graph_test.cljc"]}
+   :mechanism ["os/aiueos/scripts/verify-release-signature.py"]
+   ;; Component-side digest gating moved to kotoba-lang/grant on 2026-08-21
+   ;; (root ADR-2608219500). The property did not weaken and the mechanism did
+   ;; not shrink; it is content-addressed one git SHA at a time now instead of
+   ;; one file digest at a time, and `aiueos.tcb` requires that SHA to be
+   ;; pinned in :tcb/external before it will accept this entry.
+   :mechanism-external [{:coordinate "io.github.kotoba-lang/grant"
+                         :paths ["src/grant/manifest.cljc"
+                                 "src/grant/signing.cljc"
+                                 "src/grant/graph.cljc"]}]
+   :gate ["test/aiueos/manifest_test.cljc"]
+   ;; Two of the three gates moved with their mechanism and run in grant's
+   ;; suite, not this one. `manifest_test` stayed because it reaches into
+   ;; `aiueos.execute`. Recorded rather than silently dropped: this repository
+   ;; can no longer run them, and a gate list that did not say so would read
+   ;; as if it still could.
+   :assurance-gaps [:signing-and-graph-gates-run-in-grant]}
 
   {:property :declarative-configuration-deny-by-default
    :statement
    "Authority is a declared, reviewable value resolved by policy, and anything
     not granted is denied. There is no ambient authority to configure away."
-   :mechanism ["src/aiueos/contract.cljc"
-               "src/aiueos/policy.cljc"
-               "src/aiueos/broker.cljc"]
-   :gate ["test/aiueos/policy_test.cljc"
-          "test/aiueos/broker_test.cljc"]}
+   ;; Wholly in grant since 2026-08-21 (root ADR-2608219500). This is the
+   ;; property the split was about: deny-by-default is decided, and deciding
+   ;; is what left. Nothing in this repository implements it any more, so
+   ;; there is no local path to list -- only the pinned coordinate.
+   :mechanism []
+   :mechanism-external [{:coordinate "io.github.kotoba-lang/grant"
+                         :paths ["src/grant/contract.cljc"
+                                 "src/grant/policy.cljc"
+                                 "src/grant/broker.cljc"]}]
+   :gate []
+   :assurance-gaps [:mechanism-and-gates-run-entirely-in-grant]}
 
   {:property :atomic-update-and-rollback
    :statement

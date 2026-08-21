@@ -1,5 +1,5 @@
 (ns aiueos.manifest-test
-  (:require [aiueos.manifest :as manifest]
+  (:require [grant.manifest :as manifest]
             [clojure.test :refer [deftest is testing]]))
 
 ;; `cljs.core.ExceptionInfo` does not resolve under SCI (nbb), so a
@@ -263,7 +263,7 @@
 ;; -----------------------------------------------------------------------
 ;; verify-wasm-integrity (ADR-0003's artifact-integrity enforcement,
 ;; security fix 2607131500 -- pure comparison; `aiueos.execute`/
-;; `aiueos.signing/sha256-hex` supply the actual host-computed hash)
+;; `grant.signing/sha256-hex` supply the actual host-computed hash)
 ;; -----------------------------------------------------------------------
 
 (deftest verify-wasm-integrity-nil-without-a-declared-hash

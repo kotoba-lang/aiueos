@@ -1,5 +1,5 @@
 (ns aiueos.reproducibility-test
-  (:require [aiueos.deployment-profile :as profile]
+  (:require [grant.deployment-profile :as profile]
             [aiueos.reproducibility :as repro]
             [aiueos.sbom :as sbom]
             [aiueos.tcb :as tcb]

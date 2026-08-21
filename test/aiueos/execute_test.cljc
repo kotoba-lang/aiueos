@@ -1,15 +1,15 @@
 (ns aiueos.execute-test
   "Real end-to-end proof for ADR-2607022900: a .kotoba component, compiled
   to a genuine Wasm binary via kotoba-clj, verified through
-  aiueos.broker/verify-one, and actually EXECUTED on Chicory (no Rust,
+  grant.broker/verify-one, and actually EXECUTED on Chicory (no Rust,
   no wasmtime, no subprocess) -- closing the compile -> check -> emit ->
   verify -> RUN loop entirely on the JVM."
-  (:require [aiueos.contract :as contract]
+  (:require [grant.contract :as contract]
             [aiueos.execute :as execute]
-            [aiueos.graph :as graph]
-            [aiueos.manifest :as manifest]
-            [aiueos.policy :as policy]
-            #?(:clj [aiueos.signing :as signing])
+            [grant.graph :as graph]
+            [grant.manifest :as manifest]
+            [grant.policy :as policy]
+            #?(:clj [grant.signing :as signing])
             [aiueos.topic :as topic]
             [clojure.test :refer [deftest is testing]]
             #?(:clj [clojure.string :as str])))
@@ -167,13 +167,13 @@
 #?(:clj
    (def device-access-execute-demos
      "pci/config, dma/map, irq/subscribe, mmio/map are all default kernel
-     caps (aiueos.policy/default-kernel-caps) -- no explicit grant needed,
+     caps (grant.policy/default-kernel-caps) -- no explicit grant needed,
      same as topic/publish above. Each stub always returns 0 (see
      aiueos.execute/device-access-stub); this proves that return value
      really comes back through a live Chicory call, not just a static
      assumption.
 
-     Each ALSO now requires + is granted :iommu (aiueos.policy's
+     Each ALSO now requires + is granted :iommu (grant.policy's
      `dma-family-imports` gate, security fix 2607131500: importing any of
      this quartet triggers the DMA/IOMMU gate regardless of whether
      :aiueos/effects #{:dma} is separately declared -- these demos
@@ -305,7 +305,7 @@
          (is (not (contains? result :aiueos.execute/fuel-exceeded)))))))
 
 ;; ───────── topic-id allow-set enforcement (:aiueos/publishes /
-;; :aiueos/subscribes, derived by aiueos.manifest but previously never
+;; :aiueos/subscribes, derived by grant.manifest but previously never
 ;; enforced anywhere -- a real, silent capability-gating gap) ─────────
 
 #?(:clj
@@ -395,7 +395,7 @@
 
 ;; ───────── :aiueos/run-receipt (ADR-2607022900 follow-up 8): an ADDITIVE
 ;; field alongside the pre-existing :aiueos.execute/* shape -- wires
-;; aiueos.broker's pre-existing, tested run-receipt contract into the real
+;; grant.broker's pre-existing, tested run-receipt contract into the real
 ;; execution path for the first time ─────────
 
 #?(:clj
@@ -448,7 +448,7 @@
            result (execute/execute m empty-graph policy* topic-publish-wasm)
            receipt (:aiueos/run-receipt result)]
        (is (:valid? (contract/validate-run-receipt receipt))
-           "the receipt execute produces really satisfies aiueos.contract's own shape validator"))))
+           "the receipt execute produces really satisfies grant.contract's own shape validator"))))
 
 ;; ───────── security fix (2607131500): `instantiate` links host functions
 ;; ONLY for the component's actually-granted capability set, not
@@ -606,7 +606,7 @@
          (is (= [:artifact-mismatch] (mapv :aiueos/kind (:aiueos/violations result))))
          (is (not (contains? result :aiueos.execute/result)))
          (is (not (contains? result :aiueos/capabilities))
-             "never reached aiueos.broker/verify-one -- no capability decision was computed")
+             "never reached grant.broker/verify-one -- no capability decision was computed")
          (let [receipt (:aiueos/run-receipt result)]
            (is (= :denied (:aiueos/status receipt))))))))
 

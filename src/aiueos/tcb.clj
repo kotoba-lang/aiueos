@@ -14,7 +14,7 @@
   dependency's is its commit id (git's own content address for the tree). An
   entry that is neither content-addressable nor carrying an explicit
   `:assurance-gap` is an error — an unpinned dependency may not pass silently."
-  (:require [aiueos.key-lifecycle :as kl]
+  (:require [grant.key-lifecycle :as kl]
             [clojure.edn :as edn]
             [clojure.java.io :as io]
             [clojure.string :as str])
@@ -290,12 +290,40 @@
 
 (def build-identity-version 1)
 
-(defn- property-errors [tcb-paths {:keys [property statement mechanism gate assurance-gaps]}]
+(defn- external-mechanism-errors
+  "A property whose mechanism moved to another repository still has to name it.
+
+  Deleting the moved paths from `:mechanism` would leave the property claiming
+  to be adopted with a shorter list that passes -- a check that can no longer
+  reach the code returning the same value as one that reached it and was
+  satisfied. So `:mechanism-external` is required to name a coordinate that is
+  actually pinned in `:tcb/external`, which means the mechanism is still
+  content-addressed, just at a different granularity: one git SHA instead of
+  one digest per file.
+
+  An unpinned coordinate here is an error rather than a shrug, because the
+  whole value of the key is that it cannot be used to make a mechanism
+  disappear."
+  [external-coordinates property entries]
+  (concat
+   (for [{:keys [coordinate paths]} entries
+         :when (not (contains? external-coordinates coordinate))]
+     {:kind :property-external-mechanism-unpinned :property property
+      :coordinate coordinate})
+   (for [{:keys [coordinate paths]} entries
+         :when (empty? paths)]
+     {:kind :property-external-mechanism-without-paths :property property
+      :coordinate coordinate})))
+
+(defn- property-errors [tcb-paths external-coordinates
+                        {:keys [property statement mechanism gate assurance-gaps
+                                mechanism-external]}]
   (cond
     (not (keyword? property)) [{:kind :property-missing-name}]
     (not (and (string? statement) (not (str/blank? statement))))
     [{:kind :property-missing-statement :property property}]
-    (empty? mechanism) [{:kind :property-without-mechanism :property property}]
+    (and (empty? mechanism) (empty? mechanism-external))
+    [{:kind :property-without-mechanism :property property}]
     (and (empty? gate) (empty? assurance-gaps))
     ;; The whole point: an unenforced property must say so rather than read as
     ;; an established one.
@@ -304,6 +332,7 @@
     [{:kind :property-malformed-gap :property property}]
     :else
     (concat
+     (external-mechanism-errors external-coordinates property mechanism-external)
      (for [path (concat mechanism gate)
            :when (not (.exists (io/file path)))]
        {:kind :property-path-missing :property property :path path})
@@ -365,7 +394,8 @@
   ([] (validate-build-identity (read-edn-file build-identity-path)))
   ([document] (validate-build-identity document (read-inventory)))
   ([document inventory]
-   (let [tcb-paths (into #{} (map :path) (:tcb/files inventory))]
+   (let [tcb-paths (into #{} (map :path) (:tcb/files inventory))
+         external-coordinates (into #{} (map :coordinate) (:tcb/external inventory))]
      (cond
        (nil? document) [{:kind :build-identity-missing :path build-identity-path}]
 
@@ -378,7 +408,7 @@
        :else
        (concat
         (build-identity-review-errors document)
-        (mapcat #(property-errors tcb-paths %) (:adopted document))
+        (mapcat #(property-errors tcb-paths external-coordinates %) (:adopted document))
         (for [{:keys [property reason]} (:non-goals document)
               :when (not (and (keyword? property)
                               (string? reason)
@@ -412,7 +442,7 @@
 
   Pairing it with a digest of everything else makes it checkable without git:
   change an entry and the digest moves, so the date has to move with it. The
-  canonical form is `aiueos.key-lifecycle/document-bytes`, the one canonicaliser
+  canonical form is `grant.key-lifecycle/document-bytes`, the one canonicaliser
   this repository has."
   ([] (inventory-content-digest (read-inventory)))
   ([inventory]

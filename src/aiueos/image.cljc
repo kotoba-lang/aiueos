@@ -17,8 +17,8 @@
 
   JVM-only (`#?(:clj ...)` throughout) -- file I/O, same as `aiueos.launcher`."
   (:require [clojure.string :as str]
-            #?(:clj [aiueos.anchors :as anchors])
-            #?(:clj [aiueos.key-lifecycle :as kl])
+            #?(:clj [grant.anchors :as anchors])
+            #?(:clj [grant.key-lifecycle :as kl])
             #?(:clj [clojure.java.io :as io])
             #?(:clj [clojure.java.shell :as shell])))
 
@@ -80,7 +80,7 @@
    (defn anchors-artifact
      "The release-manifest entry for the staged anchor set, or nil when the
      image carries none. The manifest names this digest; the device re-measures
-     the file and `aiueos.anchors/from-release` compares the two."
+     the file and `grant.anchors/from-release` compares the two."
      [p]
      (when-let [digest (:anchors-digest p)]
        {:kind anchors/anchors-artifact-kind :sha256 digest})))

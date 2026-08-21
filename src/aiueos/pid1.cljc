@@ -20,9 +20,9 @@
 
   JVM-only (`#?(:clj ...)` throughout, same reason as `aiueos.execute`/
   `aiueos.vfio`: FFM + file I/O)."
-  (:require [aiueos.deployment-profile :as deployment-profile]
+  (:require [grant.deployment-profile :as deployment-profile]
             [clojure.string :as str]
-            #?(:clj [aiueos.anchors :as anchors])
+            #?(:clj [grant.anchors :as anchors])
             #?(:clj [clojure.edn :as edn])))
 
 (def boot-edn-path "/etc/aiueos/boot.edn")

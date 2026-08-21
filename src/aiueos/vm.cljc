@@ -10,9 +10,9 @@
   JVM-only (`#?(:clj ...)` throughout) -- process I/O, same as
   `aiueos.image`/`aiueos.launcher`."
   (:require [clojure.string :as str]
-            #?(:clj [aiueos.deployment-profile :as deployment-profile])
-            #?(:clj [aiueos.boot-admission :as boot-admission])
-            #?(:clj [aiueos.signing :as signing])))
+            #?(:clj [grant.deployment-profile :as deployment-profile])
+            #?(:clj [grant.boot-admission :as boot-admission])
+            #?(:clj [grant.signing :as signing])))
 
 (def known-graphics #{"none" "virtio-gpu"})
 (def known-console #{"pl011" "virtio-console"})
@@ -83,7 +83,7 @@
   ADR-0049 recorded `:aiueos.boot/verified? false` and said no profile turned it
   into a requirement; ADR-0065 did the anchors half inside the guest and left
   this one, because the fact lives on the launcher's plan and
-  `aiueos.deployment-profile` judges a boot config from inside the guest — the
+  `grant.deployment-profile` judges a boot config from inside the guest — the
   two never meet.
 
   They still do not. **What this adds is the host declaring its own intent**:
@@ -116,7 +116,7 @@
      "`{kind digest}` for the artifacts this plan would boot.
 
      Reads each file whole. A launcher can afford that once; the alternative is
-     a third copy of \"SHA-256 of some bytes\" and `aiueos.signing/sha256-hex`
+     a third copy of \"SHA-256 of some bytes\" and `grant.signing/sha256-hex`
      already declares itself the canonical one."
      [p]
      (into {}

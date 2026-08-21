@@ -1,15 +1,15 @@
 (ns aiueos.provider.device
   "The device half of enrolment, as mechanism rather than decision.
 
-  `aiueos.enroll` decides whether a claim may bind a device to an owner, and it
+  `grant.enroll` decides whether a claim may bind a device to an owner, and it
   refuses to decide without a verified `:possession-proof-valid?`. This
   namespace is what produces and checks that answer: it generates the
   operational key on the device, signs an enrolment challenge with it, and
   verifies such a signature against an expected challenge.
 
-  JVM-only, like `aiueos.key-lifecycle` and `aiueos.entropy` — key custody is a
+  JVM-only, like `grant.key-lifecycle` and `aiueos.entropy` — key custody is a
   host concern and there is no portable answer to it. No new dependency: the
-  Ed25519 primitives are the JDK's, reached through `aiueos.key-lifecycle`.
+  Ed25519 primitives are the JDK's, reached through `grant.key-lifecycle`.
 
   ## The private key is generated here and never leaves
 
@@ -40,8 +40,8 @@
     presented to a different one;
   - the **purpose**, so an enrolment proof cannot be lifted into a different
     protocol that happens to sign the same shape."
-  (:require [aiueos.key-lifecycle :as kl]
-            [aiueos.signing :as signing])
+  (:require [grant.key-lifecycle :as kl]
+            [grant.signing :as signing])
   (:import [java.security KeyPair PrivateKey]
            [java.util Base64]))
 
@@ -63,14 +63,14 @@
 
 (defn public-key-base64
   "The X.509 SubjectPublicKeyInfo form, which is what
-  `aiueos.key-lifecycle/document-signature-valid?` verifies against."
+  `grant.key-lifecycle/document-signature-valid?` verifies against."
   [^KeyPair kp]
   (kl/public-key-base64 kp))
 
 (defn challenge
   "The document a device signs to prove it holds the key behind `public-key-b64`.
 
-  Deterministic by construction: `aiueos.key-lifecycle/document-bytes` is the
+  Deterministic by construction: `grant.key-lifecycle/document-bytes` is the
   one canonicaliser in this repository, and its own docstring says a second one
   would be a signature-confusion hazard. This function therefore builds a map
   and signs *that*, rather than concatenating a string of its own."
@@ -124,7 +124,7 @@
            :aiueos.device/public-key public-key-b64}))
 
 (defn possession-proof-valid?
-  "The single boolean `aiueos.enroll/claim` consumes. Kept as its own function
+  "The single boolean `grant.enroll/claim` consumes. Kept as its own function
   so the decision layer never has to know the shape of a verification result,
   and so a caller cannot accidentally pass a truthy *map* where a boolean was
   meant — every mismatch map is truthy."

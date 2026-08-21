@@ -18,7 +18,7 @@
   map and pure `(f state ...) -> state'` functions (or `(f state ...) ->
   [state' value]` where the Rust method also returned something), matching
   `aiueos.topic`'s convention. Invalid input throws `ex-info`, matching
-  `aiueos.launcher`/`aiueos.signing`'s convention for what the Rust modeled as
+  `aiueos.launcher`/`grant.signing`'s convention for what the Rust modeled as
   `Result::Err`.
 
   virtio-console (single-descriptor receive/transmit buffers) is ALSO ported,
