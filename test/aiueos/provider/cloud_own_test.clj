@@ -5,7 +5,7 @@
   Every test here that has a platform counterpart runs **both** transports over
   the same server, because the claim is not that the own path works -- it is
   that the two paths answer the same question the same way. A behaviour proved
-  on one and assumed on the other is the shape ADR-0076 exists to avoid."
+  on one and assumed on the other is the shape ADR-0077 exists to avoid."
   (:require [aiueos.cloud-live :as live]
             [aiueos.provider.cloud :as provider]
             [aiueos.provider.cloud-own :as own]

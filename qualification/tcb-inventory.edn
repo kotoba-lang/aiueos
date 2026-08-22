@@ -4,7 +4,7 @@
  ;; other field, so an entry cannot change without this date having to change
  ;; too. It said 2026-08-01 while the file was being edited that morning, and
  ;; nothing read it.
- :tcb/content-digest "287f0bb88d2b6709e3fcf93757da3aaad121c6f9fe6497712941d1b8cd89287f"
+ :tcb/content-digest "1f5f2fdd9b6a00a26e26708079b968fc07b4c3dcf3c132a4275c1d5c5bf55c89"
  :tcb/scope
  "Code whose compromise can grant authority, escape Wasm isolation, falsify
   production admission/audit evidence, or access hardware outside a component."
@@ -36,8 +36,8 @@
   ;; said yes -- which is TCB for a different reason: it is the last place that
   ;; could ignore them.
   {:path "src/aiueos/provider/cloud.clj" :role :remote-authority-transport
-   :sha256 "01ee0106c36e126a08825380563fe3c76a39c378a2719d81cc3d5fb42d003ef2"}
-  ;; The second transport (ADR-0076): the same requests over
+   :sha256 "4e299a967c8c78af573df213cfe6c390153f54a2e4f1466066299613479023d5"}
+  ;; The second transport (ADR-0077): the same requests over
   ;; `kotoba-lang/org-ietf-tls` and `kotoba.lang.http.wire` rather than
   ;; `java.net.http`. TCB for the same reason as the file above and one more of
   ;; its own -- it holds the `tls.client` `:verify-chain` function, which is the

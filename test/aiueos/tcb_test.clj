@@ -62,7 +62,7 @@
           ;; 20 -> 21: the operator gate that leaves this machine, which carries
           ;; the one trust manager here that accepts any peer (ADR-0073).
           ;;
-          ;; 21 -> 22 and 6 -> 8: the second transport (ADR-0076). One file --
+          ;; 21 -> 22 and 6 -> 8: the second transport (ADR-0077). One file --
           ;; the adapter holding the `:verify-chain` that IS the peer decision
           ;; on that path -- and two coordinates, org-ietf-tls and http, which
           ;; are the TLS and HTTP implementations `java.net.http` used to be.

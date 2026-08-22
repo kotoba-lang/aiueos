@@ -333,7 +333,7 @@
 
   `:jdk` is `java.net.http`. `:own` is `kotoba-lang/org-ietf-tls` carrying
   `kotoba.lang.http.wire`, which is this workspace's own TLS 1.3 and HTTP/1.1
-  (ADR-0076). The default is `:jdk` and changing it is a separate decision from
+  (ADR-0077). The default is `:jdk` and changing it is a separate decision from
   making `:own` exist: a transport nothing has run against a real authority is
   not a default, whatever its test suite says."
   #{:jdk :own})

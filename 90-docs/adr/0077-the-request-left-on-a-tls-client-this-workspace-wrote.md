@@ -1,4 +1,4 @@
-# ADR-0076 — The request left on a TLS client this workspace wrote, and one pin check decided who it talked to
+# ADR-0077 — The request left on a TLS client this workspace wrote, and one pin check decided who it talked to
 
 Date: 2026-08-22
 
@@ -31,11 +31,15 @@ Not executable, and also stated here:
   constraints, no issuer signature, no validity dates, and — measured, see
   below — no match between the certificate and the name it was reached by.
 - **The bare-metal profile still cannot use any of this.** ADR-0041's ordered
-  gap ledger steps 1–3 — address configuration, a DNS stub resolver, TCP as a
-  usable stream — are exactly where they were. Steps 4 and 5 of that ledger are
-  answered by this change *as libraries*, and their rows are corrected there;
-  what stands on nothing is that a TLS client with no TCP stream under it is a
-  state machine with nothing to read. Nothing in `os/aiueos/` changed.
+  gap ledger steps **2 and 3** — a DNS stub resolver, and TCP as a usable stream
+  — are exactly where they were. Step 1 closed on the same day, by different
+  work in the same repository (ADR-0076: a real DHCPv4 exchange in QEMU), which
+  makes the remaining gap smaller by one row and not by one inch on this path: a
+  TLS client with no TCP stream under it is a state machine with nothing to
+  read, and one with no resolver cannot find out where to point it. Steps 4 and
+  5 are answered by this change *as libraries*, and their rows are corrected
+  there. **Nothing in `os/aiueos/` changed here** — that directory's diff on
+  this branch is entirely ADR-0076's.
 - **The own transport speaks https and nothing else.** A plaintext URL is
   refused by name; the platform path, under the operator escape hatch that
   loopback suites use, would fetch it.
@@ -162,14 +166,21 @@ have removed a check while claiming parity.
 
 | | before | after |
 |---|---|---|
-| `clojure -M:test` | 341 tests / 8,645 assertions / 0 failures | **361 / 8,750 / 0** |
-| `clojure -M:test-fleet` | 338 / 1,199 / 0 | **358 / 1,302 / 0** |
+| `clojure -M:test` | 341 tests / 8,645 assertions / 0 failures | **361 / 8,752 / 0** |
+| `clojure -M:test-fleet` | 338 / 1,199 / 0 | **358 / 1,304 / 0** |
 | `clojure -M:tcb-check` | `:valid? true :files 21 :external 6 :classpath 9` | **`:valid? true :files 22 :external 8 :classpath 9`** |
 | `clojure -M:lint` | 0 errors / 56 warnings | **0 / 56** |
 
-The twenty new tests are `aiueos.provider.cloud-own-test`, and eleven of them
-run **both** transports over the same server: a behaviour proved on one and
-assumed on the other is the shape this ADR exists to avoid.
+The **test** counts are exact and the **assertion** counts are not, which is
+worth saying rather than rounding: `aiueos.provider.cloud-own-test` contributes
+exactly 20 tests and 105 assertions, measured on its own, and the suite totals
+above drift by two because `aiueos.tcp-seq-acceptable-parity-test` generates its
+cases. A table that quoted one run's number as the number would go red on the
+next run for a reason having nothing to do with this change.
+
+Eleven of the twenty tests run **both** transports over the same server: a
+behaviour proved on one and assumed on the other is the shape this ADR exists
+to avoid.
 
 The dependency suites, run from clean clones at the pinned commits:
 `org-ietf-tls` `clojure -M:test:report` prints `RFC8448-VECTORS-COMPARED 43`,
@@ -239,10 +250,11 @@ failed with `(not (nil? 0))` — exactly the confusion the rule exists to preven
   begin with. Pin-only trust is a real posture for a machine that talks to three
   authorities known before it boots, and it is not the same thing as validating
   a certificate.
-- **The bare-metal profile still cannot use any of this.** ADR-0041 steps 1–3
-  are untouched: no address configuration, no DNS stub resolver, no TCP stream.
-  Steps 4 and 5 are now answered as libraries — corrected in that ledger — and
-  standing on nothing.
+- **The bare-metal profile still cannot use any of this.** ADR-0041 steps 2 and
+  3 are untouched: no DNS stub resolver, no TCP stream. Step 1 closed the same
+  day under ADR-0076, and the lease it obtains is recorded and consumed by
+  nothing. Steps 4 and 5 are now answered as libraries — corrected in that
+  ledger — and standing on the two rows that did not move.
 - **`:jdk` is the default.** Changing it needs more than one operator's two runs.
 
 ### What the own transport cannot do
