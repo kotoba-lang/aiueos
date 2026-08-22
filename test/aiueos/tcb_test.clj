@@ -61,7 +61,15 @@
           ;;
           ;; 20 -> 21: the operator gate that leaves this machine, which carries
           ;; the one trust manager here that accepts any peer (ADR-0073).
-          :files 21 :external 6 :classpath 9 :properties 6 :errors []}
+          ;;
+          ;; 21 -> 22 and 6 -> 8: the second transport (ADR-0077). One file --
+          ;; the adapter holding the `:verify-chain` that IS the peer decision
+          ;; on that path -- and two coordinates, org-ietf-tls and http, which
+          ;; are the TLS and HTTP implementations `java.net.http` used to be.
+          ;; The platform entry stays: `:jdk` is still the default transport, so
+          ;; the JDK's TLS is still in the TCB, and pretending otherwise would
+          ;; be an inventory recording an intention.
+          :files 22 :external 8 :classpath 9 :properties 6 :errors []}
          (tcb/validate (tcb/read-inventory)
                        (clojure.edn/read-string (slurp "deps.edn"))
                        (clojure.edn/read-string (slurp "security-adoption.edn"))

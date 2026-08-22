@@ -71,6 +71,7 @@
   a different sentence from unimplemented."
   (:require [grant.cloud :as cloud]
             [grant.json :as json]
+            [aiueos.provider.cloud-own :as own]
             [clojure.string :as str])
   (:import [java.io InputStream]
            [java.net URI]
@@ -98,12 +99,18 @@
   `grant.cloud` reasons reported through a fault, because a TLS handshake that
   is refused mid-flight surfaces as an I/O failure and would otherwise be
   reported as one."
-  #{:plan-not-allowed :net-denied :response-too-large :request-failed
-    :method-unsupported :body-unencodable
-    :no-trust-anchors :peer-not-pinned :peer-unmeasured
-    :trust-anchors-unbound :anchor-binding-malformed
-    :peer-host-unknown :host-not-pinned :peer-pinned-to-other-host
-    :peer-pin-expired :peer-pin-window-unevaluated})
+  (into #{:plan-not-allowed :net-denied :response-too-large :request-failed
+          :method-unsupported :body-unencodable
+          :no-trust-anchors :peer-not-pinned :peer-unmeasured
+          :trust-anchors-unbound :anchor-binding-malformed
+          :peer-host-unknown :host-not-pinned :peer-pinned-to-other-host
+          :peer-pin-expired :peer-pin-window-unevaluated
+          ;; A policy naming a transport this build does not have is a fault,
+          ;; never a silent fall back to the other one: a machine configured to
+          ;; use its own stack and quietly using the platform's has answered a
+          ;; question nobody asked it.
+          :transport-unknown}
+        own/errors))
 
 (defn spki-sha256-hex
   "SHA-256 of a certificate's SubjectPublicKeyInfo — `PublicKey.getEncoded` is
@@ -185,9 +192,42 @@
   (let [digest (.digest (MessageDigest/getInstance "SHA-256") bytes)]
     (apply str (map #(format "%02x" (bit-and (int %) 0xff)) digest))))
 
+(defn- arrived-of
+  "What arrived, as the one map both transports report.
+
+  ONE builder, deliberately. `grant.cloud/admit-block`, `admit-inference` and
+  `admit-liveness` read this shape, and two transports describing the same
+  response in two shapes would be two things those admissions have to agree
+  with -- the day they differ, the difference arrives as a decision rather than
+  as a bug."
+  [status ^bytes body content-type opts verdict]
+  (cond-> {:status status
+           :bytes body
+           :byte-count (alength body)
+           :digest-hex (sha256-hex body)
+           ;; What the authority said this document is. Reported and never
+           ;; acted on here: `grant.cloud` decides what `text/event-stream`
+           ;; means, and this namespace only says what arrived.
+           :content-type content-type}
+    ;; Only when the caller asked. A block is bytes and decoding four megabytes
+    ;; of them as text to satisfy a key nobody reads is work this machine does
+    ;; not need to do.
+    (:decode-body? opts)
+    (assoc :body (String. body "UTF-8"))
+
+    (:aiueos.cloud/peer-spki @verdict)
+    (assoc :peer-spki (:aiueos.cloud/peer-spki @verdict)
+           ;; Not only WHICH key was accepted but on what grounds: bound to
+           ;; this host, or out of a flat set that would have accepted it from
+           ;; any host. A receipt that showed the key and not the grounds would
+           ;; make the strong and the weak case identical.
+           :peer-anchor-binding (:aiueos.cloud/anchor-binding @verdict)
+           :peer-host (:aiueos.cloud/host @verdict))))
+
 (defn- send-request
-  "Perform one request and report what arrived. Never throws: a request that
-  could not complete is reported as a fault, not as an empty response."
+  "Perform one request on the platform transport and report what arrived. Never
+  throws: a request that could not complete is reported as a fault, not as an
+  empty response."
   [^HttpClient http request opts verdict]
   (let [max-bytes (limit opts :max-bytes)]
     (try
@@ -197,32 +237,9 @@
             (if (= ::too-large read)
               {:aiueos.provider.cloud/error :response-too-large
                :max-bytes max-bytes}
-              (cond-> {:status (.statusCode response)
-                       :bytes read
-                       :byte-count (alength ^bytes read)
-                       :digest-hex (sha256-hex read)
-                       ;; What the authority said this document is. Reported
-                       ;; and never acted on here: `grant.cloud` decides what
-                       ;; `text/event-stream` means, and this namespace only
-                       ;; says what arrived.
-                       :content-type (-> response .headers
-                                         (.firstValue "content-type")
-                                         (.orElse nil))}
-                ;; Only when the caller asked. A block is bytes and decoding
-                ;; four megabytes of them as text to satisfy a key nobody reads
-                ;; is work this machine does not need to do.
-                (:decode-body? opts)
-                (assoc :body (String. ^bytes read "UTF-8"))
-
-                (:aiueos.cloud/peer-spki @verdict)
-                (assoc :peer-spki (:aiueos.cloud/peer-spki @verdict)
-                       ;; Not only WHICH key was accepted but on what
-                       ;; grounds: bound to this host, or out of a flat set
-                       ;; that would have accepted it from any host. A
-                       ;; receipt that showed the key and not the grounds
-                       ;; would make the strong and the weak case identical.
-                       :peer-anchor-binding (:aiueos.cloud/anchor-binding @verdict)
-                       :peer-host (:aiueos.cloud/host @verdict)))))))
+              (arrived-of (.statusCode response) read
+                          (-> response .headers (.firstValue "content-type") (.orElse nil))
+                          opts verdict)))))
       (catch Exception e
         (let [v @verdict]
           (if (and v (not (cloud/allowed? v)))
@@ -232,6 +249,32 @@
             {:aiueos.provider.cloud/error :request-failed
              :exception (.getSimpleName (class e))
              :message (.getMessage e)}))))))
+
+(defn- send-request-own
+  "Perform one request on this workspace's own TLS and HTTP, and report what
+  arrived in exactly the shape `send-request` reports.
+
+  The fault half is already a value when it gets here -- `aiueos.provider.cloud-own`
+  catches at the socket seam so nothing throws across this line -- so all this
+  does is turn a response that arrived into the shared map."
+  [policy host port request opts verdict]
+  (let [;; `:body-bytes` is carried by `contains?`, not by its value, so it is
+        ;; only put on when the caller put it on. Passing a nil through would
+        ;; make "no body" and "an empty body the caller supplied" the same
+        ;; request, and one of those is a block write of nothing.
+        own-opts (cond-> {:max-bytes (limit opts :max-bytes)
+                          :connect-timeout-ms (limit opts :connect-timeout-ms)
+                          :request-timeout-ms (limit opts :request-timeout-ms)
+                          :headers (:headers opts)}
+                   (contains? opts :body-bytes)
+                   (assoc :body-bytes (:body-bytes opts)))
+        outcome (own/fetch! policy host port request own-opts verdict)]
+    (if (:aiueos.provider.cloud/error outcome)
+      outcome
+      (arrived-of (:status outcome)
+                  (byte-array (map unchecked-byte (:body-octets outcome)))
+                  (:content-type outcome)
+                  opts verdict))))
 
 (defn- body-publisher
   "The publisher for this request's body, or an error map.
@@ -285,6 +328,31 @@
           :put {:request (.build (.PUT built publisher))}
           {:error :method-unsupported :detail (:method request)})))))
 
+(def transports
+  "The two transports, and the one a policy gets if it says nothing.
+
+  `:jdk` is `java.net.http`. `:own` is `kotoba-lang/org-ietf-tls` carrying
+  `kotoba.lang.http.wire`, which is this workspace's own TLS 1.3 and HTTP/1.1
+  (ADR-0077). The default is `:jdk` and changing it is a separate decision from
+  making `:own` exist: a transport nothing has run against a real authority is
+  not a default, whatever its test suite says."
+  #{:jdk :own})
+
+(def default-transport :jdk)
+
+(defn transport-of
+  "Which transport POLICY selects. Deployment configuration, not a per-call
+  option: which stack this machine's bytes go through is a property of the
+  machine, and a caller that could override it per request would make the
+  receipt's answer depend on who asked."
+  [policy]
+  (get policy :aiueos.cloud/transport default-transport))
+
+(defn- url-port
+  "The port a URL names, or 443. `URI/getPort` is -1 when none was given."
+  [^URI uri]
+  (let [p (.getPort uri)] (if (pos? p) p 443)))
+
 (defn perform!
   "Execute an allowed PLAN and report what arrived.
 
@@ -296,23 +364,47 @@
     {:aiueos.provider.cloud/error :plan-not-allowed
      :aiueos.cloud/reason (:aiueos.cloud/reason plan)}
     (let [url (get-in plan [:aiueos.cloud/request :url])
-          host (.getHost (URI/create (str url)))
-          https? (str/starts-with? (str url) "https://")]
-      (if (and https? (not (cloud/anchors-declared? policy)))
+          uri (URI/create (str url))
+          host (.getHost uri)
+          https? (str/starts-with? (str url) "https://")
+          transport (transport-of policy)]
+      (cond
+        (not (contains? transports transport))
+        {:aiueos.provider.cloud/error :transport-unknown
+         :transport transport :aiueos.cloud/url url}
+
         ;; No anchor means no verdict was possible, so there is nothing to
         ;; connect for: refused before the socket rather than after a handshake
         ;; this machine could not have judged.
+        (and https? (not (cloud/anchors-declared? policy)))
         {:aiueos.provider.cloud/error :no-trust-anchors :aiueos.cloud/url url}
+
+        ;; The own path speaks https and nothing else. Refused by name rather
+        ;; than handed to the other transport, because a machine told to use
+        ;; its own stack and quietly using the platform's has not done what it
+        ;; was configured to do.
+        (and (= :own transport) (not https?))
+        {:aiueos.provider.cloud/error :transport-scheme-unsupported
+         :transport transport :aiueos.cloud/url url}
+
+        :else
         (let [verdict (atom nil)
-              http (client policy host verdict opts)
+              http (when (= :jdk transport) (client policy host verdict opts))
               outcome (cloud/perform
                        policy plan
                        (fn [request]
-                         (let [built (build-request request opts)]
-                           (if-let [error (:error built)]
-                             {:aiueos.provider.cloud/error error
-                              :detail (:detail built)}
-                             (send-request http (:request built) opts verdict)))))]
+                         ;; The own path never builds an `HttpRequest`. It has
+                         ;; its own refusals for a verb it has no case for and
+                         ;; a body it could not encode, and reaching through
+                         ;; the platform's builder to borrow them would put
+                         ;; `java.net.http` back on the path this exists to
+                         ;; take it off.
+                         (if (= :own transport)
+                           (send-request-own policy host (url-port uri) request opts verdict)
+                           (let [built (build-request request opts)]
+                             (if-let [error (:error built)]
+                               {:aiueos.provider.cloud/error error :detail (:detail built)}
+                               (send-request http (:request built) opts verdict))))))]
           (if (:ok? outcome)
             (:aiueos.net/result outcome)
             {:aiueos.provider.cloud/error :net-denied

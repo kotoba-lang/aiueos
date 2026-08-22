@@ -13,6 +13,24 @@
                                      :git/sha "86d15e306853bd3658efb1fdfde3f8508dba9ef3"}
         io.github.kotoba-lang/security {:git/url "https://github.com/kotoba-lang/security.git"
                                         :git/sha "74235d1cdf8034334f01dcb2f6faaff0c731146e"}
+        ;; This workspace's own TLS 1.3 and HTTP/1.1, so a request can leave
+        ;; this machine without `java.net.http`. Both are RUNTIME dependencies
+        ;; of `aiueos.provider.cloud-own` and both are TCB: a TLS client that
+        ;; accepts the wrong peer, or an HTTP parser that mis-frames a body,
+        ;; ends with this machine acting on somebody else's bytes.
+        ;;
+        ;; Pinned at each repository's `main` tip; `gh api
+        ;; repos/kotoba-lang/<repo>/compare/<sha>...main` answers `identical`
+        ;; for both, measured 2026-08-22. org-ietf-x509, org-ietf-asn1 and
+        ;; kotoba-lang/json arrive transitively and are not restated here --
+        ;; a dependency no namespace in this repository requires by name is a
+        ;; claim about the wrong repository.
+        io.github.kotoba-lang/org-ietf-tls
+        {:git/url "https://github.com/kotoba-lang/org-ietf-tls.git"
+         :git/sha "b91d4a144e7ce89380643e440f7eac48d91e45a4"}
+        io.github.kotoba-lang/http
+        {:git/url "https://github.com/kotoba-lang/http.git"
+         :git/sha "1af5514a3a27098812be4e172d718908fb58e78e"}
         com.dylibso.chicory/wasm {:mvn/version "1.4.0"}
         com.dylibso.chicory/runtime {:mvn/version "1.4.0"}}
  :aliases
