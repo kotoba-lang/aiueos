@@ -19,6 +19,9 @@
 (def ^:private tcp-ok
   "AIUEOS_TCP_CLOUD_PROBE result=ok dst=1.2.3.4 port=443\r\n")
 
+(def ^:private tls-handshake
+  "AIUEOS_TLS_PROBE result=ok leftover=:http-absent\r\n")
+
 (def ^:private tls-record
   "AIUEOS_TLS_PROBE result=record type=22 leftover=:tls-handshake-incomplete,:http-absent\r\n")
 
@@ -44,7 +47,12 @@
   (testing "a TLS record without HTTP is the handshake leftover, not :tls-absent"
     (let [s (str consumed dns-ok tcp-ok tls-record http-absent)]
       (is (= [:tls-handshake-incomplete :http-absent] (bm/leftover-from-serial s)))
-      (is (not (some #{:tls-absent} (bm/leftover-from-serial s)))))))
+      (is (not (some #{:tls-absent} (bm/leftover-from-serial s))))))
+  (testing "handshake without HTTP is :http-absent, not :tls-handshake-incomplete"
+    (let [s (str consumed dns-ok tcp-ok tls-handshake http-absent)]
+      (is (= [:http-absent] (bm/leftover-from-serial s)))
+      (is (not (some #{:tls-handshake-incomplete :tls-absent}
+                     (bm/leftover-from-serial s)))))))
 
 (deftest guest-http-is-the-only-green
   (is (not (bm/guest-http+cid? (str consumed dns-ok tcp-ok tls-record http-absent))))
