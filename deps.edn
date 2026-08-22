@@ -119,9 +119,11 @@
    ;; Hosted daily shell (root ADR-2608221625 P1 / P3). Not cloud-live check.
    ;;   clojure -M:session smoke
    ;;   clojure -M:session guest
+   ;;   clojure -M:session operator
    ;;   clojure -M:session serve
    ;; smoke: DADS SPA + kotobase read + murakumo infer from this process.
    ;; guest: grant-limited :app/notes visible in the same SPA (P3).
+   ;; operator: grant-gated live itonami.cloud from the same SPA (P4).
    ;; Exit 1 refused / not DADS. Exit 3 unmeasured.
    :session {:jvm-opts ["--enable-native-access=ALL-UNNAMED"]
              :main-opts ["-m" "aiueos.session"]}
