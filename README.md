@@ -375,6 +375,26 @@ clojure -M:compositor serve   # same SPA; compositor owns surfaces; Ctrl-C to st
 
 `clojure -M:phone-bind smoke` stays headless **without** the GPU device. Display-present (動線 D) is extra, not the only bind path.
 
+
+## Grant-limited guest in the shell (P3)
+
+Root contract: P3 of [`adr-2608221625`](https://github.com/com-junkawasaki/root/blob/main/90-docs/adr/2608221625-aiueos-chromeos-cloud-desktop.edn). Same `apps/session` DADS SPA. `:app/notes` runs through `grant` + Chicory Wasm (`examples/apps/notes.wat`). A deny is HTTP 403 with `:unresolved-capability`, not a generic 500. POSIX `:fs/open` is not the store; kotobase write without a credential is `:write-unauthorized`.
+
+```bash
+clojure -M:session guest
+```
+
+Expected markers:
+
+- `AIUEOS_GUEST_URL=http://127.0.0.1:<port>/#session`
+- `AIUEOS_GUEST_SPA=admitted`
+- `AIUEOS_GUEST_DENY=` … `"reason":"unresolved-capability"` and HTTP 403
+- `AIUEOS_GUEST_ALLOW=` … `"decision":"grant"`, `"visible":true`, `"component":"app/notes"`, log `hi`
+- `AIUEOS_GUEST_ALLOW_LIST=` lists the guest under `guests`
+- `AIUEOS_GUEST_OK`
+
+Exit 0 means the SPA listed the guest, grant allow ran it, and grant deny was the named red. This is **not** the full Chrome OS-shaped desktop: P2 bare-metal net, P4 itonami, P5 a real machine, and full WM/IME/virtio-gpu 2D remain.
+
 ## Maturity
 
 Tracked M0-M6 in `docs/coverage.edn` (template borrowed from

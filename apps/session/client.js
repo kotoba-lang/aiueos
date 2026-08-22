@@ -19,6 +19,7 @@ function show() {
   if (h === "#devices") refreshDevices();
   if (h === "#setup") refreshSetup();
   if (h === "#desktop") refreshDesktop();
+  if (h === "#session" || h === "#desktop") refreshGuest();
 }
 
 function pretty(x) {
@@ -168,10 +169,63 @@ async function runInfer() {
   el.textContent = pretty(await res.text());
 }
 
+
+async function refreshGuest() {
+  var el = document.getElementById("guest-out");
+  var desk = document.getElementById("guest-desktop-out");
+  try {
+    var r = await fetch("/api/session/guests");
+    var text = await r.text();
+    var j = JSON.parse(text);
+    if (el) el.textContent = pretty(j);
+    if (desk) {
+      var g = (j.guests && j.guests[0]) || (j.refused && j.refused[0]) || j;
+      desk.textContent = pretty(g);
+    }
+    if (hSessionEmpty(j)) maybeAutostartGuest(j);
+  } catch (e) {
+    if (el) el.textContent = String(e);
+    if (desk) desk.textContent = String(e);
+  }
+}
+
+function hSessionEmpty(j) {
+  return j && j.count === 0 && (!j.guests || j.guests.length === 0)
+    && (!j.refused || j.refused.length === 0);
+}
+
+var __aiueosGuestAutostarted = false;
+function maybeAutostartGuest(j) {
+  if (__aiueosGuestAutostarted) return;
+  if (viewId() !== "#session") return;
+  if (!hSessionEmpty(j)) return;
+  __aiueosGuestAutostarted = true;
+  postGuest("allow");
+}
+
+async function postGuest(grant) {
+  var el = document.getElementById("guest-out");
+  if (el) el.textContent = "asking grant for app/notes (" + grant + ")…";
+  var res = await fetch("/api/session/guest", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ grant: grant })
+  });
+  var text = await res.text();
+  if (el) el.textContent = pretty(text);
+  var desk = document.getElementById("guest-desktop-out");
+  if (desk) desk.textContent = pretty(text);
+}
+
+async function runGuest() { await postGuest("allow"); }
+async function denyGuest() { await postGuest("deny"); }
+
 window.addEventListener("hashchange", show);
 document.getElementById("bind").addEventListener("click", bind);
 document.getElementById("cycle").addEventListener("click", cycle);
 document.getElementById("read-cid").addEventListener("click", readCid);
 document.getElementById("run-infer").addEventListener("click", runInfer);
+document.getElementById("run-guest").addEventListener("click", runGuest);
+document.getElementById("deny-guest").addEventListener("click", denyGuest);
 show();
 refreshSetup();

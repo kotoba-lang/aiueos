@@ -25,6 +25,7 @@
             #?(:clj [clojure.edn :as edn])
             #?(:clj [clojure.java.io :as io])
             #?(:clj [aiueos.session.live :as session-live])
+            #?(:clj [aiueos.session.guest :as session-guest])
             #?(:clj [aiueos.compositor.desktop :as compositor-desktop]))
   #?(:clj
      (:import [com.sun.net.httpserver HttpExchange HttpHandler HttpServer]
@@ -567,7 +568,8 @@
           :qemu (atom nil)
           :server (atom nil)
           :pre-grant (atom grant)
-          :nonce (atom nil)}))
+          :nonce (atom nil)
+          :guest (atom nil)}))
 
      (defn public-status [rt]
        (let [d @(:device rt)
@@ -724,6 +726,21 @@
                     (send-bytes! ex 200 "application/json; charset=utf-8"
                                  (->json (compositor-desktop/public-snapshot
                                           @(:desktop rt))))
+
+                    (and (= "GET" method) (= path "/api/session/guests"))
+                    (send-bytes! ex 200 "application/json; charset=utf-8"
+                                 (->json (session-guest/public-list
+                                          (some-> (:guest rt) deref))))
+
+                    (and (= "POST" method) (= path "/api/session/guest"))
+                    (let [req (json-req ex)
+                          mode (session-guest/parse-grant-mode (:grant req))
+                          result (session-guest/run mode)
+                          _ (when-let [g (:guest rt)] (reset! g result))
+                          snap (session-guest/public-snapshot result)
+                          code (session-guest/http-code result)]
+                      (send-bytes! ex code "application/json; charset=utf-8"
+                                   (->json snap)))
 
                     :else (send-bytes! ex 404 "text/plain; charset=utf-8" "not found")))
                 (catch Exception e

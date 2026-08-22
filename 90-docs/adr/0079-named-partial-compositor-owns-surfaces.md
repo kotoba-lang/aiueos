@@ -21,8 +21,8 @@ Not executable, and stated here rather than at the end:
   A display session exists when the compositor process owns surfaces and QMP
   `query-pci` names virtio-gpu.
 - **This is not bare-metal Phase 6.** Nothing in `os/aiueos/` gained a native
-  compositor. P2 (bare-metal net), P3 (guest in shell), P4 (itonami), P5
-  (real machine) are still later units.
+  compositor. P2 (bare-metal net), P4 (itonami), P5 (real machine) remain
+  later units. P3 (guest in shell) is ADR-0080, not this compositor gate.
 - **`clojure -M:phone-bind smoke` must stay green without a GPU device.**
   Display-present (動線 D) is extra.
 

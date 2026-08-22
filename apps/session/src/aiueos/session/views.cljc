@@ -39,7 +39,18 @@
       [:code "infer.murakumo.cloud"]
       " へ送ります。"]
      (dds/button "推論する" {:id "run-infer" :size "md"})
-     [:pre {:id "infer-out" :class "session-out"}])))
+     [:pre {:id "infer-out" :class "session-out"}])
+    (dds/card
+     (dds/heading 2 "notes guest" {:size "24"})
+     [:p "Kotoba guest "
+      [:code "app/notes"]
+      " は grant を通ったときだけこのシェルに現れます。"
+      " 拒否は "
+      [:code "unresolved-capability"]
+      " など grant の理由で、汎用 500 ではありません。"]
+     (dds/button "grant して走らせる" {:id "run-guest" :size "md"})
+     (dds/button "grant を拒否する" {:id "deny-guest" :size "md"})
+     [:pre {:id "guest-out" :class "session-out"}])))
 
 
 (defn desktop-view
@@ -60,6 +71,12 @@
     (dds/card
      (dds/heading 2 "compositor surfaces" {:size "24"})
      [:pre {:id "compositor-out" :class "session-out"}])
+    (dds/card
+     (dds/heading 2 "notes guest" {:size "24"})
+     [:p "同じ文書の "
+      [:code "app/notes"]
+      "。compositor iframe ではなく guest の identity です。"]
+     [:pre {:id "guest-desktop-out" :class "session-out"}])
     (dds/card
      (dds/heading 2 "kami viewport" {:size "24"})
      [:canvas {:id "kami-viewport"
