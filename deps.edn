@@ -101,6 +101,15 @@
    ;; 3 = a leg could not be answered (no network, nothing to ask).
    :cloud-live {:main-opts ["-m" "aiueos.cloud-live"]}
 
+   ;; Mac VM phone-bind proving slice (root ADR-2608221625 P1b / P1c).
+   ;;   clojure -M:phone-bind smoke
+   ;;   clojure -M:phone-bind pre-enroll
+   ;;   clojure -M:phone-bind serve
+   ;; Exit 0 = QEMU headless + HTTP phone bind (or pre-enroll) admitted,
+   ;; 1 = refused, 3 = could not answer (no QEMU/firmware).
+   ;; This is not the C-free kernel gate and not clojure -M:test.
+   :phone-bind {:main-opts ["-m" "aiueos.phone-bind"]}
+
    ;; Release attestations (SBOM + SLSA-style provenance) for a built artifact.
    ;;   clojure -M:attest sha256:<disk-digest> <source-commit> <builder> --isolated
    :attest {:main-opts ["-m" "aiueos.sbom"]}

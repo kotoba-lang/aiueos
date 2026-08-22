@@ -276,6 +276,49 @@ JRE/JAR/runtime-root inputs and rejects a non-ELF guest Java executable.
 This is the ADR-0011 Linux-hosted profile, not the bare-metal kernel described
 by the product integration ADR in `kotoba-lang/kotoba`.
 
+## Mac VM phone-bind (P1b / P1c proving slice)
+
+Root contract: [`adr-2608221625-aiueos-chromeos-cloud-desktop`](https://github.com/com-junkawasaki/root/blob/main/90-docs/adr/2608221625-aiueos-chromeos-cloud-desktop.edn).
+This slice does **not** claim a compositor, bare-metal TLS, itonami, or
+real-machine qualification.
+
+A VM has no chassis sticker. The hypervisor helper on the Mac prints the
+setup URL and QR payload on the **host** terminal and writes `setup.json`
+next to the VM. QEMU runs with `-display none`; guest VGA/keyboard is not a
+passing path. User-mode/slirp stands in for Ethernet DHCP. Enrollment is
+`grant.enroll` (not a second identity stack). The local check-in ledger is
+labelled `non-authoritative`; production still names `https://kotobase.net`.
+
+On Apple Silicon this uses `qemu-system-aarch64` + HVF + edk2 firmware, the
+same ISA `aiueos.vm` defaults to. It is **not** the x86_64 C-free kernel
+gate.
+
+```bash
+# from this repository (worktree or clone)
+clojure -M:phone-bind smoke
+```
+
+Expected markers on stdout:
+
+- `AIUEOS_SETUP_URL=http://127.0.0.1:<port>/#setup`
+- `AIUEOS_QR=aiueos:1;did=...;model=aiueos-qemu-hosted;endpoint=...;token=...`
+- `AIUEOS_BIND_OK`
+
+Exit 0 means an unbound headless VM was bound by a simulated **phone HTTP**
+client (no guest keyboard), a bind receipt was written, and a QMP power
+cycle left the device claimed. Exit 1 is a refusal. Exit 3 means QEMU or
+firmware could not be answered (not a pass).
+
+```bash
+clojure -M:phone-bind pre-enroll   # P1c: grant in the image, zero QR, copy refused
+clojure -M:phone-bind serve        # leave the phone SPA up; open the printed URL
+```
+
+The SPA is one document (`aiueos.phone-bind/session-html`, fragments `#setup`
+and `#manage`). Production chrome is jp-go-dds; this string is a temporary
+face on the `--hig-*` contract. `clojure -M:test` of unrelated suites is **not**
+this gate.
+
 ## Maturity
 
 Tracked M0-M6 in `docs/coverage.edn` (template borrowed from
