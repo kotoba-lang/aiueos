@@ -444,33 +444,69 @@ depends on the peer resending. The echoed bytes are never compared with what was
 sent — the checksum proves the segment is intact, not that it carries our data.
 HTTPS will need more than this.
 
-## Network: no address configuration, and what stops it
+## Network: address configuration
 
-`10.0.2.15` and `10.0.2.2` are still compiled into `kernel/pci.c`. DHCP is what
-would stop hardcoding them, and it is step 1 of ADR-0041's gap ledger.
+aiueos performs a real DHCPv4 exchange and records the lease (ADR-0076).
 
-It was attempted on 2026-08-22 and stopped before a line of it was written
-(ADR-0074). Under ADR-0015 the options parse — variable length,
-self-describing, attacker-controlled — is a decision and so has to be a Kotoba
-object, and **a new kernel admission object cannot be exported at the compiler
-revision this repository pins**. The symbol comes from the closed
-`kernel-object-entries` allow-list in `kotoba-lang/kotoba-native`, which names
-no DHCP or UDP entry. A source whose entry is not on that list **compiles
-green** and exports `kotoba_aiueos_probe` — the symbol `kernel-probe.o` already
-exports and every link already contains. Only
-`verify-kotoba-kernel-object.py` objects, at link time.
+```sh
+AIUEOS_TEST_NET=1 ./os/aiueos/scripts/smoke-qemu-uefi.sh
+# AIUEOS_DHCP_OK offer-ack kotoba-admitted address=10.0.2.15 mask=255.255.255.0 \
+#   router=10.0.2.2 server=10.0.2.2 lease=86400
+```
 
-Upstream has since made that miss loud (`kotoba-native` `dc1d2a9`, `amu`
-`6bd93b7`, closing amu#626, the issue ADR-0054 filed), and made a contract's
-`:native {:export "…"}` block the way to declare an entry. `amu` `8ff1030` —
-the revision `scripts/reproduce-kotoba-kernel-object.sh` pins — is 250 commits
-behind that. Advancing it is the next piece of work, not DHCP.
+QEMU's user-mode network carries its own DHCP server, so the guest broadcasts a
+DISCOVER and something outside it answers — twice, since a REQUEST has to be
+acknowledged before a lease exists. Nothing in the guest simulates a server.
 
-Two other decisions in `kotoba/` are stranded the same way and have no `.o`:
-`murakumo-join-plan.kotoba` (named in ADR-0019) and `tcp-seq-acceptable.kotoba`
-(RFC 9293 §3.10.7.4 segment acceptance, parity-tested, named nowhere until
-ADR-0074). **Read a `.kotoba` file's presence as a decision that was written,
-not one the kernel runs** — `build-uefi.sh` names every object it links.
+**Two Kotoba objects carry the decisions**, and one of them is unlike every
+admission below it. Every field the ARP, ICMP and TCP admissions read sits at a
+constant offset; a DHCP reply ends in a chain of `(code, length, value)` records
+that is variable-length, self-describing, terminated by a byte inside itself,
+and written entirely by whoever answered. A walk that believes a length byte
+reads past the end of the frame, which is the classic DHCP client defect. So
+`dhcp-reply-valid.kotoba` proves at every step that a record's header *and its
+whole value* lie below a limit derived from the IPv4 total length, and proves
+the whole field parses **before** looking up any option — a field that does not
+parse is reported as exactly that, not as whichever option the walk could not
+reach. `dhcp-option-u32.kotoba` extracts one four-byte option, re-walking under
+the same bound rather than being told where to look.
+
+**It returns a reason code, not a boolean** — `0` admits, `1..12` name the
+clause that refused. That is new for this ABI and is spelled out at the
+kotoba-native entry, in `contracts/dhcp-reply-valid-v1.edn` and at the C call
+site, because `if (validate(...))` admits exactly what it rejects. A boolean
+would have made "the transaction id belongs to somebody else" and "an option
+claims 255 bytes that are not there" the same event; they are the two ends of
+what the object exists to tell apart.
+
+**Both directions, with the broken thing being the reported thing.**
+
+```sh
+./os/aiueos/scripts/smoke-qemu-dhcp.sh
+# four boots: one unmodified, three with the reply broken one way each
+# AIUEOS_DHCP_SMOKE_OK admitted=1 refused=3 distinct-reasons=5,9,8
+```
+
+The tampering recomputes the UDP checksum afterwards. Without that every
+tampered datagram would have been refused at the checksum instead, and all three
+runs would have been red for a reason nobody chose.
+
+**UDP appears here and this is not a UDP stack**: no socket, no port table, no
+demultiplexer, no receive path for anything but this exchange. **And this is a
+probe, not a client**: one exchange at boot and then nothing — no renewal
+timers, no rebinding, no DECLINE, no RELEASE, no retransmission, one interface,
+and a compile-time transaction id where a real client picks a random one.
+
+**Nothing consumes the lease yet.** `kernel/pci.c` still sends from the
+compiled-in `10.0.2.15`, which is the address the server happens to hand out, so
+configuring it changes no behaviour. That is the whole of what row 1 of
+ADR-0041 currently buys.
+
+`murakumo-join-plan.kotoba` and `tcp-seq-acceptable.kotoba` are still written
+and unlinked — the second because listing an export for an object no kernel
+calls would reserve ABI for work not done (ADR-0074, ADR-0076). **Read a
+`.kotoba` file's presence as a decision that was written, not one the kernel
+runs**; `build-uefi.sh` names every object it links.
 
 ## USB removable-media boot
 

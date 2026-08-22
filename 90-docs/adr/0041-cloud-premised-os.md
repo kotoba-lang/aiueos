@@ -14,9 +14,10 @@ hash to its CID, refused one the store does not hold, resolved the
 real `PUT`. Row 7 is closed end to end for that profile; row 6 has both halves
 built and its write answers 401 for want of a bearer token.
 
-**Steps 1–5 remain untouched**, so the bare-metal profile has still reached
-nothing — and that gap is now the whole of the remaining distance rather than
-part of it.
+**Step 1 closed on 2026-08-22** (ADR-0076): the bare-metal profile now
+configures its own address from a real DHCP server. **Steps 2–5 remain
+untouched**, so it has still reached nothing — it can be told what its address
+is and cannot resolve a name, open a TLS connection, or speak HTTP.
 
 Since 2026-08-21 the decision half of rows 6 and 7 lives in `kotoba-lang/grant`
 (root ADR-2608219500) and the mechanism half here; `aiueos` requires `grant`,
@@ -41,8 +42,8 @@ install" means "flash a stick and boot it", not "install onto the machine".
 
 **Network.** Bare metal has the virtio-net link layer (ADR-0020), ARP + IPv4 +
 ICMP (ADR-0021), one TCP connection that completes (ADR-0022), and RFC 9293
-§3.10.7.4 segment acceptance (`7182047`). It has **no DHCP, no DNS resolver, no
-TLS, and no HTTP client**. `src/aiueos/net.cljc` is 41 lines of URL allowlist
+§3.10.7.4 segment acceptance (`7182047`). **DHCP landed 2026-08-22** (ADR-0076). It has
+**no DNS resolver, no TLS, and no HTTP client**. `src/aiueos/net.cljc` is 41 lines of URL allowlist
 for *host* adapters; `:net/fetch` is policy, not a bare-metal provider.
 
 **Storage.** `aiueos.sealed-audit` and `aiueos.sealed-state` are local
@@ -100,7 +101,7 @@ workspace, so none of it starts from a blank page.
 
 | # | Gap | What actually exists (measured 2026-08-18) |
 |---|---|---|
-| 1 | Address configuration (DHCP, or static bound to the enrolment record) | **still nothing, and now measured as blocked before the first line of it** (ADR-0074, 2026-08-22). A DHCPv4 client needs UDP, which this repository also lacks, and — by ADR-0015 — a Kotoba object for the options parse, which is the attacker-controlled part. **A new kernel admission object cannot be exported from inside this repository**: the symbol comes from the closed `kernel-object-entries` allow-list in `kotoba-lang/kotoba-native`, which carries no DHCP or UDP entry at the revision `amu` pins (56 entries) or at its own tip (60), and at the compiler revision this repository pins an unlisted entry compiles **green** while exporting `kotoba_aiueos_probe` — the symbol `kernel-probe.o` already exports. The two entries the client needs are named in ADR-0074; adding them is a three-repository pin chain, not a change here |
+| 1 | Address configuration (DHCP, or static bound to the enrolment record) | **closed for the bare-metal profile** (ADR-0076, 2026-08-22). A real DHCPv4 exchange — DISCOVER, OFFER, REQUEST, ACK — against QEMU's own DHCP server, with every judgement made by two compiler-emitted Kotoba objects: `dhcp-reply-valid` (transaction id, hardware address, magic cookie, message type, server identifier, address/mask consistency, lease range, and an options walk that never reads past the end of the frame) and `dhcp-option-u32`. Proved both ways: an unmodified boot configures `10.0.2.15/255.255.255.0` via `10.0.2.2` with an 86,400s lease, and three separately broken replies are refused with three distinct reason codes. **The lease is recorded and nothing consumes it** — the driver still sends from the compiled-in address — and there is no renewal. As much UDP as DHCP needs, and no more |
 | 2 | DNS **stub resolver** | wire format only. `kotoba-lang/org-ietf-dns` is an authoritative *server* — `nameserver.resolver` is the server-side answer-plan seam, not a client — and `org-ietf-dnssec` is *zone signing*, not resolver-side validation. `nameserver.wire` (RFC 1035 encode/decode) is reusable; the client is not written |
 | 3 | TCP from one connection to a usable stream: retransmit, window, close | this repo (ADR-0022 continues) |
 | 4 | TLS 1.3 client and chain validation | **no implementation anywhere in the workspace.** `capability-crypto-tls` is an authority package, `provider status: contract-only`, two files. Real: `org-ietf-x509` (RFC 5280 parsing, the subset a signature verifier needs) for part of chain validation, and `kotoba/x25519.kotoba`, `sha256.kotoba`, `rsa2048.kotoba` natively. **The handshake and record layer are unwritten** |

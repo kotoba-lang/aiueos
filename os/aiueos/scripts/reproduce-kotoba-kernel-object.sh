@@ -8,12 +8,28 @@ compiler=${1:?usage: reproduce-kotoba-kernel-object.sh /path/to/compiler}
 # either failed to compile (12 of them) or produced different bytes (25), so
 # this script had not passed in some time and nothing was running it to notice.
 #
-# 8ff1030 reproduces all 37 byte-for-byte, checked one at a time before this
-# line was changed. It is not the tip of the compiler's main -- it is 115
-# commits behind it -- and it is pinned here because it is the revision the
-# check was actually run against. Pinning the tip would put an unverified
-# number in a file whose whole purpose is to state a verified one.
-expected=8ff10308ac3e9a158440d901f1246e0319075511
+# 8ff1030 reproduced all 37 byte-for-byte, checked one at a time before this
+# line was changed. It is not the tip of the compiler's main and it is pinned
+# here because it is the revision the check was actually run against. Pinning
+# the tip would put an unverified number in a file whose whole purpose is to
+# state a verified one.
+#
+# Advanced 2026-08-22 from 8ff1030 to 9cf3a0a, which is 8ff1030 with ONE line
+# changed: its kotoba-native dependency moves from 15b4a0e2 to a60da444, and
+# a60da444 is 15b4a0e2 plus two entries in `kernel-object-entries` and nothing
+# else. Codegen is untouched, which is the point -- the two DHCP objects
+# (ADR-0076) could not be compiled at all without those entries, and every
+# object above them still had to reproduce.
+#
+# THE FULL ADVANCE WAS MEASURED AND NOT TAKEN. amu's tip is 250 commits ahead
+# and pins kotoba-native main, which is 121 commits ahead of 15b4a0e2 and moves
+# 2,076 lines of machine_ir.cljc and 281 of x86_64.cljc. Five objects were
+# compiled there and compared against the checked-in bytes:
+# net-arp-reply-valid, ipv4-checksum, ipv4-icmp-reply-valid, tcp-segment-valid
+# and sha256 -- ALL FIVE DIFFER. Taking that advance means regenerating every
+# object in this script and every pinned digest in build-uefi.sh, which is a
+# change to the shipped kernel and not a side effect of adding DHCP.
+expected=9cf3a0ac07a1fb0d735a460230a7e5e9c97bc6a7
 actual=$(git -C "$compiler" rev-parse HEAD)
 
 [ "$actual" = "$expected" ] || {
@@ -58,8 +74,10 @@ dispatch_plan_tmp=${TMPDIR:-/tmp}/aiueos-kotoba-dispatch-plan.$$
 exit_route_tmp=${TMPDIR:-/tmp}/aiueos-kotoba-exit-route.$$
 service_task_tmp=${TMPDIR:-/tmp}/aiueos-kotoba-service-task.$$
 rsa2048_tmp=${TMPDIR:-/tmp}/aiueos-kotoba-rsa2048.$$
+dhcp_reply_tmp=${TMPDIR:-/tmp}/aiueos-kotoba-dhcp-reply.$$
+dhcp_option_tmp=${TMPDIR:-/tmp}/aiueos-kotoba-dhcp-option.$$
 user_elf_tmp=${TMPDIR:-/tmp}/aiueos-kotoba-user-smoke.$$
-trap 'rm -f "$tmp" "$journal_tmp" "$fnv_tmp" "$journal_valid_tmp" "$transaction_valid_tmp" "$transaction_route_tmp" "$mutable_valid_tmp" "$superblock_valid_tmp" "$journal_build_tmp" "$mutable_build_tmp" "$cap_valid_tmp" "$extent_valid_tmp" "$region_valid_tmp" "$syscall_range_tmp" "$copy_in_tmp" "$capability_tmp" "$capability_mutation_tmp" "$service_lifecycle_tmp" "$service_registry_tmp" "$service_registry_state_tmp" "$user_object_journal_tmp" "$user_object_journal_valid_tmp" "$user_object_journal_value_tmp" "$sha256_tmp" "$digest_equal_tmp" "$catalog_valid_tmp" "$app_lookup_tmp" "$user_elf_valid_tmp" "$user_context_tmp" "$mapping_plan_tmp" "$process_plan_tmp" "$teardown_plan_tmp" "$task_plan_tmp" "$dispatch_plan_tmp" "$exit_route_tmp" "$service_task_tmp" "$rsa2048_tmp" "$user_elf_tmp"' EXIT HUP INT TERM
+trap 'rm -f "$dhcp_reply_tmp" "$dhcp_option_tmp" "$tmp" "$journal_tmp" "$fnv_tmp" "$journal_valid_tmp" "$transaction_valid_tmp" "$transaction_route_tmp" "$mutable_valid_tmp" "$superblock_valid_tmp" "$journal_build_tmp" "$mutable_build_tmp" "$cap_valid_tmp" "$extent_valid_tmp" "$region_valid_tmp" "$syscall_range_tmp" "$copy_in_tmp" "$capability_tmp" "$capability_mutation_tmp" "$service_lifecycle_tmp" "$service_registry_tmp" "$service_registry_state_tmp" "$user_object_journal_tmp" "$user_object_journal_valid_tmp" "$user_object_journal_value_tmp" "$sha256_tmp" "$digest_equal_tmp" "$catalog_valid_tmp" "$app_lookup_tmp" "$user_elf_valid_tmp" "$user_context_tmp" "$mapping_plan_tmp" "$process_plan_tmp" "$teardown_plan_tmp" "$task_plan_tmp" "$dispatch_plan_tmp" "$exit_route_tmp" "$service_task_tmp" "$rsa2048_tmp" "$user_elf_tmp"' EXIT HUP INT TERM
 "$compiler/bin/kotoba-compiler" compile "$aiueos/kotoba/kernel-probe.kotoba" \
   --target x86_64-aiueos-kernel-v1 --output "$tmp"
 cmp "$aiueos/kotoba/kernel-probe.o" "$tmp"
@@ -275,6 +293,20 @@ cmp "$aiueos/kotoba/rsa2048.o" "$rsa2048_tmp"
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$rsa2048_tmp" \
   b48dc4edec96fc109d89570bbd872d0dc525a1b536ee84dc90c1c1671c6d15e9 \
   kotoba_aiueos_rsa2048_sha256_verify
+# DHCPv4 (ADR-0076). Placed before the known-failing entry below so that a
+# `set -e` exit there cannot be mistaken for these not having been checked.
+"$compiler/bin/kotoba-compiler" compile "$aiueos/kotoba/dhcp-reply-valid.kotoba" \
+  --target x86_64-aiueos-kernel-v1 --output "$dhcp_reply_tmp"
+cmp "$aiueos/kotoba/dhcp-reply-valid.o" "$dhcp_reply_tmp"
+python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$dhcp_reply_tmp" \
+  ceecb05c3400535ccff22509d2fc1426eb9166c2d79a93ae952377a0f4bc5951 \
+  kotoba_aiueos_dhcp_reply_valid
+"$compiler/bin/kotoba-compiler" compile "$aiueos/kotoba/dhcp-option-u32.kotoba" \
+  --target x86_64-aiueos-kernel-v1 --output "$dhcp_option_tmp"
+cmp "$aiueos/kotoba/dhcp-option-u32.o" "$dhcp_option_tmp"
+python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$dhcp_option_tmp" \
+  0b5341000376104c6a23d2e6ef89c05c08fd03e91d2c2aa905643c65604741a0 \
+  kotoba_aiueos_dhcp_option_u32
 # NOT REPRODUCIBLE at the pinned revision, and the only one left that is not.
 #
 # Both files are 8560 bytes and 541 of them differ. The segment size field at
