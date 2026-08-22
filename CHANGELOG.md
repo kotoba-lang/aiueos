@@ -5,11 +5,10 @@ All notable changes to **aiueos** are documented here. The format follows
 
 ## [Unreleased]
 
-### Bare-metal net (P2, not green)
-- DHCP lease is consumed as the source address for a DNS query and TCP:443
-  (ADR-0081). Probes may see a TLS record. Guest HTTPS GET + CID verify is
-  still absent. Gate: `clojure -M:bare-metal cloud`. Hosted `cloud-live` does
-  not count.
+### Bare-metal net (P2, green on QEMU UEFI)
+- Guest TLS 1.3 (0x1301) + HTTPS GET of empty raw CID with SHA-256 admit
+  (ADR-0082). Gate: `clojure -M:bare-metal cloud` EXIT=0 leftover `[]`.
+  Hosted `cloud-live` does not count. Chain/CertVerify still not checked.
 
 The Phase-0 substrate plus the runtime/robotics/agent work built on top of it.
 

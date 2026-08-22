@@ -35,7 +35,8 @@
 (defn leftover-from-serial
   "Named leftovers the serial already printed. Order is the stack: lease,
   DNS, TCP:443, TLS, HTTP. A TLS record without a handshake is
-  `:tls-handshake-incomplete`, not `:tls-absent`."
+  `:tls-handshake-incomplete`, not `:tls-absent`. A completed handshake
+  without HTTP (`result=ok` / `result=handshake`) leaves only `:http-absent`."
   [serial]
   (if (guest-http+cid? serial)
     []
@@ -48,7 +49,7 @@
       (conj :tcp-cloud-absent)
       (re-find #"AIUEOS_TLS_PROBE result=record" (or serial ""))
       (conj :tls-handshake-incomplete)
-      (and (not (re-find #"AIUEOS_TLS_PROBE result=record" (or serial "")))
+      (and (not (re-find #"AIUEOS_TLS_PROBE result=(record|ok|handshake)" (or serial "")))
            (or (re-find #"AIUEOS_TLS_PROBE result=absent" (or serial ""))
                (not (re-find #"AIUEOS_TLS_PROBE" (or serial "")))))
       (conj :tls-absent)

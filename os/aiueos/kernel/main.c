@@ -168,6 +168,18 @@ extern int aiueos_tcp_cloud_ready(void);
 extern unsigned aiueos_tcp_cloud_stage(void);
 extern int aiueos_tls_record_ready(void);
 extern uint8_t aiueos_tls_record_type(void);
+extern int aiueos_tls_handshake_ready(void);
+extern int aiueos_http_cid_ready(void);
+extern const char *aiueos_http_cid(void);
+extern uint32_t aiueos_tls_stage(void);
+extern uint32_t aiueos_tls_rx_buffered(void);
+extern uint32_t aiueos_tls_app_len(void);
+extern uint8_t aiueos_tls_last_record_type(void);
+extern uint8_t aiueos_tls_last_inner_type(void);
+extern int aiueos_tls_failed(void);
+extern int aiueos_tls_finished_sent(void);
+extern int aiueos_tls_http_sent(void);
+extern uint32_t aiueos_tls_nst_count(void);
 extern uint32_t aiueos_gpu_scanout_width(void);
 extern uint32_t aiueos_gpu_scanout_height(void);
 extern void aiueos_scheduler_initialize(void);
@@ -484,6 +496,22 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
       }
       debug_string("AIUEOS_X25519_OK rfc7748-base-point 32-bytes\n");
       serial_string("AIUEOS_X25519_OK rfc7748-base-point 32-bytes\r\n");
+    }
+    {
+      extern int aiueos_tls13_aes_selftest(void);
+      if (!aiueos_tls13_aes_selftest()) {
+        serial_string("AIUEOS_AES_GCM_FAIL nist-vectors\r\n");
+        qemu_exit(0x6f);
+      }
+      serial_string("AIUEOS_AES_GCM_OK aes-128-gcm nist\r\n");
+    }
+    {
+      extern int aiueos_tls13_hmac_selftest(void);
+      if (!aiueos_tls13_hmac_selftest()) {
+        serial_string("AIUEOS_HMAC_HKDF_FAIL rfc4231-rfc5869\r\n");
+        qemu_exit(0x6f);
+      }
+      serial_string("AIUEOS_HMAC_HKDF_OK sha256 rfc4231-rfc5869\r\n");
     }
     if (!aiueos_framebuffer_initialize(boot)) {
       debug_string("AIUEOS_FRAMEBUFFER_FAIL gop-contract\n");
@@ -824,15 +852,49 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
           serial_string(" leftover=:tcp-cloud-absent\r\n");
         }
         serial_string("AIUEOS_TLS_PROBE result=");
-        if (aiueos_tls_record_ready()) {
+        if (aiueos_tls_handshake_ready()) {
+          serial_string("ok");
+          if (!aiueos_http_cid_ready())
+            serial_string(" leftover=:http-absent");
+          serial_string("\r\n");
+        } else if (aiueos_tls_record_ready()) {
           serial_string("record type=");
           serial_decimal(aiueos_tls_record_type());
+          serial_string(" stage=");
+          serial_decimal(aiueos_tls_stage());
+          serial_string(" rx=");
+          serial_decimal(aiueos_tls_rx_buffered());
           serial_string(" leftover=:tls-handshake-incomplete,:http-absent\r\n");
         } else {
           serial_string("absent leftover=:tls-absent,:http-absent\r\n");
         }
-        serial_string("AIUEOS_HTTP_PROBE result=absent leftover=:http-absent\r\n");
-        if (aiueos_tls_record_ready()) {
+        serial_string("AIUEOS_HTTP_PROBE result=");
+        if (aiueos_http_cid_ready()) {
+          serial_string("ok cid=");
+          serial_string(aiueos_http_cid());
+          serial_string("\r\n");
+        } else {
+          serial_string("absent leftover=:http-absent app=");
+          serial_decimal(aiueos_tls_app_len());
+          serial_string(" rec=");
+          serial_decimal(aiueos_tls_last_record_type());
+          serial_string(" inner=");
+          serial_decimal(aiueos_tls_last_inner_type());
+          serial_string(" fail=");
+          serial_decimal((uint32_t)aiueos_tls_failed());
+          serial_string(" fin=");
+          serial_decimal((uint32_t)aiueos_tls_finished_sent());
+          serial_string(" get=");
+          serial_decimal((uint32_t)aiueos_tls_http_sent());
+          serial_string(" nst=");
+          serial_decimal(aiueos_tls_nst_count());
+          serial_string("\r\n");
+        }
+        if (aiueos_http_cid_ready()) {
+          serial_string("AIUEOS_BARE_METAL_P2 green leftover=[]\r\n");
+        } else if (aiueos_tls_handshake_ready()) {
+          serial_string("AIUEOS_BARE_METAL_P2 not-green leftover=:http-absent\r\n");
+        } else if (aiueos_tls_record_ready()) {
           serial_string("AIUEOS_BARE_METAL_P2 not-green leftover=:tls-handshake-incomplete,:http-absent\r\n");
         } else {
           serial_string("AIUEOS_BARE_METAL_P2 not-green leftover=:tls-absent,:http-absent\r\n");

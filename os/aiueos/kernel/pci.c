@@ -1,5 +1,6 @@
 #include <stdint.h>
 #include <stddef.h>
+#include "tls13.h"
 
 #define VIRTIO_VENDOR_ID 0x1af4
 #define VIRTIO_RNG_MODERN_ID 0x1044
@@ -1232,6 +1233,9 @@ static int tcp_cloud_ready;
 static unsigned tcp_cloud_stage;
 static int tls_record_ready;
 static uint8_t tls_record_type;
+static int tls_handshake_ready;
+static int http_cid_ready;
+static const char *http_cid_text;
 int aiueos_dns_ready(void) { return dns_ready; }
 unsigned aiueos_dns_stage(void) { return dns_stage; }
 uint32_t aiueos_dns_a(void) { return dns_a; }
@@ -1239,6 +1243,20 @@ int aiueos_tcp_cloud_ready(void) { return tcp_cloud_ready; }
 unsigned aiueos_tcp_cloud_stage(void) { return tcp_cloud_stage; }
 int aiueos_tls_record_ready(void) { return tls_record_ready; }
 uint8_t aiueos_tls_record_type(void) { return tls_record_type; }
+int aiueos_tls_handshake_ready(void) { return tls_handshake_ready; }
+int aiueos_http_cid_ready(void) { return http_cid_ready; }
+const char *aiueos_http_cid(void) { return http_cid_text ? http_cid_text : ""; }
+uint32_t aiueos_tls_stage(void) { return aiueos_tls13_stage(); }
+uint32_t aiueos_tls_rx_buffered(void) { return aiueos_tls13_rx_buffered(); }
+uint32_t aiueos_tls_app_len(void) { return aiueos_tls13_app_len(); }
+uint8_t aiueos_tls_last_record_type(void) { return aiueos_tls13_last_record_type(); }
+uint8_t aiueos_tls_last_inner_type(void) { return aiueos_tls13_last_inner_type(); }
+int aiueos_tls_failed(void) { return aiueos_tls13_failed(); }
+uint32_t aiueos_tls_nst_count(void) { return aiueos_tls13_nst_count(); }
+static int tls_finished_sent;
+static int tls_http_sent;
+int aiueos_tls_finished_sent(void) { return tls_finished_sent; }
+int aiueos_tls_http_sent(void) { return tls_http_sent; }
 
 /* SLIRP's fixed topology: the guest is 10.0.2.15 and the gateway that answers
    ARP is 10.0.2.2. Nothing here depends on DHCP having run -- an ARP exchange
@@ -1448,7 +1466,14 @@ static int net_ipv4_echo(struct net_ring *rx, struct net_ring *tx,
 /* Advertised once and never updated. Nothing here holds more than one segment,
    so this is a constant rather than a variable that would have to shrink. */
 #define NET_TCP_WINDOW 2048
+/* Cloud :443 window must fit one TLS application record of the empty-CID
+   HTTP 200 (measured host probe: 1276-byte HTTP, ~1298-byte TLS record).
+   1280 was one byte-short of that record and split it across the one-slot
+   RX queue. Ethernet+IPv4+TCP headers are 54 bytes; 1792+54 < NET_FRAME_MAX. */
+#define NET_CLOUD_WINDOW 1792
 #define NET_TCP_PAYLOAD 8
+static uint16_t net_tx_window = NET_TCP_WINDOW;
+static uint16_t net_ip_id = 1;
 
 #define NET_TCP_FIN 0x01
 #define NET_TCP_SYN 0x02
@@ -1508,8 +1533,10 @@ static uint32_t net_build_tcp(uint8_t *frame, uint32_t src, uint32_t dst,
   frame[15] = 0;
   net_store_be16(frame + 16, (uint16_t)total);
   /* Identification 0 with DF set, as for the echo: RFC 6864 permits it because
-     a datagram that may not be fragmented can never need reassembly. */
-  net_store_be16(frame + 18, 0);
+     a datagram that may not be fragmented can never need reassembly. Distinct
+     IDs still help SLIRP tell later TCP segments apart from the ClientHello. */
+  net_store_be16(frame + 18, net_ip_id);
+  net_ip_id++;
   net_store_be16(frame + 20, 0x4000);
   frame[22] = 64;                                            /* TTL */
   frame[23] = 6;                                             /* TCP */
@@ -1524,7 +1551,7 @@ static uint32_t net_build_tcp(uint8_t *frame, uint32_t src, uint32_t dst,
   net_store_be32(frame + 42, acknowledgement);
   frame[46] = 0x50;                                          /* data offset 5, no options */
   frame[47] = flags;
-  net_store_be16(frame + 48, NET_TCP_WINDOW);
+  net_store_be16(frame + 48, net_tx_window);
   net_store_be16(frame + 50, 0);                             /* checksum covers itself as 0 */
   net_store_be16(frame + 52, 0);                             /* no urgent data */
   for (uint32_t i = 0; i < payload_length; i++) frame[54 + i] = payload[i];
@@ -1949,11 +1976,10 @@ static int net_dhcp_exchange(struct net_ring *rx, struct net_ring *tx,
 }
 
 /* ------------------------------------------------------------------------- */
-/* DNS stub + TCP:443 + TLS record (ADR-0081). Not a resolver, not a TLS      */
-/* client, not HTTP. QNAME is compiled in, so every field sits at a constant  */
-/* offset the way TCP headers do -- there is no options-style walk. UDP is    */
-/* the same "as much as this exchange needs" that DHCP already paid for.      */
+/* DNS stub + TCP:443 + TLS 1.3 + HTTP GET (ADR-0082). QNAME is compiled in. */
 /* Source address is dhcp_address: that is what consuming the lease means.    */
+/* AES-GCM record layer is mechanism (tls_aes_gcm.c). X25519 / SHA-256 /      */
+/* digest_equal stay Kotoba. CID admission is Kotoba SHA-256 of the body.     */
 /* ------------------------------------------------------------------------- */
 
 #define NET_DNS_IP 0x0a000203U
@@ -1972,21 +1998,12 @@ static const uint8_t net_dns_question[18] = {
   8,'k','o','t','o','b','a','s','e',3,'n','e','t',0,0,1,0,1
 };
 
-/* TLS 1.3 ClientHello, SNI kotobase.net, key_share x25519 (dummy 32 bytes).
-   A TLS server answers with a handshake (0x16) or alert (0x15) record. That
-   is a TLS record on the stream, not a completed handshake and not HTTP. */
-static const uint8_t net_tls_clienthello[142] = {
-  0x16,0x03,0x01,0x00,0x89,0x01,0x00,0x00,0x85,0x03,0x03,0xa1,0xe0,0xa1,0xe0,
-  0xa1,0xe0,0xa1,0xe0,0xa1,0xe0,0xa1,0xe0,0xa1,0xe0,0xa1,0xe0,0xa1,0xe0,0xa1,
-  0xe0,0xa1,0xe0,0xa1,0xe0,0xa1,0xe0,0xa1,0xe0,0xa1,0xe0,0xa1,0xe0,0x00,0x00,
-  0x02,0x13,0x01,0x01,0x00,0x00,0x5a,0x00,0x00,0x00,0x11,0x00,0x0f,0x00,0x00,
-  0x0c,0x6b,0x6f,0x74,0x6f,0x62,0x61,0x73,0x65,0x2e,0x6e,0x65,0x74,0x00,0x0a,
-  0x00,0x04,0x00,0x02,0x00,0x1d,0x00,0x0d,0x00,0x08,0x00,0x06,0x04,0x03,0x08,
-  0x04,0x04,0x01,0x00,0x2b,0x00,0x03,0x02,0x03,0x04,0x00,0x33,0x00,0x26,0x00,
-  0x24,0x00,0x1d,0x00,0x20,0x01,0x08,0x0f,0x16,0x1d,0x24,0x2b,0x32,0x39,0x40,
-  0x47,0x4e,0x55,0x5c,0x63,0x6a,0x71,0x78,0x7f,0x86,0x8d,0x94,0x9b,0xa2,0xa9,
-  0xb0,0xb7,0xbe,0xc5,0xcc,0xd3,0xda
+static const uint8_t http_empty_sha256[32] = {
+  0xe3,0xb0,0xc4,0x42,0x98,0xfc,0x1c,0x14,0x9a,0xfb,0xf4,0xc8,0x99,0x6f,0xb9,0x24,
+  0x27,0xae,0x41,0xe4,0x64,0x9b,0x93,0x4c,0xa4,0x95,0x99,0x1b,0x78,0x52,0xb8,0x55
 };
+static const char http_expected_cid[] =
+  "bafkreihdwdcefgh4dqkjv67uzcmw7ojee6xedzdetojuzjevtenxquvyku";
 
 static uint32_t net_dns_server(void) {
   return dhcp_dns ? dhcp_dns : NET_DNS_IP;
@@ -2117,49 +2134,123 @@ static int net_dns_probe(struct net_ring *rx, struct net_ring *tx,
   return 0;
 }
 
-static int net_tls_payload_type(const uint8_t *frame, uint8_t *out_type) {
+static int net_tcp_data(const uint8_t *frame, const uint8_t **payload,
+                           uint32_t *plen) {
   uint32_t total = net_load_be16(frame + 16);
   uint32_t header = 4U * (uint32_t)(frame[46] >> 4);
-  if (header < 20 || 20 + header + 1 > total) return 0;
-  *out_type = frame[34 + header];
+  if (header < 20 || 20 + header > total) return 0;
+  *payload = frame + 34 + header;
+  *plen = total - 20 - header;
   return 1;
 }
 
-/* One receive buffer: an empty ACK of ClientHello followed immediately by a
-   ServerHello drops the second segment. Piggybacking ClientHello on the
-   handshake ACK removes that extra ACK, and this loop keeps an empty ACK
-   from counting as a TLS record so the next posted buffer can still catch
-   0x16 / 0x15. Flags are compared for equality by tcp-segment-valid, so ACK
-   and PSH|ACK are two admissions, not a mask. */
-static int net_tcp_cloud_receive_tls(struct net_ring *rx, uint8_t *rx_page,
-                                     uint32_t expected_src, uint32_t expected_ack,
-                                     unsigned attempts) {
+static int net_http_cid_admit(const uint8_t *app, uint32_t n) {
+  uint32_t i, body = 0;
+  uint8_t digest[32];
+  /* Mechanism: find the compiled status line and header terminator. */
+  if (n < 12) return 0;
+  if (app[0] != 'H' || app[1] != 'T' || app[2] != 'T' || app[3] != 'P') return 0;
+  if (app[5] != '1' || app[9] != '2' || app[10] != '0' || app[11] != '0') return 0;
+  for (i = 0; i + 3 < n; i++) {
+    if (app[i] == '\r' && app[i + 1] == '\n' &&
+        app[i + 2] == '\r' && app[i + 3] == '\n') {
+      body = i + 4;
+      break;
+    }
+  }
+  if (body == 0) return 0;
+  {
+    static const uint8_t empty[1] = {0};
+    uint32_t body_len = n - body;
+    const uint8_t *p = (body_len == 0) ? empty : (app + body);
+    if (!sha256(p, body_len, digest)) return 0;
+  }
+  if (!kotoba_aiueos_digest_equal(digest, http_empty_sha256, 32)) return 0;
+  http_cid_text = http_expected_cid;
+  http_cid_ready = 1;
+  return 1;
+}
+
+static int net_tcp_cloud_seg_ok(const uint8_t *frame, uint32_t ip_len,
+                                uint32_t dst, uint32_t ack_hi, uint32_t ack_lo) {
+  uint32_t ack = ack_hi;
+  for (;;) {
+    if (kotoba_aiueos_tcp_segment_valid(
+          (uint64_t)(uintptr_t)frame, ip_len, dst, ack, NET_TCP_PSH | NET_TCP_ACK) ||
+        kotoba_aiueos_tcp_segment_valid(
+          (uint64_t)(uintptr_t)frame, ip_len, dst, ack, NET_TCP_ACK) ||
+        kotoba_aiueos_tcp_segment_valid(
+          (uint64_t)(uintptr_t)frame, ip_len, dst, ack, NET_TCP_FIN | NET_TCP_ACK))
+      return 1;
+    if (ack == ack_lo) return 0;
+    ack = ack_lo;
+  }
+}
+
+/* One receive buffer: ACK each segment before the peer sends the next.
+   Post the next RX before the ACK so the reply has somewhere to land.
+   ack_lo is the sequence the peer may still be ACKing (ClientHello) while
+   ack_hi is our_next after ClientFinished+GET. */
+static int net_tcp_cloud_pump(struct net_ring *rx, struct net_ring *tx,
+                              uint8_t *rx_page, uint8_t *tx_page,
+                              uint32_t src, uint32_t dst,
+                              uint32_t *our_next, uint32_t *peer_next,
+                              uint32_t ack_lo,
+                              unsigned attempts, int want_http) {
   const uint8_t *frame = rx_page + sizeof(struct virtio_net_hdr);
-  for (unsigned attempt = 0; attempt < attempts; attempt++) {
-    uint8_t rec;
-    uint32_t received;
-    if (attempt) net_post(rx);
+  unsigned attempt;
+  for (attempt = 0; attempt < attempts; attempt++) {
+    const uint8_t *payload;
+    uint32_t plen = 0, received, ip_len;
     if (!net_await(rx->used, rx->posted)) return 0;
     received = rx->used->ring[0].length;
     if (rx->used->ring[0].id != 0 ||
         received <= sizeof(struct virtio_net_hdr) ||
-        received > sizeof(struct virtio_net_hdr) + NET_FRAME_MAX) continue;
-    if (!kotoba_aiueos_tcp_segment_valid(
-          (uint64_t)(uintptr_t)frame,
-          received - (uint32_t)sizeof(struct virtio_net_hdr),
-          expected_src, expected_ack, NET_TCP_PSH | NET_TCP_ACK) &&
-        !kotoba_aiueos_tcp_segment_valid(
-          (uint64_t)(uintptr_t)frame,
-          received - (uint32_t)sizeof(struct virtio_net_hdr),
-          expected_src, expected_ack, NET_TCP_ACK))
+        received > sizeof(struct virtio_net_hdr) + NET_FRAME_MAX) {
+      net_post(rx);
       continue;
-    if (net_tls_payload_type(frame, &rec) && (rec == 0x16 || rec == 0x15)) {
-      tls_record_ready = 1;
-      tls_record_type = rec;
+    }
+    ip_len = received - (uint32_t)sizeof(struct virtio_net_hdr);
+    if (!net_tcp_cloud_seg_ok(frame, ip_len, dst, *our_next, ack_lo)) {
+      net_post(rx);
+      continue;
+    }
+    if (!net_tcp_data(frame, &payload, &plen)) {
+      net_post(rx);
+      continue;
+    }
+    if (plen) {
+      if (!aiueos_tls13_feed(payload, plen)) {
+        if (!want_http) return 0;
+        net_post(rx);
+        continue;
+      }
+      *peer_next += plen;
+      if (aiueos_tls13_saw_record()) {
+        tls_record_ready = 1;
+        tls_record_type = aiueos_tls13_first_record_type();
+      }
+    }
+    if (!want_http && aiueos_tls13_handshake_ready()) {
+      tls_handshake_ready = 1;
+      net_post(rx);
+      if (!net_tcp_send(tx, tx_page, src, dst, NET_CLOUD_LOCAL_PORT, NET_CLOUD_PORT,
+                        *our_next, *peer_next, NET_TCP_ACK, 0, 0))
+        return 0;
       return 1;
     }
+    if (want_http && net_http_cid_admit(aiueos_tls13_app(), aiueos_tls13_app_len()))
+      return 1;
+    net_post(rx);
+    if (!net_tcp_send(tx, tx_page, src, dst, NET_CLOUD_LOCAL_PORT, NET_CLOUD_PORT,
+                      *our_next, *peer_next, NET_TCP_ACK, 0, 0))
+      return 0;
   }
-  return 0;
+  if (!want_http && aiueos_tls13_handshake_ready()) {
+    tls_handshake_ready = 1;
+    return 1;
+  }
+  return want_http ? http_cid_ready : tls_handshake_ready;
 }
 
 static int net_tcp_cloud_probe(struct net_ring *rx, struct net_ring *tx,
@@ -2167,37 +2258,85 @@ static int net_tcp_cloud_probe(struct net_ring *rx, struct net_ring *tx,
   const uint8_t *frame = rx_page + sizeof(struct virtio_net_hdr);
   uint32_t src = dhcp_address;
   uint32_t dst = dns_a;
-  uint32_t peer_next;
+  uint32_t peer_next, our_next;
+  uint8_t ch[160], flight[512];
+  uint32_t ch_len = 0;
   int got_synack = 0;
   unsigned syn;
   if (!dns_ready || !src || !dst || !net_peer_mac_known) {
     tcp_cloud_stage = NET_TCP_STAGE_IDLE;
     return 0;
   }
+  net_tx_window = NET_CLOUD_WINDOW;
+  aiueos_tls13_reset();
   tcp_cloud_stage = NET_TCP_STAGE_SYN_ACK;
   for (syn = 0; syn < 2 && !got_synack; syn++) {
     net_post(rx);
     if (!net_tcp_send(tx, tx_page, src, dst, NET_CLOUD_LOCAL_PORT, NET_CLOUD_PORT,
-                      NET_CLOUD_ISN, 0, NET_TCP_SYN, 0, 0)) return 0;
+                      NET_CLOUD_ISN, 0, NET_TCP_SYN, 0, 0)) {
+      net_tx_window = NET_TCP_WINDOW;
+      return 0;
+    }
     got_synack = net_tcp_receive(rx, rx_page, dst, NET_CLOUD_ISN + 1,
                                  NET_TCP_SYN | NET_TCP_ACK, 4);
   }
-  if (!got_synack) return 0;
+  if (!got_synack) {
+    net_tx_window = NET_TCP_WINDOW;
+    return 0;
+  }
   peer_next = net_load_be32(frame + 38) + 1;
   tcp_cloud_ready = 1;
+  if (!aiueos_tls13_clienthello(ch, &ch_len)) {
+    net_tx_window = NET_TCP_WINDOW;
+    return 1;
+  }
+  our_next = NET_CLOUD_ISN + 1 + ch_len;
   net_post(rx);
   /* Handshake ACK carries ClientHello so the peer's next flight is one
      segment, not ACK-then-record on a one-buffer queue. */
   if (!net_tcp_send(tx, tx_page, src, dst, NET_CLOUD_LOCAL_PORT, NET_CLOUD_PORT,
                     NET_CLOUD_ISN + 1, peer_next,
-                    NET_TCP_PSH | NET_TCP_ACK, net_tls_clienthello,
-                    (uint32_t)sizeof(net_tls_clienthello)))
+                    NET_TCP_PSH | NET_TCP_ACK, ch, ch_len)) {
+    net_tx_window = NET_TCP_WINDOW;
     return 1;
+  }
   tcp_cloud_stage = NET_TCP_STAGE_ECHO;
-  net_tcp_cloud_receive_tls(rx, rx_page, dst,
-                            NET_CLOUD_ISN + 1 + (uint32_t)sizeof(net_tls_clienthello),
-                            8);
+  if (!net_tcp_cloud_pump(rx, tx, rx_page, tx_page, src, dst,
+                          &our_next, &peer_next, our_next, 24, 0)) {
+    net_tx_window = NET_TCP_WINDOW;
+    tcp_cloud_stage = NET_TCP_STAGE_DONE;
+    return 1;
+  }
+  /* Handshake pump consumed the ServerHello flight but did not ACK; this
+     segment is the ACK plus ClientFinished+GET. Post RX first. */
+  {
+    uint32_t fin_len = 0, get_len = 0, ack_lo = our_next;
+    if (!aiueos_tls13_take_finished(flight, &fin_len)) {
+      net_tx_window = NET_TCP_WINDOW;
+      tcp_cloud_stage = NET_TCP_STAGE_DONE;
+      return 1;
+    }
+    tls_finished_sent = 1;
+    if (!aiueos_tls13_take_http(flight + fin_len, &get_len)) {
+      net_tx_window = NET_TCP_WINDOW;
+      tcp_cloud_stage = NET_TCP_STAGE_DONE;
+      return 1;
+    }
+    net_post(rx);
+    if (!net_tcp_send(tx, tx_page, src, dst, NET_CLOUD_LOCAL_PORT, NET_CLOUD_PORT,
+                      our_next, peer_next,
+                      NET_TCP_PSH | NET_TCP_ACK, flight, fin_len + get_len)) {
+      net_tx_window = NET_TCP_WINDOW;
+      tcp_cloud_stage = NET_TCP_STAGE_DONE;
+      return 1;
+    }
+    tls_http_sent = 1;
+    our_next += fin_len + get_len;
+    net_tcp_cloud_pump(rx, tx, rx_page, tx_page, src, dst,
+                       &our_next, &peer_next, ack_lo, 32, 1);
+  }
   tcp_cloud_stage = NET_TCP_STAGE_DONE;
+  net_tx_window = NET_TCP_WINDOW;
   return 1;
 }
 
@@ -2315,6 +2454,11 @@ int aiueos_pci_enumerate(void) {
   tcp_cloud_stage = NET_TCP_STAGE_IDLE;
   tls_record_ready = 0;
   tls_record_type = 0;
+  tls_handshake_ready = 0;
+  tls_finished_sent = 0;
+  tls_http_sent = 0;
+  http_cid_ready = 0;
+  http_cid_text = 0;
   object_store_ready = 0;
   kotoba_app_count=0; for(unsigned app=0;app<KOTOBA_APP_CAPACITY;app++)kotoba_apps[app].ready=0;
   journal_ready = 0;

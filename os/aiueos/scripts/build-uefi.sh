@@ -19,6 +19,8 @@ kernel_vtd_object="$out/kernel-vtd.o"
 kernel_apic_object="$out/kernel-apic.o"
 kernel_memory_object="$out/kernel-memory.o"
 kernel_pci_object="$out/kernel-pci.o"
+kernel_tls_aes_object="$out/kernel-tls-aes-gcm.o"
+kernel_tls13_object="$out/kernel-tls13.o"
 kernel_scheduler_object="$out/kernel-scheduler.o"
 kernel_syscall_object="$out/kernel-syscall.o"
 kernel_process_object="$out/kernel-process.o"
@@ -354,6 +356,12 @@ zig cc -target x86_64-freestanding-none -std=c11 -O2 \
   -c -o "$kernel_pci_object" "$aiueos/kernel/pci.c"
 zig cc -target x86_64-freestanding-none -std=c11 -O2 \
   -ffreestanding -fno-stack-protector -mno-red-zone \
+  -c -o "$kernel_tls_aes_object" "$aiueos/kernel/tls_aes_gcm.c"
+zig cc -target x86_64-freestanding-none -std=c11 -O2 \
+  -ffreestanding -fno-stack-protector -mno-red-zone \
+  -c -o "$kernel_tls13_object" "$aiueos/kernel/tls13.c"
+zig cc -target x86_64-freestanding-none -std=c11 -O2 \
+  -ffreestanding -fno-stack-protector -mno-red-zone \
   -c -o "$kernel_scheduler_object" "$aiueos/kernel/scheduler.c"
 zig cc -target x86_64-freestanding-none -std=c11 -O2 \
   -ffreestanding -fno-stack-protector -mno-red-zone \
@@ -379,7 +387,8 @@ zig ld.lld -nostdlib -static -z max-page-size=0x1000 \
   -T "$aiueos/kernel/linker.ld" -o "$kernel" \
   "$kernel_entry_object" "$kernel_object" "$kernel_paging_object" \
   "$kernel_acpi_object" "$kernel_vtd_object" "$kernel_apic_object" "$kernel_memory_object" \
-  "$kernel_pci_object" "$kernel_scheduler_object" "$kernel_syscall_object" \
+  "$kernel_pci_object" "$kernel_tls_aes_object" "$kernel_tls13_object" \
+  "$kernel_scheduler_object" "$kernel_syscall_object" \
   "$kernel_process_object" "$kernel_loader_object" \
   "$kernel_smp_object" "$kernel_trampoline_object" \
   "$kernel_ioapic_object" "$kernel_framebuffer_object" "$kotoba_kernel_object" \

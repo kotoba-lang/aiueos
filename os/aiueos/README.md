@@ -457,7 +457,7 @@ AIUEOS_TEST_NET=1 ./os/aiueos/scripts/smoke-qemu-uefi.sh
 #   router=10.0.2.2 server=10.0.2.2 lease=86400
 # AIUEOS_DHCP_CONSUMED src=10.0.2.15 dns=10.0.2.3
 # AIUEOS_DNS_PROBE / AIUEOS_TCP_CLOUD_PROBE / AIUEOS_TLS_PROBE / AIUEOS_HTTP_PROBE
-# AIUEOS_BARE_METAL_P2 not-green leftover=:tls-handshake-incomplete,:http-absent
+# AIUEOS_BARE_METAL_P2 leftover named from serial (ADR-0082)
 ```
 
 QEMU's user-mode network carries its own DHCP server, so the guest broadcasts a
@@ -506,8 +506,9 @@ and a compile-time transaction id where a real client picks a random one.
 **DNS and cloud-TCP consume the lease (ADR-0081).** ARP/ICMP/guestfwd-TCP still
 send from compiled-in `10.0.2.15` so the four-boot tamper gate stays a
 demonstration. Those two probes take their source from `aiueos_dhcp_address()`.
-That is not a DNS resolver, not TLS, and not HTTP. P2 stays red until the guest
-prints `AIUEOS_HTTP_PROBE result=ok` with a CID.
+That is not a DNS resolver. TLS 1.3 + HTTP GET are ADR-0082 on this profile.
+P2 is green when the guest serial prints `AIUEOS_HTTP_PROBE result=ok` with a CID
+(measured 2026-08-22 on QEMU UEFI).
 
 `murakumo-join-plan.kotoba` and `tcp-seq-acceptable.kotoba` are still written
 and unlinked — the second because listing an export for an object no kernel
