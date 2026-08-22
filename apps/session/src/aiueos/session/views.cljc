@@ -119,6 +119,33 @@
      "このホストの非権威 ledger。本番の check-in は kotobase.net。D1 ではない。"]
     [:pre {:id "devices-out" :class "session-out"}]))
 
+(defn operator-view
+  "P4: live itonami.cloud from this same document. Consumer kotobase
+  / murakumo legs do not use this fragment."
+  []
+  (view-section {:id :operator :hidden? true}
+    (dds/heading 1 "運用" {:size "32"})
+    [:p {:class "session-lede"}
+     "産業側は "
+     [:code "itonami.cloud"]
+     "（network-awai/cloud-itonami）です。kotobase でも murakumo でもありません。"
+     " grant が無い消費者セッションはここへ HTTP しません。"
+     " `#itonami` も同じ面です。"]
+    (dds/card
+     (dds/heading 2 "itonami に聞く" {:size "24"})
+     [:p "この過程が "
+      [:code "/api/health"]
+      " と "
+      [:code "/api/fleet/metrics"]
+      " を "
+      [:code "itonami.cloud"]
+      " へ GET します。拒否は "
+      [:code "operator-grant-required"]
+      " です。"]
+     (dds/button "運用 grant して読む" {:id "run-operator" :size "md"})
+     (dds/button "運用 grant を拒否する" {:id "deny-operator" :size "md"})
+     [:pre {:id "operator-out" :class "session-out"}])))
+
 (defn shell
   "The one document body. Header nav is generated from `route/views`."
   []
@@ -131,4 +158,5 @@
     (desktop-view)
     (setup-view)
     (manage-view)
-    (devices-view)]])
+    (devices-view)
+    (operator-view)]])

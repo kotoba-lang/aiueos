@@ -17,8 +17,9 @@
   /api/session/*. `clojure -M:cloud-live check` is a different gate.
 
   User-mode/slirp networking stands in for Ethernet DHCP. Wi-Fi Easy Connect
-  is not this slice. Compositor, itonami, and real-machine qualification are
-  not this slice."
+  is not this slice. Compositor and real-machine qualification are later
+  units. Consumer smoke does not require itonami; the operator fragment is
+  `/api/session/operator` and a separate command."
   (:require [clojure.string :as str]
             [grant.enroll :as enroll]
             #?(:clj [grant.signing :as signing])
@@ -26,6 +27,7 @@
             #?(:clj [clojure.java.io :as io])
             #?(:clj [aiueos.session.live :as session-live])
             #?(:clj [aiueos.session.guest :as session-guest])
+            #?(:clj [aiueos.session.operator :as session-operator])
             #?(:clj [aiueos.compositor.desktop :as compositor-desktop]))
   #?(:clj
      (:import [com.sun.net.httpserver HttpExchange HttpHandler HttpServer]
@@ -569,7 +571,8 @@
           :server (atom nil)
           :pre-grant (atom grant)
           :nonce (atom nil)
-          :guest (atom nil)}))
+          :guest (atom nil)
+          :operator (atom nil)}))
 
      (defn public-status [rt]
        (let [d @(:device rt)
@@ -739,6 +742,27 @@
                           _ (when-let [g (:guest rt)] (reset! g result))
                           snap (session-guest/public-snapshot result)
                           code (session-guest/http-code result)]
+                      (send-bytes! ex code "application/json; charset=utf-8"
+                                   (->json snap)))
+
+                    (and (= "GET" method) (= path "/api/session/operator"))
+                    (send-bytes! ex 200 "application/json; charset=utf-8"
+                                 (->json (or (session-operator/public-snapshot
+                                              (some-> (:operator rt) deref))
+                                             {:component "operator/itonami"
+                                              :visible false
+                                              :called false
+                                              :authority "itonami.cloud"
+                                              :via "grant"
+                                              :via_process "session-process"})))
+
+                    (and (= "POST" method) (= path "/api/session/operator"))
+                    (let [req (json-req ex)
+                          mode (session-operator/parse-grant-mode (:grant req))
+                          result (session-operator/run mode)
+                          _ (when-let [o (:operator rt)] (reset! o result))
+                          snap (session-operator/public-snapshot result)
+                          code (session-operator/http-code result)]
                       (send-bytes! ex code "application/json; charset=utf-8"
                                    (->json snap)))
 

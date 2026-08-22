@@ -25,6 +25,12 @@
     (is (re-find #"guest-desktop-out" html)
         "desktop fragment names the guest; not an anonymous iframe")
     (is (re-find #"app/notes" html))
+    (is (re-find #"href=\"#operator\"" html)
+        "P4 operator chrome lives in this same document")
+    (is (re-find #"run-operator" html))
+    (is (re-find #"deny-operator" html))
+    (is (re-find #"operator-out" html))
+    (is (re-find #"itonami.cloud" html))
     (is (re-find #"murakumo-main" html))
     (is (re-find #"kotobase.net" html))
     (is (re-find #"window.__aiueosSessionAlive" html))
@@ -41,3 +47,9 @@
   (is (not (re-find #"qwen|gemma|claude-|gpt-"
                     (slurp "src/aiueos/session/live.clj")))
       "no hardcoded model id; alias murakumo-main only"))
+
+(deftest consumer-cloud-live-does-not-allow-itonami
+  (let [policy (slurp "resources/aiueos/cloud_live.edn")]
+    (is (not (re-find #"itonami\.cloud" policy))
+        "consumer net-allow must not require itonami")
+    (is (re-find #"kotobase.net" policy))))

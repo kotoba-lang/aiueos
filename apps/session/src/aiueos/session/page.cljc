@@ -49,7 +49,7 @@
     (throw (ex-info "dds.css is required; generate with --dds-css" {})))
   (page/->page
    {:title "aiueos session"
-    :description "Hosted daily shell. DADS SPA. kotobase.net and murakumo-main from this document."
+    :description "Hosted daily shell. DADS SPA. kotobase.net, murakumo-main, and itonami.cloud operator from this document."
     :lang "ja"
     :css dds-css
     :app-css (str tokens/skin-css "\n" app-css)

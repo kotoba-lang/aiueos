@@ -15,9 +15,14 @@
    {:id :desktop :fragment "#desktop" :label "デスクトップ"}
    {:id :setup :fragment "#setup" :label "セットアップ"}
    {:id :manage :fragment "#manage" :label "管理"}
-   {:id :devices :fragment "#devices" :label "機械"}])
+   {:id :devices :fragment "#devices" :label "機械"}
+   {:id :operator :fragment "#operator" :label "運用"}])
 
 (def default-view (first views))
+
+(def fragment-aliases
+  "Same operator view. `#itonami` is the industrial name."
+  {"#itonami" "#operator"})
 
 (defn- normalize-fragment
   [fragment]
@@ -27,10 +32,11 @@
                     (str/blank? cut) ""
                     (str/starts-with? cut "#") cut
                     :else (str "#" cut))
-        stripped (str/replace with-hash #"^#/" "#")]
-    (if (or (str/blank? stripped) (= "#" stripped) (= "#/" stripped))
+        stripped (str/replace with-hash #"^#/" "#")
+        aliased (get fragment-aliases stripped stripped)]
+    (if (or (str/blank? aliased) (= "#" aliased) (= "#/" aliased))
       (:fragment default-view)
-      stripped)))
+      aliased)))
 
 (defn fragment->view
   [fragment]

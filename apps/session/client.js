@@ -11,7 +11,8 @@ function viewId() {
 
 function show() {
   var h = viewId();
-  ["session", "desktop", "setup", "manage", "devices"].forEach(function (id) {
+  if (h === "#itonami") h = "#operator";
+  ["session", "desktop", "setup", "manage", "devices", "operator"].forEach(function (id) {
     var el = document.getElementById(id);
     if (el) el.hidden = ("#" + id) !== h;
   });
@@ -20,6 +21,7 @@ function show() {
   if (h === "#setup") refreshSetup();
   if (h === "#desktop") refreshDesktop();
   if (h === "#session" || h === "#desktop") refreshGuest();
+  if (h === "#operator") refreshOperator();
 }
 
 function pretty(x) {
@@ -220,6 +222,31 @@ async function postGuest(grant) {
 async function runGuest() { await postGuest("allow"); }
 async function denyGuest() { await postGuest("deny"); }
 
+async function refreshOperator() {
+  var el = document.getElementById("operator-out");
+  if (!el) return;
+  try {
+    var r = await fetch("/api/session/operator");
+    el.textContent = pretty(await r.text());
+  } catch (e) {
+    el.textContent = String(e);
+  }
+}
+
+async function postOperator(grant) {
+  var el = document.getElementById("operator-out");
+  if (el) el.textContent = "asking operator grant (" + grant + ") via process…";
+  var res = await fetch("/api/session/operator", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ grant: grant })
+  });
+  if (el) el.textContent = pretty(await res.text());
+}
+
+async function runOperator() { await postOperator("allow"); }
+async function denyOperator() { await postOperator("deny"); }
+
 window.addEventListener("hashchange", show);
 document.getElementById("bind").addEventListener("click", bind);
 document.getElementById("cycle").addEventListener("click", cycle);
@@ -227,5 +254,9 @@ document.getElementById("read-cid").addEventListener("click", readCid);
 document.getElementById("run-infer").addEventListener("click", runInfer);
 document.getElementById("run-guest").addEventListener("click", runGuest);
 document.getElementById("deny-guest").addEventListener("click", denyGuest);
+var runOp = document.getElementById("run-operator");
+var denyOp = document.getElementById("deny-operator");
+if (runOp) runOp.addEventListener("click", runOperator);
+if (denyOp) denyOp.addEventListener("click", denyOperator);
 show();
 refreshSetup();

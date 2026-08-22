@@ -5,6 +5,9 @@
   P3 (`guest`) is a separate command: grant-limited `:app/notes` visible
   in this same document. Do not fold execute into P1 smoke.
 
+  P4 (`operator`) is a separate command: grant-gated live itonami.cloud
+  from this same document. Do not fold itonami into P1 smoke.
+
   Exit 0 = SPA served and both live legs admitted.
   Exit 1 = a leg was refused, or the document is not the DADS SPA.
   Exit 3 = a leg could not be answered.
@@ -25,6 +28,11 @@
        (re-find #"deny-guest" html)
        (re-find #"guest-out" html)
        (re-find #"app/notes" html)
+       (re-find #"href=\"#operator\"" html)
+       (re-find #"run-operator" html)
+       (re-find #"deny-operator" html)
+       (re-find #"operator-out" html)
+       (re-find #"itonami.cloud" html)
        (not (re-find #"liquid-glass" html))))
 
 (defn- outcome-of-http
@@ -143,6 +151,62 @@
       (finally
         (pb/stop-http! rt)))))
 
+(defn- operator-body [http]
+  (or (:body http) ""))
+
+(defn run-operator
+  "P4 gate. HTTP only. Grant deny is 403 `:operator-grant-required` and
+  must not call itonami. Grant allow GETs itonami.cloud /api/health and
+  /api/fleet/metrics from this process. Consumer smoke does not run this."
+  [{:keys [dir]}]
+  (let [dir (File. (or dir (str (System/getProperty "java.io.tmpdir")
+                                "/aiueos-session-p4")))
+        rt (pb/start-http! (pb/make-runtime {:dir dir :listen-port 0}))
+        base (pb/base-url rt)]
+    (try
+      (let [page (pb/http-get (str base "/"))
+            html (:body page)
+            spa? (and (= 200 (:code page)) (html-admitted? html))
+            deny (pb/http-post (str base "/api/session/operator") {:grant "deny"}
+                               {:read-timeout-ms 30000})
+            deny-get (pb/http-get (str base "/api/session/operator"))
+            allow (pb/http-post (str base "/api/session/operator") {:grant "allow"}
+                                {:read-timeout-ms 60000})
+            deny-body (operator-body deny)
+            deny-get-body (operator-body deny-get)
+            allow-body (operator-body allow)
+            deny-ok? (and (= 403 (:code deny))
+                          (re-find #"operator-grant-required" deny-body)
+                          (re-find #"operator/itonami" deny-body)
+                          (re-find #"\"called\":false" deny-body)
+                          (not (re-find #"\"visible\":true" deny-body))
+                          (re-find #"\"called\":false" deny-get-body)
+                          (not= 500 (:code deny)))
+            allow-ok? (and (= 200 (:code allow))
+                           (re-find #"\"visible\":true" allow-body)
+                           (re-find #"itonami.cloud" allow-body)
+                           (re-find #"\"host\":\"itonami.cloud\"" allow-body)
+                           (re-find #"\"health_status\":200" allow-body)
+                           (re-find #"\"inventory_status\":200" allow-body)
+                           (re-find #"\"via_process\":\"session-process\"" allow-body)
+                           (re-find #"\"called\":true" allow-body))]
+        (println (str "AIUEOS_OPERATOR_URL=" base "/#operator"))
+        (println (str "AIUEOS_OPERATOR_SPA=" (if spa? "admitted" "refused")))
+        (println (str "AIUEOS_OPERATOR_DENY=" deny-body))
+        (println (str "AIUEOS_OPERATOR_DENY_CODE=" (:code deny)))
+        (println (str "AIUEOS_OPERATOR_ALLOW=" allow-body))
+        (println (str "AIUEOS_OPERATOR_ALLOW_CODE=" (:code allow)))
+        (when (and spa? deny-ok? allow-ok?)
+          (println "AIUEOS_OPERATOR_OK"))
+        {:exit (cond
+                 (not spa?) 1
+                 (not deny-ok?) 1
+                 (not allow-ok?) 1
+                 :else 0)
+         :deny deny :allow allow :spa? spa?})
+      (finally
+        (pb/stop-http! rt)))))
+
 (defn -main
   [& args]
   (let [cmd (or (first args) "smoke")
@@ -152,6 +216,11 @@
     (case cmd
       "guest"
       (let [r (run-guest {:dir dir})]
+        (flush)
+        (System/exit (int (:exit r))))
+
+      "operator"
+      (let [r (run-operator {:dir dir})]
         (flush)
         (System/exit (int (:exit r))))
 
@@ -168,5 +237,5 @@
         (flush)
         (System/exit (int (:exit r))))
 
-      (do (println "usage: clojure -M:session [smoke|guest|serve]")
+      (do (println "usage: clojure -M:session [smoke|guest|operator|serve]")
           (System/exit 3)))))
