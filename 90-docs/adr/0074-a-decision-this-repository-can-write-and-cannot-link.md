@@ -4,8 +4,20 @@ Date: 2026-08-22
 
 ## Status
 
-Accepted as a measurement. **No DHCPv4 client was built, and row 1 of
-ADR-0041's gap ledger is still open.**
+**Superseded in part by ADR-0076 on 2026-08-22, the same day.** The measurement
+below stands and is worth keeping; the conclusion it reached — that the client
+could not be built — does not, because the boundary it measured was moved.
+kotoba-native#57 was reviewed and landed as `a60da444`, `amu` was advanced by
+the one line that pins it, and the DHCPv4 client was built and gated. Row 1 of
+ADR-0041 is closed for the bare-metal profile.
+
+What this ADR still says correctly: the export symbol of a kernel object is not
+chosen by its source, an unlisted entry compiled green while exporting
+`kotoba_aiueos_probe` at the revision this repository pinned, and two written
+decisions had already been stranded by that rule without anything recording it.
+The last of those, `tcp-seq-acceptable.kotoba`, is **still** unlisted.
+
+Accepted as a measurement.
 
 What is executable: the existing UEFI suite with a NIC attached, measured green
 on this host today — including the three network markers ADR-0020, ADR-0021 and
@@ -283,17 +295,15 @@ DHCP behaviour. There is no client to break.
 
 ## Remaining boundary
 
-- **Nothing here was fixed.** ADR-0054 ends with *"Filing is not fixing"* about
-  this same allow-list. Upstream did fix it; this repository has not taken the
-  fix, and taking it is the whole of the next iteration.
-- **UDP remains unwritten** in every sense — no send path, no receive path, no
-  checksum, no port demultiplexing. When the entries exist, that is still all
-  to build, and it is the smaller half.
-- **The two entries above have been reviewed by nobody yet.** kotoba-native#57
-  is open, not answered. An arity-5 admission returning a reason code is a
-  shape this ABI has not carried — every existing entry returns a boolean or a
-  plan word — and that may be the wrong precedent. Asking before the objects
-  exist is the point; getting an answer is not the same as asking.
+- ~~**Nothing here was fixed.**~~ **Closed by ADR-0076.** The entries were
+  reviewed and landed, and the smaller pin advance was taken after the full one
+  was measured and rejected. What ADR-0054 said — *"Filing is not fixing"* —
+  held for four hours.
+- ~~**UDP remains unwritten**~~ — written in ADR-0076, and deliberately only as
+  much of it as DHCP needs: no socket, no port table, no demultiplexer.
+- **The two entries were reviewed and accepted**, reason code and all, and are
+  now precedent. The question was worth asking before the objects existed; that
+  it was answered quickly does not make asking it wrong.
 - **Frame-parsing admissions have no off-target oracle at all.** `net-arp-`,
   `ipv4-icmp-` and `tcp-segment-valid` have no contract in
   `os/aiueos/contracts/` and no verifier in `os/aiueos/scripts/aiueos/`; the

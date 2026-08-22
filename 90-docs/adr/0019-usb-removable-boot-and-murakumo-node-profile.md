@@ -76,12 +76,22 @@ each profile claim only what it can demonstrate.**
    `ABAIUEOS_…` on consecutive boots of the *same* transport); comparison
    therefore starts at each line's own `AIUEOS_` marker.
 
-3. **The gate does not hardcode a passing status.** On QEMU 10.0.3 the shared
-   UEFI suite fails at `AIUEOS_VIRTIO_INPUT_FAIL queue-or-envelope`, a
-   virtio-input device-model difference unrelated to boot transport. The gate
-   reports `AIUEOS_USB_BOOT_EQUIVALENT` with the shared status rather than
-   claiming a pass neither transport earned, and `AIUEOS_USB_BOOT_OK` when the
+3. **The gate does not hardcode a passing status.** It reports
+   `AIUEOS_USB_BOOT_EQUIVALENT` with whatever status the two transports shared,
+   rather than claiming a pass neither earned, and `AIUEOS_USB_BOOT_OK` when the
    suite passes.
+
+   This originally recorded that on QEMU 10.0.3 the shared UEFI suite fails at
+   `AIUEOS_VIRTIO_INPUT_FAIL queue-or-envelope`. **Re-measured 2026-08-22 and it
+   does not reproduce**: on one host running QEMU 10.0.3, virtio-input passes
+   and the whole suite is green. Five boots whose serial logs were kept say so
+   (ADR-0074, ADR-0076); earlier runs the same day agreed and their build
+   directories have since been removed, so five is what can be shown rather than
+   what was seen. One host is all either measurement covers — the original failure was real somewhere,
+   and this one is real here — so the honest statement is that the virtio-input
+   result is host-dependent and has to be measured rather than assumed in either
+   direction. What does not change is the rule above: the gate reports the
+   status it observed.
 
 4. **Flashing is deny-by-default.** `flash-usb.cljs` inspects unless `--confirm`
    repeats the device path; refuses internal disks, non-removable devices and
