@@ -136,6 +136,15 @@
    :compositor {:jvm-opts ["--enable-native-access=ALL-UNNAMED"]
                 :main-opts ["-m" "aiueos.compositor"]}
 
+   ;; P2: QEMU UEFI + KERNEL.ELF reaches kotobase (ADR-0081 / ADR-0041).
+   ;;   clojure -M:bare-metal cloud
+   ;; Exit 0 = guest HTTP GET + CID verify. Exit 1 = named leftover
+   ;; (`:http-absent`, `:tls-absent`, `:host-fetch-does-not-count`, …).
+   ;; Exit 3 = QEMU/OVMF/serial unmeasured.
+   ;; Hosted `cloud-live` and `session smoke` do not count.
+   :bare-metal {:jvm-opts ["--enable-native-access=ALL-UNNAMED"]
+                :main-opts ["-m" "aiueos.bare-metal"]}
+
    ;; Release attestations (SBOM + SLSA-style provenance) for a built artifact.
    ;;   clojure -M:attest sha256:<disk-digest> <source-commit> <builder> --isolated
    :attest {:main-opts ["-m" "aiueos.sbom"]}

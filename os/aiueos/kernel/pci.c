@@ -1209,6 +1209,8 @@ static unsigned dhcp_stage;
 static unsigned dhcp_reason;
 static uint32_t dhcp_address, dhcp_mask, dhcp_router, dhcp_server;
 static uint32_t dhcp_lease_seconds;
+static uint32_t dhcp_dns;
+static int dhcp_consumed;
 int aiueos_dhcp_ready(void) { return dhcp_ready; }
 unsigned aiueos_dhcp_stage(void) { return dhcp_stage; }
 unsigned aiueos_dhcp_reason(void) { return dhcp_reason; }
@@ -1217,6 +1219,26 @@ uint32_t aiueos_dhcp_mask(void) { return dhcp_mask; }
 uint32_t aiueos_dhcp_router(void) { return dhcp_router; }
 uint32_t aiueos_dhcp_server(void) { return dhcp_server; }
 uint32_t aiueos_dhcp_lease_seconds(void) { return dhcp_lease_seconds; }
+uint32_t aiueos_dhcp_dns(void) { return dhcp_dns; }
+int aiueos_dhcp_consumed(void) { return dhcp_consumed; }
+
+/* P2 cloud path (ADR-0081). Always attempted after a lease, so the offline
+   floor sees the same marker NAMES whether the public network answered. The
+   RESULT lives in the rest of the serial line. These are probes, not stacks. */
+static int dns_ready;
+static unsigned dns_stage;
+static uint32_t dns_a;
+static int tcp_cloud_ready;
+static unsigned tcp_cloud_stage;
+static int tls_record_ready;
+static uint8_t tls_record_type;
+int aiueos_dns_ready(void) { return dns_ready; }
+unsigned aiueos_dns_stage(void) { return dns_stage; }
+uint32_t aiueos_dns_a(void) { return dns_a; }
+int aiueos_tcp_cloud_ready(void) { return tcp_cloud_ready; }
+unsigned aiueos_tcp_cloud_stage(void) { return tcp_cloud_stage; }
+int aiueos_tls_record_ready(void) { return tls_record_ready; }
+uint8_t aiueos_tls_record_type(void) { return tls_record_type; }
 
 /* SLIRP's fixed topology: the guest is 10.0.2.15 and the gateway that answers
    ARP is 10.0.2.2. Nothing here depends on DHCP having run -- an ARP exchange
@@ -1461,9 +1483,10 @@ static const uint8_t net_tcp_payload[NET_TCP_PAYLOAD] =
    buffer is never touched by DMA -- only the CPU reads it. */
 static uint8_t net_tcp_scratch[4096] __attribute__((aligned(4096)));
 
-static uint16_t net_tcp_checksum(const uint8_t *frame, uint32_t tcp_length) {
-  net_store_be32(net_tcp_scratch, NET_GUEST_IP);
-  net_store_be32(net_tcp_scratch + 4, NET_TCP_PEER_IP);
+static uint16_t net_tcp_checksum(const uint8_t *frame, uint32_t tcp_length,
+                                 uint32_t src, uint32_t dst) {
+  net_store_be32(net_tcp_scratch, src);
+  net_store_be32(net_tcp_scratch + 4, dst);
   net_tcp_scratch[8] = 0;
   net_tcp_scratch[9] = 6;                                    /* protocol TCP */
   net_store_be16(net_tcp_scratch + 10, (uint16_t)tcp_length);
@@ -1472,8 +1495,10 @@ static uint16_t net_tcp_checksum(const uint8_t *frame, uint32_t tcp_length) {
     (uint64_t)(uintptr_t)net_tcp_scratch, 12 + tcp_length);
 }
 
-static uint32_t net_build_tcp(uint8_t *frame, uint32_t sequence,
-                              uint32_t acknowledgement, uint8_t flags,
+static uint32_t net_build_tcp(uint8_t *frame, uint32_t src, uint32_t dst,
+                              uint16_t sport, uint16_t dport,
+                              uint32_t sequence, uint32_t acknowledgement,
+                              uint8_t flags, const uint8_t *payload,
                               uint32_t payload_length) {
   uint32_t total = 40 + payload_length;                      /* 20 IPv4 + 20 TCP */
   for (unsigned i = 0; i < 6; i++) frame[i] = net_peer_mac[i];
@@ -1489,12 +1514,12 @@ static uint32_t net_build_tcp(uint8_t *frame, uint32_t sequence,
   frame[22] = 64;                                            /* TTL */
   frame[23] = 6;                                             /* TCP */
   net_store_be16(frame + 24, 0);                             /* checksum covers itself as 0 */
-  net_store_be32(frame + 26, NET_GUEST_IP);
-  net_store_be32(frame + 30, NET_TCP_PEER_IP);
+  net_store_be32(frame + 26, src);
+  net_store_be32(frame + 30, dst);
   net_store_be16(frame + 24,
     (uint16_t)kotoba_aiueos_ipv4_checksum((uint64_t)(uintptr_t)(frame + 14), 20));
-  net_store_be16(frame + 34, NET_TCP_LOCAL_PORT);
-  net_store_be16(frame + 36, NET_TCP_PEER_PORT);
+  net_store_be16(frame + 34, sport);
+  net_store_be16(frame + 36, dport);
   net_store_be32(frame + 38, sequence);
   net_store_be32(frame + 42, acknowledgement);
   frame[46] = 0x50;                                          /* data offset 5, no options */
@@ -1502,24 +1527,27 @@ static uint32_t net_build_tcp(uint8_t *frame, uint32_t sequence,
   net_store_be16(frame + 48, NET_TCP_WINDOW);
   net_store_be16(frame + 50, 0);                             /* checksum covers itself as 0 */
   net_store_be16(frame + 52, 0);                             /* no urgent data */
-  for (uint32_t i = 0; i < payload_length; i++) frame[54 + i] = net_tcp_payload[i];
-  net_store_be16(frame + 50, net_tcp_checksum(frame, 20 + payload_length));
-  /* 54 bytes without a payload, 62 with one. The first is under Ethernet's
-     60-byte minimum and is emitted unpadded, which the ARP request at 42 bytes
-     already showed this device and SLIRP both accept -- so nothing here depends
-     on padding that has never been exercised. A real NIC on a real wire pads it
-     itself, and the receiver ignores the difference because the IPv4 total
-     length, not the frame length, says where the datagram ends. */
+  for (uint32_t i = 0; i < payload_length; i++) frame[54 + i] = payload[i];
+  net_store_be16(frame + 50, net_tcp_checksum(frame, 20 + payload_length, src, dst));
+  /* 54 bytes without a payload, 62 with the echo, 196 with a ClientHello. The
+     first is under Ethernet's 60-byte minimum and is emitted unpadded, which
+     the ARP request at 42 bytes already showed this device and SLIRP both
+     accept -- so nothing here depends on padding that has never been
+     exercised. A real NIC on a real wire pads it itself, and the receiver
+     ignores the difference because the IPv4 total length, not the frame
+     length, says where the datagram ends. */
   return 14 + total;
 }
 
-static int net_tcp_send(struct net_ring *tx, uint8_t *tx_page, uint32_t sequence,
-                        uint32_t acknowledgement, uint8_t flags,
-                        uint32_t payload_length) {
+static int net_tcp_send(struct net_ring *tx, uint8_t *tx_page, uint32_t src,
+                        uint32_t dst, uint16_t sport, uint16_t dport,
+                        uint32_t sequence, uint32_t acknowledgement, uint8_t flags,
+                        const uint8_t *payload, uint32_t payload_length) {
   uint8_t *frame = tx_page + sizeof(struct virtio_net_hdr);
   for (unsigned i = 0; i < sizeof(struct virtio_net_hdr); i++) tx_page[i] = 0;
   uint32_t frame_length =
-    net_build_tcp(frame, sequence, acknowledgement, flags, payload_length);
+    net_build_tcp(frame, src, dst, sport, dport, sequence, acknowledgement,
+                  flags, payload, payload_length);
   /* The segment is put to the same admission arithmetic that will judge the
      peer's, by a different path -- from the frame, not from the scratch copy --
      before the device ever sees it. It catches a scratch copy of the wrong
@@ -1529,15 +1557,16 @@ static int net_tcp_send(struct net_ring *tx, uint8_t *tx_page, uint32_t sequence
      segment, and a dropped segment is indistinguishable from a peer that never
      answered until a whole second boot has been spent finding out. */
   if (!kotoba_aiueos_tcp_checksum_ok((uint64_t)(uintptr_t)frame,
-                                     40 + payload_length,
-                                     NET_GUEST_IP, NET_TCP_PEER_IP)) {
+                                     40 + payload_length, src, dst)) {
     tcp_stage = NET_TCP_STAGE_TX_CHECKSUM;
+    tcp_cloud_stage = NET_TCP_STAGE_TX_CHECKSUM;
     return 0;
   }
   tx->desc[0].length = (uint32_t)sizeof(struct virtio_net_hdr) + frame_length;
   net_post(tx);
   if (!net_await(tx->used, tx->posted) || tx->used->ring[0].id != 0) {
     tcp_stage = NET_TCP_STAGE_TX_STALLED;
+    tcp_cloud_stage = NET_TCP_STAGE_TX_STALLED;
     return 0;
   }
   return 1;
@@ -1552,8 +1581,9 @@ static int net_tcp_send(struct net_ring *tx, uint8_t *tx_page, uint32_t sequence
    where only the gateway's own ARP traffic competed; eight are allowed here
    because a close can be preceded by a bare ACK and a retransmission both. */
 static int net_tcp_receive(struct net_ring *rx, uint8_t *rx_page,
-                           uint32_t expected_ack, uint8_t expected_flags) {
-  for (unsigned attempt = 0; attempt < 8; attempt++) {
+                           uint32_t expected_src, uint32_t expected_ack,
+                           uint8_t expected_flags, unsigned attempts) {
+  for (unsigned attempt = 0; attempt < attempts; attempt++) {
     if (attempt) net_post(rx);
     if (!net_await(rx->used, rx->posted)) return 0;
     uint32_t received = rx->used->ring[0].length;
@@ -1563,7 +1593,7 @@ static int net_tcp_receive(struct net_ring *rx, uint8_t *rx_page,
     if (kotoba_aiueos_tcp_segment_valid(
           (uint64_t)(uintptr_t)(rx_page + sizeof(struct virtio_net_hdr)),
           received - (uint32_t)sizeof(struct virtio_net_hdr),
-          NET_TCP_PEER_IP, expected_ack, expected_flags)) return 1;
+          expected_src, expected_ack, expected_flags)) return 1;
   }
   return 0;
 }
@@ -1591,24 +1621,32 @@ static int net_tcp_probe(struct net_ring *rx, struct net_ring *tx,
 
   /* --- three-way handshake ------------------------------------------------ */
   net_post(rx);
-  if (!net_tcp_send(tx, tx_page, NET_TCP_ISN, 0, NET_TCP_SYN, 0)) return 0;
+  if (!net_tcp_send(tx, tx_page, NET_GUEST_IP, NET_TCP_PEER_IP,
+                    NET_TCP_LOCAL_PORT, NET_TCP_PEER_PORT,
+                    NET_TCP_ISN, 0, NET_TCP_SYN, 0, 0)) return 0;
   tcp_stage = NET_TCP_STAGE_SYN_ACK;
   /* SYN|ACK exactly: a bare SYN would be a simultaneous open, which this cannot
      complete, and a SYN|ACK|ECE would mean the peer negotiated ECN, which this
      never requested. Either is a real segment and neither is the answer asked
      for. The acknowledgement pins it to the SYN this boot sent. */
-  if (!net_tcp_receive(rx, rx_page, NET_TCP_ISN + 1, NET_TCP_SYN | NET_TCP_ACK))
+  if (!net_tcp_receive(rx, rx_page, NET_TCP_PEER_IP, NET_TCP_ISN + 1,
+                       NET_TCP_SYN | NET_TCP_ACK, 8))
     return 0;
   /* A SYN occupies one sequence number even though it carries no data, so the
      peer's stream starts one past the ISN it just announced. */
   peer_next = net_load_be32(frame + 38) + 1;
-  if (!net_tcp_send(tx, tx_page, NET_TCP_ISN + 1, peer_next, NET_TCP_ACK, 0))
+  if (!net_tcp_send(tx, tx_page, NET_GUEST_IP, NET_TCP_PEER_IP,
+                    NET_TCP_LOCAL_PORT, NET_TCP_PEER_PORT,
+                    NET_TCP_ISN + 1, peer_next, NET_TCP_ACK, 0, 0))
     return 0;
 
   /* --- one payload out, the peer's echo of it back ------------------------ */
   net_post(rx);
-  if (!net_tcp_send(tx, tx_page, NET_TCP_ISN + 1, peer_next,
-                    NET_TCP_PSH | NET_TCP_ACK, NET_TCP_PAYLOAD)) return 0;
+  if (!net_tcp_send(tx, tx_page, NET_GUEST_IP, NET_TCP_PEER_IP,
+                    NET_TCP_LOCAL_PORT, NET_TCP_PEER_PORT,
+                    NET_TCP_ISN + 1, peer_next,
+                    NET_TCP_PSH | NET_TCP_ACK, net_tcp_payload, NET_TCP_PAYLOAD))
+    return 0;
   tcp_stage = NET_TCP_STAGE_ECHO;
   /* PSH|ACK, because a BSD-derived stack -- which SLIRP is -- sets PSH on a
      segment that drains its send buffer, and eight echoed bytes always do. The
@@ -1619,27 +1657,33 @@ static int net_tcp_probe(struct net_ring *rx, struct net_ring *tx,
      covers the payload, so the segment is intact, but nothing compares it with
      what was sent -- that would need a third object, and the admission's arity
      is spent. */
-  if (!net_tcp_receive(rx, rx_page, NET_TCP_ISN + 1 + NET_TCP_PAYLOAD,
-                       NET_TCP_PSH | NET_TCP_ACK)) return 0;
+  if (!net_tcp_receive(rx, rx_page, NET_TCP_PEER_IP,
+                       NET_TCP_ISN + 1 + NET_TCP_PAYLOAD,
+                       NET_TCP_PSH | NET_TCP_ACK, 8)) return 0;
   if (!net_tcp_peer_next(frame, &peer_next)) return 0;
 
   /* --- close -------------------------------------------------------------- */
   net_post(rx);
-  if (!net_tcp_send(tx, tx_page, NET_TCP_ISN + 1 + NET_TCP_PAYLOAD, peer_next,
-                    NET_TCP_FIN | NET_TCP_ACK, 0)) return 0;
+  if (!net_tcp_send(tx, tx_page, NET_GUEST_IP, NET_TCP_PEER_IP,
+                    NET_TCP_LOCAL_PORT, NET_TCP_PEER_PORT,
+                    NET_TCP_ISN + 1 + NET_TCP_PAYLOAD, peer_next,
+                    NET_TCP_FIN | NET_TCP_ACK, 0, 0)) return 0;
   tcp_stage = NET_TCP_STAGE_FIN_ACK;
   /* A FIN occupies a sequence number too, so the peer acknowledges one past the
      last payload byte. `cat` reaches EOF when its half closes and exits, and
      SLIRP closes behind it -- the peer's FIN is a consequence of ours, which is
      why waiting for it is a close and not just a shutdown. */
-  if (!net_tcp_receive(rx, rx_page, NET_TCP_ISN + 2 + NET_TCP_PAYLOAD,
-                       NET_TCP_FIN | NET_TCP_ACK)) return 0;
+  if (!net_tcp_receive(rx, rx_page, NET_TCP_PEER_IP,
+                       NET_TCP_ISN + 2 + NET_TCP_PAYLOAD,
+                       NET_TCP_FIN | NET_TCP_ACK, 8)) return 0;
   /* Courtesy, not evidence: the exchange is already proved by the admitted FIN.
      It is sent so the peer's half closes instead of retransmitting into a boot
      that has moved on, and its result is deliberately not checked -- failing
      here would retract evidence that has already been earned. */
-  net_tcp_send(tx, tx_page, NET_TCP_ISN + 2 + NET_TCP_PAYLOAD, peer_next + 1,
-               NET_TCP_ACK, 0);
+  net_tcp_send(tx, tx_page, NET_GUEST_IP, NET_TCP_PEER_IP,
+               NET_TCP_LOCAL_PORT, NET_TCP_PEER_PORT,
+               NET_TCP_ISN + 2 + NET_TCP_PAYLOAD, peer_next + 1,
+               NET_TCP_ACK, 0, 0);
   tcp_stage = NET_TCP_STAGE_DONE;
   return 1;
 }
@@ -1660,7 +1704,8 @@ static int net_tcp_probe(struct net_ring *rx, struct net_ring *tx,
 /* shutdown, no retransmission with backoff if a datagram is lost, and no     */
 /* second interface. The lease is recorded and then never renewed, so a       */
 /* machine that stays up past its lease keeps using an address it no longer   */
-/* holds. Nothing above this consumes the lease yet.                          */
+/* holds. ADR-0081 consumes it for the DNS/cloud-TCP probes: those datagrams  */
+/* take their source from dhcp_address, never from NET_GUEST_IP.              */
 /* ------------------------------------------------------------------------- */
 
 /* Fixed for the same reason NET_ICMP_IDENT is: one exchange per boot, and a
@@ -1894,7 +1939,265 @@ static int net_dhcp_exchange(struct net_ring *rx, struct net_ring *tx,
     (uint64_t)(uintptr_t)frame, dhcp_frame_length, 54);
   dhcp_lease_seconds = (uint32_t)kotoba_aiueos_dhcp_option_u32(
     (uint64_t)(uintptr_t)frame, dhcp_frame_length, 51);
+  /* Option 6 is DNS. Presence is not required by dhcp-reply-valid, so 0 here
+     means absent-or-zero and the probe falls back to SLIRP's compiled-in
+     nameserver the same way ARP falls back to NET_PEER_IP. */
+  dhcp_dns = (uint32_t)kotoba_aiueos_dhcp_option_u32(
+    (uint64_t)(uintptr_t)frame, dhcp_frame_length, 6);
   dhcp_stage = NET_DHCP_STAGE_DONE;
+  return 1;
+}
+
+/* ------------------------------------------------------------------------- */
+/* DNS stub + TCP:443 + TLS record (ADR-0081). Not a resolver, not a TLS      */
+/* client, not HTTP. QNAME is compiled in, so every field sits at a constant  */
+/* offset the way TCP headers do -- there is no options-style walk. UDP is    */
+/* the same "as much as this exchange needs" that DHCP already paid for.      */
+/* Source address is dhcp_address: that is what consuming the lease means.    */
+/* ------------------------------------------------------------------------- */
+
+#define NET_DNS_IP 0x0a000203U
+#define NET_DNS_CLIENT_PORT 49154
+#define NET_DNS_XID 0xa1e0
+#define NET_DNS_STAGE_IDLE 0
+#define NET_DNS_STAGE_TX 1
+#define NET_DNS_STAGE_NO_ANSWER 2
+#define NET_DNS_STAGE_DONE 3
+
+#define NET_CLOUD_PORT 443
+#define NET_CLOUD_LOCAL_PORT 49153
+#define NET_CLOUD_ISN 0xa1e01000U
+
+static const uint8_t net_dns_question[18] = {
+  8,'k','o','t','o','b','a','s','e',3,'n','e','t',0,0,1,0,1
+};
+
+/* TLS 1.3 ClientHello, SNI kotobase.net, key_share x25519 (dummy 32 bytes).
+   A TLS server answers with a handshake (0x16) or alert (0x15) record. That
+   is a TLS record on the stream, not a completed handshake and not HTTP. */
+static const uint8_t net_tls_clienthello[142] = {
+  0x16,0x03,0x01,0x00,0x89,0x01,0x00,0x00,0x85,0x03,0x03,0xa1,0xe0,0xa1,0xe0,
+  0xa1,0xe0,0xa1,0xe0,0xa1,0xe0,0xa1,0xe0,0xa1,0xe0,0xa1,0xe0,0xa1,0xe0,0xa1,
+  0xe0,0xa1,0xe0,0xa1,0xe0,0xa1,0xe0,0xa1,0xe0,0xa1,0xe0,0xa1,0xe0,0x00,0x00,
+  0x02,0x13,0x01,0x01,0x00,0x00,0x5a,0x00,0x00,0x00,0x11,0x00,0x0f,0x00,0x00,
+  0x0c,0x6b,0x6f,0x74,0x6f,0x62,0x61,0x73,0x65,0x2e,0x6e,0x65,0x74,0x00,0x0a,
+  0x00,0x04,0x00,0x02,0x00,0x1d,0x00,0x0d,0x00,0x08,0x00,0x06,0x04,0x03,0x08,
+  0x04,0x04,0x01,0x00,0x2b,0x00,0x03,0x02,0x03,0x04,0x00,0x33,0x00,0x26,0x00,
+  0x24,0x00,0x1d,0x00,0x20,0x01,0x08,0x0f,0x16,0x1d,0x24,0x2b,0x32,0x39,0x40,
+  0x47,0x4e,0x55,0x5c,0x63,0x6a,0x71,0x78,0x7f,0x86,0x8d,0x94,0x9b,0xa2,0xa9,
+  0xb0,0xb7,0xbe,0xc5,0xcc,0xd3,0xda
+};
+
+static uint32_t net_dns_server(void) {
+  return dhcp_dns ? dhcp_dns : NET_DNS_IP;
+}
+
+static uint32_t net_build_dns_query(uint8_t *frame, uint32_t src, uint32_t dst) {
+  uint32_t udp_length = 8 + 12 + 18;
+  uint32_t total = 20 + udp_length;
+  for (uint32_t i = 0; i < 14 + total; i++) frame[i] = 0;
+  for (unsigned i = 0; i < 6; i++) frame[i] = net_peer_mac[i];
+  for (unsigned i = 0; i < 6; i++) frame[6 + i] = net_mac[i];
+  net_store_be16(frame + 12, 0x0800);
+  frame[14] = 0x45;
+  net_store_be16(frame + 16, (uint16_t)total);
+  net_store_be16(frame + 20, 0x4000);
+  frame[22] = 64;
+  frame[23] = 17;
+  net_store_be32(frame + 26, src);
+  net_store_be32(frame + 30, dst);
+  net_store_be16(frame + 24,
+    (uint16_t)kotoba_aiueos_ipv4_checksum((uint64_t)(uintptr_t)(frame + 14), 20));
+  net_store_be16(frame + 34, NET_DNS_CLIENT_PORT);
+  net_store_be16(frame + 36, 53);
+  net_store_be16(frame + 38, (uint16_t)udp_length);
+  net_store_be16(frame + 42, NET_DNS_XID);
+  net_store_be16(frame + 44, 0x0100);                        /* RD */
+  net_store_be16(frame + 46, 1);                             /* QDCOUNT */
+  for (unsigned i = 0; i < 18; i++) frame[54 + i] = net_dns_question[i];
+  net_store_be16(frame + 40, net_udp_checksum(frame, udp_length));
+  return 14 + total;
+}
+
+static int net_udp_rx_checksum_ok(const uint8_t *frame, uint32_t udp_length) {
+  net_store_be32(net_dhcp_scratch, net_load_be32(frame + 26));
+  net_store_be32(net_dhcp_scratch + 4, net_load_be32(frame + 30));
+  net_dhcp_scratch[8] = 0;
+  net_dhcp_scratch[9] = 17;
+  net_store_be16(net_dhcp_scratch + 10, (uint16_t)udp_length);
+  for (uint32_t i = 0; i < udp_length; i++) net_dhcp_scratch[12 + i] = frame[34 + i];
+  return (uint16_t)kotoba_aiueos_ipv4_checksum(
+    (uint64_t)(uintptr_t)net_dhcp_scratch, 12 + udp_length) == 0;
+}
+
+/* Constant-offset A admission for one compiled QNAME. Two answer layouts:
+   RFC 1035 pointer 0xc00c, or the question copied uncompressed. Anything with
+   an options-style walk stays unwritten -- that would need a Kotoba object
+   and a kotoba-native export that this pin does not list. */
+static int net_dns_answer_ok(const uint8_t *frame, uint32_t length, uint32_t src,
+                             uint32_t dst, uint32_t *out_a) {
+  uint32_t total, udp_length;
+  unsigned i;
+  if (length < 88) return 0;
+  if (net_load_be16(frame + 12) != 0x0800) return 0;
+  if (frame[14] != 0x45 || frame[23] != 17) return 0;
+  total = net_load_be16(frame + 16);
+  if (total < 58 || 14 + total > length) return 0;
+  if (kotoba_aiueos_ipv4_checksum((uint64_t)(uintptr_t)(frame + 14), 20) != 0)
+    return 0;
+  if (net_load_be32(frame + 26) != src) return 0;
+  if (net_load_be32(frame + 30) != dst) return 0;
+  if (net_load_be16(frame + 34) != 53) return 0;
+  if (net_load_be16(frame + 36) != NET_DNS_CLIENT_PORT) return 0;
+  udp_length = net_load_be16(frame + 38);
+  if (udp_length < 38 || 20 + udp_length != total) return 0;
+  if (net_load_be16(frame + 40) != 0 && !net_udp_rx_checksum_ok(frame, udp_length))
+    return 0;
+  if (net_load_be16(frame + 42) != NET_DNS_XID) return 0;
+  if ((net_load_be16(frame + 44) & 0x8000) == 0) return 0;   /* QR */
+  if ((net_load_be16(frame + 44) & 0x000f) != 0) return 0;   /* RCODE */
+  if (net_load_be16(frame + 46) != 1) return 0;              /* QDCOUNT */
+  if (net_load_be16(frame + 48) == 0) return 0;              /* ANCOUNT */
+  for (i = 0; i < 18; i++) {
+    if (frame[54 + i] != net_dns_question[i]) return 0;
+  }
+  if (frame[72] == 0xc0 && frame[73] == 0x0c) {
+    if (net_load_be16(frame + 74) != 1) return 0;
+    if (net_load_be16(frame + 76) != 1) return 0;
+    if (net_load_be16(frame + 82) != 4) return 0;
+    *out_a = net_load_be32(frame + 84);
+    return *out_a != 0;
+  }
+  if (length < 104) return 0;
+  for (i = 0; i < 18; i++) {
+    if (frame[72 + i] != net_dns_question[i]) return 0;
+  }
+  if (net_load_be16(frame + 90) != 1) return 0;
+  if (net_load_be16(frame + 92) != 1) return 0;
+  if (net_load_be16(frame + 98) != 4) return 0;
+  *out_a = net_load_be32(frame + 100);
+  return *out_a != 0;
+}
+
+static int net_dns_probe(struct net_ring *rx, struct net_ring *tx,
+                         uint8_t *rx_page, uint8_t *tx_page) {
+  uint8_t *frame = tx_page + sizeof(struct virtio_net_hdr);
+  const uint8_t *rx_frame = rx_page + sizeof(struct virtio_net_hdr);
+  uint32_t src = dhcp_address;
+  uint32_t dst = net_dns_server();
+  uint32_t frame_length;
+  if (!dhcp_ready || !src || !net_peer_mac_known) {
+    dns_stage = NET_DNS_STAGE_IDLE;
+    return 0;
+  }
+  net_post(rx);
+  for (unsigned i = 0; i < sizeof(struct virtio_net_hdr); i++) tx_page[i] = 0;
+  frame_length = net_build_dns_query(frame, src, dst);
+  tx->desc[0].length = (uint32_t)sizeof(struct virtio_net_hdr) + frame_length;
+  net_post(tx);
+  dns_stage = NET_DNS_STAGE_TX;
+  if (!net_await(tx->used, tx->posted) || tx->used->ring[0].id != 0) return 0;
+  dhcp_consumed = 1;
+  dns_stage = NET_DNS_STAGE_NO_ANSWER;
+  for (unsigned attempt = 0; attempt < 4; attempt++) {
+    uint32_t received, payload, a;
+    if (attempt) net_post(rx);
+    if (!net_await(rx->used, rx->posted)) return 0;
+    received = rx->used->ring[0].length;
+    if (rx->used->ring[0].id != 0 ||
+        received <= sizeof(struct virtio_net_hdr) ||
+        received > sizeof(struct virtio_net_hdr) + NET_FRAME_MAX) continue;
+    payload = received - (uint32_t)sizeof(struct virtio_net_hdr);
+    if (net_dns_answer_ok(rx_frame, payload, dst, src, &a)) {
+      dns_a = a;
+      dns_stage = NET_DNS_STAGE_DONE;
+      return 1;
+    }
+  }
+  return 0;
+}
+
+static int net_tls_payload_type(const uint8_t *frame, uint8_t *out_type) {
+  uint32_t total = net_load_be16(frame + 16);
+  uint32_t header = 4U * (uint32_t)(frame[46] >> 4);
+  if (header < 20 || 20 + header + 1 > total) return 0;
+  *out_type = frame[34 + header];
+  return 1;
+}
+
+/* One receive buffer: an empty ACK of ClientHello followed immediately by a
+   ServerHello drops the second segment. Piggybacking ClientHello on the
+   handshake ACK removes that extra ACK, and this loop keeps an empty ACK
+   from counting as a TLS record so the next posted buffer can still catch
+   0x16 / 0x15. Flags are compared for equality by tcp-segment-valid, so ACK
+   and PSH|ACK are two admissions, not a mask. */
+static int net_tcp_cloud_receive_tls(struct net_ring *rx, uint8_t *rx_page,
+                                     uint32_t expected_src, uint32_t expected_ack,
+                                     unsigned attempts) {
+  const uint8_t *frame = rx_page + sizeof(struct virtio_net_hdr);
+  for (unsigned attempt = 0; attempt < attempts; attempt++) {
+    uint8_t rec;
+    uint32_t received;
+    if (attempt) net_post(rx);
+    if (!net_await(rx->used, rx->posted)) return 0;
+    received = rx->used->ring[0].length;
+    if (rx->used->ring[0].id != 0 ||
+        received <= sizeof(struct virtio_net_hdr) ||
+        received > sizeof(struct virtio_net_hdr) + NET_FRAME_MAX) continue;
+    if (!kotoba_aiueos_tcp_segment_valid(
+          (uint64_t)(uintptr_t)frame,
+          received - (uint32_t)sizeof(struct virtio_net_hdr),
+          expected_src, expected_ack, NET_TCP_PSH | NET_TCP_ACK) &&
+        !kotoba_aiueos_tcp_segment_valid(
+          (uint64_t)(uintptr_t)frame,
+          received - (uint32_t)sizeof(struct virtio_net_hdr),
+          expected_src, expected_ack, NET_TCP_ACK))
+      continue;
+    if (net_tls_payload_type(frame, &rec) && (rec == 0x16 || rec == 0x15)) {
+      tls_record_ready = 1;
+      tls_record_type = rec;
+      return 1;
+    }
+  }
+  return 0;
+}
+
+static int net_tcp_cloud_probe(struct net_ring *rx, struct net_ring *tx,
+                               uint8_t *rx_page, uint8_t *tx_page) {
+  const uint8_t *frame = rx_page + sizeof(struct virtio_net_hdr);
+  uint32_t src = dhcp_address;
+  uint32_t dst = dns_a;
+  uint32_t peer_next;
+  int got_synack = 0;
+  unsigned syn;
+  if (!dns_ready || !src || !dst || !net_peer_mac_known) {
+    tcp_cloud_stage = NET_TCP_STAGE_IDLE;
+    return 0;
+  }
+  tcp_cloud_stage = NET_TCP_STAGE_SYN_ACK;
+  for (syn = 0; syn < 2 && !got_synack; syn++) {
+    net_post(rx);
+    if (!net_tcp_send(tx, tx_page, src, dst, NET_CLOUD_LOCAL_PORT, NET_CLOUD_PORT,
+                      NET_CLOUD_ISN, 0, NET_TCP_SYN, 0, 0)) return 0;
+    got_synack = net_tcp_receive(rx, rx_page, dst, NET_CLOUD_ISN + 1,
+                                 NET_TCP_SYN | NET_TCP_ACK, 4);
+  }
+  if (!got_synack) return 0;
+  peer_next = net_load_be32(frame + 38) + 1;
+  tcp_cloud_ready = 1;
+  net_post(rx);
+  /* Handshake ACK carries ClientHello so the peer's next flight is one
+     segment, not ACK-then-record on a one-buffer queue. */
+  if (!net_tcp_send(tx, tx_page, src, dst, NET_CLOUD_LOCAL_PORT, NET_CLOUD_PORT,
+                    NET_CLOUD_ISN + 1, peer_next,
+                    NET_TCP_PSH | NET_TCP_ACK, net_tls_clienthello,
+                    (uint32_t)sizeof(net_tls_clienthello)))
+    return 1;
+  tcp_cloud_stage = NET_TCP_STAGE_ECHO;
+  net_tcp_cloud_receive_tls(rx, rx_page, dst,
+                            NET_CLOUD_ISN + 1 + (uint32_t)sizeof(net_tls_clienthello),
+                            8);
+  tcp_cloud_stage = NET_TCP_STAGE_DONE;
   return 1;
 }
 
@@ -1982,6 +2285,11 @@ static int virtio_net(uint8_t b, uint8_t d, uint8_t f) {
      then fails in whatever state it was left, which is reported as its own
      stage rather than as a DHCP defect. */
   if (net_ready) dhcp_ready = net_dhcp_exchange(&rx, &tx, rx_page, tx_page);
+  /* Lease consumption and the cloud path sit after DHCP so a failed lease
+     cannot pretend to have been used, and so ARP/ICMP/guestfwd-TCP stay on
+     compiled-in 10.0.2.15 for the four-boot DHCP tamper gate. */
+  if (dhcp_ready) dns_ready = net_dns_probe(&rx, &tx, rx_page, tx_page);
+  if (dns_ready) net_tcp_cloud_probe(&rx, &tx, rx_page, tx_page);
   return 1;
 }
 
@@ -1997,7 +2305,16 @@ int aiueos_pci_enumerate(void) {
   dhcp_reason = 0;
   dhcp_address = 0; dhcp_mask = 0; dhcp_router = 0; dhcp_server = 0;
   dhcp_lease_seconds = 0;
+  dhcp_dns = 0;
+  dhcp_consumed = 0;
   dhcp_frame_length = 0;
+  dns_ready = 0;
+  dns_stage = NET_DNS_STAGE_IDLE;
+  dns_a = 0;
+  tcp_cloud_ready = 0;
+  tcp_cloud_stage = NET_TCP_STAGE_IDLE;
+  tls_record_ready = 0;
+  tls_record_type = 0;
   object_store_ready = 0;
   kotoba_app_count=0; for(unsigned app=0;app<KOTOBA_APP_CAPACITY;app++)kotoba_apps[app].ready=0;
   journal_ready = 0;

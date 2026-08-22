@@ -446,12 +446,18 @@ HTTPS will need more than this.
 
 ## Network: address configuration
 
-aiueos performs a real DHCPv4 exchange and records the lease (ADR-0076).
+aiueos performs a real DHCPv4 exchange and records the lease (ADR-0076). DNS
+and cloud-TCP then **send from that address** (ADR-0081). ARP/ICMP/guestfwd-TCP
+keep using compiled-in `10.0.2.15` so the four-boot tamper gate stays a
+demonstration.
 
 ```sh
 AIUEOS_TEST_NET=1 ./os/aiueos/scripts/smoke-qemu-uefi.sh
 # AIUEOS_DHCP_OK offer-ack kotoba-admitted address=10.0.2.15 mask=255.255.255.0 \
 #   router=10.0.2.2 server=10.0.2.2 lease=86400
+# AIUEOS_DHCP_CONSUMED src=10.0.2.15 dns=10.0.2.3
+# AIUEOS_DNS_PROBE / AIUEOS_TCP_CLOUD_PROBE / AIUEOS_TLS_PROBE / AIUEOS_HTTP_PROBE
+# AIUEOS_BARE_METAL_P2 not-green leftover=:tls-handshake-incomplete,:http-absent
 ```
 
 QEMU's user-mode network carries its own DHCP server, so the guest broadcasts a
@@ -497,10 +503,11 @@ probe, not a client**: one exchange at boot and then nothing — no renewal
 timers, no rebinding, no DECLINE, no RELEASE, no retransmission, one interface,
 and a compile-time transaction id where a real client picks a random one.
 
-**Nothing consumes the lease yet.** `kernel/pci.c` still sends from the
-compiled-in `10.0.2.15`, which is the address the server happens to hand out, so
-configuring it changes no behaviour. That is the whole of what row 1 of
-ADR-0041 currently buys.
+**DNS and cloud-TCP consume the lease (ADR-0081).** ARP/ICMP/guestfwd-TCP still
+send from compiled-in `10.0.2.15` so the four-boot tamper gate stays a
+demonstration. Those two probes take their source from `aiueos_dhcp_address()`.
+That is not a DNS resolver, not TLS, and not HTTP. P2 stays red until the guest
+prints `AIUEOS_HTTP_PROBE result=ok` with a CID.
 
 `murakumo-join-plan.kotoba` and `tcp-seq-acceptable.kotoba` are still written
 and unlinked — the second because listing an export for an object no kernel

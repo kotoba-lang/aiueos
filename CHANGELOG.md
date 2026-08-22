@@ -5,6 +5,12 @@ All notable changes to **aiueos** are documented here. The format follows
 
 ## [Unreleased]
 
+### Bare-metal net (P2, not green)
+- DHCP lease is consumed as the source address for a DNS query and TCP:443
+  (ADR-0081). Probes may see a TLS record. Guest HTTPS GET + CID verify is
+  still absent. Gate: `clojure -M:bare-metal cloud`. Hosted `cloud-live` does
+  not count.
+
 The Phase-0 substrate plus the runtime/robotics/agent work built on top of it.
 
 ### Capability OS core

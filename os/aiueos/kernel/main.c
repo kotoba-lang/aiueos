@@ -159,6 +159,15 @@ extern uint32_t aiueos_dhcp_mask(void);
 extern uint32_t aiueos_dhcp_router(void);
 extern uint32_t aiueos_dhcp_server(void);
 extern uint32_t aiueos_dhcp_lease_seconds(void);
+extern uint32_t aiueos_dhcp_dns(void);
+extern int aiueos_dhcp_consumed(void);
+extern int aiueos_dns_ready(void);
+extern unsigned aiueos_dns_stage(void);
+extern uint32_t aiueos_dns_a(void);
+extern int aiueos_tcp_cloud_ready(void);
+extern unsigned aiueos_tcp_cloud_stage(void);
+extern int aiueos_tls_record_ready(void);
+extern uint8_t aiueos_tls_record_type(void);
 extern uint32_t aiueos_gpu_scanout_width(void);
 extern uint32_t aiueos_gpu_scanout_height(void);
 extern void aiueos_scheduler_initialize(void);
@@ -770,9 +779,7 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
       /* Reported at link-layer level rather than under IPv4, because that is
          where it sits: DHCP is broadcast and needs neither the ARP cache nor
          anything ICMP proved. A machine that reaches here has an address it was
-         GIVEN. Nothing consumes it yet -- the driver still sends from the
-         compiled-in 10.0.2.15 -- so this marker is the whole of what row 1 of
-         ADR-0041 currently buys. */
+         GIVEN. DNS and cloud-TCP then send from that address (ADR-0081). */
       if (aiueos_dhcp_ready()) {
         serial_string("AIUEOS_DHCP_OK offer-ack kotoba-admitted address=");
         serial_ipv4(aiueos_dhcp_address());
@@ -785,6 +792,51 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
         serial_string(" lease=");
         serial_decimal(aiueos_dhcp_lease_seconds());
         serial_string("\r\n");
+        if (aiueos_dhcp_consumed()) {
+          serial_string("AIUEOS_DHCP_CONSUMED src=");
+          serial_ipv4(aiueos_dhcp_address());
+          serial_string(" dns=");
+          serial_ipv4(aiueos_dhcp_dns() ? aiueos_dhcp_dns() : 0x0a000203U);
+          serial_string("\r\n");
+        } else {
+          serial_string("AIUEOS_DHCP_CONSUMED result=absent leftover=:lease-not-consumed\r\n");
+        }
+        serial_string("AIUEOS_DNS_PROBE result=");
+        if (aiueos_dns_ready()) {
+          serial_string("ok name=kotobase.net a=");
+          serial_ipv4(aiueos_dns_a());
+          serial_string("\r\n");
+        } else {
+          serial_string("fail stage=");
+          serial_decimal(aiueos_dns_stage());
+          serial_string(" leftover=:dns-absent\r\n");
+        }
+        serial_string("AIUEOS_TCP_CLOUD_PROBE result=");
+        if (aiueos_tcp_cloud_ready()) {
+          serial_string("ok dst=");
+          serial_ipv4(aiueos_dns_a());
+          serial_string(" port=443\r\n");
+        } else if (!aiueos_dns_ready()) {
+          serial_string("skipped leftover=:dns-absent\r\n");
+        } else {
+          serial_string("fail stage=");
+          serial_decimal(aiueos_tcp_cloud_stage());
+          serial_string(" leftover=:tcp-cloud-absent\r\n");
+        }
+        serial_string("AIUEOS_TLS_PROBE result=");
+        if (aiueos_tls_record_ready()) {
+          serial_string("record type=");
+          serial_decimal(aiueos_tls_record_type());
+          serial_string(" leftover=:tls-handshake-incomplete,:http-absent\r\n");
+        } else {
+          serial_string("absent leftover=:tls-absent,:http-absent\r\n");
+        }
+        serial_string("AIUEOS_HTTP_PROBE result=absent leftover=:http-absent\r\n");
+        if (aiueos_tls_record_ready()) {
+          serial_string("AIUEOS_BARE_METAL_P2 not-green leftover=:tls-handshake-incomplete,:http-absent\r\n");
+        } else {
+          serial_string("AIUEOS_BARE_METAL_P2 not-green leftover=:tls-absent,:http-absent\r\n");
+        }
       } else {
         /* Both halves, because they answer different questions: the STAGE says
            which of the two round trips did not complete, and the REASON is the

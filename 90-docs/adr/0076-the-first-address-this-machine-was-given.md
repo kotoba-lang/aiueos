@@ -279,8 +279,9 @@ one cannot be wrong.
 ## Consequences
 
 - **ADR-0041 row 1 is closed for the bare-metal profile** and updated in place.
-  Rows 2–5 are untouched: no DNS stub resolver, no usable TCP stream, no TLS
-  1.3, no HTTP/1.1 client. A node still cannot reach `murakumo.cloud`.
+  Row 1's consumption, and rows 2–3 as probes, moved in ADR-0081. Rows 4–5 on
+  this profile still have no guest HTTPS GET. A node still cannot complete
+  `https://kotobase.net` as KERNEL.ELF.
 - **ADR-0074's status is corrected in place.** Its measurement stands; its
   conclusion — that the client could not be built — does not, because the
   boundary it measured has since been moved.
@@ -300,9 +301,10 @@ one cannot be wrong.
 
 ## Remaining boundary
 
-- **The lease changes nothing.** Nothing reads `aiueos_dhcp_address()`. Making
-  the driver send from the address it was given is the next change and is not
-  this one.
+- **The lease is consumed on the DNS / cloud-TCP path (ADR-0081).**
+  `aiueos_dhcp_address()` is the UDP/TCP source for those probes. ARP, ICMP and
+  guestfwd-TCP still send from compiled-in `10.0.2.15` so the four-boot tamper
+  gate remains a demonstration of the admission, not of routing.
 - **No renewal, ever.** One exchange at boot, then nothing: no T1/T2 timers, no
   rebinding, no DECLINE if the address is already in use, no RELEASE at
   shutdown, no retransmission with backoff if a datagram is lost. A machine
