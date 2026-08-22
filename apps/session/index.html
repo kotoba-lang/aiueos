@@ -2716,7 +2716,7 @@ body { padding-left: env(safe-area-inset-left,0px); padding-right: env(safe-area
         </section>
         <section id="desktop" class="dds-ext-section session-view" data-view="desktop" hidden>
           <h1 class="dads-heading" data-size="32">デスクトップ</h1>
-          <p class="session-lede">compositor 過程が <code>window-session-state</code> の surface を持ちます。これはウィンドウマネージャではありません。 IME も virtio-gpu の 2D create/flush もまだです。 下のキャンバスは <code>kami.webgpu.ir</code> の scanout です。</p>
+          <p class="session-lede">compositor 過程が <code>window-session-state</code> の surface を持ちます。これはウィンドウマネージャではありません。 virtio-gpu 2D create/flush はゲスト serial の CREATE+FLUSH（<code>clojure -M:compositor gpu</code>）。IME はまだです。 下のキャンバスは <code>kami.webgpu.ir</code> の scanout です。</p>
           <div class="dds-ext-card">
             <h2 class="dads-heading" data-size="24">compositor surfaces</h2>
             <pre id="compositor-out" class="session-out"></pre>

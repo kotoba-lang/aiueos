@@ -1,10 +1,11 @@
 (ns aiueos.compositor-test
-  "Discriminating tests for the named-partial compositor.
+  "Discriminating tests for the compositor process.
 
-  `clojure -M:test` of this ns is not the Mac QEMU gate. That gate is
-  `clojure -M:compositor smoke`. These tests name the reds so HTTP-only
-  `#session` cannot stand in for a display session, and so a wiped
-  desktop cannot count as restore."
+  `clojure -M:test` of this ns is not the Mac QEMU gate. Hosted surfaces
+  are `clojure -M:compositor smoke`. Guest 2D is `clojure -M:compositor gpu`.
+  These tests name the reds so HTTP-only `#session` cannot stand in for a
+  display session, a wiped desktop cannot count as restore, and query-pci
+  cannot stand in for CREATE+FLUSH."
   (:require [aiueos.compositor :as comp]
             [aiueos.compositor.desktop :as desktop]
             [aiueos.phone-bind :as pb]
@@ -82,3 +83,31 @@
     (is (pb/headless-argv? argv))
     (is (not (some #{"virtio-gpu-pci"} argv))
         "phone-bind default must not require a GPU device")))
+
+(deftest guest-2d-serial-is-the-gpu-gate
+  (testing "CREATE+FLUSH serial is green"
+    (is (comp/guest-2d-create+flush?
+         (str "AIUEOS_VIRTIO_GPU_OK modern-pci controlq display-info bounded\n"
+              "AIUEOS_VIRTIO_GPU_CREATE result=ok resource=1 format=2 w=32 h=32\n"
+              "AIUEOS_VIRTIO_GPU_FLUSH result=ok resource=1\n")))
+    (is (:green? (comp/gpu-2d-result
+                  {:serial (str "AIUEOS_VIRTIO_GPU_CREATE result=ok resource=1 format=2 w=32 h=32\n"
+                                "AIUEOS_VIRTIO_GPU_FLUSH result=ok resource=1\n")}))))
+  (testing "display-info without create/flush is the named leftover"
+    (is (not (comp/guest-2d-create+flush?
+              "AIUEOS_VIRTIO_GPU_OK modern-pci controlq display-info bounded\n")))
+    (let [r (comp/gpu-2d-result
+             {:serial (str "AIUEOS_VIRTIO_GPU_OK modern-pci controlq display-info bounded\n"
+                           "AIUEOS_VIRTIO_GPU_CREATE result=absent\n"
+                           "AIUEOS_VIRTIO_GPU_FLUSH result=absent\n")})]
+      (is (not (:green? r)))
+      (is (= 1 (:exit r)))
+      (is (= :gpu-2d-create-flush-absent (:reason r)))))
+  (testing "query-pci listing is not guest 2D"
+    (let [r (comp/gpu-2d-result {:pci-only? true :serial ""})]
+      (is (not (:green? r)))
+      (is (= :pci-device-listed-does-not-count (:reason r)))))
+  (testing "unmeasured is exit 3, not a silent pass"
+    (let [r (comp/gpu-2d-result {:qemu-unmeasured? true})]
+      (is (= 3 (:exit r)))
+      (is (= :unmeasured (:reason r))))))

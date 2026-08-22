@@ -1,23 +1,27 @@
 (ns aiueos.compositor
-  "Named partial desktop face (root ADR-2608221625 compositor unit).
+  "Desktop face (root ADR-2608221625 compositor unit).
 
-  The same `apps/session` DADS SPA is the shell. This process owns
-  window-session-state surfaces and persists them. QEMU is started with
-  `-device virtio-gpu-pci` so a display session exists; `-display none`
-  keeps P1b's no-keyboard bind path. This is not a window manager
-  (no IME, no virtio-gpu 2D create/flush).
+  Hosted: this process owns window-session-state surfaces. QEMU for
+  `smoke` is `-device virtio-gpu-pci` with `-display none` so P1b's
+  no-keyboard bind path stays. That smoke does **not** prove guest 2D.
 
-  Exit 0 = SPA served, compositor owns surfaces, restore admitted,
-  wiped restore refused, QEMU virtio-gpu present.
-  Exit 1 = refused (HTTP-only `#session` with no surfaces is red).
-  Exit 3 = QEMU/firmware could not be answered.
+  Guest 2D: `clojure -M:compositor gpu` boots KERNEL.ELF (existing
+  UEFI smoke, virtio-vga = virtio-gpu protocol) and admits only serial
+  `AIUEOS_VIRTIO_GPU_CREATE result=ok` **and** `AIUEOS_VIRTIO_GPU_FLUSH
+  result=ok`. GET_DISPLAY_INFO, GOP-once, and QMP query-pci are reds.
 
-  Command: `clojure -M:compositor smoke`"
+  This is still not a window manager (no IME, no decoration protocol).
+
+  Exit 0 = the named command admitted. Exit 1 = refused. Exit 3 =
+  QEMU/firmware/serial could not be answered.
+
+  Commands: `clojure -M:compositor smoke` | `gpu` | `serve`"
   (:require [aiueos.compositor.desktop :as desktop]
             [aiueos.phone-bind :as pb]
             [clojure.string :as str]
             #?(:clj [clojure.edn :as edn])
-            #?(:clj [clojure.java.io :as io])))
+            #?(:clj [clojure.java.io :as io])
+            #?(:clj [clojure.pprint :as pprint])))
 
 (defn gpu-argv?
   [argv]
@@ -27,7 +31,8 @@
 (defn pci-names-gpu?
   "QEMU query-pci does not echo the qdev name virtio-gpu-pci.
   Measured on qemu-system-aarch64 10.1 virt + virtio-gpu-pci: class 896
-  desc Display controller, virtio device id 4176 (0x1050)."
+  desc Display controller, virtio device id 4176 (0x1050).
+  This is the `smoke` PCI floor. It does **not** admit guest 2D."
   [qmp-body]
   (boolean
    (and (string? qmp-body)
@@ -37,6 +42,39 @@
             (str/includes? qmp-body "VGA controller")
             (str/includes? qmp-body "\"device\": 4176")
             (str/includes? qmp-body "\"device\":4176")))))
+
+(defn guest-2d-create+flush?
+  "True only when the *guest serial* says virtio-gpu 2D create and flush
+  completed. Display-info, GOP-once, and query-pci are not this."
+  [serial]
+  (boolean
+   (and (string? serial)
+        (re-find #"(?m)^AIUEOS_VIRTIO_GPU_CREATE result=ok" serial)
+        (re-find #"(?m)^AIUEOS_VIRTIO_GPU_FLUSH result=ok" serial))))
+
+(defn gpu-2d-result
+  "Classify a KERNEL.ELF boot for the compositor `gpu` profile.
+  `pci-only?` is the named red: QMP listed a GPU and nobody ran create/flush."
+  [{:keys [serial qemu-unmeasured? pci-only?]}]
+  (cond
+    qemu-unmeasured?
+    {:green? false :exit 3 :reason :unmeasured :leftover [:unmeasured]}
+
+    pci-only?
+    {:green? false :exit 1 :reason :pci-device-listed-does-not-count
+     :leftover [:pci-device-listed-does-not-count]}
+
+    (guest-2d-create+flush? serial)
+    {:green? true :exit 0 :reason :guest-2d-create-flush :leftover []}
+
+    (re-find #"(?m)^AIUEOS_VIRTIO_GPU_OK modern-pci controlq display-info"
+             (or serial ""))
+    {:green? false :exit 1 :reason :gpu-2d-create-flush-absent
+     :leftover [:gpu-2d-create-flush-absent]}
+
+    :else
+    {:green? false :exit 1 :reason :gpu-2d-absent
+     :leftover [:gpu-2d-absent]}))
 
 (defn html-has-desktop-face?
   [html]
@@ -103,8 +141,8 @@
          (desktop/boot-desktop)))
 
      (defn start-gpu-qemu!
-       "Firmware-only aarch64 virt with virtio-gpu-pci. Guest 2D resource
-       create/flush is still not this unit (ADR-0009 / ADR-0013 Phase 6)."
+       "Firmware-only aarch64 virt with virtio-gpu-pci. `smoke` admits PCI
+       listing only. Guest 2D create/flush is `clojure -M:compositor gpu`."
        [dir {:keys [accel] :as opts}]
        (let [firmware (pb/find-firmware)
              qemu (pb/find-qemu)
@@ -238,6 +276,93 @@
              (when-let [q @qemu] (pb/stop-qemu! q))
              (when-let [rt @http] (pb/stop-http! rt))))))
 
+     (defn repo-root
+       []
+       (io/file (System/getProperty "user.dir")))
+
+     (defn uefi-smoke
+       []
+       (io/file (repo-root) "os" "aiueos" "scripts" "smoke-qemu-uefi.sh"))
+
+     (defn kernel-serial-file
+       []
+       (io/file (repo-root) "build" "aiueos" "kernel-serial.log"))
+
+     (defn gpu-receipt-file
+       []
+       (io/file (repo-root) "build" "aiueos" "compositor-gpu-receipt.edn"))
+
+     (defn write-gpu-receipt!
+       [receipt]
+       (let [f (gpu-receipt-file)]
+         (io/make-parents f)
+         (spit f (with-out-str (pprint/pprint receipt)))
+         f))
+
+     (defn serial-measured?
+       [serial]
+       (boolean (and (string? serial) (re-find #"AIUEOS_" serial))))
+
+     (defn run-uefi-2d!
+       "Existing UEFI QEMU smoke (virtio-vga = virtio-gpu protocol).
+       No AIUEOS_TEST_NET — that is P2 and not this gate. No new .sh."
+       []
+       (let [script (uefi-smoke)]
+         (if-not (.isFile script)
+           {:ok false :unmeasured true :reason :smoke-script-missing
+            :tried (.getPath script)}
+           (let [pb (doto (ProcessBuilder. ^java.util.List
+                                           ["sh" (.getPath script)])
+                      (.directory (repo-root))
+                      (.inheritIO))
+                 proc (.start pb)
+                 exit (.waitFor proc)
+                 serial (when (.isFile (kernel-serial-file))
+                          (slurp (kernel-serial-file)))]
+             {:ok (zero? exit)
+              :exit exit
+              :serial serial
+              :serial-path (.getPath (kernel-serial-file))}))))
+
+     (defn run-gpu
+       "Guest 2D create/flush. PCI listing and GET_DISPLAY_INFO are reds."
+       []
+       (let [script (uefi-smoke)]
+         (if-not (.isFile script)
+           (let [r (gpu-2d-result {:qemu-unmeasured? true})]
+             (write-gpu-receipt! (assoc r :measured-at (str (java.time.Instant/now))
+                                        :command "clojure -M:compositor gpu"
+                                        :why :smoke-script-missing))
+             (println "AIUEOS_COMPOSITOR_GPU_2D leftover=:unmeasured")
+             r)
+           (let [boot (run-uefi-2d!)
+                 measured? (serial-measured? (:serial boot))
+                 r (gpu-2d-result {:serial (:serial boot)
+                                   :qemu-unmeasured? (not measured?)
+                                   :pci-only? false})
+                 receipt (assoc r
+                                :aiueos.compositor/gpu-receipt 1
+                                :measured-at (str (java.time.Instant/now))
+                                :command "clojure -M:compositor gpu"
+                                :profile :uefi-qemu-virtio-gpu-2d
+                                :uefi-smoke-exit (:exit boot)
+                                :serial-path (:serial-path boot)
+                                :note "Green only when guest serial has CREATE result=ok and FLUSH result=ok. query-pci and GET_DISPLAY_INFO do not count. Not a WM. IME leftover.")]
+             (write-gpu-receipt! receipt)
+             (println "AIUEOS_COMPOSITOR_GPU_PROFILE=uefi-qemu-2d")
+             (println (str "AIUEOS_COMPOSITOR_GPU_SERIAL=" (:serial-path boot)))
+             (println (str "AIUEOS_COMPOSITOR_GPU_RECEIPT=" (.getPath (gpu-receipt-file))))
+             (println (str "AIUEOS_COMPOSITOR_GPU_LEFTOVER=" (pr-str (:leftover r))))
+             (when (:serial boot)
+               (doseq [line (str/split-lines (:serial boot))
+                       :when (re-find #"AIUEOS_VIRTIO_GPU" line)]
+                 (println (str/replace line #"\r$" ""))))
+             (if (:green? r)
+               (println "AIUEOS_COMPOSITOR_GPU_2D green")
+               (println (str "AIUEOS_COMPOSITOR_GPU_2D not-green leftover="
+                             (pr-str (:leftover r)))))
+             r))))
+
      (defn -main
        [& args]
        (let [cmd (or (first args) "smoke")
@@ -261,5 +386,10 @@
              (flush)
              (System/exit (int (:exit r))))
 
-           (do (println "usage: clojure -M:compositor [smoke|serve]")
+           "gpu"
+           (let [r (run-gpu)]
+             (flush)
+             (System/exit (int (:exit r))))
+
+           (do (println "usage: clojure -M:compositor [smoke|gpu|serve]")
                (System/exit 3)))))))

@@ -14,9 +14,10 @@ P1b no-keyboard bind path.
 
 Not executable, and stated here rather than at the end:
 
-- **This is not a window manager.** No IME, no decoration protocol, no
-  virtio-gpu 2D resource create/flush. Guest scanout is still the GOP-once
-  transport in ADR-0013. Do not read `#desktop` as a WM.
+- **This is not a window manager.** No IME, no decoration protocol.
+  Guest virtio-gpu 2D create/flush is a **later, separate argv**
+  (`clojure -M:compositor gpu`, ADR-0084). `smoke` still admits PCI
+  listing only. Do not read `#desktop` as a WM.
 - **HTTP to `#session` with `-display none` is not this gate.** That is P1 / P1b.
   A display session exists when the compositor process owns surfaces and QMP
   `query-pci` names virtio-gpu.
