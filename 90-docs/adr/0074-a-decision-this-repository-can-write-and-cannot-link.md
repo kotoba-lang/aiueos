@@ -64,9 +64,18 @@ AIUEOS_TCP_OK handshake echo close kotoba-admitted
 **This does not reproduce ADR-0019 item 3**, which records that on QEMU 10.0.3
 the shared UEFI suite fails at `AIUEOS_VIRTIO_INPUT_FAIL queue-or-envelope`.
 This host runs QEMU 10.0.3 and virtio-input passed. ADR-0019 is not corrected
-here — one green run on one host does not retract a failure someone else
-measured — but the next agent should re-measure rather than assume that gate is
-red, and this run is the reason to.
+here — a green run on one host does not retract a failure someone else measured
+— but the next agent should re-measure rather than assume that gate is red, and
+these runs are the reason to.
+
+Three runs today, on the same tree: **two green, one hung.** The hang stopped
+after `AIUEOS_APIC_TIMER_OK` with `AIUEOS_QEMU_ATTEMPTS=1` at a one-minute load
+average of 419, which is exactly the flake the script's own retry policy exists
+for (kotoba-lang/aiueos#108) and exactly the point in the boot its comment
+names. Disabling the retry to get a cleaner measurement is what produced the
+false one; the run quoted above is with the gate's own default of three
+attempts. Reported because a suite that needs a retry to be green on a loaded
+host is a property of the evidence, not a detail of how it was collected.
 
 ### 2. The export symbol is not chosen by the source
 
@@ -79,9 +88,13 @@ same `(defn main [] 0)`:
 | `aiueos-net-arp-reply-valid` (listed) | `kotoba_aiueos_net_arp_reply_valid` |
 | `aiueos-dhcp-reply-valid` (unlisted) | `kotoba_aiueos_probe` |
 
-Both compiles returned `{:ok true, …}`. So it is not arity, not the body, not
-the presence of `main`, and not the use of a kernel intrinsic. **It is
-membership in a list.**
+Both compiles returned `{:ok true, …}`. Arity, body, `main` and the use of a
+kernel intrinsic were all held constant, so the difference is the identifier —
+and `package-kernel-object` says why. **It is membership in a list.**
+
+The count corroborates it: the fixed compiler reports `:admitted-entry-count 56`
+in its refusal (amu#626), which is exactly the number of entries at the pinned
+revision.
 
 ### 3. Where the list is, and that it now has a documented door
 
@@ -110,7 +123,8 @@ is closed. Its resolution:
 - `amu` `6bd93b7` — pins both and asserts the symbols.
 
 **This repository pins none of it.** `amu` `8ff1030` is **250 commits behind**
-`amu`'s tip `6889fa7`, and predates `6bd93b7`. So the failure mode ADR-0054
+`amu`'s tip `6889fa7`, and `git merge-base --is-ancestor 6bd93b7 8ff1030` is
+false — the pin does not contain the fix. So the failure mode ADR-0054
 discovered here is fixed upstream and still live here: measured above, the miss
 is silent at the revision this repository actually builds with.
 
@@ -149,9 +163,13 @@ DHCP would have been the third.
 ## Decision
 
 **Do not build the DHCPv4 client at this revision. State the ABI ask instead,
-in a form somebody can act on without inventing anything.**
+in a form somebody can act on without inventing anything, and file it.**
 
-Two entries, and the semantics each carries:
+Filed as
+[kotoba-native#57](https://github.com/kotoba-lang/kotoba-native/issues/57),
+carrying the table below, the measurement, and the one question worth asking
+before the objects exist rather than after. Two entries, and the semantics each
+carries:
 
 | entry | arity | symbol | what it decides |
 |---|---|---|---|
@@ -168,8 +186,9 @@ would make C decide.
 
 - **Write the options walk in C and keep a boolean in Kotoba.** The walk is the
   decision. This is the failure ADR-0015 exists to prevent.
-- **Reuse an allow-listed symbol.** `kotoba_aiueos_vtd_admit` would link, and
-  would be a lie in the symbol table.
+- **Reuse an allow-listed symbol.** Every entry on the list names a different
+  decision and most are already linked, so it would either collide or be a lie
+  in the symbol table. Usually both.
 - **Override `kotoba-native` locally to produce the bytes, then commit the
   `.o`.** It would produce an artifact no pinned revision reproduces — the
   thing `reproduce-kotoba-kernel-object.sh` exists to detect, and whose own
@@ -184,11 +203,13 @@ would make C decide.
   it could honestly invent — so it would be a parser no test and no boot could
   run.
 - **Write `os/aiueos/contracts/dhcp-*-v1.edn` to open the `1d51768` door now.**
-  Deferred, not refused. That door is not reachable from a compiler 250 commits
-  behind it, every contract in that directory carries `:vectors` a verifier
-  executes, and for the reason above these two objects can have none. A
-  contract whose vectors nobody can run is the shape ADR-0050 already named
-  here. It is the right first step **after** the pin advances.
+  Deferred, not refused. That door is not reachable from a compiler that does
+  not contain the commit that opened it; and of the eleven contracts in that
+  directory with a `:native` block, nine carry `:vectors` that
+  `os/aiueos/scripts/aiueos/verify_*.clj` executes through `kir/execute` —
+  which, for the reason above, these two objects cannot have. A contract whose
+  vectors nobody can run is the shape ADR-0050 already named here. It is the
+  right first step **after** the pin advances.
 - **Ship a QEMU gate for a client that does not exist.** A gate that cannot go
   green is not a gate (ADR-0063).
 
@@ -268,10 +289,11 @@ DHCP behaviour. There is no client to break.
 - **UDP remains unwritten** in every sense — no send path, no receive path, no
   checksum, no port demultiplexing. When the entries exist, that is still all
   to build, and it is the smaller half.
-- **The two entries above have been reviewed by nobody but their author.** An
-  arity-5 admission returning a reason code is a shape this ABI has not carried:
-  every existing entry returns a boolean or a plan word. That may be the wrong
-  precedent, and saying so before building is the point.
+- **The two entries above have been reviewed by nobody yet.** kotoba-native#57
+  is open, not answered. An arity-5 admission returning a reason code is a
+  shape this ABI has not carried — every existing entry returns a boolean or a
+  plan word — and that may be the wrong precedent. Asking before the objects
+  exist is the point; getting an answer is not the same as asking.
 - **Frame-parsing admissions have no off-target oracle at all.** `net-arp-`,
   `ipv4-icmp-` and `tcp-segment-valid` have no contract in
   `os/aiueos/contracts/` and no verifier in `os/aiueos/scripts/aiueos/`; the
