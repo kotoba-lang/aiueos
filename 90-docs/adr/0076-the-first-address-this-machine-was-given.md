@@ -123,8 +123,20 @@ Taking it means regenerating every object in
 `build-uefi.sh`. That is a change to the shipped kernel, and it is not a side
 effect of adding DHCP. It is named here rather than absorbed.
 
-⚠ **The first measurement of this was wrong and would have justified the same
-conclusion for the wrong reason.** It compared against the shared west checkout
+**What has actually been re-run at the new pin**, and what has not:
+`reproduce-kotoba-kernel-object.sh` was pointed at `9cf3a0a` and compiles every
+checked-in object one at a time, comparing bytes. At the time this ADR landed
+it had verified **13 objects byte-for-byte with no mismatch** and was still
+running — roughly three minutes per object on a loaded host. It is expected to
+stop where it already stopped before this change, at `user-smoke.elf`, which
+the script's own comment records as *"NOT REPRODUCIBLE at the pinned revision,
+and the only one left that is not"*. **That is a pre-existing failure this
+change neither caused nor fixed**, and the two DHCP entries were deliberately
+placed before it so a `set -e` exit there cannot be mistaken for them not
+having been checked.
+
+⚠ **The first measurement of the table above was wrong and would have justified
+the same conclusion for the wrong reason.** It compared against the shared west checkout
 of `aiueos`, which is 134 commits behind `origin/main` and carries another
 session's edits, so an object that reproduces perfectly reported `DIFFERS`. The
 table above is against `origin/main` content.
