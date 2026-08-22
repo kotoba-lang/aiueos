@@ -123,17 +123,26 @@ Taking it means regenerating every object in
 `build-uefi.sh`. That is a change to the shipped kernel, and it is not a side
 effect of adding DHCP. It is named here rather than absorbed.
 
-**What has actually been re-run at the new pin**, and what has not:
-`reproduce-kotoba-kernel-object.sh` was pointed at `9cf3a0a` and compiles every
-checked-in object one at a time, comparing bytes. At the time this ADR landed
-it had verified **13 objects byte-for-byte with no mismatch** and was still
-running — roughly three minutes per object on a loaded host. It is expected to
-stop where it already stopped before this change, at `user-smoke.elf`, which
+**The whole script was re-run at the new pin.** It compiles every checked-in
+object one at a time and compares bytes, and it verified **37 objects
+byte-for-byte with no mismatch**, the two DHCP objects among them:
+
+```
+$ ./os/aiueos/scripts/reproduce-kotoba-kernel-object.sh <amu@9cf3a0a>
+AIUEOS_KOTOBA_OBJECT_OK target=x86_64-aiueos-kernel-v1 export=kotoba_aiueos_dhcp_reply_valid imports=0 relocations=1
+AIUEOS_KOTOBA_OBJECT_OK target=x86_64-aiueos-kernel-v1 export=kotoba_aiueos_dhcp_option_u32 imports=0 relocations=1
+user-smoke.elf … differ: char 97, line 1
+```
+
+It then stops where it stopped before this change, at `user-smoke.elf`, which
 the script's own comment records as *"NOT REPRODUCIBLE at the pinned revision,
-and the only one left that is not"*. **That is a pre-existing failure this
-change neither caused nor fixed**, and the two DHCP entries were deliberately
-placed before it so a `set -e` exit there cannot be mistaken for them not
-having been checked.
+and the only one left that is not"*. **That failure is pre-existing and this
+change neither caused nor fixed it** — the same file, the same way. The two
+DHCP entries were placed before it deliberately, so a `set -e` exit there
+cannot be mistaken for them not having been checked.
+
+That is the measurement that makes the smaller advance real rather than
+plausible: 37 objects that had to keep their bytes kept them.
 
 ⚠ **The first measurement of the table above was wrong and would have justified
 the same conclusion for the wrong reason.** It compared against the shared west checkout
