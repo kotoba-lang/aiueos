@@ -8,7 +8,8 @@ face (named partial); it is not a second document.
 This is not `clojure -M:cloud-live check`. CID read and murakumo infer leave
 from the **session process** (`POST /api/session/read-cid`,
 `POST /api/session/infer`) when the operator presses a button in this
-document.
+document. P3 notes guest is `GET /api/session/guests` and
+`POST /api/session/guest` (`{"grant":"allow"}` / `{"grant":"deny"}`).
 
 ## Generate the document
 
@@ -25,6 +26,7 @@ nbb --classpath "apps/session/src:<dds>/src:<dds>/resources:<html>/src:<css>/src
 
 ```bash
 clojure -M:session smoke   # HTTP only; real kotobase GET + murakumo infer
+clojure -M:session guest   # P3: grant-limited app/notes in this document
 clojure -M:session serve   # leave the SPA up
 clojure -M:phone-bind smoke  # P1b: same SPA, headless QEMU + phone HTTP bind
 clojure -M:compositor smoke  # named-partial desktop: same SPA + surfaces + virtio-gpu-pci

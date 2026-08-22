@@ -113,14 +113,18 @@
    ;; Exit 0 = QEMU headless + HTTP phone bind (or pre-enroll) admitted,
    ;; 1 = refused, 3 = could not answer (no QEMU/firmware).
    ;; This is not the C-free kernel gate and not clojure -M:test.
-   :phone-bind {:main-opts ["-m" "aiueos.phone-bind"]}
+   :phone-bind {:jvm-opts ["--enable-native-access=ALL-UNNAMED"]
+                :main-opts ["-m" "aiueos.phone-bind"]}
 
-   ;; Hosted daily shell (root ADR-2608221625 P1). Not cloud-live check.
+   ;; Hosted daily shell (root ADR-2608221625 P1 / P3). Not cloud-live check.
    ;;   clojure -M:session smoke
+   ;;   clojure -M:session guest
    ;;   clojure -M:session serve
-   ;; Exit 0 = DADS SPA served and kotobase read + murakumo infer admitted
-   ;; from this process. Exit 1 refused / not DADS. Exit 3 unmeasured.
-   :session {:main-opts ["-m" "aiueos.session"]}
+   ;; smoke: DADS SPA + kotobase read + murakumo infer from this process.
+   ;; guest: grant-limited :app/notes visible in the same SPA (P3).
+   ;; Exit 1 refused / not DADS. Exit 3 unmeasured.
+   :session {:jvm-opts ["--enable-native-access=ALL-UNNAMED"]
+             :main-opts ["-m" "aiueos.session"]}
 
    ;; Named-partial desktop face (root ADR-2608221625 compositor unit).
    ;;   clojure -M:compositor smoke
@@ -129,7 +133,8 @@
    ;; surfaces, restore admitted, wiped restore refused, QEMU
    ;; -device virtio-gpu-pci with -display none.
    ;; Exit 1 refused (HTTP-only #session is red). Exit 3 unmeasured.
-   :compositor {:main-opts ["-m" "aiueos.compositor"]}
+   :compositor {:jvm-opts ["--enable-native-access=ALL-UNNAMED"]
+                :main-opts ["-m" "aiueos.compositor"]}
 
    ;; Release attestations (SBOM + SLSA-style provenance) for a built artifact.
    ;;   clojure -M:attest sha256:<disk-digest> <source-commit> <builder> --isolated

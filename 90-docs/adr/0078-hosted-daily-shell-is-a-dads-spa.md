@@ -21,8 +21,9 @@ Not executable, and stated here rather than at the end:
 - **`clojure -M:cloud-live check` does not green this gate.** That CLI
   proved the authorities. P1 is that the *session* invoked them.
 - **itonami (P4) and a real machine (P5) are not this change.**
-- **Guest apps (P3) are not wired into this SPA.** Notes and other guests
-  still live under `examples/apps/`.
+- **Guest apps (P3) are ADR-0080.** This ADR remains the P1 document +
+  kotobase/murakumo legs. `clojure -M:session smoke` does not execute the
+  guest; `clojure -M:session guest` does.
 
 ## Context
 
@@ -53,5 +54,5 @@ against this document (`-display none`).
 
 Operators can open a phone-sized URL, bind without guest VGA, read a
 CID, and run an inference without leaving the document. The Chrome OS
-goal is not complete: compositor (ADR-0079 named partial), guest apps,
-itonami, and a physical chassis are later units.
+goal is not complete: compositor (ADR-0079 named partial), guest apps
+(ADR-0080), itonami, and a physical chassis are later units.

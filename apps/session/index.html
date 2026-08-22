@@ -2705,6 +2705,13 @@ body { padding-left: env(safe-area-inset-left,0px); padding-right: env(safe-area
             <button class="dads-button" data-type="solid-fill" data-size="md" id="run-infer" type="button">推論する</button>
             <pre id="infer-out" class="session-out"></pre>
           </div>
+          <div class="dds-ext-card">
+            <h2 class="dads-heading" data-size="24">notes guest</h2>
+            <p>Kotoba guest <code>app/notes</code> は grant を通ったときだけこのシェルに現れます。 拒否は <code>unresolved-capability</code> など grant の理由で、汎用 500 ではありません。</p>
+            <button class="dads-button" data-type="solid-fill" data-size="md" id="run-guest" type="button">grant して走らせる</button>
+            <button class="dads-button" data-type="solid-fill" data-size="md" id="deny-guest" type="button">grant を拒否する</button>
+            <pre id="guest-out" class="session-out"></pre>
+          </div>
         </section>
         <section id="desktop" class="dds-ext-section session-view" data-view="desktop" hidden>
           <h1 class="dads-heading" data-size="32">デスクトップ</h1>
@@ -2712,6 +2719,11 @@ body { padding-left: env(safe-area-inset-left,0px); padding-right: env(safe-area
           <div class="dds-ext-card">
             <h2 class="dads-heading" data-size="24">compositor surfaces</h2>
             <pre id="compositor-out" class="session-out"></pre>
+          </div>
+          <div class="dds-ext-card">
+            <h2 class="dads-heading" data-size="24">notes guest</h2>
+            <p>同じ文書の <code>app/notes</code>。compositor iframe ではなく guest の identity です。</p>
+            <pre id="guest-desktop-out" class="session-out"></pre>
           </div>
           <div class="dds-ext-card">
             <h2 class="dads-heading" data-size="24">kami viewport</h2>
@@ -2764,6 +2776,7 @@ function show() {
   if (h === "#devices") refreshDevices();
   if (h === "#setup") refreshSetup();
   if (h === "#desktop") refreshDesktop();
+  if (h === "#session" || h === "#desktop") refreshGuest();
 }
 
 function pretty(x) {
@@ -2913,11 +2926,64 @@ async function runInfer() {
   el.textContent = pretty(await res.text());
 }
 
+
+async function refreshGuest() {
+  var el = document.getElementById("guest-out");
+  var desk = document.getElementById("guest-desktop-out");
+  try {
+    var r = await fetch("/api/session/guests");
+    var text = await r.text();
+    var j = JSON.parse(text);
+    if (el) el.textContent = pretty(j);
+    if (desk) {
+      var g = (j.guests && j.guests[0]) || (j.refused && j.refused[0]) || j;
+      desk.textContent = pretty(g);
+    }
+    if (hSessionEmpty(j)) maybeAutostartGuest(j);
+  } catch (e) {
+    if (el) el.textContent = String(e);
+    if (desk) desk.textContent = String(e);
+  }
+}
+
+function hSessionEmpty(j) {
+  return j && j.count === 0 && (!j.guests || j.guests.length === 0)
+    && (!j.refused || j.refused.length === 0);
+}
+
+var __aiueosGuestAutostarted = false;
+function maybeAutostartGuest(j) {
+  if (__aiueosGuestAutostarted) return;
+  if (viewId() !== "#session") return;
+  if (!hSessionEmpty(j)) return;
+  __aiueosGuestAutostarted = true;
+  postGuest("allow");
+}
+
+async function postGuest(grant) {
+  var el = document.getElementById("guest-out");
+  if (el) el.textContent = "asking grant for app/notes (" + grant + ")…";
+  var res = await fetch("/api/session/guest", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ grant: grant })
+  });
+  var text = await res.text();
+  if (el) el.textContent = pretty(text);
+  var desk = document.getElementById("guest-desktop-out");
+  if (desk) desk.textContent = pretty(text);
+}
+
+async function runGuest() { await postGuest("allow"); }
+async function denyGuest() { await postGuest("deny"); }
+
 window.addEventListener("hashchange", show);
 document.getElementById("bind").addEventListener("click", bind);
 document.getElementById("cycle").addEventListener("click", cycle);
 document.getElementById("read-cid").addEventListener("click", readCid);
 document.getElementById("run-infer").addEventListener("click", runInfer);
+document.getElementById("run-guest").addEventListener("click", runGuest);
+document.getElementById("deny-guest").addEventListener("click", denyGuest);
 show();
 refreshSetup();
 </script>

@@ -2,6 +2,9 @@
   "P1 hosted daily shell gate. Boots the DADS SPA over HTTP and, from that
   same process, reads a kotobase CID and completes a murakumo infer.
 
+  P3 (`guest`) is a separate command: grant-limited `:app/notes` visible
+  in this same document. Do not fold execute into P1 smoke.
+
   Exit 0 = SPA served and both live legs admitted.
   Exit 1 = a leg was refused, or the document is not the DADS SPA.
   Exit 3 = a leg could not be answered.
@@ -18,6 +21,10 @@
        (re-find #"href=\"#session\"" html)
        (re-find #"href=\"#manage\"" html)
        (re-find #"window.__aiueosSessionAlive" html)
+       (re-find #"run-guest" html)
+       (re-find #"deny-guest" html)
+       (re-find #"guest-out" html)
+       (re-find #"app/notes" html)
        (not (re-find #"liquid-glass" html))))
 
 (defn- outcome-of-http
@@ -69,6 +76,73 @@
       (finally
         (pb/stop-http! rt)))))
 
+
+(defn- guest-body [http]
+  (or (:body http) ""))
+
+(defn run-guest
+  "P3 gate. HTTP only. Grant allow runs `:app/notes` through Chicory;
+  grant deny is 403 with `:unresolved-capability`. The SPA document lists
+  the guest. Live kotobase write without a credential must not look like
+  a stored note."
+  [{:keys [dir]}]
+  (let [dir (File. (or dir (str (System/getProperty "java.io.tmpdir")
+                                "/aiueos-session-p3")))
+        rt (pb/start-http! (pb/make-runtime {:dir dir :listen-port 0}))
+        base (pb/base-url rt)]
+    (try
+      (let [page (pb/http-get (str base "/"))
+            html (:body page)
+            spa? (and (= 200 (:code page)) (html-admitted? html))
+            deny (pb/http-post (str base "/api/session/guest") {:grant "deny"}
+                               {:read-timeout-ms 60000})
+            deny-list (pb/http-get (str base "/api/session/guests"))
+            allow (pb/http-post (str base "/api/session/guest") {:grant "allow"}
+                                {:read-timeout-ms 180000})
+            allow-list (pb/http-get (str base "/api/session/guests"))
+            deny-body (guest-body deny)
+            allow-body (guest-body allow)
+            deny-list-body (guest-body deny-list)
+            allow-list-body (guest-body allow-list)
+            deny-ok? (and (= 403 (:code deny))
+                          (re-find #"unresolved-capability" deny-body)
+                          (re-find #"app/notes" deny-body)
+                          (not (re-find #"\"visible\":true" deny-body))
+                          (re-find #"\"guests\":\[\]" deny-list-body)
+                          (re-find #"unresolved-capability" deny-list-body)
+                          (not= 500 (:code deny)))
+            allow-ok? (and (= 200 (:code allow))
+                           (re-find #"\"decision\":\"grant\"" allow-body)
+                           (re-find #"\"visible\":true" allow-body)
+                           (re-find #"app/notes" allow-body)
+                           (re-find #"\"via\":\"grant\"" allow-body)
+                           (re-find #"hi" allow-body)
+                           (re-find #"app/notes" allow-list-body)
+                           (re-find #"\"visible\":true" allow-list-body)
+                           (not (re-find #"\"guests\":\[\]" allow-list-body)))
+            write-honest? (or (re-find #"write-unauthorized" allow-body)
+                              (re-find #"unmeasured" allow-body)
+                              (re-find #"\"storage_write\":\"refused\"" allow-body)
+                              (not (re-find #"storage_write" allow-body)))]
+        (println (str "AIUEOS_GUEST_URL=" base "/#session"))
+        (println (str "AIUEOS_GUEST_SPA=" (if spa? "admitted" "refused")))
+        (println (str "AIUEOS_GUEST_DENY=" deny-body))
+        (println (str "AIUEOS_GUEST_DENY_CODE=" (:code deny)))
+        (println (str "AIUEOS_GUEST_DENY_LIST=" deny-list-body))
+        (println (str "AIUEOS_GUEST_ALLOW=" allow-body))
+        (println (str "AIUEOS_GUEST_ALLOW_LIST=" allow-list-body))
+        (when (and spa? deny-ok? allow-ok? write-honest?)
+          (println "AIUEOS_GUEST_OK"))
+        {:exit (cond
+                 (not spa?) 1
+                 (not deny-ok?) 1
+                 (not allow-ok?) 1
+                 (not write-honest?) 1
+                 :else 0)
+         :deny deny :allow allow :spa? spa?})
+      (finally
+        (pb/stop-http! rt)))))
+
 (defn -main
   [& args]
   (let [cmd (or (first args) "smoke")
@@ -76,6 +150,11 @@
                 (.getPath (File. (System/getProperty "java.io.tmpdir")
                                  "aiueos-session-p1")))]
     (case cmd
+      "guest"
+      (let [r (run-guest {:dir dir})]
+        (flush)
+        (System/exit (int (:exit r))))
+
       "serve"
       (let [rt (pb/start-http! (pb/make-runtime {:dir dir :listen-port 0}))]
         (pb/print-chassis! rt)
@@ -89,5 +168,5 @@
         (flush)
         (System/exit (int (:exit r))))
 
-      (do (println "usage: clojure -M:session [smoke|serve]")
+      (do (println "usage: clojure -M:session [smoke|guest|serve]")
           (System/exit 3)))))
