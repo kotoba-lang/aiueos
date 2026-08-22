@@ -407,6 +407,10 @@
                    (absent-leg live)]]
          {:aiueos.cloud-live/receipt 1
           :measured-at (str (Instant/now))
+          ;; Which stack these bytes went through. A receipt that did not say
+          ;; would make two runs of the same gate indistinguishable, and the
+          ;; whole point of having two transports is comparing them.
+          :transport (provider/transport-of live)
           :origins {:storage (:aiueos.cloud/storage-origin live)
                     :inference (:aiueos.cloud/inference-origin live)}
           :trust-anchors (anchor-summary live (:aiueos.cloud/now-ms live))
@@ -437,6 +441,7 @@
                                   (outcome-of verdict))))]
          {:aiueos.cloud-live/receipt 1
           :measured-at (str (Instant/now))
+          :transport (provider/transport-of live)
           :trust-anchors (anchor-summary live (:aiueos.cloud/now-ms live))
           :legs [leg]
           :exit (exit-code [leg])}))
@@ -451,6 +456,30 @@
      (defn- policy-arg [args]
        (second (drop-while #(not= "--policy" %) args)))
 
+     (defn transport-arg
+       "`--transport jdk|own`, or nil. Kept portable-shaped and named rather than
+  parsed inline so the one test that can run without a network can assert that
+  an unknown word does not silently become the default -- which is the whole
+  hazard of a flag that selects which stack the bytes go through.
+
+  Returns `[:ok <keyword>]`, `[:ok nil]` when the flag is absent, or
+  `[:error <word>]`."
+       [args]
+       (if-let [word (second (drop-while #(not= "--transport" %) args))]
+         (let [k (keyword word)]
+           (if (contains? provider/transports k) [:ok k] [:error word]))
+         [:ok nil]))
+
+     (defn with-transport
+       "POLICY with the transport the command line named, if it named one.
+
+  The policy file's value stands when the flag is absent; the flag exists so
+  one operator can run the same gate both ways in one sitting and compare the
+  two receipts, which is the only way to find out that a transport works
+  against a real authority."
+       [policy transport]
+       (cond-> policy transport (assoc :aiueos.cloud/transport transport)))
+
      (defn- run-pin! [origins]
        (let [results (mapv measure-peer! origins)]
          (println "MEASURED, NOT TRUSTED. These keys were observed; nothing here")
@@ -460,12 +489,24 @@
          (if (every? :spki-sha256 results) 0 3)))
 
      (defn -main [& args]
-       (let [live (read-policy (policy-arg args))
-             code (case (first args)
-                    "pin" (run-pin! (remove #{"--policy" (policy-arg args)} (rest args)))
-                    "write" (let [r (run-write live)] (print-receipt! r) (:exit r))
-                    ("check" nil) (let [r (run-check live)] (print-receipt! r) (:exit r))
-                    (do (println "usage: check | pin <origin>... | write   [--policy <file>]")
-                        3))]
+       (let [transport (transport-arg args)
+             code
+             (if (= :error (first transport))
+               ;; An unrecognised transport exits 3 and runs nothing. Falling
+               ;; back to the default would make `--transport onw` report a
+               ;; green run of the stack the operator was trying not to use.
+               (do (println "unknown --transport" (pr-str (second transport))
+                            "-- expected one of" (pr-str (sort (map name provider/transports))))
+                   3)
+               (let [live (with-transport (read-policy (policy-arg args)) (second transport))
+                     flags (cond-> #{"--policy" (policy-arg args) "--transport"}
+                             (second transport) (conj (name (second transport))))]
+                 (case (first args)
+                   "pin" (run-pin! (remove flags (rest args)))
+                   "write" (let [r (run-write live)] (print-receipt! r) (:exit r))
+                   ("check" nil) (let [r (run-check live)] (print-receipt! r) (:exit r))
+                   (do (println "usage: check | pin <origin>... | write"
+                                "  [--policy <file>] [--transport jdk|own]")
+                       3))))]
          (flush)
          (System/exit code)))))

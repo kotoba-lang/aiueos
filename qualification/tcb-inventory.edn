@@ -4,7 +4,7 @@
  ;; other field, so an entry cannot change without this date having to change
  ;; too. It said 2026-08-01 while the file was being edited that morning, and
  ;; nothing read it.
- :tcb/content-digest "808598bc756c7ce42a3dc30141eb58bd8ae66f0c1733fc12c0e75bad76fba958"
+ :tcb/content-digest "287f0bb88d2b6709e3fcf93757da3aaad121c6f9fe6497712941d1b8cd89287f"
  :tcb/scope
  "Code whose compromise can grant authority, escape Wasm isolation, falsify
   production admission/audit evidence, or access hardware outside a component."
@@ -36,7 +36,16 @@
   ;; said yes -- which is TCB for a different reason: it is the last place that
   ;; could ignore them.
   {:path "src/aiueos/provider/cloud.clj" :role :remote-authority-transport
-   :sha256 "9b33d824e93f76e6da3b00f2a8886ee2dc16068960063bb1a77c5219f9925f81"}
+   :sha256 "01ee0106c36e126a08825380563fe3c76a39c378a2719d81cc3d5fb42d003ef2"}
+  ;; The second transport (ADR-0076): the same requests over
+  ;; `kotoba-lang/org-ietf-tls` and `kotoba.lang.http.wire` rather than
+  ;; `java.net.http`. TCB for the same reason as the file above and one more of
+  ;; its own -- it holds the `tls.client` `:verify-chain` function, which is the
+  ;; whole of the peer decision on that path. A change here that returned
+  ;; `[:ok …]` without asking `grant.cloud/admit-peer` would accept any peer,
+  ;; and nothing downstream would notice: the handshake would simply succeed.
+  {:path "src/aiueos/provider/cloud_own.cljc" :role :remote-authority-transport
+   :sha256 "88853413380386a9efb8a05a7a721576cec1b03d33c26e5ab97473f0730f7c4a"}
   ;; The operator gate that leaves this machine (ADR-0073). Pinned because it
   ;; carries a trust manager that accepts ANY peer -- `pin` has to look at a key
   ;; before anyone can decide to trust it -- and a change that let `check` reach
@@ -46,7 +55,7 @@
   ;; deployment configuration, it is meant to change, and every key in it
   ;; carries the date and method it was measured by.
   {:path "src/aiueos/cloud_live.cljc" :role :remote-authority-live-gate
-   :sha256 "1fe71fd05031c07a9603dd14761f3bc8c0f92f50d8557e5905ba80182b51a2ab"}
+   :sha256 "3afa088304aa280f93bc7a544bdcb418db20b464d0f1dbadb07b3d11d639ff40"}
   {:path "src/aiueos/execute.cljc" :role :wasm-host-abi
    :sha256 "0312c7c06bb2b4d9c2d704be73ebafdca794e3fe5aada5c3cd431d2bc7c2b438"}
   {:path "src/aiueos/entropy.clj" :role :security-entropy-provider
@@ -124,6 +133,27 @@
    :git-url "https://github.com/kotoba-lang/grant.git"
    :git-sha "86d15e306853bd3658efb1fdfde3f8508dba9ef3"
    :role :capability-authority}
+  ;; This workspace's own TLS 1.3 and HTTP/1.1, which `aiueos.provider.cloud-own`
+  ;; runs on. They are TCB in the strongest sense available to this inventory:
+  ;; org-ietf-tls decides nothing about which peer is acceptable -- that is
+  ;; `grant.cloud/admit-peer`'s, on both transports -- but it decides which
+  ;; certificate chain the leaf came from, what the transcript was, and whether
+  ;; a record opened. `kotoba.lang.http` decides where one response ends and the
+  ;; next begins, which is the whole of request smuggling.
+  ;;
+  ;; Unlike `java.net.http` these ARE content-addressed, which is the point of
+  ;; the change: the platform entry below carries an `:assurance-gap` because
+  ;; this repository cannot pin the JDK's TLS from inside itself, and these two
+  ;; carry a commit id instead. The gap does not close until the platform entry
+  ;; goes, and it does not go while `:jdk` is the default transport.
+  {:coordinate "io.github.kotoba-lang/org-ietf-tls" :source :git
+   :git-url "https://github.com/kotoba-lang/org-ietf-tls.git"
+   :git-sha "b91d4a144e7ce89380643e440f7eac48d91e45a4"
+   :role :remote-authority-tls-transport}
+  {:coordinate "io.github.kotoba-lang/http" :source :git
+   :git-url "https://github.com/kotoba-lang/http.git"
+   :git-sha "1af5514a3a27098812be4e172d718908fb58e78e"
+   :role :remote-authority-http-framing}
   ;; The transport half of the cloud authorities runs on the platform HTTP
   ;; client. Since ADR-0044 the trust DECISION is no longer the platform's:
   ;; the default trust store is not consulted and an https peer is accepted
