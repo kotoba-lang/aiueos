@@ -444,6 +444,34 @@ depends on the peer resending. The echoed bytes are never compared with what was
 sent — the checksum proves the segment is intact, not that it carries our data.
 HTTPS will need more than this.
 
+## Network: no address configuration, and what stops it
+
+`10.0.2.15` and `10.0.2.2` are still compiled into `kernel/pci.c`. DHCP is what
+would stop hardcoding them, and it is step 1 of ADR-0041's gap ledger.
+
+It was attempted on 2026-08-22 and stopped before a line of it was written
+(ADR-0074). Under ADR-0015 the options parse — variable length,
+self-describing, attacker-controlled — is a decision and so has to be a Kotoba
+object, and **a new kernel admission object cannot be exported at the compiler
+revision this repository pins**. The symbol comes from the closed
+`kernel-object-entries` allow-list in `kotoba-lang/kotoba-native`, which names
+no DHCP or UDP entry. A source whose entry is not on that list **compiles
+green** and exports `kotoba_aiueos_probe` — the symbol `kernel-probe.o` already
+exports and every link already contains. Only
+`verify-kotoba-kernel-object.py` objects, at link time.
+
+Upstream has since made that miss loud (`kotoba-native` `dc1d2a9`, `amu`
+`6bd93b7`, closing amu#626, the issue ADR-0054 filed), and made a contract's
+`:native {:export "…"}` block the way to declare an entry. `amu` `8ff1030` —
+the revision `scripts/reproduce-kotoba-kernel-object.sh` pins — is 250 commits
+behind that. Advancing it is the next piece of work, not DHCP.
+
+Two other decisions in `kotoba/` are stranded the same way and have no `.o`:
+`murakumo-join-plan.kotoba` (named in ADR-0019) and `tcp-seq-acceptable.kotoba`
+(RFC 9293 §3.10.7.4 segment acceptance, parity-tested, named nowhere until
+ADR-0074). **Read a `.kotoba` file's presence as a decision that was written,
+not one the kernel runs** — `build-uefi.sh` names every object it links.
+
 ## USB removable-media boot
 
 The GPT release image above is what gets written to a USB stick, but producing
