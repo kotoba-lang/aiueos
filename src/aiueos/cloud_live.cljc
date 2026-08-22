@@ -91,13 +91,19 @@
   peer was refused. Reading the reason first turned the single most important
   negative this repository has into \"could not answer\" -- measured 2026-08-22,
   by breaking one hex digit of the inference host's pin and watching the gate
-  exit 3 instead of 1."
+  exit 3 instead of 1.
+
+  **Which refusals are unanswerable is `grant.cloud`'s to say**, not this
+  namespace's: it reads `grant.cloud/unmeasurable-reasons` rather than keeping
+  a list beside it. Two lists would have drifted the day
+  `:response-upstream-fault` was added -- and the way they drift is that the
+  gate keeps calling a 503 a refusal, which is the defect this reads for."
   [verdict]
   (let [fault (:aiueos.provider.cloud/error verdict)]
     (cond
       (cloud/allowed? verdict) :admitted
       (some? fault) (if (contains? unmeasured-faults fault) :unmeasured :refused)
-      (= :response-unmeasured (:aiueos.cloud/reason verdict)) :unmeasured
+      (contains? cloud/unmeasurable-reasons (:aiueos.cloud/reason verdict)) :unmeasured
       :else :refused)))
 
 (defn negative-outcome-of
@@ -116,6 +122,38 @@
            (= expected-status (:aiueos.cloud/status verdict)))
       :admitted
       :else :refused)))
+
+(defn anchor-summary
+  "What this policy will accept from whom, as data, at NOW-MS.
+
+  The receipt used to carry one number -- how many pins were declared -- which
+  said nothing about the question that turned out to matter: whether each key
+  is bound to the host it was measured from. A count of three is the same
+  number whether the policy names three hosts or names none.
+
+  Per host: how many pins are current, how many are retiring, and the state of
+  the rotation window (`:none`, `:open`, `:closed`, `:unevaluated`). An open
+  window is worth seeing on a green run, because it is the only warning that a
+  key is still working *because of a deadline* -- and deadlines pass."
+  [policy now-ms]
+  (let [{:keys [shape by-host pins malformed]} (cloud/anchor-bindings policy)
+        clocked (assoc policy :aiueos.cloud/now-ms now-ms)]
+    (cond-> {:shape shape :pins (count pins)}
+      (seq malformed) (assoc :malformed malformed)
+      (= :host-bound shape)
+      (assoc :hosts
+             (into (sorted-map)
+                   (map (fn [[host binding]]
+                          [host {:pins (count (:pins binding))
+                                 :retiring (count (:previous binding))
+                                 :usable-now (count (cloud/usable-pins clocked host))
+                                 :window (cond
+                                           (empty? (:previous binding)) :none
+                                           (nil? (:accept-previous-until-ms binding)) :unevaluated
+                                           (nil? now-ms) :unevaluated
+                                           (<= now-ms (:accept-previous-until-ms binding)) :open
+                                           :else :closed)}]))
+                   by-host)))))
 
 (defn exit-code
   "1 if any leg was refused, else 3 if any could not be answered, else 0.
@@ -157,6 +195,16 @@
                             (:aiueos.cloud/status verdict))
                 :byte-count (:aiueos.provider.cloud/byte-count verdict)
                 :peer-spki (:aiueos.provider.cloud/peer-spki verdict)
+                ;; Whether the key that was accepted was accepted FOR THIS
+                ;; HOST. An unbound pin set is a real acceptance and a weaker
+                ;; one, and a receipt that did not say so would make the two
+                ;; look identical.
+                :anchor-binding (or (:aiueos.provider.cloud/peer-anchor-binding verdict)
+                                    (:aiueos.cloud/anchor-binding verdict))
+                :host (or (:aiueos.provider.cloud/peer-host verdict)
+                          (:aiueos.cloud/host verdict))
+                ;; Which other host's key this was, when that is what happened.
+                :pinned-for (:aiueos.cloud/pinned-for verdict)
                 ;; The key that was seen when it was not the key that was named.
                 ;; A refusal that will not say what it saw cannot be acted on --
                 ;; rotation and attack look identical without it.
@@ -334,11 +382,24 @@
                            :stop-reason (:aiueos.cloud/stop-reason verdict)}
                           (outcome-of verdict))))))
 
+     (defn with-clock
+       "POLICY with the wall clock stamped on it, once per run.
+
+  `grant.cloud` is pure and cannot read a clock, so a rotation window is
+  evaluated against `:aiueos.cloud/now-ms` or not at all -- and \"not at all\"
+  refuses the retiring key rather than admitting it. Stamping it here, once,
+  means every leg of one receipt judges the same instant: a run that straddled
+  a window's expiry would otherwise report two different answers about the same
+  policy and blame the authority for one of them."
+       [policy]
+       (assoc policy :aiueos.cloud/now-ms (System/currentTimeMillis)))
+
      (defn run-check
        "Every leg, in order, as data. No printing and no exit: the caller decides
   what to do with a receipt."
-       [live]
-       (let [[resolved model] (resolve-leg live)
+       [policy]
+       (let [live (with-clock policy)
+             [resolved model] (resolve-leg live)
              legs [resolved
                    (liveness-leg live)
                    (inference-leg live model)
@@ -348,7 +409,7 @@
           :measured-at (str (Instant/now))
           :origins {:storage (:aiueos.cloud/storage-origin live)
                     :inference (:aiueos.cloud/inference-origin live)}
-          :trust-anchors-declared (count (cloud/trust-anchors live))
+          :trust-anchors (anchor-summary live (:aiueos.cloud/now-ms live))
           :legs legs
           :exit (exit-code legs)}))
 
@@ -359,8 +420,9 @@
   `check` would pin that gate's exit code at 3 forever and make the code mean
   \"the write is still blocked\" rather than \"something could not be
   answered\"."
-       [live]
-       (let [cid (:aiueos.cloud-live/write-cid live)
+       [policy]
+       (let [live (with-clock policy)
+             cid (:aiueos.cloud-live/write-cid live)
              text (:aiueos.cloud-live/write-text live)
              bytes (.getBytes ^String (str text) "UTF-8")
              {:keys [env headers]} (credential live :write)
@@ -375,6 +437,7 @@
                                   (outcome-of verdict))))]
          {:aiueos.cloud-live/receipt 1
           :measured-at (str (Instant/now))
+          :trust-anchors (anchor-summary live (:aiueos.cloud/now-ms live))
           :legs [leg]
           :exit (exit-code [leg])}))
 

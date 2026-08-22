@@ -489,29 +489,35 @@ production `.clj`, and the split it forced is an improvement: the decision rule
   characters and `finish_reason: "stop"` is evidence that something arrived and
   was judged; it is not evidence about *what* the model said, and nothing here
   checks that.
-- **Neither reader understands streaming.** A server-sent-event response would
-  arrive as `:response-shape-mismatch`, which is honest but unhelpful, and no
-  murakumo surface has been asked to stream.
+- **Streaming is refused by name, and still not implemented.** ADR-0075 gave it
+  `:response-streaming-unsupported` rather than letting an SSE response arrive
+  as a shape mismatch or an unparsable body, so a reader can tell "we do not do
+  this yet" from "the server sent us something wrong". No murakumo surface has
+  been asked to stream and this plane never sets `stream: true`.
 - **The live write has never succeeded.** 401, for want of a bearer token.
-- **The pin set is flat.** `grant.cloud/admit-peer` asks whether the key it saw
-  is in the set, not whether it is the right key for that host, so any pin in a
-  policy is accepted from any host in it. The mapping exists only in the live
-  policy's `:anchor-notes`, which nothing reads. With three hosts in one set
-  this is now less theoretical than it was with two.
-- **Nothing connects the live policy to `grant.anchors`.** ADR-0045 designed a
-  signed, sequenced, overlapping rotation and ADR-0046 put the first set in the
-  image; this file is a hand-edited resource. When the Cloudflare edge rotates,
-  the gate goes red with `:peer-not-pinned` and a person re-measures with `pin`.
-  A worked answer, not an automated one.
-- **A transient upstream 5xx is reported as a refusal**, so the gate is not
-  idempotent under edge flakiness: a 503 takes the same exit 1 as a digest
-  mismatch. Defensible — the authority did answer, and it answered no — but a
-  caller treating exit 1 as "investigate the pins" will occasionally investigate
-  the weather.
-- **The contract lives in `grant` and names files in `aiueos`.** That is
-  deliberate — a contract that stopped naming its own mechanism the day the
-  mechanism moved would describe half a story — but nothing checks those paths
-  still exist. A rename here breaks a claim there, silently.
+- **The pin set is host-bound** (ADR-0075). `grant.cloud/admit-peer` takes the
+  host the provider was reaching, and offering one authority's key for another
+  is `:peer-pinned-to-other-host`. The flat set survives as the shape a
+  release-borne anchor document produces, is marked `:unbound` on every
+  verdict, and is refused outright where the deployment sets
+  `:aiueos.cloud/require-host-bound-anchors?` — which the live policy does.
+  What has *not* changed: the ADR-0045 anchor document still has no host field,
+  so a device booted from one holds an unbound set.
+- **The live policy borrows `grant.anchors`' rotation rule, not its
+  distribution** (ADR-0075). Each host may carry `:previous` pins and an
+  `:accept-previous-until-ms`, evaluated by `grant.anchors/usable-anchors` — so
+  a Cloudflare rotation is an overlap window that the clock closes, and a
+  retired key is `:peer-pin-expired` rather than an unexplained
+  `:peer-not-pinned`. It is still not the signed, sequenced distribution of
+  ADR-0045/0046: an operator measures with `pin` and edits the file, because
+  there is no publisher and no root key on the path this gate runs on.
+- **A transient upstream 5xx is `:response-upstream-fault`** (ADR-0075), which
+  the gate reports as UNMEASURED and exit 3. A 429 is still a refusal,
+  deliberately: it is the authority answering about this caller's behaviour.
+- **The contract's file paths are checked, in two halves** (ADR-0075).
+  `aiueos.cloud-contract-paths-test` checks the paths it names in this
+  repository; `grant.cloud-test` checks the ones in `grant`. Neither test can
+  see the other's tree, which is why there are two.
 
 The next thing is a credential for the gated surface. Everything under it is
 built.

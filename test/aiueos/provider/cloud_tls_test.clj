@@ -148,3 +148,125 @@
     (is (not= pin (provider/sha256-hex (.getEncoded cert)))
         "hashing the whole certificate would change on renewal; hashing the
          SubjectPublicKeyInfo changes when the key does")))
+
+;; ── the pin is a pin FOR A HOST ───────────────────────────────────────────
+;;
+;; The loopback server is reached as `127.0.0.1`, so that is the host the
+;; provider must tell `grant.cloud/admit-peer` about. These are the same
+;; handshake as above, differing only in which host the policy binds the key
+;; to — which is exactly the distinction the flat set could not make.
+
+(defn- host-policy-for [origin bindings]
+  {:aiueos.policy/net-allow #{"127.0.0.1"}
+   :aiueos.cloud/storage-origin origin
+   :aiueos.cloud/trust-anchors bindings})
+
+(deftest a-key-pinned-to-this-host-serves-a-block-over-real-tls
+  (with-https-server serve-hello
+    (fn [s]
+      (let [pin (server-pin)
+            v (provider/read-block!
+               (host-policy-for (:origin s) {"127.0.0.1" {:pins #{pin}}})
+               raw-cid)]
+        (is (cloud/allowed? v))
+        (is (= hello-digest (:aiueos.cloud/digest v)))
+        (is (= pin (:aiueos.provider.cloud/peer-spki v)))
+        (is (= :host (:aiueos.provider.cloud/peer-anchor-binding v))
+            "and the receipt records that it was accepted FOR this host, not
+             merely that the key was somewhere in the policy")
+        (is (= "127.0.0.1" (:aiueos.provider.cloud/peer-host v)))
+        (is (= [cid-path] @(:hits s)))))))
+
+(deftest the-same-key-pinned-to-another-host-is-refused-mid-handshake
+  (with-https-server serve-hello
+    (fn [s]
+      (let [pin (server-pin)
+            ;; Both hosts are pinned, and each to the other's key -- the shape
+            ;; the live policy has, with the two entries swapped. A policy that
+            ;; simply forgot this host is `a-host-with-no-pins-...` below.
+            v (provider/read-block!
+               (host-policy-for (:origin s)
+                                {"127.0.0.1" {:pins #{(apply str (repeat 64 "a"))}}
+                                 "kotobase.net" {:pins #{pin}}})
+               raw-cid)]
+        (is (= :peer-pinned-to-other-host (:aiueos.provider.cloud/error v))
+            "the very key this server holds, pinned to somebody else: under the
+             flat set this handshake completed and served a block")
+        (is (= ["kotobase.net"] (:aiueos.cloud/pinned-for v))
+            "and it says whose key the policy thinks this is")
+        (is (= [] @(:hits s))
+            "the request was never made: the handshake did not complete")))))
+
+(deftest a-host-with-no-pins-is-refused-before-the-key-is-judged
+  (with-https-server serve-hello
+    (fn [s]
+      (let [v (provider/read-block!
+               (host-policy-for (:origin s) {"kotobase.net" {:pins #{(apply str (repeat 64 "a"))}}})
+               raw-cid)]
+        (is (= :host-not-pinned (:aiueos.provider.cloud/error v))
+            "an operator who has not said, in the host dimension -- which is a
+             different fix from a peer that presented the wrong key")
+        (is (= "127.0.0.1" (:aiueos.cloud/host v)))
+        (is (= [] @(:hits s)))))))
+
+(deftest a-flat-set-still-works-and-still-says-that-it-is-flat
+  (with-https-server serve-hello
+    (fn [s]
+      (let [pin (server-pin)
+            v (provider/read-block! (policy-for (:origin s) #{pin}) raw-cid)]
+        (is (cloud/allowed? v)
+            "a device booted from a release-borne anchor set has no host field
+             to bind to, and refusing it would strand exactly the machines the
+             anchors plane exists for")
+        (is (= :unbound (:aiueos.provider.cloud/peer-anchor-binding v))
+            "and every verdict from it says so"))
+      (let [strict (assoc (policy-for (:origin s) #{(server-pin)})
+                          :aiueos.cloud/require-host-bound-anchors? true)]
+        (is (= :trust-anchors-unbound
+               (:aiueos.provider.cloud/error (provider/read-block! strict raw-cid)))
+            "a deployment that can bind hosts refuses a policy that does not,
+             which is how the live policy cannot regress to the weaker shape")))))
+
+;; ── a rotation window, over a real handshake ─────────────────────────────
+
+(deftest during-an-overlap-window-the-retiring-key-still-serves
+  (with-https-server serve-hello
+    (fn [s]
+      (let [pin (server-pin)
+            rotating (fn [now]
+                       (assoc (host-policy-for
+                               (:origin s)
+                               {"127.0.0.1" {:pins #{(apply str (repeat 64 "b"))}
+                                             :previous #{pin}
+                                             :accept-previous-until-ms 5000}})
+                              :aiueos.cloud/now-ms now))]
+        (is (cloud/allowed? (provider/read-block! (rotating 4999) raw-cid))
+            "mid-rotation a Cloudflare edge serves the old key from some POPs
+             and the new one from others; a client that accepts exactly one of
+             them goes red on a healthy authority")
+        (let [v (provider/read-block! (rotating 5001) raw-cid)]
+          (is (= :peer-pin-expired (:aiueos.provider.cloud/error v))
+              "and after the window the clock retires it -- named as the
+               schedule it is, not as an attack")
+          (is (= 5000 (:aiueos.cloud/accept-previous-until-ms v))))))))
+
+(deftest a-refused-peer-names-the-key-it-saw-on-every-leg-not-only-the-storage-ones
+  ;; `read-block!` short-circuits on a fault and returns the peer verdict whole,
+  ;; so the storage legs always named the key they refused. The murakumo legs go
+  ;; through `judged`, which builds a fresh verdict -- and printed `:measured {}`
+  ;; beside the same refusal. One refusal an operator can act on and one they
+  ;; cannot is two different checks wearing one name.
+  (with-https-server serve-hello
+    (fn [s]
+      (let [policy {:aiueos.policy/net-allow #{"127.0.0.1"}
+                    :aiueos.cloud/inference-origin (:origin s)
+                    :aiueos.cloud/trust-anchors
+                    {"127.0.0.1" {:pins #{(apply str (repeat 64 "a"))}}
+                     "kotobase.net" {:pins #{(server-pin)}}}}
+            v (provider/ready! policy)]
+        (is (= :peer-pinned-to-other-host (:aiueos.provider.cloud/error v)))
+        (is (= (server-pin) (:aiueos.cloud/observed-spki v))
+            "the liveness leg says which key it saw")
+        (is (= "127.0.0.1" (:aiueos.cloud/host v)))
+        (is (= ["kotobase.net"] (:aiueos.cloud/pinned-for v))
+            "and whose key the policy thinks it is")))))

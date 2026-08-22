@@ -10,7 +10,7 @@
  ;; because a dependency nothing in this repository requires is a claim
  ;; about the wrong repository.
  :deps {io.github.kotoba-lang/grant {:git/url "https://github.com/kotoba-lang/grant.git"
-                                     :git/sha "a8ed303b63951a704c7be7b4469920be684fd469"}
+                                     :git/sha "86d15e306853bd3658efb1fdfde3f8508dba9ef3"}
         io.github.kotoba-lang/security {:git/url "https://github.com/kotoba-lang/security.git"
                                         :git/sha "74235d1cdf8034334f01dcb2f6faaff0c731146e"}
         com.dylibso.chicory/wasm {:mvn/version "1.4.0"}

@@ -300,7 +300,15 @@
         (is (= "GET" (:method (first @(:requests s))))))))
   (with-server (fn [ex] (respond! ex 502 "down"))
     (fn [s]
-      (is (= :response-not-ok (:aiueos.cloud/reason (provider/ready! (murakumo-policy (:origin s)))))))))
+      (is (= :response-upstream-fault
+             (:aiueos.cloud/reason (provider/ready! (murakumo-policy (:origin s)))))
+          "the authority is having a bad minute, which is not the same event as
+           a route that is not there")))
+  (with-server (fn [ex] (respond! ex 404 "no such path"))
+    (fn [s]
+      (is (= :response-not-ok
+             (:aiueos.cloud/reason (provider/ready! (murakumo-policy (:origin s)))))
+          "and that one is a fact about this machine's configuration"))))
 
 ;; -- writing a block -----------------------------------------------------
 
@@ -375,3 +383,100 @@
              :method-unsupported :body-unencodable
              :no-trust-anchors :peer-not-pinned :peer-unmeasured]]
     (is (contains? provider/errors f) (str f " is produced but not declared"))))
+
+;; ── a stream, off a real socket ───────────────────────────────────────────
+;;
+;; Nothing here asks for one: this plane never sets `stream: true`. What is
+;; proved is what happens when an authority streams anyway — which is the case
+;; where the refusal has to be legible, because the operator did not ask for it
+;; and will not be expecting it.
+
+(defn- respond-typed!
+  "Like `respond!`, with a content type of the server's choosing. The provider
+  reports it and judges nothing; `grant.cloud` decides what it means."
+  [^HttpExchange exchange status ^String content-type ^String body]
+  (let [bytes (.getBytes body "UTF-8")]
+    (.add (.getResponseHeaders exchange) "Content-Type" content-type)
+    (.sendResponseHeaders exchange (int status) (alength bytes))
+    (with-open [out (.getResponseBody exchange)]
+      (.write out bytes))
+    (.close exchange)))
+
+(def sse-completion
+  (str "data: {\"choices\":[{\"delta\":{\"content\":\"po\"}}]}\n\n"
+       "data: {\"choices\":[{\"delta\":{\"content\":\"ng\"}}]}\n\n"
+       "data: [DONE]\n\n"))
+
+(deftest a-streamed-answer-is-refused-by-name-not-as-a-broken-document
+  (testing "the authority says text/event-stream"
+    (with-server (fn [ex] (respond-typed! ex 200 "text/event-stream" sse-completion))
+      (fn [s]
+        (let [model {:alias "murakumo-main" :endpoint (:origin s) :alias-for "qwen3.8-27b"}
+              v (provider/infer! (murakumo-policy (:origin s)) model
+                                 {:messages [{:role "user" :content "hi"}]})]
+          (is (= :response-streaming-unsupported (:aiueos.cloud/reason v))
+              "not :body-unparsable, which reads as the authority being broken
+               when the truth is that this client does not implement what it
+               was sent")
+          (is (= "text/event-stream" (:aiueos.cloud/content-type v)))
+          (is (= 200 (:aiueos.provider.cloud/status v))
+              "and the response is still reported as having arrived")))))
+  (testing "and when it does not say, the framing does"
+    (with-server (fn [ex] (respond! ex 200 sse-completion))
+      (fn [s]
+        (let [model {:alias "murakumo-main" :endpoint (:origin s) :alias-for "qwen3.8-27b"}
+              v (provider/infer! (murakumo-policy (:origin s)) model
+                                 {:messages [{:role "user" :content "hi"}]})]
+          (is (= :response-streaming-unsupported (:aiueos.cloud/reason v)))))))
+  (testing "a JSON answer with a content type is still read"
+    (with-server (fn [ex] (respond-typed! ex 200 "application/json" completion-body))
+      (fn [s]
+        (let [model {:alias "murakumo-main" :endpoint (:origin s) :alias-for "qwen3.8-27b"}
+              v (provider/infer! (murakumo-policy (:origin s)) model
+                                 {:messages [{:role "user" :content "hi"}]})]
+          (is (cloud/allowed? v))
+          (is (= "pong" (:aiueos.cloud/completion v)))))))
+  (testing "and bytes that are genuinely unreadable still read as unreadable"
+    (with-server (fn [ex] (respond-typed! ex 200 "application/json" "{ not json"))
+      (fn [s]
+        (let [model {:alias "murakumo-main" :endpoint (:origin s) :alias-for "qwen3.8-27b"}
+              v (provider/infer! (murakumo-policy (:origin s)) model
+                                 {:messages [{:role "user" :content "hi"}]})]
+          (is (= :body-unparsable (:aiueos.cloud/reason v))))))))
+
+(deftest the-provider-reports-the-content-type-and-judges-nothing-by-it
+  (with-server (fn [ex] (respond-typed! ex 200 "text/event-stream" sse-completion))
+    (fn [s]
+      (let [v (provider/read-block! (policy-for (:origin s)) raw-cid)]
+        (is (= :digest-mismatch (:aiueos.cloud/reason v))
+            "a block read is bytes and a digest; the media type is an
+             observation this namespace carries and does not act on, and
+             `admit-block` refuses these bytes for the reason it always would")
+        (is (= 200 (:aiueos.provider.cloud/status v)))))))
+
+;; ── a bad minute at the authority, off a real socket ─────────────────────
+
+(deftest a-transient-server-fault-is-classified-apart-from-a-refusal
+  (testing "a 503 on a block read"
+    (with-server (fn [ex] (respond! ex 503 "upstream is having a moment"))
+      (fn [s]
+        (let [v (provider/read-block! (policy-for (:origin s)) raw-cid)]
+          (is (= :response-upstream-fault (:aiueos.cloud/reason v)))
+          (is (= 503 (:aiueos.cloud/status v)))
+          (is (contains? cloud/unmeasurable-reasons (:aiueos.cloud/reason v))
+              "so the gate reports it as could-not-answer rather than spending
+               its refusal code on the weather")))))
+  (testing "a 502 on an inference request"
+    (with-server (fn [ex] (respond! ex 502 "bad gateway"))
+      (fn [s]
+        (let [model {:alias "murakumo-main" :endpoint (:origin s) :alias-for "qwen3.8-27b"}
+              v (provider/infer! (murakumo-policy (:origin s)) model
+                                 {:messages [{:role "user" :content "hi"}]})]
+          (is (= :response-upstream-fault (:aiueos.cloud/reason v)))
+          (is (= 502 (:aiueos.provider.cloud/status v)))))))
+  (testing "and a 401 from the same socket is still a refusal"
+    (with-server (fn [ex] (respond! ex 401 "no"))
+      (fn [s]
+        (let [v (provider/read-block! (policy-for (:origin s)) raw-cid)]
+          (is (= :response-not-ok (:aiueos.cloud/reason v)))
+          (is (not (contains? cloud/unmeasurable-reasons (:aiueos.cloud/reason v)))))))))
