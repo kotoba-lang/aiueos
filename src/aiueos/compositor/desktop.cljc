@@ -2,12 +2,18 @@
   "Window surfaces the compositor process owns.
 
   State is `window-session-state` (kami-os portable compositor: z-stack,
-  focus, window lifecycle). This namespace does not invent a second
-  compositor and does not draw with CSS 3D. GPU pixels for a guest
-  surface are a kami.webgpu.ir-shaped EDN frame hosted in a window's
-  `:kami` content; the browser WebGPU canvas is the scanout host."
-  (:require [window-session-state :as wss]
+  focus, window lifecycle, input-router). This namespace does not invent
+  a second compositor and does not draw with CSS 3D. GPU pixels for a
+  guest surface are a kami.webgpu.ir-shaped EDN frame hosted in a
+  window's `:kami` content; the browser WebGPU canvas is the scanout host.
+
+  Hosted WM (ADR-0085): two overlapping surfaces, `raise` changes
+  z-order, pointer hit-test is front-to-back, DADS title bars live in
+  `apps/session` `#desktop`. IME is a named leftover."
+  (:require [clojure.string :as str]
+            [window-session-state :as wss]
             [window-session-state.compositor :as compositor]
+            [window-session-state.input-router :as input-router]
             [window-session-state.window :as window]))
 
 (def kami-session-ir
@@ -28,6 +34,12 @@
                 :color [0.28 0.55 0.30]
                 :size [1.1 2.6 1.1]}]})
 
+(def overlap-point
+  "A point inside both default boot windows. Hit-test must prefer the
+  front of the z-stack. Scanning window ids in insertion order would
+  always return the session surface (id 1) and is the named red."
+  {:x 100 :y 80})
+
 (defn empty-desktop
   "A compositor with no surfaces. Restore of a wiped file lands here.
   `restore-admitted?` is false — that is the named red, not a comment."
@@ -39,8 +51,9 @@
          :windows {}))
 
 (defn boot-desktop
-  "One session chrome window (the DADS SPA fragment) and one kami guest
-  surface. This is a compositor, not a WM: no IME, no decoration protocol."
+  "Two overlapping surfaces: session chrome and a kami guest.
+  Last opened is front (window-session-state `open-window`). They share
+  `overlap-point` so raise is observable."
   []
   (let [base (assoc (wss/window-session-state-desktop)
                     :kind :window-session-state
@@ -62,6 +75,22 @@
                  :content (window/kami-content kami-session-ir)}))]
     d))
 
+(defn one-surface-desktop
+  "A single notes iframe. WM gate is red: stacking cannot be proven."
+  []
+  (let [base (assoc (wss/window-session-state-desktop)
+                    :kind :window-session-state
+                    :wiped? false
+                    :session-fragment "#session")
+        [d _] (wss/open-window
+               base
+               (window/window-config
+                {:app-id "aiueos.notes"
+                 :title "notes"
+                 :x 32 :y 32 :w 720 :h 540
+                 :content (window/iframe-content "/notes")}))]
+    d))
+
 (defn persistable
   [desktop]
   (select-keys desktop [:kind :wiped? :session-fragment :windows
@@ -79,23 +108,172 @@
         (seq (:windows desktop))
         (seq (compositor/z-stack (:compositor desktop))))))
 
+(defn parse-window-id
+  [id]
+  (cond
+    (integer? id) id
+    (string? id) (try #?(:clj (Long/parseLong id) :cljs (js/parseInt id 10))
+                      (catch #?(:clj Exception :cljs :default) _ nil))
+    :else nil))
+
+(defn raise
+  "Bring `window-id` to the front and give it input focus.
+  Unknown ids are a no-op (the desktop is unchanged)."
+  [desktop window-id]
+  (let [id (parse-window-id window-id)]
+    (if (and id (contains? (:windows desktop) id))
+      (wss/focus-window desktop id)
+      desktop)))
+
+(defn hit-window
+  "Front-to-back hit test. First z-stack rect that contains (px, py).
+  Insertion order of `:windows` is not this — that is the red."
+  [desktop px py]
+  (some (fn [id]
+          (when-let [rect (get-in desktop [:windows id :rect])]
+            (when (window/rect-contains? rect px py)
+              id)))
+        (compositor/z-stack (:compositor desktop))))
+
+(defn key-order-hit
+  "Anti-pattern: first matching window in map key order. The WM test
+  fails if `hit-window` agrees with this after boot (front is not id 1)."
+  [desktop px py]
+  (some (fn [id]
+          (when-let [rect (get-in desktop [:windows id :rect])]
+            (when (window/rect-contains? rect px py)
+              id)))
+        (sort (keys (:windows desktop)))))
+
+(defn route-pointer
+  "Hit-test, raise the hit surface, resolve input-router target.
+  Returns `[desktop' event]`. A miss does not change focus."
+  [desktop px py]
+  (if-let [id (hit-window desktop px py)]
+    (let [d' (raise desktop id)
+          target (input-router/resolve-target (:input-router d'))
+          focused (compositor/focused-window (:compositor d'))]
+      [d' {:hit id
+           :focused focused
+           :input-target target
+           :title-bar? (boolean
+                        (window/title-bar-contains?
+                         (get-in desktop [:windows id :rect]) px py))}])
+    [desktop {:hit nil
+              :focused (compositor/focused-window (:compositor desktop))
+              :input-target (input-router/resolve-target
+                             (:input-router desktop))
+              :title-bar? false}]))
+
+(defn occluded-at?
+  "True when `window-id` contains (px, py) but a front window is hit."
+  [desktop window-id px py]
+  (let [id (parse-window-id window-id)
+        hit (hit-window desktop px py)
+        rect (get-in desktop [:windows id :rect])]
+    (boolean
+     (and id rect hit (not= hit id)
+          (window/rect-contains? rect px py)))))
+
+(defn ime-leftover
+  "Named leftover. Do not treat absence as WM green or as a silent pass."
+  []
+  {:ime? false
+   :leftover :ime-absent
+   :note "IME is leftover. Hosted WM (z-stack, DADS decoration, input routing) does not include IME."})
+
+(defn wm-admitted?
+  "True only when at least two surfaces stack and raising the back one
+  changes who is front. One notes iframe, or raise as identity, is red."
+  [desktop]
+  (let [zs (vec (compositor/z-stack (:compositor desktop)))
+        wins (:windows desktop)
+        back (last zs)]
+    (boolean
+     (and (restore-admitted? desktop)
+          (>= (count wins) 2)
+          (>= (count zs) 2)
+          (some? back)
+          (not= (first zs) back)
+          (let [raised (raise desktop back)
+                zs' (vec (compositor/z-stack (:compositor raised)))]
+            (and (= back (first zs'))
+                 (not= (first zs) (first zs'))))))))
+
+(defn wm-refuse-reason
+  [desktop]
+  (cond
+    (not (restore-admitted? desktop)) :empty-or-wiped
+    (< (count (:windows desktop)) 2) :one-surface
+    (< (count (compositor/z-stack (:compositor desktop))) 2) :z-stack-too-short
+    (let [zs (vec (compositor/z-stack (:compositor desktop)))]
+      (= (first zs) (last zs))) :z-order-is-noop
+    (not (wm-admitted? desktop)) :z-order-is-noop
+    :else nil))
+
+(defn input-target-label
+  [target]
+  (if (sequential? target)
+    (str/join ":" (map str target))
+    (str target)))
+
+(defn z-front
+  [desktop]
+  (first (compositor/z-stack (:compositor desktop))))
+
+(defn z-back
+  [desktop]
+  (last (compositor/z-stack (:compositor desktop))))
+
+(defn wm-event
+  "Flat JSON-facing event for raise/pointer HTTP. parse-flat-json can
+  read the scalars; nested windows stay on GET /api/compositor/desktop."
+  [desktop op extra]
+  (let [zs (vec (compositor/z-stack (:compositor desktop)))
+        focused (compositor/focused-window (:compositor desktop))
+        target (input-router/resolve-target (:input-router desktop))
+        ime (ime-leftover)]
+    (merge {:ok (wm-admitted? desktop)
+            :wm? (wm-admitted? desktop)
+            :op (name op)
+            :front (or (first zs) 0)
+            :back (or (last zs) 0)
+            :focused (or focused 0)
+            :surface-count (count (:windows desktop))
+            :input-target (input-target-label target)
+            :ime? (:ime? ime)
+            :ime-leftover (name (:leftover ime))}
+           extra)))
+
 (defn public-snapshot
   "JSON-facing view: surfaces the compositor owns, plus the kami IR.
   Phone bind does not need this; it is the desktop face."
   [desktop]
-  (let [windows (:windows desktop)]
+  (let [windows (:windows desktop)
+        zs (vec (compositor/z-stack (:compositor desktop)))
+        ime (ime-leftover)]
     {:kind (name (or (:kind desktop) :empty))
      :admitted? (restore-admitted? desktop)
+     :wm? (wm-admitted? desktop)
      :wiped? (boolean (:wiped? desktop))
      :session-fragment (or (:session-fragment desktop) "")
      :focused (compositor/focused-window (:compositor desktop))
-     :z-stack (vec (compositor/z-stack (:compositor desktop)))
+     :z-stack zs
      :surface-count (count windows)
+     :ime? (:ime? ime)
+     :ime-leftover (name (:leftover ime))
      :windows (mapv (fn [[id w]]
                       {:id id
                        :app-id (get-in w [:component :app-id])
                        :title (get-in w [:component :title])
                        :state (name (get-in w [:component :state] :normal))
+                       :z (loop [i 0 xs zs]
+                            (cond
+                              (empty? xs) 0
+                              (= (first xs) id) (- (count zs) i)
+                              :else (recur (inc i) (rest xs))))
+                       :focused? (= id (compositor/focused-window
+                                        (:compositor desktop)))
                        :content (let [c (get-in w [:component :content])]
                                   (cond
                                     (vector? c) {:tag (name (first c))
@@ -107,4 +285,5 @@
      :kami-ir kami-session-ir
      :engine "window-session-state"
      :gpu-viewport "kami.webgpu.ir"
-     :note "Named partial: compositor process owns surfaces. Not a WM."}))
+     :decoration "jp-go-dds"
+     :note "Hosted WM: window-session-state z-stack + DADS title bars. IME leftover. Not P5."}))

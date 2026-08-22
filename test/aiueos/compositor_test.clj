@@ -111,3 +111,60 @@
     (let [r (comp/gpu-2d-result {:qemu-unmeasured? true})]
       (is (= 3 (:exit r)))
       (is (= :unmeasured (:reason r))))))
+
+(deftest wm-requires-two-stacked-surfaces
+  (testing "boot desktop is admitted; one notes iframe is the named red"
+    (let [d (desktop/boot-desktop)
+          one (desktop/one-surface-desktop)]
+      (is (desktop/wm-admitted? d))
+      (is (nil? (desktop/wm-refuse-reason d)))
+      (is (not (desktop/wm-admitted? one)))
+      (is (= :one-surface (desktop/wm-refuse-reason one)))))
+  (testing "IME leftover is named, not a silent pass"
+    (let [ime (desktop/ime-leftover)]
+      (is (false? (:ime? ime)))
+      (is (= :ime-absent (:leftover ime))))))
+
+(deftest wm-hit-prefers-z-stack-not-key-order
+  (let [d (desktop/boot-desktop)
+        px (:x desktop/overlap-point)
+        py (:y desktop/overlap-point)
+        hit (desktop/hit-window d px py)
+        keys (desktop/key-order-hit d px py)
+        front (desktop/z-front d)]
+    (is (= 2 (count (:windows d))))
+    (is (= front hit) "overlap must hit the front surface")
+    (is (not= hit keys)
+        "gate is red if hit-window ignores z-order and scans map keys")
+    (is (= 2 hit) "last opened window is front at boot")))
+
+(deftest wm-raise-changes-front-and-input-target
+  (let [d (desktop/boot-desktop)
+        px (:x desktop/overlap-point)
+        py (:y desktop/overlap-point)
+        front (desktop/z-front d)
+        back (desktop/z-back d)
+        raised (desktop/raise d back)
+        [_ ev] (desktop/route-pointer raised px py)]
+    (is (not= front back))
+    (is (= back (desktop/z-front raised))
+        "raising the back window must change who is front")
+    (is (not= front (desktop/z-front raised)))
+    (is (= back (desktop/hit-window raised px py)))
+    (is (desktop/occluded-at? raised front px py)
+        "the old front still contains the point but is occluded")
+    (is (= back (:hit ev)))
+    (is (= [:panel back] (:input-target ev))
+        "clicks route to the focused guest; fails if z-order is ignored")
+    (is (= :ime-absent (:leftover (desktop/ime-leftover))))))
+
+(deftest generated-spa-is-the-wm-face
+  (is (comp/html-has-wm-face? (pb/session-html))
+      "gate is red until #desktop has two DADS-decorated stacked windows")
+  (is (not (comp/html-has-wm-face?
+            (str "<html>href=\"#session\" href=\"#setup\" href=\"#desktop\" "
+                 "dads-button jp-go-dds id=\"kami-viewport\" kami.webgpu "
+                 "window.__aiueosSessionAlive "
+                 "<pre id=\"compositor-out\">{surfaces:1}</pre></html>")))
+      "a JSON dump of one surface is not a window manager"))
+

@@ -61,3 +61,9 @@ PCI device with headless display.
 README Desktop is a **named partial**, not "not yet" and not a WM. Operators
 can prove a display session on this Mac. Full Chrome OS-shaped desktop is not
 complete: guest-in-shell, bare-metal net, itonami, and a real machine remain.
+
+## Later (2026-08-23)
+
+Hosted WM (two stacked surfaces, DADS decoration, z-order input) is
+**ADR-0085** (`clojure -M:compositor wm`). This ADR stays the compositor
+*process* + PCI listing gate. Do not read ADR-0079 as if it were already a WM.

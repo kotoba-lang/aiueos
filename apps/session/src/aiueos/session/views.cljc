@@ -53,39 +53,72 @@
      [:pre {:id "guest-out" :class "session-out"}])))
 
 
+(defn- wm-titlebar
+  [id title]
+  [:header {:class "wm-titlebar dds-ext-row"
+            :data-raise (str id)}
+   (dds/heading 2 title {:size "16" :id (str "wm-title-" id)})
+   (dds/chip-label "フォーカス" {:color "blue" :style "filled-1"})
+   (dds/button "前面へ" {:id (str "wm-raise-" id)
+                        :size "sm"
+                        :type :outline
+                        :attrs {:data-raise (str id)}})])
+
+(defn- wm-guest-body
+  [id title guest-kind src]
+  (if (= guest-kind :kami)
+    [:canvas {:id "kami-viewport"
+              :class "kami-viewport wm-guest"
+              :width "640"
+              :height "360"
+              :data-engine "kami.webgpu.ir"
+              :tabindex "0"
+              :aria-label "kami WebGPU guest surface"}]
+    [:div {:class "wm-guest"
+           :id (str "wm-guest-" id)
+           :tabindex "0"
+           :data-src (or src "")
+           :aria-label title}
+     [:p {:class "session-lede"}
+      "guest "
+      [:code (or src title)]]]))
+
+(defn- wm-window
+  "One stacked surface with a DADS title bar. Guest body is not a nested
+  copy of this SPA. Kami content is the WebGPU canvas."
+  [{:keys [id title guest-kind src]}]
+  [:article {:class "wm-window"
+             :id (str "wm-window-" id)
+             :data-window-id (str id)
+             :data-guest (name guest-kind)}
+   (wm-titlebar id title)
+   [:div {:class "wm-body"}
+    (wm-guest-body id title guest-kind src)]])
+
 (defn desktop-view
-  "Compositor face: HTML chrome lists window-session-state surfaces.
-  The kami WebGPU canvas is the guest scanout host — not CSS 3D, not a
-  second engine. Overlay chrome stays DADS."
+  "Window manager face: two overlapping surfaces, DADS title bars,
+  z-order from window-session-state. Not a JSON dump of one iframe."
   []
   (view-section {:id :desktop :hidden? true}
     (dds/heading 1 "デスクトップ" {:size "32"})
     [:p {:class "session-lede"}
      "compositor 過程が "
      [:code "window-session-state"]
-     " の surface を持ちます。これはウィンドウマネージャではありません。"
-     " IME も virtio-gpu の 2D create/flush もまだです。"
-     " 下のキャンバスは "
-     [:code "kami.webgpu.ir"]
-     " の scanout です。"]
-    (dds/card
-     (dds/heading 2 "compositor surfaces" {:size "24"})
-     [:pre {:id "compositor-out" :class "session-out"}])
-    (dds/card
-     (dds/heading 2 "notes guest" {:size "24"})
-     [:p "同じ文書の "
-      [:code "app/notes"]
-      "。compositor iframe ではなく guest の identity です。"]
-     [:pre {:id "guest-desktop-out" :class "session-out"}])
-    (dds/card
-     (dds/heading 2 "kami viewport" {:size "24"})
-     [:canvas {:id "kami-viewport"
-               :class "kami-viewport"
-               :width "640"
-               :height "360"
-               :data-engine "kami.webgpu.ir"
-               :aria-label "kami WebGPU guest surface"}]
-     [:pre {:id "kami-out" :class "session-out"}])))
+     " の 2 枚を重ねます。タイトルバーは DADS（"
+     [:code "jp-go-dds"]
+     "）です。前面へで z-order が変わります。"
+     " virtio-gpu 2D は "
+     [:code "clojure -M:compositor gpu"]
+     "。IME は leftover です。"]
+    [:div {:id "wm-stage"
+           :class "wm-stage"
+           :aria-label "window-session-state"}
+     (wm-window {:id 1 :title "session" :guest-kind :session :src "/#session"})
+     (wm-window {:id 2 :title "guest-surface" :guest-kind :kami :src "kami.webgpu.ir"})]
+    [:pre {:id "compositor-out" :class "session-out" :hidden true}]
+    [:pre {:id "guest-desktop-out" :class "session-out"}]
+    [:pre {:id "kami-out" :class "session-out"}]
+    [:pre {:id "wm-input-out" :class "session-out"}]))
 
 (defn setup-view
   []

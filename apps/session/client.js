@@ -49,16 +49,103 @@ async function refreshStatus() {
 }
 
 
+function bindWmOnce() {
+  if (window.__aiueosWmBound) return;
+  var stage = document.getElementById("wm-stage");
+  if (!stage) return;
+  window.__aiueosWmBound = true;
+  stage.addEventListener("click", function (ev) {
+    var raiseEl = ev.target.closest("[data-raise]");
+    if (raiseEl) {
+      ev.preventDefault();
+      postRaise(raiseEl.getAttribute("data-raise"));
+      return;
+    }
+    if (ev.target.closest(".wm-guest")) {
+      var b = stage.getBoundingClientRect();
+      postPointer(Math.round(ev.clientX - b.left), Math.round(ev.clientY - b.top));
+    }
+  });
+}
+
+function applyWmWindows(j) {
+  var wins = j.windows || [];
+  wins.forEach(function (w) {
+    var el = document.getElementById("wm-window-" + w.id);
+    if (!el) return;
+    var r = w.rect || {};
+    el.style.left = (r.x || 0) + "px";
+    el.style.top = (r.y || 0) + "px";
+    el.style.width = (r.w || 320) + "px";
+    el.style.height = (r.h || 240) + "px";
+    el.style.zIndex = String(w.z || 1);
+    var focused = !!w["focused?"];
+    el.classList.toggle("is-focused", focused);
+    var chip = el.querySelector(".dads-chip-label");
+    if (chip) chip.hidden = !focused;
+  });
+}
+
 async function refreshDesktop() {
   var el = document.getElementById("compositor-out");
-  if (!el) return;
+  var input = document.getElementById("wm-input-out");
+  bindWmOnce();
   try {
     var r = await fetch("/api/compositor/desktop");
     var j = await r.json();
-    el.textContent = JSON.stringify(j, null, 2);
+    if (el) el.textContent = JSON.stringify(j, null, 2);
+    applyWmWindows(j);
     presentKami(j["kami-ir"] || j.kami_ir || j.kamiIr);
+    if (input && !input.dataset.wmTouched) {
+      input.textContent = pretty({
+        wm: j["wm?"],
+        front: (j["z-stack"] || [])[0],
+        focused: j.focused,
+        ime: j["ime-leftover"],
+        decoration: j.decoration
+      });
+    }
   } catch (e) {
-    el.textContent = String(e);
+    if (el) el.textContent = String(e);
+    if (input) input.textContent = String(e);
+  }
+}
+
+async function postRaise(id) {
+  var input = document.getElementById("wm-input-out");
+  try {
+    var r = await fetch("/api/compositor/raise", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: Number(id) })
+    });
+    var j = await r.json();
+    if (input) {
+      input.dataset.wmTouched = "1";
+      input.textContent = pretty(j);
+    }
+    await refreshDesktop();
+  } catch (e) {
+    if (input) input.textContent = String(e);
+  }
+}
+
+async function postPointer(x, y) {
+  var input = document.getElementById("wm-input-out");
+  try {
+    var r = await fetch("/api/compositor/pointer", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ x: x, y: y })
+    });
+    var j = await r.json();
+    if (input) {
+      input.dataset.wmTouched = "1";
+      input.textContent = pretty(j);
+    }
+    await refreshDesktop();
+  } catch (e) {
+    if (input) input.textContent = String(e);
   }
 }
 
