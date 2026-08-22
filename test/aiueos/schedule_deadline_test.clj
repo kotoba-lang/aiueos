@@ -35,12 +35,7 @@
 
   Adding a name here is a claim about that file: it must not execute anything
   under the derived deadline."
-  {"test/aiueos/manifest_test.cljc"
-   (str "the tests OF the derivation. They call normalize-schedule directly and "
-        "assert what it produces from a schedule with no :deadline-ms, which is "
-        "the behaviour this gate exists to make visible. Nothing here executes.")
-
-   "test/aiueos/schedule_deadline_test.clj"
+  {"test/aiueos/schedule_deadline_test.clj"
    (str "this gate itself. Its docstring and its exemption reasons quote "
         "schedule maps as prose -- there is no manifest in this file and "
         "nothing here is normalized or executed. It is listed rather than "
@@ -99,7 +94,15 @@
 (deftest the-scan-found-something
   (testing "an evidence floor: a scan that reads no schedules must not report clean"
     (let [total (reduce + (for [p (source-files)] (count (schedule-maps (slurp p)))))]
-      (is (<= 15 total)
+      ;; 15 until 2026-08-22. Twenty-seven literals were in this tree; the
+      ;; grant plane took twenty-two of them with it (root ADR-2608219500) and
+      ;; five are left. The floor is lowered to the MEASURED five rather than
+      ;; kept at a number this repository can no longer reach -- and the same
+      ;; gate now runs in `grant.schedule-deadline-test` over the twenty-two,
+      ;; because lowering a floor without following the corpus is how a gate
+      ;; goes from checking twenty-seven things to checking five while still
+      ;; reporting green.
+      (is (<= 5 total)
           (str "only " total " :aiueos/schedule literals found across "
                (pr-str scanned-roots) " — the scan is looking in the wrong place")))))
 

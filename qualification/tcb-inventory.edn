@@ -4,7 +4,7 @@
  ;; other field, so an entry cannot change without this date having to change
  ;; too. It said 2026-08-01 while the file was being edited that morning, and
  ;; nothing read it.
- :tcb/content-digest "35ae1fcde63a95dc28175a3dcbc0d0cd4747ef993e220b88cfa518c90dfa4d3c"
+ :tcb/content-digest "1b3d7299776a5ee7ea4e3af5c6cf5568da31b15b43d1aaa29dd983f473a74334"
  :tcb/scope
  "Code whose compromise can grant authority, escape Wasm isolation, falsify
   production admission/audit evidence, or access hardware outside a component."
@@ -76,7 +76,7 @@
   ;; deleted from an unpinned list leaves no trace, and `aiueos.tcb` only
   ;; checks the shape of what it finds there.
   {:path "qualification/build-identity.edn" :role :adopted-property-record
-   :sha256 "2317adb97a0abe8539c52090cdac310c4ab8deb0243b81f0078d0dd4e702fbc1"}
+   :sha256 "ce7cf7f577b6596dc9ff10ec878c80518e5b88014c7efed2d8a5dc42b4f1a478"}
   {:path "src/aiueos/sealed_audit.clj" :role :audit-confidentiality-integrity
    :sha256 "0ec696fa61a66dc4fdef5b0a418a51ee59ccc4ebed7998be8d46fd693c6bec17"}
   {:path "src/aiueos/sealed_state.clj" :role :component-state-confidentiality-integrity
