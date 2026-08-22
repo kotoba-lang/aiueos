@@ -105,7 +105,45 @@ struct virtio_gpu_display_info {
   struct virtio_gpu_ctrl_header header; struct virtio_gpu_display_one modes[16];
 } __attribute__((packed));
 #define VIRTIO_GPU_CMD_GET_DISPLAY_INFO 0x0100
+#define VIRTIO_GPU_CMD_RESOURCE_CREATE_2D 0x0101
+#define VIRTIO_GPU_CMD_SET_SCANOUT 0x0103
+#define VIRTIO_GPU_CMD_RESOURCE_FLUSH 0x0104
+#define VIRTIO_GPU_CMD_TRANSFER_TO_HOST_2D 0x0105
+#define VIRTIO_GPU_CMD_RESOURCE_ATTACH_BACKING 0x0106
+#define VIRTIO_GPU_RESP_OK_NODATA 0x1100
 #define VIRTIO_GPU_RESP_OK_DISPLAY_INFO 0x1101
+#define VIRTIO_GPU_FORMAT_B8G8R8X8_UNORM 2
+#define VIRTIO_GPU_2D_W 32
+#define VIRTIO_GPU_2D_H 32
+#define VIRTIO_GPU_2D_RESOURCE 1
+struct virtio_gpu_resource_create_2d {
+  struct virtio_gpu_ctrl_header header;
+  uint32_t resource_id, format, width, height;
+} __attribute__((packed));
+struct virtio_gpu_mem_entry {
+  uint64_t addr; uint32_t length, padding;
+} __attribute__((packed));
+struct virtio_gpu_resource_attach_backing {
+  struct virtio_gpu_ctrl_header header;
+  uint32_t resource_id, nr_entries;
+  struct virtio_gpu_mem_entry entries[1];
+} __attribute__((packed));
+struct virtio_gpu_set_scanout {
+  struct virtio_gpu_ctrl_header header;
+  struct virtio_gpu_rect r;
+  uint32_t scanout_id, resource_id;
+} __attribute__((packed));
+struct virtio_gpu_transfer_to_host_2d {
+  struct virtio_gpu_ctrl_header header;
+  struct virtio_gpu_rect r;
+  uint64_t offset;
+  uint32_t resource_id, padding;
+} __attribute__((packed));
+struct virtio_gpu_resource_flush {
+  struct virtio_gpu_ctrl_header header;
+  struct virtio_gpu_rect r;
+  uint32_t resource_id, padding;
+} __attribute__((packed));
 /* Kernel-to-browser.desktop-backend envelope. Raw device memory is never exposed. */
 struct aiueos_desktop_input_event {
   uint32_t abi_version, byte_size;
@@ -1111,11 +1149,123 @@ static int virtio_input(uint8_t b, uint8_t d, uint8_t f) {
 }
 
 static uint32_t gpu_scanout_width, gpu_scanout_height;
+static int gpu_2d_create_ok;
+static int gpu_2d_flush_ok;
 uint32_t aiueos_gpu_scanout_width(void) { return gpu_scanout_width; }
 uint32_t aiueos_gpu_scanout_height(void) { return gpu_scanout_height; }
+int aiueos_gpu_2d_create_ok(void) { return gpu_2d_create_ok; }
+int aiueos_gpu_2d_flush_ok(void) { return gpu_2d_flush_ok; }
 
-/* Modern controlq foundation. This deliberately stops at discovery: no 2D
-   resource, backing attachment, scanout replacement, or compositor is claimed. */
+static void gpu_zero(void *p, uint32_t n) {
+  uint8_t *b = p;
+  for (uint32_t i = 0; i < n; i++) b[i] = 0;
+}
+
+/* One in-flight controlq command. Queue size is 4; the free-running avail
+   index may exceed that because we wait for used->index == target first.
+   MMIO kick and descriptor fill are mechanism. The 32×32 bound is one page
+   of backing, not a window-manager decision. */
+static int gpu_ctrl(struct virtq_desc *desc, struct virtq_avail *avail,
+                    struct virtq_used *used, volatile uint16_t *doorbell,
+                    uint16_t *submitted,
+                    void *req, uint32_t req_len,
+                    struct virtio_gpu_ctrl_header *resp, uint32_t resp_len,
+                    uint32_t expect_type) {
+  uint16_t old = *submitted, target = (uint16_t)(old + 1);
+  gpu_zero(resp, resp_len);
+  desc[0] = (struct virtq_desc){(uint64_t)(uintptr_t)req, req_len, VIRTQ_DESC_F_NEXT, 1};
+  desc[1] = (struct virtq_desc){(uint64_t)(uintptr_t)resp, resp_len, VIRTQ_DESC_F_WRITE, 0};
+  avail->ring[old & 3] = 0;
+  __asm__ volatile("" ::: "memory");
+  avail->index = target;
+  *doorbell = 0;
+  for (uint32_t budget = 0; budget < 100000000U; budget++) {
+    __asm__ volatile("" ::: "memory");
+    if (used->index == target) {
+      struct virtq_used_element *done = &used->ring[old & 3];
+      *submitted = target;
+      if (done->id != 0 || done->length < sizeof(*resp) ||
+          done->length > resp_len || resp->type != expect_type) return 0;
+      return 1;
+    }
+    __asm__ volatile("pause");
+  }
+  return 0;
+}
+
+/* Guest 2D scanout that is not "PCI device listed" and not GOP-once.
+   Display-info already completed on this controlq (submitted == 1).
+   Failure here does not un-admit display-info: existing UEFI smokes stay
+   green; compositor `gpu` greps the CREATE/FLUSH serial instead. */
+static void gpu_2d_resource_path(struct virtq_desc *desc, struct virtq_avail *avail,
+                                 struct virtq_used *used, volatile uint16_t *doorbell,
+                                 uint8_t *messages) {
+  uint8_t *backing = aiueos_allocate_physical_page();
+  struct virtio_gpu_ctrl_header *resp = (void *)(messages + 2048);
+  uint16_t submitted = 1;
+  uint32_t *pixels;
+  struct virtio_gpu_rect tile;
+  if (!backing) return;
+  pixels = (void *)backing;
+  for (uint32_t i = 0; i < (VIRTIO_GPU_2D_W * VIRTIO_GPU_2D_H); i++)
+    pixels[i] = 0xff2557a7U;
+  tile = (struct virtio_gpu_rect){0, 0, VIRTIO_GPU_2D_W, VIRTIO_GPU_2D_H};
+
+  struct virtio_gpu_resource_create_2d *c2d = (void *)messages;
+  gpu_zero(c2d, sizeof(*c2d));
+  c2d->header.type = VIRTIO_GPU_CMD_RESOURCE_CREATE_2D;
+  c2d->resource_id = VIRTIO_GPU_2D_RESOURCE;
+  c2d->format = VIRTIO_GPU_FORMAT_B8G8R8X8_UNORM;
+  c2d->width = VIRTIO_GPU_2D_W;
+  c2d->height = VIRTIO_GPU_2D_H;
+  if (!gpu_ctrl(desc, avail, used, doorbell, &submitted,
+                c2d, sizeof(*c2d), resp, 64, VIRTIO_GPU_RESP_OK_NODATA))
+    return;
+  gpu_2d_create_ok = 1;
+
+  struct virtio_gpu_resource_attach_backing *att = (void *)messages;
+  gpu_zero(att, sizeof(*att));
+  att->header.type = VIRTIO_GPU_CMD_RESOURCE_ATTACH_BACKING;
+  att->resource_id = VIRTIO_GPU_2D_RESOURCE;
+  att->nr_entries = 1;
+  att->entries[0].addr = (uint64_t)(uintptr_t)backing;
+  att->entries[0].length = VIRTIO_GPU_2D_W * VIRTIO_GPU_2D_H * 4U;
+  if (!gpu_ctrl(desc, avail, used, doorbell, &submitted,
+                att, sizeof(*att), resp, 64, VIRTIO_GPU_RESP_OK_NODATA))
+    return;
+
+  struct virtio_gpu_set_scanout *so = (void *)messages;
+  gpu_zero(so, sizeof(*so));
+  so->header.type = VIRTIO_GPU_CMD_SET_SCANOUT;
+  so->r = tile;
+  so->scanout_id = 0;
+  so->resource_id = VIRTIO_GPU_2D_RESOURCE;
+  (void)gpu_ctrl(desc, avail, used, doorbell, &submitted,
+                 so, sizeof(*so), resp, 64, VIRTIO_GPU_RESP_OK_NODATA);
+
+  struct virtio_gpu_transfer_to_host_2d *xfer = (void *)messages;
+  gpu_zero(xfer, sizeof(*xfer));
+  xfer->header.type = VIRTIO_GPU_CMD_TRANSFER_TO_HOST_2D;
+  xfer->r = tile;
+  xfer->offset = 0;
+  xfer->resource_id = VIRTIO_GPU_2D_RESOURCE;
+  if (!gpu_ctrl(desc, avail, used, doorbell, &submitted,
+                xfer, sizeof(*xfer), resp, 64, VIRTIO_GPU_RESP_OK_NODATA))
+    return;
+
+  struct virtio_gpu_resource_flush *flush = (void *)messages;
+  gpu_zero(flush, sizeof(*flush));
+  flush->header.type = VIRTIO_GPU_CMD_RESOURCE_FLUSH;
+  flush->r = tile;
+  flush->resource_id = VIRTIO_GPU_2D_RESOURCE;
+  if (!gpu_ctrl(desc, avail, used, doorbell, &submitted,
+                flush, sizeof(*flush), resp, 64, VIRTIO_GPU_RESP_OK_NODATA))
+    return;
+  gpu_2d_flush_ok = 1;
+}
+
+/* Modern controlq: GET_DISPLAY_INFO, then a 32×32 2D create/attach/transfer/flush.
+   Display-info remains the floor the existing UEFI smoke greps. */
 static int virtio_gpu(uint8_t b, uint8_t d, uint8_t f) {
   struct virtio_caps caps;
   volatile struct virtio_common_cfg *cfg;
@@ -1148,6 +1298,7 @@ static int virtio_gpu(uint8_t b, uint8_t d, uint8_t f) {
         if (response->modes[i].rect.x || response->modes[i].rect.y || width < 320 ||
             height < 200 || width > 16384 || height > 16384) return 0;
         gpu_scanout_width = width; gpu_scanout_height = height;
+        gpu_2d_resource_path(desc, avail, used, doorbell, messages);
         return 1;
       }
       return 0;
@@ -2480,6 +2631,7 @@ int aiueos_pci_enumerate(void) {
   user_object_ready=user_object_write_evidence=user_object_replay_evidence=0;
   user_object_pending[0]=user_object_pending[1]=0;
   gpu_scanout_width = gpu_scanout_height = 0;
+  gpu_2d_create_ok = gpu_2d_flush_ok = 0;
   if (!aiueos_dma_test_policy_allows_unisolated()) return 0;
   if (!cap_selftest()) return 0;
   uint32_t present = 0, virtio = 0;

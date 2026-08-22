@@ -182,6 +182,8 @@ extern int aiueos_tls_http_sent(void);
 extern uint32_t aiueos_tls_nst_count(void);
 extern uint32_t aiueos_gpu_scanout_width(void);
 extern uint32_t aiueos_gpu_scanout_height(void);
+extern int aiueos_gpu_2d_create_ok(void);
+extern int aiueos_gpu_2d_flush_ok(void);
 extern void aiueos_scheduler_initialize(void);
 extern int aiueos_scheduler_restore_service_registry(uint64_t state0, uint64_t state1);
 extern int aiueos_scheduler_persistent_restore_evidence_ready(void);
@@ -754,6 +756,20 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
     }
     debug_string("AIUEOS_VIRTIO_GPU_OK modern-pci controlq display-info bounded\n");
     serial_string("AIUEOS_VIRTIO_GPU_OK modern-pci controlq display-info bounded\r\n");
+    if (aiueos_gpu_2d_create_ok()) {
+      debug_string("AIUEOS_VIRTIO_GPU_CREATE result=ok resource=1 format=2 w=32 h=32\n");
+      serial_string("AIUEOS_VIRTIO_GPU_CREATE result=ok resource=1 format=2 w=32 h=32\r\n");
+    } else {
+      debug_string("AIUEOS_VIRTIO_GPU_CREATE result=absent\n");
+      serial_string("AIUEOS_VIRTIO_GPU_CREATE result=absent\r\n");
+    }
+    if (aiueos_gpu_2d_flush_ok()) {
+      debug_string("AIUEOS_VIRTIO_GPU_FLUSH result=ok resource=1\n");
+      serial_string("AIUEOS_VIRTIO_GPU_FLUSH result=ok resource=1\r\n");
+    } else {
+      debug_string("AIUEOS_VIRTIO_GPU_FLUSH result=absent\n");
+      serial_string("AIUEOS_VIRTIO_GPU_FLUSH result=absent\r\n");
+    }
     debug_string("AIUEOS_BROWSER_DESKTOP_TRANSPORT_OK surface-v1 gpu-scanout-bound input-v1\n");
     serial_string("AIUEOS_BROWSER_DESKTOP_TRANSPORT_OK surface-v1 gpu-scanout-bound input-v1\r\n");
     /* The link layer is OPTIONAL: a boot with no NIC attached must stay green,

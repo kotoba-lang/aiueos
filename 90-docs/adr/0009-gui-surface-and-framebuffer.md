@@ -78,9 +78,11 @@ kami.webgpu.ir canvas; QEMU exposes `-device virtio-gpu-pci` with
 
 Not implemented yet:
 
-- aiueos-native virtio-gpu scanout driver (2D create/flush).
-- aiueos-native virtio-input/HID bridge.
 - window manager, IME, retained widget tree in the guest.
+- P5 physical boot (UNVERIFIED; QEMU is not P5).
+
+Guest virtio-gpu 2D create/flush is ADR-0084 (`clojure -M:compositor gpu`),
+not this ADR's original Rust surface. Hosted `#desktop` remains ADR-0079.
 
 ## Consequences
 
