@@ -10,12 +10,14 @@
   `AIUEOS_VIRTIO_GPU_CREATE result=ok` **and** `AIUEOS_VIRTIO_GPU_FLUSH
   result=ok`. GET_DISPLAY_INFO, GOP-once, and QMP query-pci are reds.
 
-  This is still not a window manager (no IME, no decoration protocol).
+  Hosted WM: `clojure -M:compositor wm` admits two stacked surfaces,
+  raise that changes z-order, DADS title bars, and pointer routing to
+  the focused guest. IME is leftover. Guest 2D stays `gpu`.
 
   Exit 0 = the named command admitted. Exit 1 = refused. Exit 3 =
   QEMU/firmware/serial could not be answered.
 
-  Commands: `clojure -M:compositor smoke` | `gpu` | `serve`"
+  Commands: `clojure -M:compositor smoke` | `gpu` | `wm` | `serve`"
   (:require [aiueos.compositor.desktop :as desktop]
             [aiueos.phone-bind :as pb]
             [clojure.string :as str]
@@ -87,6 +89,20 @@
        (re-find #"kami.webgpu" html)
        (re-find #"window.__aiueosSessionAlive" html)
        (not (re-find #"liquid-glass" html))))
+
+(defn html-has-wm-face?
+  "DADS decorations for two stacked windows. A JSON dump of surfaces,
+  or a single notes iframe with no title bar, is red."
+  [html]
+  (boolean
+   (and (html-has-desktop-face? html)
+        (re-find #"id=\"wm-stage\"" html)
+        (>= (count (re-seq #"class=\"[^\"]*wm-window" html)) 2)
+        (re-find #"wm-titlebar" html)
+        (re-find #"dads-chip-label" html)
+        (re-find #"data-raise" html)
+        (re-find #"dads-heading" html)
+        (not (re-find #"liquid-glass" html)))))
 
 (defn- index-of [xs x]
   (loop [i 0]
@@ -363,6 +379,97 @@
                              (pr-str (:leftover r)))))
              r))))
 
+     (defn run-wm
+       "Hosted window manager. No QEMU. Red if one surface or raise is a no-op."
+       [{:keys [dir]}]
+       (let [dir (io/file (or dir (str (System/getProperty "java.io.tmpdir")
+                                       "/aiueos-compositor-wm")))
+             http (atom nil)
+             px (:x desktop/overlap-point)
+             py (:y desktop/overlap-point)]
+         (try
+           (io/make-parents (desktop-file dir))
+           (when (.isFile (desktop-file dir))
+             (.delete (desktop-file dir)))
+           (let [d (desktop/boot-desktop)
+                 _ (persist! dir d)
+                 two? (desktop/wm-admitted? d)
+                 one-red? (not (desktop/wm-admitted? (desktop/one-surface-desktop)))
+                 boot-hit (desktop/hit-window d px py)
+                 key-hit (desktop/key-order-hit d px py)
+                 z-not-keys? (and (some? boot-hit) (not= boot-hit key-hit))
+                 zs-front (desktop/z-front d)
+                 back (desktop/z-back d)
+                 raised (desktop/raise d back)
+                 raised-front (desktop/z-front raised)
+                 raise-ok? (and (= back raised-front)
+                                (not= zs-front raised-front))
+                 occ? (desktop/occluded-at? raised zs-front px py)
+                 [_ ev] (desktop/route-pointer raised px py)
+                 route-ok? (and (= back (:hit ev))
+                                (= [:panel back] (:input-target ev)))
+                 rt (pb/start-http! (make-compositor-runtime dir))
+                 _ (reset! http rt)
+                 base (pb/base-url rt)
+                 page (pb/http-get (str base "/"))
+                 html (:body page)
+                 spa? (and (= 200 (:code page)) (html-has-wm-face? html))
+                 api (pb/http-get (str base "/api/compositor/desktop"))
+                 api-ok? (boolean
+                          (and (= 200 (:code api))
+                               (str/includes? (:body api) "window-session-state")
+                               (str/includes? (:body api) "guest-surface")
+                               (str/includes? (:body api) "\"wm?\":true")))
+                 raise-http (pb/http-post (str base "/api/compositor/raise")
+                                          {:id back})
+                 raise-parsed (:parsed raise-http)
+                 raise-http-ok? (and (= 200 (:code raise-http))
+                                     (= back (:front raise-parsed))
+                                     (= back (:focused raise-parsed)))
+                 ptr (pb/http-post (str base "/api/compositor/pointer")
+                                   {:x px :y py})
+                 ptr-ok? (boolean
+                          (and (= 200 (:code ptr))
+                               (= back (:hit (:parsed ptr)))
+                               (str/includes? (str (:input-target (:parsed ptr))) "panel:")))
+                 ime (desktop/ime-leftover)
+                 green? (and two? one-red? z-not-keys? raise-ok? occ? route-ok?
+                             spa? api-ok? raise-http-ok? ptr-ok?)]
+             (println (str "AIUEOS_COMPOSITOR_URL=" base "/#desktop"))
+             (println (str "AIUEOS_COMPOSITOR_WM_SPA=" (if spa? "admitted" "refused")))
+             (println (str "AIUEOS_COMPOSITOR_WM_SURFACES="
+                           (if two? "admitted" "refused")))
+             (println (str "AIUEOS_COMPOSITOR_WM_ONE_SURFACE="
+                           (if one-red? "refused-as-required" "falsely-admitted")))
+             (println (str "AIUEOS_COMPOSITOR_WM_ZORDER="
+                           (if (and z-not-keys? raise-ok? occ?)
+                             "admitted" "refused")))
+             (println (str "AIUEOS_COMPOSITOR_WM_INPUT="
+                           (if (and route-ok? ptr-ok?) "admitted" "refused")))
+             (println (str "AIUEOS_COMPOSITOR_WM_DECORATION="
+                           (if spa? "jp-go-dds" "missing")))
+             (println (str "AIUEOS_COMPOSITOR_WM_IME leftover=:"
+                           (name (:leftover ime))))
+             (println (str "AIUEOS_COMPOSITOR_WM_RAISE_HTTP="
+                           (if raise-http-ok? "admitted" "refused")))
+             (when green? (println "AIUEOS_COMPOSITOR_WM_OK"))
+             (when-not green?
+               (println (str "AIUEOS_COMPOSITOR_WM_FAIL"
+                             " two=" two?
+                             " one-red=" one-red?
+                             " z-not-keys=" z-not-keys?
+                             " raise=" raise-ok?
+                             " occ=" occ?
+                             " route=" route-ok?
+                             " spa=" spa?
+                             " api=" api-ok?
+                             " raise-http=" raise-http-ok?
+                             " ptr=" ptr-ok?)))
+             {:exit (if green? 0 1)
+              :green? green?})
+           (finally
+             (when-let [rt @http] (pb/stop-http! rt))))))
+
      (defn -main
        [& args]
        (let [cmd (or (first args) "smoke")
@@ -391,5 +498,13 @@
              (flush)
              (System/exit (int (:exit r))))
 
-           (do (println "usage: clojure -M:compositor [smoke|gpu|serve]")
+           "wm"
+           (let [r (run-wm {:dir (or (System/getenv "AIUEOS_COMPOSITOR_WM_DIR")
+                                     (.getPath (java.io.File.
+                                                (System/getProperty "java.io.tmpdir")
+                                                "aiueos-compositor-wm")))})]
+             (flush)
+             (System/exit (int (:exit r))))
+
+           (do (println "usage: clojure -M:compositor [smoke|gpu|wm|serve]")
                (System/exit 3)))))))

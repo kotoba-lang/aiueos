@@ -78,11 +78,13 @@ kami.webgpu.ir canvas; QEMU exposes `-device virtio-gpu-pci` with
 
 Not implemented yet:
 
-- window manager, IME, retained widget tree in the guest.
+- guest-side window manager, IME, retained widget tree in the guest.
 - P5 physical boot (UNVERIFIED; QEMU is not P5).
 
 Guest virtio-gpu 2D create/flush is ADR-0084 (`clojure -M:compositor gpu`),
-not this ADR's original Rust surface. Hosted `#desktop` remains ADR-0079.
+not this ADR's original Rust surface. Hosted `#desktop` surfaces remain
+ADR-0079. Hosted WM (z-stack + DADS decoration + input routing) is ADR-0085.
+IME is leftover. The Chrome OS-shaped desktop goal is not complete.
 
 ## Consequences
 

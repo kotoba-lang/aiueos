@@ -15,7 +15,27 @@
    "padding:var(--hig-spacing-4);"
    "color:var(--hig-color-label);"
    "background:var(--hig-color-system-background)}\n"
-   ".session-shell:has(#desktop:not([hidden])){max-width:48rem}\n"
+   ".session-shell:has(#desktop:not([hidden])){max-width:56rem}\n"
+   ".wm-stage{position:relative;height:36rem;"
+   "background:var(--hig-color-secondary-system-background);"
+   "border-radius:var(--hig-radius-xs);"
+   "margin:var(--hig-spacing-4) 0}\n"
+   ".wm-window{position:absolute;display:flex;flex-direction:column;"
+   "background:var(--hig-color-system-background);"
+   "border:var(--hig-hairline,1px) solid var(--hig-color-separator);"
+   "border-radius:var(--hig-radius-xs)}\n"
+   ".wm-window.is-focused{outline:var(--hig-hairline,1px) solid var(--hig-color-label)}\n"
+   ".wm-window:not(.is-focused) .wm-guest{pointer-events:none}\n"
+   ".wm-titlebar{min-height:2.75rem;"
+   "padding:var(--hig-spacing-3);"
+   "border-bottom:var(--hig-hairline,1px) solid var(--hig-color-separator);"
+   "background:var(--hig-color-secondary-system-background);"
+   "gap:var(--hig-spacing-3)}\n"
+   ".wm-titlebar .dads-heading{margin:0;flex:1}\n"
+   ".wm-body{flex:1;min-height:8rem;overflow:hidden}\n"
+   ".wm-guest{width:100%;height:100%;min-height:8rem;"
+   "padding:var(--hig-spacing-3);"
+   "background:var(--hig-color-secondary-system-background)}\n"
    ".kami-viewport{display:block;width:100%;height:12rem;"
    "background:var(--hig-color-secondary-system-background);"
    "border-radius:var(--hig-radius-xs);"
@@ -38,7 +58,8 @@
    "font-size:var(--hig-text-footnote-font-size)}\n"
    ".session-view[hidden]{display:none!important}\n"
    ".dds-ext-card{margin:var(--hig-spacing-4) 0}\n"
-   ".session-main .dads-button{width:100%;margin:var(--hig-spacing-3) 0}\n"))
+   ".session-main .dads-button{width:100%;margin:var(--hig-spacing-3) 0}\n"
+   ".wm-titlebar .dads-button{width:auto;margin:0}\n"))
 
 (defn document
   "Full HTML string. `dds-css` is the vendored DADS stylesheet; `client-js`

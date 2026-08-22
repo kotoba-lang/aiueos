@@ -730,6 +730,36 @@
                                  (->json (compositor-desktop/public-snapshot
                                           @(:desktop rt))))
 
+                    (and (= "POST" method) (= path "/api/compositor/raise")
+                         (:desktop rt))
+                    (let [id (:id (json-req ex))
+                          d (swap! (:desktop rt) compositor-desktop/raise id)
+                          f (io/file (:dir rt) "state" "desktop.edn")]
+                      (io/make-parents f)
+                      (spit f (pr-str (compositor-desktop/persistable d)))
+                      (send-bytes! ex 200 "application/json; charset=utf-8"
+                                   (->json (compositor-desktop/wm-event
+                                            d :raise
+                                            {:id (or (compositor-desktop/parse-window-id id) 0)}))))
+
+                    (and (= "POST" method) (= path "/api/compositor/pointer")
+                         (:desktop rt))
+                    (let [req (json-req ex)
+                          px (long (or (:x req) 0))
+                          py (long (or (:y req) 0))
+                          [d ev] (compositor-desktop/route-pointer
+                                  @(:desktop rt) px py)
+                          f (io/file (:dir rt) "state" "desktop.edn")]
+                      (reset! (:desktop rt) d)
+                      (io/make-parents f)
+                      (spit f (pr-str (compositor-desktop/persistable d)))
+                      (send-bytes! ex 200 "application/json; charset=utf-8"
+                                   (->json (compositor-desktop/wm-event
+                                            d :pointer
+                                            {:x px :y py
+                                             :hit (or (:hit ev) 0)
+                                             :title-bar? (boolean (:title-bar? ev))}))))
+
                     (and (= "GET" method) (= path "/api/session/guests"))
                     (send-bytes! ex 200 "application/json; charset=utf-8"
                                  (->json (session-guest/public-list

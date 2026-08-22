@@ -128,15 +128,20 @@
    :session {:jvm-opts ["--enable-native-access=ALL-UNNAMED"]
              :main-opts ["-m" "aiueos.session"]}
 
-   ;; Named-partial hosted desktop + guest virtio-gpu 2D (ADR-0079 / ADR-0084).
+   ;; Named-partial hosted desktop + guest virtio-gpu 2D + hosted WM
+   ;; (ADR-0079 / ADR-0084 / ADR-0085).
    ;;   clojure -M:compositor smoke   ; SPA + surfaces + query-pci (not 2D)
    ;;   clojure -M:compositor gpu     ; KERNEL.ELF CREATE+FLUSH serial
+   ;;   clojure -M:compositor wm      ; ≥2 surfaces, z-order, DADS, input
    ;;   clojure -M:compositor serve
    ;; smoke Exit 0 = DADS SPA, window-session-state restore, wipe red,
    ;;   QEMU -device virtio-gpu-pci with -display none.
    ;; gpu Exit 0 = guest serial CREATE result=ok AND FLUSH result=ok.
    ;;   GET_DISPLAY_INFO and query-pci are reds for gpu.
-   ;; Exit 1 refused. Exit 3 unmeasured. Not a WM. IME leftover.
+   ;; wm Exit 0 = two stacked surfaces, raise changes front, overlap hit
+   ;;   ≠ key-order, DADS title bars, pointer → focused guest.
+   ;;   One surface / z-order no-op is red. IME leftover :ime-absent.
+   ;; Exit 1 refused. Exit 3 unmeasured. Not P5. Goal not complete.
    :compositor {:jvm-opts ["--enable-native-access=ALL-UNNAMED"]
                 :main-opts ["-m" "aiueos.compositor"]}
 

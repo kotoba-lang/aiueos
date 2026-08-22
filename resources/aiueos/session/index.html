@@ -2666,7 +2666,15 @@ body { padding-bottom: env(safe-area-inset-bottom); }
 .dads-button,.dads-accordion__summary,.dads-input-text__input,.dads-textarea__textarea,.dads-checkbox { min-height: 44px; }
 body { padding-left: env(safe-area-inset-left,0px); padding-right: env(safe-area-inset-right,0px); padding-bottom: env(safe-area-inset-bottom,0px); }
 .session-shell{max-width:28rem;margin:0 auto;padding:var(--hig-spacing-4);color:var(--hig-color-label);background:var(--hig-color-system-background)}
-.session-shell:has(#desktop:not([hidden])){max-width:48rem}
+.session-shell:has(#desktop:not([hidden])){max-width:56rem}
+.wm-stage{position:relative;height:36rem;background:var(--hig-color-secondary-system-background);border-radius:var(--hig-radius-xs);margin:var(--hig-spacing-4) 0}
+.wm-window{position:absolute;display:flex;flex-direction:column;background:var(--hig-color-system-background);border:var(--hig-hairline,1px) solid var(--hig-color-separator);border-radius:var(--hig-radius-xs)}
+.wm-window.is-focused{outline:var(--hig-hairline,1px) solid var(--hig-color-label)}
+.wm-window:not(.is-focused) .wm-guest{pointer-events:none}
+.wm-titlebar{min-height:2.75rem;padding:var(--hig-spacing-3);border-bottom:var(--hig-hairline,1px) solid var(--hig-color-separator);background:var(--hig-color-secondary-system-background);gap:var(--hig-spacing-3)}
+.wm-titlebar .dads-heading{margin:0;flex:1}
+.wm-body{flex:1;min-height:8rem;overflow:hidden}
+.wm-guest{width:100%;height:100%;min-height:8rem;padding:var(--hig-spacing-3);background:var(--hig-color-secondary-system-background)}
 .kami-viewport{display:block;width:100%;height:12rem;background:var(--hig-color-secondary-system-background);border-radius:var(--hig-radius-xs);margin:var(--hig-spacing-3) 0}
 .session-chrome{position:sticky;top:0;z-index:1;padding-bottom:var(--hig-spacing-4);margin-bottom:var(--hig-spacing-4);border-bottom:var(--hig-hairline,1px) solid var(--hig-color-separator);background:var(--hig-color-system-background)}
 .session-chrome h1{margin:0 0 var(--hig-spacing-3)}
@@ -2676,6 +2684,7 @@ body { padding-left: env(safe-area-inset-left,0px); padding-right: env(safe-area
 .session-view[hidden]{display:none!important}
 .dds-ext-card{margin:var(--hig-spacing-4) 0}
 .session-main .dads-button{width:100%;margin:var(--hig-spacing-3) 0}
+.wm-titlebar .dads-button{width:auto;margin:0}
 </style><meta name="aiueos-design" content="jp-go-dds"></head>
   <body>
     <div class="session-shell">
@@ -2716,21 +2725,35 @@ body { padding-left: env(safe-area-inset-left,0px); padding-right: env(safe-area
         </section>
         <section id="desktop" class="dds-ext-section session-view" data-view="desktop" hidden>
           <h1 class="dads-heading" data-size="32">デスクトップ</h1>
-          <p class="session-lede">compositor 過程が <code>window-session-state</code> の surface を持ちます。これはウィンドウマネージャではありません。 virtio-gpu 2D create/flush はゲスト serial の CREATE+FLUSH（<code>clojure -M:compositor gpu</code>）。IME はまだです。 下のキャンバスは <code>kami.webgpu.ir</code> の scanout です。</p>
-          <div class="dds-ext-card">
-            <h2 class="dads-heading" data-size="24">compositor surfaces</h2>
-            <pre id="compositor-out" class="session-out"></pre>
+          <p class="session-lede">compositor 過程が <code>window-session-state</code> の 2 枚を重ねます。タイトルバーは DADS（<code>jp-go-dds</code>）です。前面へで z-order が変わります。 virtio-gpu 2D は <code>clojure -M:compositor gpu</code>。IME は leftover です。</p>
+          <div id="wm-stage" class="wm-stage" aria-label="window-session-state">
+            <article class="wm-window" id="wm-window-1" data-window-id="1" data-guest="session">
+              <header class="wm-titlebar dds-ext-row" data-raise="1">
+                <h2 class="dads-heading" data-size="16" id="wm-title-1">session</h2>
+                <span class="dads-chip-label" data-style="filled-1" data-color="blue">フォーカス</span>
+                <button data-raise="1" class="dads-button" data-type="outline" data-size="sm" id="wm-raise-1" type="button">前面へ</button>
+              </header>
+              <div class="wm-body">
+                <div class="wm-guest" id="wm-guest-1" tabindex="0" data-src="/#session" aria-label="session">
+                  <p class="session-lede">guest <code>/#session</code></p>
+                </div>
+              </div>
+            </article>
+            <article class="wm-window" id="wm-window-2" data-window-id="2" data-guest="kami">
+              <header class="wm-titlebar dds-ext-row" data-raise="2">
+                <h2 class="dads-heading" data-size="16" id="wm-title-2">guest-surface</h2>
+                <span class="dads-chip-label" data-style="filled-1" data-color="blue">フォーカス</span>
+                <button data-raise="2" class="dads-button" data-type="outline" data-size="sm" id="wm-raise-2" type="button">前面へ</button>
+              </header>
+              <div class="wm-body">
+                <canvas id="kami-viewport" class="kami-viewport wm-guest" width="640" height="360" data-engine="kami.webgpu.ir" tabindex="0" aria-label="kami WebGPU guest surface"></canvas>
+              </div>
+            </article>
           </div>
-          <div class="dds-ext-card">
-            <h2 class="dads-heading" data-size="24">notes guest</h2>
-            <p>同じ文書の <code>app/notes</code>。compositor iframe ではなく guest の identity です。</p>
-            <pre id="guest-desktop-out" class="session-out"></pre>
-          </div>
-          <div class="dds-ext-card">
-            <h2 class="dads-heading" data-size="24">kami viewport</h2>
-            <canvas id="kami-viewport" class="kami-viewport" width="640" height="360" data-engine="kami.webgpu.ir" aria-label="kami WebGPU guest surface"></canvas>
-            <pre id="kami-out" class="session-out"></pre>
-          </div>
+          <pre id="compositor-out" class="session-out" hidden></pre>
+          <pre id="guest-desktop-out" class="session-out"></pre>
+          <pre id="kami-out" class="session-out"></pre>
+          <pre id="wm-input-out" class="session-out"></pre>
         </section>
         <section id="setup" class="dds-ext-section session-view" data-view="setup" hidden>
           <h1 class="dads-heading" data-size="32">機械を紐づける</h1>
@@ -2818,16 +2841,103 @@ async function refreshStatus() {
 }
 
 
+function bindWmOnce() {
+  if (window.__aiueosWmBound) return;
+  var stage = document.getElementById("wm-stage");
+  if (!stage) return;
+  window.__aiueosWmBound = true;
+  stage.addEventListener("click", function (ev) {
+    var raiseEl = ev.target.closest("[data-raise]");
+    if (raiseEl) {
+      ev.preventDefault();
+      postRaise(raiseEl.getAttribute("data-raise"));
+      return;
+    }
+    if (ev.target.closest(".wm-guest")) {
+      var b = stage.getBoundingClientRect();
+      postPointer(Math.round(ev.clientX - b.left), Math.round(ev.clientY - b.top));
+    }
+  });
+}
+
+function applyWmWindows(j) {
+  var wins = j.windows || [];
+  wins.forEach(function (w) {
+    var el = document.getElementById("wm-window-" + w.id);
+    if (!el) return;
+    var r = w.rect || {};
+    el.style.left = (r.x || 0) + "px";
+    el.style.top = (r.y || 0) + "px";
+    el.style.width = (r.w || 320) + "px";
+    el.style.height = (r.h || 240) + "px";
+    el.style.zIndex = String(w.z || 1);
+    var focused = !!w["focused?"];
+    el.classList.toggle("is-focused", focused);
+    var chip = el.querySelector(".dads-chip-label");
+    if (chip) chip.hidden = !focused;
+  });
+}
+
 async function refreshDesktop() {
   var el = document.getElementById("compositor-out");
-  if (!el) return;
+  var input = document.getElementById("wm-input-out");
+  bindWmOnce();
   try {
     var r = await fetch("/api/compositor/desktop");
     var j = await r.json();
-    el.textContent = JSON.stringify(j, null, 2);
+    if (el) el.textContent = JSON.stringify(j, null, 2);
+    applyWmWindows(j);
     presentKami(j["kami-ir"] || j.kami_ir || j.kamiIr);
+    if (input && !input.dataset.wmTouched) {
+      input.textContent = pretty({
+        wm: j["wm?"],
+        front: (j["z-stack"] || [])[0],
+        focused: j.focused,
+        ime: j["ime-leftover"],
+        decoration: j.decoration
+      });
+    }
   } catch (e) {
-    el.textContent = String(e);
+    if (el) el.textContent = String(e);
+    if (input) input.textContent = String(e);
+  }
+}
+
+async function postRaise(id) {
+  var input = document.getElementById("wm-input-out");
+  try {
+    var r = await fetch("/api/compositor/raise", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: Number(id) })
+    });
+    var j = await r.json();
+    if (input) {
+      input.dataset.wmTouched = "1";
+      input.textContent = pretty(j);
+    }
+    await refreshDesktop();
+  } catch (e) {
+    if (input) input.textContent = String(e);
+  }
+}
+
+async function postPointer(x, y) {
+  var input = document.getElementById("wm-input-out");
+  try {
+    var r = await fetch("/api/compositor/pointer", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ x: x, y: y })
+    });
+    var j = await r.json();
+    if (input) {
+      input.dataset.wmTouched = "1";
+      input.textContent = pretty(j);
+    }
+    await refreshDesktop();
+  } catch (e) {
+    if (input) input.textContent = String(e);
   }
 }
 
