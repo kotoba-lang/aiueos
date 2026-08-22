@@ -12,6 +12,10 @@
   `-display none`. The setup URL and QR payload are printed on the **host**
   terminal and written next to the VM as `setup.json`.
 
+  GET / is the DADS document at apps/session (P1), not a temporary --hig-*
+  face. Live kotobase/murakumo legs leave this process when the SPA posts
+  /api/session/*. `clojure -M:cloud-live check` is a different gate.
+
   User-mode/slirp networking stands in for Ethernet DHCP. Wi-Fi Easy Connect
   is not this slice. Compositor, itonami, and real-machine qualification are
   not this slice."
@@ -19,7 +23,8 @@
             [grant.enroll :as enroll]
             #?(:clj [grant.signing :as signing])
             #?(:clj [clojure.edn :as edn])
-            #?(:clj [clojure.java.io :as io]))
+            #?(:clj [clojure.java.io :as io])
+            #?(:clj [aiueos.session.live :as session-live]))
   #?(:clj
      (:import [com.sun.net.httpserver HttpExchange HttpHandler HttpServer]
               [java.net InetSocketAddress StandardProtocolFamily UnixDomainSocketAddress]
@@ -192,109 +197,29 @@
      "-netdev" "user,id=n0"
      "-device" "virtio-net-pci,netdev=n0"]))
 
-(def session-html
-  "Temporary proving-slice face. Production chrome is jp-go-dds (DADS) +
-  tokens/bridge-css (root ADR-2608062000 / adr-2608221625). One document,
-  fragments #setup #manage. Not liquid-glass."
-  (str
-   "<!DOCTYPE html>\n"
-   "<html lang=\"ja\">\n"
-   "<head>\n"
-   "<meta charset=\"utf-8\">\n"
-   "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1, viewport-fit=cover\">\n"
-   "<meta name=\"color-scheme\" content=\"light\">\n"
-   "<meta name=\"theme-color\" content=\"#ffffff\">\n"
-   "<title>aiueos setup</title>\n"
-   "<!-- Temporary proving-slice face. Production session chrome is jp-go-dds\n"
-   "     (DADS) + tokens/bridge-css. One document, fragment routes #setup #manage.\n"
-   "     Not liquid-glass. root adr-2608221625 / adr-2608080100. -->\n"
-   "<style>\n"
-   ":root {\n"
-   "  color-scheme: light;\n"
-   "  --color-key-900: #0017c1;\n"
-   "  --color-neutral-white: #ffffff;\n"
-   "  --color-neutral-solid-gray-50: #f8f8fb;\n"
-   "  --color-neutral-solid-gray-300: #d8d8de;\n"
-   "  --color-neutral-solid-gray-800: #1a1a1c;\n"
-   "  --hig-color-label: var(--color-neutral-solid-gray-800);\n"
-   "  --hig-color-system-background: var(--color-neutral-white);\n"
-   "  --hig-color-secondary-system-background: var(--color-neutral-solid-gray-50);\n"
-   "  --hig-color-separator: var(--color-neutral-solid-gray-300);\n"
-   "  --hig-color-tint: var(--color-key-900);\n"
-   "  --hig-spacing-4: 16px;\n"
-   "  --hig-radius-xs: 8px;\n"
-   "  --hig-text-body-font-size: 16px;\n"
-   "}\n"
-   "body { margin: 0; font-family: system-ui, sans-serif; font-size: var(--hig-text-body-font-size);\n"
-   "  color: var(--hig-color-label); background: var(--hig-color-system-background);\n"
-   "  padding: env(safe-area-inset-top,0) env(safe-area-inset-right,0) env(safe-area-inset-bottom,0) env(safe-area-inset-left,0); }\n"
-   "header { padding: var(--hig-spacing-4); border-bottom: 1px solid var(--hig-color-separator); }\n"
-   "nav { display: flex; gap: var(--hig-spacing-4); }\n"
-   "nav a { min-height: 44px; display: inline-flex; align-items: center; color: var(--hig-color-tint); }\n"
-   "main { max-width: 28rem; margin: 0 auto; padding: var(--hig-spacing-4); }\n"
-   "label, input, button { display: block; width: 100%; box-sizing: border-box; }\n"
-   "input, button { min-height: 44px; margin: 8px 0; padding: 8px; border-radius: var(--hig-radius-xs); }\n"
-   "button { background: var(--hig-color-tint); color: #fff; border: 0; font: inherit; }\n"
-   "pre { white-space: pre-wrap; background: var(--hig-color-secondary-system-background); padding: 12px; }\n"
-   "[hidden] { display: none !important; }\n"
-   "</style>\n"
-   "</head>\n"
-   "<body>\n"
-   "<header><nav>\n"
-   "<a href=\"#setup\">セットアップ</a>\n"
-   "<a href=\"#manage\">管理</a>\n"
-   "</nav></header>\n"
-   "<main>\n"
-   "<section id=\"setup\">\n"
-   "<h1>機械を紐づける</h1>\n"
-   "<p>モニタもキーボードも使いません。筐体 QR の代わりにホストが印刷した payload です。</p>\n"
-   "<pre id=\"qr\"></pre>\n"
-   "<label>名前 / 所有者 <input id=\"owner\" value=\"acct:local-demo\"></label>\n"
-   "<button id=\"bind\" type=\"button\">電話から紐づける</button>\n"
-   "<pre id=\"bind-out\"></pre>\n"
-   "</section>\n"
-   "<section id=\"manage\" hidden>\n"
-   "<h1>管理</h1>\n"
-   "<pre id=\"status\"></pre>\n"
-   "<button id=\"cycle\" type=\"button\">電源サイクル</button>\n"
-   "<pre id=\"cycle-out\"></pre>\n"
-   "</section>\n"
-   "</main>\n"
-   "<script>\n"
-   "window.__aiueosSessionAlive = true;\n"
-   "function show() {\n"
-   "  var h = location.hash || '#setup';\n"
-   "  document.getElementById('setup').hidden = h !== '#setup';\n"
-   "  document.getElementById('manage').hidden = h !== '#manage';\n"
-   "  if (h === '#manage') refreshStatus();\n"
-   "}\n"
-   "async function refreshSetup() {\n"
-   "  var r = await fetch('/setup.json'); var j = await r.json();\n"
-   "  document.getElementById('qr').textContent = j.qr || JSON.stringify(j, null, 2);\n"
-   "}\n"
-   "async function refreshStatus() {\n"
-   "  var r = await fetch('/api/status'); document.getElementById('status').textContent = await r.text();\n"
-   "}\n"
-   "async function bind() {\n"
-   "  var ch = await (await fetch('/api/challenge', {method:'POST', headers:{'Content-Type':'application/json'}, body:'{}'})).json();\n"
-   "  var at = await (await fetch('/api/attest', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({nonce: ch.nonce})})).json();\n"
-   "  var st = await (await fetch('/setup.json')).json();\n"
-   "  var body = JSON.stringify({owner: document.getElementById('owner').value, token: st.token, nonce: ch.nonce, signature: at.signature, path: 'phone-http'});\n"
-   "  var res = await fetch('/api/bind', {method:'POST', headers:{'Content-Type':'application/json'}, body: body});\n"
-   "  document.getElementById('bind-out').textContent = await res.text();\n"
-   "}\n"
-   "async function cycle() {\n"
-   "  var res = await fetch('/api/power', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({action:'cycle'})});\n"
-   "  document.getElementById('cycle-out').textContent = await res.text();\n"
-   "  refreshStatus();\n"
-   "}\n"
-   "window.addEventListener('hashchange', show);\n"
-   "document.getElementById('bind').addEventListener('click', bind);\n"
-   "document.getElementById('cycle').addEventListener('click', cycle);\n"
-   "show(); refreshSetup();\n"
-   "</script>\n"
-   "</body>\n"
-   "</html>\n"))
+(defn session-html-source
+  "apps/session/index.html (generated DADS document) or the classpath copy."
+  []
+  (let [here #?(:clj (io/file "apps/session/index.html") :cljs nil)
+        res #?(:clj (io/resource "aiueos/session/index.html") :cljs nil)]
+    #?(:clj (cond
+              (and here (.isFile here)) here
+              res res
+              :else nil)
+       :cljs nil)))
+
+(defn session-html
+  "The DADS SPA. Generated by apps/session/generate.cljs. Temporary
+  proving-slice HTML is gone — this is P1."
+  []
+  #?(:clj
+     (let [src (session-html-source)]
+       (when-not src
+         (throw (ex-info "apps/session/index.html missing; generate the DADS document first"
+                         {:aiueos.session/error :document-missing})))
+       (slurp src))
+     :cljs ""))
+
 
 #?(:clj
    (do
@@ -734,7 +659,7 @@
                       method (.getRequestMethod ex)]
                   (cond
                     (and (= "GET" method) (or (= path "/") (= path "/index.html")))
-                    (send-bytes! ex 200 "text/html; charset=utf-8" session-html)
+                    (send-bytes! ex 200 "text/html; charset=utf-8" (session-html))
 
                     (and (= "GET" method) (= path "/setup.json"))
                     (send-bytes! ex 200 "application/json; charset=utf-8"
@@ -771,6 +696,23 @@
                     (send-bytes! ex 200 "application/json; charset=utf-8"
                                  (->json (handle-power rt (json-req ex))))
 
+                    (and (= "POST" method) (= path "/api/session/read-cid"))
+                    (let [req (json-req ex)
+                          body (session-live/read-cid (:cid req))
+                          code (case (:outcome body)
+                                 "admitted" 200
+                                 "unmeasured" 503
+                                 400)]
+                      (send-bytes! ex code "application/json; charset=utf-8" (->json body)))
+
+                    (and (= "POST" method) (= path "/api/session/infer"))
+                    (let [body (session-live/infer)
+                          code (case (:outcome body)
+                                 "admitted" 200
+                                 "unmeasured" 503
+                                 400)]
+                      (send-bytes! ex code "application/json; charset=utf-8" (->json body)))
+
                     :else (send-bytes! ex 404 "text/plain; charset=utf-8" "not found")))
                 (catch Exception e
                   (send-bytes! ex 500 "text/plain; charset=utf-8" (.getMessage e)))))))
@@ -783,30 +725,37 @@
        (when-let [s @(:server rt)]
          (.stop ^HttpServer s 0)))
 
-     (defn- http-conn [url]
-       (doto ^java.net.HttpURLConnection
-         (.openConnection (.toURL (java.net.URI/create url)))
-         (.setConnectTimeout 3000)
-         (.setReadTimeout 8000)))
+     (defn- http-conn
+       ([url] (http-conn url nil))
+       ([url {:keys [connect-timeout-ms read-timeout-ms]
+              :or {connect-timeout-ms 3000 read-timeout-ms 8000}}]
+        (doto ^java.net.HttpURLConnection
+          (.openConnection (.toURL (java.net.URI/create url)))
+          (.setConnectTimeout (int connect-timeout-ms))
+          (.setReadTimeout (int read-timeout-ms)))))
 
-     (defn http-get [url]
-       (let [conn (doto (http-conn url) (.setRequestMethod "GET"))
-             code (.getResponseCode conn)
-             body (slurp (or (.getErrorStream conn) (.getInputStream conn)))]
-         {:code code :body body}))
+     (defn http-get
+       ([url] (http-get url nil))
+       ([url opts]
+        (let [conn (doto (http-conn url opts) (.setRequestMethod "GET"))
+              code (.getResponseCode conn)
+              body (slurp (or (.getErrorStream conn) (.getInputStream conn)))]
+          {:code code :body body})))
 
-     (defn http-post [url json-map]
-       (let [body (->json json-map)
-             conn (doto (http-conn url)
-                    (.setRequestMethod "POST")
-                    (.setDoOutput true)
-                    (.setRequestProperty "Content-Type" "application/json"))]
-         (with-open [out (.getOutputStream conn)]
-           (.write out (.getBytes body StandardCharsets/UTF_8)))
-         (let [code (.getResponseCode conn)
-               in (or (.getErrorStream conn) (.getInputStream conn))
-               resp (slurp in)]
-           {:code code :body resp :parsed (parse-flat-json resp)})))
+     (defn http-post
+       ([url json-map] (http-post url json-map nil))
+       ([url json-map opts]
+        (let [body (->json json-map)
+              conn (doto (http-conn url opts)
+                     (.setRequestMethod "POST")
+                     (.setDoOutput true)
+                     (.setRequestProperty "Content-Type" "application/json"))]
+          (with-open [out (.getOutputStream conn)]
+            (.write out (.getBytes body StandardCharsets/UTF_8)))
+          (let [code (.getResponseCode conn)
+                in (or (.getErrorStream conn) (.getInputStream conn))
+                resp (slurp in)]
+            {:code code :body resp :parsed (parse-flat-json resp)}))))
 
      (defn phone-bind-http
        "Simulated phone client. HTTP only — no guest VGA."
@@ -878,16 +827,23 @@
                 :check check :second second :cycle cycle :qemu qemu})
 
              :else
-             (let [bind (phone-bind-http (base-url rt) "acct:local-demo")
+             (let [page (http-get (str (base-url rt) "/"))
+                   spa? (and (= 200 (:code page))
+                             (re-find #"dads-button" (:body page))
+                             (re-find #"jp-go-dds" (:body page))
+                             (re-find #"href=\"#setup\"" (:body page)))
+                   bind (phone-bind-http (base-url rt) "acct:local-demo")
                    granted? (= 200 (:code bind))
                    cycle (handle-power rt {:action "cycle"})
                    still (= :claimed (:state @(:device rt)))]
-               (when (and granted? still (:ok cycle))
+               (when-not spa?
+                 (println "AIUEOS_SPA_FAIL not the DADS apps/session document"))
+               (when (and spa? granted? still (:ok cycle))
                  (println "AIUEOS_BIND_OK"))
                (when-not granted?
                  (println "AIUEOS_BIND_FAIL" (:body bind)))
-               {:exit (if (and granted? still (:ok cycle) (headless-argv? (:argv qemu))) 0 1)
-                :bind bind :cycle cycle :qemu qemu
+               {:exit (if (and spa? granted? still (:ok cycle) (headless-argv? (:argv qemu))) 0 1)
+                :bind bind :cycle cycle :qemu qemu :spa? spa?
                 :receipt (when (.isFile (receipt-file dir)) (slurp (receipt-file dir)))}))
            (finally
              (stop-qemu! @(:qemu rt))

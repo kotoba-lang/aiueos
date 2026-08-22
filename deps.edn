@@ -110,6 +110,13 @@
    ;; This is not the C-free kernel gate and not clojure -M:test.
    :phone-bind {:main-opts ["-m" "aiueos.phone-bind"]}
 
+   ;; Hosted daily shell (root ADR-2608221625 P1). Not cloud-live check.
+   ;;   clojure -M:session smoke
+   ;;   clojure -M:session serve
+   ;; Exit 0 = DADS SPA served and kotobase read + murakumo infer admitted
+   ;; from this process. Exit 1 refused / not DADS. Exit 3 unmeasured.
+   :session {:main-opts ["-m" "aiueos.session"]}
+
    ;; Release attestations (SBOM + SLSA-style provenance) for a built artifact.
    ;;   clojure -M:attest sha256:<disk-digest> <source-commit> <builder> --isolated
    :attest {:main-opts ["-m" "aiueos.sbom"]}
