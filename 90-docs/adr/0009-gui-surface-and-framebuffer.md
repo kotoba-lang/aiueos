@@ -71,11 +71,16 @@ Implemented now:
 - Runnable example in `examples/browser/`.
 - CLI coverage in `tests/cli.rs`; provider coverage in `tests/browser.rs`.
 
+Named partial (ADR-0079, hosted JVM, 2026-08-22): a compositor *process*
+owns `window-session-state` surfaces; the same DADS SPA `#desktop` hosts a
+kami.webgpu.ir canvas; QEMU exposes `-device virtio-gpu-pci` with
+`-display none`. That is a display session, not a WM.
+
 Not implemented yet:
 
-- aiueos-native virtio-gpu scanout driver.
+- aiueos-native virtio-gpu scanout driver (2D create/flush).
 - aiueos-native virtio-input/HID bridge.
-- compositor or retained widget tree.
+- window manager, IME, retained widget tree in the guest.
 
 ## Consequences
 

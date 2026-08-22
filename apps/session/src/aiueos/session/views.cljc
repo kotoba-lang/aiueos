@@ -41,6 +41,35 @@
      (dds/button "推論する" {:id "run-infer" :size "md"})
      [:pre {:id "infer-out" :class "session-out"}])))
 
+
+(defn desktop-view
+  "Compositor face: HTML chrome lists window-session-state surfaces.
+  The kami WebGPU canvas is the guest scanout host — not CSS 3D, not a
+  second engine. Overlay chrome stays DADS."
+  []
+  (view-section {:id :desktop :hidden? true}
+    (dds/heading 1 "デスクトップ" {:size "32"})
+    [:p {:class "session-lede"}
+     "compositor 過程が "
+     [:code "window-session-state"]
+     " の surface を持ちます。これはウィンドウマネージャではありません。"
+     " IME も virtio-gpu の 2D create/flush もまだです。"
+     " 下のキャンバスは "
+     [:code "kami.webgpu.ir"]
+     " の scanout です。"]
+    (dds/card
+     (dds/heading 2 "compositor surfaces" {:size "24"})
+     [:pre {:id "compositor-out" :class "session-out"}])
+    (dds/card
+     (dds/heading 2 "kami viewport" {:size "24"})
+     [:canvas {:id "kami-viewport"
+               :class "kami-viewport"
+               :width "640"
+               :height "360"
+               :data-engine "kami.webgpu.ir"
+               :aria-label "kami WebGPU guest surface"}]
+     [:pre {:id "kami-out" :class "session-out"}])))
+
 (defn setup-view
   []
   (view-section {:id :setup :hidden? true}
@@ -82,6 +111,7 @@
     (route/nav :session)]
    [:main {:class "session-main"}
     (session-view)
+    (desktop-view)
     (setup-view)
     (manage-view)
     (devices-view)]])

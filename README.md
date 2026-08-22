@@ -31,7 +31,7 @@ native only when its artifact receipt has empty `c_sources`,
 | Kernel execution | **not yet** — context switch, preemptive scheduler, ring 3, syscall entry/exit, capability handle table all still reference-profile only |
 | Hardware | **not yet** — PCI, DMA, IOMMU, MSI-X, virtio, NVMe, USB HID are reference C with QEMU evidence, not compiler-emitted |
 | Boot and release | **working** — deterministic GPT disk and El Torito ISO from one builder, byte-identical recovery ESP with proven firmware fallback, update and rollback receipts, RSA-2048 release-signature verification, durable crash receipts, initramfs, Multiboot2/GRUB |
-| Desktop | **partial** — hosted DADS SPA at `apps/session` (P1). Compositor / virtio-gpu shell still **not yet** |
+| Desktop | **partial (named)** — compositor process owns `window-session-state` surfaces; same DADS SPA `#desktop` hosts a kami.webgpu.ir viewport; QEMU `-device virtio-gpu-pci` with `-display none`. **Not a WM** (no IME, no virtio-gpu 2D create/flush, guest scanout still GOP-once) |
 
 **Every gate above is QEMU/OVMF. There is no real-machine qualification yet**,
 and parity with Linux, Windows or macOS is not claimed until there is
@@ -341,10 +341,39 @@ clojure -M:phone-bind pre-enroll   # P1c: grant in the image, zero QR, copy refu
 clojure -M:phone-bind serve        # leave the phone SPA up; open the printed URL
 ```
 
-The SPA is the DADS document at `apps/session` (fragments `#session` `#setup`
+The SPA is the DADS document at `apps/session` (fragments `#session` `#desktop` `#setup`
 `#manage` `#devices`). Phone-bind serves that one HTML. `clojure -M:session smoke`
 is P1 (kotobase + murakumo from the session process). `clojure -M:test` of
 unrelated suites is **not** this gate.
+
+## Desktop / compositor (named partial)
+
+Root contract: compositor unit of [`adr-2608221625`](https://github.com/com-junkawasaki/root/blob/main/90-docs/adr/2608221625-aiueos-chromeos-cloud-desktop.edn). This is **not** a window manager and **not** guest virtio-gpu 2D create/flush. HTTP to `#session` with `-display none` and no compositor process is **red**.
+
+The same `apps/session` DADS SPA is the shell. A compositor process owns `window-session-state` surfaces (session iframe + kami guest surface), persists them in `state/desktop.edn`, and restores after kill/relaunch. A wiped file is refused (`empty-desktop`), not an empty success. QEMU is started with `-device virtio-gpu-pci` and still `-display none` so P1b phone bind needs no local keyboard.
+
+```bash
+clojure -M:compositor smoke
+```
+
+Expected markers:
+
+- `AIUEOS_COMPOSITOR_URL=http://127.0.0.1:<port>/#desktop`
+- `AIUEOS_COMPOSITOR_SPA=admitted`
+- `AIUEOS_COMPOSITOR_SURFACES=admitted`
+- `AIUEOS_COMPOSITOR_RESTORE=admitted`
+- `AIUEOS_COMPOSITOR_WIPE=refused-as-required`
+- `AIUEOS_COMPOSITOR_DISPLAY=none`
+- `AIUEOS_COMPOSITOR_GPU=virtio-gpu-pci`
+- `AIUEOS_COMPOSITOR_OK`
+
+Exit 0 means the SPA was served, surfaces restored, wipe is red, and QMP `query-pci` named virtio-gpu. Exit 1 is a refusal. Exit 3 means QEMU/firmware could not be answered.
+
+```bash
+clojure -M:compositor serve   # same SPA; compositor owns surfaces; Ctrl-C to stop
+```
+
+`clojure -M:phone-bind smoke` stays headless **without** the GPU device. Display-present (動線 D) is extra, not the only bind path.
 
 ## Maturity
 

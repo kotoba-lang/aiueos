@@ -31,6 +31,11 @@
         io.github.kotoba-lang/http
         {:git/url "https://github.com/kotoba-lang/http.git"
          :git/sha "1af5514a3a27098812be4e172d718908fb58e78e"}
+        ;; Portable compositor session state (z-stack, focus, window
+        ;; lifecycle). GPU draw stays kami.webgpu.ir in the SPA canvas.
+        io.github.kotoba-lang/window-session-state
+        {:git/url "https://github.com/kotoba-lang/window-session-state.git"
+         :git/sha "8a897953ce207c42838b81f13482464cac14fabb"}
         com.dylibso.chicory/wasm {:mvn/version "1.4.0"}
         com.dylibso.chicory/runtime {:mvn/version "1.4.0"}}
  :aliases
@@ -116,6 +121,15 @@
    ;; Exit 0 = DADS SPA served and kotobase read + murakumo infer admitted
    ;; from this process. Exit 1 refused / not DADS. Exit 3 unmeasured.
    :session {:main-opts ["-m" "aiueos.session"]}
+
+   ;; Named-partial desktop face (root ADR-2608221625 compositor unit).
+   ;;   clojure -M:compositor smoke
+   ;;   clojure -M:compositor serve
+   ;; Exit 0 = same DADS SPA, compositor owns window-session-state
+   ;; surfaces, restore admitted, wiped restore refused, QEMU
+   ;; -device virtio-gpu-pci with -display none.
+   ;; Exit 1 refused (HTTP-only #session is red). Exit 3 unmeasured.
+   :compositor {:main-opts ["-m" "aiueos.compositor"]}
 
    ;; Release attestations (SBOM + SLSA-style provenance) for a built artifact.
    ;;   clojure -M:attest sha256:<disk-digest> <source-commit> <builder> --isolated

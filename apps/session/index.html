@@ -2666,6 +2666,8 @@ body { padding-bottom: env(safe-area-inset-bottom); }
 .dads-button,.dads-accordion__summary,.dads-input-text__input,.dads-textarea__textarea,.dads-checkbox { min-height: 44px; }
 body { padding-left: env(safe-area-inset-left,0px); padding-right: env(safe-area-inset-right,0px); padding-bottom: env(safe-area-inset-bottom,0px); }
 .session-shell{max-width:28rem;margin:0 auto;padding:var(--hig-spacing-4);color:var(--hig-color-label);background:var(--hig-color-system-background)}
+.session-shell:has(#desktop:not([hidden])){max-width:48rem}
+.kami-viewport{display:block;width:100%;height:12rem;background:var(--hig-color-secondary-system-background);border-radius:var(--hig-radius-xs);margin:var(--hig-spacing-3) 0}
 .session-chrome{position:sticky;top:0;z-index:1;padding-bottom:var(--hig-spacing-4);margin-bottom:var(--hig-spacing-4);border-bottom:var(--hig-hairline,1px) solid var(--hig-color-separator);background:var(--hig-color-system-background)}
 .session-chrome h1{margin:0 0 var(--hig-spacing-3)}
 .session-nav{flex-wrap:wrap;gap:var(--hig-spacing-2)}
@@ -2681,6 +2683,7 @@ body { padding-left: env(safe-area-inset-left,0px); padding-right: env(safe-area
         <h1 class="dads-heading" data-size="20" id="session-brand">aiueos</h1>
         <nav class="dds-ext-row session-nav" aria-label="Views">
           <a aria-current="page" class="dads-button" data-type="solid-fill" data-size="sm" href="#session">セッション</a>
+          <a class="dads-button" data-type="text" data-size="sm" href="#desktop">デスクトップ</a>
           <a class="dads-button" data-type="text" data-size="sm" href="#setup">セットアップ</a>
           <a class="dads-button" data-type="text" data-size="sm" href="#manage">管理</a>
           <a class="dads-button" data-type="text" data-size="sm" href="#devices">機械</a>
@@ -2701,6 +2704,19 @@ body { padding-left: env(safe-area-inset-left,0px); padding-right: env(safe-area
             <p>モデル id は焼きません。alias は <code>murakumo-main</code>。POST はセッション過程が <code>infer.murakumo.cloud</code> へ送ります。</p>
             <button class="dads-button" data-type="solid-fill" data-size="md" id="run-infer" type="button">推論する</button>
             <pre id="infer-out" class="session-out"></pre>
+          </div>
+        </section>
+        <section id="desktop" class="dds-ext-section session-view" data-view="desktop" hidden>
+          <h1 class="dads-heading" data-size="32">デスクトップ</h1>
+          <p class="session-lede">compositor 過程が <code>window-session-state</code> の surface を持ちます。これはウィンドウマネージャではありません。 IME も virtio-gpu の 2D create/flush もまだです。 下のキャンバスは <code>kami.webgpu.ir</code> の scanout です。</p>
+          <div class="dds-ext-card">
+            <h2 class="dads-heading" data-size="24">compositor surfaces</h2>
+            <pre id="compositor-out" class="session-out"></pre>
+          </div>
+          <div class="dds-ext-card">
+            <h2 class="dads-heading" data-size="24">kami viewport</h2>
+            <canvas id="kami-viewport" class="kami-viewport" width="640" height="360" data-engine="kami.webgpu.ir" aria-label="kami WebGPU guest surface"></canvas>
+            <pre id="kami-out" class="session-out"></pre>
           </div>
         </section>
         <section id="setup" class="dds-ext-section session-view" data-view="setup" hidden>
@@ -2740,13 +2756,14 @@ function viewId() {
 
 function show() {
   var h = viewId();
-  ["session", "setup", "manage", "devices"].forEach(function (id) {
+  ["session", "desktop", "setup", "manage", "devices"].forEach(function (id) {
     var el = document.getElementById(id);
     if (el) el.hidden = ("#" + id) !== h;
   });
   if (h === "#manage") refreshStatus();
   if (h === "#devices") refreshDevices();
   if (h === "#setup") refreshSetup();
+  if (h === "#desktop") refreshDesktop();
 }
 
 function pretty(x) {
@@ -2771,6 +2788,71 @@ async function refreshStatus() {
   if (!el) return;
   var r = await fetch("/api/status");
   el.textContent = await r.text();
+}
+
+
+async function refreshDesktop() {
+  var el = document.getElementById("compositor-out");
+  if (!el) return;
+  try {
+    var r = await fetch("/api/compositor/desktop");
+    var j = await r.json();
+    el.textContent = JSON.stringify(j, null, 2);
+    presentKami(j["kami-ir"] || j.kami_ir || j.kamiIr);
+  } catch (e) {
+    el.textContent = String(e);
+  }
+}
+
+async function presentKami(ir) {
+  var canvas = document.getElementById("kami-viewport");
+  var out = document.getElementById("kami-out");
+  if (!canvas || !out) return;
+  var sky = ir && ir.globals && ir.globals.sky && ir.globals.sky.horizon;
+  out.textContent = "requesting WebGPU for kami.webgpu.ir…";
+  if (!navigator.gpu) {
+    out.textContent = JSON.stringify({
+      outcome: "unmeasured",
+      reason: "webgpu-unavailable",
+      engine: "kami.webgpu.ir",
+      note: "Compositor surfaces still exist; this canvas is the GPU scanout host."
+    }, null, 2);
+    canvas.setAttribute("data-backend", "unavailable");
+    return;
+  }
+  try {
+    var adapter = await navigator.gpu.requestAdapter();
+    if (!adapter) throw new Error("no adapter");
+    var device = await adapter.requestDevice();
+    var ctx = canvas.getContext("webgpu");
+    var format = navigator.gpu.getPreferredCanvasFormat();
+    ctx.configure({ device: device, format: format, alphaMode: "opaque" });
+    var encoder = device.createCommandEncoder();
+    var c = sky || [0.12, 0.18, 0.28];
+    encoder.beginRenderPass({
+      colorAttachments: [{
+        view: ctx.getCurrentTexture().createView(),
+        clearValue: { r: c[0], g: c[1], b: c[2], a: 1 },
+        loadOp: "clear",
+        storeOp: "store"
+      }]
+    }).end();
+    device.queue.submit([encoder.finish()]);
+    canvas.setAttribute("data-backend", "webgpu");
+    out.textContent = JSON.stringify({
+      outcome: "admitted",
+      engine: "kami.webgpu.ir",
+      backend: "webgpu",
+      instances: (ir && ir.instances && ir.instances.length) || 0
+    }, null, 2);
+  } catch (e) {
+    canvas.setAttribute("data-backend", "error");
+    out.textContent = JSON.stringify({
+      outcome: "unmeasured",
+      reason: String(e),
+      engine: "kami.webgpu.ir"
+    }, null, 2);
+  }
 }
 
 async function refreshDevices() {
