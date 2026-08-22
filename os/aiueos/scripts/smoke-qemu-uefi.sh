@@ -585,4 +585,19 @@ grep -F "AIUEOS_EXCEPTION_OK vector=6 invalid-opcode" "$serial_log" >/dev/null |
   echo "error: kernel exception dispatch evidence was not observed" >&2
   exit 1
 }
+# With a NIC attached, QEMU always runs a DHCP server, so a boot that fails to
+# configure an address has a real defect. Asserted HERE and not only in
+# smoke-qemu-dhcp.sh, because a check that lives only in a gate nobody runs by
+# habit is a check that goes quiet. Skipped when the reply is being deliberately
+# broken -- those runs are supposed to be refused, and that is what the DHCP gate
+# asserts instead.
+if [ "${AIUEOS_TEST_NET:-0}" = 1 ] && \
+   { [ -z "${AIUEOS_DHCP_TAMPER:-}" ] || [ "${AIUEOS_DHCP_TAMPER}" = 0 ]; }; then
+  grep -F "AIUEOS_DHCP_OK offer-ack kotoba-admitted address=10.0.2.15 mask=255.255.255.0 router=10.0.2.2 server=10.0.2.2 lease=" "$serial_log" >/dev/null || {
+    echo "error: DHCPv4 lease evidence was not observed" >&2
+    sed 's/\r$//' "$serial_log" | grep -E '^AIUEOS_DHCP_' >&2 || \
+      echo "       (no AIUEOS_DHCP_ marker at all)" >&2
+    exit 1
+  }
+fi
 echo "AIUEOS_UEFI_SMOKE_OK"

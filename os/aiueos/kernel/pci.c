@@ -1172,6 +1172,18 @@ extern uint64_t kotoba_aiueos_tcp_checksum_ok(uint64_t frame, uint64_t ip_total_
 extern uint64_t kotoba_aiueos_tcp_segment_valid(uint64_t frame, uint64_t length,
                                                 uint64_t expected_src, uint64_t expected_ack,
                                                 uint64_t expected_flags);
+/* DHCPv4 (ADR-0076). Unlike every admission above, the first of these returns
+   a REASON CODE and not a boolean: 0 admits, 1..12 name the clause that
+   refused. `if (kotoba_aiueos_dhcp_reply_valid(...))` would admit exactly what
+   it rejects, which is why the zero test below is written out rather than
+   folded into a condition. The second is the extractor -- where a DHCP option
+   sits is not a constant offset, so finding one is the same bounded walk the
+   admission does and stays on the same side of the boundary. */
+extern uint64_t kotoba_aiueos_dhcp_reply_valid(uint64_t frame, uint64_t length,
+                                               uint64_t xid, uint64_t mac,
+                                               uint64_t expected_type);
+extern uint64_t kotoba_aiueos_dhcp_option_u32(uint64_t frame, uint64_t length,
+                                              uint64_t code);
 
 static int net_ready;
 static uint32_t net_rx_length;
@@ -1186,6 +1198,25 @@ uint32_t aiueos_virtio_net_rx_length(void) { return net_rx_length; }
 int aiueos_ipv4_ready(void) { return ipv4_ready; }
 int aiueos_tcp_ready(void) { return tcp_ready; }
 unsigned aiueos_tcp_stage(void) { return tcp_stage; }
+
+/* The lease, which is the whole point of the exchange: the first address this
+   machine holds because a server said so rather than because a constant in this
+   file said so. Deliberately five words and no subsystem -- there is exactly one
+   interface, one lease and no renewal, so anything larger would be a shape
+   invented ahead of a second caller. */
+static int dhcp_ready;
+static unsigned dhcp_stage;
+static unsigned dhcp_reason;
+static uint32_t dhcp_address, dhcp_mask, dhcp_router, dhcp_server;
+static uint32_t dhcp_lease_seconds;
+int aiueos_dhcp_ready(void) { return dhcp_ready; }
+unsigned aiueos_dhcp_stage(void) { return dhcp_stage; }
+unsigned aiueos_dhcp_reason(void) { return dhcp_reason; }
+uint32_t aiueos_dhcp_address(void) { return dhcp_address; }
+uint32_t aiueos_dhcp_mask(void) { return dhcp_mask; }
+uint32_t aiueos_dhcp_router(void) { return dhcp_router; }
+uint32_t aiueos_dhcp_server(void) { return dhcp_server; }
+uint32_t aiueos_dhcp_lease_seconds(void) { return dhcp_lease_seconds; }
 
 /* SLIRP's fixed topology: the guest is 10.0.2.15 and the gateway that answers
    ARP is 10.0.2.2. Nothing here depends on DHCP having run -- an ARP exchange
@@ -1613,6 +1644,260 @@ static int net_tcp_probe(struct net_ring *rx, struct net_ring *tx,
   return 1;
 }
 
+/* ------------------------------------------------------------------------- */
+/* DHCPv4: the first address this machine holds because a server said so.     */
+/*                                                                           */
+/* UDP APPEARS HERE AND THIS IS NOT A UDP STACK. There is no socket, no port  */
+/* table, no demultiplexer and no receive path for anything that is not this  */
+/* exchange: exactly the header construction and the one checksum DHCP needs, */
+/* and nothing that a second protocol could reuse without being written. The  */
+/* datagram is built here and verified in `dhcp-reply-valid.kotoba`, which is */
+/* the only place the received checksum is ever checked.                      */
+/*                                                                           */
+/* This is also a PROBE and not a client. It performs one DISCOVER/OFFER/     */
+/* REQUEST/ACK once, at boot, and then stops: no T1/T2 renewal timers, no     */
+/* rebinding, no DECLINE when the address is already in use, no RELEASE at    */
+/* shutdown, no retransmission with backoff if a datagram is lost, and no     */
+/* second interface. The lease is recorded and then never renewed, so a       */
+/* machine that stays up past its lease keeps using an address it no longer   */
+/* holds. Nothing above this consumes the lease yet.                          */
+/* ------------------------------------------------------------------------- */
+
+/* Fixed for the same reason NET_ICMP_IDENT is: one exchange per boot, and a
+   constant keeps a capture of a failed run readable. A real client picks this
+   randomly, and an attacker who can guess it can answer a DISCOVER it never
+   saw -- which is why the object checks it at all, and why this constant is a
+   property of a probe rather than of the protocol. */
+#define NET_DHCP_XID 0xa1e05dc0U
+#define NET_DHCP_DISCOVER 1
+#define NET_DHCP_REQUEST 3
+#define NET_DHCP_OFFER 2
+#define NET_DHCP_ACK 5
+/* 236 bytes of BOOTP header, 4 of magic cookie, then a fixed 64-byte options
+   field zero-padded after the END marker. 304 total, over RFC 2131's 300-byte
+   minimum message size, which some servers enforce and SLIRP does not. */
+#define NET_DHCP_OPTIONS 64
+#define NET_DHCP_BOOTP (236 + 4 + NET_DHCP_OPTIONS)
+
+#define NET_DHCP_STAGE_IDLE 0
+#define NET_DHCP_STAGE_TX_DISCOVER 1
+#define NET_DHCP_STAGE_OFFER 2
+#define NET_DHCP_STAGE_TX_REQUEST 3
+#define NET_DHCP_STAGE_ACK 4
+#define NET_DHCP_STAGE_DONE 5
+
+/* Never touched by DMA -- only the CPU reads it -- so it is static rather than
+   an allocated page, for the reason net_tcp_scratch is. */
+static uint8_t net_dhcp_scratch[2048] __attribute__((aligned(16)));
+static uint32_t dhcp_frame_length;
+
+static uint64_t net_mac_value(void) {
+  uint64_t value = 0;
+  for (unsigned i = 0; i < 6; i++) value = (value << 8) | net_mac[i];
+  return value;
+}
+
+/* The pseudo-header cannot be overlaid on the frame -- to be contiguous with
+   the UDP header it would have to start at frame offset 22, which puts its
+   address fields four bytes away from where the IPv4 header carries them -- so
+   the two are laid out contiguously here and summed as one range by the object
+   that already computes exactly this sum for ICMP and TCP. Laying bytes out is
+   mechanism; the arithmetic is not. */
+static uint16_t net_udp_checksum(const uint8_t *frame, uint32_t udp_length) {
+  net_store_be32(net_dhcp_scratch, net_load_be32(frame + 26));
+  net_store_be32(net_dhcp_scratch + 4, net_load_be32(frame + 30));
+  net_dhcp_scratch[8] = 0;
+  net_dhcp_scratch[9] = 17;                                  /* protocol UDP */
+  net_store_be16(net_dhcp_scratch + 10, (uint16_t)udp_length);
+  for (uint32_t i = 0; i < udp_length; i++) net_dhcp_scratch[12 + i] = frame[34 + i];
+  uint16_t sum = (uint16_t)kotoba_aiueos_ipv4_checksum(
+    (uint64_t)(uintptr_t)net_dhcp_scratch, 12 + udp_length);
+  /* RFC 768: a computed checksum of zero goes on the wire as all ones, because
+     zero already means "not computed". The admission accepts both. */
+  return sum ? sum : 0xffff;
+}
+
+static uint32_t net_build_dhcp(uint8_t *frame, uint8_t message_type,
+                               uint32_t requested, uint32_t server) {
+  uint32_t udp_length = 8 + NET_DHCP_BOOTP;
+  uint32_t total = 20 + udp_length;
+  for (uint32_t i = 0; i < 14 + total; i++) frame[i] = 0;
+  for (unsigned i = 0; i < 6; i++) frame[i] = 0xff;          /* broadcast */
+  for (unsigned i = 0; i < 6; i++) frame[6 + i] = net_mac[i];
+  net_store_be16(frame + 12, 0x0800);                        /* EtherType IPv4 */
+  frame[14] = 0x45;                                          /* version 4, IHL 5 */
+  net_store_be16(frame + 16, (uint16_t)total);
+  net_store_be16(frame + 20, 0x4000);                        /* DF, id 0 (RFC 6864) */
+  frame[22] = 64;                                            /* TTL */
+  frame[23] = 17;                                            /* UDP */
+  /* 0.0.0.0 to 255.255.255.255: this machine has no address to send from and
+     does not know who to send to, which is the whole reason the exchange
+     exists. */
+  net_store_be32(frame + 26, 0);
+  net_store_be32(frame + 30, 0xffffffffU);
+  net_store_be16(frame + 24,
+    (uint16_t)kotoba_aiueos_ipv4_checksum((uint64_t)(uintptr_t)(frame + 14), 20));
+  net_store_be16(frame + 34, 68);                            /* client port */
+  net_store_be16(frame + 36, 67);                            /* server port */
+  net_store_be16(frame + 38, (uint16_t)udp_length);
+  frame[42] = 1;                                             /* BOOTREQUEST */
+  frame[43] = 1;                                             /* Ethernet */
+  frame[44] = 6;                                             /* 6-byte address */
+  net_store_be32(frame + 46, NET_DHCP_XID);
+  /* The broadcast flag. A client with no address configured cannot receive a
+     unicast datagram addressed to an address it does not yet hold, so RFC 2131
+     has it ask for the reply to be broadcast. */
+  net_store_be16(frame + 52, 0x8000);
+  for (unsigned i = 0; i < 6; i++) frame[70 + i] = net_mac[i];
+  net_store_be32(frame + 278, 0x63825363U);                  /* magic cookie */
+  uint32_t at = 282;
+  frame[at++] = 53; frame[at++] = 1; frame[at++] = message_type;
+  if (message_type == NET_DHCP_REQUEST) {
+    /* Both are required in a REQUEST that answers an OFFER: the address being
+       accepted, and which server offered it, so that a second server's offer is
+       declined by omission rather than by silence. */
+    frame[at++] = 50; frame[at++] = 4; net_store_be32(frame + at, requested); at += 4;
+    frame[at++] = 54; frame[at++] = 4; net_store_be32(frame + at, server); at += 4;
+  }
+  /* Parameter request list: subnet mask, router, DNS, lease time. Asking is not
+     receiving -- the admission requires the mask, the server identifier and the
+     lease regardless of what was asked for. */
+  frame[at++] = 55; frame[at++] = 4;
+  frame[at++] = 1; frame[at++] = 3; frame[at++] = 6; frame[at++] = 51;
+  frame[at++] = 255;                                         /* END */
+  net_store_be16(frame + 40, net_udp_checksum(frame, udp_length));
+  return 14 + total;
+}
+
+static int net_dhcp_send(struct net_ring *tx, uint8_t *tx_page,
+                         uint8_t message_type, uint32_t requested, uint32_t server) {
+  uint8_t *frame = tx_page + sizeof(struct virtio_net_hdr);
+  for (unsigned i = 0; i < sizeof(struct virtio_net_hdr); i++) tx_page[i] = 0;
+  uint32_t frame_length = net_build_dhcp(frame, message_type, requested, server);
+  tx->desc[0].length = (uint32_t)sizeof(struct virtio_net_hdr) + frame_length;
+  net_post(tx);
+  if (!net_await(tx->used, tx->posted) || tx->used->ring[0].id != 0) return 0;
+  return 1;
+}
+
+#if AIUEOS_DHCP_TAMPER
+/* TEST-ONLY. Breaks a received reply in exactly one way so the gate can show
+   that the object refuses it, and refuses it for the reason that was broken
+   rather than for some other reason that happened to fire first. Compiled in
+   only under -DAIUEOS_DHCP_TAMPER.
+   The UDP checksum is recomputed afterwards with the same helper the transmit
+   path uses, so the tampered datagram is well-formed in every respect except
+   the one defect. Without that the object would refuse at the checksum (3) and
+   the run would be red for a reason nobody chose. */
+static int dhcp_tamper_applied;
+int aiueos_dhcp_tamper_applied(void) { return dhcp_tamper_applied; }
+
+static void net_dhcp_tamper(uint8_t *frame, uint32_t length) {
+  uint32_t total = net_load_be16(frame + 16);
+  uint32_t limit = 14 + total;
+  if (length < 283 || limit > length || limit < 300) return;
+  if (frame[23] != 17 || net_load_be16(frame + 34) != 67) return;
+#if AIUEOS_DHCP_TAMPER == 1
+  /* A reply carrying somebody else's transaction id. */
+  frame[49] ^= 0xff;
+  dhcp_tamper_applied = 1;
+#elif AIUEOS_DHCP_TAMPER == 2
+  /* A reply of the wrong message type: the OFFER becomes an ACK, which is a
+     perfectly well-formed DHCP message and is not what was asked for. Guarded
+     on finding the type option exactly where the server put it, so a layout
+     change reports "not applied" instead of quietly passing. */
+  if (frame[282] == 53 && frame[283] == 1 && frame[284] == NET_DHCP_OFFER) {
+    frame[284] = NET_DHCP_ACK;
+    dhcp_tamper_applied = 1;
+  }
+#elif AIUEOS_DHCP_TAMPER == 3
+  /* An options field whose last record claims 255 bytes that are not there.
+     The field is filled with PAD so the walk is forced to reach the record
+     rather than stopping at an END before it; the record then starts ten bytes
+     from the end of the datagram and claims to run 247 bytes past it. */
+  for (uint32_t i = 282; i < limit - 10; i++) frame[i] = 0;
+  frame[limit - 10] = 1;
+  frame[limit - 9] = 255;
+  dhcp_tamper_applied = 1;
+#endif
+  net_store_be16(frame + 40, 0);
+  net_store_be16(frame + 40, net_udp_checksum(frame, total - 20));
+}
+#endif
+
+/* One admitted reply of the expected type, or nothing. The receive ring holds
+   exactly one buffer, so the alternation is post-one-consume-one; the gateway's
+   own ARP traffic lands here too and is refused by the object at its first
+   clause. */
+static int net_dhcp_receive(struct net_ring *rx, uint8_t *rx_page,
+                            uint8_t expected_type) {
+  uint8_t *frame = rx_page + sizeof(struct virtio_net_hdr);
+  for (unsigned attempt = 0; attempt < 8; attempt++) {
+    if (attempt) net_post(rx);
+    if (!net_await(rx->used, rx->posted)) return 0;
+    uint32_t received = rx->used->ring[0].length;
+    if (rx->used->ring[0].id != 0 ||
+        received <= sizeof(struct virtio_net_hdr) ||
+        received > sizeof(struct virtio_net_hdr) + NET_FRAME_MAX) continue;
+    uint32_t payload = received - (uint32_t)sizeof(struct virtio_net_hdr);
+#if AIUEOS_DHCP_TAMPER
+    net_dhcp_tamper(frame, payload);
+#endif
+    uint64_t reason = kotoba_aiueos_dhcp_reply_valid(
+      (uint64_t)(uintptr_t)frame, payload, NET_DHCP_XID, net_mac_value(),
+      expected_type);
+    /* ZERO ADMITS. The object returns a reason code, so the natural
+       `if (kotoba_...)` would accept every frame it just rejected. */
+    if (reason == 0) { dhcp_frame_length = payload; return 1; }
+    /* Which refusal to PRINT is a diagnostic choice and not a decision about
+       admission: the codes ascend with how far into the frame the check
+       reaches, so keeping the maximum names the candidate that got furthest.
+       Without it an ARP frame refused at clause 1 could be the last thing seen
+       and would hide a DHCP reply that failed deep. */
+    if ((unsigned)reason > dhcp_reason) dhcp_reason = (unsigned)reason;
+  }
+  return 0;
+}
+
+static int net_dhcp_exchange(struct net_ring *rx, struct net_ring *tx,
+                             uint8_t *rx_page, uint8_t *tx_page) {
+  const uint8_t *frame = rx_page + sizeof(struct virtio_net_hdr);
+  uint32_t offered, server;
+
+  net_post(rx);
+  if (!net_dhcp_send(tx, tx_page, NET_DHCP_DISCOVER, 0, 0)) {
+    dhcp_stage = NET_DHCP_STAGE_TX_DISCOVER; return 0;
+  }
+  dhcp_stage = NET_DHCP_STAGE_OFFER;
+  if (!net_dhcp_receive(rx, rx_page, NET_DHCP_OFFER)) return 0;
+
+  /* Deriving from an ADMITTED frame, the same rule under which the peer's MAC
+     is lifted out of an admitted ARP reply. `yiaddr` is at a constant offset so
+     C reads it; the server identifier is not, so the object finds it. */
+  offered = net_load_be32(frame + 58);
+  server = (uint32_t)kotoba_aiueos_dhcp_option_u32(
+    (uint64_t)(uintptr_t)frame, dhcp_frame_length, 54);
+
+  net_post(rx);
+  if (!net_dhcp_send(tx, tx_page, NET_DHCP_REQUEST, offered, server)) {
+    dhcp_stage = NET_DHCP_STAGE_TX_REQUEST; return 0;
+  }
+  dhcp_stage = NET_DHCP_STAGE_ACK;
+  if (!net_dhcp_receive(rx, rx_page, NET_DHCP_ACK)) return 0;
+
+  dhcp_address = net_load_be32(frame + 58);
+  dhcp_mask = (uint32_t)kotoba_aiueos_dhcp_option_u32(
+    (uint64_t)(uintptr_t)frame, dhcp_frame_length, 1);
+  dhcp_router = (uint32_t)kotoba_aiueos_dhcp_option_u32(
+    (uint64_t)(uintptr_t)frame, dhcp_frame_length, 3);
+  dhcp_server = (uint32_t)kotoba_aiueos_dhcp_option_u32(
+    (uint64_t)(uintptr_t)frame, dhcp_frame_length, 54);
+  dhcp_lease_seconds = (uint32_t)kotoba_aiueos_dhcp_option_u32(
+    (uint64_t)(uintptr_t)frame, dhcp_frame_length, 51);
+  dhcp_stage = NET_DHCP_STAGE_DONE;
+  return 1;
+}
+
 static int virtio_net(uint8_t b, uint8_t d, uint8_t f) {
   struct virtio_caps caps;
   volatile struct virtio_common_cfg *cfg;
@@ -1688,6 +1973,15 @@ static int virtio_net(uint8_t b, uint8_t d, uint8_t f) {
      a failed echo can return with a receive buffer still outstanding, and the
      strict post-one-consume-one alternation below assumes none is. */
   if (ipv4_ready) tcp_ready = net_tcp_probe(&rx, &tx, rx_page, tx_page);
+  /* DHCP needs only the link layer -- it is broadcast, so it uses neither the
+     ARP cache nor anything ICMP proved -- and in a real boot it would come
+     first, before anything has an address to send from. It is run LAST anyway,
+     so that a failure here cannot retract the evidence three exchanges above it
+     have already earned. The cost is the other direction: a failure in those
+     exchanges can return with a receive buffer still outstanding, and this one
+     then fails in whatever state it was left, which is reported as its own
+     stage rather than as a DHCP defect. */
+  if (net_ready) dhcp_ready = net_dhcp_exchange(&rx, &tx, rx_page, tx_page);
   return 1;
 }
 
@@ -1698,6 +1992,12 @@ int aiueos_pci_enumerate(void) {
   ipv4_ready = 0;
   tcp_ready = 0;
   tcp_stage = NET_TCP_STAGE_IDLE;
+  dhcp_ready = 0;
+  dhcp_stage = NET_DHCP_STAGE_IDLE;
+  dhcp_reason = 0;
+  dhcp_address = 0; dhcp_mask = 0; dhcp_router = 0; dhcp_server = 0;
+  dhcp_lease_seconds = 0;
+  dhcp_frame_length = 0;
   object_store_ready = 0;
   kotoba_app_count=0; for(unsigned app=0;app<KOTOBA_APP_CAPACITY;app++)kotoba_apps[app].ready=0;
   journal_ready = 0;
