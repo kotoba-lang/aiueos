@@ -39,8 +39,9 @@
 
  ;; ── the keys, and how they were measured ──────────────────────────────────
  ;;
- ;; SHA-256 of the leaf certificate's DER SubjectPublicKeyInfo. Measured
- ;; 2026-08-21 by two independent paths that agreed:
+ ;; SHA-256 of the leaf certificate's DER SubjectPublicKeyInfo, **bound to the
+ ;; host it was measured from**. Measured 2026-08-21 by two independent paths
+ ;; that agreed:
  ;;
  ;;   openssl s_client -servername H -connect H:443 </dev/null \
  ;;     | openssl x509 -pubkey -noout | openssl pkey -pubin -outform DER \
@@ -48,37 +49,82 @@
  ;;
  ;;   clojure -M:cloud-live pin https://H
  ;;
- ;; **These will rotate.** All three hosts are Cloudflare-fronted, so the leaf
- ;; key is the edge's and changes on its schedule, not on ours. That is the
- ;; problem `aiueos.anchors` exists for (ADR-0045): a set of pins is a signed,
- ;; sequenced document, an ordinary rotation overlaps old and new so no device
- ;; is stranded, and only a compromise takes the one-way door. Nothing in this
- ;; file is connected to that machinery yet -- when these stop matching, the
- ;; gate goes red with `:peer-not-pinned` and a person re-measures. Saying so
- ;; is better than a pin that looks permanent.
+ ;; Until 2026-08-22 this was a flat set and the host each key came from lived
+ ;; in a comment. That meant any one of these three keys was accepted from any
+ ;; of these three hosts: an attacker able to answer for one of them could
+ ;; answer for all three, and the receipt would have said ADMITTED. The mapping
+ ;; is now the data structure, and presenting one host's key for another is
+ ;; refused as `:peer-pinned-to-other-host` -- the one refusal here that cannot
+ ;; be a rotation.
+ ;;
+ ;; ## WHEN THE EDGE ROTATES, WHICH IT WILL
+ ;;
+ ;; All three hosts are Cloudflare-fronted, so the leaf key is the edge's and
+ ;; changes on its schedule. A person does this, in this file:
+ ;;
+ ;;   1. `clojure -M:cloud-live pin https://<host>` measures the new key. It
+ ;;      prints MEASURED, NOT TRUSTED and writes nothing: deciding to trust a
+ ;;      key is a person's act and a tool must not make it.
+ ;;   2. Move that host's current `:pins` into `:previous`, put the measured
+ ;;      key in `:pins`, and set `:accept-previous-until-ms` to when the old
+ ;;      key should stop working (epoch millis).
+ ;;   3. Nothing else. The clock retires the old key -- `grant.anchors/usable-anchors`
+ ;;      decides which keys work today, the same function the release-borne
+ ;;      anchor plane uses, so there is one implementation of the overlap rule
+ ;;      and not two.
+ ;;
+ ;; The window is why this is worth doing at all rather than editing one line:
+ ;; a Cloudflare edge mid-rotation serves the old key from some POPs and the
+ ;; new key from others, so a client that accepts exactly one of them goes red
+ ;; on a healthy authority. During the window both are admitted and the receipt
+ ;; says `:window :open`. After it, the retired key is refused as
+ ;; `:peer-pin-expired` -- which names a schedule, not an attack.
+ ;;
+ ;; This is NOT the signed, sequenced distribution of ADR-0045/0046, and should
+ ;; not be described as one. That path exists for a device receiving anchors
+ ;; over a network it cannot yet judge; it needs a publisher, root keys and a
+ ;; release, and an operator workstation running this gate has none of them.
+ ;; Here the file IS the trusted channel, and what the anchors plane lends is
+ ;; its rotation vocabulary and its overlap rule.
  :aiueos.cloud/trust-anchors
- #{"50602ad366823fcf5274a7c917baa4fd24b9de4fd15635ff501177c83d05473e"
-   "ec7f258fc32457d84295f081a479910ee9b5250d34158fcf3c92eafb9dbd1af1"
-   "014bccd86fa34b2a9dbc410b5d27e60e46fb938cc9c9b77058c567cc4b997038"}
+ {"kotobase.net"
+  {:pins #{"50602ad366823fcf5274a7c917baa4fd24b9de4fd15635ff501177c83d05473e"}
+   :measured "2026-08-21"
+   :fronted-by "cloudflare"}
 
- ;; The pin set is flat: `aiueos.cloud/admit-peer` asks whether the key it saw
- ;; is in the set, not whether it is the right key for THAT host. So any of
- ;; these three keys is accepted from any of these three hosts. Recorded rather
- ;; than implied -- it is a real limit of ADR-0044's model, and the notes below
- ;; are the only place the mapping exists at all.
- :aiueos.cloud-live/anchor-notes
- {"50602ad366823fcf5274a7c917baa4fd24b9de4fd15635ff501177c83d05473e"
-  {:host "kotobase.net" :measured "2026-08-21" :fronted-by "cloudflare"}
-  "ec7f258fc32457d84295f081a479910ee9b5250d34158fcf3c92eafb9dbd1af1"
-  {:host "api.murakumo.cloud" :measured "2026-08-21" :fronted-by "cloudflare"}
-  "014bccd86fa34b2a9dbc410b5d27e60e46fb938cc9c9b77058c567cc4b997038"
-  {:host "infer.murakumo.cloud" :measured "2026-08-21" :fronted-by "cloudflare"
-   :why "named by the murakumo-main alias entry's :endpoint field; it is the
-         host the inference leg actually POSTs to"
-   :delete-this-and "the TLS handshake for the inference leg fails and the leg
-                     is REFUSED with :peer-not-pinned -- which is the pin doing
-                     its job, and is why the key is written down next to the
-                     date and method it was measured by"}}
+  "api.murakumo.cloud"
+  {:pins #{"ec7f258fc32457d84295f081a479910ee9b5250d34158fcf3c92eafb9dbd1af1"}
+   :measured "2026-08-21"
+   :fronted-by "cloudflare"}
+
+  ;; Named by the murakumo-main alias entry's :endpoint field; it is the host
+  ;; the inference leg actually POSTs to. Delete this entry and the TLS
+  ;; handshake for that leg fails, REFUSED with :host-not-pinned -- which is
+  ;; the pin doing its job, and is why the key is written down next to the date
+  ;; and method it was measured by.
+  "infer.murakumo.cloud"
+  {:pins #{"014bccd86fa34b2a9dbc410b5d27e60e46fb938cc9c9b77058c567cc4b997038"}
+   :measured "2026-08-21"
+   :fronted-by "cloudflare"}}
+
+ ;; No rotation is in progress: every host above has :pins and no :previous, so
+ ;; every window reads :none in the receipt. A rotation looks like this, and is
+ ;; here as the worked example the step above refers to:
+ ;;
+ ;;   "kotobase.net"
+ ;;   {:pins     #{"<the key `cloud-live pin` just measured>"}
+ ;;    :previous #{"50602ad366823fcf5274a7c917baa4fd24b9de4fd15635ff501177c83d05473e"}
+ ;;    :accept-previous-until-ms 1798761600000   ; 2027-01-01T00:00:00Z
+ ;;    :measured "2026-12-18"}
+
+ ;; This deployment knows which host each key came from, so it refuses to run
+ ;; on a policy that does not. Without it a flat set would be accepted -- marked
+ ;; :unbound on every verdict, but accepted -- and this file would be able to
+ ;; regress to the weaker shape by an edit nobody noticed. A device booted from
+ ;; a release-borne anchor set has no such choice: that document carries a
+ ;; device-wide pin list with no host field, which is why the flat shape is
+ ;; accepted at all.
+ :aiueos.cloud/require-host-bound-anchors? true
 
  ;; ── what the gate asks for ────────────────────────────────────────────────
  ;;

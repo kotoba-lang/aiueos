@@ -51,6 +51,52 @@
   (is (= :refused (live/outcome-of {:aiueos/decision :deny
                                     :aiueos.cloud/reason :digest-mismatch}))))
 
+(deftest a-bad-minute-at-the-authority-is-not-the-same-event-as-bad-bytes
+  ;; ADR-0073 left this open and it fired for real: a transient 5xx exited 1,
+  ;; the same code as a digest mismatch, so a caller reading exit 1 as
+  ;; "investigate the pins" occasionally investigated the weather.
+  (let [flaky {:aiueos/decision :deny :aiueos.cloud/reason :response-upstream-fault
+               :aiueos.cloud/status 503}
+        mismatch {:aiueos/decision :deny :aiueos.cloud/reason :digest-mismatch}
+        unauthorized {:aiueos/decision :deny :aiueos.cloud/reason :response-not-ok
+                      :aiueos.cloud/status 401}]
+    (is (= :unmeasured (live/outcome-of flaky))
+        "the request completed and the answer was that the peer could not
+         answer; nothing has been shown to be wrong")
+    (is (= :refused (live/outcome-of mismatch))
+        "while the bytes not being what the CID promised is never retryable")
+    (is (= :refused (live/outcome-of unauthorized))
+        "and a 401 is still the authority saying no, with or without a token")
+    (is (= 3 (live/exit-code [{:leg :a :outcome (live/outcome-of flaky)}])))
+    (is (= 1 (live/exit-code [{:leg :a :outcome (live/outcome-of flaky)}
+                              {:leg :b :outcome (live/outcome-of mismatch)}]))
+        "and a real refusal on another leg is still never hidden behind it")))
+
+(deftest which-refusals-are-unanswerable-is-read-from-the-decision-plane
+  (is (= cloud/unmeasurable-reasons #{:response-unmeasured :response-upstream-fault}))
+  (doseq [r cloud/unmeasurable-reasons]
+    (is (= :unmeasured (live/outcome-of {:aiueos/decision :deny :aiueos.cloud/reason r}))
+        (str r " is declared unanswerable by grant.cloud and must classify as
+             one here; this gate keeps no second list, because two lists drift
+             and the way they drift is that a 503 stays a refusal")))
+  (is (= :refused (live/outcome-of {:aiueos/decision :deny
+                                    :aiueos.cloud/reason :peer-pinned-to-other-host}))
+      "and a host presenting somebody else's key is the opposite of retryable"))
+
+(deftest the-receipt-line-says-which-of-the-two-happened
+  (let [flaky (live/leg-line {:leg :storage-read :outcome :unmeasured
+                              :reason :response-upstream-fault
+                              :measured {:status 503}})
+        mismatch (live/leg-line {:leg :storage-read :outcome :refused
+                                 :reason :digest-mismatch})]
+    (is (str/includes? flaky "UNMEASURED"))
+    (is (str/includes? flaky ":response-upstream-fault")
+        "a person reading the line can tell a bad minute from bad bytes without
+         opening the EDN below it")
+    (is (str/includes? mismatch "REFUSED"))
+    (is (str/includes? mismatch ":digest-mismatch"))
+    (is (not= flaky mismatch))))
+
 (deftest a-negative-leg-passes-only-on-the-refusal-it-expected
   (let [refused {:aiueos/decision :deny :aiueos.cloud/reason :response-not-ok
                  :aiueos.cloud/status 404}]
@@ -98,12 +144,74 @@
         "a malformed pin can never match a measured key, so it would be a set
          that partly cannot work while looking entirely valid")
     (is (false? (:aiueos.cloud/endpoint-from-origin? live))
-        "the fallback exists and is off; turning it on is a decision in the file")
-    (testing "every anchor has a note saying which host it was measured from"
-      (doseq [pin (cloud/trust-anchors live)]
-        (let [note (get (:aiueos.cloud-live/anchor-notes live) pin)]
-          (is (string? (:host note)) (str pin " has no host note"))
-          (is (= "2026-08-21" (:measured note))))))))
+        "the fallback exists and is off; turning it on is a decision in the file")))
+
+;; -- the pins are bound to the hosts they were measured from --------------
+
+(deftest the-shipped-policy-cannot-regress-to-a-flat-pin-set
+  (let [live (live/read-policy)
+        bindings (cloud/anchor-bindings live)]
+    (is (= :host-bound (:shape bindings))
+        "a flat set accepts any pinned key from any allowed host; with three
+         hosts in one policy that is an attacker who can answer for one of them
+         answering for all three")
+    (is (true? (:aiueos.cloud/require-host-bound-anchors? live))
+        "and the deployment says so, so an edit that flattened this file would
+         be refused rather than silently weaker")
+    (is (= [] (:malformed bindings)))
+    (testing "every host the gate may reach has pins, and every pin has a host"
+      (doseq [host (:aiueos.policy/net-allow live)]
+        (is (seq (:pins (get (:by-host bindings) host)))
+            (str host " is allowed by the allowlist and has no pin, so the gate"
+                 " would refuse it with :host-not-pinned")))
+      (is (= (set (:aiueos.policy/net-allow live)) (set (keys (:by-host bindings))))
+          "the two lists are the same three hosts, in both directions"))
+    (testing "each binding carries the date it was measured"
+      (doseq [[host b] (:aiueos.cloud/trust-anchors live)]
+        (is (= "2026-08-21" (:measured b)) (str host " has no measurement date"))))))
+
+(deftest one-authoritys-key-is-refused-from-another
+  ;; The whole point of the shape, asserted against the shipped pins rather
+  ;; than invented ones: this is the real key of a real host, offered by a
+  ;; different real host.
+  (let [live (live/read-policy)
+        pins-of (fn [h] (get-in live [:aiueos.cloud/trust-anchors h :pins]))
+        v (cloud/admit-peer live {:spki-sha256 (first (pins-of "api.murakumo.cloud"))
+                                  :host "kotobase.net"})]
+    (is (= :peer-pinned-to-other-host (:aiueos.cloud/reason v)))
+    (is (= ["api.murakumo.cloud"] (:aiueos.cloud/pinned-for v))
+        "and it names whose key it is, which is what makes the refusal
+         actionable rather than merely correct")
+    (is (cloud/allowed? (cloud/admit-peer live {:spki-sha256 (first (pins-of "kotobase.net"))
+                                                :host "kotobase.net"}))
+        "while the right key from the right host is admitted")))
+
+(deftest the-receipt-says-what-it-will-accept-from-whom
+  (let [live (live/read-policy)
+        summary (live/anchor-summary live 1000)]
+    (is (= :host-bound (:shape summary)))
+    (is (= 3 (:pins summary)))
+    (is (= 3 (count (:hosts summary))))
+    (doseq [[host h] (:hosts summary)]
+      (is (= 1 (:pins h)) (str host))
+      (is (= 1 (:usable-now h)) (str host))
+      (is (= :none (:window h))
+          (str host " -- no rotation is in progress, and a receipt that could"
+               " not say so would hide a key that works only because a deadline"
+               " has not passed yet")))
+    (testing "a rotation shows in the summary, and closes by the clock"
+      (let [rotating (assoc-in live [:aiueos.cloud/trust-anchors "kotobase.net"]
+                               {:pins #{(apply str (repeat 64 "b"))}
+                                :previous (get-in live [:aiueos.cloud/trust-anchors
+                                                        "kotobase.net" :pins])
+                                :accept-previous-until-ms 5000})]
+        (is (= :open (get-in (live/anchor-summary rotating 4999) [:hosts "kotobase.net" :window])))
+        (is (= 2 (get-in (live/anchor-summary rotating 4999) [:hosts "kotobase.net" :usable-now])))
+        (is (= :closed (get-in (live/anchor-summary rotating 5001) [:hosts "kotobase.net" :window])))
+        (is (= 1 (get-in (live/anchor-summary rotating 5001) [:hosts "kotobase.net" :usable-now])))
+        (is (= :unevaluated (get-in (live/anchor-summary rotating nil)
+                                    [:hosts "kotobase.net" :window]))
+            "no clock is not the same fact as a window that closed")))))
 
 (deftest the-cids-the-gate-asks-for-are-cids
   (let [live (live/read-policy)]
@@ -148,9 +256,10 @@
     (is (contains? (:aiueos.policy/net-allow live) "infer.murakumo.cloud")
         "the alias resolves onto a third host and the leg POSTs to it; without
          the entry there is no admitted endpoint to ask")
-    (is (contains? (:aiueos.cloud-live/anchor-notes live)
-                   "014bccd86fa34b2a9dbc410b5d27e60e46fb938cc9c9b77058c567cc4b997038")
-        "and its key is pinned like the other two, with the date beside it")
+    (is (= #{"014bccd86fa34b2a9dbc410b5d27e60e46fb938cc9c9b77058c567cc4b997038"}
+           (get-in live [:aiueos.cloud/trust-anchors "infer.murakumo.cloud" :pins]))
+        "and its key is pinned like the other two, bound to it and to nothing
+         else, with the date beside it")
     (is (some? (get-in live [:aiueos.cloud-live/credentials :inference :env]))
         "the leg attaches a credential when one is present; the variable is
          named so a receipt can say which one is unset")))

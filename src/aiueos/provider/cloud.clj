@@ -43,13 +43,18 @@
 
   ## The platform trust store is replaced, not extended
 
-  An https connection is trusted because its leaf key is one the policy named,
-  and for no other reason. The JDK's default trust store — several hundred
-  anchors chosen by whoever packaged the runtime — is not consulted: it is a
-  reasonable default for a browser reaching hosts nobody enumerated in advance,
-  and the wrong one for a machine that talks to two authorities known before it
-  boots. The measurement is this namespace's; the verdict is
-  `grant.cloud/admit-peer`'s.
+  An https connection is trusted because its leaf key is one the policy named
+  **for the host being reached**, and for no other reason. The JDK's default
+  trust store — several hundred anchors chosen by whoever packaged the runtime
+  — is not consulted: it is a reasonable default for a browser reaching hosts
+  nobody enumerated in advance, and the wrong one for a machine that talks to
+  three authorities known before it boots. The measurement is this
+  namespace's; the verdict is `grant.cloud/admit-peer`'s.
+
+  The host comes from the URL the plan named, and reaches the trust manager
+  because the client is built per request. That is also why redirects staying
+  off is now load-bearing twice over: a followed redirect would reach a host
+  other than the one this client was built to judge.
 
   ## What this does not do
 
@@ -95,7 +100,10 @@
   reported as one."
   #{:plan-not-allowed :net-denied :response-too-large :request-failed
     :method-unsupported :body-unencodable
-    :no-trust-anchors :peer-not-pinned :peer-unmeasured})
+    :no-trust-anchors :peer-not-pinned :peer-unmeasured
+    :trust-anchors-unbound :anchor-binding-malformed
+    :peer-host-unknown :host-not-pinned :peer-pinned-to-other-host
+    :peer-pin-expired :peer-pin-window-unevaluated})
 
 (defn spki-sha256-hex
   "SHA-256 of a certificate's SubjectPublicKeyInfo — `PublicKey.getEncoded` is
@@ -110,15 +118,23 @@
   "A trust manager whose only question is `grant.cloud/admit-peer`. The
   verdict is also recorded in VERDICT so the caller can report which refusal
   happened: the handshake failure it causes arrives as an I/O exception that
-  says nothing about pins."
-  ^TrustManager [policy verdict]
+  says nothing about pins.
+
+  HOST is the host this connection was opened *for*, taken from the URL the
+  plan named. It is mechanism, not judgement: the policy decides which keys
+  that host may present, and this namespace only reports which host it was
+  trying to reach. Without it `admit-peer` could ask whether the key was
+  pinned but not whether it was pinned *here*, which is how one authority's
+  key came to be accepted from another."
+  ^TrustManager [policy host verdict]
   (reify X509TrustManager
     (getAcceptedIssuers [_] (make-array X509Certificate 0))
     (checkClientTrusted [_ _ _]
       (throw (CertificateException. "aiueos is not a TLS server")))
     (checkServerTrusted [_ chain _]
       (let [leaf (first chain)
-            peer {:spki-sha256 (when leaf (spki-sha256-hex leaf))}
+            peer {:spki-sha256 (when leaf (spki-sha256-hex leaf))
+                  :host host}
             v (cloud/admit-peer policy peer)]
         (reset! verdict v)
         (when-not (cloud/allowed? v)
@@ -126,22 +142,24 @@
                   (str "peer refused: " (:aiueos.cloud/reason v)))))))))
 
 (defn- pinning-ssl-context
-  ^SSLContext [policy verdict]
+  ^SSLContext [policy host verdict]
   (doto (SSLContext/getInstance "TLS")
-    (.init nil (into-array TrustManager [(pinning-trust-manager policy verdict)]) nil)))
+    (.init nil (into-array TrustManager [(pinning-trust-manager policy host verdict)]) nil)))
 
 (defn- limit [opts k]
   (get opts k (get default-limits k)))
 
 (defn client
   "An HTTP client that does not follow redirects, and trusts exactly the peer
-  keys POLICY names. `NEVER` is the builder's default; it is set explicitly
-  because a reader cannot see a default, and this one is load-bearing."
-  ^HttpClient [policy verdict opts]
+  keys POLICY names **for HOST**. `NEVER` is the builder's default; it is set
+  explicitly because a reader cannot see a default, and this one is
+  load-bearing -- doubly so now: a followed redirect would reach a host other
+  than the one whose pins this client was built with."
+  ^HttpClient [policy host verdict opts]
   (-> (HttpClient/newBuilder)
       (.version HttpClient$Version/HTTP_1_1)
       (.followRedirects HttpClient$Redirect/NEVER)
-      (.sslContext (pinning-ssl-context policy verdict))
+      (.sslContext (pinning-ssl-context policy host verdict))
       (.connectTimeout (Duration/ofMillis (limit opts :connect-timeout-ms)))
       (.build)))
 
@@ -182,7 +200,14 @@
               (cond-> {:status (.statusCode response)
                        :bytes read
                        :byte-count (alength ^bytes read)
-                       :digest-hex (sha256-hex read)}
+                       :digest-hex (sha256-hex read)
+                       ;; What the authority said this document is. Reported
+                       ;; and never acted on here: `grant.cloud` decides what
+                       ;; `text/event-stream` means, and this namespace only
+                       ;; says what arrived.
+                       :content-type (-> response .headers
+                                         (.firstValue "content-type")
+                                         (.orElse nil))}
                 ;; Only when the caller asked. A block is bytes and decoding
                 ;; four megabytes of them as text to satisfy a key nobody reads
                 ;; is work this machine does not need to do.
@@ -190,7 +215,14 @@
                 (assoc :body (String. ^bytes read "UTF-8"))
 
                 (:aiueos.cloud/peer-spki @verdict)
-                (assoc :peer-spki (:aiueos.cloud/peer-spki @verdict)))))))
+                (assoc :peer-spki (:aiueos.cloud/peer-spki @verdict)
+                       ;; Not only WHICH key was accepted but on what
+                       ;; grounds: bound to this host, or out of a flat set
+                       ;; that would have accepted it from any host. A
+                       ;; receipt that showed the key and not the grounds
+                       ;; would make the strong and the weak case identical.
+                       :peer-anchor-binding (:aiueos.cloud/anchor-binding @verdict)
+                       :peer-host (:aiueos.cloud/host @verdict)))))))
       (catch Exception e
         (let [v @verdict]
           (if (and v (not (cloud/allowed? v)))
@@ -264,6 +296,7 @@
     {:aiueos.provider.cloud/error :plan-not-allowed
      :aiueos.cloud/reason (:aiueos.cloud/reason plan)}
     (let [url (get-in plan [:aiueos.cloud/request :url])
+          host (.getHost (URI/create (str url)))
           https? (str/starts-with? (str url) "https://")]
       (if (and https? (not (cloud/anchors-declared? policy)))
         ;; No anchor means no verdict was possible, so there is nothing to
@@ -271,7 +304,7 @@
         ;; this machine could not have judged.
         {:aiueos.provider.cloud/error :no-trust-anchors :aiueos.cloud/url url}
         (let [verdict (atom nil)
-              http (client policy verdict opts)
+              http (client policy host verdict opts)
               outcome (cloud/perform
                        policy plan
                        (fn [request]
@@ -313,7 +346,12 @@
                (:byte-count arrived)
                (assoc :aiueos.provider.cloud/byte-count (:byte-count arrived))
                (:peer-spki arrived)
-               (assoc :aiueos.provider.cloud/peer-spki (:peer-spki arrived))))))))))
+               (assoc :aiueos.provider.cloud/peer-spki (:peer-spki arrived))
+               (:peer-anchor-binding arrived)
+               (assoc :aiueos.provider.cloud/peer-anchor-binding
+                      (:peer-anchor-binding arrived))
+               (:peer-host arrived)
+               (assoc :aiueos.provider.cloud/peer-host (:peer-host arrived))))))))))
 
 ;; ── the two clients ────────────────────────────────────────────────────────
 ;;
@@ -341,9 +379,26 @@
         (assoc :aiueos.provider.cloud/error (:aiueos.provider.cloud/error arrived)
                :aiueos.provider.cloud/message (:message arrived))
 
+        ;; What the peer verdict saw, when the fault WAS a peer verdict. Only
+        ;; `read-block!` short-circuits on a fault and returns that map whole,
+        ;; so without this the storage legs of a receipt named the key they
+        ;; refused and the inference legs printed `:measured {}` -- the same
+        ;; refusal, one of them actionable and the other not.
+        (:aiueos.cloud/observed-spki arrived)
+        (assoc :aiueos.cloud/observed-spki (:aiueos.cloud/observed-spki arrived))
+        (:aiueos.cloud/host arrived)
+        (assoc :aiueos.cloud/host (:aiueos.cloud/host arrived))
+        (:aiueos.cloud/pinned-for arrived)
+        (assoc :aiueos.cloud/pinned-for (:aiueos.cloud/pinned-for arrived))
+
         (:status arrived) (assoc :aiueos.provider.cloud/status (:status arrived))
         (:byte-count arrived) (assoc :aiueos.provider.cloud/byte-count (:byte-count arrived))
-        (:peer-spki arrived) (assoc :aiueos.provider.cloud/peer-spki (:peer-spki arrived))))))
+        (:content-type arrived) (assoc :aiueos.provider.cloud/content-type
+                                       (:content-type arrived))
+        (:peer-spki arrived) (assoc :aiueos.provider.cloud/peer-spki (:peer-spki arrived))
+        (:peer-anchor-binding arrived)
+        (assoc :aiueos.provider.cloud/peer-anchor-binding (:peer-anchor-binding arrived))
+        (:peer-host arrived) (assoc :aiueos.provider.cloud/peer-host (:peer-host arrived))))))
 
 (defn resolve-model!
   "Resolve the model alias and return `grant.cloud/admit-resolution`'s verdict.
