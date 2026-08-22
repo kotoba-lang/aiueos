@@ -7,13 +7,14 @@ Date: 2026-08-22
 Accepted and executable **for the hosted JVM profile, P1 of root
 `adr-2608221625-aiueos-chromeos-cloud-desktop`**. `clojure -M:session smoke`
 serves `apps/session` (jp-go-dds, one HTML document, fragments `#session`
-`#setup` `#manage` `#devices`) and, from **that same process**, GETs a known
+`#desktop` `#setup` `#manage` `#devices`) and, from **that same process**, GETs a known
 CID on `https://kotobase.net` and completes a `murakumo-main` infer.
 
 Not executable, and stated here rather than at the end:
 
 - **This is not the compositor.** ADR-0009's virtio-gpu / framebuffer shell
-  is where it was. P2 is still the next unit.
+  is where it was. The named-partial compositor process is ADR-0079, a later
+  unit; P1 remains HTTP + live kotobase/murakumo from this document.
 - **This is not bare-metal.** Nothing in `os/aiueos/` changed here. The
   guest still cannot speak HTTP. Phone bind remains a hosted helper with
   QEMU `-display none`.
@@ -52,5 +53,5 @@ against this document (`-display none`).
 
 Operators can open a phone-sized URL, bind without guest VGA, read a
 CID, and run an inference without leaving the document. The Chrome OS
-goal is not complete: compositor, guest apps, itonami, and a physical
-chassis are later units.
+goal is not complete: compositor (ADR-0079 named partial), guest apps,
+itonami, and a physical chassis are later units.

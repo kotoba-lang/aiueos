@@ -24,7 +24,8 @@
             #?(:clj [grant.signing :as signing])
             #?(:clj [clojure.edn :as edn])
             #?(:clj [clojure.java.io :as io])
-            #?(:clj [aiueos.session.live :as session-live]))
+            #?(:clj [aiueos.session.live :as session-live])
+            #?(:clj [aiueos.compositor.desktop :as compositor-desktop]))
   #?(:clj
      (:import [com.sun.net.httpserver HttpExchange HttpHandler HttpServer]
               [java.net InetSocketAddress StandardProtocolFamily UnixDomainSocketAddress]
@@ -181,21 +182,26 @@
           (not (some #{"cocoa" "gtk" "sdl" "vnc"} v))))))
 
 (defn chassis-argv-shape
-  "Pure argv tail used by tests. Firmware/qemu paths are filled on the JVM."
-  [{:keys [qemu firmware qmp serial accel memory]}]
-  (let [accel (or accel "hvf")]
-    [(or qemu "qemu-system-aarch64")
-     "-machine" (str "virt,accel=" accel)
-     "-cpu" (if (= accel "tcg") "max" "host")
-     "-m" (or memory "128")
-     "-smp" "1"
-     "-display" "none"
-     "-serial" (str "file:" (or serial "guest-serial.log"))
-     "-monitor" "none"
-     "-qmp" (str "unix:" (or qmp "qemu.qmp") ",server,nowait")
-     "-bios" (or firmware "edk2-aarch64-code.fd")
-     "-netdev" "user,id=n0"
-     "-device" "virtio-net-pci,netdev=n0"]))
+  "Pure argv tail used by tests. Firmware/qemu paths are filled on the JVM.
+  P1b default is `-display none` with no GPU. The compositor unit adds
+  `-device virtio-gpu-pci` via `:graphics \"virtio-gpu\"` without cocoa."
+  [{:keys [qemu firmware qmp serial accel memory graphics display]}]
+  (let [accel (or accel "hvf")
+        display (or display "none")
+        graphics (or graphics "none")]
+    (cond-> [(or qemu "qemu-system-aarch64")
+             "-machine" (str "virt,accel=" accel)
+             "-cpu" (if (= accel "tcg") "max" "host")
+             "-m" (or memory "128")
+             "-smp" "1"
+             "-display" display
+             "-serial" (str "file:" (or serial "guest-serial.log"))
+             "-monitor" "none"
+             "-qmp" (str "unix:" (or qmp "qemu.qmp") ",server,nowait")
+             "-bios" (or firmware "edk2-aarch64-code.fd")
+             "-netdev" "user,id=n0"
+             "-device" "virtio-net-pci,netdev=n0"]
+      (= graphics "virtio-gpu") (into ["-device" "virtio-gpu-pci"]))))
 
 (defn session-html-source
   "apps/session/index.html (generated DADS document) or the classpath copy."
@@ -712,6 +718,12 @@
                                  "unmeasured" 503
                                  400)]
                       (send-bytes! ex code "application/json; charset=utf-8" (->json body)))
+
+                    (and (= "GET" method) (= path "/api/compositor/desktop")
+                         (:desktop rt))
+                    (send-bytes! ex 200 "application/json; charset=utf-8"
+                                 (->json (compositor-desktop/public-snapshot
+                                          @(:desktop rt))))
 
                     :else (send-bytes! ex 404 "text/plain; charset=utf-8" "not found")))
                 (catch Exception e

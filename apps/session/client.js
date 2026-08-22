@@ -11,13 +11,14 @@ function viewId() {
 
 function show() {
   var h = viewId();
-  ["session", "setup", "manage", "devices"].forEach(function (id) {
+  ["session", "desktop", "setup", "manage", "devices"].forEach(function (id) {
     var el = document.getElementById(id);
     if (el) el.hidden = ("#" + id) !== h;
   });
   if (h === "#manage") refreshStatus();
   if (h === "#devices") refreshDevices();
   if (h === "#setup") refreshSetup();
+  if (h === "#desktop") refreshDesktop();
 }
 
 function pretty(x) {
@@ -42,6 +43,71 @@ async function refreshStatus() {
   if (!el) return;
   var r = await fetch("/api/status");
   el.textContent = await r.text();
+}
+
+
+async function refreshDesktop() {
+  var el = document.getElementById("compositor-out");
+  if (!el) return;
+  try {
+    var r = await fetch("/api/compositor/desktop");
+    var j = await r.json();
+    el.textContent = JSON.stringify(j, null, 2);
+    presentKami(j["kami-ir"] || j.kami_ir || j.kamiIr);
+  } catch (e) {
+    el.textContent = String(e);
+  }
+}
+
+async function presentKami(ir) {
+  var canvas = document.getElementById("kami-viewport");
+  var out = document.getElementById("kami-out");
+  if (!canvas || !out) return;
+  var sky = ir && ir.globals && ir.globals.sky && ir.globals.sky.horizon;
+  out.textContent = "requesting WebGPU for kami.webgpu.ir…";
+  if (!navigator.gpu) {
+    out.textContent = JSON.stringify({
+      outcome: "unmeasured",
+      reason: "webgpu-unavailable",
+      engine: "kami.webgpu.ir",
+      note: "Compositor surfaces still exist; this canvas is the GPU scanout host."
+    }, null, 2);
+    canvas.setAttribute("data-backend", "unavailable");
+    return;
+  }
+  try {
+    var adapter = await navigator.gpu.requestAdapter();
+    if (!adapter) throw new Error("no adapter");
+    var device = await adapter.requestDevice();
+    var ctx = canvas.getContext("webgpu");
+    var format = navigator.gpu.getPreferredCanvasFormat();
+    ctx.configure({ device: device, format: format, alphaMode: "opaque" });
+    var encoder = device.createCommandEncoder();
+    var c = sky || [0.12, 0.18, 0.28];
+    encoder.beginRenderPass({
+      colorAttachments: [{
+        view: ctx.getCurrentTexture().createView(),
+        clearValue: { r: c[0], g: c[1], b: c[2], a: 1 },
+        loadOp: "clear",
+        storeOp: "store"
+      }]
+    }).end();
+    device.queue.submit([encoder.finish()]);
+    canvas.setAttribute("data-backend", "webgpu");
+    out.textContent = JSON.stringify({
+      outcome: "admitted",
+      engine: "kami.webgpu.ir",
+      backend: "webgpu",
+      instances: (ir && ir.instances && ir.instances.length) || 0
+    }, null, 2);
+  } catch (e) {
+    canvas.setAttribute("data-backend", "error");
+    out.textContent = JSON.stringify({
+      outcome: "unmeasured",
+      reason: String(e),
+      engine: "kami.webgpu.ir"
+    }, null, 2);
+  }
 }
 
 async function refreshDevices() {

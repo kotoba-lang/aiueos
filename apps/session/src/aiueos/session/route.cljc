@@ -9,9 +9,10 @@
             [clojure.string :as str]))
 
 (def views
-  "Nav order. `:session` is the daily-driver default; `#setup` is the
+  "Nav order. `:session` is the daily-driver default; `#desktop` is the compositor face; `#setup` is the
   phone-first bind (P1b); `#manage` / `#devices` are day-2."
   [{:id :session :fragment "#session" :label "セッション"}
+   {:id :desktop :fragment "#desktop" :label "デスクトップ"}
    {:id :setup :fragment "#setup" :label "セットアップ"}
    {:id :manage :fragment "#manage" :label "管理"}
    {:id :devices :fragment "#devices" :label "機械"}])
