@@ -599,5 +599,11 @@ if [ "${AIUEOS_TEST_NET:-0}" = 1 ] && \
       echo "       (no AIUEOS_DHCP_ marker at all)" >&2
     exit 1
   }
+  grep -F "AIUEOS_DHCP_CONSUMED src=10.0.2.15" "$serial_log" >/dev/null || {
+    echo "error: DHCPv4 lease was recorded but not consumed as a source address" >&2
+    sed 's/\r$//' "$serial_log" | grep -E '^AIUEOS_DHCP_CONSUMED' >&2 || \
+      echo "       (no AIUEOS_DHCP_CONSUMED marker at all)" >&2
+    exit 1
+  }
 fi
 echo "AIUEOS_UEFI_SMOKE_OK"

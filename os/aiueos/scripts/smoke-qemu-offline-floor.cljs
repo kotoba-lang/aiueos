@@ -44,7 +44,10 @@
   "What the NIC-present run is allowed to have that the NIC-absent run does not.
   Named rather than derived: a new marker appearing here should be a decision,
   not a silently widened expectation."
-  #{"AIUEOS_VIRTIO_NET_OK" "AIUEOS_IPV4_OK" "AIUEOS_TCP_OK"})
+  #{"AIUEOS_VIRTIO_NET_OK" "AIUEOS_IPV4_OK" "AIUEOS_TCP_OK"
+    "AIUEOS_DHCP_OK" "AIUEOS_DHCP_CONSUMED" "AIUEOS_DNS_PROBE"
+    "AIUEOS_TCP_CLOUD_PROBE" "AIUEOS_TLS_PROBE" "AIUEOS_HTTP_PROBE"
+    "AIUEOS_BARE_METAL_P2"})
 
 (def absent-marker "AIUEOS_VIRTIO_NET_ABSENT")
 

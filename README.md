@@ -32,6 +32,7 @@ native only when its artifact receipt has empty `c_sources`,
 | Hardware | **not yet** — PCI, DMA, IOMMU, MSI-X, virtio, NVMe, USB HID are reference C with QEMU evidence, not compiler-emitted |
 | Boot and release | **working** — deterministic GPT disk and El Torito ISO from one builder, byte-identical recovery ESP with proven firmware fallback, update and rollback receipts, RSA-2048 release-signature verification, durable crash receipts, initramfs, Multiboot2/GRUB |
 | Desktop | **partial (named)** — compositor process owns `window-session-state` surfaces; same DADS SPA `#desktop` hosts a kami.webgpu.ir viewport; QEMU `-device virtio-gpu-pci` with `-display none`. **Not a WM** (no IME, no virtio-gpu 2D create/flush, guest scanout still GOP-once) |
+| Bare-metal net (P2) | **not green** — DHCP lease is consumed as a source address; DNS / TCP:443 / TLS-record probes exist (ADR-0081). Guest HTTPS GET + CID verify to kotobase has not happened. Hosted `cloud-live` / session smoke do not count |
 
 **Every gate above is QEMU/OVMF. There is no real-machine qualification yet**,
 and parity with Linux, Windows or macOS is not claimed until there is
@@ -376,6 +377,19 @@ clojure -M:compositor serve   # same SPA; compositor owns surfaces; Ctrl-C to st
 `clojure -M:phone-bind smoke` stays headless **without** the GPU device. Display-present (動線 D) is extra, not the only bind path.
 
 
+## Bare-metal cloud reach (P2) — not green
+
+Root contract: P2 of [`adr-2608221625`](https://github.com/com-junkawasaki/root/blob/main/90-docs/adr/2608221625-aiueos-chromeos-cloud-desktop.edn). This is QEMU **UEFI + KERNEL.ELF**, not the hosted JVM profile.
+
+```bash
+clojure -M:bare-metal cloud
+```
+
+The guest consumes its DHCP lease and probes DNS / TCP:443 / a TLS record (ADR-0081). Measured: TLS record type 22. **Exit 0 is reserved for guest HTTP GET + CID verify.** Until that serial line exists the command exits 1 with leftover `:tls-handshake-incomplete` and `:http-absent`.
+
+`clojure -M:cloud-live check` and `clojure -M:session smoke` do **not** green this gate. A Mac-side fetch is `:host-fetch-does-not-count`.
+
+
 ## Grant-limited guest in the shell (P3)
 
 Root contract: P3 of [`adr-2608221625`](https://github.com/com-junkawasaki/root/blob/main/90-docs/adr/2608221625-aiueos-chromeos-cloud-desktop.edn). Same `apps/session` DADS SPA. `:app/notes` runs through `grant` + Chicory Wasm (`examples/apps/notes.wat`). A deny is HTTP 403 with `:unresolved-capability`, not a generic 500. POSIX `:fs/open` is not the store; kotobase write without a credential is `:write-unauthorized`.
@@ -393,7 +407,7 @@ Expected markers:
 - `AIUEOS_GUEST_ALLOW_LIST=` lists the guest under `guests`
 - `AIUEOS_GUEST_OK`
 
-Exit 0 means the SPA listed the guest, grant allow ran it, and grant deny was the named red. This is **not** the full Chrome OS-shaped desktop: P2 bare-metal net, P4 itonami, P5 a real machine, and full WM/IME/virtio-gpu 2D remain.
+Exit 0 means the SPA listed the guest, grant allow ran it, and grant deny was the named red. This is **not** the full Chrome OS-shaped desktop: P2 bare-metal HTTP to kotobase, P4 itonami, P5 a real machine, and full WM/IME/virtio-gpu 2D remain.
 
 ## Maturity
 
