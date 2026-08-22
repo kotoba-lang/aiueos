@@ -104,6 +104,8 @@ kotoba_ipv4_checksum_object=${AIUEOS_KOTOBA_IPV4_CHECKSUM_OBJECT:-"$aiueos/kotob
 kotoba_ipv4_icmp_object=${AIUEOS_KOTOBA_IPV4_ICMP_OBJECT:-"$aiueos/kotoba/ipv4-icmp-reply-valid.o"}
 kotoba_tcp_checksum_object=${AIUEOS_KOTOBA_TCP_CHECKSUM_OBJECT:-"$aiueos/kotoba/tcp-checksum-ok.o"}
 kotoba_tcp_segment_object=${AIUEOS_KOTOBA_TCP_SEGMENT_OBJECT:-"$aiueos/kotoba/tcp-segment-valid.o"}
+kotoba_dhcp_reply_object=${AIUEOS_KOTOBA_DHCP_REPLY_OBJECT:-"$aiueos/kotoba/dhcp-reply-valid.o"}
+kotoba_dhcp_option_object=${AIUEOS_KOTOBA_DHCP_OPTION_OBJECT:-"$aiueos/kotoba/dhcp-option-u32.o"}
 kotoba_user_elf=${AIUEOS_KOTOBA_USER_ELF:-"$aiueos/kotoba/user-smoke.elf"}
 kotoba_fnv_sha=
 if [ -z "${AIUEOS_KOTOBA_FNV_OBJECT:-}" ]; then
@@ -129,6 +131,13 @@ if [ "${AIUEOS_CRASH_RECEIPT_SMOKE:-0}" = 1 ]; then
 fi
 if [ "${AIUEOS_FAULT_RECEIPT_SMOKE:-0}" = 1 ]; then
   input_smoke_cflags="$input_smoke_cflags -DAIUEOS_FAULT_RECEIPT_SMOKE=1"
+fi
+# Test-only. Breaks a received DHCP reply in exactly ONE way so the gate can
+# show the admission refusing it, and refusing it for the reason that was
+# broken. Only kernel/pci.c is compiled with it; a value of 0 or an unset
+# variable compiles none of the tampering in at all.
+if [ -n "${AIUEOS_DHCP_TAMPER:-}" ] && [ "${AIUEOS_DHCP_TAMPER}" != 0 ]; then
+  input_smoke_cflags="$input_smoke_cflags -DAIUEOS_DHCP_TAMPER=${AIUEOS_DHCP_TAMPER}"
 fi
 
 command -v zig >/dev/null 2>&1 || {
@@ -301,6 +310,12 @@ python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_tcp_checksum_o
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_tcp_segment_object" \
   887ac75e01b396acd5dd694c3aa25c82295ca196726d0487cfcfc88d4c750b55 \
   kotoba_aiueos_tcp_segment_valid
+python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_dhcp_reply_object" \
+  ceecb05c3400535ccff22509d2fc1426eb9166c2d79a93ae952377a0f4bc5951 \
+  kotoba_aiueos_dhcp_reply_valid
+python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_dhcp_option_object" \
+  0b5341000376104c6a23d2e6ef89c05c08fd03e91d2c2aa905643c65604741a0 \
+  kotoba_aiueos_dhcp_option_u32
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_x25519_object" \
   5956dc8b7de8b71fdf9b8735bc50f2b3e50eb0f975184d8eb37c9e8e58c60c4c \
   kotoba_aiueos_x25519
@@ -407,7 +422,9 @@ zig ld.lld -nostdlib -static -z max-page-size=0x1000 \
   "$kotoba_ipv4_checksum_object" \
   "$kotoba_ipv4_icmp_object" \
   "$kotoba_tcp_checksum_object" \
-  "$kotoba_tcp_segment_object"
+  "$kotoba_tcp_segment_object" \
+  "$kotoba_dhcp_reply_object" \
+  "$kotoba_dhcp_option_object"
 fi
 initramfs="$kernel_dir/INITRD.IMG"
 recovery_signature="$aiueos/kotoba/user-smoke.sig"

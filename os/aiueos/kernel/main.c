@@ -151,6 +151,14 @@ extern int aiueos_virtio_net_ready(void);
 extern int aiueos_ipv4_ready(void);
 extern int aiueos_tcp_ready(void);
 extern unsigned aiueos_tcp_stage(void);
+extern int aiueos_dhcp_ready(void);
+extern unsigned aiueos_dhcp_stage(void);
+extern unsigned aiueos_dhcp_reason(void);
+extern uint32_t aiueos_dhcp_address(void);
+extern uint32_t aiueos_dhcp_mask(void);
+extern uint32_t aiueos_dhcp_router(void);
+extern uint32_t aiueos_dhcp_server(void);
+extern uint32_t aiueos_dhcp_lease_seconds(void);
 extern uint32_t aiueos_gpu_scanout_width(void);
 extern uint32_t aiueos_gpu_scanout_height(void);
 extern void aiueos_scheduler_initialize(void);
@@ -211,6 +219,58 @@ static void serial_string(const char *text) {
 }
 static void debug_string(const char *text) {
   while (*text) debug_byte((uint8_t)*text++);
+}
+
+/* The first numbers this kernel prints. Every marker before DHCP is a fixed
+   string, because everything they report is either true or false; a lease is
+   neither, and a marker that said "an address was configured" without saying
+   which one would be unfalsifiable. Formatting is mechanism -- these decide
+   nothing, and the values they render were decided by a Kotoba object. */
+static void serial_decimal(uint32_t value) {
+  char digits[10];
+  unsigned count = 0;
+  if (!value) { serial_byte('0'); return; }
+  while (value) { digits[count++] = (char)('0' + (value % 10)); value /= 10; }
+  while (count) serial_byte((uint8_t)digits[--count]);
+}
+static void serial_ipv4(uint32_t value) {
+  for (unsigned shift = 24; ; shift -= 8) {
+    serial_decimal((value >> shift) & 0xff);
+    if (!shift) return;
+    serial_byte('.');
+  }
+}
+/* The object's reason code rendered as the clause it names. The mapping mirrors
+   the table at the top of kotoba/dhcp-reply-valid.kotoba, which is where the
+   codes are decided; this is rendering, and getting it wrong misnames a
+   refusal without changing one. */
+static const char *dhcp_reason_name(unsigned reason) {
+  switch (reason) {
+    case 0: return "admitted";
+    case 1: return "frame-length";
+    case 2: return "ipv4-envelope";
+    case 3: return "udp-envelope";
+    case 4: return "not-bootreply";
+    case 5: return "foreign-transaction-id";
+    case 6: return "foreign-hardware-address";
+    case 7: return "no-magic-cookie";
+    case 8: return "options-overrun";
+    case 9: return "message-type";
+    case 10: return "no-server-identifier";
+    case 11: return "address-mask-inconsistent";
+    case 12: return "lease-time";
+    default: return "unknown";
+  }
+}
+static const char *dhcp_stage_name(unsigned stage) {
+  switch (stage) {
+    case 1: return "tx-discover";
+    case 2: return "no-admitted-offer";
+    case 3: return "tx-request";
+    case 4: return "no-admitted-ack";
+    case 5: return "done";
+    default: return "idle";
+  }
 }
 __attribute__((noreturn)) static void qemu_exit(uint32_t value) {
   __asm__ volatile("outl %0, $0xf4" : : "a"(value));
@@ -706,6 +766,39 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
            layer down. It does not fail the boot: whether the peer answers ICMP
            at all is a property of the network, not of this OS. */
         serial_string("AIUEOS_IPV4_FAIL no-admitted-echo-reply\r\n");
+      }
+      /* Reported at link-layer level rather than under IPv4, because that is
+         where it sits: DHCP is broadcast and needs neither the ARP cache nor
+         anything ICMP proved. A machine that reaches here has an address it was
+         GIVEN. Nothing consumes it yet -- the driver still sends from the
+         compiled-in 10.0.2.15 -- so this marker is the whole of what row 1 of
+         ADR-0041 currently buys. */
+      if (aiueos_dhcp_ready()) {
+        serial_string("AIUEOS_DHCP_OK offer-ack kotoba-admitted address=");
+        serial_ipv4(aiueos_dhcp_address());
+        serial_string(" mask=");
+        serial_ipv4(aiueos_dhcp_mask());
+        serial_string(" router=");
+        serial_ipv4(aiueos_dhcp_router());
+        serial_string(" server=");
+        serial_ipv4(aiueos_dhcp_server());
+        serial_string(" lease=");
+        serial_decimal(aiueos_dhcp_lease_seconds());
+        serial_string("\r\n");
+      } else {
+        /* Both halves, because they answer different questions: the STAGE says
+           which of the two round trips did not complete, and the REASON is the
+           clause of the admission that refused the candidate which got
+           furthest. A run that refuses for a reason nobody broke is a run whose
+           evidence is about something else, and printing only one of these
+           would make that indistinguishable. */
+        serial_string("AIUEOS_DHCP_FAIL ");
+        serial_string(dhcp_stage_name(aiueos_dhcp_stage()));
+        serial_string(" reason=");
+        serial_decimal(aiueos_dhcp_reason());
+        serial_byte(' ');
+        serial_string(dhcp_reason_name(aiueos_dhcp_reason()));
+        serial_string("\r\n");
       }
     } else {
       serial_string("AIUEOS_VIRTIO_NET_ABSENT no-nic-attached\r\n");
