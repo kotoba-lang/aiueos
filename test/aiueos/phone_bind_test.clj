@@ -45,13 +45,18 @@
         "user-mode/slirp stands in for Ethernet DHCP")))
 
 (deftest p1b-session-document-is-one-spa
-  (is (re-find #"href=\"#setup\"" pb/session-html))
-  (is (re-find #"href=\"#manage\"" pb/session-html))
-  (is (re-find #"window.__aiueosSessionAlive" pb/session-html)
-      "crossing #setup/#manage must not load a second document")
-  (is (re-find #"jp-go-dds" pb/session-html)
-      "temporary face must name the production DADS chrome")
-  (is (not (re-find #"liquid-glass\.css" pb/session-html))))
+  (let [html (pb/session-html)]
+    (is (re-find #"href=\"#setup\"" html))
+    (is (re-find #"href=\"#session\"" html))
+    (is (re-find #"href=\"#manage\"" html))
+    (is (re-find #"dads-button" html)
+        "P1 is red if this is still the proving-slice hand-rolled face")
+    (is (re-find #"window.__aiueosSessionAlive" html)
+        "crossing fragments must not load a second document")
+    (is (re-find #"jp-go-dds" html))
+    (is (re-find #"--hig-" html)
+        "bridge --hig-* tokens onto DADS")
+    (is (not (re-find #"liquid-glass" html)))))
 
 (deftest p1c-copied-grant-cannot-bind-a-second-device
   (let [grant {:aiueos.enroll/kind :pre-grant

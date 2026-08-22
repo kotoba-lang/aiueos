@@ -31,7 +31,7 @@ native only when its artifact receipt has empty `c_sources`,
 | Kernel execution | **not yet** — context switch, preemptive scheduler, ring 3, syscall entry/exit, capability handle table all still reference-profile only |
 | Hardware | **not yet** — PCI, DMA, IOMMU, MSI-X, virtio, NVMe, USB HID are reference C with QEMU evidence, not compiler-emitted |
 | Boot and release | **working** — deterministic GPT disk and El Torito ISO from one builder, byte-identical recovery ESP with proven firmware fallback, update and rollback receipts, RSA-2048 release-signature verification, durable crash receipts, initramfs, Multiboot2/GRUB |
-| Desktop | **not yet** — one virtio-gpu scanout read against the OVMF GOP aperture. No compositor, no shell |
+| Desktop | **partial** — hosted DADS SPA at `apps/session` (P1). Compositor / virtio-gpu shell still **not yet** |
 
 **Every gate above is QEMU/OVMF. There is no real-machine qualification yet**,
 and parity with Linux, Windows or macOS is not claimed until there is
@@ -276,6 +276,33 @@ JRE/JAR/runtime-root inputs and rejects a non-ELF guest Java executable.
 This is the ADR-0011 Linux-hosted profile, not the bare-metal kernel described
 by the product integration ADR in `kotoba-lang/kotoba`.
 
+
+## Hosted daily shell (P1)
+
+Root contract: [`adr-2608221625-aiueos-chromeos-cloud-desktop`](https://github.com/com-junkawasaki/root/blob/main/90-docs/adr/2608221625-aiueos-chromeos-cloud-desktop.edn).
+This is the JVM hosted profile. It is **not** the bare-metal compositor, and
+`clojure -M:cloud-live check` does **not** green this gate.
+
+```bash
+clojure -M:session smoke
+```
+
+Expected markers:
+
+- `AIUEOS_SESSION_URL=http://127.0.0.1:<port>/#session`
+- `AIUEOS_SESSION_SPA=admitted`
+- `AIUEOS_SESSION_KOTOBASE=` … `"outcome":"admitted"` on a real `kotobase.net` GET
+- `AIUEOS_SESSION_INFER=` … `"alias":"murakumo-main"` and a completion snippet
+- `AIUEOS_SESSION_OK`
+
+Exit 0 means the DADS SPA was served and both live legs were admitted **from
+the session process**. Exit 1 is a refusal or a non-DADS document. Exit 3
+means a leg could not be answered.
+
+```bash
+clojure -M:session serve   # open the printed URL on a phone-sized viewport
+```
+
 ## Mac VM phone-bind (P1b / P1c proving slice)
 
 Root contract: [`adr-2608221625-aiueos-chromeos-cloud-desktop`](https://github.com/com-junkawasaki/root/blob/main/90-docs/adr/2608221625-aiueos-chromeos-cloud-desktop.edn).
@@ -314,10 +341,10 @@ clojure -M:phone-bind pre-enroll   # P1c: grant in the image, zero QR, copy refu
 clojure -M:phone-bind serve        # leave the phone SPA up; open the printed URL
 ```
 
-The SPA is one document (`aiueos.phone-bind/session-html`, fragments `#setup`
-and `#manage`). Production chrome is jp-go-dds; this string is a temporary
-face on the `--hig-*` contract. `clojure -M:test` of unrelated suites is **not**
-this gate.
+The SPA is the DADS document at `apps/session` (fragments `#session` `#setup`
+`#manage` `#devices`). Phone-bind serves that one HTML. `clojure -M:session smoke`
+is P1 (kotobase + murakumo from the session process). `clojure -M:test` of
+unrelated suites is **not** this gate.
 
 ## Maturity
 
