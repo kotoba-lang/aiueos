@@ -39,4 +39,5 @@ clojure -M:compositor ime    # hosted IME: romaji→kana in the same document
 clojure -M:compositor kanji  # hosted IME: Space converts か→加
 clojure -M:compositor guest-ime  # KERNEL.ELF Kotoba k+a→U+304B
 clojure -M:compositor guest-wm   # KERNEL.ELF Kotoba two-surface z-hit
+clojure -M:compositor guest-paint # KERNEL.ELF paints both rects in z-order
 ```

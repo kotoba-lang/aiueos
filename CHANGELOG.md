@@ -5,6 +5,23 @@ All notable changes to **aiueos** are documented here. The format follows
 
 ## [Unreleased]
 
+### Guest paint (ADR-0092)
+- KERNEL.ELF paints both boot-desktop rects back-then-front from
+  Kotoba `kotoba_aiueos_wm_hit` and samples the overlap pixel.
+  Gate: `clojure -M:compositor guest-paint`. Named red is hosted JVM
+  `AIUEOS_COMPOSITOR_WM_OK` and a key-order paint (window 1 on top at
+  overlap). `guest-wm` / `guest-ime` / `gpu` stay green without this
+  serial line. Leftover `:native-compositor-absent`. virtio-input still
+  synthetic. **Measured 2026-08-23:** `guest-paint` leftover `[]` with
+  `AIUEOS_GUEST_PAINT_OK boot-overlap=2 raised-overlap=1 key-order=0`.
+  P5 UNVERIFIED.
+
+### Guest WM (ADR-0091)
+- KERNEL.ELF Kotoba `kotoba_aiueos_wm_hit` z-hits two overlapping boot
+  rects. Gate: `clojure -M:compositor guest-wm`. Named red is hosted JVM
+  `AIUEOS_COMPOSITOR_WM_OK`. Leftover after this slice was
+  `:one-guest-scanout`. P5 UNVERIFIED.
+
 ### Guest IME (ADR-0090)
 - KERNEL.ELF Kotoba `kotoba_aiueos_ime_commit(107, 97)` returns U+304B.
   Gate: `clojure -M:compositor guest-ime`. Named red is hosted JVM

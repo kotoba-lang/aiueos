@@ -118,7 +118,9 @@
      [:code "clojure -M:compositor guest-ime"]
      "（KERNEL.ELF の Kotoba）。ゲスト側 WM は "
      [:code "clojure -M:compositor guest-wm"]
-     "（KERNEL.ELF の Kotoba が z-hit）。native compositor は leftover です。描画は "
+     "（KERNEL.ELF の Kotoba が z-hit）。ゲスト側 paint は "
+     [:code "clojure -M:compositor guest-paint"]
+     "（KERNEL.ELF が z-order で 2 枚を塗る）。native compositor は leftover です。描画は "
      [:code "kami.webgpu"]
      " の "
      [:code "clojure -M:compositor kami"]
