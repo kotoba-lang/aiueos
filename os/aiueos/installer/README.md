@@ -34,19 +34,19 @@ versioned representation `AIUEOS1-...-CHECKSUM`. Store that key offline: there
 is no TPM or escrow path in this slice.
 
 ```sh
-node os/aiueos/installer/encrypted-image-cli.mjs keygen
+umask 077
+node os/aiueos/installer/encrypted-image-cli.mjs keygen > recovery-key.txt
 node os/aiueos/installer/encrypted-image-cli.mjs encrypt \
-  --input data.img --output data.aiueenc --recovery-key 'AIUEOS1-...'
+  --input data.img --output data.aiueenc --recovery-key-file recovery-key.txt
 node os/aiueos/installer/encrypted-image-cli.mjs decrypt \
-  --input data.aiueenc --output recovered.img --recovery-key 'AIUEOS1-...'
+  --input data.aiueenc --output recovered.img --recovery-key-file recovery-key.txt
 ```
 
 Output files are created with mode `0600` and are never overwritten.
 The current host implementation reads the complete clear/encrypted image into
 memory; it is a format and integrity slice, not yet a large-volume streaming
-implementation. Passing a recovery key on a command line may expose it through
-shell history or process inspection, so production key-file/console input is
-also still required before deployment.
+implementation. Command-line recovery keys are refused. The key file must be a
+regular file with no group/other permissions (normally mode `0600`).
 
 ## Internal-disk installer
 

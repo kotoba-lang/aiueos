@@ -22,6 +22,14 @@
  {:cmd ["./os/aiueos/scripts/smoke-qemu-hw-probe.sh"]
   :doc "Boot the hardware probe as removable USB under QEMU/OVMF and require all positive markers."}
 
+ :native-driver-smoke
+ {:cmd ["./os/aiueos/native-drivers/smoke.sh"]
+  :doc "Compile and test the bounded NVMe, xHCI/HID, Ethernet-inventory, and DMA foundations."}
+
+ :encrypted-installer-test
+ {:cmd ["node" "--test" "os/aiueos/installer/test/encrypted-image.test.mjs" "os/aiueos/installer/test/encrypted-image-cli.test.mjs" "os/aiueos/installer/test/installer.test.mjs"]
+  :doc "Test authenticated encrypted images and the fail-closed second-internal-disk installer."}
+
  ;; The multiboot path had a smoke that nothing invoked. That is how a build
  ;; break reached main and sat there: `build-multiboot.sh` compiles
  ;; `kernel/acpi.c`, which since ADR-0024 calls two Kotoba symbols the script did
