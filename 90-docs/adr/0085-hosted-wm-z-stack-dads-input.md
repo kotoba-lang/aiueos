@@ -20,8 +20,9 @@ this WM.
 
 Not executable, and stated here rather than at the end:
 
-- **IME is ADR-0086.** WM green does not include IME conversion. After
-  IME lands, leftover on a boot desktop is `:kanji-absent`.
+- **IME is ADR-0086 (kana) and ADR-0088 (kanji).** WM green does not
+  include IME conversion. After those land, leftover on a boot desktop
+  is `:guest-ime-absent`.
 - **This is not a native guest WM.** Surfaces live in the hosted JVM
   compositor (`window-session-state`). No second WM was invented.
   `kuro` remains the terminal model. kami-engine remains GPU IR.
@@ -66,8 +67,8 @@ red if `hit-window` ignores z-stack.
 4. Gate: `clojure -M:compositor wm`. No QEMU. Exit 0 only when two
    surfaces, one-surface red, z-order ≠ key-order, raise changes front,
    occlusion, input-target `[:panel focused]`, DADS SPA face, and HTTP
-   raise/pointer agree. IME is not required. Leftover print is `:kanji-absent`
-   once IME is attached (ADR-0086).
+   raise/pointer agree. IME is not required. Leftover print is
+   `:guest-ime-absent` once ADR-0088 lands.
 5. Keep `clojure -M:compositor gpu` and phone-bind headless argv.
 
 ## P5 — still UNVERIFIED

@@ -111,7 +111,9 @@
      [:code "clojure -M:compositor gpu"]
      "。IME は romaji からかなへ（"
      [:code "clojure -M:compositor ime"]
-     "）。漢字変換は leftover です。"]
+     "）。IME はかなと漢字（"
+     [:code "clojure -M:compositor kanji"]
+     "）。ゲスト側 IME は leftover です。"]
     [:div {:id "ime-bar"
            :class "ime-bar dds-ext-row"
            :data-ime "on"
@@ -120,6 +122,7 @@
      (dds/heading 2 "変換中" {:size "16" :id "ime-preedit-label"})
      [:p {:id "ime-preedit" :class "session-lede" :aria-live "polite"}]
      [:p {:id "ime-buf" :class "session-lede"}]
+     [:div {:id "ime-candidates" :aria-label "kanji candidates"}]
      (dds/button "IME 切" {:id "ime-toggle" :size "sm" :type :outline})]
     [:div {:id "wm-stage"
            :class "wm-stage"

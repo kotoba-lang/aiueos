@@ -5,14 +5,15 @@
   This is the compositor's input method, not a second WM and not mozc.
 
   Keys are consumed into a romaji buffer and emitted as hiragana only
-  on commit. Delivering latin `ka` to the focused guest while IME is
-  on is the named red (`:ime-bypass`). IME-off is that red path on
-  purpose so the gate can discriminate."
+  on commit. Space converts a reading that the tiny dictionary knows
+  (ADR-0088: か→加). Delivering latin `ka` to the focused guest while
+  IME is on is the named red (`:ime-bypass`). IME-off is that red path
+  on purpose so the kana gate can discriminate. Space that commits kana
+  while the dictionary has か is leftover `:kanji-absent`."
   (:require [clojure.string :as str]))
 
 (def mora
-  "Longest-match romaji → hiragana. Enough to prove conversion; not a
-  dictionary. Kanji conversion is leftover `:kanji-absent`."
+  "Longest-match romaji → hiragana. Enough to prove conversion; not mozc."
   {"a" "あ" "i" "い" "u" "う" "e" "え" "o" "お"
    "ka" "か" "ki" "き" "ku" "く" "ke" "け" "ko" "こ"
    "sa" "さ" "si" "し" "su" "す" "se" "せ" "so" "そ"
@@ -45,17 +46,36 @@
    "pya" "ぴゃ" "pyu" "ぴゅ" "pyo" "ぴょ"
    "-" "ー" "," "、" "." "。"})
 
+(def readings
+  "Tiny hosted dictionary. Not mozc and not a west repo. か must convert
+  so `:kanji-absent` can go red. Unknown readings stay kana."
+  {"か" ["加" "可" "課"]
+   "ひ" ["日" "火"]
+   "あ" ["亜"]})
+
+(defn- engine-leftover
+  [ime]
+  (if (false? (:kanji? ime))
+    :kanji-absent
+    :guest-ime-absent))
+
 (defn boot
-  "IME on, empty buffers. `focused` is the window that receives commits."
+  "IME on, empty buffers. `focused` is the window that receives commits.
+  `:kanji? false` is the named red for ADR-0088 (Space commits kana)."
   ([] (boot {}))
   ([opts]
    {:on? (not (false? (:on? opts)))
+    :kanji? (not (false? (:kanji? opts)))
     :buf ""
     :preedit ""
     :committed ""
     :guest-log ""
     :focused (or (:focused opts) nil)
-    :leftover :kanji-absent
+    :converting? false
+    :candidates []
+    :cand-idx 0
+    :reading ""
+    :leftover (if (false? (:kanji? opts)) :kanji-absent :guest-ime-absent)
     :engine "aiueos.compositor.ime"}))
 
 (defn- sokuon?
@@ -100,6 +120,39 @@
       (= s "Space") "Space"
       :else (str/lower-case s))))
 
+(defn- flush-preedit
+  "Fold remaining romaji into `:preedit` (n→ん)."
+  [ime]
+  (let [raw (if (= (:buf ime) "n") "nn" (:buf ime))
+        conv (convert-buf raw)
+        leftover-buf (:buf conv)
+        pre (str (:preedit ime) (:preedit conv) leftover-buf)]
+    (assoc ime :buf "" :preedit pre)))
+
+(defn- commit-text
+  [ime text]
+  (assoc ime
+         :buf ""
+         :preedit ""
+         :converting? false
+         :candidates []
+         :cand-idx 0
+         :reading ""
+         :committed (str (:committed ime) text)
+         :guest-log (str (:guest-log ime) text)
+         :leftover (engine-leftover ime)))
+
+(defn- cancel-conversion
+  [ime]
+  (if (:converting? ime)
+    (assoc ime
+           :converting? false
+           :candidates []
+           :cand-idx 0
+           :preedit (or (:reading ime) "")
+           :reading "")
+    (assoc ime :buf "" :preedit "")))
+
 (defn handle-key
   "Returns `[ime' event]`. Event always names `:consumed?` and whether
   latin leaked to the guest (`:guest-text`). On-path must not leak."
@@ -120,20 +173,19 @@
                :focused focused}])
 
       (= k "Escape")
-      (let [ime' (assoc ime :buf "" :preedit "")]
+      (let [ime' (cancel-conversion ime)]
         [ime' {:consumed? true
                :reason :cancel
                :guest-text ""
-               :preedit ""
+               :preedit (:preedit ime')
                :committed (:committed ime)
                :focused focused}])
 
       (= k "Backspace")
-      (let [buf (:buf ime)
-            pre (:preedit ime)
-            ime' (cond
-                   (seq buf) (assoc ime :buf (subs buf 0 (dec (count buf))))
-                   (seq pre) (assoc ime :preedit (subs pre 0 (dec (count pre))))
+      (let [ime' (cond
+                   (:converting? ime) (cancel-conversion ime)
+                   (seq (:buf ime)) (assoc ime :buf (subs (:buf ime) 0 (dec (count (:buf ime)))))
+                   (seq (:preedit ime)) (assoc ime :preedit (subs (:preedit ime) 0 (dec (count (:preedit ime)))))
                    :else ime)]
         [ime' {:consumed? true
                :reason :backspace
@@ -142,16 +194,54 @@
                :committed (:committed ime)
                :focused focused}])
 
-      (or (= k "Enter") (= k "Space"))
-      (let [raw (if (= (:buf ime) "n") "nn" (:buf ime))
-            conv (convert-buf raw)
-            leftover (:buf conv)
-            text (str (:preedit ime) (:preedit conv) leftover)
-            ime' (assoc ime
-                        :buf ""
-                        :preedit ""
-                        :committed (str (:committed ime) text)
-                        :guest-log (str (:guest-log ime) text))]
+      (= k "Space")
+      (let [ime1 (if (:converting? ime) ime (flush-preedit ime))
+            reading (if (:converting? ime1)
+                      (:reading ime1)
+                      (:preedit ime1))
+            cands (when (:kanji? ime1) (get readings reading))]
+        (cond
+          (and (seq cands) (:converting? ime1))
+          (let [idx (mod (inc (or (:cand-idx ime1) 0)) (count cands))
+                ch (nth cands idx)
+                ime' (assoc ime1 :cand-idx idx :preedit ch)]
+            [ime' {:consumed? true
+                   :reason :cycle
+                   :guest-text ""
+                   :preedit ch
+                   :committed (:committed ime)
+                   :focused focused}])
+
+          (seq cands)
+          (let [ch (first cands)
+                ime' (assoc ime1
+                            :converting? true
+                            :reading reading
+                            :candidates (vec cands)
+                            :cand-idx 0
+                            :preedit ch
+                            :leftover :guest-ime-absent)]
+            [ime' {:consumed? true
+                   :reason :convert
+                   :guest-text ""
+                   :preedit ch
+                   :committed (:committed ime)
+                   :focused focused}])
+
+          :else
+          (let [text (:preedit ime1)
+                ime' (commit-text (assoc ime1 :leftover :kanji-absent) text)]
+            [ime' {:consumed? true
+                   :reason :kanji-absent
+                   :guest-text text
+                   :preedit ""
+                   :committed (:committed ime')
+                   :focused focused}])))
+
+      (= k "Enter")
+      (let [ime1 (if (:converting? ime) ime (flush-preedit ime))
+            text (:preedit ime1)
+            ime' (commit-text ime1 text)]
         [ime' {:consumed? true
                :reason :commit
                :guest-text text
@@ -200,10 +290,14 @@
   [ime]
   {:ime? (boolean (:on? ime))
    :on? (boolean (:on? ime))
+   :kanji? (not (false? (:kanji? ime)))
    :buf (or (:buf ime) "")
    :preedit (or (:preedit ime) "")
    :committed (or (:committed ime) "")
    :guest-log (or (:guest-log ime) "")
    :focused (or (:focused ime) 0)
-   :leftover (name (or (:leftover ime) :kanji-absent))
+   :converting? (boolean (:converting? ime))
+   :candidates (str/join "," (or (:candidates ime) []))
+   :cand-idx (or (:cand-idx ime) 0)
+   :leftover (name (or (:leftover ime) (engine-leftover ime)))
    :engine (or (:engine ime) "aiueos.compositor.ime")})

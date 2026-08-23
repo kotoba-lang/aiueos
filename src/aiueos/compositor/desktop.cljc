@@ -9,8 +9,8 @@
 
   Hosted WM (ADR-0085): two overlapping surfaces, `raise` changes
   z-order, pointer hit-test is front-to-back, DADS title bars live in
-  `apps/session` `#desktop`. Hosted IME is ADR-0086 (romaji→kana
-  in this process). Kanji conversion remains leftover."
+  `apps/session` `#desktop`. Hosted IME is ADR-0086 (romaji→kana)
+  plus ADR-0088 (Space converts か→加). Guest-side IME remains leftover."
   (:require [aiueos.compositor.ime :as ime]
             [clojure.string :as str]
             [window-session-state :as wss]
@@ -44,9 +44,10 @@
 
 (defn attach-ime
   "Hosted IME on this desktop. Focus follows the front window."
-  [desktop]
-  (let [focused (compositor/focused-window (:compositor desktop))]
-    (assoc desktop :ime (ime/boot {:focused focused}))))
+  ([desktop] (attach-ime desktop {}))
+  ([desktop opts]
+   (let [focused (compositor/focused-window (:compositor desktop))]
+     (assoc desktop :ime (ime/boot (merge {:focused focused} opts))))))
 
 (defn ensure-ime
   "Restore of a pre-IME desktop.edn still gets an IME. Absence is named
@@ -198,17 +199,28 @@
      (and id rect hit (not= hit id)
           (window/rect-contains? rect px py)))))
 
+(defn kana-only-desktop
+  "Named red for ADR-0088: IME without the dictionary. Space commits か."
+  []
+  (attach-ime
+   (dissoc (boot-desktop) :ime)
+   {:kanji? false}))
+
 (defn ime-leftover
-  "Named leftover on the attached IME. Boot desktops have IME (ADR-0086);
-  leftover is then `:kanji-absent`. No-arg / no `:ime` is `:ime-absent`."
+  "Named leftover on the attached IME. Boot desktops have IME (ADR-0086)
+  and hosted kanji (ADR-0088); leftover is then `:guest-ime-absent`.
+  No-arg / no `:ime` is `:ime-absent`. `:kanji? false` is `:kanji-absent`."
   ([] {:ime? false
        :leftover :ime-absent
        :note "IME is leftover. Call with a desktop after boot."})
   ([desktop]
    (if-let [i (:ime desktop)]
      {:ime? (boolean (:on? i))
-      :leftover (or (:leftover i) :kanji-absent)
-      :note "Hosted romaji→kana IME. Kanji conversion is leftover."}
+      :leftover (or (:leftover i)
+                    (if (false? (:kanji? i)) :kanji-absent :guest-ime-absent))
+      :note (if (false? (:kanji? i))
+              "Hosted romaji→kana only. Kanji conversion is leftover."
+              "Hosted IME converts kana to kanji. Guest-side IME is leftover.")}
      {:ime? false
       :leftover :ime-absent
       :note "No IME attached."})))
@@ -222,6 +234,10 @@
                          :on? (boolean on?)
                          :buf ""
                          :preedit ""
+                         :converting? false
+                         :candidates []
+                         :cand-idx 0
+                         :reading ""
                          :focused focused))))
 
 (defn route-key
@@ -234,6 +250,21 @@
         [ime' ev] (ime/handle-key ime key)
         d' (assoc d :ime ime')]
     [d' (assoc ev :latin-leaked? (ime/latin-leaked? ev))]))
+
+(defn kanji-admitted?
+  "True when IME-on converted か to 加 and did not leak latin. The kana
+  gate does not require this. `:kanji? false` is the named red."
+  [desktop]
+  (let [i (:ime desktop)
+        committed (str (:committed i))
+        guest (str (:guest-log i))]
+    (boolean
+     (and i
+          (:on? i)
+          (not (false? (:kanji? i)))
+          (str/includes? committed "加")
+          (not (re-find #"[a-zA-Z]" committed))
+          (not (re-find #"[a-zA-Z]" guest))))))
 
 (defn ime-admitted?
   "True when IME-on converted romaji and did not leak latin. Used by
@@ -310,6 +341,9 @@
             :surface-count (count (:windows desktop))
             :input-target (input-target-label target)
             :ime? (:ime? ime)
+            :converting? (boolean (:converting? snap))
+            :candidates (or (:candidates snap) "")
+            :cand-idx (or (:cand-idx snap) 0)
             :ime-leftover (name (:leftover ime))
             :on? (boolean (:on? snap))
             :preedit (or (:preedit snap) "")
@@ -337,6 +371,9 @@
      :ime? (:ime? ime)
      :ime-leftover (name (:leftover ime))
      :on? (boolean (:on? snap))
+     :converting? (boolean (:converting? snap))
+     :candidates (or (:candidates snap) "")
+     :cand-idx (or (:cand-idx snap) 0)
      :preedit (or (:preedit snap) "")
      :committed (or (:committed snap) "")
      :guest-log (or (:guest-log snap) "")
@@ -366,4 +403,4 @@
      :engine "window-session-state"
      :gpu-viewport "kami.webgpu.ir"
      :decoration "jp-go-dds"
-     :note "Hosted WM + hosted IME (romaji→kana). Kanji leftover. Not P5."}))
+     :note "Hosted WM + hosted IME (romaji→kana→kanji). Guest IME leftover. Not P5."}))

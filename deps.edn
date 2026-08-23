@@ -134,6 +134,7 @@
    ;;   clojure -M:compositor gpu     ; KERNEL.ELF CREATE+FLUSH serial
    ;;   clojure -M:compositor wm      ; ≥2 surfaces, z-order, DADS, input
    ;;   clojure -M:compositor ime     ; romaji→kana; off-path latin is red
+   ;;   clojure -M:compositor kanji   ; Space converts か→加; kana-only Space is red
    ;;   clojure -M:compositor serve
    ;; smoke Exit 0 = DADS SPA, window-session-state restore, wipe red,
    ;;   QEMU -device virtio-gpu-pci with -display none.
@@ -141,7 +142,7 @@
    ;;   GET_DISPLAY_INFO and query-pci are reds for gpu.
    ;; wm Exit 0 = two stacked surfaces, raise changes front, overlap hit
    ;;   ≠ key-order, DADS title bars, pointer → focused guest.
-   ;;   One surface / z-order no-op is red. ime: ka→か, leftover :kanji-absent.
+   ;;   One surface / z-order no-op is red. ime: ka→か. kanji: か→加, leftover :guest-ime-absent.
    ;; Exit 1 refused. Exit 3 unmeasured. Not P5. Goal not complete.
    :compositor {:jvm-opts ["--enable-native-access=ALL-UNNAMED"]
                 :main-opts ["-m" "aiueos.compositor"]}

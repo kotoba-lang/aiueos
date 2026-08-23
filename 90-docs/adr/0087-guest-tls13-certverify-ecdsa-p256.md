@@ -37,7 +37,7 @@ serial (~74s QEMU).
 - **RSA-PSS is not implemented.** Live `kotobase.net` serves ECDSA P-256
   (`0x0403`). A peer that offers another scheme fails closed.
 - **P5 a real machine is UNVERIFIED.** This Mac is the QEMU host. QEMU ≠ P5.
-- **CACAO write, kanji, and a guest-side WM remain.** The Chrome OS-shaped
+- **CACAO write, guest-side IME, and a guest-side WM remain.** The Chrome OS-shaped
   desktop goal is **not complete**.
 
 ## Context
