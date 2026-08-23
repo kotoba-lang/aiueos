@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runInstaller } from "../install.mjs";
 import { destructivePhrase } from "../device-policy.mjs";
-import { fakeBackend } from "../backends.mjs";
+import { fakeBackend, realBackend } from "../backends.mjs";
 
 async function fixture() {
   const dir = await mkdtemp(join(tmpdir(), "aiueos-installer-test-"));
@@ -75,6 +75,30 @@ test("validated fake-device install writes and reports readback", async () => {
   const f = await fixture(); const output = join(f.dir, "fake-target"); const b = backend(safe, output);
   const report = await runInstaller({ install: true, device: safe.path, confirmDevice: safe.path, destructivePhrase: destructivePhrase(safe.path), image: f.image, receipt: f.receipt }, b);
   assert.equal(report.installed, true); assert.deepEqual(await readFile(output), f.bytes); assert.equal(b.writes(), 1);
+});
+
+test("installer passes the re-inspected target identity into the single write operation", async () => {
+  const f = await fixture();
+  const identity = { dev: 1, ino: 2, rdev: 3, mode: 4 };
+  const info = { ...safe, nodeIdentity: identity };
+  let receivedTarget;
+  const b = {
+    kind: "fake",
+    inspect: async () => ({ info, systemDisks: ["/dev/fake-system"] }),
+    writeImage: async (_image, _device, expected, target) => {
+      receivedTarget = target;
+      return expected;
+    },
+  };
+  await runInstaller({ install: true, device: info.path, confirmDevice: info.path, destructivePhrase: destructivePhrase(info.path), image: f.image, receipt: f.receipt }, b);
+  assert.deepEqual(receivedTarget.nodeIdentity, identity);
+});
+
+test("macOS backend refuses real writes when it cannot hold an exclusive block-device open", async () => {
+  assert.throws(
+    () => realBackend("darwin").writeImage("unused", "/dev/unused", { bytes: 1, sha256: "0".repeat(64) }, {}, {}),
+    /supported only from Linux/,
+  );
 });
 
 test("bad receipt is rejected before device inspection or writing", async () => {

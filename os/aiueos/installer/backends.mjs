@@ -1,9 +1,8 @@
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { createReadStream } from "node:fs";
+import { constants, createReadStream, lstatSync } from "node:fs";
 import { open, readFile, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
-import { sha256File } from "./receipt.mjs";
 
 function run(command, args) {
   return execFileSync(command, args, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
@@ -56,6 +55,7 @@ function macDiskInfo(device) {
       system: systemDisks.has(canonical),
       bytes: value.TotalSize,
       model: value.MediaName ?? "unknown",
+      nodeIdentity: deviceNodeIdentity(canonical),
     },
     systemDisks: [...systemDisks],
   };
@@ -82,12 +82,36 @@ function linuxDiskInfo(device) {
       system: systemPaths.includes(root.path),
       bytes: root.size,
       model: root.model ?? "unknown",
+      nodeIdentity: deviceNodeIdentity(root.path),
     },
     systemDisks: systemPaths,
   };
 }
 
-async function copyAndVerify(imagePath, device, expected) {
+function deviceNodeIdentity(path) {
+  const value = lstatSync(path);
+  return { dev: value.dev, ino: value.ino, rdev: value.rdev, mode: value.mode };
+}
+
+function sameNodeIdentity(actual, expected) {
+  return expected && actual.dev === expected.dev && actual.ino === expected.ino && actual.rdev === expected.rdev && actual.mode === expected.mode;
+}
+
+async function hashOpenedExtent(handle, bytes) {
+  const hash = createHash("sha256");
+  const chunk = Buffer.allocUnsafe(Math.min(4 * 1024 * 1024, Math.max(1, bytes)));
+  let offset = 0;
+  while (offset < bytes) {
+    const wanted = Math.min(chunk.length, bytes - offset);
+    const { bytesRead } = await handle.read(chunk, 0, wanted, offset);
+    if (bytesRead === 0) break;
+    hash.update(chunk.subarray(0, bytesRead));
+    offset += bytesRead;
+  }
+  return { bytes: offset, sha256: hash.digest("hex") };
+}
+
+async function copyAndVerify(imagePath, device, expected, expectedTarget = undefined, binding = undefined) {
   const source = await open(imagePath, "r");
   let clear;
   try {
@@ -99,8 +123,24 @@ async function copyAndVerify(imagePath, device, expected) {
   if (clear.length !== expected.bytes || digest !== expected.sha256) {
     throw new Error("release image changed after receipt validation; target was not opened");
   }
-  const target = await open(device, "r+");
+  const targetFlags = binding?.exclusive
+    ? constants.O_RDWR | constants.O_EXCL | (constants.O_NOFOLLOW ?? 0)
+    : "r+";
+  const target = await open(device, targetFlags);
   try {
+    const openedIdentity = await target.stat();
+    if (expectedTarget && !sameNodeIdentity(openedIdentity, expectedTarget.nodeIdentity)) {
+      throw new Error("target device identity changed between inspection and open; nothing was written");
+    }
+    if (expectedTarget && !openedIdentity.isBlockDevice()) {
+      throw new Error("opened target is not the inspected block device; nothing was written");
+    }
+    if (binding?.reinspect) {
+      const boundInspection = binding.reinspect();
+      if (JSON.stringify(boundInspection) !== JSON.stringify(binding.expectedInspection)) {
+        throw new Error("target safety state changed after exclusive open; nothing was written");
+      }
+    }
     let offset = 0;
     while (offset < expected.bytes) {
       const bytesRead = Math.min(4 * 1024 * 1024, expected.bytes - offset);
@@ -113,23 +153,33 @@ async function copyAndVerify(imagePath, device, expected) {
       offset += bytesRead;
     }
     await target.sync();
+    const readback = await hashOpenedExtent(target, expected.bytes);
+    if (readback.bytes !== expected.bytes || readback.sha256 !== expected.sha256) throw new Error("installed image readback does not match the validated release image");
+    return readback;
   } finally {
     await target.close();
   }
-  const readback = await sha256File(device, expected.bytes);
-  if (readback.bytes !== expected.bytes || readback.sha256 !== expected.sha256) throw new Error("installed image readback does not match the validated release image");
-  return readback;
 }
 
 export function realBackend(platform = process.platform) {
+  const inspect = (device) => {
+    if (platform === "darwin") return macDiskInfo(device);
+    if (platform === "linux") return linuxDiskInfo(device);
+    throw new Error(`unsupported installer platform: ${platform}`);
+  };
   return {
     kind: "real",
-    inspect(device) {
-      if (platform === "darwin") return macDiskInfo(device);
-      if (platform === "linux") return linuxDiskInfo(device);
-      throw new Error(`unsupported installer platform: ${platform}`);
+    inspect,
+    writeImage(imagePath, device, expected, expectedTarget, expectedInspection) {
+      if (platform !== "linux") {
+        throw new Error("real internal-disk writes are supported only from Linux, where an exclusive block-device open can be required");
+      }
+      return copyAndVerify(imagePath, device, expected, expectedTarget, {
+        exclusive: true,
+        expectedInspection,
+        reinspect: () => inspect(device),
+      });
     },
-    writeImage: copyAndVerify,
   };
 }
 

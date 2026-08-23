@@ -27,7 +27,7 @@ export async function runInstaller(options, backend = realBackend()) {
   if (!reassessment.allowed || JSON.stringify(reinspected) !== JSON.stringify(inspected)) {
     throw new Error("refusing install: target identity or safety state changed after confirmation");
   }
-  const readback = await backend.writeImage(options.image, inspected.info.path, validatedImage);
+  const readback = await backend.writeImage(options.image, inspected.info.path, validatedImage, reinspected.info, reinspected);
   return { ...report, installed: true, readback };
 }
 

@@ -1,5 +1,6 @@
 #!/usr/bin/env node
-import { readFile, stat } from "node:fs/promises";
+import { constants } from "node:fs";
+import { open } from "node:fs/promises";
 import { resolve } from "node:path";
 import { decryptFile, encryptFile, generateRecoveryKey } from "./encrypted-image.mjs";
 
@@ -17,10 +18,17 @@ async function main() {
   const keyFile = arg("--recovery-key-file");
   if (!input || !output || !keyFile) throw new Error("encrypt/decrypt require --input, --output, and --recovery-key-file");
   const keyPath = resolve(keyFile);
-  const keyStat = await stat(keyPath);
-  if (!keyStat.isFile()) throw new Error("recovery key path must be a regular file");
-  if ((keyStat.mode & 0o077) !== 0) throw new Error("recovery key file must not be readable or writable by group/others (use chmod 600)");
-  const key = (await readFile(keyPath, "utf8")).trim();
+  const noFollow = constants.O_NOFOLLOW ?? 0;
+  const keyHandle = await open(keyPath, constants.O_RDONLY | noFollow);
+  let key;
+  try {
+    const keyStat = await keyHandle.stat();
+    if (!keyStat.isFile()) throw new Error("recovery key path must be a regular file");
+    if ((keyStat.mode & 0o077) !== 0) throw new Error("recovery key file must not be readable or writable by group/others (use chmod 600)");
+    key = (await keyHandle.readFile("utf8")).trim();
+  } finally {
+    await keyHandle.close();
+  }
   if (command === "encrypt") await encryptFile(resolve(input), resolve(output), key);
   else if (command === "decrypt") await decryptFile(resolve(input), resolve(output), key);
   else throw new Error("usage: encrypted-image-cli.mjs keygen | encrypt/decrypt --input PATH --output PATH --recovery-key-file PATH");

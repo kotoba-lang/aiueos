@@ -82,9 +82,13 @@ sudo node os/aiueos/installer/install.mjs --install \
 ```
 
 The complete written extent is read back and checked against the validated
-digest. The target is inspected again after confirmation and before opening it
-for writing; any identity or safety-state change aborts. The tool intentionally
-cannot install beside Windows on the same disk;
+digest. Real writes are Linux-only: the target block device must accept an
+exclusive, no-symlink open, is inspected again while that descriptor remains
+open, and is written and read back through that same descriptor. macOS can run
+the dry inspection but real internal-disk writes are refused because this
+implementation cannot obtain the equivalent exclusive block-device lock there.
+Any identity or safety-state change aborts. The tool intentionally cannot
+install beside Windows on the same disk;
 use a physically separate empty disk. Firmware boot-order changes remain a
 manual operation.
 
