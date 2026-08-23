@@ -28,13 +28,19 @@
   admits KERNEL.ELF Kotoba `aiueos-wm-hit` (two overlapping boot
   rects, z-front at overlap is 2, miss-front at 40,40 is 1, raise
   is 1). Hosted JVM `wm` does not count. After guest WM, hosted
-  leftover is still `:native-compositor-absent` (one guest scanout,
-  virtio-input synthetic, P5).
+  leftover is still `:native-compositor-absent` (one virtio-gpu
+  resource, virtio-input synthetic, P5). Guest paint:
+  `clojure -M:compositor guest-paint` admits KERNEL.ELF painting both
+  boot rects in Kotoba z-order and sampling the overlap pixel. Hosted
+  JVM `wm` does not count. A key-order paint (window 1 on top at
+  overlap) is leftover `:key-order-paint`. After guest paint, hosted
+  leftover is still `:native-compositor-absent` (virtio-input
+  synthetic, permission broker, native component runtime, P5).
 
   Exit 0 = the named command admitted. Exit 1 = refused. Exit 3 =
   QEMU/firmware/serial/browser could not be answered.
 
-  Commands: `clojure -M:compositor smoke` | `gpu` | `wm` | `ime` | `kanji` | `kami` | `guest-ime` | `guest-wm` | `serve`"
+  Commands: `clojure -M:compositor smoke` | `gpu` | `wm` | `ime` | `kanji` | `kami` | `guest-ime` | `guest-wm` | `guest-paint` | `serve`"
   (:require [aiueos.compositor.desktop :as desktop]
             [aiueos.phone-bind :as pb]
             [clojure.string :as str]
@@ -175,6 +181,51 @@
     {:green? false :exit 1 :reason :guest-wm-absent
      :leftover [:guest-wm-absent]}))
 
+(defn guest-paint-ok?
+  "True only when KERNEL.ELF serial says both boot rects were painted
+  in Kotoba z-order and the overlap pixel followed front, not key
+  order. Hosted JVM WM serial does not count."
+  [serial]
+  (boolean
+   (and (string? serial)
+        (re-find #"(?m)^AIUEOS_GUEST_PAINT_OK boot-overlap=2 raised-overlap=1 key-order=0" serial)
+        (not (re-find #"AIUEOS_COMPOSITOR_WM_OK" serial)))))
+
+(defn guest-paint-result
+  "Classify a KERNEL.ELF boot for compositor `guest-paint`.
+  Hosted `clojure -M:compositor wm` is the named red."
+  [{:keys [serial qemu-unmeasured? hosted-wm?]}]
+  (cond
+    qemu-unmeasured?
+    {:green? false :exit 3 :reason :unmeasured :leftover [:unmeasured]}
+
+    (or hosted-wm?
+        (re-find #"AIUEOS_COMPOSITOR_WM_OK" (or serial "")))
+    {:green? false :exit 1 :reason :hosted-wm-does-not-count
+     :leftover [:hosted-wm-does-not-count]}
+
+    (guest-paint-ok? serial)
+    {:green? true :exit 0 :reason :guest-paint-z-order :leftover []}
+
+    (re-find #"(?m)^AIUEOS_GUEST_PAINT leftover=fb-too-small" (or serial ""))
+    {:green? false :exit 1 :reason :fb-too-small :leftover [:fb-too-small]}
+
+    (re-find #"(?m)^AIUEOS_GUEST_PAINT leftover=one-guest-scanout" (or serial ""))
+    {:green? false :exit 1 :reason :one-guest-scanout :leftover [:one-guest-scanout]}
+
+    (re-find #"(?m)^AIUEOS_GUEST_PAINT leftover=key-order-paint" (or serial ""))
+    {:green? false :exit 1 :reason :key-order-paint :leftover [:key-order-paint]}
+
+    (re-find #"(?m)^AIUEOS_GUEST_PAINT leftover=always-front-paint" (or serial ""))
+    {:green? false :exit 1 :reason :always-front-paint :leftover [:always-front-paint]}
+
+    (re-find #"(?m)^AIUEOS_GUEST_PAINT leftover=vector-miss" (or serial ""))
+    {:green? false :exit 1 :reason :vector-miss :leftover [:vector-miss]}
+
+    :else
+    {:green? false :exit 1 :reason :guest-paint-absent
+     :leftover [:guest-paint-absent]}))
+
 (defn html-has-desktop-face?
   [html]
   (and (re-find #"dads-button" html)
@@ -250,6 +301,14 @@
   (boolean
    (and (html-has-guest-ime-face? html)
         (re-find #"clojure -M:compositor guest-wm" html))))
+
+(defn html-has-guest-paint-face?
+  "SPA names the KERNEL.ELF guest paint gate. Guest WM without
+  `clojure -M:compositor guest-paint` is red for this face."
+  [html]
+  (boolean
+   (and (html-has-guest-wm-face? html)
+        (re-find #"clojure -M:compositor guest-paint" html))))
 
 (defn presenter-is-kami-webgpu?
   "The compiled bundle must be kami.webgpu (init!/draw!), not a stub
@@ -473,6 +532,10 @@
        []
        (io/file (repo-root) "build" "aiueos" "compositor-guest-wm-receipt.edn"))
 
+     (defn guest-paint-receipt-file
+       []
+       (io/file (repo-root) "build" "aiueos" "compositor-guest-paint-receipt.edn"))
+
      (defn write-gpu-receipt!
        [receipt]
        (let [f (gpu-receipt-file)]
@@ -490,6 +553,13 @@
      (defn write-guest-wm-receipt!
        [receipt]
        (let [f (guest-wm-receipt-file)]
+         (io/make-parents f)
+         (spit f (with-out-str (pprint/pprint receipt)))
+         f))
+
+     (defn write-guest-paint-receipt!
+       [receipt]
+       (let [f (guest-paint-receipt-file)]
          (io/make-parents f)
          (spit f (with-out-str (pprint/pprint receipt)))
          f))
@@ -639,6 +709,48 @@
              (if (:green? r)
                (println "AIUEOS_COMPOSITOR_GUEST_WM_OK")
                (println (str "AIUEOS_COMPOSITOR_GUEST_WM not-green leftover="
+                             (pr-str (:leftover r)))))
+             r))))
+
+     (defn run-guest-paint
+       "Guest GOP paint of two z-ordered boot rects. Hosted JVM WM is red."
+       []
+       (let [script (uefi-smoke)]
+         (if-not (.isFile script)
+           (let [r (guest-paint-result {:qemu-unmeasured? true})]
+             (write-guest-paint-receipt!
+              (assoc r :measured-at (str (java.time.Instant/now))
+                     :command "clojure -M:compositor guest-paint"
+                     :why :smoke-script-missing))
+             (println "AIUEOS_COMPOSITOR_GUEST_PAINT leftover=:unmeasured")
+             r)
+           (let [boot (run-uefi-2d!)
+                 measured? (serial-measured? (:serial boot))
+                 r (guest-paint-result {:serial (:serial boot)
+                                        :qemu-unmeasured? (not measured?)
+                                        :hosted-wm? false})
+                 receipt (assoc r
+                                :aiueos.compositor/guest-paint-receipt 1
+                                :measured-at (str (java.time.Instant/now))
+                                :command "clojure -M:compositor guest-paint"
+                                :profile :uefi-qemu-guest-paint
+                                :uefi-smoke-exit (:exit boot)
+                                :serial-path (:serial-path boot)
+                                :note "Green only when guest serial has GUEST_PAINT_OK boot-overlap=2 raised-overlap=1 key-order=0. Hosted clojure -M:compositor wm does not count. virtio-input synthetic-smoke remains. Native Phase 6 compositor leftover. P5 UNVERIFIED.")]
+             (write-guest-paint-receipt! receipt)
+             (println "AIUEOS_COMPOSITOR_GUEST_PAINT_PROFILE=uefi-qemu")
+             (println (str "AIUEOS_COMPOSITOR_GUEST_PAINT_SERIAL=" (:serial-path boot)))
+             (println (str "AIUEOS_COMPOSITOR_GUEST_PAINT_RECEIPT="
+                           (.getPath (guest-paint-receipt-file))))
+             (println (str "AIUEOS_COMPOSITOR_GUEST_PAINT_LEFTOVER="
+                           (pr-str (:leftover r))))
+             (when (:serial boot)
+               (doseq [line (str/split-lines (:serial boot))
+                       :when (re-find #"AIUEOS_GUEST_PAINT" line)]
+                 (println (str/replace line #"\r$" ""))))
+             (if (:green? r)
+               (println "AIUEOS_COMPOSITOR_GUEST_PAINT_OK")
+               (println (str "AIUEOS_COMPOSITOR_GUEST_PAINT not-green leftover="
                              (pr-str (:leftover r)))))
              r))))
 
@@ -1077,5 +1189,10 @@
              (flush)
              (System/exit (int (:exit r))))
 
-           (do (println "usage: clojure -M:compositor [smoke|gpu|wm|ime|kanji|kami|guest-ime|guest-wm|serve]")
+           "guest-paint"
+           (let [r (run-guest-paint)]
+             (flush)
+             (System/exit (int (:exit r))))
+
+           (do (println "usage: clojure -M:compositor [smoke|gpu|wm|ime|kanji|kami|guest-ime|guest-wm|guest-paint|serve]")
                (System/exit 3)))))))

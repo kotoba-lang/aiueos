@@ -122,6 +122,10 @@ extern int aiueos_paging_initialize(void);
 extern int aiueos_framebuffer_initialize(const struct aiueos_boot_info *boot);
 extern int aiueos_desktop_surface_ready(void);
 extern int aiueos_desktop_surface_bind_scanout(uint32_t width, uint32_t height);
+extern int aiueos_desktop_wm_rects_fit(void);
+extern int aiueos_desktop_wm_paint(uint64_t front);
+extern uint32_t aiueos_desktop_wm_stored_color(uint64_t window_id);
+extern uint32_t aiueos_desktop_sample_pixel(uint32_t x, uint32_t y);
 extern int aiueos_acpi_initialize(const void *rsdp);
 extern int aiueos_dma_test_policy_allows_unisolated(void);
 extern int aiueos_vtd_initialize(void);
@@ -806,6 +810,48 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
       } else {
         debug_string("AIUEOS_GUEST_WM leftover=vector-miss\n");
         serial_string("AIUEOS_GUEST_WM leftover=vector-miss\r\n");
+      }
+    }
+    /* Guest paint (ADR-0092). C fills both boot rects back-then-front
+       from Kotoba's front id, then samples the overlap pixel. Painting
+       key-order (window 1 last) is leftover :key-order-paint. Painting
+       window 2 last regardless of raise is leftover :always-front-paint.
+       Do not qemu_exit: gpu/cloud/guest-ime/guest-wm stay green without
+       this line. */
+    {
+      uint64_t boot_front = kotoba_aiueos_wm_hit(2, 2, 100, 80);
+      uint64_t raise_front = kotoba_aiueos_wm_hit(2, 1, 100, 80);
+      uint32_t c1 = aiueos_desktop_wm_stored_color(1);
+      uint32_t c2 = aiueos_desktop_wm_stored_color(2);
+      uint32_t boot_pix, raise_pix;
+      if (!aiueos_desktop_wm_rects_fit()) {
+        debug_string("AIUEOS_GUEST_PAINT leftover=fb-too-small\n");
+        serial_string("AIUEOS_GUEST_PAINT leftover=fb-too-small\r\n");
+      } else if (!aiueos_desktop_wm_paint(boot_front)) {
+        debug_string("AIUEOS_GUEST_PAINT leftover=one-guest-scanout\n");
+        serial_string("AIUEOS_GUEST_PAINT leftover=one-guest-scanout\r\n");
+      } else {
+        boot_pix = aiueos_desktop_sample_pixel(100, 80);
+        if (!aiueos_desktop_wm_paint(raise_front)) {
+          debug_string("AIUEOS_GUEST_PAINT leftover=one-guest-scanout\n");
+          serial_string("AIUEOS_GUEST_PAINT leftover=one-guest-scanout\r\n");
+        } else {
+          raise_pix = aiueos_desktop_sample_pixel(100, 80);
+          if (boot_pix == c1) {
+            debug_string("AIUEOS_GUEST_PAINT leftover=key-order-paint\n");
+            serial_string("AIUEOS_GUEST_PAINT leftover=key-order-paint\r\n");
+          } else if (raise_pix == c2) {
+            debug_string("AIUEOS_GUEST_PAINT leftover=always-front-paint\n");
+            serial_string("AIUEOS_GUEST_PAINT leftover=always-front-paint\r\n");
+          } else if (boot_front == 2 && raise_front == 1 &&
+                     boot_pix == c2 && raise_pix == c1) {
+            debug_string("AIUEOS_GUEST_PAINT_OK boot-overlap=2 raised-overlap=1 key-order=0\n");
+            serial_string("AIUEOS_GUEST_PAINT_OK boot-overlap=2 raised-overlap=1 key-order=0\r\n");
+          } else {
+            debug_string("AIUEOS_GUEST_PAINT leftover=vector-miss\n");
+            serial_string("AIUEOS_GUEST_PAINT leftover=vector-miss\r\n");
+          }
+        }
       }
     }
     if (!(pci_result & 8) || !aiueos_desktop_surface_bind_scanout(

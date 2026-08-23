@@ -41,6 +41,85 @@ int aiueos_desktop_surface_bind_scanout(uint32_t width, uint32_t height) {
   return desktop_surface_ready && desktop_surface.width == width && desktop_surface.height == height;
 }
 
+static uint32_t pixel(uint32_t rgb, uint32_t format);
+static void rectangle(volatile uint32_t *fb, uint32_t stride, uint32_t format,
+                      uint32_t x, uint32_t y, uint32_t w, uint32_t h,
+                      uint32_t color);
+static uint64_t sample_hash(volatile uint32_t *fb, uint32_t width,
+                            uint32_t height, uint32_t stride);
+
+/* Boot-desktop WM rects (ADR-0091 hit geometry). C fills and samples;
+   Kotoba names which id is front. RGB survives format-0 vs BGR swap as
+   distinct stored values. */
+#define AIUEOS_WM_WIN1_X 32U
+#define AIUEOS_WM_WIN1_Y 32U
+#define AIUEOS_WM_WIN1_W 720U
+#define AIUEOS_WM_WIN1_H 540U
+#define AIUEOS_WM_WIN1_RGB 0x00aa2222U
+#define AIUEOS_WM_WIN2_X 96U
+#define AIUEOS_WM_WIN2_Y 72U
+#define AIUEOS_WM_WIN2_W 640U
+#define AIUEOS_WM_WIN2_H 480U
+#define AIUEOS_WM_WIN2_RGB 0x0022aa55U
+
+static int wm_rect_fits(uint32_t x, uint32_t y, uint32_t w, uint32_t h) {
+  return desktop_surface_ready && w && h &&
+    x < desktop_surface.width && y < desktop_surface.height &&
+    w <= desktop_surface.width - x && h <= desktop_surface.height - y;
+}
+
+int aiueos_desktop_wm_rects_fit(void) {
+  return wm_rect_fits(AIUEOS_WM_WIN1_X, AIUEOS_WM_WIN1_Y,
+                      AIUEOS_WM_WIN1_W, AIUEOS_WM_WIN1_H) &&
+    wm_rect_fits(AIUEOS_WM_WIN2_X, AIUEOS_WM_WIN2_Y,
+                 AIUEOS_WM_WIN2_W, AIUEOS_WM_WIN2_H);
+}
+
+uint32_t aiueos_desktop_wm_stored_color(uint64_t window_id) {
+  uint32_t rgb = 0;
+  if (window_id == 1) rgb = AIUEOS_WM_WIN1_RGB;
+  else if (window_id == 2) rgb = AIUEOS_WM_WIN2_RGB;
+  else return 0;
+  if (!desktop_surface_ready) return 0;
+  return pixel(rgb, desktop_surface.pixel_format);
+}
+
+static void paint_wm_window(uint64_t window_id) {
+  if (window_id == 1)
+    rectangle(desktop_surface_pixels, desktop_surface.stride,
+              desktop_surface.pixel_format, AIUEOS_WM_WIN1_X, AIUEOS_WM_WIN1_Y,
+              AIUEOS_WM_WIN1_W, AIUEOS_WM_WIN1_H, AIUEOS_WM_WIN1_RGB);
+  else if (window_id == 2)
+    rectangle(desktop_surface_pixels, desktop_surface.stride,
+              desktop_surface.pixel_format, AIUEOS_WM_WIN2_X, AIUEOS_WM_WIN2_Y,
+              AIUEOS_WM_WIN2_W, AIUEOS_WM_WIN2_H, AIUEOS_WM_WIN2_RGB);
+}
+
+int aiueos_desktop_wm_paint(uint64_t front) {
+  uint64_t back;
+  if (!aiueos_desktop_wm_rects_fit()) return 0;
+  if (front != 1 && front != 2) return 0;
+  back = (front == 2) ? 1 : 2;
+  paint_wm_window(back);
+  paint_wm_window(front);
+  desktop_surface.generation += 1;
+  desktop_surface.content_hash =
+    sample_hash(desktop_surface_pixels, desktop_surface.width,
+                desktop_surface.height, desktop_surface.stride);
+  desktop_surface.damage_x = AIUEOS_WM_WIN1_X;
+  desktop_surface.damage_y = AIUEOS_WM_WIN1_Y;
+  desktop_surface.damage_width = AIUEOS_WM_WIN1_W;
+  desktop_surface.damage_height = AIUEOS_WM_WIN1_H;
+  return 1;
+}
+
+uint32_t aiueos_desktop_sample_pixel(uint32_t x, uint32_t y) {
+  if (!desktop_surface_ready || x >= desktop_surface.width ||
+      y >= desktop_surface.height)
+    return 0;
+  return desktop_surface_pixels[(uint64_t)y * desktop_surface.stride + x];
+}
+
 static uint32_t pixel(uint32_t rgb, uint32_t format) {
   if (format == 0) return rgb;
   return ((rgb & 0xffU) << 16) | (rgb & 0xff00U) | ((rgb >> 16) & 0xffU);

@@ -353,6 +353,52 @@
                  "clojure -M:compositor guest-ime native compositor</html>")))
       "guest-ime lede without the guest-wm command is not the guest WM face"))
 
+(deftest guest-paint-serial-is-the-guest-paint-gate
+  (testing "KERNEL.ELF z-order overlap pixel is green"
+    (is (comp/guest-paint-ok?
+         "AIUEOS_GUEST_PAINT_OK boot-overlap=2 raised-overlap=1 key-order=0\n"))
+    (is (:green? (comp/guest-paint-result
+                  {:serial "AIUEOS_GUEST_PAINT_OK boot-overlap=2 raised-overlap=1 key-order=0\n"}))))
+  (testing "key-order paint is leftover"
+    (let [r (comp/guest-paint-result
+             {:serial "AIUEOS_GUEST_PAINT leftover=key-order-paint\n"})]
+      (is (not (:green? r)))
+      (is (= 1 (:exit r)))
+      (is (= :key-order-paint (:reason r)))))
+  (testing "always-front paint is leftover"
+    (let [r (comp/guest-paint-result
+             {:serial "AIUEOS_GUEST_PAINT leftover=always-front-paint\n"})]
+      (is (not (:green? r)))
+      (is (= :always-front-paint (:reason r)))))
+  (testing "one-scanout refuse is leftover"
+    (let [r (comp/guest-paint-result
+             {:serial "AIUEOS_GUEST_PAINT leftover=one-guest-scanout\n"})]
+      (is (= :one-guest-scanout (:reason r)))))
+  (testing "hosted JVM WM serial does not count"
+    (let [r (comp/guest-paint-result
+             {:serial "AIUEOS_COMPOSITOR_WM_OK\n"})]
+      (is (not (:green? r)))
+      (is (= :hosted-wm-does-not-count (:reason r))))
+    (let [r (comp/guest-paint-result {:hosted-wm? true :serial ""})]
+      (is (= :hosted-wm-does-not-count (:reason r)))))
+  (testing "unmeasured is exit 3, not a silent pass"
+    (let [r (comp/guest-paint-result {:qemu-unmeasured? true})]
+      (is (= 3 (:exit r)))
+      (is (= :unmeasured (:reason r))))))
+
+(deftest generated-spa-is-the-guest-paint-face
+  (is (comp/html-has-guest-paint-face? (pb/session-html))
+      "gate is red until #desktop names clojure -M:compositor guest-paint")
+  (is (not (comp/html-has-guest-paint-face?
+            (str "<html>href=\"#session\" href=\"#desktop\" "
+                 "id=\"ime-bar\" id=\"ime-preedit\" id=\"ime-toggle\" "
+                 "data-ime id=\"ime-candidates\" id=\"wm-stage\" "
+                 "class=\"wm-window\" class=\"wm-window\" wm-titlebar "
+                 "dads-chip-label data-raise dads-heading kami.webgpu "
+                 "clojure -M:compositor guest-ime "
+                 "clojure -M:compositor guest-wm native compositor</html>")))
+      "guest-wm lede without the guest-paint command is not the guest paint face"))
+
 (deftest presenter-bundle-is-kami-webgpu
   (let [f (io/file "apps/session/kami-presenter.js")]
     (is (.isFile f) "compile :kami-presenter before this gate")
