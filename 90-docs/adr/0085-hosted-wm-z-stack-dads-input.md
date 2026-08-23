@@ -20,8 +20,8 @@ this WM.
 
 Not executable, and stated here rather than at the end:
 
-- **IME is leftover `:ime-absent`.** Named here so absence is not a silent
-  pass. WM green does not include IME.
+- **IME is ADR-0086.** WM green does not include IME conversion. After
+  IME lands, leftover on a boot desktop is `:kanji-absent`.
 - **This is not a native guest WM.** Surfaces live in the hosted JVM
   compositor (`window-session-state`). No second WM was invented.
   `kuro` remains the terminal model. kami-engine remains GPU IR.
@@ -30,8 +30,8 @@ Not executable, and stated here rather than at the end:
   keyboard.
 - **P5 a real machine is UNVERIFIED.** This Mac is the QEMU host. QEMU
   ≠ P5. USB OVMF is forbidden as P5. No physical boot was invented.
-- **CertVerify, CACAO write, physical boot, and IME remain.** The Chrome
-  OS-shaped desktop goal is **not complete**.
+- **CertVerify, CACAO write, and physical boot remain.** IME is ADR-0086.
+  The Chrome OS-shaped desktop goal is **not complete**.
 
 ## Context
 
@@ -66,7 +66,8 @@ red if `hit-window` ignores z-stack.
 4. Gate: `clojure -M:compositor wm`. No QEMU. Exit 0 only when two
    surfaces, one-surface red, z-order ≠ key-order, raise changes front,
    occlusion, input-target `[:panel focused]`, DADS SPA face, and HTTP
-   raise/pointer agree. IME prints `WM_IME leftover=:ime-absent`.
+   raise/pointer agree. IME is not required. Leftover print is `:kanji-absent`
+   once IME is attached (ADR-0086).
 5. Keep `clojure -M:compositor gpu` and phone-bind headless argv.
 
 ## P5 — still UNVERIFIED
@@ -77,7 +78,7 @@ the QEMU host. Attached USB is not an aiueos machine. See ADR-0084.
 ## Consequences
 
 README Desktop can say hosted WM is proven on this Mac when
-`compositor wm` is green, and must still say IME leftover, P5 UNVERIFIED,
+`compositor wm` is green, and must still say kanji leftover / P5 UNVERIFIED,
 and the Chrome OS-shaped desktop **goal is not complete**. ADR-0079
 remains the named-partial compositor *process* + PCI listing. ADR-0084
 remains guest 2D. This ADR is the WM discriminator.

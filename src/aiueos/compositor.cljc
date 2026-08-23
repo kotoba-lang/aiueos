@@ -12,12 +12,17 @@
 
   Hosted WM: `clojure -M:compositor wm` admits two stacked surfaces,
   raise that changes z-order, DADS title bars, and pointer routing to
-  the focused guest. IME is leftover. Guest 2D stays `gpu`.
+  the focused guest. WM does **not** require IME.
+
+  Hosted IME: `clojure -M:compositor ime` admits romaji→hiragana in this
+  process. IME-on consumes `ka` (guest does not see latin). Enter
+  commits `か`. IME-off is the named red (`:ime-bypass`). Kanji is
+  leftover. Guest 2D stays `gpu`.
 
   Exit 0 = the named command admitted. Exit 1 = refused. Exit 3 =
   QEMU/firmware/serial could not be answered.
 
-  Commands: `clojure -M:compositor smoke` | `gpu` | `wm` | `serve`"
+  Commands: `clojure -M:compositor smoke` | `gpu` | `wm` | `ime` | `serve`"
   (:require [aiueos.compositor.desktop :as desktop]
             [aiueos.phone-bind :as pb]
             [clojure.string :as str]
@@ -104,6 +109,18 @@
         (re-find #"dads-heading" html)
         (not (re-find #"liquid-glass" html)))))
 
+(defn html-has-ime-face?
+  "DADS candidate bar on #desktop. WM title bars without #ime-bar are red
+  for the ime gate (WM itself stays green)."
+  [html]
+  (boolean
+   (and (html-has-wm-face? html)
+        (re-find #"id=\"ime-bar\"" html)
+        (re-find #"id=\"ime-preedit\"" html)
+        (re-find #"id=\"ime-toggle\"" html)
+        (re-find #"data-ime" html)
+        (not (re-find #"liquid-glass" html)))))
+
 (defn- index-of [xs x]
   (loop [i 0]
     (cond
@@ -145,7 +162,7 @@
        [dir]
        (let [f (desktop-file dir)]
          (if (.isFile f)
-           (edn/read-string (slurp f))
+           (desktop/ensure-ime (edn/read-string (slurp f)))
            (desktop/empty-desktop))))
 
      (defn boot-or-restore
@@ -432,7 +449,7 @@
                           (and (= 200 (:code ptr))
                                (= back (:hit (:parsed ptr)))
                                (str/includes? (str (:input-target (:parsed ptr))) "panel:")))
-                 ime (desktop/ime-leftover)
+                 ime (desktop/ime-leftover d)
                  green? (and two? one-red? z-not-keys? raise-ok? occ? route-ok?
                              spa? api-ok? raise-http-ok? ptr-ok?)]
              (println (str "AIUEOS_COMPOSITOR_URL=" base "/#desktop"))
@@ -465,6 +482,86 @@
                              " api=" api-ok?
                              " raise-http=" raise-http-ok?
                              " ptr=" ptr-ok?)))
+             {:exit (if green? 0 1)
+              :green? green?})
+           (finally
+             (when-let [rt @http] (pb/stop-http! rt))))))
+
+     (defn run-ime
+       "Hosted IME. No QEMU. Red if IME-on leaks latin `ka` to the guest."
+       [{:keys [dir]}]
+       (let [dir (io/file (or dir (str (System/getProperty "java.io.tmpdir")
+                                       "/aiueos-compositor-ime")))
+             http (atom nil)]
+         (try
+           (io/make-parents (desktop-file dir))
+           (when (.isFile (desktop-file dir))
+             (.delete (desktop-file dir)))
+           (let [d (desktop/boot-desktop)
+                 _ (persist! dir d)
+                 rt (pb/start-http! (make-compositor-runtime dir))
+                 _ (reset! http rt)
+                 base (pb/base-url rt)
+                 page (pb/http-get (str base "/"))
+                 html (:body page)
+                 spa? (and (= 200 (:code page)) (html-has-ime-face? html))
+                 api (pb/http-get (str base "/api/compositor/desktop"))
+                 api-ok? (boolean
+                          (and (= 200 (:code api))
+                               (str/includes? (:body api) "\"ime?\":true")
+                               (str/includes? (:body api) "kanji-absent")))
+                 k1 (pb/http-post (str base "/api/compositor/key") {:key "k"})
+                 k2 (pb/http-post (str base "/api/compositor/key") {:key "a"})
+                 ent (pb/http-post (str base "/api/compositor/key") {:key "Enter"})
+                 on-k (and (= 200 (:code k1))
+                           (true? (:consumed? (:parsed k1)))
+                           (= "" (or (:guest-text (:parsed k1)) "")))
+                 on-a (and (= 200 (:code k2))
+                           (true? (:consumed? (:parsed k2)))
+                           (= "" (or (:guest-text (:parsed k2)) ""))
+                           (= "か" (or (:preedit (:parsed k2)) "")))
+                 on-commit (and (= 200 (:code ent))
+                                (= "か" (or (:guest-text (:parsed ent)) ""))
+                                (str/includes? (str (:committed (:parsed ent))) "か"))
+                 leaked? (or (true? (:latin-leaked? (:parsed k1)))
+                             (true? (:latin-leaked? (:parsed k2)))
+                             (re-find #"[a-zA-Z]" (str (:guest-text (:parsed k1))))
+                             (re-find #"[a-zA-Z]" (str (:guest-text (:parsed k2)))))
+                 off (pb/http-post (str base "/api/compositor/ime") {:on? false})
+                 o1 (pb/http-post (str base "/api/compositor/key") {:key "k"})
+                 o2 (pb/http-post (str base "/api/compositor/key") {:key "a"})
+                 off-ok? (and (= 200 (:code off))
+                              (false? (:on? (:parsed off)))
+                              (= 200 (:code o1))
+                              (false? (:consumed? (:parsed o1)))
+                              (= "k" (or (:guest-text (:parsed o1)) ""))
+                              (= 200 (:code o2))
+                              (= "a" (or (:guest-text (:parsed o2)) ""))
+                              (str/includes? (str (:guest-log (:parsed o2))) "ka"))
+                 green? (and spa? api-ok? on-k on-a on-commit (not leaked?) off-ok?)]
+             (println (str "AIUEOS_COMPOSITOR_URL=" base "/#desktop"))
+             (println (str "AIUEOS_COMPOSITOR_IME_SPA=" (if spa? "admitted" "refused")))
+             (println (str "AIUEOS_COMPOSITOR_IME_ON="
+                           (if (and on-k on-a on-commit (not leaked?))
+                             "admitted" "refused")))
+             (println (str "AIUEOS_COMPOSITOR_IME_BYPASS="
+                           (if off-ok? "refused-as-required" "falsely-consumed")))
+             (println (str "AIUEOS_COMPOSITOR_IME_LEFTOVER=:kanji-absent"))
+             (when green? (println "AIUEOS_COMPOSITOR_IME_OK"))
+             (when-not green?
+               (println (str "AIUEOS_COMPOSITOR_IME_FAIL"
+                             " spa=" spa?
+                             " api=" api-ok?
+                             " on-k=" on-k
+                             " on-a=" on-a
+                             " commit=" on-commit
+                             " leaked=" (boolean leaked?)
+                             " off=" off-ok?
+                             " k1=" (pr-str (:parsed k1))
+                             " k2=" (pr-str (:parsed k2))
+                             " ent=" (pr-str (:parsed ent))
+                             " o1=" (pr-str (:parsed o1))
+                             " o2=" (pr-str (:parsed o2)))))
              {:exit (if green? 0 1)
               :green? green?})
            (finally
@@ -506,5 +603,13 @@
              (flush)
              (System/exit (int (:exit r))))
 
-           (do (println "usage: clojure -M:compositor [smoke|gpu|wm|serve]")
+           "ime"
+           (let [r (run-ime {:dir (or (System/getenv "AIUEOS_COMPOSITOR_IME_DIR")
+                                      (.getPath (java.io.File.
+                                                 (System/getProperty "java.io.tmpdir")
+                                                 "aiueos-compositor-ime")))})]
+             (flush)
+             (System/exit (int (:exit r))))
+
+           (do (println "usage: clojure -M:compositor [smoke|gpu|wm|ime|serve]")
                (System/exit 3)))))))

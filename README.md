@@ -31,7 +31,7 @@ native only when its artifact receipt has empty `c_sources`,
 | Kernel execution | **not yet** — context switch, preemptive scheduler, ring 3, syscall entry/exit, capability handle table all still reference-profile only |
 | Hardware | **not yet** — PCI, DMA, IOMMU, MSI-X, virtio, NVMe, USB HID are reference C with QEMU evidence, not compiler-emitted |
 | Boot and release | **working** — deterministic GPT disk and El Torito ISO from one builder, byte-identical recovery ESP with proven firmware fallback, update and rollback receipts, RSA-2048 release-signature verification, durable crash receipts, initramfs, Multiboot2/GRUB |
-| Desktop | **partial** — hosted WM (ADR-0085) stacks two `window-session-state` surfaces in the same DADS `#desktop`; raise changes z-order; `clojure -M:compositor wm`. Guest 2D create/flush is `clojure -M:compositor gpu` (ADR-0084). IME leftover `:ime-absent`. **P5 UNVERIFIED**. Not a finished Chrome OS-shaped desktop |
+| Desktop | **partial** — hosted WM (ADR-0085) stacks two `window-session-state` surfaces in the same DADS `#desktop`; raise changes z-order; `clojure -M:compositor wm`. Guest 2D create/flush is `clojure -M:compositor gpu` (ADR-0084). hosted IME romaji→kana is `clojure -M:compositor ime` (ADR-0086). Kanji leftover `:kanji-absent`. **P5 UNVERIFIED**. Not a finished Chrome OS-shaped desktop |
 | Bare-metal net (P2) | **green on QEMU UEFI** — guest TLS 1.3 + HTTPS GET of empty raw CID with SHA-256 admit (ADR-0082). Hosted `cloud-live` / session smoke / host curl do not count. Chain/CertVerify still not checked |
 
 **Every gate above except P5's claim is QEMU/OVMF.** P5 real-machine boot is
@@ -359,6 +359,7 @@ The same `apps/session` DADS SPA is the shell. A compositor process owns `window
 clojure -M:compositor smoke   # hosted SPA + surfaces + PCI listing
 clojure -M:compositor gpu     # KERNEL.ELF CREATE+FLUSH (not PCI listing)
 clojure -M:compositor wm      # hosted WM: ≥2 surfaces, z-order, DADS, input routing
+clojure -M:compositor ime     # hosted IME: ka→か, off-path latin leak is red
 ```
 
 Expected `smoke` markers:
@@ -376,13 +377,15 @@ Expected `smoke` markers:
 
 `gpu` exit 0 means guest serial has `AIUEOS_VIRTIO_GPU_CREATE result=ok` and `AIUEOS_VIRTIO_GPU_FLUSH result=ok` (ADR-0084). GET_DISPLAY_INFO without those lines is leftover `:gpu-2d-create-flush-absent`. Exit 1 is a refusal. Exit 3 means QEMU/firmware/serial could not be answered.
 
-`wm` exit 0 means two surfaces stack, one-surface is red, raise changes the front, overlap hit ≠ map key order, DADS title bars are in the SPA, and pointer routing names the focused guest (ADR-0085). IME prints leftover `:ime-absent`. That is **not** a finished desktop.
+`wm` exit 0 means two surfaces stack, one-surface is red, raise changes the front, overlap hit ≠ map key order, DADS title bars are in the SPA, and pointer routing names the focused guest (ADR-0085). IME is not required for `wm`.
+
+`ime` exit 0 means IME-on consumes `ka` (no latin to the guest), Enter commits `か`, and IME-off delivers `ka` (ADR-0086 named red). Kanji leftover `:kanji-absent`. That is **not** a finished desktop.
 
 ```bash
 clojure -M:compositor serve   # same SPA; compositor owns surfaces; Ctrl-C to stop
 ```
 
-`clojure -M:phone-bind smoke` stays headless **without** the GPU device. Display-present (動線 D) is extra, not the only bind path. IME remains leftover. P5 remains UNVERIFIED. CertVerify, CACAO write, and physical boot remain. The Chrome OS-shaped desktop goal is not complete.
+`clojure -M:phone-bind smoke` stays headless **without** the GPU device. Display-present (動線 D) is extra, not the only bind path. Kanji conversion remains leftover. P5 remains UNVERIFIED. CertVerify, CACAO write, and physical boot remain. The Chrome OS-shaped desktop goal is not complete.
 
 
 ## Bare-metal cloud reach (P2) — green on QEMU UEFI
