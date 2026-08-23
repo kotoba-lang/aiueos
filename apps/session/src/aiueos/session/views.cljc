@@ -109,9 +109,21 @@
      "）です。前面へで z-order が変わります。"
      " virtio-gpu 2D は "
      [:code "clojure -M:compositor gpu"]
-     "。IME は leftover です。"]
+     "。IME は romaji からかなへ（"
+     [:code "clojure -M:compositor ime"]
+     "）。漢字変換は leftover です。"]
+    [:div {:id "ime-bar"
+           :class "ime-bar dds-ext-row"
+           :data-ime "on"
+           :aria-label "input method"}
+     (dds/chip-label "かな" {:color "blue" :style "filled-1"})
+     (dds/heading 2 "変換中" {:size "16" :id "ime-preedit-label"})
+     [:p {:id "ime-preedit" :class "session-lede" :aria-live "polite"}]
+     [:p {:id "ime-buf" :class "session-lede"}]
+     (dds/button "IME 切" {:id "ime-toggle" :size "sm" :type :outline})]
     [:div {:id "wm-stage"
            :class "wm-stage"
+           :tabindex "0"
            :aria-label "window-session-state"}
      (wm-window {:id 1 :title "session" :guest-kind :session :src "/#session"})
      (wm-window {:id 2 :title "guest-surface" :guest-kind :kami :src "kami.webgpu.ir"})]

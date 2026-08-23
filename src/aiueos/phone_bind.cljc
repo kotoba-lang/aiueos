@@ -760,6 +760,38 @@
                                              :hit (or (:hit ev) 0)
                                              :title-bar? (boolean (:title-bar? ev))}))))
 
+                    (and (= "POST" method) (= path "/api/compositor/key")
+                         (:desktop rt))
+                    (let [req (json-req ex)
+                          k (or (:key req) "")
+                          [d ev] (compositor-desktop/route-key @(:desktop rt) k)
+                          f (io/file (:dir rt) "state" "desktop.edn")]
+                      (reset! (:desktop rt) d)
+                      (io/make-parents f)
+                      (spit f (pr-str (compositor-desktop/persistable d)))
+                      (send-bytes! ex 200 "application/json; charset=utf-8"
+                                   (->json (compositor-desktop/wm-event
+                                            d :key
+                                            {:key (str k)
+                                             :consumed? (boolean (:consumed? ev))
+                                             :reason (name (:reason ev))
+                                             :guest-text (or (:guest-text ev) "")
+                                             :latin-leaked? (boolean (:latin-leaked? ev))}))))
+
+                    (and (= "POST" method) (= path "/api/compositor/ime")
+                         (:desktop rt))
+                    (let [req (json-req ex)
+                          on? (boolean (:on? req))
+                          d (compositor-desktop/set-ime @(:desktop rt) on?)
+                          f (io/file (:dir rt) "state" "desktop.edn")]
+                      (reset! (:desktop rt) d)
+                      (io/make-parents f)
+                      (spit f (pr-str (compositor-desktop/persistable d)))
+                      (send-bytes! ex 200 "application/json; charset=utf-8"
+                                   (->json (compositor-desktop/wm-event
+                                            d :ime
+                                            {:on? on?}))))
+
                     (and (= "GET" method) (= path "/api/session/guests"))
                     (send-bytes! ex 200 "application/json; charset=utf-8"
                                  (->json (session-guest/public-list

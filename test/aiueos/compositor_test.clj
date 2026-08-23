@@ -10,6 +10,7 @@
             [aiueos.compositor.desktop :as desktop]
             [aiueos.phone-bind :as pb]
             [clojure.java.io :as io]
+            [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]))
 
 (deftest boot-desktop-owns-surfaces
@@ -120,10 +121,10 @@
       (is (nil? (desktop/wm-refuse-reason d)))
       (is (not (desktop/wm-admitted? one)))
       (is (= :one-surface (desktop/wm-refuse-reason one)))))
-  (testing "IME leftover is named, not a silent pass"
-    (let [ime (desktop/ime-leftover)]
-      (is (false? (:ime? ime)))
-      (is (= :ime-absent (:leftover ime))))))
+  (testing "IME leftover on a boot desktop is kanji, not ime-absent"
+    (let [st (desktop/ime-leftover (desktop/boot-desktop))]
+      (is (true? (:ime? st)))
+      (is (= :kanji-absent (:leftover st))))))
 
 (deftest wm-hit-prefers-z-stack-not-key-order
   (let [d (desktop/boot-desktop)
@@ -156,7 +157,8 @@
     (is (= back (:hit ev)))
     (is (= [:panel back] (:input-target ev))
         "clicks route to the focused guest; fails if z-order is ignored")
-    (is (= :ime-absent (:leftover (desktop/ime-leftover))))))
+    (is (= :kanji-absent (:leftover (desktop/ime-leftover raised)))
+        "WM green does not require IME conversion; leftover is kanji")))
 
 (deftest generated-spa-is-the-wm-face
   (is (comp/html-has-wm-face? (pb/session-html))
@@ -167,4 +169,41 @@
                  "window.__aiueosSessionAlive "
                  "<pre id=\"compositor-out\">{surfaces:1}</pre></html>")))
       "a JSON dump of one surface is not a window manager"))
+
+(deftest ime-on-consumes-latin-and-commits-kana
+  (let [d (desktop/boot-desktop)
+        [d1 e1] (desktop/route-key d "k")
+        [d2 e2] (desktop/route-key d1 "a")
+        [d3 e3] (desktop/route-key d2 "Enter")]
+    (is (true? (:consumed? e1)))
+    (is (= "" (:guest-text e1)))
+    (is (false? (:latin-leaked? e1)))
+    (is (true? (:consumed? e2)))
+    (is (= "" (:guest-text e2)))
+    (is (= "か" (:preedit e2)))
+    (is (= "か" (:guest-text e3)))
+    (is (desktop/ime-admitted? d3))
+    (is (not (re-find #"[a-zA-Z]" (str (get-in d3 [:ime :guest-log])))))))
+
+(deftest ime-off-is-the-named-red
+  (let [d (desktop/set-ime (desktop/boot-desktop) false)
+        [d1 e1] (desktop/route-key d "k")
+        [d2 e2] (desktop/route-key d1 "a")]
+    (is (false? (:consumed? e1)))
+    (is (= :ime-bypass (:reason e1)))
+    (is (= "k" (:guest-text e1)))
+    (is (= "a" (:guest-text e2)))
+    (is (str/includes? (str (get-in d2 [:ime :guest-log])) "ka"))
+    (is (not (desktop/ime-admitted? d2)))))
+
+(deftest generated-spa-is-the-ime-face
+  (is (comp/html-has-ime-face? (pb/session-html))
+      "gate is red until #desktop has the DADS IME candidate bar")
+  (is (not (comp/html-has-ime-face?
+            (str "<html>href=\"#session\" href=\"#setup\" href=\"#desktop\" "
+                 "dads-button jp-go-dds id=\"kami-viewport\" kami.webgpu "
+                 "window.__aiueosSessionAlive id=\"wm-stage\" "
+                 "class=\"wm-window\" class=\"wm-window\" wm-titlebar "
+                 "dads-chip-label data-raise dads-heading</html>")))
+      "WM decorations without #ime-bar are not the IME gate"))
 

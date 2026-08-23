@@ -49,6 +49,45 @@ async function refreshStatus() {
 }
 
 
+function applyIme(j) {
+  var bar = document.getElementById("ime-bar");
+  var pre = document.getElementById("ime-preedit");
+  var buf = document.getElementById("ime-buf");
+  var tog = document.getElementById("ime-toggle");
+  if (!bar) return;
+  var on = j.on !== undefined ? j.on : j["on?"];
+  bar.setAttribute("data-ime", on ? "on" : "off");
+  if (pre) pre.textContent = j.preedit || "";
+  if (buf) buf.textContent = j.buf || "";
+  if (tog) tog.textContent = on ? "IME 切" : "IME 入";
+}
+
+function bindImeOnce() {
+  if (window.__aiueosImeBound) return;
+  var stage = document.getElementById("wm-stage");
+  var tog = document.getElementById("ime-toggle");
+  window.__aiueosImeBound = true;
+  if (stage) {
+    stage.addEventListener("keydown", function (ev) {
+      if (ev.metaKey || ev.ctrlKey || ev.altKey) return;
+      var k = ev.key;
+      if (!k) return;
+      if (k.length === 1 || k === "Enter" || k === "Escape" || k === "Backspace" || k === " ") {
+        ev.preventDefault();
+        postKey(k === " " ? "Space" : k);
+      }
+    });
+  }
+  if (tog) {
+    tog.addEventListener("click", function (ev) {
+      ev.preventDefault();
+      var bar = document.getElementById("ime-bar");
+      var on = bar && bar.getAttribute("data-ime") === "on";
+      postIme(!on);
+    });
+  }
+}
+
 function bindWmOnce() {
   if (window.__aiueosWmBound) return;
   var stage = document.getElementById("wm-stage");
@@ -90,11 +129,13 @@ async function refreshDesktop() {
   var el = document.getElementById("compositor-out");
   var input = document.getElementById("wm-input-out");
   bindWmOnce();
+  bindImeOnce();
   try {
     var r = await fetch("/api/compositor/desktop");
     var j = await r.json();
     if (el) el.textContent = JSON.stringify(j, null, 2);
     applyWmWindows(j);
+    applyIme(j);
     presentKami(j["kami-ir"] || j.kami_ir || j.kamiIr);
     if (input && !input.dataset.wmTouched) {
       input.textContent = pretty({
@@ -102,6 +143,8 @@ async function refreshDesktop() {
         front: (j["z-stack"] || [])[0],
         focused: j.focused,
         ime: j["ime-leftover"],
+        on: j["on?"],
+        preedit: j.preedit,
         decoration: j.decoration
       });
     }
@@ -124,6 +167,46 @@ async function postRaise(id) {
       input.dataset.wmTouched = "1";
       input.textContent = pretty(j);
     }
+    await refreshDesktop();
+  } catch (e) {
+    if (input) input.textContent = String(e);
+  }
+}
+
+async function postKey(key) {
+  var input = document.getElementById("wm-input-out");
+  try {
+    var r = await fetch("/api/compositor/key", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ key: key })
+    });
+    var j = await r.json();
+    if (input) {
+      input.dataset.wmTouched = "1";
+      input.textContent = pretty(j);
+    }
+    applyIme(j);
+    await refreshDesktop();
+  } catch (e) {
+    if (input) input.textContent = String(e);
+  }
+}
+
+async function postIme(on) {
+  var input = document.getElementById("wm-input-out");
+  try {
+    var r = await fetch("/api/compositor/ime", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ "on?": !!on })
+    });
+    var j = await r.json();
+    if (input) {
+      input.dataset.wmTouched = "1";
+      input.textContent = pretty(j);
+    }
+    applyIme(j);
     await refreshDesktop();
   } catch (e) {
     if (input) input.textContent = String(e);

@@ -9,8 +9,10 @@
 
   Hosted WM (ADR-0085): two overlapping surfaces, `raise` changes
   z-order, pointer hit-test is front-to-back, DADS title bars live in
-  `apps/session` `#desktop`. IME is a named leftover."
-  (:require [clojure.string :as str]
+  `apps/session` `#desktop`. Hosted IME is ADR-0086 (romaji→kana
+  in this process). Kanji conversion remains leftover."
+  (:require [aiueos.compositor.ime :as ime]
+            [clojure.string :as str]
             [window-session-state :as wss]
             [window-session-state.compositor :as compositor]
             [window-session-state.input-router :as input-router]
@@ -39,6 +41,22 @@
   front of the z-stack. Scanning window ids in insertion order would
   always return the session surface (id 1) and is the named red."
   {:x 100 :y 80})
+
+(defn attach-ime
+  "Hosted IME on this desktop. Focus follows the front window."
+  [desktop]
+  (let [focused (compositor/focused-window (:compositor desktop))]
+    (assoc desktop :ime (ime/boot {:focused focused}))))
+
+(defn ensure-ime
+  "Restore of a pre-IME desktop.edn still gets an IME. Absence is named
+  leftover, not a silent pass."
+  [desktop]
+  (if (:ime desktop)
+    (let [focused (or (compositor/focused-window (:compositor desktop))
+                      (:focused (:ime desktop)))]
+      (assoc-in desktop [:ime :focused] focused))
+    (attach-ime desktop)))
 
 (defn empty-desktop
   "A compositor with no surfaces. Restore of a wiped file lands here.
@@ -73,7 +91,7 @@
                  :title "guest-surface"
                  :x 96 :y 72 :w 640 :h 480
                  :content (window/kami-content kami-session-ir)}))]
-    d))
+    (attach-ime d)))
 
 (defn one-surface-desktop
   "A single notes iframe. WM gate is red: stacking cannot be proven."
@@ -95,7 +113,8 @@
   [desktop]
   (select-keys desktop [:kind :wiped? :session-fragment :windows
                         :next-window-id :clock :compositor
-                        :input-router :taskbar :launcher :notifications]))
+                        :input-router :taskbar :launcher :notifications
+                        :ime]))
 
 (defn restore-admitted?
   "True only when the restored value still owns at least one windowed
@@ -122,7 +141,11 @@
   [desktop window-id]
   (let [id (parse-window-id window-id)]
     (if (and id (contains? (:windows desktop) id))
-      (wss/focus-window desktop id)
+      (let [d' (wss/focus-window desktop id)]
+        (if (:ime d')
+          (assoc-in d' [:ime :focused]
+                    (compositor/focused-window (:compositor d')))
+          d'))
       desktop)))
 
 (defn hit-window
@@ -176,11 +199,55 @@
           (window/rect-contains? rect px py)))))
 
 (defn ime-leftover
-  "Named leftover. Do not treat absence as WM green or as a silent pass."
-  []
-  {:ime? false
-   :leftover :ime-absent
-   :note "IME is leftover. Hosted WM (z-stack, DADS decoration, input routing) does not include IME."})
+  "Named leftover on the attached IME. Boot desktops have IME (ADR-0086);
+  leftover is then `:kanji-absent`. No-arg / no `:ime` is `:ime-absent`."
+  ([] {:ime? false
+       :leftover :ime-absent
+       :note "IME is leftover. Call with a desktop after boot."})
+  ([desktop]
+   (if-let [i (:ime desktop)]
+     {:ime? (boolean (:on? i))
+      :leftover (or (:leftover i) :kanji-absent)
+      :note "Hosted romaji→kana IME. Kanji conversion is leftover."}
+     {:ime? false
+      :leftover :ime-absent
+      :note "No IME attached."})))
+
+(defn set-ime
+  "Turn IME on or off. Off is the named red path: latin reaches the guest."
+  [desktop on?]
+  (let [d (ensure-ime desktop)
+        focused (compositor/focused-window (:compositor d))]
+    (assoc d :ime (assoc (:ime d)
+                         :on? (boolean on?)
+                         :buf ""
+                         :preedit ""
+                         :focused focused))))
+
+(defn route-key
+  "IME first. On-path consumes latin into the buffer; commit emits kana
+  to the focused guest. Off-path is `:ime-bypass` (named red)."
+  [desktop key]
+  (let [d (ensure-ime desktop)
+        focused (compositor/focused-window (:compositor d))
+        ime (assoc (:ime d) :focused focused)
+        [ime' ev] (ime/handle-key ime key)
+        d' (assoc d :ime ime')]
+    [d' (assoc ev :latin-leaked? (ime/latin-leaked? ev))]))
+
+(defn ime-admitted?
+  "True when IME-on converted romaji and did not leak latin. Used by
+  the ime gate after feeding keys; WM does not require this."
+  [desktop]
+  (let [i (:ime desktop)
+        committed (str (:committed i))
+        guest (str (:guest-log i))]
+    (boolean
+     (and i
+          (:on? i)
+          (str/includes? committed "か")
+          (not (re-find #"[a-zA-Z]" committed))
+          (not (re-find #"[a-zA-Z]" guest))))))
 
 (defn wm-admitted?
   "True only when at least two surfaces stack and raising the back one
@@ -232,7 +299,8 @@
   (let [zs (vec (compositor/z-stack (:compositor desktop)))
         focused (compositor/focused-window (:compositor desktop))
         target (input-router/resolve-target (:input-router desktop))
-        ime (ime-leftover)]
+        ime (ime-leftover desktop)
+        snap (when (:ime desktop) (ime/public-snapshot (:ime desktop)))]
     (merge {:ok (wm-admitted? desktop)
             :wm? (wm-admitted? desktop)
             :op (name op)
@@ -242,7 +310,12 @@
             :surface-count (count (:windows desktop))
             :input-target (input-target-label target)
             :ime? (:ime? ime)
-            :ime-leftover (name (:leftover ime))}
+            :ime-leftover (name (:leftover ime))
+            :on? (boolean (:on? snap))
+            :preedit (or (:preedit snap) "")
+            :committed (or (:committed snap) "")
+            :guest-log (or (:guest-log snap) "")
+            :buf (or (:buf snap) "")}
            extra)))
 
 (defn public-snapshot
@@ -251,7 +324,8 @@
   [desktop]
   (let [windows (:windows desktop)
         zs (vec (compositor/z-stack (:compositor desktop)))
-        ime (ime-leftover)]
+        ime (ime-leftover desktop)
+        snap (when (:ime desktop) (ime/public-snapshot (:ime desktop)))]
     {:kind (name (or (:kind desktop) :empty))
      :admitted? (restore-admitted? desktop)
      :wm? (wm-admitted? desktop)
@@ -262,6 +336,12 @@
      :surface-count (count windows)
      :ime? (:ime? ime)
      :ime-leftover (name (:leftover ime))
+     :on? (boolean (:on? snap))
+     :preedit (or (:preedit snap) "")
+     :committed (or (:committed snap) "")
+     :guest-log (or (:guest-log snap) "")
+     :buf (or (:buf snap) "")
+     :ime (or snap {:ime? false :leftover "ime-absent"})
      :windows (mapv (fn [[id w]]
                       {:id id
                        :app-id (get-in w [:component :app-id])
@@ -286,4 +366,4 @@
      :engine "window-session-state"
      :gpu-viewport "kami.webgpu.ir"
      :decoration "jp-go-dds"
-     :note "Hosted WM: window-session-state z-stack + DADS title bars. IME leftover. Not P5."}))
+     :note "Hosted WM + hosted IME (romaji→kana). Kanji leftover. Not P5."}))
