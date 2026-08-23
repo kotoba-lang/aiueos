@@ -120,7 +120,9 @@
      [:code "clojure -M:compositor guest-wm"]
      "（KERNEL.ELF の Kotoba が z-hit）。ゲスト側 paint は "
      [:code "clojure -M:compositor guest-paint"]
-     "（KERNEL.ELF が z-order で 2 枚を塗る）。native compositor は leftover です。描画は "
+     "（KERNEL.ELF が z-order で 2 枚を塗る）。ゲスト側 input は "
+     [:code "clojure -M:compositor guest-input"]
+     "（KERNEL.ELF が virtio-keyboard の used-ring を読む）。native compositor は leftover です。描画は "
      [:code "kami.webgpu"]
      " の "
      [:code "clojure -M:compositor kami"]

@@ -34,13 +34,18 @@
   boot rects in Kotoba z-order and sampling the overlap pixel. Hosted
   JVM `wm` does not count. A key-order paint (window 1 on top at
   overlap) is leftover `:key-order-paint`. After guest paint, hosted
-  leftover is still `:native-compositor-absent` (virtio-input
-  synthetic, permission broker, native component runtime, P5).
+  leftover is still `:native-compositor-absent` (permission
+  broker, native component runtime, one virtio-gpu resource, P5).
+  Guest input: `clojure -M:compositor guest-input` admits KERNEL.ELF
+  consuming a virtio-keyboard used-ring event. C filling the envelope
+  is leftover `:synthetic-smoke`. After guest input, hosted leftover
+  is still `:native-compositor-absent` (permission broker, native
+  component runtime, one virtio-gpu resource, P5).
 
   Exit 0 = the named command admitted. Exit 1 = refused. Exit 3 =
   QEMU/firmware/serial/browser could not be answered.
 
-  Commands: `clojure -M:compositor smoke` | `gpu` | `wm` | `ime` | `kanji` | `kami` | `guest-ime` | `guest-wm` | `guest-paint` | `serve`"
+  Commands: `clojure -M:compositor smoke` | `gpu` | `wm` | `ime` | `kanji` | `kami` | `guest-ime` | `guest-wm` | `guest-paint` | `guest-input` | `serve`"
   (:require [aiueos.compositor.desktop :as desktop]
             [aiueos.phone-bind :as pb]
             [clojure.string :as str]
@@ -226,6 +231,44 @@
     {:green? false :exit 1 :reason :guest-paint-absent
      :leftover [:guest-paint-absent]}))
 
+(defn guest-input-ok?
+  "True only when KERNEL.ELF serial says the desktop envelope came
+  from a virtio-input used-ring event, not the synthetic fill.
+  Hosted JVM compositor input does not count."
+  [serial]
+  (boolean
+   (and (string? serial)
+        (re-find #"(?m)^AIUEOS_GUEST_INPUT_OK eventq-used=1 synthetic=0" serial)
+        (not (re-find #"(?m)^AIUEOS_GUEST_INPUT leftover=synthetic-smoke" serial))
+        (not (re-find #"AIUEOS_COMPOSITOR_WM_OK" serial)))))
+
+(defn guest-input-result
+  "Classify a KERNEL.ELF boot for compositor `guest-input`.
+  Hosted `clojure -M:compositor wm` is the named red. C filling the
+  envelope is leftover `:synthetic-smoke`."
+  [{:keys [serial qemu-unmeasured? hosted-wm?]}]
+  (cond
+    qemu-unmeasured?
+    {:green? false :exit 3 :reason :unmeasured :leftover [:unmeasured]}
+
+    (or hosted-wm?
+        (re-find #"AIUEOS_COMPOSITOR_WM_OK" (or serial "")))
+    {:green? false :exit 1 :reason :hosted-wm-does-not-count
+     :leftover [:hosted-wm-does-not-count]}
+
+    (guest-input-ok? serial)
+    {:green? true :exit 0 :reason :guest-input-eventq :leftover []}
+
+    (re-find #"(?m)^AIUEOS_GUEST_INPUT leftover=synthetic-smoke" (or serial ""))
+    {:green? false :exit 1 :reason :synthetic-smoke :leftover [:synthetic-smoke]}
+
+    (re-find #"(?m)^AIUEOS_GUEST_INPUT leftover=eventq-empty" (or serial ""))
+    {:green? false :exit 1 :reason :eventq-empty :leftover [:eventq-empty]}
+
+    :else
+    {:green? false :exit 1 :reason :guest-input-absent
+     :leftover [:guest-input-absent]}))
+
 (defn html-has-desktop-face?
   [html]
   (and (re-find #"dads-button" html)
@@ -309,6 +352,14 @@
   (boolean
    (and (html-has-guest-wm-face? html)
         (re-find #"clojure -M:compositor guest-paint" html))))
+
+(defn html-has-guest-input-face?
+  "SPA names the KERNEL.ELF guest input gate. Guest paint without
+  `clojure -M:compositor guest-input` is red for this face."
+  [html]
+  (boolean
+   (and (html-has-guest-paint-face? html)
+        (re-find #"clojure -M:compositor guest-input" html))))
 
 (defn presenter-is-kami-webgpu?
   "The compiled bundle must be kami.webgpu (init!/draw!), not a stub
@@ -536,6 +587,10 @@
        []
        (io/file (repo-root) "build" "aiueos" "compositor-guest-paint-receipt.edn"))
 
+     (defn guest-input-receipt-file
+       []
+       (io/file (repo-root) "build" "aiueos" "compositor-guest-input-receipt.edn"))
+
      (defn write-gpu-receipt!
        [receipt]
        (let [f (gpu-receipt-file)]
@@ -564,30 +619,43 @@
          (spit f (with-out-str (pprint/pprint receipt)))
          f))
 
+     (defn write-guest-input-receipt!
+       [receipt]
+       (let [f (guest-input-receipt-file)]
+         (io/make-parents f)
+         (spit f (with-out-str (pprint/pprint receipt)))
+         f))
+
      (defn serial-measured?
        [serial]
        (boolean (and (string? serial) (re-find #"AIUEOS_" serial))))
 
      (defn run-uefi-2d!
        "Existing UEFI QEMU smoke (virtio-vga = virtio-gpu protocol).
-       No AIUEOS_TEST_NET — that is P2 and not this gate. No new .sh."
-       []
-       (let [script (uefi-smoke)]
-         (if-not (.isFile script)
-           {:ok false :unmeasured true :reason :smoke-script-missing
-            :tried (.getPath script)}
-           (let [pb (doto (ProcessBuilder. ^java.util.List
-                                           ["sh" (.getPath script)])
-                      (.directory (repo-root))
-                      (.inheritIO))
-                 proc (.start pb)
-                 exit (.waitFor proc)
-                 serial (when (.isFile (kernel-serial-file))
-                          (slurp (kernel-serial-file)))]
-             {:ok (zero? exit)
-              :exit exit
-              :serial serial
-              :serial-path (.getPath (kernel-serial-file))}))))
+       No AIUEOS_TEST_NET — that is P2 and not this gate. No new .sh.
+       extra-env is merged into the child environment (guest-input)."
+       ([] (run-uefi-2d! nil))
+       ([extra-env]
+        (let [script (uefi-smoke)]
+          (if-not (.isFile script)
+            {:ok false :unmeasured true :reason :smoke-script-missing
+             :tried (.getPath script)}
+            (let [pb (doto (ProcessBuilder. ^java.util.List
+                                            ["sh" (.getPath script)])
+                       (.directory (repo-root))
+                       (.inheritIO))
+                  _ (when extra-env
+                      (let [e (.environment pb)]
+                        (doseq [[k v] extra-env]
+                          (.put e (str k) (str v)))))
+                  proc (.start pb)
+                  exit (.waitFor proc)
+                  serial (when (.isFile (kernel-serial-file))
+                           (slurp (kernel-serial-file)))]
+              {:ok (zero? exit)
+               :exit exit
+               :serial serial
+               :serial-path (.getPath (kernel-serial-file))})))))
 
      (defn run-gpu
        "Guest 2D create/flush. PCI listing and GET_DISPLAY_INFO are reds."
@@ -751,6 +819,48 @@
              (if (:green? r)
                (println "AIUEOS_COMPOSITOR_GUEST_PAINT_OK")
                (println (str "AIUEOS_COMPOSITOR_GUEST_PAINT not-green leftover="
+                             (pr-str (:leftover r)))))
+             r))))
+
+     (defn run-guest-input
+       "Guest virtio-keyboard used-ring. C filling the envelope is red."
+       []
+       (let [script (uefi-smoke)]
+         (if-not (.isFile script)
+           (let [r (guest-input-result {:qemu-unmeasured? true})]
+             (write-guest-input-receipt!
+              (assoc r :measured-at (str (java.time.Instant/now))
+                     :command "clojure -M:compositor guest-input"
+                     :why :smoke-script-missing))
+             (println "AIUEOS_COMPOSITOR_GUEST_INPUT leftover=:unmeasured")
+             r)
+           (let [boot (run-uefi-2d! {"AIUEOS_GUEST_INPUT" "1"})
+                 measured? (serial-measured? (:serial boot))
+                 r (guest-input-result {:serial (:serial boot)
+                                        :qemu-unmeasured? (not measured?)
+                                        :hosted-wm? false})
+                 receipt (assoc r
+                                :aiueos.compositor/guest-input-receipt 1
+                                :measured-at (str (java.time.Instant/now))
+                                :command "clojure -M:compositor guest-input"
+                                :profile :uefi-qemu-guest-input
+                                :uefi-smoke-exit (:exit boot)
+                                :serial-path (:serial-path boot)
+                                :note "Green only when guest serial has GUEST_INPUT_OK eventq-used=1 synthetic=0. Hosted clojure -M:compositor wm does not count. C synthetic-smoke is leftover. Permission broker and native component runtime remain. P5 UNVERIFIED.")]
+             (write-guest-input-receipt! receipt)
+             (println "AIUEOS_COMPOSITOR_GUEST_INPUT_PROFILE=uefi-qemu")
+             (println (str "AIUEOS_COMPOSITOR_GUEST_INPUT_SERIAL=" (:serial-path boot)))
+             (println (str "AIUEOS_COMPOSITOR_GUEST_INPUT_RECEIPT="
+                           (.getPath (guest-input-receipt-file))))
+             (println (str "AIUEOS_COMPOSITOR_GUEST_INPUT_LEFTOVER="
+                           (pr-str (:leftover r))))
+             (when (:serial boot)
+               (doseq [line (str/split-lines (:serial boot))
+                       :when (re-find #"AIUEOS_GUEST_INPUT" line)]
+                 (println (str/replace line #"\r$" ""))))
+             (if (:green? r)
+               (println "AIUEOS_COMPOSITOR_GUEST_INPUT_OK")
+               (println (str "AIUEOS_COMPOSITOR_GUEST_INPUT not-green leftover="
                              (pr-str (:leftover r)))))
              r))))
 
@@ -1194,5 +1304,10 @@
              (flush)
              (System/exit (int (:exit r))))
 
-           (do (println "usage: clojure -M:compositor [smoke|gpu|wm|ime|kanji|kami|guest-ime|guest-wm|guest-paint|serve]")
+           "guest-input"
+           (let [r (run-guest-input)]
+             (flush)
+             (System/exit (int (:exit r))))
+
+           (do (println "usage: clojure -M:compositor [smoke|gpu|wm|ime|kanji|kami|guest-ime|guest-wm|guest-paint|guest-input|serve]")
                (System/exit 3)))))))

@@ -31,7 +31,7 @@ native only when its artifact receipt has empty `c_sources`,
 | Kernel execution | **not yet** — context switch, preemptive scheduler, ring 3, syscall entry/exit, capability handle table all still reference-profile only |
 | Hardware | **not yet** — PCI, DMA, IOMMU, MSI-X, virtio, NVMe, USB HID are reference C with QEMU evidence, not compiler-emitted |
 | Boot and release | **working** — deterministic GPT disk and El Torito ISO from one builder, byte-identical recovery ESP with proven firmware fallback, update and rollback receipts, RSA-2048 release-signature verification, durable crash receipts, initramfs, Multiboot2/GRUB |
-| Desktop | **partial** — hosted WM (ADR-0085) stacks two `window-session-state` surfaces in the same DADS `#desktop`; raise changes z-order; `clojure -M:compositor wm`. Guest 2D create/flush is `clojure -M:compositor gpu` (ADR-0084). hosted IME romaji→kana is `clojure -M:compositor ime` (ADR-0086). hosted kanji (Space converts か→加) is `clojure -M:compositor kanji` (ADR-0088). hosted kami.webgpu presenter (`init!`/`draw!` on `#kami-viewport`) is `clojure -M:compositor kami` (ADR-0089). Guest IME is KERNEL.ELF Kotoba `k`+`a`→U+304B (`clojure -M:compositor guest-ime`, ADR-0090). Guest WM is KERNEL.ELF Kotoba z-hit of two overlapping boot rects (`clojure -M:compositor guest-wm`, ADR-0091). Guest paint is KERNEL.ELF filling those rects in z-order (`clojure -M:compositor guest-paint`, ADR-0092). Leftover `:native-compositor-absent` (one virtio-gpu resource, virtio-input synthetic, permission broker). **P5 UNVERIFIED**. Not a finished Chrome OS-shaped desktop |
+| Desktop | **partial** — hosted WM (ADR-0085) stacks two `window-session-state` surfaces in the same DADS `#desktop`; raise changes z-order; `clojure -M:compositor wm`. Guest 2D create/flush is `clojure -M:compositor gpu` (ADR-0084). hosted IME romaji→kana is `clojure -M:compositor ime` (ADR-0086). hosted kanji (Space converts か→加) is `clojure -M:compositor kanji` (ADR-0088). hosted kami.webgpu presenter (`init!`/`draw!` on `#kami-viewport`) is `clojure -M:compositor kami` (ADR-0089). Guest IME is KERNEL.ELF Kotoba `k`+`a`→U+304B (`clojure -M:compositor guest-ime`, ADR-0090). Guest WM is KERNEL.ELF Kotoba z-hit of two overlapping boot rects (`clojure -M:compositor guest-wm`, ADR-0091). Guest paint is KERNEL.ELF filling those rects in z-order (`clojure -M:compositor guest-paint`, ADR-0092). Guest input is KERNEL.ELF consuming a virtio-keyboard used-ring event (`clojure -M:compositor guest-input`, ADR-0093). Leftover `:native-compositor-absent` (permission broker, native component runtime, one virtio-gpu resource). **P5 UNVERIFIED**. Not a finished Chrome OS-shaped desktop |
 | Bare-metal net (P2) | **green on QEMU UEFI** — guest TLS 1.3 + HTTPS GET of empty raw CID with SHA-256 admit (ADR-0082). CertificateVerify ECDSA P-256 is `clojure -M:bare-metal cert-verify` (ADR-0087). Hosted `cloud-live` / session smoke / host curl do not count. Chain-to-anchor still leftover |
 
 **Every gate above except P5's claim is QEMU/OVMF.** P5 real-machine boot is
@@ -365,6 +365,7 @@ clojure -M:compositor kami    # hosted kami.webgpu init!/draw!; sky-clear is red
 clojure -M:compositor guest-ime  # KERNEL.ELF Kotoba k+a→U+304B
 clojure -M:compositor guest-wm   # KERNEL.ELF Kotoba z-hit of two overlapping rects
 clojure -M:compositor guest-paint # KERNEL.ELF paints both rects in Kotoba z-order
+clojure -M:compositor guest-input # KERNEL.ELF consumes a virtio-keyboard used-ring event
 ```
 
 Expected `smoke` markers:
@@ -394,7 +395,9 @@ Expected `smoke` markers:
 
 `guest-wm` exit 0 means KERNEL.ELF serial has `AIUEOS_GUEST_WM_OK two-surfaces z-hit=2 miss-front=1 raise=1 one-surface=0` from Kotoba `kotoba_aiueos_wm_hit` (ADR-0091). Hosted `clojure -M:compositor wm` / `AIUEOS_COMPOSITOR_WM_OK` is red. virtio-input synthetic remains. Leftover `:native-compositor-absent`. That is **not** a finished desktop.
 
-`guest-paint` exit 0 means KERNEL.ELF serial has `AIUEOS_GUEST_PAINT_OK boot-overlap=2 raised-overlap=1 key-order=0` from painting both boot rects in Kotoba z-order and sampling the overlap pixel (ADR-0092). Hosted `clojure -M:compositor wm` is red. A key-order paint is leftover `:key-order-paint`. One virtio-gpu resource and virtio-input synthetic remain. Leftover `:native-compositor-absent`. That is **not** a finished desktop.
+`guest-paint` exit 0 means KERNEL.ELF serial has `AIUEOS_GUEST_PAINT_OK boot-overlap=2 raised-overlap=1 key-order=0` from painting both boot rects in Kotoba z-order and sampling the overlap pixel (ADR-0092). Hosted `clojure -M:compositor wm` is red. A key-order paint is leftover `:key-order-paint`. Default gpu/guest-paint boots still use synthetic input. Leftover `:native-compositor-absent`. That is **not** a finished desktop.
+
+`guest-input` exit 0 means KERNEL.ELF serial has `AIUEOS_GUEST_INPUT_OK eventq-used=1 synthetic=0` from a virtio-keyboard used-ring event (ADR-0093). Hosted `clojure -M:compositor wm` is red. C filling keycode 30 is leftover `:synthetic-smoke`. HMP `sendkey` is not this gate. QMP inject is not a laptop HID and not P5. Leftover `:native-compositor-absent` (permission broker, native component runtime, one virtio-gpu resource). That is **not** a finished desktop.
 
 ```bash
 clojure -M:compositor serve   # same SPA; compositor owns surfaces; Ctrl-C to stop

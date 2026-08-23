@@ -253,11 +253,13 @@ the browser remains the workspace/focus/permission authority, while the kernel
 only admits validated surfaces and hardware input. Direct framebuffer mapping
 is not granted to the browser. The input boundary uses a versioned, sequenced
 envelope (`pointer`, `key`, or `text`); raw virtio DMA memory stays kernel-only
-and IME interpretation belongs to the browser desktop authority. The QEMU
-smoke configures a real modern `virtio-keyboard-pci` event queue, but its event
-is explicitly synthetic because headless HMP `sendkey` is routed to the legacy
-console rather than virtio-keyboard. Production builds do not enable that
-fallback and require a device-completed, length/type/value-validated event.
+and IME interpretation belongs to the browser desktop authority. The default
+QEMU smoke still compiles with `AIUEOS_INPUT_SMOKE_SYNTHETIC` because gpu /
+guest-paint must stay green without a used-ring event. `clojure -M:compositor
+guest-input` (ADR-0093) rebuilds without that ifdef and admits only a
+virtio-keyboard used-ring event injected by QMP `input-send-event`. HMP
+`sendkey` is not that gate. Production builds do not enable the synthetic
+fallback.
 Virtio 2D resource creation, backing attachment, transfer/flush, a compositor,
 mapping the surface into a user component, ambient display authority, and an
 invented browser runtime are intentionally excluded.

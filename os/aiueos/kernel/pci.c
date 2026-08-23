@@ -157,7 +157,11 @@ struct aiueos_desktop_input_event {
 #define AIUEOS_DESKTOP_INPUT_PRESSED 1
 static struct aiueos_desktop_input_event desktop_input_event;
 static int desktop_input_ready;
+static int desktop_input_from_eventq;
+static int desktop_input_eventq_empty;
 int aiueos_desktop_input_event_ready(void) { return desktop_input_ready; }
+int aiueos_desktop_input_from_eventq(void) { return desktop_input_from_eventq; }
+int aiueos_desktop_input_eventq_empty(void) { return desktop_input_eventq_empty; }
 const struct aiueos_desktop_input_event *aiueos_desktop_input_event(void) {
   return desktop_input_ready ? &desktop_input_event : 0;
 }
@@ -1111,9 +1115,15 @@ static int virtio_input(uint8_t b, uint8_t d, uint8_t f) {
   struct virtq_used *used = aiueos_allocate_physical_page();
   struct virtio_input_event *event = aiueos_allocate_physical_page();
   if (!desc || !avail || !used || !event) return 0;
-  desc[0] = (struct virtq_desc){(uint64_t)(uintptr_t)event,sizeof(*event),VIRTQ_DESC_F_WRITE,0};
-  avail->ring[0] = 0; __asm__ volatile("" ::: "memory"); avail->index = 1;
-  volatile uint16_t *doorbell = prepare_queue(cfg,&caps,notify_base,1,desc,avail,used);
+  /* Four slots so EV_KEY + EV_SYN from virtio-keyboard both fit. Queue
+     size 1 dropped SYN and could refuse a real key. */
+  for (uint16_t i = 0; i < 4; i++) {
+    desc[i] = (struct virtq_desc){
+      (uint64_t)(uintptr_t)(event + i), sizeof(*event), VIRTQ_DESC_F_WRITE, 0};
+    avail->ring[i] = i;
+  }
+  __asm__ volatile("" ::: "memory"); avail->index = 4;
+  volatile uint16_t *doorbell = prepare_queue(cfg,&caps,notify_base,4,desc,avail,used);
   if (!doorbell) return 0;
   cfg->device_status |= VIRTIO_STATUS_DRIVER_OK;
   *doorbell = 0;
@@ -1124,27 +1134,38 @@ static int virtio_input(uint8_t b, uint8_t d, uint8_t f) {
 #endif
   for (uint32_t budget = 0; budget < AIUEOS_INPUT_POLL_BUDGET; budget++) {
     __asm__ volatile("" ::: "memory");
-    if (used->index == 1) {
-      if (used->ring[0].id != 0 || used->ring[0].length != sizeof(*event) ||
-          event->type != 1 || event->value > 2) return 0; /* EV_KEY; up/down/repeat */
-      desktop_input_event = (struct aiueos_desktop_input_event){
-        AIUEOS_DESKTOP_INPUT_ABI, sizeof(desktop_input_event), 1,
-        AIUEOS_DESKTOP_INPUT_KEY, event->code, (int32_t)event->value, 0,
-        event->value ? AIUEOS_DESKTOP_INPUT_PRESSED : 0};
-      desktop_input_ready = 1;
-      return 1;
+    uint16_t n = used->index;
+    if (n) {
+      if (n > 4) n = 4;
+      for (uint16_t i = 0; i < n; i++) {
+        uint32_t id = used->ring[i].id;
+        if (id > 3) continue;
+        struct virtio_input_event *ev = event + id;
+        if (ev->type != 1 || ev->value > 2) continue; /* EV_KEY; up/down/repeat */
+        desktop_input_event = (struct aiueos_desktop_input_event){
+          AIUEOS_DESKTOP_INPUT_ABI, sizeof(desktop_input_event), 1,
+          AIUEOS_DESKTOP_INPUT_KEY, ev->code, (int32_t)ev->value, 0,
+          ev->value ? AIUEOS_DESKTOP_INPUT_PRESSED : 0};
+        desktop_input_ready = 1;
+        desktop_input_from_eventq = 1;
+        return 1;
+      }
     }
+    if ((budget & 65535U) == 0) *doorbell = 0;
     __asm__ volatile("pause");
   }
 #ifdef AIUEOS_INPUT_SMOKE_SYNTHETIC
   /* HMP sendkey targets the emulated console/PS2 path under -display none, not
-     virtio-keyboard. Transport setup above is real; this event is test-only. */
+     virtio-keyboard. Transport setup above is real; this event is test-only.
+     guest-input (ADR-0093) builds without this ifdef and requires used-ring. */
   desktop_input_event = (struct aiueos_desktop_input_event){
     AIUEOS_DESKTOP_INPUT_ABI, sizeof(desktop_input_event), 1,
     AIUEOS_DESKTOP_INPUT_KEY, 30, 1, 0, AIUEOS_DESKTOP_INPUT_PRESSED};
   desktop_input_ready = 1;
+  desktop_input_from_eventq = 0;
   return 1;
 #endif
+  desktop_input_eventq_empty = 1;
   return 0;
 }
 
@@ -2638,6 +2659,8 @@ int aiueos_pci_enumerate(void) {
   uint32_t present = 0, virtio = 0;
   int rng_ok = 0, blk_ok = 0, input_ok = 0, gpu_ok = 0;
   desktop_input_ready = 0;
+  desktop_input_from_eventq = 0;
+  desktop_input_eventq_empty = 0;
   for (uint16_t bus = 0; bus < 256; bus++) for (uint8_t dev = 0; dev < 32; dev++) {
     uint32_t id0 = config_read((uint8_t)bus,dev,0,0);
     if ((id0 & 0xffffU) == 0xffffU) continue;

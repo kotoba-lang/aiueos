@@ -188,6 +188,8 @@ extern uint32_t aiueos_gpu_scanout_width(void);
 extern uint32_t aiueos_gpu_scanout_height(void);
 extern int aiueos_gpu_2d_create_ok(void);
 extern int aiueos_gpu_2d_flush_ok(void);
+extern int aiueos_desktop_input_from_eventq(void);
+extern int aiueos_desktop_input_eventq_empty(void);
 extern uint64_t kotoba_aiueos_ime_commit(uint64_t a, uint64_t b);
 extern uint64_t kotoba_aiueos_wm_hit(uint64_t n, uint64_t front,
                                      uint64_t px, uint64_t py);
@@ -761,12 +763,32 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
     /* The input result bit is set only after a validated event has been copied
        into the browser envelope; no second mutable readiness check is needed. */
     if (!(pci_result & 4)) {
-      serial_string("AIUEOS_VIRTIO_INPUT_FAIL queue-or-envelope\r\n"); qemu_exit(0x6f);
+      serial_string("AIUEOS_VIRTIO_INPUT_FAIL queue-or-envelope\r\n");
+      if (aiueos_desktop_input_eventq_empty()) {
+        debug_string("AIUEOS_GUEST_INPUT leftover=eventq-empty\n");
+        serial_string("AIUEOS_GUEST_INPUT leftover=eventq-empty\r\n");
+      }
+      qemu_exit(0x6f);
     }
-    debug_string("AIUEOS_VIRTIO_INPUT_OK modern-pci eventq configured synthetic-smoke\n");
-    serial_string("AIUEOS_VIRTIO_INPUT_OK modern-pci eventq configured synthetic-smoke\r\n");
+    if (aiueos_desktop_input_from_eventq()) {
+      debug_string("AIUEOS_VIRTIO_INPUT_OK modern-pci eventq configured used-ring\n");
+      serial_string("AIUEOS_VIRTIO_INPUT_OK modern-pci eventq configured used-ring\r\n");
+    } else {
+      debug_string("AIUEOS_VIRTIO_INPUT_OK modern-pci eventq configured synthetic-smoke\n");
+      serial_string("AIUEOS_VIRTIO_INPUT_OK modern-pci eventq configured synthetic-smoke\r\n");
+    }
     debug_string("AIUEOS_DESKTOP_INPUT_OK envelope-v1 sequence=1 kind=key ime-neutral\n");
     serial_string("AIUEOS_DESKTOP_INPUT_OK envelope-v1 sequence=1 kind=key ime-neutral\r\n");
+    /* Guest input (ADR-0093). C must not fill the envelope. Hosted JVM
+       compositor input does not count. Do not qemu_exit: gpu/guest-paint
+       stay green without this line. */
+    if (aiueos_desktop_input_from_eventq()) {
+      debug_string("AIUEOS_GUEST_INPUT_OK eventq-used=1 synthetic=0\n");
+      serial_string("AIUEOS_GUEST_INPUT_OK eventq-used=1 synthetic=0\r\n");
+    } else {
+      debug_string("AIUEOS_GUEST_INPUT leftover=synthetic-smoke\n");
+      serial_string("AIUEOS_GUEST_INPUT leftover=synthetic-smoke\r\n");
+    }
     /* Guest IME known-answer (ADR-0090). C does not convert. Hosted JVM
        IME does not count. latin k=107, a=97 must yield U+304B (12363).
        Returning those latin bytes is a leak. Do not qemu_exit: gpu/cloud
