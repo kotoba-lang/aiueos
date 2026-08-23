@@ -54,11 +54,13 @@ function applyIme(j) {
   var pre = document.getElementById("ime-preedit");
   var buf = document.getElementById("ime-buf");
   var tog = document.getElementById("ime-toggle");
+  var cands = document.getElementById("ime-candidates");
   if (!bar) return;
   var on = j.on !== undefined ? j.on : j["on?"];
   bar.setAttribute("data-ime", on ? "on" : "off");
   if (pre) pre.textContent = j.preedit || "";
   if (buf) buf.textContent = j.buf || "";
+  if (cands) cands.textContent = j.candidates || "";
   if (tog) tog.textContent = on ? "IME 切" : "IME 入";
 }
 

@@ -2728,12 +2728,13 @@ body { padding-left: env(safe-area-inset-left,0px); padding-right: env(safe-area
         </section>
         <section id="desktop" class="dds-ext-section session-view" data-view="desktop" hidden>
           <h1 class="dads-heading" data-size="32">デスクトップ</h1>
-          <p class="session-lede">compositor 過程が <code>window-session-state</code> の 2 枚を重ねます。タイトルバーは DADS（<code>jp-go-dds</code>）です。前面へで z-order が変わります。 virtio-gpu 2D は <code>clojure -M:compositor gpu</code>。IME は romaji からかなへ（<code>clojure -M:compositor ime</code>）。漢字変換は leftover です。</p>
+          <p class="session-lede">compositor 過程が <code>window-session-state</code> の 2 枚を重ねます。タイトルバーは DADS（<code>jp-go-dds</code>）です。前面へで z-order が変わります。 virtio-gpu 2D は <code>clojure -M:compositor gpu</code>。IME は romaji からかなへ（<code>clojure -M:compositor ime</code>）。IME はかなと漢字（<code>clojure -M:compositor kanji</code>）。ゲスト側 IME は leftover です。</p>
           <div id="ime-bar" class="ime-bar dds-ext-row" data-ime="on" aria-label="input method">
             <span class="dads-chip-label" data-style="filled-1" data-color="blue">かな</span>
             <h2 class="dads-heading" data-size="16" id="ime-preedit-label">変換中</h2>
             <p id="ime-preedit" class="session-lede" aria-live="polite"></p>
             <p id="ime-buf" class="session-lede"></p>
+            <div id="ime-candidates" aria-label="kanji candidates"></div>
             <button class="dads-button" data-type="outline" data-size="sm" id="ime-toggle" type="button">IME 切</button>
           </div>
           <div id="wm-stage" class="wm-stage" tabindex="0" aria-label="window-session-state">
@@ -2856,11 +2857,13 @@ function applyIme(j) {
   var pre = document.getElementById("ime-preedit");
   var buf = document.getElementById("ime-buf");
   var tog = document.getElementById("ime-toggle");
+  var cands = document.getElementById("ime-candidates");
   if (!bar) return;
   var on = j.on !== undefined ? j.on : j["on?"];
   bar.setAttribute("data-ime", on ? "on" : "off");
   if (pre) pre.textContent = j.preedit || "";
   if (buf) buf.textContent = j.buf || "";
+  if (cands) cands.textContent = j.candidates || "";
   if (tog) tog.textContent = on ? "IME 切" : "IME 入";
 }
 

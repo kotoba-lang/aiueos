@@ -18,8 +18,8 @@ A DADS title bar without `#ime-bar` is red for this gate.
 
 Not executable, and stated here rather than at the end:
 
-- **Kanji conversion is leftover `:kanji-absent`.** Named so absence of
-  a dictionary is not a silent pass. This slice is romaji→hiragana only.
+- **Kanji conversion is ADR-0088.** This slice stays romaji→hiragana.
+  Hosted leftover after ADR-0088 is `:guest-ime-absent`.
 - **This is not mozc and not a new west repo.** concept-lookup / repo-search
   found no IME repo (2026-08-23). `kuro` remains the terminal model.
   The compositor owns the input method (`aiueos.compositor.ime`).
@@ -49,7 +49,7 @@ while IME is on are the failure mode this gate exists to catch.
    has the IME bar, on-path `ka`+Enter commits `か` with no latin leak,
    and off-path delivers `ka` (the named red must actually be red).
 4. `clojure -M:compositor wm` does not require conversion. Its leftover
-   print becomes `:kanji-absent` once IME is attached.
+   print is `:guest-ime-absent` once ADR-0088 lands.
 
 ## P5 — still UNVERIFIED
 
@@ -59,6 +59,7 @@ the QEMU host. Attached USB is not an aiueos machine. See ADR-0084.
 ## Consequences
 
 README Desktop can say hosted IME (romaji→kana) is proven on this Mac
-when `compositor ime` is green, and must still say kanji leftover, P5
-UNVERIFIED, and the Chrome OS-shaped desktop **goal is not complete**.
-ADR-0085 remains the WM discriminator. This ADR is the IME discriminator.
+when `compositor ime` is green, and must still say guest IME leftover,
+P5 UNVERIFIED, and the Chrome OS-shaped desktop **goal is not complete**.
+ADR-0085 remains the WM discriminator. ADR-0088 is the kanji discriminator.
+This ADR is the kana discriminator.

@@ -5,6 +5,12 @@ All notable changes to **aiueos** are documented here. The format follows
 
 ## [Unreleased]
 
+### Hosted IME kanji (ADR-0088)
+- Space converts `か` to first candidate `加`; Enter commits. Gate:
+  `clojure -M:compositor kanji`. Named red is `kana-only-desktop`
+  (Space commits kana). `clojure -M:compositor ime` stays kana-only.
+  Leftover `:guest-ime-absent`. Not mozc. Not guest IME. P5 UNVERIFIED.
+
 ### Bare-metal net (P2, green on QEMU UEFI)
 - Guest TLS 1.3 (0x1301) + HTTPS GET of empty raw CID with SHA-256 admit
   (ADR-0082). Gate: `clojure -M:bare-metal cloud` EXIT=0 leftover `[]`.

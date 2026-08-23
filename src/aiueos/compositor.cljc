@@ -16,13 +16,15 @@
 
   Hosted IME: `clojure -M:compositor ime` admits romaji→hiragana in this
   process. IME-on consumes `ka` (guest does not see latin). Enter
-  commits `か`. IME-off is the named red (`:ime-bypass`). Kanji is
+  commits `か`. IME-off is the named red (`:ime-bypass`). Hosted kanji:
+  `clojure -M:compositor kanji` admits Space converting `か` to `加`.
+  Space that commits kana is leftover `:kanji-absent`. Guest IME stays
   leftover. Guest 2D stays `gpu`.
 
   Exit 0 = the named command admitted. Exit 1 = refused. Exit 3 =
   QEMU/firmware/serial could not be answered.
 
-  Commands: `clojure -M:compositor smoke` | `gpu` | `wm` | `ime` | `serve`"
+  Commands: `clojure -M:compositor smoke` | `gpu` | `wm` | `ime` | `kanji` | `serve`"
   (:require [aiueos.compositor.desktop :as desktop]
             [aiueos.phone-bind :as pb]
             [clojure.string :as str]
@@ -120,6 +122,14 @@
         (re-find #"id=\"ime-toggle\"" html)
         (re-find #"data-ime" html)
         (not (re-find #"liquid-glass" html)))))
+
+(defn html-has-kanji-face?
+  "DADS candidate list on #desktop. IME bar without #ime-candidates is
+  red for the kanji gate (kana itself stays green)."
+  [html]
+  (boolean
+   (and (html-has-ime-face? html)
+        (re-find #"id=\"ime-candidates\"" html))))
 
 (defn- index-of [xs x]
   (loop [i 0]
@@ -509,7 +519,7 @@
                  api-ok? (boolean
                           (and (= 200 (:code api))
                                (str/includes? (:body api) "\"ime?\":true")
-                               (str/includes? (:body api) "kanji-absent")))
+                               (str/includes? (:body api) "guest-ime-absent")))
                  k1 (pb/http-post (str base "/api/compositor/key") {:key "k"})
                  k2 (pb/http-post (str base "/api/compositor/key") {:key "a"})
                  ent (pb/http-post (str base "/api/compositor/key") {:key "Enter"})
@@ -546,7 +556,7 @@
                              "admitted" "refused")))
              (println (str "AIUEOS_COMPOSITOR_IME_BYPASS="
                            (if off-ok? "refused-as-required" "falsely-consumed")))
-             (println (str "AIUEOS_COMPOSITOR_IME_LEFTOVER=:kanji-absent"))
+             (println (str "AIUEOS_COMPOSITOR_IME_LEFTOVER=:guest-ime-absent"))
              (when green? (println "AIUEOS_COMPOSITOR_IME_OK"))
              (when-not green?
                (println (str "AIUEOS_COMPOSITOR_IME_FAIL"
@@ -562,6 +572,90 @@
                              " ent=" (pr-str (:parsed ent))
                              " o1=" (pr-str (:parsed o1))
                              " o2=" (pr-str (:parsed o2)))))
+             {:exit (if green? 0 1)
+              :green? green?})
+           (finally
+             (when-let [rt @http] (pb/stop-http! rt))))))
+
+     (defn run-kanji
+       "Hosted kanji. No QEMU. Red if Space commits kana while か is in
+       the dictionary, or if the SPA has no #ime-candidates."
+       [{:keys [dir]}]
+       (let [dir (io/file (or dir (str (System/getProperty "java.io.tmpdir")
+                                       "/aiueos-compositor-kanji")))
+             http (atom nil)]
+         (try
+           (io/make-parents (desktop-file dir))
+           (when (.isFile (desktop-file dir))
+             (.delete (desktop-file dir)))
+           (let [d (desktop/boot-desktop)
+                 red (desktop/kana-only-desktop)
+                 _ (persist! dir d)
+                 rt (pb/start-http! (make-compositor-runtime dir))
+                 _ (reset! http rt)
+                 base (pb/base-url rt)
+                 page (pb/http-get (str base "/"))
+                 html (:body page)
+                 spa? (and (= 200 (:code page)) (html-has-kanji-face? html))
+                 api (pb/http-get (str base "/api/compositor/desktop"))
+                 api-ok? (boolean
+                          (and (= 200 (:code api))
+                               (str/includes? (:body api) "\"ime?\":true")
+                               (str/includes? (:body api) "guest-ime-absent")))
+                 red-path (let [d1 (first (desktop/route-key red "k"))
+                                d2 (first (desktop/route-key d1 "a"))
+                                [d3 e3] (desktop/route-key d2 "Space")]
+                            (and (= "か" (get-in d2 [:ime :preedit]))
+                                 (= "か" (:guest-text e3))
+                                 (= :kanji-absent (:reason e3))
+                                 (not (desktop/kanji-admitted? d3))))
+                 k1 (pb/http-post (str base "/api/compositor/key") {:key "k"})
+                 k2 (pb/http-post (str base "/api/compositor/key") {:key "a"})
+                 sp (pb/http-post (str base "/api/compositor/key") {:key "Space"})
+                 ent (pb/http-post (str base "/api/compositor/key") {:key "Enter"})
+                 on-k (and (= 200 (:code k1))
+                           (true? (:consumed? (:parsed k1)))
+                           (= "" (or (:guest-text (:parsed k1)) "")))
+                 on-a (and (= 200 (:code k2))
+                           (= "か" (or (:preedit (:parsed k2)) "")))
+                 on-convert (and (= 200 (:code sp))
+                                 (= "加" (or (:preedit (:parsed sp)) ""))
+                                 (= "" (or (:guest-text (:parsed sp)) "")))
+                 on-commit (and (= 200 (:code ent))
+                                (= "加" (or (:guest-text (:parsed ent)) ""))
+                                (str/includes? (str (:committed (:parsed ent))) "加"))
+                 leaked? (or (true? (:latin-leaked? (:parsed k1)))
+                             (true? (:latin-leaked? (:parsed k2)))
+                             (true? (:latin-leaked? (:parsed sp)))
+                             (re-find #"[a-zA-Z]" (str (:guest-text (:parsed k1))))
+                             (re-find #"[a-zA-Z]" (str (:guest-text (:parsed k2))))
+                             (re-find #"[a-zA-Z]" (str (:guest-text (:parsed sp)))))
+                 green? (and spa? api-ok? red-path on-k on-a on-convert on-commit
+                             (not leaked?))]
+             (println (str "AIUEOS_COMPOSITOR_URL=" base "/#desktop"))
+             (println (str "AIUEOS_COMPOSITOR_KANJI_SPA="
+                           (if spa? "admitted" "refused")))
+             (println (str "AIUEOS_COMPOSITOR_KANJI_ON="
+                           (if (and on-k on-a on-convert on-commit (not leaked?))
+                             "admitted" "refused")))
+             (println (str "AIUEOS_COMPOSITOR_KANJI_ABSENT="
+                           (if red-path "refused-as-required" "falsely-converted")))
+             (println (str "AIUEOS_COMPOSITOR_KANJI_LEFTOVER=:guest-ime-absent"))
+             (when green? (println "AIUEOS_COMPOSITOR_KANJI_OK"))
+             (when-not green?
+               (println (str "AIUEOS_COMPOSITOR_KANJI_FAIL"
+                             " spa=" spa?
+                             " api=" api-ok?
+                             " red=" red-path
+                             " on-k=" on-k
+                             " on-a=" on-a
+                             " convert=" on-convert
+                             " commit=" on-commit
+                             " leaked=" (boolean leaked?)
+                             " k1=" (pr-str (:parsed k1))
+                             " k2=" (pr-str (:parsed k2))
+                             " sp=" (pr-str (:parsed sp))
+                             " ent=" (pr-str (:parsed ent)))))
              {:exit (if green? 0 1)
               :green? green?})
            (finally
@@ -611,5 +705,13 @@
              (flush)
              (System/exit (int (:exit r))))
 
-           (do (println "usage: clojure -M:compositor [smoke|gpu|wm|ime|serve]")
+           "kanji"
+           (let [r (run-kanji {:dir (or (System/getenv "AIUEOS_COMPOSITOR_KANJI_DIR")
+                                        (.getPath (java.io.File.
+                                                   (System/getProperty "java.io.tmpdir")
+                                                   "aiueos-compositor-kanji")))})]
+             (flush)
+             (System/exit (int (:exit r))))
+
+           (do (println "usage: clojure -M:compositor [smoke|gpu|wm|ime|kanji|serve]")
                (System/exit 3)))))))

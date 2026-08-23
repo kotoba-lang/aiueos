@@ -3,7 +3,7 @@
 The product face of root ADR-2608221625 **P1**. One HTML document, jp-go-dds
 (DADS), `--hig-*` via `jp-go-dds.tokens/skin-css`. Fragments `#session`
 `#desktop` `#setup` `#manage` `#devices` `#operator`. `#itonami` is the same operator view. `#desktop` is the hosted WM
-face (ADR-0085) plus hosted IME (ADR-0086); it is not a second document.
+face (ADR-0085) plus hosted IME (ADR-0086 / ADR-0088); it is not a second document.
 
 This is not `clojure -M:cloud-live check`. CID read and murakumo infer leave
 from the **session process** (`POST /api/session/read-cid`,
@@ -35,4 +35,5 @@ clojure -M:phone-bind smoke  # P1b: same SPA, headless QEMU + phone HTTP bind
 clojure -M:compositor smoke  # named-partial desktop: same SPA + surfaces + virtio-gpu-pci
 clojure -M:compositor wm     # hosted WM: two stacked windows, z-order, DADS title bars
 clojure -M:compositor ime    # hosted IME: romaji→kana in the same document
+clojure -M:compositor kanji  # hosted IME: Space converts か→加
 ```

@@ -121,10 +121,10 @@
       (is (nil? (desktop/wm-refuse-reason d)))
       (is (not (desktop/wm-admitted? one)))
       (is (= :one-surface (desktop/wm-refuse-reason one)))))
-  (testing "IME leftover on a boot desktop is kanji, not ime-absent"
+  (testing "IME leftover on a boot desktop is guest IME, not ime-absent"
     (let [st (desktop/ime-leftover (desktop/boot-desktop))]
       (is (true? (:ime? st)))
-      (is (= :kanji-absent (:leftover st))))))
+      (is (= :guest-ime-absent (:leftover st))))))
 
 (deftest wm-hit-prefers-z-stack-not-key-order
   (let [d (desktop/boot-desktop)
@@ -157,8 +157,8 @@
     (is (= back (:hit ev)))
     (is (= [:panel back] (:input-target ev))
         "clicks route to the focused guest; fails if z-order is ignored")
-    (is (= :kanji-absent (:leftover (desktop/ime-leftover raised)))
-        "WM green does not require IME conversion; leftover is kanji")))
+    (is (= :guest-ime-absent (:leftover (desktop/ime-leftover raised)))
+        "WM green does not require conversion; leftover is guest IME")))
 
 (deftest generated-spa-is-the-wm-face
   (is (comp/html-has-wm-face? (pb/session-html))
@@ -206,4 +206,40 @@
                  "class=\"wm-window\" class=\"wm-window\" wm-titlebar "
                  "dads-chip-label data-raise dads-heading</html>")))
       "WM decorations without #ime-bar are not the IME gate"))
+
+(deftest kanji-space-converts-ka-and-enter-commits
+  (let [d (desktop/boot-desktop)
+        [d1 _] (desktop/route-key d "k")
+        [d2 e2] (desktop/route-key d1 "a")
+        [d3 e3] (desktop/route-key d2 "Space")
+        [d4 e4] (desktop/route-key d3 "Enter")]
+    (is (= "か" (:preedit e2)))
+    (is (= :convert (:reason e3)))
+    (is (= "加" (:preedit e3)))
+    (is (= "" (:guest-text e3)))
+    (is (= "加" (:guest-text e4)))
+    (is (desktop/kanji-admitted? d4))
+    (is (= :guest-ime-absent (:leftover (desktop/ime-leftover d4))))
+    (is (not (re-find #"[a-zA-Z]" (str (get-in d4 [:ime :guest-log])))))))
+
+(deftest kanji-absent-space-commits-kana-is-the-named-red
+  (let [d (desktop/kana-only-desktop)
+        d1 (first (desktop/route-key d "k"))
+        d2 (first (desktop/route-key d1 "a"))
+        [d3 e3] (desktop/route-key d2 "Space")]
+    (is (= :kanji-absent (:reason e3)))
+    (is (= "か" (:guest-text e3)))
+    (is (not (desktop/kanji-admitted? d3)))
+    (is (= :kanji-absent (:leftover (desktop/ime-leftover d3))))))
+
+(deftest generated-spa-is-the-kanji-face
+  (is (comp/html-has-kanji-face? (pb/session-html))
+      "gate is red until #desktop names #ime-candidates")
+  (is (not (comp/html-has-kanji-face?
+            (str "<html>href=\"#session\" href=\"#desktop\" "
+                 "id=\"ime-bar\" id=\"ime-preedit\" id=\"ime-toggle\" "
+                 "data-ime id=\"wm-stage\" class=\"wm-window\" "
+                 "class=\"wm-window\" wm-titlebar dads-chip-label "
+                 "data-raise dads-heading kami.webgpu</html>")))
+      "IME bar without #ime-candidates is not the kanji gate"))
 
