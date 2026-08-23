@@ -14,6 +14,14 @@
   :pass-args? true
   :doc "Write the release image to a USB stick. Inspects unless --confirm repeats --device."}
 
+ :hw-probe-build
+ {:cmd ["./os/aiueos/scripts/build-hw-probe.sh"]
+  :doc "Build the bounded read-only x86_64 UEFI hardware-probe USB image."}
+
+ :hw-probe-smoke
+ {:cmd ["./os/aiueos/scripts/smoke-qemu-hw-probe.sh"]
+  :doc "Boot the hardware probe as removable USB under QEMU/OVMF and require all positive markers."}
+
  ;; The multiboot path had a smoke that nothing invoked. That is how a build
  ;; break reached main and sat there: `build-multiboot.sh` compiles
  ;; `kernel/acpi.c`, which since ADR-0024 calls two Kotoba symbols the script did
