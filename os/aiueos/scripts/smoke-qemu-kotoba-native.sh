@@ -37,4 +37,4 @@ data=Path(sys.argv[1]).read_bytes()
 if not data.endswith(b"M"):
     raise SystemExit("error: Kotoba-native memory-map handoff marker missing")
 PY
-echo "AIUEOS_KOTOBA_NATIVE_QEMU_OK no-c-boot-chain memory-map-v1 exit-boot-services cr3"
+echo "AIUEOS_KOTOBA_NATIVE_QEMU_OK no-c-boot-chain memory-map-v1 exit-boot-services cr3 gdt=tss stack=64k"

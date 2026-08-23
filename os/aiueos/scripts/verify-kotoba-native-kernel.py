@@ -22,8 +22,12 @@ if entry != 0x101000 or phentsize != 56 or phnum != 2:
 segments = [struct.unpack_from("<IIQQQQQQ", data, phoff + i * phentsize) for i in range(phnum)]
 if [segment[0] for segment in segments] != [1, 1] or [segment[1] for segment in segments] != [5, 6]:
     raise SystemExit("error: Kotoba-native kernel must contain only RX and RW PT_LOAD segments")
-if b"\x0f\x20\xd8" not in data or b"\xee" not in data or b"\xef" not in data:
+if segments[1][6] != 77824 or segments[1][5] != 77824:
+    raise SystemExit("error: Kotoba-native RW segment must contain syscall state, GDT/TSS and 64 KiB kernel stack")
+if b"\x41\x0f\x20\xda" not in data or b"\xee" not in data or b"\xef" not in data:
     raise SystemExit("error: privileged CR3/debug-port lowering evidence is absent")
+if b"\x0f\x01\x15" not in data or b"\x48\xcb" not in data or b"\x0f\x00\xd8" not in data:
+    raise SystemExit("error: image-owned GDT/TSS boot substrate is absent")
 for forbidden in (b".interp", b".dynamic", b".dynsym", b"NEEDED", b"libc"):
     if forbidden in data:
         raise SystemExit("error: dynamic/C runtime dependency found")
@@ -38,6 +42,7 @@ payload = {
     "foreign_objects": [],
     "c_sources": [],
     "dynamic_dependencies": [],
+    "machine_substrate": "gdt-tss-rsp0-stack-runtime-regions-v2",
 }
 receipt.write_text(json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n", encoding="ascii")
-print("AIUEOS_KOTOBA_NATIVE_KERNEL_OK no-c no-crt no-linker imports=0")
+print("AIUEOS_KOTOBA_NATIVE_KERNEL_OK no-c no-crt no-linker imports=0 gdt=tss stack=64k")

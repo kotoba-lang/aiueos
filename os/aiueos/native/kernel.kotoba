@@ -1,4 +1,5 @@
-(ns aiueos.native.kernel)
+(ns aiueos.native.kernel
+  (:export [main]))
 
 ;; Versioned loader handoff: "AIUEBOOT", version, memory-map pointer/size,
 ;; descriptor size/version. All reads remain compiler-bounded.
