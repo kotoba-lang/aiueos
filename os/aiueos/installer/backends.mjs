@@ -62,30 +62,44 @@ function macDiskInfo(device) {
 }
 
 function linuxDiskInfo(device) {
-  const tree = JSON.parse(run("lsblk", ["--json", "--bytes", "--output", "PATH,TYPE,SIZE,MODEL,RM,MOUNTPOINTS,FSTYPE,PTTYPE", device]));
+  const tree = JSON.parse(run("lsblk", ["--json", "--bytes", "--output", "PATH,TYPE,SIZE,MODEL,RM,HOTPLUG,TRAN,SERIAL,WWN,MOUNTPOINTS,FSTYPE,PTTYPE", device]));
   const root = tree.blockdevices?.[0];
   if (!root) throw new Error(`lsblk did not return ${device}`);
-  const systemSource = run("findmnt", ["--noheadings", "--output", "SOURCE", "/"]).trim();
-  const ancestors = JSON.parse(run("lsblk", ["--json", "--inverse", "--paths", "--output", "PATH,TYPE", systemSource])).blockdevices ?? [];
-  const flatten = (nodes) => nodes.flatMap((node) => [node, ...flatten(node.children ?? [])]);
-  const systemPaths = flatten(ancestors).filter((node) => node.type === "disk").map((node) => node.path);
+  const systemPaths = linuxSystemDiskPaths(run);
   const children = root.children ?? [];
   return {
     info: {
       path: root.path,
       type: root.type,
       whole: root.type === "disk",
-      internal: root.rm === false || root.rm === 0,
+      internal: (root.rm === false || root.rm === 0) && (root.hotplug === false || root.hotplug === 0) && root.tran !== "usb",
       empty: children.length === 0 && !root.fstype && !root.pttype,
       mounted: (root.mountpoints ?? []).some(Boolean) || children.some((c) => (c.mountpoints ?? []).some(Boolean)),
       boot: systemPaths.includes(root.path),
       system: systemPaths.includes(root.path),
       bytes: root.size,
       model: root.model ?? "unknown",
+      transport: root.tran ?? "unknown",
+      serial: root.serial ?? null,
+      wwn: root.wwn ?? null,
       nodeIdentity: deviceNodeIdentity(root.path),
     },
     systemDisks: systemPaths,
   };
+}
+
+export function linuxSystemDiskPaths(runCommand, mountTargets = ["/", "/cdrom", "/isodevice", "/run/live/medium"]) {
+  const disks = new Set();
+  const flatten = (nodes) => nodes.flatMap((node) => [node, ...flatten(node.children ?? [])]);
+  for (const target of mountTargets) {
+    try {
+      const source = runCommand("findmnt", ["--noheadings", "--output", "SOURCE", "--target", target]).trim();
+      if (!source.startsWith("/dev/")) continue;
+      const tree = JSON.parse(runCommand("lsblk", ["--json", "--inverse", "--paths", "--output", "PATH,TYPE", source]));
+      for (const node of flatten(tree.blockdevices ?? [])) if (node.type === "disk") disks.add(node.path);
+    } catch { /* absent live-media mount is normal; an empty final set fails closed */ }
+  }
+  return [...disks].sort();
 }
 
 function deviceNodeIdentity(path) {

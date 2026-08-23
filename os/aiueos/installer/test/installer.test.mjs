@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runInstaller } from "../install.mjs";
 import { destructivePhrase } from "../device-policy.mjs";
-import { fakeBackend, realBackend } from "../backends.mjs";
+import { fakeBackend, linuxSystemDiskPaths, realBackend } from "../backends.mjs";
 
 async function fixture() {
   const dir = await mkdtemp(join(tmpdir(), "aiueos-installer-test-"));
@@ -99,6 +99,20 @@ test("macOS backend refuses real writes when it cannot hold an exclusive block-d
     () => realBackend("darwin").writeImage("unused", "/dev/unused", { bytes: 1, sha256: "0".repeat(64) }, {}, {}),
     /supported only from Linux/,
   );
+});
+
+test("Linux live media identifies its USB system disk even when root is overlay", () => {
+  const outputs = new Map([
+    ["findmnt --noheadings --output SOURCE --target /", "overlay\n"],
+    ["findmnt --noheadings --output SOURCE --target /cdrom", "/dev/sdb3\n"],
+    ["lsblk --json --inverse --paths --output PATH,TYPE /dev/sdb3", JSON.stringify({ blockdevices: [{ path: "/dev/sdb3", type: "part", children: [{ path: "/dev/sdb", type: "disk" }] }] })],
+  ]);
+  const fakeRun = (command, args) => {
+    const key = [command, ...args].join(" ");
+    if (!outputs.has(key)) throw new Error(`not mounted: ${key}`);
+    return outputs.get(key);
+  };
+  assert.deepEqual(linuxSystemDiskPaths(fakeRun), ["/dev/sdb"]);
 });
 
 test("bad receipt is rejected before device inspection or writing", async () => {

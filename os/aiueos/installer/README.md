@@ -103,3 +103,11 @@ node --test os/aiueos/installer/test/*.test.mjs
 
 Tests use temporary regular files and injected fake devices. They never open a
 real block device.
+
+## Offline Linux bundle
+
+`offline-linux-installer.sh` runs the same installer with a bundled official
+Linux x86_64 Node.js runtime and adjacent release image/receipt. The runtime is
+copied to a private temporary directory because removable FAT media does not
+preserve executable mode bits. Run it first without `--install`; all normal
+second-empty-internal-disk and destructive-confirmation gates remain active.
