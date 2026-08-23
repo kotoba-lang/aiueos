@@ -31,7 +31,7 @@ native only when its artifact receipt has empty `c_sources`,
 | Kernel execution | **not yet** — context switch, preemptive scheduler, ring 3, syscall entry/exit, capability handle table all still reference-profile only |
 | Hardware | **not yet** — PCI, DMA, IOMMU, MSI-X, virtio, NVMe, USB HID are reference C with QEMU evidence, not compiler-emitted |
 | Boot and release | **working** — deterministic GPT disk and El Torito ISO from one builder, byte-identical recovery ESP with proven firmware fallback, update and rollback receipts, RSA-2048 release-signature verification, durable crash receipts, initramfs, Multiboot2/GRUB |
-| Desktop | **partial** — hosted WM (ADR-0085) stacks two `window-session-state` surfaces in the same DADS `#desktop`; raise changes z-order; `clojure -M:compositor wm`. Guest 2D create/flush is `clojure -M:compositor gpu` (ADR-0084). hosted IME romaji→kana is `clojure -M:compositor ime` (ADR-0086). hosted kanji (Space converts か→加) is `clojure -M:compositor kanji` (ADR-0088). hosted kami.webgpu presenter (`init!`/`draw!` on `#kami-viewport`) is `clojure -M:compositor kami` (ADR-0089). Guest IME is KERNEL.ELF Kotoba `k`+`a`→U+304B (`clojure -M:compositor guest-ime`, ADR-0090). Leftover `:native-compositor-absent`. **P5 UNVERIFIED**. Not a finished Chrome OS-shaped desktop |
+| Desktop | **partial** — hosted WM (ADR-0085) stacks two `window-session-state` surfaces in the same DADS `#desktop`; raise changes z-order; `clojure -M:compositor wm`. Guest 2D create/flush is `clojure -M:compositor gpu` (ADR-0084). hosted IME romaji→kana is `clojure -M:compositor ime` (ADR-0086). hosted kanji (Space converts か→加) is `clojure -M:compositor kanji` (ADR-0088). hosted kami.webgpu presenter (`init!`/`draw!` on `#kami-viewport`) is `clojure -M:compositor kami` (ADR-0089). Guest IME is KERNEL.ELF Kotoba `k`+`a`→U+304B (`clojure -M:compositor guest-ime`, ADR-0090). Guest WM is KERNEL.ELF Kotoba z-hit of two overlapping boot rects (`clojure -M:compositor guest-wm`, ADR-0091). Leftover `:native-compositor-absent` (one guest scanout, virtio-input synthetic). **P5 UNVERIFIED**. Not a finished Chrome OS-shaped desktop |
 | Bare-metal net (P2) | **green on QEMU UEFI** — guest TLS 1.3 + HTTPS GET of empty raw CID with SHA-256 admit (ADR-0082). CertificateVerify ECDSA P-256 is `clojure -M:bare-metal cert-verify` (ADR-0087). Hosted `cloud-live` / session smoke / host curl do not count. Chain-to-anchor still leftover |
 
 **Every gate above except P5's claim is QEMU/OVMF.** P5 real-machine boot is
@@ -362,6 +362,8 @@ clojure -M:compositor wm      # hosted WM: ≥2 surfaces, z-order, DADS, input r
 clojure -M:compositor ime     # hosted IME: ka→か, off-path latin leak is red
 clojure -M:compositor kanji   # hosted IME: Space converts か→加; kana-only Space is red
 clojure -M:compositor kami    # hosted kami.webgpu init!/draw!; sky-clear is red
+clojure -M:compositor guest-ime  # KERNEL.ELF Kotoba k+a→U+304B
+clojure -M:compositor guest-wm   # KERNEL.ELF Kotoba z-hit of two overlapping rects
 ```
 
 Expected `smoke` markers:
@@ -388,6 +390,8 @@ Expected `smoke` markers:
 `kami` exit 0 means the SPA calls `kami.webgpu/init!` then `draw!` on `#kami-viewport` with a `render-ir` of ≥1 instance (ADR-0089). A sky-only `beginRenderPass` clear is leftover `:clear-only-desktop`. Exit 3 means the browser could not be answered. Native compositor leftover remains. That is **not** a finished desktop.
 
 `guest-ime` exit 0 means KERNEL.ELF serial has `AIUEOS_GUEST_IME_OK committed=u+304b latin-leak=0` from Kotoba `kotoba_aiueos_ime_commit` (ADR-0090). Hosted `clojure -M:compositor ime` / `AIUEOS_COMPOSITOR_IME_OK` is red. virtio-input is still synthetic. Leftover `:native-compositor-absent`. That is **not** a finished desktop.
+
+`guest-wm` exit 0 means KERNEL.ELF serial has `AIUEOS_GUEST_WM_OK two-surfaces z-hit=2 miss-front=1 raise=1 one-surface=0` from Kotoba `kotoba_aiueos_wm_hit` (ADR-0091). Hosted `clojure -M:compositor wm` / `AIUEOS_COMPOSITOR_WM_OK` is red. One guest scanout and virtio-input synthetic remain. Leftover `:native-compositor-absent`. That is **not** a finished desktop.
 
 ```bash
 clojure -M:compositor serve   # same SPA; compositor owns surfaces; Ctrl-C to stop

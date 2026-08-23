@@ -185,6 +185,8 @@ extern uint32_t aiueos_gpu_scanout_height(void);
 extern int aiueos_gpu_2d_create_ok(void);
 extern int aiueos_gpu_2d_flush_ok(void);
 extern uint64_t kotoba_aiueos_ime_commit(uint64_t a, uint64_t b);
+extern uint64_t kotoba_aiueos_wm_hit(uint64_t n, uint64_t front,
+                                     uint64_t px, uint64_t py);
 extern void aiueos_scheduler_initialize(void);
 extern int aiueos_scheduler_restore_service_registry(uint64_t state0, uint64_t state1);
 extern int aiueos_scheduler_persistent_restore_evidence_ready(void);
@@ -776,6 +778,34 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
       } else {
         debug_string("AIUEOS_GUEST_IME leftover=vector-miss\n");
         serial_string("AIUEOS_GUEST_IME leftover=vector-miss\r\n");
+      }
+    }
+    /* Guest WM known-answer (ADR-0091). C does not pick z-order. Hosted
+       JVM WM does not count. Rects are hosted boot-desktop. Do not
+       qemu_exit: gpu/cloud/guest-ime stay green without this line. */
+    {
+      uint64_t one = kotoba_aiueos_wm_hit(1, 2, 100, 80);
+      uint64_t zhit = kotoba_aiueos_wm_hit(2, 2, 100, 80);
+      uint64_t missf = kotoba_aiueos_wm_hit(2, 2, 40, 40);
+      uint64_t raised = kotoba_aiueos_wm_hit(2, 1, 100, 80);
+      if (one != 0) {
+        debug_string("AIUEOS_GUEST_WM leftover=one-surface-ignored\n");
+        serial_string("AIUEOS_GUEST_WM leftover=one-surface-ignored\r\n");
+      } else if (zhit == 1) {
+        debug_string("AIUEOS_GUEST_WM leftover=z-order-ignored\n");
+        serial_string("AIUEOS_GUEST_WM leftover=z-order-ignored\r\n");
+      } else if (missf == 2) {
+        debug_string("AIUEOS_GUEST_WM leftover=always-front\n");
+        serial_string("AIUEOS_GUEST_WM leftover=always-front\r\n");
+      } else if (raised != 1) {
+        debug_string("AIUEOS_GUEST_WM leftover=raise-is-noop\n");
+        serial_string("AIUEOS_GUEST_WM leftover=raise-is-noop\r\n");
+      } else if (zhit == 2 && missf == 1) {
+        debug_string("AIUEOS_GUEST_WM_OK two-surfaces z-hit=2 miss-front=1 raise=1 one-surface=0\n");
+        serial_string("AIUEOS_GUEST_WM_OK two-surfaces z-hit=2 miss-front=1 raise=1 one-surface=0\r\n");
+      } else {
+        debug_string("AIUEOS_GUEST_WM leftover=vector-miss\n");
+        serial_string("AIUEOS_GUEST_WM leftover=vector-miss\r\n");
       }
     }
     if (!(pci_result & 8) || !aiueos_desktop_surface_bind_scanout(
