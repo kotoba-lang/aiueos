@@ -184,6 +184,7 @@ extern uint32_t aiueos_gpu_scanout_width(void);
 extern uint32_t aiueos_gpu_scanout_height(void);
 extern int aiueos_gpu_2d_create_ok(void);
 extern int aiueos_gpu_2d_flush_ok(void);
+extern uint64_t kotoba_aiueos_ime_commit(uint64_t a, uint64_t b);
 extern void aiueos_scheduler_initialize(void);
 extern int aiueos_scheduler_restore_service_registry(uint64_t state0, uint64_t state1);
 extern int aiueos_scheduler_persistent_restore_evidence_ready(void);
@@ -760,6 +761,23 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
     serial_string("AIUEOS_VIRTIO_INPUT_OK modern-pci eventq configured synthetic-smoke\r\n");
     debug_string("AIUEOS_DESKTOP_INPUT_OK envelope-v1 sequence=1 kind=key ime-neutral\n");
     serial_string("AIUEOS_DESKTOP_INPUT_OK envelope-v1 sequence=1 kind=key ime-neutral\r\n");
+    /* Guest IME known-answer (ADR-0090). C does not convert. Hosted JVM
+       IME does not count. latin k=107, a=97 must yield U+304B (12363).
+       Returning those latin bytes is a leak. Do not qemu_exit: gpu/cloud
+       stay green without this line. */
+    {
+      uint64_t ime_cp = kotoba_aiueos_ime_commit(107, 97);
+      if (ime_cp == 107 || ime_cp == 97) {
+        debug_string("AIUEOS_GUEST_IME leftover=latin-leak\n");
+        serial_string("AIUEOS_GUEST_IME leftover=latin-leak\r\n");
+      } else if (ime_cp == 12363) {
+        debug_string("AIUEOS_GUEST_IME_OK committed=u+304b latin-leak=0\n");
+        serial_string("AIUEOS_GUEST_IME_OK committed=u+304b latin-leak=0\r\n");
+      } else {
+        debug_string("AIUEOS_GUEST_IME leftover=vector-miss\n");
+        serial_string("AIUEOS_GUEST_IME leftover=vector-miss\r\n");
+      }
+    }
     if (!(pci_result & 8) || !aiueos_desktop_surface_bind_scanout(
           aiueos_gpu_scanout_width(),aiueos_gpu_scanout_height())) {
       serial_string("AIUEOS_VIRTIO_GPU_FAIL display-info-or-surface-binding\r\n"); qemu_exit(0x6f);

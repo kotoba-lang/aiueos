@@ -144,6 +144,7 @@
    ;;   clojure -M:compositor ime     ; romaji→kana; off-path latin is red
    ;;   clojure -M:compositor kanji   ; Space converts か→加; kana-only Space is red
    ;;   clojure -M:compositor kami    ; hosted kami.webgpu init!/draw!; clear-only is red
+   ;;   clojure -M:compositor guest-ime ; KERNEL.ELF Kotoba k+a→U+304B; hosted JVM IME is red
    ;;   clojure -M:compositor serve
    ;; smoke Exit 0 = DADS SPA, window-session-state restore, wipe red,
    ;;   QEMU -device virtio-gpu-pci with -display none.
@@ -151,7 +152,9 @@
    ;;   GET_DISPLAY_INFO and query-pci are reds for gpu.
    ;; wm Exit 0 = two stacked surfaces, raise changes front, overlap hit
    ;;   ≠ key-order, DADS title bars, pointer → focused guest.
-   ;;   One surface / z-order no-op is red. ime: ka→か. kanji: か→加, leftover :guest-ime-absent.
+   ;;   One surface / z-order no-op is red. ime: ka→か. kanji: か→加.
+   ;; guest-ime Exit 0 = KERNEL.ELF serial GUEST_IME_OK committed=u+304b latin-leak=0.
+   ;;   Hosted AIUEOS_COMPOSITOR_IME_OK is red. Leftover :native-compositor-absent.
    ;; kami Exit 0 = SPA calls kami.webgpu init!/draw! on #kami-viewport with
    ;;   a render-ir of ≥1 instance. beginRenderPass clear-only is red.
    ;; Exit 1 refused. Exit 3 unmeasured. Not P5. Goal not complete.

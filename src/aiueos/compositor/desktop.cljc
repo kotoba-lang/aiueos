@@ -219,9 +219,10 @@
    {:kanji? false}))
 
 (defn ime-leftover
-  "Named leftover on the attached IME. Boot desktops have IME (ADR-0086)
-  and hosted kanji (ADR-0088); leftover is then `:guest-ime-absent`.
-  No-arg / no `:ime` is `:ime-absent`. `:kanji? false` is `:kanji-absent`."
+  "Named leftover on the attached IME. Boot desktops have IME (ADR-0086),
+  hosted kanji (ADR-0088), and guest Kotoba IME (ADR-0090); leftover is
+  then `:native-compositor-absent`. No-arg / no `:ime` is `:ime-absent`.
+  `:kanji? false` is `:kanji-absent`."
   ([] {:ime? false
        :leftover :ime-absent
        :note "IME is leftover. Call with a desktop after boot."})
@@ -229,10 +230,10 @@
    (if-let [i (:ime desktop)]
      {:ime? (boolean (:on? i))
       :leftover (or (:leftover i)
-                    (if (false? (:kanji? i)) :kanji-absent :guest-ime-absent))
+                    (if (false? (:kanji? i)) :kanji-absent :native-compositor-absent))
       :note (if (false? (:kanji? i))
               "Hosted romaji→kana only. Kanji conversion is leftover."
-              "Hosted IME converts kana to kanji. Guest-side IME is leftover.")}
+              "Guest IME is KERNEL.ELF Kotoba. Native Phase 6 compositor is leftover.")}
      {:ime? false
       :leftover :ime-absent
       :note "No IME attached."})))

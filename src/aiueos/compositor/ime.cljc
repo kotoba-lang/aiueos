@@ -57,7 +57,7 @@
   [ime]
   (if (false? (:kanji? ime))
     :kanji-absent
-    :guest-ime-absent))
+    :native-compositor-absent))
 
 (defn boot
   "IME on, empty buffers. `focused` is the window that receives commits.
@@ -75,7 +75,7 @@
     :candidates []
     :cand-idx 0
     :reading ""
-    :leftover (if (false? (:kanji? opts)) :kanji-absent :guest-ime-absent)
+    :leftover (if (false? (:kanji? opts)) :kanji-absent :native-compositor-absent)
     :engine "aiueos.compositor.ime"}))
 
 (defn- sokuon?
@@ -220,7 +220,7 @@
                             :candidates (vec cands)
                             :cand-idx 0
                             :preedit ch
-                            :leftover :guest-ime-absent)]
+                            :leftover :native-compositor-absent)]
             [ime' {:consumed? true
                    :reason :convert
                    :guest-text ""
