@@ -2462,7 +2462,8 @@ static int net_tcp_cloud_probe(struct net_ring *rx, struct net_ring *tx,
      segment is the ACK plus ClientFinished+GET. Post RX first. */
   {
     uint32_t fin_len = 0, get_len = 0, ack_lo = our_next;
-    if (!aiueos_tls13_take_finished(flight, &fin_len)) {
+    if (!aiueos_tls13_run_certverify() ||
+        !aiueos_tls13_take_finished(flight, &fin_len)) {
       net_tx_window = NET_TCP_WINDOW;
       tcp_cloud_stage = NET_TCP_STAGE_DONE;
       return 1;
@@ -2484,7 +2485,7 @@ static int net_tcp_cloud_probe(struct net_ring *rx, struct net_ring *tx,
     tls_http_sent = 1;
     our_next += fin_len + get_len;
     net_tcp_cloud_pump(rx, tx, rx_page, tx_page, src, dst,
-                       &our_next, &peer_next, ack_lo, 32, 1);
+                       &our_next, &peer_next, ack_lo, 96, 1);
   }
   tcp_cloud_stage = NET_TCP_STAGE_DONE;
   net_tx_window = NET_TCP_WINDOW;

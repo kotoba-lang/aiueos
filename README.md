@@ -32,7 +32,7 @@ native only when its artifact receipt has empty `c_sources`,
 | Hardware | **not yet** — PCI, DMA, IOMMU, MSI-X, virtio, NVMe, USB HID are reference C with QEMU evidence, not compiler-emitted |
 | Boot and release | **working** — deterministic GPT disk and El Torito ISO from one builder, byte-identical recovery ESP with proven firmware fallback, update and rollback receipts, RSA-2048 release-signature verification, durable crash receipts, initramfs, Multiboot2/GRUB |
 | Desktop | **partial** — hosted WM (ADR-0085) stacks two `window-session-state` surfaces in the same DADS `#desktop`; raise changes z-order; `clojure -M:compositor wm`. Guest 2D create/flush is `clojure -M:compositor gpu` (ADR-0084). hosted IME romaji→kana is `clojure -M:compositor ime` (ADR-0086). Kanji leftover `:kanji-absent`. **P5 UNVERIFIED**. Not a finished Chrome OS-shaped desktop |
-| Bare-metal net (P2) | **green on QEMU UEFI** — guest TLS 1.3 + HTTPS GET of empty raw CID with SHA-256 admit (ADR-0082). Hosted `cloud-live` / session smoke / host curl do not count. Chain/CertVerify still not checked |
+| Bare-metal net (P2) | **green on QEMU UEFI** — guest TLS 1.3 + HTTPS GET of empty raw CID with SHA-256 admit (ADR-0082). CertificateVerify ECDSA P-256 is `clojure -M:bare-metal cert-verify` (ADR-0087). Hosted `cloud-live` / session smoke / host curl do not count. Chain-to-anchor still leftover |
 
 **Every gate above except P5's claim is QEMU/OVMF.** P5 real-machine boot is
 **UNVERIFIED** (ADR-0084): this Mac is the QEMU host; attached USB is an
@@ -396,7 +396,7 @@ Root contract: P2 of [`adr-2608221625`](https://github.com/com-junkawasaki/root/
 clojure -M:bare-metal cloud
 ```
 
-The guest consumes its DHCP lease, resolves `kotobase.net`, completes TLS 1.3 (cipher 0x1301), GET `/ipfs/<empty-raw-cid>`, and admits the body SHA-256 (ADR-0082). **Exit 0 is guest HTTP GET + CID verify.** Handshake without HTTP is leftover `:http-absent`. A TLS record without Finished is `:tls-handshake-incomplete`.
+The guest consumes its DHCP lease, resolves `kotobase.net`, completes TLS 1.3 (cipher 0x1301), GET `/ipfs/<empty-raw-cid>`, and admits the body SHA-256 (ADR-0082). **Exit 0 is guest HTTP GET + CID verify.** Handshake without HTTP is leftover `:http-absent`. A TLS record without Finished is `:tls-handshake-incomplete`. CertificateVerify (ECDSA P-256 against the leaf) is a separate gate: `clojure -M:bare-metal cert-verify` (ADR-0087). HTTP+CID without that serial line is leftover `:cert-verify-hashed-only`. Chain to a trust anchor is still leftover.
 
 `clojure -M:cloud-live check` and `clojure -M:session smoke` do **not** green this gate. A Mac-side fetch is `:host-fetch-does-not-count`.
 
@@ -418,7 +418,7 @@ Expected markers:
 - `AIUEOS_GUEST_ALLOW_LIST=` lists the guest under `guests`
 - `AIUEOS_GUEST_OK`
 
-Exit 0 means the SPA listed the guest, grant allow ran it, and grant deny was the named red. This is **not** the full Chrome OS-shaped desktop: P2 guest HTTPS to kotobase is green on QEMU; P4 itonami is green on hosted JVM; P5 a real machine is UNVERIFIED; IME, CertVerify, and CACAO write remain. Guest virtio-gpu 2D is `clojure -M:compositor gpu` (ADR-0084), not this guest-in-shell gate.
+Exit 0 means the SPA listed the guest, grant allow ran it, and grant deny was the named red. This is **not** the full Chrome OS-shaped desktop: P2 guest HTTPS to kotobase is green on QEMU; CertificateVerify is green on QEMU (ADR-0087); P4 itonami is green on hosted JVM; P5 a real machine is UNVERIFIED; kanji and CACAO write remain. Guest virtio-gpu 2D is `clojure -M:compositor gpu` (ADR-0084), not this guest-in-shell gate.
 
 ## Maturity
 

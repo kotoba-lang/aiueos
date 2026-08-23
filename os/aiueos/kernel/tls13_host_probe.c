@@ -6,6 +6,9 @@
 */
 #ifdef AIUEOS_TLS13_HOST_PROBE
 #include "tls13.h"
+#include <openssl/bn.h>
+#include <openssl/ec.h>
+#include <openssl/ecdsa.h>
 #include <openssl/evp.h>
 #include <openssl/sha.h>
 #include <arpa/inet.h>
@@ -44,6 +47,37 @@ uint64_t kotoba_aiueos_x25519(const uint8_t *scalar, const uint8_t *peer,
   return (uint64_t)ok;
 }
 
+uint64_t kotoba_aiueos_ecdsa_p256_sha256_verify(
+    const uint8_t *sig, const uint8_t *digest, const uint8_t *pub,
+    uint8_t *ws, uint64_t wslen) {
+  EC_KEY *key = 0;
+  BIGNUM *x = 0, *y = 0, *r = 0, *s = 0;
+  ECDSA_SIG *esig = 0;
+  int ok = 0;
+  (void)ws;
+  (void)wslen;
+  key = EC_KEY_new_by_curve_name(NID_X9_62_prime256v1);
+  x = BN_bin2bn(pub, 32, 0);
+  y = BN_bin2bn(pub + 32, 32, 0);
+  r = BN_bin2bn(sig, 32, 0);
+  s = BN_bin2bn(sig + 32, 32, 0);
+  esig = ECDSA_SIG_new();
+  if (key && x && y && r && s && esig &&
+      EC_KEY_set_public_key_affine_coordinates(key, x, y) == 1 &&
+      ECDSA_SIG_set0(esig, r, s) == 1) {
+    r = 0;
+    s = 0;
+    ok = ECDSA_do_verify(digest, 32, esig, key) == 1;
+  }
+  BN_free(x);
+  BN_free(y);
+  BN_free(r);
+  BN_free(s);
+  ECDSA_SIG_free(esig);
+  EC_KEY_free(key);
+  return (uint64_t)ok;
+}
+
 static int tcp_kotobase(void) {
   struct addrinfo hints, *res = 0, *rp;
   int fd = -1;
@@ -66,7 +100,8 @@ int main(void) {
   uint8_t ch[160], flight[512], rx[8192];
   uint32_t ch_len = 0, fin_len = 0, get_len = 0;
   int fd, n, i;
-  if (!aiueos_tls13_aes_selftest() || !aiueos_tls13_hmac_selftest()) {
+  if (!aiueos_tls13_aes_selftest() || !aiueos_tls13_hmac_selftest() ||
+      !aiueos_tls13_ecdsa_selftest()) {
     puts("selftest fail");
     return 1;
   }
@@ -92,11 +127,19 @@ int main(void) {
     }
   }
   if (!aiueos_tls13_handshake_ready()) {
-    printf("handshake incomplete stage=%u rec=%u\n",
-           aiueos_tls13_stage(), aiueos_tls13_last_record_type());
+    printf("handshake incomplete stage=%u rec=%u certverify=%d\n",
+           aiueos_tls13_stage(), aiueos_tls13_last_record_type(),
+           aiueos_tls13_certverify_ok());
+    return 1;
+  }
+  if (!aiueos_tls13_run_certverify() ||
+      !aiueos_tls13_certverify_ok() ||
+      aiueos_tls13_certverify_scheme() != 0x0403) {
+    printf("certverify fail scheme=%u\n", aiueos_tls13_certverify_scheme());
     return 1;
   }
   puts("handshake ok");
+  puts("certverify ok scheme=ecdsa_secp256r1_sha256");
   if (!aiueos_tls13_take_finished(flight, &fin_len) ||
       !aiueos_tls13_take_http(flight + fin_len, &get_len)) {
     puts("take fail");

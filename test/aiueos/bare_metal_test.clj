@@ -92,6 +92,40 @@
     (is (= 0 (:exit r)))
     (is (= [] (:leftover r)))))
 
+(def ^:private certverify-ok
+  "AIUEOS_CERTVERIFY_PROBE result=ok scheme=ecdsa_secp256r1_sha256\r\n")
+
+(def ^:private certverify-hashed
+  "AIUEOS_CERTVERIFY_PROBE result=hashed-only leftover=:cert-verify-hashed-only\r\n")
+
+(deftest cert-verify-discriminates-hashed-only
+  (testing "HTTP+CID without CertVerify is the named leftover, not P2 red"
+    (let [s (str consumed dns-ok tcp-ok tls-handshake http-ok)
+          cloud (bm/p2-result {:serial s :host-fetched? false})
+          cv (bm/cert-verify-result {:serial s})]
+      (is (true? (:green? cloud))
+          "cloud stays green on HTTP+CID")
+      (is (= [] (:leftover cloud)))
+      (is (false? (:green? cv)))
+      (is (= 1 (:exit cv)))
+      (is (= [:cert-verify-hashed-only] (:leftover cv)))))
+  (testing "the hashed-only serial line is the same leftover"
+    (let [s (str consumed dns-ok tcp-ok tls-handshake certverify-hashed http-ok)
+          cv (bm/cert-verify-result {:serial s})]
+      (is (= [:cert-verify-hashed-only] (:leftover cv)))
+      (is (false? (bm/guest-certverify? s)))))
+  (testing "result=ok is the only CertVerify green"
+    (let [s (str consumed dns-ok tcp-ok tls-handshake certverify-ok http-ok)
+          cv (bm/cert-verify-result {:serial s})]
+      (is (true? (:green? cv)))
+      (is (= 0 (:exit cv)))
+      (is (= [] (:leftover cv)))
+      (is (true? (bm/guest-certverify? s)))))
+  (testing "unmeasured QEMU is exit 3 for this gate too"
+    (let [r (bm/cert-verify-result {:qemu-unmeasured? true :serial certverify-ok})]
+      (is (= 3 (:exit r)))
+      (is (false? (:green? r))))))
+
 (deftest this-namespace-does-not-fetch
   (let [src (slurp (io/file "src" "aiueos" "bare_metal.cljc"))]
     (is (not (str/includes? src "java.net.http"))

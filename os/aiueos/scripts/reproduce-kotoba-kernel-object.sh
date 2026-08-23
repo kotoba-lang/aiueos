@@ -76,8 +76,9 @@ service_task_tmp=${TMPDIR:-/tmp}/aiueos-kotoba-service-task.$$
 rsa2048_tmp=${TMPDIR:-/tmp}/aiueos-kotoba-rsa2048.$$
 dhcp_reply_tmp=${TMPDIR:-/tmp}/aiueos-kotoba-dhcp-reply.$$
 dhcp_option_tmp=${TMPDIR:-/tmp}/aiueos-kotoba-dhcp-option.$$
+ecdsa_tmp=${TMPDIR:-/tmp}/aiueos-kotoba-ecdsa-p256.$$
 user_elf_tmp=${TMPDIR:-/tmp}/aiueos-kotoba-user-smoke.$$
-trap 'rm -f "$dhcp_reply_tmp" "$dhcp_option_tmp" "$tmp" "$journal_tmp" "$fnv_tmp" "$journal_valid_tmp" "$transaction_valid_tmp" "$transaction_route_tmp" "$mutable_valid_tmp" "$superblock_valid_tmp" "$journal_build_tmp" "$mutable_build_tmp" "$cap_valid_tmp" "$extent_valid_tmp" "$region_valid_tmp" "$syscall_range_tmp" "$copy_in_tmp" "$capability_tmp" "$capability_mutation_tmp" "$service_lifecycle_tmp" "$service_registry_tmp" "$service_registry_state_tmp" "$user_object_journal_tmp" "$user_object_journal_valid_tmp" "$user_object_journal_value_tmp" "$sha256_tmp" "$digest_equal_tmp" "$catalog_valid_tmp" "$app_lookup_tmp" "$user_elf_valid_tmp" "$user_context_tmp" "$mapping_plan_tmp" "$process_plan_tmp" "$teardown_plan_tmp" "$task_plan_tmp" "$dispatch_plan_tmp" "$exit_route_tmp" "$service_task_tmp" "$rsa2048_tmp" "$user_elf_tmp"' EXIT HUP INT TERM
+trap 'rm -f "$dhcp_reply_tmp" "$dhcp_option_tmp" "$ecdsa_tmp" "$tmp" "$journal_tmp" "$fnv_tmp" "$journal_valid_tmp" "$transaction_valid_tmp" "$transaction_route_tmp" "$mutable_valid_tmp" "$superblock_valid_tmp" "$journal_build_tmp" "$mutable_build_tmp" "$cap_valid_tmp" "$extent_valid_tmp" "$region_valid_tmp" "$syscall_range_tmp" "$copy_in_tmp" "$capability_tmp" "$capability_mutation_tmp" "$service_lifecycle_tmp" "$service_registry_tmp" "$service_registry_state_tmp" "$user_object_journal_tmp" "$user_object_journal_valid_tmp" "$user_object_journal_value_tmp" "$sha256_tmp" "$digest_equal_tmp" "$catalog_valid_tmp" "$app_lookup_tmp" "$user_elf_valid_tmp" "$user_context_tmp" "$mapping_plan_tmp" "$process_plan_tmp" "$teardown_plan_tmp" "$task_plan_tmp" "$dispatch_plan_tmp" "$exit_route_tmp" "$service_task_tmp" "$rsa2048_tmp" "$user_elf_tmp"' EXIT HUP INT TERM
 "$compiler/bin/kotoba-compiler" compile "$aiueos/kotoba/kernel-probe.kotoba" \
   --target x86_64-aiueos-kernel-v1 --output "$tmp"
 cmp "$aiueos/kotoba/kernel-probe.o" "$tmp"
@@ -307,6 +308,15 @@ cmp "$aiueos/kotoba/dhcp-option-u32.o" "$dhcp_option_tmp"
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$dhcp_option_tmp" \
   0b5341000376104c6a23d2e6ef89c05c08fd03e91d2c2aa905643c65604741a0 \
   kotoba_aiueos_dhcp_option_u32
+# ECDSA P-256 / SHA-256 (ADR-0087). Compiled at this same 9cf3a0a pin
+# with the native allow-list + imm32 fuel that later landed as
+# kotoba-native e570d78. Same DHCP pattern: do not wholesale-advance amu.
+"$compiler/bin/kotoba-compiler" compile "$aiueos/kotoba/ecdsa-p256.kotoba" \
+  --target x86_64-aiueos-kernel-v1 --output "$ecdsa_tmp"
+cmp "$aiueos/kotoba/ecdsa-p256.o" "$ecdsa_tmp"
+python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$ecdsa_tmp" \
+  5026b4346bdb02ba689fad3afe67f21e556ca028b03338764140079f0308dc29 \
+  kotoba_aiueos_ecdsa_p256_sha256_verify
 # NOT REPRODUCIBLE at the pinned revision, and the only one left that is not.
 #
 # Both files are 8560 bytes and 541 of them differ. The segment size field at
