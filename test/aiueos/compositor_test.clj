@@ -143,6 +143,43 @@
       (is (= 3 (:exit r)))
       (is (= :unmeasured (:reason r))))))
 
+(deftest guest-wm-serial-is-the-guest-wm-gate
+  (testing "KERNEL.ELF four-vector z-hit is green"
+    (is (comp/guest-wm-ok?
+         "AIUEOS_GUEST_WM_OK two-surfaces z-hit=2 miss-front=1 raise=1 one-surface=0\n"))
+    (is (:green? (comp/guest-wm-result
+                  {:serial "AIUEOS_GUEST_WM_OK two-surfaces z-hit=2 miss-front=1 raise=1 one-surface=0\n"}))))
+  (testing "key-order hit is leftover z-order-ignored"
+    (let [r (comp/guest-wm-result
+             {:serial "AIUEOS_GUEST_WM leftover=z-order-ignored\n"})]
+      (is (not (:green? r)))
+      (is (= 1 (:exit r)))
+      (is (= :z-order-ignored (:reason r)))))
+  (testing "always-front skip of geometry is leftover always-front"
+    (let [r (comp/guest-wm-result
+             {:serial "AIUEOS_GUEST_WM leftover=always-front\n"})]
+      (is (not (:green? r)))
+      (is (= :always-front (:reason r)))))
+  (testing "one-surface ignore is leftover"
+    (let [r (comp/guest-wm-result
+             {:serial "AIUEOS_GUEST_WM leftover=one-surface-ignored\n"})]
+      (is (= :one-surface-ignored (:reason r)))))
+  (testing "raise no-op is leftover"
+    (let [r (comp/guest-wm-result
+             {:serial "AIUEOS_GUEST_WM leftover=raise-is-noop\n"})]
+      (is (= :raise-is-noop (:reason r)))))
+  (testing "hosted JVM WM serial does not count"
+    (let [r (comp/guest-wm-result
+             {:serial "AIUEOS_COMPOSITOR_WM_OK\n"})]
+      (is (not (:green? r)))
+      (is (= :hosted-wm-does-not-count (:reason r))))
+    (let [r (comp/guest-wm-result {:hosted-wm? true :serial ""})]
+      (is (= :hosted-wm-does-not-count (:reason r)))))
+  (testing "unmeasured is exit 3, not a silent pass"
+    (let [r (comp/guest-wm-result {:qemu-unmeasured? true})]
+      (is (= 3 (:exit r)))
+      (is (= :unmeasured (:reason r))))))
+
 (deftest wm-requires-two-stacked-surfaces
   (testing "boot desktop is admitted; one notes iframe is the named red"
     (let [d (desktop/boot-desktop)
@@ -303,6 +340,18 @@
                  "class=\"wm-window\" class=\"wm-window\" wm-titlebar "
                  "dads-chip-label data-raise dads-heading kami.webgpu</html>")))
       "kanji bar without the guest-ime command is not the guest IME face"))
+
+(deftest generated-spa-is-the-guest-wm-face
+  (is (comp/html-has-guest-wm-face? (pb/session-html))
+      "gate is red until #desktop names clojure -M:compositor guest-wm")
+  (is (not (comp/html-has-guest-wm-face?
+            (str "<html>href=\"#session\" href=\"#desktop\" "
+                 "id=\"ime-bar\" id=\"ime-preedit\" id=\"ime-toggle\" "
+                 "data-ime id=\"ime-candidates\" id=\"wm-stage\" "
+                 "class=\"wm-window\" class=\"wm-window\" wm-titlebar "
+                 "dads-chip-label data-raise dads-heading kami.webgpu "
+                 "clojure -M:compositor guest-ime native compositor</html>")))
+      "guest-ime lede without the guest-wm command is not the guest WM face"))
 
 (deftest presenter-bundle-is-kami-webgpu
   (let [f (io/file "apps/session/kami-presenter.js")]

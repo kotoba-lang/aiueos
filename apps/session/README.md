@@ -38,4 +38,5 @@ clojure -M:compositor wm     # hosted WM: two stacked windows, z-order, DADS tit
 clojure -M:compositor ime    # hosted IME: romaji→kana in the same document
 clojure -M:compositor kanji  # hosted IME: Space converts か→加
 clojure -M:compositor guest-ime  # KERNEL.ELF Kotoba k+a→U+304B
+clojure -M:compositor guest-wm   # KERNEL.ELF Kotoba two-surface z-hit
 ```

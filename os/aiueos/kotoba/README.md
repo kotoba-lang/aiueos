@@ -28,6 +28,15 @@ entry `aiueos-ime-commit`. Pinned SHA-256 is
 `ee11f50c9dfb30d03c820bead466b2f1bf18e4e64f3a2bfda98f5a5dd5d4ca34`.
 Not mozc. Not hosted JVM IME. virtio-input remains synthetic.
 
+`wm-hit.o` is the guest WM hit-test (ADR-0091). It exports
+`kotoba_aiueos_wm_hit`. Four i64 in (`n`, `front`, `px`, `py`); window id
+or 0 out. Vectors match hosted `boot-desktop` rects: one-surface refuses;
+overlap at (100,80) with front=2 returns 2; (40,40) with front=2 returns 1;
+raise front=1 at overlap returns 1. Compiled at the same amu pin with
+allow-list entry `aiueos-wm-hit`. Pinned SHA-256 is
+`70fac07783c5b2841b76d9d599c03a97a44d290a8ad977f48aa5af39b21efc7f`.
+Not hosted JVM WM. Native Phase 6 compositor leftover remains.
+
 Run `scripts/reproduce-kotoba-kernel-object.sh /path/to/compiler` to compile the
 checked-in source with that west-pinned compiler checkout and compare both
 objects byte-for-byte. This pinned object is temporary cross-repository CI

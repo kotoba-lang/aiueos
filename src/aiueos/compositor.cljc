@@ -24,13 +24,17 @@
   IME does not count. Guest 2D stays `gpu`. Hosted kami-engine: `clojure
   -M:compositor kami` admits `kami.webgpu/init!` then `draw!` on
   `#kami-viewport`. A sky-only `beginRenderPass` clear is leftover
-  `:clear-only-desktop`. After guest IME, hosted leftover is
-  `:native-compositor-absent`.
+  `:clear-only-desktop`. Guest WM: `clojure -M:compositor guest-wm`
+  admits KERNEL.ELF Kotoba `aiueos-wm-hit` (two overlapping boot
+  rects, z-front at overlap is 2, miss-front at 40,40 is 1, raise
+  is 1). Hosted JVM `wm` does not count. After guest WM, hosted
+  leftover is still `:native-compositor-absent` (one guest scanout,
+  virtio-input synthetic, P5).
 
   Exit 0 = the named command admitted. Exit 1 = refused. Exit 3 =
   QEMU/firmware/serial/browser could not be answered.
 
-  Commands: `clojure -M:compositor smoke` | `gpu` | `wm` | `ime` | `kanji` | `kami` | `guest-ime` | `serve`"
+  Commands: `clojure -M:compositor smoke` | `gpu` | `wm` | `ime` | `kanji` | `kami` | `guest-ime` | `guest-wm` | `serve`"
   (:require [aiueos.compositor.desktop :as desktop]
             [aiueos.phone-bind :as pb]
             [clojure.string :as str]
@@ -127,6 +131,50 @@
     {:green? false :exit 1 :reason :guest-ime-absent
      :leftover [:guest-ime-absent]}))
 
+(defn guest-wm-ok?
+  "True only when KERNEL.ELF serial says Kotoba WM hit the four
+  boot-desktop vectors. Hosted JVM WM serial does not count."
+  [serial]
+  (boolean
+   (and (string? serial)
+        (re-find #"(?m)^AIUEOS_GUEST_WM_OK two-surfaces z-hit=2 miss-front=1 raise=1 one-surface=0" serial)
+        (not (re-find #"AIUEOS_COMPOSITOR_WM_OK" serial)))))
+
+(defn guest-wm-result
+  "Classify a KERNEL.ELF boot for compositor `guest-wm`.
+  Hosted `clojure -M:compositor wm` is the named red."
+  [{:keys [serial qemu-unmeasured? hosted-wm?]}]
+  (cond
+    qemu-unmeasured?
+    {:green? false :exit 3 :reason :unmeasured :leftover [:unmeasured]}
+
+    (or hosted-wm?
+        (re-find #"AIUEOS_COMPOSITOR_WM_OK" (or serial "")))
+    {:green? false :exit 1 :reason :hosted-wm-does-not-count
+     :leftover [:hosted-wm-does-not-count]}
+
+    (guest-wm-ok? serial)
+    {:green? true :exit 0 :reason :guest-wm-kotoba-hit :leftover []}
+
+    (re-find #"(?m)^AIUEOS_GUEST_WM leftover=one-surface-ignored" (or serial ""))
+    {:green? false :exit 1 :reason :one-surface-ignored :leftover [:one-surface-ignored]}
+
+    (re-find #"(?m)^AIUEOS_GUEST_WM leftover=z-order-ignored" (or serial ""))
+    {:green? false :exit 1 :reason :z-order-ignored :leftover [:z-order-ignored]}
+
+    (re-find #"(?m)^AIUEOS_GUEST_WM leftover=always-front" (or serial ""))
+    {:green? false :exit 1 :reason :always-front :leftover [:always-front]}
+
+    (re-find #"(?m)^AIUEOS_GUEST_WM leftover=raise-is-noop" (or serial ""))
+    {:green? false :exit 1 :reason :raise-is-noop :leftover [:raise-is-noop]}
+
+    (re-find #"(?m)^AIUEOS_GUEST_WM leftover=vector-miss" (or serial ""))
+    {:green? false :exit 1 :reason :vector-miss :leftover [:vector-miss]}
+
+    :else
+    {:green? false :exit 1 :reason :guest-wm-absent
+     :leftover [:guest-wm-absent]}))
+
 (defn html-has-desktop-face?
   [html]
   (and (re-find #"dads-button" html)
@@ -194,6 +242,14 @@
    (and (html-has-kanji-face? html)
         (re-find #"clojure -M:compositor guest-ime" html)
         (re-find #"native compositor" html))))
+
+(defn html-has-guest-wm-face?
+  "SPA names the KERNEL.ELF guest WM gate. Hosted wm without
+  `clojure -M:compositor guest-wm` is red for this face."
+  [html]
+  (boolean
+   (and (html-has-guest-ime-face? html)
+        (re-find #"clojure -M:compositor guest-wm" html))))
 
 (defn presenter-is-kami-webgpu?
   "The compiled bundle must be kami.webgpu (init!/draw!), not a stub
@@ -413,6 +469,10 @@
        []
        (io/file (repo-root) "build" "aiueos" "compositor-guest-ime-receipt.edn"))
 
+     (defn guest-wm-receipt-file
+       []
+       (io/file (repo-root) "build" "aiueos" "compositor-guest-wm-receipt.edn"))
+
      (defn write-gpu-receipt!
        [receipt]
        (let [f (gpu-receipt-file)]
@@ -423,6 +483,13 @@
      (defn write-guest-ime-receipt!
        [receipt]
        (let [f (guest-ime-receipt-file)]
+         (io/make-parents f)
+         (spit f (with-out-str (pprint/pprint receipt)))
+         f))
+
+     (defn write-guest-wm-receipt!
+       [receipt]
+       (let [f (guest-wm-receipt-file)]
          (io/make-parents f)
          (spit f (with-out-str (pprint/pprint receipt)))
          f))
@@ -530,6 +597,48 @@
              (if (:green? r)
                (println "AIUEOS_COMPOSITOR_GUEST_IME_OK")
                (println (str "AIUEOS_COMPOSITOR_GUEST_IME not-green leftover="
+                             (pr-str (:leftover r)))))
+             r))))
+
+     (defn run-guest-wm
+       "Guest Kotoba WM on KERNEL.ELF serial. Hosted JVM WM is red."
+       []
+       (let [script (uefi-smoke)]
+         (if-not (.isFile script)
+           (let [r (guest-wm-result {:qemu-unmeasured? true})]
+             (write-guest-wm-receipt!
+              (assoc r :measured-at (str (java.time.Instant/now))
+                     :command "clojure -M:compositor guest-wm"
+                     :why :smoke-script-missing))
+             (println "AIUEOS_COMPOSITOR_GUEST_WM leftover=:unmeasured")
+             r)
+           (let [boot (run-uefi-2d!)
+                 measured? (serial-measured? (:serial boot))
+                 r (guest-wm-result {:serial (:serial boot)
+                                     :qemu-unmeasured? (not measured?)
+                                     :hosted-wm? false})
+                 receipt (assoc r
+                                :aiueos.compositor/guest-wm-receipt 1
+                                :measured-at (str (java.time.Instant/now))
+                                :command "clojure -M:compositor guest-wm"
+                                :profile :uefi-qemu-guest-wm
+                                :uefi-smoke-exit (:exit boot)
+                                :serial-path (:serial-path boot)
+                                :note "Green only when guest serial has GUEST_WM_OK two-surfaces z-hit=2 miss-front=1 raise=1 one-surface=0. Hosted clojure -M:compositor wm does not count. virtio-input synthetic-smoke remains. Native Phase 6 compositor leftover. P5 UNVERIFIED.")]
+             (write-guest-wm-receipt! receipt)
+             (println "AIUEOS_COMPOSITOR_GUEST_WM_PROFILE=uefi-qemu")
+             (println (str "AIUEOS_COMPOSITOR_GUEST_WM_SERIAL=" (:serial-path boot)))
+             (println (str "AIUEOS_COMPOSITOR_GUEST_WM_RECEIPT="
+                           (.getPath (guest-wm-receipt-file))))
+             (println (str "AIUEOS_COMPOSITOR_GUEST_WM_LEFTOVER="
+                           (pr-str (:leftover r))))
+             (when (:serial boot)
+               (doseq [line (str/split-lines (:serial boot))
+                       :when (re-find #"AIUEOS_GUEST_WM" line)]
+                 (println (str/replace line #"\r$" ""))))
+             (if (:green? r)
+               (println "AIUEOS_COMPOSITOR_GUEST_WM_OK")
+               (println (str "AIUEOS_COMPOSITOR_GUEST_WM not-green leftover="
                              (pr-str (:leftover r)))))
              r))))
 
@@ -963,5 +1072,10 @@
              (flush)
              (System/exit (int (:exit r))))
 
-           (do (println "usage: clojure -M:compositor [smoke|gpu|wm|ime|kanji|kami|guest-ime|serve]")
+           "guest-wm"
+           (let [r (run-guest-wm)]
+             (flush)
+             (System/exit (int (:exit r))))
+
+           (do (println "usage: clojure -M:compositor [smoke|gpu|wm|ime|kanji|kami|guest-ime|guest-wm|serve]")
                (System/exit 3)))))))
