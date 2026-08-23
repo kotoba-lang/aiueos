@@ -26,7 +26,9 @@ the latin bytes is leftover `:latin-leak`. Compiled at amu pin
 `9cf3a0ac07a1fb0d735a460230a7e5e9c97bc6a7` with kotoba-native allow-list
 entry `aiueos-ime-commit`. Pinned SHA-256 is
 `ee11f50c9dfb30d03c820bead466b2f1bf18e4e64f3a2bfda98f5a5dd5d4ca34`.
-Not mozc. Not hosted JVM IME. virtio-input remains synthetic.
+Not mozc. Not hosted JVM IME. Default UEFI smoke still uses synthetic
+input; `clojure -M:compositor guest-input` (ADR-0093) consumes a
+virtio-keyboard used-ring event.
 
 `wm-hit.o` is the guest WM hit-test (ADR-0091). It exports
 `kotoba_aiueos_wm_hit`. Four i64 in (`n`, `front`, `px`, `py`); window id

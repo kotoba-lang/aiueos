@@ -5,6 +5,19 @@ All notable changes to **aiueos** are documented here. The format follows
 
 ## [Unreleased]
 
+### Guest input (ADR-0093)
+- KERNEL.ELF copies the desktop envelope from a virtio-keyboard
+  used-ring event, not the `#ifdef AIUEOS_INPUT_SMOKE_SYNTHETIC` fill.
+  Gate: `clojure -M:compositor guest-input`. Named red is hosted JVM
+  `AIUEOS_COMPOSITOR_WM_OK` and C synthetic fill (`:synthetic-smoke`).
+  Default `gpu` / `guest-ime` / `guest-wm` / `guest-paint` boots keep
+  the synthetic ifdef so they stay green without this serial line.
+  Injector is QMP `input-send-event`, not HMP `sendkey`. Leftover
+  `:native-compositor-absent` (permission broker, native component
+  runtime, one virtio-gpu resource). **Measured 2026-08-23:**
+  `guest-input` leftover `[]` with
+  `AIUEOS_GUEST_INPUT_OK eventq-used=1 synthetic=0`. **P5 UNVERIFIED**.
+
 ### Guest paint (ADR-0092)
 - KERNEL.ELF paints both boot-desktop rects back-then-front from
   Kotoba `kotoba_aiueos_wm_hit` and samples the overlap pixel.

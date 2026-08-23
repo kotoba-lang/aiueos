@@ -9,8 +9,13 @@ serial_log="$out/kernel-serial.log"
 blk_image="$out/virtio-blk-smoke.img"
 qemu=${QEMU_SYSTEM_X86_64:-qemu-system-x86_64}
 
-AIUEOS_INPUT_SMOKE_SYNTHETIC=1 AIUEOS_CATALOG_POLICY_SELFTEST=1 \
-  "$aiueos/scripts/build-uefi.sh" >/dev/null
+if [ "${AIUEOS_GUEST_INPUT:-0}" = 1 ]; then
+  AIUEOS_CATALOG_POLICY_SELFTEST=1 \
+    "$aiueos/scripts/build-uefi.sh" >/dev/null
+else
+  AIUEOS_INPUT_SMOKE_SYNTHETIC=1 AIUEOS_CATALOG_POLICY_SELFTEST=1 \
+    "$aiueos/scripts/build-uefi.sh" >/dev/null
+fi
 if [ "${AIUEOS_CORRUPT_KERNEL:-0}" = 1 ]; then
   python3 - "$out/esp/EFI/AIUEOS/KERNEL.ELF" <<'PY'
 from pathlib import Path
@@ -153,6 +158,13 @@ qemu_timeout=${AIUEOS_QEMU_TIMEOUT:-600}
 # and is never retried. Each attempt restarts from a pristine data disk so a
 # partially-written disk from a hung boot cannot change the retry's outcome.
 qemu_attempts=${AIUEOS_QEMU_ATTEMPTS:-3}
+qmp_path="$out/guest-input.qmp"
+qmp_args=""
+kbd_args="-device virtio-keyboard-pci,disable-legacy=on"
+if [ "${AIUEOS_GUEST_INPUT:-0}" = 1 ]; then
+  kbd_args="-device virtio-keyboard-pci,disable-legacy=on,id=kbd0"
+  qmp_args="-qmp unix:${qmp_path},server,nowait"
+fi
 pristine_blk=
 if [ -f "$blk_image" ]; then
   pristine_blk="$blk_image.pristine"
@@ -161,6 +173,91 @@ fi
 attempt=1
 while :; do
   [ -n "$pristine_blk" ] && cp "$pristine_blk" "$blk_image"
+  inject_pid=
+  if [ "${AIUEOS_GUEST_INPUT:-0}" = 1 ]; then
+    rm -f "$qmp_path"
+    AIUEOS_QMP_PATH="$qmp_path" AIUEOS_QMP_LOG="$out/guest-input-qmp.log" python3 - <<'PY' &
+import json, os, socket, sys, time
+path = os.environ["AIUEOS_QMP_PATH"]
+log_path = os.environ.get("AIUEOS_QMP_LOG", "")
+def log(msg):
+    if not log_path:
+        return
+    try:
+        with open(log_path, "a") as f:
+            f.write(msg + "\n")
+    except OSError:
+        pass
+deadline = time.time() + 60
+sock = None
+while time.time() < deadline:
+    try:
+        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        sock.connect(path)
+        break
+    except OSError:
+        time.sleep(0.05)
+        sock = None
+if sock is None:
+    log("connect-timeout")
+    sys.exit(0)
+sock.settimeout(1.0)
+buf = b""
+def recv_obj():
+    global buf
+    while True:
+        nl = buf.find(b"\n")
+        if nl >= 0:
+            line, buf = buf[:nl], buf[nl+1:]
+            line = line.strip()
+            if line:
+                return json.loads(line)
+        try:
+            chunk = sock.recv(4096)
+        except socket.timeout:
+            return None
+        if not chunk:
+            return None
+        buf += chunk
+banner = recv_obj()
+log("banner " + json.dumps(banner)[:400])
+sock.sendall(b'{"execute":"qmp_capabilities"}\n')
+log("caps " + json.dumps(recv_obj())[:400])
+# QEMU 10.1 input-send-event `device` is a *display console* name, not the
+# virtio-keyboard-pci id. Passing id=kbd0 aborts with
+# qemu-fixed-text-console.device. Broadcast (no device) reaches the
+# virtio-keyboard input handler. send-key is the PS2 path and is not this gate.
+status_deadline = time.time() + 30
+while time.time() < status_deadline:
+    sock.sendall(b'{"execute":"query-status"}\n')
+    st = recv_obj()
+    if st and st.get("return", {}).get("running"):
+        log("running")
+        break
+    time.sleep(0.1)
+key = {"type": "qcode", "data": "a"}
+events = [
+    {"type": "key", "data": {"down": True, "key": key}},
+    {"type": "key", "data": {"down": False, "key": key}},
+]
+payload = json.dumps({"execute": "input-send-event", "arguments": {"events": events}}) + "\n"
+end = time.time() + 90
+i = 0
+while time.time() < end:
+    try:
+        sock.sendall(payload.encode())
+        reply = recv_obj()
+        if reply and i < 8:
+            log("reply " + json.dumps(reply)[:400])
+        i += 1
+    except OSError as e:
+        log("send-error " + str(e))
+        break
+    time.sleep(0.05)
+log("sent " + str(i))
+PY
+    inject_pid=$!
+  fi
   set +e
   # shellcheck disable=SC2086 # intentional optional groups of QEMU arguments
   timeout "$qemu_timeout" "$qemu" \
@@ -176,10 +273,15 @@ while :; do
     -device virtio-rng-pci \
     -drive if=none,id=aiueosblk,format=raw,file="$blk_image" \
     -device virtio-blk-pci,drive=aiueosblk,disable-legacy=on \
-    -device virtio-keyboard-pci,disable-legacy=on \
+    $kbd_args \
     -device virtio-vga,disable-legacy=on \
+    $qmp_args \
     -display none -serial "file:$serial_log" -monitor none -no-reboot
   status=$?
+  if [ -n "$inject_pid" ]; then
+    kill "$inject_pid" 2>/dev/null || true
+    wait "$inject_pid" 2>/dev/null || true
+  fi
   set -e
   if [ "$status" -eq 124 ] && [ "$attempt" -lt "$qemu_attempts" ]; then
     echo "warning: QEMU hung on attempt ${attempt}/${qemu_attempts} (known flake kotoba-lang/aiueos#108); retrying" >&2
@@ -463,9 +565,18 @@ grep -F "AIUEOS_KOTOBA_PCI_PLANNER_OK cap extent msix-region" "$serial_log" >/de
   echo "error: Kotoba-native PCI planner evidence was not observed" >&2
   exit 1
 }
-grep -F "AIUEOS_VIRTIO_INPUT_OK modern-pci eventq configured synthetic-smoke" "$serial_log" >/dev/null || {
-  echo "error: modern virtio-input configuration/synthetic transport evidence was not observed" >&2; exit 1;
-}
+if [ "${AIUEOS_GUEST_INPUT:-0}" = 1 ]; then
+  grep -F "AIUEOS_VIRTIO_INPUT_OK modern-pci eventq configured used-ring" "$serial_log" >/dev/null || {
+    echo "error: virtio-input used-ring evidence was not observed" >&2; exit 1;
+  }
+  grep -F "AIUEOS_GUEST_INPUT_OK eventq-used=1 synthetic=0" "$serial_log" >/dev/null || {
+    echo "error: guest-input used-ring serial was not observed" >&2; exit 1;
+  }
+else
+  grep -F "AIUEOS_VIRTIO_INPUT_OK modern-pci eventq configured synthetic-smoke" "$serial_log" >/dev/null || {
+    echo "error: modern virtio-input configuration/synthetic transport evidence was not observed" >&2; exit 1;
+  }
+fi
 grep -F "AIUEOS_DESKTOP_INPUT_OK envelope-v1 sequence=1 kind=key ime-neutral" "$serial_log" >/dev/null || {
   echo "error: validated browser desktop input envelope was not observed" >&2; exit 1;
 }
