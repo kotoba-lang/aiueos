@@ -18,16 +18,19 @@
   process. IME-on consumes `ka` (guest does not see latin). Enter
   commits `か`. IME-off is the named red (`:ime-bypass`). Hosted kanji:
   `clojure -M:compositor kanji` admits Space converting `か` to `加`.
-  Space that commits kana is leftover `:kanji-absent`. Guest IME stays
-  leftover. Guest 2D stays `gpu`. Hosted kami-engine: `clojure
+  Space that commits kana is leftover `:kanji-absent`. Guest IME:
+  `clojure -M:compositor guest-ime` admits KERNEL.ELF Kotoba
+  `aiueos-ime-commit` (`k`+`a` → U+304B) on guest serial. Hosted JVM
+  IME does not count. Guest 2D stays `gpu`. Hosted kami-engine: `clojure
   -M:compositor kami` admits `kami.webgpu/init!` then `draw!` on
   `#kami-viewport`. A sky-only `beginRenderPass` clear is leftover
-  `:clear-only-desktop`.
+  `:clear-only-desktop`. After guest IME, hosted leftover is
+  `:native-compositor-absent`.
 
   Exit 0 = the named command admitted. Exit 1 = refused. Exit 3 =
   QEMU/firmware/serial/browser could not be answered.
 
-  Commands: `clojure -M:compositor smoke` | `gpu` | `wm` | `ime` | `kanji` | `kami` | `serve`"
+  Commands: `clojure -M:compositor smoke` | `gpu` | `wm` | `ime` | `kanji` | `kami` | `guest-ime` | `serve`"
   (:require [aiueos.compositor.desktop :as desktop]
             [aiueos.phone-bind :as pb]
             [clojure.string :as str]
@@ -88,6 +91,42 @@
     {:green? false :exit 1 :reason :gpu-2d-absent
      :leftover [:gpu-2d-absent]}))
 
+(defn guest-ime-ok?
+  "True only when KERNEL.ELF serial says Kotoba IME committed U+304B
+  without echoing latin `ka`. Hosted JVM IME serial does not count."
+  [serial]
+  (boolean
+   (and (string? serial)
+        (re-find #"(?m)^AIUEOS_GUEST_IME_OK committed=u\+304b latin-leak=0" serial)
+        (not (re-find #"(?m)^AIUEOS_GUEST_IME_OK committed=ka" serial))
+        (not (re-find #"AIUEOS_COMPOSITOR_IME_OK" serial)))))
+
+(defn guest-ime-result
+  "Classify a KERNEL.ELF boot for compositor `guest-ime`.
+  Hosted `clojure -M:compositor ime` is the named red."
+  [{:keys [serial qemu-unmeasured? hosted-ime?]}]
+  (cond
+    qemu-unmeasured?
+    {:green? false :exit 3 :reason :unmeasured :leftover [:unmeasured]}
+
+    (or hosted-ime?
+        (re-find #"AIUEOS_COMPOSITOR_IME_OK" (or serial "")))
+    {:green? false :exit 1 :reason :hosted-ime-does-not-count
+     :leftover [:hosted-ime-does-not-count]}
+
+    (guest-ime-ok? serial)
+    {:green? true :exit 0 :reason :guest-ime-kotoba-commit :leftover []}
+
+    (re-find #"(?m)^AIUEOS_GUEST_IME leftover=latin-leak" (or serial ""))
+    {:green? false :exit 1 :reason :latin-leak :leftover [:latin-leak]}
+
+    (re-find #"(?m)^AIUEOS_GUEST_IME leftover=vector-miss" (or serial ""))
+    {:green? false :exit 1 :reason :vector-miss :leftover [:vector-miss]}
+
+    :else
+    {:green? false :exit 1 :reason :guest-ime-absent
+     :leftover [:guest-ime-absent]}))
+
 (defn html-has-desktop-face?
   [html]
   (and (re-find #"dads-button" html)
@@ -146,6 +185,15 @@
         (re-find #"data-executor=\"kami.webgpu\"" html)
         (re-find #"clear-only-desktop" html)
         (not (re-find #"requesting WebGPU for kami.webgpu.ir" html)))))
+
+(defn html-has-guest-ime-face?
+  "SPA names the KERNEL.ELF guest IME gate. Hosted ime/kanji without
+  `clojure -M:compositor guest-ime` is red for this face."
+  [html]
+  (boolean
+   (and (html-has-kanji-face? html)
+        (re-find #"clojure -M:compositor guest-ime" html)
+        (re-find #"native compositor" html))))
 
 (defn presenter-is-kami-webgpu?
   "The compiled bundle must be kami.webgpu (init!/draw!), not a stub
@@ -361,9 +409,20 @@
        []
        (io/file (repo-root) "build" "aiueos" "compositor-gpu-receipt.edn"))
 
+     (defn guest-ime-receipt-file
+       []
+       (io/file (repo-root) "build" "aiueos" "compositor-guest-ime-receipt.edn"))
+
      (defn write-gpu-receipt!
        [receipt]
        (let [f (gpu-receipt-file)]
+         (io/make-parents f)
+         (spit f (with-out-str (pprint/pprint receipt)))
+         f))
+
+     (defn write-guest-ime-receipt!
+       [receipt]
+       (let [f (guest-ime-receipt-file)]
          (io/make-parents f)
          (spit f (with-out-str (pprint/pprint receipt)))
          f))
@@ -429,6 +488,48 @@
              (if (:green? r)
                (println "AIUEOS_COMPOSITOR_GPU_2D green")
                (println (str "AIUEOS_COMPOSITOR_GPU_2D not-green leftover="
+                             (pr-str (:leftover r)))))
+             r))))
+
+     (defn run-guest-ime
+       "Guest Kotoba IME on KERNEL.ELF serial. Hosted JVM IME is red."
+       []
+       (let [script (uefi-smoke)]
+         (if-not (.isFile script)
+           (let [r (guest-ime-result {:qemu-unmeasured? true})]
+             (write-guest-ime-receipt!
+              (assoc r :measured-at (str (java.time.Instant/now))
+                     :command "clojure -M:compositor guest-ime"
+                     :why :smoke-script-missing))
+             (println "AIUEOS_COMPOSITOR_GUEST_IME leftover=:unmeasured")
+             r)
+           (let [boot (run-uefi-2d!)
+                 measured? (serial-measured? (:serial boot))
+                 r (guest-ime-result {:serial (:serial boot)
+                                      :qemu-unmeasured? (not measured?)
+                                      :hosted-ime? false})
+                 receipt (assoc r
+                                :aiueos.compositor/guest-ime-receipt 1
+                                :measured-at (str (java.time.Instant/now))
+                                :command "clojure -M:compositor guest-ime"
+                                :profile :uefi-qemu-guest-ime
+                                :uefi-smoke-exit (:exit boot)
+                                :serial-path (:serial-path boot)
+                                :note "Green only when guest serial has GUEST_IME_OK committed=u+304b latin-leak=0. Hosted clojure -M:compositor ime does not count. virtio-input synthetic-smoke remains. Native Phase 6 compositor leftover. P5 UNVERIFIED.")]
+             (write-guest-ime-receipt! receipt)
+             (println "AIUEOS_COMPOSITOR_GUEST_IME_PROFILE=uefi-qemu")
+             (println (str "AIUEOS_COMPOSITOR_GUEST_IME_SERIAL=" (:serial-path boot)))
+             (println (str "AIUEOS_COMPOSITOR_GUEST_IME_RECEIPT="
+                           (.getPath (guest-ime-receipt-file))))
+             (println (str "AIUEOS_COMPOSITOR_GUEST_IME_LEFTOVER="
+                           (pr-str (:leftover r))))
+             (when (:serial boot)
+               (doseq [line (str/split-lines (:serial boot))
+                       :when (re-find #"AIUEOS_GUEST_IME" line)]
+                 (println (str/replace line #"\r$" ""))))
+             (if (:green? r)
+               (println "AIUEOS_COMPOSITOR_GUEST_IME_OK")
+               (println (str "AIUEOS_COMPOSITOR_GUEST_IME not-green leftover="
                              (pr-str (:leftover r)))))
              r))))
 
@@ -545,7 +646,7 @@
                  api-ok? (boolean
                           (and (= 200 (:code api))
                                (str/includes? (:body api) "\"ime?\":true")
-                               (str/includes? (:body api) "guest-ime-absent")))
+                               (str/includes? (:body api) "native-compositor-absent")))
                  k1 (pb/http-post (str base "/api/compositor/key") {:key "k"})
                  k2 (pb/http-post (str base "/api/compositor/key") {:key "a"})
                  ent (pb/http-post (str base "/api/compositor/key") {:key "Enter"})
@@ -582,7 +683,7 @@
                              "admitted" "refused")))
              (println (str "AIUEOS_COMPOSITOR_IME_BYPASS="
                            (if off-ok? "refused-as-required" "falsely-consumed")))
-             (println (str "AIUEOS_COMPOSITOR_IME_LEFTOVER=:guest-ime-absent"))
+             (println (str "AIUEOS_COMPOSITOR_IME_LEFTOVER=:native-compositor-absent"))
              (when green? (println "AIUEOS_COMPOSITOR_IME_OK"))
              (when-not green?
                (println (str "AIUEOS_COMPOSITOR_IME_FAIL"
@@ -627,7 +728,7 @@
                  api-ok? (boolean
                           (and (= 200 (:code api))
                                (str/includes? (:body api) "\"ime?\":true")
-                               (str/includes? (:body api) "guest-ime-absent")))
+                               (str/includes? (:body api) "native-compositor-absent")))
                  red-path (let [d1 (first (desktop/route-key red "k"))
                                 d2 (first (desktop/route-key d1 "a"))
                                 [d3 e3] (desktop/route-key d2 "Space")]
@@ -666,7 +767,7 @@
                              "admitted" "refused")))
              (println (str "AIUEOS_COMPOSITOR_KANJI_ABSENT="
                            (if red-path "refused-as-required" "falsely-converted")))
-             (println (str "AIUEOS_COMPOSITOR_KANJI_LEFTOVER=:guest-ime-absent"))
+             (println (str "AIUEOS_COMPOSITOR_KANJI_LEFTOVER=:native-compositor-absent"))
              (when green? (println "AIUEOS_COMPOSITOR_KANJI_OK"))
              (when-not green?
                (println (str "AIUEOS_COMPOSITOR_KANJI_FAIL"
@@ -763,7 +864,7 @@
                             (not measured?) :unmeasured
                             (= outcome "unmeasured") :unmeasured
                             (not drawn?) :clear-only-desktop
-                            :else :guest-ime-absent)
+                            :else :native-compositor-absent)
                  exit (cond
                         (not floor?) 1
                         (or (not measured?) (= leftover :unmeasured)) 3
@@ -857,5 +958,10 @@
              (flush)
              (System/exit (int (:exit r))))
 
-           (do (println "usage: clojure -M:compositor [smoke|gpu|wm|ime|kanji|kami|serve]")
+           "guest-ime"
+           (let [r (run-guest-ime)]
+             (flush)
+             (System/exit (int (:exit r))))
+
+           (do (println "usage: clojure -M:compositor [smoke|gpu|wm|ime|kanji|kami|guest-ime|serve]")
                (System/exit 3)))))))

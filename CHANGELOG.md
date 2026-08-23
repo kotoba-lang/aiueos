@@ -5,18 +5,28 @@ All notable changes to **aiueos** are documented here. The format follows
 
 ## [Unreleased]
 
+### Guest IME (ADR-0090)
+- KERNEL.ELF Kotoba `kotoba_aiueos_ime_commit(107, 97)` returns U+304B.
+  Gate: `clojure -M:compositor guest-ime`. Named red is hosted JVM
+  `AIUEOS_COMPOSITOR_IME_OK`. Latin echo is leftover `:latin-leak`.
+  `ime` / `kanji` / `kami` / `gpu` stay green without this serial line.
+  Leftover `:native-compositor-absent`. virtio-input still synthetic.
+  **Measured 2026-08-23:** `guest-ime` leftover `[]` with
+  `AIUEOS_GUEST_IME_OK committed=u+304b latin-leak=0`. P5 UNVERIFIED.
+
 ### Hosted kami.webgpu presenter (ADR-0089)
 - `#kami-viewport` calls `kami.webgpu/init!` then `draw!`. Gate:
   `clojure -M:compositor kami`. Named red is `clear-only-desktop`
   (sky-only `beginRenderPass`). IR is `kami.webgpu.ir/render-ir` with
   ≥1 instance. `kanji` / `ime` stay green without a kami frame.
-  Leftover `:guest-ime-absent`. P5 UNVERIFIED.
+  Leftover `:native-compositor-absent` after ADR-0090. P5 UNVERIFIED.
 
 ### Hosted IME kanji (ADR-0088)
 - Space converts `か` to first candidate `加`; Enter commits. Gate:
   `clojure -M:compositor kanji`. Named red is `kana-only-desktop`
   (Space commits kana). `clojure -M:compositor ime` stays kana-only.
-  Leftover `:guest-ime-absent`. Not mozc. Not guest IME. P5 UNVERIFIED.
+  Leftover `:native-compositor-absent` after ADR-0090. Not mozc. Hosted
+  IME stays. P5 UNVERIFIED.
 
 ### Bare-metal net (P2, green on QEMU UEFI)
 - Guest TLS 1.3 (0x1301) + HTTPS GET of empty raw CID with SHA-256 admit

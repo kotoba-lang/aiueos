@@ -113,6 +113,36 @@
       (is (= 3 (:exit r)))
       (is (= :unmeasured (:reason r))))))
 
+(deftest guest-ime-serial-is-the-guest-ime-gate
+  (testing "KERNEL.ELF u+304b without latin leak is green"
+    (is (comp/guest-ime-ok?
+         "AIUEOS_GUEST_IME_OK committed=u+304b latin-leak=0\n"))
+    (is (:green? (comp/guest-ime-result
+                  {:serial "AIUEOS_GUEST_IME_OK committed=u+304b latin-leak=0\n"}))))
+  (testing "latin echo is leftover latin-leak"
+    (let [r (comp/guest-ime-result
+             {:serial "AIUEOS_GUEST_IME leftover=latin-leak\n"})]
+      (is (not (:green? r)))
+      (is (= 1 (:exit r)))
+      (is (= :latin-leak (:reason r)))))
+  (testing "wrong codepoint is leftover vector-miss"
+    (let [r (comp/guest-ime-result
+             {:serial "AIUEOS_GUEST_IME leftover=vector-miss\n"})]
+      (is (not (:green? r)))
+      (is (= 1 (:exit r)))
+      (is (= :vector-miss (:reason r)))))
+  (testing "hosted JVM IME serial does not count"
+    (let [r (comp/guest-ime-result
+             {:serial "AIUEOS_COMPOSITOR_IME_OK\n"})]
+      (is (not (:green? r)))
+      (is (= :hosted-ime-does-not-count (:reason r))))
+    (let [r (comp/guest-ime-result {:hosted-ime? true :serial ""})]
+      (is (= :hosted-ime-does-not-count (:reason r)))))
+  (testing "unmeasured is exit 3, not a silent pass"
+    (let [r (comp/guest-ime-result {:qemu-unmeasured? true})]
+      (is (= 3 (:exit r)))
+      (is (= :unmeasured (:reason r))))))
+
 (deftest wm-requires-two-stacked-surfaces
   (testing "boot desktop is admitted; one notes iframe is the named red"
     (let [d (desktop/boot-desktop)
@@ -121,10 +151,10 @@
       (is (nil? (desktop/wm-refuse-reason d)))
       (is (not (desktop/wm-admitted? one)))
       (is (= :one-surface (desktop/wm-refuse-reason one)))))
-  (testing "IME leftover on a boot desktop is guest IME, not ime-absent"
+  (testing "IME leftover on a boot desktop is native compositor, not ime-absent"
     (let [st (desktop/ime-leftover (desktop/boot-desktop))]
       (is (true? (:ime? st)))
-      (is (= :guest-ime-absent (:leftover st))))))
+      (is (= :native-compositor-absent (:leftover st))))))
 
 (deftest wm-hit-prefers-z-stack-not-key-order
   (let [d (desktop/boot-desktop)
@@ -157,8 +187,8 @@
     (is (= back (:hit ev)))
     (is (= [:panel back] (:input-target ev))
         "clicks route to the focused guest; fails if z-order is ignored")
-    (is (= :guest-ime-absent (:leftover (desktop/ime-leftover raised)))
-        "WM green does not require conversion; leftover is guest IME")))
+    (is (= :native-compositor-absent (:leftover (desktop/ime-leftover raised)))
+        "WM green does not require conversion; leftover is native compositor")))
 
 (deftest generated-spa-is-the-wm-face
   (is (comp/html-has-wm-face? (pb/session-html))
@@ -219,7 +249,7 @@
     (is (= "" (:guest-text e3)))
     (is (= "加" (:guest-text e4)))
     (is (desktop/kanji-admitted? d4))
-    (is (= :guest-ime-absent (:leftover (desktop/ime-leftover d4))))
+    (is (= :native-compositor-absent (:leftover (desktop/ime-leftover d4))))
     (is (not (re-find #"[a-zA-Z]" (str (get-in d4 [:ime :guest-log])))))))
 
 (deftest kanji-absent-space-commits-kana-is-the-named-red
@@ -262,6 +292,17 @@
             (str (pb/session-html)
                  " requesting WebGPU for kami.webgpu.ir")))
       "the old sky-clear presentKami string is the named red"))
+
+(deftest generated-spa-is-the-guest-ime-face
+  (is (comp/html-has-guest-ime-face? (pb/session-html))
+      "gate is red until #desktop names clojure -M:compositor guest-ime")
+  (is (not (comp/html-has-guest-ime-face?
+            (str "<html>href=\"#session\" href=\"#desktop\" "
+                 "id=\"ime-bar\" id=\"ime-preedit\" id=\"ime-toggle\" "
+                 "data-ime id=\"ime-candidates\" id=\"wm-stage\" "
+                 "class=\"wm-window\" class=\"wm-window\" wm-titlebar "
+                 "dads-chip-label data-raise dads-heading kami.webgpu</html>")))
+      "kanji bar without the guest-ime command is not the guest IME face"))
 
 (deftest presenter-bundle-is-kami-webgpu
   (let [f (io/file "apps/session/kami-presenter.js")]

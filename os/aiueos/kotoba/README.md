@@ -19,6 +19,15 @@ bin/kotoba-compiler compile /path/to/aiueos/os/aiueos/kotoba/kernel-probe.kotoba
 SHA-256:
 `10d91712fccd887e68f9caa25413c8fa2c783968e72b1bead4025c6a294ffa42`.
 
+`ime-romaji.o` is the guest IME conversion (ADR-0090). It exports
+`kotoba_aiueos_ime_commit`. Two latin bytes in; Unicode codepoint or 0
+out. Vector: 107 (`k`) then 97 (`a`) must return 12363 (U+304B). Echoing
+the latin bytes is leftover `:latin-leak`. Compiled at amu pin
+`9cf3a0ac07a1fb0d735a460230a7e5e9c97bc6a7` with kotoba-native allow-list
+entry `aiueos-ime-commit`. Pinned SHA-256 is
+`ee11f50c9dfb30d03c820bead466b2f1bf18e4e64f3a2bfda98f5a5dd5d4ca34`.
+Not mozc. Not hosted JVM IME. virtio-input remains synthetic.
+
 Run `scripts/reproduce-kotoba-kernel-object.sh /path/to/compiler` to compile the
 checked-in source with that west-pinned compiler checkout and compare both
 objects byte-for-byte. This pinned object is temporary cross-repository CI

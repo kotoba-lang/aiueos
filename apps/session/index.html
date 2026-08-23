@@ -2728,7 +2728,7 @@ body { padding-left: env(safe-area-inset-left,0px); padding-right: env(safe-area
         </section>
         <section id="desktop" class="dds-ext-section session-view" data-view="desktop" hidden>
           <h1 class="dads-heading" data-size="32">デスクトップ</h1>
-          <p class="session-lede">compositor 過程が <code>window-session-state</code> の 2 枚を重ねます。タイトルバーは DADS（<code>jp-go-dds</code>）です。前面へで z-order が変わります。 virtio-gpu 2D は <code>clojure -M:compositor gpu</code>。IME は romaji からかなへ（<code>clojure -M:compositor ime</code>）。IME はかなと漢字（<code>clojure -M:compositor kanji</code>）。ゲスト側 IME は leftover です。描画は <code>kami.webgpu</code> の <code>clojure -M:compositor kami</code> です。</p>
+          <p class="session-lede">compositor 過程が <code>window-session-state</code> の 2 枚を重ねます。タイトルバーは DADS（<code>jp-go-dds</code>）です。前面へで z-order が変わります。 virtio-gpu 2D は <code>clojure -M:compositor gpu</code>。IME は romaji からかなへ（<code>clojure -M:compositor ime</code>）。IME はかなと漢字（<code>clojure -M:compositor kanji</code>）。ゲスト側 IME は <code>clojure -M:compositor guest-ime</code>（KERNEL.ELF の Kotoba）。native compositor は leftover です。描画は <code>kami.webgpu</code> の <code>clojure -M:compositor kami</code> です。</p>
           <div id="ime-bar" class="ime-bar dds-ext-row" data-ime="on" aria-label="input method">
             <span class="dads-chip-label" data-style="filled-1" data-color="blue">かな</span>
             <h2 class="dads-heading" data-size="16" id="ime-preedit-label">変換中</h2>

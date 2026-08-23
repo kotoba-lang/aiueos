@@ -114,7 +114,9 @@
      [:code "clojure -M:compositor ime"]
      "）。IME はかなと漢字（"
      [:code "clojure -M:compositor kanji"]
-     "）。ゲスト側 IME は leftover です。描画は "
+     "）。ゲスト側 IME は "
+     [:code "clojure -M:compositor guest-ime"]
+     "（KERNEL.ELF の Kotoba）。native compositor は leftover です。描画は "
      [:code "kami.webgpu"]
      " の "
      [:code "clojure -M:compositor kami"]

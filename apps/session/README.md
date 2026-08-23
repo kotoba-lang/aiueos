@@ -37,4 +37,5 @@ clojure -M:compositor smoke  # named-partial desktop: same SPA + surfaces + virt
 clojure -M:compositor wm     # hosted WM: two stacked windows, z-order, DADS title bars
 clojure -M:compositor ime    # hosted IME: romaji→kana in the same document
 clojure -M:compositor kanji  # hosted IME: Space converts か→加
+clojure -M:compositor guest-ime  # KERNEL.ELF Kotoba k+a→U+304B
 ```
