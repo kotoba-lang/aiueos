@@ -72,6 +72,7 @@
               :width "640"
               :height "360"
               :data-engine "kami.webgpu.ir"
+              :data-executor "kami.webgpu"
               :tabindex "0"
               :aria-label "kami WebGPU guest surface"}]
     [:div {:class "wm-guest"
@@ -113,7 +114,11 @@
      [:code "clojure -M:compositor ime"]
      "）。IME はかなと漢字（"
      [:code "clojure -M:compositor kanji"]
-     "）。ゲスト側 IME は leftover です。"]
+     "）。ゲスト側 IME は leftover です。描画は "
+     [:code "kami.webgpu"]
+     " の "
+     [:code "clojure -M:compositor kami"]
+     " です。"]
     [:div {:id "ime-bar"
            :class "ime-bar dds-ext-row"
            :data-ime "on"

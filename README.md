@@ -31,7 +31,7 @@ native only when its artifact receipt has empty `c_sources`,
 | Kernel execution | **not yet** — context switch, preemptive scheduler, ring 3, syscall entry/exit, capability handle table all still reference-profile only |
 | Hardware | **not yet** — PCI, DMA, IOMMU, MSI-X, virtio, NVMe, USB HID are reference C with QEMU evidence, not compiler-emitted |
 | Boot and release | **working** — deterministic GPT disk and El Torito ISO from one builder, byte-identical recovery ESP with proven firmware fallback, update and rollback receipts, RSA-2048 release-signature verification, durable crash receipts, initramfs, Multiboot2/GRUB |
-| Desktop | **partial** — hosted WM (ADR-0085) stacks two `window-session-state` surfaces in the same DADS `#desktop`; raise changes z-order; `clojure -M:compositor wm`. Guest 2D create/flush is `clojure -M:compositor gpu` (ADR-0084). hosted IME romaji→kana is `clojure -M:compositor ime` (ADR-0086). hosted kanji (Space converts か→加) is `clojure -M:compositor kanji` (ADR-0088). Guest IME leftover `:guest-ime-absent`. **P5 UNVERIFIED**. Not a finished Chrome OS-shaped desktop |
+| Desktop | **partial** — hosted WM (ADR-0085) stacks two `window-session-state` surfaces in the same DADS `#desktop`; raise changes z-order; `clojure -M:compositor wm`. Guest 2D create/flush is `clojure -M:compositor gpu` (ADR-0084). hosted IME romaji→kana is `clojure -M:compositor ime` (ADR-0086). hosted kanji (Space converts か→加) is `clojure -M:compositor kanji` (ADR-0088). hosted kami.webgpu presenter (`init!`/`draw!` on `#kami-viewport`) is `clojure -M:compositor kami` (ADR-0089). Guest IME leftover `:guest-ime-absent`. **P5 UNVERIFIED**. Not a finished Chrome OS-shaped desktop |
 | Bare-metal net (P2) | **green on QEMU UEFI** — guest TLS 1.3 + HTTPS GET of empty raw CID with SHA-256 admit (ADR-0082). CertificateVerify ECDSA P-256 is `clojure -M:bare-metal cert-verify` (ADR-0087). Hosted `cloud-live` / session smoke / host curl do not count. Chain-to-anchor still leftover |
 
 **Every gate above except P5's claim is QEMU/OVMF.** P5 real-machine boot is
@@ -349,7 +349,7 @@ The SPA is the DADS document at `apps/session` (fragments `#session` `#desktop` 
 is P1 (kotobase + murakumo from the session process). `clojure -M:test` of
 unrelated suites is **not** this gate.
 
-## Desktop / compositor (hosted WM + guest 2D argv)
+## Desktop / compositor (hosted WM + guest 2D argv + kami.webgpu presenter)
 
 Root contract: compositor unit of [`adr-2608221625`](https://github.com/com-junkawasaki/root/blob/main/90-docs/adr/2608221625-aiueos-chromeos-cloud-desktop.edn). HTTP to `#session` with `-display none` and no compositor process is **red**. QMP `query-pci` is **not** guest 2D. A single notes iframe is **not** a window manager.
 
@@ -361,6 +361,7 @@ clojure -M:compositor gpu     # KERNEL.ELF CREATE+FLUSH (not PCI listing)
 clojure -M:compositor wm      # hosted WM: ≥2 surfaces, z-order, DADS, input routing
 clojure -M:compositor ime     # hosted IME: ka→か, off-path latin leak is red
 clojure -M:compositor kanji   # hosted IME: Space converts か→加; kana-only Space is red
+clojure -M:compositor kami    # hosted kami.webgpu init!/draw!; sky-clear is red
 ```
 
 Expected `smoke` markers:
@@ -383,6 +384,8 @@ Expected `smoke` markers:
 `ime` exit 0 means IME-on consumes `ka` (no latin to the guest), Enter commits `か`, and IME-off delivers `ka` (ADR-0086 named red). Leftover `:guest-ime-absent`.
 
 `kanji` exit 0 means Space converts `か` to `加` without delivering to the guest, Enter commits `加`, and Space that commits kana is red (`kana-only-desktop`, ADR-0088). That is **not** a finished desktop.
+
+`kami` exit 0 means the SPA calls `kami.webgpu/init!` then `draw!` on `#kami-viewport` with a `render-ir` of ≥1 instance (ADR-0089). A sky-only `beginRenderPass` clear is leftover `:clear-only-desktop`. Exit 3 means the browser could not be answered. Guest IME leftover remains. That is **not** a finished desktop.
 
 ```bash
 clojure -M:compositor serve   # same SPA; compositor owns surfaces; Ctrl-C to stop

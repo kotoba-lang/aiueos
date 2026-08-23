@@ -229,6 +229,24 @@
        (slurp src))
      :cljs ""))
 
+(defn kami-presenter-js-source
+  "apps/session/kami-presenter.js — kami.webgpu init!/draw!, not inlined."
+  []
+  (let [here #?(:clj (io/file "apps/session/kami-presenter.js") :cljs nil)
+        res #?(:clj (io/resource "aiueos/session/kami-presenter.js") :cljs nil)]
+    #?(:clj (cond
+              (and here (.isFile here)) here
+              res res
+              :else nil)
+       :cljs nil)))
+
+(defn kami-presenter-js
+  []
+  #?(:clj
+     (when-let [src (kami-presenter-js-source)]
+       (slurp src))
+     :cljs nil))
+
 
 #?(:clj
    (do
@@ -671,6 +689,12 @@
                   (cond
                     (and (= "GET" method) (or (= path "/") (= path "/index.html")))
                     (send-bytes! ex 200 "text/html; charset=utf-8" (session-html))
+
+                    (and (= "GET" method) (= path "/kami-presenter.js"))
+                    (if-let [js (kami-presenter-js)]
+                      (send-bytes! ex 200 "text/javascript; charset=utf-8" js)
+                      (send-bytes! ex 404 "text/plain; charset=utf-8"
+                                   "kami-presenter.js missing"))
 
                     (and (= "GET" method) (= path "/setup.json"))
                     (send-bytes! ex 200 "application/json; charset=utf-8"

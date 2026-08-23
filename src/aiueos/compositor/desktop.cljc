@@ -10,31 +10,43 @@
   Hosted WM (ADR-0085): two overlapping surfaces, `raise` changes
   z-order, pointer hit-test is front-to-back, DADS title bars live in
   `apps/session` `#desktop`. Hosted IME is ADR-0086 (romaji→kana)
-  plus ADR-0088 (Space converts か→加). Guest-side IME remains leftover."
+  plus ADR-0088 (Space converts か→加). Hosted kami.webgpu presenter
+  is ADR-0089. Guest-side IME remains leftover."
   (:require [aiueos.compositor.ime :as ime]
             [clojure.string :as str]
+            [kami.webgpu.ir :as ir]
             [window-session-state :as wss]
             [window-session-state.compositor :as compositor]
             [window-session-state.input-router :as input-router]
             [window-session-state.window :as window]))
 
 (def kami-session-ir
-  "A kami.webgpu.ir frame (documented shape in kotoba-lang/webgpu).
-  Built as data here so aiueos does not pull the full render-graph
-  constructor graph (terrain/building) as a runtime premise. The
-  executor remains kami.webgpu in a browser; this is the IR."
-  {:engine "kami.webgpu.ir"
-   :globals {:sky {:horizon [0.12 0.18 0.28]
-                   :sun-dir [-0.4 -0.85 -0.35]
-                   :sun [1.0 0.96 0.85]}
-             :eye [8.0 6.0 10.0]
-             :target [0.0 1.0 0.0]}
-   :instances [{:pos [0.0 0.0 0.0]
-                :color [0.20 0.45 0.85]
-                :size [2.0 3.0 2.0]}
-               {:pos [3.2 0.0 1.4]
-                :color [0.28 0.55 0.30]
-                :size [1.1 2.6 1.1]}]})
+  "A kami.webgpu.ir frame built by the IR constructors, not a handmade
+  map that happens to look like one. The browser executor is still
+  `kami.webgpu`; this ns only owns the EDN. `:engine` is API metadata
+  for the SPA, not a constructor field."
+  (assoc (ir/render-ir
+          (ir/sky [0.12 0.18 0.28] [-0.4 -0.85 -0.35] [1.0 0.96 0.85])
+          [(ir/instance [0.0 0.0 0.0] [0.20 0.45 0.85] [2.0 3.0 2.0])
+           (ir/instance [3.2 0.0 1.4] [0.28 0.55 0.30] [1.1 2.6 1.1])]
+          [8.0 6.0 10.0]
+          [0.0 1.0 0.0])
+         :engine "kami.webgpu.ir"))
+
+(def clear-only-ir
+  "Sky, zero instances. A canvas that only clears is this IR.
+  Named red for `clojure -M:compositor kami`."
+  (assoc (ir/render-ir
+          (ir/sky [0.12 0.18 0.28] [-0.4 -0.85 -0.35] [1.0 0.96 0.85])
+          [])
+         :engine "kami.webgpu.ir"))
+
+(defn kami-admitted?
+  "Green when the constructors produced a valid frame with at least one
+  instance. Zero instances is the clear-only red."
+  [frame]
+  (boolean (and (ir/valid? frame)
+                (>= (count (:instances frame)) 1))))
 
 (def overlap-point
   "A point inside both default boot windows. Hit-test must prefer the
@@ -403,4 +415,4 @@
      :engine "window-session-state"
      :gpu-viewport "kami.webgpu.ir"
      :decoration "jp-go-dds"
-     :note "Hosted WM + hosted IME (romaji→kana→kanji). Guest IME leftover. Not P5."}))
+     :note "Hosted WM + hosted IME + kami.webgpu presenter. Guest IME leftover. Not P5."}))

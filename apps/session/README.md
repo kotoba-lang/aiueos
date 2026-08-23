@@ -3,7 +3,8 @@
 The product face of root ADR-2608221625 **P1**. One HTML document, jp-go-dds
 (DADS), `--hig-*` via `jp-go-dds.tokens/skin-css`. Fragments `#session`
 `#desktop` `#setup` `#manage` `#devices` `#operator`. `#itonami` is the same operator view. `#desktop` is the hosted WM
-face (ADR-0085) plus hosted IME (ADR-0086 / ADR-0088); it is not a second document.
+face (ADR-0085) plus hosted IME (ADR-0086 / ADR-0088) plus the hosted
+kami.webgpu presenter (ADR-0089, `/kami-presenter.js`); it is not a second document.
 
 This is not `clojure -M:cloud-live check`. CID read and murakumo infer leave
 from the **session process** (`POST /api/session/read-cid`,

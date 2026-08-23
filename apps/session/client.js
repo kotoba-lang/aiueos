@@ -238,49 +238,33 @@ async function presentKami(ir) {
   var canvas = document.getElementById("kami-viewport");
   var out = document.getElementById("kami-out");
   if (!canvas || !out) return;
-  var sky = ir && ir.globals && ir.globals.sky && ir.globals.sky.horizon;
-  out.textContent = "requesting WebGPU for kami.webgpu.ir…";
-  if (!navigator.gpu) {
+  var present = window.aiueosKamiPresent;
+  if (typeof present !== "function") {
     out.textContent = JSON.stringify({
-      outcome: "unmeasured",
-      reason: "webgpu-unavailable",
-      engine: "kami.webgpu.ir",
-      note: "Compositor surfaces still exist; this canvas is the GPU scanout host."
+      outcome: "refused",
+      reason: "clear-only-desktop",
+      engine: "kami.webgpu",
+      note: "beginRenderPass sky-clear is the named red. Executor is kami.webgpu init!/draw!."
     }, null, 2);
-    canvas.setAttribute("data-backend", "unavailable");
+    canvas.setAttribute("data-backend", "clear-only");
+    canvas.setAttribute("data-executor", "absent");
     return;
   }
+  out.textContent = "kami.webgpu init!…";
   try {
-    var adapter = await navigator.gpu.requestAdapter();
-    if (!adapter) throw new Error("no adapter");
-    var device = await adapter.requestDevice();
-    var ctx = canvas.getContext("webgpu");
-    var format = navigator.gpu.getPreferredCanvasFormat();
-    ctx.configure({ device: device, format: format, alphaMode: "opaque" });
-    var encoder = device.createCommandEncoder();
-    var c = sky || [0.12, 0.18, 0.28];
-    encoder.beginRenderPass({
-      colorAttachments: [{
-        view: ctx.getCurrentTexture().createView(),
-        clearValue: { r: c[0], g: c[1], b: c[2], a: 1 },
-        loadOp: "clear",
-        storeOp: "store"
-      }]
-    }).end();
-    device.queue.submit([encoder.finish()]);
-    canvas.setAttribute("data-backend", "webgpu");
-    out.textContent = JSON.stringify({
-      outcome: "admitted",
-      engine: "kami.webgpu.ir",
-      backend: "webgpu",
-      instances: (ir && ir.instances && ir.instances.length) || 0
-    }, null, 2);
+    var result = await present(canvas, ir || {});
+    canvas.setAttribute("data-executor", "kami.webgpu");
+    if (result && result.backend) {
+      canvas.setAttribute("data-backend", result.backend);
+    }
+    out.textContent = JSON.stringify(result, null, 2);
   } catch (e) {
     canvas.setAttribute("data-backend", "error");
+    canvas.setAttribute("data-executor", "kami.webgpu");
     out.textContent = JSON.stringify({
       outcome: "unmeasured",
       reason: String(e),
-      engine: "kami.webgpu.ir"
+      engine: "kami.webgpu"
     }, null, 2);
   }
 }
