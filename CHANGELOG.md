@@ -8,7 +8,11 @@ All notable changes to **aiueos** are documented here. The format follows
 ### Bare-metal net (P2, green on QEMU UEFI)
 - Guest TLS 1.3 (0x1301) + HTTPS GET of empty raw CID with SHA-256 admit
   (ADR-0082). Gate: `clojure -M:bare-metal cloud` EXIT=0 leftover `[]`.
-  Hosted `cloud-live` does not count. Chain/CertVerify still not checked.
+  Hosted `cloud-live` does not count. CertificateVerify is ADR-0087
+  (`clojure -M:bare-metal cert-verify`). Chain-to-anchor still leftover.
+  **Measured 2026-08-23:** `cert-verify` EXIT=0 leftover `[]` with
+  `AIUEOS_CERTVERIFY_PROBE result=ok scheme=ecdsa_secp256r1_sha256`, and
+  `cloud` still EXIT=0 leftover `[]` on the same firmware (ADR-0087).
 
 The Phase-0 substrate plus the runtime/robotics/agent work built on top of it.
 

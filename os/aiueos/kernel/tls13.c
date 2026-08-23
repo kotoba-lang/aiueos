@@ -5,6 +5,8 @@ extern uint64_t kotoba_aiueos_sha256(const uint8_t *, uint64_t, uint8_t[32],
                                      uint8_t *, uint64_t);
 extern uint64_t kotoba_aiueos_x25519(const uint8_t *, const uint8_t *,
                                      uint8_t *, uint8_t *);
+extern uint64_t kotoba_aiueos_ecdsa_p256_sha256_verify(
+    const uint8_t *, const uint8_t *, const uint8_t *, uint8_t *, uint64_t);
 
 #define TLS_TR_MAX 12288
 #define TLS_RX_MAX 12288
@@ -13,6 +15,14 @@ extern uint64_t kotoba_aiueos_x25519(const uint8_t *, const uint8_t *,
 
 static uint8_t sha_ws[512];
 static uint8_t x_ws[646];
+static uint8_t ecdsa_ws[2048];
+static uint8_t leaf_pub[64];
+static int have_leaf_pub;
+static int certverify_ok;
+static int certverify_parsed;
+static uint16_t certverify_scheme;
+static uint8_t cv_rs[64];
+static uint8_t cv_digest[32];
 static uint8_t hmac_block[64 + TLS_TR_MAX];
 
 static uint8_t transcript[TLS_TR_MAX];
@@ -318,6 +328,98 @@ static int finish_check(const uint8_t *verify, uint32_t n) {
   return 1;
 }
 
+static const uint8_t p256_spki_prefix[27] = {
+  0x30,0x59,0x30,0x13,0x06,0x07,0x2a,0x86,0x48,0xce,0x3d,0x02,0x01,
+  0x06,0x08,0x2a,0x86,0x48,0xce,0x3d,0x03,0x01,0x07,0x03,0x42,0x00,0x04};
+
+static int find_p256_point(const uint8_t *p, uint32_t n, uint8_t out[64]) {
+  uint32_t i, j, hit;
+  if (n < 27 + 64) return 0;
+  for (i = 0; i + 27 + 64 <= n; i++) {
+    hit = 1;
+    for (j = 0; j < 27; j++) {
+      if (p[i + j] != p256_spki_prefix[j]) { hit = 0; break; }
+    }
+    if (hit) {
+      copy_bytes(out, p + i + 27, 64);
+      return 1;
+    }
+  }
+  return 0;
+}
+
+static int der_int_be32(const uint8_t *p, uint32_t n, uint32_t *used, uint8_t out[32]) {
+  uint32_t len, off, skip;
+  if (n < 2 || p[0] != 0x02) return 0;
+  len = p[1];
+  off = 2;
+  if ((len & 0x80) != 0 || len == 0 || off + len > n) return 0;
+  skip = 0;
+  while (skip + 1 < len && p[off + skip] == 0) skip++;
+  if (len - skip > 32) return 0;
+  zero_bytes(out, 32);
+  copy_bytes(out + (32 - (len - skip)), p + off + skip, len - skip);
+  *used = off + len;
+  return 1;
+}
+
+static int parse_ecdsa_der(const uint8_t *p, uint32_t n, uint8_t rs[64]) {
+  uint32_t used = 0, inner;
+  if (n < 8 || p[0] != 0x30) return 0;
+  if ((p[1] & 0x80) != 0 || 2u + p[1] != n) return 0;
+  if (!der_int_be32(p + 2, n - 2, &used, rs)) return 0;
+  inner = 2 + used;
+  if (!der_int_be32(p + inner, n - inner, &used, rs + 32)) return 0;
+  return inner + used == n;
+}
+
+static int parse_certificate(const uint8_t *hs, uint32_t n) {
+  if (n < 8 || hs[0] != 0x0b) return 0;
+  if (be24(hs + 1) + 4 != n) return 0;
+  if (!find_p256_point(hs, n, leaf_pub)) return 0;
+  have_leaf_pub = 1;
+  return 1;
+}
+
+static int verify_certificate_verify(const uint8_t *hs, uint32_t n) {
+  uint32_t mlen, siglen, i;
+  uint8_t th[32], digest[32], rs[64], content[130];
+  static const uint8_t ctx[33] = {
+    'T','L','S',' ','1','.','3',',',' ','s','e','r','v','e','r',' ',
+    'C','e','r','t','i','f','i','c','a','t','e','V','e','r','i','f','y'};
+  if (!have_leaf_pub) return 0;
+  if (n < 8 || hs[0] != 0x0f) return 0;
+  mlen = be24(hs + 1);
+  if (mlen + 4 != n) return 0;
+  certverify_scheme = be16(hs + 4);
+  if (certverify_scheme != 0x0403) return 0; /* ecdsa_secp256r1_sha256 */
+  siglen = be16(hs + 6);
+  if (8 + siglen != n) return 0;
+  if (!parse_ecdsa_der(hs + 8, siglen, rs)) return 0;
+  if (!sha256(transcript, transcript_len, th)) return 0;
+  for (i = 0; i < 64; i++) content[i] = 0x20;
+  copy_bytes(content + 64, ctx, 33);
+  content[97] = 0;
+  copy_bytes(content + 98, th, 32);
+  if (!sha256(content, 130, digest)) return 0;
+  copy_bytes(cv_rs, rs, 64);
+  copy_bytes(cv_digest, digest, 32);
+  certverify_parsed = 1;
+  return 1;
+}
+
+int aiueos_tls13_run_certverify(void) {
+  /* TCP ACK of the server flight happens first. Kotoba ECDSA is seconds of
+     TCG; doing it inside feed delayed the ACK until the peer had moved on,
+     so HTTP GET never got a body (app=0 after get=1). */
+  if (!certverify_parsed || !have_leaf_pub) return 0;
+  if (!kotoba_aiueos_ecdsa_p256_sha256_verify(cv_rs, cv_digest, leaf_pub,
+                                              ecdsa_ws, 2048))
+    return 0;
+  certverify_ok = 1;
+  return 1;
+}
+
 static int consume_hs_messages(const uint8_t *p, uint32_t n) {
   if (hs_partial_len + n > TLS_HS_MAX) return 0;
   copy_bytes(hs_partial + hs_partial_len, p, n);
@@ -329,13 +431,20 @@ static int consume_hs_messages(const uint8_t *p, uint32_t n) {
     if (total > TLS_HS_MAX) return 0;
     if (hs_partial_len < total) return 1;
     if (typ == 0x14) {
+      if (!certverify_parsed) return 0;
       if (!finish_check(hs_partial + 4, mlen)) return 0;
       if (!transcript_add(hs_partial, total)) return 0;
       if (!derive_ap_keys()) return 0;
       handshake_ready = 1;
+    } else if (typ == 0x0b) {
+      if (!parse_certificate(hs_partial, total)) return 0;
+      if (!transcript_add(hs_partial, total)) return 0;
+    } else if (typ == 0x0f) {
+      /* Hash transcript BEFORE adding CertificateVerify (RFC 8446 4.4.3). */
+      if (!verify_certificate_verify(hs_partial, total)) return 0;
+      if (!transcript_add(hs_partial, total)) return 0;
     } else if (!have_server_finished) {
-      /* EE / Certificate / CertificateVerify / others before Finished.
-         Do not hash NST after Finished: that would desync client Finished. */
+      /* EE / others before Finished. Do not hash NST after Finished. */
       if (!transcript_add(hs_partial, total)) return 0;
     }
     if (hs_partial_len > total)
@@ -437,6 +546,10 @@ void aiueos_tls13_reset(void) {
   last_alert_desc = 0;
   nst_count = 0;
   ch_record_len = 0;
+  have_leaf_pub = 0;
+  certverify_ok = 0;
+  certverify_parsed = 0;
+  certverify_scheme = 0;
   s_hs_seq = c_hs_seq = s_ap_seq = c_ap_seq = 0;
 }
 
@@ -482,7 +595,7 @@ int aiueos_tls13_handshake_ready(void) { return handshake_ready && !failed; }
 int aiueos_tls13_take_finished(uint8_t *out, uint32_t *len) {
   uint8_t finished_key[32], th[32], verify[32], fin[36];
   uint32_t rec_len = 0;
-  if (!handshake_ready) return 0;
+  if (!handshake_ready || !certverify_ok) return 0;
   if (!hkdf_expand_label(c_hs_secret, "finished", 0, 0, finished_key, 32)) return 0;
   if (!sha256(transcript, transcript_len, th)) return 0;
   if (!hmac_sha256(finished_key, 32, th, 32, verify)) return 0;
@@ -530,6 +643,35 @@ uint32_t aiueos_tls13_stage(void) {
        | ((uint32_t)first_record_type << 8);
 }
 uint32_t aiueos_tls13_rx_buffered(void) { return rx_len; }
+
+int aiueos_tls13_certverify_ok(void) { return certverify_ok && !failed; }
+uint16_t aiueos_tls13_certverify_scheme(void) { return certverify_scheme; }
+
+int aiueos_tls13_ecdsa_selftest(void) {
+  /* RFC 6979 A.2.5 SHA-256 "sample". s+1 must refuse. */
+  static const uint8_t sig[64] = {
+    0xef,0xd4,0x8b,0x2a,0xac,0xb6,0xa8,0xfd,0x11,0x40,0xdd,0x9c,0xd4,0x5e,0x81,0xd6,
+    0x9d,0x2c,0x87,0x7b,0x56,0xaa,0xf9,0x91,0xc3,0x4d,0x0e,0xa8,0x4e,0xaf,0x37,0x16,
+    0xf7,0xcb,0x1c,0x94,0x2d,0x65,0x7c,0x41,0xd4,0x36,0xc7,0xa1,0xb6,0xe2,0x9f,0x65,
+    0xf3,0xe9,0x00,0xdb,0xb9,0xaf,0xf4,0x06,0x4d,0xc4,0xab,0x2f,0x84,0x3a,0xcd,0xa8};
+  static const uint8_t digest[32] = {
+    0xaf,0x2b,0xdb,0xe1,0xaa,0x9b,0x6e,0xc1,0xe2,0xad,0xe1,0xd6,0x94,0xf4,0x1f,0xc7,
+    0x1a,0x83,0x1d,0x02,0x68,0xe9,0x89,0x15,0x62,0x11,0x3d,0x8a,0x62,0xad,0xd1,0xbf};
+  static const uint8_t pub[64] = {
+    0x60,0xfe,0xd4,0xba,0x25,0x5a,0x9d,0x31,0xc9,0x61,0xeb,0x74,0xc6,0x35,0x6d,0x68,
+    0xc0,0x49,0xb8,0x92,0x3b,0x61,0xfa,0x6c,0xe6,0x69,0x62,0x2e,0x60,0xf2,0x9f,0xb6,
+    0x79,0x03,0xfe,0x10,0x08,0xb8,0xbc,0x99,0xa4,0x1a,0xe9,0xe9,0x56,0x28,0xbc,0x64,
+    0xf2,0xf1,0xb2,0x0c,0x2d,0x7e,0x9f,0x51,0x77,0xa3,0xc2,0x94,0xd4,0x46,0x22,0x99};
+  uint8_t bad[64];
+  uint32_t i;
+  static uint8_t ws[2048];
+  if (!kotoba_aiueos_ecdsa_p256_sha256_verify(sig, digest, pub, ws, 2048)) return 0;
+  copy_bytes(bad, sig, 64);
+  bad[63] = (uint8_t)(bad[63] + 1);
+  if (kotoba_aiueos_ecdsa_p256_sha256_verify(bad, digest, pub, ws, 2048)) return 0;
+  for (i = 0; i < 2048; i++) ws[i] = 0;
+  return 1;
+}
 
 int aiueos_tls13_hmac_selftest(void) {
   /* RFC 4231 test case 1. Proves Kotoba SHA-256 HMAC before any handshake. */

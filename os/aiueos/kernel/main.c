@@ -339,7 +339,9 @@ void aiueos_exception_dispatch(uint64_t vector) {
   } else {
     extern int aiueos_crash_receipt_write_from_fault(uint32_t);
     debug_string("AIUEOS_EXCEPTION_FAIL unexpected-vector\n");
-    serial_string("AIUEOS_EXCEPTION_FAIL unexpected-vector\r\n");
+    serial_string("AIUEOS_EXCEPTION_FAIL unexpected-vector vector=");
+    serial_decimal((uint32_t)vector);
+    serial_string("\r\n");
     if (aiueos_crash_receipt_write_from_fault((uint32_t)vector)) {
       debug_string("AIUEOS_FAULT_RECEIPT_OK polled try-lock written readback pending\n");
       serial_string("AIUEOS_FAULT_RECEIPT_OK polled try-lock written readback pending\r\n");
@@ -514,6 +516,14 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
         qemu_exit(0x6f);
       }
       serial_string("AIUEOS_HMAC_HKDF_OK sha256 rfc4231-rfc5869\r\n");
+    }
+    {
+      extern int aiueos_tls13_ecdsa_selftest(void);
+      if (!aiueos_tls13_ecdsa_selftest()) {
+        serial_string("AIUEOS_ECDSA_P256_FAIL rfc6979-sample\r\n");
+        qemu_exit(0x6f);
+      }
+      serial_string("AIUEOS_ECDSA_P256_OK rfc6979-sample s+1-refused\r\n");
     }
     if (!aiueos_framebuffer_initialize(boot)) {
       debug_string("AIUEOS_FRAMEBUFFER_FAIL gop-contract\n");
@@ -883,6 +893,19 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
           serial_string(" leftover=:tls-handshake-incomplete,:http-absent\r\n");
         } else {
           serial_string("absent leftover=:tls-absent,:http-absent\r\n");
+        }
+        {
+          extern int aiueos_tls13_certverify_ok(void);
+          extern uint16_t aiueos_tls13_certverify_scheme(void);
+          serial_string("AIUEOS_CERTVERIFY_PROBE result=");
+          if (aiueos_tls13_certverify_ok() &&
+              aiueos_tls13_certverify_scheme() == 0x0403) {
+            serial_string("ok scheme=ecdsa_secp256r1_sha256\r\n");
+          } else if (aiueos_tls_handshake_ready() || aiueos_http_cid_ready()) {
+            serial_string("hashed-only leftover=:cert-verify-hashed-only\r\n");
+          } else {
+            serial_string("absent leftover=:cert-verify-hashed-only\r\n");
+          }
         }
         serial_string("AIUEOS_HTTP_PROBE result=");
         if (aiueos_http_cid_ready()) {

@@ -101,6 +101,7 @@ kotoba_exit_route_object=${AIUEOS_KOTOBA_EXIT_ROUTE_OBJECT:-"$aiueos/kotoba/task
 kotoba_service_task_object=${AIUEOS_KOTOBA_SERVICE_TASK_OBJECT:-"$aiueos/kotoba/service-task-transition.o"}
 kotoba_rsa2048_object=${AIUEOS_KOTOBA_RSA2048_OBJECT:-"$aiueos/kotoba/rsa2048.o"}
 kotoba_x25519_object=${AIUEOS_KOTOBA_X25519_OBJECT:-"$aiueos/kotoba/x25519.o"}
+kotoba_ecdsa_object=${AIUEOS_KOTOBA_ECDSA_OBJECT:-"$aiueos/kotoba/ecdsa-p256.o"}
 kotoba_net_arp_object=${AIUEOS_KOTOBA_NET_ARP_OBJECT:-"$aiueos/kotoba/net-arp-reply-valid.o"}
 kotoba_ipv4_checksum_object=${AIUEOS_KOTOBA_IPV4_CHECKSUM_OBJECT:-"$aiueos/kotoba/ipv4-checksum.o"}
 kotoba_ipv4_icmp_object=${AIUEOS_KOTOBA_IPV4_ICMP_OBJECT:-"$aiueos/kotoba/ipv4-icmp-reply-valid.o"}
@@ -321,6 +322,9 @@ python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_dhcp_option_ob
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_x25519_object" \
   5956dc8b7de8b71fdf9b8735bc50f2b3e50eb0f975184d8eb37c9e8e58c60c4c \
   kotoba_aiueos_x25519
+python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_ecdsa_object" \
+  5026b4346bdb02ba689fad3afe67f21e556ca028b03338764140079f0308dc29 \
+  kotoba_aiueos_ecdsa_p256_sha256_verify
 python3 "$aiueos/scripts/verify-kotoba-user-elf.py" "$kotoba_user_elf" \
   1f0e5897831d0de6bbcb15eec82a6e0c4b402b436689cec051bc6de3b5c4e905
 if [ -n "${AIUEOS_EXTERNAL_KERNEL_ELF:-}" ]; then
@@ -399,7 +403,7 @@ zig ld.lld -nostdlib -static -z max-page-size=0x1000 \
   "$kotoba_mutable_build_object" "$kotoba_cap_valid_object" \
   "$kotoba_extent_valid_object" "$kotoba_region_valid_object" \
   "$kotoba_pci_config_read_object" "$kotoba_pci_config_write_object" \
-  "$kotoba_x25519_object" \
+  "$kotoba_x25519_object" "$kotoba_ecdsa_object" \
   "$kotoba_mmio_map_admit_object" \
   "$kotoba_acpi_checksum_object" "$kotoba_acpi_table_valid_object" \
   "$kotoba_vtd_admit_object" \

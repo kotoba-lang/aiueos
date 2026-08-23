@@ -152,6 +152,9 @@
    ;; (`:http-absent`, `:tls-absent`, `:host-fetch-does-not-count`, …).
    ;; Exit 3 = QEMU/OVMF/serial unmeasured.
    ;; Hosted `cloud-live` and `session smoke` do not count.
+   ;;   clojure -M:bare-metal cert-verify
+   ;; Exit 0 = guest CertificateVerify (ECDSA P-256) admitted.
+   ;; HTTP+CID without that serial line is leftover `:cert-verify-hashed-only`.
    :bare-metal {:jvm-opts ["--enable-native-access=ALL-UNNAMED"]
                 :main-opts ["-m" "aiueos.bare-metal"]}
 

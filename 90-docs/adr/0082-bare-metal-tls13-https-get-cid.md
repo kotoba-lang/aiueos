@@ -44,9 +44,9 @@ as HTTP/1.1 200 with an empty body whose SHA-256 is the empty digest.
    No libc. Limits are compile-time. Admission of a CID is not here.
 2. **Key schedule in C calling Kotoba** (`tls13.c`): HMAC-SHA256 / HKDF via
    `kotoba_aiueos_sha256`, ECDHE via `kotoba_aiueos_x25519`. RFC 4231 and
-   RFC 5869 extract vectors at boot. Cipher 0x1301 only. Certificate chain and
-   CertificateVerify are hashed, not verified (hosted profile also skips
-   chain).
+   RFC 5869 extract vectors at boot. Cipher 0x1301 only. CertificateVerify
+   is ADR-0087 (ECDSA P-256 against the leaf SPKI). The chain to a trust
+   anchor is still not walked (hosted profile is pin-only too).
 3. **TCP window 1792** on the cloud socket (`1792+54 < NET_FRAME_MAX 2048`) so
    kotobase's HTTPS record (~1298 bytes) fits one virtqueue slot. The HTTP
    pump admits ACK equal to post-GET `our_next` **or** the ClientHello-only
@@ -72,6 +72,6 @@ Not executable, and stated here rather than at the end:
 The UEFI guest completed TLS 1.3 (cipher 0x1301) and HTTPS GET of the empty
 raw CID, then verified the body SHA-256 with `kotoba_aiueos_digest_equal`.
 That is P2 green for the QEMU profile. Rows 4–5 of ADR-0041 for bare metal
-move with that serial. Chain/CertVerify are still hashed, not verified.
-P4 itonami, P5 a real machine, and WM/IME/virtio-gpu 2D remain. The Chrome
-OS-shaped desktop goal is not complete.
+move with that serial. CertificateVerify is ADR-0087; chain-to-anchor is
+still leftover. P4 itonami, P5 a real machine, and WM/IME/virtio-gpu 2D
+remain. The Chrome OS-shaped desktop goal is not complete.
