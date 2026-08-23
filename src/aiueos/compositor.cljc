@@ -19,12 +19,15 @@
   commits `か`. IME-off is the named red (`:ime-bypass`). Hosted kanji:
   `clojure -M:compositor kanji` admits Space converting `か` to `加`.
   Space that commits kana is leftover `:kanji-absent`. Guest IME stays
-  leftover. Guest 2D stays `gpu`.
+  leftover. Guest 2D stays `gpu`. Hosted kami-engine: `clojure
+  -M:compositor kami` admits `kami.webgpu/init!` then `draw!` on
+  `#kami-viewport`. A sky-only `beginRenderPass` clear is leftover
+  `:clear-only-desktop`.
 
   Exit 0 = the named command admitted. Exit 1 = refused. Exit 3 =
-  QEMU/firmware/serial could not be answered.
+  QEMU/firmware/serial/browser could not be answered.
 
-  Commands: `clojure -M:compositor smoke` | `gpu` | `wm` | `ime` | `kanji` | `serve`"
+  Commands: `clojure -M:compositor smoke` | `gpu` | `wm` | `ime` | `kanji` | `kami` | `serve`"
   (:require [aiueos.compositor.desktop :as desktop]
             [aiueos.phone-bind :as pb]
             [clojure.string :as str]
@@ -130,6 +133,29 @@
   (boolean
    (and (html-has-ime-face? html)
         (re-find #"id=\"ime-candidates\"" html))))
+
+(defn html-has-kami-face?
+  "SPA loads the kami.webgpu presenter and names the clear-only red.
+  `beginRenderPass` inside the executor bundle is not this red; the old
+  sky-clear `presentKami` (`requesting WebGPU for kami.webgpu.ir`) is."
+  [html]
+  (boolean
+   (and (html-has-desktop-face? html)
+        (re-find #"src=\"/kami-presenter.js\"" html)
+        (re-find #"aiueosKamiPresent" html)
+        (re-find #"data-executor=\"kami.webgpu\"" html)
+        (re-find #"clear-only-desktop" html)
+        (not (re-find #"requesting WebGPU for kami.webgpu.ir" html)))))
+
+(defn presenter-is-kami-webgpu?
+  "The compiled bundle must be kami.webgpu (init!/draw!), not a stub
+  that returns admitted without the executor."
+  [js]
+  (boolean
+   (and (string? js)
+        (re-find #"aiueosKamiPresent" js)
+        (re-find #"init_BANG_" js)
+        (re-find #"draw_BANG_" js))))
 
 (defn- index-of [xs x]
   (loop [i 0]
@@ -661,6 +687,116 @@
            (finally
              (when-let [rt @http] (pb/stop-http! rt))))))
 
+     (defn- presenter-js
+       []
+       (let [f (io/file "apps/session/kami-presenter.js")]
+         (when (.isFile f) (slurp f))))
+
+     (defn- frame-field
+       [frame k]
+       (let [r (or (:result frame) frame)]
+         (cond
+           (nil? r) nil
+           (map? r) (or (get r k) (get r (keyword k)))
+           (instance? java.util.Map r) (.get ^java.util.Map r k)
+           :else nil)))
+
+     (defn- frame-admitted?
+       [frame]
+       (let [presenter (str (or (frame-field frame "presenter") ""))
+             executor (str (or (frame-field frame "executor") ""))
+             engine (str (or (frame-field frame "engine") ""))
+             outcome (str (or (frame-field frame "outcome") ""))
+             instances (frame-field frame "instances")
+             n (if (number? instances) (long instances) 0)]
+         (and (= presenter "function")
+              (= executor "kami.webgpu")
+              (= engine "kami.webgpu")
+              (= outcome "admitted")
+              (>= n 1))))
+
+     (defn run-kami
+       "Hosted kami.webgpu presenter. No QEMU. Clear-only sky fill is red.
+       Guest virtio-gpu 2D stays `gpu`. Guest IME leftover."
+       [{:keys [dir]}]
+       (let [dir (io/file (or dir (str (System/getProperty "java.io.tmpdir")
+                                       "/aiueos-compositor-kami")))
+             http (atom nil)
+             js (presenter-js)
+             ir-ok? (desktop/kami-admitted? desktop/kami-session-ir)
+             red-ok? (not (desktop/kami-admitted? desktop/clear-only-ir))
+             bundle-ok? (presenter-is-kami-webgpu? js)]
+         (try
+           (io/make-parents (desktop-file dir))
+           (when (.isFile (desktop-file dir))
+             (.delete (desktop-file dir)))
+           (let [d (desktop/boot-desktop)
+                 _ (persist! dir d)
+                 rt (pb/start-http! (make-compositor-runtime dir))
+                 _ (reset! http rt)
+                 base (pb/base-url rt)
+                 page (pb/http-get (str base "/"))
+                 html (:body page)
+                 spa? (and (= 200 (:code page)) (html-has-kami-face? html))
+                 bundle (pb/http-get (str base "/kami-presenter.js")
+                                     {:read-timeout-ms 30000})
+                 bundle-served? (and (= 200 (:code bundle))
+                                     (presenter-is-kami-webgpu? (:body bundle)))
+                 api (pb/http-get (str base "/api/compositor/desktop"))
+                 api-ok? (boolean
+                          (and (= 200 (:code api))
+                               (re-find #"kami.webgpu.ir" (:body api))
+                               (re-find #"instances" (:body api))))
+                 floor? (and spa? bundle-ok? bundle-served? ir-ok? red-ok? api-ok?)
+                 frame (when floor?
+                         (try
+                           (let [eval-frame (requiring-resolve
+                                             'aiueos.compositor.kami-browser/eval-frame)]
+                             (eval-frame base))
+                           (catch Throwable e
+                             {:unmeasured true :reason (str (.getMessage e))})))
+                 measured? (and (map? frame) (not (:unmeasured frame)) (:ok frame))
+                 drawn? (and measured? (frame-admitted? frame))
+                 outcome (str (or (frame-field frame "outcome") ""))
+                 leftover (cond
+                            (not floor?) :clear-only-desktop
+                            (not measured?) :unmeasured
+                            (= outcome "unmeasured") :unmeasured
+                            (not drawn?) :clear-only-desktop
+                            :else :guest-ime-absent)
+                 exit (cond
+                        (not floor?) 1
+                        (or (not measured?) (= leftover :unmeasured)) 3
+                        (not drawn?) 1
+                        :else 0)
+                 green? (zero? exit)]
+             (println (str "AIUEOS_COMPOSITOR_URL=" base "/#desktop"))
+             (println (str "AIUEOS_COMPOSITOR_KAMI_SPA="
+                           (if spa? "admitted" "refused")))
+             (println (str "AIUEOS_COMPOSITOR_KAMI_BUNDLE="
+                           (if (and bundle-ok? bundle-served?) "admitted" "refused")))
+             (println (str "AIUEOS_COMPOSITOR_KAMI_IR="
+                           (if (and ir-ok? red-ok?) "admitted" "refused")))
+             (println (str "AIUEOS_COMPOSITOR_KAMI_FRAME="
+                           (cond
+                             drawn? "admitted"
+                             (not measured?) "unmeasured"
+                             :else "refused")))
+             (println (str "AIUEOS_COMPOSITOR_KAMI_LEFTOVER=:" (name leftover)))
+             (when green? (println "AIUEOS_COMPOSITOR_KAMI_OK"))
+             (when-not green?
+               (println (str "AIUEOS_COMPOSITOR_KAMI_FAIL"
+                             " spa=" spa?
+                             " bundle=" bundle-ok?
+                             " served=" bundle-served?
+                             " ir=" ir-ok?
+                             " red=" red-ok?
+                             " api=" api-ok?
+                             " frame=" (pr-str frame))))
+             {:exit exit :green? green? :leftover leftover})
+           (finally
+             (when-let [rt @http] (pb/stop-http! rt))))))
+
      (defn -main
        [& args]
        (let [cmd (or (first args) "smoke")
@@ -713,5 +849,13 @@
              (flush)
              (System/exit (int (:exit r))))
 
-           (do (println "usage: clojure -M:compositor [smoke|gpu|wm|ime|kanji|serve]")
+           "kami"
+           (let [r (run-kami {:dir (or (System/getenv "AIUEOS_COMPOSITOR_KAMI_DIR")
+                                       (.getPath (java.io.File.
+                                                  (System/getProperty "java.io.tmpdir")
+                                                  "aiueos-compositor-kami")))})]
+             (flush)
+             (System/exit (int (:exit r))))
+
+           (do (println "usage: clojure -M:compositor [smoke|gpu|wm|ime|kanji|kami|serve]")
                (System/exit 3)))))))

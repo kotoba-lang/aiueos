@@ -2728,7 +2728,7 @@ body { padding-left: env(safe-area-inset-left,0px); padding-right: env(safe-area
         </section>
         <section id="desktop" class="dds-ext-section session-view" data-view="desktop" hidden>
           <h1 class="dads-heading" data-size="32">デスクトップ</h1>
-          <p class="session-lede">compositor 過程が <code>window-session-state</code> の 2 枚を重ねます。タイトルバーは DADS（<code>jp-go-dds</code>）です。前面へで z-order が変わります。 virtio-gpu 2D は <code>clojure -M:compositor gpu</code>。IME は romaji からかなへ（<code>clojure -M:compositor ime</code>）。IME はかなと漢字（<code>clojure -M:compositor kanji</code>）。ゲスト側 IME は leftover です。</p>
+          <p class="session-lede">compositor 過程が <code>window-session-state</code> の 2 枚を重ねます。タイトルバーは DADS（<code>jp-go-dds</code>）です。前面へで z-order が変わります。 virtio-gpu 2D は <code>clojure -M:compositor gpu</code>。IME は romaji からかなへ（<code>clojure -M:compositor ime</code>）。IME はかなと漢字（<code>clojure -M:compositor kanji</code>）。ゲスト側 IME は leftover です。描画は <code>kami.webgpu</code> の <code>clojure -M:compositor kami</code> です。</p>
           <div id="ime-bar" class="ime-bar dds-ext-row" data-ime="on" aria-label="input method">
             <span class="dads-chip-label" data-style="filled-1" data-color="blue">かな</span>
             <h2 class="dads-heading" data-size="16" id="ime-preedit-label">変換中</h2>
@@ -2757,7 +2757,7 @@ body { padding-left: env(safe-area-inset-left,0px); padding-right: env(safe-area
                 <button data-raise="2" class="dads-button" data-type="outline" data-size="sm" id="wm-raise-2" type="button">前面へ</button>
               </header>
               <div class="wm-body">
-                <canvas id="kami-viewport" class="kami-viewport wm-guest" width="640" height="360" data-engine="kami.webgpu.ir" tabindex="0" aria-label="kami WebGPU guest surface"></canvas>
+                <canvas id="kami-viewport" class="kami-viewport wm-guest" width="640" height="360" data-engine="kami.webgpu.ir" data-executor="kami.webgpu" tabindex="0" aria-label="kami WebGPU guest surface"></canvas>
               </div>
             </article>
           </div>
@@ -2801,6 +2801,7 @@ body { padding-left: env(safe-area-inset-left,0px); padding-right: env(safe-area
         </section>
       </main>
     </div>
+    <script src="/kami-presenter.js"></script>
     <script>window.__aiueosSessionAlive = true;
 window.__aiueosSessionState = { bound: false };
 
@@ -3041,49 +3042,33 @@ async function presentKami(ir) {
   var canvas = document.getElementById("kami-viewport");
   var out = document.getElementById("kami-out");
   if (!canvas || !out) return;
-  var sky = ir && ir.globals && ir.globals.sky && ir.globals.sky.horizon;
-  out.textContent = "requesting WebGPU for kami.webgpu.ir…";
-  if (!navigator.gpu) {
+  var present = window.aiueosKamiPresent;
+  if (typeof present !== "function") {
     out.textContent = JSON.stringify({
-      outcome: "unmeasured",
-      reason: "webgpu-unavailable",
-      engine: "kami.webgpu.ir",
-      note: "Compositor surfaces still exist; this canvas is the GPU scanout host."
+      outcome: "refused",
+      reason: "clear-only-desktop",
+      engine: "kami.webgpu",
+      note: "beginRenderPass sky-clear is the named red. Executor is kami.webgpu init!/draw!."
     }, null, 2);
-    canvas.setAttribute("data-backend", "unavailable");
+    canvas.setAttribute("data-backend", "clear-only");
+    canvas.setAttribute("data-executor", "absent");
     return;
   }
+  out.textContent = "kami.webgpu init!…";
   try {
-    var adapter = await navigator.gpu.requestAdapter();
-    if (!adapter) throw new Error("no adapter");
-    var device = await adapter.requestDevice();
-    var ctx = canvas.getContext("webgpu");
-    var format = navigator.gpu.getPreferredCanvasFormat();
-    ctx.configure({ device: device, format: format, alphaMode: "opaque" });
-    var encoder = device.createCommandEncoder();
-    var c = sky || [0.12, 0.18, 0.28];
-    encoder.beginRenderPass({
-      colorAttachments: [{
-        view: ctx.getCurrentTexture().createView(),
-        clearValue: { r: c[0], g: c[1], b: c[2], a: 1 },
-        loadOp: "clear",
-        storeOp: "store"
-      }]
-    }).end();
-    device.queue.submit([encoder.finish()]);
-    canvas.setAttribute("data-backend", "webgpu");
-    out.textContent = JSON.stringify({
-      outcome: "admitted",
-      engine: "kami.webgpu.ir",
-      backend: "webgpu",
-      instances: (ir && ir.instances && ir.instances.length) || 0
-    }, null, 2);
+    var result = await present(canvas, ir || {});
+    canvas.setAttribute("data-executor", "kami.webgpu");
+    if (result && result.backend) {
+      canvas.setAttribute("data-backend", result.backend);
+    }
+    out.textContent = JSON.stringify(result, null, 2);
   } catch (e) {
     canvas.setAttribute("data-backend", "error");
+    canvas.setAttribute("data-executor", "kami.webgpu");
     out.textContent = JSON.stringify({
       outcome: "unmeasured",
       reason: String(e),
-      engine: "kami.webgpu.ir"
+      engine: "kami.webgpu"
     }, null, 2);
   }
 }

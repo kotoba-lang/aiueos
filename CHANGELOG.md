@@ -5,6 +5,13 @@ All notable changes to **aiueos** are documented here. The format follows
 
 ## [Unreleased]
 
+### Hosted kami.webgpu presenter (ADR-0089)
+- `#kami-viewport` calls `kami.webgpu/init!` then `draw!`. Gate:
+  `clojure -M:compositor kami`. Named red is `clear-only-desktop`
+  (sky-only `beginRenderPass`). IR is `kami.webgpu.ir/render-ir` with
+  ≥1 instance. `kanji` / `ime` stay green without a kami frame.
+  Leftover `:guest-ime-absent`. P5 UNVERIFIED.
+
 ### Hosted IME kanji (ADR-0088)
 - Space converts `か` to first candidate `加`; Enter commits. Gate:
   `clojure -M:compositor kanji`. Named red is `kana-only-desktop`

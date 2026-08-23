@@ -30,9 +30,9 @@ Not executable, and stated here rather than at the end:
   Hosted kana stays ADR-0086 (`clojure -M:compositor ime`).
 - **P5 a real machine is UNVERIFIED.** This Mac is the QEMU host. QEMU
   ≠ P5. USB OVMF is forbidden as P5. No physical boot was invented.
-- **kami-engine as the daily desktop, CACAO write, chain-to-anchor, and
-  physical boot remain.** The Chrome OS-shaped desktop goal is **not
-  complete**.
+- **Hosted kanji is green.** The kami.webgpu presenter leftover is
+  ADR-0089. CACAO write, chain-to-anchor, guest IME, and physical boot
+  remain. The Chrome OS-shaped desktop goal is **not complete**.
 
 ## Context
 
@@ -65,6 +65,6 @@ the QEMU host. Attached USB is not an aiueos machine. See ADR-0084.
 
 README Desktop can say hosted IME kanji is proven on this Mac when
 `compositor kanji` is green, and must still say guest IME leftover, P5
-UNVERIFIED, kami-engine daily desktop unfinished, and the Chrome
+UNVERIFIED, hosted kami.webgpu presenter as ADR-0089, and the Chrome
 OS-shaped desktop **goal is not complete**. ADR-0086 remains the kana
 discriminator. This ADR is the kanji discriminator.

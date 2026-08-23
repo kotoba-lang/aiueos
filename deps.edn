@@ -59,7 +59,12 @@
                        :git/sha "6889fa736750348863d2b98d69e688131a2ca515"}
                       io.github.kotoba-lang/org-ietf-tcp
                       {:git/url "https://github.com/kotoba-lang/org-ietf-tcp.git"
-                       :git/sha "d8c15e23b6c169a4ed044cd7764923ecbb789be4"}}
+                       :git/sha "d8c15e23b6c169a4ed044cd7764923ecbb789be4"}
+                      ;; Hosted kami IR constructors (kami.webgpu.ir). The
+                      ;; browser executor stays cljs; this is the JVM floor.
+                      io.github.kotoba-lang/webgpu
+                      {:git/url "https://github.com/kotoba-lang/webgpu.git"
+                       :git/sha "17598c1206a31e594b0e028245f222e53b1b8b71"}}
          :main-opts ["-m" "cognitect.test-runner"]
          :exec-fn cognitect.test-runner.api/test}
 
@@ -83,6 +88,9 @@
                              io.github.kotoba-lang/amu
                              {:git/url "https://github.com/kotoba-lang/amu.git"
                               :git/sha "6889fa736750348863d2b98d69e688131a2ca515"}
+                             io.github.kotoba-lang/webgpu
+                             {:git/url "https://github.com/kotoba-lang/webgpu.git"
+                              :git/sha "17598c1206a31e594b0e028245f222e53b1b8b71"}
                              }
                 ;; No org-ietf-tcp here, and the parity test that needs it is
                 ;; not selected. **That repository is private**, and fleet nodes
@@ -135,6 +143,7 @@
    ;;   clojure -M:compositor wm      ; ≥2 surfaces, z-order, DADS, input
    ;;   clojure -M:compositor ime     ; romaji→kana; off-path latin is red
    ;;   clojure -M:compositor kanji   ; Space converts か→加; kana-only Space is red
+   ;;   clojure -M:compositor kami    ; hosted kami.webgpu init!/draw!; clear-only is red
    ;;   clojure -M:compositor serve
    ;; smoke Exit 0 = DADS SPA, window-session-state restore, wipe red,
    ;;   QEMU -device virtio-gpu-pci with -display none.
@@ -143,9 +152,29 @@
    ;; wm Exit 0 = two stacked surfaces, raise changes front, overlap hit
    ;;   ≠ key-order, DADS title bars, pointer → focused guest.
    ;;   One surface / z-order no-op is red. ime: ka→か. kanji: か→加, leftover :guest-ime-absent.
+   ;; kami Exit 0 = SPA calls kami.webgpu init!/draw! on #kami-viewport with
+   ;;   a render-ir of ≥1 instance. beginRenderPass clear-only is red.
    ;; Exit 1 refused. Exit 3 unmeasured. Not P5. Goal not complete.
    :compositor {:jvm-opts ["--enable-native-access=ALL-UNNAMED"]
+                :extra-deps {io.github.kotoba-lang/webgpu
+                             {:git/url "https://github.com/kotoba-lang/webgpu.git"
+                              :git/sha "17598c1206a31e594b0e028245f222e53b1b8b71"}
+                             com.microsoft.playwright/playwright {:mvn/version "1.49.0"}}
                 :main-opts ["-m" "aiueos.compositor"]}
+
+   ;; Compile the browser presenter that actually calls kami.webgpu.
+   ;;   clojure -M:kami-presenter
+   ;; Output: apps/session/kami-presenter.js (served as /kami-presenter.js).
+   :kami-presenter {:extra-paths ["apps/session/src"]
+                    :extra-deps {org.clojure/clojurescript {:mvn/version "1.11.132"}
+                                 io.github.kotoba-lang/webgpu
+                                 {:git/url "https://github.com/kotoba-lang/webgpu.git"
+                                  :git/sha "17598c1206a31e594b0e028245f222e53b1b8b71"}}
+                    :main-opts ["-m" "cljs.main"
+                                "-t" "browser"
+                                "-O" "simple"
+                                "-o" "apps/session/kami-presenter.js"
+                                "-c" "aiueos.session.kami-presenter"]}
 
    ;; P2: QEMU UEFI + KERNEL.ELF reaches kotobase (ADR-0081 / ADR-0041).
    ;;   clojure -M:bare-metal cloud

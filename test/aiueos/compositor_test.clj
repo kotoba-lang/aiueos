@@ -243,3 +243,30 @@
                  "data-raise dads-heading kami.webgpu</html>")))
       "IME bar without #ime-candidates is not the kanji gate"))
 
+(deftest kami-ir-constructors-admit-instances
+  (testing "render-ir with an instance is green; sky-only is the named red"
+    (is (desktop/kami-admitted? desktop/kami-session-ir))
+    (is (>= (count (:instances desktop/kami-session-ir)) 1))
+    (is (not (desktop/kami-admitted? desktop/clear-only-ir)))
+    (is (zero? (count (:instances desktop/clear-only-ir))))))
+
+(deftest generated-spa-is-the-kami-face
+  (is (comp/html-has-kami-face? (pb/session-html))
+      "gate is red until index.html loads /kami-presenter.js and names the clear-only red")
+  (is (not (comp/html-has-kami-face?
+            (str "<html>href=\"#session\" href=\"#setup\" href=\"#desktop\" "
+                 "dads-button jp-go-dds id=\"kami-viewport\" kami.webgpu "
+                 "window.__aiueosSessionAlive</html>")))
+      "desktop face without presenter src is not the kami gate")
+  (is (not (comp/html-has-kami-face?
+            (str (pb/session-html)
+                 " requesting WebGPU for kami.webgpu.ir")))
+      "the old sky-clear presentKami string is the named red"))
+
+(deftest presenter-bundle-is-kami-webgpu
+  (let [f (io/file "apps/session/kami-presenter.js")]
+    (is (.isFile f) "compile :kami-presenter before this gate")
+    (is (comp/presenter-is-kami-webgpu? (slurp f)))
+    (is (not (comp/presenter-is-kami-webgpu? "aiueosKamiPresent admitted"))
+        "a stub that names the export without init!/draw! is red")))
+

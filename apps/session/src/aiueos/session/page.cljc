@@ -87,4 +87,5 @@
     :app-css (str tokens/skin-css "\n" app-css)
     :head [[:meta {:name "aiueos-design" :content "jp-go-dds"}]]}
    (views/shell)
+   [:script {:src "/kami-presenter.js"}]
    [:script (or client-js "")]))
