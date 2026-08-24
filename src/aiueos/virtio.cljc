@@ -121,14 +121,68 @@
       (throw (ex-info (str "unsupported virtio device id " id) {:id id}))))
 
 ;; ---------------------------------------------------------------------------
+;; u64 as a number, on both runtimes
+;;
+;; virtio's feature word and its queue addresses are 64 bits, and every
+;; ClojureScript bitwise operator coerces its arguments to int32 first. So on
+;; that runtime `(bit-shift-left 1 32)` is 1 -- the shift count is taken mod 32
+;; -- and `(bit-and x 0xffffffff)` is a SIGNED int32 rather than the low word.
+;; Both return plausible numbers; neither throws.
+;;
+;; Measured 2026-08-25, before this change: `features-version-1`, which is
+;; VIRTIO_F_VERSION_1 and therefore the bit that distinguishes a modern virtio
+;; device from a legacy one, was 4294967296 on the JVM and **1** on nbb, where
+;; it collided with feature bit 0.
+;;
+;; The helpers below do the 64-bit work arithmetically and use `bit-and` only
+;; on values already reduced to 32 bits, where ClojureScript's coercion is the
+;; identity on the bit pattern and only the sign needs putting back.
+;;
+;; Above 2^53 a ClojureScript number cannot represent a u64 exactly. That is
+;; the runtime's limit, not these functions'; every feature bit virtio defines
+;; is at or below bit 63, and the ones this file names are at 28, 29 and 32.
+
+(def ^:private u32-modulus 4294967296)
+
+(defn- as-u32
+  "Reinterpret a possibly-negative int32 as its unsigned value."
+  [x]
+  (if (neg? x) (+ x u32-modulus) x))
+
+(defn u64-low  "The low 32 bits of a u64, as a non-negative number."  [x] (mod x u32-modulus))
+(defn u64-high "The high 32 bits of a u64, as a non-negative number." [x] (quot x u32-modulus))
+(defn u64-join "A u64 from its high and low 32-bit halves." [high low]
+  (+ (* (mod high u32-modulus) u32-modulus) (mod low u32-modulus)))
+
+(defn u64-and [a b]
+  (u64-join (as-u32 (bit-and (u64-high a) (u64-high b)))
+            (as-u32 (bit-and (u64-low a) (u64-low b)))))
+
+(defn u64-or [a b]
+  (u64-join (as-u32 (bit-or (u64-high a) (u64-high b)))
+            (as-u32 (bit-or (u64-low a) (u64-low b)))))
+
+(defn u64-and-not
+  "`a` with every bit of `b` cleared."
+  [a b]
+  (u64-join (as-u32 (bit-and-not (u64-high a) (u64-high b)))
+            (as-u32 (bit-and-not (u64-low a) (u64-low b)))))
+
+(defn u64-bit
+  "2^n, for n in 0..52. Written as repeated multiplication rather than
+  `(bit-shift-left 1 n)`, which is that same shift-count wrap."
+  [n]
+  (loop [i 0 v 1] (if (>= i n) v (recur (inc i) (* v 2)))))
+
+;; ---------------------------------------------------------------------------
 ;; Features (u64 bitset)
 
-(def features-version-1 (bit-shift-left 1 32))
-(def features-ring-event-idx (bit-shift-left 1 29))
-(def features-ring-indirect-desc (bit-shift-left 1 28))
+(def features-version-1 (u64-bit 32))
+(def features-ring-event-idx (u64-bit 29))
+(def features-ring-indirect-desc (u64-bit 28))
 
-(defn features-contains? [features other] (= (bit-and features other) other))
-(defn features-union [a b] (bit-or a b))
+(defn features-contains? [features other] (= (u64-and features other) other))
+(defn features-union [a b] (u64-or a b))
 
 (defn negotiate-features
   "All `required` bits must be in `offered`; `wanted` bits are accepted only
@@ -136,9 +190,9 @@
   [offered required wanted]
   (when-not (features-contains? offered required)
     (throw (ex-info (str "virtio feature negotiation failed: missing required bits "
-                         (bit-and required (bit-not offered)))
+                         (u64-and-not required offered))
                      {:offered offered :required required})))
-  (bit-or required (bit-and wanted offered)))
+  (u64-or required (u64-and wanted offered)))
 
 ;; ---------------------------------------------------------------------------
 ;; QueueSize
@@ -424,8 +478,8 @@
 (defn regs-write32 [regs offset value] ((:write32 regs) offset value) nil)
 
 (defn- regs-write-u64 [regs low-offset value]
-  (regs-write32 regs low-offset (bit-and value 0xffffffff))
-  (regs-write32 regs (+ low-offset 4) (bit-and (unsigned-bit-shift-right value 32) 0xffffffff)))
+  (regs-write32 regs low-offset (u64-low value))
+  (regs-write32 regs (+ low-offset 4) (u64-high value)))
 
 (defn mmio-transport
   "Validate the magic/version handshake; returns `regs` unchanged (the
@@ -476,13 +530,13 @@
   (let [low (regs-read32 regs (:device-features mmio-reg))]
     (regs-write32 regs (:device-features-sel mmio-reg) 1)
     (let [high (regs-read32 regs (:device-features mmio-reg))]
-      (bit-or low (bit-shift-left high 32)))))
+      (u64-join high low))))
 
 (defn- mmio-write-driver-features [regs features]
   (regs-write32 regs (:driver-features-sel mmio-reg) 0)
-  (regs-write32 regs (:driver-features mmio-reg) (bit-and features 0xffffffff))
+  (regs-write32 regs (:driver-features mmio-reg) (u64-low features))
   (regs-write32 regs (:driver-features-sel mmio-reg) 1)
-  (regs-write32 regs (:driver-features mmio-reg) (bit-and (unsigned-bit-shift-right features 32) 0xffffffff)))
+  (regs-write32 regs (:driver-features mmio-reg) (u64-high features)))
 
 (defn initialize-mmio-transport
   "The virtio-mmio status/feature handshake: ACKNOWLEDGE -> DRIVER -> negotiate

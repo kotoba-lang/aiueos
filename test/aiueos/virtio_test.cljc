@@ -10,10 +10,17 @@
     (is (thrown? #?(:clj Exception :cljs js/Error)
                  (virtio/negotiate-features 0 virtio/features-version-1 0))))
   (testing "wanted bits accepted only when offered"
-    (let [offered (bit-or virtio/features-version-1 virtio/features-ring-event-idx)
+    ;; `features-union`, not `bit-or`: these are u64 values and cljs `bit-or`
+    ;; coerces to int32, which silently drops every bit at 32 or above. This
+    ;; test used `bit-or` until 2026-08-25 and so negotiated with an `offered`
+    ;; that had VERSION_1 missing on that runtime -- and still passed, because
+    ;; the constant was 1 there too.
+    (let [offered (virtio/features-union virtio/features-version-1
+                                         virtio/features-ring-event-idx)
           negotiated (virtio/negotiate-features offered virtio/features-version-1
-                                                 (bit-or virtio/features-ring-event-idx
-                                                         virtio/features-ring-indirect-desc))]
+                                                 (virtio/features-union
+                                                  virtio/features-ring-event-idx
+                                                  virtio/features-ring-indirect-desc))]
       (is (virtio/features-contains? negotiated virtio/features-version-1))
       (is (virtio/features-contains? negotiated virtio/features-ring-event-idx))
       (is (not (virtio/features-contains? negotiated virtio/features-ring-indirect-desc))
@@ -183,8 +190,8 @@
                (cond
                  (= offset (:device-features virtio/mmio-reg))
                  (if (zero? @features-sel)
-                   (bit-and offered-features 0xffffffff)
-                   (bit-and (unsigned-bit-shift-right offered-features 32) 0xffffffff))
+                   (virtio/u64-low offered-features)
+                   (virtio/u64-high offered-features))
                  :else (get @regmap offset 0)))
      :write32 (fn [offset value]
                 (cond
@@ -287,3 +294,72 @@
         [svc' _plan] (virtio/console-service-submit-receive svc 0 0x4000 64 dma)]
     (is (thrown? #?(:clj Exception :cljs js/Error)
                  (virtio/console-service-complete-used-element svc' 0 {:id 0 :len 65})))))
+
+;; ---------------------------------------------------------------------------
+;; u64, above bit 31.
+;;
+;; `features-negotiation` above has always passed on both runtimes. It could
+;; not have done otherwise: it names `virtio/features-version-1` on both sides
+;; of every assertion, so it stays true whatever that constant is. Measured
+;; 2026-08-25, the constant was 4294967296 on the JVM and 1 on nbb -- where
+;; VIRTIO_F_VERSION_1, the bit that separates a modern virtio device from a
+;; legacy one, collided with feature bit 0.
+;;
+;; These pin the NUMBERS. A test written against the symbol cannot see a wrong
+;; symbol.
+;; ---------------------------------------------------------------------------
+
+(deftest feature-constants-are-the-bits-the-spec-names
+  (is (= 4294967296 virtio/features-version-1) "VIRTIO_F_VERSION_1 is bit 32")
+  (is (= 536870912 virtio/features-ring-event-idx) "VIRTIO_RING_F_EVENT_IDX is bit 29")
+  (is (= 268435456 virtio/features-ring-indirect-desc) "VIRTIO_RING_F_INDIRECT_DESC is bit 28"))
+
+(deftest version-1-does-not-collide-with-bit-zero
+  (testing "a device offering only feature bit 0 does not appear to offer VERSION_1"
+    (is (not (virtio/features-contains? 1 virtio/features-version-1))))
+  (testing "and a device offering only VERSION_1 does not appear to offer bit 0"
+    (is (not (virtio/features-contains? virtio/features-version-1 1)))))
+
+(deftest u64-halves-round-trip-across-the-boundary
+  (is (= 0 (virtio/u64-high 4294967295)) "the largest value with no high word")
+  (is (= 4294967295 (virtio/u64-low 4294967295)))
+  (is (= 1 (virtio/u64-high 4294967296)) "one past it is entirely high word")
+  (is (= 0 (virtio/u64-low 4294967296)))
+  (is (= 4294967296 (virtio/u64-join 1 0)))
+  (is (= 4294967297 (virtio/u64-join 1 1)))
+  (testing "a low half above 2^31, where a signed int32 would come back negative"
+    ;; The high word is kept small on purpose. `u64-join 0x12345678 0xdeadbeef`
+    ;; is about 1.3e18, past 2^53, where a ClojureScript number cannot hold it
+    ;; exactly -- that limit is the runtime's and is documented on these fns.
+    ;; A test that ignores it measures the float, not the code.
+    (let [v (virtio/u64-join 0x1f 0xdeadbeef)]
+      (is (= 0x1f (virtio/u64-high v)))
+      (is (= 0xdeadbeef (virtio/u64-low v)))
+      (is (= 136879914735 v)))))
+
+(deftest u64-logic-reaches-the-high-word
+  ;; High words are kept to 16 bits so every value here stays under 2^53, where
+  ;; a ClojureScript number is exact. Wider fixtures measure the float, not the
+  ;; function -- a first draft of this test used 32-bit high words and failed on
+  ;; both runtimes for that reason.
+  (let [a (virtio/u64-join 0x0f0f 0x0000ffff)
+        b (virtio/u64-join 0xff00 0xffff0000)]
+    (is (= 16492674416640 (virtio/u64-and a b)))
+    (is (= 280444184559615 (virtio/u64-or a b)))
+    (is (= 64424574975 (virtio/u64-and-not a b)))
+    (testing "the high word really is participating"
+      (is (= 0x0f00 (virtio/u64-high (virtio/u64-and a b))))
+      (is (= 0xff0f (virtio/u64-high (virtio/u64-or a b))))
+      (is (= 0x000f (virtio/u64-high (virtio/u64-and-not a b))))))
+  (testing "and-not on the high word alone -- what negotiate-features reports"
+    (is (= virtio/features-version-1
+           (virtio/u64-and-not virtio/features-version-1 1)))))
+
+(deftest negotiation-carries-a-high-word-bit-through-mmio
+  ;; The existing round trip uses features-version-1 symbolically. This one
+  ;; checks the value that comes back out.
+  (let [regs (make-fake-block-mmio (virtio/features-union virtio/features-version-1
+                                                          virtio/features-ring-event-idx))
+        result (virtio/initialize-mmio-transport regs :block virtio/features-version-1 0)]
+    (is (= 4294967296 (:negotiated-features result))
+        "the high-word bit survives the two 32-bit MMIO windows")))
