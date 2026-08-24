@@ -14,7 +14,7 @@
            :always-front-2-last :leftover}
  :trusts-caller-for [:virtio-input-not-synthetic
                      :native-phase6-compositor
-                     :one-virtio-gpu-resource]
+                     :one-virtio-gpu-scanout]
  :verification {:off-target :impossible
                 :reason :kir-refuses-kernel-memory
                 :evidence "clojure -M:compositor guest-paint"}

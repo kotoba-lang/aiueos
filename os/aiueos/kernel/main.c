@@ -188,6 +188,7 @@ extern uint32_t aiueos_gpu_scanout_width(void);
 extern uint32_t aiueos_gpu_scanout_height(void);
 extern int aiueos_gpu_2d_create_ok(void);
 extern int aiueos_gpu_2d_flush_ok(void);
+extern int aiueos_gpu_2d_two_ok(void);
 extern int aiueos_desktop_input_from_eventq(void);
 extern int aiueos_desktop_input_eventq_empty(void);
 extern uint64_t kotoba_aiueos_ime_commit(uint64_t a, uint64_t b);
@@ -895,6 +896,17 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
     } else {
       debug_string("AIUEOS_VIRTIO_GPU_FLUSH result=absent\n");
       serial_string("AIUEOS_VIRTIO_GPU_FLUSH result=absent\r\n");
+    }
+    /* Guest gpu-two (ADR-0094). Resource count is Kotoba
+       kotoba_aiueos_wm_hit; C does not invent n=2. Hosted JVM gpu does
+       not count. Do not qemu_exit: gpu/guest-paint/guest-input stay
+       green without this line. */
+    if (aiueos_gpu_2d_two_ok()) {
+      debug_string("AIUEOS_GUEST_GPU_TWO_OK resources=2 flush=2 kotoba-n=2\n");
+      serial_string("AIUEOS_GUEST_GPU_TWO_OK resources=2 flush=2 kotoba-n=2\r\n");
+    } else {
+      debug_string("AIUEOS_GUEST_GPU_TWO leftover=one-resource\n");
+      serial_string("AIUEOS_GUEST_GPU_TWO leftover=one-resource\r\n");
     }
     debug_string("AIUEOS_BROWSER_DESKTOP_TRANSPORT_OK surface-v1 gpu-scanout-bound input-v1\n");
     serial_string("AIUEOS_BROWSER_DESKTOP_TRANSPORT_OK surface-v1 gpu-scanout-bound input-v1\r\n");
