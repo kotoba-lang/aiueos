@@ -32,7 +32,11 @@
 ;; Usage (matches fleet-ci's `nbb-cross-runtime` gate, which passes
 ;; `--classpath src:test:<git-dep srcs>` and runs this file):
 ;;
-;;   npx nbb@1.4.210 --classpath src:test run-tests.cljs
+;;   npx nbb@1.5.212 --classpath src:test run-tests.cljs
+;;
+;; The version tracks the gate's pin (superproject
+;; scripts/fleet-ci/gates/nbb-cross-runtime.cljs), bumped 1.4.210 -> 1.5.212 on
+;; 2026-08-24 after measuring that all 40 entries agree across both.
 
 (ns run-tests
   (:require ["node:fs" :as fs]
@@ -58,17 +62,25 @@
    'aiueos.image-test
    "aiueos.image is #?(:clj ...) throughout: it stages files and shells out to
     cpio/gzip."
+})
 
-   'aiueos.cli-test
-   "needs cli/read-contract, which loads resources/aiueos/cli.edn off the
-    CLASSPATH. aiueos has no portable resource seam -- read-contract's own
-    docstring says CLJS callers should parse the EDN and pass the map in, and
-    nothing in this repository does. cli/command-result, cli/parse-argv and
-    cli/dispatch are pure and portable; only their ARGUMENT is unreachable.
-    This is the one exclusion here that a design decision would remove."
-
-   'aiueos.decide-test
-   "same single cause as aiueos.cli-test: every test needs cli/read-contract."})
+;; `aiueos.cli-test` and `aiueos.decide-test` were here until 2026-08-24, both
+;; excluded because they needed `cli/read-contract`, which reads
+;; `resources/aiueos/cli.edn` off the CLASSPATH and had no portable seam. The
+;; cli entry said in its own words that it was "the one exclusion here that a
+;; design decision would remove".
+;;
+;; The design decision happened: `dc5e5b3` ("The grant plane leaves; aiueos
+;; keeps the machine") deleted `src/aiueos/cli.cljc`, `src/aiueos/decide.cljc`,
+;; `resources/aiueos/cli.edn` and both test files. The exclusions stayed, and
+;; floor 3's phantom check has been failing this gate on BOTH nbb versions
+;; ever since — correctly: an exclusion naming a namespace that does not exist
+;; is an exclusion nothing reaches.
+;;
+;; Kept as a comment rather than deleted silently, because the reason those
+;; two were unreachable is still the true statement about this repository:
+;; there is no portable resource seam. Anything that grows one should not
+;; re-derive that from scratch.
 
 (defn- ns-of [file]
   (symbol (str "aiueos." (str/replace (subs file 0 (- (count file) 5)) "_" "-"))))
