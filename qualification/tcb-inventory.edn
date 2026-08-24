@@ -1,10 +1,10 @@
 {:tcb/version 3
- :tcb/as-of "2026-08-22"
+ :tcb/as-of "2026-08-25"
  ;; Paired with :tcb/content-digest below (ADR-0067): the digest covers every
  ;; other field, so an entry cannot change without this date having to change
  ;; too. It said 2026-08-01 while the file was being edited that morning, and
  ;; nothing read it.
- :tcb/content-digest "1f5f2fdd9b6a00a26e26708079b968fc07b4c3dcf3c132a4275c1d5c5bf55c89"
+ :tcb/content-digest "87de939dca486d94cbdab13af85ac321a108aca57d244084f9e9596f4b0a130a"
  :tcb/scope
  "Code whose compromise can grant authority, escape Wasm isolation, falsify
   production admission/audit evidence, or access hardware outside a component."
@@ -91,11 +91,11 @@
   {:path "src/aiueos/sealed_state.clj" :role :component-state-confidentiality-integrity
    :sha256 "6eb5f146b30ab16ed07d40e1f32b92f1e1338acf1f4a299e9b9d013fa055828d"}
   {:path "src/aiueos/hvt.cljc" :role :hypervisor-boundary
-   :sha256 "7e777214fdf483213c7a9378718ffff0ed9f96b05539d4973547c576db88d4b8"}
+   :sha256 "a3a4b3d47d59155ca74e5f25886609eaa2d0c554f68ad06b1c0b44c99decee39"}
   {:path "src/aiueos/vfio.cljc" :role :iommu-device-boundary
    :sha256 "f96a9bb917b23d428f03667fbba1ccaec518a25dc7c9a4ccaceee9f43a19a77f"}
   {:path "src/aiueos/virtio.cljc" :role :guest-device-boundary
-   :sha256 "336d14a46314aa09441eb2f14ad24ada18679a80a56bde76f80efe46f92f2320"}
+   :sha256 "30a39d7b260f5df318d58ac3532c668a261ab99db54c51c618c60cdc990c7205"}
   ;; What the hosted launcher is allowed to execute. Every other link in the
   ;; chain was checked and the artifact the machine actually boots was not
   ;; (ADR-0049).

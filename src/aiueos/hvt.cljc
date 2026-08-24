@@ -299,9 +299,12 @@
     (:queue-num-max vio/mmio-reg) virtio-console-queue-num-max
     (:device-features vio/mmio-reg)
     (let [f virtio-console-device-features]
+      ;; A u64 split into two u32 windows. Doing it with `bit-and` and
+      ;; `unsigned-bit-shift-right` is int32 on ClojureScript -- see
+      ;; `aiueos.virtio`'s u64 section.
       (if (zero? (:device-features-sel state 0))
-        (bit-and f 0xffffffff)
-        (bit-and (unsigned-bit-shift-right f 32) 0xffffffff)))
+        (vio/u64-low f)
+        (vio/u64-high f)))
     (:status vio/mmio-reg)           (:status state 0)
     (:interrupt-status vio/mmio-reg)  0
     0))
@@ -340,8 +343,7 @@
   descriptor table, available ring, used ring)."
   [state sel]
   (let [q (get-in state [:queues sel])
-        u64 (fn [lo hi] (bit-or (bit-and (get q lo 0) 0xffffffff)
-                                (bit-shift-left (bit-and (get q hi 0) 0xffffffff) 32)))]
+        u64 (fn [lo hi] (vio/u64-join (get q hi 0) (get q lo 0)))]
     {:desc   (u64 :desc-low :desc-high)
      :driver (u64 :driver-low :driver-high)
      :device (u64 :device-low :device-high)
