@@ -443,6 +443,45 @@
                  "clojure -M:compositor guest-paint native compositor</html>")))
       "guest-paint lede without the guest-input command is not the guest input face"))
 
+(deftest guest-gpu-two-serial-is-the-guest-gpu-two-gate
+  (testing "KERNEL.ELF two resources flushed is green"
+    (is (comp/guest-gpu-two-ok?
+         "AIUEOS_GUEST_GPU_TWO_OK resources=2 flush=2 kotoba-n=2\n"))
+    (is (:green? (comp/guest-gpu-two-result
+                  {:serial "AIUEOS_GUEST_GPU_TWO_OK resources=2 flush=2 kotoba-n=2\n"}))))
+  (testing "one resource when Kotoba admits two is leftover"
+    (let [r (comp/guest-gpu-two-result
+             {:serial "AIUEOS_GUEST_GPU_TWO leftover=one-resource\n"})]
+      (is (not (:green? r)))
+      (is (= 1 (:exit r)))
+      (is (= :one-resource (:reason r)))))
+  (testing "hosted JVM WM serial does not count"
+    (let [r (comp/guest-gpu-two-result
+             {:serial "AIUEOS_COMPOSITOR_WM_OK\n"})]
+      (is (not (:green? r)))
+      (is (= :hosted-wm-does-not-count (:reason r))))
+    (let [r (comp/guest-gpu-two-result {:hosted-wm? true :serial ""})]
+      (is (= :hosted-wm-does-not-count (:reason r)))))
+  (testing "unmeasured is exit 3, not a silent pass"
+    (let [r (comp/guest-gpu-two-result {:qemu-unmeasured? true})]
+      (is (= 3 (:exit r)))
+      (is (= :unmeasured (:reason r))))))
+
+(deftest generated-spa-is-the-guest-gpu-two-face
+  (is (comp/html-has-guest-gpu-two-face? (pb/session-html))
+      "gate is red until #desktop names clojure -M:compositor guest-gpu-two")
+  (is (not (comp/html-has-guest-gpu-two-face?
+            (str "<html>href=\"#session\" href=\"#desktop\" "
+                 "id=\"ime-bar\" id=\"ime-preedit\" id=\"ime-toggle\" "
+                 "data-ime id=\"ime-candidates\" id=\"wm-stage\" "
+                 "class=\"wm-window\" class=\"wm-window\" wm-titlebar "
+                 "dads-chip-label data-raise dads-heading kami.webgpu "
+                 "clojure -M:compositor guest-ime "
+                 "clojure -M:compositor guest-wm "
+                 "clojure -M:compositor guest-paint "
+                 "clojure -M:compositor guest-input native compositor</html>")))
+      "guest-input lede without the guest-gpu-two command is not the guest gpu-two face"))
+
 (deftest presenter-bundle-is-kami-webgpu
   (let [f (io/file "apps/session/kami-presenter.js")]
     (is (.isFile f) "compile :kami-presenter before this gate")

@@ -116,6 +116,9 @@ struct virtio_gpu_display_info {
 #define VIRTIO_GPU_2D_W 32
 #define VIRTIO_GPU_2D_H 32
 #define VIRTIO_GPU_2D_RESOURCE 1
+#define VIRTIO_GPU_2D_RESOURCE_2 2
+extern uint64_t kotoba_aiueos_wm_hit(uint64_t n, uint64_t front,
+                                     uint64_t px, uint64_t py);
 struct virtio_gpu_resource_create_2d {
   struct virtio_gpu_ctrl_header header;
   uint32_t resource_id, format, width, height;
@@ -1172,10 +1175,12 @@ static int virtio_input(uint8_t b, uint8_t d, uint8_t f) {
 static uint32_t gpu_scanout_width, gpu_scanout_height;
 static int gpu_2d_create_ok;
 static int gpu_2d_flush_ok;
+static int gpu_2d_two_ok;
 uint32_t aiueos_gpu_scanout_width(void) { return gpu_scanout_width; }
 uint32_t aiueos_gpu_scanout_height(void) { return gpu_scanout_height; }
 int aiueos_gpu_2d_create_ok(void) { return gpu_2d_create_ok; }
 int aiueos_gpu_2d_flush_ok(void) { return gpu_2d_flush_ok; }
+int aiueos_gpu_2d_two_ok(void) { return gpu_2d_two_ok; }
 
 static void gpu_zero(void *p, uint32_t n) {
   uint8_t *b = p;
@@ -1283,6 +1288,57 @@ static void gpu_2d_resource_path(struct virtq_desc *desc, struct virtq_avail *av
                 flush, sizeof(*flush), resp, 64, VIRTIO_GPU_RESP_OK_NODATA))
     return;
   gpu_2d_flush_ok = 1;
+
+  /* Second 2D resource when Kotoba admits two surfaces (ADR-0094). Count
+     is Kotoba `kotoba_aiueos_wm_hit`; C does not hardcode n=2. No second
+     SET_SCANOUT — scanout 0 stays on resource 1. */
+  if (kotoba_aiueos_wm_hit(2, 2, 100, 80) != 2) return;
+  {
+    uint8_t *backing2 = aiueos_allocate_physical_page();
+    uint32_t *pixels2;
+    if (!backing2) return;
+    pixels2 = (void *)backing2;
+    for (uint32_t i = 0; i < (VIRTIO_GPU_2D_W * VIRTIO_GPU_2D_H); i++)
+      pixels2[i] = 0xff22aa55U;
+
+    gpu_zero(c2d, sizeof(*c2d));
+    c2d->header.type = VIRTIO_GPU_CMD_RESOURCE_CREATE_2D;
+    c2d->resource_id = VIRTIO_GPU_2D_RESOURCE_2;
+    c2d->format = VIRTIO_GPU_FORMAT_B8G8R8X8_UNORM;
+    c2d->width = VIRTIO_GPU_2D_W;
+    c2d->height = VIRTIO_GPU_2D_H;
+    if (!gpu_ctrl(desc, avail, used, doorbell, &submitted,
+                  c2d, sizeof(*c2d), resp, 64, VIRTIO_GPU_RESP_OK_NODATA))
+      return;
+
+    gpu_zero(att, sizeof(*att));
+    att->header.type = VIRTIO_GPU_CMD_RESOURCE_ATTACH_BACKING;
+    att->resource_id = VIRTIO_GPU_2D_RESOURCE_2;
+    att->nr_entries = 1;
+    att->entries[0].addr = (uint64_t)(uintptr_t)backing2;
+    att->entries[0].length = VIRTIO_GPU_2D_W * VIRTIO_GPU_2D_H * 4U;
+    if (!gpu_ctrl(desc, avail, used, doorbell, &submitted,
+                  att, sizeof(*att), resp, 64, VIRTIO_GPU_RESP_OK_NODATA))
+      return;
+
+    gpu_zero(xfer, sizeof(*xfer));
+    xfer->header.type = VIRTIO_GPU_CMD_TRANSFER_TO_HOST_2D;
+    xfer->r = tile;
+    xfer->offset = 0;
+    xfer->resource_id = VIRTIO_GPU_2D_RESOURCE_2;
+    if (!gpu_ctrl(desc, avail, used, doorbell, &submitted,
+                  xfer, sizeof(*xfer), resp, 64, VIRTIO_GPU_RESP_OK_NODATA))
+      return;
+
+    gpu_zero(flush, sizeof(*flush));
+    flush->header.type = VIRTIO_GPU_CMD_RESOURCE_FLUSH;
+    flush->r = tile;
+    flush->resource_id = VIRTIO_GPU_2D_RESOURCE_2;
+    if (!gpu_ctrl(desc, avail, used, doorbell, &submitted,
+                  flush, sizeof(*flush), resp, 64, VIRTIO_GPU_RESP_OK_NODATA))
+      return;
+    gpu_2d_two_ok = 1;
+  }
 }
 
 /* Modern controlq: GET_DISPLAY_INFO, then a 32×32 2D create/attach/transfer/flush.
@@ -2653,7 +2709,7 @@ int aiueos_pci_enumerate(void) {
   user_object_ready=user_object_write_evidence=user_object_replay_evidence=0;
   user_object_pending[0]=user_object_pending[1]=0;
   gpu_scanout_width = gpu_scanout_height = 0;
-  gpu_2d_create_ok = gpu_2d_flush_ok = 0;
+  gpu_2d_create_ok = gpu_2d_flush_ok = gpu_2d_two_ok = 0;
   if (!aiueos_dma_test_policy_allows_unisolated()) return 0;
   if (!cap_selftest()) return 0;
   uint32_t present = 0, virtio = 0;

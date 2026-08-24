@@ -41,11 +41,17 @@
   is leftover `:synthetic-smoke`. After guest input, hosted leftover
   is still `:native-compositor-absent` (permission broker, native
   component runtime, one virtio-gpu resource, P5).
+  Guest gpu-two: `clojure -M:compositor guest-gpu-two` admits KERNEL.ELF
+  creating and flushing two virtio-gpu 2D resources when Kotoba
+  `kotoba_aiueos_wm_hit` admits n=2. C hardcoding resource count is
+  leftover `:one-resource`. After guest gpu-two, hosted leftover is still
+  `:native-compositor-absent` (permission broker, native component
+  runtime, one virtio-gpu scanout, P5).
 
   Exit 0 = the named command admitted. Exit 1 = refused. Exit 3 =
   QEMU/firmware/serial/browser could not be answered.
 
-  Commands: `clojure -M:compositor smoke` | `gpu` | `wm` | `ime` | `kanji` | `kami` | `guest-ime` | `guest-wm` | `guest-paint` | `guest-input` | `serve`"
+  Commands: `clojure -M:compositor smoke` | `gpu` | `wm` | `ime` | `kanji` | `kami` | `guest-ime` | `guest-wm` | `guest-paint` | `guest-input` | `guest-gpu-two` | `serve`"
   (:require [aiueos.compositor.desktop :as desktop]
             [aiueos.phone-bind :as pb]
             [clojure.string :as str]
@@ -269,6 +275,40 @@
     {:green? false :exit 1 :reason :guest-input-absent
      :leftover [:guest-input-absent]}))
 
+(defn guest-gpu-two-ok?
+  "True only when KERNEL.ELF serial says two virtio-gpu 2D resources
+  were created and flushed after Kotoba admitted n=2. Hosted JVM gpu
+  serial alone does not count."
+  [serial]
+  (boolean
+   (and (string? serial)
+        (re-find #"(?m)^AIUEOS_GUEST_GPU_TWO_OK resources=2 flush=2 kotoba-n=2" serial)
+        (not (re-find #"AIUEOS_COMPOSITOR_WM_OK" serial)))))
+
+(defn guest-gpu-two-result
+  "Classify a KERNEL.ELF boot for compositor `guest-gpu-two`.
+  Hosted `clojure -M:compositor wm` is the named red. One resource
+  when Kotoba admits two is leftover `:one-resource`."
+  [{:keys [serial qemu-unmeasured? hosted-wm?]}]
+  (cond
+    qemu-unmeasured?
+    {:green? false :exit 3 :reason :unmeasured :leftover [:unmeasured]}
+
+    (or hosted-wm?
+        (re-find #"AIUEOS_COMPOSITOR_WM_OK" (or serial "")))
+    {:green? false :exit 1 :reason :hosted-wm-does-not-count
+     :leftover [:hosted-wm-does-not-count]}
+
+    (guest-gpu-two-ok? serial)
+    {:green? true :exit 0 :reason :guest-gpu-two-resources :leftover []}
+
+    (re-find #"(?m)^AIUEOS_GUEST_GPU_TWO leftover=one-resource" (or serial ""))
+    {:green? false :exit 1 :reason :one-resource :leftover [:one-resource]}
+
+    :else
+    {:green? false :exit 1 :reason :guest-gpu-two-absent
+     :leftover [:guest-gpu-two-absent]}))
+
 (defn html-has-desktop-face?
   [html]
   (and (re-find #"dads-button" html)
@@ -360,6 +400,14 @@
   (boolean
    (and (html-has-guest-paint-face? html)
         (re-find #"clojure -M:compositor guest-input" html))))
+
+(defn html-has-guest-gpu-two-face?
+  "SPA names the KERNEL.ELF guest gpu-two gate. Guest input without
+  `clojure -M:compositor guest-gpu-two` is red for this face."
+  [html]
+  (boolean
+   (and (html-has-guest-input-face? html)
+        (re-find #"clojure -M:compositor guest-gpu-two" html))))
 
 (defn presenter-is-kami-webgpu?
   "The compiled bundle must be kami.webgpu (init!/draw!), not a stub
@@ -591,6 +639,10 @@
        []
        (io/file (repo-root) "build" "aiueos" "compositor-guest-input-receipt.edn"))
 
+     (defn guest-gpu-two-receipt-file
+       []
+       (io/file (repo-root) "build" "aiueos" "compositor-guest-gpu-two-receipt.edn"))
+
      (defn write-gpu-receipt!
        [receipt]
        (let [f (gpu-receipt-file)]
@@ -622,6 +674,13 @@
      (defn write-guest-input-receipt!
        [receipt]
        (let [f (guest-input-receipt-file)]
+         (io/make-parents f)
+         (spit f (with-out-str (pprint/pprint receipt)))
+         f))
+
+     (defn write-guest-gpu-two-receipt!
+       [receipt]
+       (let [f (guest-gpu-two-receipt-file)]
          (io/make-parents f)
          (spit f (with-out-str (pprint/pprint receipt)))
          f))
@@ -861,6 +920,48 @@
              (if (:green? r)
                (println "AIUEOS_COMPOSITOR_GUEST_INPUT_OK")
                (println (str "AIUEOS_COMPOSITOR_GUEST_INPUT not-green leftover="
+                             (pr-str (:leftover r)))))
+             r))))
+
+     (defn run-guest-gpu-two
+       "Guest two virtio-gpu 2D resources. Kotoba admits count; C hardcoding is red."
+       []
+       (let [script (uefi-smoke)]
+         (if-not (.isFile script)
+           (let [r (guest-gpu-two-result {:qemu-unmeasured? true})]
+             (write-guest-gpu-two-receipt!
+              (assoc r :measured-at (str (java.time.Instant/now))
+                     :command "clojure -M:compositor guest-gpu-two"
+                     :why :smoke-script-missing))
+             (println "AIUEOS_COMPOSITOR_GUEST_GPU_TWO leftover=:unmeasured")
+             r)
+           (let [boot (run-uefi-2d!)
+                 measured? (serial-measured? (:serial boot))
+                 r (guest-gpu-two-result {:serial (:serial boot)
+                                          :qemu-unmeasured? (not measured?)
+                                          :hosted-wm? false})
+                 receipt (assoc r
+                                :aiueos.compositor/guest-gpu-two-receipt 1
+                                :measured-at (str (java.time.Instant/now))
+                                :command "clojure -M:compositor guest-gpu-two"
+                                :profile :uefi-qemu-guest-gpu-two
+                                :uefi-smoke-exit (:exit boot)
+                                :serial-path (:serial-path boot)
+                                :note "Green only when guest serial has GUEST_GPU_TWO_OK resources=2 flush=2 kotoba-n=2. Hosted clojure -M:compositor wm does not count. One resource when Kotoba admits two is leftover. One scanout remains. P5 UNVERIFIED.")]
+             (write-guest-gpu-two-receipt! receipt)
+             (println "AIUEOS_COMPOSITOR_GUEST_GPU_TWO_PROFILE=uefi-qemu")
+             (println (str "AIUEOS_COMPOSITOR_GUEST_GPU_TWO_SERIAL=" (:serial-path boot)))
+             (println (str "AIUEOS_COMPOSITOR_GUEST_GPU_TWO_RECEIPT="
+                           (.getPath (guest-gpu-two-receipt-file))))
+             (println (str "AIUEOS_COMPOSITOR_GUEST_GPU_TWO_LEFTOVER="
+                           (pr-str (:leftover r))))
+             (when (:serial boot)
+               (doseq [line (str/split-lines (:serial boot))
+                       :when (re-find #"AIUEOS_GUEST_GPU_TWO" line)]
+                 (println (str/replace line #"\r$" ""))))
+             (if (:green? r)
+               (println "AIUEOS_COMPOSITOR_GUEST_GPU_TWO_OK")
+               (println (str "AIUEOS_COMPOSITOR_GUEST_GPU_TWO not-green leftover="
                              (pr-str (:leftover r)))))
              r))))
 
@@ -1309,5 +1410,10 @@
              (flush)
              (System/exit (int (:exit r))))
 
-           (do (println "usage: clojure -M:compositor [smoke|gpu|wm|ime|kanji|kami|guest-ime|guest-wm|guest-paint|guest-input|serve]")
+           "guest-gpu-two"
+           (let [r (run-guest-gpu-two)]
+             (flush)
+             (System/exit (int (:exit r))))
+
+           (do (println "usage: clojure -M:compositor [smoke|gpu|wm|ime|kanji|kami|guest-ime|guest-wm|guest-paint|guest-input|guest-gpu-two|serve]")
                (System/exit 3)))))))

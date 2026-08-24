@@ -5,6 +5,18 @@ All notable changes to **aiueos** are documented here. The format follows
 
 ## [Unreleased]
 
+### Guest gpu-two (ADR-0094)
+- KERNEL.ELF creates and flushes two virtio-gpu 2D resources when Kotoba
+  `kotoba_aiueos_wm_hit(2, 2, 100, 80) == 2`. Count is Kotoba; C does not
+  hardcode `2`. Gate: `clojure -M:compositor guest-gpu-two`. Named red is
+  hosted JVM `AIUEOS_COMPOSITOR_WM_OK` and one resource when Kotoba admits
+  two (`:one-resource`). Default `gpu` / `guest-input` / `guest-paint` boots
+  stay green without requiring `GUEST_GPU_TWO_OK`. Leftover
+  `:native-compositor-absent` (permission broker, native component runtime,
+  one virtio-gpu scanout). **Measured 2026-08-24:**
+  `guest-gpu-two` leftover `[]` with
+  `AIUEOS_GUEST_GPU_TWO_OK resources=2 flush=2 kotoba-n=2`. **P5 UNVERIFIED**.
+
 ### Guest input (ADR-0093)
 - KERNEL.ELF copies the desktop envelope from a virtio-keyboard
   used-ring event, not the `#ifdef AIUEOS_INPUT_SMOKE_SYNTHETIC` fill.

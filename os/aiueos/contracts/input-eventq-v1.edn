@@ -9,7 +9,7 @@
            :eventq-empty :leftover}
  :trusts-caller-for [:physical-hid
                      :native-phase6-compositor
-                     :one-virtio-gpu-resource]
+                     :one-virtio-gpu-scanout]
  :verification {:off-target :impossible
                 :reason :kir-refuses-kernel-memory
                 :evidence "clojure -M:compositor guest-input"}
