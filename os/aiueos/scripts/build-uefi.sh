@@ -147,6 +147,13 @@ fi
 if [ -n "${AIUEOS_DHCP_TAMPER:-}" ] && [ "${AIUEOS_DHCP_TAMPER}" != 0 ]; then
   input_smoke_cflags="$input_smoke_cflags -DAIUEOS_DHCP_TAMPER=${AIUEOS_DHCP_TAMPER}"
 fi
+# Test-only. Compiles the SSH passive-open listener (pci.c) and its evidence
+# marker (main.c) into the kernel. Off by default so every existing gate
+# builds the exact kernel it built before; the SSH gate sets it. Both main.c
+# and pci.c receive input_smoke_cflags, so one flag reaches both.
+if [ "${AIUEOS_SSH_LISTEN:-0}" = 1 ]; then
+  input_smoke_cflags="$input_smoke_cflags -DAIUEOS_SSH_LISTEN=1"
+fi
 
 command -v zig >/dev/null 2>&1 || {
   echo "error: Zig is required to build the freestanding UEFI application" >&2

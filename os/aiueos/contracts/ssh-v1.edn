@@ -115,14 +115,21 @@
  ;; each is a named addition.
  :blockers
  {:passive-open
-  "TCP is client-only: one-shot compile-time-scripted probes, no TCB, no port
-   table, no LISTEN/accept. tcp-seq-acceptable.kotoba (RFC 9293 windowing) is
-   written but has no .o and is not linked -- it is the admission object a
-   synchronised inbound connection needs."
+  ;; RESOLVED 2026-08-25 for the identification exchange (ADR-0102):
+  ;; net_ssh_listen (pci.c, behind -DAIUEOS_SSH_LISTEN) accepts one inbound
+  ;; connection on :22 and exchanges SSH-2.0 id strings, proved by an external
+  ;; client in smoke-qemu-ssh.cljs. It reuses tcp-segment-valid for inbound
+  ;; admission -- tcp-seq-acceptable.kotoba is still unlinked and would be
+  ;; needed for a windowed, multi-segment stream, not for this single exchange.
+  "RESOLVED for the id exchange (ADR-0102). Still open for a full stream: a
+   windowed TCB and tcp-seq-acceptable.kotoba are needed once the connection
+   carries kex and userauth rather than one line each way."
   :rx-path
   "The virtio-net RX ring holds exactly ONE buffer and is polled (no MSI-X
-   vector); the ring handles are stack locals of virtio_net(). A server needs
-   them promoted to file-scope statics with a deeper queue."
+   vector); the ring handles are stack locals of virtio_net(). The id-exchange
+   listener works within this by re-posting per segment and keeping the
+   exchange to one line each way; a real session needs the handles promoted to
+   file-scope statics with a deeper queue."
   :entropy-and-sign
   "There is no random-bytes API (virtio-rng asks for 32 bytes once and
    discards them) and no signing primitive of any kind (ECDSA is verify-only,
@@ -136,8 +143,9 @@
 
  :state
  {:i4 :red
-  :provisioning :landing               ; generator + record + placement + offline test, this tranche
-  :sshd :not-yet-implemented           ; blockers above
+  :provisioning :landed                ; ADR-0101
+  :passive-open :landed                ; ADR-0102: accept + SSH id exchange, external client measured
+  :sshd :not-yet-implemented           ; kex/host-key/userauth need the crypto bricks below
   :note "Reusable on the metal today: X25519 (arbitrary scalar x point),
          SHA-256, HMAC-SHA256, HKDF, AES-128-GCM (= aes128-gcm@openssh.com),
          digest-equal. The TLS 1.3 client (tls13.c) is a TCP-passive byte

@@ -148,6 +148,13 @@ if [ "${AIUEOS_TEST_NET:-0}" = 1 ]; then
   # handshake -- sequence numbers, ACKs and both checksums all have to be
   # right or nothing comes back -- rather than a self-echo the OS produced.
   net_args="-netdev user,id=aiueosnet,guestfwd=tcp:10.0.2.100:9000-cmd:/bin/cat -device virtio-net-pci,netdev=aiueosnet,disable-legacy=on"
+  # AIUEOS_SSH_HOSTFWD=<host-port> additionally forwards that host port into the
+  # guest's :22, so an external client can reach the SSH listener (ADR-0102).
+  # It only ADDS a hostfwd to the same netdev; the guestfwd the other net gates
+  # depend on is untouched.
+  if [ -n "${AIUEOS_SSH_HOSTFWD:-}" ]; then
+    net_args="-netdev user,id=aiueosnet,guestfwd=tcp:10.0.2.100:9000-cmd:/bin/cat,hostfwd=tcp:127.0.0.1:${AIUEOS_SSH_HOSTFWD}-10.0.2.15:22 -device virtio-net-pci,netdev=aiueosnet,disable-legacy=on"
+  fi
 fi
 # A hung guest must fail fast with diagnostics rather than pinning CI until
 # the job-level timeout. 124 from timeout(1) is handled below.

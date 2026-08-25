@@ -45,6 +45,18 @@
  {:cmd ["nbb" "os/aiueos/scripts/smoke-qemu-offline-floor.cljs"]
   :doc "Boot with and without a NIC and require the difference to be exactly the three network markers. Needs KERNEL.ELF and BOOTX64.EFI built first."}
 
+ ;; SSH passive-open listener (ssh-v1.edn / ADR-0102). Build the SSH kernel
+ ;; variant, then boot it and have a real external client complete an inbound
+ ;; TCP connection + SSH identification exchange. No crypto -- this proves the
+ ;; two blockers under the crypto (no LISTEN, no post-evidence loop) are gone.
+ :ssh-build
+ {:cmd ["sh" "-c" "AIUEOS_SSH_LISTEN=1 sh os/aiueos/scripts/build-release-image.sh"]
+  :doc "Build the release image with the SSH passive-open listener compiled in (AIUEOS_SSH_LISTEN=1). Every other build is byte-for-byte unchanged."}
+
+ :ssh-smoke
+ {:cmd ["sh" "-c" "AIUEOS_SSH_LISTEN=1 AIUEOS_TEST_NET=1 AIUEOS_SSH_HOSTFWD=8022 nbb os/aiueos/scripts/smoke-qemu-ssh.cljs"]
+  :doc "Boot the SSH kernel and require an external client to complete an inbound TCP connection on :22 and read exactly SSH-2.0-aiueos_0.1, with the kernel's AIUEOS_SSH_LISTEN_OK marker. Needs :ssh-build first."}
+
  ;; Install chain (install-v1.edn, root ADR adr-2608251418). The installer
  ;; .mjs files are ported, scope-frozen legacy assets from the unmerged
  ;; agent/aiueos-dospara-native-install branch; orchestration and gates are
