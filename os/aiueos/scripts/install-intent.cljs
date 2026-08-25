@@ -61,8 +61,12 @@
          (-> (.createHash crypto "sha256") (.update blob) (.digest "base64")
              (str/replace #"=+$" "")))))
 
-(defn- serial-digest [salt-hex serial]
-  (sha256-hex (js/Buffer.from (str salt-hex ":" serial) "utf8")))
+(defn- serial-digest
+  "Digest of the canonical (trimmed) serial: sysfs pads serial numbers with
+  trailing spaces the way it pads model strings, and a digest over the padded
+  form refuses the very disk the intent names (measured in the QEMU gate)."
+  [salt-hex serial]
+  (sha256-hex (js/Buffer.from (str salt-hex ":" (str/trim (str serial))) "utf8")))
 
 ;; ------------------------------------------------------------------- create
 

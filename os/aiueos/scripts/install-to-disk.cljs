@@ -150,12 +150,21 @@
                     :keywordize-keys true)
            (catch :default _ nil)))))
 
+(def install-mjs
+  ;; Repo layout keeps install.mjs in ../installer/; the live-USB bundle
+  ;; (make-install-usb-image.py) is flat, with everything beside this script.
+  (let [repo-form (.join path scripts-dir ".." "installer" "install.mjs")
+        flat-form (.join path scripts-dir "install.mjs")]
+    (cond (.existsSync fs repo-form) repo-form
+          (.existsSync fs flat-form) flat-form
+          :else (die 3 "install.mjs not found beside or above" scripts-dir))))
+
 (defn- installer-args [& extra]
   (let [base ["--device" (arg "--device")
               "--image" (arg "--image")
               "--receipt" (arg "--receipt")]
         fake (arg "--fake-device-config")]
-    (concat [(.join path scripts-dir ".." "installer" "install.mjs")]
+    (concat [install-mjs]
             base
             (when fake ["--fake-device-config" fake])
             extra)))

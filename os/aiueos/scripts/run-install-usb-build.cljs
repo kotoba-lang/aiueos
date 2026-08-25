@@ -60,10 +60,14 @@
            "--release-receipt" release-receipt
            "--intent" intent
            "--installer-dir" (.join path aiueos "installer")
-           "--output" usb-image
-           "--receipt" usb-receipt]
+           "--output" (or (arg "--output") usb-image)
+           "--receipt" (or (arg "--receipt") usb-receipt)]
           (when-let [node-bin (arg "--node-binary")]
-            ["--node-binary" node-bin])))
+            ["--node-binary" node-bin])
+          (when-let [nbb-dir (arg "--nbb-dir")]
+            ["--nbb-dir" nbb-dir])
+          (when-let [uki (arg "--live-uki")]
+            ["--live-uki" uki])))
 
 (let [r (.spawnSync cp "python3"
                     (to-array (cons (.join path aiueos "scripts" "make-install-usb-image.py")
@@ -73,5 +77,5 @@
     (die "install USB image build failed")))
 
 (println "AIUEOS_INSTALL_USB_BUILD_OK"
-         (str "image=" usb-image)
-         (str "receipt=" usb-receipt))
+         (str "image=" (or (arg "--output") usb-image))
+         (str "receipt=" (or (arg "--receipt") usb-receipt)))
