@@ -128,7 +128,9 @@
      [:code "clojure -M:compositor guest-scanout-two"]
      "（KERNEL.ELF が Kotoba の n=2 で scanout 1 を resource 2 に bind）。ゲスト側 broker は "
      [:code "clojure -M:compositor guest-broker"]
-     "（KERNEL.ELF が Kotoba で clipboard を admit、file-picker を refuse）。native compositor は leftover です。描画は "
+     "（KERNEL.ELF が Kotoba で clipboard を admit、file-picker を refuse）。ゲスト側 session は "
+     [:code "clojure -M:compositor guest-session"]
+     "（KERNEL.ELF が Kotoba で packed front 2 を restore）。native compositor は leftover です。描画は "
      [:code "kami.webgpu"]
      " の "
      [:code "clojure -M:compositor kami"]

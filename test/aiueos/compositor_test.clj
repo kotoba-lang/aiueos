@@ -568,6 +568,63 @@
                  "clojure -M:compositor guest-scanout-two native compositor</html>")))
       "guest-scanout-two lede without the guest-broker command is not the guest broker face"))
 
+(deftest guest-session-serial-is-the-guest-session-gate
+  (testing "KERNEL.ELF packed front 2 restore is green"
+    (is (comp/guest-session-ok?
+         "AIUEOS_GUEST_SESSION_OK restored-front=2 packed=2 kotoba-front=2 hit=2\n"))
+    (is (:green? (comp/guest-session-result
+                  {:serial "AIUEOS_GUEST_SESSION_OK restored-front=2 packed=2 kotoba-front=2 hit=2\n"}))))
+  (testing "restore that always returns 2 is leftover"
+    (let [r (comp/guest-session-result
+             {:serial "AIUEOS_GUEST_SESSION leftover=always-front\n"})]
+      (is (not (:green? r)))
+      (is (= 1 (:exit r)))
+      (is (= :always-front (:reason r)))))
+  (testing "empty packed session is leftover"
+    (let [r (comp/guest-session-result
+             {:serial "AIUEOS_GUEST_SESSION leftover=empty-session\n"})]
+      (is (not (:green? r)))
+      (is (= :empty-session (:reason r)))))
+  (testing "unknown surface restore is leftover"
+    (let [r (comp/guest-session-result
+             {:serial "AIUEOS_GUEST_SESSION leftover=unknown-surface\n"})]
+      (is (not (:green? r)))
+      (is (= :unknown-surface (:reason r)))))
+  (testing "wm-hit ignoring restored front is leftover"
+    (let [r (comp/guest-session-result
+             {:serial "AIUEOS_GUEST_SESSION leftover=restore-ignored\n"})]
+      (is (not (:green? r)))
+      (is (= :restore-ignored (:reason r)))))
+  (testing "hosted JVM WM serial does not count"
+    (let [r (comp/guest-session-result
+             {:serial "AIUEOS_COMPOSITOR_WM_OK\n"})]
+      (is (not (:green? r)))
+      (is (= :hosted-wm-does-not-count (:reason r))))
+    (let [r (comp/guest-session-result {:hosted-wm? true :serial ""})]
+      (is (= :hosted-wm-does-not-count (:reason r)))))
+  (testing "unmeasured is exit 3, not a silent pass"
+    (let [r (comp/guest-session-result {:qemu-unmeasured? true})]
+      (is (= 3 (:exit r)))
+      (is (= :unmeasured (:reason r))))))
+
+(deftest generated-spa-is-the-guest-session-face
+  (is (comp/html-has-guest-session-face? (pb/session-html))
+      "gate is red until #desktop names clojure -M:compositor guest-session")
+  (is (not (comp/html-has-guest-session-face?
+            (str "<html>href=\"#session\" href=\"#desktop\" "
+                 "id=\"ime-bar\" id=\"ime-preedit\" id=\"ime-toggle\" "
+                 "data-ime id=\"ime-candidates\" id=\"wm-stage\" "
+                 "class=\"wm-window\" class=\"wm-window\" wm-titlebar "
+                 "dads-chip-label data-raise dads-heading kami.webgpu "
+                 "clojure -M:compositor guest-ime "
+                 "clojure -M:compositor guest-wm "
+                 "clojure -M:compositor guest-paint "
+                 "clojure -M:compositor guest-input "
+                 "clojure -M:compositor guest-gpu-two "
+                 "clojure -M:compositor guest-scanout-two "
+                 "clojure -M:compositor guest-broker native compositor</html>")))
+      "guest-broker lede without the guest-session command is not the guest session face"))
+
 (deftest presenter-bundle-is-kami-webgpu
   (let [f (io/file "apps/session/kami-presenter.js")]
     (is (.isFile f) "compile :kami-presenter before this gate")

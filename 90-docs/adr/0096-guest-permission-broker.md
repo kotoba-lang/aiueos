@@ -27,7 +27,7 @@ Not executable, and stated here rather than at the end:
   `guest-ime` / `guest-wm` / `guest-scanout-two` stay green **without**
   this serial line. Those gates must not start requiring `GUEST_BROKER_OK`.
 - **This is not a native component runtime, and not P5 physical boot.**
-  Leftover after this slice is still `:native-compositor-absent`.
+  Leftover after this slice was `:native-compositor-absent` (session restore, native component runtime, P5). Session restore is ADR-0098.
 - **CACAO write, chain-to-anchor, and physical boot remain.** The
   Chrome OS-shaped desktop goal is **not complete**.
 
@@ -58,8 +58,8 @@ wholesale-advance amu. JVM loads `elf64.clj` ahead of `elf64.cljc`.
 
 ## Consequences
 
-Hosted leftover print stays `:native-compositor-absent` (native
-component runtime, P5). Goal not complete.
+Hosted leftover print after this slice stayed `:native-compositor-absent`
+(session restore then native component runtime, P5). Session restore is ADR-0098.
 
 ## Measurement
 

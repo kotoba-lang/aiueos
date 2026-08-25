@@ -197,6 +197,7 @@ extern uint64_t kotoba_aiueos_ime_commit(uint64_t a, uint64_t b);
 extern uint64_t kotoba_aiueos_wm_hit(uint64_t n, uint64_t front,
                                      uint64_t px, uint64_t py);
 extern uint64_t kotoba_aiueos_broker_admit(uint64_t a, uint64_t b);
+extern uint64_t kotoba_aiueos_session_restore(uint64_t a);
 extern void aiueos_scheduler_initialize(void);
 extern int aiueos_scheduler_restore_service_registry(uint64_t state0, uint64_t state1);
 extern int aiueos_scheduler_persistent_restore_evidence_ready(void);
@@ -860,6 +861,36 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
       } else {
         debug_string("AIUEOS_GUEST_BROKER leftover=vector-miss\n");
         serial_string("AIUEOS_GUEST_BROKER leftover=vector-miss\r\n");
+      }
+    }
+    /* Guest session restore (ADR-0098). Kotoba unpacks the sealed
+       packed session word; C applies the restored front to wm-hit.
+       Do not qemu_exit: gpu/cloud/guest-ime/guest-wm/guest-broker stay
+       green without this line. Hosted JVM wm does not count. */
+    {
+      uint64_t packed = 2;
+      uint64_t front = kotoba_aiueos_session_restore(packed);
+      uint64_t empty = kotoba_aiueos_session_restore(0);
+      uint64_t unk = kotoba_aiueos_session_restore(3);
+      uint64_t hit = kotoba_aiueos_wm_hit(2, front, 100, 80);
+      if (empty != 0) {
+        debug_string("AIUEOS_GUEST_SESSION leftover=always-front\n");
+        serial_string("AIUEOS_GUEST_SESSION leftover=always-front\r\n");
+      } else if (unk != 0) {
+        debug_string("AIUEOS_GUEST_SESSION leftover=unknown-surface\n");
+        serial_string("AIUEOS_GUEST_SESSION leftover=unknown-surface\r\n");
+      } else if (front == 0) {
+        debug_string("AIUEOS_GUEST_SESSION leftover=empty-session\n");
+        serial_string("AIUEOS_GUEST_SESSION leftover=empty-session\r\n");
+      } else if (hit != front) {
+        debug_string("AIUEOS_GUEST_SESSION leftover=restore-ignored\n");
+        serial_string("AIUEOS_GUEST_SESSION leftover=restore-ignored\r\n");
+      } else if (front == 2 && empty == 0 && unk == 0 && hit == 2) {
+        debug_string("AIUEOS_GUEST_SESSION_OK restored-front=2 packed=2 kotoba-front=2 hit=2\n");
+        serial_string("AIUEOS_GUEST_SESSION_OK restored-front=2 packed=2 kotoba-front=2 hit=2\r\n");
+      } else {
+        debug_string("AIUEOS_GUEST_SESSION leftover=vector-miss\n");
+        serial_string("AIUEOS_GUEST_SESSION leftover=vector-miss\r\n");
       }
     }
     /* Guest paint (ADR-0092). C fills both boot rects back-then-front

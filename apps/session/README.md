@@ -44,4 +44,5 @@ clojure -M:compositor guest-input # KERNEL.ELF virtio-keyboard used-ring event
 clojure -M:compositor guest-gpu-two # KERNEL.ELF two virtio-gpu 2D resources
 clojure -M:compositor guest-scanout-two # KERNEL.ELF scanout 1 bound to resource 2
 clojure -M:compositor guest-broker # KERNEL.ELF Kotoba clipboard admit / picker refuse
+clojure -M:compositor guest-session # KERNEL.ELF Kotoba packed front 2 restore
 ```
