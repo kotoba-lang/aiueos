@@ -11,5 +11,5 @@
                      :multi-scanout]
  :verification {:off-target :impossible
                 :reason :kir-refuses-kernel-memory
-                :evidence "clojure -M:compositor guest-gpu-two"}
+                :evidence "nbb --classpath src scripts/compositor-guest.cljs guest-gpu-two"}
 }

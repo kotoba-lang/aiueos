@@ -5,11 +5,21 @@ All notable changes to **aiueos** are documented here. The format follows
 
 ## [Unreleased]
 
+### nbb guest compositor gates (ADR-0100)
+- Guest KERNEL.ELF serial gates run on nbb:
+  `nbb --classpath src scripts/compositor-guest.cljs <profile>`.
+  Classifiers live in portable `aiueos.compositor.guest`. Hosted JVM
+  `clojure -M:compositor wm` / `ime` stay red. JVM `clojure -M:compositor
+  guest-*` is leftover `:jvm-gate-runner`. Serial lines unchanged.
+  Leftover `:native-compositor-absent` (native component runtime, P5).
+  **P5 UNVERIFIED**.
+
 ### Guest session restore (ADR-0098)
 - KERNEL.ELF restores packed front window 2 when Kotoba
   `kotoba_aiueos_session_restore(2) == 2`, refuses packed 0 and packed 3,
   and `kotoba_aiueos_wm_hit` uses that front. Restore is Kotoba; C does
-  not hardcode front. Gate: `clojure -M:compositor guest-session`.
+  not hardcode front. Gate host as of ADR-0100:
+  `nbb --classpath src scripts/compositor-guest.cljs guest-session`.
   Named red is hosted JVM `AIUEOS_COMPOSITOR_WM_OK` and restore that
   always returns 2 (`:always-front`). Default `gpu` / `guest-broker`
   boots stay green without requiring `GUEST_SESSION_OK`. Leftover

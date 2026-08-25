@@ -13,5 +13,5 @@
                      :native-component-runtime]
  :verification {:off-target :impossible
                 :reason :kir-refuses-kernel-memory
-                :evidence "clojure -M:compositor guest-session"}
+                :evidence "nbb --classpath src scripts/compositor-guest.cljs guest-session"}
 }

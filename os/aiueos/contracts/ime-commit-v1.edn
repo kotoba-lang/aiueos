@@ -20,5 +20,5 @@
                      :native-phase6-compositor]
  :verification {:off-target :impossible
                 :reason :kir-refuses-kernel-memory
-                :evidence "clojure -M:compositor guest-ime"}
+                :evidence "nbb --classpath src scripts/compositor-guest.cljs guest-ime"}
 }

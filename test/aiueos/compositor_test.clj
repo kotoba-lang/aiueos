@@ -8,6 +8,7 @@
   cannot stand in for CREATE+FLUSH."
   (:require [aiueos.compositor :as comp]
             [aiueos.compositor.desktop :as desktop]
+            [aiueos.compositor.guest :as guest]
             [aiueos.phone-bind :as pb]
             [clojure.java.io :as io]
             [clojure.string :as str]
@@ -332,7 +333,7 @@
 
 (deftest generated-spa-is-the-guest-ime-face
   (is (comp/html-has-guest-ime-face? (pb/session-html))
-      "gate is red until #desktop names clojure -M:compositor guest-ime")
+      "gate is red until #desktop names nbb --classpath src scripts/compositor-guest.cljs guest-ime")
   (is (not (comp/html-has-guest-ime-face?
             (str "<html>href=\"#session\" href=\"#desktop\" "
                  "id=\"ime-bar\" id=\"ime-preedit\" id=\"ime-toggle\" "
@@ -343,14 +344,14 @@
 
 (deftest generated-spa-is-the-guest-wm-face
   (is (comp/html-has-guest-wm-face? (pb/session-html))
-      "gate is red until #desktop names clojure -M:compositor guest-wm")
+      "gate is red until #desktop names nbb --classpath src scripts/compositor-guest.cljs guest-wm")
   (is (not (comp/html-has-guest-wm-face?
             (str "<html>href=\"#session\" href=\"#desktop\" "
                  "id=\"ime-bar\" id=\"ime-preedit\" id=\"ime-toggle\" "
                  "data-ime id=\"ime-candidates\" id=\"wm-stage\" "
                  "class=\"wm-window\" class=\"wm-window\" wm-titlebar "
                  "dads-chip-label data-raise dads-heading kami.webgpu "
-                 "clojure -M:compositor guest-ime native compositor</html>")))
+                 "nbb --classpath src scripts/compositor-guest.cljs guest-ime native compositor</html>")))
       "guest-ime lede without the guest-wm command is not the guest WM face"))
 
 (deftest guest-paint-serial-is-the-guest-paint-gate
@@ -388,15 +389,15 @@
 
 (deftest generated-spa-is-the-guest-paint-face
   (is (comp/html-has-guest-paint-face? (pb/session-html))
-      "gate is red until #desktop names clojure -M:compositor guest-paint")
+      "gate is red until #desktop names nbb --classpath src scripts/compositor-guest.cljs guest-paint")
   (is (not (comp/html-has-guest-paint-face?
             (str "<html>href=\"#session\" href=\"#desktop\" "
                  "id=\"ime-bar\" id=\"ime-preedit\" id=\"ime-toggle\" "
                  "data-ime id=\"ime-candidates\" id=\"wm-stage\" "
                  "class=\"wm-window\" class=\"wm-window\" wm-titlebar "
                  "dads-chip-label data-raise dads-heading kami.webgpu "
-                 "clojure -M:compositor guest-ime "
-                 "clojure -M:compositor guest-wm native compositor</html>")))
+                 "nbb --classpath src scripts/compositor-guest.cljs guest-ime "
+                 "nbb --classpath src scripts/compositor-guest.cljs guest-wm native compositor</html>")))
       "guest-wm lede without the guest-paint command is not the guest paint face"))
 
 (deftest guest-input-serial-is-the-guest-input-gate
@@ -431,16 +432,16 @@
 
 (deftest generated-spa-is-the-guest-input-face
   (is (comp/html-has-guest-input-face? (pb/session-html))
-      "gate is red until #desktop names clojure -M:compositor guest-input")
+      "gate is red until #desktop names nbb --classpath src scripts/compositor-guest.cljs guest-input")
   (is (not (comp/html-has-guest-input-face?
             (str "<html>href=\"#session\" href=\"#desktop\" "
                  "id=\"ime-bar\" id=\"ime-preedit\" id=\"ime-toggle\" "
                  "data-ime id=\"ime-candidates\" id=\"wm-stage\" "
                  "class=\"wm-window\" class=\"wm-window\" wm-titlebar "
                  "dads-chip-label data-raise dads-heading kami.webgpu "
-                 "clojure -M:compositor guest-ime "
-                 "clojure -M:compositor guest-wm "
-                 "clojure -M:compositor guest-paint native compositor</html>")))
+                 "nbb --classpath src scripts/compositor-guest.cljs guest-ime "
+                 "nbb --classpath src scripts/compositor-guest.cljs guest-wm "
+                 "nbb --classpath src scripts/compositor-guest.cljs guest-paint native compositor</html>")))
       "guest-paint lede without the guest-input command is not the guest input face"))
 
 (deftest guest-gpu-two-serial-is-the-guest-gpu-two-gate
@@ -469,17 +470,17 @@
 
 (deftest generated-spa-is-the-guest-gpu-two-face
   (is (comp/html-has-guest-gpu-two-face? (pb/session-html))
-      "gate is red until #desktop names clojure -M:compositor guest-gpu-two")
+      "gate is red until #desktop names nbb --classpath src scripts/compositor-guest.cljs guest-gpu-two")
   (is (not (comp/html-has-guest-gpu-two-face?
             (str "<html>href=\"#session\" href=\"#desktop\" "
                  "id=\"ime-bar\" id=\"ime-preedit\" id=\"ime-toggle\" "
                  "data-ime id=\"ime-candidates\" id=\"wm-stage\" "
                  "class=\"wm-window\" class=\"wm-window\" wm-titlebar "
                  "dads-chip-label data-raise dads-heading kami.webgpu "
-                 "clojure -M:compositor guest-ime "
-                 "clojure -M:compositor guest-wm "
-                 "clojure -M:compositor guest-paint "
-                 "clojure -M:compositor guest-input native compositor</html>")))
+                 "nbb --classpath src scripts/compositor-guest.cljs guest-ime "
+                 "nbb --classpath src scripts/compositor-guest.cljs guest-wm "
+                 "nbb --classpath src scripts/compositor-guest.cljs guest-paint "
+                 "nbb --classpath src scripts/compositor-guest.cljs guest-input native compositor</html>")))
       "guest-input lede without the guest-gpu-two command is not the guest gpu-two face"))
 
 (deftest guest-scanout-two-serial-is-the-guest-scanout-two-gate
@@ -508,18 +509,18 @@
 
 (deftest generated-spa-is-the-guest-scanout-two-face
   (is (comp/html-has-guest-scanout-two-face? (pb/session-html))
-      "gate is red until #desktop names clojure -M:compositor guest-scanout-two")
+      "gate is red until #desktop names nbb --classpath src scripts/compositor-guest.cljs guest-scanout-two")
   (is (not (comp/html-has-guest-scanout-two-face?
             (str "<html>href=\"#session\" href=\"#desktop\" "
                  "id=\"ime-bar\" id=\"ime-preedit\" id=\"ime-toggle\" "
                  "data-ime id=\"ime-candidates\" id=\"wm-stage\" "
                  "class=\"wm-window\" class=\"wm-window\" wm-titlebar "
                  "dads-chip-label data-raise dads-heading kami.webgpu "
-                 "clojure -M:compositor guest-ime "
-                 "clojure -M:compositor guest-wm "
-                 "clojure -M:compositor guest-paint "
-                 "clojure -M:compositor guest-input "
-                 "clojure -M:compositor guest-gpu-two native compositor</html>")))
+                 "nbb --classpath src scripts/compositor-guest.cljs guest-ime "
+                 "nbb --classpath src scripts/compositor-guest.cljs guest-wm "
+                 "nbb --classpath src scripts/compositor-guest.cljs guest-paint "
+                 "nbb --classpath src scripts/compositor-guest.cljs guest-input "
+                 "nbb --classpath src scripts/compositor-guest.cljs guest-gpu-two native compositor</html>")))
       "guest-gpu-two lede without the guest-scanout-two command is not the guest scanout-two face"))
 
 (deftest guest-broker-serial-is-the-guest-broker-gate
@@ -553,19 +554,19 @@
 
 (deftest generated-spa-is-the-guest-broker-face
   (is (comp/html-has-guest-broker-face? (pb/session-html))
-      "gate is red until #desktop names clojure -M:compositor guest-broker")
+      "gate is red until #desktop names nbb --classpath src scripts/compositor-guest.cljs guest-broker")
   (is (not (comp/html-has-guest-broker-face?
             (str "<html>href=\"#session\" href=\"#desktop\" "
                  "id=\"ime-bar\" id=\"ime-preedit\" id=\"ime-toggle\" "
                  "data-ime id=\"ime-candidates\" id=\"wm-stage\" "
                  "class=\"wm-window\" class=\"wm-window\" wm-titlebar "
                  "dads-chip-label data-raise dads-heading kami.webgpu "
-                 "clojure -M:compositor guest-ime "
-                 "clojure -M:compositor guest-wm "
-                 "clojure -M:compositor guest-paint "
-                 "clojure -M:compositor guest-input "
-                 "clojure -M:compositor guest-gpu-two "
-                 "clojure -M:compositor guest-scanout-two native compositor</html>")))
+                 "nbb --classpath src scripts/compositor-guest.cljs guest-ime "
+                 "nbb --classpath src scripts/compositor-guest.cljs guest-wm "
+                 "nbb --classpath src scripts/compositor-guest.cljs guest-paint "
+                 "nbb --classpath src scripts/compositor-guest.cljs guest-input "
+                 "nbb --classpath src scripts/compositor-guest.cljs guest-gpu-two "
+                 "nbb --classpath src scripts/compositor-guest.cljs guest-scanout-two native compositor</html>")))
       "guest-scanout-two lede without the guest-broker command is not the guest broker face"))
 
 (deftest guest-session-serial-is-the-guest-session-gate
@@ -609,20 +610,22 @@
 
 (deftest generated-spa-is-the-guest-session-face
   (is (comp/html-has-guest-session-face? (pb/session-html))
-      "gate is red until #desktop names clojure -M:compositor guest-session")
+      "gate is red until #desktop names nbb --classpath src scripts/compositor-guest.cljs guest-session")
+  (is (not (str/includes? (pb/session-html) "clojure -M:compositor guest-session"))
+      "SPA must not name the JVM guest-session alias as evidence")
   (is (not (comp/html-has-guest-session-face?
             (str "<html>href=\"#session\" href=\"#desktop\" "
                  "id=\"ime-bar\" id=\"ime-preedit\" id=\"ime-toggle\" "
                  "data-ime id=\"ime-candidates\" id=\"wm-stage\" "
                  "class=\"wm-window\" class=\"wm-window\" wm-titlebar "
                  "dads-chip-label data-raise dads-heading kami.webgpu "
-                 "clojure -M:compositor guest-ime "
-                 "clojure -M:compositor guest-wm "
-                 "clojure -M:compositor guest-paint "
-                 "clojure -M:compositor guest-input "
-                 "clojure -M:compositor guest-gpu-two "
-                 "clojure -M:compositor guest-scanout-two "
-                 "clojure -M:compositor guest-broker native compositor</html>")))
+                 "nbb --classpath src scripts/compositor-guest.cljs guest-ime "
+                 "nbb --classpath src scripts/compositor-guest.cljs guest-wm "
+                 "nbb --classpath src scripts/compositor-guest.cljs guest-paint "
+                 "nbb --classpath src scripts/compositor-guest.cljs guest-input "
+                 "nbb --classpath src scripts/compositor-guest.cljs guest-gpu-two "
+                 "nbb --classpath src scripts/compositor-guest.cljs guest-scanout-two "
+                 "nbb --classpath src scripts/compositor-guest.cljs guest-broker native compositor</html>")))
       "guest-broker lede without the guest-session command is not the guest session face"))
 
 (deftest presenter-bundle-is-kami-webgpu

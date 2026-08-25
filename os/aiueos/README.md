@@ -255,8 +255,8 @@ is not granted to the browser. The input boundary uses a versioned, sequenced
 envelope (`pointer`, `key`, or `text`); raw virtio DMA memory stays kernel-only
 and IME interpretation belongs to the browser desktop authority. The default
 QEMU smoke still compiles with `AIUEOS_INPUT_SMOKE_SYNTHETIC` because gpu /
-guest-paint must stay green without a used-ring event. `clojure -M:compositor
-guest-input` (ADR-0093) rebuilds without that ifdef and admits only a
+guest-paint must stay green without a used-ring event. `nbb --classpath src
+scripts/compositor-guest.cljs guest-input` (ADR-0093) rebuilds without that ifdef and admits only a
 virtio-keyboard used-ring event injected by QMP `input-send-event`. HMP
 `sendkey` is not that gate. Production builds do not enable the synthetic
 fallback.
