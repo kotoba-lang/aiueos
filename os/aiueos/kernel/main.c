@@ -160,6 +160,38 @@ extern int aiueos_ssh_client_id_valid(void);
 extern uint32_t aiueos_ssh_client_id_len(void);
 extern int aiueos_random_selftest(void);
 extern int aiueos_random_bytes(uint8_t *out, uint32_t n);
+/* The ECDSA P-256 deterministic sign object (kotoba/ecdsa-p256-sign.kotoba).
+   ABI: private-32, digest-32, k-32, out-64 (r||s big-endian), workspace-2048;
+   returns 1 unless r or s is zero. */
+extern uint64_t kotoba_aiueos_ecdsa_p256_sign(const uint8_t *priv,
+                                              const uint8_t *digest,
+                                              const uint8_t *k,
+                                              uint8_t *out,
+                                              uint8_t *workspace);
+#ifdef AIUEOS_ECDSA_SIGN_KAT
+static int aiueos_ecdsa_sign_kat(void) {
+  /* RFC 6979 A.2.5, P-256/SHA-256, message "sample". */
+  static const uint8_t d[32] = {
+    0xc9,0xaf,0xa9,0xd8,0x45,0xba,0x75,0x16,0x6b,0x5c,0x21,0x57,0x67,0xb1,0xd6,0x93,
+    0x4e,0x50,0xc3,0xdb,0x36,0xe8,0x9b,0x12,0x7b,0x8a,0x62,0x2b,0x12,0x0f,0x67,0x21};
+  static const uint8_t h[32] = {  /* SHA256("sample") */
+    0xaf,0x2b,0xdb,0xe1,0xaa,0x9b,0x6e,0xc1,0xe2,0xad,0xe1,0xd6,0x94,0xf4,0x1f,0xc7,
+    0x1a,0x83,0x1d,0x02,0x68,0xe9,0x89,0x15,0x62,0x11,0x3d,0x8a,0x62,0xad,0xd1,0xbf};
+  static const uint8_t k[32] = {
+    0xa6,0xe3,0xc5,0x7d,0xd0,0x1a,0xbe,0x90,0x08,0x65,0x38,0x39,0x83,0x55,0xdd,0x4c,
+    0x3b,0x17,0xaa,0x87,0x33,0x82,0xb0,0xf2,0x4d,0x61,0x29,0x49,0x3d,0x8a,0xad,0x60};
+  static const uint8_t want[64] = {
+    0xef,0xd4,0x8b,0x2a,0xac,0xb6,0xa8,0xfd,0x11,0x40,0xdd,0x9c,0xd4,0x5e,0x81,0xd6,
+    0x9d,0x2c,0x87,0x7b,0x56,0xaa,0xf9,0x91,0xc3,0x4d,0x0e,0xa8,0x4e,0xaf,0x37,0x16,
+    0xf7,0xcb,0x1c,0x94,0x2d,0x65,0x7c,0x41,0xd4,0x36,0xc7,0xa1,0xb6,0xe2,0x9f,0x65,
+    0xf3,0xe9,0x00,0xdb,0xb9,0xaf,0xf4,0x06,0x4d,0xc4,0xab,0x2f,0x84,0x3a,0xcd,0xa8};
+  static uint8_t ws[2048];
+  uint8_t out[64];
+  if (!kotoba_aiueos_ecdsa_p256_sign(d, h, k, out, ws)) return 0;
+  for (int i = 0; i < 64; i++) if (out[i] != want[i]) return 0;
+  return 1;
+}
+#endif
 extern int aiueos_dhcp_ready(void);
 extern unsigned aiueos_dhcp_stage(void);
 extern unsigned aiueos_dhcp_reason(void);
@@ -648,6 +680,21 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
       debug_string("AIUEOS_RANDOM_OK two-batches distinct non-constant 32-bytes\n");
     } else {
       serial_string("AIUEOS_RANDOM_FAIL entropy-source-unusable\r\n");
+    }
+#endif
+#ifdef AIUEOS_ECDSA_SIGN_KAT
+    /* ECDSA P-256 sign known-answer test (ssh-v1.edn / ADR-0105): the host-key
+       signing brick, exercised against the RFC 6979 A.2.5 P-256/SHA-256
+       "sample" vector. The object must reproduce the published r||s from the
+       vector's private key, SHA256("sample") and nonce k. Behind its OWN flag,
+       not AIUEOS_SSH_LISTEN: the object is ~50 KiB and the listener build is
+       already near the 1 MiB kernel ceiling, so the two are measured in
+       separate builds until the sshd needs both together. */
+    if (aiueos_ecdsa_sign_kat()) {
+      serial_string("AIUEOS_ECDSA_SIGN_OK rfc6979-a2.5 r||s-match\r\n");
+      debug_string("AIUEOS_ECDSA_SIGN_OK rfc6979-a2.5 r||s-match\n");
+    } else {
+      serial_string("AIUEOS_ECDSA_SIGN_FAIL vector-mismatch\r\n");
     }
 #endif
     if ((pci_result & 3) != 3) {
