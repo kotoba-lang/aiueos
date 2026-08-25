@@ -384,7 +384,8 @@ def make_bundle_tgz(installer_dir, scripts_dir, intent_bytes, receipt_bytes, nod
         for path in sorted(live_dir.iterdir()):
             if path.is_file():
                 add(path.name, path.read_bytes(), 0o644)
-    for name in ("install-intent.cljs", "install-to-disk.cljs"):
+    for name in ("install-intent.cljs", "install-to-disk.cljs",
+                 "make-provision-record.cljs"):
         add(name, (Path(scripts_dir) / name).read_bytes(), 0o644)
     add("install-intent.json", intent_bytes, 0o644)
     add("release-receipt.json", receipt_bytes, 0o644)

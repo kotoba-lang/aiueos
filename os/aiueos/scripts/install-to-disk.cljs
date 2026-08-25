@@ -49,6 +49,13 @@
 
 (def receipt-magic "AIUEOS-INSTALL-RECEIPT-V1")
 (def receipt-zone-bytes 4096)
+;; The provisioning record (ssh-v1.edn: host key + authorized key) sits in a
+;; reserved band immediately below the target receipt, in the target's last
+;; MiB and well outside the 64 MiB release extent. 16 KiB holds the record
+;; with margin. The host-key seed is a secret and lives ONLY here, on the
+;; target -- never on the install USB (secret floor).
+(def provision-magic "AIUEOS-PROVISION-V1")
+(def provision-zone-bytes 16384)
 ;; Deterministic release-image disk GUID (make-release-image.py DISK_GUID),
 ;; little-endian as stored at GPT header offset 56.
 (def release-disk-guid-le "d1b20bd7e33801529f66a46b55077905")
@@ -109,11 +116,12 @@
 (defn- write-target-receipt!
   "Write the 4 KiB receipt block into the last MiB of DEVICE and read it
   back. Runs only after install.mjs proved the image readback."
-  [device disk-bytes intent-sha image-sha hostname]
+  [device disk-bytes intent-sha image-sha hostname provision-sha]
   (let [offset (receipt-offset disk-bytes)
         payload {:schema "aiueos.install-target-receipt.v1"
                  :intentSha256 intent-sha
                  :imageSha256 image-sha
+                 :provisionSha256 provision-sha
                  :hostname hostname
                  :installedAt (.toISOString (js/Date.))}
         json (.stringify js/JSON (clj->js payload))
@@ -138,6 +146,45 @@
                            :env (.-env js/process)})]
     {:status (or (.-status r) 1) :out (or (.-stdout r) "") :err (or (.-stderr r) "")}))
 
+(defn- provision-offset [disk-bytes]
+  (- (receipt-offset disk-bytes) provision-zone-bytes))
+
+(defn- write-provision!
+  "Generate the per-device provisioning record on the target at install time
+  and write it into the provision zone, read back. The record's host-key seed
+  is generated here, on the machine being installed -- it never travels on the
+  USB. Returns {:offset :sha256 :host-fp :authorized-fp}."
+  [device disk-bytes intent-path record-script]
+  (let [tmp (.join path (.tmpdir os) (str "aiueos-provision-" (.-pid js/process) ".json"))
+        {:keys [status out err]}
+        (run "nbb" [record-script "--intent" intent-path "--out" tmp])]
+    (when-not (zero? status)
+      (die 3 "provision record generation failed:" (str/trim err)))
+    (let [record-bytes (.readFileSync fs tmp)
+          record (js->clj (.parse js/JSON (.toString record-bytes "utf8")) :keywordize-keys true)
+          header (str provision-magic "\n")
+          block (js/Buffer.alloc provision-zone-bytes)]
+      (.rmSync fs tmp)
+      (when (> (+ (count header) (.-length record-bytes) 1) provision-zone-bytes)
+        (die 3 "provision record exceeds the" provision-zone-bytes "byte zone"))
+      (.write block header 0 "utf8")
+      (.copy record-bytes block (count header))
+      (.write block "\n" (+ (count header) (.-length record-bytes)) "utf8")
+      (let [offset (provision-offset disk-bytes)
+            fd (.openSync fs device "r+")]
+        (try
+          (.writeSync fs fd block 0 provision-zone-bytes offset)
+          (.fsyncSync fs fd)
+          (finally (.closeSync fs fd)))
+        (let [readback (read-at device offset provision-zone-bytes)]
+          (when-not (and readback (= (sha256-hex readback) (sha256-hex block)))
+            (die 3 "provision record readback does not match; the target has no"
+                 "usable SSH identity, so headless boot cannot come up"))
+          {:offset offset :sha256 (sha256-hex block)
+           :host-fp (get-in record [:sshHostKey :fingerprint])
+           :authorized-fp (get-in record [:authorizedKeys 0 :fingerprint])})))))
+
+
 (defn- parse-report
   "install.mjs prints its JSON report and, on an allowed dry run, trailing
   human lines after it -- so parse the brace-delimited slice, not the whole
@@ -158,6 +205,13 @@
     (cond (.existsSync fs repo-form) repo-form
           (.existsSync fs flat-form) flat-form
           :else (die 3 "install.mjs not found beside or above" scripts-dir))))
+
+(def provision-script
+  (let [repo-form (.join path scripts-dir "make-provision-record.cljs")
+        flat-form (.join path scripts-dir "make-provision-record.cljs")]
+    (cond (.existsSync fs repo-form) repo-form
+          (.existsSync fs flat-form) flat-form
+          :else (die 3 "make-provision-record.cljs not found beside" scripts-dir))))
 
 (defn- installer-args [& extra]
   (let [base ["--device" (arg "--device")
@@ -253,11 +307,21 @@
       (let [installed (or (parse-report (:out result))
                           (die 3 "install.mjs printed no parseable install report"))
             image-sha (get-in installed [:readback :sha256])
+            ;; provisioning comes AFTER the image write proves its readback and
+            ;; BEFORE the target receipt: the receipt binds the provision
+            ;; digest, so a target with a receipt always has a matching SSH
+            ;; identity beside it.
+            prov (write-provision! zone-device disk-bytes intent-path provision-script)
             offset (write-target-receipt! zone-device disk-bytes intent-sha
-                                          image-sha (:hostname intent))]
+                                          image-sha (:hostname intent) (:sha256 prov))]
+        (println "AIUEOS_PROVISION_OK"
+                 (str "offset=" (:offset prov))
+                 (str "host-key=" (:host-fp prov))
+                 (str "authorized=" (:authorized-fp prov)))
         (println "AIUEOS_INSTALL_OK"
                  (str "device=" (get-in report [:target :path]))
                  (str "image-sha256=" image-sha)
                  (str "intent-sha256=" intent-sha)
                  (str "receipt-offset=" offset)
+                 (str "provision-sha256=" (:sha256 prov))
                  "next=poweroff-remove-usb")))))

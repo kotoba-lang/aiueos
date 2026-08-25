@@ -62,10 +62,23 @@
 (json! receipt-path {:schema "aiueos.build-receipt.v1"
                      :disk {:bytes image-bytes :sha256 (sha256-hex fake-image)}})
 
+;; A REAL ssh-ed25519 authorized_keys line: string "ssh-ed25519" + the 32-byte
+;; public key, each length-prefixed. Provisioning parses this and refuses a
+;; blob that is not a well-formed ed25519 key, so a random blob would not do.
 (def pubkey-path (.join path tmp "test-key.pub"))
+(defn- ssh-string [buf]
+  (let [len (js/Buffer.alloc 4)]
+    (.writeUInt32BE len (.-length buf) 0)
+    (js/Buffer.concat #js [len buf])))
+(def owner-keypair (.generateKeyPairSync crypto "ed25519"))
+(def owner-raw-pub
+  (let [spki (.export (.-publicKey owner-keypair) #js {:format "der" :type "spki"})]
+    (.subarray spki (- (.-length spki) 32))))
+(def owner-blob
+  (js/Buffer.concat #js [(ssh-string (js/Buffer.from "ssh-ed25519" "utf8"))
+                         (ssh-string owner-raw-pub)]))
 (write! pubkey-path
-        (str "ssh-ed25519 " (.toString (.randomBytes crypto 51) "base64")
-             " install-chain-test\n"))
+        (str "ssh-ed25519 " (.toString owner-blob "base64") " install-chain-test\n"))
 
 (defn- create-intent! [out & extra]
   (run "nbb" (concat [(.join path scripts-dir "install-intent.cljs") "create"
@@ -191,13 +204,61 @@
            (and (zero? status) (str/includes? out "AIUEOS_INSTALL_OK"))
            (str "status=" status " " (str/trim err))))
 
+(def receipt-offset (* (quot (- (* 8 1024 1024) (* 1024 1024)) 4096) 4096))
+(def provision-offset (- receipt-offset 16384))
+
 (record! "e2e-target-receipt-present"
          (let [fd (.openSync fs fake-out "r")
-               buf (js/Buffer.alloc 25)
-               offset (* (quot (- (* 8 1024 1024) (* 1024 1024)) 4096) 4096)]
-           (.readSync fs fd buf 0 25 offset)
+               buf (js/Buffer.alloc 25)]
+           (.readSync fs fd buf 0 25 receipt-offset)
            (.closeSync fs fd)
            (= "AIUEOS-INSTALL-RECEIPT-V1" (.toString buf "utf8")))
+         "")
+
+;; Provisioning: the record landed, its host key is a valid ed25519 key
+;; (matches the openssh line it published), and the authorized key is the
+;; owner's, not something invented.
+(def provision-record
+  (let [fd (.openSync fs fake-out "r")
+        buf (js/Buffer.alloc 16384)]
+    (.readSync fs fd buf 0 16384 provision-offset)
+    (.closeSync fs fd)
+    (let [text (.toString buf "utf8")
+          magic "AIUEOS-PROVISION-V1\n"]
+      (when (str/starts-with? text magic)
+        (let [start (count magic)
+              end (str/index-of text "\n" start)]
+          (try (js->clj (.parse js/JSON (subs text start end)) :keywordize-keys true)
+               (catch :default _ nil)))))))
+
+(record! "e2e-provision-record-present"
+         (= "aiueos.provision.v1" (:schema provision-record)) "")
+
+(record! "e2e-provision-host-key-valid-ed25519"
+         (let [pub (get-in provision-record [:sshHostKey :public])]
+           (and (string? pub) (= 64 (count pub))          ; 32-byte raw key
+                (re-matches #"[0-9a-f]{64}" pub)))
+         "")
+
+(record! "e2e-provision-authorized-is-owner"
+         (= (.toString owner-raw-pub "hex")
+            (get-in provision-record [:authorizedKeys 0 :public]))
+         (str "principal=" (get-in provision-record [:authorizedKeys 0 :principal])))
+
+(record! "e2e-provision-bound-to-receipt"
+         (let [fd (.openSync fs fake-out "r")
+               buf (js/Buffer.alloc 4096)]
+           (.readSync fs fd buf 0 4096 receipt-offset)
+           (.closeSync fs fd)
+           (let [text (.toString buf "utf8")
+                 json (subs text (inc (str/index-of text "\n"))
+                            (str/index-of text "\n" (inc (str/index-of text "\n"))))
+                 rcpt (js->clj (.parse js/JSON json) :keywordize-keys true)
+                 block (js/Buffer.alloc 16384)
+                 fd2 (.openSync fs fake-out "r")]
+             (.readSync fs fd2 block 0 16384 provision-offset)
+             (.closeSync fs fd2)
+             (= (:provisionSha256 rcpt) (sha256-hex block))))
          "")
 
 ;; The stick is reinserted: same intent, same fake device still CLAIMING to be
@@ -233,7 +294,7 @@
 
 ;; ------------------------------------------------------------------ summary
 
-(let [expected 18
+(let [expected 22
       ran (count @results)
       failed (remove :ok @results)]
   (println (str "AIUEOS_INSTALL_CHAIN_SUMMARY ran=" ran " expected=" expected
