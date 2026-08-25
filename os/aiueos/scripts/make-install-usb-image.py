@@ -214,13 +214,24 @@ def read_payload_fat32(volume):
         return bytes(output[:size])
 
     files = {}
-    root = read_chain(2, cluster_bytes)
+    # Follow the whole root-directory chain, and tolerate what one mount on a
+    # host OS leaves behind: long-name entries (attr 0x0F), deleted markers
+    # (0xE5), volume labels, and non-ASCII names from indexer droppings. The
+    # named payload files are what this walk answers for; foreign entries are
+    # skipped, never fatal -- a stick that has been mounted once must still
+    # verify.
+    root = read_chain(2, 1 << 30)
     for entry_offset in range(0, len(root), 32):
         entry = root[entry_offset:entry_offset + 32]
         if entry[0] == 0:
             break
-        name = entry[:8].decode("ascii").rstrip()
-        suffix = entry[8:11].decode("ascii").rstrip()
+        if entry[0] == 0xE5 or entry[11] == 0x0F or entry[11] & 0x08:
+            continue
+        try:
+            name = entry[:8].decode("ascii").rstrip()
+            suffix = entry[8:11].decode("ascii").rstrip()
+        except UnicodeDecodeError:
+            continue
         cluster = struct.unpack_from("<H", entry, 20)[0] << 16 | struct.unpack_from("<H", entry, 26)[0]
         size = struct.unpack_from("<I", entry, 28)[0]
         files[name + ("." + suffix if suffix else "")] = read_chain(cluster, size)
