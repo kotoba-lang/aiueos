@@ -1459,6 +1459,22 @@ int aiueos_ipv4_ready(void) { return ipv4_ready; }
 int aiueos_tcp_ready(void) { return tcp_ready; }
 unsigned aiueos_tcp_stage(void) { return tcp_stage; }
 
+/* SSH listener evidence (ssh-v1.edn / ADR-0102). Passive open + the SSH-2
+   identification exchange: the first inbound connection this OS has ever
+   accepted, as opposed to the client probes above. Only the id exchange is
+   here -- kex, host key, userauth need Ed25519 + SHA-512 that the kernel does
+   not have yet, and this proves the two blockers under them (no LISTEN, and
+   no post-evidence service loop) are gone. Compiled only when AIUEOS_SSH_LISTEN
+   is defined; every other build is byte-for-byte unchanged. */
+#define NET_SSH_PORT 22
+#define NET_SSH_ISN 0x55350000U
+static unsigned ssh_listen_stage;   /* 0 idle 1 syn 2 established 3 sent-id 4 got-id */
+static int ssh_client_id_valid;
+static uint32_t ssh_client_id_len;
+unsigned aiueos_ssh_listen_stage(void) { return ssh_listen_stage; }
+int aiueos_ssh_client_id_valid(void) { return ssh_client_id_valid; }
+uint32_t aiueos_ssh_client_id_len(void) { return ssh_client_id_len; }
+
 /* The lease, which is the whole point of the exchange: the first address this
    machine holds because a server said so rather than because a constant in this
    file said so. Deliberately five words and no subsystem -- there is exactly one
@@ -1973,6 +1989,120 @@ static int net_tcp_probe(struct net_ring *rx, struct net_ring *tx,
   tcp_stage = NET_TCP_STAGE_DONE;
   return 1;
 }
+
+#ifdef AIUEOS_SSH_LISTEN
+/* The SSH-2.0 identification string this server announces. RFC 4253 §4.2:
+   "SSH-protoversion-softwareversion" then CR LF, and nothing before it because
+   this build sends no pre-banner lines. */
+static const uint8_t net_ssh_id[] = "SSH-2.0-aiueos_0.1\r\n";
+#define NET_SSH_ID_LEN (sizeof(net_ssh_id) - 1)
+
+/* A client's identification string is valid iff it begins "SSH-2.0-" or the
+   compatibility "SSH-1.99-" (RFC 4253 §5.1). Checked from the admitted frame,
+   never from a length the client chose. */
+static int net_ssh_id_prefix_ok(const uint8_t *p, uint32_t len) {
+  const uint8_t two[] = "SSH-2.0-";
+  const uint8_t compat[] = "SSH-1.99-";
+  if (len >= 8) {
+    int m = 1;
+    for (unsigned i = 0; i < 8; i++) if (p[i] != two[i]) m = 0;
+    if (m) return 1;
+  }
+  if (len >= 9) {
+    int m = 1;
+    for (unsigned i = 0; i < 9; i++) if (p[i] != compat[i]) m = 0;
+    if (m) return 1;
+  }
+  return 0;
+}
+
+/* Accept ONE inbound SSH connection and exchange identification strings. This
+   mirrors net_tcp_probe with the roles reversed: the peer opens, we answer.
+   Reuses tcp-segment-valid (already linked) for inbound admission and
+   net_tcp_send (self-checked) for the answers. Bounded throughout: a peer that
+   never connects, or a step that never completes, returns 0 and the boot
+   continues -- the listener can only ADD an evidence marker, never withhold
+   one the network chain already earned. Returns 1 only when a well-formed SSH
+   identification string was received over a connection we accepted. */
+static int net_ssh_listen(struct net_ring *rx, struct net_ring *tx,
+                          uint8_t *rx_page, uint8_t *tx_page) {
+  const uint8_t *frame = rx_page + sizeof(struct virtio_net_hdr);
+  if (!net_peer_mac_known) return 0;
+
+  /* 1. wait for an inbound SYN. tcp-segment-valid pins src and flags; a SYN's
+        acknowledgement field is zero, so expected-ack zero is exact. The peer
+        is SLIRP's gateway (NET_PEER_IP) because a hostfwd connection is
+        originated by SLIRP toward the guest. Unlike the client probes, we did
+        not send anything to prompt this, so the SYN may not have arrived when
+        we first look; SLIRP retransmits it on a ~1s/3s schedule, so we re-post
+        and re-await across enough windows to catch a retransmit rather than
+        giving up on the first empty poll. */
+  {
+    int got = 0;
+    for (unsigned attempt = 0; attempt < 64 && !got; attempt++) {
+      net_post(rx);
+      if (!net_await(rx->used, rx->posted)) continue;       /* empty window, try again */
+      uint32_t received = rx->used->ring[0].length;
+      if (rx->used->ring[0].id != 0 ||
+          received <= sizeof(struct virtio_net_hdr) ||
+          received > sizeof(struct virtio_net_hdr) + NET_FRAME_MAX) continue;
+      if (kotoba_aiueos_tcp_segment_valid(
+            (uint64_t)(uintptr_t)frame,
+            received - (uint32_t)sizeof(struct virtio_net_hdr),
+            NET_PEER_IP, 0, NET_TCP_SYN)) got = 1;
+    }
+    if (!got) return 0;
+  }
+  ssh_listen_stage = 1;
+  if (net_load_be16(frame + 36) != NET_SSH_PORT) return 0;   /* not for :22 */
+  uint16_t cport = net_load_be16(frame + 34);
+  uint32_t cseq = net_load_be32(frame + 38);
+
+  /* 2. SYN|ACK: our ISN, acknowledging the client's SYN (one sequence number). */
+  if (!net_tcp_send(tx, tx_page, NET_GUEST_IP, NET_PEER_IP, NET_SSH_PORT, cport,
+                    NET_SSH_ISN, cseq + 1, NET_TCP_SYN | NET_TCP_ACK, 0, 0))
+    return 0;
+
+  /* 3. the client's bare ACK completing the handshake. A cooperating client
+        waits for our banner before sending data, so this ACK arrives alone. */
+  net_post(rx);
+  if (!net_tcp_receive(rx, rx_page, NET_PEER_IP, NET_SSH_ISN + 1, NET_TCP_ACK, 8))
+    return 0;
+  ssh_listen_stage = 2;
+
+  /* 4. send our identification string. */
+  if (!net_tcp_send(tx, tx_page, NET_GUEST_IP, NET_PEER_IP, NET_SSH_PORT, cport,
+                    NET_SSH_ISN + 1, cseq + 1, NET_TCP_PSH | NET_TCP_ACK,
+                    net_ssh_id, NET_SSH_ID_LEN))
+    return 0;
+  ssh_listen_stage = 3;
+
+  /* 5. the client's identification string, acknowledging ours. */
+  net_post(rx);
+  if (!net_tcp_receive(rx, rx_page, NET_PEER_IP, NET_SSH_ISN + 1 + NET_SSH_ID_LEN,
+                       NET_TCP_PSH | NET_TCP_ACK, 8))
+    return 0;
+  ssh_listen_stage = 4;
+  {
+    uint32_t total = net_load_be16(frame + 16);            /* IPv4 total length */
+    uint32_t hdr = 4U * (uint32_t)(frame[46] >> 4);        /* TCP data offset */
+    if (hdr < 20 || 20 + hdr > total) return 0;
+    uint32_t dlen = total - 20 - hdr;
+    const uint8_t *data = frame + 34 + hdr;
+    ssh_client_id_len = dlen;
+    ssh_client_id_valid = net_ssh_id_prefix_ok(data, dlen);
+    uint32_t cnext = cseq + 1 + dlen;
+
+    /* 6. ACK the client's line, then close from our side (best effort). */
+    net_tcp_send(tx, tx_page, NET_GUEST_IP, NET_PEER_IP, NET_SSH_PORT, cport,
+                 NET_SSH_ISN + 1 + NET_SSH_ID_LEN, cnext, NET_TCP_ACK, 0, 0);
+    net_tcp_send(tx, tx_page, NET_GUEST_IP, NET_PEER_IP, NET_SSH_PORT, cport,
+                 NET_SSH_ISN + 1 + NET_SSH_ID_LEN, cnext,
+                 NET_TCP_FIN | NET_TCP_ACK, 0, 0);
+  }
+  return ssh_client_id_valid;
+}
+#endif /* AIUEOS_SSH_LISTEN */
 
 /* ------------------------------------------------------------------------- */
 /* DHCPv4: the first address this machine holds because a server said so.     */
@@ -2689,6 +2819,13 @@ static int virtio_net(uint8_t b, uint8_t d, uint8_t f) {
      compiled-in 10.0.2.15 for the four-boot DHCP tamper gate. */
   if (dhcp_ready) dns_ready = net_dns_probe(&rx, &tx, rx_page, tx_page);
   if (dns_ready) net_tcp_cloud_probe(&rx, &tx, rx_page, tx_page);
+#ifdef AIUEOS_SSH_LISTEN
+  /* Passive open runs last, after every client probe has earned its evidence,
+     so a peer that never connects cannot retract what the chain above proved.
+     This is the OS's first post-evidence service step -- it accepts an inbound
+     connection instead of opening one. */
+  net_ssh_listen(&rx, &tx, rx_page, tx_page);
+#endif
   return 1;
 }
 

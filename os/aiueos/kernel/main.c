@@ -155,6 +155,9 @@ extern int aiueos_virtio_net_ready(void);
 extern int aiueos_ipv4_ready(void);
 extern int aiueos_tcp_ready(void);
 extern unsigned aiueos_tcp_stage(void);
+extern unsigned aiueos_ssh_listen_stage(void);
+extern int aiueos_ssh_client_id_valid(void);
+extern uint32_t aiueos_ssh_client_id_len(void);
 extern int aiueos_dhcp_ready(void);
 extern unsigned aiueos_dhcp_stage(void);
 extern unsigned aiueos_dhcp_reason(void);
@@ -1155,6 +1158,24 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
     } else {
       serial_string("AIUEOS_VIRTIO_NET_ABSENT no-nic-attached\r\n");
     }
+#ifdef AIUEOS_SSH_LISTEN
+    /* The listener ran inside the NIC probe (pci.c). It accepts one inbound
+       connection and exchanges SSH identification strings -- passive open and
+       the first post-evidence service step, with no crypto yet. The marker is
+       green only when a well-formed SSH-2.0 id string was received over a
+       connection this OS accepted; the stage says how far a failed attempt
+       got. */
+    if (aiueos_ssh_client_id_valid()) {
+      serial_string("AIUEOS_SSH_LISTEN_OK port=22 accepted client-id=valid len=");
+      serial_decimal(aiueos_ssh_client_id_len());
+      serial_string("\r\n");
+      debug_string("AIUEOS_SSH_LISTEN_OK port=22 accepted client-id=valid\n");
+    } else {
+      serial_string("AIUEOS_SSH_LISTEN_INCOMPLETE stage=");
+      serial_decimal(aiueos_ssh_listen_stage());
+      serial_string("\r\n");
+    }
+#endif
     debug_string("AIUEOS_SCHEDULER_OK tasks=2 policy=round-robin preemption=apic-timer\n");
     serial_string("AIUEOS_SCHEDULER_OK tasks=2 policy=round-robin preemption=apic-timer\r\n");
     debug_string("AIUEOS_SCHEDULER_CR3_OK roots=3 private-pages=2 kernel-return\n");
