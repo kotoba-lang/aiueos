@@ -1,7 +1,7 @@
 # aiueos encrypted storage and second-disk installer (first slice)
 
 > Ported to `main` 2026-08-25 from unmerged branch commit `95719d66`
-> (root ADR adr-2608251418, aiueos ADR-0096). The `.mjs`/`.sh` files here are
+> (root ADR adr-2608251418, aiueos ADR-0097). The `.mjs`/`.sh` files here are
 > **scope-frozen legacy assets**: they keep exactly the guarded
 > second-empty-internal-disk contract described below. New behavior — install
 > intents, the target receipt, repeat-erase refusal, and the install-USB

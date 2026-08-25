@@ -1,4 +1,4 @@
-# 0096 — USB install and headless bootstrap, tranche one
+# 0097 — USB install and headless bootstrap, tranche one
 
 Accepted 2026-08-25. Component-side execution of root ADR
 `adr-2608251418-aiueos-usb-install-and-headless-bootstrap`, which is the
