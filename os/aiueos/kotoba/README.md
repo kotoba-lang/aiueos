@@ -39,6 +39,18 @@ allow-list entry `aiueos-wm-hit`. Pinned SHA-256 is
 `70fac07783c5b2841b76d9d599c03a97a44d290a8ad977f48aa5af39b21efc7f`.
 Not hosted JVM WM. Native Phase 6 compositor leftover remains.
 
+`scanout-bind.o` is the guest scanout-bind decision (ADR-0095). It
+exports `kotoba_aiueos_scanout_bind`. Two i64 in (resource count,
+enabled-mode count); bind count or 0 out. Vectors: one resource
+refuses; one enabled mode refuses; two and two returns 2. Compiled
+at the same amu pin. The native allow-list row `aiueos-scanout-bind`
+must live in `elf64.clj` because the JVM loads `.clj` ahead of
+`.cljc`. Pinned SHA-256 is
+`5ca924dff9fe42620f2313d16f8f62018d9bfbf588c7b142383066cce65d8305`.
+Not hosted JVM WM. One scanout when Kotoba admits two is leftover
+`:one-scanout`.
+
+
 Run `scripts/reproduce-kotoba-kernel-object.sh /path/to/compiler` to compile the
 checked-in source with that west-pinned compiler checkout and compare both
 objects byte-for-byte. This pinned object is temporary cross-repository CI

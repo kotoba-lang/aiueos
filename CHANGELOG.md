@@ -5,6 +5,20 @@ All notable changes to **aiueos** are documented here. The format follows
 
 ## [Unreleased]
 
+### Guest scanout-two (ADR-0095)
+- KERNEL.ELF `SET_SCANOUT` scanout 1 onto resource 2 when Kotoba
+  `kotoba_aiueos_scanout_bind(2, enabled) == 2`. Bind count is Kotoba;
+  C does not hardcode `2`. QEMU `virtio-vga` uses `max_outputs=2`.
+  Gate: `clojure -M:compositor guest-scanout-two`. Named red is hosted
+  JVM `AIUEOS_COMPOSITOR_WM_OK` and one scanout when Kotoba admits two
+  (`:one-scanout`). QEMU 10.1 enables extra heads only after a UI
+  frontend `ui_info`; the gate owns a unix session bus and `gdbus`
+  `SetUIInfo` on Console_1. Default `gpu` / `guest-gpu-two` boots stay
+  `-display none` and stay green without requiring
+  `GUEST_SCANOUT_TWO_OK`. Leftover
+  `:native-compositor-absent` (permission broker, native component
+  runtime, P5). **P5 UNVERIFIED**.
+
 ### Guest gpu-two (ADR-0094)
 - KERNEL.ELF creates and flushes two virtio-gpu 2D resources when Kotoba
   `kotoba_aiueos_wm_hit(2, 2, 100, 80) == 2`. Count is Kotoba; C does not

@@ -79,8 +79,9 @@ dhcp_option_tmp=${TMPDIR:-/tmp}/aiueos-kotoba-dhcp-option.$$
 ecdsa_tmp=${TMPDIR:-/tmp}/aiueos-kotoba-ecdsa-p256.$$
 ime_tmp=${TMPDIR:-/tmp}/aiueos-kotoba-ime-romaji.$$
 wm_tmp=${TMPDIR:-/tmp}/aiueos-kotoba-wm-hit.$$
+scanout_tmp=${TMPDIR:-/tmp}/aiueos-kotoba-scanout-bind.$$
 user_elf_tmp=${TMPDIR:-/tmp}/aiueos-kotoba-user-smoke.$$
-trap 'rm -f "$dhcp_reply_tmp" "$dhcp_option_tmp" "$ecdsa_tmp" "$ime_tmp" "$wm_tmp" "$tmp" "$journal_tmp" "$fnv_tmp" "$journal_valid_tmp" "$transaction_valid_tmp" "$transaction_route_tmp" "$mutable_valid_tmp" "$superblock_valid_tmp" "$journal_build_tmp" "$mutable_build_tmp" "$cap_valid_tmp" "$extent_valid_tmp" "$region_valid_tmp" "$syscall_range_tmp" "$copy_in_tmp" "$capability_tmp" "$capability_mutation_tmp" "$service_lifecycle_tmp" "$service_registry_tmp" "$service_registry_state_tmp" "$user_object_journal_tmp" "$user_object_journal_valid_tmp" "$user_object_journal_value_tmp" "$sha256_tmp" "$digest_equal_tmp" "$catalog_valid_tmp" "$app_lookup_tmp" "$user_elf_valid_tmp" "$user_context_tmp" "$mapping_plan_tmp" "$process_plan_tmp" "$teardown_plan_tmp" "$task_plan_tmp" "$dispatch_plan_tmp" "$exit_route_tmp" "$service_task_tmp" "$rsa2048_tmp" "$user_elf_tmp"' EXIT HUP INT TERM
+trap 'rm -f "$dhcp_reply_tmp" "$dhcp_option_tmp" "$ecdsa_tmp" "$ime_tmp" "$wm_tmp" "$scanout_tmp" "$tmp" "$journal_tmp" "$fnv_tmp" "$journal_valid_tmp" "$transaction_valid_tmp" "$transaction_route_tmp" "$mutable_valid_tmp" "$superblock_valid_tmp" "$journal_build_tmp" "$mutable_build_tmp" "$cap_valid_tmp" "$extent_valid_tmp" "$region_valid_tmp" "$syscall_range_tmp" "$copy_in_tmp" "$capability_tmp" "$capability_mutation_tmp" "$service_lifecycle_tmp" "$service_registry_tmp" "$service_registry_state_tmp" "$user_object_journal_tmp" "$user_object_journal_valid_tmp" "$user_object_journal_value_tmp" "$sha256_tmp" "$digest_equal_tmp" "$catalog_valid_tmp" "$app_lookup_tmp" "$user_elf_valid_tmp" "$user_context_tmp" "$mapping_plan_tmp" "$process_plan_tmp" "$teardown_plan_tmp" "$task_plan_tmp" "$dispatch_plan_tmp" "$exit_route_tmp" "$service_task_tmp" "$rsa2048_tmp" "$user_elf_tmp"' EXIT HUP INT TERM
 "$compiler/bin/kotoba-compiler" compile "$aiueos/kotoba/kernel-probe.kotoba" \
   --target x86_64-aiueos-kernel-v1 --output "$tmp"
 cmp "$aiueos/kotoba/kernel-probe.o" "$tmp"
@@ -336,6 +337,15 @@ cmp "$aiueos/kotoba/wm-hit.o" "$wm_tmp"
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$wm_tmp" \
   70fac07783c5b2841b76d9d599c03a97a44d290a8ad977f48aa5af39b21efc7f \
   kotoba_aiueos_wm_hit
+# Guest scanout-two (ADR-0095). Same 9cf3a0a pin + native allow-list
+# `aiueos-scanout-bind`. JVM loads elf64.clj over elf64.cljc; the row
+# must exist in the .clj file. Do not wholesale-advance amu.
+"$compiler/bin/kotoba-compiler" compile "$aiueos/kotoba/scanout-bind.kotoba" \
+  --target x86_64-aiueos-kernel-v1 --output "$scanout_tmp"
+cmp "$aiueos/kotoba/scanout-bind.o" "$scanout_tmp"
+python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$scanout_tmp" \
+  5ca924dff9fe42620f2313d16f8f62018d9bfbf588c7b142383066cce65d8305 \
+  kotoba_aiueos_scanout_bind
 # NOT REPRODUCIBLE at the pinned revision, and the only one left that is not.
 #
 # Both files are 8560 bytes and 541 of them differ. The segment size field at

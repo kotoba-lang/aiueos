@@ -309,6 +309,40 @@
     {:green? false :exit 1 :reason :guest-gpu-two-absent
      :leftover [:guest-gpu-two-absent]}))
 
+(defn guest-scanout-two-ok?
+  "True only when KERNEL.ELF serial says two virtio-gpu scanouts were
+  bound after Kotoba admitted n=2. Hosted JVM wm serial alone does
+  not count."
+  [serial]
+  (boolean
+   (and (string? serial)
+        (re-find #"(?m)^AIUEOS_GUEST_SCANOUT_TWO_OK scanouts=2 resource-0=1 resource-1=2 kotoba-n=2" serial)
+        (not (re-find #"AIUEOS_COMPOSITOR_WM_OK" serial)))))
+
+(defn guest-scanout-two-result
+  "Classify a KERNEL.ELF boot for compositor `guest-scanout-two`.
+  Hosted `clojure -M:compositor wm` is the named red. One scanout
+  when Kotoba admits two is leftover `:one-scanout`."
+  [{:keys [serial qemu-unmeasured? hosted-wm?]}]
+  (cond
+    qemu-unmeasured?
+    {:green? false :exit 3 :reason :unmeasured :leftover [:unmeasured]}
+
+    (or hosted-wm?
+        (re-find #"AIUEOS_COMPOSITOR_WM_OK" (or serial "")))
+    {:green? false :exit 1 :reason :hosted-wm-does-not-count
+     :leftover [:hosted-wm-does-not-count]}
+
+    (guest-scanout-two-ok? serial)
+    {:green? true :exit 0 :reason :guest-scanout-two-bound :leftover []}
+
+    (re-find #"(?m)^AIUEOS_GUEST_SCANOUT_TWO leftover=one-scanout" (or serial ""))
+    {:green? false :exit 1 :reason :one-scanout :leftover [:one-scanout]}
+
+    :else
+    {:green? false :exit 1 :reason :guest-scanout-two-absent
+     :leftover [:guest-scanout-two-absent]}))
+
 (defn html-has-desktop-face?
   [html]
   (and (re-find #"dads-button" html)
@@ -408,6 +442,14 @@
   (boolean
    (and (html-has-guest-input-face? html)
         (re-find #"clojure -M:compositor guest-gpu-two" html))))
+
+(defn html-has-guest-scanout-two-face?
+  "SPA names the KERNEL.ELF guest scanout-two gate. Guest gpu-two without
+  `clojure -M:compositor guest-scanout-two` is red for this face."
+  [html]
+  (boolean
+   (and (html-has-guest-gpu-two-face? html)
+        (re-find #"clojure -M:compositor guest-scanout-two" html))))
 
 (defn presenter-is-kami-webgpu?
   "The compiled bundle must be kami.webgpu (init!/draw!), not a stub
@@ -643,6 +685,10 @@
        []
        (io/file (repo-root) "build" "aiueos" "compositor-guest-gpu-two-receipt.edn"))
 
+     (defn guest-scanout-two-receipt-file
+       []
+       (io/file (repo-root) "build" "aiueos" "compositor-guest-scanout-two-receipt.edn"))
+
      (defn write-gpu-receipt!
        [receipt]
        (let [f (gpu-receipt-file)]
@@ -685,6 +731,13 @@
          (spit f (with-out-str (pprint/pprint receipt)))
          f))
 
+     (defn write-guest-scanout-two-receipt!
+       [receipt]
+       (let [f (guest-scanout-two-receipt-file)]
+         (io/make-parents f)
+         (spit f (with-out-str (pprint/pprint receipt)))
+         f))
+
      (defn serial-measured?
        [serial]
        (boolean (and (string? serial) (re-find #"AIUEOS_" serial))))
@@ -692,7 +745,8 @@
      (defn run-uefi-2d!
        "Existing UEFI QEMU smoke (virtio-vga = virtio-gpu protocol).
        No AIUEOS_TEST_NET — that is P2 and not this gate. No new .sh.
-       extra-env is merged into the child environment (guest-input)."
+       extra-env is merged into the child environment (guest-input,
+       guest-scanout-two dbus SetUIInfo)."
        ([] (run-uefi-2d! nil))
        ([extra-env]
         (let [script (uefi-smoke)]
@@ -962,6 +1016,53 @@
              (if (:green? r)
                (println "AIUEOS_COMPOSITOR_GUEST_GPU_TWO_OK")
                (println (str "AIUEOS_COMPOSITOR_GUEST_GPU_TWO not-green leftover="
+                             (pr-str (:leftover r)))))
+             r))))
+
+     (defn run-guest-scanout-two
+       "Guest two virtio-gpu scanouts. Kotoba admits bind count; C hardcoding is red."
+       []
+       (let [script (uefi-smoke)]
+         (if-not (.isFile script)
+           (let [r (guest-scanout-two-result {:qemu-unmeasured? true})]
+             (write-guest-scanout-two-receipt!
+              (assoc r :measured-at (str (java.time.Instant/now))
+                     :command "clojure -M:compositor guest-scanout-two"
+                     :why :smoke-script-missing))
+             (println "AIUEOS_COMPOSITOR_GUEST_SCANOUT_TWO leftover=:unmeasured")
+             r)
+           ;; QEMU 10.1 virtio-gpu enables output 0 only at realize.
+           ;; Extra heads need a UI frontend ui_info (cocoa/gtk/dbus).
+           ;; `-display none` is leftover :one-scanout, not a Kotoba miss.
+           (let [boot (run-uefi-2d!
+                       {"AIUEOS_GUEST_SCANOUT_TWO" "1"
+                        "AIUEOS_QEMU_TIMEOUT" "90"})
+                 measured? (serial-measured? (:serial boot))
+                 r (guest-scanout-two-result {:serial (:serial boot)
+                                              :qemu-unmeasured? (not measured?)
+                                              :hosted-wm? false})
+                 receipt (assoc r
+                                :aiueos.compositor/guest-scanout-two-receipt 1
+                                :measured-at (str (java.time.Instant/now))
+                                :command "clojure -M:compositor guest-scanout-two"
+                                :profile :uefi-qemu-guest-scanout-two
+                                :uefi-smoke-exit (:exit boot)
+                                :serial-path (:serial-path boot)
+                                :note "Green only when guest serial has GUEST_SCANOUT_TWO_OK scanouts=2 resource-0=1 resource-1=2 kotoba-n=2. Hosted clojure -M:compositor wm does not count. One scanout when Kotoba admits two is leftover. P5 UNVERIFIED.")]
+             (write-guest-scanout-two-receipt! receipt)
+             (println "AIUEOS_COMPOSITOR_GUEST_SCANOUT_TWO_PROFILE=uefi-qemu")
+             (println (str "AIUEOS_COMPOSITOR_GUEST_SCANOUT_TWO_SERIAL=" (:serial-path boot)))
+             (println (str "AIUEOS_COMPOSITOR_GUEST_SCANOUT_TWO_RECEIPT="
+                           (.getPath (guest-scanout-two-receipt-file))))
+             (println (str "AIUEOS_COMPOSITOR_GUEST_SCANOUT_TWO_LEFTOVER="
+                           (pr-str (:leftover r))))
+             (when (:serial boot)
+               (doseq [line (str/split-lines (:serial boot))
+                       :when (re-find #"AIUEOS_GUEST_SCANOUT_TWO" line)]
+                 (println (str/replace line #"\r$" ""))))
+             (if (:green? r)
+               (println "AIUEOS_COMPOSITOR_GUEST_SCANOUT_TWO_OK")
+               (println (str "AIUEOS_COMPOSITOR_GUEST_SCANOUT_TWO not-green leftover="
                              (pr-str (:leftover r)))))
              r))))
 
@@ -1415,5 +1516,10 @@
              (flush)
              (System/exit (int (:exit r))))
 
-           (do (println "usage: clojure -M:compositor [smoke|gpu|wm|ime|kanji|kami|guest-ime|guest-wm|guest-paint|guest-input|guest-gpu-two|serve]")
+           "guest-scanout-two"
+           (let [r (run-guest-scanout-two)]
+             (flush)
+             (System/exit (int (:exit r))))
+
+           (do (println "usage: clojure -M:compositor [smoke|gpu|wm|ime|kanji|kami|guest-ime|guest-wm|guest-paint|guest-input|guest-gpu-two|guest-scanout-two|serve]")
                (System/exit 3)))))))

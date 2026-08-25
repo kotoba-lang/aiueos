@@ -158,6 +158,42 @@ qemu_timeout=${AIUEOS_QEMU_TIMEOUT:-600}
 # and is never retried. Each attempt restarts from a pristine data disk so a
 # partially-written disk from a hung boot cannot change the retry's outcome.
 qemu_attempts=${AIUEOS_QEMU_ATTEMPTS:-3}
+# QEMU 10.1 virtio-gpu sets enabled_output_bitmask=1 at realize. Extra
+# heads become enabled only when a UI frontend calls ui_info with a
+# non-zero size (hw/display/virtio-gpu-base.c). `-display none` never
+# does that, so GET_DISPLAY_INFO stays one-scanout. cocoa only ui_info's
+# the front window (head 0). dbus SetUIInfo on Console_1 enables head 1.
+# Default stays none so gpu/guest-gpu-two do not pop a window.
+display_backend=${AIUEOS_QEMU_DISPLAY:-none}
+aiueos_dbus_pid=
+if [ "${AIUEOS_GUEST_SCANOUT_TWO:-0}" = 1 ]; then
+  display_backend=dbus
+  command -v gdbus >/dev/null 2>&1 || {
+    echo "error: gdbus is required for guest-scanout-two" >&2
+    exit 1
+  }
+  command -v dbus-daemon >/dev/null 2>&1 || {
+    echo "error: dbus-daemon is required for guest-scanout-two (brew install dbus)" >&2
+    exit 1
+  }
+  # Own a bus under $out. An inherited DBUS_SESSION_BUS_ADDRESS may
+  # point at a dead unix socket (macOS launchd session socket is empty;
+  # a previous probe in the same shell leaves a stale path). QEMU then
+  # fails with "failed to connect to DBus" before GET_DISPLAY_INFO.
+  rm -f "$out/guest-scanout.sock" "$out/dbus.addr" "$out/dbus.pid"
+  dbus-daemon --session --fork --nopidfile \
+    --address="unix:path=$out/guest-scanout.sock" \
+    --print-address=3 --print-pid=4 3>"$out/dbus.addr" 4>"$out/dbus.pid"
+  DBUS_SESSION_BUS_ADDRESS=$(cat "$out/dbus.addr")
+  export DBUS_SESSION_BUS_ADDRESS
+  unset DBUS_LAUNCHD_SESSION_BUS_SOCKET || true
+  aiueos_dbus_pid=$(cat "$out/dbus.pid")
+fi
+if [ "$display_backend" = dbus ]; then
+  display_opt="dbus,gl=off"
+else
+  display_opt="$display_backend"
+fi
 qmp_path="$out/guest-input.qmp"
 qmp_args=""
 kbd_args="-device virtio-keyboard-pci,disable-legacy=on"
@@ -258,6 +294,42 @@ log("sent " + str(i))
 PY
     inject_pid=$!
   fi
+  scanout_pid=
+  if [ "${AIUEOS_GUEST_SCANOUT_TWO:-0}" = 1 ]; then
+    AIUEOS_SCANOUT_DBUS_LOG="$out/guest-scanout-dbus.log" python3 - <<'PY' &
+import os, subprocess, time
+log_path = os.environ.get("AIUEOS_SCANOUT_DBUS_LOG", "")
+def log(msg):
+    if not log_path:
+        return
+    try:
+        with open(log_path, "a") as f:
+            f.write(msg + "\n")
+    except OSError:
+        pass
+def gdbus(path, xoff):
+    return subprocess.run(
+        ["gdbus", "call", "--session", "-d", "org.qemu",
+         "-o", path, "-m", "org.qemu.Display1.Console.SetUIInfo",
+         "0", "0", str(xoff), "0", "1280", "800"],
+        capture_output=True, text=True)
+end = time.time() + 90
+while time.time() < end:
+    ping = subprocess.run(
+        ["gdbus", "call", "--session", "-d", "org.qemu",
+         "-o", "/org/qemu/Display1/VM",
+         "-m", "org.freedesktop.DBus.Peer.Ping"],
+        capture_output=True, text=True)
+    if ping.returncode == 0:
+        a = gdbus("/org/qemu/Display1/Console_0", 0)
+        b = gdbus("/org/qemu/Display1/Console_1", 1280)
+        log("set0 rc=%s %r set1 rc=%s %r" % (
+            a.returncode, (a.stdout + a.stderr)[:200],
+            b.returncode, (b.stdout + b.stderr)[:200]))
+    time.sleep(0.05)
+PY
+    scanout_pid=$!
+  fi
   set +e
   # shellcheck disable=SC2086 # intentional optional groups of QEMU arguments
   timeout "$qemu_timeout" "$qemu" \
@@ -274,13 +346,17 @@ PY
     -drive if=none,id=aiueosblk,format=raw,file="$blk_image" \
     -device virtio-blk-pci,drive=aiueosblk,disable-legacy=on \
     $kbd_args \
-    -device virtio-vga,disable-legacy=on \
+    -device virtio-vga,disable-legacy=on,max_outputs=2 \
     $qmp_args \
-    -display none -serial "file:$serial_log" -monitor none -no-reboot
+    -display "$display_opt" -serial "file:$serial_log" -monitor none -no-reboot
   status=$?
   if [ -n "$inject_pid" ]; then
     kill "$inject_pid" 2>/dev/null || true
     wait "$inject_pid" 2>/dev/null || true
+  fi
+  if [ -n "$scanout_pid" ]; then
+    kill "$scanout_pid" 2>/dev/null || true
+    wait "$scanout_pid" 2>/dev/null || true
   fi
   set -e
   if [ "$status" -eq 124 ] && [ "$attempt" -lt "$qemu_attempts" ]; then
@@ -291,6 +367,9 @@ PY
   break
 done
 [ -n "$pristine_blk" ] && rm -f "$pristine_blk"
+if [ -n "$aiueos_dbus_pid" ]; then
+  kill "$aiueos_dbus_pid" 2>/dev/null || true
+fi
 
 if [ "$status" -eq 124 ]; then
   echo "error: QEMU did not terminate within ${qemu_timeout}s (hung guest)" >&2

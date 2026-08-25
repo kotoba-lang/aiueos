@@ -119,6 +119,8 @@ struct virtio_gpu_display_info {
 #define VIRTIO_GPU_2D_RESOURCE_2 2
 extern uint64_t kotoba_aiueos_wm_hit(uint64_t n, uint64_t front,
                                      uint64_t px, uint64_t py);
+extern uint64_t kotoba_aiueos_scanout_bind(uint64_t n_resources,
+                                           uint64_t n_enabled);
 struct virtio_gpu_resource_create_2d {
   struct virtio_gpu_ctrl_header header;
   uint32_t resource_id, format, width, height;
@@ -1173,14 +1175,18 @@ static int virtio_input(uint8_t b, uint8_t d, uint8_t f) {
 }
 
 static uint32_t gpu_scanout_width, gpu_scanout_height;
+static uint32_t gpu_enabled_scanouts;
 static int gpu_2d_create_ok;
 static int gpu_2d_flush_ok;
 static int gpu_2d_two_ok;
+static int gpu_2d_scanout_two_ok;
 uint32_t aiueos_gpu_scanout_width(void) { return gpu_scanout_width; }
 uint32_t aiueos_gpu_scanout_height(void) { return gpu_scanout_height; }
+uint32_t aiueos_gpu_enabled_scanouts(void) { return gpu_enabled_scanouts; }
 int aiueos_gpu_2d_create_ok(void) { return gpu_2d_create_ok; }
 int aiueos_gpu_2d_flush_ok(void) { return gpu_2d_flush_ok; }
 int aiueos_gpu_2d_two_ok(void) { return gpu_2d_two_ok; }
+int aiueos_gpu_scanout_two_ok(void) { return gpu_2d_scanout_two_ok; }
 
 static void gpu_zero(void *p, uint32_t n) {
   uint8_t *b = p;
@@ -1290,8 +1296,8 @@ static void gpu_2d_resource_path(struct virtq_desc *desc, struct virtq_avail *av
   gpu_2d_flush_ok = 1;
 
   /* Second 2D resource when Kotoba admits two surfaces (ADR-0094). Count
-     is Kotoba `kotoba_aiueos_wm_hit`; C does not hardcode n=2. No second
-     SET_SCANOUT — scanout 0 stays on resource 1. */
+     is Kotoba `kotoba_aiueos_wm_hit`; C does not hardcode n=2. Second
+     SET_SCANOUT is ADR-0095 and runs only after this path succeeds. */
   if (kotoba_aiueos_wm_hit(2, 2, 100, 80) != 2) return;
   {
     uint8_t *backing2 = aiueos_allocate_physical_page();
@@ -1338,6 +1344,21 @@ static void gpu_2d_resource_path(struct virtq_desc *desc, struct virtq_avail *av
                   flush, sizeof(*flush), resp, 64, VIRTIO_GPU_RESP_OK_NODATA))
       return;
     gpu_2d_two_ok = 1;
+
+    /* Second scanout when Kotoba admits two (ADR-0095). Bind count is
+       Kotoba `kotoba_aiueos_scanout_bind`; C does not hardcode n=2.
+       After gpu_2d_two_ok so guest-gpu-two stays green if SET_SCANOUT 1
+       fails. No qemu_exit. */
+    if (kotoba_aiueos_scanout_bind(2, gpu_enabled_scanouts) != 2) return;
+    gpu_zero(so, sizeof(*so));
+    so->header.type = VIRTIO_GPU_CMD_SET_SCANOUT;
+    so->r = tile;
+    so->scanout_id = 1;
+    so->resource_id = VIRTIO_GPU_2D_RESOURCE_2;
+    if (!gpu_ctrl(desc, avail, used, doorbell, &submitted,
+                  so, sizeof(*so), resp, 64, VIRTIO_GPU_RESP_OK_NODATA))
+      return;
+    gpu_2d_scanout_two_ok = 1;
   }
 }
 
@@ -1370,15 +1391,25 @@ static int virtio_gpu(uint8_t b, uint8_t d, uint8_t f) {
       if (used->ring[0].id != 0 || used->ring[0].length < sizeof(response->header) ||
           used->ring[0].length > sizeof(*response) ||
           response->header.type != VIRTIO_GPU_RESP_OK_DISPLAY_INFO) return 0;
+      gpu_enabled_scanouts = 0;
       for (uint32_t i = 0; i < 16; i++) if (response->modes[i].enabled) {
         uint32_t width = response->modes[i].rect.width, height = response->modes[i].rect.height;
-        if (response->modes[i].rect.x || response->modes[i].rect.y || width < 320 ||
-            height < 200 || width > 16384 || height > 16384) return 0;
-        gpu_scanout_width = width; gpu_scanout_height = height;
-        gpu_2d_resource_path(desc, avail, used, doorbell, messages);
-        return 1;
+        /* Primary scanout stays at origin. Extra enabled modes may sit
+           beside it (QEMU max_outputs=2 places scanout 1 at x=width).
+           Rejecting those would drop the whole GPU path and hide
+           leftover :one-scanout behind a missing CREATE. */
+        if (width < 320 || height < 200 || width > 16384 || height > 16384)
+          return 0;
+        if (gpu_enabled_scanouts == 0) {
+          if (response->modes[i].rect.x || response->modes[i].rect.y)
+            return 0;
+          gpu_scanout_width = width; gpu_scanout_height = height;
+        }
+        gpu_enabled_scanouts++;
       }
-      return 0;
+      if (gpu_enabled_scanouts == 0) return 0;
+      gpu_2d_resource_path(desc, avail, used, doorbell, messages);
+      return 1;
     }
     __asm__ volatile("pause");
   }
@@ -2709,7 +2740,8 @@ int aiueos_pci_enumerate(void) {
   user_object_ready=user_object_write_evidence=user_object_replay_evidence=0;
   user_object_pending[0]=user_object_pending[1]=0;
   gpu_scanout_width = gpu_scanout_height = 0;
-  gpu_2d_create_ok = gpu_2d_flush_ok = gpu_2d_two_ok = 0;
+  gpu_enabled_scanouts = 0;
+  gpu_2d_create_ok = gpu_2d_flush_ok = gpu_2d_two_ok = gpu_2d_scanout_two_ok = 0;
   if (!aiueos_dma_test_policy_allows_unisolated()) return 0;
   if (!cap_selftest()) return 0;
   uint32_t present = 0, virtio = 0;

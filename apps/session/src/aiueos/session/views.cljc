@@ -124,7 +124,9 @@
      [:code "clojure -M:compositor guest-input"]
      "（KERNEL.ELF が virtio-keyboard の used-ring を読む）。ゲスト側 gpu-two は "
      [:code "clojure -M:compositor guest-gpu-two"]
-     "（KERNEL.ELF が Kotoba の n=2 で 2 枚の virtio-gpu 2D resource を flush）。native compositor は leftover です。描画は "
+     "（KERNEL.ELF が Kotoba の n=2 で 2 枚の virtio-gpu 2D resource を flush）。ゲスト側 scanout-two は "
+     [:code "clojure -M:compositor guest-scanout-two"]
+     "（KERNEL.ELF が Kotoba の n=2 で scanout 1 を resource 2 に bind）。native compositor は leftover です。描画は "
      [:code "kami.webgpu"]
      " の "
      [:code "clojure -M:compositor kami"]

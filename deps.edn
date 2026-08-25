@@ -165,6 +165,8 @@
    ;;   Hosted AIUEOS_COMPOSITOR_WM_OK is red. C synthetic-smoke is leftover.
    ;; guest-gpu-two Exit 0 = KERNEL.ELF serial GUEST_GPU_TWO_OK resources=2 flush=2 kotoba-n=2.
    ;;   Hosted AIUEOS_COMPOSITOR_WM_OK is red. One resource is leftover :one-resource.
+   ;; guest-scanout-two Exit 0 = KERNEL.ELF serial GUEST_SCANOUT_TWO_OK scanouts=2 resource-0=1 resource-1=2 kotoba-n=2.
+   ;;   Hosted AIUEOS_COMPOSITOR_WM_OK is red. One scanout is leftover :one-scanout.
    ;; kami Exit 0 = SPA calls kami.webgpu init!/draw! on #kami-viewport with
    ;;   a render-ir of ≥1 instance. beginRenderPass clear-only is red.
    ;; Exit 1 refused. Exit 3 unmeasured. Not P5. Goal not complete.
