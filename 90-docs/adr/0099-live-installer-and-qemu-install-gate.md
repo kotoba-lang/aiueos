@@ -1,4 +1,4 @@
-# 0098 — The live installer, and the QEMU gate that installs with it
+# 0099 — The live installer, and the QEMU gate that installs with it
 
 Accepted 2026-08-25. Tranche two of root ADR
 `adr-2608251418-aiueos-usb-install-and-headless-bootstrap` (tranche one is
