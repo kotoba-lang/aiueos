@@ -69,9 +69,33 @@ hosted execute remain.
 
 ## Measurement
 
-Recorded by `nbb --classpath src scripts/compositor-guest.cljs guest-session`
-on this branch. **2026-08-25 this Mac:** printed
+Recorded by `nbb --classpath src scripts/compositor-guest.cljs guest-session`.
+**2026-08-25 this Mac:** printed
 `AIUEOS_COMPOSITOR_GUEST_SESSION_OK` and serial
 `AIUEOS_GUEST_SESSION_OK restored-front=2 packed=2 kotoba-front=2 hit=2`.
 `clojure -M:compositor guest-session` printed leftover `:jvm-gate-runner`
 and exited 1. QEMU != P5.
+
+## Landed
+
+Default branch merge `38a883b0e7fdfc7b5e962ab46879e7868d8fc586`
+(2026-08-25). West pin matches that SHA. Fleet-db absorbed it.
+
+Verification on that tree:
+
+- nbb `aiueos.compositor-guest-test`: 3 tests, 36 assertions, 0 fail
+- JVM `clojure -M:test -n aiueos.compositor-guest-test -n aiueos.compositor-test`:
+  40 tests, 249 assertions, 0 fail
+- live QEMU nbb `guest-session`: exit 0, `AIUEOS_COMPOSITOR_GUEST_SESSION_OK`
+- JVM leftover `clojure -M:compositor guest-session`: exit 1,
+  leftover `:jvm-gate-runner`
+
+Unknown nbb profile exits 3 (unmeasured), not 0.
+
+## Resume
+
+Next first command is **not** another nbb fold. Hosted leftover is
+`:native-compositor-absent` (native Kotoba component runtime instantiating
+a compositor component). P5 physical boot is UNVERIFIED. Do not mix USB
+install (ADR-0097 / 0099) into that slice. Do not drop amu compile JVM
+or Chicory `aiueos.execute` as part of compositor proof.
