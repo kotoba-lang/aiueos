@@ -196,6 +196,7 @@ extern int aiueos_desktop_input_eventq_empty(void);
 extern uint64_t kotoba_aiueos_ime_commit(uint64_t a, uint64_t b);
 extern uint64_t kotoba_aiueos_wm_hit(uint64_t n, uint64_t front,
                                      uint64_t px, uint64_t py);
+extern uint64_t kotoba_aiueos_broker_admit(uint64_t a, uint64_t b);
 extern void aiueos_scheduler_initialize(void);
 extern int aiueos_scheduler_restore_service_registry(uint64_t state0, uint64_t state1);
 extern int aiueos_scheduler_persistent_restore_evidence_ready(void);
@@ -835,6 +836,30 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
       } else {
         debug_string("AIUEOS_GUEST_WM leftover=vector-miss\n");
         serial_string("AIUEOS_GUEST_WM leftover=vector-miss\r\n");
+      }
+    }
+    /* Guest permission broker (ADR-0096). C copies the clipboard
+       scratch only when Kotoba admits clipboard. File-picker is
+       refused on the clipboard-only boot grant. Do not qemu_exit:
+       gpu/cloud/guest-ime/guest-wm/guest-scanout-two stay green
+       without this line. Hosted JVM wm does not count. */
+    {
+      volatile static uint8_t clipboard_scratch;
+      uint64_t clip = kotoba_aiueos_broker_admit(1, 1);
+      uint64_t pick = kotoba_aiueos_broker_admit(2, 1);
+      if (clip == 1) clipboard_scratch = 0;
+      if (clip == 0) {
+        debug_string("AIUEOS_GUEST_BROKER leftover=deny-all\n");
+        serial_string("AIUEOS_GUEST_BROKER leftover=deny-all\r\n");
+      } else if (pick != 0) {
+        debug_string("AIUEOS_GUEST_BROKER leftover=always-grant\n");
+        serial_string("AIUEOS_GUEST_BROKER leftover=always-grant\r\n");
+      } else if (clip == 1 && pick == 0) {
+        debug_string("AIUEOS_GUEST_BROKER_OK clipboard=1 picker=0 kotoba-clip=1 kotoba-pick=0\n");
+        serial_string("AIUEOS_GUEST_BROKER_OK clipboard=1 picker=0 kotoba-clip=1 kotoba-pick=0\r\n");
+      } else {
+        debug_string("AIUEOS_GUEST_BROKER leftover=vector-miss\n");
+        serial_string("AIUEOS_GUEST_BROKER leftover=vector-miss\r\n");
       }
     }
     /* Guest paint (ADR-0092). C fills both boot rects back-then-front
