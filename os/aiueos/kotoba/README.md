@@ -50,6 +50,17 @@ must live in `elf64.clj` because the JVM loads `.clj` ahead of
 Not hosted JVM WM. One scanout when Kotoba admits two is leftover
 `:one-scanout`.
 
+`broker-admit.o` is the guest permission-broker decision (ADR-0096). It
+exports `kotoba_aiueos_broker_admit`. Two i64 in (op, granted-op);
+1 admit or 0 refuse. op 1 = clipboard, op 2 = file-picker. Vectors:
+clipboard requested and granted returns 1; picker on a clipboard-only
+grant returns 0. Compiled at the same amu pin. The native allow-list
+row `aiueos-broker-admit` must live in `elf64.clj` because the JVM
+loads `.clj` ahead of `.cljc`. Pinned SHA-256 is
+`713bdc8e4c3d41ea9602fe9184741c15bd7a7b71d6f1b688a766a2d83714a48f`.
+Not hosted JVM WM. Picker admitted on a clipboard-only grant is leftover
+`:always-grant`.
+
 
 Run `scripts/reproduce-kotoba-kernel-object.sh /path/to/compiler` to compile the
 checked-in source with that west-pinned compiler checkout and compare both

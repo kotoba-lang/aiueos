@@ -5,6 +5,18 @@ All notable changes to **aiueos** are documented here. The format follows
 
 ## [Unreleased]
 
+### Guest permission broker (ADR-0096)
+- KERNEL.ELF admits clipboard and refuses file-picker when Kotoba
+  `kotoba_aiueos_broker_admit(1, 1) == 1` and
+  `kotoba_aiueos_broker_admit(2, 1) == 0`. Admit is Kotoba; C copies
+  the clipboard scratch only when admitted. Gate:
+  `clojure -M:compositor guest-broker`. Named red is hosted JVM
+  `AIUEOS_COMPOSITOR_WM_OK` and picker on a clipboard-only grant
+  (`:always-grant`). Default `gpu` / `guest-scanout-two` boots stay
+  green without requiring `GUEST_BROKER_OK`. Leftover
+  `:native-compositor-absent` (native component runtime, P5).
+  **P5 UNVERIFIED**.
+
 ### Guest scanout-two (ADR-0095)
 - KERNEL.ELF `SET_SCANOUT` scanout 1 onto resource 2 when Kotoba
   `kotoba_aiueos_scanout_bind(2, enabled) == 2`. Bind count is Kotoba;
@@ -16,8 +28,7 @@ All notable changes to **aiueos** are documented here. The format follows
   `SetUIInfo` on Console_1. Default `gpu` / `guest-gpu-two` boots stay
   `-display none` and stay green without requiring
   `GUEST_SCANOUT_TWO_OK`. Leftover
-  `:native-compositor-absent` (permission broker, native component
-  runtime, P5). **P5 UNVERIFIED**.
+  `:native-compositor-absent` (native component runtime, P5). **P5 UNVERIFIED**.
 
 ### Guest gpu-two (ADR-0094)
 - KERNEL.ELF creates and flushes two virtio-gpu 2D resources when Kotoba

@@ -7,8 +7,7 @@
 ;; compositor decision. ADR-0094 greened two resources on scanout 0.
 ;; Hosted `clojure -M:compositor wm` does not count as guest scanout-two.
 ;; The named leftover after this object is linked is still
-;; `:native-compositor-absent` (permission broker, native component
-;; runtime, P5).
+;; `:native-compositor-absent` (native component runtime, P5).
 ;;
 ;; ABI: [n-resources n-enabled] → scanouts to bind, or 0 refuse.
 ;; Vector:

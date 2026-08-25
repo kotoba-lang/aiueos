@@ -57,8 +57,8 @@ do not wholesale-advance amu.
 
 ## Consequences
 
-Hosted leftover print stays `:native-compositor-absent` (permission
-broker, native component runtime, P5). Goal not complete.
+Hosted leftover print stays `:native-compositor-absent` (native
+component runtime, P5; permission broker is ADR-0096). Goal not complete.
 
 ## Measurement
 

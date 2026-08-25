@@ -47,11 +47,23 @@
   leftover `:one-resource`. After guest gpu-two, hosted leftover is still
   `:native-compositor-absent` (permission broker, native component
   runtime, one virtio-gpu scanout, P5).
+  Guest scanout-two: `clojure -M:compositor guest-scanout-two` admits
+  KERNEL.ELF binding scanout 1 onto resource 2 when Kotoba
+  `kotoba_aiueos_scanout_bind` admits n=2. One scanout when Kotoba
+  admits two is leftover `:one-scanout`. After guest scanout-two, hosted
+  leftover is still `:native-compositor-absent` (permission broker,
+  native component runtime, P5).
+  Guest broker: `clojure -M:compositor guest-broker` admits KERNEL.ELF
+  Kotoba `aiueos-broker-admit` (clipboard granted, file-picker refused
+  on the clipboard-only boot grant). Hosted JVM `wm` does not count.
+  Admitting picker on that grant is leftover `:always-grant`. After
+  guest broker, hosted leftover is still `:native-compositor-absent`
+  (native component runtime, P5).
 
   Exit 0 = the named command admitted. Exit 1 = refused. Exit 3 =
   QEMU/firmware/serial/browser could not be answered.
 
-  Commands: `clojure -M:compositor smoke` | `gpu` | `wm` | `ime` | `kanji` | `kami` | `guest-ime` | `guest-wm` | `guest-paint` | `guest-input` | `guest-gpu-two` | `serve`"
+  Commands: `clojure -M:compositor smoke` | `gpu` | `wm` | `ime` | `kanji` | `kami` | `guest-ime` | `guest-wm` | `guest-paint` | `guest-input` | `guest-gpu-two` | `guest-scanout-two` | `guest-broker` | `serve`"
   (:require [aiueos.compositor.desktop :as desktop]
             [aiueos.phone-bind :as pb]
             [clojure.string :as str]
@@ -343,6 +355,43 @@
     {:green? false :exit 1 :reason :guest-scanout-two-absent
      :leftover [:guest-scanout-two-absent]}))
 
+(defn guest-broker-ok?
+  "True only when KERNEL.ELF serial says clipboard was admitted and
+  file-picker refused after Kotoba. Hosted JVM wm serial alone does
+  not count."
+  [serial]
+  (boolean
+   (and (string? serial)
+        (re-find #"(?m)^AIUEOS_GUEST_BROKER_OK clipboard=1 picker=0 kotoba-clip=1 kotoba-pick=0" serial)
+        (not (re-find #"AIUEOS_COMPOSITOR_WM_OK" serial)))))
+
+(defn guest-broker-result
+  "Classify a KERNEL.ELF boot for compositor `guest-broker`.
+  Hosted `clojure -M:compositor wm` is the named red. Picker admitted
+  on a clipboard-only grant is leftover `:always-grant`."
+  [{:keys [serial qemu-unmeasured? hosted-wm?]}]
+  (cond
+    qemu-unmeasured?
+    {:green? false :exit 3 :reason :unmeasured :leftover [:unmeasured]}
+
+    (or hosted-wm?
+        (re-find #"AIUEOS_COMPOSITOR_WM_OK" (or serial "")))
+    {:green? false :exit 1 :reason :hosted-wm-does-not-count
+     :leftover [:hosted-wm-does-not-count]}
+
+    (guest-broker-ok? serial)
+    {:green? true :exit 0 :reason :guest-broker-admitted :leftover []}
+
+    (re-find #"(?m)^AIUEOS_GUEST_BROKER leftover=always-grant" (or serial ""))
+    {:green? false :exit 1 :reason :always-grant :leftover [:always-grant]}
+
+    (re-find #"(?m)^AIUEOS_GUEST_BROKER leftover=deny-all" (or serial ""))
+    {:green? false :exit 1 :reason :deny-all :leftover [:deny-all]}
+
+    :else
+    {:green? false :exit 1 :reason :guest-broker-absent
+     :leftover [:guest-broker-absent]}))
+
 (defn html-has-desktop-face?
   [html]
   (and (re-find #"dads-button" html)
@@ -450,6 +499,15 @@
   (boolean
    (and (html-has-guest-gpu-two-face? html)
         (re-find #"clojure -M:compositor guest-scanout-two" html))))
+
+(defn html-has-guest-broker-face?
+  "SPA names the KERNEL.ELF guest permission-broker gate. Guest
+  scanout-two without `clojure -M:compositor guest-broker` is red for
+  this face."
+  [html]
+  (boolean
+   (and (html-has-guest-scanout-two-face? html)
+        (re-find #"clojure -M:compositor guest-broker" html))))
 
 (defn presenter-is-kami-webgpu?
   "The compiled bundle must be kami.webgpu (init!/draw!), not a stub
@@ -689,6 +747,10 @@
        []
        (io/file (repo-root) "build" "aiueos" "compositor-guest-scanout-two-receipt.edn"))
 
+     (defn guest-broker-receipt-file
+       []
+       (io/file (repo-root) "build" "aiueos" "compositor-guest-broker-receipt.edn"))
+
      (defn write-gpu-receipt!
        [receipt]
        (let [f (gpu-receipt-file)]
@@ -734,6 +796,13 @@
      (defn write-guest-scanout-two-receipt!
        [receipt]
        (let [f (guest-scanout-two-receipt-file)]
+         (io/make-parents f)
+         (spit f (with-out-str (pprint/pprint receipt)))
+         f))
+
+     (defn write-guest-broker-receipt!
+       [receipt]
+       (let [f (guest-broker-receipt-file)]
          (io/make-parents f)
          (spit f (with-out-str (pprint/pprint receipt)))
          f))
@@ -1063,6 +1132,49 @@
              (if (:green? r)
                (println "AIUEOS_COMPOSITOR_GUEST_SCANOUT_TWO_OK")
                (println (str "AIUEOS_COMPOSITOR_GUEST_SCANOUT_TWO not-green leftover="
+                             (pr-str (:leftover r)))))
+             r))))
+
+     (defn run-guest-broker
+       "Guest Kotoba clipboard/file-picker admit on KERNEL.ELF serial.
+       Hosted JVM WM is red. Default UEFI smoke; no dbus."
+       []
+       (let [script (uefi-smoke)]
+         (if-not (.isFile script)
+           (let [r (guest-broker-result {:qemu-unmeasured? true})]
+             (write-guest-broker-receipt!
+              (assoc r :measured-at (str (java.time.Instant/now))
+                     :command "clojure -M:compositor guest-broker"
+                     :why :smoke-script-missing))
+             (println "AIUEOS_COMPOSITOR_GUEST_BROKER leftover=:unmeasured")
+             r)
+           (let [boot (run-uefi-2d!)
+                 measured? (serial-measured? (:serial boot))
+                 r (guest-broker-result {:serial (:serial boot)
+                                         :qemu-unmeasured? (not measured?)
+                                         :hosted-wm? false})
+                 receipt (assoc r
+                                :aiueos.compositor/guest-broker-receipt 1
+                                :measured-at (str (java.time.Instant/now))
+                                :command "clojure -M:compositor guest-broker"
+                                :profile :uefi-qemu-guest-broker
+                                :uefi-smoke-exit (:exit boot)
+                                :serial-path (:serial-path boot)
+                                :note "Green only when guest serial has GUEST_BROKER_OK clipboard=1 picker=0 kotoba-clip=1 kotoba-pick=0. Hosted clojure -M:compositor wm does not count. Always-grant picker is leftover. Native component runtime remains. P5 UNVERIFIED.")]
+             (write-guest-broker-receipt! receipt)
+             (println "AIUEOS_COMPOSITOR_GUEST_BROKER_PROFILE=uefi-qemu")
+             (println (str "AIUEOS_COMPOSITOR_GUEST_BROKER_SERIAL=" (:serial-path boot)))
+             (println (str "AIUEOS_COMPOSITOR_GUEST_BROKER_RECEIPT="
+                           (.getPath (guest-broker-receipt-file))))
+             (println (str "AIUEOS_COMPOSITOR_GUEST_BROKER_LEFTOVER="
+                           (pr-str (:leftover r))))
+             (when (:serial boot)
+               (doseq [line (str/split-lines (:serial boot))
+                       :when (re-find #"AIUEOS_GUEST_BROKER" line)]
+                 (println (str/replace line #"\r$" ""))))
+             (if (:green? r)
+               (println "AIUEOS_COMPOSITOR_GUEST_BROKER_OK")
+               (println (str "AIUEOS_COMPOSITOR_GUEST_BROKER not-green leftover="
                              (pr-str (:leftover r)))))
              r))))
 
@@ -1521,5 +1633,10 @@
              (flush)
              (System/exit (int (:exit r))))
 
-           (do (println "usage: clojure -M:compositor [smoke|gpu|wm|ime|kanji|kami|guest-ime|guest-wm|guest-paint|guest-input|guest-gpu-two|guest-scanout-two|serve]")
+           "guest-broker"
+           (let [r (run-guest-broker)]
+             (flush)
+             (System/exit (int (:exit r))))
+
+           (do (println "usage: clojure -M:compositor [smoke|gpu|wm|ime|kanji|kami|guest-ime|guest-wm|guest-paint|guest-input|guest-gpu-two|guest-scanout-two|guest-broker|serve]")
                (System/exit 3)))))))

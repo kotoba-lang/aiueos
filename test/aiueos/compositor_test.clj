@@ -522,6 +522,52 @@
                  "clojure -M:compositor guest-gpu-two native compositor</html>")))
       "guest-gpu-two lede without the guest-scanout-two command is not the guest scanout-two face"))
 
+(deftest guest-broker-serial-is-the-guest-broker-gate
+  (testing "KERNEL.ELF clipboard-only admit is green"
+    (is (comp/guest-broker-ok?
+         "AIUEOS_GUEST_BROKER_OK clipboard=1 picker=0 kotoba-clip=1 kotoba-pick=0\n"))
+    (is (:green? (comp/guest-broker-result
+                  {:serial "AIUEOS_GUEST_BROKER_OK clipboard=1 picker=0 kotoba-clip=1 kotoba-pick=0\n"}))))
+  (testing "picker admitted on clipboard-only grant is leftover"
+    (let [r (comp/guest-broker-result
+             {:serial "AIUEOS_GUEST_BROKER leftover=always-grant\n"})]
+      (is (not (:green? r)))
+      (is (= 1 (:exit r)))
+      (is (= :always-grant (:reason r)))))
+  (testing "clipboard refused is leftover"
+    (let [r (comp/guest-broker-result
+             {:serial "AIUEOS_GUEST_BROKER leftover=deny-all\n"})]
+      (is (not (:green? r)))
+      (is (= :deny-all (:reason r)))))
+  (testing "hosted JVM WM serial does not count"
+    (let [r (comp/guest-broker-result
+             {:serial "AIUEOS_COMPOSITOR_WM_OK\n"})]
+      (is (not (:green? r)))
+      (is (= :hosted-wm-does-not-count (:reason r))))
+    (let [r (comp/guest-broker-result {:hosted-wm? true :serial ""})]
+      (is (= :hosted-wm-does-not-count (:reason r)))))
+  (testing "unmeasured is exit 3, not a silent pass"
+    (let [r (comp/guest-broker-result {:qemu-unmeasured? true})]
+      (is (= 3 (:exit r)))
+      (is (= :unmeasured (:reason r))))))
+
+(deftest generated-spa-is-the-guest-broker-face
+  (is (comp/html-has-guest-broker-face? (pb/session-html))
+      "gate is red until #desktop names clojure -M:compositor guest-broker")
+  (is (not (comp/html-has-guest-broker-face?
+            (str "<html>href=\"#session\" href=\"#desktop\" "
+                 "id=\"ime-bar\" id=\"ime-preedit\" id=\"ime-toggle\" "
+                 "data-ime id=\"ime-candidates\" id=\"wm-stage\" "
+                 "class=\"wm-window\" class=\"wm-window\" wm-titlebar "
+                 "dads-chip-label data-raise dads-heading kami.webgpu "
+                 "clojure -M:compositor guest-ime "
+                 "clojure -M:compositor guest-wm "
+                 "clojure -M:compositor guest-paint "
+                 "clojure -M:compositor guest-input "
+                 "clojure -M:compositor guest-gpu-two "
+                 "clojure -M:compositor guest-scanout-two native compositor</html>")))
+      "guest-scanout-two lede without the guest-broker command is not the guest broker face"))
+
 (deftest presenter-bundle-is-kami-webgpu
   (let [f (io/file "apps/session/kami-presenter.js")]
     (is (.isFile f) "compile :kami-presenter before this gate")

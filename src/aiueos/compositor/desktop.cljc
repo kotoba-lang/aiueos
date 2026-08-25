@@ -235,7 +235,7 @@
                     (if (false? (:kanji? i)) :kanji-absent :native-compositor-absent))
       :note (if (false? (:kanji? i))
               "Hosted romaji→kana only. Kanji conversion is leftover."
-              "Guest IME is KERNEL.ELF Kotoba. Native Phase 6 compositor is leftover.")}
+              "Guest IME is KERNEL.ELF Kotoba. Native Phase 6 compositor leftover is native component runtime and P5.")}
      {:ime? false
       :leftover :ime-absent
       :note "No IME attached."})))
