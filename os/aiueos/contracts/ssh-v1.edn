@@ -21,13 +21,24 @@
  :role :server
 
  ;; The SSH-2 profile. Every algorithm is chosen so its primitive either
- ;; already exists in the kernel or is a named crypto brick below -- no
- ;; algorithm is listed that has no path to the metal.
+ ;; already exists in the kernel or is the ONE named crypto brick below.
+ ;;
+ ;; Crypto-path decision (2026-08-25, ADR-0103): the host key and userauth are
+ ;; ecdsa-sha2-nistp256, NOT ssh-ed25519. Measured cost: the kernel already has
+ ;; ECDSA P-256 VERIFY (kotoba_aiueos_ecdsa_p256_sha256_verify), SHA-256, and
+ ;; HMAC-SHA256; ed25519 would need TWO new large objects (SHA-512 and a whole
+ ;; new Edwards curve, verify AND sign), and the KIR interpreter cannot even
+ ;; vector-test a memory-using SHA-family object, so each would have to be
+ ;; measured by native compile + boot. ecdsa-sha2-nistp256 needs exactly ONE
+ ;; new object -- ECDSA P-256 deterministic (RFC 6979) SIGN -- and it reuses
+ ;; the P-256 field and scalar arithmetic ecdsa-p256.kotoba already carries for
+ ;; verify, with HMAC-SHA256 (present) for the nonce. userauth then reuses the
+ ;; existing verify unchanged. This is the shortest path to a real login.
  :transport
  {:protocol "SSH-2.0"
   :identification "SSH-2.0-aiueos_0.1"
   :kex "curve25519-sha256"          ; X25519 (kernel kotoba) + SHA-256 exchange hash (kernel kotoba)
-  :host-key "ssh-ed25519"           ; needs Ed25519 SIGN -- crypto brick, not yet on the metal
+  :host-key "ecdsa-sha2-nistp256"   ; needs ECDSA P-256 SIGN (RFC 6979) -- the ONE crypto brick
   :cipher "aes128-gcm@openssh.com"  ; AES-128-GCM (kernel) -- GCM tag is the MAC, no separate HMAC
   :mac :implicit-in-gcm
   :compression "none"
@@ -39,7 +50,11 @@
  ;; provisioned authorized key. Password auth is never a default (decision 4).
  :userauth
  {:method "publickey"
-  :algorithm "ssh-ed25519"          ; the intent's key is ssh-ed25519 -> needs Ed25519 VERIFY
+  :algorithm "ecdsa-sha2-nistp256"  ; verified by the EXISTING kernel ECDSA P-256 verify
+  :provision-note "The intent's authorized key is ecdsa-sha2-nistp256; the
+                   owner supplies an ECDSA P-256 public key (or one is
+                   generated for the device pairing). make-provision-record.cljs
+                   places it the same way it places any authorized key."
   :against :provisioned-authorized-key
   :password :refused
   :refuses [:wrong-key              ; a key not in the authorized set
@@ -93,21 +108,35 @@
  ;; Each is a Kotoba object measured against published test vectors on its
  ;; own, before any of it is wired into a server -- a brick that passes its
  ;; vectors is real; a server that cannot be reached is not.
+ ;; With the ecdsa-sha2-nistp256 path (above), there is exactly ONE crypto
+ ;; brick left, and it reuses arithmetic the kernel already ships. SHA-512 and
+ ;; Ed25519 are NOT on the path -- they are recorded here only as the rejected
+ ;; alternative, with the measured reason.
  :crypto-bricks
- {:sha512 {:object "os/aiueos/kotoba/sha512.kotoba"
-           :vectors :fips-180-4
-           :reuses :none
-           :state :landing}                        ; this tranche
-  :ed25519-verify {:object "os/aiueos/kotoba/ed25519-verify.kotoba"
-                   :vectors :rfc8032
-                   :reuses [:sha512 :x25519-field-arithmetic]  ; GF(2^255-19) ops from x25519.kotoba
-                   :needs [:edwards-point-add :scalar-mult :point-decompress-sqrt]
-                   :state :not-yet-implemented}
-  :ed25519-sign {:object "os/aiueos/kotoba/ed25519-sign.kotoba"
-                 :vectors :rfc8032
-                 :reuses [:sha512 :ed25519-verify]
-                 :needs [:scalar-reduce-mod-L :base-point-mult]
-                 :state :not-yet-implemented}}
+ {:ecdsa-p256-sign
+  {:object "os/aiueos/kotoba/ecdsa-p256-sign.kotoba"
+   :vectors :rfc6979-p256-sha256          ; deterministic, so vectors are exact
+   :reuses ["ecdsa-p256.kotoba P-256 field + scalar mult (already linked, for verify)"
+            "hmac_sha256 (tls13.c) for the RFC 6979 nonce"
+            "sha256.kotoba"]
+   :needs [:scalar-inverse-mod-n :rfc6979-nonce :point-x-coordinate-mod-n]
+   :measured-note "Cannot be vector-tested through the KIR interpreter (it
+                   uses memory); measured by native compile with the pinned amu
+                   + a QEMU known-answer boot, the way sha256/ecdsa-verify are."
+   :state :not-yet-implemented}
+  :rejected-ed25519-path
+  {:why "Two large new objects (SHA-512 + a new Edwards curve, verify AND
+         sign) versus one that reuses existing P-256 arithmetic. Recorded so a
+         later reader does not re-open the ed25519 route without the cost."}}
+
+ ;; The entropy source both the kex ephemeral scalar and the KEXINIT cookie
+ ;; draw from. LANDED 2026-08-25 (ADR-0103): the random device is kept alive
+ ;; after enumeration and aiueos_random_bytes delivers fresh device bytes,
+ ;; self-tested in a QEMU boot (two distinct, non-constant batches). Before
+ ;; this the 32 bytes rng returned were discarded.
+ :entropy {:api "aiueos_random_bytes"
+           :selftest "AIUEOS_RANDOM_OK (main.c, behind -DAIUEOS_SSH_LISTEN)"
+           :state :landed}
 
  ;; Current state, mirrored into install-v1.edn gate I4. Update both together.
  ;; The four measured blockers between here and a served handshake (kernel
@@ -131,11 +160,11 @@
    exchange to one line each way; a real session needs the handles promoted to
    file-scope statics with a deeper queue."
   :entropy-and-sign
-  "There is no random-bytes API (virtio-rng asks for 32 bytes once and
-   discards them) and no signing primitive of any kind (ECDSA is verify-only,
-   Ed25519 absent). A standards SSH server MUST sign the exchange hash H per
-   handshake, so a provisioned-and-only-verified host key does not suffice --
-   host-key SIGN is unavoidable."
+  "Entropy RESOLVED 2026-08-25 (ADR-0103): aiueos_random_bytes now delivers
+   fresh device bytes, self-tested in a boot. Signing is still open but
+   narrowed: the host key MUST be signed per handshake, and with the
+   ecdsa-sha2-nistp256 path that is ONE new object (ECDSA P-256 RFC 6979 sign)
+   reusing existing P-256 arithmetic -- not the two ed25519 curves."
   :no-steady-state
   "main.c is a straight line ending in ud2 -> qemu_exit(0x30); there is no
    loop to serve from. A service loop must be inserted before that exit, with
@@ -145,7 +174,9 @@
  {:i4 :red
   :provisioning :landed                ; ADR-0101
   :passive-open :landed                ; ADR-0102: accept + SSH id exchange, external client measured
-  :sshd :not-yet-implemented           ; kex/host-key/userauth need the crypto bricks below
+  :entropy :landed                     ; ADR-0103: aiueos_random_bytes, self-tested in a boot
+  :crypto-path :ecdsa-p256             ; ADR-0103: one new object, no ed25519/sha-512
+  :sshd :not-yet-implemented           ; ECDSA P-256 sign + SSH transport + userauth (existing verify)
   :note "Reusable on the metal today: X25519 (arbitrary scalar x point),
          SHA-256, HMAC-SHA256, HKDF, AES-128-GCM (= aes128-gcm@openssh.com),
          digest-equal. The TLS 1.3 client (tls13.c) is a TCP-passive byte

@@ -57,6 +57,10 @@
  {:cmd ["sh" "-c" "AIUEOS_SSH_LISTEN=1 AIUEOS_TEST_NET=1 AIUEOS_SSH_HOSTFWD=8022 nbb os/aiueos/scripts/smoke-qemu-ssh.cljs"]
   :doc "Boot the SSH kernel and require an external client to complete an inbound TCP connection on :22 and read exactly SSH-2.0-aiueos_0.1, with the kernel's AIUEOS_SSH_LISTEN_OK marker. Needs :ssh-build first."}
 
+ :entropy-smoke
+ {:cmd ["sh" "-c" "AIUEOS_SSH_LISTEN=1 AIUEOS_TEST_NET=1 nbb os/aiueos/scripts/smoke-qemu-entropy.cljs"]
+  :doc "Boot and require AIUEOS_RANDOM_OK: aiueos_random_bytes delivers two distinct, non-constant 32-byte batches from the persisted virtio-rng. The entropy source an SSH handshake draws from (ADR-0103)."}
+
  ;; Install chain (install-v1.edn, root ADR adr-2608251418). The installer
  ;; .mjs files are ported, scope-frozen legacy assets from the unmerged
  ;; agent/aiueos-dospara-native-install branch; orchestration and gates are

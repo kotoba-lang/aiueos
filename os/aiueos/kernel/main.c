@@ -158,6 +158,8 @@ extern unsigned aiueos_tcp_stage(void);
 extern unsigned aiueos_ssh_listen_stage(void);
 extern int aiueos_ssh_client_id_valid(void);
 extern uint32_t aiueos_ssh_client_id_len(void);
+extern int aiueos_random_selftest(void);
+extern int aiueos_random_bytes(uint8_t *out, uint32_t n);
 extern int aiueos_dhcp_ready(void);
 extern unsigned aiueos_dhcp_stage(void);
 extern unsigned aiueos_dhcp_reason(void);
@@ -635,6 +637,19 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
     }
     debug_string("AIUEOS_VIRTIO_RNG_MSIX_OK vector=34 irq=1 table-pba-bounded\n");
     serial_string("AIUEOS_VIRTIO_RNG_MSIX_OK vector=34 irq=1 table-pba-bounded\r\n");
+#ifdef AIUEOS_SSH_LISTEN
+    /* Entropy API self-test (ssh-v1.edn / ADR-0103): the random device is kept
+       alive after enumeration, and aiueos_random_bytes must deliver two
+       distinct, non-constant 32-byte batches. This is the source an SSH
+       handshake draws its ephemeral scalar and cookie from -- before this the
+       32 bytes rng returned were discarded. */
+    if (aiueos_random_selftest()) {
+      serial_string("AIUEOS_RANDOM_OK two-batches distinct non-constant 32-bytes\r\n");
+      debug_string("AIUEOS_RANDOM_OK two-batches distinct non-constant 32-bytes\n");
+    } else {
+      serial_string("AIUEOS_RANDOM_FAIL entropy-source-unusable\r\n");
+    }
+#endif
     if ((pci_result & 3) != 3) {
       debug_string("AIUEOS_VIRTIO_BLK_FAIL capacity-or-read\n");
       serial_string("AIUEOS_VIRTIO_BLK_FAIL capacity-or-read\r\n");

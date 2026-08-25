@@ -699,6 +699,82 @@ struct msix_entry {
 };
 volatile uint64_t aiueos_virtio_rng_irq_count;
 
+/* The random device kept alive after enumeration so the OS has an entropy
+   source rather than a boolean that it once completed a request. Before this
+   the 32 bytes virtio-rng returned were written into a stack page and thrown
+   away (only rng_ok survived). An SSH server needs fresh bytes at handshake
+   time -- an ephemeral kex scalar and a KEXINIT cookie -- so the queue, its
+   pages and its doorbell are persisted here, the way blk_backend persists the
+   block device. */
+static struct {
+  volatile struct virtio_common_cfg *cfg;
+  struct virtq_desc *desc;
+  struct virtq_avail *avail;
+  struct virtq_used *used;
+  volatile uint16_t *doorbell;
+  uint8_t *page;
+  uint16_t posted;
+  int ready;
+} rng_backend;
+
+/* Request one 32-byte batch from the device into rng_backend.page, bounded.
+   Returns 1 on a completed 32-byte fill. */
+static int rng_refill(void) {
+  if (!rng_backend.ready) return 0;
+  rng_backend.desc[0].address = (uint64_t)(uintptr_t)rng_backend.page;
+  rng_backend.desc[0].length = 32;
+  rng_backend.desc[0].flags = VIRTQ_DESC_F_WRITE;
+  rng_backend.desc[0].next = 0;
+  uint64_t before = aiueos_virtio_rng_irq_count;
+  rng_backend.avail->ring[0] = 0;
+  __asm__ volatile("" ::: "memory");
+  rng_backend.posted++;
+  rng_backend.avail->index = rng_backend.posted;
+  *rng_backend.doorbell = 0;
+  for (uint32_t budget = 0; budget < 100000000U; budget++) {
+    __asm__ volatile("" ::: "memory");
+    if (aiueos_virtio_rng_irq_count != before &&
+        rng_backend.used->index == rng_backend.posted) {
+      return rng_backend.used->ring[0].length == 32;
+    }
+    __asm__ volatile("sti; hlt; cli" ::: "memory");
+  }
+  return 0;
+}
+
+/* Fill OUT with N random bytes, requesting fresh 32-byte batches as needed.
+   Returns 1 on success, 0 if the device is not ready or a request stalled. A
+   caller that gets 0 has NO usable bytes -- it must not proceed with a weak or
+   constant key. */
+int aiueos_random_bytes(uint8_t *out, uint32_t n) {
+  uint32_t filled = 0;
+  while (filled < n) {
+    if (!rng_refill()) return 0;
+    uint32_t take = n - filled;
+    if (take > 32) take = 32;
+    for (uint32_t i = 0; i < take; i++) out[filled + i] = rng_backend.page[i];
+    filled += take;
+  }
+  return 1;
+}
+
+/* Self-test evidence: two batches must both be non-constant and must differ
+   from each other. A device that returned a fixed page -- or an API that
+   handed back the same buffer twice -- would fail both, which is the whole
+   point of asking twice. */
+static int rng_selftest_done, rng_selftest_ok;
+int aiueos_random_selftest(void) {
+  if (rng_selftest_done) return rng_selftest_ok;
+  rng_selftest_done = 1;
+  uint8_t a[32], b[32];
+  if (!aiueos_random_bytes(a, 32) || !aiueos_random_bytes(b, 32)) return 0;
+  int a_varies = 0, b_varies = 0, differ = 0;
+  for (unsigned i = 1; i < 32; i++) { if (a[i] != a[0]) a_varies = 1; if (b[i] != b[0]) b_varies = 1; }
+  for (unsigned i = 0; i < 32; i++) if (a[i] != b[i]) differ = 1;
+  rng_selftest_ok = a_varies && b_varies && differ;
+  return rng_selftest_ok;
+}
+
 static int setup_rng_msix(uint8_t b, uint8_t d, uint8_t f,
                           const struct virtio_caps *caps,
                           volatile struct virtio_common_cfg *cfg) {
@@ -862,8 +938,18 @@ static int virtio_rng(uint8_t b, uint8_t d, uint8_t f) {
   *doorbell = 0;
   for (uint32_t budget = 0; budget < 100000000U; budget++) {
     __asm__ volatile("" ::: "memory");
-    if (aiueos_virtio_rng_irq_count && used->index == 1)
-      return used->ring[0].id == 0 && used->ring[0].length == 32;
+    if (aiueos_virtio_rng_irq_count && used->index == 1) {
+      int ok = used->ring[0].id == 0 && used->ring[0].length == 32;
+      if (ok) {
+        /* Keep the queue alive so aiueos_random_bytes can request more. The
+           first batch already sits in `random`; posted is 1 (one avail entry
+           consumed). */
+        rng_backend.cfg = cfg; rng_backend.desc = desc; rng_backend.avail = avail;
+        rng_backend.used = used; rng_backend.doorbell = doorbell;
+        rng_backend.page = random; rng_backend.posted = 1; rng_backend.ready = 1;
+      }
+      return ok;
+    }
     __asm__ volatile("sti; hlt; cli" ::: "memory");
   }
   return 0;
