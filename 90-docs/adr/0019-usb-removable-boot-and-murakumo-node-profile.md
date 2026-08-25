@@ -24,7 +24,14 @@ Three facts, measured rather than assumed, decide the shape of this:
    the existing gates exercised. "Produces a bootable image" and "boots from a
    stick on someone else's machine" are different claims.
 
-2. **The bare-metal profile has no network stack at all.** PCI enumerates
+2. **The bare-metal profile has no network stack at all.**
+   *(Superseded 2026-08 by the ADR-0020..0087 chain, recorded here 2026-08-25,
+   root ADR adr-2608251418: the bare-metal boot path now carries virtio-net,
+   DHCPv4, DNS, TCP, TLS 1.3 and an HTTPS GET with CID verification, proved
+   under QEMU. What this fact still gets right is physical hardware: the only
+   link-layer driver is virtio-net-pci, so a real machine boots on the offline
+   floor. The rest of this paragraph is the 2026-08-05 measurement.)*
+   PCI enumerates
    virtio RNG, BLK, INPUT and GPU; there is no NIC driver, no TCP/IP, no
    sockets. `src/aiueos/net.cljc` is 41 lines of URL allowlist for *host*
    adapters, not a stack. A bare-metal node therefore cannot reach
