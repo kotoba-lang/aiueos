@@ -61,7 +61,21 @@
  ;; Decision 3 boundary: the ported installer mechanism (os/aiueos/installer/*,
  ;; legacy .mjs assets with their scope frozen) owns inspection, admission,
  ;; exclusive-open write and readback. New orchestration and gates are nbb.
+ ;; The live environment splits the same way: the UKI initramfs is mechanism
+ ;; only (mount, drivers, find payload by GPT GUID, extract, hand over) and
+ ;; every decision -- target selection, intent admission, destruction -- runs
+ ;; from the payload bundle under nbb.
  :installer {:mechanism :auditable-linux-live-environment ; install-time only, not a runtime premise
+             :live {:uki "os/aiueos/scripts/make-live-installer.py"
+                    :kernel :debian-stable-generic ; versions pinned per-build in live-installer-receipt.json
+                    :initramfs :mechanism-only     ; busybox + storage modules + lsblk/blkid
+                    :decision "os/aiueos/installer/live/install-live.cljs"
+                    :target-selection
+                    "exactly one whole disk matching the intent's model,
+                     transport and capacity bounds, never the boot USB;
+                     zero and two-plus both refuse with named reasons"
+                    :interactive :dry-run-report-only
+                    :unattended :intent-is-the-owner-confirmation}
              :legacy-assets ["os/aiueos/installer/install.mjs"
                              "os/aiueos/installer/backends.mjs"
                              "os/aiueos/installer/device-policy.mjs"
@@ -121,7 +135,15 @@
                :payload-partition {:type :microsoft-basic-data
                                    :filesystem :fat32
                                    :name "aiueos install payload"}
-               :esp-and-recovery :byte-identical-to-release-image
+               ;; Two boot modes, chosen at build time and named in the
+               ;; receipt's :boot section. aiueos-direct keeps the release
+               ;; ESP byte-identical at its original LBAs (the ADR-0019 boot
+               ;; claim). live-installer boots the installer UKI from p1 and
+               ;; keeps the release RECOVERY volume byte-identical as the
+               ;; independent aiueos fallback; the install product boots this
+               ;; mode.
+               :boot-modes {:aiueos-direct :esp-and-recovery-byte-identical-to-release
+                            :live-installer :uki-esp-plus-release-recovery-bytes}
                :flashed-by "os/aiueos/scripts/flash-usb.cljs --image ... --receipt ..."}
 
  ;; Exit gates. Root ADR adr-2608251418 holds the authoritative wording; the
@@ -140,17 +162,27 @@
                                     every refusal asserts its named reason.
                                     Not yet exercised against a live block
                                     device on the install path."}
-  :i3-qemu-install {:state :red
-                    :note "needs the live installer environment on the USB;
-                           the payload bundle installs from an operator-run
-                           Linux environment today"}
+  :i3-qemu-install {:state :green-qemu
+                    :evidence "smoke-qemu-install.cljs (2026-08-25): one gate,
+                               four boots asserted together -- USB-booted live
+                               installer installs to a blank NVMe (intent
+                               admitted, readback verified), the NVMe boots
+                               aiueos twice with the USB detached (39 markers
+                               each), the re-inserted USB refuses with
+                               existing-install and the disk digest is
+                               unchanged; installed extent equals the release
+                               receipt digest before and after. QEMU/OVMF with
+                               a VARS pflash; no physical machine yet (I7)."}
   :i4-headless {:state :red
                 :note "no physical-NIC driver and no first-boot provisioning
                        service exist yet; see usb-boot-v1.edn :gaps"}
-  :i5-repeat-safety {:state :green-offline
-                     :evidence "target-receipt write/readback + unattended
-                                refusal proved on fake devices in
-                                :install-chain-test; not yet on hardware"}
+  :i5-repeat-safety {:state :green-qemu
+                     :evidence "fake devices in :install-chain-test, and the
+                                full chain in smoke-qemu-install.cljs boot4:
+                                unattended re-boot of the same USB against its
+                                own installed target refuses (exit 4,
+                                existing-install) with the disk byte-identical
+                                across the attempt; not yet on hardware"}
   :i6-physical-probe {:state :amber
                       :note "hw-probe tooling ported from the unmerged branch
                              (build-hw-probe.sh, make-hw-probe-image.py); not

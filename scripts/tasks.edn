@@ -64,6 +64,15 @@
  {:cmd ["nbb" "os/aiueos/scripts/run-install-usb-build.cljs"]
   :doc "Create the install intent if missing, then build + verify the install USB image and its chain receipt (gate I1)."}
 
+ :live-installer-build
+ {:cmd ["python3" "os/aiueos/scripts/make-live-installer.py" "build"
+        "--output-dir" "build/aiueos/live"]
+  :doc "Build the live-installer UKI (Debian kernel + thin initramfs mechanism) via docker. Decisions stay in the payload bundle."}
+
+ :install-smoke
+ {:cmd ["nbb" "os/aiueos/scripts/smoke-qemu-install.cljs"]
+  :doc "Gate I3+I5 under QEMU: USB-live install to a blank NVMe, boot the NVMe twice without the USB, then re-insert the USB and require the erase to be refused with the disk untouched. Needs release image, live UKI, node-linux-x64 and an nbb tree in build/aiueos."}
+
  :hw-probe-build
  {:cmd ["./os/aiueos/scripts/build-hw-probe.sh"]
   :doc "Build the bounded read-only x86_64 UEFI hardware-probe USB image (gate I6 tooling)."}

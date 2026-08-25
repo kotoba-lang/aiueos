@@ -4,3 +4,4 @@
 
 # cljs.main cache from :kami-presenter
 out/
+__pycache__/
