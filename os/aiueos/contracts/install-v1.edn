@@ -1,0 +1,164 @@
+;; What "AIUEOS installs from a USB stick" means, as checkable data
+;; (root ADR adr-2608251418-aiueos-usb-install-and-headless-bootstrap).
+;;
+;; The USB-boot contract (usb-boot-v1.edn) proves the release image boots as
+;; removable media. That is not an install: an install is the one continuous
+;; chain from a booted USB to an internal SSD that boots on its own, takes a
+;; wired DHCP lease, and accepts one named SSH key from another host. This
+;; contract records that chain, the refusal classes that protect it, and --
+;; separately, so a green piece is never mistaken for the green whole -- the
+;; current state of each exit gate. Gate I0 of the root ADR requires this
+;; matrix and the root ADR's matrix to say the same thing.
+{:format :aiueos.install-contract/v1
+ :profile :bare-metal-uefi
+ :architecture :x86_64
+ :authority {:installer :aiueos          ; target admission, write/readback, receipts
+             :artifact [:amu :kotoba]    ; checked artifacts the installer consumes
+             :identity [:grant :device]} ; machine identity, enrollment, revocation
+
+ ;; Decision 1: the product is complete only when this whole chain is proved
+ ;; by one release receipt. Each step is also reported alone, and none of the
+ ;; individual greens may be summed into "install complete".
+ :completion-chain
+ [:usb-boots-as-removable-uefi-media
+  :installer-probes-hardware-read-only
+  :intent-admits-exactly-one-named-whole-internal-disk
+  :image-written-and-digest-read-back-through-same-descriptor
+  :internal-ssd-boots-with-usb-removed
+  :first-boot-takes-wired-dhcp-and-fixes-hostname-and-device-identity
+  :external-client-authenticates-with-intent-ssh-key
+  :identity-and-ssh-survive-reboot
+  :reinserted-usb-refuses-unattended-re-erase]
+
+ ;; Decision 2: unattended install is admitted by an install intent, never by
+ ;; "largest disk" or a bare device name. The intent binds these fields; the
+ ;; installer refuses when the probed identity does not match.
+ :intent {:schema "aiueos.install-intent.v1"
+          :created-by "os/aiueos/scripts/install-intent.cljs"
+          :binds [:release-receipt-digest
+                  :release-disk-digest
+                  :machine-profile
+                  :target-disk-model
+                  :target-disk-capacity-bounds
+                  :target-disk-transport
+                  :target-disk-serial-sha256 ; comparison value; serial itself never logged
+                  :hostname
+                  :device-claim-ref
+                  :ssh-public-key
+                  :ssh-public-key-fingerprint
+                  :ssh-authorized-principal
+                  :network-policy           ; R0 is :wired-dhcp; Wi-Fi secrets are not a required path
+                  :mode                     ; :unattended | :interactive
+                  :expires]
+          :confirmation :owner-confirmed-phrase ; signing key binding is a later tranche
+          :refuses [:intent-expired
+                    :intent-release-digest-mismatch
+                    :target-model-mismatch
+                    :target-capacity-out-of-bounds
+                    :target-transport-mismatch
+                    :target-serial-mismatch]}
+
+ ;; Decision 3 boundary: the ported installer mechanism (os/aiueos/installer/*,
+ ;; legacy .mjs assets with their scope frozen) owns inspection, admission,
+ ;; exclusive-open write and readback. New orchestration and gates are nbb.
+ :installer {:mechanism :auditable-linux-live-environment ; install-time only, not a runtime premise
+             :legacy-assets ["os/aiueos/installer/install.mjs"
+                             "os/aiueos/installer/backends.mjs"
+                             "os/aiueos/installer/device-policy.mjs"
+                             "os/aiueos/installer/receipt.mjs"
+                             "os/aiueos/installer/offline-linux-installer.sh"]
+             :orchestration "os/aiueos/scripts/install-to-disk.cljs"
+             :real-writes :linux-only ; exclusive O_EXCL|O_NOFOLLOW block open; macOS inspects only
+             :refuses [:partition
+                       :removable-or-usb-device
+                       :current-boot-or-system-disk
+                       :system-disk-unidentifiable
+                       :nonempty-target
+                       :mounted-target
+                       :capacity-smaller-than-image
+                       :identity-changed-between-probe-and-open
+                       :emptiness-claim-without-inspection]}
+
+ ;; Decision 6: a successful install ends in poweroff, writes a target receipt,
+ ;; and the same USB refuses to erase a valid install unattended.
+ :target-receipt {:schema "aiueos.install-target-receipt.v1"
+                  :location :last-mib-of-target-disk ; outside the written image extent
+                  :magic "AIUEOS-INSTALL-RECEIPT-V1"
+                  :binds [:intent-sha256 :image-sha256 :installed-at]
+                  :repeat-safety
+                  "An unattended run that finds a valid target receipt and a
+                   valid AIUEOS GPT on the target refuses to install and drops
+                   to inspect/rescue. Independently, the non-empty-target
+                   refusal already blocks re-erase: the receipt makes the
+                   refusal diagnosable, it is not the only thing preventing it."}
+
+ ;; Decision 4: headless bootstrap is declared by reachability, not by the
+ ;; presence of a key file in the image. Decision 5: Tailscale comes after the
+ ;; first LAN SSH, never on the install critical path.
+ :headless {:requires [:offline-ownership-and-mode-check-of-target-root
+                       :sshd-loaded-the-provisioned-config-on-first-boot
+                       :external-client-challenge-response-with-intent-key
+                       :same-handshake-after-reboot
+                       :wrong-key-wrong-user-stale-hostkey-refused-with-reason]
+            :password-login :not-default
+            :recovery :physical-path-required ; re-place authorized key from recovery env; no long-lived shared password baked into the image
+            :tailscale {:position :after-first-lan-ssh
+                        :auth-key :never-baked-into-image
+                        :enrollment :ephemeral-bound-to-device-intent}}
+
+ ;; Install USB artifact (gate I1): one GPT image that still boots exactly the
+ ;; release ESP/recovery as removable media, plus a payload partition carrying
+ ;; the release image, its receipt, the intent, and the installer bundle. The
+ ;; receipt chain closes over all of them.
+ :install-usb {:image :aiueos-x86_64-install-usb.img
+               :built-by "os/aiueos/scripts/make-install-usb-image.py"
+               :receipt {:schema "aiueos.install-usb-receipt.v1"
+                         :chain [:release-build-receipt-sha256
+                                 :release-disk-sha256
+                                 :intent-sha256
+                                 :payload-file-sha256s
+                                 :usb-image-sha256]}
+               :payload-partition {:type :microsoft-basic-data
+                                   :filesystem :fat32
+                                   :name "aiueos install payload"}
+               :esp-and-recovery :byte-identical-to-release-image
+               :flashed-by "os/aiueos/scripts/flash-usb.cljs --image ... --receipt ..."}
+
+ ;; Exit gates. Root ADR adr-2608251418 holds the authoritative wording; the
+ ;; values here and there must match (gate I0). Update both or neither.
+ :gates
+ {:i0-contract {:state :green
+                :evidence "this file + root ADR carry the same matrix (2026-08-25)"}
+  :i1-artifact {:state :green
+                :evidence "make-install-usb-image.py closes release-receipt ->
+                           intent -> payload -> usb-image digest chain and
+                           verify re-checks it from the image alone"}
+  :i2-destructive-guard {:state :green-offline
+                         :evidence "ported installer refusals + intent refusals
+                                    exercised by scripts/tasks.edn
+                                    :installer-test and :install-chain-test;
+                                    every refusal asserts its named reason.
+                                    Not yet exercised against a live block
+                                    device on the install path."}
+  :i3-qemu-install {:state :red
+                    :note "needs the live installer environment on the USB;
+                           the payload bundle installs from an operator-run
+                           Linux environment today"}
+  :i4-headless {:state :red
+                :note "no physical-NIC driver and no first-boot provisioning
+                       service exist yet; see usb-boot-v1.edn :gaps"}
+  :i5-repeat-safety {:state :green-offline
+                     :evidence "target-receipt write/readback + unattended
+                                refusal proved on fake devices in
+                                :install-chain-test; not yet on hardware"}
+  :i6-physical-probe {:state :amber
+                      :note "hw-probe tooling ported from the unmerged branch
+                             (build-hw-probe.sh, make-hw-probe-image.py); not
+                             yet run against the qualification target"}
+  :i7-physical-install {:state :red
+                        :qualification-target
+                        "ASRock B850M Pro RS WiFi White / Ryzen 5 7500F /
+                         Intel Arc Pro B70 / PNY 500 GB NVMe -- spec-sheet
+                         names; live probe receipt required before any driver
+                         claim goes green"}
+  :i8-optional-tailnet {:state :red :note "does not block I7"}}}

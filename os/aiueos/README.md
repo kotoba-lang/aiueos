@@ -579,8 +579,12 @@ would destroy a disk.
 including the gaps: **USB boot is proved under OVMF in QEMU only**. No physical
 machine has booted this image, so real-hardware firmware quirks (USB 2 vs 3
 enumeration, per-vendor fallback-path handling) are untested. The bare-metal
-profile also has no network stack of any kind, so a USB-booted node cannot yet
-reach murakumo.cloud — see ADR-0019 for how that is split across profiles.
+profile's network stack (ADR-0020..0087: virtio-net, DHCPv4, DNS, TCP,
+TLS 1.3, HTTPS GET with CID verification) is proved under QEMU only — the one
+link-layer driver is virtio-net-pci, so on a physical machine the node boots
+on the offline floor (`AIUEOS_VIRTIO_NET_ABSENT`) until a physical-NIC driver
+exists. ADR-0019's original "no network stack at all" was superseded by that
+chain; see `contracts/usb-boot-v1.edn` `:gaps` for the current split.
 
 `verify-release-signature.py` verifies an RSA-2048 PKCS#1 v1.5 SHA-256
 signature over the build receipt using only the Python standard library

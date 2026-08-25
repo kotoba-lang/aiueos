@@ -43,4 +43,31 @@
  ;; does not apply to a gate that was written in nbb to begin with.
  :offline-floor-smoke
  {:cmd ["nbb" "os/aiueos/scripts/smoke-qemu-offline-floor.cljs"]
-  :doc "Boot with and without a NIC and require the difference to be exactly the three network markers. Needs KERNEL.ELF and BOOTX64.EFI built first."}}
+  :doc "Boot with and without a NIC and require the difference to be exactly the three network markers. Needs KERNEL.ELF and BOOTX64.EFI built first."}
+
+ ;; Install chain (install-v1.edn, root ADR adr-2608251418). The installer
+ ;; .mjs files are ported, scope-frozen legacy assets from the unmerged
+ ;; agent/aiueos-dospara-native-install branch; orchestration and gates are
+ ;; nbb per workspace policy.
+ :installer-test
+ {:cmd ["node" "--test"
+        "os/aiueos/installer/test/installer.test.mjs"
+        "os/aiueos/installer/test/encrypted-image.test.mjs"
+        "os/aiueos/installer/test/encrypted-image-cli.test.mjs"]
+  :doc "Ported installer guard/readback and encrypted-image tests. Fake devices and temp files only."}
+
+ :install-chain-test
+ {:cmd ["nbb" "os/aiueos/scripts/test-install-chain.cljs"]
+  :doc "Intent admission refusals (named reasons), fake-device install, target receipt, repeat-erase refusal. Gates I2/I5, offline."}
+
+ :install-usb-build
+ {:cmd ["nbb" "os/aiueos/scripts/run-install-usb-build.cljs"]
+  :doc "Create the install intent if missing, then build + verify the install USB image and its chain receipt (gate I1)."}
+
+ :hw-probe-build
+ {:cmd ["./os/aiueos/scripts/build-hw-probe.sh"]
+  :doc "Build the bounded read-only x86_64 UEFI hardware-probe USB image (gate I6 tooling)."}
+
+ :hw-probe-smoke
+ {:cmd ["./os/aiueos/scripts/smoke-qemu-hw-probe.sh"]
+  :doc "Boot the hardware probe as removable USB under QEMU/OVMF and require all positive markers."}}

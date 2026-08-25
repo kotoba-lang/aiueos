@@ -37,8 +37,19 @@
 (def aiueos (.resolve path (.dirname path *file*) ".."))
 (def repo (.resolve path aiueos ".." ".."))
 (def out (or (.-AIUEOS_OUT js/process.env) (.join path repo "build" "aiueos")))
-(def image (.join path out "aiueos-x86_64-gpt.img"))
-(def receipt-path (.join path out "aiueos-x86_64-build-receipt.json"))
+
+(defn- named-arg [flag]
+  (let [a (vec *command-line-args*)
+        i (.indexOf (to-array a) flag)]
+    (when (>= i 0) (nth a (inc i) nil))))
+
+;; Default is the release image. --image/--receipt point this at any other
+;; receipted image whose receipt carries the same disk.bytes/disk.sha256 shape
+;; -- the install USB (make-install-usb-image.py) is the intended case. Every
+;; guard below applies identically; only the artifact being verified changes.
+(def image (or (named-arg "--image") (.join path out "aiueos-x86_64-gpt.img")))
+(def receipt-path (or (named-arg "--receipt")
+                      (.join path out "aiueos-x86_64-build-receipt.json")))
 
 (defn- die [& msg]
   (binding [*out* *err*] (apply println (cons "error:" msg)))
@@ -113,6 +124,7 @@
 (when-not device
   (binding [*out* *err*]
     (println "usage: flash-usb.cljs --device /dev/diskN [--confirm /dev/diskN]")
+    (println "                      [--image <img> --receipt <receipt.json>]")
     (println "       without --confirm this inspects and reports only"))
   (.exit js/process 2))
 
