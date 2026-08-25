@@ -144,14 +144,15 @@
    ;;   clojure -M:compositor ime     ; romaji→kana; off-path latin is red
    ;;   clojure -M:compositor kanji   ; Space converts か→加; kana-only Space is red
    ;;   clojure -M:compositor kami    ; hosted kami.webgpu init!/draw!; clear-only is red
-   ;;   clojure -M:compositor guest-ime ; KERNEL.ELF Kotoba k+a→U+304B; hosted JVM IME is red
-   ;;   clojure -M:compositor guest-wm  ; KERNEL.ELF Kotoba two-surface z-hit; hosted JVM WM is red
-   ;;   clojure -M:compositor guest-paint ; KERNEL.ELF paints both boot rects in z-order; key-order paint is red
-   ;;   clojure -M:compositor guest-input ; KERNEL.ELF virtio-keyboard used-ring; C synthetic fill is red
-   ;;   clojure -M:compositor guest-gpu-two ; KERNEL.ELF two virtio-gpu 2D resources; C hardcoded count is red
-   ;;   clojure -M:compositor guest-scanout-two ; KERNEL.ELF scanout 1 onto resource 2; C hardcoded bind is red
-   ;;   clojure -M:compositor guest-broker ; KERNEL.ELF clipboard admit / picker refuse; hosted JVM WM is red
-   ;;   clojure -M:compositor guest-session ; KERNEL.ELF packed front 2 restore; hosted JVM WM is red
+   ;;   nbb --classpath src scripts/compositor-guest.cljs guest-ime ; KERNEL.ELF Kotoba k+a→U+304B; hosted JVM IME is red
+   ;;   nbb --classpath src scripts/compositor-guest.cljs guest-wm  ; KERNEL.ELF Kotoba two-surface z-hit; hosted JVM WM is red
+   ;;   nbb --classpath src scripts/compositor-guest.cljs guest-paint ; KERNEL.ELF paints both boot rects in z-order; key-order paint is red
+   ;;   nbb --classpath src scripts/compositor-guest.cljs guest-input ; KERNEL.ELF virtio-keyboard used-ring; C synthetic fill is red
+   ;;   nbb --classpath src scripts/compositor-guest.cljs guest-gpu-two ; KERNEL.ELF two virtio-gpu 2D resources; C hardcoded count is red
+   ;;   nbb --classpath src scripts/compositor-guest.cljs guest-scanout-two ; KERNEL.ELF scanout 1 onto resource 2; C hardcoded bind is red
+   ;;   nbb --classpath src scripts/compositor-guest.cljs guest-broker ; KERNEL.ELF clipboard admit / picker refuse; hosted JVM WM is red
+   ;;   nbb --classpath src scripts/compositor-guest.cljs guest-session ; KERNEL.ELF packed front 2 restore; hosted JVM WM is red
+   ;; JVM leftover: clojure -M:compositor guest-* exits 1 (:jvm-gate-runner, ADR-0100)
    ;;   clojure -M:compositor serve
    ;; smoke Exit 0 = DADS SPA, window-session-state restore, wipe red,
    ;;   QEMU -device virtio-gpu-pci with -display none.

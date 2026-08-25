@@ -19,47 +19,47 @@
   commits `か`. IME-off is the named red (`:ime-bypass`). Hosted kanji:
   `clojure -M:compositor kanji` admits Space converting `か` to `加`.
   Space that commits kana is leftover `:kanji-absent`. Guest IME:
-  `clojure -M:compositor guest-ime` admits KERNEL.ELF Kotoba
+  `nbb --classpath src scripts/compositor-guest.cljs guest-ime` admits KERNEL.ELF Kotoba
   `aiueos-ime-commit` (`k`+`a` → U+304B) on guest serial. Hosted JVM
   IME does not count. Guest 2D stays `gpu`. Hosted kami-engine: `clojure
   -M:compositor kami` admits `kami.webgpu/init!` then `draw!` on
   `#kami-viewport`. A sky-only `beginRenderPass` clear is leftover
-  `:clear-only-desktop`. Guest WM: `clojure -M:compositor guest-wm`
+  `:clear-only-desktop`. Guest WM: `nbb --classpath src scripts/compositor-guest.cljs guest-wm`
   admits KERNEL.ELF Kotoba `aiueos-wm-hit` (two overlapping boot
   rects, z-front at overlap is 2, miss-front at 40,40 is 1, raise
   is 1). Hosted JVM `wm` does not count. After guest WM, hosted
   leftover is still `:native-compositor-absent` (one virtio-gpu
   resource, virtio-input synthetic, P5). Guest paint:
-  `clojure -M:compositor guest-paint` admits KERNEL.ELF painting both
+  `nbb --classpath src scripts/compositor-guest.cljs guest-paint` admits KERNEL.ELF painting both
   boot rects in Kotoba z-order and sampling the overlap pixel. Hosted
   JVM `wm` does not count. A key-order paint (window 1 on top at
   overlap) is leftover `:key-order-paint`. After guest paint, hosted
   leftover is still `:native-compositor-absent` (permission
   broker, native component runtime, one virtio-gpu resource, P5).
-  Guest input: `clojure -M:compositor guest-input` admits KERNEL.ELF
+  Guest input: `nbb --classpath src scripts/compositor-guest.cljs guest-input` admits KERNEL.ELF
   consuming a virtio-keyboard used-ring event. C filling the envelope
   is leftover `:synthetic-smoke`. After guest input, hosted leftover
   is still `:native-compositor-absent` (permission broker, native
   component runtime, one virtio-gpu resource, P5).
-  Guest gpu-two: `clojure -M:compositor guest-gpu-two` admits KERNEL.ELF
+  Guest gpu-two: `nbb --classpath src scripts/compositor-guest.cljs guest-gpu-two` admits KERNEL.ELF
   creating and flushing two virtio-gpu 2D resources when Kotoba
   `kotoba_aiueos_wm_hit` admits n=2. C hardcoding resource count is
   leftover `:one-resource`. After guest gpu-two, hosted leftover is still
   `:native-compositor-absent` (permission broker, native component
   runtime, one virtio-gpu scanout, P5).
-  Guest scanout-two: `clojure -M:compositor guest-scanout-two` admits
+  Guest scanout-two: `nbb --classpath src scripts/compositor-guest.cljs guest-scanout-two` admits
   KERNEL.ELF binding scanout 1 onto resource 2 when Kotoba
   `kotoba_aiueos_scanout_bind` admits n=2. One scanout when Kotoba
   admits two is leftover `:one-scanout`. After guest scanout-two, hosted
   leftover is still `:native-compositor-absent` (permission broker,
   native component runtime, P5).
-  Guest broker: `clojure -M:compositor guest-broker` admits KERNEL.ELF
+  Guest broker: `nbb --classpath src scripts/compositor-guest.cljs guest-broker` admits KERNEL.ELF
   Kotoba `aiueos-broker-admit` (clipboard granted, file-picker refused
   on the clipboard-only boot grant). Hosted JVM `wm` does not count.
   Admitting picker on that grant is leftover `:always-grant`. After
   guest broker, hosted leftover is still `:native-compositor-absent`
   (session restore, native component runtime, P5).
-  Guest session: `clojure -M:compositor guest-session` admits KERNEL.ELF
+  Guest session: `nbb --classpath src scripts/compositor-guest.cljs guest-session` admits KERNEL.ELF
   Kotoba `aiueos-session-restore` unpacking packed front 2, refusing
   empty packed 0 and unknown packed 3, then wm-hit on that front.
   Hosted JVM `wm` does not count. Restore that always returns 2 is
@@ -69,8 +69,11 @@
   Exit 0 = the named command admitted. Exit 1 = refused. Exit 3 =
   QEMU/firmware/serial/browser could not be answered.
 
-  Commands: `clojure -M:compositor smoke` | `gpu` | `wm` | `ime` | `kanji` | `kami` | `guest-ime` | `guest-wm` | `guest-paint` | `guest-input` | `guest-gpu-two` | `guest-scanout-two` | `guest-broker` | `guest-session` | `serve`"
+  Hosted commands: `clojure -M:compositor smoke` | `gpu` | `wm` | `ime` | `kanji` | `kami` | `serve`.
+  Guest commands: `nbb --classpath src scripts/compositor-guest.cljs` plus a
+  guest profile. JVM `guest-*` is leftover `:jvm-gate-runner`."
   (:require [aiueos.compositor.desktop :as desktop]
+            [aiueos.compositor.guest :as guest]
             [aiueos.phone-bind :as pb]
             [clojure.string :as str]
             #?(:clj [clojure.edn :as edn])
@@ -130,315 +133,22 @@
     {:green? false :exit 1 :reason :gpu-2d-absent
      :leftover [:gpu-2d-absent]}))
 
-(defn guest-ime-ok?
-  "True only when KERNEL.ELF serial says Kotoba IME committed U+304B
-  without echoing latin `ka`. Hosted JVM IME serial does not count."
-  [serial]
-  (boolean
-   (and (string? serial)
-        (re-find #"(?m)^AIUEOS_GUEST_IME_OK committed=u\+304b latin-leak=0" serial)
-        (not (re-find #"(?m)^AIUEOS_GUEST_IME_OK committed=ka" serial))
-        (not (re-find #"AIUEOS_COMPOSITOR_IME_OK" serial)))))
-
-(defn guest-ime-result
-  "Classify a KERNEL.ELF boot for compositor `guest-ime`.
-  Hosted `clojure -M:compositor ime` is the named red."
-  [{:keys [serial qemu-unmeasured? hosted-ime?]}]
-  (cond
-    qemu-unmeasured?
-    {:green? false :exit 3 :reason :unmeasured :leftover [:unmeasured]}
-
-    (or hosted-ime?
-        (re-find #"AIUEOS_COMPOSITOR_IME_OK" (or serial "")))
-    {:green? false :exit 1 :reason :hosted-ime-does-not-count
-     :leftover [:hosted-ime-does-not-count]}
-
-    (guest-ime-ok? serial)
-    {:green? true :exit 0 :reason :guest-ime-kotoba-commit :leftover []}
-
-    (re-find #"(?m)^AIUEOS_GUEST_IME leftover=latin-leak" (or serial ""))
-    {:green? false :exit 1 :reason :latin-leak :leftover [:latin-leak]}
-
-    (re-find #"(?m)^AIUEOS_GUEST_IME leftover=vector-miss" (or serial ""))
-    {:green? false :exit 1 :reason :vector-miss :leftover [:vector-miss]}
-
-    :else
-    {:green? false :exit 1 :reason :guest-ime-absent
-     :leftover [:guest-ime-absent]}))
-
-(defn guest-wm-ok?
-  "True only when KERNEL.ELF serial says Kotoba WM hit the four
-  boot-desktop vectors. Hosted JVM WM serial does not count."
-  [serial]
-  (boolean
-   (and (string? serial)
-        (re-find #"(?m)^AIUEOS_GUEST_WM_OK two-surfaces z-hit=2 miss-front=1 raise=1 one-surface=0" serial)
-        (not (re-find #"AIUEOS_COMPOSITOR_WM_OK" serial)))))
-
-(defn guest-wm-result
-  "Classify a KERNEL.ELF boot for compositor `guest-wm`.
-  Hosted `clojure -M:compositor wm` is the named red."
-  [{:keys [serial qemu-unmeasured? hosted-wm?]}]
-  (cond
-    qemu-unmeasured?
-    {:green? false :exit 3 :reason :unmeasured :leftover [:unmeasured]}
-
-    (or hosted-wm?
-        (re-find #"AIUEOS_COMPOSITOR_WM_OK" (or serial "")))
-    {:green? false :exit 1 :reason :hosted-wm-does-not-count
-     :leftover [:hosted-wm-does-not-count]}
-
-    (guest-wm-ok? serial)
-    {:green? true :exit 0 :reason :guest-wm-kotoba-hit :leftover []}
-
-    (re-find #"(?m)^AIUEOS_GUEST_WM leftover=one-surface-ignored" (or serial ""))
-    {:green? false :exit 1 :reason :one-surface-ignored :leftover [:one-surface-ignored]}
-
-    (re-find #"(?m)^AIUEOS_GUEST_WM leftover=z-order-ignored" (or serial ""))
-    {:green? false :exit 1 :reason :z-order-ignored :leftover [:z-order-ignored]}
-
-    (re-find #"(?m)^AIUEOS_GUEST_WM leftover=always-front" (or serial ""))
-    {:green? false :exit 1 :reason :always-front :leftover [:always-front]}
-
-    (re-find #"(?m)^AIUEOS_GUEST_WM leftover=raise-is-noop" (or serial ""))
-    {:green? false :exit 1 :reason :raise-is-noop :leftover [:raise-is-noop]}
-
-    (re-find #"(?m)^AIUEOS_GUEST_WM leftover=vector-miss" (or serial ""))
-    {:green? false :exit 1 :reason :vector-miss :leftover [:vector-miss]}
-
-    :else
-    {:green? false :exit 1 :reason :guest-wm-absent
-     :leftover [:guest-wm-absent]}))
-
-(defn guest-paint-ok?
-  "True only when KERNEL.ELF serial says both boot rects were painted
-  in Kotoba z-order and the overlap pixel followed front, not key
-  order. Hosted JVM WM serial does not count."
-  [serial]
-  (boolean
-   (and (string? serial)
-        (re-find #"(?m)^AIUEOS_GUEST_PAINT_OK boot-overlap=2 raised-overlap=1 key-order=0" serial)
-        (not (re-find #"AIUEOS_COMPOSITOR_WM_OK" serial)))))
-
-(defn guest-paint-result
-  "Classify a KERNEL.ELF boot for compositor `guest-paint`.
-  Hosted `clojure -M:compositor wm` is the named red."
-  [{:keys [serial qemu-unmeasured? hosted-wm?]}]
-  (cond
-    qemu-unmeasured?
-    {:green? false :exit 3 :reason :unmeasured :leftover [:unmeasured]}
-
-    (or hosted-wm?
-        (re-find #"AIUEOS_COMPOSITOR_WM_OK" (or serial "")))
-    {:green? false :exit 1 :reason :hosted-wm-does-not-count
-     :leftover [:hosted-wm-does-not-count]}
-
-    (guest-paint-ok? serial)
-    {:green? true :exit 0 :reason :guest-paint-z-order :leftover []}
-
-    (re-find #"(?m)^AIUEOS_GUEST_PAINT leftover=fb-too-small" (or serial ""))
-    {:green? false :exit 1 :reason :fb-too-small :leftover [:fb-too-small]}
-
-    (re-find #"(?m)^AIUEOS_GUEST_PAINT leftover=one-guest-scanout" (or serial ""))
-    {:green? false :exit 1 :reason :one-guest-scanout :leftover [:one-guest-scanout]}
-
-    (re-find #"(?m)^AIUEOS_GUEST_PAINT leftover=key-order-paint" (or serial ""))
-    {:green? false :exit 1 :reason :key-order-paint :leftover [:key-order-paint]}
-
-    (re-find #"(?m)^AIUEOS_GUEST_PAINT leftover=always-front-paint" (or serial ""))
-    {:green? false :exit 1 :reason :always-front-paint :leftover [:always-front-paint]}
-
-    (re-find #"(?m)^AIUEOS_GUEST_PAINT leftover=vector-miss" (or serial ""))
-    {:green? false :exit 1 :reason :vector-miss :leftover [:vector-miss]}
-
-    :else
-    {:green? false :exit 1 :reason :guest-paint-absent
-     :leftover [:guest-paint-absent]}))
-
-(defn guest-input-ok?
-  "True only when KERNEL.ELF serial says the desktop envelope came
-  from a virtio-input used-ring event, not the synthetic fill.
-  Hosted JVM compositor input does not count."
-  [serial]
-  (boolean
-   (and (string? serial)
-        (re-find #"(?m)^AIUEOS_GUEST_INPUT_OK eventq-used=1 synthetic=0" serial)
-        (not (re-find #"(?m)^AIUEOS_GUEST_INPUT leftover=synthetic-smoke" serial))
-        (not (re-find #"AIUEOS_COMPOSITOR_WM_OK" serial)))))
-
-(defn guest-input-result
-  "Classify a KERNEL.ELF boot for compositor `guest-input`.
-  Hosted `clojure -M:compositor wm` is the named red. C filling the
-  envelope is leftover `:synthetic-smoke`."
-  [{:keys [serial qemu-unmeasured? hosted-wm?]}]
-  (cond
-    qemu-unmeasured?
-    {:green? false :exit 3 :reason :unmeasured :leftover [:unmeasured]}
-
-    (or hosted-wm?
-        (re-find #"AIUEOS_COMPOSITOR_WM_OK" (or serial "")))
-    {:green? false :exit 1 :reason :hosted-wm-does-not-count
-     :leftover [:hosted-wm-does-not-count]}
-
-    (guest-input-ok? serial)
-    {:green? true :exit 0 :reason :guest-input-eventq :leftover []}
-
-    (re-find #"(?m)^AIUEOS_GUEST_INPUT leftover=synthetic-smoke" (or serial ""))
-    {:green? false :exit 1 :reason :synthetic-smoke :leftover [:synthetic-smoke]}
-
-    (re-find #"(?m)^AIUEOS_GUEST_INPUT leftover=eventq-empty" (or serial ""))
-    {:green? false :exit 1 :reason :eventq-empty :leftover [:eventq-empty]}
-
-    :else
-    {:green? false :exit 1 :reason :guest-input-absent
-     :leftover [:guest-input-absent]}))
-
-(defn guest-gpu-two-ok?
-  "True only when KERNEL.ELF serial says two virtio-gpu 2D resources
-  were created and flushed after Kotoba admitted n=2. Hosted JVM gpu
-  serial alone does not count."
-  [serial]
-  (boolean
-   (and (string? serial)
-        (re-find #"(?m)^AIUEOS_GUEST_GPU_TWO_OK resources=2 flush=2 kotoba-n=2" serial)
-        (not (re-find #"AIUEOS_COMPOSITOR_WM_OK" serial)))))
-
-(defn guest-gpu-two-result
-  "Classify a KERNEL.ELF boot for compositor `guest-gpu-two`.
-  Hosted `clojure -M:compositor wm` is the named red. One resource
-  when Kotoba admits two is leftover `:one-resource`."
-  [{:keys [serial qemu-unmeasured? hosted-wm?]}]
-  (cond
-    qemu-unmeasured?
-    {:green? false :exit 3 :reason :unmeasured :leftover [:unmeasured]}
-
-    (or hosted-wm?
-        (re-find #"AIUEOS_COMPOSITOR_WM_OK" (or serial "")))
-    {:green? false :exit 1 :reason :hosted-wm-does-not-count
-     :leftover [:hosted-wm-does-not-count]}
-
-    (guest-gpu-two-ok? serial)
-    {:green? true :exit 0 :reason :guest-gpu-two-resources :leftover []}
-
-    (re-find #"(?m)^AIUEOS_GUEST_GPU_TWO leftover=one-resource" (or serial ""))
-    {:green? false :exit 1 :reason :one-resource :leftover [:one-resource]}
-
-    :else
-    {:green? false :exit 1 :reason :guest-gpu-two-absent
-     :leftover [:guest-gpu-two-absent]}))
-
-(defn guest-scanout-two-ok?
-  "True only when KERNEL.ELF serial says two virtio-gpu scanouts were
-  bound after Kotoba admitted n=2. Hosted JVM wm serial alone does
-  not count."
-  [serial]
-  (boolean
-   (and (string? serial)
-        (re-find #"(?m)^AIUEOS_GUEST_SCANOUT_TWO_OK scanouts=2 resource-0=1 resource-1=2 kotoba-n=2" serial)
-        (not (re-find #"AIUEOS_COMPOSITOR_WM_OK" serial)))))
-
-(defn guest-scanout-two-result
-  "Classify a KERNEL.ELF boot for compositor `guest-scanout-two`.
-  Hosted `clojure -M:compositor wm` is the named red. One scanout
-  when Kotoba admits two is leftover `:one-scanout`."
-  [{:keys [serial qemu-unmeasured? hosted-wm?]}]
-  (cond
-    qemu-unmeasured?
-    {:green? false :exit 3 :reason :unmeasured :leftover [:unmeasured]}
-
-    (or hosted-wm?
-        (re-find #"AIUEOS_COMPOSITOR_WM_OK" (or serial "")))
-    {:green? false :exit 1 :reason :hosted-wm-does-not-count
-     :leftover [:hosted-wm-does-not-count]}
-
-    (guest-scanout-two-ok? serial)
-    {:green? true :exit 0 :reason :guest-scanout-two-bound :leftover []}
-
-    (re-find #"(?m)^AIUEOS_GUEST_SCANOUT_TWO leftover=one-scanout" (or serial ""))
-    {:green? false :exit 1 :reason :one-scanout :leftover [:one-scanout]}
-
-    :else
-    {:green? false :exit 1 :reason :guest-scanout-two-absent
-     :leftover [:guest-scanout-two-absent]}))
-
-(defn guest-broker-ok?
-  "True only when KERNEL.ELF serial says clipboard was admitted and
-  file-picker refused after Kotoba. Hosted JVM wm serial alone does
-  not count."
-  [serial]
-  (boolean
-   (and (string? serial)
-        (re-find #"(?m)^AIUEOS_GUEST_BROKER_OK clipboard=1 picker=0 kotoba-clip=1 kotoba-pick=0" serial)
-        (not (re-find #"AIUEOS_COMPOSITOR_WM_OK" serial)))))
-
-(defn guest-broker-result
-  "Classify a KERNEL.ELF boot for compositor `guest-broker`.
-  Hosted `clojure -M:compositor wm` is the named red. Picker admitted
-  on a clipboard-only grant is leftover `:always-grant`."
-  [{:keys [serial qemu-unmeasured? hosted-wm?]}]
-  (cond
-    qemu-unmeasured?
-    {:green? false :exit 3 :reason :unmeasured :leftover [:unmeasured]}
-
-    (or hosted-wm?
-        (re-find #"AIUEOS_COMPOSITOR_WM_OK" (or serial "")))
-    {:green? false :exit 1 :reason :hosted-wm-does-not-count
-     :leftover [:hosted-wm-does-not-count]}
-
-    (guest-broker-ok? serial)
-    {:green? true :exit 0 :reason :guest-broker-admitted :leftover []}
-
-    (re-find #"(?m)^AIUEOS_GUEST_BROKER leftover=always-grant" (or serial ""))
-    {:green? false :exit 1 :reason :always-grant :leftover [:always-grant]}
-
-    (re-find #"(?m)^AIUEOS_GUEST_BROKER leftover=deny-all" (or serial ""))
-    {:green? false :exit 1 :reason :deny-all :leftover [:deny-all]}
-
-    :else
-    {:green? false :exit 1 :reason :guest-broker-absent
-     :leftover [:guest-broker-absent]}))
-
-(defn guest-session-ok?
-  "True only when KERNEL.ELF serial says packed front 2 restored and
-  wm-hit used that front. Hosted JVM wm serial alone does not count."
-  [serial]
-  (boolean
-   (and (string? serial)
-        (re-find #"(?m)^AIUEOS_GUEST_SESSION_OK restored-front=2 packed=2 kotoba-front=2 hit=2" serial)
-        (not (re-find #"AIUEOS_COMPOSITOR_WM_OK" serial)))))
-
-(defn guest-session-result
-  "Classify a KERNEL.ELF boot for compositor `guest-session`.
-  Hosted `clojure -M:compositor wm` is the named red. Restore that
-  returns 2 for packed 0 is leftover `:always-front`."
-  [{:keys [serial qemu-unmeasured? hosted-wm?]}]
-  (cond
-    qemu-unmeasured?
-    {:green? false :exit 3 :reason :unmeasured :leftover [:unmeasured]}
-
-    (or hosted-wm?
-        (re-find #"AIUEOS_COMPOSITOR_WM_OK" (or serial "")))
-    {:green? false :exit 1 :reason :hosted-wm-does-not-count
-     :leftover [:hosted-wm-does-not-count]}
-
-    (guest-session-ok? serial)
-    {:green? true :exit 0 :reason :guest-session-admitted :leftover []}
-
-    (re-find #"(?m)^AIUEOS_GUEST_SESSION leftover=always-front" (or serial ""))
-    {:green? false :exit 1 :reason :always-front :leftover [:always-front]}
-
-    (re-find #"(?m)^AIUEOS_GUEST_SESSION leftover=empty-session" (or serial ""))
-    {:green? false :exit 1 :reason :empty-session :leftover [:empty-session]}
-
-    (re-find #"(?m)^AIUEOS_GUEST_SESSION leftover=unknown-surface" (or serial ""))
-    {:green? false :exit 1 :reason :unknown-surface :leftover [:unknown-surface]}
-
-    (re-find #"(?m)^AIUEOS_GUEST_SESSION leftover=restore-ignored" (or serial ""))
-    {:green? false :exit 1 :reason :restore-ignored :leftover [:restore-ignored]}
-
-    :else
-    {:green? false :exit 1 :reason :guest-session-absent
-     :leftover [:guest-session-absent]}))
+(def guest-ime-ok? guest/guest-ime-ok?)
+(def guest-ime-result guest/guest-ime-result)
+(def guest-wm-ok? guest/guest-wm-ok?)
+(def guest-wm-result guest/guest-wm-result)
+(def guest-paint-ok? guest/guest-paint-ok?)
+(def guest-paint-result guest/guest-paint-result)
+(def guest-input-ok? guest/guest-input-ok?)
+(def guest-input-result guest/guest-input-result)
+(def guest-gpu-two-ok? guest/guest-gpu-two-ok?)
+(def guest-gpu-two-result guest/guest-gpu-two-result)
+(def guest-scanout-two-ok? guest/guest-scanout-two-ok?)
+(def guest-scanout-two-result guest/guest-scanout-two-result)
+(def guest-broker-ok? guest/guest-broker-ok?)
+(def guest-broker-result guest/guest-broker-result)
+(def guest-session-ok? guest/guest-session-ok?)
+(def guest-session-result guest/guest-session-result)
 
 (defn html-has-desktop-face?
   [html]
@@ -501,69 +211,69 @@
 
 (defn html-has-guest-ime-face?
   "SPA names the KERNEL.ELF guest IME gate. Hosted ime/kanji without
-  `clojure -M:compositor guest-ime` is red for this face."
+  the nbb guest-ime command is red for this face."
   [html]
   (boolean
    (and (html-has-kanji-face? html)
-        (re-find #"clojure -M:compositor guest-ime" html)
+        (str/includes? (or html "") (guest/gate-cmd "guest-ime"))
         (re-find #"native compositor" html))))
 
 (defn html-has-guest-wm-face?
   "SPA names the KERNEL.ELF guest WM gate. Hosted wm without
-  `clojure -M:compositor guest-wm` is red for this face."
+  the nbb guest-wm command is red for this face."
   [html]
   (boolean
    (and (html-has-guest-ime-face? html)
-        (re-find #"clojure -M:compositor guest-wm" html))))
+        (str/includes? (or html "") (guest/gate-cmd "guest-wm")))))
 
 (defn html-has-guest-paint-face?
   "SPA names the KERNEL.ELF guest paint gate. Guest WM without
-  `clojure -M:compositor guest-paint` is red for this face."
+  the nbb guest-paint command is red for this face."
   [html]
   (boolean
    (and (html-has-guest-wm-face? html)
-        (re-find #"clojure -M:compositor guest-paint" html))))
+        (str/includes? (or html "") (guest/gate-cmd "guest-paint")))))
 
 (defn html-has-guest-input-face?
   "SPA names the KERNEL.ELF guest input gate. Guest paint without
-  `clojure -M:compositor guest-input` is red for this face."
+  the nbb guest-input command is red for this face."
   [html]
   (boolean
    (and (html-has-guest-paint-face? html)
-        (re-find #"clojure -M:compositor guest-input" html))))
+        (str/includes? (or html "") (guest/gate-cmd "guest-input")))))
 
 (defn html-has-guest-gpu-two-face?
   "SPA names the KERNEL.ELF guest gpu-two gate. Guest input without
-  `clojure -M:compositor guest-gpu-two` is red for this face."
+  the nbb guest-gpu-two command is red for this face."
   [html]
   (boolean
    (and (html-has-guest-input-face? html)
-        (re-find #"clojure -M:compositor guest-gpu-two" html))))
+        (str/includes? (or html "") (guest/gate-cmd "guest-gpu-two")))))
 
 (defn html-has-guest-scanout-two-face?
   "SPA names the KERNEL.ELF guest scanout-two gate. Guest gpu-two without
-  `clojure -M:compositor guest-scanout-two` is red for this face."
+  the nbb guest-scanout-two command is red for this face."
   [html]
   (boolean
    (and (html-has-guest-gpu-two-face? html)
-        (re-find #"clojure -M:compositor guest-scanout-two" html))))
+        (str/includes? (or html "") (guest/gate-cmd "guest-scanout-two")))))
 
 (defn html-has-guest-broker-face?
   "SPA names the KERNEL.ELF guest permission-broker gate. Guest
-  scanout-two without `clojure -M:compositor guest-broker` is red for
+  scanout-two without the nbb guest-broker command is red for
   this face."
   [html]
   (boolean
    (and (html-has-guest-scanout-two-face? html)
-        (re-find #"clojure -M:compositor guest-broker" html))))
+        (str/includes? (or html "") (guest/gate-cmd "guest-broker")))))
 
 (defn html-has-guest-session-face?
   "SPA names the KERNEL.ELF guest session-restore gate. Guest broker
-  without `clojure -M:compositor guest-session` is red for this face."
+  without the nbb guest-session command is red for this face."
   [html]
   (boolean
    (and (html-has-guest-broker-face? html)
-        (re-find #"clojure -M:compositor guest-session" html))))
+        (str/includes? (or html "") (guest/gate-cmd "guest-session")))))
 
 (defn presenter-is-kami-webgpu?
   "The compiled bundle must be kami.webgpu (init!/draw!), not a stub
@@ -1654,6 +1364,17 @@
            (finally
              (when-let [rt @http] (pb/stop-http! rt))))))
 
+     (defn refuse-jvm-guest!
+       "Guest KERNEL.ELF serial gates are nbb (ADR-0100). Hosted JVM
+       compositor remaining: smoke / gpu / wm / ime / kanji / kami / serve."
+       [profile]
+       (let [cmd (guest/gate-cmd profile)
+             tag (str/replace (str/upper-case profile) "-" "_")]
+         (println (str "AIUEOS_COMPOSITOR_" tag " leftover=:jvm-gate-runner"))
+         (println (str "evidence=" cmd))
+         (flush)
+         (System/exit 1)))
+
      (defn -main
        [& args]
        (let [cmd (or (first args) "smoke")
@@ -1715,44 +1436,29 @@
              (System/exit (int (:exit r))))
 
            "guest-ime"
-           (let [r (run-guest-ime)]
-             (flush)
-             (System/exit (int (:exit r))))
+           (refuse-jvm-guest! "guest-ime")
 
            "guest-wm"
-           (let [r (run-guest-wm)]
-             (flush)
-             (System/exit (int (:exit r))))
+           (refuse-jvm-guest! "guest-wm")
 
            "guest-paint"
-           (let [r (run-guest-paint)]
-             (flush)
-             (System/exit (int (:exit r))))
+           (refuse-jvm-guest! "guest-paint")
 
            "guest-input"
-           (let [r (run-guest-input)]
-             (flush)
-             (System/exit (int (:exit r))))
+           (refuse-jvm-guest! "guest-input")
 
            "guest-gpu-two"
-           (let [r (run-guest-gpu-two)]
-             (flush)
-             (System/exit (int (:exit r))))
+           (refuse-jvm-guest! "guest-gpu-two")
 
            "guest-scanout-two"
-           (let [r (run-guest-scanout-two)]
-             (flush)
-             (System/exit (int (:exit r))))
+           (refuse-jvm-guest! "guest-scanout-two")
 
            "guest-broker"
-           (let [r (run-guest-broker)]
-             (flush)
-             (System/exit (int (:exit r))))
+           (refuse-jvm-guest! "guest-broker")
 
            "guest-session"
-           (let [r (run-guest-session)]
-             (flush)
-             (System/exit (int (:exit r))))
+           (refuse-jvm-guest! "guest-session")
 
-           (do (println "usage: clojure -M:compositor [smoke|gpu|wm|ime|kanji|kami|guest-ime|guest-wm|guest-paint|guest-input|guest-gpu-two|guest-scanout-two|guest-broker|guest-session|serve]")
+           (do (println "usage: clojure -M:compositor [smoke|gpu|wm|ime|kanji|kami|serve]")
+               (println "guest gates: nbb --classpath src scripts/compositor-guest.cljs <guest-ime|guest-wm|guest-paint|guest-input|guest-gpu-two|guest-scanout-two|guest-broker|guest-session>")
                (System/exit 3)))))))

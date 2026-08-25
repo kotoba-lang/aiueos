@@ -11,5 +11,5 @@
                      :permission-broker]
  :verification {:off-target :impossible
                 :reason :kir-refuses-kernel-memory
-                :evidence "clojure -M:compositor guest-scanout-two"}
+                :evidence "nbb --classpath src scripts/compositor-guest.cljs guest-scanout-two"}
 }

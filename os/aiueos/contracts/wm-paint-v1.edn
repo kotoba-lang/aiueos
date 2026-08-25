@@ -17,5 +17,5 @@
                      :one-virtio-gpu-scanout]
  :verification {:off-target :impossible
                 :reason :kir-refuses-kernel-memory
-                :evidence "clojure -M:compositor guest-paint"}
+                :evidence "nbb --classpath src scripts/compositor-guest.cljs guest-paint"}
 }

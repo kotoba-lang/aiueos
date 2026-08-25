@@ -37,12 +37,12 @@ clojure -M:compositor smoke  # named-partial desktop: same SPA + surfaces + virt
 clojure -M:compositor wm     # hosted WM: two stacked windows, z-order, DADS title bars
 clojure -M:compositor ime    # hosted IME: romaji→kana in the same document
 clojure -M:compositor kanji  # hosted IME: Space converts か→加
-clojure -M:compositor guest-ime  # KERNEL.ELF Kotoba k+a→U+304B
-clojure -M:compositor guest-wm   # KERNEL.ELF Kotoba two-surface z-hit
-clojure -M:compositor guest-paint # KERNEL.ELF paints both rects in z-order
-clojure -M:compositor guest-input # KERNEL.ELF virtio-keyboard used-ring event
-clojure -M:compositor guest-gpu-two # KERNEL.ELF two virtio-gpu 2D resources
-clojure -M:compositor guest-scanout-two # KERNEL.ELF scanout 1 bound to resource 2
-clojure -M:compositor guest-broker # KERNEL.ELF Kotoba clipboard admit / picker refuse
-clojure -M:compositor guest-session # KERNEL.ELF Kotoba packed front 2 restore
+nbb --classpath src scripts/compositor-guest.cljs guest-ime  # KERNEL.ELF Kotoba k+a→U+304B
+nbb --classpath src scripts/compositor-guest.cljs guest-wm   # KERNEL.ELF Kotoba two-surface z-hit
+nbb --classpath src scripts/compositor-guest.cljs guest-paint # KERNEL.ELF paints both rects in z-order
+nbb --classpath src scripts/compositor-guest.cljs guest-input # KERNEL.ELF virtio-keyboard used-ring event
+nbb --classpath src scripts/compositor-guest.cljs guest-gpu-two # KERNEL.ELF two virtio-gpu 2D resources
+nbb --classpath src scripts/compositor-guest.cljs guest-scanout-two # KERNEL.ELF scanout 1 bound to resource 2
+nbb --classpath src scripts/compositor-guest.cljs guest-broker # KERNEL.ELF Kotoba clipboard admit / picker refuse
+nbb --classpath src scripts/compositor-guest.cljs guest-session # KERNEL.ELF Kotoba packed front 2 restore
 ```

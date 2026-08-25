@@ -27,7 +27,7 @@ the latin bytes is leftover `:latin-leak`. Compiled at amu pin
 entry `aiueos-ime-commit`. Pinned SHA-256 is
 `ee11f50c9dfb30d03c820bead466b2f1bf18e4e64f3a2bfda98f5a5dd5d4ca34`.
 Not mozc. Not hosted JVM IME. Default UEFI smoke still uses synthetic
-input; `clojure -M:compositor guest-input` (ADR-0093) consumes a
+input; `nbb --classpath src scripts/compositor-guest.cljs guest-input` (ADR-0093) consumes a
 virtio-keyboard used-ring event.
 
 `wm-hit.o` is the guest WM hit-test (ADR-0091). It exports

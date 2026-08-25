@@ -115,21 +115,21 @@
      "）。IME はかなと漢字（"
      [:code "clojure -M:compositor kanji"]
      "）。ゲスト側 IME は "
-     [:code "clojure -M:compositor guest-ime"]
+     [:code "nbb --classpath src scripts/compositor-guest.cljs guest-ime"]
      "（KERNEL.ELF の Kotoba）。ゲスト側 WM は "
-     [:code "clojure -M:compositor guest-wm"]
+     [:code "nbb --classpath src scripts/compositor-guest.cljs guest-wm"]
      "（KERNEL.ELF の Kotoba が z-hit）。ゲスト側 paint は "
-     [:code "clojure -M:compositor guest-paint"]
+     [:code "nbb --classpath src scripts/compositor-guest.cljs guest-paint"]
      "（KERNEL.ELF が z-order で 2 枚を塗る）。ゲスト側 input は "
-     [:code "clojure -M:compositor guest-input"]
+     [:code "nbb --classpath src scripts/compositor-guest.cljs guest-input"]
      "（KERNEL.ELF が virtio-keyboard の used-ring を読む）。ゲスト側 gpu-two は "
-     [:code "clojure -M:compositor guest-gpu-two"]
+     [:code "nbb --classpath src scripts/compositor-guest.cljs guest-gpu-two"]
      "（KERNEL.ELF が Kotoba の n=2 で 2 枚の virtio-gpu 2D resource を flush）。ゲスト側 scanout-two は "
-     [:code "clojure -M:compositor guest-scanout-two"]
+     [:code "nbb --classpath src scripts/compositor-guest.cljs guest-scanout-two"]
      "（KERNEL.ELF が Kotoba の n=2 で scanout 1 を resource 2 に bind）。ゲスト側 broker は "
-     [:code "clojure -M:compositor guest-broker"]
+     [:code "nbb --classpath src scripts/compositor-guest.cljs guest-broker"]
      "（KERNEL.ELF が Kotoba で clipboard を admit、file-picker を refuse）。ゲスト側 session は "
-     [:code "clojure -M:compositor guest-session"]
+     [:code "nbb --classpath src scripts/compositor-guest.cljs guest-session"]
      "（KERNEL.ELF が Kotoba で packed front 2 を restore）。native compositor は leftover です。描画は "
      [:code "kami.webgpu"]
      " の "
