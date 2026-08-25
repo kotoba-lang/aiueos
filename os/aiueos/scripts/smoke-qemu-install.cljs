@@ -126,10 +126,18 @@
 (def gate-usb (.join path gate-dir "gate-usb.img"))
 (def gate-key (.join path gate-dir "gate-key.pub"))
 
-;; A throwaway key: I3 proves the install chain, not SSH (that is I4's gate).
-(.writeFileSync fs gate-key
-                (str "ssh-ed25519 " (.toString (.randomBytes crypto 51) "base64")
-                     " install-gate\n"))
+;; A throwaway but REAL ed25519 key: I3 proves the install chain, not SSH
+;; login, yet provisioning now parses this key and derives its fingerprint, so
+;; a random blob would fail the intent-fingerprint consistency check.
+(let [kp (.generateKeyPairSync crypto "ed25519")
+      spki (.export (.-publicKey kp) #js {:format "der" :type "spki"})
+      raw (.subarray spki (- (.-length spki) 32))
+      ssh-str (fn [b] (let [l (js/Buffer.alloc 4)] (.writeUInt32BE l (.-length b) 0)
+                        (js/Buffer.concat #js [l b])))
+      blob (js/Buffer.concat #js [(ssh-str (js/Buffer.from "ssh-ed25519" "utf8"))
+                                  (ssh-str raw)])]
+  (.writeFileSync fs gate-key
+                  (str "ssh-ed25519 " (.toString blob "base64") " install-gate\n")))
 
 (let [{:keys [status err]}
       (run "nbb" [(.join path aiueos "scripts" "install-intent.cljs") "create"
@@ -237,14 +245,40 @@
   (when-not (= written release-sha)
     (die "nvme first" release-bytes "bytes are" written "but the release receipt says" release-sha))
   (println "AIUEOS_INSTALL_GATE nvme-image-extent verified sha256=" written))
+(def receipt-offset (* (quot (- nvme-bytes (* 1024 1024)) 4096) 4096))
 (let [fd (.openSync fs nvme-img "r")
-      buf (js/Buffer.alloc 25)
-      offset (* (quot (- nvme-bytes (* 1024 1024)) 4096) 4096)]
-  (.readSync fs fd buf 0 25 offset)
+      buf (js/Buffer.alloc 25)]
+  (.readSync fs fd buf 0 25 receipt-offset)
   (.closeSync fs fd)
   (when-not (= "AIUEOS-INSTALL-RECEIPT-V1" (.toString buf "utf8"))
-    (die "target receipt missing at" offset))
-  (println "AIUEOS_INSTALL_GATE target-receipt present at" offset))
+    (die "target receipt missing at" receipt-offset))
+  (println "AIUEOS_INSTALL_GATE target-receipt present at" receipt-offset))
+
+;; The live installer provisioned an SSH identity onto the target (ssh-v1.edn
+;; decision 4): the record landed in its reserved zone with a valid ed25519
+;; host key and the intent's authorized key, and the target receipt binds its
+;; digest. This is the provisioning half of I4, measured in the live path --
+;; not the served handshake (that is still red).
+(let [prov-offset (- receipt-offset 16384)
+      fd (.openSync fs nvme-img "r")
+      block (js/Buffer.alloc 16384)]
+  (.readSync fs fd block 0 16384 prov-offset)
+  (.closeSync fs fd)
+  (let [text (.toString block "utf8")
+        magic "AIUEOS-PROVISION-V1\n"]
+    (when-not (str/starts-with? text magic)
+      (die "provision record missing at" prov-offset))
+    (let [start (count magic)
+          json (subs text start (str/index-of text "\n" start))
+          rec (js->clj (.parse js/JSON json) :keywordize-keys true)
+          host (get-in rec [:sshHostKey :public])]
+      (when-not (and (= "aiueos.provision.v1" (:schema rec))
+                     (string? host) (re-matches #"[0-9a-f]{64}" host)
+                     (seq (get-in rec [:authorizedKeys 0 :public])))
+        (die "provision record present but malformed:" json))
+      (println "AIUEOS_INSTALL_GATE provision record present"
+               (str "host-key=" (get-in rec [:sshHostKey :fingerprint]))
+               (str "authorized=" (get-in rec [:authorizedKeys 0 :fingerprint]))))))
 
 ;; boot 2 + 3: the installed disk boots aiueos on its own, twice
 (doseq [label ["boot2" "boot3"]]

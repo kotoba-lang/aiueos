@@ -58,7 +58,11 @@
 
  :install-chain-test
  {:cmd ["nbb" "os/aiueos/scripts/test-install-chain.cljs"]
-  :doc "Intent admission refusals (named reasons), fake-device install, target receipt, repeat-erase refusal. Gates I2/I5, offline."}
+  :doc "Intent admission refusals (named reasons), fake-device install, target receipt, repeat-erase refusal, provisioning record placement. Gates I2/I5, offline."}
+
+ :provision-record-test
+ {:cmd ["nbb" "os/aiueos/scripts/test-provision-record.cljs"]
+  :doc "SSH provisioning record: host key derived to the RFC 8032 vector, authorized key = the intent's, injected-seed and non-ed25519 and tampered-intent refusals. Gate I4 provisioning half, offline."}
 
  :install-usb-build
  {:cmd ["nbb" "os/aiueos/scripts/run-install-usb-build.cljs"]

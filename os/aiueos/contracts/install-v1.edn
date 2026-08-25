@@ -109,11 +109,21 @@
  ;; Decision 4: headless bootstrap is declared by reachability, not by the
  ;; presence of a key file in the image. Decision 5: Tailscale comes after the
  ;; first LAN SSH, never on the install critical path.
- :headless {:requires [:offline-ownership-and-mode-check-of-target-root
+ ;; The SSH profile, userauth decision, provisioning and reachability floor
+ ;; are specified in full in ssh-v1.edn (aiueos ADR-0101). This section keeps
+ ;; only the install-side requirements.
+ :headless {:contract "os/aiueos/contracts/ssh-v1.edn"
+            :requires [:offline-ownership-and-mode-check-of-target-root
                        :sshd-loaded-the-provisioned-config-on-first-boot
                        :external-client-challenge-response-with-intent-key
                        :same-handshake-after-reboot
                        :wrong-key-wrong-user-stale-hostkey-refused-with-reason]
+            :provisioning {:record "aiueos.provision.v1"
+                           :generated-by "os/aiueos/scripts/make-provision-record.cljs"
+                           :placed-by "os/aiueos/scripts/install-to-disk.cljs"
+                           :host-key :per-device-ed25519-seed-generated-on-target
+                           :authorized-key :copied-from-intent
+                           :state :landed}   ; static half only; the served handshake is red
             :password-login :not-default
             :recovery :physical-path-required ; re-place authorized key from recovery env; no long-lived shared password baked into the image
             :tailscale {:position :after-first-lan-ssh
@@ -174,8 +184,18 @@
                                receipt digest before and after. QEMU/OVMF with
                                a VARS pflash; no physical machine yet (I7)."}
   :i4-headless {:state :red
-                :note "no physical-NIC driver and no first-boot provisioning
-                       service exist yet; see usb-boot-v1.edn :gaps"}
+                :provisioning :landed  ; the static half (ssh-v1.edn, ADR-0101)
+                :note "The SSH profile is designed (ssh-v1.edn) and the
+                       provisioning half is landed and measured: the installer
+                       generates a per-device ed25519 host key on the target
+                       and places the intent's authorized key, proved by
+                       test-provision-record.cljs (RFC 8032 vector),
+                       test-install-chain.cljs (22/22) and the QEMU install
+                       gate. I4 stays RED: no sshd, no served handshake. The
+                       four blockers (no TCP passive-open, RX depth 1, no
+                       entropy/sign primitive, no post-evidence service loop)
+                       and the crypto bricks (SHA-512, Ed25519 sign+verify)
+                       are named in ssh-v1.edn."}
   :i5-repeat-safety {:state :green-qemu
                      :evidence "fake devices in :install-chain-test, and the
                                 full chain in smoke-qemu-install.cljs boot4:
