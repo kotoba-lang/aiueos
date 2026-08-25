@@ -58,12 +58,18 @@
   on the clipboard-only boot grant). Hosted JVM `wm` does not count.
   Admitting picker on that grant is leftover `:always-grant`. After
   guest broker, hosted leftover is still `:native-compositor-absent`
-  (native component runtime, P5).
+  (session restore, native component runtime, P5).
+  Guest session: `clojure -M:compositor guest-session` admits KERNEL.ELF
+  Kotoba `aiueos-session-restore` unpacking packed front 2, refusing
+  empty packed 0 and unknown packed 3, then wm-hit on that front.
+  Hosted JVM `wm` does not count. Restore that always returns 2 is
+  leftover `:always-front`. After guest session, hosted leftover is
+  still `:native-compositor-absent` (native component runtime, P5).
 
   Exit 0 = the named command admitted. Exit 1 = refused. Exit 3 =
   QEMU/firmware/serial/browser could not be answered.
 
-  Commands: `clojure -M:compositor smoke` | `gpu` | `wm` | `ime` | `kanji` | `kami` | `guest-ime` | `guest-wm` | `guest-paint` | `guest-input` | `guest-gpu-two` | `guest-scanout-two` | `guest-broker` | `serve`"
+  Commands: `clojure -M:compositor smoke` | `gpu` | `wm` | `ime` | `kanji` | `kami` | `guest-ime` | `guest-wm` | `guest-paint` | `guest-input` | `guest-gpu-two` | `guest-scanout-two` | `guest-broker` | `guest-session` | `serve`"
   (:require [aiueos.compositor.desktop :as desktop]
             [aiueos.phone-bind :as pb]
             [clojure.string :as str]
@@ -392,6 +398,48 @@
     {:green? false :exit 1 :reason :guest-broker-absent
      :leftover [:guest-broker-absent]}))
 
+(defn guest-session-ok?
+  "True only when KERNEL.ELF serial says packed front 2 restored and
+  wm-hit used that front. Hosted JVM wm serial alone does not count."
+  [serial]
+  (boolean
+   (and (string? serial)
+        (re-find #"(?m)^AIUEOS_GUEST_SESSION_OK restored-front=2 packed=2 kotoba-front=2 hit=2" serial)
+        (not (re-find #"AIUEOS_COMPOSITOR_WM_OK" serial)))))
+
+(defn guest-session-result
+  "Classify a KERNEL.ELF boot for compositor `guest-session`.
+  Hosted `clojure -M:compositor wm` is the named red. Restore that
+  returns 2 for packed 0 is leftover `:always-front`."
+  [{:keys [serial qemu-unmeasured? hosted-wm?]}]
+  (cond
+    qemu-unmeasured?
+    {:green? false :exit 3 :reason :unmeasured :leftover [:unmeasured]}
+
+    (or hosted-wm?
+        (re-find #"AIUEOS_COMPOSITOR_WM_OK" (or serial "")))
+    {:green? false :exit 1 :reason :hosted-wm-does-not-count
+     :leftover [:hosted-wm-does-not-count]}
+
+    (guest-session-ok? serial)
+    {:green? true :exit 0 :reason :guest-session-admitted :leftover []}
+
+    (re-find #"(?m)^AIUEOS_GUEST_SESSION leftover=always-front" (or serial ""))
+    {:green? false :exit 1 :reason :always-front :leftover [:always-front]}
+
+    (re-find #"(?m)^AIUEOS_GUEST_SESSION leftover=empty-session" (or serial ""))
+    {:green? false :exit 1 :reason :empty-session :leftover [:empty-session]}
+
+    (re-find #"(?m)^AIUEOS_GUEST_SESSION leftover=unknown-surface" (or serial ""))
+    {:green? false :exit 1 :reason :unknown-surface :leftover [:unknown-surface]}
+
+    (re-find #"(?m)^AIUEOS_GUEST_SESSION leftover=restore-ignored" (or serial ""))
+    {:green? false :exit 1 :reason :restore-ignored :leftover [:restore-ignored]}
+
+    :else
+    {:green? false :exit 1 :reason :guest-session-absent
+     :leftover [:guest-session-absent]}))
+
 (defn html-has-desktop-face?
   [html]
   (and (re-find #"dads-button" html)
@@ -508,6 +556,14 @@
   (boolean
    (and (html-has-guest-scanout-two-face? html)
         (re-find #"clojure -M:compositor guest-broker" html))))
+
+(defn html-has-guest-session-face?
+  "SPA names the KERNEL.ELF guest session-restore gate. Guest broker
+  without `clojure -M:compositor guest-session` is red for this face."
+  [html]
+  (boolean
+   (and (html-has-guest-broker-face? html)
+        (re-find #"clojure -M:compositor guest-session" html))))
 
 (defn presenter-is-kami-webgpu?
   "The compiled bundle must be kami.webgpu (init!/draw!), not a stub
@@ -751,6 +807,10 @@
        []
        (io/file (repo-root) "build" "aiueos" "compositor-guest-broker-receipt.edn"))
 
+     (defn guest-session-receipt-file
+       []
+       (io/file (repo-root) "build" "aiueos" "compositor-guest-session-receipt.edn"))
+
      (defn write-gpu-receipt!
        [receipt]
        (let [f (gpu-receipt-file)]
@@ -803,6 +863,13 @@
      (defn write-guest-broker-receipt!
        [receipt]
        (let [f (guest-broker-receipt-file)]
+         (io/make-parents f)
+         (spit f (with-out-str (pprint/pprint receipt)))
+         f))
+
+     (defn write-guest-session-receipt!
+       [receipt]
+       (let [f (guest-session-receipt-file)]
          (io/make-parents f)
          (spit f (with-out-str (pprint/pprint receipt)))
          f))
@@ -1177,6 +1244,50 @@
                (println (str "AIUEOS_COMPOSITOR_GUEST_BROKER not-green leftover="
                              (pr-str (:leftover r)))))
              r))))
+
+     (defn run-guest-session
+       "Guest Kotoba packed-session restore on KERNEL.ELF serial.
+       Hosted JVM WM is red. Default UEFI smoke; no dbus."
+       []
+       (let [script (uefi-smoke)]
+         (if-not (.isFile script)
+           (let [r (guest-session-result {:qemu-unmeasured? true})]
+             (write-guest-session-receipt!
+              (assoc r :measured-at (str (java.time.Instant/now))
+                     :command "clojure -M:compositor guest-session"
+                     :why :smoke-script-missing))
+             (println "AIUEOS_COMPOSITOR_GUEST_SESSION leftover=:unmeasured")
+             r)
+           (let [boot (run-uefi-2d!)
+                 measured? (serial-measured? (:serial boot))
+                 r (guest-session-result {:serial (:serial boot)
+                                          :qemu-unmeasured? (not measured?)
+                                          :hosted-wm? false})
+                 receipt (assoc r
+                                :aiueos.compositor/guest-session-receipt 1
+                                :measured-at (str (java.time.Instant/now))
+                                :command "clojure -M:compositor guest-session"
+                                :profile :uefi-qemu-guest-session
+                                :uefi-smoke-exit (:exit boot)
+                                :serial-path (:serial-path boot)
+                                :note "Green only when guest serial has GUEST_SESSION_OK restored-front=2 packed=2 kotoba-front=2 hit=2. Hosted clojure -M:compositor wm does not count. Always-front restore is leftover. Native component runtime remains. P5 UNVERIFIED.")]
+             (write-guest-session-receipt! receipt)
+             (println "AIUEOS_COMPOSITOR_GUEST_SESSION_PROFILE=uefi-qemu")
+             (println (str "AIUEOS_COMPOSITOR_GUEST_SESSION_SERIAL=" (:serial-path boot)))
+             (println (str "AIUEOS_COMPOSITOR_GUEST_SESSION_RECEIPT="
+                           (.getPath (guest-session-receipt-file))))
+             (println (str "AIUEOS_COMPOSITOR_GUEST_SESSION_LEFTOVER="
+                           (pr-str (:leftover r))))
+             (when (:serial boot)
+               (doseq [line (str/split-lines (:serial boot))
+                       :when (re-find #"AIUEOS_GUEST_SESSION" line)]
+                 (println (str/replace line #"\r$" ""))))
+             (if (:green? r)
+               (println "AIUEOS_COMPOSITOR_GUEST_SESSION_OK")
+               (println (str "AIUEOS_COMPOSITOR_GUEST_SESSION not-green leftover="
+                             (pr-str (:leftover r)))))
+             r))))
+
 
      (defn run-wm
        "Hosted window manager. No QEMU. Red if one surface or raise is a no-op."
@@ -1638,5 +1749,10 @@
              (flush)
              (System/exit (int (:exit r))))
 
-           (do (println "usage: clojure -M:compositor [smoke|gpu|wm|ime|kanji|kami|guest-ime|guest-wm|guest-paint|guest-input|guest-gpu-two|guest-scanout-two|guest-broker|serve]")
+           "guest-session"
+           (let [r (run-guest-session)]
+             (flush)
+             (System/exit (int (:exit r))))
+
+           (do (println "usage: clojure -M:compositor [smoke|gpu|wm|ime|kanji|kami|guest-ime|guest-wm|guest-paint|guest-input|guest-gpu-two|guest-scanout-two|guest-broker|guest-session|serve]")
                (System/exit 3)))))))

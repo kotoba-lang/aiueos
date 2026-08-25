@@ -151,6 +151,7 @@
    ;;   clojure -M:compositor guest-gpu-two ; KERNEL.ELF two virtio-gpu 2D resources; C hardcoded count is red
    ;;   clojure -M:compositor guest-scanout-two ; KERNEL.ELF scanout 1 onto resource 2; C hardcoded bind is red
    ;;   clojure -M:compositor guest-broker ; KERNEL.ELF clipboard admit / picker refuse; hosted JVM WM is red
+   ;;   clojure -M:compositor guest-session ; KERNEL.ELF packed front 2 restore; hosted JVM WM is red
    ;;   clojure -M:compositor serve
    ;; smoke Exit 0 = DADS SPA, window-session-state restore, wipe red,
    ;;   QEMU -device virtio-gpu-pci with -display none.
@@ -171,6 +172,8 @@
    ;;   Hosted AIUEOS_COMPOSITOR_WM_OK is red. One scanout is leftover :one-scanout.
    ;; guest-broker Exit 0 = KERNEL.ELF serial GUEST_BROKER_OK clipboard=1 picker=0 kotoba-clip=1 kotoba-pick=0.
    ;;   Hosted AIUEOS_COMPOSITOR_WM_OK is red. Picker on clipboard-only grant is leftover :always-grant.
+   ;; guest-session Exit 0 = KERNEL.ELF serial GUEST_SESSION_OK restored-front=2 packed=2 kotoba-front=2 hit=2.
+   ;;   Hosted AIUEOS_COMPOSITOR_WM_OK is red. Always-front restore is leftover :always-front.
    ;; kami Exit 0 = SPA calls kami.webgpu init!/draw! on #kami-viewport with
    ;;   a render-ir of ≥1 instance. beginRenderPass clear-only is red.
    ;; Exit 1 refused. Exit 3 unmeasured. Not P5. Goal not complete.

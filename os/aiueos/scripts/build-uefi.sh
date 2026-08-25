@@ -106,6 +106,7 @@ kotoba_ime_object=${AIUEOS_KOTOBA_IME_OBJECT:-"$aiueos/kotoba/ime-romaji.o"}
 kotoba_wm_object=${AIUEOS_KOTOBA_WM_OBJECT:-"$aiueos/kotoba/wm-hit.o"}
 kotoba_scanout_object=${AIUEOS_KOTOBA_SCANOUT_OBJECT:-"$aiueos/kotoba/scanout-bind.o"}
 kotoba_broker_object=${AIUEOS_KOTOBA_BROKER_OBJECT:-"$aiueos/kotoba/broker-admit.o"}
+kotoba_session_object=${AIUEOS_KOTOBA_SESSION_OBJECT:-"$aiueos/kotoba/session-restore.o"}
 kotoba_net_arp_object=${AIUEOS_KOTOBA_NET_ARP_OBJECT:-"$aiueos/kotoba/net-arp-reply-valid.o"}
 kotoba_ipv4_checksum_object=${AIUEOS_KOTOBA_IPV4_CHECKSUM_OBJECT:-"$aiueos/kotoba/ipv4-checksum.o"}
 kotoba_ipv4_icmp_object=${AIUEOS_KOTOBA_IPV4_ICMP_OBJECT:-"$aiueos/kotoba/ipv4-icmp-reply-valid.o"}
@@ -341,6 +342,9 @@ python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_scanout_object
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_broker_object" \
   713bdc8e4c3d41ea9602fe9184741c15bd7a7b71d6f1b688a766a2d83714a48f \
   kotoba_aiueos_broker_admit
+python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_session_object" \
+  1983e5fa9026b2a356a4c43f6fa84630f6261ebd50c9939c4d657a326659048b \
+  kotoba_aiueos_session_restore
 python3 "$aiueos/scripts/verify-kotoba-user-elf.py" "$kotoba_user_elf" \
   1f0e5897831d0de6bbcb15eec82a6e0c4b402b436689cec051bc6de3b5c4e905
 if [ -n "${AIUEOS_EXTERNAL_KERNEL_ELF:-}" ]; then
@@ -420,7 +424,7 @@ zig ld.lld -nostdlib -static -z max-page-size=0x1000 \
   "$kotoba_extent_valid_object" "$kotoba_region_valid_object" \
   "$kotoba_pci_config_read_object" "$kotoba_pci_config_write_object" \
   "$kotoba_x25519_object"   "$kotoba_ecdsa_object" "$kotoba_ime_object" \
-  "$kotoba_wm_object" "$kotoba_scanout_object" "$kotoba_broker_object" \
+  "$kotoba_wm_object" "$kotoba_scanout_object" "$kotoba_broker_object" "$kotoba_session_object" \
   "$kotoba_mmio_map_admit_object" \
   "$kotoba_acpi_checksum_object" "$kotoba_acpi_table_valid_object" \
   "$kotoba_vtd_admit_object" \

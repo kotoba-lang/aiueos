@@ -61,6 +61,15 @@ loads `.clj` ahead of `.cljc`. Pinned SHA-256 is
 Not hosted JVM WM. Picker admitted on a clipboard-only grant is leftover
 `:always-grant`.
 
+`session-restore.o` is the guest session-restore decision (ADR-0098). It
+exports `kotoba_aiueos_session_restore`. One i64 in (packed session
+word); restored front window id or 0 out. Vectors: packed 2 returns 2;
+packed 0 returns 0; packed 3 returns 0. Compiled at the same amu pin.
+The native allow-list row `aiueos-session-restore` must live in
+`elf64.clj` because the JVM loads `.clj` ahead of `.cljc`. Pinned
+SHA-256 is `1983e5fa9026b2a356a4c43f6fa84630f6261ebd50c9939c4d657a326659048b`.
+Not hosted JVM WM. Restore that always returns 2 is leftover
+`:always-front`.
 
 Run `scripts/reproduce-kotoba-kernel-object.sh /path/to/compiler` to compile the
 checked-in source with that west-pinned compiler checkout and compare both

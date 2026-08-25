@@ -81,8 +81,9 @@ ime_tmp=${TMPDIR:-/tmp}/aiueos-kotoba-ime-romaji.$$
 wm_tmp=${TMPDIR:-/tmp}/aiueos-kotoba-wm-hit.$$
 scanout_tmp=${TMPDIR:-/tmp}/aiueos-kotoba-scanout-bind.$$
 broker_tmp=${TMPDIR:-/tmp}/aiueos-kotoba-broker-admit.$$
+session_tmp=${TMPDIR:-/tmp}/aiueos-kotoba-session-restore.$$
 user_elf_tmp=${TMPDIR:-/tmp}/aiueos-kotoba-user-smoke.$$
-trap 'rm -f "$dhcp_reply_tmp" "$dhcp_option_tmp" "$ecdsa_tmp" "$ime_tmp" "$wm_tmp" "$scanout_tmp" "$broker_tmp" "$tmp" "$journal_tmp" "$fnv_tmp" "$journal_valid_tmp" "$transaction_valid_tmp" "$transaction_route_tmp" "$mutable_valid_tmp" "$superblock_valid_tmp" "$journal_build_tmp" "$mutable_build_tmp" "$cap_valid_tmp" "$extent_valid_tmp" "$region_valid_tmp" "$syscall_range_tmp" "$copy_in_tmp" "$capability_tmp" "$capability_mutation_tmp" "$service_lifecycle_tmp" "$service_registry_tmp" "$service_registry_state_tmp" "$user_object_journal_tmp" "$user_object_journal_valid_tmp" "$user_object_journal_value_tmp" "$sha256_tmp" "$digest_equal_tmp" "$catalog_valid_tmp" "$app_lookup_tmp" "$user_elf_valid_tmp" "$user_context_tmp" "$mapping_plan_tmp" "$process_plan_tmp" "$teardown_plan_tmp" "$task_plan_tmp" "$dispatch_plan_tmp" "$exit_route_tmp" "$service_task_tmp" "$rsa2048_tmp" "$user_elf_tmp"' EXIT HUP INT TERM
+trap 'rm -f "$dhcp_reply_tmp" "$dhcp_option_tmp" "$ecdsa_tmp" "$ime_tmp" "$wm_tmp" "$scanout_tmp" "$broker_tmp" "$session_tmp" "$tmp" "$journal_tmp" "$fnv_tmp" "$journal_valid_tmp" "$transaction_valid_tmp" "$transaction_route_tmp" "$mutable_valid_tmp" "$superblock_valid_tmp" "$journal_build_tmp" "$mutable_build_tmp" "$cap_valid_tmp" "$extent_valid_tmp" "$region_valid_tmp" "$syscall_range_tmp" "$copy_in_tmp" "$capability_tmp" "$capability_mutation_tmp" "$service_lifecycle_tmp" "$service_registry_tmp" "$service_registry_state_tmp" "$user_object_journal_tmp" "$user_object_journal_valid_tmp" "$user_object_journal_value_tmp" "$sha256_tmp" "$digest_equal_tmp" "$catalog_valid_tmp" "$app_lookup_tmp" "$user_elf_valid_tmp" "$user_context_tmp" "$mapping_plan_tmp" "$process_plan_tmp" "$teardown_plan_tmp" "$task_plan_tmp" "$dispatch_plan_tmp" "$exit_route_tmp" "$service_task_tmp" "$rsa2048_tmp" "$user_elf_tmp"' EXIT HUP INT TERM
 "$compiler/bin/kotoba-compiler" compile "$aiueos/kotoba/kernel-probe.kotoba" \
   --target x86_64-aiueos-kernel-v1 --output "$tmp"
 cmp "$aiueos/kotoba/kernel-probe.o" "$tmp"
@@ -356,6 +357,15 @@ cmp "$aiueos/kotoba/broker-admit.o" "$broker_tmp"
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$broker_tmp" \
   713bdc8e4c3d41ea9602fe9184741c15bd7a7b71d6f1b688a766a2d83714a48f \
   kotoba_aiueos_broker_admit
+# Guest session restore (ADR-0098). Same 9cf3a0a pin + native allow-list
+# `aiueos-session-restore`. JVM loads elf64.clj over elf64.cljc; the row
+# must exist in the .clj file. Do not wholesale-advance amu.
+"$compiler/bin/kotoba-compiler" compile "$aiueos/kotoba/session-restore.kotoba" \
+  --target x86_64-aiueos-kernel-v1 --output "$session_tmp"
+cmp "$aiueos/kotoba/session-restore.o" "$session_tmp"
+python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$session_tmp" \
+  1983e5fa9026b2a356a4c43f6fa84630f6261ebd50c9939c4d657a326659048b \
+  kotoba_aiueos_session_restore
 # NOT REPRODUCIBLE at the pinned revision, and the only one left that is not.
 #
 # Both files are 8560 bytes and 541 of them differ. The segment size field at

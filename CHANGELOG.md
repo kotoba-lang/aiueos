@@ -5,6 +5,17 @@ All notable changes to **aiueos** are documented here. The format follows
 
 ## [Unreleased]
 
+### Guest session restore (ADR-0098)
+- KERNEL.ELF restores packed front window 2 when Kotoba
+  `kotoba_aiueos_session_restore(2) == 2`, refuses packed 0 and packed 3,
+  and `kotoba_aiueos_wm_hit` uses that front. Restore is Kotoba; C does
+  not hardcode front. Gate: `clojure -M:compositor guest-session`.
+  Named red is hosted JVM `AIUEOS_COMPOSITOR_WM_OK` and restore that
+  always returns 2 (`:always-front`). Default `gpu` / `guest-broker`
+  boots stay green without requiring `GUEST_SESSION_OK`. Leftover
+  `:native-compositor-absent` (native component runtime, P5).
+  **P5 UNVERIFIED**.
+
 ### Guest permission broker (ADR-0096)
 - KERNEL.ELF admits clipboard and refuses file-picker when Kotoba
   `kotoba_aiueos_broker_admit(1, 1) == 1` and
