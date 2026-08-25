@@ -61,6 +61,10 @@
  {:cmd ["sh" "-c" "AIUEOS_SSH_LISTEN=1 AIUEOS_TEST_NET=1 nbb os/aiueos/scripts/smoke-qemu-entropy.cljs"]
   :doc "Boot and require AIUEOS_RANDOM_OK: aiueos_random_bytes delivers two distinct, non-constant 32-byte batches from the persisted virtio-rng. The entropy source an SSH handshake draws from (ADR-0103)."}
 
+ :ecdsa-sign-oracle
+ {:cmd ["nbb" "os/aiueos/scripts/ecdsa-sign-oracle.cljs"]
+  :doc "The RFC 6979 A.2.5 known answer for ecdsa-p256-sign.kotoba: a BigInt reference proves the sign FORMULA and r||s ABI. The object itself cannot be compiled in this checkout (ADR-0104)."}
+
  ;; Install chain (install-v1.edn, root ADR adr-2608251418). The installer
  ;; .mjs files are ported, scope-frozen legacy assets from the unmerged
  ;; agent/aiueos-dospara-native-install branch; orchestration and gates are

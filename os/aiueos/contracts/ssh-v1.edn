@@ -116,14 +116,18 @@
  {:ecdsa-p256-sign
   {:object "os/aiueos/kotoba/ecdsa-p256-sign.kotoba"
    :vectors :rfc6979-p256-sha256          ; deterministic, so vectors are exact
-   :reuses ["ecdsa-p256.kotoba P-256 field + scalar mult (already linked, for verify)"
-            "hmac_sha256 (tls13.c) for the RFC 6979 nonce"
+   :oracle "os/aiueos/scripts/ecdsa-sign-oracle.cljs"  ; RFC 6979 A.2.5, formula proved
+   :reuses ["ecdsa-p256.kotoba P-256 field + scalar mult (copied, ADR-0030)"
+            "hmac_sha256 (tls13.c) for the RFC 6979 nonce, in C"
             "sha256.kotoba"]
-   :needs [:scalar-inverse-mod-n :rfc6979-nonce :point-x-coordinate-mod-n]
-   :measured-note "Cannot be vector-tested through the KIR interpreter (it
-                   uses memory); measured by native compile with the pinned amu
-                   + a QEMU known-answer boot, the way sha256/ecdsa-verify are."
-   :state :not-yet-implemented}
+   ;; SOURCE WRITTEN + ALGORITHM VERIFIED, but NOT a working brick: the amu rev
+   ;; this checkout pins emits a ~52 KB code region for the ecdsa objects, over
+   ;; the 32768-byte kernel-object limit -- which blocks even recompiling the
+   ;; shipped verify object. KIR traps on memory; wasm32 NPEs on kernel
+   ;; intrinsics. No path here compiles or runs it (ADR-0104).
+   :state :source-written-algorithm-verified-compile-blocked
+   :blocked-on "object toolchain: a code region >= 52 KB for ecdsa, or a
+                kernel-memory execution harness"}
   :rejected-ed25519-path
   {:why "Two large new objects (SHA-512 + a new Edwards curve, verify AND
          sign) versus one that reuses existing P-256 arithmetic. Recorded so a
