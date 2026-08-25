@@ -42,4 +42,5 @@ clojure -M:compositor guest-wm   # KERNEL.ELF Kotoba two-surface z-hit
 clojure -M:compositor guest-paint # KERNEL.ELF paints both rects in z-order
 clojure -M:compositor guest-input # KERNEL.ELF virtio-keyboard used-ring event
 clojure -M:compositor guest-gpu-two # KERNEL.ELF two virtio-gpu 2D resources
+clojure -M:compositor guest-scanout-two # KERNEL.ELF scanout 1 bound to resource 2
 ```

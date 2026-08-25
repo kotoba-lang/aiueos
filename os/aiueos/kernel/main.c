@@ -186,9 +186,11 @@ extern int aiueos_tls_http_sent(void);
 extern uint32_t aiueos_tls_nst_count(void);
 extern uint32_t aiueos_gpu_scanout_width(void);
 extern uint32_t aiueos_gpu_scanout_height(void);
+extern uint32_t aiueos_gpu_enabled_scanouts(void);
 extern int aiueos_gpu_2d_create_ok(void);
 extern int aiueos_gpu_2d_flush_ok(void);
 extern int aiueos_gpu_2d_two_ok(void);
+extern int aiueos_gpu_scanout_two_ok(void);
 extern int aiueos_desktop_input_from_eventq(void);
 extern int aiueos_desktop_input_eventq_empty(void);
 extern uint64_t kotoba_aiueos_ime_commit(uint64_t a, uint64_t b);
@@ -907,6 +909,19 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
     } else {
       debug_string("AIUEOS_GUEST_GPU_TWO leftover=one-resource\n");
       serial_string("AIUEOS_GUEST_GPU_TWO leftover=one-resource\r\n");
+    }
+    /* Guest scanout-two (ADR-0095). Bind count is Kotoba
+       kotoba_aiueos_scanout_bind; C does not invent n=2. Hosted JVM wm
+       does not count. Do not qemu_exit: gpu/guest-gpu-two stay green
+       without this line. */
+    if (aiueos_gpu_scanout_two_ok()) {
+      debug_string("AIUEOS_GUEST_SCANOUT_TWO_OK scanouts=2 resource-0=1 resource-1=2 kotoba-n=2\n");
+      serial_string("AIUEOS_GUEST_SCANOUT_TWO_OK scanouts=2 resource-0=1 resource-1=2 kotoba-n=2\r\n");
+    } else {
+      debug_string("AIUEOS_GUEST_SCANOUT_TWO leftover=one-scanout\n");
+      serial_string("AIUEOS_GUEST_SCANOUT_TWO leftover=one-scanout enabled=");
+      serial_decimal(aiueos_gpu_enabled_scanouts());
+      serial_string("\r\n");
     }
     debug_string("AIUEOS_BROWSER_DESKTOP_TRANSPORT_OK surface-v1 gpu-scanout-bound input-v1\n");
     serial_string("AIUEOS_BROWSER_DESKTOP_TRANSPORT_OK surface-v1 gpu-scanout-bound input-v1\r\n");

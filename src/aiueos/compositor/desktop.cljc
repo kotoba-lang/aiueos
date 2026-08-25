@@ -12,7 +12,8 @@
   `apps/session` `#desktop`. Hosted IME is ADR-0086 (romaji→kana)
   plus ADR-0088 (Space converts か→加). Hosted kami.webgpu presenter
   is ADR-0089. Guest IME is ADR-0090. Guest WM is ADR-0091
-  (KERNEL.ELF Kotoba z-hit). Native Phase 6 compositor leftover remains."
+  (KERNEL.ELF Kotoba z-hit). Guest gpu-two is ADR-0094. Guest
+  scanout-two is ADR-0095. Native Phase 6 compositor leftover remains."
   (:require [aiueos.compositor.ime :as ime]
             [clojure.string :as str]
             [kami.webgpu.ir :as ir]
