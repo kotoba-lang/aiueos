@@ -63,7 +63,15 @@
 
  :ecdsa-sign-oracle
  {:cmd ["nbb" "os/aiueos/scripts/ecdsa-sign-oracle.cljs"]
-  :doc "The RFC 6979 A.2.5 known answer for ecdsa-p256-sign.kotoba: a BigInt reference proves the sign FORMULA and r||s ABI. The object itself cannot be compiled in this checkout (ADR-0104)."}
+  :doc "The RFC 6979 A.2.5 known answer for ecdsa-p256-sign.kotoba: a BigInt reference proves the sign FORMULA and r||s ABI (ADR-0104)."}
+
+ :ecdsa-sign-object
+ {:cmd ["sh" "-c" "cd $(git rev-parse --show-toplevel 2>/dev/null || echo .) && clojure -M -e '(load-file \"os/aiueos/scripts/reproduce-ecdsa-sign-object.clj\")'"]
+  :doc "Regenerate os/aiueos/kotoba/ecdsa-p256-sign.o via the pinned toolchain patched for the ecdsa entry + 250M fuel tier (ADR-0105). Needs the amu/kotoba-native git deps."}
+
+ :ecdsa-sign-kat
+ {:cmd ["sh" "-c" "AIUEOS_ECDSA_SIGN_KAT=1 AIUEOS_TEST_NET=1 nbb os/aiueos/scripts/smoke-qemu-ecdsa-sign.cljs"]
+  :doc "Build the kernel with the sign object linked and require AIUEOS_ECDSA_SIGN_OK: the object reproduces the RFC 6979 A.2.5 signature in a QEMU boot (ADR-0105)."}
 
  ;; Install chain (install-v1.edn, root ADR adr-2608251418). The installer
  ;; .mjs files are ported, scope-frozen legacy assets from the unmerged

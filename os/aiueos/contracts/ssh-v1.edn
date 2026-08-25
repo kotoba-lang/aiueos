@@ -125,9 +125,14 @@
    ;; the 32768-byte kernel-object limit -- which blocks even recompiling the
    ;; shipped verify object. KIR traps on memory; wasm32 NPEs on kernel
    ;; intrinsics. No path here compiles or runs it (ADR-0104).
-   :state :source-written-algorithm-verified-compile-blocked
-   :blocked-on "object toolchain: a code region >= 52 KB for ecdsa, or a
-                kernel-memory execution harness"}
+   ;; RESOLVED 2026-08-26 (ADR-0105): compiles to a valid kernel .o (50864
+   ;; bytes, symbol kotoba_aiueos_ecdsa_p256_sign, 250M fuel tier), links into
+   ;; the kernel, and passes a boot known-answer test against RFC 6979 A.2.5
+   ;; (AIUEOS_ECDSA_SIGN_OK). Built via reproduce-ecdsa-sign-object.clj, which
+   ;; patches the two missing pieces (the kernel-object entry + the fuel tier)
+   ;; into the pinned kotoba-native; their long-term home is upstream.
+   :state :landed-compiled-and-boot-verified
+   :object-sha256 "a40db7f8a6726de870ffb9339def0d77b1e735cfef6be5c183b90047eaa67c5b"}
   :rejected-ed25519-path
   {:why "Two large new objects (SHA-512 + a new Edwards curve, verify AND
          sign) versus one that reuses existing P-256 arithmetic. Recorded so a
@@ -180,7 +185,8 @@
   :passive-open :landed                ; ADR-0102: accept + SSH id exchange, external client measured
   :entropy :landed                     ; ADR-0103: aiueos_random_bytes, self-tested in a boot
   :crypto-path :ecdsa-p256             ; ADR-0103: one new object, no ed25519/sha-512
-  :sshd :not-yet-implemented           ; ECDSA P-256 sign + SSH transport + userauth (existing verify)
+  :ecdsa-p256-sign :landed             ; ADR-0105: compiled, linked, boot-verified vs RFC 6979 A.2.5
+  :sshd :not-yet-implemented           ; SSH transport + host-key signature + userauth (existing verify)
   :note "Reusable on the metal today: X25519 (arbitrary scalar x point),
          SHA-256, HMAC-SHA256, HKDF, AES-128-GCM (= aes128-gcm@openssh.com),
          digest-equal. The TLS 1.3 client (tls13.c) is a TCP-passive byte

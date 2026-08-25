@@ -102,6 +102,17 @@ kotoba_service_task_object=${AIUEOS_KOTOBA_SERVICE_TASK_OBJECT:-"$aiueos/kotoba/
 kotoba_rsa2048_object=${AIUEOS_KOTOBA_RSA2048_OBJECT:-"$aiueos/kotoba/rsa2048.o"}
 kotoba_x25519_object=${AIUEOS_KOTOBA_X25519_OBJECT:-"$aiueos/kotoba/x25519.o"}
 kotoba_ecdsa_object=${AIUEOS_KOTOBA_ECDSA_OBJECT:-"$aiueos/kotoba/ecdsa-p256.o"}
+# ECDSA P-256 deterministic sign (ADR-0105). Linked ONLY when
+# AIUEOS_ECDSA_SIGN_KAT=1 -- it is ~50 KiB and the kernel is near its 1 MiB
+# ceiling, so it stays out of the default and the SSH-listener builds until the
+# sshd needs it. Regenerate the object with
+# scripts/reproduce-ecdsa-sign-object.clj (the pinned amu needs the
+# kernel-object-entries + 250M fuel-tier patch that recipe applies).
+kotoba_ecdsa_sign_object=${AIUEOS_KOTOBA_ECDSA_SIGN_OBJECT:-"$aiueos/kotoba/ecdsa-p256-sign.o"}
+ecdsa_sign_link=
+if [ "${AIUEOS_ECDSA_SIGN_KAT:-0}" = 1 ]; then
+  ecdsa_sign_link="$kotoba_ecdsa_sign_object"
+fi
 kotoba_ime_object=${AIUEOS_KOTOBA_IME_OBJECT:-"$aiueos/kotoba/ime-romaji.o"}
 kotoba_wm_object=${AIUEOS_KOTOBA_WM_OBJECT:-"$aiueos/kotoba/wm-hit.o"}
 kotoba_scanout_object=${AIUEOS_KOTOBA_SCANOUT_OBJECT:-"$aiueos/kotoba/scanout-bind.o"}
@@ -153,6 +164,12 @@ fi
 # and pci.c receive input_smoke_cflags, so one flag reaches both.
 if [ "${AIUEOS_SSH_LISTEN:-0}" = 1 ]; then
   input_smoke_cflags="$input_smoke_cflags -DAIUEOS_SSH_LISTEN=1"
+fi
+# The ECDSA sign known-answer test (main.c). Its own flag so the ~50 KiB sign
+# object is only linked here, not in the SSH-listener build near the 1 MiB
+# ceiling (ADR-0105).
+if [ "${AIUEOS_ECDSA_SIGN_KAT:-0}" = 1 ]; then
+  input_smoke_cflags="$input_smoke_cflags -DAIUEOS_ECDSA_SIGN_KAT=1"
 fi
 
 command -v zig >/dev/null 2>&1 || {
@@ -337,6 +354,11 @@ python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_x25519_object"
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_ecdsa_object" \
   5026b4346bdb02ba689fad3afe67f21e556ca028b03338764140079f0308dc29 \
   kotoba_aiueos_ecdsa_p256_sha256_verify
+if [ -n "$ecdsa_sign_link" ]; then
+  python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_ecdsa_sign_object" \
+    a40db7f8a6726de870ffb9339def0d77b1e735cfef6be5c183b90047eaa67c5b \
+    kotoba_aiueos_ecdsa_p256_sign
+fi
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_ime_object" \
   ee11f50c9dfb30d03c820bead466b2f1bf18e4e64f3a2bfda98f5a5dd5d4ca34 \
   kotoba_aiueos_ime_commit
@@ -430,7 +452,7 @@ zig ld.lld -nostdlib -static -z max-page-size=0x1000 \
   "$kotoba_mutable_build_object" "$kotoba_cap_valid_object" \
   "$kotoba_extent_valid_object" "$kotoba_region_valid_object" \
   "$kotoba_pci_config_read_object" "$kotoba_pci_config_write_object" \
-  "$kotoba_x25519_object"   "$kotoba_ecdsa_object" "$kotoba_ime_object" \
+  "$kotoba_x25519_object"   "$kotoba_ecdsa_object" $ecdsa_sign_link "$kotoba_ime_object" \
   "$kotoba_wm_object" "$kotoba_scanout_object" "$kotoba_broker_object" "$kotoba_session_object" \
   "$kotoba_mmio_map_admit_object" \
   "$kotoba_acpi_checksum_object" "$kotoba_acpi_table_valid_object" \
