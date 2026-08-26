@@ -8,6 +8,7 @@ import sys
 
 
 SHA256 = re.compile(r"^[0-9a-f]{64}$")
+GIT_SHA1 = re.compile(r"^[0-9a-f]{40}$")
 
 
 def violations(receipt):
@@ -42,11 +43,17 @@ def violations(receipt):
     require(memory.get("page_faults_after_start") is False,
             "memory.page_faults_after_start")
     require(receipt.get("amu_rt_subset_version") == 1, "amu_rt_subset_version")
+    require(bool(GIT_SHA1.fullmatch(str(receipt.get("compiler_commit", "")))),
+            "compiler_commit")
     for key in ("artifact_sha256", "measured_artifact_sha256",
-                "admission_analysis_sha256"):
+                "admission_analysis_sha256", "scheduler_policy_sha256",
+                "embedded_scheduler_policy_sha256"):
         require(bool(SHA256.fullmatch(str(receipt.get(key, "")))), key)
     require(receipt.get("artifact_sha256") == receipt.get("measured_artifact_sha256"),
             "measurement_artifact_binding")
+    require(receipt.get("scheduler_policy_sha256") ==
+            receipt.get("embedded_scheduler_policy_sha256"),
+            "scheduler_policy_binding")
     require(measured.get("physical_hardware") is True, "measurement.physical_hardware")
     for key in ("max_interrupt_latency_us", "max_dispatch_latency_us",
                 "max_timer_jitter_us", "wcet_max_us"):

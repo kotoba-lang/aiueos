@@ -32,9 +32,12 @@ def qualified():
         "memory": {"dynamic_allocation_after_start": False,
                    "page_faults_after_start": False},
         "amu_rt_subset_version": 1,
+        "compiler_commit": "b" * 40,
         "artifact_sha256": DIGEST,
         "measured_artifact_sha256": DIGEST,
         "admission_analysis_sha256": DIGEST,
+        "scheduler_policy_sha256": DIGEST,
+        "embedded_scheduler_policy_sha256": DIGEST,
         "measurement": {"physical_hardware": True,
                         "max_interrupt_latency_us": 40,
                         "max_dispatch_latency_us": 60,
@@ -72,6 +75,11 @@ class ReceiptTest(unittest.TestCase):
         receipt = qualified()
         receipt["measured_artifact_sha256"] = "b" * 64
         self.assertIn("measurement_artifact_binding", verifier.violations(receipt))
+
+    def test_scheduler_policy_must_be_the_one_embedded_in_kernel(self):
+        receipt = qualified()
+        receipt["embedded_scheduler_policy_sha256"] = "b" * 64
+        self.assertIn("scheduler_policy_binding", verifier.violations(receipt))
 
 
 if __name__ == "__main__":

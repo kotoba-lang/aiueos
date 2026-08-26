@@ -35,6 +35,25 @@ C-free UEFI-to-kernel path may satisfy this profile.
 The first profile is deliberately uniprocessor. SMP adds shared-cache,
 cross-core interrupt and locking bounds and requires a new evidence version.
 
+## QNX and VxWorks comparison
+
+| Concern | QNX Neutrino | VxWorks | AIUEOS RT v1 decision |
+|---|---|---|---|
+| Ready-thread choice | Highest-priority READY thread preempts immediately; FIFO, round-robin and sporadic policies are per thread | Priority-based preemption; FIFO, round-robin, sporadic and adaptive scheduling are available | Fixed-priority preemption; lower numeric value is more urgent |
+| Equal priority | FIFO runs until block/preemption/yield; RR adds a quantum | FIFO by default with optional round-robin | FIFO by default; RR only rotates after quantum expiry |
+| Priority inversion | Message delivery inherits the receiver's priority; synchronization protocols are available | Priority inheritance/ceiling mechanisms are available | Effective priority is mandatory scheduler input; RT v1 admits only priority ceiling |
+| Partitioning | Adaptive partitioning constrains CPU budgets | Time/space partitioning and ARINC 653 profiles are available | Single static admission domain in v1; partitions require a later evidence version |
+| Qualification | Product/certification profile dependent | Cert Edition supplies safety-certification artifacts | No qualification by name: exact-image receipt, RTA and physical measurements are mandatory |
+
+QNX references: [thread scheduling](https://qnx.com/developers/docs/7.1/com.qnx.doc.neutrino.sys_arch/topic/kernel_SchedulingAlgorithms.html),
+[message priority inheritance](https://qnx.com/developers/docs/7.1/com.qnx.doc.neutrino.sys_arch/topic/ipc_Priority_inheritance_messages.html), and
+[adaptive partitioning](https://qnx.com/developers/docs/7.1/com.qnx.doc.adaptivepartitioning.userguide/topic/aps_details_Other_schedulers_.html).
+VxWorks references: [VxWorks datasheet](https://www.windriver.com/resource/vxworks-datasheet) and
+[VxWorks 653 / ARINC 653](https://www.windriver.com/resource/safety-critical-software-development-for-integrated-modular-avionics).
+
+The QNX and VxWorks feature sets are comparisons, not compatibility claims.
+AIUEOS does not adopt their APIs or certification status.
+
 ## Why not a second OS
 
 The existing firmware transition, APIC timer, ring-3 entry, address spaces,
@@ -52,5 +71,8 @@ decision, not a scheduler implementation detail.
 
 This ADR, the native RT contract and the explicit best-effort receipt prevent
 the existing native image from being mistaken for an RTOS. They do not make
-the current kernel a qualified RTOS. The current C-free kernel has no native
-preemptive scheduler and therefore cannot produce the required RT receipt.
+the current kernel a qualified RTOS. A C-free fixed-priority dispatch policy is
+now generated as a deterministic, import-free AMU object and its receipt digest
+must match the policy embedded in the kernel. The native interrupt/context-
+switch mechanism does not yet invoke that object, so the current kernel still
+cannot produce the required RT receipt.
