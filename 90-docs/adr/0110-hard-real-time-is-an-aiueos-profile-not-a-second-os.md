@@ -35,7 +35,7 @@ C-free UEFI-to-kernel path may satisfy this profile.
 The first profile is deliberately uniprocessor. SMP adds shared-cache,
 cross-core interrupt and locking bounds and requires a new evidence version.
 
-## QNX and VxWorks comparison
+## RTOS comparison
 
 | Concern | QNX Neutrino | VxWorks | AIUEOS RT v1 decision |
 |---|---|---|---|
@@ -53,6 +53,25 @@ VxWorks references: [VxWorks datasheet](https://www.windriver.com/resource/vxwor
 
 The QNX and VxWorks feature sets are comparisons, not compatibility claims.
 AIUEOS does not adopt their APIs or certification status.
+
+| System | Scheduler and equal-priority rule | Inversion control | Scope relevant to AIUEOS |
+|---|---|---|---|
+| FreeRTOS | Configurable preemptive fixed-priority scheduling; time slicing can rotate equal-priority tasks | Mutex priority inheritance; no priority-ceiling contract in the ordinary kernel API | Excellent minimal MCU baseline, but build-time options can change scheduler semantics |
+| μITRON 4.0 | Priority precedence with explicit dispatch-disabled and non-task contexts; round-robin is constructed through rotation service calls | Mutex priority inheritance and priority ceiling are both specified | Strong model for a small static profile and precise service-call context rules |
+| Zephyr | Highest-priority READY thread; FIFO for the longest-waiting peer, optional time slicing and optional EDF tie-breaking | Mutex priority inheritance with a configurable inheritance limit | Broad configurable OS with cooperative and preemptive thread classes, SMP and several ready-queue implementations |
+| AIUEOS RT v1 | Fixed-priority preemption; FIFO by default and RR only at quantum expiry | Priority ceiling only; effective priority is scheduler authority | Static admitted task set, one core, one ready-queue ABI, no cooperative class or EDF |
+
+References: [FreeRTOS scheduling](https://www.freertos.org/Documentation/02-Kernel/02-Kernel-features/01-Tasks-and-co-routines/04-Task-scheduling),
+[FreeRTOS mutexes](https://www.freertos.org/Documentation/02-Kernel/02-Kernel-features/02-Queues-mutexes-and-semaphores/04-Mutexes),
+[μITRON 4.0 specification](https://www.tron.org/wp-content/themes/dp-magjam/pdf/specifications/en_US/WG024-S001-04.03.00_en.pdf),
+[Zephyr scheduling](https://docs.zephyrproject.org/latest/kernel/services/scheduling/index.html), and
+[Zephyr mutex priority inheritance](https://docs.zephyrproject.org/latest/kernel/services/synchronization/mutexes.html).
+
+This comparison fixes additional v1 choices. The admitted task set and base
+priorities are immutable after start. Deadlines remain admission and overrun
+evidence, not an EDF ordering key. Cooperative tasks and build-time changes to
+preemption semantics are refused by the RT receipt. This keeps the measured
+scheduler identical to the scheduler described by the release contract.
 
 ## Why not a second OS
 

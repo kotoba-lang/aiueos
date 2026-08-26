@@ -27,6 +27,13 @@ def qualified():
         "imports": [],
         "dynamic_dependencies": [],
         "scheduler": {"policy": "fixed-priority-preemptive", "cores": 1,
+                      "priority_order": "lower-number-is-more-urgent",
+                      "same_priority_default": "fifo",
+                      "round_robin_trigger": "quantum-expiry-only",
+                      "task_set": "static-after-admission",
+                      "base_priority_change_after_start": False,
+                      "cooperative_task_class": False,
+                      "deadline_ordering": False,
                       "priority_inversion": "priority-ceiling",
                       "admission": "response-time-analysis"},
         "memory": {"dynamic_allocation_after_start": False,
@@ -80,6 +87,13 @@ class ReceiptTest(unittest.TestCase):
         receipt = qualified()
         receipt["embedded_scheduler_policy_sha256"] = "b" * 64
         self.assertIn("scheduler_policy_binding", verifier.violations(receipt))
+
+    def test_optional_general_purpose_scheduler_modes_are_refused(self):
+        for key in ("base_priority_change_after_start",
+                    "cooperative_task_class", "deadline_ordering"):
+            receipt = qualified()
+            receipt["scheduler"][key] = True
+            self.assertIn("scheduler." + key, verifier.violations(receipt))
 
 
 if __name__ == "__main__":

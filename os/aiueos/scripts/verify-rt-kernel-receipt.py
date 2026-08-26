@@ -34,6 +34,20 @@ def violations(receipt):
         require(receipt.get(key) == [], key)
     require(scheduler.get("policy") == "fixed-priority-preemptive", "scheduler.policy")
     require(scheduler.get("cores") == 1, "scheduler.cores")
+    require(scheduler.get("priority_order") == "lower-number-is-more-urgent",
+            "scheduler.priority_order")
+    require(scheduler.get("same_priority_default") == "fifo",
+            "scheduler.same_priority_default")
+    require(scheduler.get("round_robin_trigger") == "quantum-expiry-only",
+            "scheduler.round_robin_trigger")
+    require(scheduler.get("task_set") == "static-after-admission",
+            "scheduler.task_set")
+    require(scheduler.get("base_priority_change_after_start") is False,
+            "scheduler.base_priority_change_after_start")
+    require(scheduler.get("cooperative_task_class") is False,
+            "scheduler.cooperative_task_class")
+    require(scheduler.get("deadline_ordering") is False,
+            "scheduler.deadline_ordering")
     require(scheduler.get("priority_inversion") == "priority-ceiling",
             "scheduler.priority_inversion")
     require(scheduler.get("admission") == "response-time-analysis",

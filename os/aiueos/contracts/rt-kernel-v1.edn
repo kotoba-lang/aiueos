@@ -23,6 +23,12 @@
                           :enqueue-sequence-offset 6}
              :preemption-points [:task-release :task-wakeup :timer-interrupt]
              :same-priority [:fifo :round-robin]
+             :same-priority-default :fifo
+             :round-robin-trigger :quantum-expiry-only
+             :task-set :static-after-admission
+             :base-priority-change-after-start false
+             :cooperative-task-class false
+             :deadline-ordering false
              :policy-object "kotoba/rt-scheduler-dispatch-plan.kotoba"
              :native-export "kotoba_aiueos_scheduler_dispatch_plan"
              :priority-inversion :priority-ceiling
