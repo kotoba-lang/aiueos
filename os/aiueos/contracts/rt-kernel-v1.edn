@@ -48,6 +48,12 @@
                     :measured-artifact-digest :same-as-kernel
                     :admission-analysis-digest :sha256
                     :physical-hardware true
+                    :monotonic-clock true
+                    :timer-frequency-hz :positive
+                    :measurement-sample-count-minimum 10000
+                    :hardware-id-digest :sha256
+                    :timer-calibration-digest :sha256
+                    :measurement-run-digest :sha256
                     :max-interrupt-latency-us :positive
                     :max-dispatch-latency-us :positive
                     :max-timer-jitter-us :positive
@@ -59,7 +65,8 @@
                                 :apic-interrupt-periodic-release-smoke
                                 :native-plc-transaction-provider-smoke
                                 :native-fixed-priority-context-switch-smoke
-                                :same-task-two-period-replenishment-smoke]
+                                :same-task-100-period-replenishment-smoke
+                                :signed-plc-elf-admission-smoke]
            :blockers [:general-static-rt-task-set-integration
                       :calibrated-monotonic-timer
                       :bounded-native-driver-set

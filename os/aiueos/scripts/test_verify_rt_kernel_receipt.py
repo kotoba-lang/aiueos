@@ -46,6 +46,12 @@ def qualified():
         "scheduler_policy_sha256": DIGEST,
         "embedded_scheduler_policy_sha256": DIGEST,
         "measurement": {"physical_hardware": True,
+                        "monotonic_clock": True,
+                        "timer_frequency_hz": 100000000,
+                        "sample_count": 10000,
+                        "hardware_id_sha256": DIGEST,
+                        "timer_calibration_sha256": DIGEST,
+                        "measurement_run_sha256": DIGEST,
                         "max_interrupt_latency_us": 40,
                         "max_dispatch_latency_us": 60,
                         "max_timer_jitter_us": 8,
@@ -94,6 +100,14 @@ class ReceiptTest(unittest.TestCase):
             receipt = qualified()
             receipt["scheduler"][key] = True
             self.assertIn("scheduler." + key, verifier.violations(receipt))
+
+    def test_calibrated_physical_measurement_provenance_is_required(self):
+        receipt = qualified()
+        receipt["measurement"]["sample_count"] = 9999
+        receipt["measurement"]["timer_calibration_sha256"] = None
+        self.assertIn("measurement.sample_count", verifier.violations(receipt))
+        self.assertIn("measurement.timer_calibration_sha256",
+                      verifier.violations(receipt))
 
 
 if __name__ == "__main__":

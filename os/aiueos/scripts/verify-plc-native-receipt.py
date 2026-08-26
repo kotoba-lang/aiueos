@@ -34,8 +34,11 @@ def violations(receipt):
     for key in ("st_source_sha256", "generated_kotoba_sha256",
                 "native_elf_sha256", "rt_kernel_artifact_sha256",
                 "rt_kernel_receipt_sha256", "io_map_sha256",
-                "admission_analysis_sha256"):
+                "admission_analysis_sha256", "signature_sha256",
+                "signer_public_key_sha256"):
         require(bool(SHA256.fullmatch(str(receipt.get(key, "")))), key)
+    require(receipt.get("signature_scheme") == "ecdsa-p256-sha256",
+            "signature_scheme")
     require(bool(GIT_SHA1.fullmatch(str(receipt.get("compiler_commit", "")))),
             "compiler_commit")
     priority = timing.get("priority")
@@ -46,6 +49,16 @@ def violations(receipt):
     require(isinstance(priority, int) and 1 <= priority <= 255, "timing.priority")
     require(all(isinstance(value, int) for value in (cycle, deadline, budget, wcet))
             and 0 < wcet <= budget <= deadline <= cycle, "timing.envelope")
+    response = timing.get("response_time_us")
+    blocking = timing.get("blocking_us")
+    interference = timing.get("interference_us")
+    require(isinstance(wcet, (int, float)) and
+            all(isinstance(value, (int, float)) for value in
+                (response, blocking, interference)) and
+            0 <= blocking and 0 <= interference and wcet + blocking + interference <= response <= deadline,
+            "timing.response_time")
+    require(isinstance(timing.get("sample_count"), int) and
+            timing["sample_count"] >= 10000, "timing.sample_count")
     require(receipt.get("deployment_ready") is True, "deployment_ready")
     return failures
 

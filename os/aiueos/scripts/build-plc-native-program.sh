@@ -33,10 +33,14 @@ commit=$(git -C "$compiler" rev-parse HEAD)
 set -- "$source" "$generated" "$elf" "$commit" "$receipt"
 if [ -n "${AIUEOS_PLC_RT_KERNEL_RECEIPT:-}" ] || \
    [ -n "${AIUEOS_PLC_IO_MAP:-}" ] || \
-   [ -n "${AIUEOS_PLC_ADMISSION:-}" ]; then
+   [ -n "${AIUEOS_PLC_ADMISSION:-}" ] || \
+   [ -n "${AIUEOS_PLC_SIGNATURE:-}" ] || \
+   [ -n "${AIUEOS_PLC_PUBLIC_KEY:-}" ]; then
   set -- "$@" --rt-kernel-receipt "${AIUEOS_PLC_RT_KERNEL_RECEIPT:?}" \
     --io-map "${AIUEOS_PLC_IO_MAP:?}" \
-    --admission "${AIUEOS_PLC_ADMISSION:?}"
+    --admission "${AIUEOS_PLC_ADMISSION:?}" \
+    --signature "${AIUEOS_PLC_SIGNATURE:?}" \
+    --public-key "${AIUEOS_PLC_PUBLIC_KEY:?}"
 fi
 python3 "$aiueos/scripts/make-plc-native-receipt.py" "$@"
 

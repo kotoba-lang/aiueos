@@ -183,6 +183,8 @@ plc_runtime_link=
 if [ "${AIUEOS_PLC_RT_SMOKE:-0}" = 1 ]; then
   : "${AIUEOS_PLC_ELF:?AIUEOS_PLC_ELF is required for the RT smoke}"
   : "${AIUEOS_PLC_RECEIPT:?AIUEOS_PLC_RECEIPT is required for the RT smoke}"
+  : "${AIUEOS_PLC_SIGNATURE:?AIUEOS_PLC_SIGNATURE is required for the RT smoke}"
+  : "${AIUEOS_PLC_PUBLIC_KEY:?AIUEOS_PLC_PUBLIC_KEY is required for the RT smoke}"
   input_smoke_cflags="$input_smoke_cflags -DAIUEOS_PLC_RT_SMOKE=1"
   plc_runtime_link="$kernel_plc_runtime_object $kernel_plc_embedded_object $kotoba_rt_dispatch_plan_object"
   kotoba_user_elf_valid_object="$aiueos/kotoba/plc-user-elf-valid.o"
@@ -467,7 +469,8 @@ if [ -n "$plc_runtime_link" ]; then
     -ffreestanding -fno-stack-protector -mno-red-zone \
     -c -o "$kernel_plc_runtime_object" "$aiueos/kernel/plc_runtime.c"
   python3 "$aiueos/scripts/make-plc-embedded-assembly.py" \
-    "$AIUEOS_PLC_ELF" "$AIUEOS_PLC_RECEIPT" "$out/plc-embedded.S"
+    "$AIUEOS_PLC_ELF" "$AIUEOS_PLC_RECEIPT" \
+    "$AIUEOS_PLC_SIGNATURE" "$AIUEOS_PLC_PUBLIC_KEY" "$out/plc-embedded.S"
   zig cc -target x86_64-freestanding-none -c \
     -o "$kernel_plc_embedded_object" "$out/plc-embedded.S"
 fi

@@ -169,8 +169,9 @@ static uint64_t *rt_on_timer(uint64_t *interrupted_stack) {
   return tasks[current_task].saved_stack;
 }
 
-int aiueos_plc_rt_scheduler_evidence_ready(void) {
-  return rt_preemption_count>=2 && rt_budget_return_count>=2 && current_task==0;
+int aiueos_plc_rt_scheduler_evidence_ready(unsigned scans) {
+  return scans && scans<=255 && rt_preemption_count>=scans &&
+    rt_budget_return_count>=scans && current_task==0;
 }
 #endif
 

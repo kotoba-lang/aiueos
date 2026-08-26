@@ -39,6 +39,10 @@ int aiueos_load_object_store_kotoba_process(unsigned process,const uint8_t app_i
 #ifdef AIUEOS_PLC_RT_SMOKE
 extern const uint8_t aiueos_plc_elf_start[],aiueos_plc_elf_end[];
 extern const uint8_t aiueos_plc_elf_sha256[32],aiueos_plc_receipt_sha256[32];
+extern const uint8_t aiueos_plc_signature[64],aiueos_plc_public_key[64];
+extern uint64_t kotoba_aiueos_ecdsa_p256_sha256_verify(
+  const uint8_t *,const uint8_t *,const uint8_t *,uint8_t *,uint64_t);
+static uint8_t plc_signature_workspace[2048];
 volatile uint64_t aiueos_plc_loader_stage;
 int aiueos_load_embedded_plc_process(unsigned process,uint64_t *entry,uint64_t **result) {
   uint8_t actual[32],workspace[512],nonzero=0;
@@ -49,16 +53,24 @@ int aiueos_load_embedded_plc_process(unsigned process,uint64_t *entry,uint64_t *
   aiueos_plc_loader_stage=2;
   if (!kotoba_aiueos_digest_equal(actual,aiueos_plc_elf_sha256,32)) return 0;
   aiueos_plc_loader_stage=3;
+  uint8_t invalid_signature[64];
+  for (unsigned i=0;i<64;i++) invalid_signature[i]=aiueos_plc_signature[i];
+  invalid_signature[0]^=1;
+  if (kotoba_aiueos_ecdsa_p256_sha256_verify(invalid_signature,actual,
+      aiueos_plc_public_key,plc_signature_workspace,sizeof(plc_signature_workspace))) return 0;
+  if (!kotoba_aiueos_ecdsa_p256_sha256_verify(aiueos_plc_signature,actual,
+      aiueos_plc_public_key,plc_signature_workspace,sizeof(plc_signature_workspace))) return 0;
+  aiueos_plc_loader_stage=4;
   for (unsigned i=0;i<32;i++) nonzero|=aiueos_plc_receipt_sha256[i];
   if (!nonzero) return 0;
-  aiueos_plc_loader_stage=4;
-  if (!kotoba_aiueos_user_elf_valid(aiueos_plc_elf_start,size)) return 0;
   aiueos_plc_loader_stage=5;
+  if (!kotoba_aiueos_user_elf_valid(aiueos_plc_elf_start,size)) return 0;
+  aiueos_plc_loader_stage=6;
   uint64_t text_size=load_u32(aiueos_plc_elf_start+96);
   if (!aiueos_address_space_map_user_image(process,
       aiueos_plc_elf_start+ELF_TEXT_OFFSET,text_size,
       aiueos_plc_elf_start+ELF_DATA_OFFSET,88)) return 0;
-  aiueos_plc_loader_stage=6;
+  aiueos_plc_loader_stage=7;
   *entry=ELF_TEXT_VA;
   *result=aiueos_address_space_user_data_backing(process);
   return *result!=0;

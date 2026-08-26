@@ -35,8 +35,13 @@ def qualified():
         "rt_kernel_artifact_sha256": DIGEST,
         "io_map_sha256": DIGEST,
         "admission_analysis_sha256": DIGEST,
+        "signature_scheme": "ecdsa-p256-sha256",
+        "signature_sha256": DIGEST,
+        "signer_public_key_sha256": DIGEST,
         "timing": {"priority": 5, "cycle_us": 10000,
-                   "deadline_us": 8000, "budget_us": 1000, "wcet_us": 700},
+                   "deadline_us": 8000, "budget_us": 1000, "wcet_us": 700,
+                   "blocking_us": 50, "interference_us": 100,
+                   "response_time_us": 850, "sample_count": 10000},
         "deployment_ready": True,
     }
 
@@ -81,6 +86,15 @@ class PlcReceiptTest(unittest.TestCase):
         receipt = qualified()
         receipt["timing"]["deadline_us"] = 10001
         self.assertIn("timing.envelope", verifier.violations(receipt))
+
+    def test_signature_and_response_time_binding_are_required(self):
+        receipt = qualified()
+        receipt["signature_scheme"] = None
+        receipt["signature_sha256"] = None
+        receipt["timing"]["response_time_us"] = 800
+        self.assertIn("signature_scheme", verifier.violations(receipt))
+        self.assertIn("signature_sha256", verifier.violations(receipt))
+        self.assertIn("timing.response_time", verifier.violations(receipt))
 
 
 if __name__ == "__main__":

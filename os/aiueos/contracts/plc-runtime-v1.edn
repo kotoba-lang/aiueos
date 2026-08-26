@@ -68,6 +68,7 @@
  :receipt {:format :aiueos-plc-native-receipt/v1
            :binds [:st-source-sha256 :generated-kotoba-sha256
                    :native-elf-sha256 :compiler-commit
+                   :signature-sha256 :signer-public-key-sha256
                    :rt-kernel-receipt-sha256 :rt-kernel-artifact-sha256
                    :io-map-sha256
                    :admission-analysis-sha256]}
@@ -79,15 +80,20 @@
                          :apic-tick-periodic-release-smoke
                          :immutable-input-image-smoke
                          :atomic-output-safe-state-smoke
-                         :receipt-bound-cpl3-elf-two-periodic-scans
+                         :p256-signed-cpl3-elf-admission-smoke
+                         :signature-tamper-rejection-smoke
+                         :receipt-signature-binding-gate
+                         :receipt-bound-cpl3-elf-100-periodic-scans
                          :same-task-periodic-rearm-smoke
+                         :physical-io-qualification-receipt-gate
+                         :response-time-and-wcet-evidence-gate
                          :fixed-priority-preemption-context-switch-smoke
                          :transactional-scan-contract
                          :fail-closed-deployment-receipt]
            :deployment-ready false
            :blockers [:qualified-rt-kernel
-                      :production-signed-plc-elf-admission
-                      :long-duration-periodic-stability
+                      :production-signing-authority-and-signed-release
+                      :long-duration-periodic-soak
                       :bounded-physical-io-driver
                       :io-map
                       :wcet-and-response-time-analysis

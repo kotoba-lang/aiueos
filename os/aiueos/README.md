@@ -540,19 +540,24 @@ binding. See `contracts/plc-runtime-v1.edn` and ADR-0111. A generated program is
 not evidence that its signed ELF is already a periodic RT task or that a
 physical I/O driver is present.
 
-The RT-only QEMU gate embeds the receipt-bound generated PLC ELF, admits its
-exact capability context with a Kotoba policy, runs the same task twice at
-CPL3 under the native fixed-priority interrupt switch path, and proves absolute
-APIC-tick release/replenishment, immutable input snapshotting, watchdog-gated
-atomic commit and safe-state failures:
+The RT-only QEMU gate signs the generated PLC ELF with an isolated test key,
+embeds only its raw P-256 signature and public key, and verifies it with the
+bounded Kotoba ECDSA object before mapping. It first proves a one-bit signature
+mutation is refused, then admits the exact capability context and runs the same
+task 100 times at CPL3 under the native fixed-priority interrupt switch path.
+Every scan proves absolute APIC-tick release/replenishment, its changing input
+and expected output, immutable input snapshotting, watchdog-gated atomic commit
+and safe-state failures:
 
 ```sh
 AIUEOS_PLC_RT_SMOKE=1 os/aiueos/scripts/smoke-qemu-uefi.sh
 ```
 
-This is a two-scan logical-tick test, not a calibrated 10 ms, long-duration
-periodic stability, signed deployment or WCET claim. See ADR-0112 for the
-remaining boundary.
+This is a 100-scan logical-tick stress test with a test signing authority, not a
+calibrated 10 ms, long-duration soak, production-signed release or WCET claim.
+Deployment receipt generation separately verifies the supplied ELF signature
+and refuses missing physical-I/O qualification, measured RTA/WCET evidence or
+calibrated RT-kernel provenance. See ADR-0112 for the remaining boundary.
 
 ## USB removable-media boot
 

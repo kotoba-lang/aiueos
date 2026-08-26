@@ -258,6 +258,7 @@ static int process_create_kotoba_elf(const uint8_t app_id[16],uint16_t domain,ui
   return process_create_in_space((void (*)(uint64_t))(uintptr_t)entry,domain,address_space);
 }
 #ifdef AIUEOS_PLC_RT_SMOKE
+#define AIUEOS_PLC_RT_STRESS_SCANS 100U
 volatile uint64_t aiueos_plc_process_stage;
 int aiueos_process_enter_plc_rt(void) {
   aiueos_plc_process_stage=1;
@@ -274,34 +275,32 @@ int aiueos_process_enter_plc_rt(void) {
   extern int aiueos_plc_rt_begin_scan(int32_t enable,int32_t sensor);
   extern int aiueos_plc_rt_result_ready(int32_t output0,int32_t output1);
   extern int aiueos_plc_rt_failed(void);
-  extern int aiueos_plc_rt_scheduler_evidence_ready(void);
-  aiueos_plc_process_stage=4;
-  if (!aiueos_plc_rt_begin_scan(1,41)) return 0;
-  aiueos_plc_process_stage=5;
-  int descriptor=process_create_in_space(
-    (void (*)(uint64_t))(uintptr_t)entry,4,address_space);
-  if (descriptor<0)
-    return 0;
-  *result=0;
-  __asm__ volatile("sti");
-  while (!*result && !aiueos_plc_rt_failed()) __asm__ volatile("hlt");
-  __asm__ volatile("cli");
-  aiueos_plc_process_stage=6;
-  if (*result!=1 || !aiueos_plc_rt_result_ready(1,42)) return 0;
-  struct process_descriptor *p=&processes[descriptor];
-  aiueos_plc_process_stage=7;
-  if (!aiueos_reset_embedded_plc_context(result,runtime_handle)) return 0;
-  aiueos_plc_process_stage=8;
-  if (!aiueos_plc_rt_begin_scan(0,99)) return 0;
-  aiueos_plc_process_stage=9;
-  if (!aiueos_scheduler_rearm_plc_task(p->task_slot,
-      (void (*)(uint64_t))(uintptr_t)p->entry,p->argument,p->user_stack)) return 0;
-  __asm__ volatile("sti");
-  while (!*result && !aiueos_plc_rt_failed()) __asm__ volatile("hlt");
-  __asm__ volatile("cli");
-  aiueos_plc_process_stage=10;
-  return *result==1 && aiueos_plc_rt_result_ready(0,100) &&
-    aiueos_plc_rt_scheduler_evidence_ready();
+  extern int aiueos_plc_rt_scheduler_evidence_ready(unsigned scans);
+  int descriptor=-1;
+  struct process_descriptor *p=0;
+  for (unsigned scan=0;scan<AIUEOS_PLC_RT_STRESS_SCANS;scan++) {
+    int32_t enable=(scan&1U)?0:1;
+    int32_t sensor=(int32_t)(41U+scan);
+    int32_t command=sensor+1;
+    int32_t motor_on=enable && command<100;
+    aiueos_plc_process_stage=4U+scan;
+    if (scan && !aiueos_reset_embedded_plc_context(result,runtime_handle)) return 0;
+    if (!aiueos_plc_rt_begin_scan(enable,sensor)) return 0;
+    if (!scan) {
+      descriptor=process_create_in_space(
+        (void (*)(uint64_t))(uintptr_t)entry,4,address_space);
+      if (descriptor<0) return 0;
+      p=&processes[descriptor];
+      *result=0;
+    } else if (!aiueos_scheduler_rearm_plc_task(p->task_slot,
+        (void (*)(uint64_t))(uintptr_t)p->entry,p->argument,p->user_stack)) return 0;
+    __asm__ volatile("sti");
+    while (!*result && !aiueos_plc_rt_failed()) __asm__ volatile("hlt");
+    __asm__ volatile("cli");
+    if (*result!=1 || !aiueos_plc_rt_result_ready(motor_on,command)) return 0;
+  }
+  aiueos_plc_process_stage=104;
+  return aiueos_plc_rt_scheduler_evidence_ready(AIUEOS_PLC_RT_STRESS_SCANS);
 }
 #endif
 

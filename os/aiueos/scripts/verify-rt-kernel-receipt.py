@@ -69,6 +69,15 @@ def violations(receipt):
             receipt.get("embedded_scheduler_policy_sha256"),
             "scheduler_policy_binding")
     require(measured.get("physical_hardware") is True, "measurement.physical_hardware")
+    require(measured.get("monotonic_clock") is True, "measurement.monotonic_clock")
+    require(isinstance(measured.get("timer_frequency_hz"), (int, float)) and
+            measured.get("timer_frequency_hz", 0) > 0, "measurement.timer_frequency_hz")
+    require(isinstance(measured.get("sample_count"), int) and
+            measured.get("sample_count", 0) >= 10000, "measurement.sample_count")
+    for key in ("hardware_id_sha256", "timer_calibration_sha256",
+                "measurement_run_sha256"):
+        require(bool(SHA256.fullmatch(str(measured.get(key, "")))),
+                "measurement." + key)
     for key in ("max_interrupt_latency_us", "max_dispatch_latency_us",
                 "max_timer_jitter_us", "wcet_max_us"):
         value = measured.get(key)

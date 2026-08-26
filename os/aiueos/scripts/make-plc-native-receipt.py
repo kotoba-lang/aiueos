@@ -13,10 +13,64 @@ import sys
 
 SHA256 = re.compile(r"^[0-9a-f]{64}$")
 GIT_SHA1 = re.compile(r"^[0-9a-f]{40}$")
+P256_P = 0xFFFFFFFF00000001000000000000000000000000FFFFFFFFFFFFFFFFFFFFFFFF
+P256_A = P256_P - 3
+P256_B = 0x5AC635D8AA3A93E7B3EBBD55769886BC651D06B0CC53B0F63BCE3C3E27D2604B
+P256_N = 0xFFFFFFFF00000000FFFFFFFFFFFFFFFFBCE6FAADA7179E84F3B9CAC2FC632551
+P256_G = (
+    0x6B17D1F2E12C4247F8BCE6E563A440F277037D812DEB33A0F4A13945D898C296,
+    0x4FE342E2FE1A7F9B8EE7EB4A7C0F9E162BCE33576B315ECECBB6406837BF51F5,
+)
 
 
 def digest(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def p256_add(left, right):
+    if left is None:
+        return right
+    if right is None:
+        return left
+    x1, y1 = left
+    x2, y2 = right
+    if x1 == x2 and (y1 + y2) % P256_P == 0:
+        return None
+    if left == right:
+        slope = ((3 * x1 * x1 + P256_A) * pow(2 * y1, -1, P256_P)) % P256_P
+    else:
+        slope = ((y2 - y1) * pow(x2 - x1, -1, P256_P)) % P256_P
+    x3 = (slope * slope - x1 - x2) % P256_P
+    return x3, (slope * (x1 - x3) - y1) % P256_P
+
+
+def p256_multiply(scalar, point):
+    result = None
+    while scalar:
+        if scalar & 1:
+            result = p256_add(result, point)
+        point = p256_add(point, point)
+        scalar >>= 1
+    return result
+
+
+def ecdsa_p256_sha256_valid(signature, public_key, digest_bytes):
+    if len(signature) != 64 or len(public_key) != 64 or len(digest_bytes) != 32:
+        return False
+    r = int.from_bytes(signature[:32], "big")
+    s = int.from_bytes(signature[32:], "big")
+    x = int.from_bytes(public_key[:32], "big")
+    y = int.from_bytes(public_key[32:], "big")
+    if not (0 < r < P256_N and 0 < s < P256_N and 0 <= x < P256_P and 0 <= y < P256_P):
+        return False
+    public = (x, y)
+    if (y * y - (x * x * x + P256_A * x + P256_B)) % P256_P:
+        return False
+    inverse = pow(s, -1, P256_N)
+    z = int.from_bytes(digest_bytes, "big")
+    candidate = p256_add(p256_multiply((z * inverse) % P256_N, P256_G),
+                         p256_multiply((r * inverse) % P256_N, public))
+    return candidate is not None and candidate[0] % P256_N == r
 
 
 def validate_elf(path):
@@ -69,7 +123,7 @@ def load_frontend(path):
     return load_module("compile_plc_st", path)
 
 
-def validate_io_map(document, declared_inputs, declared_outputs):
+def validate_io_map(document, declared_inputs, declared_outputs, qualified=False):
     if document.get("format") != "aiueos-plc-io-map/v1":
         raise ValueError("invalid PLC I/O map format")
     inputs = document.get("inputs")
@@ -107,9 +161,20 @@ def validate_io_map(document, declared_inputs, declared_outputs):
         if (not isinstance(declared_outputs, int) and
                 declared_outputs[index].type == "BOOL" and safe not in (0, 1)):
             raise ValueError("BOOL safe value must be zero or one")
+    if qualified:
+        driver = document.get("qualified_driver", {})
+        for key in ("artifact_sha256", "qualification_receipt_sha256"):
+            if not SHA256.fullmatch(str(driver.get(key, ""))):
+                raise ValueError("qualified physical I/O driver digest is required")
+        if driver.get("physical_hardware") is not True or \
+                driver.get("safe_state_write_verified") is not True:
+            raise ValueError("physical I/O safe-state qualification is required")
+        for key in ("max_input_latch_us", "max_output_commit_us"):
+            if not isinstance(driver.get(key), (int, float)) or driver[key] <= 0:
+                raise ValueError("bounded physical I/O latency is required")
 
 
-def validate_admission(document):
+def validate_admission(document, qualified=False):
     if document.get("format") != "aiueos-plc-admission/v1":
         raise ValueError("invalid PLC admission format")
     priority = document.get("priority")
@@ -123,8 +188,28 @@ def validate_admission(document):
         raise ValueError("PLC timing values must be integer microseconds")
     if not 0 < wcet <= budget <= deadline <= cycle:
         raise ValueError("PLC timing must satisfy WCET <= budget <= deadline <= cycle")
-    return {"priority": priority, "cycle_us": cycle, "deadline_us": deadline,
-            "budget_us": budget, "wcet_us": wcet}
+    result = {"priority": priority, "cycle_us": cycle, "deadline_us": deadline,
+              "budget_us": budget, "wcet_us": wcet}
+    if qualified:
+        response = document.get("response_time_us")
+        blocking = document.get("blocking_us")
+        interference = document.get("interference_us")
+        if not all(isinstance(value, (int, float)) and value >= 0
+                   for value in (response, blocking, interference)) or \
+                response <= 0 or wcet + blocking + interference > response or \
+                response > deadline:
+            raise ValueError("qualified response-time analysis is required")
+        for key in ("task_set_sha256", "analysis_tool_sha256", "measurement_run_sha256"):
+            if not SHA256.fullmatch(str(document.get(key, ""))):
+                raise ValueError("response-time analysis evidence digest is required")
+        if document.get("physical_hardware") is not True or \
+                not isinstance(document.get("sample_count"), int) or \
+                document["sample_count"] < 10000:
+            raise ValueError("physical WCET measurement evidence is required")
+        result.update({"response_time_us": response, "blocking_us": blocking,
+                       "interference_us": interference,
+                       "sample_count": document["sample_count"]})
+    return result
 
 
 def main(argv=None):
@@ -137,6 +222,8 @@ def main(argv=None):
     parser.add_argument("--rt-kernel-receipt", type=pathlib.Path)
     parser.add_argument("--io-map", type=pathlib.Path)
     parser.add_argument("--admission", type=pathlib.Path)
+    parser.add_argument("--signature", type=pathlib.Path)
+    parser.add_argument("--public-key", type=pathlib.Path)
     args = parser.parse_args(argv)
 
     if not GIT_SHA1.fullmatch(args.compiler_commit):
@@ -153,9 +240,11 @@ def main(argv=None):
         raise SystemExit("error: PLC program capability surface changed")
     validate_elf(args.elf)
 
-    binding_paths = (args.rt_kernel_receipt, args.io_map, args.admission)
+    binding_paths = (args.rt_kernel_receipt, args.io_map, args.admission,
+                     args.signature, args.public_key)
     if any(binding_paths) and not all(binding_paths):
-        raise SystemExit("error: deployment binding requires RT receipt, I/O map and admission")
+        raise SystemExit("error: deployment binding requires RT receipt, I/O map, "
+                         "admission, signature and public key")
     deployment_ready = bool(all(binding_paths))
     rt_receipt_sha = rt_kernel_sha = io_map_sha = admission_sha = None
     timing = None
@@ -175,10 +264,15 @@ def main(argv=None):
         io_map = json.loads(args.io_map.read_text(encoding="utf-8"))
         admission = json.loads(args.admission.read_text(encoding="utf-8"))
         try:
-            validate_io_map(io_map, inputs, outputs)
-            timing = validate_admission(admission)
+            validate_io_map(io_map, inputs, outputs, qualified=True)
+            timing = validate_admission(admission, qualified=True)
         except ValueError as error:
             raise SystemExit("error: " + str(error)) from error
+        signature = args.signature.read_bytes()
+        public_key = args.public_key.read_bytes()
+        elf_digest = bytes.fromhex(digest(args.elf))
+        if not ecdsa_p256_sha256_valid(signature, public_key, elf_digest):
+            raise SystemExit("error: PLC ELF signature is invalid")
         io_map_sha = digest(args.io_map)
         admission_sha = digest(args.admission)
 
@@ -201,6 +295,9 @@ def main(argv=None):
         "st_source_sha256": digest(args.source),
         "generated_kotoba_sha256": digest(args.generated),
         "native_elf_sha256": digest(args.elf),
+        "signature_scheme": "ecdsa-p256-sha256" if deployment_ready else None,
+        "signature_sha256": digest(args.signature) if deployment_ready else None,
+        "signer_public_key_sha256": digest(args.public_key) if deployment_ready else None,
         "compiler_commit": args.compiler_commit,
         "rt_kernel_receipt_sha256": rt_receipt_sha,
         "rt_kernel_artifact_sha256": rt_kernel_sha,
