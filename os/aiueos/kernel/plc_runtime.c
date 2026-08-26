@@ -32,6 +32,7 @@ struct aiueos_plc_runtime {
 };
 
 static struct aiueos_plc_runtime plc;
+static uint8_t plc_initialized;
 extern volatile uint64_t aiueos_apic_timer_ticks;
 
 static void plc_safe(enum aiueos_plc_fault fault) {
@@ -124,19 +125,23 @@ static int plc_failure_vectors(void) {
     plc.physical_output[0]==0 && plc.physical_output[1]==0;
 }
 
-int aiueos_plc_rt_begin(void) {
-  if (!plc_failure_vectors()) return 0;
-  plc_reset();
-  plc.next_release=((aiueos_apic_timer_ticks/AIUEOS_PLC_CYCLE_TICKS)+1U)*
-    AIUEOS_PLC_CYCLE_TICKS;
+int aiueos_plc_rt_begin_scan(int32_t enable,int32_t sensor) {
+  if (!plc_initialized) {
+    if (!plc_failure_vectors()) return 0;
+    plc_reset();
+    plc.next_release=((aiueos_apic_timer_ticks/AIUEOS_PLC_CYCLE_TICKS)+1U)*
+      AIUEOS_PLC_CYCLE_TICKS;
+    plc_initialized=1;
+  }
+  if (plc.active || plc.fault_latched) return 0;
   while (aiueos_apic_timer_ticks<plc.next_release) __asm__ volatile("sti; hlt; cli");
-  uint64_t release=aiueos_apic_timer_ticks;
-  plc.next_release=release;
-  plc.physical_input[0]=1; plc.physical_input[1]=41;
+  uint64_t release=plc.next_release;
+  if (aiueos_apic_timer_ticks!=release) return 0;
+  plc.physical_input[0]=enable; plc.physical_input[1]=sensor;
   if (!plc_release(release)) return 0;
   /* Mutating the physical source after release proves the input image is
    * immutable during this scan. */
-  plc.physical_input[0]=0; plc.physical_input[1]=99;
+  plc.physical_input[0]=!enable; plc.physical_input[1]=sensor+1000;
   return plc.active && !plc.fault_latched;
 }
 
@@ -144,9 +149,9 @@ uint64_t aiueos_plc_capability_call(uint64_t capability,uint64_t argument) {
   return plc_call(capability,argument,aiueos_apic_timer_ticks);
 }
 
-int aiueos_plc_rt_result_ready(void) {
+int aiueos_plc_rt_result_ready(int32_t output0,int32_t output1) {
   return !plc.active && !plc.fault_latched &&
-    plc.physical_output[0]==1 && plc.physical_output[1]==42;
+    plc.physical_output[0]==output0 && plc.physical_output[1]==output1;
 }
 
 int aiueos_plc_rt_failed(void) { return plc.fault_latched; }

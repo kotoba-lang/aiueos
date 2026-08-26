@@ -399,11 +399,11 @@ if [ "${AIUEOS_PLC_RT_SMOKE:-0}" = 1 ]; then
     test -f "$serial_log" && tail -30 "$serial_log" >&2
     exit 1
   }
-  grep -F "AIUEOS_PLC_RT_OK profile=aiueos-plc-v1 scheduler=fixed-priority-preemptive priority=5 program=receipt-bound-cpl3-elf transport=syscall release=apic-absolute-ticks cycle=10ticks input=snapshot output=atomic-safe-state capabilities=16,17,18,19 failures=stage,watchdog,budget,deadline,program timing=logical-unqualified" "$serial_log" >/dev/null || {
+  grep -F "AIUEOS_PLC_RT_OK profile=aiueos-plc-v1 scheduler=fixed-priority-preemptive priority=5 program=receipt-bound-cpl3-elf scans=2 outputs=1:42,0:100 transport=syscall release=apic-absolute-ticks cycle=10ticks input=snapshot output=atomic-safe-state capabilities=16,17,18,19 failures=stage,watchdog,budget,deadline,program timing=logical-unqualified" "$serial_log" >/dev/null || {
     echo "error: native PLC RT provider evidence was not observed" >&2
     exit 1
   }
-  echo "AIUEOS_PLC_RT_QEMU_OK fixed-priority-preemption receipt-bound-cpl3-elf native-provider apic-release transactional-output safe-state"
+  echo "AIUEOS_PLC_RT_QEMU_OK scans=2 fixed-priority-preemption receipt-bound-cpl3-elf native-provider apic-release transactional-output safe-state"
   exit 0
 fi
 

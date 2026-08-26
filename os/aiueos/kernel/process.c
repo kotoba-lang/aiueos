@@ -63,6 +63,9 @@ extern int aiueos_address_space_user_entry_valid(unsigned process,uint64_t entry
 extern int aiueos_load_object_store_kotoba_process(unsigned process,const uint8_t app_id[16],uint64_t *entry,uint64_t **result);
 #ifdef AIUEOS_PLC_RT_SMOKE
 extern int aiueos_load_embedded_plc_process(unsigned process,uint64_t *entry,uint64_t **result);
+extern int aiueos_reset_embedded_plc_context(uint64_t *result,uint64_t runtime_handle);
+extern int aiueos_scheduler_rearm_plc_task(unsigned slot,void (*entry)(uint64_t),
+  uint64_t argument,uint64_t user_stack);
 #endif
 extern int aiueos_kotoba_process_loader_evidence_ready(void);
 extern int aiueos_kotoba_service_ipc_evidence_ready(void);
@@ -268,21 +271,36 @@ int aiueos_process_enter_plc_rt(void) {
   uint64_t runtime_handle=aiueos_capability_ensure_runtime_handle(4);
   if (!runtime_handle || !result) return 0;
   result[10]=runtime_handle;
-  extern int aiueos_plc_rt_begin(void);
-  extern int aiueos_plc_rt_result_ready(void);
+  extern int aiueos_plc_rt_begin_scan(int32_t enable,int32_t sensor);
+  extern int aiueos_plc_rt_result_ready(int32_t output0,int32_t output1);
   extern int aiueos_plc_rt_failed(void);
   extern int aiueos_plc_rt_scheduler_evidence_ready(void);
   aiueos_plc_process_stage=4;
-  if (!aiueos_plc_rt_begin()) return 0;
+  if (!aiueos_plc_rt_begin_scan(1,41)) return 0;
   aiueos_plc_process_stage=5;
-  if (process_create_in_space((void (*)(uint64_t))(uintptr_t)entry,4,address_space)<0)
+  int descriptor=process_create_in_space(
+    (void (*)(uint64_t))(uintptr_t)entry,4,address_space);
+  if (descriptor<0)
     return 0;
   *result=0;
   __asm__ volatile("sti");
   while (!*result && !aiueos_plc_rt_failed()) __asm__ volatile("hlt");
   __asm__ volatile("cli");
   aiueos_plc_process_stage=6;
-  return *result==1 && aiueos_plc_rt_result_ready() &&
+  if (*result!=1 || !aiueos_plc_rt_result_ready(1,42)) return 0;
+  struct process_descriptor *p=&processes[descriptor];
+  aiueos_plc_process_stage=7;
+  if (!aiueos_reset_embedded_plc_context(result,runtime_handle)) return 0;
+  aiueos_plc_process_stage=8;
+  if (!aiueos_plc_rt_begin_scan(0,99)) return 0;
+  aiueos_plc_process_stage=9;
+  if (!aiueos_scheduler_rearm_plc_task(p->task_slot,
+      (void (*)(uint64_t))(uintptr_t)p->entry,p->argument,p->user_stack)) return 0;
+  __asm__ volatile("sti");
+  while (!*result && !aiueos_plc_rt_failed()) __asm__ volatile("hlt");
+  __asm__ volatile("cli");
+  aiueos_plc_process_stage=10;
+  return *result==1 && aiueos_plc_rt_result_ready(0,100) &&
     aiueos_plc_rt_scheduler_evidence_ready();
 }
 #endif

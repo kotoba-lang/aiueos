@@ -121,7 +121,7 @@ static uint64_t kotoba_lifecycle_evidence;
 static uint64_t persistent_restore_evidence;
 #ifdef AIUEOS_PLC_RT_SMOKE
 static uint8_t rt_descriptors[256];
-static uint8_t rt_mode,rt_preemption_observed,rt_budget_return_observed;
+static uint8_t rt_mode,rt_preemption_count,rt_budget_return_count;
 extern uint64_t kotoba_aiueos_rt_scheduler_plan(
   const void *,uint64_t,uint64_t,uint64_t,uint64_t);
 
@@ -153,8 +153,10 @@ static uint64_t *rt_on_timer(uint64_t *interrupted_stack) {
   tasks[current_task].switches++;
   out[0]=(out[4]&&out[5])?1:3;
   rt_descriptors[next*16U]=2;
-  if ((plan&512U) && current_task==0) rt_preemption_observed=1;
-  if ((plan&2048U) && next==0) rt_budget_return_observed=1;
+  if ((plan&512U) && current_task==0 && rt_preemption_count<255)
+    rt_preemption_count++;
+  if ((plan&2048U) && next==0 && rt_budget_return_count<255)
+    rt_budget_return_count++;
   current_task=next;
   aiueos_scheduler_context_switches++;
   aiueos_current_user_domain=current_task?tasks[current_task].domain:0;
@@ -168,7 +170,7 @@ static uint64_t *rt_on_timer(uint64_t *interrupted_stack) {
 }
 
 int aiueos_plc_rt_scheduler_evidence_ready(void) {
-  return rt_preemption_observed && rt_budget_return_observed && current_task==0;
+  return rt_preemption_count>=2 && rt_budget_return_count>=2 && current_task==0;
 }
 #endif
 
@@ -439,7 +441,7 @@ int aiueos_scheduler_begin_user_runtime(void) {
 #ifdef AIUEOS_PLC_RT_SMOKE
   for (unsigned i=0;i<sizeof(rt_descriptors);i++) rt_descriptors[i]=0;
   rt_descriptor(0,2,255,255,255,0);
-  rt_preemption_observed=rt_budget_return_observed=0; rt_mode=1;
+  rt_preemption_count=rt_budget_return_count=0; rt_mode=1;
 #endif
   user_tasks_reaped=0; user_tasks_expected=0; user_kernel_stacks_zeroed=0;
   aiueos_current_user_domain=0;
@@ -464,6 +466,20 @@ int aiueos_scheduler_create_user_task(unsigned address_space, uint16_t domain,
   user_tasks_expected++;
   return slot;
 }
+#ifdef AIUEOS_PLC_RT_SMOKE
+int aiueos_scheduler_rearm_plc_task(unsigned slot,void (*entry)(uint64_t),
+    uint64_t argument,uint64_t user_stack) {
+  if (!rt_mode || current_task!=0 || slot<1 || slot>=AIUEOS_TASK_SLOT_COUNT ||
+      !tasks[slot].active || tasks[slot].domain!=4 || !entry || !argument ||
+      !user_stack || rt_descriptors[slot*16U]!=3) return 0;
+  uint64_t *context=initial_user_context(tasks[slot].kernel_stack,entry,argument,user_stack);
+  if (!context) return 0;
+  tasks[slot].saved_stack=context;
+  rt_descriptor(slot,1,5,8,9,
+    (uint8_t)(rt_descriptors[slot*16U+6]+1U));
+  return 1;
+}
+#endif
 int aiueos_service_runtime_evidence_ready(void) {
   return kotoba_lifecycle_evidence && services[0].id == 1 && services[1].id == 2 &&
     services[0].generation == 2 && services[0].restarts == 1 &&

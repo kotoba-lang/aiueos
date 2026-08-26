@@ -94,6 +94,8 @@ the current kernel a qualified RTOS. A C-free fixed-priority dispatch policy is
 generated as a deterministic, import-free AMU object and its receipt digest
 must match the policy embedded in the kernel. The PLC RT QEMU profile now
 invokes that object from the native APIC interrupt/context-switch path and
-proves a priority-5 task preempting the priority-255 kernel task. General static
-task-set integration, calibrated physical timing, RTA/WCET and bounded drivers
-remain required before the kernel can produce a qualified RT receipt.
+proves a priority-5 task preempting the priority-255 kernel task across two
+absolute-tick releases, including budget replenishment and return to the
+kernel after each scan. General static task-set integration, calibrated
+physical timing, RTA/WCET and bounded drivers remain required before the
+kernel can produce a qualified RT receipt.

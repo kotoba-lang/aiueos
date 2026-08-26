@@ -63,5 +63,12 @@ int aiueos_load_embedded_plc_process(unsigned process,uint64_t *entry,uint64_t *
   *result=aiueos_address_space_user_data_backing(process);
   return *result!=0;
 }
+int aiueos_reset_embedded_plc_context(uint64_t *result,uint64_t runtime_handle) {
+  if (!result || !runtime_handle) return 0;
+  for (unsigned i=0;i<88;i++)
+    ((uint8_t *)result)[i]=aiueos_plc_elf_start[ELF_DATA_OFFSET+i];
+  result[10]=runtime_handle;
+  return 1;
+}
 #endif
 int aiueos_kotoba_process_loader_evidence_ready(void) { return (int)loader_evidence; }

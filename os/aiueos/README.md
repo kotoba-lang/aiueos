@@ -541,16 +541,18 @@ not evidence that its signed ELF is already a periodic RT task or that a
 physical I/O driver is present.
 
 The RT-only QEMU gate embeds the receipt-bound generated PLC ELF, admits its
-exact capability context with a Kotoba policy, runs it at CPL3 under the native
-fixed-priority interrupt switch path, and proves APIC-tick release, immutable
-input snapshotting, watchdog-gated atomic commit and safe-state failures:
+exact capability context with a Kotoba policy, runs the same task twice at
+CPL3 under the native fixed-priority interrupt switch path, and proves absolute
+APIC-tick release/replenishment, immutable input snapshotting, watchdog-gated
+atomic commit and safe-state failures:
 
 ```sh
 AIUEOS_PLC_RT_SMOKE=1 os/aiueos/scripts/smoke-qemu-uefi.sh
 ```
 
-This is one logical-tick scan, not a calibrated 10 ms, repeated multi-scan,
-signed deployment or WCET claim. See ADR-0112 for the remaining boundary.
+This is a two-scan logical-tick test, not a calibrated 10 ms, long-duration
+periodic stability, signed deployment or WCET claim. See ADR-0112 for the
+remaining boundary.
 
 ## USB removable-media boot
 

@@ -152,11 +152,12 @@ static `x86_64-aiueos-user-v1` ELF; deployed machines do not interpret ST. A
 PLC build is not deployable until its receipt binds the qualified RT kernel,
 exact I/O map and response-time admission analysis. Input snapshot, shadow
 output, watchdog and atomic commit are the only program capabilities. The
-native QEMU gate now proves a receipt-bound generated ELF at CPL3, capability
-syscalls, fixed-priority interrupt preemption, those transactions and
-safe-state failures. It reports one logical-tick scan, not milliseconds;
-signed repeated release and physical timing qualification remain open. The
-normative contract is
+native QEMU gate now proves two absolute-tick releases of the same
+receipt-bound generated ELF at CPL3, capability syscalls, fixed-priority
+interrupt preemption, replenishment, those transactions and safe-state
+failures. It reports logical ticks, not milliseconds; production signature
+admission, long-duration periodic stability and physical timing qualification
+remain open. The normative contract is
 `os/aiueos/contracts/plc-runtime-v1.edn`.
 
 Cross-machine topic samples use `aiueos.network-topic` protocol v1. Ed25519

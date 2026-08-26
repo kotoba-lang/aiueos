@@ -58,7 +58,8 @@
            :implemented-slices [:native-fixed-priority-dispatch-policy
                                 :apic-interrupt-periodic-release-smoke
                                 :native-plc-transaction-provider-smoke
-                                :native-fixed-priority-context-switch-smoke]
+                                :native-fixed-priority-context-switch-smoke
+                                :same-task-two-period-replenishment-smoke]
            :blockers [:general-static-rt-task-set-integration
                       :calibrated-monotonic-timer
                       :bounded-native-driver-set
