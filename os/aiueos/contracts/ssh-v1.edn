@@ -42,7 +42,30 @@
   :cipher "aes128-gcm@openssh.com"  ; AES-128-GCM (kernel) -- GCM tag is the MAC, no separate HMAC
   :mac :implicit-in-gcm
   :compression "none"
-  :rekey :not-in-r0}                 ; one session, bounded; rekey is a later tranche
+  :rekey :not-in-r0                  ; one session, bounded; rekey is a later tranche
+
+  ;; The wire rules -- message numbers, the KEXINIT algorithm-name-list profile,
+  ;; binary-packet framing, the string/mpint encodings, and above all the
+  ;; ordered transcript whose SHA-256 is the exchange hash H -- are NOT written
+  ;; twice. They live once in kotoba-lang/org-ietf-ssh (ssh.transport, pure
+  ;; portable .cljc) and the kernel imports that definition (ADR-0106).
+  :transport-core
+  {:repo "kotoba-lang/org-ietf-ssh"
+   :ns "ssh.transport"
+   :authority "RFC 4253 (transport) + RFC 8731/5656 (curve25519-sha256)"
+   :kernel-mirror "aiueos_ssh_kex_h() in kernel/main.c mirrors ssh.transport/h-transcript byte-for-byte"
+   :verified-by "smoke-qemu-ssh-kex.cljs REQUIRES ssh.transport and asserts the
+                 kernel's emitted H equals the core's H for the same fixed
+                 inputs -- so a drift in the shared core turns the gate red even
+                 though the kernel self-verifies against a baked want[]."}
+  :exchange-hash
+  {:formula "H = SHA256( string(V_C) string(V_S) string(I_C) string(I_S) string(K_S) string(Q_C) string(Q_S) mpint(K) )"
+   :hash :kernel-sha256-object       ; already linked; the KAT adds no new object
+   :transcript-assembly :decision-free-c-mechanism
+   :state :landed-compiled-and-boot-verified
+   :kat-inputs :ssh-transport-test-fixture
+   :kat-h "520a9ba70d60201af9365b0e53ffafa1a31446d17ec24315eb678a9b2e709833"
+   :marker "AIUEOS_SSH_KEX_OK / AIUEOS_SSH_KEX_H <hex>"}}
 
  ;; Userauth is publickey only. The client (the owner's machine) proves it
  ;; holds the private half of the key the intent named, by signing the SSH
@@ -186,7 +209,9 @@
   :entropy :landed                     ; ADR-0103: aiueos_random_bytes, self-tested in a boot
   :crypto-path :ecdsa-p256             ; ADR-0103: one new object, no ed25519/sha-512
   :ecdsa-p256-sign :landed             ; ADR-0105: compiled, linked, boot-verified vs RFC 6979 A.2.5
-  :sshd :not-yet-implemented           ; SSH transport + host-key signature + userauth (existing verify)
+  :ssh-transport-core :imported        ; ADR-0106: kotoba-lang/org-ietf-ssh (ssh.transport), west-registered
+  :exchange-hash :landed               ; ADR-0106: KEXINIT + curve25519-sha256 transcript -> H, boot-verified vs the core
+  :sshd :not-yet-implemented           ; remaining: live KEX_ECDH wire exchange + host-key signature over H + userauth (existing verify)
   :note "Reusable on the metal today: X25519 (arbitrary scalar x point),
          SHA-256, HMAC-SHA256, HKDF, AES-128-GCM (= aes128-gcm@openssh.com),
          digest-equal. The TLS 1.3 client (tls13.c) is a TCP-passive byte
