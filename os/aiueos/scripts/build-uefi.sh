@@ -110,7 +110,11 @@ kotoba_ecdsa_object=${AIUEOS_KOTOBA_ECDSA_OBJECT:-"$aiueos/kotoba/ecdsa-p256.o"}
 # kernel-object-entries + 250M fuel-tier patch that recipe applies).
 kotoba_ecdsa_sign_object=${AIUEOS_KOTOBA_ECDSA_SIGN_OBJECT:-"$aiueos/kotoba/ecdsa-p256-sign.o"}
 ecdsa_sign_link=
-if [ "${AIUEOS_ECDSA_SIGN_KAT:-0}" = 1 ]; then
+# Linked for the sign KAT and, now, for the SSH listener build: net_ssh_kex
+# signs the exchange hash H with it (ADR-0107). Listener+sign measured at
+# 1,043,688 bytes -- under the 1 MiB ceiling, so ADR-0105's separation is
+# lifted for the SSH build (the KAT keeps its own flag for the KAT code only).
+if [ "${AIUEOS_ECDSA_SIGN_KAT:-0}" = 1 ] || [ "${AIUEOS_SSH_LISTEN:-0}" = 1 ]; then
   ecdsa_sign_link="$kotoba_ecdsa_sign_object"
 fi
 kotoba_ime_object=${AIUEOS_KOTOBA_IME_OBJECT:-"$aiueos/kotoba/ime-romaji.o"}
@@ -436,7 +440,15 @@ zig cc -target x86_64-freestanding-none -std=c11 -O2 \
 zig cc -target x86_64-freestanding-none -std=c11 -O2 \
   -ffreestanding -fno-stack-protector -mno-red-zone \
   -c -o "$kernel_framebuffer_object" "$aiueos/kernel/framebuffer.c"
-zig ld.lld -nostdlib -static -z max-page-size=0x1000 \
+# --strip-all: the symbol/string tables are ~550 KiB and are never loaded (only
+# PT_LOAD segments are), but the loader shas and reads the WHOLE KERNEL.ELF file
+# into a 1 MiB buffer, so they count against the ceiling. Stripping them keeps
+# the file at its loadable size (~516 KiB). Relocations are resolved at link
+# time; a freestanding static kernel needs no symbol table at runtime. The sha
+# is recomputed below, so nothing external pins the pre-strip file. (ADR-0107:
+# net_ssh_kex pushed the unstripped file over 1 MiB while the loadable size was
+# well under it.)
+zig ld.lld -nostdlib -static --strip-all -z max-page-size=0x1000 \
   -T "$aiueos/kernel/linker.ld" -o "$kernel" \
   "$kernel_entry_object" "$kernel_object" "$kernel_paging_object" \
   "$kernel_acpi_object" "$kernel_vtd_object" "$kernel_apic_object" "$kernel_memory_object" \

@@ -157,6 +157,7 @@ extern int aiueos_tcp_ready(void);
 extern unsigned aiueos_tcp_stage(void);
 extern unsigned aiueos_ssh_listen_stage(void);
 extern int aiueos_ssh_client_id_valid(void);
+extern unsigned aiueos_ssh_kex_stage(void);
 extern uint32_t aiueos_ssh_client_id_len(void);
 extern int aiueos_random_selftest(void);
 extern int aiueos_random_bytes(uint8_t *out, uint32_t n);
@@ -1335,6 +1336,17 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
       serial_decimal(aiueos_ssh_client_id_len());
       serial_string("\r\n");
       debug_string("AIUEOS_SSH_LISTEN_OK port=22 accepted client-id=valid\n");
+      /* The real kex outcome (ADR-0107): 5 = KEX_ECDH_REPLY + NEWKEYS sent. The
+         reply's host-key signature over H is what a real client verifies; the
+         gate confirms that independently. Lower stages say how far it got. */
+      if (aiueos_ssh_kex_stage() >= 5) {
+        serial_string("AIUEOS_SSH_KEX_REPLY_OK curve25519-sha256 ecdsa-sha2-nistp256 reply+newkeys sent\r\n");
+        debug_string("AIUEOS_SSH_KEX_REPLY_OK reply+newkeys sent\n");
+      } else {
+        serial_string("AIUEOS_SSH_KEX_REPLY_INCOMPLETE stage=");
+        serial_decimal(aiueos_ssh_kex_stage());
+        serial_string("\r\n");
+      }
     } else {
       serial_string("AIUEOS_SSH_LISTEN_INCOMPLETE stage=");
       serial_decimal(aiueos_ssh_listen_stage());
