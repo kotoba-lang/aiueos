@@ -2454,7 +2454,123 @@ static int net_ssh_userauth(struct net_ring *rx, struct net_ring *tx,
     uint32_t wl = ssh_seal(key_sc, iv_sc, 1, &suc, 1, pkt);
     if (!wl || !net_tcp_send(tx, tx_page, NET_GUEST_IP, NET_PEER_IP, NET_SSH_PORT, cport,
                              sseq, pnext, NET_TCP_PSH | NET_TCP_ACK, pkt, wl)) return 0;
-    ssh_kex_stage = 12;
+    sseq += wl; ssh_kex_stage = 12;
+  }
+
+  /* ---- the session channel (ADR-0109) ------------------------------------
+     The login has succeeded; from here everything is best-effort (return 1, not
+     0, so the AUTH marker still fires). Packet counters continue: c->s is at 2
+     (service-request 0, userauth-request 1), s->c at 2 (service-accept 0,
+     userauth-success 1). A minimal but real `exec` session: open the channel,
+     accept the command, and stream one CHANNEL_DATA that echoes it. */
+  {
+    uint32_t client_chan = 0;
+
+    /* 6. CHANNEL_OPEN (c->s 2): byte 90, string type, uint32 sender, window, max. */
+    if (!net_ssh_recv(rx, rx_page, sseq, 96)) return 1;
+    {
+      uint32_t dlen = 0; const uint8_t *seg = ssh_seg_data(frame, &dlen);
+      if (!ssh_open(key_cs, iv_cs, 2, seg, dlen, up, &uplen)) return 1;
+      if (uplen < 1 || up[0] != 90) return 1;
+      uint32_t off = 1;
+      off += 4 + ssh_be32p(up + off);      /* skip channel-type string */
+      client_chan = ssh_be32p(up + off);
+      pnext += dlen; ssh_kex_stage = 13;
+    }
+
+    /* 7. CHANNEL_OPEN_CONFIRMATION (s->c 2): recipient, sender=0, window, max. */
+    {
+      uint8_t m[24]; uint64_t o = 0;
+      m[o++] = 91;
+      m[o++] = (uint8_t)(client_chan >> 24); m[o++] = (uint8_t)(client_chan >> 16);
+      m[o++] = (uint8_t)(client_chan >> 8);  m[o++] = (uint8_t)client_chan;
+      m[o++] = 0; m[o++] = 0; m[o++] = 0; m[o++] = 0;          /* sender = 0 */
+      m[o++] = 0; m[o++] = 0x10; m[o++] = 0; m[o++] = 0;       /* window = 0x100000 */
+      m[o++] = 0; m[o++] = 0; m[o++] = 0x80; m[o++] = 0;       /* max packet = 0x8000 */
+      uint32_t wl = ssh_seal(key_sc, iv_sc, 2, m, (uint32_t)o, pkt);
+      if (!wl || !net_tcp_send(tx, tx_page, NET_GUEST_IP, NET_PEER_IP, NET_SSH_PORT, cport,
+                               sseq, pnext, NET_TCP_PSH | NET_TCP_ACK, pkt, wl)) return 1;
+      sseq += wl; ssh_kex_stage = 14;
+    }
+
+    /* 8. CHANNEL_REQUEST (c->s 3): byte 98, recipient, string type, bool, [string cmd]. */
+    static uint8_t cmd[256]; uint32_t cmdlen = 0;
+    if (!net_ssh_recv(rx, rx_page, sseq, 96)) return 1;
+    {
+      uint32_t dlen = 0; const uint8_t *seg = ssh_seg_data(frame, &dlen);
+      if (!ssh_open(key_cs, iv_cs, 3, seg, dlen, up, &uplen)) return 1;
+      if (uplen < 1 || up[0] != 98) return 1;
+      uint32_t off = 1 + 4;                 /* byte + recipient */
+      off += 4 + ssh_be32p(up + off);       /* skip request-type string */
+      off += 1;                              /* skip bool want-reply */
+      if (off + 4 <= uplen) {               /* exec carries a command string */
+        cmdlen = ssh_be32p(up + off); off += 4;
+        if (cmdlen > sizeof(cmd)) cmdlen = sizeof(cmd);
+        for (uint32_t i = 0; i < cmdlen; i++) cmd[i] = up[off + i];
+      }
+      pnext += dlen; ssh_kex_stage = 15;
+    }
+
+    /* 9. CHANNEL_SUCCESS (s->c 3). */
+    {
+      uint8_t m[8]; uint64_t o = 0;
+      m[o++] = 99;
+      m[o++] = (uint8_t)(client_chan >> 24); m[o++] = (uint8_t)(client_chan >> 16);
+      m[o++] = (uint8_t)(client_chan >> 8);  m[o++] = (uint8_t)client_chan;
+      uint32_t wl = ssh_seal(key_sc, iv_sc, 3, m, (uint32_t)o, pkt);
+      if (!wl || !net_tcp_send(tx, tx_page, NET_GUEST_IP, NET_PEER_IP, NET_SSH_PORT, cport,
+                               sseq, pnext, NET_TCP_PSH | NET_TCP_ACK, pkt, wl)) return 1;
+      sseq += wl;
+    }
+
+    /* 10. CHANNEL_DATA (s->c 4): "aiueos: <command>\n" -- echoing the command
+           proves the whole session round-trip (open, exec parsed, data returned). */
+    {
+      static uint8_t out[512]; uint32_t olen = 0;
+      const char *pfx = "aiueos: "; uint32_t i;
+      for (i = 0; pfx[i]; i++) out[olen++] = (uint8_t)pfx[i];
+      for (i = 0; i < cmdlen && olen < sizeof(out) - 1; i++) out[olen++] = cmd[i];
+      out[olen++] = '\n';
+      uint8_t m[600]; uint64_t o = 0;
+      m[o++] = 94;
+      m[o++] = (uint8_t)(client_chan >> 24); m[o++] = (uint8_t)(client_chan >> 16);
+      m[o++] = (uint8_t)(client_chan >> 8);  m[o++] = (uint8_t)client_chan;
+      o = ssh_ps(m, o, out, olen);
+      uint32_t wl = ssh_seal(key_sc, iv_sc, 4, m, (uint32_t)o, pkt);
+      if (!wl || !net_tcp_send(tx, tx_page, NET_GUEST_IP, NET_PEER_IP, NET_SSH_PORT, cport,
+                               sseq, pnext, NET_TCP_PSH | NET_TCP_ACK, pkt, wl)) return 1;
+      sseq += wl; ssh_kex_stage = 16;
+    }
+
+    /* 11. exit-status (s->c 5), CHANNEL_EOF (6), CHANNEL_CLOSE (7): best effort. */
+    {
+      uint8_t es[32]; uint64_t o = 0;
+      es[o++] = 98;
+      es[o++] = (uint8_t)(client_chan >> 24); es[o++] = (uint8_t)(client_chan >> 16);
+      es[o++] = (uint8_t)(client_chan >> 8);  es[o++] = (uint8_t)client_chan;
+      o = ssh_ps(es, o, (const uint8_t *)"exit-status", 11);
+      es[o++] = 0;                                     /* want-reply = FALSE */
+      es[o++] = 0; es[o++] = 0; es[o++] = 0; es[o++] = 0;   /* status 0 */
+      uint32_t wl = ssh_seal(key_sc, iv_sc, 5, es, (uint32_t)o, pkt);
+      if (wl) net_tcp_send(tx, tx_page, NET_GUEST_IP, NET_PEER_IP, NET_SSH_PORT, cport,
+                           sseq, pnext, NET_TCP_PSH | NET_TCP_ACK, pkt, wl);
+      sseq += wl;
+      uint8_t eof[8]; o = 0;
+      eof[o++] = 96;
+      eof[o++] = (uint8_t)(client_chan >> 24); eof[o++] = (uint8_t)(client_chan >> 16);
+      eof[o++] = (uint8_t)(client_chan >> 8);  eof[o++] = (uint8_t)client_chan;
+      wl = ssh_seal(key_sc, iv_sc, 6, eof, (uint32_t)o, pkt);
+      if (wl) net_tcp_send(tx, tx_page, NET_GUEST_IP, NET_PEER_IP, NET_SSH_PORT, cport,
+                           sseq, pnext, NET_TCP_PSH | NET_TCP_ACK, pkt, wl);
+      sseq += wl;
+      uint8_t cls[8]; o = 0;
+      cls[o++] = 97;
+      cls[o++] = (uint8_t)(client_chan >> 24); cls[o++] = (uint8_t)(client_chan >> 16);
+      cls[o++] = (uint8_t)(client_chan >> 8);  cls[o++] = (uint8_t)client_chan;
+      wl = ssh_seal(key_sc, iv_sc, 7, cls, (uint32_t)o, pkt);
+      if (wl) net_tcp_send(tx, tx_page, NET_GUEST_IP, NET_PEER_IP, NET_SSH_PORT, cport,
+                           sseq, pnext, NET_TCP_PSH | NET_TCP_ACK, pkt, wl);
+    }
   }
   return 1;
 }

@@ -1353,6 +1353,16 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
       if (aiueos_ssh_kex_stage() >= 12) {
         serial_string("AIUEOS_SSH_AUTH_OK publickey ecdsa-sha2-nistp256 aes128-gcm userauth-success sent\r\n");
         debug_string("AIUEOS_SSH_AUTH_OK userauth-success sent\n");
+        /* The session channel (ADR-0109): stage 16 = a `session` channel was
+           opened, an `exec` request accepted, and CHANNEL_DATA streamed back. */
+        if (aiueos_ssh_kex_stage() >= 16) {
+          serial_string("AIUEOS_SSH_SESSION_OK session channel exec channel-data streamed\r\n");
+          debug_string("AIUEOS_SSH_SESSION_OK exec channel-data streamed\n");
+        } else if (aiueos_ssh_kex_stage() >= 13) {
+          serial_string("AIUEOS_SSH_SESSION_INCOMPLETE stage=");
+          serial_decimal(aiueos_ssh_kex_stage());
+          serial_string("\r\n");
+        }
       } else if (aiueos_ssh_kex_stage() >= 6) {
         /* 6 entered 7 client-newkeys 8 service-req 9 service-accept
            10 userauth-req 11 signature-verified. */
