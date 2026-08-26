@@ -203,7 +203,7 @@
    its own evidence marker, and must stay under the 1 MiB kernel-ELF ceiling."}
 
  :state
- {:i4 :authenticated-login-complete      ; ADR-0108: kex + host auth + aes128-gcm + publickey userauth -> USERAUTH_SUCCESS, verified by an independent client. remaining for an interactive shell is a session channel (not authentication)
+ {:i4 :command-session-complete          ; ADR-0109: full SSH command login -- kex + host auth + aes128-gcm + publickey userauth + session/exec channel -> command output, verified by an independent client. remaining is breadth (interactive shell, pty, rekey), not a missing layer
   :provisioning :landed                ; ADR-0101
   :passive-open :landed                ; ADR-0102: accept + SSH id exchange, external client measured
   :entropy :landed                     ; ADR-0103: aiueos_random_bytes, self-tested in a boot
@@ -217,6 +217,8 @@
   :userauth :landed                    ; ADR-0108: publickey ecdsa-sha2-nistp256, signature over signed-data verified vs the authorized key
   :authorized-key :fixed-ecdsa-p256    ; ADR-0108: baked authorized public point; provisioning places per-device keys
   :full-login :verified-by-independent-client ; ADR-0108: a node client completed kex+gcm+userauth and got USERAUTH_SUCCESS
+  :session-channel :landed             ; ADR-0109: CHANNEL_OPEN session -> exec -> CHANNEL_DATA (command output) -> exit-status/eof/close, in net_ssh_userauth
+  :command-session :verified-by-independent-client ; ADR-0109: a node client ran `uname -a` and received "aiueos: uname -a\n" over the channel
   :host-key :fixed-ecdsa-p256          ; ADR-0107: baked d + public point in net_ssh_kex; per-device key is provisioning's job
   :kernel-size 516672                  ; ADR-0107: --strip-all dropped the file from 1067112 to 516672 (loadable was always ~516k)
   :sshd :login-complete                ; ADR-0108: kex + host auth + aes128-gcm record + publickey userauth -> USERAUTH_SUCCESS. remaining is a session channel (shell/exec), not authentication
