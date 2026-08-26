@@ -1,0 +1,141 @@
+(ns aiueos.native.rt-kernel
+  (:export [main]))
+
+;; This is the hard real-time vertical slice. The source owns the interrupt
+;; table, APIC setup, fixed-priority dispatcher, periodic release, and PLC
+;; scan. Amu contributes instruction lowering and the sealed vector-32 entry;
+;; no C ABI or hosted runtime is present in the produced image.
+
+(defn load64-page [page offset]
+  (+ (kernel-load-u8-4k page 4096 offset)
+     (* (kernel-load-u8-4k page 4096 (+ offset 1)) 256)
+     (* (kernel-load-u8-4k page 4096 (+ offset 2)) 65536)
+     (* (kernel-load-u8-4k page 4096 (+ offset 3)) 16777216)
+     (* (kernel-load-u8-4k page 4096 (+ offset 4)) 4294967296)
+     (* (kernel-load-u8-4k page 4096 (+ offset 5)) 1099511627776)
+     (* (kernel-load-u8-4k page 4096 (+ offset 6)) 281474976710656)
+     (* (kernel-load-u8-4k page 4096 (+ offset 7)) 72057594037927936)))
+
+(defn store64-page [page offset value]
+  (let [s0 (kernel-store-u8-4k page 4096 offset (bit-and value 255))
+        s1 (kernel-store-u8-4k page 4096 (+ offset 1) (bit-and (quot value 256) 255))
+        s2 (kernel-store-u8-4k page 4096 (+ offset 2) (bit-and (quot value 65536) 255))
+        s3 (kernel-store-u8-4k page 4096 (+ offset 3) (bit-and (quot value 16777216) 255))
+        s4 (kernel-store-u8-4k page 4096 (+ offset 4) (bit-and (quot value 4294967296) 255))
+        s5 (kernel-store-u8-4k page 4096 (+ offset 5) (bit-and (quot value 1099511627776) 255))
+        s6 (kernel-store-u8-4k page 4096 (+ offset 6) (bit-and (quot value 281474976710656) 255))
+        s7 (kernel-store-u8-4k page 4096 (+ offset 7) (bit-and (quot value 72057594037927936) 255))]
+    (if (= (load64-page page offset) value)
+      (+ 1 (* 0 (+ s0 s1 s2 s3 s4 s5 s6 s7)))
+      0)))
+
+;; Vector 32 begins at byte 512 of the IDT. The table itself starts at byte
+;; 2048 of Amu's fixed RW kernel page, leaving timer/PLC state at byte 512.
+(defn install-rt-idt [state]
+  (let [handler (kernel-rt-timer-handler-address)
+        selector (kernel-read-cs)
+        gate-offset 2560
+        descriptor-offset 3072
+        handler-low (bit-and handler 65535)
+        handler-mid (bit-and (quot handler 65536) 65535)
+        handler-high (bit-and (quot handler 4294967296) 4294967295)
+        gate-low (+ handler-low
+                    (* selector 65536)
+                    (* 142 1099511627776)
+                    (* handler-mid 281474976710656))]
+    (let [gate0 (store64-page state gate-offset gate-low)
+          gate1 (store64-page state (+ gate-offset 8) handler-high)
+          limit0 (kernel-store-u8-4k state 4096 descriptor-offset 15)
+          limit1 (kernel-store-u8-4k state 4096 (+ descriptor-offset 1) 2)
+          base (store64-page state (+ descriptor-offset 2) (+ state 2048))
+          loaded (kernel-load-idt
+                  (kernel-subregion state 4096 descriptor-offset 10) 10)]
+      (+ loaded (* 0 (+ gate0 gate1 limit0 limit1 base handler selector))))))
+
+(defn configure-local-apic []
+  (let [apic-msr (kernel-read-msr 27)
+        enabled-msr (bit-or apic-msr 2048)
+        written-msr (kernel-write-msr 27 enabled-msr)
+        base-window 4276092928
+        timer-window (kernel-subregion base-window 4096 768 512)
+        svr (kernel-store-u32 base-window 512 240 511)
+        divide (kernel-store-u32 timer-window 512 224 3)
+        lvt (kernel-store-u32 timer-window 512 32 131104)
+        initial (kernel-store-u32 timer-window 512 128 1000000)
+        readback (kernel-read-msr 27)]
+    (if (= (* 0 (+ written-msr enabled-msr svr divide lvt initial readback)) 0)
+      true false)))
+
+;; Priority 1 is the periodic PLC task; priority 10 is the always-ready
+;; background task. A lower numeric value is more urgent.
+(defn select-fixed-priority [plc-ready background-ready]
+  (if (= plc-ready 1)
+    1
+    (if (= background-ready 1) 10 0)))
+
+;; The PLC image is part of this Kotoba module. Inputs are snapshotted once;
+;; outputs are computed and committed once at the end of the scan.
+(defn plc-scan [input-snapshot]
+  (if (= input-snapshot 0) 1 0))
+
+(defn wait-next-tick [state previous]
+  (let [halted (kernel-hlt)
+        now (kernel-load-u32 state 512 0)]
+    (if (> (+ now (* 0 halted)) previous)
+      now
+      (wait-next-tick state previous))))
+
+(defn dispatch-until-100-scans [state previous scans low-dispatches]
+  (if (= scans 100)
+    (+ 1 (* 0 (+ (kernel-load-u32 state 512 0) low-dispatches)))
+    (let [tick (wait-next-tick state previous)
+          plc-ready (if (= (bit-and tick 1) 0) 1 0)
+          selected (select-fixed-priority plc-ready 1)]
+      (if (= selected 1)
+        (let [input-snapshot (bit-and (quot tick 2) 1)
+              output (plc-scan input-snapshot)
+              next-scans (+ scans 1)
+              committed-output (kernel-store-u32 state 512 8 output)
+              committed-scans (kernel-store-u32 state 512 4 next-scans)]
+          (+ (dispatch-until-100-scans state tick next-scans low-dispatches)
+             (* 0 (+ committed-output committed-scans))))
+        (let [next-low (+ low-dispatches 1)
+              committed-low (kernel-store-u32 state 512 12 next-low)]
+          (+ (dispatch-until-100-scans state tick scans next-low)
+             (* 0 committed-low)))))))
+
+(defn main []
+  (let [kernel-page 1114112
+        state 1114624
+        disabled (kernel-cli)
+        tick-low (kernel-store-u32 state 512 0 0)
+        tick-high (kernel-store-u32 state 512 4 0)
+        output (kernel-store-u32 state 512 8 0)
+        low-dispatches (kernel-store-u32 state 512 12 0)
+        pic-master (kernel-out-u8 33 255)
+        pic-slave (kernel-out-u8 161 255)]
+    (if (= (* 0 (+ disabled tick-low tick-high output low-dispatches
+                    pic-master pic-slave)) 0)
+      (let [installed (install-rt-idt kernel-page)]
+        (if (= installed 1)
+          (let [idt-marker (kernel-out-u8 233 73)
+                configured (configure-local-apic)]
+            (if configured
+              (let [apic-marker (kernel-out-u8 233 65)
+                    start-marker (kernel-out-u8 233 75)
+                    enabled (kernel-sti)
+                    passed (dispatch-until-100-scans state 0 0 0)
+                    stopped (kernel-cli)
+                    r-marker (kernel-out-u8 233 82)
+                    t-marker (kernel-out-u8 233 84)
+                    s-marker (kernel-out-u8 233 83)]
+                (kernel-out-u32 244
+                                (if (and (= passed 1)
+                                         (= idt-marker 73) (= apic-marker 65)
+                                         (= start-marker 75)
+                                         (= (+ enabled stopped) 0)
+                                         (= r-marker 82) (= t-marker 84) (= s-marker 83))
+                                  16 17)))
+              (kernel-out-u32 244 19)))
+          (kernel-out-u32 244 18)))
+      (kernel-out-u32 244 20))))

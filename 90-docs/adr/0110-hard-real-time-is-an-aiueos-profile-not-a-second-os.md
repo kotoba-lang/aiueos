@@ -1,6 +1,6 @@
 # ADR-0110 — Hard real-time is an AIUEOS profile, not a second OS
 
-- Status: accepted
+- Status: accepted; C-free functional slice verified
 - Date: 2026-08-26
 
 ## Decision
@@ -90,28 +90,32 @@ decision, not a scheduler implementation detail.
 
 This ADR, the native RT contract and the explicit best-effort receipt prevent
 the existing native image from being mistaken for an RTOS. They do not make
-the current kernel a qualified RTOS. A C-free fixed-priority dispatch policy is
-generated as a deterministic, import-free AMU object and its receipt digest
-must match the policy embedded in the kernel. The PLC RT QEMU profile now
-invokes that object from the native APIC interrupt/context-switch path and
-proves P-256 signed PLC ELF admission and a priority-5 task preempting the
-priority-255 kernel task across 100 absolute-tick releases, including budget
-replenishment and return to the kernel after each scan. General static task-set
-integration and actual calibrated physical timing, RTA/WCET measurements and
-bounded drivers remain required before the kernel can produce a qualified RT
-receipt; their new receipt gates do not substitute for that evidence.
+the current kernel a qualified RTOS.
+
+Evidence through commit 5291563 was incorrectly described as C-free. The PLC
+object and policy were Kotoba-generated, but the timer, scheduler, context
+switch, loader and provider executing them were compiled from C. Commits
+428ab44, 673438f, 48ba35c and d639653 therefore remain hybrid functional
+evidence only and cannot satisfy this ADR's C-free RT artifact boundary.
+
+The corrected vertical slice is native/rt-kernel.kotoba. Amu generates both
+its kernel ELF and UEFI loader without a C compiler or foreign object. Kotoba
+constructs IDT vector 32, programs the local APIC, waits on hardware
+interrupts, selects the lower numeric fixed priority, snapshots a PLC input and
+commits one output for 100 scans. The Amu backend contributes only the sealed,
+register-preserving vector entry and instruction lowering. Its receipt says
+rtos_qualified=false and timing=logical-qemu-unqualified.
+
+This is real interrupt preemption and fixed-priority dispatch, but not yet the
+general ring-3 task/context-switch, signed PLC ELF, priority-ceiling mutex,
+bounded-driver, RTA/WCET or physical-timing qualification promised by the full
+profile.
 
 ## Closure
 
-The architecture decision is closed on 2026-08-26. AIUEOS remains one product
-and source tree, while `x86_64-aiueos-rt-kernel-v1` remains a separately built
-and admitted native artifact. The implemented vertical slice covers the
-fixed-priority policy, native interrupt preemption, signed PLC admission,
-100-scan replenishment and fail-closed evidence gates without Linux, JVM, GC or
-a hosted fallback.
-
-This closure is not RTOS qualification. Production signing authority, general
-static task-set integration, calibrated physical-hardware measurements,
-RTA/WCET evidence, bounded physical I/O and any safety-certification work must
-be handled as subsequent qualification changes with their own evidence and,
-where they alter this decision, a superseding ADR.
+The product decision remains accepted: hard real-time is a separate AIUEOS
+artifact, not a second OS. The former implementation closure is retracted
+because it crossed a C kernel path. The corrected Kotoba/Amu-only functional
+slice is closed by its reproducible build, no-foreign-input receipt and exact
+QEMU marker `IAKRTS`. Full RTOS qualification remains open until the general
+task, driver and physical-measurement requirements above are met.

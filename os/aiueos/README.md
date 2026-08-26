@@ -778,6 +778,20 @@ artifacts, and emits a dependency receipt:
 ./os/aiueos/scripts/smoke-qemu-kotoba-native.sh /path/to/kotoba/compiler
 ```
 
+The C-free real-time functional slice is a separate Kotoba source and uses a
+pinned Amu compiler closure:
+
+```sh
+./os/aiueos/scripts/build-kotoba-rt-kernel.sh /path/to/amu
+./os/aiueos/scripts/smoke-qemu-kotoba-rt.sh /path/to/amu
+```
+
+The smoke requires the exact marker `IAKRTS`: IDT installed, APIC configured,
+kernel entered, and 100 fixed-priority PLC scans returned successfully. Its
+receipt explicitly says `rtos_qualified=false` and
+`timing=logical-qemu-unqualified`; it is not physical WCET, jitter, driver or
+safety-certification evidence.
+
 `build-kotoba-native-boot.sh` asks the Kotoba compiler to embed that ELF in a
 position-independent PE32+ UEFI application. The compiler-generated loader
 uses only AllocatePages, CopyMem, GetMemoryMap, and
