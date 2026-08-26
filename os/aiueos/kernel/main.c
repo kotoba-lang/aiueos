@@ -313,7 +313,6 @@ extern void aiueos_scheduler_initialize(void);
 extern int aiueos_scheduler_restore_service_registry(uint64_t state0, uint64_t state1);
 extern int aiueos_scheduler_persistent_restore_evidence_ready(void);
 extern int aiueos_scheduler_evidence_ready(void);
-extern int aiueos_plc_rt_smoke(void);
 extern int aiueos_service_runtime_evidence_ready(void);
 extern int aiueos_service_ipc_evidence_ready(void);
 extern int aiueos_syscall_self_test(void);
@@ -729,14 +728,6 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
     __asm__ volatile("cli");
     debug_string("AIUEOS_APIC_TIMER_OK vector=32 eoi-v1\n");
     serial_string("AIUEOS_APIC_TIMER_OK vector=32 eoi-v1\r\n");
-#ifdef AIUEOS_PLC_RT_SMOKE
-    if (!aiueos_plc_rt_smoke()) {
-      serial_string("AIUEOS_PLC_RT_FAIL provider-or-safe-state\r\n");
-      qemu_exit(0x70);
-    }
-    serial_string("AIUEOS_PLC_RT_OK profile=aiueos-plc-v1 release=apic-absolute-ticks cycle=10ticks input=snapshot output=atomic-safe-state capabilities=16,17,18,19 failures=stage,watchdog,budget,deadline,program timing=logical-unqualified\r\n");
-    qemu_exit(0x42);
-#endif
     int pci_result = aiueos_pci_enumerate();
     if (!pci_result) {
       debug_string("AIUEOS_PCI_FAIL enumeration-or-virtio\n");
@@ -1433,6 +1424,22 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
     serial_string("AIUEOS_PROCESS_FOUNDATION_OK tss-descriptor user-wx guard-page\r\n");
     debug_string("AIUEOS_PROCESS_CREATE_OK descriptors=8 entry-argument-stack domain-address-space-task\n");
     serial_string("AIUEOS_PROCESS_CREATE_OK descriptors=8 entry-argument-stack domain-address-space-task\r\n");
+#ifdef AIUEOS_PLC_RT_SMOKE
+    extern int aiueos_process_enter_plc_rt(void);
+    aiueos_load_task_register();
+    if (!aiueos_process_enter_plc_rt()) {
+      extern volatile uint64_t aiueos_plc_process_stage;
+      extern volatile uint64_t aiueos_plc_loader_stage;
+      serial_string("AIUEOS_PLC_RT_FAIL embedded-elf-provider-or-safe-state stage=");
+      serial_decimal(aiueos_plc_process_stage);
+      serial_string(" loader=");
+      serial_decimal(aiueos_plc_loader_stage);
+      serial_string("\r\n");
+      qemu_exit(0x70);
+    }
+    serial_string("AIUEOS_PLC_RT_OK profile=aiueos-plc-v1 scheduler=fixed-priority-preemptive priority=5 program=receipt-bound-cpl3-elf transport=syscall release=apic-absolute-ticks cycle=10ticks input=snapshot output=atomic-safe-state capabilities=16,17,18,19 failures=stage,watchdog,budget,deadline,program timing=logical-unqualified\r\n");
+    qemu_exit(0x42);
+#endif
     debug_string("AIUEOS_KOTOBA_ELF_PROCESS_OK source=catalog apps=2 et-exec segments=rx,rw result=42 domains=4,5\n");
     serial_string("AIUEOS_KOTOBA_ELF_PROCESS_OK source=catalog apps=2 et-exec segments=rx,rw result=42 domains=4,5\r\n");
     aiueos_load_task_register();

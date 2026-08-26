@@ -102,6 +102,16 @@ class RtSchedulerPlanTest(unittest.TestCase):
         for forbidden in ("linux", "java", "jvm", "pthread", "malloc"):
             self.assertNotIn(forbidden, text.lower())
 
+    def test_linked_policy_has_distinct_kernel_symbol_and_digest(self):
+        kotoba = pathlib.Path(__file__).parents[1] / "kotoba"
+        linkage = (kotoba / "rt-scheduler-dispatch-plan.linkage.edn").read_text()
+        self.assertTrue((kotoba / "rt-scheduler-dispatch-plan.o").is_file())
+        self.assertIn('"kotoba_aiueos_rt_scheduler_plan"', linkage)
+        self.assertIn(
+            '"5ca14a7962a63c54ae33af451bd06a994f7fce6c1a3392615bd5a40c29d3372b"',
+            linkage,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

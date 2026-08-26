@@ -119,6 +119,58 @@ static volatile uint64_t user_service_ipc_received_payloads[2];
 static uint64_t dynamic_task_evidence;
 static uint64_t kotoba_lifecycle_evidence;
 static uint64_t persistent_restore_evidence;
+#ifdef AIUEOS_PLC_RT_SMOKE
+static uint8_t rt_descriptors[256];
+static uint8_t rt_mode,rt_preemption_observed,rt_budget_return_observed;
+extern uint64_t kotoba_aiueos_rt_scheduler_plan(
+  const void *,uint64_t,uint64_t,uint64_t,uint64_t);
+
+static void rt_descriptor(unsigned slot,uint8_t state,uint8_t priority,
+                          uint8_t budget,uint8_t deadline,uint8_t sequence) {
+  uint8_t *d=rt_descriptors+slot*16U;
+  for (unsigned i=0;i<16;i++) d[i]=0;
+  d[0]=state; d[1]=priority; d[2]=priority; d[3]=0;
+  d[4]=budget; d[5]=deadline; d[6]=sequence;
+}
+
+static uint64_t *rt_on_timer(uint64_t *interrupted_stack) {
+  uint8_t *out=rt_descriptors+current_task*16U;
+  if (out[0]==2 && current_task && out[4]) out[4]--;
+  if (out[0]==2 && current_task && out[5]) out[5]--;
+  uint64_t plan=kotoba_aiueos_rt_scheduler_plan(
+    rt_descriptors,sizeof(rt_descriptors),16,16,current_task);
+  if (!plan) { aiueos_scheduler_address_space_failures++; return interrupted_stack; }
+  unsigned next=(unsigned)((plan&255U)-1U);
+  if (next>=AIUEOS_TASK_SLOT_COUNT || !tasks[next].active ||
+      ((plan>>16)&255U)!=rt_descriptors[next*16U+2]) {
+    aiueos_scheduler_address_space_failures++; return interrupted_stack;
+  }
+  if (next==current_task) return interrupted_stack;
+  if (!(plan&256U) || rt_descriptors[next*16U]!=1) {
+    aiueos_scheduler_address_space_failures++; return interrupted_stack;
+  }
+  tasks[current_task].saved_stack=interrupted_stack;
+  tasks[current_task].switches++;
+  out[0]=(out[4]&&out[5])?1:3;
+  rt_descriptors[next*16U]=2;
+  if ((plan&512U) && current_task==0) rt_preemption_observed=1;
+  if ((plan&2048U) && next==0) rt_budget_return_observed=1;
+  current_task=next;
+  aiueos_scheduler_context_switches++;
+  aiueos_current_user_domain=current_task?tasks[current_task].domain:0;
+  if (current_task) {
+    aiueos_process_set_kernel_stack((uint64_t)(uintptr_t)
+      (tasks[current_task].kernel_stack+AIUEOS_TASK_STACK_BYTES));
+    aiueos_user_scheduler_switches++;
+  }
+  aiueos_address_space_switch(tasks[current_task].cr3);
+  return tasks[current_task].saved_stack;
+}
+
+int aiueos_plc_rt_scheduler_evidence_ready(void) {
+  return rt_preemption_observed && rt_budget_return_observed && current_task==0;
+}
+#endif
 
 static int allocate_task_slot(uint64_t cr3) {
   uint64_t plan=kotoba_aiueos_task_slot_plan(tasks,sizeof(tasks),
@@ -384,6 +436,11 @@ int aiueos_scheduler_begin_user_runtime(void) {
   if (!services[0].active || !services[1].active) return 0;
   tasks[0].saved_stack=0; tasks[0].switches=0;
   current_task=0; scheduler_user_mode=1; aiueos_user_scheduler_switches=0;
+#ifdef AIUEOS_PLC_RT_SMOKE
+  for (unsigned i=0;i<sizeof(rt_descriptors);i++) rt_descriptors[i]=0;
+  rt_descriptor(0,2,255,255,255,0);
+  rt_preemption_observed=rt_budget_return_observed=0; rt_mode=1;
+#endif
   user_tasks_reaped=0; user_tasks_expected=0; user_kernel_stacks_zeroed=0;
   aiueos_current_user_domain=0;
   return 1;
@@ -401,6 +458,9 @@ int aiueos_scheduler_create_user_task(unsigned address_space, uint16_t domain,
     release_task_slot((unsigned)slot);
     return -1;
   }
+#ifdef AIUEOS_PLC_RT_SMOKE
+  if (rt_mode && domain==4) rt_descriptor((unsigned)slot,1,5,8,9,1);
+#endif
   user_tasks_expected++;
   return slot;
 }
@@ -464,6 +524,9 @@ int aiueos_scheduler_persistent_restore_evidence_ready(void) {
   return (int)persistent_restore_evidence;
 }
 uint64_t *aiueos_scheduler_on_timer(uint64_t *interrupted_stack) {
+#ifdef AIUEOS_PLC_RT_SMOKE
+  if (rt_mode) return rt_on_timer(interrupted_stack);
+#endif
   int context_reset=0;
   if (!scheduler_user_mode && current_task > 0) {
     unsigned service=tasks[current_task].service;

@@ -7,7 +7,7 @@
 #define AIUEOS_PLC_IO_COUNT 2U
 #define AIUEOS_PLC_CYCLE_TICKS 10U
 #define AIUEOS_PLC_DEADLINE_TICKS 8U
-#define AIUEOS_PLC_BUDGET_TICKS 1U
+#define AIUEOS_PLC_BUDGET_TICKS 4U
 
 enum aiueos_plc_fault {
   AIUEOS_PLC_FAULT_NONE = 0,
@@ -97,21 +97,6 @@ static uint64_t plc_call(uint64_t capability,uint64_t argument,uint64_t now) {
   plc_safe(AIUEOS_PLC_FAULT_CAPABILITY); return 0;
 }
 
-/* Exact semantics of plc/examples/motor.st. The calls deliberately use the
- * same 16..19 ABI as a generated x86_64-aiueos-user-v1 program. This is the
- * native provider gate; loading that signed ELF as a periodic task is a
- * separate admission/loader step and is not claimed here. */
-static int plc_motor_scan(uint64_t now) {
-  int enable=plc_call(16,0,now)!=0;
-  int32_t sensor=(int32_t)plc_call(16,1,now);
-  int32_t command=(int32_t)((uint32_t)sensor+1U);
-  int motor=enable && command<100;
-  if (plc_call(17,(uint32_t)motor,now)!=1) return 0;
-  if (plc_call(17,(1ULL<<32)|(uint32_t)command,now)!=1) return 0;
-  if (plc_call(19,1,now)!=1) return 0;
-  return plc_call(18,2,now)==1;
-}
-
 static int plc_failure_vectors(void) {
   plc_reset(); plc.physical_output[0]=plc.physical_output[1]=7;
   if (!plc_release(10) || plc_call(17,1,10)!=1) return 0;
@@ -124,7 +109,7 @@ static int plc_failure_vectors(void) {
 
   plc_reset(); if (!plc_release(10)) return 0;
   if (plc_call(17,1,10)!=1 || plc_call(17,1ULL<<32,10)!=1 ||
-      plc_call(19,1,10)!=1 || plc_call(18,2,12)!=0 ||
+      plc_call(19,1,10)!=1 || plc_call(18,2,15)!=0 ||
       plc.fault!=AIUEOS_PLC_FAULT_BUDGET) return 0;
 
   plc_reset(); if (!plc_release(10)) return 0;
@@ -139,16 +124,29 @@ static int plc_failure_vectors(void) {
     plc.physical_output[0]==0 && plc.physical_output[1]==0;
 }
 
-int aiueos_plc_rt_smoke(void) {
+int aiueos_plc_rt_begin(void) {
+  if (!plc_failure_vectors()) return 0;
   plc_reset();
+  plc.next_release=((aiueos_apic_timer_ticks/AIUEOS_PLC_CYCLE_TICKS)+1U)*
+    AIUEOS_PLC_CYCLE_TICKS;
   while (aiueos_apic_timer_ticks<plc.next_release) __asm__ volatile("sti; hlt; cli");
-  uint64_t release=plc.next_release;
+  uint64_t release=aiueos_apic_timer_ticks;
+  plc.next_release=release;
   plc.physical_input[0]=1; plc.physical_input[1]=41;
   if (!plc_release(release)) return 0;
   /* Mutating the physical source after release proves the input image is
    * immutable during this scan. */
   plc.physical_input[0]=0; plc.physical_input[1]=99;
-  if (!plc_motor_scan(release) || plc.physical_output[0]!=1 ||
-      plc.physical_output[1]!=42 || plc.fault_latched) return 0;
-  return plc.next_release==20 && plc_failure_vectors();
+  return plc.active && !plc.fault_latched;
 }
+
+uint64_t aiueos_plc_capability_call(uint64_t capability,uint64_t argument) {
+  return plc_call(capability,argument,aiueos_apic_timer_ticks);
+}
+
+int aiueos_plc_rt_result_ready(void) {
+  return !plc.active && !plc.fault_latched &&
+    plc.physical_output[0]==1 && plc.physical_output[1]==42;
+}
+
+int aiueos_plc_rt_failed(void) { return plc.fault_latched; }

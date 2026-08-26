@@ -540,16 +540,17 @@ binding. See `contracts/plc-runtime-v1.edn` and ADR-0111. A generated program is
 not evidence that its signed ELF is already a periodic RT task or that a
 physical I/O driver is present.
 
-The RT-only QEMU gate boots the native provider and proves APIC-tick release,
-immutable input snapshotting, shadow staging, watchdog-gated atomic commit and
-safe-state handling for stage, watchdog, budget, deadline and program faults:
+The RT-only QEMU gate embeds the receipt-bound generated PLC ELF, admits its
+exact capability context with a Kotoba policy, runs it at CPL3 under the native
+fixed-priority interrupt switch path, and proves APIC-tick release, immutable
+input snapshotting, watchdog-gated atomic commit and safe-state failures:
 
 ```sh
 AIUEOS_PLC_RT_SMOKE=1 os/aiueos/scripts/smoke-qemu-uefi.sh
 ```
 
-This is logical-tick execution evidence, not a calibrated 10 ms or WCET claim.
-See ADR-0112 for the remaining signed-ELF periodic-task boundary.
+This is one logical-tick scan, not a calibrated 10 ms, repeated multi-scan,
+signed deployment or WCET claim. See ADR-0112 for the remaining boundary.
 
 ## USB removable-media boot
 

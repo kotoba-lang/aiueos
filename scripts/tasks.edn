@@ -124,4 +124,9 @@
 
  :plc-rt-qemu-smoke
  {:cmd ["sh" "-c" "AIUEOS_PLC_RT_SMOKE=1 ./os/aiueos/scripts/smoke-qemu-uefi.sh"]
-  :doc "Boot the native PLC RT provider and prove APIC-tick release, snapshot input, atomic output and safe-state failures."}}
+  :doc "Boot the receipt-bound PLC ELF at CPL3 and prove fixed-priority preemption, APIC release, atomic output and safe-state failures."}
+
+ :plc-rt-policy-reproduce
+ {:cmd ["./os/aiueos/scripts/reproduce-plc-rt-policy-objects.sh"]
+  :pass-args? true
+  :doc "Reproduce the linked fixed-priority policy and PLC-specific C-free ELF admission objects with their exact measured Amu revisions."}}

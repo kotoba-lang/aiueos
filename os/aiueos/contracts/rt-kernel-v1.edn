@@ -30,7 +30,10 @@
              :cooperative-task-class false
              :deadline-ordering false
              :policy-object "kotoba/rt-scheduler-dispatch-plan.kotoba"
-             :native-export "kotoba_aiueos_scheduler_dispatch_plan"
+             :source-native-export "kotoba_aiueos_scheduler_dispatch_plan"
+             :linked-native-export "kotoba_aiueos_rt_scheduler_plan"
+             :linked-policy-object "kotoba/rt-scheduler-dispatch-plan.o"
+             :linkage :deterministic-symbol-redefinition
              :priority-inversion :priority-ceiling
              :admission :response-time-analysis}
  :memory {:dynamic-allocation-after-start false
@@ -54,8 +57,10 @@
            :rtos-qualified false
            :implemented-slices [:native-fixed-priority-dispatch-policy
                                 :apic-interrupt-periodic-release-smoke
-                                :native-plc-transaction-provider-smoke]
-           :blockers [:native-interrupt-context-switch-mechanism
+                                :native-plc-transaction-provider-smoke
+                                :native-fixed-priority-context-switch-smoke]
+           :blockers [:general-static-rt-task-set-integration
+                      :calibrated-monotonic-timer
                       :bounded-native-driver-set
                       :amu-rt-subset
                       :wcet-and-response-time-analysis

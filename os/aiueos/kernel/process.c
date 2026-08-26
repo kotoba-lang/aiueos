@@ -61,6 +61,9 @@ extern int aiueos_address_space_slot_self_test(void);
 extern int aiueos_address_space_claim(void);
 extern int aiueos_address_space_user_entry_valid(unsigned process,uint64_t entry);
 extern int aiueos_load_object_store_kotoba_process(unsigned process,const uint8_t app_id[16],uint64_t *entry,uint64_t **result);
+#ifdef AIUEOS_PLC_RT_SMOKE
+extern int aiueos_load_embedded_plc_process(unsigned process,uint64_t *entry,uint64_t **result);
+#endif
 extern int aiueos_kotoba_process_loader_evidence_ready(void);
 extern int aiueos_kotoba_service_ipc_evidence_ready(void);
 extern uint8_t aiueos_user_text_start[],aiueos_user_text_end[];
@@ -251,6 +254,38 @@ static int process_create_kotoba_elf(const uint8_t app_id[16],uint16_t domain,ui
   (*result)[10]=runtime_handle;
   return process_create_in_space((void (*)(uint64_t))(uintptr_t)entry,domain,address_space);
 }
+#ifdef AIUEOS_PLC_RT_SMOKE
+volatile uint64_t aiueos_plc_process_stage;
+int aiueos_process_enter_plc_rt(void) {
+  aiueos_plc_process_stage=1;
+  if (!aiueos_scheduler_begin_user_runtime()) return 0;
+  int address_space=aiueos_address_space_claim();
+  uint64_t entry=0,*result=0;
+  aiueos_plc_process_stage=2;
+  if (address_space<0 || !aiueos_load_embedded_plc_process(
+      (unsigned)address_space,&entry,&result)) return 0;
+  aiueos_plc_process_stage=3;
+  uint64_t runtime_handle=aiueos_capability_ensure_runtime_handle(4);
+  if (!runtime_handle || !result) return 0;
+  result[10]=runtime_handle;
+  extern int aiueos_plc_rt_begin(void);
+  extern int aiueos_plc_rt_result_ready(void);
+  extern int aiueos_plc_rt_failed(void);
+  extern int aiueos_plc_rt_scheduler_evidence_ready(void);
+  aiueos_plc_process_stage=4;
+  if (!aiueos_plc_rt_begin()) return 0;
+  aiueos_plc_process_stage=5;
+  if (process_create_in_space((void (*)(uint64_t))(uintptr_t)entry,4,address_space)<0)
+    return 0;
+  *result=0;
+  __asm__ volatile("sti");
+  while (!*result && !aiueos_plc_rt_failed()) __asm__ volatile("hlt");
+  __asm__ volatile("cli");
+  aiueos_plc_process_stage=6;
+  return *result==1 && aiueos_plc_rt_result_ready() &&
+    aiueos_plc_rt_scheduler_evidence_ready();
+}
+#endif
 
 static int process_teardown(unsigned descriptor,int reaped) {
   if (descriptor>=PROCESS_CAPACITY || !processes[descriptor].active) return 0;

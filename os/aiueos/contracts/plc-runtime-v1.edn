@@ -79,11 +79,13 @@
                          :apic-tick-periodic-release-smoke
                          :immutable-input-image-smoke
                          :atomic-output-safe-state-smoke
+                         :receipt-bound-cpl3-elf-single-scan
+                         :fixed-priority-preemption-context-switch-smoke
                          :transactional-scan-contract
                          :fail-closed-deployment-receipt]
            :deployment-ready false
            :blockers [:qualified-rt-kernel
-                      :signed-plc-elf-periodic-task-binding
+                      :signed-plc-elf-multiscan-periodic-binding
                       :bounded-physical-io-driver
                       :io-map
                       :wcet-and-response-time-analysis

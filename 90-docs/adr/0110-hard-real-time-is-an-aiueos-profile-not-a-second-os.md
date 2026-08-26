@@ -91,7 +91,9 @@ decision, not a scheduler implementation detail.
 This ADR, the native RT contract and the explicit best-effort receipt prevent
 the existing native image from being mistaken for an RTOS. They do not make
 the current kernel a qualified RTOS. A C-free fixed-priority dispatch policy is
-now generated as a deterministic, import-free AMU object and its receipt digest
-must match the policy embedded in the kernel. The native interrupt/context-
-switch mechanism does not yet invoke that object, so the current kernel still
-cannot produce the required RT receipt.
+generated as a deterministic, import-free AMU object and its receipt digest
+must match the policy embedded in the kernel. The PLC RT QEMU profile now
+invokes that object from the native APIC interrupt/context-switch path and
+proves a priority-5 task preempting the priority-255 kernel task. General static
+task-set integration, calibrated physical timing, RTA/WCET and bounded drivers
+remain required before the kernel can produce a qualified RT receipt.

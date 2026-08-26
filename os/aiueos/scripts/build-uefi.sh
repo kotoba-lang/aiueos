@@ -30,6 +30,7 @@ kernel_trampoline_object="$out/kernel-ap-trampoline.o"
 kernel_ioapic_object="$out/kernel-ioapic.o"
 kernel_framebuffer_object="$out/kernel-framebuffer.o"
 kernel_plc_runtime_object="$out/kernel-plc-runtime.o"
+kernel_plc_embedded_object="$out/kernel-plc-embedded.o"
 kotoba_kernel_object=${AIUEOS_KOTOBA_KERNEL_OBJECT:-"$aiueos/kotoba/kernel-probe.o"}
 kotoba_journal_object=${AIUEOS_KOTOBA_JOURNAL_OBJECT:-"$aiueos/kotoba/journal-plan.o"}
 kotoba_fnv_object=${AIUEOS_KOTOBA_FNV_OBJECT:-"$aiueos/kotoba/fnv1a.o"}
@@ -84,6 +85,7 @@ kotoba_digest_equal_object=${AIUEOS_KOTOBA_DIGEST_EQUAL_OBJECT:-"$aiueos/kotoba/
 kotoba_catalog_valid_object=${AIUEOS_KOTOBA_CATALOG_VALID_OBJECT:-"$aiueos/kotoba/app-catalog-valid.o"}
 kotoba_app_lookup_object=${AIUEOS_KOTOBA_APP_LOOKUP_OBJECT:-"$aiueos/kotoba/app-lookup-plan.o"}
 kotoba_user_elf_valid_object=${AIUEOS_KOTOBA_USER_ELF_VALID_OBJECT:-"$aiueos/kotoba/user-elf-valid.o"}
+kotoba_user_elf_valid_sha=d79cc375b46a6bc7c482e05c9f2e859f62c7a6ce186a8762b5161c2f2a426534
 kotoba_user_context_object=${AIUEOS_KOTOBA_USER_CONTEXT_OBJECT:-"$aiueos/kotoba/user-context-build.o"}
 # The kernel-selector twin of the object above, for tasks `iret` enters at ring
 # 0. Same 160-byte frame in the same bounded 4 KiB stack; CS 0x08 / SS 0x10 and
@@ -98,6 +100,7 @@ kotoba_process_plan_object=${AIUEOS_KOTOBA_PROCESS_PLAN_OBJECT:-"$aiueos/kotoba/
 kotoba_teardown_plan_object=${AIUEOS_KOTOBA_TEARDOWN_PLAN_OBJECT:-"$aiueos/kotoba/process-teardown-plan.o"}
 kotoba_task_plan_object=${AIUEOS_KOTOBA_TASK_PLAN_OBJECT:-"$aiueos/kotoba/task-slot-plan.o"}
 kotoba_dispatch_plan_object=${AIUEOS_KOTOBA_DISPATCH_PLAN_OBJECT:-"$aiueos/kotoba/scheduler-dispatch-plan.o"}
+kotoba_rt_dispatch_plan_object="$aiueos/kotoba/rt-scheduler-dispatch-plan.o"
 kotoba_exit_route_object=${AIUEOS_KOTOBA_EXIT_ROUTE_OBJECT:-"$aiueos/kotoba/task-exit-route.o"}
 kotoba_service_task_object=${AIUEOS_KOTOBA_SERVICE_TASK_OBJECT:-"$aiueos/kotoba/service-task-transition.o"}
 kotoba_rsa2048_object=${AIUEOS_KOTOBA_RSA2048_OBJECT:-"$aiueos/kotoba/rsa2048.o"}
@@ -178,8 +181,12 @@ if [ "${AIUEOS_ECDSA_SIGN_KAT:-0}" = 1 ]; then
 fi
 plc_runtime_link=
 if [ "${AIUEOS_PLC_RT_SMOKE:-0}" = 1 ]; then
+  : "${AIUEOS_PLC_ELF:?AIUEOS_PLC_ELF is required for the RT smoke}"
+  : "${AIUEOS_PLC_RECEIPT:?AIUEOS_PLC_RECEIPT is required for the RT smoke}"
   input_smoke_cflags="$input_smoke_cflags -DAIUEOS_PLC_RT_SMOKE=1"
-  plc_runtime_link="$kernel_plc_runtime_object"
+  plc_runtime_link="$kernel_plc_runtime_object $kernel_plc_embedded_object $kotoba_rt_dispatch_plan_object"
+  kotoba_user_elf_valid_object="$aiueos/kotoba/plc-user-elf-valid.o"
+  kotoba_user_elf_valid_sha=77c5e791da666e8355a7a877c37841cc63a3f228fbf785656522284a5259bbdd
 fi
 
 command -v zig >/dev/null 2>&1 || {
@@ -305,8 +312,13 @@ python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_app_lookup_obj
   ca8a261b5a967237c602912c1f945404baa5b6e9aba678fe37450633dcd587d9 \
   kotoba_aiueos_app_lookup_plan
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_user_elf_valid_object" \
-  d79cc375b46a6bc7c482e05c9f2e859f62c7a6ce186a8762b5161c2f2a426534 \
+  "$kotoba_user_elf_valid_sha" \
   kotoba_aiueos_user_elf_valid
+if [ "${AIUEOS_PLC_RT_SMOKE:-0}" = 1 ]; then
+  python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_rt_dispatch_plan_object" \
+    5ca14a7962a63c54ae33af451bd06a994f7fce6c1a3392615bd5a40c29d3372b \
+    kotoba_aiueos_rt_scheduler_plan
+fi
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_user_context_object" \
   66955e000a4b5f8a80ab97c031522e32e427cc141c6f9702f956aabce66d657f \
   kotoba_aiueos_user_context_build
@@ -425,15 +437,19 @@ zig cc -target x86_64-freestanding-none -std=c11 -O2 \
   -c -o "$kernel_tls13_object" "$aiueos/kernel/tls13.c"
 zig cc -target x86_64-freestanding-none -std=c11 -O2 \
   -ffreestanding -fno-stack-protector -mno-red-zone \
+  $input_smoke_cflags \
   -c -o "$kernel_scheduler_object" "$aiueos/kernel/scheduler.c"
 zig cc -target x86_64-freestanding-none -std=c11 -O2 \
   -ffreestanding -fno-stack-protector -mno-red-zone \
+  $input_smoke_cflags \
   -c -o "$kernel_syscall_object" "$aiueos/kernel/syscall.c"
 zig cc -target x86_64-freestanding-none -std=c11 -O2 \
   -ffreestanding -fno-stack-protector -mno-red-zone \
+  $input_smoke_cflags \
   -c -o "$kernel_process_object" "$aiueos/kernel/process.c"
 zig cc -target x86_64-freestanding-none -std=c11 -O2 \
   -ffreestanding -fno-stack-protector -mno-red-zone \
+  $input_smoke_cflags \
   -c -o "$kernel_loader_object" "$aiueos/kernel/loader.c"
 zig cc -target x86_64-freestanding-none -std=c11 -O2 \
   -ffreestanding -fno-stack-protector -mno-red-zone \
@@ -450,6 +466,10 @@ if [ -n "$plc_runtime_link" ]; then
   zig cc -target x86_64-freestanding-none -std=c11 -O2 \
     -ffreestanding -fno-stack-protector -mno-red-zone \
     -c -o "$kernel_plc_runtime_object" "$aiueos/kernel/plc_runtime.c"
+  python3 "$aiueos/scripts/make-plc-embedded-assembly.py" \
+    "$AIUEOS_PLC_ELF" "$AIUEOS_PLC_RECEIPT" "$out/plc-embedded.S"
+  zig cc -target x86_64-freestanding-none -c \
+    -o "$kernel_plc_embedded_object" "$out/plc-embedded.S"
 fi
 # --strip-all: the symbol/string tables are ~550 KiB and are never loaded (only
 # PT_LOAD segments are), but the loader shas and reads the WHOLE KERNEL.ELF file
