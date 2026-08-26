@@ -71,6 +71,10 @@ recovery_handler = b"\x48\x89\x04\x25\x10\xc1\x10\x00" in data
 payload = {
     "format": "aiueos-kotoba-native-receipt/v5",
     "target": "x86_64-aiueos-kernel-v1",
+    "timing_profile": "best-effort",
+    "rtos_qualified": False,
+    "runtime_linux": False,
+    "runtime_jvm": False,
     "entry": "aiueos_kernel_entry",
     "compiler_commit": compiler,
     "source_sha256": hashlib.sha256(source.read_bytes()).hexdigest(),

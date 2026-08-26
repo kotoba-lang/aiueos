@@ -23,6 +23,13 @@ cmp "$kernel" "$second"
 rm -f "$second"
 python3 "$aiueos/scripts/verify-kotoba-native-kernel.py" \
   "$kernel" "$source" "$expected" "$receipt"
+case ${AIUEOS_TIMING_PROFILE:-best-effort} in
+  best-effort) ;;
+  hard-real-time)
+    python3 "$aiueos/scripts/verify-rt-kernel-receipt.py" "$receipt" ;;
+  *)
+    echo "error: unknown AIUEOS_TIMING_PROFILE" >&2; exit 1 ;;
+esac
 foreign=$(find "$out" -type f \( -name '*.c' -o -name '*.o' -o -name '*.obj' -o -name '*.a' -o -name '*.so' \) \
   -print -quit)
 [ -z "$foreign" ] || {
