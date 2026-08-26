@@ -387,6 +387,20 @@ if [ "$status" -eq 124 ]; then
   exit 1
 fi
 
+if [ "${AIUEOS_PLC_RT_SMOKE:-0}" = 1 ]; then
+  [ "$status" -eq 133 ] || {
+    echo "error: PLC RT smoke produced unexpected QEMU status $status" >&2
+    test -f "$serial_log" && tail -30 "$serial_log" >&2
+    exit 1
+  }
+  grep -F "AIUEOS_PLC_RT_OK profile=aiueos-plc-v1 release=apic-absolute-ticks cycle=10ticks input=snapshot output=atomic-safe-state capabilities=16,17,18,19 failures=stage,watchdog,budget,deadline,program timing=logical-unqualified" "$serial_log" >/dev/null || {
+    echo "error: native PLC RT provider evidence was not observed" >&2
+    exit 1
+  }
+  echo "AIUEOS_PLC_RT_QEMU_OK native-provider apic-release transactional-output safe-state"
+  exit 0
+fi
+
 if [ "${AIUEOS_CORRUPT_KERNEL:-0}" = 1 ]; then
   [ "$status" -eq 255 ] || {
     echo "error: corrupted kernel produced unexpected QEMU status $status" >&2

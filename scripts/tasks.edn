@@ -120,4 +120,8 @@
  :plc-native-build
  {:cmd ["./os/aiueos/scripts/build-plc-native-program.sh"]
   :pass-args? true
-  :doc "Compile a bounded ST program twice to a reproducible static x86_64 AIUEOS user ELF and emit its deployment binding receipt."}}
+  :doc "Compile a bounded ST program twice to a reproducible static x86_64 AIUEOS user ELF and emit its deployment binding receipt."}
+
+ :plc-rt-qemu-smoke
+ {:cmd ["sh" "-c" "AIUEOS_PLC_RT_SMOKE=1 ./os/aiueos/scripts/smoke-qemu-uefi.sh"]
+  :doc "Boot the native PLC RT provider and prove APIC-tick release, snapshot input, atomic output and safe-state failures."}}

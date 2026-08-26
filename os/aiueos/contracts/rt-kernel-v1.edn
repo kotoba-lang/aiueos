@@ -52,7 +52,9 @@
  :current {:existing-native-target :x86_64-aiueos-kernel-v1
            :existing-timing-profile :best-effort
            :rtos-qualified false
-           :implemented-slices [:native-fixed-priority-dispatch-policy]
+           :implemented-slices [:native-fixed-priority-dispatch-policy
+                                :apic-interrupt-periodic-release-smoke
+                                :native-plc-transaction-provider-smoke]
            :blockers [:native-interrupt-context-switch-mechanism
                       :bounded-native-driver-set
                       :amu-rt-subset

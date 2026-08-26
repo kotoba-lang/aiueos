@@ -152,7 +152,11 @@ static `x86_64-aiueos-user-v1` ELF; deployed machines do not interpret ST. A
 PLC build is not deployable until its receipt binds the qualified RT kernel,
 exact I/O map and response-time admission analysis. Input snapshot, shadow
 output, watchdog and atomic commit are the only program capabilities. The
-normative contract is `os/aiueos/contracts/plc-runtime-v1.edn`.
+native QEMU provider gate proves those transactions and safe-state failures
+after an APIC-tick release. It reports logical ticks, not milliseconds;
+periodic binding of the exact signed PLC ELF and physical timing qualification
+remain open. The normative contract is
+`os/aiueos/contracts/plc-runtime-v1.edn`.
 
 Cross-machine topic samples use `aiueos.network-topic` protocol v1. Ed25519
 binds channel, publisher, topic, sequence, epoch and value. Registry topic

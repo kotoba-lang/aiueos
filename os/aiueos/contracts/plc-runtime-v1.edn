@@ -75,11 +75,15 @@
                          :deterministic-kotoba-generation
                          :static-aiueos-user-elf
                          :exact-capability-bitmap
+                         :native-motor-plc-capability-provider-smoke
+                         :apic-tick-periodic-release-smoke
+                         :immutable-input-image-smoke
+                         :atomic-output-safe-state-smoke
                          :transactional-scan-contract
                          :fail-closed-deployment-receipt]
            :deployment-ready false
            :blockers [:qualified-rt-kernel
-                      :native-plc-capability-provider
+                      :signed-plc-elf-periodic-task-binding
                       :bounded-physical-io-driver
                       :io-map
                       :wcet-and-response-time-analysis

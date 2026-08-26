@@ -537,8 +537,19 @@ The ordinary build receipt is intentionally not deployable. A deployment build
 must also set `AIUEOS_PLC_RT_KERNEL_RECEIPT`, `AIUEOS_PLC_IO_MAP`, and
 `AIUEOS_PLC_ADMISSION`; the receipt verifier refuses a missing or unqualified
 binding. See `contracts/plc-runtime-v1.edn` and ADR-0111. A generated program is
-not evidence that the native PLC capability provider or physical I/O driver is
-already present.
+not evidence that its signed ELF is already a periodic RT task or that a
+physical I/O driver is present.
+
+The RT-only QEMU gate boots the native provider and proves APIC-tick release,
+immutable input snapshotting, shadow staging, watchdog-gated atomic commit and
+safe-state handling for stage, watchdog, budget, deadline and program faults:
+
+```sh
+AIUEOS_PLC_RT_SMOKE=1 os/aiueos/scripts/smoke-qemu-uefi.sh
+```
+
+This is logical-tick execution evidence, not a calibrated 10 ms or WCET claim.
+See ADR-0112 for the remaining signed-ELF periodic-task boundary.
 
 ## USB removable-media boot
 

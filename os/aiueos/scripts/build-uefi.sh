@@ -29,6 +29,7 @@ kernel_smp_object="$out/kernel-smp.o"
 kernel_trampoline_object="$out/kernel-ap-trampoline.o"
 kernel_ioapic_object="$out/kernel-ioapic.o"
 kernel_framebuffer_object="$out/kernel-framebuffer.o"
+kernel_plc_runtime_object="$out/kernel-plc-runtime.o"
 kotoba_kernel_object=${AIUEOS_KOTOBA_KERNEL_OBJECT:-"$aiueos/kotoba/kernel-probe.o"}
 kotoba_journal_object=${AIUEOS_KOTOBA_JOURNAL_OBJECT:-"$aiueos/kotoba/journal-plan.o"}
 kotoba_fnv_object=${AIUEOS_KOTOBA_FNV_OBJECT:-"$aiueos/kotoba/fnv1a.o"}
@@ -174,6 +175,11 @@ fi
 # ceiling (ADR-0105).
 if [ "${AIUEOS_ECDSA_SIGN_KAT:-0}" = 1 ]; then
   input_smoke_cflags="$input_smoke_cflags -DAIUEOS_ECDSA_SIGN_KAT=1"
+fi
+plc_runtime_link=
+if [ "${AIUEOS_PLC_RT_SMOKE:-0}" = 1 ]; then
+  input_smoke_cflags="$input_smoke_cflags -DAIUEOS_PLC_RT_SMOKE=1"
+  plc_runtime_link="$kernel_plc_runtime_object"
 fi
 
 command -v zig >/dev/null 2>&1 || {
@@ -440,6 +446,11 @@ zig cc -target x86_64-freestanding-none -std=c11 -O2 \
 zig cc -target x86_64-freestanding-none -std=c11 -O2 \
   -ffreestanding -fno-stack-protector -mno-red-zone \
   -c -o "$kernel_framebuffer_object" "$aiueos/kernel/framebuffer.c"
+if [ -n "$plc_runtime_link" ]; then
+  zig cc -target x86_64-freestanding-none -std=c11 -O2 \
+    -ffreestanding -fno-stack-protector -mno-red-zone \
+    -c -o "$kernel_plc_runtime_object" "$aiueos/kernel/plc_runtime.c"
+fi
 # --strip-all: the symbol/string tables are ~550 KiB and are never loaded (only
 # PT_LOAD segments are), but the loader shas and reads the WHOLE KERNEL.ELF file
 # into a 1 MiB buffer, so they count against the ceiling. Stripping them keeps
@@ -456,7 +467,7 @@ zig ld.lld -nostdlib -static --strip-all -z max-page-size=0x1000 \
   "$kernel_scheduler_object" "$kernel_syscall_object" \
   "$kernel_process_object" "$kernel_loader_object" \
   "$kernel_smp_object" "$kernel_trampoline_object" \
-  "$kernel_ioapic_object" "$kernel_framebuffer_object" "$kotoba_kernel_object" \
+  "$kernel_ioapic_object" "$kernel_framebuffer_object" $plc_runtime_link "$kotoba_kernel_object" \
   "$kotoba_journal_object" "$kotoba_fnv_object" "$kotoba_journal_valid_object" \
   "$kotoba_transaction_valid_object" "$kotoba_transaction_route_object" \
   "$kotoba_mutable_valid_object" \
