@@ -1,4 +1,5 @@
-(ns aiueos.user-elf-valid)
+(ns aiueos.user-elf-valid
+  (:export [aiueos-user-elf-valid main]))
 
 (defn u8 [image length offset]
   (kernel-load-u8-16k image length offset))

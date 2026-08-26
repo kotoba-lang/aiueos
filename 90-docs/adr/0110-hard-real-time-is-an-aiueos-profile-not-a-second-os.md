@@ -106,10 +106,24 @@ commits one output for 100 scans. The Amu backend contributes only the sealed,
 register-preserving vector entry and instruction lowering. Its receipt says
 rtos_qualified=false and timing=logical-qemu-unqualified.
 
-This is real interrupt preemption and fixed-priority dispatch, but not yet the
-general ring-3 task/context-switch, signed PLC ELF, priority-ceiling mutex,
-bounded-driver, RTA/WCET or physical-timing qualification promised by the full
-profile.
+The next functional slice adds an immediate priority-ceiling mutex, a bounded
+two-input/two-output transactional driver ABI, and an embedded external PLC ELF
+admission path. The UEFI loader carries a bounded bundle; Kotoba checks SHA-256,
+ECDSA P-256 and the canonical PLC ELF layout before the periodic kernel starts.
+The receipt binds every Kotoba module and explicitly records that neither
+ring-3 execution nor a physical PLC driver is qualified.
+
+Effectful Kotoba RT operations are written as single-use nested state
+transitions. A `let` binding is an expression substitution and must not be
+referenced twice when it performs lock, unlock, latch, stage, watchdog or
+commit I/O; doing so would repeat the operation rather than read a cached
+result.
+
+This is real interrupt preemption, fixed-priority dispatch, priority-ceiling
+locking and signed external-code admission. It is not yet a general ring-3
+task/context switch, a hardware-specific PLC I/O driver, RTA/WCET evidence or
+physical-timing qualification promised by the full profile. Admitting an ELF
+does not claim that this C-free slice has executed it at CPL3.
 
 ## Closure
 
@@ -117,5 +131,7 @@ The product decision remains accepted: hard real-time is a separate AIUEOS
 artifact, not a second OS. The former implementation closure is retracted
 because it crossed a C kernel path. The corrected Kotoba/Amu-only functional
 slice is closed by its reproducible build, no-foreign-input receipt and exact
-QEMU marker `IAKRTS`. Full RTOS qualification remains open until the general
-task, driver and physical-measurement requirements above are met.
+QEMU marker `IMDAKRTS`. The extended signed-ELF marker remains open because its
+current P-256 implementation exceeded the QEMU/TCG performance bound. Full
+RTOS qualification remains open until the general task, driver and
+physical-measurement requirements above are met.

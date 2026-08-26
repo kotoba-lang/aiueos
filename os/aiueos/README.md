@@ -786,8 +786,13 @@ pinned Amu compiler closure:
 ./os/aiueos/scripts/smoke-qemu-kotoba-rt.sh /path/to/amu
 ```
 
-The smoke requires the exact marker `IAKRTS`: IDT installed, APIC configured,
-kernel entered, and 100 fixed-priority PLC scans returned successfully. Its
+The closed smoke requires the exact marker `IMDAKRTS`: IDT installed,
+priority-ceiling mutex checked, transactional driver ABI admitted, APIC
+configured, kernel entered, and 100 fixed-priority PLC scans returned
+successfully. Supplying `AIUEOS_PLC_RT_BUNDLE` also runs bounded SHA-256,
+ECDSA P-256 and canonical-ELF admission and expects `BHSDGVIMDAKRTS`. That
+extended path is implemented but remains performance-unqualified: the current
+P-256 implementation exceeded a 700-second QEMU/TCG bound. The
 receipt explicitly says `rtos_qualified=false` and
 `timing=logical-qemu-unqualified`; it is not physical WCET, jitter, driver or
 safety-certification evidence.

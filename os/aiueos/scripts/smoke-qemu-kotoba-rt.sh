@@ -4,6 +4,7 @@ set -eu
 repo=$(CDPATH= cd -- "$(dirname -- "$0")/../../.." && pwd)
 aiueos="$repo/os/aiueos"
 compiler=${1:?usage: smoke-qemu-kotoba-rt.sh /path/to/amu}
+payload=${AIUEOS_PLC_RT_BUNDLE:-}
 out=${AIUEOS_KOTOBA_RT_OUT:-"$repo/build/aiueos-kotoba-rt"}
 boot="$out/boot"
 efi="$boot/esp/EFI/BOOT/BOOTX64.EFI"
@@ -12,8 +13,15 @@ qemu=${QEMU_SYSTEM_X86_64:-qemu-system-x86_64}
 qemu_timeout=${AIUEOS_QEMU_TIMEOUT:-60}
 "$aiueos/scripts/build-kotoba-rt-kernel.sh" "$compiler" >/dev/null
 mkdir -p "$(dirname -- "$efi")"
-"$compiler/bin/kotoba-compiler" package-aiueos-boot "$out/KERNEL.ELF" --output "$efi"
-"$compiler/bin/kotoba-compiler" package-aiueos-boot "$out/KERNEL.ELF" --output "$second"
+if [ -n "$payload" ]; then
+  "$compiler/bin/kotoba-compiler" package-aiueos-boot "$out/KERNEL.ELF" --payload "$payload" --output "$efi"
+  "$compiler/bin/kotoba-compiler" package-aiueos-boot "$out/KERNEL.ELF" --payload "$payload" --output "$second"
+  expected_marker=BHSDGVIMDAKRTS
+else
+  "$compiler/bin/kotoba-compiler" package-aiueos-boot "$out/KERNEL.ELF" --output "$efi"
+  "$compiler/bin/kotoba-compiler" package-aiueos-boot "$out/KERNEL.ELF" --output "$second"
+  expected_marker=IMDAKRTS
+fi
 cmp "$efi" "$second"
 rm -f "$second"
 if [ -z "${OVMF_CODE:-}" ]; then
@@ -40,19 +48,21 @@ set -e
 [ "$status" = 33 ] || {
   echo "error: Kotoba RT QEMU exit was $status, expected 33" >&2; exit 1;
 }
-python3 - "$log" "$out/KERNEL.ELF" "$efi" "$out/qemu-receipt.json" <<'PY'
+python3 - "$log" "$out/KERNEL.ELF" "$efi" "$out/qemu-receipt.json" "$expected_marker" <<'PY'
 import hashlib
 import json
 from pathlib import Path
 import sys
 actual = Path(sys.argv[1]).read_bytes()
-if actual != b"IAKRTS":
-    raise SystemExit(f"error: Kotoba RT marker was {actual!r}, expected b'IAKRTS'")
+expected = sys.argv[5].encode("ascii")
+if actual != expected:
+    raise SystemExit(f"error: Kotoba RT marker was {actual!r}, expected {expected!r}")
 kernel = Path(sys.argv[2]).read_bytes()
 efi = Path(sys.argv[3]).read_bytes()
 Path(sys.argv[4]).write_text(json.dumps({
     "format": "aiueos-kotoba-native-rt-qemu-receipt/v1",
-    "marker": "IAKRTS",
+    "marker": sys.argv[5],
+    "signed_external_plc_elf": sys.argv[5].startswith("BHSDGV"),
     "qemu_exit_status": 33,
     "kernel_sha256": hashlib.sha256(kernel).hexdigest(),
     "uefi_sha256": hashlib.sha256(efi).hexdigest(),
@@ -66,4 +76,4 @@ foreign=$(find "$out" -type f \( -name '*.c' -o -name '*.o' -o -name '*.obj' \
 [ -z "$foreign" ] || {
   echo "error: C/foreign artifact entered Kotoba RT boot output: $foreign" >&2; exit 1;
 }
-echo "AIUEOS_KOTOBA_RT_QEMU_OK marker=IAKRTS no-c no-linux no-jvm apic-preemption fixed-priority plc-scans=100 timing=logical-unqualified"
+echo "AIUEOS_KOTOBA_RT_QEMU_OK marker=$expected_marker no-c no-linux no-jvm apic-preemption fixed-priority priority-ceiling transactional-io plc-scans=100 timing=logical-unqualified"

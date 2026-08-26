@@ -1,4 +1,5 @@
-(ns aiueos.sha256)
+(ns aiueos.sha256
+  (:export [aiueos-sha256 main]))
 
 ;; SHA-256 for the freestanding aiueos kernel.  The public entry accepts a
 ;; bounded 12 KiB message, a 32-byte output, and a caller-owned 320-byte

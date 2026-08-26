@@ -11,6 +11,7 @@ elf = pathlib.Path(sys.argv[1])
 source = pathlib.Path(sys.argv[2])
 compiler_commit = sys.argv[3]
 receipt = pathlib.Path(sys.argv[4])
+sources = [source] + [pathlib.Path(value) for value in sys.argv[5:]]
 data = elf.read_bytes()
 if data[:7] != b"\x7fELF\x02\x01\x01":
     raise SystemExit("error: RT kernel is not ELF64 little-endian")
@@ -50,8 +51,8 @@ payload = {
     "runtime_linux": False, "runtime_jvm": False, "runtime_gc": False,
     "hosted_adapters": False,
     "compiler_commit": compiler_commit,
-    "source": source.name,
-    "source_sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
+    "sources": {item.name: hashlib.sha256(item.read_bytes()).hexdigest()
+                for item in sources},
     "artifact_sha256": hashlib.sha256(data).hexdigest(),
     "artifact_bytes": len(data),
     "c_sources": [], "foreign_objects": [], "imports": [],
@@ -63,8 +64,18 @@ payload = {
                   "priority_order": "lower-number-is-more-urgent",
                   "plc_priority": 1, "background_priority": 10,
                   "period_ticks": 2},
+    "mutex": {"protocol": "immediate-priority-ceiling",
+              "recursive_lock": "rejected",
+              "foreign_unlock": "rejected"},
+    "io_provider": {"abi": "two-input-two-output-transaction/v1",
+                    "input": "latched-before-scan",
+                    "output": "shadow-then-atomic-commit",
+                    "watchdog": "exactly-one-before-commit",
+                    "physical_driver_qualified": False},
     "plc": {"language": "kotoba", "scan_count": 100,
-            "input": "single-snapshot", "output": "single-commit"},
+            "input": "single-snapshot", "output": "single-commit",
+            "external_elf_admission": "sha256+ecdsa-p256+canonical-elf",
+            "ring3_execution_qualified": False},
 }
 receipt.write_text(json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n",
                    encoding="ascii")
