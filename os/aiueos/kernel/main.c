@@ -1347,6 +1347,19 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
         serial_decimal(aiueos_ssh_kex_stage());
         serial_string("\r\n");
       }
+      /* Publickey userauth over the aes128-gcm record layer (ADR-0108):
+         stage 9 = the client's signature over the session's signed-data verified
+         against the authorized key and USERAUTH_SUCCESS was sent. */
+      if (aiueos_ssh_kex_stage() >= 12) {
+        serial_string("AIUEOS_SSH_AUTH_OK publickey ecdsa-sha2-nistp256 aes128-gcm userauth-success sent\r\n");
+        debug_string("AIUEOS_SSH_AUTH_OK userauth-success sent\n");
+      } else if (aiueos_ssh_kex_stage() >= 6) {
+        /* 6 entered 7 client-newkeys 8 service-req 9 service-accept
+           10 userauth-req 11 signature-verified. */
+        serial_string("AIUEOS_SSH_AUTH_INCOMPLETE stage=");
+        serial_decimal(aiueos_ssh_kex_stage());
+        serial_string("\r\n");
+      }
     } else {
       serial_string("AIUEOS_SSH_LISTEN_INCOMPLETE stage=");
       serial_decimal(aiueos_ssh_listen_stage());
