@@ -209,9 +209,13 @@
   :entropy :landed                     ; ADR-0103: aiueos_random_bytes, self-tested in a boot
   :crypto-path :ecdsa-p256             ; ADR-0103: one new object, no ed25519/sha-512
   :ecdsa-p256-sign :landed             ; ADR-0105: compiled, linked, boot-verified vs RFC 6979 A.2.5
-  :ssh-transport-core :imported        ; ADR-0106: kotoba-lang/org-ietf-ssh (ssh.transport), west-registered
+  :ssh-transport-core :imported        ; ADR-0106: kotoba-lang/org-ietf-ssh (ssh.transport + ssh.kex), west-registered
   :exchange-hash :landed               ; ADR-0106: KEXINIT + curve25519-sha256 transcript -> H, boot-verified vs the core
-  :sshd :not-yet-implemented           ; remaining: live KEX_ECDH wire exchange + host-key signature over H + userauth (existing verify)
+  :kex-reply :landed                   ; ADR-0107: live KEX_ECDH_REPLY (K_S, Q_S, ecdsa sign over H) + NEWKEYS over a real socket
+  :real-handshake :verified-by-independent-client ; ADR-0107: a node-crypto client verified the ecdsa-sha2-nistp256 signature over H
+  :host-key :fixed-ecdsa-p256          ; ADR-0107: baked d + public point in net_ssh_kex; per-device key is provisioning's job
+  :kernel-size 516672                  ; ADR-0107: --strip-all dropped the file from 1067112 to 516672 (loadable was always ~516k)
+  :sshd :partial                       ; kex + host auth are real; remaining: aes128-gcm record layer + publickey userauth (existing verify) for a full login
   :note "Reusable on the metal today: X25519 (arbitrary scalar x point),
          SHA-256, HMAC-SHA256, HKDF, AES-128-GCM (= aes128-gcm@openssh.com),
          digest-equal. The TLS 1.3 client (tls13.c) is a TCP-passive byte

@@ -1557,9 +1557,13 @@ unsigned aiueos_tcp_stage(void) { return tcp_stage; }
 static unsigned ssh_listen_stage;   /* 0 idle 1 syn 2 established 3 sent-id 4 got-id */
 static int ssh_client_id_valid;
 static uint32_t ssh_client_id_len;
+/* 0 not-reached 1 kexinit-sent 2 got-client-kexinit 3 got-ecdh-init
+   4 reply-sent 5 newkeys-sent. Read by main.c for the evidence marker. */
+static unsigned ssh_kex_stage;
 unsigned aiueos_ssh_listen_stage(void) { return ssh_listen_stage; }
 int aiueos_ssh_client_id_valid(void) { return ssh_client_id_valid; }
 uint32_t aiueos_ssh_client_id_len(void) { return ssh_client_id_len; }
+unsigned aiueos_ssh_kex_stage(void) { return ssh_kex_stage; }
 
 /* The lease, which is the whole point of the exchange: the first address this
    machine holds because a server said so rather than because a constant in this
@@ -2102,6 +2106,257 @@ static int net_ssh_id_prefix_ok(const uint8_t *p, uint32_t len) {
   return 0;
 }
 
+/* ------------------------------------------------------------------------- */
+/* The real curve25519-sha256 key exchange (ADR-0107). After the identification
+   strings, the server sends KEXINIT, receives the client's KEXINIT and its
+   KEX_ECDH_INIT (Q_C), then answers with KEX_ECDH_REPLY (K_S, Q_S, signature)
+   and NEWKEYS. The wire byte layout mirrors ssh.transport / ssh.kex in
+   kotoba-lang/org-ietf-ssh (west-imported), which an independent real-crypto
+   client verified end-to-end; here the crypto comes from the kernel's Kotoba
+   objects: X25519 for Q_S/K, SHA-256 for H, and the ECDSA-P256 sign object for
+   the host-key signature over H. Assembly is decision-free byte layout. */
+extern uint64_t kotoba_aiueos_x25519(const uint8_t *, const uint8_t *,
+                                     uint8_t *, uint8_t *);
+extern uint64_t kotoba_aiueos_ecdsa_p256_sign(const uint8_t *, const uint8_t *,
+                                              const uint8_t *, uint8_t *,
+                                              uint8_t *);
+/* Fixed ecdsa-sha2-nistp256 host key: d is the private scalar; (x,y)=d*G is the
+   public point (precomputed offline -- the kernel has no P-256 base multiply of
+   its own). The client harness pins this public key. A per-device key is the
+   provisioning's job (ssh-v1.edn); a fixed key here makes the handshake
+   reproducible for the gate. */
+static const uint8_t ssh_host_d[32] = {
+  0xe2,0x7f,0xa8,0xdf,0xb9,0xb3,0xf8,0x27,0xcc,0x11,0xe4,0x4e,0x17,0x5d,0x7f,0xf7,
+  0x85,0x44,0x51,0xbc,0x91,0x9b,0x53,0x44,0xa0,0x3a,0x0f,0x2b,0x59,0x32,0x07,0x89};
+static const uint8_t ssh_host_x[32] = {
+  0x32,0xb0,0x02,0xb8,0xfe,0x62,0x54,0xc0,0x89,0x4d,0x2c,0x08,0x24,0x29,0x99,0x2b,
+  0xd2,0x8c,0x0d,0x53,0xb4,0x51,0x86,0xab,0x79,0x06,0xdf,0x41,0x18,0x51,0x5e,0x35};
+static const uint8_t ssh_host_y[32] = {
+  0xd2,0x1a,0x8d,0x39,0x06,0x32,0x9b,0x62,0x4a,0x31,0xcc,0xe2,0xef,0x73,0x52,0x93,
+  0x5a,0x3e,0xd8,0x8f,0x5f,0x09,0x3e,0x57,0x09,0x57,0x20,0x57,0x64,0x6e,0xb2,0x9f};
+static const uint8_t x25519_base9[32] = { 9 };  /* rest zero: the curve25519 base */
+static const uint8_t ssh_v_s[] = "SSH-2.0-aiueos_0.1";  /* V_S without CR-LF */
+#define SSH_V_S_LEN (sizeof(ssh_v_s) - 1)
+static uint8_t ssh_v_c[128];       /* V_C captured from the client id line */
+static uint32_t ssh_v_c_len;
+static uint8_t ssh_x25519_ws[646]; /* X25519 workspace (same size tls13.c uses) */
+static uint8_t ssh_sign_ws[2048];  /* ECDSA sign object workspace */
+
+/* SSH `string`: uint32 length prefix then bytes. Returns the new offset. */
+static uint64_t ssh_ps(uint8_t *b, uint64_t o, const uint8_t *p, uint32_t n) {
+  b[o] = (uint8_t)(n >> 24); b[o + 1] = (uint8_t)(n >> 16);
+  b[o + 2] = (uint8_t)(n >> 8); b[o + 3] = (uint8_t)n;
+  for (uint32_t i = 0; i < n; i++) b[o + 4 + i] = p[i];
+  return o + 4 + n;
+}
+/* SSH `mpint`: big-endian, leading zeros stripped, 0x00 prepended if high bit set. */
+static uint64_t ssh_pmp(uint8_t *b, uint64_t o, const uint8_t *p, uint32_t n) {
+  uint32_t s = 0; while (s < n && p[s] == 0) s++;
+  uint32_t rem = n - s;
+  if (rem == 0) { b[o] = b[o + 1] = b[o + 2] = b[o + 3] = 0; return o + 4; }
+  uint32_t pad = (p[s] & 0x80) ? 1u : 0u, len = rem + pad;
+  b[o] = (uint8_t)(len >> 24); b[o + 1] = (uint8_t)(len >> 16);
+  b[o + 2] = (uint8_t)(len >> 8); b[o + 3] = (uint8_t)len;
+  uint64_t q = o + 4; if (pad) b[q++] = 0;
+  for (uint32_t i = s; i < n; i++) b[q++] = p[i];
+  return q;
+}
+/* Wrap a payload as an unencrypted binary packet (block 8, zero padding --
+   content is irrelevant before NEWKEYS). Returns total wire bytes. */
+static uint32_t ssh_wrap(uint8_t *out, const uint8_t *payload, uint32_t plen) {
+  uint32_t pad = 8 - ((5 + plen) % 8); if (pad < 4) pad += 8;
+  uint32_t pl = 1 + plen + pad;
+  out[0] = (uint8_t)(pl >> 24); out[1] = (uint8_t)(pl >> 16);
+  out[2] = (uint8_t)(pl >> 8);  out[3] = (uint8_t)pl;
+  out[4] = (uint8_t)pad;
+  for (uint32_t i = 0; i < plen; i++) out[5 + i] = payload[i];
+  for (uint32_t i = 0; i < pad; i++) out[5 + plen + i] = 0;
+  return 4 + pl;
+}
+/* Our KEXINIT payload (the profile in ssh.transport). Random cookie. */
+static uint32_t ssh_build_kexinit(uint8_t *p) {
+  uint64_t o = 0;
+  p[o++] = 20;
+  aiueos_random_bytes(p + o, 16); o += 16;
+  static const char *const nl[10] = {
+    "curve25519-sha256,curve25519-sha256@libssh.org",
+    "ecdsa-sha2-nistp256",
+    "aes128-gcm@openssh.com", "aes128-gcm@openssh.com",
+    "none", "none", "none", "none", "", ""};
+  for (int i = 0; i < 10; i++) {
+    uint32_t n = 0; while (nl[i][n]) n++;
+    o = ssh_ps(p, o, (const uint8_t *)nl[i], n);
+  }
+  p[o++] = 0;                                   /* first_kex_packet_follows */
+  p[o++] = 0; p[o++] = 0; p[o++] = 0; p[o++] = 0; /* reserved uint32 */
+  return (uint32_t)o;
+}
+/* The data region and length of the just-received TCP segment. */
+static const uint8_t *ssh_seg_data(const uint8_t *frame, uint32_t *len) {
+  uint32_t total = net_load_be16(frame + 16);
+  uint32_t hdr = 4U * (uint32_t)(frame[46] >> 4);
+  if (hdr < 20 || 20 + hdr > total) { *len = 0; return frame + 34 + 20; }
+  *len = total - 20 - hdr;
+  return frame + 34 + hdr;
+}
+/* The payload of a received binary packet (after the 5-byte framing), and its
+   length via *plen. Returns NULL if the framing is inconsistent with dlen. */
+static const uint8_t *ssh_unwrap(const uint8_t *seg, uint32_t dlen, uint32_t *plen) {
+  if (dlen < 6) return 0;
+  uint32_t pl = ((uint32_t)seg[0] << 24) | ((uint32_t)seg[1] << 16) |
+                ((uint32_t)seg[2] << 8) | seg[3];
+  uint32_t padl = seg[4];
+  if (padl < 4 || pl < padl + 1 || 4 + pl > dlen) return 0;
+  *plen = pl - padl - 1;
+  return seg + 5;
+}
+
+/* Drive the server side of the kex from the point the identification strings
+   have been exchanged. `sseq` is our next send sequence number, `pnext` the
+   client's next (our ack). Bounded throughout; sets ssh_kex_stage as it goes so
+   a boot shows exactly how far it got. Returns 1 iff KEX_ECDH_REPLY+NEWKEYS were
+   sent. Cooperating segmentation (one ACK between the client's two packets)
+   works within the one-buffer RX; the crypto and byte formats are real. */
+static int net_ssh_kex(struct net_ring *rx, struct net_ring *tx,
+                       uint8_t *rx_page, uint8_t *tx_page,
+                       uint16_t cport, uint32_t sseq, uint32_t pnext) {
+  const uint8_t *frame = rx_page + sizeof(struct virtio_net_hdr);
+  static uint8_t is_payload[512];
+  static uint8_t ic_payload[1024];
+  static uint8_t pkt[1024];
+  uint32_t is_len = ssh_build_kexinit(is_payload);
+
+  /* 1. send our KEXINIT (I_S). */
+  {
+    uint32_t wl = ssh_wrap(pkt, is_payload, is_len);
+    if (!net_tcp_send(tx, tx_page, NET_GUEST_IP, NET_PEER_IP, NET_SSH_PORT, cport,
+                      sseq, pnext, NET_TCP_PSH | NET_TCP_ACK, pkt, wl)) return 0;
+    sseq += wl;
+    ssh_kex_stage = 1;
+  }
+
+  /* 2. receive the client's KEXINIT (I_C). It acks our KEXINIT (expected_ack). */
+  net_post(rx);
+  if (!net_tcp_receive(rx, rx_page, NET_PEER_IP, sseq, NET_TCP_PSH | NET_TCP_ACK, 8))
+    return 0;
+  uint32_t ic_len = 0;
+  {
+    uint32_t dlen = 0;
+    const uint8_t *seg = ssh_seg_data(frame, &dlen);
+    uint32_t plen = 0;
+    const uint8_t *pay = ssh_unwrap(seg, dlen, &plen);
+    if (!pay || plen > sizeof(ic_payload)) return 0;
+    for (uint32_t i = 0; i < plen; i++) ic_payload[i] = pay[i];
+    ic_len = plen;
+    pnext += dlen;
+    ssh_kex_stage = 2;
+  }
+
+  /* 3. ACK the client's KEXINIT so it will send KEX_ECDH_INIT (one-buffer RX). */
+  net_tcp_send(tx, tx_page, NET_GUEST_IP, NET_PEER_IP, NET_SSH_PORT, cport,
+               sseq, pnext, NET_TCP_ACK, 0, 0);
+
+  /* 4. receive KEX_ECDH_INIT and extract Q_C. */
+  uint8_t q_c[32];
+  net_post(rx);
+  if (!net_tcp_receive(rx, rx_page, NET_PEER_IP, sseq, NET_TCP_PSH | NET_TCP_ACK, 8))
+    return 0;
+  {
+    uint32_t dlen = 0;
+    const uint8_t *seg = ssh_seg_data(frame, &dlen);
+    uint32_t plen = 0;
+    const uint8_t *pay = ssh_unwrap(seg, dlen, &plen);
+    if (!pay || plen < 37 || pay[0] != 30) return 0;   /* byte 30 + string(32) */
+    for (int i = 0; i < 32; i++) q_c[i] = pay[5 + i];
+    pnext += dlen;
+    ssh_kex_stage = 3;
+  }
+
+  /* 5. ephemeral X25519, shared secret, host-key blob, exchange hash H. */
+  uint8_t eph[32], q_s[32], k[32];
+  aiueos_random_bytes(eph, 32);
+  if (!kotoba_aiueos_x25519(eph, x25519_base9, q_s, ssh_x25519_ws)) return 0;
+  if (!kotoba_aiueos_x25519(eph, q_c, k, ssh_x25519_ws)) return 0;
+
+  static uint8_t ks[128];
+  uint32_t kslen = 0;
+  kslen = (uint32_t)ssh_ps(ks, kslen, (const uint8_t *)"ecdsa-sha2-nistp256", 19);
+  kslen = (uint32_t)ssh_ps(ks, kslen, (const uint8_t *)"nistp256", 8);
+  {
+    uint8_t point[65];
+    point[0] = 0x04;
+    for (int i = 0; i < 32; i++) { point[1 + i] = ssh_host_x[i]; point[33 + i] = ssh_host_y[i]; }
+    kslen = (uint32_t)ssh_ps(ks, kslen, point, 65);
+  }
+
+  static uint8_t tr[1536];
+  uint64_t to = 0;
+  to = ssh_ps(tr, to, ssh_v_c, ssh_v_c_len);
+  to = ssh_ps(tr, to, ssh_v_s, SSH_V_S_LEN);
+  to = ssh_ps(tr, to, ic_payload, ic_len);
+  to = ssh_ps(tr, to, is_payload, is_len);
+  to = ssh_ps(tr, to, ks, kslen);
+  to = ssh_ps(tr, to, q_c, 32);
+  to = ssh_ps(tr, to, q_s, 32);
+  to = ssh_pmp(tr, to, k, 32);
+
+  uint8_t h[32], e[32];
+  if (!kotoba_aiueos_sha256(tr, to, h, sha256_workspace, sizeof(sha256_workspace)))
+    return 0;
+  /* ecdsa-sha2-nistp256 signs H as an ECDSA-with-SHA256 message: digest = SHA256(H). */
+  if (!kotoba_aiueos_sha256(h, 32, e, sha256_workspace, sizeof(sha256_workspace)))
+    return 0;
+
+  /* 6. sign H's digest. k nonce: random, top bit cleared so k < 2^255 < n
+        (a valid [1,n-1] nonce without an HMAC_DRBG in the kernel). Retry on the
+        object's r==0/s==0 refusal (astronomically rare). */
+  uint8_t rs[64];
+  int signed_ok = 0;
+  for (int t = 0; t < 8 && !signed_ok; t++) {
+    uint8_t nonce[32];
+    aiueos_random_bytes(nonce, 32);
+    nonce[0] &= 0x7f;
+    if (kotoba_aiueos_ecdsa_p256_sign(ssh_host_d, e, nonce, rs, ssh_sign_ws))
+      signed_ok = 1;
+  }
+  if (!signed_ok) return 0;
+
+  /* 7. signature blob, KEX_ECDH_REPLY, send. */
+  static uint8_t sig[128];
+  uint64_t so = 0;
+  {
+    uint8_t inner[80];
+    uint64_t io = 0;
+    io = ssh_pmp(inner, io, rs, 32);
+    io = ssh_pmp(inner, io, rs + 32, 32);
+    so = ssh_ps(sig, so, (const uint8_t *)"ecdsa-sha2-nistp256", 19);
+    so = ssh_ps(sig, so, inner, (uint32_t)io);
+  }
+  static uint8_t rep[512];
+  uint64_t ro = 0;
+  rep[ro++] = 31;                                  /* SSH_MSG_KEX_ECDH_REPLY */
+  ro = ssh_ps(rep, ro, ks, kslen);
+  ro = ssh_ps(rep, ro, q_s, 32);
+  ro = ssh_ps(rep, ro, sig, (uint32_t)so);
+  {
+    uint32_t wl = ssh_wrap(pkt, rep, (uint32_t)ro);
+    if (!net_tcp_send(tx, tx_page, NET_GUEST_IP, NET_PEER_IP, NET_SSH_PORT, cport,
+                      sseq, pnext, NET_TCP_PSH | NET_TCP_ACK, pkt, wl)) return 0;
+    sseq += wl;
+    ssh_kex_stage = 4;
+  }
+
+  /* 8. NEWKEYS. */
+  {
+    uint8_t nk = 21;
+    uint32_t wl = ssh_wrap(pkt, &nk, 1);
+    if (!net_tcp_send(tx, tx_page, NET_GUEST_IP, NET_PEER_IP, NET_SSH_PORT, cport,
+                      sseq, pnext, NET_TCP_PSH | NET_TCP_ACK, pkt, wl)) return 0;
+    ssh_kex_stage = 5;
+  }
+  return 1;
+}
+
 /* Accept ONE inbound SSH connection and exchange identification strings. This
    mirrors net_tcp_probe with the roles reversed: the peer opens, we answer.
    Reuses tcp-segment-valid (already linked) for inbound admission and
@@ -2179,12 +2434,21 @@ static int net_ssh_listen(struct net_ring *rx, struct net_ring *tx,
     ssh_client_id_valid = net_ssh_id_prefix_ok(data, dlen);
     uint32_t cnext = cseq + 1 + dlen;
 
-    /* 6. ACK the client's line, then close from our side (best effort). */
-    net_tcp_send(tx, tx_page, NET_GUEST_IP, NET_PEER_IP, NET_SSH_PORT, cport,
-                 NET_SSH_ISN + 1 + NET_SSH_ID_LEN, cnext, NET_TCP_ACK, 0, 0);
-    net_tcp_send(tx, tx_page, NET_GUEST_IP, NET_PEER_IP, NET_SSH_PORT, cport,
-                 NET_SSH_ISN + 1 + NET_SSH_ID_LEN, cnext,
-                 NET_TCP_FIN | NET_TCP_ACK, 0, 0);
+    /* Capture V_C (the id line WITHOUT CR-LF) for the exchange-hash transcript,
+       before net_ssh_kex overwrites the RX page. */
+    {
+      uint32_t vlen = dlen;
+      while (vlen > 0 && (data[vlen - 1] == '\r' || data[vlen - 1] == '\n')) vlen--;
+      if (vlen > sizeof(ssh_v_c)) vlen = sizeof(ssh_v_c);
+      for (uint32_t i = 0; i < vlen; i++) ssh_v_c[i] = data[i];
+      ssh_v_c_len = vlen;
+    }
+
+    /* 6. the real curve25519-sha256 kex (KEXINIT / KEX_ECDH_REPLY / NEWKEYS).
+          Our KEXINIT acks the client's id, so no separate bare ACK first. */
+    if (ssh_client_id_valid)
+      net_ssh_kex(rx, tx, rx_page, tx_page, cport,
+                  NET_SSH_ISN + 1 + NET_SSH_ID_LEN, cnext);
   }
   return ssh_client_id_valid;
 }
