@@ -1,5 +1,8 @@
 # ADR-0112 — PLC provider precedes periodic ELF binding
 
+- Status: accepted
+- Date: 2026-08-26
+
 ## Decision
 
 Land a kernel-side transaction-provider vertical slice for the two-input,
@@ -52,3 +55,18 @@ refuses deployment without qualified physical-I/O driver evidence, at least
 work is to obtain the production signing authority and real measurements, run
 a long-duration soak, calibrate the timer and qualify physical I/O. Existing
 general-app signature checks remain unchanged.
+
+## Closure
+
+This vertical slice is closed on 2026-08-26. Commits `428ab44`, `673438f`,
+`48ba35c` and `d639653` progress from the native provider to receipt-bound CPL3
+execution, repeated fixed-priority scheduling and signed 100-scan admission.
+The closing QEMU marker is `AIUEOS_PLC_RT_QEMU_OK scans=100 signed-elf
+tamper-rejected fixed-priority-preemption native-provider apic-release
+transactional-output safe-state`; the ordinary UEFI build and PLC/RT receipt
+regressions also pass.
+
+The slice is complete at its stated logical-time QEMU boundary. Production
+signing, timer calibration, physical I/O qualification, long-duration soak,
+WCET/RTA measurement and safety certification remain explicitly outside this
+closure and must not inherit its evidence claim.

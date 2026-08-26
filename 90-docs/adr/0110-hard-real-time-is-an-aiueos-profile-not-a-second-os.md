@@ -100,3 +100,18 @@ replenishment and return to the kernel after each scan. General static task-set
 integration and actual calibrated physical timing, RTA/WCET measurements and
 bounded drivers remain required before the kernel can produce a qualified RT
 receipt; their new receipt gates do not substitute for that evidence.
+
+## Closure
+
+The architecture decision is closed on 2026-08-26. AIUEOS remains one product
+and source tree, while `x86_64-aiueos-rt-kernel-v1` remains a separately built
+and admitted native artifact. The implemented vertical slice covers the
+fixed-priority policy, native interrupt preemption, signed PLC admission,
+100-scan replenishment and fail-closed evidence gates without Linux, JVM, GC or
+a hosted fallback.
+
+This closure is not RTOS qualification. Production signing authority, general
+static task-set integration, calibrated physical-hardware measurements,
+RTA/WCET evidence, bounded physical I/O and any safety-certification work must
+be handled as subsequent qualification changes with their own evidence and,
+where they alter this decision, a superseding ADR.
