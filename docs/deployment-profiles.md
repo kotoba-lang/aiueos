@@ -146,6 +146,14 @@ are not fallback paths for that artifact. The existing native-kernel receipt
 is explicitly `best-effort` and `rtos_qualified=false`; this is currently a
 contract, not a claim that an existing AIUEOS image has qualified as an RTOS.
 
+`aiueos-plc-v1` is an application profile above that separate RT kernel. Its
+engineering path compiles the admitted IEC 61131-3 Structured Text subset to a
+static `x86_64-aiueos-user-v1` ELF; deployed machines do not interpret ST. A
+PLC build is not deployable until its receipt binds the qualified RT kernel,
+exact I/O map and response-time admission analysis. Input snapshot, shadow
+output, watchdog and atomic commit are the only program capabilities. The
+normative contract is `os/aiueos/contracts/plc-runtime-v1.edn`.
+
 Cross-machine topic samples use `aiueos.network-topic` protocol v1. Ed25519
 binds channel, publisher, topic, sequence, epoch and value. Registry topic
 allow-lists authorize publishers; sequence checkpoints prevent replay across

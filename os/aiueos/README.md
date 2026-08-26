@@ -518,6 +518,28 @@ calls would reserve ABI for work not done (ADR-0074, ADR-0076). **Read a
 `.kotoba` file's presence as a decision that was written, not one the kernel
 runs**; `build-uefi.sh` names every object it links.
 
+## Native PLC program profile
+
+`aiueos-plc-v1` compiles a bounded IEC 61131-3 Structured Text subset to a
+static, C-free `x86_64-aiueos-user-v1` program. The deployed program has only
+four capabilities: immutable input-image read, shadow-output stage, atomic
+output commit and watchdog checkpoint. It does not interpret ST at runtime.
+
+Build the included deterministic example with the pinned-compatible Amu
+checkout:
+
+```sh
+os/aiueos/scripts/build-plc-native-program.sh /path/to/amu \
+  os/aiueos/plc/examples/motor.st
+```
+
+The ordinary build receipt is intentionally not deployable. A deployment build
+must also set `AIUEOS_PLC_RT_KERNEL_RECEIPT`, `AIUEOS_PLC_IO_MAP`, and
+`AIUEOS_PLC_ADMISSION`; the receipt verifier refuses a missing or unqualified
+binding. See `contracts/plc-runtime-v1.edn` and ADR-0111. A generated program is
+not evidence that the native PLC capability provider or physical I/O driver is
+already present.
+
 ## USB removable-media boot
 
 The GPT release image above is what gets written to a USB stick, but producing

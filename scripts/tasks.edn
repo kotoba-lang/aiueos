@@ -111,4 +111,13 @@
 
  :hw-probe-smoke
  {:cmd ["./os/aiueos/scripts/smoke-qemu-hw-probe.sh"]
-  :doc "Boot the hardware probe as removable USB under QEMU/OVMF and require all positive markers."}}
+  :doc "Boot the hardware probe as removable USB under QEMU/OVMF and require all positive markers."}
+
+ :plc-test
+ {:cmd ["./os/aiueos/scripts/test-plc.sh"]
+  :doc "Bounded Structured Text frontend, exact I/O safe-state map, timing admission and fail-closed PLC deployment receipt tests."}
+
+ :plc-native-build
+ {:cmd ["./os/aiueos/scripts/build-plc-native-program.sh"]
+  :pass-args? true
+  :doc "Compile a bounded ST program twice to a reproducible static x86_64 AIUEOS user ELF and emit its deployment binding receipt."}}
