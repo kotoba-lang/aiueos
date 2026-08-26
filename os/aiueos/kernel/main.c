@@ -192,6 +192,79 @@ static int aiueos_ecdsa_sign_kat(void) {
   return 1;
 }
 #endif
+#ifdef AIUEOS_SSH_LISTEN
+/* SSH-2 curve25519-sha256 exchange hash H (RFC 5656 §4, RFC 8731). The
+   transcript is the ordered concatenation
+     string(V_C) string(V_S) string(I_C) string(I_S) string(K_S)
+     string(Q_C) string(Q_S) mpint(K)
+   and H = SHA-256(transcript). This mirrors ssh.transport/h-transcript from
+   kotoba-lang/org-ietf-ssh (west-imported, ADR-0106): that .cljc is the single
+   source of truth for the wire rules, and smoke-qemu-ssh-kex re-derives the
+   expected H from it so a drift in the shared core turns the gate red even
+   though this kernel self-verifies against a baked want[].
+
+   The transcript assembly is decision-free mechanism (byte layout only); the
+   hash is the already-linked Kotoba SHA-256 object, so this KAT adds no new
+   object and rides under AIUEOS_SSH_LISTEN (unlike the ~50 KiB ECDSA sign
+   object, which needs its own flag near the 1 MiB ceiling). */
+extern uint64_t kotoba_aiueos_sha256(const uint8_t *, uint64_t, uint8_t[32],
+                                     uint8_t *, uint64_t);
+static uint64_t ssh_put_string(uint8_t *buf, uint64_t off,
+                               const uint8_t *bytes, uint32_t n) {
+  buf[off]     = (uint8_t)(n >> 24);
+  buf[off + 1] = (uint8_t)(n >> 16);
+  buf[off + 2] = (uint8_t)(n >> 8);
+  buf[off + 3] = (uint8_t)(n);
+  for (uint32_t i = 0; i < n; i++) buf[off + 4 + i] = bytes[i];
+  return off + 4 + n;
+}
+static uint64_t ssh_put_mpint(uint8_t *buf, uint64_t off,
+                              const uint8_t *bytes, uint32_t n) {
+  uint32_t start = 0;
+  while (start < n && bytes[start] == 0) start++;   /* strip leading zeros */
+  uint32_t rem = n - start;
+  if (rem == 0) {                                    /* zero -> empty string */
+    buf[off] = buf[off + 1] = buf[off + 2] = buf[off + 3] = 0;
+    return off + 4;
+  }
+  uint32_t pad = (bytes[start] & 0x80) ? 1u : 0u;    /* keep it non-negative */
+  uint32_t len = rem + pad;
+  buf[off]     = (uint8_t)(len >> 24);
+  buf[off + 1] = (uint8_t)(len >> 16);
+  buf[off + 2] = (uint8_t)(len >> 8);
+  buf[off + 3] = (uint8_t)(len);
+  uint64_t p = off + 4;
+  if (pad) buf[p++] = 0x00;
+  for (uint32_t i = start; i < n; i++) buf[p++] = bytes[i];
+  return p;
+}
+static int aiueos_ssh_kex_h(uint8_t out[32]) {
+  /* Fixed KAT wire inputs, identical to the ssh.transport test fixture; kept
+     short so the baked arrays stay tiny. K has its high bit set to exercise the
+     mpint leading-zero rule. */
+  static const uint8_t v_c[] = "SSH-2.0-C";       /* len 9  (NUL excluded) */
+  static const uint8_t v_s[] = "SSH-2.0-aiueos";  /* len 14 */
+  static const uint8_t i_c[] = {0x14, 0x01, 0x02, 0x03};
+  static const uint8_t i_s[] = {0x14, 0x0a, 0x0b, 0x0c, 0x0d};
+  static const uint8_t k_s[] = "hostkey-blob";    /* len 12 */
+  uint8_t q_c[32], q_s[32], k[32];
+  for (int i = 0; i < 32; i++) { q_c[i] = (uint8_t)i; q_s[i] = (uint8_t)((i + 100) & 0xff); }
+  k[0] = 0x80;
+  for (int i = 1; i < 32; i++) k[i] = (uint8_t)(i - 1);
+  static uint8_t buf[256];
+  uint64_t off = 0;
+  off = ssh_put_string(buf, off, v_c, 9);
+  off = ssh_put_string(buf, off, v_s, 14);
+  off = ssh_put_string(buf, off, i_c, 4);
+  off = ssh_put_string(buf, off, i_s, 5);
+  off = ssh_put_string(buf, off, k_s, 12);
+  off = ssh_put_string(buf, off, q_c, 32);
+  off = ssh_put_string(buf, off, q_s, 32);
+  off = ssh_put_mpint(buf, off, k, 32);
+  static uint8_t ws[512];
+  return (int)kotoba_aiueos_sha256(buf, off, out, ws, sizeof(ws));
+}
+#endif
 extern int aiueos_dhcp_ready(void);
 extern unsigned aiueos_dhcp_stage(void);
 extern unsigned aiueos_dhcp_reason(void);
@@ -290,6 +363,11 @@ static void serial_byte(uint8_t value) {
 }
 static void serial_string(const char *text) {
   while (*text) serial_byte((uint8_t)*text++);
+}
+static void serial_hex_byte(uint8_t value) {
+  static const char digits[] = "0123456789abcdef";
+  serial_byte((uint8_t)digits[(value >> 4) & 0xf]);
+  serial_byte((uint8_t)digits[value & 0xf]);
 }
 static void debug_string(const char *text) {
   while (*text) debug_byte((uint8_t)*text++);
@@ -680,6 +758,31 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
       debug_string("AIUEOS_RANDOM_OK two-batches distinct non-constant 32-bytes\n");
     } else {
       serial_string("AIUEOS_RANDOM_FAIL entropy-source-unusable\r\n");
+    }
+    /* SSH curve25519-sha256 exchange hash H over the RFC 5656 transcript
+       (ssh-v1.edn / ADR-0106). H is emitted as hex so smoke-qemu-ssh-kex can
+       compare it against ssh.transport's H (kotoba-lang/org-ietf-ssh); want[]
+       is that same H, baked, so the boot self-verifies. */
+    {
+      static const uint8_t want[32] = {
+        0x52,0x0a,0x9b,0xa7,0x0d,0x60,0x20,0x1a,0xf9,0x36,0x5b,0x0e,0x53,0xff,0xaf,0xa1,
+        0xa3,0x14,0x46,0xd1,0x7e,0xc2,0x43,0x15,0xeb,0x67,0x8a,0x9b,0x2e,0x70,0x98,0x33};
+      uint8_t hh[32];
+      if (aiueos_ssh_kex_h(hh)) {
+        int match = 1;
+        for (int i = 0; i < 32; i++) if (hh[i] != want[i]) match = 0;
+        serial_string("AIUEOS_SSH_KEX_H ");
+        for (int i = 0; i < 32; i++) serial_hex_byte(hh[i]);
+        serial_string("\r\n");
+        if (match) {
+          serial_string("AIUEOS_SSH_KEX_OK curve25519-sha256 exchange-hash-match org-ietf-ssh\r\n");
+          debug_string("AIUEOS_SSH_KEX_OK curve25519-sha256 exchange-hash-match\n");
+        } else {
+          serial_string("AIUEOS_SSH_KEX_FAIL exchange-hash-mismatch\r\n");
+        }
+      } else {
+        serial_string("AIUEOS_SSH_KEX_FAIL sha256-object-failed\r\n");
+      }
     }
 #endif
 #ifdef AIUEOS_ECDSA_SIGN_KAT
