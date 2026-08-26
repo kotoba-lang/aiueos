@@ -2135,12 +2135,33 @@ static const uint8_t ssh_host_y[32] = {
   0xd2,0x1a,0x8d,0x39,0x06,0x32,0x9b,0x62,0x4a,0x31,0xcc,0xe2,0xef,0x73,0x52,0x93,
   0x5a,0x3e,0xd8,0x8f,0x5f,0x09,0x3e,0x57,0x09,0x57,0x20,0x57,0x64,0x6e,0xb2,0x9f};
 static const uint8_t x25519_base9[32] = { 9 };  /* rest zero: the curve25519 base */
+/* The single authorized publickey (ADR-0108): the ecdsa-sha2-nistp256 public
+   point a client must prove it holds the private half of. The provisioning
+   places per-device authorized keys (ssh-v1.edn); this fixed one makes the login
+   reproducible for the gate. */
+static const uint8_t ssh_auth_x[32] = {
+  0x46,0x87,0x0e,0x7c,0xe7,0x9b,0xcb,0xc6,0x01,0x47,0x14,0x61,0x8f,0x35,0x43,0xdc,
+  0x1e,0x6d,0x67,0xcb,0xc5,0xda,0x37,0x8d,0x91,0xc8,0xd7,0x17,0x11,0xaf,0x1a,0xbf};
+static const uint8_t ssh_auth_y[32] = {
+  0x04,0xae,0xd0,0x99,0x59,0x46,0xfb,0x24,0x4e,0x15,0x10,0x9e,0xe2,0x76,0xc5,0x79,
+  0xfa,0x0b,0x14,0x40,0x5b,0xf9,0x50,0x75,0x22,0xee,0xe2,0x65,0x68,0xd2,0xc0,0xf3};
+/* AES-128-GCM (tls_aes_gcm.h) and the ECDSA-P256 verify object (already linked
+   for userauth's signature check). */
+extern int aiueos_aes128_gcm_encrypt(const uint8_t[16], const uint8_t[12],
+                                     const uint8_t *, uint32_t,
+                                     const uint8_t *, uint32_t, uint8_t *, uint8_t[16]);
+extern int aiueos_aes128_gcm_decrypt(const uint8_t[16], const uint8_t[12],
+                                     const uint8_t *, uint32_t,
+                                     const uint8_t *, uint32_t, const uint8_t[16], uint8_t *);
+extern uint64_t kotoba_aiueos_ecdsa_p256_sha256_verify(const uint8_t *, const uint8_t *,
+                                                       const uint8_t *, uint8_t *, uint64_t);
 static const uint8_t ssh_v_s[] = "SSH-2.0-aiueos_0.1";  /* V_S without CR-LF */
 #define SSH_V_S_LEN (sizeof(ssh_v_s) - 1)
 static uint8_t ssh_v_c[128];       /* V_C captured from the client id line */
 static uint32_t ssh_v_c_len;
 static uint8_t ssh_x25519_ws[646]; /* X25519 workspace (same size tls13.c uses) */
 static uint8_t ssh_sign_ws[2048];  /* ECDSA sign object workspace */
+static uint8_t ssh_verify_ws[2048];/* ECDSA verify object workspace (userauth) */
 
 /* SSH `string`: uint32 length prefix then bytes. Returns the new offset. */
 static uint64_t ssh_ps(uint8_t *b, uint64_t o, const uint8_t *p, uint32_t n) {
@@ -2209,6 +2230,233 @@ static const uint8_t *ssh_unwrap(const uint8_t *seg, uint32_t dlen, uint32_t *pl
   if (padl < 4 || pl < padl + 1 || 4 + pl > dlen) return 0;
   *plen = pl - padl - 1;
   return seg + 5;
+}
+
+/* ------------------------------------------------------------------------- */
+/* Post-NEWKEYS: the aes128-gcm@openssh.com record layer and publickey userauth
+   (ADR-0108). Byte layout mirrors ssh.keys / ssh.record / ssh.userauth in
+   kotoba-lang/org-ietf-ssh, which an independent real-crypto client ran the whole
+   login through. The crypto is the kernel's: AES-128-GCM and the ECDSA-P256
+   verify object; SHA-256 for the key derivation. */
+static uint32_t ssh_be32p(const uint8_t *p) {
+  return ((uint32_t)p[0] << 24) | ((uint32_t)p[1] << 16) | ((uint32_t)p[2] << 8) | p[3];
+}
+/* GCM nonce for packet `seq`: iv[0..4] fixed, iv[4..12] as a big-endian 64-bit
+   counter plus seq (byte-wise carry, exact for any counter). */
+static void ssh_nonce(const uint8_t iv[12], uint32_t seq, uint8_t out[12]) {
+  int i; uint64_t carry;
+  for (i = 0; i < 12; i++) out[i] = iv[i];
+  carry = seq;
+  for (i = 11; i >= 4 && carry; i--) { carry += out[i]; out[i] = (uint8_t)(carry & 0xff); carry >>= 8; }
+}
+/* Encrypt+frame one packet. Returns wire length, or 0 on cipher failure. */
+static uint32_t ssh_seal(const uint8_t key[16], const uint8_t iv[12], uint32_t seq,
+                         const uint8_t *payload, uint32_t plen, uint8_t *out) {
+  uint32_t pad = 16 - ((1 + plen) % 16); if (pad < 4) pad += 16;
+  uint32_t packet_length = 1 + plen + pad;
+  uint8_t aad[4], nonce[12], tag[16];
+  static uint8_t pt[1024];
+  uint32_t i;
+  aad[0] = (uint8_t)(packet_length >> 24); aad[1] = (uint8_t)(packet_length >> 16);
+  aad[2] = (uint8_t)(packet_length >> 8);  aad[3] = (uint8_t)packet_length;
+  pt[0] = (uint8_t)pad;
+  for (i = 0; i < plen; i++) pt[1 + i] = payload[i];
+  for (i = 0; i < pad; i++) pt[1 + plen + i] = 0;
+  ssh_nonce(iv, seq, nonce);
+  out[0] = aad[0]; out[1] = aad[1]; out[2] = aad[2]; out[3] = aad[3];
+  if (!aiueos_aes128_gcm_encrypt(key, nonce, aad, 4, pt, packet_length, out + 4, tag)) return 0;
+  for (i = 0; i < 16; i++) out[4 + packet_length + i] = tag[i];
+  return 4 + packet_length + 16;
+}
+/* Deframe+decrypt one received packet from the segment. Payload to pt_out, its
+   length via *plen. Returns 0 on framing or tag failure. */
+static int ssh_open(const uint8_t key[16], const uint8_t iv[12], uint32_t seq,
+                    const uint8_t *seg, uint32_t dlen, uint8_t *pt_out, uint32_t *plen) {
+  static uint8_t pt[1024];
+  uint8_t nonce[12], aad[4];
+  uint32_t packet_length, padl, pl, i;
+  if (dlen < 4 + 1 + 16) return 0;
+  packet_length = ssh_be32p(seg);
+  if (packet_length < 1 || 4 + packet_length + 16 > dlen || packet_length > sizeof(pt)) return 0;
+  aad[0] = seg[0]; aad[1] = seg[1]; aad[2] = seg[2]; aad[3] = seg[3];
+  ssh_nonce(iv, seq, nonce);
+  if (!aiueos_aes128_gcm_decrypt(key, nonce, aad, 4, seg + 4, packet_length,
+                                 seg + 4 + packet_length, pt)) return 0;
+  padl = pt[0];
+  if (padl < 4 || padl + 1 > packet_length) return 0;
+  pl = packet_length - padl - 1;
+  for (i = 0; i < pl; i++) pt_out[i] = pt[1 + i];
+  *plen = pl;
+  return 1;
+}
+/* An SSH mpint (from a signature blob) to a fixed 32-byte big-endian scalar. */
+static void ssh_mpint_to_32(const uint8_t *src, uint32_t len, uint8_t out[32]) {
+  uint32_t s = 0, rem, i;
+  while (s < len && src[s] == 0) s++;
+  rem = len - s;
+  for (i = 0; i < 32; i++) out[i] = 0;
+  for (i = 0; i < rem && i < 32; i++) out[32 - rem + i] = src[s + i];
+}
+/* Receive one PSH|ACK data segment from the peer acking `ack`, tolerant of it
+   arriving late. Unlike net_tcp_receive (which gives up on the first empty
+   await), this keeps posting and polling across `rounds` windows -- a userauth
+   packet can arrive after a slow key-derivation or crypto step, and a single
+   short spin misses it. The segment lands in rx_page for the caller to unwrap
+   or decrypt. */
+static int net_ssh_recv(struct net_ring *rx, uint8_t *rx_page, uint32_t ack, unsigned rounds) {
+  const uint8_t *frame = rx_page + sizeof(struct virtio_net_hdr);
+  for (unsigned r = 0; r < rounds; r++) {
+    net_post(rx);
+    if (!net_await(rx->used, rx->posted)) continue;   /* empty window; retry */
+    uint32_t received = rx->used->ring[0].length;
+    if (rx->used->ring[0].id != 0 ||
+        received <= sizeof(struct virtio_net_hdr) ||
+        received > sizeof(struct virtio_net_hdr) + NET_FRAME_MAX) continue;
+    if (kotoba_aiueos_tcp_segment_valid((uint64_t)(uintptr_t)frame,
+          received - (uint32_t)sizeof(struct virtio_net_hdr), NET_PEER_IP, ack,
+          NET_TCP_PSH | NET_TCP_ACK)) return 1;
+  }
+  return 0;
+}
+
+/* Drive publickey userauth after NEWKEYS. Derives the session keys, receives the
+   client's NEWKEYS, then the encrypted SERVICE_REQUEST / USERAUTH_REQUEST, checks
+   the offered key is the authorized one and its signature over the session's
+   signed-data verifies, and answers SERVICE_ACCEPT / USERAUTH_SUCCESS. Sets
+   ssh_kex_stage 6..9. Returns 1 iff USERAUTH_SUCCESS was sent. */
+static int net_ssh_userauth(struct net_ring *rx, struct net_ring *tx,
+                            uint8_t *rx_page, uint8_t *tx_page, uint16_t cport,
+                            uint32_t sseq, uint32_t pnext,
+                            const uint8_t *k, const uint8_t *h) {
+  const uint8_t *frame = rx_page + sizeof(struct virtio_net_hdr);
+  static uint8_t pkt[1024];
+  static uint8_t kd[128];
+  static uint8_t up[1024];
+  uint8_t key_cs[16], iv_cs[12], key_sc[16], iv_sc[12], d32[32];
+  uint32_t uplen = 0;
+
+  ssh_kex_stage = 6;   /* userauth entered (granular stages 6..12 below) */
+
+  /* session keys (RFC 4253 §7.2), session_id = H:
+       HASH(mpint(K) || H || letter || H), truncated. */
+  {
+    static const char letters[4] = {'A', 'B', 'C', 'D'};
+    uint8_t *outs[4] = {iv_cs, iv_sc, key_cs, key_sc};
+    uint32_t lens[4] = {12, 12, 16, 16};
+    for (int li = 0; li < 4; li++) {
+      uint64_t o = ssh_pmp(kd, 0, k, 32);
+      for (int i = 0; i < 32; i++) kd[o + i] = h[i]; o += 32;
+      kd[o++] = (uint8_t)letters[li];
+      for (int i = 0; i < 32; i++) kd[o + i] = h[i]; o += 32;
+      kotoba_aiueos_sha256(kd, o, d32, sha256_workspace, sizeof(sha256_workspace));
+      for (uint32_t i = 0; i < lens[li]; i++) outs[li][i] = d32[i];
+    }
+  }
+
+  /* 1. the client's NEWKEYS (unencrypted, msg 21). Tolerant receive: it may
+        arrive after our key derivation, past a single net_tcp_receive spin. */
+  if (!net_ssh_recv(rx, rx_page, sseq, 96)) return 0;
+  {
+    uint32_t dlen = 0; const uint8_t *seg = ssh_seg_data(frame, &dlen);
+    uint32_t plen = 0; const uint8_t *pay = ssh_unwrap(seg, dlen, &plen);
+    if (!pay || plen < 1 || pay[0] != 21) return 0;
+    pnext += dlen; ssh_kex_stage = 7;
+  }
+  net_tcp_send(tx, tx_page, NET_GUEST_IP, NET_PEER_IP, NET_SSH_PORT, cport, sseq, pnext, NET_TCP_ACK, 0, 0);
+
+  /* 2. encrypted SERVICE_REQUEST (c->s seq 0): byte 5 + string "ssh-userauth". */
+  if (!net_ssh_recv(rx, rx_page, sseq, 96)) return 0;
+  {
+    uint32_t dlen = 0; const uint8_t *seg = ssh_seg_data(frame, &dlen);
+    if (!ssh_open(key_cs, iv_cs, 0, seg, dlen, up, &uplen)) return 0;
+    if (uplen < 1 || up[0] != 5) return 0;
+    pnext += dlen; ssh_kex_stage = 8;
+  }
+
+  /* 3. SERVICE_ACCEPT (s->c seq 0). */
+  {
+    uint8_t sa[32]; uint64_t o = 0;
+    sa[o++] = 6; o = ssh_ps(sa, o, (const uint8_t *)"ssh-userauth", 12);
+    uint32_t wl = ssh_seal(key_sc, iv_sc, 0, sa, (uint32_t)o, pkt);
+    if (!wl || !net_tcp_send(tx, tx_page, NET_GUEST_IP, NET_PEER_IP, NET_SSH_PORT, cport,
+                             sseq, pnext, NET_TCP_PSH | NET_TCP_ACK, pkt, wl)) return 0;
+    sseq += wl; ssh_kex_stage = 9;
+  }
+
+  /* 4. encrypted USERAUTH_REQUEST (c->s seq 1): byte 50, then
+        string user, string "ssh-connection", string "publickey", bool 1,
+        string algo, string pk-blob, string sig-blob. */
+  if (!net_ssh_recv(rx, rx_page, sseq, 96)) return 0;
+  {
+    uint32_t dlen = 0; const uint8_t *seg = ssh_seg_data(frame, &dlen);
+    if (!ssh_open(key_cs, iv_cs, 1, seg, dlen, up, &uplen)) return 0;
+    pnext += dlen; ssh_kex_stage = 10;
+  }
+  if (uplen < 1 || up[0] != 50) return 0;
+
+  /* Parse to the pk-blob and the sig, and find where signed-data ends (the
+     request up to but not including the trailing signature string). */
+  {
+    uint32_t off = 1, pkblob_off, sig_off, i;
+    off += 4 + ssh_be32p(up + off);   /* username */
+    off += 4 + ssh_be32p(up + off);   /* service  */
+    off += 4 + ssh_be32p(up + off);   /* method   */
+    off += 1;                          /* bool     */
+    off += 4 + ssh_be32p(up + off);   /* algo     */
+    pkblob_off = off;
+    off += 4 + ssh_be32p(up + off);   /* pk-blob  */
+    sig_off = off;                     /* signed-data ends here */
+
+    /* signed-data = string(H) || up[0..sig_off]; digest = SHA256(signed-data). */
+    {
+      static uint8_t sd[1024]; uint64_t so = 0; uint8_t digest[32];
+      so = ssh_ps(sd, so, h, 32);
+      for (i = 0; i < sig_off; i++) sd[so + i] = up[i]; so += sig_off;
+      kotoba_aiueos_sha256(sd, so, digest, sha256_workspace, sizeof(sha256_workspace));
+
+      /* offered public point from the pk-blob (string algo, string curve, string point). */
+      {
+        const uint8_t *pkb = up + pkblob_off + 4;
+        uint32_t p2 = 0;
+        uint8_t pub[64]; int authorized = 1;
+        p2 += 4 + ssh_be32p(pkb + p2);   /* algo  */
+        p2 += 4 + ssh_be32p(pkb + p2);   /* curve */
+        p2 += 4;                          /* into the point string */
+        /* point = 0x04 || x(32) || y(32) */
+        for (i = 0; i < 32; i++) { pub[i] = pkb[p2 + 1 + i]; pub[32 + i] = pkb[p2 + 1 + 32 + i]; }
+        for (i = 0; i < 32; i++) if (pub[i] != ssh_auth_x[i] || pub[32 + i] != ssh_auth_y[i]) authorized = 0;
+        if (!authorized) return 0;
+
+        /* signature r||s from the sig-blob (string algo, string (mpint r, mpint s)). */
+        {
+          const uint8_t *sigstr = up + sig_off + 4;   /* sig-blob content */
+          uint32_t s2 = 0, innoff, rn, sn;
+          uint8_t rs[64];
+          s2 += 4 + ssh_be32p(sigstr + s2);            /* algo */
+          s2 += 4;                                      /* into the inner string */
+          innoff = s2;
+          rn = ssh_be32p(sigstr + innoff); innoff += 4;
+          ssh_mpint_to_32(sigstr + innoff, rn, rs);
+          innoff += rn;
+          sn = ssh_be32p(sigstr + innoff); innoff += 4;
+          ssh_mpint_to_32(sigstr + innoff, sn, rs + 32);
+
+          if (!kotoba_aiueos_ecdsa_p256_sha256_verify(rs, digest, pub, ssh_verify_ws, 2048)) return 0;
+          ssh_kex_stage = 11;
+        }
+      }
+    }
+  }
+
+  /* 5. USERAUTH_SUCCESS (s->c seq 1): byte 52. */
+  {
+    uint8_t suc = 52;
+    uint32_t wl = ssh_seal(key_sc, iv_sc, 1, &suc, 1, pkt);
+    if (!wl || !net_tcp_send(tx, tx_page, NET_GUEST_IP, NET_PEER_IP, NET_SSH_PORT, cport,
+                             sseq, pnext, NET_TCP_PSH | NET_TCP_ACK, pkt, wl)) return 0;
+    ssh_kex_stage = 12;
+  }
+  return 1;
 }
 
 /* Drive the server side of the kex from the point the identification strings
@@ -2338,22 +2586,24 @@ static int net_ssh_kex(struct net_ring *rx, struct net_ring *tx,
   ro = ssh_ps(rep, ro, ks, kslen);
   ro = ssh_ps(rep, ro, q_s, 32);
   ro = ssh_ps(rep, ro, sig, (uint32_t)so);
+  /* 8. KEX_ECDH_REPLY and NEWKEYS in ONE segment, so the client acks both
+        before it sends its own NEWKEYS -- otherwise it acks only the reply and
+        net_ssh_userauth's first receive rejects the mismatched ack. */
   {
-    uint32_t wl = ssh_wrap(pkt, rep, (uint32_t)ro);
-    if (!net_tcp_send(tx, tx_page, NET_GUEST_IP, NET_PEER_IP, NET_SSH_PORT, cport,
-                      sseq, pnext, NET_TCP_PSH | NET_TCP_ACK, pkt, wl)) return 0;
-    sseq += wl;
-    ssh_kex_stage = 4;
-  }
-
-  /* 8. NEWKEYS. */
-  {
+    uint32_t rwl = ssh_wrap(pkt, rep, (uint32_t)ro);
     uint8_t nk = 21;
-    uint32_t wl = ssh_wrap(pkt, &nk, 1);
+    uint32_t nwl = ssh_wrap(pkt + rwl, &nk, 1);
     if (!net_tcp_send(tx, tx_page, NET_GUEST_IP, NET_PEER_IP, NET_SSH_PORT, cport,
-                      sseq, pnext, NET_TCP_PSH | NET_TCP_ACK, pkt, wl)) return 0;
+                      sseq, pnext, NET_TCP_PSH | NET_TCP_ACK, pkt, rwl + nwl)) return 0;
+    sseq += rwl + nwl;
     ssh_kex_stage = 5;
   }
+
+  /* 9. the encrypted layer and publickey userauth (ADR-0108). Best effort: the
+        kex reply is already the I4-critical evidence; if the client does not go
+        on to authenticate, the boot still shows AIUEOS_SSH_KEX_REPLY_OK and the
+        userauth stage says how far it got. */
+  net_ssh_userauth(rx, tx, rx_page, tx_page, cport, sseq, pnext, k, h);
   return 1;
 }
 
