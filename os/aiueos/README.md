@@ -274,7 +274,7 @@ invented browser runtime are intentionally excluded.
 ### Physical K16 qualification before installation
 
 The K16 stage-one image keeps every internal disk read-only while returning a
-machine-readable result on the removable USB.  v4 adds a dedicated 9 MiB FAT16
+machine-readable result on the removable USB.  v4 added a dedicated 9 MiB FAT16
 Microsoft-basic-data partition labeled `AIUEOS RSLT`; macOS mounts it as a
 normal user volume instead of requiring privileged access to an EFI System
 Partition.  The probe writes `PROBE.LOG` there, arms the
@@ -293,9 +293,20 @@ The UEFI probe also walks each xHCI controller's extended-capability list using
 bounded MMIO reads and records whether optional Debug Capability (DbC) is
 present and which debug port it reports.  It does not enable DbC or perform any
 PCI/MMIO write; live USB logging remains gated on the physical K16 result.
+If the UEFI loader returns before entering the kernel, it now prints the exact
+failure marker and code, stores a bounded failure record in the existing
+qualification variable, and returns to the probe.  The probe immediately writes
+that failure to `RESULT.LOG`; a real machine no longer sits at the initial
+`loading kernel.elf` line with its reason visible only to QEMU debugcon.  Loader
+codes are 101 through 118 in execution order; code 110 is fixed-address ELF
+segment allocation, the physical-K16 failure suspected by the v4 observation.
+The v5 code map is authoritative in
+`contracts/physical-qualification-usb-v5.edn`; v4 remains the historical
+layout/result contract.
 
 ```sh
 SOURCE_DATE_EPOCH=0 ./os/aiueos/scripts/build-physical-qualification-usb.sh
+./os/aiueos/scripts/smoke-qemu-physical-loader-failure.sh
 ```
 
 After `RESULT SAVED. REMOVE USB AND CONNECT IT TO THE MAC.`, power off and move
@@ -320,8 +331,8 @@ result retrieval, not the still-gated DbC real-time transport.
 
 It prints `AIUEOS_K16_PHYSICAL_RESULT_OK` only when the native-core result and
 the required read-only probe markers are both present.  The
-exact v4 gate and later SSD-install prerequisites are in
-`contracts/physical-qualification-usb-v4.edn`; v1 and v2 remain historical
+exact v5 gate and later SSD-install prerequisites are in
+`contracts/physical-qualification-usb-v5.edn`; v1 through v4 remain historical
 contracts.  Secure Boot must be disabled for this unsigned
 development image.  A green QEMU result is build evidence, not a physical K16
 result.
