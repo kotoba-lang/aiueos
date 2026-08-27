@@ -281,7 +281,8 @@ the probe then boots once more, writes `RESULT.LOG` to its own filesystem, and
 stops with `RESULT SAVED`.  A success result proves only the loader/kernel,
 integrity, Kotoba object, paging, GOP, allocator, and ACPI floor.  It stops
 before IOMMU, PCI DMA, block/network drivers, Murakumo, or any internal-SSD
-write.
+write.  GOP discovery first checks the firmware console handle, then performs
+a bounded protocol-handle scan for firmware that publishes GOP separately.
 
 ```sh
 SOURCE_DATE_EPOCH=0 ./os/aiueos/scripts/build-physical-qualification-usb.sh
