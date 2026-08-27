@@ -30,11 +30,11 @@ pid=$!
 trap 'kill "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true' EXIT HUP INT TERM
 i=0
 while [ "$i" -lt 200 ]; do
-  if [ -f "$log" ] && grep -F "AIUEOS_HW_PROBE_DONE exit_boot_services=no disk_writes=none" "$log" >/dev/null; then break; fi
+  if [ -f "$log" ] && grep -F "AIUEOS_HW_PROBE_DONE exit_boot_services=no internal_disk_writes=none" "$log" >/dev/null; then break; fi
   sleep 0.1
   i=$((i+1))
 done
-if [ ! -f "$log" ] || ! grep -F "AIUEOS_HW_PROBE_DONE exit_boot_services=no disk_writes=none" "$log" >/dev/null; then
+if [ ! -f "$log" ] || ! grep -F "AIUEOS_HW_PROBE_DONE exit_boot_services=no internal_disk_writes=none" "$log" >/dev/null; then
   echo "error: hardware probe did not complete" >&2
   [ -f "$log" ] && tail -80 "$log" >&2
   exit 1

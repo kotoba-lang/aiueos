@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
-"""Build one read-only qualification USB: UEFI probe -> native core.
+"""Build one internal-disk-read-only qualification USB with result return.
 
 The removable-media fallback path starts the probe as BOOTX64.EFI.  The probe
-does not call ExitBootServices and performs no writes; after its visible delay
-it starts EFI/AIUEOS/BOOTFULL.EFI from the same volume.  BOOTFULL is the normal
-AIUEOS loader, paired with the physical-qualification kernel and initramfs.
+does not call ExitBootServices. It writes only PROBE.LOG on its own filesystem,
+then starts EFI/AIUEOS/BOOTFULL.EFI. BOOTFULL is the normal AIUEOS loader,
+paired with the physical-qualification kernel and initramfs. The kernel returns
+a bounded result through UEFI NVRAM; one BootNext cycle writes RESULT.LOG back
+to the same removable filesystem without reaching an internal-disk driver.
 """
 
 import argparse
@@ -82,10 +84,14 @@ def make_fat32(probe, loader, kernel, initramfs):
     loader_cluster = allocate(loader)
     kernel_cluster = allocate(kernel)
     initramfs_cluster = allocate(initramfs)
+    free_clusters = clusters - (next_cluster - 2)
+    struct.pack_into("<II", fsinfo, 488, free_clusters, next_cluster)
+    image[sector:2 * sector] = fsinfo
+    image[7 * sector:8 * sector] = fsinfo
     root, efi_dir, boot_dir, aiueos_dir = 2, 3, 4, 5
     directories = {
         root: release.dirent("EFI", 0x10, efi_dir),
-        efi_dir: (release.dirent(".", 0x10, efi_dir) + release.dirent("..", 0x10, root) +
+        efi_dir: (release.dirent(".", 0x10, efi_dir) + release.dirent("..", 0x10, 0) +
                   release.dirent("BOOT", 0x10, boot_dir) +
                   release.dirent("AIUEOS", 0x10, aiueos_dir)),
         boot_dir: (release.dirent(".", 0x10, boot_dir) + release.dirent("..", 0x10, efi_dir) +
@@ -121,7 +127,7 @@ def make_fat16(probe, loader, kernel, initramfs):
                      63, 255, 0, 0)
     boot[36], boot[38] = 0x80, 0x29
     struct.pack_into("<I", boot, 39, release.VOLUME_ID)
-    boot[43:54], boot[54:62] = b"AIUEOS QUAL", b"FAT16   "
+    boot[43:54], boot[54:62] = b"AIUEOS RSLT", b"FAT16   "
     boot[510:512] = b"\x55\xaa"
     image[:sector] = boot
     fat = [0] * (release.FAT16_CLUSTERS + 2)
@@ -242,7 +248,7 @@ def verify(path, probe_path, loader_path, kernel_path, initramfs_path):
     }
     if primary != expected or recovery_files != expected:
         raise ValueError("qualification boot artifacts do not match both volumes")
-    print("AIUEOS_PHYSICAL_QUALIFICATION_USB_OK probe-to-native-core read-only")
+    print("AIUEOS_PHYSICAL_QUALIFICATION_USB_OK probe-native-result-v2 internal-disks-read-only")
 
 
 def build(args):
@@ -284,12 +290,13 @@ def build(args):
     verify(args.output, args.probe, args.loader, args.kernel, args.initramfs)
     epoch = int(os.environ.get("SOURCE_DATE_EPOCH", "0"))
     receipt = {
-        "schema": "aiueos.physical-qualification-usb-receipt.v1",
+        "schema": "aiueos.physical-qualification-usb-receipt.v2",
         "created": datetime.fromtimestamp(epoch, timezone.utc).isoformat().replace("+00:00", "Z"),
-        "profile": "k16-native-core-read-only-v1",
+        "profile": "k16-native-result-return-v2",
         "source": {"commit": os.environ.get("AIUEOS_SOURCE_COMMIT", "UNVERIFIED")},
         "disk": {"bytes": len(disk), "sha256": digest(disk)},
-        "boot_order": ["uefi-read-only-hardware-probe", "native-core-read-only"],
+        "boot_order": ["uefi-probe-and-arm-return", "native-core",
+                       "uefi-result-collector"],
         "artifacts": {
             "EFI/BOOT/BOOTX64.EFI": {"bytes": len(probe), "sha256": digest(probe)},
             "EFI/AIUEOS/BOOTFULL.EFI": {"bytes": len(loader), "sha256": digest(loader)},
@@ -297,6 +304,8 @@ def build(args):
             "EFI/AIUEOS/INITRD.IMG": {"bytes": len(initramfs), "sha256": digest(initramfs)},
         },
         "safety": {"internal_disk_writes": False, "block_driver_reached": False,
+                   "qualification_usb_log_writes": True,
+                   "uefi_nvram_result_bytes": 16, "bootnext": "one-shot",
                    "ssd_install": False},
     }
     Path(args.receipt).write_text(json.dumps(receipt, indent=2, sort_keys=True) + "\n",

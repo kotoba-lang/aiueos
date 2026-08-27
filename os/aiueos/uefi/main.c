@@ -50,13 +50,14 @@ struct efi_boot_services {
   efi_exit_boot_services exit_boot_services;
 };
 
+struct efi_runtime_services;
 struct efi_system_table {
   struct efi_table_header header;
   char16 *firmware_vendor; uint32_t firmware_revision, padding;
   efi_handle console_in_handle; void *console_in;
   efi_handle console_out_handle; struct efi_simple_text_output *console_out;
   efi_handle standard_error_handle; struct efi_simple_text_output *standard_error;
-  void *runtime_services; struct efi_boot_services *boot_services;
+  struct efi_runtime_services *runtime_services; struct efi_boot_services *boot_services;
   uint64_t number_of_table_entries; void *configuration_table;
 };
 struct efi_configuration_table { struct efi_guid vendor_guid; void *vendor_table; };
@@ -99,6 +100,8 @@ struct aiueos_boot_info {
   uint64_t framebuffer_base, framebuffer_size;
   uint32_t framebuffer_width, framebuffer_height, framebuffer_stride, framebuffer_format;
   uint64_t initramfs_base, initramfs_size;
+  void *runtime_services;
+  uint64_t firmware_cr3;
 };
 typedef void(SYSVABI *kernel_entry)(const struct aiueos_boot_info *);
 extern const uint8_t aiueos_expected_kernel_sha256[32];
@@ -129,6 +132,12 @@ static int guid_equal(const struct efi_guid *a, const struct efi_guid *b) {
   const uint8_t *x = (const uint8_t *)a, *y = (const uint8_t *)b;
   for (uint64_t i = 0; i < sizeof(*a); i++) if (x[i] != y[i]) return 0;
   return 1;
+}
+
+static uint64_t read_cr3(void) {
+  uint64_t value;
+  __asm__ volatile("mov %%cr3, %0" : "=r"(value));
+  return value;
 }
 
 static void copy_bytes(void *to, const void *from, uint64_t size) {
@@ -347,7 +356,7 @@ efi_status EFIAPI efi_main(efi_handle image, struct efi_system_table *system) {
   efi_status status = bs->get_memory_map(&memory_map_size, memory_map, &map_key,
                                          &descriptor_size, &descriptor_version);
   if (status != EFI_SUCCESS) return fail("AIUEOS_LOADER_FAIL memory-map");
-  info.magic = 0x414955454f53424fULL; info.version = 2;
+  info.magic = 0x414955454f53424fULL; info.version = 3;
   info.initramfs_base = (uint64_t)(uintptr_t)initramfs_file;
   info.initramfs_size = initramfs_size;
   if (!initramfs_size) return fail("AIUEOS_LOADER_FAIL initramfs-empty");
@@ -381,6 +390,8 @@ efi_status EFIAPI efi_main(efi_handle image, struct efi_system_table *system) {
   info.framebuffer_height = gop_info->vertical_resolution;
   info.framebuffer_stride = gop_info->pixels_per_scan_line;
   info.framebuffer_format = gop_info->pixel_format;
+  info.runtime_services = system->runtime_services;
+  info.firmware_cr3 = read_cr3();
   debug_string("AIUEOS_GOP_HANDOFF_OK framebuffer-v1\n");
 
   status = bs->exit_boot_services(image, map_key);
