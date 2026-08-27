@@ -7,6 +7,9 @@
 #define EFI_BUFFER_TOO_SMALL ((uint64_t)0x8000000000000005ULL)
 #define EFI_INVALID_PARAMETER ((uint64_t)0x8000000000000002ULL)
 #define EFI_BY_PROTOCOL 2
+#define EFI_VARIABLE_NON_VOLATILE 1U
+#define EFI_VARIABLE_BOOTSERVICE_ACCESS 2U
+#define EFI_VARIABLE_RUNTIME_ACCESS 4U
 #define PAGE_SIZE 4096ULL
 #define KERNEL_BUFFER_SIZE (1024ULL * 1024ULL)
 #define INITRAMFS_BUFFER_SIZE (1024ULL * 1024ULL)
@@ -51,7 +54,16 @@ struct efi_boot_services {
   efi_exit_boot_services exit_boot_services;
 };
 
-struct efi_runtime_services;
+typedef efi_status(EFIAPI *efi_set_variable)(const char16 *, const struct efi_guid *,
+                                             uint32_t, uint64_t, void *);
+struct efi_runtime_services {
+  struct efi_table_header header;
+  void *get_time, *set_time, *get_wakeup_time, *set_wakeup_time;
+  void *set_virtual_address_map, *convert_pointer;
+  void *get_variable, *get_next_variable_name;
+  efi_set_variable set_variable;
+  void *get_next_high_monotonic_count, *reset_system;
+};
 struct efi_system_table {
   struct efi_table_header header;
   char16 *firmware_vendor; uint32_t firmware_revision, padding;
@@ -104,6 +116,11 @@ struct aiueos_boot_info {
   void *runtime_services;
   uint64_t firmware_cr3;
 };
+struct aiueos_qualification_record {
+  uint32_t magic;
+  uint16_t version, state;
+  uint32_t code, reserved;
+};
 typedef void(SYSVABI *kernel_entry)(const struct aiueos_boot_info *);
 extern const uint8_t aiueos_expected_kernel_sha256[32];
 extern const uint8_t aiueos_expected_initramfs_sha256[32];
@@ -116,6 +133,9 @@ static const struct efi_guid acpi20_guid =
   {0x8868e871, 0xe4f1, 0x11d3, {0xbc,0x22,0x00,0x80,0xc7,0x3c,0x88,0x81}};
 static const struct efi_guid graphics_output_guid =
   {0x9042a9de, 0x23dc, 0x4a38, {0x96,0xfb,0x7a,0xde,0xd0,0x80,0x51,0x6a}};
+static const struct efi_guid qualification_guid =
+  {0x73953a72,0x6627,0x4b62,{0x9a,0x9c,0x10,0x38,0xd9,0x20,0x9a,0x16}};
+static const char16 qualification_name[] = u"AIUEOSQualificationResult";
 
 struct efi_graphics_output_mode_info {
   uint32_t version, horizontal_resolution, vertical_resolution, pixel_format;
@@ -236,7 +256,59 @@ static void sha256(const uint8_t *input, uint64_t size, uint8_t output[32]) {
 static inline void debug_byte(uint8_t value) { __asm__ volatile("outb %0, $0xe9" : : "a"(value)); }
 static void debug_string(const char *text) { while (*text) debug_byte((uint8_t)*text++); }
 static inline void fail_exit(void) { __asm__ volatile("outl %0, $0xf4" : : "a"(0x7f)); }
-static efi_status fail(const char *message) { debug_string(message); debug_byte('\n'); fail_exit(); return EFI_INVALID_PARAMETER; }
+static struct efi_simple_text_output *loader_console;
+static struct efi_runtime_services *loader_runtime;
+
+static void console_ascii(const char *text) {
+  if (!loader_console || !loader_console->output_string) return;
+  char16 wide[192];
+  uint64_t i=0;
+  while (text[i] && i+1<sizeof(wide)/sizeof(wide[0])) {
+    wide[i]=(uint8_t)text[i];i++;
+  }
+  wide[i]=0;
+  loader_console->output_string(loader_console,wide);
+}
+
+static void console_decimal(uint32_t value) {
+  char text[16];uint32_t digits=0;
+  do { text[digits++]=(char)('0'+value%10);value/=10; } while (value && digits<15);
+  for (uint32_t i=0;i<digits/2;i++) {
+    char tmp=text[i];text[i]=text[digits-1-i];text[digits-1-i]=tmp;
+  }
+  text[digits]=0;console_ascii(text);
+}
+
+static int persist_loader_failure(uint32_t code) {
+  if (!loader_runtime || !loader_runtime->set_variable) return 0;
+  struct aiueos_qualification_record record={0x514b3241U,2,2,code,0};
+  return loader_runtime->set_variable(
+      qualification_name,&qualification_guid,
+      EFI_VARIABLE_NON_VOLATILE|EFI_VARIABLE_BOOTSERVICE_ACCESS|
+        EFI_VARIABLE_RUNTIME_ACCESS,
+      sizeof(record),&record)==EFI_SUCCESS;
+}
+
+static efi_status fail(uint32_t code, const char *message) {
+  debug_string(message);debug_string(" code=");
+  char digits[16];uint32_t count=0,value=code;
+  do { digits[count++]=(char)('0'+value%10);value/=10; } while (value && count<15);
+  while (count) debug_byte((uint8_t)digits[--count]);
+  debug_byte('\n');
+  console_ascii("\r\n");console_ascii(message);console_ascii(" code=");
+  console_decimal(code);console_ascii("\r\n");
+  if (persist_loader_failure(code)) {
+    debug_string("AIUEOS_LOADER_FAILURE_RESULT_PERSISTED\n");
+    console_ascii("Failure result persisted; returning to USB collector.\r\n");
+  } else {
+    debug_string("AIUEOS_LOADER_FAILURE_RESULT_PERSIST_FAIL\n");
+    console_ascii("Failure result could not be persisted.\r\n");
+  }
+#ifndef AIUEOS_PHYSICAL_QUALIFICATION
+  fail_exit();
+#endif
+  return EFI_INVALID_PARAMETER;
+}
 
 static efi_status read_verified_file(struct efi_file *root, const char16 *path,
                                      const char *kind_open, const char *kind_read,
@@ -310,17 +382,23 @@ efi_status EFIAPI efi_main(efi_handle image, struct efi_system_table *system) {
   struct aiueos_boot_info info;
   struct efi_graphics_output_protocol *gop = 0;
 
-  if (!system || !(bs = system->boot_services)) return fail("AIUEOS_LOADER_FAIL system-table");
+  loader_console=system?system->console_out:0;
+  loader_runtime=system?system->runtime_services:0;
+  if (!system || !(bs = system->boot_services)) return fail(101,"AIUEOS_LOADER_FAIL system-table");
   if (system->console_out && system->console_out->output_string)
     system->console_out->output_string(system->console_out, console_message);
   debug_string("AIUEOS_LOADER_OK\n");
+#ifdef AIUEOS_QUALIFICATION_FORCE_LOADER_FAILURE_CODE
+  return fail(AIUEOS_QUALIFICATION_FORCE_LOADER_FAILURE_CODE,
+              "AIUEOS_LOADER_FAIL forced-test");
+#endif
 
   if (bs->handle_protocol(image, &loaded_image_guid, (void **)&loaded) != EFI_SUCCESS || !loaded)
-    return fail("AIUEOS_LOADER_FAIL loaded-image");
+    return fail(102,"AIUEOS_LOADER_FAIL loaded-image");
   if (bs->allocate_pool(2, KERNEL_BUFFER_SIZE, (void **)&kernel_file) != EFI_SUCCESS)
-    return fail("AIUEOS_LOADER_FAIL kernel-buffer");
+    return fail(103,"AIUEOS_LOADER_FAIL kernel-buffer");
   if (bs->allocate_pool(2, INITRAMFS_BUFFER_SIZE, (void **)&initramfs_file) != EFI_SUCCESS)
-    return fail("AIUEOS_LOADER_FAIL initramfs-buffer");
+    return fail(104,"AIUEOS_LOADER_FAIL initramfs-buffer");
   efi_status admitted = read_verified_kernel(bs, loaded->device_handle, kernel_path,
                                              initramfs_path, kernel_file, &kernel_size,
                                              initramfs_file, &initramfs_size);
@@ -340,20 +418,20 @@ efi_status EFIAPI efi_main(efi_handle image, struct efi_system_table *system) {
       }
     }
     if (admitted != EFI_SUCCESS)
-      return fail("AIUEOS_LOADER_FAIL kernel-admission-exhausted");
+      return fail(105,"AIUEOS_LOADER_FAIL kernel-admission-exhausted");
     debug_string("AIUEOS_LOADER_RECOVERY_OK kernel-from-alternate-volume sha256-v1\n");
   }
   debug_string("AIUEOS_LOADER_INTEGRITY_OK sha256-v1\n");
 
-  if (kernel_size < sizeof(struct elf64_header)) return fail("AIUEOS_LOADER_FAIL elf-size");
+  if (kernel_size < sizeof(struct elf64_header)) return fail(106,"AIUEOS_LOADER_FAIL elf-size");
   struct elf64_header *elf = (struct elf64_header *)kernel_file;
   if (elf->ident[0] != 0x7f || elf->ident[1] != 'E' || elf->ident[2] != 'L' ||
       elf->ident[3] != 'F' || elf->ident[4] != 2 || elf->machine != 62 ||
       elf->phentsize != sizeof(struct elf64_program_header))
-    return fail("AIUEOS_LOADER_FAIL elf-header");
+    return fail(107,"AIUEOS_LOADER_FAIL elf-header");
   if (elf->phoff > kernel_size || elf->phnum > 32 ||
       elf->phoff + (uint64_t)elf->phnum * elf->phentsize > kernel_size)
-    return fail("AIUEOS_LOADER_FAIL elf-program-table");
+    return fail(108,"AIUEOS_LOADER_FAIL elf-program-table");
 
   struct elf64_program_header *ph = (void *)(kernel_file + elf->phoff);
   uint8_t entry_is_executable = 0;
@@ -363,28 +441,28 @@ efi_status EFIAPI efi_main(efi_handle image, struct efi_system_table *system) {
         ph[i].filesz > kernel_size - ph[i].offset ||
         ph[i].paddr < 0x100000 || ph[i].paddr > UINT64_MAX - ph[i].memsz ||
         (ph[i].paddr & (PAGE_SIZE - 1)) != 0)
-      return fail("AIUEOS_LOADER_FAIL elf-segment");
+      return fail(109,"AIUEOS_LOADER_FAIL elf-segment");
     if ((ph[i].flags & 1) && elf->entry >= ph[i].paddr &&
         elf->entry - ph[i].paddr < ph[i].memsz) entry_is_executable = 1;
     uint64_t address = ph[i].paddr;
     uint64_t pages = (ph[i].memsz + PAGE_SIZE - 1) / PAGE_SIZE;
     if (!pages || bs->allocate_pages(2, 2, pages, &address) != EFI_SUCCESS || address != ph[i].paddr)
-      return fail("AIUEOS_LOADER_FAIL segment-allocation");
+      return fail(110,"AIUEOS_LOADER_FAIL segment-allocation");
     copy_bytes((void *)(uintptr_t)address, kernel_file + ph[i].offset, ph[i].filesz);
     zero_bytes((void *)(uintptr_t)(address + ph[i].filesz), ph[i].memsz - ph[i].filesz);
   }
-  if (!entry_is_executable) return fail("AIUEOS_LOADER_FAIL elf-entry");
+  if (!entry_is_executable) return fail(111,"AIUEOS_LOADER_FAIL elf-entry");
 
   if (bs->allocate_pool(2, MEMORY_MAP_BUFFER_SIZE, &memory_map) != EFI_SUCCESS)
-    return fail("AIUEOS_LOADER_FAIL map-buffer");
+    return fail(112,"AIUEOS_LOADER_FAIL map-buffer");
   memory_map_size = MEMORY_MAP_BUFFER_SIZE;
   efi_status status = bs->get_memory_map(&memory_map_size, memory_map, &map_key,
                                          &descriptor_size, &descriptor_version);
-  if (status != EFI_SUCCESS) return fail("AIUEOS_LOADER_FAIL memory-map");
+  if (status != EFI_SUCCESS) return fail(113,"AIUEOS_LOADER_FAIL memory-map");
   info.magic = 0x414955454f53424fULL; info.version = 3;
   info.initramfs_base = (uint64_t)(uintptr_t)initramfs_file;
   info.initramfs_size = initramfs_size;
-  if (!initramfs_size) return fail("AIUEOS_LOADER_FAIL initramfs-empty");
+  if (!initramfs_size) return fail(114,"AIUEOS_LOADER_FAIL initramfs-empty");
   info.memory_map = memory_map; info.memory_map_size = memory_map_size;
   info.descriptor_size = descriptor_size; info.descriptor_version = descriptor_version;
   info.acpi_rsdp = 0;
@@ -395,21 +473,21 @@ efi_status EFIAPI efi_main(efi_handle image, struct efi_system_table *system) {
       break;
     }
   }
-  if (!info.acpi_rsdp) return fail("AIUEOS_LOADER_FAIL acpi-rsdp");
+  if (!info.acpi_rsdp) return fail(115,"AIUEOS_LOADER_FAIL acpi-rsdp");
 
   uint8_t gop_used_protocol_scan=0;
   gop=find_graphics_output(system,bs,&gop_used_protocol_scan);
   if (!gop || !gop->mode ||
       !gop->mode->info || !gop->mode->framebuffer_base ||
       !gop->mode->framebuffer_size)
-    return fail("AIUEOS_LOADER_FAIL gop");
+    return fail(116,"AIUEOS_LOADER_FAIL gop");
   struct efi_graphics_output_mode_info *gop_info = gop->mode->info;
   if (!gop_info->horizontal_resolution || !gop_info->vertical_resolution ||
       gop_info->pixels_per_scan_line < gop_info->horizontal_resolution ||
       (gop_info->pixel_format != 0 && gop_info->pixel_format != 1) ||
       (uint64_t)gop_info->pixels_per_scan_line * gop_info->vertical_resolution >
         gop->mode->framebuffer_size / 4)
-    return fail("AIUEOS_LOADER_FAIL gop-mode");
+    return fail(117,"AIUEOS_LOADER_FAIL gop-mode");
   info.framebuffer_base = gop->mode->framebuffer_base;
   info.framebuffer_size = gop->mode->framebuffer_size;
   info.framebuffer_width = gop_info->horizontal_resolution;
@@ -423,7 +501,7 @@ efi_status EFIAPI efi_main(efi_handle image, struct efi_system_table *system) {
   debug_string("AIUEOS_GOP_HANDOFF_OK framebuffer-v1\n");
 
   status = bs->exit_boot_services(image, map_key);
-  if (status != EFI_SUCCESS) return fail("AIUEOS_LOADER_FAIL exit-boot-services");
+  if (status != EFI_SUCCESS) return fail(118,"AIUEOS_LOADER_FAIL exit-boot-services");
   ((kernel_entry)(uintptr_t)elf->entry)(&info);
   for (;;) __asm__ volatile("hlt");
 }

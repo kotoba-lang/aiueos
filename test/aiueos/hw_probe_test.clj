@@ -16,6 +16,8 @@
   (slurp (io/file "os/aiueos/scripts/install-macos-result-watcher.sh")))
 (def qualification-contract
   (slurp (io/file "os/aiueos/contracts/physical-qualification-usb-v4.edn")))
+(def qualification-v5-contract
+  (slurp (io/file "os/aiueos/contracts/physical-qualification-usb-v5.edn")))
 
 (deftest probe-is-bounded-and-keeps-internal-disks-read-only
   (testing "the probe never reaches raw block writes or exits boot services"
@@ -72,6 +74,27 @@
   (is (str/includes? uefi-loader-source
                      "locate_handle(EFI_BY_PROTOCOL,&graphics_output_guid"))
   (is (str/includes? build-script "AIUEOS_GOP_FORCE_PROTOCOL_SCAN")))
+
+(deftest physical-loader-failures-return-a-machine-readable-result
+  (is (str/includes? uefi-loader-source "persist_loader_failure"))
+  (is (str/includes? uefi-loader-source
+                     "fail(110,\"AIUEOS_LOADER_FAIL segment-allocation\")"))
+  (is (str/includes? uefi-loader-source
+                     "AIUEOS_LOADER_FAILURE_RESULT_PERSISTED"))
+  (is (str/includes? uefi-loader-source
+                     "#ifndef AIUEOS_PHYSICAL_QUALIFICATION"))
+  (is (str/includes? source
+                     "AIUEOS_HW_PROBE_CHAINLOAD_RESULT_COLLECTED"))
+  (is (str/includes? qualification-v5-contract "110 :segment-allocation"))
+  (is (str/includes? qualification-v5-contract
+                     ":collected-without-reboot true"))
+  (let [start-returned (.indexOf source
+                                 "AIUEOS_HW_PROBE_CHAINLOAD_FAIL stage=start-returned")
+        collect-after-return (.indexOf source
+                                       "collect_terminal_result(image,system)"
+                                       start-returned)]
+    (is (<= 0 start-returned))
+    (is (< start-returned collect-after-return))))
 
 (deftest incomplete-results-retain-the-physical-failure-reason
   (is (str/includes? result-checker "reason=gop-absent"))

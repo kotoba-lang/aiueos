@@ -747,6 +747,13 @@ static efi_status start_native_core(efi_handle image, struct efi_system_table *s
        "usb-log-writes=same-usb-result-partition-only\r\n");
   status=bs->start_image(child,0,0);
   emit("AIUEOS_HW_PROBE_CHAINLOAD_FAIL stage=start-returned\r\n");
+  int collected=collect_terminal_result(image,system);
+  if (collected) {
+    emit("AIUEOS_HW_PROBE_CHAINLOAD_RESULT_COLLECTED source=loader-return\r\n");
+    if (bs->stall) for (;;) bs->stall(60000000ULL);
+    return collected>0?EFI_SUCCESS:EFI_INVALID_PARAMETER;
+  }
+  emit("AIUEOS_HW_PROBE_CHAINLOAD_RESULT_ABSENT source=loader-return\r\n");
   return status;
 }
 
