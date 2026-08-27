@@ -16,11 +16,11 @@ mkdir -p "$(dirname -- "$efi")"
 if [ -n "$payload" ]; then
   "$compiler/bin/kotoba-compiler" package-aiueos-boot "$out/KERNEL.ELF" --payload "$payload" --output "$efi"
   "$compiler/bin/kotoba-compiler" package-aiueos-boot "$out/KERNEL.ELF" --payload "$payload" --output "$second"
-  expected_marker=BHSDGVIMDAKRTS
+  expected_marker=BHSDGVIPMDAKRTS
 else
   "$compiler/bin/kotoba-compiler" package-aiueos-boot "$out/KERNEL.ELF" --output "$efi"
   "$compiler/bin/kotoba-compiler" package-aiueos-boot "$out/KERNEL.ELF" --output "$second"
-  expected_marker=IMDAKRTS
+  expected_marker=IPMDAKRTS
 fi
 cmp "$efi" "$second"
 rm -f "$second"
@@ -63,6 +63,7 @@ Path(sys.argv[4]).write_text(json.dumps({
     "format": "aiueos-kotoba-native-rt-qemu-receipt/v1",
     "marker": sys.argv[5],
     "signed_external_plc_elf": sys.argv[5].startswith("BHSDGV"),
+    "plc_device_profile_registry": True,
     "qemu_exit_status": 33,
     "kernel_sha256": hashlib.sha256(kernel).hexdigest(),
     "uefi_sha256": hashlib.sha256(efi).hexdigest(),
@@ -76,4 +77,4 @@ foreign=$(find "$out" -type f \( -name '*.c' -o -name '*.o' -o -name '*.obj' \
 [ -z "$foreign" ] || {
   echo "error: C/foreign artifact entered Kotoba RT boot output: $foreign" >&2; exit 1;
 }
-echo "AIUEOS_KOTOBA_RT_QEMU_OK marker=$expected_marker no-c no-linux no-jvm apic-preemption fixed-priority priority-ceiling transactional-io plc-scans=100 timing=logical-unqualified"
+echo "AIUEOS_KOTOBA_RT_QEMU_OK marker=$expected_marker no-c no-linux no-jvm plc-profiles=9 apic-preemption fixed-priority priority-ceiling transactional-io plc-scans=100 timing=logical-unqualified"

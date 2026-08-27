@@ -113,6 +113,12 @@ ECDSA P-256 and the canonical PLC ELF layout before the periodic kernel starts.
 The receipt binds every Kotoba module and explicitly records that neither
 ring-3 execution nor a physical PLC driver is qualified.
 
+Concrete PLC models bind through one of nine vendor-neutral protocol profiles:
+MMIO, Modbus RTU/TCP, EtherCAT, PROFINET IRT, EtherNet/IP CIP Sync, CANopen,
+CC-Link IE TSN or OPC UA PubSub/TSN. This is the all-model compatibility
+boundary. It does not turn an unmeasured vendor ASIC or proprietary mailbox
+into a qualified driver; unknown transports are refused.
+
 Effectful Kotoba RT operations are written as single-use nested state
 transitions. A `let` binding is an expression substitution and must not be
 referenced twice when it performs lock, unlock, latch, stage, watchdog or
@@ -131,7 +137,7 @@ The product decision remains accepted: hard real-time is a separate AIUEOS
 artifact, not a second OS. The former implementation closure is retracted
 because it crossed a C kernel path. The corrected Kotoba/Amu-only functional
 slice is closed by its reproducible build, no-foreign-input receipt and exact
-QEMU marker `IMDAKRTS`. The extended signed-ELF marker remains open because its
+QEMU marker `IPMDAKRTS`. The extended signed-ELF marker remains open because its
 current P-256 implementation exceeded the QEMU/TCG performance bound. Full
 RTOS qualification remains open until the general task, driver and
 physical-measurement requirements above are met.
