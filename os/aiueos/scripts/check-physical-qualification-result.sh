@@ -3,8 +3,9 @@ set -eu
 
 volume=${1:-}
 if [ -z "$volume" ]; then
-  for candidate in "/Volumes/AIUEOS QUAL" "/Volumes/AIUEOS RSLT"; do
-    if [ -f "$candidate/EFI/AIUEOS/RESULT.LOG" ]; then
+  for candidate in /Volumes/AIUEOS\ RSLT*; do
+    if [ -f "$candidate/AIUEOS.ID" ] &&
+       grep -F "AIUEOS_K16_RESULT_VOLUME_V4" "$candidate/AIUEOS.ID" >/dev/null 2>&1; then
       volume=$candidate
       break
     fi
@@ -15,18 +16,38 @@ fi
   exit 2
 }
 
-result="$volume/EFI/AIUEOS/RESULT.LOG"
-probe="$volume/EFI/AIUEOS/PROBE.LOG"
+result="$volume/RESULT.LOG"
+probe="$volume/PROBE.LOG"
+if [ ! -f "$result" ] || [ ! -f "$probe" ]; then
+  # Historical v2 images kept both files on an ESP.  Retain explicit-path
+  # compatibility, but automatic discovery above accepts only the v4 data
+  # volume so it cannot mistake an unrelated mounted filesystem for a result.
+  result="$volume/EFI/AIUEOS/RESULT.LOG"
+  probe="$volume/EFI/AIUEOS/PROBE.LOG"
+fi
 [ -f "$result" ] || { echo "error: RESULT.LOG is absent" >&2; exit 2; }
 [ -f "$probe" ] || { echo "error: PROBE.LOG is absent" >&2; exit 2; }
 
 result_text=$(LC_ALL=C tr -d '\000\r' < "$result")
 probe_text=$(LC_ALL=C tr -d '\000\r' < "$probe")
 
+if printf '%s\n' "$result_text" | grep -Fx "AIUEOS_K16_RESULT_V4" >/dev/null; then
+  result_format=AIUEOS_K16_RESULT_V4
+  write_scope="usb_log_writes=same-usb-result-partition-only"
+  require_dbc=yes
+elif printf '%s\n' "$result_text" | grep -Fx "AIUEOS_K16_RESULT_V2" >/dev/null; then
+  result_format=AIUEOS_K16_RESULT_V2
+  write_scope="usb_log_writes=self-only"
+  require_dbc=no
+else
+  echo "error: RESULT.LOG has no recognized result format" >&2
+  exit 3
+fi
+
 for marker in \
-  "AIUEOS_K16_RESULT_V2" \
+  "$result_format" \
   "internal_ssd_writes=none" \
-  "usb_log_writes=self-only" \
+  "$write_scope" \
   "qualification_variable_cleared=yes"; do
   printf '%s\n' "$result_text" | grep -Fx "$marker" >/dev/null || {
     echo "error: RESULT.LOG missing marker: $marker" >&2
@@ -70,6 +91,12 @@ for marker in \
     exit 3
   }
 done
+
+if [ "$require_dbc" = yes ] &&
+   ! printf '%s\n' "$probe_text" | grep -F "AIUEOS_HW_PROBE_XHCI_DBC_SUMMARY" >/dev/null; then
+  echo "error: PROBE.LOG missing marker: AIUEOS_HW_PROBE_XHCI_DBC_SUMMARY" >&2
+  exit 3
+fi
 
 [ "$code" = 0 ] || { echo "error: success result has code=$code" >&2; exit 3; }
 printf 'AIUEOS_K16_PHYSICAL_RESULT_OK state=success code=0 internal-ssd-writes=none\n'

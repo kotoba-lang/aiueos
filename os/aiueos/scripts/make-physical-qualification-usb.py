@@ -2,11 +2,14 @@
 """Build one internal-disk-read-only qualification USB with result return.
 
 The removable-media fallback path starts the probe as BOOTX64.EFI.  The probe
-does not call ExitBootServices. It writes only PROBE.LOG on its own filesystem,
-then starts EFI/AIUEOS/BOOTFULL.EFI. BOOTFULL is the normal AIUEOS loader,
+does not call ExitBootServices. It writes only PROBE.LOG on the bound result
+partition of the same USB, then starts EFI/AIUEOS/BOOTFULL.EFI. BOOTFULL is the
+normal AIUEOS loader,
 paired with the physical-qualification kernel and initramfs. The kernel returns
-a bounded result through UEFI NVRAM; one BootNext cycle writes RESULT.LOG back
-to the same removable filesystem without reaching an internal-disk driver.
+a bounded result through UEFI NVRAM; one BootNext cycle writes RESULT.LOG to a
+dedicated Microsoft-basic-data FAT volume on the same removable device.  macOS
+mounts that volume as a normal user-readable USB volume, so collecting the two
+logs does not require raw-disk access or an administrator password.
 """
 
 import argparse
@@ -16,6 +19,7 @@ import importlib.util
 import json
 import os
 import struct
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -27,6 +31,19 @@ release = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(release)
 
 
+RESULT_SECTORS = 18432  # 9 MiB FAT16, large enough to remain FAT16 with 2 KiB clusters
+RESULT_LAST = release.RECOVERY_FIRST - 1
+RESULT_FIRST = RESULT_LAST - RESULT_SECTORS + 1
+QUAL_ESP_FIRST = release.ESP_FIRST
+QUAL_ESP_LAST = RESULT_FIRST - 1
+QUAL_ESP_SECTORS = QUAL_ESP_LAST - QUAL_ESP_FIRST + 1
+BASIC_DATA_TYPE = uuid.UUID("ebd0a0a2-b9e5-4433-87c0-68b6b72699c7")
+RESULT_GUID = uuid.UUID("1cd9b207-12e2-57b7-9702-fd32f64f65ab")
+RESULT_VOLUME_ID = 0x34525341
+RESULT_ID = (b"AIUEOS_K16_RESULT_VOLUME_V4\r\n"
+             b"partition_guid=1cd9b207-12e2-57b7-9702-fd32f64f65ab\r\n")
+
+
 def digest(data):
     return hashlib.sha256(data).hexdigest()
 
@@ -35,17 +52,17 @@ def make_fat32(probe, loader, kernel, initramfs):
     sector = release.SECTOR
     reserved, fats = 32, 2
     denominator = sector + fats * 4
-    fat_sectors = ((release.ESP_SECTORS - reserved + 2) * 4 + denominator - 1) // denominator
+    fat_sectors = ((QUAL_ESP_SECTORS - reserved + 2) * 4 + denominator - 1) // denominator
     data_start = reserved + fats * fat_sectors
-    clusters = release.ESP_SECTORS - data_start
+    clusters = QUAL_ESP_SECTORS - data_start
     if clusters < 65525:
         raise ValueError("qualification ESP is too small for FAT32")
 
-    image = bytearray(release.ESP_SECTORS * sector)
+    image = bytearray(QUAL_ESP_SECTORS * sector)
     boot = bytearray(sector)
     boot[:3], boot[3:11] = b"\xeb\x58\x90", b"AIUEOSQ "
     struct.pack_into("<HBHBHHBHHHII", boot, 11, sector, 1, reserved, fats, 0, 0,
-                     0xF8, 0, 63, 255, release.ESP_FIRST, release.ESP_SECTORS)
+                     0xF8, 0, 63, 255, QUAL_ESP_FIRST, QUAL_ESP_SECTORS)
     struct.pack_into("<IHHIHH", boot, 36, fat_sectors, 0, 0, 2, 1, 6)
     boot[64], boot[66] = 0x80, 0x29
     struct.pack_into("<I", boot, 67, release.VOLUME_ID)
@@ -182,9 +199,72 @@ def make_fat16(probe, loader, kernel, initramfs):
     return bytes(image)
 
 
+def make_result_fat16():
+    """Create a normal data volume with fixed-size log files.
+
+    The UEFI probe overwrites these existing extents in place.  No directory or
+    FAT allocation is needed on the physical machine, which keeps the only
+    persistent writes bounded to the two advertised files.
+    """
+    sector = release.SECTOR
+    image = bytearray(RESULT_SECTORS * sector)
+    boot = bytearray(sector)
+    boot[:3], boot[3:11] = b"\xeb\x3c\x90", b"AIUEOSR "
+    struct.pack_into("<HBHBHHBHHHII", boot, 11, sector, release.FAT16_CLUSTER_SECTORS,
+                     release.FAT16_RESERVED, release.FAT16_FATS,
+                     release.FAT16_ROOT_SECTORS * sector // 32,
+                     RESULT_SECTORS, 0xF8, release.FAT16_FAT_SECTORS,
+                     63, 255, RESULT_FIRST, 0)
+    boot[36], boot[38] = 0x80, 0x29
+    struct.pack_into("<I", boot, 39, RESULT_VOLUME_ID)
+    boot[43:54], boot[54:62] = b"AIUEOS RSLT", b"FAT16   "
+    boot[510:512] = b"\x55\xaa"
+    image[:sector] = boot
+
+    clusters = ((RESULT_SECTORS - release.FAT16_DATA_START) //
+                release.FAT16_CLUSTER_SECTORS)
+    if not 4085 <= clusters <= 65524:
+        raise ValueError("result volume is not FAT16")
+    fat = [0] * (clusters + 2)
+    fat[0], fat[1] = 0xFFF8, 0xFFFF
+    next_cluster = 2
+
+    def allocate(payload):
+        nonlocal next_cluster
+        cluster_bytes = release.FAT16_CLUSTER_SECTORS * sector
+        count = max(1, (len(payload) + cluster_bytes - 1) // cluster_bytes)
+        first = next_cluster
+        for index in range(count):
+            cluster = next_cluster + index
+            fat[cluster] = 0xFFFF if index == count - 1 else cluster + 1
+            chunk = payload[index * cluster_bytes:(index + 1) * cluster_bytes]
+            offset = (release.FAT16_DATA_START +
+                      (cluster - 2) * release.FAT16_CLUSTER_SECTORS) * sector
+            image[offset:offset + len(chunk)] = chunk
+        next_cluster += count
+        return first
+
+    result_id_cluster = allocate(RESULT_ID)
+    probe_cluster = allocate(bytes(64 * 1024))
+    result_cluster = allocate(bytes(1024))
+    root_offset = (release.FAT16_RESERVED +
+                   release.FAT16_FATS * release.FAT16_FAT_SECTORS) * sector
+    root = (release.dirent("AIUEOS.ID", 0x20, result_id_cluster, len(RESULT_ID)) +
+            release.dirent("PROBE.LOG", 0x20, probe_cluster, 64 * 1024) +
+            release.dirent("RESULT.LOG", 0x20, result_cluster, 1024))
+    image[root_offset:root_offset + len(root)] = root
+    fat_bytes = bytearray(release.FAT16_FAT_SECTORS * sector)
+    for index, value in enumerate(fat):
+        struct.pack_into("<H", fat_bytes, index * 2, value)
+    for copy in range(release.FAT16_FATS):
+        offset = (release.FAT16_RESERVED + copy * release.FAT16_FAT_SECTORS) * sector
+        image[offset:offset + len(fat_bytes)] = fat_bytes
+    return bytes(image)
+
+
 def fat32_read(disk, path):
     sector = release.SECTOR
-    esp = disk[release.ESP_FIRST * sector:(release.ESP_LAST + 1) * sector]
+    esp = disk[QUAL_ESP_FIRST * sector:(QUAL_ESP_LAST + 1) * sector]
     reserved = struct.unpack_from("<H", esp, 14)[0]
     fats, fat_sectors = esp[16], struct.unpack_from("<I", esp, 36)[0]
     data_start = reserved + fats * fat_sectors
@@ -228,10 +308,47 @@ def verify(path, probe_path, loader_path, kernel_path, initramfs_path):
         "kernel": Path(kernel_path).read_bytes(),
         "initramfs": Path(initramfs_path).read_bytes(),
     }
-    release.verify_image(path, probe_path, kernel_path, initramfs_path,
-                         recovery_efi=probe_path, recovery_kernel=kernel_path,
-                         recovery_initramfs=initramfs_path)
     disk = Path(path).read_bytes()
+    if len(disk) != release.DISK_SECTORS * release.SECTOR or disk[510:512] != b"\x55\xaa":
+        raise ValueError("invalid qualification disk size or protective MBR")
+    if disk[:len(release.BIOS_STUB)] != release.BIOS_STUB:
+        raise ValueError("missing legacy-BIOS refusal stub")
+    header = disk[release.SECTOR:2 * release.SECTOR]
+    if header[:8] != b"EFI PART":
+        raise ValueError("missing primary GPT")
+    stored_crc = struct.unpack_from("<I", header, 16)[0]
+    checked = bytearray(header[:92])
+    struct.pack_into("<I", checked, 16, 0)
+    if binascii.crc32(checked) & 0xFFFFFFFF != stored_crc:
+        raise ValueError("invalid primary GPT header CRC")
+    entries = disk[2 * release.SECTOR:
+                   (2 + release.GPT_ENTRY_SECTORS) * release.SECTOR]
+    if binascii.crc32(entries) & 0xFFFFFFFF != struct.unpack_from("<I", header, 88)[0]:
+        raise ValueError("invalid qualification GPT entry-array CRC")
+    backup_entries = disk[release.GPT_BACKUP_ENTRIES * release.SECTOR:
+                          (release.GPT_BACKUP_ENTRIES + release.GPT_ENTRY_SECTORS) * release.SECTOR]
+    if backup_entries != entries:
+        raise ValueError("qualification GPT entry arrays differ")
+    backup_header = disk[-release.SECTOR:]
+    backup_checked = bytearray(backup_header[:92])
+    backup_crc = struct.unpack_from("<I", backup_checked, 16)[0]
+    struct.pack_into("<I", backup_checked, 16, 0)
+    if (backup_header[:8] != b"EFI PART" or
+            binascii.crc32(backup_checked) & 0xFFFFFFFF != backup_crc):
+        raise ValueError("invalid backup GPT header CRC")
+    if (entries[:16] != release.ESP_TYPE.bytes_le or
+            entries[16:32] != release.ESP_GUID.bytes_le or
+            struct.unpack_from("<QQ", entries, 32) != (QUAL_ESP_FIRST, QUAL_ESP_LAST)):
+        raise ValueError("invalid qualification ESP entry")
+    if (entries[128:144] != release.ESP_TYPE.bytes_le or
+            entries[144:160] != release.RECOVERY_GUID.bytes_le or
+            struct.unpack_from("<QQ", entries, 160) !=
+            (release.RECOVERY_FIRST, release.RECOVERY_LAST)):
+        raise ValueError("invalid qualification recovery entry")
+    if (entries[256:272] != BASIC_DATA_TYPE.bytes_le or
+            entries[272:288] != RESULT_GUID.bytes_le or
+            struct.unpack_from("<QQ", entries, 288) != (RESULT_FIRST, RESULT_LAST)):
+        raise ValueError("invalid result data-partition entry")
     primary = {
         "probe": fat32_read(disk, ("EFI", "BOOT", "BOOTX64.EFI")),
         "loader": fat32_read(disk, ("EFI", "AIUEOS", "BOOTFULL.EFI")),
@@ -248,7 +365,14 @@ def verify(path, probe_path, loader_path, kernel_path, initramfs_path):
     }
     if primary != expected or recovery_files != expected:
         raise ValueError("qualification boot artifacts do not match both volumes")
-    print("AIUEOS_PHYSICAL_QUALIFICATION_USB_OK probe-native-result-v2 internal-disks-read-only")
+    result_volume = disk[RESULT_FIRST * release.SECTOR:(RESULT_LAST + 1) * release.SECTOR]
+    if (result_volume[43:54] != b"AIUEOS RSLT" or
+            fat16_read(result_volume, ("AIUEOS.ID",)) != RESULT_ID or
+            len(fat16_read(result_volume, ("PROBE.LOG",))) != 64 * 1024 or
+            len(fat16_read(result_volume, ("RESULT.LOG",))) != 1024):
+        raise ValueError("invalid passwordless result volume")
+    print("AIUEOS_PHYSICAL_QUALIFICATION_USB_OK probe-native-result-v4 "
+          "mac-user-mount internal-disks-read-only")
 
 
 def build(args):
@@ -267,13 +391,17 @@ def build(args):
     disk[:release.SECTOR] = mbr
     entries = bytearray(release.GPT_ENTRY_SECTORS * release.SECTOR)
     entries[:16], entries[16:32] = release.ESP_TYPE.bytes_le, release.ESP_GUID.bytes_le
-    struct.pack_into("<QQQ", entries, 32, release.ESP_FIRST, release.ESP_LAST, 0)
+    struct.pack_into("<QQQ", entries, 32, QUAL_ESP_FIRST, QUAL_ESP_LAST, 0)
     name = "aiueos K16 qualify".encode("utf-16le")
     entries[56:56 + len(name)] = name
     entries[128:144], entries[144:160] = release.ESP_TYPE.bytes_le, release.RECOVERY_GUID.bytes_le
     struct.pack_into("<QQQ", entries, 160, release.RECOVERY_FIRST, release.RECOVERY_LAST, 0)
     recovery_name = "aiueos K16 recovery".encode("utf-16le")
     entries[184:184 + len(recovery_name)] = recovery_name
+    entries[256:272], entries[272:288] = BASIC_DATA_TYPE.bytes_le, RESULT_GUID.bytes_le
+    struct.pack_into("<QQQ", entries, 288, RESULT_FIRST, RESULT_LAST, 0)
+    result_name = "aiueos K16 result".encode("utf-16le")
+    entries[312:312 + len(result_name)] = result_name
     entries_crc = binascii.crc32(entries) & 0xFFFFFFFF
     disk[2 * release.SECTOR:(2 + release.GPT_ENTRY_SECTORS) * release.SECTOR] = entries
     backup = release.GPT_BACKUP_ENTRIES * release.SECTOR
@@ -282,17 +410,19 @@ def build(args):
         1, release.DISK_SECTORS - 1, 2, entries_crc)
     disk[-release.SECTOR:] = release.gpt_header(
         release.DISK_SECTORS - 1, 1, release.GPT_BACKUP_ENTRIES, entries_crc)
-    disk[release.ESP_FIRST * release.SECTOR:(release.ESP_LAST + 1) * release.SECTOR] = \
+    disk[QUAL_ESP_FIRST * release.SECTOR:(QUAL_ESP_LAST + 1) * release.SECTOR] = \
         make_fat32(probe, loader, kernel, initramfs)
     disk[release.RECOVERY_FIRST * release.SECTOR:(release.RECOVERY_LAST + 1) * release.SECTOR] = \
         make_fat16(probe, loader, kernel, initramfs)
+    disk[RESULT_FIRST * release.SECTOR:(RESULT_LAST + 1) * release.SECTOR] = \
+        make_result_fat16()
     Path(args.output).write_bytes(disk)
     verify(args.output, args.probe, args.loader, args.kernel, args.initramfs)
     epoch = int(os.environ.get("SOURCE_DATE_EPOCH", "0"))
     receipt = {
-        "schema": "aiueos.physical-qualification-usb-receipt.v2",
+        "schema": "aiueos.physical-qualification-usb-receipt.v4",
         "created": datetime.fromtimestamp(epoch, timezone.utc).isoformat().replace("+00:00", "Z"),
-        "profile": "k16-native-result-return-v2",
+        "profile": "k16-native-passwordless-result-v4",
         "source": {"commit": os.environ.get("AIUEOS_SOURCE_COMMIT", "UNVERIFIED")},
         "disk": {"bytes": len(disk), "sha256": digest(disk)},
         "boot_order": ["uefi-probe-and-arm-return", "native-core",
@@ -303,8 +433,18 @@ def build(args):
             "EFI/AIUEOS/KERNEL.ELF": {"bytes": len(kernel), "sha256": digest(kernel)},
             "EFI/AIUEOS/INITRD.IMG": {"bytes": len(initramfs), "sha256": digest(initramfs)},
         },
+        "result_volume": {
+            "label": "AIUEOS RSLT",
+            "partition_type": str(BASIC_DATA_TYPE),
+            "partition_guid": str(RESULT_GUID),
+            "first_lba": RESULT_FIRST,
+            "last_lba": RESULT_LAST,
+            "files": ["AIUEOS.ID", "PROBE.LOG", "RESULT.LOG"],
+            "macos_mount": "normal-user-volume",
+        },
         "safety": {"internal_disk_writes": False, "block_driver_reached": False,
                    "qualification_usb_log_writes": True,
+                   "qualification_usb_write_scope": "same-usb-result-partition-guid",
                    "uefi_nvram_result_bytes": 16, "bootnext": "one-shot",
                    "ssd_install": False},
     }

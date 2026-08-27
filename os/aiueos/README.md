@@ -274,33 +274,55 @@ invented browser runtime are intentionally excluded.
 ### Physical K16 qualification before installation
 
 The K16 stage-one image keeps every internal disk read-only while returning a
-machine-readable result on the removable USB.  It writes `PROBE.LOG`, arms the
+machine-readable result on the removable USB.  v4 adds a dedicated 9 MiB FAT16
+Microsoft-basic-data partition labeled `AIUEOS RSLT`; macOS mounts it as a
+normal user volume instead of requiring privileged access to an EFI System
+Partition.  The probe writes `PROBE.LOG` there, arms the
 current USB entry as one-shot `BootNext`, and chainloads an AIUEOS native-core
 profile.  The native core stores only a bounded UEFI result record and resets;
-the probe then boots once more, writes `RESULT.LOG` to its own filesystem, and
-stops with `RESULT SAVED`.  A success result proves only the loader/kernel,
+the probe then boots once more, writes `RESULT.LOG` to the same USB's result
+partition, and stops with `RESULT SAVED`.  Binding requires the loaded USB
+device-path prefix, the exact result partition GUID, and the exact
+`AIUEOS.ID` marker; there is no fallback write to another filesystem.  A
+success result proves only the loader/kernel,
 integrity, Kotoba object, paging, GOP, allocator, and ACPI floor.  It stops
 before IOMMU, PCI DMA, block/network drivers, Murakumo, or any internal-SSD
 write.  GOP discovery first checks the firmware console handle, then performs
 a bounded protocol-handle scan for firmware that publishes GOP separately.
+The UEFI probe also walks each xHCI controller's extended-capability list using
+bounded MMIO reads and records whether optional Debug Capability (DbC) is
+present and which debug port it reports.  It does not enable DbC or perform any
+PCI/MMIO write; live USB logging remains gated on the physical K16 result.
 
 ```sh
 SOURCE_DATE_EPOCH=0 ./os/aiueos/scripts/build-physical-qualification-usb.sh
 ```
 
-After `RESULT SAVED. REMOVE USB AND CONNECT IT TO THE MAC.`, power off, move
-the USB to the Mac, and read `EFI/AIUEOS/PROBE.LOG` plus `RESULT.LOG`.  The
-result can be checked without interpreting the raw log by running:
+After `RESULT SAVED. REMOVE USB AND CONNECT IT TO THE MAC.`, power off and move
+the USB to the Mac.  `AIUEOS RSLT` mounts without an administrator password,
+with `PROBE.LOG` and `RESULT.LOG` at its root.  Check the result without
+interpreting the raw log by running:
 
 ```sh
-./os/aiueos/scripts/check-physical-qualification-result.sh "/Volumes/AIUEOS QUAL"
+./os/aiueos/scripts/check-physical-qualification-result.sh
 ```
+
+To check automatically whenever a volume is attached, install the user-level
+LaunchAgent once (no `sudo`):
+
+```sh
+./os/aiueos/scripts/install-macos-result-watcher.sh
+```
+
+The latest automatic decision is written to
+`~/Library/Logs/AIUEOS/latest-result.txt`.  This watcher is mount-triggered
+result retrieval, not the still-gated DbC real-time transport.
 
 It prints `AIUEOS_K16_PHYSICAL_RESULT_OK` only when the native-core result and
 the required read-only probe markers are both present.  The
-exact v2 gate and later SSD-install prerequisites are in
-`contracts/physical-qualification-usb-v2.edn`; v1 remains the historical
-screen-only contract.  Secure Boot must be disabled for this unsigned
+exact v4 gate and later SSD-install prerequisites are in
+`contracts/physical-qualification-usb-v4.edn`; v1 and v2 remain historical
+contracts.  Secure Boot must be disabled for this unsigned
 development image.  A green QEMU result is build evidence, not a physical K16
 result.
 
