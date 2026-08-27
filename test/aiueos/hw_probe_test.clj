@@ -9,6 +9,9 @@
   (slurp (io/file "os/aiueos/scripts/make-physical-qualification-usb.py")))
 (def qualification-runtime
   (slurp (io/file "os/aiueos/kernel/qualification.c")))
+(def uefi-loader-source (slurp (io/file "os/aiueos/uefi/main.c")))
+(def result-checker
+  (slurp (io/file "os/aiueos/scripts/check-physical-qualification-result.sh")))
 (def qualification-contract
   (slurp (io/file "os/aiueos/contracts/physical-qualification-usb-v2.edn")))
 
@@ -46,6 +49,23 @@
   (is (str/includes? build-script "SOURCE_DATE_EPOCH"))
   (is (not (str/includes? build-script "kernel/main.c")))
   (is (not (str/includes? build-script "kernel/pci.c"))))
+
+(deftest gop-discovery-falls-back-beyond-console-out
+  (is (str/includes? source "*source=\"protocol-scan\""))
+  (is (str/includes? source "locate_handle(EFI_BY_PROTOCOL,&gop_guid"))
+  (is (str/includes? uefi-loader-source "AIUEOS_GOP_DISCOVERY_OK source=protocol-scan"))
+  (is (str/includes? uefi-loader-source
+                     "locate_handle(EFI_BY_PROTOCOL,&graphics_output_guid"))
+  (is (str/includes? build-script "AIUEOS_GOP_FORCE_PROTOCOL_SCAN")))
+
+(deftest incomplete-results-retain-the-physical-failure-reason
+  (is (str/includes? result-checker "reason=gop-absent"))
+  (let [state-branch (.indexOf result-checker "case \"$state\"")
+        success-probe-gate (.indexOf result-checker
+                                     "AIUEOS_HW_PROBE_GOP capability=present")]
+    (is (<= 0 state-branch))
+    (is (<= 0 success-probe-gate))
+    (is (< state-branch success-probe-gate))))
 
 (deftest qualification-image-preserves-the-internal-disk-read-only-boundary
   (is (str/includes? qualification-builder "uefi-probe-and-arm-return"))

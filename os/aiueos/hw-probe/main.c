@@ -255,6 +255,35 @@ static int guid_equal(const struct efi_guid *a, const struct efi_guid *b) {
 }
 static uint64_t add_saturated(uint64_t a, uint64_t b) { return UINT64_MAX-a < b ? UINT64_MAX : a+b; }
 
+static struct efi_graphics_output_protocol *find_gop(
+    struct efi_system_table *system, struct efi_boot_services *bs,
+    const char **source) {
+  struct efi_graphics_output_protocol *gop=0;
+#ifdef AIUEOS_GOP_FORCE_PROTOCOL_SCAN
+  (void)system;
+#endif
+#ifndef AIUEOS_GOP_FORCE_PROTOCOL_SCAN
+  if (system->console_out_handle &&
+      bs->handle_protocol(system->console_out_handle,&gop_guid,(void **)&gop)==EFI_SUCCESS &&
+      gop) {
+    *source="console-handle";
+    return gop;
+  }
+#endif
+  efi_handle handles[32];uint64_t bytes=sizeof(handles);
+  if (bs->locate_handle(EFI_BY_PROTOCOL,&gop_guid,0,&bytes,handles)!=EFI_SUCCESS)
+    return 0;
+  uint64_t count=bytes/sizeof(efi_handle);
+  for (uint64_t i=0;i<count;i++) {
+    gop=0;
+    if (bs->handle_protocol(handles[i],&gop_guid,(void **)&gop)==EFI_SUCCESS && gop) {
+      *source="protocol-scan";
+      return gop;
+    }
+  }
+  return 0;
+}
+
 static efi_status write_self_file(efi_handle image, struct efi_system_table *system,
                                   const char16 *path, void *payload,
                                   uint64_t payload_size) {
@@ -379,16 +408,18 @@ static void report_firmware(struct efi_system_table *system) {
 }
 
 static void report_gop(struct efi_system_table *system, struct efi_boot_services *bs) {
-  struct efi_graphics_output_protocol *gop=0;
-  if (bs->handle_protocol(system->console_out_handle, &gop_guid, (void **)&gop) != EFI_SUCCESS ||
-      !gop || !gop->mode || !gop->mode->info) {
-    emit("AIUEOS_HW_PROBE_GOP capability=absent\r\n"); return;
+  const char *source="absent";
+  struct efi_graphics_output_protocol *gop=find_gop(system,bs,&source);
+  if (!gop || !gop->mode || !gop->mode->info) {
+    emit("AIUEOS_HW_PROBE_GOP capability=absent console-handle=missing protocol-scan=missing\r\n");
+    return;
   }
   struct efi_graphics_output_mode_info *info=gop->mode->info;
   char line[160], *p=append_ascii(line,"AIUEOS_HW_PROBE_GOP capability=present width=");
   p=append_dec(p,info->horizontal_resolution); p=append_ascii(p," height=");
   p=append_dec(p,info->vertical_resolution); p=append_ascii(p," stride=");
-  p=append_dec(p,info->pixels_per_scan_line); *p++='\r';*p++='\n';*p=0;emit(line);
+  p=append_dec(p,info->pixels_per_scan_line); p=append_ascii(p," source=");
+  p=append_ascii(p,source); *p++='\r';*p++='\n';*p=0;emit(line);
 
   if ((info->pixel_format == 0 || info->pixel_format == 1) && gop->mode->framebuffer_base &&
       info->pixels_per_scan_line >= info->horizontal_resolution && gop->mode->framebuffer_size >= 4) {

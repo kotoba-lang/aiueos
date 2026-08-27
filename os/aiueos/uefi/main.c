@@ -6,6 +6,7 @@
 #define EFI_SUCCESS 0
 #define EFI_BUFFER_TOO_SMALL ((uint64_t)0x8000000000000005ULL)
 #define EFI_INVALID_PARAMETER ((uint64_t)0x8000000000000002ULL)
+#define EFI_BY_PROTOCOL 2
 #define PAGE_SIZE 4096ULL
 #define KERNEL_BUFFER_SIZE (1024ULL * 1024ULL)
 #define INITRAMFS_BUFFER_SIZE (1024ULL * 1024ULL)
@@ -127,6 +128,30 @@ struct efi_graphics_output_mode {
 struct efi_graphics_output_protocol {
   void *query_mode, *set_mode, *blt; struct efi_graphics_output_mode *mode;
 };
+
+static struct efi_graphics_output_protocol *find_graphics_output(
+    struct efi_system_table *system, struct efi_boot_services *bs,
+    uint8_t *used_protocol_scan) {
+  struct efi_graphics_output_protocol *gop=0;
+#ifndef AIUEOS_GOP_FORCE_PROTOCOL_SCAN
+  if (system->console_out_handle &&
+      bs->handle_protocol(system->console_out_handle,&graphics_output_guid,
+                          (void **)&gop)==EFI_SUCCESS && gop)
+    return gop;
+#endif
+  efi_handle handles[32];uint64_t bytes=sizeof(handles);
+  if (bs->locate_handle(EFI_BY_PROTOCOL,&graphics_output_guid,0,&bytes,handles)!=EFI_SUCCESS)
+    return 0;
+  uint64_t count=bytes/sizeof(efi_handle);
+  for (uint64_t i=0;i<count;i++) {
+    gop=0;
+    if (bs->handle_protocol(handles[i],&graphics_output_guid,(void **)&gop)==EFI_SUCCESS && gop) {
+      *used_protocol_scan=1;
+      return gop;
+    }
+  }
+  return 0;
+}
 
 static int guid_equal(const struct efi_guid *a, const struct efi_guid *b) {
   const uint8_t *x = (const uint8_t *)a, *y = (const uint8_t *)b;
@@ -372,8 +397,9 @@ efi_status EFIAPI efi_main(efi_handle image, struct efi_system_table *system) {
   }
   if (!info.acpi_rsdp) return fail("AIUEOS_LOADER_FAIL acpi-rsdp");
 
-  if (bs->handle_protocol(system->console_out_handle, &graphics_output_guid,
-                          (void **)&gop) != EFI_SUCCESS || !gop || !gop->mode ||
+  uint8_t gop_used_protocol_scan=0;
+  gop=find_graphics_output(system,bs,&gop_used_protocol_scan);
+  if (!gop || !gop->mode ||
       !gop->mode->info || !gop->mode->framebuffer_base ||
       !gop->mode->framebuffer_size)
     return fail("AIUEOS_LOADER_FAIL gop");
@@ -392,6 +418,8 @@ efi_status EFIAPI efi_main(efi_handle image, struct efi_system_table *system) {
   info.framebuffer_format = gop_info->pixel_format;
   info.runtime_services = system->runtime_services;
   info.firmware_cr3 = read_cr3();
+  if (gop_used_protocol_scan)
+    debug_string("AIUEOS_GOP_DISCOVERY_OK source=protocol-scan\n");
   debug_string("AIUEOS_GOP_HANDOFF_OK framebuffer-v1\n");
 
   status = bs->exit_boot_services(image, map_key);

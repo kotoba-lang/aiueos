@@ -33,6 +33,30 @@ for marker in \
     exit 3
   }
 done
+
+state=$(printf '%s\n' "$result_text" | sed -n 's/^state=//p' | head -1)
+code=$(printf '%s\n' "$result_text" | sed -n 's/^code=//p' | head -1)
+case "$state" in
+  incomplete)
+    reason=terminal-marker-not-reached
+    if printf '%s\n' "$probe_text" | grep -F "AIUEOS_HW_PROBE_GOP capability=absent" >/dev/null; then
+      reason=gop-absent
+    fi
+    printf 'AIUEOS_K16_PHYSICAL_RESULT_INCOMPLETE code=%s reason=%s internal-ssd-writes=none\n' \
+      "$code" "$reason" >&2
+    exit 5
+    ;;
+  failure)
+    printf 'AIUEOS_K16_PHYSICAL_RESULT_FAIL state=failure code=%s internal-ssd-writes=none\n' "$code" >&2
+    exit 4
+    ;;
+  success) ;;
+  *)
+    echo "error: unknown qualification state" >&2
+    exit 3
+    ;;
+esac
+
 for marker in \
   "AIUEOS_HW_PROBE_CPU vendor=" \
   "AIUEOS_HW_PROBE_GOP capability=present" \
@@ -47,23 +71,5 @@ for marker in \
   }
 done
 
-state=$(printf '%s\n' "$result_text" | sed -n 's/^state=//p' | head -1)
-code=$(printf '%s\n' "$result_text" | sed -n 's/^code=//p' | head -1)
-case "$state" in
-  success)
-    [ "$code" = 0 ] || { echo "error: success result has code=$code" >&2; exit 3; }
-    printf 'AIUEOS_K16_PHYSICAL_RESULT_OK state=success code=0 internal-ssd-writes=none\n'
-    ;;
-  failure)
-    printf 'AIUEOS_K16_PHYSICAL_RESULT_FAIL state=failure code=%s internal-ssd-writes=none\n' "$code" >&2
-    exit 4
-    ;;
-  incomplete)
-    printf 'AIUEOS_K16_PHYSICAL_RESULT_INCOMPLETE code=%s internal-ssd-writes=none\n' "$code" >&2
-    exit 5
-    ;;
-  *)
-    echo "error: unknown qualification state" >&2
-    exit 3
-    ;;
-esac
+[ "$code" = 0 ] || { echo "error: success result has code=$code" >&2; exit 3; }
+printf 'AIUEOS_K16_PHYSICAL_RESULT_OK state=success code=0 internal-ssd-writes=none\n'
