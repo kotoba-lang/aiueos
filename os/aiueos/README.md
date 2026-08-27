@@ -302,11 +302,18 @@ codes are 101 through 118 in execution order; code 110 is fixed-address ELF
 segment allocation, the physical-K16 failure suspected by the v4 observation.
 The v5 code map is authoritative in
 `contracts/physical-qualification-usb-v5.edn`; v4 remains the historical
-layout/result contract.
+layout/result contract.  v6 also persists progress codes 201 through 209
+*before* firmware calls and native-core handoff.  A 90-second firmware watchdog
+resets a hung qualification run so the existing one-shot `BootNext` collector
+can write the last progress code to `RESULT.LOG`; a manual power cycle remains
+the fallback when firmware does not implement the watchdog.  The final memory
+map is obtained only after persisting progress and completing GOP discovery, so
+`ExitBootServices` receives the current map key.
 
 ```sh
 SOURCE_DATE_EPOCH=0 ./os/aiueos/scripts/build-physical-qualification-usb.sh
 ./os/aiueos/scripts/smoke-qemu-physical-loader-failure.sh
+./os/aiueos/scripts/smoke-qemu-physical-loader-hang.sh
 ```
 
 After `RESULT SAVED. REMOVE USB AND CONNECT IT TO THE MAC.`, power off and move
@@ -318,21 +325,24 @@ interpreting the raw log by running:
 ./os/aiueos/scripts/check-physical-qualification-result.sh
 ```
 
-To check automatically whenever a volume is attached, install the user-level
-LaunchAgent once (no `sudo`):
+An optional user-level LaunchAgent can watch for an attached volume (no
+`sudo`):
 
 ```sh
 ./os/aiueos/scripts/install-macos-result-watcher.sh
 ```
 
 The latest automatic decision is written to
-`~/Library/Logs/AIUEOS/latest-result.txt`.  This watcher is mount-triggered
-result retrieval, not the still-gated DbC real-time transport.
+`~/Library/Logs/AIUEOS/latest-result.txt`.  macOS privacy controls can deny a
+background LaunchAgent access to `/Volumes` even when the interactive checker
+works, so the interactive command above remains the authoritative retrieval
+path unless Full Disk Access has been explicitly granted.  This watcher is
+mount-triggered result retrieval, not the still-gated DbC real-time transport.
 
 It prints `AIUEOS_K16_PHYSICAL_RESULT_OK` only when the native-core result and
 the required read-only probe markers are both present.  The
-exact v5 gate and later SSD-install prerequisites are in
-`contracts/physical-qualification-usb-v5.edn`; v1 through v4 remain historical
+exact v6 gate and later SSD-install prerequisites are in
+`contracts/physical-qualification-usb-v6.edn`; v1 through v5 remain historical
 contracts.  Secure Boot must be disabled for this unsigned
 development image.  A green QEMU result is build evidence, not a physical K16
 result.

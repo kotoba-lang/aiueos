@@ -122,6 +122,7 @@ physical_qualification_cflags=
 qualification_link=
 gop_discovery_cflags=
 loader_failure_test_cflags=
+loader_hang_test_cflags=
 if [ "${AIUEOS_PHYSICAL_QUALIFICATION:-0}" = 1 ]; then
   physical_qualification_cflags="-DAIUEOS_PHYSICAL_QUALIFICATION=1"
   qualification_link="$kernel_qualification_object"
@@ -131,6 +132,9 @@ if [ "${AIUEOS_GOP_FORCE_PROTOCOL_SCAN:-0}" = 1 ]; then
 fi
 if [ -n "${AIUEOS_QUALIFICATION_FORCE_LOADER_FAILURE_CODE:-}" ]; then
   loader_failure_test_cflags="-DAIUEOS_QUALIFICATION_FORCE_LOADER_FAILURE_CODE=${AIUEOS_QUALIFICATION_FORCE_LOADER_FAILURE_CODE}"
+fi
+if [ -n "${AIUEOS_QUALIFICATION_FORCE_LOADER_HANG_CODE:-}" ]; then
+  loader_hang_test_cflags="-DAIUEOS_QUALIFICATION_FORCE_LOADER_HANG_CODE=${AIUEOS_QUALIFICATION_FORCE_LOADER_HANG_CODE} -DAIUEOS_QUALIFICATION_LOADER_WATCHDOG_SECONDS=${AIUEOS_QUALIFICATION_LOADER_WATCHDOG_SECONDS:-3}"
 fi
 kotoba_ime_object=${AIUEOS_KOTOBA_IME_OBJECT:-"$aiueos/kotoba/ime-romaji.o"}
 kotoba_wm_object=${AIUEOS_KOTOBA_WM_OBJECT:-"$aiueos/kotoba/wm-hit.o"}
@@ -559,6 +563,7 @@ zig cc -target x86_64-windows-gnu -std=c11 -O2 -ffreestanding \
 zig cc -target x86_64-windows-gnu -std=c11 -O2 \
   -ffreestanding -fshort-wchar -fno-stack-protector -mno-red-zone \
   $gop_discovery_cflags $physical_qualification_cflags $loader_failure_test_cflags \
+  $loader_hang_test_cflags \
   -c -o "$object" "$aiueos/uefi/main.c"
 zig lld-link /subsystem:efi_application /entry:efi_main /nodefaultlib /timestamp:0 \
   /fixed:no "/out:$efi" "$object" "$identity_object"
