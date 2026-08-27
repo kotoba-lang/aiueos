@@ -12,14 +12,17 @@
 (def uefi-loader-source (slurp (io/file "os/aiueos/uefi/main.c")))
 (def result-checker
   (slurp (io/file "os/aiueos/scripts/check-physical-qualification-result.sh")))
+(def macos-watcher
+  (slurp (io/file "os/aiueos/scripts/install-macos-result-watcher.sh")))
 (def qualification-contract
-  (slurp (io/file "os/aiueos/contracts/physical-qualification-usb-v2.edn")))
+  (slurp (io/file "os/aiueos/contracts/physical-qualification-usb-v4.edn")))
 
 (deftest probe-is-bounded-and-keeps-internal-disks-read-only
   (testing "the probe never reaches raw block writes or exits boot services"
     (is (not (str/includes? source "exit_boot_services(")))
     (is (not (str/includes? source "->write_blocks(")))
     (is (not (re-find #"pci\.write\s*\(" source)))
+    (is (not (re-find #"mem\.write\s*\(" source)))
     (is (not (str/includes? source "outb")))
     (is (str/includes? source "MAX_PCI_HANDLES 256")))
   (testing "required evidence is explicit"
@@ -31,11 +34,15 @@
                     "AIUEOS_PHYSICAL_QUALIFICATION_RESULT_SAVED"]]
       (is (str/includes? source marker)))))
 
-(deftest result-return-is-bounded-to-uefi-and-the-loaded-usb-filesystem
-  (is (str/includes? qualification-contract ":scope :same-loaded-image-filesystem")
-      "contract language must name the self-only write boundary")
-  (is (str/includes? source "\\\\EFI\\\\AIUEOS\\\\PROBE.LOG"))
-  (is (str/includes? source "\\\\EFI\\\\AIUEOS\\\\RESULT.LOG"))
+(deftest result-return-is-bounded-to-the-same-usb-data-partition
+  (is (str/includes? qualification-contract ":scope :same-usb-result-partition-guid")
+      "contract language must name the GUID-and-parent write boundary")
+  (is (str/includes? source "result_partition_guid"))
+  (is (str/includes? source "1cd9b207"))
+  (is (str/includes? source "AIUEOS_K16_RESULT_VOLUME_V4"))
+  (is (str/includes? source "bytes_equal(candidate_path,loaded_path,loaded_prefix)"))
+  (is (str/includes? source "\\\\PROBE.LOG"))
+  (is (str/includes? source "\\\\RESULT.LOG"))
   (is (str/includes? source "boot_next_name"))
   (is (str/includes? source "qualification_variable_cleared=yes"))
   (is (str/includes? qualification-runtime "firmware NVRAM"))
@@ -43,6 +50,14 @@
   (is (not (str/includes? qualification-runtime "block_io")))
   (is (str/includes? qualification-contract ":internal-disk-write-code-reached? false"))
   (is (str/includes? qualification-contract ":uefi-variable-bytes 16")))
+
+(deftest xhci-dbc-inventory-is-bounded-and-read-only
+  (is (str/includes? source "MAX_XHCI_EXT_CAPS 50"))
+  (is (str/includes? source "read_xhci_mmio32"))
+  (is (str/includes? source "(header&0xffU)==10U"))
+  (is (str/includes? source "offset+0x24"))
+  (is (str/includes? source "AIUEOS_HW_PROBE_XHCI_DBC_SUMMARY"))
+  (is (str/includes? qualification-contract ":live-stream-state :gated-on-physical-present-result-and-port-cable-validation")))
 
 (deftest build-is-deterministic-and-separate
   (is (str/includes? build-script "/timestamp:0"))
@@ -72,7 +87,17 @@
   (is (str/includes? qualification-builder "uefi-result-collector"))
   (is (str/includes? qualification-builder "\"internal_disk_writes\": False"))
   (is (str/includes? qualification-builder "\"qualification_usb_log_writes\": True"))
+  (is (str/includes? qualification-builder "ebd0a0a2-b9e5-4433-87c0-68b6b72699c7"))
+  (is (str/includes? qualification-builder "AIUEOS RSLT"))
+  (is (str/includes? qualification-builder "mac-user-mount"))
   (is (str/includes? qualification-builder "\"ssd_install\": False"))
   (is (str/includes? qualification-builder "release.dirent(\"..\", 0x10, 0)"))
-  (is (str/includes? qualification-builder "AIUEOS RSLT"))
   (is (str/includes? qualification-builder "AIUEOS_PHYSICAL_QUALIFICATION_USB_OK")))
+
+(deftest macos-result-retrieval-needs-no-administrator
+  (is (str/includes? result-checker "/Volumes/AIUEOS\\ RSLT"))
+  (is (str/includes? result-checker "AIUEOS_K16_RESULT_V4"))
+  (is (str/includes? macos-watcher "$HOME/Library/LaunchAgents"))
+  (is (str/includes? macos-watcher "WatchPaths"))
+  (is (str/includes? macos-watcher "AIUEOS_WATCHER_INSTALL_DRY_RUN"))
+  (is (not (str/includes? macos-watcher "sudo"))))
