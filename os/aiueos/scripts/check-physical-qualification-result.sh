@@ -60,6 +60,9 @@ code=$(printf '%s\n' "$result_text" | sed -n 's/^code=//p' | head -1)
 case "$state" in
   incomplete)
     reason=terminal-marker-not-reached
+    if [ "$code" != 0 ]; then
+      reason=loader-hang-progress
+    fi
     if printf '%s\n' "$probe_text" | grep -F "AIUEOS_HW_PROBE_GOP capability=absent" >/dev/null; then
       reason=gop-absent
     fi

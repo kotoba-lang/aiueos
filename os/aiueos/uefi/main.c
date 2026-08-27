@@ -35,6 +35,8 @@ typedef efi_status(EFIAPI *efi_handle_protocol)(efi_handle, const struct efi_gui
 typedef efi_status(EFIAPI *efi_locate_handle)(uint32_t, const struct efi_guid *, void *,
                                               uint64_t *, efi_handle *);
 typedef efi_status(EFIAPI *efi_exit_boot_services)(efi_handle, uint64_t);
+typedef efi_status(EFIAPI *efi_set_watchdog_timer)(uint64_t, uint64_t, uint64_t,
+                                                   const char16 *);
 
 struct efi_boot_services {
   struct efi_table_header header;
@@ -52,6 +54,8 @@ struct efi_boot_services {
   void *locate_device_path;
   void *install_configuration_table, *load_image, *start_image, *exit, *unload_image;
   efi_exit_boot_services exit_boot_services;
+  void *get_next_monotonic_count, *stall;
+  efi_set_watchdog_timer set_watchdog_timer;
 };
 
 typedef efi_status(EFIAPI *efi_set_variable)(const char16 *, const struct efi_guid *,
@@ -259,6 +263,10 @@ static inline void fail_exit(void) { __asm__ volatile("outl %0, $0xf4" : : "a"(0
 static struct efi_simple_text_output *loader_console;
 static struct efi_runtime_services *loader_runtime;
 
+#ifndef AIUEOS_QUALIFICATION_LOADER_WATCHDOG_SECONDS
+#define AIUEOS_QUALIFICATION_LOADER_WATCHDOG_SECONDS 90ULL
+#endif
+
 static void console_ascii(const char *text) {
   if (!loader_console || !loader_console->output_string) return;
   char16 wide[192];
@@ -279,14 +287,33 @@ static void console_decimal(uint32_t value) {
   text[digits]=0;console_ascii(text);
 }
 
-static int persist_loader_failure(uint32_t code) {
+static int persist_loader_record(uint16_t state, uint32_t code) {
   if (!loader_runtime || !loader_runtime->set_variable) return 0;
-  struct aiueos_qualification_record record={0x514b3241U,2,2,code,0};
+  struct aiueos_qualification_record record={0x514b3241U,2,state,code,0};
   return loader_runtime->set_variable(
       qualification_name,&qualification_guid,
       EFI_VARIABLE_NON_VOLATILE|EFI_VARIABLE_BOOTSERVICE_ACCESS|
         EFI_VARIABLE_RUNTIME_ACCESS,
       sizeof(record),&record)==EFI_SUCCESS;
+}
+
+static int persist_loader_failure(uint32_t code) {
+  return persist_loader_record(2,code);
+}
+
+static void progress(uint32_t code, const char *message) {
+  debug_string(message);debug_string(" code=");
+  char digits[16];uint32_t count=0,value=code;
+  do { digits[count++]=(char)('0'+value%10);value/=10; } while (value && count<15);
+  while (count) debug_byte((uint8_t)digits[--count]);
+  debug_byte('\n');
+  console_ascii(message);console_ascii(" code=");console_decimal(code);console_ascii("\r\n");
+#ifdef AIUEOS_PHYSICAL_QUALIFICATION
+  if (!persist_loader_record(0,code)) {
+    debug_string("AIUEOS_LOADER_PROGRESS_PERSIST_FAIL\n");
+    console_ascii("Progress could not be persisted.\r\n");
+  }
+#endif
 }
 
 static efi_status fail(uint32_t code, const char *message) {
@@ -388,17 +415,34 @@ efi_status EFIAPI efi_main(efi_handle image, struct efi_system_table *system) {
   if (system->console_out && system->console_out->output_string)
     system->console_out->output_string(system->console_out, console_message);
   debug_string("AIUEOS_LOADER_OK\n");
+#ifdef AIUEOS_PHYSICAL_QUALIFICATION
+  if (bs->set_watchdog_timer &&
+      bs->set_watchdog_timer(AIUEOS_QUALIFICATION_LOADER_WATCHDOG_SECONDS,
+                             0xA106,0,0)==EFI_SUCCESS) {
+    debug_string("AIUEOS_LOADER_WATCHDOG_ARMED\n");
+    console_ascii("AIUEOS loader watchdog armed.\r\n");
+  }
+#endif
+#ifdef AIUEOS_QUALIFICATION_FORCE_LOADER_HANG_CODE
+  progress(AIUEOS_QUALIFICATION_FORCE_LOADER_HANG_CODE,
+           "AIUEOS_LOADER_PROGRESS forced-hang");
+  for (;;) __asm__ volatile("pause");
+#endif
 #ifdef AIUEOS_QUALIFICATION_FORCE_LOADER_FAILURE_CODE
   return fail(AIUEOS_QUALIFICATION_FORCE_LOADER_FAILURE_CODE,
               "AIUEOS_LOADER_FAIL forced-test");
 #endif
 
+  progress(201,"AIUEOS_LOADER_PROGRESS loaded-image-protocol");
   if (bs->handle_protocol(image, &loaded_image_guid, (void **)&loaded) != EFI_SUCCESS || !loaded)
     return fail(102,"AIUEOS_LOADER_FAIL loaded-image");
+  progress(202,"AIUEOS_LOADER_PROGRESS kernel-buffer");
   if (bs->allocate_pool(2, KERNEL_BUFFER_SIZE, (void **)&kernel_file) != EFI_SUCCESS)
     return fail(103,"AIUEOS_LOADER_FAIL kernel-buffer");
+  progress(203,"AIUEOS_LOADER_PROGRESS initramfs-buffer");
   if (bs->allocate_pool(2, INITRAMFS_BUFFER_SIZE, (void **)&initramfs_file) != EFI_SUCCESS)
     return fail(104,"AIUEOS_LOADER_FAIL initramfs-buffer");
+  progress(204,"AIUEOS_LOADER_PROGRESS kernel-admission");
   efi_status admitted = read_verified_kernel(bs, loaded->device_handle, kernel_path,
                                              initramfs_path, kernel_file, &kernel_size,
                                              initramfs_file, &initramfs_size);
@@ -423,6 +467,7 @@ efi_status EFIAPI efi_main(efi_handle image, struct efi_system_table *system) {
   }
   debug_string("AIUEOS_LOADER_INTEGRITY_OK sha256-v1\n");
 
+  progress(205,"AIUEOS_LOADER_PROGRESS elf-validation");
   if (kernel_size < sizeof(struct elf64_header)) return fail(106,"AIUEOS_LOADER_FAIL elf-size");
   struct elf64_header *elf = (struct elf64_header *)kernel_file;
   if (elf->ident[0] != 0x7f || elf->ident[1] != 'E' || elf->ident[2] != 'L' ||
@@ -444,6 +489,7 @@ efi_status EFIAPI efi_main(efi_handle image, struct efi_system_table *system) {
       return fail(109,"AIUEOS_LOADER_FAIL elf-segment");
     if ((ph[i].flags & 1) && elf->entry >= ph[i].paddr &&
         elf->entry - ph[i].paddr < ph[i].memsz) entry_is_executable = 1;
+    progress(206,"AIUEOS_LOADER_PROGRESS segment-allocation");
     uint64_t address = ph[i].paddr;
     uint64_t pages = (ph[i].memsz + PAGE_SIZE - 1) / PAGE_SIZE;
     if (!pages || bs->allocate_pages(2, 2, pages, &address) != EFI_SUCCESS || address != ph[i].paddr)
@@ -453,18 +499,13 @@ efi_status EFIAPI efi_main(efi_handle image, struct efi_system_table *system) {
   }
   if (!entry_is_executable) return fail(111,"AIUEOS_LOADER_FAIL elf-entry");
 
+  progress(207,"AIUEOS_LOADER_PROGRESS memory-map-buffer");
   if (bs->allocate_pool(2, MEMORY_MAP_BUFFER_SIZE, &memory_map) != EFI_SUCCESS)
     return fail(112,"AIUEOS_LOADER_FAIL map-buffer");
-  memory_map_size = MEMORY_MAP_BUFFER_SIZE;
-  efi_status status = bs->get_memory_map(&memory_map_size, memory_map, &map_key,
-                                         &descriptor_size, &descriptor_version);
-  if (status != EFI_SUCCESS) return fail(113,"AIUEOS_LOADER_FAIL memory-map");
   info.magic = 0x414955454f53424fULL; info.version = 3;
   info.initramfs_base = (uint64_t)(uintptr_t)initramfs_file;
   info.initramfs_size = initramfs_size;
   if (!initramfs_size) return fail(114,"AIUEOS_LOADER_FAIL initramfs-empty");
-  info.memory_map = memory_map; info.memory_map_size = memory_map_size;
-  info.descriptor_size = descriptor_size; info.descriptor_version = descriptor_version;
   info.acpi_rsdp = 0;
   struct efi_configuration_table *tables = system->configuration_table;
   for (uint64_t i = 0; i < system->number_of_table_entries; i++) {
@@ -475,6 +516,7 @@ efi_status EFIAPI efi_main(efi_handle image, struct efi_system_table *system) {
   }
   if (!info.acpi_rsdp) return fail(115,"AIUEOS_LOADER_FAIL acpi-rsdp");
 
+  progress(208,"AIUEOS_LOADER_PROGRESS gop-discovery");
   uint8_t gop_used_protocol_scan=0;
   gop=find_graphics_output(system,bs,&gop_used_protocol_scan);
   if (!gop || !gop->mode ||
@@ -500,6 +542,13 @@ efi_status EFIAPI efi_main(efi_handle image, struct efi_system_table *system) {
     debug_string("AIUEOS_GOP_DISCOVERY_OK source=protocol-scan\n");
   debug_string("AIUEOS_GOP_HANDOFF_OK framebuffer-v1\n");
 
+  progress(209,"AIUEOS_LOADER_PROGRESS exit-boot-services");
+  memory_map_size = MEMORY_MAP_BUFFER_SIZE;
+  efi_status status = bs->get_memory_map(&memory_map_size, memory_map, &map_key,
+                                         &descriptor_size, &descriptor_version);
+  if (status != EFI_SUCCESS) return fail(113,"AIUEOS_LOADER_FAIL memory-map");
+  info.memory_map = memory_map; info.memory_map_size = memory_map_size;
+  info.descriptor_size = descriptor_size; info.descriptor_version = descriptor_version;
   status = bs->exit_boot_services(image, map_key);
   if (status != EFI_SUCCESS) return fail(118,"AIUEOS_LOADER_FAIL exit-boot-services");
   ((kernel_entry)(uintptr_t)elf->entry)(&info);

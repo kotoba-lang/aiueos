@@ -18,6 +18,8 @@
   (slurp (io/file "os/aiueos/contracts/physical-qualification-usb-v4.edn")))
 (def qualification-v5-contract
   (slurp (io/file "os/aiueos/contracts/physical-qualification-usb-v5.edn")))
+(def qualification-v6-contract
+  (slurp (io/file "os/aiueos/contracts/physical-qualification-usb-v6.edn")))
 
 (deftest probe-is-bounded-and-keeps-internal-disks-read-only
   (testing "the probe never reaches raw block writes or exits boot services"
@@ -104,6 +106,22 @@
     (is (<= 0 state-branch))
     (is (<= 0 success-probe-gate))
     (is (< state-branch success-probe-gate))))
+
+(deftest physical-loader-hangs-leave-a-durable-progress-code
+  (is (str/includes? uefi-loader-source "persist_loader_record(0,code)"))
+  (is (str/includes? uefi-loader-source "AIUEOS_LOADER_PROGRESS loaded-image-protocol"))
+  (is (str/includes? uefi-loader-source "AIUEOS_LOADER_PROGRESS exit-boot-services"))
+  (is (str/includes? uefi-loader-source "AIUEOS_LOADER_WATCHDOG_ARMED"))
+  (is (str/includes? qualification-v6-contract "209 :exit-boot-services-or-native-core"))
+  (is (str/includes? qualification-v6-contract ":forced-progress-code 290"))
+  (let [progress-before-map (.indexOf uefi-loader-source
+                                      "progress(209,\"AIUEOS_LOADER_PROGRESS exit-boot-services\")")
+        final-map (.indexOf uefi-loader-source
+                            "bs->get_memory_map(&memory_map_size" progress-before-map)
+        exit (.indexOf uefi-loader-source "bs->exit_boot_services" final-map)]
+    (is (<= 0 progress-before-map))
+    (is (< progress-before-map final-map))
+    (is (< final-map exit))))
 
 (deftest qualification-image-preserves-the-internal-disk-read-only-boundary
   (is (str/includes? qualification-builder "uefi-probe-and-arm-return"))
