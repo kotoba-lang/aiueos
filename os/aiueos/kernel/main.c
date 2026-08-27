@@ -120,6 +120,8 @@ volatile uint64_t aiueos_page_fault_stage;
 volatile uint64_t aiueos_page_fault_error;
 extern int aiueos_paging_initialize(void);
 extern int aiueos_framebuffer_initialize(const struct aiueos_boot_info *boot);
+extern void aiueos_framebuffer_qualification_screen(const char *, const char *,
+                                                     const char *, int);
 extern int aiueos_desktop_surface_ready(void);
 extern int aiueos_desktop_surface_bind_scanout(uint32_t width, uint32_t height);
 extern int aiueos_desktop_wm_rects_fit(void);
@@ -675,6 +677,11 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
     if (!physical_page_a || !physical_page_b || physical_page_a == physical_page_b ||
         ((uintptr_t)physical_page_a & 4095) || ((uintptr_t)physical_page_b & 4095) ||
         *(const uint64_t *)physical_page_a || *(const uint64_t *)physical_page_b) {
+#ifdef AIUEOS_PHYSICAL_QUALIFICATION
+      aiueos_framebuffer_qualification_screen("AIUEOS K16", "FAIL MEMORY", "READ ONLY", 0);
+      serial_string("AIUEOS_PHYSICAL_QUALIFICATION_FAIL stage=memory disk-writes=none\r\n");
+      for (;;) __asm__ volatile("cli; hlt");
+#endif
       debug_string("AIUEOS_PHYSICAL_ALLOCATOR_FAIL allocation\n");
       serial_string("AIUEOS_PHYSICAL_ALLOCATOR_FAIL allocation\r\n");
       qemu_exit(0x75);
@@ -682,16 +689,37 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
     debug_string("AIUEOS_PHYSICAL_ALLOCATOR_OK pages=2 zeroed\n");
     serial_string("AIUEOS_PHYSICAL_ALLOCATOR_OK pages=2 zeroed\r\n");
     if (!aiueos_capability_table_initialize()) {
+#ifdef AIUEOS_PHYSICAL_QUALIFICATION
+      aiueos_framebuffer_qualification_screen("AIUEOS K16", "FAIL MEMORY", "READ ONLY", 0);
+      serial_string("AIUEOS_PHYSICAL_QUALIFICATION_FAIL stage=capability-table disk-writes=none\r\n");
+      for (;;) __asm__ volatile("cli; hlt");
+#endif
       serial_string("AIUEOS_CAPABILITY_TABLE_FAIL page-allocation\r\n");
       qemu_exit(0x75);
     }
     if (!aiueos_acpi_initialize(boot->acpi_rsdp)) {
+#ifdef AIUEOS_PHYSICAL_QUALIFICATION
+      aiueos_framebuffer_qualification_screen("AIUEOS K16", "FAIL ACPI", "READ ONLY", 0);
+      serial_string("AIUEOS_PHYSICAL_QUALIFICATION_FAIL stage=acpi disk-writes=none\r\n");
+      for (;;) __asm__ volatile("cli; hlt");
+#endif
       debug_string("AIUEOS_ACPI_FAIL rsdp-xsdt-madt\n");
       serial_string("AIUEOS_ACPI_FAIL rsdp-xsdt-madt\r\n");
       qemu_exit(0x78);
     }
     debug_string("AIUEOS_ACPI_OK rsdp-xsdt-madt cpu>=2\n");
     serial_string("AIUEOS_ACPI_OK rsdp-xsdt-madt cpu>=2\r\n");
+#ifdef AIUEOS_PHYSICAL_QUALIFICATION
+    /* This profile is intentionally a USB-only, read-only boundary.  Reaching
+       this screen proves the native loader/kernel, integrity admission,
+       Kotoba object execution, owned paging, GOP, allocator and ACPI on the
+       physical machine.  It stops before DMA, PCI drivers or any block write;
+       those need K16-specific AMD-IOMMU, NVMe and RTL8125 qualification. */
+    aiueos_framebuffer_qualification_screen("AIUEOS K16", "NATIVE CORE OK", "READ ONLY", 1);
+    debug_string("AIUEOS_PHYSICAL_QUALIFICATION_OK native-core-v1 disk-writes=none\n");
+    serial_string("AIUEOS_PHYSICAL_QUALIFICATION_OK native-core-v1 disk-writes=none\r\n");
+    for (;;) __asm__ volatile("cli; hlt");
+#endif
     if (!aiueos_vtd_initialize()) {
       if (aiueos_vtd_error() == 3) serial_string("AIUEOS_VTD_STAGE_FAIL srtp\r\n");
       if (aiueos_vtd_error() == 4) serial_string("AIUEOS_VTD_STAGE_FAIL context-invalidate\r\n");

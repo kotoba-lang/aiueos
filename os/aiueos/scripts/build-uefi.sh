@@ -117,6 +117,10 @@ ecdsa_sign_link=
 if [ "${AIUEOS_ECDSA_SIGN_KAT:-0}" = 1 ] || [ "${AIUEOS_SSH_LISTEN:-0}" = 1 ]; then
   ecdsa_sign_link="$kotoba_ecdsa_sign_object"
 fi
+physical_qualification_cflags=
+if [ "${AIUEOS_PHYSICAL_QUALIFICATION:-0}" = 1 ]; then
+  physical_qualification_cflags="-DAIUEOS_PHYSICAL_QUALIFICATION=1"
+fi
 kotoba_ime_object=${AIUEOS_KOTOBA_IME_OBJECT:-"$aiueos/kotoba/ime-romaji.o"}
 kotoba_wm_object=${AIUEOS_KOTOBA_WM_OBJECT:-"$aiueos/kotoba/wm-hit.o"}
 kotoba_scanout_object=${AIUEOS_KOTOBA_SCANOUT_OBJECT:-"$aiueos/kotoba/scanout-bind.o"}
@@ -388,7 +392,7 @@ if [ -n "${AIUEOS_EXTERNAL_KERNEL_ELF:-}" ]; then
 else
 zig cc -target x86_64-freestanding-none -std=c11 -O2 \
   -ffreestanding -fno-stack-protector -mno-red-zone \
-  $input_smoke_cflags \
+  $input_smoke_cflags $physical_qualification_cflags \
   -c -o "$kernel_object" "$aiueos/kernel/main.c"
 zig cc -target x86_64-freestanding-none \
   -c -o "$kernel_entry_object" "$aiueos/kernel/entry.S"

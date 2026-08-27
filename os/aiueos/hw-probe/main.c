@@ -9,8 +9,13 @@
 #define EFI_BY_PROTOCOL 2
 #define EFI_BOOT_SERVICES_DATA 4
 #define MAX_MAP_BYTES (256ULL * 1024ULL)
-#define MAX_PCI_HANDLES 64
+#define MAX_PCI_HANDLES 256
 #define MAX_SERIAL_HANDLES 4
+#define MAX_BLOCK_HANDLES 32
+#define MAX_NATIVE_CORE_EFI (2ULL * 1024ULL * 1024ULL)
+#ifndef AIUEOS_HW_PROBE_DELAY_US
+#define AIUEOS_HW_PROBE_DELAY_US 30000000ULL
+#endif
 
 typedef uint64_t efi_status;
 typedef void *efi_handle;
@@ -29,6 +34,9 @@ typedef efi_status(EFIAPI *efi_free_pool)(void *);
 typedef efi_status(EFIAPI *efi_handle_protocol)(efi_handle, const struct efi_guid *, void **);
 typedef efi_status(EFIAPI *efi_locate_handle)(uint32_t, const struct efi_guid *, void *, uint64_t *, efi_handle *);
 typedef efi_status(EFIAPI *efi_stall)(uint64_t);
+typedef efi_status(EFIAPI *efi_load_image)(uint8_t, efi_handle, void *, void *,
+                                           uint64_t, efi_handle *);
+typedef efi_status(EFIAPI *efi_start_image)(efi_handle, uint64_t *, char16 **);
 
 struct efi_boot_services {
   struct efi_table_header header;
@@ -41,7 +49,9 @@ struct efi_boot_services {
   efi_handle_protocol handle_protocol;
   void *reserved, *register_protocol_notify;
   efi_locate_handle locate_handle;
-  void *locate_device_path, *install_configuration_table, *load_image, *start_image;
+  void *locate_device_path, *install_configuration_table;
+  efi_load_image load_image;
+  efi_start_image start_image;
   void *exit, *unload_image, *exit_boot_services, *get_next_monotonic_count;
   efi_stall stall;
 };
@@ -56,6 +66,29 @@ struct efi_system_table {
   uint64_t number_of_table_entries; void *configuration_table;
 };
 struct efi_configuration_table { struct efi_guid vendor_guid; void *vendor_table; };
+
+struct efi_loaded_image {
+  uint32_t revision, padding; efi_handle parent_handle;
+  struct efi_system_table *system_table; efi_handle device_handle;
+  void *file_path, *reserved; uint32_t load_options_size, padding2;
+  void *load_options, *image_base; uint64_t image_size;
+  uint32_t image_code_type, image_data_type; void *unload;
+};
+
+struct efi_file;
+typedef efi_status(EFIAPI *efi_file_open)(struct efi_file *, struct efi_file **,
+                                          const char16 *, uint64_t, uint64_t);
+typedef efi_status(EFIAPI *efi_file_close)(struct efi_file *);
+typedef efi_status(EFIAPI *efi_file_read)(struct efi_file *, uint64_t *, void *);
+struct efi_file {
+  uint64_t revision; efi_file_open open; efi_file_close close;
+  void *delete_file; efi_file_read read; void *write, *get_position, *set_position;
+  void *get_info, *set_info, *flush;
+};
+struct efi_simple_file_system {
+  uint64_t revision;
+  efi_status(EFIAPI *open_volume)(struct efi_simple_file_system *, struct efi_file **);
+};
 
 struct efi_memory_descriptor {
   uint32_t type, padding;
@@ -99,6 +132,20 @@ struct efi_serial_io_protocol {
   void *read, *mode;
 };
 
+struct efi_block_io_media {
+  uint32_t media_id;
+  uint8_t removable_media, media_present, logical_partition, read_only,
+          write_caching;
+  uint8_t padding[3];
+  uint32_t block_size, io_align;
+  uint64_t last_block;
+};
+struct efi_block_io_protocol {
+  uint64_t revision;
+  struct efi_block_io_media *media;
+  void *reset, *read_blocks, *write_blocks, *flush_blocks;
+};
+
 static const struct efi_guid gop_guid =
   {0x9042a9de,0x23dc,0x4a38,{0x96,0xfb,0x7a,0xde,0xd0,0x80,0x51,0x6a}};
 static const struct efi_guid acpi20_guid =
@@ -109,6 +156,12 @@ static const struct efi_guid pci_io_guid =
   {0x4cf5b200,0x68b8,0x4ca5,{0x9e,0xec,0xb2,0x3e,0x3f,0x50,0x02,0x9a}};
 static const struct efi_guid serial_io_guid =
   {0xbb25cf6f,0xf1d4,0x11d2,{0x9a,0x0c,0x00,0x90,0x27,0x3f,0xc1,0xfd}};
+static const struct efi_guid loaded_image_guid =
+  {0x5b1b31a1,0x9562,0x11d2,{0x8e,0x3f,0x00,0xa0,0xc9,0x69,0x72,0x3b}};
+static const struct efi_guid simple_fs_guid =
+  {0x964e5b22,0x6459,0x11d2,{0x8e,0x39,0x00,0xa0,0xc9,0x69,0x72,0x3b}};
+static const struct efi_guid block_io_guid =
+  {0x964e5b21,0x6459,0x11d2,{0x8e,0x39,0x00,0xa0,0xc9,0x69,0x72,0x3b}};
 
 static struct efi_simple_text_output *console;
 static struct efi_serial_io_protocol *serial;
@@ -152,6 +205,24 @@ static int guid_equal(const struct efi_guid *a, const struct efi_guid *b) {
   return 1;
 }
 static uint64_t add_saturated(uint64_t a, uint64_t b) { return UINT64_MAX-a < b ? UINT64_MAX : a+b; }
+
+static void report_cpu(void) {
+  uint32_t eax=0,ebx=0,ecx=0,edx=0;
+  char vendor[13], line[160], *p;
+  __asm__ volatile("cpuid" : "=a"(eax),"=b"(ebx),"=c"(ecx),"=d"(edx) : "a"(0),"c"(0));
+  *(uint32_t *)(void *)(vendor+0)=ebx;
+  *(uint32_t *)(void *)(vendor+4)=edx;
+  *(uint32_t *)(void *)(vendor+8)=ecx;
+  vendor[12]=0;
+  __asm__ volatile("cpuid" : "=a"(eax),"=b"(ebx),"=c"(ecx),"=d"(edx) : "a"(1),"c"(0));
+  uint32_t family=(eax>>8)&15, model=(eax>>4)&15;
+  if (family==15) family += (eax>>20)&255;
+  if (family==6 || family==15) model += ((eax>>16)&15)<<4;
+  p=append_ascii(line,"AIUEOS_HW_PROBE_CPU vendor=");p=append_ascii(p,vendor);
+  p=append_ascii(p," family=");p=append_dec(p,family);
+  p=append_ascii(p," model=");p=append_dec(p,model);
+  *p++='\r';*p++='\n';*p=0;emit(line);
+}
 
 static void report_firmware(struct efi_system_table *system) {
   emit("AIUEOS_HW_PROBE_FIRMWARE vendor=");
@@ -246,7 +317,7 @@ static void report_pci(struct efi_boot_services *bs) {
   if (bs->locate_handle(EFI_BY_PROTOCOL,&pci_io_guid,0,&bytes,handles)!=EFI_SUCCESS) {
     emit("AIUEOS_HW_PROBE_PCI capability=absent reason=enumeration\r\n");return;
   }
-  uint64_t count=bytes/sizeof(efi_handle),reported=0;
+  uint64_t count=bytes/sizeof(efi_handle),reported=0,display=0,network=0,storage=0,nvme=0;
   for (uint64_t i=0;i<count;i++) {
     struct efi_pci_io_protocol *pci=0; uint32_t config[4]={0};
     uint64_t segment=0,bus=0,device=0,function=0;
@@ -263,8 +334,82 @@ static void report_pci(struct efi_boot_services *bs) {
     p=append_ascii(p," class=");p=append_hex(p,(config[2]>>24)&0xff,2);
     p=append_hex(p,(config[2]>>16)&0xff,2);p=append_hex(p,(config[2]>>8)&0xff,2);
     *p++='\r';*p++='\n';*p=0;emit(line);reported++;
+    uint32_t class_code=(config[2]>>8)&0xffffff;
+    if ((class_code>>16)==3) display++;
+    if ((class_code>>16)==2) network++;
+    if ((class_code>>16)==1) storage++;
+    if (class_code==0x010802) nvme++;
   }
   emit_value("AIUEOS_HW_PROBE_PCI capability=present devices=",reported);
+  char summary[192],*p=append_ascii(summary,"AIUEOS_HW_PROBE_K16_CLASSES display=");
+  p=append_dec(p,display);p=append_ascii(p," network=");p=append_dec(p,network);
+  p=append_ascii(p," storage=");p=append_dec(p,storage);p=append_ascii(p," nvme=");
+  p=append_dec(p,nvme);*p++='\r';*p++='\n';*p=0;emit(summary);
+}
+
+static void report_block_io(struct efi_boot_services *bs) {
+  uint64_t bytes=0;
+  efi_status status=bs->locate_handle(EFI_BY_PROTOCOL,&block_io_guid,0,&bytes,0);
+  if (status==EFI_NOT_FOUND || !bytes) {
+    emit("AIUEOS_HW_PROBE_BLOCK capability=absent\r\n");return;
+  }
+  if (status!=EFI_BUFFER_TOO_SMALL || bytes>sizeof(efi_handle)*MAX_BLOCK_HANDLES) {
+    emit("AIUEOS_HW_PROBE_BLOCK capability=absent reason=handle-bound\r\n");return;
+  }
+  efi_handle handles[MAX_BLOCK_HANDLES];
+  if (bs->locate_handle(EFI_BY_PROTOCOL,&block_io_guid,0,&bytes,handles)!=EFI_SUCCESS) {
+    emit("AIUEOS_HW_PROBE_BLOCK capability=absent reason=enumeration\r\n");return;
+  }
+  uint64_t present=0,removable=0,fixed=0,partitions=0;
+  for (uint64_t i=0;i<bytes/sizeof(efi_handle);i++) {
+    struct efi_block_io_protocol *block=0;
+    if (bs->handle_protocol(handles[i],&block_io_guid,(void **)&block)!=EFI_SUCCESS ||
+        !block || !block->media || !block->media->media_present) continue;
+    present++;
+    if (block->media->logical_partition) partitions++;
+    else if (block->media->removable_media) removable++;
+    else fixed++;
+  }
+  char line[192],*p=append_ascii(line,"AIUEOS_HW_PROBE_BLOCK capability=present handles=");
+  p=append_dec(p,present);p=append_ascii(p," whole_fixed=");p=append_dec(p,fixed);
+  p=append_ascii(p," whole_removable=");p=append_dec(p,removable);
+  p=append_ascii(p," partitions=");p=append_dec(p,partitions);
+  *p++='\r';*p++='\n';*p=0;emit(line);
+}
+
+static efi_status start_native_core(efi_handle image, struct efi_system_table *system) {
+  static const char16 path[]=u"\\EFI\\AIUEOS\\BOOTFULL.EFI";
+  struct efi_boot_services *bs=system->boot_services;
+  struct efi_loaded_image *parent=0,*child_loaded=0;
+  struct efi_simple_file_system *fs=0;
+  struct efi_file *root=0,*file=0;
+  void *buffer=0; efi_handle child=0; uint64_t size=MAX_NATIVE_CORE_EFI;
+  if (!bs->load_image || !bs->start_image ||
+      bs->handle_protocol(image,&loaded_image_guid,(void **)&parent)!=EFI_SUCCESS || !parent ||
+      bs->handle_protocol(parent->device_handle,&simple_fs_guid,(void **)&fs)!=EFI_SUCCESS || !fs ||
+      fs->open_volume(fs,&root)!=EFI_SUCCESS || !root ||
+      root->open(root,&file,path,1,0)!=EFI_SUCCESS || !file ||
+      bs->allocate_pool(EFI_BOOT_SERVICES_DATA,size,&buffer)!=EFI_SUCCESS || !buffer) {
+    emit("AIUEOS_HW_PROBE_CHAINLOAD_FAIL stage=open\r\n");return EFI_INVALID_PARAMETER;
+  }
+  efi_status status=file->read(file,&size,buffer);
+  file->close(file);root->close(root);
+  if (status!=EFI_SUCCESS || size<2 || ((uint8_t *)buffer)[0]!='M' ||
+      ((uint8_t *)buffer)[1]!='Z') {
+    bs->free_pool(buffer);emit("AIUEOS_HW_PROBE_CHAINLOAD_FAIL stage=read\r\n");
+    return EFI_INVALID_PARAMETER;
+  }
+  status=bs->load_image(0,image,0,buffer,size,&child);
+  bs->free_pool(buffer);
+  if (status!=EFI_SUCCESS || !child) {
+    emit("AIUEOS_HW_PROBE_CHAINLOAD_FAIL stage=load-image\r\n");return status;
+  }
+  if (bs->handle_protocol(child,&loaded_image_guid,(void **)&child_loaded)==EFI_SUCCESS && child_loaded)
+    child_loaded->device_handle=parent->device_handle;
+  emit("AIUEOS_HW_PROBE_CHAINLOAD_OK target=native-core-v1 disk-writes=none\r\n");
+  status=bs->start_image(child,0,0);
+  emit("AIUEOS_HW_PROBE_CHAINLOAD_FAIL stage=start-returned\r\n");
+  return status;
 }
 
 static void find_serial(struct efi_boot_services *bs) {
@@ -282,13 +427,15 @@ efi_status EFIAPI efi_main(efi_handle image, struct efi_system_table *system) {
   find_serial(system->boot_services);
   emit("\r\nAIUEOS HARDWARE PROBE (READ ONLY)\r\n");
   emit("AIUEOS_HW_PROBE_START mode=uefi-boot-services disk_writes=disabled\r\n");
+  report_cpu();
   report_firmware(system);
   report_gop(system,system->boot_services);
   report_memory(system->boot_services);
   report_acpi(system);
   report_pci(system->boot_services);
+  report_block_io(system->boot_services);
   emit("AIUEOS_HW_PROBE_DONE exit_boot_services=no disk_writes=none\r\n");
-  emit("Results remain visible for 30 seconds; photograph this screen.\r\n");
-  if (system->boot_services->stall) system->boot_services->stall(30000000ULL);
-  return EFI_SUCCESS;
+  emit("Photograph this screen. Native core starts after 30 seconds.\r\n");
+  if (system->boot_services->stall) system->boot_services->stall(AIUEOS_HW_PROBE_DELAY_US);
+  return start_native_core(image,system);
 }
