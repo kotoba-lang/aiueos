@@ -7,6 +7,8 @@ struct aiueos_boot_info {
   uint64_t framebuffer_base, framebuffer_size;
   uint32_t framebuffer_width, framebuffer_height, framebuffer_stride, framebuffer_format;
   uint64_t initramfs_base, initramfs_size;
+  void *runtime_services;
+  uint64_t firmware_cr3;
 };
 
 /* Bounded `newc` cpio validation. The archive was already bound to a
@@ -122,6 +124,8 @@ extern int aiueos_paging_initialize(void);
 extern int aiueos_framebuffer_initialize(const struct aiueos_boot_info *boot);
 extern void aiueos_framebuffer_qualification_screen(const char *, const char *,
                                                      const char *, int);
+extern void aiueos_qualification_runtime_initialize(void *, uint64_t);
+extern int aiueos_qualification_finalize(uint16_t, uint32_t);
 extern int aiueos_desktop_surface_ready(void);
 extern int aiueos_desktop_surface_bind_scanout(uint32_t width, uint32_t height);
 extern int aiueos_desktop_wm_rects_fit(void);
@@ -490,12 +494,18 @@ void aiueos_exception_dispatch(uint64_t vector) {
 __attribute__((noreturn))
 void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
   serial_init();
-  if (!boot || boot->magic != 0x414955454f53424fULL || boot->version != 2 ||
+  if (!boot || boot->magic != 0x414955454f53424fULL ||
+      (boot->version != 2 && boot->version != 3) ||
       !boot->memory_map || !boot->memory_map_size || !boot->descriptor_size) {
     debug_string("AIUEOS_KERNEL_FAIL boot-info\n");
     serial_string("AIUEOS_KERNEL_FAIL boot-info\r\n");
     qemu_exit(0x7e);
   } else {
+#ifdef AIUEOS_PHYSICAL_QUALIFICATION
+    aiueos_qualification_runtime_initialize(
+        boot->version >= 3 ? boot->runtime_services : 0,
+        boot->version >= 3 ? boot->firmware_cr3 : 0);
+#endif
     debug_string("AIUEOS_KERNEL_OK memory-map-v1\n");
     serial_string("AIUEOS_SERIAL_OK stack-v1 memory-map-v1\r\n");
     extern uint64_t kotoba_aiueos_probe(void);
@@ -678,8 +688,10 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
         ((uintptr_t)physical_page_a & 4095) || ((uintptr_t)physical_page_b & 4095) ||
         *(const uint64_t *)physical_page_a || *(const uint64_t *)physical_page_b) {
 #ifdef AIUEOS_PHYSICAL_QUALIFICATION
-      aiueos_framebuffer_qualification_screen("AIUEOS K16", "FAIL MEMORY", "READ ONLY", 0);
+      aiueos_framebuffer_qualification_screen("AIUEOS K16", "FAIL MEMORY", "SSD READ ONLY", 0);
       serial_string("AIUEOS_PHYSICAL_QUALIFICATION_FAIL stage=memory disk-writes=none\r\n");
+      if (!aiueos_qualification_finalize(2, 1))
+        serial_string("AIUEOS_PHYSICAL_QUALIFICATION_LOG_FAIL stage=runtime-variable\r\n");
       for (;;) __asm__ volatile("cli; hlt");
 #endif
       debug_string("AIUEOS_PHYSICAL_ALLOCATOR_FAIL allocation\n");
@@ -690,8 +702,10 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
     serial_string("AIUEOS_PHYSICAL_ALLOCATOR_OK pages=2 zeroed\r\n");
     if (!aiueos_capability_table_initialize()) {
 #ifdef AIUEOS_PHYSICAL_QUALIFICATION
-      aiueos_framebuffer_qualification_screen("AIUEOS K16", "FAIL MEMORY", "READ ONLY", 0);
+      aiueos_framebuffer_qualification_screen("AIUEOS K16", "FAIL MEMORY", "SSD READ ONLY", 0);
       serial_string("AIUEOS_PHYSICAL_QUALIFICATION_FAIL stage=capability-table disk-writes=none\r\n");
+      if (!aiueos_qualification_finalize(2, 2))
+        serial_string("AIUEOS_PHYSICAL_QUALIFICATION_LOG_FAIL stage=runtime-variable\r\n");
       for (;;) __asm__ volatile("cli; hlt");
 #endif
       serial_string("AIUEOS_CAPABILITY_TABLE_FAIL page-allocation\r\n");
@@ -699,8 +713,10 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
     }
     if (!aiueos_acpi_initialize(boot->acpi_rsdp)) {
 #ifdef AIUEOS_PHYSICAL_QUALIFICATION
-      aiueos_framebuffer_qualification_screen("AIUEOS K16", "FAIL ACPI", "READ ONLY", 0);
+      aiueos_framebuffer_qualification_screen("AIUEOS K16", "FAIL ACPI", "SSD READ ONLY", 0);
       serial_string("AIUEOS_PHYSICAL_QUALIFICATION_FAIL stage=acpi disk-writes=none\r\n");
+      if (!aiueos_qualification_finalize(2, 3))
+        serial_string("AIUEOS_PHYSICAL_QUALIFICATION_LOG_FAIL stage=runtime-variable\r\n");
       for (;;) __asm__ volatile("cli; hlt");
 #endif
       debug_string("AIUEOS_ACPI_FAIL rsdp-xsdt-madt\n");
@@ -715,9 +731,11 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
        Kotoba object execution, owned paging, GOP, allocator and ACPI on the
        physical machine.  It stops before DMA, PCI drivers or any block write;
        those need K16-specific AMD-IOMMU, NVMe and RTL8125 qualification. */
-    aiueos_framebuffer_qualification_screen("AIUEOS K16", "NATIVE CORE OK", "READ ONLY", 1);
-    debug_string("AIUEOS_PHYSICAL_QUALIFICATION_OK native-core-v1 disk-writes=none\n");
-    serial_string("AIUEOS_PHYSICAL_QUALIFICATION_OK native-core-v1 disk-writes=none\r\n");
+    aiueos_framebuffer_qualification_screen("AIUEOS K16", "NATIVE CORE OK", "SSD READ ONLY", 1);
+    debug_string("AIUEOS_PHYSICAL_QUALIFICATION_OK native-core-v2 internal-disk-writes=none\n");
+    serial_string("AIUEOS_PHYSICAL_QUALIFICATION_OK native-core-v2 internal-disk-writes=none\r\n");
+    if (!aiueos_qualification_finalize(1, 0))
+      serial_string("AIUEOS_PHYSICAL_QUALIFICATION_LOG_FAIL stage=runtime-variable\r\n");
     for (;;) __asm__ volatile("cli; hlt");
 #endif
     if (!aiueos_vtd_initialize()) {

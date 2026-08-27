@@ -8,11 +8,18 @@
 #define EFI_INVALID_PARAMETER ((uint64_t)0x8000000000000002ULL)
 #define EFI_BY_PROTOCOL 2
 #define EFI_BOOT_SERVICES_DATA 4
+#define EFI_FILE_MODE_READ 1ULL
+#define EFI_FILE_MODE_WRITE 2ULL
+#define EFI_FILE_MODE_CREATE 0x8000000000000000ULL
+#define EFI_VARIABLE_NON_VOLATILE 1U
+#define EFI_VARIABLE_BOOTSERVICE_ACCESS 2U
+#define EFI_VARIABLE_RUNTIME_ACCESS 4U
 #define MAX_MAP_BYTES (256ULL * 1024ULL)
 #define MAX_PCI_HANDLES 256
 #define MAX_SERIAL_HANDLES 4
 #define MAX_BLOCK_HANDLES 32
 #define MAX_NATIVE_CORE_EFI (2ULL * 1024ULL * 1024ULL)
+#define PROBE_LOG_CAPACITY (64ULL * 1024ULL)
 #ifndef AIUEOS_HW_PROBE_DELAY_US
 #define AIUEOS_HW_PROBE_DELAY_US 30000000ULL
 #endif
@@ -37,6 +44,10 @@ typedef efi_status(EFIAPI *efi_stall)(uint64_t);
 typedef efi_status(EFIAPI *efi_load_image)(uint8_t, efi_handle, void *, void *,
                                            uint64_t, efi_handle *);
 typedef efi_status(EFIAPI *efi_start_image)(efi_handle, uint64_t *, char16 **);
+typedef efi_status(EFIAPI *efi_get_variable)(const char16 *, const struct efi_guid *,
+                                             uint32_t *, uint64_t *, void *);
+typedef efi_status(EFIAPI *efi_set_variable)(const char16 *, const struct efi_guid *,
+                                             uint32_t, uint64_t, void *);
 
 struct efi_boot_services {
   struct efi_table_header header;
@@ -56,13 +67,23 @@ struct efi_boot_services {
   efi_stall stall;
 };
 
+struct efi_runtime_services {
+  struct efi_table_header header;
+  void *get_time, *set_time, *get_wakeup_time, *set_wakeup_time;
+  void *set_virtual_address_map, *convert_pointer;
+  efi_get_variable get_variable;
+  void *get_next_variable_name;
+  efi_set_variable set_variable;
+  void *get_next_high_monotonic_count, *reset_system;
+};
+
 struct efi_system_table {
   struct efi_table_header header;
   char16 *firmware_vendor; uint32_t firmware_revision, padding;
   efi_handle console_in_handle; void *console_in;
   efi_handle console_out_handle; struct efi_simple_text_output *console_out;
   efi_handle standard_error_handle; struct efi_simple_text_output *standard_error;
-  void *runtime_services; struct efi_boot_services *boot_services;
+  struct efi_runtime_services *runtime_services; struct efi_boot_services *boot_services;
   uint64_t number_of_table_entries; void *configuration_table;
 };
 struct efi_configuration_table { struct efi_guid vendor_guid; void *vendor_table; };
@@ -80,10 +101,14 @@ typedef efi_status(EFIAPI *efi_file_open)(struct efi_file *, struct efi_file **,
                                           const char16 *, uint64_t, uint64_t);
 typedef efi_status(EFIAPI *efi_file_close)(struct efi_file *);
 typedef efi_status(EFIAPI *efi_file_read)(struct efi_file *, uint64_t *, void *);
+typedef efi_status(EFIAPI *efi_file_write)(struct efi_file *, uint64_t *, void *);
+typedef efi_status(EFIAPI *efi_file_set_position)(struct efi_file *, uint64_t);
+typedef efi_status(EFIAPI *efi_file_flush)(struct efi_file *);
 struct efi_file {
   uint64_t revision; efi_file_open open; efi_file_close close;
-  void *delete_file; efi_file_read read; void *write, *get_position, *set_position;
-  void *get_info, *set_info, *flush;
+  void *delete_file; efi_file_read read; efi_file_write write;
+  void *get_position; efi_file_set_position set_position;
+  void *get_info, *set_info; efi_file_flush flush;
 };
 struct efi_simple_file_system {
   uint64_t revision;
@@ -146,6 +171,12 @@ struct efi_block_io_protocol {
   void *reset, *read_blocks, *write_blocks, *flush_blocks;
 };
 
+struct aiueos_qualification_record {
+  uint32_t magic;
+  uint16_t version, state;
+  uint32_t code, reserved;
+};
+
 static const struct efi_guid gop_guid =
   {0x9042a9de,0x23dc,0x4a38,{0x96,0xfb,0x7a,0xde,0xd0,0x80,0x51,0x6a}};
 static const struct efi_guid acpi20_guid =
@@ -162,9 +193,18 @@ static const struct efi_guid simple_fs_guid =
   {0x964e5b22,0x6459,0x11d2,{0x8e,0x39,0x00,0xa0,0xc9,0x69,0x72,0x3b}};
 static const struct efi_guid block_io_guid =
   {0x964e5b21,0x6459,0x11d2,{0x8e,0x39,0x00,0xa0,0xc9,0x69,0x72,0x3b}};
+static const struct efi_guid efi_global_variable_guid =
+  {0x8be4df61,0x93ca,0x11d2,{0xaa,0x0d,0x00,0xe0,0x98,0x03,0x2b,0x8c}};
+static const struct efi_guid qualification_guid =
+  {0x73953a72,0x6627,0x4b62,{0x9a,0x9c,0x10,0x38,0xd9,0x20,0x9a,0x16}};
+static const char16 qualification_name[] = u"AIUEOSQualificationResult";
+static const char16 boot_current_name[] = u"BootCurrent";
+static const char16 boot_next_name[] = u"BootNext";
 
 static struct efi_simple_text_output *console;
 static struct efi_serial_io_protocol *serial;
+static char probe_log[PROBE_LOG_CAPACITY];
+static uint64_t probe_log_size;
 
 static uint64_t ascii_length(const char *s) { uint64_t n=0; while (s[n]) n++; return n; }
 static void serial_ascii(const char *s) {
@@ -193,7 +233,16 @@ static char *append_hex(char *p, uint64_t value, uint32_t digits) {
   for (uint32_t i = digits; i; i--) *p++ = hex[(value >> ((i - 1) * 4)) & 15];
   return p;
 }
-static void emit(const char *line) { console_ascii(line); serial_ascii(line); }
+static void log_ascii(const char *line) {
+  while (*line && probe_log_size + 1 < sizeof(probe_log))
+    probe_log[probe_log_size++] = *line++;
+  probe_log[probe_log_size] = 0;
+}
+static void emit(const char *line) {
+  log_ascii(line);
+  console_ascii(line);
+  serial_ascii(line);
+}
 static void emit_value(const char *marker, uint64_t value) {
   char line[128], *p = append_ascii(line, marker); p = append_dec(p, value);
   *p++='\r'; *p++='\n'; *p=0; emit(line);
@@ -205,6 +254,101 @@ static int guid_equal(const struct efi_guid *a, const struct efi_guid *b) {
   return 1;
 }
 static uint64_t add_saturated(uint64_t a, uint64_t b) { return UINT64_MAX-a < b ? UINT64_MAX : a+b; }
+
+static efi_status write_self_file(efi_handle image, struct efi_system_table *system,
+                                  const char16 *path, void *payload,
+                                  uint64_t payload_size) {
+  struct efi_loaded_image *loaded = 0;
+  struct efi_simple_file_system *fs = 0;
+  struct efi_file *root = 0, *file = 0;
+  struct efi_boot_services *bs = system->boot_services;
+  if (bs->handle_protocol(image,&loaded_image_guid,(void **)&loaded)!=EFI_SUCCESS || !loaded ||
+      bs->handle_protocol(loaded->device_handle,&simple_fs_guid,(void **)&fs)!=EFI_SUCCESS || !fs ||
+      fs->open_volume(fs,&root)!=EFI_SUCCESS || !root ||
+      root->open(root,&file,path,
+                 EFI_FILE_MODE_READ|EFI_FILE_MODE_WRITE|EFI_FILE_MODE_CREATE,0)!=EFI_SUCCESS ||
+      !file || !file->write) {
+    if (file) file->close(file);
+    if (root) root->close(root);
+    return EFI_INVALID_PARAMETER;
+  }
+  if (file->set_position && file->set_position(file,0)!=EFI_SUCCESS) {
+    file->close(file);root->close(root);return EFI_INVALID_PARAMETER;
+  }
+  uint64_t written=payload_size;
+  efi_status status=file->write(file,&written,payload);
+  if (status==EFI_SUCCESS && written==payload_size && file->flush)
+    status=file->flush(file);
+  file->close(file);root->close(root);
+  return status==EFI_SUCCESS && written==payload_size ? EFI_SUCCESS : EFI_INVALID_PARAMETER;
+}
+
+static int read_qualification_record(struct efi_runtime_services *runtime,
+                                     struct aiueos_qualification_record *record) {
+  if (!runtime || !runtime->get_variable || !record) return 0;
+  uint64_t size=sizeof(*record);uint32_t attributes=0;
+  if (runtime->get_variable(qualification_name,&qualification_guid,&attributes,
+                            &size,record)!=EFI_SUCCESS || size!=sizeof(*record)) return 0;
+  return record->magic==0x514b3241U && record->version==2 && record->state<=2;
+}
+
+static int prepare_one_shot_return(struct efi_runtime_services *runtime) {
+  if (!runtime || !runtime->get_variable || !runtime->set_variable) return 0;
+  uint16_t boot_current=0;uint64_t size=sizeof(boot_current);uint32_t attributes=0;
+  if (runtime->get_variable(boot_current_name,&efi_global_variable_guid,&attributes,
+                            &size,&boot_current)!=EFI_SUCCESS || size!=sizeof(boot_current))
+    return 0;
+  uint32_t variable_attributes=EFI_VARIABLE_NON_VOLATILE|
+    EFI_VARIABLE_BOOTSERVICE_ACCESS|EFI_VARIABLE_RUNTIME_ACCESS;
+  if (runtime->set_variable(boot_next_name,&efi_global_variable_guid,variable_attributes,
+                            sizeof(boot_current),&boot_current)!=EFI_SUCCESS) return 0;
+  struct aiueos_qualification_record pending={0x514b3241U,2,0,0,0};
+  if (runtime->set_variable(qualification_name,&qualification_guid,variable_attributes,
+                            sizeof(pending),&pending)!=EFI_SUCCESS) {
+    runtime->set_variable(boot_next_name,&efi_global_variable_guid,0,0,0);
+    return 0;
+  }
+  return 1;
+}
+
+static const char *result_state(uint16_t state) {
+  if (state==1) return "success";
+  if (state==2) return "failure";
+  return "incomplete";
+}
+
+static int collect_terminal_result(efi_handle image, struct efi_system_table *system) {
+  struct aiueos_qualification_record record;
+  struct efi_runtime_services *runtime=system->runtime_services;
+  if (!read_qualification_record(runtime,&record)) return 0;
+  static char result[1024];
+  char *p=append_ascii(result,"AIUEOS_K16_RESULT_V2\r\nstate=");
+  p=append_ascii(p,result_state(record.state));p=append_ascii(p,"\r\ncode=");
+  p=append_dec(p,record.code);
+  p=append_ascii(p,"\r\ninternal_ssd_writes=none\r\nusb_log_writes=self-only\r\n");
+  p=append_ascii(p,"AIUEOS_PHYSICAL_QUALIFICATION_RESULT_SAVED state=");
+  p=append_ascii(p,result_state(record.state));p=append_ascii(p,"\r\n");*p=0;
+  static const char16 result_path[]=u"\\EFI\\AIUEOS\\RESULT.LOG";
+  if (write_self_file(image,system,result_path,result,sizeof(result))!=EFI_SUCCESS) {
+    emit("AIUEOS_PHYSICAL_QUALIFICATION_RESULT_SAVE_FAIL usb-self-write\r\n");
+    return -1;
+  }
+  if (runtime->set_variable(qualification_name,&qualification_guid,0,0,0)!=EFI_SUCCESS) {
+    emit("AIUEOS_PHYSICAL_QUALIFICATION_RESULT_CLEAR_FAIL runtime-variable\r\n");
+    return -1;
+  }
+  p=append_ascii(p,"qualification_variable_cleared=yes\r\n");*p=0;
+  if (write_self_file(image,system,result_path,result,sizeof(result))!=EFI_SUCCESS) {
+    emit("AIUEOS_PHYSICAL_QUALIFICATION_RESULT_FINALIZE_FAIL usb-self-write\r\n");
+    return -1;
+  }
+  emit("AIUEOS_PHYSICAL_QUALIFICATION_RESULT_SAVED state=");
+  emit(result_state(record.state));emit(" internal-ssd-writes=none\r\n");
+  emit("RESULT SAVED. REMOVE USB AND CONNECT IT TO THE MAC.\r\n");
+  if (system->boot_services->stall)
+    for (;;) system->boot_services->stall(60000000ULL);
+  return 1;
+}
 
 static void report_cpu(void) {
   uint32_t eax=0,ebx=0,ecx=0,edx=0;
@@ -406,7 +550,7 @@ static efi_status start_native_core(efi_handle image, struct efi_system_table *s
   }
   if (bs->handle_protocol(child,&loaded_image_guid,(void **)&child_loaded)==EFI_SUCCESS && child_loaded)
     child_loaded->device_handle=parent->device_handle;
-  emit("AIUEOS_HW_PROBE_CHAINLOAD_OK target=native-core-v1 disk-writes=none\r\n");
+  emit("AIUEOS_HW_PROBE_CHAINLOAD_OK target=native-core-v2 internal-disk-writes=none usb-log-writes=self-only\r\n");
   status=bs->start_image(child,0,0);
   emit("AIUEOS_HW_PROBE_CHAINLOAD_FAIL stage=start-returned\r\n");
   return status;
@@ -420,13 +564,18 @@ static void find_serial(struct efi_boot_services *bs) {
 }
 
 efi_status EFIAPI efi_main(efi_handle image, struct efi_system_table *system) {
-  (void)image;
   if (!system || !system->boot_services || !system->console_out ||
       !system->console_out->output_string) return EFI_INVALID_PARAMETER;
   console=system->console_out;
   find_serial(system->boot_services);
-  emit("\r\nAIUEOS HARDWARE PROBE (READ ONLY)\r\n");
-  emit("AIUEOS_HW_PROBE_START mode=uefi-boot-services disk_writes=disabled\r\n");
+  int collected=collect_terminal_result(image,system);
+  if (collected) {
+    if (system->boot_services->stall)
+      for (;;) system->boot_services->stall(60000000ULL);
+    return collected>0 ? EFI_SUCCESS : EFI_INVALID_PARAMETER;
+  }
+  emit("\r\nAIUEOS HARDWARE PROBE (INTERNAL DISKS READ ONLY)\r\n");
+  emit("AIUEOS_HW_PROBE_START mode=uefi-boot-services internal_disk_writes=disabled usb_log_writes=enabled\r\n");
   report_cpu();
   report_firmware(system);
   report_gop(system,system->boot_services);
@@ -434,8 +583,24 @@ efi_status EFIAPI efi_main(efi_handle image, struct efi_system_table *system) {
   report_acpi(system);
   report_pci(system->boot_services);
   report_block_io(system->boot_services);
-  emit("AIUEOS_HW_PROBE_DONE exit_boot_services=no disk_writes=none\r\n");
-  emit("Photograph this screen. Native core starts after 30 seconds.\r\n");
+  emit("AIUEOS_HW_PROBE_DONE exit_boot_services=no internal_disk_writes=none\r\n");
+  emit("AIUEOS_PHYSICAL_QUALIFICATION_PENDING native-core-v2 internal-ssd-writes=none\r\n");
+  static const char16 probe_path[]=u"\\EFI\\AIUEOS\\PROBE.LOG";
+  if (write_self_file(image,system,probe_path,probe_log,sizeof(probe_log))!=EFI_SUCCESS) {
+    emit("AIUEOS_HW_PROBE_LOG_SAVE_FAIL usb-self-write\r\n");
+    if (system->boot_services->stall)
+      for (;;) system->boot_services->stall(60000000ULL);
+    return EFI_INVALID_PARAMETER;
+  }
+  emit("AIUEOS_HW_PROBE_LOG_SAVED path=EFI/AIUEOS/PROBE.LOG usb-self-write\r\n");
+  if (!prepare_one_shot_return(system->runtime_services)) {
+    emit("AIUEOS_HW_PROBE_RETURN_ARM_FAIL bootnext-or-result-variable\r\n");
+    if (system->boot_services->stall)
+      for (;;) system->boot_services->stall(60000000ULL);
+    return EFI_INVALID_PARAMETER;
+  }
+  emit("AIUEOS_HW_PROBE_RETURN_ARMED bootnext=current result=pending\r\n");
+  emit("Native core starts after 30 seconds, then returns here to save RESULT.LOG.\r\n");
   if (system->boot_services->stall) system->boot_services->stall(AIUEOS_HW_PROBE_DELAY_US);
   return start_native_core(image,system);
 }

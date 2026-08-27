@@ -273,21 +273,35 @@ invented browser runtime are intentionally excluded.
 
 ### Physical K16 qualification before installation
 
-The K16 stage-one image is a separate, read-only artifact.  It boots a UEFI
-hardware probe first, leaves the results visible for 30 seconds, and then
-chainloads an AIUEOS native-core profile.  A green screen reading
-`AIUEOS K16 / NATIVE CORE OK / READ ONLY` proves only the loader/kernel,
+The K16 stage-one image keeps every internal disk read-only while returning a
+machine-readable result on the removable USB.  It writes `PROBE.LOG`, arms the
+current USB entry as one-shot `BootNext`, and chainloads an AIUEOS native-core
+profile.  The native core stores only a bounded UEFI result record and resets;
+the probe then boots once more, writes `RESULT.LOG` to its own filesystem, and
+stops with `RESULT SAVED`.  A success result proves only the loader/kernel,
 integrity, Kotoba object, paging, GOP, allocator, and ACPI floor.  It stops
-before IOMMU, PCI DMA, block/network drivers, Murakumo, or any SSD write.
+before IOMMU, PCI DMA, block/network drivers, Murakumo, or any internal-SSD
+write.
 
 ```sh
 SOURCE_DATE_EPOCH=0 ./os/aiueos/scripts/build-physical-qualification-usb.sh
 ```
 
-The exact gate and the later SSD-install prerequisites are in
-`contracts/physical-qualification-usb-v1.edn`.  Secure Boot must be disabled
-for this unsigned development image.  A green QEMU run is build evidence, not
-a physical K16 result.
+After `RESULT SAVED. REMOVE USB AND CONNECT IT TO THE MAC.`, power off, move
+the USB to the Mac, and read `EFI/AIUEOS/PROBE.LOG` plus `RESULT.LOG`.  The
+result can be checked without interpreting the raw log by running:
+
+```sh
+./os/aiueos/scripts/check-physical-qualification-result.sh "/Volumes/AIUEOS QUAL"
+```
+
+It prints `AIUEOS_K16_PHYSICAL_RESULT_OK` only when the native-core result and
+the required read-only probe markers are both present.  The
+exact v2 gate and later SSD-install prerequisites are in
+`contracts/physical-qualification-usb-v2.edn`; v1 remains the historical
+screen-only contract.  Secure Boot must be disabled for this unsigned
+development image.  A green QEMU result is build evidence, not a physical K16
+result.
 
 The release-image command creates a deterministic 64 MiB GPT raw disk image
 with a protective MBR and a FAT32 EFI System Partition. The ESP contains
