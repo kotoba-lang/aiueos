@@ -271,6 +271,24 @@ invented browser runtime are intentionally excluded.
 ./os/aiueos/scripts/smoke-qemu-release-image.sh
 ```
 
+### Physical K16 qualification before installation
+
+The K16 stage-one image is a separate, read-only artifact.  It boots a UEFI
+hardware probe first, leaves the results visible for 30 seconds, and then
+chainloads an AIUEOS native-core profile.  A green screen reading
+`AIUEOS K16 / NATIVE CORE OK / READ ONLY` proves only the loader/kernel,
+integrity, Kotoba object, paging, GOP, allocator, and ACPI floor.  It stops
+before IOMMU, PCI DMA, block/network drivers, Murakumo, or any SSD write.
+
+```sh
+SOURCE_DATE_EPOCH=0 ./os/aiueos/scripts/build-physical-qualification-usb.sh
+```
+
+The exact gate and the later SSD-install prerequisites are in
+`contracts/physical-qualification-usb-v1.edn`.  Secure Boot must be disabled
+for this unsigned development image.  A green QEMU run is build evidence, not
+a physical K16 result.
+
 The release-image command creates a deterministic 64 MiB GPT raw disk image
 with a protective MBR and a FAT32 EFI System Partition. The ESP contains
 `EFI/BOOT/BOOTX64.EFI` and `EFI/AIUEOS/KERNEL.ELF`. It also emits a canonical

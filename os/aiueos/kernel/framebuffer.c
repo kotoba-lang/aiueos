@@ -48,6 +48,78 @@ static void rectangle(volatile uint32_t *fb, uint32_t stride, uint32_t format,
 static uint64_t sample_hash(volatile uint32_t *fb, uint32_t width,
                             uint32_t height, uint32_t stride);
 
+/* Physical qualification UI.  The normal desktop remains unchanged; this
+   deliberately tiny built-in font is used only by the read-only K16 USB
+   profile after the kernel owns the GOP aperture.  A photographed screen is
+   useful evidence on machines without an exposed serial port. */
+static const uint8_t *qualification_glyph(char c) {
+  static const uint8_t blank[5] = {0,0,0,0,0};
+  static const uint8_t a[5] = {0x7e,0x11,0x11,0x11,0x7e};
+  static const uint8_t c_[5] = {0x3e,0x41,0x41,0x41,0x22};
+  static const uint8_t d[5] = {0x7f,0x41,0x41,0x22,0x1c};
+  static const uint8_t e[5] = {0x7f,0x49,0x49,0x49,0x41};
+  static const uint8_t f[5] = {0x7f,0x09,0x09,0x09,0x01};
+  static const uint8_t i[5] = {0x41,0x41,0x7f,0x41,0x41};
+  static const uint8_t k[5] = {0x7f,0x08,0x14,0x22,0x41};
+  static const uint8_t l[5] = {0x7f,0x40,0x40,0x40,0x40};
+  static const uint8_t m[5] = {0x7f,0x02,0x0c,0x02,0x7f};
+  static const uint8_t n[5] = {0x7f,0x04,0x08,0x10,0x7f};
+  static const uint8_t o[5] = {0x3e,0x41,0x41,0x41,0x3e};
+  static const uint8_t r[5] = {0x7f,0x09,0x19,0x29,0x46};
+  static const uint8_t s[5] = {0x46,0x49,0x49,0x49,0x31};
+  static const uint8_t t[5] = {0x01,0x01,0x7f,0x01,0x01};
+  static const uint8_t u[5] = {0x3f,0x40,0x40,0x40,0x3f};
+  static const uint8_t v[5] = {0x1f,0x20,0x40,0x20,0x1f};
+  static const uint8_t y[5] = {0x07,0x08,0x70,0x08,0x07};
+  static const uint8_t one[5] = {0x00,0x42,0x7f,0x40,0x00};
+  static const uint8_t six[5] = {0x3c,0x4a,0x49,0x49,0x30};
+  switch (c) {
+    case 'A': return a; case 'C': return c_; case 'D': return d;
+    case 'E': return e; case 'F': return f; case 'I': return i;
+    case 'K': return k; case 'L': return l; case 'M': return m;
+    case 'N': return n; case 'O': return o; case 'R': return r;
+    case 'S': return s; case 'T': return t; case 'U': return u;
+    case 'V': return v;
+    case 'Y': return y; case '1': return one; case '6': return six;
+    default: return blank;
+  }
+}
+
+static void qualification_text(const char *text, uint32_t x, uint32_t y,
+                               uint32_t scale, uint32_t color) {
+  while (*text) {
+    const uint8_t *glyph = qualification_glyph(*text++);
+    for (uint32_t column = 0; column < 5; column++)
+      for (uint32_t row = 0; row < 7; row++)
+        if (glyph[column] & (1U << row))
+          rectangle(desktop_surface_pixels, desktop_surface.stride,
+                    desktop_surface.pixel_format,
+                    x + column * scale, y + row * scale, scale, scale, color);
+    x += 6 * scale;
+  }
+}
+
+void aiueos_framebuffer_qualification_screen(const char *line1,
+                                             const char *line2,
+                                             const char *line3,
+                                             int success) {
+  if (!desktop_surface_ready) return;
+  uint32_t scale = desktop_surface.width >= 1280 ? 6 : 4;
+  uint32_t margin = desktop_surface.width / 18;
+  uint32_t top = desktop_surface.height / 5;
+  uint32_t background = success ? 0x083f2e : 0x681c28;
+  uint32_t accent = success ? 0x35d07f : 0xff6b6b;
+  rectangle(desktop_surface_pixels, desktop_surface.stride,
+            desktop_surface.pixel_format, 0, 0, desktop_surface.width,
+            desktop_surface.height, background);
+  rectangle(desktop_surface_pixels, desktop_surface.stride,
+            desktop_surface.pixel_format, margin, margin,
+            desktop_surface.width - 2 * margin, scale * 2, accent);
+  qualification_text(line1, margin, top, scale, 0xf4f7f9);
+  qualification_text(line2, margin, top + 12 * scale, scale, 0xf4f7f9);
+  qualification_text(line3, margin, top + 24 * scale, scale, accent);
+}
+
 /* Boot-desktop WM rects (ADR-0091 hit geometry). C fills and samples;
    Kotoba names which id is front. RGB survives format-0 vs BGR swap as
    distinct stored values. */
