@@ -62,6 +62,12 @@ case "$state" in
     reason=terminal-marker-not-reached
     if [ "$code" != 0 ]; then
       reason=loader-hang-progress
+      case "$code" in
+        224|240|241|242|243|244|260|261|262|263|270|271|272|273|280|281|282|283)
+          reason=paging-handoff-progress ;;
+        220|221|222|223|225|226|227|228|229|299)
+          reason=kernel-hang-progress ;;
+      esac
     fi
     if printf '%s\n' "$probe_text" | grep -F "AIUEOS_HW_PROBE_GOP capability=absent" >/dev/null; then
       reason=gop-absent

@@ -9,6 +9,10 @@
   (slurp (io/file "os/aiueos/scripts/make-physical-qualification-usb.py")))
 (def qualification-runtime
   (slurp (io/file "os/aiueos/kernel/qualification.c")))
+(def paging-source
+  (slurp (io/file "os/aiueos/kernel/paging.c")))
+(def uefi-build-script
+  (slurp (io/file "os/aiueos/scripts/build-uefi.sh")))
 (def uefi-loader-source (slurp (io/file "os/aiueos/uefi/main.c")))
 (def result-checker
   (slurp (io/file "os/aiueos/scripts/check-physical-qualification-result.sh")))
@@ -22,6 +26,8 @@
   (slurp (io/file "os/aiueos/contracts/physical-qualification-usb-v6.edn")))
 (def qualification-v7-contract
   (slurp (io/file "os/aiueos/contracts/physical-qualification-usb-v7.edn")))
+(def qualification-v8-contract
+  (slurp (io/file "os/aiueos/contracts/physical-qualification-usb-v8.edn")))
 
 (deftest probe-is-bounded-and-keeps-internal-disks-read-only
   (testing "the probe never reaches raw block writes or exits boot services"
@@ -134,6 +140,28 @@
   (is (str/includes? qualification-v7-contract "229 :qualification-finalize"))
   (is (str/includes? qualification-v7-contract ":forced-progress-code 299"))
   (is (str/includes? qualification-v7-contract ":internal-disk-write-code-reached? false")))
+
+(deftest physical-paging-handoff-preserves-live-x86-shape
+  (testing "the physical build persists boundaries inside paging"
+    (is (str/includes? uefi-build-script "$physical_qualification_cflags"))
+    (doseq [code ["PAGING_PROGRESS(240)" "PAGING_PROGRESS(241)"
+                  "PAGING_PROGRESS(242)" "PAGING_PROGRESS(243)"
+                  "PAGING_PROGRESS(244)" "260U + paging_features"
+                  "270U + paging_features" "280U + paging_features"]]
+      (is (str/includes? paging-source code))))
+  (testing "CR4.LA57 and an active AMD SME C-bit are inherited, not guessed"
+    (is (str/includes? paging-source "five_level_paging = (read_cr4() >> 12) & 1U"))
+    (is (str/includes? paging-source "cpuid(0x8000001fU"))
+    (is (str/includes? paging-source "return firmware_cr3 & mask"))
+    (is (str/includes? paging-source "encrypted_ram_address(five_level_paging"))
+    (is (str/includes? paging-source "pml5[0] = encrypted_ram_address(pml4)")))
+  (testing "the v8 contract binds the fix to the observed K16 code 224"
+    (is (str/includes? qualification-v8-contract ":physical-result-code 224"))
+    (is (str/includes? qualification-v8-contract ":la57 :inherit-active"))
+    (is (str/includes? qualification-v8-contract ":sme-c-bit :inherit-active-from-firmware-cr3"))
+    (is (str/includes? qualification-v8-contract ":internal-disk-write-code-reached? false"))
+    (is (str/includes? result-checker "reason=paging-handoff-progress"))
+    (is (str/includes? result-checker "reason=kernel-hang-progress"))))
 
 (deftest qualification-image-preserves-the-internal-disk-read-only-boundary
   (is (str/includes? qualification-builder "uefi-probe-and-arm-return"))
