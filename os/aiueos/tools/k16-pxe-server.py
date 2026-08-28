@@ -78,6 +78,8 @@ MURAKUMO_SERVICE_TOKEN = os.environ.get(
                       "Murakumo service token file", 512)
 MURAKUMO_EXPECTED_MAC = os.environ.get(
     "AIUEOS_MURAKUMO_EXPECTED_MAC", "70-70-fc-0b-b6-32").lower()
+PXE_EXPECTED_MAC = os.environ.get(
+    "AIUEOS_PXE_EXPECTED_MAC", "70:70:fc:0b:b6:32").lower().replace("-", ":")
 MURAKUMO_JOB_QUALIFICATION = os.environ.get(
     "AIUEOS_MURAKUMO_JOB_QUALIFICATION", "0") == "1"
 MURAKUMO_JOB_KIND = "aiueos-micro-infer"
@@ -192,6 +194,11 @@ def dhcp_reply(request, message_type):
 
 def mac_address(packet):
     return ":".join(f"{byte:02x}" for byte in packet[28:34])
+
+
+def expected_dhcp_client(packet):
+    """Accept DHCP only from the one physical K16 under qualification."""
+    return len(packet) >= 34 and mac_address(packet) == PXE_EXPECTED_MAC
 
 
 def bind_interface(sock, port, address=""):
@@ -668,6 +675,10 @@ def dhcp_server():
         mac = mac_address(packet)
         print(f"AIUEOS_PXE_DHCP_RX mac={mac} type={message_type} "
               f"arch={architecture} vendor={vendor!r}", flush=True)
+        if not expected_dhcp_client(packet):
+            print(f"AIUEOS_PXE_DHCP_IGNORED mac={mac} "
+                  f"expected={PXE_EXPECTED_MAC}", flush=True)
+            continue
         if message_type == 1:
             reply_type, label = 2, "OFFER"
         elif message_type == 3:
@@ -847,7 +858,7 @@ def selftest():
     request = bytearray(240)
     request[0:4] = bytes((1, 1, 6, 0))
     request[4:8] = b"TEST"
-    request[28:34] = b"\x10\xec\x81\x25\x00\x01"
+    request[28:34] = bytes.fromhex(PXE_EXPECTED_MAC.replace(":", ""))
     request[236:240] = MAGIC
     request += option(53, b"\1") + option(60, b"PXEClient") + \
         option(93, struct.pack("!H", 9)) + b"\xff"
@@ -858,6 +869,10 @@ def selftest():
     assert values[53] == b"\2" and values[67] == BOOT_FILE.encode("ascii")
     assert 60 not in values
     assert reply[108:108 + len(BOOT_FILE)] == BOOT_FILE.encode("ascii")
+    assert expected_dhcp_client(bytes(request))
+    unexpected_request = bytearray(request)
+    unexpected_request[28:34] = b"\x2c\x9e\x00\x72\x74\x16"
+    assert not expected_dhcp_client(bytes(unexpected_request))
 
     http_request = bytearray(request[:240])
     http_request += option(53, b"\1") + option(60, b"HTTPClient") + \
@@ -1009,7 +1024,7 @@ def selftest():
         raise AssertionError("unsupported control command accepted")
     except ValueError:
         pass
-    print("AIUEOS_PXE_SELFTEST_OK dhcp=pxe+http tftp=oack control=token-bound "
+    print("AIUEOS_PXE_SELFTEST_OK dhcp=pxe+http+mac-bound tftp=oack control=token-bound "
           "node-relay=request-bound murakumo=qualify+poll+claim+result+renew "
           "interface-bound=yes")
 
