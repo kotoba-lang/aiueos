@@ -5,6 +5,7 @@ repo=$(CDPATH= cd -- "$(dirname -- "$0")/../../.." && pwd)
 aiueos="$repo/os/aiueos"
 qemu=${QEMU_SYSTEM_X86_64:-qemu-system-x86_64}
 timeout_cmd=$(command -v timeout || command -v gtimeout || true)
+network_builder=${AIUEOS_PHYSICAL_NETWORK_BUILDER:-"$aiueos/scripts/build-physical-network-pxe.sh"}
 [ -n "$timeout_cmd" ] || { echo "error: timeout or gtimeout is required" >&2; exit 1; }
 
 if [ -z "${OVMF_CODE:-}" ]; then
@@ -28,7 +29,7 @@ trap 'rm -rf "$work"' EXIT HUP INT TERM
 mkdir -p "$work/esp/EFI/BOOT"
 AIUEOS_OUT="$work/network" \
 AIUEOS_ALLOW_DIRTY_QUALIFICATION_BUILD=${AIUEOS_ALLOW_DIRTY_QUALIFICATION_BUILD:-0} \
-SOURCE_DATE_EPOCH=0 "$aiueos/scripts/build-physical-network-pxe.sh" >/dev/null
+SOURCE_DATE_EPOCH=0 "$network_builder" >/dev/null
 AIUEOS_OUT="$work/control" "$aiueos/scripts/build-dbc-probe.sh" >/dev/null
 cp "$work/network/aiueos-k16-native-pxe.efi" "$work/esp/EFI/BOOT/BOOTX64.EFI"
 cp "$OVMF_VARS" "$work/vars.fd"

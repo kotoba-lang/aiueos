@@ -2,6 +2,7 @@
 #include <stddef.h>
 #include "tls13.h"
 #include "rtl8125.h"
+#include "relay_protocol.h"
 
 #define VIRTIO_VENDOR_ID 0x1af4
 #define VIRTIO_RNG_MODERN_ID 0x1044
@@ -3552,12 +3553,20 @@ static int virtio_net(uint8_t b, uint8_t d, uint8_t f) {
    RTL8125 hand a real Ethernet frame to the Mac and receive its ARP reply? */
 static unsigned rtl8125_qualification_error;
 static uint32_t rtl8125_qualification_rx_length;
+static struct aiueos_rtl8125 rtl8125_qualification_device;
+static uint8_t rtl8125_peer_mac[6];
+static unsigned rtl8125_relay_error;
+static uint32_t rtl8125_relay_rx_length;
+static uint64_t rtl8125_relay_nonce;
 unsigned aiueos_rtl8125_qualification_error(void) {
   return rtl8125_qualification_error;
 }
 uint32_t aiueos_rtl8125_qualification_rx_length(void) {
   return rtl8125_qualification_rx_length;
 }
+unsigned aiueos_rtl8125_relay_error(void) { return rtl8125_relay_error; }
+uint32_t aiueos_rtl8125_relay_rx_length(void) { return rtl8125_relay_rx_length; }
+uint64_t aiueos_rtl8125_relay_nonce(void) { return rtl8125_relay_nonce; }
 
 static uint8_t rtl_mmio_read8(void *context,uint32_t offset) {
   return *((volatile uint8_t *)context+offset);
@@ -3593,6 +3602,57 @@ static uint32_t rtl8125_build_direct_arp(uint8_t *frame,const uint8_t mac[6]) {
   return 42;
 }
 
+static uint64_t rtl8125_boot_nonce(void) {
+  uint32_t low,high;
+  __asm__ volatile("rdtsc":"=a"(low),"=d"(high));
+  return ((uint64_t)high<<32)|low;
+}
+
+static uint32_t rtl8125_build_relay_hello(uint8_t *frame,uint64_t nonce) {
+  uint8_t payload[AIUEOS_RELAY_HELLO_CAPACITY];
+  uint32_t payload_length=aiueos_relay_hello_payload(
+    payload,sizeof(payload),nonce,rtl8125_qualification_device.mac);
+  if(!payload_length)return 0;
+  uint32_t udp_length=8U+payload_length,total=20U+udp_length;
+  for(unsigned i=0;i<6;i++)frame[i]=rtl8125_peer_mac[i];
+  for(unsigned i=0;i<6;i++)frame[6+i]=rtl8125_qualification_device.mac[i];
+  net_store_be16(frame+12,0x0800);
+  frame[14]=0x45;frame[15]=0;
+  net_store_be16(frame+16,(uint16_t)total);
+  net_store_be16(frame+18,(uint16_t)nonce);
+  net_store_be16(frame+20,0x4000);
+  frame[22]=64;frame[23]=17;
+  net_store_be16(frame+24,0);
+  net_store_be32(frame+26,0x0a4d000aU);
+  net_store_be32(frame+30,0x0a4d0001U);
+  net_store_be16(frame+24,(uint16_t)kotoba_aiueos_ipv4_checksum(
+    (uint64_t)(uintptr_t)(frame+14),20));
+  net_store_be16(frame+34,7779);
+  net_store_be16(frame+36,7777);
+  net_store_be16(frame+38,(uint16_t)udp_length);
+  net_store_be16(frame+40,0); /* IPv4 permits a zero UDP checksum. */
+  for(unsigned i=0;i<payload_length;i++)frame[42+i]=payload[i];
+  return 14U+total;
+}
+
+static int rtl8125_relay_ack_valid(const uint8_t *frame,uint32_t length,uint64_t nonce) {
+  uint8_t expected[AIUEOS_RELAY_ACK_CAPACITY];
+  uint32_t expected_length=aiueos_relay_ack_payload(expected,sizeof(expected),nonce);
+  if(length<42U+expected_length)return 0;
+  for(unsigned i=0;i<6;i++)if(frame[i]!=rtl8125_qualification_device.mac[i]||
+                                frame[6+i]!=rtl8125_peer_mac[i])return 0;
+  if(net_load_be16(frame+12)!=0x0800||frame[14]!=0x45||frame[23]!=17)return 0;
+  uint32_t total=net_load_be16(frame+16),udp_length=net_load_be16(frame+38);
+  if((net_load_be16(frame+20)&0x3fffU)!=0||total!=20U+udp_length||
+     14U+total>length||udp_length!=8U+expected_length)return 0;
+  if(kotoba_aiueos_ipv4_checksum((uint64_t)(uintptr_t)(frame+14),20)!=0)return 0;
+  if(net_load_be32(frame+26)!=0x0a4d0001U||
+     net_load_be32(frame+30)!=0x0a4d000aU||
+     net_load_be16(frame+34)!=7777||net_load_be16(frame+36)!=7779)return 0;
+  if(net_load_be16(frame+40)!=0&&!net_udp_rx_checksum_ok(frame,udp_length))return 0;
+  return aiueos_relay_ack_payload_valid(frame+42,expected_length,nonce);
+}
+
 static int rtl8125_qualify_device(uint8_t b,uint8_t d,uint8_t f) {
   uint64_t bar=0;
   if (!read_bar(b,d,f,2,&bar) && !read_bar(b,d,f,1,&bar)) {
@@ -3613,24 +3673,26 @@ static int rtl8125_qualify_device(uint8_t b,uint8_t d,uint8_t f) {
   struct aiueos_rtl8125_io io={
     (void *)(uintptr_t)bar,rtl_mmio_read8,rtl_mmio_read16,rtl_mmio_read32,
     rtl_mmio_write8,rtl_mmio_write16,rtl_mmio_write32};
-  struct aiueos_rtl8125 device;
   enum aiueos_rtl8125_result result=aiueos_rtl8125_takeover(
-    &device,&io,tx,(uint64_t)(uintptr_t)tx,rx,(uint64_t)(uintptr_t)rx,
+    &rtl8125_qualification_device,&io,
+    tx,(uint64_t)(uintptr_t)tx,rx,(uint64_t)(uintptr_t)rx,
     tx_frame,(uint64_t)(uintptr_t)tx_frame,
     rx_frame,(uint64_t)(uintptr_t)rx_frame);
   if(result!=AIUEOS_RTL8125_OK) {
     rtl8125_qualification_error=10U+(unsigned)result;return 0;
   }
-  if(!aiueos_rtl8125_link_up(&device)) {
+  if(!aiueos_rtl8125_link_up(&rtl8125_qualification_device)) {
     rtl8125_qualification_error=20;return 0;
   }
-  uint32_t bytes=rtl8125_build_direct_arp(tx_frame,device.mac);
-  result=aiueos_rtl8125_tx_submit(&device,bytes);
+  uint32_t bytes=rtl8125_build_direct_arp(
+    tx_frame,rtl8125_qualification_device.mac);
+  result=aiueos_rtl8125_tx_submit(&rtl8125_qualification_device,bytes);
   if(result!=AIUEOS_RTL8125_OK) {
     rtl8125_qualification_error=21;return 0;
   }
   uint32_t budget;
-  for(budget=0;budget<200000000U&&!aiueos_rtl8125_tx_complete(&device);budget++)
+  for(budget=0;budget<200000000U&&
+      !aiueos_rtl8125_tx_complete(&rtl8125_qualification_device);budget++)
     __asm__ volatile("pause");
   if(budget==200000000U) {
     rtl8125_qualification_error=22;return 0;
@@ -3638,13 +3700,13 @@ static int rtl8125_qualify_device(uint8_t b,uint8_t d,uint8_t f) {
   for(unsigned frame=0;frame<8;frame++) {
     uint32_t received=0;
     for(budget=0;budget<200000000U&&!received;budget++) {
-      result=aiueos_rtl8125_rx_poll(&device,&received);
+      result=aiueos_rtl8125_rx_poll(&rtl8125_qualification_device,&received);
       if(result!=AIUEOS_RTL8125_OK)break;
       __asm__ volatile("pause");
     }
     if(result!=AIUEOS_RTL8125_OK) {
       rtl8125_qualification_error=24;
-      aiueos_rtl8125_rx_rearm(&device);
+      aiueos_rtl8125_rx_rearm(&rtl8125_qualification_device);
       continue;
     }
     if(!received) {
@@ -3652,12 +3714,13 @@ static int rtl8125_qualify_device(uint8_t b,uint8_t d,uint8_t f) {
     }
     if(kotoba_aiueos_net_arp_reply_valid(
          (uint64_t)(uintptr_t)rx_frame,received,0x0a4d0001U)) {
+      for(unsigned i=0;i<6;i++)rtl8125_peer_mac[i]=rx_frame[22+i];
       rtl8125_qualification_rx_length=received;
       rtl8125_qualification_error=0;
       return 1;
     }
     rtl8125_qualification_error=25;
-    aiueos_rtl8125_rx_rearm(&device);
+    aiueos_rtl8125_rx_rearm(&rtl8125_qualification_device);
   }
   return 0;
 }
@@ -3674,6 +3737,41 @@ int aiueos_rtl8125_physical_qualification(void) {
       if((id&0xffffU)==0x10ecU&&(id>>16)==0x8125U&&
          rtl8125_qualify_device((uint8_t)bus,dev,fn))return 1;
     }
+  }
+  return 0;
+}
+
+int aiueos_rtl8125_relay_qualification(void) {
+  if(!rtl8125_qualification_device.ready||rtl8125_qualification_error) {
+    rtl8125_relay_error=1;return 0;
+  }
+  rtl8125_relay_nonce=rtl8125_boot_nonce();
+  rtl8125_relay_rx_length=0;
+  uint32_t bytes=rtl8125_build_relay_hello(
+    rtl8125_qualification_device.tx_frame,rtl8125_relay_nonce);
+  aiueos_rtl8125_rx_rearm(&rtl8125_qualification_device);
+  enum aiueos_rtl8125_result result=aiueos_rtl8125_tx_submit(
+    &rtl8125_qualification_device,bytes);
+  if(result!=AIUEOS_RTL8125_OK) { rtl8125_relay_error=2;return 0; }
+  uint32_t budget;
+  for(budget=0;budget<200000000U&&
+      !aiueos_rtl8125_tx_complete(&rtl8125_qualification_device);budget++)
+    __asm__ volatile("pause");
+  if(budget==200000000U) { rtl8125_relay_error=3;return 0; }
+  for(unsigned attempt=0;attempt<16;attempt++) {
+    uint32_t received=0;
+    for(budget=0;budget<200000000U&&!received;budget++) {
+      result=aiueos_rtl8125_rx_poll(&rtl8125_qualification_device,&received);
+      if(result!=AIUEOS_RTL8125_OK)break;
+      __asm__ volatile("pause");
+    }
+    if(result==AIUEOS_RTL8125_OK&&received&&rtl8125_relay_ack_valid(
+         rtl8125_qualification_device.rx_frame,received,rtl8125_relay_nonce)) {
+      rtl8125_relay_rx_length=received;rtl8125_relay_error=0;return 1;
+    }
+    rtl8125_relay_error=received?5:4;
+    aiueos_rtl8125_rx_rearm(&rtl8125_qualification_device);
+    if(!received)return 0;
   }
   return 0;
 }

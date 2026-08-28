@@ -25,6 +25,16 @@
   (slurp (io/file "os/aiueos/scripts/build-physical-network-pxe.sh")))
 (def physical-network-smoke
   (slurp (io/file "os/aiueos/scripts/smoke-qemu-rtl8125-qualification.sh")))
+(def physical-relay-contract
+  (slurp (io/file "os/aiueos/contracts/physical-relay-qualification-pxe-v1.edn")))
+(def physical-relay-build
+  (slurp (io/file "os/aiueos/scripts/build-physical-relay-pxe.sh")))
+(def relay-protocol
+  (slurp (io/file "os/aiueos/kernel/relay_protocol.c")))
+(def relay-protocol-smoke
+  (slurp (io/file "os/aiueos/scripts/smoke-relay-protocol.sh")))
+(def physical-relay-smoke
+  (slurp (io/file "os/aiueos/scripts/smoke-qemu-physical-relay.sh")))
 
 (deftest single-efi-carries-admitted-native-payload
   (testing "the PXE artifact embeds exactly the kernel and initramfs built now"
@@ -106,5 +116,32 @@
       (is (= :unverified
              (get-in murakumo [:gaps :transport :physical-link
                                :rtl8125-pxe-handoff :physical-state])))
-      (is (= :absent-native
+      (is (= :relay-diagnostic-implemented-native-unverified
              (get-in murakumo [:gaps :transport :murakumo-heartbeat :state]))))))
+
+(deftest k16-relay-round-trip-is-request-bound-and-not-enrollment
+  (testing "the physical-only profile binds a UDP ACK to this boot's nonce"
+    (doseq [marker ["AIUEOS_NODE_HELLO_V1" "AIUEOS_NODE_ACK_V1"
+                    "aiueos_relay_ack_payload_valid"]]
+      (is (str/includes? relay-protocol marker)))
+    (doseq [marker ["rtl8125_relay_ack_valid"
+                    "aiueos_rtl8125_relay_qualification"]]
+      (is (str/includes? pci marker)))
+    (doseq [marker ["NODE_HELLO" "node_ack_payload"
+                    "AIUEOS_NODE_RELAY_ACK" "scope=diagnostic-only"]]
+      (is (str/includes? server marker)))
+    (is (str/includes? kernel "aiueos_qualification_finalize(1,8130)"))
+    (is (str/includes? physical-relay-build
+                       "AIUEOS_PHYSICAL_RELAY_QUALIFICATION=1"))
+    (is (str/includes? relay-protocol-smoke
+                       "relay_protocol_model.c"))
+    (is (str/includes? physical-relay-smoke
+                       "build-physical-relay-pxe.sh")))
+  (testing "the evidence contract refuses to call a diagnostic ACK fleet participation"
+    (let [contract (edn/read-string physical-relay-contract)]
+      (is (= :unverified (get-in contract [:evidence :physical-state])))
+      (is (= :diagnostic-only (:scope contract)))
+      (is (every? (set (:does-not-prove contract))
+                  [:persistent-device-identity
+                   :authenticated-murakumo-heartbeat
+                   :job-claim :inference :result-return])))))

@@ -38,6 +38,10 @@ CONTROL_COMMANDS = ("ping", "reboot-pxe")
 IP_BOUND_IF = 25
 MAGIC = b"\x63\x82\x53\x63"
 CONTROL_READY = re.compile(r"^AIUEOS_CONTROL_READY nonce=([0-9a-f]{16})\b")
+NODE_HELLO = re.compile(
+    r"^AIUEOS_NODE_HELLO_V1 boot=([0-9a-f]{16}) "
+    r"mac=([0-9a-f]{2}(?:-[0-9a-f]{2}){5}) "
+    r"profile=rtl8125-relay-test$")
 NEXT_BOOT_LOCK = threading.Lock()
 
 
@@ -136,6 +140,15 @@ def control_payload(command, nonce):
     if not re.fullmatch(r"[0-9a-f]{16}", nonce or ""):
         raise ValueError("control nonce must be 16 lowercase hex digits")
     return f"AIUEOS_CTL_V1 nonce={nonce} command={command}".encode("ascii")
+
+
+def node_ack_payload(message):
+    """Return a request-bound diagnostic ACK, never a fleet enrollment claim."""
+    match = NODE_HELLO.fullmatch(message)
+    if not match:
+        return None
+    boot, _mac = match.groups()
+    return f"AIUEOS_NODE_ACK_V1 boot={boot} state=accepted".encode("ascii")
 
 
 def send_control(command, nonce):
@@ -271,6 +284,11 @@ def netlog_server():
         message = payload.decode("ascii", "replace").rstrip("\r\n")
         print(f"AIUEOS_NETLOG_RX from={peer[0]}:{peer[1]} "
               f"message={message}", flush=True)
+        ack = node_ack_payload(message)
+        if ack and peer[0] == CLIENT_IP:
+            sock.sendto(ack, peer)
+            print(f"AIUEOS_NODE_RELAY_ACK to={peer[0]}:{peer[1]} "
+                  f"bytes={len(ack)} scope=diagnostic-only", flush=True)
         nonce = extract_control_nonce(message)
         if nonce and peer[0] == CLIENT_IP:
             CONTROL_STATE_PATH.write_text(nonce + "\n", encoding="ascii")
@@ -395,13 +413,18 @@ def selftest():
     assert extract_control_nonce(ready) == "0123456789abcdef"
     assert control_payload("ping", "0123456789abcdef") == \
         b"AIUEOS_CTL_V1 nonce=0123456789abcdef command=ping"
+    hello = ("AIUEOS_NODE_HELLO_V1 boot=0123456789abcdef "
+             "mac=70-70-fc-0b-b6-32 profile=rtl8125-relay-test")
+    assert node_ack_payload(hello) == \
+        b"AIUEOS_NODE_ACK_V1 boot=0123456789abcdef state=accepted"
+    assert node_ack_payload(hello.replace("0123456789abcdef", "short")) is None
     try:
         control_payload("reboot", "0123456789abcdef")
         raise AssertionError("unsupported control command accepted")
     except ValueError:
         pass
     print("AIUEOS_PXE_SELFTEST_OK dhcp=pxe+http tftp=oack control=token-bound "
-          "interface-bound=yes")
+          "node-relay=request-bound interface-bound=yes")
 
 
 def main():
