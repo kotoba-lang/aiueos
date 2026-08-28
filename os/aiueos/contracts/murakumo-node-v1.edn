@@ -106,13 +106,14 @@
           QEMU no-device refusal are proved; no K16 frame has yet been
           transmitted or received by AIUEOS."}
    :murakumo-heartbeat
-   {:state :relay-diagnostic-implemented-native-unverified
+   {:state :relay-enrollment-implemented-native-unverified
     :why "A hosted Murakumo resident can authenticate and heartbeat, but the
           native AIUEOS HTTP path is still a fixed GET. A request-bound UDP
-          diagnostic round trip to the directly attached Mac relay is now
-          implemented after RTL8125 ARP qualification, but registration still
-          needs a persistent device identity, authenticated heartbeat renewal,
-          job execution and result return."}
+          round trip to the directly attached Mac relay can now trigger
+          operator-authenticated enrollment and a live-but-not-ready heartbeat.
+          The operator token never enters the EFI image. Physical proof,
+          device-owned persistent identity, heartbeat renewal, job execution
+          and result return remain explicit gates."}
    :why "Deciding to join is not joining. QEMU proves the upper network layers;
          physical RTL8125 wiring, authenticated heartbeat and inference remain
          explicit gates."}}}
