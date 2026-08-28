@@ -111,7 +111,7 @@ set -e
   exit 1
 }
 printf '%s\n' "$decision" | grep -F \
-  "AIUEOS_K16_PHYSICAL_RESULT_INCOMPLETE code=299 reason=loader-hang-progress internal-ssd-writes=none" \
+  "AIUEOS_K16_PHYSICAL_RESULT_INCOMPLETE code=299 reason=kernel-hang-progress internal-ssd-writes=none" \
   >/dev/null || { echo "error: checker lost kernel progress code" >&2; exit 1; }
 
 printf '%s\n' \

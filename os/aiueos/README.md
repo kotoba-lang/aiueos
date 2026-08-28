@@ -316,6 +316,15 @@ successful `ExitBootServices`, then codes 220 through 229 before the kernel's
 entry, early self-tests, GDT/IDT, PIC, paging, cryptography, framebuffer,
 allocator, ACPI, and final result stages.  These records use the same bounded
 16-byte UEFI variable and still never reach a block driver.
+The physical K16 then returned v7 code 224: native entry, early self-tests,
+GDT/IDT and PIC shutdown all completed, and the stop is inside paging setup.
+v8 records the NX, table-build, NXE, write-protect, pre-CR3, post-CR3 and
+validation boundaries.  Its CR3 codes also carry the inherited handoff shape:
+260/270/280 are four-level plaintext, +1 means firmware left CR4.LA57 active,
+and +2 means the live AMD firmware CR3 carries the CPUID-reported SME C-bit.
+The replacement root preserves either condition: a fifth-level root is used
+when LA57 is already active, and encrypted RAM/table addresses inherit the
+C-bit while MMIO mappings remain unencrypted.
 
 ```sh
 SOURCE_DATE_EPOCH=0 ./os/aiueos/scripts/build-physical-qualification-usb.sh
@@ -349,8 +358,8 @@ mount-triggered result retrieval, not the still-gated DbC real-time transport.
 
 It prints `AIUEOS_K16_PHYSICAL_RESULT_OK` only when the native-core result and
 the required read-only probe markers are both present.  The
-exact v7 gate and later SSD-install prerequisites are in
-`contracts/physical-qualification-usb-v7.edn`; v1 through v6 remain historical
+exact v8 gate and later SSD-install prerequisites are in
+`contracts/physical-qualification-usb-v8.edn`; v1 through v7 remain historical
 contracts.  Secure Boot must be disabled for this unsigned
 development image.  A green QEMU result is build evidence, not a physical K16
 result.

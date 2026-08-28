@@ -417,6 +417,7 @@ zig cc -target x86_64-freestanding-none \
   -c -o "$kernel_entry_object" "$aiueos/kernel/entry.S"
 zig cc -target x86_64-freestanding-none -std=c11 -O2 \
   -ffreestanding -fno-stack-protector -mno-red-zone \
+  $physical_qualification_cflags \
   -c -o "$kernel_paging_object" "$aiueos/kernel/paging.c"
 zig cc -target x86_64-freestanding-none -std=c11 -O2 \
   -ffreestanding -fno-stack-protector -mno-red-zone \
