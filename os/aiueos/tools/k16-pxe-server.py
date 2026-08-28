@@ -10,10 +10,12 @@ import argparse
 import functools
 import http.server
 import os
+import re
 import select
 import socket
 import struct
 import threading
+import time
 from pathlib import Path
 
 
@@ -27,8 +29,13 @@ BOOT_FILE = BOOT_PATH.name
 HTTP_PORT = int(os.environ.get("AIUEOS_PXE_HTTP_PORT", "8000"))
 HTTP_BOOT_URI = f"http://{SERVER_IP}:{HTTP_PORT}/{BOOT_FILE}"
 NETLOG_PORT = int(os.environ.get("AIUEOS_PXE_NETLOG_PORT", "7777"))
+CONTROL_PORT = int(os.environ.get("AIUEOS_PXE_CONTROL_PORT", "7778"))
+CONTROL_STATE_PATH = Path(os.environ.get(
+    "AIUEOS_PXE_CONTROL_STATE", "/tmp/aiueos-k16-pxe-control-nonce"))
+CONTROL_COMMANDS = ("ping", "reboot-pxe")
 IP_BOUND_IF = 25
 MAGIC = b"\x63\x82\x53\x63"
+CONTROL_READY = re.compile(r"^AIUEOS_CONTROL_READY nonce=([0-9a-f]{16})\b")
 
 
 def ipv4(value):
@@ -115,6 +122,33 @@ def bind_interface(sock, port, address=""):
     sock.bind((address, port))
 
 
+def extract_control_nonce(message):
+    match = CONTROL_READY.match(message)
+    return match.group(1) if match else None
+
+
+def control_payload(command, nonce):
+    if command not in CONTROL_COMMANDS:
+        raise ValueError(f"unsupported control command: {command}")
+    if not re.fullmatch(r"[0-9a-f]{16}", nonce or ""):
+        raise ValueError("control nonce must be 16 lowercase hex digits")
+    return f"AIUEOS_CTL_V1 nonce={nonce} command={command}".encode("ascii")
+
+
+def send_control(command, nonce):
+    payload = control_payload(command, nonce)
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    sock.setsockopt(socket.IPPROTO_IP, IP_BOUND_IF,
+                    socket.if_nametoindex(INTERFACE))
+    sock.bind((SERVER_IP, 0))
+    for _ in range(5):
+        sock.sendto(payload, (CLIENT_IP, CONTROL_PORT))
+        time.sleep(0.2)
+    print(f"AIUEOS_CONTROL_TX target={CLIENT_IP}:{CONTROL_PORT} "
+          f"command={command} nonce={nonce}", flush=True)
+    sock.close()
+
+
 def dhcp_server():
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     bind_interface(sock, 67)
@@ -179,6 +213,11 @@ def netlog_server():
         message = payload.decode("ascii", "replace").rstrip("\r\n")
         print(f"AIUEOS_NETLOG_RX from={peer[0]}:{peer[1]} "
               f"message={message}", flush=True)
+        nonce = extract_control_nonce(message)
+        if nonce and peer[0] == CLIENT_IP:
+            CONTROL_STATE_PATH.write_text(nonce + "\n", encoding="ascii")
+            print(f"AIUEOS_CONTROL_STATE nonce={nonce} "
+                  f"path={CONTROL_STATE_PATH}", flush=True)
 
 
 def tftp_oack(options, size):
@@ -291,16 +330,35 @@ def selftest():
     assert http_reply[108:108 + len(http_uri)] == http_uri
     oack, size = tftp_oack({"blksize": "1024", "tsize": "0"}, 13312)
     assert size == 1024 and b"tsize\00013312\000" in oack
-    print("AIUEOS_PXE_SELFTEST_OK dhcp=pxe+http tftp=oack "
+    ready = "AIUEOS_CONTROL_READY nonce=0123456789abcdef commands=ping,reboot-pxe"
+    assert extract_control_nonce(ready) == "0123456789abcdef"
+    assert control_payload("ping", "0123456789abcdef") == \
+        b"AIUEOS_CTL_V1 nonce=0123456789abcdef command=ping"
+    try:
+        control_payload("reboot", "0123456789abcdef")
+        raise AssertionError("unsupported control command accepted")
+    except ValueError:
+        pass
+    print("AIUEOS_PXE_SELFTEST_OK dhcp=pxe+http tftp=oack control=token-bound "
           "interface-bound=yes")
 
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--selftest", action="store_true")
+    parser.add_argument("--control", choices=CONTROL_COMMANDS)
+    parser.add_argument("--nonce")
     args = parser.parse_args()
     if args.selftest:
         selftest()
+        return
+    if args.control:
+        nonce = args.nonce
+        if not nonce:
+            if not CONTROL_STATE_PATH.is_file():
+                raise SystemExit(f"missing control nonce: {CONTROL_STATE_PATH}")
+            nonce = CONTROL_STATE_PATH.read_text(encoding="ascii").strip()
+        send_control(args.control, nonce)
         return
     if not BOOT_PATH.is_file():
         raise SystemExit(f"missing boot file: {BOOT_PATH}")
