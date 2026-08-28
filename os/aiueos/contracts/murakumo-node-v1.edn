@@ -98,12 +98,13 @@
    {:rtl8125-pxe-handoff {:state :implemented-model-proven
                           :rings {:tx 1 :rx 1}
                           :firmware-phy-calibration :retained
-                          :kernel-wiring :absent
+                          :kernel-wiring :physical-qualification-profile
                           :physical-state :unverified}
     :why "The K16 has RTL8125, not virtio-net. The bounded handoff driver now
-          models takeover of a firmware-initialized PXE link and is linked into
-          the freestanding kernel, but pci.c does not select it yet and no K16
-          frame has been transmitted or received by AIUEOS."}
+          takes over a firmware-initialized PXE link and pci.c selects it only
+          in the diskless physical-network qualification profile. The model and
+          QEMU no-device refusal are proved; no K16 frame has yet been
+          transmitted or received by AIUEOS."}
    :murakumo-heartbeat
    {:state :absent-native
     :why "A hosted Murakumo resident can authenticate and heartbeat, but the
