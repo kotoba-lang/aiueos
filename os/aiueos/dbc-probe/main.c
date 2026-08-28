@@ -19,6 +19,7 @@
 #define EFI_PCI_IO_ATTRIBUTE_DUAL_ADDRESS_CYCLE 0x8000ULL
 #define MAX_PCI_HANDLES 256
 #define MAX_DBC_CONTROLLERS 5
+#define MAX_PXE_HANDLES 8
 #define MAX_XHCI_EXT_CAPS 50
 #define MAX_XHCI_EXT_CAP_OFFSET 0x40000U
 #define DBC_DMA_BYTES 4096ULL
@@ -41,6 +42,7 @@
 #define DBC_COMPLETION_SHORT_PACKET 13U
 #define DBC_VENDOR_ID 0xffffU
 #define DBC_PRODUCT_ID 0xa11eU
+#define NETLOG_PORT 7777U
 
 typedef uint64_t efi_status;
 typedef void *efi_handle;
@@ -97,6 +99,37 @@ struct efi_system_table {
   struct efi_boot_services *boot_services;
   uint64_t number_of_table_entries;
   void *configuration_table;
+};
+
+struct efi_loaded_image_protocol {
+  uint32_t revision;
+  efi_handle parent_handle;
+  struct efi_system_table *system_table;
+  efi_handle device_handle;
+  void *file_path, *reserved;
+  uint32_t load_options_size;
+  void *load_options, *image_base;
+  uint64_t image_size;
+  uint32_t image_code_type, image_data_type;
+  void *unload;
+};
+
+union efi_ip_address {
+  uint8_t bytes[16];
+  uint32_t words[4];
+};
+
+struct efi_pxe_base_code_protocol;
+typedef efi_status(EFIAPI *efi_pxe_udp_write)(
+    struct efi_pxe_base_code_protocol *, uint16_t, union efi_ip_address *,
+    uint16_t *, union efi_ip_address *, union efi_ip_address *, uint16_t *,
+    uint64_t *, void *, uint64_t *, void *);
+struct efi_pxe_base_code_protocol {
+  uint64_t revision;
+  void *start, *stop, *dhcp, *discover, *mtftp;
+  efi_pxe_udp_write udp_write;
+  void *udp_read, *set_ip_filter, *arp, *set_parameters, *set_station_ip,
+       *set_packets, *mode;
 };
 
 struct efi_pci_io_protocol;
@@ -189,18 +222,89 @@ struct dbc_state {
 
 static const struct efi_guid pci_io_guid =
   {0x4cf5b200,0x68b8,0x4ca5,{0x9e,0xec,0xb2,0x3e,0x3f,0x50,0x02,0x9a}};
+static const struct efi_guid loaded_image_guid =
+  {0x5b1b31a1,0x9562,0x11d2,{0x8e,0x3f,0x00,0xa0,0xc9,0x69,0x72,0x3b}};
+static const struct efi_guid pxe_base_code_guid =
+  {0x03c4e603,0xac28,0x11d3,{0x9a,0x2d,0x00,0x90,0x27,0x3f,0xc1,0x4d}};
 static struct efi_simple_text_output *console;
 static struct efi_boot_services *boot_services;
+static struct efi_pxe_base_code_protocol *pxe_handles[MAX_PXE_HANDLES];
+static uint32_t pxe_count;
+static int32_t active_pxe=-1;
 static struct dbc_state controllers[MAX_DBC_CONTROLLERS];
 static uint32_t controller_count;
 
+static uint64_t ascii_length(const char *text) {
+  uint64_t length=0;
+  while (text[length]) length++;
+  return length;
+}
+
+static int netlog_send_with(struct efi_pxe_base_code_protocol *pxe,
+                            const char *text) {
+  if (!pxe || !pxe->udp_write || !text) return 0;
+  union efi_ip_address destination={{10,77,0,1}};
+  uint16_t port=NETLOG_PORT;
+  uint64_t bytes=ascii_length(text);
+  return pxe->udp_write(pxe,0,&destination,&port,0,0,0,0,0,&bytes,
+                        (void *)(uintptr_t)text)==EFI_SUCCESS;
+}
+
+static void netlog_ascii(const char *text) {
+  if (active_pxe>=0 && (uint32_t)active_pxe<pxe_count &&
+      netlog_send_with(pxe_handles[active_pxe],text)) return;
+  active_pxe=-1;
+  for (uint32_t index=0;index<pxe_count;index++) {
+    if (netlog_send_with(pxe_handles[index],text)) {
+      active_pxe=(int32_t)index;
+      return;
+    }
+  }
+}
+
 static void console_ascii(const char *text) {
+  netlog_ascii(text);
   char16 buffer[96];
   while (*text && console && console->output_string) {
     uint32_t count = 0;
     while (*text && count < 95) buffer[count++] = (uint8_t)*text++;
     buffer[count] = 0;
     console->output_string(console, buffer);
+  }
+}
+
+static void add_pxe_handle(struct efi_pxe_base_code_protocol *pxe) {
+  if (!pxe || !pxe->udp_write) return;
+  for (uint32_t index=0;index<pxe_count;index++)
+    if (pxe_handles[index]==pxe) return;
+  if (pxe_count<MAX_PXE_HANDLES) pxe_handles[pxe_count++]=pxe;
+}
+
+static void discover_netlog(efi_handle image) {
+  if (!boot_services || !boot_services->handle_protocol) return;
+  struct efi_loaded_image_protocol *loaded=0;
+  struct efi_pxe_base_code_protocol *pxe=0;
+  if (boot_services->handle_protocol(image,&loaded_image_guid,
+                                     (void **)&loaded)==EFI_SUCCESS &&
+      loaded && loaded->device_handle &&
+      boot_services->handle_protocol(loaded->device_handle,&pxe_base_code_guid,
+                                     (void **)&pxe)==EFI_SUCCESS)
+    add_pxe_handle(pxe);
+
+  if (!boot_services->locate_handle) return;
+  uint64_t bytes=0;
+  efi_status status=boot_services->locate_handle(
+      EFI_BY_PROTOCOL,&pxe_base_code_guid,0,&bytes,0);
+  if (status!=EFI_BUFFER_TOO_SMALL || !bytes ||
+      bytes>MAX_PXE_HANDLES*sizeof(efi_handle)) return;
+  efi_handle handles[MAX_PXE_HANDLES];
+  if (boot_services->locate_handle(EFI_BY_PROTOCOL,&pxe_base_code_guid,0,
+                                   &bytes,handles)!=EFI_SUCCESS) return;
+  for (uint64_t index=0;index<bytes/sizeof(efi_handle);index++) {
+    pxe=0;
+    if (boot_services->handle_protocol(handles[index],&pxe_base_code_guid,
+                                       (void **)&pxe)==EFI_SUCCESS)
+      add_pxe_handle(pxe);
   }
 }
 
@@ -617,6 +721,13 @@ static void service_controller(struct dbc_state *state) {
     if (state->heartbeat_ticks<100) state->heartbeat_ticks++;
     if (!state->sequence || state->heartbeat_ticks>=100) queue_transmit(state);
   } else if (!state->sequence && ++state->preconfigure_ticks>=300) {
+    /* The console may have scrolled past the first state transition by the
+       time a technician photographs a stalled target.  Re-emit the complete
+       link state immediately before each enumeration retry so the physical
+       port assignment can be diagnosed without a writable log device. */
+    state->last_control=UINT32_MAX;
+    state->last_port=UINT32_MAX;
+    report_state(state,control,port,status);
     console_ascii("AIUEOS_DBC_ENUM_RETRY dce-toggle=yes\r\n");
     mmio_write32(state->pci,base+0x20,0);
     if (state->pci->flush) state->pci->flush(state->pci);
@@ -669,6 +780,7 @@ efi_status EFIAPI efi_main(efi_handle image, struct efi_system_table *system) {
       !system->console_out->output_string) return EFI_INVALID_PARAMETER;
   console=system->console_out;
   boot_services=system->boot_services;
+  discover_netlog(image);
   console_ascii("\r\nAIUEOS DBC LIVE PROBE (NO DISK WRITES)\r\n");
   console_ascii("AIUEOS_DBC_START transport=xhci-dbc direction=duplex internal-ssd-writes=none usb-log-writes=none\r\n");
   discover_controllers(system->boot_services);

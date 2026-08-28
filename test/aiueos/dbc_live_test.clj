@@ -7,6 +7,7 @@
 (def receiver (slurp (io/file "os/aiueos/tools/dbc-receiver.c")))
 (def probe-build (slurp (io/file "os/aiueos/scripts/build-dbc-probe.sh")))
 (def receiver-build (slurp (io/file "os/aiueos/scripts/build-dbc-receiver.sh")))
+(def pxe-server (slurp (io/file "os/aiueos/tools/k16-pxe-server.py")))
 (def image-build (slurp (io/file "os/aiueos/scripts/build-dbc-live-usb.sh")))
 (def image-maker (slurp (io/file "os/aiueos/scripts/make-physical-qualification-usb.py")))
 (def contract (slurp (io/file "os/aiueos/contracts/dbc-live-v1.edn")))
@@ -45,6 +46,24 @@
   (is (not (str/includes? receiver-build "sudo")))
   (is (str/includes? receiver-build "--selftest"))
   (is (str/includes? contract "a later heartbeat with rx>=1")))
+
+(deftest pxe-boot-can-return-console-state-over-uefi-udp
+  (testing "the already-authorized PXE path carries live diagnostics back"
+    (doseq [marker ["pxe_base_code_guid" "udp_write" "NETLOG_PORT 7777U"
+                    "netlog_ascii(text)" "10,77,0,1"]]
+      (is (str/includes? probe marker))))
+  (testing "the normal-user Mac server combines boot and live log receive"
+    (doseq [marker ["AIUEOS_PXE_DHCP_READY" "AIUEOS_PXE_TFTP_OK"
+                    "AIUEOS_HTTP_READY" "AIUEOS_NETLOG_RX"
+                    "AIUEOS_PXE_BOOT"]]
+      (is (str/includes? pxe-server marker))))
+  (testing "the physical result stays narrower than native boot qualification"
+    (is (str/includes? contract ":kind :uefi-pxe-base-code-udp"))
+    (is (str/includes? contract ":state :received-live"))
+    (is (str/includes? contract ":does-not-qualify [:native-core-boot")))
+  (testing "network telemetry does not widen the disk-write boundary"
+    (doseq [forbidden ["block_io" "write_blocks"]]
+      (is (not (str/includes? probe forbidden))))))
 
 (deftest live-image-is-explicitly-not-a-qualification-or-install
   (is (str/includes? image-build "--mode dbc-live"))
