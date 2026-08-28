@@ -9,6 +9,8 @@
   (slurp (io/file "os/aiueos/scripts/make-physical-qualification-usb.py")))
 (def qualification-runtime
   (slurp (io/file "os/aiueos/kernel/qualification.c")))
+(def qualification-entry
+  (slurp (io/file "os/aiueos/kernel/qualification_entry.S")))
 (def paging-source
   (slurp (io/file "os/aiueos/kernel/paging.c")))
 (def uefi-build-script
@@ -32,6 +34,8 @@
   (slurp (io/file "os/aiueos/contracts/physical-qualification-usb-v9.edn")))
 (def qualification-v10-contract
   (slurp (io/file "os/aiueos/contracts/physical-qualification-usb-v10.edn")))
+(def qualification-v11-contract
+  (slurp (io/file "os/aiueos/contracts/physical-qualification-usb-v11.edn")))
 
 (deftest probe-is-bounded-and-keeps-internal-disks-read-only
   (testing "the probe never reaches raw block writes or exits boot services"
@@ -216,8 +220,31 @@
     (is (str/includes? qualification-v10-contract ":no-c-call-under-candidate-root true"))
     (is (str/includes? qualification-v10-contract ":pcide :clear-after-zero-pcid-reload"))
     (is (str/includes? qualification-v10-contract ":internal-disk-write-code-reached? false"))
-    (is (str/includes? result-checker "3[2-9][0-9]"))
-    (is (str/includes? qualification-builder "probe-native-result-v10"))))
+    (is (str/includes? result-checker "3[2-9][0-9]"))))
+
+(deftest physical-progress-enters-firmware-root-before-c
+  (testing "the public recorder entries switch CR3 in assembly before C"
+    (doseq [marker ["aiueos_qualification_progress:"
+                    "aiueos_qualification_finalize:"
+                    "mov qualification_firmware_cr3(%rip), %rax"
+                    "mov %cr3, %r11"
+                    "mov %rax, %cr3"
+                    "call aiueos_qualification_progress_firmware"
+                    "call aiueos_qualification_finalize_firmware"
+                    "mov %r11, %cr3"]]
+      (is (str/includes? qualification-entry marker)))
+    (is (str/includes? uefi-build-script "kernel-qualification-entry.o"))
+    (is (str/includes? qualification-runtime
+                       "aiueos_qualification_progress_firmware"))
+    (is (str/includes? qualification-runtime
+                       "aiueos_qualification_finalize_firmware")))
+  (testing "the v11 contract binds the change to physical v10 code 416"
+    (is (str/includes? qualification-v11-contract ":image-version 10"))
+    (is (str/includes? qualification-v11-contract ":physical-result-code 416"))
+    (is (str/includes? qualification-v11-contract ":cr3-load-and-readback :passed"))
+    (is (str/includes? qualification-v11-contract ":c-code-under-candidate-root false"))
+    (is (str/includes? qualification-v11-contract ":internal-disk-write-code-reached? false"))
+    (is (str/includes? qualification-builder "probe-native-result-v11"))))
 
 (deftest qualification-image-preserves-the-internal-disk-read-only-boundary
   (is (str/includes? qualification-builder "uefi-probe-and-arm-return"))
