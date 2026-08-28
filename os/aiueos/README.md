@@ -325,6 +325,14 @@ and +2 means the live AMD firmware CR3 carries the CPUID-reported SME C-bit.
 The replacement root preserves either condition: a fifth-level root is used
 when LA57 is already active, and encrypted RAM/table addresses inherit the
 C-bit while MMIO mappings remain unencrypted.
+The physical K16 returned v8 code 260, so its handoff is four-level and the
+firmware CR3 does not carry an SME C-bit; the stop is at the first owned CR3.
+v9 additionally records firmware CET in feature bit +4, disables the
+firmware-owned shadow-stack control before replacing its address space, and
+uses a bounded 1 GiB 2 MiB-leaf transition root.  The transition root is never
+published as `kernel_cr3`: v9 records 260+features before it, 270+features
+after it, 280+features before the final split W^X root, 300+features after that
+root, and 310+features only after the final permissions validate.
 
 ```sh
 SOURCE_DATE_EPOCH=0 ./os/aiueos/scripts/build-physical-qualification-usb.sh
@@ -358,8 +366,8 @@ mount-triggered result retrieval, not the still-gated DbC real-time transport.
 
 It prints `AIUEOS_K16_PHYSICAL_RESULT_OK` only when the native-core result and
 the required read-only probe markers are both present.  The
-exact v8 gate and later SSD-install prerequisites are in
-`contracts/physical-qualification-usb-v8.edn`; v1 through v7 remain historical
+exact v9 gate and later SSD-install prerequisites are in
+`contracts/physical-qualification-usb-v9.edn`; v1 through v8 remain historical
 contracts.  Secure Boot must be disabled for this unsigned
 development image.  A green QEMU result is build evidence, not a physical K16
 result.

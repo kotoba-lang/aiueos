@@ -28,6 +28,8 @@
   (slurp (io/file "os/aiueos/contracts/physical-qualification-usb-v7.edn")))
 (def qualification-v8-contract
   (slurp (io/file "os/aiueos/contracts/physical-qualification-usb-v8.edn")))
+(def qualification-v9-contract
+  (slurp (io/file "os/aiueos/contracts/physical-qualification-usb-v9.edn")))
 
 (deftest probe-is-bounded-and-keeps-internal-disks-read-only
   (testing "the probe never reaches raw block writes or exits boot services"
@@ -150,7 +152,7 @@
                   "270U + paging_features" "280U + paging_features"]]
       (is (str/includes? paging-source code))))
   (testing "CR4.LA57 and an active AMD SME C-bit are inherited, not guessed"
-    (is (str/includes? paging-source "five_level_paging = (read_cr4() >> 12) & 1U"))
+    (is (str/includes? paging-source "five_level_paging = (firmware_cr4 >> 12) & 1U"))
     (is (str/includes? paging-source "cpuid(0x8000001fU"))
     (is (str/includes? paging-source "return firmware_cr3 & mask"))
     (is (str/includes? paging-source "encrypted_ram_address(five_level_paging"))
@@ -162,6 +164,31 @@
     (is (str/includes? qualification-v8-contract ":internal-disk-write-code-reached? false"))
     (is (str/includes? result-checker "reason=paging-handoff-progress"))
     (is (str/includes? result-checker "reason=kernel-hang-progress"))))
+
+(deftest physical-paging-handoff-has-a-bounded-transition-root
+  (testing "firmware CET cannot retain a firmware-owned shadow stack"
+    (is (str/includes? paging-source "#define CR4_CET (1ULL << 23)"))
+    (is (str/includes? paging-source "firmware_cr4 & ~CR4_CET"))
+    (is (str/includes? paging-source "if (read_cr4() & CR4_CET) return 0")))
+  (testing "the temporary root is entered and replaced before publication"
+    (is (str/includes? paging-source "transition_page_directory"))
+    (is (str/includes? paging-source "write_cr3(transition_root)"))
+    (is (< (.indexOf paging-source "write_cr3(transition_root)")
+           (.indexOf paging-source "write_cr3(root)")))
+    (is (< (.indexOf paging-source "write_cr3(root)")
+           (.indexOf paging-source "kernel_cr3 = root")))
+    (doseq [code ["260U + paging_features" "270U + paging_features"
+                  "280U + paging_features" "300U + paging_features"
+                  "310U + paging_features"]]
+      (is (str/includes? paging-source code))))
+  (testing "the v9 contract binds the change to physical code 260"
+    (is (str/includes? qualification-v9-contract ":physical-result-code 260"))
+    (is (str/includes? qualification-v9-contract ":firmware-cet-observed 4"))
+    (is (str/includes? qualification-v9-contract ":published-as-kernel-cr3 false"))
+    (is (str/includes? qualification-v9-contract ":terminal-state :replaced-by-final-split-wx"))
+    (is (str/includes? qualification-v9-contract ":internal-disk-write-code-reached? false"))
+    (is (str/includes? result-checker "26[0-7]"))
+    (is (str/includes? qualification-builder "probe-native-result-v9"))))
 
 (deftest qualification-image-preserves-the-internal-disk-read-only-boundary
   (is (str/includes? qualification-builder "uefi-probe-and-arm-return"))

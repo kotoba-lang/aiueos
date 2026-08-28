@@ -63,7 +63,7 @@ case "$state" in
     if [ "$code" != 0 ]; then
       reason=loader-hang-progress
       case "$code" in
-        224|240|241|242|243|244|260|261|262|263|270|271|272|273|280|281|282|283)
+        224|240|241|242|243|244|26[0-7]|27[0-7]|28[0-7]|30[0-7]|31[0-7])
           reason=paging-handoff-progress ;;
         220|221|222|223|225|226|227|228|229|299)
           reason=kernel-hang-progress ;;
