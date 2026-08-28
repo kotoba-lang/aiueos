@@ -3820,12 +3820,58 @@ int aiueos_rtl8125_relay_qualification(void) {
   return 0;
 }
 
+static int rtl8125_execute_job(const struct aiueos_job_request *request) {
+  if(!request) { rtl8125_job_error=2;return 0; }
+  struct aiueos_micro_infer_result inference;
+  if(!aiueos_micro_infer_next(request->prompt,request->prompt_length,&inference)) {
+    rtl8125_job_error=3;return 0;
+  }
+  enum aiueos_rtl8125_result result=AIUEOS_RTL8125_OK;
+  uint8_t job_result[AIUEOS_JOB_RESULT_CAPACITY];
+  uint32_t result_length=aiueos_job_result_payload(
+    job_result,sizeof(job_result),rtl8125_relay_nonce,request->job_id,&inference);
+  uint32_t bytes=rtl8125_build_udp_payload(
+    rtl8125_qualification_device.tx_frame,job_result,result_length,
+    (uint16_t)rtl8125_relay_nonce);
+  if(!bytes) { rtl8125_job_error=4;return 0; }
+  result=aiueos_rtl8125_tx_submit(&rtl8125_qualification_device,bytes);
+  if(result!=AIUEOS_RTL8125_OK) { rtl8125_job_error=5;return 0; }
+  uint32_t budget;
+  for(budget=0;budget<200000000U&&
+      !aiueos_rtl8125_tx_complete(&rtl8125_qualification_device);budget++)
+    __asm__ volatile("pause");
+  if(budget==200000000U) { rtl8125_job_error=6;return 0; }
+  aiueos_rtl8125_rx_rearm(&rtl8125_qualification_device);
+  for(unsigned commit_attempt=0;commit_attempt<64;commit_attempt++) {
+    uint32_t received=0;
+    for(budget=0;budget<200000000U&&!received;budget++) {
+      result=aiueos_rtl8125_rx_poll(&rtl8125_qualification_device,&received);
+      if(result!=AIUEOS_RTL8125_OK)break;
+      __asm__ volatile("pause");
+    }
+    const uint8_t *payload=0;uint32_t payload_length=0;
+    if(result==AIUEOS_RTL8125_OK&&received&&
+       rtl8125_server_udp_payload(rtl8125_qualification_device.rx_frame,
+                                  received,&payload,&payload_length)&&
+       aiueos_job_commit_valid(payload,payload_length,rtl8125_relay_nonce,
+                               request->job_id)) {
+      rtl8125_job_token=inference.token;rtl8125_job_score=inference.score;
+      rtl8125_job_total=inference.total;rtl8125_job_error=0;
+      aiueos_rtl8125_rx_rearm(&rtl8125_qualification_device);
+      return 1;
+    }
+    rtl8125_job_error=8;
+    aiueos_rtl8125_rx_rearm(&rtl8125_qualification_device);
+    if(!received&&budget==200000000U)continue;
+  }
+  rtl8125_job_error=9;return 0;
+}
+
 int aiueos_rtl8125_job_qualification(void) {
   rtl8125_job_error=1;rtl8125_job_token=0;
   rtl8125_job_score=0;rtl8125_job_total=0;
   if(!rtl8125_qualification_device.ready||rtl8125_relay_error) return 0;
   struct aiueos_job_request request;
-  struct aiueos_micro_infer_result inference;
   enum aiueos_rtl8125_result result=AIUEOS_RTL8125_OK;
   uint32_t budget;
   aiueos_rtl8125_rx_rearm(&rtl8125_qualification_device);
@@ -3840,45 +3886,9 @@ int aiueos_rtl8125_job_qualification(void) {
     if(result==AIUEOS_RTL8125_OK&&received&&
        rtl8125_server_udp_payload(rtl8125_qualification_device.rx_frame,
                                   received,&payload,&payload_length)&&
-       aiueos_job_request_parse(payload,payload_length,rtl8125_relay_nonce,&request)) {
-      if(!aiueos_micro_infer_next(request.prompt,request.prompt_length,&inference)) {
-        rtl8125_job_error=3;return 0;
-      }
-      uint8_t job_result[AIUEOS_JOB_RESULT_CAPACITY];
-      uint32_t result_length=aiueos_job_result_payload(
-        job_result,sizeof(job_result),rtl8125_relay_nonce,request.job_id,&inference);
-      uint32_t bytes=rtl8125_build_udp_payload(
-        rtl8125_qualification_device.tx_frame,job_result,result_length,
-        (uint16_t)rtl8125_relay_nonce);
-      if(!bytes) { rtl8125_job_error=4;return 0; }
-      result=aiueos_rtl8125_tx_submit(&rtl8125_qualification_device,bytes);
-      if(result!=AIUEOS_RTL8125_OK) { rtl8125_job_error=5;return 0; }
-      for(budget=0;budget<200000000U&&
-          !aiueos_rtl8125_tx_complete(&rtl8125_qualification_device);budget++)
-        __asm__ volatile("pause");
-      if(budget==200000000U) { rtl8125_job_error=6;return 0; }
-      aiueos_rtl8125_rx_rearm(&rtl8125_qualification_device);
-      for(unsigned commit_attempt=0;commit_attempt<32;commit_attempt++) {
-        received=0;
-        for(budget=0;budget<200000000U&&!received;budget++) {
-          result=aiueos_rtl8125_rx_poll(&rtl8125_qualification_device,&received);
-          if(result!=AIUEOS_RTL8125_OK)break;
-          __asm__ volatile("pause");
-        }
-        if(result==AIUEOS_RTL8125_OK&&received&&
-           rtl8125_server_udp_payload(rtl8125_qualification_device.rx_frame,
-                                      received,&payload,&payload_length)&&
-           aiueos_job_commit_valid(payload,payload_length,rtl8125_relay_nonce,
-                                   request.job_id)) {
-          rtl8125_job_token=inference.token;rtl8125_job_score=inference.score;
-          rtl8125_job_total=inference.total;rtl8125_job_error=0;return 1;
-        }
-        rtl8125_job_error=8;
-        aiueos_rtl8125_rx_rearm(&rtl8125_qualification_device);
-        if(!received&&budget==200000000U)continue;
-      }
-      rtl8125_job_error=9;return 0;
-    }
+       aiueos_job_request_parse(payload,payload_length,rtl8125_relay_nonce,
+                                &request))
+      return rtl8125_execute_job(&request);
     rtl8125_job_error=received?2:7;
     aiueos_rtl8125_rx_rearm(&rtl8125_qualification_device);
     if(!received&&budget==200000000U)continue;
@@ -3900,11 +3910,11 @@ int aiueos_rtl8125_liveness_renewal(void) {
       __asm__ volatile("pause");
     }
     const uint8_t *payload=0;uint32_t payload_length=0,sequence=0;
-    if(result==AIUEOS_RTL8125_OK&&received&&
-       rtl8125_server_udp_payload(rtl8125_qualification_device.rx_frame,
-                                  received,&payload,&payload_length)&&
-       aiueos_node_ping_parse(payload,payload_length,rtl8125_relay_nonce,
-                              &sequence)) {
+    int server_payload=result==AIUEOS_RTL8125_OK&&received&&
+      rtl8125_server_udp_payload(rtl8125_qualification_device.rx_frame,
+                                 received,&payload,&payload_length);
+    if(server_payload&&aiueos_node_ping_parse(
+         payload,payload_length,rtl8125_relay_nonce,&sequence)) {
       uint8_t pong[AIUEOS_NODE_LIVENESS_CAPACITY];
       uint32_t pong_length=aiueos_node_pong_payload(
         pong,sizeof(pong),rtl8125_relay_nonce,sequence);
@@ -3921,6 +3931,15 @@ int aiueos_rtl8125_liveness_renewal(void) {
       rtl8125_liveness_sequence=sequence;rtl8125_liveness_error=0;
       aiueos_rtl8125_rx_rearm(&rtl8125_qualification_device);
       return 1;
+    }
+    if(server_payload) {
+      struct aiueos_job_request request;
+      if(aiueos_job_request_parse(payload,payload_length,rtl8125_relay_nonce,
+                                  &request)) {
+        int executed=rtl8125_execute_job(&request);
+        rtl8125_liveness_error=executed?0:7;
+        return executed;
+      }
     }
     rtl8125_liveness_error=received?2:6;
     aiueos_rtl8125_rx_rearm(&rtl8125_qualification_device);

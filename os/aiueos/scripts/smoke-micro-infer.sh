@@ -10,3 +10,4 @@ cc -std=c11 -O2 -Wall -Wextra -Werror \
   "$repo/os/aiueos/tests/micro_infer_model.c" \
   "$repo/os/aiueos/kernel/micro_infer.c"
 "$out/micro-infer-model"
+python3 "$repo/os/aiueos/tests/micro_infer_relay_model.py"

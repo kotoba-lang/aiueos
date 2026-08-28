@@ -25,9 +25,16 @@
                          :node "10.77.0.10:7779"}}
  :murakumo {:enqueue [:post "/infer/queue"]
              :observe [:get "/infer/queue"]
+             :worker-poll [:get "/infer/queue"]
              :claim [:post "/infer/queue/:id/claim"]
              :result [:post "/infer/queue/:id/result"]
              :ready-heartbeat [:post "/infer/nodes/gmktec-k16/heartbeat"]}
+ :worker {:continuous? true
+          :kind "aiueos-micro-infer"
+          :model "aiueos-char-bigram-v1"
+          :admission [:model-exact :bounded-lowercase-prompt
+                      :nonempty-transition-row]
+          :idle-proof :physical-ping-pong}
  :safety {:internal-disk-writes? false
           :service-token-in-efi? false
           :credential-files-mode "0600"

@@ -785,6 +785,11 @@ and accepts a commit only after the relay has persisted that result and posted a
 ready heartbeat.  It then answers boot- and sequence-bound liveness pings; the
 Mac relay renews the server-observed heartbeat only after each physical pong, so
 the node cannot remain live merely because the Mac process is still running.
+While live, the relay keeps polling the shared queue and claims any exact
+`aiueos-micro-infer` job whose bounded prompt has a nonempty row in the frozen
+model.  The same K16 executes each admitted job, and each result must be
+persisted and committed before the worker accepts the next event.  Thus the
+qualification job is the admission gate, not the only job the boot can run.
 Build and QEMU-negative-path coverage is available with:
 
 ```sh

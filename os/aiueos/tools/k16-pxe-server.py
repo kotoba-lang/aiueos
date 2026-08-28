@@ -85,6 +85,18 @@ MURAKUMO_JOB_MODEL = "aiueos-char-bigram-v1"
 MURAKUMO_JOB_PROMPT = "murakum"
 MURAKUMO_JOB_CORPUS_SHA256 = \
     "6433aeadc179877f103fdc87672d967d5c68d3f531f8b2bf156e377ad84058cb"
+# Compact projection of the frozen C transition matrix: last input byte ->
+# (winning next token, winning count, row total). Rows with no evidence are
+# deliberately absent, so the relay never claims a job the K16 model rejects.
+MURAKUMO_MICRO_INFER_ROWS = {
+    " ": ("a", 3, 13), "a": ("i", 2, 8), "c": ("e", 1, 1),
+    "e": (" ", 2, 9), "f": ("e", 1, 1), "g": (" ", 1, 1),
+    "i": ("n", 3, 8), "j": ("o", 1, 1), "k": ("u", 2, 3),
+    "m": ("o", 2, 5), "n": (" ", 1, 7), "o": (" ", 2, 7),
+    "p": ("e", 1, 1), "r": ("a", 3, 5), "s": (" ", 5, 7),
+    "t": ("i", 2, 4), "u": ("e", 2, 6), "v": ("e", 1, 1),
+    "w": ("m", 1, 1), "y": ("o", 1, 1),
+}
 IP_BOUND_IF = 25
 MAGIC = b"\x63\x82\x53\x63"
 CONTROL_READY = re.compile(r"^AIUEOS_CONTROL_READY nonce=([0-9a-f]{16})\b")
@@ -302,10 +314,10 @@ def job_payload(boot, job):
     kind = job.get("kind")
     input_value = job.get("input")
     prompt = input_value.get("prompt") if isinstance(input_value, dict) else None
+    model = input_value.get("model") if isinstance(input_value, dict) else None
     if not re.fullmatch(r"[0-9]{1,20}", job_id) or kind != MURAKUMO_JOB_KIND:
         return None
-    if not isinstance(prompt, str) or not (1 <= len(prompt) <= 64) or \
-            not re.fullmatch(r"[ a-z]+", prompt):
+    if model != MURAKUMO_JOB_MODEL or micro_infer_expected(prompt) is None:
         return None
     return (f"AIUEOS_JOB_V1 boot={boot} id={job_id} kind={kind} "
             f"prompt={prompt.encode('ascii').hex()}").encode("ascii")
@@ -332,7 +344,14 @@ def verified_node_pong(message, boot, sequence):
                 int(match.group(2)) == sequence)
 
 
-def verified_job_result(message, boot, job_id):
+def micro_infer_expected(prompt):
+    if not isinstance(prompt, str) or not (1 <= len(prompt) <= 64) or \
+            not re.fullmatch(r"[ a-z]+", prompt):
+        return None
+    return MURAKUMO_MICRO_INFER_ROWS.get(prompt[-1])
+
+
+def verified_job_result(message, boot, job_id, prompt):
     match = JOB_RESULT.fullmatch(message)
     if not match:
         return None
@@ -340,14 +359,67 @@ def verified_job_result(message, boot, job_id):
     if got_boot != boot or got_id != str(job_id):
         return None
     token = bytes.fromhex(token_hex).decode("ascii", "strict")
-    if MURAKUMO_JOB_PROMPT == "murakum" and \
-            (token != "o" or int(score) != 2 or int(total) != 5):
+    expected = micro_infer_expected(prompt)
+    if expected is None or (token, int(score), int(total)) != expected:
         return None
     return {"text": token, "model": MURAKUMO_JOB_MODEL,
             "score": int(score), "total": int(total),
-            "prompt": MURAKUMO_JOB_PROMPT,
+            "prompt": prompt,
             "corpus-sha256": MURAKUMO_JOB_CORPUS_SHA256,
             "boot": boot}
+
+
+def dispatch_murakumo_job(
+        boot, job, sock, peer, opener=urllib.request.urlopen,
+        result_queue=MURAKUMO_JOB_RESULTS, sleeper=time.sleep):
+    job_id = str(job.get("job-id", "")) if isinstance(job, dict) else ""
+    payload = job_payload(boot, job or {})
+    if not payload:
+        return {"state": "failed", "stage": "job-admission",
+                "job-id": job_id}
+    prompt = job["input"]["prompt"]
+    claim_status, _ = murakumo_post(
+        f"/infer/queue/{job_id}/claim", {"did": MURAKUMO_NODE_DID}, opener)
+    if claim_status != 201:
+        return {"state": "raced" if claim_status == 409 else "failed",
+                "stage": "claim", "status": claim_status,
+                "job-id": job_id}
+    for _ in range(5):
+        sock.sendto(payload, peer)
+        sleeper(0.2)
+    deadline = time.monotonic() + 30
+    output = None
+    while output is None:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return {"state": "failed", "stage": "k16-result-timeout",
+                    "job-id": job_id}
+        try:
+            candidate, candidate_peer = result_queue.get(timeout=remaining)
+        except queue.Empty:
+            return {"state": "failed", "stage": "k16-result-timeout",
+                    "job-id": job_id}
+        if candidate_peer == peer:
+            output = verified_job_result(candidate, boot, job_id, prompt)
+    result_status, _ = murakumo_post(
+        f"/infer/queue/{job_id}/result",
+        {"did": MURAKUMO_NODE_DID, "output": output, "ms": 0}, opener)
+    if result_status != 201:
+        return {"state": "failed", "stage": "result", "status": result_status,
+                "job-id": job_id}
+    ready_status, _ = murakumo_post(
+        f"/infer/nodes/{MURAKUMO_NODE_NAME}/heartbeat",
+        murakumo_heartbeat(True), opener)
+    if ready_status != 201:
+        return {"state": "failed", "stage": "ready-heartbeat",
+                "status": ready_status, "job-id": job_id}
+    commit = committed_payload(boot, job_id)
+    for _ in range(5):
+        sock.sendto(commit, peer)
+        sleeper(0.2)
+    return {"state": "ready", "boot": boot, "job-id": job_id,
+            "model": MURAKUMO_JOB_MODEL, "token": output["text"],
+            "prompt": prompt}
 
 
 def qualify_murakumo_job(message, sock, peer, opener=urllib.request.urlopen,
@@ -371,62 +443,52 @@ def qualify_murakumo_job(message, sock, peer, opener=urllib.request.urlopen,
     job = next((candidate for candidate in jobs
                 if str(candidate.get("job-id", "")) == job_id), None) \
         if list_status == 200 and isinstance(jobs, list) else None
-    payload = job_payload(boot, job or {})
-    if not payload:
+    if not job_payload(boot, job or {}):
         return {"state": "failed", "stage": "queue-observe", "status": list_status,
                 "job-id": job_id}
-    claim_status, _ = murakumo_post(
-        f"/infer/queue/{job_id}/claim", {"did": MURAKUMO_NODE_DID}, opener)
-    if claim_status != 201:
-        return {"state": "failed", "stage": "claim", "status": claim_status,
-                "job-id": job_id}
-    for _ in range(5):
-        sock.sendto(payload, peer)
-        sleeper(0.2)
-    deadline = time.monotonic() + 30
-    output = None
-    while output is None:
-        remaining = deadline - time.monotonic()
-        if remaining <= 0:
-            return {"state": "failed", "stage": "k16-result-timeout",
-                    "job-id": job_id}
-        try:
-            candidate, candidate_peer = result_queue.get(timeout=remaining)
-        except queue.Empty:
-            return {"state": "failed", "stage": "k16-result-timeout",
-                    "job-id": job_id}
-        if candidate_peer == peer:
-            output = verified_job_result(candidate, boot, job_id)
-    result_status, _ = murakumo_post(
-        f"/infer/queue/{job_id}/result",
-        {"did": MURAKUMO_NODE_DID, "output": output, "ms": 0}, opener)
-    if result_status != 201:
-        return {"state": "failed", "stage": "result", "status": result_status,
-                "job-id": job_id}
-    ready_status, _ = murakumo_post(
-        f"/infer/nodes/{MURAKUMO_NODE_NAME}/heartbeat",
-        murakumo_heartbeat(True), opener)
-    if ready_status != 201:
-        return {"state": "failed", "stage": "ready-heartbeat",
-                "status": ready_status, "job-id": job_id}
-    commit = committed_payload(boot, job_id)
-    for _ in range(5):
-        sock.sendto(commit, peer)
-        sleeper(0.2)
-    return {"state": "ready", "boot": boot, "job-id": job_id,
-            "model": MURAKUMO_JOB_MODEL, "token": output["text"]}
+    return dispatch_murakumo_job(
+        boot, job, sock, peer, opener, result_queue, sleeper)
 
 
 def maintain_murakumo_liveness(
         boot, sock, peer, opener=urllib.request.urlopen,
         result_queue=MURAKUMO_LIVENESS_RESULTS, sleeper=time.sleep,
-        rounds=None, interval=30, timeout=10):
+        rounds=None, interval=30, timeout=10,
+        job_result_queue=MURAKUMO_JOB_RESULTS):
     sequence = 1
     renewed = 0
+    executed = 0
     while rounds is None or renewed < rounds:
+        queue_status, jobs = (200, []) if renewed == 0 else \
+            murakumo_get("/infer/queue", opener)
+        if queue_status != 200 or not isinstance(jobs, list):
+            return {"state": "failed", "stage": "queue-poll",
+                    "status": queue_status, "boot": boot,
+                    "renewed": renewed, "executed": executed}
+        job = next((candidate for candidate in jobs
+                    if job_payload(boot, candidate)), None)
+        if job is not None:
+            work = dispatch_murakumo_job(
+                boot, job, sock, peer, opener, job_result_queue, sleeper)
+            if work.get("state") == "ready":
+                renewed += 1
+                executed += 1
+                print(f"AIUEOS_MURAKUMO_WORK state=recorded boot={boot} "
+                      f"job-id={work['job-id']} count={executed}", flush=True)
+                if rounds is None or renewed < rounds:
+                    sleeper(interval)
+                continue
+            if work.get("state") != "raced":
+                murakumo_post(
+                    f"/infer/nodes/{MURAKUMO_NODE_NAME}/heartbeat",
+                    murakumo_heartbeat(False), opener)
+                return {"state": "failed", "stage": "queued-work",
+                        "work-stage": work.get("stage"), "boot": boot,
+                        "renewed": renewed, "executed": executed}
         ping = node_ping_payload(boot, sequence)
         if not ping:
-            return {"state": "failed", "stage": "liveness-ping", "renewed": renewed}
+            return {"state": "failed", "stage": "liveness-ping",
+                    "renewed": renewed, "executed": executed}
         sock.sendto(ping, peer)
         deadline = time.monotonic() + timeout
         valid = False
@@ -445,21 +507,23 @@ def maintain_murakumo_liveness(
                 f"/infer/nodes/{MURAKUMO_NODE_NAME}/heartbeat",
                 murakumo_heartbeat(False), opener)
             return {"state": "stale", "stage": "liveness-timeout",
-                    "boot": boot, "sequence": sequence, "renewed": renewed}
+                    "boot": boot, "sequence": sequence, "renewed": renewed,
+                    "executed": executed}
         status, _ = murakumo_post(
             f"/infer/nodes/{MURAKUMO_NODE_NAME}/heartbeat",
             murakumo_heartbeat(True), opener)
         if status != 201:
             return {"state": "failed", "stage": "heartbeat-renew",
                     "status": status, "boot": boot, "sequence": sequence,
-                    "renewed": renewed}
+                    "renewed": renewed, "executed": executed}
         renewed += 1
         print(f"AIUEOS_MURAKUMO_LIVENESS state=renewed boot={boot} "
               f"sequence={sequence} count={renewed}", flush=True)
         sequence = (sequence + 1) & 0xffffffff
         if rounds is None or renewed < rounds:
             sleeper(interval)
-    return {"state": "live", "boot": boot, "renewed": renewed}
+    return {"state": "live", "boot": boot, "renewed": renewed,
+            "executed": executed}
 
 
 def register_murakumo_hello(message, opener=urllib.request.urlopen):
@@ -893,22 +957,48 @@ def selftest():
         assert ready_body["node/model"] == MURAKUMO_JOB_MODEL
         assert ready_body["node/capacity"] == {
             "slots-total": 1, "slots-free": 1}
+        assert micro_infer_expected("awai") == ("n", 3, 8)
+        assert micro_infer_expected("ends-in-b") is None
         liveness_results = queue.Queue()
         liveness_results.put((
             "AIUEOS_NODE_PONG_V1 boot=0123456789abcdef seq=1 state=ready",
             (CLIENT_IP, 7779)))
-        liveness_results.put((
-            "AIUEOS_NODE_PONG_V1 boot=0123456789abcdef seq=2 state=ready",
+        worker_results = queue.Queue()
+        worker_results.put((
+            "AIUEOS_JOB_RESULT_V1 boot=0123456789abcdef id=210 "
+            "model=aiueos-char-bigram-v1 token=6e score=3 total=8",
             (CLIENT_IP, 7779)))
+        liveness_captured = []
+        liveness_gets = [0]
+        def fake_liveness_open(request, timeout):
+            liveness_captured.append((request.full_url, request.method,
+                                      request.data, timeout))
+            if request.method == "GET":
+                liveness_gets[0] += 1
+                jobs = [{"job-id": "210", "kind": MURAKUMO_JOB_KIND,
+                         "input": {"model": MURAKUMO_JOB_MODEL,
+                                   "prompt": "awai"}, "price": 1}] \
+                    if liveness_gets[0] == 1 else []
+                return FakeResponse(200, json.dumps(jobs).encode("utf-8"))
+            return FakeResponse(201)
         liveness = maintain_murakumo_liveness(
             "0123456789abcdef", fake_socket, (CLIENT_IP, 7779),
-            fake_job_open, liveness_results, lambda _seconds: None,
-            rounds=2, interval=0, timeout=0.1)
+            fake_liveness_open, liveness_results, lambda _seconds: None,
+            rounds=2, interval=0, timeout=0.1,
+            job_result_queue=worker_results)
         assert liveness == {"state": "live", "boot": "0123456789abcdef",
-                            "renewed": 2}
+                            "renewed": 2, "executed": 1}
+        assert any(payload ==
+                   b"AIUEOS_JOB_V1 boot=0123456789abcdef id=210 kind=aiueos-micro-infer prompt=61776169"
+                   for payload, _peer in fake_socket.sent)
+        assert any(payload ==
+                   b"AIUEOS_NODE_PING_V1 boot=0123456789abcdef seq=1"
+                   for payload, _peer in fake_socket.sent)
         assert fake_socket.sent[-1][0] == \
-            b"AIUEOS_NODE_PING_V1 boot=0123456789abcdef seq=2"
-        assert len(job_captured) == 7
+            b"AIUEOS_JOB_COMMIT_V1 boot=0123456789abcdef id=210 state=recorded"
+        assert [entry[1] for entry in liveness_captured] == \
+            ["POST", "GET", "POST", "POST", "POST"]
+        assert len(job_captured) == 5
     finally:
         globals()["MURAKUMO_NODE_DID"] = old_did
         globals()["MURAKUMO_SERVICE_TOKEN"] = old_token
@@ -920,7 +1010,7 @@ def selftest():
     except ValueError:
         pass
     print("AIUEOS_PXE_SELFTEST_OK dhcp=pxe+http tftp=oack control=token-bound "
-          "node-relay=request-bound murakumo=enqueue+claim+k16-result+ready+renew "
+          "node-relay=request-bound murakumo=qualify+poll+claim+result+renew "
           "interface-bound=yes")
 
 
