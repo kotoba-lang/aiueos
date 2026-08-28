@@ -123,6 +123,7 @@ qualification_link=
 gop_discovery_cflags=
 loader_failure_test_cflags=
 loader_hang_test_cflags=
+kernel_hang_test_cflags=
 if [ "${AIUEOS_PHYSICAL_QUALIFICATION:-0}" = 1 ]; then
   physical_qualification_cflags="-DAIUEOS_PHYSICAL_QUALIFICATION=1"
   qualification_link="$kernel_qualification_object"
@@ -135,6 +136,9 @@ if [ -n "${AIUEOS_QUALIFICATION_FORCE_LOADER_FAILURE_CODE:-}" ]; then
 fi
 if [ -n "${AIUEOS_QUALIFICATION_FORCE_LOADER_HANG_CODE:-}" ]; then
   loader_hang_test_cflags="-DAIUEOS_QUALIFICATION_FORCE_LOADER_HANG_CODE=${AIUEOS_QUALIFICATION_FORCE_LOADER_HANG_CODE} -DAIUEOS_QUALIFICATION_LOADER_WATCHDOG_SECONDS=${AIUEOS_QUALIFICATION_LOADER_WATCHDOG_SECONDS:-3}"
+fi
+if [ -n "${AIUEOS_QUALIFICATION_FORCE_KERNEL_HANG_CODE:-}" ]; then
+  kernel_hang_test_cflags="-DAIUEOS_QUALIFICATION_FORCE_KERNEL_HANG_CODE=${AIUEOS_QUALIFICATION_FORCE_KERNEL_HANG_CODE}"
 fi
 kotoba_ime_object=${AIUEOS_KOTOBA_IME_OBJECT:-"$aiueos/kotoba/ime-romaji.o"}
 kotoba_wm_object=${AIUEOS_KOTOBA_WM_OBJECT:-"$aiueos/kotoba/wm-hit.o"}
@@ -407,7 +411,7 @@ if [ -n "${AIUEOS_EXTERNAL_KERNEL_ELF:-}" ]; then
 else
 zig cc -target x86_64-freestanding-none -std=c11 -O2 \
   -ffreestanding -fno-stack-protector -mno-red-zone \
-  $input_smoke_cflags $physical_qualification_cflags \
+  $input_smoke_cflags $physical_qualification_cflags $kernel_hang_test_cflags \
   -c -o "$kernel_object" "$aiueos/kernel/main.c"
 zig cc -target x86_64-freestanding-none \
   -c -o "$kernel_entry_object" "$aiueos/kernel/entry.S"

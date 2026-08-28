@@ -125,6 +125,7 @@ extern int aiueos_framebuffer_initialize(const struct aiueos_boot_info *boot);
 extern void aiueos_framebuffer_qualification_screen(const char *, const char *,
                                                      const char *, int);
 extern void aiueos_qualification_runtime_initialize(void *, uint64_t);
+extern int aiueos_qualification_progress(uint32_t);
 extern int aiueos_qualification_finalize(uint16_t, uint32_t);
 extern int aiueos_desktop_surface_ready(void);
 extern int aiueos_desktop_surface_bind_scanout(uint32_t width, uint32_t height);
@@ -505,9 +506,18 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
     aiueos_qualification_runtime_initialize(
         boot->version >= 3 ? boot->runtime_services : 0,
         boot->version >= 3 ? boot->firmware_cr3 : 0);
+    aiueos_qualification_progress(220);
+#ifdef AIUEOS_QUALIFICATION_FORCE_KERNEL_HANG_CODE
+    aiueos_qualification_progress(AIUEOS_QUALIFICATION_FORCE_KERNEL_HANG_CODE);
+    debug_string("AIUEOS_KERNEL_PROGRESS forced-hang\n");
+    for (;;) __asm__ volatile("pause");
+#endif
 #endif
     debug_string("AIUEOS_KERNEL_OK memory-map-v1\n");
     serial_string("AIUEOS_SERIAL_OK stack-v1 memory-map-v1\r\n");
+#ifdef AIUEOS_PHYSICAL_QUALIFICATION
+    aiueos_qualification_progress(221);
+#endif
     extern uint64_t kotoba_aiueos_probe(void);
     if (kotoba_aiueos_probe() != 42u) {
       debug_string("AIUEOS_KOTOBA_NATIVE_FAIL probe-result\n");
@@ -553,6 +563,9 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
       qemu_exit(0x6f);
     }
     serial_string("AIUEOS_KOTOBA_STORE_VECTOR_OK journal-sequence=1\r\n");
+#ifdef AIUEOS_PHYSICAL_QUALIFICATION
+    aiueos_qualification_progress(222);
+#endif
     aiueos_load_gdt();
     set_idt_gate(6, aiueos_isr_invalid_opcode);
     set_idt_gate(14, aiueos_isr_page_fault);
@@ -592,6 +605,9 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
        0xf8 because 0xf8+7 is 255, the Local APIC spurious vector this kernel
        programs in apic.c:42. 224..239 is clear of 32-35, 128 and 255. */
     extern uint64_t kotoba_aiueos_pic_disable(uint64_t, uint64_t);
+#ifdef AIUEOS_PHYSICAL_QUALIFICATION
+    aiueos_qualification_progress(223);
+#endif
     if (!kotoba_aiueos_pic_disable(0xe0, 0xe8)) {
       debug_string("AIUEOS_PIC_FAIL base-refused\n");
       serial_string("AIUEOS_PIC_FAIL base-refused\r\n");
@@ -599,6 +615,9 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
     }
     debug_string("AIUEOS_PIC_OK remapped=0xe0/0xe8 masked=both\n");
     serial_string("AIUEOS_PIC_OK remapped=0xe0/0xe8 masked=both\r\n");
+#ifdef AIUEOS_PHYSICAL_QUALIFICATION
+    aiueos_qualification_progress(224);
+#endif
     if (!aiueos_paging_initialize()) {
       debug_string("AIUEOS_PAGING_FAIL ownership-or-wx\n");
       serial_string("AIUEOS_PAGING_FAIL ownership-or-wx\r\n");
@@ -606,6 +625,9 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
     }
     debug_string("AIUEOS_PAGING_OK cr3-owned wx-v1 nx-wp\n");
     serial_string("AIUEOS_PAGING_OK cr3-owned wx-v1 nx-wp\r\n");
+#ifdef AIUEOS_PHYSICAL_QUALIFICATION
+    aiueos_qualification_progress(225);
+#endif
     /* Placed AFTER the kernel owns its own IDT and page tables, not beside the
        other known-vector self-tests earlier in boot. Measured: running it there
        faulted with the FIRMWARE's handler still installed, so the only output
@@ -667,6 +689,9 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
       }
       serial_string("AIUEOS_ECDSA_P256_OK rfc6979-sample s+1-refused\r\n");
     }
+#ifdef AIUEOS_PHYSICAL_QUALIFICATION
+    aiueos_qualification_progress(226);
+#endif
     if (!aiueos_framebuffer_initialize(boot)) {
       debug_string("AIUEOS_FRAMEBUFFER_FAIL gop-contract\n");
       serial_string("AIUEOS_FRAMEBUFFER_FAIL gop-contract\r\n");
@@ -677,6 +702,9 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
     if (!aiueos_desktop_surface_ready()) qemu_exit(0x68);
     debug_string("AIUEOS_DESKTOP_SURFACE_OK envelope-v1 opaque-handle full-damage hash-verified\n");
     serial_string("AIUEOS_DESKTOP_SURFACE_OK envelope-v1 opaque-handle full-damage hash-verified\r\n");
+#ifdef AIUEOS_PHYSICAL_QUALIFICATION
+    aiueos_qualification_progress(227);
+#endif
     if (!aiueos_physical_allocator_initialize(boot)) {
       debug_string("AIUEOS_PHYSICAL_ALLOCATOR_FAIL memory-map\n");
       serial_string("AIUEOS_PHYSICAL_ALLOCATOR_FAIL memory-map\r\n");
@@ -711,6 +739,9 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
       serial_string("AIUEOS_CAPABILITY_TABLE_FAIL page-allocation\r\n");
       qemu_exit(0x75);
     }
+#ifdef AIUEOS_PHYSICAL_QUALIFICATION
+    aiueos_qualification_progress(228);
+#endif
     if (!aiueos_acpi_initialize(boot->acpi_rsdp)) {
 #ifdef AIUEOS_PHYSICAL_QUALIFICATION
       aiueos_framebuffer_qualification_screen("AIUEOS K16", "FAIL ACPI", "SSD READ ONLY", 0);
@@ -731,6 +762,7 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
        Kotoba object execution, owned paging, GOP, allocator and ACPI on the
        physical machine.  It stops before DMA, PCI drivers or any block write;
        those need K16-specific AMD-IOMMU, NVMe and RTL8125 qualification. */
+    aiueos_qualification_progress(229);
     aiueos_framebuffer_qualification_screen("AIUEOS K16", "NATIVE CORE OK", "SSD READ ONLY", 1);
     debug_string("AIUEOS_PHYSICAL_QUALIFICATION_OK native-core-v2 internal-disk-writes=none\n");
     serial_string("AIUEOS_PHYSICAL_QUALIFICATION_OK native-core-v2 internal-disk-writes=none\r\n");

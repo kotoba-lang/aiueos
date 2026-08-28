@@ -64,6 +64,27 @@ static void write_cr3(uint64_t value) {
   __asm__ volatile("mov %0, %%cr3" : : "r"(value) : "memory");
 }
 
+/* Keep the last entered physical-qualification stage across a hang or manual
+   power cycle. This has the same 16-byte NVRAM-only boundary as finalize, but
+   deliberately does not reset the machine or touch a block device. */
+int aiueos_qualification_progress(uint32_t code) {
+  struct efi_runtime_services *runtime = qualification_runtime;
+  if (!runtime || !qualification_firmware_cr3 || !runtime->set_variable) return 0;
+  struct aiueos_qualification_record record = {
+    0x514b3241U, 2, 0, code, 0
+  };
+  uint64_t kernel_cr3 = read_cr3();
+  __asm__ volatile("cli");
+  write_cr3(qualification_firmware_cr3);
+  efi_status status = runtime->set_variable(
+      qualification_name, &qualification_guid,
+      EFI_VARIABLE_NON_VOLATILE | EFI_VARIABLE_BOOTSERVICE_ACCESS |
+        EFI_VARIABLE_RUNTIME_ACCESS,
+      sizeof(record), &record);
+  write_cr3(kernel_cr3);
+  return status == EFI_SUCCESS;
+}
+
 /* Persist only a bounded result code in firmware NVRAM, then warm-reset into
    the one-shot BootNext entry installed by the USB probe.  The probe, still
    under UEFI Boot Services, is the only component that writes RESULT.LOG to
