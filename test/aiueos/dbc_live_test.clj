@@ -55,7 +55,7 @@
   (testing "the normal-user Mac server combines boot and live log receive"
     (doseq [marker ["AIUEOS_PXE_DHCP_READY" "AIUEOS_PXE_TFTP_OK"
                     "AIUEOS_HTTP_READY" "AIUEOS_NETLOG_RX"
-                    "AIUEOS_PXE_BOOT"]]
+                    "AIUEOS_PXE_BOOT" "AIUEOS_CONTROL_TX"]]
       (is (str/includes? pxe-server marker))))
   (testing "the physical result stays narrower than native boot qualification"
     (is (str/includes? contract ":kind :uefi-pxe-base-code-udp"))
@@ -64,6 +64,31 @@
   (testing "network telemetry does not widen the disk-write boundary"
     (doseq [forbidden ["block_io" "write_blocks"]]
       (is (not (str/includes? probe forbidden))))))
+
+(deftest pxe-control-is-token-bound-and-bootnext-only
+  (testing "the target accepts only a per-boot nonce and two bounded commands"
+    (doseq [marker ["AIUEOS_CONTROL_READY nonce="
+                    "AIUEOS_CTL_V1 nonce="
+                    "format_control_command(expected,\"ping\")"
+                    "format_control_command(expected,\"reboot-pxe\")"
+                    "PXE_UDP_ANY_SRC_PORT"
+                    "source={{10,77,0,1}}"]]
+      (is (str/includes? probe marker))))
+  (testing "reboot fails closed unless the current PXE option becomes BootNext"
+    (doseq [marker ["boot_current_name" "boot_next_name"
+                    "select_current_boot_next"
+                    "EFI_VARIABLE_NON_VOLATILE"
+                    "reset_system(EFI_RESET_COLD"]]
+      (is (str/includes? probe marker)))
+    (is (not (str/includes? probe "boot_order_name")))
+    (is (str/includes? contract ":boot-next-one-shot-write? true"))
+    (is (str/includes? contract ":boot-order-write? false"))
+    (is (str/includes? contract ":physical-state :received-live"))
+    (is (str/includes? contract ":automatic-pxe-return? true"))
+    (is (str/includes? contract ":post-return-ping? true")))
+  (testing "the Mac sender exposes no arbitrary command surface"
+    (is (str/includes? pxe-server "CONTROL_COMMANDS = (\"ping\", \"reboot-pxe\")"))
+    (is (str/includes? pxe-server "control=token-bound"))))
 
 (deftest live-image-is-explicitly-not-a-qualification-or-install
   (is (str/includes? image-build "--mode dbc-live"))

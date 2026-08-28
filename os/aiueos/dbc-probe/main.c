@@ -4,6 +4,7 @@
 #define EFIAPI __attribute__((ms_abi))
 #define EFI_SUCCESS 0
 #define EFI_BUFFER_TOO_SMALL ((uint64_t)0x8000000000000005ULL)
+#define EFI_TIMEOUT ((uint64_t)0x8000000000000012ULL)
 #define EFI_NOT_FOUND ((uint64_t)0x8000000000000014ULL)
 #define EFI_INVALID_PARAMETER ((uint64_t)0x8000000000000002ULL)
 #define EFI_BY_PROTOCOL 2
@@ -43,6 +44,12 @@
 #define DBC_VENDOR_ID 0xffffU
 #define DBC_PRODUCT_ID 0xa11eU
 #define NETLOG_PORT 7777U
+#define CONTROL_PORT 7778U
+#define PXE_UDP_ANY_SRC_PORT 0x0002U
+#define EFI_VARIABLE_NON_VOLATILE 0x00000001U
+#define EFI_VARIABLE_BOOTSERVICE_ACCESS 0x00000002U
+#define EFI_VARIABLE_RUNTIME_ACCESS 0x00000004U
+#define EFI_RESET_COLD 0U
 
 typedef uint64_t efi_status;
 typedef void *efi_handle;
@@ -62,6 +69,8 @@ struct efi_simple_text_output {
   efi_output_string output_string;
   void *rest[8];
 };
+
+struct efi_runtime_services;
 
 typedef efi_status(EFIAPI *efi_handle_protocol)(efi_handle,
                                                 const struct efi_guid *, void **);
@@ -95,11 +104,35 @@ struct efi_system_table {
   struct efi_simple_text_output *console_out;
   efi_handle standard_error_handle;
   struct efi_simple_text_output *standard_error;
-  void *runtime_services;
+  struct efi_runtime_services *runtime_services;
   struct efi_boot_services *boot_services;
   uint64_t number_of_table_entries;
   void *configuration_table;
 };
+
+typedef efi_status(EFIAPI *efi_get_variable)(char16 *, const struct efi_guid *,
+                                              uint32_t *, uint64_t *, void *);
+typedef efi_status(EFIAPI *efi_set_variable)(char16 *, const struct efi_guid *,
+                                              uint32_t, uint64_t, void *);
+typedef void(EFIAPI *efi_reset_system)(uint32_t, efi_status, uint64_t, void *);
+struct efi_runtime_services {
+  struct efi_table_header header;
+  void *get_time, *set_time, *get_wakeup_time, *set_wakeup_time,
+       *set_virtual_address_map, *convert_pointer;
+  efi_get_variable get_variable;
+  void *get_next_variable_name;
+  efi_set_variable set_variable;
+  void *get_next_high_monotonic_count;
+  efi_reset_system reset_system;
+  void *update_capsule, *query_capsule_capabilities, *query_variable_info;
+};
+
+_Static_assert(offsetof(struct efi_runtime_services,get_variable)==0x48,
+               "UEFI runtime GetVariable offset");
+_Static_assert(offsetof(struct efi_runtime_services,set_variable)==0x58,
+               "UEFI runtime SetVariable offset");
+_Static_assert(offsetof(struct efi_runtime_services,reset_system)==0x68,
+               "UEFI runtime ResetSystem offset");
 
 struct efi_loaded_image_protocol {
   uint32_t revision;
@@ -124,13 +157,23 @@ typedef efi_status(EFIAPI *efi_pxe_udp_write)(
     struct efi_pxe_base_code_protocol *, uint16_t, union efi_ip_address *,
     uint16_t *, union efi_ip_address *, union efi_ip_address *, uint16_t *,
     uint64_t *, void *, uint64_t *, void *);
+typedef efi_status(EFIAPI *efi_pxe_udp_read)(
+    struct efi_pxe_base_code_protocol *, uint16_t, union efi_ip_address *,
+    uint16_t *, union efi_ip_address *, uint16_t *, uint64_t *, void *,
+    uint64_t *, void *);
 struct efi_pxe_base_code_protocol {
   uint64_t revision;
   void *start, *stop, *dhcp, *discover, *mtftp;
   efi_pxe_udp_write udp_write;
-  void *udp_read, *set_ip_filter, *arp, *set_parameters, *set_station_ip,
+  efi_pxe_udp_read udp_read;
+  void *set_ip_filter, *arp, *set_parameters, *set_station_ip,
        *set_packets, *mode;
 };
+
+_Static_assert(offsetof(struct efi_pxe_base_code_protocol,udp_write)==0x30,
+               "UEFI PXE UdpWrite offset");
+_Static_assert(offsetof(struct efi_pxe_base_code_protocol,udp_read)==0x38,
+               "UEFI PXE UdpRead offset");
 
 struct efi_pci_io_protocol;
 typedef efi_status(EFIAPI *efi_pci_config_access)(struct efi_pci_io_protocol *,
@@ -226,11 +269,17 @@ static const struct efi_guid loaded_image_guid =
   {0x5b1b31a1,0x9562,0x11d2,{0x8e,0x3f,0x00,0xa0,0xc9,0x69,0x72,0x3b}};
 static const struct efi_guid pxe_base_code_guid =
   {0x03c4e603,0xac28,0x11d3,{0x9a,0x2d,0x00,0x90,0x27,0x3f,0xc1,0x4d}};
+static const struct efi_guid global_variable_guid =
+  {0x8be4df61,0x93ca,0x11d2,{0xaa,0x0d,0x00,0xe0,0x98,0x03,0x2b,0x8c}};
+static char16 boot_current_name[] =
+  {'B','o','o','t','C','u','r','r','e','n','t',0};
+static char16 boot_next_name[] = {'B','o','o','t','N','e','x','t',0};
 static struct efi_simple_text_output *console;
 static struct efi_boot_services *boot_services;
 static struct efi_pxe_base_code_protocol *pxe_handles[MAX_PXE_HANDLES];
 static uint32_t pxe_count;
 static int32_t active_pxe=-1;
+static uint64_t control_nonce;
 static struct dbc_state controllers[MAX_DBC_CONTROLLERS];
 static uint32_t controller_count;
 
@@ -356,6 +405,120 @@ static int bytes_start_with(const uint8_t *input, uint64_t input_bytes,
     index++;
   }
   return 1;
+}
+
+static int bytes_equal_ascii(const uint8_t *input, uint64_t input_bytes,
+                             const char *expected) {
+  uint64_t expected_bytes=ascii_length(expected);
+  if (input_bytes!=expected_bytes) return 0;
+  for (uint64_t index=0;index<input_bytes;index++)
+    if (input[index]!=(uint8_t)expected[index]) return 0;
+  return 1;
+}
+
+static uint64_t timestamp_counter(void) {
+  uint32_t low=0,high=0;
+  __asm__ volatile("rdtsc" : "=a"(low),"=d"(high));
+  return ((uint64_t)high<<32)|low;
+}
+
+static uint64_t format_control_command(char *buffer, const char *command) {
+  char *output=append_ascii(buffer,"AIUEOS_CTL_V1 nonce=");
+  output=append_hex(output,control_nonce,16);
+  output=append_ascii(output," command=");
+  output=append_ascii(output,command);
+  *output=0;
+  return (uint64_t)(output-buffer);
+}
+
+static efi_status select_current_boot_next(struct efi_system_table *system,
+                                           uint16_t *selected) {
+  if (!system || !system->runtime_services ||
+      !system->runtime_services->get_variable ||
+      !system->runtime_services->set_variable || !selected)
+    return EFI_NOT_FOUND;
+  uint32_t attributes=0;
+  uint64_t bytes=sizeof(*selected);
+  efi_status status=system->runtime_services->get_variable(
+      boot_current_name,&global_variable_guid,&attributes,&bytes,selected);
+  if (status!=EFI_SUCCESS) return status;
+  if (bytes!=sizeof(*selected)) return EFI_INVALID_PARAMETER;
+  attributes=EFI_VARIABLE_NON_VOLATILE|EFI_VARIABLE_BOOTSERVICE_ACCESS|
+             EFI_VARIABLE_RUNTIME_ACCESS;
+  return system->runtime_services->set_variable(
+      boot_next_name,&global_variable_guid,attributes,sizeof(*selected),selected);
+}
+
+static void report_control_ready(void) {
+  char line[192],*output=append_ascii(line,"AIUEOS_CONTROL_READY nonce=");
+  output=append_hex(output,control_nonce,16);
+  output=append_ascii(output,
+      " listen=10.77.0.10:7778 source=10.77.0.1 commands=ping,reboot-pxe");
+  append_line_end(&output);
+  console_ascii(line);
+}
+
+static void handle_control(struct efi_system_table *system,
+                           const uint8_t *payload, uint64_t payload_bytes) {
+  char expected[96];
+  format_control_command(expected,"ping");
+  if (bytes_equal_ascii(payload,payload_bytes,expected)) {
+    char line[128],*output=append_ascii(line,
+        "AIUEOS_CONTROL_ACK command=ping nonce=");
+    output=append_hex(output,control_nonce,16);
+    append_line_end(&output);
+    console_ascii(line);
+    return;
+  }
+
+  format_control_command(expected,"reboot-pxe");
+  if (!bytes_equal_ascii(payload,payload_bytes,expected)) {
+    console_ascii("AIUEOS_CONTROL_REJECT reason=nonce-or-command\r\n");
+    return;
+  }
+
+  uint16_t boot_current=0;
+  efi_status status=select_current_boot_next(system,&boot_current);
+  if (status!=EFI_SUCCESS) {
+    char line[160],*output=append_ascii(line,
+        "AIUEOS_CONTROL_FAIL command=reboot-pxe stage=set-boot-next status=");
+    output=append_hex(output,status,16);
+    append_line_end(&output);
+    console_ascii(line);
+    return;
+  }
+
+  char line[160],*output=append_ascii(line,
+      "AIUEOS_CONTROL_ACK command=reboot-pxe boot_current=");
+  output=append_hex(output,boot_current,4);
+  output=append_ascii(output," boot_next=");
+  output=append_hex(output,boot_current,4);
+  append_line_end(&output);
+  console_ascii(line);
+  if (boot_services && boot_services->stall) boot_services->stall(200000);
+  if (system && system->runtime_services && system->runtime_services->reset_system)
+    system->runtime_services->reset_system(EFI_RESET_COLD,EFI_SUCCESS,0,0);
+}
+
+static void service_control(struct efi_system_table *system) {
+  if (active_pxe<0 || (uint32_t)active_pxe>=pxe_count) return;
+  struct efi_pxe_base_code_protocol *pxe=pxe_handles[active_pxe];
+  if (!pxe || !pxe->udp_read) return;
+  union efi_ip_address destination={{10,77,0,10}};
+  union efi_ip_address source={{10,77,0,1}};
+  uint16_t destination_port=CONTROL_PORT;
+  uint8_t payload[256];
+  uint64_t payload_bytes=sizeof(payload);
+  efi_status status=pxe->udp_read(
+      pxe,PXE_UDP_ANY_SRC_PORT,&destination,&destination_port,&source,0,
+      0,0,&payload_bytes,payload);
+  if (status==EFI_SUCCESS) handle_control(system,payload,payload_bytes);
+  else if (status!=EFI_TIMEOUT) {
+    char line[128],*output=append_ascii(line,"AIUEOS_CONTROL_READ status=");
+    output=append_hex(output,status,16);
+    append_line_end(&output);
+    console_ascii(line);
+  }
 }
 
 static void dma_barrier(void) {
@@ -780,6 +943,9 @@ efi_status EFIAPI efi_main(efi_handle image, struct efi_system_table *system) {
       !system->console_out->output_string) return EFI_INVALID_PARAMETER;
   console=system->console_out;
   boot_services=system->boot_services;
+  control_nonce=timestamp_counter()^(uint64_t)(uintptr_t)image^
+                (uint64_t)(uintptr_t)system;
+  if (!control_nonce) control_nonce=0xa11e10c077000001ULL;
   discover_netlog(image);
   console_ascii("\r\nAIUEOS DBC LIVE PROBE (NO DISK WRITES)\r\n");
   console_ascii("AIUEOS_DBC_START transport=xhci-dbc direction=duplex internal-ssd-writes=none usb-log-writes=none\r\n");
@@ -793,9 +959,11 @@ efi_status EFIAPI efi_main(efi_handle image, struct efi_system_table *system) {
   } else {
     console_ascii("AIUEOS_DBC_WAITING connect-or-replug-type-c mac-receiver-required\r\n");
   }
+  report_control_ready();
   for (;;) {
     for (uint32_t index=0;index<controller_count;index++)
       service_controller(&controllers[index]);
+    service_control(system);
     if (system->boot_services->stall) system->boot_services->stall(10000);
   }
 }

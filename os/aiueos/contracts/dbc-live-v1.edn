@@ -33,11 +33,34 @@
    :state :received-live
    :controllers 5
    :dbc-state {:dce 1 :debug-port 0 :ccs 0 :ped 0 :pls 5 :speed 0 :dcr 0}}
+  :control
+  {:listen "10.77.0.10:7778"
+   :allowed-source "10.77.0.1"
+   :authorization :per-boot-nonce
+   :commands [:ping :reboot-pxe]
+   :reboot-pxe {:boot-current-read? true
+                :boot-next-one-shot-write? true
+                :boot-order-write? false
+                :fail-closed-before-reset? true}
+   :physical-state :received-live
+   :physical-observation
+   {:date "2026-08-28"
+    :boot-current 0x0002
+    :boot-next 0x0002
+    :initial-nonce "0000000e4c3c4a20"
+    :returned-nonce "00000008707b3ca0"
+    :automatic-pxe-return? true
+    :post-return-ping? true
+    :efi-bytes 17408
+    :efi-sha256 "fcca6d1b174dbd0076e6a685da022577c926437825a6431a4cfd6319058ce924"
+    :evidence-sha256 "83c14f82cf1e4159c9cd67ade9a499a2483e54fde1e2ffb6dcbc84e2a6d634de"}}
   :does-not-qualify [:native-core-boot :xhci-dbc-duplex :ssd-install]}
  :safety {:exit-boot-services? false
           :block-io-opened? false
           :internal-disk-writes? false
           :qualification-usb-runtime-writes? false
+          :boot-order-writes? false
+          :boot-next-one-shot-write? true
           :ssd-install? false}
  :physical-gate {:state :unverified
                  :requires ["AIUEOS_DBC_MAC_CONNECTED direction=duplex"
