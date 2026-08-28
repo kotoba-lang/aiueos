@@ -301,7 +301,8 @@ def fat16_read(volume, path):
     return bytes(output[:size])
 
 
-def verify(path, probe_path, loader_path, kernel_path, initramfs_path):
+def verify(path, probe_path, loader_path, kernel_path, initramfs_path,
+           mode="qualification"):
     expected = {
         "probe": Path(probe_path).read_bytes(),
         "loader": Path(loader_path).read_bytes(),
@@ -371,8 +372,12 @@ def verify(path, probe_path, loader_path, kernel_path, initramfs_path):
             len(fat16_read(result_volume, ("PROBE.LOG",))) != 64 * 1024 or
             len(fat16_read(result_volume, ("RESULT.LOG",))) != 1024):
         raise ValueError("invalid passwordless result volume")
-    print("AIUEOS_PHYSICAL_QUALIFICATION_USB_OK probe-native-result-v11 "
-          "mac-user-mount internal-disks-read-only")
+    if mode == "dbc-live":
+        print("AIUEOS_DBC_LIVE_USB_OK xhci-dbc-v1 internal-disks-read-only "
+              "usb-runtime-writes-none")
+    else:
+        print("AIUEOS_PHYSICAL_QUALIFICATION_USB_OK probe-native-result-v11 "
+              "mac-user-mount internal-disks-read-only")
 
 
 def build(args):
@@ -392,7 +397,8 @@ def build(args):
     entries = bytearray(release.GPT_ENTRY_SECTORS * release.SECTOR)
     entries[:16], entries[16:32] = release.ESP_TYPE.bytes_le, release.ESP_GUID.bytes_le
     struct.pack_into("<QQQ", entries, 32, QUAL_ESP_FIRST, QUAL_ESP_LAST, 0)
-    name = "aiueos K16 qualify".encode("utf-16le")
+    name = ("aiueos K16 dbc" if args.mode == "dbc-live" else
+            "aiueos K16 qualify").encode("utf-16le")
     entries[56:56 + len(name)] = name
     entries[128:144], entries[144:160] = release.ESP_TYPE.bytes_le, release.RECOVERY_GUID.bytes_le
     struct.pack_into("<QQQ", entries, 160, release.RECOVERY_FIRST, release.RECOVERY_LAST, 0)
@@ -417,9 +423,10 @@ def build(args):
     disk[RESULT_FIRST * release.SECTOR:(RESULT_LAST + 1) * release.SECTOR] = \
         make_result_fat16()
     Path(args.output).write_bytes(disk)
-    verify(args.output, args.probe, args.loader, args.kernel, args.initramfs)
+    verify(args.output, args.probe, args.loader, args.kernel, args.initramfs,
+           args.mode)
     epoch = int(os.environ.get("SOURCE_DATE_EPOCH", "0"))
-    receipt = {
+    qualification_receipt = {
         "schema": "aiueos.physical-qualification-usb-receipt.v11",
         "created": datetime.fromtimestamp(epoch, timezone.utc).isoformat().replace("+00:00", "Z"),
         "profile": "k16-native-passwordless-result-firmware-first-v11",
@@ -451,6 +458,26 @@ def build(args):
                    "uefi_nvram_result_bytes": 16, "bootnext": "one-shot",
                    "ssd_install": False},
     }
+    dbc_receipt = {
+        "schema": "aiueos.dbc-live-usb-receipt.v1",
+        "created": datetime.fromtimestamp(epoch, timezone.utc).isoformat().replace("+00:00", "Z"),
+        "profile": "k16-xhci-dbc-duplex-v1",
+        "source": {"commit": os.environ.get("AIUEOS_SOURCE_COMMIT", "UNVERIFIED")},
+        "disk": {"bytes": len(disk), "sha256": digest(disk)},
+        "boot_order": ["uefi-dbc-live-probe"],
+        "transport": {"kind": "xhci-dbc", "direction": "duplex",
+                      "host": "macos-libusb-normal-user", "vendor_id": "ffff",
+                      "product_id": "a11e", "out_endpoint": "01",
+                      "in_endpoint": "81"},
+        "artifacts": qualification_receipt["artifacts"],
+        "result_volume": {"present_for_writer_layout": True, "runtime_use": "none"},
+        "safety": {"internal_disk_writes": False, "block_driver_reached": False,
+                   "qualification_usb_log_writes": False,
+                   "qualification_usb_write_scope": "none",
+                   "uefi_nvram_result_bytes": 0, "bootnext": "none",
+                   "ssd_install": False},
+    }
+    receipt = dbc_receipt if args.mode == "dbc-live" else qualification_receipt
     Path(args.receipt).write_text(json.dumps(receipt, indent=2, sort_keys=True) + "\n",
                                   encoding="utf-8")
 
@@ -460,6 +487,8 @@ def parser():
     sub = top.add_subparsers(dest="command", required=True)
     for command in ("build", "verify"):
         item = sub.add_parser(command)
+        item.add_argument("--mode", choices=("qualification", "dbc-live"),
+                          default="qualification")
         item.add_argument("--probe", required=True)
         item.add_argument("--loader", required=True)
         item.add_argument("--kernel", required=True)
@@ -475,7 +504,8 @@ def main():
     if args.command == "build":
         build(args)
     else:
-        verify(args.output, args.probe, args.loader, args.kernel, args.initramfs)
+        verify(args.output, args.probe, args.loader, args.kernel, args.initramfs,
+               args.mode)
 
 
 if __name__ == "__main__":

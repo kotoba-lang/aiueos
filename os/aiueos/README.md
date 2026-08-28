@@ -382,6 +382,25 @@ works, so the interactive command above remains the authoritative retrieval
 path unless Full Disk Access has been explicitly granted.  This watcher is
 mount-triggered result retrieval, not the still-gated DbC real-time transport.
 
+For the K16, the real-time path is qualified separately with the xHCI Debug
+Capability.  The dedicated UEFI probe does not open block I/O, leave firmware
+boot services, write the USB at runtime, or touch an internal disk.  It exposes
+one vendor-defined SuperSpeed bulk interface to the Mac and keeps the five DbC
+controllers observed on the physical K16 armed while the normal-user libusb
+receiver reconnects automatically:
+
+```sh
+SOURCE_DATE_EPOCH=0 ./os/aiueos/scripts/build-dbc-live-usb.sh
+receiver=$(./os/aiueos/scripts/build-dbc-receiver.sh)
+"$receiver"
+```
+
+`AIUEOS_DBC_MAC_CONNECTED`, a received `AIUEOS_DBC_LIVE` heartbeat, and then a
+later heartbeat with `rx>=1` are all required.  Together they prove K16-to-Mac
+streaming and a Mac-to-K16 acknowledgement.  A compiled client or a visible
+Type-C cable alone is not physical transport evidence.  The exact gate is in
+`contracts/dbc-live-v1.edn`.
+
 It prints `AIUEOS_K16_PHYSICAL_RESULT_OK` only when the native-core result and
 the required read-only probe markers are both present.  The
 exact v11 gate and later SSD-install prerequisites are in

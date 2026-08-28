@@ -1,0 +1,56 @@
+(ns aiueos.dbc-live-test
+  (:require [clojure.java.io :as io]
+            [clojure.string :as str]
+            [clojure.test :refer [deftest is testing]]))
+
+(def probe (slurp (io/file "os/aiueos/dbc-probe/main.c")))
+(def receiver (slurp (io/file "os/aiueos/tools/dbc-receiver.c")))
+(def probe-build (slurp (io/file "os/aiueos/scripts/build-dbc-probe.sh")))
+(def receiver-build (slurp (io/file "os/aiueos/scripts/build-dbc-receiver.sh")))
+(def image-build (slurp (io/file "os/aiueos/scripts/build-dbc-live-usb.sh")))
+(def image-maker (slurp (io/file "os/aiueos/scripts/make-physical-qualification-usb.py")))
+(def contract (slurp (io/file "os/aiueos/contracts/dbc-live-v1.edn")))
+
+(deftest probe-is-a-bounded-diskless-uefi-transport
+  (testing "DbC is isolated from disk and native boot operations"
+    (doseq [forbidden ["block_io" "write_blocks" "exit_boot_services("]]
+      (is (not (str/includes? probe forbidden))))
+    (is (str/includes? probe "NO DISK WRITES"))
+    (is (str/includes? contract ":internal-disk-writes? false"))
+    (is (str/includes? contract ":qualification-usb-runtime-writes? false")))
+  (testing "all five physically observed K16 controllers can be armed"
+    (is (str/includes? probe "MAX_DBC_CONTROLLERS 5"))
+    (is (str/includes? probe "EFI_PCI_IO_OPERATION_COMMON_BUFFER_64"))
+    (is (str/includes? probe "DBC_DCE"))
+    (is (str/includes? probe "DBC_DMA_BYTES 4096ULL"))))
+
+(deftest dbc-context-and-rings-follow-the-64-byte-layout
+  (doseq [marker ["context) == 0x000" "erst) == 0x0c0"
+                  "event_ring) == 0x100" "out_ring) == 0x200"
+                  "in_ring) == 0x300" "context+0x40,2"
+                  "context+0x80,6" "DBC_RING_TRBS 16U"]]
+    (is (str/includes? probe marker)))
+  (is (str/includes? probe "cross-coupled to the DbC OUT Transfer Ring"))
+  (is (str/includes? probe "cross-coupled to the\n   DbC IN Transfer Ring")))
+
+(deftest mac-client-proves-both-directions-without-administrator
+  (doseq [marker ["AIUEOS_DBC_VENDOR_ID 0xffff"
+                  "AIUEOS_DBC_PRODUCT_ID 0xa11e"
+                  "AIUEOS_DBC_IN_ENDPOINT 0x81"
+                  "AIUEOS_DBC_OUT_ENDPOINT 0x01"
+                  "AIUEOS_DBC_MAC_CONNECTED"
+                  "AIUEOS_DBC_MAC_RX"
+                  "AIUEOS_DBC_ACK"]]
+    (is (str/includes? receiver marker)))
+  (is (not (str/includes? receiver-build "sudo")))
+  (is (str/includes? receiver-build "--selftest"))
+  (is (str/includes? contract "a later heartbeat with rx>=1")))
+
+(deftest live-image-is-explicitly-not-a-qualification-or-install
+  (is (str/includes? image-build "--mode dbc-live"))
+  (is (str/includes? image-maker "aiueos.dbc-live-usb-receipt.v1"))
+  (is (str/includes? image-maker "AIUEOS_DBC_LIVE_USB_OK"))
+  (is (str/includes? image-maker "\"qualification_usb_log_writes\": False"))
+  (is (str/includes? image-maker "\"ssd_install\": False"))
+  (is (str/includes? contract ":state :unverified"))
+  (is (str/includes? probe-build "/timestamp:0")))
