@@ -10,6 +10,7 @@
 #define PTE_WRITE_THROUGH (1ULL << 3)
 #define PTE_CACHE_DISABLE (1ULL << 4)
 #define PTE_NX (1ULL << 63)
+#define CR4_CET (1ULL << 23)
 
 extern uint8_t aiueos_text_start[], aiueos_text_end[];
 extern uint8_t aiueos_rodata_start[], aiueos_rodata_end[];
@@ -22,6 +23,16 @@ static uint64_t pml5[ENTRY_COUNT] __attribute__((aligned(PAGE_SIZE)));
 static uint64_t pdpt[ENTRY_COUNT] __attribute__((aligned(PAGE_SIZE)));
 static uint64_t page_directory[ENTRY_COUNT] __attribute__((aligned(PAGE_SIZE)));
 static uint64_t low_page_table[ENTRY_COUNT] __attribute__((aligned(PAGE_SIZE)));
+/* The physical K16 may hand off with control-flow enforcement enabled.  A
+ * direct jump from firmware paging to the final split W^X map leaves no
+ * independent place to prove whether CR3 itself loaded or the first protected
+ * access faulted.  This bounded transition root maps the first GiB with 2 MiB
+ * leaves, then the kernel immediately replaces it with the final split map.
+ * It is never published as kernel_cr3 and cannot survive successful init. */
+static uint64_t transition_pml4[ENTRY_COUNT] __attribute__((aligned(PAGE_SIZE)));
+static uint64_t transition_pml5[ENTRY_COUNT] __attribute__((aligned(PAGE_SIZE)));
+static uint64_t transition_pdpt[ENTRY_COUNT] __attribute__((aligned(PAGE_SIZE)));
+static uint64_t transition_page_directory[ENTRY_COUNT] __attribute__((aligned(PAGE_SIZE)));
 static uint64_t apic_page_directory[ENTRY_COUNT] __attribute__((aligned(PAGE_SIZE)));
 static uint64_t framebuffer_page_directory[ENTRY_COUNT] __attribute__((aligned(PAGE_SIZE)));
 #define PCI_PDPT_SLOTS 4
@@ -97,6 +108,7 @@ static uint64_t read_cr4(void) {
 }
 static void write_cr0(uint64_t value) { __asm__ volatile("mov %0, %%cr0" : : "r"(value) : "memory"); }
 static void write_cr3(uint64_t value) { __asm__ volatile("mov %0, %%cr3" : : "r"(value) : "memory"); }
+static void write_cr4(uint64_t value) { __asm__ volatile("mov %0, %%cr4" : : "r"(value) : "memory"); }
 static int within(uint64_t page, const uint8_t *start, const uint8_t *end) {
   return page >= (uint64_t)(uintptr_t)start && page < (uint64_t)(uintptr_t)end;
 }
@@ -145,11 +157,15 @@ int aiueos_paging_initialize(void) {
   PAGING_PROGRESS(241);
 
   uint64_t firmware_cr3 = read_cr3();
-  five_level_paging = (read_cr4() >> 12) & 1U;
+  uint64_t firmware_cr4 = read_cr4();
+  five_level_paging = (firmware_cr4 >> 12) & 1U;
+  uint64_t inherited_cet = (firmware_cr4 & CR4_CET) ? 1U : 0U;
   memory_encryption_mask = inherited_memory_encryption_mask(firmware_cr3);
 
   for (uint64_t i = 0; i < ENTRY_COUNT; i++) {
     pml5[i] = pml4[i] = pdpt[i] = page_directory[i] = low_page_table[i] = 0;
+    transition_pml5[i] = transition_pml4[i] = transition_pdpt[i] = 0;
+    transition_page_directory[i] = 0;
     apic_page_directory[i] = 0;
     framebuffer_page_directory[i] = 0;
   }
@@ -167,9 +183,20 @@ int aiueos_paging_initialize(void) {
   pml4[0] |= PTE_USER; pdpt[0] |= PTE_USER; page_directory[0] |= PTE_USER;
   if (five_level_paging)
     pml5[0] = encrypted_ram_address(pml4) | PTE_PRESENT | PTE_WRITABLE | PTE_USER;
+  transition_pml4[0] = encrypted_ram_address(transition_pdpt) |
+    PTE_PRESENT | PTE_WRITABLE;
+  transition_pdpt[0] = encrypted_ram_address(transition_page_directory) |
+    PTE_PRESENT | PTE_WRITABLE;
+  if (five_level_paging)
+    transition_pml5[0] = encrypted_ram_address(transition_pml4) |
+      PTE_PRESENT | PTE_WRITABLE;
   for (uint64_t i = 1; i < ENTRY_COUNT; i++) {
     page_directory[i] = encrypted_ram_page(i * 0x200000ULL) |
       PTE_PRESENT | PTE_WRITABLE | PTE_HUGE | PTE_NX;
+  }
+  for (uint64_t i = 0; i < ENTRY_COUNT; i++) {
+    transition_page_directory[i] = encrypted_ram_page(i * 0x200000ULL) |
+      PTE_PRESENT | PTE_WRITABLE | PTE_HUGE;
   }
   pdpt[3] = encrypted_ram_address(apic_page_directory) | PTE_PRESENT | PTE_WRITABLE;
   const uint64_t apic_base = 0xfee00000ULL;
@@ -206,13 +233,26 @@ int aiueos_paging_initialize(void) {
   PAGING_PROGRESS(243);
   write_cr0(read_cr0() | (1ULL << 16));
   PAGING_PROGRESS(244);
-  uint64_t paging_features = five_level_paging | (memory_encryption_mask ? 2U : 0U);
+  /* UEFI may leave supervisor CET active with a firmware-owned shadow stack.
+     That stack is intentionally absent from the kernel-owned map.  Disable
+     the unsupported control before the first kernel CR3; otherwise the first
+     call after a successful CR3 load can fault while pushing its shadow
+     return address, making the load itself look opaque. */
+  if (inherited_cet) write_cr4(firmware_cr4 & ~CR4_CET);
+  if (read_cr4() & CR4_CET) return 0;
+  uint64_t paging_features = five_level_paging |
+    (memory_encryption_mask ? 2U : 0U) | (inherited_cet ? 4U : 0U);
+  uint64_t transition_root = encrypted_ram_address(
+    five_level_paging ? (const void *)transition_pml5 : (const void *)transition_pml4);
   uint64_t root = encrypted_ram_address(five_level_paging ? (const void *)pml5
                                                          : (const void *)pml4);
   PAGING_PROGRESS((uint32_t)(260U + paging_features));
+  write_cr3(transition_root);
+  PAGING_PROGRESS((uint32_t)(270U + paging_features));
+  PAGING_PROGRESS((uint32_t)(280U + paging_features));
   write_cr3(root);
   kernel_cr3 = root;
-  PAGING_PROGRESS((uint32_t)(270U + paging_features));
+  PAGING_PROGRESS((uint32_t)(300U + paging_features));
 
   uint64_t text_index = (uint64_t)(uintptr_t)aiueos_text_start / PAGE_SIZE;
   uint64_t rodata_index = (uint64_t)(uintptr_t)aiueos_rodata_start / PAGE_SIZE;
@@ -223,7 +263,7 @@ int aiueos_paging_initialize(void) {
          !(low_page_table[rodata_index] & PTE_WRITABLE) && (low_page_table[rodata_index] & PTE_NX) &&
          (low_page_table[data_index] & PTE_WRITABLE) && (low_page_table[data_index] & PTE_NX) &&
          ((uint64_t)(uintptr_t)aiueos_kernel_end < 0x200000ULL);
-  if (valid) PAGING_PROGRESS((uint32_t)(280U + paging_features));
+  if (valid) PAGING_PROGRESS((uint32_t)(310U + paging_features));
   return valid;
 }
 
