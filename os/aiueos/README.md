@@ -352,6 +352,42 @@ prologue, global access, or additional stack use.  The C SetVariable helper and
 the final reset helper now run only under the firmware map; their assembly
 entries restore the candidate root before returning.
 
+For repeated v11 trials, the diskless PXE path removes the USB move from the
+diagnostic loop.  It builds one deterministic PE/COFF file containing the
+fresh kernel and initramfs, verifies both against their compiled SHA-256
+digests, arms only the current PXE option as one-shot `BootNext`, and stores a
+bounded 16-byte qualification record in UEFI NVRAM.  The normal-user Mac
+server serves that native file once and then falls back to the read-only
+control EFI.  On the following boot, the control EFI reports
+`AIUEOS_QUALIFICATION_RESULT` over the already-qualified direct Ethernet PXE
+path and remains ready for a bounded `ping` or `reboot-pxe` command.  It never
+writes `BootOrder`, USB storage, or an internal disk.  A native-core hang can
+still require one physical power cycle because no K16 NIC driver or resident
+AIUEOS control plane exists after `ExitBootServices` yet.
+Before each native trial, the same control EFI also emits one
+`AIUEOS_RTL8125_HANDOFF` record per readable RTL8125.  It contains the exact
+PCI command, working BAR, MAC, chip command, Tx/Rx configuration and PHY status
+left by the firmware PXE driver.  This is a bounded read-only snapshot: it does
+not reset the NIC, enable DMA, acknowledge an interrupt, or modify a register.
+
+```sh
+SOURCE_DATE_EPOCH=0 \
+  ./os/aiueos/scripts/build-physical-qualification-pxe.sh
+./os/aiueos/scripts/smoke-qemu-physical-pxe.sh
+
+python3 ./os/aiueos/tools/k16-pxe-server.py \
+  --next-boot build/aiueos-physical-qualification-pxe/aiueos-k16-native-pxe.efi \
+  --control reboot-pxe
+```
+
+The QEMU smoke boots a FAT view containing only `BOOTX64.EFI`, then substitutes
+the control EFI behind the same boot option while retaining the variable
+store.  Its green result proves embedding, admission, native-core completion,
+result persistence, control fallback, and deterministic rebuilding in QEMU;
+it deliberately reports `physical-k16=unverified`.  Only the subsequent K16
+`state=success code=0` observation can satisfy the physical gate in
+`contracts/physical-qualification-pxe-v1.edn`.
+
 ```sh
 SOURCE_DATE_EPOCH=0 ./os/aiueos/scripts/build-physical-qualification-usb.sh
 ./os/aiueos/scripts/smoke-qemu-physical-loader-failure.sh

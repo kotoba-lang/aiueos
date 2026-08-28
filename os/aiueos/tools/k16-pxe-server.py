@@ -7,7 +7,7 @@ K16 qualification setup.
 """
 
 import argparse
-import functools
+import hashlib
 import http.server
 import os
 import re
@@ -32,10 +32,13 @@ NETLOG_PORT = int(os.environ.get("AIUEOS_PXE_NETLOG_PORT", "7777"))
 CONTROL_PORT = int(os.environ.get("AIUEOS_PXE_CONTROL_PORT", "7778"))
 CONTROL_STATE_PATH = Path(os.environ.get(
     "AIUEOS_PXE_CONTROL_STATE", "/tmp/aiueos-k16-pxe-control-nonce"))
+NEXT_BOOT_STATE_PATH = Path(os.environ.get(
+    "AIUEOS_PXE_NEXT_BOOT_STATE", "/tmp/aiueos-k16-pxe-next-boot"))
 CONTROL_COMMANDS = ("ping", "reboot-pxe")
 IP_BOUND_IF = 25
 MAGIC = b"\x63\x82\x53\x63"
 CONTROL_READY = re.compile(r"^AIUEOS_CONTROL_READY nonce=([0-9a-f]{16})\b")
+NEXT_BOOT_LOCK = threading.Lock()
 
 
 def ipv4(value):
@@ -149,6 +152,51 @@ def send_control(command, nonce):
     sock.close()
 
 
+def artifact_sha256(path):
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def next_boot_path():
+    with NEXT_BOOT_LOCK:
+        if not NEXT_BOOT_STATE_PATH.is_file():
+            return BOOT_PATH
+        try:
+            selected = Path(NEXT_BOOT_STATE_PATH.read_text(
+                encoding="utf-8").strip()).resolve()
+        except (OSError, ValueError):
+            return BOOT_PATH
+        return selected if selected.is_file() else BOOT_PATH
+
+
+def arm_next_boot(path):
+    selected = Path(path).resolve()
+    if not selected.is_file():
+        raise SystemExit(f"missing next-boot EFI: {selected}")
+    if selected.stat().st_size > 16 * 1024 * 1024:
+        raise SystemExit(f"next-boot EFI exceeds 16 MiB: {selected}")
+    with NEXT_BOOT_LOCK:
+        NEXT_BOOT_STATE_PATH.write_text(str(selected) + "\n", encoding="utf-8")
+    print(f"AIUEOS_PXE_NEXT_BOOT_ARMED path={selected} "
+          f"bytes={selected.stat().st_size} sha256={artifact_sha256(selected)}",
+          flush=True)
+
+
+def consume_next_boot(selected):
+    with NEXT_BOOT_LOCK:
+        if not NEXT_BOOT_STATE_PATH.is_file():
+            return
+        try:
+            armed = Path(NEXT_BOOT_STATE_PATH.read_text(
+                encoding="utf-8").strip()).resolve()
+        except (OSError, ValueError):
+            return
+        if armed != selected.resolve():
+            return
+        NEXT_BOOT_STATE_PATH.unlink()
+    print(f"AIUEOS_PXE_NEXT_BOOT_CONSUMED path={selected} "
+          f"fallback={BOOT_PATH}", flush=True)
+
+
 def dhcp_server():
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     bind_interface(sock, 67)
@@ -184,11 +232,22 @@ def dhcp_server():
               f"boot={boot}", flush=True)
 
 
-class HttpBootHandler(http.server.SimpleHTTPRequestHandler):
+class HttpBootHandler(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
         print(f"AIUEOS_HTTP_GET from={self.client_address[0]} path={self.path}",
               flush=True)
-        super().do_GET()
+        if self.path.split("?", 1)[0] != f"/{BOOT_FILE}":
+            self.send_error(404)
+            return
+        selected = next_boot_path()
+        content = selected.read_bytes()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/efi")
+        self.send_header("Content-Length", str(len(content)))
+        self.end_headers()
+        self.wfile.write(content)
+        self.wfile.flush()
+        consume_next_boot(selected)
 
     def log_message(self, fmt, *args):
         print(f"AIUEOS_HTTP_RESULT from={self.client_address[0]} "
@@ -196,8 +255,7 @@ class HttpBootHandler(http.server.SimpleHTTPRequestHandler):
 
 
 def http_server():
-    handler = functools.partial(HttpBootHandler, directory=str(BOOT_PATH.parent))
-    server = http.server.ThreadingHTTPServer((SERVER_IP, HTTP_PORT), handler)
+    server = http.server.ThreadingHTTPServer((SERVER_IP, HTTP_PORT), HttpBootHandler)
     print(f"AIUEOS_HTTP_READY interface={INTERFACE} uri={HTTP_BOOT_URI} "
           f"bytes={BOOT_PATH.stat().st_size}", flush=True)
     server.serve_forever()
@@ -263,11 +321,13 @@ def tftp_transfer(peer, request):
                 fields[index + 1].decode("ascii", "replace")
     if filename not in (BOOT_FILE, "efi/boot/bootx64.efi") or mode != "octet":
         return
-    content = BOOT_PATH.read_bytes()
+    selected = next_boot_path()
+    content = selected.read_bytes()
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     bind_interface(sock, 0, SERVER_IP)
     print(f"AIUEOS_PXE_TFTP_RRQ from={peer[0]}:{peer[1]} file={filename} "
-          f"bytes={len(content)} options={options}", flush=True)
+          f"artifact={selected.name} bytes={len(content)} options={options}",
+          flush=True)
     oack, block_size = tftp_oack(options, len(content))
     if oack is not None and not wait_for_ack(sock, peer, 0, oack):
         print("AIUEOS_PXE_TFTP_FAIL stage=oack", flush=True)
@@ -288,6 +348,7 @@ def tftp_transfer(peer, request):
         block = (block + 1) & 0xffff
     print(f"AIUEOS_PXE_TFTP_OK file={filename} bytes={position}", flush=True)
     sock.close()
+    consume_next_boot(selected)
 
 
 def tftp_server():
@@ -348,10 +409,13 @@ def main():
     parser.add_argument("--selftest", action="store_true")
     parser.add_argument("--control", choices=CONTROL_COMMANDS)
     parser.add_argument("--nonce")
+    parser.add_argument("--next-boot")
     args = parser.parse_args()
     if args.selftest:
         selftest()
         return
+    if args.next_boot:
+        arm_next_boot(args.next_boot)
     if args.control:
         nonce = args.nonce
         if not nonce:
@@ -359,6 +423,8 @@ def main():
                 raise SystemExit(f"missing control nonce: {CONTROL_STATE_PATH}")
             nonce = CONTROL_STATE_PATH.read_text(encoding="ascii").strip()
         send_control(args.control, nonce)
+        return
+    if args.next_boot:
         return
     if not BOOT_PATH.is_file():
         raise SystemExit(f"missing boot file: {BOOT_PATH}")
