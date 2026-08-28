@@ -144,6 +144,9 @@ extern volatile uint64_t aiueos_apic_timer_ticks;
 extern int aiueos_physical_allocator_initialize(const struct aiueos_boot_info *boot);
 extern void *aiueos_allocate_physical_page(void);
 extern int aiueos_pci_enumerate(void);
+extern int aiueos_rtl8125_physical_qualification(void);
+extern unsigned aiueos_rtl8125_qualification_error(void);
+extern uint32_t aiueos_rtl8125_qualification_rx_length(void);
 extern int aiueos_catalog_policy_selftest_ok(void);
 extern int aiueos_object_store_ready(void);
 extern int aiueos_journal_ready(void);
@@ -757,6 +760,31 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
     debug_string("AIUEOS_ACPI_OK rsdp-xsdt-madt cpu>=2\n");
     serial_string("AIUEOS_ACPI_OK rsdp-xsdt-madt cpu>=2\r\n");
 #ifdef AIUEOS_PHYSICAL_QUALIFICATION
+#ifdef AIUEOS_PHYSICAL_NETWORK_QUALIFICATION
+    /* A second, explicitly test-only physical slice. The native-core gate has
+       already passed; now allow only four DMA pages and one RTL8125 ARP
+       exchange. AMD-IVRS isolation is not implemented, so this is evidence for
+       the link driver, not production DMA qualification. */
+    aiueos_qualification_progress(230);
+    aiueos_framebuffer_qualification_screen("AIUEOS K16", "TEST RTL8125", "SSD READ ONLY", 0);
+    if(!aiueos_rtl8125_physical_qualification()) {
+      uint32_t code=8200U+aiueos_rtl8125_qualification_error();
+      aiueos_framebuffer_qualification_screen("AIUEOS K16", "FAIL RTL8125", "SSD READ ONLY", 0);
+      debug_string("AIUEOS_PHYSICAL_NETWORK_FAIL rtl8125 arp=10.77.0.1 dma=unisolated-test-only\n");
+      serial_string("AIUEOS_PHYSICAL_NETWORK_FAIL rtl8125 arp=10.77.0.1 dma=unisolated-test-only\r\n");
+      if(!aiueos_qualification_finalize(2,code))
+        serial_string("AIUEOS_PHYSICAL_QUALIFICATION_LOG_FAIL stage=runtime-variable\r\n");
+      for(;;)__asm__ volatile("cli; hlt");
+    }
+    aiueos_qualification_progress(231);
+    aiueos_framebuffer_qualification_screen("AIUEOS K16", "RTL8125 LINK OK", "SSD READ ONLY", 1);
+    (void)aiueos_rtl8125_qualification_rx_length();
+    debug_string("AIUEOS_PHYSICAL_NETWORK_OK rtl8125 arp-peer=10.77.0.1 dma=unisolated-test-only\n");
+    serial_string("AIUEOS_PHYSICAL_NETWORK_OK rtl8125 arp-peer=10.77.0.1 dma=unisolated-test-only\r\n");
+    if(!aiueos_qualification_finalize(1,8125))
+      serial_string("AIUEOS_PHYSICAL_QUALIFICATION_LOG_FAIL stage=runtime-variable\r\n");
+    for(;;)__asm__ volatile("cli; hlt");
+#else
     /* This profile is intentionally a USB-only, read-only boundary.  Reaching
        this screen proves the native loader/kernel, integrity admission,
        Kotoba object execution, owned paging, GOP, allocator and ACPI on the
@@ -769,6 +797,7 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
     if (!aiueos_qualification_finalize(1, 0))
       serial_string("AIUEOS_PHYSICAL_QUALIFICATION_LOG_FAIL stage=runtime-variable\r\n");
     for (;;) __asm__ volatile("cli; hlt");
+#endif
 #endif
     if (!aiueos_vtd_initialize()) {
       if (aiueos_vtd_error() == 3) serial_string("AIUEOS_VTD_STAGE_FAIL srtp\r\n");

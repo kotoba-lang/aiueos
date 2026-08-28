@@ -1,6 +1,7 @@
 #include <stdint.h>
 #include <stddef.h>
 #include "tls13.h"
+#include "rtl8125.h"
 
 #define VIRTIO_VENDOR_ID 0x1af4
 #define VIRTIO_RNG_MODERN_ID 0x1044
@@ -3543,6 +3544,138 @@ static int virtio_net(uint8_t b, uint8_t d, uint8_t f) {
   net_ssh_listen(&rx, &tx, rx_page, tx_page);
 #endif
   return 1;
+}
+
+/* K16 physical-network qualification.  This is intentionally separate from
+   the normal virtio enumeration below: the diskless PXE image has no block
+   device and asks exactly one question -- can the firmware-initialized
+   RTL8125 hand a real Ethernet frame to the Mac and receive its ARP reply? */
+static unsigned rtl8125_qualification_error;
+static uint32_t rtl8125_qualification_rx_length;
+unsigned aiueos_rtl8125_qualification_error(void) {
+  return rtl8125_qualification_error;
+}
+uint32_t aiueos_rtl8125_qualification_rx_length(void) {
+  return rtl8125_qualification_rx_length;
+}
+
+static uint8_t rtl_mmio_read8(void *context,uint32_t offset) {
+  return *((volatile uint8_t *)context+offset);
+}
+static uint16_t rtl_mmio_read16(void *context,uint32_t offset) {
+  return *(volatile uint16_t *)(void *)((volatile uint8_t *)context+offset);
+}
+static uint32_t rtl_mmio_read32(void *context,uint32_t offset) {
+  return *(volatile uint32_t *)(void *)((volatile uint8_t *)context+offset);
+}
+static void rtl_mmio_write8(void *context,uint32_t offset,uint8_t value) {
+  *((volatile uint8_t *)context+offset)=value;
+}
+static void rtl_mmio_write16(void *context,uint32_t offset,uint16_t value) {
+  *(volatile uint16_t *)(void *)((volatile uint8_t *)context+offset)=value;
+}
+static void rtl_mmio_write32(void *context,uint32_t offset,uint32_t value) {
+  *(volatile uint32_t *)(void *)((volatile uint8_t *)context+offset)=value;
+}
+
+static uint32_t rtl8125_build_direct_arp(uint8_t *frame,const uint8_t mac[6]) {
+  for(unsigned i=0;i<6;i++)frame[i]=0xff;
+  for(unsigned i=0;i<6;i++)frame[6+i]=mac[i];
+  net_store_be16(frame+12,0x0806);
+  net_store_be16(frame+14,1);
+  net_store_be16(frame+16,0x0800);
+  frame[18]=6;frame[19]=4;
+  net_store_be16(frame+20,1);
+  for(unsigned i=0;i<6;i++)frame[22+i]=mac[i];
+  net_store_be32(frame+28,0x0a4d000aU); /* K16 10.77.0.10 */
+  for(unsigned i=0;i<6;i++)frame[32+i]=0;
+  net_store_be32(frame+38,0x0a4d0001U); /* Mac 10.77.0.1 */
+  return 42;
+}
+
+static int rtl8125_qualify_device(uint8_t b,uint8_t d,uint8_t f) {
+  uint64_t bar=0;
+  if (!read_bar(b,d,f,2,&bar) && !read_bar(b,d,f,1,&bar)) {
+    rtl8125_qualification_error=2;return 0;
+  }
+  if (!aiueos_map_pci_mmio(bar,4096)) {
+    rtl8125_qualification_error=3;return 0;
+  }
+  struct aiueos_rtl8125_tx_desc *tx=aiueos_allocate_physical_page();
+  struct aiueos_rtl8125_rx_desc *rx=aiueos_allocate_physical_page();
+  uint8_t *tx_frame=aiueos_allocate_physical_page();
+  uint8_t *rx_frame=aiueos_allocate_physical_page();
+  if(!tx||!rx||!tx_frame||!rx_frame) {
+    rtl8125_qualification_error=4;return 0;
+  }
+  uint32_t command=config_read(b,d,f,0x04);
+  config_write(b,d,f,0x04,(command&0xffffU)|0x0006U);
+  struct aiueos_rtl8125_io io={
+    (void *)(uintptr_t)bar,rtl_mmio_read8,rtl_mmio_read16,rtl_mmio_read32,
+    rtl_mmio_write8,rtl_mmio_write16,rtl_mmio_write32};
+  struct aiueos_rtl8125 device;
+  enum aiueos_rtl8125_result result=aiueos_rtl8125_takeover(
+    &device,&io,tx,(uint64_t)(uintptr_t)tx,rx,(uint64_t)(uintptr_t)rx,
+    tx_frame,(uint64_t)(uintptr_t)tx_frame,
+    rx_frame,(uint64_t)(uintptr_t)rx_frame);
+  if(result!=AIUEOS_RTL8125_OK) {
+    rtl8125_qualification_error=10U+(unsigned)result;return 0;
+  }
+  if(!aiueos_rtl8125_link_up(&device)) {
+    rtl8125_qualification_error=20;return 0;
+  }
+  uint32_t bytes=rtl8125_build_direct_arp(tx_frame,device.mac);
+  result=aiueos_rtl8125_tx_submit(&device,bytes);
+  if(result!=AIUEOS_RTL8125_OK) {
+    rtl8125_qualification_error=21;return 0;
+  }
+  uint32_t budget;
+  for(budget=0;budget<200000000U&&!aiueos_rtl8125_tx_complete(&device);budget++)
+    __asm__ volatile("pause");
+  if(budget==200000000U) {
+    rtl8125_qualification_error=22;return 0;
+  }
+  for(unsigned frame=0;frame<8;frame++) {
+    uint32_t received=0;
+    for(budget=0;budget<200000000U&&!received;budget++) {
+      result=aiueos_rtl8125_rx_poll(&device,&received);
+      if(result!=AIUEOS_RTL8125_OK)break;
+      __asm__ volatile("pause");
+    }
+    if(result!=AIUEOS_RTL8125_OK) {
+      rtl8125_qualification_error=24;
+      aiueos_rtl8125_rx_rearm(&device);
+      continue;
+    }
+    if(!received) {
+      rtl8125_qualification_error=23;return 0;
+    }
+    if(kotoba_aiueos_net_arp_reply_valid(
+         (uint64_t)(uintptr_t)rx_frame,received,0x0a4d0001U)) {
+      rtl8125_qualification_rx_length=received;
+      rtl8125_qualification_error=0;
+      return 1;
+    }
+    rtl8125_qualification_error=25;
+    aiueos_rtl8125_rx_rearm(&device);
+  }
+  return 0;
+}
+
+int aiueos_rtl8125_physical_qualification(void) {
+  rtl8125_qualification_error=1;
+  rtl8125_qualification_rx_length=0;
+  for(uint16_t bus=0;bus<256;bus++)for(uint8_t dev=0;dev<32;dev++) {
+    uint32_t id0=config_read((uint8_t)bus,dev,0,0);
+    if((id0&0xffffU)==0xffffU)continue;
+    uint8_t functions=(config8((uint8_t)bus,dev,0,0x0e)&0x80)?8:1;
+    for(uint8_t fn=0;fn<functions;fn++) {
+      uint32_t id=config_read((uint8_t)bus,dev,fn,0);
+      if((id&0xffffU)==0x10ecU&&(id>>16)==0x8125U&&
+         rtl8125_qualify_device((uint8_t)bus,dev,fn))return 1;
+    }
+  }
+  return 0;
 }
 
 int aiueos_pci_enumerate(void) {

@@ -21,6 +21,7 @@ kernel_vtd_object="$out/kernel-vtd.o"
 kernel_apic_object="$out/kernel-apic.o"
 kernel_memory_object="$out/kernel-memory.o"
 kernel_pci_object="$out/kernel-pci.o"
+kernel_rtl8125_object="$out/kernel-rtl8125.o"
 kernel_tls_aes_object="$out/kernel-tls-aes-gcm.o"
 kernel_tls13_object="$out/kernel-tls13.o"
 kernel_scheduler_object="$out/kernel-scheduler.o"
@@ -122,6 +123,7 @@ if [ "${AIUEOS_ECDSA_SIGN_KAT:-0}" = 1 ] || [ "${AIUEOS_SSH_LISTEN:-0}" = 1 ]; t
   ecdsa_sign_link="$kotoba_ecdsa_sign_object"
 fi
 physical_qualification_cflags=
+physical_network_qualification_cflags=
 qualification_link=
 gop_discovery_cflags=
 loader_failure_test_cflags=
@@ -133,6 +135,13 @@ embedded_release_link=
 if [ "${AIUEOS_PHYSICAL_QUALIFICATION:-0}" = 1 ]; then
   physical_qualification_cflags="-DAIUEOS_PHYSICAL_QUALIFICATION=1"
   qualification_link="$kernel_qualification_entry_object $kernel_qualification_object"
+fi
+if [ "${AIUEOS_PHYSICAL_NETWORK_QUALIFICATION:-0}" = 1 ]; then
+  [ "${AIUEOS_PHYSICAL_QUALIFICATION:-0}" = 1 ] || {
+    echo "error: physical network qualification requires physical qualification" >&2
+    exit 1
+  }
+  physical_network_qualification_cflags="-DAIUEOS_PHYSICAL_NETWORK_QUALIFICATION=1"
 fi
 if [ "${AIUEOS_EMBEDDED_RELEASE:-0}" = 1 ]; then
   embedded_release_cflags="-DAIUEOS_EMBEDDED_RELEASE=1"
@@ -432,7 +441,8 @@ if [ -n "${AIUEOS_EXTERNAL_KERNEL_ELF:-}" ]; then
 else
 zig cc -target x86_64-freestanding-none -std=c11 -O2 \
   -ffreestanding -fno-stack-protector -mno-red-zone \
-  $input_smoke_cflags $physical_qualification_cflags $kernel_hang_test_cflags \
+  $input_smoke_cflags $physical_qualification_cflags \
+  $physical_network_qualification_cflags $kernel_hang_test_cflags \
   -c -o "$kernel_object" "$aiueos/kernel/main.c"
 zig cc -target x86_64-freestanding-none \
   -c -o "$kernel_entry_object" "$aiueos/kernel/entry.S"
@@ -454,8 +464,11 @@ zig cc -target x86_64-freestanding-none -std=c11 -O2 \
   -c -o "$kernel_memory_object" "$aiueos/kernel/memory.c"
 zig cc -target x86_64-freestanding-none -std=c11 -O2 \
   -ffreestanding -fno-stack-protector -mno-red-zone \
-  $input_smoke_cflags \
+  $input_smoke_cflags $physical_network_qualification_cflags \
   -c -o "$kernel_pci_object" "$aiueos/kernel/pci.c"
+zig cc -target x86_64-freestanding-none -std=c11 -O2 \
+  -ffreestanding -fno-stack-protector -mno-red-zone \
+  -c -o "$kernel_rtl8125_object" "$aiueos/kernel/rtl8125.c"
 zig cc -target x86_64-freestanding-none -std=c11 -O2 \
   -ffreestanding -fno-stack-protector -mno-red-zone \
   -c -o "$kernel_tls_aes_object" "$aiueos/kernel/tls_aes_gcm.c"
@@ -505,7 +518,8 @@ zig ld.lld -nostdlib -static --strip-all -z max-page-size=0x1000 \
   -T "$aiueos/kernel/linker.ld" -o "$kernel" \
   "$kernel_entry_object" "$kernel_object" "$kernel_paging_object" \
   "$kernel_acpi_object" "$kernel_vtd_object" "$kernel_apic_object" "$kernel_memory_object" \
-  "$kernel_pci_object" "$kernel_tls_aes_object" "$kernel_tls13_object" \
+  "$kernel_pci_object" "$kernel_rtl8125_object" \
+  "$kernel_tls_aes_object" "$kernel_tls13_object" \
   "$kernel_scheduler_object" "$kernel_syscall_object" \
   "$kernel_process_object" "$kernel_loader_object" \
   "$kernel_smp_object" "$kernel_trampoline_object" \
