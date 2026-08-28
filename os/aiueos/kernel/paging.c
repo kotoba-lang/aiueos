@@ -10,6 +10,8 @@
 #define PTE_WRITE_THROUGH (1ULL << 3)
 #define PTE_CACHE_DISABLE (1ULL << 4)
 #define PTE_NX (1ULL << 63)
+#define CR4_PGE (1ULL << 7)
+#define CR4_PCIDE (1ULL << 17)
 #define CR4_CET (1ULL << 23)
 
 extern uint8_t aiueos_text_start[], aiueos_text_end[];
@@ -81,6 +83,7 @@ static uint64_t five_level_paging;
 
 #ifdef AIUEOS_PHYSICAL_QUALIFICATION
 extern int aiueos_qualification_progress(uint32_t code);
+extern void aiueos_qualification_runtime_set_firmware_cr3(uint64_t firmware_cr3);
 #define PAGING_PROGRESS(code) aiueos_qualification_progress(code)
 #else
 #define PAGING_PROGRESS(code) ((void)0)
@@ -109,6 +112,23 @@ static uint64_t read_cr4(void) {
 static void write_cr0(uint64_t value) { __asm__ volatile("mov %0, %%cr0" : : "r"(value) : "memory"); }
 static void write_cr3(uint64_t value) { __asm__ volatile("mov %0, %%cr3" : : "r"(value) : "memory"); }
 static void write_cr4(uint64_t value) { __asm__ volatile("mov %0, %%cr4" : : "r"(value) : "memory"); }
+
+/* Execute only the three register operations between address spaces.  The
+ * durable marker is written after this returns under the firmware root, so a
+ * physical result distinguishes a CR3/first-fetch failure from a later C call
+ * or UEFI SetVariable failure under the kernel-owned map. */
+static __attribute__((always_inline)) inline uint64_t
+observe_cr3_roundtrip(uint64_t candidate, uint64_t firmware) {
+  uint64_t observed;
+  __asm__ volatile(
+      "mov %[candidate], %%cr3\n\t"
+      "mov %%cr3, %[observed]\n\t"
+      "mov %[firmware], %%cr3"
+      : [observed] "=&r"(observed)
+      : [candidate] "r"(candidate), [firmware] "r"(firmware)
+      : "memory");
+  return observed;
+}
 static int within(uint64_t page, const uint8_t *start, const uint8_t *end) {
   return page >= (uint64_t)(uintptr_t)start && page < (uint64_t)(uintptr_t)end;
 }
@@ -160,6 +180,8 @@ int aiueos_paging_initialize(void) {
   uint64_t firmware_cr4 = read_cr4();
   five_level_paging = (firmware_cr4 >> 12) & 1U;
   uint64_t inherited_cet = (firmware_cr4 & CR4_CET) ? 1U : 0U;
+  uint64_t inherited_pge = (firmware_cr4 & CR4_PGE) ? 1U : 0U;
+  uint64_t inherited_pcide = (firmware_cr4 & CR4_PCIDE) ? 1U : 0U;
   memory_encryption_mask = inherited_memory_encryption_mask(firmware_cr3);
 
   for (uint64_t i = 0; i < ENTRY_COUNT; i++) {
@@ -233,26 +255,38 @@ int aiueos_paging_initialize(void) {
   PAGING_PROGRESS(243);
   write_cr0(read_cr0() | (1ULL << 16));
   PAGING_PROGRESS(244);
-  /* UEFI may leave supervisor CET active with a firmware-owned shadow stack.
-     That stack is intentionally absent from the kernel-owned map.  Disable
-     the unsupported control before the first kernel CR3; otherwise the first
-     call after a successful CR3 load can fault while pushing its shadow
-     return address, making the load itself look opaque. */
-  if (inherited_cet) write_cr4(firmware_cr4 & ~CR4_CET);
-  if (read_cr4() & CR4_CET) return 0;
+  /* Normalize firmware-owned translation controls before the first owned CR3.
+     PCIDE may only be cleared with a zero PCID, so first reload the same
+     firmware root with CR3[11:0] clear and teach the qualification recorder
+     that normalized value.  Clearing PGE flushes inherited global entries;
+     clearing CET removes the firmware-owned shadow stack. */
   uint64_t paging_features = five_level_paging |
-    (memory_encryption_mask ? 2U : 0U) | (inherited_cet ? 4U : 0U);
+    (memory_encryption_mask ? 2U : 0U) | (inherited_cet ? 4U : 0U) |
+    (inherited_pge ? 8U : 0U) | (inherited_pcide ? 16U : 0U);
+  PAGING_PROGRESS((uint32_t)(320U + paging_features));
+  if (inherited_pcide) {
+    firmware_cr3 &= ~0xfffULL;
+    write_cr3(firmware_cr3);
+#ifdef AIUEOS_PHYSICAL_QUALIFICATION
+    aiueos_qualification_runtime_set_firmware_cr3(firmware_cr3);
+#endif
+  }
+  uint64_t normalized_cr4 = firmware_cr4 & ~(CR4_CET | CR4_PGE | CR4_PCIDE);
+  if (normalized_cr4 != firmware_cr4) write_cr4(normalized_cr4);
+  if (read_cr4() & (CR4_CET | CR4_PGE | CR4_PCIDE)) return 0;
+  PAGING_PROGRESS((uint32_t)(352U + paging_features));
   uint64_t transition_root = encrypted_ram_address(
     five_level_paging ? (const void *)transition_pml5 : (const void *)transition_pml4);
   uint64_t root = encrypted_ram_address(five_level_paging ? (const void *)pml5
                                                          : (const void *)pml4);
-  PAGING_PROGRESS((uint32_t)(260U + paging_features));
-  write_cr3(transition_root);
-  PAGING_PROGRESS((uint32_t)(270U + paging_features));
-  PAGING_PROGRESS((uint32_t)(280U + paging_features));
+  if (observe_cr3_roundtrip(transition_root, firmware_cr3) != transition_root)
+    return 0;
+  PAGING_PROGRESS((uint32_t)(384U + paging_features));
+  if (observe_cr3_roundtrip(root, firmware_cr3) != root) return 0;
+  PAGING_PROGRESS((uint32_t)(416U + paging_features));
   write_cr3(root);
   kernel_cr3 = root;
-  PAGING_PROGRESS((uint32_t)(300U + paging_features));
+  PAGING_PROGRESS((uint32_t)(448U + paging_features));
 
   uint64_t text_index = (uint64_t)(uintptr_t)aiueos_text_start / PAGE_SIZE;
   uint64_t rodata_index = (uint64_t)(uintptr_t)aiueos_rodata_start / PAGE_SIZE;
@@ -263,7 +297,7 @@ int aiueos_paging_initialize(void) {
          !(low_page_table[rodata_index] & PTE_WRITABLE) && (low_page_table[rodata_index] & PTE_NX) &&
          (low_page_table[data_index] & PTE_WRITABLE) && (low_page_table[data_index] & PTE_NX) &&
          ((uint64_t)(uintptr_t)aiueos_kernel_end < 0x200000ULL);
-  if (valid) PAGING_PROGRESS((uint32_t)(310U + paging_features));
+  if (valid) PAGING_PROGRESS((uint32_t)(480U + paging_features));
   return valid;
 }
 

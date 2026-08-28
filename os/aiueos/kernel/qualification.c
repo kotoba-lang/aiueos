@@ -54,6 +54,13 @@ void aiueos_qualification_runtime_initialize(void *runtime_services,
   qualification_firmware_cr3 = firmware_cr3;
 }
 
+/* Paging may normalize a firmware PCID before clearing CR4.PCIDE.  Keep the
+   recorder's bounded hand-back root in lockstep so later progress calls never
+   attempt to load a stale nonzero PCID while PCIDE is disabled. */
+void aiueos_qualification_runtime_set_firmware_cr3(uint64_t firmware_cr3) {
+  qualification_firmware_cr3 = firmware_cr3;
+}
+
 static uint64_t read_cr3(void) {
   uint64_t value;
   __asm__ volatile("mov %%cr3, %0" : "=r"(value));

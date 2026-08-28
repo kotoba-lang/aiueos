@@ -30,6 +30,8 @@
   (slurp (io/file "os/aiueos/contracts/physical-qualification-usb-v8.edn")))
 (def qualification-v9-contract
   (slurp (io/file "os/aiueos/contracts/physical-qualification-usb-v9.edn")))
+(def qualification-v10-contract
+  (slurp (io/file "os/aiueos/contracts/physical-qualification-usb-v10.edn")))
 
 (deftest probe-is-bounded-and-keeps-internal-disks-read-only
   (testing "the probe never reaches raw block writes or exits boot services"
@@ -148,8 +150,8 @@
     (is (str/includes? uefi-build-script "$physical_qualification_cflags"))
     (doseq [code ["PAGING_PROGRESS(240)" "PAGING_PROGRESS(241)"
                   "PAGING_PROGRESS(242)" "PAGING_PROGRESS(243)"
-                  "PAGING_PROGRESS(244)" "260U + paging_features"
-                  "270U + paging_features" "280U + paging_features"]]
+                  "PAGING_PROGRESS(244)" "320U + paging_features"
+                  "352U + paging_features" "384U + paging_features"]]
       (is (str/includes? paging-source code))))
   (testing "CR4.LA57 and an active AMD SME C-bit are inherited, not guessed"
     (is (str/includes? paging-source "five_level_paging = (firmware_cr4 >> 12) & 1U"))
@@ -168,18 +170,19 @@
 (deftest physical-paging-handoff-has-a-bounded-transition-root
   (testing "firmware CET cannot retain a firmware-owned shadow stack"
     (is (str/includes? paging-source "#define CR4_CET (1ULL << 23)"))
-    (is (str/includes? paging-source "firmware_cr4 & ~CR4_CET"))
-    (is (str/includes? paging-source "if (read_cr4() & CR4_CET) return 0")))
+    (is (str/includes? paging-source "firmware_cr4 & ~(CR4_CET | CR4_PGE | CR4_PCIDE)"))
+    (is (str/includes? paging-source
+                       "if (read_cr4() & (CR4_CET | CR4_PGE | CR4_PCIDE)) return 0")))
   (testing "the temporary root is entered and replaced before publication"
     (is (str/includes? paging-source "transition_page_directory"))
-    (is (str/includes? paging-source "write_cr3(transition_root)"))
-    (is (< (.indexOf paging-source "write_cr3(transition_root)")
+    (is (str/includes? paging-source "observe_cr3_roundtrip(transition_root"))
+    (is (< (.indexOf paging-source "observe_cr3_roundtrip(transition_root")
            (.indexOf paging-source "write_cr3(root)")))
     (is (< (.indexOf paging-source "write_cr3(root)")
            (.indexOf paging-source "kernel_cr3 = root")))
-    (doseq [code ["260U + paging_features" "270U + paging_features"
-                  "280U + paging_features" "300U + paging_features"
-                  "310U + paging_features"]]
+    (doseq [code ["320U + paging_features" "352U + paging_features"
+                  "384U + paging_features" "416U + paging_features"
+                  "448U + paging_features" "480U + paging_features"]]
       (is (str/includes? paging-source code))))
   (testing "the v9 contract binds the change to physical code 260"
     (is (str/includes? qualification-v9-contract ":physical-result-code 260"))
@@ -187,8 +190,34 @@
     (is (str/includes? qualification-v9-contract ":published-as-kernel-cr3 false"))
     (is (str/includes? qualification-v9-contract ":terminal-state :replaced-by-final-split-wx"))
     (is (str/includes? qualification-v9-contract ":internal-disk-write-code-reached? false"))
-    (is (str/includes? result-checker "26[0-7]"))
-    (is (str/includes? qualification-builder "probe-native-result-v9"))))
+    (is (str/includes? result-checker "26[0-7]"))))
+
+(deftest physical-paging-handoff-observes-cr3-before-calls
+  (testing "PGE, PCIDE and CET are normalized with a reusable firmware root"
+    (doseq [marker ["#define CR4_PGE (1ULL << 7)"
+                    "#define CR4_PCIDE (1ULL << 17)"
+                    "firmware_cr3 &= ~0xfffULL"
+                    "aiueos_qualification_runtime_set_firmware_cr3(firmware_cr3)"
+                    "~(CR4_CET | CR4_PGE | CR4_PCIDE)"]]
+      (is (str/includes? paging-source marker)))
+    (is (str/includes? qualification-runtime
+                       "aiueos_qualification_runtime_set_firmware_cr3")))
+  (testing "candidate CR3 is read back and firmware CR3 restored inline"
+    (is (str/includes? paging-source "observe_cr3_roundtrip"))
+    (is (str/includes? paging-source "mov %%cr3, %[observed]"))
+    (is (str/includes? paging-source "mov %[firmware], %%cr3"))
+    (is (< (.indexOf paging-source "observe_cr3_roundtrip(transition_root")
+           (.indexOf paging-source "384U + paging_features")))
+    (is (< (.indexOf paging-source "observe_cr3_roundtrip(root")
+           (.indexOf paging-source "416U + paging_features"))))
+  (testing "the v10 contract binds the observation to physical v9 code 260"
+    (is (str/includes? qualification-v10-contract ":image-version 9"))
+    (is (str/includes? qualification-v10-contract ":physical-result-code 260"))
+    (is (str/includes? qualification-v10-contract ":no-c-call-under-candidate-root true"))
+    (is (str/includes? qualification-v10-contract ":pcide :clear-after-zero-pcid-reload"))
+    (is (str/includes? qualification-v10-contract ":internal-disk-write-code-reached? false"))
+    (is (str/includes? result-checker "3[2-9][0-9]"))
+    (is (str/includes? qualification-builder "probe-native-result-v10"))))
 
 (deftest qualification-image-preserves-the-internal-disk-read-only-boundary
   (is (str/includes? qualification-builder "uefi-probe-and-arm-return"))
