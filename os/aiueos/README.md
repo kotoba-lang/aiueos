@@ -749,10 +749,11 @@ write and store something else, which is invisible without readback. There is
 deliberately no "find my USB stick" mode; the one time it guessed wrong it
 would destroy a disk.
 
-`contracts/usb-boot-v1.edn` carries these properties as checkable data,
-including the gaps: **USB boot is proved under OVMF in QEMU only**. No physical
-machine has booted this image, so real-hardware firmware quirks (USB 2 vs 3
-enumeration, per-vendor fallback-path handling) are untested. The bare-metal
+`contracts/usb-boot-v1.edn` carries these properties as checkable data.  Its
+original USB image was proved under OVMF only; the subsequent K16 qualification
+images have booted far enough on the physical machine to return bounded stage
+codes, but a normal AIUEOS boot is still unproved.  Real-hardware firmware
+quirks and the complete native runtime therefore remain qualification gates. The bare-metal
 profile's network stack (ADR-0020..0087: virtio-net, DHCPv4, DNS, TCP,
 TLS 1.3, HTTPS GET with CID verification) is proved under QEMU only — the one
 link-layer driver is virtio-net-pci, so on a physical machine the node boots
@@ -760,7 +761,7 @@ on the offline floor (`AIUEOS_VIRTIO_NET_ABSENT`) until a physical-NIC driver
 exists. ADR-0019's original "no network stack at all" was superseded by that
 chain; see `contracts/usb-boot-v1.edn` `:gaps` for the current split.
 
-The first RTL8125 physical-link slice is now in `kernel/rtl8125.c`. It is a
+The RTL8125 physical-link slice is in `kernel/rtl8125.c`. It is a
 bounded **PXE handoff**, not a general Realtek driver: after UEFI has powered
 and calibrated the PHY, it drains the firmware rings, installs one aligned TX
 and one aligned RX descriptor, preserves the firmware PHY/MCU setup, masks
@@ -770,12 +771,29 @@ completion, RX FCS removal and rearming:
 
 ```sh
 os/aiueos/scripts/smoke-rtl8125-handoff.sh
+os/aiueos/scripts/smoke-micro-infer.sh
+os/aiueos/scripts/smoke-job-protocol.sh
 ```
 
 `AIUEOS_RTL8125_MODEL_OK` proves the register/descriptor state machine only.
-`pci.c` does not select this backend yet, AMD-IOMMU isolation is not yet in the
-physical path, and no K16 frame has been observed; those are required before
-the driver can support a Murakumo heartbeat.
+The physical qualification build now selects the backend and stages progressively
+stronger checks: an ARP round trip, a boot-nonce-bound UDP relay, authenticated
+Murakumo enrollment through the Mac-held service token, and one claimed bounded
+inference job.  The K16 computes the job with the frozen
+`aiueos-char-bigram-v1` transition matrix, returns the boot- and job-bound result,
+and accepts a commit only after the relay has persisted that result and posted a
+ready heartbeat.  Build and QEMU-negative-path coverage is available with:
+
+```sh
+os/aiueos/scripts/smoke-qemu-physical-job.sh
+```
+
+The exact scope and known answer are in
+`contracts/micro-inference-qualification-v1.edn`.  This remains a physical
+qualification path: AMD-IOMMU isolation is not in the RTL8125 path, no completed
+K16 job has yet been observed, and a fixed character-bigram model is not a
+production LLM/GPU workload.  None of these checks authorizes an internal-SSD
+write.
 
 `verify-release-signature.py` verifies an RSA-2048 PKCS#1 v1.5 SHA-256
 signature over the build receipt using only the Python standard library

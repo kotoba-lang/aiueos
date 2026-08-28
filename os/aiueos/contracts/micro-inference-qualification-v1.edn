@@ -1,0 +1,34 @@
+;; A fixed, bounded language-model job executed by the physical K16.  This is
+;; stronger than a relay echo because the expected output is computed from a
+;; frozen transition matrix on the node.  It is not the production GPU/LLM
+;; admission gate.
+{:format :aiueos.micro-inference-qualification/v1
+ :model {:id "aiueos-char-bigram-v1"
+         :kind :character-bigram
+         :vocabulary " space+a-z"
+         :corpus-sha256 "6433aeadc179877f103fdc87672d967d5c68d3f531f8b2bf156e377ad84058cb"
+         :prompt-max-bytes 64
+         :tie-break :lowest-vocabulary-index}
+ :known-answer {:prompt "murakum"
+                :token "o"
+                :score 2
+                :row-total 5}
+ :requires [:physical-k16 :same-boot-nonce :claimed-job-id
+            :result-persisted-before-ready]
+ :transport {:request "AIUEOS_JOB_V1"
+             :result "AIUEOS_JOB_RESULT_V1"
+             :commit "AIUEOS_JOB_COMMIT_V1"
+             :binds [:boot-nonce :job-id]
+             :relay-udp {:server "10.77.0.1:7777"
+                         :node "10.77.0.10:7779"}}
+ :murakumo {:enqueue [:post "/infer/queue"]
+             :observe [:get "/infer/queue"]
+             :claim [:post "/infer/queue/:id/claim"]
+             :result [:post "/infer/queue/:id/result"]
+             :ready-heartbeat [:post "/infer/nodes/gmktec-k16/heartbeat"]}
+ :safety {:internal-disk-writes? false
+          :service-token-in-efi? false
+          :bounded-input? true}
+ :scope :native-micro-inference-qualification
+ :does-not-prove [:production-llm :gguf-runtime :gpu-inference
+                  :production-throughput :ssd-installation]}

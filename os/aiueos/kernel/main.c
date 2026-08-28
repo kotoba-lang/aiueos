@@ -150,6 +150,11 @@ extern uint32_t aiueos_rtl8125_qualification_rx_length(void);
 extern int aiueos_rtl8125_relay_qualification(void);
 extern unsigned aiueos_rtl8125_relay_error(void);
 extern uint32_t aiueos_rtl8125_relay_rx_length(void);
+extern int aiueos_rtl8125_job_qualification(void);
+extern unsigned aiueos_rtl8125_job_error(void);
+extern uint8_t aiueos_rtl8125_job_token(void);
+extern uint16_t aiueos_rtl8125_job_score(void);
+extern uint16_t aiueos_rtl8125_job_total(void);
 extern int aiueos_catalog_policy_selftest_ok(void);
 extern int aiueos_object_store_ready(void);
 extern int aiueos_journal_ready(void);
@@ -801,8 +806,31 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
     (void)aiueos_rtl8125_relay_rx_length();
     debug_string("AIUEOS_PHYSICAL_RELAY_OK request-bound-udp=10.77.0.1:7777 scope=diagnostic-only\n");
     serial_string("AIUEOS_PHYSICAL_RELAY_OK request-bound-udp=10.77.0.1:7777 scope=diagnostic-only\r\n");
+#ifdef AIUEOS_PHYSICAL_JOB_QUALIFICATION
+    aiueos_qualification_progress(234);
+    aiueos_framebuffer_qualification_screen("AIUEOS K16", "WAIT INFERENCE JOB", "SSD READ ONLY", 0);
+    if(!aiueos_rtl8125_job_qualification()) {
+      uint32_t code=8400U+aiueos_rtl8125_job_error();
+      aiueos_framebuffer_qualification_screen("AIUEOS K16", "FAIL INFERENCE JOB", "SSD READ ONLY", 0);
+      debug_string("AIUEOS_PHYSICAL_JOB_FAIL queue=claim model=aiueos-char-bigram-v1 result=uncommitted\n");
+      serial_string("AIUEOS_PHYSICAL_JOB_FAIL queue=claim model=aiueos-char-bigram-v1 result=uncommitted\r\n");
+      if(!aiueos_qualification_finalize(2,code))
+        serial_string("AIUEOS_PHYSICAL_QUALIFICATION_LOG_FAIL stage=runtime-variable\r\n");
+      for(;;)__asm__ volatile("cli; hlt");
+    }
+    aiueos_qualification_progress(235);
+    aiueos_framebuffer_qualification_screen("AIUEOS K16", "INFERENCE RESULT OK", "SSD READ ONLY", 1);
+    (void)aiueos_rtl8125_job_token();
+    (void)aiueos_rtl8125_job_score();
+    (void)aiueos_rtl8125_job_total();
+    debug_string("AIUEOS_PHYSICAL_JOB_OK queue=claim model=aiueos-char-bigram-v1 token=o result=recorded ready=true\n");
+    serial_string("AIUEOS_PHYSICAL_JOB_OK queue=claim model=aiueos-char-bigram-v1 token=o result=recorded ready=true\r\n");
+    if(!aiueos_qualification_finalize(1,8140))
+      serial_string("AIUEOS_PHYSICAL_QUALIFICATION_LOG_FAIL stage=runtime-variable\r\n");
+#else
     if(!aiueos_qualification_finalize(1,8130))
       serial_string("AIUEOS_PHYSICAL_QUALIFICATION_LOG_FAIL stage=runtime-variable\r\n");
+#endif
 #else
     if(!aiueos_qualification_finalize(1,8125))
       serial_string("AIUEOS_PHYSICAL_QUALIFICATION_LOG_FAIL stage=runtime-variable\r\n");
