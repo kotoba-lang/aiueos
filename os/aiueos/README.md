@@ -309,11 +309,19 @@ can write the last progress code to `RESULT.LOG`; a manual power cycle remains
 the fallback when firmware does not implement the watchdog.  The final memory
 map is obtained only after persisting progress and completing GOP discovery, so
 `ExitBootServices` receives the current map key.
+The physical K16 returned v6 code 209, proving ELF admission, fixed-address
+segment allocation, and GOP discovery while narrowing the hang to
+`ExitBootServices` or the native-core path.  v7 persists code 211 after a
+successful `ExitBootServices`, then codes 220 through 229 before the kernel's
+entry, early self-tests, GDT/IDT, PIC, paging, cryptography, framebuffer,
+allocator, ACPI, and final result stages.  These records use the same bounded
+16-byte UEFI variable and still never reach a block driver.
 
 ```sh
 SOURCE_DATE_EPOCH=0 ./os/aiueos/scripts/build-physical-qualification-usb.sh
 ./os/aiueos/scripts/smoke-qemu-physical-loader-failure.sh
 ./os/aiueos/scripts/smoke-qemu-physical-loader-hang.sh
+./os/aiueos/scripts/smoke-qemu-physical-kernel-hang.sh
 ```
 
 After `RESULT SAVED. REMOVE USB AND CONNECT IT TO THE MAC.`, power off and move
@@ -341,8 +349,8 @@ mount-triggered result retrieval, not the still-gated DbC real-time transport.
 
 It prints `AIUEOS_K16_PHYSICAL_RESULT_OK` only when the native-core result and
 the required read-only probe markers are both present.  The
-exact v6 gate and later SSD-install prerequisites are in
-`contracts/physical-qualification-usb-v6.edn`; v1 through v5 remain historical
+exact v7 gate and later SSD-install prerequisites are in
+`contracts/physical-qualification-usb-v7.edn`; v1 through v6 remain historical
 contracts.  Secure Boot must be disabled for this unsigned
 development image.  A green QEMU result is build evidence, not a physical K16
 result.

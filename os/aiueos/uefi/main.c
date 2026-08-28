@@ -551,6 +551,8 @@ efi_status EFIAPI efi_main(efi_handle image, struct efi_system_table *system) {
   info.descriptor_size = descriptor_size; info.descriptor_version = descriptor_version;
   status = bs->exit_boot_services(image, map_key);
   if (status != EFI_SUCCESS) return fail(118,"AIUEOS_LOADER_FAIL exit-boot-services");
+  debug_string("AIUEOS_LOADER_PROGRESS kernel-entry-call code=211\n");
+  persist_loader_record(0,211);
   ((kernel_entry)(uintptr_t)elf->entry)(&info);
   for (;;) __asm__ volatile("hlt");
 }

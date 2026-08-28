@@ -20,6 +20,8 @@
   (slurp (io/file "os/aiueos/contracts/physical-qualification-usb-v5.edn")))
 (def qualification-v6-contract
   (slurp (io/file "os/aiueos/contracts/physical-qualification-usb-v6.edn")))
+(def qualification-v7-contract
+  (slurp (io/file "os/aiueos/contracts/physical-qualification-usb-v7.edn")))
 
 (deftest probe-is-bounded-and-keeps-internal-disks-read-only
   (testing "the probe never reaches raw block writes or exits boot services"
@@ -122,6 +124,16 @@
     (is (<= 0 progress-before-map))
     (is (< progress-before-map final-map))
     (is (< final-map exit))))
+
+(deftest post-exit-and-kernel-hangs-leave-durable-progress-codes
+  (is (str/includes? uefi-loader-source
+                     "AIUEOS_LOADER_PROGRESS kernel-entry-call code=211"))
+  (is (str/includes? qualification-runtime "aiueos_qualification_progress"))
+  (is (str/includes? qualification-runtime "0x514b3241U, 2, 0, code, 0"))
+  (is (str/includes? qualification-v7-contract "220 :kernel-entry"))
+  (is (str/includes? qualification-v7-contract "229 :qualification-finalize"))
+  (is (str/includes? qualification-v7-contract ":forced-progress-code 299"))
+  (is (str/includes? qualification-v7-contract ":internal-disk-write-code-reached? false")))
 
 (deftest qualification-image-preserves-the-internal-disk-read-only-boundary
   (is (str/includes? qualification-builder "uefi-probe-and-arm-return"))

@@ -371,7 +371,7 @@ def verify(path, probe_path, loader_path, kernel_path, initramfs_path):
             len(fat16_read(result_volume, ("PROBE.LOG",))) != 64 * 1024 or
             len(fat16_read(result_volume, ("RESULT.LOG",))) != 1024):
         raise ValueError("invalid passwordless result volume")
-    print("AIUEOS_PHYSICAL_QUALIFICATION_USB_OK probe-native-result-v6 "
+    print("AIUEOS_PHYSICAL_QUALIFICATION_USB_OK probe-native-result-v7 "
           "mac-user-mount internal-disks-read-only")
 
 
@@ -420,14 +420,15 @@ def build(args):
     verify(args.output, args.probe, args.loader, args.kernel, args.initramfs)
     epoch = int(os.environ.get("SOURCE_DATE_EPOCH", "0"))
     receipt = {
-        "schema": "aiueos.physical-qualification-usb-receipt.v6",
+        "schema": "aiueos.physical-qualification-usb-receipt.v7",
         "created": datetime.fromtimestamp(epoch, timezone.utc).isoformat().replace("+00:00", "Z"),
-        "profile": "k16-native-passwordless-result-loader-hang-recovery-v6",
+        "profile": "k16-native-passwordless-result-kernel-progress-v7",
         "source": {"commit": os.environ.get("AIUEOS_SOURCE_COMMIT", "UNVERIFIED")},
         "disk": {"bytes": len(disk), "sha256": digest(disk)},
         "boot_order": ["uefi-probe-and-arm-return", "native-core",
                        "loader-failure-immediate-collector",
                        "loader-progress-watchdog-reboot-collector",
+                       "post-exit-kernel-progress-manual-reboot-collector",
                        "uefi-result-collector"],
         "artifacts": {
             "EFI/BOOT/BOOTX64.EFI": {"bytes": len(probe), "sha256": digest(probe)},
