@@ -15,12 +15,37 @@ import queue
 import re
 import select
 import socket
+import stat
 import struct
+import tempfile
 import threading
 import time
 import urllib.error
 import urllib.request
 from pathlib import Path
+
+
+def private_file_text(path_value, label, max_bytes):
+    """Read one owner-only regular file without following a symlink."""
+    if not path_value:
+        return ""
+    path = Path(path_value).expanduser()
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    descriptor = os.open(path, flags)
+    try:
+        details = os.fstat(descriptor)
+        if not stat.S_ISREG(details.st_mode):
+            raise RuntimeError(f"{label} is not a regular file")
+        if details.st_uid != os.getuid() or details.st_mode & 0o077:
+            raise RuntimeError(f"{label} must be owned by this user with mode 0600")
+        if details.st_size > max_bytes:
+            raise RuntimeError(f"{label} is too large")
+        value = os.read(descriptor, max_bytes + 1).decode("ascii").strip()
+        if not value or len(value.encode("ascii")) > max_bytes:
+            raise RuntimeError(f"{label} is empty or too large")
+        return value
+    finally:
+        os.close(descriptor)
 
 
 INTERFACE = os.environ.get("AIUEOS_PXE_INTERFACE", "en11")
@@ -43,10 +68,14 @@ MURAKUMO_API = os.environ.get(
     "AIUEOS_MURAKUMO_API", "https://api.murakumo.cloud").rstrip("/")
 MURAKUMO_NODE_NAME = os.environ.get(
     "AIUEOS_MURAKUMO_NODE_NAME", "gmktec-k16")
-MURAKUMO_NODE_DID = os.environ.get("AIUEOS_MURAKUMO_NODE_DID", "")
+MURAKUMO_NODE_DID = os.environ.get("AIUEOS_MURAKUMO_NODE_DID", "") or \
+    private_file_text(os.environ.get("AIUEOS_MURAKUMO_NODE_DID_FILE", ""),
+                      "Murakumo node DID file", 256)
 MURAKUMO_SERVICE_TOKEN = os.environ.get(
     "AIUEOS_MURAKUMO_SERVICE_TOKEN",
-    os.environ.get("MURAKUMO_SERVICE_TOKEN", ""))
+    os.environ.get("MURAKUMO_SERVICE_TOKEN", "")) or \
+    private_file_text(os.environ.get("AIUEOS_MURAKUMO_SERVICE_TOKEN_FILE", ""),
+                      "Murakumo service token file", 512)
 MURAKUMO_EXPECTED_MAC = os.environ.get(
     "AIUEOS_MURAKUMO_EXPECTED_MAC", "70-70-fc-0b-b6-32").lower()
 MURAKUMO_JOB_QUALIFICATION = os.environ.get(
@@ -67,10 +96,14 @@ JOB_RESULT = re.compile(
     r"^AIUEOS_JOB_RESULT_V1 boot=([0-9a-f]{16}) id=([0-9]{1,20}) "
     r"model=aiueos-char-bigram-v1 token=([0-9a-f]{2}) "
     r"score=([0-9]{1,5}) total=([0-9]{1,5})$")
+NODE_PONG = re.compile(
+    r"^AIUEOS_NODE_PONG_V1 boot=([0-9a-f]{16}) "
+    r"seq=([0-9]{1,10}) state=ready$")
 NEXT_BOOT_LOCK = threading.Lock()
 MURAKUMO_BOOT_LOCK = threading.Lock()
 MURAKUMO_SEEN_BOOTS = set()
 MURAKUMO_JOB_RESULTS = queue.Queue()
+MURAKUMO_LIVENESS_RESULTS = queue.Queue()
 
 
 def ipv4(value):
@@ -194,13 +227,10 @@ def murakumo_enrollment():
         "node/trust-tier": "awai-secure",
         "node/caps": {
             "engine": "aiueos-native",
-            "mem-bytes": 35185754112,
-            "gpu": "amd-1002:1681-unqualified",
+            "qualification-model": MURAKUMO_JOB_MODEL,
+            "physical-network": "rtl8125-unisolated-qualification",
         },
-        "node/can": [
-            "host-large-model", "low-latency-pipeline",
-            "media-generate", "full-shard",
-        ],
+        "node/can": [MURAKUMO_JOB_KIND],
     }
 
 
@@ -216,9 +246,8 @@ def murakumo_heartbeat(ready=False):
     if ready:
         heartbeat["node/model"] = MURAKUMO_JOB_MODEL
         heartbeat["node/capacity"] = {
-            "kind": MURAKUMO_JOB_KIND,
-            "concurrency": 1,
-            "qualification-only": True,
+            "slots-total": 1,
+            "slots-free": 1,
         }
     return heartbeat
 
@@ -288,6 +317,19 @@ def committed_payload(boot, job_id):
         return None
     return (f"AIUEOS_JOB_COMMIT_V1 boot={boot} id={job_id} "
             "state=recorded").encode("ascii")
+
+
+def node_ping_payload(boot, sequence):
+    if not re.fullmatch(r"[0-9a-f]{16}", boot or "") or \
+            not isinstance(sequence, int) or not (0 <= sequence <= 0xffffffff):
+        return None
+    return f"AIUEOS_NODE_PING_V1 boot={boot} seq={sequence}".encode("ascii")
+
+
+def verified_node_pong(message, boot, sequence):
+    match = NODE_PONG.fullmatch(message)
+    return bool(match and match.group(1) == boot and
+                int(match.group(2)) == sequence)
 
 
 def verified_job_result(message, boot, job_id):
@@ -375,6 +417,51 @@ def qualify_murakumo_job(message, sock, peer, opener=urllib.request.urlopen,
             "model": MURAKUMO_JOB_MODEL, "token": output["text"]}
 
 
+def maintain_murakumo_liveness(
+        boot, sock, peer, opener=urllib.request.urlopen,
+        result_queue=MURAKUMO_LIVENESS_RESULTS, sleeper=time.sleep,
+        rounds=None, interval=30, timeout=10):
+    sequence = 1
+    renewed = 0
+    while rounds is None or renewed < rounds:
+        ping = node_ping_payload(boot, sequence)
+        if not ping:
+            return {"state": "failed", "stage": "liveness-ping", "renewed": renewed}
+        sock.sendto(ping, peer)
+        deadline = time.monotonic() + timeout
+        valid = False
+        while not valid:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            try:
+                candidate, candidate_peer = result_queue.get(timeout=remaining)
+            except queue.Empty:
+                break
+            valid = candidate_peer == peer and \
+                verified_node_pong(candidate, boot, sequence)
+        if not valid:
+            murakumo_post(
+                f"/infer/nodes/{MURAKUMO_NODE_NAME}/heartbeat",
+                murakumo_heartbeat(False), opener)
+            return {"state": "stale", "stage": "liveness-timeout",
+                    "boot": boot, "sequence": sequence, "renewed": renewed}
+        status, _ = murakumo_post(
+            f"/infer/nodes/{MURAKUMO_NODE_NAME}/heartbeat",
+            murakumo_heartbeat(True), opener)
+        if status != 201:
+            return {"state": "failed", "stage": "heartbeat-renew",
+                    "status": status, "boot": boot, "sequence": sequence,
+                    "renewed": renewed}
+        renewed += 1
+        print(f"AIUEOS_MURAKUMO_LIVENESS state=renewed boot={boot} "
+              f"sequence={sequence} count={renewed}", flush=True)
+        sequence = (sequence + 1) & 0xffffffff
+        if rounds is None or renewed < rounds:
+            sleeper(interval)
+    return {"state": "live", "boot": boot, "renewed": renewed}
+
+
 def register_murakumo_hello(message, opener=urllib.request.urlopen):
     match = NODE_HELLO.fullmatch(message)
     if not match:
@@ -419,6 +506,10 @@ def relay_murakumo_hello(message, sock=None, peer=None):
             job_fields = " ".join(
                 f"{key}={value}" for key, value in job_result.items())
             print(f"AIUEOS_MURAKUMO_JOB {job_fields}", flush=True)
+            if job_result.get("state") == "ready":
+                threading.Thread(
+                    target=maintain_murakumo_liveness,
+                    args=(job_result["boot"], sock, peer), daemon=True).start()
     except Exception as error:
         print(f"AIUEOS_MURAKUMO_RELAY state=failed stage=client "
               f"error={type(error).__name__}", flush=True)
@@ -440,6 +531,20 @@ def send_control(command, nonce):
 
 def artifact_sha256(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def murakumo_preflight(opener=urllib.request.urlopen):
+    if not murakumo_relay_configured():
+        raise RuntimeError("Murakumo node DID or service token is unavailable")
+    if not BOOT_PATH.is_file():
+        raise RuntimeError(f"PXE boot image is unavailable: {BOOT_PATH}")
+    socket.if_nametoindex(INTERFACE)
+    status, jobs = murakumo_get("/infer/queue", opener)
+    if status != 200 or not isinstance(jobs, list):
+        raise RuntimeError(f"Murakumo queue authentication failed: HTTP {status}")
+    return {"did": MURAKUMO_NODE_DID,
+            "boot-sha256": artifact_sha256(BOOT_PATH),
+            "queued-jobs": len(jobs)}
 
 
 def next_boot_path():
@@ -567,6 +672,8 @@ def netlog_server():
                              daemon=True).start()
         if JOB_RESULT.fullmatch(message) and peer[0] == CLIENT_IP:
             MURAKUMO_JOB_RESULTS.put((message, peer))
+        if NODE_PONG.fullmatch(message) and peer[0] == CLIENT_IP:
+            MURAKUMO_LIVENESS_RESULTS.put((message, peer))
         nonce = extract_control_nonce(message)
         if nonce and peer[0] == CLIENT_IP:
             CONTROL_STATE_PATH.write_text(nonce + "\n", encoding="ascii")
@@ -660,6 +767,19 @@ def tftp_server():
 
 
 def selftest():
+    with tempfile.TemporaryDirectory() as directory:
+        private_path = Path(directory) / "credential"
+        private_path.write_text("bounded-value\n", encoding="ascii")
+        private_path.chmod(0o600)
+        assert private_file_text(private_path, "selftest credential", 32) == \
+            "bounded-value"
+        private_path.chmod(0o640)
+        try:
+            private_file_text(private_path, "selftest credential", 32)
+            raise AssertionError("group-readable credential accepted")
+        except RuntimeError:
+            pass
+
     request = bytearray(240)
     request[0:4] = bytes((1, 1, 6, 0))
     request[4:8] = b"TEST"
@@ -771,7 +891,24 @@ def selftest():
         ready_body = json.loads(job_captured[-1][2])
         assert ready_body["node/ready?"] is True
         assert ready_body["node/model"] == MURAKUMO_JOB_MODEL
-        assert ready_body["node/capacity"]["qualification-only"] is True
+        assert ready_body["node/capacity"] == {
+            "slots-total": 1, "slots-free": 1}
+        liveness_results = queue.Queue()
+        liveness_results.put((
+            "AIUEOS_NODE_PONG_V1 boot=0123456789abcdef seq=1 state=ready",
+            (CLIENT_IP, 7779)))
+        liveness_results.put((
+            "AIUEOS_NODE_PONG_V1 boot=0123456789abcdef seq=2 state=ready",
+            (CLIENT_IP, 7779)))
+        liveness = maintain_murakumo_liveness(
+            "0123456789abcdef", fake_socket, (CLIENT_IP, 7779),
+            fake_job_open, liveness_results, lambda _seconds: None,
+            rounds=2, interval=0, timeout=0.1)
+        assert liveness == {"state": "live", "boot": "0123456789abcdef",
+                            "renewed": 2}
+        assert fake_socket.sent[-1][0] == \
+            b"AIUEOS_NODE_PING_V1 boot=0123456789abcdef seq=2"
+        assert len(job_captured) == 7
     finally:
         globals()["MURAKUMO_NODE_DID"] = old_did
         globals()["MURAKUMO_SERVICE_TOKEN"] = old_token
@@ -783,19 +920,25 @@ def selftest():
     except ValueError:
         pass
     print("AIUEOS_PXE_SELFTEST_OK dhcp=pxe+http tftp=oack control=token-bound "
-          "node-relay=request-bound murakumo=enqueue+observe+claim+k16-result+ready "
+          "node-relay=request-bound murakumo=enqueue+claim+k16-result+ready+renew "
           "interface-bound=yes")
 
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--selftest", action="store_true")
+    parser.add_argument("--preflight", action="store_true")
     parser.add_argument("--control", choices=CONTROL_COMMANDS)
     parser.add_argument("--nonce")
     parser.add_argument("--next-boot")
     args = parser.parse_args()
     if args.selftest:
         selftest()
+        return
+    if args.preflight:
+        result = murakumo_preflight()
+        print("AIUEOS_MURAKUMO_PREFLIGHT_OK " +
+              " ".join(f"{key}={value}" for key, value in result.items()))
         return
     if args.next_boot:
         arm_next_boot(args.next_boot)

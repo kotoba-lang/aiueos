@@ -14,11 +14,13 @@
                 :score 2
                 :row-total 5}
  :requires [:physical-k16 :same-boot-nonce :claimed-job-id
-            :result-persisted-before-ready]
+            :result-persisted-before-ready :fresh-liveness-renewal]
  :transport {:request "AIUEOS_JOB_V1"
              :result "AIUEOS_JOB_RESULT_V1"
              :commit "AIUEOS_JOB_COMMIT_V1"
-             :binds [:boot-nonce :job-id]
+             :liveness-ping "AIUEOS_NODE_PING_V1"
+             :liveness-pong "AIUEOS_NODE_PONG_V1"
+             :binds [:boot-nonce :job-id :liveness-sequence]
              :relay-udp {:server "10.77.0.1:7777"
                          :node "10.77.0.10:7779"}}
  :murakumo {:enqueue [:post "/infer/queue"]
@@ -28,6 +30,7 @@
              :ready-heartbeat [:post "/infer/nodes/gmktec-k16/heartbeat"]}
  :safety {:internal-disk-writes? false
           :service-token-in-efi? false
+          :credential-files-mode "0600"
           :bounded-input? true}
  :scope :native-micro-inference-qualification
  :does-not-prove [:production-llm :gguf-runtime :gpu-inference

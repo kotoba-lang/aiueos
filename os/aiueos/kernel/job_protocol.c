@@ -139,3 +139,32 @@ int aiueos_job_commit_valid(
   for(uint32_t i=0;i<n;i++)if(expected[i]!=payload[i])return 0;
   return 1;
 }
+
+int aiueos_node_ping_parse(
+    const uint8_t *payload,uint32_t length,uint64_t expected_boot,
+    uint32_t *sequence) {
+  if(!payload||!sequence||!length||length>AIUEOS_NODE_LIVENESS_CAPACITY)return 0;
+  uint32_t at=0,value=0,digits=0;uint64_t boot=0;
+  if(!take_text(payload,length,&at,"AIUEOS_NODE_PING_V1 boot=")||
+     !take_hex64(payload,length,&at,&boot)||boot!=expected_boot||
+     !take_text(payload,length,&at," seq="))return 0;
+  while(at<length&&payload[at]>='0'&&payload[at]<='9') {
+    uint32_t digit=(uint32_t)(payload[at++]-'0');
+    if(digits++>=10U||value>429496729U||
+       (value==429496729U&&digit>5U))return 0;
+    value=value*10U+digit;
+  }
+  if(!digits||at!=length)return 0;
+  *sequence=value;return 1;
+}
+
+uint32_t aiueos_node_pong_payload(
+    uint8_t *out,uint32_t capacity,uint64_t boot_nonce,uint32_t sequence) {
+  if(!out||!capacity)return 0;
+  uint32_t n=append_text(out,capacity,0,"AIUEOS_NODE_PONG_V1 boot=");
+  n=append_hex64(out,capacity,n,boot_nonce);
+  n=append_text(out,capacity,n," seq=");
+  n=append_decimal(out,capacity,n,sequence);
+  n=append_text(out,capacity,n," state=ready");
+  return n<=capacity?n:0;
+}

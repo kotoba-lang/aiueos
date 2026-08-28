@@ -155,6 +155,9 @@ extern unsigned aiueos_rtl8125_job_error(void);
 extern uint8_t aiueos_rtl8125_job_token(void);
 extern uint16_t aiueos_rtl8125_job_score(void);
 extern uint16_t aiueos_rtl8125_job_total(void);
+extern int aiueos_rtl8125_liveness_renewal(void);
+extern unsigned aiueos_rtl8125_liveness_error(void);
+extern uint32_t aiueos_rtl8125_liveness_sequence(void);
 extern int aiueos_catalog_policy_selftest_ok(void);
 extern int aiueos_object_store_ready(void);
 extern int aiueos_journal_ready(void);
@@ -825,8 +828,26 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
     (void)aiueos_rtl8125_job_total();
     debug_string("AIUEOS_PHYSICAL_JOB_OK queue=claim model=aiueos-char-bigram-v1 token=o result=recorded ready=true\n");
     serial_string("AIUEOS_PHYSICAL_JOB_OK queue=claim model=aiueos-char-bigram-v1 token=o result=recorded ready=true\r\n");
-    if(!aiueos_qualification_finalize(1,8140))
+    if(!aiueos_rtl8125_liveness_renewal()) {
+      uint32_t code=8500U+aiueos_rtl8125_liveness_error();
+      aiueos_framebuffer_qualification_screen("AIUEOS K16", "FAIL HEARTBEAT RENEW", "SSD READ ONLY", 0);
+      debug_string("AIUEOS_PHYSICAL_LIVENESS_FAIL ping=pong heartbeat=not-renewed\n");
+      serial_string("AIUEOS_PHYSICAL_LIVENESS_FAIL ping=pong heartbeat=not-renewed\r\n");
+      if(!aiueos_qualification_finalize(2,code))
+        serial_string("AIUEOS_PHYSICAL_QUALIFICATION_LOG_FAIL stage=runtime-variable\r\n");
+      for(;;)__asm__ volatile("cli; hlt");
+    }
+    (void)aiueos_rtl8125_liveness_sequence();
+    aiueos_framebuffer_qualification_screen("AIUEOS K16", "MURAKUMO NODE LIVE", "SSD READ ONLY", 1);
+    debug_string("AIUEOS_PHYSICAL_LIVENESS_OK ping=pong heartbeat=renewed\n");
+    serial_string("AIUEOS_PHYSICAL_LIVENESS_OK ping=pong heartbeat=renewed\r\n");
+    if(!aiueos_qualification_finalize(1,8141))
       serial_string("AIUEOS_PHYSICAL_QUALIFICATION_LOG_FAIL stage=runtime-variable\r\n");
+    for(;;) {
+      if(aiueos_rtl8125_liveness_renewal())continue;
+      aiueos_framebuffer_qualification_screen("AIUEOS K16", "NODE LINK STALE", "SSD READ ONLY", 0);
+      for(;;)__asm__ volatile("cli; hlt");
+    }
 #else
     if(!aiueos_qualification_finalize(1,8130))
       serial_string("AIUEOS_PHYSICAL_QUALIFICATION_LOG_FAIL stage=runtime-variable\r\n");

@@ -782,11 +782,29 @@ Murakumo enrollment through the Mac-held service token, and one claimed bounded
 inference job.  The K16 computes the job with the frozen
 `aiueos-char-bigram-v1` transition matrix, returns the boot- and job-bound result,
 and accepts a commit only after the relay has persisted that result and posted a
-ready heartbeat.  Build and QEMU-negative-path coverage is available with:
+ready heartbeat.  It then answers boot- and sequence-bound liveness pings; the
+Mac relay renews the server-observed heartbeat only after each physical pong, so
+the node cannot remain live merely because the Mac process is still running.
+Build and QEMU-negative-path coverage is available with:
 
 ```sh
 os/aiueos/scripts/smoke-qemu-physical-job.sh
 ```
+
+The relay accepts its DID and service token from owner-only regular files,
+never from the EFI image or the LaunchAgent plist.  Its preflight authenticates
+to the live queue without enrolling a node:
+
+```sh
+AIUEOS_PXE_BOOT=build/aiueos-physical-job-pxe/aiueos-k16-native-pxe.efi \
+  os/aiueos/scripts/run-k16-murakumo-pxe.sh --preflight
+```
+
+After a clean physical image has been built and proved, the macOS user
+LaunchAgent installer copies that exact receipt-bound image and relay into
+Application Support and can restart it after login without an administrator
+password.  It refuses dirty or receipt-mismatched images.  Preparing with
+`AIUEOS_PXE_INSTALL_NO_LOAD=1` does not replace a currently running PXE server.
 
 The exact scope and known answer are in
 `contracts/micro-inference-qualification-v1.edn`.  This remains a physical
