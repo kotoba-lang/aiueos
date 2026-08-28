@@ -20,6 +20,20 @@
           :bytes-per-controller 4096
           :event-ring-trbs 16
           :transfer-ring-trbs 16}
+ :network-telemetry
+ {:kind :uefi-pxe-base-code-udp
+  :host-listen "10.77.0.1:7777"
+  :target-address "10.77.0.10"
+  :boot-transport :dhcpv4-tftp
+  :host-server :macos-normal-user
+  :physical-observation
+  {:date "2026-08-28"
+   :target-mac "70:70:fc:0b:b6:32"
+   :efi-bytes 13824
+   :state :received-live
+   :controllers 5
+   :dbc-state {:dce 1 :debug-port 0 :ccs 0 :ped 0 :pls 5 :speed 0 :dcr 0}}
+  :does-not-qualify [:native-core-boot :xhci-dbc-duplex :ssd-install]}
  :safety {:exit-boot-services? false
           :block-io-opened? false
           :internal-disk-writes? false
