@@ -57,7 +57,7 @@ AIUEOS_PXE_BOOT='$support/bootx64.efi' \\
 AIUEOS_MURAKUMO_NODE_DID_FILE='$did_file' \\
 AIUEOS_MURAKUMO_SERVICE_TOKEN_FILE='$token_file' \\
 AIUEOS_MURAKUMO_JOB_QUALIFICATION=1 \\
-  exec /usr/bin/python3 '$support/k16-pxe-server.py'
+  exec /usr/bin/python3 '$support/k16-pxe-server.py' "\$@"
 EOF
 chmod 755 "$runner"
 
