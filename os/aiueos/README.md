@@ -343,6 +343,14 @@ no C call under the candidate map.  Durable markers 320, 352, 384, 416, 448
 and 480 (+feature bits) mean before normalization, after normalization, after
 the transition-root round trip, after the final-root round trip, after a C
 call under the final root, and final W^X validation respectively.
+The physical K16 returned v10 code 416 with no feature bits.  Both candidate
+CR3 loads and readbacks therefore passed with four-level paging and no active
+SME, CET, PGE, or PCIDE handoff bit.  v11 narrows the remaining boundary by
+entering the qualification recorder through assembly: its first instructions
+save the candidate CR3 and restore the known firmware CR3 before any C
+prologue, global access, or additional stack use.  The C SetVariable helper and
+the final reset helper now run only under the firmware map; their assembly
+entries restore the candidate root before returning.
 
 ```sh
 SOURCE_DATE_EPOCH=0 ./os/aiueos/scripts/build-physical-qualification-usb.sh
@@ -376,8 +384,8 @@ mount-triggered result retrieval, not the still-gated DbC real-time transport.
 
 It prints `AIUEOS_K16_PHYSICAL_RESULT_OK` only when the native-core result and
 the required read-only probe markers are both present.  The
-exact v10 gate and later SSD-install prerequisites are in
-`contracts/physical-qualification-usb-v10.edn`; v1 through v9 remain historical
+exact v11 gate and later SSD-install prerequisites are in
+`contracts/physical-qualification-usb-v11.edn`; v1 through v10 remain historical
 contracts.  Secure Boot must be disabled for this unsigned
 development image.  A green QEMU result is build evidence, not a physical K16
 result.

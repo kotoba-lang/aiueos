@@ -30,6 +30,7 @@ kernel_trampoline_object="$out/kernel-ap-trampoline.o"
 kernel_ioapic_object="$out/kernel-ioapic.o"
 kernel_framebuffer_object="$out/kernel-framebuffer.o"
 kernel_qualification_object="$out/kernel-qualification.o"
+kernel_qualification_entry_object="$out/kernel-qualification-entry.o"
 kotoba_kernel_object=${AIUEOS_KOTOBA_KERNEL_OBJECT:-"$aiueos/kotoba/kernel-probe.o"}
 kotoba_journal_object=${AIUEOS_KOTOBA_JOURNAL_OBJECT:-"$aiueos/kotoba/journal-plan.o"}
 kotoba_fnv_object=${AIUEOS_KOTOBA_FNV_OBJECT:-"$aiueos/kotoba/fnv1a.o"}
@@ -126,7 +127,7 @@ loader_hang_test_cflags=
 kernel_hang_test_cflags=
 if [ "${AIUEOS_PHYSICAL_QUALIFICATION:-0}" = 1 ]; then
   physical_qualification_cflags="-DAIUEOS_PHYSICAL_QUALIFICATION=1"
-  qualification_link="$kernel_qualification_object"
+  qualification_link="$kernel_qualification_entry_object $kernel_qualification_object"
 fi
 if [ "${AIUEOS_GOP_FORCE_PROTOCOL_SCAN:-0}" = 1 ]; then
   gop_discovery_cflags="-DAIUEOS_GOP_FORCE_PROTOCOL_SCAN=1"
@@ -465,6 +466,9 @@ zig cc -target x86_64-freestanding-none -std=c11 -O2 \
   -ffreestanding -fno-stack-protector -mno-red-zone \
   -c -o "$kernel_framebuffer_object" "$aiueos/kernel/framebuffer.c"
 if [ -n "$qualification_link" ]; then
+  zig cc -target x86_64-freestanding-none \
+    -c -o "$kernel_qualification_entry_object" \
+    "$aiueos/kernel/qualification_entry.S"
   zig cc -target x86_64-freestanding-none -std=c11 -O2 \
     -ffreestanding -fno-stack-protector -mno-red-zone \
     -c -o "$kernel_qualification_object" "$aiueos/kernel/qualification.c"
