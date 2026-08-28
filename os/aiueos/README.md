@@ -333,6 +333,16 @@ uses a bounded 1 GiB 2 MiB-leaf transition root.  The transition root is never
 published as `kernel_cr3`: v9 records 260+features before it, 270+features
 after it, 280+features before the final split W^X root, 300+features after that
 root, and 310+features only after the final permissions validate.
+The physical K16 also returned v9 code 260 with no feature bits.  This proves
+LA57, SME and CET were absent, but it does not distinguish the CR3 load/first
+instruction from the following C call that hands back to UEFI.  v10 makes that
+boundary observable: it clears inherited PGE (+8) and PCIDE (+16, only after
+reloading the firmware root with PCID zero), then switches to each candidate
+root, reads CR3, and switches straight back in one inline assembly block with
+no C call under the candidate map.  Durable markers 320, 352, 384, 416, 448
+and 480 (+feature bits) mean before normalization, after normalization, after
+the transition-root round trip, after the final-root round trip, after a C
+call under the final root, and final W^X validation respectively.
 
 ```sh
 SOURCE_DATE_EPOCH=0 ./os/aiueos/scripts/build-physical-qualification-usb.sh
@@ -366,8 +376,8 @@ mount-triggered result retrieval, not the still-gated DbC real-time transport.
 
 It prints `AIUEOS_K16_PHYSICAL_RESULT_OK` only when the native-core result and
 the required read-only probe markers are both present.  The
-exact v9 gate and later SSD-install prerequisites are in
-`contracts/physical-qualification-usb-v9.edn`; v1 through v8 remain historical
+exact v10 gate and later SSD-install prerequisites are in
+`contracts/physical-qualification-usb-v10.edn`; v1 through v9 remain historical
 contracts.  Secure Boot must be disabled for this unsigned
 development image.  A green QEMU result is build evidence, not a physical K16
 result.
