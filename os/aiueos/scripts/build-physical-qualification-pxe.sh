@@ -23,6 +23,7 @@ mkdir -p "$out"
 AIUEOS_OUT="$core_out" \
 AIUEOS_PHYSICAL_QUALIFICATION=1 \
 AIUEOS_PHYSICAL_NETWORK_QUALIFICATION=${AIUEOS_PHYSICAL_NETWORK_QUALIFICATION:-0} \
+AIUEOS_PHYSICAL_DIRECT_HTTPS_QUALIFICATION=${AIUEOS_PHYSICAL_DIRECT_HTTPS_QUALIFICATION:-0} \
 AIUEOS_PERSISTENT_BOOT=${AIUEOS_PERSISTENT_BOOT:-0} \
 AIUEOS_EMBEDDED_RELEASE=1 \
 AIUEOS_NETBOOT_QUALIFICATION=1 \
@@ -31,7 +32,9 @@ SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH:-0} \
 cp "$core_out/esp/EFI/BOOT/BOOTX64.EFI" "$efi"
 
 AIUEOS_SOURCE_COMMIT="$source_commit" AIUEOS_SOURCE_DIRTY="$source_dirty" \
-AIUEOS_PERSISTENT_BOOT=${AIUEOS_PERSISTENT_BOOT:-0} python3 - \
+AIUEOS_PERSISTENT_BOOT=${AIUEOS_PERSISTENT_BOOT:-0} \
+AIUEOS_PHYSICAL_DIRECT_HTTPS_QUALIFICATION=${AIUEOS_PHYSICAL_DIRECT_HTTPS_QUALIFICATION:-0} \
+python3 - \
   "$efi" "$core_out/esp/EFI/AIUEOS/KERNEL.ELF" \
   "$core_out/esp/EFI/AIUEOS/INITRD.IMG" "$receipt" <<'PY'
 import hashlib
@@ -66,6 +69,17 @@ document = {
                      os.environ["AIUEOS_PERSISTENT_BOOT"] == "1" else
                      "90-second-recovery"),
     },
+    "qualification": ({
+        "profile": "rtl8125-direct-https",
+        "authority": "https://api.murakumo.cloud",
+        "path": "/infer/queue",
+        "trust": "transport-only",
+        "physical_k16": "unverified",
+        "secrets": "none",
+        "mac_application_relay": False,
+    } if os.environ["AIUEOS_PHYSICAL_DIRECT_HTTPS_QUALIFICATION"] == "1" else {
+        "profile": "native-core",
+    }),
     "safety": {
         "internal-disk-writes": False,
         "boot-order-writes": False,

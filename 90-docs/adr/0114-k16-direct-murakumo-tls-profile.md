@@ -41,11 +41,12 @@ deterministic test entropy. Therefore its evidence label is
 `trust=transport-only`; it must not carry an account result, Wi-Fi secret or
 CACAO credential on a physical machine.
 
-The next physical gate must add all of the following before "K16 direct HTTPS"
-can be green:
+ADR-0115 adds the source/build side of the first item below. None of the
+following may be called physically green before its own K16 receipt exists:
 
 1. RTL8125 send/receive integration for DNS and TCP, with the Mac acting only
-   as an IP router during qualification rather than an application relay;
+   as an IP router during qualification rather than an application relay
+   (implemented image, physical reboot unverified);
 2. secure boot-time entropy and durable device-key custody;
 3. chain plus `api.murakumo.cloud` hostname admission;
 4. a device-owned CACAO request and a real K16 reboot receipt;

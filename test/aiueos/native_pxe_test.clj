@@ -25,6 +25,13 @@
   (slurp (io/file "os/aiueos/scripts/build-physical-network-pxe.sh")))
 (def physical-network-smoke
   (slurp (io/file "os/aiueos/scripts/smoke-qemu-rtl8125-qualification.sh")))
+(def physical-direct-https-contract
+  (slurp (io/file
+          "os/aiueos/contracts/physical-direct-https-qualification-pxe-v1.edn")))
+(def physical-direct-https-build
+  (slurp (io/file "os/aiueos/scripts/build-physical-direct-https-pxe.sh")))
+(def physical-direct-https-smoke
+  (slurp (io/file "os/aiueos/scripts/smoke-qemu-physical-direct-https.sh")))
 (def physical-relay-contract
   (slurp (io/file "os/aiueos/contracts/physical-relay-qualification-pxe-v1.edn")))
 (def murakumo-relay-contract
@@ -195,6 +202,33 @@
                   [:persistent-device-identity
                    :authenticated-murakumo-heartbeat
                    :job-claim :inference :result-return])))))
+
+(deftest k16-direct-https-image-carries-no-secret-or-mac-application-relay
+  (testing "RTL8125 owns DNS, TCP, TLS and the public Murakumo GET"
+    (doseq [marker ["rtl8125_direct_dns"
+                    "rtl8125_direct_tcp_send"
+                    "aiueos_tls13_configure"
+                    "GET /infer/queue HTTP/1.1"
+                    "AIUEOS_PHYSICAL_DIRECT_HTTPS_OK"]]
+      (is (or (str/includes? pci marker)
+              (str/includes? kernel marker))))
+    (is (str/includes? physical-direct-https-build
+                       "AIUEOS_PHYSICAL_DIRECT_HTTPS_QUALIFICATION=1"))
+    (is (str/includes? physical-direct-https-smoke
+                       "build-physical-direct-https-pxe.sh")))
+  (testing "the contract keeps source/build separate from a physical reboot"
+    (let [contract (edn/read-string physical-direct-https-contract)]
+      (is (= :transport-only (get-in contract [:transport :trust])))
+      (is (= :unverified (get-in contract [:evidence :physical-state])))
+      (is (= :none (get-in contract [:request :secrets])))
+      (is (false? (get-in contract [:request :mac-application-relay?])))
+      (is (false? (get-in contract [:safety :account-token-in-image?])))
+      (is (false? (get-in contract [:safety :wifi-secret-in-image?])))
+      (is (false? (get-in contract [:safety :cacao-in-image?])))
+      (is (every? (set (:does-not-prove contract))
+                  [:trusted-https :device-owned-cacao :account-claim
+                   :wifi-application :authenticated-murakumo-heartbeat
+                   :inference :reboot-recovery])))))
 
 (deftest k16-relay-enrollment-keeps-readiness-behind-real-work
   (let [contract (edn/read-string murakumo-relay-contract)]
