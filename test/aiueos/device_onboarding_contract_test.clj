@@ -9,6 +9,12 @@
 
 (deftest account-node-network-and-storage-gates-stay-separate
   (is (= :kotoba-lang/browser (get-in contract [:ui :engine])))
+  (is (= "https://auth.kotoba.cloud"
+         (get-in contract [:authentication :authority])))
+  (is (= "auth.kotoba.cloud"
+         (get-in contract [:authentication :rp-id])))
+  (is (= "/v1/passkey/login/options"
+         (get-in contract [:authentication :endpoints :passkey-options])))
   (is (= [:factory :challenge-issued :account-authenticated
           :device-key-proved :claimed :account-synced]
          (get-in contract [:authentication :shared-flow])))

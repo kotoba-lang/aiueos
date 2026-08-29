@@ -9,8 +9,11 @@
       :hosted-html-js {:scope :verification-only
                        :counts-as-native? false}}
  :authentication
- {:authority "https://auth.itonami.cloud"
-  :rp-id "itonami.cloud"
+ {:authority "https://auth.kotoba.cloud"
+  :rp-id "auth.kotoba.cloud"
+  :endpoints {:sign-in "/sign-in"
+              :passkey-options "/v1/passkey/login/options"
+              :passkey-verify "/v1/passkey/login/verify"}
   :methods
   {:passkey {:requirements [:single-use-challenge :rp-id-bound
                             :origin-bound :user-present :user-verified

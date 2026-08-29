@@ -95,6 +95,14 @@
           :aiueos.enroll/reason reason}
          extra))
 
+(def device-auth-authority "https://auth.kotoba.cloud")
+(def device-auth-rp-id "auth.kotoba.cloud")
+(def device-auth-sign-in (str device-auth-authority "/sign-in"))
+(def device-auth-login-options
+  (str device-auth-authority "/v1/passkey/login/options"))
+(def device-auth-login-verify
+  (str device-auth-authority "/v1/passkey/login/verify"))
+
 (defn bind-via
   "The only P1b-green path is `:phone-http`. A guest VGA/keyboard attempt is
   `:local-console-required` — that is the named red for 'operator used the
@@ -369,7 +377,7 @@
        {:did (:did device)
         :model (:model device)
         :endpoint endpoint
-        :auth-authority "https://auth.itonami.cloud"
+        :auth-authority device-auth-authority
         :auth-methods "passkey,phone-scan"})
 
      (defn chassis-qr
@@ -390,7 +398,7 @@
                            :endpoint endpoint
                            :setup_url setup-url
                            :qr qr
-                           :auth_authority "https://auth.itonami.cloud"
+                           :auth_authority device-auth-authority
                            :auth_methods ["passkey" "phone-scan"]
                            :claim_secret_exposed false
                            :chassis "host-helper"
@@ -585,9 +593,9 @@
        (device-auth/factory
         {:device-did (:did device)
          :model (:model device)
-         :rp-id "itonami.cloud"
-         :origin "https://auth.itonami.cloud"
-         :authority "https://auth.itonami.cloud"}))
+         :rp-id device-auth-rp-id
+         :origin device-auth-authority
+         :authority device-auth-authority}))
 
      (defn make-runtime
        [{:keys [dir ledger-path listen-port pre-enroll? tenant]}]
@@ -630,6 +638,9 @@
           :rp_id (:auth/rp-id state)
           :origin (:auth/origin state)
           :authority (:auth/authority state)
+          :sign_in_url device-auth-sign-in
+          :passkey_options_url device-auth-login-options
+          :passkey_verify_url device-auth-login-verify
           :scan_payload (when (= :phone-scan method)
                           (str "aiueos-auth:1;did=" (:device/did state)
                                ";challenge=" challenge
@@ -649,6 +660,9 @@
           :same_ceremony true
           :authority (:auth/authority state)
           :rp_id (:auth/rp-id state)
+          :sign_in_url device-auth-sign-in
+          :passkey_options_url device-auth-login-options
+          :passkey_verify_url device-auth-login-verify
           :account_sync "after-verified-claim"
           :node_add "after-device-key-proof"
           :murakumo_ready "after-runtime-proof"
@@ -791,7 +805,7 @@
                     (send-bytes! ex 501 "application/json; charset=utf-8"
                                  (->json {:decision "deny"
                                           :reason "authority-verifier-not-wired"
-                                          :authority "https://auth.itonami.cloud"
+                                          :authority device-auth-authority
                                           :note "Client supplied verified flags are never accepted."}))
 
                     (and (= "POST" method) (= path "/api/attest"))

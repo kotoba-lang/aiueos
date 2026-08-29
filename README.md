@@ -324,7 +324,8 @@ passing path. User-mode/slirp stands in for Ethernet DHCP. Enrollment is
 The hosted fixture uses `grant.enroll` (not a second identity stack). The
 product account flow sends `Passkey` or `phone-scan` into one single-use
 challenge and then proves the device-owned key. The scanned payload contains
-neither the device enrollment token nor an account/passkey private key. The local check-in ledger is
+neither the device enrollment token nor an account/passkey private key. The
+formal WebAuthn authority and RP ID are both `auth.kotoba.cloud`. The local check-in ledger is
 labelled `non-authoritative`; production still names `https://kotobase.net`.
 
 On Apple Silicon this uses `qemu-system-aarch64` + HVF + edk2 firmware, the

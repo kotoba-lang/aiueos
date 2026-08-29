@@ -5,9 +5,9 @@
 (def base
   (auth/factory {:device-did "did:aiueos:k16:one"
                  :model "gmktec-k16"
-                 :rp-id "itonami.cloud"
-                 :origin "https://auth.itonami.cloud"
-                 :authority "https://auth.itonami.cloud"}))
+                 :rp-id "auth.kotoba.cloud"
+                 :origin "https://auth.kotoba.cloud"
+                 :authority "https://auth.kotoba.cloud"}))
 
 (defn issued []
   (auth/issue-challenge base {:challenge "once" :now-ms 1000 :ttl-ms 300000}))
@@ -15,8 +15,8 @@
 (def passkey-proof
   {:auth/method :passkey
    :auth/challenge "once"
-   :auth/rp-id "itonami.cloud"
-   :auth/origin "https://auth.itonami.cloud"
+   :auth/rp-id "auth.kotoba.cloud"
+   :auth/origin "https://auth.kotoba.cloud"
    :auth/user-present? true
    :auth/user-verified? true
    :authority/verified? true

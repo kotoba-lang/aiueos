@@ -91,6 +91,7 @@
           "a scanned code must not expose the device enrollment token")
       (let [setup (:body (pb/http-get (str (pb/base-url rt) "/setup.json")))]
         (is (re-find #"\"claim_secret_exposed\":false" setup))
+        (is (re-find #"\"auth_authority\":\"https://auth.kotoba.cloud\"" setup))
         (is (not (re-find #"\"token\"" setup))))
       (let [plan (pb/http-get (str (pb/base-url rt) "/api/device-auth/plan"))
             challenge (pb/http-post
@@ -103,6 +104,12 @@
         (is (re-find #"\"engine\":\"kotoba-lang/browser\"" (:body plan)))
         (is (= "external-authority-required"
                (get-in challenge [:parsed :verification])))
+        (is (= "https://auth.kotoba.cloud"
+               (get-in challenge [:parsed :authority])))
+        (is (= "auth.kotoba.cloud"
+               (get-in challenge [:parsed :rp_id])))
+        (is (= "https://auth.kotoba.cloud/v1/passkey/login/options"
+               (get-in challenge [:parsed :passkey_options_url])))
         (is (re-find #"^aiueos-auth:1;did=.*;secret=none$"
                      (get-in challenge [:parsed :scan_payload])))
         (is (= 501 (:code complete)))

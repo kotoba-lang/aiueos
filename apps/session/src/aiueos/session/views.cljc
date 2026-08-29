@@ -164,7 +164,9 @@
      "Passkey をこの画面で使うか、スマホでコードを読み取ります。どちらも同じアカウント確認を通り、Passkey の秘密鍵は Node へコピーしません。"]
     (dds/card
      (dds/heading 2 "Passkey で続ける" {:size "24"})
-     [:p "この機械の Kotoba Browser から、アカウントの Passkey を確認します。"]
+     [:p "この機械の Kotoba Browser から、"
+      [:code "auth.kotoba.cloud"]
+      " の Passkey を確認します。"]
      (dds/button "Passkey で確認" {:id "start-passkey" :size "md"
                                      :attrs {:data-kotoba-action "device-auth/start-passkey"}}))
     (dds/card

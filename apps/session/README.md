@@ -10,6 +10,8 @@ The committed HTML/JavaScript build is a hosted verification adapter and does
 not count as the native Kotoba Browser guest. The native product target is the
 same document/action model in `kotoba-clj/WASM` through browser desktop-backend
 contract v1.
+The formal Passkey authority, origin, and WebAuthn RP ID are
+`auth.kotoba.cloud`; `auth.itonami.cloud` is not an aiueos OS-auth route.
 
 This is not `clojure -M:cloud-live check`. CID read and murakumo infer leave
 from the **session process** (`POST /api/session/read-cid`,
