@@ -129,6 +129,7 @@ physical_qualification_cflags=
 physical_network_qualification_cflags=
 physical_relay_qualification_cflags=
 physical_job_qualification_cflags=
+persistent_boot_cflags=
 qualification_link=
 gop_discovery_cflags=
 loader_failure_test_cflags=
@@ -140,6 +141,13 @@ embedded_release_link=
 if [ "${AIUEOS_PHYSICAL_QUALIFICATION:-0}" = 1 ]; then
   physical_qualification_cflags="-DAIUEOS_PHYSICAL_QUALIFICATION=1"
   qualification_link="$kernel_qualification_entry_object $kernel_qualification_object"
+fi
+if [ "${AIUEOS_PERSISTENT_BOOT:-0}" = 1 ]; then
+  [ "${AIUEOS_PHYSICAL_QUALIFICATION:-0}" = 1 ] || {
+    echo "error: persistent boot requires physical qualification" >&2
+    exit 1
+  }
+  persistent_boot_cflags="-DAIUEOS_PERSISTENT_BOOT=1"
 fi
 if [ "${AIUEOS_PHYSICAL_NETWORK_QUALIFICATION:-0}" = 1 ]; then
   [ "${AIUEOS_PHYSICAL_QUALIFICATION:-0}" = 1 ] || {
@@ -537,6 +545,7 @@ if [ -n "$qualification_link" ]; then
     "$aiueos/kernel/qualification_entry.S"
   zig cc -target x86_64-freestanding-none -std=c11 -O2 \
     -ffreestanding -fno-stack-protector -mno-red-zone \
+    $persistent_boot_cflags \
     -c -o "$kernel_qualification_object" "$aiueos/kernel/qualification.c"
 fi
 # --strip-all: the symbol/string tables are ~550 KiB and are never loaded (only
@@ -667,6 +676,7 @@ zig cc -target x86_64-windows-gnu -std=c11 -O2 \
   -ffreestanding -fshort-wchar -fno-stack-protector -mno-red-zone \
   $gop_discovery_cflags $physical_qualification_cflags $loader_failure_test_cflags \
   $loader_hang_test_cflags $embedded_release_cflags $netboot_qualification_cflags \
+  $persistent_boot_cflags \
   -c -o "$object" "$aiueos/uefi/main.c"
 zig lld-link /subsystem:efi_application /entry:efi_main /nodefaultlib /timestamp:0 \
   /fixed:no "/out:$efi" "$object" "$identity_object" $embedded_release_link

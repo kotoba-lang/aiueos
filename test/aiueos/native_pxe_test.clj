@@ -37,6 +37,12 @@
   (slurp (io/file "os/aiueos/scripts/smoke-relay-protocol.sh")))
 (def physical-relay-smoke
   (slurp (io/file "os/aiueos/scripts/smoke-qemu-physical-relay.sh")))
+(def persistent-build
+  (slurp (io/file "os/aiueos/scripts/build-physical-job-persistent-pxe.sh")))
+(def persistent-smoke
+  (slurp (io/file "os/aiueos/scripts/smoke-qemu-physical-persistent.sh")))
+(def qualification-runtime
+  (slurp (io/file "os/aiueos/kernel/qualification.c")))
 
 (deftest single-efi-carries-admitted-native-payload
   (testing "the PXE artifact embeds exactly the kernel and initramfs built now"
@@ -83,6 +89,19 @@
                   "repeated native PXE builds differ"]]
     (is (str/includes? smoke marker)))
   (is (str/includes? contract ":does-not-prove [:physical-k16-boot")))
+
+(deftest persistent-native-records-success-without-resetting
+  (doseq [marker ["AIUEOS_PERSISTENT_BOOT=1"
+                  "build-physical-job-pxe.sh"]]
+    (is (str/includes? persistent-build marker)))
+  (is (str/includes? loader
+                     "AIUEOS_LOADER_WATCHDOG_DISABLED persistent-native"))
+  (is (str/includes? qualification-runtime
+                     "#ifdef AIUEOS_PERSISTENT_BOOT"))
+  (doseq [marker ["AIUEOS_NATIVE_PERSISTENT_QEMU_OK"
+                  "current-pxe-persistent"
+                  "watchdog=disabled"]]
+    (is (str/includes? persistent-smoke marker))))
 
 (deftest k16-rtl8125-uefi-observation-stays-read-only
   (doseq [marker ["AIUEOS_RTL8125_HANDOFF bdf="

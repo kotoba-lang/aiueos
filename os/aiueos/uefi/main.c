@@ -627,12 +627,20 @@ efi_status EFIAPI efi_main(efi_handle image, struct efi_system_table *system) {
     system->console_out->output_string(system->console_out, console_message);
   debug_string("AIUEOS_LOADER_OK\n");
 #ifdef AIUEOS_PHYSICAL_QUALIFICATION
+#ifdef AIUEOS_PERSISTENT_BOOT
+  if (!bs->set_watchdog_timer ||
+      bs->set_watchdog_timer(0,0,0,0)!=EFI_SUCCESS)
+    return fail(120,"AIUEOS_LOADER_FAIL watchdog-disable");
+  debug_string("AIUEOS_LOADER_WATCHDOG_DISABLED persistent-native\n");
+  console_ascii("AIUEOS loader watchdog disabled for persistent native boot.\r\n");
+#else
   if (bs->set_watchdog_timer &&
       bs->set_watchdog_timer(AIUEOS_QUALIFICATION_LOADER_WATCHDOG_SECONDS,
                              0xA106,0,0)==EFI_SUCCESS) {
     debug_string("AIUEOS_LOADER_WATCHDOG_ARMED\n");
     console_ascii("AIUEOS loader watchdog armed.\r\n");
   }
+#endif
 #endif
 #ifdef AIUEOS_QUALIFICATION_FORCE_LOADER_HANG_CODE
   progress(AIUEOS_QUALIFICATION_FORCE_LOADER_HANG_CODE,
