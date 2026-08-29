@@ -313,6 +313,9 @@ if [ "${AIUEOS_QWEN38_MODEL_HANDOFF:-0}" = 1 ] ||
   fi
   if [ "${AIUEOS_MODEL_NVME_SLOTS:-0}" = 1 ]; then
     model_slots_cflags="-DAIUEOS_MODEL_NVME_SLOTS=1"
+    if [ "${AIUEOS_MODEL_NVME_TARGET_OPTIONAL:-0}" = 1 ]; then
+      model_slots_cflags="$model_slots_cflags -DAIUEOS_MODEL_NVME_TARGET_OPTIONAL=1"
+    fi
     if [ "${AIUEOS_MODEL_SLOT_IMPORT_EXIT:-0}" = 1 ]; then
       [ "${AIUEOS_MODEL_TEST_FIXTURE:-0}" = 1 ] || {
         echo "error: model-slot import exit is test-fixture only" >&2
@@ -322,6 +325,9 @@ if [ "${AIUEOS_QWEN38_MODEL_HANDOFF:-0}" = 1 ] ||
     fi
     model_slots_link="$model_slots_object"
   fi
+elif [ "${AIUEOS_MODEL_NVME_TARGET_OPTIONAL:-0}" = 1 ]; then
+  echo "error: optional NVMe model target requires AIUEOS_MODEL_NVME_SLOTS=1" >&2
+  exit 1
 elif [ "${AIUEOS_MODEL_TEST_FIXTURE:-0}" = 1 ]; then
   echo "error: model test fixture requires a model handoff or NVMe-slot build" >&2
   exit 1

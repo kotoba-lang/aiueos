@@ -33,7 +33,10 @@ not claim a native post-handoff NVMe driver.
    and is not bootable.
 5. Normal bytes will come from the admitted Kotobase/IPFS HTTPS channel. For
    this first physical qualification, the same exact three-file FAT32 bundle
-   may be streamed from removable USB. USB is a source, never the cache target.
+   may be fetched directly by exact HTTPS byte ranges and streamed from
+   removable USB. USB is a source, never the cache target. If no anchored
+   model partition exists, the combined qualification records a deferred
+   import and continues the direct-HTTPS test without an internal-disk write.
 
 ## Evidence and limits
 
@@ -42,6 +45,15 @@ selector commit and corruption of the newest selector. The QEMU gate boots the
 real UEFI application against a QEMU NVMe namespace, imports generation 1 to
 A, generation 2 to B without changing A, and refuses a corrupt generation 3
 while generation 2 remains active.
+
+The same QEMU gate also boots with no admitted target and proves the physical
+qualification takes the explicit deferred branch before continuing, with no
+Block I/O write target selected.
+
+The ranged downloader is separately tested with a resumable prefix and exact
+206 responses. It writes three FAT32-safe files directly and verifies the
+reconstructed whole-artifact SHA-256; it never requires a 10.9 GiB staging
+file that FAT32 cannot represent.
 
 This is physical-adapter-shaped evidence, not a completed K16 disk write. The
 K16 still needs a deliberately provisioned model partition, a physical boot,

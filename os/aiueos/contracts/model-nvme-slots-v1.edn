@@ -18,7 +18,8 @@
           :minimum-slot-bytes 10934860800
           :record-checksum :crc32-ieee}
  :update {:source-normal :kotobase-https-cid-stream
-          :source-this-qualification :split-fat32-usb
+          :source-this-qualification :https-range-to-split-fat32-usb
+          :target-absent :continue-without-internal-disk-write
           :write-order [:inactive-data :flush :full-readback-sha256
                         :inactive-header :flush-and-readback
                         :alternate-selector :flush-and-readback]
@@ -33,9 +34,12 @@
             :qemu-uefi-nvme-block-io :passed
             :qemu-a-to-b-update :passed
             :qemu-corrupt-update-last-known-good :passed
+            :qemu-absent-target-deferred :passed
+            :fat32-ranged-fetch-resume :passed
             :physical-k16-nvme-write :unverified
             :physical-k16-https-model-fetch :unverified}
  :safety {:writes-without-anchor? false
+          :target-absent-continues-https? true
           :writes-removable-target? false
           :writes-whole-nvme? false
           :writes-windows-partition? false

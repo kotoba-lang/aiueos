@@ -34,6 +34,7 @@ cp "$core_out/esp/EFI/BOOT/BOOTX64.EFI" "$efi"
 AIUEOS_SOURCE_COMMIT="$source_commit" AIUEOS_SOURCE_DIRTY="$source_dirty" \
 AIUEOS_PERSISTENT_BOOT=${AIUEOS_PERSISTENT_BOOT:-0} \
 AIUEOS_PHYSICAL_DIRECT_HTTPS_QUALIFICATION=${AIUEOS_PHYSICAL_DIRECT_HTTPS_QUALIFICATION:-0} \
+AIUEOS_MODEL_NVME_SLOTS=${AIUEOS_MODEL_NVME_SLOTS:-0} \
 python3 - \
   "$efi" "$core_out/esp/EFI/AIUEOS/KERNEL.ELF" \
   "$core_out/esp/EFI/AIUEOS/INITRD.IMG" "$receipt" <<'PY'
@@ -81,7 +82,9 @@ document = {
         "profile": "native-core",
     }),
     "safety": {
-        "internal-disk-writes": False,
+        "internal-disk-writes": ("dedicated-anchored-model-partition-only" if
+                                 os.environ["AIUEOS_MODEL_NVME_SLOTS"] == "1" else
+                                 False),
         "boot-order-writes": False,
         "ssd-install": False,
     },
