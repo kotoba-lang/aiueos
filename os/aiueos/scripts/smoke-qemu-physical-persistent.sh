@@ -43,7 +43,12 @@ cp "$work/release/aiueos-k16-native-pxe.efi" \
 cp "$OVMF_VARS" "$work/vars.fd"
 
 set +e
-"$timeout_cmd" 18 "$qemu" -machine q35,accel=tcg -cpu max -m 256M -smp 2 \
+# This gate hashes the whole embedded kernel with the deliberately small
+# freestanding SHA-256 path before entry.  The native inference glyph/status
+# object moved the TCG run past the old 18-second wall without changing its
+# progress markers; 35 seconds is the measured deterministic envelope on the
+# same Mac, not a relaxed success condition.
+"$timeout_cmd" 35 "$qemu" -machine q35,accel=tcg -cpu max -m 256M -smp 2 \
   -drive "if=pflash,format=raw,readonly=on,file=$OVMF_CODE" \
   -drive "if=pflash,format=raw,file=$work/vars.fd" \
   -drive "format=raw,file=fat:rw:$work/esp" \

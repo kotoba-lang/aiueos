@@ -1,4 +1,5 @@
 #include <stdint.h>
+#include "inference_status.h"
 
 struct aiueos_boot_info {
   uint64_t magic, version;
@@ -887,7 +888,23 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
     serial_string("AIUEOS_PHYSICAL_RELAY_OK request-bound-udp=10.77.0.1:7777 scope=diagnostic-only\r\n");
 #ifdef AIUEOS_PHYSICAL_JOB_QUALIFICATION
     aiueos_qualification_progress(234);
-    aiueos_framebuffer_qualification_screen("AIUEOS K16", "WAIT INFERENCE JOB", "SSD READ ONLY", 0);
+    struct aiueos_inference_status inference_status = {
+      .abi_version = AIUEOS_INFERENCE_STATUS_ABI_VERSION,
+      .byte_size = sizeof(struct aiueos_inference_status),
+      .phase = AIUEOS_INFERENCE_ADMISSION,
+      .model = "AIUEOS CHAR BIGRAM",
+      .quant = "FROZEN U8",
+      .detail = "WAITING FOR JOB",
+      .target_tokens = 1,
+      .artifact_bytes = AIUEOS_INFERENCE_UNMEASURED,
+      .resident_bytes = AIUEOS_INFERENCE_UNMEASURED,
+      .load_ns = AIUEOS_INFERENCE_UNMEASURED,
+      .prefill_ns = AIUEOS_INFERENCE_UNMEASURED,
+      .decode_ns = AIUEOS_INFERENCE_UNMEASURED,
+      .time_to_first_token_ns = AIUEOS_INFERENCE_UNMEASURED
+    };
+    if (!aiueos_framebuffer_inference_screen(&inference_status))
+      aiueos_framebuffer_qualification_screen("AIUEOS K16", "WAIT INFERENCE JOB", "SSD READ ONLY", 0);
     if(!aiueos_rtl8125_job_qualification()) {
       uint32_t code=8400U+aiueos_rtl8125_job_error();
       aiueos_framebuffer_qualification_screen("AIUEOS K16", "FAIL INFERENCE JOB", "SSD READ ONLY", 0);
@@ -898,11 +915,15 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
       for(;;)__asm__ volatile("cli; hlt");
     }
     aiueos_qualification_progress(235);
-    aiueos_framebuffer_qualification_screen("AIUEOS K16", "INFERENCE RESULT OK", "SSD READ ONLY", 1);
     (void)aiueos_rtl8125_job_token();
     (void)aiueos_rtl8125_job_score();
     (void)aiueos_rtl8125_job_total();
-    (void)aiueos_rtl8125_job_cycles();
+    inference_status.phase = AIUEOS_INFERENCE_COMPLETE;
+    inference_status.detail = "RESULT RECORDED";
+    inference_status.generated_tokens = 1;
+    inference_status.compute_cycles = aiueos_rtl8125_job_cycles();
+    if (!aiueos_framebuffer_inference_screen(&inference_status))
+      aiueos_framebuffer_qualification_screen("AIUEOS K16", "INFERENCE RESULT OK", "SSD READ ONLY", 1);
     debug_string("AIUEOS_PHYSICAL_JOB_OK queue=claim model=aiueos-char-bigram-v1 token=o result=recorded ready=true\n");
     serial_string("AIUEOS_PHYSICAL_JOB_OK queue=claim model=aiueos-char-bigram-v1 token=o result=recorded ready=true\r\n");
     if(!aiueos_rtl8125_liveness_renewal()) {
@@ -915,7 +936,8 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
       for(;;)__asm__ volatile("cli; hlt");
     }
     (void)aiueos_rtl8125_liveness_sequence();
-    aiueos_framebuffer_qualification_screen("AIUEOS K16", "MURAKUMO NODE LIVE", "SSD READ ONLY", 1);
+    inference_status.detail = "MURAKUMO NODE LIVE";
+    (void)aiueos_framebuffer_inference_screen(&inference_status);
     debug_string("AIUEOS_PHYSICAL_LIVENESS_OK ping=pong heartbeat=renewed\n");
     serial_string("AIUEOS_PHYSICAL_LIVENESS_OK ping=pong heartbeat=renewed\r\n");
     if(!aiueos_qualification_finalize(1,8141))
@@ -924,7 +946,9 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
     for(;;) {
       if(aiueos_rtl8125_liveness_renewal()) {
         if(liveness_failures) {
-          aiueos_framebuffer_qualification_screen("AIUEOS K16", "MURAKUMO NODE LIVE", "SSD READ ONLY", 1);
+          inference_status.phase = AIUEOS_INFERENCE_COMPLETE;
+          inference_status.detail = "MURAKUMO NODE LIVE";
+          (void)aiueos_framebuffer_inference_screen(&inference_status);
           debug_string("AIUEOS_PHYSICAL_LIVENESS_RECOVERED heartbeat=renewed\n");
           serial_string("AIUEOS_PHYSICAL_LIVENESS_RECOVERED failures=");
           serial_decimal(liveness_failures);
@@ -936,7 +960,9 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
         continue;
       }
       liveness_failures++;
-      aiueos_framebuffer_qualification_screen("AIUEOS K16", "NODE RECONNECTING", "SSD READ ONLY", 0);
+      inference_status.phase = AIUEOS_INFERENCE_ERROR;
+      inference_status.detail = "NODE RECONNECTING";
+      (void)aiueos_framebuffer_inference_screen(&inference_status);
       debug_string("AIUEOS_PHYSICAL_LIVENESS_RETRY heartbeat=stale action=reconnect\n");
       serial_string("AIUEOS_PHYSICAL_LIVENESS_RETRY failure=");
       serial_decimal(liveness_failures);
