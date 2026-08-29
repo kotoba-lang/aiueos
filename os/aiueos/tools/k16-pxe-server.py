@@ -82,6 +82,7 @@ PXE_EXPECTED_MAC = os.environ.get(
     "AIUEOS_PXE_EXPECTED_MAC", "70:70:fc:0b:b6:32").lower().replace("-", ":")
 MURAKUMO_JOB_QUALIFICATION = os.environ.get(
     "AIUEOS_MURAKUMO_JOB_QUALIFICATION", "0") == "1"
+MURAKUMO_RESUME_BOOT = ""
 MURAKUMO_JOB_KIND = "aiueos-micro-infer"
 MURAKUMO_JOB_MODEL = "aiueos-char-bigram-v1"
 MURAKUMO_JOB_PROMPT = "murakum"
@@ -437,24 +438,44 @@ def qualify_murakumo_job(message, sock, peer, opener=urllib.request.urlopen,
     boot, mac = match.groups()
     if mac != MURAKUMO_EXPECTED_MAC or not murakumo_relay_configured():
         return {"state": "disabled", "reason": "identity-token-or-mac"}
-    enqueue_status, enqueue = murakumo_post(
-        "/infer/queue",
-        {"kind": MURAKUMO_JOB_KIND,
-         "input": {"model": MURAKUMO_JOB_MODEL,
-                   "prompt": MURAKUMO_JOB_PROMPT},
-         "price": 0}, opener)
-    job_id = str(enqueue.get("job-id", "")) if isinstance(enqueue, dict) else ""
-    if enqueue_status != 201 or not re.fullmatch(r"[0-9]{1,20}", job_id):
-        return {"state": "failed", "stage": "enqueue", "status": enqueue_status}
-    list_status, jobs = murakumo_get("/infer/queue", opener)
-    job = next((candidate for candidate in jobs
-                if str(candidate.get("job-id", "")) == job_id), None) \
-        if list_status == 200 and isinstance(jobs, list) else None
-    if not job_payload(boot, job or {}):
-        return {"state": "failed", "stage": "queue-observe", "status": list_status,
-                "job-id": job_id}
-    return dispatch_murakumo_job(
-        boot, job, sock, peer, opener, result_queue, sleeper)
+    last_race = None
+    for _attempt in range(8):
+        enqueue_status, enqueue = murakumo_post(
+            "/infer/queue",
+            {"kind": MURAKUMO_JOB_KIND,
+             "input": {"model": MURAKUMO_JOB_MODEL,
+                       "prompt": MURAKUMO_JOB_PROMPT},
+             "price": 0}, opener)
+        job_id = str(enqueue.get("job-id", "")) \
+            if isinstance(enqueue, dict) else ""
+        if enqueue_status != 201 or not re.fullmatch(r"[0-9]{1,20}", job_id):
+            return {"state": "failed", "stage": "enqueue",
+                    "status": enqueue_status}
+        list_status, jobs = murakumo_get("/infer/queue", opener)
+        job = next((candidate for candidate in jobs
+                    if str(candidate.get("job-id", "")) == job_id), None) \
+            if list_status == 200 and isinstance(jobs, list) else None
+        if not job_payload(boot, job or {}):
+            return {"state": "failed", "stage": "queue-observe",
+                    "status": list_status, "job-id": job_id}
+        result = dispatch_murakumo_job(
+            boot, job, sock, peer, opener, result_queue, sleeper)
+        if result.get("state") != "raced":
+            return result
+        last_race = result
+    return last_race or {"state": "failed", "stage": "claim-retry"}
+
+
+def resume_murakumo_job(boot, sock, peer):
+    hello = (f"AIUEOS_NODE_HELLO_V1 boot={boot} "
+             f"mac={MURAKUMO_EXPECTED_MAC} profile=rtl8125-relay-test")
+    result = qualify_murakumo_job(hello, sock, peer)
+    fields = " ".join(f"{key}={value}" for key, value in result.items())
+    print(f"AIUEOS_MURAKUMO_RESUME {fields}", flush=True)
+    if result.get("state") == "ready":
+        threading.Thread(
+            target=maintain_murakumo_liveness,
+            args=(boot, sock, peer), daemon=True).start()
 
 
 def maintain_murakumo_liveness(
@@ -732,6 +753,11 @@ def netlog_server():
     bind_interface(sock, NETLOG_PORT, SERVER_IP)
     print(f"AIUEOS_NETLOG_READY interface={INTERFACE} "
           f"listen={SERVER_IP}:{NETLOG_PORT}", flush=True)
+    if MURAKUMO_RESUME_BOOT:
+        threading.Thread(
+            target=resume_murakumo_job,
+            args=(MURAKUMO_RESUME_BOOT, sock, (CLIENT_IP, 7779)),
+            daemon=True).start()
     while True:
         payload, peer = sock.recvfrom(4096)
         message = payload.decode("ascii", "replace").rstrip("\r\n")
@@ -974,6 +1000,35 @@ def selftest():
             "slots-total": 1, "slots-free": 1}
         assert micro_infer_expected("awai") == ("n", 3, 8)
         assert micro_infer_expected("ends-in-b") is None
+        race_calls = []
+        race_enqueue = [0]
+        race_results = queue.Queue()
+        race_results.put((
+            "AIUEOS_JOB_RESULT_V1 boot=0123456789abcdef id=212 "
+            "model=aiueos-char-bigram-v1 token=6f score=2 total=5",
+            (CLIENT_IP, 7779)))
+        def fake_race_open(request, timeout):
+            race_calls.append((request.full_url, request.method))
+            if request.method == "GET":
+                job_id = str(211 + race_enqueue[0] - 1)
+                return FakeResponse(200, json.dumps([{
+                    "job-id": job_id, "kind": MURAKUMO_JOB_KIND,
+                    "input": {"model": MURAKUMO_JOB_MODEL,
+                              "prompt": MURAKUMO_JOB_PROMPT},
+                    "price": 0}]).encode("utf-8"))
+            if request.full_url.endswith("/infer/queue"):
+                job_id = str(211 + race_enqueue[0])
+                race_enqueue[0] += 1
+                return FakeResponse(201, json.dumps(
+                    {"job-id": job_id}).encode("utf-8"))
+            if request.full_url.endswith("/211/claim"):
+                return FakeResponse(409)
+            return FakeResponse(201)
+        retried = qualify_murakumo_job(
+            hello, fake_socket, (CLIENT_IP, 7779), fake_race_open,
+            race_results, lambda _seconds: None)
+        assert retried["state"] == "ready" and retried["job-id"] == "212"
+        assert sum(url.endswith("/claim") for url, _method in race_calls) == 2
         liveness_results = queue.Queue()
         liveness_results.put((
             "AIUEOS_NODE_PONG_V1 boot=0123456789abcdef seq=1 state=ready",
@@ -1036,6 +1091,7 @@ def main():
     parser.add_argument("--control", choices=CONTROL_COMMANDS)
     parser.add_argument("--nonce")
     parser.add_argument("--next-boot")
+    parser.add_argument("--resume-boot")
     args = parser.parse_args()
     if args.selftest:
         selftest()
@@ -1057,6 +1113,10 @@ def main():
         return
     if args.next_boot:
         return
+    if args.resume_boot:
+        if not re.fullmatch(r"[0-9a-f]{16}", args.resume_boot):
+            raise SystemExit("resume boot must be 16 lowercase hex digits")
+        globals()["MURAKUMO_RESUME_BOOT"] = args.resume_boot
     if not BOOT_PATH.is_file():
         raise SystemExit(f"missing boot file: {BOOT_PATH}")
     threading.Thread(target=tftp_server, daemon=True).start()
