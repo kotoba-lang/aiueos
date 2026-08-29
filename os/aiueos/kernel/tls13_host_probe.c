@@ -14,6 +14,7 @@
 #include <arpa/inet.h>
 #include <netdb.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
 #include <unistd.h>
@@ -78,13 +79,13 @@ uint64_t kotoba_aiueos_ecdsa_p256_sha256_verify(
   return (uint64_t)ok;
 }
 
-static int tcp_kotobase(void) {
+static int tcp_host(const char *host) {
   struct addrinfo hints, *res = 0, *rp;
   int fd = -1;
   memset(&hints, 0, sizeof(hints));
   hints.ai_socktype = SOCK_STREAM;
   hints.ai_family = AF_INET;
-  if (getaddrinfo("kotobase.net", "443", &hints, &res)) return -1;
+  if (getaddrinfo(host, "443", &hints, &res)) return -1;
   for (rp = res; rp; rp = rp->ai_next) {
     fd = (int)socket(rp->ai_family, rp->ai_socktype, rp->ai_protocol);
     if (fd < 0) continue;
@@ -96,24 +97,94 @@ static int tcp_kotobase(void) {
   return fd;
 }
 
-int main(void) {
-  uint8_t ch[160], flight[512], rx[8192];
+static int configured_profile(const char *host, const char *path) {
+  static const uint8_t client_random[32] = {
+    0x41,0x49,0x55,0x45,0x4f,0x53,0x2d,0x4b,0x31,0x36,0x2d,0x44,0x49,0x52,0x45,
+    0x43,0x54,0x2d,0x48,0x54,0x54,0x50,0x53,0x2d,0x50,0x52,0x4f,0x42,0x45,0x31};
+  static const uint8_t scalar[32] = {
+    0x7a,0x1e,0x05,0x13,0xc1,0x0d,0x15,0x07,0xa1,0xe0,0x53,0x00,0x6d,0x75,0x72,0x61,
+    0x6b,0x75,0x6d,0x6f,0x2e,0x63,0x6c,0x6f,0x75,0x64,0x13,0x01,0x03,0x04,0x00,0x1d};
+  uint8_t request[512];
+  int n;
+  if (!host || !path || path[0] != '/') return 0;
+  n = snprintf((char *)request, sizeof(request),
+               "GET %s HTTP/1.1\r\nHost: %s\r\n"
+               "User-Agent: aiueos-k16-direct-probe\r\n"
+               "Accept: application/json\r\nConnection: close\r\n\r\n",
+               path, host);
+  if (n <= 0 || (size_t)n >= sizeof(request)) return 0;
+  return aiueos_tls13_configure(host, request, (uint32_t)n,
+                                client_random, scalar);
+}
+
+static int configuration_refusals(void) {
+  static const uint8_t request[] = "GET / HTTP/1.1\r\n\r\n";
+  uint8_t one[32], zero[32];
+  memset(one, 1, sizeof(one));
+  memset(zero, 0, sizeof(zero));
+  return !aiueos_tls13_configure("", request, sizeof(request) - 1, one, one) &&
+         !aiueos_tls13_configure("API.murakumo.cloud", request,
+                                 sizeof(request) - 1, one, one) &&
+         !aiueos_tls13_configure("-api.murakumo.cloud", request,
+                                 sizeof(request) - 1, one, one) &&
+         !aiueos_tls13_configure("api-.murakumo.cloud", request,
+                                 sizeof(request) - 1, one, one) &&
+         !aiueos_tls13_configure("api.murakumo.cloud", request,
+                                 sizeof(request) - 1, zero, one) &&
+         !aiueos_tls13_configure("api.murakumo.cloud", request,
+                                 sizeof(request) - 1, one, zero);
+}
+
+static int clienthello_profile_ok(const uint8_t *ch, uint32_t ch_len,
+                                  const char *host) {
+  size_t host_len = strlen(host);
+  if (!ch || host_len > 63 || ch_len != 145 + host_len) return 0;
+  if ((((uint32_t)ch[3] << 8) | ch[4]) != ch_len - 5) return 0;
+  if ((((uint32_t)ch[7] << 8) | ch[8]) != ch_len - 9) return 0;
+  if ((((uint32_t)ch[59] << 8) | ch[60]) != host_len) return 0;
+  return memcmp(ch + 61, host, host_len) == 0;
+}
+
+int main(int argc, char **argv) {
+  uint8_t ch[256], flight[512], rx[8192];
   uint32_t ch_len = 0, fin_len = 0, get_len = 0;
   int fd, n, i;
+  int inspect = argc > 1 && strcmp(argv[1], "--inspect") == 0;
+  const char *host = (inspect && argc > 2) ? argv[2] :
+                     ((!inspect && argc > 1) ? argv[1] : "kotobase.net");
+  const char *path = (inspect && argc > 3) ? argv[3] :
+                     ((!inspect && argc > 2) ? argv[2] :
+                      "/ipfs/bafkreihdwdcefgh4dqkjv67uzcmw7ojee6xedzdetojuzjevtenxquvyku");
   if (!aiueos_tls13_aes_selftest() || !aiueos_tls13_hmac_selftest() ||
-      !aiueos_tls13_ecdsa_selftest()) {
+      !aiueos_tls13_ecdsa_selftest() || !configuration_refusals()) {
     puts("selftest fail");
     return 1;
   }
-  fd = tcp_kotobase();
+  if ((argc > 1) && !configured_profile(host, path)) {
+    puts("profile fail");
+    return 1;
+  }
+  aiueos_tls13_reset();
+  if (!aiueos_tls13_clienthello(ch, &ch_len)) {
+    puts("clienthello fail");
+    return 1;
+  }
+  if (argc > 1 && !clienthello_profile_ok(ch, ch_len, host)) {
+    puts("clienthello profile mismatch");
+    return 1;
+  }
+  if (inspect) {
+    printf("profile ok host=%s path=%s clienthello=%u trust=transport-only\n",
+           host, path, ch_len);
+    return 0;
+  }
+  fd = tcp_host(host);
   if (fd < 0) {
     puts("connect fail");
     return 1;
   }
-  aiueos_tls13_reset();
-  if (!aiueos_tls13_clienthello(ch, &ch_len) ||
-      send(fd, ch, ch_len, 0) != (ssize_t)ch_len) {
-    puts("clienthello fail");
+  if (send(fd, ch, ch_len, 0) != (ssize_t)ch_len) {
+    puts("clienthello send fail");
     return 1;
   }
   for (i = 0; i < 64 && !aiueos_tls13_handshake_ready(); i++) {

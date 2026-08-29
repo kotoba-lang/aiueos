@@ -827,6 +827,13 @@ the Mac relay; target-bound queue routing is a direct logical dispatch to the
 K16, not device-owned HTTPS/CACAO or a network-direct K16-to-Murakumo path.
 None of these checks authorizes an internal-SSD write.
 
+The next direct-path prerequisite is executable without changing that claim.
+`os/aiueos/scripts/smoke-tls13-murakumo-profile.sh` verifies the bounded native
+TLS profile for SNI `api.murakumo.cloud` and `GET /infer/queue`; setting
+`AIUEOS_TLS13_LIVE=1` measures the same record engine against the live endpoint.
+Its receipt says `trust=transport-only physical-k16=unverified` because native
+chain/hostname admission and RTL8125 DNS/TCP wiring remain red (ADR-0114).
+
 `verify-release-signature.py` verifies an RSA-2048 PKCS#1 v1.5 SHA-256
 signature over the build receipt using only the Python standard library
 (public-key operation only, fixed-work encoded-message comparison, RSA-2048

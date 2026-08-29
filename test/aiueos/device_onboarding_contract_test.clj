@@ -35,6 +35,18 @@
   (is (false? (get-in contract [:node-addition :murakumo :ready?])))
   (is (= :pending-native-adapter
          (get-in contract [:node-addition :kekkai :initial-state])))
+  (is (= "https://api.murakumo.cloud"
+         (get-in contract [:network :murakumo-https :authority])))
+  (is (= :http-200
+         (get-in contract [:network :murakumo-https :live-host-probe])))
+  (is (= :unverified
+         (get-in contract [:network :murakumo-https :physical-rtl8125])))
+  (is (= :not-implemented
+         (get-in contract
+                 [:network :murakumo-https
+                  :server-chain-and-hostname-admission])))
+  (is (= :not-wired-to-kernel
+         (get-in contract [:network :native-device-cacao :state])))
   (is (false? (get-in contract [:storage :local :write-authorized?])))
   (is (= :folder-scoped-opt-in
          (get-in contract [:storage :replication :mode])))
