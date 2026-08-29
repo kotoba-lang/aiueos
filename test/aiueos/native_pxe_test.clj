@@ -27,6 +27,8 @@
   (slurp (io/file "os/aiueos/scripts/smoke-qemu-rtl8125-qualification.sh")))
 (def physical-relay-contract
   (slurp (io/file "os/aiueos/contracts/physical-relay-qualification-pxe-v1.edn")))
+(def murakumo-relay-contract
+  (slurp (io/file "os/aiueos/contracts/murakumo-relay-enrollment-v1.edn")))
 (def physical-relay-build
   (slurp (io/file "os/aiueos/scripts/build-physical-relay-pxe.sh")))
 (def relay-protocol
@@ -116,7 +118,7 @@
       (is (= :unverified
              (get-in murakumo [:gaps :transport :physical-link
                                :rtl8125-pxe-handoff :physical-state])))
-      (is (= :relay-diagnostic-implemented-native-unverified
+      (is (= :relay-enrollment-implemented-native-unverified
              (get-in murakumo [:gaps :transport :murakumo-heartbeat :state]))))))
 
 (deftest k16-relay-round-trip-is-request-bound-and-not-enrollment
@@ -145,3 +147,18 @@
                   [:persistent-device-identity
                    :authenticated-murakumo-heartbeat
                    :job-claim :inference :result-return])))))
+
+(deftest k16-relay-enrollment-keeps-readiness-behind-real-work
+  (let [contract (edn/read-string murakumo-relay-contract)]
+    (is (= :operator-service-token-on-mac-relay
+           (get-in contract [:control-plane :authorization])))
+    (is (false? (get-in contract [:reported-state :node/ready?])))
+    (is (= [:node/model :node/capacity]
+           (get-in contract [:reported-state :withheld-until-real-work])))
+    (is (false? (get-in contract [:safety :service-token-in-efi?])))
+    (is (false? (get-in contract [:safety :service-token-on-wire-to-k16?])))
+    (is (= :unverified (get-in contract [:evidence :physical-k16])))
+    (is (every? (set (:does-not-prove contract))
+                [:device-owned-persistent-key :ready-capacity :job-claim
+                 :inference :result-return :heartbeat-renewal
+                 :reboot-recovery]))))

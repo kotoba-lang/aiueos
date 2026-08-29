@@ -9,6 +9,7 @@ K16 qualification setup.
 import argparse
 import hashlib
 import http.server
+import json
 import os
 import re
 import select
@@ -16,6 +17,8 @@ import socket
 import struct
 import threading
 import time
+import urllib.error
+import urllib.request
 from pathlib import Path
 
 
@@ -35,6 +38,16 @@ CONTROL_STATE_PATH = Path(os.environ.get(
 NEXT_BOOT_STATE_PATH = Path(os.environ.get(
     "AIUEOS_PXE_NEXT_BOOT_STATE", "/tmp/aiueos-k16-pxe-next-boot"))
 CONTROL_COMMANDS = ("ping", "reboot-pxe")
+MURAKUMO_API = os.environ.get(
+    "AIUEOS_MURAKUMO_API", "https://api.murakumo.cloud").rstrip("/")
+MURAKUMO_NODE_NAME = os.environ.get(
+    "AIUEOS_MURAKUMO_NODE_NAME", "gmktec-k16")
+MURAKUMO_NODE_DID = os.environ.get("AIUEOS_MURAKUMO_NODE_DID", "")
+MURAKUMO_SERVICE_TOKEN = os.environ.get(
+    "AIUEOS_MURAKUMO_SERVICE_TOKEN",
+    os.environ.get("MURAKUMO_SERVICE_TOKEN", ""))
+MURAKUMO_EXPECTED_MAC = os.environ.get(
+    "AIUEOS_MURAKUMO_EXPECTED_MAC", "70-70-fc-0b-b6-32").lower()
 IP_BOUND_IF = 25
 MAGIC = b"\x63\x82\x53\x63"
 CONTROL_READY = re.compile(r"^AIUEOS_CONTROL_READY nonce=([0-9a-f]{16})\b")
@@ -43,6 +56,8 @@ NODE_HELLO = re.compile(
     r"mac=([0-9a-f]{2}(?:-[0-9a-f]{2}){5}) "
     r"profile=rtl8125-relay-test$")
 NEXT_BOOT_LOCK = threading.Lock()
+MURAKUMO_BOOT_LOCK = threading.Lock()
+MURAKUMO_SEEN_BOOTS = set()
 
 
 def ipv4(value):
@@ -149,6 +164,108 @@ def node_ack_payload(message):
         return None
     boot, _mac = match.groups()
     return f"AIUEOS_NODE_ACK_V1 boot={boot} state=accepted".encode("ascii")
+
+
+def murakumo_relay_configured():
+    return bool(MURAKUMO_SERVICE_TOKEN and
+                MURAKUMO_NODE_DID.startswith("did:key:"))
+
+
+def murakumo_enrollment():
+    return {
+        "node/name": MURAKUMO_NODE_NAME,
+        "node/did": MURAKUMO_NODE_DID,
+        "node/tier": "native",
+        "node/connect": "mac-relay",
+        "node/needs-relay?": True,
+        "node/trust-tier": "awai-secure",
+        "node/caps": {
+            "engine": "aiueos-native",
+            "mem-bytes": 35185754112,
+            "gpu": "amd-1002:1681-unqualified",
+        },
+        "node/can": [
+            "host-large-model", "low-latency-pipeline",
+            "media-generate", "full-shard",
+        ],
+    }
+
+
+def murakumo_heartbeat():
+    # A relay round trip is liveness, not inference readiness. Capacity and a
+    # model are withheld until a real K16 job has completed and returned.
+    return {
+        "did": MURAKUMO_NODE_DID,
+        "node/name": MURAKUMO_NODE_NAME,
+        "node/ready?": False,
+        "node/engine": "aiueos-native-relay",
+    }
+
+
+def murakumo_post(path, body, opener=urllib.request.urlopen):
+    request = urllib.request.Request(
+        MURAKUMO_API + path,
+        data=json.dumps(body, separators=(",", ":")).encode("utf-8"),
+        method="POST",
+        headers={
+            "authorization": f"Bearer {MURAKUMO_SERVICE_TOKEN}",
+            "content-type": "application/json",
+            "user-agent": "aiueos-k16-relay/1",
+        })
+    try:
+        with opener(request, timeout=8) as response:
+            payload = response.read(4096)
+            return response.status, json.loads(payload or b"{}")
+    except urllib.error.HTTPError as error:
+        payload = error.read(4096)
+        try:
+            parsed = json.loads(payload or b"{}")
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            parsed = {"error": "non-json response"}
+        return error.code, parsed
+
+
+def register_murakumo_hello(message, opener=urllib.request.urlopen):
+    match = NODE_HELLO.fullmatch(message)
+    if not match:
+        return {"state": "ignored", "reason": "invalid-hello"}
+    boot, mac = match.groups()
+    if mac != MURAKUMO_EXPECTED_MAC:
+        return {"state": "ignored", "reason": "unexpected-mac"}
+    if not murakumo_relay_configured():
+        return {"state": "disabled", "reason": "identity-or-token-unset"}
+    with MURAKUMO_BOOT_LOCK:
+        if boot in MURAKUMO_SEEN_BOOTS:
+            return {"state": "duplicate", "boot": boot}
+        MURAKUMO_SEEN_BOOTS.add(boot)
+    enrollment_status, _ = murakumo_post(
+        "/infer/nodes", murakumo_enrollment(), opener)
+    if enrollment_status not in (200, 201):
+        with MURAKUMO_BOOT_LOCK:
+            MURAKUMO_SEEN_BOOTS.discard(boot)
+        return {"state": "failed", "stage": "enroll",
+                "status": enrollment_status, "boot": boot}
+    heartbeat_status, _ = murakumo_post(
+        f"/infer/nodes/{MURAKUMO_NODE_NAME}/heartbeat",
+        murakumo_heartbeat(), opener)
+    if heartbeat_status != 201:
+        with MURAKUMO_BOOT_LOCK:
+            MURAKUMO_SEEN_BOOTS.discard(boot)
+        return {"state": "failed", "stage": "heartbeat",
+                "status": heartbeat_status, "boot": boot}
+    return {"state": "live-not-ready", "boot": boot,
+            "enrollment-status": enrollment_status,
+            "heartbeat-status": heartbeat_status}
+
+
+def relay_murakumo_hello(message):
+    try:
+        result = register_murakumo_hello(message)
+        fields = " ".join(f"{key}={value}" for key, value in result.items())
+        print(f"AIUEOS_MURAKUMO_RELAY {fields}", flush=True)
+    except Exception as error:
+        print(f"AIUEOS_MURAKUMO_RELAY state=failed stage=client "
+              f"error={type(error).__name__}", flush=True)
 
 
 def send_control(command, nonce):
@@ -289,6 +406,8 @@ def netlog_server():
             sock.sendto(ack, peer)
             print(f"AIUEOS_NODE_RELAY_ACK to={peer[0]}:{peer[1]} "
                   f"bytes={len(ack)} scope=diagnostic-only", flush=True)
+            threading.Thread(target=relay_murakumo_hello, args=(message,),
+                             daemon=True).start()
         nonce = extract_control_nonce(message)
         if nonce and peer[0] == CLIENT_IP:
             CONTROL_STATE_PATH.write_text(nonce + "\n", encoding="ascii")
@@ -418,13 +537,51 @@ def selftest():
     assert node_ack_payload(hello) == \
         b"AIUEOS_NODE_ACK_V1 boot=0123456789abcdef state=accepted"
     assert node_ack_payload(hello.replace("0123456789abcdef", "short")) is None
+    old_did, old_token = MURAKUMO_NODE_DID, MURAKUMO_SERVICE_TOKEN
+    try:
+        globals()["MURAKUMO_NODE_DID"] = "did:key:z6MkK16Selftest"
+        globals()["MURAKUMO_SERVICE_TOKEN"] = "selftest-token"
+        captured = []
+
+        class FakeResponse:
+            def __init__(self, status):
+                self.status = status
+            def read(self, _limit):
+                return b"{}"
+            def __enter__(self):
+                return self
+            def __exit__(self, *_args):
+                return False
+
+        def fake_open(request, timeout):
+            captured.append((request.full_url, request.data,
+                             request.get_header("Authorization"), timeout))
+            return FakeResponse(201)
+
+        result = register_murakumo_hello(hello, fake_open)
+        assert result["state"] == "live-not-ready"
+        assert len(captured) == 2
+        assert captured[0][0].endswith("/infer/nodes")
+        assert captured[1][0].endswith("/gmktec-k16/heartbeat")
+        assert captured[0][2] == "Bearer selftest-token"
+        enrollment = json.loads(captured[0][1])
+        heartbeat = json.loads(captured[1][1])
+        assert enrollment["node/trust-tier"] == "awai-secure"
+        assert enrollment["node/needs-relay?"] is True
+        assert heartbeat["node/ready?"] is False
+        assert "node/capacity" not in heartbeat and "node/model" not in heartbeat
+        assert register_murakumo_hello(hello, fake_open)["state"] == "duplicate"
+    finally:
+        globals()["MURAKUMO_NODE_DID"] = old_did
+        globals()["MURAKUMO_SERVICE_TOKEN"] = old_token
+        MURAKUMO_SEEN_BOOTS.clear()
     try:
         control_payload("reboot", "0123456789abcdef")
         raise AssertionError("unsupported control command accepted")
     except ValueError:
         pass
     print("AIUEOS_PXE_SELFTEST_OK dhcp=pxe+http tftp=oack control=token-bound "
-          "node-relay=request-bound interface-bound=yes")
+          "node-relay=request-bound murakumo=live-not-ready interface-bound=yes")
 
 
 def main():
