@@ -200,6 +200,7 @@ int aiueos_acpi_initialize(const void *rsdp_pointer) {
   const uint8_t *cursor = (const uint8_t *)madt + sizeof(*madt);
   const uint8_t *end = (const uint8_t *)madt + madt->sdt.length;
   uint32_t enabled_cpus = 0;
+  uint32_t ioapic_addresses[16], ioapic_gsi_bases[16], ioapic_count = 0;
   while (cursor < end) {
     if ((uint64_t)(end - cursor) < 2) return 0;
     uint8_t type = cursor[0], length = cursor[1];
@@ -220,15 +221,34 @@ int aiueos_acpi_initialize(const void *rsdp_pointer) {
         enabled_cpus++;
       }
     } else if (type == 1) {
-      if (length < 12 || discovered_ioapic_address) return 0;
-      discovered_ioapic_address = *(const uint32_t *)(const void *)(cursor + 4);
-      discovered_ioapic_gsi_base = *(const uint32_t *)(const void *)(cursor + 8);
+      if (length < 12 || ioapic_count >= 16) return 0;
+      uint32_t address = *(const uint32_t *)(const void *)(cursor + 4);
+      uint32_t gsi_base = *(const uint32_t *)(const void *)(cursor + 8);
+      if (!address || (address & 4095U)) return 0;
+      for (uint32_t i = 0; i < ioapic_count; i++)
+        if (ioapic_gsi_bases[i] == gsi_base) return 0;
+      ioapic_addresses[ioapic_count] = address;
+      ioapic_gsi_bases[ioapic_count++] = gsi_base;
     } else if (type == 2) {
       if (length < 10) return 0;
       if (cursor[2] == 0 && cursor[3] == 0)
         discovered_timer_gsi = *(const uint32_t *)(const void *)(cursor + 4);
     }
     cursor += length;
+  }
+  /* A MADT may expose multiple IOAPICs. Route the legacy timer through the
+     controller whose GSI range begins closest at or below the timer GSI;
+     rejecting every second entry made otherwise-valid K16 firmware fail. */
+  uint32_t selected_base = 0;
+  int selected = 0;
+  for (uint32_t i = 0; i < ioapic_count; i++) {
+    if (ioapic_gsi_bases[i] <= discovered_timer_gsi &&
+        (!selected || ioapic_gsi_bases[i] > selected_base)) {
+      discovered_ioapic_address = ioapic_addresses[i];
+      discovered_ioapic_gsi_base = ioapic_gsi_bases[i];
+      selected_base = ioapic_gsi_bases[i];
+      selected = 1;
+    }
   }
   return enabled_cpus >= 2 && discovered_ioapic_address == 0xfec00000U;
 }

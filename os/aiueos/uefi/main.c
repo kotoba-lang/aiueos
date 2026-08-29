@@ -14,6 +14,15 @@
 #define KERNEL_BUFFER_SIZE (1024ULL * 1024ULL)
 #define INITRAMFS_BUFFER_SIZE (1024ULL * 1024ULL)
 #define MEMORY_MAP_BUFFER_SIZE (128ULL * 1024ULL)
+#define EFI_ALLOCATE_MAX_ADDRESS 1U
+#define EFI_LOADER_DATA 2U
+#define ACPI_IDENTITY_LIMIT 0x40000000ULL
+#define ACPI_RETAIN_RSDP_BYTES PAGE_SIZE
+#define ACPI_RETAIN_ROOT_BYTES PAGE_SIZE
+#define ACPI_RETAIN_TABLE_BYTES (64ULL * 1024ULL)
+#define ACPI_RETAIN_BYTES (ACPI_RETAIN_RSDP_BYTES + ACPI_RETAIN_ROOT_BYTES + \
+                           2ULL * ACPI_RETAIN_TABLE_BYTES)
+#define ACPI_MAX_ROOT_ENTRIES 128U
 
 typedef uint64_t efi_status;
 typedef void *efi_handle;
@@ -81,6 +90,17 @@ struct efi_system_table {
   uint64_t number_of_table_entries; void *configuration_table;
 };
 struct efi_configuration_table { struct efi_guid vendor_guid; void *vendor_table; };
+
+struct __attribute__((packed)) acpi_rsdp_v2 {
+  char signature[8]; uint8_t checksum; char oem_id[6]; uint8_t revision;
+  uint32_t rsdt_address, length; uint64_t xsdt_address;
+  uint8_t extended_checksum, reserved[3];
+};
+struct __attribute__((packed)) acpi_sdt_header {
+  char signature[4]; uint32_t length; uint8_t revision, checksum;
+  char oem_id[6], oem_table_id[8];
+  uint32_t oem_revision, creator_id, creator_revision;
+};
 
 struct efi_loaded_image {
   uint32_t revision, padding; efi_handle parent_handle;
@@ -207,6 +227,123 @@ static void copy_bytes(void *to, const void *from, uint64_t size) {
   uint8_t *d = to; const uint8_t *s = from; while (size--) *d++ = *s++;
 }
 static void zero_bytes(void *to, uint64_t size) { uint8_t *d = to; while (size--) *d++ = 0; }
+
+static int acpi_bytes_equal(const char *left, const char *right,
+                            uint64_t bytes) {
+  while (bytes--) if (*left++ != *right++) return 0;
+  return 1;
+}
+
+static int acpi_checksum_ok(const void *table, uint64_t bytes) {
+  if (!table || !bytes || bytes > ACPI_RETAIN_TABLE_BYTES) return 0;
+  const uint8_t *input=table;
+  uint8_t sum=0;
+  while (bytes--) sum=(uint8_t)(sum+*input++);
+  return sum==0;
+}
+
+static uint8_t acpi_checksum_value(const void *table, uint64_t bytes) {
+  const uint8_t *input=table;
+  uint8_t sum=0;
+  while (bytes--) sum=(uint8_t)(sum+*input++);
+  return (uint8_t)(0U-sum);
+}
+
+static int acpi_source_address_sane(uint64_t address, uint64_t bytes) {
+  return address && bytes && address < (1ULL << 52) &&
+         address <= (1ULL << 52) - bytes;
+}
+
+/* Firmware can place ACPI reclaim memory well above the kernel's intentionally
+   small bootstrap identity map (the physical K16 places it around 0x92f00000).
+   Before ExitBootServices, validate the source graph and relocate only the two
+   tables this kernel consumes into LoaderData below 1 GiB.  The synthetic XSDT
+   is checksummed again and contains only APIC plus optional DMAR, so the kernel
+   still runs its Kotoba admission over every table it is asked to trust. */
+static void *retain_acpi_graph(struct efi_boot_services *bs,
+                               const void *rsdp_pointer) {
+  if (!bs || !bs->allocate_pages || !rsdp_pointer) return 0;
+  const struct acpi_rsdp_v2 *source_rsdp=rsdp_pointer;
+  if (!acpi_bytes_equal(source_rsdp->signature,"RSD PTR ",8) ||
+      source_rsdp->revision<2 || source_rsdp->length<sizeof(*source_rsdp) ||
+      source_rsdp->length>ACPI_RETAIN_RSDP_BYTES ||
+      !acpi_checksum_ok(source_rsdp,20) ||
+      !acpi_checksum_ok(source_rsdp,source_rsdp->length) ||
+      !acpi_source_address_sane(source_rsdp->xsdt_address,
+                                sizeof(struct acpi_sdt_header))) return 0;
+
+  const struct acpi_sdt_header *source_root=
+    (const void *)(uintptr_t)source_rsdp->xsdt_address;
+  if (!acpi_bytes_equal(source_root->signature,"XSDT",4) ||
+      source_root->length<sizeof(*source_root) ||
+      source_root->length>ACPI_RETAIN_ROOT_BYTES ||
+      (source_root->length-sizeof(*source_root))%8 ||
+      !acpi_checksum_ok(source_root,source_root->length)) return 0;
+  uint32_t entries=(source_root->length-sizeof(*source_root))/8;
+  if (!entries || entries>ACPI_MAX_ROOT_ENTRIES) return 0;
+
+  const struct acpi_sdt_header *source_madt=0,*source_dmar=0;
+  const uint8_t *entry_bytes=(const uint8_t *)source_root+sizeof(*source_root);
+  for (uint32_t index=0;index<entries;index++) {
+    uint64_t address=*(const uint64_t *)(const void *)(entry_bytes+(uint64_t)index*8);
+    if (!acpi_source_address_sane(address,sizeof(struct acpi_sdt_header))) return 0;
+    const struct acpi_sdt_header *candidate=(const void *)(uintptr_t)address;
+    if (!acpi_bytes_equal(candidate->signature,"APIC",4) &&
+        !acpi_bytes_equal(candidate->signature,"DMAR",4)) continue;
+    if (candidate->length<sizeof(*candidate) ||
+        candidate->length>ACPI_RETAIN_TABLE_BYTES ||
+        !acpi_source_address_sane(address,candidate->length) ||
+        !acpi_checksum_ok(candidate,candidate->length)) return 0;
+    if (acpi_bytes_equal(candidate->signature,"APIC",4)) {
+      if (source_madt) return 0;
+      source_madt=candidate;
+    } else {
+      if (source_dmar) return 0;
+      source_dmar=candidate;
+    }
+  }
+  if (!source_madt) return 0;
+
+  uint64_t pages=(ACPI_RETAIN_BYTES+PAGE_SIZE-1)/PAGE_SIZE;
+  uint64_t base=ACPI_IDENTITY_LIMIT-1;
+  if (bs->allocate_pages(EFI_ALLOCATE_MAX_ADDRESS,EFI_LOADER_DATA,pages,&base)
+        != EFI_SUCCESS || !base || base>=ACPI_IDENTITY_LIMIT ||
+      base>ACPI_IDENTITY_LIMIT-pages*PAGE_SIZE) return 0;
+  zero_bytes((void *)(uintptr_t)base,pages*PAGE_SIZE);
+
+  struct acpi_rsdp_v2 *retained_rsdp=(void *)(uintptr_t)base;
+  struct acpi_sdt_header *retained_root=
+    (void *)(uintptr_t)(base+ACPI_RETAIN_RSDP_BYTES);
+  struct acpi_sdt_header *retained_madt=
+    (void *)(uintptr_t)(base+ACPI_RETAIN_RSDP_BYTES+ACPI_RETAIN_ROOT_BYTES);
+  struct acpi_sdt_header *retained_dmar=
+    (void *)(uintptr_t)(base+ACPI_RETAIN_RSDP_BYTES+ACPI_RETAIN_ROOT_BYTES+
+                        ACPI_RETAIN_TABLE_BYTES);
+  copy_bytes(retained_rsdp,source_rsdp,source_rsdp->length);
+  copy_bytes(retained_root,source_root,sizeof(*retained_root));
+  copy_bytes(retained_madt,source_madt,source_madt->length);
+  if (source_dmar) copy_bytes(retained_dmar,source_dmar,source_dmar->length);
+
+  uint64_t *retained_entries=(void *)((uint8_t *)retained_root+
+                                      sizeof(*retained_root));
+  retained_entries[0]=(uint64_t)(uintptr_t)retained_madt;
+  uint32_t retained_entry_count=1;
+  if (source_dmar)
+    retained_entries[retained_entry_count++]=(uint64_t)(uintptr_t)retained_dmar;
+  retained_root->length=sizeof(*retained_root)+retained_entry_count*8U;
+  retained_root->checksum=0;
+  retained_root->checksum=acpi_checksum_value(retained_root,retained_root->length);
+
+  retained_rsdp->rsdt_address=0;
+  retained_rsdp->xsdt_address=(uint64_t)(uintptr_t)retained_root;
+  retained_rsdp->checksum=0;
+  retained_rsdp->extended_checksum=0;
+  retained_rsdp->checksum=acpi_checksum_value(retained_rsdp,20);
+  retained_rsdp->extended_checksum=
+    acpi_checksum_value(retained_rsdp,retained_rsdp->length);
+  return retained_rsdp;
+}
+
 static uint32_t rotate_right(uint32_t value, uint32_t bits) {
   return (value >> bits) | (value << (32 - bits));
 }
@@ -588,14 +725,18 @@ efi_status EFIAPI efi_main(efi_handle image, struct efi_system_table *system) {
   info.initramfs_size = initramfs_size;
   if (!initramfs_size) return fail(114,"AIUEOS_LOADER_FAIL initramfs-empty");
   info.acpi_rsdp = 0;
+  const void *firmware_acpi_rsdp=0;
   struct efi_configuration_table *tables = system->configuration_table;
   for (uint64_t i = 0; i < system->number_of_table_entries; i++) {
     if (guid_equal(&tables[i].vendor_guid, &acpi20_guid)) {
-      info.acpi_rsdp = tables[i].vendor_table;
+      firmware_acpi_rsdp = tables[i].vendor_table;
       break;
     }
   }
-  if (!info.acpi_rsdp) return fail(115,"AIUEOS_LOADER_FAIL acpi-rsdp");
+  if (!firmware_acpi_rsdp) return fail(115,"AIUEOS_LOADER_FAIL acpi-rsdp");
+  info.acpi_rsdp=retain_acpi_graph(bs,firmware_acpi_rsdp);
+  if (!info.acpi_rsdp) return fail(115,"AIUEOS_LOADER_FAIL acpi-retain");
+  debug_string("AIUEOS_ACPI_RETAIN_OK source=firmware copy=low-identity tables=APIC+DMAR\n");
 
   progress(208,"AIUEOS_LOADER_PROGRESS gop-discovery");
   uint8_t gop_used_protocol_scan=0;
