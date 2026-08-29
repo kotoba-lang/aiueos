@@ -415,9 +415,28 @@ commits activation only after the complete artifact passes. Offline, refused
 or interrupted updates keep booting the last-known-good slot.
 
 `aiueos.model-channel` implements and tests that admission/update decision.
-Physical K16 HTTPS download and the NVMe two-slot writer remain unverified;
-host tests do not turn either adapter green. The FAT32 flow below remains the
-explicit offline recovery path.
+The guarded two-slot writer is now implemented by the pure UEFI loader and
+described by `contracts/model-nvme-slots-v1.edn`. It accepts only a dedicated,
+anchored, non-removable NVMe partition; streams into the inactive slot; reads
+the complete artifact back through Block I/O; and writes the activation
+selector last. QEMU proves A-to-B update and last-known-good recovery after a
+corrupt update. A physical K16 NVMe write and physical HTTPS model download
+remain unverified; host/QEMU tests do not turn either physical adapter green.
+The FAT32 flow below remains the explicit offline source path.
+
+The combined physical image keeps the existing K16 RTL8125/TLS GET and uses
+the split USB bundle as this qualification's model source:
+
+```sh
+AIUEOS_OUT=build/aiueos-qwen38-model-slots-usb \
+  ./os/aiueos/scripts/build-qwen38-model-slots-usb.sh
+./os/aiueos/scripts/smoke-model-slots.sh
+./os/aiueos/scripts/smoke-qemu-model-slots.sh
+```
+
+It never formats a target at boot and never writes a Windows partition, an
+unmarked whole NVMe device, or a removable USB target. The target partition
+must be provisioned deliberately before the physical import can run.
 
 The display/telemetry model can be exercised without making a physical claim:
 

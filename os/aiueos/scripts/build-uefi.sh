@@ -7,6 +7,7 @@ out=${AIUEOS_OUT:-"$repo/build/aiueos"}
 esp="$out/esp"
 efi="$esp/EFI/BOOT/BOOTX64.EFI"
 object="$out/uefi-main.obj"
+model_slots_object="$out/uefi-model-slots.obj"
 identity_source="$out/kernel-identity.c"
 identity_object="$out/kernel-identity.obj"
 model_identity_header="$out/aiueos-model-identity.h"
@@ -272,6 +273,8 @@ fi
 # require the explicit test-fixture switch.
 model_handoff_cflags=
 model_handoff_link=
+model_slots_cflags=
+model_slots_link=
 model_total=${AIUEOS_MODEL_TOTAL_BYTES:-10934860704}
 model_part0=${AIUEOS_MODEL_PART0_BYTES:-4000000000}
 model_part1=${AIUEOS_MODEL_PART1_BYTES:-4000000000}
@@ -279,7 +282,8 @@ model_part2=${AIUEOS_MODEL_PART2_BYTES:-2934860704}
 model_sha256=${AIUEOS_MODEL_SHA256:-c0b7c3038681ed2e3040456c1dd45f9858b6c2290bed172c70388a94874f3eee}
 model_min_address=${AIUEOS_MODEL_MIN_ADDRESS:-4294967296}
 model_max_address=${AIUEOS_MODEL_MAX_ADDRESS:-68719476735}
-if [ "${AIUEOS_QWEN38_MODEL_HANDOFF:-0}" = 1 ]; then
+if [ "${AIUEOS_QWEN38_MODEL_HANDOFF:-0}" = 1 ] ||
+   [ "${AIUEOS_MODEL_NVME_SLOTS:-0}" = 1 ]; then
   if [ "${AIUEOS_MODEL_TEST_FIXTURE:-0}" != 1 ]; then
     [ "$model_total" = 10934860704 ] &&
     [ "$model_part0" = 4000000000 ] &&
@@ -303,10 +307,23 @@ if [ "${AIUEOS_QWEN38_MODEL_HANDOFF:-0}" = 1 ]; then
   [ $((model_part0 + model_part1 + model_part2)) -eq "$model_total" ] || {
     echo "error: model part lengths do not sum to total bytes" >&2; exit 1;
   }
-  model_handoff_cflags="-DAIUEOS_QWEN38_MODEL_HANDOFF=1"
-  model_handoff_link="$kernel_model_handoff_object"
+  if [ "${AIUEOS_QWEN38_MODEL_HANDOFF:-0}" = 1 ]; then
+    model_handoff_cflags="-DAIUEOS_QWEN38_MODEL_HANDOFF=1"
+    model_handoff_link="$kernel_model_handoff_object"
+  fi
+  if [ "${AIUEOS_MODEL_NVME_SLOTS:-0}" = 1 ]; then
+    model_slots_cflags="-DAIUEOS_MODEL_NVME_SLOTS=1"
+    if [ "${AIUEOS_MODEL_SLOT_IMPORT_EXIT:-0}" = 1 ]; then
+      [ "${AIUEOS_MODEL_TEST_FIXTURE:-0}" = 1 ] || {
+        echo "error: model-slot import exit is test-fixture only" >&2
+        exit 1
+      }
+      model_slots_cflags="$model_slots_cflags -DAIUEOS_MODEL_SLOT_IMPORT_EXIT=1"
+    fi
+    model_slots_link="$model_slots_object"
+  fi
 elif [ "${AIUEOS_MODEL_TEST_FIXTURE:-0}" = 1 ]; then
-  echo "error: model test fixture requires AIUEOS_QWEN38_MODEL_HANDOFF=1" >&2
+  echo "error: model test fixture requires a model handoff or NVMe-slot build" >&2
   exit 1
 fi
 
@@ -759,14 +776,22 @@ PYEMBED
   zig cc -target x86_64-windows-gnu -c \
     -o "$embedded_object" "$embedded_source"
 fi
+if [ -n "$model_slots_link" ]; then
+  zig cc -target x86_64-windows-gnu -std=c11 -O2 \
+    -ffreestanding -fno-builtin -fshort-wchar -fno-stack-protector -mno-red-zone \
+    -I "$aiueos/uefi" -c -o "$model_slots_object" \
+    "$aiueos/uefi/model_slots.c"
+fi
 zig cc -target x86_64-windows-gnu -std=c11 -O2 \
-  -ffreestanding -fshort-wchar -fno-stack-protector -mno-red-zone -I "$out" \
+  -ffreestanding -fshort-wchar -fno-stack-protector -mno-red-zone \
+  -I "$out" -I "$aiueos/uefi" \
   $gop_discovery_cflags $physical_qualification_cflags $loader_failure_test_cflags \
   $loader_hang_test_cflags $embedded_release_cflags $netboot_qualification_cflags \
-  $persistent_boot_cflags $model_handoff_cflags \
+  $persistent_boot_cflags $model_handoff_cflags $model_slots_cflags \
   -c -o "$object" "$aiueos/uefi/main.c"
 zig lld-link /subsystem:efi_application /entry:efi_main /nodefaultlib /timestamp:0 \
-  /fixed:no "/out:$efi" "$object" "$identity_object" $embedded_release_link
+  /fixed:no "/out:$efi" "$object" "$identity_object" \
+  $embedded_release_link $model_slots_link
 
 magic=$(dd if="$efi" bs=1 count=2 2>/dev/null)
 [ "$magic" = MZ ] || {
