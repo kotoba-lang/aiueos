@@ -9,6 +9,8 @@ efi="$esp/EFI/BOOT/BOOTX64.EFI"
 object="$out/uefi-main.obj"
 identity_source="$out/kernel-identity.c"
 identity_object="$out/kernel-identity.obj"
+embedded_source="$out/embedded-release.S"
+embedded_object="$out/embedded-release.obj"
 kernel_dir="$esp/EFI/AIUEOS"
 kernel="$kernel_dir/KERNEL.ELF"
 kernel_object="$out/kernel-main.o"
@@ -125,9 +127,27 @@ gop_discovery_cflags=
 loader_failure_test_cflags=
 loader_hang_test_cflags=
 kernel_hang_test_cflags=
+embedded_release_cflags=
+netboot_qualification_cflags=
+embedded_release_link=
 if [ "${AIUEOS_PHYSICAL_QUALIFICATION:-0}" = 1 ]; then
   physical_qualification_cflags="-DAIUEOS_PHYSICAL_QUALIFICATION=1"
   qualification_link="$kernel_qualification_entry_object $kernel_qualification_object"
+fi
+if [ "${AIUEOS_EMBEDDED_RELEASE:-0}" = 1 ]; then
+  embedded_release_cflags="-DAIUEOS_EMBEDDED_RELEASE=1"
+  embedded_release_link="$embedded_object"
+fi
+if [ "${AIUEOS_NETBOOT_QUALIFICATION:-0}" = 1 ]; then
+  [ "${AIUEOS_PHYSICAL_QUALIFICATION:-0}" = 1 ] || {
+    echo "error: netboot qualification requires AIUEOS_PHYSICAL_QUALIFICATION=1" >&2
+    exit 1
+  }
+  [ "${AIUEOS_EMBEDDED_RELEASE:-0}" = 1 ] || {
+    echo "error: netboot qualification requires AIUEOS_EMBEDDED_RELEASE=1" >&2
+    exit 1
+  }
+  netboot_qualification_cflags="-DAIUEOS_NETBOOT_QUALIFICATION=1"
 fi
 if [ "${AIUEOS_GOP_FORCE_PROTOCOL_SCAN:-0}" = 1 ]; then
   gop_discovery_cflags="-DAIUEOS_GOP_FORCE_PROTOCOL_SCAN=1"
@@ -569,13 +589,39 @@ pathlib.Path(sys.argv[3]).write_text(
 PY
 zig cc -target x86_64-windows-gnu -std=c11 -O2 -ffreestanding \
   -c -o "$identity_object" "$identity_source"
+if [ "${AIUEOS_EMBEDDED_RELEASE:-0}" = 1 ]; then
+  python3 - "$kernel" "$initramfs" "$embedded_source" <<'PYEMBED'
+from pathlib import Path
+import sys
+
+kernel = Path(sys.argv[1]).resolve().as_posix()
+initramfs = Path(sys.argv[2]).resolve().as_posix()
+Path(sys.argv[3]).write_text(
+    '.section .rdata,"dr"\n'
+    '.balign 16\n'
+    '.globl aiueos_embedded_kernel_start\n'
+    'aiueos_embedded_kernel_start:\n'
+    f'.incbin "{kernel}"\n'
+    '.globl aiueos_embedded_kernel_end\n'
+    'aiueos_embedded_kernel_end:\n'
+    '.balign 16\n'
+    '.globl aiueos_embedded_initramfs_start\n'
+    'aiueos_embedded_initramfs_start:\n'
+    f'.incbin "{initramfs}"\n'
+    '.globl aiueos_embedded_initramfs_end\n'
+    'aiueos_embedded_initramfs_end:\n',
+    encoding='ascii')
+PYEMBED
+  zig cc -target x86_64-windows-gnu -c \
+    -o "$embedded_object" "$embedded_source"
+fi
 zig cc -target x86_64-windows-gnu -std=c11 -O2 \
   -ffreestanding -fshort-wchar -fno-stack-protector -mno-red-zone \
   $gop_discovery_cflags $physical_qualification_cflags $loader_failure_test_cflags \
-  $loader_hang_test_cflags \
+  $loader_hang_test_cflags $embedded_release_cflags $netboot_qualification_cflags \
   -c -o "$object" "$aiueos/uefi/main.c"
 zig lld-link /subsystem:efi_application /entry:efi_main /nodefaultlib /timestamp:0 \
-  /fixed:no "/out:$efi" "$object" "$identity_object"
+  /fixed:no "/out:$efi" "$object" "$identity_object" $embedded_release_link
 
 magic=$(dd if="$efi" bs=1 count=2 2>/dev/null)
 [ "$magic" = MZ ] || {

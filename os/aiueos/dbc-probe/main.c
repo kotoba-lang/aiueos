@@ -10,6 +10,7 @@
 #define EFI_BY_PROTOCOL 2
 #define EFI_BOOT_SERVICES_DATA 4
 #define EFI_ALLOCATE_ANY_PAGES 0
+#define EFI_PCI_IO_WIDTH_UINT8 0
 #define EFI_PCI_IO_WIDTH_UINT32 2
 #define EFI_PCI_IO_WIDTH_UINT64 3
 #define EFI_PCI_IO_OPERATION_COMMON_BUFFER 2
@@ -263,6 +264,12 @@ struct dbc_state {
   uint32_t last_control, last_port;
 };
 
+struct aiueos_qualification_record {
+  uint32_t magic;
+  uint16_t version, state;
+  uint32_t code, reserved;
+};
+
 static const struct efi_guid pci_io_guid =
   {0x4cf5b200,0x68b8,0x4ca5,{0x9e,0xec,0xb2,0x3e,0x3f,0x50,0x02,0x9a}};
 static const struct efi_guid loaded_image_guid =
@@ -271,9 +278,14 @@ static const struct efi_guid pxe_base_code_guid =
   {0x03c4e603,0xac28,0x11d3,{0x9a,0x2d,0x00,0x90,0x27,0x3f,0xc1,0x4d}};
 static const struct efi_guid global_variable_guid =
   {0x8be4df61,0x93ca,0x11d2,{0xaa,0x0d,0x00,0xe0,0x98,0x03,0x2b,0x8c}};
+static const struct efi_guid qualification_guid =
+  {0x73953a72,0x6627,0x4b62,{0x9a,0x9c,0x10,0x38,0xd9,0x20,0x9a,0x16}};
 static char16 boot_current_name[] =
   {'B','o','o','t','C','u','r','r','e','n','t',0};
 static char16 boot_next_name[] = {'B','o','o','t','N','e','x','t',0};
+static char16 qualification_name[] =
+  {'A','I','U','E','O','S','Q','u','a','l','i','f','i','c','a','t','i','o','n',
+   'R','e','s','u','l','t',0};
 static struct efi_simple_text_output *console;
 static struct efi_boot_services *boot_services;
 static struct efi_pxe_base_code_protocol *pxe_handles[MAX_PXE_HANDLES];
@@ -447,6 +459,28 @@ static efi_status select_current_boot_next(struct efi_system_table *system,
              EFI_VARIABLE_RUNTIME_ACCESS;
   return system->runtime_services->set_variable(
       boot_next_name,&global_variable_guid,attributes,sizeof(*selected),selected);
+}
+
+static void report_qualification_result(struct efi_system_table *system) {
+  if (!system || !system->runtime_services ||
+      !system->runtime_services->get_variable) return;
+  struct aiueos_qualification_record record={0};
+  uint32_t attributes=0;
+  uint64_t bytes=sizeof(record);
+  if (system->runtime_services->get_variable(
+          qualification_name,&qualification_guid,&attributes,&bytes,
+          &record)!=EFI_SUCCESS || bytes!=sizeof(record) ||
+      record.magic!=0x514b3241U || record.version!=2 || record.state>2) return;
+  const char *state=record.state==1 ? "success" :
+                    record.state==2 ? "failure" : "incomplete";
+  char line[192],*output=append_ascii(line,"AIUEOS_QUALIFICATION_RESULT state=");
+  output=append_ascii(output,state);
+  output=append_ascii(output," code=");
+  output=append_dec(output,record.code);
+  output=append_ascii(output,
+      " source=uefi-nvram internal-ssd-writes=none retained=yes");
+  append_line_end(&output);
+  console_ascii(line);
 }
 
 static void report_control_ready(void) {
@@ -855,6 +889,68 @@ static void report_state(struct dbc_state *state, uint32_t control,
   console_ascii(line);
 }
 
+static int rtl8125_mac_valid(uint32_t low, uint32_t high) {
+  uint64_t mac=(uint64_t)low|((uint64_t)(high&0xffffU)<<32);
+  return mac && mac!=0xffffffffffffULL && !(low&1U);
+}
+
+/* Capture the exact firmware-PXE handoff state before ExitBootServices.  This
+   intentionally uses only EFI_PCI_IO_PROTOCOL reads: it does not reset the
+   device, enable bus mastering, acknowledge an interrupt, alter a BAR or
+   touch a descriptor.  The native driver can therefore be derived from the
+   state the physical K16 is actually using instead of from an assumed board
+   revision. */
+static void report_rtl8125_handoff(struct efi_pci_io_protocol *pci,
+                                   uint8_t bus, uint8_t device,
+                                   uint8_t function, uint32_t command) {
+  if (!pci || !pci->pci.read || !pci->mem.read) return;
+  uint32_t bars[6]={0};
+  if (pci->pci.read(pci,EFI_PCI_IO_WIDTH_UINT32,0x10,6,bars)!=EFI_SUCCESS)
+    return;
+  uint32_t reported=0;
+  for (uint8_t bar=0;bar<6;bar++) {
+    uint32_t mac_low=0,mac_high=0,tx_config=0,rx_config=0;
+    uint8_t chip_command=0,phy_status=0;
+    if (pci->mem.read(pci,EFI_PCI_IO_WIDTH_UINT32,bar,0x00,1,&mac_low)!=EFI_SUCCESS ||
+        pci->mem.read(pci,EFI_PCI_IO_WIDTH_UINT32,bar,0x04,1,&mac_high)!=EFI_SUCCESS ||
+        pci->mem.read(pci,EFI_PCI_IO_WIDTH_UINT8,bar,0x37,1,&chip_command)!=EFI_SUCCESS ||
+        pci->mem.read(pci,EFI_PCI_IO_WIDTH_UINT32,bar,0x40,1,&tx_config)!=EFI_SUCCESS ||
+        pci->mem.read(pci,EFI_PCI_IO_WIDTH_UINT32,bar,0x44,1,&rx_config)!=EFI_SUCCESS ||
+        pci->mem.read(pci,EFI_PCI_IO_WIDTH_UINT8,bar,0x6c,1,&phy_status)!=EFI_SUCCESS ||
+        !rtl8125_mac_valid(mac_low,mac_high)) continue;
+    char line[320],*output=append_ascii(line,"AIUEOS_RTL8125_HANDOFF bdf=");
+    output=append_hex(output,bus,2);*output++=':';
+    output=append_hex(output,device,2);*output++='.';
+    output=append_hex(output,function,1);
+    output=append_ascii(output," bar=");output=append_dec(output,bar);
+    output=append_ascii(output," command=");output=append_hex(output,command&0xffffU,4);
+    output=append_ascii(output," bar-raw=");output=append_hex(output,bars[bar],8);
+    output=append_ascii(output," mac=");
+    for (uint32_t octet=0;octet<6;octet++) {
+      if (octet) *output++=':';
+      uint64_t mac=(uint64_t)mac_low|((uint64_t)mac_high<<32);
+      output=append_hex(output,(mac>>(octet*8))&0xffU,2);
+    }
+    output=append_ascii(output," chipcmd=");output=append_hex(output,chip_command,2);
+    output=append_ascii(output," txconfig=");output=append_hex(output,tx_config,8);
+    output=append_ascii(output," rxconfig=");output=append_hex(output,rx_config,8);
+    output=append_ascii(output," phystatus=");output=append_hex(output,phy_status,2);
+    output=append_ascii(output," access=mmio-read-only");
+    append_line_end(&output);
+    console_ascii(line);
+    reported++;
+  }
+  if (!reported) {
+    char line[160],*output=append_ascii(line,"AIUEOS_RTL8125_HANDOFF_FAIL bdf=");
+    output=append_hex(output,bus,2);*output++=':';
+    output=append_hex(output,device,2);*output++='.';
+    output=append_hex(output,function,1);
+    output=append_ascii(output," reason=mmio-bar-unreadable access=read-only");
+    append_line_end(&output);
+    console_ascii(line);
+  }
+}
+
 static void service_controller(struct dbc_state *state) {
   if (!state->active) return;
   uint32_t control=0,status=0,port=0;
@@ -914,15 +1010,19 @@ static void discover_controllers(struct efi_boot_services *boot) {
     console_ascii("AIUEOS_DBC_DISCOVERY_FAIL pci-enumeration\r\n");
     return;
   }
-  for (uint64_t index=0;index<bytes/sizeof(efi_handle) &&
-       controller_count<MAX_DBC_CONTROLLERS;index++) {
+  for (uint64_t index=0;index<bytes/sizeof(efi_handle);index++) {
     struct efi_pci_io_protocol *pci=0;
     uint32_t config[4]={0};
     uint64_t segment=0,bus=0,device=0,function=0;
     if (boot->handle_protocol(handles[index],&pci_io_guid,(void **)&pci)!=EFI_SUCCESS ||
         !pci || !pci->pci.read || !pci->get_location ||
         pci->get_location(pci,&segment,&bus,&device,&function)!=EFI_SUCCESS ||
-        pci->pci.read(pci,EFI_PCI_IO_WIDTH_UINT32,0,4,config)!=EFI_SUCCESS ||
+        pci->pci.read(pci,EFI_PCI_IO_WIDTH_UINT32,0,4,config)!=EFI_SUCCESS)
+      continue;
+    if ((config[0]&0xffffU)==0x10ecU && (config[0]>>16)==0x8125U)
+      report_rtl8125_handoff(pci,(uint8_t)bus,(uint8_t)device,
+                             (uint8_t)function,config[1]);
+    if (controller_count>=MAX_DBC_CONTROLLERS ||
         ((config[2]>>8)&0xffffffU)!=0x0c0330U) continue;
     uint32_t dbc_offset=0;
     if (!find_dbc(pci,&dbc_offset)) continue;
@@ -947,6 +1047,7 @@ efi_status EFIAPI efi_main(efi_handle image, struct efi_system_table *system) {
                 (uint64_t)(uintptr_t)system;
   if (!control_nonce) control_nonce=0xa11e10c077000001ULL;
   discover_netlog(image);
+  report_qualification_result(system);
   console_ascii("\r\nAIUEOS DBC LIVE PROBE (NO DISK WRITES)\r\n");
   console_ascii("AIUEOS_DBC_START transport=xhci-dbc direction=duplex internal-ssd-writes=none usb-log-writes=none\r\n");
   discover_controllers(system->boot_services);

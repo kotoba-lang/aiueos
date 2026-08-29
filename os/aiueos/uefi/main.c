@@ -60,11 +60,14 @@ struct efi_boot_services {
 
 typedef efi_status(EFIAPI *efi_set_variable)(const char16 *, const struct efi_guid *,
                                              uint32_t, uint64_t, void *);
+typedef efi_status(EFIAPI *efi_get_variable)(const char16 *, const struct efi_guid *,
+                                             uint32_t *, uint64_t *, void *);
 struct efi_runtime_services {
   struct efi_table_header header;
   void *get_time, *set_time, *get_wakeup_time, *set_wakeup_time;
   void *set_virtual_address_map, *convert_pointer;
-  void *get_variable, *get_next_variable_name;
+  efi_get_variable get_variable;
+  void *get_next_variable_name;
   efi_set_variable set_variable;
   void *get_next_high_monotonic_count, *reset_system;
 };
@@ -139,7 +142,18 @@ static const struct efi_guid graphics_output_guid =
   {0x9042a9de, 0x23dc, 0x4a38, {0x96,0xfb,0x7a,0xde,0xd0,0x80,0x51,0x6a}};
 static const struct efi_guid qualification_guid =
   {0x73953a72,0x6627,0x4b62,{0x9a,0x9c,0x10,0x38,0xd9,0x20,0x9a,0x16}};
+static const struct efi_guid global_variable_guid =
+  {0x8be4df61,0x93ca,0x11d2,{0xaa,0x0d,0x00,0xe0,0x98,0x03,0x2b,0x8c}};
 static const char16 qualification_name[] = u"AIUEOSQualificationResult";
+static const char16 boot_current_name[] = u"BootCurrent";
+static const char16 boot_next_name[] = u"BootNext";
+
+#ifdef AIUEOS_EMBEDDED_RELEASE
+extern const uint8_t aiueos_embedded_kernel_start[];
+extern const uint8_t aiueos_embedded_kernel_end[];
+extern const uint8_t aiueos_embedded_initramfs_start[];
+extern const uint8_t aiueos_embedded_initramfs_end[];
+#endif
 
 struct efi_graphics_output_mode_info {
   uint32_t version, horizontal_resolution, vertical_resolution, pixel_format;
@@ -301,6 +315,34 @@ static int persist_loader_failure(uint32_t code) {
   return persist_loader_record(2,code);
 }
 
+static int prepare_netboot_qualification_return(void) {
+#ifdef AIUEOS_NETBOOT_QUALIFICATION
+  if (!loader_runtime || !loader_runtime->get_variable ||
+      !loader_runtime->set_variable) return 0;
+  uint16_t boot_current=0;
+  uint32_t attributes=0;
+  uint64_t bytes=sizeof(boot_current);
+  if (loader_runtime->get_variable(
+          boot_current_name,&global_variable_guid,&attributes,&bytes,
+          &boot_current)!=EFI_SUCCESS || bytes!=sizeof(boot_current)) return 0;
+  attributes=EFI_VARIABLE_NON_VOLATILE|EFI_VARIABLE_BOOTSERVICE_ACCESS|
+             EFI_VARIABLE_RUNTIME_ACCESS;
+  if (loader_runtime->set_variable(
+          boot_next_name,&global_variable_guid,attributes,sizeof(boot_current),
+          &boot_current)!=EFI_SUCCESS) return 0;
+  struct aiueos_qualification_record pending={0x514b3241U,2,0,0,0};
+  if (loader_runtime->set_variable(
+          qualification_name,&qualification_guid,attributes,sizeof(pending),
+          &pending)!=EFI_SUCCESS) {
+    loader_runtime->set_variable(
+        boot_next_name,&global_variable_guid,0,0,0);
+    return 0;
+  }
+  debug_string("AIUEOS_NETBOOT_RETURN_ARMED bootnext=current result=pending\n");
+#endif
+  return 1;
+}
+
 static void progress(uint32_t code, const char *message) {
   debug_string(message);debug_string(" code=");
   char digits[16];uint32_t count=0,value=code;
@@ -394,6 +436,36 @@ static efi_status read_verified_kernel(struct efi_boot_services *bs, efi_handle 
   return status;
 }
 
+#ifdef AIUEOS_EMBEDDED_RELEASE
+static efi_status read_verified_embedded(uint8_t *kernel_file,
+                                         uint64_t *kernel_size,
+                                         uint8_t *initramfs_file,
+                                         uint64_t *initramfs_size) {
+  uint64_t embedded_kernel_size=
+    (uint64_t)(aiueos_embedded_kernel_end-aiueos_embedded_kernel_start);
+  uint64_t embedded_initramfs_size=
+    (uint64_t)(aiueos_embedded_initramfs_end-aiueos_embedded_initramfs_start);
+  if (!embedded_kernel_size || embedded_kernel_size>KERNEL_BUFFER_SIZE ||
+      !embedded_initramfs_size || embedded_initramfs_size>INITRAMFS_BUFFER_SIZE)
+    return EFI_INVALID_PARAMETER;
+  copy_bytes(kernel_file,aiueos_embedded_kernel_start,embedded_kernel_size);
+  copy_bytes(initramfs_file,aiueos_embedded_initramfs_start,
+             embedded_initramfs_size);
+  uint8_t digest[32];
+  sha256(kernel_file,embedded_kernel_size,digest);
+  for (uint32_t i=0;i<32;i++)
+    if (digest[i]!=aiueos_expected_kernel_sha256[i]) return EFI_INVALID_PARAMETER;
+  sha256(initramfs_file,embedded_initramfs_size,digest);
+  for (uint32_t i=0;i<32;i++)
+    if (digest[i]!=aiueos_expected_initramfs_sha256[i]) return EFI_INVALID_PARAMETER;
+  *kernel_size=embedded_kernel_size;
+  *initramfs_size=embedded_initramfs_size;
+  debug_string("AIUEOS_NETBOOT_EMBEDDED_OK kernel+initramfs sha256-v1\n");
+  console_ascii("AIUEOS PXE payload admitted.\r\n");
+  return EFI_SUCCESS;
+}
+#endif
+
 efi_status EFIAPI efi_main(efi_handle image, struct efi_system_table *system) {
   static const char16 console_message[] = u"AIUEOS_LOADER_OK loading kernel.elf\r\n";
   static const char16 kernel_path[] = u"\\EFI\\AIUEOS\\KERNEL.ELF";
@@ -412,6 +484,8 @@ efi_status EFIAPI efi_main(efi_handle image, struct efi_system_table *system) {
   loader_console=system?system->console_out:0;
   loader_runtime=system?system->runtime_services:0;
   if (!system || !(bs = system->boot_services)) return fail(101,"AIUEOS_LOADER_FAIL system-table");
+  if (!prepare_netboot_qualification_return())
+    return fail(119,"AIUEOS_LOADER_FAIL netboot-return-arm");
   if (system->console_out && system->console_out->output_string)
     system->console_out->output_string(system->console_out, console_message);
   debug_string("AIUEOS_LOADER_OK\n");
@@ -443,6 +517,12 @@ efi_status EFIAPI efi_main(efi_handle image, struct efi_system_table *system) {
   if (bs->allocate_pool(2, INITRAMFS_BUFFER_SIZE, (void **)&initramfs_file) != EFI_SUCCESS)
     return fail(104,"AIUEOS_LOADER_FAIL initramfs-buffer");
   progress(204,"AIUEOS_LOADER_PROGRESS kernel-admission");
+#ifdef AIUEOS_EMBEDDED_RELEASE
+  efi_status admitted=read_verified_embedded(
+      kernel_file,&kernel_size,initramfs_file,&initramfs_size);
+  if (admitted!=EFI_SUCCESS)
+    return fail(105,"AIUEOS_LOADER_FAIL embedded-admission");
+#else
   efi_status admitted = read_verified_kernel(bs, loaded->device_handle, kernel_path,
                                              initramfs_path, kernel_file, &kernel_size,
                                              initramfs_file, &initramfs_size);
@@ -465,6 +545,7 @@ efi_status EFIAPI efi_main(efi_handle image, struct efi_system_table *system) {
       return fail(105,"AIUEOS_LOADER_FAIL kernel-admission-exhausted");
     debug_string("AIUEOS_LOADER_RECOVERY_OK kernel-from-alternate-volume sha256-v1\n");
   }
+#endif
   debug_string("AIUEOS_LOADER_INTEGRITY_OK sha256-v1\n");
 
   progress(205,"AIUEOS_LOADER_PROGRESS elf-validation");
