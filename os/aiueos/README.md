@@ -436,7 +436,9 @@ AIUEOS_OUT=build/aiueos-qwen38-model-slots-usb \
 
 It never formats a target at boot and never writes a Windows partition, an
 unmarked whole NVMe device, or a removable USB target. The target partition
-must be provisioned deliberately before the physical import can run.
+must be provisioned deliberately before the physical import can run. If it is
+absent, the combined image records `AIUEOS_MODEL_SLOT_DEFERRED` and continues
+the direct-HTTPS qualification without an internal-disk write.
 
 The display/telemetry model can be exercised without making a physical claim:
 
@@ -444,9 +446,18 @@ The display/telemetry model can be exercised without making a physical claim:
 ./os/aiueos/scripts/smoke-inference-status.sh
 ```
 
-For offline recovery, once a destination with the artifact plus 2 GiB of free
-headroom is attached, fetch the exact revision without overwriting an existing
-mismatch:
+For a FAT32 recovery USB, fetch the pinned artifact directly as three files.
+Every HTTPS 206 range is first checked in a bounded temporary chunk, interrupted
+parts resume from their verified prefix, and the final three-file stream must
+match the whole-artifact SHA-256:
+
+```sh
+./os/aiueos/scripts/fetch-qwen38-model-bundle.sh /Volumes/AIUEOSMODEL
+./os/aiueos/scripts/smoke-qwen38-ranged-bundle.sh
+```
+
+On a filesystem that supports files larger than 4 GiB, the whole-artifact
+offline recovery path remains available:
 
 ```sh
 ./os/aiueos/scripts/fetch-qwen38-27b-model.sh /path/to/model-volume

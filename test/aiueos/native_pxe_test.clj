@@ -56,6 +56,10 @@
   (slurp (io/file "os/aiueos/kernel/paging.c")))
 (def qwen38-bundle
   (slurp (io/file "os/aiueos/scripts/prepare-qwen38-model-bundle.sh")))
+(def qwen38-ranged-bundle
+  (slurp (io/file "os/aiueos/scripts/fetch-qwen38-model-bundle.sh")))
+(def qwen38-ranged-bundle-smoke
+  (slurp (io/file "os/aiueos/scripts/smoke-qwen38-ranged-bundle.sh")))
 (def qwen38-handoff-build
   (slurp (io/file "os/aiueos/scripts/build-qwen38-model-handoff-pxe.sh")))
 (def qwen38-handoff-smoke
@@ -244,8 +248,15 @@
                   "corrupt-update=last-known-good"]]
     (is (str/includes? model-slots-smoke marker)))
   (doseq [marker ["AIUEOS_MODEL_NVME_SLOTS=1"
+                  "AIUEOS_MODEL_NVME_TARGET_OPTIONAL=1"
                   "AIUEOS_PHYSICAL_DIRECT_HTTPS_QUALIFICATION=1"]]
-    (is (str/includes? model-slots-build marker))))
+    (is (str/includes? model-slots-build marker)))
+  (doseq [marker ["--range" "--max-filesize" "Q38P0.BIN"
+                  "transport=https-range"]]
+    (is (str/includes? qwen38-ranged-bundle marker)))
+  (is (str/includes? qwen38-ranged-bundle-smoke
+                     "AIUEOS_QWEN38_RANGED_BUNDLE_OK"))
+  (is (str/includes? loader "AIUEOS_MODEL_SLOT_DEFERRED")))
 
 (deftest k16-rtl8125-uefi-observation-stays-read-only
   (doseq [marker ["AIUEOS_RTL8125_HANDOFF bdf="

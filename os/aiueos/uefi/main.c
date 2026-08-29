@@ -892,8 +892,14 @@ static efi_status stage_model_to_nvme(struct efi_boot_services *bs,
   zero_bytes(&io, sizeof(io));
   zero_bytes(&before, sizeof(before));
   if (!find_model_slot_nvme(bs, &context, &io, &before)) {
+#ifdef AIUEOS_MODEL_NVME_TARGET_OPTIONAL
+    debug_string("AIUEOS_MODEL_SLOT_DEFERRED target=dedicated-nvme-partition reason=absent internal-disk-write=none\n");
+    console_ascii("AIUEOS dedicated model partition absent; continuing HTTPS qualification without an internal-disk write.\r\n");
+    return EFI_SUCCESS;
+#else
     debug_string("AIUEOS_MODEL_SLOT_FAIL target=dedicated-nvme-partition reason=absent\n");
     return EFI_INVALID_PARAMETER;
+#endif
   }
   struct aiueos_model_identity identity;
   identity.bytes = AIUEOS_MODEL_TOTAL_BYTES;
