@@ -12,6 +12,9 @@ extern uint64_t kotoba_aiueos_ecdsa_p256_sha256_verify(
 #define TLS_RX_MAX 12288
 #define TLS_APP_MAX 4096
 #define TLS_HS_MAX 12288
+#define TLS_HOST_MAX 63
+#define TLS_HTTP_MAX 1024
+#define TLS_CH_MAX 256
 
 static uint8_t sha_ws[512];
 static uint8_t x_ws[646];
@@ -36,8 +39,21 @@ static uint32_t app_len;
 
 static uint8_t client_scalar[32];
 static uint8_t client_pub[32];
-static uint8_t ch_record[160];
+static uint8_t ch_record[TLS_CH_MAX];
 static uint32_t ch_record_len;
+
+/* A profile is mechanism, not server admission: callers choose the exact SNI,
+   HTTP request, ClientHello random and X25519 scalar before reset/handshake.
+   Keeping bounded copies here lets the physical RTL8125 profile use the same
+   record engine without retaining pointers to transient boot memory. The
+   default below preserves the original kotobase smoke byte-for-byte. */
+static uint8_t configured_host[TLS_HOST_MAX];
+static uint32_t configured_host_len;
+static uint8_t configured_http[TLS_HTTP_MAX];
+static uint32_t configured_http_len;
+static uint8_t configured_random[32];
+static uint8_t configured_scalar[32];
+static int configured;
 
 static uint8_t c_hs_key[16], c_hs_iv[12], s_hs_key[16], s_hs_iv[12];
 static uint8_t c_ap_key[16], c_ap_iv[12], s_ap_key[16], s_ap_iv[12];
@@ -75,13 +91,15 @@ static const uint8_t ch_template[157] = {
   0x0b,0x0c,0x0d,0x0e,0x0f,0x10,0x11,0x12,0x13,0x14,0x15,0x16,0x17,0x18,0x19,
   0x1a,0x1b,0x1c,0x1d,0x1e,0x1f,0x20};
 
-static const uint8_t http_get[] =
+static const uint8_t default_http_get[] =
   "GET /ipfs/bafkreihdwdcefgh4dqkjv67uzcmw7ojee6xedzdetojuzjevtenxquvyku HTTP/1.1\r\n"
   "Host: kotobase.net\r\n"
   "User-Agent: aiueos-p2\r\n"
   "Accept: */*\r\n"
   "Connection: close\r\n"
   "\r\n";
+
+static const char default_host[] = "kotobase.net";
 
 static uint16_t be16(const uint8_t *p) {
   return (uint16_t)(((uint32_t)p[0] << 8) | p[1]);
@@ -99,6 +117,95 @@ static void copy_bytes(uint8_t *d, const uint8_t *s, uint32_t n) {
 static void zero_bytes(uint8_t *d, uint32_t n) {
   uint32_t i;
   for (i = 0; i < n; i++) d[i] = 0;
+}
+
+static int hostname_ok(const char *host, uint32_t *length) {
+  uint32_t n = 0;
+  uint32_t label_len = 0;
+  int label_has_byte = 0;
+  int last_hyphen = 0;
+  if (!host || !length) return 0;
+  while (host[n]) {
+    uint8_t c = (uint8_t)host[n];
+    if (n >= TLS_HOST_MAX) return 0;
+    if ((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')) {
+      label_has_byte = 1;
+      label_len++;
+      last_hyphen = 0;
+    } else if (c == '-') {
+      if (!label_has_byte) return 0;
+      label_len++;
+      last_hyphen = 1;
+    } else if (c == '.') {
+      if (!label_has_byte || last_hyphen || label_len > 63) return 0;
+      label_has_byte = 0;
+      label_len = 0;
+      last_hyphen = 0;
+    } else {
+      return 0;
+    }
+    n++;
+  }
+  if (!n || !label_has_byte || last_hyphen || label_len > 63) return 0;
+  *length = n;
+  return 1;
+}
+
+int aiueos_tls13_configure(const char *host,
+                           const uint8_t *request, uint32_t request_len,
+                           const uint8_t client_random[32],
+                           const uint8_t ephemeral_scalar[32]) {
+  uint32_t host_len = 0, i;
+  uint8_t random_or = 0, scalar_or = 0;
+  if (!hostname_ok(host, &host_len) || !request || !request_len ||
+      request_len > TLS_HTTP_MAX || !client_random || !ephemeral_scalar)
+    return 0;
+  for (i = 0; i < 32; i++) {
+    random_or |= client_random[i];
+    scalar_or |= ephemeral_scalar[i];
+  }
+  if (!random_or || !scalar_or) return 0;
+  copy_bytes(configured_host, (const uint8_t *)host, host_len);
+  configured_host_len = host_len;
+  copy_bytes(configured_http, request, request_len);
+  configured_http_len = request_len;
+  copy_bytes(configured_random, client_random, 32);
+  copy_bytes(configured_scalar, ephemeral_scalar, 32);
+  configured = 1;
+  return 1;
+}
+
+static int clienthello_build(void) {
+  const uint8_t *host = configured ? configured_host :
+    (const uint8_t *)default_host;
+  uint32_t host_len = configured ? configured_host_len :
+    (uint32_t)(sizeof(default_host) - 1);
+  const uint8_t *tail = ch_template + 73;
+  uint32_t tail_len = (uint32_t)sizeof(ch_template) - 73;
+  uint32_t total = 61 + host_len + tail_len;
+  uint32_t record_payload = total - 5;
+  uint32_t handshake_payload = total - 9;
+  uint32_t extensions_len = 93 + host_len;
+  uint32_t sni_ext_len = 5 + host_len;
+  uint32_t sni_list_len = 3 + host_len;
+  uint32_t i;
+  if (total > TLS_CH_MAX || host_len > 255) return 0;
+  copy_bytes(ch_record, ch_template, 61);
+  put16(ch_record + 3, (uint16_t)record_payload);
+  ch_record[6] = (uint8_t)(handshake_payload >> 16);
+  ch_record[7] = (uint8_t)(handshake_payload >> 8);
+  ch_record[8] = (uint8_t)handshake_payload;
+  if (configured) copy_bytes(ch_record + 11, configured_random, 32);
+  put16(ch_record + 50, (uint16_t)extensions_len);
+  put16(ch_record + 54, (uint16_t)sni_ext_len);
+  put16(ch_record + 56, (uint16_t)sni_list_len);
+  put16(ch_record + 59, (uint16_t)host_len);
+  copy_bytes(ch_record + 61, host, host_len);
+  copy_bytes(ch_record + 61 + host_len, tail, tail_len);
+  for (i = 0; i < 32; i++)
+    ch_record[113 + host_len + i] = client_pub[i];
+  ch_record_len = total;
+  return 1;
 }
 
 static int sha256(const uint8_t *in, uint32_t n, uint8_t out[32]) {
@@ -554,15 +661,12 @@ void aiueos_tls13_reset(void) {
 }
 
 int aiueos_tls13_clienthello(uint8_t *out, uint32_t *len) {
-  uint32_t i;
-  copy_bytes(client_scalar, smoke_scalar, 32);
+  copy_bytes(client_scalar, configured ? configured_scalar : smoke_scalar, 32);
   if (!kotoba_aiueos_x25519(client_scalar, x25519_base, client_pub, x_ws)) return 0;
-  copy_bytes(ch_record, ch_template, 157);
-  for (i = 0; i < 32; i++) ch_record[125 + i] = client_pub[i];
-  ch_record_len = 157;
-  if (!transcript_add(ch_record + 5, 152)) return 0;
-  copy_bytes(out, ch_record, 157);
-  *len = 157;
+  if (!clienthello_build()) return 0;
+  if (!transcript_add(ch_record + 5, ch_record_len - 5)) return 0;
+  copy_bytes(out, ch_record, ch_record_len);
+  *len = ch_record_len;
   return 1;
 }
 
@@ -612,10 +716,13 @@ int aiueos_tls13_take_finished(uint8_t *out, uint32_t *len) {
 }
 
 int aiueos_tls13_take_http(uint8_t *out, uint32_t *len) {
-  uint32_t rec_len = 0, get_len;
+  const uint8_t *request = configured ? configured_http : default_http_get;
+  uint32_t rec_len = 0;
+  uint32_t request_len = configured ? configured_http_len :
+    (uint32_t)(sizeof(default_http_get) - 1);
   if (!handshake_ready) return 0;
-  get_len = (uint32_t)(sizeof(http_get) - 1);
-  if (!protect(c_ap_key, c_ap_iv, c_ap_seq, 0x17, http_get, get_len, out, &rec_len))
+  if (!protect(c_ap_key, c_ap_iv, c_ap_seq, 0x17,
+               request, request_len, out, &rec_len))
     return 0;
   c_ap_seq++;
   *len = rec_len;

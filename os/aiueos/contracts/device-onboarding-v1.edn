@@ -57,6 +57,16 @@
            :initial-state :pending-native-adapter
            :required-proof [:device-key-custody :signed-netmap
                             :peer-handshake :reconnect]}}
+ :network
+ {:murakumo-https {:authority "https://api.murakumo.cloud"
+                    :sni "api.murakumo.cloud"
+                    :transport-profile :implemented
+                    :live-host-probe :http-200
+                    :physical-rtl8125 :unverified
+                    :server-chain-and-hostname-admission :not-implemented}
+  :native-device-cacao {:state :not-wired-to-kernel
+                        :requires [:persistent-device-key :secure-entropy
+                                   :ed25519-sign :trusted-https]}}
  :storage
  {:local {:role :encrypted-cache
           :target :internal-ssd
@@ -80,7 +90,8 @@
   :device-owned-cacao :implemented-and-unit-tested
   :encrypted-network-profile :implemented-and-unit-tested
   :kotoba-browser-render :hosted-engine-smoke
-  :production-authority-route :pending-deployment
+  :production-authority-route :deployed-and-live-flow-probed
+  :native-tls-murakumo-profile :implemented-and-live-host-probed
   :physical-k16-direct-https :unverified
   :physical-k16-wifi-application :unverified
   :physical-k16-auth :unverified
