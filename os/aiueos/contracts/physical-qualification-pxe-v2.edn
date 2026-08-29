@@ -9,14 +9,14 @@
                   :physical-result-code 226
                   :meaning :framebuffer-entry}
  :framebuffer-progress
- {236 :function-entry
-  237 :gop-contract-accepted
-  238 :aperture-mapped
-  239 :background-filled
-  240 :desktop-panels-filled
-  241 :first-sample-hash-complete
-  242 :second-sample-hash-complete
-  243 :desktop-surface-ready}
+ {250 :function-entry
+  251 :gop-contract-accepted
+  252 :aperture-mapped
+  253 :background-filled
+  254 :desktop-panels-filled
+  255 :first-sample-hash-complete
+  256 :second-sample-hash-complete
+  257 :desktop-surface-ready}
  :persisted-before-stage true
  :safety {:internal-disk-writes? false
           :usb-runtime-writes? false

@@ -228,7 +228,7 @@ static uint64_t sample_hash(volatile uint32_t *fb, uint32_t width,
 
 int aiueos_framebuffer_initialize(const struct aiueos_boot_info *boot) {
   desktop_surface_ready = 0;
-  FRAMEBUFFER_PROGRESS(236);
+  FRAMEBUFFER_PROGRESS(250);
   if (!boot || !boot->framebuffer_base || !boot->framebuffer_size ||
       boot->framebuffer_width < 320 || boot->framebuffer_height < 200 ||
       boot->framebuffer_stride < boot->framebuffer_width ||
@@ -236,16 +236,16 @@ int aiueos_framebuffer_initialize(const struct aiueos_boot_info *boot) {
       (uint64_t)boot->framebuffer_stride * boot->framebuffer_height >
         boot->framebuffer_size / 4)
     return 0;
-  FRAMEBUFFER_PROGRESS(237);
+  FRAMEBUFFER_PROGRESS(251);
   if (!aiueos_map_framebuffer(boot->framebuffer_base, boot->framebuffer_size))
     return 0;
-  FRAMEBUFFER_PROGRESS(238);
+  FRAMEBUFFER_PROGRESS(252);
 
   volatile uint32_t *fb = (volatile uint32_t *)(uintptr_t)boot->framebuffer_base;
   desktop_surface_pixels = fb;
   rectangle(fb, boot->framebuffer_stride, boot->framebuffer_format, 0, 0,
             boot->framebuffer_width, boot->framebuffer_height, 0x101827);
-  FRAMEBUFFER_PROGRESS(239);
+  FRAMEBUFFER_PROGRESS(253);
   uint32_t margin = boot->framebuffer_width / 16;
   uint32_t top = boot->framebuffer_height / 12;
   rectangle(fb, boot->framebuffer_stride, boot->framebuffer_format,
@@ -260,19 +260,19 @@ int aiueos_framebuffer_initialize(const struct aiueos_boot_info *boot) {
             top + boot->framebuffer_height / 7,
             (boot->framebuffer_width - 3 * margin) / 2,
             boot->framebuffer_height * 2 / 3, 0x35b779);
-  FRAMEBUFFER_PROGRESS(240);
+  FRAMEBUFFER_PROGRESS(254);
   uint64_t first = sample_hash(fb, boot->framebuffer_width,
                                boot->framebuffer_height, boot->framebuffer_stride);
-  FRAMEBUFFER_PROGRESS(241);
+  FRAMEBUFFER_PROGRESS(255);
   uint64_t second = sample_hash(fb, boot->framebuffer_width,
                                 boot->framebuffer_height, boot->framebuffer_stride);
-  FRAMEBUFFER_PROGRESS(242);
+  FRAMEBUFFER_PROGRESS(256);
   if (!first || first != second) return 0;
   desktop_surface = (struct aiueos_desktop_surface){
     1, sizeof(desktop_surface), 1, 1, first,
     boot->framebuffer_width, boot->framebuffer_height, boot->framebuffer_stride,
     boot->framebuffer_format, 0, 0, boot->framebuffer_width, boot->framebuffer_height};
   desktop_surface_ready = 1;
-  FRAMEBUFFER_PROGRESS(243);
+  FRAMEBUFFER_PROGRESS(257);
   return 1;
 }

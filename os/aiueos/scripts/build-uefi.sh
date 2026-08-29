@@ -529,6 +529,7 @@ zig cc -target x86_64-freestanding-none -std=c11 -O2 \
   -c -o "$kernel_ioapic_object" "$aiueos/kernel/ioapic.c"
 zig cc -target x86_64-freestanding-none -std=c11 -O2 \
   -ffreestanding -fno-stack-protector -mno-red-zone \
+  $physical_qualification_cflags \
   -c -o "$kernel_framebuffer_object" "$aiueos/kernel/framebuffer.c"
 if [ -n "$qualification_link" ]; then
   zig cc -target x86_64-freestanding-none \
