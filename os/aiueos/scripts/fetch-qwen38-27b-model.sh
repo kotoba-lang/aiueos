@@ -47,7 +47,8 @@ required_kib=$(( (bytes + 1023) / 1024 + headroom_kib ))
   exit 1
 }
 
-curl -fL --continue-at - --retry 4 --retry-delay 2 -o "$partial" "$url"
+curl --http1.1 -fL --continue-at - --retry 12 --retry-all-errors \
+  --retry-delay 2 -o "$partial" "$url"
 [ "$(wc -c < "$partial" | tr -d ' ')" = "$bytes" ] || {
   echo "error: downloaded artifact byte count does not match the pin" >&2
   exit 1

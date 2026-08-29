@@ -60,6 +60,13 @@
   (slurp (io/file "os/aiueos/scripts/build-qwen38-model-handoff-pxe.sh")))
 (def qwen38-handoff-smoke
   (slurp (io/file "os/aiueos/scripts/smoke-qemu-model-handoff.sh")))
+(def model-slots-contract
+  (slurp (io/file "os/aiueos/contracts/model-nvme-slots-v1.edn")))
+(def model-slots-core (slurp (io/file "os/aiueos/uefi/model_slots.c")))
+(def model-slots-smoke
+  (slurp (io/file "os/aiueos/scripts/smoke-qemu-model-slots.sh")))
+(def model-slots-build
+  (slurp (io/file "os/aiueos/scripts/build-qwen38-model-slots-usb.sh")))
 (def physical-relay-build
   (slurp (io/file "os/aiueos/scripts/build-physical-relay-pxe.sh")))
 (def relay-protocol
@@ -218,6 +225,27 @@
                   "AIUEOS_QWEN38_MODEL_HANDOFF_QEMU_REFUSAL_OK"
                   "generation=not-yet-present"]]
     (is (str/includes? qwen38-handoff-smoke marker))))
+
+(deftest pure-aiueos-model-cache-writes-only-guarded-inactive-nvme-slot
+  (let [contract (edn/read-string model-slots-contract)]
+    (is (= :nvme-namespace-required (get-in contract [:target :device-path])))
+    (is (= [:inactive-data :flush :full-readback-sha256
+            :inactive-header :flush-and-readback
+            :alternate-selector :flush-and-readback]
+           (get-in contract [:update :write-order])))
+    (is (= :last-known-good (get-in contract [:update :interrupted])))
+    (is (false? (get-in contract [:safety :writes-without-anchor?])))
+    (is (false? (get-in contract [:safety :writes-windows-partition?])))
+    (is (= :unverified (get-in contract [:evidence :physical-k16-nvme-write]))))
+  (doseq [marker ["anchor_magic" "AIUEOS_MODEL_SLOT_RECORD_SELECTOR"
+                  "aiueos_model_slot_commit" "aiueos_model_slot_verify_active"]]
+    (is (str/includes? model-slots-core marker)))
+  (doseq [marker ["AIUEOS_MODEL_SLOTS_QEMU_OK" "generations=1,2"
+                  "corrupt-update=last-known-good"]]
+    (is (str/includes? model-slots-smoke marker)))
+  (doseq [marker ["AIUEOS_MODEL_NVME_SLOTS=1"
+                  "AIUEOS_PHYSICAL_DIRECT_HTTPS_QUALIFICATION=1"]]
+    (is (str/includes? model-slots-build marker))))
 
 (deftest k16-rtl8125-uefi-observation-stays-read-only
   (doseq [marker ["AIUEOS_RTL8125_HANDOFF bdf="
