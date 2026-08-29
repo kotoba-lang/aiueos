@@ -1,0 +1,641 @@
+/* SPDX-License-Identifier: Apache-2.0 */
+#include "qwen35_runtime.h"
+
+enum gguf_value_type {
+  GGUF_UINT8 = 0,
+  GGUF_INT8 = 1,
+  GGUF_UINT16 = 2,
+  GGUF_INT16 = 3,
+  GGUF_UINT32 = 4,
+  GGUF_INT32 = 5,
+  GGUF_FLOAT32 = 6,
+  GGUF_BOOL = 7,
+  GGUF_STRING = 8,
+  GGUF_ARRAY = 9,
+  GGUF_UINT64 = 10,
+  GGUF_INT64 = 11,
+  GGUF_FLOAT64 = 12
+};
+
+struct reader {
+  const uint8_t *bytes;
+  uint64_t length;
+  uint64_t position;
+  int valid;
+};
+
+struct string_view {
+  const uint8_t *bytes;
+  uint64_t length;
+};
+
+static uint32_t read_u32(struct reader *reader) {
+  if (!reader->valid || reader->position > reader->length ||
+      reader->length - reader->position < 4) {
+    reader->valid = 0;
+    return 0;
+  }
+  const uint8_t *p = reader->bytes + reader->position;
+  reader->position += 4;
+  return (uint32_t)p[0] | ((uint32_t)p[1] << 8) |
+         ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
+}
+
+static uint64_t read_u64(struct reader *reader) {
+  uint64_t low = read_u32(reader);
+  uint64_t high = read_u32(reader);
+  return low | (high << 32);
+}
+
+static float read_f32(struct reader *reader) {
+  union { uint32_t bits; float value; } decoded;
+  decoded.bits = read_u32(reader);
+  return decoded.value;
+}
+
+static int skip_bytes(struct reader *reader, uint64_t amount) {
+  if (!reader->valid || reader->position > reader->length ||
+      amount > reader->length - reader->position) {
+    reader->valid = 0;
+    return 0;
+  }
+  reader->position += amount;
+  return 1;
+}
+
+static struct string_view read_string(struct reader *reader) {
+  struct string_view result = {0};
+  uint64_t length = read_u64(reader);
+  if (!reader->valid || !skip_bytes(reader, length)) return result;
+  result.bytes = reader->bytes + reader->position - length;
+  result.length = length;
+  return result;
+}
+
+static int string_is(struct string_view value, const char *expected) {
+  uint64_t length = 0;
+  while (expected[length]) length++;
+  if (value.length != length) return 0;
+  for (uint64_t i = 0; i < length; i++)
+    if (value.bytes[i] != (uint8_t)expected[i]) return 0;
+  return 1;
+}
+
+static int string_starts(struct string_view value, const char *prefix,
+                         uint64_t *prefix_length) {
+  uint64_t length = 0;
+  while (prefix[length]) length++;
+  if (value.length < length) return 0;
+  for (uint64_t i = 0; i < length; i++)
+    if (value.bytes[i] != (uint8_t)prefix[i]) return 0;
+  if (prefix_length) *prefix_length = length;
+  return 1;
+}
+
+static uint64_t scalar_size(uint32_t type) {
+  switch (type) {
+    case GGUF_UINT8:
+    case GGUF_INT8:
+    case GGUF_BOOL: return 1;
+    case GGUF_UINT16:
+    case GGUF_INT16: return 2;
+    case GGUF_UINT32:
+    case GGUF_INT32:
+    case GGUF_FLOAT32: return 4;
+    case GGUF_UINT64:
+    case GGUF_INT64:
+    case GGUF_FLOAT64: return 8;
+    default: return 0;
+  }
+}
+
+static int skip_value(struct reader *reader, uint32_t type, uint32_t depth) {
+  uint64_t size = scalar_size(type);
+  if (size) return skip_bytes(reader, size);
+  if (type == GGUF_STRING) {
+    (void)read_string(reader);
+    return reader->valid;
+  }
+  if (type != GGUF_ARRAY || depth >= 2) return 0;
+  uint32_t element_type = read_u32(reader);
+  uint64_t count = read_u64(reader);
+  if (!reader->valid || count > 1000000ULL) return 0;
+  size = scalar_size(element_type);
+  if (size) {
+    if (count && size > UINT64_MAX / count) return 0;
+    return skip_bytes(reader, size * count);
+  }
+  for (uint64_t i = 0; i < count; i++)
+    if (!skip_value(reader, element_type, depth + 1)) return 0;
+  return 1;
+}
+
+static int read_expected_u32(struct reader *reader, uint32_t type,
+                             uint32_t *destination) {
+  if (type != GGUF_UINT32) return 0;
+  *destination = read_u32(reader);
+  return reader->valid;
+}
+
+static int read_expected_string(struct reader *reader, uint32_t type,
+                                const char *expected) {
+  return type == GGUF_STRING && string_is(read_string(reader), expected) &&
+         reader->valid;
+}
+
+static int read_expected_array_length(struct reader *reader, uint32_t type,
+                                      uint32_t expected_element_type,
+                                      uint64_t expected_count) {
+  if (type != GGUF_ARRAY) return 0;
+  uint32_t element_type = read_u32(reader);
+  uint64_t count = read_u64(reader);
+  if (!reader->valid || element_type != expected_element_type ||
+      count != expected_count) return 0;
+  uint64_t size = scalar_size(element_type);
+  if (size) return skip_bytes(reader, size * count);
+  for (uint64_t i = 0; i < count; i++)
+    if (!skip_value(reader, element_type, 1)) return 0;
+  return 1;
+}
+
+static int parse_metadata(struct reader *reader,
+                          struct aiueos_qwen35_model *model) {
+  uint64_t required = 0;
+  for (uint64_t i = 0; i < model->metadata_count; i++) {
+    struct string_view key = read_string(reader);
+    uint32_t type = read_u32(reader);
+    if (!reader->valid) return 0;
+    if (string_is(key, "general.architecture")) {
+      if (!read_expected_string(reader, type, "qwen35")) return 0;
+      required |= 1ULL << 0;
+    } else if (string_is(key, "general.name")) {
+      if (!read_expected_string(reader, type, "Qwen3.8-27B")) return 0;
+      required |= 1ULL << 1;
+    } else if (string_is(key, "qwen35.block_count")) {
+      if (!read_expected_u32(reader, type, &model->block_count)) return 0;
+      required |= 1ULL << 2;
+    } else if (string_is(key, "qwen35.context_length")) {
+      if (!read_expected_u32(reader, type, &model->context_length)) return 0;
+      required |= 1ULL << 3;
+    } else if (string_is(key, "qwen35.embedding_length")) {
+      if (!read_expected_u32(reader, type, &model->embedding_length)) return 0;
+      required |= 1ULL << 4;
+    } else if (string_is(key, "qwen35.feed_forward_length")) {
+      if (!read_expected_u32(reader, type, &model->feed_forward_length)) return 0;
+      required |= 1ULL << 5;
+    } else if (string_is(key, "qwen35.attention.head_count")) {
+      if (!read_expected_u32(reader, type, &model->attention_head_count)) return 0;
+      required |= 1ULL << 6;
+    } else if (string_is(key, "qwen35.attention.head_count_kv")) {
+      if (!read_expected_u32(reader, type, &model->attention_kv_head_count)) return 0;
+      required |= 1ULL << 7;
+    } else if (string_is(key, "qwen35.rope.dimension_sections")) {
+      if (type != GGUF_ARRAY || read_u32(reader) != GGUF_INT32 ||
+          read_u64(reader) != 4) return 0;
+      for (uint32_t section = 0; section < 4; section++)
+        model->rope_sections[section] = read_u32(reader);
+      required |= 1ULL << 8;
+    } else if (string_is(key, "qwen35.rope.freq_base")) {
+      if (type != GGUF_FLOAT32 || read_f32(reader) != 10000000.0f) return 0;
+      required |= 1ULL << 9;
+    } else if (string_is(key, "qwen35.attention.layer_norm_rms_epsilon")) {
+      if (type != GGUF_FLOAT32) return 0;
+      float epsilon = read_f32(reader);
+      if (epsilon < 0.0000009f || epsilon > 0.0000011f) return 0;
+      required |= 1ULL << 10;
+    } else if (string_is(key, "qwen35.attention.key_length")) {
+      if (!read_expected_u32(reader, type, &model->attention_key_length)) return 0;
+      required |= 1ULL << 11;
+    } else if (string_is(key, "qwen35.attention.value_length")) {
+      if (!read_expected_u32(reader, type, &model->attention_value_length)) return 0;
+      required |= 1ULL << 12;
+    } else if (string_is(key, "qwen35.nextn_predict_layers")) {
+      if (!read_expected_u32(reader, type, &model->nextn_layer_count)) return 0;
+      required |= 1ULL << 13;
+    } else if (string_is(key, "qwen35.ssm.conv_kernel")) {
+      if (!read_expected_u32(reader, type, &model->linear_conv_kernel)) return 0;
+      required |= 1ULL << 14;
+    } else if (string_is(key, "qwen35.ssm.state_size")) {
+      if (!read_expected_u32(reader, type, &model->linear_state_size)) return 0;
+      required |= 1ULL << 15;
+    } else if (string_is(key, "qwen35.ssm.group_count")) {
+      if (!read_expected_u32(reader, type, &model->linear_key_head_count)) return 0;
+      required |= 1ULL << 16;
+    } else if (string_is(key, "qwen35.ssm.time_step_rank")) {
+      if (!read_expected_u32(reader, type, &model->linear_value_head_count)) return 0;
+      required |= 1ULL << 17;
+    } else if (string_is(key, "qwen35.ssm.inner_size")) {
+      if (!read_expected_u32(reader, type, &model->linear_inner_size)) return 0;
+      required |= 1ULL << 18;
+    } else if (string_is(key, "qwen35.full_attention_interval")) {
+      if (!read_expected_u32(reader, type, &model->full_attention_interval)) return 0;
+      required |= 1ULL << 19;
+    } else if (string_is(key, "qwen35.rope.dimension_count")) {
+      if (!read_expected_u32(reader, type, &model->rope_dimension_count)) return 0;
+      required |= 1ULL << 20;
+    } else if (string_is(key, "tokenizer.ggml.model")) {
+      if (!read_expected_string(reader, type, "gpt2")) return 0;
+      required |= 1ULL << 21;
+    } else if (string_is(key, "tokenizer.ggml.pre")) {
+      if (!read_expected_string(reader, type, "qwen35")) return 0;
+      required |= 1ULL << 22;
+    } else if (string_is(key, "tokenizer.ggml.tokens")) {
+      if (!read_expected_array_length(reader, type, GGUF_STRING,
+                                      AIUEOS_QWEN35_VOCAB_SIZE)) return 0;
+      model->vocab_size = AIUEOS_QWEN35_VOCAB_SIZE;
+      required |= 1ULL << 23;
+    } else if (string_is(key, "tokenizer.ggml.token_type")) {
+      if (!read_expected_array_length(reader, type, GGUF_INT32,
+                                      AIUEOS_QWEN35_VOCAB_SIZE)) return 0;
+      required |= 1ULL << 24;
+    } else if (string_is(key, "tokenizer.ggml.merges")) {
+      if (!read_expected_array_length(reader, type, GGUF_STRING, 247587)) return 0;
+      required |= 1ULL << 25;
+    } else if (string_is(key, "tokenizer.ggml.eos_token_id")) {
+      uint32_t value;
+      if (!read_expected_u32(reader, type, &value) || value != 248046U) return 0;
+      required |= 1ULL << 26;
+    } else if (string_is(key, "tokenizer.ggml.padding_token_id")) {
+      uint32_t value;
+      if (!read_expected_u32(reader, type, &value) || value != 248055U) return 0;
+      required |= 1ULL << 27;
+    } else if (string_is(key, "tokenizer.ggml.bos_token_id")) {
+      uint32_t value;
+      if (!read_expected_u32(reader, type, &value) || value != 248044U) return 0;
+      required |= 1ULL << 28;
+    } else if (string_is(key, "general.quantization_version")) {
+      uint32_t value;
+      if (!read_expected_u32(reader, type, &value) || value != 2U) return 0;
+      required |= 1ULL << 29;
+    } else if (string_is(key, "general.file_type")) {
+      uint32_t value;
+      if (!read_expected_u32(reader, type, &value) || value != 23U) return 0;
+      required |= 1ULL << 30;
+    } else if (!skip_value(reader, type, 0)) {
+      return 0;
+    }
+  }
+  return reader->valid && required == ((1ULL << 31) - 1ULL);
+}
+
+static int type_layout(uint32_t type, uint64_t *block, uint64_t *bytes) {
+  *block = 256;
+  switch (type) {
+    case AIUEOS_GGML_F32: *block = 1; *bytes = 4; return 1;
+    case AIUEOS_GGML_Q8_0: *block = 32; *bytes = 34; return 1;
+    case AIUEOS_GGML_Q2_K: *bytes = 84; return 1;
+    case AIUEOS_GGML_Q3_K: *bytes = 110; return 1;
+    case AIUEOS_GGML_Q4_K: *bytes = 144; return 1;
+    case AIUEOS_GGML_Q5_K: *bytes = 176; return 1;
+    case AIUEOS_GGML_Q6_K: *bytes = 210; return 1;
+    case AIUEOS_GGML_IQ2_XXS: *bytes = 66; return 1;
+    case AIUEOS_GGML_IQ2_XS: *bytes = 74; return 1;
+    case AIUEOS_GGML_IQ3_XXS: *bytes = 98; return 1;
+    case AIUEOS_GGML_IQ1_S: *bytes = 50; return 1;
+    case AIUEOS_GGML_IQ3_S: *bytes = 110; return 1;
+    case AIUEOS_GGML_IQ2_S: *bytes = 82; return 1;
+    case AIUEOS_GGML_IQ4_XS: *bytes = 136; return 1;
+    case AIUEOS_GGML_IQ1_M: *bytes = 56; return 1;
+    default: return 0;
+  }
+}
+
+static int tensor_storage(struct aiueos_qwen35_tensor *tensor) {
+  if (!tensor->dimension_count || tensor->dimension_count > 4) return 0;
+  uint64_t elements = 1;
+  for (uint32_t i = 0; i < tensor->dimension_count; i++) {
+    uint64_t dimension = tensor->dimensions[i];
+    if (!dimension || elements > UINT64_MAX / dimension) return 0;
+    elements *= dimension;
+  }
+  uint64_t block, bytes;
+  if (!type_layout(tensor->type, &block, &bytes) || elements % block) return 0;
+  elements /= block;
+  if (elements > UINT64_MAX / bytes) return 0;
+  tensor->storage_bytes = elements * bytes;
+  return tensor->storage_bytes != 0;
+}
+
+static int tensor_set(struct aiueos_qwen35_tensor *destination,
+                      const struct aiueos_qwen35_tensor *source) {
+  if (destination->dimension_count) return 0;
+  *destination = *source;
+  return 1;
+}
+
+static int parse_layer_name(struct string_view name, uint32_t *layer,
+                            struct string_view *role) {
+  uint64_t position;
+  if (!string_starts(name, "blk.", &position) || position >= name.length) return 0;
+  uint32_t value = 0, digits = 0;
+  while (position < name.length && name.bytes[position] >= '0' &&
+         name.bytes[position] <= '9') {
+    if (value > 100U) return 0;
+    value = value * 10U + (uint32_t)(name.bytes[position] - '0');
+    position++;
+    digits++;
+  }
+  if (!digits || value >= AIUEOS_QWEN35_LAYER_COUNT ||
+      position >= name.length || name.bytes[position++] != '.') return 0;
+  *layer = value;
+  role->bytes = name.bytes + position;
+  role->length = name.length - position;
+  return role->length != 0;
+}
+
+static int assign_layer_tensor(struct aiueos_qwen35_layer *layer,
+                               struct string_view role,
+                               const struct aiueos_qwen35_tensor *tensor) {
+  if (string_is(role, "attn_norm.weight"))
+    return tensor_set(&layer->attention_norm, tensor);
+  if (string_is(role, "post_attention_norm.weight"))
+    return tensor_set(&layer->post_attention_norm, tensor);
+  if (string_is(role, "ffn_down.weight"))
+    return tensor_set(&layer->ffn_down, tensor);
+  if (string_is(role, "ffn_gate.weight"))
+    return tensor_set(&layer->ffn_gate, tensor);
+  if (string_is(role, "ffn_up.weight"))
+    return tensor_set(&layer->ffn_up, tensor);
+  if (string_is(role, "attn_gate.weight"))
+    return tensor_set(&layer->mixer.linear.gate, tensor);
+  if (string_is(role, "attn_qkv.weight"))
+    return tensor_set(&layer->mixer.linear.qkv, tensor);
+  if (string_is(role, "ssm_a"))
+    return tensor_set(&layer->mixer.linear.a, tensor);
+  if (string_is(role, "ssm_alpha.weight"))
+    return tensor_set(&layer->mixer.linear.alpha, tensor);
+  if (string_is(role, "ssm_beta.weight"))
+    return tensor_set(&layer->mixer.linear.beta, tensor);
+  if (string_is(role, "ssm_conv1d.weight"))
+    return tensor_set(&layer->mixer.linear.conv1d, tensor);
+  if (string_is(role, "ssm_dt.bias"))
+    return tensor_set(&layer->mixer.linear.dt_bias, tensor);
+  if (string_is(role, "ssm_norm.weight"))
+    return tensor_set(&layer->mixer.linear.norm, tensor);
+  if (string_is(role, "ssm_out.weight"))
+    return tensor_set(&layer->mixer.linear.output, tensor);
+  if (string_is(role, "attn_k.weight"))
+    return tensor_set(&layer->mixer.full.key, tensor);
+  if (string_is(role, "attn_k_norm.weight"))
+    return tensor_set(&layer->mixer.full.key_norm, tensor);
+  if (string_is(role, "attn_output.weight"))
+    return tensor_set(&layer->mixer.full.output, tensor);
+  if (string_is(role, "attn_q.weight"))
+    return tensor_set(&layer->mixer.full.query_gate, tensor);
+  if (string_is(role, "attn_q_norm.weight"))
+    return tensor_set(&layer->mixer.full.query_norm, tensor);
+  if (string_is(role, "attn_v.weight"))
+    return tensor_set(&layer->mixer.full.value, tensor);
+  if (string_is(role, "nextn.eh_proj.weight"))
+    return tensor_set(&layer->nextn.eh_projection, tensor);
+  if (string_is(role, "nextn.enorm.weight"))
+    return tensor_set(&layer->nextn.embedding_norm, tensor);
+  if (string_is(role, "nextn.hnorm.weight"))
+    return tensor_set(&layer->nextn.hidden_norm, tensor);
+  if (string_is(role, "nextn.shared_head_norm.weight"))
+    return tensor_set(&layer->nextn.shared_head_norm, tensor);
+  return 0;
+}
+
+static int assign_tensor(struct aiueos_qwen35_model *model,
+                         struct string_view name,
+                         const struct aiueos_qwen35_tensor *tensor) {
+  if (string_is(name, "token_embd.weight"))
+    return tensor_set(&model->token_embedding, tensor);
+  if (string_is(name, "output_norm.weight"))
+    return tensor_set(&model->output_norm, tensor);
+  if (string_is(name, "output.weight"))
+    return tensor_set(&model->output, tensor);
+  uint32_t layer;
+  struct string_view role;
+  if (!parse_layer_name(name, &layer, &role)) return 0;
+  return assign_layer_tensor(&model->layers[layer], role, tensor);
+}
+
+static int dimensions_are(const struct aiueos_qwen35_tensor *tensor,
+                          uint32_t count, uint64_t d0, uint64_t d1) {
+  return tensor->dimension_count == count && tensor->dimensions[0] == d0 &&
+         (count == 1 || tensor->dimensions[1] == d1);
+}
+
+static int common_layer_valid(const struct aiueos_qwen35_layer *layer) {
+  return dimensions_are(&layer->attention_norm, 1, 5120, 0) &&
+         dimensions_are(&layer->post_attention_norm, 1, 5120, 0) &&
+         dimensions_are(&layer->ffn_down, 2, 17408, 5120) &&
+         dimensions_are(&layer->ffn_gate, 2, 5120, 17408) &&
+         dimensions_are(&layer->ffn_up, 2, 5120, 17408);
+}
+
+static int linear_layer_valid(const struct aiueos_qwen35_layer *layer) {
+  const struct aiueos_qwen35_linear_tensors *linear = &layer->mixer.linear;
+  return common_layer_valid(layer) &&
+         dimensions_are(&linear->gate, 2, 5120, 6144) &&
+         dimensions_are(&linear->qkv, 2, 5120, 10240) &&
+         dimensions_are(&linear->a, 1, 48, 0) &&
+         dimensions_are(&linear->alpha, 2, 5120, 48) &&
+         dimensions_are(&linear->beta, 2, 5120, 48) &&
+         dimensions_are(&linear->conv1d, 2, 4, 10240) &&
+         dimensions_are(&linear->dt_bias, 1, 48, 0) &&
+         dimensions_are(&linear->norm, 1, 128, 0) &&
+         dimensions_are(&linear->output, 2, 6144, 5120);
+}
+
+static int full_layer_valid(const struct aiueos_qwen35_layer *layer) {
+  const struct aiueos_qwen35_attention_tensors *full = &layer->mixer.full;
+  return common_layer_valid(layer) &&
+         dimensions_are(&full->key, 2, 5120, 1024) &&
+         dimensions_are(&full->key_norm, 1, 256, 0) &&
+         dimensions_are(&full->output, 2, 6144, 5120) &&
+         dimensions_are(&full->query_gate, 2, 5120, 12288) &&
+         dimensions_are(&full->query_norm, 1, 256, 0) &&
+         dimensions_are(&full->value, 2, 5120, 1024);
+}
+
+static int nextn_layer_valid(const struct aiueos_qwen35_layer *layer) {
+  return full_layer_valid(layer) &&
+         dimensions_are(&layer->nextn.eh_projection, 2, 10240, 5120) &&
+         dimensions_are(&layer->nextn.embedding_norm, 1, 5120, 0) &&
+         dimensions_are(&layer->nextn.hidden_norm, 1, 5120, 0) &&
+         dimensions_are(&layer->nextn.shared_head_norm, 1, 5120, 0);
+}
+
+static int expected_type_counts(const struct aiueos_qwen35_model *model) {
+  static const struct { uint32_t type, count; } expected[] = {
+    {AIUEOS_GGML_F32, 360}, {AIUEOS_GGML_Q8_0, 98},
+    {AIUEOS_GGML_Q2_K, 10}, {AIUEOS_GGML_Q3_K, 6},
+    {AIUEOS_GGML_Q4_K, 26}, {AIUEOS_GGML_Q5_K, 7},
+    {AIUEOS_GGML_Q6_K, 6}, {AIUEOS_GGML_IQ2_XXS, 24},
+    {AIUEOS_GGML_IQ2_XS, 12}, {AIUEOS_GGML_IQ3_XXS, 120},
+    {AIUEOS_GGML_IQ1_S, 8}, {AIUEOS_GGML_IQ3_S, 106},
+    {AIUEOS_GGML_IQ2_S, 35}, {AIUEOS_GGML_IQ4_XS, 45},
+    {AIUEOS_GGML_IQ1_M, 3}
+  };
+  uint32_t total = 0;
+  for (uint32_t i = 0; i < sizeof(expected) / sizeof(expected[0]); i++) {
+    if (model->ggml_type_counts[expected[i].type] != expected[i].count) return 0;
+    total += expected[i].count;
+  }
+  return total == AIUEOS_QWEN35_TENSOR_COUNT;
+}
+
+static int exact_contract_valid(struct aiueos_qwen35_model *model) {
+  if (model->tensor_count != AIUEOS_QWEN35_TENSOR_COUNT ||
+      model->metadata_count != AIUEOS_QWEN35_METADATA_COUNT ||
+      model->metadata_end != 10945379ULL ||
+      model->tensor_info_end != 10996621ULL ||
+      model->data_offset != AIUEOS_QWEN35_DATA_OFFSET ||
+      model->artifact_bytes != AIUEOS_QWEN35_ARTIFACT_BYTES ||
+      model->block_count != AIUEOS_QWEN35_LAYER_COUNT ||
+      model->context_length != AIUEOS_QWEN35_CONTEXT_LENGTH ||
+      model->embedding_length != AIUEOS_QWEN35_EMBEDDING_LENGTH ||
+      model->feed_forward_length != AIUEOS_QWEN35_FEED_FORWARD_LENGTH ||
+      model->vocab_size != AIUEOS_QWEN35_VOCAB_SIZE ||
+      model->attention_head_count != 24 ||
+      model->attention_kv_head_count != 4 ||
+      model->attention_key_length != 256 ||
+      model->attention_value_length != 256 ||
+      model->linear_key_head_count != 16 ||
+      model->linear_value_head_count != 48 ||
+      model->linear_state_size != 128 ||
+      model->linear_inner_size != 6144 ||
+      model->linear_conv_kernel != 4 ||
+      model->full_attention_interval != 4 ||
+      model->rope_dimension_count != 64 ||
+      model->rope_sections[0] != 11 || model->rope_sections[1] != 11 ||
+      model->rope_sections[2] != 10 || model->rope_sections[3] != 0 ||
+      model->nextn_layer_count != AIUEOS_QWEN35_NEXTN_LAYER_COUNT ||
+      !dimensions_are(&model->token_embedding, 2, 5120, 248320) ||
+      model->token_embedding.type != AIUEOS_GGML_Q2_K ||
+      !dimensions_are(&model->output_norm, 1, 5120, 0) ||
+      model->output_norm.type != AIUEOS_GGML_F32 ||
+      !dimensions_are(&model->output, 2, 5120, 248320) ||
+      model->output.type != AIUEOS_GGML_Q4_K ||
+      !expected_type_counts(model)) return 0;
+
+  model->linear_layer_count = 0;
+  model->full_layer_count = 0;
+  for (uint32_t layer = 0; layer < AIUEOS_QWEN35_TRUNK_LAYER_COUNT; layer++) {
+    int linear = ((layer + 1U) % 4U) != 0;
+    model->layers[layer].linear_attention = (uint32_t)linear;
+    if (linear) {
+      if (!linear_layer_valid(&model->layers[layer])) return 0;
+      model->linear_layer_count++;
+    } else {
+      if (!full_layer_valid(&model->layers[layer])) return 0;
+      model->full_layer_count++;
+    }
+  }
+  model->layers[64].linear_attention = 0;
+  if (!nextn_layer_valid(&model->layers[64])) return 0;
+  model->trunk_layer_count = AIUEOS_QWEN35_TRUNK_LAYER_COUNT;
+  return model->linear_layer_count == AIUEOS_QWEN35_LINEAR_LAYER_COUNT &&
+         model->full_layer_count == AIUEOS_QWEN35_FULL_LAYER_COUNT;
+}
+
+int aiueos_qwen35_model_parse(const uint8_t *bytes,
+                              uint64_t accessible_bytes,
+                              uint64_t artifact_bytes,
+                              struct aiueos_qwen35_model *model) {
+  if (!bytes || !model || accessible_bytes < 24 ||
+      artifact_bytes != AIUEOS_QWEN35_ARTIFACT_BYTES ||
+      accessible_bytes > artifact_bytes) return 0;
+  volatile uint8_t *clear = (volatile uint8_t *)model;
+  for (uint64_t i = 0; i < sizeof(*model); i++) clear[i] = 0;
+  model->bytes = bytes;
+  model->accessible_bytes = accessible_bytes;
+  model->artifact_bytes = artifact_bytes;
+
+  struct reader reader = {bytes, accessible_bytes, 0, 1};
+  if (read_u32(&reader) != 0x46554747U || read_u32(&reader) != 3U) return 0;
+  model->tensor_count = read_u64(&reader);
+  model->metadata_count = read_u64(&reader);
+  if (model->tensor_count != AIUEOS_QWEN35_TENSOR_COUNT ||
+      model->metadata_count != AIUEOS_QWEN35_METADATA_COUNT ||
+      !parse_metadata(&reader, model)) return 0;
+  model->metadata_end = reader.position;
+
+  uint64_t next_offset = 0;
+  for (uint64_t index = 0; index < model->tensor_count; index++) {
+    struct string_view name = read_string(&reader);
+    struct aiueos_qwen35_tensor tensor = {0};
+    tensor.dimension_count = read_u32(&reader);
+    if (!reader.valid || tensor.dimension_count == 0 ||
+        tensor.dimension_count > 4) return 0;
+    for (uint32_t dimension = 0; dimension < tensor.dimension_count; dimension++)
+      tensor.dimensions[dimension] = read_u64(&reader);
+    tensor.type = read_u32(&reader);
+    tensor.offset = read_u64(&reader);
+    if (!reader.valid || tensor.type >= AIUEOS_QWEN35_MAX_GGML_TYPE ||
+        !tensor_storage(&tensor) || tensor.offset != next_offset ||
+        tensor.offset > artifact_bytes ||
+        tensor.storage_bytes > artifact_bytes - tensor.offset ||
+        !assign_tensor(model, name, &tensor)) return 0;
+    model->ggml_type_counts[tensor.type]++;
+    uint64_t end = tensor.offset + tensor.storage_bytes;
+    if (end > UINT64_MAX - 31ULL) return 0;
+    next_offset = (end + 31ULL) & ~31ULL;
+  }
+  model->tensor_info_end = reader.position;
+  if (reader.position > UINT64_MAX - 31ULL) return 0;
+  model->data_offset = (reader.position + 31ULL) & ~31ULL;
+  if (model->data_offset > artifact_bytes ||
+      next_offset != artifact_bytes - model->data_offset ||
+      !exact_contract_valid(model)) return 0;
+  if (accessible_bytes == artifact_bytes)
+    return aiueos_qwen35_model_bind(model, bytes, accessible_bytes);
+  return 1;
+}
+
+static int bind_tensor(struct aiueos_qwen35_model *model,
+                       struct aiueos_qwen35_tensor *tensor) {
+  if (!tensor->dimension_count || tensor->offset > model->artifact_bytes ||
+      model->data_offset > model->artifact_bytes - tensor->offset) return 0;
+  uint64_t absolute = model->data_offset + tensor->offset;
+  if (absolute > model->accessible_bytes ||
+      tensor->storage_bytes > model->accessible_bytes - absolute) return 0;
+  tensor->data = model->bytes + absolute;
+  return 1;
+}
+
+static int bind_common(struct aiueos_qwen35_model *model,
+                       struct aiueos_qwen35_layer *layer) {
+  return bind_tensor(model, &layer->attention_norm) &&
+         bind_tensor(model, &layer->post_attention_norm) &&
+         bind_tensor(model, &layer->ffn_down) &&
+         bind_tensor(model, &layer->ffn_gate) &&
+         bind_tensor(model, &layer->ffn_up);
+}
+
+int aiueos_qwen35_model_bind(struct aiueos_qwen35_model *model,
+                             const uint8_t *bytes,
+                             uint64_t accessible_bytes) {
+  if (!model || !bytes || accessible_bytes != model->artifact_bytes ||
+      model->data_offset != AIUEOS_QWEN35_DATA_OFFSET) return 0;
+  model->bytes = bytes;
+  model->accessible_bytes = accessible_bytes;
+  if (!bind_tensor(model, &model->token_embedding) ||
+      !bind_tensor(model, &model->output_norm) ||
+      !bind_tensor(model, &model->output)) return 0;
+  for (uint32_t index = 0; index < AIUEOS_QWEN35_LAYER_COUNT; index++) {
+    struct aiueos_qwen35_layer *layer = &model->layers[index];
+    if (!bind_common(model, layer)) return 0;
+    if (index < AIUEOS_QWEN35_TRUNK_LAYER_COUNT && layer->linear_attention) {
+      struct aiueos_qwen35_linear_tensors *linear = &layer->mixer.linear;
+      if (!bind_tensor(model, &linear->gate) || !bind_tensor(model, &linear->qkv) ||
+          !bind_tensor(model, &linear->a) || !bind_tensor(model, &linear->alpha) ||
+          !bind_tensor(model, &linear->beta) || !bind_tensor(model, &linear->conv1d) ||
+          !bind_tensor(model, &linear->dt_bias) || !bind_tensor(model, &linear->norm) ||
+          !bind_tensor(model, &linear->output)) return 0;
+    } else {
+      struct aiueos_qwen35_attention_tensors *full = &layer->mixer.full;
+      if (!bind_tensor(model, &full->key) || !bind_tensor(model, &full->key_norm) ||
+          !bind_tensor(model, &full->output) || !bind_tensor(model, &full->query_gate) ||
+          !bind_tensor(model, &full->query_norm) || !bind_tensor(model, &full->value)) return 0;
+    }
+  }
+  struct aiueos_qwen35_nextn_tensors *nextn = &model->layers[64].nextn;
+  return bind_tensor(model, &nextn->eh_projection) &&
+         bind_tensor(model, &nextn->embedding_norm) &&
+         bind_tensor(model, &nextn->hidden_norm) &&
+         bind_tensor(model, &nextn->shared_head_norm);
+}

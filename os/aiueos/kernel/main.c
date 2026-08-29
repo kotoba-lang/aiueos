@@ -2,11 +2,22 @@
 #include "../include/boot_info.h"
 #include "inference_status.h"
 #include "model_handoff.h"
+#include "qwen35_infer.h"
+#include "qwen35_runtime.h"
 
 #define AIUEOS_OWNED_MEMORY_MAP_BYTES (128ULL * 1024ULL)
 static struct aiueos_boot_info aiueos_owned_boot_info;
 static uint8_t aiueos_owned_memory_map[AIUEOS_OWNED_MEMORY_MAP_BYTES]
   __attribute__((aligned(16)));
+#ifdef AIUEOS_QWEN38_MODEL_HANDOFF
+/* The exact graph is about 75 KiB.  Keeping it in kernel BSS moves the linked
+ * user/guard pages beyond the low-2MiB bootstrap map.  The admitted model is
+ * immutable, so retain only this pointer here and construct the graph in the
+ * allocator-backed volatile workspace after owned paging is active. */
+static struct aiueos_qwen35_model *aiueos_qwen35_model;
+static struct aiueos_inference_status aiueos_qwen35_status;
+static char aiueos_qwen35_progress_detail[] = "LAYER 00 OF 64";
+#endif
 
 /* The loader's boot-info object and memory-map buffer are firmware-owned.
    They are readable under the inherited CR3 but are not necessarily inside
@@ -455,6 +466,41 @@ static void serial_decimal(uint32_t value) {
   while (value) { digits[count++] = (char)('0' + (value % 10)); value /= 10; }
   while (count) serial_byte((uint8_t)digits[--count]);
 }
+
+static void serial_decimal64(uint64_t value) {
+  char digits[20];
+  uint32_t count = 0;
+  do {
+    digits[count++] = (char)('0' + value % 10U);
+    value /= 10U;
+  } while (value && count < sizeof(digits));
+  while (count) serial_byte((uint8_t)digits[--count]);
+}
+
+#ifdef AIUEOS_QWEN38_MODEL_HANDOFF
+static void aiueos_qwen35_progress(uint32_t completed_layers,
+                                   uint32_t total_layers,
+                                   int output_head) {
+  (void)total_layers;
+  if (output_head) {
+    aiueos_qwen35_status.phase = AIUEOS_INFERENCE_DECODING;
+    aiueos_qwen35_status.detail = "OUTPUT HEAD";
+  } else {
+    aiueos_qwen35_progress_detail[6] =
+        (char)('0' + (completed_layers / 10U) % 10U);
+    aiueos_qwen35_progress_detail[7] =
+        (char)('0' + completed_layers % 10U);
+    aiueos_qwen35_status.phase = AIUEOS_INFERENCE_PREFILL;
+    aiueos_qwen35_status.detail = aiueos_qwen35_progress_detail;
+  }
+  (void)aiueos_framebuffer_inference_screen(&aiueos_qwen35_status);
+  serial_string("AIUEOS_QWEN35_PROGRESS layers=");
+  serial_decimal(completed_layers);
+  serial_string("/64 output=");
+  serial_decimal((uint32_t)(output_head != 0));
+  serial_string("\r\n");
+}
+#endif
 static void serial_ipv4(uint32_t value) {
   for (unsigned shift = 24; ; shift -= 8) {
     serial_decimal((value >> shift) & 0xff);
@@ -789,6 +835,10 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
       serial_string("AIUEOS_MODEL_HANDOFF_FAIL format-or-sha-or-map\r\n");
       qemu_exit(0x66);
     }
+#ifdef AIUEOS_MODEL_TEST_FIXTURE
+    debug_string("AIUEOS_QWEN35_GRAPH_FIXTURE_SKIP tiny-transport-fixture\n");
+    serial_string("AIUEOS_QWEN35_GRAPH_FIXTURE_SKIP tiny-transport-fixture\r\n");
+#endif
     {
       struct aiueos_inference_status admitted = {
         .abi_version = AIUEOS_INFERENCE_STATUS_ABI_VERSION,
@@ -796,7 +846,11 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
         .phase = AIUEOS_INFERENCE_ADMISSION,
         .model = "QWEN3.8 27B",
         .quant = "UD-IQ3 XXS",
+#ifndef AIUEOS_MODEL_TEST_FIXTURE
+        .detail = "QWEN35 GRAPH PENDING",
+#else
         .detail = "GGUF SHA256 OK",
+#endif
         .artifact_bytes = boot->model_size,
         .resident_bytes = boot->model_size,
         .load_ns = AIUEOS_INFERENCE_UNMEASURED,
@@ -809,6 +863,26 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
     }
     debug_string("AIUEOS_MODEL_HANDOFF_OK format=gguf-v3 parts=3 sha256=verified mapping=read-only-nx metrics=N/A\n");
     serial_string("AIUEOS_MODEL_HANDOFF_OK format=gguf-v3 parts=3 sha256=verified mapping=read-only-nx metrics=N/A\r\n");
+#ifndef AIUEOS_MODEL_TEST_FIXTURE
+    aiueos_qwen35_status = (struct aiueos_inference_status){
+      .abi_version = AIUEOS_INFERENCE_STATUS_ABI_VERSION,
+      .byte_size = sizeof(struct aiueos_inference_status),
+      .phase = AIUEOS_INFERENCE_ADMISSION,
+      .model = "QWEN3.8 27B",
+      .quant = "UD-IQ3 XXS",
+      .detail = "QWEN35 GRAPH PENDING",
+      .prompt_tokens = 1,
+      .generated_tokens = 0,
+      .target_tokens = 1,
+      .artifact_bytes = boot->model_size,
+      .resident_bytes = boot->model_size,
+      .load_ns = AIUEOS_INFERENCE_UNMEASURED,
+      .prefill_ns = AIUEOS_INFERENCE_UNMEASURED,
+      .decode_ns = AIUEOS_INFERENCE_UNMEASURED,
+      .time_to_first_token_ns = AIUEOS_INFERENCE_UNMEASURED,
+      .compute_cycles = 0
+    };
+#endif
 #endif
 #ifdef AIUEOS_PHYSICAL_QUALIFICATION
     aiueos_qualification_progress(227);
@@ -836,6 +910,96 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
     }
     debug_string("AIUEOS_PHYSICAL_ALLOCATOR_OK pages=2 zeroed\n");
     serial_string("AIUEOS_PHYSICAL_ALLOCATOR_OK pages=2 zeroed\r\n");
+#if defined(AIUEOS_QWEN38_MODEL_HANDOFF) && !defined(AIUEOS_MODEL_TEST_FIXTURE)
+    enum {
+      qwen_model_pages =
+        (sizeof(struct aiueos_qwen35_model) + 4095U) / 4096U,
+      qwen_workspace_pages =
+        (AIUEOS_QWEN35_WORKSPACE_BYTES + 4095U) / 4096U,
+      qwen_volatile_pages = qwen_model_pages + qwen_workspace_pages
+    };
+    uint8_t *qwen_volatile = 0;
+    int qwen_workspace_ok = 1;
+    for (uint32_t page_index = 0;
+         page_index < qwen_volatile_pages; page_index++) {
+      uint8_t *page = aiueos_allocate_physical_page();
+      if (!page) { qwen_workspace_ok = 0; break; }
+      if (!qwen_volatile) qwen_volatile = page;
+      if (page != qwen_volatile + (uint64_t)page_index * 4096U) {
+        qwen_workspace_ok = 0;
+        break;
+      }
+    }
+    if (!qwen_workspace_ok) {
+      aiueos_qwen35_status.phase = AIUEOS_INFERENCE_ERROR;
+      aiueos_qwen35_status.detail = "WORKSPACE REFUSED";
+      (void)aiueos_framebuffer_inference_screen(&aiueos_qwen35_status);
+      serial_string("AIUEOS_QWEN35_FIRST_TOKEN_FAIL workspace-contiguous\r\n");
+      for (;;) __asm__ volatile("cli; hlt");
+    }
+    aiueos_qwen35_model = (struct aiueos_qwen35_model *)qwen_volatile;
+    uint8_t *qwen_workspace =
+      qwen_volatile + (uint64_t)qwen_model_pages * 4096U;
+    if (!aiueos_qwen35_model_parse(
+          (const uint8_t *)(uintptr_t)boot->model_base,
+          boot->model_size, boot->model_size, aiueos_qwen35_model)) {
+      aiueos_qwen35_status.phase = AIUEOS_INFERENCE_BLOCKED;
+      aiueos_qwen35_status.detail = "QWEN35 GRAPH REFUSED";
+      (void)aiueos_framebuffer_inference_screen(&aiueos_qwen35_status);
+      debug_string("AIUEOS_QWEN35_GRAPH_FAIL exact-contract\n");
+      serial_string("AIUEOS_QWEN35_GRAPH_FAIL exact-contract\r\n");
+      for (;;) __asm__ volatile("cli; hlt");
+    }
+    debug_string("AIUEOS_QWEN35_GRAPH_OK tensors=866 trunk=64 linear=48 full=16 mtp=1 data-offset=10996640 bind=read-only\n");
+    serial_string("AIUEOS_QWEN35_GRAPH_OK tensors=866 trunk=64 linear=48 full=16 mtp=1 data-offset=10996640 bind=read-only storage=volatile-ram\r\n");
+    aiueos_qwen35_status.phase = AIUEOS_INFERENCE_PREFILL;
+    aiueos_qwen35_status.detail = aiueos_qwen35_progress_detail;
+    (void)aiueos_framebuffer_inference_screen(&aiueos_qwen35_status);
+    serial_string("AIUEOS_QWEN35_WORKSPACE_OK bytes=");
+    serial_decimal(AIUEOS_QWEN35_WORKSPACE_BYTES);
+    serial_string(" pages=");
+    serial_decimal(qwen_workspace_pages);
+    serial_string(" graph-pages=");
+    serial_decimal(qwen_model_pages);
+    serial_string(" storage=volatile-ram\r\n");
+    struct aiueos_qwen35_first_token_result first_token;
+    if (!aiueos_qwen35_first_token(
+          aiueos_qwen35_model, AIUEOS_QWEN35_BOS_TOKEN,
+          qwen_workspace, (uint64_t)qwen_workspace_pages * 4096U,
+          aiueos_qwen35_progress, &first_token)) {
+      aiueos_qwen35_status.phase = AIUEOS_INFERENCE_ERROR;
+      aiueos_qwen35_status.detail = "EXECUTION REFUSED";
+      (void)aiueos_framebuffer_inference_screen(&aiueos_qwen35_status);
+      debug_string("AIUEOS_QWEN35_FIRST_TOKEN_FAIL execution\n");
+      serial_string("AIUEOS_QWEN35_FIRST_TOKEN_FAIL execution\r\n");
+      for (;;) __asm__ volatile("cli; hlt");
+    }
+    if (first_token.token != AIUEOS_QWEN35_REFERENCE_FIRST_TOKEN) {
+      aiueos_qwen35_status.phase = AIUEOS_INFERENCE_ERROR;
+      aiueos_qwen35_status.detail = "TOKEN MISMATCH";
+      aiueos_qwen35_status.compute_cycles = first_token.compute_cycles;
+      (void)aiueos_framebuffer_inference_screen(&aiueos_qwen35_status);
+      serial_string("AIUEOS_QWEN35_FIRST_TOKEN_FAIL expected=2005 actual=");
+      serial_decimal(first_token.token);
+      serial_string(" cycles=");
+      serial_decimal64(first_token.compute_cycles);
+      serial_string("\r\n");
+      for (;;) __asm__ volatile("cli; hlt");
+    }
+    aiueos_qwen35_status.phase = AIUEOS_INFERENCE_COMPLETE;
+    aiueos_qwen35_status.detail = "TOKEN 2005 MATCH";
+    aiueos_qwen35_status.generated_tokens = 1;
+    aiueos_qwen35_status.compute_cycles = first_token.compute_cycles;
+    (void)aiueos_framebuffer_inference_screen(&aiueos_qwen35_status);
+    debug_string("AIUEOS_QWEN35_FIRST_TOKEN_OK bos=248044 token=2005 reference=matched timing=cycles\n");
+    serial_string("AIUEOS_QWEN35_FIRST_TOKEN_OK bos=248044 token=");
+    serial_decimal(first_token.token);
+    serial_string(" second=");
+    serial_decimal(first_token.second_token);
+    serial_string(" cycles=");
+    serial_decimal64(first_token.compute_cycles);
+    serial_string(" timing=raw-tsc\r\n");
+#endif
     if (!aiueos_capability_table_initialize()) {
 #ifdef AIUEOS_PHYSICAL_QUALIFICATION
       aiueos_framebuffer_qualification_screen("AIUEOS K16", "FAIL MEMORY", "SSD READ ONLY", 0);
@@ -1041,6 +1205,7 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
        those need K16-specific AMD-IOMMU, NVMe and RTL8125 qualification. */
     aiueos_qualification_progress(229);
 #ifdef AIUEOS_QWEN38_MODEL_HANDOFF
+#ifdef AIUEOS_MODEL_TEST_FIXTURE
     {
       struct aiueos_inference_status admitted = {
         .abi_version = AIUEOS_INFERENCE_STATUS_ABI_VERSION,
@@ -1048,7 +1213,11 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
         .phase = AIUEOS_INFERENCE_ADMISSION,
         .model = "QWEN3.8 27B",
         .quant = "UD-IQ3 XXS",
+#ifndef AIUEOS_MODEL_TEST_FIXTURE
+        .detail = "QWEN35 GRAPH READY",
+#else
         .detail = "RUNTIME NEXT",
+#endif
         .artifact_bytes = boot->model_size,
         .resident_bytes = boot->model_size,
         .load_ns = AIUEOS_INFERENCE_UNMEASURED,
@@ -1061,6 +1230,13 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
     }
     debug_string("AIUEOS_PHYSICAL_MODEL_HANDOFF_OK qwen38-27b runtime=not-yet-present internal-disk-writes=none\n");
     serial_string("AIUEOS_PHYSICAL_MODEL_HANDOFF_OK qwen38-27b runtime=not-yet-present internal-disk-writes=none\r\n");
+#else
+    (void)aiueos_framebuffer_inference_screen(&aiueos_qwen35_status);
+    debug_string("AIUEOS_PHYSICAL_QWEN35_OK token=2005 reference=matched timing=raw-tsc internal-disk-writes=none\n");
+    serial_string("AIUEOS_PHYSICAL_QWEN35_OK token=2005 cycles=");
+    serial_decimal64(aiueos_qwen35_status.compute_cycles);
+    serial_string(" reference=matched timing=raw-tsc internal-disk-writes=none\r\n");
+#endif
     if (!aiueos_qualification_finalize(1, 8160))
 #else
     aiueos_framebuffer_qualification_screen("AIUEOS K16", "NATIVE CORE OK", "SSD READ ONLY", 1);
