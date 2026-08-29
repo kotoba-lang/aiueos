@@ -570,7 +570,17 @@ def maintain_murakumo_liveness(
             if terminal:
                 return terminal
             continue
-        sock.sendto(ping, peer)
+        try:
+            sock.sendto(ping, peer)
+        except OSError as error:
+            terminal = retry_or_return(
+                {"state": "failed", "stage": "liveness-send",
+                 "error": error.errno, "boot": boot,
+                 "sequence": sequence, "renewed": renewed,
+                 "executed": executed}, True)
+            if terminal:
+                return terminal
+            continue
         deadline = time.monotonic() + timeout
         valid = False
         while not valid:
@@ -1154,6 +1164,32 @@ def selftest():
         assert recovered == {"state": "live", "boot": "0123456789abcdef",
                              "renewed": 1, "executed": 0}
         assert recovery_sleeps == [0]
+        class FailOnceSocket(FakeSocket):
+            def __init__(self):
+                super().__init__()
+                self.failures = 1
+            def sendto(self, payload, peer):
+                if self.failures:
+                    self.failures -= 1
+                    raise OSError(65, "No route to host")
+                super().sendto(payload, peer)
+        send_recovery_results = queue.Queue()
+        send_recovery_sleeps = []
+        def recover_send_sleep(seconds):
+            send_recovery_sleeps.append(seconds)
+            if send_recovery_results.empty():
+                send_recovery_results.put((
+                    "AIUEOS_NODE_PONG_V1 boot=0123456789abcdef seq=1 state=ready",
+                    (CLIENT_IP, 7779)))
+        send_recovered = maintain_murakumo_liveness(
+            "0123456789abcdef", FailOnceSocket(), (CLIENT_IP, 7779),
+            fake_liveness_open, send_recovery_results, recover_send_sleep,
+            rounds=1, interval=0, timeout=0.01,
+            max_failures=2, retry_interval=0)
+        assert send_recovered == {
+            "state": "live", "boot": "0123456789abcdef",
+            "renewed": 1, "executed": 0}
+        assert send_recovery_sleeps == [0]
         assert len(job_captured) == 5
     finally:
         globals()["MURAKUMO_NODE_DID"] = old_did
