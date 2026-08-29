@@ -24,6 +24,7 @@ kernel_pci_object="$out/kernel-pci.o"
 kernel_rtl8125_object="$out/kernel-rtl8125.o"
 kernel_relay_protocol_object="$out/kernel-relay-protocol.o"
 kernel_micro_infer_object="$out/kernel-micro-infer.o"
+kernel_inference_status_object="$out/kernel-inference-status.o"
 kernel_job_protocol_object="$out/kernel-job-protocol.o"
 kernel_tls_aes_object="$out/kernel-tls-aes-gcm.o"
 kernel_tls13_object="$out/kernel-tls13.o"
@@ -518,6 +519,9 @@ zig cc -target x86_64-freestanding-none -std=c11 -O2 \
   -c -o "$kernel_micro_infer_object" "$aiueos/kernel/micro_infer.c"
 zig cc -target x86_64-freestanding-none -std=c11 -O2 \
   -ffreestanding -fno-stack-protector -mno-red-zone \
+  -c -o "$kernel_inference_status_object" "$aiueos/kernel/inference_status.c"
+zig cc -target x86_64-freestanding-none -std=c11 -O2 \
+  -ffreestanding -fno-stack-protector -mno-red-zone \
   -c -o "$kernel_job_protocol_object" "$aiueos/kernel/job_protocol.c"
 zig cc -target x86_64-freestanding-none -std=c11 -O2 \
   -ffreestanding -fno-stack-protector -mno-red-zone \
@@ -571,7 +575,8 @@ zig ld.lld -nostdlib -static --strip-all -z max-page-size=0x1000 \
   "$kernel_entry_object" "$kernel_object" "$kernel_paging_object" \
   "$kernel_acpi_object" "$kernel_vtd_object" "$kernel_apic_object" "$kernel_memory_object" \
   "$kernel_pci_object" "$kernel_rtl8125_object" "$kernel_relay_protocol_object" \
-  "$kernel_micro_infer_object" "$kernel_job_protocol_object" \
+  "$kernel_micro_infer_object" "$kernel_inference_status_object" \
+  "$kernel_job_protocol_object" \
   "$kernel_tls_aes_object" "$kernel_tls13_object" \
   "$kernel_scheduler_object" "$kernel_syscall_object" \
   "$kernel_process_object" "$kernel_loader_object" \

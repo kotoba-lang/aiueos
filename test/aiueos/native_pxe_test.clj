@@ -38,6 +38,16 @@
   (slurp (io/file "os/aiueos/contracts/murakumo-relay-enrollment-v1.edn")))
 (def micro-inference-contract
   (slurp (io/file "os/aiueos/contracts/micro-inference-qualification-v1.edn")))
+(def qwen38-benchmark-contract
+  (slurp (io/file "os/aiueos/contracts/qwen38-27b-k16-benchmark-v1.edn")))
+(def inference-status
+  (slurp (io/file "os/aiueos/kernel/inference_status.c")))
+(def inference-status-header
+  (slurp (io/file "os/aiueos/kernel/inference_status.h")))
+(def inference-status-smoke
+  (slurp (io/file "os/aiueos/scripts/smoke-inference-status.sh")))
+(def qwen38-fetch
+  (slurp (io/file "os/aiueos/scripts/fetch-qwen38-27b-model.sh")))
 (def physical-relay-build
   (slurp (io/file "os/aiueos/scripts/build-physical-relay-pxe.sh")))
 (def relay-protocol
@@ -138,6 +148,35 @@
             pci
             "!rtl8125_qualification_device.ready||rtl8125_relay_error||rtl8125_job_error"))
       "one failed job must not permanently suppress future heartbeat handling"))
+
+(deftest qwen38-k16-benchmark-is-exact-and-red-until-real-generation
+  (let [contract (edn/read-string qwen38-benchmark-contract)]
+    (is (= "Qwen/Qwen3.8-27B" (get-in contract [:model :id])))
+    (is (= "Qwen3.8-27B-UD-IQ3_XXS.gguf"
+           (get-in contract [:artifact :file])))
+    (is (= 10934860704 (get-in contract [:artifact :bytes])))
+    (is (= "c0b7c3038681ed2e3040456c1dd45f9858b6c2290bed172c70388a94874f3eee"
+           (get-in contract [:artifact :sha256])))
+    (is (= :not-available (get-in contract [:observed :speed])))
+    (is (false? (get-in contract [:observed :real-generation?])))
+    (is (some #{:zero-for-missing-timing}
+              (get-in contract [:measurement :forbidden-substitutions])))
+    (is (every? (set (:does-not-prove contract))
+                [:qwen38-loaded :qwen38-generation
+                 :physical-k16-throughput :ssd-installation])))
+  (doseq [marker ["AIUEOS_INFERENCE_UNMEASURED"
+                  "aiueos_inference_milli_tokens_per_second"
+                  "compute_cycles"]]
+    (is (or (str/includes? inference-status marker)
+            (str/includes? inference-status-header marker))))
+  (is (str/includes? inference-status-smoke
+                     "inference_status_screen_model.c"))
+  (doseq [marker ["4ca720788d1e01f1bff70c033e0d0028fd02e502"
+                  "10934860704"
+                  "c0b7c3038681ed2e3040456c1dd45f9858b6c2290bed172c70388a94874f3eee"
+                  "artifact plus 2 GiB headroom"]]
+    (is (str/includes? qwen38-fetch marker)))
+  (is (str/includes? kernel "aiueos_framebuffer_inference_screen")))
 
 (deftest k16-rtl8125-uefi-observation-stays-read-only
   (doseq [marker ["AIUEOS_RTL8125_HANDOFF bdf="

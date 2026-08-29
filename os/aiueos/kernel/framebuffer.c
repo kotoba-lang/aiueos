@@ -1,4 +1,5 @@
 #include <stdint.h>
+#include "inference_status.h"
 
 struct aiueos_boot_info {
   uint64_t magic, version;
@@ -62,38 +63,68 @@ static uint64_t sample_hash(volatile uint32_t *fb, uint32_t width,
 static const uint8_t *qualification_glyph(char c) {
   static const uint8_t blank[5] = {0,0,0,0,0};
   static const uint8_t a[5] = {0x7e,0x11,0x11,0x11,0x7e};
+  static const uint8_t b[5] = {0x7f,0x49,0x49,0x49,0x36};
   static const uint8_t c_[5] = {0x3e,0x41,0x41,0x41,0x22};
   static const uint8_t d[5] = {0x7f,0x41,0x41,0x22,0x1c};
   static const uint8_t e[5] = {0x7f,0x49,0x49,0x49,0x41};
   static const uint8_t f[5] = {0x7f,0x09,0x09,0x09,0x01};
+  static const uint8_t g[5] = {0x3e,0x41,0x49,0x49,0x7a};
+  static const uint8_t h[5] = {0x7f,0x08,0x08,0x08,0x7f};
   static const uint8_t i[5] = {0x41,0x41,0x7f,0x41,0x41};
+  static const uint8_t j[5] = {0x20,0x40,0x41,0x3f,0x01};
   static const uint8_t k[5] = {0x7f,0x08,0x14,0x22,0x41};
   static const uint8_t l[5] = {0x7f,0x40,0x40,0x40,0x40};
   static const uint8_t m[5] = {0x7f,0x02,0x0c,0x02,0x7f};
   static const uint8_t n[5] = {0x7f,0x04,0x08,0x10,0x7f};
   static const uint8_t o[5] = {0x3e,0x41,0x41,0x41,0x3e};
+  static const uint8_t p[5] = {0x7f,0x09,0x09,0x09,0x06};
+  static const uint8_t q[5] = {0x3e,0x41,0x51,0x21,0x5e};
   static const uint8_t r[5] = {0x7f,0x09,0x19,0x29,0x46};
   static const uint8_t s[5] = {0x46,0x49,0x49,0x49,0x31};
   static const uint8_t t[5] = {0x01,0x01,0x7f,0x01,0x01};
   static const uint8_t u[5] = {0x3f,0x40,0x40,0x40,0x3f};
   static const uint8_t v[5] = {0x1f,0x20,0x40,0x20,0x1f};
+  static const uint8_t w[5] = {0x7f,0x20,0x18,0x20,0x7f};
+  static const uint8_t x[5] = {0x63,0x14,0x08,0x14,0x63};
   static const uint8_t y[5] = {0x07,0x08,0x70,0x08,0x07};
+  static const uint8_t z[5] = {0x61,0x51,0x49,0x45,0x43};
+  static const uint8_t zero[5] = {0x3e,0x51,0x49,0x45,0x3e};
   static const uint8_t one[5] = {0x00,0x42,0x7f,0x40,0x00};
+  static const uint8_t two[5] = {0x62,0x51,0x49,0x49,0x46};
+  static const uint8_t three[5] = {0x22,0x41,0x49,0x49,0x36};
+  static const uint8_t four[5] = {0x18,0x14,0x12,0x7f,0x10};
+  static const uint8_t five[5] = {0x2f,0x49,0x49,0x49,0x31};
   static const uint8_t six[5] = {0x3c,0x4a,0x49,0x49,0x30};
+  static const uint8_t seven[5] = {0x01,0x71,0x09,0x05,0x03};
+  static const uint8_t eight[5] = {0x36,0x49,0x49,0x49,0x36};
+  static const uint8_t nine[5] = {0x06,0x49,0x49,0x29,0x1e};
+  static const uint8_t dot[5] = {0x00,0x60,0x60,0x00,0x00};
+  static const uint8_t colon[5] = {0x00,0x36,0x36,0x00,0x00};
+  static const uint8_t dash[5] = {0x08,0x08,0x08,0x08,0x08};
+  static const uint8_t slash[5] = {0x60,0x18,0x06,0x01,0x00};
+  if (c >= 'a' && c <= 'z') c = (char)(c - 'a' + 'A');
   switch (c) {
-    case 'A': return a; case 'C': return c_; case 'D': return d;
-    case 'E': return e; case 'F': return f; case 'I': return i;
-    case 'K': return k; case 'L': return l; case 'M': return m;
-    case 'N': return n; case 'O': return o; case 'R': return r;
+    case 'A': return a; case 'B': return b; case 'C': return c_;
+    case 'D': return d; case 'E': return e; case 'F': return f;
+    case 'G': return g; case 'H': return h; case 'I': return i;
+    case 'J': return j; case 'K': return k; case 'L': return l;
+    case 'M': return m; case 'N': return n; case 'O': return o;
+    case 'P': return p; case 'Q': return q; case 'R': return r;
     case 'S': return s; case 'T': return t; case 'U': return u;
-    case 'V': return v;
-    case 'Y': return y; case '1': return one; case '6': return six;
+    case 'V': return v; case 'W': return w; case 'X': return x;
+    case 'Y': return y; case 'Z': return z;
+    case '0': return zero; case '1': return one; case '2': return two;
+    case '3': return three; case '4': return four; case '5': return five;
+    case '6': return six; case '7': return seven; case '8': return eight;
+    case '9': return nine; case '.': return dot; case ':': return colon;
+    case '-': return dash; case '/': return slash;
     default: return blank;
   }
 }
 
 static void qualification_text(const char *text, uint32_t x, uint32_t y,
                                uint32_t scale, uint32_t color) {
+  if (!text) return;
   while (*text) {
     const uint8_t *glyph = qualification_glyph(*text++);
     for (uint32_t column = 0; column < 5; column++)
@@ -104,6 +135,172 @@ static void qualification_text(const char *text, uint32_t x, uint32_t y,
                     x + column * scale, y + row * scale, scale, scale, color);
     x += 6 * scale;
   }
+}
+
+static uint32_t qualification_text_width(const char *text, uint32_t scale) {
+  uint32_t length = 0;
+  if (!text) return 0;
+  while (text[length] && length <= AIUEOS_INFERENCE_STATUS_TEXT_MAX) length++;
+  return length * 6U * scale;
+}
+
+static uint32_t inference_u64(uint64_t value, char *out, uint32_t capacity) {
+  char reverse[20]; uint32_t count = 0, written = 0;
+  if (!out || !capacity) return 0;
+  do { reverse[count++] = (char)('0' + value % 10U); value /= 10U; }
+  while (value && count < sizeof(reverse));
+  if (count + 1U > capacity) return 0;
+  while (count) out[written++] = reverse[--count];
+  out[written] = 0;
+  return written;
+}
+
+static void inference_number(uint64_t value, uint32_t x, uint32_t y,
+                             uint32_t scale, uint32_t color) {
+  char number[21];
+  if (inference_u64(value, number, sizeof(number)))
+    qualification_text(number, x, y, scale, color);
+}
+
+static void inference_na(uint32_t x, uint32_t y, uint32_t scale,
+                         uint32_t color) {
+  qualification_text("N/A", x, y, scale, color);
+}
+
+static void inference_millis(uint64_t nanoseconds, uint32_t x, uint32_t y,
+                             uint32_t scale, uint32_t color) {
+  if (nanoseconds == AIUEOS_INFERENCE_UNMEASURED) {
+    inference_na(x, y, scale, color); return;
+  }
+  inference_number(nanoseconds / 1000000ULL, x, y, scale, color);
+}
+
+static void inference_rate(uint32_t tokens, uint64_t nanoseconds,
+                           uint32_t x, uint32_t y, uint32_t scale,
+                           uint32_t color) {
+  uint64_t rate = aiueos_inference_milli_tokens_per_second(tokens, nanoseconds);
+  if (rate == AIUEOS_INFERENCE_UNMEASURED) {
+    inference_na(x, y, scale, color); return;
+  }
+  char whole[21];
+  uint32_t whole_length = inference_u64(rate / 1000ULL, whole, sizeof(whole));
+  qualification_text(whole, x, y, scale, color);
+  x += whole_length * 6U * scale;
+  qualification_text(".", x, y, scale, color); x += 6U * scale;
+  char decimal[4] = {(char)('0' + (rate / 100ULL) % 10ULL),
+                     (char)('0' + (rate / 10ULL) % 10ULL),
+                     (char)('0' + rate % 10ULL), 0};
+  qualification_text(decimal, x, y, scale, color);
+}
+
+static const char *inference_phase(enum aiueos_inference_phase phase) {
+  switch (phase) {
+    case AIUEOS_INFERENCE_ADMISSION: return "ADMISSION";
+    case AIUEOS_INFERENCE_LOADING: return "LOADING";
+    case AIUEOS_INFERENCE_PREFILL: return "PREFILL";
+    case AIUEOS_INFERENCE_DECODING: return "DECODING";
+    case AIUEOS_INFERENCE_COMPLETE: return "COMPLETE";
+    case AIUEOS_INFERENCE_BLOCKED: return "BLOCKED";
+    case AIUEOS_INFERENCE_ERROR: return "ERROR";
+    default: return "INVALID";
+  }
+}
+
+static void framebuffer_commit(void) {
+  desktop_surface.generation += 1;
+  desktop_surface.content_hash =
+    sample_hash(desktop_surface_pixels, desktop_surface.width,
+                desktop_surface.height, desktop_surface.stride);
+  desktop_surface.damage_x = 0; desktop_surface.damage_y = 0;
+  desktop_surface.damage_width = desktop_surface.width;
+  desktop_surface.damage_height = desktop_surface.height;
+}
+
+int aiueos_framebuffer_inference_screen(
+    const struct aiueos_inference_status *status) {
+  if (!desktop_surface_ready || !aiueos_inference_status_valid(status)) return 0;
+  uint32_t scale = desktop_surface.width >= 1280 ? 4U :
+                   desktop_surface.width >= 800 ? 3U : 2U;
+  uint32_t margin = desktop_surface.width / 18U;
+  uint32_t value_x = desktop_surface.width / 2U;
+  uint32_t y = margin + 12U * scale;
+  uint32_t row = 10U * scale;
+  uint32_t accent = 0x3b82f6U;
+  if (status->phase == AIUEOS_INFERENCE_COMPLETE) accent = 0x35d07fU;
+  if (status->phase == AIUEOS_INFERENCE_BLOCKED ||
+      status->phase == AIUEOS_INFERENCE_ERROR) accent = 0xff6b6bU;
+  rectangle(desktop_surface_pixels, desktop_surface.stride,
+            desktop_surface.pixel_format, 0, 0, desktop_surface.width,
+            desktop_surface.height, 0x0b1220U);
+  rectangle(desktop_surface_pixels, desktop_surface.stride,
+            desktop_surface.pixel_format, margin, margin,
+            desktop_surface.width - 2U * margin, 3U * scale, accent);
+  qualification_text("AIUEOS INFERENCE", margin, y, scale, 0xf4f7f9U);
+  y += row;
+  qualification_text(status->model, margin, y, scale, 0xf4f7f9U);
+  qualification_text(status->quant, value_x, y, scale, 0x94a3b8U);
+  y += row;
+  qualification_text("STATE", margin, y, scale, 0x94a3b8U);
+  qualification_text(inference_phase(status->phase), value_x, y, scale, accent);
+  y += row;
+  qualification_text("DETAIL", margin, y, scale, 0x94a3b8U);
+  qualification_text(status->detail ? status->detail : "N/A",
+                     value_x, y, scale, 0xf4f7f9U);
+  y += row;
+  qualification_text("LOAD MS", margin, y, scale, 0x94a3b8U);
+  inference_millis(status->load_ns, value_x, y, scale, 0xf4f7f9U);
+  y += row;
+  qualification_text("PREFILL TOK/S", margin, y, scale, 0x94a3b8U);
+  inference_rate(status->prompt_tokens, status->prefill_ns,
+                 value_x, y, scale, 0xf4f7f9U);
+  y += row;
+  qualification_text("DECODE TOK/S", margin, y, scale, 0x94a3b8U);
+  inference_rate(status->generated_tokens, status->decode_ns,
+                 value_x, y, scale, 0xf4f7f9U);
+  y += row;
+  qualification_text("TOKENS", margin, y, scale, 0x94a3b8U);
+  inference_number(status->generated_tokens, value_x, y, scale, 0xf4f7f9U);
+  if (status->target_tokens) {
+    uint32_t offset = qualification_text_width("00000000", scale);
+    qualification_text("/", value_x + offset, y, scale, 0x94a3b8U);
+    inference_number(status->target_tokens, value_x + offset + 6U * scale,
+                     y, scale, 0xf4f7f9U);
+  }
+  y += row;
+  qualification_text("RESIDENT MIB", margin, y, scale, 0x94a3b8U);
+  if (status->resident_bytes == AIUEOS_INFERENCE_UNMEASURED)
+    inference_na(value_x, y, scale, 0xf4f7f9U);
+  else
+    inference_number(status->resident_bytes / (1024ULL * 1024ULL),
+                     value_x, y, scale, 0xf4f7f9U);
+  y += row;
+  qualification_text("TTFT MS", margin, y, scale, 0x94a3b8U);
+  inference_millis(status->time_to_first_token_ns,
+                   value_x, y, scale, 0xf4f7f9U);
+  y += row;
+  qualification_text("CYCLES", margin, y, scale, 0x94a3b8U);
+  if (status->compute_cycles) inference_number(status->compute_cycles,
+                                               value_x, y, scale, 0xf4f7f9U);
+  else inference_na(value_x, y, scale, 0xf4f7f9U);
+
+  uint32_t bar_y = desktop_surface.height - margin - 6U * scale;
+  uint32_t bar_width = desktop_surface.width - 2U * margin;
+  rectangle(desktop_surface_pixels, desktop_surface.stride,
+            desktop_surface.pixel_format, margin, bar_y, bar_width,
+            6U * scale, 0x1e293bU);
+  uint32_t fill = 0;
+  if (status->target_tokens)
+    fill = (uint32_t)(((uint64_t)bar_width * status->generated_tokens) /
+                      status->target_tokens);
+  else if (status->phase == AIUEOS_INFERENCE_COMPLETE) fill = bar_width;
+  else if (status->phase >= AIUEOS_INFERENCE_LOADING &&
+           status->phase <= AIUEOS_INFERENCE_DECODING)
+    fill = bar_width * (uint32_t)status->phase / 5U;
+  if (fill) rectangle(desktop_surface_pixels, desktop_surface.stride,
+                      desktop_surface.pixel_format, margin, bar_y, fill,
+                      6U * scale, accent);
+  framebuffer_commit();
+  return 1;
 }
 
 void aiueos_framebuffer_qualification_screen(const char *line1,
@@ -125,6 +322,7 @@ void aiueos_framebuffer_qualification_screen(const char *line1,
   qualification_text(line1, margin, top, scale, 0xf4f7f9);
   qualification_text(line2, margin, top + 12 * scale, scale, 0xf4f7f9);
   qualification_text(line3, margin, top + 24 * scale, scale, accent);
+  framebuffer_commit();
 }
 
 /* Boot-desktop WM rects (ADR-0091 hit geometry). C fills and samples;

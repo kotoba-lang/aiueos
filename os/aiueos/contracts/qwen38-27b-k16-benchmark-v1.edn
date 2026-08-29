@@ -1,0 +1,59 @@
+;; Exact-artifact local-inference gate for the GMKtec K16.  This contract is
+;; deliberately red at source time: a screen and a downloaded filename are not
+;; evidence that the native OS generated a token.
+{:format :aiueos.qwen38-27b-k16-benchmark/v1
+ :model {:id "Qwen/Qwen3.8-27B"
+         :revision "1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0"
+         :kind :dense-vision-language-model
+         :language-parameters 27000000000
+         :native-context-tokens 262144}
+ :artifact {:repo "unsloth/Qwen3.8-27B-GGUF"
+            :revision "4ca720788d1e01f1bff70c033e0d0028fd02e502"
+            :file "Qwen3.8-27B-UD-IQ3_XXS.gguf"
+            :quant :UD-IQ3_XXS
+            :bytes 10934860704
+            :sha256 "c0b7c3038681ed2e3040456c1dd45f9858b6c2290bed172c70388a94874f3eee"
+            :vision-projection :excluded-from-first-text-only-cell}
+ :target {:machine :gmktec-k16
+          :cpu :amd-ryzen-7-7735hs
+          :gpu :radeon-680m
+          :installed-memory :must-be-read-from-uefi-memory-map
+          :storage :must-be-read-only-until-explicit-ssd-install}
+ :measurement {:clock :calibrated-monotonic
+               :required [:artifact-sha256 :runtime-revision :cold-load-ns
+                          :prompt-token-count :prefill-ns
+                          :generated-token-count :decode-ns
+                          :time-to-first-token-ns :peak-resident-bytes]
+               :derived [:prefill-tokens-per-second
+                         :decode-tokens-per-second]
+               :separate [:device-local-compute :network-round-trip]
+               :unmeasured-value :not-available
+               :forbidden-substitutions [:nominal-cpu-clock-for-tsc
+                                         :server-listening-for-generation
+                                         :zero-for-missing-timing]}
+ :current-native-gaps {:general-address-space :first-1-gib-identity-map-only
+                       :physical-allocation :bounded-256-page-record-table
+                       :model-storage-reader :absent
+                       :nvme-driver :reference-c-qemu-only
+                       :gguf-parser :absent
+                       :qwen35-runtime :absent
+                       :tokenizer :absent
+                       :threaded-simd-backend :absent
+                       :tsc-frequency-calibration :absent}
+ :display {:abi :aiueos-inference-status/v1
+           :fields [:model :quant :phase :detail :load-ms
+                    :prefill-tokens-per-second :decode-tokens-per-second
+                    :generated-tokens :resident-mib :time-to-first-token-ms
+                    :compute-cycles]
+           :missing-metric "N/A"
+           :source-state :implemented-qemu-unverified-on-physical-k16}
+ :observed {:artifact-on-k16? false
+            :real-generation? false
+            :speed :not-available
+            :reason :native-runtime-and-storage-path-not-yet-present}
+ :admit-only-when [:exact-artifact-present :artifact-sha256-matches
+                   :runtime-generates-nonempty-token-sequence
+                   :all-required-measurements-present
+                   :os-screen-values-match-saved-record]
+ :does-not-prove [:qwen38-loaded :qwen38-generation :physical-k16-throughput
+                  :gpu-offload :ssd-installation]}

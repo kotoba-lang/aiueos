@@ -380,6 +380,50 @@ python3 ./os/aiueos/tools/k16-pxe-server.py \
   --control reboot-pxe
 ```
 
+### K16 local inference telemetry
+
+The native GOP surface now has a versioned inference-status screen.  It shows
+the exact model and quant, admission/load/prefill/decode/complete/error phase,
+cold-load and first-token milliseconds, separate prefill and decode token
+rates, generated tokens, resident MiB, and raw compute cycles.  An absent duration renders as
+`N/A`; raw TSC cycles are never converted with a nominal CPU clock and missing
+timing is never rendered as zero.  The persistent physical micro-inference
+profile updates this surface from the real job state and retains its measured
+cycle count while Murakumo liveness renews or reconnects.
+
+The target Qwen cell is pinned in
+`contracts/qwen38-27b-k16-benchmark-v1.edn`: official
+`Qwen/Qwen3.8-27B` revision `1d4bf0f...`, Unsloth
+`Qwen3.8-27B-UD-IQ3_XXS.gguf` revision `4ca7207...`, 10,934,860,704 bytes,
+SHA-256 `c0b7c303...f3eee`.  It is **not yet loaded on the K16**.  The present
+native kernel still has only its first-1-GiB identity map, a bounded 256-page
+allocation record table, no native NVMe model reader, no GGUF/Qwen3.5 runtime,
+and no calibrated monotonic wall clock.  Therefore its Qwen speed is `N/A`,
+not `0 tok/s`; the already-qualified character-bigram job is not substituted
+for the 27B model.
+
+The display/telemetry model can be exercised without making a physical claim:
+
+```sh
+./os/aiueos/scripts/smoke-inference-status.sh
+```
+
+Once a destination with the artifact plus 2 GiB of free headroom is attached,
+fetch the exact revision without overwriting an existing mismatch:
+
+```sh
+./os/aiueos/scripts/fetch-qwen38-27b-model.sh /path/to/model-volume
+```
+
+The downloader resumes only its `.partial` file and promotes it only after
+both the byte count and SHA-256 match.  Fetching the file still does not make
+the native GGUF runtime present.
+
+That produces a synthetic `QEMU UI TEST` frame only.  A passing final K16 cell
+requires the exact artifact hash, a non-empty real token sequence, cold load,
+prefill, decode, first-token and peak-resident measurements, and equality
+between the saved record and the values shown on screen.
+
 The QEMU smoke boots a FAT view containing only `BOOTX64.EFI`, then substitutes
 the control EFI behind the same boot option while retaining the variable
 store.  Its green result proves embedding, admission, native-core completion,
