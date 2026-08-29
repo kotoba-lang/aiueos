@@ -405,14 +405,29 @@ tokenizer, threaded SIMD backend and calibrated monotonic clock are still
 absent.  Therefore its Qwen speed is `N/A`, not `0 tok/s`; the already-qualified
 character-bigram job is not substituted for the 27B model.
 
+The normal update path is now
+[`contracts/model-channel-v1.edn`](contracts/model-channel-v1.edn), not a model
+copied onto every boot USB. USB carries AIUEOS boot/recovery. Immutable model
+blocks live in Kotobase/IPFS and a signed, monotonic IPNS head selects the
+latest compatible manifest. AIUEOS plans only missing-CID downloads into an
+inactive NVMe slot, verifies every raw CID and the whole GGUF SHA-256, and
+commits activation only after the complete artifact passes. Offline, refused
+or interrupted updates keep booting the last-known-good slot.
+
+`aiueos.model-channel` implements and tests that admission/update decision.
+Physical K16 HTTPS download and the NVMe two-slot writer remain unverified;
+host tests do not turn either adapter green. The FAT32 flow below remains the
+explicit offline recovery path.
+
 The display/telemetry model can be exercised without making a physical claim:
 
 ```sh
 ./os/aiueos/scripts/smoke-inference-status.sh
 ```
 
-Once a destination with the artifact plus 2 GiB of free headroom is attached,
-fetch the exact revision without overwriting an existing mismatch:
+For offline recovery, once a destination with the artifact plus 2 GiB of free
+headroom is attached, fetch the exact revision without overwriting an existing
+mismatch:
 
 ```sh
 ./os/aiueos/scripts/fetch-qwen38-27b-model.sh /path/to/model-volume
@@ -433,8 +448,8 @@ AIUEOS_OUT=build/aiueos-qwen38-model-handoff-pxe \
 
 Boot the resulting EFI through PXE while the model volume is attached.  The
 loader searches attached UEFI filesystems after the PXE boot device, so the
-USB carries weights only; neither the USB nor the internal SSD is written at
-runtime.  `AIUEOS_MODEL_HANDOFF_OK` proves exact artifact admission and the
+recovery USB may carry weights; neither the USB nor the internal SSD is written
+at runtime. `AIUEOS_MODEL_HANDOFF_OK` proves exact artifact admission and the
 read-only/NX mapping, not inference.  The screen deliberately keeps load,
 prefill, decode and first-token values at `N/A` until a real runtime measures
 them.
