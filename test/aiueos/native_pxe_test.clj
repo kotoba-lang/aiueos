@@ -103,6 +103,16 @@
                   "watchdog=disabled"]]
     (is (str/includes? persistent-smoke marker))))
 
+(deftest persistent-node-reconnects-instead-of-halting-on-one-missed-renewal
+  (doseq [marker ["NODE RECONNECTING"
+                  "AIUEOS_PHYSICAL_LIVENESS_RETRY"
+                  "AIUEOS_PHYSICAL_LIVENESS_RECOVERED"]]
+    (is (str/includes? kernel marker)))
+  (is (not (str/includes?
+            kernel
+            "aiueos_framebuffer_qualification_screen(\"AIUEOS K16\", \"NODE LINK STALE\", \"SSD READ ONLY\", 0);\n      for(;;)__asm__ volatile(\"cli; hlt\");"))
+      "one renewal miss must not permanently halt an otherwise qualified node"))
+
 (deftest k16-rtl8125-uefi-observation-stays-read-only
   (doseq [marker ["AIUEOS_RTL8125_HANDOFF bdf="
                   "access=mmio-read-only"

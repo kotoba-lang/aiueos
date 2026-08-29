@@ -883,10 +883,34 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
     serial_string("AIUEOS_PHYSICAL_LIVENESS_OK ping=pong heartbeat=renewed\r\n");
     if(!aiueos_qualification_finalize(1,8141))
       serial_string("AIUEOS_PHYSICAL_QUALIFICATION_LOG_FAIL stage=runtime-variable\r\n");
+    uint32_t liveness_failures=0;
     for(;;) {
-      if(aiueos_rtl8125_liveness_renewal())continue;
-      aiueos_framebuffer_qualification_screen("AIUEOS K16", "NODE LINK STALE", "SSD READ ONLY", 0);
-      for(;;)__asm__ volatile("cli; hlt");
+      if(aiueos_rtl8125_liveness_renewal()) {
+        if(liveness_failures) {
+          aiueos_framebuffer_qualification_screen("AIUEOS K16", "MURAKUMO NODE LIVE", "SSD READ ONLY", 1);
+          debug_string("AIUEOS_PHYSICAL_LIVENESS_RECOVERED heartbeat=renewed\n");
+          serial_string("AIUEOS_PHYSICAL_LIVENESS_RECOVERED failures=");
+          serial_decimal(liveness_failures);
+          serial_string(" sequence=");
+          serial_decimal(aiueos_rtl8125_liveness_sequence());
+          serial_string("\r\n");
+          liveness_failures=0;
+        }
+        continue;
+      }
+      liveness_failures++;
+      aiueos_framebuffer_qualification_screen("AIUEOS K16", "NODE RECONNECTING", "SSD READ ONLY", 0);
+      debug_string("AIUEOS_PHYSICAL_LIVENESS_RETRY heartbeat=stale action=reconnect\n");
+      serial_string("AIUEOS_PHYSICAL_LIVENESS_RETRY failure=");
+      serial_decimal(liveness_failures);
+      serial_string(" error=");
+      serial_decimal(aiueos_rtl8125_liveness_error());
+      serial_string(" action=reconnect\r\n");
+      /* A failed job can leave its error sticky and make the next renewal
+         return immediately. Keep that path from becoming a hot spin while a
+         future recovery policy decides whether the job may be retried. */
+      for(volatile uint32_t backoff=0;backoff<50000000U;backoff++)
+        __asm__ volatile("pause");
     }
 #else
     if(!aiueos_qualification_finalize(1,8130))

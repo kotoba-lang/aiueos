@@ -1,10 +1,15 @@
 # apps/session — hosted daily shell
 
-The product face of root ADR-2608221625 **P1**. One HTML document, jp-go-dds
+The product face of root ADR-2608221625 **P1**. The OS UI engine contract is
+`kotoba-lang/browser`; `kotoba-browser.edn` is the boundary. One HTML document, jp-go-dds
 (DADS), `--hig-*` via `jp-go-dds.tokens/skin-css`. Fragments `#session`
 `#desktop` `#setup` `#manage` `#devices` `#operator`. `#itonami` is the same operator view. `#desktop` is the hosted WM
 face (ADR-0085) plus hosted IME (ADR-0086 / ADR-0088) plus the hosted
 kami.webgpu presenter (ADR-0089, `/kami-presenter.js`); it is not a second document.
+The committed HTML/JavaScript build is a hosted verification adapter and does
+not count as the native Kotoba Browser guest. The native product target is the
+same document/action model in `kotoba-clj/WASM` through browser desktop-backend
+contract v1.
 
 This is not `clojure -M:cloud-live check`. CID read and murakumo infer leave
 from the **session process** (`POST /api/session/read-cid`,
@@ -45,4 +50,13 @@ nbb --classpath src scripts/compositor-guest.cljs guest-gpu-two # KERNEL.ELF two
 nbb --classpath src scripts/compositor-guest.cljs guest-scanout-two # KERNEL.ELF scanout 1 bound to resource 2
 nbb --classpath src scripts/compositor-guest.cljs guest-broker # KERNEL.ELF Kotoba clipboard admit / picker refuse
 nbb --classpath src scripts/compositor-guest.cljs guest-session # KERNEL.ELF Kotoba packed front 2 restore
+```
+
+From the superproject, the generated document can also be rendered by the
+actual Kotoba Browser engine (no Chrome/Playwright engine):
+
+```bash
+cd /tmp
+clojure -Sdeps '{:paths ["<aiueos>/scripts"] :deps {io.github.kotoba-lang/browser {:local/root "<superproject>/orgs/kotoba-lang/browser"}}}' \
+  -M -m aiueos.kotoba-browser-smoke <aiueos>/apps/session/index.html
 ```

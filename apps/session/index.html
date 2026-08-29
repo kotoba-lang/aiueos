@@ -2688,11 +2688,11 @@ body { padding-left: env(safe-area-inset-left,0px); padding-right: env(safe-area
 .dds-ext-card{margin:var(--hig-spacing-4) 0}
 .session-main .dads-button{width:100%;margin:var(--hig-spacing-3) 0}
 .wm-titlebar .dads-button{width:auto;margin:0}
-</style><meta name="aiueos-design" content="jp-go-dds"></head>
+</style><meta name="aiueos-design" content="jp-go-dds"><meta name="aiueos-ui-engine" content="kotoba-lang/browser"><meta name="aiueos-hosted-adapter" content="html-js-verification-only"></head>
   <body>
     <div class="session-shell">
       <header class="session-chrome">
-        <h1 class="dads-heading" data-size="20" id="session-brand">aiueos</h1>
+        <h1 class="dads-heading" data-size="20" id="session-brand">aiueos · Kotoba Browser</h1>
         <nav class="dds-ext-row session-nav" aria-label="Views">
           <a aria-current="page" class="dads-button" data-type="solid-fill" data-size="sm" href="#session">セッション</a>
           <a class="dads-button" data-type="text" data-size="sm" href="#desktop">デスクトップ</a>
@@ -2767,14 +2767,29 @@ body { padding-left: env(safe-area-inset-left,0px); padding-right: env(safe-area
           <pre id="wm-input-out" class="session-out"></pre>
         </section>
         <section id="setup" class="dds-ext-section session-view" data-view="setup" hidden>
-          <h1 class="dads-heading" data-size="32">機械を紐づける</h1>
-          <p class="session-lede">モニタもキーボードも使いません。筐体 QR の代わりにホストが印刷した payload です。</p>
-          <pre id="qr" class="session-out"></pre>
-          <div class="dads-form-control-label" data-size="md"><label class="dads-form-control-label__label" for="owner">名前 / 所有者</label><div>
-            <span class="dads-input-text"><input id="owner" name="owner" value="acct:local-demo" autocomplete="username" class="dads-input-text__input" data-size="md" type="text"></span>
-          </div></div>
-          <button class="dads-button" data-type="solid-fill" data-size="md" id="bind" type="button">電話から紐づける</button>
-          <pre id="bind-out" class="session-out"></pre>
+          <h1 class="dads-heading" data-size="32">この機械を追加</h1>
+          <p class="session-lede">Passkey をこの画面で使うか、スマホでコードを読み取ります。どちらも同じアカウント確認を通り、Passkey の秘密鍵は Node へコピーしません。</p>
+          <div class="dds-ext-card">
+            <h2 class="dads-heading" data-size="24">Passkey で続ける</h2>
+            <p>この機械の Kotoba Browser から、アカウントの Passkey を確認します。</p>
+            <button data-kotoba-action="device-auth/start-passkey" class="dads-button" data-type="solid-fill" data-size="md" id="start-passkey" type="button">Passkey で確認</button>
+          </div>
+          <div class="dds-ext-card">
+            <h2 class="dads-heading" data-size="24">スマホで続ける</h2>
+            <p>スマホ側でも Passkey を確認してから、この機械を承認します。コードにアカウント鍵や端末トークンは含めません。</p>
+            <pre id="qr" class="session-out"></pre>
+            <button data-kotoba-action="device-auth/start-phone-scan" class="dads-button" data-type="solid-fill" data-size="md" id="start-phone-scan" type="button">スマホ用コードを準備</button>
+          </div>
+          <pre id="auth-out" class="session-out" aria-live="polite"></pre>
+          <details class="session-details">
+            <summary>hosted 検証用</summary>
+            <p class="session-lede">現在の Mac/QEMU fixture を検証するための非権威経路です。実機の OS アカウント認証には数えません。</p>
+            <div class="dads-form-control-label" data-size="md"><label class="dads-form-control-label__label" for="owner">fixture 所有者</label><div>
+              <span class="dads-input-text"><input id="owner" name="owner" value="acct:local-demo" autocomplete="username" class="dads-input-text__input" data-size="md" type="text"></span>
+            </div></div>
+            <button class="dads-button" data-type="solid-fill" data-size="md" id="bind" type="button">fixture を実行</button>
+            <pre id="bind-out" class="session-out"></pre>
+          </details>
         </section>
         <section id="manage" class="dds-ext-section session-view" data-view="manage" hidden>
           <h1 class="dads-heading" data-size="32">管理</h1>
@@ -2785,7 +2800,8 @@ body { padding-left: env(safe-area-inset-left,0px); padding-right: env(safe-area
         </section>
         <section id="devices" class="dds-ext-section session-view" data-view="devices" hidden>
           <h1 class="dads-heading" data-size="32">機械</h1>
-          <p class="session-lede">このホストの非権威 ledger。本番の check-in は kotobase.net。D1 ではない。</p>
+          <p class="session-lede">アカウント確認後に端末鍵を証明すると Node 候補へ追加します。Murakumo の ready、Kekkai 接続、SSD キャッシュ同期は、それぞれ実測できるまで別の状態です。</p>
+          <pre id="device-plan-out" class="session-out"></pre>
           <pre id="devices-out" class="session-out"></pre>
         </section>
         <section id="operator" class="dds-ext-section session-view" data-view="operator" hidden>
@@ -2804,6 +2820,8 @@ body { padding-left: env(safe-area-inset-left,0px); padding-right: env(safe-area
     <script src="/kami-presenter.js"></script>
     <script>window.__aiueosSessionAlive = true;
 window.__aiueosSessionState = { bound: false };
+window.__aiueosUiEngine = "kotoba-lang/browser";
+window.__aiueosHostedAdapter = "html-js-verification-only";
 
 function viewId() {
   var raw = location.hash || "#session";
@@ -2840,6 +2858,37 @@ async function refreshSetup() {
     var r = await fetch("/setup.json");
     var j = await r.json();
     el.textContent = j.qr || JSON.stringify(j, null, 2);
+  } catch (e) {
+    el.textContent = String(e);
+  }
+}
+
+async function startDeviceAuth(method) {
+  var el = document.getElementById("auth-out");
+  if (el) el.textContent = "単回チャレンジを準備しています…";
+  try {
+    var r = await fetch("/api/device-auth/challenge", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ method: method })
+    });
+    var j = await r.json();
+    if (method === "phone-scan" && j.scan_payload) {
+      var qr = document.getElementById("qr");
+      if (qr) qr.textContent = j.scan_payload;
+    }
+    if (el) el.textContent = pretty(j);
+  } catch (e) {
+    if (el) el.textContent = String(e);
+  }
+}
+
+async function refreshDevicePlan() {
+  var el = document.getElementById("device-plan-out");
+  if (!el) return;
+  try {
+    var r = await fetch("/api/device-auth/plan");
+    el.textContent = pretty(await r.text());
   } catch (e) {
     el.textContent = String(e);
   }
@@ -3078,6 +3127,7 @@ async function refreshDevices() {
   if (!el) return;
   var r = await fetch("/api/devices");
   el.textContent = await r.text();
+  refreshDevicePlan();
 }
 
 async function bind() {
@@ -3088,10 +3138,8 @@ async function bind() {
     method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ nonce: ch.nonce })
   })).json();
-  var st = await (await fetch("/setup.json")).json();
   var body = JSON.stringify({
     owner: document.getElementById("owner").value,
-    token: st.token,
     nonce: ch.nonce,
     signature: at.signature,
     path: "phone-http"
@@ -3209,6 +3257,12 @@ async function denyOperator() { await postOperator("deny"); }
 
 window.addEventListener("hashchange", show);
 document.getElementById("bind").addEventListener("click", bind);
+document.getElementById("start-passkey").addEventListener("click", function () {
+  startDeviceAuth("passkey");
+});
+document.getElementById("start-phone-scan").addEventListener("click", function () {
+  startDeviceAuth("phone-scan");
+});
 document.getElementById("cycle").addEventListener("click", cycle);
 document.getElementById("read-cid").addEventListener("click", readCid);
 document.getElementById("run-infer").addEventListener("click", runInfer);

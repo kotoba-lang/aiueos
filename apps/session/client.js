@@ -1,5 +1,7 @@
 window.__aiueosSessionAlive = true;
 window.__aiueosSessionState = { bound: false };
+window.__aiueosUiEngine = "kotoba-lang/browser";
+window.__aiueosHostedAdapter = "html-js-verification-only";
 
 function viewId() {
   var raw = location.hash || "#session";
@@ -36,6 +38,37 @@ async function refreshSetup() {
     var r = await fetch("/setup.json");
     var j = await r.json();
     el.textContent = j.qr || JSON.stringify(j, null, 2);
+  } catch (e) {
+    el.textContent = String(e);
+  }
+}
+
+async function startDeviceAuth(method) {
+  var el = document.getElementById("auth-out");
+  if (el) el.textContent = "単回チャレンジを準備しています…";
+  try {
+    var r = await fetch("/api/device-auth/challenge", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ method: method })
+    });
+    var j = await r.json();
+    if (method === "phone-scan" && j.scan_payload) {
+      var qr = document.getElementById("qr");
+      if (qr) qr.textContent = j.scan_payload;
+    }
+    if (el) el.textContent = pretty(j);
+  } catch (e) {
+    if (el) el.textContent = String(e);
+  }
+}
+
+async function refreshDevicePlan() {
+  var el = document.getElementById("device-plan-out");
+  if (!el) return;
+  try {
+    var r = await fetch("/api/device-auth/plan");
+    el.textContent = pretty(await r.text());
   } catch (e) {
     el.textContent = String(e);
   }
@@ -274,6 +307,7 @@ async function refreshDevices() {
   if (!el) return;
   var r = await fetch("/api/devices");
   el.textContent = await r.text();
+  refreshDevicePlan();
 }
 
 async function bind() {
@@ -284,10 +318,8 @@ async function bind() {
     method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ nonce: ch.nonce })
   })).json();
-  var st = await (await fetch("/setup.json")).json();
   var body = JSON.stringify({
     owner: document.getElementById("owner").value,
-    token: st.token,
     nonce: ch.nonce,
     signature: at.signature,
     path: "phone-http"
@@ -405,6 +437,12 @@ async function denyOperator() { await postOperator("deny"); }
 
 window.addEventListener("hashchange", show);
 document.getElementById("bind").addEventListener("click", bind);
+document.getElementById("start-passkey").addEventListener("click", function () {
+  startDeviceAuth("passkey");
+});
+document.getElementById("start-phone-scan").addEventListener("click", function () {
+  startDeviceAuth("phone-scan");
+});
 document.getElementById("cycle").addEventListener("click", cycle);
 document.getElementById("read-cid").addEventListener("click", readCid);
 document.getElementById("run-infer").addEventListener("click", runInfer);

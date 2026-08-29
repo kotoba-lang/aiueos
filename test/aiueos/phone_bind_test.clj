@@ -86,7 +86,29 @@
         printed (pb/print-chassis! rt)]
     (try
       (is (re-find #"^http://127\.0\.0\.1:\d+/#setup$" (:url printed)))
-      (is (re-find #"^aiueos:1;" (:qr printed)))
+      (is (re-find #"^aiueos:2;" (:qr printed)))
+      (is (not (re-find #"token=" (:qr printed)))
+          "a scanned code must not expose the device enrollment token")
+      (let [setup (:body (pb/http-get (str (pb/base-url rt) "/setup.json")))]
+        (is (re-find #"\"claim_secret_exposed\":false" setup))
+        (is (not (re-find #"\"token\"" setup))))
+      (let [plan (pb/http-get (str (pb/base-url rt) "/api/device-auth/plan"))
+            challenge (pb/http-post
+                       (str (pb/base-url rt) "/api/device-auth/challenge")
+                       {:method "phone-scan"})
+            complete (pb/http-post
+                      (str (pb/base-url rt) "/api/device-auth/complete")
+                      {:verified true})]
+        (is (= 200 (:code plan)))
+        (is (re-find #"\"engine\":\"kotoba-lang/browser\"" (:body plan)))
+        (is (= "external-authority-required"
+               (get-in challenge [:parsed :verification])))
+        (is (re-find #"^aiueos-auth:1;did=.*;secret=none$"
+                     (get-in challenge [:parsed :scan_payload])))
+        (is (= 501 (:code complete)))
+        (is (= "authority-verifier-not-wired"
+               (get-in complete [:parsed :reason])))
+        "the hosted helper never trusts a client-supplied verified flag")
       (let [bind (pb/phone-bind-http (pb/base-url rt) "acct:test")]
         (is (= 200 (:code bind)))
         (is (= "grant" (get-in bind [:parsed (keyword "aiueos/decision")])))

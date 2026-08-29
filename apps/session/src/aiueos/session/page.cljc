@@ -85,7 +85,9 @@
     :lang "ja"
     :css dds-css
     :app-css (str tokens/skin-css "\n" app-css)
-    :head [[:meta {:name "aiueos-design" :content "jp-go-dds"}]]}
+    :head [[:meta {:name "aiueos-design" :content "jp-go-dds"}]
+           [:meta {:name "aiueos-ui-engine" :content "kotoba-lang/browser"}]
+           [:meta {:name "aiueos-hosted-adapter" :content "html-js-verification-only"}]]}
    (views/shell)
    [:script {:src "/kami-presenter.js"}]
    [:script (or client-js "")]))

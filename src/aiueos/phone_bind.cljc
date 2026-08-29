@@ -21,6 +21,7 @@
   units. Consumer smoke does not require itonami; the operator fragment is
   `/api/session/operator` and a separate command."
   (:require [clojure.string :as str]
+            [aiueos.device-auth :as device-auth]
             [grant.enroll :as enroll]
             #?(:clj [grant.signing :as signing])
             #?(:clj [clojure.edn :as edn])
@@ -368,11 +369,16 @@
        {:did (:did device)
         :model (:model device)
         :endpoint endpoint
-        :token (:token device)})
+        :auth-authority "https://auth.itonami.cloud"
+        :auth-methods "passkey,phone-scan"})
 
      (defn chassis-qr
        [device endpoint]
-       (enroll/qr-payload (setup-fields device endpoint)))
+       (let [{:keys [did model endpoint]} (setup-fields device endpoint)]
+         (str "aiueos:2;did=" did
+              ";model=" model
+              ";endpoint=" endpoint
+              ";auth=passkey,phone-scan;claim-secret=none")))
 
      (defn setup-url [listen-port]
        (str "http://127.0.0.1:" listen-port "/#setup"))
@@ -384,7 +390,9 @@
                            :endpoint endpoint
                            :setup_url setup-url
                            :qr qr
-                           :token (:token device)
+                           :auth_authority "https://auth.itonami.cloud"
+                           :auth_methods ["passkey" "phone-scan"]
+                           :claim_secret_exposed false
                            :chassis "host-helper"
                            :guest_framebuffer "not-an-operator-console"
                            :kotobase "https://kotobase.net"
@@ -572,6 +580,15 @@
      (defn- json-req [ex]
        (or (parse-flat-json (read-body ex)) {}))
 
+     (defn device-auth-factory
+       [device]
+       (device-auth/factory
+        {:device-did (:did device)
+         :model (:model device)
+         :rp-id "itonami.cloud"
+         :origin "https://auth.itonami.cloud"
+         :authority "https://auth.itonami.cloud"}))
+
      (defn make-runtime
        [{:keys [dir ledger-path listen-port pre-enroll? tenant]}]
        (io/make-parents (device-file dir))
@@ -589,8 +606,54 @@
           :server (atom nil)
           :pre-grant (atom grant)
           :nonce (atom nil)
+          :device-auth (atom (device-auth-factory device))
           :guest (atom nil)
           :operator (atom nil)}))
+
+     (defn handle-device-auth-challenge
+       "Issue the public half of an OS account claim. The hosted helper has no
+       WebAuthn authority key, so completion remains closed until the named
+       authority adapter returns a cryptographically verified proof."
+       [rt method]
+       (let [method (keyword (or method "passkey"))
+             now (System/currentTimeMillis)
+             challenge (rand-hex 32)
+             state (device-auth/issue-challenge
+                    (device-auth-factory @(:device rt))
+                    {:challenge challenge :now-ms now :ttl-ms 300000})]
+         (reset! (:device-auth rt) state)
+         {:state "challenge-issued"
+          :method (name method)
+          :supported (contains? device-auth/supported-methods method)
+          :challenge challenge
+          :expires_at_ms (:auth/challenge-expires-at-ms state)
+          :rp_id (:auth/rp-id state)
+          :origin (:auth/origin state)
+          :authority (:auth/authority state)
+          :scan_payload (when (= :phone-scan method)
+                          (str "aiueos-auth:1;did=" (:device/did state)
+                               ";challenge=" challenge
+                               ";authority=" (:auth/authority state)
+                               ";rp-id=" (:auth/rp-id state)
+                               ";secret=none"))
+          :verification "external-authority-required"
+          :private_key_copied false}))
+
+     (defn public-device-auth-plan
+       [rt]
+       (let [state @(:device-auth rt)]
+         {:engine "kotoba-lang/browser"
+          :surface "aiueos/session"
+          :state (name (:aiueos.device-auth/state state))
+          :methods ["passkey" "phone-scan"]
+          :same_ceremony true
+          :authority (:auth/authority state)
+          :rp_id (:auth/rp-id state)
+          :account_sync "after-verified-claim"
+          :node_add "after-device-key-proof"
+          :murakumo_ready "after-runtime-proof"
+          :kekkai "pending-native-adapter"
+          :storage_replication "opt-in-not-started"}))
 
      (defn public-status [rt]
        (let [d @(:device rt)
@@ -712,6 +775,24 @@
                     (and (= "POST" method) (= path "/api/challenge"))
                     (send-bytes! ex 200 "application/json; charset=utf-8"
                                  (->json (handle-challenge rt)))
+
+                    (and (= "GET" method) (= path "/api/device-auth/plan"))
+                    (send-bytes! ex 200 "application/json; charset=utf-8"
+                                 (->json (public-device-auth-plan rt)))
+
+                    (and (= "POST" method) (= path "/api/device-auth/challenge"))
+                    (let [req (json-req ex)
+                          body (handle-device-auth-challenge rt (:method req))
+                          code (if (:supported body) 200 400)]
+                      (send-bytes! ex code "application/json; charset=utf-8"
+                                   (->json body)))
+
+                    (and (= "POST" method) (= path "/api/device-auth/complete"))
+                    (send-bytes! ex 501 "application/json; charset=utf-8"
+                                 (->json {:decision "deny"
+                                          :reason "authority-verifier-not-wired"
+                                          :authority "https://auth.itonami.cloud"
+                                          :note "Client supplied verified flags are never accepted."}))
 
                     (and (= "POST" method) (= path "/api/attest"))
                     (send-bytes! ex 200 "application/json; charset=utf-8"
@@ -899,12 +980,10 @@
      (defn phone-bind-http
        "Simulated phone client. HTTP only — no guest VGA."
        [base owner]
-       (let [setup (parse-flat-json (:body (http-get (str base "/setup.json"))))
-             ch (:parsed (http-post (str base "/api/challenge") {}))
+       (let [ch (:parsed (http-post (str base "/api/challenge") {}))
              at (:parsed (http-post (str base "/api/attest") {:nonce (:nonce ch)}))
              bind (http-post (str base "/api/bind")
                              {:owner owner
-                              :token (:token setup)
                               :nonce (:nonce ch)
                               :signature (:signature at)
                               :path "phone-http"})]

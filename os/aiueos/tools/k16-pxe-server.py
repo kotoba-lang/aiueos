@@ -482,17 +482,43 @@ def maintain_murakumo_liveness(
         boot, sock, peer, opener=urllib.request.urlopen,
         result_queue=MURAKUMO_LIVENESS_RESULTS, sleeper=time.sleep,
         rounds=None, interval=30, timeout=10,
-        job_result_queue=MURAKUMO_JOB_RESULTS):
+        job_result_queue=MURAKUMO_JOB_RESULTS,
+        max_failures=None, retry_interval=5):
     sequence = 1
     renewed = 0
     executed = 0
+    consecutive_failures = 0
+
+    def retry_or_return(result, mark_stale=False):
+        nonlocal consecutive_failures
+        consecutive_failures += 1
+        if mark_stale:
+            try:
+                murakumo_post(
+                    f"/infer/nodes/{MURAKUMO_NODE_NAME}/heartbeat",
+                    murakumo_heartbeat(False), opener)
+            except Exception:
+                pass
+        print(f"AIUEOS_MURAKUMO_LIVENESS state=reconnecting boot={boot} "
+              f"stage={result.get('stage')} failures={consecutive_failures} "
+              f"renewed={renewed} executed={executed}", flush=True)
+        if max_failures is not None and \
+                consecutive_failures >= max_failures:
+            return dict(result, failures=consecutive_failures)
+        sleeper(retry_interval)
+        return None
+
     while rounds is None or renewed < rounds:
         queue_status, jobs = (200, []) if renewed == 0 else \
             murakumo_get("/infer/queue", opener)
         if queue_status != 200 or not isinstance(jobs, list):
-            return {"state": "failed", "stage": "queue-poll",
-                    "status": queue_status, "boot": boot,
-                    "renewed": renewed, "executed": executed}
+            terminal = retry_or_return(
+                {"state": "failed", "stage": "queue-poll",
+                 "status": queue_status, "boot": boot,
+                 "renewed": renewed, "executed": executed})
+            if terminal:
+                return terminal
+            continue
         job = next((candidate for candidate in jobs
                     if job_payload(boot, candidate)), None)
         if job is not None:
@@ -507,16 +533,21 @@ def maintain_murakumo_liveness(
                     sleeper(interval)
                 continue
             if work.get("state") != "raced":
-                murakumo_post(
-                    f"/infer/nodes/{MURAKUMO_NODE_NAME}/heartbeat",
-                    murakumo_heartbeat(False), opener)
-                return {"state": "failed", "stage": "queued-work",
-                        "work-stage": work.get("stage"), "boot": boot,
-                        "renewed": renewed, "executed": executed}
+                terminal = retry_or_return(
+                    {"state": "failed", "stage": "queued-work",
+                     "work-stage": work.get("stage"), "boot": boot,
+                     "renewed": renewed, "executed": executed}, True)
+                if terminal:
+                    return terminal
+                continue
         ping = node_ping_payload(boot, sequence)
         if not ping:
-            return {"state": "failed", "stage": "liveness-ping",
-                    "renewed": renewed, "executed": executed}
+            terminal = retry_or_return(
+                {"state": "failed", "stage": "liveness-ping",
+                 "renewed": renewed, "executed": executed})
+            if terminal:
+                return terminal
+            continue
         sock.sendto(ping, peer)
         deadline = time.monotonic() + timeout
         valid = False
@@ -531,19 +562,29 @@ def maintain_murakumo_liveness(
             valid = candidate_peer == peer and \
                 verified_node_pong(candidate, boot, sequence)
         if not valid:
-            murakumo_post(
-                f"/infer/nodes/{MURAKUMO_NODE_NAME}/heartbeat",
-                murakumo_heartbeat(False), opener)
-            return {"state": "stale", "stage": "liveness-timeout",
-                    "boot": boot, "sequence": sequence, "renewed": renewed,
-                    "executed": executed}
+            terminal = retry_or_return(
+                {"state": "stale", "stage": "liveness-timeout",
+                 "boot": boot, "sequence": sequence, "renewed": renewed,
+                 "executed": executed}, True)
+            if terminal:
+                return terminal
+            continue
         status, _ = murakumo_post(
             f"/infer/nodes/{MURAKUMO_NODE_NAME}/heartbeat",
             murakumo_heartbeat(True), opener)
         if status != 201:
-            return {"state": "failed", "stage": "heartbeat-renew",
-                    "status": status, "boot": boot, "sequence": sequence,
-                    "renewed": renewed, "executed": executed}
+            terminal = retry_or_return(
+                {"state": "failed", "stage": "heartbeat-renew",
+                 "status": status, "boot": boot, "sequence": sequence,
+                 "renewed": renewed, "executed": executed})
+            if terminal:
+                return terminal
+            continue
+        if consecutive_failures:
+            print(f"AIUEOS_MURAKUMO_LIVENESS state=recovered boot={boot} "
+                  f"sequence={sequence} failures={consecutive_failures}",
+                  flush=True)
+            consecutive_failures = 0
         renewed += 1
         print(f"AIUEOS_MURAKUMO_LIVENESS state=renewed boot={boot} "
               f"sequence={sequence} count={renewed}", flush=True)
@@ -1068,6 +1109,22 @@ def selftest():
             b"AIUEOS_JOB_COMMIT_V1 boot=0123456789abcdef id=210 state=recorded"
         assert [entry[1] for entry in liveness_captured] == \
             ["POST", "GET", "POST", "POST", "POST"]
+        recovery_results = queue.Queue()
+        recovery_sleeps = []
+        def recover_sleep(seconds):
+            recovery_sleeps.append(seconds)
+            if recovery_results.empty():
+                recovery_results.put((
+                    "AIUEOS_NODE_PONG_V1 boot=0123456789abcdef seq=1 state=ready",
+                    (CLIENT_IP, 7779)))
+        recovered = maintain_murakumo_liveness(
+            "0123456789abcdef", fake_socket, (CLIENT_IP, 7779),
+            fake_liveness_open, recovery_results, recover_sleep,
+            rounds=1, interval=0, timeout=0.01,
+            max_failures=2, retry_interval=0)
+        assert recovered == {"state": "live", "boot": "0123456789abcdef",
+                             "renewed": 1, "executed": 0}
+        assert recovery_sleeps == [0]
         assert len(job_captured) == 5
     finally:
         globals()["MURAKUMO_NODE_DID"] = old_did
@@ -1080,7 +1137,7 @@ def selftest():
     except ValueError:
         pass
     print("AIUEOS_PXE_SELFTEST_OK dhcp=pxe+http+mac-bound tftp=oack control=token-bound "
-          "node-relay=request-bound murakumo=qualify+poll+claim+result+renew "
+          "node-relay=request-bound murakumo=qualify+poll+claim+result+renew+recover "
           "interface-bound=yes")
 
 
