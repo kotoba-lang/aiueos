@@ -40,6 +40,12 @@
         ;; auth.kotoba.cloud URL locally. No third-party QR endpoint learns a
         ;; live approval flow. Version 1.8.0 is the upstream Maven release.
         io.nayuki/qrcodegen {:mvn/version "1.8.0"}
+        ;; Device-owned CAIP-122/CACAO.  AIUEOS keeps the raw Ed25519 seed on
+        ;; the node, signs its own Murakumo heartbeat/queue capabilities, and
+        ;; never asks auth.kotoba.cloud to impersonate the device.
+        io.github.kotoba-lang/org-chainagnostic-cacao
+        {:git/url "https://github.com/kotoba-lang/org-chainagnostic-cacao.git"
+         :git/sha "cd98347a1b8460186dd1bb63ed818fb7d01ffd8a"}
         com.dylibso.chicory/wasm {:mvn/version "1.4.0"}
         com.dylibso.chicory/runtime {:mvn/version "1.4.0"}}
  :aliases

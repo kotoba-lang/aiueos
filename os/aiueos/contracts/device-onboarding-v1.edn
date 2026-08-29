@@ -18,17 +18,37 @@
   {:passkey {:requirements [:single-use-challenge :rp-id-bound
                             :origin-bound :user-present :user-verified
                             :signature-verified :sign-count-checked]}
-   :phone-scan {:requirements [:public-device-challenge :phone-device-id
+   :phone-scan {:requirements [:public-device-challenge :device-key-proof
+                               :phone-device-id
                                :phone-passkey-verified :human-approved]
                 :qr-contains [:device-did :model :public-challenge-reference]
                 :qr-excludes [:passkey-private-key :account-session
-                              :device-enrollment-token]}}
+                              :poll-token :device-enrollment-token]}}
+  :device-key-proof
+  {:signing :ed25519
+   :encryption :x25519
+   :start-message :aiueos-device-start-v1
+   :poll-message :aiueos-device-poll-v1
+   :private-key-leaves-device? false
+   :replayed-start-proof-accepted? false}
   :shared-flow [:factory :challenge-issued :account-authenticated
                 :device-key-proved :claimed :account-synced]
   :private-key-copy? false}
+ :network-profile-sync
+ {:source :authenticated-phone-browser
+  :profile-fields [:ssid :security :passphrase]
+  :suite :x25519-hkdf-sha256-aes-256-gcm-v1
+  :authority-sees-plaintext? false
+  :device-storage :encrypted-envelope
+  :native-k16-application :pending-wifi-driver
+  :required-proof [:authority-opaque-envelope :device-decryption
+                   :physical-association :reboot-recovery]}
  :node-addition
  {:after [:account-authenticated :device-key-proved]
   :murakumo {:initial-state :pending-runtime-proof
+             :authentication :device-owned-cacao
+             :cacao-issuer :device-signing-did
+             :cacao-copy-from-authority? false
              :ready? false
              :required-proof [:authenticated-heartbeat :real-job-result
                               :reboot-recovery]}
@@ -56,7 +76,13 @@
                                  :second-node-pack-import :conflict-policy]}}
  :present-evidence
  {:state-machine :implemented-and-unit-tested
+  :device-key-proof :implemented-and-unit-tested
+  :device-owned-cacao :implemented-and-unit-tested
+  :encrypted-network-profile :implemented-and-unit-tested
   :kotoba-browser-render :hosted-engine-smoke
+  :production-authority-route :pending-deployment
+  :physical-k16-direct-https :unverified
+  :physical-k16-wifi-application :unverified
   :physical-k16-auth :unverified
   :physical-k16-kekkai :unverified
   :physical-k16-storage :unverified}

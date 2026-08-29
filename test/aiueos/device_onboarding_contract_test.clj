@@ -19,6 +19,19 @@
           :device-key-proved :claimed :account-synced]
          (get-in contract [:authentication :shared-flow])))
   (is (false? (get-in contract [:authentication :private-key-copy?])))
+  (is (= :ed25519
+         (get-in contract [:authentication :device-key-proof :signing])))
+  (is (false? (get-in contract
+                      [:authentication :device-key-proof
+                       :private-key-leaves-device?])))
+  (is (= :x25519-hkdf-sha256-aes-256-gcm-v1
+         (get-in contract [:network-profile-sync :suite])))
+  (is (false? (get-in contract
+                      [:network-profile-sync :authority-sees-plaintext?])))
+  (is (= :pending-wifi-driver
+         (get-in contract [:network-profile-sync :native-k16-application])))
+  (is (= :device-owned-cacao
+         (get-in contract [:node-addition :murakumo :authentication])))
   (is (false? (get-in contract [:node-addition :murakumo :ready?])))
   (is (= :pending-native-adapter
          (get-in contract [:node-addition :kekkai :initial-state])))

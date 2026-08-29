@@ -22,6 +22,8 @@
   `/api/session/operator` and a separate command."
   (:require [clojure.string :as str]
             [aiueos.device-auth :as device-auth]
+            #?(:clj [cacao.core :as cacao])
+            #?(:clj [ed25519.core :as ed25519])
             [grant.enroll :as enroll]
             #?(:clj [grant.signing :as signing])
             #?(:clj [clojure.edn :as edn])
@@ -41,6 +43,9 @@
               [java.nio.charset StandardCharsets]
               [java.security KeyFactory KeyPairGenerator SecureRandom Signature]
               [java.security.spec PKCS8EncodedKeySpec X509EncodedKeySpec]
+              [java.util Base64]
+              [javax.crypto Cipher KeyAgreement Mac]
+              [javax.crypto.spec GCMParameterSpec SecretKeySpec]
               [java.time Duration Instant]
               [java.util.concurrent Executors TimeUnit])))
 
@@ -271,13 +276,47 @@
          (.nextBytes (SecureRandom.) buf)
          (signing/hex-encode buf)))
 
+     (defn- tail-bytes [encoded n]
+       (byte-array (take-last n (seq encoded))))
+
+     (defn- b64url-encode [^bytes value]
+       (.encodeToString (.withoutPadding (Base64/getUrlEncoder)) value))
+
+     (defn- b64url-decode [value]
+       (.decode (Base64/getUrlDecoder) ^String value))
+
+     (defn start-proof-message
+       [{:keys [device-did challenge model method signing-public-key
+                encryption-public-key request-nonce]}]
+       (str "aiueos-device-start-v1\n"
+            device-did "\n" challenge "\n" model "\n" method "\n"
+            signing-public-key "\n" encryption-public-key "\n" request-nonce))
+
+     (defn poll-proof-message
+       [{:keys [flow-id poll-token device-did challenge]}]
+       (str "aiueos-device-poll-v1\n"
+            flow-id "\n" device-did "\n" challenge "\n" poll-token))
+
      (defn generate-device-keys
        "On-device operational key, hosted file-backed (ADR-2608221625). Not a
-       cloud credential. JDK Ed25519, the same algorithm grant.signing verifies."
+       cloud credential. The Ed25519 seed remains device-owned and can mint a
+       self-signed CACAO; a separate X25519 key decrypts network profiles."
        []
-       (let [kp (.generateKeyPair (KeyPairGenerator/getInstance "Ed25519"))]
+       (let [kp (.generateKeyPair (KeyPairGenerator/getInstance "Ed25519"))
+             encryption-kp (.generateKeyPair (KeyPairGenerator/getInstance "X25519"))
+             seed (tail-bytes (.getEncoded (.getPrivate kp)) 32)
+             raw-public (tail-bytes (.getEncoded (.getPublic kp)) 32)]
          {:public-hex (signing/hex-encode (.getEncoded (.getPublic kp)))
-          :private-hex (signing/hex-encode (.getEncoded (.getPrivate kp)))}))
+          :private-hex (signing/hex-encode (.getEncoded (.getPrivate kp)))
+          :signing-seed-hex (signing/hex-encode seed)
+          :signing-public-b64url (b64url-encode raw-public)
+          :signing-did (ed25519/did-key-from-seed seed)
+          :encryption-public-hex
+          (signing/hex-encode (.getEncoded (.getPublic encryption-kp)))
+          :encryption-private-hex
+          (signing/hex-encode (.getEncoded (.getPrivate encryption-kp)))
+          :encryption-public-b64url
+          (b64url-encode (tail-bytes (.getEncoded (.getPublic encryption-kp)) 32))}))
 
      (defn sign-nonce
        [private-hex nonce]
@@ -288,6 +327,34 @@
                    (.initSign pk)
                    (.update (.getBytes (str nonce) StandardCharsets/UTF_8)))]
          (signing/hex-encode (.sign sig))))
+
+     (defn sign-text-b64url
+       [private-hex value]
+       (let [kf (KeyFactory/getInstance "Ed25519")
+             pk (.generatePrivate kf (PKCS8EncodedKeySpec.
+                                      (byte-array (signing/hex-decode private-hex))))
+             sig (doto (Signature/getInstance "Ed25519")
+                   (.initSign pk)
+                   (.update (.getBytes (str value) StandardCharsets/UTF_8)))]
+         (b64url-encode (.sign sig))))
+
+     (defn device-cacao
+       "Mint one short-lived CACAO in the device runtime.  The issuer is the
+       device's own did:key and every use receives a fresh nonce."
+       [device {:keys [audience resources ttl-seconds]
+                :or {audience "https://api.murakumo.cloud"
+                     resources ["murakumo://can/node:heartbeat"
+                                "murakumo://can/infer:queue"]
+                     ttl-seconds 300}}]
+       (let [now (.truncatedTo (Instant/now) java.time.temporal.ChronoUnit/SECONDS)
+             seed (byte-array (signing/hex-decode (:signing-seed-hex device)))]
+         (cacao/mint {:seed seed
+                      :aud audience
+                      :domain "api.murakumo.cloud"
+                      :iat (str now)
+                      :exp (str (.plusSeconds now (long ttl-seconds)))
+                      :nonce (rand-hex 16)
+                      :resources resources})))
 
      (defn verify-nonce
        [public-hex nonce signature-hex]
@@ -335,6 +402,8 @@
      (defn device-auth-file [dir] (io/file dir "state" "device-auth.edn"))
      (defn device-auth-receipt-file [dir]
        (io/file dir "state" "device-auth-receipt.edn"))
+     (defn network-profiles-file [dir]
+       (io/file dir "state" "network-profiles.edn"))
      (defn pre-grant-file [dir] (io/file dir "image" "enroll-grant.edn"))
      (defn setup-json-file [dir] (io/file dir "setup.json"))
      (defn qmp-file [dir] (io/file dir "qemu.qmp"))
@@ -378,9 +447,28 @@
        (load-edn (device-file dir) nil))
 
      (defn ensure-operational-keys [device]
-       (if (and (:public-hex device) (:private-hex device))
+       (if (and (:public-hex device) (:private-hex device)
+                (:signing-seed-hex device) (:signing-public-b64url device)
+                (:signing-did device)
+                (:encryption-public-hex device) (:encryption-private-hex device)
+                (:encryption-public-b64url device))
          device
-         (merge device (generate-device-keys))))
+         (let [existing-signing?
+               (and (:public-hex device) (:private-hex device))
+               generated (generate-device-keys)
+               signing-fields
+               (when existing-signing?
+                 (let [seed (tail-bytes
+                             (byte-array (signing/hex-decode (:private-hex device))) 32)]
+                   {:public-hex (:public-hex device)
+                    :private-hex (:private-hex device)
+                    :signing-seed-hex (signing/hex-encode seed)
+                    :signing-public-b64url
+                    (b64url-encode
+                     (tail-bytes
+                      (byte-array (signing/hex-decode (:public-hex device))) 32))
+                    :signing-did (ed25519/did-key-from-seed seed)}))]
+           (merge device generated signing-fields))))
 
      (defn setup-fields
        [device endpoint]
@@ -625,7 +713,111 @@
          (if (> (count raw) 65536)
            {:status 502 :body {:error "authority-response-too-large"}}
            {:status (.statusCode response)
-            :body (or (parse-flat-json raw) {})})))
+            :body
+            (let [flat (or (parse-flat-json raw) {})
+                  envelope-json (second
+                                 (re-find #"\"networkEnvelope\"\s*:\s*(\{[^{}]*\})"
+                                          raw))]
+              (cond-> flat
+                envelope-json
+                (assoc :networkEnvelope (parse-flat-json envelope-json))))})))
+
+     (defn- hmac-sha256 [^bytes key ^bytes value]
+       (let [mac (Mac/getInstance "HmacSHA256")]
+         (.init mac (SecretKeySpec. key "HmacSHA256"))
+         (.doFinal mac value)))
+
+     (defn- hkdf-sha256-32 [^bytes salt ^bytes shared ^bytes info]
+       (let [prk (hmac-sha256 salt shared)
+             expanded-input (byte-array (inc (alength info)))]
+         (System/arraycopy info 0 expanded-input 0 (alength info))
+         (aset-byte expanded-input (alength info) (byte 1))
+         (hmac-sha256 prk expanded-input)))
+
+     (def ^:private x25519-spki-prefix
+       (byte-array (signing/hex-decode "302a300506032b656e032100")))
+
+     (defn decrypt-network-envelope
+       "Decrypt the phone-created Wi-Fi profile with this device's X25519 key.
+       The authority never receives the private half or this plaintext."
+       [device flow envelope]
+       (when envelope
+         (let [private-key
+               (.generatePrivate
+                (KeyFactory/getInstance "X25519")
+                (PKCS8EncodedKeySpec.
+                 (byte-array (signing/hex-decode (:encryption-private-hex device)))))
+               peer-raw (b64url-decode (:ephemeralPublicKey envelope))
+               peer-encoded (byte-array (+ (alength x25519-spki-prefix)
+                                           (alength peer-raw)))
+               _ (System/arraycopy x25519-spki-prefix 0 peer-encoded 0
+                                   (alength x25519-spki-prefix))
+               _ (System/arraycopy peer-raw 0 peer-encoded
+                                   (alength x25519-spki-prefix) (alength peer-raw))
+               peer-key (.generatePublic
+                         (KeyFactory/getInstance "X25519")
+                         (X509EncodedKeySpec. peer-encoded))
+               agreement (doto (KeyAgreement/getInstance "X25519")
+                           (.init private-key)
+                           (.doPhase peer-key true))
+               shared (.generateSecret agreement)
+               aad (.getBytes (str "aiueos-wifi-profile-v1\n" (:flow-id flow))
+                              StandardCharsets/UTF_8)
+               salt (.getBytes (str (:challenge flow)) StandardCharsets/UTF_8)
+               key (hkdf-sha256-32 salt shared aad)
+               cipher (doto (Cipher/getInstance "AES/GCM/NoPadding")
+                        (.init Cipher/DECRYPT_MODE
+                               (SecretKeySpec. key "AES")
+                               (GCMParameterSpec. 128 (b64url-decode (:iv envelope))))
+                        (.updateAAD aad))
+               plaintext (.doFinal cipher (b64url-decode (:ciphertext envelope)))
+               profile (parse-flat-json (String. plaintext StandardCharsets/UTF_8))]
+           (when (and (= 1 (:version profile))
+                      (string? (:ssid profile))
+                      (<= 1 (count (:ssid profile)) 32)
+                      (contains? #{"open" "wpa2-personal" "wpa3-personal"}
+                                 (:security profile))
+                      (or (= "open" (:security profile))
+                          (<= 8 (count (:passphrase profile)) 63)))
+             profile))))
+
+     (defn encrypt-network-profile
+       "JVM reference for the browser's X25519/HKDF/AES-GCM envelope.  Used by
+       compatibility tests and recovery tooling; the production phone page
+       performs this operation locally with WebCrypto."
+       [device flow profile]
+       (let [ephemeral (.generateKeyPair (KeyPairGenerator/getInstance "X25519"))
+             peer-raw (b64url-decode (:encryption-public-b64url device))
+             peer-encoded (byte-array (+ (alength x25519-spki-prefix)
+                                         (alength peer-raw)))
+             _ (System/arraycopy x25519-spki-prefix 0 peer-encoded 0
+                                 (alength x25519-spki-prefix))
+             _ (System/arraycopy peer-raw 0 peer-encoded
+                                 (alength x25519-spki-prefix) (alength peer-raw))
+             peer-key (.generatePublic
+                       (KeyFactory/getInstance "X25519")
+                       (X509EncodedKeySpec. peer-encoded))
+             agreement (doto (KeyAgreement/getInstance "X25519")
+                         (.init (.getPrivate ephemeral))
+                         (.doPhase peer-key true))
+             shared (.generateSecret agreement)
+             aad (.getBytes (str "aiueos-wifi-profile-v1\n" (:flow-id flow))
+                            StandardCharsets/UTF_8)
+             salt (.getBytes (str (:challenge flow)) StandardCharsets/UTF_8)
+             key (hkdf-sha256-32 salt shared aad)
+             iv (byte-array 12)
+             _ (.nextBytes (SecureRandom.) iv)
+             cipher (doto (Cipher/getInstance "AES/GCM/NoPadding")
+                      (.init Cipher/ENCRYPT_MODE
+                             (SecretKeySpec. key "AES")
+                             (GCMParameterSpec. 128 iv))
+                      (.updateAAD aad))
+             plaintext (.getBytes (->json profile) StandardCharsets/UTF_8)]
+         {:suite "x25519-hkdf-sha256-aes-256-gcm-v1"
+          :ephemeralPublicKey
+          (b64url-encode (tail-bytes (.getEncoded (.getPublic ephemeral)) 32))
+          :iv (b64url-encode iv)
+          :ciphertext (b64url-encode (.doFinal cipher plaintext))}))
 
      (defn production-device-auth-authority-client
        [operation body]
@@ -733,10 +925,13 @@
        (let [method (keyword (or method "passkey"))
              now (System/currentTimeMillis)
              challenge (rand-hex 32)
+             device (swap! (:device rt) ensure-operational-keys)
+             _ (save-device (:dir rt) device)
+             request-nonce (rand-hex 32)
              supported? (contains? device-auth/supported-methods method)
              state (assoc
                     (device-auth/issue-challenge
-                     (device-auth-factory @(:device rt))
+                     (device-auth-factory device)
                      {:challenge challenge :now-ms now :ttl-ms 300000})
                     :auth/requested-method method)]
          (reset! (:device-auth-flow rt) nil)
@@ -749,12 +944,29 @@
             :reason "method-unsupported"
             :authority device-auth-authority}
            (try
-             (let [response ((:device-auth-authority-client rt)
+             (let [proof-input
+                   {:device-did (:device/did state)
+                    :challenge challenge
+                    :model (:device/model state)
+                    :method (name method)
+                    :signing-public-key (:signing-public-b64url device)
+                    :encryption-public-key (:encryption-public-b64url device)
+                    :request-nonce request-nonce}
+                   response ((:device-auth-authority-client rt)
                              :start
                              {:deviceDid (:device/did state)
                               :challenge challenge
                               :model (:device/model state)
-                              :method (name method)})
+                              :method (name method)
+                              :deviceSigningPublicKey
+                              (:signing-public-b64url device)
+                              :deviceEncryptionPublicKey
+                              (:encryption-public-b64url device)
+                              :requestNonce request-nonce
+                              :deviceProof
+                              (sign-text-b64url
+                               (:private-hex device)
+                               (start-proof-message proof-input))})
                    body (:body response)]
                (if-not (and (= 201 (:status response))
                             (valid-authority-start? body))
@@ -770,6 +982,9 @@
                              :device-did (:device/did state)
                              :challenge challenge
                              :method method
+                             :signing-public-key (:signing-public-b64url device)
+                             :encryption-public-key (:encryption-public-b64url device)
+                             :signing-did (:signing-did device)
                              :expires-at-ms expires-at
                              :interval (:interval body)
                              :verification-uri-complete
@@ -829,6 +1044,8 @@
             (= (name (:auth/requested-method state)) (:method body))
             (= device-auth-authority (:authority body))
             (= device-auth-rp-id (:rpId body))
+            (= (:signing-public-key flow) (:deviceSigningPublicKey body))
+            (= (:encryption-public-key flow) (:deviceEncryptionPublicKey body))
             (true? (:userPresent body))
             (true? (:userVerified body))
             (true? (:passkeyVerified body))
@@ -854,11 +1071,22 @@
 
            :else
            (try
-             (let [response ((:device-auth-authority-client rt)
+             (let [device (swap! (:device rt) ensure-operational-keys)
+                   poll-proof
+                   (sign-text-b64url
+                    (:private-hex device)
+                    (poll-proof-message
+                     {:flow-id (:flow-id flow)
+                      :poll-token (:poll-token flow)
+                      :device-did (:device-did flow)
+                      :challenge (:challenge flow)}))
+                   response ((:device-auth-authority-client rt)
                              :poll
-                             {:pollToken (:poll-token flow)
+                             {:flowId (:flow-id flow)
+                              :pollToken (:poll-token flow)
                               :deviceDid (:device-did flow)
-                              :challenge (:challenge flow)})
+                              :challenge (:challenge flow)
+                              :deviceProof poll-proof})
                    body (:body response)]
                (cond
                  (= 202 (:status response))
@@ -897,7 +1125,6 @@
                                   :phone/approved? true}
                            authenticated
                            (device-auth/authenticate-account state proof now)
-                           device (swap! (:device rt) ensure-operational-keys)
                            signature (sign-nonce (:private-hex device)
                                                  (:auth/challenge authenticated))
                            possession-valid?
@@ -916,7 +1143,13 @@
                          {:http-status 401
                           :decision "deny"
                           :reason (name (:aiueos.device-auth/reason claimed))}
-                         (let [device' (assoc device
+                         (let [network-envelope (:networkEnvelope body)
+                               network-profile
+                               (when network-envelope
+                                 (decrypt-network-envelope device flow network-envelope))
+                               network-valid? (or (nil? network-envelope)
+                                                  (some? network-profile))
+                               device' (assoc device
                                               :state :claimed
                                               :owner (:account/did claimed)
                                               :principal-id
@@ -932,24 +1165,47 @@
                                         :device-did (:device/did claimed)
                                         :method method
                                         :claimed-at (str (Instant/now))
+                                        :device-signing-did (:signing-did device)
+                                        :network-profile-synced?
+                                        (boolean network-profile)
                                         :private-key-copied? false}]
-                           (reset! (:device rt) device')
-                           (save-device (:dir rt) device')
-                           (save-ledger
-                            (:ledger-path rt)
-                            (record-claimed-device
-                             (load-ledger (:ledger-path rt)) device'))
-                           (spit-edn (device-auth-file (:dir rt))
-                                     (public-device-auth-state claimed))
-                           (spit-edn (device-auth-receipt-file (:dir rt)) receipt)
-                           {:http-status 200
-                            :decision "grant"
-                            :state "claimed"
-                            :principal_id (:account/principal-id claimed)
-                            :account_did (:account/did claimed)
-                            :device_did (:device/did claimed)
-                            :private_key_copied false
-                            :node_plan plan})))))))
+                           (if-not network-valid?
+                             {:http-status 401
+                              :decision "deny"
+                              :reason "network-envelope-decryption-invalid"}
+                             (do
+                               (reset! (:device rt) device')
+                               (save-device (:dir rt) device')
+                               (save-ledger
+                                (:ledger-path rt)
+                                (record-claimed-device
+                                 (load-ledger (:ledger-path rt)) device'))
+                               (spit-edn (device-auth-file (:dir rt))
+                                         (public-device-auth-state claimed))
+                               (spit-edn (device-auth-receipt-file (:dir rt)) receipt)
+                               ;; Persist only the device-encrypted envelope.
+                               ;; Plaintext exists only long enough to validate
+                               ;; and apply it to the local network manager.
+                               (when network-profile
+                                 (spit-edn
+                                  (network-profiles-file (:dir rt))
+                                  {:format :aiueos.network-profiles/v1
+                                   :encrypted-envelope network-envelope
+                                   :ssid-present? true
+                                   :security (:security network-profile)
+                                   :applied? false
+                                   :apply-state :pending-native-wifi-driver}))
+                               {:http-status 200
+                                :decision "grant"
+                                :state "claimed"
+                                :principal_id (:account/principal-id claimed)
+                                :account_did (:account/did claimed)
+                                :device_did (:device/did claimed)
+                                :device_signing_did (:signing-did device)
+                                :network_profile_synced
+                                (boolean network-profile)
+                                :private_key_copied false
+                                :node_plan plan})))))))))
              (catch Exception _
                {:http-status 502
                 :decision "deny"

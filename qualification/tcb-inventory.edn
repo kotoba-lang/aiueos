@@ -4,7 +4,7 @@
  ;; other field, so an entry cannot change without this date having to change
  ;; too. It said 2026-08-01 while the file was being edited that morning, and
  ;; nothing read it.
- :tcb/content-digest "f5a327ca16fc989faaaf741faa7da5c28bc0634f58ef379c6a84f8d1a2bd20dc"
+ :tcb/content-digest "592fb584258fb6db8079a0b2173034798337b7d21cb05d4673e155092d701cfb"
  :tcb/scope
  "Code whose compromise can grant authority, escape Wasm isolation, falsify
   production admission/audit evidence, or access hardware outside a component."
@@ -31,7 +31,7 @@
    ;; claimed transitions. Both can grant device authority and therefore belong
    ;; in this inventory.
   {:path "src/aiueos/phone_bind.cljc" :role :device-authorization-hosted-adapter
-   :sha256 "64a8c78b2c54be5ad20949348d179d68bb8334cda613431882cc33461732a9f1"}
+   :sha256 "2442353584f3f244f8fa0b58767cc3851244a35d8639edcc81aa6066481b9582"}
   {:path "src/aiueos/device_auth.cljc" :role :device-authorization-state-machine
    :sha256 "ebe85a848e343493408b2b84456e65feda9e3c87f44ce612e03b10d583ebf52f"}
    ;; Device key custody and possession proofs.
@@ -122,6 +122,10 @@
  [{:coordinate "io.nayuki/qrcodegen" :version "1.8.0"
    :role :device-authorization-qr-renderer :source :maven
    :sha256 "1d1aef3caea19387e7dd8034835054bab83db57a02b69cfc6dbc849746f0be21"}
+  {:coordinate "io.github.kotoba-lang/org-chainagnostic-cacao" :source :git
+   :git-url "https://github.com/kotoba-lang/org-chainagnostic-cacao.git"
+   :git-sha "cd98347a1b8460186dd1bb63ed818fb7d01ffd8a"
+   :role :device-owned-cacao-mint-and-verify}
   {:coordinate "com.dylibso.chicory/wasm" :version "1.4.0"
    :role :wasm-parser :source :maven
    :sha256 "a850df5e77f60411648fd970144f825517a2c076dbb807ff6de95c6cfa439968"}
