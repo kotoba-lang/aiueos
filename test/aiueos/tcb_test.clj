@@ -41,6 +41,7 @@
   the repository boundary is the granularity, not whether the code is pinned.
   What must not change is that the boundary is named somewhere."
   #{"io.github.kotoba-lang/grant"
+    "io.github.kotoba-lang/org-chainagnostic-cacao"
     "io.nayuki/qrcodegen"})
 
 (deftest checked-in-tcb-inventory-has-no-drift
@@ -77,8 +78,8 @@
           ;; authorization adapter/state machine and the local QR renderer;
           ;; the same inventory update also records the already-declared
           ;; window-session-state dependency instead of leaving it outside the
-          ;; external closure.
-          :files 24 :external 10 :classpath 10 :properties 6 :errors []}
+          ;; external closure. 10 -> 11: the device-owned CACAO implementation.
+          :files 24 :external 11 :classpath 10 :properties 6 :errors []}
          (tcb/validate (tcb/read-inventory)
                        (clojure.edn/read-string (slurp "deps.edn"))
                        (clojure.edn/read-string (slurp "security-adoption.edn"))

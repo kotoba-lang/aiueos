@@ -325,13 +325,23 @@ uses `grant.enroll` (not a second identity stack). The
 product account flow sends `Passkey` or `phone-scan` into one single-use
 challenge at `https://auth.kotoba.cloud/v1/aiueos/device/start`; the helper polls
 `/v1/aiueos/device/poll` with a separate node-only secret and then proves the
-device-owned Ed25519 key. The browser and locally rendered QR receive only the
-public approval URL. They receive neither the poll secret, device enrollment
-token, nor an account/passkey private key. The formal WebAuthn authority and RP
-ID are both `auth.kotoba.cloud` (ADR-0113). The local check-in ledger is labelled
+device-owned Ed25519 key. Start and poll are each signed by that key; the start
+also binds a separate X25519 public key. The browser and locally rendered QR
+receive only the public approval URL. They receive neither the poll secret,
+device enrollment token, nor an account/passkey private key. The formal WebAuthn
+authority and RP ID are both `auth.kotoba.cloud` (ADR-0113). An optional Wi-Fi
+profile is encrypted in the authenticated phone browser directly to that X25519
+key; the authority receives only an opaque AES-GCM envelope and AIUEOS persists
+only that envelope after local decryption/validation. Native K16 radio
+association is still pending its driver gate. The local check-in ledger is labelled
 `non-authoritative`; production still names `https://kotobase.net`. A mocked
 authority gate proves the adapter and binding rules; a production deployment
 plus a human Passkey ceremony remains separate live evidence.
+
+The device-owned Ed25519 seed can also mint a five-minute CACAO whose issuer is
+the node's own `did:key`, for Murakumo heartbeat and inference-queue
+capabilities. This is hosted cryptographic evidence; the physical K16 still
+uses its Mac UDP relay, so it is not yet evidence of K16-direct HTTPS/CACAO.
 
 On Apple Silicon this uses `qemu-system-aarch64` + HVF + edk2 firmware, the
 same ISA `aiueos.vm` defaults to. It is **not** the x86_64 C-free kernel

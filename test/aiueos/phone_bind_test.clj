@@ -5,6 +5,7 @@
   `clojure -M:phone-bind smoke` (and `pre-enroll`). These tests name the
   reasons a bind is refused so a silent pass cannot stand in for a phone."
   (:require [aiueos.phone-bind :as pb]
+            [cacao.core :as cacao]
             [clojure.test :refer [deftest is testing]]
             [grant.enroll :as enroll]))
 
@@ -68,6 +69,29 @@
             pb/device-auth-start)
       "the pre-existing generic Device Code route is a different contract"))
 
+(deftest device-owned-cacao-and-network-envelope-roundtrip
+  (let [device (pb/ensure-operational-keys (pb/mint-unbound-device {}))
+        minted (pb/device-cacao device {})
+        checked (cacao/verify (:cacao-b64 minted))
+        flow {:flow-id "flow-network-roundtrip"
+              :challenge "challenge-network-roundtrip"}
+        profile {:version 1 :ssid "K16 Lab" :security "wpa3-personal"
+                 :passphrase "correct-horse-battery-staple"
+                 :hiddenNetwork false :autoConnect true}
+        envelope (pb/encrypt-network-profile device flow profile)
+        opened (pb/decrypt-network-envelope device flow envelope)]
+    (is (:valid? checked))
+    (is (= (:signing-did device) (:iss checked)))
+    (is (= "https://api.murakumo.cloud" (get-in checked [:payload :aud])))
+    (is (= "x25519-hkdf-sha256-aes-256-gcm-v1" (:suite envelope)))
+    (is (= (select-keys profile [:version :ssid :security :passphrase
+                                :hiddenNetwork :autoConnect])
+           (select-keys opened [:version :ssid :security :passphrase
+                                :hiddenNetwork :autoConnect])))
+    (is (not (re-find #"K16 Lab|correct-horse"
+                      (pr-str envelope)))
+        "the authority-visible envelope must contain no Wi-Fi plaintext")))
+
 (deftest p1c-copied-grant-cannot-bind-a-second-device
   (let [grant {:aiueos.enroll/kind :pre-grant
                :nonce "once-only"
@@ -124,6 +148,8 @@
                         :activeDid "did:key:z6MkPhonePasskey"
                         :authority "https://auth.kotoba.cloud"
                         :rpId "auth.kotoba.cloud"
+                        :deviceSigningPublicKey (:deviceSigningPublicKey start)
+                        :deviceEncryptionPublicKey (:deviceEncryptionPublicKey start)
                         :userPresent true
                         :userVerified true
                         :passkeyVerified true}}))
@@ -188,6 +214,16 @@
             "the consumed authority result has no local replay path")
         (is (= "private-device-poll-token-0123456789abcdef"
                (get-in @authority-state [:poll :pollToken])))
+        (is (= "flow_0123456789abcdefghijklmnopqrstuvwxyzABCDEFG"
+               (get-in @authority-state [:poll :flowId])))
+        (is (re-matches #"[A-Za-z0-9_-]{43}"
+                        (get-in @authority-state [:start :deviceSigningPublicKey])))
+        (is (re-matches #"[A-Za-z0-9_-]{43}"
+                        (get-in @authority-state [:start :deviceEncryptionPublicKey])))
+        (is (re-matches #"[A-Za-z0-9_-]{86}"
+                        (get-in @authority-state [:start :deviceProof])))
+        (is (re-matches #"[A-Za-z0-9_-]{86}"
+                        (get-in @authority-state [:poll :deviceProof])))
         (is (.isFile (pb/device-auth-file dir)))
         (is (.isFile (pb/device-auth-receipt-file dir)))
         (is (not (re-find #"private-device-poll-token"
@@ -223,6 +259,8 @@
                            :activeDid "did:key:z6MkPhonePasskey"
                            :authority "https://evil.example"
                            :rpId "auth.kotoba.cloud"
+                           :deviceSigningPublicKey (:deviceSigningPublicKey @started)
+                           :deviceEncryptionPublicKey (:deviceEncryptionPublicKey @started)
                            :userPresent true :userVerified true
                            :passkeyVerified true}}))
         rt (pb/make-runtime {:dir dir :listen-port 0
