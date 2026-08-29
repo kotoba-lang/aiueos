@@ -1,5 +1,9 @@
 #include <stdint.h>
 #include <stddef.h>
+#include "../include/boot_info.h"
+#ifdef AIUEOS_QWEN38_MODEL_HANDOFF
+#include "aiueos-model-identity.h"
+#endif
 
 #define EFIAPI __attribute__((ms_abi))
 #define SYSVABI __attribute__((sysv_abi))
@@ -37,6 +41,7 @@ struct efi_simple_text_output {
 };
 
 typedef efi_status(EFIAPI *efi_allocate_pages)(uint32_t, uint32_t, uint64_t, uint64_t *);
+typedef efi_status(EFIAPI *efi_free_pages)(uint64_t, uint64_t);
 typedef efi_status(EFIAPI *efi_get_memory_map)(uint64_t *, void *, uint64_t *, uint64_t *, uint32_t *);
 typedef efi_status(EFIAPI *efi_allocate_pool)(uint32_t, uint64_t, void **);
 typedef efi_status(EFIAPI *efi_free_pool)(void *);
@@ -51,7 +56,7 @@ struct efi_boot_services {
   struct efi_table_header header;
   void *raise_tpl, *restore_tpl;
   efi_allocate_pages allocate_pages;
-  void *free_pages;
+  efi_free_pages free_pages;
   efi_get_memory_map get_memory_map;
   efi_allocate_pool allocate_pool;
   efi_free_pool free_pool;
@@ -133,16 +138,6 @@ struct elf64_program_header {
   uint32_t type, flags; uint64_t offset, vaddr, paddr, filesz, memsz, align;
 };
 
-struct aiueos_boot_info {
-  uint64_t magic, version;
-  void *memory_map; uint64_t memory_map_size, descriptor_size, descriptor_version;
-  void *acpi_rsdp;
-  uint64_t framebuffer_base, framebuffer_size;
-  uint32_t framebuffer_width, framebuffer_height, framebuffer_stride, framebuffer_format;
-  uint64_t initramfs_base, initramfs_size;
-  void *runtime_services;
-  uint64_t firmware_cr3;
-};
 struct aiueos_qualification_record {
   uint32_t magic;
   uint16_t version, state;
@@ -221,6 +216,12 @@ static uint64_t read_cr3(void) {
   uint64_t value;
   __asm__ volatile("mov %%cr3, %0" : "=r"(value));
   return value;
+}
+
+static uint64_t read_tsc(void) {
+  uint32_t low, high;
+  __asm__ volatile("rdtsc" : "=a"(low), "=d"(high));
+  return ((uint64_t)high << 32) | low;
 }
 
 static void copy_bytes(void *to, const void *from, uint64_t size) {
@@ -573,6 +574,151 @@ static efi_status read_verified_kernel(struct efi_boot_services *bs, efi_handle 
   return status;
 }
 
+#ifdef AIUEOS_QWEN38_MODEL_HANDOFF
+#define MODEL_READ_CHUNK (16ULL * 1024ULL * 1024ULL)
+#define MODEL_HUGE_PAGE_SIZE (2ULL * 1024ULL * 1024ULL)
+_Static_assert(AIUEOS_MODEL_PART_COUNT == 3U, "Qwen bundle part count changed");
+_Static_assert(AIUEOS_MODEL_PART0_BYTES + AIUEOS_MODEL_PART1_BYTES +
+               AIUEOS_MODEL_PART2_BYTES == AIUEOS_MODEL_TOTAL_BYTES,
+               "Qwen bundle lengths do not sum to the artifact length");
+
+static efi_status read_exact_model_part(struct efi_file *root,
+                                        const char16 *path,
+                                        uint8_t *destination,
+                                        uint64_t expected_bytes) {
+  struct efi_file *file = 0;
+  if (!root || root->open(root, &file, path, 1, 0) != EFI_SUCCESS || !file)
+    return EFI_INVALID_PARAMETER;
+  uint64_t offset = 0;
+  while (offset < expected_bytes) {
+    uint64_t remaining = expected_bytes - offset;
+    uint64_t bytes = remaining > MODEL_READ_CHUNK ? MODEL_READ_CHUNK : remaining;
+    efi_status status = file->read(file, &bytes, destination + offset);
+    if (status != EFI_SUCCESS || !bytes || bytes > remaining) {
+      file->close(file);
+      return EFI_INVALID_PARAMETER;
+    }
+    offset += bytes;
+  }
+  uint8_t extra = 0;
+  uint64_t extra_bytes = 1;
+  efi_status status = file->read(file, &extra_bytes, &extra);
+  file->close(file);
+  return status == EFI_SUCCESS && extra_bytes == 0 ?
+    EFI_SUCCESS : EFI_INVALID_PARAMETER;
+}
+
+static efi_status read_model_on_device(struct efi_boot_services *bs,
+                                       efi_handle device, uint8_t *model) {
+  static const char16 part0[] = u"\\EFI\\AIUEOS\\Q38P0.BIN";
+  static const char16 part1[] = u"\\EFI\\AIUEOS\\Q38P1.BIN";
+  static const char16 part2[] = u"\\EFI\\AIUEOS\\Q38P2.BIN";
+  struct efi_simple_file_system *fs = 0;
+  struct efi_file *root = 0;
+  if (bs->handle_protocol(device, &simple_fs_guid, (void **)&fs) != EFI_SUCCESS ||
+      !fs || fs->open_volume(fs, &root) != EFI_SUCCESS || !root)
+    return EFI_INVALID_PARAMETER;
+  efi_status status = read_exact_model_part(
+    root, part0, model, AIUEOS_MODEL_PART0_BYTES);
+  if (status == EFI_SUCCESS)
+    status = read_exact_model_part(root, part1,
+      model + AIUEOS_MODEL_PART0_BYTES, AIUEOS_MODEL_PART1_BYTES);
+  if (status == EFI_SUCCESS)
+    status = read_exact_model_part(root, part2,
+      model + AIUEOS_MODEL_PART0_BYTES + AIUEOS_MODEL_PART1_BYTES,
+      AIUEOS_MODEL_PART2_BYTES);
+  root->close(root);
+  if (status != EFI_SUCCESS) return status;
+  uint8_t digest[32];
+  sha256(model, AIUEOS_MODEL_TOTAL_BYTES, digest);
+  for (uint32_t i = 0; i < 32; i++)
+    if (digest[i] != aiueos_expected_model_sha256[i])
+      return EFI_INVALID_PARAMETER;
+  return EFI_SUCCESS;
+}
+
+static efi_status load_verified_model(struct efi_boot_services *bs,
+                                      efi_handle boot_device,
+                                      struct aiueos_boot_info *info) {
+  if (!bs || !bs->allocate_pages || !bs->free_pages || !info ||
+      !AIUEOS_MODEL_TOTAL_BYTES ||
+      AIUEOS_MODEL_TOTAL_BYTES > AIUEOS_MODEL_MAX_ADDRESS + 1ULL)
+    return EFI_INVALID_PARAMETER;
+  uint64_t mapped_bytes =
+    (AIUEOS_MODEL_TOTAL_BYTES + MODEL_HUGE_PAGE_SIZE - 1) &
+    ~(MODEL_HUGE_PAGE_SIZE - 1);
+  uint64_t pages = mapped_bytes / PAGE_SIZE;
+  uint64_t raw_pages = pages + MODEL_HUGE_PAGE_SIZE / PAGE_SIZE - 1;
+  uint64_t raw_base = AIUEOS_MODEL_MAX_ADDRESS;
+  if (!pages || raw_pages < pages ||
+      raw_pages > (AIUEOS_MODEL_MAX_ADDRESS + 1ULL) / PAGE_SIZE)
+    return EFI_INVALID_PARAMETER;
+  if (bs->allocate_pages(EFI_ALLOCATE_MAX_ADDRESS, EFI_LOADER_DATA,
+                         raw_pages, &raw_base) != EFI_SUCCESS)
+    return EFI_INVALID_PARAMETER;
+  uint64_t base = (raw_base + MODEL_HUGE_PAGE_SIZE - 1) &
+                  ~(MODEL_HUGE_PAGE_SIZE - 1);
+  if (base < AIUEOS_MODEL_MIN_ADDRESS ||
+      base < raw_base || base > AIUEOS_MODEL_MAX_ADDRESS + 1ULL - mapped_bytes ||
+      base + mapped_bytes > raw_base + raw_pages * PAGE_SIZE) {
+    bs->free_pages(raw_base, raw_pages);
+    return EFI_INVALID_PARAMETER;
+  }
+  uint64_t paging_pages = AIUEOS_MODEL_PAGING_PAGES;
+  uint64_t paging_base = 0x40000000ULL - 1ULL;
+  if (bs->allocate_pages(EFI_ALLOCATE_MAX_ADDRESS, EFI_LOADER_DATA,
+                         paging_pages, &paging_base) != EFI_SUCCESS) {
+    bs->free_pages(raw_base, raw_pages);
+    return EFI_INVALID_PARAMETER;
+  }
+  if (!paging_base || paging_base >= 0x40000000ULL ||
+      paging_base > 0x40000000ULL - paging_pages * PAGE_SIZE) {
+    bs->free_pages(paging_base, paging_pages);
+    bs->free_pages(raw_base, raw_pages);
+    return EFI_INVALID_PARAMETER;
+  }
+  zero_bytes((void *)(uintptr_t)paging_base, paging_pages * PAGE_SIZE);
+  uint8_t *model = (uint8_t *)(uintptr_t)base;
+  uint64_t started = read_tsc();
+  efi_status admitted = read_model_on_device(bs, boot_device, model);
+  if (admitted != EFI_SUCCESS) {
+    efi_handle handles[32];
+    uint64_t handle_bytes = sizeof(handles);
+    if (bs->locate_handle(EFI_BY_PROTOCOL, &simple_fs_guid, 0,
+                          &handle_bytes, handles) == EFI_SUCCESS) {
+      uint64_t count = handle_bytes / sizeof(efi_handle);
+      for (uint64_t i = 0; i < count && admitted != EFI_SUCCESS; i++) {
+        if (handles[i] == boot_device) continue;
+        admitted = read_model_on_device(bs, handles[i], model);
+      }
+    }
+  }
+  if (admitted != EFI_SUCCESS) {
+    zero_bytes(model, mapped_bytes);
+    zero_bytes((void *)(uintptr_t)paging_base, paging_pages * PAGE_SIZE);
+    bs->free_pages(paging_base, paging_pages);
+    bs->free_pages(raw_base, raw_pages);
+    return admitted;
+  }
+  zero_bytes(model + AIUEOS_MODEL_TOTAL_BYTES,
+             mapped_bytes - AIUEOS_MODEL_TOTAL_BYTES);
+  info->model_base = base;
+  info->model_size = AIUEOS_MODEL_TOTAL_BYTES;
+  for (uint32_t i = 0; i < 32; i++)
+    info->model_sha256[i] = aiueos_expected_model_sha256[i];
+  info->model_part_count = AIUEOS_MODEL_PART_COUNT;
+  info->model_format = AIUEOS_MODEL_FORMAT_GGUF;
+  info->model_flags = AIUEOS_MODEL_HANDOFF_SHA256_VERIFIED |
+                      AIUEOS_MODEL_HANDOFF_SPLIT_EXACT;
+  info->model_load_cycles = read_tsc() - started;
+  info->model_paging_base = paging_base;
+  info->model_paging_pages = paging_pages;
+  debug_string("AIUEOS_LOADER_MODEL_OK qwen38-27b gguf-v3 parts=3 sha256=verified\n");
+  console_ascii("Qwen3.8 27B model admitted. Entering native kernel.\r\n");
+  return EFI_SUCCESS;
+}
+#endif
+
 #ifdef AIUEOS_EMBEDDED_RELEASE
 static efi_status read_verified_embedded(uint8_t *kernel_file,
                                          uint64_t *kernel_size,
@@ -621,6 +767,7 @@ efi_status EFIAPI efi_main(efi_handle image, struct efi_system_table *system) {
   loader_console=system?system->console_out:0;
   loader_runtime=system?system->runtime_services:0;
   if (!system || !(bs = system->boot_services)) return fail(101,"AIUEOS_LOADER_FAIL system-table");
+  zero_bytes(&info, sizeof(info));
   if (!prepare_netboot_qualification_return())
     return fail(119,"AIUEOS_LOADER_FAIL netboot-return-arm");
   if (system->console_out && system->console_out->output_string)
@@ -692,6 +839,11 @@ efi_status EFIAPI efi_main(efi_handle image, struct efi_system_table *system) {
   }
 #endif
   debug_string("AIUEOS_LOADER_INTEGRITY_OK sha256-v1\n");
+#ifdef AIUEOS_QWEN38_MODEL_HANDOFF
+  progress(210,"AIUEOS_LOADER_PROGRESS model-allocation-and-admission");
+  if (load_verified_model(bs, loaded->device_handle, &info) != EFI_SUCCESS)
+    return fail(121,"AIUEOS_LOADER_FAIL qwen38-model-admission");
+#endif
 
   progress(205,"AIUEOS_LOADER_PROGRESS elf-validation");
   if (kernel_size < sizeof(struct elf64_header)) return fail(106,"AIUEOS_LOADER_FAIL elf-size");
@@ -728,7 +880,12 @@ efi_status EFIAPI efi_main(efi_handle image, struct efi_system_table *system) {
   progress(207,"AIUEOS_LOADER_PROGRESS memory-map-buffer");
   if (bs->allocate_pool(2, MEMORY_MAP_BUFFER_SIZE, &memory_map) != EFI_SUCCESS)
     return fail(112,"AIUEOS_LOADER_FAIL map-buffer");
-  info.magic = 0x414955454f53424fULL; info.version = 3;
+  info.magic = AIUEOS_BOOT_INFO_MAGIC;
+#ifdef AIUEOS_QWEN38_MODEL_HANDOFF
+  info.version = AIUEOS_BOOT_INFO_VERSION_MODEL_HANDOFF;
+#else
+  info.version = AIUEOS_BOOT_INFO_VERSION_BASE;
+#endif
   info.initramfs_base = (uint64_t)(uintptr_t)initramfs_file;
   info.initramfs_size = initramfs_size;
   if (!initramfs_size) return fail(114,"AIUEOS_LOADER_FAIL initramfs-empty");

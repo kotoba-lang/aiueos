@@ -1,5 +1,7 @@
 #include <stdint.h>
 #include <stddef.h>
+#include "../include/boot_info.h"
+#include "model_handoff.h"
 
 #define PAGE_SIZE 4096ULL
 #define ENTRY_COUNT 512
@@ -172,7 +174,45 @@ static uint64_t encrypted_ram_page(uint64_t address) {
   return address | memory_encryption_mask;
 }
 
-int aiueos_paging_initialize(void) {
+#ifdef AIUEOS_QWEN38_MODEL_HANDOFF
+static int map_model_handoff(const struct aiueos_boot_info *boot) {
+  struct aiueos_model_mapping_plan plan;
+  if (!boot || boot->version < AIUEOS_BOOT_INFO_VERSION_MODEL_HANDOFF ||
+      !boot->model_paging_base ||
+      (boot->model_paging_base & (PAGE_SIZE - 1)) ||
+      boot->model_paging_pages != AIUEOS_MODEL_PAGING_PAGES ||
+      boot->model_paging_base >= 0x40000000ULL ||
+      boot->model_paging_base > 0x40000000ULL -
+        boot->model_paging_pages * PAGE_SIZE ||
+      !aiueos_model_mapping_plan(boot->model_base, boot->model_size, &plan))
+    return 0;
+  uint64_t (*model_page_directories)[ENTRY_COUNT] =
+    (void *)(uintptr_t)boot->model_paging_base;
+  for (uint32_t slot = 0; slot < AIUEOS_MODEL_MAX_PDPT_DIRECTORIES; slot++)
+    for (uint32_t entry = 0; entry < ENTRY_COUNT; entry++)
+      model_page_directories[slot][entry] = 0;
+  for (uint32_t slot = 0; slot < plan.directory_count; slot++) {
+    uint32_t pdpt_index = plan.first_pdpt + slot;
+    if (pdpt_index >= ENTRY_COUNT || pdpt[pdpt_index]) return 0;
+    pdpt[pdpt_index] = encrypted_ram_address(model_page_directories[slot]) |
+      PTE_PRESENT | PTE_WRITABLE;
+  }
+  for (uint64_t page = plan.first_2m;; page += 0x200000ULL) {
+    uint32_t pdpt_index = (uint32_t)(page >> 30);
+    uint32_t directory_slot = pdpt_index - plan.first_pdpt;
+    uint32_t page_index = (uint32_t)((page >> 21) & 0x1ffU);
+    /* The leaf is deliberately not writable: after loader SHA-256 admission,
+     * the native runtime receives immutable weights rather than an allocator
+     * buffer it may silently modify. */
+    model_page_directories[directory_slot][page_index] =
+      encrypted_ram_page(page) | PTE_PRESENT | PTE_HUGE | PTE_NX;
+    if (page == plan.last_2m) break;
+  }
+  return 1;
+}
+#endif
+
+int aiueos_paging_initialize(const struct aiueos_boot_info *boot) {
   PAGING_PROGRESS(240);
   if (!kotoba_aiueos_cpu_feature_nx()) return 0;
   PAGING_PROGRESS(241);
@@ -230,6 +270,11 @@ int aiueos_paging_initialize(void) {
   const uint64_t ioapic_pde = (ioapic_base >> 21) & 0x1ff;
   apic_page_directory[ioapic_pde] = ioapic_base | PTE_PRESENT | PTE_WRITABLE |
     PTE_HUGE | PTE_NX | PTE_WRITE_THROUGH | PTE_CACHE_DISABLE;
+#ifdef AIUEOS_QWEN38_MODEL_HANDOFF
+  if (!map_model_handoff(boot)) return 0;
+#else
+  (void)boot;
+#endif
   for (uint64_t i = 0; i < ENTRY_COUNT; i++) {
     uint64_t page = i * PAGE_SIZE;
     uint64_t flags = PTE_PRESENT | PTE_NX;

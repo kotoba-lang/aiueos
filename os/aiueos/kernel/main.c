@@ -1,16 +1,7 @@
 #include <stdint.h>
+#include "../include/boot_info.h"
 #include "inference_status.h"
-
-struct aiueos_boot_info {
-  uint64_t magic, version;
-  void *memory_map; uint64_t memory_map_size, descriptor_size, descriptor_version;
-  void *acpi_rsdp;
-  uint64_t framebuffer_base, framebuffer_size;
-  uint32_t framebuffer_width, framebuffer_height, framebuffer_stride, framebuffer_format;
-  uint64_t initramfs_base, initramfs_size;
-  void *runtime_services;
-  uint64_t firmware_cr3;
-};
+#include "model_handoff.h"
 
 #define AIUEOS_OWNED_MEMORY_MAP_BYTES (128ULL * 1024ULL)
 static struct aiueos_boot_info aiueos_owned_boot_info;
@@ -27,6 +18,7 @@ static int aiueos_boot_info_retain(const struct aiueos_boot_info *source) {
       source->memory_map_size > AIUEOS_OWNED_MEMORY_MAP_BYTES ||
       source->memory_map_size % source->descriptor_size != 0)
     return 0;
+  aiueos_owned_boot_info = (struct aiueos_boot_info){0};
   aiueos_owned_boot_info.magic = source->magic;
   aiueos_owned_boot_info.version = source->version;
   aiueos_owned_boot_info.memory_map_size = source->memory_map_size;
@@ -43,6 +35,18 @@ static int aiueos_boot_info_retain(const struct aiueos_boot_info *source) {
   aiueos_owned_boot_info.initramfs_size = source->initramfs_size;
   aiueos_owned_boot_info.runtime_services = source->runtime_services;
   aiueos_owned_boot_info.firmware_cr3 = source->firmware_cr3;
+  if (source->version >= AIUEOS_BOOT_INFO_VERSION_MODEL_HANDOFF) {
+    aiueos_owned_boot_info.model_base = source->model_base;
+    aiueos_owned_boot_info.model_size = source->model_size;
+    for (uint32_t i = 0; i < 32; i++)
+      aiueos_owned_boot_info.model_sha256[i] = source->model_sha256[i];
+    aiueos_owned_boot_info.model_part_count = source->model_part_count;
+    aiueos_owned_boot_info.model_format = source->model_format;
+    aiueos_owned_boot_info.model_flags = source->model_flags;
+    aiueos_owned_boot_info.model_load_cycles = source->model_load_cycles;
+    aiueos_owned_boot_info.model_paging_base = source->model_paging_base;
+    aiueos_owned_boot_info.model_paging_pages = source->model_paging_pages;
+  }
   const volatile uint8_t *input = source->memory_map;
   for (uint64_t i = 0; i < source->memory_map_size; i++)
     aiueos_owned_memory_map[i] = input[i];
@@ -159,7 +163,7 @@ extern void aiueos_probe_write_protect(void);
 extern void aiueos_probe_no_execute(void);
 volatile uint64_t aiueos_page_fault_stage;
 volatile uint64_t aiueos_page_fault_error;
-extern int aiueos_paging_initialize(void);
+extern int aiueos_paging_initialize(const struct aiueos_boot_info *boot);
 extern int aiueos_framebuffer_initialize(const struct aiueos_boot_info *boot);
 extern void aiueos_framebuffer_qualification_screen(const char *, const char *,
                                                      const char *, int);
@@ -553,8 +557,9 @@ void aiueos_exception_dispatch(uint64_t vector) {
 __attribute__((noreturn))
 void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
   serial_init();
-  if (!boot || boot->magic != 0x414955454f53424fULL ||
-      (boot->version != 2 && boot->version != 3) ||
+  if (!boot || boot->magic != AIUEOS_BOOT_INFO_MAGIC ||
+      (boot->version != 2 && boot->version != AIUEOS_BOOT_INFO_VERSION_BASE &&
+       boot->version != AIUEOS_BOOT_INFO_VERSION_MODEL_HANDOFF) ||
       !boot->memory_map || !boot->memory_map_size || !boot->descriptor_size ||
       !aiueos_boot_info_retain(boot)) {
     debug_string("AIUEOS_KERNEL_FAIL boot-info\n");
@@ -678,7 +683,7 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
 #ifdef AIUEOS_PHYSICAL_QUALIFICATION
     aiueos_qualification_progress(224);
 #endif
-    if (!aiueos_paging_initialize()) {
+    if (!aiueos_paging_initialize(boot)) {
       debug_string("AIUEOS_PAGING_FAIL ownership-or-wx\n");
       serial_string("AIUEOS_PAGING_FAIL ownership-or-wx\r\n");
       qemu_exit(0x7c);
@@ -762,6 +767,49 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
     if (!aiueos_desktop_surface_ready()) qemu_exit(0x68);
     debug_string("AIUEOS_DESKTOP_SURFACE_OK envelope-v1 opaque-handle full-damage hash-verified\n");
     serial_string("AIUEOS_DESKTOP_SURFACE_OK envelope-v1 opaque-handle full-damage hash-verified\r\n");
+#ifdef AIUEOS_QWEN38_MODEL_HANDOFF
+    if (!aiueos_qwen38_model_handoff_admit(boot)) {
+      struct aiueos_inference_status blocked = {
+        .abi_version = AIUEOS_INFERENCE_STATUS_ABI_VERSION,
+        .byte_size = sizeof(struct aiueos_inference_status),
+        .phase = AIUEOS_INFERENCE_BLOCKED,
+        .model = "QWEN3.8 27B",
+        .quant = "UD-IQ3 XXS",
+        .detail = "MODEL HANDOFF REFUSED",
+        .artifact_bytes = boot->model_size,
+        .resident_bytes = AIUEOS_INFERENCE_UNMEASURED,
+        .load_ns = AIUEOS_INFERENCE_UNMEASURED,
+        .prefill_ns = AIUEOS_INFERENCE_UNMEASURED,
+        .decode_ns = AIUEOS_INFERENCE_UNMEASURED,
+        .time_to_first_token_ns = AIUEOS_INFERENCE_UNMEASURED,
+        .compute_cycles = AIUEOS_INFERENCE_UNMEASURED
+      };
+      (void)aiueos_framebuffer_inference_screen(&blocked);
+      debug_string("AIUEOS_MODEL_HANDOFF_FAIL format-or-sha-or-map\n");
+      serial_string("AIUEOS_MODEL_HANDOFF_FAIL format-or-sha-or-map\r\n");
+      qemu_exit(0x66);
+    }
+    {
+      struct aiueos_inference_status admitted = {
+        .abi_version = AIUEOS_INFERENCE_STATUS_ABI_VERSION,
+        .byte_size = sizeof(struct aiueos_inference_status),
+        .phase = AIUEOS_INFERENCE_ADMISSION,
+        .model = "QWEN3.8 27B",
+        .quant = "UD-IQ3 XXS",
+        .detail = "GGUF SHA256 OK",
+        .artifact_bytes = boot->model_size,
+        .resident_bytes = boot->model_size,
+        .load_ns = AIUEOS_INFERENCE_UNMEASURED,
+        .prefill_ns = AIUEOS_INFERENCE_UNMEASURED,
+        .decode_ns = AIUEOS_INFERENCE_UNMEASURED,
+        .time_to_first_token_ns = AIUEOS_INFERENCE_UNMEASURED,
+        .compute_cycles = AIUEOS_INFERENCE_UNMEASURED
+      };
+      (void)aiueos_framebuffer_inference_screen(&admitted);
+    }
+    debug_string("AIUEOS_MODEL_HANDOFF_OK format=gguf-v3 parts=3 sha256=verified mapping=read-only-nx metrics=N/A\n");
+    serial_string("AIUEOS_MODEL_HANDOFF_OK format=gguf-v3 parts=3 sha256=verified mapping=read-only-nx metrics=N/A\r\n");
+#endif
 #ifdef AIUEOS_PHYSICAL_QUALIFICATION
     aiueos_qualification_progress(227);
 #endif
@@ -992,10 +1040,34 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
        physical machine.  It stops before DMA, PCI drivers or any block write;
        those need K16-specific AMD-IOMMU, NVMe and RTL8125 qualification. */
     aiueos_qualification_progress(229);
+#ifdef AIUEOS_QWEN38_MODEL_HANDOFF
+    {
+      struct aiueos_inference_status admitted = {
+        .abi_version = AIUEOS_INFERENCE_STATUS_ABI_VERSION,
+        .byte_size = sizeof(struct aiueos_inference_status),
+        .phase = AIUEOS_INFERENCE_ADMISSION,
+        .model = "QWEN3.8 27B",
+        .quant = "UD-IQ3 XXS",
+        .detail = "RUNTIME NEXT",
+        .artifact_bytes = boot->model_size,
+        .resident_bytes = boot->model_size,
+        .load_ns = AIUEOS_INFERENCE_UNMEASURED,
+        .prefill_ns = AIUEOS_INFERENCE_UNMEASURED,
+        .decode_ns = AIUEOS_INFERENCE_UNMEASURED,
+        .time_to_first_token_ns = AIUEOS_INFERENCE_UNMEASURED,
+        .compute_cycles = AIUEOS_INFERENCE_UNMEASURED
+      };
+      (void)aiueos_framebuffer_inference_screen(&admitted);
+    }
+    debug_string("AIUEOS_PHYSICAL_MODEL_HANDOFF_OK qwen38-27b runtime=not-yet-present internal-disk-writes=none\n");
+    serial_string("AIUEOS_PHYSICAL_MODEL_HANDOFF_OK qwen38-27b runtime=not-yet-present internal-disk-writes=none\r\n");
+    if (!aiueos_qualification_finalize(1, 8160))
+#else
     aiueos_framebuffer_qualification_screen("AIUEOS K16", "NATIVE CORE OK", "SSD READ ONLY", 1);
     debug_string("AIUEOS_PHYSICAL_QUALIFICATION_OK native-core-v2 internal-disk-writes=none\n");
     serial_string("AIUEOS_PHYSICAL_QUALIFICATION_OK native-core-v2 internal-disk-writes=none\r\n");
     if (!aiueos_qualification_finalize(1, 0))
+#endif
       serial_string("AIUEOS_PHYSICAL_QUALIFICATION_LOG_FAIL stage=runtime-variable\r\n");
     for (;;) __asm__ volatile("cli; hlt");
 #endif

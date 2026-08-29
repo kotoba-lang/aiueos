@@ -1,13 +1,6 @@
 #include <stdint.h>
+#include "../include/boot_info.h"
 #include "inference_status.h"
-
-struct aiueos_boot_info {
-  uint64_t magic, version;
-  void *memory_map; uint64_t memory_map_size, descriptor_size, descriptor_version;
-  void *acpi_rsdp;
-  uint64_t framebuffer_base, framebuffer_size;
-  uint32_t framebuffer_width, framebuffer_height, framebuffer_stride, framebuffer_format;
-};
 
 extern int aiueos_map_framebuffer(uint64_t address, uint64_t length);
 

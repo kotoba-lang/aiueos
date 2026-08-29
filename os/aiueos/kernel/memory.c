@@ -1,17 +1,11 @@
 #include <stdint.h>
 #include <stddef.h>
+#include "../include/boot_info.h"
 
 #define EFI_CONVENTIONAL_MEMORY 7U
 #define PAGE_SIZE 4096ULL
 #define IDENTITY_LIMIT 0x40000000ULL
 
-struct aiueos_boot_info {
-  uint64_t magic, version;
-  void *memory_map; uint64_t memory_map_size, descriptor_size, descriptor_version;
-  void *acpi_rsdp;
-  uint64_t framebuffer_base, framebuffer_size;
-  uint32_t framebuffer_width, framebuffer_height, framebuffer_stride, framebuffer_format;
-};
 struct efi_memory_descriptor_prefix {
   uint32_t type, padding;
   uint64_t physical_start, virtual_start, number_of_pages, attributes;
