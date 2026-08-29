@@ -21,14 +21,21 @@
              :liveness-ping "AIUEOS_NODE_PING_V1"
              :liveness-pong "AIUEOS_NODE_PONG_V1"
              :binds [:boot-nonce :job-id :liveness-sequence]
+             :result-fields [:token :score :row-total :inference-cycles]
              :relay-udp {:server "10.77.0.1:7777"
                          :node "10.77.0.10:7779"}}
  :murakumo {:enqueue [:post "/infer/queue"]
-             :observe [:get "/infer/queue"]
-             :worker-poll [:get "/infer/queue"]
+             :target-field :target-did
+             :target-value :node-did
+             :observe [:get "/infer/queue?did=<node-did>"]
+             :worker-poll [:get "/infer/queue?did=<node-did>"]
              :claim [:post "/infer/queue/:id/claim"]
              :result [:post "/infer/queue/:id/result"]
              :ready-heartbeat [:post "/infer/nodes/gmktec-k16/heartbeat"]}
+ :measurement {:native-compute :serialized-tsc-cycle-delta
+               :transport-round-trip :mac-monotonic-nanoseconds
+               :murakumo-ms :positive-ceiling-of-transport-round-trip
+               :native-wall-time :unqualified-until-tsc-frequency-is-measured}
  :worker {:continuous? true
           :kind "aiueos-micro-infer"
           :model "aiueos-char-bigram-v1"
@@ -41,4 +48,6 @@
           :bounded-input? true}
  :scope :native-micro-inference-qualification
  :does-not-prove [:production-llm :gguf-runtime :gpu-inference
-                  :production-throughput :ssd-installation]}
+                  :production-throughput :ssd-installation
+                  :device-owned-https :device-owned-cacao
+                  :network-direct-to-murakumo]}

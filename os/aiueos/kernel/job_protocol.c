@@ -78,6 +78,15 @@ static uint32_t append_decimal(
   return at;
 }
 
+static uint32_t append_decimal64(
+    uint8_t *out,uint32_t capacity,uint32_t at,uint64_t value) {
+  uint8_t digits[20];unsigned n=0;
+  do { digits[n++]=(uint8_t)('0'+value%10U);value/=10U; } while(value&&n<20);
+  if(at+n>capacity)return capacity+1U;
+  while(n)out[at++]=digits[--n];
+  return at;
+}
+
 int aiueos_job_request_parse(
     const uint8_t *payload,uint32_t length,uint64_t expected_boot,
     struct aiueos_job_request *request) {
@@ -107,7 +116,7 @@ int aiueos_job_request_parse(
 
 uint32_t aiueos_job_result_payload(
     uint8_t *out,uint32_t capacity,uint64_t boot_nonce,const uint8_t *job_id,
-    const struct aiueos_micro_infer_result *result) {
+    const struct aiueos_micro_infer_result *result,uint64_t inference_cycles) {
   uint32_t id_length=text_length(job_id,AIUEOS_JOB_ID_MAX+1U);
   if(!out||!capacity||!result||!id_length||id_length>AIUEOS_JOB_ID_MAX)return 0;
   for(uint32_t i=0;i<id_length;i++)if(job_id[i]<'0'||job_id[i]>'9')return 0;
@@ -121,6 +130,8 @@ uint32_t aiueos_job_result_payload(
   n=append_decimal(out,capacity,n,result->score);
   n=append_text(out,capacity,n," total=");
   n=append_decimal(out,capacity,n,result->total);
+  n=append_text(out,capacity,n," cycles=");
+  n=append_decimal64(out,capacity,n,inference_cycles);
   return n<=capacity?n:0;
 }
 

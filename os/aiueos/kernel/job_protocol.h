@@ -23,7 +23,7 @@ int aiueos_job_request_parse(
   struct aiueos_job_request *request);
 uint32_t aiueos_job_result_payload(
   uint8_t *out,uint32_t capacity,uint64_t boot_nonce,const uint8_t *job_id,
-  const struct aiueos_micro_infer_result *result);
+  const struct aiueos_micro_infer_result *result,uint64_t inference_cycles);
 int aiueos_job_commit_valid(
   const uint8_t *payload,uint32_t length,uint64_t boot_nonce,
   const uint8_t *job_id);

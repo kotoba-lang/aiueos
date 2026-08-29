@@ -193,6 +193,7 @@ extern unsigned aiueos_rtl8125_job_error(void);
 extern uint8_t aiueos_rtl8125_job_token(void);
 extern uint16_t aiueos_rtl8125_job_score(void);
 extern uint16_t aiueos_rtl8125_job_total(void);
+extern uint64_t aiueos_rtl8125_job_cycles(void);
 extern int aiueos_rtl8125_liveness_renewal(void);
 extern unsigned aiueos_rtl8125_liveness_error(void);
 extern uint32_t aiueos_rtl8125_liveness_sequence(void);
@@ -866,6 +867,7 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
     (void)aiueos_rtl8125_job_token();
     (void)aiueos_rtl8125_job_score();
     (void)aiueos_rtl8125_job_total();
+    (void)aiueos_rtl8125_job_cycles();
     debug_string("AIUEOS_PHYSICAL_JOB_OK queue=claim model=aiueos-char-bigram-v1 token=o result=recorded ready=true\n");
     serial_string("AIUEOS_PHYSICAL_JOB_OK queue=claim model=aiueos-char-bigram-v1 token=o result=recorded ready=true\r\n");
     if(!aiueos_rtl8125_liveness_renewal()) {
