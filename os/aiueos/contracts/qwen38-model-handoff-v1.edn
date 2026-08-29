@@ -21,7 +21,7 @@
                        :maximum-address 0x1000000000
                        :alignment 0x200000
                        :shape :contiguous
-                       :physical-k16-state :unverified}}
+                       :physical-k16-state :passed}}
  :kernel {:boot-info-version 4
           :mapping {:page-size 0x200000
                     :permissions [:supervisor :read-only :nx]
@@ -36,14 +36,14 @@
  :evidence {:host-model-test :passed
             :qemu-split-volume :passed
             :qemu-one-byte-corruption-refusal :passed
-            :physical-k16 :unverified
+            :physical-k16 :passed
+            :physical-direct-https-after-handoff :passed
             :real-generation :absent}
  :safety {:internal-disk-writes? false
           :ssd-install? false
           :model-mutable-after-admission? false
           :production-identity-overrides? false}
- :next-runtime-gates [:gguf-metadata-and-tensor-parser :tokenizer
+ :next-runtime-gates [:tokenizer
                       :qwen35-operator-runtime :threaded-simd-backend
                       :calibrated-monotonic-clock :nonempty-generation]
- :does-not-prove [:artifact-present-on-k16 :physical-contiguous-allocation
-                  :qwen38-generation :physical-k16-throughput :gpu-offload]}
+ :does-not-prove [:qwen38-generation :physical-k16-throughput :gpu-offload]}

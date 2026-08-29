@@ -28,6 +28,9 @@ kernel_relay_protocol_object="$out/kernel-relay-protocol.o"
 kernel_micro_infer_object="$out/kernel-micro-infer.o"
 kernel_inference_status_object="$out/kernel-inference-status.o"
 kernel_model_handoff_object="$out/kernel-model-handoff.o"
+kernel_qwen35_runtime_object="$out/kernel-qwen35-runtime.o"
+kernel_qwen35_quant_object="$out/kernel-qwen35-quant.o"
+kernel_qwen35_infer_object="$out/kernel-qwen35-infer.o"
 kernel_job_protocol_object="$out/kernel-job-protocol.o"
 kernel_tls_aes_object="$out/kernel-tls-aes-gcm.o"
 kernel_tls13_object="$out/kernel-tls13.o"
@@ -136,6 +139,7 @@ physical_relay_qualification_cflags=
 physical_job_qualification_cflags=
 persistent_boot_cflags=
 qualification_link=
+qualification_gc_link=
 gop_discovery_cflags=
 loader_failure_test_cflags=
 loader_hang_test_cflags=
@@ -146,6 +150,7 @@ embedded_release_link=
 if [ "${AIUEOS_PHYSICAL_QUALIFICATION:-0}" = 1 ]; then
   physical_qualification_cflags="-DAIUEOS_PHYSICAL_QUALIFICATION=1"
   qualification_link="$kernel_qualification_entry_object $kernel_qualification_object"
+  qualification_gc_link="--gc-sections"
 fi
 if [ "${AIUEOS_PERSISTENT_BOOT:-0}" = 1 ]; then
   [ "${AIUEOS_PHYSICAL_QUALIFICATION:-0}" = 1 ] || {
@@ -309,7 +314,10 @@ if [ "${AIUEOS_QWEN38_MODEL_HANDOFF:-0}" = 1 ] ||
   }
   if [ "${AIUEOS_QWEN38_MODEL_HANDOFF:-0}" = 1 ]; then
     model_handoff_cflags="-DAIUEOS_QWEN38_MODEL_HANDOFF=1"
-    model_handoff_link="$kernel_model_handoff_object"
+    if [ "${AIUEOS_MODEL_TEST_FIXTURE:-0}" = 1 ]; then
+      model_handoff_cflags="$model_handoff_cflags -DAIUEOS_MODEL_TEST_FIXTURE=1"
+    fi
+    model_handoff_link="$kernel_model_handoff_object $kernel_qwen35_runtime_object $kernel_qwen35_quant_object $kernel_qwen35_infer_object"
   fi
   if [ "${AIUEOS_MODEL_NVME_SLOTS:-0}" = 1 ]; then
     model_slots_cflags="-DAIUEOS_MODEL_NVME_SLOTS=1"
@@ -614,6 +622,18 @@ if [ -n "$model_handoff_link" ]; then
     -ffreestanding -fno-stack-protector -mno-red-zone -I "$out" \
     $model_handoff_cflags \
     -c -o "$kernel_model_handoff_object" "$aiueos/kernel/model_handoff.c"
+  zig cc -target x86_64-freestanding-none -std=c11 -O2 \
+    -ffreestanding -fno-stack-protector -mno-red-zone \
+    $model_handoff_cflags \
+    -c -o "$kernel_qwen35_runtime_object" "$aiueos/kernel/qwen35_runtime.c"
+  zig cc -target x86_64-freestanding-none -std=c11 -O3 \
+    -ffreestanding -fno-stack-protector -mno-red-zone \
+    $model_handoff_cflags \
+    -c -o "$kernel_qwen35_quant_object" "$aiueos/kernel/qwen35_quant.c"
+  zig cc -target x86_64-freestanding-none -std=c11 -O3 \
+    -ffreestanding -fno-stack-protector -mno-red-zone \
+    $model_handoff_cflags \
+    -c -o "$kernel_qwen35_infer_object" "$aiueos/kernel/qwen35_infer.c"
 fi
 zig cc -target x86_64-freestanding-none -std=c11 -O2 \
   -ffreestanding -fno-stack-protector -mno-red-zone \
@@ -665,7 +685,11 @@ fi
 # is recomputed below, so nothing external pins the pre-strip file. (ADR-0107:
 # net_ssh_kex pushed the unstripped file over 1 MiB while the loadable size was
 # well under it.)
-zig ld.lld -nostdlib -static --strip-all -z max-page-size=0x1000 \
+# The physical qualification branches halt before the generic virtio/SMP
+# continuation.  Dropping those unreachable whole sections there keeps
+# optional model runtimes inside the existing low-2MiB W^X bootstrap boundary.
+# The ordinary OS link deliberately keeps its historical section set.
+zig ld.lld -nostdlib -static --strip-all $qualification_gc_link -z max-page-size=0x1000 \
   -T "$aiueos/kernel/linker.ld" -o "$kernel" \
   "$kernel_entry_object" "$kernel_object" "$kernel_paging_object" \
   "$kernel_acpi_object" "$kernel_vtd_object" "$kernel_apic_object" "$kernel_memory_object" \
