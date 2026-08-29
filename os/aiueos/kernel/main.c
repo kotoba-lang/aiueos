@@ -147,6 +147,9 @@ extern int aiueos_pci_enumerate(void);
 extern int aiueos_rtl8125_physical_qualification(void);
 extern unsigned aiueos_rtl8125_qualification_error(void);
 extern uint32_t aiueos_rtl8125_qualification_rx_length(void);
+extern int aiueos_rtl8125_relay_qualification(void);
+extern unsigned aiueos_rtl8125_relay_error(void);
+extern uint32_t aiueos_rtl8125_relay_rx_length(void);
 extern int aiueos_catalog_policy_selftest_ok(void);
 extern int aiueos_object_store_ready(void);
 extern int aiueos_journal_ready(void);
@@ -781,8 +784,29 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
     (void)aiueos_rtl8125_qualification_rx_length();
     debug_string("AIUEOS_PHYSICAL_NETWORK_OK rtl8125 arp-peer=10.77.0.1 dma=unisolated-test-only\n");
     serial_string("AIUEOS_PHYSICAL_NETWORK_OK rtl8125 arp-peer=10.77.0.1 dma=unisolated-test-only\r\n");
+#ifdef AIUEOS_PHYSICAL_RELAY_QUALIFICATION
+    aiueos_qualification_progress(232);
+    aiueos_framebuffer_qualification_screen("AIUEOS K16", "TEST NODE RELAY", "SSD READ ONLY", 0);
+    if(!aiueos_rtl8125_relay_qualification()) {
+      uint32_t code=8300U+aiueos_rtl8125_relay_error();
+      aiueos_framebuffer_qualification_screen("AIUEOS K16", "FAIL NODE RELAY", "SSD READ ONLY", 0);
+      debug_string("AIUEOS_PHYSICAL_RELAY_FAIL udp=10.77.0.1:7777 scope=diagnostic-only\n");
+      serial_string("AIUEOS_PHYSICAL_RELAY_FAIL udp=10.77.0.1:7777 scope=diagnostic-only\r\n");
+      if(!aiueos_qualification_finalize(2,code))
+        serial_string("AIUEOS_PHYSICAL_QUALIFICATION_LOG_FAIL stage=runtime-variable\r\n");
+      for(;;)__asm__ volatile("cli; hlt");
+    }
+    aiueos_qualification_progress(233);
+    aiueos_framebuffer_qualification_screen("AIUEOS K16", "NODE RELAY OK", "SSD READ ONLY", 1);
+    (void)aiueos_rtl8125_relay_rx_length();
+    debug_string("AIUEOS_PHYSICAL_RELAY_OK request-bound-udp=10.77.0.1:7777 scope=diagnostic-only\n");
+    serial_string("AIUEOS_PHYSICAL_RELAY_OK request-bound-udp=10.77.0.1:7777 scope=diagnostic-only\r\n");
+    if(!aiueos_qualification_finalize(1,8130))
+      serial_string("AIUEOS_PHYSICAL_QUALIFICATION_LOG_FAIL stage=runtime-variable\r\n");
+#else
     if(!aiueos_qualification_finalize(1,8125))
       serial_string("AIUEOS_PHYSICAL_QUALIFICATION_LOG_FAIL stage=runtime-variable\r\n");
+#endif
     for(;;)__asm__ volatile("cli; hlt");
 #else
     /* This profile is intentionally a USB-only, read-only boundary.  Reaching
