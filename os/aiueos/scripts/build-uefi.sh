@@ -9,6 +9,7 @@ efi="$esp/EFI/BOOT/BOOTX64.EFI"
 object="$out/uefi-main.obj"
 identity_source="$out/kernel-identity.c"
 identity_object="$out/kernel-identity.obj"
+model_identity_header="$out/aiueos-model-identity.h"
 embedded_source="$out/embedded-release.S"
 embedded_object="$out/embedded-release.obj"
 kernel_dir="$esp/EFI/AIUEOS"
@@ -25,6 +26,7 @@ kernel_rtl8125_object="$out/kernel-rtl8125.o"
 kernel_relay_protocol_object="$out/kernel-relay-protocol.o"
 kernel_micro_infer_object="$out/kernel-micro-infer.o"
 kernel_inference_status_object="$out/kernel-inference-status.o"
+kernel_model_handoff_object="$out/kernel-model-handoff.o"
 kernel_job_protocol_object="$out/kernel-job-protocol.o"
 kernel_tls_aes_object="$out/kernel-tls-aes-gcm.o"
 kernel_tls13_object="$out/kernel-tls13.o"
@@ -265,12 +267,76 @@ if [ "${AIUEOS_ECDSA_SIGN_KAT:-0}" = 1 ]; then
   input_smoke_cflags="$input_smoke_cflags -DAIUEOS_ECDSA_SIGN_KAT=1"
 fi
 
+# Pure-AIUEOS Qwen handoff. Production values are pinned and cannot be
+# overridden accidentally; the tiny overrides exist only for the QEMU gate and
+# require the explicit test-fixture switch.
+model_handoff_cflags=
+model_handoff_link=
+model_total=${AIUEOS_MODEL_TOTAL_BYTES:-10934860704}
+model_part0=${AIUEOS_MODEL_PART0_BYTES:-4000000000}
+model_part1=${AIUEOS_MODEL_PART1_BYTES:-4000000000}
+model_part2=${AIUEOS_MODEL_PART2_BYTES:-2934860704}
+model_sha256=${AIUEOS_MODEL_SHA256:-c0b7c3038681ed2e3040456c1dd45f9858b6c2290bed172c70388a94874f3eee}
+model_min_address=${AIUEOS_MODEL_MIN_ADDRESS:-4294967296}
+model_max_address=${AIUEOS_MODEL_MAX_ADDRESS:-68719476735}
+if [ "${AIUEOS_QWEN38_MODEL_HANDOFF:-0}" = 1 ]; then
+  if [ "${AIUEOS_MODEL_TEST_FIXTURE:-0}" != 1 ]; then
+    [ "$model_total" = 10934860704 ] &&
+    [ "$model_part0" = 4000000000 ] &&
+    [ "$model_part1" = 4000000000 ] &&
+    [ "$model_part2" = 2934860704 ] &&
+    [ "$model_sha256" = c0b7c3038681ed2e3040456c1dd45f9858b6c2290bed172c70388a94874f3eee ] &&
+    [ "$model_min_address" = 4294967296 ] &&
+    [ "$model_max_address" = 68719476735 ] || {
+      echo "error: production Qwen handoff identity is pinned; overrides require AIUEOS_MODEL_TEST_FIXTURE=1" >&2
+      exit 1
+    }
+  fi
+  for value in "$model_total" "$model_part0" "$model_part1" "$model_part2" \
+               "$model_min_address" "$model_max_address"; do
+    case "$value" in ''|*[!0-9]*) echo "error: model identity values must be decimal integers" >&2; exit 1 ;; esac
+  done
+  case "$model_sha256" in
+    *[!0-9a-f]*|'') echo "error: model SHA-256 must be lowercase hexadecimal" >&2; exit 1 ;;
+  esac
+  [ "${#model_sha256}" -eq 64 ] || { echo "error: model SHA-256 must contain 64 hex digits" >&2; exit 1; }
+  [ $((model_part0 + model_part1 + model_part2)) -eq "$model_total" ] || {
+    echo "error: model part lengths do not sum to total bytes" >&2; exit 1;
+  }
+  model_handoff_cflags="-DAIUEOS_QWEN38_MODEL_HANDOFF=1"
+  model_handoff_link="$kernel_model_handoff_object"
+elif [ "${AIUEOS_MODEL_TEST_FIXTURE:-0}" = 1 ]; then
+  echo "error: model test fixture requires AIUEOS_QWEN38_MODEL_HANDOFF=1" >&2
+  exit 1
+fi
+
 command -v zig >/dev/null 2>&1 || {
   echo "error: Zig is required to build the freestanding UEFI application" >&2
   exit 1
 }
 
 mkdir -p "$(dirname -- "$efi")" "$kernel_dir"
+python3 - "$model_identity_header" "$model_total" "$model_part0" \
+  "$model_part1" "$model_part2" "$model_sha256" "$model_min_address" \
+  "$model_max_address" <<'PYMODEL'
+from pathlib import Path
+import sys
+
+out, total, part0, part1, part2, digest, minimum, maximum = sys.argv[1:]
+values = ",".join(f"0x{int(digest[i:i+2], 16):02x}" for i in range(0, 64, 2))
+Path(out).write_text(
+    "#ifndef AIUEOS_MODEL_IDENTITY_H\n#define AIUEOS_MODEL_IDENTITY_H\n"
+    "#include <stdint.h>\n"
+    f"#define AIUEOS_MODEL_TOTAL_BYTES {total}ULL\n"
+    f"#define AIUEOS_MODEL_PART0_BYTES {part0}ULL\n"
+    f"#define AIUEOS_MODEL_PART1_BYTES {part1}ULL\n"
+    f"#define AIUEOS_MODEL_PART2_BYTES {part2}ULL\n"
+    "#define AIUEOS_MODEL_PART_COUNT 3U\n"
+    f"#define AIUEOS_MODEL_MIN_ADDRESS {minimum}ULL\n"
+    f"#define AIUEOS_MODEL_MAX_ADDRESS {maximum}ULL\n"
+    "static const uint8_t aiueos_expected_model_sha256[32]={" + values + "};\n"
+    "#endif\n", encoding="ascii")
+PYMODEL
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_kernel_object" "$kotoba_kernel_sha"
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_journal_object" \
   "$kotoba_journal_sha" kotoba_aiueos_journal_plan
@@ -476,8 +542,8 @@ if [ -n "${AIUEOS_EXTERNAL_KERNEL_ELF:-}" ]; then
   cp "$AIUEOS_EXTERNAL_KERNEL_ELF" "$kernel"
 else
 zig cc -target x86_64-freestanding-none -std=c11 -O2 \
-  -ffreestanding -fno-stack-protector -mno-red-zone \
-  $input_smoke_cflags $physical_qualification_cflags \
+  -ffreestanding -fno-stack-protector -mno-red-zone -I "$out" \
+  $input_smoke_cflags $model_handoff_cflags $physical_qualification_cflags \
   $physical_network_qualification_cflags $physical_direct_https_qualification_cflags \
   $physical_relay_qualification_cflags \
   $physical_job_qualification_cflags \
@@ -486,8 +552,8 @@ zig cc -target x86_64-freestanding-none -std=c11 -O2 \
 zig cc -target x86_64-freestanding-none \
   -c -o "$kernel_entry_object" "$aiueos/kernel/entry.S"
 zig cc -target x86_64-freestanding-none -std=c11 -O2 \
-  -ffreestanding -fno-stack-protector -mno-red-zone \
-  $physical_qualification_cflags \
+  -ffreestanding -fno-stack-protector -mno-red-zone -I "$out" \
+  $physical_qualification_cflags $model_handoff_cflags \
   -c -o "$kernel_paging_object" "$aiueos/kernel/paging.c"
 zig cc -target x86_64-freestanding-none -std=c11 -O2 \
   -ffreestanding -fno-stack-protector -mno-red-zone \
@@ -520,6 +586,12 @@ zig cc -target x86_64-freestanding-none -std=c11 -O2 \
 zig cc -target x86_64-freestanding-none -std=c11 -O2 \
   -ffreestanding -fno-stack-protector -mno-red-zone \
   -c -o "$kernel_inference_status_object" "$aiueos/kernel/inference_status.c"
+if [ -n "$model_handoff_link" ]; then
+  zig cc -target x86_64-freestanding-none -std=c11 -O2 \
+    -ffreestanding -fno-stack-protector -mno-red-zone -I "$out" \
+    $model_handoff_cflags \
+    -c -o "$kernel_model_handoff_object" "$aiueos/kernel/model_handoff.c"
+fi
 zig cc -target x86_64-freestanding-none -std=c11 -O2 \
   -ffreestanding -fno-stack-protector -mno-red-zone \
   -c -o "$kernel_job_protocol_object" "$aiueos/kernel/job_protocol.c"
@@ -575,7 +647,7 @@ zig ld.lld -nostdlib -static --strip-all -z max-page-size=0x1000 \
   "$kernel_entry_object" "$kernel_object" "$kernel_paging_object" \
   "$kernel_acpi_object" "$kernel_vtd_object" "$kernel_apic_object" "$kernel_memory_object" \
   "$kernel_pci_object" "$kernel_rtl8125_object" "$kernel_relay_protocol_object" \
-  "$kernel_micro_infer_object" "$kernel_inference_status_object" \
+  "$kernel_micro_infer_object" "$kernel_inference_status_object" $model_handoff_link \
   "$kernel_job_protocol_object" \
   "$kernel_tls_aes_object" "$kernel_tls13_object" \
   "$kernel_scheduler_object" "$kernel_syscall_object" \
@@ -688,10 +760,10 @@ PYEMBED
     -o "$embedded_object" "$embedded_source"
 fi
 zig cc -target x86_64-windows-gnu -std=c11 -O2 \
-  -ffreestanding -fshort-wchar -fno-stack-protector -mno-red-zone \
+  -ffreestanding -fshort-wchar -fno-stack-protector -mno-red-zone -I "$out" \
   $gop_discovery_cflags $physical_qualification_cflags $loader_failure_test_cflags \
   $loader_hang_test_cflags $embedded_release_cflags $netboot_qualification_cflags \
-  $persistent_boot_cflags \
+  $persistent_boot_cflags $model_handoff_cflags \
   -c -o "$object" "$aiueos/uefi/main.c"
 zig lld-link /subsystem:efi_application /entry:efi_main /nodefaultlib /timestamp:0 \
   /fixed:no "/out:$efi" "$object" "$identity_object" $embedded_release_link

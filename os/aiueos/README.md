@@ -395,12 +395,15 @@ The target Qwen cell is pinned in
 `contracts/qwen38-27b-k16-benchmark-v1.edn`: official
 `Qwen/Qwen3.8-27B` revision `1d4bf0f...`, Unsloth
 `Qwen3.8-27B-UD-IQ3_XXS.gguf` revision `4ca7207...`, 10,934,860,704 bytes,
-SHA-256 `c0b7c303...f3eee`.  It is **not yet loaded on the K16**.  The present
-native kernel still has only its first-1-GiB identity map, a bounded 256-page
-allocation record table, no native NVMe model reader, no GGUF/Qwen3.5 runtime,
-and no calibrated monotonic wall clock.  Therefore its Qwen speed is `N/A`,
-not `0 tok/s`; the already-qualified character-bigram job is not substituted
-for the 27B model.
+SHA-256 `c0b7c303...f3eee`.  It is **not yet loaded on the physical K16**.  A
+model-enabled pure-AIUEOS build now reads an exact three-part FAT32 bundle in
+UEFI, verifies the reconstructed SHA-256, and maps the admitted range
+supervisor-only, read-only and NX.  That handoff and its one-byte corruption
+refusal are verified in QEMU; the K16's contiguous 10.9-GB allocation remains
+unverified.  GGUF metadata/tensor parsing, the Qwen3.5 operator runtime,
+tokenizer, threaded SIMD backend and calibrated monotonic clock are still
+absent.  Therefore its Qwen speed is `N/A`, not `0 tok/s`; the already-qualified
+character-bigram job is not substituted for the 27B model.
 
 The display/telemetry model can be exercised without making a physical claim:
 
@@ -418,6 +421,31 @@ fetch the exact revision without overwriting an existing mismatch:
 The downloader resumes only its `.partial` file and promotes it only after
 both the byte count and SHA-256 match.  Fetching the file still does not make
 the native GGUF runtime present.
+
+Prepare an attached FAT32 model volume, then build the pure native PXE image:
+
+```sh
+./os/aiueos/scripts/prepare-qwen38-model-bundle.sh \
+  /path/to/model-volume/Qwen3.8-27B-UD-IQ3_XXS.gguf /Volumes/AIUEOSMODEL
+AIUEOS_OUT=build/aiueos-qwen38-model-handoff-pxe \
+  ./os/aiueos/scripts/build-qwen38-model-handoff-pxe.sh
+```
+
+Boot the resulting EFI through PXE while the model volume is attached.  The
+loader searches attached UEFI filesystems after the PXE boot device, so the
+USB carries weights only; neither the USB nor the internal SSD is written at
+runtime.  `AIUEOS_MODEL_HANDOFF_OK` proves exact artifact admission and the
+read-only/NX mapping, not inference.  The screen deliberately keeps load,
+prefill, decode and first-token values at `N/A` until a real runtime measures
+them.
+
+The transport gates are reproducible without a physical claim:
+
+```sh
+./os/aiueos/scripts/smoke-model-handoff.sh
+./os/aiueos/scripts/smoke-qemu-model-handoff.sh
+AIUEOS_MODEL_CORRUPT=1 ./os/aiueos/scripts/smoke-qemu-model-handoff.sh
+```
 
 That produces a synthetic `QEMU UI TEST` frame only.  A passing final K16 cell
 requires the exact artifact hash, a non-empty real token sequence, cold load,

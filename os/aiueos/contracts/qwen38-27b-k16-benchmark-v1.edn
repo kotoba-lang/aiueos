@@ -31,11 +31,11 @@
                :forbidden-substitutions [:nominal-cpu-clock-for-tsc
                                          :server-listening-for-generation
                                          :zero-for-missing-timing]}
- :current-native-gaps {:general-address-space :first-1-gib-identity-map-only
-                       :physical-allocation :bounded-256-page-record-table
-                       :model-storage-reader :absent
+ :current-native-gaps {:general-address-space :model-range-read-only-nx-qemu-verified
+                       :physical-allocation :bounded-256-page-record-table-for-runtime-pages
+                       :model-storage-reader :split-fat32-uefi-qemu-verified-physical-unverified
                        :nvme-driver :reference-c-qemu-only
-                       :gguf-parser :absent
+                       :gguf-parser :v3-header-admission-only
                        :qwen35-runtime :absent
                        :tokenizer :absent
                        :threaded-simd-backend :absent
@@ -48,9 +48,10 @@
            :missing-metric "N/A"
            :source-state :implemented-qemu-unverified-on-physical-k16}
  :observed {:artifact-on-k16? false
+            :model-handoff :implemented-qemu-physical-unverified
             :real-generation? false
             :speed :not-available
-            :reason :native-runtime-and-storage-path-not-yet-present}
+            :reason :native-qwen-runtime-not-yet-present}
  :admit-only-when [:exact-artifact-present :artifact-sha256-matches
                    :runtime-generates-nonempty-token-sequence
                    :all-required-measurements-present

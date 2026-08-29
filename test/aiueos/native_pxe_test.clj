@@ -48,6 +48,18 @@
   (slurp (io/file "os/aiueos/scripts/smoke-inference-status.sh")))
 (def qwen38-fetch
   (slurp (io/file "os/aiueos/scripts/fetch-qwen38-27b-model.sh")))
+(def qwen38-handoff-contract
+  (slurp (io/file "os/aiueos/contracts/qwen38-model-handoff-v1.edn")))
+(def qwen38-handoff
+  (slurp (io/file "os/aiueos/kernel/model_handoff.c")))
+(def qwen38-paging
+  (slurp (io/file "os/aiueos/kernel/paging.c")))
+(def qwen38-bundle
+  (slurp (io/file "os/aiueos/scripts/prepare-qwen38-model-bundle.sh")))
+(def qwen38-handoff-build
+  (slurp (io/file "os/aiueos/scripts/build-qwen38-model-handoff-pxe.sh")))
+(def qwen38-handoff-smoke
+  (slurp (io/file "os/aiueos/scripts/smoke-qemu-model-handoff.sh")))
 (def physical-relay-build
   (slurp (io/file "os/aiueos/scripts/build-physical-relay-pxe.sh")))
 (def relay-protocol
@@ -177,6 +189,35 @@
                   "artifact plus 2 GiB headroom"]]
     (is (str/includes? qwen38-fetch marker)))
   (is (str/includes? kernel "aiueos_framebuffer_inference_screen")))
+
+(deftest qwen38-pure-aiueos-handoff-is-exact-immutable-and-not-generation
+  (let [contract (edn/read-string qwen38-handoff-contract)]
+    (is (= [4000000000 4000000000 2934860704]
+           (mapv :bytes (get-in contract [:bundle :parts]))))
+    (is (= [:supervisor :read-only :nx]
+           (get-in contract [:kernel :mapping :permissions])))
+    (is (= :unverified (get-in contract [:evidence :physical-k16])))
+    (is (= :absent (get-in contract [:evidence :real-generation])))
+    (is (false? (get-in contract [:safety :internal-disk-writes?])))
+    (is (every? (set (:does-not-prove contract))
+                [:physical-contiguous-allocation :qwen38-generation
+                 :physical-k16-throughput])))
+  (doseq [marker ["HUGE_PAGE_SIZE" "AIUEOS_MODEL_RESERVED_APIC_START"
+                  "version == 3U"]]
+    (is (str/includes? qwen38-handoff marker)))
+  (doseq [marker ["PTE_PRESENT | PTE_HUGE | PTE_NX"
+                  "deliberately not writable"]]
+    (is (str/includes? qwen38-paging marker)))
+  (doseq [marker ["10934860704"
+                  "c0b7c3038681ed2e3040456c1dd45f9858b6c2290bed172c70388a94874f3eee"
+                  "Q38P0.BIN" "model-bundle-v1.json"]]
+    (is (str/includes? qwen38-bundle marker)))
+  (is (str/includes? qwen38-handoff-build
+                     "AIUEOS_QWEN38_MODEL_HANDOFF=1"))
+  (doseq [marker ["AIUEOS_QWEN38_MODEL_HANDOFF_QEMU_OK"
+                  "AIUEOS_QWEN38_MODEL_HANDOFF_QEMU_REFUSAL_OK"
+                  "generation=not-yet-present"]]
+    (is (str/includes? qwen38-handoff-smoke marker))))
 
 (deftest k16-rtl8125-uefi-observation-stays-read-only
   (doseq [marker ["AIUEOS_RTL8125_HANDOFF bdf="
