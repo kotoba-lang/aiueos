@@ -13,6 +13,7 @@
 #define CR4_PGE (1ULL << 7)
 #define CR4_PCIDE (1ULL << 17)
 #define CR4_CET (1ULL << 23)
+#define PML4_SLOT_ZERO_LIMIT (1ULL << 39)
 
 extern uint8_t aiueos_text_start[], aiueos_text_end[];
 extern uint8_t aiueos_rodata_start[], aiueos_rodata_end[];
@@ -476,14 +477,18 @@ int aiueos_address_space_reuse(unsigned process) {
 
 /* GOP memory is mapped supervisor-only, non-executable and uncached.  Its
  * dedicated directory prevents a display capability from replacing RAM or
- * PCI transport mappings. */
+ * PCI transport mappings.  Firmware may place an integrated-GPU aperture at
+ * any address in PML4 slot zero; the physical K16 reports 0x7fe0000000, so a
+ * legacy below-3-GiB limit would reject its valid GOP handoff. */
 int aiueos_map_framebuffer(uint64_t address, uint64_t length) {
-  if (!length || address < 0x40000000ULL || address >= 0xc0000000ULL ||
-      address + length < address || address + length > 0xc0000000ULL)
+  if (!length || address < 0x40000000ULL ||
+      address >= PML4_SLOT_ZERO_LIMIT || address + length < address ||
+      address + length > PML4_SLOT_ZERO_LIMIT)
     return 0;
-  uint64_t pdpt_index = address >> 30;
-  if (pdpt_index < 1 || pdpt_index > 2 ||
-      pdpt_index != ((address + length - 1) >> 30) || pdpt[pdpt_index])
+  uint64_t pdpt_index = (address >> 30) & 0x1ff;
+  if (!pdpt_index ||
+      pdpt_index != (((address + length - 1) >> 30) & 0x1ff) ||
+      pdpt[pdpt_index])
     return 0;
   pdpt[pdpt_index] = encrypted_ram_address(framebuffer_page_directory) |
     PTE_PRESENT | PTE_WRITABLE;

@@ -11,6 +11,44 @@ struct aiueos_boot_info {
   uint64_t firmware_cr3;
 };
 
+#define AIUEOS_OWNED_MEMORY_MAP_BYTES (128ULL * 1024ULL)
+static struct aiueos_boot_info aiueos_owned_boot_info;
+static uint8_t aiueos_owned_memory_map[AIUEOS_OWNED_MEMORY_MAP_BYTES]
+  __attribute__((aligned(16)));
+
+/* The loader's boot-info object and memory-map buffer are firmware-owned.
+   They are readable under the inherited CR3 but are not necessarily inside
+   the kernel's bounded low identity map.  Retain every scalar and the bounded
+   descriptor stream before aiueos_paging_initialize installs the owned root. */
+static int aiueos_boot_info_retain(const struct aiueos_boot_info *source) {
+  if (!source || !source->memory_map || !source->memory_map_size ||
+      !source->descriptor_size ||
+      source->memory_map_size > AIUEOS_OWNED_MEMORY_MAP_BYTES ||
+      source->memory_map_size % source->descriptor_size != 0)
+    return 0;
+  aiueos_owned_boot_info.magic = source->magic;
+  aiueos_owned_boot_info.version = source->version;
+  aiueos_owned_boot_info.memory_map_size = source->memory_map_size;
+  aiueos_owned_boot_info.descriptor_size = source->descriptor_size;
+  aiueos_owned_boot_info.descriptor_version = source->descriptor_version;
+  aiueos_owned_boot_info.acpi_rsdp = source->acpi_rsdp;
+  aiueos_owned_boot_info.framebuffer_base = source->framebuffer_base;
+  aiueos_owned_boot_info.framebuffer_size = source->framebuffer_size;
+  aiueos_owned_boot_info.framebuffer_width = source->framebuffer_width;
+  aiueos_owned_boot_info.framebuffer_height = source->framebuffer_height;
+  aiueos_owned_boot_info.framebuffer_stride = source->framebuffer_stride;
+  aiueos_owned_boot_info.framebuffer_format = source->framebuffer_format;
+  aiueos_owned_boot_info.initramfs_base = source->initramfs_base;
+  aiueos_owned_boot_info.initramfs_size = source->initramfs_size;
+  aiueos_owned_boot_info.runtime_services = source->runtime_services;
+  aiueos_owned_boot_info.firmware_cr3 = source->firmware_cr3;
+  const volatile uint8_t *input = source->memory_map;
+  for (uint64_t i = 0; i < source->memory_map_size; i++)
+    aiueos_owned_memory_map[i] = input[i];
+  aiueos_owned_boot_info.memory_map = aiueos_owned_memory_map;
+  return 1;
+}
+
 /* Bounded `newc` cpio validation. The archive was already bound to a
    compiled-in SHA-256 by the loader; this walk proves the structure: magic
    per entry, hex-only size fields, 4-byte alignment, in-bounds extents, a
@@ -150,6 +188,14 @@ extern uint32_t aiueos_rtl8125_qualification_rx_length(void);
 extern int aiueos_rtl8125_relay_qualification(void);
 extern unsigned aiueos_rtl8125_relay_error(void);
 extern uint32_t aiueos_rtl8125_relay_rx_length(void);
+extern int aiueos_rtl8125_job_qualification(void);
+extern unsigned aiueos_rtl8125_job_error(void);
+extern uint8_t aiueos_rtl8125_job_token(void);
+extern uint16_t aiueos_rtl8125_job_score(void);
+extern uint16_t aiueos_rtl8125_job_total(void);
+extern int aiueos_rtl8125_liveness_renewal(void);
+extern unsigned aiueos_rtl8125_liveness_error(void);
+extern uint32_t aiueos_rtl8125_liveness_sequence(void);
 extern int aiueos_catalog_policy_selftest_ok(void);
 extern int aiueos_object_store_ready(void);
 extern int aiueos_journal_ready(void);
@@ -503,11 +549,13 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
   serial_init();
   if (!boot || boot->magic != 0x414955454f53424fULL ||
       (boot->version != 2 && boot->version != 3) ||
-      !boot->memory_map || !boot->memory_map_size || !boot->descriptor_size) {
+      !boot->memory_map || !boot->memory_map_size || !boot->descriptor_size ||
+      !aiueos_boot_info_retain(boot)) {
     debug_string("AIUEOS_KERNEL_FAIL boot-info\n");
     serial_string("AIUEOS_KERNEL_FAIL boot-info\r\n");
     qemu_exit(0x7e);
   } else {
+    boot = &aiueos_owned_boot_info;
 #ifdef AIUEOS_PHYSICAL_QUALIFICATION
     aiueos_qualification_runtime_initialize(
         boot->version >= 3 ? boot->runtime_services : 0,
@@ -801,8 +849,73 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
     (void)aiueos_rtl8125_relay_rx_length();
     debug_string("AIUEOS_PHYSICAL_RELAY_OK request-bound-udp=10.77.0.1:7777 scope=diagnostic-only\n");
     serial_string("AIUEOS_PHYSICAL_RELAY_OK request-bound-udp=10.77.0.1:7777 scope=diagnostic-only\r\n");
+#ifdef AIUEOS_PHYSICAL_JOB_QUALIFICATION
+    aiueos_qualification_progress(234);
+    aiueos_framebuffer_qualification_screen("AIUEOS K16", "WAIT INFERENCE JOB", "SSD READ ONLY", 0);
+    if(!aiueos_rtl8125_job_qualification()) {
+      uint32_t code=8400U+aiueos_rtl8125_job_error();
+      aiueos_framebuffer_qualification_screen("AIUEOS K16", "FAIL INFERENCE JOB", "SSD READ ONLY", 0);
+      debug_string("AIUEOS_PHYSICAL_JOB_FAIL queue=claim model=aiueos-char-bigram-v1 result=uncommitted\n");
+      serial_string("AIUEOS_PHYSICAL_JOB_FAIL queue=claim model=aiueos-char-bigram-v1 result=uncommitted\r\n");
+      if(!aiueos_qualification_finalize(2,code))
+        serial_string("AIUEOS_PHYSICAL_QUALIFICATION_LOG_FAIL stage=runtime-variable\r\n");
+      for(;;)__asm__ volatile("cli; hlt");
+    }
+    aiueos_qualification_progress(235);
+    aiueos_framebuffer_qualification_screen("AIUEOS K16", "INFERENCE RESULT OK", "SSD READ ONLY", 1);
+    (void)aiueos_rtl8125_job_token();
+    (void)aiueos_rtl8125_job_score();
+    (void)aiueos_rtl8125_job_total();
+    debug_string("AIUEOS_PHYSICAL_JOB_OK queue=claim model=aiueos-char-bigram-v1 token=o result=recorded ready=true\n");
+    serial_string("AIUEOS_PHYSICAL_JOB_OK queue=claim model=aiueos-char-bigram-v1 token=o result=recorded ready=true\r\n");
+    if(!aiueos_rtl8125_liveness_renewal()) {
+      uint32_t code=8500U+aiueos_rtl8125_liveness_error();
+      aiueos_framebuffer_qualification_screen("AIUEOS K16", "FAIL HEARTBEAT RENEW", "SSD READ ONLY", 0);
+      debug_string("AIUEOS_PHYSICAL_LIVENESS_FAIL ping=pong heartbeat=not-renewed\n");
+      serial_string("AIUEOS_PHYSICAL_LIVENESS_FAIL ping=pong heartbeat=not-renewed\r\n");
+      if(!aiueos_qualification_finalize(2,code))
+        serial_string("AIUEOS_PHYSICAL_QUALIFICATION_LOG_FAIL stage=runtime-variable\r\n");
+      for(;;)__asm__ volatile("cli; hlt");
+    }
+    (void)aiueos_rtl8125_liveness_sequence();
+    aiueos_framebuffer_qualification_screen("AIUEOS K16", "MURAKUMO NODE LIVE", "SSD READ ONLY", 1);
+    debug_string("AIUEOS_PHYSICAL_LIVENESS_OK ping=pong heartbeat=renewed\n");
+    serial_string("AIUEOS_PHYSICAL_LIVENESS_OK ping=pong heartbeat=renewed\r\n");
+    if(!aiueos_qualification_finalize(1,8141))
+      serial_string("AIUEOS_PHYSICAL_QUALIFICATION_LOG_FAIL stage=runtime-variable\r\n");
+    uint32_t liveness_failures=0;
+    for(;;) {
+      if(aiueos_rtl8125_liveness_renewal()) {
+        if(liveness_failures) {
+          aiueos_framebuffer_qualification_screen("AIUEOS K16", "MURAKUMO NODE LIVE", "SSD READ ONLY", 1);
+          debug_string("AIUEOS_PHYSICAL_LIVENESS_RECOVERED heartbeat=renewed\n");
+          serial_string("AIUEOS_PHYSICAL_LIVENESS_RECOVERED failures=");
+          serial_decimal(liveness_failures);
+          serial_string(" sequence=");
+          serial_decimal(aiueos_rtl8125_liveness_sequence());
+          serial_string("\r\n");
+          liveness_failures=0;
+        }
+        continue;
+      }
+      liveness_failures++;
+      aiueos_framebuffer_qualification_screen("AIUEOS K16", "NODE RECONNECTING", "SSD READ ONLY", 0);
+      debug_string("AIUEOS_PHYSICAL_LIVENESS_RETRY heartbeat=stale action=reconnect\n");
+      serial_string("AIUEOS_PHYSICAL_LIVENESS_RETRY failure=");
+      serial_decimal(liveness_failures);
+      serial_string(" error=");
+      serial_decimal(aiueos_rtl8125_liveness_error());
+      serial_string(" action=reconnect\r\n");
+      /* A failed job can leave its error sticky and make the next renewal
+         return immediately. Keep that path from becoming a hot spin while a
+         future recovery policy decides whether the job may be retried. */
+      for(volatile uint32_t backoff=0;backoff<50000000U;backoff++)
+        __asm__ volatile("pause");
+    }
+#else
     if(!aiueos_qualification_finalize(1,8130))
       serial_string("AIUEOS_PHYSICAL_QUALIFICATION_LOG_FAIL stage=runtime-variable\r\n");
+#endif
 #else
     if(!aiueos_qualification_finalize(1,8125))
       serial_string("AIUEOS_PHYSICAL_QUALIFICATION_LOG_FAIL stage=runtime-variable\r\n");

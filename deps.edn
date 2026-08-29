@@ -36,6 +36,10 @@
         io.github.kotoba-lang/window-session-state
         {:git/url "https://github.com/kotoba-lang/window-session-state.git"
          :git/sha "8a897953ce207c42838b81f13482464cac14fabb"}
+        ;; Hosted Kotoba Browser device approval renders the canonical
+        ;; auth.kotoba.cloud URL locally. No third-party QR endpoint learns a
+        ;; live approval flow. Version 1.8.0 is the upstream Maven release.
+        io.nayuki/qrcodegen {:mvn/version "1.8.0"}
         com.dylibso.chicory/wasm {:mvn/version "1.4.0"}
         com.dylibso.chicory/runtime {:mvn/version "1.4.0"}}
  :aliases

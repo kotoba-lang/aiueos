@@ -51,6 +51,9 @@
 #define EFI_VARIABLE_BOOTSERVICE_ACCESS 0x00000002U
 #define EFI_VARIABLE_RUNTIME_ACCESS 0x00000004U
 #define EFI_RESET_COLD 0U
+#define ACPI_MAX_TABLE_SIZE (1024U * 1024U)
+#define ACPI_MAX_ROOT_ENTRIES 128U
+#define ACPI_BOOTSTRAP_IDENTITY_LIMIT 0x40000000ULL
 
 typedef uint64_t efi_status;
 typedef void *efi_handle;
@@ -111,6 +114,29 @@ struct efi_system_table {
   void *configuration_table;
 };
 
+struct efi_configuration_table {
+  struct efi_guid vendor_guid;
+  void *vendor_table;
+};
+
+struct __attribute__((packed)) acpi_rsdp_v2 {
+  char signature[8];
+  uint8_t checksum;
+  char oem_id[6];
+  uint8_t revision;
+  uint32_t rsdt_address, length;
+  uint64_t xsdt_address;
+  uint8_t extended_checksum, reserved[3];
+};
+
+struct __attribute__((packed)) acpi_sdt_header {
+  char signature[4];
+  uint32_t length;
+  uint8_t revision, checksum;
+  char oem_id[6], oem_table_id[8];
+  uint32_t oem_revision, creator_id, creator_revision;
+};
+
 typedef efi_status(EFIAPI *efi_get_variable)(char16 *, const struct efi_guid *,
                                               uint32_t *, uint64_t *, void *);
 typedef efi_status(EFIAPI *efi_set_variable)(char16 *, const struct efi_guid *,
@@ -146,6 +172,20 @@ struct efi_loaded_image_protocol {
   uint64_t image_size;
   uint32_t image_code_type, image_data_type;
   void *unload;
+};
+
+struct efi_graphics_output_mode_info {
+  uint32_t version, horizontal_resolution, vertical_resolution, pixel_format;
+  uint32_t pixel_information[4], pixels_per_scan_line;
+};
+struct efi_graphics_output_mode {
+  uint32_t max_mode, mode;
+  struct efi_graphics_output_mode_info *info;
+  uint64_t size_of_info, framebuffer_base, framebuffer_size;
+};
+struct efi_graphics_output_protocol {
+  void *query_mode, *set_mode, *blt;
+  struct efi_graphics_output_mode *mode;
 };
 
 union efi_ip_address {
@@ -276,6 +316,12 @@ static const struct efi_guid loaded_image_guid =
   {0x5b1b31a1,0x9562,0x11d2,{0x8e,0x3f,0x00,0xa0,0xc9,0x69,0x72,0x3b}};
 static const struct efi_guid pxe_base_code_guid =
   {0x03c4e603,0xac28,0x11d3,{0x9a,0x2d,0x00,0x90,0x27,0x3f,0xc1,0x4d}};
+static const struct efi_guid graphics_output_guid =
+  {0x9042a9de,0x23dc,0x4a38,{0x96,0xfb,0x7a,0xde,0xd0,0x80,0x51,0x6a}};
+static const struct efi_guid acpi_20_table_guid =
+  {0x8868e871,0xe4f1,0x11d3,{0xbc,0x22,0x00,0x80,0xc7,0x3c,0x88,0x81}};
+static const struct efi_guid acpi_10_table_guid =
+  {0xeb9d2d30,0x2d88,0x11d3,{0x9a,0x16,0x00,0x90,0x27,0x3f,0xc1,0x4d}};
 static const struct efi_guid global_variable_guid =
   {0x8be4df61,0x93ca,0x11d2,{0xaa,0x0d,0x00,0xe0,0x98,0x03,0x2b,0x8c}};
 static const struct efi_guid qualification_guid =
@@ -396,6 +442,290 @@ static void append_line_end(char **output) {
   *(*output)++ = '\r';
   *(*output)++ = '\n';
   **output = 0;
+}
+
+static void report_graphics_output(struct efi_system_table *system) {
+  if (!system || !boot_services || !boot_services->handle_protocol) return;
+  struct efi_graphics_output_protocol *gop=0;
+  if (system->console_out_handle)
+    boot_services->handle_protocol(system->console_out_handle,
+                                   &graphics_output_guid,(void **)&gop);
+  if (!gop && boot_services->locate_handle) {
+    efi_handle handles[32];
+    uint64_t bytes=sizeof(handles);
+    if (boot_services->locate_handle(EFI_BY_PROTOCOL,&graphics_output_guid,0,
+                                     &bytes,handles)==EFI_SUCCESS)
+      for (uint64_t index=0;index<bytes/sizeof(efi_handle) && !gop;index++)
+        boot_services->handle_protocol(handles[index],&graphics_output_guid,
+                                       (void **)&gop);
+  }
+  if (!gop || !gop->mode || !gop->mode->info) {
+    console_ascii("AIUEOS_PXE_GOP state=unavailable\r\n");
+    return;
+  }
+  struct efi_graphics_output_mode *mode=gop->mode;
+  struct efi_graphics_output_mode_info *info=mode->info;
+  char line[224],*output=append_ascii(line,"AIUEOS_PXE_GOP state=ready base=");
+  output=append_hex(output,mode->framebuffer_base,16);
+  output=append_ascii(output," bytes=");
+  output=append_dec(output,mode->framebuffer_size);
+  output=append_ascii(output," width=");
+  output=append_dec(output,info->horizontal_resolution);
+  output=append_ascii(output," height=");
+  output=append_dec(output,info->vertical_resolution);
+  output=append_ascii(output," stride=");
+  output=append_dec(output,info->pixels_per_scan_line);
+  output=append_ascii(output," format=");
+  output=append_dec(output,info->pixel_format);
+  append_line_end(&output);
+  console_ascii(line);
+}
+
+static int guid_equal(const struct efi_guid *left,
+                      const struct efi_guid *right) {
+  if (!left || !right || left->a!=right->a || left->b!=right->b ||
+      left->c!=right->c) return 0;
+  for (uint32_t index=0;index<8;index++)
+    if (left->d[index]!=right->d[index]) return 0;
+  return 1;
+}
+
+static int acpi_bytes_equal(const char *left, const char *right,
+                            uint32_t bytes) {
+  for (uint32_t index=0;index<bytes;index++)
+    if (left[index]!=right[index]) return 0;
+  return 1;
+}
+
+static int acpi_checksum_ok(const void *table, uint32_t bytes) {
+  if (!table || !bytes || bytes>ACPI_MAX_TABLE_SIZE) return 0;
+  const uint8_t *input=table;
+  uint8_t sum=0;
+  for (uint32_t index=0;index<bytes;index++) sum=(uint8_t)(sum+input[index]);
+  return sum==0;
+}
+
+static int acpi_sdt_header_sane(const struct acpi_sdt_header *header) {
+  return header && header->length>=sizeof(*header) &&
+         header->length<=ACPI_MAX_TABLE_SIZE;
+}
+
+static int acpi_below_kernel_identity_limit(uint64_t address,
+                                            uint32_t bytes) {
+  return address && bytes && address<ACPI_BOOTSTRAP_IDENTITY_LIMIT &&
+         address<=ACPI_BOOTSTRAP_IDENTITY_LIMIT-bytes;
+}
+
+static void append_acpi_signature(char **output, const char signature[4]) {
+  for (uint32_t index=0;index<4;index++) {
+    uint8_t value=(uint8_t)signature[index];
+    *(*output)++=(value>=0x20 && value<=0x7e) ? (char)value : '?';
+  }
+}
+
+static void report_acpi_madt(const struct acpi_sdt_header *header) {
+  if (!acpi_sdt_header_sane(header) || header->length<sizeof(*header)+8) return;
+  const uint8_t *cursor=(const uint8_t *)header+sizeof(*header)+8;
+  const uint8_t *end=(const uint8_t *)header+header->length;
+  uint32_t cpus=0,ioapics=0,timer_gsi=0,first_ioapic=0,first_gsi_base=0;
+  int malformed=0;
+  while (cursor<end) {
+    if ((uint64_t)(end-cursor)<2 || cursor[1]<2 ||
+        (uint64_t)(end-cursor)<cursor[1]) {
+      malformed=1;
+      break;
+    }
+    uint8_t type=cursor[0],length=cursor[1];
+    if (type==0 && length>=8) {
+      uint32_t flags=*(const uint32_t *)(const void *)(cursor+4);
+      if (flags&3U) cpus++;
+    } else if (type==9 && length>=16) {
+      uint32_t flags=*(const uint32_t *)(const void *)(cursor+8);
+      if (flags&3U) cpus++;
+    } else if (type==1 && length>=12) {
+      uint32_t address=*(const uint32_t *)(const void *)(cursor+4);
+      uint32_t gsi_base=*(const uint32_t *)(const void *)(cursor+8);
+      if (!ioapics) {
+        first_ioapic=address;
+        first_gsi_base=gsi_base;
+      }
+      ioapics++;
+    } else if (type==2 && length>=10 && cursor[2]==0 && cursor[3]==0) {
+      timer_gsi=*(const uint32_t *)(const void *)(cursor+4);
+    }
+    cursor+=length;
+  }
+  char line[256],*output=append_ascii(line,"AIUEOS_PXE_ACPI_MADT cpus=");
+  output=append_dec(output,cpus);
+  output=append_ascii(output," ioapics=");
+  output=append_dec(output,ioapics);
+  output=append_ascii(output," first-ioapic=");
+  output=append_hex(output,first_ioapic,8);
+  output=append_ascii(output," first-gsi-base=");
+  output=append_dec(output,first_gsi_base);
+  output=append_ascii(output," timer-gsi=");
+  output=append_dec(output,timer_gsi);
+  output=append_ascii(output," malformed=");
+  output=append_dec(output,(uint32_t)malformed);
+  append_line_end(&output);
+  console_ascii(line);
+}
+
+static void report_acpi_dmar(const struct acpi_sdt_header *header) {
+  if (!acpi_sdt_header_sane(header) || header->length<sizeof(*header)+12) return;
+  const uint8_t *bytes=(const uint8_t *)header;
+  const uint8_t *cursor=bytes+sizeof(*header)+12;
+  const uint8_t *end=bytes+header->length;
+  uint32_t drhds=0,segment0=0,include_all=0;
+  uint64_t segment0_base=0;
+  int malformed=0;
+  while (cursor<end) {
+    if ((uint64_t)(end-cursor)<4) { malformed=1; break; }
+    uint16_t type=*(const uint16_t *)(const void *)cursor;
+    uint16_t length=*(const uint16_t *)(const void *)(cursor+2);
+    if (length<4 || (uint64_t)(end-cursor)<length) { malformed=1; break; }
+    if (type==0) {
+      if (length<16) { malformed=1; break; }
+      uint16_t segment=*(const uint16_t *)(const void *)(cursor+6);
+      uint64_t base=*(const uint64_t *)(const void *)(cursor+8);
+      drhds++;
+      if (!segment0 && segment==0) {
+        segment0=1;
+        include_all=cursor[4]&1U;
+        segment0_base=base;
+      }
+    }
+    cursor+=length;
+  }
+  char line[256],*output=append_ascii(line,"AIUEOS_PXE_ACPI_DMAR width=");
+  output=append_dec(output,bytes[sizeof(*header)]);
+  output=append_ascii(output," drhds=");
+  output=append_dec(output,drhds);
+  output=append_ascii(output," segment0=");
+  output=append_dec(output,segment0);
+  output=append_ascii(output," include-all=");
+  output=append_dec(output,include_all);
+  output=append_ascii(output," register-base=");
+  output=append_hex(output,segment0_base,16);
+  output=append_ascii(output," malformed=");
+  output=append_dec(output,(uint32_t)malformed);
+  append_line_end(&output);
+  console_ascii(line);
+}
+
+static void report_acpi(struct efi_system_table *system) {
+  if (!system || !system->configuration_table ||
+      system->number_of_table_entries>4096) {
+    console_ascii("AIUEOS_PXE_ACPI_RSDP state=unavailable reason=configuration-table\r\n");
+    return;
+  }
+  const struct efi_configuration_table *tables=system->configuration_table;
+  const struct acpi_rsdp_v2 *rsdp=0;
+  const char *source="none";
+  for (uint64_t index=0;index<system->number_of_table_entries;index++) {
+    if (guid_equal(&tables[index].vendor_guid,&acpi_20_table_guid)) {
+      rsdp=tables[index].vendor_table;
+      source="acpi20";
+      break;
+    }
+    if (!rsdp && guid_equal(&tables[index].vendor_guid,&acpi_10_table_guid)) {
+      rsdp=tables[index].vendor_table;
+      source="acpi10";
+    }
+  }
+  if (!rsdp) {
+    console_ascii("AIUEOS_PXE_ACPI_RSDP state=unavailable reason=guid-not-found\r\n");
+    return;
+  }
+  int signature=acpi_bytes_equal(rsdp->signature,"RSD PTR ",8);
+  int checksum20=signature && acpi_checksum_ok(rsdp,20);
+  uint32_t rsdp_length=rsdp->revision>=2 ? rsdp->length : 20;
+  int length_sane=rsdp_length>=20 && rsdp_length<=4096;
+  int checksum_full=length_sane && acpi_checksum_ok(rsdp,rsdp_length);
+  char line[320],*output=append_ascii(line,"AIUEOS_PXE_ACPI_RSDP state=ready source=");
+  output=append_ascii(output,source);
+  output=append_ascii(output," address=");
+  output=append_hex(output,(uint64_t)(uintptr_t)rsdp,16);
+  output=append_ascii(output," revision=");
+  output=append_dec(output,rsdp->revision);
+  output=append_ascii(output," length=");
+  output=append_dec(output,rsdp_length);
+  output=append_ascii(output," checksum20=");
+  output=append_dec(output,(uint32_t)checksum20);
+  output=append_ascii(output," checksum-full=");
+  output=append_dec(output,(uint32_t)checksum_full);
+  output=append_ascii(output," below-1g=");
+  output=append_dec(output,(uint32_t)acpi_below_kernel_identity_limit(
+      (uint64_t)(uintptr_t)rsdp,rsdp_length));
+  append_line_end(&output);
+  console_ascii(line);
+  if (!signature || !checksum20 || !length_sane || !checksum_full) return;
+
+  uint32_t entry_width=rsdp->revision>=2 ? 8U : 4U;
+  uint64_t root_address=rsdp->revision>=2 ? rsdp->xsdt_address :
+                                           rsdp->rsdt_address;
+  const struct acpi_sdt_header *root=(const void *)(uintptr_t)root_address;
+  if (!acpi_sdt_header_sane(root)) {
+    console_ascii("AIUEOS_PXE_ACPI_ROOT state=invalid reason=length\r\n");
+    return;
+  }
+  uint32_t payload=root->length-sizeof(*root);
+  uint32_t entries=payload/entry_width;
+  int aligned=(payload%entry_width)==0;
+  output=append_ascii(line,"AIUEOS_PXE_ACPI_ROOT state=ready signature=");
+  append_acpi_signature(&output,root->signature);
+  output=append_ascii(output," address=");
+  output=append_hex(output,root_address,16);
+  output=append_ascii(output," length=");
+  output=append_dec(output,root->length);
+  output=append_ascii(output," entry-width=");
+  output=append_dec(output,entry_width);
+  output=append_ascii(output," entries=");
+  output=append_dec(output,entries);
+  output=append_ascii(output," aligned=");
+  output=append_dec(output,(uint32_t)aligned);
+  output=append_ascii(output," checksum=");
+  output=append_dec(output,(uint32_t)acpi_checksum_ok(root,root->length));
+  output=append_ascii(output," below-1g=");
+  output=append_dec(output,(uint32_t)acpi_below_kernel_identity_limit(
+      root_address,root->length));
+  append_line_end(&output);
+  console_ascii(line);
+  if (!aligned || entries>ACPI_MAX_ROOT_ENTRIES) {
+    console_ascii("AIUEOS_PXE_ACPI_ROOT_ENUM state=refused reason=entry-bound\r\n");
+    return;
+  }
+
+  const uint8_t *entry_bytes=(const uint8_t *)root+sizeof(*root);
+  for (uint32_t index=0;index<entries;index++) {
+    uint64_t address=entry_width==8
+      ? *(const uint64_t *)(const void *)(entry_bytes+(uint64_t)index*8)
+      : *(const uint32_t *)(const void *)(entry_bytes+(uint64_t)index*4);
+    const struct acpi_sdt_header *candidate=(const void *)(uintptr_t)address;
+    output=append_ascii(line,"AIUEOS_PXE_ACPI_TABLE index=");
+    output=append_dec(output,index);
+    output=append_ascii(output," address=");
+    output=append_hex(output,address,16);
+    output=append_ascii(output," signature=");
+    append_acpi_signature(&output,candidate->signature);
+    output=append_ascii(output," length=");
+    output=append_dec(output,candidate->length);
+    output=append_ascii(output," sane=");
+    output=append_dec(output,(uint32_t)acpi_sdt_header_sane(candidate));
+    output=append_ascii(output," checksum=");
+    output=append_dec(output,(uint32_t)(acpi_sdt_header_sane(candidate) &&
+        acpi_checksum_ok(candidate,candidate->length)));
+    output=append_ascii(output," below-1g=");
+    output=append_dec(output,(uint32_t)(acpi_sdt_header_sane(candidate) &&
+        acpi_below_kernel_identity_limit(address,candidate->length)));
+    append_line_end(&output);
+    console_ascii(line);
+    if (!acpi_sdt_header_sane(candidate)) continue;
+    if (acpi_bytes_equal(candidate->signature,"APIC",4))
+      report_acpi_madt(candidate);
+    else if (acpi_bytes_equal(candidate->signature,"DMAR",4))
+      report_acpi_dmar(candidate);
+  }
 }
 
 static void zero_bytes(void *memory, uint64_t bytes) {
@@ -1022,6 +1352,9 @@ static void discover_controllers(struct efi_boot_services *boot) {
     if ((config[0]&0xffffU)==0x10ecU && (config[0]>>16)==0x8125U)
       report_rtl8125_handoff(pci,(uint8_t)bus,(uint8_t)device,
                              (uint8_t)function,config[1]);
+#ifdef AIUEOS_PXE_ONLY_CONTROL
+    continue;
+#endif
     if (controller_count>=MAX_DBC_CONTROLLERS ||
         ((config[2]>>8)&0xffffffU)!=0x0c0330U) continue;
     uint32_t dbc_offset=0;
@@ -1047,10 +1380,18 @@ efi_status EFIAPI efi_main(efi_handle image, struct efi_system_table *system) {
                 (uint64_t)(uintptr_t)system;
   if (!control_nonce) control_nonce=0xa11e10c077000001ULL;
   discover_netlog(image);
+  report_graphics_output(system);
+  report_acpi(system);
   report_qualification_result(system);
+#ifdef AIUEOS_PXE_ONLY_CONTROL
+  console_ascii("\r\nAIUEOS PXE CONTROL (NO DISK WRITES)\r\n");
+  console_ascii("AIUEOS_PXE_CONTROL_START transport=uefi-pxe-base-code internal-ssd-writes=none usb-log-writes=none\r\n");
+#else
   console_ascii("\r\nAIUEOS DBC LIVE PROBE (NO DISK WRITES)\r\n");
   console_ascii("AIUEOS_DBC_START transport=xhci-dbc direction=duplex internal-ssd-writes=none usb-log-writes=none\r\n");
+#endif
   discover_controllers(system->boot_services);
+#ifndef AIUEOS_PXE_ONLY_CONTROL
   char summary[128],*output=append_ascii(summary,"AIUEOS_DBC_DISCOVERY controllers=");
   output=append_dec(output,controller_count);
   output=append_ascii(output," max=5\r\n");*output=0;
@@ -1060,6 +1401,9 @@ efi_status EFIAPI efi_main(efi_handle image, struct efi_system_table *system) {
   } else {
     console_ascii("AIUEOS_DBC_WAITING connect-or-replug-type-c mac-receiver-required\r\n");
   }
+#else
+  console_ascii("AIUEOS_PXE_CONTROL_READY diagnostics=gop+acpi+rtl8125+nvram control=udp\r\n");
+#endif
   report_control_ready();
   for (;;) {
     for (uint32_t index=0;index<controller_count;index++)

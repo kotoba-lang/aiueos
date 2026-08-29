@@ -298,6 +298,11 @@ Expected markers:
 - `AIUEOS_SESSION_INFER=` … `"alias":"murakumo-main"` and a completion snippet
 - `AIUEOS_SESSION_OK`
 
+The OS UI engine contract is `kotoba-lang/browser`; DADS is the component and
+token layer inside that surface. The committed HTML/JavaScript document is a
+hosted verification adapter and is explicitly not counted as the native
+Kotoba-clj/WASM browser guest.
+
 Exit 0 means the DADS SPA was served and both live legs were admitted **from
 the session process**. Exit 1 is a refusal or a non-DADS document. Exit 3
 means a leg could not be answered.
@@ -315,9 +320,18 @@ real-machine qualification.
 A VM has no chassis sticker. The hypervisor helper on the Mac prints the
 setup URL and QR payload on the **host** terminal and writes `setup.json`
 next to the VM. QEMU runs with `-display none`; guest VGA/keyboard is not a
-passing path. User-mode/slirp stands in for Ethernet DHCP. Enrollment is
-`grant.enroll` (not a second identity stack). The local check-in ledger is
-labelled `non-authoritative`; production still names `https://kotobase.net`.
+passing path. User-mode/slirp stands in for Ethernet DHCP. The hosted fixture
+uses `grant.enroll` (not a second identity stack). The
+product account flow sends `Passkey` or `phone-scan` into one single-use
+challenge at `https://auth.kotoba.cloud/v1/aiueos/device/start`; the helper polls
+`/v1/aiueos/device/poll` with a separate node-only secret and then proves the
+device-owned Ed25519 key. The browser and locally rendered QR receive only the
+public approval URL. They receive neither the poll secret, device enrollment
+token, nor an account/passkey private key. The formal WebAuthn authority and RP
+ID are both `auth.kotoba.cloud` (ADR-0113). The local check-in ledger is labelled
+`non-authoritative`; production still names `https://kotobase.net`. A mocked
+authority gate proves the adapter and binding rules; a production deployment
+plus a human Passkey ceremony remains separate live evidence.
 
 On Apple Silicon this uses `qemu-system-aarch64` + HVF + edk2 firmware, the
 same ISA `aiueos.vm` defaults to. It is **not** the x86_64 C-free kernel
@@ -331,7 +345,7 @@ clojure -M:phone-bind smoke
 Expected markers on stdout:
 
 - `AIUEOS_SETUP_URL=http://127.0.0.1:<port>/#setup`
-- `AIUEOS_QR=aiueos:1;did=...;model=aiueos-qemu-hosted;endpoint=...;token=...`
+- `AIUEOS_QR=aiueos:2;did=...;model=aiueos-qemu-hosted;endpoint=...;auth=passkey,phone-scan;claim-secret=none`
 - `AIUEOS_BIND_OK`
 
 Exit 0 means an unbound headless VM was bound by a simulated **phone HTTP**
@@ -348,6 +362,12 @@ The SPA is the DADS document at `apps/session` (fragments `#session` `#desktop` 
 `#manage` `#devices`). Phone-bind serves that one HTML. `clojure -M:session smoke`
 is P1 (kotobase + murakumo from the session process). `clojure -M:test` of
 unrelated suites is **not** this gate.
+
+The complete onboarding boundary is
+`os/aiueos/contracts/device-onboarding-v1.edn`. Account sync, Murakumo
+readiness, Kekkai reachability, and Kotobase/CARv2 storage replication are
+independent gates. The current contract neither authorizes an internal SSD
+write nor claims that the native Kekkai or storage adapter already exists.
 
 ## Desktop / compositor (hosted WM + guest 2D argv + kami.webgpu presenter)
 

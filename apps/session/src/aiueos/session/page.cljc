@@ -67,6 +67,10 @@
    "background:var(--hig-color-secondary-system-background);"
    "border-radius:var(--hig-radius-xs);"
    "font-size:var(--hig-text-footnote-font-size)}\n"
+   ".device-auth-qr{display:block;width:min(100%,18rem);height:auto;"
+   "margin:var(--hig-spacing-4) auto;image-rendering:pixelated;"
+   "background:var(--hig-color-system-background)}\n"
+   ".device-auth-qr[hidden]{display:none!important}\n"
    ".session-view[hidden]{display:none!important}\n"
    ".dds-ext-card{margin:var(--hig-spacing-4) 0}\n"
    ".session-main .dads-button{width:100%;margin:var(--hig-spacing-3) 0}\n"
@@ -85,7 +89,9 @@
     :lang "ja"
     :css dds-css
     :app-css (str tokens/skin-css "\n" app-css)
-    :head [[:meta {:name "aiueos-design" :content "jp-go-dds"}]]}
+    :head [[:meta {:name "aiueos-design" :content "jp-go-dds"}]
+           [:meta {:name "aiueos-ui-engine" :content "kotoba-lang/browser"}]
+           [:meta {:name "aiueos-hosted-adapter" :content "html-js-verification-only"}]]}
    (views/shell)
    [:script {:src "/kami-presenter.js"}]
    [:script (or client-js "")]))

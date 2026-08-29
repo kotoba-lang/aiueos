@@ -1,5 +1,7 @@
 window.__aiueosSessionAlive = true;
 window.__aiueosSessionState = { bound: false };
+window.__aiueosUiEngine = "kotoba-lang/browser";
+window.__aiueosHostedAdapter = "html-js-verification-only";
 
 function viewId() {
   var raw = location.hash || "#session";
@@ -36,6 +38,115 @@ async function refreshSetup() {
     var r = await fetch("/setup.json");
     var j = await r.json();
     el.textContent = j.qr || JSON.stringify(j, null, 2);
+  } catch (e) {
+    el.textContent = String(e);
+  }
+}
+
+async function startDeviceAuth(method) {
+  var el = document.getElementById("auth-out");
+  var approvalWindow = null;
+  if (method === "passkey") {
+    approvalWindow = window.open("about:blank", "aiueos-device-approval");
+    if (approvalWindow) approvalWindow.opener = null;
+  }
+  if (el) el.textContent = "単回チャレンジを準備しています…";
+  try {
+    var r = await fetch("/api/device-auth/challenge", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ method: method })
+    });
+    var j = await r.json();
+    if (!r.ok || !j.verification_uri_complete) {
+      if (approvalWindow) approvalWindow.close();
+      if (el) el.textContent = pretty(j);
+      return;
+    }
+    var link = document.getElementById("device-auth-link");
+    if (link) {
+      link.href = j.verification_uri_complete;
+      link.textContent = "承認ページを開く";
+      link.hidden = false;
+    }
+    if (method === "phone-scan" && j.scan_payload) {
+      var qr = document.getElementById("qr");
+      var qrImage = document.getElementById("device-auth-qr");
+      if (qr) qr.textContent = j.scan_payload;
+      if (qrImage) {
+        qrImage.src = "/api/device-auth/qr?flow=" + encodeURIComponent(j.flow_id);
+        qrImage.hidden = false;
+      }
+    }
+    if (method === "passkey") {
+      if (approvalWindow) approvalWindow.location.replace(j.verification_uri_complete);
+      else window.open(j.verification_uri_complete, "_blank", "noopener,noreferrer");
+    }
+    if (el) el.textContent = pretty(j);
+    window.__aiueosDeviceAuth = {
+      expiresAt: j.expires_at_ms,
+      interval: j.poll_interval_seconds || 2
+    };
+    scheduleDeviceAuthPoll(1);
+  } catch (e) {
+    if (approvalWindow) approvalWindow.close();
+    if (el) el.textContent = String(e);
+  }
+}
+
+function scheduleDeviceAuthPoll(seconds) {
+  if (window.__aiueosDeviceAuthTimer) {
+    clearTimeout(window.__aiueosDeviceAuthTimer);
+  }
+  window.__aiueosDeviceAuthTimer = setTimeout(pollDeviceAuth, seconds * 1000);
+}
+
+async function pollDeviceAuth() {
+  var flow = window.__aiueosDeviceAuth;
+  var el = document.getElementById("auth-out");
+  if (!flow) return;
+  if (Date.now() >= flow.expiresAt) {
+    window.__aiueosDeviceAuth = null;
+    if (el) el.textContent = "承認の有効期限が切れました。もう一度始めてください。";
+    return;
+  }
+  try {
+    var r = await fetch("/api/device-auth/complete", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{}"
+    });
+    var j = await r.json();
+    if (r.status === 202) {
+      if (el) el.textContent = "Passkey の確認を待っています…\n" + pretty(j);
+      scheduleDeviceAuthPoll(j.interval || flow.interval || 2);
+      return;
+    }
+    window.__aiueosDeviceAuth = null;
+    if (el) el.textContent = pretty(j);
+    if (r.ok && j.decision === "grant") {
+      var qr = document.getElementById("qr");
+      var qrImage = document.getElementById("device-auth-qr");
+      var link = document.getElementById("device-auth-link");
+      if (qr) qr.textContent = "承認済み";
+      if (qrImage) qrImage.hidden = true;
+      if (link) link.hidden = true;
+      refreshDevicePlan();
+      refreshStatus();
+      refreshDevices();
+    }
+  } catch (e) {
+    if (el) el.textContent = "認証局への接続を再試行しています…";
+    scheduleDeviceAuthPoll(flow.interval || 2);
+  }
+}
+
+async function refreshDevicePlan() {
+  var el = document.getElementById("device-plan-out");
+  if (!el) return;
+  try {
+    var r = await fetch("/api/device-auth/plan");
+    el.textContent = pretty(await r.text());
   } catch (e) {
     el.textContent = String(e);
   }
@@ -274,6 +385,7 @@ async function refreshDevices() {
   if (!el) return;
   var r = await fetch("/api/devices");
   el.textContent = await r.text();
+  refreshDevicePlan();
 }
 
 async function bind() {
@@ -284,10 +396,8 @@ async function bind() {
     method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ nonce: ch.nonce })
   })).json();
-  var st = await (await fetch("/setup.json")).json();
   var body = JSON.stringify({
     owner: document.getElementById("owner").value,
-    token: st.token,
     nonce: ch.nonce,
     signature: at.signature,
     path: "phone-http"
@@ -405,6 +515,12 @@ async function denyOperator() { await postOperator("deny"); }
 
 window.addEventListener("hashchange", show);
 document.getElementById("bind").addEventListener("click", bind);
+document.getElementById("start-passkey").addEventListener("click", function () {
+  startDeviceAuth("passkey");
+});
+document.getElementById("start-phone-scan").addEventListener("click", function () {
+  startDeviceAuth("phone-scan");
+});
 document.getElementById("cycle").addEventListener("click", cycle);
 document.getElementById("read-cid").addEventListener("click", readCid);
 document.getElementById("run-infer").addEventListener("click", runInfer);

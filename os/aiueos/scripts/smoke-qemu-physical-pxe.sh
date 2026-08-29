@@ -57,7 +57,8 @@ cp "$payload_a" "$work/esp/EFI/BOOT/BOOTX64.EFI"
   exit 1
 }
 
-AIUEOS_OUT="$work/control" "$aiueos/scripts/build-dbc-probe.sh" >/dev/null
+AIUEOS_OUT="$work/control" AIUEOS_PXE_ONLY_CONTROL=1 \
+  "$aiueos/scripts/build-dbc-probe.sh" >/dev/null
 cp "$OVMF_VARS" "$work/vars.fd"
 
 set +e
@@ -110,6 +111,18 @@ grep -F \
 }
 grep -F "AIUEOS_CONTROL_READY nonce=" "$work/control.serial" >/dev/null || {
   echo "error: control EFI did not become ready after result recovery" >&2
+  exit 1
+}
+grep -F "AIUEOS_PXE_ACPI_RSDP state=ready" "$work/control.serial" >/dev/null || {
+  echo "error: control EFI did not report the firmware ACPI RSDP" >&2
+  exit 1
+}
+grep -F "AIUEOS_PXE_ACPI_ROOT state=ready" "$work/control.serial" >/dev/null || {
+  echo "error: control EFI did not report the firmware ACPI root" >&2
+  exit 1
+}
+grep -F "AIUEOS_PXE_ACPI_MADT cpus=" "$work/control.serial" >/dev/null || {
+  echo "error: control EFI did not summarize the firmware MADT" >&2
   exit 1
 }
 

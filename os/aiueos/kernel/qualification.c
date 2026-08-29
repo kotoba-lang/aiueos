@@ -82,16 +82,19 @@ int aiueos_qualification_progress_firmware(uint32_t code) {
   return status == EFI_SUCCESS;
 }
 
-/* Persist only a bounded result code in firmware NVRAM, then warm-reset into
-   the one-shot BootNext entry installed by the USB probe.  The probe, still
-   under UEFI Boot Services, is the only component that writes RESULT.LOG to
-   the removable medium.  Neither this function nor the qualification kernel
-   reaches a block driver or an internal-disk path.  As above, the assembly
-   entry restores the firmware CR3 before any C code executes. */
+/* Persist only a bounded result code in firmware NVRAM.  Qualification builds
+   warm-reset into the one-shot BootNext entry installed by the USB probe;
+   persistent native builds return to the kernel so the live node can keep
+   renewing its lease.  Neither path reaches a block driver or an
+   internal-disk path.  As above, the assembly entry restores the firmware CR3
+   before any C code executes. */
 int aiueos_qualification_finalize_firmware(uint16_t state, uint32_t code) {
   struct efi_runtime_services *runtime = qualification_runtime;
-  if (!runtime || !qualification_firmware_cr3 || !runtime->set_variable ||
-      !runtime->reset_system) return 0;
+  if (!runtime || !qualification_firmware_cr3 || !runtime->set_variable)
+    return 0;
+#ifndef AIUEOS_PERSISTENT_BOOT
+  if (!runtime->reset_system) return 0;
+#endif
 
   struct aiueos_qualification_record record = {
     0x514b3241U, 2, state, code, 0
@@ -102,6 +105,10 @@ int aiueos_qualification_finalize_firmware(uint16_t state, uint32_t code) {
         EFI_VARIABLE_RUNTIME_ACCESS,
       sizeof(record), &record);
   if (status != EFI_SUCCESS) return 0;
+#ifdef AIUEOS_PERSISTENT_BOOT
+  return 1;
+#else
   runtime->reset_system(1, EFI_SUCCESS, 0, 0);
   return 0;
+#endif
 }

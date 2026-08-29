@@ -542,6 +542,10 @@ grep -F "AIUEOS_PHYSICAL_ALLOCATOR_OK pages=2 zeroed" "$serial_log" >/dev/null |
   echo "error: physical page allocator evidence was not observed" >&2
   exit 1
 }
+grep -F "AIUEOS_ACPI_RETAIN_OK source=firmware copy=low-identity tables=APIC+DMAR" "$debug_log" >/dev/null || {
+  echo "error: loader did not retain ACPI below the bootstrap identity limit" >&2
+  exit 1
+}
 grep -F "AIUEOS_ACPI_OK rsdp-xsdt-madt cpu>=2" "$serial_log" >/dev/null || {
   echo "error: validated ACPI CPU discovery evidence was not observed" >&2
   exit 1

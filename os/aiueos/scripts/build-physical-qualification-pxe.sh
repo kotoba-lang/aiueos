@@ -23,13 +23,15 @@ mkdir -p "$out"
 AIUEOS_OUT="$core_out" \
 AIUEOS_PHYSICAL_QUALIFICATION=1 \
 AIUEOS_PHYSICAL_NETWORK_QUALIFICATION=${AIUEOS_PHYSICAL_NETWORK_QUALIFICATION:-0} \
+AIUEOS_PERSISTENT_BOOT=${AIUEOS_PERSISTENT_BOOT:-0} \
 AIUEOS_EMBEDDED_RELEASE=1 \
 AIUEOS_NETBOOT_QUALIFICATION=1 \
 SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH:-0} \
   "$aiueos/scripts/build-uefi.sh" >/dev/null
 cp "$core_out/esp/EFI/BOOT/BOOTX64.EFI" "$efi"
 
-AIUEOS_SOURCE_COMMIT="$source_commit" AIUEOS_SOURCE_DIRTY="$source_dirty" python3 - \
+AIUEOS_SOURCE_COMMIT="$source_commit" AIUEOS_SOURCE_DIRTY="$source_dirty" \
+AIUEOS_PERSISTENT_BOOT=${AIUEOS_PERSISTENT_BOOT:-0} python3 - \
   "$efi" "$core_out/esp/EFI/AIUEOS/KERNEL.ELF" \
   "$core_out/esp/EFI/AIUEOS/INITRD.IMG" "$receipt" <<'PY'
 import hashlib
@@ -56,8 +58,13 @@ document = {
         "initramfs": artifact(initramfs),
     },
     "return": {
-        "bootnext": "current-pxe-one-shot",
+        "bootnext": ("current-pxe-persistent" if
+                     os.environ["AIUEOS_PERSISTENT_BOOT"] == "1" else
+                     "current-pxe-one-shot"),
         "result": "uefi-nvram-16-bytes",
+        "watchdog": ("disabled" if
+                     os.environ["AIUEOS_PERSISTENT_BOOT"] == "1" else
+                     "90-second-recovery"),
     },
     "safety": {
         "internal-disk-writes": False,

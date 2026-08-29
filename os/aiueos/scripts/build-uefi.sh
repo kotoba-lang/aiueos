@@ -23,6 +23,8 @@ kernel_memory_object="$out/kernel-memory.o"
 kernel_pci_object="$out/kernel-pci.o"
 kernel_rtl8125_object="$out/kernel-rtl8125.o"
 kernel_relay_protocol_object="$out/kernel-relay-protocol.o"
+kernel_micro_infer_object="$out/kernel-micro-infer.o"
+kernel_job_protocol_object="$out/kernel-job-protocol.o"
 kernel_tls_aes_object="$out/kernel-tls-aes-gcm.o"
 kernel_tls13_object="$out/kernel-tls13.o"
 kernel_scheduler_object="$out/kernel-scheduler.o"
@@ -126,6 +128,8 @@ fi
 physical_qualification_cflags=
 physical_network_qualification_cflags=
 physical_relay_qualification_cflags=
+physical_job_qualification_cflags=
+persistent_boot_cflags=
 qualification_link=
 gop_discovery_cflags=
 loader_failure_test_cflags=
@@ -137,6 +141,13 @@ embedded_release_link=
 if [ "${AIUEOS_PHYSICAL_QUALIFICATION:-0}" = 1 ]; then
   physical_qualification_cflags="-DAIUEOS_PHYSICAL_QUALIFICATION=1"
   qualification_link="$kernel_qualification_entry_object $kernel_qualification_object"
+fi
+if [ "${AIUEOS_PERSISTENT_BOOT:-0}" = 1 ]; then
+  [ "${AIUEOS_PHYSICAL_QUALIFICATION:-0}" = 1 ] || {
+    echo "error: persistent boot requires physical qualification" >&2
+    exit 1
+  }
+  persistent_boot_cflags="-DAIUEOS_PERSISTENT_BOOT=1"
 fi
 if [ "${AIUEOS_PHYSICAL_NETWORK_QUALIFICATION:-0}" = 1 ]; then
   [ "${AIUEOS_PHYSICAL_QUALIFICATION:-0}" = 1 ] || {
@@ -151,6 +162,13 @@ if [ "${AIUEOS_PHYSICAL_RELAY_QUALIFICATION:-0}" = 1 ]; then
     exit 1
   }
   physical_relay_qualification_cflags="-DAIUEOS_PHYSICAL_RELAY_QUALIFICATION=1"
+fi
+if [ "${AIUEOS_PHYSICAL_JOB_QUALIFICATION:-0}" = 1 ]; then
+  [ "${AIUEOS_PHYSICAL_RELAY_QUALIFICATION:-0}" = 1 ] || {
+    echo "error: physical job qualification requires physical relay qualification" >&2
+    exit 1
+  }
+  physical_job_qualification_cflags="-DAIUEOS_PHYSICAL_JOB_QUALIFICATION=1"
 fi
 if [ "${AIUEOS_EMBEDDED_RELEASE:-0}" = 1 ]; then
   embedded_release_cflags="-DAIUEOS_EMBEDDED_RELEASE=1"
@@ -452,6 +470,7 @@ zig cc -target x86_64-freestanding-none -std=c11 -O2 \
   -ffreestanding -fno-stack-protector -mno-red-zone \
   $input_smoke_cflags $physical_qualification_cflags \
   $physical_network_qualification_cflags $physical_relay_qualification_cflags \
+  $physical_job_qualification_cflags \
   $kernel_hang_test_cflags \
   -c -o "$kernel_object" "$aiueos/kernel/main.c"
 zig cc -target x86_64-freestanding-none \
@@ -476,6 +495,7 @@ zig cc -target x86_64-freestanding-none -std=c11 -O2 \
   -ffreestanding -fno-stack-protector -mno-red-zone \
   $input_smoke_cflags $physical_network_qualification_cflags \
   $physical_relay_qualification_cflags \
+  $physical_job_qualification_cflags \
   -c -o "$kernel_pci_object" "$aiueos/kernel/pci.c"
 zig cc -target x86_64-freestanding-none -std=c11 -O2 \
   -ffreestanding -fno-stack-protector -mno-red-zone \
@@ -483,6 +503,12 @@ zig cc -target x86_64-freestanding-none -std=c11 -O2 \
 zig cc -target x86_64-freestanding-none -std=c11 -O2 \
   -ffreestanding -fno-stack-protector -mno-red-zone \
   -c -o "$kernel_relay_protocol_object" "$aiueos/kernel/relay_protocol.c"
+zig cc -target x86_64-freestanding-none -std=c11 -O2 \
+  -ffreestanding -fno-stack-protector -mno-red-zone \
+  -c -o "$kernel_micro_infer_object" "$aiueos/kernel/micro_infer.c"
+zig cc -target x86_64-freestanding-none -std=c11 -O2 \
+  -ffreestanding -fno-stack-protector -mno-red-zone \
+  -c -o "$kernel_job_protocol_object" "$aiueos/kernel/job_protocol.c"
 zig cc -target x86_64-freestanding-none -std=c11 -O2 \
   -ffreestanding -fno-stack-protector -mno-red-zone \
   -c -o "$kernel_tls_aes_object" "$aiueos/kernel/tls_aes_gcm.c"
@@ -511,6 +537,7 @@ zig cc -target x86_64-freestanding-none -std=c11 -O2 \
   -c -o "$kernel_ioapic_object" "$aiueos/kernel/ioapic.c"
 zig cc -target x86_64-freestanding-none -std=c11 -O2 \
   -ffreestanding -fno-stack-protector -mno-red-zone \
+  $physical_qualification_cflags \
   -c -o "$kernel_framebuffer_object" "$aiueos/kernel/framebuffer.c"
 if [ -n "$qualification_link" ]; then
   zig cc -target x86_64-freestanding-none \
@@ -518,6 +545,7 @@ if [ -n "$qualification_link" ]; then
     "$aiueos/kernel/qualification_entry.S"
   zig cc -target x86_64-freestanding-none -std=c11 -O2 \
     -ffreestanding -fno-stack-protector -mno-red-zone \
+    $persistent_boot_cflags \
     -c -o "$kernel_qualification_object" "$aiueos/kernel/qualification.c"
 fi
 # --strip-all: the symbol/string tables are ~550 KiB and are never loaded (only
@@ -533,6 +561,7 @@ zig ld.lld -nostdlib -static --strip-all -z max-page-size=0x1000 \
   "$kernel_entry_object" "$kernel_object" "$kernel_paging_object" \
   "$kernel_acpi_object" "$kernel_vtd_object" "$kernel_apic_object" "$kernel_memory_object" \
   "$kernel_pci_object" "$kernel_rtl8125_object" "$kernel_relay_protocol_object" \
+  "$kernel_micro_infer_object" "$kernel_job_protocol_object" \
   "$kernel_tls_aes_object" "$kernel_tls13_object" \
   "$kernel_scheduler_object" "$kernel_syscall_object" \
   "$kernel_process_object" "$kernel_loader_object" \
@@ -647,6 +676,7 @@ zig cc -target x86_64-windows-gnu -std=c11 -O2 \
   -ffreestanding -fshort-wchar -fno-stack-protector -mno-red-zone \
   $gop_discovery_cflags $physical_qualification_cflags $loader_failure_test_cflags \
   $loader_hang_test_cflags $embedded_release_cflags $netboot_qualification_cflags \
+  $persistent_boot_cflags \
   -c -o "$object" "$aiueos/uefi/main.c"
 zig lld-link /subsystem:efi_application /entry:efi_main /nodefaultlib /timestamp:0 \
   /fixed:no "/out:$efi" "$object" "$identity_object" $embedded_release_link

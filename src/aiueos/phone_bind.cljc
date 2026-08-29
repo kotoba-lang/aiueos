@@ -21,6 +21,7 @@
   units. Consumer smoke does not require itonami; the operator fragment is
   `/api/session/operator` and a separate command."
   (:require [clojure.string :as str]
+            [aiueos.device-auth :as device-auth]
             [grant.enroll :as enroll]
             #?(:clj [grant.signing :as signing])
             #?(:clj [clojure.edn :as edn])
@@ -31,13 +32,16 @@
             #?(:clj [aiueos.compositor.desktop :as compositor-desktop]))
   #?(:clj
      (:import [com.sun.net.httpserver HttpExchange HttpHandler HttpServer]
-              [java.net InetSocketAddress StandardProtocolFamily UnixDomainSocketAddress]
+              [io.nayuki.qrcodegen QrCode QrCode$Ecc]
+              [java.net InetSocketAddress URI StandardProtocolFamily UnixDomainSocketAddress]
+              [java.net.http HttpClient HttpClient$Redirect HttpRequest
+               HttpRequest$BodyPublishers HttpResponse$BodyHandlers]
               [java.nio ByteBuffer]
               [java.nio.channels SocketChannel]
               [java.nio.charset StandardCharsets]
               [java.security KeyFactory KeyPairGenerator SecureRandom Signature]
               [java.security.spec PKCS8EncodedKeySpec X509EncodedKeySpec]
-              [java.time Instant]
+              [java.time Duration Instant]
               [java.util.concurrent Executors TimeUnit])))
 
 ;; ── tiny JSON (closed SPA wire; no extra dep) ──────────────────────────────
@@ -93,6 +97,18 @@
   (merge {:aiueos/decision :deny
           :aiueos.enroll/reason reason}
          extra))
+
+(def device-auth-authority "https://auth.kotoba.cloud")
+(def device-auth-rp-id "auth.kotoba.cloud")
+(def device-auth-sign-in (str device-auth-authority "/sign-in"))
+(def device-auth-login-options
+  (str device-auth-authority "/v1/passkey/login/options"))
+(def device-auth-login-verify
+  (str device-auth-authority "/v1/passkey/login/verify"))
+(def device-auth-start
+  (str device-auth-authority "/v1/aiueos/device/start"))
+(def device-auth-poll
+  (str device-auth-authority "/v1/aiueos/device/poll"))
 
 (defn bind-via
   "The only P1b-green path is `:phone-http`. A guest VGA/keyboard attempt is
@@ -316,6 +332,9 @@
 
      (defn device-file [dir] (io/file dir "state" "device.edn"))
      (defn receipt-file [dir] (io/file dir "state" "bind-receipt.edn"))
+     (defn device-auth-file [dir] (io/file dir "state" "device-auth.edn"))
+     (defn device-auth-receipt-file [dir]
+       (io/file dir "state" "device-auth-receipt.edn"))
      (defn pre-grant-file [dir] (io/file dir "image" "enroll-grant.edn"))
      (defn setup-json-file [dir] (io/file dir "setup.json"))
      (defn qmp-file [dir] (io/file dir "qemu.qmp"))
@@ -368,11 +387,16 @@
        {:did (:did device)
         :model (:model device)
         :endpoint endpoint
-        :token (:token device)})
+        :auth-authority device-auth-authority
+        :auth-methods "passkey,phone-scan"})
 
      (defn chassis-qr
        [device endpoint]
-       (enroll/qr-payload (setup-fields device endpoint)))
+       (let [{:keys [did model endpoint]} (setup-fields device endpoint)]
+         (str "aiueos:2;did=" did
+              ";model=" model
+              ";endpoint=" endpoint
+              ";auth=passkey,phone-scan;claim-secret=none")))
 
      (defn setup-url [listen-port]
        (str "http://127.0.0.1:" listen-port "/#setup"))
@@ -384,7 +408,9 @@
                            :endpoint endpoint
                            :setup_url setup-url
                            :qr qr
-                           :token (:token device)
+                           :auth_authority device-auth-authority
+                           :auth_methods ["passkey" "phone-scan"]
+                           :claim_secret_exposed false
                            :chassis "host-helper"
                            :guest_framebuffer "not-an-operator-console"
                            :kotobase "https://kotobase.net"
@@ -419,6 +445,7 @@
        (assoc-in ledger [:devices (:did device)]
                  {:did (:did device)
                   :owner (:owner device)
+                  :principal-id (:principal-id device)
                   :model (:model device)
                   :via :phone-http
                   :qr? true}))
@@ -572,8 +599,109 @@
      (defn- json-req [ex]
        (or (parse-flat-json (read-body ex)) {}))
 
+     (defonce ^:private authority-http-client
+       (delay
+        (-> (HttpClient/newBuilder)
+            (.connectTimeout (Duration/ofSeconds 5))
+            (.followRedirects HttpClient$Redirect/NEVER)
+            (.build))))
+
+     (defn authority-post-json
+       "POST a bounded JSON object to the fixed identity authority. No browser
+       cookie, Passkey material, or redirect is accepted by this client."
+       [url body]
+       (let [request (-> (HttpRequest/newBuilder (URI/create url))
+                         (.timeout (Duration/ofSeconds 8))
+                         (.header "Content-Type" "application/json")
+                         (.header "Accept" "application/json")
+                         (.POST (HttpRequest$BodyPublishers/ofString
+                                 (->json body) StandardCharsets/UTF_8))
+                         (.build))
+             response (.send ^HttpClient @authority-http-client
+                             request
+                             (HttpResponse$BodyHandlers/ofString
+                              StandardCharsets/UTF_8))
+             raw (.body response)]
+         (if (> (count raw) 65536)
+           {:status 502 :body {:error "authority-response-too-large"}}
+           {:status (.statusCode response)
+            :body (or (parse-flat-json raw) {})})))
+
+     (defn production-device-auth-authority-client
+       [operation body]
+       (case operation
+         :start (authority-post-json device-auth-start body)
+         :poll (authority-post-json device-auth-poll body)
+         {:status 500 :body {:error "unsupported-authority-operation"}}))
+
+     (defn- authority-token?
+       [value]
+       (and (string? value)
+            (<= 40 (count value) 256)
+            (boolean (re-matches #"[A-Za-z0-9_-]+" value))))
+
+     (defn- valid-authority-start?
+       [body]
+       (let [flow-id (:flowId body)]
+         (and (authority-token? flow-id)
+              (authority-token? (:pollToken body))
+              (= (str device-auth-authority "/aiueos/device")
+                 (:verificationUri body))
+              (= (str device-auth-authority "/aiueos/device?flow=" flow-id)
+                 (:verificationUriComplete body))
+              (integer? (:expiresIn body))
+              (<= 1 (:expiresIn body) 300)
+              (integer? (:interval body))
+              (<= 1 (:interval body) 10))))
+
+     (defn- public-device-auth-state
+       [state]
+       (select-keys state
+                    [:aiueos.device-auth/version
+                     :aiueos.device-auth/state
+                     :aiueos.device-auth/decision
+                     :device/did :device/model :device/public-key
+                     :auth/rp-id :auth/origin :auth/authority :auth/method
+                     :auth/authenticated-at-ms :device/claimed-at-ms
+                     :account/principal-id :account/did
+                     :device/key-proved?]))
+
+     (defn qr-svg
+       "Encode one already-validated approval URL as an inline-safe SVG.
+       The payload is represented only as QR modules; it is never inserted as
+       XML text or fetched by a third party."
+       [text]
+       (let [qr (QrCode/encodeText text QrCode$Ecc/MEDIUM)
+             size (.-size qr)
+             border 4
+             dimension (+ size (* 2 border))
+             out (StringBuilder.)]
+         (.append out (str "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 "
+                           dimension " " dimension
+                           "\" role=\"img\" aria-label=\"AIUEOS device approval QR\">"))
+         (.append out (str "<rect width=\"" dimension "\" height=\"" dimension
+                           "\" fill=\"#fff\"/>"))
+         (.append out "<g fill=\"#000\">")
+         (doseq [y (range size)
+                 x (range size)
+                 :when (.getModule qr x y)]
+           (.append out (str "<rect x=\"" (+ border x) "\" y=\"" (+ border y)
+                             "\" width=\"1\" height=\"1\"/>")))
+         (.append out "</g></svg>")
+         (str out)))
+
+     (defn device-auth-factory
+       [device]
+       (device-auth/factory
+        {:device-did (:did device)
+         :model (:model device)
+         :rp-id device-auth-rp-id
+         :origin device-auth-authority
+         :authority device-auth-authority}))
+
      (defn make-runtime
-       [{:keys [dir ledger-path listen-port pre-enroll? tenant]}]
+       [{:keys [dir ledger-path listen-port pre-enroll? tenant
+                device-auth-authority-client]}]
        (io/make-parents (device-file dir))
        (let [ledger-path (or ledger-path (.getPath (io/file dir ".." "phone-bind-ledger.edn")))
              device (or (load-device dir) (mint-unbound-device {}))
@@ -589,8 +717,243 @@
           :server (atom nil)
           :pre-grant (atom grant)
           :nonce (atom nil)
+          :device-auth (atom (device-auth-factory device))
+          :device-auth-flow (atom nil)
+          :device-auth-authority-client
+          (or device-auth-authority-client
+              production-device-auth-authority-client)
           :guest (atom nil)
           :operator (atom nil)}))
+
+     (defn handle-device-auth-challenge
+       "Start the authority's device flow and return only its public half.
+       The poll token stays in `:device-auth-flow`; neither the SPA response
+       nor the phone-scan payload receives it."
+       [rt method]
+       (let [method (keyword (or method "passkey"))
+             now (System/currentTimeMillis)
+             challenge (rand-hex 32)
+             supported? (contains? device-auth/supported-methods method)
+             state (assoc
+                    (device-auth/issue-challenge
+                     (device-auth-factory @(:device rt))
+                     {:challenge challenge :now-ms now :ttl-ms 300000})
+                    :auth/requested-method method)]
+         (reset! (:device-auth-flow rt) nil)
+         (reset! (:device-auth rt) state)
+         (if-not supported?
+           {:http-status 400
+            :state "denied"
+            :method (name method)
+            :supported false
+            :reason "method-unsupported"
+            :authority device-auth-authority}
+           (try
+             (let [response ((:device-auth-authority-client rt)
+                             :start
+                             {:deviceDid (:device/did state)
+                              :challenge challenge
+                              :model (:device/model state)
+                              :method (name method)})
+                   body (:body response)]
+               (if-not (and (= 201 (:status response))
+                            (valid-authority-start? body))
+                 {:http-status 502
+                  :state "denied"
+                  :method (name method)
+                  :supported true
+                  :reason "authority-start-refused"
+                  :authority device-auth-authority}
+                 (let [expires-at (+ now (* 1000 (:expiresIn body)))
+                       flow {:flow-id (:flowId body)
+                             :poll-token (:pollToken body)
+                             :device-did (:device/did state)
+                             :challenge challenge
+                             :method method
+                             :expires-at-ms expires-at
+                             :interval (:interval body)
+                             :verification-uri-complete
+                             (:verificationUriComplete body)}]
+                   (reset! (:device-auth-flow rt) flow)
+                   {:http-status 200
+                    :state "challenge-issued"
+                    :method (name method)
+                    :supported true
+                    :flow_id (:flow-id flow)
+                    :challenge challenge
+                    :expires_at_ms expires-at
+                    :poll_interval_seconds (:interval flow)
+                    :rp_id (:auth/rp-id state)
+                    :origin (:auth/origin state)
+                    :authority (:auth/authority state)
+                    :verification_uri_complete
+                    (:verification-uri-complete flow)
+                    :scan_payload (when (= :phone-scan method)
+                                    (:verification-uri-complete flow))
+                    :verification "authority-pending"
+                    :private_key_copied false})))
+             (catch Exception _
+               {:http-status 502
+                :state "denied"
+                :method (name method)
+                :supported true
+                :reason "authority-unreachable"
+                :authority device-auth-authority})))))
+
+     (defn public-device-auth-plan
+       [rt]
+       (let [state @(:device-auth rt)]
+         {:engine "kotoba-lang/browser"
+          :surface "aiueos/session"
+          :state (name (:aiueos.device-auth/state state))
+          :methods ["passkey" "phone-scan"]
+          :same_ceremony true
+          :authority (:auth/authority state)
+          :rp_id (:auth/rp-id state)
+          :sign_in_url device-auth-sign-in
+          :passkey_options_url device-auth-login-options
+          :passkey_verify_url device-auth-login-verify
+          :account_sync "after-verified-claim"
+          :node_add "after-device-key-proof"
+          :murakumo_ready "after-runtime-proof"
+          :kekkai "pending-native-adapter"
+          :storage_replication "opt-in-not-started"}))
+
+     (defn- verified-authority-result?
+       [state flow body]
+       (and (true? (:valid body))
+            (= (:flow-id flow) (:flowId body))
+            (= (:device/did state) (:deviceDid body))
+            (= (:auth/challenge state) (:challenge body))
+            (= (:device/model state) (:model body))
+            (= (name (:auth/requested-method state)) (:method body))
+            (= device-auth-authority (:authority body))
+            (= device-auth-rp-id (:rpId body))
+            (true? (:userPresent body))
+            (true? (:userVerified body))
+            (true? (:passkeyVerified body))
+            (string? (:principalId body))
+            (string? (:accountDid body))
+            (string? (:activeDid body))))
+
+     (defn handle-device-auth-complete
+       "Poll the authority using the node-only secret, then prove the local
+       Ed25519 key before persisting a claimed node. Client-supplied flags in
+       `req` are intentionally ignored."
+       [rt _req]
+       (let [flow @(:device-auth-flow rt)
+             state @(:device-auth rt)
+             now (System/currentTimeMillis)]
+         (cond
+           (nil? flow)
+           {:http-status 409 :decision "deny" :reason "device-flow-not-started"}
+
+           (>= now (:expires-at-ms flow))
+           (do (reset! (:device-auth-flow rt) nil)
+               {:http-status 410 :decision "deny" :reason "device-flow-expired"})
+
+           :else
+           (try
+             (let [response ((:device-auth-authority-client rt)
+                             :poll
+                             {:pollToken (:poll-token flow)
+                              :deviceDid (:device-did flow)
+                              :challenge (:challenge flow)})
+                   body (:body response)]
+               (cond
+                 (= 202 (:status response))
+                 {:http-status 202
+                  :decision "continue"
+                  :state "authorization-pending"
+                  :interval (or (:interval body) (:interval flow))}
+
+                 (not= 200 (:status response))
+                 {:http-status 502
+                  :decision "deny"
+                  :reason "authority-poll-refused"}
+
+                 :else
+                 (do
+                   ;; A 200 authority result is single-use. Forget the poll
+                   ;; token before any local projection or persistence.
+                   (reset! (:device-auth-flow rt) nil)
+                   (if-not (verified-authority-result? state flow body)
+                     {:http-status 401
+                      :decision "deny"
+                      :reason "authority-result-binding-invalid"}
+                     (let [method (:auth/requested-method state)
+                           proof {:auth/method method
+                                  :auth/challenge (:challenge body)
+                                  :auth/rp-id (:rpId body)
+                                  :auth/origin (:authority body)
+                                  :auth/user-present? (:userPresent body)
+                                  :auth/user-verified? (:userVerified body)
+                                  :authority/verified? true
+                                  :account/principal-id (:principalId body)
+                                  :account/did (:accountDid body)
+                                  :passkey/sign-count-ok? true
+                                  :phone/device-did (:activeDid body)
+                                  :phone/passkey-verified? (:passkeyVerified body)
+                                  :phone/approved? true}
+                           authenticated
+                           (device-auth/authenticate-account state proof now)
+                           device (swap! (:device rt) ensure-operational-keys)
+                           signature (sign-nonce (:private-hex device)
+                                                 (:auth/challenge authenticated))
+                           possession-valid?
+                           (verify-nonce (:public-hex device)
+                                         (:auth/challenge authenticated)
+                                         signature)
+                           claimed
+                           (device-auth/prove-device
+                            authenticated
+                            {:device-did (:did device)
+                             :public-key (:public-hex device)
+                             :proof-valid? possession-valid?}
+                            now)]
+                       (reset! (:device-auth rt) claimed)
+                       (if-not (device-auth/claimed? claimed)
+                         {:http-status 401
+                          :decision "deny"
+                          :reason (name (:aiueos.device-auth/reason claimed))}
+                         (let [device' (assoc device
+                                              :state :claimed
+                                              :owner (:account/did claimed)
+                                              :principal-id
+                                              (:account/principal-id claimed)
+                                              :bound-at (str (Instant/now)))
+                               plan (device-auth/node-plan claimed)
+                               receipt {:decision :grant
+                                        :authority device-auth-authority
+                                        :rp-id device-auth-rp-id
+                                        :principal-id
+                                        (:account/principal-id claimed)
+                                        :account-did (:account/did claimed)
+                                        :device-did (:device/did claimed)
+                                        :method method
+                                        :claimed-at (str (Instant/now))
+                                        :private-key-copied? false}]
+                           (reset! (:device rt) device')
+                           (save-device (:dir rt) device')
+                           (save-ledger
+                            (:ledger-path rt)
+                            (record-claimed-device
+                             (load-ledger (:ledger-path rt)) device'))
+                           (spit-edn (device-auth-file (:dir rt))
+                                     (public-device-auth-state claimed))
+                           (spit-edn (device-auth-receipt-file (:dir rt)) receipt)
+                           {:http-status 200
+                            :decision "grant"
+                            :state "claimed"
+                            :principal_id (:account/principal-id claimed)
+                            :account_did (:account/did claimed)
+                            :device_did (:device/did claimed)
+                            :private_key_copied false
+                            :node_plan plan})))))))
+             (catch Exception _
+               {:http-status 502
+                :decision "deny"
+                :reason "authority-unreachable"})))))
 
      (defn public-status [rt]
        (let [d @(:device rt)
@@ -712,6 +1075,31 @@
                     (and (= "POST" method) (= path "/api/challenge"))
                     (send-bytes! ex 200 "application/json; charset=utf-8"
                                  (->json (handle-challenge rt)))
+
+                    (and (= "GET" method) (= path "/api/device-auth/plan"))
+                    (send-bytes! ex 200 "application/json; charset=utf-8"
+                                 (->json (public-device-auth-plan rt)))
+
+                    (and (= "GET" method) (= path "/api/device-auth/qr"))
+                    (if-let [verification-uri
+                             (:verification-uri-complete @(:device-auth-flow rt))]
+                      (send-bytes! ex 200 "image/svg+xml; charset=utf-8"
+                                   (qr-svg verification-uri))
+                      (send-bytes! ex 404 "application/json; charset=utf-8"
+                                   (->json {:error "device-flow-not-started"})))
+
+                    (and (= "POST" method) (= path "/api/device-auth/challenge"))
+                    (let [req (json-req ex)
+                          body (handle-device-auth-challenge rt (:method req))
+                          code (or (:http-status body) 500)]
+                      (send-bytes! ex code "application/json; charset=utf-8"
+                                   (->json (dissoc body :http-status))))
+
+                    (and (= "POST" method) (= path "/api/device-auth/complete"))
+                    (let [body (handle-device-auth-complete rt (json-req ex))
+                          code (or (:http-status body) 500)]
+                      (send-bytes! ex code "application/json; charset=utf-8"
+                                   (->json (dissoc body :http-status))))
 
                     (and (= "POST" method) (= path "/api/attest"))
                     (send-bytes! ex 200 "application/json; charset=utf-8"
@@ -899,12 +1287,10 @@
      (defn phone-bind-http
        "Simulated phone client. HTTP only — no guest VGA."
        [base owner]
-       (let [setup (parse-flat-json (:body (http-get (str base "/setup.json"))))
-             ch (:parsed (http-post (str base "/api/challenge") {}))
+       (let [ch (:parsed (http-post (str base "/api/challenge") {}))
              at (:parsed (http-post (str base "/api/attest") {:nonce (:nonce ch)}))
              bind (http-post (str base "/api/bind")
                              {:owner owner
-                              :token (:token setup)
                               :nonce (:nonce ch)
                               :signature (:signature at)
                               :path "phone-http"})]
