@@ -832,7 +832,22 @@ The next direct-path prerequisite is executable without changing that claim.
 TLS profile for SNI `api.murakumo.cloud` and `GET /infer/queue`; setting
 `AIUEOS_TLS13_LIVE=1` measures the same record engine against the live endpoint.
 Its receipt says `trust=transport-only physical-k16=unverified` because native
-chain/hostname admission and RTL8125 DNS/TCP wiring remain red (ADR-0114).
+chain/hostname admission and physical K16 execution remain red (ADR-0114).
+
+The next diskless image connects that exact profile to the K16 RTL8125 path:
+
+```sh
+os/aiueos/scripts/build-physical-direct-https-pxe.sh
+os/aiueos/scripts/smoke-qemu-physical-direct-https.sh
+```
+
+It uses `10.77.0.1` only as a DNS/NAT router and makes a public, read-only
+`GET /infer/queue` directly from the native TLS engine. There is no Mac
+application relay and the image contains no account token, Wi-Fi secret or
+CACAO. Source/build and bounded missing-device behavior are verified; a real
+K16 reboot is still required before the physical state can become green.
+Even after an HTTP 200, the label remains `trust=transport-only` until native
+certificate-chain and hostname/SAN admission land (ADR-0115).
 
 `verify-release-signature.py` verifies an RSA-2048 PKCS#1 v1.5 SHA-256
 signature over the build receipt using only the Python standard library

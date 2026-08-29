@@ -1662,7 +1662,7 @@ static uint32_t net_load_be32(const uint8_t *at) {
 /* A locally-administered address. The peer replies to whatever source it sees,
    so this needs no VIRTIO_NET_F_MAC negotiation and reads nothing from the
    device's own config space. */
-static const uint8_t net_mac[6] = {0x52,0x54,0x00,0xa1,0xe0,0x51};
+static uint8_t net_mac[6] = {0x52,0x54,0x00,0xa1,0xe0,0x51};
 
 static uint32_t net_build_arp_request(uint8_t *frame) {
   for (unsigned i = 0; i < 6; i++) frame[i] = 0xff;          /* broadcast */
@@ -3117,9 +3117,14 @@ static uint32_t net_dns_server(void) {
   return dhcp_dns ? dhcp_dns : NET_DNS_IP;
 }
 
-static uint32_t net_build_dns_query(uint8_t *frame, uint32_t src, uint32_t dst) {
-  uint32_t udp_length = 8 + 12 + 18;
+static uint32_t net_build_dns_query_named(uint8_t *frame, uint32_t src,
+                                          uint32_t dst,
+                                          const uint8_t *question,
+                                          uint32_t question_length) {
+  uint32_t udp_length = 8 + 12 + question_length;
   uint32_t total = 20 + udp_length;
+  if (!frame || !question || question_length < 5 || question_length > 255)
+    return 0;
   for (uint32_t i = 0; i < 14 + total; i++) frame[i] = 0;
   for (unsigned i = 0; i < 6; i++) frame[i] = net_peer_mac[i];
   for (unsigned i = 0; i < 6; i++) frame[6 + i] = net_mac[i];
@@ -3139,7 +3144,8 @@ static uint32_t net_build_dns_query(uint8_t *frame, uint32_t src, uint32_t dst) 
   net_store_be16(frame + 42, NET_DNS_XID);
   net_store_be16(frame + 44, 0x0100);                        /* RD */
   net_store_be16(frame + 46, 1);                             /* QDCOUNT */
-  for (unsigned i = 0; i < 18; i++) frame[54 + i] = net_dns_question[i];
+  for (uint32_t i = 0; i < question_length; i++)
+    frame[54 + i] = question[i];
   net_store_be16(frame + 40, net_udp_checksum(frame, udp_length));
   return 14 + total;
 }
@@ -3155,15 +3161,19 @@ static int net_udp_rx_checksum_ok(const uint8_t *frame, uint32_t udp_length) {
     (uint64_t)(uintptr_t)net_dhcp_scratch, 12 + udp_length) == 0;
 }
 
-/* Constant-offset A admission for one compiled QNAME. Two answer layouts:
+/* Constant-offset A admission for one caller-owned bounded QNAME. Two layouts:
    RFC 1035 pointer 0xc00c, or the question copied uncompressed. Anything with
    an options-style walk stays unwritten -- that would need a Kotoba object
    and a kotoba-native export that this pin does not list. */
-static int net_dns_answer_ok(const uint8_t *frame, uint32_t length, uint32_t src,
-                             uint32_t dst, uint32_t *out_a) {
-  uint32_t total, udp_length;
+static int net_dns_answer_ok_named(const uint8_t *frame, uint32_t length,
+                                   uint32_t src, uint32_t dst,
+                                   const uint8_t *question,
+                                   uint32_t question_length,
+                                   uint32_t *out_a) {
+  uint32_t total, udp_length, answer;
   unsigned i;
-  if (length < 88) return 0;
+  if (!frame || !question || !out_a || question_length < 5 ||
+      question_length > 255 || length < 70 + question_length) return 0;
   if (net_load_be16(frame + 12) != 0x0800) return 0;
   if (frame[14] != 0x45 || frame[23] != 17) return 0;
   total = net_load_be16(frame + 16);
@@ -3175,7 +3185,7 @@ static int net_dns_answer_ok(const uint8_t *frame, uint32_t length, uint32_t src
   if (net_load_be16(frame + 34) != 53) return 0;
   if (net_load_be16(frame + 36) != NET_DNS_CLIENT_PORT) return 0;
   udp_length = net_load_be16(frame + 38);
-  if (udp_length < 38 || 20 + udp_length != total) return 0;
+  if (udp_length < 20 + question_length || 20 + udp_length != total) return 0;
   if (net_load_be16(frame + 40) != 0 && !net_udp_rx_checksum_ok(frame, udp_length))
     return 0;
   if (net_load_be16(frame + 42) != NET_DNS_XID) return 0;
@@ -3183,24 +3193,24 @@ static int net_dns_answer_ok(const uint8_t *frame, uint32_t length, uint32_t src
   if ((net_load_be16(frame + 44) & 0x000f) != 0) return 0;   /* RCODE */
   if (net_load_be16(frame + 46) != 1) return 0;              /* QDCOUNT */
   if (net_load_be16(frame + 48) == 0) return 0;              /* ANCOUNT */
-  for (i = 0; i < 18; i++) {
-    if (frame[54 + i] != net_dns_question[i]) return 0;
+  for (i = 0; i < question_length; i++) {
+    if (frame[54 + i] != question[i]) return 0;
   }
-  if (frame[72] == 0xc0 && frame[73] == 0x0c) {
-    if (net_load_be16(frame + 74) != 1) return 0;
-    if (net_load_be16(frame + 76) != 1) return 0;
-    if (net_load_be16(frame + 82) != 4) return 0;
-    *out_a = net_load_be32(frame + 84);
+  answer = 54 + question_length;
+  if (frame[answer] == 0xc0 && frame[answer + 1] == 0x0c) {
+    if (length < answer + 16) return 0;
+    if (net_load_be16(frame + answer + 2) != 1) return 0;
+    if (net_load_be16(frame + answer + 4) != 1) return 0;
+    if (net_load_be16(frame + answer + 10) != 4) return 0;
+    *out_a = net_load_be32(frame + answer + 12);
     return *out_a != 0;
   }
-  if (length < 104) return 0;
-  for (i = 0; i < 18; i++) {
-    if (frame[72 + i] != net_dns_question[i]) return 0;
+  if (length < answer + question_length + 10) return 0;
+  for (i = 0; i < question_length; i++) {
+    if (frame[answer + i] != question[i]) return 0;
   }
-  if (net_load_be16(frame + 90) != 1) return 0;
-  if (net_load_be16(frame + 92) != 1) return 0;
-  if (net_load_be16(frame + 98) != 4) return 0;
-  *out_a = net_load_be32(frame + 100);
+  if (net_load_be16(frame + answer + question_length + 4) != 4) return 0;
+  *out_a = net_load_be32(frame + answer + question_length + 6);
   return *out_a != 0;
 }
 
@@ -3217,7 +3227,9 @@ static int net_dns_probe(struct net_ring *rx, struct net_ring *tx,
   }
   net_post(rx);
   for (unsigned i = 0; i < sizeof(struct virtio_net_hdr); i++) tx_page[i] = 0;
-  frame_length = net_build_dns_query(frame, src, dst);
+  frame_length = net_build_dns_query_named(
+    frame, src, dst, net_dns_question, sizeof(net_dns_question));
+  if (!frame_length) return 0;
   tx->desc[0].length = (uint32_t)sizeof(struct virtio_net_hdr) + frame_length;
   net_post(tx);
   dns_stage = NET_DNS_STAGE_TX;
@@ -3233,7 +3245,9 @@ static int net_dns_probe(struct net_ring *rx, struct net_ring *tx,
         received <= sizeof(struct virtio_net_hdr) ||
         received > sizeof(struct virtio_net_hdr) + NET_FRAME_MAX) continue;
     payload = received - (uint32_t)sizeof(struct virtio_net_hdr);
-    if (net_dns_answer_ok(rx_frame, payload, dst, src, &a)) {
+    if (net_dns_answer_ok_named(rx_frame, payload, dst, src,
+                                net_dns_question, sizeof(net_dns_question),
+                                &a)) {
       dns_a = a;
       dns_stage = NET_DNS_STAGE_DONE;
       return 1;
@@ -3786,6 +3800,259 @@ int aiueos_rtl8125_physical_qualification(void) {
   }
   return 0;
 }
+
+#ifdef AIUEOS_PHYSICAL_DIRECT_HTTPS_QUALIFICATION
+/* Read-only physical direct-path qualification (ADR-0115).  This deliberately
+   uses the already admitted static K16 qualification link (10.77.0.10 via
+   10.77.0.1) and asks the gateway only for DNS/NAT.  No Mac application relay,
+   account token, Wi-Fi secret or CACAO is present in this image.  Until native
+   X.509 chain/SAN admission and secure entropy land, a successful exchange is
+   transport evidence only. */
+#define RTL_DIRECT_IP 0x0a4d000aU
+#define RTL_DIRECT_GATEWAY 0x0a4d0001U
+#define RTL_DIRECT_LOCAL_PORT 49155
+#define RTL_DIRECT_ISN 0xa1e02000U
+
+static const uint8_t rtl_direct_dns_question[24] = {
+  3,'a','p','i',8,'m','u','r','a','k','u','m','o',5,'c','l','o','u','d',0,
+  0,1,0,1
+};
+static const uint8_t rtl_direct_http_request[] =
+  "GET /infer/queue HTTP/1.1\r\n"
+  "Host: api.murakumo.cloud\r\n"
+  "User-Agent: aiueos-k16-qualification\r\n"
+  "Accept: application/json\r\n"
+  "Connection: close\r\n"
+  "\r\n";
+/* Deterministic qualification entropy makes captures reproducible.  It is not
+   a device entropy source and is one reason this profile must carry no secret. */
+static const uint8_t rtl_direct_client_random[32] = {
+  0xa1,0xe0,0x4b,0x31,0x36,0x2d,0x68,0x74,0x74,0x70,0x73,0x2d,0x70,0x72,0x6f,0x62,
+  0x65,0x2d,0x74,0x72,0x61,0x6e,0x73,0x70,0x6f,0x72,0x74,0x2d,0x6f,0x6e,0x6c,0x79
+};
+static const uint8_t rtl_direct_scalar[32] = {
+  0x62,0x6f,0x75,0x6e,0x64,0x65,0x64,0x2d,0x6b,0x31,0x36,0x2d,0x74,0x6c,0x73,0x2d,
+  0x70,0x72,0x6f,0x62,0x65,0x2d,0x6e,0x6f,0x2d,0x73,0x65,0x63,0x72,0x65,0x74,0x73
+};
+
+static unsigned rtl8125_direct_https_error;
+static uint32_t rtl8125_direct_dns_a;
+static int rtl8125_direct_http_ready;
+
+unsigned aiueos_rtl8125_direct_https_error(void) {
+  return rtl8125_direct_https_error;
+}
+uint32_t aiueos_rtl8125_direct_dns_a(void) { return rtl8125_direct_dns_a; }
+int aiueos_rtl8125_direct_http_ready(void) { return rtl8125_direct_http_ready; }
+
+static int rtl8125_direct_tx(uint32_t bytes) {
+  enum aiueos_rtl8125_result result = aiueos_rtl8125_tx_submit(
+    &rtl8125_qualification_device, bytes);
+  if (result != AIUEOS_RTL8125_OK) return 0;
+  for (uint32_t budget = 0; budget < 200000000U; budget++) {
+    if (aiueos_rtl8125_tx_complete(&rtl8125_qualification_device)) return 1;
+    __asm__ volatile("pause");
+  }
+  return 0;
+}
+
+static int rtl8125_direct_rx(uint32_t *received) {
+  enum aiueos_rtl8125_result result;
+  if (!received) return 0;
+  *received = 0;
+  for (uint32_t budget = 0; budget < 200000000U && !*received; budget++) {
+    result = aiueos_rtl8125_rx_poll(&rtl8125_qualification_device, received);
+    if (result != AIUEOS_RTL8125_OK) return 0;
+    __asm__ volatile("pause");
+  }
+  return *received != 0;
+}
+
+static int rtl8125_direct_tcp_send(uint32_t dst, uint32_t sequence,
+                                   uint32_t acknowledgement, uint8_t flags,
+                                   const uint8_t *payload,
+                                   uint32_t payload_length) {
+  uint8_t *frame = rtl8125_qualification_device.tx_frame;
+  uint32_t bytes = net_build_tcp(frame, RTL_DIRECT_IP, dst,
+                                 RTL_DIRECT_LOCAL_PORT, NET_CLOUD_PORT,
+                                 sequence, acknowledgement, flags,
+                                 payload, payload_length);
+  if (!kotoba_aiueos_tcp_checksum_ok((uint64_t)(uintptr_t)frame,
+                                     40 + payload_length,
+                                     RTL_DIRECT_IP, dst)) return 0;
+  return rtl8125_direct_tx(bytes);
+}
+
+static int rtl8125_direct_tcp_receive(uint32_t dst, uint32_t expected_ack,
+                                      uint8_t expected_flags,
+                                      unsigned attempts,
+                                      uint32_t *received) {
+  uint8_t *frame = rtl8125_qualification_device.rx_frame;
+  for (unsigned attempt = 0; attempt < attempts; attempt++) {
+    uint32_t bytes = 0;
+    if (!rtl8125_direct_rx(&bytes)) return 0;
+    if (kotoba_aiueos_tcp_segment_valid(
+          (uint64_t)(uintptr_t)frame, bytes, dst, expected_ack,
+          expected_flags)) {
+      if (received) *received = bytes;
+      return 1;
+    }
+    aiueos_rtl8125_rx_rearm(&rtl8125_qualification_device);
+  }
+  return 0;
+}
+
+static int rtl8125_direct_dns(void) {
+  uint8_t *tx = rtl8125_qualification_device.tx_frame;
+  uint8_t *rx = rtl8125_qualification_device.rx_frame;
+  uint32_t bytes = net_build_dns_query_named(
+    tx, RTL_DIRECT_IP, RTL_DIRECT_GATEWAY,
+    rtl_direct_dns_question, sizeof(rtl_direct_dns_question));
+  if (!bytes) return 0;
+  aiueos_rtl8125_rx_rearm(&rtl8125_qualification_device);
+  if (!rtl8125_direct_tx(bytes)) return 0;
+  for (unsigned attempt = 0; attempt < 8; attempt++) {
+    uint32_t received = 0, answer = 0;
+    if (!rtl8125_direct_rx(&received)) return 0;
+    if (net_dns_answer_ok_named(
+          rx, received, RTL_DIRECT_GATEWAY, RTL_DIRECT_IP,
+          rtl_direct_dns_question, sizeof(rtl_direct_dns_question), &answer)) {
+      rtl8125_direct_dns_a = answer;
+      return 1;
+    }
+    aiueos_rtl8125_rx_rearm(&rtl8125_qualification_device);
+  }
+  return 0;
+}
+
+static int rtl8125_http_200(const uint8_t *bytes, uint32_t length) {
+  return bytes && length >= 12 &&
+    bytes[0] == 'H' && bytes[1] == 'T' && bytes[2] == 'T' && bytes[3] == 'P' &&
+    bytes[4] == '/' && bytes[5] == '1' && bytes[6] == '.' && bytes[7] == '1' &&
+    bytes[8] == ' ' && bytes[9] == '2' && bytes[10] == '0' && bytes[11] == '0';
+}
+
+static int rtl8125_direct_tls_pump(uint32_t dst, uint32_t *our_next,
+                                   uint32_t *peer_next, uint32_t ack_lo,
+                                   unsigned attempts, int want_http) {
+  uint8_t *frame = rtl8125_qualification_device.rx_frame;
+  for (unsigned attempt = 0; attempt < attempts; attempt++) {
+    const uint8_t *payload = 0;
+    uint32_t plen = 0, received = 0;
+    if (!rtl8125_direct_rx(&received)) return 0;
+    if (!net_tcp_cloud_seg_ok(frame, received, dst, *our_next, ack_lo) ||
+        !net_tcp_data(frame, &payload, &plen)) {
+      aiueos_rtl8125_rx_rearm(&rtl8125_qualification_device);
+      continue;
+    }
+    if (plen) {
+      if (!aiueos_tls13_feed(payload, plen)) return 0;
+      *peer_next += plen;
+    }
+    if (!want_http && aiueos_tls13_handshake_ready()) {
+      aiueos_rtl8125_rx_rearm(&rtl8125_qualification_device);
+      if (!rtl8125_direct_tcp_send(dst, *our_next, *peer_next, NET_TCP_ACK, 0, 0))
+        return 0;
+      return 1;
+    }
+    if (want_http && rtl8125_http_200(
+          aiueos_tls13_app(), aiueos_tls13_app_len())) return 1;
+    aiueos_rtl8125_rx_rearm(&rtl8125_qualification_device);
+    if (!rtl8125_direct_tcp_send(dst, *our_next, *peer_next, NET_TCP_ACK, 0, 0))
+      return 0;
+  }
+  return want_http ? rtl8125_http_200(
+    aiueos_tls13_app(), aiueos_tls13_app_len()) :
+    aiueos_tls13_handshake_ready();
+}
+
+int aiueos_rtl8125_direct_https_qualification(void) {
+  uint32_t peer_next, our_next, received = 0;
+  uint8_t client_hello[256], flight[512];
+  uint32_t client_hello_length = 0, finished_length = 0, http_length = 0;
+  rtl8125_direct_https_error = 1;
+  rtl8125_direct_dns_a = 0;
+  rtl8125_direct_http_ready = 0;
+  if (!rtl8125_qualification_device.ready || rtl8125_qualification_error)
+    return 0;
+  for (unsigned i = 0; i < 6; i++) {
+    net_mac[i] = rtl8125_qualification_device.mac[i];
+    net_peer_mac[i] = rtl8125_peer_mac[i];
+  }
+  net_peer_mac_known = 1;
+  net_tx_window = NET_CLOUD_WINDOW;
+  if (!rtl8125_direct_dns()) {
+    rtl8125_direct_https_error = 2;
+    goto failed;
+  }
+  if (!aiueos_tls13_configure(
+        "api.murakumo.cloud", rtl_direct_http_request,
+        sizeof(rtl_direct_http_request) - 1,
+        rtl_direct_client_random, rtl_direct_scalar)) {
+    rtl8125_direct_https_error = 3;
+    goto failed;
+  }
+  aiueos_tls13_reset();
+  if (!aiueos_tls13_clienthello(client_hello, &client_hello_length)) {
+    rtl8125_direct_https_error = 4;
+    goto failed;
+  }
+  aiueos_rtl8125_rx_rearm(&rtl8125_qualification_device);
+  if (!rtl8125_direct_tcp_send(rtl8125_direct_dns_a, RTL_DIRECT_ISN, 0,
+                               NET_TCP_SYN, 0, 0)) {
+    rtl8125_direct_https_error = 5;
+    goto failed;
+  }
+  if (!rtl8125_direct_tcp_receive(
+        rtl8125_direct_dns_a, RTL_DIRECT_ISN + 1,
+        NET_TCP_SYN | NET_TCP_ACK, 8, &received)) {
+    rtl8125_direct_https_error = 6;
+    goto failed;
+  }
+  peer_next = net_load_be32(rtl8125_qualification_device.rx_frame + 38) + 1;
+  our_next = RTL_DIRECT_ISN + 1 + client_hello_length;
+  aiueos_rtl8125_rx_rearm(&rtl8125_qualification_device);
+  if (!rtl8125_direct_tcp_send(
+        rtl8125_direct_dns_a, RTL_DIRECT_ISN + 1, peer_next,
+        NET_TCP_PSH | NET_TCP_ACK, client_hello, client_hello_length)) {
+    rtl8125_direct_https_error = 7;
+    goto failed;
+  }
+  if (!rtl8125_direct_tls_pump(rtl8125_direct_dns_a, &our_next, &peer_next,
+                               our_next, 48, 0)) {
+    rtl8125_direct_https_error = 8;
+    goto failed;
+  }
+  if (!aiueos_tls13_run_certverify() ||
+      !aiueos_tls13_take_finished(flight, &finished_length) ||
+      !aiueos_tls13_take_http(flight + finished_length, &http_length)) {
+    rtl8125_direct_https_error = 9;
+    goto failed;
+  }
+  if (!rtl8125_direct_tcp_send(
+        rtl8125_direct_dns_a, our_next, peer_next,
+        NET_TCP_PSH | NET_TCP_ACK, flight, finished_length + http_length)) {
+    rtl8125_direct_https_error = 10;
+    goto failed;
+  }
+  {
+    uint32_t ack_lo = our_next;
+    our_next += finished_length + http_length;
+    if (!rtl8125_direct_tls_pump(rtl8125_direct_dns_a, &our_next, &peer_next,
+                                 ack_lo, 128, 1)) {
+      rtl8125_direct_https_error = 11;
+      goto failed;
+    }
+  }
+  rtl8125_direct_http_ready = 1;
+  rtl8125_direct_https_error = 0;
+  net_tx_window = NET_TCP_WINDOW;
+  return 1;
+failed:
+  net_tx_window = NET_TCP_WINDOW;
+  return 0;
+}
+#endif
 
 int aiueos_rtl8125_relay_qualification(void) {
   if(!rtl8125_qualification_device.ready||rtl8125_qualification_error) {

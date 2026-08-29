@@ -185,6 +185,10 @@ extern int aiueos_pci_enumerate(void);
 extern int aiueos_rtl8125_physical_qualification(void);
 extern unsigned aiueos_rtl8125_qualification_error(void);
 extern uint32_t aiueos_rtl8125_qualification_rx_length(void);
+extern int aiueos_rtl8125_direct_https_qualification(void);
+extern unsigned aiueos_rtl8125_direct_https_error(void);
+extern uint32_t aiueos_rtl8125_direct_dns_a(void);
+extern int aiueos_rtl8125_direct_http_ready(void);
 extern int aiueos_rtl8125_relay_qualification(void);
 extern unsigned aiueos_rtl8125_relay_error(void);
 extern uint32_t aiueos_rtl8125_relay_rx_length(void);
@@ -833,6 +837,37 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
     (void)aiueos_rtl8125_qualification_rx_length();
     debug_string("AIUEOS_PHYSICAL_NETWORK_OK rtl8125 arp-peer=10.77.0.1 dma=unisolated-test-only\n");
     serial_string("AIUEOS_PHYSICAL_NETWORK_OK rtl8125 arp-peer=10.77.0.1 dma=unisolated-test-only\r\n");
+#ifdef AIUEOS_PHYSICAL_DIRECT_HTTPS_QUALIFICATION
+    aiueos_qualification_progress(232);
+    aiueos_framebuffer_qualification_screen("AIUEOS K16", "TEST DIRECT HTTPS", "SSD READ ONLY", 0);
+    if(!aiueos_rtl8125_direct_https_qualification()) {
+      uint32_t error=aiueos_rtl8125_direct_https_error();
+      uint32_t code=8600U+error;
+      aiueos_framebuffer_qualification_screen("AIUEOS K16", "FAIL DIRECT HTTPS", "SSD READ ONLY", 0);
+      debug_string("AIUEOS_PHYSICAL_DIRECT_HTTPS_FAIL host=api.murakumo.cloud trust=transport-only secrets=none\n");
+      serial_string("AIUEOS_PHYSICAL_DIRECT_HTTPS_FAIL host=api.murakumo.cloud error=");
+      serial_decimal(error);
+      serial_string(" trust=transport-only secrets=none\r\n");
+      if(!aiueos_qualification_finalize(2,code))
+        serial_string("AIUEOS_PHYSICAL_QUALIFICATION_LOG_FAIL stage=runtime-variable\r\n");
+      for(;;)__asm__ volatile("cli; hlt");
+    }
+    (void)aiueos_rtl8125_direct_dns_a();
+    if(!aiueos_rtl8125_direct_http_ready()) {
+      aiueos_framebuffer_qualification_screen("AIUEOS K16", "FAIL DIRECT HTTPS", "SSD READ ONLY", 0);
+      serial_string("AIUEOS_PHYSICAL_DIRECT_HTTPS_FAIL host=api.murakumo.cloud error=12 trust=transport-only secrets=none\r\n");
+      if(!aiueos_qualification_finalize(2,8612))
+        serial_string("AIUEOS_PHYSICAL_QUALIFICATION_LOG_FAIL stage=runtime-variable\r\n");
+      for(;;)__asm__ volatile("cli; hlt");
+    }
+    aiueos_qualification_progress(233);
+    aiueos_framebuffer_qualification_screen("AIUEOS K16", "DIRECT HTTPS OK", "SSD READ ONLY", 1);
+    debug_string("AIUEOS_PHYSICAL_DIRECT_HTTPS_OK host=api.murakumo.cloud path=/infer/queue http=200 mac-app-relay=none trust=transport-only secrets=none\n");
+    serial_string("AIUEOS_PHYSICAL_DIRECT_HTTPS_OK host=api.murakumo.cloud path=/infer/queue http=200 mac-app-relay=none trust=transport-only secrets=none\r\n");
+    if(!aiueos_qualification_finalize(1,8150))
+      serial_string("AIUEOS_PHYSICAL_QUALIFICATION_LOG_FAIL stage=runtime-variable\r\n");
+    for(;;)__asm__ volatile("cli; hlt");
+#else
 #ifdef AIUEOS_PHYSICAL_RELAY_QUALIFICATION
     aiueos_qualification_progress(232);
     aiueos_framebuffer_qualification_screen("AIUEOS K16", "TEST NODE RELAY", "SSD READ ONLY", 0);
@@ -923,6 +958,7 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
       serial_string("AIUEOS_PHYSICAL_QUALIFICATION_LOG_FAIL stage=runtime-variable\r\n");
 #endif
     for(;;)__asm__ volatile("cli; hlt");
+#endif
 #else
     /* This profile is intentionally a USB-only, read-only boundary.  Reaching
        this screen proves the native loader/kernel, integrity admission,

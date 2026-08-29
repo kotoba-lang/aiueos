@@ -127,6 +127,7 @@ if [ "${AIUEOS_ECDSA_SIGN_KAT:-0}" = 1 ] || [ "${AIUEOS_SSH_LISTEN:-0}" = 1 ]; t
 fi
 physical_qualification_cflags=
 physical_network_qualification_cflags=
+physical_direct_https_qualification_cflags=
 physical_relay_qualification_cflags=
 physical_job_qualification_cflags=
 persistent_boot_cflags=
@@ -155,6 +156,13 @@ if [ "${AIUEOS_PHYSICAL_NETWORK_QUALIFICATION:-0}" = 1 ]; then
     exit 1
   }
   physical_network_qualification_cflags="-DAIUEOS_PHYSICAL_NETWORK_QUALIFICATION=1"
+fi
+if [ "${AIUEOS_PHYSICAL_DIRECT_HTTPS_QUALIFICATION:-0}" = 1 ]; then
+  [ "${AIUEOS_PHYSICAL_NETWORK_QUALIFICATION:-0}" = 1 ] || {
+    echo "error: physical direct HTTPS qualification requires physical network qualification" >&2
+    exit 1
+  }
+  physical_direct_https_qualification_cflags="-DAIUEOS_PHYSICAL_DIRECT_HTTPS_QUALIFICATION=1"
 fi
 if [ "${AIUEOS_PHYSICAL_RELAY_QUALIFICATION:-0}" = 1 ]; then
   [ "${AIUEOS_PHYSICAL_NETWORK_QUALIFICATION:-0}" = 1 ] || {
@@ -469,7 +477,8 @@ else
 zig cc -target x86_64-freestanding-none -std=c11 -O2 \
   -ffreestanding -fno-stack-protector -mno-red-zone \
   $input_smoke_cflags $physical_qualification_cflags \
-  $physical_network_qualification_cflags $physical_relay_qualification_cflags \
+  $physical_network_qualification_cflags $physical_direct_https_qualification_cflags \
+  $physical_relay_qualification_cflags \
   $physical_job_qualification_cflags \
   $kernel_hang_test_cflags \
   -c -o "$kernel_object" "$aiueos/kernel/main.c"
@@ -494,6 +503,7 @@ zig cc -target x86_64-freestanding-none -std=c11 -O2 \
 zig cc -target x86_64-freestanding-none -std=c11 -O2 \
   -ffreestanding -fno-stack-protector -mno-red-zone \
   $input_smoke_cflags $physical_network_qualification_cflags \
+  $physical_direct_https_qualification_cflags \
   $physical_relay_qualification_cflags \
   $physical_job_qualification_cflags \
   -c -o "$kernel_pci_object" "$aiueos/kernel/pci.c"

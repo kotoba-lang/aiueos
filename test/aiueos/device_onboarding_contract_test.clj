@@ -39,8 +39,13 @@
          (get-in contract [:network :murakumo-https :authority])))
   (is (= :http-200
          (get-in contract [:network :murakumo-https :live-host-probe])))
-  (is (= :unverified
+  (is (= :image-implemented-physical-unverified
          (get-in contract [:network :murakumo-https :physical-rtl8125])))
+  (is (= :none
+         (get-in contract [:network :murakumo-https
+                           :physical-request :secrets])))
+  (is (false? (get-in contract [:network :murakumo-https
+                                :physical-request :mac-application-relay?])))
   (is (= :not-implemented
          (get-in contract
                  [:network :murakumo-https
