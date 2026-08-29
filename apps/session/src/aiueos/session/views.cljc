@@ -171,8 +171,13 @@
                                      :attrs {:data-kotoba-action "device-auth/start-passkey"}}))
     (dds/card
      (dds/heading 2 "スマホで続ける" {:size "24"})
-     [:p "スマホ側でも Passkey を確認してから、この機械を承認します。コードにアカウント鍵や端末トークンは含めません。"]
+     [:p "スマホ側でも Passkey を確認してから、この機械を承認します。表示する承認URLにアカウント鍵や端末トークンは含めません。"]
+     [:img {:id "device-auth-qr" :class "device-auth-qr"
+            :alt "AIUEOSの端末承認ページを開くQRコード" :hidden true}]
      [:pre {:id "qr" :class "session-out"}]
+     [:a {:id "device-auth-link" :class "dads-link"
+          :href "#" :target "_blank" :rel "noopener noreferrer" :hidden true}
+      "承認ページを開く"]
      (dds/button "スマホ用コードを準備" {:id "start-phone-scan" :size "md"
                                            :attrs {:data-kotoba-action "device-auth/start-phone-scan"}}))
     [:pre {:id "auth-out" :class "session-out" :aria-live "polite"}]

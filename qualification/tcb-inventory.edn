@@ -1,10 +1,10 @@
 {:tcb/version 3
- :tcb/as-of "2026-08-25"
+ :tcb/as-of "2026-08-29"
  ;; Paired with :tcb/content-digest below (ADR-0067): the digest covers every
  ;; other field, so an entry cannot change without this date having to change
  ;; too. It said 2026-08-01 while the file was being edited that morning, and
  ;; nothing read it.
- :tcb/content-digest "87de939dca486d94cbdab13af85ac321a108aca57d244084f9e9596f4b0a130a"
+ :tcb/content-digest "f5a327ca16fc989faaaf741faa7da5c28bc0634f58ef379c6a84f8d1a2bd20dc"
  :tcb/scope
  "Code whose compromise can grant authority, escape Wasm isolation, falsify
   production admission/audit evidence, or access hardware outside a component."
@@ -25,6 +25,15 @@
    ;; What is left here is the machine: the thing that executes an admitted
    ;; component, and the hardware and boot surfaces it executes it on.
 
+   ;; Account authorization is decided by auth.kotoba.cloud, then bound to the
+   ;; exact device DID and one-time challenge here. The hosted adapter owns the
+   ;; poll secret and transport; the state machine owns the authenticated and
+   ;; claimed transitions. Both can grant device authority and therefore belong
+   ;; in this inventory.
+  {:path "src/aiueos/phone_bind.cljc" :role :device-authorization-hosted-adapter
+   :sha256 "64a8c78b2c54be5ad20949348d179d68bb8334cda613431882cc33461732a9f1"}
+  {:path "src/aiueos/device_auth.cljc" :role :device-authorization-state-machine
+   :sha256 "ebe85a848e343493408b2b84456e65feda9e3c87f44ce612e03b10d583ebf52f"}
    ;; Device key custody and possession proofs.
   {:path "src/aiueos/provider/device.clj" :role :device-identity
    :sha256 "616f1aa9cde0f97c92a11b9379b0809e9a38539454a962185ec98b7b051432f5"}
@@ -110,7 +119,10 @@
  ;; `security-adoption.edn`) so the records cannot silently disagree, and
  ;; rejects any runtime dependency that never reached this list.
  :tcb/external
- [{:coordinate "com.dylibso.chicory/wasm" :version "1.4.0"
+ [{:coordinate "io.nayuki/qrcodegen" :version "1.8.0"
+   :role :device-authorization-qr-renderer :source :maven
+   :sha256 "1d1aef3caea19387e7dd8034835054bab83db57a02b69cfc6dbc849746f0be21"}
+  {:coordinate "com.dylibso.chicory/wasm" :version "1.4.0"
    :role :wasm-parser :source :maven
    :sha256 "a850df5e77f60411648fd970144f825517a2c076dbb807ff6de95c6cfa439968"}
   {:coordinate "com.dylibso.chicory/runtime" :version "1.4.0"
@@ -154,6 +166,10 @@
    :git-url "https://github.com/kotoba-lang/http.git"
    :git-sha "1af5514a3a27098812be4e172d718908fb58e78e"
    :role :remote-authority-http-framing}
+  {:coordinate "io.github.kotoba-lang/window-session-state" :source :git
+   :git-url "https://github.com/kotoba-lang/window-session-state.git"
+   :git-sha "8a897953ce207c42838b81f13482464cac14fabb"
+   :role :hosted-desktop-session-state}
   ;; The transport half of the cloud authorities runs on the platform HTTP
   ;; client. Since ADR-0044 the trust DECISION is no longer the platform's:
   ;; the default trust store is not consulted and an https peer is accepted
@@ -197,6 +213,8 @@
    :sha256 "eb73ac08cf49ba840c88ba67beef11336ca554333d9408808d78946e0feb9ddb"}
   {:jar "spec.alpha-0.5.238.jar" :role :language-runtime-spec :scope :runtime
    :sha256 "94cd99b6ea639641f37af4860a643b6ed399ee5a8be5d717cff0b663c8d75077"}
+  {:jar "qrcodegen-1.8.0.jar" :role :device-authorization-qr-renderer :scope :runtime
+   :sha256 "1d1aef3caea19387e7dd8034835054bab83db57a02b69cfc6dbc849746f0be21"}
   {:jar "wasm-1.4.0.jar" :role :wasm-parser :scope :runtime
    :sha256 "a850df5e77f60411648fd970144f825517a2c076dbb807ff6de95c6cfa439968"}
   {:jar "runtime-1.4.0.jar" :role :wasm-runtime :scope :runtime

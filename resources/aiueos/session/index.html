@@ -2684,6 +2684,8 @@ body { padding-left: env(safe-area-inset-left,0px); padding-right: env(safe-area
 .session-nav{flex-wrap:wrap;gap:var(--hig-spacing-2)}
 .session-lede{color:var(--hig-color-secondary-label);font-size:var(--hig-text-body-font-size,1rem);line-height:var(--hig-text-body-line-height,1.5)}
 .session-out{white-space:pre-wrap;overflow:auto;min-height:var(--hig-spacing-4);padding:var(--hig-spacing-3);background:var(--hig-color-secondary-system-background);border-radius:var(--hig-radius-xs);font-size:var(--hig-text-footnote-font-size)}
+.device-auth-qr{display:block;width:min(100%,18rem);height:auto;margin:var(--hig-spacing-4) auto;image-rendering:pixelated;background:var(--hig-color-system-background)}
+.device-auth-qr[hidden]{display:none!important}
 .session-view[hidden]{display:none!important}
 .dds-ext-card{margin:var(--hig-spacing-4) 0}
 .session-main .dads-button{width:100%;margin:var(--hig-spacing-3) 0}
@@ -2774,12 +2776,7 @@ body { padding-left: env(safe-area-inset-left,0px); padding-right: env(safe-area
             <p>この機械の Kotoba Browser から、<code>auth.kotoba.cloud</code> の Passkey を確認します。</p>
             <button data-kotoba-action="device-auth/start-passkey" class="dads-button" data-type="solid-fill" data-size="md" id="start-passkey" type="button">Passkey で確認</button>
           </div>
-          <div class="dds-ext-card">
-            <h2 class="dads-heading" data-size="24">スマホで続ける</h2>
-            <p>スマホ側でも Passkey を確認してから、この機械を承認します。コードにアカウント鍵や端末トークンは含めません。</p>
-            <pre id="qr" class="session-out"></pre>
-            <button data-kotoba-action="device-auth/start-phone-scan" class="dads-button" data-type="solid-fill" data-size="md" id="start-phone-scan" type="button">スマホ用コードを準備</button>
-          </div>
+          <div class="dds-ext-card"><h2 class="dads-heading" data-size="24">スマホで続ける</h2><p>スマホ側でも Passkey を確認してから、この機械を承認します。表示する承認URLにアカウント鍵や端末トークンは含めません。</p><img id="device-auth-qr" class="device-auth-qr" alt="AIUEOSの端末承認ページを開くQRコード" hidden><pre id="qr" class="session-out"></pre><a id="device-auth-link" class="dads-link" href="#" target="_blank" rel="noopener noreferrer" hidden>承認ページを開く</a><button data-kotoba-action="device-auth/start-phone-scan" class="dads-button" data-type="solid-fill" data-size="md" id="start-phone-scan" type="button">スマホ用コードを準備</button></div>
           <pre id="auth-out" class="session-out" aria-live="polite"></pre>
           <details class="session-details">
             <summary>hosted 検証用</summary>
@@ -2865,6 +2862,11 @@ async function refreshSetup() {
 
 async function startDeviceAuth(method) {
   var el = document.getElementById("auth-out");
+  var approvalWindow = null;
+  if (method === "passkey") {
+    approvalWindow = window.open("about:blank", "aiueos-device-approval");
+    if (approvalWindow) approvalWindow.opener = null;
+  }
   if (el) el.textContent = "単回チャレンジを準備しています…";
   try {
     var r = await fetch("/api/device-auth/challenge", {
@@ -2873,13 +2875,86 @@ async function startDeviceAuth(method) {
       body: JSON.stringify({ method: method })
     });
     var j = await r.json();
+    if (!r.ok || !j.verification_uri_complete) {
+      if (approvalWindow) approvalWindow.close();
+      if (el) el.textContent = pretty(j);
+      return;
+    }
+    var link = document.getElementById("device-auth-link");
+    if (link) {
+      link.href = j.verification_uri_complete;
+      link.textContent = "承認ページを開く";
+      link.hidden = false;
+    }
     if (method === "phone-scan" && j.scan_payload) {
       var qr = document.getElementById("qr");
+      var qrImage = document.getElementById("device-auth-qr");
       if (qr) qr.textContent = j.scan_payload;
+      if (qrImage) {
+        qrImage.src = "/api/device-auth/qr?flow=" + encodeURIComponent(j.flow_id);
+        qrImage.hidden = false;
+      }
+    }
+    if (method === "passkey") {
+      if (approvalWindow) approvalWindow.location.replace(j.verification_uri_complete);
+      else window.open(j.verification_uri_complete, "_blank", "noopener,noreferrer");
     }
     if (el) el.textContent = pretty(j);
+    window.__aiueosDeviceAuth = {
+      expiresAt: j.expires_at_ms,
+      interval: j.poll_interval_seconds || 2
+    };
+    scheduleDeviceAuthPoll(1);
   } catch (e) {
+    if (approvalWindow) approvalWindow.close();
     if (el) el.textContent = String(e);
+  }
+}
+
+function scheduleDeviceAuthPoll(seconds) {
+  if (window.__aiueosDeviceAuthTimer) {
+    clearTimeout(window.__aiueosDeviceAuthTimer);
+  }
+  window.__aiueosDeviceAuthTimer = setTimeout(pollDeviceAuth, seconds * 1000);
+}
+
+async function pollDeviceAuth() {
+  var flow = window.__aiueosDeviceAuth;
+  var el = document.getElementById("auth-out");
+  if (!flow) return;
+  if (Date.now() >= flow.expiresAt) {
+    window.__aiueosDeviceAuth = null;
+    if (el) el.textContent = "承認の有効期限が切れました。もう一度始めてください。";
+    return;
+  }
+  try {
+    var r = await fetch("/api/device-auth/complete", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{}"
+    });
+    var j = await r.json();
+    if (r.status === 202) {
+      if (el) el.textContent = "Passkey の確認を待っています…\n" + pretty(j);
+      scheduleDeviceAuthPoll(j.interval || flow.interval || 2);
+      return;
+    }
+    window.__aiueosDeviceAuth = null;
+    if (el) el.textContent = pretty(j);
+    if (r.ok && j.decision === "grant") {
+      var qr = document.getElementById("qr");
+      var qrImage = document.getElementById("device-auth-qr");
+      var link = document.getElementById("device-auth-link");
+      if (qr) qr.textContent = "承認済み";
+      if (qrImage) qrImage.hidden = true;
+      if (link) link.hidden = true;
+      refreshDevicePlan();
+      refreshStatus();
+      refreshDevices();
+    }
+  } catch (e) {
+    if (el) el.textContent = "認証局への接続を再試行しています…";
+    scheduleDeviceAuthPoll(flow.interval || 2);
   }
 }
 

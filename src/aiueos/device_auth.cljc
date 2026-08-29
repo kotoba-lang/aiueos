@@ -24,6 +24,7 @@
    :auth/challenge-expires-at-ms nil
    :auth/challenge-consumed? false
    :auth/method nil
+   :account/principal-id nil
    :account/did nil
    :device/key-proved? false})
 
@@ -98,6 +99,9 @@
     (not (string? (:account/did proof)))
     :account/did-required
 
+    (not (string? (:account/principal-id proof)))
+    :account/principal-id-required
+
     :else nil))
 
 (defn authenticate-account
@@ -113,6 +117,7 @@
            :aiueos.device-auth/state :account-authenticated
            :aiueos.device-auth/decision :continue
            :auth/method (:auth/method proof)
+           :account/principal-id (:account/principal-id proof)
            :account/did (:account/did proof)
            :passkey/credential-id (:passkey/credential-id proof)
            :passkey/sign-count (:passkey/sign-count proof)
@@ -160,7 +165,8 @@
     {:aiueos.device-auth/decision :deny
      :aiueos.device-auth/reason :device/not-claimed}
     {:aiueos.device-auth/decision :grant
-     :account {:did (:account/did state)
+     :account {:principal-id (:account/principal-id state)
+               :did (:account/did state)
                :sync :ready-to-append
                :authority (:auth/authority state)
                :private-key-copied? false}

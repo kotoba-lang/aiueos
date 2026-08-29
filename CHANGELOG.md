@@ -5,6 +5,19 @@ All notable changes to **aiueos** are documented here. The format follows
 
 ## [Unreleased]
 
+### Passkey-bound device addition (ADR-0113)
+- The Kotoba Browser setup surface now starts and polls the one-time device
+  authorization flow at the formal authority `auth.kotoba.cloud`, under the
+  dedicated `/v1/aiueos/device/*` namespace. Passkey and phone scan share one
+  ceremony; phone scan renders the public approval URL as a local QR.
+- A separate poll secret remains only in helper memory. The browser cannot
+  grant itself authority, and a successful authority result must match the
+  exact flow, device DID, challenge, model, method, origin and RP ID before a
+  local device-key possession proof can claim the node.
+- The new adapter/state-machine files and QR runtime are content-addressed in
+  the TCB inventory. Production deploy and a real human Passkey ceremony remain
+  separate live evidence.
+
 ### nbb guest compositor gates (ADR-0100)
 - Guest KERNEL.ELF serial gates run on nbb:
   `nbb --classpath src scripts/compositor-guest.cljs <profile>`.

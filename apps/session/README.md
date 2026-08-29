@@ -13,6 +13,21 @@ contract v1.
 The formal Passkey authority, origin, and WebAuthn RP ID are
 `auth.kotoba.cloud`; `auth.itonami.cloud` is not an aiueos OS-auth route.
 
+Device addition uses the authority's one-time `/v1/aiueos/device/*` flow
+(ADR-0113), not its generic Device Code API. Both buttons start the same bound
+ceremony. `Passkey` opens the public approval URL;
+`phone-scan` renders that same URL as a QR locally in the AIUEOS helper. The
+authority's poll token stays only in helper memory and is never returned to the
+document, placed in the QR, or persisted. The helper accepts a grant only when
+the authority result matches the exact flow, device DID, challenge, model,
+method, origin and RP ID, and then separately verifies possession of the local
+device key. Browser-supplied `verified` flags have no effect.
+
+The repository test injects the authority boundary and proves pending, grant,
+binding refusal, one-time consumption and secret non-disclosure. It is not a
+claim that the production authority route has been deployed or that a human
+Passkey ceremony has run on the physical K16.
+
 This is not `clojure -M:cloud-live check`. CID read and murakumo infer leave
 from the **session process** (`POST /api/session/read-cid`,
 `POST /api/session/infer`) when the operator presses a button in this

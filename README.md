@@ -320,13 +320,18 @@ real-machine qualification.
 A VM has no chassis sticker. The hypervisor helper on the Mac prints the
 setup URL and QR payload on the **host** terminal and writes `setup.json`
 next to the VM. QEMU runs with `-display none`; guest VGA/keyboard is not a
-passing path. User-mode/slirp stands in for Ethernet DHCP. Enrollment is
-The hosted fixture uses `grant.enroll` (not a second identity stack). The
+passing path. User-mode/slirp stands in for Ethernet DHCP. The hosted fixture
+uses `grant.enroll` (not a second identity stack). The
 product account flow sends `Passkey` or `phone-scan` into one single-use
-challenge and then proves the device-owned key. The scanned payload contains
-neither the device enrollment token nor an account/passkey private key. The
-formal WebAuthn authority and RP ID are both `auth.kotoba.cloud`. The local check-in ledger is
-labelled `non-authoritative`; production still names `https://kotobase.net`.
+challenge at `https://auth.kotoba.cloud/v1/aiueos/device/start`; the helper polls
+`/v1/aiueos/device/poll` with a separate node-only secret and then proves the
+device-owned Ed25519 key. The browser and locally rendered QR receive only the
+public approval URL. They receive neither the poll secret, device enrollment
+token, nor an account/passkey private key. The formal WebAuthn authority and RP
+ID are both `auth.kotoba.cloud` (ADR-0113). The local check-in ledger is labelled
+`non-authoritative`; production still names `https://kotobase.net`. A mocked
+authority gate proves the adapter and binding rules; a production deployment
+plus a human Passkey ceremony remains separate live evidence.
 
 On Apple Silicon this uses `qemu-system-aarch64` + HVF + edk2 firmware, the
 same ISA `aiueos.vm` defaults to. It is **not** the x86_64 C-free kernel

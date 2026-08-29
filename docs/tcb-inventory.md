@@ -2,7 +2,7 @@
 
 Status: machine checked  
 Inventory version: 3  
-Date: 2026-08-01
+Date: 2026-08-29
 
 The authoritative inventory is
 `qualification/tcb-inventory.edn`. It lists every in-repository source boundary
@@ -20,7 +20,7 @@ The check fails on missing files, duplicate paths, unsupported inventory
 versions, missing roles or any source digest drift. Regulated boot evidence
 must bind the inventory digest and assert that this check passed.
 
-## External dependencies are content-addressed (version 2)
+## External dependencies are content-addressed (inventory version 3)
 
 `:tcb/external` records the same kind of fact for code this repository does not
 contain. A dependency is pinned by *content*, never by a path or a bare version
@@ -58,12 +58,15 @@ Both are the classes of error the checks above now reject.
   local topic isolation,
   authenticated network-topic protocol, graph and provider surface;
 - deployment admission and PID-1;
+- hosted `auth.kotoba.cloud` device authorization, its state machine, and
+  device-key possession proof;
 - plaintext audit emission, sealed production audit and component-state
   storage;
 - HVT, VFIO/IOMMU, virtio, VM launch and boot-image construction.
 
-The external TCB records the Chicory parser/runtime jars, the shared security
-package, the freestanding ABI contract, and `java.base`.
+The external TCB records the Chicory parser/runtime jars, the locally executed
+QR renderer, the shared security and capability-authority packages, the hosted
+desktop session-state package, the owned TLS/HTTP transports, and `java.base`.
 
 `:tcb/classpath` records the transitive closure `:tcb/external` cannot express:
 every jar actually on the running classpath, by SHA-256. `org.clojure/clojure`,

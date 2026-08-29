@@ -20,6 +20,7 @@
    :auth/user-present? true
    :auth/user-verified? true
    :authority/verified? true
+   :account/principal-id "urn:kotoba:principal:one"
    :account/did "did:key:account"
    :passkey/credential-id "credential-1"
    :passkey/sign-count 8
@@ -36,6 +37,7 @@
     (is (auth/claimed? claimed))
     (is (= :kotoba-lang/browser (get-in plan [:ui :engine])))
     (is (= :ready-to-append (get-in plan [:account :sync])))
+    (is (= "urn:kotoba:principal:one" (get-in plan [:account :principal-id])))
     (is (false? (get-in plan [:account :private-key-copied?])))
     (is (false? (get-in plan [:murakumo :ready?]))
         "claiming an account is not workload readiness")
