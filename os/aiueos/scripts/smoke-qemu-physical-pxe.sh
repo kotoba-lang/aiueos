@@ -113,6 +113,18 @@ grep -F "AIUEOS_CONTROL_READY nonce=" "$work/control.serial" >/dev/null || {
   echo "error: control EFI did not become ready after result recovery" >&2
   exit 1
 }
+grep -F "AIUEOS_PXE_ACPI_RSDP state=ready" "$work/control.serial" >/dev/null || {
+  echo "error: control EFI did not report the firmware ACPI RSDP" >&2
+  exit 1
+}
+grep -F "AIUEOS_PXE_ACPI_ROOT state=ready" "$work/control.serial" >/dev/null || {
+  echo "error: control EFI did not report the firmware ACPI root" >&2
+  exit 1
+}
+grep -F "AIUEOS_PXE_ACPI_MADT cpus=" "$work/control.serial" >/dev/null || {
+  echo "error: control EFI did not summarize the firmware MADT" >&2
+  exit 1
+}
 
 printf '%s\n' \
   "AIUEOS_NATIVE_PXE_QEMU_OK embedded=kernel+initramfs result=uefi-nvram fallback=control-efi deterministic=yes internal-ssd-writes=none physical-k16=unverified"
