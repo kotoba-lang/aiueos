@@ -21,6 +21,7 @@ import tempfile
 import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
@@ -110,7 +111,8 @@ NODE_HELLO = re.compile(
 JOB_RESULT = re.compile(
     r"^AIUEOS_JOB_RESULT_V1 boot=([0-9a-f]{16}) id=([0-9]{1,20}) "
     r"model=aiueos-char-bigram-v1 token=([0-9a-f]{2}) "
-    r"score=([0-9]{1,5}) total=([0-9]{1,5})$")
+    r"score=([0-9]{1,5}) total=([0-9]{1,5}) "
+    r"cycles=([0-9]{1,20})$")
 NODE_PONG = re.compile(
     r"^AIUEOS_NODE_PONG_V1 boot=([0-9a-f]{16}) "
     r"seq=([0-9]{1,10}) state=ready$")
@@ -317,6 +319,11 @@ def murakumo_get(path, opener=urllib.request.urlopen):
         return error.code, parsed
 
 
+def murakumo_queue_path():
+    return "/infer/queue?did=" + urllib.parse.quote(
+        MURAKUMO_NODE_DID, safe="")
+
+
 def job_payload(boot, job):
     job_id = str(job.get("job-id", ""))
     kind = job.get("kind")
@@ -363,7 +370,7 @@ def verified_job_result(message, boot, job_id, prompt):
     match = JOB_RESULT.fullmatch(message)
     if not match:
         return None
-    got_boot, got_id, token_hex, score, total = match.groups()
+    got_boot, got_id, token_hex, score, total, cycles = match.groups()
     if got_boot != boot or got_id != str(job_id):
         return None
     token = bytes.fromhex(token_hex).decode("ascii", "strict")
@@ -372,6 +379,7 @@ def verified_job_result(message, boot, job_id, prompt):
         return None
     return {"text": token, "model": MURAKUMO_JOB_MODEL,
             "score": int(score), "total": int(total),
+            "inference-cycles": int(cycles),
             "prompt": prompt,
             "corpus-sha256": MURAKUMO_JOB_CORPUS_SHA256,
             "boot": boot}
@@ -379,7 +387,9 @@ def verified_job_result(message, boot, job_id, prompt):
 
 def dispatch_murakumo_job(
         boot, job, sock, peer, opener=urllib.request.urlopen,
-        result_queue=MURAKUMO_JOB_RESULTS, sleeper=time.sleep):
+        result_queue=MURAKUMO_JOB_RESULTS, sleeper=time.sleep,
+        monotonic=time.monotonic, monotonic_ns=time.monotonic_ns,
+        retry_wait=0.2):
     job_id = str(job.get("job-id", "")) if isinstance(job, dict) else ""
     payload = job_payload(boot, job or {})
     if not payload:
@@ -392,26 +402,35 @@ def dispatch_murakumo_job(
         return {"state": "raced" if claim_status == 409 else "failed",
                 "stage": "claim", "status": claim_status,
                 "job-id": job_id}
-    for _ in range(5):
-        sock.sendto(payload, peer)
-        sleeper(0.2)
-    deadline = time.monotonic() + 30
+    started_ns = monotonic_ns()
+    deadline = monotonic() + 30
     output = None
-    while output is None:
-        remaining = deadline - time.monotonic()
-        if remaining <= 0:
-            return {"state": "failed", "stage": "k16-result-timeout",
-                    "job-id": job_id}
-        try:
-            candidate, candidate_peer = result_queue.get(timeout=remaining)
-        except queue.Empty:
-            return {"state": "failed", "stage": "k16-result-timeout",
-                    "job-id": job_id}
-        if candidate_peer == peer:
-            output = verified_job_result(candidate, boot, job_id, prompt)
+    for _attempt in range(5):
+        sock.sendto(payload, peer)
+        attempt_deadline = deadline if _attempt == 4 else \
+            min(deadline, monotonic() + retry_wait)
+        while output is None:
+            remaining = attempt_deadline - monotonic()
+            if remaining <= 0:
+                break
+            try:
+                candidate, candidate_peer = result_queue.get(timeout=remaining)
+            except queue.Empty:
+                break
+            if candidate_peer == peer:
+                output = verified_job_result(candidate, boot, job_id, prompt)
+        if output is not None:
+            break
+    if output is None:
+        return {"state": "failed", "stage": "k16-result-timeout",
+                "job-id": job_id}
+    round_trip_ns = max(1, monotonic_ns() - started_ns)
+    output["relay-round-trip-ns"] = round_trip_ns
+    round_trip_ms = max(1, (round_trip_ns + 999999) // 1000000)
     result_status, _ = murakumo_post(
         f"/infer/queue/{job_id}/result",
-        {"did": MURAKUMO_NODE_DID, "output": output, "ms": 0}, opener)
+        {"did": MURAKUMO_NODE_DID, "output": output,
+         "ms": round_trip_ms}, opener)
     if result_status != 201:
         return {"state": "failed", "stage": "result", "status": result_status,
                 "job-id": job_id}
@@ -427,7 +446,9 @@ def dispatch_murakumo_job(
         sleeper(0.2)
     return {"state": "ready", "boot": boot, "job-id": job_id,
             "model": MURAKUMO_JOB_MODEL, "token": output["text"],
-            "prompt": prompt}
+            "prompt": prompt, "inference-cycles": output["inference-cycles"],
+            "relay-round-trip-ns": round_trip_ns,
+            "relay-round-trip-ms": round_trip_ms}
 
 
 def qualify_murakumo_job(message, sock, peer, opener=urllib.request.urlopen,
@@ -445,13 +466,14 @@ def qualify_murakumo_job(message, sock, peer, opener=urllib.request.urlopen,
             {"kind": MURAKUMO_JOB_KIND,
              "input": {"model": MURAKUMO_JOB_MODEL,
                        "prompt": MURAKUMO_JOB_PROMPT},
-             "price": 0}, opener)
+             "price": 0,
+             "target-did": MURAKUMO_NODE_DID}, opener)
         job_id = str(enqueue.get("job-id", "")) \
             if isinstance(enqueue, dict) else ""
         if enqueue_status != 201 or not re.fullmatch(r"[0-9]{1,20}", job_id):
             return {"state": "failed", "stage": "enqueue",
                     "status": enqueue_status}
-        list_status, jobs = murakumo_get("/infer/queue", opener)
+        list_status, jobs = murakumo_get(murakumo_queue_path(), opener)
         job = next((candidate for candidate in jobs
                     if str(candidate.get("job-id", "")) == job_id), None) \
             if list_status == 200 and isinstance(jobs, list) else None
@@ -510,7 +532,7 @@ def maintain_murakumo_liveness(
 
     while rounds is None or renewed < rounds:
         queue_status, jobs = (200, []) if renewed == 0 else \
-            murakumo_get("/infer/queue", opener)
+            murakumo_get(murakumo_queue_path(), opener)
         if queue_status != 200 or not isinstance(jobs, list):
             terminal = retry_or_return(
                 {"state": "failed", "stage": "queue-poll",
@@ -548,7 +570,17 @@ def maintain_murakumo_liveness(
             if terminal:
                 return terminal
             continue
-        sock.sendto(ping, peer)
+        try:
+            sock.sendto(ping, peer)
+        except OSError as error:
+            terminal = retry_or_return(
+                {"state": "failed", "stage": "liveness-send",
+                 "error": error.errno, "boot": boot,
+                 "sequence": sequence, "renewed": renewed,
+                 "executed": executed}, True)
+            if terminal:
+                return terminal
+            continue
         deadline = time.monotonic() + timeout
         valid = False
         while not valid:
@@ -672,7 +704,7 @@ def murakumo_preflight(opener=urllib.request.urlopen):
     if not BOOT_PATH.is_file():
         raise RuntimeError(f"PXE boot image is unavailable: {BOOT_PATH}")
     socket.if_nametoindex(INTERFACE)
-    status, jobs = murakumo_get("/infer/queue", opener)
+    status, jobs = murakumo_get(murakumo_queue_path(), opener)
     if status != 200 or not isinstance(jobs, list):
         raise RuntimeError(f"Murakumo queue authentication failed: HTTP {status}")
     return {"did": MURAKUMO_NODE_DID,
@@ -1009,7 +1041,7 @@ def selftest():
         fake_results = queue.Queue()
         fake_results.put((
             "AIUEOS_JOB_RESULT_V1 boot=0123456789abcdef id=209 "
-            "model=aiueos-char-bigram-v1 token=6f score=2 total=5",
+            "model=aiueos-char-bigram-v1 token=6f score=2 total=5 cycles=41",
             (CLIENT_IP, 7779)))
         def fake_job_open(request, timeout):
             job_captured.append((request.full_url, request.method, request.data,
@@ -1039,6 +1071,13 @@ def selftest():
         assert ready_body["node/model"] == MURAKUMO_JOB_MODEL
         assert ready_body["node/capacity"] == {
             "slots-total": 1, "slots-free": 1}
+        enqueue_body = json.loads(job_captured[0][2])
+        assert enqueue_body["target-did"] == "did:key:z6MkK16Selftest"
+        assert "did%3Akey%3Az6MkK16Selftest" in job_captured[1][0]
+        result_body = json.loads(job_captured[3][2])
+        assert result_body["ms"] >= 1
+        assert result_body["output"]["inference-cycles"] == 41
+        assert result_body["output"]["relay-round-trip-ns"] >= 1
         assert micro_infer_expected("awai") == ("n", 3, 8)
         assert micro_infer_expected("ends-in-b") is None
         race_calls = []
@@ -1046,7 +1085,7 @@ def selftest():
         race_results = queue.Queue()
         race_results.put((
             "AIUEOS_JOB_RESULT_V1 boot=0123456789abcdef id=212 "
-            "model=aiueos-char-bigram-v1 token=6f score=2 total=5",
+            "model=aiueos-char-bigram-v1 token=6f score=2 total=5 cycles=42",
             (CLIENT_IP, 7779)))
         def fake_race_open(request, timeout):
             race_calls.append((request.full_url, request.method))
@@ -1077,7 +1116,7 @@ def selftest():
         worker_results = queue.Queue()
         worker_results.put((
             "AIUEOS_JOB_RESULT_V1 boot=0123456789abcdef id=210 "
-            "model=aiueos-char-bigram-v1 token=6e score=3 total=8",
+            "model=aiueos-char-bigram-v1 token=6e score=3 total=8 cycles=43",
             (CLIENT_IP, 7779)))
         liveness_captured = []
         liveness_gets = [0]
@@ -1125,6 +1164,32 @@ def selftest():
         assert recovered == {"state": "live", "boot": "0123456789abcdef",
                              "renewed": 1, "executed": 0}
         assert recovery_sleeps == [0]
+        class FailOnceSocket(FakeSocket):
+            def __init__(self):
+                super().__init__()
+                self.failures = 1
+            def sendto(self, payload, peer):
+                if self.failures:
+                    self.failures -= 1
+                    raise OSError(65, "No route to host")
+                super().sendto(payload, peer)
+        send_recovery_results = queue.Queue()
+        send_recovery_sleeps = []
+        def recover_send_sleep(seconds):
+            send_recovery_sleeps.append(seconds)
+            if send_recovery_results.empty():
+                send_recovery_results.put((
+                    "AIUEOS_NODE_PONG_V1 boot=0123456789abcdef seq=1 state=ready",
+                    (CLIENT_IP, 7779)))
+        send_recovered = maintain_murakumo_liveness(
+            "0123456789abcdef", FailOnceSocket(), (CLIENT_IP, 7779),
+            fake_liveness_open, send_recovery_results, recover_send_sleep,
+            rounds=1, interval=0, timeout=0.01,
+            max_failures=2, retry_interval=0)
+        assert send_recovered == {
+            "state": "live", "boot": "0123456789abcdef",
+            "renewed": 1, "executed": 0}
+        assert send_recovery_sleeps == [0]
         assert len(job_captured) == 5
     finally:
         globals()["MURAKUMO_NODE_DID"] = old_did

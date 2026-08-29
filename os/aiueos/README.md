@@ -785,11 +785,18 @@ and accepts a commit only after the relay has persisted that result and posted a
 ready heartbeat.  It then answers boot- and sequence-bound liveness pings; the
 Mac relay renews the server-observed heartbeat only after each physical pong, so
 the node cannot remain live merely because the Mac process is still running.
-While live, the relay keeps polling the shared queue and claims any exact
-`aiueos-micro-infer` job whose bounded prompt has a nonempty row in the frozen
-model.  The same K16 executes each admitted job, and each result must be
+While live, the relay polls the queue with the K16 DID. K16-only jobs carry a
+matching `target-did`; Murakumo hides them from generic pollers and rejects a
+claim whose worker DID differs. It claims only an exact `aiueos-micro-infer`
+job whose bounded prompt has a nonempty row in the frozen model. The same K16
+executes each admitted job, and each result must be
 persisted and committed before the worker accepts the next event.  Thus the
 qualification job is the admission gate, not the only job the boot can run.
+The result records a serialized TSC cycle delta around the native model and a
+separate Mac-monotonic K16 relay round trip. The latter is rounded up to a
+positive millisecond for Murakumo's run ledger; it is no longer written as the
+placeholder `0`. Cycles are not converted to native wall time until the K16's
+TSC frequency has been measured in the same physical boot.
 Build and QEMU-negative-path coverage is available with:
 
 ```sh
@@ -813,10 +820,12 @@ password.  It refuses dirty or receipt-mismatched images.  Preparing with
 
 The exact scope and known answer are in
 `contracts/micro-inference-qualification-v1.edn`.  This remains a physical
-qualification path: AMD-IOMMU isolation is not in the RTL8125 path, no completed
-K16 job has yet been observed, and a fixed character-bigram model is not a
-production LLM/GPU workload.  None of these checks authorizes an internal-SSD
-write.
+qualification path: AMD-IOMMU isolation is not in the RTL8125 path, and a fixed
+character-bigram model is not a production LLM/GPU workload. The current
+topology still terminates Murakumo HTTPS and holds the operator credential on
+the Mac relay; target-bound queue routing is a direct logical dispatch to the
+K16, not device-owned HTTPS/CACAO or a network-direct K16-to-Murakumo path.
+None of these checks authorizes an internal-SSD write.
 
 `verify-release-signature.py` verifies an RSA-2048 PKCS#1 v1.5 SHA-256
 signature over the build receipt using only the Python standard library

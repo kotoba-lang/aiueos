@@ -29,6 +29,8 @@
   (slurp (io/file "os/aiueos/contracts/physical-relay-qualification-pxe-v1.edn")))
 (def murakumo-relay-contract
   (slurp (io/file "os/aiueos/contracts/murakumo-relay-enrollment-v1.edn")))
+(def micro-inference-contract
+  (slurp (io/file "os/aiueos/contracts/micro-inference-qualification-v1.edn")))
 (def physical-relay-build
   (slurp (io/file "os/aiueos/scripts/build-physical-relay-pxe.sh")))
 (def relay-protocol
@@ -112,6 +114,23 @@
             kernel
             "aiueos_framebuffer_qualification_screen(\"AIUEOS K16\", \"NODE LINK STALE\", \"SSD READ ONLY\", 0);\n      for(;;)__asm__ volatile(\"cli; hlt\");"))
       "one renewal miss must not permanently halt an otherwise qualified node"))
+
+(deftest native-inference-measurement-and-targeting-stay-evidence-bounded
+  (let [contract (edn/read-string micro-inference-contract)]
+    (is (= :serialized-tsc-cycle-delta
+           (get-in contract [:measurement :native-compute])))
+    (is (= :unqualified-until-tsc-frequency-is-measured
+           (get-in contract [:measurement :native-wall-time])))
+    (is (= :target-did (get-in contract [:murakumo :target-field])))
+    (is (some #{:network-direct-to-murakumo} (:does-not-prove contract))))
+  (doseq [marker ["cycles=" "inference-cycles" "relay-round-trip-ns"
+                  "target-did" "murakumo_queue_path"]]
+    (is (str/includes? server marker)))
+  (is (str/includes? pci "rdtscp; lfence"))
+  (is (not (str/includes?
+            pci
+            "!rtl8125_qualification_device.ready||rtl8125_relay_error||rtl8125_job_error"))
+      "one failed job must not permanently suppress future heartbeat handling"))
 
 (deftest k16-rtl8125-uefi-observation-stays-read-only
   (doseq [marker ["AIUEOS_RTL8125_HANDOFF bdf="

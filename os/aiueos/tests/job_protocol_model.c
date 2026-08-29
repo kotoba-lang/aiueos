@@ -7,7 +7,7 @@
 
 int main(void) {
   static const char job[]="AIUEOS_JOB_V1 boot=0123456789abcdef id=209 kind=aiueos-micro-infer prompt=6d7572616b756d";
-  static const char result[]="AIUEOS_JOB_RESULT_V1 boot=0123456789abcdef id=209 model=aiueos-char-bigram-v1 token=6f score=2 total=5";
+  static const char result[]="AIUEOS_JOB_RESULT_V1 boot=0123456789abcdef id=209 model=aiueos-char-bigram-v1 token=6f score=2 total=5 cycles=18446744073709551615";
   static const char commit[]="AIUEOS_JOB_COMMIT_V1 boot=0123456789abcdef id=209 state=recorded";
   static const char ping[]="AIUEOS_NODE_PING_V1 boot=0123456789abcdef seq=4294967295";
   static const char pong[]="AIUEOS_NODE_PONG_V1 boot=0123456789abcdef seq=4294967295 state=ready";
@@ -21,7 +21,7 @@ int main(void) {
   CHECK(request.prompt_length==7&&!memcmp(request.prompt,"murakum",7));
   CHECK(aiueos_micro_infer_next(request.prompt,request.prompt_length,&inferred));
   uint32_t n=aiueos_job_result_payload(out,sizeof(out),request.boot_nonce,
-                                       request.job_id,&inferred);
+                                       request.job_id,&inferred,UINT64_MAX);
   CHECK(n==sizeof(result)-1&&!memcmp(out,result,n));
   CHECK(aiueos_job_commit_valid((const uint8_t *)commit,sizeof(commit)-1,
                                 request.boot_nonce,request.job_id));
@@ -39,6 +39,6 @@ int main(void) {
   CHECK(n==sizeof(pong)-1&&!memcmp(out,pong,n));
   CHECK(!aiueos_node_ping_parse((const uint8_t *)invalid_ping,sizeof(invalid_ping)-1,
                                 request.boot_nonce,&sequence));
-  puts("AIUEOS_JOB_PROTOCOL_MODEL_OK request=boot+job-bound result=model+score commit=persisted liveness=boot+sequence-bound");
+  puts("AIUEOS_JOB_PROTOCOL_MODEL_OK request=boot+job-bound result=model+score+cycles commit=persisted liveness=boot+sequence-bound");
   return 0;
 }

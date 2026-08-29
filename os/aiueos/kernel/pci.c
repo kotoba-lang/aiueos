@@ -3563,6 +3563,7 @@ static unsigned rtl8125_job_error;
 static uint8_t rtl8125_job_token;
 static uint16_t rtl8125_job_score;
 static uint16_t rtl8125_job_total;
+static uint64_t rtl8125_job_cycles;
 static unsigned rtl8125_liveness_error;
 static uint32_t rtl8125_liveness_sequence;
 unsigned aiueos_rtl8125_qualification_error(void) {
@@ -3578,6 +3579,7 @@ unsigned aiueos_rtl8125_job_error(void) { return rtl8125_job_error; }
 uint8_t aiueos_rtl8125_job_token(void) { return rtl8125_job_token; }
 uint16_t aiueos_rtl8125_job_score(void) { return rtl8125_job_score; }
 uint16_t aiueos_rtl8125_job_total(void) { return rtl8125_job_total; }
+uint64_t aiueos_rtl8125_job_cycles(void) { return rtl8125_job_cycles; }
 unsigned aiueos_rtl8125_liveness_error(void) { return rtl8125_liveness_error; }
 uint32_t aiueos_rtl8125_liveness_sequence(void) { return rtl8125_liveness_sequence; }
 
@@ -3821,15 +3823,25 @@ int aiueos_rtl8125_relay_qualification(void) {
 }
 
 static int rtl8125_execute_job(const struct aiueos_job_request *request) {
+  rtl8125_job_error=1;rtl8125_job_cycles=0;
   if(!request) { rtl8125_job_error=2;return 0; }
   struct aiueos_micro_infer_result inference;
+  uint32_t tsc_low,tsc_high,aux;
+  uint64_t started,finished;
+  __asm__ volatile("lfence; rdtsc":"=a"(tsc_low),"=d"(tsc_high)::"memory");
+  started=((uint64_t)tsc_high<<32)|tsc_low;
   if(!aiueos_micro_infer_next(request->prompt,request->prompt_length,&inference)) {
     rtl8125_job_error=3;return 0;
   }
+  __asm__ volatile("rdtscp; lfence":"=a"(tsc_low),"=d"(tsc_high),"=c"(aux)::"memory");
+  (void)aux;
+  finished=((uint64_t)tsc_high<<32)|tsc_low;
+  rtl8125_job_cycles=finished-started;
   enum aiueos_rtl8125_result result=AIUEOS_RTL8125_OK;
   uint8_t job_result[AIUEOS_JOB_RESULT_CAPACITY];
   uint32_t result_length=aiueos_job_result_payload(
-    job_result,sizeof(job_result),rtl8125_relay_nonce,request->job_id,&inference);
+    job_result,sizeof(job_result),rtl8125_relay_nonce,request->job_id,&inference,
+    rtl8125_job_cycles);
   uint32_t bytes=rtl8125_build_udp_payload(
     rtl8125_qualification_device.tx_frame,job_result,result_length,
     (uint16_t)rtl8125_relay_nonce);
@@ -3869,7 +3881,7 @@ static int rtl8125_execute_job(const struct aiueos_job_request *request) {
 
 int aiueos_rtl8125_job_qualification(void) {
   rtl8125_job_error=1;rtl8125_job_token=0;
-  rtl8125_job_score=0;rtl8125_job_total=0;
+  rtl8125_job_score=0;rtl8125_job_total=0;rtl8125_job_cycles=0;
   if(!rtl8125_qualification_device.ready||rtl8125_relay_error) return 0;
   struct aiueos_job_request request;
   enum aiueos_rtl8125_result result=AIUEOS_RTL8125_OK;
@@ -3898,7 +3910,7 @@ int aiueos_rtl8125_job_qualification(void) {
 
 int aiueos_rtl8125_liveness_renewal(void) {
   rtl8125_liveness_error=1;
-  if(!rtl8125_qualification_device.ready||rtl8125_relay_error||rtl8125_job_error)
+  if(!rtl8125_qualification_device.ready||rtl8125_relay_error)
     return 0;
   enum aiueos_rtl8125_result result=AIUEOS_RTL8125_OK;
   aiueos_rtl8125_rx_rearm(&rtl8125_qualification_device);
