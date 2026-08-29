@@ -11,6 +11,44 @@ struct aiueos_boot_info {
   uint64_t firmware_cr3;
 };
 
+#define AIUEOS_OWNED_MEMORY_MAP_BYTES (128ULL * 1024ULL)
+static struct aiueos_boot_info aiueos_owned_boot_info;
+static uint8_t aiueos_owned_memory_map[AIUEOS_OWNED_MEMORY_MAP_BYTES]
+  __attribute__((aligned(16)));
+
+/* The loader's boot-info object and memory-map buffer are firmware-owned.
+   They are readable under the inherited CR3 but are not necessarily inside
+   the kernel's bounded low identity map.  Retain every scalar and the bounded
+   descriptor stream before aiueos_paging_initialize installs the owned root. */
+static int aiueos_boot_info_retain(const struct aiueos_boot_info *source) {
+  if (!source || !source->memory_map || !source->memory_map_size ||
+      !source->descriptor_size ||
+      source->memory_map_size > AIUEOS_OWNED_MEMORY_MAP_BYTES ||
+      source->memory_map_size % source->descriptor_size != 0)
+    return 0;
+  aiueos_owned_boot_info.magic = source->magic;
+  aiueos_owned_boot_info.version = source->version;
+  aiueos_owned_boot_info.memory_map_size = source->memory_map_size;
+  aiueos_owned_boot_info.descriptor_size = source->descriptor_size;
+  aiueos_owned_boot_info.descriptor_version = source->descriptor_version;
+  aiueos_owned_boot_info.acpi_rsdp = source->acpi_rsdp;
+  aiueos_owned_boot_info.framebuffer_base = source->framebuffer_base;
+  aiueos_owned_boot_info.framebuffer_size = source->framebuffer_size;
+  aiueos_owned_boot_info.framebuffer_width = source->framebuffer_width;
+  aiueos_owned_boot_info.framebuffer_height = source->framebuffer_height;
+  aiueos_owned_boot_info.framebuffer_stride = source->framebuffer_stride;
+  aiueos_owned_boot_info.framebuffer_format = source->framebuffer_format;
+  aiueos_owned_boot_info.initramfs_base = source->initramfs_base;
+  aiueos_owned_boot_info.initramfs_size = source->initramfs_size;
+  aiueos_owned_boot_info.runtime_services = source->runtime_services;
+  aiueos_owned_boot_info.firmware_cr3 = source->firmware_cr3;
+  const volatile uint8_t *input = source->memory_map;
+  for (uint64_t i = 0; i < source->memory_map_size; i++)
+    aiueos_owned_memory_map[i] = input[i];
+  aiueos_owned_boot_info.memory_map = aiueos_owned_memory_map;
+  return 1;
+}
+
 /* Bounded `newc` cpio validation. The archive was already bound to a
    compiled-in SHA-256 by the loader; this walk proves the structure: magic
    per entry, hex-only size fields, 4-byte alignment, in-bounds extents, a
@@ -511,11 +549,13 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
   serial_init();
   if (!boot || boot->magic != 0x414955454f53424fULL ||
       (boot->version != 2 && boot->version != 3) ||
-      !boot->memory_map || !boot->memory_map_size || !boot->descriptor_size) {
+      !boot->memory_map || !boot->memory_map_size || !boot->descriptor_size ||
+      !aiueos_boot_info_retain(boot)) {
     debug_string("AIUEOS_KERNEL_FAIL boot-info\n");
     serial_string("AIUEOS_KERNEL_FAIL boot-info\r\n");
     qemu_exit(0x7e);
   } else {
+    boot = &aiueos_owned_boot_info;
 #ifdef AIUEOS_PHYSICAL_QUALIFICATION
     aiueos_qualification_runtime_initialize(
         boot->version >= 3 ? boot->runtime_services : 0,
