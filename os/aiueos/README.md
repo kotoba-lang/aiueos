@@ -760,6 +760,23 @@ on the offline floor (`AIUEOS_VIRTIO_NET_ABSENT`) until a physical-NIC driver
 exists. ADR-0019's original "no network stack at all" was superseded by that
 chain; see `contracts/usb-boot-v1.edn` `:gaps` for the current split.
 
+The first RTL8125 physical-link slice is now in `kernel/rtl8125.c`. It is a
+bounded **PXE handoff**, not a general Realtek driver: after UEFI has powered
+and calibrated the PHY, it drains the firmware rings, installs one aligned TX
+and one aligned RX descriptor, preserves the firmware PHY/MCU setup, masks
+interrupts, and polls ownership with bounded callers. The host model exercises
+the observed K16 MAC, an RTL8125B revision case, descriptor programming, TX
+completion, RX FCS removal and rearming:
+
+```sh
+os/aiueos/scripts/smoke-rtl8125-handoff.sh
+```
+
+`AIUEOS_RTL8125_MODEL_OK` proves the register/descriptor state machine only.
+`pci.c` does not select this backend yet, AMD-IOMMU isolation is not yet in the
+physical path, and no K16 frame has been observed; those are required before
+the driver can support a Murakumo heartbeat.
+
 `verify-release-signature.py` verifies an RSA-2048 PKCS#1 v1.5 SHA-256
 signature over the build receipt using only the Python standard library
 (public-key operation only, fixed-work encoded-message comparison, RSA-2048
