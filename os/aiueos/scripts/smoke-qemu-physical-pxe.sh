@@ -57,7 +57,8 @@ cp "$payload_a" "$work/esp/EFI/BOOT/BOOTX64.EFI"
   exit 1
 }
 
-AIUEOS_OUT="$work/control" "$aiueos/scripts/build-dbc-probe.sh" >/dev/null
+AIUEOS_OUT="$work/control" AIUEOS_PXE_ONLY_CONTROL=1 \
+  "$aiueos/scripts/build-dbc-probe.sh" >/dev/null
 cp "$OVMF_VARS" "$work/vars.fd"
 
 set +e

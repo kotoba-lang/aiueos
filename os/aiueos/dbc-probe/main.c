@@ -148,6 +148,20 @@ struct efi_loaded_image_protocol {
   void *unload;
 };
 
+struct efi_graphics_output_mode_info {
+  uint32_t version, horizontal_resolution, vertical_resolution, pixel_format;
+  uint32_t pixel_information[4], pixels_per_scan_line;
+};
+struct efi_graphics_output_mode {
+  uint32_t max_mode, mode;
+  struct efi_graphics_output_mode_info *info;
+  uint64_t size_of_info, framebuffer_base, framebuffer_size;
+};
+struct efi_graphics_output_protocol {
+  void *query_mode, *set_mode, *blt;
+  struct efi_graphics_output_mode *mode;
+};
+
 union efi_ip_address {
   uint8_t bytes[16];
   uint32_t words[4];
@@ -276,6 +290,8 @@ static const struct efi_guid loaded_image_guid =
   {0x5b1b31a1,0x9562,0x11d2,{0x8e,0x3f,0x00,0xa0,0xc9,0x69,0x72,0x3b}};
 static const struct efi_guid pxe_base_code_guid =
   {0x03c4e603,0xac28,0x11d3,{0x9a,0x2d,0x00,0x90,0x27,0x3f,0xc1,0x4d}};
+static const struct efi_guid graphics_output_guid =
+  {0x9042a9de,0x23dc,0x4a38,{0x96,0xfb,0x7a,0xde,0xd0,0x80,0x51,0x6a}};
 static const struct efi_guid global_variable_guid =
   {0x8be4df61,0x93ca,0x11d2,{0xaa,0x0d,0x00,0xe0,0x98,0x03,0x2b,0x8c}};
 static const struct efi_guid qualification_guid =
@@ -396,6 +412,43 @@ static void append_line_end(char **output) {
   *(*output)++ = '\r';
   *(*output)++ = '\n';
   **output = 0;
+}
+
+static void report_graphics_output(struct efi_system_table *system) {
+  if (!system || !boot_services || !boot_services->handle_protocol) return;
+  struct efi_graphics_output_protocol *gop=0;
+  if (system->console_out_handle)
+    boot_services->handle_protocol(system->console_out_handle,
+                                   &graphics_output_guid,(void **)&gop);
+  if (!gop && boot_services->locate_handle) {
+    efi_handle handles[32];
+    uint64_t bytes=sizeof(handles);
+    if (boot_services->locate_handle(EFI_BY_PROTOCOL,&graphics_output_guid,0,
+                                     &bytes,handles)==EFI_SUCCESS)
+      for (uint64_t index=0;index<bytes/sizeof(efi_handle) && !gop;index++)
+        boot_services->handle_protocol(handles[index],&graphics_output_guid,
+                                       (void **)&gop);
+  }
+  if (!gop || !gop->mode || !gop->mode->info) {
+    console_ascii("AIUEOS_PXE_GOP state=unavailable\r\n");
+    return;
+  }
+  struct efi_graphics_output_mode *mode=gop->mode;
+  struct efi_graphics_output_mode_info *info=mode->info;
+  char line[224],*output=append_ascii(line,"AIUEOS_PXE_GOP state=ready base=");
+  output=append_hex(output,mode->framebuffer_base,16);
+  output=append_ascii(output," bytes=");
+  output=append_dec(output,mode->framebuffer_size);
+  output=append_ascii(output," width=");
+  output=append_dec(output,info->horizontal_resolution);
+  output=append_ascii(output," height=");
+  output=append_dec(output,info->vertical_resolution);
+  output=append_ascii(output," stride=");
+  output=append_dec(output,info->pixels_per_scan_line);
+  output=append_ascii(output," format=");
+  output=append_dec(output,info->pixel_format);
+  append_line_end(&output);
+  console_ascii(line);
 }
 
 static void zero_bytes(void *memory, uint64_t bytes) {
@@ -1022,6 +1075,9 @@ static void discover_controllers(struct efi_boot_services *boot) {
     if ((config[0]&0xffffU)==0x10ecU && (config[0]>>16)==0x8125U)
       report_rtl8125_handoff(pci,(uint8_t)bus,(uint8_t)device,
                              (uint8_t)function,config[1]);
+#ifdef AIUEOS_PXE_ONLY_CONTROL
+    continue;
+#endif
     if (controller_count>=MAX_DBC_CONTROLLERS ||
         ((config[2]>>8)&0xffffffU)!=0x0c0330U) continue;
     uint32_t dbc_offset=0;
@@ -1047,10 +1103,17 @@ efi_status EFIAPI efi_main(efi_handle image, struct efi_system_table *system) {
                 (uint64_t)(uintptr_t)system;
   if (!control_nonce) control_nonce=0xa11e10c077000001ULL;
   discover_netlog(image);
+  report_graphics_output(system);
   report_qualification_result(system);
+#ifdef AIUEOS_PXE_ONLY_CONTROL
+  console_ascii("\r\nAIUEOS PXE CONTROL (NO DISK WRITES)\r\n");
+  console_ascii("AIUEOS_PXE_CONTROL_START transport=uefi-pxe-base-code internal-ssd-writes=none usb-log-writes=none\r\n");
+#else
   console_ascii("\r\nAIUEOS DBC LIVE PROBE (NO DISK WRITES)\r\n");
   console_ascii("AIUEOS_DBC_START transport=xhci-dbc direction=duplex internal-ssd-writes=none usb-log-writes=none\r\n");
+#endif
   discover_controllers(system->boot_services);
+#ifndef AIUEOS_PXE_ONLY_CONTROL
   char summary[128],*output=append_ascii(summary,"AIUEOS_DBC_DISCOVERY controllers=");
   output=append_dec(output,controller_count);
   output=append_ascii(output," max=5\r\n");*output=0;
@@ -1060,6 +1123,9 @@ efi_status EFIAPI efi_main(efi_handle image, struct efi_system_table *system) {
   } else {
     console_ascii("AIUEOS_DBC_WAITING connect-or-replug-type-c mac-receiver-required\r\n");
   }
+#else
+  console_ascii("AIUEOS_PXE_CONTROL_READY diagnostics=gop+rtl8125+nvram control=udp\r\n");
+#endif
   report_control_ready();
   for (;;) {
     for (uint32_t index=0;index<controller_count;index++)
