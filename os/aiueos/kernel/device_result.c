@@ -122,11 +122,15 @@ static int device_private_key(uint8_t key[32]) {
   return aiueos_device_p256_key_save(key);
 }
 
-static int device_boot_id_ensure(void) {
-  if (device_boot_id_ready) return 1;
+static int device_boot_id_refresh(void) {
   if (!aiueos_cpu_random_bytes(device_boot_id, sizeof(device_boot_id))) return 0;
   device_boot_id_ready = 1;
   return 1;
+}
+
+static int device_boot_id_ensure(void) {
+  if (device_boot_id_ready) return 1;
+  return device_boot_id_refresh();
 }
 
 static int base58_encode(const uint8_t *input, uint32_t input_bytes,
@@ -194,10 +198,14 @@ uint32_t aiueos_device_result_http_request(
   uint8_t nonce[16] = {0}, digest[32] = {0};
   uint8_t signature[64] = {0};
   uint32_t request_length = 0;
+  /* A warm PXE reboot may reuse the same physical pages before the loader has
+     cleared every kernel BSS page.  The qualification result is built once
+     per native boot, so refresh here and let all worker requests from this
+     boot reuse the resulting id. */
   if (!device_private_key(private_key) ||
       !kotoba_aiueos_ecdsa_p256_public(private_key, public_key, p256_workspace) ||
       !random_scalar(nonce_k) ||
-      !device_boot_id_ensure() ||
+      !device_boot_id_refresh() ||
       !aiueos_cpu_random_bytes(nonce, sizeof(nonce))) goto cleanup;
   if (!p256_did(public_key, did_out, did_capacity)) goto cleanup;
 

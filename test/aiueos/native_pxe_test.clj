@@ -72,6 +72,8 @@
           "os/aiueos/scripts/build-qwen38-murakumo-node-pxe.sh")))
 (def device-worker-protocol
   (slurp (io/file "os/aiueos/kernel/device_worker_protocol.c")))
+(def device-result
+  (slurp (io/file "os/aiueos/kernel/device_result.c")))
 (def device-worker-protocol-smoke
   (slurp (io/file
           "os/aiueos/scripts/smoke-device-worker-protocol.sh")))
@@ -191,6 +193,16 @@
     (is (str/includes? device-worker-protocol marker)))
   (is (str/includes? device-worker-protocol-smoke
                      "device_worker_protocol_model.c")))
+
+(deftest device-worker-refreshes-boot-id-across-warm-pxe-reboots
+  (testing "the once-per-boot qualification request replaces retained BSS state"
+    (is (str/includes? device-result
+                       "!device_boot_id_refresh()"))
+    (is (str/includes? device-result
+                       "A warm PXE reboot may reuse the same physical pages")))
+  (testing "poll and result requests keep one id throughout the current boot"
+    (is (str/includes? device-result
+                       "!random_scalar(nonce_k) || !device_boot_id_ensure()"))))
 
 (deftest direct-node-post-closes-and-retries-with-a-bounded-flight
   (testing "a server FIN terminates the current receive pump"
