@@ -162,6 +162,25 @@
                     "AIUEOS_QUALIFICATION_LOADER_WATCHDOG_SECONDS:-1800"]]
       (is (str/includes? qwen38-node-oneshot-build marker)))))
 
+(deftest direct-node-post-closes-and-retries-with-a-bounded-flight
+  (testing "a server FIN terminates the current receive pump"
+    (doseq [marker ["if (frame[47] & NET_TCP_FIN)"
+                    "return 0;"
+                    "RTL_DIRECT_RX_BUDGET 10000000U"]]
+      (is (str/includes? pci marker))))
+  (testing "a signed node POST gets fresh TLS material on up to three attempts"
+    (doseq [marker ["RTL_DIRECT_TLS_ATTEMPTS 3U"
+                    "RTL_DIRECT_LOCAL_PORT + attempt"
+                    "RTL_DIRECT_ISN + (attempt << 16)"
+                    "aiueos_cpu_random_bytes(rtl_direct_client_random"
+                    "rtl8125_direct_https_attempts = attempt + 1"]]
+      (is (str/includes? pci marker))))
+  (testing "Finished plus a maximum 1024-byte HTTP request cannot overflow"
+    (is (str/includes? pci "RTL_DIRECT_TLS_FLIGHT_MAX 1152U"))
+    (is (str/includes? pci
+                       "RTL_DIRECT_TLS_FLIGHT_MAX >= 58U + 1024U + 22U"))
+    (is (not (str/includes? pci "client_hello[256], flight[512]")))))
+
 (deftest persistent-node-reconnects-instead-of-halting-on-one-missed-renewal
   (doseq [marker ["NODE RECONNECTING"
                   "AIUEOS_PHYSICAL_LIVENESS_RETRY"
