@@ -254,6 +254,27 @@
             "aiueos_framebuffer_qualification_screen(\"AIUEOS K16\", \"NODE LINK STALE\", \"SSD READ ONLY\", 0);\n      for(;;)__asm__ volatile(\"cli; hlt\");"))
       "one renewal miss must not permanently halt an otherwise qualified node"))
 
+(deftest persistent-node-reconnects-after-an-ambiguous-initial-post
+  (testing "a retained device DID lets persistent boot enter the worker loop"
+    (doseq [marker ["int direct_https_ok = 0"
+                    "AIUEOS_MURAKUMO_INITIAL_POST_AMBIGUOUS"
+                    "action=worker-reconnect"
+                    "if(!aiueos_rtl8125_direct_device_did()[0])"
+                    "int persistent_qualification_recorded = direct_https_ok"]]
+      (is (str/includes? kernel marker))))
+  (testing "the qualification is recorded only after Murakumo accepts a worker request"
+    (doseq [marker ["if (!persistent_qualification_recorded)"
+                    "AIUEOS_MURAKUMO_INITIAL_POST_RECOVERED"
+                    "aiueos_qualification_finalize(1,8162)"]]
+      (is (str/includes? kernel marker))))
+  (testing "one-shot builds still fail closed and confirmed responses keep the HTTP gate"
+    (is (str/includes? kernel
+                       "if(direct_https_ok && !aiueos_rtl8125_direct_http_ready())"))
+    (is (str/includes? kernel
+                       "#if defined(AIUEOS_MURAKUMO_DEVICE_RESULT) && defined(AIUEOS_PERSISTENT_BOOT)"))
+    (is (str/includes? kernel
+                       "for(;;)__asm__ volatile(\"cli; hlt\");"))))
+
 (deftest native-inference-measurement-and-targeting-stay-evidence-bounded
   (let [contract (edn/read-string micro-inference-contract)]
     (is (= :serialized-tsc-cycle-delta
@@ -306,12 +327,11 @@
            (mapv :bytes (get-in contract [:bundle :parts]))))
     (is (= [:supervisor :read-only :nx]
            (get-in contract [:kernel :mapping :permissions])))
-    (is (= :unverified (get-in contract [:evidence :physical-k16])))
+    (is (= :passed (get-in contract [:evidence :physical-k16])))
     (is (= :absent (get-in contract [:evidence :real-generation])))
     (is (false? (get-in contract [:safety :internal-disk-writes?])))
     (is (every? (set (:does-not-prove contract))
-                [:physical-contiguous-allocation :qwen38-generation
-                 :physical-k16-throughput])))
+                [:qwen38-generation :physical-k16-throughput])))
   (doseq [marker ["HUGE_PAGE_SIZE" "AIUEOS_MODEL_RESERVED_APIC_START"
                   "version == 3U"]]
     (is (str/includes? qwen38-handoff marker)))
@@ -439,7 +459,8 @@
       (is (= :transport-only (get-in contract [:transport :trust])))
       (is (= :unverified (get-in contract [:evidence :physical-state])))
       (is (= :none (get-in contract [:request :secrets])))
-      (is (false? (get-in contract [:request :mac-application-relay?])))
+      (is (false? (get-in contract [:request :mac-application-termination?])))
+      (is (true? (get-in contract [:request :mac-opaque-l4-forwarder?])))
       (is (false? (get-in contract [:safety :account-token-in-image?])))
       (is (false? (get-in contract [:safety :wifi-secret-in-image?])))
       (is (false? (get-in contract [:safety :cacao-in-image?])))
