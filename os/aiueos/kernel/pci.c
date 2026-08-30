@@ -3817,7 +3817,11 @@ int aiueos_rtl8125_physical_qualification(void) {
 #define RTL_DIRECT_TLS_PORT 8443U
 #define RTL_DIRECT_LOCAL_PORT 49155
 #define RTL_DIRECT_ISN 0xa1e02000U
-#define RTL_DIRECT_RX_BUDGET 500000000U
+/* The direct path normally receives a LAN ACK or Cloudflare TLS segment in
+   milliseconds.  A larger spin budget turned one dropped certificate flight
+   into minutes without a heartbeat, so persistent workers use a bounded
+   reconnect interval instead. */
+#define RTL_DIRECT_RX_BUDGET 50000000U
 #define RTL_DIRECT_RX_WINDOW 1024U
 #define RTL_DIRECT_TLS_ATTEMPTS 3U
 #define RTL_DIRECT_TLS_FLIGHT_MAX 1152U
@@ -4170,6 +4174,7 @@ static int rtl8125_direct_tls_attempt(uint32_t dst, uint32_t request_length,
   return 1;
 failed:
   rtl8125_direct_tls_stage = aiueos_tls13_stage();
+  aiueos_rtl8125_rx_rearm(&rtl8125_qualification_device);
   return 0;
 }
 
@@ -4267,6 +4272,10 @@ static int rtl8125_direct_device_request(uint32_t request_length) {
       return 1;
     }
   }
+  /* Do not carry a failed TCP/TLS receive state into the next heartbeat.
+     Re-arm the only RX descriptor and force a fresh bounded DNS exchange. */
+  aiueos_rtl8125_rx_rearm(&rtl8125_qualification_device);
+  rtl8125_direct_dns_a = 0;
   net_tx_window = NET_TCP_WINDOW;
   return 0;
 }
