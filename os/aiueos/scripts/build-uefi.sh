@@ -28,6 +28,7 @@ kernel_relay_protocol_object="$out/kernel-relay-protocol.o"
 kernel_micro_infer_object="$out/kernel-micro-infer.o"
 kernel_inference_status_object="$out/kernel-inference-status.o"
 kernel_device_result_object="$out/kernel-device-result.o"
+kernel_device_worker_protocol_object="$out/kernel-device-worker-protocol.o"
 kernel_model_handoff_object="$out/kernel-model-handoff.o"
 kernel_qwen35_runtime_object="$out/kernel-qwen35-runtime.o"
 kernel_qwen35_quant_object="$out/kernel-qwen35-quant.o"
@@ -142,7 +143,7 @@ if [ "${AIUEOS_MURAKUMO_DEVICE_RESULT:-0}" = 1 ] ||
   ecdsa_public_link="$kotoba_ecdsa_public_object"
 fi
 if [ "${AIUEOS_MURAKUMO_DEVICE_RESULT:-0}" = 1 ]; then
-  device_result_link="$kernel_device_result_object"
+  device_result_link="$kernel_device_result_object $kernel_device_worker_protocol_object"
 fi
 physical_qualification_cflags=
 physical_network_qualification_cflags=
@@ -637,7 +638,7 @@ zig cc -target x86_64-freestanding-none -std=c11 -O2 \
   -ffreestanding -fno-stack-protector -mno-red-zone -I "$out" \
   $input_smoke_cflags $model_handoff_cflags $physical_qualification_cflags \
   $physical_network_qualification_cflags $physical_direct_https_qualification_cflags \
-  $murakumo_device_result_cflags \
+  $murakumo_device_result_cflags $persistent_boot_cflags \
   $physical_relay_qualification_cflags \
   $physical_job_qualification_cflags \
   $kernel_hang_test_cflags \
@@ -684,6 +685,10 @@ if [ "${AIUEOS_MURAKUMO_DEVICE_RESULT:-0}" = 1 ]; then
   zig cc -target x86_64-freestanding-none -std=c11 -O2 \
     -ffreestanding -fno-stack-protector -mno-red-zone \
     -c -o "$kernel_device_result_object" "$aiueos/kernel/device_result.c"
+  zig cc -target x86_64-freestanding-none -std=c11 -O2 \
+    -ffreestanding -fno-stack-protector -mno-red-zone \
+    -c -o "$kernel_device_worker_protocol_object" \
+    "$aiueos/kernel/device_worker_protocol.c"
 fi
 if [ -n "$model_handoff_link" ]; then
   zig cc -target x86_64-freestanding-none -std=c11 -O2 \

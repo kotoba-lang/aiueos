@@ -78,15 +78,28 @@ document = {
                       "-second-recovery")),
     },
     "qualification": ({
-        "profile": "qwen38-murakumo-device-result",
+        "profile": ("qwen38-murakumo-persistent-worker" if
+                    os.environ["AIUEOS_PERSISTENT_BOOT"] == "1" else
+                    "qwen38-murakumo-device-result"),
         "authority": "https://api.murakumo.cloud",
-        "path": "/infer/nodes/device-p256-result",
+        "path": (["/infer/nodes/device-p256-result",
+                  "/infer/nodes/device-p256-worker"] if
+                 os.environ["AIUEOS_PERSISTENT_BOOT"] == "1" else
+                 "/infer/nodes/device-p256-result"),
         "auth": "device-p256",
         "device_key": "uefi-nvram-p256",
         "model": "Qwen3.8-27B-UD-IQ3_XXS.gguf",
         "model_sha256": "c0b7c3038681ed2e3040456c1dd45f9858b6c2290bed172c70388a94874f3eee",
         "admission": "community-pending",
-        "ready": False,
+        "ready": ("server-observed-device-heartbeat" if
+                  os.environ["AIUEOS_PERSISTENT_BOOT"] == "1" else False),
+        "worker": ({
+            "heartbeat": "signed-poll",
+            "poll": "bounded-qwen38-first-token",
+            "claim": "server-atomic-target-did",
+            "result": "signed-device-p256",
+            "retry": "persistent-with-bounded-backoff",
+        } if os.environ["AIUEOS_PERSISTENT_BOOT"] == "1" else None),
         "cacao": False,
         "passkey_bound": False,
         "post_quantum": False,

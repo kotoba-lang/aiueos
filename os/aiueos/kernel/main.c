@@ -214,6 +214,11 @@ extern uint32_t aiueos_rtl8125_qualification_rx_length(void);
 extern int aiueos_rtl8125_direct_https_qualification(
     const struct aiueos_boot_info *, uint32_t, uint32_t, uint64_t);
 extern const char *aiueos_rtl8125_direct_device_did(void);
+extern int aiueos_rtl8125_device_worker_poll(
+    const struct aiueos_boot_info *, uint32_t, uint64_t *, uint32_t *, int *);
+extern int aiueos_rtl8125_device_worker_result(
+    const struct aiueos_boot_info *, uint32_t, uint64_t,
+    uint32_t, uint32_t, uint64_t);
 #else
 extern int aiueos_rtl8125_direct_https_qualification(void);
 #endif
@@ -536,6 +541,19 @@ static void aiueos_qwen35_progress(uint32_t completed_layers,
   serial_string("/64 output=");
   serial_decimal((uint32_t)(output_head != 0));
   serial_string("\r\n");
+}
+
+static uint64_t aiueos_read_tsc(void) {
+  uint32_t low, high;
+  __asm__ volatile("lfence; rdtsc" : "=a"(low), "=d"(high) :: "memory");
+  return ((uint64_t)high << 32) | low;
+}
+
+static void aiueos_wait_seconds(uint64_t tsc_hz, uint32_t seconds) {
+  if (!tsc_hz || !seconds) return;
+  uint64_t start = aiueos_read_tsc();
+  uint64_t cycles = tsc_hz * seconds;
+  while (aiueos_read_tsc() - start < cycles) __asm__ volatile("pause");
 }
 #endif
 static void serial_ipv4(uint32_t value) {
@@ -1194,14 +1212,133 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
     serial_string(" decode-tokens-per-second=N/A tsc-hz=");
     serial_decimal64(boot->tsc_hz);
     serial_string("\r\n");
+#ifdef AIUEOS_PERSISTENT_BOOT
+    if(!aiueos_qualification_finalize(1,8161))
+      serial_string("AIUEOS_PHYSICAL_QUALIFICATION_LOG_FAIL stage=runtime-variable\r\n");
+    aiueos_framebuffer_qualification_screen(
+      "AIUEOS K16", "MURAKUMO WORKER", "POLLING JOBS", 1);
+    debug_string("AIUEOS_MURAKUMO_PERSISTENT_BOOT_OK model=Qwen3.8-27B path=/infer/nodes/device-p256-worker\n");
+    serial_string("AIUEOS_MURAKUMO_PERSISTENT_BOOT_OK did=");
+    serial_string(aiueos_rtl8125_direct_device_did());
+    serial_string(" model=Qwen3.8-27B storage=volatile-ram internal-disk-writes=none\r\n");
+    uint32_t worker_sequence = 1;
+    uint32_t heartbeat_failures = 0;
+    for (;;) {
+      uint64_t job_id = 0;
+      uint32_t bos_token = 0;
+      int ready = 0;
+      aiueos_qwen35_status.phase = AIUEOS_INFERENCE_ADMISSION;
+      aiueos_qwen35_status.detail = "POLLING MURAKUMO";
+      aiueos_qwen35_status.generated_tokens = 0;
+      aiueos_qwen35_status.compute_cycles = 0;
+      aiueos_qwen35_status.time_to_first_token_ns = AIUEOS_INFERENCE_UNMEASURED;
+      (void)aiueos_framebuffer_inference_screen(&aiueos_qwen35_status);
+      if (!aiueos_rtl8125_device_worker_poll(
+            boot, worker_sequence++, &job_id, &bos_token, &ready)) {
+        heartbeat_failures++;
+        aiueos_qwen35_status.phase = AIUEOS_INFERENCE_ERROR;
+        aiueos_qwen35_status.detail = "NODE RECONNECTING";
+        (void)aiueos_framebuffer_inference_screen(&aiueos_qwen35_status);
+        debug_string("AIUEOS_MURAKUMO_HEARTBEAT_RETRY ready=false action=reconnect\n");
+        serial_string("AIUEOS_MURAKUMO_HEARTBEAT_RETRY failure=");
+        serial_decimal(heartbeat_failures);
+        serial_string(" error=");
+        serial_decimal(aiueos_rtl8125_direct_https_error());
+        serial_string(" action=reconnect\r\n");
+        aiueos_wait_seconds(boot->tsc_hz, 5);
+        continue;
+      }
+      if (heartbeat_failures) {
+        serial_string("AIUEOS_MURAKUMO_HEARTBEAT_RECOVERED failures=");
+        serial_decimal(heartbeat_failures);
+        serial_string("\r\n");
+        heartbeat_failures = 0;
+      }
+      serial_string("AIUEOS_MURAKUMO_HEARTBEAT_OK ready=");
+      serial_string(ready ? "true" : "false");
+      serial_string(" sequence=");
+      serial_decimal(worker_sequence - 1);
+      serial_string("\r\n");
+      if (!job_id) {
+        aiueos_qwen35_status.phase = AIUEOS_INFERENCE_COMPLETE;
+        aiueos_qwen35_status.detail = "READY - NO JOB";
+        (void)aiueos_framebuffer_inference_screen(&aiueos_qwen35_status);
+        debug_string("AIUEOS_MURAKUMO_JOB_POLL_OK job=none ready=true\n");
+        serial_string("AIUEOS_MURAKUMO_JOB_POLL_OK job=none ready=true\r\n");
+        aiueos_wait_seconds(boot->tsc_hz, 30);
+        continue;
+      }
+      serial_string("AIUEOS_MURAKUMO_JOB_CLAIMED job-id=");
+      serial_decimal64(job_id);
+      serial_string(" kind=qwen38-first-token bos=");
+      serial_decimal(bos_token);
+      serial_string(" ready=false\r\n");
+      if (bos_token != AIUEOS_QWEN35_BOS_TOKEN) {
+        serial_string("AIUEOS_MURAKUMO_JOB_REFUSED reason=unsupported-bos\r\n");
+        aiueos_wait_seconds(boot->tsc_hz, 5);
+        continue;
+      }
+      struct aiueos_qwen35_first_token_result job_result;
+      aiueos_qwen35_status.phase = AIUEOS_INFERENCE_PREFILL;
+      aiueos_qwen35_status.detail = aiueos_qwen35_progress_detail;
+      (void)aiueos_framebuffer_inference_screen(&aiueos_qwen35_status);
+      if (!aiueos_qwen35_first_token(
+            aiueos_qwen35_model, bos_token,
+            qwen_workspace, (uint64_t)qwen_workspace_pages * 4096U,
+            aiueos_qwen35_progress, &job_result) ||
+          job_result.token != AIUEOS_QWEN35_REFERENCE_FIRST_TOKEN) {
+        aiueos_qwen35_status.phase = AIUEOS_INFERENCE_ERROR;
+        aiueos_qwen35_status.detail = "JOB INFERENCE RETRY";
+        (void)aiueos_framebuffer_inference_screen(&aiueos_qwen35_status);
+        serial_string("AIUEOS_MURAKUMO_JOB_INFERENCE_RETRY job-id=");
+        serial_decimal64(job_id);
+        serial_string(" reason=execution-or-token-mismatch\r\n");
+        aiueos_wait_seconds(boot->tsc_hz, 5);
+        continue;
+      }
+      aiueos_qwen35_status.phase = AIUEOS_INFERENCE_COMPLETE;
+      aiueos_qwen35_status.detail = "POSTING JOB RESULT";
+      aiueos_qwen35_status.generated_tokens = 1;
+      aiueos_qwen35_status.compute_cycles = job_result.compute_cycles;
+      (void)aiueos_framebuffer_inference_screen(&aiueos_qwen35_status);
+      while (!aiueos_rtl8125_device_worker_result(
+               boot, worker_sequence++, job_id, job_result.token,
+               job_result.second_token, job_result.compute_cycles)) {
+        aiueos_qwen35_status.phase = AIUEOS_INFERENCE_ERROR;
+        aiueos_qwen35_status.detail = "RESULT POST RETRY";
+        (void)aiueos_framebuffer_inference_screen(&aiueos_qwen35_status);
+        serial_string("AIUEOS_MURAKUMO_JOB_RESULT_RETRY job-id=");
+        serial_decimal64(job_id);
+        serial_string(" error=");
+        serial_decimal(aiueos_rtl8125_direct_https_error());
+        serial_string("\r\n");
+        aiueos_wait_seconds(boot->tsc_hz, 5);
+      }
+      aiueos_qwen35_status.phase = AIUEOS_INFERENCE_COMPLETE;
+      aiueos_qwen35_status.detail = "RESULT RECORDED - READY";
+      (void)aiueos_framebuffer_inference_screen(&aiueos_qwen35_status);
+      debug_string("AIUEOS_MURAKUMO_JOB_RESULT_OK model=Qwen3.8-27B result=recorded ready=true\n");
+      serial_string("AIUEOS_MURAKUMO_JOB_RESULT_OK job-id=");
+      serial_decimal64(job_id);
+      serial_string(" token=");
+      serial_decimal(job_result.token);
+      serial_string(" second-token=");
+      serial_decimal(job_result.second_token);
+      serial_string(" cycles=");
+      serial_decimal64(job_result.compute_cycles);
+      serial_string(" result=recorded ready=true\r\n");
+    }
+#else
     if(!aiueos_qualification_finalize(1,8160))
+      serial_string("AIUEOS_PHYSICAL_QUALIFICATION_LOG_FAIL stage=runtime-variable\r\n");
+#endif
 #else
     aiueos_framebuffer_qualification_screen("AIUEOS K16", "DIRECT HTTPS OK", "SSD READ ONLY", 1);
     debug_string("AIUEOS_PHYSICAL_DIRECT_HTTPS_OK host=api.murakumo.cloud path=/infer/queue http=200 mac-app-relay=none trust=transport-only secrets=none\n");
     serial_string("AIUEOS_PHYSICAL_DIRECT_HTTPS_OK host=api.murakumo.cloud path=/infer/queue http=200 mac-app-relay=none trust=transport-only secrets=none\r\n");
     if(!aiueos_qualification_finalize(1,8150))
-#endif
       serial_string("AIUEOS_PHYSICAL_QUALIFICATION_LOG_FAIL stage=runtime-variable\r\n");
+#endif
     for(;;)__asm__ volatile("cli; hlt");
 #else
 #ifdef AIUEOS_PHYSICAL_RELAY_QUALIFICATION

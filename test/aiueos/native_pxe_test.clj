@@ -67,6 +67,14 @@
 (def qwen38-node-oneshot-build
   (slurp (io/file
           "os/aiueos/scripts/build-qwen38-murakumo-node-oneshot-pxe.sh")))
+(def qwen38-node-persistent-build
+  (slurp (io/file
+          "os/aiueos/scripts/build-qwen38-murakumo-node-pxe.sh")))
+(def device-worker-protocol
+  (slurp (io/file "os/aiueos/kernel/device_worker_protocol.c")))
+(def device-worker-protocol-smoke
+  (slurp (io/file
+          "os/aiueos/scripts/smoke-device-worker-protocol.sh")))
 (def model-slots-contract
   (slurp (io/file "os/aiueos/contracts/model-nvme-slots-v1.edn")))
 (def model-slots-core (slurp (io/file "os/aiueos/uefi/model_slots.c")))
@@ -162,6 +170,28 @@
                     "AIUEOS_QUALIFICATION_LOADER_WATCHDOG_SECONDS:-1800"]]
       (is (str/includes? qwen38-node-oneshot-build marker)))))
 
+(deftest qwen-node-persistent-worker-owns-heartbeat-poll-and-result
+  (doseq [marker ["AIUEOS_QWEN38_MODEL_HANDOFF=1"
+                  "AIUEOS_MURAKUMO_DEVICE_RESULT=1"
+                  "AIUEOS_PERSISTENT_BOOT=1"]]
+    (is (str/includes? qwen38-node-persistent-build marker)))
+  (doseq [marker ["AIUEOS_MURAKUMO_PERSISTENT_BOOT_OK"
+                  "AIUEOS_MURAKUMO_HEARTBEAT_OK"
+                  "AIUEOS_MURAKUMO_JOB_POLL_OK"
+                  "AIUEOS_MURAKUMO_JOB_CLAIMED"
+                  "AIUEOS_MURAKUMO_JOB_RESULT_OK"
+                  "aiueos_rtl8125_device_worker_poll"
+                  "aiueos_rtl8125_device_worker_result"]]
+    (is (or (str/includes? kernel marker) (str/includes? pci marker))))
+  (doseq [marker ["\\\"accepted\\\":true"
+                  "\\\"operation\\\":\\\"poll\\\""
+                  "\\\"job-id\\\":\\\""
+                  "\\\"bos\\\":"
+                  "\\\"job\\\":null"]]
+    (is (str/includes? device-worker-protocol marker)))
+  (is (str/includes? device-worker-protocol-smoke
+                     "device_worker_protocol_model.c")))
+
 (deftest direct-node-post-closes-and-retries-with-a-bounded-flight
   (testing "a server FIN terminates the current receive pump"
     (doseq [marker ["if (frame[47] & NET_TCP_FIN)"
@@ -170,8 +200,8 @@
       (is (str/includes? pci marker))))
   (testing "a signed node POST gets fresh TLS material on up to three attempts"
     (doseq [marker ["RTL_DIRECT_TLS_ATTEMPTS 3U"
-                    "RTL_DIRECT_LOCAL_PORT + attempt"
-                    "RTL_DIRECT_ISN + (attempt << 16)"
+                    "RTL_DIRECT_LOCAL_PORT + (lane % 12000U)"
+                    "RTL_DIRECT_ISN + (lane << 16) + lane"
                     "aiueos_cpu_random_bytes(rtl_direct_client_random"
                     "rtl8125_direct_https_attempts = attempt + 1"]]
       (is (str/includes? pci marker))))

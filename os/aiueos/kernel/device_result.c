@@ -24,6 +24,8 @@ static const char base58_alphabet[] =
 static const char hex_alphabet[] = "0123456789abcdef";
 static uint8_t sha_workspace[512];
 static uint8_t p256_workspace[2048];
+static uint8_t device_boot_id[8];
+static int device_boot_id_ready;
 
 struct bounded_buffer {
   uint8_t *bytes;
@@ -120,6 +122,13 @@ static int device_private_key(uint8_t key[32]) {
   return aiueos_device_p256_key_save(key);
 }
 
+static int device_boot_id_ensure(void) {
+  if (device_boot_id_ready) return 1;
+  if (!aiueos_cpu_random_bytes(device_boot_id, sizeof(device_boot_id))) return 0;
+  device_boot_id_ready = 1;
+  return 1;
+}
+
 static int base58_encode(const uint8_t *input, uint32_t input_bytes,
                          char *out, uint32_t capacity) {
   uint8_t digits[64] = {0};
@@ -182,13 +191,13 @@ uint32_t aiueos_device_result_http_request(
       !result->boot->tsc_hz) return 0;
 
   uint8_t private_key[32] = {0}, public_key[64] = {0}, nonce_k[32] = {0};
-  uint8_t boot_id[8] = {0}, nonce[16] = {0}, digest[32] = {0};
+  uint8_t nonce[16] = {0}, digest[32] = {0};
   uint8_t signature[64] = {0};
   uint32_t request_length = 0;
   if (!device_private_key(private_key) ||
       !kotoba_aiueos_ecdsa_p256_public(private_key, public_key, p256_workspace) ||
       !random_scalar(nonce_k) ||
-      !aiueos_cpu_random_bytes(boot_id, sizeof(boot_id)) ||
+      !device_boot_id_ensure() ||
       !aiueos_cpu_random_bytes(nonce, sizeof(nonce))) goto cleanup;
   if (!p256_did(public_key, did_out, did_capacity)) goto cleanup;
 
@@ -200,7 +209,7 @@ uint32_t aiueos_device_result_http_request(
   node[23] = 0;
   char public_hex[129], boot_hex[17], model_hex[65], nonce_hex[33];
   hex_encode(public_key, 64, public_hex);
-  hex_encode(boot_id, 8, boot_hex);
+  hex_encode(device_boot_id, 8, boot_hex);
   hex_encode(result->boot->model_sha256, 32, model_hex);
   hex_encode(nonce, 16, nonce_hex);
 
@@ -251,6 +260,116 @@ uint32_t aiueos_device_result_http_request(
   put_text(&request, "POST /infer/nodes/device-p256-result HTTP/1.1\r\n");
   put_text(&request, "Host: api.murakumo.cloud\r\n");
   put_text(&request, "User-Agent: aiueos-k16-node-v1\r\n");
+  put_text(&request, "Content-Type: application/json\r\n");
+  put_text(&request, "Accept: application/json\r\nContent-Length: ");
+  put_decimal(&request, body.length);
+  put_text(&request, "\r\nConnection: close\r\n\r\n");
+  for (uint32_t i = 0; i < body.length; i++) put_byte(&request, body.bytes[i]);
+  if (request.ok) request_length = request.length;
+
+cleanup:
+  secure_zero(private_key, sizeof(private_key));
+  secure_zero(nonce_k, sizeof(nonce_k));
+  secure_zero(digest, sizeof(digest));
+  secure_zero(p256_workspace, sizeof(p256_workspace));
+  return request_length;
+}
+
+uint32_t aiueos_device_worker_http_request(
+    const struct aiueos_device_worker_request *worker,
+    uint8_t *out, uint32_t capacity,
+    char *did_out, uint32_t did_capacity) {
+  if (!worker || !worker->boot || !worker->mac || !out || capacity < 512 ||
+      !did_out || did_capacity < 48 || !worker->sequence ||
+      worker->boot->version < AIUEOS_BOOT_INFO_VERSION_TSC_CALIBRATED ||
+      !worker->boot->tsc_hz ||
+      (worker->operation != AIUEOS_DEVICE_WORKER_POLL &&
+       worker->operation != AIUEOS_DEVICE_WORKER_RESULT) ||
+      (worker->operation == AIUEOS_DEVICE_WORKER_POLL &&
+       (worker->job_id || worker->token || worker->second_token ||
+        worker->inference_cycles)) ||
+      (worker->operation == AIUEOS_DEVICE_WORKER_RESULT && !worker->job_id))
+    return 0;
+
+  uint8_t private_key[32] = {0}, public_key[64] = {0}, nonce_k[32] = {0};
+  uint8_t nonce[16] = {0}, digest[32] = {0}, signature[64] = {0};
+  uint32_t request_length = 0;
+  if (!device_private_key(private_key) ||
+      !kotoba_aiueos_ecdsa_p256_public(private_key, public_key, p256_workspace) ||
+      !random_scalar(nonce_k) || !device_boot_id_ensure() ||
+      !aiueos_cpu_random_bytes(nonce, sizeof(nonce))) goto cleanup;
+  if (!p256_did(public_key, did_out, did_capacity)) goto cleanup;
+
+  char node[32] = "aiueos-k16-";
+  for (uint32_t i = 0; i < 6; i++) {
+    node[11 + i * 2] = hex_alphabet[worker->mac[i] >> 4];
+    node[12 + i * 2] = hex_alphabet[worker->mac[i] & 15U];
+  }
+  node[23] = 0;
+  char public_hex[129], boot_hex[17], model_hex[65], nonce_hex[33];
+  hex_encode(public_key, 64, public_hex);
+  hex_encode(device_boot_id, 8, boot_hex);
+  hex_encode(worker->boot->model_sha256, 32, model_hex);
+  hex_encode(nonce, 16, nonce_hex);
+  const char *operation = worker->operation == AIUEOS_DEVICE_WORKER_POLL ?
+    "poll" : "result";
+
+  uint8_t canonical_bytes[DEVICE_CANONICAL_MAX];
+  struct bounded_buffer canonical = {
+    canonical_bytes, 0, sizeof(canonical_bytes), 1
+  };
+  put_text(&canonical, "aiueos-k16-worker-v1");
+  canonical_field(&canonical, node);
+  canonical_field(&canonical, public_hex);
+  canonical_field(&canonical, boot_hex);
+  canonical_field(&canonical, model_hex);
+  canonical_number(&canonical, worker->sequence);
+  canonical_field(&canonical, operation);
+  put_byte(&canonical, '\n');
+  if (worker->operation == AIUEOS_DEVICE_WORKER_POLL)
+    put_text(&canonical, "-");
+  else
+    put_decimal(&canonical, worker->job_id);
+  canonical_number(&canonical, worker->token);
+  canonical_number(&canonical, worker->second_token);
+  canonical_number(&canonical, worker->inference_cycles);
+  canonical_number(&canonical, worker->boot->tsc_hz);
+  canonical_field(&canonical, nonce_hex);
+  if (!canonical.ok ||
+      !kotoba_aiueos_sha256(canonical.bytes, canonical.length, digest,
+                            sha_workspace, sizeof(sha_workspace)) ||
+      !kotoba_aiueos_ecdsa_p256_sign(private_key, digest, nonce_k,
+                                     signature, p256_workspace)) goto cleanup;
+  char signature_hex[129];
+  hex_encode(signature, 64, signature_hex);
+
+  uint8_t body_bytes[DEVICE_BODY_MAX];
+  struct bounded_buffer body = {body_bytes, 0, sizeof(body_bytes), 1};
+  put_text(&body, "{\"node\":\""); put_text(&body, node);
+  put_text(&body, "\",\"public-key\":\""); put_text(&body, public_hex);
+  put_text(&body, "\",\"boot\":\""); put_text(&body, boot_hex);
+  put_text(&body, "\",\"model-sha256\":\""); put_text(&body, model_hex);
+  put_text(&body, "\",\"sequence\":"); put_decimal(&body, worker->sequence);
+  put_text(&body, ",\"operation\":\""); put_text(&body, operation);
+  put_text(&body, "\",\"job-id\":\"");
+  if (worker->operation == AIUEOS_DEVICE_WORKER_POLL)
+    put_text(&body, "-");
+  else
+    put_decimal(&body, worker->job_id);
+  put_text(&body, "\",\"token\":"); put_decimal(&body, worker->token);
+  put_text(&body, ",\"second-token\":"); put_decimal(&body, worker->second_token);
+  put_text(&body, ",\"inference-cycles\":");
+  put_decimal(&body, worker->inference_cycles);
+  put_text(&body, ",\"tsc-hz\":"); put_decimal(&body, worker->boot->tsc_hz);
+  put_text(&body, ",\"nonce\":\""); put_text(&body, nonce_hex);
+  put_text(&body, "\",\"signature\":\""); put_text(&body, signature_hex);
+  put_text(&body, "\"}");
+  if (!body.ok) goto cleanup;
+
+  struct bounded_buffer request = {out, 0, capacity, 1};
+  put_text(&request, "POST /infer/nodes/device-p256-worker HTTP/1.1\r\n");
+  put_text(&request, "Host: api.murakumo.cloud\r\n");
+  put_text(&request, "User-Agent: aiueos-k16-worker-v1\r\n");
   put_text(&request, "Content-Type: application/json\r\n");
   put_text(&request, "Accept: application/json\r\nContent-Length: ");
   put_decimal(&request, body.length);
