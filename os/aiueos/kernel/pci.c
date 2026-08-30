@@ -3929,6 +3929,44 @@ static void rtl8125_direct_worker_wire_copy(
   if (bytes && rtl8125_direct_tx(bytes)) rtl_direct_worker_wire_sent = 1;
   aiueos_rtl8125_rx_rearm(&rtl8125_qualification_device);
 }
+
+/* Report only bounded transport metadata from the physical worker response.
+   The first bytes distinguish a decrypted HTTP response from an empty or
+   shifted buffer; response JSON, signatures and device-private material are
+   deliberately excluded.  The compact wire fields are status, sequence,
+   error, TLS stage, application length and a 12-byte prefix. */
+static void rtl8125_direct_worker_rx_report(
+    uint32_t sequence, uint8_t status) {
+  static const uint8_t prefix[] = "AIUEOS_WORKER_RX ";
+  static const char digits[] = "0123456789abcdef";
+  const uint8_t *app = aiueos_tls13_app();
+  uint32_t app_length = aiueos_tls13_app_len();
+  uint32_t fields[4] = {sequence, rtl8125_direct_https_error,
+                        rtl8125_direct_tls_stage, app_length};
+  uint32_t length = sizeof(prefix) - 1U;
+  for (uint32_t i = 0; i < length; i++) rtl_direct_worker_wire[i] = prefix[i];
+  rtl_direct_worker_wire[length++] = status;
+  for (uint32_t field = 0; field < 4U; field++) {
+    rtl_direct_worker_wire[length++] = ' ';
+    for (int shift = 28; shift >= 0; shift -= 4)
+      rtl_direct_worker_wire[length++] =
+        (uint8_t)digits[(fields[field] >> shift) & 0x0fU];
+  }
+  rtl_direct_worker_wire[length++] = ' ';
+  if (!app || !app_length) rtl_direct_worker_wire[length++] = '-';
+  else {
+    uint32_t app_prefix_length = app_length < 12U ? app_length : 12U;
+    for (uint32_t i = 0; i < app_prefix_length; i++) {
+      rtl_direct_worker_wire[length++] = (uint8_t)digits[(app[i] >> 4) & 0x0fU];
+      rtl_direct_worker_wire[length++] = (uint8_t)digits[app[i] & 0x0fU];
+    }
+  }
+  uint32_t bytes = rtl8125_build_udp_payload(
+    rtl8125_qualification_device.tx_frame, rtl_direct_worker_wire,
+    length, (uint16_t)(0x8000U | (sequence & 0x7fffU)));
+  if (bytes) (void)rtl8125_direct_tx(bytes);
+  aiueos_rtl8125_rx_rearm(&rtl8125_qualification_device);
+}
 #endif
 
 static int rtl8125_direct_rx(uint32_t *received) {
@@ -4302,13 +4340,18 @@ int aiueos_rtl8125_device_worker_poll(
     rtl_direct_device_did, sizeof(rtl_direct_device_did));
   rtl8125_direct_worker_wire_copy(
     rtl_direct_http_request, request_length, sequence);
-  if (!rtl8125_direct_device_request(request_length)) return 0;
+  if (!rtl8125_direct_device_request(request_length)) {
+    rtl8125_direct_worker_rx_report(sequence, 'R');
+    return 0;
+  }
   struct aiueos_device_worker_poll poll;
   if (!aiueos_device_worker_poll_response(
         aiueos_tls13_app(), aiueos_tls13_app_len(), &poll)) {
     rtl8125_direct_https_error = 60;
+    rtl8125_direct_worker_rx_report(sequence, 'P');
     return 0;
   }
+  rtl8125_direct_worker_rx_report(sequence, 'O');
   *job_id = poll.job_id;
   *bos_token = poll.bos_token;
   *ready = poll.ready;
@@ -4333,7 +4376,9 @@ int aiueos_rtl8125_device_worker_result(
   uint32_t request_length = aiueos_device_worker_http_request(
     &request, rtl_direct_http_request, sizeof(rtl_direct_http_request),
     rtl_direct_device_did, sizeof(rtl_direct_device_did));
-  return rtl8125_direct_device_request(request_length);
+  int ok = rtl8125_direct_device_request(request_length);
+  rtl8125_direct_worker_rx_report(sequence, ok ? 'o' : 'F');
+  return ok;
 }
 #endif
 #endif

@@ -256,6 +256,22 @@
                     "rtl8125_direct_tls_pump_error = 7"]]
       (is (str/includes? pci marker)))))
 
+(deftest physical-worker-reports-bounded-response-diagnostics
+  (testing "a reboot identifies transport, parse and result response outcomes"
+    (doseq [marker ["AIUEOS_WORKER_RX "
+                    "rtl8125_direct_worker_rx_report(sequence, 'R')"
+                    "rtl8125_direct_worker_rx_report(sequence, 'P')"
+                    "rtl8125_direct_worker_rx_report(sequence, 'O')"
+                    "ok ? 'o' : 'F'"]]
+      (is (str/includes? pci marker))))
+  (testing "the UDP report is bounded and excludes the response body"
+    (doseq [marker ["uint32_t fields[4]"
+                    "app_length < 12U ? app_length : 12U"
+                    "0x8000U | (sequence & 0x7fffU)"]]
+      (is (str/includes? pci marker)))
+    (is (str/includes? pci
+                       "response JSON, signatures and device-private material are"))))
+
 (deftest persistent-node-reconnects-instead-of-halting-on-one-missed-renewal
   (doseq [marker ["NODE RECONNECTING"
                   "AIUEOS_PHYSICAL_LIVENESS_RETRY"
