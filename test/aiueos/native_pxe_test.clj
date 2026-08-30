@@ -238,6 +238,13 @@
     (is (str/includes? pci
                        "aiueos_rtl8125_rx_rearm(&rtl8125_qualification_device);"))
     (is (str/includes? pci "rtl8125_direct_dns_a = 0;")))
+  (testing "each bounded DNS receive gets a fresh reply after a stale TLS frame"
+    (doseq [marker ["Pair every"
+                    "bounded receive attempt with a fresh DNS query"
+                    "for (unsigned attempt = 0; attempt < 8; attempt++)"
+                    "if (!rtl8125_direct_tx(bytes)) return 0;"
+                    "if (!rtl8125_direct_rx(&received)) continue;"]]
+      (is (str/includes? pci marker))))
   (testing "a physical pump refusal names the exact receive gate"
     (doseq [marker ["30U + rtl8125_direct_tls_pump_error"
                     "rtl8125_direct_tls_pump_error = 4"

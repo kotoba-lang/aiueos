@@ -3985,11 +3985,17 @@ static int rtl8125_direct_dns(void) {
     tx, RTL_DIRECT_IP, RTL_DIRECT_GATEWAY, RTL_DIRECT_DNS_PORT,
     rtl_direct_dns_question, sizeof(rtl_direct_dns_question));
   if (!bytes) return 0;
-  aiueos_rtl8125_rx_rearm(&rtl8125_qualification_device);
-  if (!rtl8125_direct_tx(bytes)) return 0;
+  /* A failed TLS close may race one late TCP segment into the K16's sole RX
+     descriptor.  If that stale segment occupies the slot, the DNS reply sent
+     immediately behind it is dropped by hardware.  Re-arming without sending
+     another query then waits for a reply that can never arrive.  Pair every
+     bounded receive attempt with a fresh DNS query so the first stale frame is
+     discarded and the next re-armed slot gets a new answer. */
   for (unsigned attempt = 0; attempt < 8; attempt++) {
     uint32_t received = 0, answer = 0;
-    if (!rtl8125_direct_rx(&received)) return 0;
+    aiueos_rtl8125_rx_rearm(&rtl8125_qualification_device);
+    if (!rtl8125_direct_tx(bytes)) return 0;
+    if (!rtl8125_direct_rx(&received)) continue;
     if (net_dns_answer_ok_named(
           rx, received, RTL_DIRECT_GATEWAY, RTL_DIRECT_IP,
           RTL_DIRECT_DNS_PORT,
@@ -3997,7 +4003,6 @@ static int rtl8125_direct_dns(void) {
       rtl8125_direct_dns_a = answer;
       return 1;
     }
-    aiueos_rtl8125_rx_rearm(&rtl8125_qualification_device);
   }
   return 0;
 }
