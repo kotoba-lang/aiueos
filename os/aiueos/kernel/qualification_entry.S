@@ -2,6 +2,7 @@
 .extern qualification_firmware_cr3
 .extern aiueos_qualification_progress_firmware
 .extern aiueos_qualification_finalize_firmware
+.extern aiueos_qualification_reboot_firmware
 .extern aiueos_device_p256_key_load_firmware
 .extern aiueos_device_p256_key_save_firmware
 
@@ -52,6 +53,25 @@ aiueos_qualification_finalize:
   xor %eax, %eax
   ret
 .size aiueos_qualification_finalize, .-aiueos_qualification_finalize
+
+.global aiueos_qualification_reboot
+.type aiueos_qualification_reboot,@function
+aiueos_qualification_reboot:
+  mov qualification_firmware_cr3(%rip), %rax
+  test %rax, %rax
+  jz .Lreboot_unavailable
+  mov %cr3, %r11
+  cli
+  mov %rax, %cr3
+  push %r11
+  call aiueos_qualification_reboot_firmware
+  pop %r11
+  mov %r11, %cr3
+  ret
+.Lreboot_unavailable:
+  xor %eax, %eax
+  ret
+.size aiueos_qualification_reboot, .-aiueos_qualification_reboot
 
 .global aiueos_device_p256_key_load
 .type aiueos_device_p256_key_load,@function

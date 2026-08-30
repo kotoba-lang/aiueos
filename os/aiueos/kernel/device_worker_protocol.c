@@ -47,6 +47,14 @@ int aiueos_device_worker_poll_response(
       !find_text(http, length, "\"operation\":\"poll\"", &at)) return 0;
   *poll = (struct aiueos_device_worker_poll){0};
   if (find_text(http, length, "\"ready\":true", &at)) poll->ready = 1;
+  if (find_text(http, length,
+                "\"control\":{\"action\":\"reboot-pxe\",\"command-id\":\"",
+                &at)) {
+    if (!decimal64(http, length, &at, &poll->control_id) ||
+        at >= length || http[at] != '"' || !poll->control_id) return 0;
+    poll->reboot_pxe = 1;
+    return 1;
+  }
   if (!find_text(http, length, "\"job-id\":\"", &at)) {
     return find_text(http, length, "\"job\":null", &at);
   }

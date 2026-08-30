@@ -200,7 +200,10 @@ static int object_store_ready;
 #define KOTOBA_APP_CAPACITY 4U
 struct kotoba_app_metadata { uint8_t id[16]; uint32_t length; uint8_t ready; } __attribute__((packed));
 static struct kotoba_app_metadata kotoba_apps[KOTOBA_APP_CAPACITY];
-static uint8_t kotoba_app_objects[KOTOBA_APP_CAPACITY][12288];
+/* Catalog payloads are populated only by PCI storage discovery, after owned
+   paging is active.  They are kernel data, never admitted user mappings. */
+static uint8_t kotoba_app_objects[KOTOBA_APP_CAPACITY][12288]
+  __attribute__((section(".high_bss")));
 static uint32_t kotoba_app_count;
 static int journal_ready;
 static int journal_recovered;
@@ -3834,7 +3837,11 @@ static const uint8_t rtl_direct_dns_question[24] = {
   0,1,0,1
 };
 #ifdef AIUEOS_MURAKUMO_DEVICE_RESULT
-static uint8_t rtl_direct_http_request[1024];
+/* Persistent Device-P256 requests are built after owned paging is active.
+   Keep their reusable buffers in the same writable/NX 4..6 MiB window as the
+   TLS application and decrypt buffers instead of consuming low W^X pages. */
+static uint8_t rtl_direct_http_request[1024]
+  __attribute__((section(".high_bss")));
 static uint8_t rtl_direct_client_random[32];
 static uint8_t rtl_direct_scalar[32];
 static char rtl_direct_device_did[72];
@@ -3870,7 +3877,8 @@ static uint32_t rtl8125_direct_tls_stage;
 static uint32_t rtl8125_direct_dns_a;
 static int rtl8125_direct_http_ready;
 static uint32_t rtl8125_direct_connection_sequence;
-static uint8_t rtl8125_direct_tls_flight[RTL_DIRECT_TLS_FLIGHT_MAX];
+static uint8_t rtl8125_direct_tls_flight[RTL_DIRECT_TLS_FLIGHT_MAX]
+  __attribute__((section(".high_bss")));
 
 unsigned aiueos_rtl8125_direct_https_error(void) {
   return rtl8125_direct_https_error;
@@ -4343,8 +4351,10 @@ static int rtl8125_direct_device_request(uint32_t request_length) {
 
 int aiueos_rtl8125_device_worker_poll(
     const struct aiueos_boot_info *boot, uint32_t sequence,
-    uint64_t *job_id, uint32_t *bos_token, int *ready) {
-  if (!boot || !job_id || !bos_token || !ready) return 0;
+    uint64_t *job_id, uint32_t *bos_token, int *ready,
+    uint64_t *control_id, int *reboot_pxe) {
+  if (!boot || !job_id || !bos_token || !ready ||
+      !control_id || !reboot_pxe) return 0;
   struct aiueos_device_worker_request request = {
     .boot = boot,
     .mac = rtl8125_qualification_device.mac,
@@ -4369,9 +4379,30 @@ int aiueos_rtl8125_device_worker_poll(
   }
   rtl8125_direct_worker_rx_report(sequence, 'O');
   *job_id = poll.job_id;
+  *control_id = poll.control_id;
   *bos_token = poll.bos_token;
   *ready = poll.ready;
+  *reboot_pxe = poll.reboot_pxe;
   return 1;
+}
+
+int aiueos_rtl8125_device_worker_control_ack(
+    const struct aiueos_boot_info *boot, uint32_t sequence,
+    uint64_t command_id) {
+  if (!boot || !command_id) return 0;
+  struct aiueos_device_worker_request request = {
+    .boot = boot,
+    .mac = rtl8125_qualification_device.mac,
+    .sequence = sequence,
+    .operation = AIUEOS_DEVICE_WORKER_CONTROL_ACK,
+    .job_id = command_id
+  };
+  uint32_t request_length = aiueos_device_worker_http_request(
+    &request, rtl_direct_http_request, sizeof(rtl_direct_http_request),
+    rtl_direct_device_did, sizeof(rtl_direct_device_did));
+  int ok = rtl8125_direct_device_request(request_length);
+  rtl8125_direct_worker_rx_report(sequence, ok ? 'A' : 'a');
+  return ok;
 }
 
 int aiueos_rtl8125_device_worker_result(

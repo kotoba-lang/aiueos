@@ -5,9 +5,11 @@
 
 struct aiueos_device_worker_poll {
   uint64_t job_id;
+  uint64_t control_id;
   uint32_t bos_token;
   int ready;
   int has_job;
+  int reboot_pxe;
 };
 
 int aiueos_device_worker_poll_response(

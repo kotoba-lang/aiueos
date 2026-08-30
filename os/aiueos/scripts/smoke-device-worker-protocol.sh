@@ -12,4 +12,4 @@ ${CC:-zig cc} -std=c11 -O2 \
 "$work/device-worker-protocol"
 
 printf '%s\n' \
-  "AIUEOS_DEVICE_WORKER_PROTOCOL_OK heartbeat=ready poll=bounded job-id=u64 chunked=accepted"
+  "AIUEOS_DEVICE_WORKER_PROTOCOL_OK heartbeat=ready poll=bounded job-id=u64 control=reboot-pxe command-id=u64 chunked=accepted"

@@ -140,3 +140,15 @@ int aiueos_qualification_finalize_firmware(uint16_t state, uint32_t code) {
   return 0;
 #endif
 }
+
+/* Execute a cold firmware reset only after the worker has received an HTTP
+   2xx response to its signed control acknowledgement.  The assembly entry
+   restores the firmware page-table root before calling Runtime Services.
+   Boot order remains firmware-owned; on the K16 it is already PXE-first. */
+int aiueos_qualification_reboot_firmware(void) {
+  struct efi_runtime_services *runtime = qualification_runtime;
+  if (!runtime || !qualification_firmware_cr3 || !runtime->reset_system)
+    return 0;
+  runtime->reset_system(0, EFI_SUCCESS, 0, 0);
+  return 0;
+}
