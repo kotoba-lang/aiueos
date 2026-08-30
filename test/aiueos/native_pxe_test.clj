@@ -98,6 +98,8 @@
   (slurp (io/file "os/aiueos/scripts/smoke-qemu-physical-persistent.sh")))
 (def qualification-runtime
   (slurp (io/file "os/aiueos/kernel/qualification.c")))
+(def qualification-entry
+  (slurp (io/file "os/aiueos/kernel/qualification_entry.S")))
 
 (deftest single-efi-carries-admitted-native-payload
   (testing "the PXE artifact embeds exactly the kernel and initramfs built now"
@@ -182,17 +184,53 @@
                   "AIUEOS_MURAKUMO_JOB_POLL_OK"
                   "AIUEOS_MURAKUMO_JOB_CLAIMED"
                   "AIUEOS_MURAKUMO_JOB_RESULT_OK"
+                  "AIUEOS_MURAKUMO_CONTROL_RECEIVED"
+                  "AIUEOS_MURAKUMO_CONTROL_ACK_OK"
                   "aiueos_rtl8125_device_worker_poll"
+                  "aiueos_rtl8125_device_worker_control_ack"
                   "aiueos_rtl8125_device_worker_result"]]
     (is (or (str/includes? kernel marker) (str/includes? pci marker))))
   (doseq [marker ["\\\"accepted\\\":true"
                   "\\\"operation\\\":\\\"poll\\\""
+                  "\\\"control\\\":{\\\"action\\\":\\\"reboot-pxe\\\""
+                  "\\\"command-id\\\":\\\""
                   "\\\"job-id\\\":\\\""
                   "\\\"bos\\\":"
                   "\\\"job\\\":null"]]
     (is (str/includes? device-worker-protocol marker)))
   (is (str/includes? device-worker-protocol-smoke
                      "device_worker_protocol_model.c")))
+
+(deftest network-reboot-acks-before-uefi-runtime-reset
+  (testing "the signed worker protocol has a result-free control ACK"
+    (doseq [marker ["AIUEOS_DEVICE_WORKER_CONTROL_ACK"
+                    "\"control-ack\""
+                    "worker->token || worker->second_token || worker->inference_cycles"]]
+      (is (str/includes? device-result marker))))
+  (is (str/includes? release-build
+                     "\"ack\": \"signed-device-p256-before-reset\""))
+  (testing "the node resets only after the acknowledgement returns HTTP 2xx"
+    (let [ack (.indexOf kernel "AIUEOS_MURAKUMO_CONTROL_ACK_OK")
+          reset (.indexOf kernel "(void)aiueos_qualification_reboot();")]
+      (is (<= 0 ack))
+      (is (< ack reset)))
+    (is (str/includes? pci "rtl8125_direct_device_request(request_length)")))
+  (testing "Runtime Services are entered under the retained firmware CR3"
+    (doseq [marker ["aiueos_qualification_reboot_firmware"
+                    "runtime->reset_system(0, EFI_SUCCESS, 0, 0)"]]
+      (is (str/includes? qualification-runtime marker)))
+    (doseq [marker [".global aiueos_qualification_reboot"
+                    "call aiueos_qualification_reboot_firmware"
+                    "mov %rax, %cr3"]]
+      (is (str/includes? qualification-entry marker))))
+  (testing "worker-only scratch does not relax the low W^X aperture"
+    (is (str/includes? device-result "AIUEOS_DEVICE_HIGH_BSS"))
+    (is (str/includes? pci
+                       "rtl_direct_http_request[1024]\n  __attribute__((section(\".high_bss\")))"))
+    (is (str/includes? pci
+                       "kotoba_app_objects[KOTOBA_APP_CAPACITY][12288]\n  __attribute__((section(\".high_bss\")))"))
+    (is (str/includes? pci
+                       "rtl8125_direct_tls_flight[RTL_DIRECT_TLS_FLIGHT_MAX]\n  __attribute__((section(\".high_bss\")))"))))
 
 (deftest device-worker-refreshes-boot-id-across-warm-pxe-reboots
   (testing "the once-per-boot qualification request replaces retained BSS state"
