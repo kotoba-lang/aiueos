@@ -17,15 +17,24 @@ the same handshake but does not yet admit a trusted chain or hostname/SAN.
 Add one read-only qualification profile that reuses the admitted RTL8125
 handoff and static K16 qualification link:
 
-- K16 is `10.77.0.10`; `10.77.0.1` is DNS plus IPv4 routing/NAT only;
+- K16 is `10.77.0.10`; a passwordless Mac user service on `10.77.0.1`
+  answers the bounded DNS query on UDP `1053` and forwards opaque TLS bytes
+  from TCP `8443` to `api.murakumo.cloud:443`;
 - the K16 builds and admits DNS, TCP, TLS 1.3 and HTTP frames itself;
 - SNI is `api.murakumo.cloud` and the only request is public
   `GET /infer/queue`;
-- the EFI contains no account token, Wi-Fi passphrase, device CACAO or Mac
-  application-relay protocol;
+- the EFI and Mac forwarder contain no account token, Wi-Fi passphrase or
+  device CACAO, and the Mac does not terminate the K16 TLS session;
 - all DMA waits and receive attempts are bounded, and the NVRAM result keeps a
   distinct error stage;
 - the image remains read-only for the USB and internal SSD.
+
+Ports `1053` and `8443` are deliberate: binding `53` or `443`, installing a
+packet-filter redirect, or enabling host NAT requires administrator authority
+on macOS and would reintroduce an unlock prompt after rule loss or reboot. The
+high-port path starts as the logged-in user and keeps TLS end-to-end between
+AIUEOS and Murakumo. It is therefore a user-space L4 forwarding dependency,
+not evidence of a standalone routed Internet connection.
 
 The build label is `trust=transport-only`. An HTTP 200 proves that the native
 K16 network/TLS implementation reached and decrypted a Murakumo response. It

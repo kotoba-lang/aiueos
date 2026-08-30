@@ -1,23 +1,30 @@
-;; Native K16 -> Murakumo transport qualification with no Mac application relay.
-;; The Mac-side 10.77.0.1 endpoint is only the link router/DNS/NAT during this
-;; qualification. This profile intentionally carries no credential while
-;; native X.509 chain and hostname admission remain absent.
+;; Native K16 -> Murakumo transport qualification with end-to-end TLS and no
+;; Mac application termination. The passwordless Mac-side endpoint answers a
+;; bounded DNS name and forwards opaque TLS bytes from unprivileged ports; it
+;; cannot inspect the signed request or hold a device/account credential.
 {:format :aiueos.physical-direct-https-qualification-pxe/v1
  :depends-on :aiueos.physical-network-qualification-pxe/v1
  :target {:model :gmktec-k16
           :nic {:vendor 0x10ec :device 0x8125}
           :client-ip "10.77.0.10"
-          :gateway {:ip "10.77.0.1" :roles [:dns-forwarder :ipv4-router-nat]}
+          :gateway {:ip "10.77.0.1"
+                    :roles [:bounded-dns-answerer :opaque-tls-forwarder]
+                    :ports {:dns-udp 1053 :tls-tcp 8443}}
           :authority "https://api.murakumo.cloud"
           :sni "api.murakumo.cloud"}
  :request {:method :get
            :path "/infer/queue"
            :accept "application/json"
            :secrets :none
-           :mac-application-relay? false}
- :transport {:dns {:qtype :a :bounded-answers [:compressed-name :full-name]}
-             :tcp {:port 443 :connections 1 :rx-descriptors 1}
+           :mac-application-termination? false
+           :mac-opaque-l4-forwarder? true}
+ :transport {:dns {:port 1053
+                   :qtype :a :bounded-answers [:compressed-name :full-name]}
+             :tcp {:device-port 8443
+                   :upstream-port 443
+                   :connections 1 :rx-descriptors 1}
              :tls :tls-1.3-aes-128-gcm-x25519
+             :tls-end-to-end? true
              :client-entropy :deterministic-qualification-only
              :trust :transport-only
              :certificate-verify :leaf-key-from-same-handshake
