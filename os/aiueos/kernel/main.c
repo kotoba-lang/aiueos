@@ -218,6 +218,8 @@ extern const char *aiueos_rtl8125_direct_device_did(void);
 extern int aiueos_rtl8125_direct_https_qualification(void);
 #endif
 extern unsigned aiueos_rtl8125_direct_https_error(void);
+extern unsigned aiueos_rtl8125_direct_https_attempts(void);
+extern uint32_t aiueos_rtl8125_direct_tls_stage(void);
 extern uint32_t aiueos_rtl8125_direct_dns_a(void);
 extern int aiueos_rtl8125_direct_http_ready(void);
 extern int aiueos_rtl8125_relay_qualification(void);
@@ -1145,11 +1147,19 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
       debug_string("AIUEOS_PHYSICAL_DIRECT_HTTPS_FAIL host=api.murakumo.cloud auth=device-p256 nvram-key=true cacao=false\n");
       serial_string("AIUEOS_PHYSICAL_DIRECT_HTTPS_FAIL host=api.murakumo.cloud error=");
       serial_decimal(error);
+      serial_string(" attempts=");
+      serial_decimal(aiueos_rtl8125_direct_https_attempts());
+      serial_string(" tls-stage=");
+      serial_decimal(aiueos_rtl8125_direct_tls_stage());
       serial_string(" auth=device-p256 nvram-key=true cacao=false passkey=false pq=false biscuit=false\r\n");
 #else
       debug_string("AIUEOS_PHYSICAL_DIRECT_HTTPS_FAIL host=api.murakumo.cloud trust=transport-only secrets=none\n");
       serial_string("AIUEOS_PHYSICAL_DIRECT_HTTPS_FAIL host=api.murakumo.cloud error=");
       serial_decimal(error);
+      serial_string(" attempts=");
+      serial_decimal(aiueos_rtl8125_direct_https_attempts());
+      serial_string(" tls-stage=");
+      serial_decimal(aiueos_rtl8125_direct_tls_stage());
       serial_string(" trust=transport-only secrets=none\r\n");
 #endif
       if(!aiueos_qualification_finalize(2,code))
@@ -1174,6 +1184,8 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
     debug_string("AIUEOS_MURAKUMO_NODE_OK host=api.murakumo.cloud path=/infer/nodes/device-p256-result auth=device-p256 cacao=false ready=false\n");
     serial_string("AIUEOS_MURAKUMO_NODE_OK did=");
     serial_string(aiueos_rtl8125_direct_device_did());
+    serial_string(" attempts=");
+    serial_decimal(aiueos_rtl8125_direct_https_attempts());
     serial_string(" auth=device-p256 cacao=false passkey=false pq=false biscuit=false ready=false\r\n");
     serial_string("AIUEOS_QWEN38_TIMING model-load-ns=");
     serial_decimal64(aiueos_qwen35_status.load_ns);
