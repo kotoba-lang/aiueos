@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted (2026-08-30)
+Superseded by ADR-0127 (2026-08-30)
 
 ## Context
 
@@ -40,3 +40,6 @@ The physical result proves model inference reached TLS and that retry control
 works.  It does not prove a POST, node registration, heartbeat, or inference
 throughput until the K16 returns code 8160 and Murakumo records the signed
 result.
+
+ADR-0127 corrects an overlooked Device-P256 `+1` error-code transform: the
+observed 8609 was receive-pump stage 8, not CertificateVerify stage 9.

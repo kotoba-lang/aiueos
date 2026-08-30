@@ -3816,7 +3816,8 @@ int aiueos_rtl8125_physical_qualification(void) {
 #define RTL_DIRECT_TLS_PORT 8443U
 #define RTL_DIRECT_LOCAL_PORT 49155
 #define RTL_DIRECT_ISN 0xa1e02000U
-#define RTL_DIRECT_RX_BUDGET 10000000U
+#define RTL_DIRECT_RX_BUDGET 500000000U
+#define RTL_DIRECT_RX_WINDOW 1024U
 #define RTL_DIRECT_TLS_ATTEMPTS 3U
 #define RTL_DIRECT_TLS_FLIGHT_MAX 1152U
 _Static_assert(RTL_DIRECT_TLS_FLIGHT_MAX >= 58U + 1024U + 22U,
@@ -3831,7 +3832,7 @@ static uint8_t rtl_direct_http_request[1024];
 static uint8_t rtl_direct_client_random[32];
 static uint8_t rtl_direct_scalar[32];
 static char rtl_direct_device_did[72];
-#define RTL_DIRECT_STAGE_ERROR(stage) ((stage) + 1U)
+#define RTL_DIRECT_STAGE_ERROR(stage) (stage)
 #else
 static const uint8_t rtl_direct_http_request[] =
   "GET /infer/queue HTTP/1.1\r\n"
@@ -3853,6 +3854,7 @@ static const uint8_t rtl_direct_scalar[32] = {
 
 static unsigned rtl8125_direct_https_error;
 static unsigned rtl8125_direct_https_attempts;
+static unsigned rtl8125_direct_tls_pump_error;
 static uint32_t rtl8125_direct_tls_stage;
 static uint32_t rtl8125_direct_dns_a;
 static int rtl8125_direct_http_ready;
@@ -3974,21 +3976,34 @@ static int rtl8125_direct_tls_pump(uint32_t dst, uint16_t local_port,
   for (unsigned attempt = 0; attempt < attempts; attempt++) {
     const uint8_t *payload = 0;
     uint32_t plen = 0, received = 0;
-    if (!rtl8125_direct_rx(&received)) return 0;
-    if (!net_tcp_cloud_seg_ok(frame, received, dst, *our_next, ack_lo) ||
-        !net_tcp_data(frame, &payload, &plen)) {
+    if (!rtl8125_direct_rx(&received)) {
+      if (!rtl8125_direct_tls_pump_error) rtl8125_direct_tls_pump_error = 1;
+      return 0;
+    }
+    if (!net_tcp_cloud_seg_ok(frame, received, dst, *our_next, ack_lo)) {
+      if (!rtl8125_direct_tls_pump_error) rtl8125_direct_tls_pump_error = 2;
+      aiueos_rtl8125_rx_rearm(&rtl8125_qualification_device);
+      continue;
+    }
+    if (!net_tcp_data(frame, &payload, &plen)) {
+      if (!rtl8125_direct_tls_pump_error) rtl8125_direct_tls_pump_error = 3;
       aiueos_rtl8125_rx_rearm(&rtl8125_qualification_device);
       continue;
     }
     if (plen) {
-      if (!aiueos_tls13_feed(payload, plen)) return 0;
+      if (!aiueos_tls13_feed(payload, plen)) {
+        rtl8125_direct_tls_pump_error = 4;
+        return 0;
+      }
       *peer_next += plen;
     }
     if (!want_http && aiueos_tls13_handshake_ready()) {
       aiueos_rtl8125_rx_rearm(&rtl8125_qualification_device);
       if (!rtl8125_direct_tcp_send(dst, local_port, *our_next, *peer_next,
-                                   NET_TCP_ACK, 0, 0))
+                                   NET_TCP_ACK, 0, 0)) {
+        rtl8125_direct_tls_pump_error = 5;
         return 0;
+      }
       return 1;
     }
     if (want_http && rtl8125_http_success(
@@ -3998,6 +4013,7 @@ static int rtl8125_direct_tls_pump(uint32_t dst, uint16_t local_port,
        segment, then entered another full receive budget.  On the real K16 that
        left TEST DIRECT HTTPS on screen until the firmware watchdog fired. */
     if (frame[47] & NET_TCP_FIN) {
+      rtl8125_direct_tls_pump_error = 6;
       *peer_next += 1;
       aiueos_rtl8125_rx_rearm(&rtl8125_qualification_device);
       (void)rtl8125_direct_tcp_send(dst, local_port, *our_next, *peer_next,
@@ -4006,12 +4022,19 @@ static int rtl8125_direct_tls_pump(uint32_t dst, uint16_t local_port,
     }
     aiueos_rtl8125_rx_rearm(&rtl8125_qualification_device);
     if (!rtl8125_direct_tcp_send(dst, local_port, *our_next, *peer_next,
-                                 NET_TCP_ACK, 0, 0))
+                                 NET_TCP_ACK, 0, 0)) {
+      rtl8125_direct_tls_pump_error = 5;
       return 0;
+    }
   }
-  return want_http ? rtl8125_http_success(
-    aiueos_tls13_app(), aiueos_tls13_app_len()) :
-    aiueos_tls13_handshake_ready();
+  {
+    int complete = want_http ? rtl8125_http_success(
+      aiueos_tls13_app(), aiueos_tls13_app_len()) :
+      aiueos_tls13_handshake_ready();
+    if (!complete && !rtl8125_direct_tls_pump_error)
+      rtl8125_direct_tls_pump_error = 7;
+    return complete;
+  }
 }
 
 static int rtl8125_direct_tls_attempt(uint32_t dst, uint32_t request_length,
@@ -4021,6 +4044,7 @@ static int rtl8125_direct_tls_attempt(uint32_t dst, uint32_t request_length,
   uint32_t isn = RTL_DIRECT_ISN + (attempt << 16);
   uint16_t local_port = (uint16_t)(RTL_DIRECT_LOCAL_PORT + attempt);
   uint8_t client_hello[256];
+  rtl8125_direct_tls_pump_error = 0;
 
 #ifdef AIUEOS_MURAKUMO_DEVICE_RESULT
   if (!aiueos_cpu_random_bytes(rtl_direct_client_random,
@@ -4063,7 +4087,8 @@ static int rtl8125_direct_tls_attempt(uint32_t dst, uint32_t request_length,
   }
   if (!rtl8125_direct_tls_pump(dst, local_port, &our_next, &peer_next,
                                our_next, 48, 0)) {
-    rtl8125_direct_https_error = RTL_DIRECT_STAGE_ERROR(8);
+    rtl8125_direct_https_error =
+      RTL_DIRECT_STAGE_ERROR(30U + rtl8125_direct_tls_pump_error);
     goto failed;
   }
   if (!aiueos_tls13_run_certverify()) {
@@ -4130,7 +4155,12 @@ int aiueos_rtl8125_direct_https_qualification(void) {
     net_peer_mac[i] = rtl8125_peer_mac[i];
   }
   net_peer_mac_known = 1;
-  net_tx_window = NET_CLOUD_WINDOW;
+  /* This RTL8125 qualification path owns one RX descriptor.  A larger
+     advertised window let Murakumo send a second TLS segment while the first
+     was still being decrypted, so the NIC had nowhere to DMA it.  One
+     descriptor-sized flow-control window makes each ACK re-open exactly one
+     bounded receive slot. */
+  net_tx_window = RTL_DIRECT_RX_WINDOW;
   if (!rtl8125_direct_dns()) {
     rtl8125_direct_https_error = 2;
     goto failed;
