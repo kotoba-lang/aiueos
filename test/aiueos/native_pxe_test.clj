@@ -179,7 +179,14 @@
     (is (str/includes? pci "RTL_DIRECT_TLS_FLIGHT_MAX 1152U"))
     (is (str/includes? pci
                        "RTL_DIRECT_TLS_FLIGHT_MAX >= 58U + 1024U + 22U"))
-    (is (not (str/includes? pci "client_hello[256], flight[512]")))))
+    (is (not (str/includes? pci "client_hello[256], flight[512]"))))
+  (testing "the retained NVRAM result separates every local TLS-flight gate"
+    (doseq [marker ["request_length > sizeof(rtl8125_direct_tls_flight) - 80U"
+                    "RTL_DIRECT_STAGE_ERROR(9)"
+                    "RTL_DIRECT_STAGE_ERROR(12)"
+                    "RTL_DIRECT_STAGE_ERROR(13)"
+                    "RTL_DIRECT_STAGE_ERROR(14)"]]
+      (is (str/includes? pci marker)))))
 
 (deftest persistent-node-reconnects-instead-of-halting-on-one-missed-renewal
   (doseq [marker ["NODE RECONNECTING"
