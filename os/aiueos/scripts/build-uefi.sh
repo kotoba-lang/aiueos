@@ -156,6 +156,7 @@ qualification_gc_link=
 gop_discovery_cflags=
 loader_failure_test_cflags=
 loader_hang_test_cflags=
+qualification_watchdog_cflags=
 kernel_hang_test_cflags=
 embedded_release_cflags=
 netboot_qualification_cflags=
@@ -236,8 +237,32 @@ fi
 if [ -n "${AIUEOS_QUALIFICATION_FORCE_LOADER_FAILURE_CODE:-}" ]; then
   loader_failure_test_cflags="-DAIUEOS_QUALIFICATION_FORCE_LOADER_FAILURE_CODE=${AIUEOS_QUALIFICATION_FORCE_LOADER_FAILURE_CODE}"
 fi
+qualification_watchdog_seconds=${AIUEOS_QUALIFICATION_LOADER_WATCHDOG_SECONDS:-}
 if [ -n "${AIUEOS_QUALIFICATION_FORCE_LOADER_HANG_CODE:-}" ]; then
-  loader_hang_test_cflags="-DAIUEOS_QUALIFICATION_FORCE_LOADER_HANG_CODE=${AIUEOS_QUALIFICATION_FORCE_LOADER_HANG_CODE} -DAIUEOS_QUALIFICATION_LOADER_WATCHDOG_SECONDS=${AIUEOS_QUALIFICATION_LOADER_WATCHDOG_SECONDS:-3}"
+  loader_hang_test_cflags="-DAIUEOS_QUALIFICATION_FORCE_LOADER_HANG_CODE=${AIUEOS_QUALIFICATION_FORCE_LOADER_HANG_CODE}"
+  qualification_watchdog_seconds=${qualification_watchdog_seconds:-3}
+fi
+if [ -n "$qualification_watchdog_seconds" ]; then
+  case "$qualification_watchdog_seconds" in
+    *[!0-9]*|'')
+      echo "error: qualification loader watchdog seconds must be an integer" >&2
+      exit 1
+      ;;
+  esac
+  [ "$qualification_watchdog_seconds" -ge 1 ] &&
+    [ "$qualification_watchdog_seconds" -le 3600 ] || {
+      echo "error: qualification loader watchdog seconds must be 1..3600" >&2
+      exit 1
+    }
+  [ "${AIUEOS_PHYSICAL_QUALIFICATION:-0}" = 1 ] || {
+    echo "error: qualification loader watchdog requires physical qualification" >&2
+    exit 1
+  }
+  [ "${AIUEOS_PERSISTENT_BOOT:-0}" != 1 ] || {
+    echo "error: persistent boot disables the loader watchdog" >&2
+    exit 1
+  }
+  qualification_watchdog_cflags="-DAIUEOS_QUALIFICATION_LOADER_WATCHDOG_SECONDS=${qualification_watchdog_seconds}"
 fi
 if [ -n "${AIUEOS_QUALIFICATION_FORCE_KERNEL_HANG_CODE:-}" ]; then
   kernel_hang_test_cflags="-DAIUEOS_QUALIFICATION_FORCE_KERNEL_HANG_CODE=${AIUEOS_QUALIFICATION_FORCE_KERNEL_HANG_CODE}"
@@ -860,7 +885,8 @@ zig cc -target x86_64-windows-gnu -std=c11 -O2 \
   -ffreestanding -fshort-wchar -fno-stack-protector -mno-red-zone \
   -I "$out" -I "$aiueos/uefi" \
   $gop_discovery_cflags $physical_qualification_cflags $loader_failure_test_cflags \
-  $loader_hang_test_cflags $embedded_release_cflags $netboot_qualification_cflags \
+  $loader_hang_test_cflags $qualification_watchdog_cflags \
+  $embedded_release_cflags $netboot_qualification_cflags \
   $persistent_boot_cflags $model_handoff_cflags $model_slots_cflags \
   -c -o "$object" "$aiueos/uefi/main.c"
 zig lld-link /subsystem:efi_application /entry:efi_main /nodefaultlib /timestamp:0 \

@@ -64,6 +64,9 @@
   (slurp (io/file "os/aiueos/scripts/build-qwen38-model-handoff-pxe.sh")))
 (def qwen38-handoff-smoke
   (slurp (io/file "os/aiueos/scripts/smoke-qemu-model-handoff.sh")))
+(def qwen38-node-oneshot-build
+  (slurp (io/file
+          "os/aiueos/scripts/build-qwen38-murakumo-node-oneshot-pxe.sh")))
 (def model-slots-contract
   (slurp (io/file "os/aiueos/contracts/model-nvme-slots-v1.edn")))
 (def model-slots-core (slurp (io/file "os/aiueos/uefi/model_slots.c")))
@@ -144,6 +147,20 @@
                   "current-pxe-persistent"
                   "watchdog=disabled"]]
     (is (str/includes? persistent-smoke marker))))
+
+(deftest qwen-node-one-shot-has-a-bounded-model-sized-watchdog
+  (testing "the generic release keeps 90 seconds unless a physical profile opts in"
+    (is (str/includes? build "qualification_watchdog_seconds"))
+    (is (str/includes? build "must be 1..3600"))
+    (is (str/includes? build "persistent boot disables the loader watchdog"))
+    (is (str/includes? release-build
+                       "AIUEOS_QUALIFICATION_LOADER_WATCHDOG_SECONDS:-90")))
+  (testing "the exact Qwen node can return a result after its 10.9 GB admission"
+    (doseq [marker ["AIUEOS_QWEN38_MODEL_HANDOFF=1"
+                    "AIUEOS_MURAKUMO_DEVICE_RESULT=1"
+                    "AIUEOS_PERSISTENT_BOOT=0"
+                    "AIUEOS_QUALIFICATION_LOADER_WATCHDOG_SECONDS:-1800"]]
+      (is (str/includes? qwen38-node-oneshot-build marker)))))
 
 (deftest persistent-node-reconnects-instead-of-halting-on-one-missed-renewal
   (doseq [marker ["NODE RECONNECTING"
