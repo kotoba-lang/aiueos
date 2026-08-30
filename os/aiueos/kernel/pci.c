@@ -3817,6 +3817,7 @@ int aiueos_rtl8125_physical_qualification(void) {
 #define RTL_DIRECT_LOCAL_PORT 49155
 #define RTL_DIRECT_ISN 0xa1e02000U
 #define RTL_DIRECT_RX_BUDGET 10000000U
+#define RTL_DIRECT_RX_WINDOW 1024U
 #define RTL_DIRECT_TLS_ATTEMPTS 3U
 #define RTL_DIRECT_TLS_FLIGHT_MAX 1152U
 _Static_assert(RTL_DIRECT_TLS_FLIGHT_MAX >= 58U + 1024U + 22U,
@@ -3831,7 +3832,7 @@ static uint8_t rtl_direct_http_request[1024];
 static uint8_t rtl_direct_client_random[32];
 static uint8_t rtl_direct_scalar[32];
 static char rtl_direct_device_did[72];
-#define RTL_DIRECT_STAGE_ERROR(stage) ((stage) + 1U)
+#define RTL_DIRECT_STAGE_ERROR(stage) (stage)
 #else
 static const uint8_t rtl_direct_http_request[] =
   "GET /infer/queue HTTP/1.1\r\n"
@@ -4130,7 +4131,12 @@ int aiueos_rtl8125_direct_https_qualification(void) {
     net_peer_mac[i] = rtl8125_peer_mac[i];
   }
   net_peer_mac_known = 1;
-  net_tx_window = NET_CLOUD_WINDOW;
+  /* This RTL8125 qualification path owns one RX descriptor.  A larger
+     advertised window let Murakumo send a second TLS segment while the first
+     was still being decrypted, so the NIC had nowhere to DMA it.  One
+     descriptor-sized flow-control window makes each ACK re-open exactly one
+     bounded receive slot. */
+  net_tx_window = RTL_DIRECT_RX_WINDOW;
   if (!rtl8125_direct_dns()) {
     rtl8125_direct_https_error = 2;
     goto failed;

@@ -186,7 +186,11 @@
                     "RTL_DIRECT_STAGE_ERROR(12)"
                     "RTL_DIRECT_STAGE_ERROR(13)"
                     "RTL_DIRECT_STAGE_ERROR(14)"]]
-      (is (str/includes? pci marker)))))
+      (is (str/includes? pci marker))))
+  (testing "the one-descriptor K16 path advertises one bounded receive slot"
+    (is (str/includes? pci "RTL_DIRECT_RX_WINDOW 1024U"))
+    (is (str/includes? pci "net_tx_window = RTL_DIRECT_RX_WINDOW"))
+    (is (not (str/includes? pci "((stage) + 1U)")))))
 
 (deftest persistent-node-reconnects-instead-of-halting-on-one-missed-renewal
   (doseq [marker ["NODE RECONNECTING"
