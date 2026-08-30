@@ -1151,16 +1151,22 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
 #ifdef AIUEOS_PHYSICAL_DIRECT_HTTPS_QUALIFICATION
     aiueos_qualification_progress(232);
     aiueos_framebuffer_qualification_screen("AIUEOS K16", "TEST DIRECT HTTPS", "SSD READ ONLY", 0);
+    int direct_https_ok = 0;
 #ifdef AIUEOS_MURAKUMO_DEVICE_RESULT
-    if(!aiueos_rtl8125_direct_https_qualification(
-          boot, first_token.token, first_token.second_token,
-          first_token.compute_cycles)) {
+    direct_https_ok = aiueos_rtl8125_direct_https_qualification(
+      boot, first_token.token, first_token.second_token,
+      first_token.compute_cycles);
 #else
-    if(!aiueos_rtl8125_direct_https_qualification()) {
+    direct_https_ok = aiueos_rtl8125_direct_https_qualification();
 #endif
+    if(!direct_https_ok) {
       uint32_t error=aiueos_rtl8125_direct_https_error();
       uint32_t code=8600U+error;
+#if defined(AIUEOS_MURAKUMO_DEVICE_RESULT) && defined(AIUEOS_PERSISTENT_BOOT)
+      aiueos_framebuffer_qualification_screen("AIUEOS K16", "MURAKUMO WORKER", "NODE RECONNECTING", 0);
+#else
       aiueos_framebuffer_qualification_screen("AIUEOS K16", "FAIL DIRECT HTTPS", "SSD READ ONLY", 0);
+#endif
 #ifdef AIUEOS_MURAKUMO_DEVICE_RESULT
       debug_string("AIUEOS_PHYSICAL_DIRECT_HTTPS_FAIL host=api.murakumo.cloud auth=device-p256 nvram-key=true cacao=false\n");
       serial_string("AIUEOS_PHYSICAL_DIRECT_HTTPS_FAIL host=api.murakumo.cloud error=");
@@ -1180,12 +1186,24 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
       serial_decimal(aiueos_rtl8125_direct_tls_stage());
       serial_string(" trust=transport-only secrets=none\r\n");
 #endif
+#if defined(AIUEOS_MURAKUMO_DEVICE_RESULT) && defined(AIUEOS_PERSISTENT_BOOT)
+      if(!aiueos_rtl8125_direct_device_did()[0]) {
+        if(!aiueos_qualification_finalize(2,code))
+          serial_string("AIUEOS_PHYSICAL_QUALIFICATION_LOG_FAIL stage=runtime-variable\r\n");
+        for(;;)__asm__ volatile("cli; hlt");
+      }
+      debug_string("AIUEOS_MURAKUMO_INITIAL_POST_AMBIGUOUS action=worker-reconnect\n");
+      serial_string("AIUEOS_MURAKUMO_INITIAL_POST_AMBIGUOUS did=");
+      serial_string(aiueos_rtl8125_direct_device_did());
+      serial_string(" action=worker-reconnect internal-disk-writes=none\r\n");
+#else
       if(!aiueos_qualification_finalize(2,code))
         serial_string("AIUEOS_PHYSICAL_QUALIFICATION_LOG_FAIL stage=runtime-variable\r\n");
       for(;;)__asm__ volatile("cli; hlt");
+#endif
     }
     (void)aiueos_rtl8125_direct_dns_a();
-    if(!aiueos_rtl8125_direct_http_ready()) {
+    if(direct_https_ok && !aiueos_rtl8125_direct_http_ready()) {
       aiueos_framebuffer_qualification_screen("AIUEOS K16", "FAIL DIRECT HTTPS", "SSD READ ONLY", 0);
 #ifdef AIUEOS_MURAKUMO_DEVICE_RESULT
       serial_string("AIUEOS_PHYSICAL_DIRECT_HTTPS_FAIL host=api.murakumo.cloud error=12 auth=device-p256 nvram-key=true cacao=false passkey=false pq=false biscuit=false\r\n");
@@ -1196,15 +1214,17 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
         serial_string("AIUEOS_PHYSICAL_QUALIFICATION_LOG_FAIL stage=runtime-variable\r\n");
       for(;;)__asm__ volatile("cli; hlt");
     }
-    aiueos_qualification_progress(233);
 #ifdef AIUEOS_MURAKUMO_DEVICE_RESULT
-    aiueos_framebuffer_qualification_screen("AIUEOS K16", "MURAKUMO NODE OK", "COMMUNITY PENDING", 1);
-    debug_string("AIUEOS_MURAKUMO_NODE_OK host=api.murakumo.cloud path=/infer/nodes/device-p256-result auth=device-p256 cacao=false ready=false\n");
-    serial_string("AIUEOS_MURAKUMO_NODE_OK did=");
-    serial_string(aiueos_rtl8125_direct_device_did());
-    serial_string(" attempts=");
-    serial_decimal(aiueos_rtl8125_direct_https_attempts());
-    serial_string(" auth=device-p256 cacao=false passkey=false pq=false biscuit=false ready=false\r\n");
+    if(direct_https_ok) {
+      aiueos_qualification_progress(233);
+      aiueos_framebuffer_qualification_screen("AIUEOS K16", "MURAKUMO NODE OK", "COMMUNITY PENDING", 1);
+      debug_string("AIUEOS_MURAKUMO_NODE_OK host=api.murakumo.cloud path=/infer/nodes/device-p256-result auth=device-p256 cacao=false ready=false\n");
+      serial_string("AIUEOS_MURAKUMO_NODE_OK did=");
+      serial_string(aiueos_rtl8125_direct_device_did());
+      serial_string(" attempts=");
+      serial_decimal(aiueos_rtl8125_direct_https_attempts());
+      serial_string(" auth=device-p256 cacao=false passkey=false pq=false biscuit=false ready=false\r\n");
+    }
     serial_string("AIUEOS_QWEN38_TIMING model-load-ns=");
     serial_decimal64(aiueos_qwen35_status.load_ns);
     serial_string(" ttft-ns=");
@@ -1213,8 +1233,11 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
     serial_decimal64(boot->tsc_hz);
     serial_string("\r\n");
 #ifdef AIUEOS_PERSISTENT_BOOT
-    if(!aiueos_qualification_finalize(1,8161))
-      serial_string("AIUEOS_PHYSICAL_QUALIFICATION_LOG_FAIL stage=runtime-variable\r\n");
+    int persistent_qualification_recorded = direct_https_ok;
+    if(direct_https_ok) {
+      if(!aiueos_qualification_finalize(1,8161))
+        serial_string("AIUEOS_PHYSICAL_QUALIFICATION_LOG_FAIL stage=runtime-variable\r\n");
+    }
     aiueos_framebuffer_qualification_screen(
       "AIUEOS K16", "MURAKUMO WORKER", "POLLING JOBS", 1);
     debug_string("AIUEOS_MURAKUMO_PERSISTENT_BOOT_OK model=Qwen3.8-27B path=/infer/nodes/device-p256-worker\n");
@@ -1253,6 +1276,14 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
         serial_decimal(heartbeat_failures);
         serial_string("\r\n");
         heartbeat_failures = 0;
+      }
+      if (!persistent_qualification_recorded) {
+        aiueos_qualification_progress(233);
+        if(!aiueos_qualification_finalize(1,8162))
+          serial_string("AIUEOS_PHYSICAL_QUALIFICATION_LOG_FAIL stage=runtime-variable\r\n");
+        persistent_qualification_recorded = 1;
+        debug_string("AIUEOS_MURAKUMO_INITIAL_POST_RECOVERED path=/infer/nodes/device-p256-worker\n");
+        serial_string("AIUEOS_MURAKUMO_INITIAL_POST_RECOVERED path=/infer/nodes/device-p256-worker\r\n");
       }
       serial_string("AIUEOS_MURAKUMO_HEARTBEAT_OK ready=");
       serial_string(ready ? "true" : "false");
