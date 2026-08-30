@@ -3833,6 +3833,11 @@ static uint8_t rtl_direct_http_request[1024];
 static uint8_t rtl_direct_client_random[32];
 static uint8_t rtl_direct_scalar[32];
 static char rtl_direct_device_did[72];
+#if defined(__GNUC__)
+__attribute__((section(".high_bss")))
+#endif
+static uint8_t rtl_direct_worker_wire[1024];
+static int rtl_direct_worker_wire_sent;
 #define RTL_DIRECT_STAGE_ERROR(stage) (stage)
 #else
 static const uint8_t rtl_direct_http_request[] =
@@ -3889,6 +3894,38 @@ static int rtl8125_direct_tx(uint32_t bytes) {
   }
   return 0;
 }
+
+#ifdef AIUEOS_MURAKUMO_DEVICE_RESULT
+/* Emit the first physical worker request body to the Mac-side qualification
+   log.  The body contains only public verification material (DID, public key,
+   nonce and signature); the device private key never enters this buffer. */
+static void rtl8125_direct_worker_wire_copy(
+    const uint8_t *request, uint32_t request_length, uint32_t sequence) {
+  static const uint8_t prefix[] = "AIUEOS_WORKER_WIRE ";
+  if (rtl_direct_worker_wire_sent || !request || !request_length) return;
+  uint32_t body_offset = 0;
+  for (uint32_t i = 0; i + 3U < request_length; i++) {
+    if (request[i] == '\r' && request[i + 1U] == '\n' &&
+        request[i + 2U] == '\r' && request[i + 3U] == '\n') {
+      body_offset = i + 4U;
+      break;
+    }
+  }
+  if (!body_offset || body_offset >= request_length) return;
+  uint32_t body_length = request_length - body_offset;
+  uint32_t prefix_length = sizeof(prefix) - 1U;
+  if (prefix_length + body_length > sizeof(rtl_direct_worker_wire)) return;
+  for (uint32_t i = 0; i < prefix_length; i++)
+    rtl_direct_worker_wire[i] = prefix[i];
+  for (uint32_t i = 0; i < body_length; i++)
+    rtl_direct_worker_wire[prefix_length + i] = request[body_offset + i];
+  uint32_t bytes = rtl8125_build_udp_payload(
+    rtl8125_qualification_device.tx_frame, rtl_direct_worker_wire,
+    prefix_length + body_length, (uint16_t)sequence);
+  if (bytes && rtl8125_direct_tx(bytes)) rtl_direct_worker_wire_sent = 1;
+  aiueos_rtl8125_rx_rearm(&rtl8125_qualification_device);
+}
+#endif
 
 static int rtl8125_direct_rx(uint32_t *received) {
   enum aiueos_rtl8125_result result;
@@ -4247,6 +4284,8 @@ int aiueos_rtl8125_device_worker_poll(
   uint32_t request_length = aiueos_device_worker_http_request(
     &request, rtl_direct_http_request, sizeof(rtl_direct_http_request),
     rtl_direct_device_did, sizeof(rtl_direct_device_did));
+  rtl8125_direct_worker_wire_copy(
+    rtl_direct_http_request, request_length, sequence);
   if (!rtl8125_direct_device_request(request_length)) return 0;
   struct aiueos_device_worker_poll poll;
   if (!aiueos_device_worker_poll_response(
