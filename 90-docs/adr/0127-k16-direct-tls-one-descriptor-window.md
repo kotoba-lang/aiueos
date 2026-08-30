@@ -45,10 +45,22 @@ returned success code 8150.  The direct bridge observed 381 bytes from K16 and
 This proves the bounded receive change completed the transport-only TLS and
 HTTP qualification against `/infer/queue` on the physical RTL8125 path.
 
-It does not prove the exact Qwen model result.  That requires a clean exact
-model boot to send ClientFinished plus the signed device POST, obtain Murakumo
-HTTP 2xx, and return 8160.  Only that physical result plus the server record can
-prove node registration or report inference timing.
+The clean exact-model artifact at commit `4f7062a`, SHA-256
+`12c1c7b95f6e26c5441989dd03f1595e7d9e2e80d49a39f9f1cc026dc12f9de6`,
+then returned physical K16 success code 8160.  The bridge observed 1,074 bytes
+from K16 and 4,056 bytes from Murakumo, including the encrypted signed device
+POST and response rather than only a ClientHello.
+
+Murakumo's live `infer.runs` ledger persisted sequence `1788078031098390` for
+node `aiueos-k16-7070fc0bb632` and its Device-P256 DID.  The model digest matched
+the exact `Qwen3.8-27B-UD-IQ3_XXS.gguf` artifact, the first token was the
+expected 2005, the second token was 17, model load was 135,904,582,116 ns, and
+time to first token was 46,666,864,001 ns.  Decode tokens/second remains `N/A`
+because this is deliberately a one-token qualification, not a multi-token
+decode benchmark.  The general `/infer/nodes` list did not return within a
+30-second observation window; registration is instead bounded here by the
+successful device response and the persisted run, which the handler writes
+only after enrolling the node.
 
 During physical diagnosis, codes 8631--8637 refine the former 8608 pump gate as
 RX timeout, TCP-segment refusal, TCP-layout refusal, TLS-feed refusal, ACK-send
