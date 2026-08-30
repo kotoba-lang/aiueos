@@ -7,8 +7,15 @@
 
 #define AIUEOS_OWNED_MEMORY_MAP_BYTES (128ULL * 1024ULL)
 static struct aiueos_boot_info aiueos_owned_boot_info;
+/* Keep the retained firmware map out of the low-2MiB fine-grained W^X
+ * aperture.  The exact Qwen runtime plus Device-P256 objects make the map's
+ * 128 KiB the difference between keeping the linked user/guard pages below
+ * PROCESS_PRIVATE_BASE and silently pushing them into the 2MiB huge-page
+ * region.  The high section is still ordinary kernel-owned RAM: the owned
+ * page directory maps 4..6 MiB writable and NX, and the physical allocator
+ * excludes it through aiueos_kernel_end. */
 static uint8_t aiueos_owned_memory_map[AIUEOS_OWNED_MEMORY_MAP_BYTES]
-  __attribute__((aligned(16)));
+  __attribute__((aligned(16), section(".high_bss")));
 #ifdef AIUEOS_QWEN38_MODEL_HANDOFF
 /* The exact graph is about 75 KiB.  Keeping it in kernel BSS moves the linked
  * user/guard pages beyond the low-2MiB bootstrap map.  The admitted model is
