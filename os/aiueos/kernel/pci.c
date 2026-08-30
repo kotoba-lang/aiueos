@@ -1847,6 +1847,7 @@ static uint16_t net_ip_id = 1;
 
 #define NET_TCP_FIN 0x01
 #define NET_TCP_SYN 0x02
+#define NET_TCP_RST 0x04
 #define NET_TCP_PSH 0x08
 #define NET_TCP_ACK 0x10
 
@@ -4093,7 +4094,22 @@ static int rtl8125_direct_tls_pump(uint32_t dst, uint16_t local_port,
       return 1;
     }
     if (want_http && rtl8125_http_success(
-          aiueos_tls13_app(), aiueos_tls13_app_len())) return 1;
+          aiueos_tls13_app(), aiueos_tls13_app_len())) {
+      /* The complete HTTP response is already authenticated and decrypted.
+         ACK its last TCP sequence and actively close this short-lived worker
+         connection.  Leaving that segment unacknowledged made Cloudflare
+         retransmit it after every successful poll; with one RX descriptor,
+         those stale frames hid the third connection's SYN-ACK on the K16. */
+      if (frame[47] & NET_TCP_FIN) *peer_next += 1;
+      aiueos_rtl8125_rx_rearm(&rtl8125_qualification_device);
+      if (!rtl8125_direct_tcp_send(
+            dst, local_port, *our_next, *peer_next,
+            NET_TCP_RST | NET_TCP_ACK, 0, 0)) {
+        rtl8125_direct_tls_pump_error = 5;
+        return 0;
+      }
+      return 1;
+    }
     /* A FIN consumes one sequence number.  ACK it and stop immediately: the
        previous implementation treated a clean server close as an empty data
        segment, then entered another full receive budget.  On the real K16 that
