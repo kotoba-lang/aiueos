@@ -4278,9 +4278,11 @@ static int rtl8125_direct_device_request(uint32_t request_length) {
     }
   }
   /* Do not carry a failed TCP/TLS receive state into the next heartbeat.
-     Re-arm the only RX descriptor and force a fresh bounded DNS exchange. */
+     Re-arm the only RX descriptor, but retain the DNS answer already verified
+     on this boot.  The direct-link bridge is the fixed 10.77.0.1 endpoint;
+     clearing it here forces UDP back through the same one-descriptor queue
+     while late TLS frames are still arriving and can starve every DNS reply. */
   aiueos_rtl8125_rx_rearm(&rtl8125_qualification_device);
-  rtl8125_direct_dns_a = 0;
   net_tx_window = NET_TCP_WINDOW;
   return 0;
 }
