@@ -424,6 +424,17 @@ corrupt update. A physical K16 NVMe write and physical HTTPS model download
 remain unverified; host/QEMU tests do not turn either physical adapter green.
 The FAT32 flow below remains the explicit offline source path.
 
+OS releases use a separate channel from models. `aiueos.os-update` and
+`contracts/os-update-v1.edn` require threshold publisher admission, revocation,
+monotonic sequence and freshness before producing an immutable
+`ipfs.kotobase.net` HTTPS fetch plan. Loader, kernel and initramfs are verified
+as separate artifacts, staged to an inactive OS slot, read back in full and
+given one trial boot. A candidate is committed only after boot, storage,
+direct-HTTPS, Murakumo-node and inference health all pass; failure or bounded
+missing evidence selects the previous slot. The current K16 PXE/TFTP route is
+not this authenticated path: native K16 HTTPS artifact streaming and the OS
+NVMe writer remain unimplemented and physical update evidence is unverified.
+
 The combined physical image keeps the existing K16 RTL8125/TLS GET and uses
 the split USB bundle as this qualification's model source:
 
