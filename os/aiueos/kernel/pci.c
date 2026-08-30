@@ -4,6 +4,7 @@
 #include "rtl8125.h"
 #include "relay_protocol.h"
 #include "job_protocol.h"
+#include "device_result.h"
 
 #define VIRTIO_VENDOR_ID 0x1af4
 #define VIRTIO_RNG_MODERN_ID 0x1044
@@ -3817,6 +3818,13 @@ static const uint8_t rtl_direct_dns_question[24] = {
   3,'a','p','i',8,'m','u','r','a','k','u','m','o',5,'c','l','o','u','d',0,
   0,1,0,1
 };
+#ifdef AIUEOS_MURAKUMO_DEVICE_RESULT
+static uint8_t rtl_direct_http_request[1024];
+static uint8_t rtl_direct_client_random[32];
+static uint8_t rtl_direct_scalar[32];
+static char rtl_direct_device_did[72];
+#define RTL_DIRECT_STAGE_ERROR(stage) ((stage) + 1U)
+#else
 static const uint8_t rtl_direct_http_request[] =
   "GET /infer/queue HTTP/1.1\r\n"
   "Host: api.murakumo.cloud\r\n"
@@ -3824,8 +3832,6 @@ static const uint8_t rtl_direct_http_request[] =
   "Accept: application/json\r\n"
   "Connection: close\r\n"
   "\r\n";
-/* Deterministic qualification entropy makes captures reproducible.  It is not
-   a device entropy source and is one reason this profile must carry no secret. */
 static const uint8_t rtl_direct_client_random[32] = {
   0xa1,0xe0,0x4b,0x31,0x36,0x2d,0x68,0x74,0x74,0x70,0x73,0x2d,0x70,0x72,0x6f,0x62,
   0x65,0x2d,0x74,0x72,0x61,0x6e,0x73,0x70,0x6f,0x72,0x74,0x2d,0x6f,0x6e,0x6c,0x79
@@ -3834,6 +3840,8 @@ static const uint8_t rtl_direct_scalar[32] = {
   0x62,0x6f,0x75,0x6e,0x64,0x65,0x64,0x2d,0x6b,0x31,0x36,0x2d,0x74,0x6c,0x73,0x2d,
   0x70,0x72,0x6f,0x62,0x65,0x2d,0x6e,0x6f,0x2d,0x73,0x65,0x63,0x72,0x65,0x74,0x73
 };
+#define RTL_DIRECT_STAGE_ERROR(stage) (stage)
+#endif
 
 static unsigned rtl8125_direct_https_error;
 static uint32_t rtl8125_direct_dns_a;
@@ -3844,6 +3852,11 @@ unsigned aiueos_rtl8125_direct_https_error(void) {
 }
 uint32_t aiueos_rtl8125_direct_dns_a(void) { return rtl8125_direct_dns_a; }
 int aiueos_rtl8125_direct_http_ready(void) { return rtl8125_direct_http_ready; }
+#ifdef AIUEOS_MURAKUMO_DEVICE_RESULT
+const char *aiueos_rtl8125_direct_device_did(void) {
+  return rtl_direct_device_did[0] ? rtl_direct_device_did : 0;
+}
+#endif
 
 static int rtl8125_direct_tx(uint32_t bytes) {
   enum aiueos_rtl8125_result result = aiueos_rtl8125_tx_submit(
@@ -3925,11 +3938,13 @@ static int rtl8125_direct_dns(void) {
   return 0;
 }
 
-static int rtl8125_http_200(const uint8_t *bytes, uint32_t length) {
+static int rtl8125_http_success(const uint8_t *bytes, uint32_t length) {
   return bytes && length >= 12 &&
     bytes[0] == 'H' && bytes[1] == 'T' && bytes[2] == 'T' && bytes[3] == 'P' &&
     bytes[4] == '/' && bytes[5] == '1' && bytes[6] == '.' && bytes[7] == '1' &&
-    bytes[8] == ' ' && bytes[9] == '2' && bytes[10] == '0' && bytes[11] == '0';
+    bytes[8] == ' ' && bytes[9] == '2' &&
+    bytes[10] >= '0' && bytes[10] <= '9' &&
+    bytes[11] >= '0' && bytes[11] <= '9';
 }
 
 static int rtl8125_direct_tls_pump(uint32_t dst, uint32_t *our_next,
@@ -3955,24 +3970,36 @@ static int rtl8125_direct_tls_pump(uint32_t dst, uint32_t *our_next,
         return 0;
       return 1;
     }
-    if (want_http && rtl8125_http_200(
+    if (want_http && rtl8125_http_success(
           aiueos_tls13_app(), aiueos_tls13_app_len())) return 1;
     aiueos_rtl8125_rx_rearm(&rtl8125_qualification_device);
     if (!rtl8125_direct_tcp_send(dst, *our_next, *peer_next, NET_TCP_ACK, 0, 0))
       return 0;
   }
-  return want_http ? rtl8125_http_200(
+  return want_http ? rtl8125_http_success(
     aiueos_tls13_app(), aiueos_tls13_app_len()) :
     aiueos_tls13_handshake_ready();
 }
 
+#ifdef AIUEOS_MURAKUMO_DEVICE_RESULT
+int aiueos_rtl8125_direct_https_qualification(
+    const struct aiueos_boot_info *boot, uint32_t token,
+    uint32_t second_token, uint64_t inference_cycles) {
+#else
 int aiueos_rtl8125_direct_https_qualification(void) {
+#endif
   uint32_t peer_next, our_next, received = 0;
   uint8_t client_hello[256], flight[512];
   uint32_t client_hello_length = 0, finished_length = 0, http_length = 0;
+#ifdef AIUEOS_MURAKUMO_DEVICE_RESULT
+  uint32_t request_length = 0;
+#endif
   rtl8125_direct_https_error = 1;
   rtl8125_direct_dns_a = 0;
   rtl8125_direct_http_ready = 0;
+#ifdef AIUEOS_MURAKUMO_DEVICE_RESULT
+  rtl_direct_device_did[0] = 0;
+#endif
   if (!rtl8125_qualification_device.ready || rtl8125_qualification_error)
     return 0;
   for (unsigned i = 0; i < 6; i++) {
@@ -3985,28 +4012,53 @@ int aiueos_rtl8125_direct_https_qualification(void) {
     rtl8125_direct_https_error = 2;
     goto failed;
   }
+#ifdef AIUEOS_MURAKUMO_DEVICE_RESULT
+  {
+    struct aiueos_device_result result = {
+      .boot = boot,
+      .mac = rtl8125_qualification_device.mac,
+      .token = token,
+      .second_token = second_token,
+      .inference_cycles = inference_cycles
+    };
+    if (!aiueos_cpu_random_bytes(rtl_direct_client_random,
+                                 sizeof(rtl_direct_client_random)) ||
+        !aiueos_cpu_random_bytes(rtl_direct_scalar,
+                                 sizeof(rtl_direct_scalar)) ||
+        !(request_length = aiueos_device_result_http_request(
+            &result, rtl_direct_http_request, sizeof(rtl_direct_http_request),
+            rtl_direct_device_did, sizeof(rtl_direct_device_did)))) {
+      rtl8125_direct_https_error = 3;
+      goto failed;
+    }
+  }
+#endif
   if (!aiueos_tls13_configure(
         "api.murakumo.cloud", rtl_direct_http_request,
+#ifdef AIUEOS_MURAKUMO_DEVICE_RESULT
+        request_length,
+#else
         sizeof(rtl_direct_http_request) - 1,
+#endif
         rtl_direct_client_random, rtl_direct_scalar)) {
-    rtl8125_direct_https_error = 3;
+    rtl8125_direct_https_error = RTL_DIRECT_STAGE_ERROR(3);
     goto failed;
   }
   aiueos_tls13_reset();
   if (!aiueos_tls13_clienthello(client_hello, &client_hello_length)) {
-    rtl8125_direct_https_error = 4;
+    rtl8125_direct_https_error = RTL_DIRECT_STAGE_ERROR(4);
     goto failed;
   }
   aiueos_rtl8125_rx_rearm(&rtl8125_qualification_device);
   if (!rtl8125_direct_tcp_send(rtl8125_direct_dns_a, RTL_DIRECT_ISN, 0,
                                NET_TCP_SYN, 0, 0)) {
-    rtl8125_direct_https_error = 5;
+    rtl8125_direct_https_error = RTL_DIRECT_STAGE_ERROR(5);
     goto failed;
   }
   if (!rtl8125_direct_tcp_receive(
         rtl8125_direct_dns_a, RTL_DIRECT_ISN + 1,
         NET_TCP_SYN | NET_TCP_ACK, 8, &received)) {
-    rtl8125_direct_https_error = 6;
+    rtl8125_direct_https_error = RTL_DIRECT_STAGE_ERROR(6);
     goto failed;
   }
   peer_next = net_load_be32(rtl8125_qualification_device.rx_frame + 38) + 1;
@@ -4015,24 +4067,24 @@ int aiueos_rtl8125_direct_https_qualification(void) {
   if (!rtl8125_direct_tcp_send(
         rtl8125_direct_dns_a, RTL_DIRECT_ISN + 1, peer_next,
         NET_TCP_PSH | NET_TCP_ACK, client_hello, client_hello_length)) {
-    rtl8125_direct_https_error = 7;
+    rtl8125_direct_https_error = RTL_DIRECT_STAGE_ERROR(7);
     goto failed;
   }
   if (!rtl8125_direct_tls_pump(rtl8125_direct_dns_a, &our_next, &peer_next,
                                our_next, 48, 0)) {
-    rtl8125_direct_https_error = 8;
+    rtl8125_direct_https_error = RTL_DIRECT_STAGE_ERROR(8);
     goto failed;
   }
   if (!aiueos_tls13_run_certverify() ||
       !aiueos_tls13_take_finished(flight, &finished_length) ||
       !aiueos_tls13_take_http(flight + finished_length, &http_length)) {
-    rtl8125_direct_https_error = 9;
+    rtl8125_direct_https_error = RTL_DIRECT_STAGE_ERROR(9);
     goto failed;
   }
   if (!rtl8125_direct_tcp_send(
         rtl8125_direct_dns_a, our_next, peer_next,
         NET_TCP_PSH | NET_TCP_ACK, flight, finished_length + http_length)) {
-    rtl8125_direct_https_error = 10;
+    rtl8125_direct_https_error = RTL_DIRECT_STAGE_ERROR(10);
     goto failed;
   }
   {
@@ -4040,7 +4092,7 @@ int aiueos_rtl8125_direct_https_qualification(void) {
     our_next += finished_length + http_length;
     if (!rtl8125_direct_tls_pump(rtl8125_direct_dns_a, &our_next, &peer_next,
                                  ack_lo, 128, 1)) {
-      rtl8125_direct_https_error = 11;
+      rtl8125_direct_https_error = RTL_DIRECT_STAGE_ERROR(11);
       goto failed;
     }
   }

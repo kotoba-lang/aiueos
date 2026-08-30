@@ -43,7 +43,8 @@ int aiueos_model_handoff_validate(const struct aiueos_boot_info *boot,
       !boot->model_paging_base ||
       (boot->model_paging_base & (PAGE_SIZE - 1)) ||
       boot->model_paging_base >= ONE_GIB ||
-      boot->model_paging_pages != AIUEOS_MODEL_PAGING_PAGES ||
+      (boot->version < AIUEOS_BOOT_INFO_VERSION_TSC_CALIBRATED &&
+       boot->model_paging_pages != AIUEOS_MODEL_PAGING_PAGES) ||
       boot->model_flags != (AIUEOS_MODEL_HANDOFF_SHA256_VERIFIED |
                             AIUEOS_MODEL_HANDOFF_SPLIT_EXACT) || !header)
     return 0;

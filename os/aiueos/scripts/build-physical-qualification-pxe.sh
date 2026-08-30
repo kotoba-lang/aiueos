@@ -24,6 +24,8 @@ AIUEOS_OUT="$core_out" \
 AIUEOS_PHYSICAL_QUALIFICATION=1 \
 AIUEOS_PHYSICAL_NETWORK_QUALIFICATION=${AIUEOS_PHYSICAL_NETWORK_QUALIFICATION:-0} \
 AIUEOS_PHYSICAL_DIRECT_HTTPS_QUALIFICATION=${AIUEOS_PHYSICAL_DIRECT_HTTPS_QUALIFICATION:-0} \
+AIUEOS_MURAKUMO_DEVICE_RESULT=${AIUEOS_MURAKUMO_DEVICE_RESULT:-0} \
+AIUEOS_QWEN38_MODEL_HANDOFF=${AIUEOS_QWEN38_MODEL_HANDOFF:-0} \
 AIUEOS_PERSISTENT_BOOT=${AIUEOS_PERSISTENT_BOOT:-0} \
 AIUEOS_EMBEDDED_RELEASE=1 \
 AIUEOS_NETBOOT_QUALIFICATION=1 \
@@ -34,6 +36,8 @@ cp "$core_out/esp/EFI/BOOT/BOOTX64.EFI" "$efi"
 AIUEOS_SOURCE_COMMIT="$source_commit" AIUEOS_SOURCE_DIRTY="$source_dirty" \
 AIUEOS_PERSISTENT_BOOT=${AIUEOS_PERSISTENT_BOOT:-0} \
 AIUEOS_PHYSICAL_DIRECT_HTTPS_QUALIFICATION=${AIUEOS_PHYSICAL_DIRECT_HTTPS_QUALIFICATION:-0} \
+AIUEOS_MURAKUMO_DEVICE_RESULT=${AIUEOS_MURAKUMO_DEVICE_RESULT:-0} \
+AIUEOS_QWEN38_MODEL_HANDOFF=${AIUEOS_QWEN38_MODEL_HANDOFF:-0} \
 AIUEOS_MODEL_NVME_SLOTS=${AIUEOS_MODEL_NVME_SLOTS:-0} \
 python3 - \
   "$efi" "$core_out/esp/EFI/AIUEOS/KERNEL.ELF" \
@@ -71,6 +75,22 @@ document = {
                      "90-second-recovery"),
     },
     "qualification": ({
+        "profile": "qwen38-murakumo-device-result",
+        "authority": "https://api.murakumo.cloud",
+        "path": "/infer/nodes/device-p256-result",
+        "auth": "device-p256",
+        "device_key": "uefi-nvram-p256",
+        "model": "Qwen3.8-27B-UD-IQ3_XXS.gguf",
+        "model_sha256": "c0b7c3038681ed2e3040456c1dd45f9858b6c2290bed172c70388a94874f3eee",
+        "admission": "community-pending",
+        "ready": False,
+        "cacao": False,
+        "passkey_bound": False,
+        "post_quantum": False,
+        "biscuit": False,
+        "physical_k16": "unverified",
+        "mac_application_relay": False,
+    } if os.environ["AIUEOS_MURAKUMO_DEVICE_RESULT"] == "1" else {
         "profile": "rtl8125-direct-https",
         "authority": "https://api.murakumo.cloud",
         "path": "/infer/queue",

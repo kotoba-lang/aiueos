@@ -180,10 +180,11 @@ static int map_model_handoff(const struct aiueos_boot_info *boot) {
   if (!boot || boot->version < AIUEOS_BOOT_INFO_VERSION_MODEL_HANDOFF ||
       !boot->model_paging_base ||
       (boot->model_paging_base & (PAGE_SIZE - 1)) ||
-      boot->model_paging_pages != AIUEOS_MODEL_PAGING_PAGES ||
+      (boot->version < AIUEOS_BOOT_INFO_VERSION_TSC_CALIBRATED &&
+       boot->model_paging_pages != AIUEOS_MODEL_PAGING_PAGES) ||
       boot->model_paging_base >= 0x40000000ULL ||
       boot->model_paging_base > 0x40000000ULL -
-        boot->model_paging_pages * PAGE_SIZE ||
+        AIUEOS_MODEL_PAGING_PAGES * PAGE_SIZE ||
       !aiueos_model_mapping_plan(boot->model_base, boot->model_size, &plan))
     return 0;
   uint64_t (*model_page_directories)[ENTRY_COUNT] =
