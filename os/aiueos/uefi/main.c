@@ -54,6 +54,7 @@ typedef efi_status(EFIAPI *efi_locate_handle)(uint32_t, const struct efi_guid *,
 typedef efi_status(EFIAPI *efi_exit_boot_services)(efi_handle, uint64_t);
 typedef efi_status(EFIAPI *efi_set_watchdog_timer)(uint64_t, uint64_t, uint64_t,
                                                    const char16 *);
+typedef efi_status(EFIAPI *efi_stall)(uint64_t);
 
 struct efi_boot_services {
   struct efi_table_header header;
@@ -71,7 +72,8 @@ struct efi_boot_services {
   void *locate_device_path;
   void *install_configuration_table, *load_image, *start_image, *exit, *unload_image;
   efi_exit_boot_services exit_boot_services;
-  void *get_next_monotonic_count, *stall;
+  void *get_next_monotonic_count;
+  efi_stall stall;
   efi_set_watchdog_timer set_watchdog_timer;
 };
 
@@ -1132,7 +1134,7 @@ efi_status EFIAPI efi_main(efi_handle image, struct efi_system_table *system) {
     return fail(112,"AIUEOS_LOADER_FAIL map-buffer");
   info.magic = AIUEOS_BOOT_INFO_MAGIC;
 #ifdef AIUEOS_QWEN38_MODEL_HANDOFF
-  info.version = AIUEOS_BOOT_INFO_VERSION_MODEL_HANDOFF;
+  info.version = AIUEOS_BOOT_INFO_VERSION_TSC_CALIBRATED;
 #else
   info.version = AIUEOS_BOOT_INFO_VERSION_BASE;
 #endif
@@ -1178,6 +1180,23 @@ efi_status EFIAPI efi_main(efi_handle image, struct efi_system_table *system) {
   if (gop_used_protocol_scan)
     debug_string("AIUEOS_GOP_DISCOVERY_OK source=protocol-scan\n");
   debug_string("AIUEOS_GOP_HANDOFF_OK framebuffer-v1\n");
+
+  /* Calibrate the Qwen qualification image's invariant TSC against UEFI's
+     microsecond service while Boot Services still exist. This measurement is
+     handed to the kernel; no nominal CPU clock is used to turn inference
+     cycles into elapsed time. Other profiles retain the v3 handoff unchanged. */
+#ifdef AIUEOS_QWEN38_MODEL_HANDOFF
+  if (!bs->stall) return fail(123,"AIUEOS_LOADER_FAIL tsc-calibration-service");
+  {
+    uint64_t started = read_tsc();
+    if (bs->stall(100000) != EFI_SUCCESS)
+      return fail(123,"AIUEOS_LOADER_FAIL tsc-calibration-stall");
+    uint64_t elapsed = read_tsc() - started;
+    if (elapsed < 100000 || elapsed > 1000000000ULL)
+      return fail(123,"AIUEOS_LOADER_FAIL tsc-calibration-bounds");
+    info.tsc_hz = elapsed * 10ULL;
+  }
+#endif
 
   progress(209,"AIUEOS_LOADER_PROGRESS exit-boot-services");
   memory_map_size = MEMORY_MAP_BUFFER_SIZE;

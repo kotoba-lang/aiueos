@@ -480,6 +480,26 @@ fi
   exit 1
 }
 
+if [ "${AIUEOS_ECDSA_PUBLIC_KAT:-0}" = 1 ]; then
+  grep -F "AIUEOS_ECDSA_PUBLIC_OK rfc6979-a2.5 x||y-match" "$serial_log" >/dev/null || {
+    echo "error: Kotoba P-256 public-key derivation KAT marker was not observed" >&2
+    test -f "$serial_log" && tail -40 "$serial_log" >&2
+    exit 1
+  }
+  echo "AIUEOS_ECDSA_PUBLIC_SMOKE_OK rfc6979-a2.5 x||y-match"
+  exit 0
+fi
+
+if [ "${AIUEOS_ECDSA_SIGN_KAT:-0}" = 1 ]; then
+  grep -F "AIUEOS_ECDSA_SIGN_OK rfc6979-a2.5 r||s-match" "$serial_log" >/dev/null || {
+    echo "error: Kotoba P-256 signature KAT marker was not observed" >&2
+    test -f "$serial_log" && tail -40 "$serial_log" >&2
+    exit 1
+  }
+  echo "AIUEOS_ECDSA_SIGN_SMOKE_OK rfc6979-a2.5 r||s-match"
+  exit 0
+fi
+
 # A corrupted application payload or signature is no longer fatal: the kernel
 # must restore it from the initramfs recovery materials under the catalog
 # digest and RSA policy, then pass the complete evidence gate below.

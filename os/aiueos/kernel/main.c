@@ -57,6 +57,8 @@ static int aiueos_boot_info_retain(const struct aiueos_boot_info *source) {
     aiueos_owned_boot_info.model_load_cycles = source->model_load_cycles;
     aiueos_owned_boot_info.model_paging_base = source->model_paging_base;
     aiueos_owned_boot_info.model_paging_pages = source->model_paging_pages;
+    if (source->version >= AIUEOS_BOOT_INFO_VERSION_TSC_CALIBRATED)
+      aiueos_owned_boot_info.tsc_hz = source->tsc_hz;
   }
   const volatile uint8_t *input = source->memory_map;
   for (uint64_t i = 0; i < source->memory_map_size; i++)
@@ -201,7 +203,13 @@ extern int aiueos_pci_enumerate(void);
 extern int aiueos_rtl8125_physical_qualification(void);
 extern unsigned aiueos_rtl8125_qualification_error(void);
 extern uint32_t aiueos_rtl8125_qualification_rx_length(void);
+#ifdef AIUEOS_MURAKUMO_DEVICE_RESULT
+extern int aiueos_rtl8125_direct_https_qualification(
+    const struct aiueos_boot_info *, uint32_t, uint32_t, uint64_t);
+extern const char *aiueos_rtl8125_direct_device_did(void);
+#else
 extern int aiueos_rtl8125_direct_https_qualification(void);
+#endif
 extern unsigned aiueos_rtl8125_direct_https_error(void);
 extern uint32_t aiueos_rtl8125_direct_dns_a(void);
 extern int aiueos_rtl8125_direct_http_ready(void);
@@ -249,6 +257,26 @@ extern uint64_t kotoba_aiueos_ecdsa_p256_sign(const uint8_t *priv,
                                               const uint8_t *k,
                                               uint8_t *out,
                                               uint8_t *workspace);
+#ifdef AIUEOS_ECDSA_PUBLIC_KAT
+extern uint64_t kotoba_aiueos_ecdsa_p256_public(const uint8_t *priv,
+                                                uint8_t *out,
+                                                uint8_t *workspace);
+static int aiueos_ecdsa_public_kat(void) {
+  static const uint8_t d[32] = {
+    0xc9,0xaf,0xa9,0xd8,0x45,0xba,0x75,0x16,0x6b,0x5c,0x21,0x57,0x67,0xb1,0xd6,0x93,
+    0x4e,0x50,0xc3,0xdb,0x36,0xe8,0x9b,0x12,0x7b,0x8a,0x62,0x2b,0x12,0x0f,0x67,0x21};
+  static const uint8_t want[64] = {
+    0x60,0xfe,0xd4,0xba,0x25,0x5a,0x9d,0x31,0xc9,0x61,0xeb,0x74,0xc6,0x35,0x6d,0x68,
+    0xc0,0x49,0xb8,0x92,0x3b,0x61,0xfa,0x6c,0xe6,0x69,0x62,0x2e,0x60,0xf2,0x9f,0xb6,
+    0x79,0x03,0xfe,0x10,0x08,0xb8,0xbc,0x99,0xa4,0x1a,0xe9,0xe9,0x56,0x28,0xbc,0x64,
+    0xf2,0xf1,0xb2,0x0c,0x2d,0x7e,0x9f,0x51,0x77,0xa3,0xc2,0x94,0xd4,0x46,0x22,0x99};
+  static uint8_t workspace[2048];
+  uint8_t out[64];
+  if (!kotoba_aiueos_ecdsa_p256_public(d, out, workspace)) return 0;
+  for (uint32_t i = 0; i < 64; i++) if (out[i] != want[i]) return 0;
+  return 1;
+}
+#endif
 #ifdef AIUEOS_ECDSA_SIGN_KAT
 static int aiueos_ecdsa_sign_kat(void) {
   /* RFC 6979 A.2.5, P-256/SHA-256, message "sample". */
@@ -605,7 +633,8 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
   serial_init();
   if (!boot || boot->magic != AIUEOS_BOOT_INFO_MAGIC ||
       (boot->version != 2 && boot->version != AIUEOS_BOOT_INFO_VERSION_BASE &&
-       boot->version != AIUEOS_BOOT_INFO_VERSION_MODEL_HANDOFF) ||
+       boot->version != AIUEOS_BOOT_INFO_VERSION_MODEL_HANDOFF &&
+       boot->version != AIUEOS_BOOT_INFO_VERSION_TSC_CALIBRATED) ||
       !boot->memory_map || !boot->memory_map_size || !boot->descriptor_size ||
       !aiueos_boot_info_retain(boot)) {
     debug_string("AIUEOS_KERNEL_FAIL boot-info\n");
@@ -626,6 +655,30 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
 #endif
     debug_string("AIUEOS_KERNEL_OK memory-map-v1\n");
     serial_string("AIUEOS_SERIAL_OK stack-v1 memory-map-v1\r\n");
+#ifdef AIUEOS_ECDSA_PUBLIC_KAT
+    /* Run before the owned low-2MiB page table is installed. The standalone
+       public-point object intentionally makes this one-purpose KAT image
+       larger than that generic bootstrap boundary. */
+    if (aiueos_ecdsa_public_kat()) {
+      serial_string("AIUEOS_ECDSA_PUBLIC_OK rfc6979-a2.5 x||y-match\r\n");
+      debug_string("AIUEOS_ECDSA_PUBLIC_OK rfc6979-a2.5 x||y-match\n");
+      qemu_exit(0x30);
+    }
+    serial_string("AIUEOS_ECDSA_PUBLIC_FAIL vector-mismatch\r\n");
+    qemu_exit(0x7d);
+#endif
+#ifdef AIUEOS_ECDSA_SIGN_KAT
+    /* The standalone sign brick makes this one-purpose image larger than the
+       generic low-2MiB bootstrap mapping. Exercise it before owned paging, as
+       with the public-point KAT above, then terminate the dedicated test. */
+    if (aiueos_ecdsa_sign_kat()) {
+      serial_string("AIUEOS_ECDSA_SIGN_OK rfc6979-a2.5 r||s-match\r\n");
+      debug_string("AIUEOS_ECDSA_SIGN_OK rfc6979-a2.5 r||s-match\n");
+      qemu_exit(0x30);
+    }
+    serial_string("AIUEOS_ECDSA_SIGN_FAIL vector-mismatch\r\n");
+    qemu_exit(0x7d);
+#endif
 #ifdef AIUEOS_PHYSICAL_QUALIFICATION
     aiueos_qualification_progress(221);
 #endif
@@ -864,6 +917,15 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
     debug_string("AIUEOS_MODEL_HANDOFF_OK format=gguf-v3 parts=3 sha256=verified mapping=read-only-nx metrics=N/A\n");
     serial_string("AIUEOS_MODEL_HANDOFF_OK format=gguf-v3 parts=3 sha256=verified mapping=read-only-nx metrics=N/A\r\n");
 #ifndef AIUEOS_MODEL_TEST_FIXTURE
+    uint64_t calibrated_model_load_ns = AIUEOS_INFERENCE_UNMEASURED;
+    if (boot->version >= AIUEOS_BOOT_INFO_VERSION_TSC_CALIBRATED && boot->tsc_hz) {
+      uint64_t whole = boot->model_load_cycles / boot->tsc_hz;
+      uint64_t remainder = boot->model_load_cycles % boot->tsc_hz;
+      if (whole <= (UINT64_MAX - (remainder * 1000000000ULL) / boot->tsc_hz) /
+                     1000000000ULL)
+        calibrated_model_load_ns = whole * 1000000000ULL +
+          (remainder * 1000000000ULL) / boot->tsc_hz;
+    }
     aiueos_qwen35_status = (struct aiueos_inference_status){
       .abi_version = AIUEOS_INFERENCE_STATUS_ABI_VERSION,
       .byte_size = sizeof(struct aiueos_inference_status),
@@ -876,7 +938,7 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
       .target_tokens = 1,
       .artifact_bytes = boot->model_size,
       .resident_bytes = boot->model_size,
-      .load_ns = AIUEOS_INFERENCE_UNMEASURED,
+      .load_ns = calibrated_model_load_ns,
       .prefill_ns = AIUEOS_INFERENCE_UNMEASURED,
       .decode_ns = AIUEOS_INFERENCE_UNMEASURED,
       .time_to_first_token_ns = AIUEOS_INFERENCE_UNMEASURED,
@@ -990,6 +1052,15 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
     aiueos_qwen35_status.detail = "TOKEN 2005 MATCH";
     aiueos_qwen35_status.generated_tokens = 1;
     aiueos_qwen35_status.compute_cycles = first_token.compute_cycles;
+    if (boot->version >= AIUEOS_BOOT_INFO_VERSION_TSC_CALIBRATED && boot->tsc_hz) {
+      uint64_t whole = first_token.compute_cycles / boot->tsc_hz;
+      uint64_t remainder = first_token.compute_cycles % boot->tsc_hz;
+      if (whole <= (UINT64_MAX - (remainder * 1000000000ULL) / boot->tsc_hz) /
+                     1000000000ULL)
+        aiueos_qwen35_status.time_to_first_token_ns =
+          whole * 1000000000ULL +
+          (remainder * 1000000000ULL) / boot->tsc_hz;
+    }
     (void)aiueos_framebuffer_inference_screen(&aiueos_qwen35_status);
     debug_string("AIUEOS_QWEN35_FIRST_TOKEN_OK bos=248044 token=2005 reference=matched timing=cycles\n");
     serial_string("AIUEOS_QWEN35_FIRST_TOKEN_OK bos=248044 token=");
@@ -1053,14 +1124,27 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
 #ifdef AIUEOS_PHYSICAL_DIRECT_HTTPS_QUALIFICATION
     aiueos_qualification_progress(232);
     aiueos_framebuffer_qualification_screen("AIUEOS K16", "TEST DIRECT HTTPS", "SSD READ ONLY", 0);
+#ifdef AIUEOS_MURAKUMO_DEVICE_RESULT
+    if(!aiueos_rtl8125_direct_https_qualification(
+          boot, first_token.token, first_token.second_token,
+          first_token.compute_cycles)) {
+#else
     if(!aiueos_rtl8125_direct_https_qualification()) {
+#endif
       uint32_t error=aiueos_rtl8125_direct_https_error();
       uint32_t code=8600U+error;
       aiueos_framebuffer_qualification_screen("AIUEOS K16", "FAIL DIRECT HTTPS", "SSD READ ONLY", 0);
+#ifdef AIUEOS_MURAKUMO_DEVICE_RESULT
+      debug_string("AIUEOS_PHYSICAL_DIRECT_HTTPS_FAIL host=api.murakumo.cloud auth=device-p256 nvram-key=true cacao=false\n");
+      serial_string("AIUEOS_PHYSICAL_DIRECT_HTTPS_FAIL host=api.murakumo.cloud error=");
+      serial_decimal(error);
+      serial_string(" auth=device-p256 nvram-key=true cacao=false passkey=false pq=false biscuit=false\r\n");
+#else
       debug_string("AIUEOS_PHYSICAL_DIRECT_HTTPS_FAIL host=api.murakumo.cloud trust=transport-only secrets=none\n");
       serial_string("AIUEOS_PHYSICAL_DIRECT_HTTPS_FAIL host=api.murakumo.cloud error=");
       serial_decimal(error);
       serial_string(" trust=transport-only secrets=none\r\n");
+#endif
       if(!aiueos_qualification_finalize(2,code))
         serial_string("AIUEOS_PHYSICAL_QUALIFICATION_LOG_FAIL stage=runtime-variable\r\n");
       for(;;)__asm__ volatile("cli; hlt");
@@ -1068,16 +1152,36 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
     (void)aiueos_rtl8125_direct_dns_a();
     if(!aiueos_rtl8125_direct_http_ready()) {
       aiueos_framebuffer_qualification_screen("AIUEOS K16", "FAIL DIRECT HTTPS", "SSD READ ONLY", 0);
+#ifdef AIUEOS_MURAKUMO_DEVICE_RESULT
+      serial_string("AIUEOS_PHYSICAL_DIRECT_HTTPS_FAIL host=api.murakumo.cloud error=12 auth=device-p256 nvram-key=true cacao=false passkey=false pq=false biscuit=false\r\n");
+#else
       serial_string("AIUEOS_PHYSICAL_DIRECT_HTTPS_FAIL host=api.murakumo.cloud error=12 trust=transport-only secrets=none\r\n");
+#endif
       if(!aiueos_qualification_finalize(2,8612))
         serial_string("AIUEOS_PHYSICAL_QUALIFICATION_LOG_FAIL stage=runtime-variable\r\n");
       for(;;)__asm__ volatile("cli; hlt");
     }
     aiueos_qualification_progress(233);
+#ifdef AIUEOS_MURAKUMO_DEVICE_RESULT
+    aiueos_framebuffer_qualification_screen("AIUEOS K16", "MURAKUMO NODE OK", "COMMUNITY PENDING", 1);
+    debug_string("AIUEOS_MURAKUMO_NODE_OK host=api.murakumo.cloud path=/infer/nodes/device-p256-result auth=device-p256 cacao=false ready=false\n");
+    serial_string("AIUEOS_MURAKUMO_NODE_OK did=");
+    serial_string(aiueos_rtl8125_direct_device_did());
+    serial_string(" auth=device-p256 cacao=false passkey=false pq=false biscuit=false ready=false\r\n");
+    serial_string("AIUEOS_QWEN38_TIMING model-load-ns=");
+    serial_decimal64(aiueos_qwen35_status.load_ns);
+    serial_string(" ttft-ns=");
+    serial_decimal64(aiueos_qwen35_status.time_to_first_token_ns);
+    serial_string(" decode-tokens-per-second=N/A tsc-hz=");
+    serial_decimal64(boot->tsc_hz);
+    serial_string("\r\n");
+    if(!aiueos_qualification_finalize(1,8160))
+#else
     aiueos_framebuffer_qualification_screen("AIUEOS K16", "DIRECT HTTPS OK", "SSD READ ONLY", 1);
     debug_string("AIUEOS_PHYSICAL_DIRECT_HTTPS_OK host=api.murakumo.cloud path=/infer/queue http=200 mac-app-relay=none trust=transport-only secrets=none\n");
     serial_string("AIUEOS_PHYSICAL_DIRECT_HTTPS_OK host=api.murakumo.cloud path=/infer/queue http=200 mac-app-relay=none trust=transport-only secrets=none\r\n");
     if(!aiueos_qualification_finalize(1,8150))
+#endif
       serial_string("AIUEOS_PHYSICAL_QUALIFICATION_LOG_FAIL stage=runtime-variable\r\n");
     for(;;)__asm__ volatile("cli; hlt");
 #else
@@ -1340,21 +1444,6 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
       } else {
         serial_string("AIUEOS_SSH_KEX_FAIL sha256-object-failed\r\n");
       }
-    }
-#endif
-#ifdef AIUEOS_ECDSA_SIGN_KAT
-    /* ECDSA P-256 sign known-answer test (ssh-v1.edn / ADR-0105): the host-key
-       signing brick, exercised against the RFC 6979 A.2.5 P-256/SHA-256
-       "sample" vector. The object must reproduce the published r||s from the
-       vector's private key, SHA256("sample") and nonce k. Behind its OWN flag,
-       not AIUEOS_SSH_LISTEN: the object is ~50 KiB and the listener build is
-       already near the 1 MiB kernel ceiling, so the two are measured in
-       separate builds until the sshd needs both together. */
-    if (aiueos_ecdsa_sign_kat()) {
-      serial_string("AIUEOS_ECDSA_SIGN_OK rfc6979-a2.5 r||s-match\r\n");
-      debug_string("AIUEOS_ECDSA_SIGN_OK rfc6979-a2.5 r||s-match\n");
-    } else {
-      serial_string("AIUEOS_ECDSA_SIGN_FAIL vector-mismatch\r\n");
     }
 #endif
     if ((pci_result & 3) != 3) {

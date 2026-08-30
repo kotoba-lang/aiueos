@@ -966,6 +966,27 @@ K16 reboot is still required before the physical state can become green.
 Even after an HTTP 200, the label remains `trust=transport-only` until native
 certificate-chain and hostname/SAN admission land (ADR-0115).
 
+The Qwen qualification result extends that transport profile with a
+device-owned P-256 key and a bounded signed POST:
+
+```sh
+os/aiueos/scripts/build-qwen38-murakumo-node-pxe.sh
+```
+
+The first boot generates a valid P-256 scalar from CPU RDRAND and persists it
+as the UEFI NVRAM variable `AIUEOSDeviceP256Key`; later boots retain the same
+standard P-256 `did:key`. After exact GGUF admission and the native first-token
+check, the K16 posts `/infer/nodes/device-p256-result` over its own TLS session.
+The receipt binds the device public key, boot nonce, model digest, token,
+measured model-load cycles, first-token cycles, and a UEFI-calibrated TSC rate.
+Murakumo enrolls this self-asserted identity only as `Community/pending` and
+keeps `ready=false`: one correct token is qualification evidence, not a job
+polling worker. It reports model-load time and TTFT; decode tokens/second stays
+`N/A` until a multi-token decode exists. Device-P256 is deliberately not
+called CACAO and does not imply Passkey account binding, post-quantum
+authentication, Biscuit delegation, TPM sealing, or AWAI Secure admission.
+The image writes neither the model USB nor the internal SSD.
+
 `verify-release-signature.py` verifies an RSA-2048 PKCS#1 v1.5 SHA-256
 signature over the build receipt using only the Python standard library
 (public-key operation only, fixed-work encoded-message comparison, RSA-2048

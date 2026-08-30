@@ -27,6 +27,7 @@ kernel_rtl8125_object="$out/kernel-rtl8125.o"
 kernel_relay_protocol_object="$out/kernel-relay-protocol.o"
 kernel_micro_infer_object="$out/kernel-micro-infer.o"
 kernel_inference_status_object="$out/kernel-inference-status.o"
+kernel_device_result_object="$out/kernel-device-result.o"
 kernel_model_handoff_object="$out/kernel-model-handoff.o"
 kernel_qwen35_runtime_object="$out/kernel-qwen35-runtime.o"
 kernel_qwen35_quant_object="$out/kernel-qwen35-quant.o"
@@ -124,19 +125,31 @@ kotoba_ecdsa_object=${AIUEOS_KOTOBA_ECDSA_OBJECT:-"$aiueos/kotoba/ecdsa-p256.o"}
 # scripts/reproduce-ecdsa-sign-object.clj (the pinned amu needs the
 # kernel-object-entries + 250M fuel-tier patch that recipe applies).
 kotoba_ecdsa_sign_object=${AIUEOS_KOTOBA_ECDSA_SIGN_OBJECT:-"$aiueos/kotoba/ecdsa-p256-sign.o"}
+kotoba_ecdsa_public_object=${AIUEOS_KOTOBA_ECDSA_PUBLIC_OBJECT:-"$aiueos/kotoba/ecdsa-p256-public.o"}
 ecdsa_sign_link=
+ecdsa_public_link=
+device_result_link=
 # Linked for the sign KAT and, now, for the SSH listener build: net_ssh_kex
 # signs the exchange hash H with it (ADR-0107). Listener+sign measured at
 # 1,043,688 bytes -- under the 1 MiB ceiling, so ADR-0105's separation is
 # lifted for the SSH build (the KAT keeps its own flag for the KAT code only).
-if [ "${AIUEOS_ECDSA_SIGN_KAT:-0}" = 1 ] || [ "${AIUEOS_SSH_LISTEN:-0}" = 1 ]; then
+if [ "${AIUEOS_ECDSA_SIGN_KAT:-0}" = 1 ] || [ "${AIUEOS_SSH_LISTEN:-0}" = 1 ] ||
+   [ "${AIUEOS_MURAKUMO_DEVICE_RESULT:-0}" = 1 ]; then
   ecdsa_sign_link="$kotoba_ecdsa_sign_object"
+fi
+if [ "${AIUEOS_MURAKUMO_DEVICE_RESULT:-0}" = 1 ] ||
+   [ "${AIUEOS_ECDSA_PUBLIC_KAT:-0}" = 1 ]; then
+  ecdsa_public_link="$kotoba_ecdsa_public_object"
+fi
+if [ "${AIUEOS_MURAKUMO_DEVICE_RESULT:-0}" = 1 ]; then
+  device_result_link="$kernel_device_result_object"
 fi
 physical_qualification_cflags=
 physical_network_qualification_cflags=
 physical_direct_https_qualification_cflags=
 physical_relay_qualification_cflags=
 physical_job_qualification_cflags=
+murakumo_device_result_cflags=
 persistent_boot_cflags=
 qualification_link=
 qualification_gc_link=
@@ -172,6 +185,21 @@ if [ "${AIUEOS_PHYSICAL_DIRECT_HTTPS_QUALIFICATION:-0}" = 1 ]; then
     exit 1
   }
   physical_direct_https_qualification_cflags="-DAIUEOS_PHYSICAL_DIRECT_HTTPS_QUALIFICATION=1"
+fi
+if [ -n "$device_result_link" ]; then
+  [ "${AIUEOS_PHYSICAL_DIRECT_HTTPS_QUALIFICATION:-0}" = 1 ] || {
+    echo "error: Murakumo device result requires physical direct HTTPS" >&2
+    exit 1
+  }
+  [ "${AIUEOS_QWEN38_MODEL_HANDOFF:-0}" = 1 ] || {
+    echo "error: Murakumo device result requires the exact Qwen3.8 model handoff" >&2
+    exit 1
+  }
+  [ "${AIUEOS_MODEL_TEST_FIXTURE:-0}" != 1 ] || {
+    echo "error: Murakumo device result refuses a model test fixture" >&2
+    exit 1
+  }
+  murakumo_device_result_cflags="-DAIUEOS_MURAKUMO_DEVICE_RESULT=1"
 fi
 if [ "${AIUEOS_PHYSICAL_RELAY_QUALIFICATION:-0}" = 1 ]; then
   [ "${AIUEOS_PHYSICAL_NETWORK_QUALIFICATION:-0}" = 1 ] || {
@@ -271,6 +299,9 @@ fi
 # ceiling (ADR-0105).
 if [ "${AIUEOS_ECDSA_SIGN_KAT:-0}" = 1 ]; then
   input_smoke_cflags="$input_smoke_cflags -DAIUEOS_ECDSA_SIGN_KAT=1"
+fi
+if [ "${AIUEOS_ECDSA_PUBLIC_KAT:-0}" = 1 ]; then
+  input_smoke_cflags="$input_smoke_cflags -DAIUEOS_ECDSA_PUBLIC_KAT=1"
 fi
 
 # Pure-AIUEOS Qwen handoff. Production values are pinned and cannot be
@@ -546,8 +577,13 @@ python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_ecdsa_object" 
   kotoba_aiueos_ecdsa_p256_sha256_verify
 if [ -n "$ecdsa_sign_link" ]; then
   python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_ecdsa_sign_object" \
-    a40db7f8a6726de870ffb9339def0d77b1e735cfef6be5c183b90047eaa67c5b \
+    decd83b1cd331af1305ad24c080443118f925067353c320078e66085695fd433 \
     kotoba_aiueos_ecdsa_p256_sign
+fi
+if [ -n "$ecdsa_public_link" ]; then
+  python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_ecdsa_public_object" \
+    e524dbbfb56f58e5bfac41c0a5b62d355b67c8e9790678984c3ca01a0a66c993 \
+    kotoba_aiueos_ecdsa_p256_public
 fi
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_ime_object" \
   ee11f50c9dfb30d03c820bead466b2f1bf18e4e64f3a2bfda98f5a5dd5d4ca34 \
@@ -576,6 +612,7 @@ zig cc -target x86_64-freestanding-none -std=c11 -O2 \
   -ffreestanding -fno-stack-protector -mno-red-zone -I "$out" \
   $input_smoke_cflags $model_handoff_cflags $physical_qualification_cflags \
   $physical_network_qualification_cflags $physical_direct_https_qualification_cflags \
+  $murakumo_device_result_cflags \
   $physical_relay_qualification_cflags \
   $physical_job_qualification_cflags \
   $kernel_hang_test_cflags \
@@ -602,6 +639,7 @@ zig cc -target x86_64-freestanding-none -std=c11 -O2 \
   -ffreestanding -fno-stack-protector -mno-red-zone \
   $input_smoke_cflags $physical_network_qualification_cflags \
   $physical_direct_https_qualification_cflags \
+  $murakumo_device_result_cflags \
   $physical_relay_qualification_cflags \
   $physical_job_qualification_cflags \
   -c -o "$kernel_pci_object" "$aiueos/kernel/pci.c"
@@ -617,6 +655,11 @@ zig cc -target x86_64-freestanding-none -std=c11 -O2 \
 zig cc -target x86_64-freestanding-none -std=c11 -O2 \
   -ffreestanding -fno-stack-protector -mno-red-zone \
   -c -o "$kernel_inference_status_object" "$aiueos/kernel/inference_status.c"
+if [ "${AIUEOS_MURAKUMO_DEVICE_RESULT:-0}" = 1 ]; then
+  zig cc -target x86_64-freestanding-none -std=c11 -O2 \
+    -ffreestanding -fno-stack-protector -mno-red-zone \
+    -c -o "$kernel_device_result_object" "$aiueos/kernel/device_result.c"
+fi
 if [ -n "$model_handoff_link" ]; then
   zig cc -target x86_64-freestanding-none -std=c11 -O2 \
     -ffreestanding -fno-stack-protector -mno-red-zone -I "$out" \
@@ -694,7 +737,8 @@ zig ld.lld -nostdlib -static --strip-all $qualification_gc_link -z max-page-size
   "$kernel_entry_object" "$kernel_object" "$kernel_paging_object" \
   "$kernel_acpi_object" "$kernel_vtd_object" "$kernel_apic_object" "$kernel_memory_object" \
   "$kernel_pci_object" "$kernel_rtl8125_object" "$kernel_relay_protocol_object" \
-  "$kernel_micro_infer_object" "$kernel_inference_status_object" $model_handoff_link \
+  "$kernel_micro_infer_object" "$kernel_inference_status_object" \
+  $device_result_link $model_handoff_link \
   "$kernel_job_protocol_object" \
   "$kernel_tls_aes_object" "$kernel_tls13_object" \
   "$kernel_scheduler_object" "$kernel_syscall_object" \
@@ -709,7 +753,7 @@ zig ld.lld -nostdlib -static --strip-all $qualification_gc_link -z max-page-size
   "$kotoba_mutable_build_object" "$kotoba_cap_valid_object" \
   "$kotoba_extent_valid_object" "$kotoba_region_valid_object" \
   "$kotoba_pci_config_read_object" "$kotoba_pci_config_write_object" \
-  "$kotoba_x25519_object"   "$kotoba_ecdsa_object" $ecdsa_sign_link "$kotoba_ime_object" \
+  "$kotoba_x25519_object"   "$kotoba_ecdsa_object" $ecdsa_sign_link $ecdsa_public_link "$kotoba_ime_object" \
   "$kotoba_wm_object" "$kotoba_scanout_object" "$kotoba_broker_object" "$kotoba_session_object" \
   "$kotoba_mmio_map_admit_object" \
   "$kotoba_acpi_checksum_object" "$kotoba_acpi_table_valid_object" \
