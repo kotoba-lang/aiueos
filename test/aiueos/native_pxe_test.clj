@@ -166,7 +166,7 @@
   (testing "a server FIN terminates the current receive pump"
     (doseq [marker ["if (frame[47] & NET_TCP_FIN)"
                     "return 0;"
-                    "RTL_DIRECT_RX_BUDGET 10000000U"]]
+                    "RTL_DIRECT_RX_BUDGET 500000000U"]]
       (is (str/includes? pci marker))))
   (testing "a signed node POST gets fresh TLS material on up to three attempts"
     (doseq [marker ["RTL_DIRECT_TLS_ATTEMPTS 3U"
@@ -186,6 +186,16 @@
                     "RTL_DIRECT_STAGE_ERROR(12)"
                     "RTL_DIRECT_STAGE_ERROR(13)"
                     "RTL_DIRECT_STAGE_ERROR(14)"]]
+      (is (str/includes? pci marker))))
+  (testing "the one-descriptor K16 path advertises one bounded receive slot"
+    (is (str/includes? pci "RTL_DIRECT_RX_BUDGET 500000000U"))
+    (is (str/includes? pci "RTL_DIRECT_RX_WINDOW 1024U"))
+    (is (str/includes? pci "net_tx_window = RTL_DIRECT_RX_WINDOW"))
+    (is (not (str/includes? pci "((stage) + 1U)"))))
+  (testing "a physical pump refusal names the exact receive gate"
+    (doseq [marker ["30U + rtl8125_direct_tls_pump_error"
+                    "rtl8125_direct_tls_pump_error = 4"
+                    "rtl8125_direct_tls_pump_error = 7"]]
       (is (str/includes? pci marker)))))
 
 (deftest persistent-node-reconnects-instead-of-halting-on-one-missed-renewal
