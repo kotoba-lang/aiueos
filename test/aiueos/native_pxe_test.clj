@@ -234,10 +234,15 @@
     (is (str/includes? pci "RTL_DIRECT_RX_WINDOW 1024U"))
     (is (str/includes? pci "net_tx_window = RTL_DIRECT_RX_WINDOW"))
     (is (not (str/includes? pci "((stage) + 1U)"))))
-  (testing "a failed persistent request starts the next poll from a clean RX/DNS state"
+  (testing "a failed persistent request resets RX but keeps boot-scoped DNS"
     (is (str/includes? pci
                        "aiueos_rtl8125_rx_rearm(&rtl8125_qualification_device);"))
-    (is (str/includes? pci "rtl8125_direct_dns_a = 0;")))
+    (doseq [marker ["retain the DNS answer already verified"
+                    "The direct-link bridge is the fixed 10.77.0.1 endpoint"]]
+      (is (str/includes? pci marker)))
+    (is (not (str/includes?
+              pci
+              "aiueos_rtl8125_rx_rearm(&rtl8125_qualification_device);\n  rtl8125_direct_dns_a = 0;\n  net_tx_window = NET_TCP_WINDOW;"))))
   (testing "each bounded DNS receive gets a fresh reply after a stale TLS frame"
     (doseq [marker ["Pair every"
                     "bounded receive attempt with a fresh DNS query"
