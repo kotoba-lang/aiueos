@@ -26,6 +26,7 @@ int aiueos_tls13_ecdsa_selftest(void);
 int aiueos_tls13_run_certverify(void);
 int aiueos_tls13_certverify_ok(void);
 uint16_t aiueos_tls13_certverify_scheme(void);
+uint32_t aiueos_tls13_certverify_evidence(uint8_t *out, uint32_t capacity);
 uint32_t aiueos_tls13_stage(void);
 uint32_t aiueos_tls13_rx_buffered(void);
 uint8_t aiueos_tls13_last_record_type(void);

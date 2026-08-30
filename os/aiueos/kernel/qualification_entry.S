@@ -4,6 +4,7 @@
 .extern aiueos_qualification_finalize_firmware
 .extern aiueos_device_p256_key_load_firmware
 .extern aiueos_device_p256_key_save_firmware
+.extern aiueos_tls_certverify_evidence_save_firmware
 
 /* The physical K16 v10 result reached code 416: both candidate CR3 loads and
  * readbacks completed, but the first ordinary C progress call under the final
@@ -90,5 +91,24 @@ aiueos_device_p256_key_save:
   xor %eax, %eax
   ret
 .size aiueos_device_p256_key_save, .-aiueos_device_p256_key_save
+
+.global aiueos_tls_certverify_evidence_save
+.type aiueos_tls_certverify_evidence_save,@function
+aiueos_tls_certverify_evidence_save:
+  mov qualification_firmware_cr3(%rip), %rax
+  test %rax, %rax
+  jz .Ltls_certverify_evidence_save_unavailable
+  mov %cr3, %r11
+  cli
+  mov %rax, %cr3
+  push %r11
+  call aiueos_tls_certverify_evidence_save_firmware
+  pop %r11
+  mov %r11, %cr3
+  ret
+.Ltls_certverify_evidence_save_unavailable:
+  xor %eax, %eax
+  ret
+.size aiueos_tls_certverify_evidence_save, .-aiueos_tls_certverify_evidence_save
 
 .section .note.GNU-stack,"",@progbits

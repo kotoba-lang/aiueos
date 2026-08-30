@@ -186,7 +186,21 @@
                     "RTL_DIRECT_STAGE_ERROR(12)"
                     "RTL_DIRECT_STAGE_ERROR(13)"
                     "RTL_DIRECT_STAGE_ERROR(14)"]]
-      (is (str/includes? pci marker)))))
+      (is (str/includes? pci marker))))
+  (testing "a refused public CertificateVerify vector is recoverable over netlog"
+    (doseq [marker ["AIUEOS_TLS_CERTVERIFY_VECTOR_V1 attempt="
+                    "aiueos_tls13_certverify_evidence"
+                    "i < 160U"
+                    "rtl8125_direct_certverify_evidence(attempt, certverify_evidence)"]]
+      (is (str/includes? pci marker))))
+  (testing "the pre-admission vector survives reset in bounded public NVRAM"
+    (doseq [marker ["AIUEOSTLSCertVerifyEvidence"
+                    "aiueos_tls_certverify_evidence_save_firmware"
+                    "record.evidence[i] = evidence[i]"]]
+      (is (str/includes? qualification-runtime marker)))
+    (doseq [marker ["AIUEOS_TLS_CERTVERIFY_VECTOR_V1 source=uefi-nvram"
+                    "report_tls_certverify_evidence(system)"]]
+      (is (str/includes? probe marker)))))
 
 (deftest persistent-node-reconnects-instead-of-halting-on-one-missed-renewal
   (doseq [marker ["NODE RECONNECTING"

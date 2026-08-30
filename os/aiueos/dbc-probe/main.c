@@ -332,6 +332,9 @@ static char16 boot_next_name[] = {'B','o','o','t','N','e','x','t',0};
 static char16 qualification_name[] =
   {'A','I','U','E','O','S','Q','u','a','l','i','f','i','c','a','t','i','o','n',
    'R','e','s','u','l','t',0};
+static char16 tls_certverify_evidence_name[] =
+  {'A','I','U','E','O','S','T','L','S','C','e','r','t','V','e','r','i','f','y',
+   'E','v','i','d','e','n','c','e',0};
 static struct efi_simple_text_output *console;
 static struct efi_boot_services *boot_services;
 static struct efi_pxe_base_code_protocol *pxe_handles[MAX_PXE_HANDLES];
@@ -809,6 +812,36 @@ static void report_qualification_result(struct efi_system_table *system) {
   output=append_dec(output,record.code);
   output=append_ascii(output,
       " source=uefi-nvram internal-ssd-writes=none retained=yes");
+  append_line_end(&output);
+  console_ascii(line);
+}
+
+struct aiueos_tls_certverify_evidence_record {
+  uint32_t magic;
+  uint16_t version, attempt;
+  uint8_t evidence[160];
+};
+
+static void report_tls_certverify_evidence(struct efi_system_table *system) {
+  if (!system || !system->runtime_services ||
+      !system->runtime_services->get_variable) return;
+  struct aiueos_tls_certverify_evidence_record record={0};
+  uint32_t attributes=0;
+  uint64_t bytes=sizeof(record);
+  if (system->runtime_services->get_variable(
+        tls_certverify_evidence_name,&qualification_guid,&attributes,&bytes,
+        &record)!=EFI_SUCCESS || bytes!=sizeof(record) ||
+      record.magic!=0x31335643U || record.version!=1 || record.attempt>=3)
+    return;
+  char line[448],*output=append_ascii(
+    line,"AIUEOS_TLS_CERTVERIFY_VECTOR_V1 source=uefi-nvram attempt=");
+  output=append_dec(output,record.attempt+1);
+  output=append_ascii(output," sig=");
+  for (uint32_t i=0;i<64;i++) output=append_hex(output,record.evidence[i],2);
+  output=append_ascii(output," digest=");
+  for (uint32_t i=64;i<96;i++) output=append_hex(output,record.evidence[i],2);
+  output=append_ascii(output," pub=");
+  for (uint32_t i=96;i<160;i++) output=append_hex(output,record.evidence[i],2);
   append_line_end(&output);
   console_ascii(line);
 }
@@ -1383,6 +1416,7 @@ efi_status EFIAPI efi_main(efi_handle image, struct efi_system_table *system) {
   report_graphics_output(system);
   report_acpi(system);
   report_qualification_result(system);
+  report_tls_certverify_evidence(system);
 #ifdef AIUEOS_PXE_ONLY_CONTROL
   console_ascii("\r\nAIUEOS PXE CONTROL (NO DISK WRITES)\r\n");
   console_ascii("AIUEOS_PXE_CONTROL_START transport=uefi-pxe-base-code internal-ssd-writes=none usb-log-writes=none\r\n");

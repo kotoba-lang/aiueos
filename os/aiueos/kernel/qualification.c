@@ -49,6 +49,8 @@ static const struct efi_guid qualification_guid =
   {0x73953a72,0x6627,0x4b62,{0x9a,0x9c,0x10,0x38,0xd9,0x20,0x9a,0x16}};
 static const char16 qualification_name[] = u"AIUEOSQualificationResult";
 static const char16 device_p256_key_name[] = u"AIUEOSDeviceP256Key";
+static const char16 tls_certverify_evidence_name[] =
+  u"AIUEOSTLSCertVerifyEvidence";
 static struct efi_runtime_services *qualification_runtime;
 /* Read by qualification_entry.S before any C prologue executes under the
    final split-W^X root.  Keep this symbol externally visible to that bounded
@@ -90,6 +92,29 @@ int aiueos_device_p256_key_save_firmware(const uint8_t key[32]) {
            EFI_VARIABLE_NON_VOLATILE | EFI_VARIABLE_BOOTSERVICE_ACCESS |
              EFI_VARIABLE_RUNTIME_ACCESS,
            32, (void *)key) == EFI_SUCCESS;
+}
+
+struct aiueos_tls_certverify_evidence_record {
+  uint32_t magic;
+  uint16_t version, attempt;
+  uint8_t evidence[160];
+};
+
+int aiueos_tls_certverify_evidence_save_firmware(
+    const uint8_t evidence[160], uint16_t attempt) {
+  struct efi_runtime_services *runtime = qualification_runtime;
+  if (!runtime || !qualification_firmware_cr3 || !runtime->set_variable ||
+      !evidence || attempt >= 3)
+    return 0;
+  struct aiueos_tls_certverify_evidence_record record = {
+    .magic = 0x31335643U, .version = 1, .attempt = attempt
+  };
+  for (uint32_t i = 0; i < 160U; i++) record.evidence[i] = evidence[i];
+  return runtime->set_variable(
+           tls_certverify_evidence_name, &qualification_guid,
+           EFI_VARIABLE_NON_VOLATILE | EFI_VARIABLE_BOOTSERVICE_ACCESS |
+             EFI_VARIABLE_RUNTIME_ACCESS,
+           sizeof(record), &record) == EFI_SUCCESS;
 }
 
 /* Keep the last entered physical-qualification stage across a hang or manual

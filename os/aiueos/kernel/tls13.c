@@ -527,6 +527,14 @@ int aiueos_tls13_run_certverify(void) {
   return 1;
 }
 
+uint32_t aiueos_tls13_certverify_evidence(uint8_t *out, uint32_t capacity) {
+  if (!out || capacity < 160 || !certverify_parsed || !have_leaf_pub) return 0;
+  copy_bytes(out, cv_rs, 64);
+  copy_bytes(out + 64, cv_digest, 32);
+  copy_bytes(out + 96, leaf_pub, 64);
+  return 160;
+}
+
 static int consume_hs_messages(const uint8_t *p, uint32_t n) {
   if (hs_partial_len + n > TLS_HS_MAX) return 0;
   copy_bytes(hs_partial + hs_partial_len, p, n);

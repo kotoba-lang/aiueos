@@ -4014,6 +4014,38 @@ static int rtl8125_direct_tls_pump(uint32_t dst, uint16_t local_port,
     aiueos_tls13_handshake_ready();
 }
 
+static void rtl8125_direct_certverify_evidence(
+    unsigned attempt, const uint8_t raw[160]) {
+  static const uint8_t prefix[] =
+    "AIUEOS_TLS_CERTVERIFY_VECTOR_V1 attempt=";
+  static const uint8_t hex[] = "0123456789abcdef";
+  uint8_t payload[384];
+  uint32_t at = 0, bytes;
+  if (attempt >= 9 || !raw) return;
+  for (uint32_t i = 0; i < sizeof(prefix) - 1; i++) payload[at++] = prefix[i];
+  payload[at++] = (uint8_t)('1' + attempt);
+  payload[at++] = ' ';
+  payload[at++] = 's'; payload[at++] = 'i'; payload[at++] = 'g'; payload[at++] = '=';
+  for (uint32_t i = 0; i < 64; i++) {
+    payload[at++] = hex[raw[i] >> 4]; payload[at++] = hex[raw[i] & 15U];
+  }
+  payload[at++] = ' ';
+  payload[at++] = 'd'; payload[at++] = 'i'; payload[at++] = 'g';
+  payload[at++] = 'e'; payload[at++] = 's'; payload[at++] = 't'; payload[at++] = '=';
+  for (uint32_t i = 64; i < 96; i++) {
+    payload[at++] = hex[raw[i] >> 4]; payload[at++] = hex[raw[i] & 15U];
+  }
+  payload[at++] = ' ';
+  payload[at++] = 'p'; payload[at++] = 'u'; payload[at++] = 'b'; payload[at++] = '=';
+  for (uint32_t i = 96; i < 160U; i++) {
+    payload[at++] = hex[raw[i] >> 4]; payload[at++] = hex[raw[i] & 15U];
+  }
+  bytes = rtl8125_build_udp_payload(
+    rtl8125_qualification_device.tx_frame, payload, at,
+    (uint16_t)(0xc900U + attempt));
+  if (bytes) (void)rtl8125_direct_tx(bytes);
+}
+
 static int rtl8125_direct_tls_attempt(uint32_t dst, uint32_t request_length,
                                       unsigned attempt) {
   uint32_t peer_next, our_next, received = 0;
@@ -4021,6 +4053,8 @@ static int rtl8125_direct_tls_attempt(uint32_t dst, uint32_t request_length,
   uint32_t isn = RTL_DIRECT_ISN + (attempt << 16);
   uint16_t local_port = (uint16_t)(RTL_DIRECT_LOCAL_PORT + attempt);
   uint8_t client_hello[256];
+  uint8_t certverify_evidence[160];
+  uint32_t certverify_evidence_length = 0;
 
 #ifdef AIUEOS_MURAKUMO_DEVICE_RESULT
   if (!aiueos_cpu_random_bytes(rtl_direct_client_random,
@@ -4066,7 +4100,20 @@ static int rtl8125_direct_tls_attempt(uint32_t dst, uint32_t request_length,
     rtl8125_direct_https_error = RTL_DIRECT_STAGE_ERROR(8);
     goto failed;
   }
+  /* Snapshot before calling the verifier.  The physical failure under
+     investigation may itself mutate TLS state or adjacent scratch storage;
+     post-failure access is therefore not a sound evidence boundary. */
+  certverify_evidence_length = aiueos_tls13_certverify_evidence(
+    certverify_evidence, sizeof(certverify_evidence));
+  if (certverify_evidence_length == sizeof(certverify_evidence)) {
+    extern int aiueos_tls_certverify_evidence_save(
+      const uint8_t evidence[160], uint16_t attempt);
+    (void)aiueos_tls_certverify_evidence_save(
+      certverify_evidence, (uint16_t)attempt);
+  }
   if (!aiueos_tls13_run_certverify()) {
+    if (certverify_evidence_length == sizeof(certverify_evidence))
+      rtl8125_direct_certverify_evidence(attempt, certverify_evidence);
     rtl8125_direct_https_error = RTL_DIRECT_STAGE_ERROR(9);
     goto failed;
   }
