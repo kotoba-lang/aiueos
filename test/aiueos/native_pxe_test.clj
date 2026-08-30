@@ -210,6 +210,11 @@
                     "return 0;"
                     "RTL_DIRECT_RX_BUDGET 50000000U"]]
       (is (str/includes? pci marker))))
+  (testing "a complete HTTP response is acknowledged and actively closed"
+    (doseq [marker ["#define NET_TCP_RST 0x04"
+                    "NET_TCP_RST | NET_TCP_ACK"
+                    "those stale frames hid the third connection's SYN-ACK"]]
+      (is (str/includes? pci marker))))
   (testing "a signed node POST gets fresh TLS material on up to three attempts"
     (doseq [marker ["RTL_DIRECT_TLS_ATTEMPTS 3U"
                     "RTL_DIRECT_LOCAL_PORT + (lane % 12000U)"
