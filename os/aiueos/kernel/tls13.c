@@ -16,6 +16,12 @@ extern uint64_t kotoba_aiueos_ecdsa_p256_sha256_verify(
 #define TLS_HTTP_MAX 1024
 #define TLS_CH_MAX 256
 
+#ifdef AIUEOS_TLS13_HOST_PROBE
+#define AIUEOS_TLS_HIGH_BSS
+#else
+#define AIUEOS_TLS_HIGH_BSS __attribute__((section(".high_bss")))
+#endif
+
 static uint8_t sha_ws[512];
 static uint8_t x_ws[646];
 static uint8_t ecdsa_ws[2048];
@@ -34,7 +40,12 @@ static uint8_t rx[TLS_RX_MAX];
 static uint32_t rx_len;
 static uint8_t hs_partial[TLS_HS_MAX];
 static uint32_t hs_partial_len;
-static uint8_t app_buf[TLS_APP_MAX];
+/* Application plaintext and the record decrypt staging are needed only after
+   owned paging is live.  Keep them in the writable/NX 4..6 MiB kernel window
+   so persistent worker telemetry does not consume the bounded low W^X
+   aperture shared with admitted user text. */
+static uint8_t app_buf[TLS_APP_MAX]
+  AIUEOS_TLS_HIGH_BSS;
 static uint32_t app_len;
 
 static uint8_t client_scalar[32];
@@ -59,7 +70,8 @@ static uint8_t c_hs_key[16], c_hs_iv[12], s_hs_key[16], s_hs_iv[12];
 static uint8_t c_ap_key[16], c_ap_iv[12], s_ap_key[16], s_ap_iv[12];
 static uint8_t handshake_secret[32];
 static uint8_t c_hs_secret[32], s_hs_secret[32];
-static uint8_t decrypt_plain[TLS_HS_MAX];
+static uint8_t decrypt_plain[TLS_HS_MAX]
+  AIUEOS_TLS_HIGH_BSS;
 static uint64_t s_hs_seq, c_hs_seq, s_ap_seq, c_ap_seq;
 
 static int saw_record;

@@ -5,6 +5,7 @@
 #include "relay_protocol.h"
 #include "job_protocol.h"
 #include "device_result.h"
+#include "device_worker_protocol.h"
 
 #define VIRTIO_VENDOR_ID 0x1af4
 #define VIRTIO_RNG_MODERN_ID 0x1044
@@ -3858,6 +3859,7 @@ static unsigned rtl8125_direct_tls_pump_error;
 static uint32_t rtl8125_direct_tls_stage;
 static uint32_t rtl8125_direct_dns_a;
 static int rtl8125_direct_http_ready;
+static uint32_t rtl8125_direct_connection_sequence;
 static uint8_t rtl8125_direct_tls_flight[RTL_DIRECT_TLS_FLIGHT_MAX];
 
 unsigned aiueos_rtl8125_direct_https_error(void) {
@@ -4038,11 +4040,13 @@ static int rtl8125_direct_tls_pump(uint32_t dst, uint16_t local_port,
 }
 
 static int rtl8125_direct_tls_attempt(uint32_t dst, uint32_t request_length,
+                                      uint32_t connection_sequence,
                                       unsigned attempt) {
   uint32_t peer_next, our_next, received = 0;
   uint32_t client_hello_length = 0, finished_length = 0, http_length = 0;
-  uint32_t isn = RTL_DIRECT_ISN + (attempt << 16);
-  uint16_t local_port = (uint16_t)(RTL_DIRECT_LOCAL_PORT + attempt);
+  uint32_t lane = connection_sequence * RTL_DIRECT_TLS_ATTEMPTS + attempt;
+  uint32_t isn = RTL_DIRECT_ISN + (lane << 16) + lane;
+  uint16_t local_port = (uint16_t)(RTL_DIRECT_LOCAL_PORT + (lane % 12000U));
   uint8_t client_hello[256];
   rtl8125_direct_tls_pump_error = 0;
 
@@ -4189,7 +4193,8 @@ int aiueos_rtl8125_direct_https_qualification(void) {
 #endif
     rtl8125_direct_https_attempts = attempt + 1;
     if (rtl8125_direct_tls_attempt(
-          rtl8125_direct_dns_a, request_length, attempt)) {
+          rtl8125_direct_dns_a, request_length,
+          rtl8125_direct_connection_sequence, attempt)) {
       rtl8125_direct_http_ready = 1;
       rtl8125_direct_https_error = 0;
       net_tx_window = NET_TCP_WINDOW;
@@ -4200,6 +4205,82 @@ failed:
   net_tx_window = NET_TCP_WINDOW;
   return 0;
 }
+
+#ifdef AIUEOS_MURAKUMO_DEVICE_RESULT
+static int rtl8125_direct_device_request(uint32_t request_length) {
+  if (!request_length || !rtl8125_qualification_device.ready ||
+      rtl8125_qualification_error) {
+    rtl8125_direct_https_error = 3;
+    return 0;
+  }
+  net_tx_window = RTL_DIRECT_RX_WINDOW;
+  if (!rtl8125_direct_dns_a && !rtl8125_direct_dns()) {
+    rtl8125_direct_https_error = 2;
+    net_tx_window = NET_TCP_WINDOW;
+    return 0;
+  }
+  rtl8125_direct_connection_sequence++;
+  for (unsigned attempt = 0; attempt < RTL_DIRECT_TLS_ATTEMPTS; attempt++) {
+    rtl8125_direct_https_attempts = attempt + 1;
+    if (rtl8125_direct_tls_attempt(
+          rtl8125_direct_dns_a, request_length,
+          rtl8125_direct_connection_sequence, attempt)) {
+      rtl8125_direct_https_error = 0;
+      net_tx_window = NET_TCP_WINDOW;
+      return 1;
+    }
+  }
+  net_tx_window = NET_TCP_WINDOW;
+  return 0;
+}
+
+int aiueos_rtl8125_device_worker_poll(
+    const struct aiueos_boot_info *boot, uint32_t sequence,
+    uint64_t *job_id, uint32_t *bos_token, int *ready) {
+  if (!boot || !job_id || !bos_token || !ready) return 0;
+  struct aiueos_device_worker_request request = {
+    .boot = boot,
+    .mac = rtl8125_qualification_device.mac,
+    .sequence = sequence,
+    .operation = AIUEOS_DEVICE_WORKER_POLL
+  };
+  uint32_t request_length = aiueos_device_worker_http_request(
+    &request, rtl_direct_http_request, sizeof(rtl_direct_http_request),
+    rtl_direct_device_did, sizeof(rtl_direct_device_did));
+  if (!rtl8125_direct_device_request(request_length)) return 0;
+  struct aiueos_device_worker_poll poll;
+  if (!aiueos_device_worker_poll_response(
+        aiueos_tls13_app(), aiueos_tls13_app_len(), &poll)) {
+    rtl8125_direct_https_error = 60;
+    return 0;
+  }
+  *job_id = poll.job_id;
+  *bos_token = poll.bos_token;
+  *ready = poll.ready;
+  return 1;
+}
+
+int aiueos_rtl8125_device_worker_result(
+    const struct aiueos_boot_info *boot, uint32_t sequence,
+    uint64_t job_id, uint32_t token, uint32_t second_token,
+    uint64_t inference_cycles) {
+  if (!boot || !job_id) return 0;
+  struct aiueos_device_worker_request request = {
+    .boot = boot,
+    .mac = rtl8125_qualification_device.mac,
+    .sequence = sequence,
+    .operation = AIUEOS_DEVICE_WORKER_RESULT,
+    .job_id = job_id,
+    .token = token,
+    .second_token = second_token,
+    .inference_cycles = inference_cycles
+  };
+  uint32_t request_length = aiueos_device_worker_http_request(
+    &request, rtl_direct_http_request, sizeof(rtl_direct_http_request),
+    rtl_direct_device_did, sizeof(rtl_direct_device_did));
+  return rtl8125_direct_device_request(request_length);
+}
+#endif
 #endif
 
 int aiueos_rtl8125_relay_qualification(void) {
