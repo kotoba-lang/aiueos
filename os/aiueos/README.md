@@ -958,11 +958,14 @@ os/aiueos/scripts/build-physical-direct-https-pxe.sh
 os/aiueos/scripts/smoke-qemu-physical-direct-https.sh
 ```
 
-It uses `10.77.0.1` only as a DNS/NAT router and makes a public, read-only
-`GET /infer/queue` directly from the native TLS engine. There is no Mac
-application relay and the image contains no account token, Wi-Fi secret or
-CACAO. Source/build and bounded missing-device behavior are verified; a real
-K16 reboot is still required before the physical state can become green.
+It sends a bounded DNS request to `10.77.0.1:1053` and opens its native TLS
+session through `10.77.0.1:8443`; the passwordless Mac user service forwards
+only opaque TLS bytes to `api.murakumo.cloud:443`. The Mac does not terminate
+TLS or hold an account/device credential, but it remains an L4 forwarding
+dependency rather than a standalone routed Internet connection. The image
+contains no account token, Wi-Fi secret or CACAO. Source/build and bounded
+missing-device behavior are verified; a real K16 reboot is still required
+before the physical state can become green.
 Even after an HTTP 200, the label remains `trust=transport-only` until native
 certificate-chain and hostname/SAN admission land (ADR-0115).
 

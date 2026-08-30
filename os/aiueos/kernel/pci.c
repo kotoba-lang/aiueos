@@ -3119,7 +3119,7 @@ static uint32_t net_dns_server(void) {
 }
 
 static uint32_t net_build_dns_query_named(uint8_t *frame, uint32_t src,
-                                          uint32_t dst,
+                                          uint32_t dst, uint16_t server_port,
                                           const uint8_t *question,
                                           uint32_t question_length) {
   uint32_t udp_length = 8 + 12 + question_length;
@@ -3140,7 +3140,7 @@ static uint32_t net_build_dns_query_named(uint8_t *frame, uint32_t src,
   net_store_be16(frame + 24,
     (uint16_t)kotoba_aiueos_ipv4_checksum((uint64_t)(uintptr_t)(frame + 14), 20));
   net_store_be16(frame + 34, NET_DNS_CLIENT_PORT);
-  net_store_be16(frame + 36, 53);
+  net_store_be16(frame + 36, server_port);
   net_store_be16(frame + 38, (uint16_t)udp_length);
   net_store_be16(frame + 42, NET_DNS_XID);
   net_store_be16(frame + 44, 0x0100);                        /* RD */
@@ -3168,6 +3168,7 @@ static int net_udp_rx_checksum_ok(const uint8_t *frame, uint32_t udp_length) {
    and a kotoba-native export that this pin does not list. */
 static int net_dns_answer_ok_named(const uint8_t *frame, uint32_t length,
                                    uint32_t src, uint32_t dst,
+                                   uint16_t server_port,
                                    const uint8_t *question,
                                    uint32_t question_length,
                                    uint32_t *out_a) {
@@ -3183,7 +3184,7 @@ static int net_dns_answer_ok_named(const uint8_t *frame, uint32_t length,
     return 0;
   if (net_load_be32(frame + 26) != src) return 0;
   if (net_load_be32(frame + 30) != dst) return 0;
-  if (net_load_be16(frame + 34) != 53) return 0;
+  if (net_load_be16(frame + 34) != server_port) return 0;
   if (net_load_be16(frame + 36) != NET_DNS_CLIENT_PORT) return 0;
   udp_length = net_load_be16(frame + 38);
   if (udp_length < 20 + question_length || 20 + udp_length != total) return 0;
@@ -3229,7 +3230,7 @@ static int net_dns_probe(struct net_ring *rx, struct net_ring *tx,
   net_post(rx);
   for (unsigned i = 0; i < sizeof(struct virtio_net_hdr); i++) tx_page[i] = 0;
   frame_length = net_build_dns_query_named(
-    frame, src, dst, net_dns_question, sizeof(net_dns_question));
+    frame, src, dst, 53, net_dns_question, sizeof(net_dns_question));
   if (!frame_length) return 0;
   tx->desc[0].length = (uint32_t)sizeof(struct virtio_net_hdr) + frame_length;
   net_post(tx);
@@ -3246,7 +3247,7 @@ static int net_dns_probe(struct net_ring *rx, struct net_ring *tx,
         received <= sizeof(struct virtio_net_hdr) ||
         received > sizeof(struct virtio_net_hdr) + NET_FRAME_MAX) continue;
     payload = received - (uint32_t)sizeof(struct virtio_net_hdr);
-    if (net_dns_answer_ok_named(rx_frame, payload, dst, src,
+    if (net_dns_answer_ok_named(rx_frame, payload, dst, src, 53,
                                 net_dns_question, sizeof(net_dns_question),
                                 &a)) {
       dns_a = a;
@@ -3811,6 +3812,8 @@ int aiueos_rtl8125_physical_qualification(void) {
    transport evidence only. */
 #define RTL_DIRECT_IP 0x0a4d000aU
 #define RTL_DIRECT_GATEWAY 0x0a4d0001U
+#define RTL_DIRECT_DNS_PORT 1053U
+#define RTL_DIRECT_TLS_PORT 8443U
 #define RTL_DIRECT_LOCAL_PORT 49155
 #define RTL_DIRECT_ISN 0xa1e02000U
 
@@ -3887,7 +3890,7 @@ static int rtl8125_direct_tcp_send(uint32_t dst, uint32_t sequence,
                                    uint32_t payload_length) {
   uint8_t *frame = rtl8125_qualification_device.tx_frame;
   uint32_t bytes = net_build_tcp(frame, RTL_DIRECT_IP, dst,
-                                 RTL_DIRECT_LOCAL_PORT, NET_CLOUD_PORT,
+                                 RTL_DIRECT_LOCAL_PORT, RTL_DIRECT_TLS_PORT,
                                  sequence, acknowledgement, flags,
                                  payload, payload_length);
   if (!kotoba_aiueos_tcp_checksum_ok((uint64_t)(uintptr_t)frame,
@@ -3919,7 +3922,7 @@ static int rtl8125_direct_dns(void) {
   uint8_t *tx = rtl8125_qualification_device.tx_frame;
   uint8_t *rx = rtl8125_qualification_device.rx_frame;
   uint32_t bytes = net_build_dns_query_named(
-    tx, RTL_DIRECT_IP, RTL_DIRECT_GATEWAY,
+    tx, RTL_DIRECT_IP, RTL_DIRECT_GATEWAY, RTL_DIRECT_DNS_PORT,
     rtl_direct_dns_question, sizeof(rtl_direct_dns_question));
   if (!bytes) return 0;
   aiueos_rtl8125_rx_rearm(&rtl8125_qualification_device);
@@ -3929,6 +3932,7 @@ static int rtl8125_direct_dns(void) {
     if (!rtl8125_direct_rx(&received)) return 0;
     if (net_dns_answer_ok_named(
           rx, received, RTL_DIRECT_GATEWAY, RTL_DIRECT_IP,
+          RTL_DIRECT_DNS_PORT,
           rtl_direct_dns_question, sizeof(rtl_direct_dns_question), &answer)) {
       rtl8125_direct_dns_a = answer;
       return 1;
