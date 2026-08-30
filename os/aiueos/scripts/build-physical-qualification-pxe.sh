@@ -99,6 +99,12 @@ document = {
             "claim": "server-atomic-target-did",
             "result": "signed-device-p256",
             "retry": "persistent-with-bounded-backoff",
+            "control": {
+                "action": "reboot-pxe",
+                "delivery": "signed-poll",
+                "ack": "signed-device-p256-before-reset",
+                "reset": "uefi-runtime-cold",
+            },
         } if os.environ["AIUEOS_PERSISTENT_BOOT"] == "1" else None),
         "cacao": False,
         "passkey_bound": False,

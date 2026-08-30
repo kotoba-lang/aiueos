@@ -190,6 +190,7 @@ extern void aiueos_framebuffer_qualification_screen(const char *, const char *,
 extern void aiueos_qualification_runtime_initialize(void *, uint64_t);
 extern int aiueos_qualification_progress(uint32_t);
 extern int aiueos_qualification_finalize(uint16_t, uint32_t);
+extern int aiueos_qualification_reboot(void);
 extern int aiueos_desktop_surface_ready(void);
 extern int aiueos_desktop_surface_bind_scanout(uint32_t width, uint32_t height);
 extern int aiueos_desktop_wm_rects_fit(void);
@@ -215,7 +216,10 @@ extern int aiueos_rtl8125_direct_https_qualification(
     const struct aiueos_boot_info *, uint32_t, uint32_t, uint64_t);
 extern const char *aiueos_rtl8125_direct_device_did(void);
 extern int aiueos_rtl8125_device_worker_poll(
-    const struct aiueos_boot_info *, uint32_t, uint64_t *, uint32_t *, int *);
+    const struct aiueos_boot_info *, uint32_t, uint64_t *, uint32_t *, int *,
+    uint64_t *, int *);
+extern int aiueos_rtl8125_device_worker_control_ack(
+    const struct aiueos_boot_info *, uint32_t, uint64_t);
 extern int aiueos_rtl8125_device_worker_result(
     const struct aiueos_boot_info *, uint32_t, uint64_t,
     uint32_t, uint32_t, uint64_t);
@@ -1248,8 +1252,10 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
     uint32_t heartbeat_failures = 0;
     for (;;) {
       uint64_t job_id = 0;
+      uint64_t control_id = 0;
       uint32_t bos_token = 0;
       int ready = 0;
+      int reboot_pxe = 0;
       aiueos_qwen35_status.phase = AIUEOS_INFERENCE_ADMISSION;
       aiueos_qwen35_status.detail = "POLLING MURAKUMO";
       aiueos_qwen35_status.generated_tokens = 0;
@@ -1257,7 +1263,8 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
       aiueos_qwen35_status.time_to_first_token_ns = AIUEOS_INFERENCE_UNMEASURED;
       (void)aiueos_framebuffer_inference_screen(&aiueos_qwen35_status);
       if (!aiueos_rtl8125_device_worker_poll(
-            boot, worker_sequence++, &job_id, &bos_token, &ready)) {
+            boot, worker_sequence++, &job_id, &bos_token, &ready,
+            &control_id, &reboot_pxe)) {
         heartbeat_failures++;
         aiueos_qwen35_status.phase = AIUEOS_INFERENCE_ERROR;
         aiueos_qwen35_status.detail = "NODE RECONNECTING";
@@ -1290,6 +1297,49 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
       serial_string(" sequence=");
       serial_decimal(worker_sequence - 1);
       serial_string("\r\n");
+      if (reboot_pxe && control_id) {
+        aiueos_qwen35_status.phase = AIUEOS_INFERENCE_ADMISSION;
+        aiueos_qwen35_status.detail = "NETWORK REBOOT ACK";
+        (void)aiueos_framebuffer_inference_screen(&aiueos_qwen35_status);
+        serial_string("AIUEOS_MURAKUMO_CONTROL_RECEIVED action=reboot-pxe command-id=");
+        serial_decimal64(control_id);
+        serial_string("\r\n");
+        uint32_t control_ack_failures = 0;
+        while (control_ack_failures < 12 &&
+               !aiueos_rtl8125_device_worker_control_ack(
+                 boot, worker_sequence++, control_id)) {
+          control_ack_failures++;
+          serial_string("AIUEOS_MURAKUMO_CONTROL_ACK_RETRY command-id=");
+          serial_decimal64(control_id);
+          serial_string(" failure=");
+          serial_decimal(control_ack_failures);
+          serial_string(" error=");
+          serial_decimal(aiueos_rtl8125_direct_https_error());
+          serial_string("\r\n");
+          aiueos_wait_seconds(boot->tsc_hz, 5);
+        }
+        if (control_ack_failures == 12) {
+          aiueos_qwen35_status.phase = AIUEOS_INFERENCE_ERROR;
+          aiueos_qwen35_status.detail = "REBOOT ACK FAILED";
+          (void)aiueos_framebuffer_inference_screen(&aiueos_qwen35_status);
+          serial_string("AIUEOS_MURAKUMO_CONTROL_ABORT action=reboot-pxe reason=ack-failed\r\n");
+          continue;
+        }
+        aiueos_qwen35_status.phase = AIUEOS_INFERENCE_COMPLETE;
+        aiueos_qwen35_status.detail = "REBOOTING TO PXE";
+        (void)aiueos_framebuffer_inference_screen(&aiueos_qwen35_status);
+        debug_string("AIUEOS_MURAKUMO_CONTROL_ACK_OK action=reboot-pxe reset=uefi-runtime\n");
+        serial_string("AIUEOS_MURAKUMO_CONTROL_ACK_OK action=reboot-pxe command-id=");
+        serial_decimal64(control_id);
+        serial_string(" reset=uefi-runtime\r\n");
+        (void)aiueos_qualification_reboot();
+        aiueos_qwen35_status.phase = AIUEOS_INFERENCE_ERROR;
+        aiueos_qwen35_status.detail = "FIRMWARE RESET FAILED";
+        (void)aiueos_framebuffer_inference_screen(&aiueos_qwen35_status);
+        serial_string("AIUEOS_MURAKUMO_CONTROL_RESET_FAIL action=reboot-pxe\r\n");
+        aiueos_wait_seconds(boot->tsc_hz, 30);
+        continue;
+      }
       if (!job_id) {
         aiueos_qwen35_status.phase = AIUEOS_INFERENCE_COMPLETE;
         aiueos_qwen35_status.detail = "READY - NO JOB";

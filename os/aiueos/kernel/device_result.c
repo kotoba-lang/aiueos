@@ -22,8 +22,15 @@ static const uint8_t p256_order[32] = {
 static const char base58_alphabet[] =
   "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
 static const char hex_alphabet[] = "0123456789abcdef";
-static uint8_t sha_workspace[512];
-static uint8_t p256_workspace[2048];
+#if defined(__GNUC__)
+#define AIUEOS_DEVICE_HIGH_BSS __attribute__((section(".high_bss")))
+#else
+#define AIUEOS_DEVICE_HIGH_BSS
+#endif
+/* Device signing begins only after owned paging is active.  Keep its reusable
+   workspaces out of the low W^X aperture shared with admitted user pages. */
+static uint8_t sha_workspace[512] AIUEOS_DEVICE_HIGH_BSS;
+static uint8_t p256_workspace[2048] AIUEOS_DEVICE_HIGH_BSS;
 static uint8_t device_boot_id[8];
 static int device_boot_id_ready;
 
@@ -292,11 +299,16 @@ uint32_t aiueos_device_worker_http_request(
       worker->boot->version < AIUEOS_BOOT_INFO_VERSION_TSC_CALIBRATED ||
       !worker->boot->tsc_hz ||
       (worker->operation != AIUEOS_DEVICE_WORKER_POLL &&
-       worker->operation != AIUEOS_DEVICE_WORKER_RESULT) ||
+       worker->operation != AIUEOS_DEVICE_WORKER_RESULT &&
+       worker->operation != AIUEOS_DEVICE_WORKER_CONTROL_ACK) ||
       (worker->operation == AIUEOS_DEVICE_WORKER_POLL &&
        (worker->job_id || worker->token || worker->second_token ||
         worker->inference_cycles)) ||
-      (worker->operation == AIUEOS_DEVICE_WORKER_RESULT && !worker->job_id))
+      ((worker->operation == AIUEOS_DEVICE_WORKER_RESULT ||
+        worker->operation == AIUEOS_DEVICE_WORKER_CONTROL_ACK) &&
+       !worker->job_id) ||
+      (worker->operation == AIUEOS_DEVICE_WORKER_CONTROL_ACK &&
+       (worker->token || worker->second_token || worker->inference_cycles)))
     return 0;
 
   uint8_t private_key[32] = {0}, public_key[64] = {0}, nonce_k[32] = {0};
@@ -320,7 +332,8 @@ uint32_t aiueos_device_worker_http_request(
   hex_encode(worker->boot->model_sha256, 32, model_hex);
   hex_encode(nonce, 16, nonce_hex);
   const char *operation = worker->operation == AIUEOS_DEVICE_WORKER_POLL ?
-    "poll" : "result";
+    "poll" : (worker->operation == AIUEOS_DEVICE_WORKER_RESULT ?
+              "result" : "control-ack");
 
   uint8_t canonical_bytes[DEVICE_CANONICAL_MAX];
   struct bounded_buffer canonical = {

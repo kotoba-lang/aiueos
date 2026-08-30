@@ -14,7 +14,8 @@ struct aiueos_device_result {
 
 enum aiueos_device_worker_operation {
   AIUEOS_DEVICE_WORKER_POLL = 1,
-  AIUEOS_DEVICE_WORKER_RESULT = 2
+  AIUEOS_DEVICE_WORKER_RESULT = 2,
+  AIUEOS_DEVICE_WORKER_CONTROL_ACK = 3
 };
 
 struct aiueos_device_worker_request {
