@@ -4066,13 +4066,23 @@ static int rtl8125_direct_tls_attempt(uint32_t dst, uint32_t request_length,
     rtl8125_direct_https_error = RTL_DIRECT_STAGE_ERROR(8);
     goto failed;
   }
-  if (!aiueos_tls13_run_certverify() ||
-      !aiueos_tls13_take_finished(rtl8125_direct_tls_flight,
-                                  &finished_length) ||
-      !aiueos_tls13_take_http(rtl8125_direct_tls_flight + finished_length,
+  if (!aiueos_tls13_run_certverify()) {
+    rtl8125_direct_https_error = RTL_DIRECT_STAGE_ERROR(9);
+    goto failed;
+  }
+  if (request_length > sizeof(rtl8125_direct_tls_flight) - 80U) {
+    rtl8125_direct_https_error = RTL_DIRECT_STAGE_ERROR(12);
+    goto failed;
+  }
+  if (!aiueos_tls13_take_finished(rtl8125_direct_tls_flight,
+                                  &finished_length)) {
+    rtl8125_direct_https_error = RTL_DIRECT_STAGE_ERROR(13);
+    goto failed;
+  }
+  if (!aiueos_tls13_take_http(rtl8125_direct_tls_flight + finished_length,
                               &http_length) ||
       finished_length + http_length > sizeof(rtl8125_direct_tls_flight)) {
-    rtl8125_direct_https_error = RTL_DIRECT_STAGE_ERROR(9);
+    rtl8125_direct_https_error = RTL_DIRECT_STAGE_ERROR(14);
     goto failed;
   }
   if (!rtl8125_direct_tcp_send(
