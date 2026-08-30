@@ -22,6 +22,7 @@ extern uint8_t aiueos_rodata_start[], aiueos_rodata_end[];
 extern uint8_t aiueos_data_start[], aiueos_kernel_end[];
 extern uint8_t aiueos_user_text_start[], aiueos_user_text_end[];
 extern uint8_t aiueos_user_data_start[], aiueos_user_data_end[];
+extern uint8_t aiueos_low_end[], aiueos_high_data_start[], aiueos_high_data_end[];
 
 static uint64_t pml4[ENTRY_COUNT] __attribute__((aligned(PAGE_SIZE)));
 static uint64_t pml5[ENTRY_COUNT] __attribute__((aligned(PAGE_SIZE)));
@@ -343,7 +344,12 @@ int aiueos_paging_initialize(const struct aiueos_boot_info *boot) {
          !(low_page_table[text_index] & PTE_WRITABLE) && !(low_page_table[text_index] & PTE_NX) &&
          !(low_page_table[rodata_index] & PTE_WRITABLE) && (low_page_table[rodata_index] & PTE_NX) &&
          (low_page_table[data_index] & PTE_WRITABLE) && (low_page_table[data_index] & PTE_NX) &&
-         ((uint64_t)(uintptr_t)aiueos_kernel_end < 0x200000ULL);
+         (uint64_t)(uintptr_t)aiueos_low_end <= PROCESS_PRIVATE_BASE &&
+         (uint64_t)(uintptr_t)aiueos_high_data_start >= 0x400000ULL &&
+         (uint64_t)(uintptr_t)aiueos_high_data_end <= 0x600000ULL &&
+         (uint64_t)(uintptr_t)aiueos_kernel_end <= 0x600000ULL &&
+         (page_directory[2] & (PTE_PRESENT | PTE_WRITABLE | PTE_HUGE | PTE_NX)) ==
+           (PTE_PRESENT | PTE_WRITABLE | PTE_HUGE | PTE_NX);
   if (valid) PAGING_PROGRESS((uint32_t)(480U + paging_features));
   return valid;
 }
