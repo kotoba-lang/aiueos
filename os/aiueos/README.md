@@ -903,6 +903,14 @@ engine, waits for a bounded FIFO-empty indication, and reinstalls both single
 descriptor rings. This discards late records from the prior TCP four-tuple
 without rereading the overwritten hardware-revision bits or touching PHY/MCU
 calibration.
+The 2026-08-31 physical K16 run in
+`contracts/physical-persistent-worker-k16-v1.edn` records the resulting
+end-to-end control loop: repeated signed polls, an operator-created
+`reboot-pxe`, a separate signed device ACK, UEFI cold reset, a second PXE
+transfer, a changed boot ID, and renewed Murakumo polls without another button
+press. Two stage-11 poll failures recovered within the bounded retry loop, so
+the receipt calls polling recovered rather than lossless. It does not promote
+the uncaptured server `ready` field or unmeasured decode throughput.
 The host model exercises
 the observed K16 MAC, an RTL8125B revision case, descriptor programming, TX
 completion, RX FCS removal, rearming and the peer-bound ARP reply:
