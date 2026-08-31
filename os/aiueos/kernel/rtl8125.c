@@ -157,6 +157,52 @@ static void dma_acquire(void) {
   __atomic_thread_fence(__ATOMIC_ACQUIRE);
 }
 
+static enum aiueos_rtl8125_result rings_restart(
+    struct aiueos_rtl8125 *device) {
+  const struct aiueos_rtl8125_io *io = &device->io;
+
+  /* Each worker POST is a separate short TLS connection.  Stop and drain the
+     already-owned engine before reusing its single descriptor so late frames
+     from the previous four-tuple cannot hide the next SYN-ACK in the RTL FIFO.
+     Keep the firmware-owned PHY/MCU calibration and the revision captured at
+     takeover; TXCFG no longer contains usable revision bits after takeover. */
+  io->write8(io->context,RGE_CMD,
+             (uint8_t)(io->read8(io->context,RGE_CMD)|RGE_CMD_STOP));
+  unsigned budget;
+  for (budget=0;budget<300000U;budget++)
+    if ((io->read8(io->context,RGE_MCUCMD)&RGE_FIFO_EMPTY)==RGE_FIFO_EMPTY)
+      break;
+  if (budget==300000U) {
+    device->ready=0;
+    return AIUEOS_RTL8125_FIFO_TIMEOUT;
+  }
+  io->write8(io->context,RGE_CMD,0);
+
+  bytes_zero(device->tx,sizeof(*device->tx));
+  bytes_zero(device->rx,sizeof(*device->rx));
+  device->tx->command = RGE_DESC_EOR;
+  device->tx->address = device->tx_frame_physical;
+  device->rx->address = device->rx_frame_physical;
+  device->rx->command = RGE_DESC_OWN|RGE_DESC_EOR|
+                        AIUEOS_RTL8125_FRAME_CAPACITY;
+  dma_release();
+
+  io->write32(io->context,RGE_IMR,0);
+  io->write32(io->context,RGE_ISR,0xffffffffU);
+  io->write32(io->context,RGE_TXDESC_LO,(uint32_t)device->tx_desc_physical);
+  io->write32(io->context,RGE_TXDESC_HI,
+              (uint32_t)(device->tx_desc_physical>>32));
+  io->write32(io->context,RGE_RXDESC_LO,(uint32_t)device->rx_desc_physical);
+  io->write32(io->context,RGE_RXDESC_HI,
+              (uint32_t)(device->rx_desc_physical>>32));
+  io->write16(io->context,RGE_RXMAXSIZE,AIUEOS_RTL8125_FRAME_CAPACITY);
+  io->write32(io->context,RGE_TXCFG,RGE_TXCFG_CONFIG);
+  io->write32(io->context,RGE_RXCFG,receive_config(device->revision)|
+              RGE_RXCFG_INDIVIDUAL|RGE_RXCFG_BROADCAST);
+  io->write8(io->context,RGE_CMD,RGE_CMD_TX|RGE_CMD_RX);
+  return AIUEOS_RTL8125_OK;
+}
+
 enum aiueos_rtl8125_result aiueos_rtl8125_takeover(
     struct aiueos_rtl8125 *device,
     const struct aiueos_rtl8125_io *io,
@@ -181,36 +227,6 @@ enum aiueos_rtl8125_result aiueos_rtl8125_takeover(
                     (uint8_t)(mac0>>24),(uint8_t)mac4,(uint8_t)(mac4>>8)};
   if (!mac_valid(mac)) return AIUEOS_RTL8125_INVALID_MAC;
 
-  /* Quiesce the firmware-owned rings but retain its PHY/MCU calibration. */
-  io->write8(io->context,RGE_CMD,
-             (uint8_t)(io->read8(io->context,RGE_CMD)|RGE_CMD_STOP));
-  unsigned budget;
-  for (budget=0;budget<300000U;budget++)
-    if ((io->read8(io->context,RGE_MCUCMD)&RGE_FIFO_EMPTY)==RGE_FIFO_EMPTY)
-      break;
-  if (budget==300000U) return AIUEOS_RTL8125_FIFO_TIMEOUT;
-  io->write8(io->context,RGE_CMD,0);
-
-  bytes_zero(tx,sizeof(*tx));
-  bytes_zero(rx,sizeof(*rx));
-  tx->command = RGE_DESC_EOR;
-  tx->address = tx_frame_physical;
-  rx->address = rx_frame_physical;
-  rx->command = RGE_DESC_OWN|RGE_DESC_EOR|AIUEOS_RTL8125_FRAME_CAPACITY;
-  dma_release();
-
-  io->write32(io->context,RGE_IMR,0);
-  io->write32(io->context,RGE_ISR,0xffffffffU);
-  io->write32(io->context,RGE_TXDESC_LO,(uint32_t)tx_desc_physical);
-  io->write32(io->context,RGE_TXDESC_HI,(uint32_t)(tx_desc_physical>>32));
-  io->write32(io->context,RGE_RXDESC_LO,(uint32_t)rx_desc_physical);
-  io->write32(io->context,RGE_RXDESC_HI,(uint32_t)(rx_desc_physical>>32));
-  io->write16(io->context,RGE_RXMAXSIZE,AIUEOS_RTL8125_FRAME_CAPACITY);
-  io->write32(io->context,RGE_TXCFG,RGE_TXCFG_CONFIG);
-  io->write32(io->context,RGE_RXCFG,receive_config(revision)|
-              RGE_RXCFG_INDIVIDUAL|RGE_RXCFG_BROADCAST);
-  io->write8(io->context,RGE_CMD,RGE_CMD_TX|RGE_CMD_RX);
-
   *device=(struct aiueos_rtl8125){0};
   device->io=*io;device->tx=tx;device->rx=rx;
   device->tx_frame=tx_frame;device->rx_frame=rx_frame;
@@ -220,7 +236,19 @@ enum aiueos_rtl8125_result aiueos_rtl8125_takeover(
   device->rx_frame_physical=rx_frame_physical;
   for (unsigned i=0;i<6;i++) device->mac[i]=mac[i];
   device->revision=revision;device->ready=1;
-  return AIUEOS_RTL8125_OK;
+  return rings_restart(device);
+}
+
+enum aiueos_rtl8125_result aiueos_rtl8125_restart(
+    struct aiueos_rtl8125 *device) {
+  if (!device || !device->ready || !io_valid(&device->io) ||
+      !device->tx || !device->rx || !device->tx_frame || !device->rx_frame ||
+      !device->tx_desc_physical || !device->rx_desc_physical ||
+      !device->tx_frame_physical || !device->rx_frame_physical ||
+      device->revision < AIUEOS_RTL8125_REV_8125 ||
+      device->revision > AIUEOS_RTL8125_REV_8125D_2)
+    return AIUEOS_RTL8125_INVALID;
+  return rings_restart(device);
 }
 
 int aiueos_rtl8125_link_up(const struct aiueos_rtl8125 *device) {

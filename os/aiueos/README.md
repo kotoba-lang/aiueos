@@ -898,6 +898,11 @@ worker also answers only an ARP request whose Ethernet sender, ARP sender,
 gateway address and K16 target address match the peer admitted at boot.  This
 refreshes the Mac's neighbor entry while the K16 is waiting for DNS or TLS and
 prevents a healthy outbound worker from becoming one-way after cache expiry.
+Before every short TLS connection, the driver also stops the already-owned
+engine, waits for a bounded FIFO-empty indication, and reinstalls both single
+descriptor rings. This discards late records from the prior TCP four-tuple
+without rereading the overwritten hardware-revision bits or touching PHY/MCU
+calibration.
 The host model exercises
 the observed K16 MAC, an RTL8125B revision case, descriptor programming, TX
 completion, RX FCS removal, rearming and the peer-bound ARP reply:

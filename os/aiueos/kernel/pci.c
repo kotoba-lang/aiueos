@@ -4174,6 +4174,16 @@ static int rtl8125_direct_tls_attempt(uint32_t dst, uint32_t request_length,
   uint8_t client_hello[256];
   rtl8125_direct_tls_pump_error = 0;
 
+  /* A completed short connection can leave late server records in the
+     RTL8125 FIFO even after its only descriptor is rearmed.  Reinstall the
+     already-owned rings before every attempt so the next SYN-ACK starts from
+     an empty, bounded receive engine. */
+  if (aiueos_rtl8125_restart(&rtl8125_qualification_device) !=
+      AIUEOS_RTL8125_OK) {
+    rtl8125_direct_https_error = RTL_DIRECT_STAGE_ERROR(15);
+    return 0;
+  }
+
 #ifdef AIUEOS_MURAKUMO_DEVICE_RESULT
   if (!aiueos_cpu_random_bytes(rtl_direct_client_random,
                                sizeof(rtl_direct_client_random)) ||

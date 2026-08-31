@@ -25,7 +25,8 @@
                    :client-ip "10.77.0.10"}
              :tcp {:device-port 8443
                    :upstream-port 443
-                   :connections 1 :rx-descriptors 1}
+                   :connections 1 :rx-descriptors 1
+                   :connection-reset :bounded-ring-fifo-restart}
              :tls :tls-1.3-aes-128-gcm-x25519
              :tls-end-to-end? true
              :client-entropy :deterministic-qualification-only
