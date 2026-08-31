@@ -77,6 +77,11 @@ enum aiueos_rtl8125_result aiueos_rtl8125_takeover(
     uint8_t *tx_frame, uint64_t tx_frame_physical,
     uint8_t *rx_frame, uint64_t rx_frame_physical);
 
+/* Stop, drain, and reinstall the already-owned one-descriptor rings without
+   rereading the hardware revision or disturbing firmware PHY calibration. */
+enum aiueos_rtl8125_result aiueos_rtl8125_restart(
+    struct aiueos_rtl8125 *device);
+
 int aiueos_rtl8125_link_up(const struct aiueos_rtl8125 *device);
 enum aiueos_rtl8125_result aiueos_rtl8125_tx_submit(
     struct aiueos_rtl8125 *device, uint32_t frame_length);

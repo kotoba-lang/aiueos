@@ -258,6 +258,16 @@
                     "more than eight such frames after two successful polls"
                     "RTL_DIRECT_SYN_SCAN_FRAMES, &received"]]
       (is (str/includes? pci marker))))
+  (testing "each connection restarts the owned rings after a bounded FIFO drain"
+    (doseq [marker ["aiueos_rtl8125_restart(&rtl8125_qualification_device)"
+                    "an empty, bounded receive engine"
+                    "RTL_DIRECT_STAGE_ERROR(15)"]]
+      (is (str/includes? pci marker)))
+    (doseq [marker ["aiueos_rtl8125_restart"
+                    "restart=bounded-fifo-flush"]]
+      (is (or (str/includes? rtl8125 marker)
+              (str/includes? (slurp (io/file "os/aiueos/tests/rtl8125_handoff_model.c"))
+                             marker)))))
   (testing "a signed node POST gets fresh TLS material on up to three attempts"
     (doseq [marker ["RTL_DIRECT_TLS_ATTEMPTS 3U"
                     "RTL_DIRECT_LOCAL_PORT + (lane % 12000U)"
@@ -476,7 +486,8 @@
 
 (deftest k16-rtl8125-native-qualification-is-separate-and-bounded
   (testing "the model, PCI wiring and physical-only build name the same gate"
-    (doseq [marker ["aiueos_rtl8125_takeover" "RGE_DESC_OWN"
+    (doseq [marker ["aiueos_rtl8125_takeover" "aiueos_rtl8125_restart"
+                    "RGE_DESC_OWN"
                     "RGE_RX_SOF" "RGE_RX_EOF"]]
       (is (str/includes? rtl8125 marker)))
     (is (str/includes? pci "aiueos_rtl8125_physical_qualification"))

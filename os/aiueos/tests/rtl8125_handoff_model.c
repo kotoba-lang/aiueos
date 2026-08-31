@@ -48,6 +48,24 @@ int main(void) {
   CHECK(received==64);
   aiueos_rtl8125_rx_rearm(&device);
   CHECK((rx.command&0xc0000000U)==0xc0000000U);
+
+  /* Model a late frame and a still-owned TX descriptor from the prior TLS
+     four-tuple.  A connection restart must drain and reinstall both rings
+     while preserving the takeover-time hardware identity. */
+  struct aiueos_rtl8125_io saved_io=device.io;
+  enum aiueos_rtl8125_revision saved_revision=device.revision;
+  uint8_t saved_mac[6];memcpy(saved_mac,device.mac,sizeof(saved_mac));
+  tx.command=0xffffffffU;tx.extension=0xffffffffU;tx.address=0;
+  rx.command=0x43000044U;rx.extension=0xffffffffU;rx.address=0;
+  CHECK(aiueos_rtl8125_restart(&device)==AIUEOS_RTL8125_OK);
+  CHECK(device.ready&&device.revision==saved_revision);
+  CHECK(device.io.context==saved_io.context&&!memcmp(device.mac,saved_mac,6));
+  CHECK(tx.command==0x40000000U&&tx.extension==0&&tx.address==0x102000);
+  CHECK(rx.command==(0xc0000000U|AIUEOS_RTL8125_FRAME_CAPACITY)&&
+        rx.extension==0&&rx.address==0x103000);
+  CHECK(r32(&mmio,0x20)==0x100000&&r32(&mmio,0xe4)==0x101000);
+  CHECK(r32(&mmio,0x40)==0x03000700U&&r32(&mmio,0x44)==0x41000c0aU);
+  CHECK(mmio.bytes[0x37]==0x0c&&aiueos_rtl8125_link_up(&device));
   CHECK(mmio.writes>=12);
 
   const uint8_t local_mac[6]={0x70,0x70,0xfc,0x0b,0xb6,0x32};
@@ -81,6 +99,6 @@ int main(void) {
   put32(&mmio,0x40,0x12300000U);
   CHECK(aiueos_rtl8125_takeover(&device,&io,&tx,0x100000,&rx,0x101000,
         tx_frame,0x102000,rx_frame,0x103000)==AIUEOS_RTL8125_UNSUPPORTED_REVISION);
-  puts("AIUEOS_RTL8125_MODEL_OK handoff=pxe rings=1x1 tx=bounded rx=fcs-stripped revision=8125b arp=peer-bound-reply");
+  puts("AIUEOS_RTL8125_MODEL_OK handoff=pxe rings=1x1 tx=bounded rx=fcs-stripped revision=8125b arp=peer-bound-reply restart=bounded-fifo-flush");
   return 0;
 }
