@@ -1,9 +1,11 @@
 (ns aiueos.verify-value-runtime-all
   "Run every value-runtime verifier and write down what happened.
 
-  The eleven `verify_value_*.clj` next to this file each compile one Kotoba
-  object and check it against its contract. Measured 2026-08-18: **nothing in
-  this repository invoked any of them** — no task, no script, no test, no doc
+  The verifiers next to this file each compile one Kotoba object and check it
+  against its contract -- eleven `verify_value_*.clj`, plus
+  `verify_cid_v1_admit` and `verify_unixfs_file_admit`, which are not
+  value-runtime objects but are here for the reason this whole file exists.
+  Measured 2026-08-18: **nothing in this repository invoked any of them** — no task, no script, no test, no doc
   mentions them. They are not a check that passes; they are a check nobody
   runs, which reports the same green as one that ran (ADR-2608136000 question
   2, and ADR-0050 here).
@@ -72,7 +74,16 @@
    ["value-runtime-provider-transport" [arena sha256 digest cas transport
                                         (c "value-runtime-provider-transport")]]
    ["value-runtime-syscall-plan" [(k "value-runtime-syscall-plan")
-                                  (c "value-runtime-syscall-plan")]]])
+                                  (c "value-runtime-syscall-plan")]]
+   ;; Not value-runtime objects, and here anyway. This file exists because a
+   ;; verifier nobody invokes reports the same green as one that ran, and that
+   ;; is true of these two for exactly the same reason. They are also the first
+   ;; two whose verifiers EXECUTE the object rather than model it (ADR-0128):
+   ;; kotoba-kir's optional memory image made `kir/execute` able to run a
+   ;; byte-walking object, so a failure here is the object disagreeing with its
+   ;; contract and not a Java re-implementation disagreeing with itself.
+   ["cid-v1-admit" [sha256 (k "cid-v1-admit") (c "cid-v1-admit")]]
+   ["unixfs-file-admit" [(k "unixfs-file-admit") (c "unixfs-file-admit")]]])
 
 (defn- measured-at
   "Today, read from the clock. It was a literal string until 2026-08-18, which
