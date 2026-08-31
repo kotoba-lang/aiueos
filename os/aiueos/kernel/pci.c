@@ -3828,6 +3828,7 @@ int aiueos_rtl8125_physical_qualification(void) {
 #define RTL_DIRECT_RX_BUDGET 50000000U
 #define RTL_DIRECT_RX_WINDOW 1024U
 #define RTL_DIRECT_TLS_ATTEMPTS 3U
+#define RTL_DIRECT_SYN_SCAN_FRAMES 64U
 #define RTL_DIRECT_TLS_FLIGHT_MAX 1152U
 _Static_assert(RTL_DIRECT_TLS_FLIGHT_MAX >= 58U + 1024U + 22U,
                "direct TLS flight must hold Finished plus maximum HTTP record");
@@ -4198,8 +4199,16 @@ static int rtl8125_direct_tls_attempt(uint32_t dst, uint32_t request_length,
     rtl8125_direct_https_error = RTL_DIRECT_STAGE_ERROR(5);
     goto failed;
   }
+  /* A completed Cloudflare response can already have several 256-byte bridge
+     chunks in the RTL8125 FIFO when this one-descriptor client actively
+     closes it.  They retain the old four-tuple and must be discarded before
+     the new connection's SYN-ACK.  The physical reboot qualification saw
+     more than eight such frames after two successful polls, permanently
+     starving the control ACK.  Scan a larger but still fixed number; every
+     candidate remains bound to the expected peer, ACK and SYN|ACK flags. */
   if (!rtl8125_direct_tcp_receive(
-        dst, isn + 1, NET_TCP_SYN | NET_TCP_ACK, 8, &received)) {
+        dst, isn + 1, NET_TCP_SYN | NET_TCP_ACK,
+        RTL_DIRECT_SYN_SCAN_FRAMES, &received)) {
     rtl8125_direct_https_error = RTL_DIRECT_STAGE_ERROR(6);
     goto failed;
   }
