@@ -146,3 +146,15 @@ disturb, not whether the result would work.
 The receipt is `qualification/object-producer-measurement.edn` and it names
 the compiler it measured, because a reproduction count without one is a number
 with no closure.
+
+It does not name the ROUTE, because at `512f7e2a` there was only one: the
+aiueos targets had no JDK-free implementation, so every object in it was built
+through `clojure`. ADR-0130 gives the tool a `--jvm-free` pass-through and a
+`:route` key; a later receipt without that key is ambiguous, this one is not.
+
+That matters more than it looked at the time. ADR-0130's cross-route comparison
+found that the JVM packager under-fuelled three of these objects
+(`ecdsa-p256` by 8.6x, both DHCP objects by 64x) against what actually ships,
+because the two `elf64` twins disagreed. So three rows of this receipt were
+measured through a packager that was wrong about them, and the `:differs`
+verdict for those three is right for a reason the receipt does not give.

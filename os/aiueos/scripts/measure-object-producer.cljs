@@ -2,7 +2,7 @@
 ;; Compile every committed kernel object with a given compiler and say, for
 ;; each one, whether the bytes come back identical.
 ;;
-;;   nbb os/aiueos/scripts/measure-object-producer.cljs --compiler /path/to/amu
+;;   nbb os/aiueos/scripts/measure-object-producer.cljs --compiler /path/to/amu [--jvm-free]
 ;;
 ;; WHY THIS EXISTS. `reproduce-kotoba-kernel-object.sh` pins amu 9cf3a0a and
 ;; its comment records why that pin has not moved: five objects were compiled
@@ -61,9 +61,19 @@
   [#"FileNotFoundException" #"MODULE_NOT_FOUND" #"could not resolve the dependency closure"
    #"ClassNotFoundException" #"Could not locate"])
 
+;; `--jvm-free` is opt-in rather than the default because this tool is pointed
+;; at ARBITRARY compiler checkouts, including ones older than the JDK-free
+;; native driver's packaging step -- against those the flag is a refusal, not a
+;; route. What it must never be is silent: the receipt records which route
+;; produced the bytes, because "the committed object differs" and "the
+;; committed object differs under a route we did not name" are different
+;; claims.
+(def jvm-free? (some #(= "--jvm-free" %) (vec *command-line-args*)))
+
 (defn- attempt [compiler root source out]
   (sh (path/join compiler "bin/amu")
-      ["compile" source "--target" target "--output" out]
+      (cond-> ["compile" source "--target" target "--output" out]
+        jvm-free? (conj "--jvm-free"))
       {:cwd root}))
 
 (defn- measure-one [compiler root name]
@@ -102,7 +112,7 @@
         only (or (some #(when (str/starts-with? % "--only=") (subs % 7)) args)
                    (second (drop-while #(not= "--only" %) args)))]
     (when-not compiler
-      (fail! "usage: --compiler <path to an amu checkout> [--root <aiueos>] [--only <name>]" {}))
+      (fail! "usage: --compiler <path to an amu checkout> [--root <aiueos>] [--only <name>] [--jvm-free]" {}))
     (let [sha (compiler-sha compiler)
           dir (path/join root "os/aiueos/kotoba")
           committed (->> (fs/readdirSync dir)
@@ -140,6 +150,7 @@
             receipt {:format :aiueos.object-producer-measurement/v1
                      :measured-at (subs (.toISOString (js/Date.)) 0 10)
                      :compiler-sha sha
+                     :route (if jvm-free? :jvm-free :default)
                      :target (keyword target)
                      :committed (count committed)
                      :objects (count results)
