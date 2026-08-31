@@ -1,4 +1,5 @@
 {:format :aiueos.value-handle-arena/v1
+ :graph {:root aiueos.value-handle-arena :modules [aiueos.value-handle-arena]}
  :page {:bytes 4096 :permissions #{:read :write} :executable? false}
  :header {:bytes 64
           :lock {:offset 0 :type :u32 :acquire [0 1] :release [1 0]}
@@ -19,6 +20,31 @@
           :export "kotoba_aiueos_value_handle_arena"
           :imports []
           :required-opcode [240 69 15 177 19]}
+ ;; Added 2026-08-31 with the runner rewrite. Until then
+ ;; `verify_value_handle_arena.clj` implemented the arena state machine in
+ ;; Clojure and compared THAT against the expected values below, so these two
+ ;; vectors passed whatever the compiled object did. The object is now executed
+ ;; against a supplied memory image; the layout the runner writes comes from
+ ;; `:header` and `:slots` above rather than being restated here.
+ ;;
+ ;; The lock is why this was the last one converted. `kir/execute` refused
+ ;; `kernel-try-lock-u32` outright until kotoba-kir 674a5bee, so an object whose
+ ;; first act is to take the arena lock could not be run at all.
+ ;;
+ ;; WHAT A GREEN RUN DOES NOT SAY. The interpreter has one thread, so
+ ;; `:busy-lock-fails-closed` shows the object refuses when the lock word is
+ ;; already 1 -- not that two callers cannot both enter. Contention is not
+ ;; modelled here and no vector below should be read as evidence about it.
+ :verification
+ {:off-target :executed
+  :mechanism :kir-execute-with-a-supplied-memory-image
+  :runner "os/aiueos/scripts/verify-admissions.cljs"
+  :host :nbb
+  :concurrency :single-threaded-only
+  :memory {:base 65536 :image-bytes 4096 :arena-offset 0}
+  :fuel 20000000
+  :floors {:minimum-vectors 2 :minimum-steps 11}}
+
  :vectors
  [{:name :lifecycle-and-nonreuse
    :steps [{:args [0 0 0] :expected 1}

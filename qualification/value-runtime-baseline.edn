@@ -1,4 +1,4 @@
-#:value-runtime{:objects 10,
+#:value-runtime{:objects 9,
                 :results
                 [{:object "value-runtime-kernel-image",
                   :verdict :fail,
@@ -22,11 +22,6 @@
                   :rejected-form "kernel-value-provider-queue",
                   :error-code :kotoba.error/subset-reject,
                   :compiler-phase :subset}
-                 {:object "value-handle-arena",
-                  :verdict :ok,
-                  :args
-                  ["os/aiueos/kotoba/value-handle-arena.kotoba"
-                   "os/aiueos/contracts/value-handle-arena-v1.edn"]}
                  {:object "value-handle-plan",
                   :verdict :ok,
                   :args
@@ -122,7 +117,8 @@
                  :objects
                  ["cid-v1-admit"
                   "unixfs-file-admit"
-                  "value-runtime-cas-verify"],
+                  "value-runtime-cas-verify"
+                  "value-handle-arena"],
                  :why
                  "their verifiers execute the object, and executing needs\n                        only .cljc: the linker, the frontend, the lowering and\n                        the interpreter. No JVM."},
                 :upstream

@@ -59,7 +59,7 @@
                       {:git/tag "v0.5.1" :git/sha "dfb30dd"}
                       io.github.kotoba-lang/kotoba-kir
                       {:git/url "https://github.com/kotoba-lang/kotoba-kir.git"
-                       :git/sha "084a4e2add5ce14f8cdd43905ccc6ca12000ec23"}
+                       :git/sha "674a5beea7c6c02178a69808db05dcad65397f1b"}
                       ;; TEST-ONLY, and pinned directly rather than taken
                       ;; through amu, because the admission verifiers need the
                       ;; `kernel-object-entries` row for
@@ -102,7 +102,7 @@
                              {:git/tag "v0.5.1" :git/sha "dfb30dd"}
                              io.github.kotoba-lang/kotoba-kir
                              {:git/url "https://github.com/kotoba-lang/kotoba-kir.git"
-                              :git/sha "084a4e2add5ce14f8cdd43905ccc6ca12000ec23"}
+                              :git/sha "674a5beea7c6c02178a69808db05dcad65397f1b"}
                              io.github.kotoba-lang/kotoba-native
                              {:git/url "https://github.com/kotoba-lang/kotoba-native.git"
                               :git/sha "ff02fd24bfd24bf8a44373319a9fc0eec73a374e"}
@@ -139,7 +139,7 @@
                  ;; which is how this was caught.
                  io.github.kotoba-lang/kotoba-kir
                  {:git/url "https://github.com/kotoba-lang/kotoba-kir.git"
-                  :git/sha "084a4e2add5ce14f8cdd43905ccc6ca12000ec23"}}}
+                  :git/sha "674a5beea7c6c02178a69808db05dcad65397f1b"}}}
 
    :tcb-check {:main-opts ["-m" "aiueos.tcb"]}
 
