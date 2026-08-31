@@ -92,6 +92,51 @@
      :args [(+ base block-offset) (count input)
             (+ base expected-offset) (+ base output-offset) (+ base workspace-offset)]}))
 
+;; --- step-based contracts --------------------------------------------------
+;; `value-handle-arena` is not one call per vector: a vector is a sequence of
+;; steps sharing one page, and one of them starts from a page that is already
+;; initialized with the lock held. The layout comes from the contract's own
+;; `:header` and `:slots`, so this transcribes rather than restates it.
+
+(defn- write-u32 [image offset value]
+  (reduce (fn [v [i b]] (assoc v (+ offset i) b))
+          image
+          (map-indexed vector
+                       [(bit-and value 0xff)
+                        (bit-and (bit-shift-right value 8) 0xff)
+                        (bit-and (bit-shift-right value 16) 0xff)
+                        (bit-and (bit-shift-right value 24) 0xff)])))
+
+(defn- arena-page [contract initial image-bytes arena-offset]
+  (let [{:keys [lock magic next-handle live-count version]} (:header contract)
+        page (vec (repeat image-bytes 0))]
+    (if-not initial
+      page
+      (cond-> page
+        true (write-u32 (+ arena-offset (:offset lock)) (or (:lock initial) 0))
+        (:initialized? initial)
+        (-> (write-u32 (+ arena-offset (:offset magic)) (:value magic))
+            (write-u32 (+ arena-offset (:offset version)) (:value version)))
+        true (write-u32 (+ arena-offset (:offset next-handle))
+                        (or (:next-handle initial) (:initial next-handle)))
+        true (write-u32 (+ arena-offset (:offset live-count))
+                        (count (:entries initial)))))))
+
+(defmulti ^:private prepare-steps (fn [contract _vector] (:format contract)))
+
+(defmethod prepare-steps :aiueos.value-handle-arena/v1 [contract v]
+  (let [{:keys [base image-bytes arena-offset]} (get-in contract [:verification :memory])]
+    {:entry 'aiueos-value-handle-arena
+     :base base
+     :image (arena-page contract (:initial v) image-bytes arena-offset)
+     :args-of (fn [[operation handle descriptor]]
+                [(+ base arena-offset) (:bytes (:page contract))
+                 operation handle descriptor])}))
+
+(defmethod prepare-steps :default [contract _]
+  (fail! "REFUSING TO REPORT A PASS: no step builder for this contract format"
+         {:format (:format contract)}))
+
 (defmethod prepare :default [contract _]
   (fail! "REFUSING TO REPORT A PASS: no argument builder for this contract format"
          {:format (:format contract)}))
@@ -99,6 +144,12 @@
 ;; --- compile ---------------------------------------------------------------
 
 (defn- compile-graph [root-dir {:keys [root modules]}]
+  ;; A contract with no `:graph` would otherwise reach the linker as an empty
+  ;; source map and come back as "project source map is empty", which reads
+  ;; like a linker problem rather than a missing declaration.
+  (when-not (and root (seq modules))
+    (fail! "REFUSING TO REPORT A PASS: this contract declares no :graph, so there is nothing to compile"
+           {:root root :modules modules}))
   (let [sources (into {} (map (fn [m]
                                 [m (fs/readFileSync
                                     (path/join root-dir "os/aiueos/kotoba"
@@ -120,80 +171,125 @@
 
 ;; --- run -------------------------------------------------------------------
 
+(defn- execute-once [kir entry args base image fuel]
+  (try (word (ir/execute kir entry args
+                         {:memory {:base base :bytes image} :fuel fuel}))
+       (catch :default e (ex-data e))))
+
+(defn- refuse-on-trap! [contract label actual]
+  (when (map? actual)
+    (fail! (if (= :kernel-memory-unavailable (:trap actual))
+             "REFUSING TO REPORT A PASS: this kotoba-kir cannot execute kernel memory operations, so nothing was actually run"
+             "vector trapped where a result was expected")
+           {:contract (:format contract) :vector label :trap actual})))
+
+(defn- run-single
+  "One call per vector, each against a fresh image."
+  [contract kir entry fuel started]
+  (let [{:keys [floors]} (:verification contract)
+        observed
+        (doall
+         (for [v (:vectors contract)]
+           (let [{:keys [base image args]} (prepare contract v)
+                 actual (execute-once kir entry args base (volatile! image) fuel)]
+             (refuse-on-trap! contract (:name v) actual)
+             (when-not (= (:expected v) actual)
+               (fail! "vector mismatch"
+                      {:contract (:format contract) :vector (:name v)
+                       :expected (:expected v) :actual actual}))
+             actual)))
+        traps
+        (doall
+         (for [t (:traps contract)]
+           (let [{:keys [base image args]} (prepare contract t)
+                 actual (execute-once kir entry args base (volatile! image) fuel)]
+             (when-not (map? actual)
+               (fail! "trap vector returned a value" {:vector (:name t) :actual actual}))
+             (when-not (and (= (:expect-trap t) (:trap actual))
+                            (= (:expect-check t) (:check actual)))
+               (fail! "trap vector named the wrong fault"
+                      {:vector (:name t)
+                       :expected [(:expect-trap t) (:expect-check t)]
+                       :actual [(:trap actual) (:check actual)]}))
+             (:name t))))
+        seen (set observed)
+        declared (set (keys (:reasons contract)))
+        reachable (set (remove (set (:unreachable-by-construction contract)) declared))
+        unobserved (sort (remove seen reachable))]
+
+    ;; Floors. A run that executed nothing must not return what a run that
+    ;; executed everything returns.
+    (when (< (count observed) (or (:minimum-vectors floors) 1))
+      (fail! "fewer vectors ran than the contract's floor"
+             {:ran (count observed) :floor (:minimum-vectors floors)}))
+    (when (and (:every-reachable-reason-observed floors) (seq unobserved))
+      (fail! "a declared reason was never produced by any vector" {:unobserved unobserved}))
+    (when (and (:both-verdicts-observed floors) (not= #{0 1} seen))
+      (fail! "the object never produced both verdicts" {:observed (vec (sort seen))}))
+    (when-let [impossible (seq (filter seen (set (:unreachable-by-construction contract))))]
+      (fail! "a reason declared unreachable by construction was produced"
+             {:reasons (vec (sort impossible))}))
+
+    {:contract (:format contract)
+     :vectors (count observed) :traps (count traps)
+     :observed (vec (sort seen))
+     :elapsed-ms (- (js/Date.now) started)}))
+
+(defn- run-stepped
+  "A vector is a sequence of steps sharing ONE image, so the object's own
+  writes are what the next step reads. That is the whole point of the arena
+  vectors: `:lifecycle-and-nonreuse` only means anything if step 8 sees the
+  handle step 6 released."
+  [contract kir entry fuel started]
+  (let [{:keys [floors]} (:verification contract)
+        counted (volatile! 0)]
+    (doseq [v (:vectors contract)]
+      (let [{:keys [base image args-of]} (prepare-steps contract v)
+            page (volatile! image)]
+        (when (empty? (:steps v))
+          (fail! "REFUSING TO REPORT A PASS: this vector declares no steps"
+                 {:vector (:name v)}))
+        (doseq [[index step] (map-indexed vector (:steps v))]
+          (let [actual (execute-once kir entry (args-of (:args step)) base page fuel)]
+            (refuse-on-trap! contract [(:name v) index] actual)
+            (when-not (= (:expected step) actual)
+              (fail! "step mismatch"
+                     {:contract (:format contract) :vector (:name v) :step index
+                      :args (:args step) :expected (:expected step) :actual actual}))
+            (vswap! counted inc)))))
+    (when (< (count (:vectors contract)) (or (:minimum-vectors floors) 1))
+      (fail! "fewer vectors ran than the contract's floor"
+             {:ran (count (:vectors contract)) :floor (:minimum-vectors floors)}))
+    (when (< @counted (or (:minimum-steps floors) 1))
+      (fail! "fewer steps ran than the contract's floor"
+             {:ran @counted :floor (:minimum-steps floors)}))
+    {:contract (:format contract)
+     :vectors (count (:vectors contract)) :steps @counted :traps 0
+     :elapsed-ms (- (js/Date.now) started)}))
+
 (defn- run-contract [root-dir contract-path]
   (let [contract (edn/read-string (fs/readFileSync contract-path "utf8"))
-        {:keys [fuel floors]} (:verification contract)
+        {:keys [fuel]} (:verification contract)
         started (js/Date.now)
         ;; Before anything else: a contract with no vectors would otherwise
         ;; compile cleanly, run nothing, and be caught only by the minimum-
-        ;; vectors floor further down -- after `prepare` had already been
+        ;; vectors floor further down -- after the builder had already been
         ;; handed `nil` to read the entry symbol out of.
         _ (when (empty? (:vectors contract))
             (fail! "REFUSING TO REPORT A PASS: this contract declares no vectors"
                    {:contract (:format contract)}))
+        stepped? (some :steps (:vectors contract))
         kir (compile-graph root-dir (:graph contract))
         exports (set (:exports kir))
-        entry (:entry (prepare contract (first (:vectors contract))))]
+        entry (:entry (if stepped?
+                        (prepare-steps contract (first (:vectors contract)))
+                        (prepare contract (first (:vectors contract)))))]
     (when-not (contains? exports entry)
       (fail! "the linked project does not export the entry this runner calls"
              {:entry entry :exports (vec exports)}))
-    (let [observed
-          (doall
-           (for [v (:vectors contract)]
-             (let [{:keys [base image args]} (prepare contract v)
-                   actual (try (word (ir/execute kir entry args
-                                                 {:memory {:base base :bytes (volatile! image)}
-                                                  :fuel fuel}))
-                               (catch :default e (ex-data e)))]
-               (when (map? actual)
-                 (fail! (if (= :kernel-memory-unavailable (:trap actual))
-                          "REFUSING TO REPORT A PASS: this kotoba-kir cannot execute kernel memory operations, so no vector was actually run"
-                          "vector trapped where a result was expected")
-                        {:vector (:name v) :trap actual}))
-               (when-not (= (:expected v) actual)
-                 (fail! "vector mismatch"
-                        {:contract (:format contract) :vector (:name v)
-                         :expected (:expected v) :actual actual}))
-               actual)))
-          traps
-          (doall
-           (for [t (:traps contract)]
-             (let [{:keys [base image args]} (prepare contract t)
-                   actual (try (word (ir/execute kir entry args
-                                                 {:memory {:base base :bytes (volatile! image)}
-                                                  :fuel fuel}))
-                               (catch :default e (ex-data e)))]
-               (when-not (map? actual)
-                 (fail! "trap vector returned a value" {:vector (:name t) :actual actual}))
-               (when-not (and (= (:expect-trap t) (:trap actual))
-                              (= (:expect-check t) (:check actual)))
-                 (fail! "trap vector named the wrong fault"
-                        {:vector (:name t)
-                         :expected [(:expect-trap t) (:expect-check t)]
-                         :actual [(:trap actual) (:check actual)]}))
-               (:name t))))
-          seen (set observed)
-          declared (set (keys (:reasons contract)))
-          reachable (set (remove (set (:unreachable-by-construction contract)) declared))
-          unobserved (sort (remove seen reachable))]
-
-      ;; Floors. A run that executed nothing must not return what a run that
-      ;; executed everything returns.
-      (when (< (count observed) (or (:minimum-vectors floors) 1))
-        (fail! "fewer vectors ran than the contract's floor"
-               {:ran (count observed) :floor (:minimum-vectors floors)}))
-      (when (and (:every-reachable-reason-observed floors) (seq unobserved))
-        (fail! "a declared reason was never produced by any vector" {:unobserved unobserved}))
-      (when (and (:both-verdicts-observed floors) (not= #{0 1} seen))
-        (fail! "the object never produced both verdicts" {:observed (vec (sort seen))}))
-      (when-let [impossible (seq (filter seen (set (:unreachable-by-construction contract))))]
-        (fail! "a reason declared unreachable by construction was produced"
-               {:reasons (vec (sort impossible))}))
-
-      {:contract (:format contract)
-       :vectors (count observed) :traps (count traps)
-       :observed (vec (sort seen))
-       :elapsed-ms (- (js/Date.now) started)})))
+    (if stepped?
+      (run-stepped contract kir entry fuel started)
+      (run-single contract kir entry fuel started))))
 
 (defn- compiler-sha
   "The amu this measurement is about. A receipt without it is a number with no
@@ -223,12 +319,15 @@
                 paths
                 (mapv #(path/join root-dir "os/aiueos/contracts" %)
                       ["cid-v1-admit-v1.edn" "unixfs-file-admit-v1.edn"
-                       "value-runtime-cas-verify-v1.edn"]))
+                       "value-runtime-cas-verify-v1.edn"
+                       "value-handle-arena-v1.edn"]))
         results (mapv #(run-contract root-dir %) paths)]
     (doseq [r results]
       (println (str "CONTRACT\t" (:contract r)
-                    "\tvectors=" (:vectors r) "\ttraps=" (:traps r)
-                    "\tobserved=" (str/join "," (:observed r))
+                    "\tvectors=" (:vectors r)
+                    (when (:steps r) (str "\tsteps=" (:steps r)))
+                    "\ttraps=" (:traps r)
+                    (when (:observed r) (str "\tobserved=" (str/join "," (:observed r))))
                     "\tms=" (:elapsed-ms r))))
     (println (str "CONTRACTS\t" (count results)))
     (println (pr-str {:format :aiueos.verify-admissions/v1
@@ -237,4 +336,10 @@
                       :contracts results
                       :status :passed}))))
 
-(apply -main *command-line-args*)
+;; nbb prints an exception's message and drops its ex-data, so a failing run
+;; said "step mismatch" and never which step. The data is the whole diagnosis.
+(try (apply -main *command-line-args*)
+     (catch :default e
+       (println "FAILED:" (ex-message e))
+       (println "  " (pr-str (ex-data e)))
+       (set! (.-exitCode js/process) 1)))

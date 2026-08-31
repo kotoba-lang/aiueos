@@ -2,7 +2,7 @@
   "Run every value-runtime verifier and write down what happened.
 
   The verifiers next to this file each compile one Kotoba object and check it
-  against its contract. Ten remain here. Three left on 2026-08-31 for
+  against its contract. Nine remain here. Four left on 2026-08-31 for
   `os/aiueos/scripts/verify-admissions.cljs`, which runs on nbb with no JVM;
   coverage moved rather than dropped, and `:value-runtime/moved-to` in the
   receipt names where.
@@ -61,7 +61,6 @@
      sha256 digest cas
      "os/aiueos/native/kernel.kotoba" "os/aiueos/native/value-runtime-kernel.kotoba"
      (c "value-runtime-kernel-image")]]
-   ["value-handle-arena" [arena (c "value-handle-arena")]]
    ["value-handle-plan" [(k "value-handle-plan") (c "value-handle-plan")]]
    ["value-runtime-capability-table" [table (c "value-runtime-capability-table")]]
    ["value-runtime-dispatch" [arena sha256 digest cas transport dispatch
@@ -75,8 +74,9 @@
                                         (c "value-runtime-provider-transport")]]
    ["value-runtime-syscall-plan" [(k "value-runtime-syscall-plan")
                                   (c "value-runtime-syscall-plan")]]
-   ;; `cid-v1-admit`, `unixfs-file-admit` and `value-runtime-cas-verify` were
-   ;; here and have LEFT, to `os/aiueos/scripts/verify-admissions.cljs`. They
+   ;; `cid-v1-admit`, `unixfs-file-admit`, `value-runtime-cas-verify` and
+   ;; `value-handle-arena` were here and have LEFT, to
+   ;; `os/aiueos/scripts/verify-admissions.cljs`. They
    ;; are the three whose verifiers execute the object rather than model it,
    ;; and executing needs nothing this host provides: the linker
    ;; (`kotoba.compiler.project`), the frontend (`kotoba.sema`) and the
@@ -215,7 +215,7 @@
                  {:runner "os/aiueos/scripts/verify-admissions.cljs"
                   :host :nbb
                   :objects ["cid-v1-admit" "unixfs-file-admit"
-                            "value-runtime-cas-verify"]
+                            "value-runtime-cas-verify" "value-handle-arena"]
                   :why "their verifiers execute the object, and executing needs
                         only .cljc: the linker, the frontend, the lowering and
                         the interpreter. No JVM."}
