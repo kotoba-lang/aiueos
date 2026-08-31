@@ -2,9 +2,10 @@
   "Run every value-runtime verifier and write down what happened.
 
   The verifiers next to this file each compile one Kotoba object and check it
-  against its contract -- eleven `verify_value_*.clj`, plus
-  `verify_cid_v1_admit` and `verify_unixfs_file_admit`, which are not
-  value-runtime objects but are here for the reason this whole file exists.
+  against its contract. Ten remain here. Three left on 2026-08-31 for
+  `os/aiueos/scripts/verify-admissions.cljs`, which runs on nbb with no JVM;
+  coverage moved rather than dropped, and `:value-runtime/moved-to` in the
+  receipt names where.
   Measured 2026-08-18: **nothing in this repository invoked any of them** — no task, no script, no test, no doc
   mentions them. They are not a check that passes; they are a check nobody
   runs, which reports the same green as one that ran (ADR-2608136000 question
@@ -63,7 +64,6 @@
    ["value-handle-arena" [arena (c "value-handle-arena")]]
    ["value-handle-plan" [(k "value-handle-plan") (c "value-handle-plan")]]
    ["value-runtime-capability-table" [table (c "value-runtime-capability-table")]]
-   ["value-runtime-cas-verify" [sha256 digest cas (c "value-runtime-cas-verify")]]
    ["value-runtime-dispatch" [arena sha256 digest cas transport dispatch
                               (c "value-runtime-dispatch")]]
    ["value-runtime-domain" [(k "value-runtime-domain") (c "value-runtime-domain")]]
@@ -75,15 +75,19 @@
                                         (c "value-runtime-provider-transport")]]
    ["value-runtime-syscall-plan" [(k "value-runtime-syscall-plan")
                                   (c "value-runtime-syscall-plan")]]
-   ;; Not value-runtime objects, and here anyway. This file exists because a
-   ;; verifier nobody invokes reports the same green as one that ran, and that
-   ;; is true of these two for exactly the same reason. They are also the first
-   ;; two whose verifiers EXECUTE the object rather than model it (ADR-0128):
-   ;; kotoba-kir's optional memory image made `kir/execute` able to run a
-   ;; byte-walking object, so a failure here is the object disagreeing with its
-   ;; contract and not a Java re-implementation disagreeing with itself.
-   ["cid-v1-admit" [sha256 (k "cid-v1-admit") (c "cid-v1-admit")]]
-   ["unixfs-file-admit" [(k "unixfs-file-admit") (c "unixfs-file-admit")]]])
+   ;; `cid-v1-admit`, `unixfs-file-admit` and `value-runtime-cas-verify` were
+   ;; here and have LEFT, to `os/aiueos/scripts/verify-admissions.cljs`. They
+   ;; are the three whose verifiers execute the object rather than model it,
+   ;; and executing needs nothing this host provides: the linker
+   ;; (`kotoba.compiler.project`), the frontend (`kotoba.sema`) and the
+   ;; lowering and interpreter (`kotoba.kir`) are all `.cljc`. Only
+   ;; `kotoba.compiler.core/compile-project` was `.clj`, and it is a thin
+   ;; wrapper over the four. So they run on nbb with no JVM, which is what the
+   ;; workspace Q9 rule asks of acceptance.
+   ;;
+   ;; This receipt therefore covers ten objects and says so. Coverage did not
+   ;; drop; it moved, and `:value-runtime/moved-to` below names where.
+   ])
 
 (defn- measured-at
   "Today, read from the clock. It was a literal string until 2026-08-18, which
@@ -205,6 +209,16 @@
                  :value-runtime/upstream upstream
                  :value-runtime/upstream-by-cause upstream-by-cause
                  :value-runtime/results results
+                 ;; Named here so a shrinking object count reads as a move
+                 ;; and not as coverage quietly going away.
+                 :value-runtime/moved-to
+                 {:runner "os/aiueos/scripts/verify-admissions.cljs"
+                  :host :nbb
+                  :objects ["cid-v1-admit" "unixfs-file-admit"
+                            "value-runtime-cas-verify"]
+                  :why "their verifiers execute the object, and executing needs
+                        only .cljc: the linker, the frontend, the lowering and
+                        the interpreter. No JVM."}
                  :value-runtime/no-verifier-of-their-own
                  {"value-runtime-sha256" "an input to cas-verify, dispatch, entry and provider-transport; compiled as part of them"
                   "value-runtime-digest-equal" "same — an input, not an uncovered object"}

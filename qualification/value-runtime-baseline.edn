@@ -1,4 +1,4 @@
-#:value-runtime{:objects 13,
+#:value-runtime{:objects 10,
                 :results
                 [{:object "value-runtime-kernel-image",
                   :verdict :fail,
@@ -43,13 +43,6 @@
                   "kernel-value-runtime-capability-table",
                   :error-code :kotoba.error/subset-reject,
                   :compiler-phase :subset}
-                 {:object "value-runtime-cas-verify",
-                  :verdict :ok,
-                  :args
-                  ["os/aiueos/kotoba/value-runtime-sha256.kotoba"
-                   "os/aiueos/kotoba/value-runtime-digest-equal.kotoba"
-                   "os/aiueos/kotoba/value-runtime-cas-verify.kotoba"
-                   "os/aiueos/contracts/value-runtime-cas-verify-v1.edn"]}
                  {:object "value-runtime-dispatch",
                   :verdict :fail,
                   :args
@@ -122,18 +115,16 @@
                   :verdict :ok,
                   :args
                   ["os/aiueos/kotoba/value-runtime-syscall-plan.kotoba"
-                   "os/aiueos/contracts/value-runtime-syscall-plan-v1.edn"]}
-                 {:object "cid-v1-admit",
-                  :verdict :ok,
-                  :args
-                  ["os/aiueos/kotoba/value-runtime-sha256.kotoba"
-                   "os/aiueos/kotoba/cid-v1-admit.kotoba"
-                   "os/aiueos/contracts/cid-v1-admit-v1.edn"]}
-                 {:object "unixfs-file-admit",
-                  :verdict :ok,
-                  :args
-                  ["os/aiueos/kotoba/unixfs-file-admit.kotoba"
-                   "os/aiueos/contracts/unixfs-file-admit-v1.edn"]}],
+                   "os/aiueos/contracts/value-runtime-syscall-plan-v1.edn"]}],
+                :moved-to
+                {:runner "os/aiueos/scripts/verify-admissions.cljs",
+                 :host :nbb,
+                 :objects
+                 ["cid-v1-admit"
+                  "unixfs-file-admit"
+                  "value-runtime-cas-verify"],
+                 :why
+                 "their verifiers execute the object, and executing needs\n                        only .cljc: the linker, the frontend, the lowering and\n                        the interpreter. No JVM."},
                 :upstream
                 {"kernel-value-provider-queue"
                  "https://github.com/kotoba-lang/amu/issues/625",

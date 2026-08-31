@@ -69,7 +69,8 @@
  :verification
  {:off-target :executed
   :mechanism :kir-execute-with-a-supplied-memory-image
-  :runner "os/aiueos/scripts/aiueos/verify_unixfs_file_admit.clj"
+  :runner "os/aiueos/scripts/verify-admissions.cljs"
+  :host :nbb
   :ground-truth
   "The two admitted nodes are real: `unixfs.file/build` in
    tech-ipfs-specs-unixfs produced them, that implementation is pinned
