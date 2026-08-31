@@ -4210,6 +4210,65 @@ static int rtl8125_direct_tcp_send(uint32_t dst, uint16_t local_port,
    that arrived outside the short spin window. */
 static uint32_t rtl8125_ssh_pending_length;
 static int rtl8125_ssh_frame_consumed;
+static uint32_t rtl8125_ssh_report_sequence;
+static uint32_t rtl8125_ssh_frames_seen;
+static uint32_t rtl8125_ssh_tcp_frames_seen;
+static uint32_t rtl8125_ssh_syn_candidates;
+static uint32_t rtl8125_ssh_valid_syns;
+static uint32_t rtl8125_ssh_last_length;
+static uint32_t rtl8125_ssh_last_source_ip;
+static uint32_t rtl8125_ssh_last_ports;
+static uint32_t rtl8125_ssh_last_flags;
+
+static void rtl8125_ssh_capture(uint32_t frame_length) {
+  const uint8_t *frame = rtl8125_qualification_device.rx_frame;
+  rtl8125_ssh_frames_seen++;
+  rtl8125_ssh_last_length = frame_length;
+  if (frame_length < 54 || net_load_be16(frame + 12) != 0x0800U ||
+      frame[14] != 0x45U || frame[23] != 6U) return;
+  rtl8125_ssh_tcp_frames_seen++;
+  rtl8125_ssh_last_source_ip = net_load_be32(frame + 26);
+  rtl8125_ssh_last_ports = ((uint32_t)net_load_be16(frame + 34) << 16) |
+    net_load_be16(frame + 36);
+  rtl8125_ssh_last_flags = frame[47];
+  if (net_load_be16(frame + 36) == NET_SSH_PORT &&
+      frame[47] == NET_TCP_SYN) {
+    rtl8125_ssh_syn_candidates++;
+    if (kotoba_aiueos_tcp_segment_valid(
+          (uint64_t)(uintptr_t)frame, frame_length,
+          RTL_DIRECT_GATEWAY, 0, NET_TCP_SYN))
+      rtl8125_ssh_valid_syns++;
+  }
+}
+
+/* Emit bounded frame metadata only: no SSH payload, key or identity bytes.
+   This makes the physical qualification distinguish "the SYN never reached
+   the K16" from a listener/admission failure without granting a debug shell. */
+static void rtl8125_ssh_report(int accepted) {
+  static const uint8_t prefix[] = "AIUEOS_SSH_RX ";
+  static const char digits[] = "0123456789abcdef";
+  uint32_t fields[10] = {
+    ++rtl8125_ssh_report_sequence, rtl8125_ssh_frames_seen,
+    rtl8125_ssh_tcp_frames_seen, rtl8125_ssh_syn_candidates,
+    rtl8125_ssh_valid_syns, rtl8125_ssh_last_length,
+    rtl8125_ssh_last_source_ip, rtl8125_ssh_last_ports,
+    rtl8125_ssh_last_flags, (ssh_listen_stage << 1) | (accepted ? 1U : 0U)
+  };
+  uint32_t length = sizeof(prefix) - 1U;
+  for (uint32_t i = 0; i < length; i++)
+    rtl_direct_worker_wire[i] = prefix[i];
+  for (uint32_t field = 0; field < 10U; field++) {
+    if (field) rtl_direct_worker_wire[length++] = ' ';
+    for (int shift = 28; shift >= 0; shift -= 4)
+      rtl_direct_worker_wire[length++] =
+        (uint8_t)digits[(fields[field] >> shift) & 0x0fU];
+  }
+  uint32_t bytes = rtl8125_build_udp_payload(
+    rtl8125_qualification_device.tx_frame, rtl_direct_worker_wire,
+    length, (uint16_t)(0x6000U | (rtl8125_ssh_report_sequence & 0x1fffU)));
+  if (bytes) (void)rtl8125_direct_tx(bytes);
+  aiueos_rtl8125_rx_rearm(&rtl8125_qualification_device);
+}
 
 static int rtl8125_ssh_rearm(void *context) {
   (void)context;
@@ -4241,12 +4300,16 @@ static int rtl8125_ssh_wait(void *context, uint32_t *frame_length) {
     *frame_length = rtl8125_ssh_pending_length;
     rtl8125_ssh_pending_length = 0;
     rtl8125_ssh_frame_consumed = 1;
+    rtl8125_ssh_capture(*frame_length);
     return 1;
   }
   int received = ssh_listen_stage
     ? rtl8125_direct_rx(frame_length)
     : rtl8125_direct_rx_budget(frame_length, RTL8125_SSH_IDLE_RX_BUDGET);
-  if (received) rtl8125_ssh_frame_consumed = 1;
+  if (received) {
+    rtl8125_ssh_frame_consumed = 1;
+    rtl8125_ssh_capture(*frame_length);
+  }
   return received;
 }
 
@@ -4276,6 +4339,14 @@ int aiueos_rtl8125_ssh_poll(void) {
   net_peer_mac_known = 1;
   rtl8125_ssh_pending_length = 0;
   rtl8125_ssh_frame_consumed = 0;
+  rtl8125_ssh_frames_seen = 0;
+  rtl8125_ssh_tcp_frames_seen = 0;
+  rtl8125_ssh_syn_candidates = 0;
+  rtl8125_ssh_valid_syns = 0;
+  rtl8125_ssh_last_length = 0;
+  rtl8125_ssh_last_source_ip = 0;
+  rtl8125_ssh_last_ports = 0;
+  rtl8125_ssh_last_flags = 0;
   ssh_listen_stage = 0;
   ssh_client_id_valid = 0;
   ssh_client_id_len = 0;
@@ -4290,6 +4361,7 @@ int aiueos_rtl8125_ssh_poll(void) {
   net_tx_window = RTL_DIRECT_RX_WINDOW;
   int accepted = net_ssh_listen(&io, RTL8125_SSH_LISTEN_ROUNDS);
   net_tx_window = NET_TCP_WINDOW;
+  if (rtl8125_ssh_frames_seen) rtl8125_ssh_report(accepted);
   return accepted && ssh_kex_stage >= 16;
 }
 #endif

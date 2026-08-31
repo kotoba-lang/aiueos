@@ -294,7 +294,12 @@
     (doseq [marker ["Management is an AIUEOS service, not a consequence of Murakumo health"
                     "aiueos_k16_management_wait(boot->tsc_hz, 5)"
                     "aiueos_k16_management_wait(boot->tsc_hz, 30)"]]
-      (is (str/includes? kernel marker))))
+      (is (str/includes? kernel marker)))
+    (doseq [marker ["Keep RX posted for the whole management second"
+                    "uint64_t management_start = aiueos_read_tsc()"
+                    "aiueos_read_tsc() - management_start < tsc_hz"]]
+      (is (str/includes? kernel marker)))
+    (is (not (str/includes? kernel "aiueos_wait_seconds(tsc_hz, 1)"))))
   (testing "an idle SSH listener cannot monopolize the persistent worker loop"
     (doseq [marker ["RTL8125_SSH_IDLE_RX_BUDGET"
                     "rtl8125_direct_rx_budget"
@@ -314,6 +319,13 @@
     (is (< (str/index-of pci "aiueos_rtl8125_rx_poll(\n      &rtl8125_qualification_device")
            (str/index-of pci "aiueos_rtl8125_rx_rearm(&rtl8125_qualification_device);"
                          (str/index-of pci "static int rtl8125_ssh_rearm")))))
+  (testing "physical SSH diagnostics expose bounded frame metadata, never payload"
+    (doseq [marker ["AIUEOS_SSH_RX "
+                    "rtl8125_ssh_syn_candidates"
+                    "rtl8125_ssh_valid_syns"
+                    "no SSH payload, key or identity bytes"
+                    "if (rtl8125_ssh_frames_seen) rtl8125_ssh_report(accepted)"]]
+      (is (str/includes? pci marker))))
   (testing "management can restart Kototama but cannot obtain a shell or reboot"
     (doseq [marker ["AIUEOS_RTL8125_SSH_SESSION_OK"
                     "commands=runtime-status,runtime-restart"

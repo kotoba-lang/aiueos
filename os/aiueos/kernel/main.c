@@ -641,11 +641,19 @@ static void aiueos_k16_management_wait(uint64_t tsc_hz, uint32_t seconds) {
     defined(AIUEOS_MURAKUMO_DEVICE_RESULT)
   for (uint32_t management_second = 0;
        management_second < seconds; management_second++) {
-    if (aiueos_rtl8125_ssh_poll()) {
-      debug_string("AIUEOS_RTL8125_SSH_SESSION_OK commands=runtime-status,runtime-restart shell=false kernel-reboot=false\n");
-      serial_string("AIUEOS_RTL8125_SSH_SESSION_OK commands=runtime-status,runtime-restart shell=false kernel-reboot=false\r\n");
-    }
-    aiueos_wait_seconds(tsc_hz, 1);
+    /* Keep RX posted for the whole management second.  One short listener
+       followed by a one-second CPU delay leaves the physical link deaf for
+       most of the interval and can phase-lock with macOS SYN retransmission.
+       The listener itself is bounded, so repeat it until the second expires;
+       this changes no command authority and still returns to Murakumo on the
+       original five/30-second schedule. */
+    uint64_t management_start = aiueos_read_tsc();
+    do {
+      if (aiueos_rtl8125_ssh_poll()) {
+        debug_string("AIUEOS_RTL8125_SSH_SESSION_OK commands=runtime-status,runtime-restart shell=false kernel-reboot=false\n");
+        serial_string("AIUEOS_RTL8125_SSH_SESSION_OK commands=runtime-status,runtime-restart shell=false kernel-reboot=false\r\n");
+      }
+    } while (tsc_hz && aiueos_read_tsc() - management_start < tsc_hz);
   }
 #else
   aiueos_wait_seconds(tsc_hz, seconds);
