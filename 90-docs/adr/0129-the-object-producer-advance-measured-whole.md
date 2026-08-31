@@ -33,7 +33,9 @@ with the same flags `reproduce-kotoba-kernel-object.sh` uses:
 
 | | |
 |---|---|
-| Objects with a committed `.o` and a sibling source | **66** |
+| Committed `.o` files | **67** |
+| Measured (have a sibling source) | **66** |
+| Skipped, reported rather than filtered away | **1** — `ecdsa-p256-public` |
 | Reproduce byte for byte | **4** — `broker-admit`, `ime-romaji`, `scanout-bind`, `session-restore` |
 | Differ | **58** |
 | **Failed to compile** | **4** — `dhcp-option-u32`, `dhcp-reply-valid`, `ecdsa-p256`, `ecdsa-p256-sign`. All four now compile; see below — three were an allowlist that had drifted, one was this measurement asking the wrong question |
@@ -80,6 +82,20 @@ digest in `build-uefi.sh` moves.
 
 Note that reproduction is not explained by an object being trivial:
 `broker-admit` has no `:export` clause, and neither do the four that crash.
+
+**The one that was skipped, and why saying so matters.** The first version of
+this measurement filtered out objects with no sibling `.kotoba` and reported
+the remainder: 67 committed objects went in, 66 came out, and the receipt said
+66 with nothing to record that a difference existed. That is the shape this
+whole series is about, in a tool written to find it.
+
+`ecdsa-p256-public.o` is not sourceless. `ecdsa-p256-sign.kotoba` defines both
+`aiueos-ecdsa-p256-sign` and `aiueos-ecdsa-p256-public`, and
+`reproduce-ecdsa-sign-object.clj` writes both `.o` files from that one source —
+identical 52,264 bytes, differing only in which admitted symbol
+`package-kernel-object` selects. Measuring it needs that recipe rather than the
+generic command, so the script now reports it as skipped with its reason
+instead of quietly narrowing the denominator.
 
 ## What this changes about the decision
 
