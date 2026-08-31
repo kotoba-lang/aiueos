@@ -78,6 +78,29 @@ void *aiueos_allocate_physical_page(void) {
   if (page) zero_page(page); unlock(); return page;
 }
 
+/* Reserve one boot-lifetime contiguous arena without consuming the small
+   individually-freeable allocation record table.  Model decode state is
+   never returned during this native boot, so recording tens of thousands of
+   component pages would add metadata without enabling a valid free path. */
+void *aiueos_allocate_contiguous_physical_pages(uint64_t page_count) {
+  if (!page_count || page_count > UINT64_MAX / PAGE_SIZE) return 0;
+  lock();
+  uint64_t bytes = page_count * PAGE_SIZE;
+  uint64_t start = next_page;
+  if (!start || page_count > remaining_pages ||
+      start >= IDENTITY_LIMIT || bytes > IDENTITY_LIMIT - start) {
+    unlock();
+    return 0;
+  }
+  next_page += bytes;
+  remaining_pages -= page_count;
+  unlock();
+  uint8_t *memory = (uint8_t *)(uintptr_t)start;
+  for (uint64_t page = 0; page < page_count; page++)
+    zero_page(memory + page * PAGE_SIZE);
+  return memory;
+}
+
 int aiueos_free_physical_page(void *page) {
   if (!page || ((uintptr_t)page&(PAGE_SIZE-1)) || (uintptr_t)page>=IDENTITY_LIMIT) return 0;
   lock();

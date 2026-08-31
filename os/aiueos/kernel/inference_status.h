@@ -4,7 +4,7 @@
 
 #include <stdint.h>
 
-#define AIUEOS_INFERENCE_STATUS_ABI_VERSION 1U
+#define AIUEOS_INFERENCE_STATUS_ABI_VERSION 2U
 #define AIUEOS_INFERENCE_STATUS_TEXT_MAX 32U
 #define AIUEOS_INFERENCE_TOKEN_MAX 10000000U
 #define AIUEOS_INFERENCE_UNMEASURED UINT64_MAX
@@ -31,6 +31,9 @@ struct aiueos_inference_status {
   const char *detail;
   uint32_t prompt_tokens;
   uint32_t generated_tokens;
+  /* Excludes the first generated token.  decode_ns covers exactly this many
+     subsequent autoregressive tokens. */
+  uint32_t decode_tokens;
   uint32_t target_tokens;
   uint64_t artifact_bytes;
   uint64_t resident_bytes;

@@ -385,25 +385,26 @@ python3 ./os/aiueos/tools/k16-pxe-server.py \
 The native GOP surface now has a versioned inference-status screen.  It shows
 the exact model and quant, admission/load/prefill/decode/complete/error phase,
 cold-load and first-token milliseconds, separate prefill and decode token
-rates, generated tokens, resident MiB, and raw compute cycles.  An absent duration renders as
+rates, generated tokens, resident MiB, and raw compute cycles. Status ABI v2
+stores `decode_tokens` separately, so the decode rate excludes the first
+generated token instead of substituting reciprocal TTFT. An absent duration renders as
 `N/A`; raw TSC cycles are never converted with a nominal CPU clock and missing
 timing is never rendered as zero.  The persistent physical micro-inference
 profile updates this surface from the real job state and retains its measured
 cycle count while Murakumo liveness renews or reconnects.
 
-The target Qwen cell is pinned in
-`contracts/qwen38-27b-k16-benchmark-v1.edn`: official
+The exact first-token observations are retained in the historical
+`contracts/qwen38-27b-k16-benchmark-v1.edn`; the multi-token measurement
+boundary is pinned in
+`contracts/qwen38-27b-k16-decode-benchmark-v2.edn`: official
 `Qwen/Qwen3.8-27B` revision `1d4bf0f...`, Unsloth
 `Qwen3.8-27B-UD-IQ3_XXS.gguf` revision `4ca7207...`, 10,934,860,704 bytes,
-SHA-256 `c0b7c303...f3eee`.  It is **not yet loaded on the physical K16**.  A
-model-enabled pure-AIUEOS build now reads an exact three-part FAT32 bundle in
-UEFI, verifies the reconstructed SHA-256, and maps the admitted range
-supervisor-only, read-only and NX.  That handoff and its one-byte corruption
-refusal are verified in QEMU; the K16's contiguous 10.9-GB allocation remains
-unverified.  GGUF metadata/tensor parsing, the Qwen3.5 operator runtime,
-tokenizer, threaded SIMD backend and calibrated monotonic clock are still
-absent.  Therefore its Qwen speed is `N/A`, not `0 tok/s`; the already-qualified
-character-bigram job is not substituted for the 27B model.
+SHA-256 `c0b7c303...f3eee`. The physical K16 has admitted that artifact and
+matched frozen first token 2005. The current image adds bounded greedy
+generation of eight tokens, Gated DeltaNet recurrent/causal-convolution state,
+full-attention K/V state, AVX2 with scalar rejection fallback, and a preferred
+two-thread matrix path. Its decode speed remains `N/A`, not `0 tok/s`, until
+the K16 boots this exact image and records all seven post-first-token cycles.
 
 The normal update path is now
 [`contracts/model-channel-v1.edn`](contracts/model-channel-v1.edn), not a model
@@ -1009,12 +1010,15 @@ The first boot generates a valid P-256 scalar from CPU RDRAND and persists it
 as the UEFI NVRAM variable `AIUEOSDeviceP256Key`; later boots retain the same
 standard P-256 `did:key`. After exact GGUF admission and the native first-token
 check, the K16 posts `/infer/nodes/device-p256-result` over its own TLS session.
-The receipt binds the device public key, boot nonce, model digest, token,
-measured model-load cycles, first-token cycles, and a UEFI-calibrated TSC rate.
+The v2 receipt binds the device public key, boot nonce, model digest, first two
+sequential tokens, generated/decode counts, first-token/decode/total cycles,
+AVX2 width, worker count, and a UEFI-calibrated TSC rate. Murakumo continues to
+accept the older v1 receipt while new images sign `aiueos-k16-result-v2` and
+`aiueos-k16-worker-v2`.
 Murakumo enrolls this self-asserted identity only as `Community/pending` and
-keeps `ready=false`: one correct token is qualification evidence, not a job
-polling worker. It reports model-load time and TTFT; decode tokens/second stays
-`N/A` until a multi-token decode exists. Device-P256 is deliberately not
+keeps `ready=false` until persistent worker polling starts. A v2 multi-token
+receipt reports decode tokens/second only from the seven tokens after the
+first. Device-P256 is deliberately not
 called CACAO and does not imply Passkey account binding, post-quantum
 authentication, Biscuit delegation, TPM sealing, or AWAI Secure admission.
 The image writes neither the model USB nor the internal SSD.

@@ -207,13 +207,15 @@ extern int aiueos_apic_timer_initialize(void);
 extern volatile uint64_t aiueos_apic_timer_ticks;
 extern int aiueos_physical_allocator_initialize(const struct aiueos_boot_info *boot);
 extern void *aiueos_allocate_physical_page(void);
+extern void *aiueos_allocate_contiguous_physical_pages(uint64_t);
 extern int aiueos_pci_enumerate(void);
 extern int aiueos_rtl8125_physical_qualification(void);
 extern unsigned aiueos_rtl8125_qualification_error(void);
 extern uint32_t aiueos_rtl8125_qualification_rx_length(void);
 #ifdef AIUEOS_MURAKUMO_DEVICE_RESULT
 extern int aiueos_rtl8125_direct_https_qualification(
-    const struct aiueos_boot_info *, uint32_t, uint32_t, uint64_t);
+    const struct aiueos_boot_info *, uint32_t, uint32_t, uint32_t,
+    uint32_t, uint64_t, uint64_t, uint64_t, uint32_t, uint32_t);
 extern const char *aiueos_rtl8125_direct_device_did(void);
 extern int aiueos_rtl8125_device_worker_poll(
     const struct aiueos_boot_info *, uint32_t, uint64_t *, uint32_t *, int *,
@@ -222,7 +224,8 @@ extern int aiueos_rtl8125_device_worker_control_ack(
     const struct aiueos_boot_info *, uint32_t, uint64_t);
 extern int aiueos_rtl8125_device_worker_result(
     const struct aiueos_boot_info *, uint32_t, uint64_t,
-    uint32_t, uint32_t, uint64_t);
+    uint32_t, uint32_t, uint32_t, uint32_t, uint64_t, uint64_t, uint64_t,
+    uint32_t, uint32_t);
 #else
 extern int aiueos_rtl8125_direct_https_qualification(void);
 #endif
@@ -457,6 +460,7 @@ extern int aiueos_kotoba_runtime_evidence_ready(void);
 extern int aiueos_address_space_self_test(void);
 extern void aiueos_load_task_register(void);
 extern int aiueos_smp_start_application_processor(void);
+extern int aiueos_smp_dispatch_selftest(void);
 extern int aiueos_ioapic_route_legacy_timer(void);
 extern volatile uint64_t aiueos_external_timer_ticks;
 extern volatile uint64_t aiueos_virtio_rng_irq_count;
@@ -558,6 +562,16 @@ static void aiueos_wait_seconds(uint64_t tsc_hz, uint32_t seconds) {
   uint64_t start = aiueos_read_tsc();
   uint64_t cycles = tsc_hz * seconds;
   while (aiueos_read_tsc() - start < cycles) __asm__ volatile("pause");
+}
+
+static uint64_t aiueos_cycles_to_ns(uint64_t cycles, uint64_t tsc_hz) {
+  if (!cycles || !tsc_hz) return AIUEOS_INFERENCE_UNMEASURED;
+  uint64_t whole = cycles / tsc_hz;
+  uint64_t remainder = cycles % tsc_hz;
+  uint64_t fraction = (remainder * 1000000000ULL) / tsc_hz;
+  if (whole > (UINT64_MAX - fraction) / 1000000000ULL)
+    return AIUEOS_INFERENCE_UNMEASURED;
+  return whole * 1000000000ULL + fraction;
 }
 #endif
 static void serial_ipv4(uint32_t value) {
@@ -673,6 +687,10 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
     qemu_exit(0x7e);
   } else {
     boot = &aiueos_owned_boot_info;
+#if defined(AIUEOS_PHYSICAL_QUALIFICATION) && \
+    defined(AIUEOS_QWEN38_MODEL_HANDOFF) && !defined(AIUEOS_MODEL_TEST_FIXTURE)
+    int qwen_early_acpi_ready = 0;
+#endif
 #ifdef AIUEOS_PHYSICAL_QUALIFICATION
     aiueos_qualification_runtime_initialize(
         boot->version >= 3 ? boot->runtime_services : 0,
@@ -966,7 +984,8 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
       .detail = "QWEN35 GRAPH PENDING",
       .prompt_tokens = 1,
       .generated_tokens = 0,
-      .target_tokens = 1,
+      .decode_tokens = 0,
+      .target_tokens = AIUEOS_QWEN35_GENERATION_TOKENS,
       .artifact_bytes = boot->model_size,
       .resident_bytes = boot->model_size,
       .load_ns = calibrated_model_load_ns,
@@ -1004,26 +1023,35 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
     debug_string("AIUEOS_PHYSICAL_ALLOCATOR_OK pages=2 zeroed\n");
     serial_string("AIUEOS_PHYSICAL_ALLOCATOR_OK pages=2 zeroed\r\n");
 #if defined(AIUEOS_QWEN38_MODEL_HANDOFF) && !defined(AIUEOS_MODEL_TEST_FIXTURE)
+#ifdef AIUEOS_PHYSICAL_QUALIFICATION
+#ifdef AIUEOS_QWEN35_SMP
+    /* Bring up one application processor before the first model walk.  The
+       previous SMP qualification happened after the physical-Qwen branch had
+       already completed and halted, so every measured token was necessarily
+       single-threaded.  AP startup is best-effort here: the scalar path stays
+       available, while the result records the actual worker count. */
+    qwen_early_acpi_ready = aiueos_acpi_initialize(boot->acpi_rsdp);
+    if (qwen_early_acpi_ready && aiueos_apic_timer_initialize() &&
+        aiueos_smp_start_application_processor() &&
+        aiueos_smp_dispatch_selftest()) {
+      serial_string("AIUEOS_QWEN35_SMP_READY threads=2 init-sipi-v1 dispatch=verified\r\n");
+    } else {
+      serial_string("AIUEOS_QWEN35_SMP_FALLBACK threads=1\r\n");
+    }
+#else
+    serial_string("AIUEOS_QWEN35_SMP_DISABLED threads=1\r\n");
+#endif
+#endif
     enum {
       qwen_model_pages =
         (sizeof(struct aiueos_qwen35_model) + 4095U) / 4096U,
       qwen_workspace_pages =
-        (AIUEOS_QWEN35_WORKSPACE_BYTES + 4095U) / 4096U,
+        (AIUEOS_QWEN35_DECODE_WORKSPACE_BYTES + 4095U) / 4096U,
       qwen_volatile_pages = qwen_model_pages + qwen_workspace_pages
     };
-    uint8_t *qwen_volatile = 0;
-    int qwen_workspace_ok = 1;
-    for (uint32_t page_index = 0;
-         page_index < qwen_volatile_pages; page_index++) {
-      uint8_t *page = aiueos_allocate_physical_page();
-      if (!page) { qwen_workspace_ok = 0; break; }
-      if (!qwen_volatile) qwen_volatile = page;
-      if (page != qwen_volatile + (uint64_t)page_index * 4096U) {
-        qwen_workspace_ok = 0;
-        break;
-      }
-    }
-    if (!qwen_workspace_ok) {
+    uint8_t *qwen_volatile = aiueos_allocate_contiguous_physical_pages(
+      qwen_volatile_pages);
+    if (!qwen_volatile) {
       aiueos_qwen35_status.phase = AIUEOS_INFERENCE_ERROR;
       aiueos_qwen35_status.detail = "WORKSPACE REFUSED";
       (void)aiueos_framebuffer_inference_screen(&aiueos_qwen35_status);
@@ -1055,52 +1083,81 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
     serial_string(" graph-pages=");
     serial_decimal(qwen_model_pages);
     serial_string(" storage=volatile-ram\r\n");
-    struct aiueos_qwen35_first_token_result first_token;
-    if (!aiueos_qwen35_first_token(
-          aiueos_qwen35_model, AIUEOS_QWEN35_BOS_TOKEN,
-          qwen_workspace, (uint64_t)qwen_workspace_pages * 4096U,
-          aiueos_qwen35_progress, &first_token)) {
-      aiueos_qwen35_status.phase = AIUEOS_INFERENCE_ERROR;
-      aiueos_qwen35_status.detail = "EXECUTION REFUSED";
-      (void)aiueos_framebuffer_inference_screen(&aiueos_qwen35_status);
-      debug_string("AIUEOS_QWEN35_FIRST_TOKEN_FAIL execution\n");
-      serial_string("AIUEOS_QWEN35_FIRST_TOKEN_FAIL execution\r\n");
-      for (;;) __asm__ volatile("cli; hlt");
+    struct aiueos_qwen35_generation_result generation = {0};
+    int generation_ok = aiueos_qwen35_generate(
+      aiueos_qwen35_model, AIUEOS_QWEN35_BOS_TOKEN,
+      AIUEOS_QWEN35_GENERATION_TOKENS,
+      qwen_workspace, (uint64_t)qwen_workspace_pages * 4096U,
+      aiueos_qwen35_progress, &generation);
+    if (!generation_ok && generation.vector_bits == 256U &&
+        generation.generated_tokens &&
+        generation.tokens[0] != AIUEOS_QWEN35_REFERENCE_FIRST_TOKEN) {
+      serial_string("AIUEOS_QWEN35_AVX2_REJECT expected=2005 actual=");
+      serial_decimal(generation.tokens[0]);
+      serial_string(" fallback=scalar\r\n");
+      aiueos_qwen35_force_scalar();
+      generation = (struct aiueos_qwen35_generation_result){0};
+      generation_ok = aiueos_qwen35_generate(
+        aiueos_qwen35_model, AIUEOS_QWEN35_BOS_TOKEN,
+        AIUEOS_QWEN35_GENERATION_TOKENS,
+        qwen_workspace, (uint64_t)qwen_workspace_pages * 4096U,
+        aiueos_qwen35_progress, &generation);
     }
-    if (first_token.token != AIUEOS_QWEN35_REFERENCE_FIRST_TOKEN) {
+    if (!generation_ok ||
+        generation.generated_tokens != AIUEOS_QWEN35_GENERATION_TOKENS ||
+        generation.tokens[0] != AIUEOS_QWEN35_REFERENCE_FIRST_TOKEN) {
       aiueos_qwen35_status.phase = AIUEOS_INFERENCE_ERROR;
-      aiueos_qwen35_status.detail = "TOKEN MISMATCH";
-      aiueos_qwen35_status.compute_cycles = first_token.compute_cycles;
+      aiueos_qwen35_status.detail = "DECODE REFUSED";
+      aiueos_qwen35_status.compute_cycles = generation.total_cycles;
       (void)aiueos_framebuffer_inference_screen(&aiueos_qwen35_status);
-      serial_string("AIUEOS_QWEN35_FIRST_TOKEN_FAIL expected=2005 actual=");
-      serial_decimal(first_token.token);
-      serial_string(" cycles=");
-      serial_decimal64(first_token.compute_cycles);
+      serial_string("AIUEOS_QWEN35_GENERATE_FAIL expected-first=2005 actual=");
+      serial_decimal(generation.generated_tokens ? generation.tokens[0] : UINT32_MAX);
+      serial_string(" generated=");
+      serial_decimal(generation.generated_tokens);
+      serial_string(" total-cycles=");
+      serial_decimal64(generation.total_cycles);
       serial_string("\r\n");
       for (;;) __asm__ volatile("cli; hlt");
     }
     aiueos_qwen35_status.phase = AIUEOS_INFERENCE_COMPLETE;
-    aiueos_qwen35_status.detail = "TOKEN 2005 MATCH";
-    aiueos_qwen35_status.generated_tokens = 1;
-    aiueos_qwen35_status.compute_cycles = first_token.compute_cycles;
+    aiueos_qwen35_status.detail = generation.vector_bits == 256U
+      ? (generation.worker_threads == 2U
+          ? "AVX2 2T 8 TOKENS" : "AVX2 1T 8 TOKENS")
+      : (generation.worker_threads == 2U
+          ? "SCALAR 2T 8 TOKENS" : "SCALAR 1T 8 TOKENS");
+    aiueos_qwen35_status.generated_tokens = generation.generated_tokens;
+    aiueos_qwen35_status.decode_tokens = generation.decode_tokens;
+    aiueos_qwen35_status.compute_cycles = generation.total_cycles;
+    aiueos_qwen35_status.resident_bytes =
+      boot->model_size + AIUEOS_QWEN35_DECODE_WORKSPACE_BYTES;
     if (boot->version >= AIUEOS_BOOT_INFO_VERSION_TSC_CALIBRATED && boot->tsc_hz) {
-      uint64_t whole = first_token.compute_cycles / boot->tsc_hz;
-      uint64_t remainder = first_token.compute_cycles % boot->tsc_hz;
-      if (whole <= (UINT64_MAX - (remainder * 1000000000ULL) / boot->tsc_hz) /
-                     1000000000ULL)
-        aiueos_qwen35_status.time_to_first_token_ns =
-          whole * 1000000000ULL +
-          (remainder * 1000000000ULL) / boot->tsc_hz;
+      aiueos_qwen35_status.time_to_first_token_ns =
+        aiueos_cycles_to_ns(generation.first_token_cycles, boot->tsc_hz);
+      aiueos_qwen35_status.decode_ns =
+        aiueos_cycles_to_ns(generation.decode_cycles, boot->tsc_hz);
     }
     (void)aiueos_framebuffer_inference_screen(&aiueos_qwen35_status);
-    debug_string("AIUEOS_QWEN35_FIRST_TOKEN_OK bos=248044 token=2005 reference=matched timing=cycles\n");
-    serial_string("AIUEOS_QWEN35_FIRST_TOKEN_OK bos=248044 token=");
-    serial_decimal(first_token.token);
-    serial_string(" second=");
-    serial_decimal(first_token.second_token);
-    serial_string(" cycles=");
-    serial_decimal64(first_token.compute_cycles);
-    serial_string(" timing=raw-tsc\r\n");
+    debug_string("AIUEOS_QWEN35_GENERATE_OK bos=248044 tokens=8 first=2005 reference=matched timing=calibrated-tsc\n");
+    serial_string("AIUEOS_QWEN35_GENERATE_OK bos=248044 tokens=");
+    for (uint32_t token_index = 0;
+         token_index < generation.generated_tokens; token_index++) {
+      if (token_index) serial_byte(',');
+      serial_decimal(generation.tokens[token_index]);
+    }
+    serial_string(" first-cycles=");
+    serial_decimal64(generation.first_token_cycles);
+    serial_string(" decode-cycles=");
+    serial_decimal64(generation.decode_cycles);
+    serial_string(" decode-tokens=");
+    serial_decimal(generation.decode_tokens);
+    serial_string(" decode-milli-tok-s=");
+    serial_decimal64(aiueos_inference_milli_tokens_per_second(
+      generation.decode_tokens, aiueos_qwen35_status.decode_ns));
+    serial_string(" vector-bits=");
+    serial_decimal(generation.vector_bits);
+    serial_string(" threads=");
+    serial_decimal(generation.worker_threads);
+    serial_string(" timing=calibrated-tsc\r\n");
 #endif
     if (!aiueos_capability_table_initialize()) {
 #ifdef AIUEOS_PHYSICAL_QUALIFICATION
@@ -1116,7 +1173,12 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
 #ifdef AIUEOS_PHYSICAL_QUALIFICATION
     aiueos_qualification_progress(228);
 #endif
+#if defined(AIUEOS_PHYSICAL_QUALIFICATION) && \
+    defined(AIUEOS_QWEN38_MODEL_HANDOFF) && !defined(AIUEOS_MODEL_TEST_FIXTURE)
+    if (!qwen_early_acpi_ready) {
+#else
     if (!aiueos_acpi_initialize(boot->acpi_rsdp)) {
+#endif
 #ifdef AIUEOS_PHYSICAL_QUALIFICATION
       aiueos_framebuffer_qualification_screen("AIUEOS K16", "FAIL ACPI", "SSD READ ONLY", 0);
       serial_string("AIUEOS_PHYSICAL_QUALIFICATION_FAIL stage=acpi disk-writes=none\r\n");
@@ -1158,8 +1220,11 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
     int direct_https_ok = 0;
 #ifdef AIUEOS_MURAKUMO_DEVICE_RESULT
     direct_https_ok = aiueos_rtl8125_direct_https_qualification(
-      boot, first_token.token, first_token.second_token,
-      first_token.compute_cycles);
+      boot, generation.tokens[0], generation.tokens[1],
+      generation.generated_tokens, generation.decode_tokens,
+      generation.first_token_cycles, generation.decode_cycles,
+      generation.total_cycles, generation.vector_bits,
+      generation.worker_threads);
 #else
     direct_https_ok = aiueos_rtl8125_direct_https_qualification();
 #endif
@@ -1233,7 +1298,14 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
     serial_decimal64(aiueos_qwen35_status.load_ns);
     serial_string(" ttft-ns=");
     serial_decimal64(aiueos_qwen35_status.time_to_first_token_ns);
-    serial_string(" decode-tokens-per-second=N/A tsc-hz=");
+    serial_string(" decode-milli-tok-s=");
+    serial_decimal64(aiueos_inference_milli_tokens_per_second(
+      aiueos_qwen35_status.decode_tokens, aiueos_qwen35_status.decode_ns));
+    serial_string(" decode-tokens=");
+    serial_decimal(aiueos_qwen35_status.decode_tokens);
+    serial_string(" decode-ns=");
+    serial_decimal64(aiueos_qwen35_status.decode_ns);
+    serial_string(" tsc-hz=");
     serial_decimal64(boot->tsc_hz);
     serial_string("\r\n");
 #ifdef AIUEOS_PERSISTENT_BOOT
@@ -1258,9 +1330,6 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
       int reboot_pxe = 0;
       aiueos_qwen35_status.phase = AIUEOS_INFERENCE_ADMISSION;
       aiueos_qwen35_status.detail = "POLLING MURAKUMO";
-      aiueos_qwen35_status.generated_tokens = 0;
-      aiueos_qwen35_status.compute_cycles = 0;
-      aiueos_qwen35_status.time_to_first_token_ns = AIUEOS_INFERENCE_UNMEASURED;
       (void)aiueos_framebuffer_inference_screen(&aiueos_qwen35_status);
       if (!aiueos_rtl8125_device_worker_poll(
             boot, worker_sequence++, &job_id, &bos_token, &ready,
@@ -1359,15 +1428,22 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
         aiueos_wait_seconds(boot->tsc_hz, 5);
         continue;
       }
-      struct aiueos_qwen35_first_token_result job_result;
+      struct aiueos_qwen35_generation_result job_result = {0};
       aiueos_qwen35_status.phase = AIUEOS_INFERENCE_PREFILL;
       aiueos_qwen35_status.detail = aiueos_qwen35_progress_detail;
+      aiueos_qwen35_status.generated_tokens = 0;
+      aiueos_qwen35_status.decode_tokens = 0;
+      aiueos_qwen35_status.compute_cycles = 0;
+      aiueos_qwen35_status.time_to_first_token_ns =
+        AIUEOS_INFERENCE_UNMEASURED;
+      aiueos_qwen35_status.decode_ns = AIUEOS_INFERENCE_UNMEASURED;
       (void)aiueos_framebuffer_inference_screen(&aiueos_qwen35_status);
-      if (!aiueos_qwen35_first_token(
+      if (!aiueos_qwen35_generate(
             aiueos_qwen35_model, bos_token,
+            AIUEOS_QWEN35_GENERATION_TOKENS,
             qwen_workspace, (uint64_t)qwen_workspace_pages * 4096U,
             aiueos_qwen35_progress, &job_result) ||
-          job_result.token != AIUEOS_QWEN35_REFERENCE_FIRST_TOKEN) {
+          job_result.tokens[0] != AIUEOS_QWEN35_REFERENCE_FIRST_TOKEN) {
         aiueos_qwen35_status.phase = AIUEOS_INFERENCE_ERROR;
         aiueos_qwen35_status.detail = "JOB INFERENCE RETRY";
         (void)aiueos_framebuffer_inference_screen(&aiueos_qwen35_status);
@@ -1379,12 +1455,20 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
       }
       aiueos_qwen35_status.phase = AIUEOS_INFERENCE_COMPLETE;
       aiueos_qwen35_status.detail = "POSTING JOB RESULT";
-      aiueos_qwen35_status.generated_tokens = 1;
-      aiueos_qwen35_status.compute_cycles = job_result.compute_cycles;
+      aiueos_qwen35_status.generated_tokens = job_result.generated_tokens;
+      aiueos_qwen35_status.decode_tokens = job_result.decode_tokens;
+      aiueos_qwen35_status.compute_cycles = job_result.total_cycles;
+      aiueos_qwen35_status.time_to_first_token_ns =
+        aiueos_cycles_to_ns(job_result.first_token_cycles, boot->tsc_hz);
+      aiueos_qwen35_status.decode_ns =
+        aiueos_cycles_to_ns(job_result.decode_cycles, boot->tsc_hz);
       (void)aiueos_framebuffer_inference_screen(&aiueos_qwen35_status);
       while (!aiueos_rtl8125_device_worker_result(
-               boot, worker_sequence++, job_id, job_result.token,
-               job_result.second_token, job_result.compute_cycles)) {
+               boot, worker_sequence++, job_id, job_result.tokens[0],
+               job_result.tokens[1], job_result.generated_tokens,
+               job_result.decode_tokens, job_result.first_token_cycles,
+               job_result.decode_cycles, job_result.total_cycles,
+               job_result.vector_bits, job_result.worker_threads)) {
         aiueos_qwen35_status.phase = AIUEOS_INFERENCE_ERROR;
         aiueos_qwen35_status.detail = "RESULT POST RETRY";
         (void)aiueos_framebuffer_inference_screen(&aiueos_qwen35_status);
@@ -1402,11 +1486,14 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
       serial_string("AIUEOS_MURAKUMO_JOB_RESULT_OK job-id=");
       serial_decimal64(job_id);
       serial_string(" token=");
-      serial_decimal(job_result.token);
-      serial_string(" second-token=");
-      serial_decimal(job_result.second_token);
-      serial_string(" cycles=");
-      serial_decimal64(job_result.compute_cycles);
+      serial_decimal(job_result.tokens[0]);
+      serial_string(" next-token=");
+      serial_decimal(job_result.tokens[1]);
+      serial_string(" decode-milli-tok-s=");
+      serial_decimal64(aiueos_inference_milli_tokens_per_second(
+        job_result.decode_tokens, aiueos_qwen35_status.decode_ns));
+      serial_string(" total-cycles=");
+      serial_decimal64(job_result.total_cycles);
       serial_string(" result=recorded ready=true\r\n");
     }
 #else
@@ -1617,8 +1704,13 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
       serial_string("AIUEOS_SMP_FAIL ap-startup\r\n");
       qemu_exit(0x73);
     }
+    if (!aiueos_smp_dispatch_selftest()) {
+      debug_string("AIUEOS_SMP_FAIL ap-dispatch\n");
+      serial_string("AIUEOS_SMP_FAIL ap-dispatch\r\n");
+      qemu_exit(0x73);
+    }
     debug_string("AIUEOS_SMP_OK cpus=2 init-sipi-v1\n");
-    serial_string("AIUEOS_SMP_OK cpus=2 init-sipi-v1 per-cpu-stack\r\n");
+    serial_string("AIUEOS_SMP_OK cpus=2 init-sipi-v1 per-cpu-stack dispatch=verified\r\n");
     aiueos_scheduler_initialize();
     __asm__ volatile("sti");
     while (!aiueos_scheduler_evidence_ready()) __asm__ volatile("hlt");

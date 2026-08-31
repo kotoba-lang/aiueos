@@ -248,7 +248,7 @@ int aiueos_framebuffer_inference_screen(
                  value_x, y, scale, 0xf4f7f9U);
   y += row;
   qualification_text("DECODE TOK/S", margin, y, scale, 0x94a3b8U);
-  inference_rate(status->generated_tokens, status->decode_ns,
+  inference_rate(status->decode_tokens, status->decode_ns,
                  value_x, y, scale, 0xf4f7f9U);
   y += row;
   qualification_text("TOKENS", margin, y, scale, 0x94a3b8U);

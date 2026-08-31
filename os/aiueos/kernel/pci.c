@@ -3826,7 +3826,7 @@ int aiueos_rtl8125_physical_qualification(void) {
    into minutes without a heartbeat, so persistent workers use a bounded
    reconnect interval instead. */
 #define RTL_DIRECT_RX_BUDGET 50000000U
-#define RTL_DIRECT_RX_WINDOW 1024U
+#define RTL_DIRECT_RX_WINDOW 256U
 #define RTL_DIRECT_TLS_ATTEMPTS 3U
 #define RTL_DIRECT_SYN_SCAN_FRAMES 64U
 #define RTL_DIRECT_TLS_FLIGHT_MAX 1152U
@@ -3874,10 +3874,13 @@ static const uint8_t rtl_direct_scalar[32] = {
 static unsigned rtl8125_direct_https_error;
 static unsigned rtl8125_direct_https_attempts;
 static unsigned rtl8125_direct_tls_pump_error;
+static unsigned rtl8125_direct_tcp_recoveries;
 static uint32_t rtl8125_direct_tls_stage;
 static uint32_t rtl8125_direct_dns_a;
 static int rtl8125_direct_http_ready;
 static uint32_t rtl8125_direct_connection_sequence;
+static uint32_t rtl8125_direct_qwen_vector_bits;
+static uint32_t rtl8125_direct_qwen_worker_threads;
 static uint8_t rtl8125_direct_tls_flight[RTL_DIRECT_TLS_FLIGHT_MAX]
   __attribute__((section(".high_bss")));
 
@@ -3944,19 +3947,24 @@ static void rtl8125_direct_worker_wire_copy(
    The first bytes distinguish a decrypted HTTP response from an empty or
    shifted buffer; response JSON, signatures and device-private material are
    deliberately excluded.  The compact wire fields are status, sequence,
-   error, TLS stage, application length and a 12-byte prefix. */
+   error, TLS stage, pump error, TCP recovery count, application length, Qwen
+   vector width, Qwen worker count and a 12-byte prefix. */
 static void rtl8125_direct_worker_rx_report(
     uint32_t sequence, uint8_t status) {
   static const uint8_t prefix[] = "AIUEOS_WORKER_RX ";
   static const char digits[] = "0123456789abcdef";
   const uint8_t *app = aiueos_tls13_app();
   uint32_t app_length = aiueos_tls13_app_len();
-  uint32_t fields[4] = {sequence, rtl8125_direct_https_error,
-                        rtl8125_direct_tls_stage, app_length};
+  uint32_t fields[8] = {sequence, rtl8125_direct_https_error,
+                        rtl8125_direct_tls_stage,
+                        rtl8125_direct_tls_pump_error,
+                        rtl8125_direct_tcp_recoveries, app_length,
+                        rtl8125_direct_qwen_vector_bits,
+                        rtl8125_direct_qwen_worker_threads};
   uint32_t length = sizeof(prefix) - 1U;
   for (uint32_t i = 0; i < length; i++) rtl_direct_worker_wire[i] = prefix[i];
   rtl_direct_worker_wire[length++] = status;
-  for (uint32_t field = 0; field < 4U; field++) {
+  for (uint32_t field = 0; field < 8U; field++) {
     rtl_direct_worker_wire[length++] = ' ';
     for (int shift = 28; shift >= 0; shift -= 4)
       rtl_direct_worker_wire[length++] =
@@ -4101,6 +4109,27 @@ static int rtl8125_direct_tls_pump(uint32_t dst, uint16_t local_port,
       aiueos_rtl8125_rx_rearm(&rtl8125_qualification_device);
       continue;
     }
+    /* The direct-link bridge deliberately emits 256-byte writes, while this
+       RTL8125 slice owns one RX descriptor.  A lost descriptor therefore
+       appears as either a later TCP sequence or a retransmission of bytes we
+       already admitted.  Feeding either into the TLS record parser corrupts
+       its authenticated byte stream and used to surface as the opaque
+       post-request stage 11.  Keep the receive window to one bridge fragment,
+       admit only the exact next sequence, and send a duplicate ACK for every
+       gap/retransmission so the peer recovers the missing fragment. */
+    {
+      uint32_t sequence = net_load_be32(frame + 38);
+      if ((int32_t)(sequence - *peer_next) != 0) {
+        rtl8125_direct_tcp_recoveries++;
+        aiueos_rtl8125_rx_rearm(&rtl8125_qualification_device);
+        if (!rtl8125_direct_tcp_send(dst, local_port, *our_next, *peer_next,
+                                     NET_TCP_ACK, 0, 0)) {
+          rtl8125_direct_tls_pump_error = 5;
+          return 0;
+        }
+        continue;
+      }
+    }
     if (plen) {
       if (!aiueos_tls13_feed(payload, plen)) {
         rtl8125_direct_tls_pump_error = 4;
@@ -4173,6 +4202,7 @@ static int rtl8125_direct_tls_attempt(uint32_t dst, uint32_t request_length,
   uint16_t local_port = (uint16_t)(RTL_DIRECT_LOCAL_PORT + (lane % 12000U));
   uint8_t client_hello[256];
   rtl8125_direct_tls_pump_error = 0;
+  rtl8125_direct_tcp_recoveries = 0;
 
   /* A completed short connection can leave late server records in the
      RTL8125 FIFO even after its only descriptor is rearmed.  Reinstall the
@@ -4282,7 +4312,10 @@ failed:
 #ifdef AIUEOS_MURAKUMO_DEVICE_RESULT
 int aiueos_rtl8125_direct_https_qualification(
     const struct aiueos_boot_info *boot, uint32_t token,
-    uint32_t second_token, uint64_t inference_cycles) {
+    uint32_t second_token, uint32_t generated_tokens,
+    uint32_t decode_tokens, uint64_t first_token_cycles,
+    uint64_t decode_cycles, uint64_t inference_cycles,
+    uint32_t vector_bits, uint32_t worker_threads) {
 #else
 int aiueos_rtl8125_direct_https_qualification(void) {
 #endif
@@ -4294,6 +4327,8 @@ int aiueos_rtl8125_direct_https_qualification(void) {
   rtl8125_direct_http_ready = 0;
 #ifdef AIUEOS_MURAKUMO_DEVICE_RESULT
   rtl_direct_device_did[0] = 0;
+  rtl8125_direct_qwen_vector_bits = vector_bits;
+  rtl8125_direct_qwen_worker_threads = worker_threads;
 #endif
   if (!rtl8125_qualification_device.ready || rtl8125_qualification_error)
     return 0;
@@ -4319,7 +4354,13 @@ int aiueos_rtl8125_direct_https_qualification(void) {
       .mac = rtl8125_qualification_device.mac,
       .token = token,
       .second_token = second_token,
-      .inference_cycles = inference_cycles
+      .generated_tokens = generated_tokens,
+      .decode_tokens = decode_tokens,
+      .first_token_cycles = first_token_cycles,
+      .decode_cycles = decode_cycles,
+      .inference_cycles = inference_cycles,
+      .vector_bits = vector_bits,
+      .worker_threads = worker_threads
     };
     if (!(request_length = aiueos_device_result_http_request(
             &result, rtl_direct_http_request, sizeof(rtl_direct_http_request),
@@ -4442,7 +4483,10 @@ int aiueos_rtl8125_device_worker_control_ack(
 int aiueos_rtl8125_device_worker_result(
     const struct aiueos_boot_info *boot, uint32_t sequence,
     uint64_t job_id, uint32_t token, uint32_t second_token,
-    uint64_t inference_cycles) {
+    uint32_t generated_tokens, uint32_t decode_tokens,
+    uint64_t first_token_cycles, uint64_t decode_cycles,
+    uint64_t inference_cycles, uint32_t vector_bits,
+    uint32_t worker_threads) {
   if (!boot || !job_id) return 0;
   struct aiueos_device_worker_request request = {
     .boot = boot,
@@ -4452,7 +4496,13 @@ int aiueos_rtl8125_device_worker_result(
     .job_id = job_id,
     .token = token,
     .second_token = second_token,
-    .inference_cycles = inference_cycles
+    .generated_tokens = generated_tokens,
+    .decode_tokens = decode_tokens,
+    .first_token_cycles = first_token_cycles,
+    .decode_cycles = decode_cycles,
+    .inference_cycles = inference_cycles,
+    .vector_bits = vector_bits,
+    .worker_threads = worker_threads
   };
   uint32_t request_length = aiueos_device_worker_http_request(
     &request, rtl_direct_http_request, sizeof(rtl_direct_http_request),

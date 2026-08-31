@@ -335,6 +335,8 @@ fi
 # require the explicit test-fixture switch.
 model_handoff_cflags=
 model_handoff_link=
+qwen35_smp_cflags=
+qwen35_vector_cflags=
 model_slots_cflags=
 model_slots_link=
 model_total=${AIUEOS_MODEL_TOTAL_BYTES:-10934860704}
@@ -371,6 +373,16 @@ if [ "${AIUEOS_QWEN38_MODEL_HANDOFF:-0}" = 1 ] ||
   }
   if [ "${AIUEOS_QWEN38_MODEL_HANDOFF:-0}" = 1 ]; then
     model_handoff_cflags="-DAIUEOS_QWEN38_MODEL_HANDOFF=1"
+    case "${AIUEOS_QWEN35_SMP:-1}" in
+      1) qwen35_smp_cflags="-DAIUEOS_QWEN35_SMP=1" ;;
+      0) qwen35_smp_cflags= ;;
+      *) echo "error: AIUEOS_QWEN35_SMP must be 0 or 1" >&2; exit 1 ;;
+    esac
+    case "${AIUEOS_QWEN35_AVX2:-1}" in
+      1) qwen35_vector_cflags= ;;
+      0) qwen35_vector_cflags="-DAIUEOS_QWEN35_SCALAR=1" ;;
+      *) echo "error: AIUEOS_QWEN35_AVX2 must be 0 or 1" >&2; exit 1 ;;
+    esac
     if [ "${AIUEOS_MODEL_TEST_FIXTURE:-0}" = 1 ]; then
       model_handoff_cflags="$model_handoff_cflags -DAIUEOS_MODEL_TEST_FIXTURE=1"
     fi
@@ -637,6 +649,7 @@ else
 zig cc -target x86_64-freestanding-none -std=c11 -O2 \
   -ffreestanding -fno-stack-protector -mno-red-zone -I "$out" \
   $input_smoke_cflags $model_handoff_cflags $physical_qualification_cflags \
+  $qwen35_smp_cflags \
   $physical_network_qualification_cflags $physical_direct_https_qualification_cflags \
   $murakumo_device_result_cflags $persistent_boot_cflags \
   $physical_relay_qualification_cflags \
@@ -705,6 +718,8 @@ if [ -n "$model_handoff_link" ]; then
     -c -o "$kernel_qwen35_quant_object" "$aiueos/kernel/qwen35_quant.c"
   zig cc -target x86_64-freestanding-none -std=c11 -O3 \
     -ffreestanding -fno-stack-protector -mno-red-zone \
+    $qwen35_smp_cflags \
+    $qwen35_vector_cflags \
     $model_handoff_cflags \
     -c -o "$kernel_qwen35_infer_object" "$aiueos/kernel/qwen35_infer.c"
 fi

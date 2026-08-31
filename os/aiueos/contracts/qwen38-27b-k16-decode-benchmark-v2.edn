@@ -1,0 +1,69 @@
+;; Multi-token pure-AIUEOS benchmark contract.  Implementation and protocol
+;; evidence may be green before the physical K16 reboots into this image; an
+;; unobserved physical rate remains :not-available rather than an estimate.
+{:format :aiueos.qwen38-27b-k16-decode-benchmark/v2
+ :supersedes-measurement-scope
+ :aiueos.qwen38-27b-k16-benchmark/v1
+ :model {:id "Qwen/Qwen3.8-27B"
+         :artifact "Qwen3.8-27B-UD-IQ3_XXS.gguf"
+         :bytes 10934860704
+         :sha256 "c0b7c3038681ed2e3040456c1dd45f9858b6c2290bed172c70388a94874f3eee"}
+ :target {:machine :gmktec-k16
+          :cpu :amd-ryzen-7-7735hs
+          :node "aiueos-k16-7070fc0bb632"
+          :storage :usb-model-handoff-internal-ssd-read-only}
+ :runtime {:os :pure-aiueos
+           :engine :aiueos-qwen35-native
+           :matrix-backends [:scalar :avx2]
+           :worker-threads {:preferred 2 :fallback 1}
+           :gpu-offload? false
+           :model-storage :read-only-usb-handoff
+           :decode-state :volatile-contiguous-ram
+           :decode-state-bytes 157941760
+           :internal-disk-writes? false}
+ :sequence {:input {:tokens [248044] :kind :bos}
+            :sampling :greedy
+            :generated-tokens 8
+            :first-token-reference 2005
+            :decode-tokens 7
+            :maximum-context-for-this-cell 8}
+ :measurement {:clock :uefi-calibrated-tsc
+               :first-token {:numerator :one-generated-token
+                             :cycles-field :first-token-cycles}
+               :decode {:numerator :decode-tokens
+                        :cycles-field :decode-cycles
+                        :formula "decode_tokens * tsc_hz / decode_cycles"
+                        :excludes-first-token? true}
+               :total {:cycles-field :inference-cycles
+                       :invariant "first_token_cycles + decode_cycles"}
+               :forbidden-substitutions
+               [:reciprocal-time-to-first-token
+                :generated-tokens-including-first
+                :nominal-cpu-clock
+                :zero-for-unmeasured]}
+ :display {:abi :aiueos-inference-status/v2
+           :decode-rate-token-field :decode-tokens
+           :fields [:model :quant :phase :detail :load-ms
+                    :decode-tokens-per-second :generated-tokens
+                    :resident-mib :time-to-first-token-ms :compute-cycles]}
+ :murakumo {:endpoint "/infer/nodes/device-p256-worker"
+            :canonical :aiueos-k16-worker-v2
+            :signed-fields [:generated-tokens :decode-tokens
+                            :first-token-cycles :decode-cycles
+                            :inference-cycles :vector-bits :worker-threads]
+            :v1-backward-compatible? true
+            :trust-boundary {:device-p256 true
+                             :cacao false
+                             :passkey-bound false
+                             :post-quantum false
+                             :biscuit false}}
+ :verification {:host-build :pending
+                :scalar-reference-fixture :pending
+                :avx2-first-token-reference :pending-physical
+                :physical-k16-sequence :pending
+                :murakumo-signed-result :pending}
+ :observed {:boot-id :not-available
+            :tokens :not-available
+            :time-to-first-token-ns :not-available
+            :decode-ns :not-available
+            :decode-tokens-per-second :not-available}}

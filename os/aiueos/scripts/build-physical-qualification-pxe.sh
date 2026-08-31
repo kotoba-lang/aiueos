@@ -26,6 +26,8 @@ AIUEOS_PHYSICAL_NETWORK_QUALIFICATION=${AIUEOS_PHYSICAL_NETWORK_QUALIFICATION:-0
 AIUEOS_PHYSICAL_DIRECT_HTTPS_QUALIFICATION=${AIUEOS_PHYSICAL_DIRECT_HTTPS_QUALIFICATION:-0} \
 AIUEOS_MURAKUMO_DEVICE_RESULT=${AIUEOS_MURAKUMO_DEVICE_RESULT:-0} \
 AIUEOS_QWEN38_MODEL_HANDOFF=${AIUEOS_QWEN38_MODEL_HANDOFF:-0} \
+AIUEOS_QWEN35_SMP=${AIUEOS_QWEN35_SMP:-1} \
+AIUEOS_QWEN35_AVX2=${AIUEOS_QWEN35_AVX2:-1} \
 AIUEOS_PERSISTENT_BOOT=${AIUEOS_PERSISTENT_BOOT:-0} \
 AIUEOS_QUALIFICATION_LOADER_WATCHDOG_SECONDS=${AIUEOS_QUALIFICATION_LOADER_WATCHDOG_SECONDS:-} \
 AIUEOS_EMBEDDED_RELEASE=1 \
@@ -87,6 +89,10 @@ document = {
                  os.environ["AIUEOS_PERSISTENT_BOOT"] == "1" else
                  "/infer/nodes/device-p256-result"),
         "auth": "device-p256",
+        "device_result_protocol": "aiueos-k16-result-v2",
+        "worker_protocol": ("aiueos-k16-worker-v2" if
+                            os.environ["AIUEOS_PERSISTENT_BOOT"] == "1" else
+                            None),
         "device_key": "uefi-nvram-p256",
         "model": "Qwen3.8-27B-UD-IQ3_XXS.gguf",
         "model_sha256": "c0b7c3038681ed2e3040456c1dd45f9858b6c2290bed172c70388a94874f3eee",
@@ -95,9 +101,14 @@ document = {
                   os.environ["AIUEOS_PERSISTENT_BOOT"] == "1" else False),
         "worker": ({
             "heartbeat": "signed-poll",
-            "poll": "bounded-qwen38-first-token",
+            "poll": "bounded-qwen38-greedy-8",
             "claim": "server-atomic-target-did",
-            "result": "signed-device-p256",
+            "result": "signed-device-p256-v2-decode-metrics",
+            "measurement": {
+                "generated_tokens": 8,
+                "decode_tokens": 7,
+                "first_token_excluded_from_decode_rate": True,
+            },
             "retry": "persistent-with-bounded-backoff",
             "control": {
                 "action": "reboot-pxe",

@@ -2,7 +2,7 @@
 #include "device_result.h"
 
 #define DEVICE_CANONICAL_MAX 512U
-#define DEVICE_BODY_MAX 768U
+#define DEVICE_BODY_MAX 1024U
 
 extern uint64_t kotoba_aiueos_sha256(
     const uint8_t *, uint64_t, uint8_t[32], uint8_t *, uint64_t);
@@ -22,7 +22,7 @@ static const uint8_t p256_order[32] = {
 static const char base58_alphabet[] =
   "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
 static const char hex_alphabet[] = "0123456789abcdef";
-#if defined(__GNUC__)
+#if defined(__GNUC__) && !defined(AIUEOS_DEVICE_RESULT_TESTING)
 #define AIUEOS_DEVICE_HIGH_BSS __attribute__((section(".high_bss")))
 #else
 #define AIUEOS_DEVICE_HIGH_BSS
@@ -73,6 +73,7 @@ static void hex_encode(const uint8_t *in, uint32_t bytes, char *out) {
   out[bytes * 2] = 0;
 }
 
+#ifndef AIUEOS_DEVICE_RESULT_TESTING
 static void cpuid(uint32_t leaf, uint32_t subleaf,
                   uint32_t *a, uint32_t *b, uint32_t *c, uint32_t *d) {
   __asm__ volatile("cpuid"
@@ -105,6 +106,12 @@ int aiueos_cpu_random_bytes(uint8_t *out, uint32_t bytes) {
   }
   return 1;
 }
+#else
+extern int aiueos_device_test_random_bytes(uint8_t *, uint32_t);
+int aiueos_cpu_random_bytes(uint8_t *out, uint32_t bytes) {
+  return aiueos_device_test_random_bytes(out, bytes);
+}
+#endif
 
 static int scalar_valid(const uint8_t scalar[32]) {
   int nonzero = 0;
@@ -193,13 +200,46 @@ static void canonical_number(struct bounded_buffer *b, uint64_t number) {
   put_decimal(b, number);
 }
 
+static int decode_metrics_valid(uint32_t generated_tokens,
+                                uint32_t decode_tokens,
+                                uint64_t first_token_cycles,
+                                uint64_t decode_cycles,
+                                uint64_t inference_cycles,
+                                uint32_t vector_bits,
+                                uint32_t worker_threads) {
+  return generated_tokens >= 2U && generated_tokens <= 8U &&
+         decode_tokens == generated_tokens - 1U &&
+         first_token_cycles && decode_cycles &&
+         first_token_cycles <= UINT64_MAX - decode_cycles &&
+         inference_cycles == first_token_cycles + decode_cycles &&
+         (vector_bits == 0U || vector_bits == 256U) &&
+         (worker_threads == 1U || worker_threads == 2U);
+}
+
+static int decode_metrics_empty(uint32_t generated_tokens,
+                                uint32_t decode_tokens,
+                                uint64_t first_token_cycles,
+                                uint64_t decode_cycles,
+                                uint64_t inference_cycles,
+                                uint32_t vector_bits,
+                                uint32_t worker_threads) {
+  return !generated_tokens && !decode_tokens && !first_token_cycles &&
+         !decode_cycles && !inference_cycles && !vector_bits &&
+         !worker_threads;
+}
+
 uint32_t aiueos_device_result_http_request(
     const struct aiueos_device_result *result, uint8_t *out, uint32_t capacity,
     char *did_out, uint32_t did_capacity) {
   if (!result || !result->boot || !result->mac || !out || capacity < 512 ||
       !did_out || did_capacity < 48 ||
       result->boot->version < AIUEOS_BOOT_INFO_VERSION_TSC_CALIBRATED ||
-      !result->boot->tsc_hz) return 0;
+      !result->boot->tsc_hz ||
+      !decode_metrics_valid(
+        result->generated_tokens, result->decode_tokens,
+        result->first_token_cycles, result->decode_cycles,
+        result->inference_cycles, result->vector_bits,
+        result->worker_threads)) return 0;
 
   uint8_t private_key[32] = {0}, public_key[64] = {0}, nonce_k[32] = {0};
   uint8_t nonce[16] = {0}, digest[32] = {0};
@@ -232,16 +272,23 @@ uint32_t aiueos_device_result_http_request(
   struct bounded_buffer canonical = {
     canonical_bytes, 0, sizeof(canonical_bytes), 1
   };
-  put_text(&canonical, "aiueos-k16-result-v1");
+  put_text(&canonical, "aiueos-k16-result-v2");
   canonical_field(&canonical, node);
   canonical_field(&canonical, public_hex);
   canonical_field(&canonical, boot_hex);
   canonical_field(&canonical, model_hex);
   canonical_field(&canonical, "Qwen3.8-27B-UD-IQ3_XXS.gguf");
+  canonical_number(&canonical, 2);
   canonical_number(&canonical, result->token);
   canonical_number(&canonical, result->second_token);
+  canonical_number(&canonical, result->generated_tokens);
+  canonical_number(&canonical, result->decode_tokens);
   canonical_number(&canonical, result->boot->model_load_cycles);
+  canonical_number(&canonical, result->first_token_cycles);
+  canonical_number(&canonical, result->decode_cycles);
   canonical_number(&canonical, result->inference_cycles);
+  canonical_number(&canonical, result->vector_bits);
+  canonical_number(&canonical, result->worker_threads);
   canonical_number(&canonical, result->boot->tsc_hz);
   canonical_field(&canonical, nonce_hex);
   if (!canonical.ok ||
@@ -258,13 +305,24 @@ uint32_t aiueos_device_result_http_request(
   put_text(&body, "\",\"public-key\":\""); put_text(&body, public_hex);
   put_text(&body, "\",\"boot\":\""); put_text(&body, boot_hex);
   put_text(&body, "\",\"model-sha256\":\""); put_text(&body, model_hex);
-  put_text(&body, "\",\"model\":\"Qwen3.8-27B-UD-IQ3_XXS.gguf\",\"token\":");
+  put_text(&body, "\",\"model\":\"Qwen3.8-27B-UD-IQ3_XXS.gguf\",\"protocol\":2,\"token\":");
   put_decimal(&body, result->token);
   put_text(&body, ",\"second-token\":"); put_decimal(&body, result->second_token);
+  put_text(&body, ",\"generated-tokens\":");
+  put_decimal(&body, result->generated_tokens);
+  put_text(&body, ",\"decode-tokens\":");
+  put_decimal(&body, result->decode_tokens);
   put_text(&body, ",\"model-load-cycles\":");
   put_decimal(&body, result->boot->model_load_cycles);
+  put_text(&body, ",\"first-token-cycles\":");
+  put_decimal(&body, result->first_token_cycles);
+  put_text(&body, ",\"decode-cycles\":");
+  put_decimal(&body, result->decode_cycles);
   put_text(&body, ",\"inference-cycles\":");
   put_decimal(&body, result->inference_cycles);
+  put_text(&body, ",\"vector-bits\":"); put_decimal(&body, result->vector_bits);
+  put_text(&body, ",\"worker-threads\":");
+  put_decimal(&body, result->worker_threads);
   put_text(&body, ",\"tsc-hz\":"); put_decimal(&body, result->boot->tsc_hz);
   put_text(&body, ",\"nonce\":\""); put_text(&body, nonce_hex);
   put_text(&body, "\",\"signature\":\""); put_text(&body, signature_hex);
@@ -274,7 +332,7 @@ uint32_t aiueos_device_result_http_request(
   struct bounded_buffer request = {out, 0, capacity, 1};
   put_text(&request, "POST /infer/nodes/device-p256-result HTTP/1.1\r\n");
   put_text(&request, "Host: api.murakumo.cloud\r\n");
-  put_text(&request, "User-Agent: aiueos-k16-node-v1\r\n");
+  put_text(&request, "User-Agent: aiueos-k16-node-v2\r\n");
   put_text(&request, "Content-Type: application/json\r\n");
   put_text(&request, "Accept: application/json\r\nContent-Length: ");
   put_decimal(&request, body.length);
@@ -303,12 +361,27 @@ uint32_t aiueos_device_worker_http_request(
        worker->operation != AIUEOS_DEVICE_WORKER_CONTROL_ACK) ||
       (worker->operation == AIUEOS_DEVICE_WORKER_POLL &&
        (worker->job_id || worker->token || worker->second_token ||
-        worker->inference_cycles)) ||
+        !decode_metrics_empty(
+          worker->generated_tokens, worker->decode_tokens,
+          worker->first_token_cycles, worker->decode_cycles,
+          worker->inference_cycles, worker->vector_bits,
+          worker->worker_threads))) ||
       ((worker->operation == AIUEOS_DEVICE_WORKER_RESULT ||
         worker->operation == AIUEOS_DEVICE_WORKER_CONTROL_ACK) &&
        !worker->job_id) ||
       (worker->operation == AIUEOS_DEVICE_WORKER_CONTROL_ACK &&
-       (worker->token || worker->second_token || worker->inference_cycles)))
+       (worker->token || worker->second_token ||
+        !decode_metrics_empty(
+          worker->generated_tokens, worker->decode_tokens,
+          worker->first_token_cycles, worker->decode_cycles,
+          worker->inference_cycles, worker->vector_bits,
+          worker->worker_threads))) ||
+      (worker->operation == AIUEOS_DEVICE_WORKER_RESULT &&
+       !decode_metrics_valid(
+         worker->generated_tokens, worker->decode_tokens,
+         worker->first_token_cycles, worker->decode_cycles,
+         worker->inference_cycles, worker->vector_bits,
+         worker->worker_threads)))
     return 0;
 
   uint8_t private_key[32] = {0}, public_key[64] = {0}, nonce_k[32] = {0};
@@ -339,7 +412,7 @@ uint32_t aiueos_device_worker_http_request(
   struct bounded_buffer canonical = {
     canonical_bytes, 0, sizeof(canonical_bytes), 1
   };
-  put_text(&canonical, "aiueos-k16-worker-v1");
+  put_text(&canonical, "aiueos-k16-worker-v2");
   canonical_field(&canonical, node);
   canonical_field(&canonical, public_hex);
   canonical_field(&canonical, boot_hex);
@@ -351,9 +424,16 @@ uint32_t aiueos_device_worker_http_request(
     put_text(&canonical, "-");
   else
     put_decimal(&canonical, worker->job_id);
+  canonical_number(&canonical, 2);
   canonical_number(&canonical, worker->token);
   canonical_number(&canonical, worker->second_token);
+  canonical_number(&canonical, worker->generated_tokens);
+  canonical_number(&canonical, worker->decode_tokens);
+  canonical_number(&canonical, worker->first_token_cycles);
+  canonical_number(&canonical, worker->decode_cycles);
   canonical_number(&canonical, worker->inference_cycles);
+  canonical_number(&canonical, worker->vector_bits);
+  canonical_number(&canonical, worker->worker_threads);
   canonical_number(&canonical, worker->boot->tsc_hz);
   canonical_field(&canonical, nonce_hex);
   if (!canonical.ok ||
@@ -377,10 +457,23 @@ uint32_t aiueos_device_worker_http_request(
     put_text(&body, "-");
   else
     put_decimal(&body, worker->job_id);
-  put_text(&body, "\",\"token\":"); put_decimal(&body, worker->token);
+  put_text(&body, "\",\"protocol\":2,\"token\":");
+  put_decimal(&body, worker->token);
   put_text(&body, ",\"second-token\":"); put_decimal(&body, worker->second_token);
+  put_text(&body, ",\"generated-tokens\":");
+  put_decimal(&body, worker->generated_tokens);
+  put_text(&body, ",\"decode-tokens\":");
+  put_decimal(&body, worker->decode_tokens);
+  put_text(&body, ",\"first-token-cycles\":");
+  put_decimal(&body, worker->first_token_cycles);
+  put_text(&body, ",\"decode-cycles\":");
+  put_decimal(&body, worker->decode_cycles);
   put_text(&body, ",\"inference-cycles\":");
   put_decimal(&body, worker->inference_cycles);
+  put_text(&body, ",\"vector-bits\":");
+  put_decimal(&body, worker->vector_bits);
+  put_text(&body, ",\"worker-threads\":");
+  put_decimal(&body, worker->worker_threads);
   put_text(&body, ",\"tsc-hz\":"); put_decimal(&body, worker->boot->tsc_hz);
   put_text(&body, ",\"nonce\":\""); put_text(&body, nonce_hex);
   put_text(&body, "\",\"signature\":\""); put_text(&body, signature_hex);
@@ -390,7 +483,7 @@ uint32_t aiueos_device_worker_http_request(
   struct bounded_buffer request = {out, 0, capacity, 1};
   put_text(&request, "POST /infer/nodes/device-p256-worker HTTP/1.1\r\n");
   put_text(&request, "Host: api.murakumo.cloud\r\n");
-  put_text(&request, "User-Agent: aiueos-k16-worker-v1\r\n");
+  put_text(&request, "User-Agent: aiueos-k16-worker-v2\r\n");
   put_text(&request, "Content-Type: application/json\r\n");
   put_text(&request, "Accept: application/json\r\nContent-Length: ");
   put_decimal(&request, body.length);
