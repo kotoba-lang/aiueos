@@ -4312,7 +4312,9 @@ failed:
 #ifdef AIUEOS_MURAKUMO_DEVICE_RESULT
 int aiueos_rtl8125_direct_https_qualification(
     const struct aiueos_boot_info *boot, uint32_t token,
-    uint32_t second_token, uint64_t inference_cycles,
+    uint32_t second_token, uint32_t generated_tokens,
+    uint32_t decode_tokens, uint64_t first_token_cycles,
+    uint64_t decode_cycles, uint64_t inference_cycles,
     uint32_t vector_bits, uint32_t worker_threads) {
 #else
 int aiueos_rtl8125_direct_https_qualification(void) {
@@ -4352,7 +4354,13 @@ int aiueos_rtl8125_direct_https_qualification(void) {
       .mac = rtl8125_qualification_device.mac,
       .token = token,
       .second_token = second_token,
-      .inference_cycles = inference_cycles
+      .generated_tokens = generated_tokens,
+      .decode_tokens = decode_tokens,
+      .first_token_cycles = first_token_cycles,
+      .decode_cycles = decode_cycles,
+      .inference_cycles = inference_cycles,
+      .vector_bits = vector_bits,
+      .worker_threads = worker_threads
     };
     if (!(request_length = aiueos_device_result_http_request(
             &result, rtl_direct_http_request, sizeof(rtl_direct_http_request),
@@ -4475,7 +4483,10 @@ int aiueos_rtl8125_device_worker_control_ack(
 int aiueos_rtl8125_device_worker_result(
     const struct aiueos_boot_info *boot, uint32_t sequence,
     uint64_t job_id, uint32_t token, uint32_t second_token,
-    uint64_t inference_cycles) {
+    uint32_t generated_tokens, uint32_t decode_tokens,
+    uint64_t first_token_cycles, uint64_t decode_cycles,
+    uint64_t inference_cycles, uint32_t vector_bits,
+    uint32_t worker_threads) {
   if (!boot || !job_id) return 0;
   struct aiueos_device_worker_request request = {
     .boot = boot,
@@ -4485,7 +4496,13 @@ int aiueos_rtl8125_device_worker_result(
     .job_id = job_id,
     .token = token,
     .second_token = second_token,
-    .inference_cycles = inference_cycles
+    .generated_tokens = generated_tokens,
+    .decode_tokens = decode_tokens,
+    .first_token_cycles = first_token_cycles,
+    .decode_cycles = decode_cycles,
+    .inference_cycles = inference_cycles,
+    .vector_bits = vector_bits,
+    .worker_threads = worker_threads
   };
   uint32_t request_length = aiueos_device_worker_http_request(
     &request, rtl_direct_http_request, sizeof(rtl_direct_http_request),

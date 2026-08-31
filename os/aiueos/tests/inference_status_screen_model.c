@@ -55,32 +55,48 @@ int main(int argc, char **argv) {
   uint64_t initial_hash = surface->content_hash;
 
   struct aiueos_inference_status blocked = {
-    AIUEOS_INFERENCE_STATUS_ABI_VERSION, sizeof(blocked),
-    AIUEOS_INFERENCE_BLOCKED, "QWEN3.8 27B", "UD IQ3 XXS",
-    "RUNTIME NOT PRESENT", 0, 0, 64, 10934860704ULL,
-    AIUEOS_INFERENCE_UNMEASURED, AIUEOS_INFERENCE_UNMEASURED,
-    AIUEOS_INFERENCE_UNMEASURED, AIUEOS_INFERENCE_UNMEASURED,
-    AIUEOS_INFERENCE_UNMEASURED, 0
+    .abi_version = AIUEOS_INFERENCE_STATUS_ABI_VERSION,
+    .byte_size = sizeof(blocked),
+    .phase = AIUEOS_INFERENCE_BLOCKED,
+    .model = "QWEN3.8 27B", .quant = "UD IQ3 XXS",
+    .detail = "RUNTIME NOT PRESENT",
+    .target_tokens = 64, .artifact_bytes = 10934860704ULL,
+    .resident_bytes = AIUEOS_INFERENCE_UNMEASURED,
+    .load_ns = AIUEOS_INFERENCE_UNMEASURED,
+    .prefill_ns = AIUEOS_INFERENCE_UNMEASURED,
+    .decode_ns = AIUEOS_INFERENCE_UNMEASURED,
+    .time_to_first_token_ns = AIUEOS_INFERENCE_UNMEASURED,
+    .compute_cycles = 0
   };
   CHECK(aiueos_inference_status_valid(&blocked));
   CHECK(aiueos_framebuffer_inference_screen(&blocked));
   CHECK(surface->generation == 2 && surface->content_hash != initial_hash);
 
   struct aiueos_inference_status measured = {
-    AIUEOS_INFERENCE_STATUS_ABI_VERSION, sizeof(measured),
-    AIUEOS_INFERENCE_COMPLETE, "QWEN3.8 27B", "UD IQ3 XXS",
-    "QEMU UI TEST", 128, 32, 32, 10934860704ULL, 13958643712ULL,
-    53000000000ULL, 3200000000ULL, 8000000000ULL, 3450000000ULL, 0
+    .abi_version = AIUEOS_INFERENCE_STATUS_ABI_VERSION,
+    .byte_size = sizeof(measured),
+    .phase = AIUEOS_INFERENCE_COMPLETE,
+    .model = "QWEN3.8 27B", .quant = "UD IQ3 XXS",
+    .detail = "QEMU UI TEST",
+    .prompt_tokens = 128, .generated_tokens = 32, .decode_tokens = 31,
+    .target_tokens = 32, .artifact_bytes = 10934860704ULL,
+    .resident_bytes = 13958643712ULL,
+    .load_ns = 53000000000ULL, .prefill_ns = 3200000000ULL,
+    .decode_ns = 8000000000ULL, .time_to_first_token_ns = 3450000000ULL,
+    .compute_cycles = 0
   };
   CHECK(aiueos_inference_status_valid(&measured));
   CHECK(aiueos_inference_milli_tokens_per_second(128, 3200000000ULL) == 40000);
-  CHECK(aiueos_inference_milli_tokens_per_second(32, 8000000000ULL) == 4000);
+  CHECK(aiueos_inference_milli_tokens_per_second(31, 8000000000ULL) == 3875);
   CHECK(aiueos_framebuffer_inference_screen(&measured));
   CHECK(surface->generation == 3 && surface->damage_width == WIDTH &&
         surface->damage_height == HEIGHT);
 
   struct aiueos_inference_status invalid = measured;
   invalid.decode_ns = AIUEOS_INFERENCE_UNMEASURED;
+  CHECK(!aiueos_inference_status_valid(&invalid));
+  invalid = measured;
+  invalid.decode_tokens = 0;
   CHECK(!aiueos_inference_status_valid(&invalid));
   CHECK(argc < 2 || write_ppm(argv[1]));
   puts("AIUEOS_INFERENCE_STATUS_SCREEN_OK model=QWEN3.8-27B metrics=load,prefill,decode,tokens,resident phase=complete evidence=qemu-ui-test-only");

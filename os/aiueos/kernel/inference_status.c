@@ -25,11 +25,17 @@ int aiueos_inference_status_valid(const struct aiueos_inference_status *status) 
       !bounded_display_text(status->detail, 0) ||
       status->prompt_tokens > AIUEOS_INFERENCE_TOKEN_MAX ||
       status->generated_tokens > AIUEOS_INFERENCE_TOKEN_MAX ||
+      status->decode_tokens > status->generated_tokens ||
       status->target_tokens > AIUEOS_INFERENCE_TOKEN_MAX ||
       (status->target_tokens && status->generated_tokens > status->target_tokens) ||
       !duration(status->load_ns) || !duration(status->prefill_ns) ||
       !duration(status->decode_ns) ||
       !duration(status->time_to_first_token_ns)) return 0;
+
+  if ((status->decode_tokens &&
+       status->decode_ns == AIUEOS_INFERENCE_UNMEASURED) ||
+      (!status->decode_tokens &&
+       status->decode_ns != AIUEOS_INFERENCE_UNMEASURED)) return 0;
 
   if (status->phase == AIUEOS_INFERENCE_COMPLETE &&
       (!status->generated_tokens ||

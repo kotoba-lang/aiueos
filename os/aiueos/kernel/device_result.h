@@ -9,7 +9,13 @@ struct aiueos_device_result {
   const uint8_t *mac;
   uint32_t token;
   uint32_t second_token;
+  uint32_t generated_tokens;
+  uint32_t decode_tokens;
+  uint64_t first_token_cycles;
+  uint64_t decode_cycles;
   uint64_t inference_cycles;
+  uint32_t vector_bits;
+  uint32_t worker_threads;
 };
 
 enum aiueos_device_worker_operation {
@@ -26,7 +32,13 @@ struct aiueos_device_worker_request {
   uint64_t job_id;
   uint32_t token;
   uint32_t second_token;
+  uint32_t generated_tokens;
+  uint32_t decode_tokens;
+  uint64_t first_token_cycles;
+  uint64_t decode_cycles;
   uint64_t inference_cycles;
+  uint32_t vector_bits;
+  uint32_t worker_threads;
 };
 
 int aiueos_cpu_random_bytes(uint8_t *out, uint32_t bytes);
