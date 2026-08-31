@@ -24,6 +24,9 @@ static uint8_t aiueos_owned_memory_map[AIUEOS_OWNED_MEMORY_MAP_BYTES]
 static struct aiueos_qwen35_model *aiueos_qwen35_model;
 static struct aiueos_inference_status aiueos_qwen35_status;
 static char aiueos_qwen35_progress_detail[] = "LAYER 00 OF 64";
+static char aiueos_qwen35_decode_detail[] = "TOKEN 00 OF 08";
+static char aiueos_qwen35_first_fail_detail[] = "FIRST TOKEN 000000";
+static char aiueos_qwen35_decode_fail_detail[] = "FAILED AT TOKEN 00";
 #endif
 
 /* The loader's boot-info object and memory-map buffer are firmware-owned.
@@ -531,8 +534,21 @@ static void serial_decimal64(uint64_t value) {
 static void aiueos_qwen35_progress(uint32_t completed_layers,
                                    uint32_t total_layers,
                                    int output_head) {
-  (void)total_layers;
-  if (output_head) {
+  if (output_head == 2) {
+    aiueos_qwen35_decode_detail[6] =
+        (char)('0' + (completed_layers / 10U) % 10U);
+    aiueos_qwen35_decode_detail[7] =
+        (char)('0' + completed_layers % 10U);
+    aiueos_qwen35_decode_detail[12] =
+        (char)('0' + (total_layers / 10U) % 10U);
+    aiueos_qwen35_decode_detail[13] =
+        (char)('0' + total_layers % 10U);
+    aiueos_qwen35_status.phase = AIUEOS_INFERENCE_DECODING;
+    aiueos_qwen35_status.detail = aiueos_qwen35_decode_detail;
+    aiueos_qwen35_status.generated_tokens = completed_layers;
+    aiueos_qwen35_status.decode_tokens =
+        completed_layers ? completed_layers - 1U : 0U;
+  } else if (output_head) {
     aiueos_qwen35_status.phase = AIUEOS_INFERENCE_DECODING;
     aiueos_qwen35_status.detail = "OUTPUT HEAD";
   } else {
@@ -1107,7 +1123,25 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
         generation.generated_tokens != AIUEOS_QWEN35_GENERATION_TOKENS ||
         generation.tokens[0] != AIUEOS_QWEN35_REFERENCE_FIRST_TOKEN) {
       aiueos_qwen35_status.phase = AIUEOS_INFERENCE_ERROR;
-      aiueos_qwen35_status.detail = "DECODE REFUSED";
+      aiueos_qwen35_status.generated_tokens = generation.generated_tokens;
+      aiueos_qwen35_status.decode_tokens = generation.decode_tokens;
+      if (generation.generated_tokens &&
+          generation.tokens[0] != AIUEOS_QWEN35_REFERENCE_FIRST_TOKEN) {
+        uint32_t actual = generation.tokens[0];
+        for (uint32_t digit = 0; digit < 6U; digit++) {
+          aiueos_qwen35_first_fail_detail[17U - digit] =
+              (char)('0' + actual % 10U);
+          actual /= 10U;
+        }
+        aiueos_qwen35_status.detail = aiueos_qwen35_first_fail_detail;
+      } else {
+        uint32_t failed = generation.generated_tokens + 1U;
+        aiueos_qwen35_decode_fail_detail[16] =
+            (char)('0' + (failed / 10U) % 10U);
+        aiueos_qwen35_decode_fail_detail[17] =
+            (char)('0' + failed % 10U);
+        aiueos_qwen35_status.detail = aiueos_qwen35_decode_fail_detail;
+      }
       aiueos_qwen35_status.compute_cycles = generation.total_cycles;
       (void)aiueos_framebuffer_inference_screen(&aiueos_qwen35_status);
       serial_string("AIUEOS_QWEN35_GENERATE_FAIL expected-first=2005 actual=");

@@ -509,6 +509,19 @@ static int linear_attention(const struct aiueos_qwen35_layer *layer,
          y <- (q/sqrt(d))^T S.  Rows are key dimension, columns value. */
       recurrent_step(head_state, key, query, value, decay, beta,
                      dequantized, output);
+      if (!decode->position) {
+        /* With an all-zero recurrent state the official delta rule reduces
+           exactly to v * beta * dot(q, k) / sqrt(d).  Keep the state written
+           by recurrent_step, but preserve the already physically-qualified
+           position-zero reduction order for the emitted activation.  The two
+           forms are algebraically identical; fixing the association here
+           prevents an IQ3 argmax from changing solely because the cache path
+           introduced a different float accumulation order. */
+        float coefficient = dot(query, key, LINEAR_HEAD_DIM) *
+                            INV_SQRT_LINEAR_HEAD_DIM * beta;
+        for (uint32_t index = 0; index < LINEAR_HEAD_DIM; index++)
+          output[index] = value[index] * coefficient;
+      }
     }
   }
 
@@ -805,6 +818,7 @@ int aiueos_qwen35_generate(
       result->decode_cycles += choice.cycles;
       result->decode_tokens++;
     }
+    if (progress) progress(position + 1U, generated_tokens, 2);
     current_input = choice.token;
   }
   return result->generated_tokens == generated_tokens &&

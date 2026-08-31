@@ -57,11 +57,18 @@
                              :passkey-bound false
                              :post-quantum false
                              :biscuit false}}
- :verification {:host-build :pending
-                :scalar-reference-fixture :pending
+ :verification {:host-build :passed
+                :scalar-reference-fixture :passed
                 :avx2-first-token-reference :pending-physical
                 :physical-k16-sequence :pending
                 :murakumo-signed-result :pending}
+ :attempts [{:at "2026-08-31T05:32:14Z"
+             :efi-sha256 "a4ca10161220dd6dcf6180dbd551aff1d642d5796fe920ac4cc9525825b3fa67"
+             :screen {:state :error :detail "DECODE REFUSED"}
+             :elapsed-lower-bound-seconds 1500
+             :result-posted? false
+             :decode-rate :not-available
+             :inference :position-zero-reduction-order-under-investigation}]
  :observed {:boot-id :not-available
             :tokens :not-available
             :time-to-first-token-ns :not-available
