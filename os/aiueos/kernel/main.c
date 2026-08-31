@@ -213,7 +213,8 @@ extern unsigned aiueos_rtl8125_qualification_error(void);
 extern uint32_t aiueos_rtl8125_qualification_rx_length(void);
 #ifdef AIUEOS_MURAKUMO_DEVICE_RESULT
 extern int aiueos_rtl8125_direct_https_qualification(
-    const struct aiueos_boot_info *, uint32_t, uint32_t, uint64_t);
+    const struct aiueos_boot_info *, uint32_t, uint32_t, uint64_t,
+    uint32_t, uint32_t);
 extern const char *aiueos_rtl8125_direct_device_did(void);
 extern int aiueos_rtl8125_device_worker_poll(
     const struct aiueos_boot_info *, uint32_t, uint64_t *, uint32_t *, int *,
@@ -457,6 +458,7 @@ extern int aiueos_kotoba_runtime_evidence_ready(void);
 extern int aiueos_address_space_self_test(void);
 extern void aiueos_load_task_register(void);
 extern int aiueos_smp_start_application_processor(void);
+extern int aiueos_smp_dispatch_selftest(void);
 extern int aiueos_ioapic_route_legacy_timer(void);
 extern volatile uint64_t aiueos_external_timer_ticks;
 extern volatile uint64_t aiueos_virtio_rng_irq_count;
@@ -673,6 +675,10 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
     qemu_exit(0x7e);
   } else {
     boot = &aiueos_owned_boot_info;
+#if defined(AIUEOS_PHYSICAL_QUALIFICATION) && \
+    defined(AIUEOS_QWEN38_MODEL_HANDOFF) && !defined(AIUEOS_MODEL_TEST_FIXTURE)
+    int qwen_early_acpi_ready = 0;
+#endif
 #ifdef AIUEOS_PHYSICAL_QUALIFICATION
     aiueos_qualification_runtime_initialize(
         boot->version >= 3 ? boot->runtime_services : 0,
@@ -1004,6 +1010,25 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
     debug_string("AIUEOS_PHYSICAL_ALLOCATOR_OK pages=2 zeroed\n");
     serial_string("AIUEOS_PHYSICAL_ALLOCATOR_OK pages=2 zeroed\r\n");
 #if defined(AIUEOS_QWEN38_MODEL_HANDOFF) && !defined(AIUEOS_MODEL_TEST_FIXTURE)
+#ifdef AIUEOS_PHYSICAL_QUALIFICATION
+#ifdef AIUEOS_QWEN35_SMP
+    /* Bring up one application processor before the first model walk.  The
+       previous SMP qualification happened after the physical-Qwen branch had
+       already completed and halted, so every measured token was necessarily
+       single-threaded.  AP startup is best-effort here: the scalar path stays
+       available, while the result records the actual worker count. */
+    qwen_early_acpi_ready = aiueos_acpi_initialize(boot->acpi_rsdp);
+    if (qwen_early_acpi_ready && aiueos_apic_timer_initialize() &&
+        aiueos_smp_start_application_processor() &&
+        aiueos_smp_dispatch_selftest()) {
+      serial_string("AIUEOS_QWEN35_SMP_READY threads=2 init-sipi-v1 dispatch=verified\r\n");
+    } else {
+      serial_string("AIUEOS_QWEN35_SMP_FALLBACK threads=1\r\n");
+    }
+#else
+    serial_string("AIUEOS_QWEN35_SMP_DISABLED threads=1\r\n");
+#endif
+#endif
     enum {
       qwen_model_pages =
         (sizeof(struct aiueos_qwen35_model) + 4095U) / 4096U,
@@ -1067,6 +1092,19 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
       serial_string("AIUEOS_QWEN35_FIRST_TOKEN_FAIL execution\r\n");
       for (;;) __asm__ volatile("cli; hlt");
     }
+    if (first_token.token != AIUEOS_QWEN35_REFERENCE_FIRST_TOKEN &&
+        first_token.vector_bits == 256U) {
+      serial_string("AIUEOS_QWEN35_AVX2_REJECT expected=2005 actual=");
+      serial_decimal(first_token.token);
+      serial_string(" fallback=scalar\r\n");
+      aiueos_qwen35_force_scalar();
+      if (!aiueos_qwen35_first_token(
+            aiueos_qwen35_model, AIUEOS_QWEN35_BOS_TOKEN,
+            qwen_workspace, (uint64_t)qwen_workspace_pages * 4096U,
+            aiueos_qwen35_progress, &first_token)) {
+        first_token.token = UINT32_MAX;
+      }
+    }
     if (first_token.token != AIUEOS_QWEN35_REFERENCE_FIRST_TOKEN) {
       aiueos_qwen35_status.phase = AIUEOS_INFERENCE_ERROR;
       aiueos_qwen35_status.detail = "TOKEN MISMATCH";
@@ -1080,7 +1118,11 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
       for (;;) __asm__ volatile("cli; hlt");
     }
     aiueos_qwen35_status.phase = AIUEOS_INFERENCE_COMPLETE;
-    aiueos_qwen35_status.detail = "TOKEN 2005 MATCH";
+    aiueos_qwen35_status.detail = first_token.vector_bits == 256U
+      ? (first_token.worker_threads == 2U
+          ? "AVX2 2T TOKEN 2005" : "AVX2 1T TOKEN 2005")
+      : (first_token.worker_threads == 2U
+          ? "SCALAR 2T TOKEN 2005" : "SCALAR 1T TOKEN 2005");
     aiueos_qwen35_status.generated_tokens = 1;
     aiueos_qwen35_status.compute_cycles = first_token.compute_cycles;
     if (boot->version >= AIUEOS_BOOT_INFO_VERSION_TSC_CALIBRATED && boot->tsc_hz) {
@@ -1100,6 +1142,10 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
     serial_decimal(first_token.second_token);
     serial_string(" cycles=");
     serial_decimal64(first_token.compute_cycles);
+    serial_string(" vector-bits=");
+    serial_decimal(first_token.vector_bits);
+    serial_string(" threads=");
+    serial_decimal(first_token.worker_threads);
     serial_string(" timing=raw-tsc\r\n");
 #endif
     if (!aiueos_capability_table_initialize()) {
@@ -1116,7 +1162,12 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
 #ifdef AIUEOS_PHYSICAL_QUALIFICATION
     aiueos_qualification_progress(228);
 #endif
+#if defined(AIUEOS_PHYSICAL_QUALIFICATION) && \
+    defined(AIUEOS_QWEN38_MODEL_HANDOFF) && !defined(AIUEOS_MODEL_TEST_FIXTURE)
+    if (!qwen_early_acpi_ready) {
+#else
     if (!aiueos_acpi_initialize(boot->acpi_rsdp)) {
+#endif
 #ifdef AIUEOS_PHYSICAL_QUALIFICATION
       aiueos_framebuffer_qualification_screen("AIUEOS K16", "FAIL ACPI", "SSD READ ONLY", 0);
       serial_string("AIUEOS_PHYSICAL_QUALIFICATION_FAIL stage=acpi disk-writes=none\r\n");
@@ -1159,7 +1210,8 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
 #ifdef AIUEOS_MURAKUMO_DEVICE_RESULT
     direct_https_ok = aiueos_rtl8125_direct_https_qualification(
       boot, first_token.token, first_token.second_token,
-      first_token.compute_cycles);
+      first_token.compute_cycles, first_token.vector_bits,
+      first_token.worker_threads);
 #else
     direct_https_ok = aiueos_rtl8125_direct_https_qualification();
 #endif
@@ -1617,8 +1669,13 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
       serial_string("AIUEOS_SMP_FAIL ap-startup\r\n");
       qemu_exit(0x73);
     }
+    if (!aiueos_smp_dispatch_selftest()) {
+      debug_string("AIUEOS_SMP_FAIL ap-dispatch\n");
+      serial_string("AIUEOS_SMP_FAIL ap-dispatch\r\n");
+      qemu_exit(0x73);
+    }
     debug_string("AIUEOS_SMP_OK cpus=2 init-sipi-v1\n");
-    serial_string("AIUEOS_SMP_OK cpus=2 init-sipi-v1 per-cpu-stack\r\n");
+    serial_string("AIUEOS_SMP_OK cpus=2 init-sipi-v1 per-cpu-stack dispatch=verified\r\n");
     aiueos_scheduler_initialize();
     __asm__ volatile("sti");
     while (!aiueos_scheduler_evidence_ready()) __asm__ volatile("hlt");

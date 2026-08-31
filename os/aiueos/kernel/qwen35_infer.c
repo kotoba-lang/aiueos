@@ -4,6 +4,10 @@
 
 #include <stdint.h>
 
+#ifdef AIUEOS_QWEN35_SMP
+#include "smp.h"
+#endif
+
 #define EMBED 5120U
 #define FFN 17408U
 #define LINEAR_QKV 10240U
@@ -21,6 +25,7 @@ struct qwen35_workspace {
   float scratch_b[FFN];
   float scratch_c[FULL_QG];
   float dequantized[FFN];
+  float ap_dequantized[FFN];
   float beta_values[48];
 };
 
@@ -33,7 +38,16 @@ static float *scratch_a;
 static float *scratch_b;
 static float *scratch_c;
 static float *dequantized;
+static float *ap_dequantized;
 static float *beta_values;
+static uint32_t qwen_vector_bits;
+static uint32_t qwen_worker_threads = 1U;
+static uint32_t qwen_force_scalar;
+
+void aiueos_qwen35_force_scalar(void) {
+  qwen_force_scalar = 1U;
+  qwen_vector_bits = 0U;
+}
 
 static float local_sqrt(float value) {
 #if defined(__x86_64__)
@@ -88,7 +102,8 @@ static uint64_t read_cycles(void) {
 #endif
 }
 
-static float dot(const float * left, const float * right, uint64_t count) {
+static float dot_scalar(const float * left, const float * right,
+                        uint64_t count) {
   float sum0 = 0.0f, sum1 = 0.0f, sum2 = 0.0f, sum3 = 0.0f;
   uint64_t index = 0;
   for (; index + 4 <= count; index += 4) {
@@ -100,6 +115,86 @@ static float dot(const float * left, const float * right, uint64_t count) {
   float sum = (sum0 + sum1) + (sum2 + sum3);
   for (; index < count; index++) sum += left[index] * right[index];
   return sum;
+}
+
+#if defined(__x86_64__) && !defined(AIUEOS_QWEN35_SCALAR)
+typedef float qwen_v8f __attribute__((vector_size(32), aligned(1)));
+typedef float qwen_v4f __attribute__((vector_size(16), aligned(1)));
+
+static void prepare_bsp_extended_state(void) {
+  uint32_t eax, ebx, ecx, edx;
+  __asm__ volatile("cpuid"
+                   : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx)
+                   : "a"(1U), "c"(0U));
+  if ((ecx & ((1U << 26) | (1U << 28))) !=
+      ((1U << 26) | (1U << 28))) return;
+  uintptr_t cr4;
+  __asm__ volatile("mov %%cr4, %0" : "=r"(cr4));
+  cr4 |= (1U << 9) | (1U << 10) | (1U << 18);
+  __asm__ volatile("mov %0, %%cr4" : : "r"(cr4) : "memory");
+  uint32_t xcr0_low, xcr0_high;
+  __asm__ volatile("xgetbv"
+                   : "=a"(xcr0_low), "=d"(xcr0_high) : "c"(0U));
+  xcr0_low |= 0x6U;
+  __asm__ volatile("xsetbv"
+                   : : "a"(xcr0_low), "d"(xcr0_high), "c"(0U));
+}
+
+__attribute__((target("avx2")))
+static float dot_avx2(const float *left, const float *right, uint64_t count) {
+  qwen_v4f sums = {0.0f, 0.0f, 0.0f, 0.0f};
+  uint64_t index = 0;
+  for (; index + 8U <= count; index += 8U) {
+    qwen_v8f left8 = *(const qwen_v8f *)(const void *)(left + index);
+    qwen_v8f right8 = *(const qwen_v8f *)(const void *)(right + index);
+    qwen_v8f product = left8 * right8;
+    qwen_v4f lower = __builtin_shufflevector(product, product, 0, 1, 2, 3);
+    qwen_v4f upper = __builtin_shufflevector(product, product, 4, 5, 6, 7);
+    /* Preserve the scalar implementation's four-accumulator operation order.
+       Each SIMD lane is one original accumulator, and lower is added before
+       upper just like two consecutive four-element scalar iterations. */
+    sums += lower;
+    sums += upper;
+  }
+  union { qwen_v4f vector; float lane[4]; } reduced = {sums};
+  /* Four volatile updates prevent the optimizer from replacing the contract's
+     left-to-right final reduction with a different horizontal tree. */
+  volatile float ordered = reduced.lane[0];
+  ordered += reduced.lane[1];
+  ordered += reduced.lane[2];
+  ordered += reduced.lane[3];
+  float sum = ordered;
+  for (; index < count; index++) sum += left[index] * right[index];
+  return sum;
+}
+
+static int cpu_has_avx2(void) {
+  uint32_t eax, ebx, ecx, edx;
+  __asm__ volatile("cpuid"
+                   : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx)
+                   : "a"(0U), "c"(0U));
+  if (eax < 7U) return 0;
+  __asm__ volatile("cpuid"
+                   : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx)
+                   : "a"(1U), "c"(0U));
+  if ((ecx & ((1U << 27) | (1U << 28))) !=
+      ((1U << 27) | (1U << 28))) return 0;
+  uint32_t xcr0_low, xcr0_high;
+  __asm__ volatile("xgetbv"
+                   : "=a"(xcr0_low), "=d"(xcr0_high) : "c"(0U));
+  if ((xcr0_low & 0x6U) != 0x6U) return 0;
+  __asm__ volatile("cpuid"
+                   : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx)
+                   : "a"(7U), "c"(0U));
+  return (ebx & (1U << 5)) != 0;
+}
+#endif
+
+static float dot(const float *left, const float *right, uint64_t count) {
+#if defined(__x86_64__) && !defined(AIUEOS_QWEN35_SCALAR)
+  if (qwen_vector_bits == 256U) return dot_avx2(left, right, count);
+#endif
+  return dot_scalar(left, right, count);
 }
 
 static int tensor_row(const struct aiueos_qwen35_tensor *tensor,
@@ -116,17 +211,59 @@ static int tensor_row(const struct aiueos_qwen35_tensor *tensor,
       tensor->dimensions[0], output);
 }
 
+static int matvec_range(const struct aiueos_qwen35_tensor *tensor,
+                        const float *input, uint64_t input_count,
+                        float *output, uint64_t first, uint64_t end,
+                        float *row_values) {
+  for (uint64_t row = first; row < end; row++) {
+    if (!tensor_row(tensor, row, row_values)) return 0;
+    output[row] = dot(row_values, input, input_count);
+  }
+  return 1;
+}
+
+#ifdef AIUEOS_QWEN35_SMP
+struct matvec_ap_task {
+  const struct aiueos_qwen35_tensor *tensor;
+  const float *input;
+  uint64_t input_count;
+  float *output;
+  uint64_t first;
+  uint64_t end;
+  int ok;
+};
+
+static void matvec_ap(void *opaque) {
+  struct matvec_ap_task *task = opaque;
+  task->ok = matvec_range(task->tensor, task->input, task->input_count,
+                          task->output, task->first, task->end,
+                          ap_dequantized);
+}
+#endif
+
 static int matvec(const struct aiueos_qwen35_tensor *tensor,
                   const float *input, uint64_t input_count,
                   float *output, uint64_t output_count) {
   if (!tensor || tensor->dimension_count != 2 ||
       tensor->dimensions[0] != input_count ||
       tensor->dimensions[1] != output_count) return 0;
-  for (uint64_t row = 0; row < output_count; row++) {
-    if (!tensor_row(tensor, row, dequantized)) return 0;
-    output[row] = dot(dequantized, input, input_count);
+#ifdef AIUEOS_QWEN35_SMP
+  if (qwen_worker_threads == 2U && output_count >= 512U) {
+    uint64_t split = output_count / 2U;
+    struct matvec_ap_task task = {
+      .tensor = tensor, .input = input, .input_count = input_count,
+      .output = output, .first = split, .end = output_count, .ok = 0
+    };
+    if (aiueos_smp_dispatch(matvec_ap, &task)) {
+      int bsp_ok = matvec_range(tensor, input, input_count, output, 0, split,
+                                dequantized);
+      int ap_ok = aiueos_smp_join() && task.ok;
+      return bsp_ok && ap_ok;
+    }
   }
-  return 1;
+#endif
+  return matvec_range(tensor, input, input_count, output, 0, output_count,
+                      dequantized);
 }
 
 static int rms_norm(const float *input,
@@ -267,7 +404,19 @@ int aiueos_qwen35_first_token(
   scratch_b = memory->scratch_b;
   scratch_c = memory->scratch_c;
   dequantized = memory->dequantized;
+  ap_dequantized = memory->ap_dequantized;
   beta_values = memory->beta_values;
+#if defined(__x86_64__) && !defined(AIUEOS_QWEN35_SCALAR)
+  prepare_bsp_extended_state();
+  qwen_vector_bits = !qwen_force_scalar && cpu_has_avx2() ? 256U : 0U;
+#else
+  qwen_vector_bits = 0U;
+#endif
+#ifdef AIUEOS_QWEN35_SMP
+  qwen_worker_threads = aiueos_smp_worker_threads();
+#else
+  qwen_worker_threads = 1U;
+#endif
   if (!tensor_row(&model->token_embedding, input_token, state)) return 0;
 
   uint64_t started = read_cycles();
@@ -286,6 +435,8 @@ int aiueos_qwen35_first_token(
   result->second_token = UINT32_MAX;
   result->logit = -3.402823466e+38f;
   result->second_logit = -3.402823466e+38f;
+  result->vector_bits = qwen_vector_bits;
+  result->worker_threads = qwen_worker_threads;
   for (uint32_t token = 0; token < model->vocab_size; token++) {
     if (!tensor_row(&model->output, token, dequantized)) return 0;
     float logit = dot(dequantized, normalized, EMBED);

@@ -103,6 +103,11 @@
   (slurp (io/file "os/aiueos/kernel/qualification.c")))
 (def qualification-entry
   (slurp (io/file "os/aiueos/kernel/qualification_entry.S")))
+(def qwen35-infer
+  (slurp (io/file "os/aiueos/kernel/qwen35_infer.c")))
+(def qwen35-infer-header
+  (slurp (io/file "os/aiueos/kernel/qwen35_infer.h")))
+(def smp (slurp (io/file "os/aiueos/kernel/smp.c")))
 
 (deftest single-efi-carries-admitted-native-payload
   (testing "the PXE artifact embeds exactly the kernel and initramfs built now"
@@ -117,6 +122,29 @@
     (is (str/includes? release-build "AIUEOS_NETBOOT_QUALIFICATION=1"))
     (is (str/includes? release-build "AIUEOS_SOURCE_DIRTY"))
     (is (str/includes? contract ":admission :compiled-sha256"))))
+
+(deftest qwen35-k16-execution-selects-real-avx2-and-two-thread-work
+  (testing "the runtime gates a 256-bit dot kernel on CPU and XCR0 support"
+    (doseq [marker ["target(\"avx2\")" "qwen_v8f"
+                    "cpu_has_avx2" "xgetbv" "qwen_vector_bits == 256U"]]
+      (is (str/includes? qwen35-infer marker)))
+    (is (str/includes? build "-DAIUEOS_QWEN35_SMP=1")))
+  (testing "one AP owns the other half of each large matrix output"
+    (doseq [marker ["output_count / 2U" "aiueos_smp_dispatch(matvec_ap"
+                    "aiueos_smp_join()" "ap_dequantized[FFN]"]]
+      (is (str/includes? qwen35-infer marker)))
+    (doseq [marker ["ap_work_generation" "ap_work_completed"
+                    "aiueos_smp_dispatch_selftest"
+                    "ap_dispatch_qualified"
+                    "section(\".high_bss\")"]]
+      (is (str/includes? smp marker)))
+    (is (str/includes? qwen35-infer-header
+                       "AIUEOS_QWEN35_WORKSPACE_BYTES 368832U")))
+  (testing "physical evidence records the execution path actually selected"
+    (doseq [marker ["AIUEOS_QWEN35_SMP_READY threads=2"
+                    "AVX2 2T TOKEN 2005"
+                    "vector-bits=" "threads="]]
+      (is (str/includes? kernel marker)))))
 
 (deftest native-netboot-returns-to-the-control-efi
   (testing "BootNext is one-shot and BootOrder has no write surface"
@@ -317,9 +345,9 @@
                     "RTL_DIRECT_STAGE_ERROR(13)"
                     "RTL_DIRECT_STAGE_ERROR(14)"]]
       (is (str/includes? pci marker))))
-  (testing "the one-descriptor K16 path advertises one bounded receive slot"
+  (testing "the one-descriptor K16 path advertises one bridge fragment"
     (is (str/includes? pci "RTL_DIRECT_RX_BUDGET 50000000U"))
-    (is (str/includes? pci "RTL_DIRECT_RX_WINDOW 1024U"))
+    (is (str/includes? pci "RTL_DIRECT_RX_WINDOW 256U"))
     (is (str/includes? pci "net_tx_window = RTL_DIRECT_RX_WINDOW"))
     (is (not (str/includes? pci "((stage) + 1U)"))))
   (testing "a failed persistent request resets RX but keeps boot-scoped DNS"
@@ -354,6 +382,12 @@
     (doseq [marker ["30U + rtl8125_direct_tls_pump_error"
                     "rtl8125_direct_tls_pump_error = 4"
                     "rtl8125_direct_tls_pump_error = 7"]]
+      (is (str/includes? pci marker))))
+  (testing "the TLS pump recovers TCP gaps and retransmissions before parsing"
+    (doseq [marker ["(int32_t)(sequence - *peer_next) != 0"
+                    "rtl8125_direct_tcp_recoveries++"
+                    "duplicate ACK for every"
+                    "gap/retransmission"]]
       (is (str/includes? pci marker)))))
 
 (deftest physical-worker-reports-bounded-response-diagnostics
@@ -365,7 +399,11 @@
                     "ok ? 'o' : 'F'"]]
       (is (str/includes? pci marker))))
   (testing "the UDP report is bounded and excludes the response body"
-    (doseq [marker ["uint32_t fields[4]"
+    (doseq [marker ["uint32_t fields[8]"
+                    "rtl8125_direct_tls_pump_error"
+                    "rtl8125_direct_tcp_recoveries"
+                    "rtl8125_direct_qwen_vector_bits"
+                    "rtl8125_direct_qwen_worker_threads"
                     "app_length < 12U ? app_length : 12U"
                     "0x8000U | (sequence & 0x7fffU)"]]
       (is (str/includes? pci marker)))
