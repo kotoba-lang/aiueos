@@ -218,7 +218,11 @@
   :authorized-key :fixed-ecdsa-p256    ; ADR-0108: baked authorized public point; provisioning places per-device keys
   :full-login :verified-by-independent-client ; ADR-0108: a node client completed kex+gcm+userauth and got USERAUTH_SUCCESS
   :session-channel :landed             ; ADR-0109: CHANNEL_OPEN session -> exec -> CHANNEL_DATA (command output) -> exit-status/eof/close, in net_ssh_userauth
-  :command-session :verified-by-independent-client ; ADR-0109: a node client ran `uname -a` and received "aiueos: uname -a\n" over the channel
+  :command-session :verified-by-independent-client ; capability-limited management, not a root shell
+  :commands ["runtime status" "runtime restart"]
+  :unknown-command :refused
+  :runtime-restart {:kernel-reboot? false :network-preserved? true}
+  :physical-rtl8125-listener :unverified ; current handshake evidence is virtio/QEMU; do not infer K16 port 22 reachability
   :host-key :fixed-ecdsa-p256          ; ADR-0107: baked d + public point in net_ssh_kex; per-device key is provisioning's job
   :kernel-size 516672                  ; ADR-0107: --strip-all dropped the file from 1067112 to 516672 (loadable was always ~516k)
   :sshd :login-complete                ; ADR-0108: kex + host auth + aes128-gcm record + publickey userauth -> USERAUTH_SUCCESS. remaining is a session channel (shell/exec), not authentication

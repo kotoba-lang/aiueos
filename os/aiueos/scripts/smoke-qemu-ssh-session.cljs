@@ -14,8 +14,8 @@
          '[ssh.transport :as t] '[ssh.kex :as kex]
          '[ssh.keys :as keys] '[ssh.record :as rec] '[ssh.userauth :as ua]
          '[ssh.connection :as con])
-(def command "uname -a")
-(def expect-output (str "aiueos: " command "\n"))
+(def command "runtime status")
+(def expect-output "aiueos: runtime unavailable\n")
 
 (def fs (js/require "node:fs")) (def path (js/require "node:path"))
 (def cp (js/require "node:child_process")) (def net (js/require "node:net"))

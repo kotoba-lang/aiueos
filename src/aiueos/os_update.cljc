@@ -11,7 +11,7 @@
 (def schema "aiueos.os-update/v1")
 (def required-artifact-kinds #{:loader :kernel :initramfs})
 (def required-health-signals
-  #{:boot :storage :direct-https :murakumo-node :inference})
+  #{:boot :storage :direct-https :murakumo-node})
 (def ^:private sha256-pattern #"[0-9a-f]{64}")
 (def ^:private immutable-url-pattern
   #"https://ipfs\.kotobase\.net/ipfs/[a-z0-9]+")

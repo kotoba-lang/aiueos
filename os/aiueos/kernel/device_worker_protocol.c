@@ -55,6 +55,14 @@ int aiueos_device_worker_poll_response(
     poll->reboot_pxe = 1;
     return 1;
   }
+  if (find_text(http, length,
+                "\"control\":{\"action\":\"restart-runtime\",\"command-id\":\"",
+                &at)) {
+    if (!decimal64(http, length, &at, &poll->control_id) ||
+        at >= length || http[at] != '"' || !poll->control_id) return 0;
+    poll->restart_runtime = 1;
+    return 1;
+  }
   if (!find_text(http, length, "\"job-id\":\"", &at)) {
     return find_text(http, length, "\"job\":null", &at);
   }

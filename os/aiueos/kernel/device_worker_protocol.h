@@ -10,6 +10,7 @@ struct aiueos_device_worker_poll {
   int ready;
   int has_job;
   int reboot_pxe;
+  int restart_runtime;
 };
 
 int aiueos_device_worker_poll_response(
