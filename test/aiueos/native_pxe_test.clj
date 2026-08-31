@@ -304,6 +304,16 @@
     (is (str/includes?
           pci
           ": rtl8125_direct_rx_budget(frame_length, RTL8125_SSH_IDLE_RX_BUDGET)")))
+  (testing "a SYN arriving between short listener windows is consumed before rearm"
+    (doseq [marker ["rtl8125_ssh_pending_length"
+                    "rtl8125_ssh_frame_consumed"
+                    "inspect the descriptor and hand an already-completed frame"
+                    "if (!rtl8125_ssh_frame_consumed)"
+                    "rtl8125_ssh_pending_length = received"]]
+      (is (str/includes? pci marker)))
+    (is (< (str/index-of pci "aiueos_rtl8125_rx_poll(\n      &rtl8125_qualification_device")
+           (str/index-of pci "aiueos_rtl8125_rx_rearm(&rtl8125_qualification_device);"
+                         (str/index-of pci "static int rtl8125_ssh_rearm")))))
   (testing "management can restart Kototama but cannot obtain a shell or reboot"
     (doseq [marker ["AIUEOS_RTL8125_SSH_SESSION_OK"
                     "commands=runtime-status,runtime-restart"
