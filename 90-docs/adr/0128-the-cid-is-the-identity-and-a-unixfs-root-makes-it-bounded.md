@@ -4,10 +4,11 @@ Date: 2026-08-31
 
 ## Status
 
-Accepted for the two objects and their executed contracts. NOT yet linked into
-`KERNEL.ELF`: that needs amu's `kotoba-native` pin to reach `db677bc2` and a
-kernel build, and until then no boot has run either object. Nothing here
-claims a physical result.
+Accepted for the two objects and their executed contracts. NOT linked into
+`KERNEL.ELF`, and the first version of this line understated why: it said the
+gap was amu's `kotoba-native` pin. It is not. See *What this does not claim*.
+No boot, QEMU or physical, has run either object, and nothing here claims a
+physical result.
 
 ## Context
 
@@ -131,10 +132,18 @@ the raw CID of zero bytes that ADR-0082 already fetches over TLS.
 
 ## What this does not claim
 
-- **Neither object is in `KERNEL.ELF`.** kotoba-native now admits both export
-  symbols, but amu pins kotoba-native at `9ca7a2fc`; until that pin reaches
-  `db677bc2` the kernel build cannot link them. No boot, QEMU or physical, has
-  executed either object.
+- **Neither object is in `KERNEL.ELF`, and the gap is not a pin bump.** The
+  checked-in `os/aiueos/kotoba/*.o` are produced by amu `9cf3a0a` -- **502
+  commits behind amu main** -- which pins kotoba-native `a60da444`, itself 222
+  commits and ~3,000 lines of codegen behind the revision carrying the two new
+  export rows. `reproduce-kotoba-kernel-object.sh` already records why that
+  pin has not moved: five objects were compiled at the tip and compared
+  against the committed bytes, and **all five differ**, so taking the advance
+  means regenerating all 37 objects and every pinned digest in
+  `build-uefi.sh`. That is a change to the shipped kernel and needs its own
+  boot evidence; it is not a side effect of adding a decision. Measured again
+  2026-08-31 -- the distances above are this session's, not quoted from the
+  script's comment.
 - **Neither object is in `qualification/tcb-inventory.edn`,** and that is
   correct today: they are not yet in the trusted computing base because they
   are not yet in the kernel. They belong there the moment they are linked.
