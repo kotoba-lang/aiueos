@@ -85,4 +85,16 @@ enum aiueos_rtl8125_result aiueos_rtl8125_rx_poll(
     struct aiueos_rtl8125 *device, uint32_t *frame_length);
 void aiueos_rtl8125_rx_rearm(struct aiueos_rtl8125 *device);
 
+/* Pure, peer-bound ARP helpers used by the persistent direct-link worker.
+   IPv4 arguments use the same big-endian numeric form as an Ethernet frame,
+   for example 10.77.0.10 is 0x0a4d000a. */
+int aiueos_rtl8125_direct_arp_request(
+    const uint8_t *frame, uint32_t frame_length,
+    const uint8_t local_mac[6], const uint8_t peer_mac[6],
+    uint32_t local_ip, uint32_t peer_ip);
+uint32_t aiueos_rtl8125_direct_arp_reply(
+    uint8_t *frame, uint32_t capacity,
+    const uint8_t local_mac[6], const uint8_t peer_mac[6],
+    uint32_t local_ip, uint32_t peer_ip);
+
 #endif

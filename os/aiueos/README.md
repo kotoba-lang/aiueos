@@ -893,9 +893,14 @@ The RTL8125 physical-link slice is in `kernel/rtl8125.c`. It is a
 bounded **PXE handoff**, not a general Realtek driver: after UEFI has powered
 and calibrated the PHY, it drains the firmware rings, installs one aligned TX
 and one aligned RX descriptor, preserves the firmware PHY/MCU setup, masks
-interrupts, and polls ownership with bounded callers. The host model exercises
+interrupts, and polls ownership with bounded callers.  The persistent direct
+worker also answers only an ARP request whose Ethernet sender, ARP sender,
+gateway address and K16 target address match the peer admitted at boot.  This
+refreshes the Mac's neighbor entry while the K16 is waiting for DNS or TLS and
+prevents a healthy outbound worker from becoming one-way after cache expiry.
+The host model exercises
 the observed K16 MAC, an RTL8125B revision case, descriptor programming, TX
-completion, RX FCS removal and rearming:
+completion, RX FCS removal, rearming and the peer-bound ARP reply:
 
 ```sh
 os/aiueos/scripts/smoke-rtl8125-handoff.sh

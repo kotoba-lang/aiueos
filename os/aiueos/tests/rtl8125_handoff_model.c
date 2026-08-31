@@ -13,6 +13,8 @@ static void w16(void *p,uint32_t o,uint16_t v){struct fake_mmio*m=p;memcpy(m->by
 static void w32(void *p,uint32_t o,uint32_t v){struct fake_mmio*m=p;memcpy(m->bytes+o,&v,4);m->writes++;}
 static void put16(struct fake_mmio*m,uint32_t o,uint16_t v){memcpy(m->bytes+o,&v,2);}
 static void put32(struct fake_mmio*m,uint32_t o,uint32_t v){memcpy(m->bytes+o,&v,4);}
+static void be16(uint8_t*p,uint16_t v){p[0]=(uint8_t)(v>>8);p[1]=(uint8_t)v;}
+static void be32(uint8_t*p,uint32_t v){p[0]=(uint8_t)(v>>24);p[1]=(uint8_t)(v>>16);p[2]=(uint8_t)(v>>8);p[3]=(uint8_t)v;}
 
 #define CHECK(x) do { if (!(x)) { fprintf(stderr,"FAIL line=%d expr=%s\n",__LINE__,#x); return 1; } } while(0)
 
@@ -48,9 +50,37 @@ int main(void) {
   CHECK((rx.command&0xc0000000U)==0xc0000000U);
   CHECK(mmio.writes>=12);
 
+  const uint8_t local_mac[6]={0x70,0x70,0xfc,0x0b,0xb6,0x32};
+  const uint8_t peer_mac[6]={0x80,0x69,0x1a,0x17,0x4f,0x15};
+  uint8_t arp[64]={0};
+  memset(arp,0xff,6);memcpy(arp+6,peer_mac,6);
+  be16(arp+12,0x0806);be16(arp+14,1);be16(arp+16,0x0800);
+  arp[18]=6;arp[19]=4;be16(arp+20,1);memcpy(arp+22,peer_mac,6);
+  be32(arp+28,0x0a4d0001U);be32(arp+38,0x0a4d000aU);
+  CHECK(aiueos_rtl8125_direct_arp_request(
+        arp,42,local_mac,peer_mac,0x0a4d000aU,0x0a4d0001U));
+  CHECK(!aiueos_rtl8125_direct_arp_request(
+        arp,41,local_mac,peer_mac,0x0a4d000aU,0x0a4d0001U));
+  arp[21]=2;
+  CHECK(!aiueos_rtl8125_direct_arp_request(
+        arp,42,local_mac,peer_mac,0x0a4d000aU,0x0a4d0001U));
+  arp[21]=1;arp[41]=2;
+  CHECK(!aiueos_rtl8125_direct_arp_request(
+        arp,42,local_mac,peer_mac,0x0a4d000aU,0x0a4d0001U));
+  arp[41]=10;
+  CHECK(aiueos_rtl8125_direct_arp_reply(
+        arp,sizeof(arp),local_mac,peer_mac,0x0a4d000aU,0x0a4d0001U)==42);
+  CHECK(!memcmp(arp,peer_mac,6)&&!memcmp(arp+6,local_mac,6));
+  CHECK(arp[20]==0&&arp[21]==2&&!memcmp(arp+22,local_mac,6));
+  CHECK(arp[28]==10&&arp[29]==77&&arp[30]==0&&arp[31]==10);
+  CHECK(!memcmp(arp+32,peer_mac,6));
+  CHECK(arp[38]==10&&arp[39]==77&&arp[40]==0&&arp[41]==1);
+  CHECK(aiueos_rtl8125_direct_arp_reply(
+        arp,41,local_mac,peer_mac,0x0a4d000aU,0x0a4d0001U)==0);
+
   put32(&mmio,0x40,0x12300000U);
   CHECK(aiueos_rtl8125_takeover(&device,&io,&tx,0x100000,&rx,0x101000,
         tx_frame,0x102000,rx_frame,0x103000)==AIUEOS_RTL8125_UNSUPPORTED_REVISION);
-  puts("AIUEOS_RTL8125_MODEL_OK handoff=pxe rings=1x1 tx=bounded rx=fcs-stripped revision=8125b");
+  puts("AIUEOS_RTL8125_MODEL_OK handoff=pxe rings=1x1 tx=bounded rx=fcs-stripped revision=8125b arp=peer-bound-reply");
   return 0;
 }
