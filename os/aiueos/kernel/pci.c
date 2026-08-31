@@ -4202,10 +4202,30 @@ static int rtl8125_direct_tcp_send(uint32_t dst, uint16_t local_port,
 }
 
 #if defined(AIUEOS_SSH_LISTEN) && defined(AIUEOS_MURAKUMO_DEVICE_RESULT)
+/* The RTL8125 has one RX descriptor in this qualification slice.  An idle
+   listener deliberately leaves it owned by the NIC between management ticks
+   so a SYN arriving during the one-second wait is retained.  Before rearming,
+   inspect the descriptor and hand an already-completed frame to the common SSH
+   state machine.  Otherwise an unconditional rearm discards exactly the SYN
+   that arrived outside the short spin window. */
+static uint32_t rtl8125_ssh_pending_length;
+static int rtl8125_ssh_frame_consumed;
+
 static int rtl8125_ssh_rearm(void *context) {
   (void)context;
   if (!rtl8125_qualification_device.ready) return 0;
+  rtl8125_ssh_pending_length = 0;
+  if (!rtl8125_ssh_frame_consumed) {
+    uint32_t received = 0;
+    enum aiueos_rtl8125_result result = aiueos_rtl8125_rx_poll(
+      &rtl8125_qualification_device, &received);
+    if (result == AIUEOS_RTL8125_OK) {
+      rtl8125_ssh_pending_length = received;
+      return 1;
+    }
+  }
   aiueos_rtl8125_rx_rearm(&rtl8125_qualification_device);
+  rtl8125_ssh_frame_consumed = 0;
   return 1;
 }
 
@@ -4217,9 +4237,17 @@ static int rtl8125_ssh_wait(void *context, uint32_t *frame_length) {
      accepted use a short window and let aiueos_k16_management_wait poll again
      on the next management tick. Once a connection exists, retain the full
      receive budget for identification, key exchange and public-key auth. */
-  return ssh_listen_stage
+  if (rtl8125_ssh_pending_length) {
+    *frame_length = rtl8125_ssh_pending_length;
+    rtl8125_ssh_pending_length = 0;
+    rtl8125_ssh_frame_consumed = 1;
+    return 1;
+  }
+  int received = ssh_listen_stage
     ? rtl8125_direct_rx(frame_length)
     : rtl8125_direct_rx_budget(frame_length, RTL8125_SSH_IDLE_RX_BUDGET);
+  if (received) rtl8125_ssh_frame_consumed = 1;
+  return received;
 }
 
 static int rtl8125_ssh_send(void *context, uint16_t client_port,
@@ -4246,6 +4274,8 @@ int aiueos_rtl8125_ssh_poll(void) {
     net_peer_mac[i] = rtl8125_peer_mac[i];
   }
   net_peer_mac_known = 1;
+  rtl8125_ssh_pending_length = 0;
+  rtl8125_ssh_frame_consumed = 0;
   ssh_listen_stage = 0;
   ssh_client_id_valid = 0;
   ssh_client_id_len = 0;
