@@ -3981,6 +3981,7 @@ int aiueos_rtl8125_physical_qualification(void) {
    reconnect interval instead. */
 #define RTL_DIRECT_RX_BUDGET 50000000U
 #define RTL_DIRECT_RX_WINDOW 256U
+#define RTL8125_SSH_LISTEN_ROUNDS 64U
 #define RTL_DIRECT_TLS_ATTEMPTS 3U
 #define RTL_DIRECT_SYN_SCAN_FRAMES 64U
 #define RTL_DIRECT_TLS_FLIGHT_MAX 1152U
@@ -4217,7 +4218,9 @@ static int rtl8125_ssh_send(void *context, uint16_t client_port,
     sequence, acknowledgement, flags, payload, payload_length);
 }
 
-/* Poll one bounded port-22 receive window between Murakumo worker requests.
+/* Poll bounded port-22 receive windows between Murakumo worker requests.
+   Multiple rounds are required on the physical link: unrelated DNS/worker
+   frames may occupy the sole RX descriptor before a retransmitted TCP SYN.
    Authentication and the command allow-list stay in the common SSH state
    machine; this adapter has no shell, filesystem, reboot or capability-grant
    entrypoint. */
@@ -4241,7 +4244,7 @@ int aiueos_rtl8125_ssh_poll(void) {
     .wait = rtl8125_ssh_wait,
     .send = rtl8125_ssh_send};
   net_tx_window = RTL_DIRECT_RX_WINDOW;
-  int accepted = net_ssh_listen(&io, 1);
+  int accepted = net_ssh_listen(&io, RTL8125_SSH_LISTEN_ROUNDS);
   net_tx_window = NET_TCP_WINDOW;
   return accepted && ssh_kex_stage >= 16;
 }
