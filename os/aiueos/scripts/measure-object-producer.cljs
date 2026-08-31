@@ -82,11 +82,22 @@
       (fail! "usage: --compiler <path to an amu checkout> [--root <aiueos>] [--only <name>]" {}))
     (let [sha (compiler-sha compiler)
           dir (path/join root "os/aiueos/kotoba")
-          objects (->> (fs/readdirSync dir)
-                       (filter #(str/ends-with? % ".o"))
-                       (map #(subs % 0 (- (count %) 2)))
-                       (filter #(fs/existsSync (path/join dir (str % ".kotoba"))))
-                       sort vec)
+          committed (->> (fs/readdirSync dir)
+                         (filter #(str/ends-with? % ".o"))
+                         (map #(subs % 0 (- (count %) 2)))
+                         sort vec)
+          sourced? #(fs/existsSync (path/join dir (str % ".kotoba")))
+          ;; Objects with no sibling source cannot be measured by this
+          ;; command, and they are REPORTED rather than filtered away. The
+          ;; first version dropped them silently: 67 committed objects went in,
+          ;; 66 came out, and the receipt said 66 with nothing to say the
+          ;; difference existed. `ecdsa-p256-public` is the one -- not
+          ;; sourceless, but a second packaging of `ecdsa-p256-sign.kotoba`,
+          ;; which defines both entries and whose recipe writes both `.o`
+          ;; files. Measuring it needs that recipe, not this command.
+          skipped (mapv (fn [n] {:object n :reason :no-sibling-source})
+                        (remove sourced? committed))
+          objects (filterv sourced? committed)
           objects (if only (filterv #(= only %) objects) objects)]
       ;; Evidence floor: a scan that found no objects has not found no
       ;; differences.
@@ -94,7 +105,10 @@
         (fail! "REFUSING TO REPORT A MEASUREMENT: no committed object has a sibling source"
                {:dir dir :only only}))
       (println (str "COMPILER\t" sha))
-      (println (str "OBJECTS\t" (count objects)))
+      (println (str "COMMITTED\t" (count committed)
+                    "\tMEASURED\t" (count objects)
+                    "\tSKIPPED\t" (count skipped)))
+      (doseq [s skipped] (println (str "  skipped: " (:object s) " (" (name (:reason s)) ")")))
       (let [results (vec (for [n objects]
                            (let [r (measure-one compiler root n)]
                              (println (str n (apply str (repeat (max 1 (- 40 (count n))) " ")) (name (:verdict r))))
@@ -104,7 +118,9 @@
                      :measured-at (subs (.toISOString (js/Date.)) 0 10)
                      :compiler-sha sha
                      :target (keyword target)
+                     :committed (count committed)
                      :objects (count results)
+                     :skipped skipped
                      :reproduced (count (:reproduced by))
                      :differs (count (:differs by))
                      :failed (count (:failed by))
