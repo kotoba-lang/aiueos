@@ -16,6 +16,9 @@
 #define FULL_VALUE 1024U
 #define HEAD_DIM 256U
 #define LINEAR_HEAD_DIM 128U
+#define LINEAR_KEY_HEADS 16U
+#define LINEAR_VALUE_HEADS 48U
+#define LINEAR_KV_GROUP_SIZE (LINEAR_VALUE_HEADS / LINEAR_KEY_HEADS)
 #define EPSILON 0.000001f
 #define LINEAR_CONV_HISTORY 3U
 #define FULL_KV_WIDTH 1024U
@@ -46,6 +49,8 @@ struct qwen35_decode_context {
   float *conv;
   float *full_key;
   float *full_value;
+  float *full_key_shadow;
+  uint64_t *full_key_hash;
   uint32_t position;
 };
 
@@ -78,6 +83,8 @@ const char *aiueos_qwen35_failure_stage_label(uint32_t stage) {
     case AIUEOS_QWEN35_FAILURE_STATE_NONFINITE: return "STATE NAN";
     case AIUEOS_QWEN35_FAILURE_OUTPUT_NORM: return "OUTPUT NORM";
     case AIUEOS_QWEN35_FAILURE_OUTPUT_LOGITS: return "LOGITS NAN";
+    case AIUEOS_QWEN35_FAILURE_FULL_QUERY: return "FULL QUERY";
+    case AIUEOS_QWEN35_FAILURE_FULL_CACHE: return "KV CACHE";
     default: return "UNKNOWN";
   }
 }
@@ -91,6 +98,38 @@ static int finite_values(const float *values, uint64_t count) {
   for (uint64_t index = 0; index < count; index++)
     if (!finite_float(values[index])) return 0;
   return 1;
+}
+
+static uint64_t float_values_hash(const float *values, uint64_t count) {
+  uint64_t hash = 14695981039346656037ULL;
+  for (uint64_t index = 0; index < count; index++) {
+    union { float value; uint32_t bits; } representation = {values[index]};
+    for (uint32_t byte = 0; byte < 4U; byte++) {
+      hash ^= (representation.bits >> (byte * 8U)) & 0xffU;
+      hash *= 1099511628211ULL;
+    }
+  }
+  return hash;
+}
+
+static int stable_attention_score(const float *query, const float *key,
+                                  uint32_t count, double *score) {
+  if (!score || !finite_values(query, count) || !finite_values(key, count))
+    return 0;
+  double sum0 = 0.0, sum1 = 0.0, sum2 = 0.0, sum3 = 0.0;
+  uint32_t index = 0;
+  for (; index + 4U <= count; index += 4U) {
+    sum0 += (double)query[index + 0U] * (double)key[index + 0U];
+    sum1 += (double)query[index + 1U] * (double)key[index + 1U];
+    sum2 += (double)query[index + 2U] * (double)key[index + 2U];
+    sum3 += (double)query[index + 3U] * (double)key[index + 3U];
+  }
+  double sum = (sum0 + sum1) + (sum2 + sum3);
+  for (; index < count; index++)
+    sum += (double)query[index] * (double)key[index];
+  *score = sum * (double)INV_SQRT_HEAD_DIM;
+  return *score == *score && *score <= 1.7976931348623157e+308 &&
+         *score >= -1.7976931348623157e+308;
 }
 
 static int fail_at(uint32_t stage) {
@@ -389,12 +428,36 @@ static int rms_norm_heads_weighted(float *values, uint32_t heads,
   for (uint32_t head = 0; head < heads; head++) {
     float *vector = values + head * width;
     double sum = 0.0;
-    for (uint32_t index = 0; index < width; index++)
-      sum += (double)(vector[index] * vector[index]);
-    float scale = 1.0f /
-      local_sqrt((float)(sum / (double)width) + EPSILON);
-    for (uint32_t index = 0; index < width; index++)
+    int ordinary = 1;
+    float maximum = 0.0f;
+    for (uint32_t index = 0; index < width; index++) {
+      if (!finite_float(vector[index])) return 0;
+      float magnitude = vector[index] < 0.0f ? -vector[index] : vector[index];
+      if (magnitude > maximum) maximum = magnitude;
+      float square = vector[index] * vector[index];
+      if (!finite_float(square)) ordinary = 0;
+      else sum += (double)square;
+    }
+    float scale;
+    if (ordinary) {
+      scale = 1.0f /
+        local_sqrt((float)(sum / (double)width) + EPSILON);
+    } else {
+      double scaled_sum = 0.0;
+      for (uint32_t index = 0; index < width; index++) {
+        double scaled = (double)vector[index] / (double)maximum;
+        scaled_sum += scaled * scaled;
+      }
+      double epsilon_scaled =
+        (double)EPSILON / ((double)maximum * (double)maximum);
+      scale = (1.0f / maximum) /
+        local_sqrt((float)(scaled_sum / (double)width + epsilon_scaled));
+    }
+    if (!finite_float(scale)) return 0;
+    for (uint32_t index = 0; index < width; index++) {
       vector[index] = vector[index] * scale * weights[index];
+      if (!finite_float(vector[index])) return 0;
+    }
   }
   return 1;
 }
@@ -476,6 +539,25 @@ static int ffn(const struct aiueos_qwen35_layer *layer) {
   return 1;
 }
 
+static const float *resolved_cached_key(
+    struct qwen35_decode_context *decode, uint64_t cache_entry,
+    uint32_t kv_head) {
+  if (!decode || kv_head >= 4U) return 0;
+  float *primary = decode->full_key + cache_entry * FULL_KV_WIDTH;
+  uint64_t expected_hash = decode->full_key_hash[cache_entry];
+  if (!expected_hash || !finite_values(primary, FULL_KV_WIDTH) ||
+      float_values_hash(primary, FULL_KV_WIDTH) != expected_hash) {
+    const float *shadow =
+      decode->full_key_shadow + cache_entry * FULL_KV_WIDTH;
+    if (!finite_values(shadow, FULL_KV_WIDTH) ||
+        float_values_hash(shadow, FULL_KV_WIDTH) != expected_hash)
+      return 0;
+    for (uint32_t index = 0; index < FULL_KV_WIDTH; index++)
+      primary[index] = shadow[index];
+  }
+  return primary + kv_head * HEAD_DIM;
+}
+
 static int linear_attention(const struct aiueos_qwen35_layer *layer,
                             struct qwen35_decode_context *decode,
                             uint32_t linear_slot) {
@@ -518,7 +600,7 @@ static int linear_attention(const struct aiueos_qwen35_layer *layer,
 
   if (!decode) {
     for (uint32_t head = 0; head < 48; head++) {
-      uint32_t key_head = head % 16U;
+      uint32_t key_head = head / LINEAR_KV_GROUP_SIZE;
       float coefficient =
           dot(scratch_a + key_head * LINEAR_HEAD_DIM,
               scratch_a + 2048U + key_head * LINEAR_HEAD_DIM,
@@ -535,7 +617,7 @@ static int linear_attention(const struct aiueos_qwen35_layer *layer,
     float *layer_state = decode->recurrent +
       (uint64_t)linear_slot * 48U * LINEAR_HEAD_DIM * LINEAR_HEAD_DIM;
     for (uint32_t head = 0; head < 48; head++) {
-      uint32_t key_head = head % 16U;
+      uint32_t key_head = head / LINEAR_KV_GROUP_SIZE;
       const float *query = scratch_a + key_head * LINEAR_HEAD_DIM;
       const float *key = scratch_a + 2048U + key_head * LINEAR_HEAD_DIM;
       const float *value = scratch_a + 4096U + head * LINEAR_HEAD_DIM;
@@ -646,29 +728,41 @@ static int full_attention(const struct aiueos_qwen35_layer *layer,
                       decode->position) * FULL_KV_WIDTH;
     float *key_entry = decode->full_key + entry;
     float *value_entry = decode->full_value + entry;
+    float *shadow_entry = decode->full_key_shadow + entry;
     for (uint32_t index = 0; index < FULL_KV_WIDTH; index++) {
       key_entry[index] = key_projection[index];
+      shadow_entry[index] = key_projection[index];
       value_entry[index] = scratch_b[index];
     }
+    uint32_t cache_index =
+      full_slot * AIUEOS_QWEN35_GENERATION_TOKENS + decode->position;
+    decode->full_key_hash[cache_index] =
+      float_values_hash(key_projection, FULL_KV_WIDTH);
 
     for (uint32_t head = 0; head < 24; head++) {
       uint32_t kv_head = head / 6U;
       const float *query = scratch_c + head * HEAD_DIM;
-      float maximum = -3.402823466e+38f;
+      if (!finite_values(query, HEAD_DIM))
+        return fail_at(AIUEOS_QWEN35_FAILURE_FULL_QUERY);
+      double attention_scores[AIUEOS_QWEN35_GENERATION_TOKENS];
+      double maximum = -1.7976931348623157e+308;
       for (uint32_t prior = 0; prior <= decode->position; prior++) {
-        uint64_t prior_entry =
-          ((uint64_t)full_slot * AIUEOS_QWEN35_GENERATION_TOKENS + prior) *
-          FULL_KV_WIDTH + kv_head * HEAD_DIM;
-        float score = dot(query, decode->full_key + prior_entry, HEAD_DIM) *
-                      INV_SQRT_HEAD_DIM;
-        if (!finite_float(score))
+        uint64_t cache_entry =
+          (uint64_t)full_slot * AIUEOS_QWEN35_GENERATION_TOKENS + prior;
+        const float *key = resolved_cached_key(decode, cache_entry, kv_head);
+        if (!key) return fail_at(AIUEOS_QWEN35_FAILURE_FULL_CACHE);
+        double score;
+        if (!stable_attention_score(query, key, HEAD_DIM, &score))
           return fail_at(AIUEOS_QWEN35_FAILURE_FULL_SOFTMAX);
-        beta_values[prior] = score;
+        attention_scores[prior] = score;
         if (score > maximum) maximum = score;
       }
       float denominator = 0.0f;
       for (uint32_t prior = 0; prior <= decode->position; prior++) {
-        beta_values[prior] = local_exp(beta_values[prior] - maximum);
+        double difference = attention_scores[prior] - maximum;
+        float shifted = difference <= -87.0 ? -87.0f :
+                        difference >= 0.0 ? 0.0f : (float)difference;
+        beta_values[prior] = local_exp(shifted);
         denominator += beta_values[prior];
       }
       if (!(denominator > 0.0f) || !finite_float(denominator))
@@ -889,7 +983,13 @@ int aiueos_qwen35_generate(
       AIUEOS_QWEN35_RECURRENT_BYTES + AIUEOS_QWEN35_CONV_STATE_BYTES),
     .full_value = (float *)(void *)(decode_memory +
       AIUEOS_QWEN35_RECURRENT_BYTES + AIUEOS_QWEN35_CONV_STATE_BYTES +
-      AIUEOS_QWEN35_FULL_KV_BYTES / 2U),
+      AIUEOS_QWEN35_FULL_CACHE_PLANE_BYTES),
+    .full_key_shadow = (float *)(void *)(decode_memory +
+      AIUEOS_QWEN35_RECURRENT_BYTES + AIUEOS_QWEN35_CONV_STATE_BYTES +
+      2U * AIUEOS_QWEN35_FULL_CACHE_PLANE_BYTES),
+    .full_key_hash = (uint64_t *)(void *)(decode_memory +
+      AIUEOS_QWEN35_RECURRENT_BYTES + AIUEOS_QWEN35_CONV_STATE_BYTES +
+      3U * AIUEOS_QWEN35_FULL_CACHE_PLANE_BYTES),
     .position = 0
   };
 
@@ -950,5 +1050,29 @@ void aiueos_qwen35_test_recurrent_step(
     float output[LINEAR_HEAD_DIM]) {
   recurrent_step(state_values, key, query, value, decay, beta,
                  correction, output);
+}
+
+uint32_t aiueos_qwen35_test_linear_key_head(uint32_t value_head) {
+  return value_head / LINEAR_KV_GROUP_SIZE;
+}
+
+int aiueos_qwen35_test_attention_score(
+    const float query[HEAD_DIM], const float key[HEAD_DIM], double *score) {
+  return stable_attention_score(query, key, HEAD_DIM, score);
+}
+
+uint64_t aiueos_qwen35_test_cache_hash(const float values[FULL_KV_WIDTH]) {
+  return float_values_hash(values, FULL_KV_WIDTH);
+}
+
+int aiueos_qwen35_test_cache_resolve(
+    float primary[FULL_KV_WIDTH], float shadow[FULL_KV_WIDTH],
+    uint64_t expected_hash) {
+  struct qwen35_decode_context decode = {
+    .full_key = primary,
+    .full_key_shadow = shadow,
+    .full_key_hash = &expected_hash
+  };
+  return resolved_cached_key(&decode, 0, 0) == primary;
 }
 #endif

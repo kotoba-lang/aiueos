@@ -14,11 +14,16 @@
 /* The hybrid decoder owns fixed, volatile state for one bounded sequence:
    - 48 Gated DeltaNet recurrent matrices [48, 48, 128, 128]
    - three retained causal-convolution inputs [48, 10240, 3]
-   - eight K/V entries for each of the 16 full-attention layers.
+   - eight K/V entries for each of the 16 full-attention layers
+   - an integrity shadow for every cached key.
    The model weights remain in the admitted read-only GGUF mapping. */
 #define AIUEOS_QWEN35_RECURRENT_BYTES 150994944ULL
 #define AIUEOS_QWEN35_CONV_STATE_BYTES 5898240ULL
-#define AIUEOS_QWEN35_FULL_KV_BYTES 1048576ULL
+#define AIUEOS_QWEN35_FULL_CACHE_PLANE_BYTES 524288ULL
+#define AIUEOS_QWEN35_FULL_KEY_HASH_BYTES 1024ULL
+#define AIUEOS_QWEN35_FULL_KV_BYTES \
+  (3ULL * AIUEOS_QWEN35_FULL_CACHE_PLANE_BYTES + \
+   AIUEOS_QWEN35_FULL_KEY_HASH_BYTES)
 #define AIUEOS_QWEN35_DECODE_WORKSPACE_BYTES \
   ((uint64_t)AIUEOS_QWEN35_WORKSPACE_BYTES + \
    AIUEOS_QWEN35_RECURRENT_BYTES + AIUEOS_QWEN35_CONV_STATE_BYTES + \
@@ -39,7 +44,9 @@ enum aiueos_qwen35_failure_stage {
   AIUEOS_QWEN35_FAILURE_FFN = 11,
   AIUEOS_QWEN35_FAILURE_STATE_NONFINITE = 12,
   AIUEOS_QWEN35_FAILURE_OUTPUT_NORM = 13,
-  AIUEOS_QWEN35_FAILURE_OUTPUT_LOGITS = 14
+  AIUEOS_QWEN35_FAILURE_OUTPUT_LOGITS = 14,
+  AIUEOS_QWEN35_FAILURE_FULL_QUERY = 15,
+  AIUEOS_QWEN35_FAILURE_FULL_CACHE = 16
 };
 
 struct aiueos_qwen35_first_token_result {

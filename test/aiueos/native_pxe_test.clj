@@ -157,6 +157,18 @@
                        "matvec(&full->key, normalized, EMBED, key_projection"))
     (is (not (str/includes? qwen35-infer
                             "matvec(&full->key, normalized, EMBED, dequantized"))))
+  (testing "the recurrent grouping and cached keys match the decode contract"
+    (is (str/includes? qwen35-infer
+                       "uint32_t key_head = head / LINEAR_KV_GROUP_SIZE"))
+    (is (not (str/includes? qwen35-infer
+                            "uint32_t key_head = head % 16U")))
+    (doseq [marker ["full_key_shadow" "full_key_hash"
+                    "float_values_hash" "stable_attention_score"]]
+      (is (str/includes? qwen35-infer marker)))
+    (doseq [marker ["AIUEOS_QWEN35_FULL_CACHE_PLANE_BYTES"
+                    "AIUEOS_QWEN35_FAILURE_FULL_QUERY"
+                    "AIUEOS_QWEN35_FAILURE_FULL_CACHE"]]
+      (is (str/includes? qwen35-infer-header marker))))
   (testing "a physical failure retains one-based token, layer, and stage"
     (doseq [marker ["failed_token" "failed_layer" "failure_stage"
                     "AIUEOS_QWEN35_FAILURE_FULL_SOFTMAX"]]
