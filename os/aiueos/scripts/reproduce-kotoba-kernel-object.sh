@@ -21,7 +21,12 @@ compiler=${1:?usage: reproduce-kotoba-kernel-object.sh /path/to/compiler}
 # (ADR-0076) could not be compiled at all without those entries, and every
 # object above them still had to reproduce.
 #
-# THE FULL ADVANCE WAS MEASURED AND NOT TAKEN. amu's tip is 250 commits ahead
+# THE FULL ADVANCE WAS MEASURED AND NOT TAKEN. The sample below has since
+# been replaced by the whole inventory -- ADR-0129 and
+# qualification/object-producer-measurement.edn: of 66 objects, 4 reproduce,
+# 58 differ (all smaller), and 4 fail with an internal compiler error, which
+# the five-object sample could not have shown.
+# amu's tip is 250 commits ahead
 # and pins kotoba-native main, which is 121 commits ahead of 15b4a0e2 and moves
 # 2,076 lines of machine_ir.cljc and 281 of x86_64.cljc. Five objects were
 # compiled there and compared against the checked-in bytes:
