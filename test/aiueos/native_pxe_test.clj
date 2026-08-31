@@ -247,6 +247,12 @@
     (is (= :passed (get-in evidence [:result :network-triggered-reboot])))
     (is (= :passed
            (get-in evidence [:result :post-reboot-murakumo-reconnect])))
+    (is (= :passed (get-in evidence [:result :targeted-job-claim])))
+    (is (= :passed (get-in evidence [:result :physical-qwen-first-token])))
+    (is (= 3 (get-in evidence [:targeted-inference :runs])))
+    (is (= 47139022281
+           (get-in evidence
+                   [:targeted-inference :median-time-to-first-token-ns])))
     (is (= :not-captured-in-opaque-netlog
            (get-in evidence [:result :server-ready-field])))
     (is (every? (set (:does-not-prove evidence))
@@ -414,7 +420,7 @@
             "!rtl8125_qualification_device.ready||rtl8125_relay_error||rtl8125_job_error"))
       "one failed job must not permanently suppress future heartbeat handling"))
 
-(deftest qwen38-k16-benchmark-is-exact-and-red-until-real-generation
+(deftest qwen38-k16-benchmark-records-physical-murakumo-generation
   (let [contract (edn/read-string qwen38-benchmark-contract)]
     (is (= "Qwen/Qwen3.8-27B" (get-in contract [:model :id])))
     (is (= "Qwen3.8-27B-UD-IQ3_XXS.gguf"
@@ -422,13 +428,29 @@
     (is (= 10934860704 (get-in contract [:artifact :bytes])))
     (is (= "c0b7c3038681ed2e3040456c1dd45f9858b6c2290bed172c70388a94874f3eee"
            (get-in contract [:artifact :sha256])))
-    (is (= :not-available (get-in contract [:observed :speed])))
-    (is (false? (get-in contract [:observed :real-generation?])))
+    (is (= "512c9d8804f58d31" (get-in contract [:observed :boot-id])))
+    (is (= 135792741870 (get-in contract [:observed :model-load :ns])))
+    (is (= 3 (get-in contract [:observed :summary :runs])))
+    (is (= 3 (get-in contract [:observed :summary :reference-matches])))
+    (is (= 47139022281 (get-in contract [:observed :summary :median-ns])))
+    (is (= :not-available
+           (get-in contract [:observed :summary :decode-tokens-per-second])))
+    (is (= #{2005}
+           (set (map :token (get-in contract [:observed :murakumo-jobs])))))
+    (is (= 31 (get-in contract [:observed
+                                :communication-through-sequence-76
+                                :failed-exchanges-followed-by-recovery])))
+    (is (zero? (get-in contract [:observed
+                                 :communication-through-sequence-76
+                                 :unrecovered-at-snapshot])))
     (is (some #{:zero-for-missing-timing}
               (get-in contract [:measurement :forbidden-substitutions])))
     (is (every? (set (:does-not-prove contract))
-                [:qwen38-loaded :qwen38-generation
-                 :physical-k16-throughput :ssd-installation])))
+                [:multi-token-generation :decode-tokens-per-second
+                 :threaded-or-simd-throughput :gpu-offload
+                 :network-round-trip-latency
+                 :production-grade-link-reliability
+                 :standalone-k16-internet :ssd-installation])))
   (doseq [marker ["AIUEOS_INFERENCE_UNMEASURED"
                   "aiueos_inference_milli_tokens_per_second"
                   "compute_cycles"]]

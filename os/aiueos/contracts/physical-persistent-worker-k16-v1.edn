@@ -31,12 +31,27 @@
                :pxe-dhcp? true
                :pxe-tftp-bytes 699392
                :poll-http-200-sequences [1 2 3]}
+ :targeted-inference
+ {:observed-at "2026-08-31T11:27:15.076+09:00"
+  :job-ids ["1788142737331830" "1788142960942295" "1788143128671164"]
+  :result-run-seqs [1788142835354788 1788143044595043 1788143235076963]
+  :reference-token 2005
+  :reference-second-token 17
+  :reference-matches 3
+  :runs 3
+  :median-time-to-first-token-ns 47139022281
+  :result-proof :device-p256
+  :result-post-retry-idempotent? true
+  :post-result-poll-recovered? true}
  :result {:device-enrollment :passed
           :persistent-worker-poll :passed-with-bounded-recovery
           :signed-control-ack :passed
           :network-triggered-reboot :passed
           :persistent-pxe-recovery :passed
           :post-reboot-murakumo-reconnect :passed
+          :targeted-job-claim :passed
+          :physical-qwen-first-token :passed
+          :murakumo-result-ledger :passed
           :server-ready-field :not-captured-in-opaque-netlog
           :decode-throughput :not-measured}
  :transport {:tls :device-owned-end-to-end
