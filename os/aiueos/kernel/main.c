@@ -631,6 +631,27 @@ static void aiueos_wait_seconds(uint64_t tsc_hz, uint32_t seconds) {
   while (aiueos_read_tsc() - start < cycles) __asm__ volatile("pause");
 }
 
+/* Management is an AIUEOS service, not a consequence of Murakumo health.
+   Keep the same bounded listener active both while the worker is ready and
+   while its HTTPS heartbeat is reconnecting.  This is deliberately limited
+   to the runtime status/restart allow-list enforced by the SSH state machine. */
+static void aiueos_k16_management_wait(uint64_t tsc_hz, uint32_t seconds) {
+#if defined(AIUEOS_SSH_LISTEN) && \
+    defined(AIUEOS_PHYSICAL_DIRECT_HTTPS_QUALIFICATION) && \
+    defined(AIUEOS_MURAKUMO_DEVICE_RESULT)
+  for (uint32_t management_second = 0;
+       management_second < seconds; management_second++) {
+    if (aiueos_rtl8125_ssh_poll()) {
+      debug_string("AIUEOS_RTL8125_SSH_SESSION_OK commands=runtime-status,runtime-restart shell=false kernel-reboot=false\n");
+      serial_string("AIUEOS_RTL8125_SSH_SESSION_OK commands=runtime-status,runtime-restart shell=false kernel-reboot=false\r\n");
+    }
+    aiueos_wait_seconds(tsc_hz, 1);
+  }
+#else
+  aiueos_wait_seconds(tsc_hz, seconds);
+#endif
+}
+
 static uint64_t aiueos_cycles_to_ns(uint64_t cycles, uint64_t tsc_hz) {
   if (!cycles || !tsc_hz) return AIUEOS_INFERENCE_UNMEASURED;
   uint64_t whole = cycles / tsc_hz;
@@ -1474,7 +1495,7 @@ qwen_runtime_boot_complete:
         serial_string(" error=");
         serial_decimal(aiueos_rtl8125_direct_https_error());
         serial_string(" action=reconnect\r\n");
-        aiueos_wait_seconds(boot->tsc_hz, 5);
+        aiueos_k16_management_wait(boot->tsc_hz, 5);
         continue;
       }
       if (heartbeat_failures) {
@@ -1562,23 +1583,7 @@ qwen_runtime_boot_complete:
         (void)aiueos_framebuffer_inference_screen(&aiueos_qwen35_status);
         debug_string("AIUEOS_MURAKUMO_JOB_POLL_OK job=none ready=true\n");
         serial_string("AIUEOS_MURAKUMO_JOB_POLL_OK job=none ready=true\r\n");
-#if defined(AIUEOS_SSH_LISTEN) && \
-    defined(AIUEOS_PHYSICAL_DIRECT_HTTPS_QUALIFICATION) && \
-    defined(AIUEOS_MURAKUMO_DEVICE_RESULT)
-        /* Keep the HTTPS heartbeat cadence at thirty seconds while opening a
-           bounded port-22 receive window once per second.  SSH can restart the
-           Kototama runtime, but exposes neither a shell nor kernel reboot. */
-        for (uint32_t management_second = 0;
-             management_second < 30; management_second++) {
-          if (aiueos_rtl8125_ssh_poll()) {
-            debug_string("AIUEOS_RTL8125_SSH_SESSION_OK commands=runtime-status,runtime-restart shell=false kernel-reboot=false\n");
-            serial_string("AIUEOS_RTL8125_SSH_SESSION_OK commands=runtime-status,runtime-restart shell=false kernel-reboot=false\r\n");
-          }
-          aiueos_wait_seconds(boot->tsc_hz, 1);
-        }
-#else
-        aiueos_wait_seconds(boot->tsc_hz, 30);
-#endif
+        aiueos_k16_management_wait(boot->tsc_hz, 30);
         continue;
       }
       serial_string("AIUEOS_MURAKUMO_JOB_CLAIMED job-id=");

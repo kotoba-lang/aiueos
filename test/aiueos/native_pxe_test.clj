@@ -286,8 +286,15 @@
     (doseq [marker ["ssh_use_device_host_key"
                     "aiueos_device_p256_key_load"
                     "aiueos_rtl8125_ssh_poll"
-                    "RTL_DIRECT_GATEWAY, NET_SSH_PORT"]]
+                    "RTL_DIRECT_GATEWAY, NET_SSH_PORT"
+                    "RTL8125_SSH_LISTEN_ROUNDS"
+                    "net_ssh_listen(&io, RTL8125_SSH_LISTEN_ROUNDS)"]]
       (is (str/includes? pci marker))))
+  (testing "management remains available while Murakumo is reconnecting"
+    (doseq [marker ["Management is an AIUEOS service, not a consequence of Murakumo health"
+                    "aiueos_k16_management_wait(boot->tsc_hz, 5)"
+                    "aiueos_k16_management_wait(boot->tsc_hz, 30)"]]
+      (is (str/includes? kernel marker))))
   (testing "management can restart Kototama but cannot obtain a shell or reboot"
     (doseq [marker ["AIUEOS_RTL8125_SSH_SESSION_OK"
                     "commands=runtime-status,runtime-restart"
