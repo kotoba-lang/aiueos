@@ -49,25 +49,48 @@
             (not= (aget a i) (aget b i)) i
             :else (recur (inc i))))))
 
+(def ^:private could-not-run
+  "Messages that mean the toolchain did not run, as against the compiler
+  refusing the object. Measured 2026-08-31: `ipv4-checksum` was recorded as
+  FAILED by a run whose message was `Execution error (FileNotFoundException) at
+  kotoba.compiler.frontend/eval271$loading` -- the frontend namespace failing to
+  LOAD, under a machine at load average 76. The object compiles on retry. A
+  measurement that reports `could not answer` as `answered no` is the defect
+  this tool exists to find, so these are retried and, if they persist, reported
+  under their own verdict."
+  [#"FileNotFoundException" #"MODULE_NOT_FOUND" #"could not resolve the dependency closure"
+   #"ClassNotFoundException" #"Could not locate"])
+
+(defn- attempt [compiler root source out]
+  (sh (path/join compiler "bin/amu")
+      ["compile" source "--target" target "--output" out]
+      {:cwd root}))
+
 (defn- measure-one [compiler root name]
   (let [source (path/join root "os/aiueos/kotoba" (str name ".kotoba"))
         committed (path/join root "os/aiueos/kotoba" (str name ".o"))
         out (path/join (os/tmpdir) (str "aiueos-measure-" name "-" js/process.pid ".o"))
-        r (sh (path/join compiler "bin/amu")
-              ["compile" source "--target" target "--output" out]
-              {:cwd root})]
+        first-try (attempt compiler root source out)
+        transient? (fn [r] (let [text (str (:stdout r) (:stderr r))]
+                             (boolean (some #(re-find % text) could-not-run))))
+        retried? (and (not (zero? (:status first-try))) (transient? first-try))
+        r (if retried? (attempt compiler root source out) first-try)]
     (try
       (if-not (zero? (:status r))
         (let [text (str (:stdout r) (:stderr r))
               line (first (remove str/blank? (str/split-lines text)))]
-          {:object name :verdict :failed :exit (:status r)
+          {:object name
+           ;; `:could-not-run` is not `:failed`. One says the toolchain never
+           ;; started; the other says the compiler read the object and refused.
+           :verdict (if (transient? r) :could-not-run :failed)
+           :exit (:status r) :retried retried?
            :message (some-> line str/trim (subs 0 (min 200 (count (str/trim line)))))})
         (let [produced (fs/readFileSync out)
               expected (fs/readFileSync committed)
               at (first-difference produced expected)]
           (if (nil? at)
-            {:object name :verdict :reproduced :bytes (.-length expected)}
-            {:object name :verdict :differs
+            {:object name :verdict :reproduced :bytes (.-length expected) :retried retried?}
+            {:object name :verdict :differs :retried retried?
              :committed-bytes (.-length expected) :produced-bytes (.-length produced)
              :first-difference-at at})))
       (finally (try (fs/unlinkSync out) (catch :default _ nil))))))
@@ -124,12 +147,16 @@
                      :reproduced (count (:reproduced by))
                      :differs (count (:differs by))
                      :failed (count (:failed by))
+                     :could-not-run (count (:could-not-run by))
+                     :retried (count (filter :retried results))
                      :results results}]
         (fs/writeFileSync (path/join root "qualification/object-producer-measurement.edn")
                           (str (pr-str receipt) "\n"))
         (println (str "REPRODUCED\t" (count (:reproduced by))
                       "\tDIFFERS\t" (count (:differs by))
-                      "\tFAILED\t" (count (:failed by))))
+                      "\tFAILED\t" (count (:failed by))
+                      "\tCOULD-NOT-RUN\t" (count (:could-not-run by))
+                      "\tRETRIED\t" (count (filter :retried results))))
         (println "-> qualification/object-producer-measurement.edn")))))
 
 (try (apply -main *command-line-args*)
