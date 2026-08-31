@@ -121,9 +121,12 @@
             :provisioning {:record "aiueos.provision.v1"
                            :generated-by "os/aiueos/scripts/make-provision-record.cljs"
                            :placed-by "os/aiueos/scripts/install-to-disk.cljs"
-                           :host-key :per-device-ed25519-seed-generated-on-target
+                           :host-key :legacy-ed25519-record
                            :authorized-key :copied-from-intent
-                           :state :landed}   ; static half only; the served handshake is red
+                           :state :not-consumed-by-current-p256-server}
+            :current-k16-pxe {:host-key :device-p256-uefi-nvram
+                              :authorized-key :build-pinned-public-p256
+                              :listener :rtl8125-landed-physical-unverified}
             :password-login :not-default
             :recovery :physical-path-required ; re-place authorized key from recovery env; no long-lived shared password baked into the image
             :tailscale {:position :after-first-lan-ssh

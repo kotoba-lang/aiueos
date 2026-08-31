@@ -25,7 +25,7 @@
 (def serial-log (.join path out "kernel-serial.log"))
 (def host-port 8022)
 (def client-id "SSH-2.0-realgate")
-(def username "root")
+(def username "runtime")
 
 ;; the authorized key's PRIVATE half (matches ssh_auth_x/y baked in the kernel)
 (def auth-d "8f71791cab5a5f45468c32abf8d67a35122bbd451d65986465d6f45b02536267")

@@ -320,6 +320,21 @@ fi
 # and pci.c receive input_smoke_cflags, so one flag reaches both.
 if [ "${AIUEOS_SSH_LISTEN:-0}" = 1 ]; then
   input_smoke_cflags="$input_smoke_cflags -DAIUEOS_SSH_LISTEN=1"
+  if [ "${AIUEOS_PHYSICAL_DIRECT_HTTPS_QUALIFICATION:-0}" = 1 ]; then
+    [ "${AIUEOS_MURAKUMO_DEVICE_RESULT:-0}" = 1 ] || {
+      echo "error: physical SSH requires the Device-P256 identity" >&2
+      exit 1
+    }
+    [ -n "${AIUEOS_SSH_AUTHORIZED_KEY_HEX:-}" ] || {
+      echo "error: physical SSH requires AIUEOS_SSH_AUTHORIZED_KEY_HEX (public x||y only)" >&2
+      exit 1
+    }
+  fi
+  if [ -n "${AIUEOS_SSH_AUTHORIZED_KEY_HEX:-}" ]; then
+    python3 "$aiueos/scripts/write-ssh-authorized-key-header.py" \
+      "$AIUEOS_SSH_AUTHORIZED_KEY_HEX" "$out/aiueos-ssh-authorized-key.h"
+    input_smoke_cflags="$input_smoke_cflags -DAIUEOS_SSH_AUTHORIZED_KEY_HEADER=1"
+  fi
 fi
 # The ECDSA sign known-answer test (main.c). Its own flag so the ~50 KiB sign
 # object is only linked here, not in the SSH-listener build near the 1 MiB
@@ -676,7 +691,7 @@ zig cc -target x86_64-freestanding-none -std=c11 -O2 \
   -ffreestanding -fno-stack-protector -mno-red-zone \
   -c -o "$kernel_memory_object" "$aiueos/kernel/memory.c"
 zig cc -target x86_64-freestanding-none -std=c11 -O2 \
-  -ffreestanding -fno-stack-protector -mno-red-zone \
+  -ffreestanding -fno-stack-protector -mno-red-zone -I "$out" \
   $input_smoke_cflags $physical_network_qualification_cflags \
   $physical_direct_https_qualification_cflags \
   $murakumo_device_result_cflags \
