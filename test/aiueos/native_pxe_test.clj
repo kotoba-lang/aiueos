@@ -295,6 +295,15 @@
                     "aiueos_k16_management_wait(boot->tsc_hz, 5)"
                     "aiueos_k16_management_wait(boot->tsc_hz, 30)"]]
       (is (str/includes? kernel marker))))
+  (testing "an idle SSH listener cannot monopolize the persistent worker loop"
+    (doseq [marker ["RTL8125_SSH_IDLE_RX_BUDGET"
+                    "rtl8125_direct_rx_budget"
+                    "ssh_listen_stage"
+                    "let aiueos_k16_management_wait poll again"]]
+      (is (str/includes? pci marker)))
+    (is (str/includes?
+          pci
+          ": rtl8125_direct_rx_budget(frame_length, RTL8125_SSH_IDLE_RX_BUDGET)")))
   (testing "management can restart Kototama but cannot obtain a shell or reboot"
     (doseq [marker ["AIUEOS_RTL8125_SSH_SESSION_OK"
                     "commands=runtime-status,runtime-restart"

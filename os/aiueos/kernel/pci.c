@@ -3981,6 +3981,7 @@ int aiueos_rtl8125_physical_qualification(void) {
    reconnect interval instead. */
 #define RTL_DIRECT_RX_BUDGET 50000000U
 #define RTL_DIRECT_RX_WINDOW 256U
+#define RTL8125_SSH_IDLE_RX_BUDGET 250000U
 #define RTL8125_SSH_LISTEN_ROUNDS 64U
 #define RTL_DIRECT_TLS_ATTEMPTS 3U
 #define RTL_DIRECT_SYN_SCAN_FRAMES 64U
@@ -4142,11 +4143,12 @@ static void rtl8125_direct_worker_rx_report(
 }
 #endif
 
-static int rtl8125_direct_rx(uint32_t *received) {
+static int rtl8125_direct_rx_budget(uint32_t *received,
+                                    uint32_t receive_budget) {
   enum aiueos_rtl8125_result result;
-  if (!received) return 0;
+  if (!received || !receive_budget) return 0;
   *received = 0;
-  for (uint32_t budget = 0; budget < RTL_DIRECT_RX_BUDGET && !*received; budget++) {
+  for (uint32_t budget = 0; budget < receive_budget && !*received; budget++) {
     result = aiueos_rtl8125_rx_poll(&rtl8125_qualification_device, received);
     if (result != AIUEOS_RTL8125_OK) return 0;
     if (*received && aiueos_rtl8125_direct_arp_request(
@@ -4167,6 +4169,10 @@ static int rtl8125_direct_rx(uint32_t *received) {
     __asm__ volatile("pause");
   }
   return *received != 0;
+}
+
+static int rtl8125_direct_rx(uint32_t *received) {
+  return rtl8125_direct_rx_budget(received, RTL_DIRECT_RX_BUDGET);
 }
 
 static int rtl8125_tcp_send(uint32_t dst, uint16_t local_port,
@@ -4205,7 +4211,15 @@ static int rtl8125_ssh_rearm(void *context) {
 
 static int rtl8125_ssh_wait(void *context, uint32_t *frame_length) {
   (void)context;
-  return rtl8125_direct_rx(frame_length);
+  /* An idle management poll must not inherit the much larger HTTPS receive
+     timeout on every listen round: 64 empty worker-sized windows can hold the
+     persistent loop at ADMISSION/POLLING for minutes. Before a SYN is
+     accepted use a short window and let aiueos_k16_management_wait poll again
+     on the next management tick. Once a connection exists, retain the full
+     receive budget for identification, key exchange and public-key auth. */
+  return ssh_listen_stage
+    ? rtl8125_direct_rx(frame_length)
+    : rtl8125_direct_rx_budget(frame_length, RTL8125_SSH_IDLE_RX_BUDGET);
 }
 
 static int rtl8125_ssh_send(void *context, uint16_t client_port,
