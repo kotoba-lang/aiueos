@@ -19,6 +19,8 @@
 #define EPSILON 0.000001f
 #define LINEAR_CONV_HISTORY 3U
 #define FULL_KV_WIDTH 1024U
+#define FULL_GATE_TEMP_OFFSET FULL_VALUE
+#define FULL_KEY_TEMP_OFFSET (FULL_GATE_TEMP_OFFSET + HEAD_DIM)
 #define ROPE_DIM 64U
 #define ROPE_HALF 32U
 #define ROPE_LOG_THETA 16.11809565095832f
@@ -58,6 +60,44 @@ static float *beta_values;
 static uint32_t qwen_vector_bits;
 static uint32_t qwen_worker_threads = 1U;
 static uint32_t qwen_force_scalar;
+static uint32_t qwen_failure_stage;
+
+const char *aiueos_qwen35_failure_stage_label(uint32_t stage) {
+  switch (stage) {
+    case AIUEOS_QWEN35_FAILURE_EMBEDDING: return "EMBEDDING";
+    case AIUEOS_QWEN35_FAILURE_ATTENTION_PROJECTION: return "ATTN PROJ";
+    case AIUEOS_QWEN35_FAILURE_LINEAR_ALPHA: return "ALPHA";
+    case AIUEOS_QWEN35_FAILURE_LINEAR_CONV: return "CONV";
+    case AIUEOS_QWEN35_FAILURE_LINEAR_DECAY: return "DECAY";
+    case AIUEOS_QWEN35_FAILURE_LINEAR_RECURRENT: return "RECURRENT";
+    case AIUEOS_QWEN35_FAILURE_LINEAR_OUTPUT: return "LINEAR OUT";
+    case AIUEOS_QWEN35_FAILURE_FULL_KEY: return "FULL KEY";
+    case AIUEOS_QWEN35_FAILURE_FULL_SOFTMAX: return "SOFTMAX";
+    case AIUEOS_QWEN35_FAILURE_FULL_OUTPUT: return "FULL OUT";
+    case AIUEOS_QWEN35_FAILURE_FFN: return "FFN";
+    case AIUEOS_QWEN35_FAILURE_STATE_NONFINITE: return "STATE NAN";
+    case AIUEOS_QWEN35_FAILURE_OUTPUT_NORM: return "OUTPUT NORM";
+    case AIUEOS_QWEN35_FAILURE_OUTPUT_LOGITS: return "LOGITS NAN";
+    default: return "UNKNOWN";
+  }
+}
+
+static int finite_float(float value) {
+  union { float value; uint32_t bits; } representation = {value};
+  return (representation.bits & 0x7f800000U) != 0x7f800000U;
+}
+
+static int finite_values(const float *values, uint64_t count) {
+  for (uint64_t index = 0; index < count; index++)
+    if (!finite_float(values[index])) return 0;
+  return 1;
+}
+
+static int fail_at(uint32_t stage) {
+  if (qwen_failure_stage == AIUEOS_QWEN35_FAILURE_NONE)
+    qwen_failure_stage = stage;
+  return 0;
+}
 
 void aiueos_qwen35_force_scalar(void) {
   qwen_force_scalar = 1U;
@@ -444,16 +484,17 @@ static int linear_attention(const struct aiueos_qwen35_layer *layer,
       !matvec(&linear->qkv, normalized, EMBED, scratch_a, LINEAR_QKV) ||
       !matvec(&linear->gate, normalized, EMBED, scratch_b, LINEAR_INNER) ||
       !matvec(&linear->beta, normalized, EMBED, beta_values, 48))
-    return 0;
+    return fail_at(AIUEOS_QWEN35_FAILURE_ATTENTION_PROJECTION);
 
   if (decode && decode->position &&
       !matvec(&linear->alpha, normalized, EMBED, ap_dequantized, 48))
-    return 0;
+    return fail_at(AIUEOS_QWEN35_FAILURE_LINEAR_ALPHA);
 
   if (!linear->conv1d.data || linear->conv1d.type != AIUEOS_GGML_F32 ||
       linear->conv1d.dimension_count != 2 ||
       linear->conv1d.dimensions[0] != 4 ||
-      linear->conv1d.dimensions[1] != LINEAR_QKV) return 0;
+      linear->conv1d.dimensions[1] != LINEAR_QKV)
+    return fail_at(AIUEOS_QWEN35_FAILURE_LINEAR_CONV);
   const float *kernel = (const float *)(const void *)linear->conv1d.data;
   float *conv = decode ? decode->conv +
     (uint64_t)linear_slot * LINEAR_QKV * LINEAR_CONV_HISTORY : 0;
@@ -490,7 +531,7 @@ static int linear_attention(const struct aiueos_qwen35_layer *layer,
   } else {
     const float *a = f32_vector(&linear->a, 48);
     const float *dt = f32_vector(&linear->dt_bias, 48);
-    if (!a || !dt) return 0;
+    if (!a || !dt) return fail_at(AIUEOS_QWEN35_FAILURE_LINEAR_DECAY);
     float *layer_state = decode->recurrent +
       (uint64_t)linear_slot * 48U * LINEAR_HEAD_DIM * LINEAR_HEAD_DIM;
     for (uint32_t head = 0; head < 48; head++) {
@@ -500,15 +541,22 @@ static int linear_attention(const struct aiueos_qwen35_layer *layer,
       const float *value = scratch_a + 4096U + head * LINEAR_HEAD_DIM;
       float *head_state = layer_state +
         (uint64_t)head * LINEAR_HEAD_DIM * LINEAR_HEAD_DIM;
-      float decay = decode->position ?
-        local_exp(a[head] * softplus(ap_dequantized[head] + dt[head])) : 1.0f;
+      float transition = decode->position ?
+        a[head] * softplus(ap_dequantized[head] + dt[head]) : 0.0f;
+      if (!finite_float(transition))
+        return fail_at(AIUEOS_QWEN35_FAILURE_LINEAR_DECAY);
+      float decay = decode->position ? local_exp(transition) : 1.0f;
       float beta = sigmoid(beta_values[head]);
+      if (!finite_float(decay) || !finite_float(beta))
+        return fail_at(AIUEOS_QWEN35_FAILURE_LINEAR_DECAY);
 
       float *output = scratch_c + head * LINEAR_HEAD_DIM;
       /* S <- decay*S; delta <- beta*(v-k^T S); S <- S+k*delta;
          y <- (q/sqrt(d))^T S.  Rows are key dimension, columns value. */
       recurrent_step(head_state, key, query, value, decay, beta,
                      dequantized, output);
+      if (!finite_values(output, LINEAR_HEAD_DIM))
+        return fail_at(AIUEOS_QWEN35_FAILURE_LINEAR_RECURRENT);
       if (!decode->position) {
         /* With an all-zero recurrent state the official delta rule reduces
            exactly to v * beta * dot(q, k) / sqrt(d).  Keep the state written
@@ -527,7 +575,8 @@ static int linear_attention(const struct aiueos_qwen35_layer *layer,
 
   if (!linear->norm.data || linear->norm.type != AIUEOS_GGML_F32 ||
       linear->norm.dimension_count != 1 ||
-      linear->norm.dimensions[0] != LINEAR_HEAD_DIM) return 0;
+      linear->norm.dimensions[0] != LINEAR_HEAD_DIM)
+    return fail_at(AIUEOS_QWEN35_FAILURE_LINEAR_OUTPUT);
   const float *weights = (const float *)(const void *)linear->norm.data;
   for (uint32_t head = 0; head < 48; head++) {
     float *vector = scratch_c + head * LINEAR_HEAD_DIM;
@@ -544,7 +593,7 @@ static int linear_attention(const struct aiueos_qwen35_layer *layer,
   }
 
   if (!matvec(&linear->output, scratch_c, LINEAR_INNER, normalized, EMBED))
-    return 0;
+    return fail_at(AIUEOS_QWEN35_FAILURE_LINEAR_OUTPUT);
   for (uint32_t index = 0; index < EMBED; index++) state[index] += normalized[index];
   return 1;
 }
@@ -556,7 +605,7 @@ static int full_attention(const struct aiueos_qwen35_layer *layer,
   if (!rms_norm(state, &layer->attention_norm, EMBED, normalized) ||
       !matvec(&full->query_gate, normalized, EMBED, scratch_a, FULL_QG) ||
       !matvec(&full->value, normalized, EMBED, scratch_b, FULL_VALUE))
-    return 0;
+    return fail_at(AIUEOS_QWEN35_FAILURE_ATTENTION_PROJECTION);
 
   if (!decode) {
     for (uint32_t head = 0; head < 24; head++) {
@@ -568,9 +617,17 @@ static int full_attention(const struct aiueos_qwen35_layer *layer,
       }
     }
   } else {
+    /* This output must not be `dequantized`: matvec_range uses that array as
+       its BSP row buffer, so every next key row would overwrite the outputs
+       already computed (and race the AP half).  A one-element position-zero
+       softmax masks the corruption because its weight is always one; position
+       one is the first time cached keys affect a score.  Keep values, the gate
+       temporary, and this key projection in three disjoint scratch_b ranges. */
+    float *key_projection = scratch_b + FULL_KEY_TEMP_OFFSET;
     if (decode->position >= AIUEOS_QWEN35_GENERATION_TOKENS ||
-        !matvec(&full->key, normalized, EMBED, dequantized, FULL_VALUE))
-      return 0;
+        !matvec(&full->key, normalized, EMBED, key_projection, FULL_VALUE) ||
+        !finite_values(key_projection, FULL_VALUE))
+      return fail_at(AIUEOS_QWEN35_FAILURE_FULL_KEY);
 
     /* Remove the per-head Q/G interleave before normalization and RoPE. */
     for (uint32_t head = 0; head < 24; head++)
@@ -579,17 +636,18 @@ static int full_attention(const struct aiueos_qwen35_layer *layer,
           scratch_a[head * HEAD_DIM * 2U + index];
     if (!rms_norm_heads_weighted(scratch_c, 24, HEAD_DIM,
                                  &full->query_norm) ||
-        !rms_norm_heads_weighted(dequantized, 4, HEAD_DIM,
-                                 &full->key_norm)) return 0;
+        !rms_norm_heads_weighted(key_projection, 4, HEAD_DIM,
+                                 &full->key_norm))
+      return fail_at(AIUEOS_QWEN35_FAILURE_FULL_KEY);
     rope_heads(scratch_c, 24, decode->position);
-    rope_heads(dequantized, 4, decode->position);
+    rope_heads(key_projection, 4, decode->position);
 
     uint64_t entry = ((uint64_t)full_slot * AIUEOS_QWEN35_GENERATION_TOKENS +
                       decode->position) * FULL_KV_WIDTH;
     float *key_entry = decode->full_key + entry;
     float *value_entry = decode->full_value + entry;
     for (uint32_t index = 0; index < FULL_KV_WIDTH; index++) {
-      key_entry[index] = dequantized[index];
+      key_entry[index] = key_projection[index];
       value_entry[index] = scratch_b[index];
     }
 
@@ -603,6 +661,8 @@ static int full_attention(const struct aiueos_qwen35_layer *layer,
           FULL_KV_WIDTH + kv_head * HEAD_DIM;
         float score = dot(query, decode->full_key + prior_entry, HEAD_DIM) *
                       INV_SQRT_HEAD_DIM;
+        if (!finite_float(score))
+          return fail_at(AIUEOS_QWEN35_FAILURE_FULL_SOFTMAX);
         beta_values[prior] = score;
         if (score > maximum) maximum = score;
       }
@@ -611,7 +671,8 @@ static int full_attention(const struct aiueos_qwen35_layer *layer,
         beta_values[prior] = local_exp(beta_values[prior] - maximum);
         denominator += beta_values[prior];
       }
-      if (!(denominator > 0.0f)) return 0;
+      if (!(denominator > 0.0f) || !finite_float(denominator))
+        return fail_at(AIUEOS_QWEN35_FAILURE_FULL_SOFTMAX);
       float *output = scratch_a + head * HEAD_DIM;
       for (uint32_t index = 0; index < HEAD_DIM; index++) output[index] = 0.0f;
       for (uint32_t prior = 0; prior <= decode->position; prior++) {
@@ -627,10 +688,10 @@ static int full_attention(const struct aiueos_qwen35_layer *layer,
         float gate = scratch_a[head * HEAD_DIM * 2U + HEAD_DIM + index];
         /* The gate projection is still in the original interleaved buffer for
            heads not yet overwritten.  Save it before writing the output. */
-        scratch_b[FULL_VALUE + index] = gate;
+        scratch_b[FULL_GATE_TEMP_OFFSET + index] = gate;
       }
       for (uint32_t index = 0; index < HEAD_DIM; index++)
-        output[index] *= sigmoid(scratch_b[FULL_VALUE + index]);
+        output[index] *= sigmoid(scratch_b[FULL_GATE_TEMP_OFFSET + index]);
     }
     /* Attention output must be contiguous [24,256].  The computation above
        wrote it there in scratch_a after consuming each head's gate. */
@@ -638,7 +699,7 @@ static int full_attention(const struct aiueos_qwen35_layer *layer,
       scratch_c[index] = scratch_a[index];
   }
   if (!matvec(&full->output, scratch_c, LINEAR_INNER, normalized, EMBED))
-    return 0;
+    return fail_at(AIUEOS_QWEN35_FAILURE_FULL_OUTPUT);
   for (uint32_t index = 0; index < EMBED; index++) state[index] += normalized[index];
   return 1;
 }
@@ -649,6 +710,8 @@ struct qwen35_token_choice {
   float logit;
   float second_logit;
   uint64_t cycles;
+  uint32_t failed_layer;
+  uint32_t failure_stage;
 };
 
 static int inference_inputs_valid(const struct aiueos_qwen35_model *model,
@@ -694,8 +757,14 @@ static int evaluate_token(const struct aiueos_qwen35_model *model,
                           struct qwen35_decode_context *decode,
                           aiueos_qwen35_progress_fn progress,
                           struct qwen35_token_choice *choice) {
-  if (!choice || !tensor_row(&model->token_embedding, input_token, state))
+  if (!choice) return 0;
+  choice->failed_layer = 0;
+  choice->failure_stage = AIUEOS_QWEN35_FAILURE_NONE;
+  qwen_failure_stage = AIUEOS_QWEN35_FAILURE_NONE;
+  if (!tensor_row(&model->token_embedding, input_token, state)) {
+    choice->failure_stage = AIUEOS_QWEN35_FAILURE_EMBEDDING;
     return 0;
+  }
 
   uint64_t started = read_cycles();
   uint32_t linear_slot = 0;
@@ -705,11 +774,29 @@ static int evaluate_token(const struct aiueos_qwen35_model *model,
     int ok = layer->linear_attention ?
       linear_attention(layer, decode, linear_slot++) :
       full_attention(layer, decode, full_slot++);
-    if (!ok || !ffn(layer)) return 0;
+    if (!ok) {
+      choice->failed_layer = index + 1U;
+      choice->failure_stage = qwen_failure_stage;
+      return 0;
+    }
+    if (!ffn(layer)) {
+      choice->failed_layer = index + 1U;
+      choice->failure_stage = AIUEOS_QWEN35_FAILURE_FFN;
+      return 0;
+    }
+    if (!finite_values(state, EMBED)) {
+      choice->failed_layer = index + 1U;
+      choice->failure_stage = AIUEOS_QWEN35_FAILURE_STATE_NONFINITE;
+      return 0;
+    }
     if (progress) progress(index + 1U, AIUEOS_QWEN35_TRUNK_LAYER_COUNT, 0);
   }
 
-  if (!rms_norm(state, &model->output_norm, EMBED, normalized)) return 0;
+  if (!rms_norm(state, &model->output_norm, EMBED, normalized) ||
+      !finite_values(normalized, EMBED)) {
+    choice->failure_stage = AIUEOS_QWEN35_FAILURE_OUTPUT_NORM;
+    return 0;
+  }
   if (progress) progress(64, 64, 1);
 
   choice->token = UINT32_MAX;
@@ -717,8 +804,15 @@ static int evaluate_token(const struct aiueos_qwen35_model *model,
   choice->logit = -3.402823466e+38f;
   choice->second_logit = -3.402823466e+38f;
   for (uint32_t token = 0; token < model->vocab_size; token++) {
-    if (!tensor_row(&model->output, token, dequantized)) return 0;
+    if (!tensor_row(&model->output, token, dequantized)) {
+      choice->failure_stage = AIUEOS_QWEN35_FAILURE_OUTPUT_LOGITS;
+      return 0;
+    }
     float logit = dot(dequantized, normalized, EMBED);
+    if (!finite_float(logit)) {
+      choice->failure_stage = AIUEOS_QWEN35_FAILURE_OUTPUT_LOGITS;
+      return 0;
+    }
     if (logit > choice->logit) {
       choice->second_logit = choice->logit;
       choice->second_token = choice->token;
@@ -731,7 +825,11 @@ static int evaluate_token(const struct aiueos_qwen35_model *model,
   }
   uint64_t finished = read_cycles();
   choice->cycles = finished >= started ? finished - started : 0;
-  return choice->token != UINT32_MAX && choice->second_token != UINT32_MAX;
+  if (choice->token == UINT32_MAX || choice->second_token == UINT32_MAX) {
+    choice->failure_stage = AIUEOS_QWEN35_FAILURE_OUTPUT_LOGITS;
+    return 0;
+  }
+  return 1;
 }
 
 int aiueos_qwen35_first_token(
@@ -802,12 +900,20 @@ int aiueos_qwen35_generate(
   result->total_cycles = 0;
   result->vector_bits = qwen_vector_bits;
   result->worker_threads = qwen_worker_threads;
+  result->failed_token = 0;
+  result->failed_layer = 0;
+  result->failure_stage = AIUEOS_QWEN35_FAILURE_NONE;
   uint32_t current_input = input_token;
   for (uint32_t position = 0; position < generated_tokens; position++) {
     struct qwen35_token_choice choice;
     decode.position = position;
-    if (!evaluate_token(model, current_input, &decode,
-                        position ? 0 : progress, &choice)) return 0;
+    if (progress) progress(position + 1U, generated_tokens, 3);
+    if (!evaluate_token(model, current_input, &decode, progress, &choice)) {
+      result->failed_token = position + 1U;
+      result->failed_layer = choice.failed_layer;
+      result->failure_stage = choice.failure_stage;
+      return 0;
+    }
     result->tokens[position] = choice.token;
     result->generated_tokens++;
     result->total_cycles += choice.cycles;

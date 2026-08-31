@@ -1,7 +1,7 @@
 # ADR-0121: The first native Qwen token is a frozen correctness probe
 
 Date: 2026-08-30
-Status: accepted; same-artifact host proof passed, physical K16 unverified
+Status: accepted; first token passed on physical K16, multi-token decode pending
 
 ## Context
 
@@ -50,3 +50,20 @@ These are same-artifact host and virtual-boot results. They do not prove that
 the K16 has generated the token, establish K16 throughput, preserve recurrent
 or KV state for a second token, or submit the result as a Murakumo job. Those
 claims remain closed until their physical evidence exists.
+
+## 2026-08-31 physical follow-up
+
+The K16 advanced to `FAILED AT TOKEN 02`. The generation path emits that state
+only after token 1 equals the frozen `2005` reference, so physical first-token
+correctness is now observed. No decode token completed, therefore decode tok/s
+remains unavailable rather than zero.
+
+The failure exposed an output/workspace alias in full attention. The key
+projection wrote into `dequantized`, which is also `matvec_range`'s BSP row
+buffer. Each new weight row overwrote earlier key outputs while the AP wrote
+the other half. Position zero could not reveal this because a one-element
+softmax always assigns the cached value weight one; position one is the first
+step that compares keys. The decoder now gives key projection, value
+projection, and gate temporary disjoint ranges and rejects non-finite state at
+the layer that creates it. Physical retry remains required before calling the
+eight-token sequence, its rate, or its Murakumo post complete.

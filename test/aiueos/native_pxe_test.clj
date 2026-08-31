@@ -107,6 +107,9 @@
   (slurp (io/file "os/aiueos/kernel/qwen35_infer.c")))
 (def qwen35-infer-header
   (slurp (io/file "os/aiueos/kernel/qwen35_infer.h")))
+(def qwen35-decode-contract
+  (slurp (io/file
+          "os/aiueos/contracts/qwen38-27b-k16-decode-benchmark-v2.edn")))
 (def smp (slurp (io/file "os/aiueos/kernel/smp.c")))
 
 (deftest single-efi-carries-admitted-native-payload
@@ -142,9 +145,27 @@
                        "AIUEOS_QWEN35_WORKSPACE_BYTES 368832U")))
   (testing "physical evidence records the execution path actually selected"
     (doseq [marker ["AIUEOS_QWEN35_SMP_READY threads=2"
-                    "AVX2 2T TOKEN 2005"
+                    "AVX2 2T 8 TOKENS"
                     "vector-bits=" "threads="]]
       (is (str/includes? kernel marker)))))
+
+(deftest qwen35-multi-token-cache-and-failure-evidence-are-bounded
+  (testing "full-attention keys never alias either dequantization row buffer"
+    (is (str/includes? qwen35-infer
+                       "float *key_projection = scratch_b + FULL_KEY_TEMP_OFFSET"))
+    (is (str/includes? qwen35-infer
+                       "matvec(&full->key, normalized, EMBED, key_projection"))
+    (is (not (str/includes? qwen35-infer
+                            "matvec(&full->key, normalized, EMBED, dequantized"))))
+  (testing "a physical failure retains one-based token, layer, and stage"
+    (doseq [marker ["failed_token" "failed_layer" "failure_stage"
+                    "AIUEOS_QWEN35_FAILURE_FULL_SOFTMAX"]]
+      (is (str/includes? qwen35-infer-header marker)))
+    (doseq [marker ["T00 L00 UNKNOWN" "aiueos_qwen35_format_failure"
+                    "failed-token=" "failed-layer=" "failure-stage="]]
+      (is (str/includes? kernel marker)))
+    (is (str/includes? qwen35-decode-contract
+                       ":failure-detail [:one-based-token :one-based-layer :stage]"))))
 
 (deftest native-netboot-returns-to-the-control-efi
   (testing "BootNext is one-shot and BootOrder has no write surface"

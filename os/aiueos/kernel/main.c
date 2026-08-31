@@ -23,10 +23,12 @@ static uint8_t aiueos_owned_memory_map[AIUEOS_OWNED_MEMORY_MAP_BYTES]
  * allocator-backed volatile workspace after owned paging is active. */
 static struct aiueos_qwen35_model *aiueos_qwen35_model;
 static struct aiueos_inference_status aiueos_qwen35_status;
-static char aiueos_qwen35_progress_detail[] = "LAYER 00 OF 64";
+static char aiueos_qwen35_progress_detail[] = "T01 L00 OF64";
+static char aiueos_qwen35_output_detail[] = "T01 OUTPUT HEAD";
 static char aiueos_qwen35_decode_detail[] = "TOKEN 00 OF 08";
 static char aiueos_qwen35_first_fail_detail[] = "FIRST TOKEN 000000";
-static char aiueos_qwen35_decode_fail_detail[] = "FAILED AT TOKEN 00";
+static char aiueos_qwen35_decode_fail_detail[32] = "T00 L00 UNKNOWN";
+static uint32_t aiueos_qwen35_active_token = 1U;
 #endif
 
 /* The loader's boot-info object and memory-map buffer are firmware-owned.
@@ -534,7 +536,23 @@ static void serial_decimal64(uint64_t value) {
 static void aiueos_qwen35_progress(uint32_t completed_layers,
                                    uint32_t total_layers,
                                    int output_head) {
-  if (output_head == 2) {
+  if (output_head == 3) {
+    aiueos_qwen35_active_token = completed_layers;
+    aiueos_qwen35_decode_detail[6] =
+        (char)('0' + (completed_layers / 10U) % 10U);
+    aiueos_qwen35_decode_detail[7] =
+        (char)('0' + completed_layers % 10U);
+    aiueos_qwen35_decode_detail[12] =
+        (char)('0' + (total_layers / 10U) % 10U);
+    aiueos_qwen35_decode_detail[13] =
+        (char)('0' + total_layers % 10U);
+    aiueos_qwen35_status.phase = completed_layers == 1U
+      ? AIUEOS_INFERENCE_PREFILL : AIUEOS_INFERENCE_DECODING;
+    aiueos_qwen35_status.detail = aiueos_qwen35_decode_detail;
+    aiueos_qwen35_status.generated_tokens = completed_layers - 1U;
+    aiueos_qwen35_status.decode_tokens = completed_layers > 1U
+      ? completed_layers - 2U : 0U;
+  } else if (output_head == 2) {
     aiueos_qwen35_decode_detail[6] =
         (char)('0' + (completed_layers / 10U) % 10U);
     aiueos_qwen35_decode_detail[7] =
@@ -549,22 +567,50 @@ static void aiueos_qwen35_progress(uint32_t completed_layers,
     aiueos_qwen35_status.decode_tokens =
         completed_layers ? completed_layers - 1U : 0U;
   } else if (output_head) {
+    aiueos_qwen35_output_detail[1] =
+        (char)('0' + (aiueos_qwen35_active_token / 10U) % 10U);
+    aiueos_qwen35_output_detail[2] =
+        (char)('0' + aiueos_qwen35_active_token % 10U);
     aiueos_qwen35_status.phase = AIUEOS_INFERENCE_DECODING;
-    aiueos_qwen35_status.detail = "OUTPUT HEAD";
+    aiueos_qwen35_status.detail = aiueos_qwen35_output_detail;
   } else {
-    aiueos_qwen35_progress_detail[6] =
+    aiueos_qwen35_progress_detail[1] =
+        (char)('0' + (aiueos_qwen35_active_token / 10U) % 10U);
+    aiueos_qwen35_progress_detail[2] =
+        (char)('0' + aiueos_qwen35_active_token % 10U);
+    aiueos_qwen35_progress_detail[5] =
         (char)('0' + (completed_layers / 10U) % 10U);
-    aiueos_qwen35_progress_detail[7] =
+    aiueos_qwen35_progress_detail[6] =
         (char)('0' + completed_layers % 10U);
-    aiueos_qwen35_status.phase = AIUEOS_INFERENCE_PREFILL;
+    aiueos_qwen35_status.phase = aiueos_qwen35_active_token == 1U
+      ? AIUEOS_INFERENCE_PREFILL : AIUEOS_INFERENCE_DECODING;
     aiueos_qwen35_status.detail = aiueos_qwen35_progress_detail;
   }
   (void)aiueos_framebuffer_inference_screen(&aiueos_qwen35_status);
   serial_string("AIUEOS_QWEN35_PROGRESS layers=");
   serial_decimal(completed_layers);
-  serial_string("/64 output=");
-  serial_decimal((uint32_t)(output_head != 0));
+  serial_string("/");
+  serial_decimal(total_layers);
+  serial_string(" token=");
+  serial_decimal(aiueos_qwen35_active_token);
+  serial_string(" event=");
+  serial_decimal((uint32_t)output_head);
   serial_string("\r\n");
+}
+
+static void aiueos_qwen35_format_failure(uint32_t token, uint32_t layer,
+                                         uint32_t stage) {
+  aiueos_qwen35_decode_fail_detail[1] =
+      (char)('0' + (token / 10U) % 10U);
+  aiueos_qwen35_decode_fail_detail[2] = (char)('0' + token % 10U);
+  aiueos_qwen35_decode_fail_detail[5] =
+      (char)('0' + (layer / 10U) % 10U);
+  aiueos_qwen35_decode_fail_detail[6] = (char)('0' + layer % 10U);
+  const char *label = aiueos_qwen35_failure_stage_label(stage);
+  uint32_t index = 8U;
+  while (*label && index + 1U < sizeof(aiueos_qwen35_decode_fail_detail))
+    aiueos_qwen35_decode_fail_detail[index++] = *label++;
+  aiueos_qwen35_decode_fail_detail[index] = 0;
 }
 
 static uint64_t aiueos_read_tsc(void) {
@@ -1135,11 +1181,10 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
         }
         aiueos_qwen35_status.detail = aiueos_qwen35_first_fail_detail;
       } else {
-        uint32_t failed = generation.generated_tokens + 1U;
-        aiueos_qwen35_decode_fail_detail[16] =
-            (char)('0' + (failed / 10U) % 10U);
-        aiueos_qwen35_decode_fail_detail[17] =
-            (char)('0' + failed % 10U);
+        uint32_t failed = generation.failed_token
+          ? generation.failed_token : generation.generated_tokens + 1U;
+        aiueos_qwen35_format_failure(
+          failed, generation.failed_layer, generation.failure_stage);
         aiueos_qwen35_status.detail = aiueos_qwen35_decode_fail_detail;
       }
       aiueos_qwen35_status.compute_cycles = generation.total_cycles;
@@ -1148,6 +1193,12 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
       serial_decimal(generation.generated_tokens ? generation.tokens[0] : UINT32_MAX);
       serial_string(" generated=");
       serial_decimal(generation.generated_tokens);
+      serial_string(" failed-token=");
+      serial_decimal(generation.failed_token);
+      serial_string(" failed-layer=");
+      serial_decimal(generation.failed_layer);
+      serial_string(" failure-stage=");
+      serial_decimal(generation.failure_stage);
       serial_string(" total-cycles=");
       serial_decimal64(generation.total_cycles);
       serial_string("\r\n");
