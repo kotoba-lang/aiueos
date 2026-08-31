@@ -1,0 +1,125 @@
+#!/usr/bin/env nbb
+;; Compile every committed kernel object with a given compiler and say, for
+;; each one, whether the bytes come back identical.
+;;
+;;   nbb os/aiueos/scripts/measure-object-producer.cljs --compiler /path/to/amu
+;;
+;; WHY THIS EXISTS. `reproduce-kotoba-kernel-object.sh` pins amu 9cf3a0a and
+;; its comment records why that pin has not moved: five objects were compiled
+;; at the tip and compared against the committed bytes, and all five differed,
+;; so taking the advance means regenerating every object and every pinned
+;; digest in `build-uefi.sh` -- a change to the shipped kernel.
+;;
+;; Five is a sample. The decision that was deferred on it needs the whole
+;; inventory: which objects reproduce, which differ, which no longer compile at
+;; all, and for the ones that differ, by how much. This measures that and
+;; writes a receipt. It does NOT take the advance, move a pin, or touch a
+;; committed object.
+;;
+;; The receipt names the compiler it measured, because a reproduction count
+;; without one is a number with no closure.
+(ns measure-object-producer
+  (:require [clojure.string :as str]
+            ["fs" :as fs]
+            ["path" :as path]
+            ["os" :as os]
+            ["child_process" :as cp]))
+
+(def ^:private target "x86_64-aiueos-kernel-v1")
+
+(defn- fail! [message data]
+  (throw (ex-info message (assoc data :phase :measure-object-producer))))
+
+(defn- sh [cmd args opts]
+  (let [r (.spawnSync cp cmd (clj->js args)
+                      (clj->js (merge {:encoding "utf8" :maxBuffer (* 8 1024 1024)} opts)))]
+    {:status (.-status r) :stdout (or (.-stdout r) "") :stderr (or (.-stderr r) "")}))
+
+(defn- compiler-sha [compiler]
+  (let [r (sh "git" ["-C" compiler "rev-parse" "HEAD"] {})]
+    (when-not (zero? (:status r))
+      (fail! "REFUSING TO REPORT A MEASUREMENT: the compiler path is not a git checkout, so the receipt could not name what it measured"
+             {:compiler compiler}))
+    (str/trim (:stdout r))))
+
+(defn- first-difference [a b]
+  (let [n (min (.-length a) (.-length b))]
+    (loop [i 0]
+      (cond (= i n) (when (not= (.-length a) (.-length b)) n)
+            (not= (aget a i) (aget b i)) i
+            :else (recur (inc i))))))
+
+(defn- measure-one [compiler root name]
+  (let [source (path/join root "os/aiueos/kotoba" (str name ".kotoba"))
+        committed (path/join root "os/aiueos/kotoba" (str name ".o"))
+        out (path/join (os/tmpdir) (str "aiueos-measure-" name "-" js/process.pid ".o"))
+        r (sh (path/join compiler "bin/amu")
+              ["compile" source "--target" target "--output" out]
+              {:cwd root})]
+    (try
+      (if-not (zero? (:status r))
+        (let [text (str (:stdout r) (:stderr r))
+              line (first (remove str/blank? (str/split-lines text)))]
+          {:object name :verdict :failed :exit (:status r)
+           :message (some-> line str/trim (subs 0 (min 200 (count (str/trim line)))))})
+        (let [produced (fs/readFileSync out)
+              expected (fs/readFileSync committed)
+              at (first-difference produced expected)]
+          (if (nil? at)
+            {:object name :verdict :reproduced :bytes (.-length expected)}
+            {:object name :verdict :differs
+             :committed-bytes (.-length expected) :produced-bytes (.-length produced)
+             :first-difference-at at})))
+      (finally (try (fs/unlinkSync out) (catch :default _ nil))))))
+
+(defn -main [& args]
+  (let [compiler (or (some #(when (str/starts-with? % "--compiler=") (subs % 11)) args)
+                     (second (drop-while #(not= "--compiler" %) args)))
+        root (or (some #(when (str/starts-with? % "--root=") (subs % 7)) args) ".")
+        only (or (some #(when (str/starts-with? % "--only=") (subs % 7)) args)
+                   (second (drop-while #(not= "--only" %) args)))]
+    (when-not compiler
+      (fail! "usage: --compiler <path to an amu checkout> [--root <aiueos>] [--only <name>]" {}))
+    (let [sha (compiler-sha compiler)
+          dir (path/join root "os/aiueos/kotoba")
+          objects (->> (fs/readdirSync dir)
+                       (filter #(str/ends-with? % ".o"))
+                       (map #(subs % 0 (- (count %) 2)))
+                       (filter #(fs/existsSync (path/join dir (str % ".kotoba"))))
+                       sort vec)
+          objects (if only (filterv #(= only %) objects) objects)]
+      ;; Evidence floor: a scan that found no objects has not found no
+      ;; differences.
+      (when (empty? objects)
+        (fail! "REFUSING TO REPORT A MEASUREMENT: no committed object has a sibling source"
+               {:dir dir :only only}))
+      (println (str "COMPILER\t" sha))
+      (println (str "OBJECTS\t" (count objects)))
+      (let [results (vec (for [n objects]
+                           (let [r (measure-one compiler root n)]
+                             (println (str n (apply str (repeat (max 1 (- 40 (count n))) " ")) (name (:verdict r))))
+                             r)))
+            by (group-by :verdict results)
+            receipt {:format :aiueos.object-producer-measurement/v1
+                     :measured-at (subs (.toISOString (js/Date.)) 0 10)
+                     :compiler-sha sha
+                     :target (keyword target)
+                     :objects (count results)
+                     :reproduced (count (:reproduced by))
+                     :differs (count (:differs by))
+                     :failed (count (:failed by))
+                     :results results}]
+        (fs/writeFileSync (path/join root "qualification/object-producer-measurement.edn")
+                          (str (pr-str receipt) "\n"))
+        (println (str "REPRODUCED\t" (count (:reproduced by))
+                      "\tDIFFERS\t" (count (:differs by))
+                      "\tFAILED\t" (count (:failed by))))
+        (println "-> qualification/object-producer-measurement.edn")))))
+
+(try (apply -main *command-line-args*)
+     (catch :default e
+       (println "FAILED:" (ex-message e))
+       (println "  " (pr-str (ex-data e)))
+       (println (first (clojure.string/split-lines (or (.-stack e) ""))))
+       (doseq [l (take 5 (rest (clojure.string/split-lines (or (.-stack e) ""))))] (println "   " l))
+       (set! (.-exitCode js/process) 1)))
