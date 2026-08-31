@@ -40,6 +40,36 @@ with the same flags `reproduce-kotoba-kernel-object.sh` uses:
 | Differ | **58** |
 | **Failed to compile** | **4** — `dhcp-option-u32`, `dhcp-reply-valid`, `ecdsa-p256`, `ecdsa-p256-sign`. All four now compile; see below — three were an allowlist that had drifted, one was this measurement asking the wrong question |
 
+## Re-measured once the toolchain was whole
+
+Against amu `512f7e2a`, which carries kotoba-native `db7b7119`, from worktrees
+nobody edited while it ran:
+
+| | |
+|---|---|
+| Measured | **66** (67 committed, 1 skipped with its reason) |
+| Reproduce byte for byte | **4** |
+| Differ | **62** |
+| Fail to compile | **0** |
+| Could not run | **0** |
+| Needed a retry | **0** |
+
+**Nothing upstream is in the way of the advance any more.** What it costs is
+62 objects to regenerate and every pinned digest in `build-uefi.sh` to move,
+which is a change to the shipped kernel and wants boot evidence — a decision,
+not a task, and not one this measurement makes.
+
+Two runs were discarded on the way to this one, and both for reasons worth
+keeping. The first was contaminated: it was compiling against a compiler
+worktree while `deps-lock.edn` was regenerated *in that worktree*, and it
+recorded `ecdsa-p256-sign` as failed on a toolchain that no longer existed by
+the time the run ended. The second recorded `ipv4-checksum` as **failed** when
+its message was `FileNotFoundException` while *loading* the compiler frontend
+on a machine at load average 76 — the toolchain never started. That object
+compiles, and differs. `:could-not-run` now exists as a verdict distinct from
+`:failed` precisely so that a run cannot report *could not answer* as
+*answered no*.
+
 Two things here were not visible from five.
 
 **Four objects no longer compile — and the diagnosis in the first version of
