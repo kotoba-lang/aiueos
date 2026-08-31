@@ -253,6 +253,11 @@
                     "NET_TCP_RST | NET_TCP_ACK"
                     "those stale frames hid the third connection's SYN-ACK"]]
       (is (str/includes? pci marker))))
+  (testing "a new connection scans past a bounded stale server flight"
+    (doseq [marker ["RTL_DIRECT_SYN_SCAN_FRAMES 64U"
+                    "more than eight such frames after two successful polls"
+                    "RTL_DIRECT_SYN_SCAN_FRAMES, &received"]]
+      (is (str/includes? pci marker))))
   (testing "a signed node POST gets fresh TLS material on up to three attempts"
     (doseq [marker ["RTL_DIRECT_TLS_ATTEMPTS 3U"
                     "RTL_DIRECT_LOCAL_PORT + (lane % 12000U)"
