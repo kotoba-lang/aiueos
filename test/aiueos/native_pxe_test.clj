@@ -80,6 +80,10 @@
 (def device-worker-protocol-smoke
   (slurp (io/file
           "os/aiueos/scripts/smoke-device-worker-protocol.sh")))
+(def kototama-runtime
+  (slurp (io/file "os/aiueos/kernel/kototama_runtime.c")))
+(def kototama-runtime-smoke
+  (slurp (io/file "os/aiueos/scripts/smoke-kototama-runtime.sh")))
 (def model-slots-contract
   (slurp (io/file "os/aiueos/contracts/model-nvme-slots-v1.edn")))
 (def model-slots-core (slurp (io/file "os/aiueos/uefi/model_slots.c")))
@@ -269,7 +273,7 @@
   (testing "the signed worker protocol has a result-free control ACK"
     (doseq [marker ["AIUEOS_DEVICE_WORKER_CONTROL_ACK"
                     "\"control-ack\""
-                    "worker->token || worker->second_token || worker->inference_cycles"]]
+                    "decode_metrics_empty("]]
       (is (str/includes? device-result marker))))
   (is (str/includes? release-build
                      "\"ack\": \"signed-device-p256-before-reset\""))
@@ -441,7 +445,27 @@
                     "0x8000U | (sequence & 0x7fffU)"]]
       (is (str/includes? pci marker)))
     (is (str/includes? pci
-                       "response JSON, signatures and device-private material are"))))
+                    "response JSON, signatures and device-private material are"))))
+
+(deftest inference-runtime-failure-does-not-stop-aiueos
+  (doseq [marker ["AIUEOS_KOTOTAMA_RUNTIME_DEGRADED"
+                  "kernel=alive network=continue"
+                  "AIUEOS_KOTOTAMA_RUNTIME_RESTART"
+                  "kernel-reboot=false network=continue"
+                  "aiueos_kototama_runtime_invoke"
+                  "aiueos_kototama_runtime_restart"]]
+    (is (or (str/includes? kernel marker)
+            (str/includes? kototama-runtime marker))))
+  (is (str/includes? kototama-runtime "bytes_zero(runtime.workspace"))
+  (is (str/includes? kototama-runtime-smoke
+                     "kototama_runtime_model.c")))
+
+(deftest runtime-restart-and-firmware-reboot-are-distinct-controls
+  (doseq [marker ["restart-runtime" "reboot-pxe"]]
+    (is (str/includes? device-worker-protocol marker)))
+  (is (str/includes? kernel
+                     "AIUEOS_MURAKUMO_CONTROL_ACK_OK action=restart-runtime kernel-reboot=false network=preserved"))
+  (is (str/includes? kernel "(void)aiueos_qualification_reboot();")))
 
 (deftest persistent-node-reconnects-instead-of-halting-on-one-missed-renewal
   (doseq [marker ["NODE RECONNECTING"

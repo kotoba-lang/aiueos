@@ -6,6 +6,7 @@
 #include "job_protocol.h"
 #include "device_result.h"
 #include "device_worker_protocol.h"
+#include "kototama_runtime.h"
 
 #define VIRTIO_VENDOR_ID 0x1af4
 #define VIRTIO_RNG_MODERN_ID 0x1044
@@ -2532,14 +2533,14 @@ static int net_ssh_userauth(struct net_ring *rx, struct net_ring *tx,
       sseq += wl;
     }
 
-    /* 10. CHANNEL_DATA (s->c 4): "aiueos: <command>\n" -- echoing the command
-           proves the whole session round-trip (open, exec parsed, data returned). */
+    /* 10. CHANNEL_DATA (s->c 4).  SSH is a capability-limited management
+           session, not a root shell.  The bounded Kototama runtime dispatcher
+           accepts only status/restart and refuses every other command. */
     {
       static uint8_t out[512]; uint32_t olen = 0;
-      const char *pfx = "aiueos: "; uint32_t i;
-      for (i = 0; pfx[i]; i++) out[olen++] = (uint8_t)pfx[i];
-      for (i = 0; i < cmdlen && olen < sizeof(out) - 1; i++) out[olen++] = cmd[i];
-      out[olen++] = '\n';
+      olen = aiueos_kototama_runtime_management_command(
+        cmd, cmdlen, out, sizeof(out));
+      if (!olen) return 1;
       uint8_t m[600]; uint64_t o = 0;
       m[o++] = 94;
       m[o++] = (uint8_t)(client_chan >> 24); m[o++] = (uint8_t)(client_chan >> 16);
@@ -4427,9 +4428,9 @@ static int rtl8125_direct_device_request(uint32_t request_length) {
 int aiueos_rtl8125_device_worker_poll(
     const struct aiueos_boot_info *boot, uint32_t sequence,
     uint64_t *job_id, uint32_t *bos_token, int *ready,
-    uint64_t *control_id, int *reboot_pxe) {
+    uint64_t *control_id, int *reboot_pxe, int *restart_runtime) {
   if (!boot || !job_id || !bos_token || !ready ||
-      !control_id || !reboot_pxe) return 0;
+      !control_id || !reboot_pxe || !restart_runtime) return 0;
   struct aiueos_device_worker_request request = {
     .boot = boot,
     .mac = rtl8125_qualification_device.mac,
@@ -4458,6 +4459,8 @@ int aiueos_rtl8125_device_worker_poll(
   *bos_token = poll.bos_token;
   *ready = poll.ready;
   *reboot_pxe = poll.reboot_pxe;
+  *restart_runtime = poll.restart_runtime;
+  rtl8125_direct_http_ready = 1;
   return 1;
 }
 

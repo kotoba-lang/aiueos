@@ -33,6 +33,7 @@ kernel_model_handoff_object="$out/kernel-model-handoff.o"
 kernel_qwen35_runtime_object="$out/kernel-qwen35-runtime.o"
 kernel_qwen35_quant_object="$out/kernel-qwen35-quant.o"
 kernel_qwen35_infer_object="$out/kernel-qwen35-infer.o"
+kernel_kototama_runtime_object="$out/kernel-kototama-runtime.o"
 kernel_job_protocol_object="$out/kernel-job-protocol.o"
 kernel_tls_aes_object="$out/kernel-tls-aes-gcm.o"
 kernel_tls13_object="$out/kernel-tls13.o"
@@ -725,6 +726,10 @@ if [ -n "$model_handoff_link" ]; then
 fi
 zig cc -target x86_64-freestanding-none -std=c11 -O2 \
   -ffreestanding -fno-stack-protector -mno-red-zone \
+  $model_handoff_cflags \
+  -c -o "$kernel_kototama_runtime_object" "$aiueos/kernel/kototama_runtime.c"
+zig cc -target x86_64-freestanding-none -std=c11 -O2 \
+  -ffreestanding -fno-stack-protector -mno-red-zone \
   -c -o "$kernel_job_protocol_object" "$aiueos/kernel/job_protocol.c"
 zig cc -target x86_64-freestanding-none -std=c11 -O2 \
   -ffreestanding -fno-stack-protector -mno-red-zone \
@@ -783,7 +788,7 @@ zig ld.lld -nostdlib -static --strip-all $qualification_gc_link -z max-page-size
   "$kernel_acpi_object" "$kernel_vtd_object" "$kernel_apic_object" "$kernel_memory_object" \
   "$kernel_pci_object" "$kernel_rtl8125_object" "$kernel_relay_protocol_object" \
   "$kernel_micro_infer_object" "$kernel_inference_status_object" \
-  $device_result_link $model_handoff_link \
+  $device_result_link $model_handoff_link "$kernel_kototama_runtime_object" \
   "$kernel_job_protocol_object" \
   "$kernel_tls_aes_object" "$kernel_tls13_object" \
   "$kernel_scheduler_object" "$kernel_syscall_object" \

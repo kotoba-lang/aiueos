@@ -22,7 +22,7 @@
          :selector :after-full-verification
          :trial-boots 1
          :partial-slot-bootable? false}
- :health {:required [:boot :storage :direct-https :murakumo-node :inference]
+ :health {:required [:boot :storage :direct-https :murakumo-node]
           :unknown :wait-bounded
           :failure :rollback
           :timeout-ms 120000
@@ -37,4 +37,5 @@
                     :bare-metal-k16-os-slot-writer :not-yet-implemented
                     :physical-k16-update :unverified}
  :never [:git-pull-on-device :write-active-slot :activate-before-readback
-         :commit-on-unknown-health :treat-pxe-tftp-as-authenticated-update]}
+         :commit-on-unknown-health :treat-pxe-tftp-as-authenticated-update
+         :rollback-os-for-runtime-inference-failure]}

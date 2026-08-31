@@ -34,7 +34,7 @@
    :root-expires-ms 100000})
 (def observed {:loader digest-a :kernel digest-b :initramfs digest-c})
 (def health {:boot true :storage true :direct-https true
-             :murakumo-node true :inference true})
+             :murakumo-node true})
 
 (defn pull []
   (update/plan-pull {:context context :manifest manifest
@@ -136,6 +136,13 @@
                            :probe-elapsed-ms 120001})]
       (is (= :rolled-back (:status result)))
       (is (= :health-timeout (:reason result))))))
+
+(deftest inference-health-does-not-own-the-os-slot
+  (is (= :pass (update/health-status (assoc health :inference false))))
+  (is (= :committed
+         (:status (advance :probing
+                           {:health-signals (assoc health :inference false)}))))
+  "Kototama runtime rollback is separate from AIUEOS A/B rollback")
 
 (deftest an-unconfirmed-candidate-gets-one-trial-boot
   (is (= {:boot :b :mode :trial :next-trial-attempts 1}
