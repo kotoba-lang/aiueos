@@ -3,6 +3,8 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "qwen35_infer.h"
+
 #define HEAD 128U
 #define FULL_HEAD 256U
 
@@ -59,6 +61,12 @@ static void reference_step(float decay, float beta) {
 }
 
 int main(void) {
+  CHECK(strcmp(aiueos_qwen35_failure_stage_label(
+                 AIUEOS_QWEN35_FAILURE_FULL_KEY), "FULL KEY") == 0);
+  CHECK(strcmp(aiueos_qwen35_failure_stage_label(
+                 AIUEOS_QWEN35_FAILURE_FULL_SOFTMAX), "SOFTMAX") == 0);
+  CHECK(strcmp(aiueos_qwen35_failure_stage_label(999U), "UNKNOWN") == 0);
+
   const float samples[] = {-10.0f, -1.0f, 0.0f, 1.0f, 10.0f};
   for (uint32_t i = 0; i < sizeof(samples) / sizeof(samples[0]); i++) {
     float expected = log1pf(expf(samples[i]));

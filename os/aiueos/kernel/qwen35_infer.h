@@ -24,6 +24,24 @@
    AIUEOS_QWEN35_RECURRENT_BYTES + AIUEOS_QWEN35_CONV_STATE_BYTES + \
    AIUEOS_QWEN35_FULL_KV_BYTES)
 
+enum aiueos_qwen35_failure_stage {
+  AIUEOS_QWEN35_FAILURE_NONE = 0,
+  AIUEOS_QWEN35_FAILURE_EMBEDDING = 1,
+  AIUEOS_QWEN35_FAILURE_ATTENTION_PROJECTION = 2,
+  AIUEOS_QWEN35_FAILURE_LINEAR_ALPHA = 3,
+  AIUEOS_QWEN35_FAILURE_LINEAR_CONV = 4,
+  AIUEOS_QWEN35_FAILURE_LINEAR_DECAY = 5,
+  AIUEOS_QWEN35_FAILURE_LINEAR_RECURRENT = 6,
+  AIUEOS_QWEN35_FAILURE_LINEAR_OUTPUT = 7,
+  AIUEOS_QWEN35_FAILURE_FULL_KEY = 8,
+  AIUEOS_QWEN35_FAILURE_FULL_SOFTMAX = 9,
+  AIUEOS_QWEN35_FAILURE_FULL_OUTPUT = 10,
+  AIUEOS_QWEN35_FAILURE_FFN = 11,
+  AIUEOS_QWEN35_FAILURE_STATE_NONFINITE = 12,
+  AIUEOS_QWEN35_FAILURE_OUTPUT_NORM = 13,
+  AIUEOS_QWEN35_FAILURE_OUTPUT_LOGITS = 14
+};
+
 struct aiueos_qwen35_first_token_result {
   uint32_t token;
   uint32_t second_token;
@@ -43,6 +61,11 @@ struct aiueos_qwen35_generation_result {
   uint64_t first_token_cycles;
   uint64_t decode_cycles;
   uint64_t total_cycles;
+  /* One-based token/layer coordinates.  failed_layer is zero for failures
+     outside the 64-layer trunk (embedding or output head). */
+  uint32_t failed_token;
+  uint32_t failed_layer;
+  uint32_t failure_stage;
 };
 
 typedef void (*aiueos_qwen35_progress_fn)(uint32_t completed_layers,
@@ -50,6 +73,8 @@ typedef void (*aiueos_qwen35_progress_fn)(uint32_t completed_layers,
                                           int output_head);
 
 void aiueos_qwen35_force_scalar(void);
+
+const char *aiueos_qwen35_failure_stage_label(uint32_t stage);
 
 int aiueos_qwen35_first_token(
     const struct aiueos_qwen35_model *model,
