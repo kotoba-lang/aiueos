@@ -3985,6 +3985,21 @@ static int rtl8125_direct_rx(uint32_t *received) {
   for (uint32_t budget = 0; budget < RTL_DIRECT_RX_BUDGET && !*received; budget++) {
     result = aiueos_rtl8125_rx_poll(&rtl8125_qualification_device, received);
     if (result != AIUEOS_RTL8125_OK) return 0;
+    if (*received && aiueos_rtl8125_direct_arp_request(
+          rtl8125_qualification_device.rx_frame, *received,
+          rtl8125_qualification_device.mac, rtl8125_peer_mac,
+          RTL_DIRECT_IP, RTL_DIRECT_GATEWAY)) {
+      uint32_t reply = aiueos_rtl8125_direct_arp_reply(
+        rtl8125_qualification_device.tx_frame,
+        AIUEOS_RTL8125_FRAME_CAPACITY,
+        rtl8125_qualification_device.mac, rtl8125_peer_mac,
+        RTL_DIRECT_IP, RTL_DIRECT_GATEWAY);
+      int sent = reply && rtl8125_direct_tx(reply);
+      aiueos_rtl8125_rx_rearm(&rtl8125_qualification_device);
+      *received = 0;
+      if (!sent) return 0;
+      continue;
+    }
     __asm__ volatile("pause");
   }
   return *received != 0;

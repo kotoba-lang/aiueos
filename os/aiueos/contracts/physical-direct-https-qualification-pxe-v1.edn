@@ -20,6 +20,9 @@
            :mac-opaque-l4-forwarder? true}
  :transport {:dns {:port 1053
                    :qtype :a :bounded-answers [:compressed-name :full-name]}
+             :arp {:runtime-refresh :peer-bound-reply
+                   :peer-ip "10.77.0.1"
+                   :client-ip "10.77.0.10"}
              :tcp {:device-port 8443
                    :upstream-port 443
                    :connections 1 :rx-descriptors 1}
@@ -30,6 +33,7 @@
              :certificate-verify :leaf-key-from-same-handshake
              :chain-and-hostname-admission :not-implemented}
  :success {:requires [:admitted-dns-a
+                      :runtime-arp-reply-for-10.77.0.10
                       :tcp-three-way-handshake
                       :tls-server-finished
                       :ecdsa-p256-certificate-verify

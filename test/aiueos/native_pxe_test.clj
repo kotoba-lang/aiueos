@@ -293,6 +293,18 @@
                     "if (!rtl8125_direct_tx(bytes)) return 0;"
                     "if (!rtl8125_direct_rx(&received)) continue;"]]
       (is (str/includes? pci marker))))
+  (testing "runtime ARP refresh remains bound to the admitted Mac peer"
+    (doseq [marker ["aiueos_rtl8125_direct_arp_request"
+                    "aiueos_rtl8125_direct_arp_reply"
+                    "RTL_DIRECT_IP, RTL_DIRECT_GATEWAY"
+                    "if (!sent) return 0;"]]
+      (is (str/includes? pci marker)))
+    (doseq [marker ["load_be32(frame + 28) != peer_ip"
+                    "load_be32(frame + 38) != local_ip"
+                    "arp=peer-bound-reply"]]
+      (is (or (str/includes? rtl8125 marker)
+              (str/includes? (slurp (io/file "os/aiueos/tests/rtl8125_handoff_model.c"))
+                             marker)))))
   (testing "a physical pump refusal names the exact receive gate"
     (doseq [marker ["30U + rtl8125_direct_tls_pump_error"
                     "rtl8125_direct_tls_pump_error = 4"
