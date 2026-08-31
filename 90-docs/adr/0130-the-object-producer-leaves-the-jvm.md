@@ -134,9 +134,27 @@ measured -- 62 objects regenerated and every pinned digest in `build-uefi.sh`
 moved -- is still deferred, and still wants boot evidence.  This changes who can
 produce an object, not which objects ship.
 
-`package-aiueos-boot` is a separate command and still runs on the JVM.  Its only
-JVM-specific line is a `Files/readAllBytes`; the packager it calls is the same
-portable `pe32plus`.  Not done here.
+`package-aiueos-boot` is a separate command and still runs on the JVM.
+
+That sentence used to end "its only JVM-specific line is a `Files/readAllBytes`;
+the packager it calls is the same portable `pe32plus`", which read as *this is
+three lines away*.  It was measured, and it is not.
+
+Implemented on the JDK-free route, **the two routes produce different boot
+images**: 129,024 bytes each, differing in exactly two, inside an eight-byte run
+the JVM writes as `AIUEBOOT` and ClojureScript as `\0HUEBOOT`.  Read as one
+little-endian word the two differ by 321.  Both routes report the same
+`:kernel-sha256`, so both read the same input; the divergence is inside
+`pe32plus/package-embedded-kernel`, a file with **zero reader conditionals**.
+
+`pe32plus/package-efi` -- the UEFI target -- is byte-identical across both
+routes, so this is one function rather than the namespace.  The implementation
+was reverted rather than shipped: serving a different boot image under a flag
+whose value is that it refuses instead of falling back is the same silent wrong
+answer this ADR exists to remove.
+
+A file having no reader conditionals is not evidence that it is portable.  It is
+evidence that nobody wrote one.
 
 ## Two measurements discarded, and why
 
