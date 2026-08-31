@@ -61,7 +61,7 @@
                       {:git/url "https://github.com/kotoba-lang/kotoba-kir.git"
                        :git/sha "084a4e2add5ce14f8cdd43905ccc6ca12000ec23"}
                       ;; TEST-ONLY, and pinned directly rather than taken
-                      ;; through amu, because `verify-cid-v1-admit` needs the
+                      ;; through amu, because the admission verifiers need the
                       ;; `kernel-object-entries` row for
                       ;; `kotoba_aiueos_cid_v1_admit`. Closest-wins puts this
                       ;; ahead of amu's own kotoba-native pin.
@@ -121,6 +121,25 @@
                 ;; its first real gate (ADR-0068).
                 :main-opts ["-m" "cognitect.test-runner"
                             "-r" "^aiueos\\.(?!tcp-seq-acceptable-parity-test).*$"]}
+
+   ;; The nbb admission runner (os/aiueos/scripts/verify-admissions.cljs).
+   ;; A SEPARATE alias with its OWN amu pin on purpose: the runner needs
+   ;; kotoba.compiler.project's ClojureScript printer fix (amu#714), while
+   ;; :test keeps the compiler the committed value-runtime verdicts were
+   ;; measured against. Advancing :test instead would have moved that pin 255
+   ;; commits and re-measured ten receipts as a side effect of adding a runner.
+   :verify-admissions
+   {:extra-deps {io.github.kotoba-lang/amu
+                 {:git/url "https://github.com/kotoba-lang/amu.git"
+                  :git/sha "0085e138484b807dddcdec397c87de6513461881"}
+                 ;; Pinned explicitly, not taken through amu: amu's own pin
+                 ;; predates `kir/execute`'s optional memory image, and without
+                 ;; it every vector traps `:kernel-memory-unavailable`. The
+                 ;; runner refuses rather than reporting a pass in that case,
+                 ;; which is how this was caught.
+                 io.github.kotoba-lang/kotoba-kir
+                 {:git/url "https://github.com/kotoba-lang/kotoba-kir.git"
+                  :git/sha "084a4e2add5ce14f8cdd43905ccc6ca12000ec23"}}}
 
    :tcb-check {:main-opts ["-m" "aiueos.tcb"]}
 

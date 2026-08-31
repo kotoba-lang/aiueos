@@ -76,7 +76,8 @@
  :verification
  {:off-target :executed
   :mechanism :kir-execute-with-a-supplied-memory-image
-  :runner "os/aiueos/scripts/aiueos/verify_cid_v1_admit.clj"
+  :runner "os/aiueos/scripts/verify-admissions.cljs"
+  :host :nbb
   :note
   "Until kotoba-kir 10fa46ce every byte-walking object here had NO off-target
    oracle: `kir/execute` refused `kernel-load-u8` outright, so

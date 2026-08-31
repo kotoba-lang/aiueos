@@ -88,8 +88,10 @@ that is the kernel dying on bytes an attacker chose rather than refusing them.
 ### 3. Both are verified by executing them
 
 kotoba-kir `10fa46ce` takes an optional memory image, so `kir/execute` can now
-run an object against caller-supplied bytes. `verify_cid_v1_admit.clj` and
-`verify_unixfs_file_admit.clj` ask the object. They also carry floors: a
+run an object against caller-supplied bytes. The runners ask the object --
+since 2026-08-31 all three are one nbb script,
+`os/aiueos/scripts/verify-admissions.cljs`, with no JVM anywhere in the
+chain. They carry floors: a
 minimum vector count, and a requirement that every reachable reason code was
 actually produced by some vector. A run that executed nothing cannot return
 what a run that executed everything returns, and a `:kernel-memory-unavailable`
@@ -104,8 +106,8 @@ property of the code).
 
 | | Result |
 |---|---|
-| `verify_cid_v1_admit` | 14 vectors, 1 trap vector, reasons 0,1,2,3,4,5,6,8 all observed, reason 7 declared unreachable and not observed, `:imports []`. 4m41s wall / 143s CPU — almost all of it the two 12,288-byte vectors in a tree-walking interpreter |
-| `verify_unixfs_file_admit` | 22 vectors, all 18 reason codes observed, `:imports []`, seconds |
+| `cid-v1-admit` | 14 vectors, 1 trap vector, reasons 0,1,2,3,4,5,6,8 all observed, reason 7 declared unreachable and not observed, `:imports []`. 4m41s wall / 143s CPU on the JVM runner; 360s on the nbb one that replaced it — almost all of it the two 12,288-byte vectors in a tree-walking interpreter |
+| `unixfs-file-admit` | 22 vectors, all 18 reason codes observed, `:imports []`. 0.9s on nbb |
 | kotoba-kir | 18 new tests / 33 assertions on both runtimes; full suites 168 tests / 642 assertions (JVM) and 29 / 60 (nbb) |
 | kotoba-native | 220 tests / 2533 assertions |
 
@@ -147,9 +149,23 @@ the raw CID of zero bytes that ADR-0082 already fetches over TLS.
 - **Neither object is in `qualification/tcb-inventory.edn`,** and that is
   correct today: they are not yet in the trusted computing base because they
   are not yet in the kernel. They belong there the moment they are linked.
-- **`value-runtime-cas-verify` is untouched.** Its verifier is still the one
-  that models SHA-256 in Java instead of running the object. Converting it is
-  a separate change, and it is now possible.
+- ~~**`value-runtime-cas-verify` is untouched.**~~ Converted on 2026-08-31: its
+  verifier executes the object. The conversion's first finding was that
+  `:digest-length-rejected` is named for a check that does not exist -- the
+  object passes the literal 32 to `aiueos-digest-equal`, so the vector is
+  refused for a digest mismatch and the Java model had agreed by coincidence.
+
+- **All three verifiers left the JVM on 2026-08-31.** They are one nbb runner,
+  `os/aiueos/scripts/verify-admissions.cljs`. Everything under
+  `kotoba.compiler.core/compile-project` was already portable -- the linker
+  (`kotoba.compiler.project`), the frontend (`kotoba.sema`), the lowering and
+  the interpreter (`kotoba.kir`) are all `.cljc` -- so the JVM was carried by
+  one `.clj` wrapper and one printer. The printer is amu#714: `source-text`
+  rendered ClojureScript BigInts as `#object[BigInt 42]`, which the reader then
+  refused, so the portable linker failed for every project containing a number.
+  The cost is in the receipt and is not hidden: 0.9 s for the UnixFS contract,
+  360 s and 302 s for the two that hash 12 KiB blocks, against roughly 200 s
+  each on the JVM.
 - **The OTA and model-channel paths still verify by manifest digest.** Making
   `os-update` and the model channel *use* these objects is the next step, and
   it is what turns a URL with a hash beside it into a name the device checks.
