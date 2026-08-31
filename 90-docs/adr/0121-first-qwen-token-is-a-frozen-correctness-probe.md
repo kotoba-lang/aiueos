@@ -67,3 +67,19 @@ step that compares keys. The decoder now gives key projection, value
 projection, and gate temporary disjoint ranges and rejects non-finite state at
 the layer that creates it. Physical retry remains required before calling the
 eight-token sequence, its rate, or its Murakumo post complete.
+
+The next physical image made the remaining failure precise:
+`T02 L04 SOFTMAX`. That is the first full-attention layer at sequence position
+one. The decoder therefore keeps the primary key cache under a per-entry hash,
+writes a physically separate shadow key plane, repairs only a primary entry
+whose shadow still matches, and fails as `KV CACHE` if neither copy is intact.
+Finite Q/K operands are accumulated as double products for the bounded
+eight-position softmax, so float-product overflow cannot masquerade as cache
+corruption; invalid query and cache inputs have separate screen stages.
+
+The same audit found that the recurrent 16-to-48 Q/K-to-value expansion used
+`head % 16`. Qwen3.5 specifies `repeat_interleave(48 / 16)`, so each Q/K head
+feeds three adjacent value heads. The native mapping is now `head / 3`, with a
+48-head host check. This is a decoder correctness fix, not a performance claim.
+The corrected eight-token image still requires physical K16 evidence before a
+decode rate or successful Murakumo result may be recorded.

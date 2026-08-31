@@ -19,7 +19,11 @@
            :gpu-offload? false
            :model-storage :read-only-usb-handoff
            :decode-state :volatile-contiguous-ram
-           :decode-state-bytes 157941760
+           :decode-state-bytes 158835904
+           :full-attention-cache {:primary-keys true
+                                  :values true
+                                  :integrity-shadow-keys true
+                                  :entry-hash :fnv1a-64}
            :internal-disk-writes? false}
  :sequence {:input {:tokens [248044] :kind :bos}
             :sampling :greedy
@@ -62,6 +66,9 @@
  :verification {:host-build :passed
                 :scalar-reference-fixture :passed
                 :full-attention-key-workspace-disjoint :passed-host
+                :linear-qk-repeat-interleave :passed-host
+                :finite-double-attention-score :passed-host
+                :full-attention-key-integrity-shadow :passed-host
                 :nonfinite-failure-diagnostics :passed-host
                 :avx2-first-token-reference :passed-physical
                 :physical-k16-sequence :pending
@@ -80,7 +87,19 @@
              :generated-tokens 1
              :decode-tokens 0
              :decode-rate :not-available
-             :finding :full-attention-key-output-aliased-dequantization-workspace}]
+             :finding :full-attention-key-output-aliased-dequantization-workspace}
+            {:recorded-at "2026-08-31T07:34:18Z"
+             :efi-sha256 "fa35e99f917e9cf37fcf02845e48ef071281adae878184824ce3ac14ab84f852"
+             :screen {:state :error
+                      :detail "T02 L04 SOFTMAX"
+                      :token 2
+                      :layer 4
+                      :stage :full-attention-softmax}
+             :result-posted? false
+             :generated-tokens 1
+             :decode-tokens 0
+             :decode-rate :not-available
+             :finding :nonfinite-score-at-first-position-one-full-attention}]
  :observed {:boot-id :not-available
             :tokens :not-available
             :time-to-first-token-ns :not-available
