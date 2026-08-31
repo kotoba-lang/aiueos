@@ -28,6 +28,9 @@
 (def physical-direct-https-contract
   (slurp (io/file
           "os/aiueos/contracts/physical-direct-https-qualification-pxe-v1.edn")))
+(def physical-persistent-worker-contract
+  (slurp (io/file
+          "os/aiueos/contracts/physical-persistent-worker-k16-v1.edn")))
 (def physical-direct-https-build
   (slurp (io/file "os/aiueos/scripts/build-physical-direct-https-pxe.sh")))
 (def physical-direct-https-smoke
@@ -223,6 +226,7 @@
                     "call aiueos_qualification_reboot_firmware"
                     "mov %rax, %cr3"]]
       (is (str/includes? qualification-entry marker))))
+
   (testing "worker-only scratch does not relax the low W^X aperture"
     (is (str/includes? device-result "AIUEOS_DEVICE_HIGH_BSS"))
     (is (str/includes? pci
@@ -231,6 +235,26 @@
                        "kotoba_app_objects[KOTOBA_APP_CAPACITY][12288]\n  __attribute__((section(\".high_bss\")))"))
     (is (str/includes? pci
                        "rtl8125_direct_tls_flight[RTL_DIRECT_TLS_FLIGHT_MAX]\n  __attribute__((section(\".high_bss\")))"))))
+
+(deftest physical-k16-network-reboot-evidence-is-bounded
+  (let [evidence (edn/read-string physical-persistent-worker-contract)]
+    (is (= "e066c8753550b05f5dff67cbebe10fdc50db147c"
+           (get-in evidence [:artifact :source-commit])))
+    (is (= "3c6f2ffb14fd721f" (get-in evidence [:first-boot :boot-id])))
+    (is (= "512c9d8804f58d31" (get-in evidence [:second-boot :boot-id])))
+    (is (true? (get-in evidence [:second-boot :boot-id-changed?])))
+    (is (= :passed (get-in evidence [:result :signed-control-ack])))
+    (is (= :passed (get-in evidence [:result :network-triggered-reboot])))
+    (is (= :passed
+           (get-in evidence [:result :post-reboot-murakumo-reconnect])))
+    (is (= :not-captured-in-opaque-netlog
+           (get-in evidence [:result :server-ready-field])))
+    (is (every? (set (:does-not-prove evidence))
+                [:server-ready-true :multi-token-decode-throughput
+                 :gpu-offload :standalone-k16-internet
+                 :device-owned-cacao :passkey-account-binding
+                 :post-quantum-authentication :biscuit-authorization
+                 :ssd-installation]))))
 
 (deftest device-worker-refreshes-boot-id-across-warm-pxe-reboots
   (testing "the once-per-boot qualification request replaces retained BSS state"
