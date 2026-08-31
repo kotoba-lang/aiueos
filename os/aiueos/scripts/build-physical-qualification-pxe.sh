@@ -29,6 +29,8 @@ AIUEOS_QWEN38_MODEL_HANDOFF=${AIUEOS_QWEN38_MODEL_HANDOFF:-0} \
 AIUEOS_QWEN35_SMP=${AIUEOS_QWEN35_SMP:-1} \
 AIUEOS_QWEN35_AVX2=${AIUEOS_QWEN35_AVX2:-1} \
 AIUEOS_PERSISTENT_BOOT=${AIUEOS_PERSISTENT_BOOT:-0} \
+AIUEOS_SSH_LISTEN=${AIUEOS_SSH_LISTEN:-0} \
+AIUEOS_SSH_AUTHORIZED_KEY_HEX=${AIUEOS_SSH_AUTHORIZED_KEY_HEX:-} \
 AIUEOS_QUALIFICATION_LOADER_WATCHDOG_SECONDS=${AIUEOS_QUALIFICATION_LOADER_WATCHDOG_SECONDS:-} \
 AIUEOS_EMBEDDED_RELEASE=1 \
 AIUEOS_NETBOOT_QUALIFICATION=1 \
@@ -43,6 +45,8 @@ AIUEOS_PHYSICAL_DIRECT_HTTPS_QUALIFICATION=${AIUEOS_PHYSICAL_DIRECT_HTTPS_QUALIF
 AIUEOS_MURAKUMO_DEVICE_RESULT=${AIUEOS_MURAKUMO_DEVICE_RESULT:-0} \
 AIUEOS_QWEN38_MODEL_HANDOFF=${AIUEOS_QWEN38_MODEL_HANDOFF:-0} \
 AIUEOS_MODEL_NVME_SLOTS=${AIUEOS_MODEL_NVME_SLOTS:-0} \
+AIUEOS_SSH_LISTEN=${AIUEOS_SSH_LISTEN:-0} \
+AIUEOS_SSH_AUTHORIZED_KEY_FINGERPRINT=${AIUEOS_SSH_AUTHORIZED_KEY_FINGERPRINT:-} \
 python3 - \
   "$efi" "$core_out/esp/EFI/AIUEOS/KERNEL.ELF" \
   "$core_out/esp/EFI/AIUEOS/INITRD.IMG" "$receipt" <<'PY'
@@ -111,10 +115,11 @@ document = {
             },
             "retry": "persistent-with-bounded-backoff",
             "control": {
-                "action": "reboot-pxe",
+                "actions": ["restart-runtime", "reboot-pxe"],
                 "delivery": "signed-poll",
-                "ack": "signed-device-p256-before-reset",
-                "reset": "uefi-runtime-cold",
+                "ack": "signed-device-p256-before-action",
+                "runtime_restart": "kototama-only-kernel-network-preserved",
+                "pxe_reset": "uefi-runtime-cold",
             },
         } if os.environ["AIUEOS_PERSISTENT_BOOT"] == "1" else None),
         "cacao": False,
@@ -149,6 +154,19 @@ document = {
         "boot-order-writes": False,
         "ssd-install": False,
     },
+    "management": ({
+        "transport": "ssh-2.0-over-rtl8125",
+        "listen": "10.77.0.10:22",
+        "host_key": "per-device-uefi-nvram-p256",
+        "authorized_key": "build-pinned-public-p256",
+        "authorized_key_fingerprint":
+            (os.environ["AIUEOS_SSH_AUTHORIZED_KEY_FINGERPRINT"] or None),
+        "principal": "runtime",
+        "commands": ["runtime status", "runtime restart"],
+        "shell": False,
+        "kernel_reboot": False,
+        "physical_k16": "unverified",
+    } if os.environ["AIUEOS_SSH_LISTEN"] == "1" else None),
 }
 receipt.write_text(json.dumps(document, indent=2, sort_keys=True) + "\n",
                    encoding="ascii")

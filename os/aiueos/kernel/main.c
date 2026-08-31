@@ -273,6 +273,11 @@ extern unsigned aiueos_ssh_listen_stage(void);
 extern int aiueos_ssh_client_id_valid(void);
 extern unsigned aiueos_ssh_kex_stage(void);
 extern uint32_t aiueos_ssh_client_id_len(void);
+#if defined(AIUEOS_SSH_LISTEN) && \
+    defined(AIUEOS_PHYSICAL_DIRECT_HTTPS_QUALIFICATION) && \
+    defined(AIUEOS_MURAKUMO_DEVICE_RESULT)
+extern int aiueos_rtl8125_ssh_poll(void);
+#endif
 extern int aiueos_random_selftest(void);
 extern int aiueos_random_bytes(uint8_t *out, uint32_t n);
 /* The ECDSA P-256 deterministic sign object (kotoba/ecdsa-p256-sign.kotoba).
@@ -1557,7 +1562,23 @@ qwen_runtime_boot_complete:
         (void)aiueos_framebuffer_inference_screen(&aiueos_qwen35_status);
         debug_string("AIUEOS_MURAKUMO_JOB_POLL_OK job=none ready=true\n");
         serial_string("AIUEOS_MURAKUMO_JOB_POLL_OK job=none ready=true\r\n");
+#if defined(AIUEOS_SSH_LISTEN) && \
+    defined(AIUEOS_PHYSICAL_DIRECT_HTTPS_QUALIFICATION) && \
+    defined(AIUEOS_MURAKUMO_DEVICE_RESULT)
+        /* Keep the HTTPS heartbeat cadence at thirty seconds while opening a
+           bounded port-22 receive window once per second.  SSH can restart the
+           Kototama runtime, but exposes neither a shell nor kernel reboot. */
+        for (uint32_t management_second = 0;
+             management_second < 30; management_second++) {
+          if (aiueos_rtl8125_ssh_poll()) {
+            debug_string("AIUEOS_RTL8125_SSH_SESSION_OK commands=runtime-status,runtime-restart shell=false kernel-reboot=false\n");
+            serial_string("AIUEOS_RTL8125_SSH_SESSION_OK commands=runtime-status,runtime-restart shell=false kernel-reboot=false\r\n");
+          }
+          aiueos_wait_seconds(boot->tsc_hz, 1);
+        }
+#else
         aiueos_wait_seconds(boot->tsc_hz, 30);
+#endif
         continue;
       }
       serial_string("AIUEOS_MURAKUMO_JOB_CLAIMED job-id=");

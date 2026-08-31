@@ -18,6 +18,10 @@
   (slurp (io/file "os/aiueos/contracts/physical-network-qualification-pxe-v1.edn")))
 (def murakumo-contract
   (slurp (io/file "os/aiueos/contracts/murakumo-node-v1.edn")))
+(def ssh-contract
+  (slurp (io/file "os/aiueos/contracts/ssh-v1.edn")))
+(def k16-runtime-client
+  (slurp (io/file "os/aiueos/scripts/k16-runtime.sh")))
 (def rtl8125 (slurp (io/file "os/aiueos/kernel/rtl8125.c")))
 (def pci (slurp (io/file "os/aiueos/kernel/pci.c")))
 (def kernel (slurp (io/file "os/aiueos/kernel/main.c")))
@@ -269,6 +273,36 @@
   (is (str/includes? device-worker-protocol-smoke
                      "device_worker_protocol_model.c")))
 
+(deftest physical-k16-ssh-is-device-bound-and-capability-limited
+  (testing "the physical build fails closed without a pinned public key"
+    (doseq [marker ["physical SSH requires the Device-P256 identity"
+                    "physical SSH requires AIUEOS_SSH_AUTHORIZED_KEY_HEX"
+                    "AIUEOS_SSH_AUTHORIZED_KEY_HEADER=1"]]
+      (is (str/includes? build marker)))
+    (doseq [marker ["AIUEOS_SSH_LISTEN=${AIUEOS_SSH_LISTEN:-0}"
+                    "AIUEOS_SSH_AUTHORIZED_KEY_HEX=${AIUEOS_SSH_AUTHORIZED_KEY_HEX:-}"]]
+      (is (str/includes? release-build marker))))
+  (testing "the RTL8125 adapter reuses the NVRAM device host key"
+    (doseq [marker ["ssh_use_device_host_key"
+                    "aiueos_device_p256_key_load"
+                    "aiueos_rtl8125_ssh_poll"
+                    "RTL_DIRECT_GATEWAY, NET_SSH_PORT"]]
+      (is (str/includes? pci marker))))
+  (testing "management can restart Kototama but cannot obtain a shell or reboot"
+    (doseq [marker ["AIUEOS_RTL8125_SSH_SESSION_OK"
+                    "commands=runtime-status,runtime-restart"
+                    "shell=false kernel-reboot=false"]]
+      (is (str/includes? kernel marker)))
+    (doseq [marker ["PasswordAuthentication=no"
+                    "runtime@10.77.0.10"
+                    "runtime status"
+                    "runtime restart"]]
+      (is (str/includes? k16-runtime-client marker)))
+    (doseq [marker [":physical-rtl8125-listener :landed-build-unverified"
+                    ":physical-k16 :device-p256-uefi-nvram"
+                    ":commands [\"runtime status\" \"runtime restart\"]"]]
+      (is (str/includes? ssh-contract marker)))))
+
 (deftest network-reboot-acks-before-uefi-runtime-reset
   (testing "the signed worker protocol has a result-free control ACK"
     (doseq [marker ["AIUEOS_DEVICE_WORKER_CONTROL_ACK"
@@ -276,7 +310,7 @@
                     "decode_metrics_empty("]]
       (is (str/includes? device-result marker))))
   (is (str/includes? release-build
-                     "\"ack\": \"signed-device-p256-before-reset\""))
+                     "\"ack\": \"signed-device-p256-before-action\""))
   (testing "the node resets only after the acknowledgement returns HTTP 2xx"
     (let [ack (.indexOf kernel "AIUEOS_MURAKUMO_CONTROL_ACK_OK")
           reset (.indexOf kernel "(void)aiueos_qualification_reboot();")]
