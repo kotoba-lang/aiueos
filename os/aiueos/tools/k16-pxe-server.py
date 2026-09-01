@@ -106,7 +106,6 @@ INFERENCE_FAILURE_LABELS = {
     16: "full-cache",
     20: "reference-token",
     21: "output-selection",
-    22: "reference-layer",
 }
 
 

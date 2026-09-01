@@ -5137,6 +5137,13 @@ int aiueos_rtl8125_device_worker_result(
   uint32_t request_length = aiueos_device_worker_http_request(
     &request, rtl_direct_http_request, sizeof(rtl_direct_http_request),
     rtl_direct_device_did, sizeof(rtl_direct_device_did));
+  /* Mirror the public, device-signed result body to the directly attached
+     Mac before HTTPS submission.  This preserves exact decode timing and
+     backend evidence even though the bounded public queue result omits those
+     fields.  The device private key never enters the request buffer. */
+  rtl_direct_worker_wire_sent = 0;
+  rtl8125_direct_worker_wire_copy(
+    rtl_direct_http_request, request_length, sequence);
   int ok = rtl8125_direct_device_request(request_length, boot->tsc_hz);
   rtl8125_direct_worker_rx_report(sequence, ok ? 'o' : 'F');
   return ok;
