@@ -689,16 +689,7 @@ static int full_attention(const struct aiueos_qwen35_layer *layer,
       !matvec(&full->value, normalized, EMBED, scratch_b, FULL_VALUE))
     return fail_at(AIUEOS_QWEN35_FAILURE_ATTENTION_PROJECTION);
 
-  if (!decode) {
-    for (uint32_t head = 0; head < 24; head++) {
-      uint32_t value_head = head / 6U;
-      for (uint32_t index = 0; index < HEAD_DIM; index++) {
-        float gate = scratch_a[head * HEAD_DIM * 2U + HEAD_DIM + index];
-        scratch_c[head * HEAD_DIM + index] =
-            scratch_b[value_head * HEAD_DIM + index] * sigmoid(gate);
-      }
-    }
-  } else {
+  if (decode) {
     /* This output must not be `dequantized`: matvec_range uses that array as
        its BSP row buffer, so every next key row would overwrite the outputs
        already computed (and race the AP half).  A one-element position-zero
@@ -739,7 +730,7 @@ static int full_attention(const struct aiueos_qwen35_layer *layer,
     decode->full_key_hash[cache_index] =
       float_values_hash(key_projection, FULL_KV_WIDTH);
 
-    for (uint32_t head = 0; head < 24; head++) {
+    if (decode->position) for (uint32_t head = 0; head < 24; head++) {
       uint32_t kv_head = head / 6U;
       const float *query = scratch_c + head * HEAD_DIM;
       if (!finite_values(query, HEAD_DIM))
@@ -787,10 +778,26 @@ static int full_attention(const struct aiueos_qwen35_layer *layer,
       for (uint32_t index = 0; index < HEAD_DIM; index++)
         output[index] *= sigmoid(scratch_b[FULL_GATE_TEMP_OFFSET + index]);
     }
-    /* Attention output must be contiguous [24,256].  The computation above
-       wrote it there in scratch_a after consuming each head's gate. */
-    for (uint32_t index = 0; index < LINEAR_INNER; index++)
-      scratch_c[index] = scratch_a[index];
+    if (decode->position) {
+      /* Attention output must be contiguous [24,256].  The computation above
+         wrote it there in scratch_a after consuming each head's gate. */
+      for (uint32_t index = 0; index < LINEAR_INNER; index++)
+        scratch_c[index] = scratch_a[index];
+    }
+  }
+  if (!decode || !decode->position) {
+    /* Position zero still populates the normalized K/V cache above, but its
+       emitted activation must be bit-for-bit the same reduction as the
+       physically-qualified cache-free first-token path.  A one-element
+       softmax is algebraically equivalent, not floating-point equivalent. */
+    for (uint32_t head = 0; head < 24; head++) {
+      uint32_t value_head = head / 6U;
+      for (uint32_t index = 0; index < HEAD_DIM; index++) {
+        float gate = scratch_a[head * HEAD_DIM * 2U + HEAD_DIM + index];
+        scratch_c[head * HEAD_DIM + index] =
+            scratch_b[value_head * HEAD_DIM + index] * sigmoid(gate);
+      }
+    }
   }
   if (!matvec(&full->output, scratch_c, LINEAR_INNER, normalized, EMBED))
     return fail_at(AIUEOS_QWEN35_FAILURE_FULL_OUTPUT);
