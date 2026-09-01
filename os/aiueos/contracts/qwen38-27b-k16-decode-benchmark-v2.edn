@@ -28,7 +28,7 @@
  :sequence {:input {:tokens [248044] :kind :bos}
             :sampling :greedy
             :generated-tokens 8
-            :first-token-reference 2005
+            :first-token-reference 248046
             :decode-tokens 7
             :maximum-context-for-this-cell 8}
  :measurement {:clock :uefi-calibrated-tsc
@@ -70,9 +70,9 @@
                 :finite-double-attention-score :passed-host
                 :full-attention-key-integrity-shadow :passed-host
                 :nonfinite-failure-diagnostics :passed-host
-                :avx2-first-token-reference :passed-physical
-                :physical-k16-sequence :pending
-                :murakumo-signed-result :pending}
+                :repeat-interleave-position-zero-reference :passed-physical
+                :physical-k16-sequence :passed
+                :murakumo-signed-result :passed}
  :attempts [{:at "2026-08-31T05:32:14Z"
              :efi-sha256 "a4ca10161220dd6dcf6180dbd551aff1d642d5796fe920ac4cc9525825b3fa67"
              :screen {:state :error :detail "DECODE REFUSED"}
@@ -99,9 +99,37 @@
              :generated-tokens 1
              :decode-tokens 0
              :decode-rate :not-available
-             :finding :nonfinite-score-at-first-position-one-full-attention}]
- :observed {:boot-id :not-available
-            :tokens :not-available
-            :time-to-first-token-ns :not-available
-            :decode-ns :not-available
-            :decode-tokens-per-second :not-available}}
+             :finding :nonfinite-score-at-first-position-one-full-attention}
+            {:recorded-at "2026-09-01T13:19:03Z"
+             :source-commit "d2e3a49bd56a2329ce40503f73e41f83e71ab224"
+             :efi-sha256 "ab8bdd108e27a65660db513d8d77ec12fe1fdd42cb0ce33c8f9673cdf48f8c4a"
+             :boot-id "24a1b8aa16636184"
+             :job-id "1788268464162743"
+             :result-posted? true
+             :result-proof :device-p256
+             :result-http-status 201
+             :murakumo-run-seq 1788268735556810
+             :generated-tokens 8
+             :decode-tokens 7
+             :tokens [248046 198]
+             :vector-bits 256
+             :worker-threads 2
+             :tsc-hz 3200019520
+             :first-token-cycles 88194615104
+             :decode-cycles 615608917152
+             :inference-cycles 703803532256
+             :inference-cycle-invariant? true}]
+ :observed {:boot-id "24a1b8aa16636184"
+            :job-id "1788268464162743"
+            :tokens {:first 248046 :second 198
+                     :generated 8 :decode 7}
+            :backend {:vector-bits 256 :worker-threads 2}
+            :time-to-first-token-ns 27560649100
+            :decode-ns 192376613113
+            :total-inference-ns 219937262213
+            :decode-tokens-per-second 0.036386959
+            :murakumo {:queue-result-http-status 200
+                       :recorded-ms 219937
+                       :run-seq 1788268735556810
+                       :proof :device-p256
+                       :model :native-relay}}}

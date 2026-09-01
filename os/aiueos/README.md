@@ -399,8 +399,12 @@ boundary is pinned in
 `contracts/qwen38-27b-k16-decode-benchmark-v2.edn`: official
 `Qwen/Qwen3.8-27B` revision `1d4bf0f...`, Unsloth
 `Qwen3.8-27B-UD-IQ3_XXS.gguf` revision `4ca7207...`, 10,934,860,704 bytes,
-SHA-256 `c0b7c303...f3eee`. The physical K16 has admitted that artifact and
-matched frozen first token 2005. The current image adds bounded greedy
+SHA-256 `c0b7c303...f3eee`. The historical scalar image matched token 2005
+before its linear Q/K expansion was corrected from cyclic `head % 16` to the
+official adjacent `repeat_interleave` mapping. With the corrected `head / 3`
+mapping, the physical cache-free BOS probe returns EOS token 248046; that is
+the current position-zero gate while the older runs remain historical evidence.
+The current image adds bounded greedy
 generation of eight tokens, Gated DeltaNet recurrent/causal-convolution state,
 full-attention K/V state, AVX2 with scalar rejection fallback, and a preferred
 two-thread matrix path. Its decode speed remains `N/A`, not `0 tok/s`, until

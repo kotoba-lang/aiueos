@@ -83,3 +83,14 @@ feeds three adjacent value heads. The native mapping is now `head / 3`, with a
 48-head host check. This is a decoder correctness fix, not a performance claim.
 The corrected eight-token image still requires physical K16 evidence before a
 decode rate or successful Murakumo result may be recorded.
+
+## 2026-09-01 reference supersession
+
+The frozen token 2005 belonged to the earlier cyclic `head % 16` execution and
+cannot gate the corrected adjacent repeat-interleave graph. A physical K16
+layer-hash diagnostic ran the current cache-free position-zero path and
+observed token 248046 (the model EOS) for BOS 248044. The current runtime gate
+is therefore 248046. The earlier 2005 runs remain historical evidence for the
+old graph and are not rewritten as corrected-graph results. Multi-token decode,
+its rate, and the Murakumo result remain pending until the corrected graph
+produces and posts the complete bounded sequence.

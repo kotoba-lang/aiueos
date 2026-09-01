@@ -585,9 +585,10 @@ static int linear_attention(const struct aiueos_qwen35_layer *layer,
     float mixed = current * kernel[channel * 4U + 3U];
     if (conv) {
       float *history = conv + (uint64_t)channel * LINEAR_CONV_HISTORY;
-      mixed += history[0] * kernel[channel * 4U + 0U] +
-               history[1] * kernel[channel * 4U + 1U] +
-               history[2] * kernel[channel * 4U + 2U];
+      if (decode->position)
+        mixed += history[0] * kernel[channel * 4U + 0U] +
+                 history[1] * kernel[channel * 4U + 1U] +
+                 history[2] * kernel[channel * 4U + 2U];
       history[0] = history[1];
       history[1] = history[2];
       history[2] = current;
@@ -689,16 +690,7 @@ static int full_attention(const struct aiueos_qwen35_layer *layer,
       !matvec(&full->value, normalized, EMBED, scratch_b, FULL_VALUE))
     return fail_at(AIUEOS_QWEN35_FAILURE_ATTENTION_PROJECTION);
 
-  if (!decode) {
-    for (uint32_t head = 0; head < 24; head++) {
-      uint32_t value_head = head / 6U;
-      for (uint32_t index = 0; index < HEAD_DIM; index++) {
-        float gate = scratch_a[head * HEAD_DIM * 2U + HEAD_DIM + index];
-        scratch_c[head * HEAD_DIM + index] =
-            scratch_b[value_head * HEAD_DIM + index] * sigmoid(gate);
-      }
-    }
-  } else {
+  if (decode) {
     /* This output must not be `dequantized`: matvec_range uses that array as
        its BSP row buffer, so every next key row would overwrite the outputs
        already computed (and race the AP half).  A one-element position-zero
@@ -739,7 +731,7 @@ static int full_attention(const struct aiueos_qwen35_layer *layer,
     decode->full_key_hash[cache_index] =
       float_values_hash(key_projection, FULL_KV_WIDTH);
 
-    for (uint32_t head = 0; head < 24; head++) {
+    if (decode->position) for (uint32_t head = 0; head < 24; head++) {
       uint32_t kv_head = head / 6U;
       const float *query = scratch_c + head * HEAD_DIM;
       if (!finite_values(query, HEAD_DIM))
@@ -787,10 +779,26 @@ static int full_attention(const struct aiueos_qwen35_layer *layer,
       for (uint32_t index = 0; index < HEAD_DIM; index++)
         output[index] *= sigmoid(scratch_b[FULL_GATE_TEMP_OFFSET + index]);
     }
-    /* Attention output must be contiguous [24,256].  The computation above
-       wrote it there in scratch_a after consuming each head's gate. */
-    for (uint32_t index = 0; index < LINEAR_INNER; index++)
-      scratch_c[index] = scratch_a[index];
+    if (decode->position) {
+      /* Attention output must be contiguous [24,256].  The computation above
+         wrote it there in scratch_a after consuming each head's gate. */
+      for (uint32_t index = 0; index < LINEAR_INNER; index++)
+        scratch_c[index] = scratch_a[index];
+    }
+  }
+  if (!decode || !decode->position) {
+    /* Position zero still populates the normalized K/V cache above, but its
+       emitted activation must be bit-for-bit the same reduction as the
+       physically-qualified cache-free first-token path.  A one-element
+       softmax is algebraically equivalent, not floating-point equivalent. */
+    for (uint32_t head = 0; head < 24; head++) {
+      uint32_t value_head = head / 6U;
+      for (uint32_t index = 0; index < HEAD_DIM; index++) {
+        float gate = scratch_a[head * HEAD_DIM * 2U + HEAD_DIM + index];
+        scratch_c[head * HEAD_DIM + index] =
+            scratch_b[value_head * HEAD_DIM + index] * sigmoid(gate);
+      }
+    }
   }
   if (!matvec(&full->output, scratch_c, LINEAR_INNER, normalized, EMBED))
     return fail_at(AIUEOS_QWEN35_FAILURE_FULL_OUTPUT);
@@ -920,7 +928,7 @@ static int evaluate_token(const struct aiueos_qwen35_model *model,
   uint64_t finished = read_cycles();
   choice->cycles = finished >= started ? finished - started : 0;
   if (choice->token == UINT32_MAX || choice->second_token == UINT32_MAX) {
-    choice->failure_stage = AIUEOS_QWEN35_FAILURE_OUTPUT_LOGITS;
+    choice->failure_stage = AIUEOS_QWEN35_FAILURE_OUTPUT_SELECTION;
     return 0;
   }
   return 1;
@@ -1003,6 +1011,7 @@ int aiueos_qwen35_generate(
   result->failed_token = 0;
   result->failed_layer = 0;
   result->failure_stage = AIUEOS_QWEN35_FAILURE_NONE;
+
   uint32_t current_input = input_token;
   for (uint32_t position = 0; position < generated_tokens; position++) {
     struct qwen35_token_choice choice;
@@ -1019,7 +1028,14 @@ int aiueos_qwen35_generate(
     result->total_cycles += choice.cycles;
     if (!position) {
       result->first_token_cycles = choice.cycles;
-      if (choice.token != AIUEOS_QWEN35_REFERENCE_FIRST_TOKEN) return 0;
+      if (choice.token != AIUEOS_QWEN35_REFERENCE_FIRST_TOKEN) {
+        result->failed_token = 1U;
+        /* The output head is outside the trunk, so this field carries the
+           observed token for the bounded physical failure report. */
+        result->failed_layer = choice.token;
+        result->failure_stage = AIUEOS_QWEN35_FAILURE_REFERENCE_TOKEN;
+        return 0;
+      }
     } else {
       result->decode_cycles += choice.cycles;
       result->decode_tokens++;
@@ -1075,4 +1091,5 @@ int aiueos_qwen35_test_cache_resolve(
   };
   return resolved_cached_key(&decode, 0, 0) == primary;
 }
+
 #endif

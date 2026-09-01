@@ -22,6 +22,10 @@
   (slurp (io/file "os/aiueos/contracts/ssh-v1.edn")))
 (def k16-runtime-client
   (slurp (io/file "os/aiueos/scripts/k16-runtime.sh")))
+(def k16-ssh-transport
+  (slurp (io/file "os/aiueos/scripts/k16-ssh-transport.py")))
+(def aiueos-version
+  (str/trim (slurp (io/file "os/aiueos/VERSION"))))
 (def rtl8125 (slurp (io/file "os/aiueos/kernel/rtl8125.c")))
 (def pci (slurp (io/file "os/aiueos/kernel/pci.c")))
 (def kernel (slurp (io/file "os/aiueos/kernel/main.c")))
@@ -51,6 +55,8 @@
   (slurp (io/file "os/aiueos/kernel/inference_status.c")))
 (def inference-status-header
   (slurp (io/file "os/aiueos/kernel/inference_status.h")))
+(def framebuffer
+  (slurp (io/file "os/aiueos/kernel/framebuffer.c")))
 (def inference-status-smoke
   (slurp (io/file "os/aiueos/scripts/smoke-inference-status.sh")))
 (def qwen38-fetch
@@ -128,7 +134,10 @@
                     "AIUEOS_NETBOOT_EMBEDDED_OK kernel+initramfs sha256-v1"]]
       (is (str/includes? loader marker)))
     (doseq [marker [".incbin" "AIUEOS_EMBEDDED_RELEASE"
-                    "embedded-release.obj"]]
+                    "embedded-release.obj"
+                    "aiueos-embedded-kernel-sha256="
+                    "AIUEOS_EMBEDDED_POSTLINK_OK"
+                    "linked EFI must contain exactly one current"]]
       (is (str/includes? build marker)))
     (is (str/includes? release-build "AIUEOS_NETBOOT_QUALIFICATION=1"))
     (is (str/includes? release-build "AIUEOS_SOURCE_DIRTY"))
@@ -294,7 +303,12 @@
     (doseq [marker ["Management is an AIUEOS service, not a consequence of Murakumo health"
                     "aiueos_k16_management_wait(boot->tsc_hz, 5)"
                     "aiueos_k16_management_wait(boot->tsc_hz, 30)"]]
-      (is (str/includes? kernel marker))))
+      (is (str/includes? kernel marker)))
+    (doseq [marker ["Keep RX posted for the whole management second"
+                    "uint64_t management_start = aiueos_read_tsc()"
+                    "aiueos_read_tsc() - management_start < tsc_hz"]]
+      (is (str/includes? kernel marker)))
+    (is (not (str/includes? kernel "aiueos_wait_seconds(tsc_hz, 1)"))))
   (testing "an idle SSH listener cannot monopolize the persistent worker loop"
     (doseq [marker ["RTL8125_SSH_IDLE_RX_BUDGET"
                     "rtl8125_direct_rx_budget"
@@ -314,20 +328,88 @@
     (is (< (str/index-of pci "aiueos_rtl8125_rx_poll(\n      &rtl8125_qualification_device")
            (str/index-of pci "aiueos_rtl8125_rx_rearm(&rtl8125_qualification_device);"
                          (str/index-of pci "static int rtl8125_ssh_rearm")))))
-  (testing "management can restart Kototama but cannot obtain a shell or reboot"
+  (testing "physical SSH diagnostics expose bounded frame metadata, never payload"
+    (doseq [marker ["AIUEOS_SSH_RX "
+                    "rtl8125_ssh_syn_candidates"
+                    "rtl8125_ssh_valid_syns"
+                    "no SSH payload, key or identity bytes"
+                    "if (rtl8125_ssh_frames_seen) rtl8125_ssh_report(accepted)"]]
+      (is (str/includes? pci marker))))
+  (testing "physical SSH data does not require the optional TCP PSH hint"
+    (doseq [marker ["ssh_tcp_payload_present"
+                    "only PSH is no longer mistaken for a message boundary"
+                    "ack, NET_TCP_PSH | NET_TCP_ACK"
+                    "ack, NET_TCP_ACK"
+                    "if (!net_ssh_recv(io, sseq, 8))"
+                    "if (!net_ssh_recv(io, NET_SSH_ISN + 1 + NET_SSH_ID_LEN, 8))"]]
+      (is (str/includes? pci marker))))
+  (testing "the direct Mac path accepts ECN and one complete OpenSSH KEXINIT"
+    (doseq [marker ["NET_TCP_SYN | NET_TCP_ECE | NET_TCP_CWR"
+                    "macOS enables ECN on an active open"
+                    "RTL8125_SSH_RX_WINDOW 1024U"
+                    "net_tx_window = RTL8125_SSH_RX_WINDOW"
+                    "physical SSH receive window must fit one Ethernet frame"]]
+      (is (str/includes? pci marker))))
+  (testing "OpenSSH stream framing and the none method probe are explicit"
+    (doseq [marker ["OpenSSH commonly puts its unencrypted 16-byte NEWKEYS"
+                    "coalesced_length = dlen - newkeys_wire_length"
+                    "ssh_userauth_method_is(up, uplen, \"none\")"
+                    "failure[o++] = 51"
+                    "ssh_ps(failure, o, (const uint8_t *)\"publickey\", 9)"
+                    "ssh_userauth_method_is(up, uplen, \"publickey\")"
+                    "publickey_ok[o++] = 60"
+                    "ssh_authorized_publickey_blob"]]
+      (is (str/includes? pci marker))))
+  (testing "management can restart Kototama or reboot PXE but cannot obtain a shell"
     (doseq [marker ["AIUEOS_RTL8125_SSH_SESSION_OK"
-                    "commands=runtime-status,runtime-restart"
-                    "shell=false kernel-reboot=false"]]
+                    "commands=runtime-status,runtime-restart,system-reboot-pxe"
+                    "AIUEOS_SSH_REBOOT_PXE_ACK reset=uefi-runtime"
+                    "shell=false"]]
       (is (str/includes? kernel marker)))
+    (let [ack (.indexOf kernel "AIUEOS_SSH_REBOOT_PXE_ACK")
+          reset (.indexOf kernel "(void)aiueos_qualification_reboot();" ack)]
+      (is (<= 0 ack))
+      (is (< ack reset)))
     (doseq [marker ["PasswordAuthentication=no"
+                    "MACs=hmac-sha1"
+                    "ProxyCommand=$proxy_command"
+                    "HostKeyAlias=aiueos-k16-7070fc0bb632"
+                    "/usr/bin/env -i"
                     "runtime@10.77.0.10"
                     "runtime status"
-                    "runtime restart"]]
+                    "runtime restart"
+                    "system reboot-pxe"
+                    "status|restart|reboot"]]
       (is (str/includes? k16-runtime-client marker)))
-    (doseq [marker [":physical-rtl8125-listener :landed-build-unverified"
+    (doseq [marker ["TCP_ENABLE_ECN"
+                    "read_ssh_packet_fd"
+                    "server_newkeys_seen"
+                    "client_newkeys_sent"
+                    "AIUEOS_K16_SSH_TRANSPORT_TCP_OK"]]
+      (is (str/includes? k16-ssh-transport marker)))
+    (doseq [marker [":physical-rtl8125-listener :physical-runtime-status-verified"
                     ":physical-k16 :device-p256-uefi-nvram"
-                    ":commands [\"runtime status\" \"runtime restart\"]"]]
+                    ":commands [\"runtime status\" \"runtime restart\" \"system reboot-pxe\"]"
+                    ":ack-before-reset? true"
+                    ":reset :uefi-runtime-cold"]]
       (is (str/includes? ssh-contract marker)))))
+
+(deftest boot-screen-carries-version-and-source-identity
+  (is (re-matches #"[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?"
+                  aiueos-version))
+  (doseq [marker ["aiueos-build-identity.h"
+                  "AIUEOS_BUILD_VERSION"
+                  "AIUEOS_BUILD_SOURCE_HASH"
+                  "AIUEOS_BUILD_DIRTY_SUFFIX"
+                  "build_source_commit=$(git -C \"$repo\" rev-parse HEAD)"]]
+    (is (str/includes? build marker)))
+  (doseq [marker ["framebuffer_build_identity"
+                  "AIUEOS \" AIUEOS_BUILD_VERSION"
+                  "\" SOURCE \" AIUEOS_BUILD_SOURCE_HASH"
+                  "not the SHA-256 of the EFI"]]
+    (is (str/includes? framebuffer marker)))
+  (is (str/includes? release-build
+                     "\"version\": os.environ[\"AIUEOS_SOURCE_VERSION\"]")))
 
 (deftest network-reboot-acks-before-uefi-runtime-reset
   (testing "the signed worker protocol has a result-free control ACK"
@@ -339,10 +421,11 @@
                      "\"ack\": \"signed-device-p256-before-action\""))
   (testing "the node resets only after the acknowledgement returns HTTP 2xx"
     (let [ack (.indexOf kernel "AIUEOS_MURAKUMO_CONTROL_ACK_OK")
-          reset (.indexOf kernel "(void)aiueos_qualification_reboot();")]
+          reset (.indexOf kernel "(void)aiueos_qualification_reboot();" ack)]
       (is (<= 0 ack))
       (is (< ack reset)))
-    (is (str/includes? pci "rtl8125_direct_device_request(request_length)")))
+    (is (str/includes?
+         pci "rtl8125_direct_device_request(request_length, boot->tsc_hz)")))
   (testing "Runtime Services are entered under the retained firmware CR3"
     (doseq [marker ["aiueos_qualification_reboot_firmware"
                     "runtime->reset_system(0, EFI_SUCCESS, 0, 0)"]]
@@ -407,6 +490,12 @@
     (doseq [marker ["#define NET_TCP_RST 0x04"
                     "NET_TCP_RST | NET_TCP_ACK"
                     "those stale frames hid the third connection's SYN-ACK"]]
+      (is (str/includes? pci marker))))
+  (testing "every failed established TLS attempt is actively aborted"
+    (doseq [marker ["int tcp_established = 0"
+                    "if (tcp_established)"
+                    "Abort the failed"
+                    "NET_TCP_RST | NET_TCP_ACK"]]
       (is (str/includes? pci marker))))
   (testing "a new connection scans past a bounded stale server flight"
     (doseq [marker ["RTL_DIRECT_SYN_SCAN_FRAMES 64U"
@@ -496,16 +585,61 @@
                     "ok ? 'o' : 'F'"]]
       (is (str/includes? pci marker))))
   (testing "the UDP report is bounded and excludes the response body"
-    (doseq [marker ["uint32_t fields[8]"
+    (doseq [marker ["uint32_t fields[10]"
                     "rtl8125_direct_tls_pump_error"
                     "rtl8125_direct_tcp_recoveries"
+                    "rtl8125_direct_response_wait_ms"
+                    "RTL_DIRECT_HTTP_TIMEOUT_SECONDS"
                     "rtl8125_direct_qwen_vector_bits"
                     "rtl8125_direct_qwen_worker_threads"
                     "app_length < 12U ? app_length : 12U"
                     "0x8000U | (sequence & 0x7fffU)"]]
       (is (str/includes? pci marker)))
     (is (str/includes? pci
-                    "response JSON, signatures and device-private material are"))))
+                    "response JSON, signatures and device-private material are")))
+  (testing "the Mac receiver emits timestamped human-readable diagnostics"
+    (doseq [marker ["def worker_diagnostic(message):"
+                    "AIUEOS_WORKER_DIAG timestamp="
+                    "http-response-timeout"
+                    "response-wait-ms="
+                    "response-timeout-s="
+                    "tls-ready="
+                    "http-prefix="]]
+      (is (str/includes? server marker))))
+  (testing "runtime failures expose bounded coordinates and keep management alive"
+    (doseq [marker ["AIUEOS_INFERENCE_RX "
+                    "aiueos_rtl8125_inference_failure_report"
+                    "failed_token, job_result.failed_layer, failure_stage"
+                    "aiueos_k16_management_wait(boot->tsc_hz, 30)"]]
+      (is (or (str/includes? pci marker) (str/includes? kernel marker))))
+    (doseq [marker ["def inference_diagnostic(message):"
+                    "AIUEOS_INFERENCE_DIAG timestamp="
+                    "failure-stage={stage}:"
+                    "full-softmax"]]
+      (is (str/includes? server marker))))
+  (testing "the framebuffer and serial stream name the failing transport phase"
+    (doseq [marker ["aiueos_worker_transport_detail"
+                    "HTTP RESPONSE TIMEOUT"
+                    "RESPONSE PARSE ERROR"
+                    "response-wait-ms="
+                    "response-timeout-s="]]
+      (is (str/includes? kernel marker)))))
+
+(deftest physical-worker-http-wait-uses-calibrated-time
+  (testing "a valid but slow Murakumo response gets a real twenty-second window"
+    (doseq [marker ["#define RTL_DIRECT_HTTP_TIMEOUT_SECONDS 20U"
+                    "uint64_t response_started"
+                    "uint64_t response_timeout_cycles"
+                    "rtl8125_direct_tsc() - response_started < response_timeout_cycles"
+                    "rtl8125_direct_elapsed_ms(response_started, tsc_hz)"]]
+      (is (str/includes? pci marker))))
+  (testing "the longer HTTP wait does not expand idle SSH or handshake waits"
+    (is (str/includes? pci
+                       "want_http && tsc_hz ? rtl8125_direct_tsc() : 0"))
+    (is (str/includes? pci
+                       "our_next, 48, 0, tsc_hz"))
+    (is (str/includes? pci
+                       "ack_lo, 128, 1, tsc_hz"))))
 
 (deftest inference-runtime-failure-does-not-stop-aiueos
   (doseq [marker ["AIUEOS_KOTOTAMA_RUNTIME_DEGRADED"
@@ -619,6 +753,18 @@
                   "artifact plus 2 GiB headroom"]]
     (is (str/includes? qwen38-fetch marker)))
   (is (str/includes? kernel "aiueos_framebuffer_inference_screen")))
+
+(deftest inference-screen-updates-damage-without-full-frame-flash
+  (testing "only the first inference frame clears the full live GOP scanout"
+    (doseq [marker ["int full_redraw = !inference_screen_initialized"
+                    "erase only the changing value pane"
+                    "framebuffer_commit_region("
+                    "inference_screen_initialized = 1"]]
+      (is (str/includes? framebuffer marker))))
+  (testing "layer progress keeps serial evidence but throttles visible redraws"
+    (doseq [marker ["completed_layers % 4U == 0U"
+                    "aiueos_qwen35_last_render_token"]]
+      (is (str/includes? kernel marker)))))
 
 (deftest qwen38-pure-aiueos-handoff-is-exact-immutable-and-not-generation
   (let [contract (edn/read-string qwen38-handoff-contract)]

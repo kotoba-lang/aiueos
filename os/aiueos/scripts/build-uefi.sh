@@ -11,6 +11,7 @@ model_slots_object="$out/uefi-model-slots.obj"
 identity_source="$out/kernel-identity.c"
 identity_object="$out/kernel-identity.obj"
 model_identity_header="$out/aiueos-model-identity.h"
+build_identity_header="$out/aiueos-build-identity.h"
 embedded_source="$out/embedded-release.S"
 embedded_object="$out/embedded-release.obj"
 kernel_dir="$esp/EFI/AIUEOS"
@@ -432,6 +433,31 @@ command -v zig >/dev/null 2>&1 || {
 }
 
 mkdir -p "$(dirname -- "$efi")" "$kernel_dir"
+build_version=$(tr -d '\r\n' < "$aiueos/VERSION")
+build_source_commit=$(git -C "$repo" rev-parse HEAD)
+build_source_dirty=false
+if [ -n "$(git -C "$repo" status --porcelain --untracked-files=no)" ]; then
+  build_source_dirty=true
+fi
+python3 - "$build_identity_header" "$build_version" \
+  "$build_source_commit" "$build_source_dirty" <<'PYBUILD'
+from pathlib import Path
+import re
+import sys
+
+out, version, commit, dirty = sys.argv[1:]
+if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?", version):
+    raise SystemExit("error: os/aiueos/VERSION must be a bounded SemVer string")
+if not re.fullmatch(r"[0-9a-f]{40}", commit):
+    raise SystemExit("error: AIUEOS source commit must be a full lowercase git hash")
+suffix = "-DIRTY" if dirty == "true" else ""
+Path(out).write_text(
+    "#ifndef AIUEOS_BUILD_IDENTITY_H\n#define AIUEOS_BUILD_IDENTITY_H\n"
+    f'#define AIUEOS_BUILD_VERSION "{version}"\n'
+    f'#define AIUEOS_BUILD_SOURCE_HASH "{commit[:12]}"\n'
+    f'#define AIUEOS_BUILD_DIRTY_SUFFIX "{suffix}"\n'
+    "#endif\n", encoding="ascii")
+PYBUILD
 python3 - "$model_identity_header" "$model_total" "$model_part0" \
   "$model_part1" "$model_part2" "$model_sha256" "$model_min_address" \
   "$model_max_address" <<'PYMODEL'
@@ -773,7 +799,7 @@ zig cc -target x86_64-freestanding-none -std=c11 -O2 \
   -ffreestanding -fno-stack-protector -mno-red-zone \
   -c -o "$kernel_ioapic_object" "$aiueos/kernel/ioapic.c"
 zig cc -target x86_64-freestanding-none -std=c11 -O2 \
-  -ffreestanding -fno-stack-protector -mno-red-zone \
+  -ffreestanding -fno-stack-protector -mno-red-zone -I "$out" \
   $physical_qualification_cflags \
   -c -o "$kernel_framebuffer_object" "$aiueos/kernel/framebuffer.c"
 if [ -n "$qualification_link" ]; then
@@ -892,11 +918,18 @@ zig cc -target x86_64-windows-gnu -std=c11 -O2 -ffreestanding \
 if [ "${AIUEOS_EMBEDDED_RELEASE:-0}" = 1 ]; then
   python3 - "$kernel" "$initramfs" "$embedded_source" <<'PYEMBED'
 from pathlib import Path
+import hashlib
 import sys
 
-kernel = Path(sys.argv[1]).resolve().as_posix()
-initramfs = Path(sys.argv[2]).resolve().as_posix()
+kernel_path = Path(sys.argv[1]).resolve()
+initramfs_path = Path(sys.argv[2]).resolve()
+kernel = kernel_path.as_posix()
+initramfs = initramfs_path.as_posix()
+kernel_sha256 = hashlib.sha256(kernel_path.read_bytes()).hexdigest()
+initramfs_sha256 = hashlib.sha256(initramfs_path.read_bytes()).hexdigest()
 Path(sys.argv[3]).write_text(
+    f'# aiueos-embedded-kernel-sha256={kernel_sha256}\n'
+    f'# aiueos-embedded-initramfs-sha256={initramfs_sha256}\n'
     '.section .rdata,"dr"\n'
     '.balign 16\n'
     '.globl aiueos_embedded_kernel_start\n'
@@ -932,6 +965,25 @@ zig cc -target x86_64-windows-gnu -std=c11 -O2 \
 zig lld-link /subsystem:efi_application /entry:efi_main /nodefaultlib /timestamp:0 \
   /fixed:no "/out:$efi" "$object" "$identity_object" \
   $embedded_release_link $model_slots_link
+
+if [ "${AIUEOS_EMBEDDED_RELEASE:-0}" = 1 ]; then
+  # `.incbin` inputs are not compiler source files.  Keep both a content salt
+  # in embedded-release.S (above) and this post-link admission so a stale Zig
+  # object can never be published with fresh expected digests.
+  python3 - "$efi" "$kernel" "$initramfs" <<'PYVERIFYEMBED'
+from pathlib import Path
+import sys
+
+image = Path(sys.argv[1]).read_bytes()
+for label, source in (("kernel", sys.argv[2]), ("initramfs", sys.argv[3])):
+    payload = Path(source).read_bytes()
+    first = image.find(payload)
+    if first < 0 or image.find(payload, first + 1) >= 0:
+        raise SystemExit(
+            f"error: linked EFI must contain exactly one current {label} payload")
+print("AIUEOS_EMBEDDED_POSTLINK_OK kernel+initramfs exact-current-bytes")
+PYVERIFYEMBED
+fi
 
 magic=$(dd if="$efi" bs=1 count=2 2>/dev/null)
 [ "$magic" = MZ ] || {

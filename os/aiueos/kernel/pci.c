@@ -1854,6 +1854,8 @@ static uint16_t net_ip_id = 1;
 #define NET_TCP_RST 0x04
 #define NET_TCP_PSH 0x08
 #define NET_TCP_ACK 0x10
+#define NET_TCP_ECE 0x40
+#define NET_TCP_CWR 0x80
 
 /* Which admission was not reached. `TX_*` are build faults rather than network
    ones and are reported apart for that reason: they mean the segment was wrong
@@ -2448,15 +2450,126 @@ static int ssh_io_send(struct aiueos_ssh_io *io, uint16_t client_port,
     payload, payload_length);
 }
 
-/* Receive one PSH|ACK data segment from the peer acking `ack`, tolerant of it
-   arriving late. Unlike net_tcp_receive (which gives up on the first empty
-   await), this keeps posting and polling across `rounds` windows -- a userauth
-   packet can arrive after a slow key-derivation or crypto step, and a single
-   short spin misses it. The segment lands in rx_page for the caller to unwrap
-   or decrypt. */
+static int ssh_tcp_payload_present(const uint8_t *frame, uint32_t received) {
+  if (!frame || received < 54) return 0;
+  uint32_t total = net_load_be16(frame + 16);
+  uint32_t tcp_header = 4U * (uint32_t)(frame[46] >> 4);
+  return tcp_header >= 20U && total >= 20U + tcp_header &&
+    14U + total <= received && total > 20U + tcp_header;
+}
+
+/* Receive one data-bearing ACK from the peer, tolerant both of arrival delay
+   and of the optional TCP PSH hint. QEMU's SLIRP sets PSH on every SSH data
+   segment, while the K16's directly attached macOS stack legitimately sends
+   KEX data with ACK alone. TCP payload, sequence acknowledgement and checksum
+   remain mandatory; only PSH is no longer mistaken for a message boundary. */
 static int net_ssh_recv(struct aiueos_ssh_io *io, uint32_t ack,
                         unsigned rounds) {
-  return ssh_io_receive(io, ack, NET_TCP_PSH | NET_TCP_ACK, rounds);
+  if (!io || !io->frame || !io->rearm || !io->wait) return 0;
+  for (unsigned round = 0; round < rounds; round++) {
+    uint32_t received = 0;
+    if (!io->rearm(io->context) || !io->wait(io->context, &received)) continue;
+    if (received > NET_FRAME_MAX) continue;
+    int admitted = kotoba_aiueos_tcp_segment_valid(
+      (uint64_t)(uintptr_t)io->frame, received, io->peer_ip,
+      ack, NET_TCP_PSH | NET_TCP_ACK);
+    if (!admitted)
+      admitted = kotoba_aiueos_tcp_segment_valid(
+        (uint64_t)(uintptr_t)io->frame, received, io->peer_ip,
+        ack, NET_TCP_ACK);
+    if (admitted && ssh_tcp_payload_present(io->frame, received)) return 1;
+  }
+  return 0;
+}
+
+/* macOS enables ECN on an active open and therefore sends SYN|ECE|CWR.  A
+   listener may decline ECN by answering with an ordinary SYN|ACK, but it must
+   still admit the SYN.  Keep the admission exact to the two RFC 3168 forms;
+   this does not relax ACK, RST, FIN, address, port or checksum validation. */
+static int net_ssh_syn_valid(struct aiueos_ssh_io *io, uint32_t received) {
+  if (!io || !io->frame) return 0;
+  return kotoba_aiueos_tcp_segment_valid(
+           (uint64_t)(uintptr_t)io->frame, received,
+           io->peer_ip, 0, NET_TCP_SYN) ||
+         kotoba_aiueos_tcp_segment_valid(
+           (uint64_t)(uintptr_t)io->frame, received,
+           io->peer_ip, 0, NET_TCP_SYN | NET_TCP_ECE | NET_TCP_CWR);
+}
+
+static int ssh_userauth_method_is(const uint8_t *payload,
+                                  uint32_t payload_length,
+                                  const char *expected) {
+  uint32_t offset = 1;
+  const uint8_t *username, *service, *method;
+  uint32_t username_length, service_length, method_length;
+  return payload && payload_length > 1U && payload[0] == 50U &&
+    ssh_take_string(payload, payload_length, &offset,
+                    &username, &username_length) &&
+    ssh_take_string(payload, payload_length, &offset,
+                    &service, &service_length) &&
+    ssh_take_string(payload, payload_length, &offset,
+                    &method, &method_length) &&
+    ssh_text_equal(username, username_length, "runtime") &&
+    ssh_text_equal(service, service_length, "ssh-connection") &&
+    ssh_text_equal(method, method_length, expected);
+}
+
+static int ssh_userauth_publickey_fields(
+    const uint8_t *payload, uint32_t payload_length,
+    int *has_signature, const uint8_t **algorithm,
+    uint32_t *algorithm_length, const uint8_t **public_key_blob,
+    uint32_t *public_key_blob_length, uint32_t *after_key) {
+  uint32_t offset = 1;
+  const uint8_t *username, *service, *method;
+  uint32_t username_length, service_length, method_length;
+  if (!has_signature || !algorithm || !algorithm_length ||
+      !public_key_blob || !public_key_blob_length || !after_key ||
+      !payload || payload_length <= 1U || payload[0] != 50U ||
+      !ssh_take_string(payload, payload_length, &offset,
+                       &username, &username_length) ||
+      !ssh_take_string(payload, payload_length, &offset,
+                       &service, &service_length) ||
+      !ssh_take_string(payload, payload_length, &offset,
+                       &method, &method_length) ||
+      !ssh_text_equal(username, username_length, "runtime") ||
+      !ssh_text_equal(service, service_length, "ssh-connection") ||
+      !ssh_text_equal(method, method_length, "publickey") ||
+      offset >= payload_length) return 0;
+  *has_signature = payload[offset++] != 0;
+  if (!ssh_take_string(payload, payload_length, &offset,
+                       algorithm, algorithm_length) ||
+      !ssh_text_equal(*algorithm, *algorithm_length,
+                      "ecdsa-sha2-nistp256") ||
+      !ssh_take_string(payload, payload_length, &offset,
+                       public_key_blob, public_key_blob_length)) return 0;
+  *after_key = offset;
+  return 1;
+}
+
+static int ssh_authorized_publickey_blob(const uint8_t *blob,
+                                         uint32_t blob_length,
+                                         uint8_t public_point[64]) {
+  uint32_t offset = 0;
+  const uint8_t *algorithm, *curve, *point;
+  uint32_t algorithm_length, curve_length, point_length;
+  if (!blob || !public_point ||
+      !ssh_take_string(blob, blob_length, &offset,
+                       &algorithm, &algorithm_length) ||
+      !ssh_take_string(blob, blob_length, &offset,
+                       &curve, &curve_length) ||
+      !ssh_take_string(blob, blob_length, &offset,
+                       &point, &point_length) ||
+      offset != blob_length || point_length != 65U || point[0] != 4U ||
+      !ssh_text_equal(algorithm, algorithm_length,
+                      "ecdsa-sha2-nistp256") ||
+      !ssh_text_equal(curve, curve_length, "nistp256")) return 0;
+  for (uint32_t i = 0; i < 32U; i++) {
+    public_point[i] = point[1U + i];
+    public_point[32U + i] = point[33U + i];
+    if (public_point[i] != ssh_auth_x[i] ||
+        public_point[32U + i] != ssh_auth_y[i]) return 0;
+  }
+  return 1;
 }
 
 /* Drive publickey userauth after NEWKEYS. Derives the session keys, receives the
@@ -2471,8 +2584,10 @@ static int net_ssh_userauth(struct aiueos_ssh_io *io, uint16_t cport,
   static uint8_t pkt[1024] AIUEOS_SSH_HIGH_BSS;
   static uint8_t kd[128] AIUEOS_SSH_HIGH_BSS;
   static uint8_t up[1024] AIUEOS_SSH_HIGH_BSS;
+  static uint8_t coalesced[1024] AIUEOS_SSH_HIGH_BSS;
   uint8_t key_cs[16], iv_cs[12], key_sc[16], iv_sc[12], d32[32];
-  uint32_t uplen = 0;
+  uint32_t uplen = 0, coalesced_length = 0;
+  uint32_t client_crypto_seq = 1, server_crypto_seq = 1;
 
   ssh_kex_stage = 6;   /* userauth entered (granular stages 6..12 below) */
 
@@ -2499,17 +2614,31 @@ static int net_ssh_userauth(struct aiueos_ssh_io *io, uint16_t cport,
     uint32_t dlen = 0; const uint8_t *seg = ssh_seg_data(frame, &dlen);
     uint32_t plen = 0; const uint8_t *pay = ssh_unwrap(seg, dlen, &plen);
     if (!pay || plen < 1 || pay[0] != 21) return 0;
+    /* OpenSSH commonly puts its unencrypted 16-byte NEWKEYS and encrypted
+       SERVICE_REQUEST in one TCP segment.  TCP is a byte stream, so retain the
+       second SSH packet instead of treating the segment as one message. */
+    uint32_t newkeys_wire_length = 4U + ssh_be32p(seg);
+    if (newkeys_wire_length > dlen ||
+        dlen - newkeys_wire_length > sizeof(coalesced)) return 0;
+    coalesced_length = dlen - newkeys_wire_length;
+    for (uint32_t i = 0; i < coalesced_length; i++)
+      coalesced[i] = seg[newkeys_wire_length + i];
     pnext += dlen; ssh_kex_stage = 7;
   }
   ssh_io_send(io, cport, sseq, pnext, NET_TCP_ACK, 0, 0);
 
   /* 2. encrypted SERVICE_REQUEST (c->s seq 0): byte 5 + string "ssh-userauth". */
-  if (!net_ssh_recv(io, sseq, 96)) return 0;
   {
-    uint32_t dlen = 0; const uint8_t *seg = ssh_seg_data(frame, &dlen);
+    uint32_t dlen = coalesced_length;
+    const uint8_t *seg = coalesced;
+    if (!dlen) {
+      if (!net_ssh_recv(io, sseq, 96)) return 0;
+      seg = ssh_seg_data(frame, &dlen);
+      pnext += dlen;
+    }
     if (!ssh_open(key_cs, iv_cs, 0, seg, dlen, up, &uplen)) return 0;
     if (uplen < 1 || up[0] != 5) return 0;
-    pnext += dlen; ssh_kex_stage = 8;
+    ssh_kex_stage = 8;
   }
 
   /* 3. SERVICE_ACCEPT (s->c seq 0). */
@@ -2528,30 +2657,88 @@ static int net_ssh_userauth(struct aiueos_ssh_io *io, uint16_t cport,
   if (!net_ssh_recv(io, sseq, 96)) return 0;
   {
     uint32_t dlen = 0; const uint8_t *seg = ssh_seg_data(frame, &dlen);
-    if (!ssh_open(key_cs, iv_cs, 1, seg, dlen, up, &uplen)) return 0;
+    if (!ssh_open(key_cs, iv_cs, client_crypto_seq,
+                  seg, dlen, up, &uplen)) return 0;
     pnext += dlen; ssh_kex_stage = 10;
   }
   if (uplen < 1 || up[0] != 50) return 0;
 
+  /* OpenSSH probes the enabled methods with USERAUTH_REQUEST "none" before
+     offering its key even when PreferredAuthentications is publickey.  Refuse
+     that probe explicitly and advertise only publickey, then consume the real
+     signed request at the next encrypted packet sequence number. */
+  if (ssh_userauth_method_is(up, uplen, "none")) {
+    uint8_t failure[32]; uint64_t o = 0;
+    failure[o++] = 51;
+    o = ssh_ps(failure, o, (const uint8_t *)"publickey", 9);
+    failure[o++] = 0;
+    uint32_t wl = ssh_seal(key_sc, iv_sc, server_crypto_seq,
+                           failure, (uint32_t)o, pkt);
+    if (!wl || !ssh_io_send(io, cport, sseq, pnext,
+                            NET_TCP_PSH | NET_TCP_ACK, pkt, wl)) return 0;
+    sseq += wl;
+    server_crypto_seq++;
+    client_crypto_seq++;
+    if (!net_ssh_recv(io, sseq, 96)) return 0;
+    {
+      uint32_t dlen = 0; const uint8_t *seg = ssh_seg_data(frame, &dlen);
+      if (!ssh_open(key_cs, iv_cs, client_crypto_seq,
+                    seg, dlen, up, &uplen)) return 0;
+      pnext += dlen; ssh_kex_stage = 10;
+    }
+  }
+  if (!ssh_userauth_method_is(up, uplen, "publickey")) return 0;
+
+  /* OpenSSH may first ask whether the explicit key is acceptable with the
+     signature boolean clear.  Authenticate the offered public blob against
+     the build-pinned key before returning PK_OK, then require the signed form
+     as the next request. */
+  {
+    int has_signature = 0;
+    const uint8_t *algorithm, *public_key_blob;
+    uint32_t algorithm_length, public_key_blob_length, after_key;
+    uint8_t public_point[64];
+    if (!ssh_userauth_publickey_fields(
+          up, uplen, &has_signature, &algorithm, &algorithm_length,
+          &public_key_blob, &public_key_blob_length, &after_key)) return 0;
+    if (!has_signature) {
+      if (after_key != uplen ||
+          !ssh_authorized_publickey_blob(
+            public_key_blob, public_key_blob_length, public_point)) return 0;
+      uint8_t publickey_ok[256]; uint64_t o = 0;
+      publickey_ok[o++] = 60;
+      o = ssh_ps(publickey_ok, o, algorithm, algorithm_length);
+      o = ssh_ps(publickey_ok, o, public_key_blob, public_key_blob_length);
+      uint32_t wl = ssh_seal(key_sc, iv_sc, server_crypto_seq,
+                             publickey_ok, (uint32_t)o, pkt);
+      if (!wl || !ssh_io_send(io, cport, sseq, pnext,
+                              NET_TCP_PSH | NET_TCP_ACK, pkt, wl)) return 0;
+      sseq += wl;
+      server_crypto_seq++;
+      client_crypto_seq++;
+      if (!net_ssh_recv(io, sseq, 96)) return 0;
+      {
+        uint32_t dlen = 0; const uint8_t *seg = ssh_seg_data(frame, &dlen);
+        if (!ssh_open(key_cs, iv_cs, client_crypto_seq,
+                      seg, dlen, up, &uplen)) return 0;
+        pnext += dlen; ssh_kex_stage = 10;
+      }
+    }
+  }
+
   /* Parse to the pk-blob and the sig, and find where signed-data ends (the
      request up to but not including the trailing signature string). */
   {
-    uint32_t off = 1, sig_off, i;
-    const uint8_t *username, *service, *method, *algorithm;
+    uint32_t off, sig_off, i;
+    int has_signature = 0;
+    const uint8_t *algorithm;
     const uint8_t *pkb, *signature;
-    uint32_t username_length, service_length, method_length, algorithm_length;
+    uint32_t algorithm_length;
     uint32_t pkb_length, signature_length;
-    if (!ssh_take_string(up, uplen, &off, &username, &username_length) ||
-        !ssh_take_string(up, uplen, &off, &service, &service_length) ||
-        !ssh_take_string(up, uplen, &off, &method, &method_length) ||
-        !ssh_text_equal(username, username_length, "runtime") ||
-        !ssh_text_equal(service, service_length, "ssh-connection") ||
-        !ssh_text_equal(method, method_length, "publickey") ||
-        off >= uplen || up[off++] != 1 ||
-        !ssh_take_string(up, uplen, &off, &algorithm, &algorithm_length) ||
-        !ssh_text_equal(algorithm, algorithm_length, "ecdsa-sha2-nistp256") ||
-        !ssh_take_string(up, uplen, &off, &pkb, &pkb_length)) return 0;
-    sig_off = off;                     /* signed-data ends before signature string */
+    if (!ssh_userauth_publickey_fields(
+          up, uplen, &has_signature, &algorithm, &algorithm_length,
+          &pkb, &pkb_length, &off) || !has_signature) return 0;
+    sig_off = off;
     if (!ssh_take_string(up, uplen, &off, &signature, &signature_length) ||
         off != uplen) return 0;
 
@@ -2563,29 +2750,10 @@ static int net_ssh_userauth(struct aiueos_ssh_io *io, uint16_t cport,
       for (i = 0; i < sig_off; i++) sd[so + i] = up[i]; so += sig_off;
       kotoba_aiueos_sha256(sd, so, digest, sha256_workspace, sizeof(sha256_workspace));
 
-      /* offered public point from the pk-blob (string algo, string curve, string point). */
+      /* offered public point from the build-pinned pk-blob. */
       {
-        uint32_t p2 = 0;
-        const uint8_t *pk_algorithm, *pk_curve, *pk_point;
-        uint32_t pk_algorithm_length, pk_curve_length, pk_point_length;
-        uint8_t pub[64]; int authorized = 1;
-        if (!ssh_take_string(pkb, pkb_length, &p2, &pk_algorithm,
-                             &pk_algorithm_length) ||
-            !ssh_take_string(pkb, pkb_length, &p2, &pk_curve,
-                             &pk_curve_length) ||
-            !ssh_take_string(pkb, pkb_length, &p2, &pk_point,
-                             &pk_point_length) ||
-            p2 != pkb_length || pk_point_length != 65 || pk_point[0] != 4 ||
-            !ssh_text_equal(pk_algorithm, pk_algorithm_length,
-                            "ecdsa-sha2-nistp256") ||
-            !ssh_text_equal(pk_curve, pk_curve_length, "nistp256")) return 0;
-        /* point = 0x04 || x(32) || y(32) */
-        for (i = 0; i < 32; i++) {
-          pub[i] = pk_point[1 + i];
-          pub[32 + i] = pk_point[1 + 32 + i];
-        }
-        for (i = 0; i < 32; i++) if (pub[i] != ssh_auth_x[i] || pub[32 + i] != ssh_auth_y[i]) authorized = 0;
-        if (!authorized) return 0;
+        uint8_t pub[64];
+        if (!ssh_authorized_publickey_blob(pkb, pkb_length, pub)) return 0;
 
         /* signature r||s from the sig-blob (string algo, string (mpint r, mpint s)). */
         {
@@ -2613,35 +2781,37 @@ static int net_ssh_userauth(struct aiueos_ssh_io *io, uint16_t cport,
       }
     }
   }
+  client_crypto_seq++;
 
-  /* 5. USERAUTH_SUCCESS (s->c seq 1): byte 52. */
+  /* 5. USERAUTH_SUCCESS.  OpenSSH's preceding "none" probe, when present,
+        advances both encrypted packet sequence numbers by one. */
   {
     uint8_t suc = 52;
-    uint32_t wl = ssh_seal(key_sc, iv_sc, 1, &suc, 1, pkt);
+    uint32_t wl = ssh_seal(key_sc, iv_sc, server_crypto_seq, &suc, 1, pkt);
     if (!wl || !ssh_io_send(io, cport, sseq, pnext,
                             NET_TCP_PSH | NET_TCP_ACK, pkt, wl)) return 0;
-    sseq += wl; ssh_kex_stage = 12;
+    sseq += wl; server_crypto_seq++; ssh_kex_stage = 12;
   }
 
   /* ---- the session channel (ADR-0109) ------------------------------------
      The login has succeeded; from here everything is best-effort (return 1, not
-     0, so the AUTH marker still fires). Packet counters continue: c->s is at 2
-     (service-request 0, userauth-request 1), s->c at 2 (service-accept 0,
-     userauth-success 1). A minimal but real `exec` session: open the channel,
-     accept the command, and stream one CHANNEL_DATA that echoes it. */
+     0, so the AUTH marker still fires). Packet counters continue from the
+     direct-publickey path or from OpenSSH's one bounded "none" probe. A minimal
+     but real `exec` session accepts the command and returns CHANNEL_DATA. */
   {
     uint32_t client_chan = 0;
 
-    /* 6. CHANNEL_OPEN (c->s 2): byte 90, string type, uint32 sender, window, max. */
+    /* 6. CHANNEL_OPEN: byte 90, string type, uint32 sender, window, max. */
     if (!net_ssh_recv(io, sseq, 96)) return 1;
     {
       uint32_t dlen = 0; const uint8_t *seg = ssh_seg_data(frame, &dlen);
-      if (!ssh_open(key_cs, iv_cs, 2, seg, dlen, up, &uplen)) return 1;
+      if (!ssh_open(key_cs, iv_cs, client_crypto_seq,
+                    seg, dlen, up, &uplen)) return 1;
       if (uplen < 1 || up[0] != 90) return 1;
       uint32_t off = 1;
       off += 4 + ssh_be32p(up + off);      /* skip channel-type string */
       client_chan = ssh_be32p(up + off);
-      pnext += dlen; ssh_kex_stage = 13;
+      pnext += dlen; client_crypto_seq++; ssh_kex_stage = 13;
     }
 
     /* 7. CHANNEL_OPEN_CONFIRMATION (s->c 2): recipient, sender=0, window, max. */
@@ -2653,10 +2823,11 @@ static int net_ssh_userauth(struct aiueos_ssh_io *io, uint16_t cport,
       m[o++] = 0; m[o++] = 0; m[o++] = 0; m[o++] = 0;          /* sender = 0 */
       m[o++] = 0; m[o++] = 0x10; m[o++] = 0; m[o++] = 0;       /* window = 0x100000 */
       m[o++] = 0; m[o++] = 0; m[o++] = 0x80; m[o++] = 0;       /* max packet = 0x8000 */
-      uint32_t wl = ssh_seal(key_sc, iv_sc, 2, m, (uint32_t)o, pkt);
+      uint32_t wl = ssh_seal(key_sc, iv_sc, server_crypto_seq,
+                             m, (uint32_t)o, pkt);
       if (!wl || !ssh_io_send(io, cport, sseq, pnext,
                               NET_TCP_PSH | NET_TCP_ACK, pkt, wl)) return 1;
-      sseq += wl; ssh_kex_stage = 14;
+      sseq += wl; server_crypto_seq++; ssh_kex_stage = 14;
     }
 
     /* 8. CHANNEL_REQUEST (c->s 3): byte 98, recipient, string type, bool, [string cmd]. */
@@ -2664,7 +2835,8 @@ static int net_ssh_userauth(struct aiueos_ssh_io *io, uint16_t cport,
     if (!net_ssh_recv(io, sseq, 96)) return 1;
     {
       uint32_t dlen = 0; const uint8_t *seg = ssh_seg_data(frame, &dlen);
-      if (!ssh_open(key_cs, iv_cs, 3, seg, dlen, up, &uplen)) return 1;
+      if (!ssh_open(key_cs, iv_cs, client_crypto_seq,
+                    seg, dlen, up, &uplen)) return 1;
       if (uplen < 1 || up[0] != 98) return 1;
       uint32_t off = 1 + 4;                 /* byte + recipient */
       off += 4 + ssh_be32p(up + off);       /* skip request-type string */
@@ -2674,7 +2846,7 @@ static int net_ssh_userauth(struct aiueos_ssh_io *io, uint16_t cport,
         if (cmdlen > sizeof(cmd)) cmdlen = sizeof(cmd);
         for (uint32_t i = 0; i < cmdlen; i++) cmd[i] = up[off + i];
       }
-      pnext += dlen; ssh_kex_stage = 15;
+      pnext += dlen; client_crypto_seq++; ssh_kex_stage = 15;
     }
 
     /* 9. CHANNEL_SUCCESS (s->c 3). */
@@ -2683,10 +2855,11 @@ static int net_ssh_userauth(struct aiueos_ssh_io *io, uint16_t cport,
       m[o++] = 99;
       m[o++] = (uint8_t)(client_chan >> 24); m[o++] = (uint8_t)(client_chan >> 16);
       m[o++] = (uint8_t)(client_chan >> 8);  m[o++] = (uint8_t)client_chan;
-      uint32_t wl = ssh_seal(key_sc, iv_sc, 3, m, (uint32_t)o, pkt);
+      uint32_t wl = ssh_seal(key_sc, iv_sc, server_crypto_seq,
+                             m, (uint32_t)o, pkt);
       if (!wl || !ssh_io_send(io, cport, sseq, pnext,
                               NET_TCP_PSH | NET_TCP_ACK, pkt, wl)) return 1;
-      sseq += wl;
+      sseq += wl; server_crypto_seq++;
     }
 
     /* 10. CHANNEL_DATA (s->c 4).  SSH is a capability-limited management
@@ -2702,10 +2875,11 @@ static int net_ssh_userauth(struct aiueos_ssh_io *io, uint16_t cport,
       m[o++] = (uint8_t)(client_chan >> 24); m[o++] = (uint8_t)(client_chan >> 16);
       m[o++] = (uint8_t)(client_chan >> 8);  m[o++] = (uint8_t)client_chan;
       o = ssh_ps(m, o, out, olen);
-      uint32_t wl = ssh_seal(key_sc, iv_sc, 4, m, (uint32_t)o, pkt);
+      uint32_t wl = ssh_seal(key_sc, iv_sc, server_crypto_seq,
+                             m, (uint32_t)o, pkt);
       if (!wl || !ssh_io_send(io, cport, sseq, pnext,
                               NET_TCP_PSH | NET_TCP_ACK, pkt, wl)) return 1;
-      sseq += wl; ssh_kex_stage = 16;
+      sseq += wl; server_crypto_seq++; ssh_kex_stage = 16;
     }
 
     /* 11. exit-status (s->c 5), CHANNEL_EOF (6), CHANNEL_CLOSE (7): best effort. */
@@ -2717,23 +2891,26 @@ static int net_ssh_userauth(struct aiueos_ssh_io *io, uint16_t cport,
       o = ssh_ps(es, o, (const uint8_t *)"exit-status", 11);
       es[o++] = 0;                                     /* want-reply = FALSE */
       es[o++] = 0; es[o++] = 0; es[o++] = 0; es[o++] = 0;   /* status 0 */
-      uint32_t wl = ssh_seal(key_sc, iv_sc, 5, es, (uint32_t)o, pkt);
+      uint32_t wl = ssh_seal(key_sc, iv_sc, server_crypto_seq,
+                             es, (uint32_t)o, pkt);
       if (wl) ssh_io_send(io, cport, sseq, pnext,
                           NET_TCP_PSH | NET_TCP_ACK, pkt, wl);
-      sseq += wl;
+      sseq += wl; server_crypto_seq++;
       uint8_t eof[8]; o = 0;
       eof[o++] = 96;
       eof[o++] = (uint8_t)(client_chan >> 24); eof[o++] = (uint8_t)(client_chan >> 16);
       eof[o++] = (uint8_t)(client_chan >> 8);  eof[o++] = (uint8_t)client_chan;
-      wl = ssh_seal(key_sc, iv_sc, 6, eof, (uint32_t)o, pkt);
+      wl = ssh_seal(key_sc, iv_sc, server_crypto_seq,
+                    eof, (uint32_t)o, pkt);
       if (wl) ssh_io_send(io, cport, sseq, pnext,
                           NET_TCP_PSH | NET_TCP_ACK, pkt, wl);
-      sseq += wl;
+      sseq += wl; server_crypto_seq++;
       uint8_t cls[8]; o = 0;
       cls[o++] = 97;
       cls[o++] = (uint8_t)(client_chan >> 24); cls[o++] = (uint8_t)(client_chan >> 16);
       cls[o++] = (uint8_t)(client_chan >> 8);  cls[o++] = (uint8_t)client_chan;
-      wl = ssh_seal(key_sc, iv_sc, 7, cls, (uint32_t)o, pkt);
+      wl = ssh_seal(key_sc, iv_sc, server_crypto_seq,
+                    cls, (uint32_t)o, pkt);
       if (wl) ssh_io_send(io, cport, sseq, pnext,
                           NET_TCP_PSH | NET_TCP_ACK, pkt, wl);
     }
@@ -2765,7 +2942,7 @@ static int net_ssh_kex(struct aiueos_ssh_io *io, uint16_t cport,
   }
 
   /* 2. receive the client's KEXINIT (I_C). It acks our KEXINIT (expected_ack). */
-  if (!ssh_io_receive(io, sseq, NET_TCP_PSH | NET_TCP_ACK, 8))
+  if (!net_ssh_recv(io, sseq, 8))
     return 0;
   uint32_t ic_len = 0;
   {
@@ -2785,7 +2962,7 @@ static int net_ssh_kex(struct aiueos_ssh_io *io, uint16_t cport,
 
   /* 4. receive KEX_ECDH_INIT and extract Q_C. */
   uint8_t q_c[32];
-  if (!ssh_io_receive(io, sseq, NET_TCP_PSH | NET_TCP_ACK, 8))
+  if (!net_ssh_recv(io, sseq, 8))
     return 0;
   {
     uint32_t dlen = 0;
@@ -2912,9 +3089,7 @@ static int net_ssh_listen(struct aiueos_ssh_io *io, unsigned listen_rounds) {
       if (!io->rearm(io->context) ||
           !io->wait(io->context, &received)) continue;
       if (received > NET_FRAME_MAX) continue;
-      if (kotoba_aiueos_tcp_segment_valid(
-            (uint64_t)(uintptr_t)frame,
-            received, io->peer_ip, 0, NET_TCP_SYN)) got = 1;
+      if (net_ssh_syn_valid(io, received)) got = 1;
     }
     if (!got) return 0;
   }
@@ -2941,8 +3116,7 @@ static int net_ssh_listen(struct aiueos_ssh_io *io, unsigned listen_rounds) {
   ssh_listen_stage = 3;
 
   /* 5. the client's identification string, acknowledging ours. */
-  if (!ssh_io_receive(io, NET_SSH_ISN + 1 + NET_SSH_ID_LEN,
-                      NET_TCP_PSH | NET_TCP_ACK, 8))
+  if (!net_ssh_recv(io, NET_SSH_ISN + 1 + NET_SSH_ID_LEN, 8))
     return 0;
   ssh_listen_stage = 4;
   {
@@ -3981,6 +4155,8 @@ int aiueos_rtl8125_physical_qualification(void) {
    reconnect interval instead. */
 #define RTL_DIRECT_RX_BUDGET 50000000U
 #define RTL_DIRECT_RX_WINDOW 256U
+#define RTL_DIRECT_HTTP_TIMEOUT_SECONDS 20U
+#define RTL8125_SSH_RX_WINDOW 1024U
 #define RTL8125_SSH_IDLE_RX_BUDGET 250000U
 #define RTL8125_SSH_LISTEN_ROUNDS 64U
 #define RTL_DIRECT_TLS_ATTEMPTS 3U
@@ -3988,6 +4164,8 @@ int aiueos_rtl8125_physical_qualification(void) {
 #define RTL_DIRECT_TLS_FLIGHT_MAX 1152U
 _Static_assert(RTL_DIRECT_TLS_FLIGHT_MAX >= 58U + 1024U + 22U,
                "direct TLS flight must hold Finished plus maximum HTTP record");
+_Static_assert(RTL8125_SSH_RX_WINDOW + 54U <= NET_FRAME_MAX,
+               "physical SSH receive window must fit one Ethernet frame");
 
 static const uint8_t rtl_direct_dns_question[24] = {
   3,'a','p','i',8,'m','u','r','a','k','u','m','o',5,'c','l','o','u','d',0,
@@ -4032,6 +4210,7 @@ static unsigned rtl8125_direct_https_attempts;
 static unsigned rtl8125_direct_tls_pump_error;
 static unsigned rtl8125_direct_tcp_recoveries;
 static uint32_t rtl8125_direct_tls_stage;
+static uint32_t rtl8125_direct_response_wait_ms;
 static uint32_t rtl8125_direct_dns_a;
 static int rtl8125_direct_http_ready;
 static uint32_t rtl8125_direct_connection_sequence;
@@ -4048,6 +4227,14 @@ unsigned aiueos_rtl8125_direct_https_attempts(void) {
 }
 uint32_t aiueos_rtl8125_direct_tls_stage(void) {
   return rtl8125_direct_tls_stage;
+}
+
+uint32_t aiueos_rtl8125_direct_response_wait_ms(void) {
+  return rtl8125_direct_response_wait_ms;
+}
+
+uint32_t aiueos_rtl8125_direct_response_timeout_seconds(void) {
+  return RTL_DIRECT_HTTP_TIMEOUT_SECONDS;
 }
 uint32_t aiueos_rtl8125_direct_dns_a(void) { return rtl8125_direct_dns_a; }
 int aiueos_rtl8125_direct_http_ready(void) { return rtl8125_direct_http_ready; }
@@ -4104,23 +4291,26 @@ static void rtl8125_direct_worker_wire_copy(
    shifted buffer; response JSON, signatures and device-private material are
    deliberately excluded.  The compact wire fields are status, sequence,
    error, TLS stage, pump error, TCP recovery count, application length, Qwen
-   vector width, Qwen worker count and a 12-byte prefix. */
+   vector width, Qwen worker count, response wait milliseconds, configured
+   response timeout seconds and a 12-byte prefix. */
 static void rtl8125_direct_worker_rx_report(
     uint32_t sequence, uint8_t status) {
   static const uint8_t prefix[] = "AIUEOS_WORKER_RX ";
   static const char digits[] = "0123456789abcdef";
   const uint8_t *app = aiueos_tls13_app();
   uint32_t app_length = aiueos_tls13_app_len();
-  uint32_t fields[8] = {sequence, rtl8125_direct_https_error,
+  uint32_t fields[10] = {sequence, rtl8125_direct_https_error,
                         rtl8125_direct_tls_stage,
                         rtl8125_direct_tls_pump_error,
                         rtl8125_direct_tcp_recoveries, app_length,
                         rtl8125_direct_qwen_vector_bits,
-                        rtl8125_direct_qwen_worker_threads};
+                        rtl8125_direct_qwen_worker_threads,
+                        rtl8125_direct_response_wait_ms,
+                        RTL_DIRECT_HTTP_TIMEOUT_SECONDS};
   uint32_t length = sizeof(prefix) - 1U;
   for (uint32_t i = 0; i < length; i++) rtl_direct_worker_wire[i] = prefix[i];
   rtl_direct_worker_wire[length++] = status;
-  for (uint32_t field = 0; field < 8U; field++) {
+  for (uint32_t field = 0; field < 10U; field++) {
     rtl_direct_worker_wire[length++] = ' ';
     for (int shift = 28; shift >= 0; shift -= 4)
       rtl_direct_worker_wire[length++] =
@@ -4138,6 +4328,40 @@ static void rtl8125_direct_worker_rx_report(
   uint32_t bytes = rtl8125_build_udp_payload(
     rtl8125_qualification_device.tx_frame, rtl_direct_worker_wire,
     length, (uint16_t)(0x8000U | (sequence & 0x7fffU)));
+  if (bytes) (void)rtl8125_direct_tx(bytes);
+  aiueos_rtl8125_rx_rearm(&rtl8125_qualification_device);
+}
+
+/* Export the exact bounded inference failure coordinates while the physical
+   worker still owns the claim.  Serial and framebuffer diagnostics are not
+   observable from the Mac once ExitBootServices has completed, and the
+   inference loop deliberately has no shell.  This packet contains only the
+   public job id and numeric runtime status; it never includes model bytes,
+   prompts, device keys, signatures or response JSON. */
+void aiueos_rtl8125_inference_failure_report(
+    uint64_t job_id, uint32_t attempt, uint32_t failed_token,
+    uint32_t failed_layer, uint32_t failure_stage) {
+  static const uint8_t prefix[] = "AIUEOS_INFERENCE_RX ";
+  static const char digits[] = "0123456789abcdef";
+  uint32_t fields[4] = {
+    attempt, failed_token, failed_layer, failure_stage
+  };
+  uint32_t length = sizeof(prefix) - 1U;
+  if (!rtl8125_qualification_device.ready || !job_id) return;
+  for (uint32_t i = 0; i < length; i++)
+    rtl_direct_worker_wire[i] = prefix[i];
+  for (int shift = 60; shift >= 0; shift -= 4)
+    rtl_direct_worker_wire[length++] =
+      (uint8_t)digits[(job_id >> shift) & 0x0fU];
+  for (uint32_t field = 0; field < 4U; field++) {
+    rtl_direct_worker_wire[length++] = ' ';
+    for (int shift = 28; shift >= 0; shift -= 4)
+      rtl_direct_worker_wire[length++] =
+        (uint8_t)digits[(fields[field] >> shift) & 0x0fU];
+  }
+  uint32_t bytes = rtl8125_build_udp_payload(
+    rtl8125_qualification_device.tx_frame, rtl_direct_worker_wire,
+    length, (uint16_t)(0x4000U | (attempt & 0x3fffU)));
   if (bytes) (void)rtl8125_direct_tx(bytes);
   aiueos_rtl8125_rx_rearm(&rtl8125_qualification_device);
 }
@@ -4175,6 +4399,22 @@ static int rtl8125_direct_rx(uint32_t *received) {
   return rtl8125_direct_rx_budget(received, RTL_DIRECT_RX_BUDGET);
 }
 
+static uint64_t rtl8125_direct_tsc(void) {
+  uint32_t low, high;
+  __asm__ volatile("lfence; rdtsc" : "=a"(low), "=d"(high) :: "memory");
+  return ((uint64_t)high << 32) | low;
+}
+
+static uint32_t rtl8125_direct_elapsed_ms(uint64_t started,
+                                          uint64_t tsc_hz) {
+  if (!started || !tsc_hz) return 0;
+  uint64_t elapsed = rtl8125_direct_tsc() - started;
+  uint64_t whole = elapsed / tsc_hz;
+  uint64_t remainder = elapsed % tsc_hz;
+  uint64_t milliseconds = whole * 1000U + (remainder * 1000U) / tsc_hz;
+  return milliseconds > UINT32_MAX ? UINT32_MAX : (uint32_t)milliseconds;
+}
+
 static int rtl8125_tcp_send(uint32_t dst, uint16_t local_port,
                             uint16_t remote_port, uint32_t sequence,
                             uint32_t acknowledgement, uint8_t flags,
@@ -4210,6 +4450,72 @@ static int rtl8125_direct_tcp_send(uint32_t dst, uint16_t local_port,
    that arrived outside the short spin window. */
 static uint32_t rtl8125_ssh_pending_length;
 static int rtl8125_ssh_frame_consumed;
+static uint32_t rtl8125_ssh_report_sequence;
+static uint32_t rtl8125_ssh_frames_seen;
+static uint32_t rtl8125_ssh_tcp_frames_seen;
+static uint32_t rtl8125_ssh_syn_candidates;
+static uint32_t rtl8125_ssh_valid_syns;
+static uint32_t rtl8125_ssh_last_length;
+static uint32_t rtl8125_ssh_last_source_ip;
+static uint32_t rtl8125_ssh_last_ports;
+static uint32_t rtl8125_ssh_last_flags;
+
+static void rtl8125_ssh_capture(uint32_t frame_length) {
+  const uint8_t *frame = rtl8125_qualification_device.rx_frame;
+  rtl8125_ssh_frames_seen++;
+  rtl8125_ssh_last_length = frame_length;
+  if (frame_length < 54 || net_load_be16(frame + 12) != 0x0800U ||
+      frame[14] != 0x45U || frame[23] != 6U) return;
+  rtl8125_ssh_tcp_frames_seen++;
+  rtl8125_ssh_last_source_ip = net_load_be32(frame + 26);
+  rtl8125_ssh_last_ports = ((uint32_t)net_load_be16(frame + 34) << 16) |
+    net_load_be16(frame + 36);
+  rtl8125_ssh_last_flags = frame[47];
+  uint8_t flags = frame[47];
+  if (net_load_be16(frame + 36) == NET_SSH_PORT &&
+      (flags == NET_TCP_SYN ||
+       flags == (NET_TCP_SYN | NET_TCP_ECE | NET_TCP_CWR))) {
+    rtl8125_ssh_syn_candidates++;
+    if (kotoba_aiueos_tcp_segment_valid(
+          (uint64_t)(uintptr_t)frame, frame_length,
+          RTL_DIRECT_GATEWAY, 0, NET_TCP_SYN) ||
+        kotoba_aiueos_tcp_segment_valid(
+          (uint64_t)(uintptr_t)frame, frame_length,
+          RTL_DIRECT_GATEWAY, 0,
+          NET_TCP_SYN | NET_TCP_ECE | NET_TCP_CWR))
+      rtl8125_ssh_valid_syns++;
+  }
+}
+
+/* Emit bounded frame metadata only: no SSH payload, key or identity bytes.
+   This makes the physical qualification distinguish "the SYN never reached
+   the K16" from a listener/admission failure without granting a debug shell. */
+static void rtl8125_ssh_report(int accepted) {
+  static const uint8_t prefix[] = "AIUEOS_SSH_RX ";
+  static const char digits[] = "0123456789abcdef";
+  uint32_t fields[11] = {
+    ++rtl8125_ssh_report_sequence, rtl8125_ssh_frames_seen,
+    rtl8125_ssh_tcp_frames_seen, rtl8125_ssh_syn_candidates,
+    rtl8125_ssh_valid_syns, rtl8125_ssh_last_length,
+    rtl8125_ssh_last_source_ip, rtl8125_ssh_last_ports,
+    rtl8125_ssh_last_flags, (ssh_listen_stage << 1) | (accepted ? 1U : 0U),
+    ssh_kex_stage
+  };
+  uint32_t length = sizeof(prefix) - 1U;
+  for (uint32_t i = 0; i < length; i++)
+    rtl_direct_worker_wire[i] = prefix[i];
+  for (uint32_t field = 0; field < 11U; field++) {
+    if (field) rtl_direct_worker_wire[length++] = ' ';
+    for (int shift = 28; shift >= 0; shift -= 4)
+      rtl_direct_worker_wire[length++] =
+        (uint8_t)digits[(fields[field] >> shift) & 0x0fU];
+  }
+  uint32_t bytes = rtl8125_build_udp_payload(
+    rtl8125_qualification_device.tx_frame, rtl_direct_worker_wire,
+    length, (uint16_t)(0x6000U | (rtl8125_ssh_report_sequence & 0x1fffU)));
+  if (bytes) (void)rtl8125_direct_tx(bytes);
+  aiueos_rtl8125_rx_rearm(&rtl8125_qualification_device);
+}
 
 static int rtl8125_ssh_rearm(void *context) {
   (void)context;
@@ -4241,12 +4547,16 @@ static int rtl8125_ssh_wait(void *context, uint32_t *frame_length) {
     *frame_length = rtl8125_ssh_pending_length;
     rtl8125_ssh_pending_length = 0;
     rtl8125_ssh_frame_consumed = 1;
+    rtl8125_ssh_capture(*frame_length);
     return 1;
   }
   int received = ssh_listen_stage
     ? rtl8125_direct_rx(frame_length)
     : rtl8125_direct_rx_budget(frame_length, RTL8125_SSH_IDLE_RX_BUDGET);
-  if (received) rtl8125_ssh_frame_consumed = 1;
+  if (received) {
+    rtl8125_ssh_frame_consumed = 1;
+    rtl8125_ssh_capture(*frame_length);
+  }
   return received;
 }
 
@@ -4276,6 +4586,14 @@ int aiueos_rtl8125_ssh_poll(void) {
   net_peer_mac_known = 1;
   rtl8125_ssh_pending_length = 0;
   rtl8125_ssh_frame_consumed = 0;
+  rtl8125_ssh_frames_seen = 0;
+  rtl8125_ssh_tcp_frames_seen = 0;
+  rtl8125_ssh_syn_candidates = 0;
+  rtl8125_ssh_valid_syns = 0;
+  rtl8125_ssh_last_length = 0;
+  rtl8125_ssh_last_source_ip = 0;
+  rtl8125_ssh_last_ports = 0;
+  rtl8125_ssh_last_flags = 0;
   ssh_listen_stage = 0;
   ssh_client_id_valid = 0;
   ssh_client_id_len = 0;
@@ -4287,9 +4605,13 @@ int aiueos_rtl8125_ssh_poll(void) {
     .rearm = rtl8125_ssh_rearm,
     .wait = rtl8125_ssh_wait,
     .send = rtl8125_ssh_send};
-  net_tx_window = RTL_DIRECT_RX_WINDOW;
+  /* A 256-byte TLS bridge fragment is too small for OpenSSH's KEXINIT and
+     forces it into multiple TCP segments.  The SSH parser remains bounded to
+     one Ethernet frame, so advertise the separate 1024-byte SSH window. */
+  net_tx_window = RTL8125_SSH_RX_WINDOW;
   int accepted = net_ssh_listen(&io, RTL8125_SSH_LISTEN_ROUNDS);
   net_tx_window = NET_TCP_WINDOW;
+  if (rtl8125_ssh_frames_seen) rtl8125_ssh_report(accepted);
   return accepted && ssh_kex_stage >= 16;
 }
 #endif
@@ -4354,13 +4676,24 @@ static int rtl8125_http_success(const uint8_t *bytes, uint32_t length) {
 static int rtl8125_direct_tls_pump(uint32_t dst, uint16_t local_port,
                                    uint32_t *our_next,
                                    uint32_t *peer_next, uint32_t ack_lo,
-                                   unsigned attempts, int want_http) {
+                                   unsigned attempts, int want_http,
+                                   uint64_t tsc_hz) {
   uint8_t *frame = rtl8125_qualification_device.rx_frame;
+  uint64_t response_started = want_http && tsc_hz ? rtl8125_direct_tsc() : 0;
+  uint64_t response_timeout_cycles =
+    want_http && tsc_hz ? tsc_hz * RTL_DIRECT_HTTP_TIMEOUT_SECONDS : 0;
+  if (want_http) rtl8125_direct_response_wait_ms = 0;
   for (unsigned attempt = 0; attempt < attempts; attempt++) {
     const uint8_t *payload = 0;
     uint32_t plen = 0, received = 0;
     if (!rtl8125_direct_rx(&received)) {
+      if (response_started &&
+          rtl8125_direct_tsc() - response_started < response_timeout_cycles)
+        continue;
       if (!rtl8125_direct_tls_pump_error) rtl8125_direct_tls_pump_error = 1;
+      if (want_http)
+        rtl8125_direct_response_wait_ms =
+          rtl8125_direct_elapsed_ms(response_started, tsc_hz);
       return 0;
     }
     if (!net_tcp_cloud_seg_ok(frame, received, dst, *our_next, ack_lo)) {
@@ -4412,6 +4745,8 @@ static int rtl8125_direct_tls_pump(uint32_t dst, uint16_t local_port,
     }
     if (want_http && rtl8125_http_success(
           aiueos_tls13_app(), aiueos_tls13_app_len())) {
+      rtl8125_direct_response_wait_ms =
+        rtl8125_direct_elapsed_ms(response_started, tsc_hz);
       /* The complete HTTP response is already authenticated and decrypted.
          ACK its last TCP sequence and actively close this short-lived worker
          connection.  Leaving that segment unacknowledged made Cloudflare
@@ -4433,6 +4768,9 @@ static int rtl8125_direct_tls_pump(uint32_t dst, uint16_t local_port,
        left TEST DIRECT HTTPS on screen until the firmware watchdog fired. */
     if (frame[47] & NET_TCP_FIN) {
       rtl8125_direct_tls_pump_error = 6;
+      if (want_http)
+        rtl8125_direct_response_wait_ms =
+          rtl8125_direct_elapsed_ms(response_started, tsc_hz);
       *peer_next += 1;
       aiueos_rtl8125_rx_rearm(&rtl8125_qualification_device);
       (void)rtl8125_direct_tcp_send(dst, local_port, *our_next, *peer_next,
@@ -4450,6 +4788,9 @@ static int rtl8125_direct_tls_pump(uint32_t dst, uint16_t local_port,
     int complete = want_http ? rtl8125_http_success(
       aiueos_tls13_app(), aiueos_tls13_app_len()) :
       aiueos_tls13_handshake_ready();
+    if (want_http)
+      rtl8125_direct_response_wait_ms =
+        rtl8125_direct_elapsed_ms(response_started, tsc_hz);
     if (!complete && !rtl8125_direct_tls_pump_error)
       rtl8125_direct_tls_pump_error = 7;
     return complete;
@@ -4457,16 +4798,19 @@ static int rtl8125_direct_tls_pump(uint32_t dst, uint16_t local_port,
 }
 
 static int rtl8125_direct_tls_attempt(uint32_t dst, uint32_t request_length,
+                                      uint64_t tsc_hz,
                                       uint32_t connection_sequence,
                                       unsigned attempt) {
-  uint32_t peer_next, our_next, received = 0;
+  uint32_t peer_next = 0, our_next = 0, received = 0;
   uint32_t client_hello_length = 0, finished_length = 0, http_length = 0;
   uint32_t lane = connection_sequence * RTL_DIRECT_TLS_ATTEMPTS + attempt;
   uint32_t isn = RTL_DIRECT_ISN + (lane << 16) + lane;
   uint16_t local_port = (uint16_t)(RTL_DIRECT_LOCAL_PORT + (lane % 12000U));
   uint8_t client_hello[256];
+  int tcp_established = 0;
   rtl8125_direct_tls_pump_error = 0;
   rtl8125_direct_tcp_recoveries = 0;
+  rtl8125_direct_response_wait_ms = 0;
 
   /* A completed short connection can leave late server records in the
      RTL8125 FIFO even after its only descriptor is rearmed.  Reinstall the
@@ -4518,6 +4862,7 @@ static int rtl8125_direct_tls_attempt(uint32_t dst, uint32_t request_length,
   }
   peer_next = net_load_be32(rtl8125_qualification_device.rx_frame + 38) + 1;
   our_next = isn + 1 + client_hello_length;
+  tcp_established = 1;
   aiueos_rtl8125_rx_rearm(&rtl8125_qualification_device);
   if (!rtl8125_direct_tcp_send(
         dst, local_port, isn + 1, peer_next,
@@ -4526,7 +4871,7 @@ static int rtl8125_direct_tls_attempt(uint32_t dst, uint32_t request_length,
     goto failed;
   }
   if (!rtl8125_direct_tls_pump(dst, local_port, &our_next, &peer_next,
-                               our_next, 48, 0)) {
+                               our_next, 48, 0, tsc_hz)) {
     rtl8125_direct_https_error =
       RTL_DIRECT_STAGE_ERROR(30U + rtl8125_direct_tls_pump_error);
     goto failed;
@@ -4560,7 +4905,7 @@ static int rtl8125_direct_tls_attempt(uint32_t dst, uint32_t request_length,
     uint32_t ack_lo = our_next;
     our_next += finished_length + http_length;
     if (!rtl8125_direct_tls_pump(dst, local_port, &our_next, &peer_next,
-                                 ack_lo, 128, 1)) {
+                                 ack_lo, 128, 1, tsc_hz)) {
       rtl8125_direct_https_error = RTL_DIRECT_STAGE_ERROR(11);
       goto failed;
     }
@@ -4569,7 +4914,19 @@ static int rtl8125_direct_tls_attempt(uint32_t dst, uint32_t request_length,
   return 1;
 failed:
   rtl8125_direct_tls_stage = aiueos_tls13_stage();
+  /* A stage-11 failure used to abandon an established four-tuple without
+     closing it.  The Mac passthrough and Cloudflare then kept delivering that
+     old encrypted response while the K16 had already started a fresh TLS
+     attempt.  With one RX descriptor, those stale records repeatedly won the
+     slot and produced the observed ADMISSION/ERROR loop.  Abort the failed
+     connection from the endpoint which owns its sequence numbers before the
+     next ring restart; the bridge sees EOF and closes its upstream socket. */
   aiueos_rtl8125_rx_rearm(&rtl8125_qualification_device);
+  if (tcp_established) {
+    (void)rtl8125_direct_tcp_send(dst, local_port, our_next, peer_next,
+                                  NET_TCP_RST | NET_TCP_ACK, 0, 0);
+    aiueos_rtl8125_rx_rearm(&rtl8125_qualification_device);
+  }
   return 0;
 }
 
@@ -4587,6 +4944,7 @@ int aiueos_rtl8125_direct_https_qualification(void) {
   rtl8125_direct_https_error = 1;
   rtl8125_direct_https_attempts = 0;
   rtl8125_direct_tls_stage = 0;
+  rtl8125_direct_response_wait_ms = 0;
   rtl8125_direct_dns_a = 0;
   rtl8125_direct_http_ready = 0;
 #ifdef AIUEOS_MURAKUMO_DEVICE_RESULT
@@ -4642,6 +5000,11 @@ int aiueos_rtl8125_direct_https_qualification(void) {
     rtl8125_direct_https_attempts = attempt + 1;
     if (rtl8125_direct_tls_attempt(
           rtl8125_direct_dns_a, request_length,
+#ifdef AIUEOS_MURAKUMO_DEVICE_RESULT
+          boot->tsc_hz,
+#else
+          0,
+#endif
           rtl8125_direct_connection_sequence, attempt)) {
       rtl8125_direct_http_ready = 1;
       rtl8125_direct_https_error = 0;
@@ -4655,7 +5018,8 @@ failed:
 }
 
 #ifdef AIUEOS_MURAKUMO_DEVICE_RESULT
-static int rtl8125_direct_device_request(uint32_t request_length) {
+static int rtl8125_direct_device_request(uint32_t request_length,
+                                         uint64_t tsc_hz) {
   if (!request_length || !rtl8125_qualification_device.ready ||
       rtl8125_qualification_error) {
     rtl8125_direct_https_error = 3;
@@ -4671,7 +5035,7 @@ static int rtl8125_direct_device_request(uint32_t request_length) {
   for (unsigned attempt = 0; attempt < RTL_DIRECT_TLS_ATTEMPTS; attempt++) {
     rtl8125_direct_https_attempts = attempt + 1;
     if (rtl8125_direct_tls_attempt(
-          rtl8125_direct_dns_a, request_length,
+          rtl8125_direct_dns_a, request_length, tsc_hz,
           rtl8125_direct_connection_sequence, attempt)) {
       rtl8125_direct_https_error = 0;
       net_tx_window = NET_TCP_WINDOW;
@@ -4705,7 +5069,7 @@ int aiueos_rtl8125_device_worker_poll(
     rtl_direct_device_did, sizeof(rtl_direct_device_did));
   rtl8125_direct_worker_wire_copy(
     rtl_direct_http_request, request_length, sequence);
-  if (!rtl8125_direct_device_request(request_length)) {
+  if (!rtl8125_direct_device_request(request_length, boot->tsc_hz)) {
     rtl8125_direct_worker_rx_report(sequence, 'R');
     return 0;
   }
@@ -4741,7 +5105,7 @@ int aiueos_rtl8125_device_worker_control_ack(
   uint32_t request_length = aiueos_device_worker_http_request(
     &request, rtl_direct_http_request, sizeof(rtl_direct_http_request),
     rtl_direct_device_did, sizeof(rtl_direct_device_did));
-  int ok = rtl8125_direct_device_request(request_length);
+  int ok = rtl8125_direct_device_request(request_length, boot->tsc_hz);
   rtl8125_direct_worker_rx_report(sequence, ok ? 'A' : 'a');
   return ok;
 }
@@ -4773,7 +5137,14 @@ int aiueos_rtl8125_device_worker_result(
   uint32_t request_length = aiueos_device_worker_http_request(
     &request, rtl_direct_http_request, sizeof(rtl_direct_http_request),
     rtl_direct_device_did, sizeof(rtl_direct_device_did));
-  int ok = rtl8125_direct_device_request(request_length);
+  /* Mirror the public, device-signed result body to the directly attached
+     Mac before HTTPS submission.  This preserves exact decode timing and
+     backend evidence even though the bounded public queue result omits those
+     fields.  The device private key never enters the request buffer. */
+  rtl_direct_worker_wire_sent = 0;
+  rtl8125_direct_worker_wire_copy(
+    rtl_direct_http_request, request_length, sequence);
+  int ok = rtl8125_direct_device_request(request_length, boot->tsc_hz);
   rtl8125_direct_worker_rx_report(sequence, ok ? 'o' : 'F');
   return ok;
 }

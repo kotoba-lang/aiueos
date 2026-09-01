@@ -89,8 +89,9 @@ int main(int argc, char **argv) {
   CHECK(aiueos_inference_milli_tokens_per_second(128, 3200000000ULL) == 40000);
   CHECK(aiueos_inference_milli_tokens_per_second(31, 8000000000ULL) == 3875);
   CHECK(aiueos_framebuffer_inference_screen(&measured));
-  CHECK(surface->generation == 3 && surface->damage_width == WIDTH &&
-        surface->damage_height == HEIGHT);
+  CHECK(surface->generation == 3 && surface->damage_x > 0 &&
+        surface->damage_y > 0 && surface->damage_width < WIDTH &&
+        surface->damage_height < HEIGHT);
 
   struct aiueos_inference_status invalid = measured;
   invalid.decode_ns = AIUEOS_INFERENCE_UNMEASURED;

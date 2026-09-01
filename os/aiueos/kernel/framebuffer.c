@@ -2,6 +2,24 @@
 #include "../include/boot_info.h"
 #include "inference_status.h"
 
+/* Release builds generate this header from os/aiueos/VERSION and the clean
+   source commit.  Host-only framebuffer tests intentionally use the explicit
+   fallback, so the renderer remains independently compilable. */
+#if defined(__has_include)
+#if __has_include("aiueos-build-identity.h")
+#include "aiueos-build-identity.h"
+#endif
+#endif
+#ifndef AIUEOS_BUILD_VERSION
+#define AIUEOS_BUILD_VERSION "UNVERSIONED"
+#endif
+#ifndef AIUEOS_BUILD_SOURCE_HASH
+#define AIUEOS_BUILD_SOURCE_HASH "UNVERIFIED"
+#endif
+#ifndef AIUEOS_BUILD_DIRTY_SUFFIX
+#define AIUEOS_BUILD_DIRTY_SUFFIX "-DIRTY"
+#endif
+
 extern int aiueos_map_framebuffer(uint64_t address, uint64_t length);
 
 #ifdef AIUEOS_PHYSICAL_QUALIFICATION
@@ -22,6 +40,7 @@ struct aiueos_desktop_surface {
 static struct aiueos_desktop_surface desktop_surface;
 static int desktop_surface_ready;
 static volatile uint32_t *desktop_surface_pixels;
+static int inference_screen_initialized;
 int aiueos_desktop_surface_ready(void) { return desktop_surface_ready; }
 const struct aiueos_desktop_surface *aiueos_desktop_surface(void) {
   return desktop_surface_ready ? &desktop_surface : 0;
@@ -137,6 +156,18 @@ static uint32_t qualification_text_width(const char *text, uint32_t scale) {
   return length * 6U * scale;
 }
 
+/* This is deliberately a source/build identity, not the SHA-256 of the EFI
+   that contains it: embedding an artifact's own digest would be
+   self-referential.  The complete EFI SHA-256 remains in the signed build
+   receipt, keyed by this version and source hash. */
+static void framebuffer_build_identity(uint32_t x, uint32_t y,
+                                       uint32_t scale) {
+  qualification_text("AIUEOS " AIUEOS_BUILD_VERSION
+                     " SOURCE " AIUEOS_BUILD_SOURCE_HASH
+                     AIUEOS_BUILD_DIRTY_SUFFIX,
+                     x, y, scale, 0x94a3b8U);
+}
+
 static uint32_t inference_u64(uint64_t value, char *out, uint32_t capacity) {
   char reverse[20]; uint32_t count = 0, written = 0;
   if (!out || !capacity) return 0;
@@ -199,14 +230,20 @@ static const char *inference_phase(enum aiueos_inference_phase phase) {
   }
 }
 
-static void framebuffer_commit(void) {
+static void framebuffer_commit_region(uint32_t x, uint32_t y,
+                                      uint32_t width, uint32_t height) {
   desktop_surface.generation += 1;
   desktop_surface.content_hash =
     sample_hash(desktop_surface_pixels, desktop_surface.width,
                 desktop_surface.height, desktop_surface.stride);
-  desktop_surface.damage_x = 0; desktop_surface.damage_y = 0;
-  desktop_surface.damage_width = desktop_surface.width;
-  desktop_surface.damage_height = desktop_surface.height;
+  desktop_surface.damage_x = x; desktop_surface.damage_y = y;
+  desktop_surface.damage_width = width;
+  desktop_surface.damage_height = height;
+}
+
+static void framebuffer_commit_full(void) {
+  framebuffer_commit_region(0, 0, desktop_surface.width,
+                             desktop_surface.height);
 }
 
 int aiueos_framebuffer_inference_screen(
@@ -217,41 +254,65 @@ int aiueos_framebuffer_inference_screen(
   uint32_t margin = desktop_surface.width / 18U;
   uint32_t value_x = desktop_surface.width / 2U;
   uint32_t y = margin + 12U * scale;
+  uint32_t value_y = y + 10U * scale;
   uint32_t row = 10U * scale;
   uint32_t accent = 0x3b82f6U;
   if (status->phase == AIUEOS_INFERENCE_COMPLETE) accent = 0x35d07fU;
   if (status->phase == AIUEOS_INFERENCE_BLOCKED ||
       status->phase == AIUEOS_INFERENCE_ERROR) accent = 0xff6b6bU;
-  rectangle(desktop_surface_pixels, desktop_surface.stride,
-            desktop_surface.pixel_format, 0, 0, desktop_surface.width,
-            desktop_surface.height, 0x0b1220U);
+  int full_redraw = !inference_screen_initialized;
+  if (full_redraw) {
+    rectangle(desktop_surface_pixels, desktop_surface.stride,
+              desktop_surface.pixel_format, 0, 0, desktop_surface.width,
+              desktop_surface.height, 0x0b1220U);
+  } else {
+    /* The GOP aperture is the live scanout.  Clearing it wholesale exposed a
+       dark frame on every ADMISSION/ERROR and every model-layer callback.
+       Keep the static labels intact and erase only the changing value pane. */
+    rectangle(desktop_surface_pixels, desktop_surface.stride,
+              desktop_surface.pixel_format, value_x, value_y,
+              desktop_surface.width - margin - value_x,
+              10U * row, 0x0b1220U);
+  }
   rectangle(desktop_surface_pixels, desktop_surface.stride,
             desktop_surface.pixel_format, margin, margin,
             desktop_surface.width - 2U * margin, 3U * scale, accent);
-  qualification_text("AIUEOS INFERENCE", margin, y, scale, 0xf4f7f9U);
+  if (full_redraw) {
+    uint32_t identity_scale = desktop_surface.width >= 1280 ? 3U : 2U;
+    framebuffer_build_identity(margin, margin + 5U * scale, identity_scale);
+  }
+  if (full_redraw)
+    qualification_text("AIUEOS INFERENCE", margin, y, scale, 0xf4f7f9U);
   y += row;
-  qualification_text(status->model, margin, y, scale, 0xf4f7f9U);
+  if (full_redraw)
+    qualification_text(status->model, margin, y, scale, 0xf4f7f9U);
   qualification_text(status->quant, value_x, y, scale, 0x94a3b8U);
   y += row;
-  qualification_text("STATE", margin, y, scale, 0x94a3b8U);
+  if (full_redraw)
+    qualification_text("STATE", margin, y, scale, 0x94a3b8U);
   qualification_text(inference_phase(status->phase), value_x, y, scale, accent);
   y += row;
-  qualification_text("DETAIL", margin, y, scale, 0x94a3b8U);
+  if (full_redraw)
+    qualification_text("DETAIL", margin, y, scale, 0x94a3b8U);
   qualification_text(status->detail ? status->detail : "N/A",
                      value_x, y, scale, 0xf4f7f9U);
   y += row;
-  qualification_text("LOAD MS", margin, y, scale, 0x94a3b8U);
+  if (full_redraw)
+    qualification_text("LOAD MS", margin, y, scale, 0x94a3b8U);
   inference_millis(status->load_ns, value_x, y, scale, 0xf4f7f9U);
   y += row;
-  qualification_text("PREFILL TOK/S", margin, y, scale, 0x94a3b8U);
+  if (full_redraw)
+    qualification_text("PREFILL TOK/S", margin, y, scale, 0x94a3b8U);
   inference_rate(status->prompt_tokens, status->prefill_ns,
                  value_x, y, scale, 0xf4f7f9U);
   y += row;
-  qualification_text("DECODE TOK/S", margin, y, scale, 0x94a3b8U);
+  if (full_redraw)
+    qualification_text("DECODE TOK/S", margin, y, scale, 0x94a3b8U);
   inference_rate(status->decode_tokens, status->decode_ns,
                  value_x, y, scale, 0xf4f7f9U);
   y += row;
-  qualification_text("TOKENS", margin, y, scale, 0x94a3b8U);
+  if (full_redraw)
+    qualification_text("TOKENS", margin, y, scale, 0x94a3b8U);
   inference_number(status->generated_tokens, value_x, y, scale, 0xf4f7f9U);
   if (status->target_tokens) {
     uint32_t offset = qualification_text_width("00000000", scale);
@@ -260,18 +321,21 @@ int aiueos_framebuffer_inference_screen(
                      y, scale, 0xf4f7f9U);
   }
   y += row;
-  qualification_text("RESIDENT MIB", margin, y, scale, 0x94a3b8U);
+  if (full_redraw)
+    qualification_text("RESIDENT MIB", margin, y, scale, 0x94a3b8U);
   if (status->resident_bytes == AIUEOS_INFERENCE_UNMEASURED)
     inference_na(value_x, y, scale, 0xf4f7f9U);
   else
     inference_number(status->resident_bytes / (1024ULL * 1024ULL),
                      value_x, y, scale, 0xf4f7f9U);
   y += row;
-  qualification_text("TTFT MS", margin, y, scale, 0x94a3b8U);
+  if (full_redraw)
+    qualification_text("TTFT MS", margin, y, scale, 0x94a3b8U);
   inference_millis(status->time_to_first_token_ns,
                    value_x, y, scale, 0xf4f7f9U);
   y += row;
-  qualification_text("CYCLES", margin, y, scale, 0x94a3b8U);
+  if (full_redraw)
+    qualification_text("CYCLES", margin, y, scale, 0x94a3b8U);
   if (status->compute_cycles) inference_number(status->compute_cycles,
                                                value_x, y, scale, 0xf4f7f9U);
   else inference_na(value_x, y, scale, 0xf4f7f9U);
@@ -292,7 +356,11 @@ int aiueos_framebuffer_inference_screen(
   if (fill) rectangle(desktop_surface_pixels, desktop_surface.stride,
                       desktop_surface.pixel_format, margin, bar_y, fill,
                       6U * scale, accent);
-  framebuffer_commit();
+  inference_screen_initialized = 1;
+  if (full_redraw) framebuffer_commit_full();
+  else framebuffer_commit_region(
+    margin, margin, desktop_surface.width - 2U * margin,
+    bar_y + 6U * scale - margin);
   return 1;
 }
 
@@ -301,6 +369,7 @@ void aiueos_framebuffer_qualification_screen(const char *line1,
                                              const char *line3,
                                              int success) {
   if (!desktop_surface_ready) return;
+  inference_screen_initialized = 0;
   uint32_t scale = desktop_surface.width >= 1280 ? 6 : 4;
   uint32_t margin = desktop_surface.width / 18;
   uint32_t top = desktop_surface.height / 5;
@@ -312,10 +381,14 @@ void aiueos_framebuffer_qualification_screen(const char *line1,
   rectangle(desktop_surface_pixels, desktop_surface.stride,
             desktop_surface.pixel_format, margin, margin,
             desktop_surface.width - 2 * margin, scale * 2, accent);
+  {
+    uint32_t identity_scale = desktop_surface.width >= 1280 ? 3U : 2U;
+    framebuffer_build_identity(margin, margin + 4U * scale, identity_scale);
+  }
   qualification_text(line1, margin, top, scale, 0xf4f7f9);
   qualification_text(line2, margin, top + 12 * scale, scale, 0xf4f7f9);
   qualification_text(line3, margin, top + 24 * scale, scale, accent);
-  framebuffer_commit();
+  framebuffer_commit_full();
 }
 
 /* Boot-desktop WM rects (ADR-0091 hit geometry). C fills and samples;
@@ -419,6 +492,7 @@ static uint64_t sample_hash(volatile uint32_t *fb, uint32_t width,
 
 int aiueos_framebuffer_initialize(const struct aiueos_boot_info *boot) {
   desktop_surface_ready = 0;
+  inference_screen_initialized = 0;
   FRAMEBUFFER_PROGRESS(250);
   if (!boot || !boot->framebuffer_base || !boot->framebuffer_size ||
       boot->framebuffer_width < 320 || boot->framebuffer_height < 200 ||

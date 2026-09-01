@@ -24,6 +24,7 @@ static uint8_t aiueos_owned_memory_map[AIUEOS_OWNED_MEMORY_MAP_BYTES]
  * allocator-backed volatile workspace after owned paging is active. */
 static struct aiueos_inference_status aiueos_qwen35_status;
 static char aiueos_qwen35_progress_detail[] = "T01 L00 OF64";
+static uint32_t aiueos_qwen35_last_render_token = UINT32_MAX;
 static char aiueos_qwen35_output_detail[] = "T01 OUTPUT HEAD";
 static char aiueos_qwen35_decode_detail[] = "TOKEN 00 OF 08";
 static char aiueos_qwen35_first_fail_detail[] = "FIRST TOKEN 000000";
@@ -231,12 +232,16 @@ extern int aiueos_rtl8125_device_worker_result(
     const struct aiueos_boot_info *, uint32_t, uint64_t,
     uint32_t, uint32_t, uint32_t, uint32_t, uint64_t, uint64_t, uint64_t,
     uint32_t, uint32_t);
+extern void aiueos_rtl8125_inference_failure_report(
+    uint64_t, uint32_t, uint32_t, uint32_t, uint32_t);
 #else
 extern int aiueos_rtl8125_direct_https_qualification(void);
 #endif
 extern unsigned aiueos_rtl8125_direct_https_error(void);
 extern unsigned aiueos_rtl8125_direct_https_attempts(void);
 extern uint32_t aiueos_rtl8125_direct_tls_stage(void);
+extern uint32_t aiueos_rtl8125_direct_response_wait_ms(void);
+extern uint32_t aiueos_rtl8125_direct_response_timeout_seconds(void);
 extern uint32_t aiueos_rtl8125_direct_dns_a(void);
 extern int aiueos_rtl8125_direct_http_ready(void);
 extern int aiueos_rtl8125_relay_qualification(void);
@@ -591,7 +596,15 @@ static void aiueos_qwen35_progress(uint32_t completed_layers,
       ? AIUEOS_INFERENCE_PREFILL : AIUEOS_INFERENCE_DECODING;
     aiueos_qwen35_status.detail = aiueos_qwen35_progress_detail;
   }
-  (void)aiueos_framebuffer_inference_screen(&aiueos_qwen35_status);
+  /* The physical GOP aperture is a live scanout, not an atomic page-flip.
+     Preserve per-layer serial evidence but refresh the visible progress only
+     at token boundaries and every fourth trunk layer. */
+  if (output_head || completed_layers == 1U ||
+      completed_layers == total_layers || completed_layers % 4U == 0U ||
+      aiueos_qwen35_active_token != aiueos_qwen35_last_render_token) {
+    (void)aiueos_framebuffer_inference_screen(&aiueos_qwen35_status);
+    aiueos_qwen35_last_render_token = aiueos_qwen35_active_token;
+  }
   serial_string("AIUEOS_QWEN35_PROGRESS layers=");
   serial_decimal(completed_layers);
   serial_string("/");
@@ -641,11 +654,26 @@ static void aiueos_k16_management_wait(uint64_t tsc_hz, uint32_t seconds) {
     defined(AIUEOS_MURAKUMO_DEVICE_RESULT)
   for (uint32_t management_second = 0;
        management_second < seconds; management_second++) {
-    if (aiueos_rtl8125_ssh_poll()) {
-      debug_string("AIUEOS_RTL8125_SSH_SESSION_OK commands=runtime-status,runtime-restart shell=false kernel-reboot=false\n");
-      serial_string("AIUEOS_RTL8125_SSH_SESSION_OK commands=runtime-status,runtime-restart shell=false kernel-reboot=false\r\n");
-    }
-    aiueos_wait_seconds(tsc_hz, 1);
+    /* Keep RX posted for the whole management second.  One short listener
+       followed by a one-second CPU delay leaves the physical link deaf for
+       most of the interval and can phase-lock with macOS SYN retransmission.
+       The listener itself is bounded, so repeat it until the second expires;
+       this changes no command authority and still returns to Murakumo on the
+       original five/30-second schedule. */
+    uint64_t management_start = aiueos_read_tsc();
+    do {
+      if (aiueos_rtl8125_ssh_poll()) {
+        debug_string("AIUEOS_RTL8125_SSH_SESSION_OK commands=runtime-status,runtime-restart,system-reboot-pxe shell=false\n");
+        serial_string("AIUEOS_RTL8125_SSH_SESSION_OK commands=runtime-status,runtime-restart,system-reboot-pxe shell=false\r\n");
+        if (aiueos_management_take_reboot_pxe_request()) {
+          debug_string("AIUEOS_SSH_REBOOT_PXE_ACK reset=uefi-runtime\n");
+          serial_string("AIUEOS_SSH_REBOOT_PXE_ACK reset=uefi-runtime\r\n");
+          (void)aiueos_qualification_reboot();
+          debug_string("AIUEOS_SSH_REBOOT_PXE_FAIL reset=uefi-runtime\n");
+          serial_string("AIUEOS_SSH_REBOOT_PXE_FAIL reset=uefi-runtime\r\n");
+        }
+      }
+    } while (tsc_hz && aiueos_read_tsc() - management_start < tsc_hz);
   }
 #else
   aiueos_wait_seconds(tsc_hz, seconds);
@@ -660,6 +688,16 @@ static uint64_t aiueos_cycles_to_ns(uint64_t cycles, uint64_t tsc_hz) {
   if (whole > (UINT64_MAX - fraction) / 1000000000ULL)
     return AIUEOS_INFERENCE_UNMEASURED;
   return whole * 1000000000ULL + fraction;
+}
+
+static const char *aiueos_worker_transport_detail(void) {
+  switch (aiueos_rtl8125_direct_https_error()) {
+    case 2: return "DNS RETRY";
+    case 6: return "TCP CONNECT RETRY";
+    case 11: return "HTTP RESPONSE TIMEOUT";
+    case 60: return "RESPONSE PARSE ERROR";
+    default: return "NODE RECONNECTING";
+  }
 }
 #endif
 static void serial_ipv4(uint32_t value) {
@@ -1187,7 +1225,7 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
     if (!generation_ok && generation.vector_bits == 256U &&
         generation.generated_tokens &&
         generation.tokens[0] != AIUEOS_QWEN35_REFERENCE_FIRST_TOKEN) {
-      serial_string("AIUEOS_QWEN35_AVX2_REJECT expected=2005 actual=");
+      serial_string("AIUEOS_QWEN35_AVX2_REJECT expected=248046 actual=");
       serial_decimal(generation.tokens[0]);
       serial_string(" fallback=scalar\r\n");
       aiueos_qwen35_force_scalar();
@@ -1222,7 +1260,7 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
       }
       aiueos_qwen35_status.compute_cycles = generation.total_cycles;
       (void)aiueos_framebuffer_inference_screen(&aiueos_qwen35_status);
-      serial_string("AIUEOS_QWEN35_GENERATE_FAIL expected-first=2005 actual=");
+      serial_string("AIUEOS_QWEN35_GENERATE_FAIL expected-first=248046 actual=");
       serial_decimal(generation.generated_tokens ? generation.tokens[0] : UINT32_MAX);
       serial_string(" generated=");
       serial_decimal(generation.generated_tokens);
@@ -1262,7 +1300,7 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
         aiueos_cycles_to_ns(generation.decode_cycles, boot->tsc_hz);
     }
     (void)aiueos_framebuffer_inference_screen(&aiueos_qwen35_status);
-    debug_string("AIUEOS_QWEN35_GENERATE_OK bos=248044 tokens=8 first=2005 reference=matched timing=calibrated-tsc\n");
+    debug_string("AIUEOS_QWEN35_GENERATE_OK bos=248044 tokens=8 first=248046 reference=matched timing=calibrated-tsc\n");
     serial_string("AIUEOS_QWEN35_GENERATE_OK bos=248044 tokens=");
     for (uint32_t token_index = 0;
          token_index < generation.generated_tokens; token_index++) {
@@ -1383,7 +1421,9 @@ qwen_runtime_boot_complete:
       uint32_t error=aiueos_rtl8125_direct_https_error();
       uint32_t code=8600U+error;
 #if defined(AIUEOS_MURAKUMO_DEVICE_RESULT) && defined(AIUEOS_PERSISTENT_BOOT)
-      aiueos_framebuffer_qualification_screen("AIUEOS K16", "MURAKUMO WORKER", "NODE RECONNECTING", 0);
+      aiueos_framebuffer_qualification_screen(
+        "AIUEOS K16", "MURAKUMO WORKER",
+        aiueos_worker_transport_detail(), 0);
 #else
       aiueos_framebuffer_qualification_screen("AIUEOS K16", "FAIL DIRECT HTTPS", "SSD READ ONLY", 0);
 #endif
@@ -1395,6 +1435,10 @@ qwen_runtime_boot_complete:
       serial_decimal(aiueos_rtl8125_direct_https_attempts());
       serial_string(" tls-stage=");
       serial_decimal(aiueos_rtl8125_direct_tls_stage());
+      serial_string(" response-wait-ms=");
+      serial_decimal(aiueos_rtl8125_direct_response_wait_ms());
+      serial_string(" response-timeout-s=");
+      serial_decimal(aiueos_rtl8125_direct_response_timeout_seconds());
       serial_string(" auth=device-p256 nvram-key=true cacao=false passkey=false pq=false biscuit=false\r\n");
 #else
       debug_string("AIUEOS_PHYSICAL_DIRECT_HTTPS_FAIL host=api.murakumo.cloud trust=transport-only secrets=none\n");
@@ -1472,6 +1516,7 @@ qwen_runtime_boot_complete:
     serial_string(aiueos_rtl8125_direct_device_did());
     serial_string(" model=Qwen3.8-27B storage=volatile-ram internal-disk-writes=none\r\n");
     uint32_t heartbeat_failures = 0;
+    uint32_t inference_failures = 0;
     for (;;) {
       uint64_t job_id = 0;
       uint64_t control_id = 0;
@@ -1487,13 +1532,17 @@ qwen_runtime_boot_complete:
             &control_id, &reboot_pxe, &restart_runtime)) {
         heartbeat_failures++;
         aiueos_qwen35_status.phase = AIUEOS_INFERENCE_ERROR;
-        aiueos_qwen35_status.detail = "NODE RECONNECTING";
+        aiueos_qwen35_status.detail = aiueos_worker_transport_detail();
         (void)aiueos_framebuffer_inference_screen(&aiueos_qwen35_status);
         debug_string("AIUEOS_MURAKUMO_HEARTBEAT_RETRY ready=false action=reconnect\n");
         serial_string("AIUEOS_MURAKUMO_HEARTBEAT_RETRY failure=");
         serial_decimal(heartbeat_failures);
         serial_string(" error=");
         serial_decimal(aiueos_rtl8125_direct_https_error());
+        serial_string(" response-wait-ms=");
+        serial_decimal(aiueos_rtl8125_direct_response_wait_ms());
+        serial_string(" response-timeout-s=");
+        serial_decimal(aiueos_rtl8125_direct_response_timeout_seconds());
         serial_string(" action=reconnect\r\n");
         aiueos_k16_management_wait(boot->tsc_hz, 5);
         continue;
@@ -1611,14 +1660,37 @@ qwen_runtime_boot_complete:
             AIUEOS_QWEN35_GENERATION_TOKENS,
             aiueos_qwen35_progress, &job_result) ||
           job_result.tokens[0] != AIUEOS_QWEN35_REFERENCE_FIRST_TOKEN) {
+        inference_failures++;
+        uint32_t failed_token = job_result.failed_token
+          ? job_result.failed_token : job_result.generated_tokens + 1U;
+        uint32_t failure_stage = job_result.failure_stage;
+        if (!failure_stage && job_result.generated_tokens &&
+            job_result.tokens[0] != AIUEOS_QWEN35_REFERENCE_FIRST_TOKEN)
+          failure_stage = AIUEOS_QWEN35_FAILURE_OUTPUT_LOGITS;
         aiueos_qwen35_status.phase = AIUEOS_INFERENCE_ERROR;
-        aiueos_qwen35_status.detail = "JOB INFERENCE RETRY";
+        aiueos_qwen35_format_failure(
+          failed_token, job_result.failed_layer, failure_stage);
+        aiueos_qwen35_status.detail = aiueos_qwen35_decode_fail_detail;
         (void)aiueos_framebuffer_inference_screen(&aiueos_qwen35_status);
+        aiueos_rtl8125_inference_failure_report(
+          job_id, inference_failures, failed_token,
+          job_result.failed_layer, failure_stage);
         serial_string("AIUEOS_MURAKUMO_JOB_INFERENCE_RETRY job-id=");
         serial_decimal64(job_id);
+        serial_string(" attempt=");
+        serial_decimal(inference_failures);
+        serial_string(" failed-token=");
+        serial_decimal(failed_token);
+        serial_string(" failed-layer=");
+        serial_decimal(job_result.failed_layer);
+        serial_string(" failure-stage=");
+        serial_decimal(failure_stage);
         serial_string(" reason=execution-or-token-mismatch action=restart-runtime kernel-reboot=false\r\n");
         (void)aiueos_kototama_runtime_restart();
-        aiueos_wait_seconds(boot->tsc_hz, 5);
+        /* A failed inference must not make the AIUEOS management plane deaf.
+           Preserve the retry policy while providing a bounded SSH window for
+           status, runtime restart and authenticated PXE reboot. */
+        aiueos_k16_management_wait(boot->tsc_hz, 30);
         continue;
       }
       aiueos_qwen35_status.phase = AIUEOS_INFERENCE_COMPLETE;
@@ -1828,8 +1900,8 @@ qwen_runtime_boot_complete:
     serial_string("AIUEOS_PHYSICAL_MODEL_HANDOFF_OK qwen38-27b runtime=not-yet-present internal-disk-writes=none\r\n");
 #else
     (void)aiueos_framebuffer_inference_screen(&aiueos_qwen35_status);
-    debug_string("AIUEOS_PHYSICAL_QWEN35_OK token=2005 reference=matched timing=raw-tsc internal-disk-writes=none\n");
-    serial_string("AIUEOS_PHYSICAL_QWEN35_OK token=2005 cycles=");
+    debug_string("AIUEOS_PHYSICAL_QWEN35_OK token=248046 reference=matched timing=raw-tsc internal-disk-writes=none\n");
+    serial_string("AIUEOS_PHYSICAL_QWEN35_OK token=248046 cycles=");
     serial_decimal64(aiueos_qwen35_status.compute_cycles);
     serial_string(" reference=matched timing=raw-tsc internal-disk-writes=none\r\n");
 #endif

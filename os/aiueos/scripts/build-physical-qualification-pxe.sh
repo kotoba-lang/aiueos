@@ -9,6 +9,7 @@ efi="$out/aiueos-k16-native-pxe.efi"
 receipt="$out/aiueos-k16-native-pxe-receipt.json"
 
 source_commit=$(git -C "$repo" rev-parse HEAD)
+source_version=$(tr -d '\r\n' < "$aiueos/VERSION")
 source_dirty=false
 if [ -n "$(git -C "$repo" status --porcelain --untracked-files=no)" ]; then
   source_dirty=true
@@ -38,7 +39,8 @@ SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH:-0} \
   "$aiueos/scripts/build-uefi.sh" >/dev/null
 cp "$core_out/esp/EFI/BOOT/BOOTX64.EFI" "$efi"
 
-AIUEOS_SOURCE_COMMIT="$source_commit" AIUEOS_SOURCE_DIRTY="$source_dirty" \
+AIUEOS_SOURCE_COMMIT="$source_commit" AIUEOS_SOURCE_VERSION="$source_version" \
+AIUEOS_SOURCE_DIRTY="$source_dirty" \
 AIUEOS_PERSISTENT_BOOT=${AIUEOS_PERSISTENT_BOOT:-0} \
 AIUEOS_QUALIFICATION_LOADER_WATCHDOG_SECONDS=${AIUEOS_QUALIFICATION_LOADER_WATCHDOG_SECONDS:-90} \
 AIUEOS_PHYSICAL_DIRECT_HTTPS_QUALIFICATION=${AIUEOS_PHYSICAL_DIRECT_HTTPS_QUALIFICATION:-0} \
@@ -65,6 +67,7 @@ def artifact(path):
 document = {
     "schema": "aiueos.physical-qualification-pxe-receipt.v1",
     "source": {
+        "version": os.environ["AIUEOS_SOURCE_VERSION"],
         "commit": os.environ["AIUEOS_SOURCE_COMMIT"],
         "dirty": os.environ["AIUEOS_SOURCE_DIRTY"] == "true",
     },
@@ -162,9 +165,9 @@ document = {
         "authorized_key_fingerprint":
             (os.environ["AIUEOS_SSH_AUTHORIZED_KEY_FINGERPRINT"] or None),
         "principal": "runtime",
-        "commands": ["runtime status", "runtime restart"],
+        "commands": ["runtime status", "runtime restart", "system reboot-pxe"],
         "shell": False,
-        "kernel_reboot": False,
+        "kernel_reboot": "uefi-runtime-reset-after-authenticated-ack",
         "physical_k16": "unverified",
     } if os.environ["AIUEOS_SSH_LISTEN"] == "1" else None),
 }
