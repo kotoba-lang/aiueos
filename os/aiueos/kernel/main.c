@@ -1225,7 +1225,7 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
     if (!generation_ok && generation.vector_bits == 256U &&
         generation.generated_tokens &&
         generation.tokens[0] != AIUEOS_QWEN35_REFERENCE_FIRST_TOKEN) {
-      serial_string("AIUEOS_QWEN35_AVX2_REJECT expected=2005 actual=");
+      serial_string("AIUEOS_QWEN35_AVX2_REJECT expected=248046 actual=");
       serial_decimal(generation.tokens[0]);
       serial_string(" fallback=scalar\r\n");
       aiueos_qwen35_force_scalar();
@@ -1260,7 +1260,7 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
       }
       aiueos_qwen35_status.compute_cycles = generation.total_cycles;
       (void)aiueos_framebuffer_inference_screen(&aiueos_qwen35_status);
-      serial_string("AIUEOS_QWEN35_GENERATE_FAIL expected-first=2005 actual=");
+      serial_string("AIUEOS_QWEN35_GENERATE_FAIL expected-first=248046 actual=");
       serial_decimal(generation.generated_tokens ? generation.tokens[0] : UINT32_MAX);
       serial_string(" generated=");
       serial_decimal(generation.generated_tokens);
@@ -1300,7 +1300,7 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
         aiueos_cycles_to_ns(generation.decode_cycles, boot->tsc_hz);
     }
     (void)aiueos_framebuffer_inference_screen(&aiueos_qwen35_status);
-    debug_string("AIUEOS_QWEN35_GENERATE_OK bos=248044 tokens=8 first=2005 reference=matched timing=calibrated-tsc\n");
+    debug_string("AIUEOS_QWEN35_GENERATE_OK bos=248044 tokens=8 first=248046 reference=matched timing=calibrated-tsc\n");
     serial_string("AIUEOS_QWEN35_GENERATE_OK bos=248044 tokens=");
     for (uint32_t token_index = 0;
          token_index < generation.generated_tokens; token_index++) {
@@ -1900,8 +1900,8 @@ qwen_runtime_boot_complete:
     serial_string("AIUEOS_PHYSICAL_MODEL_HANDOFF_OK qwen38-27b runtime=not-yet-present internal-disk-writes=none\r\n");
 #else
     (void)aiueos_framebuffer_inference_screen(&aiueos_qwen35_status);
-    debug_string("AIUEOS_PHYSICAL_QWEN35_OK token=2005 reference=matched timing=raw-tsc internal-disk-writes=none\n");
-    serial_string("AIUEOS_PHYSICAL_QWEN35_OK token=2005 cycles=");
+    debug_string("AIUEOS_PHYSICAL_QWEN35_OK token=248046 reference=matched timing=raw-tsc internal-disk-writes=none\n");
+    serial_string("AIUEOS_PHYSICAL_QWEN35_OK token=248046 cycles=");
     serial_decimal64(aiueos_qwen35_status.compute_cycles);
     serial_string(" reference=matched timing=raw-tsc internal-disk-writes=none\r\n");
 #endif

@@ -67,7 +67,10 @@ static uint32_t qwen_worker_threads = 1U;
 static uint32_t qwen_force_scalar;
 static uint32_t qwen_failure_stage;
 static uint64_t qwen_reference_layer_hashes[AIUEOS_QWEN35_TRUNK_LAYER_COUNT]
-  __attribute__((section(".high_bss")));
+#if defined(__ELF__)
+  __attribute__((section(".high_bss")))
+#endif
+  ;
 static uint32_t qwen_record_reference_layers;
 static uint32_t qwen_compare_reference_layers;
 

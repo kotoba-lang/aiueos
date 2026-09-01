@@ -28,7 +28,7 @@
  :sequence {:input {:tokens [248044] :kind :bos}
             :sampling :greedy
             :generated-tokens 8
-            :first-token-reference 2005
+            :first-token-reference 248046
             :decode-tokens 7
             :maximum-context-for-this-cell 8}
  :measurement {:clock :uefi-calibrated-tsc
@@ -70,7 +70,7 @@
                 :finite-double-attention-score :passed-host
                 :full-attention-key-integrity-shadow :passed-host
                 :nonfinite-failure-diagnostics :passed-host
-                :avx2-first-token-reference :passed-physical
+                :repeat-interleave-position-zero-reference :passed-physical
                 :physical-k16-sequence :pending
                 :murakumo-signed-result :pending}
  :attempts [{:at "2026-08-31T05:32:14Z"
