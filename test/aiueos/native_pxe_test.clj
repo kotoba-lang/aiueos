@@ -51,6 +51,8 @@
   (slurp (io/file "os/aiueos/kernel/inference_status.c")))
 (def inference-status-header
   (slurp (io/file "os/aiueos/kernel/inference_status.h")))
+(def framebuffer
+  (slurp (io/file "os/aiueos/kernel/framebuffer.c")))
 (def inference-status-smoke
   (slurp (io/file "os/aiueos/scripts/smoke-inference-status.sh")))
 (def qwen38-fetch
@@ -431,6 +433,12 @@
                     "NET_TCP_RST | NET_TCP_ACK"
                     "those stale frames hid the third connection's SYN-ACK"]]
       (is (str/includes? pci marker))))
+  (testing "every failed established TLS attempt is actively aborted"
+    (doseq [marker ["int tcp_established = 0"
+                    "if (tcp_established)"
+                    "Abort the failed"
+                    "NET_TCP_RST | NET_TCP_ACK"]]
+      (is (str/includes? pci marker))))
   (testing "a new connection scans past a bounded stale server flight"
     (doseq [marker ["RTL_DIRECT_SYN_SCAN_FRAMES 64U"
                     "more than eight such frames after two successful polls"
@@ -642,6 +650,18 @@
                   "artifact plus 2 GiB headroom"]]
     (is (str/includes? qwen38-fetch marker)))
   (is (str/includes? kernel "aiueos_framebuffer_inference_screen")))
+
+(deftest inference-screen-updates-damage-without-full-frame-flash
+  (testing "only the first inference frame clears the full live GOP scanout"
+    (doseq [marker ["int full_redraw = !inference_screen_initialized"
+                    "erase only the changing value pane"
+                    "framebuffer_commit_region("
+                    "inference_screen_initialized = 1"]]
+      (is (str/includes? framebuffer marker))))
+  (testing "layer progress keeps serial evidence but throttles visible redraws"
+    (doseq [marker ["completed_layers % 4U == 0U"
+                    "aiueos_qwen35_last_render_token"]]
+      (is (str/includes? kernel marker)))))
 
 (deftest qwen38-pure-aiueos-handoff-is-exact-immutable-and-not-generation
   (let [contract (edn/read-string qwen38-handoff-contract)]

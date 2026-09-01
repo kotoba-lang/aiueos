@@ -4552,12 +4552,13 @@ static int rtl8125_direct_tls_pump(uint32_t dst, uint16_t local_port,
 static int rtl8125_direct_tls_attempt(uint32_t dst, uint32_t request_length,
                                       uint32_t connection_sequence,
                                       unsigned attempt) {
-  uint32_t peer_next, our_next, received = 0;
+  uint32_t peer_next = 0, our_next = 0, received = 0;
   uint32_t client_hello_length = 0, finished_length = 0, http_length = 0;
   uint32_t lane = connection_sequence * RTL_DIRECT_TLS_ATTEMPTS + attempt;
   uint32_t isn = RTL_DIRECT_ISN + (lane << 16) + lane;
   uint16_t local_port = (uint16_t)(RTL_DIRECT_LOCAL_PORT + (lane % 12000U));
   uint8_t client_hello[256];
+  int tcp_established = 0;
   rtl8125_direct_tls_pump_error = 0;
   rtl8125_direct_tcp_recoveries = 0;
 
@@ -4611,6 +4612,7 @@ static int rtl8125_direct_tls_attempt(uint32_t dst, uint32_t request_length,
   }
   peer_next = net_load_be32(rtl8125_qualification_device.rx_frame + 38) + 1;
   our_next = isn + 1 + client_hello_length;
+  tcp_established = 1;
   aiueos_rtl8125_rx_rearm(&rtl8125_qualification_device);
   if (!rtl8125_direct_tcp_send(
         dst, local_port, isn + 1, peer_next,
@@ -4662,7 +4664,19 @@ static int rtl8125_direct_tls_attempt(uint32_t dst, uint32_t request_length,
   return 1;
 failed:
   rtl8125_direct_tls_stage = aiueos_tls13_stage();
+  /* A stage-11 failure used to abandon an established four-tuple without
+     closing it.  The Mac passthrough and Cloudflare then kept delivering that
+     old encrypted response while the K16 had already started a fresh TLS
+     attempt.  With one RX descriptor, those stale records repeatedly won the
+     slot and produced the observed ADMISSION/ERROR loop.  Abort the failed
+     connection from the endpoint which owns its sequence numbers before the
+     next ring restart; the bridge sees EOF and closes its upstream socket. */
   aiueos_rtl8125_rx_rearm(&rtl8125_qualification_device);
+  if (tcp_established) {
+    (void)rtl8125_direct_tcp_send(dst, local_port, our_next, peer_next,
+                                  NET_TCP_RST | NET_TCP_ACK, 0, 0);
+    aiueos_rtl8125_rx_rearm(&rtl8125_qualification_device);
+  }
   return 0;
 }
 

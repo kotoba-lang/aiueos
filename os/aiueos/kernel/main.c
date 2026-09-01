@@ -24,6 +24,7 @@ static uint8_t aiueos_owned_memory_map[AIUEOS_OWNED_MEMORY_MAP_BYTES]
  * allocator-backed volatile workspace after owned paging is active. */
 static struct aiueos_inference_status aiueos_qwen35_status;
 static char aiueos_qwen35_progress_detail[] = "T01 L00 OF64";
+static uint32_t aiueos_qwen35_last_render_token = UINT32_MAX;
 static char aiueos_qwen35_output_detail[] = "T01 OUTPUT HEAD";
 static char aiueos_qwen35_decode_detail[] = "TOKEN 00 OF 08";
 static char aiueos_qwen35_first_fail_detail[] = "FIRST TOKEN 000000";
@@ -591,7 +592,15 @@ static void aiueos_qwen35_progress(uint32_t completed_layers,
       ? AIUEOS_INFERENCE_PREFILL : AIUEOS_INFERENCE_DECODING;
     aiueos_qwen35_status.detail = aiueos_qwen35_progress_detail;
   }
-  (void)aiueos_framebuffer_inference_screen(&aiueos_qwen35_status);
+  /* The physical GOP aperture is a live scanout, not an atomic page-flip.
+     Preserve per-layer serial evidence but refresh the visible progress only
+     at token boundaries and every fourth trunk layer. */
+  if (output_head || completed_layers == 1U ||
+      completed_layers == total_layers || completed_layers % 4U == 0U ||
+      aiueos_qwen35_active_token != aiueos_qwen35_last_render_token) {
+    (void)aiueos_framebuffer_inference_screen(&aiueos_qwen35_status);
+    aiueos_qwen35_last_render_token = aiueos_qwen35_active_token;
+  }
   serial_string("AIUEOS_QWEN35_PROGRESS layers=");
   serial_decimal(completed_layers);
   serial_string("/");
