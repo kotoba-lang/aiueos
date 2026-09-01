@@ -331,20 +331,21 @@ static float dot(const float *left, const float *right, uint64_t count) {
    overflow before opposite signs cancel.  Only that exceptional output row
    is replayed in double precision; normal vocabulary scanning keeps the
    physically measured AVX2 path and its operation order. */
-static int output_logit(const float *left, const float *right,
-                        uint32_t count, float *result) {
-  if (!left || !right || !result) return 0;
+static uint32_t output_logit_failure(const float *left, const float *right,
+                                     uint32_t count, float *result) {
   float fast = dot(left, right, count);
   if (finite_float(fast)) {
     *result = fast;
-    return 1;
+    return AIUEOS_QWEN35_FAILURE_NONE;
   }
   double stable;
-  if (!stable_attention_score(left, right, count, &stable)) return 0;
+  if (!stable_attention_score(left, right, count, &stable))
+    return AIUEOS_QWEN35_FAILURE_OUTPUT_OPERANDS;
   /* stable_attention_score applies the 1/sqrt(256) attention scale. */
   stable /= (double)INV_SQRT_HEAD_DIM;
   *result = (float)stable;
-  return finite_float(*result);
+  return finite_float(*result) ? AIUEOS_QWEN35_FAILURE_NONE
+                               : AIUEOS_QWEN35_FAILURE_OUTPUT_RANGE;
 }
 
 static int tensor_row(const struct aiueos_qwen35_tensor *tensor,
@@ -920,12 +921,14 @@ static int evaluate_token(const struct aiueos_qwen35_model *model,
   choice->second_logit = -3.402823466e+38f;
   for (uint32_t token = 0; token < model->vocab_size; token++) {
     if (!tensor_row(&model->output, token, dequantized)) {
-      choice->failure_stage = AIUEOS_QWEN35_FAILURE_OUTPUT_LOGITS;
+      choice->failure_stage = AIUEOS_QWEN35_FAILURE_OUTPUT_ROW;
       return 0;
     }
     float logit;
-    if (!output_logit(dequantized, normalized, EMBED, &logit)) {
-      choice->failure_stage = AIUEOS_QWEN35_FAILURE_OUTPUT_LOGITS;
+    uint32_t output_failure = output_logit_failure(
+      dequantized, normalized, EMBED, &logit);
+    if (output_failure) {
+      choice->failure_stage = output_failure;
       return 0;
     }
     if (logit > choice->logit) {
@@ -1099,6 +1102,7 @@ int aiueos_qwen35_test_cache_resolve(
 
 int aiueos_qwen35_test_output_logit(
     const float *left, const float *right, uint32_t count, float *result) {
-  return output_logit(left, right, count, result);
+  return output_logit_failure(left, right, count, result) ==
+         AIUEOS_QWEN35_FAILURE_NONE;
 }
 #endif

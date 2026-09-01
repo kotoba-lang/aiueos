@@ -104,6 +104,9 @@ INFERENCE_FAILURE_LABELS = {
     14: "output-logits",
     15: "full-query",
     16: "full-cache",
+    17: "output-operands",
+    18: "output-range",
+    19: "output-row",
 }
 
 
