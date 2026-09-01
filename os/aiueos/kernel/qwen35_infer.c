@@ -326,28 +326,6 @@ static float dot(const float *left, const float *right, uint64_t count) {
   return dot_scalar(left, right, count);
 }
 
-/* Keep the AVX2/scalar result on the ordinary path.  A finite pair of vectors
-   can nevertheless produce Inf/NaN when float products or lane accumulators
-   overflow before opposite signs cancel.  Only that exceptional output row
-   is replayed in double precision; normal vocabulary scanning keeps the
-   physically measured AVX2 path and its operation order. */
-static uint32_t output_logit_failure(const float *left, const float *right,
-                                     uint32_t count, float *result) {
-  float fast = dot(left, right, count);
-  if (finite_float(fast)) {
-    *result = fast;
-    return AIUEOS_QWEN35_FAILURE_NONE;
-  }
-  double stable;
-  if (!stable_attention_score(left, right, count, &stable))
-    return AIUEOS_QWEN35_FAILURE_OUTPUT_OPERANDS;
-  /* stable_attention_score applies the 1/sqrt(256) attention scale. */
-  stable /= (double)INV_SQRT_HEAD_DIM;
-  *result = (float)stable;
-  return finite_float(*result) ? AIUEOS_QWEN35_FAILURE_NONE
-                               : AIUEOS_QWEN35_FAILURE_OUTPUT_RANGE;
-}
-
 static int tensor_row(const struct aiueos_qwen35_tensor *tensor,
                       uint64_t row, float *output) {
   if (!tensor || !tensor->data || tensor->dimension_count != 2 ||
@@ -921,14 +899,12 @@ static int evaluate_token(const struct aiueos_qwen35_model *model,
   choice->second_logit = -3.402823466e+38f;
   for (uint32_t token = 0; token < model->vocab_size; token++) {
     if (!tensor_row(&model->output, token, dequantized)) {
-      choice->failure_stage = AIUEOS_QWEN35_FAILURE_OUTPUT_ROW;
+      choice->failure_stage = AIUEOS_QWEN35_FAILURE_OUTPUT_LOGITS;
       return 0;
     }
-    float logit;
-    uint32_t output_failure = output_logit_failure(
-      dequantized, normalized, EMBED, &logit);
-    if (output_failure) {
-      choice->failure_stage = output_failure;
+    float logit = dot(dequantized, normalized, EMBED);
+    if (!finite_float(logit)) {
+      choice->failure_stage = AIUEOS_QWEN35_FAILURE_OUTPUT_LOGITS;
       return 0;
     }
     if (logit > choice->logit) {
@@ -944,7 +920,7 @@ static int evaluate_token(const struct aiueos_qwen35_model *model,
   uint64_t finished = read_cycles();
   choice->cycles = finished >= started ? finished - started : 0;
   if (choice->token == UINT32_MAX || choice->second_token == UINT32_MAX) {
-    choice->failure_stage = AIUEOS_QWEN35_FAILURE_OUTPUT_LOGITS;
+    choice->failure_stage = AIUEOS_QWEN35_FAILURE_OUTPUT_SELECTION;
     return 0;
   }
   return 1;
@@ -1043,7 +1019,14 @@ int aiueos_qwen35_generate(
     result->total_cycles += choice.cycles;
     if (!position) {
       result->first_token_cycles = choice.cycles;
-      if (choice.token != AIUEOS_QWEN35_REFERENCE_FIRST_TOKEN) return 0;
+      if (choice.token != AIUEOS_QWEN35_REFERENCE_FIRST_TOKEN) {
+        result->failed_token = 1U;
+        /* The output head is outside the trunk, so this field carries the
+           observed token for the bounded physical failure report. */
+        result->failed_layer = choice.token;
+        result->failure_stage = AIUEOS_QWEN35_FAILURE_REFERENCE_TOKEN;
+        return 0;
+      }
     } else {
       result->decode_cycles += choice.cycles;
       result->decode_tokens++;
@@ -1100,9 +1083,4 @@ int aiueos_qwen35_test_cache_resolve(
   return resolved_cached_key(&decode, 0, 0) == primary;
 }
 
-int aiueos_qwen35_test_output_logit(
-    const float *left, const float *right, uint32_t count, float *result) {
-  return output_logit_failure(left, right, count, result) ==
-         AIUEOS_QWEN35_FAILURE_NONE;
-}
 #endif
