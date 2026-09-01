@@ -128,7 +128,10 @@
                     "AIUEOS_NETBOOT_EMBEDDED_OK kernel+initramfs sha256-v1"]]
       (is (str/includes? loader marker)))
     (doseq [marker [".incbin" "AIUEOS_EMBEDDED_RELEASE"
-                    "embedded-release.obj"]]
+                    "embedded-release.obj"
+                    "aiueos-embedded-kernel-sha256="
+                    "AIUEOS_EMBEDDED_POSTLINK_OK"
+                    "linked EFI must contain exactly one current"]]
       (is (str/includes? build marker)))
     (is (str/includes? release-build "AIUEOS_NETBOOT_QUALIFICATION=1"))
     (is (str/includes? release-build "AIUEOS_SOURCE_DIRTY"))

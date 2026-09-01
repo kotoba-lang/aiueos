@@ -892,11 +892,18 @@ zig cc -target x86_64-windows-gnu -std=c11 -O2 -ffreestanding \
 if [ "${AIUEOS_EMBEDDED_RELEASE:-0}" = 1 ]; then
   python3 - "$kernel" "$initramfs" "$embedded_source" <<'PYEMBED'
 from pathlib import Path
+import hashlib
 import sys
 
-kernel = Path(sys.argv[1]).resolve().as_posix()
-initramfs = Path(sys.argv[2]).resolve().as_posix()
+kernel_path = Path(sys.argv[1]).resolve()
+initramfs_path = Path(sys.argv[2]).resolve()
+kernel = kernel_path.as_posix()
+initramfs = initramfs_path.as_posix()
+kernel_sha256 = hashlib.sha256(kernel_path.read_bytes()).hexdigest()
+initramfs_sha256 = hashlib.sha256(initramfs_path.read_bytes()).hexdigest()
 Path(sys.argv[3]).write_text(
+    f'# aiueos-embedded-kernel-sha256={kernel_sha256}\n'
+    f'# aiueos-embedded-initramfs-sha256={initramfs_sha256}\n'
     '.section .rdata,"dr"\n'
     '.balign 16\n'
     '.globl aiueos_embedded_kernel_start\n'
@@ -932,6 +939,25 @@ zig cc -target x86_64-windows-gnu -std=c11 -O2 \
 zig lld-link /subsystem:efi_application /entry:efi_main /nodefaultlib /timestamp:0 \
   /fixed:no "/out:$efi" "$object" "$identity_object" \
   $embedded_release_link $model_slots_link
+
+if [ "${AIUEOS_EMBEDDED_RELEASE:-0}" = 1 ]; then
+  # `.incbin` inputs are not compiler source files.  Keep both a content salt
+  # in embedded-release.S (above) and this post-link admission so a stale Zig
+  # object can never be published with fresh expected digests.
+  python3 - "$efi" "$kernel" "$initramfs" <<'PYVERIFYEMBED'
+from pathlib import Path
+import sys
+
+image = Path(sys.argv[1]).read_bytes()
+for label, source in (("kernel", sys.argv[2]), ("initramfs", sys.argv[3])):
+    payload = Path(source).read_bytes()
+    first = image.find(payload)
+    if first < 0 or image.find(payload, first + 1) >= 0:
+        raise SystemExit(
+            f"error: linked EFI must contain exactly one current {label} payload")
+print("AIUEOS_EMBEDDED_POSTLINK_OK kernel+initramfs exact-current-bytes")
+PYVERIFYEMBED
+fi
 
 magic=$(dd if="$efi" bs=1 count=2 2>/dev/null)
 [ "$magic" = MZ ] || {
