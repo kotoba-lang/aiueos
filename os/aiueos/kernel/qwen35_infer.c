@@ -326,6 +326,27 @@ static float dot(const float *left, const float *right, uint64_t count) {
   return dot_scalar(left, right, count);
 }
 
+/* Keep the AVX2/scalar result on the ordinary path.  A finite pair of vectors
+   can nevertheless produce Inf/NaN when float products or lane accumulators
+   overflow before opposite signs cancel.  Only that exceptional output row
+   is replayed in double precision; normal vocabulary scanning keeps the
+   physically measured AVX2 path and its operation order. */
+static int output_logit(const float *left, const float *right,
+                        uint32_t count, float *result) {
+  if (!left || !right || !result) return 0;
+  float fast = dot(left, right, count);
+  if (finite_float(fast)) {
+    *result = fast;
+    return 1;
+  }
+  double stable;
+  if (!stable_attention_score(left, right, count, &stable)) return 0;
+  /* stable_attention_score applies the 1/sqrt(256) attention scale. */
+  stable /= (double)INV_SQRT_HEAD_DIM;
+  *result = (float)stable;
+  return finite_float(*result);
+}
+
 static int tensor_row(const struct aiueos_qwen35_tensor *tensor,
                       uint64_t row, float *output) {
   if (!tensor || !tensor->data || tensor->dimension_count != 2 ||
@@ -902,8 +923,8 @@ static int evaluate_token(const struct aiueos_qwen35_model *model,
       choice->failure_stage = AIUEOS_QWEN35_FAILURE_OUTPUT_LOGITS;
       return 0;
     }
-    float logit = dot(dequantized, normalized, EMBED);
-    if (!finite_float(logit)) {
+    float logit;
+    if (!output_logit(dequantized, normalized, EMBED, &logit)) {
       choice->failure_stage = AIUEOS_QWEN35_FAILURE_OUTPUT_LOGITS;
       return 0;
     }
@@ -1074,5 +1095,10 @@ int aiueos_qwen35_test_cache_resolve(
     .full_key_hash = &expected_hash
   };
   return resolved_cached_key(&decode, 0, 0) == primary;
+}
+
+int aiueos_qwen35_test_output_logit(
+    const float *left, const float *right, uint32_t count, float *result) {
+  return output_logit(left, right, count, result);
 }
 #endif

@@ -20,6 +20,8 @@ int aiueos_qwen35_test_attention_score(
 uint64_t aiueos_qwen35_test_cache_hash(const float[FULL_KV]);
 int aiueos_qwen35_test_cache_resolve(
     float[FULL_KV], float[FULL_KV], uint64_t);
+int aiueos_qwen35_test_output_logit(
+    const float *, const float *, uint32_t, float *);
 
 int aiueos_qwen35_dequantize_row(uint32_t type, const uint8_t *data,
                                  uint64_t elements, float *output) {
@@ -45,6 +47,7 @@ static float expected_state[HEAD * HEAD];
 static float key[HEAD], query[HEAD], value[HEAD];
 static float correction[HEAD], output[HEAD], expected_output[HEAD];
 static float primary_cache[FULL_KV], shadow_cache[FULL_KV];
+static float output_left[5120], output_right[5120];
 
 static void reference_step(float decay, float beta) {
   float reference_correction[HEAD];
@@ -108,6 +111,17 @@ int main(void) {
   CHECK(!aiueos_qwen35_test_cache_resolve(
           primary_cache, shadow_cache, cache_hash));
 
+  /* The ordinary float dot overflows its positive and negative lanes, while
+     the mathematically finite cancellation remains representable. */
+  for (uint32_t i = 0; i < 5120U; i++) {
+    output_left[i] = 1.0e30f;
+    output_right[i] = i & 1U ? -1.0e30f : 1.0e30f;
+  }
+  float stable_output = 1.0f;
+  CHECK(aiueos_qwen35_test_output_logit(
+          output_left, output_right, 5120U, &stable_output));
+  CHECK(stable_output == 0.0f);
+
   const float samples[] = {-10.0f, -1.0f, 0.0f, 1.0f, 10.0f};
   for (uint32_t i = 0; i < sizeof(samples) / sizeof(samples[0]); i++) {
     float expected = log1pf(expf(samples[i]));
@@ -143,6 +157,6 @@ int main(void) {
   for (uint32_t i = 0; i < HEAD; i++)
     CHECK(near(output[i], expected_output[i], 0.000001f));
 
-  puts("AIUEOS_QWEN35_DECODE_MATH_OK softplus=reference rope=partial64 recurrent=delta-rule qk=repeat-interleave score=double");
+  puts("AIUEOS_QWEN35_DECODE_MATH_OK softplus=reference rope=partial64 recurrent=delta-rule qk=repeat-interleave score=double output-overflow=double-fallback");
   return 0;
 }
