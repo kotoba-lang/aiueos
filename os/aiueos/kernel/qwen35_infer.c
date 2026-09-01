@@ -66,6 +66,10 @@ static uint32_t qwen_vector_bits;
 static uint32_t qwen_worker_threads = 1U;
 static uint32_t qwen_force_scalar;
 static uint32_t qwen_failure_stage;
+static uint64_t qwen_reference_layer_hashes[AIUEOS_QWEN35_TRUNK_LAYER_COUNT]
+  __attribute__((section(".high_bss")));
+static uint32_t qwen_record_reference_layers;
+static uint32_t qwen_compare_reference_layers;
 
 const char *aiueos_qwen35_failure_stage_label(uint32_t stage) {
   switch (stage) {
@@ -85,6 +89,7 @@ const char *aiueos_qwen35_failure_stage_label(uint32_t stage) {
     case AIUEOS_QWEN35_FAILURE_OUTPUT_LOGITS: return "LOGITS NAN";
     case AIUEOS_QWEN35_FAILURE_FULL_QUERY: return "FULL QUERY";
     case AIUEOS_QWEN35_FAILURE_FULL_CACHE: return "KV CACHE";
+    case AIUEOS_QWEN35_FAILURE_REFERENCE_LAYER: return "LAYER DIFF";
     default: return "UNKNOWN";
   }
 }
@@ -891,6 +896,15 @@ static int evaluate_token(const struct aiueos_qwen35_model *model,
       choice->failure_stage = AIUEOS_QWEN35_FAILURE_STATE_NONFINITE;
       return 0;
     }
+    uint64_t state_hash = float_values_hash(state, EMBED);
+    if (qwen_record_reference_layers)
+      qwen_reference_layer_hashes[index] = state_hash;
+    else if (qwen_compare_reference_layers &&
+             qwen_reference_layer_hashes[index] != state_hash) {
+      choice->failed_layer = index + 1U;
+      choice->failure_stage = AIUEOS_QWEN35_FAILURE_REFERENCE_LAYER;
+      return 0;
+    }
     if (progress) progress(index + 1U, AIUEOS_QWEN35_TRUNK_LAYER_COUNT, 0);
   }
 
@@ -1011,12 +1025,37 @@ int aiueos_qwen35_generate(
   result->failed_token = 0;
   result->failed_layer = 0;
   result->failure_stage = AIUEOS_QWEN35_FAILURE_NONE;
+
+  /* A bounded physical diagnostic records the already-qualified cache-free
+     state after each layer, then checks the cache-populating position-zero
+     path against it.  It turns a final argmax mismatch into the first exact
+     layer coordinate without persisting model activations or weights. */
+  struct qwen35_token_choice reference_choice;
+  qwen_record_reference_layers = 1U;
+  int reference_ok = evaluate_token(
+    model, input_token, 0, 0, &reference_choice);
+  qwen_record_reference_layers = 0U;
+  if (!reference_ok ||
+      reference_choice.token != AIUEOS_QWEN35_REFERENCE_FIRST_TOKEN) {
+    result->failed_token = 1U;
+    result->failed_layer = reference_ok ? reference_choice.token
+                                        : reference_choice.failed_layer;
+    result->failure_stage = reference_ok
+      ? AIUEOS_QWEN35_FAILURE_REFERENCE_TOKEN
+      : reference_choice.failure_stage;
+    return 0;
+  }
+
   uint32_t current_input = input_token;
   for (uint32_t position = 0; position < generated_tokens; position++) {
     struct qwen35_token_choice choice;
     decode.position = position;
     if (progress) progress(position + 1U, generated_tokens, 3);
-    if (!evaluate_token(model, current_input, &decode, progress, &choice)) {
+    qwen_compare_reference_layers = !position;
+    int token_ok = evaluate_token(
+      model, current_input, &decode, progress, &choice);
+    qwen_compare_reference_layers = 0U;
+    if (!token_ok) {
       result->failed_token = position + 1U;
       result->failed_layer = choice.failed_layer;
       result->failure_stage = choice.failure_stage;
