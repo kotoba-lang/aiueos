@@ -585,9 +585,10 @@ static int linear_attention(const struct aiueos_qwen35_layer *layer,
     float mixed = current * kernel[channel * 4U + 3U];
     if (conv) {
       float *history = conv + (uint64_t)channel * LINEAR_CONV_HISTORY;
-      mixed += history[0] * kernel[channel * 4U + 0U] +
-               history[1] * kernel[channel * 4U + 1U] +
-               history[2] * kernel[channel * 4U + 2U];
+      if (decode->position)
+        mixed += history[0] * kernel[channel * 4U + 0U] +
+                 history[1] * kernel[channel * 4U + 1U] +
+                 history[2] * kernel[channel * 4U + 2U];
       history[0] = history[1];
       history[1] = history[2];
       history[2] = current;
