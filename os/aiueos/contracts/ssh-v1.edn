@@ -98,7 +98,7 @@
    :authorized-key :build-pinned-public-p256
    :authorized-key-writer "os/aiueos/scripts/write-ssh-authorized-key-header.py"
    :management-key-generator "os/aiueos/scripts/make-ssh-management-key.mjs"
-   :state :landed-build-physical-unverified}
+   :state :physical-runtime-status-verified}
   :ssd-install-record
   {:schema "aiueos.provision.v1"
    :written-by "os/aiueos/scripts/make-provision-record.cljs"
@@ -171,18 +171,18 @@
            :selftest "AIUEOS_RANDOM_OK (main.c, behind -DAIUEOS_SSH_LISTEN)"
            :state :landed}
 
- ;; Historical blockers are retained as resolved evidence.  The remaining gate
- ;; is physical reachability from the Mac to the K16 over RTL8125, including a
- ;; successful command and a wrong-key refusal after a reboot.
+ ;; Historical blockers are retained as resolved evidence.  A Mac outside the
+ ;; EFI completed Device-P256 host-key verification, publickey auth and
+ ;; `runtime status` after a physical PXE reboot on 2026-09-01.  The remaining
+ ;; reachability claims are the negative wrong-key/password checks.
  :blockers
  {:passive-open :resolved
   :command-session :resolved-in-qemu
   :entropy-and-sign :resolved
   :persistent-service-loop :resolved-for-k16-worker
-  :physical-rtl8125-external-session
-  "UNVERIFIED until the K16 accepts the pinned Mac key on 10.77.0.10:22,
-   executes runtime status/restart, refuses a wrong key, and repeats after
-   reboot."}
+  :physical-rtl8125-external-session :resolved-runtime-status-after-reboot
+  :physical-negative-auth
+  "UNVERIFIED until the physical K16 refuses a wrong key and password."}
 
  :state
  {:i4 :command-session-complete          ; ADR-0109: full SSH command login -- kex + host auth + aes128-gcm + publickey userauth + session/exec channel -> command output, verified by an independent client. remaining is breadth (interactive shell, pty, rekey), not a missing layer
@@ -204,13 +204,13 @@
                     :coalesced-newkeys-service-request :retained
                     :none-method-probe :explicitly-refused-publickey-only
                     :publickey-test-probe :authorized-key-only-pk-ok
-                    :physical-k16 :landed-build-unverified}
+                    :physical-k16 :verified-runtime-status-via-unprivileged-mac-transport}
   :session-channel :landed             ; ADR-0109: CHANNEL_OPEN session -> exec -> CHANNEL_DATA (command output) -> exit-status/eof/close, in net_ssh_userauth
   :command-session :verified-by-independent-client ; capability-limited management, not a root shell
   :commands ["runtime status" "runtime restart"]
   :unknown-command :refused
   :runtime-restart {:kernel-reboot? false :network-preserved? true}
-  :physical-rtl8125-listener :landed-build-unverified
+  :physical-rtl8125-listener :physical-runtime-status-verified
   :host-key {:qemu-gate :fixed-ecdsa-p256
              :physical-k16 :device-p256-uefi-nvram}
   :kernel-size 516672                  ; ADR-0107: --strip-all dropped the file from 1067112 to 516672 (loadable was always ~516k)

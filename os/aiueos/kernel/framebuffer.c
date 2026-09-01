@@ -2,6 +2,24 @@
 #include "../include/boot_info.h"
 #include "inference_status.h"
 
+/* Release builds generate this header from os/aiueos/VERSION and the clean
+   source commit.  Host-only framebuffer tests intentionally use the explicit
+   fallback, so the renderer remains independently compilable. */
+#if defined(__has_include)
+#if __has_include("aiueos-build-identity.h")
+#include "aiueos-build-identity.h"
+#endif
+#endif
+#ifndef AIUEOS_BUILD_VERSION
+#define AIUEOS_BUILD_VERSION "UNVERSIONED"
+#endif
+#ifndef AIUEOS_BUILD_SOURCE_HASH
+#define AIUEOS_BUILD_SOURCE_HASH "UNVERIFIED"
+#endif
+#ifndef AIUEOS_BUILD_DIRTY_SUFFIX
+#define AIUEOS_BUILD_DIRTY_SUFFIX "-DIRTY"
+#endif
+
 extern int aiueos_map_framebuffer(uint64_t address, uint64_t length);
 
 #ifdef AIUEOS_PHYSICAL_QUALIFICATION
@@ -138,6 +156,18 @@ static uint32_t qualification_text_width(const char *text, uint32_t scale) {
   return length * 6U * scale;
 }
 
+/* This is deliberately a source/build identity, not the SHA-256 of the EFI
+   that contains it: embedding an artifact's own digest would be
+   self-referential.  The complete EFI SHA-256 remains in the signed build
+   receipt, keyed by this version and source hash. */
+static void framebuffer_build_identity(uint32_t x, uint32_t y,
+                                       uint32_t scale) {
+  qualification_text("AIUEOS " AIUEOS_BUILD_VERSION
+                     " SOURCE " AIUEOS_BUILD_SOURCE_HASH
+                     AIUEOS_BUILD_DIRTY_SUFFIX,
+                     x, y, scale, 0x94a3b8U);
+}
+
 static uint32_t inference_u64(uint64_t value, char *out, uint32_t capacity) {
   char reverse[20]; uint32_t count = 0, written = 0;
   if (!out || !capacity) return 0;
@@ -247,6 +277,10 @@ int aiueos_framebuffer_inference_screen(
   rectangle(desktop_surface_pixels, desktop_surface.stride,
             desktop_surface.pixel_format, margin, margin,
             desktop_surface.width - 2U * margin, 3U * scale, accent);
+  if (full_redraw) {
+    uint32_t identity_scale = desktop_surface.width >= 1280 ? 3U : 2U;
+    framebuffer_build_identity(margin, margin + 5U * scale, identity_scale);
+  }
   if (full_redraw)
     qualification_text("AIUEOS INFERENCE", margin, y, scale, 0xf4f7f9U);
   y += row;
@@ -347,6 +381,10 @@ void aiueos_framebuffer_qualification_screen(const char *line1,
   rectangle(desktop_surface_pixels, desktop_surface.stride,
             desktop_surface.pixel_format, margin, margin,
             desktop_surface.width - 2 * margin, scale * 2, accent);
+  {
+    uint32_t identity_scale = desktop_surface.width >= 1280 ? 3U : 2U;
+    framebuffer_build_identity(margin, margin + 4U * scale, identity_scale);
+  }
   qualification_text(line1, margin, top, scale, 0xf4f7f9);
   qualification_text(line2, margin, top + 12 * scale, scale, 0xf4f7f9);
   qualification_text(line3, margin, top + 24 * scale, scale, accent);

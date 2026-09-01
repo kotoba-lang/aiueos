@@ -22,6 +22,10 @@
   (slurp (io/file "os/aiueos/contracts/ssh-v1.edn")))
 (def k16-runtime-client
   (slurp (io/file "os/aiueos/scripts/k16-runtime.sh")))
+(def k16-ssh-transport
+  (slurp (io/file "os/aiueos/scripts/k16-ssh-transport.py")))
+(def aiueos-version
+  (str/trim (slurp (io/file "os/aiueos/VERSION"))))
 (def rtl8125 (slurp (io/file "os/aiueos/kernel/rtl8125.c")))
 (def pci (slurp (io/file "os/aiueos/kernel/pci.c")))
 (def kernel (slurp (io/file "os/aiueos/kernel/main.c")))
@@ -362,14 +366,41 @@
                     "shell=false kernel-reboot=false"]]
       (is (str/includes? kernel marker)))
     (doseq [marker ["PasswordAuthentication=no"
+                    "MACs=hmac-sha1"
+                    "ProxyCommand=$proxy_command"
+                    "HostKeyAlias=aiueos-k16-7070fc0bb632"
+                    "/usr/bin/env -i"
                     "runtime@10.77.0.10"
                     "runtime status"
                     "runtime restart"]]
       (is (str/includes? k16-runtime-client marker)))
-    (doseq [marker [":physical-rtl8125-listener :landed-build-unverified"
+    (doseq [marker ["TCP_ENABLE_ECN"
+                    "read_ssh_packet_fd"
+                    "server_newkeys_seen"
+                    "client_newkeys_sent"
+                    "AIUEOS_K16_SSH_TRANSPORT_TCP_OK"]]
+      (is (str/includes? k16-ssh-transport marker)))
+    (doseq [marker [":physical-rtl8125-listener :physical-runtime-status-verified"
                     ":physical-k16 :device-p256-uefi-nvram"
                     ":commands [\"runtime status\" \"runtime restart\"]"]]
       (is (str/includes? ssh-contract marker)))))
+
+(deftest boot-screen-carries-version-and-source-identity
+  (is (re-matches #"[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?"
+                  aiueos-version))
+  (doseq [marker ["aiueos-build-identity.h"
+                  "AIUEOS_BUILD_VERSION"
+                  "AIUEOS_BUILD_SOURCE_HASH"
+                  "AIUEOS_BUILD_DIRTY_SUFFIX"
+                  "build_source_commit=$(git -C \"$repo\" rev-parse HEAD)"]]
+    (is (str/includes? build marker)))
+  (doseq [marker ["framebuffer_build_identity"
+                  "AIUEOS \" AIUEOS_BUILD_VERSION"
+                  "\" SOURCE \" AIUEOS_BUILD_SOURCE_HASH"
+                  "not the SHA-256 of the EFI"]]
+    (is (str/includes? framebuffer marker)))
+  (is (str/includes? release-build
+                     "\"version\": os.environ[\"AIUEOS_SOURCE_VERSION\"]")))
 
 (deftest network-reboot-acks-before-uefi-runtime-reset
   (testing "the signed worker protocol has a result-free control ACK"
