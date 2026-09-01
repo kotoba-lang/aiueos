@@ -339,6 +339,23 @@
                     "if (!net_ssh_recv(io, sseq, 8))"
                     "if (!net_ssh_recv(io, NET_SSH_ISN + 1 + NET_SSH_ID_LEN, 8))"]]
       (is (str/includes? pci marker))))
+  (testing "the direct Mac path accepts ECN and one complete OpenSSH KEXINIT"
+    (doseq [marker ["NET_TCP_SYN | NET_TCP_ECE | NET_TCP_CWR"
+                    "macOS enables ECN on an active open"
+                    "RTL8125_SSH_RX_WINDOW 1024U"
+                    "net_tx_window = RTL8125_SSH_RX_WINDOW"
+                    "physical SSH receive window must fit one Ethernet frame"]]
+      (is (str/includes? pci marker))))
+  (testing "OpenSSH stream framing and the none method probe are explicit"
+    (doseq [marker ["OpenSSH commonly puts its unencrypted 16-byte NEWKEYS"
+                    "coalesced_length = dlen - newkeys_wire_length"
+                    "ssh_userauth_method_is(up, uplen, \"none\")"
+                    "failure[o++] = 51"
+                    "ssh_ps(failure, o, (const uint8_t *)\"publickey\", 9)"
+                    "ssh_userauth_method_is(up, uplen, \"publickey\")"
+                    "publickey_ok[o++] = 60"
+                    "ssh_authorized_publickey_blob"]]
+      (is (str/includes? pci marker))))
   (testing "management can restart Kototama but cannot obtain a shell or reboot"
     (doseq [marker ["AIUEOS_RTL8125_SSH_SESSION_OK"
                     "commands=runtime-status,runtime-restart"

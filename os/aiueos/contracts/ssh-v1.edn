@@ -199,6 +199,12 @@
   :userauth :landed                    ; ADR-0108: publickey ecdsa-sha2-nistp256, signature over signed-data verified vs the authorized key
   :authorized-key :build-pinned-ecdsa-p256-public
   :full-login :verified-by-independent-client ; ADR-0108: a node client completed kex+gcm+userauth and got USERAUTH_SUCCESS
+  :openssh-interop {:ecn-syn :accepted
+                    :kexinit-window-bytes 1024
+                    :coalesced-newkeys-service-request :retained
+                    :none-method-probe :explicitly-refused-publickey-only
+                    :publickey-test-probe :authorized-key-only-pk-ok
+                    :physical-k16 :landed-build-unverified}
   :session-channel :landed             ; ADR-0109: CHANNEL_OPEN session -> exec -> CHANNEL_DATA (command output) -> exit-status/eof/close, in net_ssh_userauth
   :command-session :verified-by-independent-client ; capability-limited management, not a root shell
   :commands ["runtime status" "runtime restart"]
