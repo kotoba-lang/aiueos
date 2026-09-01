@@ -606,6 +606,17 @@
                     "tls-ready="
                     "http-prefix="]]
       (is (str/includes? server marker))))
+  (testing "runtime failures expose bounded coordinates and keep management alive"
+    (doseq [marker ["AIUEOS_INFERENCE_RX "
+                    "aiueos_rtl8125_inference_failure_report"
+                    "failed_token, job_result.failed_layer, failure_stage"
+                    "aiueos_k16_management_wait(boot->tsc_hz, 30)"]]
+      (is (or (str/includes? pci marker) (str/includes? kernel marker))))
+    (doseq [marker ["def inference_diagnostic(message):"
+                    "AIUEOS_INFERENCE_DIAG timestamp="
+                    "failure-stage={stage}:"
+                    "full-softmax"]]
+      (is (str/includes? server marker))))
   (testing "the framebuffer and serial stream name the failing transport phase"
     (doseq [marker ["aiueos_worker_transport_detail"
                     "HTTP RESPONSE TIMEOUT"

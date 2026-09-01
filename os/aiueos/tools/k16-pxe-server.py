@@ -86,6 +86,25 @@ WORKER_STATUS_LABELS = {
     "o": "result-ok",
     "F": "result-retry",
 }
+INFERENCE_FAILURE_LABELS = {
+    0: "none",
+    1: "embedding",
+    2: "attention-projection",
+    3: "linear-alpha",
+    4: "linear-conv",
+    5: "linear-decay",
+    6: "linear-recurrent",
+    7: "linear-output",
+    8: "full-key",
+    9: "full-softmax",
+    10: "full-output",
+    11: "ffn",
+    12: "state-nonfinite",
+    13: "output-norm",
+    14: "output-logits",
+    15: "full-query",
+    16: "full-cache",
+}
 
 
 def worker_diagnostic(message):
@@ -128,6 +147,24 @@ def worker_diagnostic(message):
         f"response-timeout-s={response_timeout_s} "
         f"vector-bits={vector_bits} worker-threads={worker_threads} "
         f"http-prefix={prefix}")
+
+
+def inference_diagnostic(message):
+    """Decode public job coordinates from a failed native inference."""
+    parts = message.split()
+    if len(parts) != 6 or parts[0] != "AIUEOS_INFERENCE_RX" or not \
+            re.fullmatch(r"[0-9a-fA-F]{16}", parts[1]) or any(
+                not re.fullmatch(r"[0-9a-fA-F]{8}", field)
+                for field in parts[2:]):
+        return None
+    job_id = int(parts[1], 16)
+    attempt, token, layer, stage = [int(field, 16) for field in parts[2:]]
+    timestamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    return (
+        f"AIUEOS_INFERENCE_DIAG timestamp={timestamp} job-id={job_id} "
+        f"attempt={attempt} failed-token={token} failed-layer={layer} "
+        f"failure-stage={stage}:"
+        f"{INFERENCE_FAILURE_LABELS.get(stage, 'unknown')}")
 
 
 INTERFACE = os.environ.get("AIUEOS_PXE_INTERFACE", "en11")
@@ -920,6 +957,9 @@ def netlog_server():
         diagnostic = worker_diagnostic(message)
         if diagnostic:
             print(f"{diagnostic} from={peer[0]}:{peer[1]}", flush=True)
+        inference = inference_diagnostic(message)
+        if inference:
+            print(f"{inference} from={peer[0]}:{peer[1]}", flush=True)
         ack = node_ack_payload(message)
         if ack and peer[0] == CLIENT_IP:
             sock.sendto(ack, peer)
@@ -1037,6 +1077,16 @@ def selftest():
             raise AssertionError("group-readable credential accepted")
         except RuntimeError:
             pass
+
+    inference = inference_diagnostic(
+        "AIUEOS_INFERENCE_RX 00065a69e05b19ca 00000002 "
+        "00000002 00000004 00000009")
+    assert inference and "job-id=1788260642396618" in inference
+    assert "attempt=2" in inference and "failed-token=2" in inference
+    assert "failed-layer=4" in inference and "failure-stage=9:full-softmax" \
+        in inference
+    assert inference_diagnostic(
+        "AIUEOS_INFERENCE_RX 00065a4db6b359ca 00000002") is None
 
     request = bytearray(240)
     request[0:4] = bytes((1, 1, 6, 0))

@@ -232,6 +232,8 @@ extern int aiueos_rtl8125_device_worker_result(
     const struct aiueos_boot_info *, uint32_t, uint64_t,
     uint32_t, uint32_t, uint32_t, uint32_t, uint64_t, uint64_t, uint64_t,
     uint32_t, uint32_t);
+extern void aiueos_rtl8125_inference_failure_report(
+    uint64_t, uint32_t, uint32_t, uint32_t, uint32_t);
 #else
 extern int aiueos_rtl8125_direct_https_qualification(void);
 #endif
@@ -1514,6 +1516,7 @@ qwen_runtime_boot_complete:
     serial_string(aiueos_rtl8125_direct_device_did());
     serial_string(" model=Qwen3.8-27B storage=volatile-ram internal-disk-writes=none\r\n");
     uint32_t heartbeat_failures = 0;
+    uint32_t inference_failures = 0;
     for (;;) {
       uint64_t job_id = 0;
       uint64_t control_id = 0;
@@ -1657,14 +1660,37 @@ qwen_runtime_boot_complete:
             AIUEOS_QWEN35_GENERATION_TOKENS,
             aiueos_qwen35_progress, &job_result) ||
           job_result.tokens[0] != AIUEOS_QWEN35_REFERENCE_FIRST_TOKEN) {
+        inference_failures++;
+        uint32_t failed_token = job_result.failed_token
+          ? job_result.failed_token : job_result.generated_tokens + 1U;
+        uint32_t failure_stage = job_result.failure_stage;
+        if (!failure_stage && job_result.generated_tokens &&
+            job_result.tokens[0] != AIUEOS_QWEN35_REFERENCE_FIRST_TOKEN)
+          failure_stage = AIUEOS_QWEN35_FAILURE_OUTPUT_LOGITS;
         aiueos_qwen35_status.phase = AIUEOS_INFERENCE_ERROR;
-        aiueos_qwen35_status.detail = "JOB INFERENCE RETRY";
+        aiueos_qwen35_format_failure(
+          failed_token, job_result.failed_layer, failure_stage);
+        aiueos_qwen35_status.detail = aiueos_qwen35_decode_fail_detail;
         (void)aiueos_framebuffer_inference_screen(&aiueos_qwen35_status);
+        aiueos_rtl8125_inference_failure_report(
+          job_id, inference_failures, failed_token,
+          job_result.failed_layer, failure_stage);
         serial_string("AIUEOS_MURAKUMO_JOB_INFERENCE_RETRY job-id=");
         serial_decimal64(job_id);
+        serial_string(" attempt=");
+        serial_decimal(inference_failures);
+        serial_string(" failed-token=");
+        serial_decimal(failed_token);
+        serial_string(" failed-layer=");
+        serial_decimal(job_result.failed_layer);
+        serial_string(" failure-stage=");
+        serial_decimal(failure_stage);
         serial_string(" reason=execution-or-token-mismatch action=restart-runtime kernel-reboot=false\r\n");
         (void)aiueos_kototama_runtime_restart();
-        aiueos_wait_seconds(boot->tsc_hz, 5);
+        /* A failed inference must not make the AIUEOS management plane deaf.
+           Preserve the retry policy while providing a bounded SSH window for
+           status, runtime restart and authenticated PXE reboot. */
+        aiueos_k16_management_wait(boot->tsc_hz, 30);
         continue;
       }
       aiueos_qwen35_status.phase = AIUEOS_INFERENCE_COMPLETE;

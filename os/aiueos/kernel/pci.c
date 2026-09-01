@@ -4331,6 +4331,40 @@ static void rtl8125_direct_worker_rx_report(
   if (bytes) (void)rtl8125_direct_tx(bytes);
   aiueos_rtl8125_rx_rearm(&rtl8125_qualification_device);
 }
+
+/* Export the exact bounded inference failure coordinates while the physical
+   worker still owns the claim.  Serial and framebuffer diagnostics are not
+   observable from the Mac once ExitBootServices has completed, and the
+   inference loop deliberately has no shell.  This packet contains only the
+   public job id and numeric runtime status; it never includes model bytes,
+   prompts, device keys, signatures or response JSON. */
+void aiueos_rtl8125_inference_failure_report(
+    uint64_t job_id, uint32_t attempt, uint32_t failed_token,
+    uint32_t failed_layer, uint32_t failure_stage) {
+  static const uint8_t prefix[] = "AIUEOS_INFERENCE_RX ";
+  static const char digits[] = "0123456789abcdef";
+  uint32_t fields[4] = {
+    attempt, failed_token, failed_layer, failure_stage
+  };
+  uint32_t length = sizeof(prefix) - 1U;
+  if (!rtl8125_qualification_device.ready || !job_id) return;
+  for (uint32_t i = 0; i < length; i++)
+    rtl_direct_worker_wire[i] = prefix[i];
+  for (int shift = 60; shift >= 0; shift -= 4)
+    rtl_direct_worker_wire[length++] =
+      (uint8_t)digits[(job_id >> shift) & 0x0fU];
+  for (uint32_t field = 0; field < 4U; field++) {
+    rtl_direct_worker_wire[length++] = ' ';
+    for (int shift = 28; shift >= 0; shift -= 4)
+      rtl_direct_worker_wire[length++] =
+        (uint8_t)digits[(fields[field] >> shift) & 0x0fU];
+  }
+  uint32_t bytes = rtl8125_build_udp_payload(
+    rtl8125_qualification_device.tx_frame, rtl_direct_worker_wire,
+    length, (uint16_t)(0x4000U | (attempt & 0x3fffU)));
+  if (bytes) (void)rtl8125_direct_tx(bytes);
+  aiueos_rtl8125_rx_rearm(&rtl8125_qualification_device);
+}
 #endif
 
 static int rtl8125_direct_rx_budget(uint32_t *received,
