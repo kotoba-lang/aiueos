@@ -4155,6 +4155,7 @@ int aiueos_rtl8125_physical_qualification(void) {
    reconnect interval instead. */
 #define RTL_DIRECT_RX_BUDGET 50000000U
 #define RTL_DIRECT_RX_WINDOW 256U
+#define RTL_DIRECT_HTTP_TIMEOUT_SECONDS 20U
 #define RTL8125_SSH_RX_WINDOW 1024U
 #define RTL8125_SSH_IDLE_RX_BUDGET 250000U
 #define RTL8125_SSH_LISTEN_ROUNDS 64U
@@ -4209,6 +4210,7 @@ static unsigned rtl8125_direct_https_attempts;
 static unsigned rtl8125_direct_tls_pump_error;
 static unsigned rtl8125_direct_tcp_recoveries;
 static uint32_t rtl8125_direct_tls_stage;
+static uint32_t rtl8125_direct_response_wait_ms;
 static uint32_t rtl8125_direct_dns_a;
 static int rtl8125_direct_http_ready;
 static uint32_t rtl8125_direct_connection_sequence;
@@ -4225,6 +4227,14 @@ unsigned aiueos_rtl8125_direct_https_attempts(void) {
 }
 uint32_t aiueos_rtl8125_direct_tls_stage(void) {
   return rtl8125_direct_tls_stage;
+}
+
+uint32_t aiueos_rtl8125_direct_response_wait_ms(void) {
+  return rtl8125_direct_response_wait_ms;
+}
+
+uint32_t aiueos_rtl8125_direct_response_timeout_seconds(void) {
+  return RTL_DIRECT_HTTP_TIMEOUT_SECONDS;
 }
 uint32_t aiueos_rtl8125_direct_dns_a(void) { return rtl8125_direct_dns_a; }
 int aiueos_rtl8125_direct_http_ready(void) { return rtl8125_direct_http_ready; }
@@ -4281,23 +4291,26 @@ static void rtl8125_direct_worker_wire_copy(
    shifted buffer; response JSON, signatures and device-private material are
    deliberately excluded.  The compact wire fields are status, sequence,
    error, TLS stage, pump error, TCP recovery count, application length, Qwen
-   vector width, Qwen worker count and a 12-byte prefix. */
+   vector width, Qwen worker count, response wait milliseconds, configured
+   response timeout seconds and a 12-byte prefix. */
 static void rtl8125_direct_worker_rx_report(
     uint32_t sequence, uint8_t status) {
   static const uint8_t prefix[] = "AIUEOS_WORKER_RX ";
   static const char digits[] = "0123456789abcdef";
   const uint8_t *app = aiueos_tls13_app();
   uint32_t app_length = aiueos_tls13_app_len();
-  uint32_t fields[8] = {sequence, rtl8125_direct_https_error,
+  uint32_t fields[10] = {sequence, rtl8125_direct_https_error,
                         rtl8125_direct_tls_stage,
                         rtl8125_direct_tls_pump_error,
                         rtl8125_direct_tcp_recoveries, app_length,
                         rtl8125_direct_qwen_vector_bits,
-                        rtl8125_direct_qwen_worker_threads};
+                        rtl8125_direct_qwen_worker_threads,
+                        rtl8125_direct_response_wait_ms,
+                        RTL_DIRECT_HTTP_TIMEOUT_SECONDS};
   uint32_t length = sizeof(prefix) - 1U;
   for (uint32_t i = 0; i < length; i++) rtl_direct_worker_wire[i] = prefix[i];
   rtl_direct_worker_wire[length++] = status;
-  for (uint32_t field = 0; field < 8U; field++) {
+  for (uint32_t field = 0; field < 10U; field++) {
     rtl_direct_worker_wire[length++] = ' ';
     for (int shift = 28; shift >= 0; shift -= 4)
       rtl_direct_worker_wire[length++] =
@@ -4350,6 +4363,22 @@ static int rtl8125_direct_rx_budget(uint32_t *received,
 
 static int rtl8125_direct_rx(uint32_t *received) {
   return rtl8125_direct_rx_budget(received, RTL_DIRECT_RX_BUDGET);
+}
+
+static uint64_t rtl8125_direct_tsc(void) {
+  uint32_t low, high;
+  __asm__ volatile("lfence; rdtsc" : "=a"(low), "=d"(high) :: "memory");
+  return ((uint64_t)high << 32) | low;
+}
+
+static uint32_t rtl8125_direct_elapsed_ms(uint64_t started,
+                                          uint64_t tsc_hz) {
+  if (!started || !tsc_hz) return 0;
+  uint64_t elapsed = rtl8125_direct_tsc() - started;
+  uint64_t whole = elapsed / tsc_hz;
+  uint64_t remainder = elapsed % tsc_hz;
+  uint64_t milliseconds = whole * 1000U + (remainder * 1000U) / tsc_hz;
+  return milliseconds > UINT32_MAX ? UINT32_MAX : (uint32_t)milliseconds;
 }
 
 static int rtl8125_tcp_send(uint32_t dst, uint16_t local_port,
@@ -4613,13 +4642,24 @@ static int rtl8125_http_success(const uint8_t *bytes, uint32_t length) {
 static int rtl8125_direct_tls_pump(uint32_t dst, uint16_t local_port,
                                    uint32_t *our_next,
                                    uint32_t *peer_next, uint32_t ack_lo,
-                                   unsigned attempts, int want_http) {
+                                   unsigned attempts, int want_http,
+                                   uint64_t tsc_hz) {
   uint8_t *frame = rtl8125_qualification_device.rx_frame;
+  uint64_t response_started = want_http && tsc_hz ? rtl8125_direct_tsc() : 0;
+  uint64_t response_timeout_cycles =
+    want_http && tsc_hz ? tsc_hz * RTL_DIRECT_HTTP_TIMEOUT_SECONDS : 0;
+  if (want_http) rtl8125_direct_response_wait_ms = 0;
   for (unsigned attempt = 0; attempt < attempts; attempt++) {
     const uint8_t *payload = 0;
     uint32_t plen = 0, received = 0;
     if (!rtl8125_direct_rx(&received)) {
+      if (response_started &&
+          rtl8125_direct_tsc() - response_started < response_timeout_cycles)
+        continue;
       if (!rtl8125_direct_tls_pump_error) rtl8125_direct_tls_pump_error = 1;
+      if (want_http)
+        rtl8125_direct_response_wait_ms =
+          rtl8125_direct_elapsed_ms(response_started, tsc_hz);
       return 0;
     }
     if (!net_tcp_cloud_seg_ok(frame, received, dst, *our_next, ack_lo)) {
@@ -4671,6 +4711,8 @@ static int rtl8125_direct_tls_pump(uint32_t dst, uint16_t local_port,
     }
     if (want_http && rtl8125_http_success(
           aiueos_tls13_app(), aiueos_tls13_app_len())) {
+      rtl8125_direct_response_wait_ms =
+        rtl8125_direct_elapsed_ms(response_started, tsc_hz);
       /* The complete HTTP response is already authenticated and decrypted.
          ACK its last TCP sequence and actively close this short-lived worker
          connection.  Leaving that segment unacknowledged made Cloudflare
@@ -4692,6 +4734,9 @@ static int rtl8125_direct_tls_pump(uint32_t dst, uint16_t local_port,
        left TEST DIRECT HTTPS on screen until the firmware watchdog fired. */
     if (frame[47] & NET_TCP_FIN) {
       rtl8125_direct_tls_pump_error = 6;
+      if (want_http)
+        rtl8125_direct_response_wait_ms =
+          rtl8125_direct_elapsed_ms(response_started, tsc_hz);
       *peer_next += 1;
       aiueos_rtl8125_rx_rearm(&rtl8125_qualification_device);
       (void)rtl8125_direct_tcp_send(dst, local_port, *our_next, *peer_next,
@@ -4709,6 +4754,9 @@ static int rtl8125_direct_tls_pump(uint32_t dst, uint16_t local_port,
     int complete = want_http ? rtl8125_http_success(
       aiueos_tls13_app(), aiueos_tls13_app_len()) :
       aiueos_tls13_handshake_ready();
+    if (want_http)
+      rtl8125_direct_response_wait_ms =
+        rtl8125_direct_elapsed_ms(response_started, tsc_hz);
     if (!complete && !rtl8125_direct_tls_pump_error)
       rtl8125_direct_tls_pump_error = 7;
     return complete;
@@ -4716,6 +4764,7 @@ static int rtl8125_direct_tls_pump(uint32_t dst, uint16_t local_port,
 }
 
 static int rtl8125_direct_tls_attempt(uint32_t dst, uint32_t request_length,
+                                      uint64_t tsc_hz,
                                       uint32_t connection_sequence,
                                       unsigned attempt) {
   uint32_t peer_next = 0, our_next = 0, received = 0;
@@ -4727,6 +4776,7 @@ static int rtl8125_direct_tls_attempt(uint32_t dst, uint32_t request_length,
   int tcp_established = 0;
   rtl8125_direct_tls_pump_error = 0;
   rtl8125_direct_tcp_recoveries = 0;
+  rtl8125_direct_response_wait_ms = 0;
 
   /* A completed short connection can leave late server records in the
      RTL8125 FIFO even after its only descriptor is rearmed.  Reinstall the
@@ -4787,7 +4837,7 @@ static int rtl8125_direct_tls_attempt(uint32_t dst, uint32_t request_length,
     goto failed;
   }
   if (!rtl8125_direct_tls_pump(dst, local_port, &our_next, &peer_next,
-                               our_next, 48, 0)) {
+                               our_next, 48, 0, tsc_hz)) {
     rtl8125_direct_https_error =
       RTL_DIRECT_STAGE_ERROR(30U + rtl8125_direct_tls_pump_error);
     goto failed;
@@ -4821,7 +4871,7 @@ static int rtl8125_direct_tls_attempt(uint32_t dst, uint32_t request_length,
     uint32_t ack_lo = our_next;
     our_next += finished_length + http_length;
     if (!rtl8125_direct_tls_pump(dst, local_port, &our_next, &peer_next,
-                                 ack_lo, 128, 1)) {
+                                 ack_lo, 128, 1, tsc_hz)) {
       rtl8125_direct_https_error = RTL_DIRECT_STAGE_ERROR(11);
       goto failed;
     }
@@ -4860,6 +4910,7 @@ int aiueos_rtl8125_direct_https_qualification(void) {
   rtl8125_direct_https_error = 1;
   rtl8125_direct_https_attempts = 0;
   rtl8125_direct_tls_stage = 0;
+  rtl8125_direct_response_wait_ms = 0;
   rtl8125_direct_dns_a = 0;
   rtl8125_direct_http_ready = 0;
 #ifdef AIUEOS_MURAKUMO_DEVICE_RESULT
@@ -4915,6 +4966,11 @@ int aiueos_rtl8125_direct_https_qualification(void) {
     rtl8125_direct_https_attempts = attempt + 1;
     if (rtl8125_direct_tls_attempt(
           rtl8125_direct_dns_a, request_length,
+#ifdef AIUEOS_MURAKUMO_DEVICE_RESULT
+          boot->tsc_hz,
+#else
+          0,
+#endif
           rtl8125_direct_connection_sequence, attempt)) {
       rtl8125_direct_http_ready = 1;
       rtl8125_direct_https_error = 0;
@@ -4928,7 +4984,8 @@ failed:
 }
 
 #ifdef AIUEOS_MURAKUMO_DEVICE_RESULT
-static int rtl8125_direct_device_request(uint32_t request_length) {
+static int rtl8125_direct_device_request(uint32_t request_length,
+                                         uint64_t tsc_hz) {
   if (!request_length || !rtl8125_qualification_device.ready ||
       rtl8125_qualification_error) {
     rtl8125_direct_https_error = 3;
@@ -4944,7 +5001,7 @@ static int rtl8125_direct_device_request(uint32_t request_length) {
   for (unsigned attempt = 0; attempt < RTL_DIRECT_TLS_ATTEMPTS; attempt++) {
     rtl8125_direct_https_attempts = attempt + 1;
     if (rtl8125_direct_tls_attempt(
-          rtl8125_direct_dns_a, request_length,
+          rtl8125_direct_dns_a, request_length, tsc_hz,
           rtl8125_direct_connection_sequence, attempt)) {
       rtl8125_direct_https_error = 0;
       net_tx_window = NET_TCP_WINDOW;
@@ -4978,7 +5035,7 @@ int aiueos_rtl8125_device_worker_poll(
     rtl_direct_device_did, sizeof(rtl_direct_device_did));
   rtl8125_direct_worker_wire_copy(
     rtl_direct_http_request, request_length, sequence);
-  if (!rtl8125_direct_device_request(request_length)) {
+  if (!rtl8125_direct_device_request(request_length, boot->tsc_hz)) {
     rtl8125_direct_worker_rx_report(sequence, 'R');
     return 0;
   }
@@ -5014,7 +5071,7 @@ int aiueos_rtl8125_device_worker_control_ack(
   uint32_t request_length = aiueos_device_worker_http_request(
     &request, rtl_direct_http_request, sizeof(rtl_direct_http_request),
     rtl_direct_device_did, sizeof(rtl_direct_device_did));
-  int ok = rtl8125_direct_device_request(request_length);
+  int ok = rtl8125_direct_device_request(request_length, boot->tsc_hz);
   rtl8125_direct_worker_rx_report(sequence, ok ? 'A' : 'a');
   return ok;
 }
@@ -5046,7 +5103,7 @@ int aiueos_rtl8125_device_worker_result(
   uint32_t request_length = aiueos_device_worker_http_request(
     &request, rtl_direct_http_request, sizeof(rtl_direct_http_request),
     rtl_direct_device_did, sizeof(rtl_direct_device_did));
-  int ok = rtl8125_direct_device_request(request_length);
+  int ok = rtl8125_direct_device_request(request_length, boot->tsc_hz);
   rtl8125_direct_worker_rx_report(sequence, ok ? 'o' : 'F');
   return ok;
 }

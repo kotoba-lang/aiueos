@@ -238,6 +238,8 @@ extern int aiueos_rtl8125_direct_https_qualification(void);
 extern unsigned aiueos_rtl8125_direct_https_error(void);
 extern unsigned aiueos_rtl8125_direct_https_attempts(void);
 extern uint32_t aiueos_rtl8125_direct_tls_stage(void);
+extern uint32_t aiueos_rtl8125_direct_response_wait_ms(void);
+extern uint32_t aiueos_rtl8125_direct_response_timeout_seconds(void);
 extern uint32_t aiueos_rtl8125_direct_dns_a(void);
 extern int aiueos_rtl8125_direct_http_ready(void);
 extern int aiueos_rtl8125_relay_qualification(void);
@@ -677,6 +679,16 @@ static uint64_t aiueos_cycles_to_ns(uint64_t cycles, uint64_t tsc_hz) {
   if (whole > (UINT64_MAX - fraction) / 1000000000ULL)
     return AIUEOS_INFERENCE_UNMEASURED;
   return whole * 1000000000ULL + fraction;
+}
+
+static const char *aiueos_worker_transport_detail(void) {
+  switch (aiueos_rtl8125_direct_https_error()) {
+    case 2: return "DNS RETRY";
+    case 6: return "TCP CONNECT RETRY";
+    case 11: return "HTTP RESPONSE TIMEOUT";
+    case 60: return "RESPONSE PARSE ERROR";
+    default: return "NODE RECONNECTING";
+  }
 }
 #endif
 static void serial_ipv4(uint32_t value) {
@@ -1400,7 +1412,9 @@ qwen_runtime_boot_complete:
       uint32_t error=aiueos_rtl8125_direct_https_error();
       uint32_t code=8600U+error;
 #if defined(AIUEOS_MURAKUMO_DEVICE_RESULT) && defined(AIUEOS_PERSISTENT_BOOT)
-      aiueos_framebuffer_qualification_screen("AIUEOS K16", "MURAKUMO WORKER", "NODE RECONNECTING", 0);
+      aiueos_framebuffer_qualification_screen(
+        "AIUEOS K16", "MURAKUMO WORKER",
+        aiueos_worker_transport_detail(), 0);
 #else
       aiueos_framebuffer_qualification_screen("AIUEOS K16", "FAIL DIRECT HTTPS", "SSD READ ONLY", 0);
 #endif
@@ -1412,6 +1426,10 @@ qwen_runtime_boot_complete:
       serial_decimal(aiueos_rtl8125_direct_https_attempts());
       serial_string(" tls-stage=");
       serial_decimal(aiueos_rtl8125_direct_tls_stage());
+      serial_string(" response-wait-ms=");
+      serial_decimal(aiueos_rtl8125_direct_response_wait_ms());
+      serial_string(" response-timeout-s=");
+      serial_decimal(aiueos_rtl8125_direct_response_timeout_seconds());
       serial_string(" auth=device-p256 nvram-key=true cacao=false passkey=false pq=false biscuit=false\r\n");
 #else
       debug_string("AIUEOS_PHYSICAL_DIRECT_HTTPS_FAIL host=api.murakumo.cloud trust=transport-only secrets=none\n");
@@ -1504,13 +1522,17 @@ qwen_runtime_boot_complete:
             &control_id, &reboot_pxe, &restart_runtime)) {
         heartbeat_failures++;
         aiueos_qwen35_status.phase = AIUEOS_INFERENCE_ERROR;
-        aiueos_qwen35_status.detail = "NODE RECONNECTING";
+        aiueos_qwen35_status.detail = aiueos_worker_transport_detail();
         (void)aiueos_framebuffer_inference_screen(&aiueos_qwen35_status);
         debug_string("AIUEOS_MURAKUMO_HEARTBEAT_RETRY ready=false action=reconnect\n");
         serial_string("AIUEOS_MURAKUMO_HEARTBEAT_RETRY failure=");
         serial_decimal(heartbeat_failures);
         serial_string(" error=");
         serial_decimal(aiueos_rtl8125_direct_https_error());
+        serial_string(" response-wait-ms=");
+        serial_decimal(aiueos_rtl8125_direct_response_wait_ms());
+        serial_string(" response-timeout-s=");
+        serial_decimal(aiueos_rtl8125_direct_response_timeout_seconds());
         serial_string(" action=reconnect\r\n");
         aiueos_k16_management_wait(boot->tsc_hz, 5);
         continue;

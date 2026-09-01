@@ -49,6 +49,87 @@ def private_file_text(path_value, label, max_bytes):
         os.close(descriptor)
 
 
+WORKER_ERROR_LABELS = {
+    0: "none",
+    1: "not-started",
+    2: "dns",
+    3: "request-or-entropy",
+    4: "clienthello-build",
+    5: "tcp-syn-send",
+    6: "tcp-syn-ack",
+    7: "clienthello-send",
+    9: "certificate-verify",
+    10: "finished-http-send",
+    11: "http-response-timeout",
+    12: "tls-flight-size",
+    13: "finished-build",
+    14: "http-protect",
+    15: "nic-restart",
+    60: "response-parse",
+}
+WORKER_PUMP_LABELS = {
+    0: "none",
+    1: "receive-timeout",
+    2: "unexpected-tcp-segment",
+    3: "tcp-payload-missing",
+    4: "tls-record-rejected",
+    5: "tcp-ack-send",
+    6: "peer-finished-before-http",
+    7: "incomplete",
+}
+WORKER_STATUS_LABELS = {
+    "R": "transport-retry",
+    "P": "response-parse-error",
+    "O": "poll-ok",
+    "A": "control-ack-ok",
+    "a": "control-ack-retry",
+    "o": "result-ok",
+    "F": "result-retry",
+}
+
+
+def worker_diagnostic(message):
+    """Decode the bounded K16 worker report without exposing response JSON."""
+    parts = message.split()
+    if len(parts) < 11 or parts[0] != "AIUEOS_WORKER_RX":
+        return None
+    status = parts[1]
+    encoded_fields = parts[2:-1]
+    if len(encoded_fields) not in (8, 10) or any(
+            not re.fullmatch(r"[0-9a-fA-F]{8}", field)
+            for field in encoded_fields):
+        return None
+    fields = [int(field, 16) for field in encoded_fields]
+    sequence, error, tls_stage, pump_error, recoveries, app_bytes = fields[:6]
+    vector_bits, worker_threads = fields[6:8]
+    response_wait_ms = fields[8] if len(fields) == 10 else 0
+    response_timeout_s = fields[9] if len(fields) == 10 else 0
+    prefix = parts[-1]
+    if prefix != "-" and not re.fullmatch(r"[0-9a-fA-F]{2,24}", prefix):
+        return None
+    first_record = (tls_stage >> 8) & 0xff
+    tls_ready = bool(tls_stage & 0x10)
+    tls_failed = bool(tls_stage & 0x20)
+    error_label = WORKER_ERROR_LABELS.get(error)
+    if error_label is None and 30 <= error <= 37:
+        error_label = "handshake-" + WORKER_PUMP_LABELS.get(error - 30, "pump")
+    if error_label is None:
+        error_label = "unknown"
+    timestamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    return (
+        f"AIUEOS_WORKER_DIAG timestamp={timestamp} "
+        f"state={WORKER_STATUS_LABELS.get(status, 'unknown')} "
+        f"sequence={sequence} error={error}:{error_label} "
+        f"tls-ready={str(tls_ready).lower()} tls-failed={str(tls_failed).lower()} "
+        f"tls-first-record=0x{first_record:02x} "
+        f"pump={pump_error}:{WORKER_PUMP_LABELS.get(pump_error, 'unknown')} "
+        f"tcp-recoveries={recoveries} app-bytes={app_bytes} "
+        f"response-wait-ms={response_wait_ms} "
+        f"response-timeout-s={response_timeout_s} "
+        f"vector-bits={vector_bits} worker-threads={worker_threads} "
+        f"http-prefix={prefix}")
+
+
 INTERFACE = os.environ.get("AIUEOS_PXE_INTERFACE", "en11")
 SERVER_IP = os.environ.get("AIUEOS_PXE_SERVER_IP", "10.77.0.1")
 CLIENT_IP = os.environ.get("AIUEOS_PXE_CLIENT_IP", "10.77.0.10")
@@ -836,6 +917,9 @@ def netlog_server():
         message = payload.decode("ascii", "replace").rstrip("\r\n")
         print(f"AIUEOS_NETLOG_RX from={peer[0]}:{peer[1]} "
               f"message={message}", flush=True)
+        diagnostic = worker_diagnostic(message)
+        if diagnostic:
+            print(f"{diagnostic} from={peer[0]}:{peer[1]}", flush=True)
         ack = node_ack_payload(message)
         if ack and peer[0] == CLIENT_IP:
             sock.sendto(ack, peer)

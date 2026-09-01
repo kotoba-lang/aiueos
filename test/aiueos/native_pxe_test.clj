@@ -415,7 +415,8 @@
           reset (.indexOf kernel "(void)aiueos_qualification_reboot();")]
       (is (<= 0 ack))
       (is (< ack reset)))
-    (is (str/includes? pci "rtl8125_direct_device_request(request_length)")))
+    (is (str/includes?
+         pci "rtl8125_direct_device_request(request_length, boot->tsc_hz)")))
   (testing "Runtime Services are entered under the retained firmware CR3"
     (doseq [marker ["aiueos_qualification_reboot_firmware"
                     "runtime->reset_system(0, EFI_SUCCESS, 0, 0)"]]
@@ -575,16 +576,50 @@
                     "ok ? 'o' : 'F'"]]
       (is (str/includes? pci marker))))
   (testing "the UDP report is bounded and excludes the response body"
-    (doseq [marker ["uint32_t fields[8]"
+    (doseq [marker ["uint32_t fields[10]"
                     "rtl8125_direct_tls_pump_error"
                     "rtl8125_direct_tcp_recoveries"
+                    "rtl8125_direct_response_wait_ms"
+                    "RTL_DIRECT_HTTP_TIMEOUT_SECONDS"
                     "rtl8125_direct_qwen_vector_bits"
                     "rtl8125_direct_qwen_worker_threads"
                     "app_length < 12U ? app_length : 12U"
                     "0x8000U | (sequence & 0x7fffU)"]]
       (is (str/includes? pci marker)))
     (is (str/includes? pci
-                    "response JSON, signatures and device-private material are"))))
+                    "response JSON, signatures and device-private material are")))
+  (testing "the Mac receiver emits timestamped human-readable diagnostics"
+    (doseq [marker ["def worker_diagnostic(message):"
+                    "AIUEOS_WORKER_DIAG timestamp="
+                    "http-response-timeout"
+                    "response-wait-ms="
+                    "response-timeout-s="
+                    "tls-ready="
+                    "http-prefix="]]
+      (is (str/includes? server marker))))
+  (testing "the framebuffer and serial stream name the failing transport phase"
+    (doseq [marker ["aiueos_worker_transport_detail"
+                    "HTTP RESPONSE TIMEOUT"
+                    "RESPONSE PARSE ERROR"
+                    "response-wait-ms="
+                    "response-timeout-s="]]
+      (is (str/includes? kernel marker)))))
+
+(deftest physical-worker-http-wait-uses-calibrated-time
+  (testing "a valid but slow Murakumo response gets a real twenty-second window"
+    (doseq [marker ["#define RTL_DIRECT_HTTP_TIMEOUT_SECONDS 20U"
+                    "uint64_t response_started"
+                    "uint64_t response_timeout_cycles"
+                    "rtl8125_direct_tsc() - response_started < response_timeout_cycles"
+                    "rtl8125_direct_elapsed_ms(response_started, tsc_hz)"]]
+      (is (str/includes? pci marker))))
+  (testing "the longer HTTP wait does not expand idle SSH or handshake waits"
+    (is (str/includes? pci
+                       "want_http && tsc_hz ? rtl8125_direct_tsc() : 0"))
+    (is (str/includes? pci
+                       "our_next, 48, 0, tsc_hz"))
+    (is (str/includes? pci
+                       "ack_lo, 128, 1, tsc_hz"))))
 
 (deftest inference-runtime-failure-does-not-stop-aiueos
   (doseq [marker ["AIUEOS_KOTOTAMA_RUNTIME_DEGRADED"
