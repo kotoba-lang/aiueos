@@ -326,6 +326,14 @@
                     "no SSH payload, key or identity bytes"
                     "if (rtl8125_ssh_frames_seen) rtl8125_ssh_report(accepted)"]]
       (is (str/includes? pci marker))))
+  (testing "physical SSH data does not require the optional TCP PSH hint"
+    (doseq [marker ["ssh_tcp_payload_present"
+                    "only PSH is no longer mistaken for a message boundary"
+                    "ack, NET_TCP_PSH | NET_TCP_ACK"
+                    "ack, NET_TCP_ACK"
+                    "if (!net_ssh_recv(io, sseq, 8))"
+                    "if (!net_ssh_recv(io, NET_SSH_ISN + 1 + NET_SSH_ID_LEN, 8))"]]
+      (is (str/includes? pci marker))))
   (testing "management can restart Kototama but cannot obtain a shell or reboot"
     (doseq [marker ["AIUEOS_RTL8125_SSH_SESSION_OK"
                     "commands=runtime-status,runtime-restart"

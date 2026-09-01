@@ -2448,15 +2448,36 @@ static int ssh_io_send(struct aiueos_ssh_io *io, uint16_t client_port,
     payload, payload_length);
 }
 
-/* Receive one PSH|ACK data segment from the peer acking `ack`, tolerant of it
-   arriving late. Unlike net_tcp_receive (which gives up on the first empty
-   await), this keeps posting and polling across `rounds` windows -- a userauth
-   packet can arrive after a slow key-derivation or crypto step, and a single
-   short spin misses it. The segment lands in rx_page for the caller to unwrap
-   or decrypt. */
+static int ssh_tcp_payload_present(const uint8_t *frame, uint32_t received) {
+  if (!frame || received < 54) return 0;
+  uint32_t total = net_load_be16(frame + 16);
+  uint32_t tcp_header = 4U * (uint32_t)(frame[46] >> 4);
+  return tcp_header >= 20U && total >= 20U + tcp_header &&
+    14U + total <= received && total > 20U + tcp_header;
+}
+
+/* Receive one data-bearing ACK from the peer, tolerant both of arrival delay
+   and of the optional TCP PSH hint. QEMU's SLIRP sets PSH on every SSH data
+   segment, while the K16's directly attached macOS stack legitimately sends
+   KEX data with ACK alone. TCP payload, sequence acknowledgement and checksum
+   remain mandatory; only PSH is no longer mistaken for a message boundary. */
 static int net_ssh_recv(struct aiueos_ssh_io *io, uint32_t ack,
                         unsigned rounds) {
-  return ssh_io_receive(io, ack, NET_TCP_PSH | NET_TCP_ACK, rounds);
+  if (!io || !io->frame || !io->rearm || !io->wait) return 0;
+  for (unsigned round = 0; round < rounds; round++) {
+    uint32_t received = 0;
+    if (!io->rearm(io->context) || !io->wait(io->context, &received)) continue;
+    if (received > NET_FRAME_MAX) continue;
+    int admitted = kotoba_aiueos_tcp_segment_valid(
+      (uint64_t)(uintptr_t)io->frame, received, io->peer_ip,
+      ack, NET_TCP_PSH | NET_TCP_ACK);
+    if (!admitted)
+      admitted = kotoba_aiueos_tcp_segment_valid(
+        (uint64_t)(uintptr_t)io->frame, received, io->peer_ip,
+        ack, NET_TCP_ACK);
+    if (admitted && ssh_tcp_payload_present(io->frame, received)) return 1;
+  }
+  return 0;
 }
 
 /* Drive publickey userauth after NEWKEYS. Derives the session keys, receives the
@@ -2765,7 +2786,7 @@ static int net_ssh_kex(struct aiueos_ssh_io *io, uint16_t cport,
   }
 
   /* 2. receive the client's KEXINIT (I_C). It acks our KEXINIT (expected_ack). */
-  if (!ssh_io_receive(io, sseq, NET_TCP_PSH | NET_TCP_ACK, 8))
+  if (!net_ssh_recv(io, sseq, 8))
     return 0;
   uint32_t ic_len = 0;
   {
@@ -2785,7 +2806,7 @@ static int net_ssh_kex(struct aiueos_ssh_io *io, uint16_t cport,
 
   /* 4. receive KEX_ECDH_INIT and extract Q_C. */
   uint8_t q_c[32];
-  if (!ssh_io_receive(io, sseq, NET_TCP_PSH | NET_TCP_ACK, 8))
+  if (!net_ssh_recv(io, sseq, 8))
     return 0;
   {
     uint32_t dlen = 0;
@@ -2941,8 +2962,7 @@ static int net_ssh_listen(struct aiueos_ssh_io *io, unsigned listen_rounds) {
   ssh_listen_stage = 3;
 
   /* 5. the client's identification string, acknowledging ours. */
-  if (!ssh_io_receive(io, NET_SSH_ISN + 1 + NET_SSH_ID_LEN,
-                      NET_TCP_PSH | NET_TCP_ACK, 8))
+  if (!net_ssh_recv(io, NET_SSH_ISN + 1 + NET_SSH_ID_LEN, 8))
     return 0;
   ssh_listen_stage = 4;
   {
@@ -4247,17 +4267,18 @@ static void rtl8125_ssh_capture(uint32_t frame_length) {
 static void rtl8125_ssh_report(int accepted) {
   static const uint8_t prefix[] = "AIUEOS_SSH_RX ";
   static const char digits[] = "0123456789abcdef";
-  uint32_t fields[10] = {
+  uint32_t fields[11] = {
     ++rtl8125_ssh_report_sequence, rtl8125_ssh_frames_seen,
     rtl8125_ssh_tcp_frames_seen, rtl8125_ssh_syn_candidates,
     rtl8125_ssh_valid_syns, rtl8125_ssh_last_length,
     rtl8125_ssh_last_source_ip, rtl8125_ssh_last_ports,
-    rtl8125_ssh_last_flags, (ssh_listen_stage << 1) | (accepted ? 1U : 0U)
+    rtl8125_ssh_last_flags, (ssh_listen_stage << 1) | (accepted ? 1U : 0U),
+    ssh_kex_stage
   };
   uint32_t length = sizeof(prefix) - 1U;
   for (uint32_t i = 0; i < length; i++)
     rtl_direct_worker_wire[i] = prefix[i];
-  for (uint32_t field = 0; field < 10U; field++) {
+  for (uint32_t field = 0; field < 11U; field++) {
     if (field) rtl_direct_worker_wire[length++] = ' ';
     for (int shift = 28; shift >= 0; shift -= 4)
       rtl_direct_worker_wire[length++] =
