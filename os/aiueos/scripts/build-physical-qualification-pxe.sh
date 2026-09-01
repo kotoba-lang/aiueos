@@ -165,9 +165,9 @@ document = {
         "authorized_key_fingerprint":
             (os.environ["AIUEOS_SSH_AUTHORIZED_KEY_FINGERPRINT"] or None),
         "principal": "runtime",
-        "commands": ["runtime status", "runtime restart"],
+        "commands": ["runtime status", "runtime restart", "system reboot-pxe"],
         "shell": False,
-        "kernel_reboot": False,
+        "kernel_reboot": "uefi-runtime-reset-after-authenticated-ack",
         "physical_k16": "unverified",
     } if os.environ["AIUEOS_SSH_LISTEN"] == "1" else None),
 }

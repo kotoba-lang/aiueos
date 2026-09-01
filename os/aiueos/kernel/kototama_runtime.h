@@ -44,6 +44,7 @@ int aiueos_kototama_runtime_invoke(
 int aiueos_kototama_runtime_restart(void);
 void aiueos_kototama_runtime_stop(void);
 struct aiueos_kototama_runtime_status aiueos_kototama_runtime_status(void);
+int aiueos_management_take_reboot_pxe_request(void);
 const char *aiueos_kototama_runtime_state_name(
     enum aiueos_kototama_runtime_state state);
 

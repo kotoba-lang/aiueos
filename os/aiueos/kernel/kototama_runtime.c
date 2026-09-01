@@ -9,6 +9,7 @@ struct aiueos_kototama_runtime {
 };
 
 static struct aiueos_kototama_runtime runtime;
+static int reboot_pxe_requested;
 
 static void bytes_zero(uint8_t *bytes, uint64_t length) {
   if (!bytes) return;
@@ -149,6 +150,12 @@ struct aiueos_kototama_runtime_status aiueos_kototama_runtime_status(void) {
   return runtime.status;
 }
 
+int aiueos_management_take_reboot_pxe_request(void) {
+  int requested = reboot_pxe_requested;
+  reboot_pxe_requested = 0;
+  return requested;
+}
+
 const char *aiueos_kototama_runtime_state_name(
     enum aiueos_kototama_runtime_state state) {
   switch (state) {
@@ -182,6 +189,11 @@ uint32_t aiueos_kototama_runtime_management_command(
       aiueos_kototama_runtime_restart()
         ? "aiueos: runtime restarted\n"
         : "aiueos: runtime restart refused unavailable\n");
+  }
+  if (text_is(command, command_length, "system reboot-pxe")) {
+    reboot_pxe_requested = 1;
+    return text_put(output, output_capacity,
+                    "aiueos: reboot-pxe scheduled\n");
   }
   return text_put(output, output_capacity,
                   "aiueos: refused unsupported management command\n");

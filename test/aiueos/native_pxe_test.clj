@@ -360,11 +360,16 @@
                     "publickey_ok[o++] = 60"
                     "ssh_authorized_publickey_blob"]]
       (is (str/includes? pci marker))))
-  (testing "management can restart Kototama but cannot obtain a shell or reboot"
+  (testing "management can restart Kototama or reboot PXE but cannot obtain a shell"
     (doseq [marker ["AIUEOS_RTL8125_SSH_SESSION_OK"
-                    "commands=runtime-status,runtime-restart"
-                    "shell=false kernel-reboot=false"]]
+                    "commands=runtime-status,runtime-restart,system-reboot-pxe"
+                    "AIUEOS_SSH_REBOOT_PXE_ACK reset=uefi-runtime"
+                    "shell=false"]]
       (is (str/includes? kernel marker)))
+    (let [ack (.indexOf kernel "AIUEOS_SSH_REBOOT_PXE_ACK")
+          reset (.indexOf kernel "(void)aiueos_qualification_reboot();" ack)]
+      (is (<= 0 ack))
+      (is (< ack reset)))
     (doseq [marker ["PasswordAuthentication=no"
                     "MACs=hmac-sha1"
                     "ProxyCommand=$proxy_command"
@@ -372,7 +377,9 @@
                     "/usr/bin/env -i"
                     "runtime@10.77.0.10"
                     "runtime status"
-                    "runtime restart"]]
+                    "runtime restart"
+                    "system reboot-pxe"
+                    "status|restart|reboot"]]
       (is (str/includes? k16-runtime-client marker)))
     (doseq [marker ["TCP_ENABLE_ECN"
                     "read_ssh_packet_fd"
@@ -382,7 +389,9 @@
       (is (str/includes? k16-ssh-transport marker)))
     (doseq [marker [":physical-rtl8125-listener :physical-runtime-status-verified"
                     ":physical-k16 :device-p256-uefi-nvram"
-                    ":commands [\"runtime status\" \"runtime restart\"]"]]
+                    ":commands [\"runtime status\" \"runtime restart\" \"system reboot-pxe\"]"
+                    ":ack-before-reset? true"
+                    ":reset :uefi-runtime-cold"]]
       (is (str/includes? ssh-contract marker)))))
 
 (deftest boot-screen-carries-version-and-source-identity
@@ -412,7 +421,7 @@
                      "\"ack\": \"signed-device-p256-before-action\""))
   (testing "the node resets only after the acknowledgement returns HTTP 2xx"
     (let [ack (.indexOf kernel "AIUEOS_MURAKUMO_CONTROL_ACK_OK")
-          reset (.indexOf kernel "(void)aiueos_qualification_reboot();")]
+          reset (.indexOf kernel "(void)aiueos_qualification_reboot();" ack)]
       (is (<= 0 ack))
       (is (< ack reset)))
     (is (str/includes?

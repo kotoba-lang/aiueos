@@ -21,7 +21,9 @@
           :failure :rollback-runtime-only
           :timeout-ms 120000}
  :management {:https-control [:status :restart-runtime]
-              :ssh-command-session ["runtime status" "runtime restart"]
+              :ssh-command-session ["runtime status" "runtime restart"
+                                    "system reboot-pxe"]
+              :system-control [:reboot-pxe]
               :root-shell? false}
  :current-evidence {:decision-and-negative-tests :implemented
                     :kernel-runtime-supervisor :implemented

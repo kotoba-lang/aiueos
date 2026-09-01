@@ -73,12 +73,17 @@ int main(void) {
     (const uint8_t *)"runtime status", 14, output, sizeof(output));
   if (length != 22 || memcmp(output, "aiueos: runtime ready\n", 22)) return 9;
   length = aiueos_kototama_runtime_management_command(
+    (const uint8_t *)"system reboot-pxe", 17, output, sizeof(output));
+  if (length != 29 || memcmp(output, "aiueos: reboot-pxe scheduled\n", 29) ||
+      !aiueos_management_take_reboot_pxe_request() ||
+      aiueos_management_take_reboot_pxe_request()) return 10;
+  length = aiueos_kototama_runtime_management_command(
     (const uint8_t *)"uname -a", 8, output, sizeof(output));
-  if (!length || !contains(output, length, "refused", 7)) return 10;
+  if (!length || !contains(output, length, "refused", 7)) return 11;
   struct aiueos_kototama_runtime_status ready =
     aiueos_kototama_runtime_status();
   if (ready.epoch != 2 || ready.restarts != 1 ||
-      ready.invocations != 2 || ready.failures != 1) return 11;
+      ready.invocations != 2 || ready.failures != 1) return 12;
   free(memory);
   return 0;
 }

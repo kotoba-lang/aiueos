@@ -661,8 +661,15 @@ static void aiueos_k16_management_wait(uint64_t tsc_hz, uint32_t seconds) {
     uint64_t management_start = aiueos_read_tsc();
     do {
       if (aiueos_rtl8125_ssh_poll()) {
-        debug_string("AIUEOS_RTL8125_SSH_SESSION_OK commands=runtime-status,runtime-restart shell=false kernel-reboot=false\n");
-        serial_string("AIUEOS_RTL8125_SSH_SESSION_OK commands=runtime-status,runtime-restart shell=false kernel-reboot=false\r\n");
+        debug_string("AIUEOS_RTL8125_SSH_SESSION_OK commands=runtime-status,runtime-restart,system-reboot-pxe shell=false\n");
+        serial_string("AIUEOS_RTL8125_SSH_SESSION_OK commands=runtime-status,runtime-restart,system-reboot-pxe shell=false\r\n");
+        if (aiueos_management_take_reboot_pxe_request()) {
+          debug_string("AIUEOS_SSH_REBOOT_PXE_ACK reset=uefi-runtime\n");
+          serial_string("AIUEOS_SSH_REBOOT_PXE_ACK reset=uefi-runtime\r\n");
+          (void)aiueos_qualification_reboot();
+          debug_string("AIUEOS_SSH_REBOOT_PXE_FAIL reset=uefi-runtime\n");
+          serial_string("AIUEOS_SSH_REBOOT_PXE_FAIL reset=uefi-runtime\r\n");
+        }
       }
     } while (tsc_hz && aiueos_read_tsc() - management_start < tsc_hz);
   }

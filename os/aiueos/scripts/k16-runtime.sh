@@ -4,8 +4,9 @@ set -eu
 case "${1:-status}" in
   status) command_text='runtime status' ;;
   restart) command_text='runtime restart' ;;
+  reboot) command_text='system reboot-pxe' ;;
   *)
-    echo "usage: k16-runtime.sh [status|restart]" >&2
+    echo "usage: k16-runtime.sh [status|restart|reboot]" >&2
     exit 2
     ;;
 esac
