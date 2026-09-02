@@ -199,6 +199,12 @@ AIUEOS_RING3_OK processes=2 preemptive roots=2 domains=2,3 kernel-stacks=2 sysca
 AIUEOS_UEFI_SMOKE_OK
 ```
 
+`head=4a7ddcf` is the commit the objects and the self-test were at. The same
+two lines were re-observed after the merge that carried them onto today's main,
+at `head=e36c5b8 tree=cf2536b80401` — a later ADR edit moves the tree hash and
+not the kernel, so no quote of a freshness receipt can name the commit that
+contains the quote.
+
 ```
 IMAGE-FRESH artifacts=3 head=4a7ddcf tree=67f1a502ce1f
 QWEN-PARITY recurrent ok
