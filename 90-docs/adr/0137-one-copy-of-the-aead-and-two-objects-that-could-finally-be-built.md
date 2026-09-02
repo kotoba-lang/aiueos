@@ -84,6 +84,44 @@ committed value-runtime verdicts were measured against) and moving it
 re-measures ten receipts as a side effect. The defect was never that `:test`
 was old; it was that a runner told you to use it.
 
+### And the whole default set was run on the new pins
+
+`npm run verify-admissions` (no arguments, so the seven contracts the runner
+picks by default), at amu `bb51dc14` / kotoba-kir `0fd7e259`:
+
+```
+CONTRACT :aiueos.cid-v1-admit/v1              vectors=14  traps=1  memory=0   observed=0,1,2,3,4,5,6,8            ms=2230899
+CONTRACT :aiueos.unixfs-file-admit/v1         vectors=22  traps=0  memory=0   observed=0,...,17                   ms=6845
+CONTRACT :aiueos.value-runtime-cas-verify/v1  vectors=6   traps=0  memory=0   observed=0,1                        ms=1959395
+CONTRACT :aiueos.value-handle-arena/v1        vectors=2   steps=11 traps=0                                        ms=1438
+CONTRACT :aiueos.aes128-gcm/v1                vectors=15  traps=1  memory=16  observed=0,1,2,3,4,5                ms=617060
+CONTRACT :aiueos.hkdf-sha256/v1               vectors=18  traps=0  memory=11  observed=0,1,2,3,4,5,6              ms=538076
+CONTRACT :aiueos.tls13-record/v1              vectors=17  traps=0  memory=18  observed=0,1,2,3,4,5,6,7            ms=344555
+CONTRACTS 7
+{... :amu-sha "bb51dc147d8ccb9d0aa636be24392a76113909e5" ... :status :passed}
+```
+
+exit 0. 94 vectors, 11 steps, 45 memory assertions. The two `traps=1` are the
+refusals those contracts declare, not failures — the runner reports an
+undeclared trap as `vector trapped where a result was expected` and refuses.
+
+Two things in that table are the point of this ADR. `aes128-gcm` and
+`tls13-record` pass with `aiueos.lib.aes128-gcm-core` in their `:graph
+:modules`, so the vectors executed the extracted core and not a leftover copy —
+and the first attempt at this run **failed**, with
+
+```
+FAILED: required module is outside the closed project
+   {:module aiueos.lib.aes128-gcm-core, :phase :project-link}
+```
+
+because those two contracts still declared the single-module graph. A contract
+that names the wrong closure is refused rather than quietly linked, which is
+how the omission surfaced.
+
+And `hkdf-sha256` — the contract ADR-0135 could not check with this
+repository's own pins — passes here on them.
+
 ## Six sources, two objects
 
 Compiled through the project route at amu `bb51dc14` +
