@@ -5,9 +5,13 @@
 {:format :aiueos.k16-kotoba-native-closure/v1
  :target :gmktec-k16
  :compiler {:repo "kotoba-lang/amu"
-            :commit "795800cedbf602108c801aee13704f3af8c65043"
+            :commit "3559d82be3bd4ec42abb44826fa2fa7cfd0b74dc"
             :backend {:repo "kotoba-lang/kotoba-native"
-                      :commit "01756a619ad543d270b8ba9a38b7f6543bea5b20"}
+                      :commit "ce85a36d5307e7e019c304caa17daf237abb9b9b"}
+            :firmware-entry {:arity 2
+                             :arguments [:efi-handle :efi-system-table]
+                             :contract :microsoft-x64-two-arity-efi-status-v2}
+            :memory-widths [:u8 :u16 :u32 :u64]
             :scalar-f32 {:x86-64 :implemented
                          :aarch64 :implemented
                          :public-f32-abi? false
@@ -20,9 +24,13 @@
          :foreign-code? false
          :qemu-evidence "scripts/smoke-qemu-kotoba-native.sh"
          :physical-k16 :unverified-for-this-compiler-commit}
-  :nic {:state :not-implemented-in-pure-closure
-        :required [:rtl8125-pci-discovery :mmio-map :dma-ring-ownership
-                   :tx :rx :link-recovery]
+  :nic {:state :one-shot-native-provider
+        :implemented [:rtl8125-pci-discovery :mmio-map :dma-ring-ownership
+                      :tx :rx :arp-request-reply]
+        :native-source "native/rtl8125.kotoba"
+        :required [:physical-k16-arp-positive :persistent-link-recovery]
+        :qemu-evidence :bounded-no-device-passed
+        :physical-k16 :unverified
         :current-reference ["kernel/rtl8125.c" "kernel/rtl8125.h"]
         :contract-repositories ["kotoba-lang/capability-pci-config"
                                 "kotoba-lang/capability-mmio-map"
@@ -35,6 +43,19 @@
                                "kotoba/tls13-record.kotoba"]
           :required [:arp :dhcp :dns :tcp :tls13-handshake :https-range
                      :certificate-path-validation :cid-verification]
+          :reuse-candidates
+          [{:repo "kotoba-lang/org-ietf-dhcp"
+            :available :kotoba-client-core
+            :missing :bare-metal-frame-integration}
+           {:repo "kotoba-lang/org-ietf-tcp"
+            :available :kotoba-state-machine-cores
+            :missing :bare-metal-segment-engine}
+           {:repo "kotoba-lang/org-ietf-tls"
+            :available :portable-cljc-handshake
+            :missing :amu-firmware-kotoba-port}
+           {:repo "kotoba-lang/http"
+            :available :portable-http-wire
+            :missing :amu-firmware-kotoba-port}]
           :current-reference ["kernel/tls13.c" "kernel/tls_aes_gcm.c"]
           :contract-repositories ["kotoba-lang/capability-net-transport"
                                   "kotoba-lang/capability-crypto-tls"
@@ -47,6 +68,13 @@
          :required [:large-model-authority :gguf-metadata :quant-decode
                     :threaded-matmul :attention :deltanet :kv-state
                     :tokenizer :sampling :bounded-output]
+         :reuse-candidates
+         [{:repo "kotoba-lang/inference" :available :runtime-contracts
+           :missing :bare-metal-qwen-executor}
+          {:repo "kotoba-lang/torch" :available :module-graph-data
+           :missing :bare-metal-qwen-kernels}
+          {:repo "kotoba-lang/num" :available :hosted-numerical-api
+           :missing :amu-avx2-firmware-backend}]
          :current-reference ["kernel/qwen35_infer.c"
                              "kernel/qwen35_quant.c"
                              "kernel/qwen35_runtime.c"]

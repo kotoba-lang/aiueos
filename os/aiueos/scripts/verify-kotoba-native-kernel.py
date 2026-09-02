@@ -7,9 +7,12 @@ import sys
 
 elf = pathlib.Path(sys.argv[1])
 source = pathlib.Path(sys.argv[2])
+rtl8125_source = source.with_name("rtl8125.kotoba")
 compiler = sys.argv[3]
 receipt = pathlib.Path(sys.argv[4])
 data = elf.read_bytes()
+if not rtl8125_source.is_file():
+    raise SystemExit("error: closed native RTL8125 module is missing")
 if data[:4] != b"\x7fELF" or data[4:7] != b"\x02\x01\x01":
     raise SystemExit("error: Kotoba-native kernel is not ELF64 little-endian")
 if struct.unpack_from("<H", data, 16)[0] != 2 or struct.unpack_from("<H", data, 18)[0] != 0x3E:
@@ -57,10 +60,16 @@ if (not any(encoding in data for encoding in cr3_read_encodings)
         or b"\x0f\x01\x0c\x24" not in data
         or not any(encoding in data for encoding in page_fault_frame_encodings)
         or b"\x4c\x89\x14\x25\x00\x01\x11\x00" not in data
+        or b"\xed" not in data
         or b"\xee" not in data or b"\xef" not in data):
     raise SystemExit("error: privileged paging/protection lowering evidence is absent")
 if b"\x88" not in data:
     raise SystemExit("error: allocator zero-store lowering evidence is absent")
+if b"\x0f\xb7" not in data or not any(
+    encoding in data
+    for encoding in (b"\x66\x89", b"\x66\x41\x89", b"\x66\x45\x89")
+):
+    raise SystemExit("error: native u16 RTL8125 MMIO lowering evidence is absent")
 for forbidden in (b".interp", b".dynamic", b".dynsym", b"NEEDED", b"libc"):
     if forbidden in data:
         raise SystemExit("error: dynamic/C runtime dependency found")
@@ -80,6 +89,12 @@ payload = {
     "entry": "aiueos_kernel_entry",
     "compiler_commit": compiler,
     "source_sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
+    "source_closure": [
+        {"module": "aiueos.native.kernel", "source": source.name,
+         "sha256": hashlib.sha256(source.read_bytes()).hexdigest()},
+        {"module": "native.rtl8125", "source": rtl8125_source.name,
+         "sha256": hashlib.sha256(rtl8125_source.read_bytes()).hexdigest()},
+    ],
     "artifact_sha256": hashlib.sha256(data).hexdigest(),
     "artifact_bytes": len(data),
     "foreign_objects": [],
@@ -87,10 +102,10 @@ payload = {
     "imports": [],
     "dynamic_dependencies": [],
     "fuel": {"initial": 1048576, "replenishable": False},
-    "allocator": {"page_bytes": 4096, "published_pages": 8,
+    "allocator": {"page_bytes": 4096, "published_pages": 14,
                   "descriptor_limit": 410,
                   "zero_before_publish": True,
-                  "ownership_state": "boot-lifetime-eight-slot-bitmap",
+                  "ownership_state": "boot-lifetime-fourteen-slot-bitmap",
                   "duplicate_claim_rejected": True,
                   "double_free_rejected": True,
                   "reclamation_reused": True,
@@ -105,6 +120,13 @@ payload = {
                                   if rx_limit < rw_start else "none"),
                    "kernel_state": f"0x{rw_start:x}-0x{rw_end - 1:x}-rw-nx",
                    "remaining_identity_map": "rw-nx"},
+    "network": {"provider": "native.rtl8125",
+                "pci_bdfs": ["02:00.0", "03:00.0"],
+                "bar_mapping": "2m-uc-rw-nx",
+                "dma_pages": 4,
+                "rings": {"tx": 1, "rx": 1},
+                "qemu_path": "bounded-no-device",
+                "physical_k16": "unverified"},
     "exceptions": {"idt_vector": 14, "selector": "runtime-current-cs",
                    "lidt": True, "sidt_readback": True,
                    "handler": ("recoverable-bounded-frame-iretq"
@@ -115,4 +137,4 @@ payload = {
                    "sealed_probe": present_probes[0] if present_probes else None},
 }
 receipt.write_text(json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n", encoding="ascii")
-print("AIUEOS_KOTOBA_NATIVE_KERNEL_OK no-c no-crt no-linker imports=0 fuel=1048576 allocator-pages=8 ownership-bitmap page-table-root identity-1g guard-unmapped text-rx state-rw-nx nxe cr0-wp cr3-activated invlpg idt14-sidt-readback pf-cr2-error-code recovery-frame dedicated-handler-stack reuse double-free-rejected descriptors<=410 zero-before-publish")
+print("AIUEOS_KOTOBA_NATIVE_KERNEL_OK no-c no-crt no-linker imports=0 fuel=1048576 allocator-pages=14 ownership-bitmap page-table-root identity-1g rtl8125-pci-mmio-dma guard-unmapped text-rx state-rw-nx nxe cr0-wp cr3-activated invlpg idt14-sidt-readback pf-cr2-error-code recovery-frame dedicated-handler-stack reuse double-free-rejected descriptors<=410 zero-before-publish")

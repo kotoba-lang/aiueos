@@ -11,7 +11,7 @@ import sys
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 CONTRACT = ROOT / "contracts" / "k16-kotoba-native-closure-v1.edn"
-EXPECTED_COMPILER = "795800cedbf602108c801aee13704f3af8c65043"
+EXPECTED_COMPILER = "3559d82be3bd4ec42abb44826fa2fa7cfd0b74dc"
 
 
 def sha256(path: pathlib.Path) -> str:
@@ -43,7 +43,7 @@ def main() -> int:
         ],
     }
     native_sources = {
-        "nic": [],
+        "nic": [str(pathlib.Path("native") / "rtl8125.kotoba")],
         "https": [
             str(pathlib.Path("kotoba") / "aes128-gcm.kotoba"),
             str(pathlib.Path("kotoba") / "hkdf-sha256.kotoba"),
@@ -65,7 +65,11 @@ def main() -> int:
     for name, paths in reference_files.items():
         present = [path for path in paths if (ROOT / path).is_file()]
         layers[name] = {
-            "state": "not-implemented-in-pure-closure",
+            "state": (
+                "one-shot-native-provider-qemu-negative-physical-unverified"
+                if name == "nic"
+                else "not-implemented-in-pure-closure"
+            ),
             "foreign_reference_files_present": present,
             "native_sources": {
                 path: sha256(ROOT / path)
@@ -79,7 +83,7 @@ def main() -> int:
         for marker in (
             ":all-native-ready? false",
             ":status :in-progress",
-            ":nic {:state :not-implemented-in-pure-closure",
+            ":nic {:state :one-shot-native-provider",
             ":https {:state :not-implemented-in-pure-closure",
             ":qwen {:state :not-implemented-in-pure-closure",
         )
@@ -91,7 +95,7 @@ def main() -> int:
         "compiler": EXPECTED_COMPILER,
         "layers": layers,
         "all_native_ready": False,
-        "next_blocker": "rtl8125-pci-mmio-dma-provider-in-kotoba",
+        "next_blocker": "physical-rtl8125-arp-positive-receipt",
     }
     json.dump(result, sys.stdout, indent=2, sort_keys=True)
     sys.stdout.write("\n")

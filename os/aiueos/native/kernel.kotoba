@@ -5,6 +5,7 @@
   ;; single-source compile the build script runs emits byte-identical artifacts
   ;; with and without it -- code sha c3bd9664…, binary sha b64afc94…, both
   ;; unchanged, and the export symbol stays kotoba_aiueos_probe.
+  (:require [native.rtl8125 :as rtl])
   (:export [main]))
 
 ;; The compiler-emitted loader keeps the final UEFI memory map in a bounded
@@ -38,7 +39,7 @@
 
 ;; UEFI type 7 is EfiConventionalMemory.  The compiler-emitted loader identity
 ;; maps the first GiB, so this bounded allocator slice admits one aligned,
-;; contiguous eight-page extent in [2 MiB, 1 GiB).  Loader/kernel pages have
+;; contiguous fourteen-page extent in [2 MiB, 1 GiB).  Loader/kernel pages have
 ;; non-conventional UEFI types.
 (defn find-page [memory-map map-size descriptor-size offset remaining]
   (if (or (= remaining 0)
@@ -48,9 +49,9 @@
           physical-start (load64 memory-map map-size (+ offset 8))
           pages (load64 memory-map map-size (+ offset 24))]
       (if (and (= memory-type 7)
-               (> pages 7)
+               (> pages 13)
                (>= physical-start 2097152)
-               (< physical-start 1073717248)
+               (< physical-start 1073688576)
                (= (bit-and physical-start 4095) 0))
         physical-start
         (find-page memory-map map-size descriptor-size
@@ -220,6 +221,50 @@
         27
         (if (= (kernel-load-u8-4k reusable-page 4096 4095) 0) 0 28)))))
 
+(defn claim-nic-slots-status [state]
+  (if (not (= (claim-slot state 8) 1)) 73
+    (if (not (= (claim-slot state 9) 1)) 74
+      (if (not (= (claim-slot state 10) 1)) 75
+        (if (not (= (claim-slot state 11) 1)) 76
+          (if (not (= (claim-slot state 12) 1)) 77
+            (if (= (claim-slot state 13) 1) 0 78)))))))
+
+(defn prepare-nic-pages [directory-a directory-b dma-pages]
+  (let [tx (kernel-subregion dma-pages 16384 0 4096)
+        rx (kernel-subregion dma-pages 16384 4096 4096)
+        tx-frame (kernel-subregion dma-pages 16384 8192 4096)
+        rx-frame (kernel-subregion dma-pages 16384 12288 4096)]
+    (if (not (= (zero-page directory-a 0) 1)) 79
+      (if (not (= (zero-page directory-b 0) 1)) 80
+        (if (not (= (zero-page tx 0) 1)) 81
+          (if (not (= (zero-page rx 0) 1)) 82
+            (if (not (= (zero-page tx-frame 0) 1)) 83
+              (if (= (zero-page rx-frame 0) 1) 0 84))))))))
+
+(defn prepare-rtl-page-tables [pdpt directory-a directory-b bar-a bar-b]
+  (if (and (= bar-a 0) (= bar-b 0))
+    true
+    (if (and (> bar-a 0) (> bar-b 0)
+             (= (quot bar-a 1073741824) (quot bar-b 1073741824)))
+      (and (= (rtl/install-directory pdpt directory-a bar-a) 1)
+           (= (rtl/install-bar-page directory-a bar-b) 1))
+      (and (if (> bar-a 0)
+             (= (rtl/install-directory pdpt directory-a bar-a) 1)
+             true)
+           (if (> bar-b 0)
+             (= (rtl/install-directory pdpt directory-b bar-b) 1)
+             true)))))
+
+(defn qualify-rtl8125 [bar-a bar-b dma-pages]
+  (if (> bar-a 0)
+    (let [first-result (rtl/qualify 2 bar-a dma-pages)]
+      (if (= first-result 0)
+        0
+        (if (and (> bar-b 0) (= (rtl/quiesce bar-a) 1))
+          (rtl/qualify 3 bar-b dma-pages)
+          first-result)))
+    (if (> bar-b 0) (rtl/qualify 3 bar-b dma-pages) -1)))
+
 (defn prepare-page-tables [pml4 pdpt pd pt]
   (and (= (store64-page pml4 0 (+ pdpt 3)) 1)
        (= (store64-page pdpt 0 (+ pd 3)) 1)
@@ -355,7 +400,15 @@
                 fifth-start (+ physical-start 16384)
                 sixth-start (+ physical-start 20480)
                 seventh-start (+ physical-start 24576)
-                eighth-start (+ physical-start 28672)]
+                eighth-start (+ physical-start 28672)
+                ninth-start (+ physical-start 32768)
+                tenth-start (+ physical-start 36864)
+                eleventh-start (+ physical-start 40960)
+                twelfth-start (+ physical-start 45056)
+                thirteenth-start (+ physical-start 49152)
+                fourteenth-start (+ physical-start 53248)
+                bar-a (rtl/bar-for-bus 2)
+                bar-b (rtl/bar-for-bus 3)]
             (if (and (five-distinct physical-start second-start third-start
                                     fourth-start fifth-start)
                      (> sixth-start 0) (< sixth-start 1073741824)
@@ -378,7 +431,14 @@
                      (not (= eighth-start fourth-start))
                      (not (= eighth-start fifth-start))
                      (not (= eighth-start sixth-start))
-                     (not (= eighth-start seventh-start)))
+                     (not (= eighth-start seventh-start))
+                     (> ninth-start eighth-start)
+                     (> tenth-start ninth-start)
+                     (> eleventh-start tenth-start)
+                     (> twelfth-start eleventh-start)
+                     (> thirteenth-start twelfth-start)
+                     (> fourteenth-start thirteenth-start)
+                     (< fourteenth-start 1073741824))
                   ;; The literal parent names the loader's identity-mapped
                   ;; physical window. Map values select only checked offsets.
                   (let [state (kernel-subregion 4096 1073737728
@@ -397,15 +457,35 @@
                                                      (- seventh-start 4096) 4096)
                         stack-page (kernel-subregion 4096 1073737728
                                                      (- eighth-start 4096) 4096)
+                        rtl-directory-a (kernel-subregion 4096 1073737728
+                                                          (- ninth-start 4096) 4096)
+                        rtl-directory-b (kernel-subregion 4096 1073737728
+                                                          (- tenth-start 4096) 4096)
+                        rtl-dma-pages (kernel-subregion 4096 1073737728
+                                                       (- eleventh-start 4096) 16384)
                         owned-status (prepare-owned-pages
                                       state page-table-root pdpt pd pt)
                         extra-status (prepare-extra-pages
-                                      reusable-page frame-page stack-page)]
+                                      reusable-page frame-page stack-page)
+                        nic-owned-status (if (= owned-status 0)
+                                           (claim-nic-slots-status state)
+                                           85)
+                        nic-pages-status (if (and (= owned-status 0)
+                                                  (= extra-status 0)
+                                                  (= nic-owned-status 0))
+                                           (prepare-nic-pages
+                                            rtl-directory-a rtl-directory-b
+                                            rtl-dma-pages)
+                                           86)]
                     (if (and (= map-marker 77)
                              (= owned-status 0)
-                             (= extra-status 0))
+                             (= extra-status 0)
+                             (= nic-owned-status 0)
+                             (= nic-pages-status 0))
                       (if (and (prepare-page-tables page-table-root pdpt pd pt)
-                               (prepare-low-page-table pt rx-limit rw-start))
+                               (prepare-low-page-table pt rx-limit rw-start)
+                               (prepare-rtl-page-tables
+                                pdpt rtl-directory-a rtl-directory-b bar-a bar-b))
                           (if (and (enable-page-protection)
                                    (activate-page-tables page-table-root)
                                    (= (kernel-configure-page-fault-recovery
@@ -415,21 +495,35 @@
                                   root-marker (kernel-out-u8 233 82)
                                   cr3-marker (kernel-out-u8 233 67)
                                   idt-marker (kernel-out-u8 233 68)
-                                  probe (page-fault-probe)]
+                                  probe (page-fault-probe)
+                                  core-ok (and (= page-marker 80)
+                                               (= root-marker 82)
+                                               (= cr3-marker 67)
+                                               (= idt-marker 68)
+                                               (= (recoverable-frame-valid
+                                                   frame-page stack-page probe) 1))
+                                  nic-status (if core-ok
+                                               (qualify-rtl8125
+                                                bar-a bar-b rtl-dma-pages)
+                                               -2)
+                                  nic-marker (if (= nic-status 0)
+                                               (kernel-out-u8 233 78)
+                                               (if (>= nic-status 0)
+                                                 (kernel-out-u8 233 70)
+                                                 0))]
                               (kernel-out-u32 244
-                                              (if (and (= page-marker 80)
-                                                       (= root-marker 82)
-                                                       (= cr3-marker 67)
-                                                       (= idt-marker 68)
-                                                       (= (recoverable-frame-valid
-                                                           frame-page stack-page
-                                                           probe) 1))
-                                                16 17)))
+                                              (+ (if core-ok 16 17)
+                                                 (* 0 nic-marker))))
                             (kernel-out-u32 244 24))
                         (kernel-out-u32 244 23))
                       (kernel-out-u32 244
                                       (if (not (= owned-status 0))
-                                        owned-status extra-status))))
+                                        owned-status
+                                        (if (not (= extra-status 0))
+                                          extra-status
+                                          (if (not (= nic-owned-status 0))
+                                            nic-owned-status
+                                            nic-pages-status))))))
               (kernel-out-u32 244 20)))
           (kernel-out-u32 244 19)))
       (kernel-out-u32 244 18))))
