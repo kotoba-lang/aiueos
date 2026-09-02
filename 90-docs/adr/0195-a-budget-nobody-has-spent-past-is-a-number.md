@@ -136,3 +136,24 @@ itself (`movabs r10, imm64`) is proven by byte goldens on both runtimes and by
 executed, because that would need the object linked into a kernel image and
 called, which is a larger change than this stream should make. The two claims
 are separate and are reported separately.
+
+## Reproducible from where
+
+**Not from amu main, until the pin bump in amu #764 merges.** Measured rather
+than assumed — the smoke run against the shared amu checkout answers:
+
+```
+COULD-NOT-RUN compile-failed at fuel=2500000000:
+  :error :verify  "native fuel budget is not admitted"
+```
+
+because `kotoba.verifier` at the pin amu main currently carries admits at most
+2^20, so the probe's 2,500,000,000 is refused before any machine sees it. The
+run recorded above used an amu carrying kotoba-kir `233bd6bb`, kotoba-native
+`95361f3f` and kotoba-verifier `d1985d62`.
+
+This is the gap SMOKE-FRESHNESS named: a QEMU proof that reproduces only
+against a private branch. It is written down here rather than left for someone
+to rediscover, and the three-outcome convention (ADR-0155) is what let the
+harness say so — `COULD-NOT-RUN` rather than a failure, because a machine that
+cannot compile the probe has not disagreed with anything.
