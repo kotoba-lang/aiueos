@@ -56,6 +56,53 @@
 (def ^:private ecdsa-recipe "os/aiueos/scripts/reproduce-ecdsa-sign-object.clj")
 (def ^:private kernel-recipe "os/aiueos/scripts/reproduce-kotoba-kernel-object.sh")
 
+
+;; A source that declares `(:require ...)` is a MODULE OF A PROJECT, and the
+;; object built from it depends on bytes this manifest would otherwise not
+;; name. Recording only the entry file would leave `:source-sha256` unchanged
+;; while the object changed -- a receipt that reports "unmodified" for an input
+;; it never looked at.
+;;
+;; Resolution is amu's own rule (`.` -> `/`, `-` -> `_`, relative to
+;; `os/aiueos/kotoba`), with the historical flat spelling as a fallback,
+;; because every module written before amu#742 sits flat under a hyphenated
+;; name. A module that resolves to neither is a hard stop: a partial closure
+;; recorded as if it were whole is the failure this whole file exists to avoid.
+(defn- required-namespaces [text]
+  (->> (re-seq #"\[([a-zA-Z][a-zA-Z0-9.*+!_?<>=-]*)\s+:as\s" text)
+       (map second)
+       distinct
+       sort
+       vec))
+
+(defn- module-file [dir namespace]
+  (let [munged (-> namespace (str/replace "." "/") (str/replace "-" "_"))
+        flat (str/replace namespace #"^aiueos\." "")]
+    (first (filter #(.existsSync fs %)
+                   [(path/join dir (str munged ".kotoba"))
+                    (path/join dir (str flat ".kotoba"))]))))
+
+(defn- module-closure
+  "Every module the entry pulls in, transitively, as
+  namespace -> {:source :source-sha256}. Empty for a single-file object."
+  [dir object entry-path]
+  (loop [pending (required-namespaces (.readFileSync fs entry-path "utf8"))
+         seen (sorted-map)]
+    (if-let [ns-name (first pending)]
+      (if (contains? seen ns-name)
+        (recur (rest pending) seen)
+        (let [file (module-file dir ns-name)]
+          (when-not file
+            (die! 2 (str "UNANSWERED could-not-answer reason=module-source-absent object="
+                         object " module=" ns-name)))
+          (let [text (.readFileSync fs file "utf8")]
+            (recur (into (vec (rest pending)) (required-namespaces text))
+                   (assoc seen ns-name
+                          {:source (str "os/aiueos/kotoba/"
+                                        (path/relative dir file))
+                           :source-sha256 (sha256-file file)})))))
+      seen)))
+
 (defn- kernel-recipe-pin
   "The compiler revision `reproduce-kotoba-kernel-object.sh` pins, and the set
   of objects it actually names. Read out of the script rather than restated
@@ -103,7 +150,8 @@
                                        (cond-> {:repo "kotoba-lang/amu" :sha sha :recipe recipe}
                                          (= recipe ecdsa-recipe) (assoc :patched true))
                                        {:repo "kotoba-lang/amu" :sha nil :recipe :unrecorded})}
-                    true identity)])))
+                    (seq (module-closure dir o src-path))
+                    (assoc :modules (module-closure dir o src-path)))])))
           unrecorded (->> entries (filter #(nil? (get-in (val %) [:compiler :sha]))) (mapv key))
           out (path/join dir "provenance.edn")]
       (.writeFileSync

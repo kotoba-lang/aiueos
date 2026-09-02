@@ -4,7 +4,7 @@
 ;; stated by the repository that owns the decision.
 {:format :aiueos.hkdf-sha256/v1
  :graph {:root aiueos.hkdf-sha256
-         :modules [aiueos.hkdf-sha256]}
+         :modules [aiueos.lib.sha256-core aiueos.hkdf-sha256]}
  :native {:target :x86_64-aiueos-kernel-v1
           :export "kotoba_aiueos_hkdf_sha256"
           :imports []
