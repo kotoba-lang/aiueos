@@ -1093,3 +1093,436 @@ int aiueos_qwen35_test_cache_resolve(
 }
 
 #endif
+
+/* ── QWEN-PARITY: the Kotoba objects against this file, on the CPU ─────────
+ *
+ * ADR-0137.  `aiueos-qwen35-dequant-row`, `aiueos-qwen35-dot-f32` and
+ * `aiueos-qwen35-matvec` are ports of `aiueos_qwen35_dequantize_row`,
+ * `dot_scalar` and `matvec_range`.  Their contracts are checked against a
+ * ClojureScript re-derivation in the KIR interpreter, which proves the
+ * ALGORITHM and says nothing about what amu emitted.  This runs the emitted
+ * objects on the target and compares every bit against the C that is compiled
+ * beside them -- the only evidence that covers the backend too, and the same
+ * argument `AIUEOS_X25519_OK` makes in main.c.
+ *
+ * The inputs are synthetic and deterministic (xorshift32), not the model: this
+ * has to run in the plain UEFI smoke, where no 10.9 GiB mapping exists.  What
+ * it establishes is bit-equality of the arithmetic, which is the property the
+ * model path needs and the one a wrong nibble, a wrong scale index or a
+ * different accumulation tree breaks.
+ *
+ * Prints one line per stage on the serial port, `QWEN-PARITY <stage> ok` or
+ * `... mismatch`, and returns zero on the first disagreement.
+ */
+#ifdef AIUEOS_QWEN35_KOTOBA_PARITY
+
+/* TWO PROFILES, AND THE REASON IS THE LINKER SCRIPT.
+ * `aiueos_low_end <= 0x1f4000` leaves 999,424 bytes for text, rodata,
+ * data and bss together, and since the tokenizer objects landed there is
+ * less headroom than these five objects need at once (measured: adding the
+ * 16,120 bytes of `qwen35-activation.o` + `qwen35-norm.o` to a link that
+ * already carries the other three overflows it). So the comparison runs in
+ * two halves, each linking only the objects its stages call:
+ *
+ *   AIUEOS_QWEN35_KOTOBA_PARITY=1   dequant, dot, matvec
+ *   AIUEOS_QWEN35_KOTOBA_PARITY=2   activation, norm
+ *
+ * Splitting the RUN rather than the evidence: both halves are the emitted
+ * objects against the compiled C on the same CPU, and neither half is
+ * weaker for the other one not being linked beside it. */
+static uint32_t qwen_parity_state;
+
+static uint8_t qwen_parity_byte(void) {
+  uint32_t x = qwen_parity_state;
+  x ^= x << 13; x ^= x >> 17; x ^= x << 5;
+  qwen_parity_state = x;
+  return (uint8_t)(x & 0xffU);
+}
+
+/* A spread of magnitudes rather than a spread of mantissas: the accumulation
+   tree is what is being compared, and a tree only shows itself when the
+   addends round differently depending on the order they arrive in. */
+static float qwen_parity_value(void) {
+  int32_t mantissa = (int32_t)qwen_parity_byte() - 128;
+  int32_t exponent = (int32_t)(qwen_parity_byte() & 15U) - 7;
+  float value = (float)mantissa;
+  for (int32_t step = 0; step < exponent; step++) value *= 2.0f;
+  for (int32_t step = exponent; step < 0; step++) value *= 0.5f;
+  return value;
+}
+
+static uint32_t qwen_parity_bits(float value) {
+  union { float value; uint32_t bits; } representation = {value};
+  return representation.bits;
+}
+
+#if AIUEOS_QWEN35_KOTOBA_PARITY == 1
+
+#define QWEN_PARITY_COLS 256U
+#define QWEN_PARITY_ROWS 4U
+#define QWEN_PARITY_MAX_ROW_BYTES 1024U
+
+extern uint64_t kotoba_aiueos_qwen35_dequant_row(uint64_t type,
+                                                 const uint8_t *source,
+                                                 uint64_t source_bytes,
+                                                 float *destination,
+                                                 uint64_t destination_bytes);
+extern uint64_t kotoba_aiueos_qwen35_dot_f32(const float *left,
+                                             uint64_t left_bytes,
+                                             const float *right,
+                                             uint64_t right_bytes,
+                                             uint64_t count);
+extern uint64_t kotoba_aiueos_qwen35_matvec(uint8_t *arena, uint64_t arena_bytes,
+                                            const uint8_t *plan,
+                                            uint64_t plan_bytes);
+
+static uint64_t qwen_parity_row_bytes(uint32_t type) {
+  return aiueos_qwen35_quant_row_bytes(type, QWEN_PARITY_COLS);
+}
+
+static void qwen_parity_write_u32(uint8_t *plan, uint32_t offset, uint32_t v) {
+  plan[offset + 0] = (uint8_t)(v & 0xffU);
+  plan[offset + 1] = (uint8_t)((v >> 8) & 0xffU);
+  plan[offset + 2] = (uint8_t)((v >> 16) & 0xffU);
+  plan[offset + 3] = (uint8_t)((v >> 24) & 0xffU);
+}
+
+static void qwen_parity_write_u64(uint8_t *plan, uint32_t offset, uint64_t v) {
+  qwen_parity_write_u32(plan, offset, (uint32_t)(v & 0xffffffffU));
+  qwen_parity_write_u32(plan, offset + 4, (uint32_t)(v >> 32));
+}
+
+/* [weights][input][output][row scratch] in one region, which is what
+   `aiueos-qwen35-matvec` takes: `kernel-subregion` requires a BASE to be a
+   parameter, so four regions cannot arrive as four bases through a five-
+   argument ABI. */
+static uint8_t __attribute__((section(".high_bss"), aligned(8))) qwen_parity_arena[
+    QWEN_PARITY_ROWS * QWEN_PARITY_MAX_ROW_BYTES
+    + QWEN_PARITY_COLS * 4U + QWEN_PARITY_ROWS * 4U + QWEN_PARITY_COLS * 4U];
+static uint8_t __attribute__((section(".high_bss"), aligned(8))) qwen_parity_plan[96];
+static float __attribute__((section(".high_bss"))) qwen_parity_reference_row[QWEN_PARITY_COLS];
+static float __attribute__((section(".high_bss"))) qwen_parity_object_row[QWEN_PARITY_COLS];
+static float __attribute__((section(".high_bss"))) qwen_parity_reference_out[QWEN_PARITY_ROWS];
+
+/* F32, Q8_0, Q4_K, Q6_K -- the four this object decodes.  The IQ types stay in
+   the C for want of a rodata facility to hold their codebook grids. */
+static const uint32_t qwen_parity_types[4] = {
+  AIUEOS_GGML_F32, AIUEOS_GGML_Q8_0, AIUEOS_GGML_Q4_K, AIUEOS_GGML_Q6_K
+};
+
+static int qwen_parity_dequant(uint32_t type) {
+  uint64_t row_bytes = qwen_parity_row_bytes(type);
+  if (!row_bytes || row_bytes > QWEN_PARITY_MAX_ROW_BYTES) return 0;
+  qwen_parity_state = 0x1234567u + type;
+  for (uint64_t index = 0; index < row_bytes; index++)
+    qwen_parity_arena[index] = qwen_parity_byte();
+  if (!aiueos_qwen35_dequantize_row(type, qwen_parity_arena,
+                                    QWEN_PARITY_COLS,
+                                    qwen_parity_reference_row))
+    return 0;
+  for (uint32_t index = 0; index < QWEN_PARITY_COLS; index++)
+    qwen_parity_object_row[index] = 0.0f;
+  if (kotoba_aiueos_qwen35_dequant_row(type, qwen_parity_arena, row_bytes,
+                                       qwen_parity_object_row,
+                                       QWEN_PARITY_COLS * 4U) != 0)
+    return 0;
+  for (uint32_t index = 0; index < QWEN_PARITY_COLS; index++)
+    if (qwen_parity_bits(qwen_parity_reference_row[index]) !=
+        qwen_parity_bits(qwen_parity_object_row[index]))
+      return 0;
+  return 1;
+}
+
+/* Counts 0..17 and 4096: every residue of four (dot_scalar's accumulator
+   step) and of eight (the tree `kernel-dot-f32` would use if the SIMD swap-in
+   were wired), plus one long vector so a per-lane divergence has room to
+   show. */
+static int qwen_parity_dot(void) {
+  float *left = (float *)(void *)qwen_parity_arena;
+  float *right = left + QWEN_PARITY_COLS;
+  qwen_parity_state = 0x2468aceu;
+  for (uint32_t index = 0; index < QWEN_PARITY_COLS; index++) {
+    left[index] = qwen_parity_value();
+    right[index] = qwen_parity_value();
+  }
+  for (uint32_t count = 0; count <= 17U; count++) {
+    uint64_t object = kotoba_aiueos_qwen35_dot_f32(left, count * 4U, right,
+                                                   count * 4U, count);
+    if (object != (uint64_t)(int64_t)(int32_t)
+        qwen_parity_bits(dot_scalar(left, right, count)))
+      return 0;
+  }
+  {
+    uint64_t object = kotoba_aiueos_qwen35_dot_f32(
+        left, QWEN_PARITY_COLS * 4U, right, QWEN_PARITY_COLS * 4U,
+        QWEN_PARITY_COLS);
+    if (object != (uint64_t)(int64_t)(int32_t)
+        qwen_parity_bits(dot_scalar(left, right, QWEN_PARITY_COLS)))
+      return 0;
+  }
+  /* The refusals, so the object is not merely believed to compute. */
+  if (kotoba_aiueos_qwen35_dot_f32(left, 12, right, 16, 4) !=
+      (uint64_t)(int64_t)-4294967299LL) return 0;
+  if (kotoba_aiueos_qwen35_dot_f32(left, 16, right, 12, 4) !=
+      (uint64_t)(int64_t)-4294967300LL) return 0;
+  return 1;
+}
+
+static int qwen_parity_matvec(uint32_t type) {
+  uint64_t row_bytes = qwen_parity_row_bytes(type);
+  uint64_t weights_bytes = row_bytes * QWEN_PARITY_ROWS;
+  uint64_t input_offset = weights_bytes;
+  uint64_t output_offset = input_offset + QWEN_PARITY_COLS * 4U;
+  uint64_t scratch_offset = output_offset + QWEN_PARITY_ROWS * 4U;
+  uint64_t arena_bytes = scratch_offset + QWEN_PARITY_COLS * 4U;
+  float *input;
+  struct aiueos_qwen35_tensor tensor;
+  if (!row_bytes || row_bytes > QWEN_PARITY_MAX_ROW_BYTES) return 0;
+  if (arena_bytes > sizeof qwen_parity_arena) return 0;
+  qwen_parity_state = 0x9abcdefu + type;
+  for (uint64_t index = 0; index < weights_bytes; index++)
+    qwen_parity_arena[index] = qwen_parity_byte();
+  input = (float *)(void *)(qwen_parity_arena + input_offset);
+  for (uint32_t index = 0; index < QWEN_PARITY_COLS; index++)
+    input[index] = qwen_parity_value();
+  for (uint64_t index = output_offset; index < arena_bytes; index++)
+    qwen_parity_arena[index] = 0;
+
+  tensor.dimensions[0] = QWEN_PARITY_COLS;
+  tensor.dimensions[1] = QWEN_PARITY_ROWS;
+  tensor.dimensions[2] = 0;
+  tensor.dimensions[3] = 0;
+  tensor.offset = 0;
+  tensor.storage_bytes = weights_bytes;
+  tensor.dimension_count = 2;
+  tensor.type = type;
+  tensor.data = qwen_parity_arena;
+  if (!matvec_range(&tensor, input, QWEN_PARITY_COLS,
+                    qwen_parity_reference_out, 0, QWEN_PARITY_ROWS,
+                    qwen_parity_reference_row))
+    return 0;
+
+  for (uint32_t index = 0; index < 96U; index++) qwen_parity_plan[index] = 0;
+  qwen_parity_write_u32(qwen_parity_plan, 0, type);
+  qwen_parity_write_u64(qwen_parity_plan, 8, QWEN_PARITY_ROWS);
+  qwen_parity_write_u64(qwen_parity_plan, 16, QWEN_PARITY_COLS);
+  qwen_parity_write_u64(qwen_parity_plan, 24, 0);
+  qwen_parity_write_u64(qwen_parity_plan, 32, weights_bytes);
+  qwen_parity_write_u64(qwen_parity_plan, 40, input_offset);
+  qwen_parity_write_u64(qwen_parity_plan, 48, output_offset);
+  qwen_parity_write_u64(qwen_parity_plan, 56, scratch_offset);
+  qwen_parity_write_u64(qwen_parity_plan, 64, 0);
+  qwen_parity_write_u64(qwen_parity_plan, 72, QWEN_PARITY_ROWS);
+  if (kotoba_aiueos_qwen35_matvec(qwen_parity_arena, arena_bytes,
+                                  qwen_parity_plan, 96) != 0)
+    return 0;
+  {
+    const float *object = (const float *)(const void *)
+        (qwen_parity_arena + output_offset);
+    for (uint32_t row = 0; row < QWEN_PARITY_ROWS; row++)
+      if (qwen_parity_bits(qwen_parity_reference_out[row]) !=
+          qwen_parity_bits(object[row]))
+        return 0;
+  }
+  /* A plan the object must refuse: a reserved slot that is not zero.  A
+     self-test that only ever sees agreement has not shown the object
+     discriminates. */
+  qwen_parity_write_u32(qwen_parity_plan, 4, 1);
+  if (kotoba_aiueos_qwen35_matvec(qwen_parity_arena, arena_bytes,
+                                  qwen_parity_plan, 96) !=
+      (uint64_t)(int64_t)-4)
+    return 0;
+  return 1;
+}
+
+
+#endif /* AIUEOS_QWEN35_KOTOBA_PARITY == 1 */
+
+#if AIUEOS_QWEN35_KOTOBA_PARITY == 2
+
+/* Stage 3: the elementwise activations.  Every one of `local_exp`'s clamp
+   boundaries is a probe value, because the clamps are where a port drifts:
+   -87 returns zero, +88 saturates, and +-20 switch softplus between its three
+   branches. */
+#define QWEN_PARITY_ACT 128U
+
+extern uint64_t kotoba_aiueos_qwen35_activation(uint64_t mode, float *a,
+                                                const float *b, uint64_t count,
+                                                uint64_t spare);
+/* Every argument as a word: mode 0 reads `b` as a POINTER (the weights) while
+   modes 1 and 2 read it as a head COUNT, so a typed declaration would have to
+   lie about one of them. */
+extern uint64_t kotoba_aiueos_qwen35_norm(uint64_t mode, uint64_t a, uint64_t b,
+                                          uint64_t c, uint64_t d);
+
+static float __attribute__((section(".high_bss"))) qwen_parity_act_in[QWEN_PARITY_ACT];
+static float __attribute__((section(".high_bss"))) qwen_parity_act_ref[QWEN_PARITY_ACT];
+static float __attribute__((section(".high_bss"))) qwen_parity_act_obj[QWEN_PARITY_ACT];
+static float __attribute__((section(".high_bss"))) qwen_parity_act_gate[QWEN_PARITY_ACT];
+
+static const float qwen_parity_edges[16] = {
+  0.0f, 1.0f, -1.0f, 20.0f, -20.0f, 20.5f, -20.5f, 87.0f,
+  -87.0f, 88.0f, -88.0f, 89.0f, -89.0f, 0.001f, -0.001f, 12.0f
+};
+
+static int qwen_parity_activation(void) {
+  uint32_t index;
+  qwen_parity_state = 0x5a5a5a5u;
+  for (index = 0; index < QWEN_PARITY_ACT; index++)
+    qwen_parity_act_in[index] = index < 16U ? qwen_parity_edges[index]
+                                            : qwen_parity_value();
+  for (uint32_t mode = 0; mode < 5U; mode++) {
+    for (index = 0; index < QWEN_PARITY_ACT; index++) {
+      float x = qwen_parity_act_in[index];
+      qwen_parity_act_obj[index] = x;
+      qwen_parity_act_gate[index] = (float)((int32_t)index - 64) * 0.125f;
+      qwen_parity_act_ref[index] =
+        mode == 0U ? silu(x) :
+        mode == 1U ? sigmoid(x) :
+        mode == 2U ? softplus(x) :
+        mode == 3U ? local_exp(x) :
+                     silu(x) * qwen_parity_act_gate[index];
+    }
+    if (kotoba_aiueos_qwen35_activation(mode, qwen_parity_act_obj,
+                                        qwen_parity_act_gate,
+                                        QWEN_PARITY_ACT, 0) != 0)
+      return 0;
+    for (index = 0; index < QWEN_PARITY_ACT; index++)
+      if (qwen_parity_bits(qwen_parity_act_ref[index]) !=
+          qwen_parity_bits(qwen_parity_act_obj[index]))
+        return 0;
+  }
+  /* A refusal, so the object is not merely believed to compute. */
+  if (kotoba_aiueos_qwen35_activation(5, qwen_parity_act_obj,
+                                      qwen_parity_act_gate,
+                                      QWEN_PARITY_ACT, 0) != (uint64_t)(int64_t)-2)
+    return 0;
+  return 1;
+}
+
+/* Stage 4: the three normalisations.  The reference is this file's own
+   `rms_norm`, `l2_norm_heads` and `rms_norm_heads_weighted`, which reduce in
+   f64 over f32 squares and narrow at different points -- the property the port
+   is most likely to get subtly wrong. */
+#define QWEN_PARITY_NORM_HEADS 4U
+#define QWEN_PARITY_NORM_WIDTH 32U
+#define QWEN_PARITY_NORM (QWEN_PARITY_NORM_HEADS * QWEN_PARITY_NORM_WIDTH)
+
+static float __attribute__((section(".high_bss"))) qwen_parity_norm_in[QWEN_PARITY_NORM];
+static float __attribute__((section(".high_bss"))) qwen_parity_norm_ref[QWEN_PARITY_NORM];
+static float __attribute__((section(".high_bss"))) qwen_parity_norm_obj[QWEN_PARITY_NORM];
+static float __attribute__((section(".high_bss"))) qwen_parity_norm_w[QWEN_PARITY_NORM];
+
+static void qwen_parity_norm_fill(uint32_t seed) {
+  qwen_parity_state = seed;
+  for (uint32_t index = 0; index < QWEN_PARITY_NORM; index++) {
+    qwen_parity_norm_in[index] = qwen_parity_value();
+    qwen_parity_norm_w[index] = qwen_parity_value();
+  }
+}
+
+static int qwen_parity_norm(void) {
+  struct aiueos_qwen35_tensor weights;
+  uint32_t index;
+  qwen_parity_norm_fill(0x7654321u);
+  weights.dimensions[0] = QWEN_PARITY_NORM;
+  weights.dimensions[1] = 0;
+  weights.dimensions[2] = 0;
+  weights.dimensions[3] = 0;
+  weights.offset = 0;
+  weights.storage_bytes = QWEN_PARITY_NORM * sizeof(float);
+  weights.dimension_count = 1;
+  weights.type = AIUEOS_GGML_F32;
+  weights.data = (const uint8_t *)(const void *)qwen_parity_norm_w;
+
+  /* mode 0: rms_norm, out of place. */
+  if (!rms_norm(qwen_parity_norm_in, &weights, QWEN_PARITY_NORM,
+                qwen_parity_norm_ref))
+    return 0;
+  for (index = 0; index < QWEN_PARITY_NORM; index++)
+    qwen_parity_norm_obj[index] = 0.0f;
+  /* `[mode input weights count output]` -- the object's own order, which is
+     `rms_norm`'s. Getting this wrong is not a crash: it computes a norm of the
+     wrong vector into the wrong place and every bound still holds. Measured
+     2026-09-02 under QEMU, where an earlier draft of this harness passed the
+     output buffer as the input and the comparison said `norm mismatch`. */
+  if (kotoba_aiueos_qwen35_norm(0, (uint64_t)(uintptr_t)qwen_parity_norm_in,
+                                (uint64_t)(uintptr_t)qwen_parity_norm_w,
+                                QWEN_PARITY_NORM,
+                                (uint64_t)(uintptr_t)qwen_parity_norm_obj) != 0)
+    return 0;
+  for (index = 0; index < QWEN_PARITY_NORM; index++)
+    if (qwen_parity_bits(qwen_parity_norm_ref[index]) !=
+        qwen_parity_bits(qwen_parity_norm_obj[index]))
+      return 0;
+
+  /* mode 1: l2_norm_heads, in place. */
+  qwen_parity_norm_fill(0x1111111u);
+  for (index = 0; index < QWEN_PARITY_NORM; index++) {
+    qwen_parity_norm_ref[index] = qwen_parity_norm_in[index];
+    qwen_parity_norm_obj[index] = qwen_parity_norm_in[index];
+  }
+  l2_norm_heads(qwen_parity_norm_ref, QWEN_PARITY_NORM_HEADS,
+                QWEN_PARITY_NORM_WIDTH);
+  if (kotoba_aiueos_qwen35_norm(1, (uint64_t)(uintptr_t)qwen_parity_norm_obj,
+                                QWEN_PARITY_NORM_HEADS,
+                                QWEN_PARITY_NORM_WIDTH, 0) != 0)
+    return 0;
+  for (index = 0; index < QWEN_PARITY_NORM; index++)
+    if (qwen_parity_bits(qwen_parity_norm_ref[index]) !=
+        qwen_parity_bits(qwen_parity_norm_obj[index]))
+      return 0;
+
+  /* mode 2: rms_norm_heads_weighted, in place, one weight row per head. */
+  qwen_parity_norm_fill(0x2222222u);
+  for (index = 0; index < QWEN_PARITY_NORM; index++) {
+    qwen_parity_norm_ref[index] = qwen_parity_norm_in[index];
+    qwen_parity_norm_obj[index] = qwen_parity_norm_in[index];
+  }
+  weights.dimensions[0] = QWEN_PARITY_NORM_WIDTH;
+  weights.storage_bytes = QWEN_PARITY_NORM_WIDTH * sizeof(float);
+  if (!rms_norm_heads_weighted(qwen_parity_norm_ref, QWEN_PARITY_NORM_HEADS,
+                               QWEN_PARITY_NORM_WIDTH, &weights))
+    return 0;
+  if (kotoba_aiueos_qwen35_norm(2, (uint64_t)(uintptr_t)qwen_parity_norm_obj,
+                                QWEN_PARITY_NORM_HEADS,
+                                QWEN_PARITY_NORM_WIDTH,
+                                (uint64_t)(uintptr_t)qwen_parity_norm_w) != 0)
+    return 0;
+  for (index = 0; index < QWEN_PARITY_NORM; index++)
+    if (qwen_parity_bits(qwen_parity_norm_ref[index]) !=
+        qwen_parity_bits(qwen_parity_norm_obj[index]))
+      return 0;
+
+  /* A refusal: mode 3 does not exist. */
+  if (kotoba_aiueos_qwen35_norm(3, (uint64_t)(uintptr_t)qwen_parity_norm_obj,
+                                1, 8, 0) != (uint64_t)(int64_t)-2)
+    return 0;
+  return 1;
+}
+
+#endif /* AIUEOS_QWEN35_KOTOBA_PARITY == 2 */
+
+int aiueos_qwen35_kotoba_parity_selftest(uint32_t stage) {
+#if AIUEOS_QWEN35_KOTOBA_PARITY == 1
+  if (stage == 0) {
+    for (uint32_t index = 0; index < 4U; index++)
+      if (!qwen_parity_dequant(qwen_parity_types[index])) return 0;
+    return 1;
+  }
+  if (stage == 1) return qwen_parity_dot();
+  if (stage == 2) {
+    for (uint32_t index = 0; index < 4U; index++)
+      if (!qwen_parity_matvec(qwen_parity_types[index])) return 0;
+    return 1;
+  }
+#else
+  if (stage == 3) return qwen_parity_activation();
+  if (stage == 4) return qwen_parity_norm();
+#endif
+  /* A stage this profile did not compile is a REFUSAL, not a pass: a loop that
+     asked for one and got 1 would report `ok` for a comparison that never ran. */
+  return 0;
+}
+
+#endif

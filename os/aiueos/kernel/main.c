@@ -1429,6 +1429,73 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
       debug_string("AIUEOS_TLS13_RECORD_OK rfc8448-s3 seq0 seal-open tamper-refused\n");
       serial_string("AIUEOS_TLS13_RECORD_OK rfc8448-s3 seq0 seal-open tamper-refused\r\n");
     }
+    /* The RTL8125 driver objects, against a software model of the BAR window
+       (ADR-0140).  QEMU has no RTL8125, so the model is how the emitted machine
+       code gets executed at all -- and it is not a substitute for the physical
+       qualification, which still runs on the K16 nodes.  What it proves is that
+       the six Kotoba objects and the C in `kernel/rtl8125.c` leave the same
+       4,096-byte register file and the same two descriptors behind, from the
+       same seed. */
+    {
+      extern int aiueos_rtl8125_kotoba_selftest(void);
+      extern unsigned aiueos_rtl8125_parity_stage;
+      extern unsigned aiueos_rtl8125_parity_detail;
+      if (!aiueos_rtl8125_kotoba_selftest()) {
+        serial_string("NIC-PARITY mismatch stage=");
+        serial_decimal(aiueos_rtl8125_parity_stage);
+        serial_string(" offset=");
+        serial_decimal(aiueos_rtl8125_parity_detail);
+        serial_string("\r\n");
+        debug_string("NIC-PARITY mismatch\n");
+        qemu_exit(0x6f);
+      }
+      debug_string("NIC-PARITY ok rtl8125 identify link-up ring-build program tx-submit rx-poll\n");
+      serial_string("NIC-PARITY ok rtl8125 identify link-up ring-build program tx-submit rx-poll\r\n");
+    }
+#ifdef AIUEOS_QWEN35_KOTOBA_PARITY
+    /* QWEN-PARITY (ADR-0137).  The three Qwen3.5 forward-pass objects against
+       the C they were ported from, on this CPU, over synthetic inputs.  Placed
+       with the other Kotoba self-tests, after the kernel owns its own IDT: a
+       fuel-guard `ud2` raised while the FIRMWARE's handler is still installed
+       gives an OVMF dump with no vector and no address, and here it reaches
+       set_idt_gate(6, aiueos_isr_invalid_opcode) and names itself.
+       Only when AIUEOS_QWEN35_KOTOBA_PARITY=1, which is what compiles
+       kernel/qwen35_quant.c and kernel/qwen35_infer.c -- the reference half of
+       the comparison.  It is a SEPARATE flag from the model handoff on
+       purpose: the handoff makes the UEFI loader demand a 10,934,860,704-byte
+       mapping and refuse the boot without one (AIUEOS_LOADER_FAIL
+       qwen38-model-admission code=121, measured), and this comparison needs
+       no model at all -- it is bit-equality of the arithmetic over synthetic
+       inputs, which is exactly the property that survives having no weights. */
+    {
+      extern int aiueos_qwen35_kotoba_parity_selftest(uint32_t stage);
+      /* Two profiles, because the low region cannot hold all five objects at
+         once since the tokenizer landed (see qwen35_infer.c's own comment).
+         Each half links only the objects its stages call, and a stage the
+         profile did not compile is REFUSED rather than reported ok. */
+#if AIUEOS_QWEN35_KOTOBA_PARITY == 1
+      static const char *const qwen_parity_names[3] = {"dequant", "dot", "matvec"};
+      uint32_t qwen_parity_first = 0U;
+#else
+      static const char *const qwen_parity_names[2] = {"activation", "norm"};
+      uint32_t qwen_parity_first = 3U;
+#endif
+      for (uint32_t index = 0;
+           index < sizeof qwen_parity_names / sizeof qwen_parity_names[0];
+           index++) {
+        uint32_t stage = qwen_parity_first + index;
+        if (!aiueos_qwen35_kotoba_parity_selftest(stage)) {
+          serial_string("QWEN-PARITY ");
+          serial_string(qwen_parity_names[index]);
+          serial_string(" mismatch\r\n");
+          qemu_exit(0x6f);
+        }
+        serial_string("QWEN-PARITY ");
+        serial_string(qwen_parity_names[index]);
+        serial_string(" ok\r\n");
+      }
+    }
+#endif
     {
       /* DEVCLIENT-PARITY.  The emitted `device-worker-canonical` object against
          the bytes the C writer produced for the same inputs (protocol 2) and
@@ -1601,7 +1668,7 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
     debug_string("AIUEOS_PHYSICAL_ALLOCATOR_OK pages=2 zeroed\n");
     serial_string("AIUEOS_PHYSICAL_ALLOCATOR_OK pages=2 zeroed\r\n");
 #if defined(AIUEOS_QWEN38_MODEL_HANDOFF) && defined(AIUEOS_MODEL_TEST_FIXTURE)
-    /* The GGUF admission, EXECUTED. ADR-0135 moved it to three Kotoba objects
+    /* The GGUF admission, EXECUTED. ADR-0137 moved it to three Kotoba objects
        and made kernel/qwen35_runtime.c delegate to them, but nothing ever ran
        that delegation: the objects passed a KIR-interpreter oracle, the image
        linked, and this workstation is aarch64 so the emitted x86-64 was never

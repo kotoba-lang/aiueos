@@ -15,9 +15,13 @@
   a receipt naming the compiler it measured against, so the numbers cannot be
   quoted without their date and closure.
 
-  Two objects have no verifier of their own — `value-runtime-sha256` and
-  `value-runtime-digest-equal` — because they are *inputs* to the ones that do,
-  and are compiled as part of them. They are covered, not missing.
+  Two modules have no verifier of their own — `aiueos.sha256` and
+  `aiueos.digest-equal` — because they are *inputs* to the ones that do, and are
+  compiled as part of them. They are covered, not missing. They used to be
+  `value-runtime-sha256.kotoba` and `value-runtime-digest-equal.kotoba`, which
+  were byte-for-byte copies of the sources the kernel's own `sha256.o` and
+  `digest-equal.o` are built from; ADR-0141 deleted the copies and left the
+  originals, imported rather than pasted in.
 
   The eleventh verifier, `verify_value_runtime_kernel_image`, is not a
   per-object verifier: it composes every value module plus
@@ -44,8 +48,14 @@
 (defn- c [n] (str "os/aiueos/contracts/" n "-v1.edn"))
 
 (def arena (k "value-handle-arena"))
-(def sha256 (k "value-runtime-sha256"))
-(def digest (k "value-runtime-digest-equal"))
+;; `value-runtime-sha256.kotoba` and `value-runtime-digest-equal.kotoba` were
+;; byte-for-byte copies of `sha256.kotoba` and `digest-equal.kotoba` -- the
+;; objects the kernel actually links -- differing only in their `ns` line. They
+;; are gone (ADR-0141); what stands here is the one remaining copy, at the path
+;; amu's module resolver derives from its namespace (`.` -> `/`, `-` -> `_`),
+;; because it is now IMPORTED rather than pasted in.
+(def sha256 (k "aiueos/sha256"))
+(def digest (k "aiueos/digest_equal"))
 (def cas (k "value-runtime-cas-verify"))
 (def transport (k "value-runtime-provider-transport"))
 (def dispatch (k "value-runtime-dispatch"))
@@ -220,8 +230,8 @@
                         only .cljc: the linker, the frontend, the lowering and
                         the interpreter. No JVM."}
                  :value-runtime/no-verifier-of-their-own
-                 {"value-runtime-sha256" "an input to cas-verify, dispatch, entry and provider-transport; compiled as part of them"
-                  "value-runtime-digest-equal" "same — an input, not an uncovered object"}
+                 {"aiueos.sha256" "an input to cid-v1-admit, cas-verify, dispatch, entry and provider-transport; compiled as part of them. It is also the source of the LINKED sha256.o, so it is covered twice over."
+                  "aiueos.digest-equal" "same — an input, not an uncovered object, and also the source of digest-equal.o"}
                  ;; Resolved 2026-08-18 (ADR-0057): there was never a source to
                  ;; miss. `git log --all --diff-filter=AD` shows that
                  ;; value-runtime-kernel-image.kotoba has never existed on any

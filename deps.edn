@@ -165,9 +165,30 @@
                  ;; it every vector traps `:kernel-memory-unavailable`. The
                  ;; runner refuses rather than reporting a pass in that case,
                  ;; which is how this was caught.
+                 ;;
+                 ;; ADVANCED 2026-09-02 for the RTL8125 driver objects, and the
+                 ;; FRONTEND had to move with it. At the pins this alias carried
+                 ;; before, `kernel-fence-load` / `kernel-fence-store` /
+                 ;; `kernel-rdtsc` (the SYSOPS slice) have no entry in
+                 ;; `kotoba.compiler.frontend`'s operator table, so
+                 ;; `sema/analyze` refuses the whole module with `operation has
+                 ;; no admitted type signature` -- four of the six driver
+                 ;; objects could not be lowered at all, let alone executed, and
+                 ;; a runner that cannot lower an object cannot report anything
+                 ;; about it.
+                 ;;
+                 ;; `kotoba-sema` is pinned to the SHA amu's own `deps.edn`
+                 ;; names at the tip this repo's objects are compiled with, so
+                 ;; the frontend that admits a program here is the frontend that
+                 ;; admitted the `.o`. Pinning it directly rather than advancing
+                 ;; the amu above keeps that amu's ClojureScript printer fix,
+                 ;; which is the reason this alias exists.
+                 io.github.kotoba-lang/kotoba-sema
+                 {:git/url "https://github.com/kotoba-lang/kotoba-sema.git"
+                  :git/sha "e42b74eff72fdea0f55ec883a293c937421ca571"}
                  io.github.kotoba-lang/kotoba-kir
                  {:git/url "https://github.com/kotoba-lang/kotoba-kir.git"
-                  :git/sha "674a5beea7c6c02178a69808db05dcad65397f1b"}}}
+                  :git/sha "08bdab8b1084160dcb58ac291a002b140a5abf13"}}}
 
    :tcb-check {:main-opts ["-m" "aiueos.tcb"]}
 

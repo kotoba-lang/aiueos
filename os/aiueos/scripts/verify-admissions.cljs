@@ -1,9 +1,27 @@
 #!/usr/bin/env nbb
 ;; Runs the admission objects against their contracts WITHOUT a JVM.
 ;;
+;;   npm run verify-admissions -- [contract.edn ...]
+;;
+;; which is
+;;
 ;;   node --stack-size=4000 "$(command -v nbb)" \
-;;     --classpath "$(clojure -Spath -M:test)" \
+;;     --classpath "$(clojure -Spath -M:verify-admissions)" \
 ;;     os/aiueos/scripts/verify-admissions.cljs [contract.edn ...]
+;;
+;; `-M:verify-admissions`, NOT `-M:test`. This line said `-M:test` from the day
+;; it was written and `package.json` said `-M:verify-admissions`, and the two
+;; are different compilers on purpose (see the alias comment in `deps.edn`).
+;; Measured 2026-09-02: with the `:test` closure -- amu 6889fa73, which carries
+;; kotoba-sema 244765d4 -- EVERY contract fails at
+;;
+;;     FAILED: source reader rejected input
+;;        {:phase :read}
+;;
+;; before a single vector runs, because that kotoba-sema predates the
+;; linked-source printer fix. The same contract passes on the classpath this
+;; file's own receipt names. A run following this comment could not check
+;; anything, and the comment was the only thing wrong.
 ;;
 ;; `--stack-size` is not decoration, and 4000 IS NOT ENOUGH FOR EVERY CONTRACT.
 ;; Two different things need it. `value-runtime-sha256` is 9 KB of nested `if`
@@ -277,6 +295,127 @@
        (conj {:label :record-length :offset (+ ctx-offset 60)
               :bytes (be-bytes (:expect-record-length v) 2)}))}))
 
+;; --- the Qwen3.5 forward pass, first tranche (ADR-0137) -------------------
+;;
+;; Three objects that are three copies of one piece of arithmetic:
+;; `aiueos-qwen35-matvec` inlines the other two, because a kernel object
+;; exports one symbol and cannot call another. So the three builders below feed
+;; the SAME oracle-derived bytes into all three, and a divergence between them
+;; is a vector mismatch here rather than something to be discovered later.
+;;
+;; The expected bytes come from an independent ClojureScript re-derivation of
+;; the C over `Float32Array`, so every rounding in an expectation is a real
+;; binary32 rounding. That proves the algorithm against a second reading and
+;; says nothing about what amu emitted; the evidence that covers the backend is
+;; the QEMU self-test `QWEN-PARITY`, which compares the emitted objects
+;; against the compiled C on the CPU.
+
+(defn- row-bytes
+  "`aiueos_qwen35_quant_row_bytes` for the four types this tranche decodes."
+  [qtype count]
+  (case qtype
+    0 (* count 4)
+    8 (* (quot count 32) 34)
+    12 (* (quot count 256) 144)
+    14 (* (quot count 256) 210)
+    ;; A type the object refuses. The runner still has to place SOMETHING, and
+    ;; a Q5_K row is the honest size for the vector that provokes -6/-5.
+    13 (* (quot count 256) 176)
+    (fail! "no row byte count for this quantisation type" {:qtype qtype})))
+
+(defmethod prepare :aiueos.qwen35-dequant-row/v1 [contract v]
+  (let [{:keys [base image-bytes src-offset dst-offset]}
+        (get-in contract [:verification :memory])
+        row (hex-bytes (:row-hex v))
+        count (:count v)
+        src-len (or (:src-len-override v) (row-bytes (:qtype v) count))
+        dst-len (or (:dst-len-override v) (* count 4))]
+    {:entry 'aiueos-qwen35-dequant-row
+     :base base
+     :image (write-at (vec (repeat image-bytes 0)) src-offset row)
+     :args [(:qtype v)
+            (if (some? (:src-base-override v)) (:src-base-override v) (+ base src-offset))
+            src-len
+            (if (some? (:dst-base-override v)) (:dst-base-override v) (+ base dst-offset))
+            dst-len]
+     :expect-memory
+     (cond-> []
+       (:expect-row-hex v)
+       (conj {:label :row :offset dst-offset :bytes (hex-bytes (:expect-row-hex v))}))}))
+
+(defmethod prepare :aiueos.qwen35-dot-f32/v1 [contract v]
+  (let [{:keys [base image-bytes left-offset right-offset]}
+        (get-in contract [:verification :memory])
+        left (hex-bytes (:left-hex v))
+        right (hex-bytes (:right-hex v))
+        count (or (:count-override v) (:count v))]
+    {:entry 'aiueos-qwen35-dot-f32
+     :base base
+     :image (-> (vec (repeat image-bytes 0))
+                (write-at left-offset left)
+                (write-at right-offset right))
+     ;; The overrides exist so a refusal can be provoked by a LENGTH rather
+     ;; than by bytes the runner would have to place: refusing a count of
+     ;; 65,537 must not cost 262 KiB of image.
+     :args [(+ base left-offset)
+            (or (:a-len-override v) (:len-override v) (* 4 (max count 0)))
+            (+ base right-offset)
+            (or (:b-len-override v) (:len-override v) (* 4 (max count 0)))
+            count]}))
+
+
+(defn- write-u64 [image offset value]
+  (-> image
+      (write-u32 offset (mod value 4294967296))
+      (write-u32 (+ offset 4) (js/Math.floor (/ value 4294967296)))))
+
+(defmethod prepare :aiueos.qwen35-matvec/v1 [contract v]
+  (let [{:keys [base image-bytes arena-offset]}
+        (get-in contract [:verification :memory])
+        qtype (:qtype v)
+        rows (:rows v)
+        cols (:cols v)
+        rb (row-bytes qtype cols)
+        weights (hex-bytes (or (:weights-hex v) ""))
+        input (hex-bytes (or (:input-hex v) ""))
+        weights-bytes (* rows rb)
+        input-offset weights-bytes
+        output-offset (+ input-offset (* cols 4))
+        scratch-offset (+ output-offset (* rows 4))
+        arena-bytes (+ scratch-offset (* cols 4))
+        plan-offset (+ arena-offset arena-bytes)
+        plan (-> (vec (repeat 96 0))
+                 (write-u32 0 qtype)
+                 (write-u32 4 (or (:reserved-4 v) 0))
+                 (write-u64 8 (or (:rows-override v) rows))
+                 (write-u64 16 (or (:cols-override v) cols))
+                 (write-u64 24 (or (:weights-offset-override v) 0))
+                 (write-u64 32 (or (:weights-bytes-override v) weights-bytes))
+                 (write-u64 40 input-offset)
+                 (write-u64 48 output-offset)
+                 (write-u64 56 scratch-offset)
+                 (write-u64 64 (or (:first-override v) (:first v) 0))
+                 (write-u64 72 (or (:end-override v) (:end v) rows))
+                 (write-u64 80 (or (:reserved-80 v) 0))
+                 (write-u64 88 (or (:reserved-88 v) 0)))]
+    (when (> (+ plan-offset 96) image-bytes)
+      (fail! "REFUSING TO REPORT A PASS: this vector's arena does not fit the contract's image"
+             {:vector (:name v) :needed (+ plan-offset 96) :image-bytes image-bytes}))
+    {:entry 'aiueos-qwen35-matvec
+     :base base
+     :image (-> (vec (repeat image-bytes 0))
+                (write-at arena-offset weights)
+                (write-at (+ arena-offset input-offset) input)
+                (write-at plan-offset plan))
+     :args [(if (some? (:arena-base-override v)) (:arena-base-override v) (+ base arena-offset))
+            arena-bytes
+            (if (some? (:plan-base-override v)) (:plan-base-override v) (+ base plan-offset))
+            (or (:plan-len-override v) 96)]
+     :expect-memory
+     (cond-> []
+       (:expect-output-hex v)
+       (conj {:label :output :offset (+ arena-offset output-offset)
+              :bytes (hex-bytes (:expect-output-hex v))}))}))
 ;; --- device-worker client --------------------------------------------------
 ;; `device-worker-canonical` writes the text the device SIGNS. Its contract is
 ;; the only one here whose expected bytes come from a second implementation
@@ -451,6 +590,211 @@
                  (or st-len (get-in contract [:st :bytes]))
                  (+ base src-offset (or src-delta 0))
                  (or src-len 0)])}))
+;; nic: the RTL8125 driver objects. ONE builder for the whole family, unlike
+;; every method above it, because these six take the same KIND of argument --
+;; an address of a region in the image, a length, and some literals -- and
+;; differ only in which regions and how many. So the contract names its own
+;; entry and writes its arguments as a template, and this resolves the region
+;; keywords against the base.
+;;
+;;   :args [:mmio 4096 :out 16]        -> [base+mmio-offset 4096 base+out-offset 16]
+;;   :args [[:tx 16] 32 ...]           -> [base+tx-offset+16 32 ...]
+;;   :args [0 32 ...]                  -> passed through
+;;
+;; The `[region offset]` form exists so a vector can name a MISALIGNED address
+;; without hard-coding a number that silently stops meaning what it meant when
+;; the layout moves.
+;;
+;; ⚠ ONLY TWO OF THE SIX OBJECTS CAN BE RUN HERE, and it is not a gap in this
+;; builder. `kotoba.kir`'s interpreter refuses `kernel-fence-load`,
+;; `kernel-fence-store` and `kernel-rdtsc` with `:kernel-privileged-unavailable`
+;; -- deliberately, and its comment says why: a barrier orders memory operations
+;; against a machine this interpreter is not running on, and an oracle that
+;; executes one operation at a time would be answering "the barrier worked" from
+;; something that never had the problem. `rtl8125-ring-build`, `-program`,
+;; `-tx-submit` and `-rx-poll` all carry fences, so the oracle cannot execute
+;; them AT ALL -- it traps rather than returning a wrong answer, which is the
+;; right refusal and still leaves those four with no host-side evidence. Their
+;; evidence is `aiueos_rtl8125_kotoba_selftest` running the EMITTED MACHINE CODE
+;; against a software model under QEMU, which is a stronger claim about the same
+;; program and a weaker one about portability.
+(defmethod prepare :aiueos.rtl8125/v1 [contract v]
+  (let [{:keys [base image-bytes regions]} (get-in contract [:verification :memory])
+        entry (:entry contract)
+        _ (when-not (symbol? entry)
+            (fail! "REFUSING TO REPORT A PASS: this contract names no entry symbol"
+                   {:contract (:format contract)}))
+        region-at (fn [k]
+                    (or (get regions k)
+                        (fail! "REFUSING TO REPORT A PASS: a vector names a region the contract does not lay out"
+                               {:vector (:name v) :region k})))
+        image (reduce (fn [img {:keys [offset bytes hex]}]
+                        (write-at img offset (if hex (hex-bytes hex) (vec bytes))))
+                      (vec (repeat image-bytes 0))
+                      (:seed v))
+        resolve-arg (fn [a]
+                      (cond (keyword? a) (+ base (region-at a))
+                            (vector? a) (+ base (region-at (first a)) (second a))
+                            :else a))]
+    {:entry entry
+     :base base
+     :image image
+     :args (mapv resolve-arg (:args v))
+     :expect-memory (:expect-memory v)}))
+
+;; --- the tokenizer family --------------------------------------------------
+;;
+;; Three objects, one image and one builder, because the three take the SAME
+;; four arguments -- a model window and a workspace -- and differ only in which
+;; header slots they read. The model is a seven-token mini vocabulary written
+;; at image offset 0; the workspace follows at `:work-offset` and every other
+;; offset in the map is relative to IT, which is what the objects themselves
+;; mean by a workspace offset.
+;;
+;; `:prelude-args` is the contract's own base and lengths, never the vector's
+;; overrides: a vector that hands the object a 16 MiB window in order to be
+;; refused for it must not make the index build refuse first.
+
+(defn- u32-bytes [v]
+  [(bit-and v 0xff) (bit-and (bit-shift-right v 8) 0xff)
+   (bit-and (bit-shift-right v 16) 0xff) (bit-and (bit-shift-right v 24) 0xff)])
+
+(defn- tokenizer-prepare [contract v entry]
+  (let [m (get-in contract [:verification :memory])
+        f (:fixture contract)
+        base (:base m)
+        wo (:work-offset m)
+        ;; A vector may name one of the fixture's ALTERNATE models by keyword
+        ;; rather than repeat 232 characters of hex to change three bytes.
+        model-hex (let [h (or (:model-hex v) (:model-hex f))]
+                    (if (keyword? h) (get f h) h))
+        model (hex-bytes model-hex)
+        input (cond (:input-fill v)
+                    (vec (repeat (:count (:input-fill v)) (:byte (:input-fill v))))
+                    (:input-hex v) (hex-bytes (:input-hex v))
+                    :else [])
+        ids (vec (mapcat u32-bytes (:ids v)))
+        header (merge {4 (or (:vocab-count v) (:vocab-count f))
+                       8 (if (some? (:merge-count v)) (:merge-count v) (:merge-count f))
+                       12 (or (:tokens-at v) (:tokens-at f))
+                       16 (or (:merges-at v) (:merges-at f))
+                       44 0
+                       48 (:input-offset m)
+                       52 (count input)
+                       56 (:output-offset m)
+                       60 (or (:output-capacity v) (:output-capacity m))
+                       68 (:scratch-offset m)
+                       72 (or (:scratch-bytes v) (:scratch-bytes m))
+                       76 (:ids-offset m)
+                       80 (if (some? (:id-count v)) (:id-count v) (count (:ids v)))
+                       84 (:text-offset m)
+                       88 (or (:text-capacity v) (:text-capacity m))}
+                      (:header v))
+        image (reduce (fn [img [off val]] (write-u32 img (+ wo off) val))
+                      (-> (vec (repeat (:image-bytes m) 0))
+                          (write-at 0 model)
+                          (write-at (+ wo (:input-offset m)) input)
+                          (write-at (+ wo (:ids-offset m)) ids))
+                      header)]
+    {:entry entry
+     :base base
+     :image image
+     :args [(if (some? (:model-base v)) (:model-base v) base)
+            (if (some? (:model-len v)) (:model-len v) (count model))
+            (if (some? (:work-base v)) (:work-base v) (+ base wo))
+            (if (some? (:work-len v)) (:work-len v) (:work-bytes m))]
+     :prelude-args (when-not (false? (:prelude? v))
+                     [base (count model) (+ base wo) (:work-bytes m)])
+     :expect-memory
+     (cond-> []
+       (:expect-ids v)
+       (conj {:label :ids :offset (+ wo (:output-offset m))
+              :bytes (vec (mapcat u32-bytes (:expect-ids v)))})
+       (some? (:expect-id-count v))
+       (conj {:label :id-count :offset (+ wo 64) :bytes (u32-bytes (:expect-id-count v))})
+       (:expect-text-hex v)
+       (conj {:label :text :offset (+ wo (:text-offset m))
+              :bytes (hex-bytes (:expect-text-hex v))})
+       (some? (:expect-text-length v))
+       (conj {:label :text-length :offset (+ wo 92)
+              :bytes (u32-bytes (:expect-text-length v))})
+       (:expect-header v)
+       (into (map (fn [[off val]]
+                    {:label (keyword (str "header-" off)) :offset (+ wo off)
+                     :bytes (u32-bytes val)})
+                  (:expect-header v))))}))
+
+(defmethod prepare :aiueos.qwen35-vocab-index-build/v1 [contract v]
+  (tokenizer-prepare contract v 'aiueos-qwen35-vocab-index-build))
+
+(defmethod prepare :aiueos.qwen35-tokenize/v1 [contract v]
+  (tokenizer-prepare contract v 'aiueos-qwen35-tokenize))
+
+(defmethod prepare :aiueos.qwen35-detokenize/v1 [contract v]
+  (tokenizer-prepare contract v 'aiueos-qwen35-detokenize))
+
+;; --- the Qwen3.5 forward pass, second tranche (ADR-0140) -------------------
+;;
+;; The scalar functions between the matvecs. Expectations come from the same
+;; independent ClojureScript re-derivation over `Float32Array` the first
+;; tranche used, and the same caveat applies: it proves the algorithm against a
+;; second reading of the C and says nothing about what amu emitted. The
+;; evidence that covers the backend is the QEMU self-test `QWEN-PARITY`,
+;; which caught an argument-order mistake in its own harness that this
+;; interpreter could not have.
+
+(defmethod prepare :aiueos.qwen35-activation/v1 [contract v]
+  (let [{:keys [base image-bytes a-offset b-offset]}
+        (get-in contract [:verification :memory])
+        a (hex-bytes (or (:a-hex v) ""))
+        b (hex-bytes (or (:b-hex v) ""))]
+    {:entry 'aiueos-qwen35-activation
+     :base base
+     :image (-> (vec (repeat image-bytes 0))
+                (write-at a-offset a)
+                (write-at b-offset b))
+     :args [(:mode v)
+            (if (some? (:a-base-override v)) (:a-base-override v) (+ base a-offset))
+            (if (some? (:b-base-override v)) (:b-base-override v) (+ base b-offset))
+            (:count v)
+            0]
+     :expect-memory
+     (cond-> []
+       (:expect-a-hex v)
+       (conj {:label :a :offset a-offset :bytes (hex-bytes (:expect-a-hex v))}))}))
+
+;; Three modes with three different argument meanings, which is why this is a
+;; `case` rather than one shape: mode 0 reads `b` as a weights POINTER and
+;; `c` as an element count, modes 1 and 2 read them as a head count and a
+;; width. Getting that wrong is not a crash -- it normalises the wrong vector
+;; into the wrong place and every bound still holds.
+(defmethod prepare :aiueos.qwen35-norm/v1 [contract v]
+  (let [{:keys [base image-bytes a-offset b-offset out-offset]}
+        (get-in contract [:verification :memory])
+        a (hex-bytes (or (:a-hex v) ""))
+        b (hex-bytes (or (:b-hex v) ""))
+        image (-> (vec (repeat image-bytes 0))
+                  (write-at a-offset a)
+                  (write-at b-offset b))
+        base-a (if (some? (:a-base-override v)) (:a-base-override v) (+ base a-offset))
+        base-b (if (some? (:b-base-override v)) (:b-base-override v) (+ base b-offset))
+        base-d (if (some? (:d-base-override v)) (:d-base-override v) (+ base b-offset))]
+    {:entry 'aiueos-qwen35-norm
+     :base base
+     :image image
+     :args (case (long (:mode v))
+             0 [0 base-a base-b (:count v) (+ base out-offset)]
+             1 [1 base-a (:heads v) (:width v) 0]
+             2 [2 base-a (:heads v) (:width v) base-d]
+             ;; a mode the object refuses; the remaining words are still real
+             ;; regions so the refusal is provoked by the MODE and nothing else
+             [(:mode v) base-a (or (:heads v) 1) (or (:width v) (:count v) 8) 0])
+     :expect-memory
+     (cond-> []
+       (:expect-out-hex v)
+       (conj {:label :out :offset out-offset :bytes (hex-bytes (:expect-out-hex v))})
+       (:expect-a-hex v)
+       (conj {:label :a :offset a-offset :bytes (hex-bytes (:expect-a-hex v))}))}))
 
 (defmethod prepare :default [contract _]
   (fail! "REFUSING TO REPORT A PASS: no argument builder for this contract format"
@@ -551,16 +895,38 @@
      0
      expect-memory)))
 
+;; A PRELUDE is another object's call, run against the same page before the
+;; vector's own. It exists because `aiueos-qwen35-tokenize` and
+;; `aiueos-qwen35-detokenize` read tables a THIRD object writes, and a kernel
+;; object cannot call another (ADR-0030): without this the only way to give
+;; those two a workspace would be to transcribe the tables into the contract as
+;; hex, which is exactly the "a constant rather than a derivation" failure
+;; these contracts keep naming. A vector opts out with `:prelude? false`, which
+;; is how the "no index in the workspace" refusal is reached.
+;;
+;; The prelude runs with the contract's OWN base and lengths, never the
+;; vector's argument overrides -- a vector that hands the object a 16 MiB
+;; window to be refused for must not make the prelude refuse first.
+(defn- run-prelude! [contract prelude base page fuel prelude-args label]
+  (when (and prelude prelude-args)
+    (let [actual (execute-once (:kir prelude) (:entry prelude) prelude-args base page fuel)]
+      (refuse-on-trap! contract [label :prelude] actual)
+      (when-not (= (:expected (:declared prelude) 0) actual)
+        (fail! "REFUSING TO REPORT A PASS: the prelude refused, so the vector ran against a workspace the contract does not describe"
+               {:contract (:format contract) :vector label
+                :entry (:entry prelude) :actual actual})))))
+
 (defn- run-single
   "One call per vector, each against a fresh image."
-  [contract kir entry fuel started]
+  [contract kir entry fuel started prelude]
   (let [{:keys [floors]} (:verification contract)
         memory-assertions (volatile! 0)
         observed
         (doall
          (for [v (:vectors contract)]
-           (let [{:keys [base image args expect-memory]} (prepare contract v)
+           (let [{:keys [base image args expect-memory prelude-args]} (prepare contract v)
                  page (volatile! image)
+                 _ (run-prelude! contract prelude base page fuel prelude-args (:name v))
                  actual (execute-once kir entry args base page fuel)]
              (refuse-on-trap! contract (:name v) actual)
              (when-not (= (:expected v) actual)
@@ -573,8 +939,10 @@
         traps
         (doall
          (for [t (:traps contract)]
-           (let [{:keys [base image args]} (prepare contract t)
-                 actual (execute-once kir entry args base (volatile! image) fuel)]
+           (let [{:keys [base image args prelude-args]} (prepare contract t)
+                 page (volatile! image)
+                 _ (run-prelude! contract prelude base page fuel prelude-args (:name t))
+                 actual (execute-once kir entry args base page fuel)]
              (when-not (map? actual)
                (fail! "trap vector returned a value" {:vector (:name t) :actual actual}))
              (when-not (and (= (:expect-trap t) (:trap actual))
@@ -682,13 +1050,19 @@
         exports (set (:exports kir))
         entry (:entry (if stepped?
                         (prepare-steps contract (first (:vectors contract)))
-                        (prepare contract (first (:vectors contract)))))]
+                        (prepare contract (first (:vectors contract)))))
+        prelude (when-let [declared (:prelude contract)]
+                  (let [pkir (compile-graph root-dir (:graph declared))]
+                    (when-not (contains? (set (:exports pkir)) (:entry declared))
+                      (fail! "the prelude project does not export the entry the contract names"
+                             {:entry (:entry declared) :exports (vec (:exports pkir))}))
+                    {:kir pkir :entry (:entry declared) :declared declared}))]
     (when-not (contains? exports entry)
       (fail! "the linked project does not export the entry this runner calls"
              {:entry entry :exports (vec exports)}))
     (if stepped?
       (run-stepped contract kir entry fuel started)
-      (run-single contract kir entry fuel started))))
+      (run-single contract kir entry fuel started prelude))))
 
 (defn- compiler-sha
   "The amu this measurement is about. A receipt without it is a number with no
@@ -733,13 +1107,30 @@
                       ;; off-target, and it is minutes rather than seconds.
                       ;; Anything larger is the QEMU self-test's job, not a
                       ;; ClojureScript interpreter's.
+                      ;; The two RTL8125 contracts are cheap (under three
+                      ;; seconds between them) and are here for the same reason
+                      ;; the TLS pair is: a contract nothing runs by default is
+                      ;; a contract nobody runs. The other four driver objects
+                      ;; have no contract here at all, and that is stated in the
+                      ;; builder's comment rather than left as an absence --
+                      ;; the oracle refuses the fences they carry.
                       ["cid-v1-admit-v1.edn" "unixfs-file-admit-v1.edn"
                        "value-runtime-cas-verify-v1.edn"
                        "value-handle-arena-v1.edn"
+                       "rtl8125-identify-v1.edn" "rtl8125-link-up-v1.edn"
                        "aes128-gcm-v1.edn" "hkdf-sha256-v1.edn"
                        "tls13-record-v1.edn"
                        "sha256-region-v1.edn" "sha256-stream-v1.edn"
-                       "device-worker-digest-v1.edn"]))
+                       "device-worker-digest-v1.edn"
+                       ;; The tokenizer family. Cheap by comparison -- about
+                       ;; forty seconds between them, because the vocabulary
+                       ;; they run against is seven tokens rather than an AEAD
+                       ;; over a 12 KiB record. Two of the three declare a
+                       ;; `:prelude`, so each of their vectors runs the index
+                       ;; build first against the same page.
+                       "qwen35-vocab-index-build-v1.edn"
+                       "qwen35-tokenize-v1.edn"
+                       "qwen35-detokenize-v1.edn"]))
         results (mapv #(run-contract root-dir %) paths)]
     (doseq [r results]
       (println (str "CONTRACT\t" (:contract r)

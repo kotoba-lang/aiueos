@@ -84,9 +84,9 @@
   ;; `kotoba.kir` interpreter. The interpreter charges one unit per Kotoba
   ;; call, which is the same accounting the emitted prologue does. It is a fit,
   ;; not an execution on a CPU; the CPU half is the QEMU boot self-test
-  ;; SHA-STREAM-PARITY, and both numbers are reported in ADR-0139.
-  :fuel-model {:per-64-byte-block :measured-see-adr-0139
-               :fixed :measured-see-adr-0139}
+  ;; SHA-STREAM-PARITY, and both numbers are reported in ADR-0142.
+  :fuel-model {:per-64-byte-block :measured-see-adr-0142
+               :fixed :measured-see-adr-0142}
   :floors {:minimum-vectors 12
            :minimum-memory-assertions 9
            :every-reachable-reason-observed true}}

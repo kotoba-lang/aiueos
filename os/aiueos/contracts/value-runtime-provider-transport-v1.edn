@@ -1,8 +1,8 @@
 {:format :aiueos.value-runtime-provider-transport/v1
  :graph {:root aiueos.value-runtime-provider-transport
          :modules [aiueos.value-handle-arena
-                   aiueos.value-runtime-sha256
-                   aiueos.value-runtime-digest-equal
+                   aiueos.sha256
+                   aiueos.digest-equal
                    aiueos.value-runtime-cas-verify
                    aiueos.value-runtime-provider-transport]}
  :queue {:region :image-private

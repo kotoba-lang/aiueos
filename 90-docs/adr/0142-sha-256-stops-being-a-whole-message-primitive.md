@@ -1,4 +1,4 @@
-# ADR-0139 — SHA-256 stops being a whole-message primitive
+# ADR-0142 — SHA-256 stops being a whole-message primitive
 
 Status: accepted
 Date: 2026-09-02

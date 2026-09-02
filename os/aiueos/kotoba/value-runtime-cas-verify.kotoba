@@ -1,6 +1,6 @@
 (ns aiueos.value-runtime-cas-verify
-  (:require [aiueos.value-runtime-sha256 :as sha]
-            [aiueos.value-runtime-digest-equal :as digest])
+  (:require [aiueos.sha256 :as sha]
+            [aiueos.digest-equal :as digest])
   (:export [aiueos-value-runtime-cas-verify main]))
 
 ;; C-free integrity primitive for a provider-supplied canonical block.

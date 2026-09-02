@@ -1,4 +1,4 @@
-# ADR 0137 — The AVX2 arm runs, because Kotoba can now enable the state
+# ADR 0138 — The AVX2 arm runs, because Kotoba can now enable the state
 
 Status: accepted (2026-09-02)
 
