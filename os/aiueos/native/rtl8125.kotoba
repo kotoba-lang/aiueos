@@ -539,7 +539,11 @@
                           0
                           (+ (frame-be32 peer-frame 38) 1))
         flags (if (= mode 0) 2 20)]
-    (if (and (= (zero-prefix frame 54 0) 1)
+    ;; Ethernet requires at least 60 bytes before the NIC appends the FCS.
+    ;; Do not depend on RTL8125 descriptor-side short-frame padding: the first
+    ;; physical TCP candidate used 54 and could therefore be discarded as a
+    ;; runt by the peer even though descriptor completion succeeded.
+    (if (and (= (zero-prefix frame 60 0) 1)
              (= (copy-frame-mac frame 0 peer-frame peer-mac-offset 0) 1)
              (= (copy-device-mac frame 6 mmio 0) 1)
              (= (frame-store-be16 frame 12 2048) 2048)
@@ -570,7 +574,7 @@
                   (internet-checksum frame 34 tcp-length
                                      (tcp-pseudo-sum src dst tcp-length)))
                 (frame-be16 frame 50)))
-      54
+      60
       0)))
 
 (defn tcp-syn-ack-valid [frame length sent-frame mmio]
@@ -664,19 +668,27 @@
         rx-frame (kernel-subregion dma-base 16384 12288 4096)]
     (if (= frames 0)
       34
-      (let [command (wait-rx-command rx 200000000)]
+      ;; This is a physical diagnostic gate, not an unbounded runtime poll.
+      ;; Four short windows restore a visible screen result in seconds while
+      ;; the UDP stage receipts identify whether any peer frame arrived.
+      (let [command (wait-rx-command rx 8000000)]
         (if (= command 0)
-          33
-          (let [bytes (bit-and command 16383)
+          (if (= frames 1)
+            33
+            (receive-tcp-syn-ack mmio dma-base (- frames 1)))
+          (let [observed (send-native-nic-diagnostic mmio dma-base 68)
+                bytes (bit-and command 16383)
                 valid-command (and (= (bit-and command 1048576) 0)
                                    (not (= (bit-and command 33554432) 0))
                                    (not (= (bit-and command 16777216) 0))
                                    (>= bytes 58) (<= bytes 2048))]
             (if (and valid-command
                      (tcp-syn-ack-valid rx-frame (- bytes 4) tx-frame mmio))
-              (tcp-reset-and-receipt mmio tx tx-frame rx-frame)
+              (+ (tcp-reset-and-receipt mmio tx tx-frame rx-frame)
+                 (* 0 observed))
               (if (= (rx-rearm rx rx-frame) 1)
-                (receive-tcp-syn-ack mmio dma-base (- frames 1))
+                (+ (receive-tcp-syn-ack mmio dma-base (- frames 1))
+                   (* 0 observed))
                 30))))))))
 
 (defn probe-tcp-after-arp [mmio dma-base arp-reply]
@@ -684,16 +696,19 @@
         rx (kernel-subregion dma-base 16384 4096 4096)
         tx-frame (kernel-subregion dma-base 16384 8192 4096)
         rx-frame (kernel-subregion dma-base 16384 12288 4096)
+        entered (send-native-nic-diagnostic mmio dma-base 64)
         syn-length (build-tcp-segment tx-frame arp-reply 6 mmio 0)]
     (if (= syn-length 0)
-      29
+      (+ 29 (* 0 entered))
       (if (not (= (rx-rearm rx rx-frame) 1))
-        30
+        (+ 30 (* 0 entered))
         (if (not (= (tx-submit mmio tx tx-frame syn-length) 0))
-          31
-          (if (not (= (wait-tx-complete tx 200000000) 1))
-            32
-            (receive-tcp-syn-ack mmio dma-base 16)))))))
+          (+ 31 (* 0 entered))
+          (if (not (= (wait-tx-complete tx 8000000) 1))
+            (+ 32 (* 0 entered))
+            (let [transmitted (send-native-nic-diagnostic mmio dma-base 67)]
+              (+ (receive-tcp-syn-ack mmio dma-base 4)
+                 (* 0 (+ entered transmitted))))))))))
 
 (defn receive-arp [mmio dma-base frames]
   (let [tx dma-base

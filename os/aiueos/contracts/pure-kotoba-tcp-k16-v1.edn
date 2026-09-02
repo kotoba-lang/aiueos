@@ -19,6 +19,11 @@
  :diagnostic {:screen-success-hex "60"
               :wire-success "AIUEOS_NATIVE_TCP_OK"
               :wire-destination "10.77.0.1:7777"
+              :wire-stages [{:hex "40" :meaning :tcp-gate-entered}
+                            {:hex "43" :meaning :syn-descriptor-completed}
+                            {:hex "44" :meaning :peer-frame-received}]
+              :bounded-poll {:iterations-per-window 8000000
+                             :receive-windows 4}
               :failure-encoding :screen-base-plus-provider-reason}
  :artifact {:state :built-reproducibly
             :aiueos-implementation-commit

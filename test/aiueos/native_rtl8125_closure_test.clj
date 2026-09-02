@@ -30,6 +30,7 @@
       (is (str/includes? rtl "(defn send-native-arp-receipt"))
       (is (str/includes? rtl "AIUEOS_NATIVE_ARP_OK"))
       (is (str/includes? rtl "(defn build-tcp-segment"))
+      (is (str/includes? rtl "(zero-prefix frame 60 0)"))
       (is (str/includes? rtl "(defn tcp-syn-ack-valid"))
       (is (str/includes? rtl "(defn receive-tcp-syn-ack"))
       (is (str/includes? rtl "AIUEOS_NATIVE_TCP_OK"))
@@ -99,6 +100,13 @@
     (is (= "60" (get-in candidate [:diagnostic :screen-success-hex])))
     (is (= "AIUEOS_NATIVE_TCP_OK"
            (get-in candidate [:diagnostic :wire-success])))
+    (is (= [{:hex "40" :meaning :tcp-gate-entered}
+            {:hex "43" :meaning :syn-descriptor-completed}
+            {:hex "44" :meaning :peer-frame-received}]
+           (get-in candidate [:diagnostic :wire-stages])))
+    (is (= 8000000
+           (get-in candidate [:diagnostic :bounded-poll
+                              :iterations-per-window])))
     (is (= "10c92268ca602becc00e32eed510c2b3c9d198cb"
            (get-in candidate [:artifact :aiueos-implementation-commit])))
     (is (= "5120d4a2d740b1c368de95cb498b7d7cd6342015aff6bc9cf5b2508d6a9f0b3d"
