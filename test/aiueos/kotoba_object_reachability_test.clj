@@ -131,6 +131,18 @@
         "C, including the 495,907-string tokenizer walk that admission "
         "actually costs.")
 
+   "qwen35-tensor-table-bind"
+   (str "The 866-record GGUF tensor table against the exact graph: name to "
+        "role, role to shape, the contiguous 32-aligned extents, the ggml type "
+        "histogram, and the per-layer role sets of the hybrid schedule. The "
+        "third and last of the Qwen3.8 admission objects, and unbuilt with the "
+        "other two -- they land in the build together so the C is never "
+        "half-delegated. It is driven through the KIR interpreter by "
+        "aiueos.qwen35-tensor-table-parity-test over a 51,242-byte table "
+        "rebuilt in the test and pinned to the sha256 of the same slice of the "
+        "fixture the C gate accepts, and it must reproduce the four tensor "
+        "offsets tests/qwen35_runtime_model.c asserts.")
+
    "murakumo-join-plan"
    (str "A node's own fleet-enrolment decision. It has no caller inside the "
         "kernel, so no build links it; kotoba-lang/murakumo drives it through "
