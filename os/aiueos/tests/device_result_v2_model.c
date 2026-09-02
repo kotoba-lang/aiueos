@@ -1,5 +1,6 @@
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "../kernel/device_result.h"
@@ -71,7 +72,20 @@ static int contains(const uint8_t *request, uint32_t length,
   fprintf(stderr, "check failed: %s\n", #x); return 1; \
 } } while (0)
 
-int main(void) {
+/* The canonical text this file already captures through the `kotoba_aiueos_sha256`
+   stub is the ORACLE for `os/aiueos/kotoba/device-worker-canonical.kotoba`.
+   Printed here rather than transcribed into that object's contract by hand:
+   the contract pins the bytes the C produces, and a transcription is a second
+   thing that has to agree about what they are. */
+static void emit(const char *label) {
+  printf("%s\t%u\t", label, signed_length);
+  for (uint32_t i = 0; i < signed_length; i++)
+    printf("%02x", (unsigned char)signed_text[i]);
+  printf("\n");
+}
+
+int main(int argc, char **argv) {
+  const int dump = argc > 1 && !strcmp(argv[1], "--dump-canonical");
   struct aiueos_boot_info boot = {
     .magic = AIUEOS_BOOT_INFO_MAGIC,
     .version = AIUEOS_BOOT_INFO_VERSION_TSC_CALIBRATED,
@@ -123,6 +137,7 @@ int main(void) {
     "\n7\nresult\n42\n2\n2005\n17\n8\n7\n"
     "12000000000\n56000000000\n68000000000\n256\n2\n4000000000\n"));
   CHECK(contains(request, length, "User-Agent: aiueos-k16-worker-v2"));
+  if (dump) emit("worker-result-v2");
 
   worker = (struct aiueos_device_worker_request){
     .boot = &boot, .mac = mac, .sequence = 8,
@@ -132,6 +147,33 @@ int main(void) {
     &worker, request, sizeof(request), did, sizeof(did));
   CHECK(length && strstr(signed_text,
     "\n8\npoll\n-\n2\n0\n0\n0\n0\n0\n0\n0\n0\n0\n4000000000\n"));
+  if (dump) emit("worker-poll-v2");
+
+  worker = (struct aiueos_device_worker_request){
+    .boot = &boot, .mac = mac, .sequence = 9,
+    .operation = AIUEOS_DEVICE_WORKER_CONTROL_ACK, .job_id = 1788078031098390ULL
+  };
+  length = aiueos_device_worker_http_request(
+    &worker, request, sizeof(request), did, sizeof(did));
+  CHECK(length && strstr(signed_text,
+    "\n9\ncontrol-ack\n1788078031098390\n2\n0\n0\n0\n0\n0\n0\n0\n0\n0\n4000000000\n"));
+  if (dump) emit("worker-control-ack-v2");
+
+  worker = (struct aiueos_device_worker_request){
+    .boot = &boot, .mac = mac, .sequence = 12,
+    .operation = AIUEOS_DEVICE_WORKER_RESULT, .job_id = 1788078031098390ULL,
+    .token = 2005, .second_token = 17,
+    .generated_tokens = 3, .decode_tokens = 2,
+    .first_token_cycles = 12000000000ULL,
+    .decode_cycles = 24000000000ULL,
+    .inference_cycles = 36000000000ULL,
+    .vector_bits = 256, .worker_threads = 2
+  };
+  length = aiueos_device_worker_http_request(
+    &worker, request, sizeof(request), did, sizeof(did));
+  CHECK(length);
+  if (dump) emit("worker-result-v2-spec-shaped");
+
   puts("AIUEOS_DEVICE_RESULT_V2_OK signed=decode-boundary backward-server=v1+v2");
   return 0;
 }
