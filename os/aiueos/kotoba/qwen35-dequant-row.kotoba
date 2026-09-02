@@ -1,4 +1,5 @@
-(ns aiueos.qwen35-dequant-row)
+(ns aiueos.qwen35-dequant-row
+  (:export [aiueos-qwen35-dequant-row main]))
 
 ;; One quantised weight row -> `count` binary32 values in a caller-owned
 ;; workspace. A port of `aiueos_qwen35_dequantize_row`

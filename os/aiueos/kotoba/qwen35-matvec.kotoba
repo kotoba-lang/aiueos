@@ -1,4 +1,5 @@
-(ns aiueos.qwen35-matvec)
+(ns aiueos.qwen35-matvec
+  (:export [aiueos-qwen35-matvec main]))
 
 ;; `matvec_range` (`kernel/qwen35_infer.c:344`) as one kernel object: for each
 ;; row of a quantised weight tensor, dequantise the row into a workspace and

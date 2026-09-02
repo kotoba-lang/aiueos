@@ -1037,16 +1037,21 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
       debug_string("AIUEOS_TLS13_RECORD_OK rfc8448-s3 seq0 seal-open tamper-refused\n");
       serial_string("AIUEOS_TLS13_RECORD_OK rfc8448-s3 seq0 seal-open tamper-refused\r\n");
     }
-#ifdef AIUEOS_QWEN38_MODEL_HANDOFF
-    /* QWEN-PARITY (ADR-0135).  The three Qwen3.5 forward-pass objects against
+#ifdef AIUEOS_QWEN35_KOTOBA_PARITY
+    /* QWEN-PARITY (ADR-0137).  The three Qwen3.5 forward-pass objects against
        the C they were ported from, on this CPU, over synthetic inputs.  Placed
        with the other Kotoba self-tests, after the kernel owns its own IDT: a
        fuel-guard `ud2` raised while the FIRMWARE's handler is still installed
        gives an OVMF dump with no vector and no address, and here it reaches
        set_idt_gate(6, aiueos_isr_invalid_opcode) and names itself.
-       Only in the model-handoff build, because that is the only one where
+       Only when AIUEOS_QWEN35_KOTOBA_PARITY=1, which is what compiles
        kernel/qwen35_quant.c and kernel/qwen35_infer.c -- the reference half of
-       the comparison -- are compiled at all. */
+       the comparison.  It is a SEPARATE flag from the model handoff on
+       purpose: the handoff makes the UEFI loader demand a 10,934,860,704-byte
+       mapping and refuse the boot without one (AIUEOS_LOADER_FAIL
+       qwen38-model-admission code=121, measured), and this comparison needs
+       no model at all -- it is bit-equality of the arithmetic over synthetic
+       inputs, which is exactly the property that survives having no weights. */
     {
       extern int aiueos_qwen35_kotoba_parity_selftest(uint32_t stage);
       static const char *const qwen_parity_names[3] = {"dequant", "dot", "matvec"};
@@ -1195,7 +1200,7 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
     debug_string("AIUEOS_PHYSICAL_ALLOCATOR_OK pages=2 zeroed\n");
     serial_string("AIUEOS_PHYSICAL_ALLOCATOR_OK pages=2 zeroed\r\n");
 #if defined(AIUEOS_QWEN38_MODEL_HANDOFF) && defined(AIUEOS_MODEL_TEST_FIXTURE)
-    /* The GGUF admission, EXECUTED. ADR-0135 moved it to three Kotoba objects
+    /* The GGUF admission, EXECUTED. ADR-0137 moved it to three Kotoba objects
        and made kernel/qwen35_runtime.c delegate to them, but nothing ever ran
        that delegation: the objects passed a KIR-interpreter oracle, the image
        linked, and this workstation is aarch64 so the emitted x86-64 was never

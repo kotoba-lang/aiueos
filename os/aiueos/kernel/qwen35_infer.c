@@ -1096,7 +1096,7 @@ int aiueos_qwen35_test_cache_resolve(
 
 /* ── QWEN-PARITY: the Kotoba objects against this file, on the CPU ─────────
  *
- * ADR-0135.  `aiueos-qwen35-dequant-row`, `aiueos-qwen35-dot-f32` and
+ * ADR-0137.  `aiueos-qwen35-dequant-row`, `aiueos-qwen35-dot-f32` and
  * `aiueos-qwen35-matvec` are ports of `aiueos_qwen35_dequantize_row`,
  * `dot_scalar` and `matvec_range`.  Their contracts are checked against a
  * ClojureScript re-derivation in the KIR interpreter, which proves the
@@ -1114,7 +1114,7 @@ int aiueos_qwen35_test_cache_resolve(
  * Prints one line per stage on the serial port, `QWEN-PARITY <stage> ok` or
  * `... mismatch`, and returns zero on the first disagreement.
  */
-#ifdef AIUEOS_QWEN38_MODEL_HANDOFF
+#ifdef AIUEOS_QWEN35_KOTOBA_PARITY
 
 #define QWEN_PARITY_COLS 256U
 #define QWEN_PARITY_ROWS 4U
@@ -1180,14 +1180,13 @@ static void qwen_parity_write_u64(uint8_t *plan, uint32_t offset, uint64_t v) {
    `aiueos-qwen35-matvec` takes: `kernel-subregion` requires a BASE to be a
    parameter, so four regions cannot arrive as four bases through a five-
    argument ABI. */
-static uint8_t qwen_parity_arena[
+static uint8_t __attribute__((section(".high_bss"), aligned(8))) qwen_parity_arena[
     QWEN_PARITY_ROWS * QWEN_PARITY_MAX_ROW_BYTES
-    + QWEN_PARITY_COLS * 4U + QWEN_PARITY_ROWS * 4U + QWEN_PARITY_COLS * 4U]
-    __attribute__((aligned(8)));
-static uint8_t qwen_parity_plan[96] __attribute__((aligned(8)));
-static float qwen_parity_reference_row[QWEN_PARITY_COLS];
-static float qwen_parity_object_row[QWEN_PARITY_COLS];
-static float qwen_parity_reference_out[QWEN_PARITY_ROWS];
+    + QWEN_PARITY_COLS * 4U + QWEN_PARITY_ROWS * 4U + QWEN_PARITY_COLS * 4U];
+static uint8_t __attribute__((section(".high_bss"), aligned(8))) qwen_parity_plan[96];
+static float __attribute__((section(".high_bss"))) qwen_parity_reference_row[QWEN_PARITY_COLS];
+static float __attribute__((section(".high_bss"))) qwen_parity_object_row[QWEN_PARITY_COLS];
+static float __attribute__((section(".high_bss"))) qwen_parity_reference_out[QWEN_PARITY_ROWS];
 
 /* F32, Q8_0, Q4_K, Q6_K -- the four this object decodes.  The IQ types stay in
    the C for want of a rodata facility to hold their codebook grids. */

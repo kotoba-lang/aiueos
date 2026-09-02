@@ -1,4 +1,5 @@
-(ns aiueos.qwen35-dot-f32)
+(ns aiueos.qwen35-dot-f32
+  (:export [aiueos-qwen35-dot-f32 main]))
 
 ;; A four-accumulator f32 dot product, bit-for-bit `dot_scalar`
 ;; (`kernel/qwen35_infer.c:234`).

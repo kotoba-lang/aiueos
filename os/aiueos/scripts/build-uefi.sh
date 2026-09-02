@@ -121,7 +121,7 @@ kotoba_service_task_object=${AIUEOS_KOTOBA_SERVICE_TASK_OBJECT:-"$aiueos/kotoba/
 kotoba_rsa2048_object=${AIUEOS_KOTOBA_RSA2048_OBJECT:-"$aiueos/kotoba/rsa2048.o"}
 kotoba_x25519_object=${AIUEOS_KOTOBA_X25519_OBJECT:-"$aiueos/kotoba/x25519.o"}
 kotoba_ecdsa_object=${AIUEOS_KOTOBA_ECDSA_OBJECT:-"$aiueos/kotoba/ecdsa-p256.o"}
-# Qwen3.8-27B GGUF admission (ADR-0135). Three objects, linked only by the
+# Qwen3.8-27B GGUF admission (ADR-0137). Three objects, linked only by the
 # model-handoff profile because nothing else parses a model. They replace the
 # whole of kernel/qwen35_runtime.c's parser: with
 # -DAIUEOS_QWEN35_KOTOBA_ADMISSION that file compiles to buffer plumbing and a
@@ -138,7 +138,7 @@ kotoba_qwen35_tensor_object=${AIUEOS_KOTOBA_QWEN35_TENSOR_OBJECT:-"$aiueos/kotob
 # 13 KiB artifact in the image to no end.
 kotoba_aes128_gcm_object=${AIUEOS_KOTOBA_AES128_GCM_OBJECT:-"$aiueos/kotoba/aes128-gcm.o"}
 kotoba_tls13_record_object=${AIUEOS_KOTOBA_TLS13_RECORD_OBJECT:-"$aiueos/kotoba/tls13-record.o"}
-# The Qwen3.5 forward pass, first tranche (ADR-0135). Linked ONLY with the
+# The Qwen3.5 forward pass, first tranche (ADR-0137). Linked ONLY with the
 # model handoff, because that is the only build in which the C they are
 # compared against (kernel/qwen35_infer.c, kernel/qwen35_quant.c) is compiled
 # at all -- linking them into every image would carry 23 KiB nothing calls.
@@ -390,6 +390,19 @@ model_part2=${AIUEOS_MODEL_PART2_BYTES:-2934860704}
 model_sha256=${AIUEOS_MODEL_SHA256:-c0b7c3038681ed2e3040456c1dd45f9858b6c2290bed172c70388a94874f3eee}
 model_min_address=${AIUEOS_MODEL_MIN_ADDRESS:-4294967296}
 model_max_address=${AIUEOS_MODEL_MAX_ADDRESS:-68719476735}
+# The Kotoba/C parity self-test for the Qwen3.5 forward-pass objects
+# (ADR-0137).  A SEPARATE flag from AIUEOS_QWEN38_MODEL_HANDOFF on purpose: the
+# handoff makes the UEFI loader demand a 10,934,860,704-byte model mapping and
+# refuse the boot without one (AIUEOS_LOADER_FAIL qwen38-model-admission
+# code=121, measured 2026-09-02), while this comparison needs no model -- it is
+# bit-equality of the arithmetic over synthetic inputs.  It compiles the same
+# two C files the handoff does, so the reference half of the comparison is the
+# code the model path actually runs.
+qwen35_parity_cflags=
+qwen35_parity_link=
+if [ "${AIUEOS_QWEN35_KOTOBA_PARITY:-0}" = 1 ]; then
+  qwen35_parity_cflags="-DAIUEOS_QWEN35_KOTOBA_PARITY=1"
+fi
 if [ "${AIUEOS_QWEN38_MODEL_HANDOFF:-0}" = 1 ] ||
    [ "${AIUEOS_MODEL_NVME_SLOTS:-0}" = 1 ]; then
   if [ "${AIUEOS_MODEL_TEST_FIXTURE:-0}" != 1 ]; then
@@ -780,7 +793,7 @@ python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_ecdsa_object" 
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_aes128_gcm_object" \
   a3d22ecd5761e0273015267a7c3a59823fce94f545c9ee8b725b3728da665465 \
   kotoba_aiueos_aes128_gcm
-# Qwen3.8-27B GGUF admission (ADR-0135). Verified unconditionally like every
+# Qwen3.8-27B GGUF admission (ADR-0137). Verified unconditionally like every
 # object above, even in profiles that do not link them: the digests are what
 # ties the committed artifacts to the sources the oracles graded.
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_qwen35_header_object" \
@@ -795,7 +808,7 @@ python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_qwen35_tensor_
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_tls13_record_object" \
   46d7bf41d9c50f519ef499134f0c021d06ab7dea256002f0c56e43f83391c46f \
   kotoba_aiueos_tls13_record
-if [ -n "$model_handoff_link" ]; then
+if [ -n "$model_handoff_link" ] || [ -n "$qwen35_parity_cflags" ]; then
   python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_qwen35_dot_object" \
     "" kotoba_aiueos_qwen35_dot_f32
   python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_qwen35_dequant_object" \
@@ -840,7 +853,7 @@ else
 zig cc -target x86_64-freestanding-none -std=c11 -O2 \
   -ffreestanding -fno-stack-protector -mno-red-zone -I "$out" \
   $input_smoke_cflags $model_handoff_cflags $physical_qualification_cflags \
-  $qwen35_smp_cflags \
+  $qwen35_smp_cflags $qwen35_parity_cflags \
   $physical_network_qualification_cflags $physical_direct_https_qualification_cflags \
   $murakumo_device_result_cflags $persistent_boot_cflags \
   $physical_relay_qualification_cflags \
@@ -893,6 +906,22 @@ if [ "${AIUEOS_MURAKUMO_DEVICE_RESULT:-0}" = 1 ]; then
     -ffreestanding -fno-stack-protector -mno-red-zone \
     -c -o "$kernel_device_worker_protocol_object" \
     "$aiueos/kernel/device_worker_protocol.c"
+fi
+if [ -z "$model_handoff_link" ] && [ -n "$qwen35_parity_cflags" ]; then
+  # The parity build compiles the reference C without the model handoff, so
+  # the loader never asks for a model and the comparison still runs against
+  # the same qwen35_quant.c / qwen35_infer.c the handoff compiles.
+  zig cc -target x86_64-freestanding-none -std=c11 -O2 \
+    -ffreestanding -fno-stack-protector -mno-red-zone \
+    -c -o "$kernel_qwen35_runtime_object" "$aiueos/kernel/qwen35_runtime.c"
+  zig cc -target x86_64-freestanding-none -std=c11 -O3 \
+    -ffreestanding -fno-stack-protector -mno-red-zone \
+    -c -o "$kernel_qwen35_quant_object" "$aiueos/kernel/qwen35_quant.c"
+  zig cc -target x86_64-freestanding-none -std=c11 -O3 \
+    -ffreestanding -fno-stack-protector -mno-red-zone \
+    $qwen35_parity_cflags \
+    -c -o "$kernel_qwen35_infer_object" "$aiueos/kernel/qwen35_infer.c"
+  qwen35_parity_link="$kernel_qwen35_runtime_object $kernel_qwen35_quant_object $kernel_qwen35_infer_object"
 fi
 if [ -n "$model_handoff_link" ]; then
   zig cc -target x86_64-freestanding-none -std=c11 -O2 \
@@ -1013,7 +1042,7 @@ zig ld.lld -nostdlib -static --strip-all $qualification_gc_link -z max-page-size
   "$kotoba_pci_config_read_object" "$kotoba_pci_config_write_object" \
   "$kotoba_x25519_object"   "$kotoba_ecdsa_object" $ecdsa_sign_link $ecdsa_public_link "$kotoba_ime_object" \
   "$kotoba_aes128_gcm_object" "$kotoba_tls13_record_object" \
-  $qwen35_kotoba_link \
+  $qwen35_kotoba_link $qwen35_parity_link \
   "$kotoba_wm_object" "$kotoba_scanout_object" "$kotoba_broker_object" "$kotoba_session_object" \
   "$kotoba_mmio_map_admit_object" \
   "$kotoba_acpi_checksum_object" "$kotoba_acpi_table_valid_object" \
