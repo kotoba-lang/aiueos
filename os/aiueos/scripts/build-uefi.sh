@@ -1272,4 +1272,21 @@ magic=$(dd if="$efi" bs=1 count=2 2>/dev/null)
   exit 1
 }
 
+# The freshness receipt (ADR-0142). Written LAST, from the artifacts that were
+# just produced and the tree they were produced from, so that a boot harness
+# can refuse an image it did not just build. Nothing above this line is allowed
+# to have failed: `set -e` is on, and the receipt is therefore evidence that the
+# whole build ran, not merely that a file called BOOTX64.EFI exists.
+#
+# `nbb` absent is a REFUSAL, not a skip. A build that quietly shipped no
+# receipt would put every downstream `assert` into could-not-run, which is
+# exactly the state this file exists to make impossible.
+command -v nbb >/dev/null 2>&1 || {
+  echo "error: nbb is required to write the image freshness receipt" >&2
+  exit 3
+}
+nbb "$aiueos/scripts/image-freshness.cljs" record \
+  --out "$out/image-receipt.edn" --root "$repo" \
+  "$efi" "$kernel" "$initramfs" >/dev/null
+
 echo "$efi"

@@ -147,10 +147,46 @@
 (println "BUILDING the qualification image with the Kotoba admission linked")
 (let [r (.spawnSync cp (.join path aiueos "scripts" "build-physical-qualification-pxe.sh")
                     #js [] #js {:stdio "inherit" :env build-env})]
-  (when-not (zero? (.-status r)) (die "the image build failed")))
+  ;; A build that did not run is `unmeasured`, not `die`. Exit 1 here would be
+  ;; indistinguishable from "the kernel refused the fixture", which is the one
+  ;; verdict this gate exists to report (ADR-0142).
+  (when-not (zero? (.-status r))
+    (unmeasured "the image build failed with status" (.-status r))))
 
-(.copyFileSync fs (.join path work "release" "aiueos-k16-native-pxe.efi")
-               (.join path esp "EFI" "BOOT" "BOOTX64.EFI"))
+;; --- freshness floor (ADR-0142) --------------------------------------------
+;;
+;; The build above writes a receipt beside its artifacts naming their sha256
+;; and the state of the `os/aiueos` subtree they came from. Asserting it here
+;; is what makes `AIUEOS_QWEN35_ADMISSION_OK` a statement about the tree in
+;; front of us rather than about whatever bytes were in the output directory.
+(when-not (which "nbb")
+  (unmeasured "nbb is required to check the image freshness receipt"))
+(let [r (.spawnSync cp "nbb"
+                    #js [(.join path aiueos "scripts" "image-freshness.cljs")
+                         "assert"
+                         "--receipt" (.join path work "release" "image-receipt.edn")
+                         "--root" (.resolve path aiueos ".." "..")]
+                    #js {:stdio "inherit"})]
+  (when-not (zero? (.-status r)) (.exit js/process (.-status r))))
+
+;; The receipt covers what `build-uefi.sh` produced. What BOOTS is the PXE
+;; wrapper the qualification build derives from it, copied into the ESP -- so
+;; the copy is checked too. "The build was fresh" and "the fresh bytes are the
+;; ones QEMU opened" are two claims, and only the second is about this file.
+(def pxe-efi (.join path work "release" "aiueos-k16-native-pxe.efi"))
+(def booted-efi (.join path esp "EFI" "BOOT" "BOOTX64.EFI"))
+(.copyFileSync fs pxe-efi booted-efi)
+(let [digest (fn [f] (-> (.createHash crypto "sha256")
+                         (.update (.readFileSync fs f))
+                         (.digest "hex")))
+      produced (digest pxe-efi)
+      booted (digest booted-efi)]
+  (when-not (= produced booted)
+    (binding [*out* *err*]
+      (println "REFUSED stale-image artifact=" booted-efi
+               "expected=" produced "found=" booted))
+    (.exit js/process 4))
+  (println "IMAGE-FRESH pxe-efi sha256=" produced))
 (.copyFileSync fs ovmf-vars (.join path work "vars.fd"))
 
 ;; ------------------------------------- the image holds no C GGUF parser

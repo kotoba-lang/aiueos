@@ -65,12 +65,45 @@ build="$root/build/aiueos"
 esp="$build/esp"
 blk="$build/virtio-blk-smoke.img"
 
-[ -d "$esp" ] || { echo "error: $esp missing -- run build-uefi.sh first" >&2; exit 2; }
+[ -d "$esp" ] || {
+  echo "COULD-NOT-RUN esp-missing: $esp -- run build-uefi.sh first" >&2
+  exit 3
+}
+# --- freshness floor (ADR-0142) ---------------------------------------------
+#
+# This harness does NOT build. It boots whatever is in `$esp`, and until
+# 2026-09-02 the only precondition was that the directory EXISTS. Measured on
+# c9f7506: editing `kernel/main.c` so that the string `AIUEOS_PCI_OK
+# bounded-scan virtio-vendor=1af4` no longer appears anywhere in the tree, and
+# then running this script unchanged, produced
+#
+#   RUN     default-nonvram exit=97 evidence-lines=98 distinct-markers=85
+#   ...
+#   AIUEOS_FIRMWARE_MATRIX_OK configurations=3 byte-identical-evidence-lines
+#   EXIT=0
+#
+# -- a full pass, three ways, over a kernel that was not in the tree, still
+# printing a marker the tree no longer contains.
+#
+# The receipt `build-uefi.sh` writes beside the image is what closes it: the
+# artifacts must be byte-for-byte the ones that build produced, AND the
+# `os/aiueos` subtree must still be the one they were produced from.
+command -v nbb >/dev/null 2>&1 || {
+  echo "COULD-NOT-RUN nbb-missing: the image freshness receipt cannot be checked" >&2
+  exit 3
+}
+freshness_status=0
+nbb "$aiueos/scripts/image-freshness.cljs" assert \
+  --receipt "$build/image-receipt.edn" --root "$root" || freshness_status=$?
+[ "$freshness_status" = 0 ] || exit "$freshness_status"
 # build-uefi.sh does NOT make this one -- smoke-qemu-uefi.sh does, and only
 # keeps it with AIUEOS_PRESERVE_BLK_IMAGE=1. Pointing at the wrong script cost
 # a measurement: two QEMU runs came back with zero markers and looked like a
 # firmware rejection, when both had simply been handed a missing block file.
-[ -f "$blk" ] || { echo "error: $blk missing -- run AIUEOS_PRESERVE_BLK_IMAGE=1 smoke-qemu-uefi.sh first" >&2; exit 2; }
+[ -f "$blk" ] || {
+  echo "COULD-NOT-RUN blk-missing: $blk -- run AIUEOS_PRESERVE_BLK_IMAGE=1 smoke-qemu-uefi.sh first" >&2
+  exit 3
+}
 
 fwdir="${AIUEOS_FIRMWARE_DIR:-}"
 if [ -z "$fwdir" ]; then
