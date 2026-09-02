@@ -1,10 +1,10 @@
-# ADR 0143: two arms that agree on the wrong fixture agree about nothing
+# ADR 0165: two arms that agree on the wrong fixture agree about nothing
 
 Status: accepted. Date: 2026-09-02.
 
 ## Context
 
-kotoba-native ADR 0052 landed `kernel-dequant-dot-q8-0`: one opaque MC
+kotoba-native ADR 0066 landed `kernel-dequant-dot-q8-0`: one opaque MC
 instruction that widens a packed Q8_0 weight row inside the register file and
 folds it against f32 activations, with an AVX2 arm and a legacy-SSE arm
 required to agree bit for bit. ADR 0138 established the shape of the evidence
@@ -69,7 +69,7 @@ AVX2. Four runs on 2026-09-02 under changing load gave ratios of 1.17, 1.45,
 1.55 and 1.57 — the spread is the load, not the code.
 
 The defensible statement about speed is a COUNT, and it lives in kotoba-native
-ADR 0052: eight elements cost 13 guest instructions vectorised and 53 scalar.
+ADR 0066: eight elements cost 13 guest instructions vectorised and 53 scalar.
 This workstation is an Apple M4 whose Rosetta exposes no AVX, so there is no
 silicon here that can turn that count into a time.
 
@@ -95,6 +95,6 @@ kernel, and it links no C object — the same no-foreign-artifact floor
 
 Q4_K and Q6_K are declared and have oracles and are refused by the backend by
 name. The IQ family — 306 of the model's 866 tensors, and its dominant types —
-is not declared at all; kotoba-native ADR 0052 records that the literal pool
+is not declared at all; kotoba-native ADR 0066 records that the literal pool
 landed by the boot-compiler stream makes their codebook grids expressible from
 a kernel object, which is what had blocked them.

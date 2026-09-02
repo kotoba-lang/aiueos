@@ -1,7 +1,7 @@
 #!/usr/bin/env nbb
 ;; The fused dequantize-and-dot, executed.
 ;;
-;; `kernel-dequant-dot-q8-0` (superproject ADR-2609021900) selects ONE OF TWO
+;; `kernel-dequant-dot-q8-0` (kotoba-native ADR 0066) selects ONE OF TWO
 ;; instruction sequences at run time, from the same `cpuid`/`xgetbv` guard
 ;; `kernel-dot-f32` uses: eight lanes of AVX2 where the machine has it, and
 ;; legacy scalar SSE where it does not. The compiler's own suites can assert
