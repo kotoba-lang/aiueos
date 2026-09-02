@@ -482,40 +482,50 @@
                              (= extra-status 0)
                              (= nic-owned-status 0)
                              (= nic-pages-status 0))
-                      (if (and (prepare-page-tables page-table-root pdpt pd pt)
-                               (prepare-low-page-table pt rx-limit rw-start)
-                               (prepare-rtl-page-tables
-                                pdpt rtl-directory-a rtl-directory-b bar-a bar-b))
-                          (if (and (enable-page-protection)
-                                   (activate-page-tables page-table-root)
-                                   (= (kernel-configure-page-fault-recovery
-                                       frame-page stack-page) 1)
-                                   (= (install-page-fault-idt reusable-page) 1))
-                            (let [page-marker (kernel-out-u8 233 80)
-                                  root-marker (kernel-out-u8 233 82)
-                                  cr3-marker (kernel-out-u8 233 67)
-                                  idt-marker (kernel-out-u8 233 68)
-                                  probe (page-fault-probe)
-                                  core-ok (and (= page-marker 80)
-                                               (= root-marker 82)
-                                               (= cr3-marker 67)
-                                               (= idt-marker 68)
-                                               (= (recoverable-frame-valid
-                                                   frame-page stack-page probe) 1))
-                                  nic-status (if core-ok
-                                               (qualify-rtl8125
-                                                bar-a bar-b rtl-dma-pages)
-                                               -2)
-                                  nic-marker (if (= nic-status 0)
-                                               (kernel-out-u8 233 78)
-                                               (if (>= nic-status 0)
-                                                 (kernel-out-u8 233 70)
-                                                 0))]
-                              (kernel-out-u32 244
-                                              (+ (if core-ok 16 17)
-                                                 (* 0 nic-marker))))
-                            (kernel-out-u32 244 24))
-                        (kernel-out-u32 244 23))
+                      ;; The UEFI PXE path has just used this BAR and therefore
+                      ;; supplies a known-good mapping until CR3 is replaced.
+                      ;; Qualify a physical RTL8125 once under that mapping so
+                      ;; the wire receipt separates provider faults from faults
+                      ;; in AIUEOS's replacement page tables.  The no-device
+                      ;; QEMU gate keeps exercising the complete CR3/IDT path.
+                      (if (or (> bar-a 0) (> bar-b 0))
+                        (let [pre-cr3-nic-status
+                              (qualify-rtl8125 bar-a bar-b rtl-dma-pages)]
+                          (kernel-out-u32 244 (+ 90 pre-cr3-nic-status)))
+                        (if (and (prepare-page-tables page-table-root pdpt pd pt)
+                                 (prepare-low-page-table pt rx-limit rw-start)
+                                 (prepare-rtl-page-tables
+                                  pdpt rtl-directory-a rtl-directory-b bar-a bar-b))
+                            (if (and (enable-page-protection)
+                                     (activate-page-tables page-table-root)
+                                     (= (kernel-configure-page-fault-recovery
+                                         frame-page stack-page) 1)
+                                     (= (install-page-fault-idt reusable-page) 1))
+                              (let [page-marker (kernel-out-u8 233 80)
+                                    root-marker (kernel-out-u8 233 82)
+                                    cr3-marker (kernel-out-u8 233 67)
+                                    idt-marker (kernel-out-u8 233 68)
+                                    probe (page-fault-probe)
+                                    core-ok (and (= page-marker 80)
+                                                 (= root-marker 82)
+                                                 (= cr3-marker 67)
+                                                 (= idt-marker 68)
+                                                 (= (recoverable-frame-valid
+                                                     frame-page stack-page probe) 1))
+                                    nic-status (if core-ok
+                                                 (qualify-rtl8125
+                                                  bar-a bar-b rtl-dma-pages)
+                                                 -2)
+                                    nic-marker (if (= nic-status 0)
+                                                 (kernel-out-u8 233 78)
+                                                 (if (>= nic-status 0)
+                                                   (kernel-out-u8 233 70)
+                                                   0))]
+                                (kernel-out-u32 244
+                                                (+ (if core-ok 16 17)
+                                                   (* 0 nic-marker))))
+                              (kernel-out-u32 244 24))
+                          (kernel-out-u32 244 23)))
                       (kernel-out-u32 244
                                       (if (not (= owned-status 0))
                                         owned-status

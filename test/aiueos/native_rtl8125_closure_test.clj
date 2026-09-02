@@ -38,7 +38,10 @@
       (is (str/includes? kernel "(rtl/bar-for-bus 2)"))
       (is (str/includes? kernel "(rtl/bar-for-bus 3)"))
       (is (str/includes? kernel "rtl-dma-pages"))
-      (is (str/includes? kernel "(qualify-rtl8125")))
+      (is (str/includes? kernel "(qualify-rtl8125"))
+      (is (str/includes? kernel "pre-cr3-nic-status"))
+      (is (str/includes? kernel
+                         "(qualify-rtl8125 bar-a bar-b rtl-dma-pages)")))
     (testing "the builder compiles the closed module graph with the sealed fuel"
       (is (str/includes? builder "--source-path \"$aiueos\" --unpinned"))
       (is (str/includes? builder "--fuel 1048576"))
