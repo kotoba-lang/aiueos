@@ -30,8 +30,8 @@
                  'aiueos.value-runtime-domain (slurp domain-source)
                  'aiueos.value-runtime-capability-table (slurp capability-source)
                  'aiueos.value-runtime-provider-policy (slurp provider-source)
-                 'aiueos.value-runtime-sha256 (slurp sha-source)
-                 'aiueos.value-runtime-digest-equal (slurp digest-source)
+                 'aiueos.sha256 (slurp sha-source)
+                 'aiueos.digest-equal (slurp digest-source)
                  'aiueos.value-runtime-cas-verify (slurp cas-source)
                  'aiueos.native.kernel (slurp kernel-source)
                  'aiueos.native.value-runtime-kernel (slurp root-source)}

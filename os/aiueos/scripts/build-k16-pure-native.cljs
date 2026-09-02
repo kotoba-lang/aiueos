@@ -111,7 +111,13 @@
   (let [p (path/join root kernel-recipe)
         text (.readFileSync fs p "utf8")
         sha (second (re-find #"(?m)^expected=([0-9a-f]{40})" text))
-        named (set (map second (re-seq #"kotoba/([a-z0-9-]+)\.kotoba" text)))]
+        ;; `kotoba/<stem>.kotoba` and, since the ns->path move,
+        ;; `kotoba/aiueos/<munged stem>.kotoba`. Reading only the flat spelling
+        ;; would silently demote every moved object to `:unrecorded` -- the
+        ;; failure this file exists to avoid, arriving as a quieter receipt
+        ;; rather than as an error.
+        named (set (map (fn [[_ stem]] (str/replace stem "_" "-"))
+                        (re-seq #"kotoba/(?:aiueos/)?([a-z0-9_-]+)\.kotoba" text)))]
     (when-not sha
       (die! 2 (str "UNANSWERED could-not-answer reason=recipe-pin-unreadable path=" kernel-recipe)))
     {:sha sha :named named}))
@@ -130,7 +136,19 @@
            (sorted-map)
            (for [o objects]
              (let [stem (subs o 0 (- (count o) 2))
-                   src-name (get source-overrides o (str stem ".kotoba"))
+                   ;; Flat `<stem>.kotoba` first, then the ns->path spelling
+                   ;; `aiueos/<munged stem>.kotoba` an object's source moves to
+                   ;; when it becomes an importable module. Same rule as
+                   ;; `module-file` above, and it has to be the same rule: a
+                   ;; source this cannot find is reported as `source-absent`
+                   ;; and stops the run, which is right for a source that is
+                   ;; gone and wrong for one that merely moved.
+                   src-name (or (get source-overrides o)
+                                (first (filter #(.existsSync fs (path/join dir %))
+                                               [(str stem ".kotoba")
+                                                (str "aiueos/" (str/replace stem "-" "_")
+                                                     ".kotoba")]))
+                                (str stem ".kotoba"))
                    src-path (path/join dir src-name)
                    src-rel (str "os/aiueos/kotoba/" src-name)
                    recipe (cond

@@ -62,6 +62,17 @@ kotoba_cap_valid_object=${AIUEOS_KOTOBA_CAP_VALID_OBJECT:-"$aiueos/kotoba/virtio
 kotoba_extent_valid_object=${AIUEOS_KOTOBA_EXTENT_VALID_OBJECT:-"$aiueos/kotoba/pci-extent-valid.o"}
 kotoba_region_valid_object=${AIUEOS_KOTOBA_REGION_VALID_OBJECT:-"$aiueos/kotoba/pci-region-valid.o"}
 kotoba_pci_config_read_object=${AIUEOS_KOTOBA_PCI_CONFIG_READ_OBJECT:-"$aiueos/kotoba/pci-config-read.o"}
+# The RTL8125 2.5GbE driver (ADR-0140). Six objects, always linked: the NIC is
+# how a diskless PXE node reaches anything at all, and `kernel/rtl8125.c` is in
+# every profile. `aiueos_rtl8125_kotoba_selftest` runs all six against a
+# software model of the BAR on every boot, so an unlinked one is a link error
+# rather than a silent absence.
+kotoba_rtl8125_identify_object=${AIUEOS_KOTOBA_RTL8125_IDENTIFY_OBJECT:-"$aiueos/kotoba/rtl8125-identify.o"}
+kotoba_rtl8125_link_up_object=${AIUEOS_KOTOBA_RTL8125_LINK_UP_OBJECT:-"$aiueos/kotoba/rtl8125-link-up.o"}
+kotoba_rtl8125_ring_build_object=${AIUEOS_KOTOBA_RTL8125_RING_BUILD_OBJECT:-"$aiueos/kotoba/rtl8125-ring-build.o"}
+kotoba_rtl8125_program_object=${AIUEOS_KOTOBA_RTL8125_PROGRAM_OBJECT:-"$aiueos/kotoba/rtl8125-program.o"}
+kotoba_rtl8125_tx_submit_object=${AIUEOS_KOTOBA_RTL8125_TX_SUBMIT_OBJECT:-"$aiueos/kotoba/rtl8125-tx-submit.o"}
+kotoba_rtl8125_rx_poll_object=${AIUEOS_KOTOBA_RTL8125_RX_POLL_OBJECT:-"$aiueos/kotoba/rtl8125-rx-poll.o"}
 kotoba_pci_config_write_object=${AIUEOS_KOTOBA_PCI_CONFIG_WRITE_OBJECT:-"$aiueos/kotoba/pci-config-write.o"}
 kotoba_mmio_map_admit_object=${AIUEOS_KOTOBA_MMIO_MAP_ADMIT_OBJECT:-"$aiueos/kotoba/mmio-map-admit.o"}
 kotoba_acpi_checksum_object=${AIUEOS_KOTOBA_ACPI_CHECKSUM_OBJECT:-"$aiueos/kotoba/acpi-checksum-ok.o"}
@@ -148,6 +159,14 @@ kotoba_qwen35_tensor_object=${AIUEOS_KOTOBA_QWEN35_TENSOR_OBJECT:-"$aiueos/kotob
 # 13 KiB artifact in the image to no end.
 kotoba_aes128_gcm_object=${AIUEOS_KOTOBA_AES128_GCM_OBJECT:-"$aiueos/kotoba/aes128-gcm.o"}
 kotoba_tls13_record_object=${AIUEOS_KOTOBA_TLS13_RECORD_OBJECT:-"$aiueos/kotoba/tls13-record.o"}
+# The two project-route objects (ADR-0141). NOT LINKED, and that is a decision
+# about the kernel rather than an omission: nothing in the kernel calls
+# `kotoba_aiueos_cid_v1_admit` or `kotoba_aiueos_value_runtime_cas_verify` yet.
+# They are verified here anyway, exactly as the qwen35 objects below are,
+# because the digest is what ties the committed artifact to the source its
+# contract graded -- and until amu#742 neither could be built at all.
+kotoba_cid_v1_admit_object=${AIUEOS_KOTOBA_CID_V1_ADMIT_OBJECT:-"$aiueos/kotoba/cid-v1-admit.o"}
+kotoba_value_runtime_cas_verify_object=${AIUEOS_KOTOBA_VALUE_RUNTIME_CAS_VERIFY_OBJECT:-"$aiueos/kotoba/value-runtime-cas-verify.o"}
 # The Qwen3.5 forward pass, first tranche (ADR-0137). Linked ONLY with the
 # model handoff, because that is the only build in which the C they are
 # compared against (kernel/qwen35_infer.c, kernel/qwen35_quant.c) is compiled
@@ -824,7 +843,7 @@ python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_ecdsa_object" 
   5026b4346bdb02ba689fad3afe67f21e556ca028b03338764140079f0308dc29 \
   kotoba_aiueos_ecdsa_p256_sha256_verify
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_aes128_gcm_object" \
-  a3d22ecd5761e0273015267a7c3a59823fce94f545c9ee8b725b3728da665465 \
+  65492e522fdea32d7c9e83d463c42d26dece7ee3300f1a58ba74dd352687b265 \
   kotoba_aiueos_aes128_gcm
 # Qwen3.8-27B GGUF admission (ADR-0137). Verified unconditionally like every
 # object above, even in profiles that do not link them: the digests are what
@@ -839,8 +858,14 @@ python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_qwen35_tensor_
   8509d721348c060e73576bbdb4380301cc10f1eb9c1f9e1595e7e342e7ea1454 \
   kotoba_aiueos_qwen35_tensor_table_bind
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_tls13_record_object" \
-  46d7bf41d9c50f519ef499134f0c021d06ab7dea256002f0c56e43f83391c46f \
+  5c3dee8193c63f3ac1c32b791c4ccdf1fd9d6cda2e3ead08f45c1068e9d36334 \
   kotoba_aiueos_tls13_record
+python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_cid_v1_admit_object" \
+  3aeb23085b6fe6071b5afb1772d712b18db65c0f066ac6a801c6feaeae889808 \
+  kotoba_aiueos_cid_v1_admit
+python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_value_runtime_cas_verify_object" \
+  dfef74bb28a510d6ca1afc671171ffb8370560f1b98e46d85f063110a46ebc70 \
+  kotoba_aiueos_value_runtime_cas_verify
 if [ -n "$model_handoff_link" ] || [ -n "$qwen35_parity_cflags" ]; then
   python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_qwen35_dot_object" \
     "" kotoba_aiueos_qwen35_dot_f32
@@ -1087,6 +1112,9 @@ zig ld.lld -nostdlib -static --strip-all $qualification_gc_link -z max-page-size
   "$kotoba_mutable_build_object" "$kotoba_cap_valid_object" \
   "$kotoba_extent_valid_object" "$kotoba_region_valid_object" \
   "$kotoba_pci_config_read_object" "$kotoba_pci_config_write_object" \
+  "$kotoba_rtl8125_identify_object" "$kotoba_rtl8125_link_up_object" \
+  "$kotoba_rtl8125_ring_build_object" "$kotoba_rtl8125_program_object" \
+  "$kotoba_rtl8125_tx_submit_object" "$kotoba_rtl8125_rx_poll_object" \
   "$kotoba_x25519_object"   "$kotoba_ecdsa_object" $ecdsa_sign_link $ecdsa_public_link "$kotoba_ime_object" \
   "$kotoba_aes128_gcm_object" "$kotoba_tls13_record_object" \
   $qwen35_kotoba_link $qwen35_parity_link \

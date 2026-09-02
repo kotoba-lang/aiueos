@@ -1230,6 +1230,29 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
       debug_string("AIUEOS_TLS13_RECORD_OK rfc8448-s3 seq0 seal-open tamper-refused\n");
       serial_string("AIUEOS_TLS13_RECORD_OK rfc8448-s3 seq0 seal-open tamper-refused\r\n");
     }
+    /* The RTL8125 driver objects, against a software model of the BAR window
+       (ADR-0140).  QEMU has no RTL8125, so the model is how the emitted machine
+       code gets executed at all -- and it is not a substitute for the physical
+       qualification, which still runs on the K16 nodes.  What it proves is that
+       the six Kotoba objects and the C in `kernel/rtl8125.c` leave the same
+       4,096-byte register file and the same two descriptors behind, from the
+       same seed. */
+    {
+      extern int aiueos_rtl8125_kotoba_selftest(void);
+      extern unsigned aiueos_rtl8125_parity_stage;
+      extern unsigned aiueos_rtl8125_parity_detail;
+      if (!aiueos_rtl8125_kotoba_selftest()) {
+        serial_string("NIC-PARITY mismatch stage=");
+        serial_decimal(aiueos_rtl8125_parity_stage);
+        serial_string(" offset=");
+        serial_decimal(aiueos_rtl8125_parity_detail);
+        serial_string("\r\n");
+        debug_string("NIC-PARITY mismatch\n");
+        qemu_exit(0x6f);
+      }
+      debug_string("NIC-PARITY ok rtl8125 identify link-up ring-build program tx-submit rx-poll\n");
+      serial_string("NIC-PARITY ok rtl8125 identify link-up ring-build program tx-submit rx-poll\r\n");
+    }
 #ifdef AIUEOS_QWEN35_KOTOBA_PARITY
     /* QWEN-PARITY (ADR-0137).  The three Qwen3.5 forward-pass objects against
        the C they were ported from, on this CPU, over synthetic inputs.  Placed

@@ -4,7 +4,7 @@
 ;; stated by the repository that owns the decision.
 {:format :aiueos.aes128-gcm/v1
  :graph {:root aiueos.aes128-gcm
-         :modules [aiueos.aes128-gcm]}
+         :modules [aiueos.lib.aes128-gcm-core aiueos.aes128-gcm]}
  :native {:target :x86_64-aiueos-kernel-v1
           :export "kotoba_aiueos_aes128_gcm"
           :imports []
