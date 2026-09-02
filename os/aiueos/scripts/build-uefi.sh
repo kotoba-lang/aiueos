@@ -883,19 +883,19 @@ python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_value_runtime_
   kotoba_aiueos_value_runtime_cas_verify
 if [ -n "$model_handoff_link" ] || [ -n "$qwen35_parity_cflags" ]; then
   python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_qwen35_dot_object" \
-    "" kotoba_aiueos_qwen35_dot_f32
+    4effd1be80404bd910f0df31dd6510391671b7af025a61d9974ffdecf05f1340 kotoba_aiueos_qwen35_dot_f32
   python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_qwen35_dequant_object" \
-    "" kotoba_aiueos_qwen35_dequant_row
+    9eb567d148f09b5c26885846e44092ecc686da0c99c9e21e3d9cf8535132a4bc kotoba_aiueos_qwen35_dequant_row
   python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_qwen35_matvec_object" \
-    "" kotoba_aiueos_qwen35_matvec
+    ec0e3352538e670db1b8165c51e14eff0250908a247a2b0f901484ea5571fa44 kotoba_aiueos_qwen35_matvec
   # Two parity profiles, each linking only the objects its stages call. The
   # low region (`aiueos_low_end <= 0x1f4000`) cannot hold all five at once
   # since the tokenizer objects landed -- measured, not assumed.
   if [ "${AIUEOS_QWEN35_KOTOBA_PARITY:-0}" = 2 ]; then
     python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_qwen35_activation_object" \
-      "" kotoba_aiueos_qwen35_activation
+      49556872a8110c3cf95eea7648df693e8352f0d65bf1755404c4f3d92e114b68 kotoba_aiueos_qwen35_activation
     python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_qwen35_norm_object" \
-      "" kotoba_aiueos_qwen35_norm
+      faff9aefe51909376dc6a2bfe30fa720c88cc47db06a70df32fa7852b110eaee kotoba_aiueos_qwen35_norm
     qwen35_kotoba_link="$kotoba_qwen35_activation_object $kotoba_qwen35_norm_object"
   else
     qwen35_kotoba_link="$kotoba_qwen35_dot_object $kotoba_qwen35_dequant_object $kotoba_qwen35_matvec_object"

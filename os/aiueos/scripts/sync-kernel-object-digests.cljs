@@ -50,12 +50,13 @@
   {:object <basename> :slot <literal-hex or shell-var name> :literal? bool}."
   [text vars]
   (for [[whole objvar slot]
-        (re-seq #"verify-kotoba-kernel-object\.py\"?\s+\"\$([a-z0-9_]+)\"\s*(?:\\\s*\n\s*)?(\"?\$?[A-Za-z0-9_]+\"?)"
+        (re-seq #"verify-kotoba-kernel-object\.py\"?\s+\"\$([a-z0-9_]+)\"\s*(?:\\\s*\n\s*)?(\"\"|\"?\$?[A-Za-z0-9_]+\"?)"
                 text)
-        :let [slot (-> slot (str/replace "\"" "") (str/replace "$" ""))
+        :let [empty? (= "\"\"" slot)
+              slot (-> slot (str/replace "\"" "") (str/replace "$" ""))
               literal? (re-matches #"[0-9a-f]{64}" slot)]]
     {:object (get vars objvar) :objvar objvar :slot slot
-     :literal? (boolean literal?) :whole whole}))
+     :empty? empty? :literal? (boolean literal?) :whole whole}))
 
 (defn -main []
   (when-not (.existsSync fs script) (die! 2 (str "COULD-NOT-RUN reason=script-absent path=" script)))
@@ -68,6 +69,19 @@
         unresolved (filterv #(nil? (:object %)) calls)]
     (when (empty? calls)
       (die! 2 "COULD-NOT-RUN reason=no-verify-invocations (the call shape changed)"))
+    ;; EVIDENCE FLOOR. This parse is a regular expression over shell, and its
+    ;; failure mode is not "no match" but "fewer matches than there are calls"
+    ;; -- which reports a clean sync over a set it quietly narrowed. Measured
+    ;; 2026-09-03: it matched 81 of 86 calls, and the five it missed were
+    ;; exactly the ones passing an EMPTY digest, i.e. the objects that are not
+    ;; pinned at all. The parse was blindest where the answer mattered most.
+    ;; Counting the calls a second way, cheaply and independently, turns that
+    ;; into a refusal instead of a pass.
+    (let [n (count (re-seq #"verify-kotoba-kernel-object\.py" text))]
+      (when (not= n (count calls))
+        (die! 2 (str "COULD-NOT-RUN reason=invocation-parse-incomplete calls=" n
+                     " parsed=" (count calls)
+                     " (refusing to report a sync over a subset)"))))
     (when (seq unresolved)
       (die! 2 (str "COULD-NOT-RUN reason=object-variable-unresolved n=" (count unresolved)
                    " first=" (:objvar (first unresolved)))))
@@ -75,7 +89,7 @@
     ;; three conditionally-pinned objects (kernel-probe, journal-plan, fnv1a)
     ;; are compared and rewritten like the rest instead of being skipped.
     (let [slots (for [c calls
-                      :let [current (if (:literal? c)
+                      :let [current (if (or (:empty? c) (:literal? c))
                                       (:slot c)
                                       (second (re-find (re-pattern (str "(?m)^\\s*" (:slot c)
                                                                         "=([0-9a-f]{64})\\s*$"))
@@ -91,15 +105,26 @@
         (die! 2 (str "COULD-NOT-RUN reason=digest-slot-unreadable n=" (count unreadable)
                      " first=" (:objvar (first unreadable)))))
       (doseq [s stale]
-        (println (str "STALE\t" (:object s) "\tshell=" (subs (:current s) 0 12)
+        (println (str (if (:empty? s) "UNPINNED\t" "STALE\t")
+                      (:object s)
+                      (if (:empty? s)
+                        "\tshell=<empty>"
+                        (str "\tshell=" (subs (:current s) 0 12)))
                       "\tmanifest=" (subs (:expected s) 0 12))))
       (println (str "SCANNED\t" (count slots)))
       (cond
         (flag? "--write")
         (let [out (reduce (fn [t s]
-                            (if (= (:current s) (:expected s))
-                              t
-                              (str/replace t (:current s) (:expected s))))
+                            (cond
+                              (= (:current s) (:expected s)) t
+                              ;; An empty slot is the two-character string `""`.
+                              ;; Replacing that globally would rewrite every
+                              ;; empty argument in the file, so rewrite the one
+                              ;; call that owns it.
+                              (:empty? s)
+                              (str/replace t (:whole s)
+                                           (str/replace (:whole s) "\"\"" (:expected s)))
+                              :else (str/replace t (:current s) (:expected s))))
                           text stale)]
           (.writeFileSync fs script out "utf8")
           (println (str "SYNCED\tobjects=" (count slots) " rewritten=" (count stale)))
@@ -107,11 +132,13 @@
 
         (seq stale)
         (do (println (str "AIUEOS_KERNEL_OBJECT_DIGESTS_STALE scanned=" (count slots)
-                          " stale=" (count stale)))
+                          " stale=" (count (remove :empty? stale))
+                          " unpinned=" (count (filter :empty? stale))))
             (.exit js/process 3))
 
         :else
-        (do (println (str "AIUEOS_KERNEL_OBJECT_DIGESTS_OK scanned=" (count slots) " stale=0"))
+        (do (println (str "AIUEOS_KERNEL_OBJECT_DIGESTS_OK scanned=" (count slots)
+                          " stale=0 unpinned=0"))
             (.exit js/process 0))))))
 
 (-main)
