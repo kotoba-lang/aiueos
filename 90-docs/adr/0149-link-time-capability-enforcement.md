@@ -1,4 +1,4 @@
-# ADR-0011 — Link-time capability enforcement in the JVM/Chicory execution path
+# ADR-0149 — Link-time capability enforcement in the JVM/Chicory execution path
 
 - Status: accepted
 - Date: 2026-07-13

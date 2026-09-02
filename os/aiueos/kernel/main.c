@@ -1463,7 +1463,7 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
       serial_string("NIC-PARITY ok rtl8125 identify link-up ring-build program tx-submit rx-poll\r\n");
     }
 #ifdef AIUEOS_QWEN35_KOTOBA_PARITY
-    /* QWEN-PARITY (ADR-0137).  The three Qwen3.5 forward-pass objects against
+    /* QWEN-PARITY (ADR-0147).  The three Qwen3.5 forward-pass objects against
        the C they were ported from, on this CPU, over synthetic inputs.  Placed
        with the other Kotoba self-tests, after the kernel owns its own IDT: a
        fuel-guard `ud2` raised while the FIRMWARE's handler is still installed

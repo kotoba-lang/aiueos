@@ -1139,7 +1139,7 @@ int aiueos_qwen35_test_cache_resolve(
 
 /* ── QWEN-PARITY: the Kotoba objects against this file, on the CPU ─────────
  *
- * ADR-0137.  `aiueos-qwen35-dequant-row`, `aiueos-qwen35-dot-f32` and
+ * ADR-0147.  `aiueos-qwen35-dequant-row`, `aiueos-qwen35-dot-f32` and
  * `aiueos-qwen35-matvec` are ports of `aiueos_qwen35_dequantize_row`,
  * `dot_scalar` and `matvec_range`.  Their contracts are checked against a
  * ClojureScript re-derivation in the KIR interpreter, which proves the

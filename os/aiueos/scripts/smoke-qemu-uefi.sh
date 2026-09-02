@@ -9,13 +9,68 @@ serial_log="$out/kernel-serial.log"
 blk_image="$out/virtio-blk-smoke.img"
 qemu=${QEMU_SYSTEM_X86_64:-qemu-system-x86_64}
 
+# --- freshness floor (ADR-0155) ---------------------------------------------
+#
+# Three outcomes, and they must be distinguishable from the exit status alone:
+#
+#   0  the image booted and every assertion below held
+#   1  a real boot failure -- named, with the marker that was missing
+#   3  COULD-NOT-RUN -- the build failed, or qemu/OVMF/nbb is not here. This is
+#      NOT a pass and NOT a boot failure: nothing was measured
+#   4  REFUSED stale-image -- the artifact about to boot is not the one this run
+#      produced (propagated from image-freshness.cljs)
+#
+# Measured 2026-09-02 on c9f7506, which is why the deletions come FIRST: when
+# `build-uefi.sh` fails, everything the previous run wrote is still on disk --
+# `esp/EFI/AIUEOS/KERNEL.ELF` and, worse, `kernel-serial.log` with the previous
+# kernel's `NIC-PARITY ok` / `DEVCLIENT-PARITY canonical ok` /
+# `AIUEOS_TLS13_RECORD_OK` in it. Every stream in the K16 programme collects its
+# evidence by grepping that file, so a build that never ran answered with a
+# kernel that is not in the tree.
+receipt="$out/image-receipt.edn"
+efi_image="$out/esp/EFI/BOOT/BOOTX64.EFI"
+kernel_image="$out/esp/EFI/AIUEOS/KERNEL.ELF"
+initrd_image="$out/esp/EFI/AIUEOS/INITRD.IMG"
+rm -f "$receipt" "$efi_image" "$kernel_image" "$initrd_image" "$log" "$serial_log"
+
+# nbb absent is could-not-run, never a quiet skip: without it the receipt is
+# neither written nor checked, and the boot below would be unattributed again.
+command -v nbb >/dev/null 2>&1 || {
+  echo "COULD-NOT-RUN nbb-missing: the image freshness receipt cannot be checked" >&2
+  exit 3
+}
+
+build_status=0
 if [ "${AIUEOS_GUEST_INPUT:-0}" = 1 ]; then
   AIUEOS_CATALOG_POLICY_SELFTEST=1 \
-    "$aiueos/scripts/build-uefi.sh" >/dev/null
+    "$aiueos/scripts/build-uefi.sh" >/dev/null || build_status=$?
 else
   AIUEOS_INPUT_SMOKE_SYNTHETIC=1 AIUEOS_CATALOG_POLICY_SELFTEST=1 \
-    "$aiueos/scripts/build-uefi.sh" >/dev/null
+    "$aiueos/scripts/build-uefi.sh" >/dev/null || build_status=$?
 fi
+# The build's own exit status, not the presence of a file. `set -e` already
+# stopped a build that exits non-zero, but it stopped it SILENTLY -- one line of
+# bash's stderr and nothing that says which of the three outcomes this was.
+[ "$build_status" = 0 ] || {
+  echo "COULD-NOT-RUN build-failed: build-uefi.sh exited $build_status" >&2
+  echo "               no image was booted and no evidence was produced" >&2
+  exit 3
+}
+
+# The other half: the artifact the boot is about to consume must be the one the
+# build just produced, from the tree in front of us. Deleting first cannot say
+# that -- a build could still write an image from a different source path, or
+# hand back a cached one.
+#
+# Run HERE, before the deliberate-corruption blocks below: those exist to feed
+# the loader a damaged image on purpose, so they are allowed to move these bytes
+# afterwards. What is asserted is that they damaged a FRESH image.
+freshness_status=0
+nbb "$aiueos/scripts/image-freshness.cljs" assert \
+  --receipt "$receipt" --root "$repo" \
+  "$efi_image" "$kernel_image" "$initrd_image" || freshness_status=$?
+[ "$freshness_status" = 0 ] || exit "$freshness_status"
+
 if [ "${AIUEOS_CORRUPT_KERNEL:-0}" = 1 ]; then
   python3 - "$out/esp/EFI/AIUEOS/KERNEL.ELF" <<'PY'
 from pathlib import Path
@@ -37,8 +92,8 @@ path.write_bytes(data)
 PYC
 fi
 command -v "$qemu" >/dev/null 2>&1 || {
-  echo "error: qemu-system-x86_64 is required" >&2
-  exit 1
+  echo "COULD-NOT-RUN qemu-missing: qemu-system-x86_64 is required" >&2
+  exit 3
 }
 
 if [ -z "${OVMF_CODE:-}" ]; then
@@ -52,8 +107,8 @@ if [ -z "${OVMF_CODE:-}" ]; then
   done
 fi
 [ -f "${OVMF_CODE:-}" ] || {
-  echo "error: OVMF firmware not found; set OVMF_CODE" >&2
-  exit 1
+  echo "COULD-NOT-RUN ovmf-missing: OVMF firmware not found; set OVMF_CODE" >&2
+  exit 3
 }
 
 rm -f "$log" "$serial_log"
@@ -806,7 +861,7 @@ grep -F "AIUEOS_EXCEPTION_OK vector=6 invalid-opcode" "$serial_log" >/dev/null |
   echo "error: kernel exception dispatch evidence was not observed" >&2
   exit 1
 }
-# SHA-STREAM-PARITY (ADR-0142). The full line, not a prefix: a run that printed
+# SHA-STREAM-PARITY (ADR-0155). The full line, not a prefix: a run that printed
 # `SHA-STREAM-PARITY mismatch case=6` would satisfy a prefix match, and case 6
 # is the 131,080-byte hash that is the entire reason these objects exist.
 grep -F "SHA-STREAM-PARITY ok fips-abc fips-448 one-block region-vs-sha256-12288 stream-192-blocks region-131080 dwd-input-4 dwd-output-3 dwd-input-32768 refusals" "$serial_log" >/dev/null || {
