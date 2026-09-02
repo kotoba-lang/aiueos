@@ -107,9 +107,9 @@
     (is (= 8000000
            (get-in candidate [:diagnostic :bounded-poll
                               :iterations-per-window])))
-    (is (= "10c92268ca602becc00e32eed510c2b3c9d198cb"
+    (is (= "4151e6d5cde47f7ae6534185eb1e3bdc102a429c"
            (get-in candidate [:artifact :aiueos-implementation-commit])))
-    (is (= "5120d4a2d740b1c368de95cb498b7d7cd6342015aff6bc9cf5b2508d6a9f0b3d"
+    (is (= "9755a8c5545aeb4b3f3e1a3329f363b8a09880dbf8bf0b08a82b4994fa1f8a6d"
            (get-in candidate [:artifact :efi :sha256])))
     (is (= :passed (get-in candidate [:evidence :qemu :state])))
     (is (= :unverified (get-in candidate [:evidence :physical-k16])))
