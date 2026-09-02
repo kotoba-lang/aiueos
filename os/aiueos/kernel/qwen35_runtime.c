@@ -1,6 +1,29 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 #include "qwen35_runtime.h"
 
+/* The GGUF admission moved to three Kotoba objects (ADR-0135). This file now
+   holds TWO implementations of `aiueos_qwen35_model_parse` and the build
+   chooses one:
+
+     AIUEOS_QWEN35_KOTOBA_ADMISSION defined   -- delegate to the objects.
+                                                 build-uefi.sh defines it for
+                                                 every profile that compiles
+                                                 this file, so NO IMAGE
+                                                 CONTAINS C GGUF PARSING.
+     undefined                               -- the C parser below. It is the
+                                                 host reference that
+                                                 scripts/smoke-qwen35-runtime.sh
+                                                 and tests/qwen35_runtime_model.c
+                                                 exercise, because this
+                                                 workstation is aarch64 and the
+                                                 objects are x86-64 ET_REL.
+
+   The `#else` branch is NOT a runtime fallback. Nothing selects it at run
+   time and no shipped artifact contains it; it is the reference the oracle
+   for those objects is checked against, kept compilable so the fixture and
+   the four representative tensor offsets stay gated on a machine that cannot
+   execute the objects. */
+#ifndef AIUEOS_QWEN35_KOTOBA_ADMISSION
 enum gguf_value_type {
   GGUF_UINT8 = 0,
   GGUF_INT8 = 1,
@@ -585,6 +608,193 @@ int aiueos_qwen35_model_parse(const uint8_t *bytes,
     return aiueos_qwen35_model_bind(model, bytes, accessible_bytes);
   return 1;
 }
+
+#else /* AIUEOS_QWEN35_KOTOBA_ADMISSION */
+
+/* The admission is three Kotoba objects (ADR-0135). What remains here is
+   buffer plumbing: two workspaces, a little-endian load, and the translation
+   from the objects' workspace into `struct aiueos_qwen35_model`, which is the
+   shape `qwen35_infer.c` reads.
+
+   The objects decide; this decides nothing. Every refusal below is either a
+   non-zero verdict handed back by an object, or the one thing the objects
+   cannot check because it is about THIS struct rather than about the file: two
+   records claiming the same field.
+
+   ZERO IS THE SUCCESS VALUE for all three. `if (verdict)` would invert the
+   decision and admit exactly the files they rejected, so every call site here
+   spells `!= 0`. */
+
+extern int64_t kotoba_aiueos_qwen35_gguf_header_valid(uint64_t base,
+                                                      uint64_t accessible,
+                                                      uint64_t artifact);
+extern int64_t kotoba_aiueos_qwen35_gguf_kv_scan(uint64_t base,
+                                                 uint64_t accessible,
+                                                 uint64_t plan,
+                                                 uint64_t plan_length);
+extern int64_t kotoba_aiueos_qwen35_tensor_table_bind(uint64_t table,
+                                                      uint64_t limit,
+                                                      uint64_t metadata_end,
+                                                      uint64_t plan,
+                                                      uint64_t plan_length);
+
+#define AIUEOS_QWEN35_KV_PLAN_BYTES 128U
+#define AIUEOS_QWEN35_TT_PLAN_BYTES 28160U
+#define AIUEOS_QWEN35_TT_SLOT_BYTES 32U
+
+static uint8_t qwen35_kv_plan[AIUEOS_QWEN35_KV_PLAN_BYTES];
+static uint8_t qwen35_tt_plan[AIUEOS_QWEN35_TT_PLAN_BYTES];
+
+static uint32_t plan_u32(const uint8_t *plan, uint64_t offset) {
+  const uint8_t *p = plan + offset;
+  return (uint32_t)p[0] | ((uint32_t)p[1] << 8) |
+         ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
+}
+
+static uint64_t plan_u64(const uint8_t *plan, uint64_t offset) {
+  return (uint64_t)plan_u32(plan, offset) |
+         ((uint64_t)plan_u32(plan, offset + 4) << 32);
+}
+
+/* Role id (1..27) and layer (0..64, or 65 for the three whole-model tensors)
+   to the field that holds it. The union is safe because the object's per-layer
+   role masks admit only linear roles in a linear layer and only full-attention
+   roles in a full one; a layer carrying both is refused there with -25 before
+   this function is ever reached. */
+static struct aiueos_qwen35_tensor *qwen35_slot(
+    struct aiueos_qwen35_model *model, uint32_t role, uint32_t layer) {
+  if (layer == AIUEOS_QWEN35_LAYER_COUNT) {
+    if (role == 25) return &model->token_embedding;
+    if (role == 26) return &model->output_norm;
+    if (role == 27) return &model->output;
+    return 0;
+  }
+  if (layer >= AIUEOS_QWEN35_LAYER_COUNT) return 0;
+  struct aiueos_qwen35_layer *l = &model->layers[layer];
+  switch (role) {
+    case 1:  return &l->attention_norm;
+    case 2:  return &l->post_attention_norm;
+    case 3:  return &l->ffn_down;
+    case 4:  return &l->ffn_gate;
+    case 5:  return &l->ffn_up;
+    case 6:  return &l->mixer.linear.gate;
+    case 7:  return &l->mixer.linear.qkv;
+    case 8:  return &l->mixer.linear.a;
+    case 9:  return &l->mixer.linear.alpha;
+    case 10: return &l->mixer.linear.beta;
+    case 11: return &l->mixer.linear.conv1d;
+    case 12: return &l->mixer.linear.dt_bias;
+    case 13: return &l->mixer.linear.norm;
+    case 14: return &l->mixer.linear.output;
+    case 15: return &l->mixer.full.key;
+    case 16: return &l->mixer.full.key_norm;
+    case 17: return &l->mixer.full.output;
+    case 18: return &l->mixer.full.query_gate;
+    case 19: return &l->mixer.full.query_norm;
+    case 20: return &l->mixer.full.value;
+    case 21: return &l->nextn.eh_projection;
+    case 22: return &l->nextn.embedding_norm;
+    case 23: return &l->nextn.hidden_norm;
+    case 24: return &l->nextn.shared_head_norm;
+    default: return 0;
+  }
+}
+
+int aiueos_qwen35_model_parse(const uint8_t *bytes,
+                              uint64_t accessible_bytes,
+                              uint64_t artifact_bytes,
+                              struct aiueos_qwen35_model *model) {
+  if (!bytes || !model) return 0;
+  volatile uint8_t *clear = (volatile uint8_t *)model;
+  for (uint64_t i = 0; i < sizeof(*model); i++) clear[i] = 0;
+  for (uint64_t i = 0; i < AIUEOS_QWEN35_KV_PLAN_BYTES; i++)
+    qwen35_kv_plan[i] = 0;
+  for (uint64_t i = 0; i < AIUEOS_QWEN35_TT_PLAN_BYTES; i++)
+    qwen35_tt_plan[i] = 0;
+
+  uint64_t base = (uint64_t)(uintptr_t)bytes;
+  if (kotoba_aiueos_qwen35_gguf_header_valid(base, accessible_bytes,
+                                             artifact_bytes) != 0) return 0;
+  if (kotoba_aiueos_qwen35_gguf_kv_scan(
+        base, accessible_bytes,
+        (uint64_t)(uintptr_t)qwen35_kv_plan,
+        AIUEOS_QWEN35_KV_PLAN_BYTES) != 0) return 0;
+
+  uint64_t metadata_end = plan_u32(qwen35_kv_plan, 0);
+  if (metadata_end > accessible_bytes) return 0;
+  if (kotoba_aiueos_qwen35_tensor_table_bind(
+        base + metadata_end, accessible_bytes - metadata_end, metadata_end,
+        (uint64_t)(uintptr_t)qwen35_tt_plan,
+        AIUEOS_QWEN35_TT_PLAN_BYTES) != 0) return 0;
+
+  model->bytes = bytes;
+  model->accessible_bytes = accessible_bytes;
+  model->artifact_bytes = artifact_bytes;
+  model->tensor_count = AIUEOS_QWEN35_TENSOR_COUNT;
+  model->metadata_count = AIUEOS_QWEN35_METADATA_COUNT;
+  model->metadata_end = metadata_end;
+  model->tensor_info_end = plan_u64(qwen35_tt_plan, 16);
+  model->data_offset = plan_u64(qwen35_tt_plan, 4);
+  model->block_count = plan_u32(qwen35_kv_plan, 4);
+  model->context_length = plan_u32(qwen35_kv_plan, 8);
+  model->embedding_length = plan_u32(qwen35_kv_plan, 12);
+  model->feed_forward_length = plan_u32(qwen35_kv_plan, 16);
+  model->attention_head_count = plan_u32(qwen35_kv_plan, 20);
+  model->attention_kv_head_count = plan_u32(qwen35_kv_plan, 24);
+  model->attention_key_length = plan_u32(qwen35_kv_plan, 28);
+  model->attention_value_length = plan_u32(qwen35_kv_plan, 32);
+  model->linear_key_head_count = plan_u32(qwen35_kv_plan, 36);
+  model->linear_value_head_count = plan_u32(qwen35_kv_plan, 40);
+  model->linear_state_size = plan_u32(qwen35_kv_plan, 44);
+  model->linear_inner_size = plan_u32(qwen35_kv_plan, 48);
+  model->linear_conv_kernel = plan_u32(qwen35_kv_plan, 52);
+  model->full_attention_interval = plan_u32(qwen35_kv_plan, 56);
+  model->rope_dimension_count = plan_u32(qwen35_kv_plan, 60);
+  for (uint32_t section = 0; section < 4; section++)
+    model->rope_sections[section] = plan_u32(qwen35_kv_plan, 64 + 4 * section);
+  model->nextn_layer_count = plan_u32(qwen35_kv_plan, 80);
+  model->vocab_size = plan_u32(qwen35_kv_plan, 84);
+  model->trunk_layer_count = AIUEOS_QWEN35_TRUNK_LAYER_COUNT;
+  model->linear_layer_count = plan_u32(qwen35_tt_plan, 24);
+  model->full_layer_count = plan_u32(qwen35_tt_plan, 28);
+  for (uint32_t layer = 0; layer < AIUEOS_QWEN35_TRUNK_LAYER_COUNT; layer++)
+    model->layers[layer].linear_attention = ((layer + 1U) % 4U) != 0;
+  model->layers[AIUEOS_QWEN35_TRUNK_LAYER_COUNT].linear_attention = 0;
+
+  for (uint64_t index = 0; index < AIUEOS_QWEN35_TENSOR_COUNT; index++) {
+    const uint8_t *slot = qwen35_tt_plan + 32 +
+                          index * AIUEOS_QWEN35_TT_SLOT_BYTES;
+    uint32_t role = plan_u32(slot, 0);
+    uint32_t layer = plan_u32(slot, 4);
+    uint64_t file_offset = plan_u64(slot, 20);
+    struct aiueos_qwen35_tensor *tensor = qwen35_slot(model, role, layer);
+    /* An unknown (role, layer) or a second claim on one field. The objects
+       refuse both -- -18 and -19 -- so reaching either here means the
+       workspace and this translation disagree, which is a refusal and not a
+       recovery. */
+    if (!tensor || tensor->dimension_count) return 0;
+    if (file_offset < model->data_offset) return 0;
+    /* Refuse rather than mask. The object already refuses a type at or above
+       the table bound (-13), so this cannot fire; but `% MAX` would WRAP type
+       31 onto the F32 counter and make a corrupt table look like a valid one,
+       which is the shape a bounds guard must not have. */
+    if (plan_u32(slot, 8) >= AIUEOS_QWEN35_MAX_GGML_TYPE) return 0;
+    tensor->dimensions[0] = plan_u32(slot, 12);
+    tensor->dimensions[1] = plan_u32(slot, 16);
+    tensor->dimension_count = tensor->dimensions[1] ? 2U : 1U;
+    tensor->type = plan_u32(slot, 8);
+    tensor->offset = file_offset - model->data_offset;
+    tensor->storage_bytes = plan_u32(slot, 28);
+    tensor->data = 0;
+    model->ggml_type_counts[tensor->type]++;
+  }
+
+  if (accessible_bytes == artifact_bytes)
+    return aiueos_qwen35_model_bind(model, bytes, accessible_bytes);
+  return 1;
+}
+
+#endif /* AIUEOS_QWEN35_KOTOBA_ADMISSION */
 
 static int bind_tensor(struct aiueos_qwen35_model *model,
                        struct aiueos_qwen35_tensor *tensor) {

@@ -121,6 +121,15 @@ kotoba_service_task_object=${AIUEOS_KOTOBA_SERVICE_TASK_OBJECT:-"$aiueos/kotoba/
 kotoba_rsa2048_object=${AIUEOS_KOTOBA_RSA2048_OBJECT:-"$aiueos/kotoba/rsa2048.o"}
 kotoba_x25519_object=${AIUEOS_KOTOBA_X25519_OBJECT:-"$aiueos/kotoba/x25519.o"}
 kotoba_ecdsa_object=${AIUEOS_KOTOBA_ECDSA_OBJECT:-"$aiueos/kotoba/ecdsa-p256.o"}
+# Qwen3.8-27B GGUF admission (ADR-0135). Three objects, linked only by the
+# model-handoff profile because nothing else parses a model. They replace the
+# whole of kernel/qwen35_runtime.c's parser: with
+# -DAIUEOS_QWEN35_KOTOBA_ADMISSION that file compiles to buffer plumbing and a
+# translation into struct aiueos_qwen35_model, and its C parser is not in the
+# image at all.
+kotoba_qwen35_header_object=${AIUEOS_KOTOBA_QWEN35_HEADER_OBJECT:-"$aiueos/kotoba/qwen35-gguf-header-valid.o"}
+kotoba_qwen35_kv_object=${AIUEOS_KOTOBA_QWEN35_KV_OBJECT:-"$aiueos/kotoba/qwen35-gguf-kv-scan.o"}
+kotoba_qwen35_tensor_object=${AIUEOS_KOTOBA_QWEN35_TENSOR_OBJECT:-"$aiueos/kotoba/qwen35-tensor-table-bind.o"}
 # The TLS 1.3 AEAD and record layer (ADR-0132, ADR-0133). Both return a REASON
 # CODE and zero is success -- the C they replaced returned 1 for success, so a
 # transcribed `if (call(...))` accepts exactly what they refuse.
@@ -411,7 +420,7 @@ if [ "${AIUEOS_QWEN38_MODEL_HANDOFF:-0}" = 1 ] ||
     if [ "${AIUEOS_MODEL_TEST_FIXTURE:-0}" = 1 ]; then
       model_handoff_cflags="$model_handoff_cflags -DAIUEOS_MODEL_TEST_FIXTURE=1"
     fi
-    model_handoff_link="$kernel_model_handoff_object $kernel_qwen35_runtime_object $kernel_qwen35_quant_object $kernel_qwen35_infer_object"
+    model_handoff_link="$kernel_model_handoff_object $kernel_qwen35_runtime_object $kernel_qwen35_quant_object $kernel_qwen35_infer_object $kotoba_qwen35_header_object $kotoba_qwen35_kv_object $kotoba_qwen35_tensor_object"
   fi
   if [ "${AIUEOS_MODEL_NVME_SLOTS:-0}" = 1 ]; then
     model_slots_cflags="-DAIUEOS_MODEL_NVME_SLOTS=1"
@@ -761,6 +770,18 @@ python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_ecdsa_object" 
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_aes128_gcm_object" \
   a3d22ecd5761e0273015267a7c3a59823fce94f545c9ee8b725b3728da665465 \
   kotoba_aiueos_aes128_gcm
+# Qwen3.8-27B GGUF admission (ADR-0135). Verified unconditionally like every
+# object above, even in profiles that do not link them: the digests are what
+# ties the committed artifacts to the sources the oracles graded.
+python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_qwen35_header_object" \
+  ede85ad44b12e624d2fe9d9c37102270ff7a68e5dfbb1b4e8a5b77a06e232ec6 \
+  kotoba_aiueos_qwen35_gguf_header_valid
+python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_qwen35_kv_object" \
+  c0b7e0a6fca9672371b26249dc197375a734b30f1d0e18b36fd8c9b2d2280e2e \
+  kotoba_aiueos_qwen35_gguf_kv_scan
+python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_qwen35_tensor_object" \
+  8509d721348c060e73576bbdb4380301cc10f1eb9c1f9e1595e7e342e7ea1454 \
+  kotoba_aiueos_qwen35_tensor_table_bind
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_tls13_record_object" \
   46d7bf41d9c50f519ef499134f0c021d06ab7dea256002f0c56e43f83391c46f \
   kotoba_aiueos_tls13_record
@@ -861,7 +882,7 @@ if [ -n "$model_handoff_link" ]; then
     -c -o "$kernel_model_handoff_object" "$aiueos/kernel/model_handoff.c"
   zig cc -target x86_64-freestanding-none -std=c11 -O2 \
     -ffreestanding -fno-stack-protector -mno-red-zone \
-    $model_handoff_cflags \
+    $model_handoff_cflags -DAIUEOS_QWEN35_KOTOBA_ADMISSION \
     -c -o "$kernel_qwen35_runtime_object" "$aiueos/kernel/qwen35_runtime.c"
   zig cc -target x86_64-freestanding-none -std=c11 -O3 \
     -ffreestanding -fno-stack-protector -mno-red-zone \

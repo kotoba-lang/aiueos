@@ -105,44 +105,6 @@
         "verify-admissions.cljs: 18 vectors from RFC 4231 section 4 and RFC "
         "8448 section 3.")
 
-   "qwen35-gguf-header-valid"
-   (str "The GGUF v3 container header of the Qwen3.8-27B artifact -- magic, "
-        "version, tensor count, metadata count -- ported from the opening of "
-        "kernel/qwen35_runtime.c's aiueos_qwen35_model_parse. No script "
-        "compiles it yet because the C still owns the whole parse: swapping "
-        "its header guards for a call to this object is a change to the "
-        "kernel, and it lands with the two objects beside it (the metadata "
-        "scan and the tensor table) rather than one at a time, so that the C "
-        "is never half-delegated. It is driven through the KIR interpreter by "
-        "aiueos.qwen35-gguf-header-parity-test over the same 24 header bytes "
-        "scripts/smoke-qwen35-runtime.sh accepts, and every one of its eight "
-        "refusal codes is required to be the only producer of its own code.")
-
-   "qwen35-gguf-kv-scan"
-   (str "The 50 GGUF metadata entries between the container header and the "
-        "tensor table, against the 31 keys kernel/qwen35_runtime.c's "
-        "parse_metadata requires and the scalars exact_contract_valid "
-        "requires. Unbuilt for the same reason as its neighbour above: the C "
-        "still owns the whole parse, and the three objects land in the build "
-        "together so it is never half-delegated. It is driven through the KIR "
-        "interpreter by aiueos.qwen35-gguf-kv-scan-parity-test over a "
-        "10,945,379-byte metadata section rebuilt in the test and pinned to "
-        "the sha256 of the fixture scripts/smoke-qwen35-runtime.sh feeds the "
-        "C, including the 495,907-string tokenizer walk that admission "
-        "actually costs.")
-
-   "qwen35-tensor-table-bind"
-   (str "The 866-record GGUF tensor table against the exact graph: name to "
-        "role, role to shape, the contiguous 32-aligned extents, the ggml type "
-        "histogram, and the per-layer role sets of the hybrid schedule. The "
-        "third and last of the Qwen3.8 admission objects, and unbuilt with the "
-        "other two -- they land in the build together so the C is never "
-        "half-delegated. It is driven through the KIR interpreter by "
-        "aiueos.qwen35-tensor-table-parity-test over a 51,242-byte table "
-        "rebuilt in the test and pinned to the sha256 of the same slice of the "
-        "fixture the C gate accepts, and it must reproduce the four tensor "
-        "offsets tests/qwen35_runtime_model.c asserts.")
-
    "murakumo-join-plan"
    (str "A node's own fleet-enrolment decision. It has no caller inside the "
         "kernel, so no build links it; kotoba-lang/murakumo drives it through "
