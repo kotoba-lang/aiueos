@@ -15,9 +15,13 @@
   a receipt naming the compiler it measured against, so the numbers cannot be
   quoted without their date and closure.
 
-  Two objects have no verifier of their own — `value-runtime-sha256` and
-  `value-runtime-digest-equal` — because they are *inputs* to the ones that do,
-  and are compiled as part of them. They are covered, not missing.
+  Two modules have no verifier of their own — `aiueos.sha256` and
+  `aiueos.digest-equal` — because they are *inputs* to the ones that do, and are
+  compiled as part of them. They are covered, not missing. They used to be
+  `value-runtime-sha256.kotoba` and `value-runtime-digest-equal.kotoba`, which
+  were byte-for-byte copies of the sources the kernel's own `sha256.o` and
+  `digest-equal.o` are built from; ADR-0136 deleted the copies and left the
+  originals, imported rather than pasted in.
 
   The eleventh verifier, `verify_value_runtime_kernel_image`, is not a
   per-object verifier: it composes every value module plus

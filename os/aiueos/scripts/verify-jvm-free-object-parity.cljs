@@ -120,15 +120,23 @@
 ;; So the compiler decides. Plain first; if the refusal names the project
 ;; route, run it again with `--source-path`. Both routes make the same decision
 ;; independently, so neither is measured under a shape the other did not get.
+;; `--unpinned` travels WITH `--source-path`, and it is not decoration: the two
+;; routes disagree about what a bare `--source-path` means. The JVM route
+;; refuses a multi-module compile without it ("a multi-module compile needs
+;; pinned inputs"); the JVM-free route proceeds and reports
+;; `:kotoba.compile/inputs :unpinned-source-path`. Sending the flag on both
+;; makes the comparison about the OBJECT rather than about that divergence.
+;; Measured 2026-09-02: adding it to the JVM-free route leaves the bytes
+;; unchanged (cid-v1-admit, 3aeb2308... either way).
 (defn- invoke [route src out source-path?]
   (case route
     :jvm-free (run (.join path compiler "bin" "amu")
                    (cond-> ["compile" src "--target" target "--output" out "--jvm-free"]
-                     source-path? (conj "--source-path" kotoba-dir))
+                     source-path? (conj "--source-path" kotoba-dir "--unpinned"))
                    {:no-jvm? true})
     :jvm (run "clojure"
               (cond-> ["-M:run" "compile" src "--target" target "--output" out]
-                source-path? (conj "--source-path" kotoba-dir)))))
+                source-path? (conj "--source-path" kotoba-dir "--unpinned")))))
 
 (defn- compile-one [route src out]
   (let [plain (invoke route src out false)
