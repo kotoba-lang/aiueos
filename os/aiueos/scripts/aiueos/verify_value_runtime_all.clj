@@ -20,7 +20,7 @@
   compiled as part of them. They are covered, not missing. They used to be
   `value-runtime-sha256.kotoba` and `value-runtime-digest-equal.kotoba`, which
   were byte-for-byte copies of the sources the kernel's own `sha256.o` and
-  `digest-equal.o` are built from; ADR-0140 deleted the copies and left the
+  `digest-equal.o` are built from; ADR-0141 deleted the copies and left the
   originals, imported rather than pasted in.
 
   The eleventh verifier, `verify_value_runtime_kernel_image`, is not a
@@ -51,7 +51,7 @@
 ;; `value-runtime-sha256.kotoba` and `value-runtime-digest-equal.kotoba` were
 ;; byte-for-byte copies of `sha256.kotoba` and `digest-equal.kotoba` -- the
 ;; objects the kernel actually links -- differing only in their `ns` line. They
-;; are gone (ADR-0140); what stands here is the one remaining copy, at the path
+;; are gone (ADR-0141); what stands here is the one remaining copy, at the path
 ;; amu's module resolver derives from its namespace (`.` -> `/`, `-` -> `_`),
 ;; because it is now IMPORTED rather than pasted in.
 (def sha256 (k "aiueos/sha256"))

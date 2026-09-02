@@ -1,4 +1,4 @@
-# ADR-0140 — one copy of the AEAD, and two objects that could finally be built
+# ADR-0141 — one copy of the AEAD, and two objects that could finally be built
 
 Status: accepted
 Date: 2026-09-02
@@ -70,21 +70,31 @@ produces, and says why the two pins differ.
 that could not be performed returned the same kind of output as a run that
 performed badly, and the difference lived in a comment.
 
-### The pins moved anyway
+### The pins did not need to move, and this branch does not move them
 
-`:verify-admissions` now names amu `bb51dc14` (kotoba-sema `1acb9f83`,
-kotoba-kir through amu `c4149fb1`) and pins kotoba-kir `0fd7e259` explicitly.
-The old rationale for the explicit kotoba-kir pin — amu's own pin predating
-`kir/execute`'s optional memory image — has expired (`c4149fb` is 34 ahead of
-the `674a5be` it used to name), so the comment now states the weaker reason
-that is still true: closest-wins makes the interpreter a stated choice.
+The advance was made and then **withdrawn**, which is the honest end of the
+paragraph above. `:verify-admissions` was moved to amu `bb51dc14` +
+kotoba-kir `0fd7e259` and the whole default contract set was run on it (below).
+But the measurement that opens this section already says the old pin passes, so
+the advance was never what fixed anything — it was the reflex the report
+suggested, and this branch had no evidence that required it.
 
-`:test` was **not** advanced. Its pin is deliberate (it is the compiler the
-committed value-runtime verdicts were measured against) and moving it
-re-measures ten receipts as a side effect. The defect was never that `:test`
-was old; it was that a runner told you to use it.
+While it was in flight the RTL8125 driver stream advanced the same alias for a
+reason that IS forced: at the pins the alias carried, `kernel-fence-load`,
+`kernel-fence-store` and `kernel-rdtsc` have no entry in
+`kotoba.compiler.frontend`'s operator table, so four of its six objects could
+not be lowered at all. It pinned `kotoba-sema e42b74e` and
+`kotoba-kir 08bdab8` on top of the existing amu. **That pin set is taken
+whole here** and the advance on this branch is dropped: two streams advancing
+one alias in two directions, only one of which is backed by an object that
+could not otherwise be built, is not a merge to split down the middle.
 
-### And the whole default set was run on the new pins
+`:test` was never advanced by either. Its pin is deliberate (it is the compiler
+the committed value-runtime verdicts were measured against) and moving it
+re-measures ten receipts as a side effect. The defect was never that a pin was
+old; it was that a runner told you to use the wrong one.
+
+### And the whole default set was run, on the pins this branch measured
 
 `npm run verify-admissions` (no arguments, so the seven contracts the runner
 picks by default), at amu `bb51dc14` / kotoba-kir `0fd7e259`:
@@ -101,7 +111,16 @@ CONTRACTS 7
 {... :amu-sha "bb51dc147d8ccb9d0aa636be24392a76113909e5" ... :status :passed}
 ```
 
-exit 0. 94 vectors, 11 steps, 45 memory assertions. The two `traps=1` are the
+exit 0. 94 vectors, 11 steps, 45 memory assertions.
+
+**That run is at amu `bb51dc14` + kotoba-kir `0fd7e259`, which is NOT the
+closure this branch lands** — see the section above; the pin advance was
+withdrawn in favour of the RTL8125 stream's, which keeps amu `0085e138` and
+pins `kotoba-sema e42b74e` + `kotoba-kir 08bdab8`. A re-run on the landed
+closure was started and is listed under "What is NOT done" if it did not
+finish. What the quoted run does establish, on any closure, is the thing this
+ADR needed it for: the deduped `aes128-gcm` and `tls13-record` execute their
+vectors through the extracted core, and the `hkdf-sha256` contract passes. The two `traps=1` are the
 refusals those contracts declare, not failures — the runner reports an
 undeclared trap as `vector trapped where a result was expected` and refuses.
 
@@ -409,6 +428,12 @@ once.
   a header saying two of its three rows now describe artifacts that no longer
   exist — editing measured rows to keep them current would make the rest of the
   file unfalsifiable.
+* **The default contract set was measured on the pins this branch proposed, not
+  on the pins it lands.** The advance was withdrawn during the final merge (the
+  RTL8125 stream's pin set is taken instead) and a re-run on the landed closure
+  was started; if it is not quoted above, it did not finish before this landed
+  and the 7-contract green is a measurement of amu `bb51dc14` + kotoba-kir
+  `0fd7e259`.
 * **That scoped receipt was not produced by a single script invocation.** The
   script writes its receipt into `<root>/qualification/`, which the scoped root
   did not have; the verdicts and byte counts come from the run whose console

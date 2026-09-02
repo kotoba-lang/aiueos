@@ -52,7 +52,7 @@
        "kernel-publish-current-domain are three facilities the kernel would "
        "have to publish through hidden-context slots it does not have yet. "
        "Four of them are refused by the COMPILER for the same reason and that "
-       "was measured, not assumed (ADR-0140): compiled through the project "
+       "was measured, not assumed (ADR-0141): compiled through the project "
        "route at amu bb51dc14, `value-runtime-dispatch`, `-entry`, "
        "`-provider-policy` and `-provider-transport` come back "
        ":kotoba.error/subset-reject \"operation has no admitted type "

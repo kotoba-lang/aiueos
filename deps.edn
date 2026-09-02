@@ -128,30 +128,39 @@
    ;; :test keeps the compiler the committed value-runtime verdicts were
    ;; measured against. Advancing :test instead would have moved that pin 255
    ;; commits and re-measured ten receipts as a side effect of adding a runner.
-   ;;
-   ;; ADVANCED 2026-09-02 from amu 0085e138 to main. The old pin carried
-   ;; kotoba-sema 8676e3d6, which PREDATES the linked-source printer fix, and
-   ;; `hkdf-sha256-v1.edn` -- the first contract whose root imports a module --
-   ;; could not be checked with this repository's own pins at all (ADR-0135
-   ;; measured that and had to borrow a current closure to run the vectors).
-   ;; A contract that only passes on somebody else's classpath is not a
-   ;; contract this repository checks.
    :verify-admissions
    {:extra-deps {io.github.kotoba-lang/amu
                  {:git/url "https://github.com/kotoba-lang/amu.git"
-                  :git/sha "bb51dc147d8ccb9d0aa636be24392a76113909e5"}
+                  :git/sha "0085e138484b807dddcdec397c87de6513461881"}
                  ;; Pinned explicitly, not taken through amu: amu's own pin
                  ;; predates `kir/execute`'s optional memory image, and without
                  ;; it every vector traps `:kernel-memory-unavailable`. The
                  ;; runner refuses rather than reporting a pass in that case,
-                 ;; which is how this was caught. amu's pin has since caught up
-                 ;; (c4149fb is 34 ahead of the 674a5be this used to name), so
-                 ;; the reason is now the weaker one: closest-wins makes the
-                 ;; interpreter this runner executes vectors on a stated choice
-                 ;; rather than a consequence of the compiler's own graph.
+                 ;; which is how this was caught.
+                 ;;
+                 ;; ADVANCED 2026-09-02 for the RTL8125 driver objects, and the
+                 ;; FRONTEND had to move with it. At the pins this alias carried
+                 ;; before, `kernel-fence-load` / `kernel-fence-store` /
+                 ;; `kernel-rdtsc` (the SYSOPS slice) have no entry in
+                 ;; `kotoba.compiler.frontend`'s operator table, so
+                 ;; `sema/analyze` refuses the whole module with `operation has
+                 ;; no admitted type signature` -- four of the six driver
+                 ;; objects could not be lowered at all, let alone executed, and
+                 ;; a runner that cannot lower an object cannot report anything
+                 ;; about it.
+                 ;;
+                 ;; `kotoba-sema` is pinned to the SHA amu's own `deps.edn`
+                 ;; names at the tip this repo's objects are compiled with, so
+                 ;; the frontend that admits a program here is the frontend that
+                 ;; admitted the `.o`. Pinning it directly rather than advancing
+                 ;; the amu above keeps that amu's ClojureScript printer fix,
+                 ;; which is the reason this alias exists.
+                 io.github.kotoba-lang/kotoba-sema
+                 {:git/url "https://github.com/kotoba-lang/kotoba-sema.git"
+                  :git/sha "e42b74eff72fdea0f55ec883a293c937421ca571"}
                  io.github.kotoba-lang/kotoba-kir
                  {:git/url "https://github.com/kotoba-lang/kotoba-kir.git"
-                  :git/sha "0fd7e259a65ab5ac2f726217e83714cd590bbf39"}}}
+                  :git/sha "08bdab8b1084160dcb58ac291a002b140a5abf13"}}}
 
    :tcb-check {:main-opts ["-m" "aiueos.tcb"]}
 
