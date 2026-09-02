@@ -249,8 +249,18 @@ extern uint64_t kotoba_aiueos_sha256(const uint8_t *, uint64_t, uint8_t[32],
    also large enough for the 32,768-entry be32 token array case 9 needs. */
 #define SHA_STREAM_BUFFER_BYTES 131080U
 
-static uint8_t sha_stream_state[SHA_STREAM_STATE_BYTES];
-static uint8_t sha_stream_buffer[SHA_STREAM_BUFFER_BYTES];
+/* `.high_bss`, not ordinary `.bss`. The low kernel/user layout has to end
+   below 0x1f4000 (`kernel/linker.ld`'s own ASSERT), and 131,080 bytes of
+   message buffer is 13% of that whole budget -- measured 2026-09-02, putting
+   it in `.bss` made the link fail with `low kernel/user layout overlaps
+   process-private aperture` on a tree that had just gained the RTL8125 and
+   Qwen3.5 objects. The 4..6 MiB window is what that section is for: kernel-only
+   scratch, mapped writable and NX by `page_directory[2]`, and it is where
+   `device_result.c`, `tls13.c` and `qwen35_infer.c` already put theirs. */
+static uint8_t __attribute__((section(".high_bss"), aligned(64)))
+  sha_stream_state[SHA_STREAM_STATE_BYTES];
+static uint8_t __attribute__((section(".high_bss"), aligned(64)))
+  sha_stream_buffer[SHA_STREAM_BUFFER_BYTES];
 
 static int sha_stream_is(const uint8_t *digest, const char *expected) {
   static const char hexits[] = "0123456789abcdef";

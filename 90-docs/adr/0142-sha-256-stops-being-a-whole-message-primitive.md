@@ -307,6 +307,17 @@ as a literal — and those literals are the ones the JVM test re-derives.
 Cases 7 and 8 are the point of the whole stream: the two digests they compute
 are ALREADY IN THAT FILE as hand-transcribed literals. Now they are computed.
 
+**The self-test's buffers live in `.high_bss`, and that was measured rather
+than chosen.** 131,080 bytes is 13% of the whole low kernel/user budget
+(`kernel/linker.ld` asserts `aiueos_low_end <= 0x1f4000`), and putting them in
+ordinary `.bss` linked fine on the tree this branch started from and then
+failed — `ld.lld: error: low kernel/user layout overlaps process-private
+aperture` — the moment `origin/main` was merged in with the RTL8125 and
+Qwen3.5 objects. The 4..6 MiB window is what that section is for, and
+`device_result.c`, `tls13.c` and `qwen35_infer.c` already put theirs there.
+Anything that wants to hash at this size in the kernel has the same
+constraint.
+
 Green, on the serial console (`smoke-qemu-uefi.sh`, q35 + OVMF, isa-debugcon
 0xe9), verbatim:
 
@@ -398,9 +409,19 @@ they are built by a script, which is the question it asks.
 
 ## Housekeeping
 
-**ADR numbers 0134 and 0135 are each duplicated on aiueos `main`** —
-`0134-the-f32-dot-product-…` / `0134-the-tls-objects-…` and
-`0135-a-kernel-object-imports-…` / `0135-the-qwen38-gguf-admission-…`. Two
-streams landed within minutes of each other on the same number, twice. This
-ADR is 0139, the next free number at PR time; the four existing files are left
-alone, because renumbering a landed ADR breaks every reference to it.
+**FIVE ADR numbers are duplicated on aiueos `main`**, and the count grew while
+this branch was open. 0134, 0135, 0136, 0137 and 0140 each name two files
+written by two streams that landed within minutes of each other. This one was
+drafted as 0139 — the next free number when it was written — and 0139 was
+taken by `a-prompt-becomes-token-ids-without-leaving-kotoba` before this
+branch could merge, so it is renumbered to **0142** here rather than becoming
+the sixth collision. The ten existing duplicate files are left alone:
+renumbering a landed ADR breaks every reference to it.
+
+That is the sixth time in two days, so it is a property of the process and not
+of any stream: a filename chosen at authoring time cannot be unique when N
+branches are open, because the number is picked from a `main` that moves. The
+fix is not a rule about looking harder. It is either a number allocated at
+merge time or an identity that is not a number at all, which is what the
+superproject's own `:adr/id` slug form already decided (root
+CLAUDE.md, "`:adr/id` は slug 形").
