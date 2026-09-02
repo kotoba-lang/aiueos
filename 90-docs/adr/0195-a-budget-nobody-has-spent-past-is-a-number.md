@@ -81,7 +81,18 @@ only difference between the two images is the budget.
 ### The measured rate, and what it says about the ceiling
 
 **58,367,824 charges/second** under QEMU TCG on this host (Apple M4; there is
-no other x86-64 here). At that rate:
+no other x86-64 here).
+
+**That number is a snapshot, not a constant, and the second run says so.** The
+same smoke re-run twenty minutes later on a busier workstation reported
+**26,664,727** charges/second for the identical artifact — same console, same
+2,200,000,005 spent, 2.2× slower. Quote the *order* (tens of millions per
+second under TCG on a loaded machine) and re-measure before quoting a figure.
+The table below is computed at the faster of the two, which is the kinder
+direction for the argument it supports: if the ceiling is a bound at 58M/s, it
+is more of one at 27M/s.
+
+At 58,367,824 charges/second:
 
 | budget | TCG, this host | a real CPU at 1e9 charges/s |
 |---|---|---|
