@@ -22,6 +22,9 @@
       (is (str/includes? rtl "(defn install-directory"))
       (is (str/includes? rtl "(defn rings-start"))
       (is (str/includes? rtl "(defn receive-arp"))
+      (is (str/includes? rtl "(defn send-native-arp-receipt"))
+      (is (str/includes? rtl "AIUEOS_NATIVE_ARP_OK"))
+      (is (str/includes? rtl "(frame-store-be16 frame 36 7777)"))
       (is (str/includes? rtl "(kernel-load-u16 mmio 512 offset)"))
       (is (str/includes? rtl "(kernel-store-u16 mmio 512 offset value)"))
       (is (not (str/includes? rtl
