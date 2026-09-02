@@ -40,13 +40,14 @@
       (is (str/includes? kernel "rtl-dma-pages"))
       (is (str/includes? kernel "(qualify-rtl8125"))
       (is (str/includes? kernel "pre-cr3-nic-status"))
+      (is (str/includes? kernel "physical-start rw-end"))
       (is (str/includes? kernel
                          "(qualify-rtl8125 bar-a bar-b rtl-dma-pages)")))
     (testing "the builder compiles the closed module graph with the sealed fuel"
       (is (str/includes? builder "--source-path \"$aiueos\" --unpinned"))
       (is (str/includes? builder "--fuel 1048576"))
       (is (str/includes? builder
-                         "3559d82be3bd4ec42abb44826fa2fa7cfd0b74dc")))))
+                         "364d24d8ba77a7d462c4431f5ca2e906ad4d5561")))))
 
 (deftest closure-audit-keeps-physical-proof-unverified
   (let [{:keys [exit out err]}
