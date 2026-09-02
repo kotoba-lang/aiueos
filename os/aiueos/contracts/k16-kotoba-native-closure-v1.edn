@@ -29,7 +29,11 @@
                                 "kotoba-lang/capability-dma-map"
                                 "kotoba-lang/capability-link-frame"]}
   :https {:state :not-implemented-in-pure-closure
-          :required [:arp :dhcp :dns :tcp :tls13 :https-range
+          :implemented [:aes128-gcm :hkdf-sha256 :tls13-record]
+          :implemented-source ["kotoba/aes128-gcm.kotoba"
+                               "kotoba/hkdf-sha256.kotoba"
+                               "kotoba/tls13-record.kotoba"]
+          :required [:arp :dhcp :dns :tcp :tls13-handshake :https-range
                      :certificate-path-validation :cid-verification]
           :current-reference ["kernel/tls13.c" "kernel/tls_aes_gcm.c"]
           :contract-repositories ["kotoba-lang/capability-net-transport"

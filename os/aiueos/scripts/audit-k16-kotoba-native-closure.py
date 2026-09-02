@@ -44,8 +44,14 @@ def main() -> int:
     }
     native_sources = {
         "nic": [],
-        "https": [],
-        "qwen": ["kotoba/qwen35-gguf-header-valid.kotoba"],
+        "https": [
+            str(pathlib.Path("kotoba") / "aes128-gcm.kotoba"),
+            str(pathlib.Path("kotoba") / "hkdf-sha256.kotoba"),
+            str(pathlib.Path("kotoba") / "tls13-record.kotoba"),
+        ],
+        "qwen": [
+            str(pathlib.Path("kotoba") / "qwen35-gguf-header-valid.kotoba")
+        ],
     }
     layers = {
         "boot": {
