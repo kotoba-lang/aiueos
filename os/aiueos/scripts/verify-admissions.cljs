@@ -1,9 +1,27 @@
 #!/usr/bin/env nbb
 ;; Runs the admission objects against their contracts WITHOUT a JVM.
 ;;
+;;   npm run verify-admissions -- [contract.edn ...]
+;;
+;; which is
+;;
 ;;   node --stack-size=4000 "$(command -v nbb)" \
-;;     --classpath "$(clojure -Spath -M:test)" \
+;;     --classpath "$(clojure -Spath -M:verify-admissions)" \
 ;;     os/aiueos/scripts/verify-admissions.cljs [contract.edn ...]
+;;
+;; `-M:verify-admissions`, NOT `-M:test`. This line said `-M:test` from the day
+;; it was written and `package.json` said `-M:verify-admissions`, and the two
+;; are different compilers on purpose (see the alias comment in `deps.edn`).
+;; Measured 2026-09-02: with the `:test` closure -- amu 6889fa73, which carries
+;; kotoba-sema 244765d4 -- EVERY contract fails at
+;;
+;;     FAILED: source reader rejected input
+;;        {:phase :read}
+;;
+;; before a single vector runs, because that kotoba-sema predates the
+;; linked-source printer fix. The same contract passes on the classpath this
+;; file's own receipt names. A run following this comment could not check
+;; anything, and the comment was the only thing wrong.
 ;;
 ;; `--stack-size` is not decoration, and 4000 IS NOT ENOUGH FOR EVERY CONTRACT.
 ;; Two different things need it. `value-runtime-sha256` is 9 KB of nested `if`
@@ -482,6 +500,57 @@
        (seq text)
        (conj {:label :canonical :offset out-offset :bytes (ascii-bytes text)}))}))
 
+;; nic: the RTL8125 driver objects. ONE builder for the whole family, unlike
+;; every method above it, because these six take the same KIND of argument --
+;; an address of a region in the image, a length, and some literals -- and
+;; differ only in which regions and how many. So the contract names its own
+;; entry and writes its arguments as a template, and this resolves the region
+;; keywords against the base.
+;;
+;;   :args [:mmio 4096 :out 16]        -> [base+mmio-offset 4096 base+out-offset 16]
+;;   :args [[:tx 16] 32 ...]           -> [base+tx-offset+16 32 ...]
+;;   :args [0 32 ...]                  -> passed through
+;;
+;; The `[region offset]` form exists so a vector can name a MISALIGNED address
+;; without hard-coding a number that silently stops meaning what it meant when
+;; the layout moves.
+;;
+;; ⚠ ONLY TWO OF THE SIX OBJECTS CAN BE RUN HERE, and it is not a gap in this
+;; builder. `kotoba.kir`'s interpreter refuses `kernel-fence-load`,
+;; `kernel-fence-store` and `kernel-rdtsc` with `:kernel-privileged-unavailable`
+;; -- deliberately, and its comment says why: a barrier orders memory operations
+;; against a machine this interpreter is not running on, and an oracle that
+;; executes one operation at a time would be answering "the barrier worked" from
+;; something that never had the problem. `rtl8125-ring-build`, `-program`,
+;; `-tx-submit` and `-rx-poll` all carry fences, so the oracle cannot execute
+;; them AT ALL -- it traps rather than returning a wrong answer, which is the
+;; right refusal and still leaves those four with no host-side evidence. Their
+;; evidence is `aiueos_rtl8125_kotoba_selftest` running the EMITTED MACHINE CODE
+;; against a software model under QEMU, which is a stronger claim about the same
+;; program and a weaker one about portability.
+(defmethod prepare :aiueos.rtl8125/v1 [contract v]
+  (let [{:keys [base image-bytes regions]} (get-in contract [:verification :memory])
+        entry (:entry contract)
+        _ (when-not (symbol? entry)
+            (fail! "REFUSING TO REPORT A PASS: this contract names no entry symbol"
+                   {:contract (:format contract)}))
+        region-at (fn [k]
+                    (or (get regions k)
+                        (fail! "REFUSING TO REPORT A PASS: a vector names a region the contract does not lay out"
+                               {:vector (:name v) :region k})))
+        image (reduce (fn [img {:keys [offset bytes hex]}]
+                        (write-at img offset (if hex (hex-bytes hex) (vec bytes))))
+                      (vec (repeat image-bytes 0))
+                      (:seed v))
+        resolve-arg (fn [a]
+                      (cond (keyword? a) (+ base (region-at a))
+                            (vector? a) (+ base (region-at (first a)) (second a))
+                            :else a))]
+    {:entry entry
+     :base base
+     :image image
+     :args (mapv resolve-arg (:args v))
+     :expect-memory (:expect-memory v)}))
 
 ;; --- the tokenizer family --------------------------------------------------
 ;;
@@ -573,6 +642,69 @@
 
 (defmethod prepare :aiueos.qwen35-detokenize/v1 [contract v]
   (tokenizer-prepare contract v 'aiueos-qwen35-detokenize))
+
+;; --- the Qwen3.5 forward pass, second tranche (ADR-0140) -------------------
+;;
+;; The scalar functions between the matvecs. Expectations come from the same
+;; independent ClojureScript re-derivation over `Float32Array` the first
+;; tranche used, and the same caveat applies: it proves the algorithm against a
+;; second reading of the C and says nothing about what amu emitted. The
+;; evidence that covers the backend is the QEMU self-test `QWEN-PARITY`,
+;; which caught an argument-order mistake in its own harness that this
+;; interpreter could not have.
+
+(defmethod prepare :aiueos.qwen35-activation/v1 [contract v]
+  (let [{:keys [base image-bytes a-offset b-offset]}
+        (get-in contract [:verification :memory])
+        a (hex-bytes (or (:a-hex v) ""))
+        b (hex-bytes (or (:b-hex v) ""))]
+    {:entry 'aiueos-qwen35-activation
+     :base base
+     :image (-> (vec (repeat image-bytes 0))
+                (write-at a-offset a)
+                (write-at b-offset b))
+     :args [(:mode v)
+            (if (some? (:a-base-override v)) (:a-base-override v) (+ base a-offset))
+            (if (some? (:b-base-override v)) (:b-base-override v) (+ base b-offset))
+            (:count v)
+            0]
+     :expect-memory
+     (cond-> []
+       (:expect-a-hex v)
+       (conj {:label :a :offset a-offset :bytes (hex-bytes (:expect-a-hex v))}))}))
+
+;; Three modes with three different argument meanings, which is why this is a
+;; `case` rather than one shape: mode 0 reads `b` as a weights POINTER and
+;; `c` as an element count, modes 1 and 2 read them as a head count and a
+;; width. Getting that wrong is not a crash -- it normalises the wrong vector
+;; into the wrong place and every bound still holds.
+(defmethod prepare :aiueos.qwen35-norm/v1 [contract v]
+  (let [{:keys [base image-bytes a-offset b-offset out-offset]}
+        (get-in contract [:verification :memory])
+        a (hex-bytes (or (:a-hex v) ""))
+        b (hex-bytes (or (:b-hex v) ""))
+        image (-> (vec (repeat image-bytes 0))
+                  (write-at a-offset a)
+                  (write-at b-offset b))
+        base-a (if (some? (:a-base-override v)) (:a-base-override v) (+ base a-offset))
+        base-b (if (some? (:b-base-override v)) (:b-base-override v) (+ base b-offset))
+        base-d (if (some? (:d-base-override v)) (:d-base-override v) (+ base b-offset))]
+    {:entry 'aiueos-qwen35-norm
+     :base base
+     :image image
+     :args (case (long (:mode v))
+             0 [0 base-a base-b (:count v) (+ base out-offset)]
+             1 [1 base-a (:heads v) (:width v) 0]
+             2 [2 base-a (:heads v) (:width v) base-d]
+             ;; a mode the object refuses; the remaining words are still real
+             ;; regions so the refusal is provoked by the MODE and nothing else
+             [(:mode v) base-a (or (:heads v) 1) (or (:width v) (:count v) 8) 0])
+     :expect-memory
+     (cond-> []
+       (:expect-out-hex v)
+       (conj {:label :out :offset out-offset :bytes (hex-bytes (:expect-out-hex v))})
+       (:expect-a-hex v)
+       (conj {:label :a :offset a-offset :bytes (hex-bytes (:expect-a-hex v))}))}))
 
 (defmethod prepare :default [contract _]
   (fail! "REFUSING TO REPORT A PASS: no argument builder for this contract format"
@@ -858,9 +990,17 @@
                       ;; elapsed times in the receipt) -- the price of
                       ;; executing an AEAD in a ClojureScript interpreter, and
                       ;; stated rather than hidden.
+                      ;; The two RTL8125 contracts are cheap (under three
+                      ;; seconds between them) and are here for the same reason
+                      ;; the TLS pair is: a contract nothing runs by default is
+                      ;; a contract nobody runs. The other four driver objects
+                      ;; have no contract here at all, and that is stated in the
+                      ;; builder's comment rather than left as an absence --
+                      ;; the oracle refuses the fences they carry.
                       ["cid-v1-admit-v1.edn" "unixfs-file-admit-v1.edn"
                        "value-runtime-cas-verify-v1.edn"
                        "value-handle-arena-v1.edn"
+                       "rtl8125-identify-v1.edn" "rtl8125-link-up-v1.edn"
                        "aes128-gcm-v1.edn" "hkdf-sha256-v1.edn"
                        "tls13-record-v1.edn"
                        ;; The tokenizer family. Cheap by comparison -- about

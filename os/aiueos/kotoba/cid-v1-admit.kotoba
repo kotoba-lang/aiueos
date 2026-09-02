@@ -1,5 +1,5 @@
 (ns aiueos.cid-v1-admit
-  (:require [aiueos.value-runtime-sha256 :as sha])
+  (:require [aiueos.sha256 :as sha])
   (:export [aiueos-cid-v1-admit main]))
 
 ;; Decides that a block IS the content a binary CIDv1 names.
