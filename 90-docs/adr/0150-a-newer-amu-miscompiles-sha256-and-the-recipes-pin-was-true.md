@@ -161,17 +161,34 @@ the tooling and the manifest shape stay.
 3. `--emit-provenance` seeds `:compiler` from the recipe's pin only for objects
    the recipe names, and carries a measured claim forward only while both
    digests it was made against still hold.
-4. `unattested = 0` is **not reachable today**, and the reason is now named
-   rather than papered over: the objects the old recipe could not build need a
-   newer compiler, and every newer compiler measured miscompiles `sha256`.
+4. `unattested = 0` was **not reachable when this was written**, and the
+   reason was named rather than papered over: the objects the old recipe could
+   not build need a newer compiler, and every newer compiler measured
+   miscompiles `sha256`. **Reachable as of 2026-09-03** -- ADR-0190 bisected the
+   regression to kotoba-native `da3b56b` and it is fixed upstream (kotoba-mir
+   ADR 0038 / kotoba-native ADR 0076 / amu ADR 0326). Rebuilding at a compiler
+   past kotoba-native `d7105581` measures `kotoba=80 unattested=0` AND boots.
 
 ## Consequences
 
-- **A compiler regression is live and unfixed.** Anyone advancing amu past
-  `9cf3a0ac` for aiueos kernel objects must boot the result, not just link it.
-  The next step is a bisect of amu `9cf3a0ac..7e8f06d7` against
-  `smoke-qemu-uefi.sh`; this ADR bounds the window and supplies the reproducer
-  but does not name the commit.
+- **The compiler regression is CLOSED (2026-09-03, ADR-0190).** The bisect this
+  ADR called for landed on kotoba-native `da3b56b` ("Optimize x86 direct self
+  reentry"), and the defect under it was in kotoba-mir: a reentry parameter's
+  spill store was spliced before the loop header, so `round-block` read its loop
+  counter's ENTRY value on every iteration, never reached `(= i 64)`, and spun
+  until a fuel guard fired. Fixed by kotoba-mir `0bb174c8`, pinned by
+  kotoba-native `d7105581`. **The standing instruction survives the fix**:
+  anyone advancing amu for aiueos kernel objects must boot the result, not just
+  link it -- linking and `verify-kotoba-kernel-object.py` both passed for an
+  object that never returns.
+- **This ADR's reading of the trap was wrong in one respect, and ADR-0190 says
+  how.** "Control lands mid-instruction, twice" and "not fuel -- raising it
+  MOVES the trap" are true observations of the 9,936 B object in a 69-object
+  rebuild, but they are what a NON-TERMINATING LOOP looks like when the budget
+  runs out somewhere different each time. On an image with only `sha256.o`
+  swapped, the trap is at object offset `0x175`, which IS a `ud2`, and IS the
+  fuel guard; patching the immediate to `2^31-1` removes the trap and hangs the
+  image instead.
 - **Nothing else could have caught this.** The image freshness receipt
   (aiueos #246) is scoped to `os/aiueos` and hashes committed `.o` files, so a
   compiler change that alters what those bytes should be leaves the image

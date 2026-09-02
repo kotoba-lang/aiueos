@@ -108,13 +108,45 @@ went non-zero would not distinguish "the file is wrong" from "the reader is".
 - **This does not replace the K16 loader and the gate still refuses.** The K16
   profile also needs the model read, the embedded-release path and `BootNext`.
   `uefi/main.c` is unchanged and every byte of it still runs.
-- **Four of the seven planned modules are BLOCKED, not deferred.** `memory`
-  (`AllocatePages`), `fs` (`HandleProtocol`, `OpenVolume`, `Read`), `integrity`
-  (a 512-byte SHA-256 state region and a digest destination) and `exit`
-  (`GetMemoryMap`) each need an address the image may WRITE, and a Kotoba UEFI
-  application has none: `.text` is `0x60000020`, and `kernel-boot-info` answers
-  the ImageHandle rather than the context. The BOOT-SCRATCH work owns that
-  operation; until it lands these four cannot be written honestly.
+- **`integrity` is landed as source and has NEVER RETURNED ON A CPU** (2026-09-03,
+  after BOOT-SCRATCH landed `kernel-scratch-region`). It compiles, the scratch
+  region works, and `sha-block` traps with `#UD` inside a UEFI image while the
+  same `aiueos.lib.sha256-stream` runs correctly as a kernel object. Bisected
+  in the guest: scratch write/read back, a 64-byte `kernel-subregion` of a
+  `bytes-literal` read through the library's own window-64 accessor,
+  `store32`/`load32`, and `sha-init` all pass; `sha-block` does not. A separate
+  probe stored and read back offsets 0, 255, 256, 300, 360, 424, 455 and 511 of
+  the scratch state and exited 33, so the whole 512-byte window is sound.
+
+  **The blocker is fuel, and `--fuel` is inert on this route.**
+  `sha256-region.kotoba` measures 1,772 fuel per 64-byte block; a UEFI image
+  runs on `native-fuel!`'s default of **512** (amu
+  `src/kotoba/compiler/nbb/cli.cljs:89`). The flag is read and validated —
+  250,000,000 is refused as `native fuel budget is not admitted`, 1,048,576 is
+  accepted — and then does not reach the image:
+
+  | `--fuel` | artifact sha256 |
+  |---|---|
+  | 512 | `714a7509d057b654cb8ae4181284250ce82514626d50e7d25f624cc979872f29` |
+  | 1048576 | `714a7509d057b654cb8ae4181284250ce82514626d50e7d25f624cc979872f29` |
+
+  **Byte-identical across a 2048x difference in the declared budget.** A
+  200-iteration arithmetic loop completes and a 2,000-iteration one traps,
+  identically, under both. A knob that is validated and then discarded looks
+  exactly like a knob that works — the failure ADR-2608136000 is about. The
+  module is deliberately NOT wired into `loader-probe.kotoba`, so the probe
+  stays green on what it can actually demonstrate; wiring it in is two lines
+  once the image installs the declared budget.
+
+- **Three of the seven planned modules are BLOCKED, not deferred.** `memory`
+  (`AllocatePages`), `fs` (`HandleProtocol`, `OpenVolume`, `Read`) and `exit`
+  (`GetMemoryMap`) can now ALLOCATE and INSPECT — BOOT-SCRATCH's
+  `kernel-scratch-region` gives a firmware call somewhere to put an
+  out-pointer — but cannot PLACE a kernel image, because the page address an
+  `AllocatePages` out-pointer yields arrives from a load and the region
+  provenance rule refuses a base it cannot trace. FIRMWARE-STORE owns that
+  primitive and is writing `uefi/memory.kotoba` as its first consumer, so this
+  stream did not duplicate it.
 - **`kernel-jump-to` is still unexecuted.** The loader can now compute a
   kernel's entry point and print it. It cannot go there, because it cannot load
   the kernel first.
