@@ -121,6 +121,14 @@ kotoba_service_task_object=${AIUEOS_KOTOBA_SERVICE_TASK_OBJECT:-"$aiueos/kotoba/
 kotoba_rsa2048_object=${AIUEOS_KOTOBA_RSA2048_OBJECT:-"$aiueos/kotoba/rsa2048.o"}
 kotoba_x25519_object=${AIUEOS_KOTOBA_X25519_OBJECT:-"$aiueos/kotoba/x25519.o"}
 kotoba_ecdsa_object=${AIUEOS_KOTOBA_ECDSA_OBJECT:-"$aiueos/kotoba/ecdsa-p256.o"}
+# The TLS 1.3 AEAD and record layer (ADR-0132, ADR-0133). Both return a REASON
+# CODE and zero is success -- the C they replaced returned 1 for success, so a
+# transcribed `if (call(...))` accepts exactly what they refuse.
+# `hkdf-sha256.o` is deliberately NOT here: it does not return on this machine
+# (see the stage-5 ADR), and linking an object nothing may call would put a
+# 13 KiB artifact in the image to no end.
+kotoba_aes128_gcm_object=${AIUEOS_KOTOBA_AES128_GCM_OBJECT:-"$aiueos/kotoba/aes128-gcm.o"}
+kotoba_tls13_record_object=${AIUEOS_KOTOBA_TLS13_RECORD_OBJECT:-"$aiueos/kotoba/tls13-record.o"}
 # ECDSA P-256 deterministic sign (ADR-0105). Linked ONLY when
 # AIUEOS_ECDSA_SIGN_KAT=1 -- it is ~50 KiB and the kernel is near its 1 MiB
 # ceiling, so it stays out of the default and the SSH-listener builds until the
@@ -750,6 +758,12 @@ python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_x25519_object"
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_ecdsa_object" \
   5026b4346bdb02ba689fad3afe67f21e556ca028b03338764140079f0308dc29 \
   kotoba_aiueos_ecdsa_p256_sha256_verify
+python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_aes128_gcm_object" \
+  a3d22ecd5761e0273015267a7c3a59823fce94f545c9ee8b725b3728da665465 \
+  kotoba_aiueos_aes128_gcm
+python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_tls13_record_object" \
+  46d7bf41d9c50f519ef499134f0c021d06ab7dea256002f0c56e43f83391c46f \
+  kotoba_aiueos_tls13_record
 if [ -n "$ecdsa_sign_link" ]; then
   python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_ecdsa_sign_object" \
     decd83b1cd331af1305ad24c080443118f925067353c320078e66085695fd433 \
@@ -958,6 +972,7 @@ zig ld.lld -nostdlib -static --strip-all $qualification_gc_link -z max-page-size
   "$kotoba_extent_valid_object" "$kotoba_region_valid_object" \
   "$kotoba_pci_config_read_object" "$kotoba_pci_config_write_object" \
   "$kotoba_x25519_object"   "$kotoba_ecdsa_object" $ecdsa_sign_link $ecdsa_public_link "$kotoba_ime_object" \
+  "$kotoba_aes128_gcm_object" "$kotoba_tls13_record_object" \
   "$kotoba_wm_object" "$kotoba_scanout_object" "$kotoba_broker_object" "$kotoba_session_object" \
   "$kotoba_mmio_map_admit_object" \
   "$kotoba_acpi_checksum_object" "$kotoba_acpi_table_valid_object" \
