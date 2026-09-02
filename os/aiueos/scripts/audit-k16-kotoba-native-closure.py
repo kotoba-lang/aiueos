@@ -11,7 +11,7 @@ import sys
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 CONTRACT = ROOT / "contracts" / "k16-kotoba-native-closure-v1.edn"
-EXPECTED_COMPILER = "428408c50dbfcc0d63983a165908c354228a1c0c"
+EXPECTED_COMPILER = "795800cedbf602108c801aee13704f3af8c65043"
 
 
 def sha256(path: pathlib.Path) -> str:
@@ -42,6 +42,11 @@ def main() -> int:
             "kernel/qwen35_runtime.c",
         ],
     }
+    native_sources = {
+        "nic": [],
+        "https": [],
+        "qwen": ["kotoba/qwen35-gguf-header-valid.kotoba"],
+    }
     layers = {
         "boot": {
             "state": "implemented",
@@ -56,6 +61,11 @@ def main() -> int:
         layers[name] = {
             "state": "not-implemented-in-pure-closure",
             "foreign_reference_files_present": present,
+            "native_sources": {
+                path: sha256(ROOT / path)
+                for path in native_sources[name]
+                if (ROOT / path).is_file()
+            },
         }
 
     declared_incomplete = all(

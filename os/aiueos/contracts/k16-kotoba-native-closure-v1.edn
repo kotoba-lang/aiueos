@@ -5,7 +5,7 @@
 {:format :aiueos.k16-kotoba-native-closure/v1
  :target :gmktec-k16
  :compiler {:repo "kotoba-lang/amu"
-            :commit "428408c50dbfcc0d63983a165908c354228a1c0c"
+            :commit "795800cedbf602108c801aee13704f3af8c65043"
             :backend {:repo "kotoba-lang/kotoba-native"
                       :commit "01756a619ad543d270b8ba9a38b7f6543bea5b20"}
             :scalar-f32 {:x86-64 :implemented
@@ -36,7 +36,10 @@
                                   "kotoba-lang/capability-crypto-tls"
                                   "kotoba-lang/capability-http-fetch"]}
   :qwen {:state :not-implemented-in-pure-closure
-         :implemented [:scalar-f32-native-machine-code]
+         :implemented [:scalar-f32-native-machine-code
+                       :gguf-header-admission-kotoba-object]
+         :implemented-source
+         ["kotoba/qwen35-gguf-header-valid.kotoba"]
          :required [:large-model-authority :gguf-metadata :quant-decode
                     :threaded-matmul :attention :deltanet :kv-state
                     :tokenizer :sampling :bounded-output]
