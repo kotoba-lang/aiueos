@@ -388,11 +388,12 @@
              (= (bit-and rw-end 4095) 0)
              (< rw-end 1073741824))
       (let [map-marker (kernel-out-u8 233 77)
-            ;; 16 KiB / the admitted 40-byte minimum is at most 409 complete
-            ;; descriptors.  Keep an independent recursive bound so corrupt
-            ;; arithmetic can never turn the firmware-controlled stride into
-            ;; an unbounded walk.
-            physical-start (find-page memory-map map-size descriptor-size 0 410)]
+            ;; Amu reserves fourteen EfiLoaderData pages immediately after
+            ;; the aligned RW PT_LOAD before taking the final memory map.
+            ;; Deriving them from the authenticated RW boundary keeps their
+            ;; ownership stable across machines; scanning for leftover
+            ;; conventional memory made K16 depend on firmware layout.
+            physical-start rw-end]
         (if (> physical-start 0)
           (let [second-start (+ physical-start 4096)
                 third-start (+ physical-start 8192)

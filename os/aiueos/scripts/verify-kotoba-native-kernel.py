@@ -103,7 +103,7 @@ payload = {
     "dynamic_dependencies": [],
     "fuel": {"initial": 1048576, "replenishable": False},
     "allocator": {"page_bytes": 4096, "published_pages": 14,
-                  "descriptor_limit": 410,
+                  "allocation_source": "amu-uefi-loader-rw-tail",
                   "zero_before_publish": True,
                   "ownership_state": "boot-lifetime-fourteen-slot-bitmap",
                   "duplicate_claim_rejected": True,
