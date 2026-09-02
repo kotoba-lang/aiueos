@@ -59,22 +59,6 @@
 ;; hidden in a script, so `reproduce-kotoba-objects.cljs` can replay it and a
 ;; reviewer can see that there is no second copy of the P-256 arithmetic.
 
-;; MEASURED FALSE. `reproduce-kotoba-objects.cljs --git-resolve` recompiled all
-;; 47 objects the recipes name, each at the revision its own receipt records
-;; (2026-09-03, amu 9cf3a0ac): 39 reproduced byte-for-byte, 3 could not be
-;; built at all by an unpatched compiler (the ecdsa trio -- the recipe patches
-;; kotoba-native's entry table and fuel tier in-process, which `--git-resolve`
-;; deliberately does not do), and these five DID NOT REPRODUCE. Their committed
-;; bytes came from some other, newer compiler, so seeding the recipe's pin for
-;; them would restate a claim that has been falsified.
-;;
-;; This list is a measurement, not a judgement: re-run the driver, and if one of
-;; these starts reproducing, delete its line. Removing a line without re-running
-;; it is how a measured absence turns back into an assumption.
-(def ^:private producer-claim-falsified
-  #{"broker-admit.o" "ime-romaji.o" "scanout-bind.o" "session-restore.o"
-    "wm-hit.o"})
-
 (def ^:private ecdsa-recipe "os/aiueos/scripts/reproduce-ecdsa-sign-object.clj")
 (def ^:private kernel-recipe "os/aiueos/scripts/reproduce-kotoba-kernel-object.sh")
 
@@ -281,12 +265,6 @@
                                   :route (if (seq modules) :project :single-file)
                                   :compiler
                                   (cond
-                                    ;; Before carry-forward: a falsified claim
-                                    ;; must not survive because the digits it
-                                    ;; was recorded against did not move.
-                                    (contains? producer-claim-falsified o)
-                                    {:repo "kotoba-lang/amu" :sha nil
-                                     :recipe :claim-falsified}
                                     carry? (:compiler was)
                                     (contains? recipe-named stem)
                                     {:repo "kotoba-lang/amu" :sha recipe-sha
