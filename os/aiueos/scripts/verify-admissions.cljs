@@ -283,6 +283,34 @@
 
 ;; --- compile ---------------------------------------------------------------
 
+(def ^:private kotoba-dir "os/aiueos/kotoba")
+
+(defn- module-source
+  "The file a module namespace names, by the SAME rule amu's resolver uses --
+  `.` becomes `/`, `-` becomes `_` -- with the historical flat spelling kept as
+  a fallback.
+
+  Both are needed and neither is optional. Every module that existed before
+  today sits flat in `os/aiueos/kotoba` under a hyphenated name that no
+  namespace munging produces (`aiueos.hkdf-sha256` ->
+  `hkdf-sha256.kotoba`), so dropping the fallback would stop every existing
+  contract compiling. But `amu compile --source-path` resolves
+  `aiueos.lib.sha256-core` to `aiueos/lib/sha256_core.kotoba` and will not find
+  a flat file, so a module written to be shared has to be reachable by the
+  munged path -- and this verifier has to agree with the compiler about which
+  bytes a namespace names, or it verifies a different program than the one that
+  ships."
+  [root-dir namespace]
+  (let [munged (-> (str namespace) (str/replace "." "/") (str/replace "-" "_"))
+        flat (str/replace (name namespace) #"^aiueos\." "")
+        candidates [(path/join root-dir kotoba-dir (str munged ".kotoba"))
+                    (path/join root-dir kotoba-dir (str flat ".kotoba"))]
+        found (first (filter #(.existsSync fs %) candidates))]
+    (when-not found
+      (fail! "REFUSING TO REPORT A PASS: a declared module has no source file"
+             {:module namespace :tried (vec candidates)}))
+    (fs/readFileSync found "utf8")))
+
 (defn- compile-graph [root-dir {:keys [root modules]}]
   ;; A contract with no `:graph` would otherwise reach the linker as an empty
   ;; source map and come back as "project source map is empty", which reads
@@ -290,12 +318,7 @@
   (when-not (and root (seq modules))
     (fail! "REFUSING TO REPORT A PASS: this contract declares no :graph, so there is nothing to compile"
            {:root root :modules modules}))
-  (let [sources (into {} (map (fn [m]
-                                [m (fs/readFileSync
-                                    (path/join root-dir "os/aiueos/kotoba"
-                                               (str (str/replace (name m) #"^aiueos\." "") ".kotoba"))
-                                    "utf8")])
-                              modules))
+  (let [sources (into {} (map (fn [m] [m (module-source root-dir m)])) modules)
         linked (try (project/link-source sources root)
                     (catch :default e
                       (if (str/includes? (str (ex-message e)) "Maximum call stack")
