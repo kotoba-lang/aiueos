@@ -10,9 +10,13 @@ source = pathlib.Path(sys.argv[2])
 rtl8125_source = source.with_name("rtl8125.kotoba")
 compiler = sys.argv[3]
 receipt = pathlib.Path(sys.argv[4])
+capability_inputs = list(zip(sys.argv[5::2], sys.argv[6::2]))
+capability_sources = [pathlib.Path(value) for value, _ in capability_inputs]
 data = elf.read_bytes()
 if not rtl8125_source.is_file():
     raise SystemExit("error: closed native RTL8125 module is missing")
+if len(capability_sources) != 4 or not all(path.is_file() for path in capability_sources):
+    raise SystemExit("error: closed native device-I/O capability sources are missing")
 if data[:4] != b"\x7fELF" or data[4:7] != b"\x02\x01\x01":
     raise SystemExit("error: Kotoba-native kernel is not ELF64 little-endian")
 if struct.unpack_from("<H", data, 16)[0] != 2 or struct.unpack_from("<H", data, 18)[0] != 0x3E:
@@ -94,6 +98,15 @@ payload = {
          "sha256": hashlib.sha256(source.read_bytes()).hexdigest()},
         {"module": "native.rtl8125", "source": rtl8125_source.name,
          "sha256": hashlib.sha256(rtl8125_source.read_bytes()).hexdigest()},
+    ] + [
+        {"module": module, "source": "/".join(path.parts[-4:]),
+         "revision": revision,
+         "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}
+        for module, (path, revision) in zip(
+            ["capability.link.frame", "capability.dma.map",
+             "capability.mmio.map", "capability.net.transport"],
+            zip(capability_sources, [revision for _, revision in capability_inputs]),
+        )
     ],
     "artifact_sha256": hashlib.sha256(data).hexdigest(),
     "artifact_bytes": len(data),

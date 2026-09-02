@@ -3,6 +3,10 @@
   ;; powered and calibrated the PHY; this module owns PCI discovery, the
   ;; uncached/NX BAR mapping, one TX/RX DMA descriptor, and the first admitted
   ;; ARP exchange after ExitBootServices.
+  (:require [capability.link.frame :as link]
+            [capability.dma.map :as dma]
+            [capability.mmio.map :as mapped]
+            [capability.net.transport :as transport])
   (:export [bar-for-bus install-bar-page install-directory qualify quiesce]))
 
 (defn pci-address [bus offset]
@@ -88,22 +92,28 @@
   (kernel-subregion 1 549755813887 (- bar 1) 512))
 
 (defn mmio-load-u8 [mmio offset]
-  (kernel-load-u8 mmio 512 offset))
+  (do (assert (= (mapped/access-valid 512 offset 1) 1))
+      (kernel-load-u8 mmio 512 offset)))
 
 (defn mmio-load-u16 [mmio offset]
-  (kernel-load-u16 mmio 512 offset))
+  (do (assert (= (mapped/access-valid 512 offset 2) 1))
+      (kernel-load-u16 mmio 512 offset)))
 
 (defn mmio-load-u32 [mmio offset]
-  (kernel-load-u32 mmio 512 offset))
+  (do (assert (= (mapped/access-valid 512 offset 4) 1))
+      (kernel-load-u32 mmio 512 offset)))
 
 (defn mmio-store-u8 [mmio offset value]
-  (kernel-store-u8 mmio 512 offset value))
+  (do (assert (= (mapped/access-valid 512 offset 1) 1))
+      (kernel-store-u8 mmio 512 offset value)))
 
 (defn mmio-store-u16 [mmio offset value]
-  (kernel-store-u16 mmio 512 offset value))
+  (do (assert (= (mapped/access-valid 512 offset 2) 1))
+      (kernel-store-u16 mmio 512 offset value)))
 
 (defn mmio-store-u32 [mmio offset value]
-  (kernel-store-u32 mmio 512 offset value))
+  (do (assert (= (mapped/access-valid 512 offset 4) 1))
+      (kernel-store-u32 mmio 512 offset value)))
 
 (defn zero-prefix [page bytes offset]
   (if (= offset bytes)
@@ -112,11 +122,6 @@
       (if (= stored 0)
         (zero-prefix page bytes (+ offset 1))
         0))))
-
-(defn dma-fence []
-  ;; CPUID is serialising on x86-64.  The result is folded to one only after
-  ;; the instruction executes, so the compiler cannot discard the barrier.
-  (+ 1 (* 0 (kernel-cpuid-eax 0 0))))
 
 (defn revision [mmio]
   (let [masked (bit-and (mmio-load-u32 mmio 64) 2096103424)]
@@ -163,8 +168,8 @@
         rx-address (store64-page rx 16 rx-frame)
         tx-command (kernel-store-u32 tx 512 0 1073741824)
         rx-extension (kernel-store-u32 rx 512 24 0)
-        rx-command (kernel-store-u32 rx 512 28 3221227520)
-        fenced (dma-fence)
+        rx-command (kernel-store-u32 rx 512 28 (dma/rx-command 2048))
+        fenced (dma/release-fence)
         imr (mmio-store-u32 mmio 56 0)
         isr (mmio-store-u32 mmio 60 4294967295)
         tx-lo (mmio-store-u32 mmio 32 (bit-and tx 4294967295))
@@ -179,7 +184,7 @@
     (if (and (= tx-zero 1) (= rx-zero 1)
              (= tx-address 1) (= rx-address 1)
              (= tx-command 1073741824)
-             (= rx-extension 0) (= rx-command 3221227520)
+             (= rx-extension 0) (= rx-command (dma/rx-command 2048))
              (= fenced 1) (= started 12))
       (+ (if (= fifo-empty 1) 0 4)
          (* 0 (+ stopped disabled imr isr tx-lo tx-hi rx-lo rx-hi
@@ -222,7 +227,7 @@
         0))))
 
 (defn build-arp-request [frame mmio]
-  (if (and (= (zero-prefix frame 42 0) 1)
+  (if (and (= (zero-prefix frame 60 0) 1)
            (= (fill-byte frame 0 6 255) 1)
            (= (copy-device-mac frame 6 mmio 0) 1)
            (= (frame-store-be16 frame 12 2054) 2054)
@@ -239,21 +244,22 @@
     0))
 
 (defn tx-submit [mmio tx tx-frame frame-length]
-  (if (or (< frame-length 14) (> frame-length 2048)
-          (not (= (bit-and (kernel-load-u32 tx 512 0) 2147483648) 0)))
-    5
-    (let [extension (kernel-store-u32 tx 512 4 0)
+  (let [wire-length (link/tx-wire-length frame-length)]
+    (if (or (= wire-length 0)
+            (not (= (bit-and (kernel-load-u32 tx 512 0) 2147483648) 0)))
+      5
+      (let [extension (kernel-store-u32 tx 512 4 0)
           address (store64-page tx 8 tx-frame)
-          before (dma-fence)
+          before (dma/release-fence)
           command (kernel-store-u32 tx 512 0
-                                    (bit-or 4026531840 frame-length))
-          after (dma-fence)
+                                    (dma/tx-command wire-length))
+          after (dma/release-fence)
           kicked (mmio-store-u16 mmio 144 1)]
-      (if (and (= extension 0) (= address 1) (= before 1)
-               (= command (bit-or 4026531840 frame-length))
-               (= after 1) (= kicked 1))
-        0
-        1))))
+        (if (and (= extension 0) (= address 1) (= before 1)
+                 (= command (dma/tx-command wire-length))
+                 (= after 1) (= kicked 1))
+          0
+          1)))))
 
 (defn wait-tx-complete [tx remaining]
   ;; x86 TSO already gives the descriptor load acquire ordering needed here;
@@ -489,11 +495,11 @@
 (defn rx-rearm [rx rx-frame]
   (let [extension (kernel-store-u32 rx 512 24 0)
         address (store64-page rx 16 rx-frame)
-        fenced (dma-fence)
-        command (kernel-store-u32 rx 512 28 3221227520)
-        after (dma-fence)]
+        fenced (dma/release-fence)
+        command (kernel-store-u32 rx 512 28 (dma/rx-command 2048))
+        after (dma/release-fence)]
     (if (and (= extension 0) (= address 1) (= fenced 1)
-             (= command 3221227520) (= after 1))
+             (= command (dma/rx-command 2048)) (= after 1))
       1
       0)))
 
@@ -539,10 +545,9 @@
                           0
                           (+ (frame-be32 peer-frame 38) 1))
         flags (if (= mode 0) 2 (if (= mode 1) 16 20))]
-    ;; Ethernet requires at least 60 bytes before the NIC appends the FCS.
-    ;; Do not depend on RTL8125 descriptor-side short-frame padding: the first
-    ;; physical TCP candidate used 54 and could therefore be discarded as a
-    ;; runt by the peer even though descriptor completion succeeded.
+    ;; link/frame owns the pre-FCS Ethernet bound. Do not depend on RTL8125
+    ;; descriptor-side padding: the first physical candidate published 54 and
+    ;; could be discarded as a runt despite descriptor completion.
     (if (and (= (zero-prefix frame 60 0) 1)
              (= (copy-frame-mac frame 0 peer-frame peer-mac-offset 0) 1)
              (= (copy-device-mac frame 6 mmio 0) 1)
@@ -574,7 +579,7 @@
                   (internet-checksum frame 34 tcp-length
                                      (tcp-pseudo-sum src dst tcp-length)))
                 (frame-be16 frame 50)))
-      60
+      (link/tx-wire-length (+ 14 total-length))
       0)))
 
 (defn tcp-syn-ack-valid [frame length sent-frame mmio]
@@ -583,7 +588,8 @@
         total (if (>= length 18) (frame-be16 frame 16) 0)
         tcp-length (if (>= total 20) (- total 20) 0)
         tcp-header (if (>= length 47)
-                     (* (quot (kernel-load-u8-4k frame 4096 46) 16) 4)
+                     (transport/tcp-header-length
+                      (kernel-load-u8-4k frame 4096 46))
                      0)]
     (and (>= length 54) (<= length 2048)
          (= (frame-mac-matches-device frame 0 mmio 0) 1)
@@ -591,7 +597,6 @@
          (= (frame-be16 frame 12) 2048)
          (= (kernel-load-u8-4k frame 4096 14) 69)
          (= (kernel-load-u8-4k frame 4096 23) 6)
-         (>= total 40)
          (<= (+ 14 total) length)
          (= (frame-be32 frame 26) src)
          (= (frame-be32 frame 30) dst)
@@ -599,9 +604,8 @@
          (= (frame-be16 frame 34) 8443)
          (= (frame-be16 frame 36) 49155)
          (= (frame-be32 frame 42) 2715820033)
-         (>= tcp-header 20)
-         (= tcp-header tcp-length)
-         (= (kernel-load-u8-4k frame 4096 47) 18)
+         (= (transport/syn-ack-shape
+             total tcp-header (kernel-load-u8-4k frame 4096 47)) 1)
          (= (internet-checksum frame 34 tcp-length
                                (tcp-pseudo-sum src dst tcp-length)) 0))))
 

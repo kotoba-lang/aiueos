@@ -32,7 +32,14 @@
       (is (str/includes? rtl "(defn build-tcp-segment"))
       (is (str/includes? rtl "(zero-prefix frame 60 0)"))
       (is (str/includes? rtl "(defn tcp-syn-ack-valid"))
-      (is (str/includes? rtl "(= tcp-header tcp-length)"))
+      (is (str/includes? rtl "[capability.link.frame :as link]"))
+      (is (str/includes? rtl "[capability.dma.map :as dma]"))
+      (is (str/includes? rtl "[capability.mmio.map :as mapped]"))
+      (is (str/includes? rtl "[capability.net.transport :as transport]"))
+      (is (str/includes? rtl "(transport/syn-ack-shape"))
+      (is (str/includes? rtl "(link/tx-wire-length frame-length)"))
+      (is (str/includes? rtl "(dma/release-fence)"))
+      (is (str/includes? rtl "(dma/tx-command wire-length)"))
       (is (str/includes? rtl "(defn tcp-ack-reset-and-receipt"))
       (is (str/includes? rtl "(defn receive-tcp-syn-ack"))
       (is (str/includes? rtl "AIUEOS_NATIVE_TCP_OK"))
@@ -43,6 +50,7 @@
       (is (str/includes? rtl "AIUEOS_NATIVE_NIC_"))
       (is (str/includes? rtl "(store-server-mac frame)"))
       (is (str/includes? rtl "(frame-store-be16 frame 36 7777)"))
+      (is (str/includes? rtl "(mapped/access-valid 512 offset 2)"))
       (is (str/includes? rtl "(kernel-load-u16 mmio 512 offset)"))
       (is (str/includes? rtl "(kernel-store-u16 mmio 512 offset value)"))
       (is (not (str/includes? rtl
@@ -66,7 +74,17 @@
       (is (str/includes? kernel
                          "(qualify-rtl8125 bar-a bar-b rtl-dma-pages)")))
     (testing "the builder compiles the closed module graph with the sealed fuel"
-      (is (str/includes? builder "--source-path \"$aiueos\" --unpinned"))
+      (is (str/includes? builder "--source-path \"$link_frame_source\""))
+      (is (str/includes? builder "--source-path \"$dma_map_source\""))
+      (is (str/includes? builder "--source-path \"$mmio_map_source\""))
+      (is (str/includes? builder "--source-path \"$net_transport_source\""))
+      (is (str/includes? builder
+                         "$link_frame_source/capability/link/frame.kotoba"))
+      (is (str/includes? builder
+                         "04279d4e2bc8c88b84089eaed11545521d3e5982"))
+      (is (str/includes? (slurp (io/file aiueos "scripts"
+                                         "verify-kotoba-native-kernel.py"))
+                         "capability.net.transport"))
       (is (str/includes? builder "--fuel 1048576"))
       (is (str/includes? builder
                          "13d2f5dfe1adeaa99b7e9e6c04fcf8cb8fc15a4b"))
