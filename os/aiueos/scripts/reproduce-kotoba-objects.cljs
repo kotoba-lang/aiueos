@@ -157,9 +157,25 @@
       (into (sorted-map) (filter #(contains? want (key %)) entries)))
     (into (sorted-map) entries)))
 
+;; THREE digests, not two. The receipt CLAIMS one, the tree HOLDS one, and the
+;; compiler PRODUCES one, and each pair can disagree for its own reason:
+;;
+;;   receipt vs tree      the manifest describes bytes that are not here. The
+;;                        K16 gate calls this `object-sha256-mismatch` and the
+;;                        name is kept, because it is the same fact.
+;;   compiler vs tree     the recorded recipe no longer produces the committed
+;;                        object.
+;;
+;; Comparing only the last two is what this driver did until a red test asked
+;; it about a receipt whose `:object-sha256` had one hex digit changed: it
+;; recompiled, got the committed bytes, and reported MATCH. A manifest is the
+;; thing being checked here, so a claim it makes that nothing reads is a claim
+;; nothing can falsify.
 (defn- verdict-for [receipt available fresh-sha committed-sha]
-  (let [recorded (get-in receipt [:compiler :sha])]
+  (let [recorded (get-in receipt [:compiler :sha])
+        claimed (:object-sha256 receipt)]
     (cond
+      (not= claimed committed-sha) :object-sha256-mismatch
       (not= fresh-sha committed-sha) :differs
       (nil? recorded) :unrecorded-producer
       (not= recorded available) :drift
@@ -171,17 +187,21 @@
   (let [names (vec (keys entries))
         rs (mapv #(get @state %) names)
         by (frequencies (map :verdict rs))
-        differs (filterv #(= :differs (:verdict %)) rs)
+        differs (filterv #(contains? #{:differs :object-sha256-mismatch} (:verdict %)) rs)
         errored (filterv :error rs)]
     (doseq [r rs]
       (println (str (case (:verdict r)
                       :match "MATCH      "
                       :drift "DRIFT      "
                       :differs "DIFFERS    "
+                      :object-sha256-mismatch "RECEIPT-MISMATCH "
                       :unrecorded-producer "UNRECORDED "
                       "COULD-NOT-RUN ")
                     (:object r)
                     (when (:error r) (str " reason=" (:error r)))
+                    (when (= :object-sha256-mismatch (:verdict r))
+                      (str " receipt=" (subs (str (:object-sha256 (:receipt r))) 0 12)
+                           " tree=" (subs (:committed-sha r) 0 12)))
                     (when (= :differs (:verdict r))
                       (str " committed=" (subs (:committed-sha r) 0 12)
                            "/" (:committed-bytes r) "B"
@@ -196,7 +216,8 @@
                   " scanned=" (count rs)
                   " match=" (get by :match 0)
                   " drift=" (get by :drift 0)
-                  " differs=" (count differs)
+                  " differs=" (get by :differs 0)
+                  " receipt-mismatch=" (get by :object-sha256-mismatch 0)
                   " unrecorded=" (get by :unrecorded-producer 0)
                   " could-not-run=" (count errored)))
     (when (and attest? (empty? errored))

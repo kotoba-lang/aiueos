@@ -120,14 +120,24 @@
       {:status (.-status r)
        :text (str (.-stdout r) (.-stderr r))})))
 
+;; A source that declares `(:require ...)` is a module of a project and needs
+;; `--source-path`; without it BOTH routes refuse with
+;; `:kotoba.error/namespace-require-needs-project`, and the comparison that
+;; comes back is `:failed` -- an answer about the object, for a question that
+;; was asked wrong. Measured 2026-09-02 on `hkdf-sha256`, the one committed
+;; object that imports a module (ADR-0135).
+(defn- project-source? [src]
+  (boolean (re-find #"\(:require\s" (.readFileSync fs src "utf8"))))
+
 (defn- compile-one [route src out]
-  (let [{:keys [status text]}
+  (let [extra (if (project-source? src) ["--source-path" kotoba-dir] [])
+        {:keys [status text]}
         (case route
           :jvm-free (run (.join path compiler "bin" "amu")
-                         ["compile" src "--target" target "--output" out "--jvm-free"]
+                         (into ["compile" src "--target" target "--output" out "--jvm-free"] extra)
                          {:no-jvm? true})
           :jvm (run "clojure"
-                    ["-M:run" "compile" src "--target" target "--output" out]))]
+                    (into ["-M:run" "compile" src "--target" target "--output" out] extra)))]
     (if (and (zero? status) (.existsSync fs out))
       {:ok true :sha (sha256 (.readFileSync fs out)) :bytes (.-size (.statSync fs out))}
       {:ok false :verdict (classify text)
