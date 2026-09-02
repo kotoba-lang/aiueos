@@ -4,7 +4,7 @@ Status: accepted (2026-09-02)
 
 ## Context
 
-ADR 0134 executed `kernel-dot-f32` under QEMU TCG on two CPU models and could
+ADR 0144 executed `kernel-dot-f32` under QEMU TCG on two CPU models and could
 not finish the experiment. Both models printed `4B800004`, the answer
 `kotoba.kir` gives, and **both took the scalar arm**:
 
@@ -80,7 +80,7 @@ other than this probe set it.
 ## Shown to discriminate, twice
 
 **Neutering the enable** (`enable-extended-state` returns 0 without writing
-anything) reproduces ADR 0134's outcome exactly:
+anything) reproduces ADR 0144's outcome exactly:
 
 ```
   max: enable=0 features=6 ["avx" "avx2"] arm=scalar digits=4B800004

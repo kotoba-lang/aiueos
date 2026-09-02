@@ -1,7 +1,7 @@
 #!/usr/bin/env nbb
-;; The GGUF admission (ADR-0135) EXECUTED on a CPU.
+;; The GGUF admission (ADR-0145) EXECUTED on a CPU.
 ;;
-;; ADR-0135 moved the whole of `kernel/qwen35_runtime.c`'s parser into three
+;; ADR-0145 moved the whole of `kernel/qwen35_runtime.c`'s parser into three
 ;; Kotoba objects and made the C delegate to them. Nothing ran that: the
 ;; objects passed a KIR-interpreter oracle, the image linked, and this
 ;; workstation is aarch64, so the emitted x86-64 had never been on a processor.

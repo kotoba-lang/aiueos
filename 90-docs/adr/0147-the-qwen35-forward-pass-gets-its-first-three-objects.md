@@ -1,8 +1,8 @@
-# ADR-0137 — The Qwen3.5 forward pass gets its first three objects
+# ADR-0147 — The Qwen3.5 forward pass gets its first three objects
 
 Status: accepted
 Date: 2026-09-02
-Relates to: ADR-0131 (K16 pure-native profile), ADR-0135 (GGUF admission
+Relates to: ADR-0131 (K16 pure-native profile), ADR-0145 (GGUF admission
 objects), ADR-0136 (the GGUF admission runs on a CPU), ADR-0030 (one exported
 symbol per object), kotoba-native #113, kotoba-kir ADR 0238.
 

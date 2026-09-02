@@ -233,7 +233,7 @@
 ;; The 28,160 bytes the object writes, committed so that
 ;; `tests/qwen35_runtime_model.c` can run the C translation over the SAME bytes
 ;; a real run of this object produced. Without it the translation could only be
-;; read, and reading it is what ADR-0135 already did.
+;; read, and reading it is what ADR-0145 already did.
 ;;
 ;; Regenerate with
 ;;   clojure -M:test -v aiueos.qwen35-tensor-table-parity-test/the-admitted-table-is-admitted \
