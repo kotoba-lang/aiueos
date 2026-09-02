@@ -35,13 +35,21 @@
 ;; K entry ran; H ImageHandle survived; S SystemTable survived; C ConOut found;
 ;; N ClearScreen+SetAttribute+OutputString all returned EFI_SUCCESS; A the real
 ;; kernel's headers were admitted; b..f each mutation refused with ITS OWN
-;; reason; Z kernel-system-table still answers, so R9 survived every call.
-(def default-markers "KHSCNAbcdefZ")
+;; reason; P a page the firmware allocated was WRITTEN and read back; W the
+;; placement rule answered all five of its clauses; Z kernel-system-table still
+;; answers, so R9 survived every call.
+(def default-markers "KHSCNAbcdefPWZ")
 
 ;; The reasons `aiueos.uefi.elf/admit` gives for the six headers, in order.
 ;; Not "all non-zero": each names one clause, and swapping two of these
 ;; mutations would leave a "some refusal happened" check green.
 (def default-verdicts "0 2 5 24 23 41")
+
+;; fwstore: and the reasons `aiueos.uefi.memory/window-reason` gives for the
+;; five placements, in order -- admitted, below 4 GiB, not allocated, ends
+;; above 64 GiB, ends past the pages the firmware gave. The last is the clause
+;; the 511 pages of alignment slack exist for.
+(def default-window "0 4 3 6 7")
 
 (def expected-entry "0000000000101000")
 (def expected-status 33)
@@ -118,6 +126,7 @@
                      (die "usage: smoke-qemu-uefi-loader.cljs /path/to/amu"))
         want-markers (flag args "--expect-markers" default-markers)
         want-verdicts (flag args "--expect-verdicts" default-verdicts)
+        want-window (flag args "--expect-window" default-window)
         out (fs/mkdtempSync (path/join (os/tmpdir) "aiueos-uefi-loader-"))
         built (build! compiler out)
         seen (observe out (firmware))
@@ -128,10 +137,12 @@
         ;; is a second and independent observation of the same decisions the
         ;; debug console marked.
         verdicts (second (re-find #"verdict ([0-9 ]+)" serial))
+        window (second (re-find #"window ([0-9 ]+)" serial))
         entry (second (re-find #"entry\s+([0-9A-F]{16})" serial))]
     (println (str "BOOTX64.EFI " (:bytes built) " bytes"))
     (println (str "exit=" status " debugcon=" (pr-str debug)))
-    (println (str "entry=" (pr-str entry) " verdicts=" (pr-str verdicts)))
+    (println (str "entry=" (pr-str entry) " verdicts=" (pr-str verdicts)
+                  " window=" (pr-str window)))
     (when-not (= expected-status status)
       (die (str "QEMU exited " status ", expected " expected-status
                 " -- the probe's own checks did not reach isa-debug-exit")))
@@ -141,6 +152,9 @@
     (when-not (= want-verdicts verdicts)
       (die (str "the firmware console reported verdicts " (pr-str verdicts)
                 ", expected " (pr-str want-verdicts))))
+    (when-not (= want-window window)
+      (die (str "the firmware console reported window verdicts " (pr-str window)
+                ", expected " (pr-str want-window))))
     ;; e_entry of the fixture kernel, read out of the literal pool by
     ;; `aiueos.uefi.elf/entry-point` and printed by `aiueos.uefi.console`.
     (when-not (= expected-entry entry)
@@ -148,6 +162,7 @@
                 ", expected " expected-entry)))
     (println (str "AIUEOS_UEFI_LOADER_OK markers=" debug
                   " verdicts=" (str/replace want-verdicts " " ",")
+                  " window=" (str/replace want-window " " ",")
                   " entry=" entry))))
 
 (apply -main (drop 3 (js->clj js/process.argv)))
