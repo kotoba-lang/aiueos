@@ -62,6 +62,17 @@ kotoba_cap_valid_object=${AIUEOS_KOTOBA_CAP_VALID_OBJECT:-"$aiueos/kotoba/virtio
 kotoba_extent_valid_object=${AIUEOS_KOTOBA_EXTENT_VALID_OBJECT:-"$aiueos/kotoba/pci-extent-valid.o"}
 kotoba_region_valid_object=${AIUEOS_KOTOBA_REGION_VALID_OBJECT:-"$aiueos/kotoba/pci-region-valid.o"}
 kotoba_pci_config_read_object=${AIUEOS_KOTOBA_PCI_CONFIG_READ_OBJECT:-"$aiueos/kotoba/pci-config-read.o"}
+# The RTL8125 2.5GbE driver (ADR-0140). Six objects, always linked: the NIC is
+# how a diskless PXE node reaches anything at all, and `kernel/rtl8125.c` is in
+# every profile. `aiueos_rtl8125_kotoba_selftest` runs all six against a
+# software model of the BAR on every boot, so an unlinked one is a link error
+# rather than a silent absence.
+kotoba_rtl8125_identify_object=${AIUEOS_KOTOBA_RTL8125_IDENTIFY_OBJECT:-"$aiueos/kotoba/rtl8125-identify.o"}
+kotoba_rtl8125_link_up_object=${AIUEOS_KOTOBA_RTL8125_LINK_UP_OBJECT:-"$aiueos/kotoba/rtl8125-link-up.o"}
+kotoba_rtl8125_ring_build_object=${AIUEOS_KOTOBA_RTL8125_RING_BUILD_OBJECT:-"$aiueos/kotoba/rtl8125-ring-build.o"}
+kotoba_rtl8125_program_object=${AIUEOS_KOTOBA_RTL8125_PROGRAM_OBJECT:-"$aiueos/kotoba/rtl8125-program.o"}
+kotoba_rtl8125_tx_submit_object=${AIUEOS_KOTOBA_RTL8125_TX_SUBMIT_OBJECT:-"$aiueos/kotoba/rtl8125-tx-submit.o"}
+kotoba_rtl8125_rx_poll_object=${AIUEOS_KOTOBA_RTL8125_RX_POLL_OBJECT:-"$aiueos/kotoba/rtl8125-rx-poll.o"}
 kotoba_pci_config_write_object=${AIUEOS_KOTOBA_PCI_CONFIG_WRITE_OBJECT:-"$aiueos/kotoba/pci-config-write.o"}
 kotoba_mmio_map_admit_object=${AIUEOS_KOTOBA_MMIO_MAP_ADMIT_OBJECT:-"$aiueos/kotoba/mmio-map-admit.o"}
 kotoba_acpi_checksum_object=${AIUEOS_KOTOBA_ACPI_CHECKSUM_OBJECT:-"$aiueos/kotoba/acpi-checksum-ok.o"}
@@ -1071,6 +1082,9 @@ zig ld.lld -nostdlib -static --strip-all $qualification_gc_link -z max-page-size
   "$kotoba_mutable_build_object" "$kotoba_cap_valid_object" \
   "$kotoba_extent_valid_object" "$kotoba_region_valid_object" \
   "$kotoba_pci_config_read_object" "$kotoba_pci_config_write_object" \
+  "$kotoba_rtl8125_identify_object" "$kotoba_rtl8125_link_up_object" \
+  "$kotoba_rtl8125_ring_build_object" "$kotoba_rtl8125_program_object" \
+  "$kotoba_rtl8125_tx_submit_object" "$kotoba_rtl8125_rx_poll_object" \
   "$kotoba_x25519_object"   "$kotoba_ecdsa_object" $ecdsa_sign_link $ecdsa_public_link "$kotoba_ime_object" \
   "$kotoba_aes128_gcm_object" "$kotoba_tls13_record_object" \
   $qwen35_kotoba_link $qwen35_parity_link \

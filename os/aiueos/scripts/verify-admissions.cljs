@@ -482,6 +482,57 @@
        (seq text)
        (conj {:label :canonical :offset out-offset :bytes (ascii-bytes text)}))}))
 
+;; nic: the RTL8125 driver objects. ONE builder for the whole family, unlike
+;; every method above it, because these six take the same KIND of argument --
+;; an address of a region in the image, a length, and some literals -- and
+;; differ only in which regions and how many. So the contract names its own
+;; entry and writes its arguments as a template, and this resolves the region
+;; keywords against the base.
+;;
+;;   :args [:mmio 4096 :out 16]        -> [base+mmio-offset 4096 base+out-offset 16]
+;;   :args [[:tx 16] 32 ...]           -> [base+tx-offset+16 32 ...]
+;;   :args [0 32 ...]                  -> passed through
+;;
+;; The `[region offset]` form exists so a vector can name a MISALIGNED address
+;; without hard-coding a number that silently stops meaning what it meant when
+;; the layout moves.
+;;
+;; ⚠ ONLY TWO OF THE SIX OBJECTS CAN BE RUN HERE, and it is not a gap in this
+;; builder. `kotoba.kir`'s interpreter refuses `kernel-fence-load`,
+;; `kernel-fence-store` and `kernel-rdtsc` with `:kernel-privileged-unavailable`
+;; -- deliberately, and its comment says why: a barrier orders memory operations
+;; against a machine this interpreter is not running on, and an oracle that
+;; executes one operation at a time would be answering "the barrier worked" from
+;; something that never had the problem. `rtl8125-ring-build`, `-program`,
+;; `-tx-submit` and `-rx-poll` all carry fences, so the oracle cannot execute
+;; them AT ALL -- it traps rather than returning a wrong answer, which is the
+;; right refusal and still leaves those four with no host-side evidence. Their
+;; evidence is `aiueos_rtl8125_kotoba_selftest` running the EMITTED MACHINE CODE
+;; against a software model under QEMU, which is a stronger claim about the same
+;; program and a weaker one about portability.
+(defmethod prepare :aiueos.rtl8125/v1 [contract v]
+  (let [{:keys [base image-bytes regions]} (get-in contract [:verification :memory])
+        entry (:entry contract)
+        _ (when-not (symbol? entry)
+            (fail! "REFUSING TO REPORT A PASS: this contract names no entry symbol"
+                   {:contract (:format contract)}))
+        region-at (fn [k]
+                    (or (get regions k)
+                        (fail! "REFUSING TO REPORT A PASS: a vector names a region the contract does not lay out"
+                               {:vector (:name v) :region k})))
+        image (reduce (fn [img {:keys [offset bytes hex]}]
+                        (write-at img offset (if hex (hex-bytes hex) (vec bytes))))
+                      (vec (repeat image-bytes 0))
+                      (:seed v))
+        resolve-arg (fn [a]
+                      (cond (keyword? a) (+ base (region-at a))
+                            (vector? a) (+ base (region-at (first a)) (second a))
+                            :else a))]
+    {:entry entry
+     :base base
+     :image image
+     :args (mapv resolve-arg (:args v))
+     :expect-memory (:expect-memory v)}))
 
 ;; --- the tokenizer family --------------------------------------------------
 ;;
@@ -858,9 +909,17 @@
                       ;; elapsed times in the receipt) -- the price of
                       ;; executing an AEAD in a ClojureScript interpreter, and
                       ;; stated rather than hidden.
+                      ;; The two RTL8125 contracts are cheap (under three
+                      ;; seconds between them) and are here for the same reason
+                      ;; the TLS pair is: a contract nothing runs by default is
+                      ;; a contract nobody runs. The other four driver objects
+                      ;; have no contract here at all, and that is stated in the
+                      ;; builder's comment rather than left as an absence --
+                      ;; the oracle refuses the fences they carry.
                       ["cid-v1-admit-v1.edn" "unixfs-file-admit-v1.edn"
                        "value-runtime-cas-verify-v1.edn"
                        "value-handle-arena-v1.edn"
+                       "rtl8125-identify-v1.edn" "rtl8125-link-up-v1.edn"
                        "aes128-gcm-v1.edn" "hkdf-sha256-v1.edn"
                        "tls13-record-v1.edn"
                        ;; The tokenizer family. Cheap by comparison -- about
