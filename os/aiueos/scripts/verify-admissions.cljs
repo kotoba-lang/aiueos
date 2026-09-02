@@ -361,6 +361,97 @@
        (seq text)
        (conj {:label :canonical :offset out-offset :bytes (ascii-bytes text)}))}))
 
+;; --- the streaming SHA-256 family ------------------------------------------
+;; Three objects over one shared module (`aiueos.lib.sha256-stream`). All three
+;; write their answer into the CALLER'S state region rather than returning it,
+;; so `:expect-memory` is not decoration here -- the return value of a
+;; successful `sha256-region` call is the constant 0, and a vector that checked
+;; only that would pass against an object that hashed nothing.
+
+(defn- message-bytes
+  "The message a vector describes, in either of the two spellings a SHA-256
+  vector needs: a published ASCII string, or N copies of one byte. A vector
+  that gives neither is a vector with no input, and saying so here is cheaper
+  than a digest mismatch that looks like an arithmetic bug."
+  [contract v]
+  (cond
+    (contains? v :message-ascii) (ascii-bytes (:message-ascii v))
+    (contains? v :message-hex) (hex-bytes (:message-hex v))
+    (contains? v :message-bytes) (vec (repeat (:message-bytes v) (or (:fill-byte v) 0)))
+    :else (fail! "REFUSING TO REPORT A PASS: this vector declares no message"
+                 {:contract (:format contract) :vector (:name v)})))
+
+(defn- digest-expectation [v offset]
+  (when (:digest-hex v)
+    [{:label :digest :offset offset :bytes (hex-bytes (:digest-hex v))}]))
+
+(defmethod prepare :aiueos.sha256-region/v1 [contract v]
+  (let [{:keys [base image-bytes st-offset src-offset]}
+        (get-in contract [:verification :memory])
+        msg (message-bytes contract v)]
+    {:entry 'aiueos-sha256-region
+     :base base
+     :image (write-at (vec (repeat image-bytes 0)) src-offset msg)
+     :args [(+ base st-offset)
+            (if (contains? v :st-len) (:st-len v) (get-in contract [:st :bytes]))
+            (+ base src-offset)
+            (if (contains? v :src-len) (:src-len v) (count msg))]
+     :expect-memory (digest-expectation v (+ st-offset 424))}))
+
+(defn- be32-bytes [value]
+  (mapv (fn [scale] (bit-and (js/Math.floor (/ value scale)) 0xff))
+        [16777216 65536 256 1]))
+
+(defn- digest-tokens
+  "`:tokens` is either a literal vector of ids or one of two named ranges. The
+  ranges are named rather than written out because a 64-element literal in a
+  contract is 64 chances to transcribe one wrong, and the digest they are
+  checked against was computed from the range."
+  [contract v]
+  (let [t (:tokens v)]
+    (cond
+      (vector? t) t
+      (= t :range-100-163) (vec (range 100 164))
+      (= t :range-1-20) (vec (range 1 21))
+      :else (fail! "REFUSING TO REPORT A PASS: this vector names a token set this runner does not know"
+                   {:contract (:format contract) :vector (:name v) :tokens t}))))
+
+(defmethod prepare :aiueos.device-worker-digest/v1 [contract v]
+  (let [{:keys [base image-bytes st-offset tok-offset]}
+        (get-in contract [:verification :memory])
+        tokens (digest-tokens contract v)
+        max-tokens-offset (get-in contract [:st :caller-writes :max-tokens])]
+    {:entry 'aiueos-device-worker-digest
+     :base base
+     :image (-> (vec (repeat image-bytes 0))
+                (write-at tok-offset (vec (mapcat be32-bytes tokens)))
+                ;; The MODE, written by the caller and validated by the object.
+                (write-at (+ st-offset max-tokens-offset)
+                          (be32-bytes (or (:max-tokens v) 0))))
+     :args [(+ base st-offset)
+            (if (contains? v :st-len) (:st-len v) (get-in contract [:st :bytes]))
+            (+ base tok-offset)
+            (if (contains? v :tok-count) (:tok-count v) (count tokens))]
+     :expect-memory (digest-expectation v (+ st-offset 424))}))
+
+(defmethod prepare-steps :aiueos.sha256-stream/v1 [contract v]
+  (let [{:keys [base image-bytes st-offset src-offset]}
+        (get-in contract [:verification :memory])
+        msg (message-bytes contract v)]
+    {:entry 'aiueos-sha256-stream
+     :base base
+     :image (write-at (vec (repeat image-bytes 0)) src-offset msg)
+     ;; `[mode src-delta src-len]`, with an optional fourth element overriding
+     ;; `st-len` so the length refusal can be a step rather than a vector of
+     ;; its own. `src-delta` is an offset INTO THE MESSAGE, which is what makes
+     ;; a block call point at the next 64 bytes of the same image the previous
+     ;; call read.
+     :args-of (fn [[mode src-delta src-len st-len]]
+                [mode (+ base st-offset)
+                 (or st-len (get-in contract [:st :bytes]))
+                 (+ base src-offset (or src-delta 0))
+                 (or src-len 0)])}))
+
 (defmethod prepare :default [contract _]
   (fail! "REFUSING TO REPORT A PASS: no argument builder for this contract format"
          {:format (:format contract)}))
@@ -531,7 +622,8 @@
   handle step 6 released."
   [contract kir entry fuel started]
   (let [{:keys [floors]} (:verification contract)
-        counted (volatile! 0)]
+        counted (volatile! 0)
+        memory-assertions (volatile! 0)]
     (doseq [v (:vectors contract)]
       (let [{:keys [base image args-of]} (prepare-steps contract v)
             page (volatile! image)]
@@ -545,6 +637,19 @@
               (fail! "step mismatch"
                      {:contract (:format contract) :vector (:name v) :step index
                       :args (:args step) :expected (:expected step) :actual actual}))
+            ;; A STEP MAY ASSERT BYTES, not only a reason code. `run-single`
+            ;; has had this since ADR-0132 and this runner did not, which was
+            ;; the same gap that comment names: a transforming object whose
+            ;; success value is a constant 0 is checked over the part that does
+            ;; not matter. The whole point of `aiueos-sha256-stream` is that
+            ;; the LAST step leaves a digest behind, and nothing could say so.
+            (vswap! memory-assertions +
+                    (check-memory! contract [(:name v) index]
+                                   (mapv (fn [e]
+                                           (cond-> e
+                                             (:hex e) (assoc :bytes (hex-bytes (:hex e)))))
+                                         (:expect-memory step))
+                                   page))
             (vswap! counted inc)))))
     (when (< (count (:vectors contract)) (or (:minimum-vectors floors) 1))
       (fail! "fewer vectors ran than the contract's floor"
@@ -552,8 +657,13 @@
     (when (< @counted (or (:minimum-steps floors) 1))
       (fail! "fewer steps ran than the contract's floor"
              {:ran @counted :floor (:minimum-steps floors)}))
+    (when (< @memory-assertions (or (:minimum-memory-assertions floors) 0))
+      (fail! "fewer memory assertions ran than the contract's floor"
+             {:ran @memory-assertions
+              :floor (:minimum-memory-assertions floors)}))
     {:contract (:format contract)
      :vectors (count (:vectors contract)) :steps @counted :traps 0
+     :memory-assertions @memory-assertions
      :elapsed-ms (- (js/Date.now) started)}))
 
 (defn- run-contract [root-dir contract-path]
@@ -615,11 +725,21 @@
                       ;; elapsed times in the receipt) -- the price of
                       ;; executing an AEAD in a ClojureScript interpreter, and
                       ;; stated rather than hidden.
+                      ;; The three streaming-SHA-256 contracts are here for
+                      ;; the same reason. `sha256-region-v1` carries a
+                      ;; 1,000-byte vector and `sha256-stream-v1` drives the
+                      ;; same message a block at a time; between them that is
+                      ;; the only place the block LOOP runs more than twice
+                      ;; off-target, and it is minutes rather than seconds.
+                      ;; Anything larger is the QEMU self-test's job, not a
+                      ;; ClojureScript interpreter's.
                       ["cid-v1-admit-v1.edn" "unixfs-file-admit-v1.edn"
                        "value-runtime-cas-verify-v1.edn"
                        "value-handle-arena-v1.edn"
                        "aes128-gcm-v1.edn" "hkdf-sha256-v1.edn"
-                       "tls13-record-v1.edn"]))
+                       "tls13-record-v1.edn"
+                       "sha256-region-v1.edn" "sha256-stream-v1.edn"
+                       "device-worker-digest-v1.edn"]))
         results (mapv #(run-contract root-dir %) paths)]
     (doseq [r results]
       (println (str "CONTRACT\t" (:contract r)

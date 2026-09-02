@@ -144,6 +144,21 @@ kotoba_tls13_record_object=${AIUEOS_KOTOBA_TLS13_RECORD_OBJECT:-"$aiueos/kotoba/
 # self-test runs it on every UEFI profile -- the K16 profile is the only one
 # that can send a request, and it is the one that cannot be booted here.
 kotoba_device_worker_canonical_object=${AIUEOS_KOTOBA_DEVICE_WORKER_CANONICAL_OBJECT:-"$aiueos/kotoba/device-worker-canonical.o"}
+# sha-stream: streaming SHA-256 (ADR-0139). Three objects over ONE shared module
+# (`kotoba/aiueos/lib/sha256_stream.kotoba`), so the compression rounds exist
+# once in source; three symbols because a fuel tier is a per-CALL budget and
+# these three calls are not the same size.
+#
+# `sha256.o` above stays: it is the whole-message object that ten call sites
+# in this kernel already use, and nothing here replaces it. What these add is
+# the sizes it refuses: its ceiling is 12,288 bytes and `input-sha256` reaches 131,080.
+#
+# Linked unconditionally, like device-worker-canonical and for the same
+# reason: main.c's SHA-STREAM-PARITY boot self-test runs all three on every
+# UEFI profile.
+kotoba_sha256_stream_object=${AIUEOS_KOTOBA_SHA256_STREAM_OBJECT:-"$aiueos/kotoba/sha256-stream.o"}
+kotoba_sha256_region_object=${AIUEOS_KOTOBA_SHA256_REGION_OBJECT:-"$aiueos/kotoba/sha256-region.o"}
+kotoba_device_worker_digest_object=${AIUEOS_KOTOBA_DEVICE_WORKER_DIGEST_OBJECT:-"$aiueos/kotoba/device-worker-digest.o"}
 # ECDSA P-256 deterministic sign (ADR-0105). Linked ONLY when
 # AIUEOS_ECDSA_SIGN_KAT=1 -- it is ~50 KiB and the kernel is near its 1 MiB
 # ceiling, so it stays out of the default and the SSH-listener builds until the
@@ -794,6 +809,15 @@ python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_tls13_record_o
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_device_worker_canonical_object" \
   c64371c50104c8acd2b73224eed1377e160cd36ab70e27cae11d39b76e440b0a \
   kotoba_aiueos_device_worker_canonical
+python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_sha256_stream_object" \
+  fdf5b3ac388982cdcc851817a7414f638a821420f70650df4dc8985491281abc \
+  kotoba_aiueos_sha256_stream
+python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_sha256_region_object" \
+  5306967ed079f62c37e906095e75a5d0d3cf1e7b0df741a4219d40515e851f0e \
+  kotoba_aiueos_sha256_region
+python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_device_worker_digest_object" \
+  496d285c78f906e2de996fc392212fc6ed01c770fa7d05c813db07833f830ca2 \
+  kotoba_aiueos_device_worker_digest
 if [ -n "$ecdsa_sign_link" ]; then
   python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_ecdsa_sign_object" \
     decd83b1cd331af1305ad24c080443118f925067353c320078e66085695fd433 \
@@ -1004,6 +1028,8 @@ zig ld.lld -nostdlib -static --strip-all $qualification_gc_link -z max-page-size
   "$kotoba_x25519_object"   "$kotoba_ecdsa_object" $ecdsa_sign_link $ecdsa_public_link "$kotoba_ime_object" \
   "$kotoba_aes128_gcm_object" "$kotoba_tls13_record_object" \
   "$kotoba_device_worker_canonical_object" \
+  "$kotoba_sha256_stream_object" "$kotoba_sha256_region_object" \
+  "$kotoba_device_worker_digest_object" \
   "$kotoba_wm_object" "$kotoba_scanout_object" "$kotoba_broker_object" "$kotoba_session_object" \
   "$kotoba_mmio_map_admit_object" \
   "$kotoba_acpi_checksum_object" "$kotoba_acpi_table_valid_object" \
