@@ -15,10 +15,12 @@ experiment. Neither is the bare-metal provider.
 The larger C/assembly implementation below is retained as a reference profile,
 regression oracle, and the current physical RTL8125/TLS/Qwen qualification
 path. Its feature count must not be read as C-free maturity. In particular,
-`native/kernel.kotoba` owns the C-free boot/memory slice today; it does not yet
-contain the physical NIC DMA provider, TLS 1.3/HTTPS transport, or the complete
-Qwen GGUF runtime. The exact all-native closure and its fail-closed claim rule
-are recorded in `contracts/k16-kotoba-native-closure-v1.edn` and audited by
+the closed `native/kernel.kotoba` + `native/rtl8125.kotoba` graph owns the
+C-free boot/memory slice and a K16-specific one-shot PCI/MMIO/DMA/ARP provider.
+The latter has a QEMU no-device receipt but not yet a physical ARP receipt.
+Complete TLS 1.3/HTTPS and Qwen GGUF execution are still outside the pure
+closure. The exact all-native closure and its fail-closed claim rule are
+recorded in `contracts/k16-kotoba-native-closure-v1.edn` and audited by
 `scripts/audit-k16-kotoba-native-closure.py`.
 
 The current Phase 1 slice builds a PE32+ `BOOTX64.EFI` and a separate ELF64
@@ -43,14 +45,15 @@ to call `kotoba_aiueos_probe` and observe result `42`. Set
 `AIUEOS_KOTOBA_KERNEL_OBJECT` only to test another compiler output under the
 same verifier; a hosted or import-bearing object is rejected before link.
 
-### The K16 pure-native profile does not boot yet, and now says so
+### The K16 pure-native profile boots through Amu and keeps the legacy link measurable
 
 `AIUEOS_K16_PURE_NATIVE=1 sh os/aiueos/scripts/build-uefi.sh` (or
 `nbb os/aiueos/scripts/build-k16-pure-native.cljs`) restricts the kernel link
 to Kotoba objects and Amu toolchain stubs, gates that exact list before
-`zig ld.lld` runs, and refuses to emit a loader. It cannot produce a bootable
-K16 image: `BOOTX64.EFI` is `uefi/main.c`, and `aiueos_kernel_entry` is in the
-hand-written `entry.S` the profile excludes. It exists so the C boundary is
+`zig ld.lld` runs, and keeps the legacy C/assembly route fail-closed. Passing
+`--compiler /path/to/pinned-amu` instead emits a reproducible C-free PE32+
+loader and the closed Kotoba ELF without invoking that linker. The legacy
+measurement remains so the old production link's C boundary stays
 machine-checked rather than described (ADR-0131).
 
 Measured 2026-09-02 on the link list today's K16 build actually hands the
@@ -944,6 +947,14 @@ engine, waits for a bounded FIFO-empty indication, and reinstalls both single
 descriptor rings. This discards late records from the prior TCP four-tuple
 without rereading the overwritten hardware-revision bits or touching PHY/MCU
 calibration.
+The pure profile now has the corresponding first transport slice in
+`native/rtl8125.kotoba`. It probes only the two BDFs observed on the K16
+(`02:00.0` and `03:00.0`), validates the Realtek device ID and memory BAR,
+installs a 2 MiB UC/RW/NX mapping, owns four zeroed DMA pages, drains and
+restarts a one-descriptor TX/RX pair, and admits only the expected
+10.77.0.10-to-10.77.0.1 ARP exchange. QEMU proves that absence of RTL8125 is
+bounded and leaves the boot marker unchanged. This is not yet physical proof;
+the C reference remains the only path with an observed K16 ARP/TLS/Qwen run.
 The 2026-08-31 physical K16 run in
 `contracts/physical-persistent-worker-k16-v1.edn` records the resulting
 end-to-end control loop: repeated signed polls, an operator-created
@@ -1221,12 +1232,14 @@ ExitBootServices before entering the kernel. The hard-flip boot chain has no C,
 CRT, foreign object, linker, interpreter, import table, or dynamic dependency.
 Its final memory map resides in a compiler-owned bounded 16 KiB RW region.
 The kernel derives that region from boot-info rather than trusting a loaded
-pointer as authority, admits a contiguous eight-page UEFI Conventional Memory
-extent inside the identity-mapped physical window, derives eight non-overlapping
-authorities, and zeros all 4,096 bytes of each before use. The first page is a
-boot-lifetime eight-slot ownership bitmap; the next four are PML4, PDPT, PD,
-and a low-memory PT; the remaining pages prove release/reuse and hold the page
-fault recovery frame and dedicated handler stack. Kotoba writes and reads back
+pointer as authority, admits a contiguous fourteen-page UEFI Conventional
+Memory extent inside the identity-mapped physical window, derives fourteen
+non-overlapping authorities, and zeros all 4,096 bytes of each before use. The
+first page is a boot-lifetime fourteen-slot ownership bitmap; the next four are
+PML4, PDPT, PD, and a low-memory PT; three pages prove release/reuse and hold
+the page-fault recovery frame and dedicated handler stack; two pages hold
+uncached/NX RTL8125 page directories; and the final four pages are the one TX,
+one RX, TX-frame, and RX-frame DMA authorities. Kotoba writes and reads back
 the complete first-GiB identity map, but the low 2 MiB is split into 4 KiB
 leaves. Page `0x100000` is unmapped, compiler-reported kernel text is RX, any
 RX/RW alignment gap is unmapped, kernel state is RW+NX, and the remaining

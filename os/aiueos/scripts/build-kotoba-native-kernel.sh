@@ -4,7 +4,7 @@ set -eu
 repo=$(CDPATH= cd -- "$(dirname -- "$0")/../../.." && pwd)
 aiueos="$repo/os/aiueos"
 compiler=${1:?usage: build-kotoba-native-kernel.sh /path/to/compiler}
-expected=795800cedbf602108c801aee13704f3af8c65043
+expected=3559d82be3bd4ec42abb44826fa2fa7cfd0b74dc
 actual=$(git -C "$compiler" rev-parse HEAD)
 [ "$actual" = "$expected" ] || {
   echo "error: compiler HEAD is $actual; expected $expected" >&2; exit 1;
@@ -16,8 +16,10 @@ second="$out/KERNEL.reproduced.ELF"
 receipt="$out/receipt.json"
 mkdir -p "$out"
 "$compiler/bin/kotoba-compiler" compile "$source" \
+  --source-path "$aiueos" --unpinned \
   --target x86_64-aiueos-kernel-v1 --artifact image --fuel 1048576 --output "$kernel"
 "$compiler/bin/kotoba-compiler" compile "$source" \
+  --source-path "$aiueos" --unpinned \
   --target x86_64-aiueos-kernel-v1 --artifact image --fuel 1048576 --output "$second"
 cmp "$kernel" "$second"
 rm -f "$second"

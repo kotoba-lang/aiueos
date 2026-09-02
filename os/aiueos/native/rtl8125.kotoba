@@ -1,0 +1,376 @@
+(ns native.rtl8125
+  ;; K16-specific, firmware-handoff RTL8125 provider.  UEFI PXE has already
+  ;; powered and calibrated the PHY; this module owns PCI discovery, the
+  ;; uncached/NX BAR mapping, one TX/RX DMA descriptor, and the first admitted
+  ;; ARP exchange after ExitBootServices.
+  (:export [bar-for-bus install-bar-page install-directory qualify quiesce]))
+
+(defn pci-address [bus offset]
+  (bit-or 2147483648
+          (bit-or (* bus 65536) (bit-and offset 252))))
+
+(defn pci-read [bus offset]
+  (let [addressed (kernel-out-u32 3320 (pci-address bus offset))]
+    (+ (kernel-in-u32 3324) (* 0 addressed))))
+
+(defn pci-write [bus offset value]
+  (let [addressed (kernel-out-u32 3320 (pci-address bus offset))
+        written (kernel-out-u32 3324 value)]
+    (+ written (* 0 addressed))))
+
+(defn decode-memory-bar [bus offset]
+  (let [low (pci-read bus offset)
+        kind (bit-and (quot low 2) 3)
+        low-address (bit-and low 4294967280)
+        value (if (= kind 2)
+                (+ low-address (* (pci-read bus (+ offset 4)) 4294967296))
+                (if (= kind 0) low-address 0))]
+    (if (and (> value 0)
+             (not (= value 4294967280))
+             (>= value 1073741824)
+             (<= value 549755809792))
+      value
+      0)))
+
+(defn bar-for-bus [bus]
+  (if (and (>= bus 0) (<= bus 255)
+           (= (pci-read bus 0) 2166690028))
+    (let [bar2 (decode-memory-bar bus 24)]
+      (if (> bar2 0) bar2 (decode-memory-bar bus 20)))
+    0))
+
+(defn load64-page [page offset]
+  (+ (kernel-load-u8-4k page 4096 offset)
+     (* (kernel-load-u8-4k page 4096 (+ offset 1)) 256)
+     (* (kernel-load-u8-4k page 4096 (+ offset 2)) 65536)
+     (* (kernel-load-u8-4k page 4096 (+ offset 3)) 16777216)
+     (* (kernel-load-u8-4k page 4096 (+ offset 4)) 4294967296)
+     (* (kernel-load-u8-4k page 4096 (+ offset 5)) 1099511627776)
+     (* (kernel-load-u8-4k page 4096 (+ offset 6)) 281474976710656)
+     (* (kernel-load-u8-4k page 4096 (+ offset 7)) 72057594037927936)))
+
+(defn store64-page [page offset value]
+  (let [s0 (kernel-store-u8-4k page 4096 offset (bit-and value 255))
+        s1 (kernel-store-u8-4k page 4096 (+ offset 1) (bit-and (quot value 256) 255))
+        s2 (kernel-store-u8-4k page 4096 (+ offset 2) (bit-and (quot value 65536) 255))
+        s3 (kernel-store-u8-4k page 4096 (+ offset 3) (bit-and (quot value 16777216) 255))
+        s4 (kernel-store-u8-4k page 4096 (+ offset 4) (bit-and (quot value 4294967296) 255))
+        s5 (kernel-store-u8-4k page 4096 (+ offset 5) (bit-and (quot value 1099511627776) 255))
+        s6 (kernel-store-u8-4k page 4096 (+ offset 6) (bit-and (quot value 281474976710656) 255))
+        s7 (kernel-store-u8-4k page 4096 (+ offset 7) (bit-and (quot value 72057594037927936) 255))]
+    (if (= (load64-page page offset) value)
+      (+ 1 (* 0 (+ s0 s1 s2 s3 s4 s5 s6 s7)))
+      0)))
+
+(defn store64-nx-page [page offset value]
+  (if (and (= (store64-page page offset value) 1)
+           (= (kernel-store-u8-4k page 4096 (+ offset 7) 128) 128)
+           (= (kernel-load-u8-4k page 4096 (+ offset 7)) 128))
+    1
+    0))
+
+(defn install-bar-page [directory bar]
+  (let [physical (* (quot bar 2097152) 2097152)
+        index (bit-and (quot bar 2097152) 511)]
+    ;; present | writable | write-through | cache-disable | huge | NX
+    (store64-nx-page directory (* index 8) (+ physical 155))))
+
+(defn install-directory [pdpt directory bar]
+  (let [pdpt-index (quot bar 1073741824)]
+    (if (and (> pdpt-index 0) (< pdpt-index 512)
+             (= (store64-page pdpt (* pdpt-index 8) (+ directory 3)) 1))
+      (install-bar-page directory bar)
+      0)))
+
+(defn mmio-window [bar]
+  ;; A non-null parent window keeps kernel-subregion's provenance check while
+  ;; still deriving an identity-mapped physical BAR below the admitted 512 GiB.
+  (kernel-subregion 1 549755813887 (- bar 1) 512))
+
+(defn mmio-load-u8 [mmio offset]
+  (kernel-load-u8 mmio 512 offset))
+
+(defn mmio-load-u16 [mmio offset]
+  (kernel-load-u16 mmio 512 offset))
+
+(defn mmio-load-u32 [mmio offset]
+  (kernel-load-u32 mmio 512 offset))
+
+(defn mmio-store-u8 [mmio offset value]
+  (kernel-store-u8 mmio 512 offset value))
+
+(defn mmio-store-u16 [mmio offset value]
+  (kernel-store-u16 mmio 512 offset value))
+
+(defn mmio-store-u32 [mmio offset value]
+  (kernel-store-u32 mmio 512 offset value))
+
+(defn zero-prefix [page bytes offset]
+  (if (= offset bytes)
+    1
+    (let [stored (kernel-store-u8-4k page 4096 offset 0)]
+      (if (= stored 0)
+        (zero-prefix page bytes (+ offset 1))
+        0))))
+
+(defn dma-fence []
+  ;; CPUID is serialising on x86-64.  The result is folded to one only after
+  ;; the instruction executes, so the compiler cannot discard the barrier.
+  (+ 1 (* 0 (kernel-cpuid-eax 0 0))))
+
+(defn revision [mmio]
+  (let [masked (bit-and (mmio-load-u32 mmio 64) 2096103424)]
+    (if (= masked 1620049920) 1
+      (if (= masked 1678770176) 2
+        (if (= masked 1753219072) 3
+          (if (= masked 1754267648) 4 0))))))
+
+(defn receive-config [revision-id]
+  (if (= revision-id 1) 1090520832
+    (if (= revision-id 2) 1090522112 1092619264)))
+
+(defn mac-valid [mmio]
+  (let [mac0 (mmio-load-u32 mmio 0)
+        mac4 (mmio-load-u16 mmio 4)]
+    (and (not (= (bit-or mac0 mac4) 0))
+         (not (and (= mac0 4294967295) (= mac4 65535)))
+         (= (bit-and mac0 1) 0))))
+
+(defn wait-fifo-empty [mmio remaining]
+  (if (= (bit-and (mmio-load-u8 mmio 211) 48) 48)
+    1
+    (if (= remaining 0)
+      0
+      (let [paused (kernel-pause)]
+        (+ (wait-fifo-empty mmio (- remaining 1)) (* 0 paused))))))
+
+(defn rings-start [mmio revision-id dma-base]
+  (let [tx dma-base
+        rx (kernel-subregion dma-base 16384 4096 4096)
+        tx-frame (kernel-subregion dma-base 16384 8192 4096)
+        rx-frame (kernel-subregion dma-base 16384 12288 4096)
+        stopped (mmio-store-u8 mmio 55
+                                (bit-or (mmio-load-u8 mmio 55) 128))]
+    (if (= (wait-fifo-empty mmio 300000) 0)
+      4
+      (let [disabled (mmio-store-u8 mmio 55 0)
+            tx-zero (zero-prefix tx 32 0)
+            rx-zero (zero-prefix rx 32 0)
+            tx-address (store64-page tx 8 tx-frame)
+            rx-address (store64-page rx 16 rx-frame)
+            tx-command (kernel-store-u32 tx 512 0 1073741824)
+            rx-extension (kernel-store-u32 rx 512 24 0)
+            rx-command (kernel-store-u32 rx 512 28 3221227520)
+            fenced (dma-fence)
+            imr (mmio-store-u32 mmio 56 0)
+            isr (mmio-store-u32 mmio 60 4294967295)
+            tx-lo (mmio-store-u32 mmio 32 (bit-and tx 4294967295))
+            tx-hi (mmio-store-u32 mmio 36 (quot tx 4294967296))
+            rx-lo (mmio-store-u32 mmio 228 (bit-and rx 4294967295))
+            rx-hi (mmio-store-u32 mmio 232 (quot rx 4294967296))
+            rx-max (mmio-store-u16 mmio 218 2048)
+            tx-config (mmio-store-u32 mmio 64 50333440)
+            rx-config (mmio-store-u32 mmio 68
+                                      (bit-or (receive-config revision-id) 10))
+            started (mmio-store-u8 mmio 55 12)]
+        (if (and (= tx-zero 1) (= rx-zero 1)
+                 (= tx-address 1) (= rx-address 1)
+                 (= tx-command 1073741824)
+                 (= rx-extension 0) (= rx-command 3221227520)
+                 (= fenced 1) (= started 12))
+          (+ 0 (* 0 (+ stopped disabled imr isr tx-lo tx-hi rx-lo rx-hi
+                       rx-max tx-config rx-config)))
+          1)))))
+
+(defn frame-store-be16 [frame offset value]
+  (let [high (kernel-store-u8-4k frame 4096 offset
+                                  (bit-and (quot value 256) 255))
+        low (kernel-store-u8-4k frame 4096 (+ offset 1)
+                                 (bit-and value 255))]
+    (+ low (* high 256))))
+
+(defn frame-store-be32 [frame offset value]
+  (let [b0 (kernel-store-u8-4k frame 4096 offset
+                                (bit-and (quot value 16777216) 255))
+        b1 (kernel-store-u8-4k frame 4096 (+ offset 1)
+                                (bit-and (quot value 65536) 255))
+        b2 (kernel-store-u8-4k frame 4096 (+ offset 2)
+                                (bit-and (quot value 256) 255))
+        b3 (kernel-store-u8-4k frame 4096 (+ offset 3)
+                                (bit-and value 255))]
+    (+ b3 (* b2 256) (* b1 65536) (* b0 16777216))))
+
+(defn fill-byte [frame offset remaining value]
+  (if (= remaining 0)
+    1
+    (let [stored (kernel-store-u8-4k frame 4096 offset value)]
+      (if (= stored value)
+        (fill-byte frame (+ offset 1) (- remaining 1) value)
+        0))))
+
+(defn copy-device-mac [frame frame-offset mmio index]
+  (if (= index 6)
+    1
+    (let [value (mmio-load-u8 mmio index)
+          stored (kernel-store-u8-4k frame 4096 (+ frame-offset index) value)]
+      (if (= stored value)
+        (copy-device-mac frame frame-offset mmio (+ index 1))
+        0))))
+
+(defn build-arp-request [frame mmio]
+  (if (and (= (zero-prefix frame 42 0) 1)
+           (= (fill-byte frame 0 6 255) 1)
+           (= (copy-device-mac frame 6 mmio 0) 1)
+           (= (frame-store-be16 frame 12 2054) 2054)
+           (= (frame-store-be16 frame 14 1) 1)
+           (= (frame-store-be16 frame 16 2048) 2048)
+           (= (kernel-store-u8-4k frame 4096 18 6) 6)
+           (= (kernel-store-u8-4k frame 4096 19 4) 4)
+           (= (frame-store-be16 frame 20 1) 1)
+           (= (copy-device-mac frame 22 mmio 0) 1)
+           (= (fill-byte frame 32 6 0) 1)
+           (= (frame-store-be32 frame 28 172818442) 172818442)
+           (= (frame-store-be32 frame 38 172818433) 172818433))
+    42
+    0))
+
+(defn tx-submit [mmio tx tx-frame frame-length]
+  (if (or (< frame-length 14) (> frame-length 2048)
+          (not (= (bit-and (kernel-load-u32 tx 512 0) 2147483648) 0)))
+    5
+    (let [extension (kernel-store-u32 tx 512 4 0)
+          address (store64-page tx 8 tx-frame)
+          before (dma-fence)
+          command (kernel-store-u32 tx 512 0
+                                    (bit-or 4026531840 frame-length))
+          after (dma-fence)
+          kicked (mmio-store-u16 mmio 144 1)]
+      (if (and (= extension 0) (= address 1) (= before 1)
+               (= command (bit-or 4026531840 frame-length))
+               (= after 1) (= kicked 1))
+        0
+        1))))
+
+(defn wait-tx-complete [tx remaining]
+  ;; x86 TSO already gives the descriptor load acquire ordering needed here;
+  ;; a serialising CPUID in every polling iteration would make the bounded
+  ;; 200M budget unusably slow on the physical K16.
+  (if (= (bit-and (kernel-load-u32 tx 512 0) 2147483648) 0)
+    1
+    (if (= remaining 0)
+      0
+      (let [paused (kernel-pause)]
+        (+ (wait-tx-complete tx (- remaining 1)) (* 0 paused))))))
+
+(defn wait-rx-command [rx remaining]
+  (let [command (kernel-load-u32 rx 512 28)]
+    (if (= (bit-and command 2147483648) 0)
+      command
+      (if (= remaining 0)
+        0
+        (let [paused (kernel-pause)]
+          (+ (wait-rx-command rx (- remaining 1)) (* 0 paused)))))))
+
+(defn quiesce [bar]
+  (let [mmio (kernel-subregion 1 549755813887 (- bar 1) 512)
+        stopped (mmio-store-u8 mmio 55
+                                (bit-or (mmio-load-u8 mmio 55) 128))]
+    (if (= (wait-fifo-empty mmio 300000) 1)
+      (let [disabled (mmio-store-u8 mmio 55 0)]
+        (if (= disabled 0) (+ 1 (* 0 stopped)) 0))
+      0)))
+
+(defn frame-be16 [frame offset]
+  (+ (* (kernel-load-u8-4k frame 4096 offset) 256)
+     (kernel-load-u8-4k frame 4096 (+ offset 1))))
+
+(defn frame-be32 [frame offset]
+  (+ (* (kernel-load-u8-4k frame 4096 offset) 16777216)
+     (* (kernel-load-u8-4k frame 4096 (+ offset 1)) 65536)
+     (* (kernel-load-u8-4k frame 4096 (+ offset 2)) 256)
+     (kernel-load-u8-4k frame 4096 (+ offset 3))))
+
+(defn frame-mac-matches-device [frame frame-offset mmio index]
+  (if (= index 6)
+    1
+    (if (= (kernel-load-u8-4k frame 4096 (+ frame-offset index))
+           (mmio-load-u8 mmio index))
+      (frame-mac-matches-device frame frame-offset mmio (+ index 1))
+      0)))
+
+(defn frame-macs-match [frame left-offset right-offset index]
+  (if (= index 6)
+    1
+    (if (= (kernel-load-u8-4k frame 4096 (+ left-offset index))
+           (kernel-load-u8-4k frame 4096 (+ right-offset index)))
+      (frame-macs-match frame left-offset right-offset (+ index 1))
+      0)))
+
+(defn arp-reply-valid [frame length mmio]
+  (and (>= length 42) (<= length 2048)
+       (= (frame-mac-matches-device frame 0 mmio 0) 1)
+       (= (frame-macs-match frame 6 22 0) 1)
+       (= (frame-be16 frame 12) 2054)
+       (= (frame-be16 frame 14) 1)
+       (= (frame-be16 frame 16) 2048)
+       (= (kernel-load-u8-4k frame 4096 18) 6)
+       (= (kernel-load-u8-4k frame 4096 19) 4)
+       (= (frame-be16 frame 20) 2)
+       (= (frame-be32 frame 28) 172818433)
+       (= (frame-be32 frame 38) 172818442)
+       (= (frame-mac-matches-device frame 32 mmio 0) 1)))
+
+(defn rx-rearm [rx rx-frame]
+  (let [extension (kernel-store-u32 rx 512 24 0)
+        address (store64-page rx 16 rx-frame)
+        fenced (dma-fence)
+        command (kernel-store-u32 rx 512 28 3221227520)
+        after (dma-fence)]
+    (if (and (= extension 0) (= address 1) (= fenced 1)
+             (= command 3221227520) (= after 1))
+      1
+      0)))
+
+(defn receive-arp [mmio rx rx-frame frames]
+  (if (= frames 0)
+    25
+    (let [command (wait-rx-command rx 200000000)]
+      (if (= command 0)
+        23
+        (let [bytes (bit-and command 16383)
+              valid-command (and (= (bit-and command 1048576) 0)
+                                 (not (= (bit-and command 33554432) 0))
+                                 (not (= (bit-and command 16777216) 0))
+                                 (>= bytes 18) (<= bytes 2048))]
+          (if (and valid-command (arp-reply-valid rx-frame (- bytes 4) mmio))
+            0
+            (if (= (rx-rearm rx rx-frame) 1)
+              (receive-arp mmio rx rx-frame (- frames 1))
+              24)))))))
+
+(defn qualify [bus bar dma-base]
+  (let [tx dma-base
+        rx (kernel-subregion dma-base 16384 4096 4096)
+        tx-frame (kernel-subregion dma-base 16384 8192 4096)
+        rx-frame (kernel-subregion dma-base 16384 12288 4096)
+        mmio (kernel-subregion 1 549755813887 (- bar 1) 512)
+        flushed (kernel-invlpg bar)
+        command (pci-read bus 4)
+        enabled (pci-write bus 4 (bit-or (bit-and command 65535) 6))
+        revision-id (revision mmio)]
+    (if (= revision-id 0)
+      (+ 2 (* 0 (+ flushed enabled)))
+      (if (not (mac-valid mmio))
+        3
+        (let [started (rings-start mmio revision-id dma-base)]
+          (if (not (= started 0))
+            (+ 10 started)
+            (if (= (bit-and (mmio-load-u16 mmio 108) 2) 0)
+              20
+              (let [arp-bytes (build-arp-request tx-frame mmio)
+                    submitted (tx-submit mmio tx tx-frame arp-bytes)]
+                (if (or (= arp-bytes 0) (not (= submitted 0)))
+                  21
+                  (if (= (wait-tx-complete tx 200000000) 0)
+                    22
+                    (receive-arp mmio rx rx-frame 8)))))))))))
