@@ -53,8 +53,34 @@
 (def ^:private source-overrides
   {"ecdsa-p256-public.o" "ecdsa-p256-sign.kotoba"})
 
+;; The kernel object ABI exports exactly one entry per object, so the
+;; public-point object is compiled from the SAME reviewed source with the sign
+;; entry renamed out of the export allow-list. Recorded as data rather than
+;; hidden in a script, so `reproduce-kotoba-objects.cljs` can replay it and a
+;; reviewer can see that there is no second copy of the P-256 arithmetic.
+
+;; MEASURED FALSE. `reproduce-kotoba-objects.cljs --git-resolve` recompiled all
+;; 47 objects the recipes name, each at the revision its own receipt records
+;; (2026-09-03, amu 9cf3a0ac): 39 reproduced byte-for-byte, 3 could not be
+;; built at all by an unpatched compiler (the ecdsa trio -- the recipe patches
+;; kotoba-native's entry table and fuel tier in-process, which `--git-resolve`
+;; deliberately does not do), and these five DID NOT REPRODUCE. Their committed
+;; bytes came from some other, newer compiler, so seeding the recipe's pin for
+;; them would restate a claim that has been falsified.
+;;
+;; This list is a measurement, not a judgement: re-run the driver, and if one of
+;; these starts reproducing, delete its line. Removing a line without re-running
+;; it is how a measured absence turns back into an assumption.
+(def ^:private producer-claim-falsified
+  #{"broker-admit.o" "ime-romaji.o" "scanout-bind.o" "session-restore.o"
+    "wm-hit.o"})
+
 (def ^:private ecdsa-recipe "os/aiueos/scripts/reproduce-ecdsa-sign-object.clj")
 (def ^:private kernel-recipe "os/aiueos/scripts/reproduce-kotoba-kernel-object.sh")
+
+(def ^:private source-transforms
+  {"ecdsa-p256-public.o" [["(defn aiueos-ecdsa-p256-sign"
+                           "(defn ecdsa-p256-sign-internal"]]})
 
 
 ;; A source that declares `(:require ...)` is a MODULE OF A PROJECT, and the
@@ -103,6 +129,9 @@
                            :source-sha256 (sha256-file file)})))))
       seen)))
 
+(defn- read-edn [p]
+  (try (edn/read-string (.readFileSync fs p "utf8")) (catch :default _ nil)))
+
 (defn- kernel-recipe-pin
   "The compiler revision `reproduce-kotoba-kernel-object.sh` pins, and the set
   of objects it actually names. Read out of the script rather than restated
@@ -122,9 +151,84 @@
       (die! 2 (str "UNANSWERED could-not-answer reason=recipe-pin-unreadable path=" kernel-recipe)))
     {:sha sha :named named}))
 
-(defn- emit-provenance! []
+;; ------------------------------------------------------ verification ------
+
+;; What, if anything, runs vectors against an object's SOURCE. Computed from
+;; what is on disk rather than declared, so it cannot claim coverage that was
+;; deleted.
+;;
+;; Both kinds run the source through the KIR interpreter. NEITHER executes the
+;; emitted machine code, so neither is evidence that the committed `.o` is
+;; correct -- only a QEMU smoke is, and that is recorded per measurement in
+;; `qualification/jvm-free-object-parity.edn`, not as a property of the file.
+;; Saying `:kir-vectors` where the truth is "its source has vectors" would be
+;; the same class of mistake this whole manifest exists to stop.
+(defn- verification-index
+  "namespace -> {:verification ... :verification-note ...}"
+  []
+  (let [contracts-dir (path/join root "os" "aiueos" "contracts")
+        runner (path/join root "os" "aiueos" "scripts" "verify-admissions.cljs")
+        runner-text (if (.existsSync fs runner) (.readFileSync fs runner "utf8") "")
+        tests-dir (path/join root "test" "aiueos")
+        from-contracts
+        (into {}
+              (for [f (if (.existsSync fs contracts-dir) (.readdirSync fs contracts-dir) [])
+                    :when (str/ends-with? f ".edn")
+                    :let [c (read-edn (path/join contracts-dir f))
+                          nsym (get-in c [:graph :root])
+                          fmt (:format c)]
+                    :when (and nsym fmt
+                               (str/includes? runner-text
+                                              (str "defmethod prepare " fmt)))]
+                [(str nsym)
+                 {:verification :kir-vectors
+                  :verification-note
+                  (str "os/aiueos/contracts/" f
+                       " vectors run through the KIR interpreter by"
+                       " os/aiueos/scripts/verify-admissions.cljs;"
+                       " the emitted machine code is not executed by it")}]))
+        from-tests
+        (into {}
+              (for [f (if (.existsSync fs tests-dir) (.readdirSync fs tests-dir) [])
+                    :when (str/ends-with? f ".clj")
+                    :let [t (.readFileSync fs (path/join tests-dir f) "utf8")
+                          m (re-find #"\"os\" \"aiueos\" \"kotoba\" \"([a-z0-9-]+)\.kotoba\"" t)]
+                    :when (and m (str/includes? t "kotoba.kir"))]
+                [(str "aiueos." (second m))
+                 {:verification :kir-vectors
+                  :verification-note
+                  (str "test/aiueos/" f
+                       " lowers the source with kotoba.sema/kotoba.kir and runs"
+                       " vectors through the interpreter (clojure -M:test);"
+                       " the emitted machine code is not executed by it")}]))]
+    (merge from-tests from-contracts)))
+
+(defn- source-namespace [src-path]
+  (second (re-find #"\(ns\s+([a-zA-Z][a-zA-Z0-9.*+!_?<>=-]*)"
+                   (.readFileSync fs src-path "utf8"))))
+
+(defn- emit-provenance!
+  "Rebuild the manifest's STRUCTURE from what is on disk: which objects exist,
+  which source each comes from, how that source is compiled, and what the
+  digests are today.
+
+  It does not invent a producer. An object's `:compiler` is carried forward
+  only when the attestation it records still applies -- same object bytes, same
+  source bytes. The moment either moves, the recorded revision is a claim about
+  bytes that no longer exist, so it drops back to `:sha nil` and the gate
+  refuses the object as `compiler-unrecorded` until
+  `reproduce-kotoba-objects.cljs --attest` measures it again."
+  []
   (let [dir (path/join root "os" "aiueos" "kotoba")
-        {:keys [sha named]} (kernel-recipe-pin)
+        out (path/join dir "provenance.edn")
+        prior (:objects (read-edn out))
+        verified (verification-index)
+        ;; The recipe's pin is a CLAIM, and it is seeded here only for objects
+        ;; the recipe actually names. `reproduce-kotoba-objects.cljs` is what
+        ;; turns it into a measurement: it recompiles at exactly this revision
+        ;; and compares. Measured 2026-09-02, `sha256.o` is byte-identical when
+        ;; built at 9cf3a0ac, so the claim holds for it.
+        {recipe-sha :sha recipe-named :named} (kernel-recipe-pin)
         objects (->> (.readdirSync fs dir)
                      (filter #(str/ends-with? % ".o"))
                      sort
@@ -151,27 +255,52 @@
                                 (str stem ".kotoba"))
                    src-path (path/join dir src-name)
                    src-rel (str "os/aiueos/kotoba/" src-name)
-                   recipe (cond
-                            (contains? #{"ecdsa-p256-sign.o" "ecdsa-p256-public.o"} o) ecdsa-recipe
-                            (contains? named stem) kernel-recipe
-                            :else nil)]
-               (when-not (.existsSync fs src-path)
-                 (die! 2 (str "UNANSWERED could-not-answer reason=source-absent object=" o)))
-               [o (cond-> {:source src-rel
-                           :source-sha256 (sha256-file src-path)
-                           :object-sha256 (sha256-file (path/join dir o))
-                           :target target
-                           ;; A recipe that patches the pinned toolchain
-                           ;; in-process is still a recorded producer, but it
-                           ;; is not the same claim as an unpatched one.
-                           :compiler (if recipe
-                                       (cond-> {:repo "kotoba-lang/amu" :sha sha :recipe recipe}
-                                         (= recipe ecdsa-recipe) (assoc :patched true))
-                                       {:repo "kotoba-lang/amu" :sha nil :recipe :unrecorded})}
-                    (seq (module-closure dir o src-path))
-                    (assoc :modules (module-closure dir o src-path)))])))
-          unrecorded (->> entries (filter #(nil? (get-in (val %) [:compiler :sha]))) (mapv key))
-          out (path/join dir "provenance.edn")]
+                   _ (when-not (.existsSync fs src-path)
+                       (die! 2 (str "UNANSWERED could-not-answer reason=source-absent object=" o)))
+                   src-sha (sha256-file src-path)
+                   obj-sha (sha256-file (path/join dir o))
+                   was (get prior o)
+                   carry? (and was
+                               (= obj-sha (:object-sha256 was))
+                               (= src-sha (:source-sha256 was))
+                               (get-in was [:compiler :sha]))
+                   modules (module-closure dir o src-path)
+                   v (or (get verified (source-namespace src-path))
+                         {:verification :attested-unverified
+                          :verification-note
+                          (str "no vector suite covers this source: no contract"
+                               " with a verify-admissions prepare method and no"
+                               " test/aiueos parity test names it. Its shape is"
+                               " checked by scripts/verify-kotoba-kernel-object.py"
+                               " and the K16 pure-native gate; its behaviour is"
+                               " not.")})]
+               [o (cond-> (merge {:source src-rel
+                                  :source-sha256 src-sha
+                                  :object-sha256 obj-sha
+                                  :target target
+                                  :route (if (seq modules) :project :single-file)
+                                  :compiler
+                                  (cond
+                                    ;; Before carry-forward: a falsified claim
+                                    ;; must not survive because the digits it
+                                    ;; was recorded against did not move.
+                                    (contains? producer-claim-falsified o)
+                                    {:repo "kotoba-lang/amu" :sha nil
+                                     :recipe :claim-falsified}
+                                    carry? (:compiler was)
+                                    (contains? recipe-named stem)
+                                    {:repo "kotoba-lang/amu" :sha recipe-sha
+                                     :recipe kernel-recipe}
+                                    (contains? #{"ecdsa-p256-sign.o" "ecdsa-p256-public.o"} o)
+                                    {:repo "kotoba-lang/amu" :sha recipe-sha
+                                     :recipe ecdsa-recipe :patched true}
+                                    :else {:repo "kotoba-lang/amu" :sha nil
+                                           :recipe :unrecorded})}
+                                 v)
+                    (seq modules) (assoc :modules modules)
+                    (contains? source-transforms o)
+                    (assoc :source-transform (get source-transforms o)))])))
+          unrecorded (->> entries (filter #(nil? (get-in (val %) [:compiler :sha]))) (mapv key))]
       (.writeFileSync
        fs out
        (str ";; GENERATED by os/aiueos/scripts/build-k16-pure-native.cljs --emit-provenance\n"
@@ -180,9 +309,10 @@
             ";; is an honest gap, not a placeholder to fill in with a guess. The\n"
             ";; K16 pure-native gate refuses those objects with reason=compiler-unrecorded.\n"
             ";;\n"
-            ";; This file does NOT claim the objects reproduce byte-for-byte from these\n"
-            ";; sources at these revisions -- that is measured separately\n"
-            ";; (ADR-0129, qualification/object-producer-measurement.edn).\n"
+            ";; A `:compiler {:sha ...}` here IS a byte-level claim: it was written by\n"
+            ";; `reproduce-kotoba-objects.cljs --attest`, which compiled the source with\n"
+            ";; that amu revision and hashed the result. This generator only carries such\n"
+            ";; a claim forward while both digests it was made against still hold.\n"
             (pr-str {:format :aiueos.kotoba-object-provenance/v1
                      :target target
                      :objects entries
