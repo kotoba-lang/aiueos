@@ -172,13 +172,14 @@
           repository names the Amu revision that produced them; see
           os/aiueos/kotoba/provenance.edn :unrecorded."}
   :native-boot
-  {:compiler "c2095e05d01ffc2dd2da412a98a3344fc2dc2b45"
+  {:compiler "8aa59c85cf078bc1ad1bf7cf6b79fc2805f8d939"
    :backend "ce85a36d5307e7e019c304caa17daf237abb9b9b"
    :firmware-entry :microsoft-x64-two-arity-efi-status-v2
    :memory-widths [:u8 :u16 :u32 :u64]
    :source "os/aiueos/native/kernel.kotoba"
    :scratch-pages {:count 14 :address-offset 80 :pages-offset 88
                    :owner :amu-uefi-loader-data}
+   :k16-preflight-screen "AIUEOS K16 PREFLIGHT STATUS XX"
    :qemu-marker "MPRCD"
    :qemu-exit 33
    :foreign 0

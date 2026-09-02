@@ -49,7 +49,10 @@
       (is (str/includes? builder "--source-path \"$aiueos\" --unpinned"))
       (is (str/includes? builder "--fuel 1048576"))
       (is (str/includes? builder
-                         "c2095e05d01ffc2dd2da412a98a3344fc2dc2b45")))))
+                         "8aa59c85cf078bc1ad1bf7cf6b79fc2805f8d939"))
+      (is (str/includes? (slurp (io/file aiueos "scripts"
+                                         "build-kotoba-native-boot.sh"))
+                         "AIUEOS_NATIVE_K16_PREFLIGHT")))))
 
 (deftest closure-audit-keeps-physical-proof-unverified
   (let [{:keys [exit out err]}
