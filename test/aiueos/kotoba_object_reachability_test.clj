@@ -52,7 +52,7 @@
        "kernel-publish-current-domain are three facilities the kernel would "
        "have to publish through hidden-context slots it does not have yet. "
        "Four of them are refused by the COMPILER for the same reason and that "
-       "was measured, not assumed (ADR-0136): compiled through the project "
+       "was measured, not assumed (ADR-0137): compiled through the project "
        "route at amu bb51dc14, `value-runtime-dispatch`, `-entry`, "
        "`-provider-policy` and `-provider-transport` come back "
        ":kotoba.error/subset-reject \"operation has no admitted type "
@@ -161,28 +161,10 @@
        vec))
 
 (def ^:private script-text
-  "Every script here, with COMMENT LINES REMOVED.
-
-  Removing them is not tidiness. `build-uefi.sh` carries the line
-
-      # `hkdf-sha256.o` is deliberately NOT here: it does not return ...
-
-  and a substring scan over the raw text reads that as a build. The object it
-  is talking about would then be `built-here?` BECAUSE a comment says it is
-  not, and its entry below would be rejected as decoration -- the test
-  inverted by the very sentence written to explain the state it is in.
-  Measured 2026-09-02.
-
-  `#` covers sh and python, `;` covers cljs; both are compared after leading
-  whitespace, so an indented comment counts."
   (delay
     (->> (.listFiles scripts-dir)
          (filter #(.isFile %))
          (map slurp)
-         (str/join "\n")
-         str/split-lines
-         (remove #(let [s (str/triml %)]
-                    (or (str/starts-with? s "#") (str/starts-with? s ";"))))
          (str/join "\n"))))
 
 (def ^:private imported-namespaces
@@ -202,6 +184,20 @@
   ;; A module reaches it inside whatever imports it, and has no name of its own
   ;; in any script -- which is the third answer, and why it is a separate
   ;; clause rather than a wider regex.
+  ;;
+  ;; The scan is over the RAW script text, comments included, and that was
+  ;; nearly "fixed" on 2026-09-02 for a defect that does not exist.
+  ;; `build-uefi.sh` carries the line
+  ;;
+  ;;     # `hkdf-sha256.o` is deliberately NOT here: it does not return ...
+  ;;
+  ;; which reads like a comment this scan would mistake for a build. It is not:
+  ;; the substring tested is `kotoba/<id>.o`, WITH the directory, and the
+  ;; comment writes the bare basename. Measured over all 90 sources here, no
+  ;; verdict changes when comment lines are removed first. The stripping was
+  ;; written, failed to discriminate on a deliberate break, and was reverted --
+  ;; a no-op guard in a test whose subject is honest measurement is decoration.
+  ;; If a comment ever DOES spell the directory, this is where it bites.
   (or (str/includes? @script-text (str "kotoba/" id ".o"))
       (str/includes? @script-text (str "kotoba/" id ".elf"))
       (str/includes? @script-text (str "kotoba/" id ".kotoba"))

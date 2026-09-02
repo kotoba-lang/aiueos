@@ -182,7 +182,7 @@
 ;; `aiueos/<munged stem>.kotoba` its source moves to when it becomes an
 ;; importable module. Looking only for the flat name would DROP those objects
 ;; from the run -- `sha256.o` and `digest-equal.o` are exactly that case since
-;; ADR-0136 -- and a shorter list reads as a clean pass over everything that
+;; ADR-0137 -- and a shorter list reads as a clean pass over everything that
 ;; was left.
 (defn- source-of [base]
   (->> [(str base ".kotoba")

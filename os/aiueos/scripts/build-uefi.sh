@@ -138,7 +138,7 @@ kotoba_qwen35_tensor_object=${AIUEOS_KOTOBA_QWEN35_TENSOR_OBJECT:-"$aiueos/kotob
 # 13 KiB artifact in the image to no end.
 kotoba_aes128_gcm_object=${AIUEOS_KOTOBA_AES128_GCM_OBJECT:-"$aiueos/kotoba/aes128-gcm.o"}
 kotoba_tls13_record_object=${AIUEOS_KOTOBA_TLS13_RECORD_OBJECT:-"$aiueos/kotoba/tls13-record.o"}
-# The two project-route objects (ADR-0136). NOT LINKED, and that is a decision
+# The two project-route objects (ADR-0137). NOT LINKED, and that is a decision
 # about the kernel rather than an omission: nothing in the kernel calls
 # `kotoba_aiueos_cid_v1_admit` or `kotoba_aiueos_value_runtime_cas_verify` yet.
 # They are verified here anyway, exactly as the qwen35 objects below are,

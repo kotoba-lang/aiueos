@@ -1,4 +1,4 @@
-# ADR-0136 — one copy of the AEAD, and two objects that could finally be built
+# ADR-0137 — one copy of the AEAD, and two objects that could finally be built
 
 Status: accepted
 Date: 2026-09-02
@@ -219,6 +219,11 @@ AIUEOS_TLS13_RECORD_OK rfc8448-s3 seq0 seal-open tamper-refused
 AIUEOS_UEFI_SMOKE_OK
 ```
 
+The run was repeated on the final tree, after merging `origin/main` twice
+(#228, #229, #230 and the f32 probe landed while this was in flight), and the
+serial log is again **byte-identical to the same baseline**, `AIUEOS_UEFI_SMOKE_OK`,
+exit 0.
+
 `TLS-PARITY ok aes-gcm record 6-cases` is **not** reproducible and was not
 re-run: ADR-0134 says the transition harness was deleted in the same change that
 made the flip, and `git grep TLS-PARITY` finds it only in that ADR's prose.
@@ -286,15 +291,28 @@ rule (`.` → `/`, `-` → `_`). A new assertion,
 the previous bug was not a wrong answer, it was a shorter list, and a shorter
 list passes every other assertion in the file.
 
-**A second defect, found while fixing the first.** `built-here?` searched the
-concatenated text of every script, and `build-uefi.sh` contains the line
+**A second defect, claimed and then withdrawn.** While fixing the first I read
+this line in `build-uefi.sh`
 
     # `hkdf-sha256.o` is deliberately NOT here: it does not return ...
 
-so a substring scan read that comment as a build. `hkdf-sha256` was
-`built-here?` **because a comment said it was not**, and its entry in the
-declared list was therefore rejected as decoration. The scan now drops comment
-lines (`#` and `;`, after leading whitespace).
+and concluded that `built-here?`, which scans the concatenated text of every
+script, was reading that comment as a build — so `hkdf-sha256` would be
+`built-here?` *because a comment said it was not*, and its entry in the declared
+list would be rejected as decoration. A comment-stripping pass was written and
+this ADR said so.
+
+**It is not true.** The substring `built-here?` tests is `kotoba/<id>.o`, WITH
+the directory; the comment writes the bare basename. Deliberately reverting the
+stripping left the suite green — the break did not discriminate — and a direct
+measurement over all 90 sources found **zero** whose verdict changes when
+comment lines are removed first. The stripping is reverted; what remains is a
+comment at `built-here?` saying what was checked and when it would bite.
+
+This is recorded rather than quietly dropped because it is the failure mode
+this repository keeps naming, arriving from the other side: not a check that
+passes without measuring, but a *fix* that would have passed review without
+ever having been the reason for anything. The break/restore rule caught it.
 
 ## Two other tools were reading the flat layout
 
@@ -346,8 +364,20 @@ once.
 * **The full 66-object roster is still not regenerated.** ADR-0132 measured that
   job at roughly nine hours (the JVM half of the comparison costs ~8 minutes per
   object on this machine) and the script's own `tree-digest` guard discards the
-  run if the compiler is touched meanwhile. This ADR extends the SCOPED receipt
-  instead.
+  run if the compiler is touched meanwhile. A SCOPED receipt covering seven —
+  `qualification/jvm-free-object-parity-project-route.edn` — is added instead:
+  `SCANNED 7 MATCH 7 DIFFERS 0 COULD-NOT-RUN 0 FAILED 0 REACHED-A-JVM 0`.
+  `jvm-free-object-parity-tls13.edn` is left as the record of its own run, with
+  a header saying two of its three rows now describe artifacts that no longer
+  exist — editing measured rows to keep them current would make the rest of the
+  file unfalsifiable.
+* **That scoped receipt was not produced by a single script invocation.** The
+  script writes its receipt into `<root>/qualification/`, which the scoped root
+  did not have; the verdicts and byte counts come from the run whose console
+  output the file quotes verbatim, and the per-object `:sha256` from re-running
+  the JVM-free half afterwards (cross-checked by the byte counts agreeing
+  exactly). The file says so at the top. A single-invocation re-run was still
+  going when this landed.
 * **Four of the six sources still have no object**, for the measured reason
   above. Closing that is a change to kotoba-kir / kotoba-sema / kotoba-native
   (five operations) plus an answer to the one-public-symbol rule for the two
