@@ -1,0 +1,36 @@
+;; Objects committed to this tree that already carry the stale parameter home
+;; described in ADR-0190, listed so `verify-loop-parameter-homes.cljs` can refuse
+;; a NEW one without being permanently red about these four.
+;;
+;; This baseline is not a tolerance. Every entry is a real defect in a real
+;; committed object, produced by a compiler between kotoba-native `da3b56b` and
+;; `d7105581`. Each one disappears the moment its object is rebuilt at a compiler
+;; past `d7105581` -- measured: rebuilt at amu `ed78ffd1`, all four report
+;; `SCANNED 4 self-tail-loops=47 objects-with-findings=0`.
+;;
+;; The rebuild belongs to the object-attestation stream (ADR-0150 decision 3),
+;; not here. When it lands, delete the cleared entries; the checker exits 4 and
+;; names them rather than passing quietly over a baseline that has gone stale.
+{:format :aiueos.loop-parameter-home/baseline-v1
+ :recorded "2026-09-03"
+ :adr "ADR-0190"
+ :cleared-by "any compiler pinning kotoba-native d7105581 or later"
+ :known
+ [{:object "hkdf-sha256.o" :function 0x18ea :slot 0x60
+   :note "NOT LINKED -- build-uefi.sh:157 says it 'does not return on this
+          machine'. This is why. Same shape as sha256's `round-block`, reached
+          through `copy-round`, which is what aiueos ADR-0136 (TLS-DIAG anomaly
+          2) measured and could not explain."}
+  {:object "cid-v1-admit.o" :function 0x1971 :slot 0x60
+   :note "NOT LINKED (built and shape-verified at build-uefi.sh:878; its .text
+          is not in KERNEL.ELF). Imports aiueos.sha256, so it carries the same
+          round-block at the same offset."}
+  {:object "value-runtime-cas-verify.o" :function 0x1971 :slot 0x60
+   :note "NOT LINKED (built at build-uefi.sh:881). Same import, same function,
+          same slot as cid-v1-admit."}
+  {:object "qwen35-vocab-index-build.o" :function 0xcfb :slot 0x20
+   :note "LINKED -- its .text is in KERNEL.ELF at 0x15f4c0. A different function
+          and a different slot, so the shape is not specific to sha256. Its
+          counter is recomputed as slot-1 from a slot frozen at entry, so a call
+          with a count above 1 does not terminate. Whether boot reaches it at
+          all is UNMEASURED."}]}
