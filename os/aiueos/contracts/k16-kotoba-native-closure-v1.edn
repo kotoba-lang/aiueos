@@ -5,7 +5,7 @@
 {:format :aiueos.k16-kotoba-native-closure/v1
  :target :gmktec-k16
  :compiler {:repo "kotoba-lang/amu"
-            :commit "6acdea817f4388edea81677778bc9bab60704887"
+            :commit "71286d1d89572f2382c79e397f55b10c7ebafbe4"
             :backend {:repo "kotoba-lang/kotoba-native"
                       :commit "ce85a36d5307e7e019c304caa17daf237abb9b9b"}
             :firmware-entry {:arity 2
@@ -26,6 +26,7 @@
          :scratch-pages {:count 14 :address-offset 80 :pages-offset 88
                          :owner :amu-uefi-loader-data}
          :k16-preflight {:gate :pci-02-00-0-rtl8125
+                         :kernel-call :returnable-main-wrapper
                          :checkpoints ["AIUEOS K16 PREFLIGHT ENTER"
                                        "AIUEOS K16 PREFLIGHT RTL8125"]
                          :screen "AIUEOS K16 PREFLIGHT STATUS XX"

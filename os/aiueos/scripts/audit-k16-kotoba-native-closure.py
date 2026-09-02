@@ -11,7 +11,7 @@ import sys
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 CONTRACT = ROOT / "contracts" / "k16-kotoba-native-closure-v1.edn"
-EXPECTED_COMPILER = "6acdea817f4388edea81677778bc9bab60704887"
+EXPECTED_COMPILER = "71286d1d89572f2382c79e397f55b10c7ebafbe4"
 
 
 def sha256(path: pathlib.Path) -> str:
