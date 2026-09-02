@@ -25,6 +25,34 @@
 ;; and then the four entries below are deleted. Do not delete one without
 ;; re-running the checker: an entry removed on the strength of a compiler
 ;; version rather than a measurement is the assumption this file replaced.
+;;
+;; CLASSIFY WITH THE CHECKER, NOT WITH A REBUILD. `verify-loop-parameter-homes`
+;; already answers "which committed objects carry this" for the whole tree --
+;; 95 scanned, 301 self-tail loops, 4 findings, measured 2026-09-03 -- from
+;; objdump alone: no compile, no amu, seconds. Comparing a rebuild at a
+;; fix-containing pin against the committed bytes answers the same question
+;; indirectly and costs a compile per object.
+;;
+;; It is also asymmetric, and only one direction is sound:
+;;
+;;   bytes DID NOT move   sound evidence the object is not at risk -- but it
+;;                        assumes the fix is complete for the shape, which the
+;;                        checker does not have to assume, because it looks for
+;;                        the shape in the artifact.
+;;   bytes DID move       NOT evidence of a defect. A codegen change moves
+;;                        objects for every reason there is. Measured on the
+;;                        earlier sweep at amu 370a04e0: 69 of 74 objects
+;;                        changed bytes, while the shape is present in 4.
+;;                        Reading movement as risk would flag 65 clean objects.
+;;
+;; So a rebuild comparison is a CORROBORATOR, and a good one when two methods
+;; are made to agree. Worked example (QWEN-KERNELS-2, 2026-09-03):
+;; `qwen35-attention.o` and `qwen35-recurrent-step.o` were built at
+;; kotoba-native 2c4d6c3 (no fix) and recompile byte-identically at 452422f
+;; (with fix) -- 5cd0baa6... 17,872 B and 23308afe... 6,808 B. The checker,
+;; run on those two alone, independently reports
+;; `SCANNED 2 self-tail-loops=23 findings=0`: 23 loops examined, so it could
+;; have found the shape, and did not. Two methods, one answer.
 {:format :aiueos.loop-parameter-home/baseline-v1
  :recorded "2026-09-03"
  :adr "ADR-0190"
