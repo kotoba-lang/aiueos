@@ -107,29 +107,48 @@ A module that resolves to neither path is a hard stop
 (`reason=module-source-absent`, exit 2) — shown red by hiding the module file,
 green with it restored.
 
-## What is NOT verified here
+## The vectors ran, and this section used to say they had not
 
-**The admission vectors for this contract did not run, and they were already
-red before this change.** `verify-admissions os/aiueos/contracts/hkdf-sha256-v1.edn`
-fails on a *pristine* `origin/main` worktree (de48542) with
-`source reader rejected input {:phase :read}`, raised from the pinned
-`kotoba-sema` at `244765d4`: `project/link-source` prints a linked source its
-own reader then refuses. That is the BigInt printer defect this repository's own
-verifier header describes as "fixed upstream" — the pin has not been advanced to
-the fix. It reproduces on the unmodified single-module source, so it is not
-caused by the split.
+They finished after this ADR first landed and they pass, so the claim is
+replaced rather than annotated.
 
-Re-running the vectors against a current toolchain (amu `bb51dc14`'s own
-dependency closure) was started and had not finished when this landed; the
-CLJS interpreter runs SHA-256 about ten times slower than the JVM one and this
-workstation was at load 270. **Nothing here should be read as evidence that
-the derived key bytes are unchanged.** What IS evidence: the moved core is the
-same 180 lines, moved verbatim, and the only edit to the remaining file is an
-alias prefix on the 24 call sites of `cl`, `cs` and `sha-run` — which are, by
-measurement, the only three of the core's 32 functions the HKDF half calls.
+`verify-admissions os/aiueos/contracts/hkdf-sha256-v1.edn`, run twice on the
+same current toolchain — once against a pristine `origin/main` worktree
+(de48542, the unmodified single-module source) as the control, once against
+this split:
 
-Advancing the amu/kotoba-sema pin so the vectors can run again is the next
-change, and it gates any further extraction.
+| | vectors | traps | memory assertions | observed reasons | verdict |
+|---|---|---|---|---|---|
+| control (inlined) | 18 | 0 | 11 | `0 1 2 3 4 5 6` | `:passed` |
+| this change (imported) | 18 | 0 | 11 | `0 1 2 3 4 5 6` | `:passed` |
+
+The 11 memory assertions are the derived bytes themselves — the key schedule's
+output, not merely its reason code — so this is the statement that matters:
+**importing the core did not change what the object derives.** Both runs are
+`{:jvm false}`. Elapsed 864,607 ms and 869,970 ms; the header's note that the
+CLJS interpreter runs SHA-256 about ten times slower than the JVM is not
+decoration.
+
+And the committed object is reproducible from the landed compiler:
+rebuilding `hkdf-sha256.o` with amu `bb51dc14` gives
+`75a9857d…a30c4b59`, byte-identical to what is committed.
+
+### The blocker that made the earlier claim true
+
+Running them at all required a classpath other than this repository's own.
+With aiueos's pinned closure, `verify-admissions` on this contract fails —
+**including on a pristine `origin/main`, on the unmodified single-module
+source** — with `source reader rejected input {:phase :read}` out of the pinned
+`kotoba-sema` `244765d4`: `project/link-source` prints a linked source its own
+reader then refuses. That is the BigInt printer defect this repository's own
+verifier header calls "fixed upstream" while the pin still predates the fix.
+
+So the contract is unrunnable on the pinned toolchain and green on a current
+one, and it was already unrunnable before this change. **Advancing the
+amu/kotoba-sema pin is the next change**, and until it lands, a green
+`verify-admissions` for this contract requires passing a current closure
+explicitly. That is a real gap: the repository's default invocation cannot
+check this object.
 
 ## Not done
 
@@ -139,3 +158,6 @@ change, and it gates any further extraction.
 - The six multi-module sources still have no objects (namespace-shaped paths).
 - `qualification/jvm-free-object-parity.edn` still lists 66 objects and does not
   cover `hkdf-sha256`; regenerating it is a separate measured run.
+- The amu/kotoba-sema pin (`244765d4`) predates the linked-source printer fix,
+  so `verify-admissions` cannot check this contract with the repository's own
+  closure. Advancing it is the next change.
