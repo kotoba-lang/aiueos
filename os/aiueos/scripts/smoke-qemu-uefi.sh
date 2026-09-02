@@ -806,6 +806,15 @@ grep -F "AIUEOS_EXCEPTION_OK vector=6 invalid-opcode" "$serial_log" >/dev/null |
   echo "error: kernel exception dispatch evidence was not observed" >&2
   exit 1
 }
+# SHA-STREAM-PARITY (ADR-0142). The full line, not a prefix: a run that printed
+# `SHA-STREAM-PARITY mismatch case=6` would satisfy a prefix match, and case 6
+# is the 131,080-byte hash that is the entire reason these objects exist.
+grep -F "SHA-STREAM-PARITY ok fips-abc fips-448 one-block region-vs-sha256-12288 stream-192-blocks region-131080 dwd-input-4 dwd-output-3 dwd-input-32768 refusals" "$serial_log" >/dev/null || {
+  echo "error: streaming SHA-256 parity evidence was not observed" >&2
+  sed 's/\r$//' "$serial_log" | grep -E '^SHA-STREAM-PARITY' >&2 || \
+    echo "       (no SHA-STREAM-PARITY marker at all)" >&2
+  exit 1
+}
 # With a NIC attached, QEMU always runs a DHCP server, so a boot that fails to
 # configure an address has a real defect. Asserted HERE and not only in
 # smoke-qemu-dhcp.sh, because a check that lives only in a gate nobody runs by

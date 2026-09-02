@@ -198,6 +198,215 @@ static int aiueos_device_worker_canonical_selftest(void) {
   return 0;
 }
 
+/* ---------------------------------------------------------------------------
+   SHA-STREAM-PARITY.  The streaming SHA-256 objects, on a CPU.
+   ---------------------------------------------------------------------------
+   THE ORACLE IS THE OBJECT THIS KERNEL ALREADY TRUSTS, plus published digests
+   for the sizes that object cannot reach.
+
+   There is no C SHA-256 in this kernel to compare against and has not been
+   since ADR-0015: every kernel hash already goes through
+   `kotoba_aiueos_sha256`, a Kotoba object.  (The C one lives in the UEFI
+   loader, `uefi/main.c:390`, and is a separate binary this self-test cannot
+   call.)  So cases 4 and 5 hash 12,288 bytes -- the LARGEST input
+   `kotoba_aiueos_sha256` accepts -- with both the old object and the two new
+   ones and compare the 32 bytes.  Two independent Kotoba implementations,
+   both running here as x86-64 machine code, agreeing on the same input is a
+   stronger statement than either against a literal.
+
+   Past 12,288 bytes nothing else here can answer, so cases 6 and 9 pin the
+   digest as a literal.  Those literals come from an implementation that is
+   not this one and are also carried by
+   `contracts/{sha256-region,device-worker-digest}-v1.edn`, whose expectations
+   `test/aiueos/sha256_stream_parity_test.clj` re-derives from
+   `kotoba-lang/org-nist-sha2` -- the pure `.cljc` reference.
+
+   Cases 7 and 8 are the point of the whole stream.  The two 64-character
+   digests they produce are ALREADY IN THIS FILE, transcribed by hand into
+   `worker_canonical_v3_expected` above from the server's worked example.  A
+   device that had to transcribe them could not settle a job it actually ran.
+   Now they are computed.  If the two ever disagree, one of the two is wrong
+   and this boot says which.
+
+   The KIR interpreter already agrees with every one of these; that says
+   nothing about what the backend emitted, which is the half a boot self-test
+   covers.  */
+extern int64_t kotoba_aiueos_sha256_region(uint8_t *st, int64_t st_len,
+                                           const uint8_t *src, int64_t src_len);
+extern int64_t kotoba_aiueos_sha256_stream(int64_t mode, uint8_t *st,
+                                           int64_t st_len, const uint8_t *src,
+                                           int64_t src_len);
+extern int64_t kotoba_aiueos_device_worker_digest(uint8_t *st, int64_t st_len,
+                                                  const uint8_t *tok,
+                                                  int64_t tok_count);
+extern uint64_t kotoba_aiueos_sha256(const uint8_t *, uint64_t, uint8_t[32],
+                                     uint8_t *, uint64_t);
+
+#define SHA_STREAM_STATE_BYTES 512U
+#define SHA_STREAM_DIGEST 424U        /* raw 32 bytes, big-endian */
+#define SHA_STREAM_MAX_TOKENS 460U    /* the caller's mode word, be32 */
+/* 4*(32768+2): the widest canonical `input-sha256` the protocol admits, and
+   also large enough for the 32,768-entry be32 token array case 9 needs. */
+#define SHA_STREAM_BUFFER_BYTES 131080U
+
+/* `.high_bss`, not ordinary `.bss`. The low kernel/user layout has to end
+   below 0x1f4000 (`kernel/linker.ld`'s own ASSERT), and 131,080 bytes of
+   message buffer is 13% of that whole budget -- measured 2026-09-02, putting
+   it in `.bss` made the link fail with `low kernel/user layout overlaps
+   process-private aperture` on a tree that had just gained the RTL8125 and
+   Qwen3.5 objects. The 4..6 MiB window is what that section is for: kernel-only
+   scratch, mapped writable and NX by `page_directory[2]`, and it is where
+   `device_result.c`, `tls13.c` and `qwen35_infer.c` already put theirs. */
+static uint8_t __attribute__((section(".high_bss"), aligned(64)))
+  sha_stream_state[SHA_STREAM_STATE_BYTES];
+static uint8_t __attribute__((section(".high_bss"), aligned(64)))
+  sha_stream_buffer[SHA_STREAM_BUFFER_BYTES];
+
+static int sha_stream_is(const uint8_t *digest, const char *expected) {
+  static const char hexits[] = "0123456789abcdef";
+  for (int i = 0; i < 32; i++) {
+    if (expected[i * 2] != hexits[digest[i] >> 4]) return 0;
+    if (expected[i * 2 + 1] != hexits[digest[i] & 15U]) return 0;
+  }
+  return expected[64] == 0;
+}
+
+static void sha_stream_be32(uint8_t *p, uint32_t v) {
+  p[0] = (uint8_t)(v >> 24); p[1] = (uint8_t)(v >> 16);
+  p[2] = (uint8_t)(v >> 8);  p[3] = (uint8_t)v;
+}
+
+static void sha_stream_fill(uint32_t bytes, uint8_t value) {
+  for (uint32_t i = 0; i < bytes; i++) sha_stream_buffer[i] = value;
+}
+
+/* Returns 0, or the 1-based number of the case that disagreed, so a mismatch
+   names which of the ten it was rather than only that one of them was. */
+static int aiueos_sha_stream_selftest(void) {
+  static uint8_t old_digest[32];
+  static uint8_t old_workspace[512];
+  const uint8_t *out = sha_stream_state + SHA_STREAM_DIGEST;
+
+  /* 1. FIPS 180-4 B.1. */
+  sha_stream_buffer[0] = 'a'; sha_stream_buffer[1] = 'b'; sha_stream_buffer[2] = 'c';
+  if (kotoba_aiueos_sha256_region(sha_stream_state, SHA_STREAM_STATE_BYTES,
+                                  sha_stream_buffer, 3) != 0) return 1;
+  if (!sha_stream_is(out,
+      "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad")) return 1;
+
+  /* 2. FIPS 180-4 B.2 -- 56 bytes, the exact length at which the padding no
+        longer fits in one block, so this is the only case here that takes the
+        two-block `final-long` arm. */
+  {
+    static const char b2[] =
+      "abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq";
+    for (int i = 0; i < 56; i++) sha_stream_buffer[i] = (uint8_t)b2[i];
+    if (kotoba_aiueos_sha256_region(sha_stream_state, SHA_STREAM_STATE_BYTES,
+                                    sha_stream_buffer, 56) != 0) return 2;
+    if (!sha_stream_is(out,
+        "248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1")) return 2;
+  }
+
+  /* 3. Exactly one block and an EMPTY tail. A padding routine that skipped the
+        final block when nothing was left over passes cases 1 and 2. */
+  sha_stream_fill(64, 'a');
+  if (kotoba_aiueos_sha256_region(sha_stream_state, SHA_STREAM_STATE_BYTES,
+                                  sha_stream_buffer, 64) != 0) return 3;
+  if (!sha_stream_is(out,
+      "ffe054fe7ae0cb6dc65c3af9b61d5209f439851db43d0ba5997337df154668eb")) return 3;
+
+  /* 4. 12,288 bytes: the LARGEST input `kotoba_aiueos_sha256` accepts, hashed
+        by both objects, compared byte for byte. No literal. */
+  sha_stream_fill(12288, 'a');
+  if (!kotoba_aiueos_sha256(sha_stream_buffer, 12288, old_digest,
+                            old_workspace, sizeof(old_workspace))) return 4;
+  if (kotoba_aiueos_sha256_region(sha_stream_state, SHA_STREAM_STATE_BYTES,
+                                  sha_stream_buffer, 12288) != 0) return 4;
+  for (int i = 0; i < 32; i++) if (out[i] != old_digest[i]) return 4;
+
+  /* 5. The same 12,288 bytes driven a block at a time: one init, 192 block
+        calls, one final over an empty tail. Compared against the SAME
+        `kotoba_aiueos_sha256` answer, so this checks the streaming object
+        against the old one and against case 4 at once. */
+  if (kotoba_aiueos_sha256_stream(0, sha_stream_state, SHA_STREAM_STATE_BYTES,
+                                  sha_stream_buffer, 0) != 0) return 5;
+  for (int b = 0; b < 192; b++)
+    if (kotoba_aiueos_sha256_stream(1, sha_stream_state, SHA_STREAM_STATE_BYTES,
+                                    sha_stream_buffer + b * 64, 64) != 0) return 5;
+  if (kotoba_aiueos_sha256_stream(2, sha_stream_state, SHA_STREAM_STATE_BYTES,
+                                  sha_stream_buffer, 0) != 0) return 5;
+  for (int i = 0; i < 32; i++) if (out[i] != old_digest[i]) return 5;
+
+  /* 6. 131,080 bytes -- ten times what `kotoba_aiueos_sha256` accepts and six
+        hundred times what `sha256_core` does. This is the size that made the
+        whole stream necessary, and nothing else in this kernel can answer it,
+        so the digest is a literal. */
+  sha_stream_fill(SHA_STREAM_BUFFER_BYTES, 'a');
+  if (kotoba_aiueos_sha256_region(sha_stream_state, SHA_STREAM_STATE_BYTES,
+                                  sha_stream_buffer,
+                                  SHA_STREAM_BUFFER_BYTES) != 0) return 6;
+  if (!sha_stream_is(out,
+      "f9849709fe889fedb13705ffc841d41f81e26844a49e5fc4cf78e0fa3fba9441")) return 6;
+
+  /* 7. `input-sha256([248044 9707 11 1879], 64)`. This digest is the literal
+        `worker_canonical_v3_expected` carries above. */
+  sha_stream_be32(sha_stream_buffer + 0, 248044U);
+  sha_stream_be32(sha_stream_buffer + 4, 9707U);
+  sha_stream_be32(sha_stream_buffer + 8, 11U);
+  sha_stream_be32(sha_stream_buffer + 12, 1879U);
+  sha_stream_be32(sha_stream_state + SHA_STREAM_MAX_TOKENS, 64U);
+  if (kotoba_aiueos_device_worker_digest(sha_stream_state,
+                                         SHA_STREAM_STATE_BYTES,
+                                         sha_stream_buffer, 4) != 24) return 7;
+  if (!sha_stream_is(out,
+      "6d1f26aca9a65756235d79f4246587ffa5192cddab5fd1056d0eff3b5dd2b34a")) return 7;
+
+  /* 8. `output-sha256([2005 17 42])` -- max-tokens zero, so the suffix is
+        absent. The other literal above. */
+  sha_stream_be32(sha_stream_buffer + 0, 2005U);
+  sha_stream_be32(sha_stream_buffer + 4, 17U);
+  sha_stream_be32(sha_stream_buffer + 8, 42U);
+  sha_stream_be32(sha_stream_state + SHA_STREAM_MAX_TOKENS, 0U);
+  if (kotoba_aiueos_device_worker_digest(sha_stream_state,
+                                         SHA_STREAM_STATE_BYTES,
+                                         sha_stream_buffer, 3) != 16) return 8;
+  if (!sha_stream_is(out,
+      "bfc850f9c5276dffd405b5f6413ec57703465265dc0747fa9fea07d2aee1b644")) return 8;
+
+  /* 9. The protocol's WIDEST input: 32,768 tokens and a max-tokens suffix,
+        131,080 canonical bytes. `t[i] = i` is deterministic and every id is
+        inside the 248,320-entry vocabulary. */
+  for (uint32_t i = 0; i < 32768U; i++)
+    sha_stream_be32(sha_stream_buffer + i * 4U, i);
+  sha_stream_be32(sha_stream_state + SHA_STREAM_MAX_TOKENS, 4096U);
+  if (kotoba_aiueos_device_worker_digest(sha_stream_state,
+                                         SHA_STREAM_STATE_BYTES,
+                                         sha_stream_buffer, 32768) != 131080)
+    return 9;
+  if (!sha_stream_is(out,
+      "c77159f6fffac7e2e21b6802cd1f0f0b5eb4adfba7cd060a8c44c01e038f22a8")) return 9;
+
+  /* 10. Four refusals, so a run that never saw an object say no is not counted
+         as a pass, and one success afterwards so a run in which the objects had
+         simply stopped working is not counted as a set of correct refusals. */
+  if (kotoba_aiueos_sha256_region(sha_stream_state, 511,
+                                  sha_stream_buffer, 0) != 1) return 10;
+  if (kotoba_aiueos_sha256_region(sha_stream_state, SHA_STREAM_STATE_BYTES,
+                                  sha_stream_buffer, 1048577) != 3) return 10;
+  if (kotoba_aiueos_sha256_stream(3, sha_stream_state, SHA_STREAM_STATE_BYTES,
+                                  sha_stream_buffer, 0) != 2) return 10;
+  if (kotoba_aiueos_device_worker_digest(sha_stream_state,
+                                         SHA_STREAM_STATE_BYTES,
+                                         sha_stream_buffer, 32769) != -2)
+    return 10;
+  sha_stream_buffer[0] = 'a'; sha_stream_buffer[1] = 'b'; sha_stream_buffer[2] = 'c';
+  if (kotoba_aiueos_sha256_region(sha_stream_state, SHA_STREAM_STATE_BYTES,
+                                  sha_stream_buffer, 3) != 0) return 10;
+  if (!sha_stream_is(out,
+      "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad")) return 10;
+  return 0;
+}
+
 
 #define AIUEOS_OWNED_MEMORY_MAP_BYTES (128ULL * 1024ULL)
 static struct aiueos_boot_info aiueos_owned_boot_info;
@@ -1314,6 +1523,28 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
       }
       debug_string("DEVCLIENT-PARITY canonical ok\n");
       serial_string("DEVCLIENT-PARITY canonical ok v2-result v3-result refusal-5 refusal-7\r\n");
+    }
+    {
+      /* SHA-STREAM-PARITY.  The three streaming SHA-256 objects on this CPU,
+         against `kotoba_aiueos_sha256` where both can answer and against
+         published digests where only the new ones can.  Cases 6 and 9 hash
+         131,080 bytes each -- ten times the old object's ceiling -- so this
+         block is the slowest self-test in the boot and is deliberately not
+         behind a flag: the sizes it covers are the reason the objects exist,
+         and a check that only runs when someone remembers to ask is a check
+         that goes quiet. */
+      int sha_stream_case = aiueos_sha_stream_selftest();
+      if (sha_stream_case) {
+        debug_string("SHA-STREAM-PARITY mismatch\n");
+        serial_string("SHA-STREAM-PARITY mismatch case=");
+        serial_decimal((uint32_t)sha_stream_case);
+        serial_string("\r\n");
+        qemu_exit(0x71);
+      }
+      debug_string("SHA-STREAM-PARITY ok\n");
+      serial_string("SHA-STREAM-PARITY ok fips-abc fips-448 one-block "
+                    "region-vs-sha256-12288 stream-192-blocks region-131080 "
+                    "dwd-input-4 dwd-output-3 dwd-input-32768 refusals\r\n");
     }
 #ifdef AIUEOS_PHYSICAL_QUALIFICATION
     aiueos_qualification_progress(226);
