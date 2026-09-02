@@ -20,6 +20,7 @@
 ;; Usage: nbb os/aiueos/scripts/smoke-qemu-dot-f32.cljs /path/to/compiler
 (ns smoke-qemu-dot-f32
   (:require ["child_process" :as cp]
+            ["crypto" :as crypto]
             ["fs" :as fs]
             ["os" :as os]
             ["path" :as path]))
@@ -89,6 +90,19 @@
   (js/console.error (str "error: " message))
   (js/process.exit 1))
 
+;; Three outcomes, not two (ADR-0155). `die` is a real disagreement -- an arm
+;; answered something other than what kotoba.kir answers. `unmeasured` is "this
+;; machine could not ask": no compiler, no OVMF, no QEMU. Before 2026-09-02
+;; both were exit 1, so a run that never compiled anything was indistinguishable
+;; from a run where the vector arm computed the wrong dot product.
+(defn unmeasured [message]
+  (js/console.error (str "COULD-NOT-RUN " message))
+  (js/process.exit 3))
+
+(defn refused [message]
+  (js/console.error (str "REFUSED stale-image " message))
+  (js/process.exit 4))
+
 (defn run! [command args options]
   (let [result (cp/spawnSync command (clj->js args)
                              (clj->js (merge {:encoding "utf8"} options)))]
@@ -96,11 +110,21 @@
      :stdout (or (.-stdout result) "")
      :stderr (or (.-stderr result) "")}))
 
+(defn sha256-file [p]
+  (when (fs/existsSync p)
+    (-> (crypto/createHash "sha256") (.update (fs/readFileSync p)) (.digest "hex"))))
+
+(defn qemu-binary []
+  (let [q (or (.. js/process -env -QEMU_SYSTEM_X86_64) "qemu-system-x86_64")
+        r (cp/spawnSync "sh" #js ["-c" (str "command -v " q)] #js {:encoding "utf8"})]
+    (when-not (zero? (.-status r)) (unmeasured (str "qemu-missing: " q)))
+    q))
+
 (defn firmware []
   (or (some #(when (fs/existsSync %) %) (cons (.. js/process -env -OVMF_CODE)
                                               ovmf-candidates))
-      (die (str "OVMF firmware not found. Looked at: "
-                (clojure.string/join ", " ovmf-candidates)))))
+      (unmeasured (str "ovmf-missing. Looked at: "
+                       (clojure.string/join ", " ovmf-candidates)))))
 
 (defn build! [compiler out]
   (let [kernel (path/join out "KERNEL.ELF")
@@ -114,17 +138,37 @@
                                  "--output" kernel]
                          {})]
       (when-not (zero? (:status compiled))
-        (die (str "compile failed:\n" (:stdout compiled) (:stderr compiled)))))
+        (unmeasured (str "compile-failed:\n" (:stdout compiled) (:stderr compiled)))))
     (let [packaged (run! binary ["package-aiueos-boot" kernel "--output" efi] {})]
       (when-not (zero? (:status packaged))
-        (die (str "package failed:\n" (:stdout packaged) (:stderr packaged)))))
+        (unmeasured (str "package-failed:\n" (:stdout packaged) (:stderr packaged)))))
     ;; The same no-foreign-object floor the shipping kernel's build script
     ;; keeps. A test variant that quietly linked a C object would prove
     ;; nothing about a pure-Kotoba kernel.
     (doseq [entry (fs/readdirSync out #js {:recursive true})]
       (when (re-find #"\.(c|o|obj|a|so)$" entry)
         (die (str "foreign/C artifact entered the probe output: " entry))))
-    {:kernel kernel :efi efi}))
+    ;; The freshness receipt (ADR-0155). This harness compiles into a fresh
+    ;; mkdtemp, so it cannot boot a PREVIOUS run's image the way the
+    ;; build/aiueos harnesses could -- but "the compiler wrote a file" and "QEMU
+    ;; opened the file the compiler wrote" are still two claims, and the sha256
+    ;; recorded here is what the assert before each boot compares against.
+    {:kernel kernel :efi efi
+     :digests {kernel (sha256-file kernel) efi (sha256-file efi)}}))
+
+(defn assert-fresh!
+  "Refuse to boot an artifact whose bytes are not the ones `build!` produced."
+  [{:keys [digests]}]
+  (when (empty? digests)
+    (unmeasured "no-artifacts: build! recorded no digest to compare against"))
+  (doseq [[p expected] digests]
+    (let [found (sha256-file p)]
+      (when-not found
+        (refused (str "artifact=" p " expected=" expected " found=absent")))
+      (when-not (= found expected)
+        (refused (str "artifact=" p " expected=" expected " found=" found)))))
+  (println (str "IMAGE-FRESH artifacts=" (count digests)))
+  (println (str "SCANNED " (count digests))))
 
 (defn observe [out cpu code]
   (let [log (path/join out (str "debug-" cpu ".log"))]
@@ -149,8 +193,15 @@
                      (die "usage: smoke-qemu-dot-f32.cljs /path/to/compiler"))
         out (fs/mkdtempSync (path/join (os/tmpdir) "aiueos-dot-f32-"))
         code (firmware)
-        _ (build! compiler out)
-        observations (mapv #(observe out % code) cpu-models)]
+        _ (qemu-binary)
+        built (build! compiler out)
+        observations (mapv (fn [cpu]
+                             ;; before EVERY boot, not once: two boots share one
+                             ;; artifact, and the claim under test is that they
+                             ;; ran the SAME bytes on two different machines.
+                             (assert-fresh! built)
+                             (observe out cpu code))
+                           cpu-models)]
     (doseq [{:keys [cpu status console]} observations]
       (println (str "-cpu " cpu ": exit=" status " console=" (pr-str console))))
     (doseq [{:keys [cpu status console]} observations]
