@@ -81,7 +81,7 @@
       (is (str/includes? builder
                          "$link_frame_source/capability/link/frame.kotoba"))
       (is (str/includes? builder
-                         "04279d4e2bc8c88b84089eaed11545521d3e5982"))
+                         "8e859f5d1817374a1b1de8447961ac223ffd538c"))
       (is (str/includes? (slurp (io/file aiueos "scripts"
                                          "verify-kotoba-native-kernel.py"))
                          "capability.net.transport"))

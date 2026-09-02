@@ -18,10 +18,10 @@ link_frame_source=${AIUEOS_LINK_FRAME_SOURCE_PATH:-"$repo/../capability-link-fra
 dma_map_source=${AIUEOS_DMA_MAP_SOURCE_PATH:-"$repo/../capability-dma-map/kotoba"}
 mmio_map_source=${AIUEOS_MMIO_MAP_SOURCE_PATH:-"$repo/../capability-mmio-map/kotoba"}
 net_transport_source=${AIUEOS_NET_TRANSPORT_SOURCE_PATH:-"$repo/../capability-net-transport/kotoba"}
-link_frame_commit=04279d4e2bc8c88b84089eaed11545521d3e5982
-dma_map_commit=3a1d8a6945470257b031e6bc7eb005cdc47f4f75
-mmio_map_commit=17d015d42a27271ad59888fdd106be16b87847c9
-net_transport_commit=9b71af9fa70f6440a212b784d5cabca47171e902
+link_frame_commit=8e859f5d1817374a1b1de8447961ac223ffd538c
+dma_map_commit=b3590c605a7c189b67a86c28aaae31ec7cdcb8bf
+mmio_map_commit=cbbf4ec59f7ca010cec44be2dd84e310faadccee
+net_transport_commit=583a9f7c3f517a30a65cf9db3f2dcd19289cbef0
 require_source_commit() {
   label=$1
   source_root=$2
