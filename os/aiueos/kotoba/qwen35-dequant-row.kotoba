@@ -1,0 +1,237 @@
+(ns aiueos.qwen35-dequant-row
+  (:export [aiueos-qwen35-dequant-row main]))
+
+;; One quantised weight row -> `count` binary32 values in a caller-owned
+;; workspace. A port of `aiueos_qwen35_dequantize_row`
+;; (`kernel/qwen35_quant.c:584`) for the four types this object admits, whose
+;; equations come from ggml-org/llama.cpp @3173a564 (MIT) by way of that file.
+;;
+;; ## Return
+;;
+;; **Zero is the success value**, the `aiueos-dhcp-reply-valid` convention. A
+;; caller that writes `if (dequantize(...))` inverts the decision.
+;;
+;;    0    the row was written
+;;   -1    null source
+;;   -2    null destination
+;;   -3    destination length is not a positive multiple of four
+;;   -4    element count above this object's 65,536 ceiling
+;;   -5    source length is not the row byte count for this type and count
+;;   -6    quantisation type is not one of F32 / Q8_0 / Q4_K / Q6_K
+;;
+;; ## Which types, and why only these
+;;
+;; F32 (0), Q8_0 (8), Q4_K (12) and Q6_K (14). They are the four whose
+;; equations are pure arithmetic over the block's own bytes.
+;;
+;; THE SHIPPING MODEL'S DOMINANT TYPES ARE NOT AMONG THEM. The admitted
+;; artifact (`contracts/qwen38-qwen35-runtime-v1.edn` `:tensor-types`) is
+;; IQ3_XXS 120, IQ3_S 106, IQ4_XS 45, IQ2_S 35 -- 306 of 866 tensors -- and
+;; every one of those decodes through a CODEBOOK GRID that
+;; `kernel/qwen35_quant_tables.inc` holds as static const data. This dialect
+;; has no rodata and no bytes literal, so a grid can only be written as a
+;; nested `if` chain over thousands of entries, which is not a table but a
+;; transcription mistake waiting to happen. Those types stay in the C until a
+;; literal facility lands. The four here cover 490 of 866 tensors (F32 360,
+;; Q8_0 98, Q4_K 26, Q6_K 6) and the K16 model still runs its dominant matvecs
+;; in C.
+;;
+;; ## The scale is recomputed per element
+;;
+;; The C hoists `d` and `dmin` out of the element loop; this object reads and
+;; converts them again for every element, because a hoisted value would have to
+;; travel as a sixth parameter and the ABI admits five. The cost is fuel, not
+;; correctness: `fp16-bits` is a pure function of four bytes it re-reads, so
+;; every element sees the same `d` the C's hoisted one holds. Measured: 22 fuel
+;; per Q4_K element against 6 for the arithmetic alone.
+;;
+;; ## Rounding
+;;
+;; Every arithmetic step is binary32 in the same order and with the same
+;; operands as the C, so the bytes written are the bytes the C writes. The one
+;; place order is load-bearing is Q6_K's `d * sc[is] * q`, which C evaluates
+;; left to right as `(d * sc) * q` and this object writes that way.
+
+;; ------------------------------------------------------------------ readers
+
+(defn u8-at [base len off]
+  (kernel-load-u8 (kernel-subregion base len off 1) 1 0))
+
+(defn s8-at [base len off]
+  (let [v (u8-at base len off)]
+    (if (> v 127) (- v 256) v)))
+
+(defn u16-at [base len off]
+  (+ (u8-at base len off) (* 256 (u8-at base len (+ off 1)))))
+
+;; `kernel-load-u32` hands back a ZERO-extended word and `f32-from-bits`
+;; refuses one: the KIR oracle's `f32-to-i64-bits` yields a signed i32, so a
+;; word at or above 2^31 is not a bit pattern it will accept. (The x86 emitter
+;; canonicalises the same word silently -- the two disagree, and this object
+;; does the narrowing itself so that both see the value the other would.)
+(defn f32w [u]
+  (if (> u 2147483647) (- u 4294967296) u))
+
+;; `f32-to-bits` yields a signed i32; `kernel-store-u32` stores a word.
+(defn u32w [v]
+  (bit-and v 4294967295))
+
+;; ------------------------------------------------- fp16 -> binary32 pattern
+;;
+;; `fp16_to_f32` (`qwen35_quant.c:87`). Shifts are `quot` and `*`: this subset
+;; admits `bit-and`/`bit-or` but not a shift form, which is the same reason
+;; `qwen35-gguf-kv-scan.kotoba` carries power tables.
+
+(defn fp16-sub [sign m u]
+  (if (= (bit-and m 1024) 0)
+    (fp16-sub sign (* m 2) (- u 1))
+    (bit-or sign (bit-or (* (+ u 127) 8388608) (* (bit-and m 1023) 8192)))))
+
+(defn fp16-bits [h]
+  (let [sign (* (bit-and h 32768) 65536)
+        e (bit-and (quot h 1024) 31)
+        m (bit-and h 1023)]
+    (if (= e 0)
+      (if (= m 0) sign (fp16-sub sign m -14))
+      (if (= e 31)
+        (bit-or sign (bit-or 2139095040 (* m 8192)))
+        (bit-or sign (bit-or (* (+ e 112) 8388608) (* m 8192)))))))
+
+;; --------------------------------------------------------------- F32 (copy)
+
+(defn f32-el [src slen dst count i]
+  (if (>= i count)
+    0
+    (do (kernel-store-u32 (kernel-subregion dst (* count 4) (* i 4) 4) 4 0
+                          (kernel-load-u32 (kernel-subregion src slen (* i 4) 4) 4 0))
+        (f32-el src slen dst count (+ i 1)))))
+
+;; ---------------------------------------------------- Q8_0 (34-byte blocks)
+;;
+;; `dequantize_row_q8_0`: one fp16 scale then 32 signed bytes,
+;; `y[i*32 + j] = qs[j] * d`.
+
+(defn q80-value [src slen base j]
+  (f32-to-bits
+   (f32-mul (i64-to-f32-rounded (s8-at src slen (+ base (+ 2 j))))
+            (f32-from-bits (f32w (fp16-bits (u16-at src slen base)))))))
+
+(defn q80-el [src slen dst count i]
+  (if (>= i count)
+    0
+    (do (kernel-store-u32
+         (kernel-subregion dst (* count 4) (* i 4) 4) 4 0
+         (u32w (q80-value src slen (* 34 (quot i 32)) (- i (* 32 (quot i 32))))))
+        (q80-el src slen dst count (+ i 1)))))
+
+;; --------------------------------------------------- Q4_K (144-byte blocks)
+;;
+;; `get_scale_min_k4` as two functions, because a Kotoba function returns one
+;; value and the C returns two through pointers. Both read the same twelve
+;; scale bytes and neither has a side effect, so splitting them cannot make
+;; them disagree about which `j` they were asked for.
+
+(defn k4-scale [src slen sbase j]
+  (if (< j 4)
+    (bit-and (u8-at src slen (+ sbase j)) 63)
+    (bit-or (bit-and (u8-at src slen (+ sbase (+ j 4))) 15)
+            (* 16 (quot (u8-at src slen (+ sbase (- j 4))) 64)))))
+
+(defn k4-min [src slen sbase j]
+  (if (< j 4)
+    (bit-and (u8-at src slen (+ sbase (+ j 4))) 63)
+    (bit-or (quot (u8-at src slen (+ sbase (+ j 4))) 16)
+            (* 16 (quot (u8-at src slen (+ sbase j)) 64)))))
+
+(defn q4k-value [src slen base r]
+  (let [step (quot r 64)
+        inner (- r (* 64 step))
+        low (< inner 32)
+        j (+ (* 2 step) (if low 0 1))
+        l (if low inner (- inner 32))
+        q (u8-at src slen (+ base (+ 16 (+ (* 32 step) l))))
+        v (if low (bit-and q 15) (quot q 16))]
+    (f32-to-bits
+     (f32-sub (f32-mul (f32-mul (f32-from-bits (f32w (fp16-bits (u16-at src slen base))))
+                                (i64-to-f32-rounded (k4-scale src slen (+ base 4) j)))
+                       (i64-to-f32-rounded v))
+              (f32-mul (f32-from-bits (f32w (fp16-bits (u16-at src slen (+ base 2)))))
+                       (i64-to-f32-rounded (k4-min src slen (+ base 4) j)))))))
+
+(defn q4k-el [src slen dst count i]
+  (if (>= i count)
+    0
+    (do (kernel-store-u32
+         (kernel-subregion dst (* count 4) (* i 4) 4) 4 0
+         (u32w (q4k-value src slen (* 144 (quot i 256)) (- i (* 256 (quot i 256))))))
+        (q4k-el src slen dst count (+ i 1)))))
+
+;; --------------------------------------------------- Q6_K (210-byte blocks)
+;;
+;; The C writes four output positions per `l` from one `qh` byte; this object
+;; reads the same byte four times, once per output element, and takes the two
+;; bits its own group owns. `pow4` is `1 << (2 * group)` as a table for the
+;; same reason `fp16-bits` uses `quot`.
+
+(defn pow4 [g]
+  (if (= g 0) 1 (if (= g 1) 4 (if (= g 2) 16 64))))
+
+(defn q6k-value [src slen base r]
+  (let [half (quot r 128)
+        t (- r (* 128 half))
+        grp (quot t 32)
+        l (- t (* 32 grp))
+        odd (- grp (* 2 (quot grp 2)))
+        qv (u8-at src slen (+ base (+ (* 64 half) (+ l (* 32 odd)))))
+        nib (if (< grp 2) (bit-and qv 15) (quot qv 16))
+        hi (bit-and (quot (u8-at src slen (+ base (+ 128 (+ (* 32 half) l)))) (pow4 grp)) 3)
+        q (- (bit-or nib (* 16 hi)) 32)
+        sc (s8-at src slen (+ base (+ 192 (+ (* 8 half) (+ (quot l 16) (* 2 grp))))))]
+    (f32-to-bits
+     (f32-mul (f32-mul (f32-from-bits (f32w (fp16-bits (u16-at src slen (+ base 208)))))
+                       (i64-to-f32-rounded sc))
+              (i64-to-f32-rounded q)))))
+
+(defn q6k-el [src slen dst count i]
+  (if (>= i count)
+    0
+    (do (kernel-store-u32
+         (kernel-subregion dst (* count 4) (* i 4) 4) 4 0
+         (u32w (q6k-value src slen (* 210 (quot i 256)) (- i (* 256 (quot i 256))))))
+        (q6k-el src slen dst count (+ i 1)))))
+
+;; ------------------------------------------------------------------ the row
+;;
+;; `aiueos_qwen35_quant_row_bytes` for the admitted four. -1 for a type this
+;; object does not decode, which cannot collide with a real byte count.
+
+(defn row-bytes [qtype count]
+  (if (= qtype 0) (* count 4)
+    (if (= qtype 8)
+      (if (= 0 (- count (* 32 (quot count 32)))) (* 34 (quot count 32)) -1)
+      (if (= qtype 12)
+        (if (= 0 (- count (* 256 (quot count 256)))) (* 144 (quot count 256)) -1)
+        (if (= qtype 14)
+          (if (= 0 (- count (* 256 (quot count 256)))) (* 210 (quot count 256)) -1)
+          -1)))))
+
+(defn supported [qtype]
+  (if (= qtype 0) 1 (if (= qtype 8) 1 (if (= qtype 12) 1 (if (= qtype 14) 1 0)))))
+
+(defn dequant-run [qtype src slen dst count]
+  (if (= qtype 0) (f32-el src slen dst count 0)
+    (if (= qtype 8) (q80-el src slen dst count 0)
+      (if (= qtype 12) (q4k-el src slen dst count 0)
+        (q6k-el src slen dst count 0)))))
+
+(defn aiueos-qwen35-dequant-row [qtype src src-length dst dst-length]
+  (if (= src 0) -1
+    (if (= dst 0) -2
+      (if (< dst-length 4) -3
+        (if (not (= 0 (- dst-length (* 4 (quot dst-length 4))))) -3
+          (if (> (quot dst-length 4) 65536) -4
+            (if (= (supported qtype) 0) -6
+              (if (not (= src-length (row-bytes qtype (quot dst-length 4)))) -5
+                (dequant-run qtype src src-length dst (quot dst-length 4))))))))))
+
+(defn main [] 0)

@@ -1230,6 +1230,39 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
       debug_string("AIUEOS_TLS13_RECORD_OK rfc8448-s3 seq0 seal-open tamper-refused\n");
       serial_string("AIUEOS_TLS13_RECORD_OK rfc8448-s3 seq0 seal-open tamper-refused\r\n");
     }
+<<<<<<< HEAD
+#ifdef AIUEOS_QWEN35_KOTOBA_PARITY
+    /* QWEN-PARITY (ADR-0137).  The three Qwen3.5 forward-pass objects against
+       the C they were ported from, on this CPU, over synthetic inputs.  Placed
+       with the other Kotoba self-tests, after the kernel owns its own IDT: a
+       fuel-guard `ud2` raised while the FIRMWARE's handler is still installed
+       gives an OVMF dump with no vector and no address, and here it reaches
+       set_idt_gate(6, aiueos_isr_invalid_opcode) and names itself.
+       Only when AIUEOS_QWEN35_KOTOBA_PARITY=1, which is what compiles
+       kernel/qwen35_quant.c and kernel/qwen35_infer.c -- the reference half of
+       the comparison.  It is a SEPARATE flag from the model handoff on
+       purpose: the handoff makes the UEFI loader demand a 10,934,860,704-byte
+       mapping and refuse the boot without one (AIUEOS_LOADER_FAIL
+       qwen38-model-admission code=121, measured), and this comparison needs
+       no model at all -- it is bit-equality of the arithmetic over synthetic
+       inputs, which is exactly the property that survives having no weights. */
+    {
+      extern int aiueos_qwen35_kotoba_parity_selftest(uint32_t stage);
+      static const char *const qwen_parity_names[3] = {"dequant", "dot", "matvec"};
+      for (uint32_t stage = 0; stage < 3U; stage++) {
+        if (!aiueos_qwen35_kotoba_parity_selftest(stage)) {
+          serial_string("QWEN-PARITY ");
+          serial_string(qwen_parity_names[stage]);
+          serial_string(" mismatch\r\n");
+          qemu_exit(0x6f);
+        }
+        serial_string("QWEN-PARITY ");
+        serial_string(qwen_parity_names[stage]);
+        serial_string(" ok\r\n");
+      }
+    }
+#endif
+=======
     {
       /* DEVCLIENT-PARITY.  The emitted `device-worker-canonical` object against
          the bytes the C writer produced for the same inputs (protocol 2) and
@@ -1248,6 +1281,7 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
       debug_string("DEVCLIENT-PARITY canonical ok\n");
       serial_string("DEVCLIENT-PARITY canonical ok v2-result v3-result refusal-5 refusal-7\r\n");
     }
+>>>>>>> origin/main
 #ifdef AIUEOS_PHYSICAL_QUALIFICATION
     aiueos_qualification_progress(226);
 #endif
@@ -1380,7 +1414,7 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
     debug_string("AIUEOS_PHYSICAL_ALLOCATOR_OK pages=2 zeroed\n");
     serial_string("AIUEOS_PHYSICAL_ALLOCATOR_OK pages=2 zeroed\r\n");
 #if defined(AIUEOS_QWEN38_MODEL_HANDOFF) && defined(AIUEOS_MODEL_TEST_FIXTURE)
-    /* The GGUF admission, EXECUTED. ADR-0135 moved it to three Kotoba objects
+    /* The GGUF admission, EXECUTED. ADR-0137 moved it to three Kotoba objects
        and made kernel/qwen35_runtime.c delegate to them, but nothing ever ran
        that delegation: the objects passed a KIR-interpreter oracle, the image
        linked, and this workstation is aarch64 so the emitted x86-64 was never
