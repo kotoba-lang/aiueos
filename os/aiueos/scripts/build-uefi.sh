@@ -433,6 +433,101 @@ command -v zig >/dev/null 2>&1 || {
 }
 
 mkdir -p "$(dirname -- "$efi")" "$kernel_dir"
+
+# ---------------------------------------------------------------------------
+# AIUEOS_K16_PURE_NATIVE=1 -- the pure Kotoba/Amu profile (ADR-0131).
+#
+# This profile does NOT produce a bootable image and is not trying to. What it
+# does is make the Kotoba/foreign boundary MACHINE-CHECKED instead of stated:
+#
+#   (i)   the kernel link input is restricted to Kotoba objects and Amu
+#         toolchain stubs -- the 33 C/ASM objects the ordinary link carries are
+#         not compiled and not linked;
+#   (ii)  the exact link list is handed to k16-pure-native-gate.cljs BEFORE
+#         `zig ld.lld` runs, and a non-zero exit aborts the build;
+#   (iii) the artifacts are named aiueos-k16-pure-native-* and the gate receipt
+#         is written next to them;
+#   (iv)  BOOTX64.EFI would have to come from a Kotoba/Amu artifact. None
+#         exists: `uefi/main.c` is the loader. So this profile REFUSES to emit
+#         a loader rather than shipping the C one under a "pure native" name.
+#
+# The refusal is conditional on a measurement, not hard-coded: set
+# AIUEOS_KOTOBA_LOADER_EFI to a Kotoba/Amu-produced PE32+ image and this stops
+# refusing on that ground. Until such an artifact exists, the honest output of
+# this profile is a refusal and a count.
+#
+# The link list is DERIVED from the production `zig ld.lld` invocation below
+# rather than restated here. A second copy of that list is a copy that can fall
+# out of step with it silently, and a gate over the wrong list is worse than no
+# gate at all.
+# ---------------------------------------------------------------------------
+if [ "${AIUEOS_K16_PURE_NATIVE:-0}" = 1 ]; then
+  command -v nbb >/dev/null 2>&1 || {
+    echo "error: the K16 pure-native profile needs nbb to run its gate" >&2
+    exit 2
+  }
+  pure_prefix="$out/aiueos-k16-pure-native"
+  pure_list="$pure_prefix-link-list.txt"
+  pure_receipt="$pure_prefix-receipt.edn"
+  pure_kernel="$pure_prefix-kernel.elf"
+  pure_vars=$(sed -n '/^zig ld\.lld /,/^fi$/p' "$0" \
+    | grep -o '\$kotoba_[A-Za-z0-9_]*_object' | sed 's/^\$//')
+  [ -n "$pure_vars" ] || {
+    echo "error: could not derive the Kotoba link list from $0" >&2
+    exit 2
+  }
+  : > "$pure_list"
+  for pure_var in $pure_vars; do
+    eval "printf '%s\n' \"\$$pure_var\"" >> "$pure_list"
+  done
+  # The two conditionally linked Kotoba objects reach the production link
+  # through these variables rather than by name, so they are appended the same
+  # way the link line reads them.
+  for pure_extra in $ecdsa_sign_link $ecdsa_public_link; do
+    printf '%s\n' "$pure_extra" >> "$pure_list"
+  done
+  echo "AIUEOS_K16_PURE_NATIVE profile: kernel link restricted to Kotoba objects + Amu stubs"
+  echo "AIUEOS_K16_PURE_NATIVE link-list=$pure_list entries=$(wc -l < "$pure_list" | tr -d ' ')"
+  pure_gate_status=0
+  # The provenance manifest is overridable so the profile's ADMITTED branch can
+  # be exercised. It is not a way to wave objects through: the override is still
+  # a manifest the gate checks digest-for-digest against the bytes on disk.
+  pure_provenance=${AIUEOS_K16_PURE_NATIVE_PROVENANCE:-"$aiueos/kotoba/provenance.edn"}
+  nbb "$aiueos/scripts/k16-pure-native-gate.cljs" \
+    --link-list "$pure_list" \
+    --provenance "$pure_provenance" \
+    --receipt-out "$pure_receipt" \
+    --root "$repo" || pure_gate_status=$?
+  if [ "$pure_gate_status" = 0 ]; then
+    zig ld.lld -nostdlib -static --strip-all -z max-page-size=0x1000 \
+      -T "$aiueos/kernel/linker.ld" -o "$pure_kernel" @"$pure_list" \
+      || {
+        echo "AIUEOS_K16_PURE_NATIVE_LINK_FAILED kernel=$pure_kernel" >&2
+        pure_gate_status=3
+      }
+  else
+    echo "AIUEOS_K16_PURE_NATIVE gate refused; kernel not linked" >&2
+  fi
+  pure_kernel_state=not-linked
+  if [ -f "$pure_kernel" ]; then
+    pure_kernel_state=linked
+  fi
+  if [ -n "${AIUEOS_KOTOBA_LOADER_EFI:-}" ] && [ -f "${AIUEOS_KOTOBA_LOADER_EFI:-}" ]; then
+    cp "$AIUEOS_KOTOBA_LOADER_EFI" "$pure_prefix-BOOTX64.EFI"
+    pure_loader_state=copied
+  else
+    echo "REFUSED foreign-code: uefi/main.c"
+    pure_loader_state=refused
+    if [ "$pure_gate_status" = 0 ]; then
+      pure_gate_status=3
+    fi
+  fi
+  echo "AIUEOS_K16_PURE_NATIVE_INCOMPLETE loader=$pure_loader_state kernel=$pure_kernel_state bootable=no receipt=$pure_receipt"
+  echo "This profile cannot produce a bootable K16 image today. It exists so that" >&2
+  echo "every later stream can measure progress against a machine-checked boundary." >&2
+  exit "$pure_gate_status"
+fi
+
 build_version=$(tr -d '\r\n' < "$aiueos/VERSION")
 build_source_commit=$(git -C "$repo" rev-parse HEAD)
 build_source_dirty=false
@@ -823,6 +918,24 @@ fi
 # continuation.  Dropping those unreachable whole sections there keeps
 # optional model runtimes inside the existing low-2MiB W^X bootstrap boundary.
 # The ordinary OS link deliberately keeps its historical section set.
+# AIUEOS_K16_LINK_LIST_OUT=<file> writes the EXACT object list this link is
+# about to receive, one path per line, and changes nothing else. It exists so
+# that the pure-native gate (ADR-0131) can be run against today's production
+# link rather than against a list somebody retyped -- the variable names are
+# read back out of this very invocation, so a list added here cannot fall out
+# of step with the one measured.
+if [ -n "${AIUEOS_K16_LINK_LIST_OUT:-}" ]; then
+  : > "$AIUEOS_K16_LINK_LIST_OUT"
+  for link_var in $(sed -n '/^zig ld\.lld /,/^fi$/p' "$0" \
+                      | grep -o '\$[A-Za-z_][A-Za-z0-9_]*' | sed 's/^\$//' \
+                      | grep -vxE 'aiueos|kernel|qualification_gc_link'); do
+    eval "set -- \$$link_var"
+    for link_path in "$@"; do
+      printf '%s\n' "$link_path" >> "$AIUEOS_K16_LINK_LIST_OUT"
+    done
+  done
+  echo "AIUEOS_K16_LINK_LIST_WRITTEN entries=$(wc -l < "$AIUEOS_K16_LINK_LIST_OUT" | tr -d ' ') path=$AIUEOS_K16_LINK_LIST_OUT"
+fi
 zig ld.lld -nostdlib -static --strip-all $qualification_gc_link -z max-page-size=0x1000 \
   -T "$aiueos/kernel/linker.ld" -o "$kernel" \
   "$kernel_entry_object" "$kernel_object" "$kernel_paging_object" \

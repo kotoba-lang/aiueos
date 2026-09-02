@@ -39,6 +39,38 @@ to call `kotoba_aiueos_probe` and observe result `42`. Set
 `AIUEOS_KOTOBA_KERNEL_OBJECT` only to test another compiler output under the
 same verifier; a hosted or import-bearing object is rejected before link.
 
+### The K16 pure-native profile does not boot yet, and now says so
+
+`AIUEOS_K16_PURE_NATIVE=1 sh os/aiueos/scripts/build-uefi.sh` (or
+`nbb os/aiueos/scripts/build-k16-pure-native.cljs`) restricts the kernel link
+to Kotoba objects and Amu toolchain stubs, gates that exact list before
+`zig ld.lld` runs, and refuses to emit a loader. It cannot produce a bootable
+K16 image: `BOOTX64.EFI` is `uefi/main.c`, and `aiueos_kernel_entry` is in the
+hand-written `entry.S` the profile excludes. It exists so the C boundary is
+machine-checked rather than described (ADR-0131).
+
+Measured 2026-09-02 on the link list today's K16 build actually hands the
+linker (captured with `AIUEOS_K16_LINK_LIST_OUT=<file>`, which writes that list
+and changes nothing else):
+
+```
+SCANNED	99
+AIUEOS_K16_PURE_NATIVE_REFUSED scanned=99 kotoba=47 stubs=0 foreign=32 unattested=20
+```
+
+32 objects are compiled from `kernel/*.c` and three hand-written `.S` files.
+20 are Kotoba objects that pass every structural check but for which no recipe
+in this repository records the Amu revision that produced them -- refused as
+`REFUSED unattested-provenance: ... reason=compiler-unrecorded`, counted apart
+from foreign code so the C number stays readable. No committed Kotoba object
+is C-derived or malformed.
+
+Exit codes are `0` admitted, `2` could not answer, `3` refused; `scanned=0` is
+exit 2 and never a pass. Provenance lives in `os/aiueos/kotoba/provenance.edn`
+(regenerate with `--emit-provenance`); the acceptance conditions, receipt
+schema and measured status are in
+`os/aiueos/contracts/k16-pure-native-profile-v1.edn`.
+
 The loader also selects the ACPI 2.0 configuration-table GUID. The kernel
 validates both RSDP checksums, the XSDT and MADT checksums and lengths, and every
 MADT subtable boundary. The QEMU gate starts two vCPUs and requires both to be
