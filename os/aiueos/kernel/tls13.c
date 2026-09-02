@@ -7,6 +7,13 @@ extern uint64_t kotoba_aiueos_x25519(const uint8_t *, const uint8_t *,
                                      uint8_t *, uint8_t *);
 extern uint64_t kotoba_aiueos_ecdsa_p256_sha256_verify(
     const uint8_t *, const uint8_t *, const uint8_t *, uint8_t *, uint64_t);
+/* The TLS 1.3 AEAD and record layer (ADR-0132, ADR-0133). Both return a
+   REASON CODE and ZERO IS SUCCESS -- the opposite of the C in this file, so
+   every call site has to be written rather than transcribed. */
+extern uint64_t kotoba_aiueos_aes128_gcm(uint8_t *, uint64_t, uint8_t *,
+                                         uint64_t, uint64_t);
+extern uint64_t kotoba_aiueos_tls13_record(uint8_t *, uint64_t, uint8_t *,
+                                           uint64_t, uint64_t);
 
 #define TLS_TR_MAX 12288
 #define TLS_RX_MAX 12288
@@ -70,8 +77,6 @@ static uint8_t c_hs_key[16], c_hs_iv[12], s_hs_key[16], s_hs_iv[12];
 static uint8_t c_ap_key[16], c_ap_iv[12], s_ap_key[16], s_ap_iv[12];
 static uint8_t handshake_secret[32];
 static uint8_t c_hs_secret[32], s_hs_secret[32];
-static uint8_t decrypt_plain[TLS_HS_MAX]
-  AIUEOS_TLS_HIGH_BSS;
 static uint64_t s_hs_seq, c_hs_seq, s_ap_seq, c_ap_seq;
 
 static int saw_record;
@@ -300,58 +305,64 @@ static int transcript_add(const uint8_t *p, uint32_t n) {
   return 1;
 }
 
-static void make_nonce(uint8_t nonce[12], const uint8_t iv[12], uint64_t seq) {
+/* The record layer is `os/aiueos/kotoba/tls13-record.kotoba`, compiled to
+   `kotoba_aiueos_tls13_record` (ADR-0133).  What was here -- `make_nonce`,
+   `protect` and `unprotect`, 52 lines -- is gone, and it was not plumbing:
+   the 5-byte header is the AAD, so a length taken from the wrong place is a
+   forgery the AEAD accepts; the sequence number is XORed into the nonce, so a
+   reused sequence is a reused keystream; the inner content type is the last
+   non-zero plaintext byte, so a padding strip that stops one byte early hands
+   the caller the wrong record type.
+
+   THE OBJECT RETURNS A REASON CODE AND ZERO IS SUCCESS.  These two wrappers
+   keep the 1-is-success shape their callers were written against, and the
+   inversion happens on the `return` lines below and nowhere else.
+
+   THE RECORD IS TRANSFORMED IN PLACE.  SEAL wants the plaintext already at
+   `out + 5`; OPEN decrypts `rec` where it lies.  That is exact rather than a
+   shortcut -- CTR is an XOR -- and it is why `decrypt_plain`, 12 KiB of
+   `.high_bss`, and `protect`'s 2 KiB `inner` stack buffer are both gone. */
+static uint8_t record_ctx[1280];
+
+static void record_ctx_open(const uint8_t key[16], const uint8_t iv[12],
+                            uint64_t seq) {
   uint32_t i;
-  copy_bytes(nonce, iv, 12);
-  for (i = 0; i < 8; i++) {
-    nonce[4 + i] ^= (uint8_t)(seq >> (56 - 8 * i));
-  }
+  for (i = 0; i < sizeof(record_ctx); i++) record_ctx[i] = 0;
+  copy_bytes(record_ctx, key, 16);
+  copy_bytes(record_ctx + 16, iv, 12);
+  for (i = 0; i < 8; i++)
+    record_ctx[48 + i] = (uint8_t)(seq >> (56 - 8 * i));
 }
 
 static int protect(const uint8_t key[16], const uint8_t iv[12], uint64_t seq,
                    uint8_t inner_type, const uint8_t *pt, uint32_t pt_len,
                    uint8_t *out, uint32_t *out_len) {
-  uint8_t nonce[12], aad[5], inner[2048], tag[16];
-  uint32_t rec_len;
-  if (pt_len + 1 > sizeof(inner)) return 0;
-  copy_bytes(inner, pt, pt_len);
-  inner[pt_len] = inner_type;
-  rec_len = pt_len + 1 + 16;
-  out[0] = 0x17;
-  out[1] = 0x03;
-  out[2] = 0x03;
-  put16(out + 3, (uint16_t)rec_len);
-  aad[0] = 0x17; aad[1] = 0x03; aad[2] = 0x03;
-  put16(aad + 3, (uint16_t)rec_len);
-  make_nonce(nonce, iv, seq);
-  if (!aiueos_aes128_gcm_encrypt(key, nonce, aad, 5, inner, pt_len + 1,
-                                 out + 5, tag))
+  if (pt_len > 12287) return 0;
+  record_ctx_open(key, iv, seq);
+  record_ctx[56] = inner_type;
+  record_ctx[58] = (uint8_t)(pt_len >> 8);
+  record_ctx[59] = (uint8_t)(pt_len & 0xff);
+  copy_bytes(out + 5, pt, pt_len);
+  if (kotoba_aiueos_tls13_record(record_ctx, sizeof(record_ctx), out,
+                                 (uint64_t)pt_len + 22u, 1) != 0)
     return 0;
-  copy_bytes(out + 5 + pt_len + 1, tag, 16);
-  *out_len = 5 + rec_len;
+  *out_len = (uint32_t)record_ctx[60] * 256u + record_ctx[61];
   return 1;
 }
 
+/* `rec` is written, not read: OPEN decrypts in place.  The caller owns a
+   mutable receive buffer (`rx`), which is where records arrive anyway. */
 static int unprotect(const uint8_t key[16], const uint8_t iv[12], uint64_t seq,
-                     const uint8_t *rec, uint32_t rec_len,
+                     uint8_t *rec, uint32_t rec_len,
                      uint8_t *pt, uint32_t *pt_len, uint8_t *inner_type) {
-  uint8_t nonce[12], aad[5];
-  uint32_t clen, i, content_len;
-  if (rec_len < 5 + 16 + 1) return 0;
-  clen = (uint32_t)be16(rec + 3);
-  if (clen + 5 != rec_len || clen < 17 || clen - 16 > TLS_HS_MAX) return 0;
-  aad[0] = rec[0]; aad[1] = rec[1]; aad[2] = rec[2];
-  aad[3] = rec[3]; aad[4] = rec[4];
-  make_nonce(nonce, iv, seq);
-  if (!aiueos_aes128_gcm_decrypt(key, nonce, aad, 5, rec + 5, clen - 16,
-                                 rec + 5 + clen - 16, decrypt_plain))
+  if (rec_len < 22 || rec_len > 12310) return 0;
+  record_ctx_open(key, iv, seq);
+  if (kotoba_aiueos_tls13_record(record_ctx, sizeof(record_ctx), rec,
+                                 (uint64_t)rec_len, 0) != 0)
     return 0;
-  content_len = clen - 16;
-  while (content_len > 0 && decrypt_plain[content_len - 1] == 0) content_len--;
-  if (content_len == 0) return 0;
-  *inner_type = decrypt_plain[content_len - 1];
-  *pt_len = content_len - 1;
-  for (i = 0; i < *pt_len; i++) pt[i] = decrypt_plain[i];
+  *inner_type = record_ctx[56];
+  *pt_len = (uint32_t)record_ctx[58] * 256u + record_ctx[59];
+  copy_bytes(pt, rec + 5, *pt_len);
   return 1;
 }
 
@@ -578,7 +589,7 @@ static uint32_t nst_count;
 static uint8_t last_alert_level;
 static uint8_t last_alert_desc;
 
-static int process_record(const uint8_t *rec, uint32_t rec_len) {
+static int process_record(uint8_t *rec, uint32_t rec_len) {
   uint8_t typ = rec[0];
   last_record_type = typ;
   if (!saw_record) {
@@ -824,4 +835,48 @@ int aiueos_tls13_hmac_selftest(void) {
   diff = 0;
   for (i = 0; i < 32; i++) diff |= (uint32_t)(out[i] ^ prk[i]);
   return diff == 0;
+}
+
+/* The record layer, executed on the machine that will run it, against a whole
+   encrypted record printed in RFC 8448 section 3 beside the traffic keys that
+   produced it.  The kernel had a boot self-test for the AEAD, the key schedule
+   and the signature and none for the framing around them -- which is the part
+   ADR-0133 argues is where a record layer gets exploited.
+
+   The sequence number is 0 here and 1 in the alert that follows it in the RFC;
+   this vector is the application_data record, so the nonce XOR is exercised by
+   the contract rather than by this test, which exists to prove the OBJECT runs
+   and agrees with a published record, not to re-run its 17 vectors. */
+int aiueos_tls13_record_selftest(void) {
+  static const uint8_t key[16] = {
+    0x17,0x42,0x2d,0xda,0x59,0x6e,0xd5,0xd9,0xac,0xd8,0x90,0xe3,0xc6,0x3f,0x50,0x51};
+  static const uint8_t iv[12] = {
+    0x5b,0x78,0x92,0x3d,0xee,0x08,0x57,0x90,0x33,0xe5,0x23,0xd9};
+  static const uint8_t expect[72] = {
+    0x17,0x03,0x03,0x00,0x43,0xa2,0x3f,0x70,0x54,0xb6,0x2c,0x94,0xd0,0xaf,0xfa,0xfe,
+    0x82,0x28,0xba,0x55,0xcb,0xef,0xac,0xea,0x42,0xf9,0x14,0xaa,0x66,0xbc,0xab,0x3f,
+    0x2b,0x98,0x19,0xa8,0xa5,0xb4,0x6b,0x39,0x5b,0xd5,0x4a,0x9a,0x20,0x44,0x1e,0x2b,
+    0x62,0x97,0x4e,0x1f,0x5a,0x62,0x92,0xa2,0x97,0x70,0x14,0xbd,0x1e,0x3d,0xea,0xe6,
+    0x3a,0xee,0xbb,0x21,0x69,0x49,0x15,0xe4};
+  static uint8_t record[128];
+  static uint8_t payload[64];
+  static uint8_t plain[64];
+  uint32_t i, diff = 0, len = 0, plen = 0;
+  uint8_t inner = 0;
+  for (i = 0; i < 50; i++) payload[i] = (uint8_t)i;
+  for (i = 0; i < sizeof(record); i++) record[i] = 0;
+  if (!protect(key, iv, 0, 0x17, payload, 50, record, &len)) return 0;
+  if (len != 72) return 0;
+  for (i = 0; i < 72; i++) diff |= (uint32_t)(record[i] ^ expect[i]);
+  if (diff) return 0;
+  if (!unprotect(key, iv, 0, record, 72, plain, &plen, &inner)) return 0;
+  if (plen != 50 || inner != 0x17) return 0;
+  for (i = 0; i < 50; i++) diff |= (uint32_t)(plain[i] ^ payload[i]);
+  if (diff) return 0;
+  /* One ciphertext byte flipped must be refused. The published record is
+     restored first, because OPEN just overwrote it with its plaintext. */
+  for (i = 0; i < 72; i++) record[i] = expect[i];
+  record[10] = (uint8_t)(record[10] ^ 1);
+  if (unprotect(key, iv, 0, record, 72, plain, &plen, &inner)) return 0;
+  return 1;
 }
