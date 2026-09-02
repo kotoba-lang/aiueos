@@ -34,6 +34,15 @@ compiler=${1:?usage: reproduce-kotoba-kernel-object.sh /path/to/compiler}
 # and sha256 -- ALL FIVE DIFFER. Taking that advance means regenerating every
 # object in this script and every pinned digest in build-uefi.sh, which is a
 # change to the shipped kernel and not a side effect of adding DHCP.
+#
+# 2026-09-02: `sha256.kotoba` and `digest-equal.kotoba` MOVED to
+# `kotoba/aiueos/sha256.kotoba` and `kotoba/aiueos/digest_equal.kotoba` and
+# gained an `(:export ...)` vector, because a project module must declare one
+# and both are now imported by `cid-v1-admit` / `value-runtime-cas-verify`
+# instead of being copied into them. THE OBJECTS DID NOT MOVE AND DID NOT
+# CHANGE: compiled at this same pin with and without the export vector, both
+# produce af378b06... and 6156db8b... -- the committed bytes -- so the two
+# `cmp`s below still compare what they always did.
 expected=9cf3a0ac07a1fb0d735a460230a7e5e9c97bc6a7
 actual=$(git -C "$compiler" rev-parse HEAD)
 
@@ -220,13 +229,13 @@ cmp "$aiueos/kotoba/user-object-journal-value.o" "$user_object_journal_value_tmp
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$user_object_journal_value_tmp" \
   d96960555b01642a1b2204b2e2b73a0d33de522ce01293ba5fca64c4338994a6 \
   kotoba_aiueos_user_object_journal_value
-"$compiler/bin/kotoba-compiler" compile "$aiueos/kotoba/sha256.kotoba" \
+"$compiler/bin/kotoba-compiler" compile "$aiueos/kotoba/aiueos/sha256.kotoba" \
   --target x86_64-aiueos-kernel-v1 --output "$sha256_tmp"
 cmp "$aiueos/kotoba/sha256.o" "$sha256_tmp"
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$sha256_tmp" \
   af378b061725473bf4aa66d02d276973ffc5c7cef4b0ed1f4a0e01fc754a7753 \
   kotoba_aiueos_sha256
-"$compiler/bin/kotoba-compiler" compile "$aiueos/kotoba/digest-equal.kotoba" \
+"$compiler/bin/kotoba-compiler" compile "$aiueos/kotoba/aiueos/digest_equal.kotoba" \
   --target x86_64-aiueos-kernel-v1 --output "$digest_equal_tmp"
 cmp "$aiueos/kotoba/digest-equal.o" "$digest_equal_tmp"
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$digest_equal_tmp" \

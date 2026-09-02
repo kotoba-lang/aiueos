@@ -1,9 +1,27 @@
 #!/usr/bin/env nbb
 ;; Runs the admission objects against their contracts WITHOUT a JVM.
 ;;
+;;   npm run verify-admissions -- [contract.edn ...]
+;;
+;; which is
+;;
 ;;   node --stack-size=4000 "$(command -v nbb)" \
-;;     --classpath "$(clojure -Spath -M:test)" \
+;;     --classpath "$(clojure -Spath -M:verify-admissions)" \
 ;;     os/aiueos/scripts/verify-admissions.cljs [contract.edn ...]
+;;
+;; `-M:verify-admissions`, NOT `-M:test`. This line said `-M:test` from the day
+;; it was written and `package.json` said `-M:verify-admissions`, and the two
+;; are different compilers on purpose (see the alias comment in `deps.edn`).
+;; Measured 2026-09-02: with the `:test` closure -- amu 6889fa73, which carries
+;; kotoba-sema 244765d4 -- EVERY contract fails at
+;;
+;;     FAILED: source reader rejected input
+;;        {:phase :read}
+;;
+;; before a single vector runs, because that kotoba-sema predates the
+;; linked-source printer fix. The same contract passes on the classpath this
+;; file's own receipt names. A run following this comment could not check
+;; anything, and the comment was the only thing wrong.
 ;;
 ;; `--stack-size` is not decoration, and 4000 IS NOT ENOUGH FOR EVERY CONTRACT.
 ;; Two different things need it. `value-runtime-sha256` is 9 KB of nested `if`

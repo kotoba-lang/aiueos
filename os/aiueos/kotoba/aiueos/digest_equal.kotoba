@@ -1,4 +1,4 @@
-(ns aiueos.value-runtime-digest-equal
+(ns aiueos.digest-equal
   (:export [aiueos-digest-equal main]))
 
 ;; Fixed-work comparison for the 32-byte SHA-256 values admitted by aiuefs.
