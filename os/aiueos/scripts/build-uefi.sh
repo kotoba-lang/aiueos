@@ -98,6 +98,16 @@ kotoba_user_object_journal_object=${AIUEOS_KOTOBA_USER_OBJECT_JOURNAL_OBJECT:-"$
 kotoba_user_object_journal_valid_object=${AIUEOS_KOTOBA_USER_OBJECT_JOURNAL_VALID_OBJECT:-"$aiueos/kotoba/user-object-journal-valid.o"}
 kotoba_user_object_journal_value_object=${AIUEOS_KOTOBA_USER_OBJECT_JOURNAL_VALUE_OBJECT:-"$aiueos/kotoba/user-object-journal-value.o"}
 kotoba_sha256_object=${AIUEOS_KOTOBA_SHA256_OBJECT:-"$aiueos/kotoba/sha256.o"}
+# tokenizer: the three objects that turn a prompt into token ids and back
+# (ADR-0135). They are in the image and NOTHING CALLS THEM YET -- kernel/
+# qwen35_infer.c takes a single BOS id and has no tokenizer at all, so there is
+# no C function here to replace. Linking them now makes wiring the prompt path
+# a change to the C that calls them rather than a change to what the image
+# contains, and keeps them under the same per-object export and relocation
+# check as every other Kotoba object.
+kotoba_qwen35_vocab_index_object=${AIUEOS_KOTOBA_QWEN35_VOCAB_INDEX_OBJECT:-"$aiueos/kotoba/qwen35-vocab-index-build.o"}
+kotoba_qwen35_tokenize_object=${AIUEOS_KOTOBA_QWEN35_TOKENIZE_OBJECT:-"$aiueos/kotoba/qwen35-tokenize.o"}
+kotoba_qwen35_detokenize_object=${AIUEOS_KOTOBA_QWEN35_DETOKENIZE_OBJECT:-"$aiueos/kotoba/qwen35-detokenize.o"}
 kotoba_digest_equal_object=${AIUEOS_KOTOBA_DIGEST_EQUAL_OBJECT:-"$aiueos/kotoba/digest-equal.o"}
 kotoba_catalog_valid_object=${AIUEOS_KOTOBA_CATALOG_VALID_OBJECT:-"$aiueos/kotoba/app-catalog-valid.o"}
 kotoba_app_lookup_object=${AIUEOS_KOTOBA_APP_LOOKUP_OBJECT:-"$aiueos/kotoba/app-lookup-plan.o"}
@@ -730,6 +740,18 @@ python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_user_object_jo
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_sha256_object" \
   af378b061725473bf4aa66d02d276973ffc5c7cef4b0ed1f4a0e01fc754a7753 \
   kotoba_aiueos_sha256
+# tokenizer: same check as every object above -- one export, zero imports, one
+# relocation into its own .data, and the sha256 of the artifact this tree
+# carries.
+python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_qwen35_vocab_index_object" \
+  802defd59b320b40aeb9edc0de8f7b14f9792d0fb7f38090a8138b78e2a046ed \
+  kotoba_aiueos_qwen35_vocab_index_build
+python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_qwen35_tokenize_object" \
+  e5da4864479b272563c9ad22e4ff2812928dcba0ec7dcdd70ffe64f97d0b8ed5 \
+  kotoba_aiueos_qwen35_tokenize
+python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_qwen35_detokenize_object" \
+  9c2cf494a55b54e5213976b702114510ac70f20dfa35c016ef5787187a27acd3 \
+  kotoba_aiueos_qwen35_detokenize
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_digest_equal_object" \
   6156db8b78f883610521ac4eb458cb98df655b26087e7d6808279c8b9d927b78 \
   kotoba_aiueos_digest_equal
@@ -1096,7 +1118,10 @@ zig ld.lld -nostdlib -static --strip-all $qualification_gc_link -z max-page-size
   "$kotoba_tcp_checksum_object" \
   "$kotoba_tcp_segment_object" \
   "$kotoba_dhcp_reply_object" \
-  "$kotoba_dhcp_option_object"
+  "$kotoba_dhcp_option_object" \
+  "$kotoba_qwen35_vocab_index_object" \
+  "$kotoba_qwen35_tokenize_object" \
+  "$kotoba_qwen35_detokenize_object"
 fi
 initramfs="$kernel_dir/INITRD.IMG"
 recovery_signature="$aiueos/kotoba/user-smoke.sig"

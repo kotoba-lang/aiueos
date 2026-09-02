@@ -482,6 +482,98 @@
        (seq text)
        (conj {:label :canonical :offset out-offset :bytes (ascii-bytes text)}))}))
 
+
+;; --- the tokenizer family --------------------------------------------------
+;;
+;; Three objects, one image and one builder, because the three take the SAME
+;; four arguments -- a model window and a workspace -- and differ only in which
+;; header slots they read. The model is a seven-token mini vocabulary written
+;; at image offset 0; the workspace follows at `:work-offset` and every other
+;; offset in the map is relative to IT, which is what the objects themselves
+;; mean by a workspace offset.
+;;
+;; `:prelude-args` is the contract's own base and lengths, never the vector's
+;; overrides: a vector that hands the object a 16 MiB window in order to be
+;; refused for it must not make the index build refuse first.
+
+(defn- u32-bytes [v]
+  [(bit-and v 0xff) (bit-and (bit-shift-right v 8) 0xff)
+   (bit-and (bit-shift-right v 16) 0xff) (bit-and (bit-shift-right v 24) 0xff)])
+
+(defn- tokenizer-prepare [contract v entry]
+  (let [m (get-in contract [:verification :memory])
+        f (:fixture contract)
+        base (:base m)
+        wo (:work-offset m)
+        ;; A vector may name one of the fixture's ALTERNATE models by keyword
+        ;; rather than repeat 232 characters of hex to change three bytes.
+        model-hex (let [h (or (:model-hex v) (:model-hex f))]
+                    (if (keyword? h) (get f h) h))
+        model (hex-bytes model-hex)
+        input (cond (:input-fill v)
+                    (vec (repeat (:count (:input-fill v)) (:byte (:input-fill v))))
+                    (:input-hex v) (hex-bytes (:input-hex v))
+                    :else [])
+        ids (vec (mapcat u32-bytes (:ids v)))
+        header (merge {4 (or (:vocab-count v) (:vocab-count f))
+                       8 (if (some? (:merge-count v)) (:merge-count v) (:merge-count f))
+                       12 (or (:tokens-at v) (:tokens-at f))
+                       16 (or (:merges-at v) (:merges-at f))
+                       44 0
+                       48 (:input-offset m)
+                       52 (count input)
+                       56 (:output-offset m)
+                       60 (or (:output-capacity v) (:output-capacity m))
+                       68 (:scratch-offset m)
+                       72 (or (:scratch-bytes v) (:scratch-bytes m))
+                       76 (:ids-offset m)
+                       80 (if (some? (:id-count v)) (:id-count v) (count (:ids v)))
+                       84 (:text-offset m)
+                       88 (or (:text-capacity v) (:text-capacity m))}
+                      (:header v))
+        image (reduce (fn [img [off val]] (write-u32 img (+ wo off) val))
+                      (-> (vec (repeat (:image-bytes m) 0))
+                          (write-at 0 model)
+                          (write-at (+ wo (:input-offset m)) input)
+                          (write-at (+ wo (:ids-offset m)) ids))
+                      header)]
+    {:entry entry
+     :base base
+     :image image
+     :args [(if (some? (:model-base v)) (:model-base v) base)
+            (if (some? (:model-len v)) (:model-len v) (count model))
+            (if (some? (:work-base v)) (:work-base v) (+ base wo))
+            (if (some? (:work-len v)) (:work-len v) (:work-bytes m))]
+     :prelude-args (when-not (false? (:prelude? v))
+                     [base (count model) (+ base wo) (:work-bytes m)])
+     :expect-memory
+     (cond-> []
+       (:expect-ids v)
+       (conj {:label :ids :offset (+ wo (:output-offset m))
+              :bytes (vec (mapcat u32-bytes (:expect-ids v)))})
+       (some? (:expect-id-count v))
+       (conj {:label :id-count :offset (+ wo 64) :bytes (u32-bytes (:expect-id-count v))})
+       (:expect-text-hex v)
+       (conj {:label :text :offset (+ wo (:text-offset m))
+              :bytes (hex-bytes (:expect-text-hex v))})
+       (some? (:expect-text-length v))
+       (conj {:label :text-length :offset (+ wo 92)
+              :bytes (u32-bytes (:expect-text-length v))})
+       (:expect-header v)
+       (into (map (fn [[off val]]
+                    {:label (keyword (str "header-" off)) :offset (+ wo off)
+                     :bytes (u32-bytes val)})
+                  (:expect-header v))))}))
+
+(defmethod prepare :aiueos.qwen35-vocab-index-build/v1 [contract v]
+  (tokenizer-prepare contract v 'aiueos-qwen35-vocab-index-build))
+
+(defmethod prepare :aiueos.qwen35-tokenize/v1 [contract v]
+  (tokenizer-prepare contract v 'aiueos-qwen35-tokenize))
+
+(defmethod prepare :aiueos.qwen35-detokenize/v1 [contract v]
+  (tokenizer-prepare contract v 'aiueos-qwen35-detokenize))
+
 (defmethod prepare :default [contract _]
   (fail! "REFUSING TO REPORT A PASS: no argument builder for this contract format"
          {:format (:format contract)}))
@@ -581,16 +673,38 @@
      0
      expect-memory)))
 
+;; A PRELUDE is another object's call, run against the same page before the
+;; vector's own. It exists because `aiueos-qwen35-tokenize` and
+;; `aiueos-qwen35-detokenize` read tables a THIRD object writes, and a kernel
+;; object cannot call another (ADR-0030): without this the only way to give
+;; those two a workspace would be to transcribe the tables into the contract as
+;; hex, which is exactly the "a constant rather than a derivation" failure
+;; these contracts keep naming. A vector opts out with `:prelude? false`, which
+;; is how the "no index in the workspace" refusal is reached.
+;;
+;; The prelude runs with the contract's OWN base and lengths, never the
+;; vector's argument overrides -- a vector that hands the object a 16 MiB
+;; window to be refused for must not make the prelude refuse first.
+(defn- run-prelude! [contract prelude base page fuel prelude-args label]
+  (when (and prelude prelude-args)
+    (let [actual (execute-once (:kir prelude) (:entry prelude) prelude-args base page fuel)]
+      (refuse-on-trap! contract [label :prelude] actual)
+      (when-not (= (:expected (:declared prelude) 0) actual)
+        (fail! "REFUSING TO REPORT A PASS: the prelude refused, so the vector ran against a workspace the contract does not describe"
+               {:contract (:format contract) :vector label
+                :entry (:entry prelude) :actual actual})))))
+
 (defn- run-single
   "One call per vector, each against a fresh image."
-  [contract kir entry fuel started]
+  [contract kir entry fuel started prelude]
   (let [{:keys [floors]} (:verification contract)
         memory-assertions (volatile! 0)
         observed
         (doall
          (for [v (:vectors contract)]
-           (let [{:keys [base image args expect-memory]} (prepare contract v)
+           (let [{:keys [base image args expect-memory prelude-args]} (prepare contract v)
                  page (volatile! image)
+                 _ (run-prelude! contract prelude base page fuel prelude-args (:name v))
                  actual (execute-once kir entry args base page fuel)]
              (refuse-on-trap! contract (:name v) actual)
              (when-not (= (:expected v) actual)
@@ -603,8 +717,10 @@
         traps
         (doall
          (for [t (:traps contract)]
-           (let [{:keys [base image args]} (prepare contract t)
-                 actual (execute-once kir entry args base (volatile! image) fuel)]
+           (let [{:keys [base image args prelude-args]} (prepare contract t)
+                 page (volatile! image)
+                 _ (run-prelude! contract prelude base page fuel prelude-args (:name t))
+                 actual (execute-once kir entry args base page fuel)]
              (when-not (map? actual)
                (fail! "trap vector returned a value" {:vector (:name t) :actual actual}))
              (when-not (and (= (:expect-trap t) (:trap actual))
@@ -693,13 +809,19 @@
         exports (set (:exports kir))
         entry (:entry (if stepped?
                         (prepare-steps contract (first (:vectors contract)))
-                        (prepare contract (first (:vectors contract)))))]
+                        (prepare contract (first (:vectors contract)))))
+        prelude (when-let [declared (:prelude contract)]
+                  (let [pkir (compile-graph root-dir (:graph declared))]
+                    (when-not (contains? (set (:exports pkir)) (:entry declared))
+                      (fail! "the prelude project does not export the entry the contract names"
+                             {:entry (:entry declared) :exports (vec (:exports pkir))}))
+                    {:kir pkir :entry (:entry declared) :declared declared}))]
     (when-not (contains? exports entry)
       (fail! "the linked project does not export the entry this runner calls"
              {:entry entry :exports (vec exports)}))
     (if stepped?
       (run-stepped contract kir entry fuel started)
-      (run-single contract kir entry fuel started))))
+      (run-single contract kir entry fuel started prelude))))
 
 (defn- compiler-sha
   "The amu this measurement is about. A receipt without it is a number with no
@@ -740,7 +862,16 @@
                        "value-runtime-cas-verify-v1.edn"
                        "value-handle-arena-v1.edn"
                        "aes128-gcm-v1.edn" "hkdf-sha256-v1.edn"
-                       "tls13-record-v1.edn"]))
+                       "tls13-record-v1.edn"
+                       ;; The tokenizer family. Cheap by comparison -- about
+                       ;; forty seconds between them, because the vocabulary
+                       ;; they run against is seven tokens rather than an AEAD
+                       ;; over a 12 KiB record. Two of the three declare a
+                       ;; `:prelude`, so each of their vectors runs the index
+                       ;; build first against the same page.
+                       "qwen35-vocab-index-build-v1.edn"
+                       "qwen35-tokenize-v1.edn"
+                       "qwen35-detokenize-v1.edn"]))
         results (mapv #(run-contract root-dir %) paths)]
     (doseq [r results]
       (println (str "CONTRACT\t" (:contract r)
