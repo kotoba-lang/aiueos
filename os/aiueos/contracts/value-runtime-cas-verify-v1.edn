@@ -2,8 +2,8 @@
  :identity {:cid-version 1 :codec :dag-cbor :multihash :sha2-256
             :digest-bytes 32}
  :graph {:root aiueos.value-runtime-cas-verify
-         :modules [aiueos.value-runtime-sha256
-                   aiueos.value-runtime-digest-equal
+         :modules [aiueos.sha256
+                   aiueos.digest-equal
                    aiueos.value-runtime-cas-verify]}
  :input {:block-length {:minimum 1 :maximum 12288}
          :expected-digest-bytes 32
