@@ -250,7 +250,20 @@ that. recurrent-step: 1,762 at d=8, 6,721 at d=16, 25,414 at d=32, fitting
   1,161** (+43, the three extracted signatures and the hoisted resolve loop, of
   which 11 lines are the plan writers moved out of a self-test guard so two
   profiles can share them) and **self-test-guarded 411 → 661** (+250).
-- **`evaluate_token` is untouched.** Stage 4 of this stream is not done.
+- **`evaluate_token` is untouched, and one object cannot replace it.** This is
+  measured, not deferred. A kernel object exports one symbol and cannot call
+  another (ADR-0030), so an `aiueos-qwen35-evaluate-token` would have to inline
+  the whole forward pass, and the packager writes the fuel word as the
+  immediate of `mov qword [r9+8], imm32` — a ceiling of 2,147,483,647. The
+  output projection alone is 248,320 vocabulary rows of 5,120, which is
+  1,271,398,400 multiply-accumulates and, at the 22 fuel per element measured
+  for `aiueos-qwen35-matvec`, **27,970,764,800 fuel: thirteen times the largest
+  tier that can be written**. One `ffn_gate` matvec is 1,960,837,120, which
+  fits only by 9% — and `aiueos-qwen35-matvec` already caps a call at 2,097,152
+  elements for exactly this reason, so `ffn_gate` is 43 chunks. The
+  orchestration therefore stays in C, and the flip that is actually available
+  is C calling each object in turn. That is a different change from the one
+  "stage 4" names, and it wants `ffn` and `linear_attention` decided first.
 - **`ffn` and `linear_attention` are not objects.** What is left of them after
   the matvecs is already covered by `aiueos-qwen35-norm` and
   `aiueos-qwen35-activation` plus a residual add; an object that restated those
