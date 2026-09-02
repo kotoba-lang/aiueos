@@ -49,7 +49,7 @@
       (is (str/includes? builder "--source-path \"$aiueos\" --unpinned"))
       (is (str/includes? builder "--fuel 1048576"))
       (is (str/includes? builder
-                         "8aa59c85cf078bc1ad1bf7cf6b79fc2805f8d939"))
+                         "6acdea817f4388edea81677778bc9bab60704887"))
       (is (str/includes? (slurp (io/file aiueos "scripts"
                                          "build-kotoba-native-boot.sh"))
                          "AIUEOS_NATIVE_K16_PREFLIGHT")))))
