@@ -5,10 +5,22 @@
 ;;     --classpath "$(clojure -Spath -M:test)" \
 ;;     os/aiueos/scripts/verify-admissions.cljs [contract.edn ...]
 ;;
-;; `--stack-size` is not decoration. `value-runtime-sha256` is 9 KB of nested
-;; `if`, and the ClojureScript analyzer recurses deeply enough over it to
-;; exhaust node's default stack; 4000 is measured to be enough and the runner
-;; says so rather than reporting a module it could not analyse as absent.
+;; `--stack-size` is not decoration, and 4000 IS NOT ENOUGH FOR EVERY CONTRACT.
+;; Two different things need it. `value-runtime-sha256` is 9 KB of nested `if`
+;; and the ClojureScript ANALYZER recurses over it; 4000 is measured to be
+;; enough for that, and the runner says so rather than reporting a module it
+;; could not analyse as absent. The INTERPRETER needs its own room, once per
+;; Kotoba call: `aes128-gcm` is 4,565 calls deep per GHASH multiplication, and
+;; at 4000 the first vectors of a cold run trapped while later ones passed --
+;; V8 shrinks the interpreter's frames once it tiers up, so the limit is
+;; TIMING-DEPENDENT rather than a fixed property of the object.
+;;
+;; Each contract states what it needs in `:verification :node-stack-size`. Run
+;; the deep ones as
+;;   ulimit -s 65520
+;;   node --stack-size=60000 "$(command -v nbb)" --classpath ... verify-admissions.cljs ...
+;; `--stack-size` above the thread's actual stack segfaults instead of
+;; throwing, so the `ulimit` is the half that makes the flag safe.
 ;;
 ;; WHY NOT `.clj`. These three verifiers were JVM programs calling
 ;; `kotoba.compiler.core/compile-project`, which is `.clj` and has no portable
@@ -137,6 +149,75 @@
   (fail! "REFUSING TO REPORT A PASS: no step builder for this contract format"
          {:format (:format contract)}))
 
+;; AES-128-GCM is the first contract here whose ANSWER IS NOT THE RETURN VALUE.
+;; `aiueos-cid-v1-admit` and its neighbours decide; this one transforms, and a
+;; reason code of 0 says only that the object thought it succeeded. The
+;; ciphertext, the tag and -- for a refused open -- the fact that the buffer
+;; still holds ciphertext are all in memory, so `:expect-memory` carries them
+;; and `run-single` compares them against the image the object actually wrote.
+(defmethod prepare :aiueos.aes128-gcm/v1 [contract v]
+  (let [{:keys [base image-bytes ctx-offset data-offset]}
+        (get-in contract [:verification :memory])
+        aad (hex-bytes (:aad-hex v))
+        data (hex-bytes (:data-hex v))
+        ;; The overrides exist so a refusal can be provoked by a LENGTH the
+        ;; object is handed rather than by bytes it would have to read to find
+        ;; the problem -- refusing 12289 must not cost 12289 bytes of image.
+        aad-len (or (:aad-len-override v) (count aad))
+        data-len (or (:data-len-override v) (count data))]
+    {:entry 'aiueos-aes128-gcm
+     :base base
+     :image (-> (vec (repeat image-bytes 0))
+                (write-at ctx-offset (hex-bytes (:key-hex v)))
+                (write-at (+ ctx-offset 16) (hex-bytes (:nonce-hex v)))
+                (write-at (+ ctx-offset 28) [aad-len])
+                (write-at (+ ctx-offset 32) (hex-bytes (:tag-hex v)))
+                (write-at (+ ctx-offset 64) aad)
+                (write-at data-offset data))
+     :args [(+ base ctx-offset)
+            (or (:ctx-len v) (get-in contract [:ctx :bytes]))
+            (if (some? (:data-base-override v))
+              (:data-base-override v)
+              (+ base data-offset))
+            data-len
+            (:mode v)]
+     :expect-memory
+     (cond-> []
+       (:expect-data-hex v)
+       (conj {:label :data :offset data-offset
+              :bytes (hex-bytes (:expect-data-hex v))})
+       (:expect-tag-hex v)
+       (conj {:label :tag :offset (+ ctx-offset 32)
+              :bytes (hex-bytes (:expect-tag-hex v))}))}))
+
+;; The key schedule beside the AEAD, and the same reason for `:expect-memory`:
+;; the reason code says the derivation ran, and the derived bytes are what
+;; decides whether the connection is readable by the peer or by anyone else.
+(defmethod prepare :aiueos.hkdf-sha256/v1 [contract v]
+  (let [{:keys [base image-bytes ctx-offset]} (get-in contract [:verification :memory])
+        key (hex-bytes (:key-hex v))
+        label (hex-bytes (:label-hex v))
+        context (hex-bytes (:context-hex v))]
+    {:entry 'aiueos-hkdf-sha256
+     :base base
+     :image (-> (vec (repeat image-bytes 0))
+                (write-at ctx-offset key)
+                (write-at (+ ctx-offset 96)
+                          [(or (:key-len-override v) (count key))
+                           (or (:label-len-override v) (count label))
+                           (or (:context-len-override v) (count context))
+                           (or (:out-len v) 32)])
+                (write-at (+ ctx-offset 112) label)
+                (write-at (+ ctx-offset 128) context))
+     :args [(+ base ctx-offset)
+            (or (:ctx-len v) (get-in contract [:ctx :bytes]))
+            (:mode v)]
+     :expect-memory
+     (cond-> []
+       (:expect-out-hex v)
+       (conj {:label :out :offset (+ ctx-offset 64)
+              :bytes (hex-bytes (:expect-out-hex v))}))}))
+
 (defmethod prepare :default [contract _]
   (fail! "REFUSING TO REPORT A PASS: no argument builder for this contract format"
          {:format (:format contract)}))
@@ -178,25 +259,59 @@
 
 (defn- refuse-on-trap! [contract label actual]
   (when (map? actual)
-    (fail! (if (= :kernel-memory-unavailable (:trap actual))
+    (fail! (cond
+             (= :kernel-memory-unavailable (:trap actual))
              "REFUSING TO REPORT A PASS: this kotoba-kir cannot execute kernel memory operations, so nothing was actually run"
-             "vector trapped where a result was expected")
+             ;; The interpreter recurses once per Kotoba call, so a deeply
+             ;; recursive object exhausts NODE'S STACK and `kir/execute` reports
+             ;; it as `:fuel-exhausted` with `:host-stack-exhausted true`. That
+             ;; is the host running out of room, not the object running out of
+             ;; fuel and not the object being wrong -- and at 4000 it is
+             ;; TIMING-DEPENDENT: measured 2026-09-02 on aes128-gcm, the first
+             ;; vectors of a cold run trapped and later ones passed, because V8
+             ;; shrinks the interpreter's frames once it tiers up. Reported as a
+             ;; refusal with the flag that names it, never as a mismatch.
+             (:host-stack-exhausted actual)
+             "REFUSING TO REPORT A PASS: node's stack was exhausted, so this vector was not executed -- rerun with a larger `ulimit -s` and `node --stack-size=...` (the contract's :verification :node-stack-size states what this one needs)"
+             :else "vector trapped where a result was expected")
            {:contract (:format contract) :vector label :trap actual})))
+
+;; The bytes the object left behind, compared against the bytes the contract
+;; says it should have. A vector that declares none of these is checking only
+;; the reason code, which for a transforming object is most of nothing.
+(defn- check-memory! [contract label expect-memory page]
+  (let [image @page]
+    (reduce
+     (fn [n {:keys [offset bytes] :as expectation}]
+       (let [actual (subvec image offset (+ offset (count bytes)))]
+         (when-not (= (vec bytes) (vec actual))
+           (fail! "memory mismatch"
+                  {:contract (:format contract) :vector label
+                   :region (:label expectation) :offset offset
+                   :expected (mapv #(bit-and % 0xff) bytes)
+                   :actual (mapv #(bit-and % 0xff) actual)})))
+       (inc n))
+     0
+     expect-memory)))
 
 (defn- run-single
   "One call per vector, each against a fresh image."
   [contract kir entry fuel started]
   (let [{:keys [floors]} (:verification contract)
+        memory-assertions (volatile! 0)
         observed
         (doall
          (for [v (:vectors contract)]
-           (let [{:keys [base image args]} (prepare contract v)
-                 actual (execute-once kir entry args base (volatile! image) fuel)]
+           (let [{:keys [base image args expect-memory]} (prepare contract v)
+                 page (volatile! image)
+                 actual (execute-once kir entry args base page fuel)]
              (refuse-on-trap! contract (:name v) actual)
              (when-not (= (:expected v) actual)
                (fail! "vector mismatch"
                       {:contract (:format contract) :vector (:name v)
                        :expected (:expected v) :actual actual}))
+             (vswap! memory-assertions +
+                     (check-memory! contract (:name v) expect-memory page))
              actual)))
         traps
         (doall
@@ -222,6 +337,13 @@
     (when (< (count observed) (or (:minimum-vectors floors) 1))
       (fail! "fewer vectors ran than the contract's floor"
              {:ran (count observed) :floor (:minimum-vectors floors)}))
+    ;; A contract that declares a memory floor and then runs vectors carrying no
+    ;; `:expect-memory` has checked reason codes only. For a transforming object
+    ;; that is a pass over the part that does not matter.
+    (when (< @memory-assertions (or (:minimum-memory-assertions floors) 0))
+      (fail! "fewer memory assertions ran than the contract's floor"
+             {:ran @memory-assertions
+              :floor (:minimum-memory-assertions floors)}))
     (when (and (:every-reachable-reason-observed floors) (seq unobserved))
       (fail! "a declared reason was never produced by any vector" {:unobserved unobserved}))
     (when (and (:both-verdicts-observed floors) (not= #{0 1} seen))
@@ -232,6 +354,7 @@
 
     {:contract (:format contract)
      :vectors (count observed) :traps (count traps)
+     :memory-assertions @memory-assertions
      :observed (vec (sort seen))
      :elapsed-ms (- (js/Date.now) started)}))
 
@@ -318,15 +441,26 @@
         paths (if (seq paths)
                 paths
                 (mapv #(path/join root-dir "os/aiueos/contracts" %)
+                      ;; The two TLS objects are here rather than named by
+                      ;; hand, because a contract nothing runs by default is a
+                      ;; contract nobody runs. They cost about twenty minutes
+                      ;; between them on this machine (see their
+                      ;; `:verification :largest-executed-record-bytes` and the
+                      ;; elapsed times in the receipt) -- the price of
+                      ;; executing an AEAD in a ClojureScript interpreter, and
+                      ;; stated rather than hidden.
                       ["cid-v1-admit-v1.edn" "unixfs-file-admit-v1.edn"
                        "value-runtime-cas-verify-v1.edn"
-                       "value-handle-arena-v1.edn"]))
+                       "value-handle-arena-v1.edn"
+                       "aes128-gcm-v1.edn" "hkdf-sha256-v1.edn"]))
         results (mapv #(run-contract root-dir %) paths)]
     (doseq [r results]
       (println (str "CONTRACT\t" (:contract r)
                     "\tvectors=" (:vectors r)
                     (when (:steps r) (str "\tsteps=" (:steps r)))
                     "\ttraps=" (:traps r)
+                    (when (:memory-assertions r)
+                      (str "\tmemory=" (:memory-assertions r)))
                     (when (:observed r) (str "\tobserved=" (str/join "," (:observed r))))
                     "\tms=" (:elapsed-ms r))))
     (println (str "CONTRACTS\t" (count results)))
