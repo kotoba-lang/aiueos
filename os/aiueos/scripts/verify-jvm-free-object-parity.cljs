@@ -12,23 +12,44 @@
 ;; must not read like an answered one. A pass over zero sources refuses with
 ;; its own exit code rather than reporting a clean parity.
 (ns verify-jvm-free-object-parity
-  (:require ["node:child_process" :as child]
+  (:require [clojure.edn :as edn]
+            [clojure.string :as string]
+            ["node:child_process" :as child]
             ["node:crypto" :as crypto]
             ["node:fs" :as fs]
             ["node:os" :as os]
             ["node:path" :as path]))
 
-(def root (or (first (filter #(not (.startsWith % "--")) *command-line-args*))
-              (throw (js/Error. "usage: verify-jvm-free-object-parity.cljs <aiueos-root> --compiler <dir>"))))
+;; Resolved to an absolute path. Both compile routes run with `:cwd` set to the
+;; COMPILER checkout, so a relative root reaches them as a path relative to the
+;; wrong directory -- and the compiler's answer for that is
+;; `:kotoba/invalid-data "input could not be read"`, which `classify` has no
+;; pattern for and therefore records as `:failed`. Measured 2026-09-02: eight
+;; objects in a row reported "failed" for a source that compiles by both routes
+;; when either is run alone. A toolchain that was handed the wrong path did not
+;; answer a question about the object.
+(def root (.resolve path
+                    (or (first (filter #(not (.startsWith % "--")) *command-line-args*))
+                        (throw (js/Error. "usage: verify-jvm-free-object-parity.cljs <aiueos-root> --compiler <dir>")))))
 (def compiler
   (let [args (vec *command-line-args*)
         i (.indexOf args "--compiler")]
     (when (neg? i) (throw (js/Error. "--compiler <amu checkout> is required")))
-    (nth args (inc i))))
+    (.resolve path (nth args (inc i)))))
 (def only
   (let [args (vec *command-line-args*)
         i (.indexOf args "--only")]
     (when-not (neg? i) (js/parseInt (nth args (inc i))))))
+
+;; `--objects a,b,c` measures a named subset. The JVM route is the expensive
+;; half (ADR-0132 measured the whole roster in hours), so a run that has to be
+;; split across sittings needs a way to name what it is doing -- and the merge
+;; below is what keeps the rows it did not measure from silently disappearing
+;; into a smaller `:scanned`.
+(def wanted
+  (let [args (vec *command-line-args*)
+        i (.indexOf args "--objects")]
+    (when-not (neg? i) (set (string/split (nth args (inc i)) #",")))))
 
 (def kotoba-dir (.join path root "os" "aiueos" "kotoba"))
 (def target "x86_64-aiueos-kernel-v1")
@@ -145,18 +166,42 @@
        (map #(.slice % 0 -2))
        (filter #(.existsSync fs (.join path kotoba-dir (str % ".kotoba"))))
        sort
-       (#(if only (take only %) %))
        vec))
 
-(when (zero? (count sources))
-  (println "REFUSED\tno kernel sources found under" kotoba-dir)
+;; Every object with a source, whether or not this run measures it. `:scanned`
+;; is about the run; `:unmeasured` is about the tree, and a roster that reports
+;; only the first without the second reads as complete when it is not.
+(def selected
+  (cond->> sources
+    wanted (filter wanted)
+    only (take only)
+    true vec))
+
+(when (zero? (count selected))
+  (println "REFUSED\tno kernel sources selected under" kotoba-dir)
   (.exit js/process 2))
+
+(defn- committed-sha [base]
+  (let [p (.join path kotoba-dir (str base ".o"))]
+    (when (.existsSync fs p) (sha256 (.readFileSync fs p)))))
+
+(def out-path (.join path root "qualification" "jvm-free-object-parity.edn"))
+
+;; Rows this run does not measure are carried from the previous receipt rather
+;; than dropped, and they keep the compiler digest they were measured under.
+;; Two runs against different compilers are not one measurement, so the summary
+;; refuses to name a single compiler when the rows disagree.
+(def prior
+  (when (.existsSync fs out-path)
+    (try (into {} (map (juxt :object identity)
+                       (:results (edn/read-string (.readFileSync fs out-path "utf8")))))
+         (catch :default _ {}))))
 
 (def work (.mkdtempSync fs (.join path (.tmpdir os) "parity-")))
 (def compiler-before (tree-digest compiler))
 
 (def results
-  (vec (for [base sources
+  (vec (for [base selected
              :let [src (.join path kotoba-dir (str base ".kotoba"))
                    a (compile-with-retry :jvm-free src (.join path work (str base ".nbb.o")))
                    b (compile-with-retry :jvm src (.join path work (str base ".jvm.o")))
@@ -175,7 +220,20 @@
                            (when (contains? #{:could-not-run :failed :reached-a-jvm} verdict)
                              (str "\t" (or (:message a) (:message b))))))
              (cond-> {:object base :verdict verdict
-                      :retried (boolean (or (:retried a) (:retried b)))}
+                      :retried (boolean (or (:retried a) (:retried b)))
+                      :compiler-tree-sha256 compiler-before
+                      ;; What is actually in the tree. Parity between two
+                      ;; compile routes says nothing about whether either one
+                      ;; produced the committed object -- and for most of 2026
+                      ;; it did not: this roster listed 66 rows whose digests
+                      ;; matched a newer compiler than the `.o` files beside
+                      ;; them (aiueos ADR-0129, and the TLS stream measured
+                      ;; sha256.o at 17,792 B against a 9,912 B row). Recording
+                      ;; the committed digest here makes that visible in the
+                      ;; roster instead of only in a separate manifest.
+                      :committed-sha256 (committed-sha base)
+                      :attests-committed
+                      (boolean (and (:ok a) (= (:sha a) (committed-sha base))))}
                (:ok a) (assoc :bytes (:bytes a) :sha256 (:sha a))
                (not (:ok a)) (assoc :jvm-free-message (:message a))
                (not (:ok b)) (assoc :jvm-message (:message b)))))))
@@ -191,27 +249,50 @@
                   " Discard them and re-run against a checkout nothing edits."))
     (.exit js/process 3)))
 
-(def by (frequencies (map :verdict results)))
+(def measured (set (map :object results)))
+(def carried
+  (vec (for [base sources
+             :when (not (contains? measured base))
+             :let [row (get prior base)]
+             :when row]
+         ;; The committed digest is re-read now, so a carried row cannot keep
+         ;; claiming it attests an object that has since been rebuilt.
+         (let [c (committed-sha base)]
+           (assoc row :committed-sha256 c
+                  :attests-committed (boolean (and (:sha256 row) (= (:sha256 row) c))))))))
+(def all-rows (vec (sort-by :object (into results carried))))
+(def unmeasured
+  (vec (sort (remove (set (map :object all-rows)) sources))))
+(def by (frequencies (map :verdict all-rows)))
+(def tree-digests (set (map :compiler-tree-sha256 all-rows)))
 (def summary
   {:format :aiueos.jvm-free-object-parity/v1
    :target (keyword target)
-   :scanned (count results)
-   :compiler-tree-sha256 compiler-before
+   :scanned (count all-rows)
+   :measured-this-run (count results)
+   :carried-from-previous (count carried)
+   :sources (count sources)
+   :unmeasured unmeasured
+   :compiler-tree-sha256 (if (= 1 (count tree-digests)) (first tree-digests) :mixed)
    :match (get by :match 0) :differs (get by :differs 0)
    :could-not-run (get by :could-not-run 0) :failed (get by :failed 0)
    :reached-a-jvm (get by :reached-a-jvm 0)
+   :attests-committed (count (filter :attests-committed all-rows))
+   :does-not-attest-committed
+   (vec (sort (map :object (remove :attests-committed all-rows))))
    :retried (count (filter :retried results))
-   :results results})
-(println (str "SCANNED\t" (count results)
+   :results all-rows})
+(println (str "SCANNED\t" (count all-rows)
               "\tMATCH\t" (get by :match 0)
               "\tDIFFERS\t" (get by :differs 0)
               "\tCOULD-NOT-RUN\t" (get by :could-not-run 0)
               "\tFAILED\t" (get by :failed 0)
-              "\tREACHED-A-JVM\t" (get by :reached-a-jvm 0)))
-(let [out (.join path root "qualification" "jvm-free-object-parity.edn")]
-  (when (.existsSync fs (.dirname path out))
-    (.writeFileSync fs out (str (pr-str summary) "\n"))
-    (println "wrote" out)))
+              "\tREACHED-A-JVM\t" (get by :reached-a-jvm 0)
+              "\tATTESTS-COMMITTED\t" (:attests-committed summary)
+              "\tUNMEASURED\t" (count unmeasured)))
+(when (.existsSync fs (.dirname path out-path))
+  (.writeFileSync fs out-path (str (pr-str summary) "\n"))
+  (println "wrote" out-path))
 (.exit js/process (cond (pos? (get by :could-not-run 0)) 2
                         (pos? (+ (get by :differs 0) (get by :failed 0)
                                  (get by :reached-a-jvm 0))) 1

@@ -65,9 +65,13 @@
  {:cmd ["nbb" "os/aiueos/scripts/ecdsa-sign-oracle.cljs"]
   :doc "The RFC 6979 A.2.5 known answer for ecdsa-p256-sign.kotoba: a BigInt reference proves the sign FORMULA and r||s ABI (ADR-0104)."}
 
- :ecdsa-sign-object
- {:cmd ["sh" "-c" "cd $(git rev-parse --show-toplevel 2>/dev/null || echo .) && clojure -M -e '(load-file \"os/aiueos/scripts/reproduce-ecdsa-sign-object.clj\")'"]
-  :doc "Regenerate os/aiueos/kotoba/ecdsa-p256-sign.o via the pinned toolchain patched for the ecdsa entry + 250M fuel tier (ADR-0105). Needs the amu/kotoba-native git deps."}
+ :reproduce-objects
+ {:cmd ["nbb" "os/aiueos/scripts/reproduce-kotoba-objects.cljs"]
+  :doc "Recompile every committed Kotoba kernel object from os/aiueos/kotoba/provenance.edn and compare the bytes. Needs --amu <checkout>; exit 0 all reproduce, 3 any differ, 2 could not run. Replaces reproduce-kotoba-kernel-object.sh and reproduce-ecdsa-sign-object.clj."}
+
+ :kernel-object-digests
+ {:cmd ["nbb" "os/aiueos/scripts/sync-kernel-object-digests.cljs" "--check"]
+  :doc "Do build-uefi.sh's pinned object digests still agree with provenance.edn? exit 3 when they do not; --write syncs them from the manifest."}
 
  :ecdsa-sign-kat
  {:cmd ["sh" "-c" "AIUEOS_ECDSA_SIGN_KAT=1 AIUEOS_TEST_NET=1 nbb os/aiueos/scripts/smoke-qemu-ecdsa-sign.cljs"]
