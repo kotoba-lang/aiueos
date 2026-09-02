@@ -295,7 +295,7 @@
        (conj {:label :record-length :offset (+ ctx-offset 60)
               :bytes (be-bytes (:expect-record-length v) 2)}))}))
 
-;; --- the Qwen3.5 forward pass, first tranche (ADR-0137) -------------------
+;; --- the Qwen3.5 forward pass, first tranche (ADR-0147) -------------------
 ;;
 ;; Three objects that are three copies of one piece of arithmetic:
 ;; `aiueos-qwen35-matvec` inlines the other two, because a kernel object
@@ -733,7 +733,7 @@
 (defmethod prepare :aiueos.qwen35-detokenize/v1 [contract v]
   (tokenizer-prepare contract v 'aiueos-qwen35-detokenize))
 
-;; --- the Qwen3.5 forward pass, second tranche (ADR-0140) -------------------
+;; --- the Qwen3.5 forward pass, second tranche (ADR-0148) -------------------
 ;;
 ;; The scalar functions between the matvecs. Expectations come from the same
 ;; independent ClojureScript re-derivation over `Float32Array` the first

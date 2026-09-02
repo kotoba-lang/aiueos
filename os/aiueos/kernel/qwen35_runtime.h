@@ -139,7 +139,7 @@ int aiueos_qwen35_model_bind(struct aiueos_qwen35_model *model,
                              const uint8_t *bytes,
                              uint64_t accessible_bytes);
 
-/* The workspace -> struct translation of the Kotoba admission (ADR-0135), on
+/* The workspace -> struct translation of the Kotoba admission (ADR-0145), on
    its own. `kv_plan` is the 128-byte workspace `kotoba_aiueos_qwen35_gguf_kv_scan`
    filled and `tt_plan` the 28,160-byte one
    `kotoba_aiueos_qwen35_tensor_table_bind` filled. It decides nothing the

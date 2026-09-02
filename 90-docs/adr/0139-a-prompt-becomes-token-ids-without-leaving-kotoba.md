@@ -9,7 +9,7 @@ Date: 2026-09-02
 Its input is a single BOS id — `contracts/qwen38-qwen35-runtime-v1.edn`
 `:execution :input-token {:kind :bos :id 248044}` — and the K16 image contains
 no tokenizer, in C or anywhere else. The three GGUF admission objects
-(ADR-0135) answer "is this the file", "what does it say it is" and "where is
+(ADR-0145) answer "is this the file", "what does it say it is" and "where is
 every tensor" without ever reading a token *string*; the two arrays whose
 coordinates `aiueos-qwen35-gguf-kv-scan` records into workspace slots 100–120
 have never been read at all.

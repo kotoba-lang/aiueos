@@ -6,7 +6,7 @@ Accepted (2026-09-02)
 
 ## Context
 
-ADR-0135 moved the whole of `kernel/qwen35_runtime.c`'s GGUF parser into three
+ADR-0145 moved the whole of `kernel/qwen35_runtime.c`'s GGUF parser into three
 Kotoba objects and made the C delegate to them under
 `-DAIUEOS_QWEN35_KOTOBA_ADMISSION`, which `build-uefi.sh` defines for every
 profile that compiles that file. Its own "What is NOT done" said what was
@@ -205,8 +205,8 @@ own 232–240 lines subtracted:
 
 | profile | lines | in an image |
 |---|---|---|
-| before ADR-0135 — the only implementation | 603 | yes |
-| after ADR-0135 — delegating branch + bind | 192 | yes |
+| before ADR-0145 — the only implementation | 603 | yes |
+| after ADR-0145 — delegating branch + bind | 192 | yes |
 | **after this ADR — delegating branch + bind** | **243** | **yes** |
 | reference parser (`#ifndef`) | 603 | no |
 | `AIUEOS_QWEN35_TRANSLATION_ONLY` (the host gate's unit) | 130 | no |
@@ -214,7 +214,7 @@ own 232–240 lines subtracted:
 The K16 profile grew by 51 lines, and none of them is a decision: 5 call sites
 that record `verdict`/`stage` before returning 0, and 4 translation refusals
 that now say which one fired. The parser is still gone — 603 → 243 against
-ADR-0135's baseline of 641 physical lines, all of it C, all of it in the image.
+ADR-0145's baseline of 641 physical lines, all of it C, all of it in the image.
 
 `zig cc` was asked for and cannot run this gate: on this host it links no
 hosted program at all (`zig cc hello.c` → `undefined symbol: _printf`, zig
@@ -232,12 +232,14 @@ is what `${CC:-cc}` already selected.
 2. **One mutation, one clause.** The QEMU refusal exercises clause 21 of one of
    the three objects. The other twenty-plus clauses are exercised by the KIR
    oracle only; the boot proves the seam, not the table.
-3. **`-22` and `-23` still have no case**, unchanged from ADR-0135 §2.
+3. **`-22` and `-23` still have no case**, unchanged from ADR-0145 §2.
 4. **`qualification/jvm-free-object-parity.edn` is still not regenerated**,
-   unchanged from ADR-0135 §3. No `.kotoba` source and no `.o` changed here, so
+   unchanged from ADR-0145 §3. No `.kotoba` source and no `.o` changed here, so
    the object set and its provenance are untouched.
-5. **The two files numbered 0135** (`…-a-kernel-object-imports-its-first-module`
-   and `…-the-qwen38-gguf-admission-becomes-three-kotoba-objects`) collided when
-   two streams landed on the same day, and the first of them still says
-   "ADR 0134" in its own heading. Not renumbered here — noted so the next
-   author does not spend the same minutes rediscovering it.
+5. ~~**The two files numbered 0135**~~ **CLOSED.** They collided when two
+   streams landed on the same day, and the first still said "ADR 0134" in its
+   own heading. `…-a-kernel-object-imports-its-first-module` keeps 0135 and its
+   heading now says so; `…-the-qwen38-gguf-admission-becomes-three-kotoba-objects`
+   is **ADR-0145**, and the citations that meant it were re-pointed by reading
+   each one rather than by rewriting every "ADR-0135" in the tree — half of them
+   meant the other file.

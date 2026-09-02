@@ -10,7 +10,7 @@ python3 "$aiueos/tests/make_qwen35_header_fixture.py" "$work/header.gguf"
 
 # Two translation units from one source file. The first is the C reference
 # parser; the second is ONLY the workspace -> struct translation of the Kotoba
-# admission (ADR-0135), which is what lets this gate compare the two structs on
+# admission (ADR-0145), which is what lets this gate compare the two structs on
 # an aarch64 workstation that cannot execute the x86-64 objects themselves.
 ${CC:-cc} -std=c11 -O2 -Wall -Wextra -Werror \
   -c -o "$work/qwen35_runtime_reference.o" "$aiueos/kernel/qwen35_runtime.c"

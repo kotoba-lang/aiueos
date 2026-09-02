@@ -167,7 +167,7 @@ kotoba_tls13_record_object=${AIUEOS_KOTOBA_TLS13_RECORD_OBJECT:-"$aiueos/kotoba/
 # contract graded -- and until amu#742 neither could be built at all.
 kotoba_cid_v1_admit_object=${AIUEOS_KOTOBA_CID_V1_ADMIT_OBJECT:-"$aiueos/kotoba/cid-v1-admit.o"}
 kotoba_value_runtime_cas_verify_object=${AIUEOS_KOTOBA_VALUE_RUNTIME_CAS_VERIFY_OBJECT:-"$aiueos/kotoba/value-runtime-cas-verify.o"}
-# The Qwen3.5 forward pass, first tranche (ADR-0137). Linked ONLY with the
+# The Qwen3.5 forward pass, first tranche (ADR-0147). Linked ONLY with the
 # model handoff, because that is the only build in which the C they are
 # compared against (kernel/qwen35_infer.c, kernel/qwen35_quant.c) is compiled
 # at all -- linking them into every image would carry 23 KiB nothing calls.
@@ -176,7 +176,7 @@ kotoba_value_runtime_cas_verify_object=${AIUEOS_KOTOBA_VALUE_RUNTIME_CAS_VERIFY_
 kotoba_qwen35_dot_object=${AIUEOS_KOTOBA_QWEN35_DOT_OBJECT:-"$aiueos/kotoba/qwen35-dot-f32.o"}
 kotoba_qwen35_dequant_object=${AIUEOS_KOTOBA_QWEN35_DEQUANT_OBJECT:-"$aiueos/kotoba/qwen35-dequant-row.o"}
 kotoba_qwen35_matvec_object=${AIUEOS_KOTOBA_QWEN35_MATVEC_OBJECT:-"$aiueos/kotoba/qwen35-matvec.o"}
-# Second tranche (ADR-0140): the scalar functions between the matvecs.
+# Second tranche (ADR-0148): the scalar functions between the matvecs.
 kotoba_qwen35_activation_object=${AIUEOS_KOTOBA_QWEN35_ACTIVATION_OBJECT:-"$aiueos/kotoba/qwen35-activation.o"}
 kotoba_qwen35_norm_object=${AIUEOS_KOTOBA_QWEN35_NORM_OBJECT:-"$aiueos/kotoba/qwen35-norm.o"}
 qwen35_kotoba_link=
@@ -444,7 +444,7 @@ model_sha256=${AIUEOS_MODEL_SHA256:-c0b7c3038681ed2e3040456c1dd45f9858b6c2290bed
 model_min_address=${AIUEOS_MODEL_MIN_ADDRESS:-4294967296}
 model_max_address=${AIUEOS_MODEL_MAX_ADDRESS:-68719476735}
 # The Kotoba/C parity self-test for the Qwen3.5 forward-pass objects
-# (ADR-0137).  A SEPARATE flag from AIUEOS_QWEN38_MODEL_HANDOFF on purpose: the
+# (ADR-0147).  A SEPARATE flag from AIUEOS_QWEN38_MODEL_HANDOFF on purpose: the
 # handoff makes the UEFI loader demand a 10,934,860,704-byte model mapping and
 # refuse the boot without one (AIUEOS_LOADER_FAIL qwen38-model-admission
 # code=121, measured 2026-09-02), while this comparison needs no model -- it is

@@ -1,4 +1,4 @@
-# ADR-0136: The HKDF object was miscompiled, that is fixed, and it still does not return
+# ADR-0146: The HKDF object was miscompiled, that is fixed, and it still does not return
 
 - Status: accepted
 - Date: 2026-09-02

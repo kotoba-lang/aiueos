@@ -40,7 +40,7 @@
  ;; in ClojureScript over `Float32Array`, so every rounding in the expectation
  ;; is a real binary32 rounding rather than a double printed short. That proves
  ;; the ALGORITHM against a second reading of the same C and says nothing about
- ;; what amu emitted -- which is why ADR-0137's acceptance is the QEMU
+ ;; what amu emitted -- which is why ADR-0147's acceptance is the QEMU
  ;; self-test `QWEN-PARITY dequant`, where the emitted object is compared
  ;; against the compiled C on the CPU, bit for bit.
 
