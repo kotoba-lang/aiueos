@@ -277,6 +277,127 @@
        (conj {:label :record-length :offset (+ ctx-offset 60)
               :bytes (be-bytes (:expect-record-length v) 2)}))}))
 
+;; --- the Qwen3.5 forward pass, first tranche (ADR-0137) -------------------
+;;
+;; Three objects that are three copies of one piece of arithmetic:
+;; `aiueos-qwen35-matvec` inlines the other two, because a kernel object
+;; exports one symbol and cannot call another. So the three builders below feed
+;; the SAME oracle-derived bytes into all three, and a divergence between them
+;; is a vector mismatch here rather than something to be discovered later.
+;;
+;; The expected bytes come from an independent ClojureScript re-derivation of
+;; the C over `Float32Array`, so every rounding in an expectation is a real
+;; binary32 rounding. That proves the algorithm against a second reading and
+;; says nothing about what amu emitted; the evidence that covers the backend is
+;; the QEMU self-test `QWEN-PARITY`, which compares the emitted objects
+;; against the compiled C on the CPU.
+
+(defn- row-bytes
+  "`aiueos_qwen35_quant_row_bytes` for the four types this tranche decodes."
+  [qtype count]
+  (case qtype
+    0 (* count 4)
+    8 (* (quot count 32) 34)
+    12 (* (quot count 256) 144)
+    14 (* (quot count 256) 210)
+    ;; A type the object refuses. The runner still has to place SOMETHING, and
+    ;; a Q5_K row is the honest size for the vector that provokes -6/-5.
+    13 (* (quot count 256) 176)
+    (fail! "no row byte count for this quantisation type" {:qtype qtype})))
+
+(defmethod prepare :aiueos.qwen35-dequant-row/v1 [contract v]
+  (let [{:keys [base image-bytes src-offset dst-offset]}
+        (get-in contract [:verification :memory])
+        row (hex-bytes (:row-hex v))
+        count (:count v)
+        src-len (or (:src-len-override v) (row-bytes (:qtype v) count))
+        dst-len (or (:dst-len-override v) (* count 4))]
+    {:entry 'aiueos-qwen35-dequant-row
+     :base base
+     :image (write-at (vec (repeat image-bytes 0)) src-offset row)
+     :args [(:qtype v)
+            (if (some? (:src-base-override v)) (:src-base-override v) (+ base src-offset))
+            src-len
+            (if (some? (:dst-base-override v)) (:dst-base-override v) (+ base dst-offset))
+            dst-len]
+     :expect-memory
+     (cond-> []
+       (:expect-row-hex v)
+       (conj {:label :row :offset dst-offset :bytes (hex-bytes (:expect-row-hex v))}))}))
+
+(defmethod prepare :aiueos.qwen35-dot-f32/v1 [contract v]
+  (let [{:keys [base image-bytes left-offset right-offset]}
+        (get-in contract [:verification :memory])
+        left (hex-bytes (:left-hex v))
+        right (hex-bytes (:right-hex v))
+        count (or (:count-override v) (:count v))]
+    {:entry 'aiueos-qwen35-dot-f32
+     :base base
+     :image (-> (vec (repeat image-bytes 0))
+                (write-at left-offset left)
+                (write-at right-offset right))
+     ;; The overrides exist so a refusal can be provoked by a LENGTH rather
+     ;; than by bytes the runner would have to place: refusing a count of
+     ;; 65,537 must not cost 262 KiB of image.
+     :args [(+ base left-offset)
+            (or (:a-len-override v) (:len-override v) (* 4 (max count 0)))
+            (+ base right-offset)
+            (or (:b-len-override v) (:len-override v) (* 4 (max count 0)))
+            count]}))
+
+
+(defn- write-u64 [image offset value]
+  (-> image
+      (write-u32 offset (mod value 4294967296))
+      (write-u32 (+ offset 4) (js/Math.floor (/ value 4294967296)))))
+
+(defmethod prepare :aiueos.qwen35-matvec/v1 [contract v]
+  (let [{:keys [base image-bytes arena-offset]}
+        (get-in contract [:verification :memory])
+        qtype (:qtype v)
+        rows (:rows v)
+        cols (:cols v)
+        rb (row-bytes qtype cols)
+        weights (hex-bytes (or (:weights-hex v) ""))
+        input (hex-bytes (or (:input-hex v) ""))
+        weights-bytes (* rows rb)
+        input-offset weights-bytes
+        output-offset (+ input-offset (* cols 4))
+        scratch-offset (+ output-offset (* rows 4))
+        arena-bytes (+ scratch-offset (* cols 4))
+        plan-offset (+ arena-offset arena-bytes)
+        plan (-> (vec (repeat 96 0))
+                 (write-u32 0 qtype)
+                 (write-u32 4 (or (:reserved-4 v) 0))
+                 (write-u64 8 (or (:rows-override v) rows))
+                 (write-u64 16 (or (:cols-override v) cols))
+                 (write-u64 24 (or (:weights-offset-override v) 0))
+                 (write-u64 32 (or (:weights-bytes-override v) weights-bytes))
+                 (write-u64 40 input-offset)
+                 (write-u64 48 output-offset)
+                 (write-u64 56 scratch-offset)
+                 (write-u64 64 (or (:first-override v) (:first v) 0))
+                 (write-u64 72 (or (:end-override v) (:end v) rows))
+                 (write-u64 80 (or (:reserved-80 v) 0))
+                 (write-u64 88 (or (:reserved-88 v) 0)))]
+    (when (> (+ plan-offset 96) image-bytes)
+      (fail! "REFUSING TO REPORT A PASS: this vector's arena does not fit the contract's image"
+             {:vector (:name v) :needed (+ plan-offset 96) :image-bytes image-bytes}))
+    {:entry 'aiueos-qwen35-matvec
+     :base base
+     :image (-> (vec (repeat image-bytes 0))
+                (write-at arena-offset weights)
+                (write-at (+ arena-offset input-offset) input)
+                (write-at plan-offset plan))
+     :args [(if (some? (:arena-base-override v)) (:arena-base-override v) (+ base arena-offset))
+            arena-bytes
+            (if (some? (:plan-base-override v)) (:plan-base-override v) (+ base plan-offset))
+            (or (:plan-len-override v) 96)]
+     :expect-memory
+     (cond-> []
+       (:expect-output-hex v)
+       (conj {:label :output :offset (+ arena-offset output-offset)
+              :bytes (hex-bytes (:expect-output-hex v))}))}))
 ;; --- device-worker client --------------------------------------------------
 ;; `device-worker-canonical` writes the text the device SIGNS. Its contract is
 ;; the only one here whose expected bytes come from a second implementation
