@@ -129,6 +129,16 @@ kotoba_ecdsa_object=${AIUEOS_KOTOBA_ECDSA_OBJECT:-"$aiueos/kotoba/ecdsa-p256.o"}
 # 13 KiB artifact in the image to no end.
 kotoba_aes128_gcm_object=${AIUEOS_KOTOBA_AES128_GCM_OBJECT:-"$aiueos/kotoba/aes128-gcm.o"}
 kotoba_tls13_record_object=${AIUEOS_KOTOBA_TLS13_RECORD_OBJECT:-"$aiueos/kotoba/tls13-record.o"}
+# The Qwen3.5 forward pass, first tranche (ADR-0135). Linked ONLY with the
+# model handoff, because that is the only build in which the C they are
+# compared against (kernel/qwen35_infer.c, kernel/qwen35_quant.c) is compiled
+# at all -- linking them into every image would carry 23 KiB nothing calls.
+# All three return a REASON CODE and zero is success, except the dot product,
+# whose answer IS the value; see the objects' contracts.
+kotoba_qwen35_dot_object=${AIUEOS_KOTOBA_QWEN35_DOT_OBJECT:-"$aiueos/kotoba/qwen35-dot-f32.o"}
+kotoba_qwen35_dequant_object=${AIUEOS_KOTOBA_QWEN35_DEQUANT_OBJECT:-"$aiueos/kotoba/qwen35-dequant-row.o"}
+kotoba_qwen35_matvec_object=${AIUEOS_KOTOBA_QWEN35_MATVEC_OBJECT:-"$aiueos/kotoba/qwen35-matvec.o"}
+qwen35_kotoba_link=
 # ECDSA P-256 deterministic sign (ADR-0105). Linked ONLY when
 # AIUEOS_ECDSA_SIGN_KAT=1 -- it is ~50 KiB and the kernel is near its 1 MiB
 # ceiling, so it stays out of the default and the SSH-listener builds until the
@@ -764,6 +774,15 @@ python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_aes128_gcm_obj
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_tls13_record_object" \
   46d7bf41d9c50f519ef499134f0c021d06ab7dea256002f0c56e43f83391c46f \
   kotoba_aiueos_tls13_record
+if [ -n "$model_handoff_link" ]; then
+  python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_qwen35_dot_object" \
+    "" kotoba_aiueos_qwen35_dot_f32
+  python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_qwen35_dequant_object" \
+    "" kotoba_aiueos_qwen35_dequant_row
+  python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_qwen35_matvec_object" \
+    "" kotoba_aiueos_qwen35_matvec
+  qwen35_kotoba_link="$kotoba_qwen35_dot_object $kotoba_qwen35_dequant_object $kotoba_qwen35_matvec_object"
+fi
 if [ -n "$ecdsa_sign_link" ]; then
   python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_ecdsa_sign_object" \
     decd83b1cd331af1305ad24c080443118f925067353c320078e66085695fd433 \
@@ -973,6 +992,7 @@ zig ld.lld -nostdlib -static --strip-all $qualification_gc_link -z max-page-size
   "$kotoba_pci_config_read_object" "$kotoba_pci_config_write_object" \
   "$kotoba_x25519_object"   "$kotoba_ecdsa_object" $ecdsa_sign_link $ecdsa_public_link "$kotoba_ime_object" \
   "$kotoba_aes128_gcm_object" "$kotoba_tls13_record_object" \
+  $qwen35_kotoba_link \
   "$kotoba_wm_object" "$kotoba_scanout_object" "$kotoba_broker_object" "$kotoba_session_object" \
   "$kotoba_mmio_map_admit_object" \
   "$kotoba_acpi_checksum_object" "$kotoba_acpi_table_valid_object" \

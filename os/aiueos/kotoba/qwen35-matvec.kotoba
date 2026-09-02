@@ -1,0 +1,320 @@
+(ns aiueos.qwen35-matvec)
+
+;; `matvec_range` (`kernel/qwen35_infer.c:344`) as one kernel object: for each
+;; row of a quantised weight tensor, dequantise the row into a workspace and
+;; take its four-accumulator dot product with the input vector.
+;;
+;; ## Why the dequantiser and the dot product are BOTH here
+;;
+;; A kernel object exports one symbol and cannot call another (ADR-0030), so
+;; `aiueos-qwen35-dequant-row` and `aiueos-qwen35-dot-f32` cannot be reached
+;; from here. Their bodies are inlined below, character for character where the
+;; ABI allows it. The three objects are therefore three copies of the same
+;; arithmetic, and the contracts pin them to the same vectors so a divergence
+;; is a test failure rather than a discovery.
+;;
+;; ## One arena, one plan
+;;
+;; `kernel-subregion` requires its BASE to be a parameter, a literal or
+;; `kernel-boot-info` (amu's kernel_region_provenance_test), so every region
+;; this object touches would otherwise have to arrive as its own parameter --
+;; weights, input, output and row scratch is four bases and four lengths
+;; against an ABI that admits five arguments in total.
+;;
+;; So the caller places all four inside ONE region and describes them in a
+;; 96-byte plan. An OFFSET may be computed; only a base may not. The offsets
+;; are 64-bit because the model mapping is 10,934,860,704 bytes and a u32
+;; slot would silently truncate every tensor past 4 GiB.
+;;
+;;     0   quantisation type                       u32
+;;     4   reserved, must be zero                  u32
+;;     8   rows      (output elements)             u64
+;;    16   cols      (input elements)              u64
+;;    24   weights offset within the arena         u64
+;;    32   weights bytes                           u64
+;;    40   input offset                            u64
+;;    48   output offset                           u64
+;;    56   row scratch offset                      u64
+;;    64   first row, inclusive                    u64
+;;    72   end row, exclusive                      u64
+;;    80   reserved, must be zero                  u64
+;;    88   reserved, must be zero                  u64
+;;
+;; Input, output and scratch lengths are DERIVED (cols*4, rows*4, cols*4)
+;; rather than carried, so the plan cannot state a length that disagrees with
+;; the count it also states.
+;;
+;; The row range is what makes an SMP split expressible without a second
+;; object: `matvec` in the C hands the AP `[split, output_count)` and keeps
+;; `[0, split)`. It is also what keeps the fuel bound finite -- see below.
+;;
+;; ## Return
+;;
+;; **Zero is the success value.**
+;;
+;;    0    every row in [first, end) was written
+;;   -1    null arena
+;;   -2    null plan
+;;   -3    plan length is not 96
+;;   -4    a reserved slot is non-zero
+;;   -5    quantisation type is not one of F32 / Q8_0 / Q4_K / Q6_K
+;;   -6    cols outside 1..65536, or not a multiple of this type's block
+;;   -7    rows outside 1..1048576
+;;   -8    weights bytes is not rows * the row byte count
+;;   -9    the row range is not 0 <= first <= end <= rows
+;;  -10    (end - first) * cols is above the 2,097,152 work ceiling
+;;  -11    a region runs past the arena
+;;  -12    a row dequantised to a refusal (unreachable: the type and the
+;;         lengths are proved above)
+;;
+;; ## The work ceiling is not a limitation of the arithmetic
+;;
+;; 2,097,152 multiply-accumulates per call, which at the measured 22 fuel per
+;; element is ~46,000,000 fuel against a 250,000,000 tier. A single K16 matvec
+;; is larger than that -- `ffn_gate` is 17,408 rows of 5,120 -- so the C
+;; chunks: 409 rows per call is one chunk's worth. THAT IS THE POINT OF THE ROW
+;; RANGE. A fuel bound that moves with the tensor is not a bound, and an object
+;; that traps partway through a matrix leaves the output half written with no
+;; way to tell which half.
+
+;; ------------------------------------------------------------------ readers
+
+(defn u8-at [base len off]
+  (kernel-load-u8 (kernel-subregion base len off 1) 1 0))
+
+(defn s8-at [base len off]
+  (let [v (u8-at base len off)]
+    (if (> v 127) (- v 256) v)))
+
+(defn u16-at [base len off]
+  (+ (u8-at base len off) (* 256 (u8-at base len (+ off 1)))))
+
+(defn plan-u32 [plan slot]
+  (kernel-load-u32 plan 96 slot))
+
+(defn plan-u64 [plan slot]
+  (+ (kernel-load-u32 plan 96 slot)
+     (* 4294967296 (kernel-load-u32 plan 96 (+ slot 4)))))
+
+(defn f32w [u]
+  (if (> u 2147483647) (- u 4294967296) u))
+
+(defn u32w [v]
+  (bit-and v 4294967295))
+
+;; ------------------------------------------- fp16 -> binary32 bit pattern
+
+(defn fp16-sub [sign m u]
+  (if (= (bit-and m 1024) 0)
+    (fp16-sub sign (* m 2) (- u 1))
+    (bit-or sign (bit-or (* (+ u 127) 8388608) (* (bit-and m 1023) 8192)))))
+
+(defn fp16-bits [h]
+  (let [sign (* (bit-and h 32768) 65536)
+        e (bit-and (quot h 1024) 31)
+        m (bit-and h 1023)]
+    (if (= e 0)
+      (if (= m 0) sign (fp16-sub sign m -14))
+      (if (= e 31)
+        (bit-or sign (bit-or 2139095040 (* m 8192)))
+        (bit-or sign (bit-or (* (+ e 112) 8388608) (* m 8192)))))))
+
+;; ------------------------------------------------------ dequantise one row
+
+(defn f32-el [src slen dst count i]
+  (if (>= i count)
+    0
+    (do (kernel-store-u32 (kernel-subregion dst (* count 4) (* i 4) 4) 4 0
+                          (kernel-load-u32 (kernel-subregion src slen (* i 4) 4) 4 0))
+        (f32-el src slen dst count (+ i 1)))))
+
+(defn q80-value [src slen base j]
+  (f32-to-bits
+   (f32-mul (i64-to-f32-rounded (s8-at src slen (+ base (+ 2 j))))
+            (f32-from-bits (f32w (fp16-bits (u16-at src slen base)))))))
+
+(defn q80-el [src slen dst count i]
+  (if (>= i count)
+    0
+    (do (kernel-store-u32
+         (kernel-subregion dst (* count 4) (* i 4) 4) 4 0
+         (u32w (q80-value src slen (* 34 (quot i 32)) (- i (* 32 (quot i 32))))))
+        (q80-el src slen dst count (+ i 1)))))
+
+(defn k4-scale [src slen sbase j]
+  (if (< j 4)
+    (bit-and (u8-at src slen (+ sbase j)) 63)
+    (bit-or (bit-and (u8-at src slen (+ sbase (+ j 4))) 15)
+            (* 16 (quot (u8-at src slen (+ sbase (- j 4))) 64)))))
+
+(defn k4-min [src slen sbase j]
+  (if (< j 4)
+    (bit-and (u8-at src slen (+ sbase (+ j 4))) 63)
+    (bit-or (quot (u8-at src slen (+ sbase (+ j 4))) 16)
+            (* 16 (quot (u8-at src slen (+ sbase j)) 64)))))
+
+(defn q4k-value [src slen base r]
+  (let [step (quot r 64)
+        inner (- r (* 64 step))
+        low (< inner 32)
+        j (+ (* 2 step) (if low 0 1))
+        l (if low inner (- inner 32))
+        q (u8-at src slen (+ base (+ 16 (+ (* 32 step) l))))
+        v (if low (bit-and q 15) (quot q 16))]
+    (f32-to-bits
+     (f32-sub (f32-mul (f32-mul (f32-from-bits (f32w (fp16-bits (u16-at src slen base))))
+                                (i64-to-f32-rounded (k4-scale src slen (+ base 4) j)))
+                       (i64-to-f32-rounded v))
+              (f32-mul (f32-from-bits (f32w (fp16-bits (u16-at src slen (+ base 2)))))
+                       (i64-to-f32-rounded (k4-min src slen (+ base 4) j)))))))
+
+(defn q4k-el [src slen dst count i]
+  (if (>= i count)
+    0
+    (do (kernel-store-u32
+         (kernel-subregion dst (* count 4) (* i 4) 4) 4 0
+         (u32w (q4k-value src slen (* 144 (quot i 256)) (- i (* 256 (quot i 256))))))
+        (q4k-el src slen dst count (+ i 1)))))
+
+(defn pow4 [g]
+  (if (= g 0) 1 (if (= g 1) 4 (if (= g 2) 16 64))))
+
+(defn q6k-value [src slen base r]
+  (let [half (quot r 128)
+        t (- r (* 128 half))
+        grp (quot t 32)
+        l (- t (* 32 grp))
+        odd (- grp (* 2 (quot grp 2)))
+        qv (u8-at src slen (+ base (+ (* 64 half) (+ l (* 32 odd)))))
+        nib (if (< grp 2) (bit-and qv 15) (quot qv 16))
+        hi (bit-and (quot (u8-at src slen (+ base (+ 128 (+ (* 32 half) l)))) (pow4 grp)) 3)
+        q (- (bit-or nib (* 16 hi)) 32)
+        sc (s8-at src slen (+ base (+ 192 (+ (* 8 half) (+ (quot l 16) (* 2 grp))))))]
+    (f32-to-bits
+     (f32-mul (f32-mul (f32-from-bits (f32w (fp16-bits (u16-at src slen (+ base 208)))))
+                       (i64-to-f32-rounded sc))
+              (i64-to-f32-rounded q)))))
+
+(defn q6k-el [src slen dst count i]
+  (if (>= i count)
+    0
+    (do (kernel-store-u32
+         (kernel-subregion dst (* count 4) (* i 4) 4) 4 0
+         (u32w (q6k-value src slen (* 210 (quot i 256)) (- i (* 256 (quot i 256))))))
+        (q6k-el src slen dst count (+ i 1)))))
+
+(defn dequant-run [qtype src slen dst count]
+  (if (= qtype 0) (f32-el src slen dst count 0)
+    (if (= qtype 8) (q80-el src slen dst count 0)
+      (if (= qtype 12) (q4k-el src slen dst count 0)
+        (q6k-el src slen dst count 0)))))
+
+;; ---------------------------------------------------- the dot product
+
+(defn f32-word-at [base n4 i]
+  (let [u (kernel-load-u32 (kernel-subregion base n4 (* i 4) 4) 4 0)]
+    (if (> u 2147483647) (- u 4294967296) u)))
+
+(defn dot-lane [a b count k acc]
+  (if (>= k (* 4 (quot count 4)))
+    acc
+    (dot-lane a b count (+ k 4)
+      (f32-to-bits
+        (f32-add (f32-from-bits acc)
+                 (f32-mul (f32-from-bits (f32-word-at a (* count 4) k))
+                          (f32-from-bits (f32-word-at b (* count 4) k))))))))
+
+(defn dot-tail [a b count i acc]
+  (if (>= i count)
+    acc
+    (dot-tail a b count (+ i 1)
+      (f32-to-bits
+        (f32-add (f32-from-bits acc)
+                 (f32-mul (f32-from-bits (f32-word-at a (* count 4) i))
+                          (f32-from-bits (f32-word-at b (* count 4) i))))))))
+
+(defn dot-run [a b count]
+  (dot-tail a b count (* 4 (quot count 4))
+    (f32-to-bits
+      (f32-add
+        (f32-add (f32-from-bits (dot-lane a b count 0 0))
+                 (f32-from-bits (dot-lane a b count 1 0)))
+        (f32-add (f32-from-bits (dot-lane a b count 2 0))
+                 (f32-from-bits (dot-lane a b count 3 0)))))))
+
+;; ------------------------------------------------------------ the row walk
+
+(defn row-bytes [qtype count]
+  (if (= qtype 0) (* count 4)
+    (if (= qtype 8)
+      (if (= 0 (- count (* 32 (quot count 32)))) (* 34 (quot count 32)) -1)
+      (if (= qtype 12)
+        (if (= 0 (- count (* 256 (quot count 256)))) (* 144 (quot count 256)) -1)
+        (if (= qtype 14)
+          (if (= 0 (- count (* 256 (quot count 256)))) (* 210 (quot count 256)) -1)
+          -1)))))
+
+(defn supported [qtype]
+  (if (= qtype 0) 1 (if (= qtype 8) 1 (if (= qtype 12) 1 (if (= qtype 14) 1 0)))))
+
+(defn matvec-rows [arena alen plan row end]
+  (if (>= row end)
+    0
+    (let [cols (plan-u64 plan 16)
+          rb (row-bytes (plan-u32 plan 0) cols)
+          scratch (kernel-subregion arena alen (plan-u64 plan 56) (* cols 4))
+          verdict (dequant-run (plan-u32 plan 0)
+                               (kernel-subregion arena alen
+                                                 (+ (plan-u64 plan 24) (* row rb)) rb)
+                               rb scratch cols)]
+      (if (not (= verdict 0))
+        -12
+        (do (kernel-store-u32
+             (kernel-subregion arena alen (+ (plan-u64 plan 48) (* row 4)) 4) 4 0
+             (u32w (dot-run scratch
+                            (kernel-subregion arena alen (plan-u64 plan 40) (* cols 4))
+                            cols)))
+            (matvec-rows arena alen plan (+ row 1) end))))))
+
+;; The four region bounds, checked here rather than left to `kernel-subregion`:
+;; a subregion that runs past its parent TRAPS (`ud2`), and a trap is a triple
+;; fault with no reason code, where this object's whole convention is that a
+;; caller is told what was wrong. The subregion checks still run underneath and
+;; are the belt to this suspenders.
+(defn fits [alen off len]
+  (if (< off 0) 0 (if (< len 0) 0 (if (> (+ off len) alen) 0 1))))
+
+(defn regions-fit [arena-length plan rows cols rb]
+  (if (= 0 (fits arena-length (plan-u64 plan 24) (* rows rb))) 0
+    (if (= 0 (fits arena-length (plan-u64 plan 40) (* cols 4))) 0
+      (if (= 0 (fits arena-length (plan-u64 plan 48) (* rows 4))) 0
+        (fits arena-length (plan-u64 plan 56) (* cols 4))))))
+
+(defn checked [arena arena-length plan rows cols]
+  (if (not (= (plan-u64 plan 32) (* rows (row-bytes (plan-u32 plan 0) cols)))) -8
+    (if (< (plan-u64 plan 64) 0) -9
+      (if (> (plan-u64 plan 72) rows) -9
+        (if (> (plan-u64 plan 64) (plan-u64 plan 72)) -9
+          (if (> (* (- (plan-u64 plan 72) (plan-u64 plan 64)) cols) 2097152) -10
+            (if (= 0 (regions-fit arena-length plan rows cols
+                                  (row-bytes (plan-u32 plan 0) cols))) -11
+              (matvec-rows arena arena-length plan
+                           (plan-u64 plan 64) (plan-u64 plan 72)))))))))
+
+(defn aiueos-qwen35-matvec [arena arena-length plan plan-length]
+  (if (= arena 0) -1
+    (if (= plan 0) -2
+      (if (not (= plan-length 96)) -3
+        (if (not (= (plan-u32 plan 4) 0)) -4
+          (if (not (= (plan-u64 plan 80) 0)) -4
+            (if (not (= (plan-u64 plan 88) 0)) -4
+              (if (= (supported (plan-u32 plan 0)) 0) -5
+                (if (< (plan-u64 plan 16) 1) -6
+                  (if (> (plan-u64 plan 16) 65536) -6
+                    (if (< (row-bytes (plan-u32 plan 0) (plan-u64 plan 16)) 0) -6
+                      (if (< (plan-u64 plan 8) 1) -7
+                        (if (> (plan-u64 plan 8) 1048576) -7
+                          (checked arena arena-length plan
+                                   (plan-u64 plan 8) (plan-u64 plan 16)))))))))))))))
+
+(defn main [] 0)

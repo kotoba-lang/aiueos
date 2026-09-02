@@ -1037,6 +1037,32 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
       debug_string("AIUEOS_TLS13_RECORD_OK rfc8448-s3 seq0 seal-open tamper-refused\n");
       serial_string("AIUEOS_TLS13_RECORD_OK rfc8448-s3 seq0 seal-open tamper-refused\r\n");
     }
+#ifdef AIUEOS_QWEN38_MODEL_HANDOFF
+    /* QWEN-PARITY (ADR-0135).  The three Qwen3.5 forward-pass objects against
+       the C they were ported from, on this CPU, over synthetic inputs.  Placed
+       with the other Kotoba self-tests, after the kernel owns its own IDT: a
+       fuel-guard `ud2` raised while the FIRMWARE's handler is still installed
+       gives an OVMF dump with no vector and no address, and here it reaches
+       set_idt_gate(6, aiueos_isr_invalid_opcode) and names itself.
+       Only in the model-handoff build, because that is the only one where
+       kernel/qwen35_quant.c and kernel/qwen35_infer.c -- the reference half of
+       the comparison -- are compiled at all. */
+    {
+      extern int aiueos_qwen35_kotoba_parity_selftest(uint32_t stage);
+      static const char *const qwen_parity_names[3] = {"dequant", "dot", "matvec"};
+      for (uint32_t stage = 0; stage < 3U; stage++) {
+        if (!aiueos_qwen35_kotoba_parity_selftest(stage)) {
+          serial_string("QWEN-PARITY ");
+          serial_string(qwen_parity_names[stage]);
+          serial_string(" mismatch\r\n");
+          qemu_exit(0x6f);
+        }
+        serial_string("QWEN-PARITY ");
+        serial_string(qwen_parity_names[stage]);
+        serial_string(" ok\r\n");
+      }
+    }
+#endif
 #ifdef AIUEOS_PHYSICAL_QUALIFICATION
     aiueos_qualification_progress(226);
 #endif
