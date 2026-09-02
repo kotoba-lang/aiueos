@@ -22,7 +22,17 @@
    time and no shipped artifact contains it; it is the reference the oracle
    for those objects is checked against, kept compilable so the fixture and
    the four representative tensor offsets stay gated on a machine that cannot
-   execute the objects. */
+   execute the objects.
+
+   A third switch, AIUEOS_QWEN35_TRANSLATION_ONLY, compiles ONLY the
+   workspace -> struct translation out of the delegating branch: no externs, no
+   parse, no bind. It exists so the host gate can link that translation
+   alongside the reference parser and compare the two structs; it is never set
+   by a build that produces an image. */
+#if defined(AIUEOS_QWEN35_TRANSLATION_ONLY) && \
+    !defined(AIUEOS_QWEN35_KOTOBA_ADMISSION)
+#error "AIUEOS_QWEN35_TRANSLATION_ONLY requires AIUEOS_QWEN35_KOTOBA_ADMISSION"
+#endif
 #ifndef AIUEOS_QWEN35_KOTOBA_ADMISSION
 enum gguf_value_type {
   GGUF_UINT8 = 0,
@@ -623,27 +633,28 @@ int aiueos_qwen35_model_parse(const uint8_t *bytes,
 
    ZERO IS THE SUCCESS VALUE for all three. `if (verdict)` would invert the
    decision and admit exactly the files they rejected, so every call site here
-   spells `!= 0`. */
+   spells `!= 0`.
 
-extern int64_t kotoba_aiueos_qwen35_gguf_header_valid(uint64_t base,
-                                                      uint64_t accessible,
-                                                      uint64_t artifact);
-extern int64_t kotoba_aiueos_qwen35_gguf_kv_scan(uint64_t base,
-                                                 uint64_t accessible,
-                                                 uint64_t plan,
-                                                 uint64_t plan_length);
-extern int64_t kotoba_aiueos_qwen35_tensor_table_bind(uint64_t table,
-                                                      uint64_t limit,
-                                                      uint64_t metadata_end,
-                                                      uint64_t plan,
-                                                      uint64_t plan_length);
+   The translation is a NAMED function rather than the tail of
+   `aiueos_qwen35_model_parse`, and with AIUEOS_QWEN35_TRANSLATION_ONLY it is
+   the only thing this file compiles to. That is what lets
+   `tests/qwen35_runtime_model.c` link the translation and the reference parser
+   into one binary on a machine that cannot execute an x86-64 ET_REL object,
+   and compare the two structs field by field. Before that seam existed the
+   translation had been read but never run (ADR-0135 left it that way). */
 
 #define AIUEOS_QWEN35_KV_PLAN_BYTES 128U
 #define AIUEOS_QWEN35_TT_PLAN_BYTES 28160U
 #define AIUEOS_QWEN35_TT_SLOT_BYTES 32U
 
-static uint8_t qwen35_kv_plan[AIUEOS_QWEN35_KV_PLAN_BYTES];
-static uint8_t qwen35_tt_plan[AIUEOS_QWEN35_TT_PLAN_BYTES];
+/* The last verdict an object handed back, and which object handed it back.
+   Diagnostics only: nothing reads these to decide anything. They exist because
+   `aiueos_qwen35_model_parse` returns 0/1 and a boot that refuses a model
+   otherwise cannot say WHICH clause of WHICH object refused it, and the reason
+   literal is the only evidence on the console that the decision came from a
+   Kotoba object at all -- the C parser has no such number to print. */
+int64_t aiueos_qwen35_admission_verdict;
+uint32_t aiueos_qwen35_admission_stage;
 
 static uint32_t plan_u32(const uint8_t *plan, uint64_t offset) {
   const uint8_t *p = plan + offset;
@@ -700,32 +711,16 @@ static struct aiueos_qwen35_tensor *qwen35_slot(
   }
 }
 
-int aiueos_qwen35_model_parse(const uint8_t *bytes,
-                              uint64_t accessible_bytes,
-                              uint64_t artifact_bytes,
-                              struct aiueos_qwen35_model *model) {
-  if (!bytes || !model) return 0;
+int aiueos_qwen35_model_translate(const uint8_t *bytes,
+                                  uint64_t accessible_bytes,
+                                  uint64_t artifact_bytes,
+                                  const uint8_t *qwen35_kv_plan,
+                                  const uint8_t *qwen35_tt_plan,
+                                  struct aiueos_qwen35_model *model) {
+  if (!bytes || !model || !qwen35_kv_plan || !qwen35_tt_plan) return 0;
   volatile uint8_t *clear = (volatile uint8_t *)model;
   for (uint64_t i = 0; i < sizeof(*model); i++) clear[i] = 0;
-  for (uint64_t i = 0; i < AIUEOS_QWEN35_KV_PLAN_BYTES; i++)
-    qwen35_kv_plan[i] = 0;
-  for (uint64_t i = 0; i < AIUEOS_QWEN35_TT_PLAN_BYTES; i++)
-    qwen35_tt_plan[i] = 0;
-
-  uint64_t base = (uint64_t)(uintptr_t)bytes;
-  if (kotoba_aiueos_qwen35_gguf_header_valid(base, accessible_bytes,
-                                             artifact_bytes) != 0) return 0;
-  if (kotoba_aiueos_qwen35_gguf_kv_scan(
-        base, accessible_bytes,
-        (uint64_t)(uintptr_t)qwen35_kv_plan,
-        AIUEOS_QWEN35_KV_PLAN_BYTES) != 0) return 0;
-
   uint64_t metadata_end = plan_u32(qwen35_kv_plan, 0);
-  if (metadata_end > accessible_bytes) return 0;
-  if (kotoba_aiueos_qwen35_tensor_table_bind(
-        base + metadata_end, accessible_bytes - metadata_end, metadata_end,
-        (uint64_t)(uintptr_t)qwen35_tt_plan,
-        AIUEOS_QWEN35_TT_PLAN_BYTES) != 0) return 0;
 
   model->bytes = bytes;
   model->accessible_bytes = accessible_bytes;
@@ -772,13 +767,30 @@ int aiueos_qwen35_model_parse(const uint8_t *bytes,
        refuse both -- -18 and -19 -- so reaching either here means the
        workspace and this translation disagree, which is a refusal and not a
        recovery. */
-    if (!tensor || tensor->dimension_count) return 0;
-    if (file_offset < model->data_offset) return 0;
+    if (!tensor) {
+      aiueos_qwen35_admission_verdict = -102;
+      aiueos_qwen35_admission_stage = 4;
+      return 0;
+    }
+    if (tensor->dimension_count) {
+      aiueos_qwen35_admission_verdict = -103;
+      aiueos_qwen35_admission_stage = 4;
+      return 0;
+    }
+    if (file_offset < model->data_offset) {
+      aiueos_qwen35_admission_verdict = -104;
+      aiueos_qwen35_admission_stage = 4;
+      return 0;
+    }
     /* Refuse rather than mask. The object already refuses a type at or above
        the table bound (-13), so this cannot fire; but `% MAX` would WRAP type
        31 onto the F32 counter and make a corrupt table look like a valid one,
        which is the shape a bounds guard must not have. */
-    if (plan_u32(slot, 8) >= AIUEOS_QWEN35_MAX_GGML_TYPE) return 0;
+    if (plan_u32(slot, 8) >= AIUEOS_QWEN35_MAX_GGML_TYPE) {
+      aiueos_qwen35_admission_verdict = -105;
+      aiueos_qwen35_admission_stage = 4;
+      return 0;
+    }
     tensor->dimensions[0] = plan_u32(slot, 12);
     tensor->dimensions[1] = plan_u32(slot, 16);
     tensor->dimension_count = tensor->dimensions[1] ? 2U : 1U;
@@ -788,13 +800,84 @@ int aiueos_qwen35_model_parse(const uint8_t *bytes,
     tensor->data = 0;
     model->ggml_type_counts[tensor->type]++;
   }
+  return 1;
+}
 
+#ifndef AIUEOS_QWEN35_TRANSLATION_ONLY
+
+extern int64_t kotoba_aiueos_qwen35_gguf_header_valid(uint64_t base,
+                                                      uint64_t accessible,
+                                                      uint64_t artifact);
+extern int64_t kotoba_aiueos_qwen35_gguf_kv_scan(uint64_t base,
+                                                 uint64_t accessible,
+                                                 uint64_t plan,
+                                                 uint64_t plan_length);
+extern int64_t kotoba_aiueos_qwen35_tensor_table_bind(uint64_t table,
+                                                      uint64_t limit,
+                                                      uint64_t metadata_end,
+                                                      uint64_t plan,
+                                                      uint64_t plan_length);
+
+static uint8_t qwen35_kv_plan[AIUEOS_QWEN35_KV_PLAN_BYTES];
+static uint8_t qwen35_tt_plan[AIUEOS_QWEN35_TT_PLAN_BYTES];
+
+int aiueos_qwen35_model_parse(const uint8_t *bytes,
+                              uint64_t accessible_bytes,
+                              uint64_t artifact_bytes,
+                              struct aiueos_qwen35_model *model) {
+  aiueos_qwen35_admission_verdict = 0;
+  aiueos_qwen35_admission_stage = 0;
+  if (!bytes || !model) return 0;
+  for (uint64_t i = 0; i < AIUEOS_QWEN35_KV_PLAN_BYTES; i++)
+    qwen35_kv_plan[i] = 0;
+  for (uint64_t i = 0; i < AIUEOS_QWEN35_TT_PLAN_BYTES; i++)
+    qwen35_tt_plan[i] = 0;
+
+  uint64_t base = (uint64_t)(uintptr_t)bytes;
+  int64_t verdict = kotoba_aiueos_qwen35_gguf_header_valid(
+    base, accessible_bytes, artifact_bytes);
+  if (verdict != 0) {
+    aiueos_qwen35_admission_verdict = verdict;
+    aiueos_qwen35_admission_stage = 1;
+    return 0;
+  }
+  verdict = kotoba_aiueos_qwen35_gguf_kv_scan(
+    base, accessible_bytes, (uint64_t)(uintptr_t)qwen35_kv_plan,
+    AIUEOS_QWEN35_KV_PLAN_BYTES);
+  if (verdict != 0) {
+    aiueos_qwen35_admission_verdict = verdict;
+    aiueos_qwen35_admission_stage = 2;
+    return 0;
+  }
+
+  uint64_t metadata_end = plan_u32(qwen35_kv_plan, 0);
+  if (metadata_end > accessible_bytes) {
+    aiueos_qwen35_admission_verdict = -101;
+    aiueos_qwen35_admission_stage = 4;
+    return 0;
+  }
+  verdict = kotoba_aiueos_qwen35_tensor_table_bind(
+    base + metadata_end, accessible_bytes - metadata_end, metadata_end,
+    (uint64_t)(uintptr_t)qwen35_tt_plan, AIUEOS_QWEN35_TT_PLAN_BYTES);
+  if (verdict != 0) {
+    aiueos_qwen35_admission_verdict = verdict;
+    aiueos_qwen35_admission_stage = 3;
+    return 0;
+  }
+
+  if (!aiueos_qwen35_model_translate(bytes, accessible_bytes, artifact_bytes,
+                                     qwen35_kv_plan, qwen35_tt_plan, model))
+    return 0;
   if (accessible_bytes == artifact_bytes)
     return aiueos_qwen35_model_bind(model, bytes, accessible_bytes);
   return 1;
 }
 
+#endif /* AIUEOS_QWEN35_TRANSLATION_ONLY */
+
 #endif /* AIUEOS_QWEN35_KOTOBA_ADMISSION */
+
+#ifndef AIUEOS_QWEN35_TRANSLATION_ONLY
 
 static int bind_tensor(struct aiueos_qwen35_model *model,
                        struct aiueos_qwen35_tensor *tensor) {
@@ -849,3 +932,5 @@ int aiueos_qwen35_model_bind(struct aiueos_qwen35_model *model,
          bind_tensor(model, &nextn->hidden_norm) &&
          bind_tensor(model, &nextn->shared_head_norm);
 }
+
+#endif /* AIUEOS_QWEN35_TRANSLATION_ONLY */

@@ -244,6 +244,23 @@
        (finally
          (doseq [[off v] saved] (vswap! bytes assoc off v)))))))
 
+;; ------------------------------------------------------- the workspace file
+;;
+;; The 128 bytes the object writes, committed so that
+;; `tests/qwen35_runtime_model.c` can run the C translation over the SAME bytes
+;; a real run of this object produced.
+;;
+;; Regenerate with
+;;   clojure -M:test -v aiueos.qwen35-gguf-kv-scan-parity-test/the-admitted-metadata-is-admitted \
+;;     -J-Daiueos.workspace-fixture-write=1
+
+(def ^:private workspace-file
+  (io/file "os" "aiueos" "tests" "fixtures" "qwen35-kv-plan.bin"))
+
+(defn- workspace-bytes []
+  (let [b @@image]
+    (byte-array (map #(unchecked-byte (nth b (+ plan-offset %))) (range 128)))))
+
 (defn- plan-slot [i]
   (let [b @@image
         at (+ plan-offset (* 4 i))]
@@ -293,7 +310,25 @@
               "every token string in this fixture is empty, so 8 bytes each")
           (is (= merge-array-start (plan-slot 28)))
           (is (= merge-count (plan-slot 29)))
-          (is (= (+ merge-array-start (* 8 merge-count)) (plan-slot 30))))))))
+          (is (= (+ merge-array-start (* 8 merge-count)) (plan-slot 30))))
+        (testing "the committed workspace is the one this run produced"
+          (let [^bytes produced (workspace-bytes)]
+            (when (System/getProperty "aiueos.workspace-fixture-write")
+              (io/make-parents workspace-file)
+              (with-open [o (io/output-stream workspace-file)]
+                (.write o produced))
+              (println "WROTE" (.getPath workspace-file) (alength produced) "bytes"))
+            (is (.exists workspace-file)
+                (str "the committed workspace is missing at " workspace-file
+                     "; tests/qwen35_runtime_model.c reads it"))
+            (when (.exists workspace-file)
+              (let [committed (java.nio.file.Files/readAllBytes (.toPath workspace-file))]
+                (is (= 128 (alength ^bytes committed))
+                    "the committed workspace must be 128 bytes")
+                (is (= (hex produced) (hex committed))
+                    (str "the committed workspace and this run disagree. The C "
+                         "translation gate would then be reading bytes no run "
+                         "of this object produced."))))))))))
 
 (def ^:private cheap-refusals
   "One mutation or argument per clause, each aborting in the first few entries
