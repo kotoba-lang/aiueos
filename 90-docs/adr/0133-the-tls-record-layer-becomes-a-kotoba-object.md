@@ -124,6 +124,27 @@ The live third clause needed the largest record the object admits (12,310
 bytes, header claiming a 12,289-byte body).  It costs nothing, because the
 refusal happens before any crypto -- which is itself the property worth having.
 
+## The provenance manifest calls all three unattested, and that is correct
+
+`os/aiueos/kotoba/provenance.edn` (ADR-0131, regenerated here) now carries 70
+objects, 47 recorded and 23 unattested -- the three TLS objects among the
+latter.  That is not an oversight to fix by typing a SHA in.
+
+The generator attributes a compiler by asking whether a RECIPE SCRIPT in this
+repository names the object, and the only kernel recipe is
+`reproduce-kotoba-kernel-object.sh`, which pins amu `9cf3a0a`.  These three
+CANNOT be built at that pin: it predates the `kernel-object-entries` rows they
+need, so it refuses their exports outright.  `:recipe :unrecorded` therefore
+states something true -- no script here reproduces them -- and the K16
+pure-native gate refuses them with `reason=compiler-unrecorded`, which is also
+correct: nothing should link an object the repository cannot rebuild.
+
+What IS recorded is in ADR-0132 and in
+`qualification/jvm-free-object-parity-tls13.edn`: the amu revision, the
+kotoba-native revision, and both routes' digests.  Closing the gap properly
+means a recipe that can pin a newer compiler, which is a change to how this
+repository reproduces objects and not a side effect of adding three.
+
 ## What is NOT done
 
 * **The C is unchanged.**  `tls13.c` is still 827 lines with `protect` and

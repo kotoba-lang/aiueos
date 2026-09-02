@@ -123,6 +123,19 @@
         "sequence numbers recovered by opening each record with OpenSSL rather "
         "than assumed to be zero.")
 
+   "qwen35-gguf-header-valid"
+   (str "The GGUF v3 container header of the Qwen3.8-27B artifact -- magic, "
+        "version, tensor count, metadata count -- ported from the opening of "
+        "kernel/qwen35_runtime.c's aiueos_qwen35_model_parse. No script "
+        "compiles it yet because the C still owns the whole parse: swapping "
+        "its header guards for a call to this object is a change to the "
+        "kernel, and it lands with the two objects beside it (the metadata "
+        "scan and the tensor table) rather than one at a time, so that the C "
+        "is never half-delegated. It is driven through the KIR interpreter by "
+        "aiueos.qwen35-gguf-header-parity-test over the same 24 header bytes "
+        "scripts/smoke-qwen35-runtime.sh accepts, and every one of its eight "
+        "refusal codes is required to be the only producer of its own code.")
+
    "murakumo-join-plan"
    (str "A node's own fleet-enrolment decision. It has no caller inside the "
         "kernel, so no build links it; kotoba-lang/murakumo drives it through "
