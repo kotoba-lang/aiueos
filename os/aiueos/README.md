@@ -3,19 +3,23 @@
 This directory contains the Linux-independent aiueos boot path owned by the
 canonical `kotoba-lang/aiueos` OS repository.
 
-## Which path is production
+## Native target and current physical boundary
 
-The production hard-flip input is `native/kernel.kotoba`, compiled and packaged
+The C-free hard-flip input is `native/kernel.kotoba`, compiled and packaged
 by exact-pinned Amu into a C-free PE32+ loader and ELF64 kernel. It consumes
 the freestanding ABI and instruction semantics owned by `kotoba-native`; this
 directory owns OS policy, physical-memory admission, effects, and QEMU
 evidence. `aiueos.vm` is the hosted QEMU launcher and `aiueos.hvt` is a JVM/FFM
 experiment. Neither is the bare-metal provider.
 
-The larger C/assembly implementation below is retained as a reference profile
-and regression oracle. Its feature count must not be read as production C-free
-maturity. The exact dependency/evidence rule is in the repository `README.md`
-and `90-docs/adr/0013-native-os-ownership-and-boot.md`.
+The larger C/assembly implementation below is retained as a reference profile,
+regression oracle, and the current physical RTL8125/TLS/Qwen qualification
+path. Its feature count must not be read as C-free maturity. In particular,
+`native/kernel.kotoba` owns the C-free boot/memory slice today; it does not yet
+contain the physical NIC DMA provider, TLS 1.3/HTTPS transport, or the complete
+Qwen GGUF runtime. The exact all-native closure and its fail-closed claim rule
+are recorded in `contracts/k16-kotoba-native-closure-v1.edn` and audited by
+`scripts/audit-k16-kotoba-native-closure.py`.
 
 The current Phase 1 slice builds a PE32+ `BOOTX64.EFI` and a separate ELF64
 `KERNEL.ELF`. OVMF starts the loader, which validates and places bounded ELF
@@ -1217,19 +1221,22 @@ ExitBootServices before entering the kernel. The hard-flip boot chain has no C,
 CRT, foreign object, linker, interpreter, import table, or dynamic dependency.
 Its final memory map resides in a compiler-owned bounded 16 KiB RW region.
 The kernel derives that region from boot-info rather than trusting a loaded
-pointer as authority, admits a contiguous five-page UEFI Conventional Memory
-extent inside the identity-mapped physical window, derives five non-overlapping
+pointer as authority, admits a contiguous eight-page UEFI Conventional Memory
+extent inside the identity-mapped physical window, derives eight non-overlapping
 authorities, and zeros all 4,096 bytes of each before use. The first page is a
-boot-lifetime five-slot ownership bitmap; the next three are PML4, PDPT, and PD;
-the fifth proves release and reuse. Kotoba writes and reads back a 512-entry
-2 MiB-page identity map for the first GiB, loads its PML4 into CR3, reads CR3
-back, invalidates one mapped address, and continues executing under that map.
-The success path
-itself rejects a duplicate claim and a double-free, then requires the released
-slot to be claimed again before emitting `MPRC`. This is persistent across
-allocator operations during one boot, not durable across reboot, and it is not
-yet a general map-indexed allocator. The first-GiB map is deliberately RW and
-executable, so this slice does not claim W^X. Real QEMU
+boot-lifetime eight-slot ownership bitmap; the next four are PML4, PDPT, PD,
+and a low-memory PT; the remaining pages prove release/reuse and hold the page
+fault recovery frame and dedicated handler stack. Kotoba writes and reads back
+the complete first-GiB identity map, but the low 2 MiB is split into 4 KiB
+leaves. Page `0x100000` is unmapped, compiler-reported kernel text is RX, any
+RX/RW alignment gap is unmapped, kernel state is RW+NX, and the remaining
+identity map is RW+NX. The kernel enables EFER.NXE and CR0.WP with readback,
+loads its PML4 into CR3, reads CR3 back, invalidates one mapped address, and
+continues executing under that map. The success path rejects a duplicate claim
+and a double-free, then requires the released slot to be claimed again before
+emitting `MPRCD`. This is persistent across allocator operations during one
+boot, not durable across reboot, and it is not yet a general map-indexed
+allocator. Real QEMU
 mutations reject a complete map with no admitted extent, an overlapping second
 authority, a claim implementation that accepts the wrong ownership state, a
 non-present PML4 link, and a retained firmware CR3.

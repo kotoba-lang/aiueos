@@ -1,0 +1,69 @@
+;; The physical K16 may be called "all Kotoba/Amu native" only when every
+;; required layer is both implemented in the sealed Kotoba source closure and
+;; observed on the physical device. A C-free boot does not imply a C-free NIC,
+;; HTTPS stack, or model runtime.
+{:format :aiueos.k16-kotoba-native-closure/v1
+ :target :gmktec-k16
+ :compiler {:repo "kotoba-lang/amu"
+            :commit "795800cedbf602108c801aee13704f3af8c65043"
+            :backend {:repo "kotoba-lang/kotoba-native"
+                      :commit "01756a619ad543d270b8ba9a38b7f6543bea5b20"}
+            :scalar-f32 {:x86-64 :implemented
+                         :aarch64 :implemented
+                         :public-f32-abi? false
+                         :aggregate-f32? false}}
+ :layers
+ {:boot {:state :implemented
+         :language :kotoba
+         :builder :amu
+         :entry "native/kernel.kotoba"
+         :foreign-code? false
+         :qemu-evidence "scripts/smoke-qemu-kotoba-native.sh"
+         :physical-k16 :unverified-for-this-compiler-commit}
+  :nic {:state :not-implemented-in-pure-closure
+        :required [:rtl8125-pci-discovery :mmio-map :dma-ring-ownership
+                   :tx :rx :link-recovery]
+        :current-reference ["kernel/rtl8125.c" "kernel/rtl8125.h"]
+        :contract-repositories ["kotoba-lang/capability-pci-config"
+                                "kotoba-lang/capability-mmio-map"
+                                "kotoba-lang/capability-dma-map"
+                                "kotoba-lang/capability-link-frame"]}
+  :https {:state :not-implemented-in-pure-closure
+          :implemented [:aes128-gcm :hkdf-sha256 :tls13-record]
+          :implemented-source ["kotoba/aes128-gcm.kotoba"
+                               "kotoba/hkdf-sha256.kotoba"
+                               "kotoba/tls13-record.kotoba"]
+          :required [:arp :dhcp :dns :tcp :tls13-handshake :https-range
+                     :certificate-path-validation :cid-verification]
+          :current-reference ["kernel/tls13.c" "kernel/tls_aes_gcm.c"]
+          :contract-repositories ["kotoba-lang/capability-net-transport"
+                                  "kotoba-lang/capability-crypto-tls"
+                                  "kotoba-lang/capability-http-fetch"]}
+  :qwen {:state :not-implemented-in-pure-closure
+         :implemented [:scalar-f32-native-machine-code
+                       :gguf-header-admission-kotoba-object]
+         :implemented-source
+         ["kotoba/qwen35-gguf-header-valid.kotoba"]
+         :required [:large-model-authority :gguf-metadata :quant-decode
+                    :threaded-matmul :attention :deltanet :kv-state
+                    :tokenizer :sampling :bounded-output]
+         :current-reference ["kernel/qwen35_infer.c"
+                             "kernel/qwen35_quant.c"
+                             "kernel/qwen35_runtime.c"]
+         :exact-artifact {:file "Qwen3.8-27B-UD-IQ3_XXS.gguf"
+                          :bytes 10934860704
+                          :sha256 "c0b7c3038681ed2e3040456c1dd45f9858b6c2290bed172c70388a94874f3eee"}}}
+ :claim-policy
+ {:all-native-ready? false
+  :must-have [:boot :nic :https :qwen]
+  :requires [:sealed-kotoba-source-closure
+             :no-c-or-assembly-inputs
+             :reproducible-build
+             :qemu-negative-and-positive-gates
+             :physical-k16-boot
+             :physical-k16-network
+             :physical-k16-https
+             :exact-qwen-token-and-timing]
+  :forbidden-in-final-image ["*.c" "*.S" "*.o" "*.a" :foreign-symbols
+                             :dynamic-imports]
+  :status :in-progress}}
