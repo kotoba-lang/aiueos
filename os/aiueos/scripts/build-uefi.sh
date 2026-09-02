@@ -765,13 +765,13 @@ python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_sha256_object"
 # relocation into its own .data, and the sha256 of the artifact this tree
 # carries.
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_qwen35_vocab_index_object" \
-  802defd59b320b40aeb9edc0de8f7b14f9792d0fb7f38090a8138b78e2a046ed \
+  dc58fefacf66431ddcd493038bdc42c5cf4ae1dce29d821cb1d0d9bf4c29cefd \
   kotoba_aiueos_qwen35_vocab_index_build
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_qwen35_tokenize_object" \
-  e5da4864479b272563c9ad22e4ff2812928dcba0ec7dcdd70ffe64f97d0b8ed5 \
+  bef86908cb7ba9c8dc620fbb8cd36685d996f802baf96436247157337662133a \
   kotoba_aiueos_qwen35_tokenize
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_qwen35_detokenize_object" \
-  9c2cf494a55b54e5213976b702114510ac70f20dfa35c016ef5787187a27acd3 \
+  3d11e2900be3799ab3b3101c816c5e3a3c896083ac7e0c3d92d298cdc43fe392 \
   kotoba_aiueos_qwen35_detokenize
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_digest_equal_object" \
   6156db8b78f883610521ac4eb458cb98df655b26087e7d6808279c8b9d927b78 \
