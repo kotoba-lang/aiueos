@@ -40,8 +40,9 @@
 (def expected-marker "DOT")
 (def expected-status 33)
 
-;; The console is <feature-nibble><eight digits>"DOT". The nibble is what the
-;; guard tests, reported by the guest:
+;; The console is <enable-nibble><feature-nibble><eight digits>"DOT".
+;;
+;; The FEATURE nibble is what the guard tests, reported by the guest:
 ;;
 ;;   bit 0  leaf 1 ECX[27]  OSXSAVE
 ;;   bit 1  leaf 1 ECX[28]  AVX
@@ -52,6 +53,16 @@
 ;; unless the two machines differ in what the guard branches on, and it is also
 ;; the only way to know WHICH ARM each run took -- the guard's answer is
 ;; internal to one MC instruction and leaves no other trace.
+;;
+;; xsave: the ENABLE nibble is the second control, and it exists because the
+;; feature nibble alone cannot tell two different stories apart. `1` means the
+;; guest ran `enable-extended-state` to completion -- CR4 |= 0x40600, then
+;; `xsetbv 0, XCR0|6`. `0` means `cpuid` leaf 1 ECX bit 26 said the CPU has no
+;; XSAVE at all, so the enable correctly did nothing.
+;;
+;; Without it, "the enable ran and the machine still reports nothing" and "the
+;; machine has no XSAVE so the enable was skipped" print the same feature digit
+;; on a CPU with neither.
 (def feature-bits [[1 "osxsave"] [2 "avx"] [4 "avx2"] [8 "xcr0-ymm"]])
 
 (defn decode-features [digit]
@@ -146,17 +157,31 @@
       (when-not (= expected-status status)
         (die (str "-cpu " cpu " exited " status ", expected " expected-status
                   " -- the probe's own checks failed inside the guest")))
-      (when-not (re-find #"^[0-9A-F][0-9A-F]{8}DOT$" console)
+      (when-not (re-find #"^[01][0-9A-F][0-9A-F]{8}DOT$" console)
         (die (str "-cpu " cpu " printed " (pr-str console)
-                  ", which is not <feature-nibble><eight digits>DOT"))))
+                  ", which is not <enable-nibble><feature-nibble><eight digits>DOT"))))
     (let [decoded (mapv (fn [{:keys [cpu console]}]
-                          (assoc (decode-features (subs console 0 1))
+                          (assoc (decode-features (subs console 1 2))
                                  :cpu cpu
-                                 :digits (subs console 1 9)))
+                                 :enabled (js/parseInt (subs console 0 1) 10)
+                                 :digits (subs console 2 10)))
                         observations)]
-      (doseq [{:keys [cpu value named arm digits]} decoded]
-        (println (str "  " cpu ": features=" value " " (pr-str named)
-                      " arm=" arm " digits=" digits)))
+      (doseq [{:keys [cpu value named arm digits enabled]} decoded]
+        (println (str "  " cpu ": enable=" enabled " features=" value " "
+                      (pr-str named) " arm=" arm " digits=" digits)))
+      ;; xsave: the enable and the machine must agree. A run that reports
+      ;; `enable=1` and no OSXSAVE means CR4 was written and did not take,
+      ;; which is a bug in the operators rather than a property of the CPU;
+      ;; a run that reports `enable=0` and OSXSAVE means something else set
+      ;; it and this probe is not measuring what it claims to.
+      (doseq [{:keys [cpu enabled value]} decoded]
+        (when (and (= 1 enabled) (zero? (bit-and value 1)))
+          (die (str "-cpu " cpu " ran the extended-state enable and still"
+                    " reports CR4.OSXSAVE clear -- the CR4 write did not"
+                    " take")))
+        (when (and (= 0 enabled) (pos? (bit-and value 1)))
+          (die (str "-cpu " cpu " reports CR4.OSXSAVE set without having run"
+                    " the enable -- something other than this probe set it"))))
       ;; Every run must agree with the reference interpreter. This is the
       ;; assertion that fails if an arm computes something else.
       (doseq [{:keys [cpu digits]} decoded]
@@ -183,23 +208,24 @@
           ;; and answered what the oracle answers; the AVX2 arm did not run at
           ;; all, so nothing here says anything about it.
           ;;
-          ;; The reason is the guard working exactly as designed: `-cpu max`
-          ;; has AVX and AVX2 in CPUID, and CR4.OSXSAVE is CLEAR, because
-          ;; nothing set it. A kernel that used YMM anyway would not fault --
-          ;; it would compute wrong answers intermittently and only under
-          ;; load, which is the whole reason the guard tests bit 27.
+          ;; xsave: before 2026-09-02 this branch was the outcome, and the
+          ;; reason was that `-cpu max` reports AVX and AVX2 in CPUID while
+          ;; CR4.OSXSAVE is CLEAR -- nothing in a pure-Kotoba kernel could set
+          ;; it, so the guard refused the vector arm on a machine that has it.
+          ;; `kernel-read-cr4`, `kernel-write-cr4` and `kernel-xsetbv` closed
+          ;; that, and `enable-extended-state` in the probe now runs the
+          ;; sequence `prepare_bsp_extended_state()` runs in C.
           ;;
-          ;; Setting it needs CR4 and `xsetbv`, and neither has a Kotoba
-          ;; spelling: `kernel-write-cr0` exists and there is no CR4 operator
-          ;; and no `kernel-xsetbv` anywhere in the surface (measured
-          ;; 2026-09-02 across kotoba-sema, kotoba-gmir and kotoba-native).
-          ;; That is what `prepare_bsp_extended_state()` does in the C kernel
-          ;; -- CR4 bits 9, 10 and 18, then `xsetbv` -- and it is a real K16
-          ;; gap, not a property of this test.
+          ;; Reaching here NOW means something else: the enable ran and the
+          ;; machine still did not admit the vector arm. The per-run
+          ;; `enable=`/`features=` lines above say which of the four bits is
+          ;; missing.
           (do (js/console.error
                (str "AIUEOS_DOT_F32_QEMU_AVX2_ARM_NOT_EXERCISED"
-                    " reason=cr4-osxsave-clear"
-                    " blocker=no-kotoba-operator-for-cr4-or-xsetbv"
+                    " enable=" (clojure.string/join
+                                "," (map #(str (:cpu %) ":" (:enabled %)) decoded))
+                    " features=" (clojure.string/join
+                                  "," (map #(str (:cpu %) ":" (:value %)) decoded))
                     " -- the scalar arm ran on both models and agrees with"
                     " kotoba.kir; the AVX2 arm did not run, so this says"
                     " nothing about it"))
