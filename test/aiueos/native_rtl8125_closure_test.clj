@@ -1,5 +1,6 @@
 (ns aiueos.native-rtl8125-closure-test
-  (:require [clojure.java.io :as io]
+  (:require [clojure.edn :as edn]
+            [clojure.java.io :as io]
             [clojure.java.shell :as shell]
             [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]))
@@ -10,6 +11,8 @@
 (def kernel-source (io/file aiueos "native" "kernel.kotoba"))
 (def kernel-builder (io/file aiueos "scripts" "build-kotoba-native-kernel.sh"))
 (def audit (io/file aiueos "scripts" "audit-k16-kotoba-native-closure.py"))
+(def physical-evidence
+  (io/file aiueos "contracts" "physical-kotoba-native-k16-v1.edn"))
 
 (deftest rtl8125-is-in-the-closed-native-module-graph
   (let [rtl (slurp rtl-source)
@@ -56,12 +59,23 @@
                                          "build-kotoba-native-boot.sh"))
                          "AIUEOS_NATIVE_K16_PREFLIGHT")))))
 
-(deftest closure-audit-keeps-physical-proof-unverified
+(deftest closure-audit-records-physical-nic-proof-without-upgrading-https
   (let [{:keys [exit out err]}
         (shell/sh "python3" (str audit) :dir repo)
         report (str out err)]
     (is (zero? exit) report)
-    (is (str/includes? report "one-shot-native-provider-qemu-negative-physical-unverified"))
+    (is (str/includes? report "physical-arp-and-udp-receipt-passed"))
     (is (str/includes? report "native/rtl8125.kotoba"))
-    (is (str/includes? report "physical-rtl8125-arp-positive-receipt"))
+    (is (str/includes? report "pure-kotoba-dhcp-dns-tcp-tls13-https-integration"))
+    (is (str/includes? report "not-implemented-in-pure-closure"))
     (is (str/includes? report "\"all_native_ready\": false"))))
+
+(deftest physical-k16-native-nic-evidence-binds-screen-wire-and-artifact
+  (let [evidence (edn/read-string (slurp physical-evidence))]
+    (is (= "97e899fef2bc20412fe5e0919b260db0193a02cd9627bf97b0f24961d7b951df"
+           (get-in evidence [:artifact :efi-sha256])))
+    (is (= 0 (get-in evidence [:screen :provider-status])))
+    (is (= "AIUEOS_NATIVE_ARP_OK" (get-in evidence [:wire :message])))
+    (is (= :passed (get-in evidence [:result :physical-rtl8125-provider])))
+    (is (some #{:physical-k16-https} (:does-not-prove evidence)))
+    (is (some #{:physical-k16-qwen} (:does-not-prove evidence)))))

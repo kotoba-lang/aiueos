@@ -188,12 +188,14 @@
    :qemu-marker "MPRCD"
    :qemu-exit 33
    :foreign 0
-   :physical-k16 :unverified}
+   :physical-k16 {:preflight-kernel-entry :passed
+                  :rtl8125-arp-udp :passed
+                  :evidence "physical-kotoba-native-k16-v1.edn"}}
   :loader-note
   "The --compiler route emits the Kotoba/Amu PE32+ loader and embedded ELF.
    The no-argument legacy measurement still refuses uefi/main.c and all
    foreign objects; it is retained to measure the old production link."
-  :bootable? :qemu-passed-physical-unverified}
+  :bootable? :qemu-and-physical-preflight-passed}
 
  ;; --- what this contract does NOT say ------------------------------------
  :not-claimed

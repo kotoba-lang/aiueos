@@ -33,7 +33,8 @@
                          :screen "AIUEOS K16 PREFLIGHT STATUS XX"
                          :terminal :halt-after-status
                          :before :exit-boot-services}
-         :physical-k16 :unverified-for-this-compiler-commit}
+         :physical-k16 {:state :preflight-kernel-entry-passed
+                        :evidence "physical-kotoba-native-k16-v1.edn"}}
   :nic {:state :one-shot-native-provider
         :implemented [:rtl8125-pci-discovery :mmio-map :dma-ring-ownership
                       :tx :rx :arp-request-reply :udp-arp-positive-receipt
@@ -45,7 +46,9 @@
         :receipt-destination "10.77.0.1:7777"
         :required [:physical-k16-arp-positive :persistent-link-recovery]
         :qemu-evidence :bounded-no-device-passed
-        :physical-k16 :unverified
+        :physical-k16 {:state :arp-and-udp-receipt-passed
+                       :status-hex "5A"
+                       :evidence "physical-kotoba-native-k16-v1.edn"}
         :current-reference ["kernel/rtl8125.c" "kernel/rtl8125.h"]
         :contract-repositories ["kotoba-lang/capability-pci-config"
                                 "kotoba-lang/capability-mmio-map"

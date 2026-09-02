@@ -11,6 +11,7 @@ import sys
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 CONTRACT = ROOT / "contracts" / "k16-kotoba-native-closure-v1.edn"
+PHYSICAL_EVIDENCE = ROOT / "contracts" / "physical-kotoba-native-k16-v1.edn"
 EXPECTED_COMPILER = "13d2f5dfe1adeaa99b7e9e6c04fcf8cb8fc15a4b"
 
 
@@ -30,6 +31,7 @@ def main() -> int:
     boot_builder = (ROOT / "scripts" / "build-kotoba-native-boot.sh").read_text(
         encoding="utf-8"
     )
+    physical_evidence = PHYSICAL_EVIDENCE.read_text(encoding="utf-8")
     pure_source = ROOT / "native" / "kernel.kotoba"
 
     expected_pin = f"expected={EXPECTED_COMPILER}"
@@ -55,18 +57,19 @@ def main() -> int:
     }
     layers = {
         "boot": {
-            "state": "implemented",
+            "state": "physical-preflight-kernel-entry-passed",
             "source": str(pure_source.relative_to(ROOT)),
             "source_sha256": sha256(pure_source),
             "compiler_pin_matches": expected_pin in kernel_builder
             and expected_pin in boot_builder,
+            "physical_evidence": str(PHYSICAL_EVIDENCE.relative_to(ROOT)),
         }
     }
     for name, paths in reference_files.items():
         present = [path for path in paths if (ROOT / path).is_file()]
         layers[name] = {
             "state": (
-                "one-shot-native-provider-qemu-negative-physical-unverified"
+                "physical-arp-and-udp-receipt-passed"
                 if name == "nic"
                 else "not-implemented-in-pure-closure"
             ),
@@ -87,6 +90,14 @@ def main() -> int:
             ":https {:state :not-implemented-in-pure-closure",
             ":qwen {:state :not-implemented-in-pure-closure",
         )
+    ) and all(
+        marker in physical_evidence
+        for marker in (
+            ':checkpoint "AIUEOS K16 PREFLIGHT STATUS 5A"',
+            ':provider-status 0',
+            ':message "AIUEOS_NATIVE_ARP_OK"',
+            ':physical-rtl8125-provider :passed',
+        )
     )
     result = {
         "format": "aiueos.k16-kotoba-native-closure-audit/v1",
@@ -95,7 +106,7 @@ def main() -> int:
         "compiler": EXPECTED_COMPILER,
         "layers": layers,
         "all_native_ready": False,
-        "next_blocker": "physical-rtl8125-arp-positive-receipt",
+        "next_blocker": "pure-kotoba-dhcp-dns-tcp-tls13-https-integration",
     }
     json.dump(result, sys.stdout, indent=2, sort_keys=True)
     sys.stdout.write("\n")
