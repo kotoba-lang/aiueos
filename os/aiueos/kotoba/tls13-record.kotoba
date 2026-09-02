@@ -1,0 +1,616 @@
+(ns aiueos.tls13-record
+  (:export [aiueos-tls13-record main]))
+
+;; The TLS 1.3 record layer (RFC 8446 5.2) for the freestanding aiueos kernel.
+;;
+;;   (aiueos-tls13-record ctx ctx-len rec rec-len mode)
+;;
+;; This replaces `protect` and `unprotect` in `kernel/tls13.c` (:311 and :335)
+;; together with the AEAD underneath them.  ADR-0132 moved the AEAD itself into
+;; `aes128-gcm.kotoba`; what stayed in C around it was the framing -- and the
+;; framing is where a record layer gets exploited.  The 5-byte header is the
+;; ADDITIONAL AUTHENTICATED DATA, so a length field taken from the wrong place
+;; is a forgery the AEAD would happily accept; the sequence number is XORed
+;; into the nonce, so a reused sequence is a reused keystream; and the inner
+;; content type is the last non-zero byte of the plaintext, so a padding strip
+;; that stops one byte early hands the caller the wrong record type.
+;;
+;; ---------------------------------------------------------------------------
+;; NOT A BOOLEAN.  ZERO IS THE SUCCESS VALUE.
+;; ---------------------------------------------------------------------------
+;;     0   done
+;;     1   ctx-len below the 1280 bytes this object requires
+;;     2   mode is neither 0 (open) nor 1 (seal)
+;;     3   rec-len outside 22..12310
+;;     4   SEAL: the plaintext does not fit the record buffer
+;;     5   OPEN: the record's own length field disagrees with rec-len, or the
+;;         body is outside 17..12304
+;;     6   OPEN: the tag did not match, and nothing was decrypted
+;;     7   OPEN: the inner plaintext is all zeros, so it carries no content type
+;;
+;; ---------------------------------------------------------------------------
+;; ONE RECORD BUFFER, TRANSFORMED IN PLACE
+;; ---------------------------------------------------------------------------
+;; SEAL expects the plaintext already at `rec+5` and its length in ctx; it
+;; appends the content type, encrypts in place, writes the header and appends
+;; the tag.  OPEN takes the whole record and decrypts in place.  The C used
+;; separate `out` and `decrypt_plain` buffers -- 12 KiB of `.high_bss` for the
+;; second one -- and in-place is exact rather than a shortcut because CTR mode
+;; is an XOR.
+;;
+;;   ctx offset  bytes  what
+;;   ----------  -----  ----------------------------------------------------
+;;        0        16   traffic key
+;;       16        12   traffic IV, the BASE -- never modified
+;;       28         1   aad length; the object writes 5
+;;       32        16   tag scratch
+;;       48         8   sequence number, big-endian
+;;       56         1   inner content type: SEAL reads it, OPEN writes it
+;;       57         1   reserved
+;;       58         2   plaintext length, big-endian: SEAL reads, OPEN writes
+;;       60         2   whole record length, big-endian: SEAL writes
+;;       62         2   reserved
+;;       64        64   aad; the 5-byte record header occupies 64..69
+;;      128      1152   the AEAD's round keys, GHASH state and derived tables,
+;;                      laid out exactly as `aes128-gcm.kotoba` documents, with
+;;                      one addition: 480..492 is the PER-RECORD NONCE
+;;     1280             end -- ctx-len must be at least this
+;;
+;; The base IV is not modified, and that is the point of the extra slot.  The
+;; nonce is `iv XOR seq` and a caller sends many records under one key; an
+;; object that XORed in place would corrupt the IV on the second record, and
+;; the corruption would look like a peer that stopped decrypting.
+;;
+;; ---------------------------------------------------------------------------
+;; THE AEAD BELOW IS `aes128-gcm.kotoba`, COPIED
+;; ---------------------------------------------------------------------------
+;; Not imported.  A kernel object exports one symbol and cannot call another,
+;; and a namespace that declares `(:require ...)` cannot be packaged for this
+;; target at all (measured 2026-09-02 against amu b1fdaad2:
+;; `:kotoba.error/namespace-require-needs-project`, and `--unpinned` does not
+;; change it).  This is the duplication ADR-0021 already pays for between
+;; `ipv4-checksum` and `ipv4-icmp-reply-valid`, at a larger size.
+;;
+;; The copy is MECHANICAL and differs in exactly two ways, both stated so a
+;; reader can diff the two files and account for every change: `set-j0` reads
+;; the nonce from 480 rather than from the IV slot at 16, and `data` is spelled
+;; `body` because here it is the record body rather than a caller's buffer.
+;; Everything else -- the derived S-box, the key schedule, GHASH, the
+;; block-at-a-time `kernel-subregion` narrowing, authenticate-before-decrypt --
+;; is byte-for-byte the same source.
+;;
+;; That claim is CHECKABLE, and was checked. Take each file's AEAD section --
+;; from `;; --- one-region accessors` to this file's `;; --- the record buffer`
+;; and to aes128-gcm's `(defn aiueos-aes128-gcm ` -- and diff them. Measured
+;; 2026-09-02: 52 changed lines, of which 51 are the `data`/`body` rename (two
+;; of them inside comments) and ONE is
+;;     -    (let [v (if (< i 12) (cl ctx (+  16 i)) (if (= i 15) 1 0))
+;;     +    (let [v (if (< i 12) (cl ctx (+ 480 i)) (if (= i 15) 1 0))
+;; If that diff ever grows a line this comment does not account for, the two
+;; AEADs have drifted and one of them is no longer the one the vectors checked.
+;; --- one-region accessors --------------------------------------------------
+;; 1280 is written as a literal at every access rather than derived from
+;; `ctx-len`: the entry checks `ctx-len` once and then the bound the machine
+;; enforces is a constant, so a caller that passes a larger region cannot widen
+;; what this object may touch.
+
+(defn cl [ctx i] (kernel-load-u8-4k ctx 1280 i))
+(defn cs [ctx i v] (kernel-store-u8-4k ctx 1280 i v))
+
+;; --- GF(2^8) ---------------------------------------------------------------
+
+(defn xtime [x]
+  (bit-and (bit-xor (* x 2)
+                    (* (bit-and (quot x 128) 1) 27))
+           255))
+
+(defn rotl8-1 [x] (bit-and (bit-or (* x 2) (quot x 128)) 255))
+(defn rotl8-2 [x] (bit-and (bit-or (* x 4) (quot x 64)) 255))
+(defn rotl8-3 [x] (bit-and (bit-or (* x 8) (quot x 32)) 255))
+(defn rotl8-4 [x] (bit-and (bit-or (* x 16) (quot x 16)) 255))
+
+;; alog[i] = 3^i and log[3^i] = i, for i in 0..254.  The generator 3 is
+;; `p ^ xtime(p)`, i.e. p*2 + p in GF(2^8).
+(defn build-log-tables [ctx i p]
+  (if (= i 255) 1
+    (let [a (cs ctx (+ 512 i) p)
+          l (cs ctx (+ 768 p) i)]
+      (build-log-tables ctx (+ i 1 (* 0 (+ a l))) (bit-xor p (xtime p))))))
+
+;; alog[255] = alog[0] = 1, so that x = 1 (whose log is 0) reaches a written
+;; slot through `alog[255 - log[x]]` rather than reading uninitialised memory.
+(defn build-tables [ctx]
+  (let [b (build-log-tables ctx 0 1)
+        e (cs ctx 767 1)]
+    (+ 1 (* 0 (+ b e)))))
+
+(defn inv-of [ctx x]
+  (if (= x 0) 0
+    (cl ctx (+ 512 (- 255 (cl ctx (+ 768 x)))))))
+
+;; FIPS 197 5.1.1: b ^ rotl(b,1) ^ rotl(b,2) ^ rotl(b,3) ^ rotl(b,4) ^ 0x63.
+(defn sbox-value [ctx x]
+  (let [b (inv-of ctx x)]
+    (bit-and (bit-xor (bit-xor (bit-xor b (rotl8-1 b))
+                               (bit-xor (rotl8-2 b) (rotl8-3 b)))
+                      (bit-xor (rotl8-4 b) 99))
+             255)))
+
+(defn build-sbox [ctx i]
+  (if (= i 256) 1
+    (let [s (cs ctx (+ 1024 i) (sbox-value ctx i))]
+      (build-sbox ctx (+ i 1 (* 0 s))))))
+
+(defn sbox [ctx x] (cl ctx (+ 1024 x)))
+
+;; --- key schedule ----------------------------------------------------------
+
+(defn rcon [i]
+  (if (= i 1) 1 (if (= i 2) 2 (if (= i 3) 4 (if (= i 4) 8
+  (if (= i 5) 16 (if (= i 6) 32 (if (= i 7) 64 (if (= i 8) 128
+  (if (= i 9) 27 54))))))))))
+
+(defn key-expand-copy [ctx i]
+  (if (= i 16) 1
+    (let [s (cs ctx (+ 128 i) (cl ctx i))]
+      (key-expand-copy ctx (+ i 1 (* 0 s))))))
+
+(defn key-expand-word [ctx i]
+  (let [t0 (cl ctx (+ 128 (- i 4)))
+        t1 (cl ctx (+ 128 (- i 3)))
+        t2 (cl ctx (+ 128 (- i 2)))
+        t3 (cl ctx (+ 128 (- i 1)))
+        turn (= (bit-and i 15) 0)
+        u0 (if turn (bit-xor (sbox ctx t1) (rcon (quot i 16))) t0)
+        u1 (if turn (sbox ctx t2) t1)
+        u2 (if turn (sbox ctx t3) t2)
+        u3 (if turn (sbox ctx t0) t3)
+        s0 (cs ctx (+ 128 i) (bit-xor (cl ctx (+ 128 (- i 16))) u0))
+        s1 (cs ctx (+ 128 (+ i 1)) (bit-xor (cl ctx (+ 128 (- i 15))) u1))
+        s2 (cs ctx (+ 128 (+ i 2)) (bit-xor (cl ctx (+ 128 (- i 14))) u2))
+        s3 (cs ctx (+ 128 (+ i 3)) (bit-xor (cl ctx (+ 128 (- i 13))) u3))]
+    (+ 1 (* 0 (+ s0 (+ s1 (+ s2 s3)))))))
+
+(defn key-expand-loop [ctx i]
+  (if (= i 176) 1
+    (let [w (key-expand-word ctx i)]
+      (key-expand-loop ctx (+ i 4 (* 0 w))))))
+
+(defn key-expand [ctx]
+  (let [c (key-expand-copy ctx 0)
+        e (key-expand-loop ctx 16)]
+    (+ 1 (* 0 (+ c e)))))
+
+;; --- AES-128 block encryption ----------------------------------------------
+
+(defn aes-load-state [ctx in-off i]
+  (if (= i 16) 1
+    (let [s (cs ctx (+ 432 i) (bit-xor (cl ctx (+ in-off i)) (cl ctx (+ 128 i))))]
+      (aes-load-state ctx in-off (+ i 1 (* 0 s))))))
+
+(defn aes-sub-to-t [ctx i]
+  (if (= i 16) 1
+    (let [s (cs ctx (+ 416 i) (sbox ctx (cl ctx (+ 432 i))))]
+      (aes-sub-to-t ctx (+ i 1 (* 0 s))))))
+
+;; ShiftRows as a permutation of the SubBytes output, column-major, exactly the
+;; sixteen assignments the C wrote out by hand.
+(defn shift-src [i]
+  (if (= i 0) 0 (if (= i 1) 5 (if (= i 2) 10 (if (= i 3) 15
+  (if (= i 4) 4 (if (= i 5) 9 (if (= i 6) 14 (if (= i 7) 3
+  (if (= i 8) 8 (if (= i 9) 13 (if (= i 10) 2 (if (= i 11) 7
+  (if (= i 12) 12 (if (= i 13) 1 (if (= i 14) 6 11))))))))))))))))
+
+(defn aes-shift-rows [ctx i]
+  (if (= i 16) 1
+    (let [s (cs ctx (+ 432 i) (cl ctx (+ 416 (shift-src i))))]
+      (aes-shift-rows ctx (+ i 1 (* 0 s))))))
+
+(defn aes-mix-col [ctx i]
+  (let [a (cl ctx (+ 432 i))
+        b (cl ctx (+ 432 (+ i 1)))
+        c (cl ctx (+ 432 (+ i 2)))
+        d (cl ctx (+ 432 (+ i 3)))
+        s0 (cs ctx (+ 432 i)
+               (bit-and (bit-xor (bit-xor (xtime a) (xtime b))
+                                 (bit-xor b (bit-xor c d))) 255))
+        s1 (cs ctx (+ 432 (+ i 1))
+               (bit-and (bit-xor (bit-xor a (xtime b))
+                                 (bit-xor (xtime c) (bit-xor c d))) 255))
+        s2 (cs ctx (+ 432 (+ i 2))
+               (bit-and (bit-xor (bit-xor a b)
+                                 (bit-xor (xtime c) (bit-xor (xtime d) d))) 255))
+        s3 (cs ctx (+ 432 (+ i 3))
+               (bit-and (bit-xor (bit-xor (xtime a) a)
+                                 (bit-xor b (bit-xor c (xtime d)))) 255))]
+    (+ 1 (* 0 (+ s0 (+ s1 (+ s2 s3)))))))
+
+(defn aes-mix [ctx i]
+  (if (= i 16) 1
+    (let [m (aes-mix-col ctx i)]
+      (aes-mix ctx (+ i 4 (* 0 m))))))
+
+(defn aes-add-round-key [ctx round i]
+  (if (= i 16) 1
+    (let [s (cs ctx (+ 432 i)
+                (bit-xor (cl ctx (+ 432 i))
+                         (cl ctx (+ 128 (+ (* round 16) i)))))]
+      (aes-add-round-key ctx round (+ i 1 (* 0 s))))))
+
+(defn aes-round [ctx round]
+  (let [a (aes-sub-to-t ctx 0)
+        b (aes-shift-rows ctx 0)
+        c (aes-mix ctx 0)
+        d (aes-add-round-key ctx round 0)]
+    (+ 1 (* 0 (+ a (+ b (+ c d)))))))
+
+(defn aes-rounds [ctx round]
+  (if (= round 10) 1
+    (let [r (aes-round ctx round)]
+      (aes-rounds ctx (+ round 1 (* 0 r))))))
+
+(defn aes-final [ctx out-off i]
+  (if (= i 16) 1
+    (let [s (cs ctx (+ out-off i)
+                (bit-xor (cl ctx (+ 432 i)) (cl ctx (+ 128 (+ 160 i)))))]
+      (aes-final ctx out-off (+ i 1 (* 0 s))))))
+
+;; `in-off` and `out-off` may be the same offset: the state lives at 432, so an
+;; in-place block (H = E_K(0)) is exact rather than a special case.
+(defn aes-encrypt-block [ctx in-off out-off]
+  (let [a (aes-load-state ctx in-off 0)
+        b (aes-rounds ctx 1)
+        c (aes-sub-to-t ctx 0)
+        d (aes-shift-rows ctx 0)
+        e (aes-final ctx out-off 0)]
+    (+ 1 (* 0 (+ a (+ b (+ c (+ d e))))))))
+
+;; --- GHASH -----------------------------------------------------------------
+;; Y := Y * H in GF(2^128) with the SP 800-38D bit order: bit 0 of the field
+;; element is the MOST significant bit of byte 0, and the reduction polynomial
+;; appears as 0xe1 in the top byte after a right shift.
+
+(defn gh-zero-z [ctx i]
+  (if (= i 16) 1
+    (let [s (cs ctx (+ 384 i) 0)] (gh-zero-z ctx (+ i 1 (* 0 s))))))
+
+(defn gh-copy-h-to-v [ctx i]
+  (if (= i 16) 1
+    (let [s (cs ctx (+ 400 i) (cl ctx (+ 304 i)))]
+      (gh-copy-h-to-v ctx (+ i 1 (* 0 s))))))
+
+(defn gh-xor-v-into-z [ctx i]
+  (if (= i 16) 1
+    (let [s (cs ctx (+ 384 i) (bit-xor (cl ctx (+ 384 i)) (cl ctx (+ 400 i))))]
+      (gh-xor-v-into-z ctx (+ i 1 (* 0 s))))))
+
+;; V >>= 1 across all 128 bits, most significant byte first.
+(defn gh-shift-v [ctx k]
+  (if (= k 0)
+    (cs ctx 400 (quot (cl ctx 400) 2))
+    (let [s (cs ctx (+ 400 k)
+                (bit-and (bit-or (quot (cl ctx (+ 400 k)) 2)
+                                 (* (bit-and (cl ctx (+ 400 (- k 1))) 1) 128))
+                         255))]
+      (gh-shift-v ctx (- k 1 (* 0 s))))))
+
+(defn gh-bit [ctx bit]
+  (let [lsb (bit-and (cl ctx 415) 1)
+        x (if (= bit 1) (gh-xor-v-into-z ctx 0) 0)
+        s (gh-shift-v ctx 15)
+        r (if (= lsb 1) (cs ctx 400 (bit-xor (cl ctx 400) 225)) 0)]
+    (+ 1 (* 0 (+ x (+ s r))))))
+
+;; The bit index is walked by shifting the byte left, not by a shift whose
+;; count depends on the loop counter: this subset admits only literal shift
+;; counts, so `(x >> (7 - j))` has no spelling here.
+(defn gh-byte-bits [ctx b j]
+  (if (= j 8) 1
+    (let [r (gh-bit ctx (bit-and (quot b 128) 1))]
+      (gh-byte-bits ctx (bit-and (* b 2) 255) (+ j 1 (* 0 r))))))
+
+(defn gh-mult-bytes [ctx i]
+  (if (= i 16) 1
+    (let [r (gh-byte-bits ctx (cl ctx (+ 352 i)) 0)]
+      (gh-mult-bytes ctx (+ i 1 (* 0 r))))))
+
+(defn gh-copy-z-to-y [ctx i]
+  (if (= i 16) 1
+    (let [s (cs ctx (+ 352 i) (cl ctx (+ 384 i)))]
+      (gh-copy-z-to-y ctx (+ i 1 (* 0 s))))))
+
+(defn gh-mult [ctx]
+  (let [a (gh-zero-z ctx 0)
+        b (gh-copy-h-to-v ctx 0)
+        c (gh-mult-bytes ctx 0)
+        d (gh-copy-z-to-y ctx 0)]
+    (+ 1 (* 0 (+ a (+ b (+ c d)))))))
+
+;; --- GHASH over the AAD (inside ctx) and the record body --------------------
+
+(defn gh-xor-aad-block [ctx off i limit]
+  (if (= i 16) 1
+    (let [byte (if (< i limit) (cl ctx (+ 64 (+ off i))) 0)
+          s (cs ctx (+ 352 i) (bit-xor (cl ctx (+ 352 i)) byte))]
+      (gh-xor-aad-block ctx off (+ i 1 (* 0 s)) limit))))
+
+(defn gh-aad [ctx off aad-len]
+  (if (>= off aad-len) 1
+    (let [rem (- aad-len off)
+          limit (if (> rem 16) 16 rem)
+          x (gh-xor-aad-block ctx off 0 limit)
+          m (gh-mult ctx)]
+      (gh-aad ctx (+ off 16 (* 0 (+ x m))) aad-len))))
+
+;; Reads use the 16 KiB window directly: 12288 is inside it, so the body side
+;; of GHASH needs no chunking.  Only the STORES in `crypt-all` do, because the
+;; store window stops at 4096.
+(defn gh-xor-body-block [ctx body body-len off i]
+  (if (= i 16) 1
+    (let [idx (+ off i)
+          byte (if (< idx body-len) (kernel-load-u8-16k body body-len idx) 0)
+          s (cs ctx (+ 352 i) (bit-xor (cl ctx (+ 352 i)) byte))]
+      (gh-xor-body-block ctx body body-len off (+ i 1 (* 0 s))))))
+
+(defn gh-body [ctx body body-len off]
+  (if (>= off body-len) 1
+    (let [x (gh-xor-body-block ctx body body-len off 0)
+          m (gh-mult ctx)]
+      (gh-body ctx body body-len (+ off 16 (* 0 (+ x m)))))))
+
+;; Least significant byte first, so the eight-byte field is written without
+;; any literal above 256 -- and therefore without a shift count at all (see the
+;; header note on why this object contains no `i64-shift-*`).
+(defn be64-tail [ctx off i value]
+  (if (= i 8) 1
+    (let [s (cs ctx (+ off (- 7 i)) (bit-and value 255))]
+      (be64-tail ctx off (+ i 1 (* 0 s)) (quot value 256)))))
+
+(defn be64-into [ctx off value] (be64-tail ctx off 0 value))
+
+(defn gh-xor-lenblk [ctx i]
+  (if (= i 16) 1
+    (let [s (cs ctx (+ 352 i) (bit-xor (cl ctx (+ 352 i)) (cl ctx (+ 464 i))))]
+      (gh-xor-lenblk ctx (+ i 1 (* 0 s))))))
+
+(defn gh-final [ctx aad-len body-len]
+  (let [a (be64-into ctx 464 (* aad-len 8))
+        b (be64-into ctx 472 (* body-len 8))
+        x (gh-xor-lenblk ctx 0)
+        m (gh-mult ctx)]
+    (+ 1 (* 0 (+ a (+ b (+ x m)))))))
+
+;; --- CTR -------------------------------------------------------------------
+
+(defn set-j0 [ctx i]
+  (if (= i 16) 1
+    (let [v (if (< i 12) (cl ctx (+ 480 i)) (if (= i 15) 1 0))
+          s (cs ctx (+ 320 i) v)]
+      (set-j0 ctx (+ i 1 (* 0 s))))))
+
+(defn copy-j0-to-ctr [ctx i]
+  (if (= i 16) 1
+    (let [s (cs ctx (+ 336 i) (cl ctx (+ 320 i)))]
+      (copy-j0-to-ctr ctx (+ i 1 (* 0 s))))))
+
+;; inc32 on the last four bytes of the counter block, modulo 2^32 as SP 800-38D
+;; specifies -- not modulo 2^128.
+(defn inc32 [ctx]
+  (let [n (+ (* (cl ctx 348) 16777216)
+             (+ (* (cl ctx 349) 65536)
+                (+ (* (cl ctx 350) 256) (cl ctx 351))))
+        m (bit-and (+ n 1) 4294967295)
+        s0 (cs ctx 348 (bit-and (quot m 16777216) 255))
+        s1 (cs ctx 349 (bit-and (quot m 65536) 255))
+        s2 (cs ctx 350 (bit-and (quot m 256) 255))
+        s3 (cs ctx 351 (bit-and m 255))]
+    (+ 1 (* 0 (+ s0 (+ s1 (+ s2 s3)))))))
+
+(defn crypt-block [ctx sub sublen index]
+  (if (>= index sublen) 1
+    (let [k (cl ctx (+ 448 index))
+          c (kernel-load-u8-4k sub sublen index)
+          s (kernel-store-u8-4k sub sublen index (bit-xor c k))]
+      (crypt-block ctx sub sublen (+ index 1 (* 0 s))))))
+
+;; The store window stops at 4096 and a record may be 12288, so the buffer has
+;; to be narrowed through `kernel-subregion` before anything is written to it.
+;; The narrowing is ONE CIPHER BLOCK WIDE rather than one 4096-byte chunk, and
+;; that is the whole point: with a 4096-wide chunk there is a boundary at 4096
+;; that nothing below 4 KiB of plaintext ever crosses, so every cheap vector
+;; would exercise a path the real records do not.  At 16 bytes the first block
+;; of a 32-byte record takes the identical path as the 768th block of a 12 KiB
+;; one, and the last partial block takes the same path a 60-byte record's does.
+;;
+;; The cost is one bounds-checked narrowing per block instead of per 4096
+;; bytes -- 768 extra operations on a full record, against the ~4M the object
+;; already spends there.  The keystream index becomes the block-local `index`
+;; rather than `index & 15`, so the alignment assumption disappears too.
+(defn crypt-all [ctx body body-len off]
+  (if (>= off body-len) 1
+    (let [rem (- body-len off)
+          sublen (if (> rem 16) 16 rem)
+          a (inc32 ctx)
+          b (aes-encrypt-block ctx 336 448)
+          sub (kernel-subregion body body-len off sublen)
+          c (crypt-block ctx sub sublen 0)]
+      (crypt-all ctx body body-len (+ off 16 (* 0 (+ a (+ b c))))))))
+
+;; --- tag -------------------------------------------------------------------
+
+(defn tag-out [ctx i]
+  (if (= i 16) 1
+    (let [s (cs ctx (+ 32 i) (bit-xor (cl ctx (+ 368 i)) (cl ctx (+ 352 i))))]
+      (tag-out ctx (+ i 1 (* 0 s))))))
+
+;; Accumulates every byte's difference before deciding, so the comparison does
+;; not return early on the first mismatching byte.
+(defn tag-diff [ctx i acc]
+  (if (= i 16) acc
+    (tag-diff ctx (+ i 1)
+              (bit-or acc
+                      (bit-xor (bit-xor (cl ctx (+ 368 i)) (cl ctx (+ 352 i)))
+                               (cl ctx (+ 32 i)))))))
+
+(defn zero-region [ctx off i]
+  (if (= i 16) 1
+    (let [s (cs ctx (+ off i) 0)] (zero-region ctx off (+ i 1 (* 0 s))))))
+
+;; --- the two directions ----------------------------------------------------
+
+(defn gcm-seal [ctx body body-len aad-len]
+  (let [c (crypt-all ctx body body-len 0)
+        a (gh-aad ctx 0 aad-len)
+        d (gh-body ctx body body-len 0)
+        l (gh-final ctx aad-len body-len)
+        t (tag-out ctx 0)]
+    (* 0 (+ c (+ a (+ d (+ l t)))))))
+
+(defn gcm-open [ctx body body-len aad-len]
+  (let [a (gh-aad ctx 0 aad-len)
+        d (gh-body ctx body body-len 0)
+        l (gh-final ctx aad-len body-len)
+        diff (tag-diff ctx 0 0)
+        prefix (* 0 (+ a (+ d l)))]
+    (if (= diff 0)
+      (let [c (crypt-all ctx body body-len 0)] (* 0 (+ c prefix)))
+      (+ 5 prefix))))
+
+(defn gcm-prepare [ctx]
+  (let [bt (build-tables ctx)
+        bs (build-sbox ctx 0)
+        ke (key-expand ctx)
+        zh (zero-region ctx 304 0)
+        h (aes-encrypt-block ctx 304 304)
+        j (set-j0 ctx 0)
+        ek (aes-encrypt-block ctx 320 368)
+        cc (copy-j0-to-ctr ctx 0)
+        zy (zero-region ctx 352 0)]
+    (+ 1 (* 0 (+ bt (+ bs (+ ke (+ zh (+ h (+ j (+ ek (+ cc zy))))))))))))
+
+
+;; --- the record buffer -----------------------------------------------------
+;; Every store into `rec` narrows to ONE BYTE through `kernel-subregion` first.
+;; The store window stops at 4096 and a record may be 12,310 bytes, so the
+;; narrowing has to happen; making it one byte wide means the header write, the
+;; content-type write and the tag write all take the identical checked path,
+;; and none of them can be the one that was reasoned about wrongly.
+
+(defn store-one [base value] (kernel-store-u8-4k base 1 0 value))
+
+(defn rs [rec rec-len index value]
+  (let [sub (kernel-subregion rec rec-len index 1)]
+    (store-one sub value)))
+
+(defn rl [rec rec-len index] (kernel-load-u8-16k rec rec-len index))
+
+(defn body-byte [body body-len index] (kernel-load-u8-16k body body-len index))
+
+;; RFC 8446 5.3: the per-record nonce is the write IV with the 64-bit sequence
+;; number XORed into its LAST EIGHT bytes, left-padded. The first four bytes of
+;; a 12-byte IV are therefore untouched.
+(defn derive-nonce [ctx i]
+  (if (= i 12) 1
+    (let [b (cl ctx (+ 16 i))
+          v (if (< i 4) b (bit-xor b (cl ctx (+ 48 (- i 4)))))
+          s (cs ctx (+ 480 i) v)]
+      (derive-nonce ctx (+ i 1 (* 0 s))))))
+
+;; The header IS the additional authenticated data. Writing it into the AAD
+;; slot and into the record from the same three arguments is what stops the two
+;; from ever disagreeing -- a record whose header says one length and whose AAD
+;; says another is a record the peer will reject for reasons nobody can find.
+(defn write-aad-header [ctx outer len-hi len-lo]
+  (let [a0 (cs ctx 64 outer) a1 (cs ctx 65 3) a2 (cs ctx 66 3)
+        a3 (cs ctx 67 len-hi) a4 (cs ctx 68 len-lo)
+        n (cs ctx 28 5)]
+    (+ 1 (* 0 (+ a0 (+ a1 (+ a2 (+ a3 (+ a4 n)))))))))
+
+(defn header-to-record [ctx rec rec-len i]
+  (if (= i 5) 1
+    (let [s (rs rec rec-len i (cl ctx (+ 64 i)))]
+      (header-to-record ctx rec rec-len (+ i 1 (* 0 s))))))
+
+;; OPEN takes the AAD from the WIRE, not from what the caller believes the
+;; header to be. Those differ exactly when someone has rewritten the header,
+;; which is the case the AEAD exists to catch.
+(defn copy-header-in [ctx rec rec-len i]
+  (if (= i 5) (cs ctx 28 5)
+    (let [s (cs ctx (+ 64 i) (rl rec rec-len i))]
+      (copy-header-in ctx rec rec-len (+ i 1 (* 0 s))))))
+
+(defn tag-to-record [ctx rec rec-len at i]
+  (if (= i 16) 1
+    (let [s (rs rec rec-len (+ at i) (cl ctx (+ 32 i)))]
+      (tag-to-record ctx rec rec-len at (+ i 1 (* 0 s))))))
+
+(defn tag-from-record [ctx rec rec-len at i]
+  (if (= i 16) 1
+    (let [s (cs ctx (+ 32 i) (rl rec rec-len (+ at i)))]
+      (tag-from-record ctx rec rec-len at (+ i 1 (* 0 s))))))
+
+;; RFC 8446 5.4: strip trailing zeros, and the last byte of what remains is the
+;; content type. Scanning from the end is the only way to do this; a record
+;; whose plaintext is entirely zeros has no content type at all and is reason 7
+;; rather than a record of type zero.
+(defn content-length [body body-len n]
+  (if (= n 0) 0
+    (if (= (body-byte body body-len (- n 1)) 0)
+      (content-length body body-len (- n 1))
+      n)))
+
+(defn seal-record [ctx rec rec-len pt-len]
+  (let [body-len (+ pt-len 1)
+        wire (+ body-len 16)
+        typed (rs rec rec-len (+ 5 pt-len) (cl ctx 56))
+        hdr (write-aad-header ctx 23 (quot wire 256) (bit-and wire 255))
+        put (header-to-record ctx rec rec-len 0)
+        non (derive-nonce ctx 0)
+        pre (gcm-prepare ctx)
+        body (kernel-subregion rec rec-len 5 body-len)
+        r (gcm-seal ctx body body-len 5)
+        tg (tag-to-record ctx rec rec-len (+ 5 body-len) 0)
+        o0 (cs ctx 60 (quot (+ 5 wire) 256))
+        o1 (cs ctx 61 (bit-and (+ 5 wire) 255))]
+    (* 0 (+ typed (+ hdr (+ put (+ non (+ pre (+ r (+ tg (+ o0 o1)))))))))))
+
+(defn open-record [ctx rec rec-len body-len]
+  (let [hdr (copy-header-in ctx rec rec-len 0)
+        tg (tag-from-record ctx rec rec-len (+ 5 body-len) 0)
+        non (derive-nonce ctx 0)
+        pre (gcm-prepare ctx)
+        body (kernel-subregion rec rec-len 5 body-len)
+        r (gcm-open ctx body body-len 5)
+        prefix (* 0 (+ hdr (+ tg (+ non pre))))]
+    (if (= r 0)
+      (let [n (content-length body body-len body-len)]
+        (if (= n 0) (+ 7 prefix)
+          (let [t (cs ctx 56 (body-byte body body-len (- n 1)))
+                l0 (cs ctx 58 (quot (- n 1) 256))
+                l1 (cs ctx 59 (bit-and (- n 1) 255))]
+            (* 0 (+ t (+ l0 (+ l1 prefix)))))))
+      (+ 6 prefix))))
+
+;; 12310 is 5 + 12288 + 1 + 16: the largest record whose BODY still fits the
+;; AEAD's own 12288 bound. It is below the 16384 load window and below RFC
+;; 8446's 2^14 + 256 ceiling, so a conforming peer can still send a record this
+;; object refuses -- reason 3 says which, rather than trapping.
+(defn aiueos-tls13-record [ctx ctx-len rec rec-len mode]
+  (if (< ctx-len 1280) 1
+    (if (> mode 1) 2
+      (if (< mode 0) 2
+        (if (< rec-len 22) 3
+          (if (> rec-len 12310) 3
+            (if (= mode 1)
+              (let [pt-len (+ (* (cl ctx 58) 256) (cl ctx 59))]
+                (if (> pt-len 12287) 4
+                  (if (> (+ 22 pt-len) rec-len) 4
+                    (seal-record ctx rec rec-len pt-len))))
+              (let [clen (+ (* (rl rec rec-len 3) 256) (rl rec rec-len 4))]
+                (if (> (+ clen 5) rec-len) 5
+                  (if (< (+ clen 5) rec-len) 5
+                    (if (< clen 17) 5
+                      (if (> (- clen 16) 12288) 5
+                        (open-record ctx rec rec-len (- clen 16))))))))))))))
+
+(defn main [] 0)

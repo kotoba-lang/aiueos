@@ -63,6 +63,66 @@
         "kotoba-lang/org-ietf-tcp's tcp.seq on every input, so the wrap "
         "arithmetic it had to copy is checked rather than asserted.")
 
+   ;; These two were UNDECLARED and this test was red for them on main before
+   ;; ADR-0132 touched anything -- neither is built by a script and neither was
+   ;; listed here, which is exactly the state the list exists to make
+   ;; impossible. Declared now, with what does execute them, because the same
+   ;; measurement that had to be made for the two objects below answers them:
+   "cid-v1-admit"
+   (str "CANNOT be built here, and that is a measured fact rather than an "
+        "omission: it declares `(:require [aiueos.value-runtime-sha256 ...])`, "
+        "so it is a multi-module project, and `amu compile` refuses to package "
+        "one for x86_64-aiueos-kernel-v1 at all -- "
+        ":kotoba.error/namespace-require-needs-project, and --unpinned does not "
+        "change it (measured 2026-09-02 against amu b1fdaad2). That is why no "
+        "`.o` sits beside it. What executes it is contracts/cid-v1-admit-v1.edn "
+        "through os/aiueos/scripts/verify-admissions.cljs, which links the two "
+        "modules itself and runs 14 vectors and a trap through the KIR "
+        "interpreter.")
+
+   "unixfs-file-admit"
+   (str "A single-module source with no committed object and no build. What "
+        "executes it is contracts/unixfs-file-admit-v1.edn through "
+        "os/aiueos/scripts/verify-admissions.cljs -- 22 vectors covering all "
+        "18 of its reason codes, measured through the KIR interpreter. Nothing "
+        "in the kernel calls it yet: the UnixFS root it admits names blocks the "
+        "model channel fetches, and giving that path a call site is a change to "
+        "the kernel rather than a way to satisfy this test.")
+
+   "aes128-gcm"
+   (str "The AES-128-GCM AEAD under every TLS 1.3 record (ADR-0132). No build "
+        "links it because the thing it would replace is still there: "
+        "kernel/tls_aes_gcm.c holds the same cipher and tls13.c calls it, and "
+        "moving those call sites is a change to the kernel rather than a way "
+        "to satisfy this test -- the object's reason codes even invert the C's "
+        "convention, so a transcribed call site would accept what it refuses. "
+        "What executes it is contracts/aes128-gcm-v1.edn through "
+        "os/aiueos/scripts/verify-admissions.cljs: 15 vectors and 1 trap "
+        "against SP 800-38D and against ciphertexts that org-nist-aes and "
+        "OpenSSL agree on byte for byte, with 16 assertions on the bytes it "
+        "wrote rather than only on what it returned.")
+
+   "hkdf-sha256"
+   (str "HMAC-SHA256 and HKDF-Expand-Label, the key schedule beside the AEAD "
+        "above (ADR-0132). Unlinked for the same reason: tls13.c's "
+        "hmac_sha256 / hkdf_extract / hkdf_expand_label are still the ones "
+        "being called. What executes it is contracts/hkdf-sha256-v1.edn "
+        "through verify-admissions.cljs: 18 vectors whose values are RFC 4231 "
+        "section 4 and RFC 8448 section 3, the latter taken from the "
+        "extraction org-ietf-tls keeps at resources/rfc8448_section3.edn.")
+
+   "tls13-record"
+   (str "The TLS 1.3 record layer (ADR-0133), the AEAD above plus the framing "
+        "that decides what the AEAD is applied to. Unlinked for the same "
+        "reason as its two neighbours: kernel/tls13.c's protect and unprotect "
+        "are still the ones being called, and moving those call sites is a "
+        "change to the kernel. What executes it is "
+        "contracts/tls13-record-v1.edn through verify-admissions.cljs: 17 "
+        "vectors, four of them whole encrypted records printed in RFC 8448 "
+        "section 3 beside the traffic keys that produced them, with the "
+        "sequence numbers recovered by opening each record with OpenSSL rather "
+        "than assumed to be zero.")
+
    "qwen35-gguf-header-valid"
    (str "The GGUF v3 container header of the Qwen3.8-27B artifact -- magic, "
         "version, tensor count, metadata count -- ported from the opening of "
