@@ -28,21 +28,21 @@
               :failure-encoding :screen-base-plus-provider-reason}
  :artifact {:state :built-reproducibly
             :aiueos-implementation-commit
-            "4151e6d5cde47f7ae6534185eb1e3bdc102a429c"
+            "85030c4b04e392d6739c1bb38d9b2c41e3dccbbe"
             :amu-commit "13d2f5dfe1adeaa99b7e9e6c04fcf8cb8fc15a4b"
             :kernel {:bytes 143640
                      :sha256
-                     "e4aa45d0c4a4f3cdfcf783a7982c160963d28f87ca049441c1e22075cecf6524"}
+                     "fffda951daf3e9b6841ef0e9cb7fbd5a6f4968393937f596d65a7b4c15c693a0"}
             :efi {:bytes 162816
                   :sha256
-                  "9755a8c5545aeb4b3f3e1a3329f363b8a09880dbf8bf0b08a82b4994fa1f8a6d"}
+                  "b32342bd3f6200b9e2fd78a9357841d9df267efd484a79c0285064c228709025"}
             :source-closure
             [{:module :aiueos.native.kernel
               :sha256
               "c90a7d117a41f6e620336db17ae08fb0d702404075ed6ca28fae9210b3fab4fa"}
              {:module :native.rtl8125
               :sha256
-              "6016b4cf30b63f4faef78045dd18e29a119c6b38f73d7aadd971ce6faa64608b"}]
+              "88728ca2e398e000f2634ea9e59ca0d97eba289d30a47f539e323fb74db474fc"}]
             :foreign-code []
             :dynamic-imports []}
  :evidence {:qemu {:state :passed
