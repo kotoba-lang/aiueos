@@ -136,6 +136,22 @@ cljc), OpenSSL through node's `crypto.createCipheriv('aes-128-gcm', ...)`, and
 the C being replaced.  The published SP 800-38D empty-input tag
 `58e2fcce...455a` is among them.
 
+That third agreement is worth naming precisely, because it is the parity
+evidence stage 5 will need for the AEAD: **the object passes
+`aiueos_aes128_gcm_selftest`'s own expectations.**  The C's `expect_tag`
+(`58e2fcce…455a`), `expect_ct` (`4faa3ccb…bde7`), `expect_t2`
+(`97f7b291…003e`) and `expect_t3` (`2b956e81…21ee`) are, byte for byte, the
+first three vectors of `aes128-gcm-v1.edn`.  The old and the new implementation
+are not merely both correct; they are checked against the same numbers.
+
+A remark on those numbers, since they read like published GCM test vectors and
+are not quite: the C's comment says its 64-byte expectations were "measured
+against cryptography.hazmat" rather than transcribed, because the published
+SP 800-38D appendix vector for that key and IV carries 20 bytes of AAD and a
+60-byte plaintext.  The 64-byte empty-AAD companion is a derived vector.  Two
+further independent implementations now agree with it, which is what this ADR
+adds to the C's word for it.
+
 The HKDF contract's values are RFC 4231 section 4 (the two HMAC vectors) and
 RFC 8448 section 3 for everything else, taken from the extraction
 kotoba-lang/org-ietf-tls keeps at `resources/rfc8448_section3.edn`, whose header
@@ -250,6 +266,8 @@ and `elf64.cljc`, because the JVM loads the first and nbb the second):
   `aead-fuel?` arm at 250,000,000.
 * `77d4f9801cb4d0b5c68588a1efc48f837f5e6e53` -- `aiueos-hkdf-sha256`, and an
   `hkdf-fuel?` arm at 10,000,000.
+* `81d6644eead9f6a6900cd35736ef94f1f22a1218` -- `aiueos-tls13-record`, which
+  ADR-0133 introduces and which joins the `aead-fuel?` arm.
 
 Both fuel arms are SEPARATE arms rather than names added to an existing set,
 for the reason `elf64.cljc` already gives about `dhcp-fuel?` and
@@ -259,8 +277,14 @@ their computation and say it is computed rather than executed.
 assertions).
 
 The amu that produced these objects is `b1fdaad2` with its kotoba-native pin
-advanced to `77d4f98` and `deps-lock.edn` regenerated.  That amu is NOT landed;
+advanced to `81d6644` and `deps-lock.edn` regenerated.  That amu is NOT landed;
 it exists as a worktree.  Reproducing these `.o` files requires the same bump.
+
+Both objects were compiled again after the third row landed and are
+byte-identical to the ones committed here.  An allowlist row does not move an
+object that does not use it -- which is the same property the kotoba-native
+side asserted when it added the DHCP rows, and it is checked rather than
+assumed.
 
 ## What is NOT done
 
@@ -282,7 +306,8 @@ it exists as a worktree.  Reproducing these `.o` files requires the same bump.
   exactly these two, produced by the same script against a root containing only
   them, is at `qualification/jvm-free-object-parity-tls13.edn`; it names its own
   `:scanned 2` and its own compiler tree digest rather than being merged into a
-  file whose header names a different one.
+  file whose header names a different one.  It covers all three objects,
+  including ADR-0133's, and reports MATCH 3 DIFFERS 0.
 * **The largest record executed is 64 bytes.**  The object's bound is 12,288.
   The cost is linear in blocks and the code path is uniform -- `crypt-all`
   narrows ONE CIPHER BLOCK at a time through `kernel-subregion`, so the first

@@ -111,6 +111,18 @@
         "section 4 and RFC 8448 section 3, the latter taken from the "
         "extraction org-ietf-tls keeps at resources/rfc8448_section3.edn.")
 
+   "tls13-record"
+   (str "The TLS 1.3 record layer (ADR-0133), the AEAD above plus the framing "
+        "that decides what the AEAD is applied to. Unlinked for the same "
+        "reason as its two neighbours: kernel/tls13.c's protect and unprotect "
+        "are still the ones being called, and moving those call sites is a "
+        "change to the kernel. What executes it is "
+        "contracts/tls13-record-v1.edn through verify-admissions.cljs: 17 "
+        "vectors, four of them whole encrypted records printed in RFC 8448 "
+        "section 3 beside the traffic keys that produced them, with the "
+        "sequence numbers recovered by opening each record with OpenSSL rather "
+        "than assumed to be zero.")
+
    "murakumo-join-plan"
    (str "A node's own fleet-enrolment decision. It has no caller inside the "
         "kernel, so no build links it; kotoba-lang/murakumo drives it through "

@@ -218,6 +218,65 @@
        (conj {:label :out :offset (+ ctx-offset 64)
               :bytes (hex-bytes (:expect-out-hex v))}))}))
 
+(defn- be-bytes
+  "`n` as `width` big-endian bytes. The record layer's sequence number, lengths
+  and the contract's expectations are all big-endian fields."
+  [n width]
+  (mapv (fn [i] (bit-and (js/Math.floor (/ n (js/Math.pow 256 (- width 1 i)))) 0xff))
+        (range width)))
+
+;; The record layer. Three regions' worth of state in two: the ctx carries the
+;; key, the IV, the sequence and the in/out length fields, and `rec` is the
+;; record itself, transformed in place.
+(defmethod prepare :aiueos.tls13-record/v1 [contract v]
+  (let [{:keys [base image-bytes ctx-offset rec-offset]}
+        (get-in contract [:verification :memory])
+        record (hex-bytes (:record-hex v))
+        plaintext (hex-bytes (:plaintext-hex v))
+        seal? (= 1 (:mode v))
+        ;; A record image is either the literal bytes, or a run of zeros with
+        ;; those bytes written over its head -- the second shape is how a
+        ;; 12,310-byte refusal is provoked without 12 KiB of hex in a contract.
+        rec-image (if (:record-fill-bytes v)
+                    (reduce (fn [acc [i b]] (assoc acc i b))
+                            (vec (repeat (:record-fill-bytes v) 0))
+                            (map-indexed vector record))
+                    record)
+        plaintext-length (or (:plaintext-length-override v) (count plaintext))
+        rec-len (or (:rec-len v)
+                    (if seal? (+ 22 (count plaintext)) (count rec-image)))]
+    {:entry 'aiueos-tls13-record
+     :base base
+     :image (cond-> (-> (vec (repeat image-bytes 0))
+                        (write-at ctx-offset (hex-bytes (:key-hex v)))
+                        (write-at (+ ctx-offset 16) (hex-bytes (:iv-hex v)))
+                        (write-at (+ ctx-offset 48) (be-bytes (or (:sequence v) 0) 8))
+                        (write-at (+ ctx-offset 56) [(or (:content-type v) 0)])
+                        (write-at (+ ctx-offset 58) (be-bytes plaintext-length 2))
+                        (write-at rec-offset rec-image))
+              ;; SEAL is handed the plaintext where the record body will be.
+              seal? (write-at (+ rec-offset 5) plaintext))
+     :args [(+ base ctx-offset)
+            (or (:ctx-len v) (get-in contract [:ctx :bytes]))
+            (+ base rec-offset) rec-len (:mode v)]
+     :expect-memory
+     (cond-> []
+       (:expect-record-hex v)
+       (conj {:label :record :offset rec-offset
+              :bytes (hex-bytes (:expect-record-hex v))})
+       (:expect-plaintext-hex v)
+       (conj {:label :plaintext :offset (+ rec-offset 5)
+              :bytes (hex-bytes (:expect-plaintext-hex v))})
+       (:expect-content-type v)
+       (conj {:label :content-type :offset (+ ctx-offset 56)
+              :bytes [(:expect-content-type v)]})
+       (some? (:expect-plaintext-length v))
+       (conj {:label :plaintext-length :offset (+ ctx-offset 58)
+              :bytes (be-bytes (:expect-plaintext-length v) 2)})
+       (some? (:expect-record-length v))
+       (conj {:label :record-length :offset (+ ctx-offset 60)
+              :bytes (be-bytes (:expect-record-length v) 2)}))}))
+
 (defmethod prepare :default [contract _]
   (fail! "REFUSING TO REPORT A PASS: no argument builder for this contract format"
          {:format (:format contract)}))
@@ -452,7 +511,8 @@
                       ["cid-v1-admit-v1.edn" "unixfs-file-admit-v1.edn"
                        "value-runtime-cas-verify-v1.edn"
                        "value-handle-arena-v1.edn"
-                       "aes128-gcm-v1.edn" "hkdf-sha256-v1.edn"]))
+                       "aes128-gcm-v1.edn" "hkdf-sha256-v1.edn"
+                       "tls13-record-v1.edn"]))
         results (mapv #(run-contract root-dir %) paths)]
     (doseq [r results]
       (println (str "CONTRACT\t" (:contract r)
