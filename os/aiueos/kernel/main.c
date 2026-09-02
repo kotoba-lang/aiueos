@@ -1099,8 +1099,19 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
       qemu_exit(0x66);
     }
 #ifdef AIUEOS_MODEL_TEST_FIXTURE
-    debug_string("AIUEOS_QWEN35_GRAPH_FIXTURE_SKIP tiny-transport-fixture\n");
-    serial_string("AIUEOS_QWEN35_GRAPH_FIXTURE_SKIP tiny-transport-fixture\r\n");
+    /* Two fixtures reach this profile now. The model-handoff gate's is 27
+       bytes of transport and carries no graph; the admission gate's is the
+       10,996,640-byte metadata + tensor-table prefix, which IS parsed, further
+       down, once the physical allocator can hold the graph. Saying
+       "tiny-transport-fixture" for both would put a false line on the console
+       of every run that then parses 866 tensor records. */
+    if (boot->model_size == AIUEOS_QWEN35_DATA_OFFSET) {
+      debug_string("AIUEOS_QWEN35_GRAPH_FIXTURE_DEFERRED admission-selftest\n");
+      serial_string("AIUEOS_QWEN35_GRAPH_FIXTURE_DEFERRED admission-selftest\r\n");
+    } else {
+      debug_string("AIUEOS_QWEN35_GRAPH_FIXTURE_SKIP tiny-transport-fixture\n");
+      serial_string("AIUEOS_QWEN35_GRAPH_FIXTURE_SKIP tiny-transport-fixture\r\n");
+    }
 #endif
     {
       struct aiueos_inference_status admitted = {
@@ -1183,6 +1194,78 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
     }
     debug_string("AIUEOS_PHYSICAL_ALLOCATOR_OK pages=2 zeroed\n");
     serial_string("AIUEOS_PHYSICAL_ALLOCATOR_OK pages=2 zeroed\r\n");
+#if defined(AIUEOS_QWEN38_MODEL_HANDOFF) && defined(AIUEOS_MODEL_TEST_FIXTURE)
+    /* The GGUF admission, EXECUTED. ADR-0135 moved it to three Kotoba objects
+       and made kernel/qwen35_runtime.c delegate to them, but nothing ever ran
+       that delegation: the objects passed a KIR-interpreter oracle, the image
+       linked, and this workstation is aarch64 so the emitted x86-64 was never
+       on a CPU.
+       The transport fixture the model-handoff gate carries is 27 bytes and
+       cannot be parsed, so this runs only when the handed-off artifact is
+       exactly the 10,996,640-byte metadata+tensor-table prefix that
+       tests/make_qwen35_header_fixture.py builds and
+       scripts/smoke-qwen35-runtime.sh feeds to the C reference parser. That
+       prefix is not the artifact, so the artifact length is the contract's
+       rather than what was mapped -- which is the same pair of arguments the
+       host gate passes, so the numbers printed below are comparable with it.
+       QWEN-ADMIT carries the object's own reason code. The C in this image
+       has no such number: the delegating branch returns 0 or 1 and every
+       negative value here was written in a .kotoba file. */
+    if (boot->model_size == AIUEOS_QWEN35_DATA_OFFSET) {
+      const uint64_t admission_pages =
+        (sizeof(struct aiueos_qwen35_model) + 4095U) / 4096U;
+      struct aiueos_qwen35_model *admitted =
+        (struct aiueos_qwen35_model *)
+          aiueos_allocate_contiguous_physical_pages(admission_pages);
+      if (!admitted) {
+        serial_string("AIUEOS_QWEN35_ADMISSION_FAIL graph-pages\r\n");
+        qemu_exit(0x66);
+      }
+      int admission_ok = aiueos_qwen35_model_parse(
+        (const uint8_t *)(uintptr_t)boot->model_base, boot->model_size,
+        AIUEOS_QWEN35_ARTIFACT_BYTES, admitted);
+      serial_string("QWEN-ADMIT reason=");
+      if (aiueos_qwen35_admission_verdict < 0) {
+        serial_string("-");
+        serial_decimal64((uint64_t)(-aiueos_qwen35_admission_verdict));
+      } else {
+        serial_decimal64((uint64_t)aiueos_qwen35_admission_verdict);
+      }
+      serial_string(" stage=");
+      serial_decimal(aiueos_qwen35_admission_stage);
+      serial_string(" admitted=");
+      serial_decimal((uint32_t)admission_ok);
+      serial_string("\r\n");
+      if (!admission_ok) {
+        debug_string("AIUEOS_QWEN35_ADMISSION_REFUSED kotoba-objects\n");
+        serial_string("AIUEOS_QWEN35_ADMISSION_REFUSED kotoba-objects\r\n");
+        qemu_exit(0x66);
+      }
+      debug_string("AIUEOS_QWEN35_ADMISSION_OK kotoba-objects\n");
+      /* The four representative offsets tests/qwen35_runtime_model.c asserts
+         on the host, recomputed here by the objects and this image's
+         translation. Printing them rather than only a verdict is what makes a
+         wrong workspace offset visible: a translation that read the wrong word
+         still returns 1. */
+      serial_string("AIUEOS_QWEN35_ADMISSION_OK tensors=");
+      serial_decimal64(admitted->tensor_count);
+      serial_string(" linear=");
+      serial_decimal(admitted->linear_layer_count);
+      serial_string(" full=");
+      serial_decimal(admitted->full_layer_count);
+      serial_string(" data-offset=");
+      serial_decimal64(admitted->data_offset);
+      serial_string(" embd=");
+      serial_decimal64(admitted->token_embedding.offset);
+      serial_string(" qkv=");
+      serial_decimal64(admitted->layers[0].mixer.linear.qkv.offset);
+      serial_string(" tail=");
+      serial_decimal64(admitted->layers[64].post_attention_norm.offset);
+      serial_string("\r\n");
+    } else {
+      serial_string("AIUEOS_QWEN35_ADMISSION_SKIP tiny-transport-fixture\r\n");
+    }
+#endif
 #if defined(AIUEOS_QWEN38_MODEL_HANDOFF) && !defined(AIUEOS_MODEL_TEST_FIXTURE)
 #ifdef AIUEOS_PHYSICAL_QUALIFICATION
 #ifdef AIUEOS_QWEN35_SMP
