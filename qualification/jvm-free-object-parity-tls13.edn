@@ -13,6 +13,26 @@
 ;; when the 66 were measured, and `tree-digest` covers `deps-lock.edn`.
 ;; Copying rows across would make that header a lie about half its contents.
 ;;
+;; ONE MORE THING THIS FILE MEANS AND THE MAIN ROSTER DOES NOT.
+;; The script compares the JVM-free ROUTE against the JVM ROUTE. `:match` says
+;; the two routes produced the same bytes; it does NOT by itself say those
+;; bytes are the ones committed beside the source. For the three objects here
+;; they are -- each `:sha256` below is the sha256 of the committed `.o`, and
+;; that was checked. In `jvm-free-object-parity.edn` they are NOT: it records
+;; `sha256` as 9,912 bytes / db5effa8..., while the committed `sha256.o` is
+;; 17,792 bytes / af378b06... (which is what `provenance.edn`, generated from
+;; the files themselves, reports). That roster is a receipt about a
+;; compilation run, not an attestation of the tree, and the two are easy to
+;; read as the same thing.
+;;
+;; Measured the same day, and it is the ADR-0129/0130 drift seen again at a
+;; newer compiler: of seven committed objects recompiled at this amu, ONE
+;; (ime-romaji) reproduces byte-for-byte and six do not -- sha256, x25519,
+;; dhcp-reply-valid, ipv4-checksum, tcp-segment-valid and pic-disable all come
+;; out smaller than the committed artifact. An eighth, ecdsa-p256, did not
+;; finish inside a 900-second timeout and is therefore UNMEASURED rather than
+;; either.
+;;
 ;; Regenerating the whole roster under one compiler is the right fix and was
 ;; not done: measured 2026-09-02 at load average ~150, the JVM half of the
 ;; comparison took ~8 minutes per object, so 67 objects is about nine hours --

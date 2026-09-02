@@ -308,6 +308,27 @@ assumed.
   `:scanned 2` and its own compiler tree digest rather than being merged into a
   file whose header names a different one.  It covers all three objects,
   including ADR-0133's, and reports MATCH 3 DIFFERS 0.
+
+  It also records something the main roster does not, and the difference
+  matters.  The script compares the JVM-free ROUTE against the JVM ROUTE, so
+  `:match` says the two routes agree -- not that the agreed bytes are the ones
+  committed beside the source.  For these three they are, and that was checked:
+  each `:sha256` in the scoped receipt is the sha256 of the committed `.o`.  In
+  `jvm-free-object-parity.edn` they are not.  It records `sha256` as 9,912
+  bytes / `db5effa8…`, while the committed `sha256.o` is 17,792 bytes /
+  `af378b06…` -- which is what `provenance.edn`, generated from the files
+  themselves, reports.  That roster is a receipt about a compilation run; it is
+  not an attestation of the tree, and the two are easy to read as the same
+  thing.
+* **Most committed objects do not reproduce at this compiler**, which is the
+  ADR-0129/0130 drift seen again at a newer amu.  Of seven recompiled here, ONE
+  (`ime-romaji`) reproduces byte-for-byte and six do not -- `sha256`, `x25519`,
+  `dhcp-reply-valid`, `ipv4-checksum`, `tcp-segment-valid` and `pic-disable`
+  all come out smaller than the committed artifact.  An eighth, `ecdsa-p256`,
+  did not finish inside a 900-second timeout and is UNMEASURED rather than
+  either.  Nothing in this ADR depends on that -- the three objects it
+  introduces were compiled here and committed here -- but a reader who assumes
+  the tree is reproducible at the tip would be wrong.
 * **The largest record executed is 64 bytes.**  The object's bound is 12,288.
   The cost is linear in blocks and the code path is uniform -- `crypt-all`
   narrows ONE CIPHER BLOCK at a time through `kernel-subregion`, so the first
