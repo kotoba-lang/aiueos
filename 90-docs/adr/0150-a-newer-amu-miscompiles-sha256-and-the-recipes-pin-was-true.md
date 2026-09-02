@@ -107,6 +107,39 @@ sources with a bounded store and 17 whose answer decides something, wider than
 the table in that ADR, which predates `qwen35-gguf-kv-scan`,
 `qwen35-tensor-table-bind` and `tls13-record`.
 
+### Five of the recipe's claims are false, and the gate's number goes UP
+
+`reproduce-kotoba-objects.cljs --git-resolve` recompiled all 47 objects the
+recipes name, each at the revision its own receipt records, and compared bytes:
+
+| verdict | n | objects |
+|---|---|---|
+| MATCH | 39 | the recipe's pin is true for these |
+| DIFFERS | 5 | `broker-admit` `ime-romaji` `scanout-bind` `session-restore` `wm-hit` |
+| COULD-NOT-RUN | 3 | the `ecdsa-p256` trio |
+
+The five that differ were built by some newer compiler than the manifest names
+— four of them are among the five objects that reproduced byte-for-byte at amu
+`370a04e0`, which is the other end of the same fact. The three ecdsa objects
+cannot be built by an unpatched compiler at all: `reproduce-ecdsa-sign-object.clj`
+patches kotoba-native's entry table and fuel tier in-process, and `--git-resolve`
+deliberately does not, so it reports `could-not-run` rather than a verdict about
+the object.
+
+The generator no longer restates a falsified claim, and that check runs *before*
+carry-forward, because a false claim must not survive merely because the digests
+it was recorded against did not move. The consequence is that the gate's number
+gets worse:
+
+```
+                        before   after
+kotoba                      45      40
+unattested                  35      40
+```
+
+Nothing about the tree changed. Five receipts stopped asserting something that
+had just been measured to be untrue.
+
 ## Decision
 
 **Attesting an object means recording the revision that produced the bytes in
