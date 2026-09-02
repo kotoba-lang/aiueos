@@ -1,0 +1,270 @@
+#!/usr/bin/env nbb
+;; The GGUF admission (ADR-0135) EXECUTED on a CPU.
+;;
+;; ADR-0135 moved the whole of `kernel/qwen35_runtime.c`'s parser into three
+;; Kotoba objects and made the C delegate to them. Nothing ran that: the
+;; objects passed a KIR-interpreter oracle, the image linked, and this
+;; workstation is aarch64, so the emitted x86-64 had never been on a processor.
+;;
+;; This boots a real image under OVMF and hands it the 10,996,640-byte
+;; metadata + tensor-table prefix `tests/make_qwen35_header_fixture.py` builds
+;; -- the same fixture `scripts/smoke-qwen35-runtime.sh` feeds to the C
+;; reference parser on the host -- through the model-handoff path, and requires
+;; the kernel to print the numbers the objects derived.
+;;
+;;   nbb os/aiueos/scripts/smoke-qemu-qwen35-admission.cljs
+;;     the fixture is admitted; the kernel prints QWEN-ADMIT reason=0 stage=0
+;;     and the four representative tensor offsets the host gate asserts.
+;;
+;;   AIUEOS_QWEN35_ADMISSION_MUTATE=1 nbb …
+;;     one byte of one tensor record -- the `type` field of
+;;     `token_embd.weight`, Q2_K -> Q4_K -- is changed, and the kernel must
+;;     refuse with QWEN-ADMIT reason=-21 stage=3.
+;;
+;; -21 is clause 21 of `kotoba/qwen35-tensor-table-bind.kotoba` ("token_embd
+;; retyped, which the contract forbids"), and stage 3 names that object. The C
+;; in this image cannot produce either number: under
+;; -DAIUEOS_QWEN35_KOTOBA_ADMISSION `aiueos_qwen35_model_parse` returns 0 or 1
+;; and every negative value it can report was written in a .kotoba file. That
+;; is the discrimination this gate provides. It is NOT a claim that the C
+;; reference parser would admit the mutated fixture -- it refuses it too, by
+;; design, which is what `aiueos.qwen35-tensor-table-parity-test` exists to
+;; keep true.
+
+(require '[clojure.string :as str])
+(def fs (js/require "node:fs"))
+(def os (js/require "node:os"))
+(def path (js/require "node:path"))
+(def cp (js/require "node:child_process"))
+(def crypto (js/require "node:crypto"))
+
+(def aiueos (.resolve path (.dirname path *file*) ".."))
+(def mutate? (= "1" (.-AIUEOS_QWEN35_ADMISSION_MUTATE js/process.env)))
+
+(defn- die [& msg]
+  (binding [*out* *err*] (apply println (cons "error:" msg)))
+  (.exit js/process 1))
+
+(defn- unmeasured [& msg]
+  ;; Exit 3, not 1: "this machine could not ask the question" is a different
+  ;; answer from "the kernel refused", and a gate that returns the same value
+  ;; for both reports a pass it never measured.
+  (binding [*out* *err*] (apply println (cons "unmeasured:" msg)))
+  (.exit js/process 3))
+
+(def qemu (or (.-QEMU_SYSTEM_X86_64 js/process.env) "qemu-system-x86_64"))
+
+(defn- which [program]
+  (let [r (.spawnSync cp "sh" #js ["-c" (str "command -v " program)]
+                      #js {:encoding "utf8"})]
+    (when (zero? (.-status r)) (str/trim (.-stdout r)))))
+
+(when-not (which qemu) (unmeasured "qemu-system-x86_64 is required"))
+(def timeout-cmd (or (which "timeout") (which "gtimeout")))
+(when-not timeout-cmd (unmeasured "timeout or gtimeout is required"))
+
+(def ovmf-code
+  (or (.-OVMF_CODE js/process.env)
+      (first (filter #(.existsSync fs %)
+                     ["/opt/homebrew/share/qemu/edk2-x86_64-code.fd"
+                      "/usr/share/OVMF/OVMF_CODE_4M.fd"
+                      "/usr/share/OVMF/OVMF_CODE.fd"]))))
+(def ovmf-vars
+  (or (.-OVMF_VARS js/process.env)
+      (first (filter #(.existsSync fs %)
+                     ["/opt/homebrew/share/qemu/edk2-i386-vars.fd"
+                      "/usr/share/OVMF/OVMF_VARS_4M.fd"
+                      "/usr/share/OVMF/OVMF_VARS.fd"]))))
+(when-not ovmf-code (unmeasured "OVMF code not found; set OVMF_CODE"))
+(when-not ovmf-vars (unmeasured "OVMF vars not found; set OVMF_VARS"))
+
+(def work (.mkdtempSync fs (.join path (.tmpdir os) "aiueos-qwen35-admission-")))
+(def esp (.join path work "esp"))
+(.mkdirSync fs (.join path esp "EFI" "BOOT") #js {:recursive true})
+(.mkdirSync fs (.join path esp "EFI" "AIUEOS") #js {:recursive true})
+
+;; ------------------------------------------------------------- the fixture
+
+(def fixture (.join path work "header.gguf"))
+(let [r (.spawnSync cp "python3"
+                    #js [(.join path aiueos "tests" "make_qwen35_header_fixture.py")
+                         fixture]
+                    #js {:stdio "inherit"})]
+  (when-not (zero? (.-status r)) (die "the header fixture generator failed")))
+
+(def fixture-bytes (.readFileSync fs fixture))
+(when-not (= 10996640 (.-length fixture-bytes))
+  (die "the fixture is" (.-length fixture-bytes) "bytes, not the contract's 10,996,640"))
+
+;; `token_embd.weight` is a 17-byte name, so its record is
+;;   u64 name-length | name | u32 dimension-count | u64 x 2 | u32 type | u64 offset
+;; and the type field is 8 + 17 + 4 + 16 = 45 bytes past the record start. The
+;; name is located rather than transcribed as an offset so that a change to the
+;; generator moves this with it instead of silently mutating a neighbour.
+(when mutate?
+  (let [needle (js/Buffer.concat
+                #js [(doto (js/Buffer.alloc 8) (.writeUInt32LE 17 0))
+                     (js/Buffer.from "token_embd.weight" "utf8")])
+        at (.indexOf fixture-bytes needle)]
+    (when (neg? at) (die "token_embd.weight is not in the fixture"))
+    (let [type-at (+ at 45)
+          before (.readUInt32LE fixture-bytes type-at)]
+      (when-not (= 10 before)
+        (die "expected token_embd.weight to be ggml type 10 (Q2_K), found" before))
+      (.writeUInt32LE fixture-bytes 12 type-at)
+      (println "MUTATED token_embd.weight type" before "->"
+               (.readUInt32LE fixture-bytes type-at) "at file offset" type-at)))
+  (.writeFileSync fs fixture fixture-bytes))
+
+(def part-lengths [4000000 4000000 (- (.-length fixture-bytes) 8000000)])
+(doseq [[index length] (map-indexed vector part-lengths)]
+  (let [start (reduce + 0 (take index part-lengths))]
+    (.writeFileSync fs (.join path esp "EFI" "AIUEOS" (str "Q38P" index ".BIN"))
+                    (.subarray fixture-bytes start (+ start length)))))
+(def fixture-sha
+  (-> (.createHash crypto "sha256") (.update fixture-bytes) (.digest "hex")))
+(println "FIXTURE bytes=" (.-length fixture-bytes) "sha256=" fixture-sha
+         "parts=" (str/join "/" part-lengths))
+
+;; --------------------------------------------------------------- the image
+
+(def build-env
+  (doto (js/Object.assign #js {} js/process.env)
+    (aset "AIUEOS_OUT" (.join path work "release"))
+    (aset "AIUEOS_ALLOW_DIRTY_QUALIFICATION_BUILD" "1")
+    (aset "AIUEOS_QWEN38_MODEL_HANDOFF" "1")
+    (aset "AIUEOS_MODEL_TEST_FIXTURE" "1")
+    (aset "AIUEOS_MODEL_TOTAL_BYTES" (str (.-length fixture-bytes)))
+    (aset "AIUEOS_MODEL_PART0_BYTES" (str (nth part-lengths 0)))
+    (aset "AIUEOS_MODEL_PART1_BYTES" (str (nth part-lengths 1)))
+    (aset "AIUEOS_MODEL_PART2_BYTES" (str (nth part-lengths 2)))
+    (aset "AIUEOS_MODEL_SHA256" fixture-sha)
+    (aset "AIUEOS_MODEL_MIN_ADDRESS" "1073741824")
+    (aset "AIUEOS_MODEL_MAX_ADDRESS" "2147483647")
+    (aset "AIUEOS_PERSISTENT_BOOT" "1")
+    (aset "SOURCE_DATE_EPOCH" "0")))
+
+(println "BUILDING the qualification image with the Kotoba admission linked")
+(let [r (.spawnSync cp (.join path aiueos "scripts" "build-physical-qualification-pxe.sh")
+                    #js [] #js {:stdio "inherit" :env build-env})]
+  (when-not (zero? (.-status r)) (die "the image build failed")))
+
+(.copyFileSync fs (.join path work "release" "aiueos-k16-native-pxe.efi")
+               (.join path esp "EFI" "BOOT" "BOOTX64.EFI"))
+(.copyFileSync fs ovmf-vars (.join path work "vars.fd"))
+
+;; ------------------------------------- the image holds no C GGUF parser
+;;
+;; The console alone cannot tell you WHO decided: a C parser that agreed with
+;; the objects would print the same numbers. This reads the object the image
+;; actually links. Under -DAIUEOS_QWEN35_KOTOBA_ADMISSION the three entries are
+;; UNDEFINED -- the image does not link without them -- and none of the
+;; reference parser's functions is present, not even as a local symbol.
+(let [object (.join path work "release" "core" "kernel-qwen35-runtime.o")
+      r (.spawnSync cp "nm" #js [object] #js {:encoding "utf8"})
+      symbols (or (.-stdout r) "")
+      lines (remove str/blank? (str/split-lines symbols))
+      defined (into #{} (keep (fn [line]
+                                (let [parts (str/split (str/trim line) #"\s+")]
+                                  (when (and (= 3 (count parts))
+                                             (not= "U" (second parts)))
+                                    (nth parts 2))))
+                              lines))
+      undefined (into #{} (keep (fn [line]
+                                  (let [parts (str/split (str/trim line) #"\s+")]
+                                    (when (and (= 2 (count parts))
+                                               (= "U" (first parts)))
+                                      (second parts))))
+                                lines))
+      entries ["kotoba_aiueos_qwen35_gguf_header_valid"
+               "kotoba_aiueos_qwen35_gguf_kv_scan"
+               "kotoba_aiueos_qwen35_tensor_table_bind"]
+      c-parser ["parse_metadata" "exact_contract_valid" "tensor_storage"
+                "read_expected_u32" "assign_tensor" "type_layout"]]
+  (when-not (zero? (.-status r)) (unmeasured "nm could not read" object))
+  (when (empty? lines) (unmeasured "nm reported no symbols for" object))
+  (when-not (contains? defined "aiueos_qwen35_model_parse")
+    (die "nm read something, but not this object: no aiueos_qwen35_model_parse"))
+  (doseq [e entries]
+    (when-not (contains? undefined e)
+      (die "the image does not import" e "-- it is not delegating")))
+  (doseq [f c-parser]
+    (when (contains? defined f)
+      (die "the C reference parser is IN the image:" f)))
+  (println "LINK scanned=" (count lines) "imports=" (count entries)
+           "c-parser-symbols=0 defined=" (str/join "," (sort defined))))
+
+;; ---------------------------------------------------------------- the boot
+
+(def serial-log (.join path work "native.serial"))
+(def debug-log (.join path work "native.debug"))
+(def seconds (or (.-AIUEOS_QWEN35_ADMISSION_SECONDS js/process.env) "180"))
+
+(println "BOOTING" qemu "for at most" seconds "s")
+(def run
+  (.spawnSync cp timeout-cmd
+              (clj->js
+               [seconds qemu "-machine" "q35,accel=tcg" "-cpu" "max"
+                "-m" "1536M" "-smp" "2"
+                "-drive" (str "if=pflash,format=raw,readonly=on,file=" ovmf-code)
+                "-drive" (str "if=pflash,format=raw,file=" (.join path work "vars.fd"))
+                "-drive" (str "format=raw,file=fat:rw:" esp)
+                "-device" "isa-debug-exit,iobase=0xf4,iosize=0x04"
+                "-display" "none"
+                "-serial" (str "file:" serial-log)
+                "-debugcon" (str "file:" debug-log)
+                "-global" "isa-debugcon.iobase=0xe9"
+                "-monitor" "none" "-no-reboot"])
+              #js {:stdio "ignore"}))
+
+(defn- log [file]
+  (if (.existsSync fs file)
+    (str/replace (.readFileSync fs file "utf8") "\r" "")
+    ""))
+(def serial (log serial-log))
+(def debug (log debug-log))
+(def status (.-status run))
+
+(defn- line-with [text needle]
+  (first (filter #(str/includes? % needle) (str/split-lines text))))
+
+(when-not (str/includes? serial "AIUEOS_PHYSICAL_ALLOCATOR_OK")
+  (binding [*out* *err*]
+    (println (str/join "\n" (take-last 40 (str/split-lines serial)))))
+  (unmeasured "the guest never reached the physical allocator; nothing was asked"
+              "(qemu status" status ")"))
+
+(def admit-line (line-with serial "QWEN-ADMIT"))
+(when-not admit-line
+  (binding [*out* *err*]
+    (println (str/join "\n" (take-last 40 (str/split-lines serial)))))
+  (die "the kernel printed no QWEN-ADMIT line; the admission never ran"))
+(println admit-line)
+
+(if mutate?
+  (do
+    (when-not (str/includes? admit-line "reason=-21 stage=3 admitted=0")
+      (die "expected the tensor-table object's clause 21, got:" admit-line))
+    (when-not (str/includes? serial "AIUEOS_QWEN35_ADMISSION_REFUSED")
+      (die "the refusal marker is absent"))
+    (when (str/includes? serial "AIUEOS_QWEN35_ADMISSION_OK")
+      (die "the mutated fixture was ALSO admitted"))
+    (println (line-with serial "AIUEOS_QWEN35_ADMISSION_REFUSED"))
+    (println "AIUEOS_QWEN35_ADMISSION_QEMU_REFUSAL_OK"
+             "reason=-21 object=qwen35-tensor-table-bind clause=token-embd-retyped"))
+  (let [ok-line (line-with serial "AIUEOS_QWEN35_ADMISSION_OK")
+        expected (str "AIUEOS_QWEN35_ADMISSION_OK tensors=866 linear=48 full=16 "
+                      "data-offset=10996640 embd=715182080 qkv=1149091840 "
+                      "tail=10923843584")]
+    (when-not (str/includes? admit-line "reason=0 stage=0 admitted=1")
+      (die "the objects refused the exact-contract fixture:" admit-line))
+    (when-not (str/includes? serial "AIUEOS_QWEN35_GRAPH_FIXTURE_DEFERRED")
+      (die "the earlier fixture line still claims the transport fixture"))
+    (when-not (and ok-line (str/includes? ok-line expected))
+      (die "the derived numbers are not the host gate's. expected:\n  " expected
+           "\ngot:\n  " (or ok-line "<absent>")))
+    (println ok-line)
+    (when-not (str/includes? debug "AIUEOS_QWEN35_ADMISSION_OK")
+      (die "the debugcon copy of the marker is absent"))
+    (println "AIUEOS_QWEN35_ADMISSION_QEMU_OK"
+             "objects=3 translation=in-image offsets=match-host-reference")))

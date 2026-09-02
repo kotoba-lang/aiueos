@@ -228,6 +228,26 @@
 
 ;; Byte offsets inside record `i`: the name starts at +8, and the fixed fields
 ;; follow the name.
+;; ------------------------------------------------------- the workspace file
+;;
+;; The 28,160 bytes the object writes, committed so that
+;; `tests/qwen35_runtime_model.c` can run the C translation over the SAME bytes
+;; a real run of this object produced. Without it the translation could only be
+;; read, and reading it is what ADR-0135 already did.
+;;
+;; Regenerate with
+;;   clojure -M:test -v aiueos.qwen35-tensor-table-parity-test/the-admitted-table-is-admitted \
+;;     -J-Daiueos.workspace-fixture-write=1
+;; and commit the result; the assertion below then pins it in both directions.
+
+(def ^:private workspace-file
+  (io/file "os" "aiueos" "tests" "fixtures" "qwen35-tensor-plan.bin"))
+
+(defn- workspace-bytes []
+  (let [b @@image]
+    (byte-array (map #(unchecked-byte (nth b (+ plan-offset %)))
+                     (range plan-length)))))
+
 (defn- name-at [i] (+ (nth (:starts @table) i) 8))
 (defn- name-length [i] (count (first (nth rows i))))
 (defn- dims-at [i] (+ (name-at i) (name-length i) 4))
@@ -313,7 +333,25 @@
         (testing "every slot was written"
           (is (= tensor-count
                  (count (for [i (range tensor-count) :when (pos? (:role (slot i)))] i)))
-              "a role id of zero would mean a slot the walk never reached"))))))
+              "a role id of zero would mean a slot the walk never reached"))
+        (testing "the committed workspace is the one this run produced"
+          (let [^bytes produced (workspace-bytes)]
+            (when (System/getProperty "aiueos.workspace-fixture-write")
+              (io/make-parents workspace-file)
+              (with-open [o (io/output-stream workspace-file)]
+                (.write o produced))
+              (println "WROTE" (.getPath workspace-file) (alength produced) "bytes"))
+            (is (.exists workspace-file)
+                (str "the committed workspace is missing at " workspace-file
+                     "; tests/qwen35_runtime_model.c reads it"))
+            (when (.exists workspace-file)
+              (let [committed (java.nio.file.Files/readAllBytes (.toPath workspace-file))]
+                (is (= plan-length (alength ^bytes committed))
+                    "the committed workspace must be 28,160 bytes")
+                (is (= (hex produced) (hex committed))
+                    (str "the committed workspace and this run disagree. The C "
+                         "translation gate would then be reading bytes no run "
+                         "of this object produced."))))))))))
 
 (def ^:private refusals
   "One case per reachable clause. All but the last three abort at record 0 or 2
