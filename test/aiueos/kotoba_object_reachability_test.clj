@@ -136,6 +136,19 @@
         "scripts/smoke-qwen35-runtime.sh accepts, and every one of its eight "
         "refusal codes is required to be the only producer of its own code.")
 
+   "qwen35-gguf-kv-scan"
+   (str "The 50 GGUF metadata entries between the container header and the "
+        "tensor table, against the 31 keys kernel/qwen35_runtime.c's "
+        "parse_metadata requires and the scalars exact_contract_valid "
+        "requires. Unbuilt for the same reason as its neighbour above: the C "
+        "still owns the whole parse, and the three objects land in the build "
+        "together so it is never half-delegated. It is driven through the KIR "
+        "interpreter by aiueos.qwen35-gguf-kv-scan-parity-test over a "
+        "10,945,379-byte metadata section rebuilt in the test and pinned to "
+        "the sha256 of the fixture scripts/smoke-qwen35-runtime.sh feeds the "
+        "C, including the 495,907-string tokenizer walk that admission "
+        "actually costs.")
+
    "murakumo-join-plan"
    (str "A node's own fleet-enrolment decision. It has no caller inside the "
         "kernel, so no build links it; kotoba-lang/murakumo drives it through "

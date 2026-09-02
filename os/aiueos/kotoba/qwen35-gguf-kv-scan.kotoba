@@ -1,0 +1,560 @@
+(ns aiueos.qwen35-gguf-kv-scan)
+
+;; GGUF v3 metadata admission for the Qwen3.8-27B artifact
+;; (`contracts/qwen38-qwen35-runtime-v1.edn`). A port of
+;; `kernel/qwen35_runtime.c`'s `parse_metadata` plus the scalar half of
+;; `exact_contract_valid`.
+;;
+;; It walks the 50 key/value pairs between the container header and the tensor
+;; table, requires all 31 keys the C requires with the values the C requires,
+;; skips every other key by the C's own bounded rules, and writes what it
+;; learned into a caller-owned 128-byte workspace.
+;;
+;; ## Return
+;;
+;; **Zero is the success value.** Non-zero is a REASON CODE, never a count:
+;;
+;;      0            admitted
+;;     -1            null model base
+;;     -2            null workspace
+;;     -3            workspace is not 128 bytes
+;;     -4            accessible window below the 24-byte header
+;;     -5 .. -8      header: magic, version, tensor count, metadata count
+;;     -9            a key string ran past the accessible window
+;;    -10            the value that follows a key ran past it
+;;    -11            an unknown key's value did not skip (bad type, nesting
+;;                   deeper than the C admits, or an element count above the
+;;                   C's 1,000,000 ceiling)
+;;    -13            not all 31 required keys were present
+;;    -14            the metadata section did not end at 10,945,379
+;;    -51 .. -80     a contract scalar disagreed; the code is -(50 + slot/4),
+;;                   so the workspace slot names the field
+;;   -100 .. -130    required key k carried the wrong GGUF value TYPE
+;;   -200 .. -230    required key k carried the wrong VALUE, or its value ran
+;;                   past the window
+;;
+;; The header clauses are repeated here rather than delegated to
+;; `aiueos-qwen35-gguf-header-valid`: a kernel object exports one symbol and
+;; cannot call another (ADR-0030). Their codes are deliberately the SAME
+;; -5..-8, so the two objects do not disagree about what a bad magic is called.
+;;
+;; ## Workspace (128 bytes, u32 little-endian, all written by this object)
+;;
+;;     0  tensor-table offset (= metadata end)   10945379
+;;     4  block_count                                  65
+;;     8  context_length                           262144
+;;    12  embedding_length                           5120
+;;    16  feed_forward_length                       17408
+;;    20  attention.head_count                         24
+;;    24  attention.head_count_kv                       4
+;;    28  attention.key_length                        256
+;;    32  attention.value_length                      256
+;;    36  ssm.group_count      (linear key heads)      16
+;;    40  ssm.time_step_rank   (linear value heads)    48
+;;    44  ssm.state_size                              128
+;;    48  ssm.inner_size                             6144
+;;    52  ssm.conv_kernel                               4
+;;    56  full_attention_interval                       4
+;;    60  rope.dimension_count                         64
+;;    64  rope.dimension_sections[0]                   11
+;;    68  rope.dimension_sections[1]                   11
+;;    72  rope.dimension_sections[2]                   10
+;;    76  rope.dimension_sections[3]                    0
+;;    80  nextn_predict_layers                          1
+;;    84  vocabulary                               248320
+;;    88  tokenizer bos                            248044
+;;    92  tokenizer eos                            248046
+;;    96  tokenizer padding                        248055
+;;   100  token array: file offset of the first element
+;;   104  token array: element count               248320
+;;   108  token array: file offset just past the last element
+;;   112  merge array: file offset of the first element
+;;   116  merge array: element count               247587
+;;   120  merge array: file offset just past the last element
+;;   124  required-key mask                    2147483647
+;;
+;; Slots 100..120 are what a later tokenizer stream needs and the C never
+;; recorded: `read_expected_array_length` walks those two arrays to prove they
+;; parse and then throws the coordinates away, so every later reader would have
+;; to walk 495,907 length-prefixed strings again to find where they start.
+;;
+;; The data-section offset is NOT here. It is `align32(tensor_info_end)`, and
+;; `tensor_info_end` is not known until the tensor table has been walked --
+;; that is `aiueos-qwen35-tensor-table-bind`'s output, and putting the
+;; artifact's expected value here would be transcribing a constant rather than
+;; deriving one. Slot 0 is where that walk starts.
+;;
+;; ## Reading a 10.9 GiB region through a 512-byte window
+;;
+;; `kernel-load-u32` refuses a declared length above 512, so the region length
+;; can never be handed to a load. Every access narrows with `kernel-subregion`
+;; first, whose own offset/sub-length check is emitted by the backends -- so a
+;; four-byte window at a computed offset is checked rather than asserted.
+;;
+;; ## Where this is deliberately narrower than the C
+;;
+;; `qwen35.attention.layer_norm_rms_epsilon` is a float32 and this dialect has
+;; no float32, so the range check is done on the IEEE-754 BIT PATTERN, which is
+;; monotonic in the value for positive finite floats. That admits exactly the
+;; positive floats in [0.0000009f, 0.0000011f]. The C writes
+;; `if (epsilon < 0.0000009f || epsilon > 0.0000011f) return 0;` and a NaN
+;; compares false against both, so **the C admits NaN here and this object
+;; refuses it**. The divergence is in the refusing direction, against a value
+;; the admitted artifact does not carry (its epsilon is 1e-6f, bits
+;; 897988541), and it is stated rather than discovered.
+
+;; ---------------------------------------------------------------- readers
+
+(defn u8-at [base length off]
+  (kernel-load-u8 (kernel-subregion base length off 1) 1 0))
+
+(defn u32-at [base length off]
+  (kernel-load-u32 (kernel-subregion base length off 4) 4 0))
+
+;; `low | (high << 32)` in the C. The product wraps modulo 2^64 exactly as the
+;; C's uint64_t does, so the BITS agree; what differs is the reading, and every
+;; caller that treats this as a length refuses a negative result before using
+;; it -- which is the same refusal the C's unsigned comparison performs, since
+;; a value at or above 2^63 cannot be a length inside an 11 MB prefix.
+(defn u64-at [base length off]
+  (+ (u32-at base length off)
+     (* (u32-at base length (+ off 4)) 4294967296)))
+
+;; ------------------------------------------------------- literal key table
+;;
+;; The 31 required keys, then the three expected string VALUES (entries 31..33)
+;; so that one comparison routine serves both. Eight ASCII bytes per word: the
+;; high byte of a key is always below 0x80, so a packed word is a positive i64
+;; and `quot` is exact.
+;;
+;;  0 general.architecture                     17 qwen35.ssm.time_step_rank
+;;  1 general.name                             18 qwen35.ssm.inner_size
+;;  2 qwen35.block_count                       19 qwen35.full_attention_interval
+;;  3 qwen35.context_length                    20 qwen35.rope.dimension_count
+;;  4 qwen35.embedding_length                  21 tokenizer.ggml.model
+;;  5 qwen35.feed_forward_length               22 tokenizer.ggml.pre
+;;  6 qwen35.attention.head_count              23 tokenizer.ggml.tokens
+;;  7 qwen35.attention.head_count_kv           24 tokenizer.ggml.token_type
+;;  8 qwen35.rope.dimension_sections           25 tokenizer.ggml.merges
+;;  9 qwen35.rope.freq_base                    26 tokenizer.ggml.eos_token_id
+;; 10 qwen35.attention.layer_norm_rms_epsilon  27 tokenizer.ggml.padding_token_id
+;; 11 qwen35.attention.key_length              28 tokenizer.ggml.bos_token_id
+;; 12 qwen35.attention.value_length            29 general.quantization_version
+;; 13 qwen35.nextn_predict_layers              30 general.file_type
+;; 14 qwen35.ssm.conv_kernel                   31 "qwen35"
+;; 15 qwen35.ssm.state_size                    32 "Qwen3.8-27B"
+;; 16 qwen35.ssm.group_count                   33 "gpt2"
+
+(defn key-length [i]
+  (if (= i 0) 20 (if (= i 1) 12 (if (= i 2) 18 (if (= i 3) 21 (if (= i 4) 23
+  (if (= i 5) 26 (if (= i 6) 27 (if (= i 7) 30 (if (= i 8) 30 (if (= i 9) 21
+  (if (= i 10) 39 (if (= i 11) 27 (if (= i 12) 29 (if (= i 13) 27 (if (= i
+  14) 22 (if (= i 15) 21 (if (= i 16) 22 (if (= i 17) 25 (if (= i 18) 21 (if
+  (= i 19) 30 (if (= i 20) 27 (if (= i 21) 20 (if (= i 22) 18 (if (= i 23)
+  21 (if (= i 24) 25 (if (= i 25) 21 (if (= i 26) 27 (if (= i 27) 31 (if (=
+  i 28) 27 (if (= i 29) 28 (if (= i 30) 17 (if (= i 31) 6 (if (= i 32) 11
+  (if (= i 33) 4 0)))))))))))))))))))))))))))))))))))
+
+(defn key-word [i]
+  (if (= i 0) 3345155767185335655 (if (= i 1) 7162258778474377825 (if (= i
+  2) 1701999988 (if (= i 5) 3345155767185335655 (if (= i 6) 1701667182 (if
+  (= i 10) 7074650559657375601 (if (= i 11) 8462091486327172972 (if (= i 12)
+  29806 (if (= i 15) 7146708153695303537 (if (= i 16) 7809088339330756207
+  (if (= i 17) 448629534309 (if (= i 20) 7290823341771159409 (if (= i 21)
+  7453010313246761581 (if (= i 22) 29401385160502367 (if (= i 25)
+  7362880935809087345 (if (= i 26) 8607064323336201573 (if (= i 27)
+  7453005949476041313 (if (= i 28) 26740 (if (= i 30) 7002592965619447665
+  (if (= i 31) 7957695015376221300 (if (= i 32) 8026363845639759918 (if (= i
+  33) 7630453 (if (= i 35) 7002592965619447665 (if (= i 36)
+  7957695015376221300 (if (= i 37) 8026363845639759918 (if (= i 38)
+  130203535044213 (if (= i 40) 8227572064264222577 (if (= i 41)
+  7308613649288228975 (if (= i 42) 7310291548072670062 (if (= i 43)
+  126918152778851 (if (= i 45) 8227572064264222577 (if (= i 46)
+  8171062882124263535 (if (= i 47) 435727458911 (if (= i 50)
+  7002592965619447665 (if (= i 51) 7957695015376221300 (if (= i 52)
+  7953201247113276462 (if (= i 53) 6877961393919586927 (if (= i 54)
+  31084758854496357 (if (= i 55) 7002592965619447665 (if (= i 56)
+  7957695015376221300 (if (= i 57) 7954883474134231854 (if (= i 58) 6845543
+  (if (= i 60) 7002592965619447665 (if (= i 61) 7957695015376221300 (if (= i
+  62) 7809071833887634990 (if (= i 63) 448629534309 (if (= i 65)
+  7939341688112510833 (if (= i 66) 7310028700353067109 (if (= i 67)
+  8746391108560578916 (if (= i 68) 7565925 (if (= i 70) 8299629658302150513
+  (if (= i 71) 6878806905539423603 (if (= i 72) 119182900487531 (if (= i 75)
+  8299629658302150513 (if (= i 76) 7310575247905680755 (if (= i 77)
+  435845428063 (if (= i 80) 8299629658302150513 (if (= i 81)
+  8103505641671126387 (if (= i 82) 128017765458783 (if (= i 85)
+  8299629658302150513 (if (= i 86) 6874020705939123571 (if (= i 87)
+  7953764171146163315 (if (= i 88) 107 (if (= i 90) 8299629658302150513 (if
+  (= i 91) 8243116113461669235 (if (= i 92) 435845428063 (if (= i 95)
+  7362880935809087345 (if (= i 96) 7310596056690748533 (if (= i 97)
+  7955995144646915182 (if (= i 98) 119165854836084 (if (= i 100)
+  8227572064264222577 (if (= i 101) 7308613649288228975 (if (= i 102)
+  8026363888824578926 (if (= i 103) 7630453 (if (= i 105)
+  7312272867858280308 (if (= i 106) 7867344816204885618 (if (= i 107)
+  1818584175 (if (= i 110) 7312272867858280308 (if (= i 111)
+  8083517598318669426 (if (= i 112) 25970 (if (= i 115) 7312272867858280308
+  (if (= i 116) 8371747974470381170 (if (= i 117) 495773379439 (if (= i 120)
+  7312272867858280308 (if (= i 121) 8371747974470381170 (if (= i 122)
+  8104636957652773743 (if (= i 123) 101 (if (= i 125) 7312272867858280308
+  (if (= i 126) 7867344816204885618 (if (= i 127) 495622517349 (if (= i 130)
+  7312272867858280308 (if (= i 131) 7290884063901462130 (if (= i 132)
+  7954882443257803631 (if (= i 133) 6580575 (if (= i 135)
+  7312272867858280308 (if (= i 136) 8083517598318669426 (if (= i 137)
+  8385534755099403361 (if (= i 138) 28263356266015599 (if (= i 140)
+  7312272867858280308 (if (= i 141) 7074711281787678322 (if (= i 142)
+  7954882443257803631 (if (= i 143) 6580575 (if (= i 145)
+  3345155767185335655 (if (= i 146) 7024042517626713457 (if (= i 147)
+  8243124845218326900 (if (= i 148) 1852795251 (if (= i 150)
+  3345155767185335655 (if (= i 151) 8104636957502237030 (if (= i 152) 101
+  (if (= i 155) 58495011747697 (if (= i 160) 3258405128832907089 (if (= i
+  161) 4339506 (if (= i 165) 846491751
+  0))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))
+
+;; `bit-shift-left` has no admitted lowering in this subset (measured against
+;; amu b1fdaad2), so the two powers below are tables rather than shifts.
+(defn pow256 [r]
+  (if (= r 0) 1 (if (= r 1) 256 (if (= r 2) 65536 (if (= r 3) 16777216
+  (if (= r 4) 4294967296 (if (= r 5) 1099511627776
+  (if (= r 6) 281474976710656 (if (= r 7) 72057594037927936 0)))))))))
+
+(defn pow2 [k]
+  (if (= k 0) 1 (if (= k 1) 2 (if (= k 2) 4 (if (= k 3) 8 (if (= k 4) 16
+  (if (= k 5) 32 (if (= k 6) 64 (if (= k 7) 128 (if (= k 8) 256
+  (if (= k 9) 512 (if (= k 10) 1024 (if (= k 11) 2048 (if (= k 12) 4096
+  (if (= k 13) 8192 (if (= k 14) 16384 (if (= k 15) 32768 (if (= k 16) 65536
+  (if (= k 17) 131072 (if (= k 18) 262144 (if (= k 19) 524288
+  (if (= k 20) 1048576 (if (= k 21) 2097152 (if (= k 22) 4194304
+  (if (= k 23) 8388608 (if (= k 24) 16777216 (if (= k 25) 33554432
+  (if (= k 26) 67108864 (if (= k 27) 134217728 (if (= k 28) 268435456
+  (if (= k 29) 536870912 (if (= k 30) 1073741824 0))))))))))))))))))))))))))))))))
+
+(defn key-byte [k i]
+  (bit-and (quot (key-word (+ (* k 5) (quot i 8)))
+                 (pow256 (- i (* 8 (quot i 8)))))
+           255))
+
+;; The C's `string_is`, which compares lengths first; every caller has already
+;; matched the length, so this only walks the bytes.
+(defn key-eq-from [base accessible koff k i]
+  (if (= i (key-length k)) 1
+    (if (= (u8-at base accessible (+ koff i)) (key-byte k i))
+      (key-eq-from base accessible koff k (+ i 1))
+      0)))
+
+;; The index of the required key this one is, or 31 for "not one of them" --
+;; which is the C's `else if` chain falling through to `skip_value`.
+(defn key-index-from [base accessible koff klen k]
+  (if (= k 31) 31
+    (if (= klen (key-length k))
+      (if (= (key-eq-from base accessible koff k 0) 1)
+        k
+        (key-index-from base accessible koff klen (+ k 1)))
+      (key-index-from base accessible koff klen (+ k 1)))))
+
+;; ------------------------------------------------------- the C's skip_value
+;;
+;; `scalar_size`: zero means "not a scalar", which is how the C tells a string
+;; or an array from a number.
+(defn scalar-size [t]
+  (if (= t 0) 1 (if (= t 1) 1 (if (= t 7) 1
+  (if (= t 2) 2 (if (= t 3) 2
+  (if (= t 4) 4 (if (= t 5) 4 (if (= t 6) 4
+  (if (= t 10) 8 (if (= t 11) 8 (if (= t 12) 8 0))))))))))))
+
+;; `read_string`: a u64 length then that many bytes. Returns the position just
+;; past, or -1. A length at or above 2^63 arrives negative and is refused
+;; before the bound comparison, because a signed `>` would admit it.
+(defn skip-string [base accessible pos]
+  (if (> (+ pos 8) accessible) -1
+    (let [len (u64-at base accessible pos)]
+      (if (< len 0) -1
+        (if (> len (- accessible (+ pos 8))) -1
+          (+ pos (+ 8 len)))))))
+
+;; The C's `skip_value` is recursive with a `depth >= 2` cut-off. A kernel
+;; object cannot express mutual recursion, so the three depths are unrolled
+;; into three functions -- which makes the cut-off structural rather than a
+;; counter that could be miscompared.
+(defn skip-d2 [base accessible pos t]
+  (let [size (scalar-size t)]
+    (if (> size 0)
+      (if (> size (- accessible pos)) -1 (+ pos size))
+      (if (= t 8) (skip-string base accessible pos) -1))))
+
+(defn skip-d2-elements [base accessible pos t n]
+  (if (= n 0) pos
+    (let [next (skip-d2 base accessible pos t)]
+      (if (< next 0) next
+        (skip-d2-elements base accessible next t (- n 1))))))
+
+(defn skip-d1 [base accessible pos t]
+  (let [size (scalar-size t)]
+    (if (> size 0)
+      (if (> size (- accessible pos)) -1 (+ pos size))
+      (if (= t 8) (skip-string base accessible pos)
+        (if (not (= t 9)) -1
+          (if (> (+ pos 12) accessible) -1
+            (let [et (u32-at base accessible pos)
+                  n (u64-at base accessible (+ pos 4))
+                  es (scalar-size (u32-at base accessible pos))]
+              (if (< n 0) -1
+                (if (> n 1000000) -1
+                  (if (> es 0)
+                    (if (> (* es n) (- accessible (+ pos 12))) -1
+                      (+ pos (+ 12 (* es n))))
+                    (skip-d2-elements base accessible (+ pos 12) et n)))))))))))
+
+(defn skip-d1-elements [base accessible pos t n]
+  (if (= n 0) pos
+    (let [next (skip-d1 base accessible pos t)]
+      (if (< next 0) next
+        (skip-d1-elements base accessible next t (- n 1))))))
+
+(defn skip-d0 [base accessible pos t]
+  (let [size (scalar-size t)]
+    (if (> size 0)
+      (if (> size (- accessible pos)) -1 (+ pos size))
+      (if (= t 8) (skip-string base accessible pos)
+        (if (not (= t 9)) -1
+          (if (> (+ pos 12) accessible) -1
+            (let [et (u32-at base accessible pos)
+                  n (u64-at base accessible (+ pos 4))
+                  es (scalar-size (u32-at base accessible pos))]
+              (if (< n 0) -1
+                (if (> n 1000000) -1
+                  (if (> es 0)
+                    (if (> (* es n) (- accessible (+ pos 12))) -1
+                      (+ pos (+ 12 (* es n))))
+                    (skip-d1-elements base accessible (+ pos 12) et n)))))))))))
+
+;; The two tokenizer arrays hold 248,320 and 247,587 length-prefixed strings.
+;; `skip-d2-elements` would walk them one recursive call deep per element,
+;; which is what the machine does and what the KIR oracle cannot: the
+;; interpreter recurses on its host stack, so a 248,320-deep walk is a host
+;; stack overflow rather than a verdict. Chunking makes the deepest host stack
+;; ~2 x sqrt(n) instead of n, and on the machine it is the same loop -- the
+;; backend turns self tail calls into a jump, so the chunk only costs the
+;; 970 extra fuel of the outer loop.
+;; `skip-string` is inlined here rather than called. It is the same three
+;; clauses, and the reason is cost: this is the only loop in the object whose
+;; trip count is in the hundreds of thousands, so every call it makes is
+;; multiplied by 495,907. Calling `skip-string` (which calls `u64-at`, which
+;; calls `u32-at` twice) is five charged calls per element instead of one --
+;; 2.5 million rather than 496,000, on the machine's fuel and in the oracle's
+;; interpreter alike.
+(defn skip-strings-chunk [base accessible pos n]
+  (if (= n 0) pos
+    (if (> (+ pos 8) accessible) -1
+      (let [len (+ (kernel-load-u32 (kernel-subregion base accessible pos 4) 4 0)
+                   (* (kernel-load-u32
+                       (kernel-subregion base accessible (+ pos 4) 4) 4 0)
+                      4294967296))]
+        (if (< len 0) -1
+          (if (> len (- accessible (+ pos 8))) -1
+            (skip-strings-chunk base accessible (+ pos (+ 8 len))
+                                (- n 1))))))))
+
+(defn skip-strings [base accessible pos remaining]
+  (if (= remaining 0) pos
+    (let [chunk (if (> remaining 512) 512 remaining)
+          next (skip-strings-chunk base accessible pos chunk)]
+      (if (< next 0) next
+        (skip-strings base accessible next (- remaining chunk))))))
+
+;; ------------------------------------------------------------ key dispatch
+;;
+;; 1 uint32 (stored, sometimes with a required value)   5 float32 in a range
+;; 2 an expected string                                 6 string array + walk
+;; 3 the four rope sections                             7 int32 array + skip
+;; 4 float32 with one exact value
+(defn key-kind [k]
+  (if (= k 0) 2 (if (= k 1) 2 (if (= k 8) 3 (if (= k 9) 4 (if (= k 10) 5
+  (if (= k 21) 2 (if (= k 22) 2 (if (= k 23) 6 (if (= k 24) 7
+  (if (= k 25) 6 1)))))))))))
+
+;; Workspace slot for a stored uint32, or -1 for one the C checks and drops.
+(defn plan-slot [k]
+  (if (= k 2) 4 (if (= k 3) 8 (if (= k 4) 12 (if (= k 5) 16 (if (= k 6) 20
+  (if (= k 7) 24 (if (= k 11) 28 (if (= k 12) 32 (if (= k 13) 80
+  (if (= k 14) 52 (if (= k 15) 44 (if (= k 16) 36 (if (= k 17) 40
+  (if (= k 18) 48 (if (= k 19) 56 (if (= k 20) 60 (if (= k 26) 92
+  (if (= k 27) 96 (if (= k 28) 88 -1))))))))))))))))))))
+
+;; The five uint32 keys the C compares against a literal, and -1 for the rest.
+(defn expect-u32 [k]
+  (if (= k 26) 248046 (if (= k 27) 248055 (if (= k 28) 248044
+  (if (= k 29) 2 (if (= k 30) 23 -1))))))
+
+;; Table entry holding the expected string value.
+(defn expect-str [k]
+  (if (= k 0) 31 (if (= k 1) 32 (if (= k 21) 33 (if (= k 22) 31 -1)))))
+
+(defn array-count [k]
+  (if (= k 23) 248320 (if (= k 24) 248320 (if (= k 25) 247587 -1))))
+
+(defn array-slot [k]
+  (if (= k 23) 100 (if (= k 25) 112 -1)))
+
+;; --------------------------------------------------------- value handlers
+;;
+;; Each takes the position of the VALUE and re-reads the GGUF type word that
+;; precedes it. Re-reading four bytes costs less than the sixth parameter the
+;; ABI does not have.
+
+(defn rv-u32 [k base accessible vpos plan]
+  (if (not (= (u32-at base accessible (- vpos 4)) 4)) (- -100 k)
+    (if (> (+ vpos 4) accessible) (- -200 k)
+      (let [v (u32-at base accessible vpos)
+            e (expect-u32 k)
+            s (plan-slot k)]
+        (if (if (< e 0) false (not (= v e)))
+          (- -200 k)
+          (do (if (< s 0) 0 (kernel-store-u32 plan 128 s v))
+              (+ vpos 4)))))))
+
+(defn rv-string [k base accessible vpos plan]
+  (if (not (= (u32-at base accessible (- vpos 4)) 8)) (- -100 k)
+    (if (> (+ vpos 8) accessible) (- -200 k)
+      (let [len (u64-at base accessible vpos)
+            e (expect-str k)]
+        (if (< len 0) (- -200 k)
+          (if (> len (- accessible (+ vpos 8))) (- -200 k)
+            (if (not (= len (key-length e))) (- -200 k)
+              (if (= (key-eq-from base accessible (+ vpos 8) e 0) 1)
+                (+ vpos (+ 8 len))
+                (- -200 k)))))))))
+
+(defn rv-rope [k base accessible vpos plan]
+  (if (not (= (u32-at base accessible (- vpos 4)) 9)) (- -100 k)
+    (if (> (+ vpos 28) accessible) (- -200 k)
+      (if (not (= (u32-at base accessible vpos) 5)) (- -200 k)
+        (if (not (= (u64-at base accessible (+ vpos 4)) 4)) (- -200 k)
+          (do (kernel-store-u32 plan 128 64 (u32-at base accessible (+ vpos 12)))
+              (kernel-store-u32 plan 128 68 (u32-at base accessible (+ vpos 16)))
+              (kernel-store-u32 plan 128 72 (u32-at base accessible (+ vpos 20)))
+              (kernel-store-u32 plan 128 76 (u32-at base accessible (+ vpos 24)))
+              (+ vpos 28)))))))
+
+;; 1259902592 is the IEEE-754 single of 10000000.0f, which is what the C's
+;; `read_f32(reader) != 10000000.0f` compares. Comparing the bits is exact for
+;; a value that is not NaN, and 10000000.0f is not.
+(defn rv-f32-exact [k base accessible vpos plan]
+  (if (not (= (u32-at base accessible (- vpos 4)) 6)) (- -100 k)
+    (if (> (+ vpos 4) accessible) (- -200 k)
+      (if (= (u32-at base accessible vpos) 1259902592) (+ vpos 4)
+        (- -200 k)))))
+
+;; 896636807 and 898868150 are the bits of 0.0000009f and 0.0000011f. See the
+;; header for the one place this is narrower than the C.
+(defn rv-f32-range [k base accessible vpos plan]
+  (if (not (= (u32-at base accessible (- vpos 4)) 6)) (- -100 k)
+    (if (> (+ vpos 4) accessible) (- -200 k)
+      (let [b (u32-at base accessible vpos)]
+        (if (< b 896636807) (- -200 k)
+          (if (> b 898868150) (- -200 k) (+ vpos 4)))))))
+
+(defn rv-str-array [k base accessible vpos plan]
+  (if (not (= (u32-at base accessible (- vpos 4)) 9)) (- -100 k)
+    (if (> (+ vpos 12) accessible) (- -200 k)
+      (if (not (= (u32-at base accessible vpos) 8)) (- -200 k)
+        (if (not (= (u64-at base accessible (+ vpos 4)) (array-count k))) (- -200 k)
+          (let [start (+ vpos 12)
+                end (skip-strings base accessible start (array-count k))]
+            (if (< end 0) (- -200 k)
+              (do (kernel-store-u32 plan 128 (array-slot k) start)
+                  (kernel-store-u32 plan 128 (+ (array-slot k) 4) (array-count k))
+                  (kernel-store-u32 plan 128 (+ (array-slot k) 8) end)
+                  (if (= k 23) (kernel-store-u32 plan 128 84 248320) 0)
+                  end))))))))
+
+(defn rv-i32-array [k base accessible vpos plan]
+  (if (not (= (u32-at base accessible (- vpos 4)) 9)) (- -100 k)
+    (if (> (+ vpos 12) accessible) (- -200 k)
+      (if (not (= (u32-at base accessible vpos) 5)) (- -200 k)
+        (if (not (= (u64-at base accessible (+ vpos 4)) (array-count k))) (- -200 k)
+          (if (> (* 4 (array-count k)) (- accessible (+ vpos 12))) (- -200 k)
+            (+ vpos (+ 12 (* 4 (array-count k))))))))))
+
+(defn required-value [k base accessible vpos plan]
+  (let [kind (key-kind k)]
+    (if (= kind 1) (rv-u32 k base accessible vpos plan)
+      (if (= kind 2) (rv-string k base accessible vpos plan)
+        (if (= kind 3) (rv-rope k base accessible vpos plan)
+          (if (= kind 4) (rv-f32-exact k base accessible vpos plan)
+            (if (= kind 5) (rv-f32-range k base accessible vpos plan)
+              (if (= kind 6) (rv-str-array k base accessible vpos plan)
+                (if (= kind 7) (rv-i32-array k base accessible vpos plan)
+                  (- -100 k))))))))))
+
+;; --------------------------------------------- the scalar exact contract
+;;
+;; `exact_contract_valid`'s scalar half, read back out of the workspace so that
+;; what is CHECKED is what was WRITTEN. Checking the values as they arrive
+;; would leave the workspace unverified, which is the half a later object
+;; consumes. -1 means the slot carries a derived offset with nothing to
+;; compare it to.
+(defn expect-slot [slot]
+  (if (= slot 4) 65 (if (= slot 8) 262144 (if (= slot 12) 5120
+  (if (= slot 16) 17408 (if (= slot 20) 24 (if (= slot 24) 4
+  (if (= slot 28) 256 (if (= slot 32) 256 (if (= slot 36) 16
+  (if (= slot 40) 48 (if (= slot 44) 128 (if (= slot 48) 6144
+  (if (= slot 52) 4 (if (= slot 56) 4 (if (= slot 60) 64
+  (if (= slot 64) 11 (if (= slot 68) 11 (if (= slot 72) 10
+  (if (= slot 76) 0 (if (= slot 80) 1 (if (= slot 84) 248320
+  (if (= slot 88) 248044 (if (= slot 92) 248046 (if (= slot 96) 248055
+  (if (= slot 104) 248320 (if (= slot 116) 247587 -1)))))))))))))))))))))))))))
+
+(defn contract-ok [plan slot]
+  (if (> slot 120) 0
+    (let [e (expect-slot slot)]
+      (if (< e 0) (contract-ok plan (+ slot 4))
+        (if (= (kernel-load-u32 plan 128 slot) e)
+          (contract-ok plan (+ slot 4))
+          (- 0 (+ 50 (quot slot 4))))))))
+
+(defn plan-clear [plan off]
+  (if (>= off 128) 0
+    (do (kernel-store-u32 plan 128 off 0)
+        (plan-clear plan (+ off 4)))))
+
+;; ------------------------------------------------------------- the walk
+
+(defn scan-entries [base accessible plan pos index]
+  (if (= index 50)
+    (if (not (= (kernel-load-u32 plan 128 124) 2147483647)) -13
+      (if (not (= pos 10945379)) -14
+        (do (kernel-store-u32 plan 128 0 pos)
+            (contract-ok plan 4))))
+    (if (> (+ pos 8) accessible) -9
+      (let [klen (u64-at base accessible pos)]
+        (if (< klen 0) -9
+          (if (> klen (- accessible (+ pos 8))) -9
+            (let [koff (+ pos 8)
+                  tpos (+ koff klen)]
+              (if (> (+ tpos 4) accessible) -10
+                (let [k (key-index-from base accessible koff klen 0)]
+                  (if (= k 31)
+                    (let [next (skip-d0 base accessible (+ tpos 4)
+                                        (u32-at base accessible tpos))]
+                      (if (< next 0) -11
+                        (scan-entries base accessible plan next (+ index 1))))
+                    (let [next (required-value k base accessible (+ tpos 4) plan)]
+                      (if (< next 0) next
+                        (do (kernel-store-u32 plan 128 124
+                              (bit-or (kernel-load-u32 plan 128 124) (pow2 k)))
+                            (scan-entries base accessible plan next
+                                          (+ index 1)))))))))))))))
+
+(defn aiueos-qwen35-gguf-kv-scan [base accessible plan plan-length]
+  (if (= base 0) -1
+    (if (= plan 0) -2
+      (if (not (= plan-length 128)) -3
+        (if (< accessible 24) -4
+          (if (not (= (u32-at base accessible 0) 1179993927)) -5
+            (if (not (= (u32-at base accessible 4) 3)) -6
+              (if (not (= (u64-at base accessible 8) 866)) -7
+                (if (not (= (u64-at base accessible 16) 50)) -8
+                  (do (plan-clear plan 0)
+                      (scan-entries base accessible plan 24 0)))))))))))
+
+(defn main [] 0)
