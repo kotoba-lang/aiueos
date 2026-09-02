@@ -139,4 +139,24 @@ int aiueos_qwen35_model_bind(struct aiueos_qwen35_model *model,
                              const uint8_t *bytes,
                              uint64_t accessible_bytes);
 
+/* The workspace -> struct translation of the Kotoba admission (ADR-0135), on
+   its own. `kv_plan` is the 128-byte workspace `kotoba_aiueos_qwen35_gguf_kv_scan`
+   filled and `tt_plan` the 28,160-byte one
+   `kotoba_aiueos_qwen35_tensor_table_bind` filled. It decides nothing the
+   objects have not already decided; it copies, and refuses rather than masks
+   when the workspace and this struct disagree. Declared unconditionally so the
+   host gate can call it, defined only in the delegating branch. */
+int aiueos_qwen35_model_translate(const uint8_t *bytes,
+                                  uint64_t accessible_bytes,
+                                  uint64_t artifact_bytes,
+                                  const uint8_t *kv_plan,
+                                  const uint8_t *tt_plan,
+                                  struct aiueos_qwen35_model *model);
+
+/* Diagnostics: the last object verdict and which object produced it
+   (1 header, 2 kv-scan, 3 tensor-table, 4 this file's translation). Defined
+   only in the delegating branch. */
+extern int64_t aiueos_qwen35_admission_verdict;
+extern uint32_t aiueos_qwen35_admission_stage;
+
 #endif

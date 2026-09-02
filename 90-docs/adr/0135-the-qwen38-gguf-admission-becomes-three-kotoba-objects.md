@@ -247,20 +247,16 @@ fuel. The immediates were read back out of the compiled objects at file offset
 
 ## What is NOT done
 
-1. **Nothing has executed the delegation.** `kernel/qwen35_runtime.c` now
-   compiles two ways and `build-uefi.sh` selects the delegating one, so the
-   image contains no C GGUF parser -- but the only machine here is aarch64 and
-   the objects are x86-64 ET_REL, so what is proven is that it LINKS, not that
-   the translation from workspace to `struct aiueos_qwen35_model` is right.
-   The three objects are graded by their oracles and the C reference is graded
-   by `scripts/smoke-qwen35-runtime.sh`; the seam between them is not.
-
-   Resume point, and it is buildable here: have the tensor oracle write its
-   28,160-byte workspace and the metadata oracle its 128 bytes to files, then
-   extend `tests/qwen35_runtime_model.c` to run ONLY the translation over those
-   bytes and assert the resulting struct is field-identical to the one the
-   reference parser produces from the same fixture. That needs no Kotoba
-   execution in C and closes exactly the gap above.
+1. ~~**Nothing has executed the delegation.**~~ **CLOSED by ADR-0136**
+   (2026-09-02), along the resume point this item named. The three objects ran
+   as x86-64 machine code in a QEMU/OVMF boot over the 10,996,640-byte fixture
+   (`AIUEOS_QWEN35_ADMISSION_OK … embd=715182080 qkv=1149091840
+   tail=10923843584`, and `QWEN-ADMIT reason=-21 stage=3` on a one-byte
+   mutation), and both oracles now write their workspaces to
+   `tests/fixtures/`, which `tests/qwen35_runtime_model.c` translates and
+   compares against the reference parser's struct: 34 of 34 fields, byte
+   identical, with a named-mismatch control. What is still unexecuted is
+   `aiueos_qwen35_model_bind`, which needs the real 10.9 GiB mapping.
 
 2. **Two of the tensor object's 21 refusal codes have no case.** -22 ("the
    table did not end at 10,996,621") and -23 ("the extents do not fill the
