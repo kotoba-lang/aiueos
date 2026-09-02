@@ -237,10 +237,12 @@ runner refuses with `:host-stack-exhausted true` rather than reporting a pass.
 object **admits**, not to the geometry K16 passes, because a tier is a per-call
 budget and a caller may legally ask for the ceiling. attention: 29,991 at 2
 heads / position 1 and 47,539 at position 3, so 4,387 per head-prior and 6,221
-fixed per head; head scaling is linear by construction (one pass per head, no
-cross-head state), so 64 heads × 8 priors is 2,644,288 and the tier is 12.7×
-that. recurrent-step: 1,762 at d=8, 6,721 at d=16, 25,414 at d=32, fitting
-`22.85 d² + 71.5 d − 272` = 383,254 at d=128, and the tier is 10.9× that.
+fixed per head; head scaling is linear and was **measured** rather than argued
+— 4 heads at position 3 is 95,604, a ratio of 2.011 — so 64 heads × 8 priors is
+2,644,288 and the tier is 12.7× that. recurrent-step: 1,762 at d=8, 6,721 at
+d=16, 25,414 at d=32, fitting `22.85 d² + 71.5 d − 272`, which predicts 55,806
+at d=48 against **56,312 measured** and gives 383,254 at d=128; the tier is
+10.9× that.
 
 ## What this does not claim
 
