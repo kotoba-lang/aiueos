@@ -1270,16 +1270,29 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
        inputs, which is exactly the property that survives having no weights. */
     {
       extern int aiueos_qwen35_kotoba_parity_selftest(uint32_t stage);
+      /* Two profiles, because the low region cannot hold all five objects at
+         once since the tokenizer landed (see qwen35_infer.c's own comment).
+         Each half links only the objects its stages call, and a stage the
+         profile did not compile is REFUSED rather than reported ok. */
+#if AIUEOS_QWEN35_KOTOBA_PARITY == 1
       static const char *const qwen_parity_names[3] = {"dequant", "dot", "matvec"};
-      for (uint32_t stage = 0; stage < 3U; stage++) {
+      uint32_t qwen_parity_first = 0U;
+#else
+      static const char *const qwen_parity_names[2] = {"activation", "norm"};
+      uint32_t qwen_parity_first = 3U;
+#endif
+      for (uint32_t index = 0;
+           index < sizeof qwen_parity_names / sizeof qwen_parity_names[0];
+           index++) {
+        uint32_t stage = qwen_parity_first + index;
         if (!aiueos_qwen35_kotoba_parity_selftest(stage)) {
           serial_string("QWEN-PARITY ");
-          serial_string(qwen_parity_names[stage]);
+          serial_string(qwen_parity_names[index]);
           serial_string(" mismatch\r\n");
           qemu_exit(0x6f);
         }
         serial_string("QWEN-PARITY ");
-        serial_string(qwen_parity_names[stage]);
+        serial_string(qwen_parity_names[index]);
         serial_string(" ok\r\n");
       }
     }

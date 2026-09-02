@@ -176,6 +176,9 @@ kotoba_value_runtime_cas_verify_object=${AIUEOS_KOTOBA_VALUE_RUNTIME_CAS_VERIFY_
 kotoba_qwen35_dot_object=${AIUEOS_KOTOBA_QWEN35_DOT_OBJECT:-"$aiueos/kotoba/qwen35-dot-f32.o"}
 kotoba_qwen35_dequant_object=${AIUEOS_KOTOBA_QWEN35_DEQUANT_OBJECT:-"$aiueos/kotoba/qwen35-dequant-row.o"}
 kotoba_qwen35_matvec_object=${AIUEOS_KOTOBA_QWEN35_MATVEC_OBJECT:-"$aiueos/kotoba/qwen35-matvec.o"}
+# Second tranche (ADR-0140): the scalar functions between the matvecs.
+kotoba_qwen35_activation_object=${AIUEOS_KOTOBA_QWEN35_ACTIVATION_OBJECT:-"$aiueos/kotoba/qwen35-activation.o"}
+kotoba_qwen35_norm_object=${AIUEOS_KOTOBA_QWEN35_NORM_OBJECT:-"$aiueos/kotoba/qwen35-norm.o"}
 qwen35_kotoba_link=
 # device-client: the Murakumo device-P256 worker's signed canonical text,
 # v2 and v3 (ADR-0137). Linked unconditionally, not behind
@@ -435,9 +438,11 @@ model_max_address=${AIUEOS_MODEL_MAX_ADDRESS:-68719476735}
 # code the model path actually runs.
 qwen35_parity_cflags=
 qwen35_parity_link=
-if [ "${AIUEOS_QWEN35_KOTOBA_PARITY:-0}" = 1 ]; then
-  qwen35_parity_cflags="-DAIUEOS_QWEN35_KOTOBA_PARITY=1"
-fi
+case "${AIUEOS_QWEN35_KOTOBA_PARITY:-0}" in
+  0) ;;
+  1|2) qwen35_parity_cflags="-DAIUEOS_QWEN35_KOTOBA_PARITY=${AIUEOS_QWEN35_KOTOBA_PARITY}" ;;
+  *) echo "error: AIUEOS_QWEN35_KOTOBA_PARITY must be 0, 1 or 2" >&2; exit 1 ;;
+esac
 if [ "${AIUEOS_QWEN38_MODEL_HANDOFF:-0}" = 1 ] ||
    [ "${AIUEOS_MODEL_NVME_SLOTS:-0}" = 1 ]; then
   if [ "${AIUEOS_MODEL_TEST_FIXTURE:-0}" != 1 ]; then
@@ -868,7 +873,18 @@ if [ -n "$model_handoff_link" ] || [ -n "$qwen35_parity_cflags" ]; then
     "" kotoba_aiueos_qwen35_dequant_row
   python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_qwen35_matvec_object" \
     "" kotoba_aiueos_qwen35_matvec
-  qwen35_kotoba_link="$kotoba_qwen35_dot_object $kotoba_qwen35_dequant_object $kotoba_qwen35_matvec_object"
+  # Two parity profiles, each linking only the objects its stages call. The
+  # low region (`aiueos_low_end <= 0x1f4000`) cannot hold all five at once
+  # since the tokenizer objects landed -- measured, not assumed.
+  if [ "${AIUEOS_QWEN35_KOTOBA_PARITY:-0}" = 2 ]; then
+    python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_qwen35_activation_object" \
+      "" kotoba_aiueos_qwen35_activation
+    python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_qwen35_norm_object" \
+      "" kotoba_aiueos_qwen35_norm
+    qwen35_kotoba_link="$kotoba_qwen35_activation_object $kotoba_qwen35_norm_object"
+  else
+    qwen35_kotoba_link="$kotoba_qwen35_dot_object $kotoba_qwen35_dequant_object $kotoba_qwen35_matvec_object"
+  fi
 fi
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_device_worker_canonical_object" \
   c64371c50104c8acd2b73224eed1377e160cd36ab70e27cae11d39b76e440b0a \

@@ -643,6 +643,69 @@
 (defmethod prepare :aiueos.qwen35-detokenize/v1 [contract v]
   (tokenizer-prepare contract v 'aiueos-qwen35-detokenize))
 
+;; --- the Qwen3.5 forward pass, second tranche (ADR-0140) -------------------
+;;
+;; The scalar functions between the matvecs. Expectations come from the same
+;; independent ClojureScript re-derivation over `Float32Array` the first
+;; tranche used, and the same caveat applies: it proves the algorithm against a
+;; second reading of the C and says nothing about what amu emitted. The
+;; evidence that covers the backend is the QEMU self-test `QWEN-PARITY`,
+;; which caught an argument-order mistake in its own harness that this
+;; interpreter could not have.
+
+(defmethod prepare :aiueos.qwen35-activation/v1 [contract v]
+  (let [{:keys [base image-bytes a-offset b-offset]}
+        (get-in contract [:verification :memory])
+        a (hex-bytes (or (:a-hex v) ""))
+        b (hex-bytes (or (:b-hex v) ""))]
+    {:entry 'aiueos-qwen35-activation
+     :base base
+     :image (-> (vec (repeat image-bytes 0))
+                (write-at a-offset a)
+                (write-at b-offset b))
+     :args [(:mode v)
+            (if (some? (:a-base-override v)) (:a-base-override v) (+ base a-offset))
+            (if (some? (:b-base-override v)) (:b-base-override v) (+ base b-offset))
+            (:count v)
+            0]
+     :expect-memory
+     (cond-> []
+       (:expect-a-hex v)
+       (conj {:label :a :offset a-offset :bytes (hex-bytes (:expect-a-hex v))}))}))
+
+;; Three modes with three different argument meanings, which is why this is a
+;; `case` rather than one shape: mode 0 reads `b` as a weights POINTER and
+;; `c` as an element count, modes 1 and 2 read them as a head count and a
+;; width. Getting that wrong is not a crash -- it normalises the wrong vector
+;; into the wrong place and every bound still holds.
+(defmethod prepare :aiueos.qwen35-norm/v1 [contract v]
+  (let [{:keys [base image-bytes a-offset b-offset out-offset]}
+        (get-in contract [:verification :memory])
+        a (hex-bytes (or (:a-hex v) ""))
+        b (hex-bytes (or (:b-hex v) ""))
+        image (-> (vec (repeat image-bytes 0))
+                  (write-at a-offset a)
+                  (write-at b-offset b))
+        base-a (if (some? (:a-base-override v)) (:a-base-override v) (+ base a-offset))
+        base-b (if (some? (:b-base-override v)) (:b-base-override v) (+ base b-offset))
+        base-d (if (some? (:d-base-override v)) (:d-base-override v) (+ base b-offset))]
+    {:entry 'aiueos-qwen35-norm
+     :base base
+     :image image
+     :args (case (long (:mode v))
+             0 [0 base-a base-b (:count v) (+ base out-offset)]
+             1 [1 base-a (:heads v) (:width v) 0]
+             2 [2 base-a (:heads v) (:width v) base-d]
+             ;; a mode the object refuses; the remaining words are still real
+             ;; regions so the refusal is provoked by the MODE and nothing else
+             [(:mode v) base-a (or (:heads v) 1) (or (:width v) (:count v) 8) 0])
+     :expect-memory
+     (cond-> []
+       (:expect-out-hex v)
+       (conj {:label :out :offset out-offset :bytes (hex-bytes (:expect-out-hex v))})
+       (:expect-a-hex v)
+       (conj {:label :a :offset a-offset :bytes (hex-bytes (:expect-a-hex v))}))}))
+
 (defmethod prepare :default [contract _]
   (fail! "REFUSING TO REPORT A PASS: no argument builder for this contract format"
          {:format (:format contract)}))
