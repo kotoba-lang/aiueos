@@ -191,14 +191,23 @@ unchanged.
 
 Measured through the KIR interpreter by bisection, at load average ~200:
 
-| input | traps at | completes at |
-|---|---|---|
-| 1 KiB of prose | 222,208 | **225,280** |
+| input | traps at | completes at | wall clock |
+|---|---|---|---|
+| 1 KiB of prose | 222,208 | **225,280** | 66 s / 85 s |
+| 4 KiB of prose | — | 900,000 | 303 s |
+| 32 KiB of prose | 2,097,152 | **8,600,000** | 598 s / 1,863 s |
 
-That is ~220 fuel per input byte. The tier kotoba-native gives
-`aiueos-qwen35-tokenize` is 250,000,000, which is ~34x the 32 KiB projection
-and ~4x the worst case the object's own bounds allow (512 symbols per chunk,
-98,304 symbols total when invalid UTF-8 triples the byte count).
+~220 fuel per input byte, and it does not move with the length of the input:
+the merge loop's quadratic term is in one CHUNK, and prose chunks are words.
+The tier kotoba-native gives `aiueos-qwen35-tokenize` is 250,000,000, which is
+29x the measured 32 KiB cost and ~4x the worst case the object's own bounds
+allow (512 symbols per chunk, 98,304 symbols total when invalid UTF-8 triples
+the byte count).
+
+The committed test asserts the 1 KiB BRACKET and projects the rest, because
+one 32 KiB run costs half an hour in this interpreter on this workstation at
+load ~200 and that is not a per-suite price. The 4 KiB and 32 KiB figures above
+were measured once, outside the suite.
 
 **A probe that fails burns its entire budget before trapping**, which is why
 the search is bisection from a hint and why the committed test asserts a
@@ -233,3 +242,64 @@ bracket rather than repeating it.
   byte-symbols with no space, digit or punctuation in it — about 170 unbroken
   kana or kanji — is refused rather than tokenized. The bound exists because
   the merge loop is quadratic in one chunk and a fuel bound must be finite.
+
+## Addendum, 2026-09-02: the objects were rebuilt at newer pins
+
+The three `.o` files first landed (aiueos#234, merge `58d910b`) were produced
+by amu `25907a65` with kotoba-native at `eff87fcc` -- the merge that carries
+their three `kernel-object-entries` rows. Two kotoba-native changes landed
+after that and before this addendum:
+
+- **#120 `279fbc3`**: a bounded store now answers with the STORED OPERAND. It
+  previously left an undefined register on native.
+- **MEMWIDTH**: `kernel-load/store-u{8,16,32,64}` at 512 / 4k / 16k / **64k**
+  windows.
+
+Neither changes what these objects mean. No code path here reads a store's
+value -- every `kernel-store-*` sits in a non-final position of a `do`, and
+that was checked one call site at a time rather than assumed -- and the objects
+narrow with `kernel-subregion` to four bytes or one before every access, so a
+wider window primitive is an opportunity and not a correction.
+
+They were rebuilt anyway, at amu `ca869d79` with kotoba-native `c010fd9`,
+because shipping an artifact from a compiler with a known register defect is
+worse than rebuilding. **The bytes moved**: tokenize 27,904 -> 27,912,
+detokenize 8,016 -> 8,024, index-build 10,904 -> 10,904 with a different
+digest. The three contracts are unchanged and still green (51 vectors), which
+is what says the rebuild changed the artifact and not the object.
+
+The `let` multi-form body defect (kotoba-sema #29, kotoba-kir #67) is also
+fixed upstream. It changes nothing here: every `let` and `fn` body in these
+three objects was written as a single form while the defect was live, and they
+are left that way rather than rewritten for a compiler feature that landed
+after the code did.
+
+### A conflict marker was on `main`, in the build script
+
+Measured while rebuilding: `os/aiueos/scripts/build-uefi.sh` carried **three
+unresolved conflict regions** and `os/aiueos/kernel/main.c` one, so `sh -n`
+refused the build script and no image could be built from `main` at all.
+
+They arrived at **`4afe0fb`** ("Merge #233: the Qwen3.5 forward pass gets its
+first three Kotoba objects") and were on `main` from then; `3c541d5`,
+`df7abf3` and `58d910b` each carry them forward, and `4515f3e` -- the commit
+this ADR describes -- has none. Two streams had added object declarations at
+the same three places and the merge was committed unresolved.
+
+Fixed on `main` by aiueos#236 (`ff44e588`), keeping BOTH sides, because the
+additions are unrelated: the Qwen3.5 forward-pass tranche and the
+device-worker canonical object. That resolution is what this branch merged;
+the sha256 pins for these three objects were re-applied on top of it rather
+than on top of a second, competing resolution.
+
+The cheap guard, run here after every merge from now on:
+
+```
+git grep -n -E '^(<<<<<<< |=======$|>>>>>>> )' -- .
+sh -n os/aiueos/scripts/build-uefi.sh
+```
+
+Both are clean on this branch. The second one matters more than it looks: a
+marker removal that eats a line break leaves `... \  "$next_object"`, a
+backslash escaping a space rather than continuing a line, which `sh -n`
+accepts and a linker does not.
