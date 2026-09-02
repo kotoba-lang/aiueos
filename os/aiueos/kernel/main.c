@@ -587,6 +587,41 @@ extern void aiueos_isr_external_timer(void);
 extern void aiueos_isr_virtio_rng(void);
 extern void aiueos_isr_virtio_blk(void);
 extern void aiueos_isr_syscall(void);
+/* The fatal stubs entry.S generates for every remaining CPU vector
+   (ADR-0199).  Declared one per line rather than through a macro so that a
+   vector missing from this list is missing in the install table too and shows
+   up as a link error, not as a gate that was quietly never written. */
+extern void aiueos_isr_fatal_0(void);
+extern void aiueos_isr_fatal_1(void);
+extern void aiueos_isr_fatal_2(void);
+extern void aiueos_isr_fatal_3(void);
+extern void aiueos_isr_fatal_4(void);
+extern void aiueos_isr_fatal_5(void);
+extern void aiueos_isr_fatal_7(void);
+extern void aiueos_isr_fatal_8(void);
+extern void aiueos_isr_fatal_9(void);
+extern void aiueos_isr_fatal_10(void);
+extern void aiueos_isr_fatal_11(void);
+extern void aiueos_isr_fatal_12(void);
+extern void aiueos_isr_fatal_13(void);
+extern void aiueos_isr_fatal_15(void);
+extern void aiueos_isr_fatal_16(void);
+extern void aiueos_isr_fatal_17(void);
+extern void aiueos_isr_fatal_18(void);
+extern void aiueos_isr_fatal_19(void);
+extern void aiueos_isr_fatal_20(void);
+extern void aiueos_isr_fatal_21(void);
+extern void aiueos_isr_fatal_22(void);
+extern void aiueos_isr_fatal_23(void);
+extern void aiueos_isr_fatal_24(void);
+extern void aiueos_isr_fatal_25(void);
+extern void aiueos_isr_fatal_26(void);
+extern void aiueos_isr_fatal_27(void);
+extern void aiueos_isr_fatal_28(void);
+extern void aiueos_isr_fatal_29(void);
+extern void aiueos_isr_fatal_30(void);
+extern void aiueos_isr_fatal_31(void);
+extern uint8_t aiueos_text_start[], aiueos_text_end[];
 extern void aiueos_probe_write_protect(void);
 extern void aiueos_probe_no_execute(void);
 volatile uint64_t aiueos_page_fault_stage;
@@ -1176,14 +1211,129 @@ static void set_idt_gate(uint8_t vector, void (*handler)(void)) {
    durable crash receipt over the polled transport before termination. */
 volatile int aiueos_final_probe_expected;
 
+/* Rendering, not deciding: the vector's architectural name.  Getting an entry
+   wrong misnames a fault without changing one, exactly as dhcp_reason_name
+   above.  Vectors this kernel services on purpose (6 before the end-of-boot
+   probe, 14 during the three paging probes) never reach here. */
+static const char *aiueos_vector_mnemonic(uint64_t vector) {
+  switch (vector) {
+    case 0:  return "#DE/divide-error";
+    case 1:  return "#DB/debug";
+    case 2:  return "NMI/non-maskable-interrupt";
+    case 3:  return "#BP/breakpoint";
+    case 4:  return "#OF/overflow";
+    case 5:  return "#BR/bound-range";
+    case 6:  return "#UD/invalid-opcode";
+    case 7:  return "#NM/device-not-available";
+    case 8:  return "#DF/double-fault";
+    case 9:  return "coprocessor-segment-overrun";
+    case 10: return "#TS/invalid-tss";
+    case 11: return "#NP/segment-not-present";
+    case 12: return "#SS/stack-segment-fault";
+    case 13: return "#GP/general-protection";
+    case 14: return "#PF/page-fault";
+    case 16: return "#MF/x87-floating-point";
+    case 17: return "#AC/alignment-check";
+    case 18: return "#MC/machine-check";
+    case 19: return "#XM/simd-floating-point";
+    case 20: return "#VE/virtualisation";
+    case 21: return "#CP/control-protection";
+    case 28: return "#HV/hypervisor-injection";
+    case 29: return "#VC/vmm-communication";
+    case 30: return "#SX/security";
+    default: return "reserved";
+  }
+}
+
+/* One line, built once, printed to both transports.  A static buffer rather
+   than a local because a #DF or a #SS arrives with a stack that may already be
+   the reason we are here, and 256 bytes of it is 256 bytes that may not be
+   writable.  Nothing re-enters: every path out of the reporter terminates. */
+#define AIUEOS_STRINGIFY_(x) #x
+#define AIUEOS_STRINGIFY(x) AIUEOS_STRINGIFY_(x)
+static char aiueos_fatal_line[288];
+static unsigned aiueos_fatal_len;
+
+static void fatal_put(char c) {
+  if (aiueos_fatal_len + 1 < sizeof(aiueos_fatal_line))
+    aiueos_fatal_line[aiueos_fatal_len++] = c;
+}
+static void fatal_puts(const char *text) { while (*text) fatal_put(*text++); }
+static void fatal_hex_raw(uint64_t value, unsigned digits) {
+  static const char d[] = "0123456789abcdef";
+  while (digits--) fatal_put(d[(value >> (digits * 4)) & 0xf]);
+}
+static void fatal_hex(uint64_t value, unsigned digits) {
+  fatal_puts("0x");
+  fatal_hex_raw(value, digits);
+}
+static void fatal_dec(uint64_t value) {
+  char buf[20];
+  unsigned n = 0;
+  do { buf[n++] = (char)('0' + value % 10U); value /= 10U; } while (value && n < sizeof(buf));
+  while (n) fatal_put(buf[--n]);
+}
+
+/* Every fatal CPU exception in this kernel converges here (ADR-0199).  It
+   prints ONE greppable line carrying the vector, the error code and the
+   faulting RIP -- the three facts a reader previously had to recover by
+   relinking the image without --strip-all and doing arithmetic -- and then
+   terminates the machine through isa-debug-exit.  It does not halt: a halted
+   guest is a guest QEMU keeps running, and a harness can only tell that apart
+   from a slow boot by timing out, which is how a deterministic miscompile
+   spent three ten-minute attempts being reported as a known flake.
+
+   `insn=` is the four bytes at RIP when RIP is inside this kernel's own text,
+   so a Kotoba fuel guard or window bounds check -- both of which Amu emits as
+   `ud2` = 0f 0b -- names itself in the line.  Reading elsewhere could fault
+   again, so it is not attempted.  The bytes cannot say WHICH of the two guards
+   fired; that distinction is not available at the trap. */
 __attribute__((noreturn))
-void aiueos_exception_dispatch(uint64_t vector) {
+void aiueos_exception_dispatch(uint64_t vector, uint64_t error, uint64_t rip,
+                               uint64_t rsp, uint64_t cr2, uint64_t rflags) {
   if (vector == 6 && aiueos_final_probe_expected) {
     debug_string("AIUEOS_EXCEPTION_OK vector=6\n");
     serial_string("AIUEOS_EXCEPTION_OK vector=6 invalid-opcode\r\n");
     qemu_exit(0x30);
-  } else {
+  }
+  aiueos_fatal_len = 0;
+  fatal_puts("AIUEOS_FATAL_EXCEPTION vector=");
+  fatal_dec(vector);
+  fatal_puts(" mnemonic=");
+  fatal_puts(aiueos_vector_mnemonic(vector));
+  fatal_puts(" error=");
+  fatal_hex(error, 8);
+  fatal_puts(" rip=");
+  fatal_hex(rip, 16);
+  fatal_puts(" rsp=");
+  fatal_hex(rsp, 16);
+  fatal_puts(" rflags=");
+  fatal_hex(rflags, 8);
+  fatal_puts(" cr2=");
+  fatal_hex(cr2, 16);
+  {
+    const uint64_t lo = (uint64_t)(uintptr_t)aiueos_text_start;
+    const uint64_t hi = (uint64_t)(uintptr_t)aiueos_text_end;
+    if (rip >= lo && rip + 4 <= hi) {
+      const uint8_t *at = (const uint8_t *)(uintptr_t)rip;
+      fatal_puts(" rip-text=");
+      fatal_hex(rip - lo, 8);
+      fatal_puts(" insn=");
+      for (unsigned i = 0; i < 4; i++) fatal_hex_raw(at[i], 2);
+      fatal_puts(at[0] == 0x0f && at[1] == 0x0b ? " ud2=yes" : " ud2=no");
+    } else {
+      fatal_puts(" rip-text=outside insn=unreadable ud2=unknown");
+    }
+  }
+  fatal_put('\0');
+  debug_string(aiueos_fatal_line);
+  debug_string("\n");
+  serial_string(aiueos_fatal_line);
+  serial_string("\r\n");
+  {
     extern int aiueos_crash_receipt_write_from_fault(uint32_t);
+    /* Kept verbatim: three ADRs and the AIUEOS_EXPECT_FAULT gate name this
+       literal, and QWEN-KERNELS-2 read a d=128 non-terminating loop off it. */
     debug_string("AIUEOS_EXCEPTION_FAIL unexpected-vector\n");
     serial_string("AIUEOS_EXCEPTION_FAIL unexpected-vector vector=");
     serial_decimal((uint32_t)vector);
@@ -1198,12 +1348,91 @@ void aiueos_exception_dispatch(uint64_t vector) {
     }
     qemu_exit(0x7d);
   }
-  for (;;) __asm__ volatile("cli; hlt");
+}
+
+/* The gates, in one table, installed twice: once before the first Kotoba
+   object runs and again where the kernel has always installed them.  The
+   early pass is the whole point of ADR-0199 -- fifty-one Kotoba objects used
+   to execute while the FIRMWARE's IDT was still loaded, and OVMF answers a
+   #UD with a dump and a dead loop, so QEMU never exited and the harness could
+   only time out.  The second pass is left in place so that the marker every
+   existing gate greps for keeps its position in the boot. */
+struct aiueos_gate { uint8_t vector; void (*handler)(void); };
+static const struct aiueos_gate aiueos_fatal_gates[] = {
+  {0, aiueos_isr_fatal_0},   {1, aiueos_isr_fatal_1},   {2, aiueos_isr_fatal_2},
+  {3, aiueos_isr_fatal_3},   {4, aiueos_isr_fatal_4},   {5, aiueos_isr_fatal_5},
+  {6, aiueos_isr_invalid_opcode},
+  {7, aiueos_isr_fatal_7},   {8, aiueos_isr_fatal_8},   {9, aiueos_isr_fatal_9},
+  {10, aiueos_isr_fatal_10}, {11, aiueos_isr_fatal_11}, {12, aiueos_isr_fatal_12},
+  {13, aiueos_isr_fatal_13},
+  {14, aiueos_isr_page_fault},
+  {15, aiueos_isr_fatal_15}, {16, aiueos_isr_fatal_16}, {17, aiueos_isr_fatal_17},
+  {18, aiueos_isr_fatal_18}, {19, aiueos_isr_fatal_19}, {20, aiueos_isr_fatal_20},
+  {21, aiueos_isr_fatal_21}, {22, aiueos_isr_fatal_22}, {23, aiueos_isr_fatal_23},
+  {24, aiueos_isr_fatal_24}, {25, aiueos_isr_fatal_25}, {26, aiueos_isr_fatal_26},
+  {27, aiueos_isr_fatal_27}, {28, aiueos_isr_fatal_28}, {29, aiueos_isr_fatal_29},
+  {30, aiueos_isr_fatal_30}, {31, aiueos_isr_fatal_31},
+};
+
+static void aiueos_install_fatal_gates(void) {
+  /* The gate bytes come from the same Kotoba object as every other gate, so
+     the early table is not a second, C-authored answer to the packing
+     question.  The cost is that this object -- one of the fifty-one -- is
+     itself still executing under the firmware's IDT.  That residual is named
+     in ADR-0199 and is the reason the marker below is printed AFTER the
+     lidt: a boot that reaches it has covered everything after it. */
+  for (unsigned i = 0; i < sizeof(aiueos_fatal_gates) / sizeof(aiueos_fatal_gates[0]); i++)
+    set_idt_gate(aiueos_fatal_gates[i].vector, aiueos_fatal_gates[i].handler);
 }
 
 __attribute__((noreturn))
 void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
   serial_init();
+#ifndef AIUEOS_SKIP_EARLY_FATAL_IDT
+  /* Own the descriptor tables BEFORE the first Kotoba object runs (ADR-0199).
+     Everything from here to the historical install site at
+     AIUEOS_DESCRIPTOR_TABLES_OK -- fifty-one Kotoba calls on this path --
+     used to trap into OVMF's handler, which dumps and dead-loops, so a
+     miscompiled object produced a QEMU process that never exited and a smoke
+     run that could only call it a timeout.  Loading our GDT first is required:
+     the gates carry selector 0x08, and a gate whose selector is not a present
+     64-bit code segment turns the fault into a #GP and then a triple fault,
+     which QEMU reports as a reset rather than a status. */
+  aiueos_load_gdt();
+  aiueos_install_fatal_gates();
+  {
+    static struct descriptor_pointer early_idtr;
+    early_idtr.limit = (uint16_t)(sizeof(idt) - 1);
+    early_idtr.base = (uint64_t)(uintptr_t)idt;
+    aiueos_load_idt(&early_idtr);
+  }
+  debug_string("AIUEOS_FATAL_IDT_OK early vectors=0-31\n");
+  serial_string("AIUEOS_FATAL_IDT_OK early vectors=0-31\r\n");
+#endif
+#ifdef AIUEOS_EARLY_FAULT_SMOKE
+  /* Test-only, and each value raises a DIFFERENT vector on purpose (ADR-0199):
+       1  #UD  -- the hand-written stub, and what a Kotoba fuel guard raises
+       2  #UD  -- the same instruction with the early table compiled out, which
+                  is what every boot did before ADR-0199 (the RED evidence)
+       3  #BP  -- a GENERATED no-error-code stub
+       4  #GP  -- a GENERATED error-code stub, with a selector past this GDT's
+                  limit so the error code in the line is a value chosen here
+     3 and 4 exist because a reporter exercised only through vector 6 has not
+     shown that it reads the frame correctly: an error-code stub that forgot
+     its extra push would print the error code where the RIP goes, and both
+     fields would still look like plausible addresses. */
+  serial_string("AIUEOS_EARLY_FAULT_SMOKE synthetic mode="
+                AIUEOS_STRINGIFY(AIUEOS_EARLY_FAULT_SMOKE) " before-objects\r\n");
+  debug_string("AIUEOS_EARLY_FAULT_SMOKE synthetic mode="
+               AIUEOS_STRINGIFY(AIUEOS_EARLY_FAULT_SMOKE) " before-objects\n");
+#if AIUEOS_EARLY_FAULT_SMOKE == 3
+  __asm__ volatile("int3");
+#elif AIUEOS_EARLY_FAULT_SMOKE == 4
+  __asm__ volatile("mov $0x48, %%ax; mov %%ax, %%ds" : : : "ax");
+#else
+  __asm__ volatile("ud2");
+#endif
+#endif
   if (!boot || boot->magic != AIUEOS_BOOT_INFO_MAGIC ||
       (boot->version != 2 && boot->version != AIUEOS_BOOT_INFO_VERSION_BASE &&
        boot->version != AIUEOS_BOOT_INFO_VERSION_MODEL_HANDOFF &&
@@ -1308,8 +1537,10 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
     aiueos_qualification_progress(222);
 #endif
     aiueos_load_gdt();
-    set_idt_gate(6, aiueos_isr_invalid_opcode);
-    set_idt_gate(14, aiueos_isr_page_fault);
+    /* Idempotent: the same table the early pass installed (ADR-0199).  Kept
+       here so this marker keeps meaning "the kernel owns its descriptor
+       tables", and so a future edit to the fatal set lands in one place. */
+    aiueos_install_fatal_gates();
     set_idt_gate(32, aiueos_isr_apic_timer);
     set_idt_gate(33, aiueos_isr_external_timer);
     set_idt_gate(34, aiueos_isr_virtio_rng);

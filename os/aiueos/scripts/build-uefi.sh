@@ -396,6 +396,15 @@ fi
 if [ "${AIUEOS_FAULT_RECEIPT_SMOKE:-0}" = 1 ]; then
   input_smoke_cflags="$input_smoke_cflags -DAIUEOS_FAULT_RECEIPT_SMOKE=1"
 fi
+# ADR-0199 red/green.  1 raises a #UD at the earliest point the early fatal
+# IDT covers; 2 raises the same instruction with that table compiled out,
+# which is what every boot did before ADR-0199.  Never set in production.
+if [ "${AIUEOS_EARLY_FAULT_SMOKE:-0}" != 0 ]; then
+  input_smoke_cflags="$input_smoke_cflags -DAIUEOS_EARLY_FAULT_SMOKE=${AIUEOS_EARLY_FAULT_SMOKE}"
+  if [ "${AIUEOS_EARLY_FAULT_SMOKE}" = 2 ]; then
+    input_smoke_cflags="$input_smoke_cflags -DAIUEOS_SKIP_EARLY_FATAL_IDT=1"
+  fi
+fi
 # Test-only. Breaks a received DHCP reply in exactly ONE way so the gate can
 # show the admission refusing it, and refusing it for the reason that was
 # broken. Only kernel/pci.c is compiled with it; a value of 0 or an unset

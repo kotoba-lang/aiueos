@@ -213,13 +213,53 @@ if [ "${AIUEOS_TEST_NET:-0}" = 1 ]; then
 fi
 # A hung guest must fail fast with diagnostics rather than pinning CI until
 # the job-level timeout. 124 from timeout(1) is handled below.
-qemu_timeout=${AIUEOS_QEMU_TIMEOUT:-600}
-# The ring-3 process phase has an occasional lost-wakeup hang on slow TCG
-# runners (kotoba-lang/aiueos#108) that clears on a fresh boot. Retry ONLY on
-# a timeout (status 124) — every deterministic exit status is a real result
-# and is never retried. Each attempt restarts from a pristine data disk so a
-# partially-written disk from a hung boot cannot change the retry's outcome.
+#
+# Two limits now, and the second one is the one that fires (ADR-0200).
+#
+#   qemu_timeout  the wall clock. 360s, not 600. Measured on this host with
+#                 measure-boot-flake-rate.cljs: 16 consecutive boots of one
+#                 already-built image, ALL PASS, min 68.5 / p50 85.1 / p90
+#                 122.0 / max 165.5 seconds, at load average 67-125. 360 is
+#                 2.2x the slowest boot observed. 600 was never measured here
+#                 -- it was the ubuntu CI job budget from issue #108, and
+#                 three attempts at it is what turned a deterministic #UD into
+#                 half an hour of "known flake".
+#
+#   quiet_limit   how long the guest may write NOTHING on EITHER transport
+#                 before the attempt is ended. This is what makes a dead guest
+#                 fail fast, and it does not scale with how slow the host is.
+#
+# 150s for the quiet limit, and the number is justified by the boot's phase
+# structure rather than by a single reading. A healthy full-evidence boot has
+# exactly one long silent phase -- PCI enumeration under TCG, between
+# AIUEOS_APIC_TIMER_OK and AIUEOS_PCI_OK -- measured byte-for-byte at 47s, with
+# the longest silence over n=7 good boots at 66.5s (BISECT-SHA256, 2026-09-03).
+# 150 is 2.25x that. It is deliberately NOT tight: 66.5s is an observed maximum
+# over seven runs, not a bound, the gap grows with load and not monotonically
+# (largest at load 84-87, not 96-99), and the run that took 165.5s above was at
+# load 124.9 -- higher than anything in that n=7. A quiet limit that kills a
+# healthy boot converts this fix into the bug it is fixing.
+#
+# These are this workstation's numbers under concurrent agent load. The METHOD
+# transfers; re-measure the numbers per host with measure-boot-flake-rate.cljs.
+qemu_timeout=${AIUEOS_QEMU_TIMEOUT:-360}
+quiet_limit=${AIUEOS_QEMU_QUIET:-150}
+# kotoba-lang/aiueos#108 is a REAL bug with a NAMED signature: the ring-3
+# process phase loses a wakeup and the serial log stops at
+# AIUEOS_KOTOBA_ELF_PROCESS_OK. The issue also records where it was seen --
+# "~1 boot in ~15-25 on ubuntu runners; never reproduced locally (macOS,
+# QEMU 10, faster host)" -- and those runners are gone (this workspace
+# retired GitHub Actions).
+#
+# What was wrong here was not the retry, it was its WIDTH. ANY timeout was
+# retried, so a guest that had already died of #UD on the first boot was
+# reported three times as a flake and only then as a failure. A retry now
+# requires the signature, or no guest output at all; every other timeout is a
+# result and is reported immediately. Each attempt still restarts from a
+# pristine data disk so a partially-written disk cannot change its outcome.
 qemu_attempts=${AIUEOS_QEMU_ATTEMPTS:-3}
+flake_signature=${AIUEOS_FLAKE_SIGNATURE:-AIUEOS_KOTOBA_ELF_PROCESS_OK}
+boot_times="$out/boot-times.log"
 # QEMU 10.1 virtio-gpu sets enabled_output_bitmask=1 at realize. Extra
 # heads become enabled only when a UI frontend calls ui_info with a
 # non-zero size (hw/display/virtio-gpu-base.c). `-display none` never
@@ -268,8 +308,15 @@ if [ -f "$blk_image" ]; then
   pristine_blk="$blk_image.pristine"
   cp "$blk_image" "$pristine_blk"
 fi
+# Both transports, before every attempt, not once before the first. A retry
+# that inherits the previous attempt's debugcon log starts its clock about
+# fifty seconds early (the build is inside the gap) and reports the guest
+# silent while it is in fact writing to the other stream. Measured by the
+# BISECT-SHA256 stream, 2026-09-03, while it was building the distribution
+# that set the timeout above.
 attempt=1
 while :; do
+  rm -f "$log" "$serial_log"
   [ -n "$pristine_blk" ] && cp "$pristine_blk" "$blk_image"
   inject_pid=
   if [ "${AIUEOS_GUEST_INPUT:-0}" = 1 ]; then
@@ -393,6 +440,8 @@ PY
     scanout_pid=$!
   fi
   set +e
+  qemu_started=$(date +%s)
+  quiet_fired=
   # shellcheck disable=SC2086 # intentional optional groups of QEMU arguments
   timeout "$qemu_timeout" "$qemu" \
     -machine q35,accel=tcg -cpu max -m 128M -smp 2 \
@@ -410,8 +459,44 @@ PY
     $kbd_args \
     -device virtio-vga,disable-legacy=on,max_outputs=2 \
     $qmp_args \
-    -display "$display_opt" -serial "file:$serial_log" -monitor none -no-reboot
+    -display "$display_opt" -serial "file:$serial_log" -monitor none -no-reboot &
+  qemu_pid=$!
+  # The watchdog. It reads the mtime of BOTH logs, because measuring quiet on
+  # debugcon alone reports the guest silent while it is writing to serial --
+  # and on this firmware the OVMF exception dump goes to serial, so a
+  # debugcon-only reader concludes a dying guest said nothing at all.
+  # Before any output the clock runs from QEMU start, so a guest that never
+  # writes is caught too (that one IS retryable: nothing was measured).
+  while kill -0 "$qemu_pid" 2>/dev/null; do
+    sleep 5
+    kill -0 "$qemu_pid" 2>/dev/null || break
+    watchdog_now=$(date +%s)
+    watchdog_seen=$qemu_started
+    for watchdog_file in "$serial_log" "$log"; do
+      if [ -f "$watchdog_file" ]; then
+        watchdog_t=$(stat -f %m "$watchdog_file" 2>/dev/null || \
+                     stat -c %Y "$watchdog_file" 2>/dev/null || echo 0)
+        [ "$watchdog_t" -gt "$watchdog_seen" ] && watchdog_seen=$watchdog_t
+      fi
+    done
+    if [ $(( watchdog_now - watchdog_seen )) -ge "$quiet_limit" ]; then
+      quiet_fired=$(( watchdog_now - watchdog_seen ))
+      kill -TERM "$qemu_pid" 2>/dev/null || true
+      break
+    fi
+  done
+  wait "$qemu_pid"
   status=$?
+  # Normalised to 124 on purpose: every branch below, and fifteen sibling
+  # scripts, already know what 124 means. WHICH limit ended the attempt is
+  # carried in $quiet_fired and reported, not encoded in a new status nobody
+  # downstream reads.
+  if [ -n "$quiet_fired" ]; then status=124; fi
+  qemu_elapsed=$(( $(date +%s) - qemu_started ))
+  # Every boot's wall clock, appended, so the timeout above stays a
+  # measurement. A run that reports "timed out" without saying how long it
+  # waited cannot be compared with the runs that passed.
+  echo "boot status=$status elapsed=${qemu_elapsed}s attempt=$attempt" >> "$boot_times"
   if [ -n "$inject_pid" ]; then
     kill "$inject_pid" 2>/dev/null || true
     wait "$inject_pid" 2>/dev/null || true
@@ -421,11 +506,63 @@ PY
     wait "$scanout_pid" 2>/dev/null || true
   fi
   set -e
-  if [ "$status" -eq 124 ] && [ "$attempt" -lt "$qemu_attempts" ]; then
-    echo "warning: QEMU hung on attempt ${attempt}/${qemu_attempts} (known flake kotoba-lang/aiueos#108); retrying" >&2
-    attempt=$((attempt + 1))
-    continue
+  if [ "$status" -ne 124 ]; then break; fi
+
+  # The guest did not terminate. WHICH of three things happened is decided
+  # here, from what the guest actually wrote, and only two of them are
+  # retried. Before ADR-0200 this branch asked one question -- "was it a
+  # timeout?" -- and a dead kernel and a lost wakeup gave the same answer.
+  timeout_kind=
+  # WHEN the guest last wrote, on either stream -- the write timeline, not the
+  # exit status, is what separates a dead guest from a slow one. It is
+  # reported and never used to kill a boot: a healthy full-evidence boot has a
+  # genuine ~60s stretch with no write on either transport immediately before
+  # its final marker (measured by BISECT-SHA256, 2026-09-03), so any
+  # quiet-threshold short enough to be useful would also be short enough to
+  # kill boots that are working.
+  last_write=0
+  for f in "$serial_log" "$log"; do
+    if [ -f "$f" ]; then
+      t=$(stat -f %m "$f" 2>/dev/null || stat -c %Y "$f" 2>/dev/null || echo 0)
+      [ "$t" -gt "$last_write" ] && last_write=$t
+    fi
+  done
+  if [ "$last_write" -gt 0 ]; then
+    quiet_for=$(( $(date +%s) - last_write ))
+    wrote_at=$(( last_write - qemu_started ))
+  else
+    quiet_for=$qemu_elapsed
+    wrote_at=-1
   fi
+  fatal_line=$(grep -a -h -m1 -F "AIUEOS_FATAL_EXCEPTION" "$serial_log" "$log" 2>/dev/null | \
+                 tr -d '\r' || true)
+  last_serial=$(tr -d '\r' < "$serial_log" 2>/dev/null | grep -a -v '^[[:space:]]*$' | tail -1 || true)
+  last_debug=$(tr -d '\r' < "$log" 2>/dev/null | grep -a -v '^[[:space:]]*$' | tail -1 || true)
+  if [ -n "$fatal_line" ]; then
+    # The kernel named its own death and then failed to leave: isa-debug-exit
+    # is absent or the write did not take. Either way it is not a flake.
+    timeout_kind=GUEST-DIED
+  elif [ -n "$last_serial" ] || [ -n "$last_debug" ]; then
+    case "$last_serial" in
+      "$flake_signature"*) timeout_kind=HOST-FLAKE-SIGNATURE ;;
+      *) timeout_kind=GUEST-NO-EXIT ;;
+    esac
+  else
+    # Not one byte on either transport: the firmware never reached the debug
+    # console. Nothing about the guest was measured, so this is the one
+    # timeout a second attempt can legitimately answer.
+    timeout_kind=HOST-NO-OUTPUT
+  fi
+  case "$timeout_kind" in
+    HOST-FLAKE-SIGNATURE|HOST-NO-OUTPUT)
+      if [ "$attempt" -lt "$qemu_attempts" ]; then
+        echo "warning: ${timeout_kind} on attempt ${attempt}/${qemu_attempts} after ${qemu_elapsed}s; retrying" >&2
+        echo "         last serial line: ${last_serial:-<none>}" >&2
+        attempt=$((attempt + 1))
+        continue
+      fi
+      ;;
+  esac
   break
 done
 [ -n "$pristine_blk" ] && rm -f "$pristine_blk"
@@ -434,7 +571,41 @@ if [ -n "$aiueos_dbus_pid" ]; then
 fi
 
 if [ "$status" -eq 124 ]; then
-  echo "error: QEMU did not terminate within ${qemu_timeout}s (hung guest)" >&2
+  # Outcome (b): the guest ran and then stopped. Named, with the elapsed time
+  # and the last thing the guest said, so a reader can tell a dead kernel from
+  # a slow one without re-running anything.
+  case "$timeout_kind" in
+    GUEST-DIED)
+      echo "GUEST-DIED after ${qemu_elapsed}s: the kernel reported a fatal exception and did not exit" >&2
+      echo "  $fatal_line" >&2
+      ;;
+    GUEST-NO-EXIT)
+      echo "GUEST-NO-EXIT after ${qemu_elapsed}s (attempts=${attempt}): the guest produced output and then stopped" >&2
+      echo "  last serial: ${last_serial:-<none>}" >&2
+      echo "  last debug : ${last_debug:-<none>}" >&2
+      echo "  NOT kotoba-lang/aiueos#108: that hang stops at ${flake_signature}." >&2
+      ;;
+    HOST-FLAKE-SIGNATURE)
+      echo "GUEST-NO-EXIT after ${qemu_elapsed}s (attempts=${attempt}): every attempt stopped at ${flake_signature}" >&2
+      echo "  This IS the kotoba-lang/aiueos#108 signature and it did not clear on a retry." >&2
+      ;;
+    HOST-NO-OUTPUT)
+      echo "HOST-NO-OUTPUT after ${qemu_elapsed}s (attempts=${attempt}): the guest wrote nothing on either transport" >&2
+      ;;
+    *)
+      echo "GUEST-NO-EXIT after ${qemu_elapsed}s: unclassified timeout" >&2
+      ;;
+  esac
+  if [ -n "$quiet_fired" ]; then
+    echo "  ended by: the quiescence watchdog, after ${quiet_fired}s with no byte on either transport (limit ${quiet_limit}s)" >&2
+  else
+    echo "  ended by: the wall clock, ${qemu_timeout}s" >&2
+  fi
+  if [ "$wrote_at" -ge 0 ]; then
+    echo "  write timeline: last byte on either transport at T+${wrote_at}s, then ${quiet_for}s of silence" >&2
+  else
+    echo "  write timeline: no byte on either transport in ${qemu_elapsed}s" >&2
+  fi
   echo "--- debug log tail ---" >&2
   test -f "$log" && tail -40 "$log" >&2
   echo "--- serial log tail ---" >&2
@@ -519,6 +690,21 @@ if [ "${AIUEOS_EXPECT_CRASH:-0}" = 1 ]; then
   }
   echo "AIUEOS_CRASH_PANIC_BOOT_OK synthetic-panic receipt-written"
   exit 0
+fi
+
+# Outcome (b) by the other road: the guest DID exit, deliberately, because a
+# CPU exception was fatal. Say so with the kernel's own line FIRST -- this
+# used to arrive as an eighty-line dump of a debug log whose last useful entry
+# had been written by the firmware. AIUEOS_EXPECT_FAULT is the gate that asks
+# for exactly this, so it keeps its own handling below.
+guest_fatal=$(grep -a -h -m1 -F "AIUEOS_FATAL_EXCEPTION" "$serial_log" "$log" 2>/dev/null | \
+                tr -d '\r' || true)
+if [ -n "$guest_fatal" ] && [ "${AIUEOS_EXPECT_FAULT:-0}" != 1 ]; then
+  echo "GUEST-DIED after ${qemu_elapsed}s: the guest terminated on a fatal CPU exception" >&2
+  echo "  $guest_fatal" >&2
+  echo "--- serial log tail ---" >&2
+  test -f "$serial_log" && sed 's/\x1b\[[0-9;=]*[A-Za-z]//g' "$serial_log" | tail -20 >&2
+  exit 1
 fi
 
 # The #UD handler writes 0x30; isa-debug-exit maps it to (0x30 << 1) | 1 = 97.
