@@ -138,6 +138,12 @@ kotoba_qwen35_tensor_object=${AIUEOS_KOTOBA_QWEN35_TENSOR_OBJECT:-"$aiueos/kotob
 # 13 KiB artifact in the image to no end.
 kotoba_aes128_gcm_object=${AIUEOS_KOTOBA_AES128_GCM_OBJECT:-"$aiueos/kotoba/aes128-gcm.o"}
 kotoba_tls13_record_object=${AIUEOS_KOTOBA_TLS13_RECORD_OBJECT:-"$aiueos/kotoba/tls13-record.o"}
+# device-client: the Murakumo device-P256 worker's signed canonical text,
+# v2 and v3 (ADR-0137). Linked unconditionally, not behind
+# AIUEOS_MURAKUMO_DEVICE_RESULT, because main.c's DEVCLIENT-PARITY boot
+# self-test runs it on every UEFI profile -- the K16 profile is the only one
+# that can send a request, and it is the one that cannot be booted here.
+kotoba_device_worker_canonical_object=${AIUEOS_KOTOBA_DEVICE_WORKER_CANONICAL_OBJECT:-"$aiueos/kotoba/device-worker-canonical.o"}
 # ECDSA P-256 deterministic sign (ADR-0105). Linked ONLY when
 # AIUEOS_ECDSA_SIGN_KAT=1 -- it is ~50 KiB and the kernel is near its 1 MiB
 # ceiling, so it stays out of the default and the SSH-listener builds until the
@@ -785,6 +791,9 @@ python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_qwen35_tensor_
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_tls13_record_object" \
   46d7bf41d9c50f519ef499134f0c021d06ab7dea256002f0c56e43f83391c46f \
   kotoba_aiueos_tls13_record
+python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_device_worker_canonical_object" \
+  c64371c50104c8acd2b73224eed1377e160cd36ab70e27cae11d39b76e440b0a \
+  kotoba_aiueos_device_worker_canonical
 if [ -n "$ecdsa_sign_link" ]; then
   python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_ecdsa_sign_object" \
     decd83b1cd331af1305ad24c080443118f925067353c320078e66085695fd433 \
@@ -994,6 +1003,7 @@ zig ld.lld -nostdlib -static --strip-all $qualification_gc_link -z max-page-size
   "$kotoba_pci_config_read_object" "$kotoba_pci_config_write_object" \
   "$kotoba_x25519_object"   "$kotoba_ecdsa_object" $ecdsa_sign_link $ecdsa_public_link "$kotoba_ime_object" \
   "$kotoba_aes128_gcm_object" "$kotoba_tls13_record_object" \
+  "$kotoba_device_worker_canonical_object" \
   "$kotoba_wm_object" "$kotoba_scanout_object" "$kotoba_broker_object" "$kotoba_session_object" \
   "$kotoba_mmio_map_admit_object" \
   "$kotoba_acpi_checksum_object" "$kotoba_acpi_table_valid_object" \
