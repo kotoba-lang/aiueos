@@ -1,4 +1,4 @@
-# ADR-0137: The RTL8125 driver becomes six Kotoba objects, and a software model executes them
+# ADR-0140: The RTL8125 driver becomes six Kotoba objects, and a software model executes them
 
 ## Status
 

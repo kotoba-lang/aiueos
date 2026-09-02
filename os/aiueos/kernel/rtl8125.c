@@ -306,7 +306,7 @@ void aiueos_rtl8125_rx_rearm(struct aiueos_rtl8125 *device) {
 }
 
 /* ==========================================================================
-   THE KOTOBA PARITY SELF-TEST (ADR-0137)
+   THE KOTOBA PARITY SELF-TEST (ADR-0140)
    ==========================================================================
    Six Kotoba objects now express this driver's register sequence, its
    descriptor layouts and its status decisions.  QEMU has no RTL8125 model, so

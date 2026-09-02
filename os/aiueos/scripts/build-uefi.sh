@@ -62,7 +62,7 @@ kotoba_cap_valid_object=${AIUEOS_KOTOBA_CAP_VALID_OBJECT:-"$aiueos/kotoba/virtio
 kotoba_extent_valid_object=${AIUEOS_KOTOBA_EXTENT_VALID_OBJECT:-"$aiueos/kotoba/pci-extent-valid.o"}
 kotoba_region_valid_object=${AIUEOS_KOTOBA_REGION_VALID_OBJECT:-"$aiueos/kotoba/pci-region-valid.o"}
 kotoba_pci_config_read_object=${AIUEOS_KOTOBA_PCI_CONFIG_READ_OBJECT:-"$aiueos/kotoba/pci-config-read.o"}
-# The RTL8125 2.5GbE driver (ADR-0137). Six objects, always linked: the NIC is
+# The RTL8125 2.5GbE driver (ADR-0140). Six objects, always linked: the NIC is
 # how a diskless PXE node reaches anything at all, and `kernel/rtl8125.c` is in
 # every profile. `aiueos_rtl8125_kotoba_selftest` runs all six against a
 # software model of the BAR on every boot, so an unlinked one is a link error
@@ -109,6 +109,16 @@ kotoba_user_object_journal_object=${AIUEOS_KOTOBA_USER_OBJECT_JOURNAL_OBJECT:-"$
 kotoba_user_object_journal_valid_object=${AIUEOS_KOTOBA_USER_OBJECT_JOURNAL_VALID_OBJECT:-"$aiueos/kotoba/user-object-journal-valid.o"}
 kotoba_user_object_journal_value_object=${AIUEOS_KOTOBA_USER_OBJECT_JOURNAL_VALUE_OBJECT:-"$aiueos/kotoba/user-object-journal-value.o"}
 kotoba_sha256_object=${AIUEOS_KOTOBA_SHA256_OBJECT:-"$aiueos/kotoba/sha256.o"}
+# tokenizer: the three objects that turn a prompt into token ids and back
+# (ADR-0135). They are in the image and NOTHING CALLS THEM YET -- kernel/
+# qwen35_infer.c takes a single BOS id and has no tokenizer at all, so there is
+# no C function here to replace. Linking them now makes wiring the prompt path
+# a change to the C that calls them rather than a change to what the image
+# contains, and keeps them under the same per-object export and relocation
+# check as every other Kotoba object.
+kotoba_qwen35_vocab_index_object=${AIUEOS_KOTOBA_QWEN35_VOCAB_INDEX_OBJECT:-"$aiueos/kotoba/qwen35-vocab-index-build.o"}
+kotoba_qwen35_tokenize_object=${AIUEOS_KOTOBA_QWEN35_TOKENIZE_OBJECT:-"$aiueos/kotoba/qwen35-tokenize.o"}
+kotoba_qwen35_detokenize_object=${AIUEOS_KOTOBA_QWEN35_DETOKENIZE_OBJECT:-"$aiueos/kotoba/qwen35-detokenize.o"}
 kotoba_digest_equal_object=${AIUEOS_KOTOBA_DIGEST_EQUAL_OBJECT:-"$aiueos/kotoba/digest-equal.o"}
 kotoba_catalog_valid_object=${AIUEOS_KOTOBA_CATALOG_VALID_OBJECT:-"$aiueos/kotoba/app-catalog-valid.o"}
 kotoba_app_lookup_object=${AIUEOS_KOTOBA_APP_LOOKUP_OBJECT:-"$aiueos/kotoba/app-lookup-plan.o"}
@@ -132,7 +142,7 @@ kotoba_service_task_object=${AIUEOS_KOTOBA_SERVICE_TASK_OBJECT:-"$aiueos/kotoba/
 kotoba_rsa2048_object=${AIUEOS_KOTOBA_RSA2048_OBJECT:-"$aiueos/kotoba/rsa2048.o"}
 kotoba_x25519_object=${AIUEOS_KOTOBA_X25519_OBJECT:-"$aiueos/kotoba/x25519.o"}
 kotoba_ecdsa_object=${AIUEOS_KOTOBA_ECDSA_OBJECT:-"$aiueos/kotoba/ecdsa-p256.o"}
-# Qwen3.8-27B GGUF admission (ADR-0135). Three objects, linked only by the
+# Qwen3.8-27B GGUF admission (ADR-0137). Three objects, linked only by the
 # model-handoff profile because nothing else parses a model. They replace the
 # whole of kernel/qwen35_runtime.c's parser: with
 # -DAIUEOS_QWEN35_KOTOBA_ADMISSION that file compiles to buffer plumbing and a
@@ -149,6 +159,25 @@ kotoba_qwen35_tensor_object=${AIUEOS_KOTOBA_QWEN35_TENSOR_OBJECT:-"$aiueos/kotob
 # 13 KiB artifact in the image to no end.
 kotoba_aes128_gcm_object=${AIUEOS_KOTOBA_AES128_GCM_OBJECT:-"$aiueos/kotoba/aes128-gcm.o"}
 kotoba_tls13_record_object=${AIUEOS_KOTOBA_TLS13_RECORD_OBJECT:-"$aiueos/kotoba/tls13-record.o"}
+<<<<<<< HEAD
+# The Qwen3.5 forward pass, first tranche (ADR-0137). Linked ONLY with the
+# model handoff, because that is the only build in which the C they are
+# compared against (kernel/qwen35_infer.c, kernel/qwen35_quant.c) is compiled
+# at all -- linking them into every image would carry 23 KiB nothing calls.
+# All three return a REASON CODE and zero is success, except the dot product,
+# whose answer IS the value; see the objects' contracts.
+kotoba_qwen35_dot_object=${AIUEOS_KOTOBA_QWEN35_DOT_OBJECT:-"$aiueos/kotoba/qwen35-dot-f32.o"}
+kotoba_qwen35_dequant_object=${AIUEOS_KOTOBA_QWEN35_DEQUANT_OBJECT:-"$aiueos/kotoba/qwen35-dequant-row.o"}
+kotoba_qwen35_matvec_object=${AIUEOS_KOTOBA_QWEN35_MATVEC_OBJECT:-"$aiueos/kotoba/qwen35-matvec.o"}
+qwen35_kotoba_link=
+=======
+# device-client: the Murakumo device-P256 worker's signed canonical text,
+# v2 and v3 (ADR-0137). Linked unconditionally, not behind
+# AIUEOS_MURAKUMO_DEVICE_RESULT, because main.c's DEVCLIENT-PARITY boot
+# self-test runs it on every UEFI profile -- the K16 profile is the only one
+# that can send a request, and it is the one that cannot be booted here.
+kotoba_device_worker_canonical_object=${AIUEOS_KOTOBA_DEVICE_WORKER_CANONICAL_OBJECT:-"$aiueos/kotoba/device-worker-canonical.o"}
+>>>>>>> origin/main
 # ECDSA P-256 deterministic sign (ADR-0105). Linked ONLY when
 # AIUEOS_ECDSA_SIGN_KAT=1 -- it is ~50 KiB and the kernel is near its 1 MiB
 # ceiling, so it stays out of the default and the SSH-listener builds until the
@@ -391,6 +420,19 @@ model_part2=${AIUEOS_MODEL_PART2_BYTES:-2934860704}
 model_sha256=${AIUEOS_MODEL_SHA256:-c0b7c3038681ed2e3040456c1dd45f9858b6c2290bed172c70388a94874f3eee}
 model_min_address=${AIUEOS_MODEL_MIN_ADDRESS:-4294967296}
 model_max_address=${AIUEOS_MODEL_MAX_ADDRESS:-68719476735}
+# The Kotoba/C parity self-test for the Qwen3.5 forward-pass objects
+# (ADR-0137).  A SEPARATE flag from AIUEOS_QWEN38_MODEL_HANDOFF on purpose: the
+# handoff makes the UEFI loader demand a 10,934,860,704-byte model mapping and
+# refuse the boot without one (AIUEOS_LOADER_FAIL qwen38-model-admission
+# code=121, measured 2026-09-02), while this comparison needs no model -- it is
+# bit-equality of the arithmetic over synthetic inputs.  It compiles the same
+# two C files the handoff does, so the reference half of the comparison is the
+# code the model path actually runs.
+qwen35_parity_cflags=
+qwen35_parity_link=
+if [ "${AIUEOS_QWEN35_KOTOBA_PARITY:-0}" = 1 ]; then
+  qwen35_parity_cflags="-DAIUEOS_QWEN35_KOTOBA_PARITY=1"
+fi
 if [ "${AIUEOS_QWEN38_MODEL_HANDOFF:-0}" = 1 ] ||
    [ "${AIUEOS_MODEL_NVME_SLOTS:-0}" = 1 ]; then
   if [ "${AIUEOS_MODEL_TEST_FIXTURE:-0}" != 1 ]; then
@@ -709,6 +751,18 @@ python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_user_object_jo
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_sha256_object" \
   af378b061725473bf4aa66d02d276973ffc5c7cef4b0ed1f4a0e01fc754a7753 \
   kotoba_aiueos_sha256
+# tokenizer: same check as every object above -- one export, zero imports, one
+# relocation into its own .data, and the sha256 of the artifact this tree
+# carries.
+python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_qwen35_vocab_index_object" \
+  802defd59b320b40aeb9edc0de8f7b14f9792d0fb7f38090a8138b78e2a046ed \
+  kotoba_aiueos_qwen35_vocab_index_build
+python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_qwen35_tokenize_object" \
+  e5da4864479b272563c9ad22e4ff2812928dcba0ec7dcdd70ffe64f97d0b8ed5 \
+  kotoba_aiueos_qwen35_tokenize
+python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_qwen35_detokenize_object" \
+  9c2cf494a55b54e5213976b702114510ac70f20dfa35c016ef5787187a27acd3 \
+  kotoba_aiueos_qwen35_detokenize
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_digest_equal_object" \
   6156db8b78f883610521ac4eb458cb98df655b26087e7d6808279c8b9d927b78 \
   kotoba_aiueos_digest_equal
@@ -781,7 +835,7 @@ python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_ecdsa_object" 
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_aes128_gcm_object" \
   a3d22ecd5761e0273015267a7c3a59823fce94f545c9ee8b725b3728da665465 \
   kotoba_aiueos_aes128_gcm
-# Qwen3.8-27B GGUF admission (ADR-0135). Verified unconditionally like every
+# Qwen3.8-27B GGUF admission (ADR-0137). Verified unconditionally like every
 # object above, even in profiles that do not link them: the digests are what
 # ties the committed artifacts to the sources the oracles graded.
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_qwen35_header_object" \
@@ -796,6 +850,21 @@ python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_qwen35_tensor_
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_tls13_record_object" \
   46d7bf41d9c50f519ef499134f0c021d06ab7dea256002f0c56e43f83391c46f \
   kotoba_aiueos_tls13_record
+<<<<<<< HEAD
+if [ -n "$model_handoff_link" ] || [ -n "$qwen35_parity_cflags" ]; then
+  python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_qwen35_dot_object" \
+    "" kotoba_aiueos_qwen35_dot_f32
+  python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_qwen35_dequant_object" \
+    "" kotoba_aiueos_qwen35_dequant_row
+  python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_qwen35_matvec_object" \
+    "" kotoba_aiueos_qwen35_matvec
+  qwen35_kotoba_link="$kotoba_qwen35_dot_object $kotoba_qwen35_dequant_object $kotoba_qwen35_matvec_object"
+fi
+=======
+python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_device_worker_canonical_object" \
+  c64371c50104c8acd2b73224eed1377e160cd36ab70e27cae11d39b76e440b0a \
+  kotoba_aiueos_device_worker_canonical
+>>>>>>> origin/main
 if [ -n "$ecdsa_sign_link" ]; then
   python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_ecdsa_sign_object" \
     decd83b1cd331af1305ad24c080443118f925067353c320078e66085695fd433 \
@@ -832,7 +901,7 @@ else
 zig cc -target x86_64-freestanding-none -std=c11 -O2 \
   -ffreestanding -fno-stack-protector -mno-red-zone -I "$out" \
   $input_smoke_cflags $model_handoff_cflags $physical_qualification_cflags \
-  $qwen35_smp_cflags \
+  $qwen35_smp_cflags $qwen35_parity_cflags \
   $physical_network_qualification_cflags $physical_direct_https_qualification_cflags \
   $murakumo_device_result_cflags $persistent_boot_cflags \
   $physical_relay_qualification_cflags \
@@ -885,6 +954,22 @@ if [ "${AIUEOS_MURAKUMO_DEVICE_RESULT:-0}" = 1 ]; then
     -ffreestanding -fno-stack-protector -mno-red-zone \
     -c -o "$kernel_device_worker_protocol_object" \
     "$aiueos/kernel/device_worker_protocol.c"
+fi
+if [ -z "$model_handoff_link" ] && [ -n "$qwen35_parity_cflags" ]; then
+  # The parity build compiles the reference C without the model handoff, so
+  # the loader never asks for a model and the comparison still runs against
+  # the same qwen35_quant.c / qwen35_infer.c the handoff compiles.
+  zig cc -target x86_64-freestanding-none -std=c11 -O2 \
+    -ffreestanding -fno-stack-protector -mno-red-zone \
+    -c -o "$kernel_qwen35_runtime_object" "$aiueos/kernel/qwen35_runtime.c"
+  zig cc -target x86_64-freestanding-none -std=c11 -O3 \
+    -ffreestanding -fno-stack-protector -mno-red-zone \
+    -c -o "$kernel_qwen35_quant_object" "$aiueos/kernel/qwen35_quant.c"
+  zig cc -target x86_64-freestanding-none -std=c11 -O3 \
+    -ffreestanding -fno-stack-protector -mno-red-zone \
+    $qwen35_parity_cflags \
+    -c -o "$kernel_qwen35_infer_object" "$aiueos/kernel/qwen35_infer.c"
+  qwen35_parity_link="$kernel_qwen35_runtime_object $kernel_qwen35_quant_object $kernel_qwen35_infer_object"
 fi
 if [ -n "$model_handoff_link" ]; then
   zig cc -target x86_64-freestanding-none -std=c11 -O2 \
@@ -1008,6 +1093,11 @@ zig ld.lld -nostdlib -static --strip-all $qualification_gc_link -z max-page-size
   "$kotoba_rtl8125_tx_submit_object" "$kotoba_rtl8125_rx_poll_object" \
   "$kotoba_x25519_object"   "$kotoba_ecdsa_object" $ecdsa_sign_link $ecdsa_public_link "$kotoba_ime_object" \
   "$kotoba_aes128_gcm_object" "$kotoba_tls13_record_object" \
+<<<<<<< HEAD
+  $qwen35_kotoba_link $qwen35_parity_link \
+=======
+  "$kotoba_device_worker_canonical_object" \
+>>>>>>> origin/main
   "$kotoba_wm_object" "$kotoba_scanout_object" "$kotoba_broker_object" "$kotoba_session_object" \
   "$kotoba_mmio_map_admit_object" \
   "$kotoba_acpi_checksum_object" "$kotoba_acpi_table_valid_object" \
@@ -1042,7 +1132,10 @@ zig ld.lld -nostdlib -static --strip-all $qualification_gc_link -z max-page-size
   "$kotoba_tcp_checksum_object" \
   "$kotoba_tcp_segment_object" \
   "$kotoba_dhcp_reply_object" \
-  "$kotoba_dhcp_option_object"
+  "$kotoba_dhcp_option_object" \
+  "$kotoba_qwen35_vocab_index_object" \
+  "$kotoba_qwen35_tokenize_object" \
+  "$kotoba_qwen35_detokenize_object"
 fi
 initramfs="$kernel_dir/INITRD.IMG"
 recovery_signature="$aiueos/kotoba/user-smoke.sig"
