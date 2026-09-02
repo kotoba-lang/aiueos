@@ -277,7 +277,7 @@
        (conj {:label :record-length :offset (+ ctx-offset 60)
               :bytes (be-bytes (:expect-record-length v) 2)}))}))
 
-;; --- the Qwen3.5 forward pass, first tranche (ADR-0135) -------------------
+;; --- the Qwen3.5 forward pass, first tranche (ADR-0137) -------------------
 ;;
 ;; Three objects that are three copies of one piece of arithmetic:
 ;; `aiueos-qwen35-matvec` inlines the other two, because a kernel object
@@ -398,6 +398,89 @@
        (:expect-output-hex v)
        (conj {:label :output :offset (+ arena-offset output-offset)
               :bytes (hex-bytes (:expect-output-hex v))}))}))
+;; --- device-worker client --------------------------------------------------
+;; `device-worker-canonical` writes the text the device SIGNS. Its contract is
+;; the only one here whose expected bytes come from a second implementation
+;; rather than from a published test vector: the v2 rows are printed by
+;; `os/aiueos/tests/device_result_v2_model.c --dump-canonical`, which is the C
+;; this object replaces, and the v3 rows are the worked example in
+;; `docs/device-worker-v3.md` (network-awai/cloud-murakumo-api), which is the
+;; server that will verify what the device signs.
+;;
+;; The expected text is a VECTOR OF LINES rather than one string with escapes.
+;; A canonical form is exactly newline-joined fields, so lines are its shape,
+;; and an EDN document written through a shell heredoc corrupts `\"` -- which
+;; here would silently move a field boundary.
+
+(defn- ascii-bytes [s] (mapv #(.charCodeAt % 0) (seq s)))
+
+(defn- be64-bytes [value]
+  ;; Eight bytes, most significant first. `Math.floor` division rather than
+  ;; shifting: JavaScript's bitwise operators are 32-bit and a cycle counter or
+  ;; a 16-digit job-id is not.
+  (mapv (fn [scale] (bit-and (js/Math.floor (/ value scale)) 0xff))
+        [72057594037927936 281474976710656 1099511627776 4294967296
+         16777216 65536 256 1]))
+
+(defn- canonical-text [contract v]
+  (let [lines (:expect-lines v)]
+    (when (and (seq lines) (:expected v) (pos? (:expected v))
+               (not= (:expected v) (count (str/join "\n" lines))))
+      (fail! "REFUSING TO REPORT A PASS: the contract's stated length and its stated text disagree"
+             {:contract (:format contract) :vector (:name v)
+              :stated-length (:expected v)
+              :text-length (count (str/join "\n" lines))}))
+    (str/join "\n" lines)))
+
+(defmethod prepare :aiueos.device-worker-canonical/v1 [contract v]
+  (let [{:keys [base image-bytes ctx-offset out-offset]}
+        (get-in contract [:verification :memory])
+        ctx (:ctx contract)
+        fixture (:fixture contract)
+        field (fn [k] (get v k (get fixture k)))
+        ;; `:operation-code` / `:stop-reason-code` exist so a refusal vector can
+        ;; put a byte the protocol does not define into the context WITHOUT that
+        ;; byte having to be given a name in the contract's own vocabulary. A
+        ;; name for `9` would be a name for something the protocol has not got.
+        operation (or (:operation-code v)
+                      (get (:operations contract) (field :operation)))
+        stop (or (:stop-reason-code v)
+                 (get (:stop-reasons contract) (field :stop-reason)))
+        _ (when-not (and operation stop)
+            (fail! "REFUSING TO REPORT A PASS: this vector names an operation or stop reason the contract does not define"
+                   {:vector (:name v) :operation (field :operation)
+                    :stop-reason (field :stop-reason)}))
+        text (canonical-text contract v)
+        image (as-> (vec (repeat image-bytes 0)) img
+                (write-at img (+ ctx-offset (get-in ctx [:protocol :offset]))
+                          [(field :protocol)])
+                (write-at img (+ ctx-offset (get-in ctx [:operation :offset]))
+                          [operation])
+                (write-at img (+ ctx-offset (get-in ctx [:stop-reason :offset]))
+                          [stop])
+                (reduce (fn [m [k offset]]
+                          (write-at m (+ ctx-offset offset)
+                                    (be64-bytes (or (field k) 0))))
+                        img (:numbers ctx))
+                (reduce (fn [m [k [offset width]]]
+                          (let [s (or (field k) "")]
+                            (when (and (seq s) (not= width (count s)))
+                              (fail! "REFUSING TO REPORT A PASS: a fixed-width context field was given the wrong number of characters"
+                                     {:vector (:name v) :field k
+                                      :declared width :given (count s)}))
+                            (write-at m (+ ctx-offset offset) (ascii-bytes s))))
+                        img (:text ctx)))]
+    {:entry 'aiueos-device-worker-canonical
+     :base base
+     :image image
+     :args [(+ base ctx-offset)
+            (or (:ctx-len v) (:bytes ctx))
+            (+ base out-offset)
+            (or (:out-cap v) (get-in contract [:out :bytes]))]
+     :expect-memory
+     (cond-> []
+       (seq text)
+       (conj {:label :canonical :offset out-offset :bytes (ascii-bytes text)}))}))
 
 (defmethod prepare :default [contract _]
   (fail! "REFUSING TO REPORT A PASS: no argument builder for this contract format"
