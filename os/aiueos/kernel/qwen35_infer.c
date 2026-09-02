@@ -681,6 +681,90 @@ static int linear_attention(const struct aiueos_qwen35_layer *layer,
   return 1;
 }
 
+/* The de-interleave, the FUSED SOFTMAX and the position-zero reduction of
+ * `full_attention`, lifted out of it so that `aiueos-qwen35-attention`'s
+ * parity self-test compares the object against the code the model path runs
+ * rather than against a second transcription of it.  No loop body below
+ * changed: the geometry (24 heads, HEAD_DIM wide, six heads per KV head)
+ * arrives as arguments so the self-test can drive a smaller one, and the
+ * calls beneath pass exactly what was hard-coded here before.  ADR-0175. */
+static void attention_deinterleave(float *out, const float *qg,
+                                   uint32_t heads) {
+  for (uint32_t head = 0; head < heads; head++)
+    for (uint32_t index = 0; index < HEAD_DIM; index++)
+      out[head * HEAD_DIM + index] = qg[head * HEAD_DIM * 2U + index];
+}
+
+static void attention_zero_position(float *out, const float *qg,
+                                    const float *value, uint32_t heads,
+                                    uint32_t group) {
+  for (uint32_t head = 0; head < heads; head++) {
+    uint32_t value_head = head / group;
+    for (uint32_t index = 0; index < HEAD_DIM; index++) {
+      float gate = qg[head * HEAD_DIM * 2U + HEAD_DIM + index];
+      out[head * HEAD_DIM + index] =
+          value[value_head * HEAD_DIM + index] * sigmoid(gate);
+    }
+  }
+}
+
+/* Zero on success, otherwise the failure stage.  `key_slot` and `value_slot`
+ * are this layer's cache rows AFTER `resolved_cached_key` has run: the caller
+ * resolves once per prior rather than once per (head, prior), which repairs
+ * the same rows -- the repair reads the whole 1,024-float row and does not
+ * depend on the KV head, and it is idempotent. */
+static uint32_t attention_softmax_heads(float *qg, const float *query,
+                                        const float *key_slot,
+                                        const float *value_slot,
+                                        float *weights, uint32_t heads,
+                                        uint32_t group, uint32_t position) {
+  for (uint32_t head = 0; head < heads; head++) {
+    uint32_t kv_head = head / group;
+    const float *q = query + head * HEAD_DIM;
+    if (!finite_values(q, HEAD_DIM))
+      return AIUEOS_QWEN35_FAILURE_FULL_QUERY;
+    double attention_scores[AIUEOS_QWEN35_GENERATION_TOKENS];
+    double maximum = -1.7976931348623157e+308;
+    for (uint32_t prior = 0; prior <= position; prior++) {
+      const float *key =
+        key_slot + (uint64_t)prior * FULL_KV_WIDTH + kv_head * HEAD_DIM;
+      double score;
+      if (!stable_attention_score(q, key, HEAD_DIM, &score))
+        return AIUEOS_QWEN35_FAILURE_FULL_SOFTMAX;
+      attention_scores[prior] = score;
+      if (score > maximum) maximum = score;
+    }
+    float denominator = 0.0f;
+    for (uint32_t prior = 0; prior <= position; prior++) {
+      double difference = attention_scores[prior] - maximum;
+      float shifted = difference <= -87.0 ? -87.0f :
+                      difference >= 0.0 ? 0.0f : (float)difference;
+      weights[prior] = local_exp(shifted);
+      denominator += weights[prior];
+    }
+    if (!(denominator > 0.0f) || !finite_float(denominator))
+      return AIUEOS_QWEN35_FAILURE_FULL_SOFTMAX;
+    float *output = qg + head * HEAD_DIM;
+    for (uint32_t index = 0; index < HEAD_DIM; index++) output[index] = 0.0f;
+    for (uint32_t prior = 0; prior <= position; prior++) {
+      const float *value =
+        value_slot + (uint64_t)prior * FULL_KV_WIDTH + kv_head * HEAD_DIM;
+      float weight = weights[prior] / denominator;
+      for (uint32_t index = 0; index < HEAD_DIM; index++)
+        output[index] += value[index] * weight;
+    }
+    /* The gate is read IN PLACE.  It cannot have been overwritten: head h's
+     * output occupies [h*D, (h+1)*D) and its gate begins at h*2D + D, and
+     * h*2D + D >= (h+1)*D for every h >= 0, with equality only at h = 0.  The
+     * staging copy this code used to make through `scratch_b` was made AFTER
+     * the output was written, so it was already reading the same bytes this
+     * line reads, and it moved a float without rounding it. */
+    for (uint32_t index = 0; index < HEAD_DIM; index++)
+      output[index] *= sigmoid(qg[head * HEAD_DIM * 2U + HEAD_DIM + index]);
+  }
+  return AIUEOS_QWEN35_FAILURE_NONE;
+}
+
 static int full_attention(const struct aiueos_qwen35_layer *layer,
                           struct qwen35_decode_context *decode,
                           uint32_t full_slot) {
@@ -704,10 +788,7 @@ static int full_attention(const struct aiueos_qwen35_layer *layer,
       return fail_at(AIUEOS_QWEN35_FAILURE_FULL_KEY);
 
     /* Remove the per-head Q/G interleave before normalization and RoPE. */
-    for (uint32_t head = 0; head < 24; head++)
-      for (uint32_t index = 0; index < HEAD_DIM; index++)
-        scratch_c[head * HEAD_DIM + index] =
-          scratch_a[head * HEAD_DIM * 2U + index];
+    attention_deinterleave(scratch_c, scratch_a, 24);
     if (!rms_norm_heads_weighted(scratch_c, 24, HEAD_DIM,
                                  &full->query_norm) ||
         !rms_norm_heads_weighted(key_projection, 4, HEAD_DIM,
@@ -731,55 +812,24 @@ static int full_attention(const struct aiueos_qwen35_layer *layer,
     decode->full_key_hash[cache_index] =
       float_values_hash(key_projection, FULL_KV_WIDTH);
 
-    if (decode->position) for (uint32_t head = 0; head < 24; head++) {
-      uint32_t kv_head = head / 6U;
-      const float *query = scratch_c + head * HEAD_DIM;
-      if (!finite_values(query, HEAD_DIM))
-        return fail_at(AIUEOS_QWEN35_FAILURE_FULL_QUERY);
-      double attention_scores[AIUEOS_QWEN35_GENERATION_TOKENS];
-      double maximum = -1.7976931348623157e+308;
+    if (decode->position) {
+      /* Resolve the causal prefix ONCE PER PRIOR rather than once per
+         (head, prior): `resolved_cached_key` repairs the whole 1,024-float
+         row from the shadow and its repair does not depend on the KV head. */
       for (uint32_t prior = 0; prior <= decode->position; prior++) {
         uint64_t cache_entry =
           (uint64_t)full_slot * AIUEOS_QWEN35_GENERATION_TOKENS + prior;
-        const float *key = resolved_cached_key(decode, cache_entry, kv_head);
-        if (!key) return fail_at(AIUEOS_QWEN35_FAILURE_FULL_CACHE);
-        double score;
-        if (!stable_attention_score(query, key, HEAD_DIM, &score))
-          return fail_at(AIUEOS_QWEN35_FAILURE_FULL_SOFTMAX);
-        attention_scores[prior] = score;
-        if (score > maximum) maximum = score;
+        if (!resolved_cached_key(decode, cache_entry, 0))
+          return fail_at(AIUEOS_QWEN35_FAILURE_FULL_CACHE);
       }
-      float denominator = 0.0f;
-      for (uint32_t prior = 0; prior <= decode->position; prior++) {
-        double difference = attention_scores[prior] - maximum;
-        float shifted = difference <= -87.0 ? -87.0f :
-                        difference >= 0.0 ? 0.0f : (float)difference;
-        beta_values[prior] = local_exp(shifted);
-        denominator += beta_values[prior];
-      }
-      if (!(denominator > 0.0f) || !finite_float(denominator))
-        return fail_at(AIUEOS_QWEN35_FAILURE_FULL_SOFTMAX);
-      float *output = scratch_a + head * HEAD_DIM;
-      for (uint32_t index = 0; index < HEAD_DIM; index++) output[index] = 0.0f;
-      for (uint32_t prior = 0; prior <= decode->position; prior++) {
-        uint64_t prior_entry =
-          ((uint64_t)full_slot * AIUEOS_QWEN35_GENERATION_TOKENS + prior) *
-          FULL_KV_WIDTH + kv_head * HEAD_DIM;
-        float weight = beta_values[prior] / denominator;
-        const float *value = decode->full_value + prior_entry;
-        for (uint32_t index = 0; index < HEAD_DIM; index++)
-          output[index] += value[index] * weight;
-      }
-      for (uint32_t index = 0; index < HEAD_DIM; index++) {
-        float gate = scratch_a[head * HEAD_DIM * 2U + HEAD_DIM + index];
-        /* The gate projection is still in the original interleaved buffer for
-           heads not yet overwritten.  Save it before writing the output. */
-        scratch_b[FULL_GATE_TEMP_OFFSET + index] = gate;
-      }
-      for (uint32_t index = 0; index < HEAD_DIM; index++)
-        output[index] *= sigmoid(scratch_b[FULL_GATE_TEMP_OFFSET + index]);
-    }
-    if (decode->position) {
+      uint64_t slot_base = (uint64_t)full_slot *
+        AIUEOS_QWEN35_GENERATION_TOKENS * FULL_KV_WIDTH;
+      uint32_t stage =
+        attention_softmax_heads(scratch_a, scratch_c,
+                                decode->full_key + slot_base,
+                                decode->full_value + slot_base,
+                                beta_values, 24, 6, decode->position);
+      if (stage != AIUEOS_QWEN35_FAILURE_NONE) return fail_at(stage);
       /* Attention output must be contiguous [24,256].  The computation above
          wrote it there in scratch_a after consuming each head's gate. */
       for (uint32_t index = 0; index < LINEAR_INNER; index++)
@@ -791,14 +841,7 @@ static int full_attention(const struct aiueos_qwen35_layer *layer,
        emitted activation must be bit-for-bit the same reduction as the
        physically-qualified cache-free first-token path.  A one-element
        softmax is algebraically equivalent, not floating-point equivalent. */
-    for (uint32_t head = 0; head < 24; head++) {
-      uint32_t value_head = head / 6U;
-      for (uint32_t index = 0; index < HEAD_DIM; index++) {
-        float gate = scratch_a[head * HEAD_DIM * 2U + HEAD_DIM + index];
-        scratch_c[head * HEAD_DIM + index] =
-            scratch_b[value_head * HEAD_DIM + index] * sigmoid(gate);
-      }
-    }
+    attention_zero_position(scratch_c, scratch_a, scratch_b, 24, 6);
   }
   if (!matvec(&full->output, scratch_c, LINEAR_INNER, normalized, EMBED))
     return fail_at(AIUEOS_QWEN35_FAILURE_FULL_OUTPUT);
@@ -1156,6 +1199,19 @@ static uint32_t qwen_parity_bits(float value) {
   return representation.bits;
 }
 
+static void qwen_parity_write_u32(uint8_t *plan, uint32_t offset, uint32_t v) {
+  plan[offset + 0] = (uint8_t)(v & 0xffU);
+  plan[offset + 1] = (uint8_t)((v >> 8) & 0xffU);
+  plan[offset + 2] = (uint8_t)((v >> 16) & 0xffU);
+  plan[offset + 3] = (uint8_t)((v >> 24) & 0xffU);
+}
+
+static void qwen_parity_write_u64(uint8_t *plan, uint32_t offset, uint64_t v) {
+  qwen_parity_write_u32(plan, offset, (uint32_t)(v & 0xffffffffU));
+  qwen_parity_write_u32(plan, offset + 4, (uint32_t)(v >> 32));
+}
+
+
 #if AIUEOS_QWEN35_KOTOBA_PARITY == 1
 
 #define QWEN_PARITY_COLS 256U
@@ -1178,18 +1234,6 @@ extern uint64_t kotoba_aiueos_qwen35_matvec(uint8_t *arena, uint64_t arena_bytes
 
 static uint64_t qwen_parity_row_bytes(uint32_t type) {
   return aiueos_qwen35_quant_row_bytes(type, QWEN_PARITY_COLS);
-}
-
-static void qwen_parity_write_u32(uint8_t *plan, uint32_t offset, uint32_t v) {
-  plan[offset + 0] = (uint8_t)(v & 0xffU);
-  plan[offset + 1] = (uint8_t)((v >> 8) & 0xffU);
-  plan[offset + 2] = (uint8_t)((v >> 16) & 0xffU);
-  plan[offset + 3] = (uint8_t)((v >> 24) & 0xffU);
-}
-
-static void qwen_parity_write_u64(uint8_t *plan, uint32_t offset, uint64_t v) {
-  qwen_parity_write_u32(plan, offset, (uint32_t)(v & 0xffffffffU));
-  qwen_parity_write_u32(plan, offset + 4, (uint32_t)(v >> 32));
 }
 
 /* [weights][input][output][row scratch] in one region, which is what
@@ -1503,6 +1547,273 @@ static int qwen_parity_norm(void) {
 
 #endif /* AIUEOS_QWEN35_KOTOBA_PARITY == 2 */
 
+#if AIUEOS_QWEN35_KOTOBA_PARITY >= 3
+
+/* Stage 5 and stage 6: the two loops the matvecs sit between.  A THIRD
+ * profile for the reason the second one exists -- `aiueos_low_end <= 0x1f4000`
+ * cannot hold every object at once since the tokenizer landed -- and a stage a
+ * profile did not compile is REFUSED, never reported ok.
+ *
+ * TWO profiles rather than one, and the number is MEASURED: the two objects
+ * are 17,872 and 7,432 bytes and linking both at once overflows
+ * `aiueos_low_end <= 0x1f4000` -- ld.lld says "low kernel/user layout overlaps
+ * process-private aperture" and produces nothing.  Profile 2's pair is 16,120
+ * bytes and fits, so the ceiling is between the two and this is not a margin
+ * that can be assumed away. */
+
+#define QWEN_ATT_HEADS 8U
+#define QWEN_ATT_GROUP 2U
+#define QWEN_ATT_KV_HEADS (QWEN_ATT_HEADS / QWEN_ATT_GROUP)
+#define QWEN_ATT_POSITION 5U
+#define QWEN_ATT_PRIORS (QWEN_ATT_POSITION + 1U)
+#define QWEN_REC_DIM LINEAR_HEAD_DIM
+
+/* One region, because that is what `kernel-subregion`'s provenance rule
+ * leaves: a base must be a parameter, so six regions cannot arrive as six
+ * bases through a four-argument ABI.  Offsets are what the plan carries. */
+#define QWEN_ATT_QG      0U
+#define QWEN_ATT_OUT     (QWEN_ATT_QG    + QWEN_ATT_HEADS * HEAD_DIM * 2U * 4U)
+#define QWEN_ATT_QUERY   (QWEN_ATT_OUT   + QWEN_ATT_HEADS * HEAD_DIM * 4U)
+#define QWEN_ATT_KEY     (QWEN_ATT_QUERY + QWEN_ATT_HEADS * HEAD_DIM * 4U)
+#define QWEN_ATT_VALUE   (QWEN_ATT_KEY   + QWEN_ATT_PRIORS * FULL_KV_WIDTH * 4U)
+#define QWEN_ATT_SCRATCH (QWEN_ATT_VALUE + QWEN_ATT_PRIORS * FULL_KV_WIDTH * 4U)
+#define QWEN_ATT_ARENA   (QWEN_ATT_SCRATCH + 128U)
+
+#define QWEN_REC_STATE  0U
+#define QWEN_REC_KEY    (QWEN_REC_STATE + QWEN_REC_DIM * QWEN_REC_DIM * 4U)
+#define QWEN_REC_QUERY  (QWEN_REC_KEY   + QWEN_REC_DIM * 4U)
+#define QWEN_REC_VALUE  (QWEN_REC_QUERY + QWEN_REC_DIM * 4U)
+#define QWEN_REC_CORR   (QWEN_REC_VALUE + QWEN_REC_DIM * 4U)
+#define QWEN_REC_OUT    (QWEN_REC_CORR  + QWEN_REC_DIM * 4U)
+#define QWEN_REC_ARENA  (QWEN_REC_OUT   + QWEN_REC_DIM * 4U)
+
+static int qwen_parity_same(const float *a, const float *b, uint32_t count) {
+  for (uint32_t index = 0; index < count; index++)
+    if (qwen_parity_bits(a[index]) != qwen_parity_bits(b[index])) return 0;
+  return 1;
+}
+
+#if AIUEOS_QWEN35_KOTOBA_PARITY == 3
+extern uint64_t kotoba_aiueos_qwen35_attention(uint8_t *arena,
+                                               uint64_t arena_bytes,
+                                               const uint8_t *plan,
+                                               uint64_t plan_bytes);
+
+static uint8_t __attribute__((section(".high_bss"), aligned(16)))
+  qwen_att_arena[QWEN_ATT_ARENA];
+static uint8_t __attribute__((section(".high_bss"), aligned(8))) qwen_att_plan[96];
+static float __attribute__((section(".high_bss")))
+  qwen_att_reference[QWEN_ATT_HEADS * HEAD_DIM * 2U];
+static float __attribute__((section(".high_bss")))
+  qwen_att_weights[AIUEOS_QWEN35_GENERATION_TOKENS];
+
+static float *qwen_att_at(uint32_t offset) {
+  return (float *)(void *)(qwen_att_arena + offset);
+}
+
+static void qwen_att_fill(uint32_t offset, uint32_t count) {
+  float *p = qwen_att_at(offset);
+  for (uint32_t index = 0; index < count; index++) p[index] = qwen_parity_value();
+}
+
+/* Queries and keys are filled through this instead, and the halving is not
+ * cosmetic. `qwen_parity_value` spreads magnitudes over 2^-7..2^15, so a
+ * 256-term dot product is around 1e9 and a score around 1e8 -- every
+ * difference is then far below `local_exp`'s -87 clamp, every weight but the
+ * largest underflows to zero, and the softmax DEGENERATES to picking one
+ * prior with weight one. Measured 2026-09-03: with the wide fill, changing
+ * `shifted`'s upper clamp from 0.0f to 1.0f left the comparison GREEN,
+ * because `w_max / denominator` is one either way.
+ *
+ * In the model the query and the key have both been through
+ * `rms_norm_heads_weighted`, so `q.k/16` is O(1..10) and every prior
+ * contributes. Sixteen halvings put the synthetic inputs in that range. The
+ * scale is an exact power of two, so no value is rounded on the way in. */
+static void qwen_att_fill_narrow(uint32_t offset, uint32_t count) {
+  float *p = qwen_att_at(offset);
+  for (uint32_t index = 0; index < count; index++) {
+    float value = qwen_parity_value();
+    for (uint32_t step = 0; step < 16U; step++) value *= 0.5f;
+    p[index] = value;
+  }
+}
+
+static void qwen_att_plan_clear(void) {
+  for (uint32_t index = 0; index < 96U; index++) qwen_att_plan[index] = 0;
+}
+#else
+extern uint64_t kotoba_aiueos_qwen35_recurrent_step(uint8_t *arena,
+                                                    uint64_t arena_bytes,
+                                                    const uint8_t *plan,
+                                                    uint64_t plan_bytes);
+
+static uint8_t __attribute__((section(".high_bss"), aligned(16)))
+  qwen_rec_arena[QWEN_REC_ARENA];
+static uint8_t __attribute__((section(".high_bss"), aligned(8))) qwen_rec_plan[96];
+static float __attribute__((section(".high_bss")))
+  qwen_rec_state[QWEN_REC_DIM * QWEN_REC_DIM];
+static float __attribute__((section(".high_bss"))) qwen_rec_corr[QWEN_REC_DIM];
+static float __attribute__((section(".high_bss"))) qwen_rec_out[QWEN_REC_DIM];
+#endif
+
+#if AIUEOS_QWEN35_KOTOBA_PARITY == 3
+
+/* Stage 5.  Three modes and a refusal.  The reference half is
+ * `attention_deinterleave` / `attention_softmax_heads` /
+ * `attention_zero_position` -- the functions `full_attention` itself calls,
+ * not a second transcription of them. */
+static int qwen_parity_attention(void) {
+  uint32_t index;
+
+  /* mode 0: the query/gate de-interleave. */
+  qwen_parity_state = 0x0abcdef1u;
+  qwen_att_fill(QWEN_ATT_QG, QWEN_ATT_HEADS * HEAD_DIM * 2U);
+  attention_deinterleave(qwen_att_reference, qwen_att_at(QWEN_ATT_QG),
+                         QWEN_ATT_HEADS);
+  for (index = 0; index < QWEN_ATT_HEADS * HEAD_DIM; index++)
+    qwen_att_at(QWEN_ATT_OUT)[index] = 0.0f;
+  qwen_att_plan_clear();
+  qwen_parity_write_u32(qwen_att_plan, 0, 0);
+  qwen_parity_write_u64(qwen_att_plan, 8, QWEN_ATT_HEADS);
+  qwen_parity_write_u64(qwen_att_plan, 16, HEAD_DIM);
+  qwen_parity_write_u64(qwen_att_plan, 24, QWEN_ATT_OUT);
+  qwen_parity_write_u64(qwen_att_plan, 32, QWEN_ATT_QG);
+  if (kotoba_aiueos_qwen35_attention(qwen_att_arena, QWEN_ATT_ARENA,
+                                     qwen_att_plan, 96) != 0)
+    return 0;
+  if (!qwen_parity_same(qwen_att_reference, qwen_att_at(QWEN_ATT_OUT),
+                     QWEN_ATT_HEADS * HEAD_DIM))
+    return 0;
+
+  /* mode 1: the fused softmax over the causal prefix of the KV cache. */
+  qwen_parity_state = 0x13572468u;
+  qwen_att_fill(QWEN_ATT_QG, QWEN_ATT_HEADS * HEAD_DIM * 2U);
+  qwen_att_fill_narrow(QWEN_ATT_QUERY, QWEN_ATT_HEADS * HEAD_DIM);
+  qwen_att_fill_narrow(QWEN_ATT_KEY, QWEN_ATT_PRIORS * FULL_KV_WIDTH);
+  qwen_att_fill(QWEN_ATT_VALUE, QWEN_ATT_PRIORS * FULL_KV_WIDTH);
+  for (index = 0; index < QWEN_ATT_HEADS * HEAD_DIM * 2U; index++)
+    qwen_att_reference[index] = qwen_att_at(QWEN_ATT_QG)[index];
+  if (attention_softmax_heads(qwen_att_reference, qwen_att_at(QWEN_ATT_QUERY),
+                              qwen_att_at(QWEN_ATT_KEY),
+                              qwen_att_at(QWEN_ATT_VALUE), qwen_att_weights,
+                              QWEN_ATT_HEADS, QWEN_ATT_GROUP,
+                              QWEN_ATT_POSITION) !=
+      AIUEOS_QWEN35_FAILURE_NONE)
+    return 0;
+  qwen_att_plan_clear();
+  qwen_parity_write_u32(qwen_att_plan, 0, 1);
+  qwen_parity_write_u64(qwen_att_plan, 8, QWEN_ATT_HEADS);
+  qwen_parity_write_u64(qwen_att_plan, 16, HEAD_DIM);
+  qwen_parity_write_u64(qwen_att_plan, 32, QWEN_ATT_QG);
+  qwen_parity_write_u64(qwen_att_plan, 40, QWEN_ATT_KEY);
+  qwen_parity_write_u64(qwen_att_plan, 48, QWEN_ATT_VALUE);
+  qwen_parity_write_u64(qwen_att_plan, 56, QWEN_ATT_QUERY);
+  qwen_parity_write_u64(qwen_att_plan, 64, FULL_KV_WIDTH);
+  qwen_parity_write_u64(qwen_att_plan, 72, QWEN_ATT_GROUP);
+  qwen_parity_write_u64(qwen_att_plan, 80, QWEN_ATT_POSITION);
+  qwen_parity_write_u64(qwen_att_plan, 88, QWEN_ATT_SCRATCH);
+  if (kotoba_aiueos_qwen35_attention(qwen_att_arena, QWEN_ATT_ARENA,
+                                     qwen_att_plan, 96) != 0)
+    return 0;
+  if (!qwen_parity_same(qwen_att_reference, qwen_att_at(QWEN_ATT_QG),
+                     QWEN_ATT_HEADS * HEAD_DIM))
+    return 0;
+
+  /* mode 2: the position-zero reduction. */
+  qwen_parity_state = 0x2468ace0u;
+  qwen_att_fill(QWEN_ATT_QG, QWEN_ATT_HEADS * HEAD_DIM * 2U);
+  qwen_att_fill(QWEN_ATT_VALUE, QWEN_ATT_KV_HEADS * HEAD_DIM);
+  attention_zero_position(qwen_att_reference, qwen_att_at(QWEN_ATT_QG),
+                          qwen_att_at(QWEN_ATT_VALUE), QWEN_ATT_HEADS,
+                          QWEN_ATT_GROUP);
+  for (index = 0; index < QWEN_ATT_HEADS * HEAD_DIM; index++)
+    qwen_att_at(QWEN_ATT_OUT)[index] = 0.0f;
+  qwen_att_plan_clear();
+  qwen_parity_write_u32(qwen_att_plan, 0, 2);
+  qwen_parity_write_u64(qwen_att_plan, 8, QWEN_ATT_HEADS);
+  qwen_parity_write_u64(qwen_att_plan, 16, HEAD_DIM);
+  qwen_parity_write_u64(qwen_att_plan, 24, QWEN_ATT_OUT);
+  qwen_parity_write_u64(qwen_att_plan, 32, QWEN_ATT_QG);
+  qwen_parity_write_u64(qwen_att_plan, 40, QWEN_ATT_VALUE);
+  qwen_parity_write_u64(qwen_att_plan, 72, QWEN_ATT_GROUP);
+  if (kotoba_aiueos_qwen35_attention(qwen_att_arena, QWEN_ATT_ARENA,
+                                     qwen_att_plan, 96) != 0)
+    return 0;
+  if (!qwen_parity_same(qwen_att_reference, qwen_att_at(QWEN_ATT_OUT),
+                     QWEN_ATT_HEADS * HEAD_DIM))
+    return 0;
+
+  /* A refusal, so a run that never saw the object say no is not a pass. */
+  qwen_parity_write_u32(qwen_att_plan, 0, 3);
+  if (kotoba_aiueos_qwen35_attention(qwen_att_arena, QWEN_ATT_ARENA,
+                                     qwen_att_plan, 96) !=
+      (uint64_t)(int64_t)-5)
+    return 0;
+  return 1;
+}
+
+#endif /* == 3 */
+
+#if AIUEOS_QWEN35_KOTOBA_PARITY == 4
+/* Stage 6.  `recurrent_step` itself is the reference -- it is already a
+ * standalone function and nothing had to be lifted out of it. */
+static int qwen_parity_recurrent(void) {
+  float *state = (float *)(void *)(qwen_rec_arena + QWEN_REC_STATE);
+  float *key = (float *)(void *)(qwen_rec_arena + QWEN_REC_KEY);
+  float *query = (float *)(void *)(qwen_rec_arena + QWEN_REC_QUERY);
+  float *value = (float *)(void *)(qwen_rec_arena + QWEN_REC_VALUE);
+  float *out = (float *)(void *)(qwen_rec_arena + QWEN_REC_OUT);
+  /* 0.9375 and 0.375 are exact in binary32 and inside the ranges
+     `linear_attention` produces: `decay = local_exp(transition)` with a
+     negative transition, and `beta = sigmoid(beta_values[head])`. */
+  float decay = 0.9375f;
+  float beta = 0.375f;
+  uint32_t index;
+
+  qwen_parity_state = 0x0fedcba9u;
+  for (index = 0; index < QWEN_REC_DIM * QWEN_REC_DIM; index++)
+    state[index] = qwen_parity_value();
+  for (index = 0; index < QWEN_REC_DIM; index++) key[index] = qwen_parity_value();
+  for (index = 0; index < QWEN_REC_DIM; index++) query[index] = qwen_parity_value();
+  for (index = 0; index < QWEN_REC_DIM; index++) value[index] = qwen_parity_value();
+  for (index = 0; index < QWEN_REC_DIM * QWEN_REC_DIM; index++)
+    qwen_rec_state[index] = state[index];
+  recurrent_step(qwen_rec_state, key, query, value, decay, beta,
+                 qwen_rec_corr, qwen_rec_out);
+
+  for (index = 0; index < 96U; index++) qwen_rec_plan[index] = 0;
+  qwen_parity_write_u64(qwen_rec_plan, 8, QWEN_REC_DIM);
+  qwen_parity_write_u64(qwen_rec_plan, 16, QWEN_REC_STATE);
+  qwen_parity_write_u64(qwen_rec_plan, 24, QWEN_REC_KEY);
+  qwen_parity_write_u64(qwen_rec_plan, 32, QWEN_REC_QUERY);
+  qwen_parity_write_u64(qwen_rec_plan, 40, QWEN_REC_VALUE);
+  qwen_parity_write_u64(qwen_rec_plan, 48, QWEN_REC_CORR);
+  qwen_parity_write_u64(qwen_rec_plan, 56, QWEN_REC_OUT);
+  qwen_parity_write_u64(qwen_rec_plan, 64, qwen_parity_bits(decay));
+  qwen_parity_write_u64(qwen_rec_plan, 72, qwen_parity_bits(beta));
+  if (kotoba_aiueos_qwen35_recurrent_step(qwen_rec_arena, QWEN_REC_ARENA,
+                                          qwen_rec_plan, 96) != 0)
+    return 0;
+  /* BOTH halves of the answer: the 65,536-byte state the next token reads and
+     the activation this token emits.  A port that got the rank-one update
+     wrong but the read-out right passes the second check alone. */
+  if (!qwen_parity_same(qwen_rec_state, state, QWEN_REC_DIM * QWEN_REC_DIM))
+    return 0;
+  if (!qwen_parity_same(qwen_rec_out, out, QWEN_REC_DIM)) return 0;
+
+  /* A refusal: the dimension ceiling is 128 and this asks for 129. */
+  qwen_parity_write_u64(qwen_rec_plan, 8, 129);
+  if (kotoba_aiueos_qwen35_recurrent_step(qwen_rec_arena, QWEN_REC_ARENA,
+                                          qwen_rec_plan, 96) !=
+      (uint64_t)(int64_t)-5)
+    return 0;
+  return 1;
+}
+
+#endif /* == 4 */
+
+#endif /* AIUEOS_QWEN35_KOTOBA_PARITY >= 3 */
+
 int aiueos_qwen35_kotoba_parity_selftest(uint32_t stage) {
 #if AIUEOS_QWEN35_KOTOBA_PARITY == 1
   if (stage == 0) {
@@ -1516,9 +1827,13 @@ int aiueos_qwen35_kotoba_parity_selftest(uint32_t stage) {
       if (!qwen_parity_matvec(qwen_parity_types[index])) return 0;
     return 1;
   }
-#else
+#elif AIUEOS_QWEN35_KOTOBA_PARITY == 2
   if (stage == 3) return qwen_parity_activation();
   if (stage == 4) return qwen_parity_norm();
+#elif AIUEOS_QWEN35_KOTOBA_PARITY == 3
+  if (stage == 5) return qwen_parity_attention();
+#else
+  if (stage == 6) return qwen_parity_recurrent();
 #endif
   /* A stage this profile did not compile is a REFUSAL, not a pass: a loop that
      asked for one and got 1 would report `ok` for a comparison that never ran. */

@@ -796,6 +796,100 @@
        (:expect-a-hex v)
        (conj {:label :a :offset a-offset :bytes (hex-bytes (:expect-a-hex v))}))}))
 
+
+;; --- the Qwen3.5 forward pass, third tranche (ADR-0142) --------------------
+;;
+;; `full_attention`'s de-interleave / fused softmax / position-zero reduction,
+;; and `recurrent_step`'s gated DeltaNet update. Both take
+;; `[arena arena-bytes plan plan-bytes]`, so the vector describes a PLAN and
+;; this builder lays 96 bytes out from the contract's own memory map. A vector
+;; may override any slot by byte offset (`:plan-override {8 0}`), which is how
+;; the refusals are reached without a second argument shape.
+;;
+;; Expectations come from the same independent ClojureScript re-derivation over
+;; `Float32Array` / `Float64Array` the first two tranches used, and the same
+;; caveat applies: it proves the algorithm against a second reading of the C
+;; and says nothing about what amu emitted. The evidence that covers the
+;; backend is the QEMU self-test `QWEN-PARITY`.
+
+(defn- u64-bytes [v]
+  (into (u32-bytes (mod v 4294967296))
+        (u32-bytes (js/Math.floor (/ v 4294967296)))))
+
+(defn- plan-bytes
+  "96 bytes from `slot -> value`, u32 at 0 and 4 and u64 from 8 on -- the
+  layout both objects read. A slot absent from the map is zero, which is what
+  every reserved slot must be."
+  [slots]
+  (reduce (fn [image [slot value]]
+            (write-at image slot
+                      (if (< slot 8) (u32-bytes value) (u64-bytes value))))
+          (vec (repeat 96 0))
+          (sort-by key slots)))
+
+(defn- arena-plan-prepare [contract v entry slots]
+  (let [m (get-in contract [:verification :memory])
+        base (:base m)
+        image (reduce (fn [img [region hex]]
+                        (write-at img (+ (:arena-offset m) (get m region)) (hex-bytes hex)))
+                      (vec (repeat (:image-bytes m) 0))
+                      (:regions (meta slots) (:regions v)))
+        slots (merge slots (into {} (map (fn [[k x]] [(long k) (long x)]))
+                                 (:plan-override v)))]
+    {:entry entry
+     :base base
+     :image (write-at image (:plan-offset m) (plan-bytes slots))
+     :args [(if (some? (:arena-override v)) (:arena-override v) (+ base (:arena-offset m)))
+            (:arena-bytes m)
+            (if (some? (:plan-base-override v)) (:plan-base-override v) (+ base (:plan-offset m)))
+            (if (some? (:plan-length v)) (:plan-length v) 96)]
+     :expect-memory
+     (reduce (fn [acc [label region hex]]
+               (if hex
+                 (conj acc {:label label
+                            :offset (+ (:arena-offset m) (get m region))
+                            :bytes (hex-bytes hex)})
+                 acc))
+             []
+             (:expectations (meta slots)))}))
+
+(defmethod prepare :aiueos.qwen35-recurrent-step/v1 [contract v]
+  (let [m (get-in contract [:verification :memory])]
+    (arena-plan-prepare
+     contract v 'aiueos-qwen35-recurrent-step
+     (with-meta
+       {0 0 4 0
+        8 (:dim v)
+        16 (:state m) 24 (:key m) 32 (:query m) 40 (:value m)
+        48 (:correction m) 56 (:output m)
+        64 (:decay-bits v) 72 (:beta-bits v)
+        80 0 88 0}
+       {:regions [[:state (:state-hex v)] [:key (:key-hex v)]
+                  [:query (:query-hex v)] [:value (:value-hex v)]]
+        :expectations [[:state :state (:expect-state-hex v)]
+                       [:output :output (:expect-output-hex v)]]}))))
+
+(defmethod prepare :aiueos.qwen35-attention/v1 [contract v]
+  (let [m (get-in contract [:verification :memory])]
+    (arena-plan-prepare
+     contract v 'aiueos-qwen35-attention
+     (with-meta
+       {0 (:mode v) 4 0
+        8 (:heads v) 16 256
+        24 (if (= 1 (:mode v)) 0 (:out m))
+        32 (:qg m)
+        40 (case (long (:mode v)) 0 0 1 (:key m) 2 (:value m))
+        48 (if (= 1 (:mode v)) (:value m) 0)
+        56 (if (= 1 (:mode v)) (:query m) 0)
+        64 (if (= 1 (:mode v)) 1024 0)
+        72 (if (= 0 (:mode v)) 0 (:group v))
+        80 (if (= 1 (:mode v)) (:position v) 0)
+        88 (if (= 1 (:mode v)) (:scratch m) 0)}
+       {:regions [[:qg (:qg-hex v)] [:query (:query-hex v)]
+                  [:key (:key-hex v)] [:value (:value-hex v)]]
+        :expectations [[:qg :qg (:expect-qg-hex v)]
+                       [:out :out (:expect-out-hex v)]]}))))
+
 (defmethod prepare :default [contract _]
   (fail! "REFUSING TO REPORT A PASS: no argument builder for this contract format"
          {:format (:format contract)}))

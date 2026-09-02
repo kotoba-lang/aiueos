@@ -1479,16 +1479,22 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
        inputs, which is exactly the property that survives having no weights. */
     {
       extern int aiueos_qwen35_kotoba_parity_selftest(uint32_t stage);
-      /* Two profiles, because the low region cannot hold all five objects at
+      /* Four profiles, because the low region cannot hold every object at
          once since the tokenizer landed (see qwen35_infer.c's own comment).
-         Each half links only the objects its stages call, and a stage the
-         profile did not compile is REFUSED rather than reported ok. */
+         Each links only the objects its stages call, and a stage the profile
+         did not compile is REFUSED rather than reported ok. */
 #if AIUEOS_QWEN35_KOTOBA_PARITY == 1
       static const char *const qwen_parity_names[3] = {"dequant", "dot", "matvec"};
       uint32_t qwen_parity_first = 0U;
-#else
+#elif AIUEOS_QWEN35_KOTOBA_PARITY == 2
       static const char *const qwen_parity_names[2] = {"activation", "norm"};
       uint32_t qwen_parity_first = 3U;
+#elif AIUEOS_QWEN35_KOTOBA_PARITY == 3
+      static const char *const qwen_parity_names[1] = {"attention"};
+      uint32_t qwen_parity_first = 5U;
+#else
+      static const char *const qwen_parity_names[1] = {"recurrent"};
+      uint32_t qwen_parity_first = 6U;
 #endif
       for (uint32_t index = 0;
            index < sizeof qwen_parity_names / sizeof qwen_parity_names[0];
