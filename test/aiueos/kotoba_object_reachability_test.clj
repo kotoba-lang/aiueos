@@ -150,11 +150,22 @@
          (map slurp)
          (str/join "\n"))))
 
+;; fwstore: and the loader sources, which are `.kotoba` in this repository and
+;; are NOT under `kotoba-dir`. `os/aiueos/uefi/loader-probe.kotoba` requires
+;; `aiueos.uefi.console`, `.elf` and `.memory` and is compiled with them by
+;; `smoke-qemu-uefi-loader.cljs` through `--source-path`, so the script names
+;; the DIRECTORY and never the three files. Scanning only `kotoba-dir` for
+;; requires therefore reported three modules as reachable by nothing while a
+;; harness compiles and boots all three -- a false accusation rather than a
+;; missed one, but the same defect: a list that is shorter than the tree.
+(def ^:private import-roots
+  [kotoba-dir (io/file "os" "aiueos" "uefi")])
+
 (def ^:private imported-namespaces
-  "Every namespace some `.kotoba` here `(:require ...)`s, as the file identifier
-  it resolves to, by amu's own rule: `.` -> `/`, `-` -> `_`."
+  "Every namespace some `.kotoba` in this repository `(:require ...)`s, as the
+  file identifier it resolves to, by amu's own rule: `.` -> `/`, `-` -> `_`."
   (delay
-    (->> (file-seq kotoba-dir)
+    (->> (mapcat file-seq import-roots)
          (filter #(and (.isFile %) (str/ends-with? (.getName %) ".kotoba")))
          (mapcat #(re-seq #"\[(aiueos\.[a-z0-9.-]+)\s+:as\s" (slurp %)))
          (map (fn [[_ ns-name]]

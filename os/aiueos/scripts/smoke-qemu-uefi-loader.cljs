@@ -22,6 +22,7 @@
 ;; demonstration that this script discriminates.
 (ns smoke-qemu-uefi-loader
   (:require ["child_process" :as cp]
+            ["crypto" :as crypto]
             ["fs" :as fs]
             ["os" :as os]
             ["path" :as path]
@@ -81,6 +82,11 @@
   (let [i (.indexOf (clj->js args) name)]
     (if (neg? i) fallback (nth args (inc i) fallback))))
 
+(defn- sha256 [file]
+  (-> (crypto/createHash "sha256")
+      (.update (fs/readFileSync file))
+      (.digest "hex")))
+
 (defn build! [compiler out]
   (let [efi (path/join out "esp" "EFI" "BOOT" "BOOTX64.EFI")]
     (fs/mkdirSync (path/dirname efi) #js {:recursive true})
@@ -99,7 +105,7 @@
     (doseq [entry (fs/readdirSync out #js {:recursive true})]
       (when (re-find #"\.(c|S|o|obj|a|so)$" entry)
         (die (str "foreign/C artifact entered the loader output: " entry))))
-    {:efi efi :bytes (.-size (fs/statSync efi))}))
+    {:efi efi :bytes (.-size (fs/statSync efi)) :sha256 (sha256 efi)}))
 
 (defn observe [out code]
   (let [debug (path/join out "debug.log")
@@ -139,7 +145,22 @@
         verdicts (second (re-find #"verdict ([0-9 ]+)" serial))
         window (second (re-find #"window ([0-9 ]+)" serial))
         entry (second (re-find #"entry\s+([0-9A-F]{16})" serial))]
-    (println (str "BOOTX64.EFI " (:bytes built) " bytes"))
+    (println (str "BOOTX64.EFI " (:bytes built) " bytes image="
+                  (subs (:sha256 built) 0 16)))
+    ;; fwstore: the freshness receipt (ADR-0155). This harness compiles into
+    ;; its own `mkdtemp` and never reads a pre-built artifact, so the staleness
+    ;; ADR-0155 measured -- a KERNEL.ELF surviving a failed build -- cannot
+    ;; happen here. What CAN happen, and what this refuses, is the boot reading
+    ;; a different file from the one just compiled: the ESP is mounted
+    ;; `fat:rw:`, so the firmware may write to it, and a harness that pointed
+    ;; QEMU at the wrong path would report the same markers a correct run does
+    ;; if a stale image were there. The digest is taken after the compile and
+    ;; recomputed after the boot, on the byte the drive was built from.
+    (let [after (sha256 (:efi built))]
+      (when-not (= (:sha256 built) after)
+        (die (str "REFUSED stale-image: the file QEMU booted is not the one"
+                  " this run compiled\n  compiled " (:sha256 built)
+                  "\n  after boot " after))))
     (println (str "exit=" status " debugcon=" (pr-str debug)))
     (println (str "entry=" (pr-str entry) " verdicts=" (pr-str verdicts)
                   " window=" (pr-str window)))
