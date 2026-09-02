@@ -26,9 +26,12 @@
          :physical-k16 :unverified-for-this-compiler-commit}
   :nic {:state :one-shot-native-provider
         :implemented [:rtl8125-pci-discovery :mmio-map :dma-ring-ownership
-                      :tx :rx :arp-request-reply :udp-arp-positive-receipt]
+                      :tx :rx :arp-request-reply :udp-arp-positive-receipt
+                      :fixed-mac-udp-failure-diagnostic]
         :native-source "native/rtl8125.kotoba"
         :receipt "AIUEOS_NATIVE_ARP_OK"
+        :diagnostic-receipt "AIUEOS_NATIVE_NIC_XX"
+        :diagnostic-status-encoding :two-digit-hexadecimal
         :receipt-destination "10.77.0.1:7777"
         :required [:physical-k16-arp-positive :persistent-link-recovery]
         :qemu-evidence :bounded-no-device-passed

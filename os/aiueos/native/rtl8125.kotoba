@@ -367,15 +367,8 @@
                         source source-offset (+ index 1))
         0))))
 
-(defn build-native-arp-receipt [frame arp-reply mmio]
-  ;; Ethernet + IPv4 + UDP + "AIUEOS_NATIVE_ARP_OK".  The fixed IPv4 header
-  ;; checksum 0x6619 covers total length 48, TTL 64, UDP, 10.77.0.10 ->
-  ;; 10.77.0.1.  IPv4 permits a zero UDP checksum.
-  (if (and (= (zero-prefix frame 62 0) 1)
-           (= (copy-frame-mac frame 0 arp-reply 6 0) 1)
-           (= (copy-device-mac frame 6 mmio 0) 1)
-           (= (frame-store-be16 frame 12 2048) 2048)
-           (= (kernel-store-u8-4k frame 4096 14 69) 69)
+(defn build-ipv4-udp-header [frame]
+  (if (and (= (kernel-store-u8-4k frame 4096 14 69) 69)
            (= (kernel-store-u8-4k frame 4096 15 0) 0)
            (= (frame-store-be16 frame 16 48) 48)
            (= (frame-store-be16 frame 18 0) 0)
@@ -388,7 +381,19 @@
            (= (frame-store-be16 frame 34 7779) 7779)
            (= (frame-store-be16 frame 36 7777) 7777)
            (= (frame-store-be16 frame 38 28) 28)
-           (= (frame-store-be16 frame 40 0) 0)
+           (= (frame-store-be16 frame 40 0) 0))
+    1
+    0))
+
+(defn build-native-arp-receipt [frame arp-reply mmio]
+  ;; Ethernet + IPv4 + UDP + "AIUEOS_NATIVE_ARP_OK".  The fixed IPv4 header
+  ;; checksum 0x6619 covers total length 48, TTL 64, UDP, 10.77.0.10 ->
+  ;; 10.77.0.1.  IPv4 permits a zero UDP checksum.
+  (if (and (= (zero-prefix frame 62 0) 1)
+           (= (copy-frame-mac frame 0 arp-reply 6 0) 1)
+           (= (copy-device-mac frame 6 mmio 0) 1)
+           (= (frame-store-be16 frame 12 2048) 2048)
+           (= (build-ipv4-udp-header frame) 1)
            (= (store-receipt frame 42 0) 1))
     62
     0))
@@ -401,6 +406,81 @@
         (if (not (= submitted 0))
           27
           (if (= (wait-tx-complete tx 200000000) 1) 0 28))))))
+
+(defn hex-digit [value]
+  (if (< value 10) (+ value 48) (+ value 55)))
+
+(defn diagnostic-byte [index status]
+  ;; ASCII payload: AIUEOS_NATIVE_NIC_XX, with a two-digit hexadecimal status.
+  (if (= index 0) 65
+    (if (= index 1) 73
+      (if (= index 2) 85
+        (if (= index 3) 69
+          (if (= index 4) 79
+            (if (= index 5) 83
+              (if (= index 6) 95
+                (if (= index 7) 78
+                  (if (= index 8) 65
+                    (if (= index 9) 84
+                      (if (= index 10) 73
+                        (if (= index 11) 86
+                          (if (= index 12) 69
+                            (if (= index 13) 95
+                              (if (= index 14) 78
+                                (if (= index 15) 73
+                                  (if (= index 16) 67
+                                    (if (= index 17) 95
+                                      (if (= index 18)
+                                        (hex-digit (bit-and (quot status 16) 15))
+                                        (hex-digit (bit-and status 15))))))))))))))))))))))
+
+(defn store-diagnostic [frame offset index status]
+  (if (= index 20)
+    1
+    (let [value (diagnostic-byte index status)
+          stored (kernel-store-u8-4k frame 4096 (+ offset index) value)]
+      (if (= stored value)
+        (store-diagnostic frame offset (+ index 1) status)
+        0))))
+
+(defn store-server-mac [frame]
+  (if (and (= (kernel-store-u8-4k frame 4096 0 128) 128)
+           (= (kernel-store-u8-4k frame 4096 1 105) 105)
+           (= (kernel-store-u8-4k frame 4096 2 26) 26)
+           (= (kernel-store-u8-4k frame 4096 3 23) 23)
+           (= (kernel-store-u8-4k frame 4096 4 79) 79)
+           (= (kernel-store-u8-4k frame 4096 5 21) 21))
+    1
+    0))
+
+(defn build-native-nic-diagnostic [frame mmio status]
+  (if (and (= (zero-prefix frame 62 0) 1)
+           (= (store-server-mac frame) 1)
+           (= (copy-device-mac frame 6 mmio 0) 1)
+           (= (frame-store-be16 frame 12 2048) 2048)
+           (= (build-ipv4-udp-header frame) 1)
+           (= (store-diagnostic frame 42 0 status) 1))
+    62
+    0))
+
+(defn send-native-nic-diagnostic [mmio dma-base status]
+  (let [tx dma-base
+        tx-frame (kernel-subregion dma-base 16384 8192 4096)
+        frame-length (build-native-nic-diagnostic tx-frame mmio status)]
+    (if (= frame-length 0)
+      0
+      (if (= (tx-submit mmio tx tx-frame frame-length) 0)
+        (wait-tx-complete tx 200000000)
+        0))))
+
+(defn diagnose-network-status [mmio dma-base status]
+  ;; Preserve the provider's status as the return value.  On failure, also
+  ;; make one best-effort Ethernet/IPv4/UDP report directly to the PXE Mac's
+  ;; known link-layer address, so diagnosis does not itself depend on ARP.
+  (if (= status 0)
+    0
+    (let [reported (send-native-nic-diagnostic mmio dma-base status)]
+      (+ status (* 0 reported)))))
 
 (defn rx-rearm [rx rx-frame]
   (let [extension (kernel-store-u32 rx 512 24 0)
@@ -452,11 +532,12 @@
           (if (not (= started 0))
             (+ 10 started)
             (if (= (bit-and (mmio-load-u16 mmio 108) 2) 0)
-              20
+              (diagnose-network-status mmio dma-base 20)
               (let [arp-bytes (build-arp-request tx-frame mmio)
                     submitted (tx-submit mmio tx tx-frame arp-bytes)]
                 (if (or (= arp-bytes 0) (not (= submitted 0)))
-                  21
+                  (diagnose-network-status mmio dma-base 21)
                   (if (= (wait-tx-complete tx 200000000) 0)
-                    22
-                    (receive-arp mmio dma-base 8)))))))))))
+                    (diagnose-network-status mmio dma-base 22)
+                    (diagnose-network-status mmio dma-base
+                                             (receive-arp mmio dma-base 8))))))))))))
