@@ -178,7 +178,8 @@
    :memory-widths [:u8 :u16 :u32 :u64]
    :source "os/aiueos/native/kernel.kotoba"
    :scratch-pages {:count 14 :address-offset 80 :pages-offset 88
-                   :owner :amu-uefi-loader-data}
+                   :owner :amu-uefi-loader-data
+                   :address-limit-exclusive 549755813888}
    :k16-preflight-checkpoints ["AIUEOS K16 PREFLIGHT ENTER"
                                "AIUEOS K16 PREFLIGHT RTL8125"
                                "AIUEOS K16 PREFLIGHT STATUS XX"]

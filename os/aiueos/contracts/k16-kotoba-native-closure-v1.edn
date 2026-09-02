@@ -24,7 +24,8 @@
          :foreign-code? false
          :qemu-evidence "scripts/smoke-qemu-kotoba-native.sh"
          :scratch-pages {:count 14 :address-offset 80 :pages-offset 88
-                         :owner :amu-uefi-loader-data}
+                         :owner :amu-uefi-loader-data
+                         :address-limit-exclusive 549755813888}
          :k16-preflight {:gate :pci-02-00-0-rtl8125
                          :kernel-call :returnable-main-wrapper
                          :checkpoints ["AIUEOS K16 PREFLIGHT ENTER"

@@ -121,7 +121,11 @@
 
 (defn five-distinct [a b c d e]
   (and (> a 0) (> b 0) (> c 0) (> d 0) (> e 0)
-       (< e 1073741824)
+       ;; AllocateAnyPages may legally place loader-owned scratch above the
+       ;; first GiB. Keep the same 512 GiB physical-authority ceiling enforced
+       ;; by main and kernel-subregion instead of retaining the old low-RAM
+       ;; conventional-memory scan limit.
+       (< e 549755813888)
        (not (= a b)) (not (= a c)) (not (= a d)) (not (= a e))
        (not (= b c)) (not (= b d)) (not (= b e))
        (not (= c d)) (not (= c e)) (not (= d e))))

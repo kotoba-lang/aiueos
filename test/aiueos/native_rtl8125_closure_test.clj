@@ -41,6 +41,8 @@
       (is (str/includes? kernel "(qualify-rtl8125"))
       (is (str/includes? kernel "pre-cr3-nic-status"))
       (is (str/includes? kernel "physical-start scratch-start"))
+      (is (str/includes? kernel "(< e 549755813888)"))
+      (is (not (str/includes? kernel "(< e 1073741824)")))
       (is (str/includes? kernel "(= (load64-boot boot 8) 4)"))
       (is (str/includes? kernel "(= scratch-pages 14)"))
       (is (str/includes? kernel
