@@ -1028,6 +1028,15 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
       }
       serial_string("AIUEOS_ECDSA_P256_OK rfc6979-sample s+1-refused\r\n");
     }
+    {
+      extern int aiueos_tls13_record_selftest(void);
+      if (!aiueos_tls13_record_selftest()) {
+        serial_string("AIUEOS_TLS13_RECORD_FAIL rfc8448-s3\r\n");
+        qemu_exit(0x6f);
+      }
+      debug_string("AIUEOS_TLS13_RECORD_OK rfc8448-s3 seq0 seal-open tamper-refused\n");
+      serial_string("AIUEOS_TLS13_RECORD_OK rfc8448-s3 seq0 seal-open tamper-refused\r\n");
+    }
 #ifdef AIUEOS_PHYSICAL_QUALIFICATION
     aiueos_qualification_progress(226);
 #endif

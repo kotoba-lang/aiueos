@@ -89,39 +89,21 @@
         "model channel fetches, and giving that path a call site is a change to "
         "the kernel rather than a way to satisfy this test.")
 
-   "aes128-gcm"
-   (str "The AES-128-GCM AEAD under every TLS 1.3 record (ADR-0132). No build "
-        "links it because the thing it would replace is still there: "
-        "kernel/tls_aes_gcm.c holds the same cipher and tls13.c calls it, and "
-        "moving those call sites is a change to the kernel rather than a way "
-        "to satisfy this test -- the object's reason codes even invert the C's "
-        "convention, so a transcribed call site would accept what it refuses. "
-        "What executes it is contracts/aes128-gcm-v1.edn through "
-        "os/aiueos/scripts/verify-admissions.cljs: 15 vectors and 1 trap "
-        "against SP 800-38D and against ciphertexts that org-nist-aes and "
-        "OpenSSL agree on byte for byte, with 16 assertions on the bytes it "
-        "wrote rather than only on what it returned.")
-
    "hkdf-sha256"
-   (str "HMAC-SHA256 and HKDF-Expand-Label, the key schedule beside the AEAD "
-        "above (ADR-0132). Unlinked for the same reason: tls13.c's "
-        "hmac_sha256 / hkdf_extract / hkdf_expand_label are still the ones "
-        "being called. What executes it is contracts/hkdf-sha256-v1.edn "
-        "through verify-admissions.cljs: 18 vectors whose values are RFC 4231 "
-        "section 4 and RFC 8448 section 3, the latter taken from the "
-        "extraction org-ietf-tls keeps at resources/rfc8448_section3.edn.")
-
-   "tls13-record"
-   (str "The TLS 1.3 record layer (ADR-0133), the AEAD above plus the framing "
-        "that decides what the AEAD is applied to. Unlinked for the same "
-        "reason as its two neighbours: kernel/tls13.c's protect and unprotect "
-        "are still the ones being called, and moving those call sites is a "
-        "change to the kernel. What executes it is "
-        "contracts/tls13-record-v1.edn through verify-admissions.cljs: 17 "
-        "vectors, four of them whole encrypted records printed in RFC 8448 "
-        "section 3 beside the traffic keys that produced them, with the "
-        "sequence numbers recovered by opening each record with OpenSSL rather "
-        "than assumed to be zero.")
+   (str "HMAC-SHA256 and HKDF-Expand-Label, the TLS 1.3 key schedule "
+        "(ADR-0132). Its two neighbours -- aes128-gcm and tls13-record -- are "
+        "linked and are called by kernel/tls13.c since stage 5; this one is "
+        "NOT, and the reason is measured rather than pending. Compiled and "
+        "linked into the UEFI kernel and handed the RFC 4231 test case 1 that "
+        "its own contract runs in the KIR interpreter, the object does not "
+        "return: it exhausts its 10,000,000-fuel budget and traps `ud2`, and "
+        "with the budget patched to 2,147,483,647 it exhausts that too. "
+        "Measured 2026-09-02 under QEMU 10.1 TCG; the faulting instruction is "
+        "the fuel guard `cmpq $0,0x8(%r9)` in the object's own prologue, so "
+        "this is the compiler's lowering and not a bound this repository can "
+        "raise. What executes it remains contracts/hkdf-sha256-v1.edn through "
+        "verify-admissions.cljs: 18 vectors from RFC 4231 section 4 and RFC "
+        "8448 section 3.")
 
    "qwen35-gguf-header-valid"
    (str "The GGUF v3 container header of the Qwen3.8-27B artifact -- magic, "
@@ -148,6 +130,18 @@
         "the sha256 of the fixture scripts/smoke-qwen35-runtime.sh feeds the "
         "C, including the 495,907-string tokenizer walk that admission "
         "actually costs.")
+
+   "qwen35-tensor-table-bind"
+   (str "The 866-record GGUF tensor table against the exact graph: name to "
+        "role, role to shape, the contiguous 32-aligned extents, the ggml type "
+        "histogram, and the per-layer role sets of the hybrid schedule. The "
+        "third and last of the Qwen3.8 admission objects, and unbuilt with the "
+        "other two -- they land in the build together so the C is never "
+        "half-delegated. It is driven through the KIR interpreter by "
+        "aiueos.qwen35-tensor-table-parity-test over a 51,242-byte table "
+        "rebuilt in the test and pinned to the sha256 of the same slice of the "
+        "fixture the C gate accepts, and it must reproduce the four tensor "
+        "offsets tests/qwen35_runtime_model.c asserts.")
 
    "murakumo-join-plan"
    (str "A node's own fleet-enrolment decision. It has no caller inside the "

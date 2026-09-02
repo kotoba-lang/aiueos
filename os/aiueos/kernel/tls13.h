@@ -23,6 +23,7 @@ const uint8_t *aiueos_tls13_app(void);
 int aiueos_tls13_aes_selftest(void);
 int aiueos_tls13_hmac_selftest(void);
 int aiueos_tls13_ecdsa_selftest(void);
+int aiueos_tls13_record_selftest(void);
 int aiueos_tls13_run_certverify(void);
 int aiueos_tls13_certverify_ok(void);
 uint16_t aiueos_tls13_certverify_scheme(void);

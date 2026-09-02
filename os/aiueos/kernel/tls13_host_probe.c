@@ -79,6 +79,116 @@ uint64_t kotoba_aiueos_ecdsa_p256_sha256_verify(
   return (uint64_t)ok;
 }
 
+/* The TLS 1.3 crypto objects, stood in for by OpenSSL exactly as the three
+   above are.  `kernel/tls13.c` calls these rather than carrying the cipher,
+   the key schedule and the record framing itself (ADR-0132, ADR-0133, and the
+   stage-5 flip), and an x86-64 kernel object cannot be linked into a probe
+   that runs on this host -- so the host substitutes, which is what every
+   function in this file already does.
+
+   `kotoba_aiueos_hkdf_sha256` has NO shim here, because `tls13.c` still owns
+   its own HMAC and HKDF: that seam is not flipped, and the ADR says why.
+
+   NOTHING HERE IS EVIDENCE.  The objects' behaviour is measured by
+   `scripts/verify-admissions.cljs` against their contracts and, since stage 5,
+   by the boot self-tests under QEMU.  These shims exist so that
+   `scripts/smoke-tls13-murakumo-profile.sh` can still drive the SNI/profile
+   and live-handshake path from a Mac; if one of them disagreed with the
+   object, this probe would go green and the kernel would still be right.
+
+   Reason codes, and zero is success, as the objects define them. */
+
+static uint64_t host_gcm(const uint8_t key[16], const uint8_t nonce[12],
+                         const uint8_t *aad, uint32_t aad_len,
+                         uint8_t *data, uint32_t data_len,
+                         uint8_t tag[16], int seal) {
+  EVP_CIPHER_CTX *c = EVP_CIPHER_CTX_new();
+  uint8_t *scratch = 0;
+  int n = 0, ok = 0;
+  if (!c) return 5;
+  scratch = data_len ? (uint8_t *)malloc(data_len) : (uint8_t *)malloc(1);
+  if (!scratch) { EVP_CIPHER_CTX_free(c); return 5; }
+  if (EVP_CipherInit_ex(c, EVP_aes_128_gcm(), 0, 0, 0, seal) == 1 &&
+      EVP_CIPHER_CTX_ctrl(c, EVP_CTRL_AEAD_SET_IVLEN, 12, 0) == 1 &&
+      EVP_CipherInit_ex(c, 0, 0, key, nonce, seal) == 1 &&
+      (!seal ? EVP_CIPHER_CTX_ctrl(c, EVP_CTRL_AEAD_SET_TAG, 16, tag) == 1 : 1) &&
+      (aad_len == 0 || EVP_CipherUpdate(c, 0, &n, aad, (int)aad_len) == 1) &&
+      (data_len == 0 ||
+       EVP_CipherUpdate(c, scratch, &n, data, (int)data_len) == 1) &&
+      EVP_CipherFinal_ex(c, scratch + (data_len ? n : 0), &n) == 1)
+    ok = 1;
+  if (ok && seal)
+    ok = EVP_CIPHER_CTX_ctrl(c, EVP_CTRL_AEAD_GET_TAG, 16, tag) == 1;
+  /* Authenticate before decrypt: a refused record leaves `data` as it was. */
+  if (ok && data_len) memcpy(data, scratch, data_len);
+  EVP_CIPHER_CTX_free(c);
+  free(scratch);
+  return ok ? 0u : 5u;
+}
+
+uint64_t kotoba_aiueos_aes128_gcm(uint8_t *ctx, uint64_t ctx_len,
+                                  uint8_t *data, uint64_t data_len,
+                                  uint64_t mode) {
+  if (ctx_len < 1280) return 1;
+  if (data_len > 12288) return 2;
+  if (ctx[28] > 64) return 3;
+  if (mode > 1) return 4;
+  return host_gcm(ctx, ctx + 16, ctx + 64, ctx[28], data, (uint32_t)data_len,
+                  ctx + 32, mode == 1);
+}
+
+uint64_t kotoba_aiueos_tls13_record(uint8_t *ctx, uint64_t ctx_len,
+                                    uint8_t *rec, uint64_t rec_len,
+                                    uint64_t mode) {
+  uint8_t nonce[12];
+  uint32_t i;
+  uint64_t seq = 0;
+  if (ctx_len < 1280) return 1;
+  if (mode > 1) return 2;
+  if (rec_len < 22 || rec_len > 12310) return 3;
+  for (i = 0; i < 8; i++) seq = (seq << 8) | ctx[48 + i];
+  memcpy(nonce, ctx + 16, 12);
+  for (i = 0; i < 8; i++) nonce[4 + i] ^= (uint8_t)(seq >> (56 - 8 * i));
+  if (mode == 1) {
+    uint32_t pt_len = (uint32_t)ctx[58] * 256u + ctx[59];
+    uint32_t body_len, wire;
+    if (pt_len > 12287) return 4;
+    if (22 + pt_len > rec_len) return 4;
+    body_len = pt_len + 1;
+    wire = body_len + 16;
+    rec[5 + pt_len] = ctx[56];
+    rec[0] = 0x17; rec[1] = 0x03; rec[2] = 0x03;
+    rec[3] = (uint8_t)(wire >> 8); rec[4] = (uint8_t)(wire & 0xff);
+    memcpy(ctx + 64, rec, 5);
+    ctx[28] = 5;
+    if (host_gcm(ctx, nonce, ctx + 64, 5, rec + 5, body_len, ctx + 32, 1) != 0)
+      return 5;
+    memcpy(rec + 5 + body_len, ctx + 32, 16);
+    ctx[60] = (uint8_t)((5 + wire) >> 8);
+    ctx[61] = (uint8_t)((5 + wire) & 0xff);
+    return 0;
+  }
+  {
+    uint32_t clen = (uint32_t)rec[3] * 256u + rec[4];
+    uint32_t body_len, n;
+    if (clen + 5 != rec_len) return 5;
+    if (clen < 17 || clen - 16 > 12288) return 5;
+    body_len = clen - 16;
+    memcpy(ctx + 64, rec, 5);
+    ctx[28] = 5;
+    memcpy(ctx + 32, rec + 5 + body_len, 16);
+    if (host_gcm(ctx, nonce, ctx + 64, 5, rec + 5, body_len, ctx + 32, 0) != 0)
+      return 6;
+    n = body_len;
+    while (n > 0 && rec[5 + n - 1] == 0) n--;
+    if (n == 0) return 7;
+    ctx[56] = rec[5 + n - 1];
+    ctx[58] = (uint8_t)((n - 1) >> 8);
+    ctx[59] = (uint8_t)((n - 1) & 0xff);
+    return 0;
+  }
+}
+
 static int tcp_host(const char *host) {
   struct addrinfo hints, *res = 0, *rp;
   int fd = -1;
@@ -156,7 +266,8 @@ int main(int argc, char **argv) {
                      ((!inspect && argc > 2) ? argv[2] :
                       "/ipfs/bafkreihdwdcefgh4dqkjv67uzcmw7ojee6xedzdetojuzjevtenxquvyku");
   if (!aiueos_tls13_aes_selftest() || !aiueos_tls13_hmac_selftest() ||
-      !aiueos_tls13_ecdsa_selftest() || !configuration_refusals()) {
+      !aiueos_tls13_ecdsa_selftest() || !aiueos_tls13_record_selftest() ||
+      !configuration_refusals()) {
     puts("selftest fail");
     return 1;
   }
