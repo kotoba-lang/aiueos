@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 #include "qwen35_runtime.h"
 
-/* The GGUF admission moved to three Kotoba objects (ADR-0135). This file now
+/* The GGUF admission moved to three Kotoba objects (ADR-0145). This file now
    holds TWO implementations of `aiueos_qwen35_model_parse` and the build
    chooses one:
 
@@ -621,7 +621,7 @@ int aiueos_qwen35_model_parse(const uint8_t *bytes,
 
 #else /* AIUEOS_QWEN35_KOTOBA_ADMISSION */
 
-/* The admission is three Kotoba objects (ADR-0135). What remains here is
+/* The admission is three Kotoba objects (ADR-0145). What remains here is
    buffer plumbing: two workspaces, a little-endian load, and the translation
    from the objects' workspace into `struct aiueos_qwen35_model`, which is the
    shape `qwen35_infer.c` reads.
@@ -641,7 +641,7 @@ int aiueos_qwen35_model_parse(const uint8_t *bytes,
    `tests/qwen35_runtime_model.c` link the translation and the reference parser
    into one binary on a machine that cannot execute an x86-64 ET_REL object,
    and compare the two structs field by field. Before that seam existed the
-   translation had been read but never run (ADR-0135 left it that way). */
+   translation had been read but never run (ADR-0145 left it that way). */
 
 #define AIUEOS_QWEN35_KV_PLAN_BYTES 128U
 #define AIUEOS_QWEN35_TT_PLAN_BYTES 28160U

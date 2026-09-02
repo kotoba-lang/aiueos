@@ -15,7 +15,7 @@
  * `struct aiueos_qwen35_model` IDENTICAL to the reference parser's, field by
  * field and byte for byte.
  *
- * ADR-0135 landed that translation without ever running it: the delegation
+ * ADR-0145 landed that translation without ever running it: the delegation
  * linked, the objects passed their oracle, and the assignment between them was
  * checked by reading. Reading does not catch a field copied from the wrong
  * workspace offset, because both are plausible little-endian words.

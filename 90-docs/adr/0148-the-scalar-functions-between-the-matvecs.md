@@ -1,8 +1,8 @@
-# ADR-0140 — The scalar functions between the matvecs
+# ADR-0148 — The scalar functions between the matvecs
 
 Status: accepted
 Date: 2026-09-02
-Relates to: ADR-0137 (the forward pass's first three objects), ADR-0138 (the
+Relates to: ADR-0147 (the forward pass's first three objects), ADR-0138 (the
 AVX2 arm runs), kotoba-native #123, kotoba-kir ADR 0238.
 
 ## Decision

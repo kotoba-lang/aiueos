@@ -1,5 +1,5 @@
 ;; SCOPED receipt for the Qwen3.5 forward-pass objects -- both tranches
-;; (ADR-0137 dequant/dot/matvec, ADR-0140 activation/norm). Produced by the
+;; (ADR-0147 dequant/dot/matvec, ADR-0148 activation/norm). Produced by the
 ;; same script as `jvm-free-object-parity.edn`, run against a root containing
 ;; only these five sources and their objects:
 ;;

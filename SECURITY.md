@@ -39,7 +39,7 @@ explicit grant, and that whatever does happen is **audited**.
    2026-07-13 — a prior version of this JVM adapter linked all kernel-cap host
    functions unconditionally for every component, with only quota counting and
    the per-topic-id check below actually gated per call; see
-   `90-docs/adr/0011-link-time-capability-enforcement.md`.)
+   `90-docs/adr/0143-link-time-capability-enforcement.md`.)
    Holding some capabilities never leaks the ones you weren't given (capability
    attenuation is tested). Kernel-primitive imports (`:random/bytes`,
    `:log/write`, the DMA-family quartet, ...) resolve ONLY through the
@@ -75,7 +75,7 @@ explicit grant, and that whatever does happen is **audited**.
    unenforced `:aiueos/effects #{:dma}` field, with no structural link to the
    actual capability requested — a manifest could import `:dma/map` while
    simply omitting `:aiueos/effects #{:dma}` and skip the gate entirely; see
-   `90-docs/adr/0011-link-time-capability-enforcement.md`.)
+   `90-docs/adr/0143-link-time-capability-enforcement.md`.)
 6. **Safe-kotoba subset.** Source-built components are screened for escape
    hatches (`eval`, runtime `require`, `slurp`/`spit`, reflection, dotted host
    classes like `java.util.*`) *before* compilation — a security-shaped error,
