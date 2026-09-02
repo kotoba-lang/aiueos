@@ -27,6 +27,12 @@
 (def aiueos-version
   (str/trim (slurp (io/file "os/aiueos/VERSION"))))
 (def rtl8125 (slurp (io/file "os/aiueos/kernel/rtl8125.c")))
+;; The receive framing bits are named where the DECISION about them lives,
+;; which since ADR-0140 is a Kotoba object rather than `rtl8125.c`. Grepping
+;; the C for them after the flip would assert that a file still mentions a
+;; constant it no longer uses -- a marker that stays green by accident.
+(def rtl8125-rx-poll
+  (slurp (io/file "os/aiueos/kotoba/rtl8125-rx-poll.kotoba")))
 (def pci (slurp (io/file "os/aiueos/kernel/pci.c")))
 (def kernel (slurp (io/file "os/aiueos/kernel/main.c")))
 (def physical-network-build
@@ -834,9 +840,10 @@
 (deftest k16-rtl8125-native-qualification-is-separate-and-bounded
   (testing "the model, PCI wiring and physical-only build name the same gate"
     (doseq [marker ["aiueos_rtl8125_takeover" "aiueos_rtl8125_restart"
-                    "RGE_DESC_OWN"
-                    "RGE_RX_SOF" "RGE_RX_EOF"]]
+                    "RGE_DESC_OWN"]]
       (is (str/includes? rtl8125 marker)))
+    (doseq [marker ["RGE_RX_SOF" "RGE_RX_EOF"]]
+      (is (str/includes? rtl8125-rx-poll marker)))
     (is (str/includes? pci "aiueos_rtl8125_physical_qualification"))
     (is (str/includes? pci "0x0a4d0001U"))
     (is (str/includes? kernel "AIUEOS_PHYSICAL_NETWORK_QUALIFICATION"))

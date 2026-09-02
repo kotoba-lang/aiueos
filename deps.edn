@@ -78,6 +78,16 @@
                       io.github.kotoba-lang/org-ietf-tcp
                       {:git/url "https://github.com/kotoba-lang/org-ietf-tcp.git"
                        :git/sha "d8c15e23b6c169a4ed044cd7764923ecbb789be4"}
+                      ;; TEST-ONLY, and the whole point of it is that it is a
+                      ;; DIFFERENT implementation: `aiueos.sha256-stream-parity-test`
+                      ;; re-derives every digest the three streaming SHA-256
+                      ;; contracts assert, from the message each contract
+                      ;; describes, so a transcription error in a contract is
+                      ;; caught by something that did not read the contract's
+                      ;; answer. Pure `.cljc`; nothing this repo ships links it.
+                      io.github.kotoba-lang/org-nist-sha2
+                      {:git/url "https://github.com/kotoba-lang/org-nist-sha2.git"
+                       :git/sha "cb67e53e590e0999d741523797729a3d747cda95"}
                       ;; Hosted kami IR constructors (kami.webgpu.ir). The
                       ;; browser executor stays cljs; this is the JVM floor.
                       io.github.kotoba-lang/webgpu
@@ -109,6 +119,18 @@
                              io.github.kotoba-lang/amu
                              {:git/url "https://github.com/kotoba-lang/amu.git"
                               :git/sha "6889fa736750348863d2b98d69e688131a2ca515"}
+                             ;; Same reason as in `:test`, and it has to be here
+                             ;; too: this alias selects every `aiueos.*`
+                             ;; namespace except one, so
+                             ;; `sha256-stream-parity-test` runs on the fleet
+                             ;; and would fail to LOAD without it -- which reads
+                             ;; as a broken test rather than a missing pin.
+                             ;; org-nist-sha2 is PUBLIC, unlike org-ietf-tcp,
+                             ;; so a credential-free node can resolve it
+                             ;; (ADR-0068).
+                             io.github.kotoba-lang/org-nist-sha2
+                             {:git/url "https://github.com/kotoba-lang/org-nist-sha2.git"
+                              :git/sha "cb67e53e590e0999d741523797729a3d747cda95"}
                              io.github.kotoba-lang/webgpu
                              {:git/url "https://github.com/kotoba-lang/webgpu.git"
                               :git/sha "17598c1206a31e594b0e028245f222e53b1b8b71"}
@@ -128,18 +150,45 @@
    ;; :test keeps the compiler the committed value-runtime verdicts were
    ;; measured against. Advancing :test instead would have moved that pin 255
    ;; commits and re-measured ten receipts as a side effect of adding a runner.
+   ;; ADVANCED 2026-09-02 (ADR-0139). The previous pin (0085e138) predates
+   ;; amu#742, so `project/link-source` could not link a module a kernel object
+   ;; imports -- and all three streaming SHA-256 contracts are two-module
+   ;; projects. ADR-0135's "Not done" named advancing this as the next change;
+   ;; this is it. `hkdf-sha256-v1.edn` runs on this pin too, which is what
+   ;; ADR-0135 could only do by passing a closure in by hand.
    :verify-admissions
    {:extra-deps {io.github.kotoba-lang/amu
                  {:git/url "https://github.com/kotoba-lang/amu.git"
-                  :git/sha "0085e138484b807dddcdec397c87de6513461881"}
+                  :git/sha "ca869d79e118a3d1eb532602bcb4c39c87f6ea29"}
                  ;; Pinned explicitly, not taken through amu: amu's own pin
                  ;; predates `kir/execute`'s optional memory image, and without
                  ;; it every vector traps `:kernel-memory-unavailable`. The
                  ;; runner refuses rather than reporting a pass in that case,
                  ;; which is how this was caught.
+                 ;;
+                 ;; ADVANCED 2026-09-02 for the RTL8125 driver objects, and the
+                 ;; FRONTEND had to move with it. At the pins this alias carried
+                 ;; before, `kernel-fence-load` / `kernel-fence-store` /
+                 ;; `kernel-rdtsc` (the SYSOPS slice) have no entry in
+                 ;; `kotoba.compiler.frontend`'s operator table, so
+                 ;; `sema/analyze` refuses the whole module with `operation has
+                 ;; no admitted type signature` -- four of the six driver
+                 ;; objects could not be lowered at all, let alone executed, and
+                 ;; a runner that cannot lower an object cannot report anything
+                 ;; about it.
+                 ;;
+                 ;; `kotoba-sema` is pinned to the SHA amu's own `deps.edn`
+                 ;; names at the tip this repo's objects are compiled with, so
+                 ;; the frontend that admits a program here is the frontend that
+                 ;; admitted the `.o`. Pinning it directly rather than advancing
+                 ;; the amu above keeps that amu's ClojureScript printer fix,
+                 ;; which is the reason this alias exists.
+                 io.github.kotoba-lang/kotoba-sema
+                 {:git/url "https://github.com/kotoba-lang/kotoba-sema.git"
+                  :git/sha "e42b74eff72fdea0f55ec883a293c937421ca571"}
                  io.github.kotoba-lang/kotoba-kir
                  {:git/url "https://github.com/kotoba-lang/kotoba-kir.git"
-                  :git/sha "674a5beea7c6c02178a69808db05dcad65397f1b"}}}
+                  :git/sha "08bdab8b1084160dcb58ac291a002b140a5abf13"}}}
 
    :tcb-check {:main-opts ["-m" "aiueos.tcb"]}
 

@@ -58,6 +58,9 @@
 ;; entry renamed out of the export allow-list. Recorded as data rather than
 ;; hidden in a script, so `reproduce-kotoba-objects.cljs` can replay it and a
 ;; reviewer can see that there is no second copy of the P-256 arithmetic.
+(def ^:private ecdsa-recipe "os/aiueos/scripts/reproduce-ecdsa-sign-object.clj")
+(def ^:private kernel-recipe "os/aiueos/scripts/reproduce-kotoba-kernel-object.sh")
+
 (def ^:private source-transforms
   {"ecdsa-p256-public.o" [["(defn aiueos-ecdsa-p256-sign"
                            "(defn ecdsa-p256-sign-internal"]]})
@@ -111,6 +114,25 @@
 
 (defn- read-edn [p]
   (try (edn/read-string (.readFileSync fs p "utf8")) (catch :default _ nil)))
+
+(defn- kernel-recipe-pin
+  "The compiler revision `reproduce-kotoba-kernel-object.sh` pins, and the set
+  of objects it actually names. Read out of the script rather than restated
+  here: a second copy of a pin is a pin that can disagree with itself."
+  []
+  (let [p (path/join root kernel-recipe)
+        text (.readFileSync fs p "utf8")
+        sha (second (re-find #"(?m)^expected=([0-9a-f]{40})" text))
+        ;; `kotoba/<stem>.kotoba` and, since the ns->path move,
+        ;; `kotoba/aiueos/<munged stem>.kotoba`. Reading only the flat spelling
+        ;; would silently demote every moved object to `:unrecorded` -- the
+        ;; failure this file exists to avoid, arriving as a quieter receipt
+        ;; rather than as an error.
+        named (set (map (fn [[_ stem]] (str/replace stem "_" "-"))
+                        (re-seq #"kotoba/(?:aiueos/)?([a-z0-9_-]+)\.kotoba" text)))]
+    (when-not sha
+      (die! 2 (str "UNANSWERED could-not-answer reason=recipe-pin-unreadable path=" kernel-recipe)))
+    {:sha sha :named named}))
 
 ;; ------------------------------------------------------ verification ------
 
@@ -184,6 +206,12 @@
         out (path/join dir "provenance.edn")
         prior (:objects (read-edn out))
         verified (verification-index)
+        ;; The recipe's pin is a CLAIM, and it is seeded here only for objects
+        ;; the recipe actually names. `reproduce-kotoba-objects.cljs` is what
+        ;; turns it into a measurement: it recompiles at exactly this revision
+        ;; and compares. Measured 2026-09-02, `sha256.o` is byte-identical when
+        ;; built at 9cf3a0ac, so the claim holds for it.
+        {recipe-sha :sha recipe-named :named} (kernel-recipe-pin)
         objects (->> (.readdirSync fs dir)
                      (filter #(str/ends-with? % ".o"))
                      sort
@@ -195,7 +223,19 @@
            (sorted-map)
            (for [o objects]
              (let [stem (subs o 0 (- (count o) 2))
-                   src-name (get source-overrides o (str stem ".kotoba"))
+                   ;; Flat `<stem>.kotoba` first, then the ns->path spelling
+                   ;; `aiueos/<munged stem>.kotoba` an object's source moves to
+                   ;; when it becomes an importable module. Same rule as
+                   ;; `module-file` above, and it has to be the same rule: a
+                   ;; source this cannot find is reported as `source-absent`
+                   ;; and stops the run, which is right for a source that is
+                   ;; gone and wrong for one that merely moved.
+                   src-name (or (get source-overrides o)
+                                (first (filter #(.existsSync fs (path/join dir %))
+                                               [(str stem ".kotoba")
+                                                (str "aiueos/" (str/replace stem "-" "_")
+                                                     ".kotoba")]))
+                                (str stem ".kotoba"))
                    src-path (path/join dir src-name)
                    src-rel (str "os/aiueos/kotoba/" src-name)
                    _ (when-not (.existsSync fs src-path)
@@ -222,10 +262,17 @@
                                   :object-sha256 obj-sha
                                   :target target
                                   :route (if (seq modules) :project :single-file)
-                                  :compiler (if carry?
-                                              (:compiler was)
-                                              {:repo "kotoba-lang/amu" :sha nil
-                                               :recipe :unrecorded})}
+                                  :compiler
+                                  (cond
+                                    carry? (:compiler was)
+                                    (contains? recipe-named stem)
+                                    {:repo "kotoba-lang/amu" :sha recipe-sha
+                                     :recipe kernel-recipe}
+                                    (contains? #{"ecdsa-p256-sign.o" "ecdsa-p256-public.o"} o)
+                                    {:repo "kotoba-lang/amu" :sha recipe-sha
+                                     :recipe ecdsa-recipe :patched true}
+                                    :else {:repo "kotoba-lang/amu" :sha nil
+                                           :recipe :unrecorded})}
                                  v)
                     (seq modules) (assoc :modules modules)
                     (contains? source-transforms o)

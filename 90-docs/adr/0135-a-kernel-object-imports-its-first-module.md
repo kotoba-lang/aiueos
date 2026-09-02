@@ -1,4 +1,4 @@
-# ADR 0134: a kernel object imports its first module
+# ADR 0135: a kernel object imports its first module
 
 - Status: accepted
 - Date: 2026-09-02

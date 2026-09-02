@@ -1,4 +1,4 @@
-# ADR 0134 — The f32 dot product, executed, and what it did not execute
+# ADR 0144 — The f32 dot product, executed, and what it did not execute
 
 Status: accepted (2026-09-02)
 

@@ -67,7 +67,7 @@
 
  :reproduce-objects
  {:cmd ["nbb" "os/aiueos/scripts/reproduce-kotoba-objects.cljs"]
-  :doc "Recompile every committed Kotoba kernel object from os/aiueos/kotoba/provenance.edn and compare the bytes. Needs --amu <checkout>; exit 0 all reproduce, 3 any differ, 2 could not run. Replaces reproduce-kotoba-kernel-object.sh and reproduce-ecdsa-sign-object.clj."}
+  :doc "Recompile every committed Kotoba kernel object from os/aiueos/kotoba/provenance.edn and compare the bytes. Needs --amu <checkout>; or --git-resolve to fetch each object's RECORDED revision; exit 0 all reproduce, 3 any differ, 2 could not run. Turns the recipes' pin from a claim into a measurement."}
 
  :kernel-object-digests
  {:cmd ["nbb" "os/aiueos/scripts/sync-kernel-object-digests.cljs" "--check"]

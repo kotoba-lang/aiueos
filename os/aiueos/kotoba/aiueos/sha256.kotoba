@@ -1,4 +1,4 @@
-(ns aiueos.value-runtime-sha256
+(ns aiueos.sha256
   (:export [aiueos-sha256 main]))
 
 ;; SHA-256 for the freestanding aiueos kernel.  The public entry accepts a

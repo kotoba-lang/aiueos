@@ -178,6 +178,7 @@
       (not= claimed committed-sha) :object-sha256-mismatch
       (not= fresh-sha committed-sha) :differs
       (nil? recorded) :unrecorded-producer
+      (= :recorded available) :match
       (not= recorded available) :drift
       :else :match)))
 
@@ -251,9 +252,11 @@
                  :else 0))))
 
 (defn -main []
-  (let [amu-dir (when-let [d (opt "--amu")] (path/resolve d))
-        _ (when-not amu-dir (die! 2 "COULD-NOT-RUN reason=amu-not-given (pass --amu <dir>)"))
-        rev (amu-revision amu-dir)
+  (let [git-resolve? (flag? "--git-resolve")
+        amu-dir (when-let [d (opt "--amu")] (path/resolve d))
+        _ (when-not (or amu-dir git-resolve?)
+            (die! 2 "COULD-NOT-RUN reason=amu-not-given (pass --amu <dir> or --git-resolve)"))
+        rev (if git-resolve? {:sha :recorded :pins {}} (amu-revision amu-dir))
         _ (when (:error rev) (die! 2 (str "COULD-NOT-RUN reason=" (:error rev))))
         prov-path (path/resolve (or (opt "--provenance")
                                     (path/join kotoba-dir "provenance.edn")))
@@ -304,7 +307,13 @@
                (not (.existsSync fs committed))
                (finish! object {:error (str "committed-object-absent object=" object)})
 
-               (and (not drift-ok?) (not attest?)
+               ;; Nothing to resolve. Reported as its own verdict, never as a
+               ;; compile that happened to agree.
+               (and git-resolve? (not (get-in receipt [:compiler :sha])))
+               (finish! object {:verdict :unrecorded-producer
+                                :committed-sha (sha256-file committed)})
+
+               (and (not drift-ok?) (not attest?) (not git-resolve?)
                     (get-in receipt [:compiler :sha])
                     (not= (get-in receipt [:compiler :sha]) (:sha rev)))
                (finish! object {:verdict :drift :committed-sha (sha256-file committed)})
@@ -320,11 +329,26 @@
                                               (str ".reproduce-" object ".kotoba"))
                                    src-path)
                          _ (when transformed? (.writeFileSync fs in-path text "utf8"))
-                         a (cond-> ["compile" in-path "--target" target
-                                    "--output" out-path "--jvm-free"]
+;; `--git-resolve` compiles at the revision THIS receipt records, resolved
+                         ;; straight from git by tools.deps. It is the only mode in which the
+                         ;; driver cannot quietly answer about a different compiler than the one
+                         ;; the manifest names -- and it is how the retired recipes' pin becomes
+                         ;; checkable without anyone having that checkout on disk. It costs a JVM
+                         ;; per object, which is the price of asking the exact question.
+                         recorded (get-in receipt [:compiler :sha])
+                         a (cond-> (if git-resolve?
+                                     ["-Sdeps" (str "{:deps {io.github.kotoba-lang/amu "
+                                                    "{:git/url \"https://github.com/kotoba-lang/amu.git\" "
+                                                    ":git/sha \"" recorded "\"}}}")
+                                      "-M" "-m" "kotoba.compiler.cli"
+                                      "compile" in-path "--target" target "--output" out-path]
+                                     ["compile" in-path "--target" target
+                                      "--output" out-path "--jvm-free"])
                              project? (into ["--source-path" kotoba-dir]))
-                         p (.spawn child (path/join amu-dir "bin" "amu") (clj->js a)
-                                   #js {:cwd amu-dir :stdio #js ["ignore" "pipe" "pipe"]})
+                         p (.spawn child (if git-resolve? "clojure" (path/join amu-dir "bin" "amu"))
+                                   (clj->js a)
+                                   #js {:cwd (if git-resolve? root amu-dir)
+                                        :stdio #js ["ignore" "pipe" "pipe"]})
                          tail (atom "")]
                      (.on (.-stdout p) "data" #(swap! tail (fn [t] (str t %))))
                      (.on (.-stderr p) "data" #(swap! tail (fn [t] (str t %))))

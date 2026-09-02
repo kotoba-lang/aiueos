@@ -1,3 +1,15 @@
+;; ⚠ TWO OF THE THREE ROWS BELOW DESCRIBE ARTIFACTS THAT NO LONGER EXIST.
+;; ADR-0141 extracted the AEAD `aes128-gcm.kotoba` and `tls13-record.kotoba`
+;; both contained into `aiueos/lib/aes128_gcm_core.kotoba` and rebuilt both
+;; objects: `aes128-gcm` is now 14,232 B / 65492e52… and `tls13-record` is
+;; 17,736 B / 5c3dee81…. `hkdf-sha256` is unchanged.
+;;
+;; This file is NOT edited to match. It is a receipt of a run that happened, at
+;; a compiler tree it names, and rewriting measured rows to keep them current
+;; would make every other number in it unfalsifiable. The current measurement
+;; is `jvm-free-object-parity-project-route.edn`, which covers these three and
+;; four more.
+;;
 ;; SCOPED receipt, and the scope is the point. Produced by the SAME script as
 ;; `jvm-free-object-parity.edn` -- `os/aiueos/scripts/verify-jvm-free-object-parity.cljs`
 ;; -- run against a root containing only these three sources and their objects:

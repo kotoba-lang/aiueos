@@ -120,24 +120,53 @@
       {:status (.-status r)
        :text (str (.-stdout r) (.-stderr r))})))
 
-;; A source that declares `(:require ...)` is a module of a project and needs
-;; `--source-path`; without it BOTH routes refuse with
-;; `:kotoba.error/namespace-require-needs-project`, and the comparison that
-;; comes back is `:failed` -- an answer about the object, for a question that
-;; was asked wrong. Measured 2026-09-02 on `hkdf-sha256`, the one committed
-;; object that imports a module (ADR-0135).
-(defn- project-source? [src]
-  (boolean (re-find #"\(:require\s" (.readFileSync fs src "utf8"))))
+;; The project route is entered ON DEMAND, and the demand is the compiler's own
+;; refusal.
+;;
+;; A source that declares `(:require ...)` is a project and needs
+;; `--source-path`; without it amu answers
+;; `:kotoba.error/namespace-require-needs-project`. Five committed objects are
+;; built that way since amu#742 (aes128-gcm, tls13-record, hkdf-sha256,
+;; cid-v1-admit, value-runtime-cas-verify) and this script would have reported
+;; every one of them as :failed -- a statement about the invocation, not about
+;; the object.
+;;
+;; Passing the flag ALWAYS is not the fix, and that was measured rather than
+;; assumed: `fnv1a.kotoba` declares no `ns` at all, and with `--source-path` it
+;; is refused with "project module requires exactly one namespace" (2026-09-02,
+;; amu bb51dc14). Deciding from a regex over the source is not the fix either
+;; -- a `(:require ...)` spelled in a way the regex missed would get the wrong
+;; invocation and a verdict that reads like an answer.
+;;
+;; So the compiler decides. Plain first; if the refusal names the project
+;; route, run it again with `--source-path`. Both routes make the same decision
+;; independently, so neither is measured under a shape the other did not get.
+;; `--unpinned` travels WITH `--source-path`, and it is not decoration: the two
+;; routes disagree about what a bare `--source-path` means. The JVM route
+;; refuses a multi-module compile without it ("a multi-module compile needs
+;; pinned inputs"); the JVM-free route proceeds and reports
+;; `:kotoba.compile/inputs :unpinned-source-path`. Sending the flag on both
+;; makes the comparison about the OBJECT rather than about that divergence.
+;; Measured 2026-09-02: adding it to the JVM-free route leaves the bytes
+;; unchanged (cid-v1-admit, 3aeb2308... either way).
+(defn- invoke [route src out source-path?]
+  (case route
+    :jvm-free (run (.join path compiler "bin" "amu")
+                   (cond-> ["compile" src "--target" target "--output" out "--jvm-free"]
+                     source-path? (conj "--source-path" kotoba-dir "--unpinned"))
+                   {:no-jvm? true})
+    :jvm (run "clojure"
+              (cond-> ["-M:run" "compile" src "--target" target "--output" out]
+                source-path? (conj "--source-path" kotoba-dir "--unpinned")))))
 
 (defn- compile-one [route src out]
-  (let [extra (if (project-source? src) ["--source-path" kotoba-dir] [])
+  (let [plain (invoke route src out false)
         {:keys [status text]}
-        (case route
-          :jvm-free (run (.join path compiler "bin" "amu")
-                         (into ["compile" src "--target" target "--output" out "--jvm-free"] extra)
-                         {:no-jvm? true})
-          :jvm (run "clojure"
-                    (into ["-M:run" "compile" src "--target" target "--output" out] extra)))]
+        (if (and (not (zero? (:status plain)))
+                 (re-find #"namespace-require-needs-project" (:text plain)))
+          (do (.rmSync fs out #js {:force true})
+              (invoke route src out true))
+          plain)]
     (if (and (zero? status) (.existsSync fs out))
       {:ok true :sha (sha256 (.readFileSync fs out)) :bytes (.-size (.statSync fs out))}
       {:ok false :verdict (classify text)
@@ -170,11 +199,23 @@
                    ;; started: still not an answer about the object.
                    :verdict (:verdict second-try)))))))
 
+;; `<stem>.kotoba` beside the object, or the ns->path spelling
+;; `aiueos/<munged stem>.kotoba` its source moves to when it becomes an
+;; importable module. Looking only for the flat name would DROP those objects
+;; from the run -- `sha256.o` and `digest-equal.o` are exactly that case since
+;; ADR-0141 -- and a shorter list reads as a clean pass over everything that
+;; was left.
+(defn- source-of [base]
+  (->> [(str base ".kotoba")
+        (str "aiueos/" (.replaceAll base "-" "_") ".kotoba")]
+       (filter #(.existsSync fs (.join path kotoba-dir %)))
+       first))
+
 (def sources
   (->> (.readdirSync fs kotoba-dir)
        (filter #(.endsWith % ".o"))
        (map #(.slice % 0 -2))
-       (filter #(.existsSync fs (.join path kotoba-dir (str % ".kotoba"))))
+       (filter source-of)
        sort
        vec))
 
@@ -212,7 +253,7 @@
 
 (def results
   (vec (for [base selected
-             :let [src (.join path kotoba-dir (str base ".kotoba"))
+             :let [src (.join path kotoba-dir (source-of base))
                    a (compile-with-retry :jvm-free src (.join path work (str base ".nbb.o")))
                    b (compile-with-retry :jvm src (.join path work (str base ".jvm.o")))
                    verdict (cond
