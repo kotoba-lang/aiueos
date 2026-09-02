@@ -320,6 +320,88 @@
        (= (frame-be32 frame 38) 172818442)
        (= (frame-mac-matches-device frame 32 mmio 0) 1)))
 
+;; The physical qualification receipt is emitted by this provider itself,
+;; after the ARP reply has been admitted.  The Mac's existing UDP/7777 logger
+;; can therefore distinguish "UEFI downloaded the image" from "the pure
+;; Kotoba RTL8125 driver transmitted, received and used an ARP reply" without
+;; privileged packet capture or a host-side ARP-cache guess.
+(defn receipt-byte [index]
+  (if (= index 0) 65
+    (if (= index 1) 73
+      (if (= index 2) 85
+        (if (= index 3) 69
+          (if (= index 4) 79
+            (if (= index 5) 83
+              (if (= index 6) 95
+                (if (= index 7) 78
+                  (if (= index 8) 65
+                    (if (= index 9) 84
+                      (if (= index 10) 73
+                        (if (= index 11) 86
+                          (if (= index 12) 69
+                            (if (= index 13) 95
+                              (if (= index 14) 65
+                                (if (= index 15) 82
+                                  (if (= index 16) 80
+                                    (if (= index 17) 95
+                                      (if (= index 18) 79
+                                        (if (= index 19) 75 0)))))))))))))))))))))
+
+(defn store-receipt [frame offset index]
+  (if (= index 20)
+    1
+    (let [value (receipt-byte index)
+          stored (kernel-store-u8-4k frame 4096 (+ offset index) value)]
+      (if (= stored value)
+        (store-receipt frame offset (+ index 1))
+        0))))
+
+(defn copy-frame-mac [destination destination-offset source source-offset index]
+  (if (= index 6)
+    1
+    (let [value (kernel-load-u8-4k source 4096 (+ source-offset index))
+          stored (kernel-store-u8-4k destination 4096
+                                      (+ destination-offset index) value)]
+      (if (= stored value)
+        (copy-frame-mac destination destination-offset
+                        source source-offset (+ index 1))
+        0))))
+
+(defn build-native-arp-receipt [frame arp-reply mmio]
+  ;; Ethernet + IPv4 + UDP + "AIUEOS_NATIVE_ARP_OK".  The fixed IPv4 header
+  ;; checksum 0x6619 covers total length 48, TTL 64, UDP, 10.77.0.10 ->
+  ;; 10.77.0.1.  IPv4 permits a zero UDP checksum.
+  (if (and (= (zero-prefix frame 62 0) 1)
+           (= (copy-frame-mac frame 0 arp-reply 6 0) 1)
+           (= (copy-device-mac frame 6 mmio 0) 1)
+           (= (frame-store-be16 frame 12 2048) 2048)
+           (= (kernel-store-u8-4k frame 4096 14 69) 69)
+           (= (kernel-store-u8-4k frame 4096 15 0) 0)
+           (= (frame-store-be16 frame 16 48) 48)
+           (= (frame-store-be16 frame 18 0) 0)
+           (= (frame-store-be16 frame 20 0) 0)
+           (= (kernel-store-u8-4k frame 4096 22 64) 64)
+           (= (kernel-store-u8-4k frame 4096 23 17) 17)
+           (= (frame-store-be16 frame 24 26137) 26137)
+           (= (frame-store-be32 frame 26 172818442) 172818442)
+           (= (frame-store-be32 frame 30 172818433) 172818433)
+           (= (frame-store-be16 frame 34 7779) 7779)
+           (= (frame-store-be16 frame 36 7777) 7777)
+           (= (frame-store-be16 frame 38 28) 28)
+           (= (frame-store-be16 frame 40 0) 0)
+           (= (store-receipt frame 42 0) 1))
+    62
+    0))
+
+(defn send-native-arp-receipt [mmio tx tx-frame arp-reply]
+  (let [frame-length (build-native-arp-receipt tx-frame arp-reply mmio)]
+    (if (= frame-length 0)
+      26
+      (let [submitted (tx-submit mmio tx tx-frame frame-length)]
+        (if (not (= submitted 0))
+          27
+          (if (= (wait-tx-complete tx 200000000) 1) 0 28))))))
+
 (defn rx-rearm [rx rx-frame]
   (let [extension (kernel-store-u32 rx 512 24 0)
         address (store64-page rx 16 rx-frame)
@@ -331,22 +413,26 @@
       1
       0)))
 
-(defn receive-arp [mmio rx rx-frame frames]
-  (if (= frames 0)
-    25
-    (let [command (wait-rx-command rx 200000000)]
-      (if (= command 0)
-        23
-        (let [bytes (bit-and command 16383)
-              valid-command (and (= (bit-and command 1048576) 0)
-                                 (not (= (bit-and command 33554432) 0))
-                                 (not (= (bit-and command 16777216) 0))
-                                 (>= bytes 18) (<= bytes 2048))]
-          (if (and valid-command (arp-reply-valid rx-frame (- bytes 4) mmio))
-            0
-            (if (= (rx-rearm rx rx-frame) 1)
-              (receive-arp mmio rx rx-frame (- frames 1))
-              24)))))))
+(defn receive-arp [mmio dma-base frames]
+  (let [tx dma-base
+        rx (kernel-subregion dma-base 16384 4096 4096)
+        tx-frame (kernel-subregion dma-base 16384 8192 4096)
+        rx-frame (kernel-subregion dma-base 16384 12288 4096)]
+    (if (= frames 0)
+      25
+      (let [command (wait-rx-command rx 200000000)]
+        (if (= command 0)
+          23
+          (let [bytes (bit-and command 16383)
+                valid-command (and (= (bit-and command 1048576) 0)
+                                   (not (= (bit-and command 33554432) 0))
+                                   (not (= (bit-and command 16777216) 0))
+                                   (>= bytes 18) (<= bytes 2048))]
+            (if (and valid-command (arp-reply-valid rx-frame (- bytes 4) mmio))
+              (send-native-arp-receipt mmio tx tx-frame rx-frame)
+              (if (= (rx-rearm rx rx-frame) 1)
+                (receive-arp mmio dma-base (- frames 1))
+                24))))))))
 
 (defn qualify [bus bar dma-base]
   (let [tx dma-base
@@ -373,4 +459,4 @@
                   21
                   (if (= (wait-tx-complete tx 200000000) 0)
                     22
-                    (receive-arp mmio rx rx-frame 8)))))))))))
+                    (receive-arp mmio dma-base 8)))))))))))
