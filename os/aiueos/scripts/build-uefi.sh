@@ -154,9 +154,15 @@ kotoba_qwen35_tensor_object=${AIUEOS_KOTOBA_QWEN35_TENSOR_OBJECT:-"$aiueos/kotob
 # The TLS 1.3 AEAD and record layer (ADR-0132, ADR-0133). Both return a REASON
 # CODE and zero is success -- the C they replaced returned 1 for success, so a
 # transcribed `if (call(...))` accepts exactly what they refuse.
-# `hkdf-sha256.o` is deliberately NOT here: it does not return on this machine
-# (see the stage-5 ADR), and linking an object nothing may call would put a
-# 13 KiB artifact in the image to no end.
+# `hkdf-sha256.o` is deliberately NOT here, but the reason has CHANGED. It used
+# not to return on this machine (ADR-0134); ADR-0190 found why -- a reentry
+# parameter's spill store spliced before the loop header -- and the 2026-09-03
+# rebuild at amu 6c245f69 cleared it: `verify-loop-parameter-homes` reports
+# BASELINE-CLEARED for hkdf-sha256.o, and its baseline entry is gone. What is
+# left is the second half of the old reason and it still holds: nothing in the
+# kernel calls `kotoba_aiueos_hkdf_sha256`, so linking it would put a 13 KiB
+# artifact in the image to no end. Adding the call site is the TLS stream's
+# stage 4; this line is not the blocker any more.
 kotoba_aes128_gcm_object=${AIUEOS_KOTOBA_AES128_GCM_OBJECT:-"$aiueos/kotoba/aes128-gcm.o"}
 kotoba_tls13_record_object=${AIUEOS_KOTOBA_TLS13_RECORD_OBJECT:-"$aiueos/kotoba/tls13-record.o"}
 # The two project-route objects (ADR-0141). NOT LINKED, and that is a decision
@@ -367,15 +373,15 @@ kotoba_dhcp_option_object=${AIUEOS_KOTOBA_DHCP_OPTION_OBJECT:-"$aiueos/kotoba/dh
 kotoba_user_elf=${AIUEOS_KOTOBA_USER_ELF:-"$aiueos/kotoba/user-smoke.elf"}
 kotoba_fnv_sha=
 if [ -z "${AIUEOS_KOTOBA_FNV_OBJECT:-}" ]; then
-  kotoba_fnv_sha=bd1ea7d065ab9c306de56074606ab66d8a409fc5d99e36cae2b77b99f5f16ce0
+  kotoba_fnv_sha=1d547bc3536b1e94fae74ec0341c6ed8045c55c7985587eb21d7a018d69fad27
 fi
 kotoba_journal_sha=
 if [ -z "${AIUEOS_KOTOBA_JOURNAL_OBJECT:-}" ]; then
-  kotoba_journal_sha=6983847499117a5bfeb2194490290794eed792e405a8b3b52b5f808c1a2461d3
+  kotoba_journal_sha=0b97cda6327bb330b7900dacc2a68086d7ac164244b7c1e22908a85e5d94a20f
 fi
 kotoba_kernel_sha=
 if [ -z "${AIUEOS_KOTOBA_KERNEL_OBJECT:-}" ]; then
-  kotoba_kernel_sha=e230c792ebe8e983bb68a86b913f121afeb50e834032ff499f5f35e4a7a01002
+  kotoba_kernel_sha=3f7409bff00efaa79ec2e260b6734f740e9d7da002a9eb22a747344591e5d327
 fi
 input_smoke_cflags=
 if [ "${AIUEOS_INPUT_SMOKE_SYNTHETIC:-0}" = 1 ]; then
@@ -677,112 +683,112 @@ python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_journal_object
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_fnv_object" \
   "$kotoba_fnv_sha" kotoba_aiueos_fnv1a
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_journal_valid_object" \
-  c6dfb5f85029fd1f32a9fb84e6060f0d6287e3b018c24aa1cdf666870e417d62 \
+  65a0743125ac1ddd16373bae3dd0ee7cb1be5e65196f9470a7a3614304c55212 \
   kotoba_aiueos_journal_record_valid
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_transaction_valid_object" \
-  503260e5548a48ede216ac6413a99dd4a26d7db2a32a2109cdfae7b93a05cc4c \
+  b6b6bcde9518ad01ff36d38cc35eacbe5d09464b56f15f4eb06ba8d4813445e0 \
   kotoba_aiueos_object_transaction_valid
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_transaction_route_object" \
-  913ac071a4e19423c89fa7d0da20fbba0a0861d41e49ebe23e8397f2a08856ed \
+  ab11041f9b67331b8bdf2690c8e2afbc27816601a1efe500ae5ef77251d6d3e0 \
   kotoba_aiueos_object_transaction_route
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_mutable_valid_object" \
-  22fc8573f63decf753f4bc042d5e1253442a690842ab9923ca6b0a9020c0122e \
+  6547fc7870ce2d8d2be76c51d1016006b646e4bc3589ed20662604c060db8640 \
   kotoba_aiueos_mutable_object_valid
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_superblock_valid_object" \
-  41c5efc78b799b3121978f184959f8c02ffd1a3d6a65ac1f661684d1f050feb6 \
+  43db985e1d97b0e121c7205ffe9c762ca5d89b7c164c828bde00da4792c5b51b \
   kotoba_aiueos_superblock_valid
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_journal_build_object" \
-  d34637fe845cede481ee5bdd23fc6297d9a4933191fefba4bb6e8c26df7d1b7a \
+  2c17b67955bbb2dcb6d16d88da60e635df5078da357198aa7490e10601f927c8 \
   kotoba_aiueos_journal_record_build
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_mutable_build_object" \
-  a9cbcc5ebefbe8615de9d291d6bffd95119b591540acdcb9041e43e4ebbd595f \
+  8c51bcc1e65d2b7b1cbb72c6f55209f1e312e366cc7734c3a921ff3aa04bb1a8 \
   kotoba_aiueos_mutable_object_build
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_cap_valid_object" \
-  c13ec58990659e864cc2a347bc79b3644e40807c7545dbb49852c397bf5d52e0 \
+  0f591a342fe5b4fa959f8a21d36930ec9eca7859302a747ce43f5e3caa20c9c6 \
   kotoba_aiueos_virtio_cap_valid
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_extent_valid_object" \
-  a2666dfadf05361a7e0ad06cd4d24d55dc75b0e06f9323ae86f1ac8a29a695c5 \
+  cfde40e55fc8e52d6100183e2e4a7eecd60120be95f9c04234714ad041916ec4 \
   kotoba_aiueos_pci_extent_valid
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_region_valid_object" \
-  a96c6589752121b11e915728a33ca0d78805d0bdf3c80852a35d288d12b22bb6 \
+  e71f161385afb5e3c83913633417e59fa53532e2d7ba7f4234ea192988c6e0a6 \
   kotoba_aiueos_pci_region_valid
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_pci_config_read_object" \
-  dc724f88d81dda6958cc41faaa7fe53245426945cb7b2d66c9c6b420e4c83ed7 \
+  04ab0830219e6e03552cfc46ccfc56ce34fd1cf84b2f418d3a7916d4aac264d6 \
   kotoba_aiueos_pci_config_read
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_pci_config_write_object" \
-  1259a136aa27bda936cb777d5bd7eaaea478137185d66d8f1aecfbfd53c7a458 \
+  354f8ca148b0264af2dac50b2d26af9d0b439f641b0dcdf5714fd7465add4ba5 \
   kotoba_aiueos_pci_config_write
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_mmio_map_admit_object" \
-  0df513684b67fe6bb2bbec701b11e153423c392f40eb539cf108c191822a5c47 \
+  fb6b5591bf9c78b030aaf10aa93d305ac2b0f41cac9278be56507a6ec519e60b \
   kotoba_aiueos_mmio_map_admit
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_acpi_checksum_object" \
-  a7652a850836fc2a6d1eb618cf2c7bc61125fcff1c0e0311a9d5aec33fe56a72 \
+  90d2d2385552a30dbd6e47317143bdaee54907798df4667310ac23c8178f366a \
   kotoba_aiueos_acpi_checksum_ok
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_acpi_table_valid_object" \
-  572f13213143a316884f6d8d85f392ec636cb951319f31714b5c6333ed11e166 \
+  9ab5a3c2d4f11ff6921aeb87c03d3f759f4f25b2c212e8b07dd496d434961b77 \
   kotoba_aiueos_acpi_table_valid
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_vtd_admit_object" \
-  b2cf5a9a469f8fe50a3336c96fbf1b55fea424bb4c03fddd6e56bb550510ca02 \
+  2e7f1d3e6c324fe760c9ab2fb2b2614f655bd3c1aa61d31d929a4aa0aacf0bfd \
   kotoba_aiueos_vtd_admit
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_msr_read_object" \
-  0bb9f53dcc719f5ba142ef890c6d85d023a8d82062e08b2eb4b8494aff58919b \
+  da3add0a82de4562a8da117105e9a40a67e87c8086ca9b71851c4a9d9e673e0c \
   kotoba_aiueos_msr_read
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_msr_write_object" \
-  dfc03c6e48813242ba072a2288851d13b4daa1e2cd1af2b618c0bfa763462249 \
+  a6ae6efbe7c3a7543b391b01a9203906532b3c4328fb38bafb2d093b37bfe20d \
   kotoba_aiueos_msr_write
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_idt_gate_object" \
-  e96cfccddf68bd877f11177994f3bc4a7f77e4d0db86fc3fa46b01f402c23fd0 \
+  c4f675956931d19b795a978dc3e7629b13cc0db8b7c489f8e604f9a966e6f24b \
   kotoba_aiueos_idt_gate_build
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_pic_disable_object" \
-  ed310cc84e041d0b39dd419ef9ceadd1bd37d60b4e1e1cc449621597044dfde2 \
+  c88ff01d1eb89f9cf549f4c0ca24f34928f948cab4a96cad82a8ab518bf7fad1 \
   kotoba_aiueos_pic_disable
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_cpu_feature_nx_object" \
-  ee2be68aff236cf140327833baa9ab15c6ef8561816296441eb55094372c83f4 \
+  8e6b33fede5b4dd669e91c52d27273c2e36fc883e3b7d7d5b99806ab3e96903d \
   kotoba_aiueos_cpu_feature_nx
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_cpu_feature_syscall_object" \
-  211c2384278813e7d6f6ca3b0e86ce5780ab72df976d42d07231c40c89cce21d \
+  6255927efd8e44e7b204171426595c8040ee9fec57805c85162acbae5657ae61 \
   kotoba_aiueos_cpu_feature_syscall
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_cpu_apic_id_object" \
-  d6f28fdfc7a8df6767c655342bd81abad806ee715cbb579b279f3c2947419b2b \
+  078886d7c38cde4761e31a7f5a8b2e10c0facc9491394fb00d2702e515955183 \
   kotoba_aiueos_cpu_apic_id
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_syscall_range_object" \
-  1a25f96061a6990bbdf3564b2afe8c27644bdb86b2517fddd231baf0af9c5d81 \
+  04dd94e36e17da696f5bd235a7e1359173ab6625366b6db07651c5f255c90d3e \
   kotoba_aiueos_syscall_range_valid
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_copy_in_object" \
-  2e3f0cc18348d8748edcd879979a6ebcf7a706b0044e8264d18abe2f424715b3 \
+  f663a81d882c6ce87c058e947c105cb2d57a174bf594497ff69a40920ce60600 \
   kotoba_aiueos_copy_in
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_capability_object" \
-  0f2b8f694bc9c79b2c6ea155c81d5d6855a1f346beb89c903dc90528b1c6d222 \
+  32b398da53886afe2dc7dca67bba54779e7791bed9373bad52c0cf527c55697b \
   kotoba_aiueos_capability_plan
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_capability_mutation_object" \
-  ef16ab4b0720cbbb1a28071499e28aebf6c30accec7ff457b697d430514c6459 \
+  026bcc5a6cc3336d892f3c58cdbf07dbca49f72d8e129f8cb46c29f9fdb7b668 \
   kotoba_aiueos_capability_mutation_plan
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_service_lifecycle_object" \
-  ca63a6fe25c3373741057d9f17bf9ff184d19a92da61e9f5c1a3677915a5eaae \
+  a61aea52c4186715a8f87f5c3eed861e9c64b9487e5f659ba43cb6165a6dbaac \
   kotoba_aiueos_service_lifecycle
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_service_registry_object" \
-  c0bbb2bd36658a9099eee50502c6110c882cdcd7fdec066618fb3012ef582e6e \
+  baf097ff86b6bb610a8b861acb28ce3709fa8ec48d88c21df8935b766bde5ade \
   kotoba_aiueos_service_registry_build
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_service_registry_state_object" \
-  1bcfc41ed3549c7a0ccf4a96e861a363abf6e524c1ff35c0c8164279d7a6abad \
+  f498d25a332cd87754ffe70d0b5120e1de23eb0a59d68c654c8a55f780705d4a \
   kotoba_aiueos_service_registry_state
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_user_object_journal_object" \
-  9cec3d6655c9b2876585fea896ae5f5f07fd6a1b111e533ed18534fbb8698712 \
+  7a1fba86b95971d3616e870b08dbd1c5d89bf510d3541e0a406912ddae53a49c \
   kotoba_aiueos_user_object_journal_build
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_user_object_journal_valid_object" \
-  d1faea1e1446651bfa7cbf1927b6b2add539dd6fde47b781f8bab7a933f0e30d \
+  4f0e2b6bda1c6df02e7704d4b23846d2ba6bf7e9ef4bafe402fd8e18087c46b2 \
   kotoba_aiueos_user_object_journal_valid
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_user_object_journal_value_object" \
-  d96960555b01642a1b2204b2e2b73a0d33de522ce01293ba5fca64c4338994a6 \
+  908f9a52bef8b59f7d17a3cac8f62e6122055276f025d7cc9a49a6414bdda2a1 \
   kotoba_aiueos_user_object_journal_value
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_sha256_object" \
-  af378b061725473bf4aa66d02d276973ffc5c7cef4b0ed1f4a0e01fc754a7753 \
+  a31e2bd51a6a6c726e996b45edcf20c77fcbd3d15039c305d9752e5246042251 \
   kotoba_aiueos_sha256
 # tokenizer: same check as every object above -- one export, zero imports, one
 # relocation into its own .data, and the sha256 of the artifact this tree
 # carries.
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_qwen35_vocab_index_object" \
-  dc58fefacf66431ddcd493038bdc42c5cf4ae1dce29d821cb1d0d9bf4c29cefd \
+  6aa098809a041a990d4fab5273a72d7d8444ee429f248bae76ac2b2922d85aab \
   kotoba_aiueos_qwen35_vocab_index_build
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_qwen35_tokenize_object" \
   bef86908cb7ba9c8dc620fbb8cd36685d996f802baf96436247157337662133a \
@@ -791,76 +797,76 @@ python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_qwen35_detoken
   3d11e2900be3799ab3b3101c816c5e3a3c896083ac7e0c3d92d298cdc43fe392 \
   kotoba_aiueos_qwen35_detokenize
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_digest_equal_object" \
-  6156db8b78f883610521ac4eb458cb98df655b26087e7d6808279c8b9d927b78 \
+  92ba205b163f767a335c0f29cf99337d0ed1b286413a5ce8a87b0d9c38d33d05 \
   kotoba_aiueos_digest_equal
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_catalog_valid_object" \
-  cc965586258815beeac08c6cf2ca4debcd5fa7ea99f9d230452fe6eab962e7d6 \
+  dc1e55902f4d30057d79e4be58b3ad6701ab5d6d2fff2ed2f90de4474a03b0e8 \
   kotoba_aiueos_app_catalog_valid
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_app_lookup_object" \
-  ca8a261b5a967237c602912c1f945404baa5b6e9aba678fe37450633dcd587d9 \
+  e4af048c890fb98d3e3f295d909fb40b7c096539d988d1726c26ec09e77a7b0a \
   kotoba_aiueos_app_lookup_plan
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_user_elf_valid_object" \
-  d79cc375b46a6bc7c482e05c9f2e859f62c7a6ce186a8762b5161c2f2a426534 \
+  ab027deff5062a0dec32d0fd7020dab572ce624e15ddcba852f3dab691e43744 \
   kotoba_aiueos_user_elf_valid
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_user_context_object" \
-  66955e000a4b5f8a80ab97c031522e32e427cc141c6f9702f956aabce66d657f \
+  0b38f8ecca734d4dabe38a632390ccf3f4d38193555d367c55176c1483d84a92 \
   kotoba_aiueos_user_context_build
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_kernel_context_object" \
-  0f1364422887e9de0f40a084d4efc24ef670172926ffc63a3b0a7746145dc2a4 \
+  ce3eec1d0e5218712fbc349429ab601749c50f39b9d0749c1c488bdbe8a893f5 \
   kotoba_aiueos_kernel_context_build
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_mapping_plan_object" \
-  34de7a17f3bd3d1314815bc2ebab86d668001707b74164cbaaacef966b8d5ef1 \
+  263369d9194a08c361c6e9572cfe9c38cbdedf4d0678b7f14cdac84481e256f3 \
   kotoba_aiueos_page_mapping_plan
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_process_plan_object" \
-  d9fcc49f43351e666636f0145bd15e67e8054f1bb2a453c687e6d5dc9a0c42ce \
+  2330bdefb0dad7cb35531e8b0d42310017bf1d9d908c2a93eacd899712a66d8e \
   kotoba_aiueos_process_create_plan
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_teardown_plan_object" \
-  bd3e12cd46665caedb36ee6e836644309874fdbf67a8d7702e206833cb46f6e7 \
+  2d30a3cf9af5ff5d040f907a476bb16d420fc8bd91fc1c04adfdddfb642ec823 \
   kotoba_aiueos_process_teardown_plan
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_task_plan_object" \
-  df56b4eb01d25d512da5d9db8352299f66d2dd8c6e794129d3e40dfb88a23cb5 \
+  9cdb090e9272b9dcd725b943730ab8978026eddb5fb9750d1f5138f49aa06b7c \
   kotoba_aiueos_task_slot_plan
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_dispatch_plan_object" \
-  fb74d5e17d67d6e494601bc523a616e498e80c09d5f76bf802a268b418f3fd14 \
+  f920e827f842e76459da08a3c6d9393682326e2fc6f66bc9e4253eebc6e63edb \
   kotoba_aiueos_scheduler_dispatch_plan
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_exit_route_object" \
-  db3c7e138fec3f34593d717ecd250ca9297f5eb5d653622565bb74d3ccd595a9 \
+  520f54ebf80c956033fa9fffa1b2883adfd63dce9880f9d1e1caa8088f6d8d06 \
   kotoba_aiueos_task_exit_route
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_service_task_object" \
-  8b2794d08387dfb55c739ccf8e7082425282fb0975b31b14090cc57e4dcac854 \
+  a5ad1725c09d11f4c12f83c867846b6ebede3455e33e7276f7e9c4c5fbd17275 \
   kotoba_aiueos_service_task_transition
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_rsa2048_object" \
-  b48dc4edec96fc109d89570bbd872d0dc525a1b536ee84dc90c1c1671c6d15e9 \
+  5ec41a9203e24b226f91e25eb410860827ab87493bbd104458c2a3b9e461ced3 \
   kotoba_aiueos_rsa2048_sha256_verify
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_net_arp_object" \
-  150dc02d7c875bdf228f6023830aeb73918cbe1089c0c5e8491c6173e8f0ed38 \
+  8d5e1563cac30b7a8365487b9e2a768309971ab9663b25f6c718b1a6ba929766 \
   kotoba_aiueos_net_arp_reply_valid
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_ipv4_checksum_object" \
-  fc5a25ee36559d7d03831721cca41a71f3f3c41b6c3f459893b84169bd2565c1 \
+  8233c2efa4cd633b4e0f8b988e2d09ef26c653e702aba676feff1485f152bb39 \
   kotoba_aiueos_ipv4_checksum
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_ipv4_icmp_object" \
-  da83994ce5e6d52594badc13a5abc2d7448640d45c3dac9465b71d41a78c47fd \
+  d1d458d09856f04b3a16663b492cdd00cc0cc3abbf595cf7e162d51198c32e49 \
   kotoba_aiueos_ipv4_icmp_reply_valid
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_tcp_checksum_object" \
-  2ec2c58715ae7c60846d9fc4a9788ec90b20f0ae7c0ac3229ee913a63ea07ed5 \
+  fcfb1a4597fd86492d8ab7df7d5211a2baed13f20c5dc6081fe99484c604636b \
   kotoba_aiueos_tcp_checksum_ok
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_tcp_segment_object" \
-  887ac75e01b396acd5dd694c3aa25c82295ca196726d0487cfcfc88d4c750b55 \
+  feec54e99e4c30c3a1e1d92331ddfdacc47bdc4154e0fd0d72b5870de8284429 \
   kotoba_aiueos_tcp_segment_valid
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_dhcp_reply_object" \
-  ceecb05c3400535ccff22509d2fc1426eb9166c2d79a93ae952377a0f4bc5951 \
+  2f27b4a4f382c93da61c6601c443d9b11ea2f3f1458311e917b30eadc1c6f957 \
   kotoba_aiueos_dhcp_reply_valid
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_dhcp_option_object" \
-  0b5341000376104c6a23d2e6ef89c05c08fd03e91d2c2aa905643c65604741a0 \
+  82794a814363e12697b068ada76fbd5670cd28ec5b97c063ced70af335333d61 \
   kotoba_aiueos_dhcp_option_u32
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_x25519_object" \
-  5956dc8b7de8b71fdf9b8735bc50f2b3e50eb0f975184d8eb37c9e8e58c60c4c \
+  8353ac0fcf6e2119d4538196197f0e1aead980cd87db2c30fe50e64ec6bb7588 \
   kotoba_aiueos_x25519
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_ecdsa_object" \
-  5026b4346bdb02ba689fad3afe67f21e556ca028b03338764140079f0308dc29 \
+  b38190316a00eba0a30d94f4ee5ee950f094ae8ed1c1bd419a1eebe85d5d27cf \
   kotoba_aiueos_ecdsa_p256_sha256_verify
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_aes128_gcm_object" \
-  65492e522fdea32d7c9e83d463c42d26dece7ee3300f1a58ba74dd352687b265 \
+  4985bed1b82ff8da4529e4916071aa8b2166b0d8107b43c7c2e27a76cade5090 \
   kotoba_aiueos_aes128_gcm
 # Qwen3.8-27B GGUF admission (ADR-0137). Verified unconditionally like every
 # object above, even in profiles that do not link them: the digests are what
@@ -869,19 +875,19 @@ python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_qwen35_header_
   ede85ad44b12e624d2fe9d9c37102270ff7a68e5dfbb1b4e8a5b77a06e232ec6 \
   kotoba_aiueos_qwen35_gguf_header_valid
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_qwen35_kv_object" \
-  c0b7e0a6fca9672371b26249dc197375a734b30f1d0e18b36fd8c9b2d2280e2e \
+  9dcf7d4d02e8d5d55199aacbd77d817c98c82fb6a2cff8f69d22062003a2f052 \
   kotoba_aiueos_qwen35_gguf_kv_scan
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_qwen35_tensor_object" \
-  8509d721348c060e73576bbdb4380301cc10f1eb9c1f9e1595e7e342e7ea1454 \
+  06e0fbaac83d9802b86eef35057c279ea7af37ac607152353b5e952575ee4951 \
   kotoba_aiueos_qwen35_tensor_table_bind
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_tls13_record_object" \
-  5c3dee8193c63f3ac1c32b791c4ccdf1fd9d6cda2e3ead08f45c1068e9d36334 \
+  9b2bb0226add042ccb472f6d6c2e6d431e0bd6b44a7afddfbcee61d8b9481c26 \
   kotoba_aiueos_tls13_record
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_cid_v1_admit_object" \
-  3aeb23085b6fe6071b5afb1772d712b18db65c0f066ac6a801c6feaeae889808 \
+  ab74494cee897795c950521cfbbcb6daf04428504a69d09f7a4d43099139cc1c \
   kotoba_aiueos_cid_v1_admit
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_value_runtime_cas_verify_object" \
-  dfef74bb28a510d6ca1afc671171ffb8370560f1b98e46d85f063110a46ebc70 \
+  1a3bb210a6e78f7096c69f835107e65726abe0bc8585dfabf178006188a417eb \
   kotoba_aiueos_value_runtime_cas_verify
 if [ -n "$model_handoff_link" ] || [ -n "$qwen35_parity_cflags" ]; then
   python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_qwen35_dot_object" \
@@ -917,7 +923,7 @@ if [ -n "$model_handoff_link" ] || [ -n "$qwen35_parity_cflags" ]; then
   fi
 fi
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_device_worker_canonical_object" \
-  c64371c50104c8acd2b73224eed1377e160cd36ab70e27cae11d39b76e440b0a \
+  0b5c1a7d5bcce8937f2c96145107ce68649fa61adfffe785c93dd31ecc1b7c10 \
   kotoba_aiueos_device_worker_canonical
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_sha256_stream_object" \
   fdf5b3ac388982cdcc851817a7414f638a821420f70650df4dc8985491281abc \
@@ -930,19 +936,19 @@ python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_device_worker_
   kotoba_aiueos_device_worker_digest
 if [ -n "$ecdsa_sign_link" ]; then
   python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_ecdsa_sign_object" \
-    decd83b1cd331af1305ad24c080443118f925067353c320078e66085695fd433 \
+    807f0344edf6fc9cf452d1708d4886c34e0566efd025615920d9d49f8d9f9ad1 \
     kotoba_aiueos_ecdsa_p256_sign
 fi
 if [ -n "$ecdsa_public_link" ]; then
   python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_ecdsa_public_object" \
-    e524dbbfb56f58e5bfac41c0a5b62d355b67c8e9790678984c3ca01a0a66c993 \
+    ed09c773bf456b3271126b14fda014ee0d4418aa3036f3c159ee96b0a145dc15 \
     kotoba_aiueos_ecdsa_p256_public
 fi
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_ime_object" \
   ee11f50c9dfb30d03c820bead466b2f1bf18e4e64f3a2bfda98f5a5dd5d4ca34 \
   kotoba_aiueos_ime_commit
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_wm_object" \
-  70fac07783c5b2841b76d9d599c03a97a44d290a8ad977f48aa5af39b21efc7f \
+  cf3b2a1ee925008c843f4e1ee285f0af837d67a086ac3d6fb06b650fbbb71eb8 \
   kotoba_aiueos_wm_hit
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_scanout_object" \
   5ca924dff9fe42620f2313d16f8f62018d9bfbf588c7b142383066cce65d8305 \
