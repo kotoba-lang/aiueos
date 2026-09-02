@@ -291,7 +291,7 @@
 ;; The IDT storage is allocator-owned and remains RW+NX under the replacement
 ;; map. The backend contributes only the address of its sealed non-returning
 ;; entry; Kotoba constructs vector 14 and the pseudo-descriptor byte layout.
-(defn install-page-fault-idt [idt-page]
+(defn install-page-fault-idt [idt-page rx-limit]
   (let [handler (kernel-page-fault-handler-address)
         selector (kernel-read-cs)
         handler-low (bit-and handler 65535)
@@ -301,7 +301,10 @@
                     (* selector 65536)
                     (* 142 1099511627776)
                     (* handler-mid 281474976710656))]
-    (if (and (>= handler 1052672) (< handler 1097728)
+    ;; The handler is compiler-emitted executable text. Bind it to this exact
+    ;; artifact's admitted RX boundary instead of the older 0x10c000 size;
+    ;; adding the pure TCP module legitimately grows text within that segment.
+    (if (and (>= handler 1052672) (< handler rx-limit)
              (> selector 0) (<= selector 65535)
              (= (store64-page idt-page 224 gate-low) 1)
              (= (store64-page idt-page 232 handler-high) 1)
@@ -473,7 +476,10 @@
                       (if (or (> bar-a 0) (> bar-b 0))
                         (let [pre-cr3-nic-status
                               (qualify-rtl8125 bar-a bar-b rtl-dma-pages)]
-                          (kernel-out-u32 244 (+ 90 pre-cr3-nic-status)))
+                          ;; 0x60 is the pure TCP qualification base. Provider
+                          ;; zero means both the earlier ARP/UDP receipt and the
+                          ;; new 8443 SYN/SYN-ACK exchange completed.
+                          (kernel-out-u32 244 (+ 96 pre-cr3-nic-status)))
                         (if (and (prepare-page-tables page-table-root pdpt pd pt)
                                  (prepare-low-page-table pt rx-limit rw-start)
                                  (prepare-rtl-page-tables
@@ -482,7 +488,8 @@
                                      (activate-page-tables page-table-root)
                                      (= (kernel-configure-page-fault-recovery
                                          frame-page stack-page) 1)
-                                     (= (install-page-fault-idt reusable-page) 1))
+                                     (= (install-page-fault-idt
+                                         reusable-page rx-limit) 1))
                               (let [page-marker (kernel-out-u8 233 80)
                                     root-marker (kernel-out-u8 233 82)
                                     cr3-marker (kernel-out-u8 233 67)

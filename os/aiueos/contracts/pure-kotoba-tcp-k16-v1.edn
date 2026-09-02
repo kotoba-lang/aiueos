@@ -1,0 +1,31 @@
+;; Candidate boundary after the first physical pure-Kotoba RTL8125 receipt.
+;; This image must prove one TCP three-way handshake to the Mac's transparent
+;; TLS passthrough before any TLS or Murakumo claim is allowed.
+{:format :aiueos.pure-kotoba-tcp-k16/v1
+ :depends-on {:evidence "physical-kotoba-native-k16-v1.edn"
+              :result :physical-rtl8125-provider-passed}
+ :target {:model :gmktec-k16
+          :nic {:bdf "02:00.0" :vendor 0x10ec :device 0x8125}
+          :source-ip "10.77.0.10"
+          :gateway "10.77.0.1"
+          :gateway-port 8443
+          :upstream "api.murakumo.cloud:443"}
+ :implementation {:language :kotoba
+                  :source "native/rtl8125.kotoba"
+                  :path [:arp-admission :tcp-syn :tcp-syn-ack-admission
+                         :tcp-rst :udp-positive-receipt]
+                  :tls-terminated-by :k16
+                  :mac-role :transparent-byte-forwarder}
+ :diagnostic {:screen-success-hex "60"
+              :wire-success "AIUEOS_NATIVE_TCP_OK"
+              :wire-destination "10.77.0.1:7777"
+              :failure-encoding :screen-base-plus-provider-reason}
+ :artifact {:state :pending-build}
+ :evidence {:qemu :pending
+            :physical-k16 :unverified}
+ :does-not-prove [:tls13-handshake
+                  :x509-chain-or-san-admission
+                  :https-response
+                  :murakumo-node-registration
+                  :qwen-generation
+                  :decode-throughput]}

@@ -497,6 +497,204 @@
       1
       0)))
 
+;; The HTTPS path starts with one deliberately narrow TCP handshake to the
+;; Mac's byte-for-byte TLS passthrough at 10.77.0.1:8443.  The Mac does not
+;; terminate TLS; it only forwards the stream to api.murakumo.cloud:443.  This
+;; stage therefore proves the pure Kotoba frame/checksum/sequence path without
+;; confusing it with the later TLS or HTTP admission gates.
+(defn checksum-word [frame base length offset]
+  (if (>= offset length)
+    0
+    (+ (* (kernel-load-u8-4k frame 4096 (+ base offset)) 256)
+       (if (< (+ offset 1) length)
+         (kernel-load-u8-4k frame 4096 (+ base offset 1))
+         0))))
+
+(defn checksum-sum [frame base length offset total]
+  (if (>= offset length)
+    total
+    (checksum-sum frame base length (+ offset 2)
+                  (+ total (checksum-word frame base length offset)))))
+
+(defn checksum-fold [total]
+  (if (<= total 65535)
+    total
+    (checksum-fold (+ (bit-and total 65535) (quot total 65536)))))
+
+(defn internet-checksum [frame base length seed]
+  (- 65535 (checksum-fold (checksum-sum frame base length 0 seed))))
+
+(defn tcp-pseudo-sum [src dst tcp-length]
+  (+ (+ (quot src 65536) (bit-and src 65535))
+     (+ (+ (quot dst 65536) (bit-and dst 65535))
+        (+ 6 tcp-length))))
+
+(defn build-tcp-segment [frame peer-frame peer-mac-offset mmio mode]
+  (let [src 172818442
+        dst 172818433
+        tcp-length 20
+        total-length 40
+        sequence (if (= mode 0) 2715820032 2715820033)
+        acknowledgement (if (= mode 0)
+                          0
+                          (+ (frame-be32 peer-frame 38) 1))
+        flags (if (= mode 0) 2 20)]
+    (if (and (= (zero-prefix frame 54 0) 1)
+             (= (copy-frame-mac frame 0 peer-frame peer-mac-offset 0) 1)
+             (= (copy-device-mac frame 6 mmio 0) 1)
+             (= (frame-store-be16 frame 12 2048) 2048)
+             (= (kernel-store-u8-4k frame 4096 14 69) 69)
+             (= (kernel-store-u8-4k frame 4096 15 0) 0)
+             (= (frame-store-be16 frame 16 total-length) total-length)
+             (= (frame-store-be16 frame 18 1) 1)
+             (= (frame-store-be16 frame 20 16384) 16384)
+             (= (kernel-store-u8-4k frame 4096 22 64) 64)
+             (= (kernel-store-u8-4k frame 4096 23 6) 6)
+             (= (frame-store-be16 frame 24 0) 0)
+             (= (frame-store-be32 frame 26 src) src)
+             (= (frame-store-be32 frame 30 dst) dst)
+             (= (frame-store-be16 frame 24
+                                   (internet-checksum frame 14 20 0))
+                (frame-be16 frame 24))
+             (= (frame-store-be16 frame 34 49155) 49155)
+             (= (frame-store-be16 frame 36 8443) 8443)
+             (= (frame-store-be32 frame 38 sequence) sequence)
+             (= (frame-store-be32 frame 42 acknowledgement) acknowledgement)
+             (= (kernel-store-u8-4k frame 4096 46 80) 80)
+             (= (kernel-store-u8-4k frame 4096 47 flags) flags)
+             (= (frame-store-be16 frame 48 256) 256)
+             (= (frame-store-be16 frame 50 0) 0)
+             (= (frame-store-be16 frame 52 0) 0)
+             (= (frame-store-be16
+                  frame 50
+                  (internet-checksum frame 34 tcp-length
+                                     (tcp-pseudo-sum src dst tcp-length)))
+                (frame-be16 frame 50)))
+      54
+      0)))
+
+(defn tcp-syn-ack-valid [frame length sent-frame mmio]
+  (let [src 172818433
+        dst 172818442
+        total (if (>= length 18) (frame-be16 frame 16) 0)
+        tcp-length (if (>= total 20) (- total 20) 0)]
+    (and (>= length 54) (<= length 2048)
+         (= (frame-mac-matches-device frame 0 mmio 0) 1)
+         (= (frame-macs-match frame 6 sent-frame 0 0) 1)
+         (= (frame-be16 frame 12) 2048)
+         (= (kernel-load-u8-4k frame 4096 14) 69)
+         (= (kernel-load-u8-4k frame 4096 23) 6)
+         (= total 40)
+         (<= (+ 14 total) length)
+         (= (frame-be32 frame 26) src)
+         (= (frame-be32 frame 30) dst)
+         (= (internet-checksum frame 14 20 0) 0)
+         (= (frame-be16 frame 34) 8443)
+         (= (frame-be16 frame 36) 49155)
+         (= (frame-be32 frame 42) 2715820033)
+         (= (kernel-load-u8-4k frame 4096 46) 80)
+         (= (kernel-load-u8-4k frame 4096 47) 18)
+         (= tcp-length 20)
+         (= (internet-checksum frame 34 tcp-length
+                               (tcp-pseudo-sum src dst tcp-length)) 0))))
+
+(defn tcp-receipt-byte [index]
+  ;; ASCII payload: AIUEOS_NATIVE_TCP_OK.
+  (if (= index 0) 65
+    (if (= index 1) 73
+      (if (= index 2) 85
+        (if (= index 3) 69
+          (if (= index 4) 79
+            (if (= index 5) 83
+              (if (= index 6) 95
+                (if (= index 7) 78
+                  (if (= index 8) 65
+                    (if (= index 9) 84
+                      (if (= index 10) 73
+                        (if (= index 11) 86
+                          (if (= index 12) 69
+                            (if (= index 13) 95
+                              (if (= index 14) 84
+                                (if (= index 15) 67
+                                  (if (= index 16) 80
+                                    (if (= index 17) 95
+                                      (if (= index 18) 79
+                                        (if (= index 19) 75 0)))))))))))))))))))))
+
+(defn store-tcp-receipt [frame offset index]
+  (if (= index 20)
+    1
+    (let [value (tcp-receipt-byte index)
+          stored (kernel-store-u8-4k frame 4096 (+ offset index) value)]
+      (if (= stored value)
+        (store-tcp-receipt frame offset (+ index 1))
+        0))))
+
+(defn build-native-tcp-receipt [frame peer-frame mmio]
+  (if (and (= (zero-prefix frame 62 0) 1)
+           (= (copy-frame-mac frame 0 peer-frame 6 0) 1)
+           (= (copy-device-mac frame 6 mmio 0) 1)
+           (= (frame-store-be16 frame 12 2048) 2048)
+           (= (build-ipv4-udp-header frame) 1)
+           (= (store-tcp-receipt frame 42 0) 1))
+    62
+    0))
+
+(defn send-native-tcp-receipt [mmio tx tx-frame peer-frame]
+  (let [frame-length (build-native-tcp-receipt tx-frame peer-frame mmio)]
+    (if (= frame-length 0)
+      36
+      (let [submitted (tx-submit mmio tx tx-frame frame-length)]
+        (if (not (= submitted 0))
+          36
+          (if (= (wait-tx-complete tx 200000000) 1) 0 36))))))
+
+(defn tcp-reset-and-receipt [mmio tx tx-frame peer-frame]
+  (let [reset-length (build-tcp-segment tx-frame peer-frame 6 mmio 1)]
+    (if (or (= reset-length 0)
+            (not (= (tx-submit mmio tx tx-frame reset-length) 0))
+            (not (= (wait-tx-complete tx 200000000) 1)))
+      35
+      (send-native-tcp-receipt mmio tx tx-frame peer-frame))))
+
+(defn receive-tcp-syn-ack [mmio dma-base frames]
+  (let [tx dma-base
+        rx (kernel-subregion dma-base 16384 4096 4096)
+        tx-frame (kernel-subregion dma-base 16384 8192 4096)
+        rx-frame (kernel-subregion dma-base 16384 12288 4096)]
+    (if (= frames 0)
+      34
+      (let [command (wait-rx-command rx 200000000)]
+        (if (= command 0)
+          33
+          (let [bytes (bit-and command 16383)
+                valid-command (and (= (bit-and command 1048576) 0)
+                                   (not (= (bit-and command 33554432) 0))
+                                   (not (= (bit-and command 16777216) 0))
+                                   (>= bytes 58) (<= bytes 2048))]
+            (if (and valid-command
+                     (tcp-syn-ack-valid rx-frame (- bytes 4) tx-frame mmio))
+              (tcp-reset-and-receipt mmio tx tx-frame rx-frame)
+              (if (= (rx-rearm rx rx-frame) 1)
+                (receive-tcp-syn-ack mmio dma-base (- frames 1))
+                30))))))))
+
+(defn probe-tcp-after-arp [mmio dma-base arp-reply]
+  (let [tx dma-base
+        rx (kernel-subregion dma-base 16384 4096 4096)
+        tx-frame (kernel-subregion dma-base 16384 8192 4096)
+        rx-frame (kernel-subregion dma-base 16384 12288 4096)
+        syn-length (build-tcp-segment tx-frame arp-reply 6 mmio 0)]
+    (if (= syn-length 0)
+      29
+      (if (not (= (rx-rearm rx rx-frame) 1))
+        30
+        (if (not (= (tx-submit mmio tx tx-frame syn-length) 0))
+          31
+          (if (not (= (wait-tx-complete tx 200000000) 1))
+            32
+            (receive-tcp-syn-ack mmio dma-base 16)))))))
+
 (defn receive-arp [mmio dma-base frames]
   (let [tx dma-base
         rx (kernel-subregion dma-base 16384 4096 4096)
@@ -513,7 +711,11 @@
                                    (not (= (bit-and command 16777216) 0))
                                    (>= bytes 18) (<= bytes 2048))]
             (if (and valid-command (arp-reply-valid rx-frame (- bytes 4) mmio))
-              (send-native-arp-receipt mmio tx tx-frame rx-frame)
+              (let [arp-receipt
+                    (send-native-arp-receipt mmio tx tx-frame rx-frame)]
+                (if (= arp-receipt 0)
+                  (probe-tcp-after-arp mmio dma-base rx-frame)
+                  arp-receipt))
               (if (= (rx-rearm rx rx-frame) 1)
                 (receive-arp mmio dma-base (- frames 1))
                 24))))))))

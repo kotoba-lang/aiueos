@@ -106,7 +106,7 @@ def main() -> int:
         "compiler": EXPECTED_COMPILER,
         "layers": layers,
         "all_native_ready": False,
-        "next_blocker": "pure-kotoba-dhcp-dns-tcp-tls13-https-integration",
+        "next_blocker": "physical-pure-kotoba-tcp-positive-receipt",
     }
     json.dump(result, sys.stdout, indent=2, sort_keys=True)
     sys.stdout.write("\n")

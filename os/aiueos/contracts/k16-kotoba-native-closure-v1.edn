@@ -38,24 +38,32 @@
   :nic {:state :one-shot-native-provider
         :implemented [:rtl8125-pci-discovery :mmio-map :dma-ring-ownership
                       :tx :rx :arp-request-reply :udp-arp-positive-receipt
-                      :fixed-mac-udp-failure-diagnostic]
+                      :fixed-mac-udp-failure-diagnostic
+                      :static-ipv4-tcp-syn-synack-rst
+                      :udp-tcp-positive-receipt]
         :native-source "native/rtl8125.kotoba"
-        :receipt "AIUEOS_NATIVE_ARP_OK"
+        :receipt {:physical-arp "AIUEOS_NATIVE_ARP_OK"
+                  :next-tcp-candidate "AIUEOS_NATIVE_TCP_OK"}
         :diagnostic-receipt "AIUEOS_NATIVE_NIC_XX"
         :diagnostic-status-encoding :two-digit-hexadecimal
         :receipt-destination "10.77.0.1:7777"
-        :required [:physical-k16-arp-positive :persistent-link-recovery]
+        :required [:physical-k16-arp-positive :physical-k16-tcp-positive
+                   :persistent-link-recovery]
         :qemu-evidence :bounded-no-device-passed
         :physical-k16 {:state :arp-and-udp-receipt-passed
                        :status-hex "5A"
                        :evidence "physical-kotoba-native-k16-v1.edn"}
+        :next-candidate {:state :physical-unverified
+                         :screen-success-hex "60"
+                         :evidence-contract "pure-kotoba-tcp-k16-v1.edn"}
         :current-reference ["kernel/rtl8125.c" "kernel/rtl8125.h"]
         :contract-repositories ["kotoba-lang/capability-pci-config"
                                 "kotoba-lang/capability-mmio-map"
                                 "kotoba-lang/capability-dma-map"
                                 "kotoba-lang/capability-link-frame"]}
   :https {:state :not-implemented-in-pure-closure
-          :implemented [:aes128-gcm :hkdf-sha256 :tls13-record]
+          :implemented [:static-ipv4-tcp-syn-synack-rst
+                        :aes128-gcm :hkdf-sha256 :tls13-record]
           :implemented-source ["kotoba/aes128-gcm.kotoba"
                                "kotoba/hkdf-sha256.kotoba"
                                "kotoba/tls13-record.kotoba"]

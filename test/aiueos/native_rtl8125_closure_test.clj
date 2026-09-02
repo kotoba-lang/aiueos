@@ -13,6 +13,8 @@
 (def audit (io/file aiueos "scripts" "audit-k16-kotoba-native-closure.py"))
 (def physical-evidence
   (io/file aiueos "contracts" "physical-kotoba-native-k16-v1.edn"))
+(def tcp-candidate
+  (io/file aiueos "contracts" "pure-kotoba-tcp-k16-v1.edn"))
 
 (deftest rtl8125-is-in-the-closed-native-module-graph
   (let [rtl (slurp rtl-source)
@@ -27,6 +29,12 @@
       (is (str/includes? rtl "(defn receive-arp"))
       (is (str/includes? rtl "(defn send-native-arp-receipt"))
       (is (str/includes? rtl "AIUEOS_NATIVE_ARP_OK"))
+      (is (str/includes? rtl "(defn build-tcp-segment"))
+      (is (str/includes? rtl "(defn tcp-syn-ack-valid"))
+      (is (str/includes? rtl "(defn receive-tcp-syn-ack"))
+      (is (str/includes? rtl "AIUEOS_NATIVE_TCP_OK"))
+      (is (str/includes? rtl "(frame-store-be16 frame 36 8443)"))
+      (is (str/includes? rtl "(frame-store-be16 frame 34 49155)"))
       (is (str/includes? rtl "(defn send-native-nic-diagnostic"))
       (is (str/includes? rtl "(defn diagnose-network-status"))
       (is (str/includes? rtl "AIUEOS_NATIVE_NIC_"))
@@ -43,6 +51,10 @@
       (is (str/includes? kernel "rtl-dma-pages"))
       (is (str/includes? kernel "(qualify-rtl8125"))
       (is (str/includes? kernel "pre-cr3-nic-status"))
+      (is (str/includes? kernel "(+ 96 pre-cr3-nic-status)"))
+      (is (str/includes? kernel
+                         "(install-page-fault-idt\n                                         reusable-page rx-limit)"))
+      (is (not (str/includes? kernel "(< handler 1097728)")))
       (is (str/includes? kernel "physical-start scratch-start"))
       (is (str/includes? kernel "(< e 549755813888)"))
       (is (not (str/includes? kernel "(< e 1073741824)")))
@@ -66,7 +78,7 @@
     (is (zero? exit) report)
     (is (str/includes? report "physical-arp-and-udp-receipt-passed"))
     (is (str/includes? report "native/rtl8125.kotoba"))
-    (is (str/includes? report "pure-kotoba-dhcp-dns-tcp-tls13-https-integration"))
+    (is (str/includes? report "physical-pure-kotoba-tcp-positive-receipt"))
     (is (str/includes? report "not-implemented-in-pure-closure"))
     (is (str/includes? report "\"all_native_ready\": false"))))
 
@@ -79,3 +91,15 @@
     (is (= :passed (get-in evidence [:result :physical-rtl8125-provider])))
     (is (some #{:physical-k16-https} (:does-not-prove evidence)))
     (is (some #{:physical-k16-qwen} (:does-not-prove evidence)))))
+
+(deftest tcp-candidate-keeps-tls-and-murakumo-unverified
+  (let [candidate (edn/read-string (slurp tcp-candidate))]
+    (is (= :kotoba (get-in candidate [:implementation :language])))
+    (is (= 8443 (get-in candidate [:target :gateway-port])))
+    (is (= "60" (get-in candidate [:diagnostic :screen-success-hex])))
+    (is (= "AIUEOS_NATIVE_TCP_OK"
+           (get-in candidate [:diagnostic :wire-success])))
+    (is (= :unverified (get-in candidate [:evidence :physical-k16])))
+    (is (some #{:tls13-handshake} (:does-not-prove candidate)))
+    (is (some #{:murakumo-node-registration} (:does-not-prove candidate)))
+    (is (some #{:decode-throughput} (:does-not-prove candidate)))))
