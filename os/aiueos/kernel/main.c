@@ -5,6 +5,199 @@
 #include "model_handoff.h"
 #include "qwen35_infer.h"
 #include "qwen35_runtime.h"
+#include "device_result.h"
+
+/* ---------------------------------------------------------------------------
+   DEVCLIENT-PARITY.  The object against the bytes the C produced.
+   ---------------------------------------------------------------------------
+   The two expected texts are not transcriptions.  The protocol 2 one is what
+   `os/aiueos/tests/device_result_v2_model.c --dump-canonical` printed from the
+   C writer this commit deletes, captured through that model's
+   `kotoba_aiueos_sha256` stub -- the exact bytes the C was about to hash.  The
+   protocol 3 one is the worked example in network-awai/cloud-murakumo-api
+   `docs/device-worker-v3.md`, pinned there by the server's own
+   `v3-canonical-is-the-v2-list-plus-four-fields-then-the-nonce`.  Both are
+   carried in `contracts/device-worker-canonical-v1.edn` and the literals below
+   were generated from it.
+
+   This runs the emitted object ON THE TARGET.  The KIR interpreter already
+   agrees with these bytes; that says nothing about what the backend emitted,
+   which is the half a boot self-test covers.  */
+static const char worker_canonical_v2_expected[] =
+  "aiueos-k16-worker-v2\n"
+  "aiueos-k16-7070fc0bb632\n"
+  "01010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101\n"
+  "0202020202020202\n"
+  "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n"
+  "7\n"
+  "result\n"
+  "42\n"
+  "2\n"
+  "2005\n"
+  "17\n"
+  "8\n"
+  "7\n"
+  "12000000000\n"
+  "56000000000\n"
+  "68000000000\n"
+  "256\n"
+  "2\n"
+  "4000000000\n"
+  "02020202020202020202020202020202";
+
+static const char worker_canonical_v3_expected[] =
+  "aiueos-k16-worker-v3\n"
+  "aiueos-k16-7070fc0bb632\n"
+  "00000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000002\n"
+  "0123456789abcdef\n"
+  "c0b7c3038681ed2e3040456c1dd45f9858b6c2290bed172c70388a94874f3eee\n"
+  "12\n"
+  "result\n"
+  "1788078031098390\n"
+  "3\n"
+  "2005\n"
+  "17\n"
+  "3\n"
+  "2\n"
+  "12000000000\n"
+  "24000000000\n"
+  "36000000000\n"
+  "256\n"
+  "2\n"
+  "4000000000\n"
+  "6d1f26aca9a65756235d79f4246587ffa5192cddab5fd1056d0eff3b5dd2b34a\n"
+  "bfc850f9c5276dffd405b5f6413ec57703465265dc0747fa9fea07d2aee1b644\n"
+  "3\n"
+  "eos\n"
+  "00112233445566778899aabbccddeeff";
+
+
+static void dwc_zero(uint8_t *memory, uint32_t bytes) {
+  for (uint32_t i = 0; i < bytes; i++) memory[i] = 0;
+}
+
+static void dwc_text(uint8_t *ctx, uint32_t offset, const char *text,
+                     uint32_t bytes) {
+  for (uint32_t i = 0; i < bytes; i++) ctx[offset + i] = (uint8_t)text[i];
+}
+
+static void dwc_number(uint8_t *ctx, uint32_t offset, uint64_t value) {
+  for (uint32_t i = 0; i < 8; i++)
+    ctx[offset + i] = (uint8_t)(value >> (56U - i * 8U));
+}
+
+static void worker_context_numbers(
+    uint8_t *ctx, uint32_t sequence, uint64_t job_id, uint32_t token,
+    uint32_t second_token, uint32_t generated_tokens, uint32_t decode_tokens,
+    uint64_t first_token_cycles, uint64_t decode_cycles,
+    uint64_t inference_cycles, uint32_t vector_bits, uint32_t worker_threads,
+    uint64_t tsc_hz, uint64_t output_token_count) {
+  dwc_number(ctx, AIUEOS_DWC_SEQUENCE, sequence);
+  dwc_number(ctx, AIUEOS_DWC_JOB_ID, job_id);
+  dwc_number(ctx, AIUEOS_DWC_TOKEN, token);
+  dwc_number(ctx, AIUEOS_DWC_SECOND_TOKEN, second_token);
+  dwc_number(ctx, AIUEOS_DWC_GENERATED_TOKENS, generated_tokens);
+  dwc_number(ctx, AIUEOS_DWC_DECODE_TOKENS, decode_tokens);
+  dwc_number(ctx, AIUEOS_DWC_FIRST_TOKEN_CYCLES, first_token_cycles);
+  dwc_number(ctx, AIUEOS_DWC_DECODE_CYCLES, decode_cycles);
+  dwc_number(ctx, AIUEOS_DWC_INFERENCE_CYCLES, inference_cycles);
+  dwc_number(ctx, AIUEOS_DWC_VECTOR_BITS, vector_bits);
+  dwc_number(ctx, AIUEOS_DWC_WORKER_THREADS, worker_threads);
+  dwc_number(ctx, AIUEOS_DWC_TSC_HZ, tsc_hz);
+  dwc_number(ctx, AIUEOS_DWC_OUTPUT_TOKEN_COUNT, output_token_count);
+}
+
+static int canonical_matches(const uint8_t *produced, int64_t length,
+                             const char *expected) {
+  uint32_t n = 0;
+  while (expected[n]) n++;
+  if (length != (int64_t)n) return 0;
+  for (uint32_t i = 0; i < n; i++)
+    if (produced[i] != (uint8_t)expected[i]) return 0;
+  return 1;
+}
+
+static void dwc_hex_fill(uint8_t *ctx, uint32_t offset, uint32_t bytes,
+                              uint8_t value) {
+  for (uint32_t i = 0; i < bytes; i++) {
+    ctx[offset + i * 2] = (uint8_t)"0123456789abcdef"[value >> 4];
+    ctx[offset + i * 2 + 1] = (uint8_t)"0123456789abcdef"[value & 15U];
+  }
+}
+
+/* Returns 0 on success, or the 1-based number of the case that disagreed,
+   so a mismatch names which of the three it was rather than only that one
+   of them was. */
+static int aiueos_device_worker_canonical_selftest(void) {
+  uint8_t ctx[AIUEOS_DEVICE_WORKER_CTX_BYTES];
+  uint8_t out[AIUEOS_DEVICE_WORKER_CANONICAL_MAX];
+  int64_t length;
+
+  /* Protocol 2 result, the model's own stub key material: a public key of
+     0x01, a boot id and nonce of 0x02, a model digest of 0xaa. */
+  dwc_zero(ctx, sizeof(ctx));
+  ctx[AIUEOS_DWC_PROTOCOL] = 2;
+  ctx[AIUEOS_DWC_OPERATION] = AIUEOS_DEVICE_WORKER_RESULT;
+  worker_context_numbers(ctx, 7, 42, 2005, 17, 8, 7,
+                         12000000000ULL, 56000000000ULL, 68000000000ULL,
+                         256, 2, 4000000000ULL, 0);
+  dwc_text(ctx, AIUEOS_DWC_NODE, "aiueos-k16-7070fc0bb632", 23);
+  dwc_hex_fill(ctx, AIUEOS_DWC_PUBLIC_KEY, 64, 0x01);
+  dwc_hex_fill(ctx, AIUEOS_DWC_BOOT, 8, 0x02);
+  dwc_hex_fill(ctx, AIUEOS_DWC_MODEL_SHA256, 32, 0xaa);
+  dwc_hex_fill(ctx, AIUEOS_DWC_NONCE, 16, 0x02);
+  length = kotoba_aiueos_device_worker_canonical(ctx, sizeof(ctx), out,
+                                                 sizeof(out));
+  if (!canonical_matches(out, length, worker_canonical_v2_expected)) return 1;
+
+  /* Protocol 3 result, the spec's worked example.  Its public key is
+     31 zero bytes then 0x01, then 31 zero bytes then 0x02, so it is written
+     rather than filled. */
+  dwc_zero(ctx, sizeof(ctx));
+  ctx[AIUEOS_DWC_PROTOCOL] = 3;
+  ctx[AIUEOS_DWC_OPERATION] = AIUEOS_DEVICE_WORKER_RESULT;
+  ctx[AIUEOS_DWC_STOP_REASON] = 1;                              /* stop reason: eos */
+  worker_context_numbers(ctx, 12, 1788078031098390ULL, 2005, 17, 3, 2,
+                         12000000000ULL, 24000000000ULL, 36000000000ULL,
+                         256, 2, 4000000000ULL, 3);
+  dwc_text(ctx, AIUEOS_DWC_NODE, "aiueos-k16-7070fc0bb632", 23);
+  dwc_hex_fill(ctx, AIUEOS_DWC_PUBLIC_KEY, 64, 0x00);
+  ctx[AIUEOS_DWC_PUBLIC_KEY + 62] = '0'; ctx[AIUEOS_DWC_PUBLIC_KEY + 63] = '1';
+  ctx[AIUEOS_DWC_PUBLIC_KEY + 126] = '0'; ctx[AIUEOS_DWC_PUBLIC_KEY + 127] = '2';
+  dwc_text(ctx, AIUEOS_DWC_BOOT, "0123456789abcdef", 16);
+  dwc_text(ctx, AIUEOS_DWC_MODEL_SHA256,
+           "c0b7c3038681ed2e3040456c1dd45f9858b6c2290bed172c70388a94874f3eee", 64);
+  dwc_text(ctx, AIUEOS_DWC_INPUT_SHA256,
+           "6d1f26aca9a65756235d79f4246587ffa5192cddab5fd1056d0eff3b5dd2b34a", 64);
+  dwc_text(ctx, AIUEOS_DWC_OUTPUT_SHA256,
+           "bfc850f9c5276dffd405b5f6413ec57703465265dc0747fa9fea07d2aee1b644", 64);
+  dwc_text(ctx, AIUEOS_DWC_NONCE, "00112233445566778899aabbccddeeff", 32);
+  length = kotoba_aiueos_device_worker_canonical(ctx, sizeof(ctx), out,
+                                                 sizeof(out));
+  if (!canonical_matches(out, length, worker_canonical_v3_expected)) return 2;
+
+  /* Two refusals, so a run that never saw the object say no is not counted as
+     a pass -- and they are two rather than one because the ORDER matters and
+     was measured rather than assumed.
+
+     `stop-ok` is checked before the v3-field clause, so the same context
+     reports -5 while its stop-reason byte is still `eos` and -7 only once that
+     byte is the sentinel.  This is not a hypothetical: the first version of
+     this self-test set the protocol byte to 2 and expected -7, and QEMU
+     answered `DEVCLIENT-PARITY canonical mismatch` -- the object was right and
+     the expectation was wrong.  Both codes are pinned here so neither clause
+     can be removed without a red boot. */
+  ctx[AIUEOS_DWC_PROTOCOL] = 2;
+  length = kotoba_aiueos_device_worker_canonical(ctx, sizeof(ctx), out,
+                                                 sizeof(out));
+  if (length != -5) return 3;
+  ctx[AIUEOS_DWC_STOP_REASON] = 0;
+  length = kotoba_aiueos_device_worker_canonical(ctx, sizeof(ctx), out,
+                                                 sizeof(out));
+  if (length != -7) return 4;
+  return 0;
+}
+
 
 #define AIUEOS_OWNED_MEMORY_MAP_BYTES (128ULL * 1024ULL)
 static struct aiueos_boot_info aiueos_owned_boot_info;
@@ -1037,6 +1230,55 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
       debug_string("AIUEOS_TLS13_RECORD_OK rfc8448-s3 seq0 seal-open tamper-refused\n");
       serial_string("AIUEOS_TLS13_RECORD_OK rfc8448-s3 seq0 seal-open tamper-refused\r\n");
     }
+#ifdef AIUEOS_QWEN35_KOTOBA_PARITY
+    /* QWEN-PARITY (ADR-0137).  The three Qwen3.5 forward-pass objects against
+       the C they were ported from, on this CPU, over synthetic inputs.  Placed
+       with the other Kotoba self-tests, after the kernel owns its own IDT: a
+       fuel-guard `ud2` raised while the FIRMWARE's handler is still installed
+       gives an OVMF dump with no vector and no address, and here it reaches
+       set_idt_gate(6, aiueos_isr_invalid_opcode) and names itself.
+       Only when AIUEOS_QWEN35_KOTOBA_PARITY=1, which is what compiles
+       kernel/qwen35_quant.c and kernel/qwen35_infer.c -- the reference half of
+       the comparison.  It is a SEPARATE flag from the model handoff on
+       purpose: the handoff makes the UEFI loader demand a 10,934,860,704-byte
+       mapping and refuse the boot without one (AIUEOS_LOADER_FAIL
+       qwen38-model-admission code=121, measured), and this comparison needs
+       no model at all -- it is bit-equality of the arithmetic over synthetic
+       inputs, which is exactly the property that survives having no weights. */
+    {
+      extern int aiueos_qwen35_kotoba_parity_selftest(uint32_t stage);
+      static const char *const qwen_parity_names[3] = {"dequant", "dot", "matvec"};
+      for (uint32_t stage = 0; stage < 3U; stage++) {
+        if (!aiueos_qwen35_kotoba_parity_selftest(stage)) {
+          serial_string("QWEN-PARITY ");
+          serial_string(qwen_parity_names[stage]);
+          serial_string(" mismatch\r\n");
+          qemu_exit(0x6f);
+        }
+        serial_string("QWEN-PARITY ");
+        serial_string(qwen_parity_names[stage]);
+        serial_string(" ok\r\n");
+      }
+    }
+#endif
+    {
+      /* DEVCLIENT-PARITY.  The emitted `device-worker-canonical` object against
+         the bytes the C writer produced for the same inputs (protocol 2) and
+         against the server's own worked example (protocol 3), plus one refusal
+         so a run that never saw the object say no is not counted as a pass.
+         The KIR interpreter already agrees with these bytes; that says nothing
+         about what the backend emitted, which is the half this covers. */
+      int devclient_case = aiueos_device_worker_canonical_selftest();
+      if (devclient_case) {
+        debug_string("DEVCLIENT-PARITY canonical mismatch\n");
+        serial_string("DEVCLIENT-PARITY canonical mismatch case=");
+        serial_decimal((uint32_t)devclient_case);
+        serial_string("\r\n");
+        qemu_exit(0x6f);
+      }
+      debug_string("DEVCLIENT-PARITY canonical ok\n");
+      serial_string("DEVCLIENT-PARITY canonical ok v2-result v3-result refusal-5 refusal-7\r\n");
+    }
 #ifdef AIUEOS_PHYSICAL_QUALIFICATION
     aiueos_qualification_progress(226);
 #endif
@@ -1169,7 +1411,7 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
     debug_string("AIUEOS_PHYSICAL_ALLOCATOR_OK pages=2 zeroed\n");
     serial_string("AIUEOS_PHYSICAL_ALLOCATOR_OK pages=2 zeroed\r\n");
 #if defined(AIUEOS_QWEN38_MODEL_HANDOFF) && defined(AIUEOS_MODEL_TEST_FIXTURE)
-    /* The GGUF admission, EXECUTED. ADR-0135 moved it to three Kotoba objects
+    /* The GGUF admission, EXECUTED. ADR-0137 moved it to three Kotoba objects
        and made kernel/qwen35_runtime.c delegate to them, but nothing ever ran
        that delegation: the objects passed a KIR-interpreter oracle, the image
        linked, and this workstation is aarch64 so the emitted x86-64 was never

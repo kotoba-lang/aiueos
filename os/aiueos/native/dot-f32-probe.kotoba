@@ -132,6 +132,40 @@
                  (if (= (bit-and (kernel-xgetbv 0) 6) 6) 1 0))]
     (+ osxsave (* 2 avx) (* 4 avx2) (* 8 xcr-ok))))
 
+;; ---------------------------------------------------------------------------
+;; xsave: enabling the state the guard asks about.
+;;
+;; The block below is the whole reason this probe was rewritten. Measured
+;; 2026-09-02, the first version of it: under `-cpu max` the CPU reports AVX and
+;; AVX2 and `CR4.OSXSAVE` is CLEAR, because nothing in a pure-Kotoba kernel
+;; could set it -- so the guard refused the vector arm on a machine that has
+;; AVX2, correctly, and the probe compared the scalar arm against itself.
+;;
+;; Three ordered steps, and every one of them faults if taken out of order:
+;;
+;;   1. `cpuid` leaf 1 ECX bit 26 (XSAVE, 0x4000000). Setting CR4.OSXSAVE on a
+;;      CPU without XSAVE raises #GP.
+;;   2. CR4 |= OSFXSR (9) | OSXMMEXCPT (10) | OSXSAVE (18) = 0x40600 = 263680.
+;;   3. XCR0 |= SSE (1) | YMM (2) = 6. Bit 0 (x87) is always set and cannot be
+;;      cleared, so the register reads back 7. `xsetbv` raises #UD while
+;;      CR4.OSXSAVE is clear, which is why step 2 comes first.
+;;
+;; BOTH writes are read-modify-write, and that is not style. CR4 already holds
+;; bits the UEFI loader set -- PAE, PGE, possibly SMEP -- and XCR0 already holds
+;; whatever the firmware left. `(kernel-write-cr4 263680)` compiles, runs, and
+;; clears all of them without faulting anywhere near the instruction that did
+;; it. This is the same reason kotoba-kir refuses to model either register.
+;;
+;; The answer is 1 when the state was enabled and 0 when the CPU has no XSAVE
+;; at all. Zero is not an error: `-cpu qemu64` is a plain x86-64 with SSE2 and
+;; that is exactly what the control run needs it to be.
+(defn enable-extended-state []
+  (if (= (bit-and (kernel-cpuid-ecx 1 0) 67108864) 0)
+    0
+    (let [cr4 (kernel-write-cr4 (bit-or (kernel-read-cr4) 263680))]
+      (let [xcr0 (kernel-xsetbv 0 (bit-or (kernel-xgetbv 0) 6))]
+        1))))
+
 (defn hex-digit [value]
   (if (< value 10) (+ 48 value) (+ 55 value)))
 
@@ -182,7 +216,16 @@
                 ;; answer was computed from, and a read-back says that.
                 check-a0 (kernel-load-u32-4k page 4096 0)
                 check-b0 (kernel-load-u32-4k page 4096 64)
+                ;; xsave: enable BEFORE the fold, because the guard inside
+                ;; `kernel-dot-f32` reads CR4 and XCR0 at the moment it runs.
+                enabled (enable-extended-state)
                 sum (dot12 page b-page)
+                ;; Two nibbles, and the first one is new. `enabled` says
+                ;; whether this run TRIED to turn the state on; `cpu-features`
+                ;; says what the machine reports AFTERWARDS. Reporting only
+                ;; the second would leave "the enable ran and did nothing"
+                ;; and "the CPU has no XSAVE" printing the same digit.
+                enabled-digit (emit-digit enabled 1)
                 features (emit-digit (cpu-features) 1)
                 printed (emit-u32 (bit-and sum 4294967295))
                 m0 (kernel-out-u8 233 68)
@@ -203,7 +246,12 @@
                                              ;; is "a hex digit reached the
                                              ;; console", 0-9 or A-F.
                                              (> features 47)
-                                             (< features 71))
+                                             (< features 71)
+                                             ;; xsave: the enable answered 0
+                                             ;; or 1 -- ASCII 48 or 49 -- and
+                                             ;; nothing else.
+                                             (> enabled-digit 47)
+                                             (< enabled-digit 50))
                                       16 25)
                                     24)
                                   23)

@@ -52,7 +52,7 @@
        "kernel-publish-current-domain are three facilities the kernel would "
        "have to publish through hidden-context slots it does not have yet. "
        "Four of them are refused by the COMPILER for the same reason and that "
-       "was measured, not assumed (ADR-0137): compiled through the project "
+       "was measured, not assumed (ADR-0140): compiled through the project "
        "route at amu bb51dc14, `value-runtime-dispatch`, `-entry`, "
        "`-provider-policy` and `-provider-transport` come back "
        ":kotoba.error/subset-reject \"operation has no admitted type "
@@ -112,23 +112,6 @@
         "or a build script that names it. What executes it remains "
         "contracts/hkdf-sha256-v1.edn through verify-admissions.cljs: 18 "
         "vectors from RFC 4231 section 4 and RFC 8448 section 3.")
-
-   "device-worker-canonical"
-   (str "The signed canonical text of the Murakumo device-P256 worker "
-        "protocol, v2 and v3 (ADR-0136). NOT linked yet, and the reason is a "
-        "sequencing one rather than a measured refusal: `kernel/device_result.c` "
-        "still builds that text itself at :415-437, and giving the object its "
-        "call site is the flip -- a change to the kernel, in its own commit, "
-        "with a boot self-test that compares the two writers on the same "
-        "inputs. Declaring it here rather than linking it dead keeps `linked` "
-        "meaning `called`. What executes it is "
-        "contracts/device-worker-canonical-v1.edn through "
-        "os/aiueos/scripts/verify-admissions.cljs: 16 vectors and 7 byte-for-byte "
-        "memory assertions in the KIR interpreter, whose expected bytes come "
-        "from two other implementations -- "
-        "`os/aiueos/tests/device_result_v2_model.c --dump-canonical` for "
-        "protocol 2 and the worked example in network-awai/cloud-murakumo-api "
-        "`docs/device-worker-v3.md` for protocol 3.")
 
    "murakumo-join-plan"
    (str "A node's own fleet-enrolment decision. It has no caller inside the "

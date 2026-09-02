@@ -1,4 +1,4 @@
-;; SCOPED receipt, and the scope is the point (ADR-0137). Produced by
+;; SCOPED receipt, and the scope is the point (ADR-0140). Produced by
 ;; `os/aiueos/scripts/verify-jvm-free-object-parity.cljs` run against a root
 ;; containing only the seven sources below and their objects:
 ;;
@@ -24,7 +24,7 @@
 ;; `:kotoba.error/namespace-require-needs-project`, so all five would have come
 ;; back `:failed`: a statement about the invocation, not about the object. It
 ;; also looked for a source only at `<stem>.kotoba` beside the object, which
-;; since ADR-0137 drops `sha256.o` and `digest-equal.o` out of the run entirely
+;; since ADR-0140 drops `sha256.o` and `digest-equal.o` out of the run entirely
 ;; -- a shorter list, which reads as a clean pass over everything left.
 ;;
 ;; HOW THE FIELDS WERE OBTAINED, because they did not all come from one
@@ -44,7 +44,7 @@
 ;; The reason for the split is banal and is recorded rather than tidied: the
 ;; script writes its receipt to `<root>/qualification/`, that directory did not
 ;; exist in the scoped root, and the re-run with it present had not finished
-;; when this landed. See ADR-0137 "What is NOT done".
+;; when this landed. See ADR-0140 "What is NOT done".
 ;;
 ;; WHAT `:match` DOES AND DOES NOT SAY. It says the JVM-free route and the JVM
 ;; route produced the same bytes. It does NOT by itself say those bytes are the
@@ -56,10 +56,10 @@
 ;;   hkdf-sha256               75a9857d…
 ;;
 ;; For `sha256` and `digest-equal` they are NOT, and that is the ADR-0129/0130
-;; drift, not a regression from ADR-0137: the committed artifacts are
+;; drift, not a regression from ADR-0140: the committed artifacts are
 ;; af378b06… (17,792 B) and 6156db8b… (1,728 B), built at amu 9cf3a0a, and both
 ;; still reproduce byte-for-byte AT THAT PIN from these sources -- which is the
-;; measurement that let ADR-0137 move them without rebuilding them.
+;; measurement that let ADR-0140 move them without rebuilding them.
 {:format :aiueos.jvm-free-object-parity/v1,
  :target :x86_64-aiueos-kernel-v1,
  :compiler-tree-sha256 "187c14299990e9e2f5720191b037d64e5ec61620de09823a1805d0bd57d6f7f9",

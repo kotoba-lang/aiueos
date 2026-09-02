@@ -1,7 +1,12 @@
 #include <stdint.h>
 #include "device_result.h"
 
-#define DEVICE_CANONICAL_MAX 512U
+/* 1024 rather than 512: the widest protocol 3 worker form is 716 bytes.
+   os/aiueos/contracts/device-worker-canonical-v1.edn:out states the sum.
+   Both come from device_result.h, which is where the boot self-test in main.c
+   reads the same layout. */
+#define DEVICE_CANONICAL_MAX AIUEOS_DEVICE_WORKER_CANONICAL_MAX
+#define DEVICE_WORKER_CTX_BYTES AIUEOS_DEVICE_WORKER_CTX_BYTES
 #define DEVICE_BODY_MAX 1024U
 
 extern uint64_t kotoba_aiueos_sha256(
@@ -188,6 +193,45 @@ static int p256_did(const uint8_t public_key[64], char *out, uint32_t capacity) 
   put_text(&b, encoded);
   put_byte(&b, 0);
   return b.ok;
+}
+
+/* The 576-byte fixed-layout record `contracts/device-worker-canonical-v1.edn`
+   describes.  C fills the slots; the object decides what text they denote,
+   which is the whole point of moving the writer out of here -- a field order
+   or a decimal is a claim about what this device asserts, and ADR-0015 draws
+   the C boundary at mechanism. */
+static void ctx_number(uint8_t *ctx, uint32_t offset, uint64_t value) {
+  for (uint32_t i = 0; i < 8; i++)
+    ctx[offset + i] = (uint8_t)(value >> (56U - i * 8U));
+}
+
+static void ctx_text(uint8_t *ctx, uint32_t offset, const char *text,
+                     uint32_t bytes) {
+  for (uint32_t i = 0; i < bytes; i++) ctx[offset + i] = (uint8_t)text[i];
+}
+
+/* Every numeric slot of a worker request, in one place, so the two callers
+   below cannot drift.  A poll leaves job-id and the metrics zero; the object
+   writes the `-` sentinel and does not read the slot. */
+static void worker_context_numbers(
+    uint8_t *ctx, uint32_t sequence, uint64_t job_id, uint32_t token,
+    uint32_t second_token, uint32_t generated_tokens, uint32_t decode_tokens,
+    uint64_t first_token_cycles, uint64_t decode_cycles,
+    uint64_t inference_cycles, uint32_t vector_bits, uint32_t worker_threads,
+    uint64_t tsc_hz, uint64_t output_token_count) {
+  ctx_number(ctx, AIUEOS_DWC_SEQUENCE, sequence);
+  ctx_number(ctx, AIUEOS_DWC_JOB_ID, job_id);
+  ctx_number(ctx, AIUEOS_DWC_TOKEN, token);
+  ctx_number(ctx, AIUEOS_DWC_SECOND_TOKEN, second_token);
+  ctx_number(ctx, AIUEOS_DWC_GENERATED_TOKENS, generated_tokens);
+  ctx_number(ctx, AIUEOS_DWC_DECODE_TOKENS, decode_tokens);
+  ctx_number(ctx, AIUEOS_DWC_FIRST_TOKEN_CYCLES, first_token_cycles);
+  ctx_number(ctx, AIUEOS_DWC_DECODE_CYCLES, decode_cycles);
+  ctx_number(ctx, AIUEOS_DWC_INFERENCE_CYCLES, inference_cycles);
+  ctx_number(ctx, AIUEOS_DWC_VECTOR_BITS, vector_bits);
+  ctx_number(ctx, AIUEOS_DWC_WORKER_THREADS, worker_threads);
+  ctx_number(ctx, AIUEOS_DWC_TSC_HZ, tsc_hz);
+  ctx_number(ctx, AIUEOS_DWC_OUTPUT_TOKEN_COUNT, output_token_count);
 }
 
 static void canonical_field(struct bounded_buffer *b, const char *text) {
@@ -408,36 +452,32 @@ uint32_t aiueos_device_worker_http_request(
     "poll" : (worker->operation == AIUEOS_DEVICE_WORKER_RESULT ?
               "result" : "control-ack");
 
+  /* The signed text is `device-worker-canonical.kotoba` since ADR-0136.  This
+     function used to build it here with twenty put/canonical_ calls; what is
+     left is filling a fixed-layout record.  `operation` below is still needed
+     for the JSON body, which is a different string in a different order. */
   uint8_t canonical_bytes[DEVICE_CANONICAL_MAX];
-  struct bounded_buffer canonical = {
-    canonical_bytes, 0, sizeof(canonical_bytes), 1
-  };
-  put_text(&canonical, "aiueos-k16-worker-v2");
-  canonical_field(&canonical, node);
-  canonical_field(&canonical, public_hex);
-  canonical_field(&canonical, boot_hex);
-  canonical_field(&canonical, model_hex);
-  canonical_number(&canonical, worker->sequence);
-  canonical_field(&canonical, operation);
-  put_byte(&canonical, '\n');
-  if (worker->operation == AIUEOS_DEVICE_WORKER_POLL)
-    put_text(&canonical, "-");
-  else
-    put_decimal(&canonical, worker->job_id);
-  canonical_number(&canonical, 2);
-  canonical_number(&canonical, worker->token);
-  canonical_number(&canonical, worker->second_token);
-  canonical_number(&canonical, worker->generated_tokens);
-  canonical_number(&canonical, worker->decode_tokens);
-  canonical_number(&canonical, worker->first_token_cycles);
-  canonical_number(&canonical, worker->decode_cycles);
-  canonical_number(&canonical, worker->inference_cycles);
-  canonical_number(&canonical, worker->vector_bits);
-  canonical_number(&canonical, worker->worker_threads);
-  canonical_number(&canonical, worker->boot->tsc_hz);
-  canonical_field(&canonical, nonce_hex);
-  if (!canonical.ok ||
-      !kotoba_aiueos_sha256(canonical.bytes, canonical.length, digest,
+  uint8_t worker_ctx[DEVICE_WORKER_CTX_BYTES];
+  secure_zero(worker_ctx, sizeof(worker_ctx));
+  worker_ctx[AIUEOS_DWC_PROTOCOL] = 2;                       /* protocol */
+  worker_ctx[AIUEOS_DWC_OPERATION] = (uint8_t)worker->operation;
+  worker_ctx[AIUEOS_DWC_STOP_REASON] = 0;                       /* stop-reason sentinel */
+  worker_context_numbers(
+    worker_ctx, worker->sequence, worker->job_id, worker->token,
+    worker->second_token, worker->generated_tokens, worker->decode_tokens,
+    worker->first_token_cycles, worker->decode_cycles,
+    worker->inference_cycles, worker->vector_bits, worker->worker_threads,
+    worker->boot->tsc_hz, 0);
+  ctx_text(worker_ctx, AIUEOS_DWC_NODE, node, 23);
+  ctx_text(worker_ctx, AIUEOS_DWC_PUBLIC_KEY, public_hex, 128);
+  ctx_text(worker_ctx, AIUEOS_DWC_BOOT, boot_hex, 16);
+  ctx_text(worker_ctx, AIUEOS_DWC_MODEL_SHA256, model_hex, 64);
+  ctx_text(worker_ctx, AIUEOS_DWC_NONCE, nonce_hex, 32);
+  int64_t canonical_length = kotoba_aiueos_device_worker_canonical(
+    worker_ctx, sizeof(worker_ctx), canonical_bytes, sizeof(canonical_bytes));
+  /* Zero is never returned, and a negative value is the clause that refused. */
+  if (canonical_length <= 0 ||
+      !kotoba_aiueos_sha256(canonical_bytes, (uint64_t)canonical_length, digest,
                             sha_workspace, sizeof(sha_workspace)) ||
       !kotoba_aiueos_ecdsa_p256_sign(private_key, digest, nonce_k,
                                      signature, p256_workspace)) goto cleanup;
@@ -498,3 +538,4 @@ cleanup:
   secure_zero(p256_workspace, sizeof(p256_workspace));
   return request_length;
 }
+

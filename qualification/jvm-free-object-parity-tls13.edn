@@ -1,5 +1,5 @@
 ;; ⚠ TWO OF THE THREE ROWS BELOW DESCRIBE ARTIFACTS THAT NO LONGER EXIST.
-;; ADR-0137 extracted the AEAD `aes128-gcm.kotoba` and `tls13-record.kotoba`
+;; ADR-0140 extracted the AEAD `aes128-gcm.kotoba` and `tls13-record.kotoba`
 ;; both contained into `aiueos/lib/aes128_gcm_core.kotoba` and rebuilt both
 ;; objects: `aes128-gcm` is now 14,232 B / 65492e52… and `tls13-record` is
 ;; 17,736 B / 5c3dee81…. `hkdf-sha256` is unchanged.
