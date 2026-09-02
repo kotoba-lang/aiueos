@@ -4,7 +4,7 @@
 ;; stated by the repository that owns the decision.
 {:format :aiueos.tls13-record/v1
  :graph {:root aiueos.tls13-record
-         :modules [aiueos.tls13-record]}
+         :modules [aiueos.lib.aes128-gcm-core aiueos.tls13-record]}
  :native {:target :x86_64-aiueos-kernel-v1
           :export "kotoba_aiueos_tls13_record"
           :imports []

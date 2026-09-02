@@ -99,14 +99,45 @@
       {:status (.-status r)
        :text (str (.-stdout r) (.-stderr r))})))
 
+;; The project route is entered ON DEMAND, and the demand is the compiler's own
+;; refusal.
+;;
+;; A source that declares `(:require ...)` is a project and needs
+;; `--source-path`; without it amu answers
+;; `:kotoba.error/namespace-require-needs-project`. Five committed objects are
+;; built that way since amu#742 (aes128-gcm, tls13-record, hkdf-sha256,
+;; cid-v1-admit, value-runtime-cas-verify) and this script would have reported
+;; every one of them as :failed -- a statement about the invocation, not about
+;; the object.
+;;
+;; Passing the flag ALWAYS is not the fix, and that was measured rather than
+;; assumed: `fnv1a.kotoba` declares no `ns` at all, and with `--source-path` it
+;; is refused with "project module requires exactly one namespace" (2026-09-02,
+;; amu bb51dc14). Deciding from a regex over the source is not the fix either
+;; -- a `(:require ...)` spelled in a way the regex missed would get the wrong
+;; invocation and a verdict that reads like an answer.
+;;
+;; So the compiler decides. Plain first; if the refusal names the project
+;; route, run it again with `--source-path`. Both routes make the same decision
+;; independently, so neither is measured under a shape the other did not get.
+(defn- invoke [route src out source-path?]
+  (case route
+    :jvm-free (run (.join path compiler "bin" "amu")
+                   (cond-> ["compile" src "--target" target "--output" out "--jvm-free"]
+                     source-path? (conj "--source-path" kotoba-dir))
+                   {:no-jvm? true})
+    :jvm (run "clojure"
+              (cond-> ["-M:run" "compile" src "--target" target "--output" out]
+                source-path? (conj "--source-path" kotoba-dir)))))
+
 (defn- compile-one [route src out]
-  (let [{:keys [status text]}
-        (case route
-          :jvm-free (run (.join path compiler "bin" "amu")
-                         ["compile" src "--target" target "--output" out "--jvm-free"]
-                         {:no-jvm? true})
-          :jvm (run "clojure"
-                    ["-M:run" "compile" src "--target" target "--output" out]))]
+  (let [plain (invoke route src out false)
+        {:keys [status text]}
+        (if (and (not (zero? (:status plain)))
+                 (re-find #"namespace-require-needs-project" (:text plain)))
+          (do (.rmSync fs out #js {:force true})
+              (invoke route src out true))
+          plain)]
     (if (and (zero? status) (.existsSync fs out))
       {:ok true :sha (sha256 (.readFileSync fs out)) :bytes (.-size (.statSync fs out))}
       {:ok false :verdict (classify text)
@@ -139,11 +170,23 @@
                    ;; started: still not an answer about the object.
                    :verdict (:verdict second-try)))))))
 
+;; `<stem>.kotoba` beside the object, or the ns->path spelling
+;; `aiueos/<munged stem>.kotoba` its source moves to when it becomes an
+;; importable module. Looking only for the flat name would DROP those objects
+;; from the run -- `sha256.o` and `digest-equal.o` are exactly that case since
+;; ADR-0136 -- and a shorter list reads as a clean pass over everything that
+;; was left.
+(defn- source-of [base]
+  (->> [(str base ".kotoba")
+        (str "aiueos/" (.replaceAll base "-" "_") ".kotoba")]
+       (filter #(.existsSync fs (.join path kotoba-dir %)))
+       first))
+
 (def sources
   (->> (.readdirSync fs kotoba-dir)
        (filter #(.endsWith % ".o"))
        (map #(.slice % 0 -2))
-       (filter #(.existsSync fs (.join path kotoba-dir (str % ".kotoba"))))
+       (filter source-of)
        sort
        (#(if only (take only %) %))
        vec))
@@ -157,7 +200,7 @@
 
 (def results
   (vec (for [base sources
-             :let [src (.join path kotoba-dir (str base ".kotoba"))
+             :let [src (.join path kotoba-dir (source-of base))
                    a (compile-with-retry :jvm-free src (.join path work (str base ".nbb.o")))
                    b (compile-with-retry :jvm src (.join path work (str base ".jvm.o")))
                    verdict (cond
