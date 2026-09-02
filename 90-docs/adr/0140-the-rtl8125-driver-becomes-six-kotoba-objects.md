@@ -192,16 +192,88 @@ objects -- when the parity comparison would become a comparison of one
 implementation with itself -- the table is a claim that was measured against the
 C rather than transcribed from the Kotoba.
 
+## The C is flipped
+
+`kernel/rtl8125.c`'s public API is unchanged and every body is now a call into
+an object. What is left in C is the two things an object cannot do: hold the
+struct (which pointers and physical addresses this device is using), and
+sequence one object after another, which `rings_restart` needs because a kernel
+object cannot call another one.
+
+Measured, code lines only -- comments and blanks stripped:
+
+| | before | after |
+|---|---|---|
+| `kernel/rtl8125.c` driver + ARP helpers | 262 | 182 |
+| the six objects + the shared module | 0 | 182 |
+| `kernel/rtl8125.c` parity self-test | 0 | 246 |
+
+**The file got bigger, not smaller, and that is worth saying plainly.** The
+driver lost 80 lines (-31%) -- twenty-five register `#define`s, the revision
+table, the receive-configuration table, `mac_valid`, the MAC assembly, the FIFO
+drain loop, every descriptor store, and the release and acquire fences -- and a
+246-line self-test moved in. The self-test ships in every UEFI profile. It is
+not a decision and it is not driver code, but it is C in the image, and the
+honest accounting is 262 lines of driver replaced by 182 lines of driver and
+182 lines of Kotoba, with 246 lines of evidence beside them.
+
+`RGE_DESC_OWN` and `RGE_DESC_EOR` survive: `tx_complete` still reads the OWN
+bit (one bit of one word with no decision in it, so it did not earn a seventh
+export name) and the pinned table names both.
+
+### What the flip cost elsewhere
+
+* **The host model test could no longer link.** `smoke-rtl8125-handoff.sh`
+  builds `rtl8125.c` with a HOST compiler, and a Kotoba kernel object is an
+  `x86_64-aiueos-kernel-v1` ELF that an arm64 host cannot link. The driver and
+  its self-test are now behind `#ifndef AIUEOS_RTL8125_ARP_ONLY`, which that
+  script defines and no kernel build does; the model test keeps the two ARP
+  helpers, which are still ordinary C. The register/descriptor half of it is
+  gone, and the coverage it had is what `NIC-PARITY` covers -- against the
+  emitted machine code rather than against a host recompilation of the source.
+* **`native_pxe_test.clj` grepped `rtl8125.c` for `RGE_RX_SOF` / `RGE_RX_EOF`.**
+  Those constants are named in `rtl8125-rx-poll.kotoba` now. The test reads that
+  file for those two markers instead, because grepping the C for a constant it
+  no longer uses is a marker that stays green by accident.
+
+### The parity self-test changed shape, and the reason matters
+
+Until the flip it ran the C driver and the objects against two copies of the
+same seed and compared every byte. That comparison is gone, and not because it
+stopped passing -- it stopped meaning anything, because `takeover` now calls the
+same objects and the comparison would be between one implementation and itself.
+
+What replaces it is the pinned table, which was written before the flip and
+checked against the REAL C driver in the same boot. Everything else survives
+unchanged in kind, because none of it was ever a C-versus-Kotoba comparison: a
+submission that must set OWN before the doorbell, a second submission that must
+therefore refuse, four receive-completion verdicts, a rearm, a FIFO that never
+drains, and three argument refusals.
+
+Both directions shown on the flipped build:
+`receive-config` 0x41000c0a -> 0x41000c0b produces
+`NIC-PARITY mismatch stage=36 offset=68`, and restoring it recompiles
+`rtl8125-program.o` to the same sha256 and returns `NIC-PARITY ok`.
+
 ## What is NOT done
 
-* **The C is not flipped yet.** `rtl8125.c` is 306 lines of driver plus 393 of self-test (699 total);
-  its driver bodies still do the work, and the objects are executed only by the
-  self-test. `kernel/pci.c`'s RTL8125 section is untouched. That is the next
-  commit and it is the one that removes C.
+* **`kernel/pci.c`'s RTL8125 section is untouched.** The six MMIO accessors
+  (`rtl_mmio_read8`/`write32` and their siblings, :3935-3952) are now dead: the
+  driver no longer calls the vtable it fills in. They are left in place because
+  the header still declares the vtable and `io_valid` still requires it, and
+  removing them means touching a 5,400-line file three other streams are
+  editing concurrently. The frame builders above them (`rtl8125_build_direct_arp`
+  and the UDP/TCP/TLS path) are a different job.
+* **Nothing has run this on real RTL8125 silicon.** The physical qualification
+  path in `pci.c` calls the same public API, so the K16 nodes would exercise the
+  objects the next time one boots -- but no such boot has happened, and a
+  software model of a device is not the device. The register sequence, the
+  descriptor layouts and the FIFO drain are transcriptions cross-checked against
+  a fixture; the first real proof is a K16 node completing its ARP exchange.
 * **No live network exchange.** QEMU models no RTL8125, and this change does not
   port the virtio-net path (`pci.c`:3792) to Kotoba, so there is no DHCP or ARP
   round trip behind these objects. The physical qualification on the K16 nodes
-  is unchanged and still runs the C.
+  is unchanged in shape and now runs these objects the next time it boots.
 * **Four of the six have no host-side oracle**, for the reason above. If
   `kotoba.kir` ever grows a mode that models barriers as no-ops, the four
   contracts are worth writing then.

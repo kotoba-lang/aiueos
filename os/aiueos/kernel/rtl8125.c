@@ -6,43 +6,17 @@
    an AIUEOS-specific, bounded PXE-handoff driver: it keeps the firmware's PHY
    and MCU setup and replaces only the DMA rings after ExitBootServices. */
 
-#define RGE_MAC0 0x0000U
-#define RGE_MAC4 0x0004U
-#define RGE_TXDESC_LO 0x0020U
-#define RGE_TXDESC_HI 0x0024U
-#define RGE_CMD 0x0037U
-#define RGE_IMR 0x0038U
-#define RGE_ISR 0x003cU
-#define RGE_TXCFG 0x0040U
-#define RGE_RXCFG 0x0044U
-#define RGE_PHYSTAT 0x006cU
-#define RGE_TXSTART 0x0090U
-#define RGE_MCUCMD 0x00d3U
-#define RGE_RXMAXSIZE 0x00daU
-#define RGE_RXDESC_LO 0x00e4U
-#define RGE_RXDESC_HI 0x00e8U
-
-#define RGE_CMD_TX 0x04U
-#define RGE_CMD_RX 0x08U
-#define RGE_CMD_STOP 0x80U
-#define RGE_FIFO_EMPTY 0x30U
-#define RGE_PHYSTAT_LINK 0x0002U
-#define RGE_RXCFG_INDIVIDUAL 0x00000002U
-#define RGE_RXCFG_BROADCAST 0x00000008U
-#define RGE_TXCFG_HWREV 0x7cf00000U
-#define RGE_TXCFG_CONFIG 0x03000700U
-#define RGE_RXCFG_8125 0x41000700U
-#define RGE_RXCFG_8125B 0x41000c00U
-#define RGE_RXCFG_8125D 0x41200c00U
+/* The register offsets, the command bits and the receive-configuration words
+   are NOT here any more.  They live in the Kotoba objects that write them --
+   `rtl8125-program.kotoba` names each offset at its use site with the
+   hexadecimal in a comment, and `aiueos/lib/rtl8125_regs.kotoba` holds the
+   revision table and the receive filter (ADR-0140).  Twenty-five `#define`s
+   went with them.  The two below survive because C still reads the OWN bit in
+   `tx_complete` and the parity self-test still names both in its pinned
+   descriptor expectations. */
 
 #define RGE_DESC_OWN 0x80000000U
 #define RGE_DESC_EOR 0x40000000U
-#define RGE_TX_SOF 0x20000000U
-#define RGE_TX_EOF 0x10000000U
-#define RGE_RX_SOF 0x02000000U
-#define RGE_RX_EOF 0x01000000U
-#define RGE_RX_ERROR 0x00100000U
-#define RGE_RX_LENGTH 0x00003fffU
 
 _Static_assert(sizeof(struct aiueos_rtl8125_tx_desc)==32,"RTL8125 TX descriptor");
 _Static_assert(sizeof(struct aiueos_rtl8125_rx_desc)==32,"RTL8125 RX descriptor");
@@ -122,85 +96,99 @@ uint32_t aiueos_rtl8125_direct_arp_reply(
   return 42U;
 }
 
+#ifndef AIUEOS_RTL8125_ARP_ONLY
+/* Everything below this line calls a Kotoba object, and a Kotoba kernel object
+   is an `x86_64-aiueos-kernel-v1` ELF.  `scripts/smoke-rtl8125-handoff.sh`
+   builds this file with a HOST compiler to exercise the two ARP helpers above,
+   and on an arm64 host those objects cannot be linked at all -- so it defines
+   AIUEOS_RTL8125_ARP_ONLY and gets the pure-C half.  Nothing in the kernel
+   build defines it; the driver and its self-test are always present there. */
+
+/* ==========================================================================
+   THE DRIVER, WHICH IS NOW SEQUENCING (ADR-0140)
+   ==========================================================================
+   Every function below used to write registers and descriptor fields itself.
+   They call Kotoba objects now, and what remains in C is the two things an
+   object cannot do:
+
+     * hold the struct -- which pointers and physical addresses this device is
+       using, its MAC, its revision, whether it has been taken over.  A kernel
+       object's loads and stores must be based on a literal, `kernel-boot-info`
+       or an ARGUMENT, so a device handle it could read a BAR address back out
+       of is not expressible; the handle stays here and its fields arrive as
+       arguments.
+     * sequence one object after another.  `rings_restart` is stop -> drain ->
+       build both descriptors -> program -> enable, and a kernel object cannot
+       call another kernel object, so the interleaving is here.
+
+   `struct aiueos_rtl8125_io`'s six function pointers are NO LONGER CALLED by
+   this driver.  The objects reach the device through `io.context`, which on
+   this path is the BAR's physical address itself (kernel/pci.c:4068 builds it
+   as `(void *)(uintptr_t)bar`).  The pointers are still required to be present
+   because the header declares them and a caller that left them null has
+   misunderstood the handoff, and because the parity self-test below still uses
+   an io vtable of its own.
+
+   WHAT WENT AWAY: `revision_from_txcfg`, `receive_config`, `mac_valid`, the
+   sixteen register offsets, the eight command/status bit masks, the MAC
+   assembly, the FIFO drain loop, the descriptor stores, the release and
+   acquire fences.  `RGE_DESC_OWN` and `RGE_DESC_EOR` survive because
+   `tx_complete` and the self-test's pinned table still name them.  */
+
+/* `aiueos_map_pci_mmio(bar, 4096)` (kernel/pci.c:4056) maps exactly one page
+   per BAR, and the objects refuse any other length -- so this is not a bound
+   they check against, it is the length the mapping actually has. */
+#define RTL_MMIO_WINDOW 4096U
+#define RTL_DESC_BYTES 32U
+
+extern uint64_t kotoba_aiueos_rtl8125_identify(uint64_t, uint64_t, uint64_t,
+                                               uint64_t);
+extern uint64_t kotoba_aiueos_rtl8125_link_up(uint64_t, uint64_t);
+extern uint64_t kotoba_aiueos_rtl8125_ring_build(uint64_t, uint64_t, uint64_t,
+                                                 uint64_t, uint64_t);
+extern uint64_t kotoba_aiueos_rtl8125_program(uint64_t, uint64_t, uint64_t,
+                                              uint64_t, uint64_t);
+extern uint64_t kotoba_aiueos_rtl8125_tx_submit(uint64_t, uint64_t, uint64_t,
+                                                uint64_t, uint64_t);
+extern int64_t kotoba_aiueos_rtl8125_rx_poll(uint64_t, uint64_t);
+
 static int io_valid(const struct aiueos_rtl8125_io *io) {
-  return io && io->read8 && io->read16 && io->read32 && io->write8 &&
-         io->write16 && io->write32;
-}
-
-static enum aiueos_rtl8125_revision revision_from_txcfg(uint32_t value) {
-  switch (value & RGE_TXCFG_HWREV) {
-    case 0x60900000U: return AIUEOS_RTL8125_REV_8125;
-    case 0x64100000U: return AIUEOS_RTL8125_REV_8125B;
-    case 0x68800000U: return AIUEOS_RTL8125_REV_8125D_1;
-    case 0x68900000U: return AIUEOS_RTL8125_REV_8125D_2;
-    default: return AIUEOS_RTL8125_REV_NONE;
-  }
-}
-
-static uint32_t receive_config(enum aiueos_rtl8125_revision revision) {
-  if (revision == AIUEOS_RTL8125_REV_8125) return RGE_RXCFG_8125;
-  if (revision == AIUEOS_RTL8125_REV_8125B) return RGE_RXCFG_8125B;
-  return RGE_RXCFG_8125D;
-}
-
-static int mac_valid(const uint8_t mac[6]) {
-  uint8_t any = 0, all_ff = 0xff;
-  for (unsigned i = 0; i < 6; i++) { any |= mac[i]; all_ff &= mac[i]; }
-  return any && all_ff != 0xff && !(mac[0] & 1U);
-}
-
-static void dma_release(void) {
-  __atomic_thread_fence(__ATOMIC_RELEASE);
+  return io && io->context && io->read8 && io->read16 && io->read32 &&
+         io->write8 && io->write16 && io->write32;
 }
 
 static void dma_acquire(void) {
   __atomic_thread_fence(__ATOMIC_ACQUIRE);
 }
 
+/* rtl8125.c's old `rings_restart`, as four object calls.  The order is the
+   whole function: the engine is stopped and its transmit FIFO drained BEFORE
+   the descriptors are rewritten, because on a restart the ring registers still
+   point at these very descriptors and rewriting an address the hardware owns
+   is how a frame lands in a buffer the kernel has handed on.
+   `aiueos-rtl8125-program` takes 0 for the stop phase and the revision for the
+   program phase; that is why it is one symbol and not two. */
 static enum aiueos_rtl8125_result rings_restart(
     struct aiueos_rtl8125 *device) {
-  const struct aiueos_rtl8125_io *io = &device->io;
-
-  /* Each worker POST is a separate short TLS connection.  Stop and drain the
-     already-owned engine before reusing its single descriptor so late frames
-     from the previous four-tuple cannot hide the next SYN-ACK in the RTL FIFO.
-     Keep the firmware-owned PHY/MCU calibration and the revision captured at
-     takeover; TXCFG no longer contains usable revision bits after takeover. */
-  io->write8(io->context,RGE_CMD,
-             (uint8_t)(io->read8(io->context,RGE_CMD)|RGE_CMD_STOP));
-  unsigned budget;
-  for (budget=0;budget<300000U;budget++)
-    if ((io->read8(io->context,RGE_MCUCMD)&RGE_FIFO_EMPTY)==RGE_FIFO_EMPTY)
-      break;
-  if (budget==300000U) {
-    device->ready=0;
-    return AIUEOS_RTL8125_FIFO_TIMEOUT;
+  const uint64_t mmio = (uint64_t)(uintptr_t)device->io.context;
+  uint64_t reason = kotoba_aiueos_rtl8125_program(mmio, RTL_MMIO_WINDOW, 0, 0, 0);
+  if (reason) {
+    /* The C set this on the FIFO-timeout path and callers depend on it: a
+       device that would not drain is not one this kernel keeps using. */
+    device->ready = 0;
+    return (enum aiueos_rtl8125_result)reason;
   }
-  io->write8(io->context,RGE_CMD,0);
-
-  bytes_zero(device->tx,sizeof(*device->tx));
-  bytes_zero(device->rx,sizeof(*device->rx));
-  device->tx->command = RGE_DESC_EOR;
-  device->tx->address = device->tx_frame_physical;
-  device->rx->address = device->rx_frame_physical;
-  device->rx->command = RGE_DESC_OWN|RGE_DESC_EOR|
-                        AIUEOS_RTL8125_FRAME_CAPACITY;
-  dma_release();
-
-  io->write32(io->context,RGE_IMR,0);
-  io->write32(io->context,RGE_ISR,0xffffffffU);
-  io->write32(io->context,RGE_TXDESC_LO,(uint32_t)device->tx_desc_physical);
-  io->write32(io->context,RGE_TXDESC_HI,
-              (uint32_t)(device->tx_desc_physical>>32));
-  io->write32(io->context,RGE_RXDESC_LO,(uint32_t)device->rx_desc_physical);
-  io->write32(io->context,RGE_RXDESC_HI,
-              (uint32_t)(device->rx_desc_physical>>32));
-  io->write16(io->context,RGE_RXMAXSIZE,AIUEOS_RTL8125_FRAME_CAPACITY);
-  io->write32(io->context,RGE_TXCFG,RGE_TXCFG_CONFIG);
-  io->write32(io->context,RGE_RXCFG,receive_config(device->revision)|
-              RGE_RXCFG_INDIVIDUAL|RGE_RXCFG_BROADCAST);
-  io->write8(io->context,RGE_CMD,RGE_CMD_TX|RGE_CMD_RX);
-  return AIUEOS_RTL8125_OK;
+  reason = kotoba_aiueos_rtl8125_ring_build(
+    (uint64_t)(uintptr_t)device->tx, RTL_DESC_BYTES,
+    device->tx_frame_physical, 0, AIUEOS_RTL8125_FRAME_CAPACITY);
+  if (reason) return (enum aiueos_rtl8125_result)reason;
+  reason = kotoba_aiueos_rtl8125_ring_build(
+    (uint64_t)(uintptr_t)device->rx, RTL_DESC_BYTES,
+    device->rx_frame_physical, 1, AIUEOS_RTL8125_FRAME_CAPACITY);
+  if (reason) return (enum aiueos_rtl8125_result)reason;
+  return (enum aiueos_rtl8125_result)kotoba_aiueos_rtl8125_program(
+    mmio, RTL_MMIO_WINDOW, device->tx_desc_physical, device->rx_desc_physical,
+    (uint64_t)device->revision);
 }
 
 enum aiueos_rtl8125_result aiueos_rtl8125_takeover(
@@ -210,32 +198,34 @@ enum aiueos_rtl8125_result aiueos_rtl8125_takeover(
     struct aiueos_rtl8125_rx_desc *rx, uint64_t rx_desc_physical,
     uint8_t *tx_frame, uint64_t tx_frame_physical,
     uint8_t *rx_frame, uint64_t rx_frame_physical) {
+  /* The descriptor alignment and non-zero checks the C made here are made by
+     the objects instead, and with the same answer: `desc-ok` refuses a null or
+     un-256-aligned base and both `ring-build` and `program` return 1, which IS
+     AIUEOS_RTL8125_INVALID.  What is left here is the pointers, which no
+     object sees. */
   if (!device || !io_valid(io) || !tx || !rx || !tx_frame || !rx_frame ||
-      !tx_desc_physical || !rx_desc_physical || !tx_frame_physical ||
-      !rx_frame_physical || (tx_desc_physical & 0xffU) ||
-      (rx_desc_physical & 0xffU) || ((uintptr_t)tx & 0xffU) ||
-      ((uintptr_t)rx & 0xffU)) return AIUEOS_RTL8125_INVALID;
+      !tx_frame_physical || !rx_frame_physical)
+    return AIUEOS_RTL8125_INVALID;
 
-  enum aiueos_rtl8125_revision revision =
-    revision_from_txcfg(io->read32(io->context,RGE_TXCFG));
-  if (revision == AIUEOS_RTL8125_REV_NONE)
-    return AIUEOS_RTL8125_UNSUPPORTED_REVISION;
+  /* `identify` writes a 16-byte record: the revision code at 0 and the six MAC
+     bytes at 8, in wire order.  It reads TXCFG before anything writes it,
+     which is the only moment the revision bits are readable at all. */
+  _Alignas(16) uint8_t identity[16] = {0};
+  uint64_t reason = kotoba_aiueos_rtl8125_identify(
+    (uint64_t)(uintptr_t)io->context, RTL_MMIO_WINDOW,
+    (uint64_t)(uintptr_t)identity, sizeof(identity));
+  if (reason) return (enum aiueos_rtl8125_result)reason;
 
-  uint32_t mac0 = io->read32(io->context,RGE_MAC0);
-  uint16_t mac4 = io->read16(io->context,RGE_MAC4);
-  uint8_t mac[6] = {(uint8_t)mac0,(uint8_t)(mac0>>8),(uint8_t)(mac0>>16),
-                    (uint8_t)(mac0>>24),(uint8_t)mac4,(uint8_t)(mac4>>8)};
-  if (!mac_valid(mac)) return AIUEOS_RTL8125_INVALID_MAC;
-
-  *device=(struct aiueos_rtl8125){0};
-  device->io=*io;device->tx=tx;device->rx=rx;
-  device->tx_frame=tx_frame;device->rx_frame=rx_frame;
-  device->tx_desc_physical=tx_desc_physical;
-  device->rx_desc_physical=rx_desc_physical;
-  device->tx_frame_physical=tx_frame_physical;
-  device->rx_frame_physical=rx_frame_physical;
-  for (unsigned i=0;i<6;i++) device->mac[i]=mac[i];
-  device->revision=revision;device->ready=1;
+  *device = (struct aiueos_rtl8125){0};
+  device->io = *io; device->tx = tx; device->rx = rx;
+  device->tx_frame = tx_frame; device->rx_frame = rx_frame;
+  device->tx_desc_physical = tx_desc_physical;
+  device->rx_desc_physical = rx_desc_physical;
+  device->tx_frame_physical = tx_frame_physical;
+  device->rx_frame_physical = rx_frame_physical;
+  for (unsigned i = 0; i < 6; i++) device->mac[i] = identity[8 + i];
+  device->revision = (enum aiueos_rtl8125_revision)identity[0];
+  device->ready = 1;
   return rings_restart(device);
 }
 
@@ -253,56 +243,55 @@ enum aiueos_rtl8125_result aiueos_rtl8125_restart(
 
 int aiueos_rtl8125_link_up(const struct aiueos_rtl8125 *device) {
   return device && device->ready &&
-    (device->io.read16(device->io.context,RGE_PHYSTAT)&RGE_PHYSTAT_LINK);
+    (int)kotoba_aiueos_rtl8125_link_up(
+      (uint64_t)(uintptr_t)device->io.context, RTL_MMIO_WINDOW);
 }
 
 enum aiueos_rtl8125_result aiueos_rtl8125_tx_submit(
     struct aiueos_rtl8125 *device, uint32_t frame_length) {
-  if (!device || !device->ready || frame_length<14 ||
-      frame_length>AIUEOS_RTL8125_FRAME_CAPACITY)
-    return AIUEOS_RTL8125_INVALID;
-  dma_acquire();
-  if (device->tx->command&RGE_DESC_OWN) return AIUEOS_RTL8125_TX_BUSY;
-  device->tx->extension=0;
-  device->tx->address=device->tx_frame_physical;
-  dma_release();
-  device->tx->command=RGE_DESC_OWN|RGE_DESC_EOR|RGE_TX_SOF|RGE_TX_EOF|
-                      frame_length;
-  dma_release();
-  device->io.write16(device->io.context,RGE_TXSTART,1);
-  return AIUEOS_RTL8125_OK;
+  if (!device || !device->ready) return AIUEOS_RTL8125_INVALID;
+  /* The 14..2048 bound, the OWN test, the acquire fence, the two release
+     fences and the doorbell are all inside the object.  So is TX_BUSY. */
+  return (enum aiueos_rtl8125_result)kotoba_aiueos_rtl8125_tx_submit(
+    (uint64_t)(uintptr_t)device->io.context, RTL_MMIO_WINDOW,
+    (uint64_t)(uintptr_t)device->tx, device->tx_frame_physical, frame_length);
 }
 
+/* The one status read left in C.  It is one bit of one word and it has no
+   decision in it -- the caller's question is "may I submit again", and the
+   answer is the OWN bit -- so it did not earn a seventh export name. */
 int aiueos_rtl8125_tx_complete(const struct aiueos_rtl8125 *device) {
   if (!device || !device->ready) return 0;
   dma_acquire();
-  return !(device->tx->command&RGE_DESC_OWN);
+  return !(device->tx->command & RGE_DESC_OWN);
 }
 
+/* NOT ZERO-IS-SUCCESS ON THE OBJECT SIDE.  `aiueos-rtl8125-rx-poll` answers
+   with a non-negative LENGTH (zero = the descriptor is still device-owned,
+   which is the C's `*frame_length = 0` with OK) or a negative reason code,
+   because a length and a reason cannot share a non-negative value space and an
+   object has one i64 to answer with.  This restores the C's shape. */
 enum aiueos_rtl8125_result aiueos_rtl8125_rx_poll(
     struct aiueos_rtl8125 *device, uint32_t *frame_length) {
   if (!device || !device->ready || !frame_length)
     return AIUEOS_RTL8125_INVALID;
-  dma_acquire();
-  uint32_t command=device->rx->command;
-  if (command&RGE_DESC_OWN) { *frame_length=0; return AIUEOS_RTL8125_OK; }
-  uint32_t bytes=command&RGE_RX_LENGTH;
-  if ((command&RGE_RX_ERROR) || !(command&RGE_RX_SOF) ||
-      !(command&RGE_RX_EOF) || bytes<18 ||
-      bytes>AIUEOS_RTL8125_FRAME_CAPACITY)
-    return AIUEOS_RTL8125_RX_INVALID;
-  *frame_length=bytes-4; /* hardware includes the Ethernet FCS */
+  int64_t answer = kotoba_aiueos_rtl8125_rx_poll(
+    (uint64_t)(uintptr_t)device->rx, AIUEOS_RTL8125_FRAME_CAPACITY);
+  if (answer < 0) return (enum aiueos_rtl8125_result)(-answer);
+  *frame_length = (uint32_t)answer;
   return AIUEOS_RTL8125_OK;
 }
 
+/* Rearming a receive descriptor is building one: the same address store, the
+   same release fence, the same OWN|EOR|capacity command.  The C spelled them
+   as two functions only because one of them also cleared the status words the
+   hardware wrote, and clearing those is safe on both paths -- the device
+   overwrites them the moment OWN is set. */
 void aiueos_rtl8125_rx_rearm(struct aiueos_rtl8125 *device) {
   if (!device || !device->ready) return;
-  device->rx->extension=0;
-  device->rx->address=device->rx_frame_physical;
-  dma_release();
-  device->rx->command=RGE_DESC_OWN|RGE_DESC_EOR|
-                      AIUEOS_RTL8125_FRAME_CAPACITY;
-  dma_release();
+  (void)kotoba_aiueos_rtl8125_ring_build(
+    (uint64_t)(uintptr_t)device->rx, RTL_DESC_BYTES,
+    device->rx_frame_physical, 1, AIUEOS_RTL8125_FRAME_CAPACITY);
 }
 
 /* ==========================================================================
@@ -343,16 +332,6 @@ void aiueos_rtl8125_rx_rearm(struct aiueos_rtl8125 *device) {
    test that predates these objects.
    ========================================================================== */
 
-extern uint64_t kotoba_aiueos_rtl8125_identify(uint64_t, uint64_t, uint64_t,
-                                               uint64_t);
-extern uint64_t kotoba_aiueos_rtl8125_link_up(uint64_t, uint64_t);
-extern uint64_t kotoba_aiueos_rtl8125_ring_build(uint64_t, uint64_t, uint64_t,
-                                                 uint64_t, uint64_t);
-extern uint64_t kotoba_aiueos_rtl8125_program(uint64_t, uint64_t, uint64_t,
-                                              uint64_t, uint64_t);
-extern uint64_t kotoba_aiueos_rtl8125_tx_submit(uint64_t, uint64_t, uint64_t,
-                                                uint64_t, uint64_t);
-extern int64_t kotoba_aiueos_rtl8125_rx_poll(uint64_t, uint64_t);
 
 #define RTL_PARITY_BAR_BYTES 4096U
 #define RTL_PARITY_DESC_BYTES 32U
@@ -363,11 +342,8 @@ extern int64_t kotoba_aiueos_rtl8125_rx_poll(uint64_t, uint64_t);
 #define RTL_PARITY_FRAME_BYTES 64U
 
 static uint8_t rtl_parity_bar[RTL_PARITY_BAR_BYTES] __attribute__((aligned(4096)));
-static uint8_t rtl_parity_expect[RTL_PARITY_BAR_BYTES];
 static struct aiueos_rtl8125_tx_desc rtl_parity_tx __attribute__((aligned(256)));
 static struct aiueos_rtl8125_rx_desc rtl_parity_rx __attribute__((aligned(256)));
-static uint8_t rtl_parity_tx_expect[RTL_PARITY_DESC_BYTES];
-static uint8_t rtl_parity_rx_expect[RTL_PARITY_DESC_BYTES];
 static uint8_t rtl_parity_txframe[RTL_PARITY_FRAME_BYTES] __attribute__((aligned(64)));
 static uint8_t rtl_parity_rxframe[RTL_PARITY_FRAME_BYTES] __attribute__((aligned(64)));
 static struct aiueos_rtl8125 rtl_parity_device;
@@ -416,10 +392,6 @@ static void rtl_parity_seed(void) {
 
 static void rtl_parity_fill(uint8_t *at, unsigned bytes, uint8_t value) {
   for (unsigned i = 0; i < bytes; i++) at[i] = value;
-}
-
-static void rtl_parity_record(uint8_t *to, const uint8_t *from, unsigned bytes) {
-  for (unsigned i = 0; i < bytes; i++) to[i] = from[i];
 }
 
 static int rtl_parity_agree(const uint8_t *a, const uint8_t *b, unsigned bytes,
@@ -517,183 +489,165 @@ static int rtl_parity_pinned(uint64_t txd, uint64_t rxd, unsigned stage) {
     }                                                    \
   } while (0)
 
+/* WHAT CHANGED WHEN THE C WAS FLIPPED.
+ *
+ * Until the commit that made the bodies above delegate, this ran the C driver
+ * and the objects against two copies of the same seeded model and compared
+ * every byte.  That comparison is gone, and not because it stopped passing --
+ * it stopped MEANING anything.  `aiueos_rtl8125_takeover` now calls the same
+ * objects, so comparing them would be comparing one implementation with
+ * itself, which is the shape a test takes when it can no longer fail.
+ *
+ * What replaces it is the table `rtl_parity_pinned` checks, and the table is
+ * not a transcription of what these objects do: it was written before the
+ * flip, checked against the REAL C driver in the same boot, and the QEMU run
+ * that reported `NIC-PARITY ok` at that commit is what measured it.  It is
+ * kept here so that the register file this driver leaves behind is asserted
+ * value by value rather than asserted to equal itself.
+ *
+ * Everything else in this function survives unchanged in kind, because none of
+ * it was ever a C-versus-Kotoba comparison: a submission that must set OWN
+ * before the doorbell, a second submission that must therefore refuse, three
+ * receive-completion verdicts, a rearm, a FIFO that never drains, and two
+ * argument refusals.  Those assert the driver's behaviour, and they fail when
+ * it is wrong regardless of which language expresses it.
+ */
 int aiueos_rtl8125_kotoba_selftest(void) {
-  const uint64_t bar = (uint64_t)(uintptr_t)rtl_parity_bar;
   const uint64_t txd = (uint64_t)(uintptr_t)&rtl_parity_tx;
   const uint64_t rxd = (uint64_t)(uintptr_t)&rtl_parity_rx;
   const uint64_t txf = (uint64_t)(uintptr_t)rtl_parity_txframe;
   const uint64_t rxf = (uint64_t)(uintptr_t)rtl_parity_rxframe;
+  const uint64_t bar = (uint64_t)(uintptr_t)rtl_parity_bar;
+  _Alignas(16) uint8_t identity[16];
   struct aiueos_rtl8125_io io = {
     rtl_parity_bar, rtl_parity_r8, rtl_parity_r16, rtl_parity_r32,
     rtl_parity_w8, rtl_parity_w16, rtl_parity_w32
   };
-  _Alignas(16) uint8_t identity[16];
-  uint16_t doorbell;
   uint32_t received;
 
   aiueos_rtl8125_parity_stage = 0;
   aiueos_rtl8125_parity_detail = 0;
 
-  /* ---- 1. the C takes over, and its register file is recorded ---------- */
+  /* ---- 1. takeover, which is now four object calls and a struct ---------- */
+  /* The descriptors start filled with 0xff rather than zeroed, so a path that
+     failed to write a field leaves 0xff where the table expects 0.  A zeroed
+     start would let an unwritten field agree by accident. */
   rtl_parity_seed();
+  rtl_parity_fill((uint8_t *)&rtl_parity_tx, RTL_PARITY_DESC_BYTES, 0xff);
+  rtl_parity_fill((uint8_t *)&rtl_parity_rx, RTL_PARITY_DESC_BYTES, 0xff);
   RTL_PARITY_REQUIRE(
     aiueos_rtl8125_takeover(&rtl_parity_device, &io, &rtl_parity_tx, txd,
                             &rtl_parity_rx, rxd, rtl_parity_txframe, txf,
                             rtl_parity_rxframe, rxf) == AIUEOS_RTL8125_OK, 1);
-  /* The pinned table, checked against the C WHILE THE C STILL EXISTS.  When
-     the bodies above delegate to these objects the comparison below becomes a
-     comparison of one implementation with itself; this one does not. */
+  RTL_PARITY_REQUIRE(rtl_parity_device.revision == AIUEOS_RTL8125_REV_8125B, 2);
+  {
+    static const uint8_t expected_mac[6] = {0x70, 0x70, 0xfc, 0x0b, 0xb6, 0x32};
+    if (!rtl_parity_agree(rtl_parity_device.mac, expected_mac, 6, 3)) return 0;
+  }
+  RTL_PARITY_REQUIRE(aiueos_rtl8125_link_up(&rtl_parity_device) != 0, 4);
+
+  /* ---- 2. every register and both descriptors, value by value ----------- */
   if (!rtl_parity_pinned(txd, rxd, 36)) return 0;
-  rtl_parity_record(rtl_parity_expect, rtl_parity_bar, RTL_PARITY_BAR_BYTES);
-  rtl_parity_record(rtl_parity_tx_expect, (const uint8_t *)&rtl_parity_tx,
-                    RTL_PARITY_DESC_BYTES);
-  rtl_parity_record(rtl_parity_rx_expect, (const uint8_t *)&rtl_parity_rx,
-                    RTL_PARITY_DESC_BYTES);
 
-  /* ---- 2. the objects do it again, from the same seed ------------------ */
-  /* The descriptors are filled with 0xff rather than zeroed, so a Kotoba path
-     that failed to write a field would leave 0xff where the C left 0 -- a
-     zeroed start would let an unwritten field agree with the C by accident. */
-  rtl_parity_seed();
-  rtl_parity_fill((uint8_t *)&rtl_parity_tx, RTL_PARITY_DESC_BYTES, 0xff);
-  rtl_parity_fill((uint8_t *)&rtl_parity_rx, RTL_PARITY_DESC_BYTES, 0xff);
-  rtl_parity_fill(identity, sizeof(identity), 0);
-
-  RTL_PARITY_REQUIRE(
-    kotoba_aiueos_rtl8125_identify(bar, RTL_PARITY_BAR_BYTES,
-                                   (uint64_t)(uintptr_t)identity,
-                                   sizeof(identity)) == AIUEOS_RTL8125_OK, 2);
-  RTL_PARITY_REQUIRE(identity[0] == (uint8_t)rtl_parity_device.revision &&
-                     !identity[1] && !identity[2] && !identity[3], 3);
-  if (!rtl_parity_agree(identity + 8, rtl_parity_device.mac, 6, 4)) return 0;
-  RTL_PARITY_REQUIRE(
-    kotoba_aiueos_rtl8125_link_up(bar, RTL_PARITY_BAR_BYTES) ==
-      (uint64_t)(unsigned)aiueos_rtl8125_link_up(&rtl_parity_device), 5);
-
-  /* Stop, then build, then program -- the C's own order, expressed as two
-     calls because a Kotoba object cannot call another one. */
-  RTL_PARITY_REQUIRE(kotoba_aiueos_rtl8125_program(bar, RTL_PARITY_BAR_BYTES,
-                                                   0, 0, 0) ==
-                     AIUEOS_RTL8125_OK, 6);
-  RTL_PARITY_REQUIRE(kotoba_aiueos_rtl8125_ring_build(
-                       txd, RTL_PARITY_DESC_BYTES, txf, 0,
-                       AIUEOS_RTL8125_FRAME_CAPACITY) == AIUEOS_RTL8125_OK, 7);
-  RTL_PARITY_REQUIRE(kotoba_aiueos_rtl8125_ring_build(
-                       rxd, RTL_PARITY_DESC_BYTES, rxf, 1,
-                       AIUEOS_RTL8125_FRAME_CAPACITY) == AIUEOS_RTL8125_OK, 8);
-  RTL_PARITY_REQUIRE(kotoba_aiueos_rtl8125_program(bar, RTL_PARITY_BAR_BYTES,
-                                                   txd, rxd, identity[0]) ==
-                     AIUEOS_RTL8125_OK, 9);
-
-  /* ---- 3. every byte of the register file and both rings must agree ---- */
-  if (!rtl_parity_agree(rtl_parity_bar, rtl_parity_expect,
-                        RTL_PARITY_BAR_BYTES, 10)) return 0;
-  if (!rtl_parity_agree((const uint8_t *)&rtl_parity_tx, rtl_parity_tx_expect,
-                        RTL_PARITY_DESC_BYTES, 11)) return 0;
-  if (!rtl_parity_agree((const uint8_t *)&rtl_parity_rx, rtl_parity_rx_expect,
-                        RTL_PARITY_DESC_BYTES, 12)) return 0;
-  /* And against the objects' own result, so the table is measured twice. */
-  if (!rtl_parity_pinned(txd, rxd, 41)) return 0;
-
-  /* ---- 4. transmit submission ------------------------------------------ */
+  /* ---- 3. transmit submission ------------------------------------------- */
   RTL_PARITY_REQUIRE(aiueos_rtl8125_tx_submit(&rtl_parity_device, 60) ==
                      AIUEOS_RTL8125_OK, 13);
-  rtl_parity_record(rtl_parity_tx_expect, (const uint8_t *)&rtl_parity_tx,
-                    RTL_PARITY_DESC_BYTES);
-  doorbell = rtl_parity_r16(rtl_parity_bar, 0x90);
-  RTL_PARITY_REQUIRE(doorbell == 1, 14);
-
-  rtl_parity_w16(rtl_parity_bar, 0x90, 0);
-  rtl_parity_fill((uint8_t *)&rtl_parity_tx, RTL_PARITY_DESC_BYTES, 0xff);
-  RTL_PARITY_REQUIRE(kotoba_aiueos_rtl8125_ring_build(
-                       txd, RTL_PARITY_DESC_BYTES, txf, 0,
-                       AIUEOS_RTL8125_FRAME_CAPACITY) == AIUEOS_RTL8125_OK, 15);
-  RTL_PARITY_REQUIRE(kotoba_aiueos_rtl8125_tx_submit(
-                       bar, RTL_PARITY_BAR_BYTES, txd, txf, 60) ==
-                     AIUEOS_RTL8125_OK, 16);
-  RTL_PARITY_REQUIRE(rtl_parity_r16(rtl_parity_bar, 0x90) == doorbell, 17);
-  if (!rtl_parity_agree((const uint8_t *)&rtl_parity_tx, rtl_parity_tx_expect,
-                        RTL_PARITY_DESC_BYTES, 18)) return 0;
+  /* OWN|EOR|SOF|EOF|length.  The length is in the command word, not a separate
+     field, which is why a submission with the wrong width would still set the
+     flags and still transmit -- the wrong number of bytes. */
+  RTL_PARITY_REQUIRE(rtl_parity_tx.command == (0xf0000000U | 60U), 14);
+  RTL_PARITY_REQUIRE(rtl_parity_tx.extension == 0, 15);
+  RTL_PARITY_REQUIRE(rtl_parity_tx.address == txf, 16);
+  RTL_PARITY_REQUIRE(rtl_parity_r16(rtl_parity_bar, 0x90) == 1, 17);
+  RTL_PARITY_REQUIRE(aiueos_rtl8125_tx_complete(&rtl_parity_device) == 0, 18);
 
   /* The descriptor is now owned by the device, so a second submission must
      refuse -- which is only true if the first one really set the OWN bit
-     before ringing the doorbell.  Both must refuse, and with the same code. */
-  RTL_PARITY_REQUIRE(kotoba_aiueos_rtl8125_tx_submit(
-                       bar, RTL_PARITY_BAR_BYTES, txd, txf, 60) ==
-                     AIUEOS_RTL8125_TX_BUSY, 19);
+     before ringing the doorbell.  This is the ordering assertion a memory
+     model can make. */
   RTL_PARITY_REQUIRE(aiueos_rtl8125_tx_submit(&rtl_parity_device, 60) ==
-                     AIUEOS_RTL8125_TX_BUSY, 20);
+                     AIUEOS_RTL8125_TX_BUSY, 19);
+  /* And the bounds, which are the object's and no longer this file's. */
+  rtl_parity_tx.command &= ~RGE_DESC_OWN;
+  RTL_PARITY_REQUIRE(aiueos_rtl8125_tx_complete(&rtl_parity_device) == 1, 20);
+  RTL_PARITY_REQUIRE(aiueos_rtl8125_tx_submit(&rtl_parity_device, 13) ==
+                     AIUEOS_RTL8125_INVALID, 21);
+  RTL_PARITY_REQUIRE(aiueos_rtl8125_tx_submit(&rtl_parity_device, 2049) ==
+                     AIUEOS_RTL8125_INVALID, 22);
 
-  /* ---- 5. receive completion ------------------------------------------- */
+  /* ---- 4. receive completion -------------------------------------------- */
   received = 0xffffffffU;
   RTL_PARITY_REQUIRE(aiueos_rtl8125_rx_poll(&rtl_parity_device, &received) ==
-                       AIUEOS_RTL8125_OK && received == 0, 21);
-  RTL_PARITY_REQUIRE(kotoba_aiueos_rtl8125_rx_poll(
-                       rxd, AIUEOS_RTL8125_FRAME_CAPACITY) == 0, 22);
+                       AIUEOS_RTL8125_OK && received == 0, 23);
 
   /* A 68-byte completion: 64 bytes of frame plus the four FCS bytes the
      hardware leaves in the buffer.  tests/rtl8125_handoff_model.c:45 uses this
-     exact command word and :48 asserts the C reports 64. */
+     exact command word and :48 asserts 64. */
   rtl_parity_rx.command = 0x43000000U | 68U;
   received = 0;
   RTL_PARITY_REQUIRE(aiueos_rtl8125_rx_poll(&rtl_parity_device, &received) ==
-                       AIUEOS_RTL8125_OK && received == 64, 23);
-  RTL_PARITY_REQUIRE(kotoba_aiueos_rtl8125_rx_poll(
-                       rxd, AIUEOS_RTL8125_FRAME_CAPACITY) ==
-                     (int64_t)received, 24);
+                       AIUEOS_RTL8125_OK && received == 64, 24);
 
-  /* RGE_RX_ERROR set: refused by both, and the object's negative reason is the
-     C's enumerator negated. */
+  /* The four refusals a completed descriptor can earn: the error flag, a
+     missing start-of-frame, a missing end-of-frame, and a length below an
+     Ethernet header plus its FCS.  All four are the object's decision. */
   rtl_parity_rx.command = 0x43100044U;
   RTL_PARITY_REQUIRE(aiueos_rtl8125_rx_poll(&rtl_parity_device, &received) ==
                      AIUEOS_RTL8125_RX_INVALID, 25);
-  RTL_PARITY_REQUIRE(kotoba_aiueos_rtl8125_rx_poll(
-                       rxd, AIUEOS_RTL8125_FRAME_CAPACITY) ==
-                     -(int64_t)AIUEOS_RTL8125_RX_INVALID, 26);
+  rtl_parity_rx.command = 0x41000044U;
+  RTL_PARITY_REQUIRE(aiueos_rtl8125_rx_poll(&rtl_parity_device, &received) ==
+                     AIUEOS_RTL8125_RX_INVALID, 26);
+  rtl_parity_rx.command = 0x42000044U;
+  RTL_PARITY_REQUIRE(aiueos_rtl8125_rx_poll(&rtl_parity_device, &received) ==
+                     AIUEOS_RTL8125_RX_INVALID, 27);
+  rtl_parity_rx.command = 0x43000011U;
+  RTL_PARITY_REQUIRE(aiueos_rtl8125_rx_poll(&rtl_parity_device, &received) ==
+                     AIUEOS_RTL8125_RX_INVALID, 28);
 
   aiueos_rtl8125_rx_rearm(&rtl_parity_device);
-  rtl_parity_record(rtl_parity_rx_expect, (const uint8_t *)&rtl_parity_rx,
-                    RTL_PARITY_DESC_BYTES);
-  rtl_parity_fill((uint8_t *)&rtl_parity_rx, RTL_PARITY_DESC_BYTES, 0xff);
-  RTL_PARITY_REQUIRE(kotoba_aiueos_rtl8125_ring_build(
-                       rxd, RTL_PARITY_DESC_BYTES, rxf, 1,
-                       AIUEOS_RTL8125_FRAME_CAPACITY) == AIUEOS_RTL8125_OK, 27);
-  if (!rtl_parity_agree((const uint8_t *)&rtl_parity_rx, rtl_parity_rx_expect,
-                        RTL_PARITY_DESC_BYTES, 28)) return 0;
+  RTL_PARITY_REQUIRE(rtl_parity_rx.command ==
+                     (RGE_DESC_OWN | RGE_DESC_EOR | AIUEOS_RTL8125_FRAME_CAPACITY), 29);
+  RTL_PARITY_REQUIRE(rtl_parity_rx.extension == 0, 30);
+  RTL_PARITY_REQUIRE(rtl_parity_rx.address == rxf, 31);
 
-  /* ---- 6. the drain gate, which is the one ordering assertion ---------- */
-  /* Seeded so the transmit FIFO never reports empty.  Both implementations
-     must spend their budget and refuse, and both must leave RGE_CMD at 0x8c:
-     the STOP bit set by the first write and NOT cleared by the write that
-     follows a successful drain.  A port that cleared RGE_CMD before waiting,
-     or waited before stopping, produces 0x00 or 0x0c here. */
+  /* ---- 5. the drain gate, which is the other ordering assertion ---------- */
+  /* Seeded so the transmit FIFO never reports empty.  The driver must spend
+     its budget and refuse, must leave RGE_CMD at 0x8c -- the STOP bit set by
+     the first write and NOT cleared by the write that follows a successful
+     drain -- and must clear `ready`.  A port that cleared RGE_CMD before
+     waiting, or waited before stopping, leaves 0x00 or 0x0c here. */
+  /* restart=bounded-fifo-flush -- the assertion the host model test used to
+     make under that name, now made against the emitted objects. */
   rtl_parity_seed();
   rtl_parity_bar[0xd3] = 0x00;
   RTL_PARITY_REQUIRE(aiueos_rtl8125_restart(&rtl_parity_device) ==
-                     AIUEOS_RTL8125_FIFO_TIMEOUT, 29);
-  RTL_PARITY_REQUIRE(rtl_parity_bar[0x37] == 0x8c, 30);
+                     AIUEOS_RTL8125_FIFO_TIMEOUT, 32);
+  RTL_PARITY_REQUIRE(rtl_parity_bar[0x37] == 0x8c, 33);
+  RTL_PARITY_REQUIRE(rtl_parity_device.ready == 0, 34);
+  RTL_PARITY_REQUIRE(aiueos_rtl8125_link_up(&rtl_parity_device) == 0, 35);
 
-  rtl_parity_seed();
-  rtl_parity_bar[0xd3] = 0x00;
-  RTL_PARITY_REQUIRE(kotoba_aiueos_rtl8125_program(bar, RTL_PARITY_BAR_BYTES,
-                                                   0, 0, 0) ==
-                     AIUEOS_RTL8125_FIFO_TIMEOUT, 31);
-  RTL_PARITY_REQUIRE(rtl_parity_bar[0x37] == 0x8c, 32);
-
-  /* ---- 7. the argument refusals ---------------------------------------- */
-  /* A half-page window and a misaligned descriptor.  Both are AIUEOS_RTL8125_
-     INVALID, and both leave the model untouched -- the descriptor fill is
-     0xff, so a refusal that wrote anything would show. */
+  /* ---- 6. argument refusals the public API cannot reach ------------------ */
+  /* A half-page window and a misaligned descriptor.  Neither is expressible
+     through `takeover`, because the driver supplies both -- so they are
+     checked against the objects directly, which is also the only place in this
+     file that still names one. */
   rtl_parity_fill((uint8_t *)&rtl_parity_tx, RTL_PARITY_DESC_BYTES, 0xff);
+  rtl_parity_fill(identity, sizeof(identity), 0);
   RTL_PARITY_REQUIRE(kotoba_aiueos_rtl8125_identify(
                        bar, 2048, (uint64_t)(uintptr_t)identity,
-                       sizeof(identity)) == AIUEOS_RTL8125_INVALID, 33);
+                       sizeof(identity)) == AIUEOS_RTL8125_INVALID, 41);
+  RTL_PARITY_REQUIRE(identity[0] == 0 && identity[8] == 0, 42);
   RTL_PARITY_REQUIRE(kotoba_aiueos_rtl8125_ring_build(
                        txd + 16, RTL_PARITY_DESC_BYTES, txf, 0,
                        AIUEOS_RTL8125_FRAME_CAPACITY) ==
-                     AIUEOS_RTL8125_INVALID, 34);
+                     AIUEOS_RTL8125_INVALID, 43);
+  RTL_PARITY_REQUIRE(kotoba_aiueos_rtl8125_ring_build(
+                       txd, RTL_PARITY_DESC_BYTES, txf, 2,
+                       AIUEOS_RTL8125_FRAME_CAPACITY) ==
+                     AIUEOS_RTL8125_INVALID, 44);
   for (unsigned i = 0; i < RTL_PARITY_DESC_BYTES; i++)
-    RTL_PARITY_REQUIRE(((const uint8_t *)&rtl_parity_tx)[i] == 0xff, 35);
+    RTL_PARITY_REQUIRE(((const uint8_t *)&rtl_parity_tx)[i] == 0xff, 45);
 
   return 1;
 }
+#endif /* AIUEOS_RTL8125_ARP_ONLY */
