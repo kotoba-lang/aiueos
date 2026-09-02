@@ -150,37 +150,41 @@
         tx-frame (kernel-subregion dma-base 16384 8192 4096)
         rx-frame (kernel-subregion dma-base 16384 12288 4096)
         stopped (mmio-store-u8 mmio 55
-                                (bit-or (mmio-load-u8 mmio 55) 128))]
-    (if (= (wait-fifo-empty mmio 300000) 0)
-      4
-      (let [disabled (mmio-store-u8 mmio 55 0)
-            tx-zero (zero-prefix tx 32 0)
-            rx-zero (zero-prefix rx 32 0)
-            tx-address (store64-page tx 8 tx-frame)
-            rx-address (store64-page rx 16 rx-frame)
-            tx-command (kernel-store-u32 tx 512 0 1073741824)
-            rx-extension (kernel-store-u32 rx 512 24 0)
-            rx-command (kernel-store-u32 rx 512 28 3221227520)
-            fenced (dma-fence)
-            imr (mmio-store-u32 mmio 56 0)
-            isr (mmio-store-u32 mmio 60 4294967295)
-            tx-lo (mmio-store-u32 mmio 32 (bit-and tx 4294967295))
-            tx-hi (mmio-store-u32 mmio 36 (quot tx 4294967296))
-            rx-lo (mmio-store-u32 mmio 228 (bit-and rx 4294967295))
-            rx-hi (mmio-store-u32 mmio 232 (quot rx 4294967296))
-            rx-max (mmio-store-u16 mmio 218 2048)
-            tx-config (mmio-store-u32 mmio 64 50333440)
-            rx-config (mmio-store-u32 mmio 68
-                                      (bit-or (receive-config revision-id) 10))
-            started (mmio-store-u8 mmio 55 12)]
-        (if (and (= tx-zero 1) (= rx-zero 1)
-                 (= tx-address 1) (= rx-address 1)
-                 (= tx-command 1073741824)
-                 (= rx-extension 0) (= rx-command 3221227520)
-                 (= fenced 1) (= started 12))
-          (+ 0 (* 0 (+ stopped disabled imr isr tx-lo tx-hi rx-lo rx-hi
-                       rx-max tx-config rx-config)))
-          1)))))
+                                (bit-or (mmio-load-u8 mmio 55) 128))
+        fifo-empty (wait-fifo-empty mmio 300000)
+        ;; A sticky firmware FIFO flag must not hide the physical failure
+        ;; stage.  Disable the engine and install our bounded rings anyway;
+        ;; status 4 remains visible and qualify uses those rings only to emit
+        ;; the fixed-MAC diagnostic receipt.
+        disabled (mmio-store-u8 mmio 55 0)
+        tx-zero (zero-prefix tx 32 0)
+        rx-zero (zero-prefix rx 32 0)
+        tx-address (store64-page tx 8 tx-frame)
+        rx-address (store64-page rx 16 rx-frame)
+        tx-command (kernel-store-u32 tx 512 0 1073741824)
+        rx-extension (kernel-store-u32 rx 512 24 0)
+        rx-command (kernel-store-u32 rx 512 28 3221227520)
+        fenced (dma-fence)
+        imr (mmio-store-u32 mmio 56 0)
+        isr (mmio-store-u32 mmio 60 4294967295)
+        tx-lo (mmio-store-u32 mmio 32 (bit-and tx 4294967295))
+        tx-hi (mmio-store-u32 mmio 36 (quot tx 4294967296))
+        rx-lo (mmio-store-u32 mmio 228 (bit-and rx 4294967295))
+        rx-hi (mmio-store-u32 mmio 232 (quot rx 4294967296))
+        rx-max (mmio-store-u16 mmio 218 2048)
+        tx-config (mmio-store-u32 mmio 64 50333440)
+        rx-config (mmio-store-u32 mmio 68
+                                  (bit-or (receive-config revision-id) 10))
+        started (mmio-store-u8 mmio 55 12)]
+    (if (and (= tx-zero 1) (= rx-zero 1)
+             (= tx-address 1) (= rx-address 1)
+             (= tx-command 1073741824)
+             (= rx-extension 0) (= rx-command 3221227520)
+             (= fenced 1) (= started 12))
+      (+ (if (= fifo-empty 1) 0 4)
+         (* 0 (+ stopped disabled imr isr tx-lo tx-hi rx-lo rx-hi
+                 rx-max tx-config rx-config)))
+      1)))
 
 (defn frame-store-be16 [frame offset value]
   (let [high (kernel-store-u8-4k frame 4096 offset
@@ -530,7 +534,7 @@
         3
         (let [started (rings-start mmio revision-id dma-base)]
           (if (not (= started 0))
-            (+ 10 started)
+            (diagnose-network-status mmio dma-base (+ 10 started))
             (if (= (bit-and (mmio-load-u16 mmio 108) 2) 0)
               (diagnose-network-status mmio dma-base 20)
               (let [arp-bytes (build-arp-request tx-frame mmio)
