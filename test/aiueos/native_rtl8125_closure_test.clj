@@ -99,6 +99,11 @@
     (is (= "60" (get-in candidate [:diagnostic :screen-success-hex])))
     (is (= "AIUEOS_NATIVE_TCP_OK"
            (get-in candidate [:diagnostic :wire-success])))
+    (is (= "10c92268ca602becc00e32eed510c2b3c9d198cb"
+           (get-in candidate [:artifact :aiueos-implementation-commit])))
+    (is (= "5120d4a2d740b1c368de95cb498b7d7cd6342015aff6bc9cf5b2508d6a9f0b3d"
+           (get-in candidate [:artifact :efi :sha256])))
+    (is (= :passed (get-in candidate [:evidence :qemu :state])))
     (is (= :unverified (get-in candidate [:evidence :physical-k16])))
     (is (some #{:tls13-handshake} (:does-not-prove candidate)))
     (is (some #{:murakumo-node-registration} (:does-not-prove candidate)))

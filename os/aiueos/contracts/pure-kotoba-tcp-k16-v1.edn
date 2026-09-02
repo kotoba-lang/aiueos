@@ -20,8 +20,29 @@
               :wire-success "AIUEOS_NATIVE_TCP_OK"
               :wire-destination "10.77.0.1:7777"
               :failure-encoding :screen-base-plus-provider-reason}
- :artifact {:state :pending-build}
- :evidence {:qemu :pending
+ :artifact {:state :built-reproducibly
+            :aiueos-implementation-commit
+            "10c92268ca602becc00e32eed510c2b3c9d198cb"
+            :amu-commit "13d2f5dfe1adeaa99b7e9e6c04fcf8cb8fc15a4b"
+            :kernel {:bytes 143640
+                     :sha256
+                     "e1e336c8e05918de4cf9b4370850ccde6bd86f8e389d6b37c962d2e8adeca677"}
+            :efi {:bytes 162816
+                  :sha256
+                  "5120d4a2d740b1c368de95cb498b7d7cd6342015aff6bc9cf5b2508d6a9f0b3d"}
+            :source-closure
+            [{:module :aiueos.native.kernel
+              :sha256
+              "c90a7d117a41f6e620336db17ae08fb0d702404075ed6ca28fae9210b3fab4fa"}
+             {:module :native.rtl8125
+              :sha256
+              "4ec7028e5f386cdc799171ad03ff6e0b5f6b0161a888a1ebbd7bd6ab31155dd4"}]
+            :foreign-code []
+            :dynamic-imports []}
+ :evidence {:qemu {:state :passed
+                   :marker "MPRCD"
+                   :exit 33
+                   :scope :bounded-no-rtl8125-path}
             :physical-k16 :unverified}
  :does-not-prove [:tls13-handshake
                   :x509-chain-or-san-admission
