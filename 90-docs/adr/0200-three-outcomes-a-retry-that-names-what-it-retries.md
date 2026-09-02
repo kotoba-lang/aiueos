@@ -66,16 +66,34 @@ second attempt can honestly be said to be answering a different question.
 
 ## The timeout is now a measurement
 
-`AIUEOS_QEMU_TIMEOUT` 600 -> **180**. 600 was never measured on this host; it
-was a CI job budget, inherited from the ubuntu runners that issue #108 was
-filed against and that this workspace has since retired.
+Two limits, and the second one is the one that fires.
 
-Measured here, 16 consecutive boots of one already-built image
-(`measure-boot-flake-rate.cljs`, this ADR's tool, no rebuild between runs so a
-compiler change cannot be mistaken for a flake) — the distribution and the
-per-run load average are in ADR-0201, with `n`. 180 s is roughly twice the
-slowest boot observed, on a workstation that was at load average 97 while
-measuring.
+**`AIUEOS_QEMU_TIMEOUT` 600 -> 360.** 600 was never measured on this host; it
+was a CI job budget, inherited from the ubuntu runners that issue #108 was
+filed against and that this workspace has since retired. 360 is 2.2x the
+slowest good boot measured here: `measure-boot-flake-rate.cljs` (this ADR's
+tool), 16 consecutive boots of one already-built image with **no rebuild
+between runs**, so a compiler change cannot be mistaken for a flake — all pass,
+min 68.5 / p50 85.1 / p90 122.0 / **max 165.5** seconds, at load average
+67-125. Full table and caveats in ADR-0201.
+
+**`AIUEOS_QEMU_QUIET` = 150 (new).** How long the guest may write nothing on
+*either* transport before the attempt ends. This is what makes a dead guest
+fail fast, and unlike the wall clock it does not scale with how slow the host
+is. The number is justified by the boot's phase structure: a healthy
+full-evidence boot has exactly one long silent stretch — PCI enumeration under
+TCG between `AIUEOS_APIC_TIMER_OK` and `AIUEOS_PCI_OK`, measured byte-for-byte
+at 47 s — with the longest silence over n=7 good boots at 66.5 s
+(BISECT-SHA256, 2026-09-03). 150 is 2.25x that, and deliberately not tight:
+66.5 s is an observed maximum over seven runs, **not a bound**; the gap grows
+with load but not monotonically (largest at load 84-87, not 96-99); and the
+165.5 s run above was at load 124.9, higher than anything in that n=7. A quiet
+limit that kills a healthy boot converts this fix into the bug it is fixing.
+
+The watchdog normalises its exit to 124 on purpose. Every branch below, and
+fifteen sibling scripts, already know what 124 means; *which* limit ended the
+attempt is reported in the message, not encoded in a status nobody downstream
+reads.
 
 Every run now appends its QEMU wall clock to `build/aiueos/boot-times.log`:
 
@@ -143,7 +161,10 @@ Red and green are the same defect, twice, differing only in the harness.
 | build | harness | outcome | wall clock |
 |---|---|---|---|
 | `#UD` before the objects, ADR-0199 table OFF | pre-ADR-0200 (`git show origin/main:...`) | `known flake kotoba-lang/aiueos#108` x2, then timeout | **198 s** at `AIUEOS_QEMU_TIMEOUT=60`; **1800 s** at the shipped 3 x 600 |
-| same image | this branch | `GUEST-NO-EXIT after 60s (attempts=1)` + timeline | 77 s |
+| same image | this branch, wall clock only | `GUEST-NO-EXIT after 60s (attempts=1)` + timeline | 77 s |
+| same image | this branch, quiet limit 30 s | `ended by: the quiescence watchdog, after 33s ... (limit 30s)` | 58 s |
+| same image | this branch, **shipped** limits (360 / 150) | `GUEST-NO-EXIT after 158s (attempts=1)`, ended by the watchdog after 150 s of silence, `last byte at T+6s` | **174 s** |
+| good image | this branch, **shipped** limits | `AIUEOS_UEFI_SMOKE_OK` — the watchdog does **not** fire | 103 s |
 | `#UD` after the ADR-0199 table | this branch | `GUEST-DIED after 6s` + the fatal line | **22 s** |
 | `int3` (vector 3, generated no-error stub) | this branch | `GUEST-DIED after 5s`, `vector=3 mnemonic=#BP/breakpoint error=0x00000000` | 20 s |
 | `mov $0x48,%ds` (vector 13, generated error-code stub) | this branch | `GUEST-DIED after 7s`, `vector=13 mnemonic=#GP/general-protection error=0x00000048` | 25 s |
@@ -158,7 +179,12 @@ still have looked like plausible addresses.
 ## What this does not fix
 
 - **The retry width is narrowed, not removed.** `HOST-FLAKE-SIGNATURE` still
-  retries three times. ADR-0201 says whether that budget is justified.
+  retries three times. ADR-0201 says why that budget is justified (1 flake in
+  24 boots across two tools) and why it is not tuned further (n is too small).
+- **The watchdog is phase-INFORMED, not phase-AWARE.** Its threshold comes from
+  the 47 s PCI stretch, but it does not know which phase the guest is in, so it
+  cannot apply a tighter limit outside that stretch. Doing so would take
+  dead-guest detection from ~168 s to ~30 s and is the next increment.
 - **`smoke-qemu-firmware-matrix.sh` and fourteen other harnesses** are still
   unattested by ADR-0155's freshness receipt and have no timeout classification
   of their own. They spawn this script and inherit its behaviour where they

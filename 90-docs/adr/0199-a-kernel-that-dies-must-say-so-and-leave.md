@@ -107,8 +107,9 @@ the fix and not in the fault.
 | mode 2 (`#UD`, early table OFF) | pre-ADR-0200 | `known flake kotoba-lang/aiueos#108` x2, then a timeout | **198 s** at `AIUEOS_QEMU_TIMEOUT=60`; **3 x 600 s** at the shipped default |
 | mode 2 (`#UD`, early table OFF) | this branch | `GUEST-NO-EXIT after 60s (attempts=1)` + the write timeline | 77 s |
 | mode 1 (`#UD`, early table ON) | this branch | `GUEST-DIED after 6s` + the line above | **22 s** |
-| mode 3 (`int3`) | this branch | `vector=3 mnemonic=#BP/breakpoint` through a GENERATED no-error stub | see ADR-0200 |
-| mode 4 (`mov $0x48,%ds`) | this branch | `vector=13 mnemonic=#GP/general-protection error=0x00000048` through a GENERATED error-code stub | see ADR-0200 |
+| mode 3 (`int3`) | this branch | `GUEST-DIED after 5s`, `vector=3 mnemonic=#BP/breakpoint error=0x00000000` — a GENERATED no-error stub | 20 s |
+| mode 4 (`mov $0x48,%ds`) | this branch | `GUEST-DIED after 7s`, `vector=13 mnemonic=#GP/general-protection error=0x00000048` — a GENERATED error-code stub | 25 s |
+| `AIUEOS_EXPECT_FAULT=1` | this branch | `AIUEOS_FAULT_BOOT_OK synthetic-fault polled-receipt-written`, exit 0 | 118 s |
 | unmodified | this branch | `AIUEOS_UEFI_SMOKE_OK`, every marker | 102 s |
 
 Modes 3 and 4 are not decoration. A reporter exercised only through vector 6
@@ -128,17 +129,22 @@ Named, because the point of this ADR is that silence is not a pass.
    to a bit-packing question whose failure mode is a well-formed gate pointing
    at the wrong ring-0 address. The cost is that this one object still executes
    under the firmware's IDT. Fifty-one down to one.
-2. **A `#DF` on a broken stack.** The TSS has no IST populated, so the
+2. **A guest that dies before the early table is loaded still hangs, and the
+   harness now says so distinctly.** ADR-0200's quiescence watchdog ends that
+   attempt after 150 s of silence with `ended by: the quiescence watchdog` and
+   `write timeline: last byte at T+6s`, on one attempt, instead of three
+   ten-minute rounds of `known flake`. Measured: 174 s including the build.
+3. **A `#DF` on a broken stack.** The TSS has no IST populated, so the
    double-fault stub runs on whatever `%rsp` is. If that is the reason we are
    here, the stub faults again and the CPU triple-faults. QEMU then *resets*,
    and with `-no-reboot` that is an exit, not a hang — ADR-0200's harness sees
    a status with no `AIUEOS_FATAL_EXCEPTION` line and calls it a failure, but
    it cannot say which vector. Fixing it needs an IST stack, which is a
    separate change to the TSS.
-3. **Anything before `aiueos_kernel_entry`.** `BOOTX64.EFI` is a UEFI
+4. **Anything before `aiueos_kernel_entry`.** `BOOTX64.EFI` is a UEFI
    application and runs under the firmware's IDT by construction. A fault in
    the loader still dead-loops.
-4. **Fuel guard versus bounds check**, above.
+5. **Fuel guard versus bounds check**, above.
 
 ## Consequences
 
