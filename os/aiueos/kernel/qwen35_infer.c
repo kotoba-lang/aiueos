@@ -1616,6 +1616,28 @@ static void qwen_att_fill(uint32_t offset, uint32_t count) {
   for (uint32_t index = 0; index < count; index++) p[index] = qwen_parity_value();
 }
 
+/* Queries and keys are filled through this instead, and the halving is not
+ * cosmetic. `qwen_parity_value` spreads magnitudes over 2^-7..2^15, so a
+ * 256-term dot product is around 1e9 and a score around 1e8 -- every
+ * difference is then far below `local_exp`'s -87 clamp, every weight but the
+ * largest underflows to zero, and the softmax DEGENERATES to picking one
+ * prior with weight one. Measured 2026-09-03: with the wide fill, changing
+ * `shifted`'s upper clamp from 0.0f to 1.0f left the comparison GREEN,
+ * because `w_max / denominator` is one either way.
+ *
+ * In the model the query and the key have both been through
+ * `rms_norm_heads_weighted`, so `q.k/16` is O(1..10) and every prior
+ * contributes. Sixteen halvings put the synthetic inputs in that range. The
+ * scale is an exact power of two, so no value is rounded on the way in. */
+static void qwen_att_fill_narrow(uint32_t offset, uint32_t count) {
+  float *p = qwen_att_at(offset);
+  for (uint32_t index = 0; index < count; index++) {
+    float value = qwen_parity_value();
+    for (uint32_t step = 0; step < 16U; step++) value *= 0.5f;
+    p[index] = value;
+  }
+}
+
 static void qwen_att_plan_clear(void) {
   for (uint32_t index = 0; index < 96U; index++) qwen_att_plan[index] = 0;
 }
@@ -1666,8 +1688,8 @@ static int qwen_parity_attention(void) {
   /* mode 1: the fused softmax over the causal prefix of the KV cache. */
   qwen_parity_state = 0x13572468u;
   qwen_att_fill(QWEN_ATT_QG, QWEN_ATT_HEADS * HEAD_DIM * 2U);
-  qwen_att_fill(QWEN_ATT_QUERY, QWEN_ATT_HEADS * HEAD_DIM);
-  qwen_att_fill(QWEN_ATT_KEY, QWEN_ATT_PRIORS * FULL_KV_WIDTH);
+  qwen_att_fill_narrow(QWEN_ATT_QUERY, QWEN_ATT_HEADS * HEAD_DIM);
+  qwen_att_fill_narrow(QWEN_ATT_KEY, QWEN_ATT_PRIORS * FULL_KV_WIDTH);
   qwen_att_fill(QWEN_ATT_VALUE, QWEN_ATT_PRIORS * FULL_KV_WIDTH);
   for (index = 0; index < QWEN_ATT_HEADS * HEAD_DIM * 2U; index++)
     qwen_att_reference[index] = qwen_att_at(QWEN_ATT_QG)[index];

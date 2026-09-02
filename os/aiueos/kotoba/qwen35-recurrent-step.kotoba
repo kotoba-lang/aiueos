@@ -100,11 +100,21 @@
 ;; accumulate one element at a time, left to right, in binary32. Using the tree
 ;; here would disagree with the C on most inputs.
 ;;
-;; ## `vk` packs two loop counters into one parameter
+;; ## The two inner loops walk a FLAT cell index, and that is a repair
 ;;
-;; `vk = v * 128 + k`. The radix is the object's own dimension ceiling, not the
-;; dimension in the plan, so the decoding does not depend on a field a caller
-;; supplies. Both counters are below 128 by that ceiling.
+;; Both of them need a row and a column, which is six parameters against the
+;; five this dialect admits, so the first draft packed them as `v * 128 + k`
+;; with the dimension ceiling as the radix. At `d = 128` -- the only dimension
+;; K16 ever passes -- the decoded `k` is `vk mod 128`, which is never 128, so
+;; the termination test `k >= d` never fired: an infinite loop, `ud2` at the
+;; fuel guard, and `AIUEOS_EXCEPTION_FAIL unexpected-vector vector=6` under
+;; QEMU. Every interpreter vector passed, because the interpreter cannot run
+;; `d = 128` (see above) and every dimension below the ceiling terminates.
+;;
+;; The repair removes the radix rather than widening it. A column walk starts
+;; at `v` and steps by `d`, so `c >= d*d` is the end and `k` is `c / d`; the
+;; rank-one update touches every cell exactly once, so it is one flat loop over
+;; `c` with `k = c / d` and `v = c - k*d`. Neither depends on a ceiling.
 
 (defn f32w [u]
   (if (> u 2147483647) (- u 4294967296) u))
@@ -155,23 +165,19 @@
 ;; `sum over k of state[k*d + v] * r[k]`, binary32, left to right. Serves both
 ;; `remembered` (r = key) and `value_out` (r = query): the C spells them
 ;; separately but they are the same reduction down the same column.
-(defn dot-col [state r dim vk acc]
-  (if (>= (- vk (* 128 (quot vk 128))) dim)
+(defn dot-col [state r dim c acc]
+  (if (>= c (* dim dim))
     acc
-    (dot-col state r dim (+ vk 1)
+    (dot-col state r dim (+ c dim)
              (f32-to-bits
               (f32-add (f32-from-bits acc)
-                       (f32-mul (f32-from-bits
-                                 (cell-at state dim
-                                          (+ (* (- vk (* 128 (quot vk 128))) dim)
-                                             (quot vk 128))))
-                                (f32-from-bits
-                                 (vec-at r dim (- vk (* 128 (quot vk 128)))))))))))
+                       (f32-mul (f32-from-bits (cell-at state dim c))
+                                (f32-from-bits (vec-at r dim (quot c dim)))))))))
 
 (defn remembered-pass [state keyr corr dim v]
   (if (>= v dim)
     0
-    (do (vec-put corr dim v (dot-col state keyr dim (* v 128) 0))
+    (do (vec-put corr dim v (dot-col state keyr dim v 0))
         (remembered-pass state keyr corr dim (+ v 1)))))
 
 ;; `correction[v] = (value[v] - remembered) * beta`
@@ -185,28 +191,21 @@
                            (f32-from-bits beta))))
         (correction-pass valr corr beta dim (+ v 1)))))
 
-;; `row[v] += k * correction[v]`, `k` being the key element for this row. The
-;; key element is re-read per column rather than hoisted, which loads the same
-;; four bytes `d` times and changes no arithmetic.
-(defn rank1-row [state keyr corr dim kv]
-  (if (>= (- kv (* 128 (quot kv 128))) dim)
+;; `row[v] += k * correction[v]`, over every cell in row-major order -- which
+;; is the order the C's nested loops visit them in, and every cell is touched
+;; exactly once either way. The key element is re-read per column rather than
+;; hoisted, which loads the same four bytes `d` times and changes no
+;; arithmetic.
+(defn rank1-pass [state keyr corr dim c]
+  (if (>= c (* dim dim))
     0
-    (do (cell-put state dim (+ (* (quot kv 128) dim) (- kv (* 128 (quot kv 128))))
+    (do (cell-put state dim c
                   (f32-to-bits
-                   (f32-add (f32-from-bits
-                             (cell-at state dim
-                                      (+ (* (quot kv 128) dim)
-                                         (- kv (* 128 (quot kv 128))))))
-                            (f32-mul (f32-from-bits (vec-at keyr dim (quot kv 128)))
+                   (f32-add (f32-from-bits (cell-at state dim c))
+                            (f32-mul (f32-from-bits (vec-at keyr dim (quot c dim)))
                                      (f32-from-bits
-                                      (vec-at corr dim (- kv (* 128 (quot kv 128)))))))))
-        (rank1-row state keyr corr dim (+ kv 1)))))
-
-(defn rank1-pass [state keyr corr dim k]
-  (if (>= k dim)
-    0
-    (do (rank1-row state keyr corr dim (* k 128))
-        (rank1-pass state keyr corr dim (+ k 1)))))
+                                      (vec-at corr dim (- c (* dim (quot c dim)))))))))
+        (rank1-pass state keyr corr dim (+ c 1)))))
 
 ;; `output[v] = value_out * INV_SQRT_LINEAR_HEAD_DIM`. The constant is
 ;; 0.08838834764831845f = 1/sqrt(128), and it is the CONSTANT the C multiplies
@@ -217,7 +216,7 @@
     0
     (do (vec-put outr dim v
                  (f32-to-bits
-                  (f32-mul (f32-from-bits (dot-col state qryr dim (* v 128) 0))
+                  (f32-mul (f32-from-bits (dot-col state qryr dim v 0))
                            (f32-from-bits 1035273459))))
         (output-pass state qryr outr dim (+ v 1)))))
 
