@@ -21,14 +21,14 @@
      (* (kernel-load-u8-16k base length (+ offset 7)) 72057594037927936)))
 
 (defn load64-boot [base offset]
-  (+ (kernel-load-u8 base 64 offset)
-     (* (kernel-load-u8 base 64 (+ offset 1)) 256)
-     (* (kernel-load-u8 base 64 (+ offset 2)) 65536)
-     (* (kernel-load-u8 base 64 (+ offset 3)) 16777216)
-     (* (kernel-load-u8 base 64 (+ offset 4)) 4294967296)
-     (* (kernel-load-u8 base 64 (+ offset 5)) 1099511627776)
-     (* (kernel-load-u8 base 64 (+ offset 6)) 281474976710656)
-     (* (kernel-load-u8 base 64 (+ offset 7)) 72057594037927936)))
+  (+ (kernel-load-u8 base 80 offset)
+     (* (kernel-load-u8 base 80 (+ offset 1)) 256)
+     (* (kernel-load-u8 base 80 (+ offset 2)) 65536)
+     (* (kernel-load-u8 base 80 (+ offset 3)) 16777216)
+     (* (kernel-load-u8 base 80 (+ offset 4)) 4294967296)
+     (* (kernel-load-u8 base 80 (+ offset 5)) 1099511627776)
+     (* (kernel-load-u8 base 80 (+ offset 6)) 281474976710656)
+     (* (kernel-load-u8 base 80 (+ offset 7)) 72057594037927936)))
 
 (defn load32 [base length offset]
   (+ (kernel-load-u8-16k base length offset)
@@ -56,54 +56,33 @@
         (find-page memory-map map-size descriptor-size
                    (+ offset descriptor-size) (- remaining 1))))))
 
-;; Sixteen writes per tail call keep the recursive depth below the kernel fuel
-;; ceiling while proving that every byte in the admitted page is writable and
-;; zeroed before it can become allocator output.
+;; Keep only one effectful write live at a time.  This uses less sealed fuel
+;; than retaining sixteen store results and reducing them after the writes,
+;; while still proving every byte writable and zero before publication.
 (defn zero-page [page offset]
   (if (= offset 4096)
     1
-    (let [s0 (kernel-store-u8-4k page 4096 offset 0)
-          s1 (kernel-store-u8-4k page 4096 (+ offset 1) 0)
-          s2 (kernel-store-u8-4k page 4096 (+ offset 2) 0)
-          s3 (kernel-store-u8-4k page 4096 (+ offset 3) 0)
-          s4 (kernel-store-u8-4k page 4096 (+ offset 4) 0)
-          s5 (kernel-store-u8-4k page 4096 (+ offset 5) 0)
-          s6 (kernel-store-u8-4k page 4096 (+ offset 6) 0)
-          s7 (kernel-store-u8-4k page 4096 (+ offset 7) 0)
-          s8 (kernel-store-u8-4k page 4096 (+ offset 8) 0)
-          s9 (kernel-store-u8-4k page 4096 (+ offset 9) 0)
-          sa (kernel-store-u8-4k page 4096 (+ offset 10) 0)
-          sb (kernel-store-u8-4k page 4096 (+ offset 11) 0)
-          sc (kernel-store-u8-4k page 4096 (+ offset 12) 0)
-          sd (kernel-store-u8-4k page 4096 (+ offset 13) 0)
-          se (kernel-store-u8-4k page 4096 (+ offset 14) 0)
-          sf (kernel-store-u8-4k page 4096 (+ offset 15) 0)]
-      (if (= (+ s0 s1 s2 s3 s4 s5 s6 s7 s8 s9 sa sb sc sd se sf) 0)
-        (zero-page page (+ offset 16))
+    (let [stored (kernel-store-u8-4k page 4096 offset 0)]
+      (if (= stored 0)
+        (zero-page page (+ offset 1))
         0))))
 
 ;; One byte per bounded allocator slot is deliberately simple: zero means
 ;; free, one means owned.  The state lives in an allocator page rather than in
 ;; transient scalar control flow, so later claims observe earlier decisions.
 (defn claim-slot [state slot]
-  (let [current (kernel-load-u8-4k state 4096 slot)]
-    (if (= current 0)
-      (let [stored (kernel-store-u8-4k state 4096 slot 1)]
-        (if (and (= stored 1)
-                 (= (kernel-load-u8-4k state 4096 slot) 1))
-          1
-          0))
-      0)))
+  (if (= (kernel-load-u8-4k state 4096 slot) 0)
+    (if (= (kernel-store-u8-4k state 4096 slot 1) 1)
+      (if (= (kernel-load-u8-4k state 4096 slot) 1) 1 0)
+      0)
+    0))
 
 (defn release-slot [state slot]
-  (let [current (kernel-load-u8-4k state 4096 slot)]
-    (if (= current 1)
-      (let [stored (kernel-store-u8-4k state 4096 slot 0)]
-        (if (and (= stored 0)
-                 (= (kernel-load-u8-4k state 4096 slot) 0))
-          1
-          0))
-      0)))
+  (if (= (kernel-load-u8-4k state 4096 slot) 1)
+    (if (= (kernel-store-u8-4k state 4096 slot 0) 0)
+      (if (= (kernel-load-u8-4k state 4096 slot) 0) 1 0)
+      0)
+    0))
 
 (defn load64-page [page offset]
   (+ (kernel-load-u8-4k page 4096 offset)
@@ -149,18 +128,20 @@
         (fill-identity-pd page (+ index 1))
         0))))
 
-(defn fill-low-pt [page index]
+(defn fill-low-pt [page index rx-limit rw-start]
   (if (= index 512)
     1
     (let [physical (* index 4096)
           offset (* index 8)
           stored (if (= index 256)
                    (store64-page page offset 0)
-                   (if (and (>= index 257) (<= index 267))
+                   (if (and (>= physical 1052672) (< physical rx-limit))
                      (store64-page page offset (+ physical 1))
-                     (store64-nx-page page offset (+ physical 3))))]
+                     (if (and (>= physical rx-limit) (< physical rw-start))
+                       (store64-page page offset 0)
+                       (store64-nx-page page offset (+ physical 3)))))]
       (if (= stored 1)
-        (fill-low-pt page (+ index 1))
+        (fill-low-pt page (+ index 1) rx-limit rw-start)
         0))))
 
 (defn five-distinct [a b c d e]
@@ -170,55 +151,97 @@
        (not (= b c)) (not (= b d)) (not (= b e))
        (not (= c d)) (not (= c e)) (not (= d e))))
 
-(defn zero-five [state pml4 pdpt pd pt]
-  (and (= (zero-page state 0) 1)
-       (= (zero-page pml4 0) 1)
-       (= (zero-page pdpt 0) 1)
-       (= (zero-page pd 0) 1)
-       (= (zero-page pt 0) 1)
-       (= (kernel-load-u8-4k state 4096 4095) 0)
-       (= (kernel-load-u8-4k pml4 4096 4095) 0)
-       (= (kernel-load-u8-4k pdpt 4096 4095) 0)
-       (= (kernel-load-u8-4k pd 4096 4095) 0)
-       (= (kernel-load-u8-4k pt 4096 4095) 0)))
+(defn zero-five-status [state pml4 pdpt pd pt]
+  (if (not (= (zero-page state 0) 1)) 30
+    (if (not (= (zero-page pml4 0) 1)) 31
+      (if (not (= (zero-page pdpt 0) 1)) 32
+        (if (not (= (zero-page pd 0) 1)) 33
+          (if (not (= (zero-page pt 0) 1)) 34
+            (if (not (= (kernel-load-u8-4k state 4096 4095) 0)) 35
+              (if (not (= (kernel-load-u8-4k pml4 4096 4095) 0)) 36
+                (if (not (= (kernel-load-u8-4k pdpt 4096 4095) 0)) 37
+                  (if (not (= (kernel-load-u8-4k pd 4096 4095) 0)) 38
+                    (if (= (kernel-load-u8-4k pt 4096 4095) 0) 0 39)))))))))))
 
-(defn ownership-eight [state]
-  (and (= (claim-slot state 0) 1)
-       (= (claim-slot state 1) 1)
-       (= (claim-slot state 2) 1)
-       (= (claim-slot state 3) 1)
-       (= (claim-slot state 4) 1)
-       (= (claim-slot state 5) 1)
-       (= (claim-slot state 6) 1)
-       (= (claim-slot state 7) 1)
-       (= (claim-slot state 1) 0)
-       (= (release-slot state 4) 1)
-       (= (release-slot state 4) 0)
-       (= (claim-slot state 4) 1)
-       (= (kernel-load-u8-4k state 4096 0) 1)
-       (= (kernel-load-u8-4k state 4096 1) 1)
-       (= (kernel-load-u8-4k state 4096 2) 1)
-       (= (kernel-load-u8-4k state 4096 3) 1)
-       (= (kernel-load-u8-4k state 4096 4) 1)
-       (= (kernel-load-u8-4k state 4096 5) 1)
-       (= (kernel-load-u8-4k state 4096 6) 1)
-       (= (kernel-load-u8-4k state 4096 7) 1)))
+(defn claim-eight-status [state]
+  (if (not (= (kernel-load-u8-4k state 4096 0) 0)) 70
+    (if (not (= (kernel-store-u8-4k state 4096 0 1) 1)) 71
+      (if (not (= (kernel-load-u8-4k state 4096 0) 1)) 72
+        (if (not (= (claim-slot state 1) 1)) 51
+          (if (not (= (claim-slot state 2) 1)) 52
+            (if (not (= (claim-slot state 3) 1)) 53
+              (if (not (= (claim-slot state 4) 1)) 54
+                (if (not (= (claim-slot state 5) 1)) 55
+                  (if (not (= (claim-slot state 6) 1)) 56
+                    (if (= (claim-slot state 7) 1) 0 57)))))))))))
+
+(defn reclaim-status [state]
+  (if (not (= (claim-slot state 1) 0)) 58
+    (if (not (= (release-slot state 4) 1)) 59
+      (if (not (= (release-slot state 4) 0)) 60
+        (if (= (claim-slot state 4) 1) 0 61)))))
+
+(defn ownership-read-status [state]
+  (if (not (= (kernel-load-u8-4k state 4096 0) 1)) 62
+    (if (not (= (kernel-load-u8-4k state 4096 1) 1)) 63
+      (if (not (= (kernel-load-u8-4k state 4096 2) 1)) 64
+        (if (not (= (kernel-load-u8-4k state 4096 3) 1)) 65
+          (if (not (= (kernel-load-u8-4k state 4096 4) 1)) 66
+            (if (not (= (kernel-load-u8-4k state 4096 5) 1)) 67
+              (if (not (= (kernel-load-u8-4k state 4096 6) 1)) 68
+                (if (= (kernel-load-u8-4k state 4096 7) 1) 0 69)))))))))
+
+(defn ownership-eight-status [state]
+  (let [claim-status (claim-eight-status state)]
+    (if (not (= claim-status 0))
+      claim-status
+      (let [reuse-status (reclaim-status state)]
+        (if (not (= reuse-status 0))
+          reuse-status
+          (ownership-read-status state))))))
+
+(defn prepare-owned-pages [state pml4 pdpt pd pt]
+  (if (= state 0) 40
+    (if (= pml4 0) 41
+      (if (= pdpt 0) 42
+        (if (= pd 0) 43
+          (if (= pt 0) 44
+            (let [zero-status (zero-five-status state pml4 pdpt pd pt)]
+              (if (not (= zero-status 0))
+                zero-status
+                (ownership-eight-status state)))))))))
+
+(defn prepare-extra-pages [reusable-page frame-page stack-page]
+  (if (not (= (zero-page reusable-page 0) 1))
+    25
+    (if (not (= (zero-page frame-page 0) 1))
+      26
+      (if (not (= (zero-page stack-page 0) 1))
+        27
+        (if (= (kernel-load-u8-4k reusable-page 4096 4095) 0) 0 28)))))
 
 (defn prepare-page-tables [pml4 pdpt pd pt]
   (and (= (store64-page pml4 0 (+ pdpt 3)) 1)
        (= (store64-page pdpt 0 (+ pd 3)) 1)
        (= (store64-page pd 0 (+ pt 3)) 1)
        (= (fill-identity-pd pd 1) 1)
-       (= (fill-low-pt pt 0) 1)
        (= (load64-page pml4 0) (+ pdpt 3))
        (= (load64-page pdpt 0) (+ pd 3))
        (= (load64-page pd 0) (+ pt 3))
-       (= (load64-page pt 2048) 0)
-       (= (load64-page pt 2056) 1052673)
-       (= (load64-page pt 2136) 1093633)
-       (= (kernel-load-u8-4k pt 4096 2151) 128)
        (= (kernel-load-u8-4k pd 4096 15) 128)
        (= (kernel-load-u8-4k pd 4096 4095) 128)))
+
+(defn prepare-low-page-table [pt rx-limit rw-start]
+  (and (= (fill-low-pt pt 0 rx-limit rw-start) 1)
+       (= (load64-page pt 2048) 0)
+       (= (load64-page pt 2056) 1052673)
+       (= (load64-page pt (* (- (quot rx-limit 4096) 1) 8))
+          (- rx-limit 4095))
+       (if (< rx-limit rw-start)
+         (= (load64-page pt (* (quot rx-limit 4096) 8)) 0)
+         true)
+       (= (kernel-load-u8-4k pt 4096
+                             (+ (* (quot rw-start 4096) 8) 7)) 128)))
 
 (defn enable-page-protection []
   (if (and (>= (kernel-cpuid-eax 2147483648 0) 2147483649)
@@ -292,7 +315,10 @@
         cr3 (kernel-read-cr3)
         map-size (load64-boot boot 24)
         descriptor-size (load64-boot boot 32)
-        memory-map (kernel-subregion boot 16448 64 16384)]
+        rx-limit (load64-boot boot 56)
+        rw-start (load64-boot boot 64)
+        rw-end (load64-boot boot 72)
+        memory-map (kernel-subregion boot 16464 80 16384)]
     (if (and (> boot 0) (> cr3 0)
              (= (kernel-load-u8 boot 64 0) 65)
              (= (kernel-load-u8 boot 64 1) 73)
@@ -302,13 +328,20 @@
              (= (kernel-load-u8 boot 64 5) 79)
              (= (kernel-load-u8 boot 64 6) 79)
              (= (kernel-load-u8 boot 64 7) 84)
-             (= (load64-boot boot 8) 1)
+             (= (load64-boot boot 8) 2)
              (= (load64-boot boot 16) memory-map)
              (> map-size 0)
              (<= map-size 16384)
              (>= descriptor-size 40)
              (<= descriptor-size map-size)
-             (> (load64-boot boot 40) 0))
+             (> (load64-boot boot 40) 0)
+             (> rx-limit 1052672)
+             (= (bit-and rx-limit 4095) 0)
+             (>= rw-start rx-limit)
+             (= (bit-and rw-start 4095) 0)
+             (> rw-end rw-start)
+             (= (bit-and rw-end 4095) 0)
+             (< rw-end 1073741824))
       (let [map-marker (kernel-out-u8 233 77)
             ;; 16 KiB / the admitted 40-byte minimum is at most 409 complete
             ;; descriptors.  Keep an independent recursive bound so corrupt
@@ -359,24 +392,24 @@
                         pt (kernel-subregion 4096 1073737728
                                              (- fifth-start 4096) 4096)
                         reusable-page (kernel-subregion 4096 1073737728
-                                                       (- sixth-start 4096) 4096)]
+                                                       (- sixth-start 4096) 4096)
+                        frame-page (kernel-subregion 4096 1073737728
+                                                     (- seventh-start 4096) 4096)
+                        stack-page (kernel-subregion 4096 1073737728
+                                                     (- eighth-start 4096) 4096)
+                        owned-status (prepare-owned-pages
+                                      state page-table-root pdpt pd pt)
+                        extra-status (prepare-extra-pages
+                                      reusable-page frame-page stack-page)]
                     (if (and (= map-marker 77)
-                             (zero-five state page-table-root pdpt pd pt)
-                             (= (zero-page reusable-page 0) 1)
-                             (= (zero-page (kernel-subregion 4096 1073737728
-                                                            (- seventh-start 4096) 4096) 0) 1)
-                             (= (zero-page (kernel-subregion 4096 1073737728
-                                                            (- eighth-start 4096) 4096) 0) 1)
-                             (= (kernel-load-u8-4k reusable-page 4096 4095) 0)
-                             (ownership-eight state))
-                      (if (prepare-page-tables page-table-root pdpt pd pt)
+                             (= owned-status 0)
+                             (= extra-status 0))
+                      (if (and (prepare-page-tables page-table-root pdpt pd pt)
+                               (prepare-low-page-table pt rx-limit rw-start))
                           (if (and (enable-page-protection)
                                    (activate-page-tables page-table-root)
                                    (= (kernel-configure-page-fault-recovery
-                                       (kernel-subregion 4096 1073737728
-                                                         (- seventh-start 4096) 4096)
-                                       (kernel-subregion 4096 1073737728
-                                                         (- eighth-start 4096) 4096)) 1)
+                                       frame-page stack-page) 1)
                                    (= (install-page-fault-idt reusable-page) 1))
                             (let [page-marker (kernel-out-u8 233 80)
                                   root-marker (kernel-out-u8 233 82)
@@ -389,15 +422,14 @@
                                                        (= cr3-marker 67)
                                                        (= idt-marker 68)
                                                        (= (recoverable-frame-valid
-                                                           (kernel-subregion 4096 1073737728
-                                                                             (- seventh-start 4096) 4096)
-                                                           (kernel-subregion 4096 1073737728
-                                                                             (- eighth-start 4096) 4096)
+                                                           frame-page stack-page
                                                            probe) 1))
                                                 16 17)))
                             (kernel-out-u32 244 24))
                         (kernel-out-u32 244 23))
-                      (kernel-out-u32 244 22)))
+                      (kernel-out-u32 244
+                                      (if (not (= owned-status 0))
+                                        owned-status extra-status))))
               (kernel-out-u32 244 20)))
           (kernel-out-u32 244 19)))
       (kernel-out-u32 244 18))))
