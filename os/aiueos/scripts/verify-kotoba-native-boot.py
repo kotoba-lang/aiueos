@@ -20,20 +20,15 @@ if struct.unpack_from("<H",data,optional)[0]!=0x20b or struct.unpack_from("<H",d
 import_rva,import_size=struct.unpack_from("<II",data,optional+112+8)
 if import_rva or import_size: raise SystemExit("error: native bootloader imports are forbidden")
 if data.count(payload)!=1: raise SystemExit("error: embedded Kotoba kernel identity rejected")
-phoff=struct.unpack_from("<Q",payload,32)[0]
-phentsize,phnum=struct.unpack_from("<HH",payload,54)
-if phentsize!=56 or phnum!=2:
-    raise SystemExit("error: embedded kernel load contract rejected")
-rw=struct.unpack_from("<IIQQQQQQ",payload,phoff+phentsize)
-rw_pages=(rw[6]+4095)//4096
 scratch_pages=14
-scratch_allocation=b"\x41\xb8"+struct.pack("<I",rw_pages+scratch_pages)
+scratch_allocation=(b"\xb9\x00\x00\x00\x00\xba\x02\x00\x00\x00"
+                    b"\x41\xb8"+struct.pack("<I",scratch_pages))
 if scratch_allocation not in data:
     raise SystemExit("error: loader-owned fourteen-page kernel scratch allocation is absent")
 for forbidden in (b".idata",b".import",b"msvcrt",b"libc",b"NEEDED"):
     if forbidden in data: raise SystemExit("error: foreign runtime dependency found")
 value={
- "format":"aiueos-kotoba-native-boot-receipt/v2",
+ "format":"aiueos-kotoba-native-boot-receipt/v3",
  "compiler_commit":compiler,
  "boot_sha256":hashlib.sha256(data).hexdigest(),
  "boot_bytes":len(data),
@@ -42,7 +37,7 @@ value={
  "c_sources":[],"foreign_objects":[],"imports":[],"dynamic_dependencies":[],
  "boot_services":["AllocatePages","CopyMem","GetMemoryMap","ExitBootServices"],
  "memory_map":{"storage":"loader-rw-inline","capacity_bytes":16384},
- "kernel_scratch":{"base":"rw-end","pages":scratch_pages,
+ "kernel_scratch":{"address_offset":80,"pages_offset":88,"pages":scratch_pages,
                    "ownership":"EfiLoaderData-before-final-map"}}
 receipt.write_text(json.dumps(value,sort_keys=True,separators=(",",":"))+"\n",encoding="ascii")
 print("AIUEOS_KOTOBA_NATIVE_BOOT_OK no-c no-crt no-linker imports=0")

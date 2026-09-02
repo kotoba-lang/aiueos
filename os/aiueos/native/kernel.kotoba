@@ -22,40 +22,14 @@
      (* (kernel-load-u8-16k base length (+ offset 7)) 72057594037927936)))
 
 (defn load64-boot [base offset]
-  (+ (kernel-load-u8 base 80 offset)
-     (* (kernel-load-u8 base 80 (+ offset 1)) 256)
-     (* (kernel-load-u8 base 80 (+ offset 2)) 65536)
-     (* (kernel-load-u8 base 80 (+ offset 3)) 16777216)
-     (* (kernel-load-u8 base 80 (+ offset 4)) 4294967296)
-     (* (kernel-load-u8 base 80 (+ offset 5)) 1099511627776)
-     (* (kernel-load-u8 base 80 (+ offset 6)) 281474976710656)
-     (* (kernel-load-u8 base 80 (+ offset 7)) 72057594037927936)))
-
-(defn load32 [base length offset]
-  (+ (kernel-load-u8-16k base length offset)
-     (* (kernel-load-u8-16k base length (+ offset 1)) 256)
-     (* (kernel-load-u8-16k base length (+ offset 2)) 65536)
-     (* (kernel-load-u8-16k base length (+ offset 3)) 16777216)))
-
-;; UEFI type 7 is EfiConventionalMemory.  The compiler-emitted loader identity
-;; maps the first GiB, so this bounded allocator slice admits one aligned,
-;; contiguous fourteen-page extent in [2 MiB, 1 GiB).  Loader/kernel pages have
-;; non-conventional UEFI types.
-(defn find-page [memory-map map-size descriptor-size offset remaining]
-  (if (or (= remaining 0)
-          (> (+ offset descriptor-size) map-size))
-    0
-    (let [memory-type (load32 memory-map map-size offset)
-          physical-start (load64 memory-map map-size (+ offset 8))
-          pages (load64 memory-map map-size (+ offset 24))]
-      (if (and (= memory-type 7)
-               (> pages 13)
-               (>= physical-start 2097152)
-               (< physical-start 1073688576)
-               (= (bit-and physical-start 4095) 0))
-        physical-start
-        (find-page memory-map map-size descriptor-size
-                   (+ offset descriptor-size) (- remaining 1))))))
+  (+ (kernel-load-u8 base 96 offset)
+     (* (kernel-load-u8 base 96 (+ offset 1)) 256)
+     (* (kernel-load-u8 base 96 (+ offset 2)) 65536)
+     (* (kernel-load-u8 base 96 (+ offset 3)) 16777216)
+     (* (kernel-load-u8 base 96 (+ offset 4)) 4294967296)
+     (* (kernel-load-u8 base 96 (+ offset 5)) 1099511627776)
+     (* (kernel-load-u8 base 96 (+ offset 6)) 281474976710656)
+     (* (kernel-load-u8 base 96 (+ offset 7)) 72057594037927936)))
 
 ;; Keep only one effectful write live at a time.  This uses less sealed fuel
 ;; than retaining sixteen store results and reducing them after the writes,
@@ -363,7 +337,9 @@
         rx-limit (load64-boot boot 56)
         rw-start (load64-boot boot 64)
         rw-end (load64-boot boot 72)
-        memory-map (kernel-subregion boot 16464 80 16384)]
+        scratch-start (load64-boot boot 80)
+        scratch-pages (load64-boot boot 88)
+        memory-map (kernel-subregion boot 16480 96 16384)]
     (if (and (> boot 0) (> cr3 0)
              (= (kernel-load-u8 boot 64 0) 65)
              (= (kernel-load-u8 boot 64 1) 73)
@@ -373,7 +349,7 @@
              (= (kernel-load-u8 boot 64 5) 79)
              (= (kernel-load-u8 boot 64 6) 79)
              (= (kernel-load-u8 boot 64 7) 84)
-             (= (load64-boot boot 8) 2)
+             (= (load64-boot boot 8) 4)
              (= (load64-boot boot 16) memory-map)
              (> map-size 0)
              (<= map-size 16384)
@@ -386,14 +362,15 @@
              (= (bit-and rw-start 4095) 0)
              (> rw-end rw-start)
              (= (bit-and rw-end 4095) 0)
-             (< rw-end 1073741824))
+             (< rw-end 1073741824)
+             (> scratch-start 0)
+             (= (bit-and scratch-start 4095) 0)
+             (= scratch-pages 14)
+             (<= (+ scratch-start 57344) 549755813888))
       (let [map-marker (kernel-out-u8 233 77)
-            ;; Amu reserves fourteen EfiLoaderData pages immediately after
-            ;; the aligned RW PT_LOAD before taking the final memory map.
-            ;; Deriving them from the authenticated RW boundary keeps their
-            ;; ownership stable across machines; scanning for leftover
-            ;; conventional memory made K16 depend on firmware layout.
-            physical-start rw-end]
+            ;; Boot-info v4 carries the exact fourteen-page EfiLoaderData
+            ;; allocation made by Amu before the final memory map.
+            physical-start scratch-start]
         (if (> physical-start 0)
           (let [second-start (+ physical-start 4096)
                 third-start (+ physical-start 8192)
@@ -412,14 +389,14 @@
                 bar-b (rtl/bar-for-bus 3)]
             (if (and (five-distinct physical-start second-start third-start
                                     fourth-start fifth-start)
-                     (> sixth-start 0) (< sixth-start 1073741824)
+                     (> sixth-start 0) (< sixth-start 549755813888)
                      (not (= sixth-start physical-start))
                      (not (= sixth-start second-start))
                      (not (= sixth-start third-start))
                      (not (= sixth-start fourth-start))
                      (not (= sixth-start fifth-start))
                      (> seventh-start 0) (> eighth-start 0)
-                     (< eighth-start 1073741824)
+                     (< eighth-start 549755813888)
                      (not (= seventh-start physical-start))
                      (not (= seventh-start second-start))
                      (not (= seventh-start third-start))
@@ -439,30 +416,30 @@
                      (> twelfth-start eleventh-start)
                      (> thirteenth-start twelfth-start)
                      (> fourteenth-start thirteenth-start)
-                     (< fourteenth-start 1073741824))
-                  ;; The literal parent names the loader's identity-mapped
-                  ;; physical window. Map values select only checked offsets.
-                  (let [state (kernel-subregion 4096 1073737728
+                     (< fourteenth-start 549755813888))
+                  ;; The literal parent names the admitted 512 GiB physical
+                  ;; window. Boot-info values select only checked offsets.
+                  (let [state (kernel-subregion 4096 549755809792
                                                 (- physical-start 4096) 4096)
-                        page-table-root (kernel-subregion 4096 1073737728
+                        page-table-root (kernel-subregion 4096 549755809792
                                                           (- second-start 4096) 4096)
-                        pdpt (kernel-subregion 4096 1073737728
+                        pdpt (kernel-subregion 4096 549755809792
                                                (- third-start 4096) 4096)
-                        pd (kernel-subregion 4096 1073737728
+                        pd (kernel-subregion 4096 549755809792
                                              (- fourth-start 4096) 4096)
-                        pt (kernel-subregion 4096 1073737728
+                        pt (kernel-subregion 4096 549755809792
                                              (- fifth-start 4096) 4096)
-                        reusable-page (kernel-subregion 4096 1073737728
+                        reusable-page (kernel-subregion 4096 549755809792
                                                        (- sixth-start 4096) 4096)
-                        frame-page (kernel-subregion 4096 1073737728
+                        frame-page (kernel-subregion 4096 549755809792
                                                      (- seventh-start 4096) 4096)
-                        stack-page (kernel-subregion 4096 1073737728
+                        stack-page (kernel-subregion 4096 549755809792
                                                      (- eighth-start 4096) 4096)
-                        rtl-directory-a (kernel-subregion 4096 1073737728
+                        rtl-directory-a (kernel-subregion 4096 549755809792
                                                           (- ninth-start 4096) 4096)
-                        rtl-directory-b (kernel-subregion 4096 1073737728
+                        rtl-directory-b (kernel-subregion 4096 549755809792
                                                           (- tenth-start 4096) 4096)
-                        rtl-dma-pages (kernel-subregion 4096 1073737728
+                        rtl-dma-pages (kernel-subregion 4096 549755809792
                                                        (- eleventh-start 4096) 16384)
                         owned-status (prepare-owned-pages
                                       state page-table-root pdpt pd pt)

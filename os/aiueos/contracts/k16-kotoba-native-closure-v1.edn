@@ -5,7 +5,7 @@
 {:format :aiueos.k16-kotoba-native-closure/v1
  :target :gmktec-k16
  :compiler {:repo "kotoba-lang/amu"
-            :commit "364d24d8ba77a7d462c4431f5ca2e906ad4d5561"
+            :commit "c2095e05d01ffc2dd2da412a98a3344fc2dc2b45"
             :backend {:repo "kotoba-lang/kotoba-native"
                       :commit "ce85a36d5307e7e019c304caa17daf237abb9b9b"}
             :firmware-entry {:arity 2
@@ -23,7 +23,7 @@
          :entry "native/kernel.kotoba"
          :foreign-code? false
          :qemu-evidence "scripts/smoke-qemu-kotoba-native.sh"
-         :scratch-pages {:count 14 :base :rw-end
+         :scratch-pages {:count 14 :address-offset 80 :pages-offset 88
                          :owner :amu-uefi-loader-data}
          :physical-k16 :unverified-for-this-compiler-commit}
   :nic {:state :one-shot-native-provider
