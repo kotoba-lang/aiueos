@@ -172,7 +172,7 @@
           repository names the Amu revision that produced them; see
           os/aiueos/kotoba/provenance.edn :unrecorded."}
   :native-boot
-  {:compiler "71286d1d89572f2382c79e397f55b10c7ebafbe4"
+  {:compiler "13d2f5dfe1adeaa99b7e9e6c04fcf8cb8fc15a4b"
    :backend "ce85a36d5307e7e019c304caa17daf237abb9b9b"
    :firmware-entry :microsoft-x64-two-arity-efi-status-v2
    :memory-widths [:u8 :u16 :u32 :u64]
@@ -183,6 +183,7 @@
                                "AIUEOS K16 PREFLIGHT RTL8125"
                                "AIUEOS K16 PREFLIGHT STATUS XX"]
    :k16-preflight-kernel-call :returnable-main-wrapper
+   :k16-preflight-terminal :halt-after-status
    :qemu-marker "MPRCD"
    :qemu-exit 33
    :foreign 0

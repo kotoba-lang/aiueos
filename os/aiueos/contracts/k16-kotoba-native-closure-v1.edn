@@ -5,7 +5,7 @@
 {:format :aiueos.k16-kotoba-native-closure/v1
  :target :gmktec-k16
  :compiler {:repo "kotoba-lang/amu"
-            :commit "71286d1d89572f2382c79e397f55b10c7ebafbe4"
+            :commit "13d2f5dfe1adeaa99b7e9e6c04fcf8cb8fc15a4b"
             :backend {:repo "kotoba-lang/kotoba-native"
                       :commit "ce85a36d5307e7e019c304caa17daf237abb9b9b"}
             :firmware-entry {:arity 2
@@ -30,6 +30,7 @@
                          :checkpoints ["AIUEOS K16 PREFLIGHT ENTER"
                                        "AIUEOS K16 PREFLIGHT RTL8125"]
                          :screen "AIUEOS K16 PREFLIGHT STATUS XX"
+                         :terminal :halt-after-status
                          :before :exit-boot-services}
          :physical-k16 :unverified-for-this-compiler-commit}
   :nic {:state :one-shot-native-provider
