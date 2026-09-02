@@ -179,6 +179,8 @@ kotoba_qwen35_matvec_object=${AIUEOS_KOTOBA_QWEN35_MATVEC_OBJECT:-"$aiueos/kotob
 # Second tranche (ADR-0140): the scalar functions between the matvecs.
 kotoba_qwen35_activation_object=${AIUEOS_KOTOBA_QWEN35_ACTIVATION_OBJECT:-"$aiueos/kotoba/qwen35-activation.o"}
 kotoba_qwen35_norm_object=${AIUEOS_KOTOBA_QWEN35_NORM_OBJECT:-"$aiueos/kotoba/qwen35-norm.o"}
+kotoba_qwen35_attention_object=${AIUEOS_KOTOBA_QWEN35_ATTENTION_OBJECT:-"$aiueos/kotoba/qwen35-attention.o"}
+kotoba_qwen35_recurrent_object=${AIUEOS_KOTOBA_QWEN35_RECURRENT_OBJECT:-"$aiueos/kotoba/qwen35-recurrent-step.o"}
 qwen35_kotoba_link=
 # device-client: the Murakumo device-P256 worker's signed canonical text,
 # v2 and v3 (ADR-0137). Linked unconditionally, not behind
@@ -455,8 +457,8 @@ qwen35_parity_cflags=
 qwen35_parity_link=
 case "${AIUEOS_QWEN35_KOTOBA_PARITY:-0}" in
   0) ;;
-  1|2) qwen35_parity_cflags="-DAIUEOS_QWEN35_KOTOBA_PARITY=${AIUEOS_QWEN35_KOTOBA_PARITY}" ;;
-  *) echo "error: AIUEOS_QWEN35_KOTOBA_PARITY must be 0, 1 or 2" >&2; exit 1 ;;
+  1|2|3|4) qwen35_parity_cflags="-DAIUEOS_QWEN35_KOTOBA_PARITY=${AIUEOS_QWEN35_KOTOBA_PARITY}" ;;
+  *) echo "error: AIUEOS_QWEN35_KOTOBA_PARITY must be 0, 1, 2, 3 or 4" >&2; exit 1 ;;
 esac
 if [ "${AIUEOS_QWEN38_MODEL_HANDOFF:-0}" = 1 ] ||
    [ "${AIUEOS_MODEL_NVME_SLOTS:-0}" = 1 ]; then
@@ -888,15 +890,25 @@ if [ -n "$model_handoff_link" ] || [ -n "$qwen35_parity_cflags" ]; then
     "" kotoba_aiueos_qwen35_dequant_row
   python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_qwen35_matvec_object" \
     "" kotoba_aiueos_qwen35_matvec
-  # Two parity profiles, each linking only the objects its stages call. The
-  # low region (`aiueos_low_end <= 0x1f4000`) cannot hold all five at once
-  # since the tokenizer objects landed -- measured, not assumed.
+  # FOUR parity profiles, each linking only the objects its stages call. The
+  # low region (`aiueos_low_end <= 0x1f4000`) cannot hold every object at once
+  # since the tokenizer objects landed -- measured, not assumed, and measured
+  # again for the third tranche: attention (17,872 B) and recurrent-step
+  # (7,432 B) together overflow it, while profile 2's pair at 16,120 B fits.
   if [ "${AIUEOS_QWEN35_KOTOBA_PARITY:-0}" = 2 ]; then
     python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_qwen35_activation_object" \
       "" kotoba_aiueos_qwen35_activation
     python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_qwen35_norm_object" \
       "" kotoba_aiueos_qwen35_norm
     qwen35_kotoba_link="$kotoba_qwen35_activation_object $kotoba_qwen35_norm_object"
+  elif [ "${AIUEOS_QWEN35_KOTOBA_PARITY:-0}" = 3 ]; then
+    python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_qwen35_attention_object" \
+      "" kotoba_aiueos_qwen35_attention
+    qwen35_kotoba_link="$kotoba_qwen35_attention_object"
+  elif [ "${AIUEOS_QWEN35_KOTOBA_PARITY:-0}" = 4 ]; then
+    python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_qwen35_recurrent_object" \
+      "" kotoba_aiueos_qwen35_recurrent_step
+    qwen35_kotoba_link="$kotoba_qwen35_recurrent_object"
   else
     qwen35_kotoba_link="$kotoba_qwen35_dot_object $kotoba_qwen35_dequant_object $kotoba_qwen35_matvec_object"
   fi
@@ -1007,14 +1019,31 @@ if [ -z "$model_handoff_link" ] && [ -n "$qwen35_parity_cflags" ]; then
   # The parity build compiles the reference C without the model handoff, so
   # the loader never asks for a model and the comparison still runs against
   # the same qwen35_quant.c / qwen35_infer.c the handoff compiles.
+  #
+  # `-ffunction-sections -fdata-sections` + `--gc-sections` is what makes a
+  # parity image FIT. MEASURED 2026-09-03 at aiueos main f11967e: without it
+  # every profile is over `aiueos_low_end <= 0x1f4000` -- profile 1 by 45,056
+  # bytes, profile 2 by 40,960, profile 3 by 40,960, profile 4 by 28,672 --
+  # and ld.lld produces nothing. That is not a cost this tranche introduced:
+  # profiles 1 and 2 landed working and the tree grew past them. The
+  # comparison is unaffected because what the collector removes is the model
+  # path (`aiueos_qwen35_generate`, the GGUF parser, the IQ codebook grids),
+  # which no self-test stage calls, and it removes it from the REFERENCE half
+  # -- a stage whose reference had been collected would not agree with the
+  # object, it would fail to link.
+  qwen35_parity_section_cflags="-ffunction-sections -fdata-sections"
+  qualification_gc_link="--gc-sections"
   zig cc -target x86_64-freestanding-none -std=c11 -O2 \
     -ffreestanding -fno-stack-protector -mno-red-zone \
+    $qwen35_parity_section_cflags \
     -c -o "$kernel_qwen35_runtime_object" "$aiueos/kernel/qwen35_runtime.c"
   zig cc -target x86_64-freestanding-none -std=c11 -O3 \
     -ffreestanding -fno-stack-protector -mno-red-zone \
+    $qwen35_parity_section_cflags \
     -c -o "$kernel_qwen35_quant_object" "$aiueos/kernel/qwen35_quant.c"
   zig cc -target x86_64-freestanding-none -std=c11 -O3 \
     -ffreestanding -fno-stack-protector -mno-red-zone \
+    $qwen35_parity_section_cflags \
     $qwen35_parity_cflags \
     -c -o "$kernel_qwen35_infer_object" "$aiueos/kernel/qwen35_infer.c"
   qwen35_parity_link="$kernel_qwen35_runtime_object $kernel_qwen35_quant_object $kernel_qwen35_infer_object"
