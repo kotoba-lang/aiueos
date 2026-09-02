@@ -1230,7 +1230,6 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
       debug_string("AIUEOS_TLS13_RECORD_OK rfc8448-s3 seq0 seal-open tamper-refused\n");
       serial_string("AIUEOS_TLS13_RECORD_OK rfc8448-s3 seq0 seal-open tamper-refused\r\n");
     }
-<<<<<<< HEAD
 #ifdef AIUEOS_QWEN35_KOTOBA_PARITY
     /* QWEN-PARITY (ADR-0137).  The three Qwen3.5 forward-pass objects against
        the C they were ported from, on this CPU, over synthetic inputs.  Placed
@@ -1262,7 +1261,6 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
       }
     }
 #endif
-=======
     {
       /* DEVCLIENT-PARITY.  The emitted `device-worker-canonical` object against
          the bytes the C writer produced for the same inputs (protocol 2) and
@@ -1281,7 +1279,6 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
       debug_string("DEVCLIENT-PARITY canonical ok\n");
       serial_string("DEVCLIENT-PARITY canonical ok v2-result v3-result refusal-5 refusal-7\r\n");
     }
->>>>>>> origin/main
 #ifdef AIUEOS_PHYSICAL_QUALIFICATION
     aiueos_qualification_progress(226);
 #endif
