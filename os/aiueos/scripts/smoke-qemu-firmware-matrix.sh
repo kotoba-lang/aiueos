@@ -69,7 +69,7 @@ blk="$build/virtio-blk-smoke.img"
   echo "COULD-NOT-RUN esp-missing: $esp -- run build-uefi.sh first" >&2
   exit 3
 }
-# --- freshness floor (ADR-0142) ---------------------------------------------
+# --- freshness floor (ADR-0155) ---------------------------------------------
 #
 # This harness does NOT build. It boots whatever is in `$esp`, and until
 # 2026-09-02 the only precondition was that the directory EXISTS. Measured on

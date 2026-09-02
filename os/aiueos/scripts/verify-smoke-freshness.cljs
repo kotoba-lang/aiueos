@@ -1,5 +1,5 @@
 #!/usr/bin/env nbb
-;; verify-smoke-freshness.cljs -- which boot harnesses can still lie (ADR-0142).
+;; verify-smoke-freshness.cljs -- which boot harnesses can still lie (ADR-0155).
 ;;
 ;; A harness that boots an image is making a claim about the tree in front of
 ;; it. It can only make that claim if something connects the bytes QEMU opened

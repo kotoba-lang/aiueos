@@ -1,5 +1,5 @@
 (ns aiueos.image-freshness-test
-  "The boot-freshness receipt, shown in both directions (ADR-0142).
+  "The boot-freshness receipt, shown in both directions (ADR-0155).
 
   What this namespace is defending is not a script: it is the meaning of every
   acceptance string in the K16 programme. `NIC-PARITY ok`, `TLS-PARITY ok`,

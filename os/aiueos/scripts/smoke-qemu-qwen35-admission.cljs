@@ -149,11 +149,11 @@
                     #js [] #js {:stdio "inherit" :env build-env})]
   ;; A build that did not run is `unmeasured`, not `die`. Exit 1 here would be
   ;; indistinguishable from "the kernel refused the fixture", which is the one
-  ;; verdict this gate exists to report (ADR-0142).
+  ;; verdict this gate exists to report (ADR-0155).
   (when-not (zero? (.-status r))
     (unmeasured "the image build failed with status" (.-status r))))
 
-;; --- freshness floor (ADR-0142) --------------------------------------------
+;; --- freshness floor (ADR-0155) --------------------------------------------
 ;;
 ;; The build above writes a receipt beside its artifacts naming their sha256
 ;; and the state of the `os/aiueos` subtree they came from. Asserting it here
@@ -164,7 +164,11 @@
 (let [r (.spawnSync cp "nbb"
                     #js [(.join path aiueos "scripts" "image-freshness.cljs")
                          "assert"
-                         "--receipt" (.join path work "release" "image-receipt.edn")
+                         ;; build-physical-qualification-pxe.sh runs build-uefi.sh
+                         ;; with AIUEOS_OUT=<out>/core and copies the result up,
+                         ;; so the receipt is one level down from the PXE image.
+                         "--receipt" (.join path work "release" "core"
+                                            "image-receipt.edn")
                          "--root" (.resolve path aiueos ".." "..")]
                     #js {:stdio "inherit"})]
   (when-not (zero? (.-status r)) (.exit js/process (.-status r))))

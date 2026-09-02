@@ -186,7 +186,7 @@ qwen35_kotoba_link=
 # self-test runs it on every UEFI profile -- the K16 profile is the only one
 # that can send a request, and it is the one that cannot be booted here.
 kotoba_device_worker_canonical_object=${AIUEOS_KOTOBA_DEVICE_WORKER_CANONICAL_OBJECT:-"$aiueos/kotoba/device-worker-canonical.o"}
-# sha-stream: streaming SHA-256 (ADR-0142). Three objects over ONE shared module
+# sha-stream: streaming SHA-256 (ADR-0155). Three objects over ONE shared module
 # (`kotoba/aiueos/lib/sha256_stream.kotoba`), so the compression rounds exist
 # once in source; three symbols because a fuel tier is a per-CALL budget and
 # these three calls are not the same size.
@@ -1298,7 +1298,7 @@ magic=$(dd if="$efi" bs=1 count=2 2>/dev/null)
   exit 1
 }
 
-# The freshness receipt (ADR-0142). Written LAST, from the artifacts that were
+# The freshness receipt (ADR-0155). Written LAST, from the artifacts that were
 # just produced and the tree they were produced from, so that a boot harness
 # can refuse an image it did not just build. Nothing above this line is allowed
 # to have failed: `set -e` is on, and the receipt is therefore evidence that the

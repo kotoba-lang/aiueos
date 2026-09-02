@@ -9,7 +9,7 @@ serial_log="$out/kernel-serial.log"
 blk_image="$out/virtio-blk-smoke.img"
 qemu=${QEMU_SYSTEM_X86_64:-qemu-system-x86_64}
 
-# --- freshness floor (ADR-0142) ---------------------------------------------
+# --- freshness floor (ADR-0155) ---------------------------------------------
 #
 # Three outcomes, and they must be distinguishable from the exit status alone:
 #
@@ -861,7 +861,7 @@ grep -F "AIUEOS_EXCEPTION_OK vector=6 invalid-opcode" "$serial_log" >/dev/null |
   echo "error: kernel exception dispatch evidence was not observed" >&2
   exit 1
 }
-# SHA-STREAM-PARITY (ADR-0142). The full line, not a prefix: a run that printed
+# SHA-STREAM-PARITY (ADR-0155). The full line, not a prefix: a run that printed
 # `SHA-STREAM-PARITY mismatch case=6` would satisfy a prefix match, and case 6
 # is the 131,080-byte hash that is the entire reason these objects exist.
 grep -F "SHA-STREAM-PARITY ok fips-abc fips-448 one-block region-vs-sha256-12288 stream-192-blocks region-131080 dwd-input-4 dwd-output-3 dwd-input-32768 refusals" "$serial_log" >/dev/null || {

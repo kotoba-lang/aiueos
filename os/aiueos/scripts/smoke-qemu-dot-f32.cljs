@@ -90,7 +90,7 @@
   (js/console.error (str "error: " message))
   (js/process.exit 1))
 
-;; Three outcomes, not two (ADR-0142). `die` is a real disagreement -- an arm
+;; Three outcomes, not two (ADR-0155). `die` is a real disagreement -- an arm
 ;; answered something other than what kotoba.kir answers. `unmeasured` is "this
 ;; machine could not ask": no compiler, no OVMF, no QEMU. Before 2026-09-02
 ;; both were exit 1, so a run that never compiled anything was indistinguishable
@@ -148,7 +148,7 @@
     (doseq [entry (fs/readdirSync out #js {:recursive true})]
       (when (re-find #"\.(c|o|obj|a|so)$" entry)
         (die (str "foreign/C artifact entered the probe output: " entry))))
-    ;; The freshness receipt (ADR-0142). This harness compiles into a fresh
+    ;; The freshness receipt (ADR-0155). This harness compiles into a fresh
     ;; mkdtemp, so it cannot boot a PREVIOUS run's image the way the
     ;; build/aiueos harnesses could -- but "the compiler wrote a file" and "QEMU
     ;; opened the file the compiler wrote" are still two claims, and the sha256

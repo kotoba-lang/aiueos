@@ -1,7 +1,7 @@
 #!/usr/bin/env nbb
 ;; image-freshness.cljs -- the receipt that makes a boot say WHICH kernel it ran.
 ;;
-;; Why this exists (ADR-0142). Every acceptance claim in the K16 programme is a
+;; Why this exists (ADR-0155). Every acceptance claim in the K16 programme is a
 ;; string read off a serial log: `TLS-PARITY ok`, `DEVCLIENT-PARITY canonical
 ;; ok`, `NIC-PARITY ok`, `DISRP`, `AIUEOS_DOT_F32_QEMU_OK`,
 ;; `AIUEOS_QWEN35_ADMISSION_OK`, `KHSTCUGLWOZ`. The harness that produces those
