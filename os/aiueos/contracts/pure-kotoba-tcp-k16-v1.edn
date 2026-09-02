@@ -21,7 +21,8 @@
               :wire-destination "10.77.0.1:7777"
               :wire-stages [{:hex "40" :meaning :tcp-gate-entered}
                             {:hex "43" :meaning :syn-descriptor-completed}
-                            {:hex "44" :meaning :peer-frame-received}]
+                            {:hex "44" :meaning :peer-frame-received}
+                            {:hex "45" :meaning :syn-ack-admitted}]
               :bounded-poll {:iterations-per-window 8000000
                              :receive-windows 4}
               :failure-encoding :screen-base-plus-provider-reason}
@@ -47,7 +48,7 @@
  :evidence {:qemu {:state :passed
                    :marker "MPRCD"
                    :exit 33
-                   :scope :bounded-no-rtl8125-path}
+                  :scope :bounded-no-rtl8125-path}
             :physical-k16 :unverified}
  :does-not-prove [:tls13-handshake
                   :x509-chain-or-san-admission

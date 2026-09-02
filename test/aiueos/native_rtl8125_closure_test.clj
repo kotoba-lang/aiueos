@@ -32,6 +32,8 @@
       (is (str/includes? rtl "(defn build-tcp-segment"))
       (is (str/includes? rtl "(zero-prefix frame 60 0)"))
       (is (str/includes? rtl "(defn tcp-syn-ack-valid"))
+      (is (str/includes? rtl "(= tcp-header tcp-length)"))
+      (is (str/includes? rtl "(defn tcp-ack-reset-and-receipt"))
       (is (str/includes? rtl "(defn receive-tcp-syn-ack"))
       (is (str/includes? rtl "AIUEOS_NATIVE_TCP_OK"))
       (is (str/includes? rtl "(frame-store-be16 frame 36 8443)"))
@@ -102,7 +104,8 @@
            (get-in candidate [:diagnostic :wire-success])))
     (is (= [{:hex "40" :meaning :tcp-gate-entered}
             {:hex "43" :meaning :syn-descriptor-completed}
-            {:hex "44" :meaning :peer-frame-received}]
+            {:hex "44" :meaning :peer-frame-received}
+            {:hex "45" :meaning :syn-ack-admitted}]
            (get-in candidate [:diagnostic :wire-stages])))
     (is (= 8000000
            (get-in candidate [:diagnostic :bounded-poll
