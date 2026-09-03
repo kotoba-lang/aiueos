@@ -582,45 +582,38 @@
       (link/tx-wire-length (+ 14 total-length))
       0)))
 
-(defn tcp-syn-ack-status [frame length sent-frame mmio]
+(defn tcp-syn-ack-header-status [frame length mmio]
   (let [src 172818433
         dst 172818442
         total (if (>= length 18) (frame-be16 frame 16) 0)
-        tcp-length (if (>= total 20) (- total 20) 0)
         tcp-header (if (>= length 47)
                      (transport/tcp-header-length
                       (kernel-load-u8-4k frame 4096 46))
                      0)]
-    ;; Return a wire-visible hexadecimal stage instead of collapsing every
-    ;; refusal into one boolean.  One physical boot can now distinguish a
-    ;; descriptor issue from Ethernet, IPv4, sequence, option, or checksum
-    ;; rejection without privileged capture on the Mac.
+    ;; Keep this first physical classifier deliberately small.  The caller
+    ;; reports RX arrival before entering here, so a malformed peer frame or
+    ;; compiler defect cannot be confused with an empty RX ring.  Full IP/TCP
+    ;; checksum admission follows only after this header-only path is proven
+    ;; on the K16.
     (if (not (and (>= length 54) (<= length 2048)
                   (= (frame-mac-matches-device frame 0 mmio 0) 1)
-                  (= (frame-macs-match frame 6 sent-frame 0 0) 1)
                   (= (frame-be16 frame 12) 2048)))
       145
       (if (not (and (= (kernel-load-u8-4k frame 4096 14) 69)
                     (= (kernel-load-u8-4k frame 4096 23) 6)
-                    (<= (+ 14 total) length)))
+                    (<= (+ 14 total) length)
+                    (= (frame-be32 frame 26) src)
+                    (= (frame-be32 frame 30) dst)))
         146
-        (if (not (and (= (frame-be32 frame 26) src)
-                      (= (frame-be32 frame 30) dst)
-                      (= (internet-checksum frame 14 20 0) 0)))
-          147
-          (if (not (and (= (frame-be16 frame 34) 8443)
-                        (= (frame-be16 frame 36) 49155)
-                        (= (frame-be32 frame 42) 2715820033)))
-            148
-            (if (not (= (transport/syn-ack-shape
-                         total tcp-header
-                         (kernel-load-u8-4k frame 4096 47)) 1))
-              149
-              (if (= (internet-checksum
-                       frame 34 tcp-length
-                       (tcp-pseudo-sum src dst tcp-length)) 0)
-                69
-                150))))))))
+        (if (not (and (= (frame-be16 frame 34) 8443)
+                      (= (frame-be16 frame 36) 49155)
+                      (= (frame-be32 frame 42) 2715820033)))
+          148
+          (if (= (transport/syn-ack-shape
+                   total tcp-header
+                   (kernel-load-u8-4k frame 4096 47)) 1)
+            69
+            149))))))
 
 (defn tcp-receipt-byte [index]
   ;; ASCII payload: AIUEOS_NATIVE_TCP_OK.
@@ -699,7 +692,7 @@
       ;; This is a physical diagnostic gate, not an unbounded runtime poll.
       ;; Four short windows restore a visible screen result in seconds while
       ;; the UDP stage receipts identify whether any peer frame arrived.
-      (let [command (wait-rx-command rx 8000000)]
+      (let [command (wait-rx-command rx 250000)]
         (if (= command 0)
           (if (= frames 1)
             33
@@ -709,13 +702,13 @@
                                    (not (= (bit-and command 33554432) 0))
                                    (not (= (bit-and command 16777216) 0))
                                    (>= bytes 58) (<= bytes 2048))
-                ;; Classify before the stage report reuses tx-frame.  This
-                ;; preserves the exact SYN destination MAC as validation
-                ;; input instead of relying on the diagnostic packet having
-                ;; the same destination.
+                ;; Report descriptor arrival before parsing.  The compact
+                ;; classifier no longer reads tx-frame, which this report
+                ;; deliberately reuses.
+                arrived (send-native-nic-diagnostic mmio dma-base 68)
                 inspection (if valid-command
-                             (tcp-syn-ack-status
-                              rx-frame (- bytes 4) tx-frame mmio)
+                             (tcp-syn-ack-header-status
+                              rx-frame (- bytes 4) mmio)
                              144)
                 classified (send-native-nic-diagnostic
                             mmio dma-base inspection)]
@@ -725,7 +718,7 @@
                    (* 0 admitted)))
               (if (= (rx-rearm rx rx-frame) 1)
                 (+ (receive-tcp-syn-ack mmio dma-base (- frames 1))
-                   (* 0 classified))
+                   (* 0 (+ arrived classified)))
                 30))))))))
 
 (defn probe-tcp-after-arp [mmio dma-base arp-reply]
