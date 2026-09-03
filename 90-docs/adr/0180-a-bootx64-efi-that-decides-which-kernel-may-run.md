@@ -103,6 +103,40 @@ went non-zero would not distinguish "the file is wrong" from "the reader is".
 | ELF magic constant off by one | `KHSCN_b____Z` | `2 2 2 2 2 2` | `A` goes with `c d e f`: everything is refused at the first clause, so nothing downstream is measured any more |
 | `put-hex64` divides by 8 | `KHSCNAbcdefZ` | `0 2 5 24 23 41` | every marker holds and `entry` prints `0000000000000040`. The console writer and the admission verdicts fail independently |
 
+### A host oracle, because the CPU evidence was narrow
+
+`os/aiueos/contracts/uefi-elf-admit-v1.edn` runs the same module against the
+KIR interpreter, in the default `verify-admissions` set. It costs about five
+seconds and needs no firmware.
+
+The boot and the contract answer different questions, and the contract is the
+broader one. The smoke asserts **six** verdicts because six is what fits in one
+image's literal pool and one minute of TCG; the contract asserts **twenty-five**
+distinct reason codes over 28 vectors — every clause the module can produce
+except the four whose siblings already cover them.
+
+Each vector is the **same 176 bytes with one field changed**, and it names the
+field (`{:offset 88 :u64 32768}`) rather than carrying its own 352-character
+blob, because a contract of opaque hex is 352 chances per vector to transcribe
+one wrong and a reader cannot tell which byte was meant to differ.
+
+Two vectors are boundary pairs rather than single points:
+`:entry-just-inside-segment-0` (1052831) beside `:entry-outside-segment-0`
+(1052832), and `:unaligned-phoff` (65, which clause 9 would also refuse) beside
+`:unaligned-phoff-that-fits` (57, which only clause 8 refuses).
+
+**The reds, each measured rather than asserted:**
+
+| break | result |
+|---|---|
+| clause 8's alignment test made vacuous | `:unaligned-phoff-that-fits` **traps** — `:trap :kernel-memory-fault, :operation kernel-load-u32-4k, :check :misaligned-access, :width 4, :index 57`. This is the measurement behind "clause 8 turns a trap into a verdict"; without the isolating vector the claim was merely plausible, since clause 9 catches `phoff 65` on its own |
+| `paddr` floor 1048576 -> 1024 | `:segment-0-below-1mib` expected 24, actual 42 |
+| entry test `<` -> `<=` | `:entry-outside-segment-0` expected 42, actual 0 — caught only by the boundary pair |
+
+The contract declares no memory assertions, and that is correct rather than an
+omission: this object writes nothing. It answers a verdict, and the verdict is
+the whole of its output.
+
 ## Consequences
 
 - **This does not replace the K16 loader and the gate still refuses.** The K16
