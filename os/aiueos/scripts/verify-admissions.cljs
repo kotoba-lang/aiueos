@@ -99,6 +99,59 @@
             (+ base block-offset) (count block)
             (if (some? (:scratch v)) (:scratch v) (+ base scratch-offset))]}))
 
+;; --- the UEFI loader's PT_LOAD admission ------------------------------------
+;;
+;; Every vector is the SAME 176 bytes with one field changed, so it names the
+;; field instead of carrying its own blob. `:patch` entries are little-endian
+;; writes at an ELF offset -- the widths the header actually uses.
+(defn- patch-width [entry]
+  (cond (contains? entry :u8) [1 (:u8 entry)]
+        (contains? entry :u16) [2 (:u16 entry)]
+        (contains? entry :u32) [4 (:u32 entry)]
+        (contains? entry :u64) [8 (:u64 entry)]
+        :else nil))
+
+(defn- apply-patch [bytes contract label entry]
+  (let [[width value] (or (patch-width entry)
+                          (fail! "REFUSING TO REPORT A PASS: this patch names no width this runner knows"
+                                 {:contract (:format contract) :vector label
+                                  :patch entry}))
+        offset (:offset entry)]
+    (when (or (nil? offset) (neg? offset) (> (+ offset width) (count bytes)))
+      (fail! "REFUSING TO REPORT A PASS: this patch falls outside the fixture header"
+             {:contract (:format contract) :vector label :patch entry
+              :header-bytes (count bytes)}))
+    ;; Little-endian, which is what every multi-byte ELF64 field on x86-64 is.
+    (reduce (fn [acc i]
+              (assoc acc (+ offset i)
+                     (bit-and (js/Math.floor (/ value (js/Math.pow 256 i))) 0xff)))
+            bytes
+            (range width))))
+
+(defmethod prepare :aiueos.uefi-elf-admit/v1 [contract v]
+  (let [{:keys [base image-bytes header-offset]}
+        (get-in contract [:verification :memory])
+        header (hex-bytes (:header-hex contract))
+        _ (when-not (= 176 (count header))
+            (fail! "REFUSING TO REPORT A PASS: the fixture header is not the 64-byte ELF header plus two 56-byte program headers"
+                   {:contract (:format contract) :bytes (count header)}))
+        patched (reduce (fn [acc entry] (apply-patch acc contract (:name v) entry))
+                        header
+                        (:patch v))
+        ;; The window defaults to the fixture's own length, which is what the
+        ;; loader passes: the headers live in the first page and `image-len`
+        ;; is a claim about the whole file that is checked and never read
+        ;; through.
+        win (or (:win v) (count patched))
+        image-len (or (:image-len v) (:image-len contract))]
+    (when (nil? image-len)
+      (fail! "REFUSING TO REPORT A PASS: neither the vector nor the contract states an image length"
+             {:contract (:format contract) :vector (:name v)}))
+    {:entry (get-in contract [:native :entry])
+     :base base
+     :image (write-at (vec (repeat image-bytes 0)) header-offset patched)
+     :args [(+ base header-offset) win image-len]}))
+
 (defmethod prepare :aiueos.unixfs-file-admit/v1 [contract v]
   (let [{:keys [base image-bytes node-offset]} (get-in contract [:verification :memory])
         node (hex-bytes (:node-hex v))]
@@ -1208,7 +1261,15 @@
                       ;; have no contract here at all, and that is stated in the
                       ;; builder's comment rather than left as an absence --
                       ;; the oracle refuses the fences they carry.
-                      ["cid-v1-admit-v1.edn" "unixfs-file-admit-v1.edn"
+                      ;; The UEFI loader's PT_LOAD admission is here for the
+                      ;; same reason and costs about five seconds. It is the
+                      ;; only contract whose object is a MODULE of an image
+                      ;; rather than a kernel object, and it is the only
+                      ;; evidence for that object that does not need QEMU --
+                      ;; the smoke boots it and asserts six verdicts, this
+                      ;; asserts twenty-five.
+                      ["uefi-elf-admit-v1.edn"
+                       "cid-v1-admit-v1.edn" "unixfs-file-admit-v1.edn"
                        "value-runtime-cas-verify-v1.edn"
                        "value-handle-arena-v1.edn"
                        "rtl8125-identify-v1.edn" "rtl8125-link-up-v1.edn"
