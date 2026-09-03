@@ -137,6 +137,37 @@ The contract declares no memory assertions, and that is correct rather than an
 omission: this object writes nothing. It answers a verdict, and the verdict is
 the whole of its output.
 
+### The placement rule gets one too
+
+`os/aiueos/contracts/uefi-window-reason-v1.edn`, also in the default set.
+FIRMWARE-STORE's `aiueos.uefi.memory/window-reason` is the only loader function
+that is **pure arithmetic** — three words in, one word out, no memory window and
+no firmware call — so unlike the allocators it can be exercised completely
+without a machine. 14 vectors, every reachable clause, about 0.6 s.
+
+The two boundaries the rule actually turns on are pairs:
+
+| pair | says |
+|---|---|
+| 4,607 pages -> 0, 4,606 -> 7 | the 511-page slack is **exact**, not merely large enough. The aligned block ends at exactly the last byte of the allocation |
+| `want` 68719476736 -> 6, 68719476737 -> 2 | "does not fit at all" and "does not fit HERE" are different sentences, and the ceiling is a limit rather than a maximum |
+
+**Clause 5 is declared and NOT exercised, and the contract says so.** It fires
+when aligning wraps, which needs `raw-base + 2097151` to overflow i64 — and
+every such base makes `aligned-up` answer a negative word, which clause 4
+refuses first because a negative is below 4 GiB. So it is unreachable *through
+this entry given the clause order*, not because the arithmetic cannot wrap.
+Recorded as `:declared-not-exercised {5 :shadowed-by-clause-4}` rather than left
+as a hole in the observed set.
+
+Three reds, each measured:
+
+| break | result |
+|---|---|
+| clause 7 `>` -> `>=` | `:misaligned-base-with-the-full-slack` 0 -> 7 — the exact boundary |
+| clause 3 moved after clause 4 | `:firmware-refused` 3 -> 4 |
+| min address 4 GiB -> 1 MiB | `:below-4gib` 4 -> 0 |
+
 ## Consequences
 
 - **This does not replace the K16 loader and the gate still refuses.** The K16

@@ -128,6 +128,22 @@
             bytes
             (range width))))
 
+;; --- the UEFI loader's model placement rule --------------------------------
+;;
+;; The only contract here whose object touches no memory at all: three words
+;; in, one word out. The image exists because `execute-once` takes one, not
+;; because anything reads it.
+(defmethod prepare :aiueos.uefi-window-reason/v1 [contract v]
+  (let [{:keys [base image-bytes]} (get-in contract [:verification :memory])]
+    (doseq [k [:raw-base :raw-pages :want]]
+      (when-not (integer? (get v k))
+        (fail! "REFUSING TO REPORT A PASS: this vector does not state every argument"
+               {:contract (:format contract) :vector (:name v) :missing k})))
+    {:entry (get-in contract [:native :entry])
+     :base base
+     :image (vec (repeat image-bytes 0))
+     :args [(:raw-base v) (:raw-pages v) (:want v)]}))
+
 (defmethod prepare :aiueos.uefi-elf-admit/v1 [contract v]
   (let [{:keys [base image-bytes header-offset]}
         (get-in contract [:verification :memory])
@@ -1268,7 +1284,7 @@
                       ;; evidence for that object that does not need QEMU --
                       ;; the smoke boots it and asserts six verdicts, this
                       ;; asserts twenty-five.
-                      ["uefi-elf-admit-v1.edn"
+                      ["uefi-elf-admit-v1.edn" "uefi-window-reason-v1.edn"
                        "cid-v1-admit-v1.edn" "unixfs-file-admit-v1.edn"
                        "value-runtime-cas-verify-v1.edn"
                        "value-handle-arena-v1.edn"
