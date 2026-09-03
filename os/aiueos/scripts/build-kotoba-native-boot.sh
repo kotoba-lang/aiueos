@@ -4,7 +4,7 @@ set -eu
 repo=$(CDPATH= cd -- "$(dirname -- "$0")/../../.." && pwd)
 aiueos="$repo/os/aiueos"
 compiler=${1:?usage: build-kotoba-native-boot.sh /path/to/compiler}
-expected=1de9dafe71c12b68233fb815d5cd36208a9b22a4
+expected=13d2f5dfe1adeaa99b7e9e6c04fcf8cb8fc15a4b
 actual=$(git -C "$compiler" rev-parse HEAD)
 [ "$actual" = "$expected" ] || {
   echo "error: compiler HEAD is $actual; expected $expected" >&2; exit 1;
@@ -17,8 +17,12 @@ receipt="$out/receipt.json"
 AIUEOS_NATIVE_OUT="$native_out" \
   "$aiueos/scripts/build-kotoba-native-kernel.sh" "$compiler" >/dev/null
 mkdir -p "$(dirname -- "$efi")"
-"$compiler/bin/kotoba-compiler" package-aiueos-boot "$native_out/KERNEL.ELF" --output "$efi"
-"$compiler/bin/kotoba-compiler" package-aiueos-boot "$native_out/KERNEL.ELF" --output "$second"
+set -- package-aiueos-boot "$native_out/KERNEL.ELF" --output "$efi"
+if [ "${AIUEOS_NATIVE_K16_PREFLIGHT:-0}" = 1 ]; then set -- "$@" --k16-preflight; fi
+"$compiler/bin/kotoba-compiler" "$@"
+set -- package-aiueos-boot "$native_out/KERNEL.ELF" --output "$second"
+if [ "${AIUEOS_NATIVE_K16_PREFLIGHT:-0}" = 1 ]; then set -- "$@" --k16-preflight; fi
+"$compiler/bin/kotoba-compiler" "$@"
 cmp "$efi" "$second"; rm -f "$second"
 python3 "$aiueos/scripts/verify-kotoba-native-boot.py" \
   "$efi" "$native_out/KERNEL.ELF" "$expected" "$receipt"

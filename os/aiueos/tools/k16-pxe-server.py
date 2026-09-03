@@ -1022,7 +1022,9 @@ def tftp_transfer(peer, request):
         if index + 1 < len(fields) and fields[index]:
             options[fields[index].decode("ascii", "replace").lower()] = \
                 fields[index + 1].decode("ascii", "replace")
-    if filename not in (BOOT_FILE, "efi/boot/bootx64.efi") or mode != "octet":
+    if filename not in (BOOT_FILE.lower(), "efi/boot/bootx64.efi") or mode != "octet":
+        print(f"AIUEOS_PXE_TFTP_REJECT from={peer[0]}:{peer[1]} file={filename} "
+              f"mode={mode}", flush=True)
         return
     selected = next_boot_path()
     content = selected.read_bytes()

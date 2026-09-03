@@ -3,17 +3,21 @@
 ;;
 ;;   nbb os/aiueos/scripts/build-k16-pure-native.cljs
 ;;       -- run build-uefi.sh with AIUEOS_K16_PURE_NATIVE=1 and print the
-;;          receipt summary (`kotoba=n stubs=n foreign=n`).
+;;          legacy restricted-link receipt (`kotoba=n stubs=n foreign=n`).
+;;
+;;   nbb os/aiueos/scripts/build-k16-pure-native.cljs --compiler /path/to/amu
+;;       -- build the bootable C-free Amu PE32+ loader and embedded Kotoba
+;;          kernel, with the compiler revision pinned by the build scripts.
 ;;
 ;;   nbb os/aiueos/scripts/build-k16-pure-native.cljs --emit-provenance
 ;;       -- regenerate os/aiueos/kotoba/provenance.edn from the committed
 ;;          objects, their sibling sources, and the recipes that name a
 ;;          compiler revision. Writes nothing else.
 ;;
-;; THE PROFILE DOES NOT BOOT. It cannot: BOOTX64.EFI is `uefi/main.c`, there is
-;; no Kotoba/Amu loader, and the profile refuses to emit a C one. Its purpose is
-;; to make the Kotoba/foreign boundary machine-checked, so the streams that are
-;; porting the loader, the NIC, TLS and the Qwen path have a number to move.
+;; The `--compiler` route boots under QEMU and contains the pure boot/memory
+;; substrate. The no-argument legacy route remains a negative measurement of
+;; the old C/ASM link. Neither route promotes NIC, HTTPS or Qwen to pure-native;
+;; those layers remain separately closed by the profile contract.
 ;;
 ;; Exit 0 = admitted. 2 = could not answer. 3 = refused (which is today's
 ;; expected outcome, and the refusal names why).
@@ -36,6 +40,10 @@
   (path/resolve (or (opt "--root") (.cwd js/process))))
 
 (def ^:private target "x86_64-aiueos-kernel-v1")
+
+(def ^:private compiler
+  (or (opt "--compiler")
+      (.-AIUEOS_KOTOBA_COMPILER (.-env js/process))))
 
 (defn- die! [code msg]
   (.error js/console msg)
@@ -305,6 +313,52 @@
 
 ;; ------------------------------------------------------------ profile ----
 
+(defn- run-bootable-native! [compiler]
+  (let [compiler (path/resolve compiler)
+        script (path/join root "os" "aiueos" "scripts"
+                          "build-kotoba-native-boot.sh")
+        out-root (or (.-AIUEOS_OUT (.-env js/process))
+                     (path/join root "build" "aiueos"))
+        native-out (path/join out-root "k16-pure-native" "native")
+        boot-out (path/join out-root "k16-pure-native" "boot")
+        env (js/Object.assign #js {} (.-env js/process)
+                              #js {"AIUEOS_NATIVE_OUT" native-out
+                                   "AIUEOS_NATIVE_BOOT_OUT" boot-out})]
+    (when-not (.existsSync fs script)
+      (die! 2 (str "UNANSWERED could-not-answer reason=build-script-absent path=" script)))
+    (when-not (.existsSync fs compiler)
+      (die! 2 (str "UNANSWERED could-not-answer reason=compiler-absent path=" compiler)))
+    (let [r (.spawnSync child "sh" #js [script compiler]
+                        #js {:cwd root :env env :stdio "inherit"})
+          status (or (.-status r) 2)
+          kernel (path/join native-out "KERNEL.ELF")
+          efi (path/join boot-out "esp" "EFI" "BOOT" "BOOTX64.EFI")
+          kernel-receipt (path/join native-out "receipt.json")
+          boot-receipt (path/join boot-out "receipt.json")
+          receipt (path/join out-root "aiueos-k16-pure-native-boot-receipt.edn")]
+      (when-not (zero? status)
+        (.exit js/process status))
+      (doseq [p [kernel efi kernel-receipt boot-receipt]]
+        (when-not (.existsSync fs p)
+          (die! 2 (str "UNANSWERED could-not-answer reason=artifact-absent path=" p))))
+      (.mkdirSync fs out-root #js {:recursive true})
+      (.writeFileSync
+       fs receipt
+       (str (pr-str {:format :aiueos.k16-pure-native-boot-receipt/v1
+                     :target target
+                     :compiler (-> (js/JSON.parse
+                                    (.readFileSync fs kernel-receipt "utf8"))
+                                   (aget "compiler_commit"))
+                     :kernel {:path kernel :sha256 (sha256-file kernel)}
+                     :loader {:path efi :sha256 (sha256-file efi)}
+                     :foreign 0
+                     :scope :boot-memory-substrate
+                     :all-native-ready? false}) "\n")
+       "utf8")
+      (println (str "K16_PURE_NATIVE_BOOT_OK foreign=0 kernel=" kernel
+                    " loader=" efi " receipt=" receipt))
+      (.exit js/process 0))))
+
 (defn- run-profile! []
   (let [script (path/join root "os" "aiueos" "scripts" "build-uefi.sh")]
     (when-not (.existsSync fs script)
@@ -329,4 +383,5 @@
 
 (cond
   (flag? "--emit-provenance") (emit-provenance!)
+  compiler (run-bootable-native! compiler)
   :else (run-profile!))
