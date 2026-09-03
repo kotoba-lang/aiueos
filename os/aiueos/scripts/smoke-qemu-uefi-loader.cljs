@@ -39,7 +39,7 @@
 ;; reason; P a page the firmware allocated was WRITTEN and read back; W the
 ;; placement rule answered all five of its clauses; Z kernel-system-table still
 ;; answers, so R9 survived every call.
-(def default-markers "KHSCNAbcdefPWZ")
+(def default-markers "KHSCNAbcdefPWghZ")
 
 ;; The reasons `aiueos.uefi.elf/admit` gives for the six headers, in order.
 ;; Not "all non-zero": each names one clause, and swapping two of these
@@ -53,6 +53,30 @@
 (def default-window "0 4 3 6 7")
 
 (def expected-entry "0000000000101000")
+
+;; `aiueos.uefi.integrity/verify` over the same 176 bytes: 0 against the digest
+;; `shasum -a 256` gives for them, 4 against that digest with its last nibble
+;; changed. The second is what makes the first mean anything -- a comparison
+;; that answered 0 for every input would look identical without it -- and it
+;; pins the REASON rather than "non-zero", so one that refused everything would
+;; not pass either.
+(def default-digests "0 4")
+
+;; SHA-256 needs a budget, and until amu#764 the image ran on a fixed 512
+;; whatever `--fuel` said. MEASURED on this probe's digest half, three 64-byte
+;; blocks and a 32-byte comparison per call:
+;;
+;;     6,144   traps before the first verdict            debugcon "K"
+;;    16,384   the FIRST verdict completes, the second traps
+;;             debugcon "Kg", console "digest 0"
+;;    32,768   both complete   debugcon "Kgh", console "digest 0 4"
+;;
+;; So one `verify` over 176 bytes costs between 6,144 and 16,384 and two cost
+;; between 16,384 and 32,768 -- the budget is spent CUMULATIVELY across the
+;; whole `efi-main` call rather than replenished per callee. This probe does
+;; considerably more than that half, so the number here is a ceiling with room
+;; rather than the measurement; the measurement is the table.
+(def probe-fuel 1048576)
 (def expected-status 33)
 
 (def ovmf-candidates
@@ -87,7 +111,7 @@
       (.update (fs/readFileSync file))
       (.digest "hex")))
 
-(defn build! [compiler out]
+(defn build! [compiler out fuel]
   (let [efi (path/join out "esp" "EFI" "BOOT" "BOOTX64.EFI")]
     (fs/mkdirSync (path/dirname efi) #js {:recursive true})
     (let [compiled (run! (path/join compiler "bin" "amu")
@@ -95,6 +119,7 @@
                           "--source-path" source-path
                           "--target" "x86_64-aiueos-uefi-v1"
                           "--artifact" "image"
+                          "--fuel" (str fuel)
                           "--output" efi
                           "--jvm-free"]
                          {})]
@@ -132,9 +157,10 @@
                      (die "usage: smoke-qemu-uefi-loader.cljs /path/to/amu"))
         want-markers (flag args "--expect-markers" default-markers)
         want-verdicts (flag args "--expect-verdicts" default-verdicts)
+        want-digests (flag args "--expect-digests" default-digests)
         want-window (flag args "--expect-window" default-window)
         out (fs/mkdtempSync (path/join (os/tmpdir) "aiueos-uefi-loader-"))
-        built (build! compiler out)
+        built (build! compiler out probe-fuel)
         seen (observe out (firmware))
         status (:status seen)
         debug (:debug seen)
@@ -144,7 +170,8 @@
         ;; debug console marked.
         verdicts (second (re-find #"verdict ([0-9 ]+)" serial))
         window (second (re-find #"window ([0-9 ]+)" serial))
-        entry (second (re-find #"entry\s+([0-9A-F]{16})" serial))]
+        entry (second (re-find #"entry\s+([0-9A-F]{16})" serial))
+        digests (second (re-find #"digest ([0-9 ]+)" serial))]
     (println (str "BOOTX64.EFI " (:bytes built) " bytes image="
                   (subs (:sha256 built) 0 16)))
     ;; fwstore: the freshness receipt (ADR-0155). This harness compiles into
@@ -163,6 +190,7 @@
                   "\n  after boot " after))))
     (println (str "exit=" status " debugcon=" (pr-str debug)))
     (println (str "entry=" (pr-str entry) " verdicts=" (pr-str verdicts)
+                  " digests=" (pr-str digests)
                   " window=" (pr-str window)))
     (when-not (= expected-status status)
       (die (str "QEMU exited " status ", expected " expected-status
@@ -178,11 +206,15 @@
                 ", expected " (pr-str want-window))))
     ;; e_entry of the fixture kernel, read out of the literal pool by
     ;; `aiueos.uefi.elf/entry-point` and printed by `aiueos.uefi.console`.
+    (when-not (= want-digests digests)
+      (die (str "the firmware console reported digest verdicts "
+                (pr-str digests) ", expected " (pr-str want-digests))))
     (when-not (= expected-entry entry)
       (die (str "e_entry printed as " (pr-str entry)
                 ", expected " expected-entry)))
     (println (str "AIUEOS_UEFI_LOADER_OK markers=" debug
                   " verdicts=" (str/replace want-verdicts " " ",")
+                  " digests=" (str/replace want-digests " " ",")
                   " window=" (str/replace want-window " " ",")
                   " entry=" entry))))
 
