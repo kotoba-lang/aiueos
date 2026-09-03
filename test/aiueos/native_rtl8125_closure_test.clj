@@ -117,7 +117,7 @@
     (is (some #{:physical-k16-https} (:does-not-prove evidence)))
     (is (some #{:physical-k16-qwen} (:does-not-prove evidence)))))
 
-(deftest tcp-candidate-keeps-tls-and-murakumo-unverified
+(deftest physical-tcp-evidence-keeps-tls-and-murakumo-unverified
   (let [candidate (edn/read-string (slurp tcp-candidate))]
     (is (= :kotoba (get-in candidate [:implementation :language])))
     (is (= 8443 (get-in candidate [:target :gateway-port])))
@@ -129,15 +129,22 @@
             {:hex "44" :meaning :peer-frame-received}
             {:hex "45" :meaning :syn-ack-admitted}]
            (get-in candidate [:diagnostic :wire-stages])))
-    (is (= 8000000
+    (is (= 250000
            (get-in candidate [:diagnostic :bounded-poll
                               :iterations-per-window])))
-    (is (= "85030c4b04e392d6739c1bb38d9b2c41e3dccbbe"
+    (is (= "5e42cf9aafcb43e8408cd66b0a6022e3ea9e10e2"
            (get-in candidate [:artifact :aiueos-implementation-commit])))
-    (is (= "b32342bd3f6200b9e2fd78a9357841d9df267efd484a79c0285064c228709025"
+    (is (= "0f3a86357d6ae996b37998e2b0998d9d3a2adf07de7e608747e711465d38b870"
            (get-in candidate [:artifact :efi :sha256])))
     (is (= :passed (get-in candidate [:evidence :qemu :state])))
-    (is (= :unverified (get-in candidate [:evidence :physical-k16])))
+    (is (= :passed (get-in candidate [:evidence :physical-k16 :state])))
+    (is (= "60"
+           (get-in candidate [:evidence :physical-k16 :screen :status-hex])))
+    (is (= "AIUEOS_NATIVE_TCP_OK"
+           (last (get-in candidate [:evidence :physical-k16 :wire :sequence]))))
+    (is (= :deferred-to-next-gate
+           (get-in candidate [:evidence :physical-k16
+                              :incoming-checksum-admission])))
     (is (some #{:tls13-handshake} (:does-not-prove candidate)))
     (is (some #{:murakumo-node-registration} (:does-not-prove candidate)))
     (is (some #{:decode-throughput} (:does-not-prove candidate)))))

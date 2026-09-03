@@ -1,6 +1,5 @@
-;; Candidate boundary after the first physical pure-Kotoba RTL8125 receipt.
-;; This image must prove one TCP three-way handshake to the Mac's transparent
-;; TLS passthrough before any TLS or Murakumo claim is allowed.
+;; Physical boundary after the first pure-Kotoba TCP three-way handshake on
+;; the K16.  TLS and Murakumo remain separate gates below.
 {:format :aiueos.pure-kotoba-tcp-k16/v1
  :depends-on {:evidence "physical-kotoba-native-k16-v1.edn"
               :result :physical-rtl8125-provider-passed}
@@ -12,7 +11,7 @@
           :upstream "api.murakumo.cloud:443"}
  :implementation {:language :kotoba
                   :source "native/rtl8125.kotoba"
-                  :path [:arp-admission :tcp-syn :tcp-syn-ack-admission
+                  :path [:arp-admission :tcp-syn :tcp-syn-ack-header-admission
                          :tcp-rst :udp-positive-receipt]
                   :tls-terminated-by :k16
                   :mac-role :transparent-byte-forwarder}
@@ -23,33 +22,50 @@
                             {:hex "43" :meaning :syn-descriptor-completed}
                             {:hex "44" :meaning :peer-frame-received}
                             {:hex "45" :meaning :syn-ack-admitted}]
-              :bounded-poll {:iterations-per-window 8000000
+              :bounded-poll {:iterations-per-window 250000
                              :receive-windows 4}
               :failure-encoding :screen-base-plus-provider-reason}
- :artifact {:state :built-reproducibly
+ :artifact {:state :physically-verified-reproducible
             :aiueos-implementation-commit
-            "85030c4b04e392d6739c1bb38d9b2c41e3dccbbe"
+            "5e42cf9aafcb43e8408cd66b0a6022e3ea9e10e2"
             :amu-commit "13d2f5dfe1adeaa99b7e9e6c04fcf8cb8fc15a4b"
             :kernel {:bytes 143640
                      :sha256
-                     "fffda951daf3e9b6841ef0e9cb7fbd5a6f4968393937f596d65a7b4c15c693a0"}
+                     "2bfacd358caff8d52f2bcde985e945b88129bea494ad0b1dbfbe2864e967de9e"}
             :efi {:bytes 162816
                   :sha256
-                  "b32342bd3f6200b9e2fd78a9357841d9df267efd484a79c0285064c228709025"}
+                  "0f3a86357d6ae996b37998e2b0998d9d3a2adf07de7e608747e711465d38b870"}
             :source-closure
             [{:module :aiueos.native.kernel
               :sha256
               "c90a7d117a41f6e620336db17ae08fb0d702404075ed6ca28fae9210b3fab4fa"}
              {:module :native.rtl8125
               :sha256
-              "88728ca2e398e000f2634ea9e59ca0d97eba289d30a47f539e323fb74db474fc"}]
+              "0108a07db93c9dc56a1f92a5cfaa63312f010dce117280843a69d1c9fe57dfee"}]
             :foreign-code []
             :dynamic-imports []}
  :evidence {:qemu {:state :passed
                    :marker "MPRCD"
                    :exit 33
                   :scope :bounded-no-rtl8125-path}
-            :physical-k16 :unverified}
+            :physical-k16
+            {:state :passed
+             :observed-at "2026-09-03T10:20:12+09:00"
+             :screen {:status-hex "60" :provider-status 0}
+             :wire {:receiver "10.77.0.1:7777"
+                    :source "10.77.0.10:7779"
+                    :sequence ["AIUEOS_NATIVE_ARP_OK"
+                               "AIUEOS_NATIVE_NIC_40"
+                               "AIUEOS_NATIVE_NIC_43"
+                               "AIUEOS_NATIVE_NIC_44"
+                               "AIUEOS_NATIVE_NIC_45"
+                               "AIUEOS_NATIVE_TCP_OK"]}
+             :proves [:rtl8125-tx-rx
+                      :server-accepted-client-syn
+                      :client-accepted-syn-ack-header
+                      :three-way-handshake
+                      :client-ack-reset-and-udp-receipt]
+             :incoming-checksum-admission :deferred-to-next-gate}}
  :does-not-prove [:tls13-handshake
                   :x509-chain-or-san-admission
                   :https-response
