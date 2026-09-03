@@ -5,7 +5,8 @@
   The verifier is an injected authority port: this namespace never trusts a
   browser supplied `verified=true`, never handles a private passkey, and never
   copies a passkey private key onto the node.  A claim becomes a node plan only
-  after both account authentication and proof by the device-owned key.")
+  after both account authentication and proof by the device-owned key."
+  (:require [kotoba.security.information-flow :as sec-info-flow]))
 
 (def version 1)
 
