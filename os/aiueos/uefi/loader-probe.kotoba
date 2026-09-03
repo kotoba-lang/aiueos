@@ -1,8 +1,10 @@
 (ns aiueos.uefi-loader-probe
   (:require [aiueos.uefi.console :as console]
             [aiueos.uefi.elf :as elf]
-            [aiueos.uefi.memory :as memory])
-  (:export [efi-main main mark-when present verdict window-verdict]))
+            [aiueos.uefi.memory :as memory]
+            [aiueos.uefi.integrity :as integrity])
+  (:export [efi-main main mark-when present verdict window-verdict
+            digest-verdict]))
 
 ;; A BOOTX64.EFI, written in Kotoba, that says what it decided.
 ;;
@@ -54,6 +56,11 @@
 ;;   b c d e f  each mutation was refused with ITS OWN reason
 ;;   P  a page the FIRMWARE allocated was WRITTEN and read back
 ;;   W  the 4 GiB - 64 GiB placement rule answered all five of its clauses
+;;   g  those same 176 bytes hashed -- by SHA-256 running as x86-64 machine
+;;      code, with its 512-byte state in `kernel-scratch-region` -- to the
+;;      digest `shasum -a 256` computes for them off this machine
+;;   h  a digest one nibble different was refused, and refused with reason 4
+;;      rather than merely refused
 ;;   Z  kernel-system-table still answers, so R9 survived every call
 ;;
 ;; then `out 0xf4, 16`, so QEMU leaves with (16 << 1) | 1 = 33.
@@ -111,6 +118,22 @@
         n (console/put-number out r)]
     (if (= r expected) (+ 1 (* 0 (+ sp n))) 0)))
 
+;; SHA-256 needs 512 bytes of state that survives between blocks, and
+;; `kernel-scratch-region` (boot-scratch) is where it lives. 16,384 is the
+;; reserved size; the library reads it through a 512-byte window.
+;;
+;; These two verdicts were written before they could run. Measured 2026-09-02,
+;; a UEFI image ran on a fixed budget of 512 whatever `--fuel` said -- `--fuel
+;; 512` and `--fuel 1048576` produced BYTE-IDENTICAL artifacts -- and one
+;; 64-byte SHA block costs about 1,772, so `sha-block` trapped at its own fuel
+;; guard. amu#764 made the declared budget reach the image.
+(defn digest-verdict [out src expected marker]
+  (let [r (integrity/verify (kernel-scratch-region) 16384 src 176 expected)
+        sp (console/put out (ucs2 " "))
+        n (console/put-number out r)
+        m (mark-when (if (= r (if (= marker 103) 0 4)) 1 0) marker)]
+    (+ r (* 0 (+ sp (+ n m))))))
+
 (defn efi-main [image-handle system-table]
   (let [out (console/con-out system-table)
         cleared (console/clear-screen out)
@@ -149,7 +172,20 @@
         w3 (window-verdict out 68717379584 8192 16777216 6)
         w4 (window-verdict out 4294971392 4096 16777216 7)
         m7 (mark-when (if (= (+ w0 (+ w1 (+ w2 (+ w3 w4)))) 5) 1 0) 87)
-        nl2 (console/put out (ucs2 "\r\n"))
+        nl2 (console/put out (ucs2 "\r\ndigest"))
+
+        ;; g / h -- the loader's central security decision, running as machine
+        ;; code: does this image hash to the digest we expected? The second
+        ;; call is what makes the first mean anything, and it asserts the
+        ;; REASON (4) rather than merely "non-zero", so a comparison that
+        ;; refused everything would not pass.
+        d0 (digest-verdict out (bytes-literal "7f454c4602010100000000000000000002003e00010000000010100000000000400000000000000018b0010000000000000000004000380002004000040003000100000005000000001000000000000000101000000000000010100000000000a000000000000000a00000000000000000100000000000000100000006000000008000000000000000801000000000000080100000000000003001000000000000300100000000000010000000000000")
+                           (bytes-literal "db5502b1e112b394008f0fa17a7a4cfe891411d3e79a537874c025187f1825e1")
+                           103)
+        d1 (digest-verdict out (bytes-literal "7f454c4602010100000000000000000002003e00010000000010100000000000400000000000000018b0010000000000000000004000380002004000040003000100000005000000001000000000000000101000000000000010100000000000a000000000000000a00000000000000000100000000000000100000006000000008000000000000000801000000000000080100000000000003001000000000000300100000000000010000000000000")
+                           (bytes-literal "db5502b1e112b394008f0fa17a7a4cfe891411d3e79a537874c025187f1825e2")
+                           104)
+        nl3 (console/put out (ucs2 "\r\n"))
 
         parked (kernel-system-table)
         m5 (mark-when (if (= parked system-table) 1 0) 90)
