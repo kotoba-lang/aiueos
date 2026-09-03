@@ -530,6 +530,17 @@
 (defn internet-checksum [frame base length seed]
   (- 65535 (checksum-fold (checksum-sum frame base length 0 seed))))
 
+(defn ipv4-checksum-admitted [frame]
+  ;; N1 step 1: the received IPv4 header is admitted only when its stored
+  ;; checksum field equals the recomputed RFC 1071 checksum.  A mismatch
+  ;; reports the reserved IPv4-checksum-failure code 93.  The TCP checksum
+  ;; failure code 96 is restored in a separate later step and must not land
+  ;; in the same change.
+  (if (= (frame-be16 frame 24)
+         (internet-checksum frame 14 20 0))
+    1
+    0))
+
 (defn tcp-pseudo-sum [src dst tcp-length]
   (+ (+ (quot src 65536) (bit-and src 65535))
      (+ (+ (quot dst 65536) (bit-and dst 65535))
@@ -600,20 +611,25 @@
                   (= (frame-be16 frame 12) 2048)))
       145
       (if (not (and (= (kernel-load-u8-4k frame 4096 14) 69)
-                    (= (kernel-load-u8-4k frame 4096 23) 6)
-                    (<= (+ 14 total) length)
-                    (= (frame-be32 frame 26) src)
-                    (= (frame-be32 frame 30) dst)))
-        146
+                  (= (kernel-load-u8-4k frame 4096 23) 6)
+                  (<= (+ 14 total) length)
+                  (= (frame-be32 frame 26) src)
+                  (= (frame-be32 frame 30) dst)))
+      146
+      ;; N1 step 1: IPv4 header checksum admission runs after the fixed
+      ;; header fields and before the ports.  The TCP checksum check (96)
+      ;; follows in its own step.
+      (if (= (ipv4-checksum-admitted frame) 0)
+        93
         (if (not (and (= (frame-be16 frame 34) 8443)
-                      (= (frame-be16 frame 36) 49155)
-                      (= (frame-be32 frame 42) 2715820033)))
+                    (= (frame-be16 frame 36) 49155)
+                    (= (frame-be32 frame 42) 2715820033)))
           148
           (if (= (transport/syn-ack-shape
-                   total tcp-header
-                   (kernel-load-u8-4k frame 4096 47)) 1)
+                 total tcp-header
+                 (kernel-load-u8-4k frame 4096 47)) 1)
             69
-            149))))))
+            149)))))))
 
 (defn tcp-receipt-byte [index]
   ;; ASCII payload: AIUEOS_NATIVE_TCP_OK.

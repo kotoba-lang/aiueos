@@ -59,6 +59,14 @@
       (is (str/includes? rtl "(kernel-store-u16 mmio 512 offset value)"))
       (is (not (str/includes? rtl
                               "(kernel-store-u8 mmio 512 (+ offset 1)"))))
+    (testing "N1 step 1 admits the received IPv4 header checksum with code 93"
+      (is (str/includes? rtl "(defn ipv4-checksum-admitted"))
+      (is (str/includes? rtl "(if (= (ipv4-checksum-admitted frame) 0)"))
+      (is (str/includes? rtl "93"))
+      (is (str/includes? rtl
+                         "The TCP checksum\n  ;; failure code 96 is restored in a separate later step"))
+      ;; The 96 stage must not land in the same change.
+      (is (not (str/includes? rtl "tcp-checksum-admitted"))))
     (testing "the K16 BDFs, UC/NX map and four-page DMA authority are linked"
       (is (str/includes? kernel "[native.rtl8125 :as rtl]"))
       (is (str/includes? kernel "(rtl/bar-for-bus 2)"))
