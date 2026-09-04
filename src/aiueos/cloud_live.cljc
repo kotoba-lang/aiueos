@@ -56,7 +56,8 @@
   A credential. The environment variable's *name* appears in the receipt, so a
   reader knows which one to set; the value reaches a request header and nothing
   else."
-  (:require [grant.cloud :as cloud]
+  (:require [kotoba.security.information-flow :as sec-info-flow]
+            [grant.cloud :as cloud]
             [clojure.string :as str]
             #?@(:clj [[aiueos.provider.cloud :as provider]
                       [clojure.edn :as edn]

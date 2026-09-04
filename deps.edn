@@ -96,6 +96,18 @@
          :main-opts ["-m" "cognitect.test-runner"]
          :exec-fn cognitect.test-runner.api/test}
 
+   ;; The security adoption verifier (CI: `clojure -M:security-adoption`)
+   ;; loads every entrypoint in security-adoption.edn to prove the
+   ;; entrypoint-to-control dependency edges. `aiueos.phone-bind` transitively
+   ;; requires `aiueos.compositor.desktop` -> `kami.webgpu.ir`, which is only
+   ;; on the test classpath, so the verifier runs with the hosted kami IR
+   ;; floor added (same pin as the test alias).
+   :security-adoption
+   {:extra-deps {io.github.kotoba-lang/webgpu
+                 {:git/url "https://github.com/kotoba-lang/webgpu.git"
+                  :git/sha "17598c1206a31e594b0e028245f222e53b1b8b71"}}
+    :main-opts ["-m" "kotoba.security.adoption"]}
+
    ;; The fleet's suite. It used to be `:test` minus `-e :upstream-blocked`,
    ;; which dropped exactly one test whose twelve failures ADR-0050 established
    ;; as correct and amu#625/#626 owned. Both are answered as of 2026-08-20 --
