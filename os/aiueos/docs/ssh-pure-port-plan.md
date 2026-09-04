@@ -240,7 +240,8 @@ authority, what is MISSING, and the measured-size/fuel risk.
 
 ## 3. Missing-object summary
 
-Eight new `.kotoba` objects (all new code; none replaces an existing object):
+Nine new `.kotoba` objects (all new code; none replaces an existing object),
+grouped into eight tranches T1–T8 (T8 carries the last two):
 
 | # | object | ports | est. `.text` |
 |---|---|---|---:|
@@ -251,7 +252,8 @@ Eight new `.kotoba` objects (all new code; none replaces an existing object):
 | 5 | ssh-session-keys.kotoba | ssh.keys/derive + sha256 copy | ~20 KB |
 | 6 | ssh-record.kotoba | ssh.record + aes128-gcm copy | 16–19 KB |
 | 7 | ssh-userauth-check.kotoba | ssh.userauth | 4–6 KB |
-| 8 | ssh-session-route.kotoba + ssh-command-route.kotoba | ssh.connection + kototama command texts | 8–12 KB |
+| 8 | ssh-session-route.kotoba | ssh.connection | 4–6 KB |
+| 9 | ssh-command-route.kotoba | kototama command texts (the three commands) | 4–6 KB |
 
 Existing objects reused as-is (no new object, no recompile):
 `sha256.kotoba`, `x25519.kotoba`, `aes128-gcm.kotoba` (primitive; also copied
@@ -259,6 +261,12 @@ verbatim into #6), `ecdsa-p256.kotoba`, `ecdsa-p256-sign.kotoba`,
 `digest-equal.kotoba`.
 
 ## 4. Tranches, dependency-ordered
+
+Nine objects land as eight tranches T1–T8, ordered so no tranche waits on a
+later one: framing first (leaf), then H, then the reply that signs H, then the
+key derivation the record layer consumes, then the record layer itself, then
+the two decisions above it, and finally the command route with the
+whole-component closure.
 
 Common gate definitions:
 - **compile gate** = `kotoba check` + `amu check --jvm-free` clean; amu compiles
