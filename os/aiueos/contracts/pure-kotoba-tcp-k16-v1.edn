@@ -65,7 +65,28 @@
                       :client-accepted-syn-ack-header
                       :three-way-handshake
                       :client-ack-reset-and-udp-receipt]
-             :incoming-checksum-admission :deferred-to-next-gate}}
+             :incoming-checksum-admission :deferred-to-next-gate}
+            {:state :passed
+             :observed-at "2026-09-04T09:12:00+09:00"
+             :kind :repeat-run-next-day-via-macos-pxe-server
+             :screen {:status-hex "60" :provider-status 0}
+             :wire {:receiver "10.77.0.1:7777"
+                    :source "10.77.0.10:7779"
+                    :sequence ["AIUEOS_NATIVE_ARP_OK"
+                               "AIUEOS_NATIVE_NIC_40"
+                               "AIUEOS_NATIVE_NIC_43"
+                               "AIUEOS_NATIVE_NIC_44"
+                               "AIUEOS_NATIVE_NIC_45"
+                               "AIUEOS_NATIVE_TCP_OK"]}
+             :artifact-served {:efi-sha256
+                               "0f3a86357d6ae996b37998e2b0998d9d3a2adf07de7e608747e711465d38b870"
+                               :tftp-rrq "bootx64.efi"
+                               :bytes 162816}
+             :notes ["Same artifact hash as the 2026-09-03 run; served from the"
+                     "worktree k16-pxe-server.py (en15, 10.77.0.1) after the"
+                     "TFTP bare-filename case fix (main a3041d6). Identical"
+                     "wire sequence and screen status reproduce the 09-03"
+                     "physical result on a next-day boot."]}}
  :does-not-prove [:tls13-handshake
                   :x509-chain-or-san-admission
                   :https-response
