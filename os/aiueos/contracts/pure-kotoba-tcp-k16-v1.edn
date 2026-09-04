@@ -66,6 +66,7 @@
                       :three-way-handshake
                       :client-ack-reset-and-udp-receipt]
              :incoming-checksum-admission :deferred-to-next-gate}
+            :repeat-run-2026-09-04
             {:state :passed
              :observed-at "2026-09-04T09:12:00+09:00"
              :kind :repeat-run-next-day-via-macos-pxe-server
@@ -86,7 +87,32 @@
                      "worktree k16-pxe-server.py (en15, 10.77.0.1) after the"
                      "TFTP bare-filename case fix (main a3041d6). Identical"
                      "wire sequence and screen status reproduce the 09-03"
-                     "physical result on a next-day boot."]}}
+                     "physical result on a next-day boot."]}
+            :gate-n1
+            {:state :passed
+             :observed-at "2026-09-04T13:13:00+09:00"
+             :tranches [{:tranche :ipv4-checksum-93
+                         :branch "fix/k16-pxe-tftp-case @ 0e3523a"
+                         :screen {:status-hex "60" :provider-status 0}}
+                        {:tranche :tcp-checksum-96
+                         :branch "n1b-tcp-checksum-96 @ 9a9200e"
+                         :artifact {:efi-sha256
+                                    "3d0819f7e7904d28470961a75d31b1022418fda36506f36027fb06efa4614cb3"
+                                    :bytes 162816
+                                    :kernel-sha256
+                                    "9c7d624a0c1ba172ca025e13594f34d378b077f71ba6195a1744a1646d9efdeb"}
+                         :screen {:status-hex "60" :provider-status 0}}]
+             :wire {:source "10.77.0.10:7779"
+                    :sequence ["AIUEOS_NATIVE_ARP_OK"
+                               "AIUEOS_NATIVE_NIC_40"
+                               "AIUEOS_NATIVE_NIC_43"
+                               "AIUEOS_NATIVE_NIC_44"
+                               "AIUEOS_NATIVE_NIC_45"
+                               "AIUEOS_NATIVE_TCP_OK"]}
+             :checksum-fail-observations 0
+             :incoming-checksum-admission :restored-both-tranches
+             :proves [:ipv4-header-checksum-admission
+                      :tcp-header-checksum-admission]}}
  :does-not-prove [:tls13-handshake
                   :x509-chain-or-san-admission
                   :https-response

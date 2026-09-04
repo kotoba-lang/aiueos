@@ -530,6 +530,18 @@
 (defn internet-checksum [frame base length seed]
   (- 65535 (checksum-fold (checksum-sum frame base length 0 seed))))
 
+(defn ipv4-checksum-valid [frame base length]
+  ;; The sender stores 65535 - fold(sum) into the checksum field, so the
+  ;; folded sum over the header INCLUDING that field is 0xFFFF and recomputing
+  ;; the same primitive over the received bytes yields exactly zero.  One
+  ;; primitive for both directions; verified on the host against a synthetic
+  ;; header (valid -> 0, single-bit corruption -> nonzero) before this gate.
+  ;; Returns the subset-language integer 1/0, not a boolean: the caller
+  ;; compares against 0 and the subset rejects mixed-type equality.
+  (if (= (- 65535 (checksum-fold (checksum-sum frame base length 0 0))) 0)
+    1
+    0))
+
 (defn tcp-pseudo-sum [src dst tcp-length]
   (+ (+ (quot src 65536) (bit-and src 65535))
      (+ (+ (quot dst 65536) (bit-and dst 65535))
@@ -609,11 +621,35 @@
                       (= (frame-be16 frame 36) 49155)
                       (= (frame-be32 frame 42) 2715820033)))
           148
-          (if (= (transport/syn-ack-shape
-                   total tcp-header
-                   (kernel-load-u8-4k frame 4096 47)) 1)
-            69
-            149))))))
+          ;; Gate N1, tranche one: IPv4 checksum admission (reserved status
+          ;; 93).  The header spans bytes 14..33 of the received frame and the
+          ;; peer's checksum was computed over exactly those 20 bytes.
+          (if (= (ipv4-checksum-valid frame 14 20) 0)
+            93
+            ;; Gate N1, tranche two: TCP checksum admission (reserved status
+            ;; 96).  Same zero-fold admission as the IPv4 gate, over the
+            ;; received TCP header (frame bytes 34..53): the peer stored
+            ;; 65535 - fold(sum) computed with the pseudo-header seed, so
+            ;; folding the same primitives over those bytes INCLUDING the
+            ;; checksum field with the same seed yields exactly zero for a
+            ;; valid segment and nonzero after any single corruption.  The
+            ;; seed uses the addresses as seen ON THE WIRE: frame 26..29 is
+            ;; the source (gateway 172818433), frame 30..33 the destination
+            ;; (K16 172818442); the pseudo-header is symmetric, so the
+            ;; sender's mirrored pair folds the same sum -- verified on the
+            ;; host against a synthetic SYN-ACK (valid -> zero fold, corrupt
+            ;; window byte -> nonzero) before this gate.  Returns integer 1/0
+            ;; (the subset rejects mixed-type equality).
+            (if (= (- 65535
+                      (checksum-fold
+                       (checksum-sum frame 34 20 0 (tcp-pseudo-sum src dst 20))))
+                   0)
+              96
+              (if (= (transport/syn-ack-shape
+                      total tcp-header
+                      (kernel-load-u8-4k frame 4096 47)) 1)
+                69
+                149))))))))
 
 (defn tcp-receipt-byte [index]
   ;; ASCII payload: AIUEOS_NATIVE_TCP_OK.
