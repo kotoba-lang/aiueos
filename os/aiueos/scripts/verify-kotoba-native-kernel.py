@@ -104,7 +104,8 @@ payload = {
          "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}
         for module, (path, revision) in zip(
             ["capability.link.frame", "capability.dma.map",
-             "capability.mmio.map", "capability.net.transport"],
+             "capability.mmio.map", "capability.net.transport",
+             "tcp.seq-core", "tcp.reassemble-core"][:len(capability_sources)],
             zip(capability_sources, [revision for _, revision in capability_inputs]),
         )
     ],

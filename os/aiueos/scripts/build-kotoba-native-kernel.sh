@@ -18,10 +18,12 @@ link_frame_source=${AIUEOS_LINK_FRAME_SOURCE_PATH:-"$repo/../capability-link-fra
 dma_map_source=${AIUEOS_DMA_MAP_SOURCE_PATH:-"$repo/../capability-dma-map/kotoba"}
 mmio_map_source=${AIUEOS_MMIO_MAP_SOURCE_PATH:-"$repo/../capability-mmio-map/kotoba"}
 net_transport_source=${AIUEOS_NET_TRANSPORT_SOURCE_PATH:-"$repo/../capability-net-transport/kotoba"}
+org_ietf_tcp_source=${AIUEOS_ORG_IETF_TCP_SOURCE_PATH:-"$repo/../org-ietf-tcp/kotoba"}
 link_frame_commit=8e859f5d1817374a1b1de8447961ac223ffd538c
 dma_map_commit=b3590c605a7c189b67a86c28aaae31ec7cdcb8bf
 mmio_map_commit=cbbf4ec59f7ca010cec44be2dd84e310faadccee
 net_transport_commit=583a9f7c3f517a30a65cf9db3f2dcd19289cbef0
+org_ietf_tcp_commit=d8c15e23b6c169a4ed044cd7764923ecbb789be4
 require_source_commit() {
   label=$1
   source_root=$2
@@ -45,20 +47,23 @@ require_source_commit link/frame "$link_frame_source" "$link_frame_commit"
 require_source_commit dma/map "$dma_map_source" "$dma_map_commit"
 require_source_commit mmio/map "$mmio_map_source" "$mmio_map_commit"
 require_source_commit net/transport "$net_transport_source" "$net_transport_commit"
+require_source_commit org-ietf-tcp "$org_ietf_tcp_source" "$org_ietf_tcp_commit"
 mkdir -p "$out"
 "$compiler/bin/kotoba-compiler" compile "$source" \
   --source-path "$aiueos" \
   --source-path "$link_frame_source" \
   --source-path "$dma_map_source" \
   --source-path "$mmio_map_source" \
-  --source-path "$net_transport_source" --unpinned \
+  --source-path "$net_transport_source" \
+  --source-path "$org_ietf_tcp_source" --unpinned \
   --target x86_64-aiueos-kernel-v1 --artifact image --fuel 1048576 --output "$kernel"
 "$compiler/bin/kotoba-compiler" compile "$source" \
   --source-path "$aiueos" \
   --source-path "$link_frame_source" \
   --source-path "$dma_map_source" \
   --source-path "$mmio_map_source" \
-  --source-path "$net_transport_source" --unpinned \
+  --source-path "$net_transport_source" \
+  --source-path "$org_ietf_tcp_source" --unpinned \
   --target x86_64-aiueos-kernel-v1 --artifact image --fuel 1048576 --output "$second"
 cmp "$kernel" "$second"
 rm -f "$second"

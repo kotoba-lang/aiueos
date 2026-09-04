@@ -5,8 +5,17 @@
   ;; single-source compile the build script runs emits byte-identical artifacts
   ;; with and without it -- code sha c3bd9664…, binary sha b64afc94…, both
   ;; unchanged, and the export symbol stays kotoba_aiueos_probe.
-  (:require [native.rtl8125 :as rtl])
+  (:require [native.rtl8125 :as rtl]
+            [native.tcp-stream :as stream])
   (:export [main]))
+
+;; Gate N2 (ADR-0134): the persistent TCP byte stream runtime profile links
+;; into the same closed module graph as the diagnostics profile. `main` still
+;; runs only rtl/qualify -- the diagnostics path is byte-identical in behavior
+;; -- but the stream profile's module (its RX ring re-layout, bounded TCB,
+;; ESTABLISHED-state receive and the org-ietf-tcp seq/reassemble cores) is
+;; compiled, linked and receipt-recorded in every N2-era artifact. The
+;; physical tranche wires its entry into the post-qualification flow.
 
 ;; The compiler-emitted loader keeps the final UEFI memory map in a bounded
 ;; region directly after the 64-byte boot-info prefix.  The kernel derives that

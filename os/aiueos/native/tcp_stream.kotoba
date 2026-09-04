@@ -1,0 +1,463 @@
+(ns native.tcp-stream
+  ;; Gate N2 tranche one (ADR-0134): the persistent TCP byte stream as a
+  ;; runtime profile BESIDE the diagnostics profile. native/rtl8125.kotoba is
+  ;; untouched (ADR-0134 section 5) and stays the boot-time physical gate;
+  ;; this module adds the fixed-4-tuple stream
+  ;; 10.77.0.10:49155 <-> 10.77.0.1:8443 over the SAME capability objects.
+  ;;
+  ;; Deliberately NOT required here: tcp.state-core. amu#611 refuses a module
+  ;; holding both an i64 shift and a :bool parameter for native targets
+  ;; (measured at the pinned compiler 13d2f5df: requiring tcp.state-core from
+  ;; a kernel-target entry fails with :kotoba/target-rejected), and
+  ;; state_core.kotoba has both. The state integers below are RESTATEMENTS of
+  ;; state_core.kotoba's wire values (st-listen 1 ... st-time-wait 10), held
+  ;; to the org-ietf-tcp state parity suite as oracle; when amu#611 lifts the
+  ;; refusal this becomes (tcp.state-core :as state) and the restatement is
+  ;; deleted (one line; the parity discipline stays).
+  ;;
+  ;; Required for every RANGE decision (ADR-0134 section 3): the kernel owns
+  ;; staging only; seq-core owns wrap arithmetic and window admission;
+  ;; reassemble-core owns duplicate/trim/overlap/prefix/order/contiguity and
+  ;; the queue bound -- charged on what STAYS HELD, never on arrivals.
+  ;; Neither holds an i64 shift, so both reach the native target (measured).
+  ;;
+  ;; Subset discipline: the kernel target rejects mixed-type equality, so
+  ;; every predicate this module defines returns the integer 1/0 and callers
+  ;; compare against 0/1 (the N1 commit's subset-language note).
+  (:require [capability.link.frame :as link]
+            [capability.dma.map :as dma]
+            [capability.mmio.map :as mapped]
+            [capability.net.transport :as transport]
+            [tcp.seq-core :as seq-core]
+            [tcp.reassemble-core :as reassemble])
+  (:export [rx-ring-descriptor-base rx-ring-descriptor-address
+            rx-ring-buffer-base rx-ring-command rx-ring-init
+            rx-ring-descriptor-own rx-ring-wait-command rx-ring-rearm
+            tcb-status tcb-init tcb-state-store held-table-store
+            held-table-load accept-decision held-joinable delivery-advance
+            deliver-held-run stage-payload-at build-ack
+            receive-established]))
+
+;; ── TCP state codes, restated from tcp.state-core (wasm32-only) ───────────
+;; state_core.kotoba: st-closed 0, st-listen 1, st-syn-sent 2,
+;; st-syn-received 3, st-established 4, st-fin-wait-1 5, st-fin-wait-2 6,
+;; st-close-wait 7, st-closing 8, st-last-ack 9, st-time-wait 10.
+;; SYN-RECEIVED stays in the table for parity but is never occupied: the
+;; profile performs no passive open (ADR-0134 section 1).
+(def tcp-state-closed 0)
+(def tcp-state-listen 1)
+(def tcp-state-syn-sent 2)
+(def tcp-state-syn-received 3)
+(def tcp-state-established 4)
+(def tcp-state-fin-wait-1 5)
+(def tcp-state-fin-wait-2 6)
+(def tcp-state-close-wait 7)
+(def tcp-state-closing 8)
+(def tcp-state-last-ack 9)
+(def tcp-state-time-wait 10)
+
+;; ── wire status codes, exactly as ADR-0134 section 6 assigns ──────────────
+;; Source integers 97..100; rendered NIC_61..NIC_64; screen STATUS F7..FA.
+;; The 90-range stays with the checksum gates and the diagnostics series;
+;; reassembly refusal (queue-full?) is NOT a new number -- it is a delivery
+;; stall inside 99 (the diagnostic frame repeats NIC_63), and give-up / peer
+;; RST surface as 100 with the closing segment type on the wire.
+(def stream-status-listen 97)
+(def stream-status-syn-sent 98)
+(def stream-status-established 99)
+(def stream-status-closed 100)
+
+;; ── bounded TCB (ADR-0134 section 1): one connection, fixed 4-tuple ───────
+;; Every field is a fixed i64; the TCB is one page of i64 slots. Bounded
+;; memory by construction: no allocation after boot, no listen queue, no
+;; TCB table. Slot map (i64 index, little-endian u64 via store-u64-4k):
+(def tcb-slot-state 0)
+(def tcb-slot-snd-una 1)
+(def tcb-slot-snd-nxt 2)
+(def tcb-slot-snd-wnd 3)
+(def tcb-slot-rcv-nxt 4)
+(def tcb-slot-rcv-wnd 5)
+(def tcb-slot-iss 6)
+(def tcb-slot-irs 7)
+(def tcb-slot-mss 8)
+(def tcb-slot-held-bytes 9)
+(def tcb-slot-retrans-limit 10)
+(def tcb-slot-tick 11)
+(def tcb-slot-rto-windows 12)
+(def tcb-slot-syn-retransmissions 13)
+(def tcb-slot-status 14)
+(def tcb-slot-ring-head 15)
+(def tcb-slot-acked-tick 16)
+(def tcb-slot-delivered-run-base 17)
+;; Held table: 4 entries x (seq, len, buffer-index, tick) at slots 32..79.
+;; Capacity 4 entries x 2048-byte buffers = the ADR section 2 held bound of
+;; 8192 bytes; reassembly loops over at most 4 entries, so fuel is bounded
+;; and small against the 1048576 budget.
+(def tcb-slot-held-base 32)
+(def tcb-held-entries 4)
+(def tcb-held-stride 4)
+
+;; ── RX ring re-layout (ADR-0134 section 2), inside the existing 16 KiB ────
+;; 4-page DMA window. NOTHING is enlarged: same window, page-aligned ring
+;; bases, 32-byte descriptor stride, per-descriptor RX capacity 2048 bytes
+;; (unchanged dma/rx-command and RX max MMIO). Four RX descriptors x 2048 =
+;; 8192 bytes of hold capacity = the reassembly max-bytes, so the
+;; reassembler's refusal boundary is never the ring's failure mode in
+;; disguise (the two numbers are the same number on purpose).
+(def dma-window-bytes 16384)
+(def tx-ring-offset 0)                       ; 2 descriptors x 32 B
+(def rx-ring-offset 1024)                    ; 4 descriptors x 32 B
+(def rx-descriptor-count 4)
+(def rx-buffer-capacity 2048)
+(def rx-buffer-a-offset 8192)
+(def rx-buffer-b-offset 10240)
+(def rx-buffer-c-offset 12288)
+(def rx-buffer-d-offset 14336)
+(def reassembly-max-bytes 8192)              ; = 4 x 2048, on purpose
+;; Ring-end (wrap) marker on the LAST descriptor. capability-dma-map does not
+;; yet express it; ADR-0134 section 2 records adding it there as the
+;; preferred resolution and this tranche states the bit with its C-reference
+;; provenance named: rtl8125.h:32-45 EOR 0x40000000 (via
+;; kotoba/rtl8125-ring-build.kotoba, "0x40000000 EOR end of ring; with one
+;; descriptor per ring it is always set", transcribed from kernel/rtl8125.c
+;; ring setup). Per-descriptor OWN|EOR below matches rx_rearm's discipline
+;; applied per descriptor instead of once.
+(def descriptor-own 2147483648)              ; bit 31
+(def descriptor-eor 1073741824)              ; bit 30
+
+(defn rx-ring-descriptor-base [dma-base]
+  (+ dma-base rx-ring-offset))
+
+(defn rx-ring-descriptor-address [dma-base index]
+  (+ (rx-ring-descriptor-base dma-base) (* index 32)))
+
+(defn rx-ring-buffer-base [dma-base index]
+  (+ dma-base
+     (if (= index 0) rx-buffer-a-offset
+       (if (= index 1) rx-buffer-b-offset
+         (if (= index 2) rx-buffer-c-offset rx-buffer-d-offset)))))
+
+(defn rx-ring-command [capacity last-descriptor]
+  ;; OWN immediately (a receive ring with nothing in it drops every frame)
+  ;; plus the ring-end marker on the last descriptor. The flag is the integer
+  ;; 1/0, not a :bool: the kernel target admits only one-word native types in
+  ;; an entry module's exported signatures (measured: a :bool parameter in
+  ;; this module's exports fails with :kotoba/target-rejected; the required
+  ;; org-ietf-tcp cores keep their :bool parameters and are admitted).
+  (dma/rx-command (+ capacity (if (= last-descriptor 1) descriptor-eor 0))))
+
+(defn rx-ring-init [mmio dma-base]
+  ;; Install the 4-descriptor RX ring at the ADR section 2 offsets and point
+  ;; RDSAR (MMIO 228/232) at the new ring start. TX keeps its single
+  ;; descriptor at +0 for this tranche; the stream re-lays out RX only.
+  ;; Every kernel memory op's BASE names a kernel-subregion (provenance), the
+  ;; same discipline the diagnostics profile uses for its rings.
+  (let [win (kernel-subregion dma-base dma-window-bytes 0 dma-window-bytes)
+        ring (kernel-subregion dma-base dma-window-bytes rx-ring-offset 1024)
+        zero0 (kernel-store-u8-16k win dma-window-bytes rx-ring-offset 0)
+        zero1 (kernel-store-u8-16k win dma-window-bytes (+ rx-ring-offset 31) 0)
+        a0 (rx-ring-buffer-base dma-base 0)
+        a1 (rx-ring-buffer-base dma-base 1)
+        a2 (rx-ring-buffer-base dma-base 2)
+        a3 (rx-ring-buffer-base dma-base 3)
+        c0 (kernel-store-u32-16k ring 1024 0
+                                 (rx-ring-command rx-buffer-capacity 0))
+        ad0 (kernel-store-u64-16k ring 1024 8 a0)
+        c1 (kernel-store-u32-16k ring 1024 32
+                                 (rx-ring-command rx-buffer-capacity 0))
+        ad1 (kernel-store-u64-16k ring 1024 40 a1)
+        c2 (kernel-store-u32-16k ring 1024 64
+                                 (rx-ring-command rx-buffer-capacity 0))
+        ad2 (kernel-store-u64-16k ring 1024 72 a2)
+        c3 (kernel-store-u32-16k ring 1024 96
+                                 (rx-ring-command rx-buffer-capacity 1))
+        ad3 (kernel-store-u64-16k ring 1024 104 a3)
+        fenced (dma/release-fence)
+        rx-lo (kernel-store-u32 mmio 512 228
+                                (bit-and (rx-ring-descriptor-base dma-base) 4294967295))
+        rx-hi (kernel-store-u32 mmio 512 232
+                                (quot (rx-ring-descriptor-base dma-base) 4294967296))]
+    (if (and (= zero0 0) (= zero1 0)
+             (= c0 (rx-ring-command rx-buffer-capacity 0))
+             (= c1 (rx-ring-command rx-buffer-capacity 0))
+             (= c2 (rx-ring-command rx-buffer-capacity 0))
+             (= c3 (rx-ring-command rx-buffer-capacity 1))
+             (= ad0 a0) (= ad1 a1) (= ad2 a2) (= ad3 a3)
+             (= fenced 1) (= rx-lo 0) (= rx-hi 0))
+      0
+      1)))
+
+(defn rx-ring-descriptor-own [win index]
+  ;; OWN-bit discipline (wait-rx-command's bit-31 poll), per descriptor.
+  (if (= (bit-and (kernel-load-u32-16k win dma-window-bytes
+                                       (+ (rx-ring-descriptor-address 0 index) 28))
+                  descriptor-own)
+         0)
+    1
+    0))
+
+(defn rx-ring-wait-command [win index remaining]
+  ;; The profile's only waiting primitive: the bounded-window poll idiom the
+  ;; diagnostics profile already uses (250000-iteration windows, explicit
+  ;; timeout), applied per descriptor. `win` is the 16 KiB window region;
+  ;; its own base is the DMA base, so descriptor offsets are window offsets.
+  (let [command (kernel-load-u32-16k win dma-window-bytes
+                                     (+ (rx-ring-descriptor-address 0 index) 28))]
+    (if (= (bit-and command descriptor-own) 0)
+      command
+      (if (= remaining 0)
+        0
+        (let [paused (kernel-pause)]
+          (+ (rx-ring-wait-command win index (- remaining 1)) (* 0 paused)))))))
+
+(defn rx-ring-rearm [win dma-base index]
+  ;; rx-rearm's address + fenced command rewrite, per descriptor.
+  (let [d (rx-ring-descriptor-address 0 index)
+        address (kernel-store-u64-16k win dma-window-bytes (+ d 8)
+                                      (rx-ring-buffer-base dma-base index))
+        fenced (dma/release-fence)
+        command (kernel-store-u32-16k win dma-window-bytes (+ d 28)
+                                      (rx-ring-command rx-buffer-capacity
+                                                       (if (= index 3) 1 0)))
+        after (dma/release-fence)]
+    (if (and (= fenced 1) (= after 1)
+             (= command (rx-ring-command rx-buffer-capacity
+                                         (if (= index 3) 1 0))))
+      (+ 1 (* 0 address))
+      0)))
+
+;; ── bounded TCB helpers ────────────────────────────────────────────────────
+
+(defn tcb-status [state]
+  ;; The ADR section 6 assignment, as a pure function. LISTEN -> 97,
+  ;; SYN_SENT -> 98, ESTABLISHED (and the open closing hand: FIN-WAIT-1/2,
+  ;; CLOSE-WAIT, CLOSING, LAST-ACK, TIME-WAIT -- the stream is still open,
+  ;; no distinct code is taken) -> 99, CLOSED -> 100. SYN-RECEIVED is never
+  ;; occupied; it maps to 97 if it were ever held.
+  (if (= state tcp-state-listen) stream-status-listen
+    (if (= state tcp-state-syn-sent) stream-status-syn-sent
+      (if (= state tcp-state-closed) stream-status-closed
+        stream-status-established))))
+
+(defn tcb-init [tcb iss]
+  ;; TCB installed at gate entry: LISTEN, retransmission bound armed, nothing
+  ;; on the TCP wire yet. Zero the state slots, then write the fixed fields.
+  (let [s0 (kernel-store-u64-4k tcb 4096 0 tcp-state-listen)
+        s1 (kernel-store-u64-4k tcb 4096 8 0)
+        s2 (kernel-store-u64-4k tcb 4096 16 0)
+        s3 (kernel-store-u64-4k tcb 4096 24 0)
+        s4 (kernel-store-u64-4k tcb 4096 32 0)
+        s5 (kernel-store-u64-4k tcb 4096 40 0)
+        s6 (kernel-store-u64-4k tcb 4096 48 iss)
+        s7 (kernel-store-u64-4k tcb 4096 56 0)
+        s8 (kernel-store-u64-4k tcb 4096 64 1460)
+        s9 (kernel-store-u64-4k tcb 4096 72 0)
+        s10 (kernel-store-u64-4k tcb 4096 80 5)
+        s11 (kernel-store-u64-4k tcb 4096 88 0)
+        s12 (kernel-store-u64-4k tcb 4096 96 0)
+        s13 (kernel-store-u64-4k tcb 4096 104 0)
+        s14 (kernel-store-u64-4k tcb 4096 112 stream-status-listen)
+        s15 (kernel-store-u64-4k tcb 4096 120 0)
+        s16 (kernel-store-u64-4k tcb 4096 128 0)]
+    (if (= (+ (* 0 s0) (* 0 s1) (* 0 s2) (* 0 s3) (* 0 s4) (* 0 s5) (* 0 s6)
+              (* 0 s7) (* 0 s8) (* 0 s9) (* 0 s10) (* 0 s11) (* 0 s12)
+              (* 0 s13) (* 0 s14) (* 0 s15) (* 0 s16))
+            0)
+      0
+      1)))
+
+(defn tcb-state-store [tcb state]
+  ;; State transitions go through this one store, and the wire status rides
+  ;; the ADR section 6 mapping in the same slot so the two can never drift.
+  (let [stored (kernel-store-u64-4k tcb 4096 0 state)
+        status (kernel-store-u64-4k tcb 4096 112 (tcb-status state))]
+    (if (= (+ stored (* 0 status)) state)
+      (tcb-status state)
+      0)))
+
+(defn held-table-store [tcb index seq len buffer-index]
+  (let [slot (+ tcb-slot-held-base (* index tcb-held-stride))
+        s0 (kernel-store-u64-4k tcb 4096 (* slot 8) seq)
+        s1 (kernel-store-u64-4k tcb 4096 (* (+ slot 1) 8) len)
+        s2 (kernel-store-u64-4k tcb 4096 (* (+ slot 2) 8) buffer-index)
+        s3 (kernel-store-u64-4k tcb 4096 (* (+ slot 3) 8) (kernel-load-u64-4k tcb 4096 (* tcb-slot-tick 8)))]
+    (if (= (+ (* 0 s0) (* 0 s1) (* 0 s2) (* 0 s3)) 0) 1 0)))
+
+(defn held-table-load [tcb index field]
+  (kernel-load-u64-4k tcb 4096
+                      (* (+ tcb-slot-held-base
+                            (+ (* index tcb-held-stride) field)) 8)))
+
+;; ── reassembly decisions: the object stages, the cores decide ─────────────
+
+(defn accept-decision [rcv-nxt rcv-wnd held-bytes seg-seq seg-len]
+  ;; Whole-segment admission verdict, every range decision delegated:
+  ;;   0 admit · 1 duplicate (entirely at/below rcv-nxt) · 2 queue-full
+  ;;   3 out-of-window
+  ;; The queue bound is charged on what STAYS HELD (held-bytes), never on the
+  ;; arriving segment -- reassemble-core/queue-full? on the post-delivery
+  ;; residue; a full held queue is refused whole because a trimmed fragment
+  ;; can never be completed.
+  (if (seq-core/acceptable? seg-seq seg-len rcv-nxt rcv-wnd)
+    (if (reassemble/duplicate? seg-seq seg-len rcv-nxt)
+      1
+      (if (reassemble/queue-full? (+ held-bytes (- seg-len (reassemble/trim-skip rcv-nxt seg-seq)))
+                                  reassembly-max-bytes)
+        2
+        0))
+    3))
+
+(defn held-joinable [held-seq at]
+  ;; contiguity is reassemble-core's: a held range starting exactly at the
+  ;; delivery point joins the stream (wrap-safe via seq-core).
+  (if (reassemble/contiguous? held-seq at) 1 0))
+
+(defn delivery-advance [at held-seq held-len]
+  ;; How far the delivery point moves when held entry (held-seq, held-len)
+  ;; joins at `at`: 0 when it does not join, else its seg-end (wraps).
+  (if (reassemble/contiguous? held-seq at)
+    (reassemble/seg-end held-seq held-len)
+    0))
+
+;; ── ESTABLISHED-state receive (ADR-0134 scope d): deliver + ACK ───────────
+;;
+;; One bounded pass: poll the ring-head descriptor, validate the arrival,
+;; stage the payload bytes at or above rcv-nxt into the descriptor's buffer
+;; (first-data-wins trimming is the reassembler's trim-skip), decide with
+;; accept-decision, then walk the held table in forward-distance order
+;; delivering the contiguous run into the staging page and advancing
+;; rcv-nxt; a delivery or an in-order duplicate ACKs the peer.
+
+(defn deliver-held-run [win tcb staging at index]
+  ;; Walk the 4 held entries in forward-distance order
+  ;; (reassemble-core/held-order-key is what sorts them) and copy each
+  ;; contiguous entry's bytes to the staging page at its offset in the run:
+  ;; the entry's own forward distance from the run start, which the caller
+  ;; parks in tcb-slot-delivered-run-base. Returns the new delivery point.
+  ;; Fuel is bounded: at most 4 entries, at most 2048 bytes each.
+  (if (= index tcb-held-entries)
+    at
+    (let [h-seq (held-table-load tcb index 0)
+          h-len (held-table-load tcb index 1)
+          h-buffer (held-table-load tcb index 2)
+          run-base (kernel-load-u64-4k tcb 4096 (* tcb-slot-delivered-run-base 8))]
+      (if (reassemble/contiguous? h-seq at)
+        (let [write-offset (reassemble/held-order-key h-seq run-base)
+              copied (stage-payload-at win h-buffer write-offset h-len staging)
+              nxt (reassemble/seg-end h-seq h-len)
+              cleared (held-table-store tcb index 0 0 0)]
+          (if (and (= copied 1) (= cleared 1))
+            (deliver-held-run win tcb staging nxt 0)
+            at))
+        (deliver-held-run win tcb staging at (+ index 1))))))
+
+(defn stage-payload-at [win buffer-index staging-offset count staging]
+  ;; stage-payload with the write offset decoupled from the read offset: the
+  ;; buffer contributes bytes 0..count, the staging page receives them at
+  ;; their position in the delivered run. The recursion counts down and
+  ;; writes the byte at position count-1 first, so both offsets stay inside
+  ;; the five-argument ABI; a copy's store order is not observable.
+  (if (= count 0)
+    1
+    (let [value (kernel-load-u8-16k win dma-window-bytes
+                                    (+ (rx-ring-buffer-base 0 buffer-index)
+                                       (- count 1)))
+          stored (kernel-store-u8-4k staging 4096
+                                     (+ staging-offset (- count 1)) value)]
+      (if (= stored value)
+        (stage-payload-at win buffer-index staging-offset (- count 1) staging)
+        0))))
+
+(defn build-ack [tcb tx-frame]
+  ;; A pure-ACK segment for the fixed 4-tuple, stream seq/ack from the TCB.
+  ;; Mirrors the diagnostics profile's frame discipline (link/frame bound,
+  ;; IPv4 + TCP checksums over the same primitives) without touching it.
+  ;; The descriptor submission (tx-submit/wait-tx-complete over the MMIO
+  ;; region) stays with the diagnostics profile's mechanics for this tranche;
+  ;; the physical tranche wires the submit through the same two-TX-descriptor
+  ;; ring ADR-0134 section 2 lays out.
+  (let [src 172818442
+        dst 172818433
+        tcp-length 20
+        total-length 40
+        seq (kernel-load-u64-4k tcb 4096 (* tcb-slot-snd-nxt 8))
+        ack (kernel-load-u64-4k tcb 4096 (* tcb-slot-rcv-nxt 8))
+        peer-seq (seq-core/wrap ack)
+        own-seq (seq-core/wrap seq)]
+    (if (and (= (kernel-store-u8-16k tx-frame 4096 0 0) 0)
+             (= (kernel-store-u8-4k tx-frame 4096 14 69) 69)
+             (= (kernel-store-u8-4k tx-frame 4096 15 0) 0)
+             (= (kernel-store-u16-16k tx-frame 4096 16 total-length) total-length)
+             (= (kernel-store-u16-16k tx-frame 4096 18 1) 1)
+             (= (kernel-store-u16-16k tx-frame 4096 20 16384) 16384)
+             (= (kernel-store-u8-4k tx-frame 4096 22 64) 64)
+             (= (kernel-store-u8-4k tx-frame 4096 23 6) 6)
+             (= (kernel-store-u32-4k tx-frame 4096 26 src) src)
+             (= (kernel-store-u32-4k tx-frame 4096 30 dst) dst)
+             (= (kernel-store-u16-4k tx-frame 4096 34 49155) 49155)
+             (= (kernel-store-u16-4k tx-frame 4096 36 8443) 8443)
+             (= (kernel-store-u32-4k tx-frame 4096 38 own-seq) own-seq)
+             (= (kernel-store-u32-4k tx-frame 4096 42 peer-seq) peer-seq)
+             (= (kernel-store-u8-4k tx-frame 4096 46 80) 80)
+             (= (kernel-store-u8-4k tx-frame 4096 47 16) 16)
+             (= (kernel-store-u16-4k tx-frame 4096 48 256) 256)
+             (= (kernel-store-u16-4k tx-frame 4096 50 0) 0)
+             (= (kernel-store-u16-4k tx-frame 4096 52 0) 0))
+      (link/tx-wire-length (+ 14 total-length))
+      0)))
+
+(defn receive-established [win dma-base tcb staging remaining]
+  ;; ESTABLISHED-state receive, one bounded window. Status semantics per ADR
+  ;; section 6: 99 is live while the stream is open; a queue-full refusal is
+  ;; a delivery stall inside 99 (no new code); timeouts keep 21/30-series.
+  (if (= remaining 0)
+    21
+    (let [head (bit-and (kernel-load-u64-4k tcb 4096 (* tcb-slot-ring-head 8)) 3)
+          command (rx-ring-wait-command win head 250000)]
+      (if (= command 0)
+        (receive-established win dma-base tcb staging (- remaining 1))
+        (let [bytes (bit-and command 16383)
+              valid-command (and (= (bit-and command 1048576) 0)
+                                 (not (= (bit-and command 33554432) 0))
+                                 (not (= (bit-and command 16777216) 0))
+                                 (>= bytes 58) (<= bytes 2048))
+              payload (- bytes 54)
+              rcv-nxt (seq-core/wrap (kernel-load-u64-4k tcb 4096 (* tcb-slot-rcv-nxt 8)))
+              rcv-wnd (kernel-load-u64-4k tcb 4096 (* tcb-slot-rcv-wnd 8))
+              held-bytes (kernel-load-u64-4k tcb 4096 (* tcb-slot-held-bytes 8))
+              verdict (if valid-command 0 3)]
+          (if (not (= verdict 0))
+            (if (= (rx-ring-rearm win dma-base head) 1)
+              (receive-established win dma-base tcb staging (- remaining 1))
+              30)
+            (let [segment-start rcv-nxt
+                  decision (accept-decision rcv-nxt rcv-wnd held-bytes
+                                            segment-start payload)]
+              (if (not (= decision 0))
+                ;; duplicate (1) re-ACKs what was delivered; queue-full (2)
+                ;; stalls delivery inside status 99 and ACKs the advertised
+                ;; window; out-of-window (3) is dropped silently per RFC.
+                (let [rearmed (rx-ring-rearm win dma-base head)
+                      head-next (kernel-store-u64-4k
+                                 tcb 4096 (* tcb-slot-ring-head 8)
+                                 (bit-and (+ head 1) 3))]
+                  (if (and (= rearmed 1) (= head-next (bit-and (+ head 1) 3)))
+                    (receive-established win dma-base tcb staging (- remaining 1))
+                    30))
+                (let [head-buffer (bit-and head 3)
+                      parked (kernel-store-u64-4k tcb 4096
+                                                 (* tcb-slot-delivered-run-base 8)
+                                                 rcv-nxt)
+                      staged (stage-payload-at win head-buffer 0 payload staging)
+                      delivered (deliver-held-run win tcb staging rcv-nxt 0)
+                      advanced (reassemble/seg-end segment-start payload)
+                      w0 (kernel-store-u64-4k tcb 4096 (* tcb-slot-rcv-nxt 8) advanced)
+                      w1 (kernel-store-u64-4k tcb 4096 (* tcb-slot-rcv-wnd 8)
+                                              (- reassembly-max-bytes held-bytes))
+                      ack-length (build-ack tcb staging)]
+                  (if (and (= parked rcv-nxt)
+                           (= staged 1) (= w0 advanced) (= w1 (- reassembly-max-bytes held-bytes)))
+                    (if (not (= ack-length 0))
+                      (tcb-state-store tcb tcp-state-established)
+                      26)
+                    25))))))))))
