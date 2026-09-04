@@ -1,0 +1,425 @@
+(ns aiueos.ssh-packet
+  (:export [aiueos-ssh-packet aiueos-ssh-packet-kat main]))
+
+;; SSH-2 binary packet framing (RFC 4253 section 6) for the freestanding
+;; aiueos kernel -- tranche T1 of the SSH pure port
+;; (os/aiueos/docs/ssh-pure-port-plan.md section 4, T1).
+;;
+;; The authority is `ssh.transport` in kotoba-lang/org-ietf-ssh, pinned at
+;; 85e5d95c88880ced721c24cd263ce92f48662989: `pad-length`, `packet` and
+;; `packet-payload` (src/ssh/transport.cljc, the binary packet framing
+;; section). This object is a port of the DECISIONS in those three functions,
+;; the same admission the C pump performs in `ssh_unwrap`
+;; (kernel/pci.c:2281): a received buffer is trusted only after its length
+;; fields are checked against the buffer they arrived in.
+;;
+;; What is deliberately NOT here: encryption, MAC, key exchange, message
+;; dispatch. Pre-NEWKEYS framing only -- block size 8, zero padding, no MAC
+;; -- exactly the domain of the authority's unencrypted `packet`/
+;; `packet-payload` pair. The encrypted record layer is tranche T5.
+;;
+;; ---------------------------------------------------------------------------
+;; ABI -- ONE ENTRY, FIVE i64 ARGS, THREE MODES
+;; ---------------------------------------------------------------------------
+;;
+;;     (aiueos-ssh-packet seg seg-len out out-len mode)
+;;
+;; The first four arguments are two caller-owned buffers with their declared
+;; lengths. `mode` picks the operation:
+;;
+;;   mode 0  FRAME   `seg` holds the payload (seg-len bytes). Writes the
+;;                   canonical unencrypted packet to `out`: uint32
+;;                   packet_length, uint8 padding_length, payload, zero
+;;                   padding. Block 8, padding >= 4, the pre-NEWKEYS rule.
+;;                   Returns 0 when the packet is written.
+;;
+;;   mode 1  ADMIT   `seg` holds a received packet. Validates the framing --
+;;                   the same boundary `packet-payload` refuses at and
+;;                   `ssh_unwrap` refuses at -- and on success writes
+;;                   out[0..3] = payload length (big-endian uint32) and
+;;                   out[4..4+n] = the payload. Returns 0. The length goes
+;;                   through the buffer rather than the return value because
+;;                   a payload of length 0 is ADMITTED by the authority
+;;                   (packet_length == padding_length + 1 passes every clause)
+;;                   and a 0 return must keep meaning success.
+;;
+;;   mode 2  REFRAME `seg` holds a received packet. Validates exactly as
+;;                   mode 1, then writes the CANONICAL mode-0 packet over the
+;;                   admitted payload to `out`. Returns 0. Reuse of the mode-0
+;;                   writer here is what makes the round-trip claim
+;;                   structural; the baked KAT still checks it byte for byte.
+;;
+;; Every load and store goes through the bounded windows
+;; (`kernel-load-u8-16k`, and one-byte `kernel-subregion` narrowing in front
+;; of `kernel-store-u8-4k`, the pattern tls13-record.kotoba measures), so a
+;; declared buffer length is a machine-enforced bound, not a comment.
+;;
+;; ---------------------------------------------------------------------------
+;; RETURN CODES -- ZERO IS THE SUCCESS VALUE
+;; ---------------------------------------------------------------------------
+;;    0    the operation completed (each mode documents what it wrote)
+;;   -1    seg is the null base
+;;   -2    out is the null base
+;;   -3    seg-len below the mode's floor: negative for mode 0 (a payload
+;;         length cannot be negative), below 6 for modes 1 and 2 -- the
+;;         smallest buffer that could carry the 5 framing bytes
+;;   -4    padding_length below the RFC 4253 section 6 floor of 4
+;;   -5    the declared packet_length runs past the received buffer
+;;         (4 + packet_length > seg-len): a truncation, not a payload
+;;   -6    payload length below zero: padding_length >= packet_length + 1,
+;;         the framing contradicts itself
+;;   -7    out-len smaller than what the mode writes: 4 + packet_length for
+;;         modes 0 and 2, 4 + payload_length for mode 1
+;;   -8    seg-len above 16384, the `kernel-load-u8-16k` window this object
+;;         reads through
+;;   -9    mode is none of 0, 1, 2
+;;
+;; Each code has exactly one producing clause, and the clause order is the
+;; discrimination order: a packet that both truncates and underpads is
+;; refused as -4, because the padding floor is checked before the length
+;; fields are believed. The host KAT
+;; (test/aiueos/ssh_packet_kat_test.clj) pins one mutation per clause, each
+;; of which must be the ONLY clause that fires.
+;;
+;; ---------------------------------------------------------------------------
+;; THE BAKED KAT -- aiueos-ssh-packet-kat
+;; ---------------------------------------------------------------------------
+;;     (aiueos-ssh-packet-kat base)
+;;
+;; Runs the org-ietf-ssh transport_test.cljs framing vectors against the
+;; entry above, in caller-supplied scratch memory:
+;;
+;;     base +    0   payload workspace (32 bytes, written by the KAT)
+;;     base +   32   frame output (64 bytes)
+;;     base +   96   admit output (64 bytes)
+;;     base +  160   reframe output (64 bytes)
+;;     base +  224   refusal workspace (64 bytes)
+;;
+;; 288 bytes total. The vectors are the transport_test.cljs packet fixtures
+;; -- payload = [0..19] framed, admitted, 8-aligned; a 4-byte prefix refused
+;; -- plus the boundary completions the fixture implies: the minimum-padding
+;; frame (padding_length exactly 4), the empty payload (admitted, payload
+;; length 0), and one mutation per refusal clause. Every phase checks
+;; BYTES, not just codes: the framed packet is compared against its
+;; hand-computed bytes, the admitted payload against the source bytes, and
+;; the reframe against the frame.
+;;
+;; Returns 0 when every vector passes; 1..4 names the first failed phase.
+;; The wiring tranche calls this from the boot path with two scratch pages
+;; and emits AIUEOS_SSH_PKT_OK when it returns 0. Until that tranche lands
+;; the object is unlinked, and the same vectors run on the host through the
+;; KIR interpreter (test/aiueos/ssh_packet_kat_test.clj).
+
+;; --- one-region accessors --------------------------------------------------
+;; Stores narrow to ONE byte through `kernel-subregion` first: the store
+;; window is the declared length, so a length the caller passed is the bound
+;; the machine enforces, and no store can run past the buffer it declared.
+
+(defn store-one [base value] (kernel-store-u8-4k base 1 0 value))
+
+(defn ws [base len index value]
+  (let [sub (kernel-subregion base len index 1)]
+    (store-one sub value)))
+
+(defn wl [base len index] (kernel-load-u8-16k base len index))
+
+;; --- RFC 4253 section 6 padding rule ---------------------------------------
+;; `(pad-length payload-len 8)` in ssh.transport: unpadded = 5 + payload;
+;; pad = 8 - (unpadded mod 8), raised by 8 when that lands below 4. The
+;; subset has no `mod`, so the remainder comes out of `quot` -- exact for the
+;; positive lengths a framing carries. A multiple of 8 gives pad 8, which is
+;; kept (not wrapped to 0): the floor is 4, and a zero pad is not a pad.
+
+(defn pad-length-8 [payload-len]
+  (let [unpadded (+ 5 payload-len)
+        rem (- unpadded (* 8 (quot unpadded 8)))
+        p (- 8 rem)]
+    (if (< p 4) (+ p 8) p)))
+
+;; --- the canonical frame writer (mode 0's body, mode 2's tail) -------------
+;; The payload region of `out` is [5, 5+n) and the frame region is
+;; [0, 5+n+pad); every caller checks out-len >= 4 + packet_length = 5+n+pad
+;; before writing, so a subregion window of 5+n+pad bytes at out is inside
+;; the caller's declaration, and the loops below take that derived window as
+;; their bound instead of a sixth parameter -- kernel objects take at most
+;; five i64 arguments, and the arity limit is a build error, not a style.
+
+(defn frame-copy-payload [src dst n i]
+  (if (= i n) 1
+    (let [b (wl src n i)
+          s (ws dst (+ n 5) (+ 5 i) b)]
+      (frame-copy-payload src dst n (+ i 1 (* 0 s))))))
+
+(defn frame-zero-pad [dst pad n i]
+  (if (= i pad) 1
+    (let [s (ws dst (+ n 5 pad) (+ 5 n i) 0)]
+      (frame-zero-pad dst pad n (+ i 1 (* 0 s))))))
+
+;; out[0..3] is the uint32 packet_length (1 + payload + pad), out[4] the
+;; padding length. packet_length tops out under 2^25 for any window this
+;; object reads, so the high byte is `quot` and the low three are masked.
+(defn frame-header [out out-len packet-length pad]
+  (let [h0 (ws out out-len 0 (quot packet-length 16777216))
+        h1 (ws out out-len 1 (bit-and (quot packet-length 65536) 255))
+        h2 (ws out out-len 2 (bit-and (quot packet-length 256) 255))
+        h3 (ws out out-len 3 (bit-and packet-length 255))
+        h4 (ws out out-len 4 pad)]
+    (* 0 (+ h0 (+ h1 (+ h2 (+ h3 h4)))))))
+
+(defn frame-mode [seg seg-len out out-len]
+  (let [pad (pad-length-8 seg-len)
+        packet-length (+ 1 seg-len pad)]
+    (if (< out-len (+ 4 packet-length)) -7
+      (let [hdr (frame-header out out-len packet-length pad)
+            cp (frame-copy-payload seg out seg-len 0)
+            zp (frame-zero-pad out pad seg-len 0)]
+        (* 0 (+ hdr (+ cp zp)))))))
+
+;; --- admission (mode 1's body, mode 2's guard) ------------------------------
+;; The three clauses of `packet-payload` -- payload_len >= 0,
+;; padding_length >= 4, 4 + packet_length <= count -- and the null/length
+;; guards around them, in the order the codes above state.
+
+(defn admit-write-length [out out-len n]
+  (let [l0 (ws out out-len 0 (quot n 16777216))
+        l1 (ws out out-len 1 (bit-and (quot n 65536) 255))
+        l2 (ws out out-len 2 (bit-and (quot n 256) 255))
+        l3 (ws out out-len 3 (bit-and n 255))]
+    (* 0 (+ l0 (+ l1 (+ l2 l3))))))
+
+;; `src` is the admitted payload window (kernel-subregion of seg at 5, n
+;; bytes, derived by the caller) and the destination region is [4, 4+n),
+;; covered by a window of 4+n at out -- inside the out-len the caller
+;; checked (out-len >= 4 + n).
+(defn admit-copy-payload [src dst n i]
+  (if (= i n) 1
+    (let [b (wl src n i)
+          s (ws dst (+ n 4) (+ 4 i) b)]
+      (admit-copy-payload src dst n (+ i 1 (* 0 s))))))
+
+;; Reads the 5 framing bytes and returns the payload length, or the refusal
+;; code. Clause order IS the discrimination order (see the code table):
+;; padding floor, then self-consistency, then the buffer bound, then out.
+(defn admit-verdict [seg seg-len out out-len]
+  (let [packet-length (+ (* 16777216 (wl seg seg-len 0))
+                         (* 65536 (wl seg seg-len 1))
+                         (* 256 (wl seg seg-len 2))
+                         (wl seg seg-len 3))
+        pad (wl seg seg-len 4)
+        payload-len (- packet-length pad 1)]
+    (if (< pad 4) -4
+      (if (< payload-len 0) -6
+        (if (> (+ 4 packet-length) seg-len) -5
+          (if (< out-len (+ 4 payload-len)) -7
+            payload-len))))))
+
+(defn admit-mode [seg seg-len out out-len]
+  (let [payload-len (admit-verdict seg seg-len out out-len)]
+    (if (< payload-len 0) payload-len
+      (let [src (kernel-subregion seg seg-len 5 payload-len)
+            lp (admit-write-length out out-len payload-len)
+            cp (admit-copy-payload src out payload-len 0)]
+        (* 0 (+ lp cp))))))
+
+;; --- reframe (mode 2): validate, then re-emit the canonical frame ----------
+;; The payload is copied straight from seg+5 into its new position -- no
+;; intermediate buffer, so out never overlaps the copy source.
+
+(defn reframe-mode [seg seg-len out out-len]
+  (let [payload-len (admit-verdict seg seg-len out out-len)]
+    (if (< payload-len 0) payload-len
+      (let [pad (pad-length-8 payload-len)
+            packet-length (+ 1 payload-len pad)]
+        (if (< out-len (+ 4 packet-length)) -7
+          (let [src (kernel-subregion seg seg-len 5 payload-len)
+                hdr (frame-header out out-len packet-length pad)
+                cp (frame-copy-payload src out payload-len 0)
+                zp (frame-zero-pad out pad payload-len 0)]
+            (* 0 (+ hdr (+ cp zp)))))))))
+
+;; --- the entry -------------------------------------------------------------
+
+(defn aiueos-ssh-packet [seg seg-len out out-len mode]
+  (if (= seg 0) -1
+    (if (= out 0) -2
+      (if (> seg-len 16384) -8
+        (if (= mode 0)
+          (if (< seg-len 0) -3 (frame-mode seg seg-len out out-len))
+          (if (= mode 1)
+            (if (< seg-len 6) -3 (admit-mode seg seg-len out out-len))
+            (if (= mode 2)
+              (if (< seg-len 6) -3 (reframe-mode seg seg-len out out-len))
+              -9)))))))
+
+(defn main [] 0)
+
+;; --- the baked KAT ----------------------------------------------------------
+;; Scratch layout from `base` (288 bytes, all caller-supplied):
+;;     base +   0   payload workspace, 32 bytes
+;;     base +  32   frame output, 64 bytes
+;;     base +  96   admit output, 64 bytes
+;;     base + 160   reframe output, 64 bytes
+;;     base + 224   refusal workspace, 64 bytes
+
+(defn kat-store-iota [base len i n]
+  (if (= i n) 1
+    (let [s (ws base len i i)]
+      (kat-store-iota base len (+ i 1 (* 0 s)) n))))
+
+;; Byte equality of two same-length regions: 1 equal, 0 differ.
+(defn kat-regions-equal [a b len i]
+  (if (= i len) 1
+    (if (= (wl a len i) (wl b len i))
+      (kat-regions-equal a b len (+ i 1))
+      0)))
+
+;; The transport_test.cljs packet fixture, byte for byte: payload [0..19]
+;; framed at block 8 is 0,0,0,28,7, 0..19, 0..0 (7 zero pad bytes) -- 32
+;; bytes, 8-aligned.
+(defn kat-frame20-bytes-ok [out out-len i]
+  (if (= i 32) 1
+    (let [want (if (< i 4) 0
+                 (if (= i 4) 7
+                   (if (< i 25) (- i 5) 0)))
+          got (wl out out-len i)]
+      (if (= got want)
+        (kat-frame20-bytes-ok out out-len (+ i 1))
+        0))))
+
+;; The admitted payload of that frame, under the mode-1 out convention:
+;; 0,0,0,20 then 0..19 -- 24 bytes.
+(defn kat-admit20-bytes-ok [out out-len i]
+  (if (= i 24) 1
+    (let [want (if (< i 3) 0 (if (= i 3) 20 (- i 4)))
+          got (wl out out-len i)]
+      (if (= got want)
+        (kat-admit20-bytes-ok out out-len (+ i 1))
+        0))))
+
+;; Phase 1 -- the fixture vector: frame [0..19], check the framed bytes
+;; against the hand-computed packet, admit, check the recovered payload,
+;; reframe, require the reframe to be the frame byte for byte.
+;; Phase regions are derived with kernel-subregion (the checked narrowing)
+;; rather than bare addition, and INLINE rather than through a helper: a
+;; base position must name a region, and provenance does not survive a
+;; helper indirection -- a `kernel-subregion` inside a defn of its own does
+;; not root a slice another function then reads (measured against the
+;; pinned compiler: :kotoba.error/kernel-region-provenance). One 288-byte
+;; caller-owned window, sliced five ways at each use site:
+
+;; Phase 1 -- the fixture vector: frame [0..19], check the framed bytes
+;; against the hand-computed packet, admit, check the recovered payload,
+;; reframe, require the reframe to be the frame byte for byte.
+(defn kat-phase-1 [base]
+  (let [p (kernel-subregion base 288 0 32)
+        a (kernel-subregion base 288 32 64)
+        b (kernel-subregion base 288 96 64)
+        c (kernel-subregion base 288 160 64)
+        s (kat-store-iota p 32 0 20)
+        f (frame-mode p 20 a 64)
+        fa (kat-frame20-bytes-ok a 64 0)
+        ad (admit-mode a 32 b 64)
+        ba (kat-admit20-bytes-ok b 64 0)
+        r (reframe-mode a 32 c 64)
+        eq (kat-regions-equal a c 32 0)]
+    (if (and (= s 1) (= f 0) (= fa 1) (= ad 0) (= ba 1) (= r 0) (= eq 1))
+      1 0)))
+
+;; Phase 2 -- the minimum-padding boundary: payload of 7 makes unpadded 12,
+;; 12 mod 8 = 4, pad = 4 exactly, the smallest padding the RFC admits. The
+;; framed byte at index 4 must BE 4, and the round trip must hold at 16.
+(defn kat-phase-2 [base]
+  (let [p (kernel-subregion base 288 0 32)
+        a (kernel-subregion base 288 32 64)
+        b (kernel-subregion base 288 96 64)
+        c (kernel-subregion base 288 160 64)
+        s (kat-store-iota p 32 0 7)
+        f (frame-mode p 7 a 64)
+        fa (= (wl a 64 4) 4)
+        ad (admit-mode a 16 b 64)
+        ba (= (wl b 64 3) 7)
+        r (reframe-mode a 16 c 64)
+        eq (kat-regions-equal a c 16 0)]
+    (if (and (= s 1) (= f 0) fa (= ad 0) ba (= r 0) (= eq 1))
+      1 0)))
+
+;; Phase 3 -- the empty payload, which the authority admits (the frame is
+;; 0,0,0,12,11 then 11 zeros) and which is exactly why mode 1 reports the
+;; payload length through the buffer rather than the return value.
+(defn kat-phase-3 [base]
+  (let [p (kernel-subregion base 288 0 32)
+        a (kernel-subregion base 288 32 64)
+        b (kernel-subregion base 288 96 64)
+        c (kernel-subregion base 288 160 64)
+        f (frame-mode p 0 a 64)
+        fa (= (wl a 64 4) 11)
+        ad (admit-mode a 16 b 64)
+        ba (= (wl b 64 3) 0)
+        r (reframe-mode a 16 c 64)
+        eq (kat-regions-equal a c 16 0)]
+    (if (and (= f 0) fa (= ad 0) ba (= r 0) (= eq 1)) 1 0)))
+
+;; Phase 4 -- the refused boundary, one mutation per clause, each code
+;; required to be the ONLY producer. `d` is rebuilt from the payload-7 frame
+;; before every mutation, so no vector sees a previous mutation's bytes.
+;; The -1 (null seg) and -2 (null out) clauses are NOT exercised here: the
+;; subset's region-provenance check refuses any call site whose base argument
+;; is not a rooted region -- a literal 0 included (measured against the
+;; pinned compiler) -- so no Kotoba caller can hand the entry a null base and
+;; no Kotoba KAT can observe those codes. They exist for the C caller, whose
+;; null pointers are exactly what the clauses refuse, and they are pinned
+;; from the host side by the KIR-based KAT
+;; (test/aiueos/ssh_packet_kat_test.clj), whose memory model can describe a
+;; null base.
+(defn kat-phase-4 [base]
+  (let [p (kernel-subregion base 288 0 32)
+        a (kernel-subregion base 288 32 64)
+        b (kernel-subregion base 288 96 64)
+        d (kernel-subregion base 288 224 64)
+        ;; sanity: the unmuted frame admits, and pads at 4
+        f0 (frame-mode p 7 d 64)
+        ok0 (admit-mode d 16 b 64)
+        ;; -3: below the 6-byte floor, no framing bytes to read
+        f1 (frame-mode p 7 d 64)
+        v1 (admit-mode d 5 b 64)
+        ;; -4: padding_length 3, below the RFC floor of 4
+        f2 (frame-mode p 7 d 64)
+        m2 (ws d 64 4 3)
+        v2 (admit-mode d 16 b 64)
+        ;; -5: one byte truncated off a valid frame -- the declared
+        ;; packet_length now runs past the buffer
+        f3 (frame-mode p 7 d 64)
+        v3 (admit-mode d 15 b 64)
+        ;; -6: packet_length 4 under padding_length 4 -- the framing
+        ;; contradicts itself, payload_len = -1
+        f4 (frame-mode p 7 d 64)
+        m4a (ws d 64 0 0)
+        m4b (ws d 64 1 0)
+        m4c (ws d 64 2 0)
+        m4d (ws d 64 3 4)
+        v4 (admit-mode d 16 b 64)
+        ;; -7: out smaller than 4 + payload_length
+        f5 (frame-mode p 7 d 64)
+        v5 (admit-mode d 16 b 3)
+        ;; -8: above the 16384 load window -- refused before any load
+        v6 (admit-mode d 16385 b 64)
+        ;; -9: a mode that is none of 0, 1, 2
+        v9 (aiueos-ssh-packet d 16 b 64 7)]
+    (if (and (= f0 0) (= ok0 0)
+             (= f1 0) (= v1 -3)
+             (= f2 0) (= m2 0) (= v2 -4)
+             (= f3 0) (= v3 -5)
+             (= f4 0) (= m4a 0) (= m4b 0) (= m4c 0) (= m4d 0) (= v4 -6)
+             (= f5 0) (= v5 -7)
+             (= v6 -8) (= v9 -9))
+      1 0)))
+
+(defn aiueos-ssh-packet-kat [base]
+  (let [p1 (kat-phase-1 base)
+        p2 (if (= p1 1) (kat-phase-2 base) 0)
+        p3 (if (= p2 1) (kat-phase-3 base) 0)
+        p4 (if (= p3 1) (kat-phase-4 base) 0)]
+    (if (= p1 0) 1
+      (if (= p2 0) 2
+        (if (= p3 0) 3
+          (if (= p4 0) 4 0))))))
