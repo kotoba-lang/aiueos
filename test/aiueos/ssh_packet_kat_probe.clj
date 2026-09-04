@@ -8,7 +8,7 @@
         kir (:kir (compiler/compile-source src :wasm32-kotoba-v1 {}))
         image (volatile! (vec (repeat 512 0)))
         base 4096
-        r (ir/execute kir 'aiueos-ssh-packet-kat [base]
+        r (ir/execute kir 'ssh-packet-kat [base]
                       {:fuel 1048576 :memory {:base base :bytes image}})]
     (println "KAT-RESULT" r)
     (println "FRAME20-HEAD" (take 10 (drop 32 @image)))

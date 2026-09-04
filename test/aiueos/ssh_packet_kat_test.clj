@@ -78,7 +78,7 @@
   "One invocation of the entry: seg at slot `seg-slot`, out at `out-slot`.
   Returns [exit image-after]."
   [image seg-slot seg-len out-slot out-len mode]
-  (let [exit (ir/execute @kir 'aiueos-ssh-packet
+  (let [exit (ir/execute @kir 'ssh-packet
                          [(+ base seg-slot) seg-len (+ base out-slot) out-len mode]
                          {:fuel 1048576 :memory {:base base :bytes image}})]
     [exit image]))
@@ -296,7 +296,7 @@
       "the entry still refuses a null out with -2"))
 
 ;; --- 4. the object's own baked KAT ------------------------------------------
-;; The boot path calls `aiueos-ssh-packet-kat` with a 288-byte scratch
+;; The boot path calls `ssh-packet-kat` with a 288-byte scratch
 ;; region. Until the wiring tranche lands, the same entry runs here — the
 ;; exact function the boot will call, over the exact vectors, in the KIR.
 ;; A later tranche emits AIUEOS_SSH_PKT_OK when this returns 0.
@@ -304,7 +304,7 @@
 (deftest the-baked-kat-passes
   (when (source-available?)
     (let [image (fresh-image)
-          exit (ir/execute @kir 'aiueos-ssh-packet-kat [base]
+          exit (ir/execute @kir 'ssh-packet-kat [base]
                            {:fuel 1048576 :memory {:base base :bytes image}})]
       (is (zero? exit)
           "the baked KAT returns zero — every phase and every vector passed"))))

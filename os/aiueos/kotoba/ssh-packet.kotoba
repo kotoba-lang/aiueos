@@ -1,5 +1,5 @@
 (ns aiueos.ssh-packet
-  (:export [aiueos-ssh-packet aiueos-ssh-packet-kat main]))
+  (:export [ssh-packet ssh-packet-kat main]))
 
 ;; SSH-2 binary packet framing (RFC 4253 section 6) for the freestanding
 ;; aiueos kernel -- tranche T1 of the SSH pure port
@@ -22,7 +22,7 @@
 ;; ABI -- ONE ENTRY, FIVE i64 ARGS, THREE MODES
 ;; ---------------------------------------------------------------------------
 ;;
-;;     (aiueos-ssh-packet seg seg-len out out-len mode)
+;;     (ssh-packet seg seg-len out out-len mode)
 ;;
 ;; The first four arguments are two caller-owned buffers with their declared
 ;; lengths. `mode` picks the operation:
@@ -82,9 +82,9 @@
 ;; of which must be the ONLY clause that fires.
 ;;
 ;; ---------------------------------------------------------------------------
-;; THE BAKED KAT -- aiueos-ssh-packet-kat
+;; THE BAKED KAT -- ssh-packet-kat
 ;; ---------------------------------------------------------------------------
-;;     (aiueos-ssh-packet-kat base)
+;;     (ssh-packet-kat base)
 ;;
 ;; Runs the org-ietf-ssh transport_test.cljs framing vectors against the
 ;; entry above, in caller-supplied scratch memory:
@@ -239,7 +239,7 @@
 
 ;; --- the entry -------------------------------------------------------------
 
-(defn aiueos-ssh-packet [seg seg-len out out-len mode]
+(defn ssh-packet [seg seg-len out out-len mode]
   (if (= seg 0) -1
     (if (= out 0) -2
       (if (> seg-len 16384) -8
@@ -404,7 +404,7 @@
         ;; -8: above the 16384 load window -- refused before any load
         v6 (admit-mode d 16385 b 64)
         ;; -9: a mode that is none of 0, 1, 2
-        v9 (aiueos-ssh-packet d 16 b 64 7)]
+        v9 (ssh-packet d 16 b 64 7)]
     (if (and (= f0 0) (= ok0 0)
              (= f1 0) (= v1 -3)
              (= f2 0) (= m2 0) (= v2 -4)
@@ -414,7 +414,7 @@
              (= v6 -8) (= v9 -9))
       1 0)))
 
-(defn aiueos-ssh-packet-kat [base]
+(defn ssh-packet-kat [base]
   (let [p1 (kat-phase-1 base)
         p2 (if (= p1 1) (kat-phase-2 base) 0)
         p3 (if (= p2 1) (kat-phase-3 base) 0)

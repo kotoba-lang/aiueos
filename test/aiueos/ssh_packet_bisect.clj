@@ -25,8 +25,8 @@
 (def p1 (slice "(defn kat-phase-1" ";; Phase 2"))
 (def p2 (slice "(defn kat-phase-2" ";; Phase 3"))
 (def p3 (slice "(defn kat-phase-3" ";; Phase 4"))
-(def p4 (slice "(defn kat-phase-4" "(defn aiueos-ssh-packet-kat"))
-(def ke (slice "(defn aiueos-ssh-packet-kat" nil))
+(def p4 (slice "(defn kat-phase-4" "(defn ssh-packet-kat"))
+(def ke (slice "(defn ssh-packet-kat" nil))
 
 (deftest bisect
   (try-compile "head-only" head)
