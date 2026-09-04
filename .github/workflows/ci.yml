@@ -53,7 +53,7 @@ jobs:
       - name: Verify shared security adoption
         run: clojure -M:security-adoption
       - name: Test CLJC contract
-        run: clojure -M:test
+        run: clojure -M:ci
       - name: Lint
         run: clojure -M:lint
   edn-contracts:

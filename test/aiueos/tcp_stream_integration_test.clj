@@ -28,7 +28,7 @@
 ;; scripts/k16-n2-import-integration-sketch.patch) must satisfy before
 ;; `native/tcp-stream.kotoba` links the cores.
 
-(ns aiueos.tcp-stream-integration-test
+(ns ^:ci-anon aiueos.tcp-stream-integration-test
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
             [clojure.test :refer [deftest is]]
