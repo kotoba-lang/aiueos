@@ -1,0 +1,106 @@
+;; Product contract for adding an aiueos machine to an account and then to the
+;; Murakumo/Kekkai/storage planes. Identity, reachability, workload readiness,
+;; and data replication are independent gates.
+{:format :aiueos.device-onboarding/v1
+ :ui {:engine :kotoba-lang/browser
+      :surface :aiueos/session
+      :design-system :jp-go-dds
+      :native-runtime :kotoba-clj/wasm
+      :hosted-html-js {:scope :verification-only
+                       :counts-as-native? false}}
+ :authentication
+ {:authority "https://auth.kotoba.cloud"
+  :rp-id "auth.kotoba.cloud"
+  :endpoints {:sign-in "/sign-in"
+              :passkey-options "/v1/passkey/login/options"
+              :passkey-verify "/v1/passkey/login/verify"}
+  :methods
+  {:passkey {:requirements [:single-use-challenge :rp-id-bound
+                            :origin-bound :user-present :user-verified
+                            :signature-verified :sign-count-checked]}
+   :phone-scan {:requirements [:public-device-challenge :device-key-proof
+                               :phone-device-id
+                               :phone-passkey-verified :human-approved]
+                :qr-contains [:device-did :model :public-challenge-reference]
+                :qr-excludes [:passkey-private-key :account-session
+                              :poll-token :device-enrollment-token]}}
+  :device-key-proof
+  {:signing :ed25519
+   :encryption :x25519
+   :start-message :aiueos-device-start-v1
+   :poll-message :aiueos-device-poll-v1
+   :private-key-leaves-device? false
+   :replayed-start-proof-accepted? false}
+  :shared-flow [:factory :challenge-issued :account-authenticated
+                :device-key-proved :claimed :account-synced]
+  :private-key-copy? false}
+ :network-profile-sync
+ {:source :authenticated-phone-browser
+  :profile-fields [:ssid :security :passphrase]
+  :suite :x25519-hkdf-sha256-aes-256-gcm-v1
+  :authority-sees-plaintext? false
+  :device-storage :encrypted-envelope
+  :native-k16-application :pending-wifi-driver
+  :required-proof [:authority-opaque-envelope :device-decryption
+                   :physical-association :reboot-recovery]}
+ :node-addition
+ {:after [:account-authenticated :device-key-proved]
+  :murakumo {:initial-state :pending-runtime-proof
+             :authentication :device-owned-cacao
+             :cacao-issuer :device-signing-did
+             :cacao-copy-from-authority? false
+             :ready? false
+             :required-proof [:authenticated-heartbeat :real-job-result
+                              :reboot-recovery]}
+  :kekkai {:implementation "kotoba-lang/kekkai-node"
+           :transport :noise-ik
+           :initial-state :pending-native-adapter
+           :required-proof [:device-key-custody :signed-netmap
+                            :peer-handshake :reconnect]}}
+ :network
+ {:murakumo-https {:authority "https://api.murakumo.cloud"
+                    :sni "api.murakumo.cloud"
+                    :transport-profile :implemented
+                    :live-host-probe :http-200
+                    :physical-rtl8125 :image-implemented-physical-unverified
+                    :physical-request {:method :get
+                                       :path "/infer/queue"
+                                       :secrets :none
+                                       :mac-application-relay? false}
+                    :server-chain-and-hostname-admission :not-implemented}
+  :native-device-cacao {:state :not-wired-to-kernel
+                        :requires [:persistent-device-key :secure-entropy
+                                   :ed25519-sign :trusted-https]}}
+ :storage
+ {:local {:role :encrypted-cache
+          :target :internal-ssd
+          :state :not-installed
+          :write-authorized? false}
+  :metadata {:authority "https://kotobase.net"
+             :state :contract-only}
+  :blocks {:implementation "kotoba-lang/kotobase-storage"
+           :identity :cid
+           :state :contract-only}
+  :replication {:implementation "kotoba-lang/kotobase-storage-pack"
+                :format :car-v2
+                :mode :folder-scoped-opt-in
+                :state :not-started
+                :plaintext-cloud-copy? false
+                :required-proof [:encrypted-local-write :cid-round-trip
+                                 :second-node-pack-import :conflict-policy]}}
+ :present-evidence
+ {:state-machine :implemented-and-unit-tested
+  :device-key-proof :implemented-and-unit-tested
+  :device-owned-cacao :implemented-and-unit-tested
+  :encrypted-network-profile :implemented-and-unit-tested
+  :kotoba-browser-render :hosted-engine-smoke
+  :production-authority-route :deployed-and-live-flow-probed
+  :native-tls-murakumo-profile :implemented-and-live-host-probed
+  :physical-k16-direct-https :image-implemented-physical-unverified
+  :physical-k16-wifi-application :unverified
+  :physical-k16-auth :unverified
+  :physical-k16-kekkai :unverified
+  :physical-k16-storage :unverified}
+ :safety {:internal-ssd-write-without-fresh-disk-check? false
+          :account-claim-implies-murakumo-ready? false
+          :kekkai-reachability-implies-storage-sync? false}}

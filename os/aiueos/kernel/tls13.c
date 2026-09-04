@@ -7,11 +7,27 @@ extern uint64_t kotoba_aiueos_x25519(const uint8_t *, const uint8_t *,
                                      uint8_t *, uint8_t *);
 extern uint64_t kotoba_aiueos_ecdsa_p256_sha256_verify(
     const uint8_t *, const uint8_t *, const uint8_t *, uint8_t *, uint64_t);
+/* The TLS 1.3 AEAD and record layer (ADR-0132, ADR-0133). Both return a
+   REASON CODE and ZERO IS SUCCESS -- the opposite of the C in this file, so
+   every call site has to be written rather than transcribed. */
+extern uint64_t kotoba_aiueos_aes128_gcm(uint8_t *, uint64_t, uint8_t *,
+                                         uint64_t, uint64_t);
+extern uint64_t kotoba_aiueos_tls13_record(uint8_t *, uint64_t, uint8_t *,
+                                           uint64_t, uint64_t);
 
 #define TLS_TR_MAX 12288
 #define TLS_RX_MAX 12288
 #define TLS_APP_MAX 4096
 #define TLS_HS_MAX 12288
+#define TLS_HOST_MAX 63
+#define TLS_HTTP_MAX 1024
+#define TLS_CH_MAX 256
+
+#ifdef AIUEOS_TLS13_HOST_PROBE
+#define AIUEOS_TLS_HIGH_BSS
+#else
+#define AIUEOS_TLS_HIGH_BSS __attribute__((section(".high_bss")))
+#endif
 
 static uint8_t sha_ws[512];
 static uint8_t x_ws[646];
@@ -31,19 +47,36 @@ static uint8_t rx[TLS_RX_MAX];
 static uint32_t rx_len;
 static uint8_t hs_partial[TLS_HS_MAX];
 static uint32_t hs_partial_len;
-static uint8_t app_buf[TLS_APP_MAX];
+/* Application plaintext and the record decrypt staging are needed only after
+   owned paging is live.  Keep them in the writable/NX 4..6 MiB kernel window
+   so persistent worker telemetry does not consume the bounded low W^X
+   aperture shared with admitted user text. */
+static uint8_t app_buf[TLS_APP_MAX]
+  AIUEOS_TLS_HIGH_BSS;
 static uint32_t app_len;
 
 static uint8_t client_scalar[32];
 static uint8_t client_pub[32];
-static uint8_t ch_record[160];
+static uint8_t ch_record[TLS_CH_MAX];
 static uint32_t ch_record_len;
+
+/* A profile is mechanism, not server admission: callers choose the exact SNI,
+   HTTP request, ClientHello random and X25519 scalar before reset/handshake.
+   Keeping bounded copies here lets the physical RTL8125 profile use the same
+   record engine without retaining pointers to transient boot memory. The
+   default below preserves the original kotobase smoke byte-for-byte. */
+static uint8_t configured_host[TLS_HOST_MAX];
+static uint32_t configured_host_len;
+static uint8_t configured_http[TLS_HTTP_MAX];
+static uint32_t configured_http_len;
+static uint8_t configured_random[32];
+static uint8_t configured_scalar[32];
+static int configured;
 
 static uint8_t c_hs_key[16], c_hs_iv[12], s_hs_key[16], s_hs_iv[12];
 static uint8_t c_ap_key[16], c_ap_iv[12], s_ap_key[16], s_ap_iv[12];
 static uint8_t handshake_secret[32];
 static uint8_t c_hs_secret[32], s_hs_secret[32];
-static uint8_t decrypt_plain[TLS_HS_MAX];
 static uint64_t s_hs_seq, c_hs_seq, s_ap_seq, c_ap_seq;
 
 static int saw_record;
@@ -75,13 +108,15 @@ static const uint8_t ch_template[157] = {
   0x0b,0x0c,0x0d,0x0e,0x0f,0x10,0x11,0x12,0x13,0x14,0x15,0x16,0x17,0x18,0x19,
   0x1a,0x1b,0x1c,0x1d,0x1e,0x1f,0x20};
 
-static const uint8_t http_get[] =
+static const uint8_t default_http_get[] =
   "GET /ipfs/bafkreihdwdcefgh4dqkjv67uzcmw7ojee6xedzdetojuzjevtenxquvyku HTTP/1.1\r\n"
   "Host: kotobase.net\r\n"
   "User-Agent: aiueos-p2\r\n"
   "Accept: */*\r\n"
   "Connection: close\r\n"
   "\r\n";
+
+static const char default_host[] = "kotobase.net";
 
 static uint16_t be16(const uint8_t *p) {
   return (uint16_t)(((uint32_t)p[0] << 8) | p[1]);
@@ -99,6 +134,95 @@ static void copy_bytes(uint8_t *d, const uint8_t *s, uint32_t n) {
 static void zero_bytes(uint8_t *d, uint32_t n) {
   uint32_t i;
   for (i = 0; i < n; i++) d[i] = 0;
+}
+
+static int hostname_ok(const char *host, uint32_t *length) {
+  uint32_t n = 0;
+  uint32_t label_len = 0;
+  int label_has_byte = 0;
+  int last_hyphen = 0;
+  if (!host || !length) return 0;
+  while (host[n]) {
+    uint8_t c = (uint8_t)host[n];
+    if (n >= TLS_HOST_MAX) return 0;
+    if ((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')) {
+      label_has_byte = 1;
+      label_len++;
+      last_hyphen = 0;
+    } else if (c == '-') {
+      if (!label_has_byte) return 0;
+      label_len++;
+      last_hyphen = 1;
+    } else if (c == '.') {
+      if (!label_has_byte || last_hyphen || label_len > 63) return 0;
+      label_has_byte = 0;
+      label_len = 0;
+      last_hyphen = 0;
+    } else {
+      return 0;
+    }
+    n++;
+  }
+  if (!n || !label_has_byte || last_hyphen || label_len > 63) return 0;
+  *length = n;
+  return 1;
+}
+
+int aiueos_tls13_configure(const char *host,
+                           const uint8_t *request, uint32_t request_len,
+                           const uint8_t client_random[32],
+                           const uint8_t ephemeral_scalar[32]) {
+  uint32_t host_len = 0, i;
+  uint8_t random_or = 0, scalar_or = 0;
+  if (!hostname_ok(host, &host_len) || !request || !request_len ||
+      request_len > TLS_HTTP_MAX || !client_random || !ephemeral_scalar)
+    return 0;
+  for (i = 0; i < 32; i++) {
+    random_or |= client_random[i];
+    scalar_or |= ephemeral_scalar[i];
+  }
+  if (!random_or || !scalar_or) return 0;
+  copy_bytes(configured_host, (const uint8_t *)host, host_len);
+  configured_host_len = host_len;
+  copy_bytes(configured_http, request, request_len);
+  configured_http_len = request_len;
+  copy_bytes(configured_random, client_random, 32);
+  copy_bytes(configured_scalar, ephemeral_scalar, 32);
+  configured = 1;
+  return 1;
+}
+
+static int clienthello_build(void) {
+  const uint8_t *host = configured ? configured_host :
+    (const uint8_t *)default_host;
+  uint32_t host_len = configured ? configured_host_len :
+    (uint32_t)(sizeof(default_host) - 1);
+  const uint8_t *tail = ch_template + 73;
+  uint32_t tail_len = (uint32_t)sizeof(ch_template) - 73;
+  uint32_t total = 61 + host_len + tail_len;
+  uint32_t record_payload = total - 5;
+  uint32_t handshake_payload = total - 9;
+  uint32_t extensions_len = 93 + host_len;
+  uint32_t sni_ext_len = 5 + host_len;
+  uint32_t sni_list_len = 3 + host_len;
+  uint32_t i;
+  if (total > TLS_CH_MAX || host_len > 255) return 0;
+  copy_bytes(ch_record, ch_template, 61);
+  put16(ch_record + 3, (uint16_t)record_payload);
+  ch_record[6] = (uint8_t)(handshake_payload >> 16);
+  ch_record[7] = (uint8_t)(handshake_payload >> 8);
+  ch_record[8] = (uint8_t)handshake_payload;
+  if (configured) copy_bytes(ch_record + 11, configured_random, 32);
+  put16(ch_record + 50, (uint16_t)extensions_len);
+  put16(ch_record + 54, (uint16_t)sni_ext_len);
+  put16(ch_record + 56, (uint16_t)sni_list_len);
+  put16(ch_record + 59, (uint16_t)host_len);
+  copy_bytes(ch_record + 61, host, host_len);
+  copy_bytes(ch_record + 61 + host_len, tail, tail_len);
+  for (i = 0; i < 32; i++)
+    ch_record[113 + host_len + i] = client_pub[i];
+  ch_record_len = total;
+  return 1;
 }
 
 static int sha256(const uint8_t *in, uint32_t n, uint8_t out[32]) {
@@ -181,58 +305,64 @@ static int transcript_add(const uint8_t *p, uint32_t n) {
   return 1;
 }
 
-static void make_nonce(uint8_t nonce[12], const uint8_t iv[12], uint64_t seq) {
+/* The record layer is `os/aiueos/kotoba/tls13-record.kotoba`, compiled to
+   `kotoba_aiueos_tls13_record` (ADR-0133).  What was here -- `make_nonce`,
+   `protect` and `unprotect`, 52 lines -- is gone, and it was not plumbing:
+   the 5-byte header is the AAD, so a length taken from the wrong place is a
+   forgery the AEAD accepts; the sequence number is XORed into the nonce, so a
+   reused sequence is a reused keystream; the inner content type is the last
+   non-zero plaintext byte, so a padding strip that stops one byte early hands
+   the caller the wrong record type.
+
+   THE OBJECT RETURNS A REASON CODE AND ZERO IS SUCCESS.  These two wrappers
+   keep the 1-is-success shape their callers were written against, and the
+   inversion happens on the `return` lines below and nowhere else.
+
+   THE RECORD IS TRANSFORMED IN PLACE.  SEAL wants the plaintext already at
+   `out + 5`; OPEN decrypts `rec` where it lies.  That is exact rather than a
+   shortcut -- CTR is an XOR -- and it is why `decrypt_plain`, 12 KiB of
+   `.high_bss`, and `protect`'s 2 KiB `inner` stack buffer are both gone. */
+static uint8_t record_ctx[1280];
+
+static void record_ctx_open(const uint8_t key[16], const uint8_t iv[12],
+                            uint64_t seq) {
   uint32_t i;
-  copy_bytes(nonce, iv, 12);
-  for (i = 0; i < 8; i++) {
-    nonce[4 + i] ^= (uint8_t)(seq >> (56 - 8 * i));
-  }
+  for (i = 0; i < sizeof(record_ctx); i++) record_ctx[i] = 0;
+  copy_bytes(record_ctx, key, 16);
+  copy_bytes(record_ctx + 16, iv, 12);
+  for (i = 0; i < 8; i++)
+    record_ctx[48 + i] = (uint8_t)(seq >> (56 - 8 * i));
 }
 
 static int protect(const uint8_t key[16], const uint8_t iv[12], uint64_t seq,
                    uint8_t inner_type, const uint8_t *pt, uint32_t pt_len,
                    uint8_t *out, uint32_t *out_len) {
-  uint8_t nonce[12], aad[5], inner[2048], tag[16];
-  uint32_t rec_len;
-  if (pt_len + 1 > sizeof(inner)) return 0;
-  copy_bytes(inner, pt, pt_len);
-  inner[pt_len] = inner_type;
-  rec_len = pt_len + 1 + 16;
-  out[0] = 0x17;
-  out[1] = 0x03;
-  out[2] = 0x03;
-  put16(out + 3, (uint16_t)rec_len);
-  aad[0] = 0x17; aad[1] = 0x03; aad[2] = 0x03;
-  put16(aad + 3, (uint16_t)rec_len);
-  make_nonce(nonce, iv, seq);
-  if (!aiueos_aes128_gcm_encrypt(key, nonce, aad, 5, inner, pt_len + 1,
-                                 out + 5, tag))
+  if (pt_len > 12287) return 0;
+  record_ctx_open(key, iv, seq);
+  record_ctx[56] = inner_type;
+  record_ctx[58] = (uint8_t)(pt_len >> 8);
+  record_ctx[59] = (uint8_t)(pt_len & 0xff);
+  copy_bytes(out + 5, pt, pt_len);
+  if (kotoba_aiueos_tls13_record(record_ctx, sizeof(record_ctx), out,
+                                 (uint64_t)pt_len + 22u, 1) != 0)
     return 0;
-  copy_bytes(out + 5 + pt_len + 1, tag, 16);
-  *out_len = 5 + rec_len;
+  *out_len = (uint32_t)record_ctx[60] * 256u + record_ctx[61];
   return 1;
 }
 
+/* `rec` is written, not read: OPEN decrypts in place.  The caller owns a
+   mutable receive buffer (`rx`), which is where records arrive anyway. */
 static int unprotect(const uint8_t key[16], const uint8_t iv[12], uint64_t seq,
-                     const uint8_t *rec, uint32_t rec_len,
+                     uint8_t *rec, uint32_t rec_len,
                      uint8_t *pt, uint32_t *pt_len, uint8_t *inner_type) {
-  uint8_t nonce[12], aad[5];
-  uint32_t clen, i, content_len;
-  if (rec_len < 5 + 16 + 1) return 0;
-  clen = (uint32_t)be16(rec + 3);
-  if (clen + 5 != rec_len || clen < 17 || clen - 16 > TLS_HS_MAX) return 0;
-  aad[0] = rec[0]; aad[1] = rec[1]; aad[2] = rec[2];
-  aad[3] = rec[3]; aad[4] = rec[4];
-  make_nonce(nonce, iv, seq);
-  if (!aiueos_aes128_gcm_decrypt(key, nonce, aad, 5, rec + 5, clen - 16,
-                                 rec + 5 + clen - 16, decrypt_plain))
+  if (rec_len < 22 || rec_len > 12310) return 0;
+  record_ctx_open(key, iv, seq);
+  if (kotoba_aiueos_tls13_record(record_ctx, sizeof(record_ctx), rec,
+                                 (uint64_t)rec_len, 0) != 0)
     return 0;
-  content_len = clen - 16;
-  while (content_len > 0 && decrypt_plain[content_len - 1] == 0) content_len--;
-  if (content_len == 0) return 0;
-  *inner_type = decrypt_plain[content_len - 1];
-  *pt_len = content_len - 1;
-  for (i = 0; i < *pt_len; i++) pt[i] = decrypt_plain[i];
+  *inner_type = record_ctx[56];
+  *pt_len = (uint32_t)record_ctx[58] * 256u + record_ctx[59];
+  copy_bytes(pt, rec + 5, *pt_len);
   return 1;
 }
 
@@ -459,7 +589,7 @@ static uint32_t nst_count;
 static uint8_t last_alert_level;
 static uint8_t last_alert_desc;
 
-static int process_record(const uint8_t *rec, uint32_t rec_len) {
+static int process_record(uint8_t *rec, uint32_t rec_len) {
   uint8_t typ = rec[0];
   last_record_type = typ;
   if (!saw_record) {
@@ -554,15 +684,12 @@ void aiueos_tls13_reset(void) {
 }
 
 int aiueos_tls13_clienthello(uint8_t *out, uint32_t *len) {
-  uint32_t i;
-  copy_bytes(client_scalar, smoke_scalar, 32);
+  copy_bytes(client_scalar, configured ? configured_scalar : smoke_scalar, 32);
   if (!kotoba_aiueos_x25519(client_scalar, x25519_base, client_pub, x_ws)) return 0;
-  copy_bytes(ch_record, ch_template, 157);
-  for (i = 0; i < 32; i++) ch_record[125 + i] = client_pub[i];
-  ch_record_len = 157;
-  if (!transcript_add(ch_record + 5, 152)) return 0;
-  copy_bytes(out, ch_record, 157);
-  *len = 157;
+  if (!clienthello_build()) return 0;
+  if (!transcript_add(ch_record + 5, ch_record_len - 5)) return 0;
+  copy_bytes(out, ch_record, ch_record_len);
+  *len = ch_record_len;
   return 1;
 }
 
@@ -612,10 +739,13 @@ int aiueos_tls13_take_finished(uint8_t *out, uint32_t *len) {
 }
 
 int aiueos_tls13_take_http(uint8_t *out, uint32_t *len) {
-  uint32_t rec_len = 0, get_len;
+  const uint8_t *request = configured ? configured_http : default_http_get;
+  uint32_t rec_len = 0;
+  uint32_t request_len = configured ? configured_http_len :
+    (uint32_t)(sizeof(default_http_get) - 1);
   if (!handshake_ready) return 0;
-  get_len = (uint32_t)(sizeof(http_get) - 1);
-  if (!protect(c_ap_key, c_ap_iv, c_ap_seq, 0x17, http_get, get_len, out, &rec_len))
+  if (!protect(c_ap_key, c_ap_iv, c_ap_seq, 0x17,
+               request, request_len, out, &rec_len))
     return 0;
   c_ap_seq++;
   *len = rec_len;
@@ -705,4 +835,48 @@ int aiueos_tls13_hmac_selftest(void) {
   diff = 0;
   for (i = 0; i < 32; i++) diff |= (uint32_t)(out[i] ^ prk[i]);
   return diff == 0;
+}
+
+/* The record layer, executed on the machine that will run it, against a whole
+   encrypted record printed in RFC 8448 section 3 beside the traffic keys that
+   produced it.  The kernel had a boot self-test for the AEAD, the key schedule
+   and the signature and none for the framing around them -- which is the part
+   ADR-0133 argues is where a record layer gets exploited.
+
+   The sequence number is 0 here and 1 in the alert that follows it in the RFC;
+   this vector is the application_data record, so the nonce XOR is exercised by
+   the contract rather than by this test, which exists to prove the OBJECT runs
+   and agrees with a published record, not to re-run its 17 vectors. */
+int aiueos_tls13_record_selftest(void) {
+  static const uint8_t key[16] = {
+    0x17,0x42,0x2d,0xda,0x59,0x6e,0xd5,0xd9,0xac,0xd8,0x90,0xe3,0xc6,0x3f,0x50,0x51};
+  static const uint8_t iv[12] = {
+    0x5b,0x78,0x92,0x3d,0xee,0x08,0x57,0x90,0x33,0xe5,0x23,0xd9};
+  static const uint8_t expect[72] = {
+    0x17,0x03,0x03,0x00,0x43,0xa2,0x3f,0x70,0x54,0xb6,0x2c,0x94,0xd0,0xaf,0xfa,0xfe,
+    0x82,0x28,0xba,0x55,0xcb,0xef,0xac,0xea,0x42,0xf9,0x14,0xaa,0x66,0xbc,0xab,0x3f,
+    0x2b,0x98,0x19,0xa8,0xa5,0xb4,0x6b,0x39,0x5b,0xd5,0x4a,0x9a,0x20,0x44,0x1e,0x2b,
+    0x62,0x97,0x4e,0x1f,0x5a,0x62,0x92,0xa2,0x97,0x70,0x14,0xbd,0x1e,0x3d,0xea,0xe6,
+    0x3a,0xee,0xbb,0x21,0x69,0x49,0x15,0xe4};
+  static uint8_t record[128];
+  static uint8_t payload[64];
+  static uint8_t plain[64];
+  uint32_t i, diff = 0, len = 0, plen = 0;
+  uint8_t inner = 0;
+  for (i = 0; i < 50; i++) payload[i] = (uint8_t)i;
+  for (i = 0; i < sizeof(record); i++) record[i] = 0;
+  if (!protect(key, iv, 0, 0x17, payload, 50, record, &len)) return 0;
+  if (len != 72) return 0;
+  for (i = 0; i < 72; i++) diff |= (uint32_t)(record[i] ^ expect[i]);
+  if (diff) return 0;
+  if (!unprotect(key, iv, 0, record, 72, plain, &plen, &inner)) return 0;
+  if (plen != 50 || inner != 0x17) return 0;
+  for (i = 0; i < 50; i++) diff |= (uint32_t)(plain[i] ^ payload[i]);
+  if (diff) return 0;
+  /* One ciphertext byte flipped must be refused. The published record is
+     restored first, because OPEN just overwrote it with its plaintext. */
+  for (i = 0; i < 72; i++) record[i] = expect[i];
+  record[10] = (uint8_t)(record[10] ^ 1);
+  if (unprotect(key, iv, 0, record, 72, plain, &plen, &inner)) return 0;
+  return 1;
 }

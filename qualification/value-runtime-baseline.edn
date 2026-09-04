@@ -1,4 +1,4 @@
-#:value-runtime{:objects 11,
+#:value-runtime{:objects 9,
                 :results
                 [{:object "value-runtime-kernel-image",
                   :verdict :fail,
@@ -22,11 +22,6 @@
                   :rejected-form "kernel-value-provider-queue",
                   :error-code :kotoba.error/subset-reject,
                   :compiler-phase :subset}
-                 {:object "value-handle-arena",
-                  :verdict :ok,
-                  :args
-                  ["os/aiueos/kotoba/value-handle-arena.kotoba"
-                   "os/aiueos/contracts/value-handle-arena-v1.edn"]}
                  {:object "value-handle-plan",
                   :verdict :ok,
                   :args
@@ -43,13 +38,6 @@
                   "kernel-value-runtime-capability-table",
                   :error-code :kotoba.error/subset-reject,
                   :compiler-phase :subset}
-                 {:object "value-runtime-cas-verify",
-                  :verdict :ok,
-                  :args
-                  ["os/aiueos/kotoba/value-runtime-sha256.kotoba"
-                   "os/aiueos/kotoba/value-runtime-digest-equal.kotoba"
-                   "os/aiueos/kotoba/value-runtime-cas-verify.kotoba"
-                   "os/aiueos/contracts/value-runtime-cas-verify-v1.edn"]}
                  {:object "value-runtime-dispatch",
                   :verdict :fail,
                   :args
@@ -123,6 +111,16 @@
                   :args
                   ["os/aiueos/kotoba/value-runtime-syscall-plan.kotoba"
                    "os/aiueos/contracts/value-runtime-syscall-plan-v1.edn"]}],
+                :moved-to
+                {:runner "os/aiueos/scripts/verify-admissions.cljs",
+                 :host :nbb,
+                 :objects
+                 ["cid-v1-admit"
+                  "unixfs-file-admit"
+                  "value-runtime-cas-verify"
+                  "value-handle-arena"],
+                 :why
+                 "their verifiers execute the object, and executing needs\n                        only .cljc: the linker, the frontend, the lowering and\n                        the interpreter. No JVM."},
                 :upstream
                 {"kernel-value-provider-queue"
                  "https://github.com/kotoba-lang/amu/issues/625",
@@ -130,7 +128,7 @@
                  "https://github.com/kotoba-lang/amu/issues/625",
                  "(kernel-publish-current-domain domain)"
                  "https://github.com/kotoba-lang/amu/issues/625"},
-                :measured-at "2026-08-22",
+                :measured-at "2026-08-31",
                 :upstream-by-cause
                 {:native-slice-typed-values
                  "https://github.com/kotoba-lang/amu/issues/625",

@@ -1,15 +1,35 @@
 #include <stdint.h>
 #include <stddef.h>
+#include "../include/boot_info.h"
+#if defined(AIUEOS_QWEN38_MODEL_HANDOFF) || defined(AIUEOS_MODEL_NVME_SLOTS)
+#include "aiueos-model-identity.h"
+#endif
+#ifdef AIUEOS_MODEL_NVME_SLOTS
+#include "model_slots.h"
+#endif
 
 #define EFIAPI __attribute__((ms_abi))
 #define SYSVABI __attribute__((sysv_abi))
 #define EFI_SUCCESS 0
 #define EFI_BUFFER_TOO_SMALL ((uint64_t)0x8000000000000005ULL)
 #define EFI_INVALID_PARAMETER ((uint64_t)0x8000000000000002ULL)
+#define EFI_BY_PROTOCOL 2
+#define EFI_VARIABLE_NON_VOLATILE 1U
+#define EFI_VARIABLE_BOOTSERVICE_ACCESS 2U
+#define EFI_VARIABLE_RUNTIME_ACCESS 4U
 #define PAGE_SIZE 4096ULL
 #define KERNEL_BUFFER_SIZE (1024ULL * 1024ULL)
 #define INITRAMFS_BUFFER_SIZE (1024ULL * 1024ULL)
 #define MEMORY_MAP_BUFFER_SIZE (128ULL * 1024ULL)
+#define EFI_ALLOCATE_MAX_ADDRESS 1U
+#define EFI_LOADER_DATA 2U
+#define ACPI_IDENTITY_LIMIT 0x40000000ULL
+#define ACPI_RETAIN_RSDP_BYTES PAGE_SIZE
+#define ACPI_RETAIN_ROOT_BYTES PAGE_SIZE
+#define ACPI_RETAIN_TABLE_BYTES (64ULL * 1024ULL)
+#define ACPI_RETAIN_BYTES (ACPI_RETAIN_RSDP_BYTES + ACPI_RETAIN_ROOT_BYTES + \
+                           2ULL * ACPI_RETAIN_TABLE_BYTES)
+#define ACPI_MAX_ROOT_ENTRIES 128U
 
 typedef uint64_t efi_status;
 typedef void *efi_handle;
@@ -24,6 +44,7 @@ struct efi_simple_text_output {
 };
 
 typedef efi_status(EFIAPI *efi_allocate_pages)(uint32_t, uint32_t, uint64_t, uint64_t *);
+typedef efi_status(EFIAPI *efi_free_pages)(uint64_t, uint64_t);
 typedef efi_status(EFIAPI *efi_get_memory_map)(uint64_t *, void *, uint64_t *, uint64_t *, uint32_t *);
 typedef efi_status(EFIAPI *efi_allocate_pool)(uint32_t, uint64_t, void **);
 typedef efi_status(EFIAPI *efi_free_pool)(void *);
@@ -31,12 +52,15 @@ typedef efi_status(EFIAPI *efi_handle_protocol)(efi_handle, const struct efi_gui
 typedef efi_status(EFIAPI *efi_locate_handle)(uint32_t, const struct efi_guid *, void *,
                                               uint64_t *, efi_handle *);
 typedef efi_status(EFIAPI *efi_exit_boot_services)(efi_handle, uint64_t);
+typedef efi_status(EFIAPI *efi_set_watchdog_timer)(uint64_t, uint64_t, uint64_t,
+                                                   const char16 *);
+typedef efi_status(EFIAPI *efi_stall)(uint64_t);
 
 struct efi_boot_services {
   struct efi_table_header header;
   void *raise_tpl, *restore_tpl;
   efi_allocate_pages allocate_pages;
-  void *free_pages;
+  efi_free_pages free_pages;
   efi_get_memory_map get_memory_map;
   efi_allocate_pool allocate_pool;
   efi_free_pool free_pool;
@@ -48,18 +72,45 @@ struct efi_boot_services {
   void *locate_device_path;
   void *install_configuration_table, *load_image, *start_image, *exit, *unload_image;
   efi_exit_boot_services exit_boot_services;
+  void *get_next_monotonic_count;
+  efi_stall stall;
+  efi_set_watchdog_timer set_watchdog_timer;
 };
 
+typedef efi_status(EFIAPI *efi_set_variable)(const char16 *, const struct efi_guid *,
+                                             uint32_t, uint64_t, void *);
+typedef efi_status(EFIAPI *efi_get_variable)(const char16 *, const struct efi_guid *,
+                                             uint32_t *, uint64_t *, void *);
+struct efi_runtime_services {
+  struct efi_table_header header;
+  void *get_time, *set_time, *get_wakeup_time, *set_wakeup_time;
+  void *set_virtual_address_map, *convert_pointer;
+  efi_get_variable get_variable;
+  void *get_next_variable_name;
+  efi_set_variable set_variable;
+  void *get_next_high_monotonic_count, *reset_system;
+};
 struct efi_system_table {
   struct efi_table_header header;
   char16 *firmware_vendor; uint32_t firmware_revision, padding;
   efi_handle console_in_handle; void *console_in;
   efi_handle console_out_handle; struct efi_simple_text_output *console_out;
   efi_handle standard_error_handle; struct efi_simple_text_output *standard_error;
-  void *runtime_services; struct efi_boot_services *boot_services;
+  struct efi_runtime_services *runtime_services; struct efi_boot_services *boot_services;
   uint64_t number_of_table_entries; void *configuration_table;
 };
 struct efi_configuration_table { struct efi_guid vendor_guid; void *vendor_table; };
+
+struct __attribute__((packed)) acpi_rsdp_v2 {
+  char signature[8]; uint8_t checksum; char oem_id[6]; uint8_t revision;
+  uint32_t rsdt_address, length; uint64_t xsdt_address;
+  uint8_t extended_checksum, reserved[3];
+};
+struct __attribute__((packed)) acpi_sdt_header {
+  char signature[4]; uint32_t length; uint8_t revision, checksum;
+  char oem_id[6], oem_table_id[8];
+  uint32_t oem_revision, creator_id, creator_revision;
+};
 
 struct efi_loaded_image {
   uint32_t revision, padding; efi_handle parent_handle;
@@ -83,6 +134,34 @@ struct efi_simple_file_system {
   efi_status(EFIAPI *open_volume)(struct efi_simple_file_system *, struct efi_file **);
 };
 
+#ifdef AIUEOS_MODEL_NVME_SLOTS
+struct efi_block_io_media {
+  uint32_t media_id;
+  uint8_t removable_media, media_present, logical_partition, read_only, write_caching;
+  uint8_t padding[3];
+  uint32_t block_size, io_align;
+  uint64_t last_block, lowest_aligned_lba;
+  uint32_t logical_blocks_per_physical_block;
+  uint32_t optimal_transfer_length_granularity;
+};
+struct efi_block_io;
+typedef efi_status(EFIAPI *efi_block_reset)(struct efi_block_io *, uint8_t);
+typedef efi_status(EFIAPI *efi_block_read)(struct efi_block_io *, uint32_t,
+                                           uint64_t, uint64_t, void *);
+typedef efi_status(EFIAPI *efi_block_write)(struct efi_block_io *, uint32_t,
+                                            uint64_t, uint64_t, const void *);
+typedef efi_status(EFIAPI *efi_block_flush)(struct efi_block_io *);
+struct efi_block_io {
+  uint64_t revision;
+  struct efi_block_io_media *media;
+  efi_block_reset reset;
+  efi_block_read read_blocks;
+  efi_block_write write_blocks;
+  efi_block_flush flush_blocks;
+};
+struct efi_device_path_node { uint8_t type, subtype, length[2]; };
+#endif
+
 struct elf64_header {
   uint8_t ident[16]; uint16_t type, machine; uint32_t version;
   uint64_t entry, phoff, shoff; uint32_t flags; uint16_t ehsize, phentsize, phnum;
@@ -92,13 +171,10 @@ struct elf64_program_header {
   uint32_t type, flags; uint64_t offset, vaddr, paddr, filesz, memsz, align;
 };
 
-struct aiueos_boot_info {
-  uint64_t magic, version;
-  void *memory_map; uint64_t memory_map_size, descriptor_size, descriptor_version;
-  void *acpi_rsdp;
-  uint64_t framebuffer_base, framebuffer_size;
-  uint32_t framebuffer_width, framebuffer_height, framebuffer_stride, framebuffer_format;
-  uint64_t initramfs_base, initramfs_size;
+struct aiueos_qualification_record {
+  uint32_t magic;
+  uint16_t version, state;
+  uint32_t code, reserved;
 };
 typedef void(SYSVABI *kernel_entry)(const struct aiueos_boot_info *);
 extern const uint8_t aiueos_expected_kernel_sha256[32];
@@ -108,10 +184,30 @@ static const struct efi_guid loaded_image_guid =
   {0x5b1b31a1, 0x9562, 0x11d2, {0x8e,0x3f,0x00,0xa0,0xc9,0x69,0x72,0x3b}};
 static const struct efi_guid simple_fs_guid =
   {0x964e5b22, 0x6459, 0x11d2, {0x8e,0x39,0x00,0xa0,0xc9,0x69,0x72,0x3b}};
+#ifdef AIUEOS_MODEL_NVME_SLOTS
+static const struct efi_guid block_io_guid =
+  {0x964e5b21, 0x6459, 0x11d2, {0x8e,0x39,0x00,0xa0,0xc9,0x69,0x72,0x3b}};
+static const struct efi_guid device_path_guid =
+  {0x09576e91, 0x6d3f, 0x11d2, {0x8e,0x39,0x00,0xa0,0xc9,0x69,0x72,0x3b}};
+#endif
 static const struct efi_guid acpi20_guid =
   {0x8868e871, 0xe4f1, 0x11d3, {0xbc,0x22,0x00,0x80,0xc7,0x3c,0x88,0x81}};
 static const struct efi_guid graphics_output_guid =
   {0x9042a9de, 0x23dc, 0x4a38, {0x96,0xfb,0x7a,0xde,0xd0,0x80,0x51,0x6a}};
+static const struct efi_guid qualification_guid =
+  {0x73953a72,0x6627,0x4b62,{0x9a,0x9c,0x10,0x38,0xd9,0x20,0x9a,0x16}};
+static const struct efi_guid global_variable_guid =
+  {0x8be4df61,0x93ca,0x11d2,{0xaa,0x0d,0x00,0xe0,0x98,0x03,0x2b,0x8c}};
+static const char16 qualification_name[] = u"AIUEOSQualificationResult";
+static const char16 boot_current_name[] = u"BootCurrent";
+static const char16 boot_next_name[] = u"BootNext";
+
+#ifdef AIUEOS_EMBEDDED_RELEASE
+extern const uint8_t aiueos_embedded_kernel_start[];
+extern const uint8_t aiueos_embedded_kernel_end[];
+extern const uint8_t aiueos_embedded_initramfs_start[];
+extern const uint8_t aiueos_embedded_initramfs_end[];
+#endif
 
 struct efi_graphics_output_mode_info {
   uint32_t version, horizontal_resolution, vertical_resolution, pixel_format;
@@ -125,16 +221,169 @@ struct efi_graphics_output_protocol {
   void *query_mode, *set_mode, *blt; struct efi_graphics_output_mode *mode;
 };
 
+static struct efi_graphics_output_protocol *find_graphics_output(
+    struct efi_system_table *system, struct efi_boot_services *bs,
+    uint8_t *used_protocol_scan) {
+  struct efi_graphics_output_protocol *gop=0;
+#ifndef AIUEOS_GOP_FORCE_PROTOCOL_SCAN
+  if (system->console_out_handle &&
+      bs->handle_protocol(system->console_out_handle,&graphics_output_guid,
+                          (void **)&gop)==EFI_SUCCESS && gop)
+    return gop;
+#endif
+  efi_handle handles[32];uint64_t bytes=sizeof(handles);
+  if (bs->locate_handle(EFI_BY_PROTOCOL,&graphics_output_guid,0,&bytes,handles)!=EFI_SUCCESS)
+    return 0;
+  uint64_t count=bytes/sizeof(efi_handle);
+  for (uint64_t i=0;i<count;i++) {
+    gop=0;
+    if (bs->handle_protocol(handles[i],&graphics_output_guid,(void **)&gop)==EFI_SUCCESS && gop) {
+      *used_protocol_scan=1;
+      return gop;
+    }
+  }
+  return 0;
+}
+
 static int guid_equal(const struct efi_guid *a, const struct efi_guid *b) {
   const uint8_t *x = (const uint8_t *)a, *y = (const uint8_t *)b;
   for (uint64_t i = 0; i < sizeof(*a); i++) if (x[i] != y[i]) return 0;
   return 1;
 }
 
+static uint64_t read_cr3(void) {
+  uint64_t value;
+  __asm__ volatile("mov %%cr3, %0" : "=r"(value));
+  return value;
+}
+
+static uint64_t read_tsc(void) {
+  uint32_t low, high;
+  __asm__ volatile("rdtsc" : "=a"(low), "=d"(high));
+  return ((uint64_t)high << 32) | low;
+}
+
 static void copy_bytes(void *to, const void *from, uint64_t size) {
   uint8_t *d = to; const uint8_t *s = from; while (size--) *d++ = *s++;
 }
 static void zero_bytes(void *to, uint64_t size) { uint8_t *d = to; while (size--) *d++ = 0; }
+
+static int acpi_bytes_equal(const char *left, const char *right,
+                            uint64_t bytes) {
+  while (bytes--) if (*left++ != *right++) return 0;
+  return 1;
+}
+
+static int acpi_checksum_ok(const void *table, uint64_t bytes) {
+  if (!table || !bytes || bytes > ACPI_RETAIN_TABLE_BYTES) return 0;
+  const uint8_t *input=table;
+  uint8_t sum=0;
+  while (bytes--) sum=(uint8_t)(sum+*input++);
+  return sum==0;
+}
+
+static uint8_t acpi_checksum_value(const void *table, uint64_t bytes) {
+  const uint8_t *input=table;
+  uint8_t sum=0;
+  while (bytes--) sum=(uint8_t)(sum+*input++);
+  return (uint8_t)(0U-sum);
+}
+
+static int acpi_source_address_sane(uint64_t address, uint64_t bytes) {
+  return address && bytes && address < (1ULL << 52) &&
+         address <= (1ULL << 52) - bytes;
+}
+
+/* Firmware can place ACPI reclaim memory well above the kernel's intentionally
+   small bootstrap identity map (the physical K16 places it around 0x92f00000).
+   Before ExitBootServices, validate the source graph and relocate only the two
+   tables this kernel consumes into LoaderData below 1 GiB.  The synthetic XSDT
+   is checksummed again and contains only APIC plus optional DMAR, so the kernel
+   still runs its Kotoba admission over every table it is asked to trust. */
+static void *retain_acpi_graph(struct efi_boot_services *bs,
+                               const void *rsdp_pointer) {
+  if (!bs || !bs->allocate_pages || !rsdp_pointer) return 0;
+  const struct acpi_rsdp_v2 *source_rsdp=rsdp_pointer;
+  if (!acpi_bytes_equal(source_rsdp->signature,"RSD PTR ",8) ||
+      source_rsdp->revision<2 || source_rsdp->length<sizeof(*source_rsdp) ||
+      source_rsdp->length>ACPI_RETAIN_RSDP_BYTES ||
+      !acpi_checksum_ok(source_rsdp,20) ||
+      !acpi_checksum_ok(source_rsdp,source_rsdp->length) ||
+      !acpi_source_address_sane(source_rsdp->xsdt_address,
+                                sizeof(struct acpi_sdt_header))) return 0;
+
+  const struct acpi_sdt_header *source_root=
+    (const void *)(uintptr_t)source_rsdp->xsdt_address;
+  if (!acpi_bytes_equal(source_root->signature,"XSDT",4) ||
+      source_root->length<sizeof(*source_root) ||
+      source_root->length>ACPI_RETAIN_ROOT_BYTES ||
+      (source_root->length-sizeof(*source_root))%8 ||
+      !acpi_checksum_ok(source_root,source_root->length)) return 0;
+  uint32_t entries=(source_root->length-sizeof(*source_root))/8;
+  if (!entries || entries>ACPI_MAX_ROOT_ENTRIES) return 0;
+
+  const struct acpi_sdt_header *source_madt=0,*source_dmar=0;
+  const uint8_t *entry_bytes=(const uint8_t *)source_root+sizeof(*source_root);
+  for (uint32_t index=0;index<entries;index++) {
+    uint64_t address=*(const uint64_t *)(const void *)(entry_bytes+(uint64_t)index*8);
+    if (!acpi_source_address_sane(address,sizeof(struct acpi_sdt_header))) return 0;
+    const struct acpi_sdt_header *candidate=(const void *)(uintptr_t)address;
+    if (!acpi_bytes_equal(candidate->signature,"APIC",4) &&
+        !acpi_bytes_equal(candidate->signature,"DMAR",4)) continue;
+    if (candidate->length<sizeof(*candidate) ||
+        candidate->length>ACPI_RETAIN_TABLE_BYTES ||
+        !acpi_source_address_sane(address,candidate->length) ||
+        !acpi_checksum_ok(candidate,candidate->length)) return 0;
+    if (acpi_bytes_equal(candidate->signature,"APIC",4)) {
+      if (source_madt) return 0;
+      source_madt=candidate;
+    } else {
+      if (source_dmar) return 0;
+      source_dmar=candidate;
+    }
+  }
+  if (!source_madt) return 0;
+
+  uint64_t pages=(ACPI_RETAIN_BYTES+PAGE_SIZE-1)/PAGE_SIZE;
+  uint64_t base=ACPI_IDENTITY_LIMIT-1;
+  if (bs->allocate_pages(EFI_ALLOCATE_MAX_ADDRESS,EFI_LOADER_DATA,pages,&base)
+        != EFI_SUCCESS || !base || base>=ACPI_IDENTITY_LIMIT ||
+      base>ACPI_IDENTITY_LIMIT-pages*PAGE_SIZE) return 0;
+  zero_bytes((void *)(uintptr_t)base,pages*PAGE_SIZE);
+
+  struct acpi_rsdp_v2 *retained_rsdp=(void *)(uintptr_t)base;
+  struct acpi_sdt_header *retained_root=
+    (void *)(uintptr_t)(base+ACPI_RETAIN_RSDP_BYTES);
+  struct acpi_sdt_header *retained_madt=
+    (void *)(uintptr_t)(base+ACPI_RETAIN_RSDP_BYTES+ACPI_RETAIN_ROOT_BYTES);
+  struct acpi_sdt_header *retained_dmar=
+    (void *)(uintptr_t)(base+ACPI_RETAIN_RSDP_BYTES+ACPI_RETAIN_ROOT_BYTES+
+                        ACPI_RETAIN_TABLE_BYTES);
+  copy_bytes(retained_rsdp,source_rsdp,source_rsdp->length);
+  copy_bytes(retained_root,source_root,sizeof(*retained_root));
+  copy_bytes(retained_madt,source_madt,source_madt->length);
+  if (source_dmar) copy_bytes(retained_dmar,source_dmar,source_dmar->length);
+
+  uint64_t *retained_entries=(void *)((uint8_t *)retained_root+
+                                      sizeof(*retained_root));
+  retained_entries[0]=(uint64_t)(uintptr_t)retained_madt;
+  uint32_t retained_entry_count=1;
+  if (source_dmar)
+    retained_entries[retained_entry_count++]=(uint64_t)(uintptr_t)retained_dmar;
+  retained_root->length=sizeof(*retained_root)+retained_entry_count*8U;
+  retained_root->checksum=0;
+  retained_root->checksum=acpi_checksum_value(retained_root,retained_root->length);
+
+  retained_rsdp->rsdt_address=0;
+  retained_rsdp->xsdt_address=(uint64_t)(uintptr_t)retained_root;
+  retained_rsdp->checksum=0;
+  retained_rsdp->extended_checksum=0;
+  retained_rsdp->checksum=acpi_checksum_value(retained_rsdp,20);
+  retained_rsdp->extended_checksum=
+    acpi_checksum_value(retained_rsdp,retained_rsdp->length);
+  return retained_rsdp;
+}
+
 static uint32_t rotate_right(uint32_t value, uint32_t bits) {
   return (value >> bits) | (value << (32 - bits));
 }
@@ -202,7 +451,114 @@ static void sha256(const uint8_t *input, uint64_t size, uint8_t output[32]) {
 static inline void debug_byte(uint8_t value) { __asm__ volatile("outb %0, $0xe9" : : "a"(value)); }
 static void debug_string(const char *text) { while (*text) debug_byte((uint8_t)*text++); }
 static inline void fail_exit(void) { __asm__ volatile("outl %0, $0xf4" : : "a"(0x7f)); }
-static efi_status fail(const char *message) { debug_string(message); debug_byte('\n'); fail_exit(); return EFI_INVALID_PARAMETER; }
+static struct efi_simple_text_output *loader_console;
+static struct efi_runtime_services *loader_runtime;
+
+#ifndef AIUEOS_QUALIFICATION_LOADER_WATCHDOG_SECONDS
+#define AIUEOS_QUALIFICATION_LOADER_WATCHDOG_SECONDS 90ULL
+#endif
+
+static void console_ascii(const char *text) {
+  if (!loader_console || !loader_console->output_string) return;
+  char16 wide[192];
+  uint64_t i=0;
+  while (text[i] && i+1<sizeof(wide)/sizeof(wide[0])) {
+    wide[i]=(uint8_t)text[i];i++;
+  }
+  wide[i]=0;
+  loader_console->output_string(loader_console,wide);
+}
+
+static void console_decimal(uint32_t value) {
+  char text[16];uint32_t digits=0;
+  do { text[digits++]=(char)('0'+value%10);value/=10; } while (value && digits<15);
+  for (uint32_t i=0;i<digits/2;i++) {
+    char tmp=text[i];text[i]=text[digits-1-i];text[digits-1-i]=tmp;
+  }
+  text[digits]=0;console_ascii(text);
+}
+
+static int persist_loader_record(uint16_t state, uint32_t code) {
+  if (!loader_runtime || !loader_runtime->set_variable) return 0;
+  struct aiueos_qualification_record record={0x514b3241U,2,state,code,0};
+  return loader_runtime->set_variable(
+      qualification_name,&qualification_guid,
+      EFI_VARIABLE_NON_VOLATILE|EFI_VARIABLE_BOOTSERVICE_ACCESS|
+        EFI_VARIABLE_RUNTIME_ACCESS,
+      sizeof(record),&record)==EFI_SUCCESS;
+}
+
+static int persist_loader_failure(uint32_t code) {
+  return persist_loader_record(2,code);
+}
+
+static int prepare_netboot_qualification_return(void) {
+#ifdef AIUEOS_NETBOOT_QUALIFICATION
+  if (!loader_runtime || !loader_runtime->get_variable ||
+      !loader_runtime->set_variable) return 0;
+  uint16_t boot_current=0;
+  uint32_t attributes=0;
+  uint64_t bytes=sizeof(boot_current);
+  if (loader_runtime->get_variable(
+          boot_current_name,&global_variable_guid,&attributes,&bytes,
+          &boot_current)!=EFI_SUCCESS || bytes!=sizeof(boot_current)) return 0;
+  attributes=EFI_VARIABLE_NON_VOLATILE|EFI_VARIABLE_BOOTSERVICE_ACCESS|
+             EFI_VARIABLE_RUNTIME_ACCESS;
+  if (loader_runtime->set_variable(
+          boot_next_name,&global_variable_guid,attributes,sizeof(boot_current),
+          &boot_current)!=EFI_SUCCESS) return 0;
+  struct aiueos_qualification_record pending={0x514b3241U,2,0,0,0};
+  if (loader_runtime->set_variable(
+          qualification_name,&qualification_guid,attributes,sizeof(pending),
+          &pending)!=EFI_SUCCESS) {
+    loader_runtime->set_variable(
+        boot_next_name,&global_variable_guid,0,0,0);
+    return 0;
+  }
+  debug_string("AIUEOS_NETBOOT_RETURN_ARMED bootnext=current result=pending\n");
+#endif
+  return 1;
+}
+
+static void progress(uint32_t code, const char *message) {
+  debug_string(message);debug_string(" code=");
+  char digits[16];uint32_t count=0,value=code;
+  do { digits[count++]=(char)('0'+value%10);value/=10; } while (value && count<15);
+  while (count) debug_byte((uint8_t)digits[--count]);
+  debug_byte('\n');
+  console_ascii(message);console_ascii(" code=");console_decimal(code);console_ascii("\r\n");
+#ifdef AIUEOS_PHYSICAL_QUALIFICATION
+  if (!persist_loader_record(0,code)) {
+    debug_string("AIUEOS_LOADER_PROGRESS_PERSIST_FAIL\n");
+    console_ascii("Progress could not be persisted.\r\n");
+  }
+#endif
+}
+
+static efi_status fail(uint32_t code, const char *message) {
+  debug_string(message);debug_string(" code=");
+  char digits[16];uint32_t count=0,value=code;
+  do { digits[count++]=(char)('0'+value%10);value/=10; } while (value && count<15);
+  while (count) debug_byte((uint8_t)digits[--count]);
+  debug_byte('\n');
+  console_ascii("\r\n");console_ascii(message);console_ascii(" code=");
+  console_decimal(code);console_ascii("\r\n");
+  if (persist_loader_failure(code)) {
+    debug_string("AIUEOS_LOADER_FAILURE_RESULT_PERSISTED\n");
+    console_ascii("Failure result persisted; returning to USB collector.\r\n");
+  } else {
+    debug_string("AIUEOS_LOADER_FAILURE_RESULT_PERSIST_FAIL\n");
+    console_ascii("Failure result could not be persisted.\r\n");
+  }
+#ifndef AIUEOS_PHYSICAL_QUALIFICATION
+  fail_exit();
+#else
+#ifdef AIUEOS_MODEL_SLOT_IMPORT_EXIT
+  fail_exit();
+#endif
+#endif
+  return EFI_INVALID_PARAMETER;
+}
 
 static efi_status read_verified_file(struct efi_file *root, const char16 *path,
                                      const char *kind_open, const char *kind_read,
@@ -261,6 +617,381 @@ static efi_status read_verified_kernel(struct efi_boot_services *bs, efi_handle 
   return status;
 }
 
+#ifdef AIUEOS_QWEN38_MODEL_HANDOFF
+#define MODEL_READ_CHUNK (16ULL * 1024ULL * 1024ULL)
+#define MODEL_HUGE_PAGE_SIZE (2ULL * 1024ULL * 1024ULL)
+_Static_assert(AIUEOS_MODEL_PART_COUNT == 3U, "Qwen bundle part count changed");
+_Static_assert(AIUEOS_MODEL_PART0_BYTES + AIUEOS_MODEL_PART1_BYTES +
+               AIUEOS_MODEL_PART2_BYTES == AIUEOS_MODEL_TOTAL_BYTES,
+               "Qwen bundle lengths do not sum to the artifact length");
+
+static efi_status read_exact_model_part(struct efi_file *root,
+                                        const char16 *path,
+                                        uint8_t *destination,
+                                        uint64_t expected_bytes) {
+  struct efi_file *file = 0;
+  if (!root || root->open(root, &file, path, 1, 0) != EFI_SUCCESS || !file)
+    return EFI_INVALID_PARAMETER;
+  uint64_t offset = 0;
+  while (offset < expected_bytes) {
+    uint64_t remaining = expected_bytes - offset;
+    uint64_t bytes = remaining > MODEL_READ_CHUNK ? MODEL_READ_CHUNK : remaining;
+    efi_status status = file->read(file, &bytes, destination + offset);
+    if (status != EFI_SUCCESS || !bytes || bytes > remaining) {
+      file->close(file);
+      return EFI_INVALID_PARAMETER;
+    }
+    offset += bytes;
+  }
+  uint8_t extra = 0;
+  uint64_t extra_bytes = 1;
+  efi_status status = file->read(file, &extra_bytes, &extra);
+  file->close(file);
+  return status == EFI_SUCCESS && extra_bytes == 0 ?
+    EFI_SUCCESS : EFI_INVALID_PARAMETER;
+}
+
+static efi_status read_model_on_device(struct efi_boot_services *bs,
+                                       efi_handle device, uint8_t *model) {
+  static const char16 part0[] = u"\\EFI\\AIUEOS\\Q38P0.BIN";
+  static const char16 part1[] = u"\\EFI\\AIUEOS\\Q38P1.BIN";
+  static const char16 part2[] = u"\\EFI\\AIUEOS\\Q38P2.BIN";
+  struct efi_simple_file_system *fs = 0;
+  struct efi_file *root = 0;
+  if (bs->handle_protocol(device, &simple_fs_guid, (void **)&fs) != EFI_SUCCESS ||
+      !fs || fs->open_volume(fs, &root) != EFI_SUCCESS || !root)
+    return EFI_INVALID_PARAMETER;
+  efi_status status = read_exact_model_part(
+    root, part0, model, AIUEOS_MODEL_PART0_BYTES);
+  if (status == EFI_SUCCESS)
+    status = read_exact_model_part(root, part1,
+      model + AIUEOS_MODEL_PART0_BYTES, AIUEOS_MODEL_PART1_BYTES);
+  if (status == EFI_SUCCESS)
+    status = read_exact_model_part(root, part2,
+      model + AIUEOS_MODEL_PART0_BYTES + AIUEOS_MODEL_PART1_BYTES,
+      AIUEOS_MODEL_PART2_BYTES);
+  root->close(root);
+  if (status != EFI_SUCCESS) return status;
+  uint8_t digest[32];
+  sha256(model, AIUEOS_MODEL_TOTAL_BYTES, digest);
+  for (uint32_t i = 0; i < 32; i++)
+    if (digest[i] != aiueos_expected_model_sha256[i])
+      return EFI_INVALID_PARAMETER;
+  return EFI_SUCCESS;
+}
+
+static efi_status load_verified_model(struct efi_boot_services *bs,
+                                      efi_handle boot_device,
+                                      struct aiueos_boot_info *info) {
+  if (!bs || !bs->allocate_pages || !bs->free_pages || !info ||
+      !AIUEOS_MODEL_TOTAL_BYTES ||
+      AIUEOS_MODEL_TOTAL_BYTES > AIUEOS_MODEL_MAX_ADDRESS + 1ULL)
+    return EFI_INVALID_PARAMETER;
+  uint64_t mapped_bytes =
+    (AIUEOS_MODEL_TOTAL_BYTES + MODEL_HUGE_PAGE_SIZE - 1) &
+    ~(MODEL_HUGE_PAGE_SIZE - 1);
+  uint64_t pages = mapped_bytes / PAGE_SIZE;
+  uint64_t raw_pages = pages + MODEL_HUGE_PAGE_SIZE / PAGE_SIZE - 1;
+  uint64_t raw_base = AIUEOS_MODEL_MAX_ADDRESS;
+  if (!pages || raw_pages < pages ||
+      raw_pages > (AIUEOS_MODEL_MAX_ADDRESS + 1ULL) / PAGE_SIZE)
+    return EFI_INVALID_PARAMETER;
+  if (bs->allocate_pages(EFI_ALLOCATE_MAX_ADDRESS, EFI_LOADER_DATA,
+                         raw_pages, &raw_base) != EFI_SUCCESS)
+    return EFI_INVALID_PARAMETER;
+  uint64_t base = (raw_base + MODEL_HUGE_PAGE_SIZE - 1) &
+                  ~(MODEL_HUGE_PAGE_SIZE - 1);
+  if (base < AIUEOS_MODEL_MIN_ADDRESS ||
+      base < raw_base || base > AIUEOS_MODEL_MAX_ADDRESS + 1ULL - mapped_bytes ||
+      base + mapped_bytes > raw_base + raw_pages * PAGE_SIZE) {
+    bs->free_pages(raw_base, raw_pages);
+    return EFI_INVALID_PARAMETER;
+  }
+  uint64_t paging_pages = AIUEOS_MODEL_PAGING_PAGES;
+  uint64_t paging_base = 0x40000000ULL - 1ULL;
+  if (bs->allocate_pages(EFI_ALLOCATE_MAX_ADDRESS, EFI_LOADER_DATA,
+                         paging_pages, &paging_base) != EFI_SUCCESS) {
+    bs->free_pages(raw_base, raw_pages);
+    return EFI_INVALID_PARAMETER;
+  }
+  if (!paging_base || paging_base >= 0x40000000ULL ||
+      paging_base > 0x40000000ULL - paging_pages * PAGE_SIZE) {
+    bs->free_pages(paging_base, paging_pages);
+    bs->free_pages(raw_base, raw_pages);
+    return EFI_INVALID_PARAMETER;
+  }
+  zero_bytes((void *)(uintptr_t)paging_base, paging_pages * PAGE_SIZE);
+  uint8_t *model = (uint8_t *)(uintptr_t)base;
+  uint64_t started = read_tsc();
+  efi_status admitted = read_model_on_device(bs, boot_device, model);
+  if (admitted != EFI_SUCCESS) {
+    efi_handle handles[32];
+    uint64_t handle_bytes = sizeof(handles);
+    if (bs->locate_handle(EFI_BY_PROTOCOL, &simple_fs_guid, 0,
+                          &handle_bytes, handles) == EFI_SUCCESS) {
+      uint64_t count = handle_bytes / sizeof(efi_handle);
+      for (uint64_t i = 0; i < count && admitted != EFI_SUCCESS; i++) {
+        if (handles[i] == boot_device) continue;
+        admitted = read_model_on_device(bs, handles[i], model);
+      }
+    }
+  }
+  if (admitted != EFI_SUCCESS) {
+    zero_bytes(model, mapped_bytes);
+    zero_bytes((void *)(uintptr_t)paging_base, paging_pages * PAGE_SIZE);
+    bs->free_pages(paging_base, paging_pages);
+    bs->free_pages(raw_base, raw_pages);
+    return admitted;
+  }
+  zero_bytes(model + AIUEOS_MODEL_TOTAL_BYTES,
+             mapped_bytes - AIUEOS_MODEL_TOTAL_BYTES);
+  info->model_base = base;
+  info->model_size = AIUEOS_MODEL_TOTAL_BYTES;
+  for (uint32_t i = 0; i < 32; i++)
+    info->model_sha256[i] = aiueos_expected_model_sha256[i];
+  info->model_part_count = AIUEOS_MODEL_PART_COUNT;
+  info->model_format = AIUEOS_MODEL_FORMAT_GGUF;
+  info->model_flags = AIUEOS_MODEL_HANDOFF_SHA256_VERIFIED |
+                      AIUEOS_MODEL_HANDOFF_SPLIT_EXACT;
+  info->model_load_cycles = read_tsc() - started;
+  info->model_paging_base = paging_base;
+  info->model_paging_pages = paging_pages;
+  debug_string("AIUEOS_LOADER_MODEL_OK qwen38-27b gguf-v3 parts=3 sha256=verified\n");
+  console_ascii("Qwen3.8 27B model admitted. Entering native kernel.\r\n");
+  return EFI_SUCCESS;
+}
+#endif
+
+#ifdef AIUEOS_MODEL_NVME_SLOTS
+#define MODEL_SLOT_IO_BYTES (16ULL * 1024ULL * 1024ULL)
+#define MODEL_SLOT_IO_PAGES (MODEL_SLOT_IO_BYTES / PAGE_SIZE)
+
+struct uefi_model_slot_context { struct efi_block_io *block; };
+
+static int uefi_model_slot_read(void *opaque, uint64_t lba, uint64_t blocks,
+                                void *buffer) {
+  struct uefi_model_slot_context *context = opaque;
+  struct efi_block_io *block = context ? context->block : 0;
+  return block && block->media && blocks &&
+         blocks <= UINT64_MAX / block->media->block_size &&
+         block->read_blocks(block, block->media->media_id, lba,
+                            blocks * block->media->block_size, buffer) == EFI_SUCCESS;
+}
+
+static int uefi_model_slot_write(void *opaque, uint64_t lba, uint64_t blocks,
+                                 const void *buffer) {
+  struct uefi_model_slot_context *context = opaque;
+  struct efi_block_io *block = context ? context->block : 0;
+  return block && block->media && blocks &&
+         blocks <= UINT64_MAX / block->media->block_size &&
+         block->write_blocks(block, block->media->media_id, lba,
+                             blocks * block->media->block_size, buffer) == EFI_SUCCESS;
+}
+
+static int uefi_model_slot_flush(void *opaque) {
+  struct uefi_model_slot_context *context = opaque;
+  return context && context->block && context->block->flush_blocks &&
+         context->block->flush_blocks(context->block) == EFI_SUCCESS;
+}
+
+static int device_path_contains_nvme(const struct efi_device_path_node *node) {
+  uint32_t walked = 0;
+  while (node && walked < 4096U) {
+    uint16_t length = (uint16_t)node->length[0] | ((uint16_t)node->length[1] << 8);
+    if (length < sizeof(*node) || length > 4096U - walked) return 0;
+    if (node->type == 3U && node->subtype == 23U) return 1;
+    if (node->type == 0x7fU) return 0;
+    walked += length;
+    node = (const void *)((const uint8_t *)node + length);
+  }
+  return 0;
+}
+
+static int find_model_slot_nvme(struct efi_boot_services *bs,
+                                struct uefi_model_slot_context *context,
+                                struct aiueos_model_slot_io *io,
+                                struct aiueos_model_slot_state *state) {
+  efi_handle handles[64];
+  uint64_t handle_bytes = sizeof(handles);
+  if (!bs || bs->locate_handle(EFI_BY_PROTOCOL, &block_io_guid, 0,
+                               &handle_bytes, handles) != EFI_SUCCESS) return 0;
+  uint64_t count = handle_bytes / sizeof(efi_handle);
+  for (uint64_t i = 0; i < count; i++) {
+    struct efi_block_io *block = 0;
+    struct efi_device_path_node *path = 0;
+    if (bs->handle_protocol(handles[i], &block_io_guid, (void **)&block) != EFI_SUCCESS ||
+        !block || !block->media || !block->media->media_present ||
+        !block->media->logical_partition || block->media->removable_media ||
+        block->media->read_only || block->media->block_size != AIUEOS_MODEL_SLOT_BLOCK_BYTES ||
+        !block->read_blocks || !block->write_blocks || !block->flush_blocks ||
+        block->media->last_block == UINT64_MAX ||
+        bs->handle_protocol(handles[i], &device_path_guid, (void **)&path) != EFI_SUCCESS ||
+        !device_path_contains_nvme(path)) continue;
+    context->block = block;
+    io->context = context;
+    io->block_bytes = block->media->block_size;
+    io->io_alignment = block->media->io_align;
+    io->block_count = block->media->last_block + 1ULL;
+    io->read_blocks = uefi_model_slot_read;
+    io->write_blocks = uefi_model_slot_write;
+    io->flush = uefi_model_slot_flush;
+    if (aiueos_model_slot_inspect(io, state)) return 1;
+  }
+  return 0;
+}
+
+static int stream_model_part_to_slot(struct efi_file *root, const char16 *path,
+                                     uint64_t expected_bytes,
+                                     struct aiueos_model_slot_session *session,
+                                     uint8_t *buffer) {
+  struct efi_file *file = 0;
+  if (!root || root->open(root, &file, path, 1, 0) != EFI_SUCCESS || !file) return 0;
+  uint64_t offset = 0;
+  while (offset < expected_bytes) {
+    uint64_t remaining = expected_bytes - offset;
+    uint64_t bytes = remaining > MODEL_SLOT_IO_BYTES ? MODEL_SLOT_IO_BYTES : remaining;
+    if (file->read(file, &bytes, buffer) != EFI_SUCCESS || !bytes || bytes > remaining ||
+        !aiueos_model_slot_append(session, buffer, bytes)) {
+      file->close(file);
+      return 0;
+    }
+    offset += bytes;
+  }
+  uint8_t extra = 0;
+  uint64_t extra_bytes = 1;
+  efi_status status = file->read(file, &extra_bytes, &extra);
+  file->close(file);
+  return status == EFI_SUCCESS && extra_bytes == 0;
+}
+
+static int stream_model_volume_to_slot(struct efi_boot_services *bs,
+                                       efi_handle source,
+                                       struct aiueos_model_slot_session *session,
+                                       uint8_t *buffer) {
+  static const char16 part0[] = u"\\EFI\\AIUEOS\\Q38P0.BIN";
+  static const char16 part1[] = u"\\EFI\\AIUEOS\\Q38P1.BIN";
+  static const char16 part2[] = u"\\EFI\\AIUEOS\\Q38P2.BIN";
+  struct efi_simple_file_system *fs = 0;
+  struct efi_file *root = 0;
+  if (bs->handle_protocol(source, &simple_fs_guid, (void **)&fs) != EFI_SUCCESS ||
+      !fs || fs->open_volume(fs, &root) != EFI_SUCCESS || !root) return 0;
+  int ok = stream_model_part_to_slot(root, part0, AIUEOS_MODEL_PART0_BYTES,
+                                     session, buffer) &&
+           stream_model_part_to_slot(root, part1, AIUEOS_MODEL_PART1_BYTES,
+                                     session, buffer) &&
+           stream_model_part_to_slot(root, part2, AIUEOS_MODEL_PART2_BYTES,
+                                     session, buffer);
+  root->close(root);
+  return ok;
+}
+
+static efi_status stage_model_to_nvme(struct efi_boot_services *bs,
+                                      efi_handle boot_device) {
+  struct uefi_model_slot_context context;
+  struct aiueos_model_slot_io io;
+  struct aiueos_model_slot_state before, after;
+  zero_bytes(&context, sizeof(context));
+  zero_bytes(&io, sizeof(io));
+  zero_bytes(&before, sizeof(before));
+  if (!find_model_slot_nvme(bs, &context, &io, &before)) {
+#ifdef AIUEOS_MODEL_NVME_TARGET_OPTIONAL
+    debug_string("AIUEOS_MODEL_SLOT_DEFERRED target=dedicated-nvme-partition reason=absent internal-disk-write=none\n");
+    console_ascii("AIUEOS dedicated model partition absent; continuing HTTPS qualification without an internal-disk write.\r\n");
+    return EFI_SUCCESS;
+#else
+    debug_string("AIUEOS_MODEL_SLOT_FAIL target=dedicated-nvme-partition reason=absent\n");
+    return EFI_INVALID_PARAMETER;
+#endif
+  }
+  struct aiueos_model_identity identity;
+  identity.bytes = AIUEOS_MODEL_TOTAL_BYTES;
+  copy_bytes(identity.sha256, aiueos_expected_model_sha256, 32);
+  struct aiueos_model_slot_session session;
+  int begin = aiueos_model_slot_begin(&io, &identity, &session, &before);
+  if (begin == AIUEOS_MODEL_SLOT_BEGIN_ALREADY_ACTIVE) {
+    uint64_t verify_base = 0xffffffffULL;
+    if (bs->allocate_pages(EFI_ALLOCATE_MAX_ADDRESS, EFI_LOADER_DATA,
+                           MODEL_SLOT_IO_PAGES, &verify_base) != EFI_SUCCESS)
+      return EFI_INVALID_PARAMETER;
+    uint8_t *verify_buffer = (void *)(uintptr_t)verify_base;
+    int verified = aiueos_model_slot_verify_active(
+      &io, &before, verify_buffer, MODEL_SLOT_IO_BYTES);
+    zero_bytes(verify_buffer, MODEL_SLOT_IO_BYTES);
+    bs->free_pages(verify_base, MODEL_SLOT_IO_PAGES);
+    if (!verified) {
+      debug_string("AIUEOS_MODEL_SLOT_FAIL source=nvme action=reuse-active reason=sha256\n");
+      return EFI_INVALID_PARAMETER;
+    }
+    debug_string("AIUEOS_MODEL_SLOT_OK source=nvme action=reuse-active sha256=verified\n");
+    console_ascii("AIUEOS model slot already active and verified.\r\n");
+    return EFI_SUCCESS;
+  }
+  if (begin != AIUEOS_MODEL_SLOT_BEGIN_WRITE) return EFI_INVALID_PARAMETER;
+
+  uint64_t buffer_base = 0xffffffffULL;
+  if (bs->allocate_pages(EFI_ALLOCATE_MAX_ADDRESS, EFI_LOADER_DATA,
+                         MODEL_SLOT_IO_PAGES, &buffer_base) != EFI_SUCCESS)
+    return EFI_INVALID_PARAMETER;
+  uint8_t *buffer = (void *)(uintptr_t)buffer_base;
+  int streamed = stream_model_volume_to_slot(bs, boot_device, &session, buffer);
+  if (!streamed) {
+    efi_handle handles[32];
+    uint64_t handle_bytes = sizeof(handles);
+    if (bs->locate_handle(EFI_BY_PROTOCOL, &simple_fs_guid, 0,
+                          &handle_bytes, handles) == EFI_SUCCESS) {
+      uint64_t count = handle_bytes / sizeof(efi_handle);
+      for (uint64_t i = 0; i < count && !streamed; i++) {
+        if (handles[i] == boot_device) continue;
+        begin = aiueos_model_slot_begin(&io, &identity, &session, &before);
+        if (begin != AIUEOS_MODEL_SLOT_BEGIN_WRITE) break;
+        streamed = stream_model_volume_to_slot(bs, handles[i], &session, buffer);
+      }
+    }
+  }
+  int committed = streamed &&
+    aiueos_model_slot_commit(&session, buffer, MODEL_SLOT_IO_BYTES, &after);
+  zero_bytes(buffer, MODEL_SLOT_IO_BYTES);
+  bs->free_pages(buffer_base, MODEL_SLOT_IO_PAGES);
+  if (!committed) {
+    debug_string("AIUEOS_MODEL_SLOT_FAIL source=usb target=nvme action=keep-last-known-good\n");
+    return EFI_INVALID_PARAMETER;
+  }
+  debug_string("AIUEOS_MODEL_SLOT_OK source=usb target=nvme layout=ab readback=sha256 activation=atomic\n");
+  console_ascii("AIUEOS model imported to inactive NVMe slot and activated.\r\n");
+  return EFI_SUCCESS;
+}
+#endif
+
+#ifdef AIUEOS_EMBEDDED_RELEASE
+static efi_status read_verified_embedded(uint8_t *kernel_file,
+                                         uint64_t *kernel_size,
+                                         uint8_t *initramfs_file,
+                                         uint64_t *initramfs_size) {
+  uint64_t embedded_kernel_size=
+    (uint64_t)(aiueos_embedded_kernel_end-aiueos_embedded_kernel_start);
+  uint64_t embedded_initramfs_size=
+    (uint64_t)(aiueos_embedded_initramfs_end-aiueos_embedded_initramfs_start);
+  if (!embedded_kernel_size || embedded_kernel_size>KERNEL_BUFFER_SIZE ||
+      !embedded_initramfs_size || embedded_initramfs_size>INITRAMFS_BUFFER_SIZE)
+    return EFI_INVALID_PARAMETER;
+  copy_bytes(kernel_file,aiueos_embedded_kernel_start,embedded_kernel_size);
+  copy_bytes(initramfs_file,aiueos_embedded_initramfs_start,
+             embedded_initramfs_size);
+  uint8_t digest[32];
+  sha256(kernel_file,embedded_kernel_size,digest);
+  for (uint32_t i=0;i<32;i++)
+    if (digest[i]!=aiueos_expected_kernel_sha256[i]) return EFI_INVALID_PARAMETER;
+  sha256(initramfs_file,embedded_initramfs_size,digest);
+  for (uint32_t i=0;i<32;i++)
+    if (digest[i]!=aiueos_expected_initramfs_sha256[i]) return EFI_INVALID_PARAMETER;
+  *kernel_size=embedded_kernel_size;
+  *initramfs_size=embedded_initramfs_size;
+  debug_string("AIUEOS_NETBOOT_EMBEDDED_OK kernel+initramfs sha256-v1\n");
+  console_ascii("AIUEOS PXE payload admitted.\r\n");
+  return EFI_SUCCESS;
+}
+#endif
+
 efi_status EFIAPI efi_main(efi_handle image, struct efi_system_table *system) {
   static const char16 console_message[] = u"AIUEOS_LOADER_OK loading kernel.elf\r\n";
   static const char16 kernel_path[] = u"\\EFI\\AIUEOS\\KERNEL.ELF";
@@ -276,17 +1007,57 @@ efi_status EFIAPI efi_main(efi_handle image, struct efi_system_table *system) {
   struct aiueos_boot_info info;
   struct efi_graphics_output_protocol *gop = 0;
 
-  if (!system || !(bs = system->boot_services)) return fail("AIUEOS_LOADER_FAIL system-table");
+  loader_console=system?system->console_out:0;
+  loader_runtime=system?system->runtime_services:0;
+  if (!system || !(bs = system->boot_services)) return fail(101,"AIUEOS_LOADER_FAIL system-table");
+  zero_bytes(&info, sizeof(info));
+  if (!prepare_netboot_qualification_return())
+    return fail(119,"AIUEOS_LOADER_FAIL netboot-return-arm");
   if (system->console_out && system->console_out->output_string)
     system->console_out->output_string(system->console_out, console_message);
   debug_string("AIUEOS_LOADER_OK\n");
+#ifdef AIUEOS_PHYSICAL_QUALIFICATION
+#ifdef AIUEOS_PERSISTENT_BOOT
+  if (!bs->set_watchdog_timer ||
+      bs->set_watchdog_timer(0,0,0,0)!=EFI_SUCCESS)
+    return fail(120,"AIUEOS_LOADER_FAIL watchdog-disable");
+  debug_string("AIUEOS_LOADER_WATCHDOG_DISABLED persistent-native\n");
+  console_ascii("AIUEOS loader watchdog disabled for persistent native boot.\r\n");
+#else
+  if (bs->set_watchdog_timer &&
+      bs->set_watchdog_timer(AIUEOS_QUALIFICATION_LOADER_WATCHDOG_SECONDS,
+                             0xA106,0,0)==EFI_SUCCESS) {
+    debug_string("AIUEOS_LOADER_WATCHDOG_ARMED\n");
+    console_ascii("AIUEOS loader watchdog armed.\r\n");
+  }
+#endif
+#endif
+#ifdef AIUEOS_QUALIFICATION_FORCE_LOADER_HANG_CODE
+  progress(AIUEOS_QUALIFICATION_FORCE_LOADER_HANG_CODE,
+           "AIUEOS_LOADER_PROGRESS forced-hang");
+  for (;;) __asm__ volatile("pause");
+#endif
+#ifdef AIUEOS_QUALIFICATION_FORCE_LOADER_FAILURE_CODE
+  return fail(AIUEOS_QUALIFICATION_FORCE_LOADER_FAILURE_CODE,
+              "AIUEOS_LOADER_FAIL forced-test");
+#endif
 
+  progress(201,"AIUEOS_LOADER_PROGRESS loaded-image-protocol");
   if (bs->handle_protocol(image, &loaded_image_guid, (void **)&loaded) != EFI_SUCCESS || !loaded)
-    return fail("AIUEOS_LOADER_FAIL loaded-image");
+    return fail(102,"AIUEOS_LOADER_FAIL loaded-image");
+  progress(202,"AIUEOS_LOADER_PROGRESS kernel-buffer");
   if (bs->allocate_pool(2, KERNEL_BUFFER_SIZE, (void **)&kernel_file) != EFI_SUCCESS)
-    return fail("AIUEOS_LOADER_FAIL kernel-buffer");
+    return fail(103,"AIUEOS_LOADER_FAIL kernel-buffer");
+  progress(203,"AIUEOS_LOADER_PROGRESS initramfs-buffer");
   if (bs->allocate_pool(2, INITRAMFS_BUFFER_SIZE, (void **)&initramfs_file) != EFI_SUCCESS)
-    return fail("AIUEOS_LOADER_FAIL initramfs-buffer");
+    return fail(104,"AIUEOS_LOADER_FAIL initramfs-buffer");
+  progress(204,"AIUEOS_LOADER_PROGRESS kernel-admission");
+#ifdef AIUEOS_EMBEDDED_RELEASE
+  efi_status admitted=read_verified_embedded(
+      kernel_file,&kernel_size,initramfs_file,&initramfs_size);
+  if (admitted!=EFI_SUCCESS)
+    return fail(105,"AIUEOS_LOADER_FAIL embedded-admission");
+#else
   efi_status admitted = read_verified_kernel(bs, loaded->device_handle, kernel_path,
                                              initramfs_path, kernel_file, &kernel_size,
                                              initramfs_file, &initramfs_size);
@@ -306,20 +1077,36 @@ efi_status EFIAPI efi_main(efi_handle image, struct efi_system_table *system) {
       }
     }
     if (admitted != EFI_SUCCESS)
-      return fail("AIUEOS_LOADER_FAIL kernel-admission-exhausted");
+      return fail(105,"AIUEOS_LOADER_FAIL kernel-admission-exhausted");
     debug_string("AIUEOS_LOADER_RECOVERY_OK kernel-from-alternate-volume sha256-v1\n");
   }
+#endif
   debug_string("AIUEOS_LOADER_INTEGRITY_OK sha256-v1\n");
+#ifdef AIUEOS_MODEL_NVME_SLOTS
+  progress(211,"AIUEOS_LOADER_PROGRESS model-usb-to-nvme-ab");
+  if (stage_model_to_nvme(bs, loaded->device_handle) != EFI_SUCCESS)
+    return fail(122,"AIUEOS_LOADER_FAIL model-nvme-slot-import");
+#ifdef AIUEOS_MODEL_SLOT_IMPORT_EXIT
+  debug_string("AIUEOS_MODEL_SLOT_IMPORT_TEST_EXIT\n");
+  fail_exit();
+#endif
+#endif
+#ifdef AIUEOS_QWEN38_MODEL_HANDOFF
+  progress(210,"AIUEOS_LOADER_PROGRESS model-allocation-and-admission");
+  if (load_verified_model(bs, loaded->device_handle, &info) != EFI_SUCCESS)
+    return fail(121,"AIUEOS_LOADER_FAIL qwen38-model-admission");
+#endif
 
-  if (kernel_size < sizeof(struct elf64_header)) return fail("AIUEOS_LOADER_FAIL elf-size");
+  progress(205,"AIUEOS_LOADER_PROGRESS elf-validation");
+  if (kernel_size < sizeof(struct elf64_header)) return fail(106,"AIUEOS_LOADER_FAIL elf-size");
   struct elf64_header *elf = (struct elf64_header *)kernel_file;
   if (elf->ident[0] != 0x7f || elf->ident[1] != 'E' || elf->ident[2] != 'L' ||
       elf->ident[3] != 'F' || elf->ident[4] != 2 || elf->machine != 62 ||
       elf->phentsize != sizeof(struct elf64_program_header))
-    return fail("AIUEOS_LOADER_FAIL elf-header");
+    return fail(107,"AIUEOS_LOADER_FAIL elf-header");
   if (elf->phoff > kernel_size || elf->phnum > 32 ||
       elf->phoff + (uint64_t)elf->phnum * elf->phentsize > kernel_size)
-    return fail("AIUEOS_LOADER_FAIL elf-program-table");
+    return fail(108,"AIUEOS_LOADER_FAIL elf-program-table");
 
   struct elf64_program_header *ph = (void *)(kernel_file + elf->phoff);
   uint8_t entry_is_executable = 0;
@@ -329,62 +1116,99 @@ efi_status EFIAPI efi_main(efi_handle image, struct efi_system_table *system) {
         ph[i].filesz > kernel_size - ph[i].offset ||
         ph[i].paddr < 0x100000 || ph[i].paddr > UINT64_MAX - ph[i].memsz ||
         (ph[i].paddr & (PAGE_SIZE - 1)) != 0)
-      return fail("AIUEOS_LOADER_FAIL elf-segment");
+      return fail(109,"AIUEOS_LOADER_FAIL elf-segment");
     if ((ph[i].flags & 1) && elf->entry >= ph[i].paddr &&
         elf->entry - ph[i].paddr < ph[i].memsz) entry_is_executable = 1;
+    progress(206,"AIUEOS_LOADER_PROGRESS segment-allocation");
     uint64_t address = ph[i].paddr;
     uint64_t pages = (ph[i].memsz + PAGE_SIZE - 1) / PAGE_SIZE;
     if (!pages || bs->allocate_pages(2, 2, pages, &address) != EFI_SUCCESS || address != ph[i].paddr)
-      return fail("AIUEOS_LOADER_FAIL segment-allocation");
+      return fail(110,"AIUEOS_LOADER_FAIL segment-allocation");
     copy_bytes((void *)(uintptr_t)address, kernel_file + ph[i].offset, ph[i].filesz);
     zero_bytes((void *)(uintptr_t)(address + ph[i].filesz), ph[i].memsz - ph[i].filesz);
   }
-  if (!entry_is_executable) return fail("AIUEOS_LOADER_FAIL elf-entry");
+  if (!entry_is_executable) return fail(111,"AIUEOS_LOADER_FAIL elf-entry");
 
+  progress(207,"AIUEOS_LOADER_PROGRESS memory-map-buffer");
   if (bs->allocate_pool(2, MEMORY_MAP_BUFFER_SIZE, &memory_map) != EFI_SUCCESS)
-    return fail("AIUEOS_LOADER_FAIL map-buffer");
-  memory_map_size = MEMORY_MAP_BUFFER_SIZE;
-  efi_status status = bs->get_memory_map(&memory_map_size, memory_map, &map_key,
-                                         &descriptor_size, &descriptor_version);
-  if (status != EFI_SUCCESS) return fail("AIUEOS_LOADER_FAIL memory-map");
-  info.magic = 0x414955454f53424fULL; info.version = 2;
+    return fail(112,"AIUEOS_LOADER_FAIL map-buffer");
+  info.magic = AIUEOS_BOOT_INFO_MAGIC;
+#ifdef AIUEOS_QWEN38_MODEL_HANDOFF
+  info.version = AIUEOS_BOOT_INFO_VERSION_TSC_CALIBRATED;
+#else
+  info.version = AIUEOS_BOOT_INFO_VERSION_BASE;
+#endif
   info.initramfs_base = (uint64_t)(uintptr_t)initramfs_file;
   info.initramfs_size = initramfs_size;
-  if (!initramfs_size) return fail("AIUEOS_LOADER_FAIL initramfs-empty");
-  info.memory_map = memory_map; info.memory_map_size = memory_map_size;
-  info.descriptor_size = descriptor_size; info.descriptor_version = descriptor_version;
+  if (!initramfs_size) return fail(114,"AIUEOS_LOADER_FAIL initramfs-empty");
   info.acpi_rsdp = 0;
+  const void *firmware_acpi_rsdp=0;
   struct efi_configuration_table *tables = system->configuration_table;
   for (uint64_t i = 0; i < system->number_of_table_entries; i++) {
     if (guid_equal(&tables[i].vendor_guid, &acpi20_guid)) {
-      info.acpi_rsdp = tables[i].vendor_table;
+      firmware_acpi_rsdp = tables[i].vendor_table;
       break;
     }
   }
-  if (!info.acpi_rsdp) return fail("AIUEOS_LOADER_FAIL acpi-rsdp");
+  if (!firmware_acpi_rsdp) return fail(115,"AIUEOS_LOADER_FAIL acpi-rsdp");
+  info.acpi_rsdp=retain_acpi_graph(bs,firmware_acpi_rsdp);
+  if (!info.acpi_rsdp) return fail(115,"AIUEOS_LOADER_FAIL acpi-retain");
+  debug_string("AIUEOS_ACPI_RETAIN_OK source=firmware copy=low-identity tables=APIC+DMAR\n");
 
-  if (bs->handle_protocol(system->console_out_handle, &graphics_output_guid,
-                          (void **)&gop) != EFI_SUCCESS || !gop || !gop->mode ||
+  progress(208,"AIUEOS_LOADER_PROGRESS gop-discovery");
+  uint8_t gop_used_protocol_scan=0;
+  gop=find_graphics_output(system,bs,&gop_used_protocol_scan);
+  if (!gop || !gop->mode ||
       !gop->mode->info || !gop->mode->framebuffer_base ||
       !gop->mode->framebuffer_size)
-    return fail("AIUEOS_LOADER_FAIL gop");
+    return fail(116,"AIUEOS_LOADER_FAIL gop");
   struct efi_graphics_output_mode_info *gop_info = gop->mode->info;
   if (!gop_info->horizontal_resolution || !gop_info->vertical_resolution ||
       gop_info->pixels_per_scan_line < gop_info->horizontal_resolution ||
       (gop_info->pixel_format != 0 && gop_info->pixel_format != 1) ||
       (uint64_t)gop_info->pixels_per_scan_line * gop_info->vertical_resolution >
         gop->mode->framebuffer_size / 4)
-    return fail("AIUEOS_LOADER_FAIL gop-mode");
+    return fail(117,"AIUEOS_LOADER_FAIL gop-mode");
   info.framebuffer_base = gop->mode->framebuffer_base;
   info.framebuffer_size = gop->mode->framebuffer_size;
   info.framebuffer_width = gop_info->horizontal_resolution;
   info.framebuffer_height = gop_info->vertical_resolution;
   info.framebuffer_stride = gop_info->pixels_per_scan_line;
   info.framebuffer_format = gop_info->pixel_format;
+  info.runtime_services = system->runtime_services;
+  info.firmware_cr3 = read_cr3();
+  if (gop_used_protocol_scan)
+    debug_string("AIUEOS_GOP_DISCOVERY_OK source=protocol-scan\n");
   debug_string("AIUEOS_GOP_HANDOFF_OK framebuffer-v1\n");
 
+  /* Calibrate the Qwen qualification image's invariant TSC against UEFI's
+     microsecond service while Boot Services still exist. This measurement is
+     handed to the kernel; no nominal CPU clock is used to turn inference
+     cycles into elapsed time. Other profiles retain the v3 handoff unchanged. */
+#ifdef AIUEOS_QWEN38_MODEL_HANDOFF
+  if (!bs->stall) return fail(123,"AIUEOS_LOADER_FAIL tsc-calibration-service");
+  {
+    uint64_t started = read_tsc();
+    if (bs->stall(100000) != EFI_SUCCESS)
+      return fail(123,"AIUEOS_LOADER_FAIL tsc-calibration-stall");
+    uint64_t elapsed = read_tsc() - started;
+    if (elapsed < 100000 || elapsed > 1000000000ULL)
+      return fail(123,"AIUEOS_LOADER_FAIL tsc-calibration-bounds");
+    info.tsc_hz = elapsed * 10ULL;
+  }
+#endif
+
+  progress(209,"AIUEOS_LOADER_PROGRESS exit-boot-services");
+  memory_map_size = MEMORY_MAP_BUFFER_SIZE;
+  efi_status status = bs->get_memory_map(&memory_map_size, memory_map, &map_key,
+                                         &descriptor_size, &descriptor_version);
+  if (status != EFI_SUCCESS) return fail(113,"AIUEOS_LOADER_FAIL memory-map");
+  info.memory_map = memory_map; info.memory_map_size = memory_map_size;
+  info.descriptor_size = descriptor_size; info.descriptor_version = descriptor_version;
   status = bs->exit_boot_services(image, map_key);
-  if (status != EFI_SUCCESS) return fail("AIUEOS_LOADER_FAIL exit-boot-services");
+  if (status != EFI_SUCCESS) return fail(118,"AIUEOS_LOADER_FAIL exit-boot-services");
+  debug_string("AIUEOS_LOADER_PROGRESS kernel-entry-call code=211\n");
+  persist_loader_record(0,211);
   ((kernel_entry)(uintptr_t)elf->entry)(&info);
   for (;;) __asm__ volatile("hlt");
 }

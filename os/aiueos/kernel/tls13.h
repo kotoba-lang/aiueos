@@ -6,6 +6,10 @@
 /* TLS 1.3 record layer + key schedule for one ClientHello → Finished →
    HTTP GET. Mechanism: AES-GCM, HKDF, X25519 (Kotoba), SHA-256 (Kotoba).
    CID admission is not here. */
+int aiueos_tls13_configure(const char *host,
+                           const uint8_t *request, uint32_t request_len,
+                           const uint8_t client_random[32],
+                           const uint8_t ephemeral_scalar[32]);
 void aiueos_tls13_reset(void);
 int aiueos_tls13_clienthello(uint8_t *out, uint32_t *len);
 int aiueos_tls13_feed(const uint8_t *data, uint32_t len);
@@ -19,6 +23,7 @@ const uint8_t *aiueos_tls13_app(void);
 int aiueos_tls13_aes_selftest(void);
 int aiueos_tls13_hmac_selftest(void);
 int aiueos_tls13_ecdsa_selftest(void);
+int aiueos_tls13_record_selftest(void);
 int aiueos_tls13_run_certverify(void);
 int aiueos_tls13_certverify_ok(void);
 uint16_t aiueos_tls13_certverify_scheme(void);

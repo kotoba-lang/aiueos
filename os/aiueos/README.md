@@ -3,19 +3,25 @@
 This directory contains the Linux-independent aiueos boot path owned by the
 canonical `kotoba-lang/aiueos` OS repository.
 
-## Which path is production
+## Native target and current physical boundary
 
-The production hard-flip input is `native/kernel.kotoba`, compiled and packaged
+The C-free hard-flip input is `native/kernel.kotoba`, compiled and packaged
 by exact-pinned Amu into a C-free PE32+ loader and ELF64 kernel. It consumes
 the freestanding ABI and instruction semantics owned by `kotoba-native`; this
 directory owns OS policy, physical-memory admission, effects, and QEMU
 evidence. `aiueos.vm` is the hosted QEMU launcher and `aiueos.hvt` is a JVM/FFM
 experiment. Neither is the bare-metal provider.
 
-The larger C/assembly implementation below is retained as a reference profile
-and regression oracle. Its feature count must not be read as production C-free
-maturity. The exact dependency/evidence rule is in the repository `README.md`
-and `90-docs/adr/0013-native-os-ownership-and-boot.md`.
+The larger C/assembly implementation below is retained as a reference profile,
+regression oracle, and the current physical RTL8125/TLS/Qwen qualification
+path. Its feature count must not be read as C-free maturity. In particular,
+the closed `native/kernel.kotoba` + `native/rtl8125.kotoba` graph owns the
+C-free boot/memory slice and a K16-specific one-shot PCI/MMIO/DMA/ARP provider.
+The latter has a QEMU no-device receipt but not yet a physical ARP receipt.
+Complete TLS 1.3/HTTPS and Qwen GGUF execution are still outside the pure
+closure. The exact all-native closure and its fail-closed claim rule are
+recorded in `contracts/k16-kotoba-native-closure-v1.edn` and audited by
+`scripts/audit-k16-kotoba-native-closure.py`.
 
 The current Phase 1 slice builds a PE32+ `BOOTX64.EFI` and a separate ELF64
 `KERNEL.ELF`. OVMF starts the loader, which validates and places bounded ELF
@@ -38,6 +44,39 @@ the versioned freestanding ELF object ABI, and the VM gate requires the kernel
 to call `kotoba_aiueos_probe` and observe result `42`. Set
 `AIUEOS_KOTOBA_KERNEL_OBJECT` only to test another compiler output under the
 same verifier; a hosted or import-bearing object is rejected before link.
+
+### The K16 pure-native profile boots through Amu and keeps the legacy link measurable
+
+`AIUEOS_K16_PURE_NATIVE=1 sh os/aiueos/scripts/build-uefi.sh` (or
+`nbb os/aiueos/scripts/build-k16-pure-native.cljs`) restricts the kernel link
+to Kotoba objects and Amu toolchain stubs, gates that exact list before
+`zig ld.lld` runs, and keeps the legacy C/assembly route fail-closed. Passing
+`--compiler /path/to/pinned-amu` instead emits a reproducible C-free PE32+
+loader and the closed Kotoba ELF without invoking that linker. The legacy
+measurement remains so the old production link's C boundary stays
+machine-checked rather than described (ADR-0131).
+
+Measured 2026-09-02 on the link list today's K16 build actually hands the
+linker (captured with `AIUEOS_K16_LINK_LIST_OUT=<file>`, which writes that list
+and changes nothing else):
+
+```
+SCANNED	99
+AIUEOS_K16_PURE_NATIVE_REFUSED scanned=99 kotoba=47 stubs=0 foreign=32 unattested=20
+```
+
+32 objects are compiled from `kernel/*.c` and three hand-written `.S` files.
+20 are Kotoba objects that pass every structural check but for which no recipe
+in this repository records the Amu revision that produced them -- refused as
+`REFUSED unattested-provenance: ... reason=compiler-unrecorded`, counted apart
+from foreign code so the C number stays readable. No committed Kotoba object
+is C-derived or malformed.
+
+Exit codes are `0` admitted, `2` could not answer, `3` refused; `scanned=0` is
+exit 2 and never a pass. Provenance lives in `os/aiueos/kotoba/provenance.edn`
+(regenerate with `--emit-provenance`); the acceptance conditions, receipt
+schema and measured status are in
+`os/aiueos/contracts/k16-pure-native-profile-v1.edn`.
 
 The loader also selects the ACPI 2.0 configuration-table GUID. The kernel
 validates both RSDP checksums, the XSDT and MADT checksums and lengths, and every
@@ -270,6 +309,313 @@ invented browser runtime are intentionally excluded.
 ./os/aiueos/scripts/build-release-image.sh
 ./os/aiueos/scripts/smoke-qemu-release-image.sh
 ```
+
+### Physical K16 qualification before installation
+
+The K16 stage-one image keeps every internal disk read-only while returning a
+machine-readable result on the removable USB.  v4 added a dedicated 9 MiB FAT16
+Microsoft-basic-data partition labeled `AIUEOS RSLT`; macOS mounts it as a
+normal user volume instead of requiring privileged access to an EFI System
+Partition.  The probe writes `PROBE.LOG` there, arms the
+current USB entry as one-shot `BootNext`, and chainloads an AIUEOS native-core
+profile.  The native core stores only a bounded UEFI result record and resets;
+the probe then boots once more, writes `RESULT.LOG` to the same USB's result
+partition, and stops with `RESULT SAVED`.  Binding requires the loaded USB
+device-path prefix, the exact result partition GUID, and the exact
+`AIUEOS.ID` marker; there is no fallback write to another filesystem.  A
+success result proves only the loader/kernel,
+integrity, Kotoba object, paging, GOP, allocator, and ACPI floor.  It stops
+before IOMMU, PCI DMA, block/network drivers, Murakumo, or any internal-SSD
+write.  GOP discovery first checks the firmware console handle, then performs
+a bounded protocol-handle scan for firmware that publishes GOP separately.
+The UEFI probe also walks each xHCI controller's extended-capability list using
+bounded MMIO reads and records whether optional Debug Capability (DbC) is
+present and which debug port it reports.  It does not enable DbC or perform any
+PCI/MMIO write; live USB logging remains gated on the physical K16 result.
+If the UEFI loader returns before entering the kernel, it now prints the exact
+failure marker and code, stores a bounded failure record in the existing
+qualification variable, and returns to the probe.  The probe immediately writes
+that failure to `RESULT.LOG`; a real machine no longer sits at the initial
+`loading kernel.elf` line with its reason visible only to QEMU debugcon.  Loader
+codes are 101 through 118 in execution order; code 110 is fixed-address ELF
+segment allocation, the physical-K16 failure suspected by the v4 observation.
+The v5 code map is authoritative in
+`contracts/physical-qualification-usb-v5.edn`; v4 remains the historical
+layout/result contract.  v6 also persists progress codes 201 through 209
+*before* firmware calls and native-core handoff.  A 90-second firmware watchdog
+resets a hung qualification run so the existing one-shot `BootNext` collector
+can write the last progress code to `RESULT.LOG`; a manual power cycle remains
+the fallback when firmware does not implement the watchdog.  The final memory
+map is obtained only after persisting progress and completing GOP discovery, so
+`ExitBootServices` receives the current map key.
+The physical K16 returned v6 code 209, proving ELF admission, fixed-address
+segment allocation, and GOP discovery while narrowing the hang to
+`ExitBootServices` or the native-core path.  v7 persists code 211 after a
+successful `ExitBootServices`, then codes 220 through 229 before the kernel's
+entry, early self-tests, GDT/IDT, PIC, paging, cryptography, framebuffer,
+allocator, ACPI, and final result stages.  These records use the same bounded
+16-byte UEFI variable and still never reach a block driver.
+The physical K16 then returned v7 code 224: native entry, early self-tests,
+GDT/IDT and PIC shutdown all completed, and the stop is inside paging setup.
+v8 records the NX, table-build, NXE, write-protect, pre-CR3, post-CR3 and
+validation boundaries.  Its CR3 codes also carry the inherited handoff shape:
+260/270/280 are four-level plaintext, +1 means firmware left CR4.LA57 active,
+and +2 means the live AMD firmware CR3 carries the CPUID-reported SME C-bit.
+The replacement root preserves either condition: a fifth-level root is used
+when LA57 is already active, and encrypted RAM/table addresses inherit the
+C-bit while MMIO mappings remain unencrypted.
+The physical K16 returned v8 code 260, so its handoff is four-level and the
+firmware CR3 does not carry an SME C-bit; the stop is at the first owned CR3.
+v9 additionally records firmware CET in feature bit +4, disables the
+firmware-owned shadow-stack control before replacing its address space, and
+uses a bounded 1 GiB 2 MiB-leaf transition root.  The transition root is never
+published as `kernel_cr3`: v9 records 260+features before it, 270+features
+after it, 280+features before the final split W^X root, 300+features after that
+root, and 310+features only after the final permissions validate.
+The physical K16 also returned v9 code 260 with no feature bits.  This proves
+LA57, SME and CET were absent, but it does not distinguish the CR3 load/first
+instruction from the following C call that hands back to UEFI.  v10 makes that
+boundary observable: it clears inherited PGE (+8) and PCIDE (+16, only after
+reloading the firmware root with PCID zero), then switches to each candidate
+root, reads CR3, and switches straight back in one inline assembly block with
+no C call under the candidate map.  Durable markers 320, 352, 384, 416, 448
+and 480 (+feature bits) mean before normalization, after normalization, after
+the transition-root round trip, after the final-root round trip, after a C
+call under the final root, and final W^X validation respectively.
+The physical K16 returned v10 code 416 with no feature bits.  Both candidate
+CR3 loads and readbacks therefore passed with four-level paging and no active
+SME, CET, PGE, or PCIDE handoff bit.  v11 narrows the remaining boundary by
+entering the qualification recorder through assembly: its first instructions
+save the candidate CR3 and restore the known firmware CR3 before any C
+prologue, global access, or additional stack use.  The C SetVariable helper and
+the final reset helper now run only under the firmware map; their assembly
+entries restore the candidate root before returning.
+
+For repeated v11 trials, the diskless PXE path removes the USB move from the
+diagnostic loop.  It builds one deterministic PE/COFF file containing the
+fresh kernel and initramfs, verifies both against their compiled SHA-256
+digests, arms only the current PXE option as one-shot `BootNext`, and stores a
+bounded 16-byte qualification record in UEFI NVRAM.  The normal-user Mac
+server serves that native file once and then falls back to the read-only
+control EFI.  On the following boot, the control EFI reports
+`AIUEOS_QUALIFICATION_RESULT` over the already-qualified direct Ethernet PXE
+path and remains ready for a bounded `ping` or `reboot-pxe` command.  It never
+writes `BootOrder`, USB storage, or an internal disk.  A native-core hang can
+still require one physical power cycle because no K16 NIC driver or resident
+AIUEOS control plane exists after `ExitBootServices` yet.
+Before each native trial, the same control EFI also emits one
+`AIUEOS_RTL8125_HANDOFF` record per readable RTL8125.  It contains the exact
+PCI command, working BAR, MAC, chip command, Tx/Rx configuration and PHY status
+left by the firmware PXE driver.  This is a bounded read-only snapshot: it does
+not reset the NIC, enable DMA, acknowledge an interrupt, or modify a register.
+
+```sh
+SOURCE_DATE_EPOCH=0 \
+  ./os/aiueos/scripts/build-physical-qualification-pxe.sh
+./os/aiueos/scripts/smoke-qemu-physical-pxe.sh
+
+python3 ./os/aiueos/tools/k16-pxe-server.py \
+  --next-boot build/aiueos-physical-qualification-pxe/aiueos-k16-native-pxe.efi \
+  --control reboot-pxe
+```
+
+### K16 local inference telemetry
+
+The native GOP surface now has a versioned inference-status screen.  It shows
+the exact model and quant, admission/load/prefill/decode/complete/error phase,
+cold-load and first-token milliseconds, separate prefill and decode token
+rates, generated tokens, resident MiB, and raw compute cycles. Status ABI v2
+stores `decode_tokens` separately, so the decode rate excludes the first
+generated token instead of substituting reciprocal TTFT. An absent duration renders as
+`N/A`; raw TSC cycles are never converted with a nominal CPU clock and missing
+timing is never rendered as zero.  The persistent physical micro-inference
+profile updates this surface from the real job state and retains its measured
+cycle count while Murakumo liveness renews or reconnects.
+
+The exact first-token observations are retained in the historical
+`contracts/qwen38-27b-k16-benchmark-v1.edn`; the multi-token measurement
+boundary is pinned in
+`contracts/qwen38-27b-k16-decode-benchmark-v2.edn`: official
+`Qwen/Qwen3.8-27B` revision `1d4bf0f...`, Unsloth
+`Qwen3.8-27B-UD-IQ3_XXS.gguf` revision `4ca7207...`, 10,934,860,704 bytes,
+SHA-256 `c0b7c303...f3eee`. The historical scalar image matched token 2005
+before its linear Q/K expansion was corrected from cyclic `head % 16` to the
+official adjacent `repeat_interleave` mapping. With the corrected `head / 3`
+mapping, the physical cache-free BOS probe returns EOS token 248046; that is
+the current position-zero gate while the older runs remain historical evidence.
+The current image adds bounded greedy
+generation of eight tokens, Gated DeltaNet recurrent/causal-convolution state,
+full-attention K/V state, AVX2 with scalar rejection fallback, and a preferred
+two-thread matrix path. Its decode speed remains `N/A`, not `0 tok/s`, until
+the K16 boots this exact image and records all seven post-first-token cycles.
+
+The normal update path is now
+[`contracts/model-channel-v1.edn`](contracts/model-channel-v1.edn), not a model
+copied onto every boot USB. USB carries AIUEOS boot/recovery. Immutable model
+blocks live in Kotobase/IPFS and a signed, monotonic IPNS head selects the
+latest compatible manifest. AIUEOS plans only missing-CID downloads into an
+inactive NVMe slot, verifies every raw CID and the whole GGUF SHA-256, and
+commits activation only after the complete artifact passes. Offline, refused
+or interrupted updates keep booting the last-known-good slot.
+
+`aiueos.model-channel` implements and tests that admission/update decision.
+The guarded two-slot writer is now implemented by the pure UEFI loader and
+described by `contracts/model-nvme-slots-v1.edn`. It accepts only a dedicated,
+anchored, non-removable NVMe partition; streams into the inactive slot; reads
+the complete artifact back through Block I/O; and writes the activation
+selector last. QEMU proves A-to-B update and last-known-good recovery after a
+corrupt update. A physical K16 NVMe write and physical HTTPS model download
+remain unverified; host/QEMU tests do not turn either physical adapter green.
+The FAT32 flow below remains the explicit offline source path.
+
+OS releases use a separate channel from models. `aiueos.os-update` and
+`contracts/os-update-v1.edn` require threshold publisher admission, revocation,
+monotonic sequence and freshness before producing an immutable
+`ipfs.kotobase.net` HTTPS fetch plan. Loader, kernel and initramfs are verified
+as separate artifacts, staged to an inactive OS slot, read back in full and
+given one trial boot. A candidate is committed only after boot, storage,
+direct-HTTPS, Murakumo-node and inference health all pass; failure or bounded
+missing evidence selects the previous slot. The current K16 PXE/TFTP route is
+not this authenticated path: native K16 HTTPS artifact streaming and the OS
+NVMe writer remain unimplemented and physical update evidence is unverified.
+
+The combined physical image keeps the existing K16 RTL8125/TLS GET and uses
+the split USB bundle as this qualification's model source:
+
+```sh
+AIUEOS_OUT=build/aiueos-qwen38-model-slots-usb \
+  ./os/aiueos/scripts/build-qwen38-model-slots-usb.sh
+./os/aiueos/scripts/smoke-model-slots.sh
+./os/aiueos/scripts/smoke-qemu-model-slots.sh
+```
+
+It never formats a target at boot and never writes a Windows partition, an
+unmarked whole NVMe device, or a removable USB target. The target partition
+must be provisioned deliberately before the physical import can run. If it is
+absent, the combined image records `AIUEOS_MODEL_SLOT_DEFERRED` and continues
+the direct-HTTPS qualification without an internal-disk write.
+
+The display/telemetry model can be exercised without making a physical claim:
+
+```sh
+./os/aiueos/scripts/smoke-inference-status.sh
+```
+
+For a FAT32 recovery USB, fetch the pinned artifact directly as three files.
+Every HTTPS 206 range is first checked in a bounded temporary chunk, interrupted
+parts resume from their verified prefix, and the final three-file stream must
+match the whole-artifact SHA-256:
+
+```sh
+./os/aiueos/scripts/fetch-qwen38-model-bundle.sh /Volumes/AIUEOSMODEL
+./os/aiueos/scripts/smoke-qwen38-ranged-bundle.sh
+```
+
+On a filesystem that supports files larger than 4 GiB, the whole-artifact
+offline recovery path remains available:
+
+```sh
+./os/aiueos/scripts/fetch-qwen38-27b-model.sh /path/to/model-volume
+```
+
+The downloader resumes only its `.partial` file and promotes it only after
+both the byte count and SHA-256 match.  Fetching the file still does not make
+the native GGUF runtime present.
+
+Prepare an attached FAT32 model volume, then build the pure native PXE image:
+
+```sh
+./os/aiueos/scripts/prepare-qwen38-model-bundle.sh \
+  /path/to/model-volume/Qwen3.8-27B-UD-IQ3_XXS.gguf /Volumes/AIUEOSMODEL
+AIUEOS_OUT=build/aiueos-qwen38-model-handoff-pxe \
+  ./os/aiueos/scripts/build-qwen38-model-handoff-pxe.sh
+```
+
+Boot the resulting EFI through PXE while the model volume is attached.  The
+loader searches attached UEFI filesystems after the PXE boot device, so the
+recovery USB may carry weights; neither the USB nor the internal SSD is written
+at runtime. `AIUEOS_MODEL_HANDOFF_OK` proves exact artifact admission and the
+read-only/NX mapping, not inference.  The screen deliberately keeps load,
+prefill, decode and first-token values at `N/A` until a real runtime measures
+them.
+
+The transport gates are reproducible without a physical claim:
+
+```sh
+./os/aiueos/scripts/smoke-model-handoff.sh
+./os/aiueos/scripts/smoke-qemu-model-handoff.sh
+AIUEOS_MODEL_CORRUPT=1 ./os/aiueos/scripts/smoke-qemu-model-handoff.sh
+```
+
+That produces a synthetic `QEMU UI TEST` frame only.  A passing final K16 cell
+requires the exact artifact hash, a non-empty real token sequence, cold load,
+prefill, decode, first-token and peak-resident measurements, and equality
+between the saved record and the values shown on screen.
+
+The QEMU smoke boots a FAT view containing only `BOOTX64.EFI`, then substitutes
+the control EFI behind the same boot option while retaining the variable
+store.  Its green result proves embedding, admission, native-core completion,
+result persistence, control fallback, and deterministic rebuilding in QEMU;
+it deliberately reports `physical-k16=unverified`.  Only the subsequent K16
+`state=success code=0` observation can satisfy the physical gate in
+`contracts/physical-qualification-pxe-v1.edn`.
+
+```sh
+SOURCE_DATE_EPOCH=0 ./os/aiueos/scripts/build-physical-qualification-usb.sh
+./os/aiueos/scripts/smoke-qemu-physical-loader-failure.sh
+./os/aiueos/scripts/smoke-qemu-physical-loader-hang.sh
+./os/aiueos/scripts/smoke-qemu-physical-kernel-hang.sh
+```
+
+After `RESULT SAVED. REMOVE USB AND CONNECT IT TO THE MAC.`, power off and move
+the USB to the Mac.  `AIUEOS RSLT` mounts without an administrator password,
+with `PROBE.LOG` and `RESULT.LOG` at its root.  Check the result without
+interpreting the raw log by running:
+
+```sh
+./os/aiueos/scripts/check-physical-qualification-result.sh
+```
+
+An optional user-level LaunchAgent can watch for an attached volume (no
+`sudo`):
+
+```sh
+./os/aiueos/scripts/install-macos-result-watcher.sh
+```
+
+The latest automatic decision is written to
+`~/Library/Logs/AIUEOS/latest-result.txt`.  macOS privacy controls can deny a
+background LaunchAgent access to `/Volumes` even when the interactive checker
+works, so the interactive command above remains the authoritative retrieval
+path unless Full Disk Access has been explicitly granted.  This watcher is
+mount-triggered result retrieval, not the still-gated DbC real-time transport.
+
+For the K16, the real-time path is qualified separately with the xHCI Debug
+Capability.  The dedicated UEFI probe does not open block I/O, leave firmware
+boot services, write the USB at runtime, or touch an internal disk.  It exposes
+one vendor-defined SuperSpeed bulk interface to the Mac and keeps the five DbC
+controllers observed on the physical K16 armed while the normal-user libusb
+receiver reconnects automatically:
+
+```sh
+SOURCE_DATE_EPOCH=0 ./os/aiueos/scripts/build-dbc-live-usb.sh
+receiver=$(./os/aiueos/scripts/build-dbc-receiver.sh)
+"$receiver"
+```
+
+`AIUEOS_DBC_MAC_CONNECTED`, a received `AIUEOS_DBC_LIVE` heartbeat, and then a
+later heartbeat with `rx>=1` are all required.  Together they prove K16-to-Mac
+streaming and a Mac-to-K16 acknowledgement.  A compiled client or a visible
+Type-C cable alone is not physical transport evidence.  The exact gate is in
+`contracts/dbc-live-v1.edn`.
+
+It prints `AIUEOS_K16_PHYSICAL_RESULT_OK` only when the native-core result and
+the required read-only probe markers are both present.  The
+exact v11 gate and later SSD-install prerequisites are in
+`contracts/physical-qualification-usb-v11.edn`; v1 through v10 remain historical
+contracts.  Secure Boot must be disabled for this unsigned
+development image.  A green QEMU result is build evidence, not a physical K16
+result.
 
 The release-image command creates a deterministic 64 MiB GPT raw disk image
 with a protective MBR and a FAT32 EFI System Partition. The ESP contains
@@ -616,16 +962,158 @@ write and store something else, which is invisible without readback. There is
 deliberately no "find my USB stick" mode; the one time it guessed wrong it
 would destroy a disk.
 
-`contracts/usb-boot-v1.edn` carries these properties as checkable data,
-including the gaps: **USB boot is proved under OVMF in QEMU only**. No physical
-machine has booted this image, so real-hardware firmware quirks (USB 2 vs 3
-enumeration, per-vendor fallback-path handling) are untested. The bare-metal
+`contracts/usb-boot-v1.edn` carries these properties as checkable data.  Its
+original USB image was proved under OVMF only; the subsequent K16 qualification
+images have booted far enough on the physical machine to return bounded stage
+codes, but a normal AIUEOS boot is still unproved.  Real-hardware firmware
+quirks and the complete native runtime therefore remain qualification gates. The bare-metal
 profile's network stack (ADR-0020..0087: virtio-net, DHCPv4, DNS, TCP,
 TLS 1.3, HTTPS GET with CID verification) is proved under QEMU only — the one
 link-layer driver is virtio-net-pci, so on a physical machine the node boots
 on the offline floor (`AIUEOS_VIRTIO_NET_ABSENT`) until a physical-NIC driver
 exists. ADR-0019's original "no network stack at all" was superseded by that
 chain; see `contracts/usb-boot-v1.edn` `:gaps` for the current split.
+
+The RTL8125 physical-link slice is in `kernel/rtl8125.c`. It is a
+bounded **PXE handoff**, not a general Realtek driver: after UEFI has powered
+and calibrated the PHY, it drains the firmware rings, installs one aligned TX
+and one aligned RX descriptor, preserves the firmware PHY/MCU setup, masks
+interrupts, and polls ownership with bounded callers.  The persistent direct
+worker also answers only an ARP request whose Ethernet sender, ARP sender,
+gateway address and K16 target address match the peer admitted at boot.  This
+refreshes the Mac's neighbor entry while the K16 is waiting for DNS or TLS and
+prevents a healthy outbound worker from becoming one-way after cache expiry.
+Before every short TLS connection, the driver also stops the already-owned
+engine, waits for a bounded FIFO-empty indication, and reinstalls both single
+descriptor rings. This discards late records from the prior TCP four-tuple
+without rereading the overwritten hardware-revision bits or touching PHY/MCU
+calibration.
+The pure profile now has the corresponding first transport slice in
+`native/rtl8125.kotoba`. It probes only the two BDFs observed on the K16
+(`02:00.0` and `03:00.0`), validates the Realtek device ID and memory BAR,
+installs a 2 MiB UC/RW/NX mapping, owns four zeroed DMA pages, drains and
+restarts a one-descriptor TX/RX pair, and admits only the expected
+10.77.0.10-to-10.77.0.1 ARP exchange. QEMU proves that absence of RTL8125 is
+bounded and leaves the boot marker unchanged. This is not yet physical proof;
+the C reference remains the only path with an observed K16 ARP/TLS/Qwen run.
+The 2026-08-31 physical K16 run in
+`contracts/physical-persistent-worker-k16-v1.edn` records the resulting
+end-to-end control loop: repeated signed polls, an operator-created
+`reboot-pxe`, a separate signed device ACK, UEFI cold reset, a second PXE
+transfer, a changed boot ID, and renewed Murakumo polls without another button
+press. Two stage-11 poll failures recovered within the bounded retry loop, so
+the receipt calls polling recovered rather than lossless. It does not promote
+the uncaptured server `ready` field or unmeasured decode throughput.
+The host model exercises
+the observed K16 MAC, an RTL8125B revision case, descriptor programming, TX
+completion, RX FCS removal, rearming and the peer-bound ARP reply:
+
+```sh
+os/aiueos/scripts/smoke-rtl8125-handoff.sh
+os/aiueos/scripts/smoke-micro-infer.sh
+os/aiueos/scripts/smoke-job-protocol.sh
+```
+
+`AIUEOS_RTL8125_MODEL_OK` proves the register/descriptor state machine only.
+The physical qualification build now selects the backend and stages progressively
+stronger checks: an ARP round trip, a boot-nonce-bound UDP relay, authenticated
+Murakumo enrollment through the Mac-held service token, and one claimed bounded
+inference job.  The K16 computes the job with the frozen
+`aiueos-char-bigram-v1` transition matrix, returns the boot- and job-bound result,
+and accepts a commit only after the relay has persisted that result and posted a
+ready heartbeat.  It then answers boot- and sequence-bound liveness pings; the
+Mac relay renews the server-observed heartbeat only after each physical pong, so
+the node cannot remain live merely because the Mac process is still running.
+While live, the relay polls the queue with the K16 DID. K16-only jobs carry a
+matching `target-did`; Murakumo hides them from generic pollers and rejects a
+claim whose worker DID differs. It claims only an exact `aiueos-micro-infer`
+job whose bounded prompt has a nonempty row in the frozen model. The same K16
+executes each admitted job, and each result must be
+persisted and committed before the worker accepts the next event.  Thus the
+qualification job is the admission gate, not the only job the boot can run.
+The result records a serialized TSC cycle delta around the native model and a
+separate Mac-monotonic K16 relay round trip. The latter is rounded up to a
+positive millisecond for Murakumo's run ledger; it is no longer written as the
+placeholder `0`. Cycles are not converted to native wall time until the K16's
+TSC frequency has been measured in the same physical boot.
+Build and QEMU-negative-path coverage is available with:
+
+```sh
+os/aiueos/scripts/smoke-qemu-physical-job.sh
+```
+
+The relay accepts its DID and service token from owner-only regular files,
+never from the EFI image or the LaunchAgent plist.  Its preflight authenticates
+to the live queue without enrolling a node:
+
+```sh
+AIUEOS_PXE_BOOT=build/aiueos-physical-job-pxe/aiueos-k16-native-pxe.efi \
+  os/aiueos/scripts/run-k16-murakumo-pxe.sh --preflight
+```
+
+After a clean physical image has been built and proved, the macOS user
+LaunchAgent installer copies that exact receipt-bound image and relay into
+Application Support and can restart it after login without an administrator
+password.  It refuses dirty or receipt-mismatched images.  Preparing with
+`AIUEOS_PXE_INSTALL_NO_LOAD=1` does not replace a currently running PXE server.
+
+The exact scope and known answer are in
+`contracts/micro-inference-qualification-v1.edn`.  This remains a physical
+qualification path: AMD-IOMMU isolation is not in the RTL8125 path, and a fixed
+character-bigram model is not a production LLM/GPU workload. The current
+topology still terminates Murakumo HTTPS and holds the operator credential on
+the Mac relay; target-bound queue routing is a direct logical dispatch to the
+K16, not device-owned HTTPS/CACAO or a network-direct K16-to-Murakumo path.
+None of these checks authorizes an internal-SSD write.
+
+The next direct-path prerequisite is executable without changing that claim.
+`os/aiueos/scripts/smoke-tls13-murakumo-profile.sh` verifies the bounded native
+TLS profile for SNI `api.murakumo.cloud` and `GET /infer/queue`; setting
+`AIUEOS_TLS13_LIVE=1` measures the same record engine against the live endpoint.
+Its receipt says `trust=transport-only physical-k16=unverified` because native
+chain/hostname admission and physical K16 execution remain red (ADR-0114).
+
+The next diskless image connects that exact profile to the K16 RTL8125 path:
+
+```sh
+os/aiueos/scripts/build-physical-direct-https-pxe.sh
+os/aiueos/scripts/smoke-qemu-physical-direct-https.sh
+```
+
+It sends a bounded DNS request to `10.77.0.1:1053` and opens its native TLS
+session through `10.77.0.1:8443`; the passwordless Mac user service forwards
+only opaque TLS bytes to `api.murakumo.cloud:443`. The Mac does not terminate
+TLS or hold an account/device credential, but it remains an L4 forwarding
+dependency rather than a standalone routed Internet connection. The image
+contains no account token, Wi-Fi secret or CACAO. Source/build and bounded
+missing-device behavior are verified; a real K16 reboot is still required
+before the physical state can become green.
+Even after an HTTP 200, the label remains `trust=transport-only` until native
+certificate-chain and hostname/SAN admission land (ADR-0115).
+
+The Qwen qualification result extends that transport profile with a
+device-owned P-256 key and a bounded signed POST:
+
+```sh
+os/aiueos/scripts/build-qwen38-murakumo-node-pxe.sh
+```
+
+The first boot generates a valid P-256 scalar from CPU RDRAND and persists it
+as the UEFI NVRAM variable `AIUEOSDeviceP256Key`; later boots retain the same
+standard P-256 `did:key`. After exact GGUF admission and the native first-token
+check, the K16 posts `/infer/nodes/device-p256-result` over its own TLS session.
+The v2 receipt binds the device public key, boot nonce, model digest, first two
+sequential tokens, generated/decode counts, first-token/decode/total cycles,
+AVX2 width, worker count, and a UEFI-calibrated TSC rate. Murakumo continues to
+accept the older v1 receipt while new images sign `aiueos-k16-result-v2` and
+`aiueos-k16-worker-v2`.
+Murakumo enrolls this self-asserted identity only as `Community/pending` and
+keeps `ready=false` until persistent worker polling starts. A v2 multi-token
+receipt reports decode tokens/second only from the seven tokens after the
+first. Device-P256 is deliberately not
+called CACAO and does not imply Passkey account binding, post-quantum
+authentication, Biscuit delegation, TPM sealing, or AWAI Secure admission.
+The image writes neither the model USB nor the internal SSD.
 
 `verify-release-signature.py` verifies an RSA-2048 PKCS#1 v1.5 SHA-256
 signature over the build receipt using only the Python standard library
@@ -811,19 +1299,24 @@ ExitBootServices before entering the kernel. The hard-flip boot chain has no C,
 CRT, foreign object, linker, interpreter, import table, or dynamic dependency.
 Its final memory map resides in a compiler-owned bounded 16 KiB RW region.
 The kernel derives that region from boot-info rather than trusting a loaded
-pointer as authority, admits a contiguous five-page UEFI Conventional Memory
-extent inside the identity-mapped physical window, derives five non-overlapping
-authorities, and zeros all 4,096 bytes of each before use. The first page is a
-boot-lifetime five-slot ownership bitmap; the next three are PML4, PDPT, and PD;
-the fifth proves release and reuse. Kotoba writes and reads back a 512-entry
-2 MiB-page identity map for the first GiB, loads its PML4 into CR3, reads CR3
-back, invalidates one mapped address, and continues executing under that map.
-The success path
-itself rejects a duplicate claim and a double-free, then requires the released
-slot to be claimed again before emitting `MPRC`. This is persistent across
-allocator operations during one boot, not durable across reboot, and it is not
-yet a general map-indexed allocator. The first-GiB map is deliberately RW and
-executable, so this slice does not claim W^X. Real QEMU
+pointer as authority, admits a contiguous fourteen-page UEFI Conventional
+Memory extent inside the identity-mapped physical window, derives fourteen
+non-overlapping authorities, and zeros all 4,096 bytes of each before use. The
+first page is a boot-lifetime fourteen-slot ownership bitmap; the next four are
+PML4, PDPT, PD, and a low-memory PT; three pages prove release/reuse and hold
+the page-fault recovery frame and dedicated handler stack; two pages hold
+uncached/NX RTL8125 page directories; and the final four pages are the one TX,
+one RX, TX-frame, and RX-frame DMA authorities. Kotoba writes and reads back
+the complete first-GiB identity map, but the low 2 MiB is split into 4 KiB
+leaves. Page `0x100000` is unmapped, compiler-reported kernel text is RX, any
+RX/RW alignment gap is unmapped, kernel state is RW+NX, and the remaining
+identity map is RW+NX. The kernel enables EFER.NXE and CR0.WP with readback,
+loads its PML4 into CR3, reads CR3 back, invalidates one mapped address, and
+continues executing under that map. The success path rejects a duplicate claim
+and a double-free, then requires the released slot to be claimed again before
+emitting `MPRCD`. This is persistent across allocator operations during one
+boot, not durable across reboot, and it is not yet a general map-indexed
+allocator. Real QEMU
 mutations reject a complete map with no admitted extent, an overlapping second
 authority, a claim implementation that accepts the wrong ownership state, a
 non-present PML4 link, and a retained firmware CR3.

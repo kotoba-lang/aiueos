@@ -45,7 +45,7 @@
  :call {:entry 'aiueos-murakumo-join-plan
         :arity 4
         :arguments [{:name :node
-                     :bits {0-1 :tier, 2 :inbound-reachable}}
+                     :bits {:0..1 :tier, 2 :inbound-reachable}}
                     {:name :kind :domain :work-kinds}
                     {:name :mem-request
                      ;; `present` is packed INTO the request to keep upstream's
@@ -90,7 +90,30 @@
          Until both are settled this object is a verified artifact, not an
          admitted application."}
   :transport
-  {:state :absent
-   :why "Deciding to join is not joining. The bare-metal profile has no network
-         stack, so a node can compute its participation plan and cannot yet act
-         on it. Reaching murakumo.cloud belongs to the hosted profile."}}}
+  {:state :partial
+   :network-stack {:state :present-qemu-proven
+                   :layers [:virtio-net :dhcpv4 :dns :tcp :tls13 :https-get]
+                   :physical-k16 :unverified}
+   :physical-link
+   {:rtl8125-pxe-handoff {:state :implemented-model-proven
+                          :rings {:tx 1 :rx 1}
+                          :firmware-phy-calibration :retained
+                          :kernel-wiring :physical-qualification-profile
+                          :physical-state :unverified}
+    :why "The K16 has RTL8125, not virtio-net. The bounded handoff driver now
+          takes over a firmware-initialized PXE link and pci.c selects it only
+          in the diskless physical-network qualification profile. The model and
+          QEMU no-device refusal are proved; no K16 frame has yet been
+          transmitted or received by AIUEOS."}
+   :murakumo-heartbeat
+   {:state :relay-enrollment-implemented-native-unverified
+    :why "A hosted Murakumo resident can authenticate and heartbeat, but the
+          native AIUEOS HTTP path is still a fixed GET. A request-bound UDP
+          round trip to the directly attached Mac relay can now trigger
+          operator-authenticated enrollment and a live-but-not-ready heartbeat.
+          The operator token never enters the EFI image. Physical proof,
+          device-owned persistent identity, heartbeat renewal, job execution
+          and result return remain explicit gates."}
+   :why "Deciding to join is not joining. QEMU proves the upper network layers;
+         physical RTL8125 wiring, authenticated heartbeat and inference remain
+         explicit gates."}}}

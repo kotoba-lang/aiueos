@@ -5,6 +5,7 @@
   `clojure -M:phone-bind smoke` (and `pre-enroll`). These tests name the
   reasons a bind is refused so a silent pass cannot stand in for a phone."
   (:require [aiueos.phone-bind :as pb]
+            [cacao.core :as cacao]
             [clojure.test :refer [deftest is testing]]
             [grant.enroll :as enroll]))
 
@@ -58,6 +59,39 @@
         "bridge --hig-* tokens onto DADS")
     (is (not (re-find #"liquid-glass" html)))))
 
+(deftest aiueos-device-flow-uses-the-canonical-namespaced-authority
+  (is (= "https://auth.kotoba.cloud/v1/aiueos/device/start"
+         pb/device-auth-start))
+  (is (= "https://auth.kotoba.cloud/v1/aiueos/device/poll"
+         pb/device-auth-poll))
+  (is (= "auth.kotoba.cloud" pb/device-auth-rp-id))
+  (is (not= "https://auth.kotoba.cloud/v1/device/start"
+            pb/device-auth-start)
+      "the pre-existing generic Device Code route is a different contract"))
+
+(deftest device-owned-cacao-and-network-envelope-roundtrip
+  (let [device (pb/ensure-operational-keys (pb/mint-unbound-device {}))
+        minted (pb/device-cacao device {})
+        checked (cacao/verify (:cacao-b64 minted))
+        flow {:flow-id "flow-network-roundtrip"
+              :challenge "challenge-network-roundtrip"}
+        profile {:version 1 :ssid "K16 Lab" :security "wpa3-personal"
+                 :passphrase "correct-horse-battery-staple"
+                 :hiddenNetwork false :autoConnect true}
+        envelope (pb/encrypt-network-profile device flow profile)
+        opened (pb/decrypt-network-envelope device flow envelope)]
+    (is (:valid? checked))
+    (is (= (:signing-did device) (:iss checked)))
+    (is (= "https://api.murakumo.cloud" (get-in checked [:payload :aud])))
+    (is (= "x25519-hkdf-sha256-aes-256-gcm-v1" (:suite envelope)))
+    (is (= (select-keys profile [:version :ssid :security :passphrase
+                                :hiddenNetwork :autoConnect])
+           (select-keys opened [:version :ssid :security :passphrase
+                                :hiddenNetwork :autoConnect])))
+    (is (not (re-find #"K16 Lab|correct-horse"
+                      (pr-str envelope)))
+        "the authority-visible envelope must contain no Wi-Fi plaintext")))
+
 (deftest p1c-copied-grant-cannot-bind-a-second-device
   (let [grant {:aiueos.enroll/kind :pre-grant
                :nonce "once-only"
@@ -82,17 +116,164 @@
 (deftest p1b-http-phone-client-binds-without-guest-console
   (let [dir (java.io.File. (str (System/getProperty "java.io.tmpdir")
                                 "/aiueos-pb-http-" (System/nanoTime)))
-        rt (pb/start-http! (pb/make-runtime {:dir dir :listen-port 0}))
+        authority-state (atom {:polls 0})
+        authority-client
+        (fn [operation request]
+          (case operation
+            :start
+            (do (swap! authority-state assoc :start request)
+                {:status 201
+                 :body {:flowId "flow_0123456789abcdefghijklmnopqrstuvwxyzABCDEFG"
+                        :pollToken "private-device-poll-token-0123456789abcdef"
+                        :verificationUri "https://auth.kotoba.cloud/aiueos/device"
+                        :verificationUriComplete
+                        "https://auth.kotoba.cloud/aiueos/device?flow=flow_0123456789abcdefghijklmnopqrstuvwxyzABCDEFG"
+                        :expiresIn 300
+                        :interval 2}})
+            :poll
+            (let [n (:polls (swap! authority-state update :polls inc))
+                  start (:start @authority-state)]
+              (swap! authority-state assoc :poll request)
+              (if (= 1 n)
+                {:status 202 :body {:state "authorization_pending" :interval 2}}
+                {:status 200
+                 :body {:valid true
+                        :flowId "flow_0123456789abcdefghijklmnopqrstuvwxyzABCDEFG"
+                        :deviceDid (:deviceDid start)
+                        :challenge (:challenge start)
+                        :model (:model start)
+                        :method (:method start)
+                        :principalId "urn:kotoba:principal:test"
+                        :accountDid "did:kotoba:account:test"
+                        :activeDid "did:key:z6MkPhonePasskey"
+                        :authority "https://auth.kotoba.cloud"
+                        :rpId "auth.kotoba.cloud"
+                        :deviceSigningPublicKey (:deviceSigningPublicKey start)
+                        :deviceEncryptionPublicKey (:deviceEncryptionPublicKey start)
+                        :userPresent true
+                        :userVerified true
+                        :passkeyVerified true}}))
+            {:status 500 :body {}}))
+        rt (pb/start-http!
+            (pb/make-runtime {:dir dir :listen-port 0
+                              :device-auth-authority-client authority-client}))
         printed (pb/print-chassis! rt)]
     (try
       (is (re-find #"^http://127\.0\.0\.1:\d+/#setup$" (:url printed)))
-      (is (re-find #"^aiueos:1;" (:qr printed)))
+      (is (re-find #"^aiueos:2;" (:qr printed)))
+      (is (not (re-find #"token=" (:qr printed)))
+          "a scanned code must not expose the device enrollment token")
+      (let [setup (:body (pb/http-get (str (pb/base-url rt) "/setup.json")))]
+        (is (re-find #"\"claim_secret_exposed\":false" setup))
+        (is (re-find #"\"auth_authority\":\"https://auth.kotoba.cloud\"" setup))
+        (is (not (re-find #"\"token\"" setup))))
       (let [bind (pb/phone-bind-http (pb/base-url rt) "acct:test")]
         (is (= 200 (:code bind)))
         (is (= "grant" (get-in bind [:parsed (keyword "aiueos/decision")])))
         (is (.isFile (pb/receipt-file dir))))
+      (let [plan (pb/http-get (str (pb/base-url rt) "/api/device-auth/plan"))
+            challenge (pb/http-post
+                       (str (pb/base-url rt) "/api/device-auth/challenge")
+                       {:method "phone-scan"})
+            qr-image (pb/http-get
+                      (str (pb/base-url rt) "/api/device-auth/qr"))
+            pending (pb/http-post
+                     (str (pb/base-url rt) "/api/device-auth/complete")
+                     {:verified true})
+            complete (pb/http-post
+                      (str (pb/base-url rt) "/api/device-auth/complete")
+                      {:verified false})
+            replay (pb/http-post
+                    (str (pb/base-url rt) "/api/device-auth/complete")
+                    {:verified true})]
+        (is (= 200 (:code plan)))
+        (is (re-find #"\"engine\":\"kotoba-lang/browser\"" (:body plan)))
+        (is (= "authority-pending"
+               (get-in challenge [:parsed :verification])))
+        (is (= "https://auth.kotoba.cloud"
+               (get-in challenge [:parsed :authority])))
+        (is (= "auth.kotoba.cloud"
+               (get-in challenge [:parsed :rp_id])))
+        (is (= "https://auth.kotoba.cloud/aiueos/device?flow=flow_0123456789abcdefghijklmnopqrstuvwxyzABCDEFG"
+               (get-in challenge [:parsed :scan_payload])))
+        (is (not (re-find #"private-device-poll-token" (:body challenge)))
+            "the node-only poll token never reaches the browser response")
+        (is (= 200 (:code qr-image)))
+        (is (re-find #"^<svg .*AIUEOS device approval QR" (:body qr-image)))
+        (is (not (re-find #"private-device-poll-token" (:body qr-image)))
+            "the QR contains only the public approval URL")
+        (is (= 202 (:code pending)))
+        (is (= "continue" (get-in pending [:parsed :decision]))
+            "client verified=true cannot outrank a pending authority")
+        (is (= 200 (:code complete)))
+        (is (= "grant" (get-in complete [:parsed :decision]))
+            "client verified=false cannot negate a verified authority result")
+        (is (= "urn:kotoba:principal:test"
+               (get-in complete [:parsed :principal_id])))
+        (is (= 409 (:code replay))
+            "the consumed authority result has no local replay path")
+        (is (= "private-device-poll-token-0123456789abcdef"
+               (get-in @authority-state [:poll :pollToken])))
+        (is (= "flow_0123456789abcdefghijklmnopqrstuvwxyzABCDEFG"
+               (get-in @authority-state [:poll :flowId])))
+        (is (re-matches #"[A-Za-z0-9_-]{43}"
+                        (get-in @authority-state [:start :deviceSigningPublicKey])))
+        (is (re-matches #"[A-Za-z0-9_-]{43}"
+                        (get-in @authority-state [:start :deviceEncryptionPublicKey])))
+        (is (re-matches #"[A-Za-z0-9_-]{86}"
+                        (get-in @authority-state [:start :deviceProof])))
+        (is (re-matches #"[A-Za-z0-9_-]{86}"
+                        (get-in @authority-state [:poll :deviceProof])))
+        (is (.isFile (pb/device-auth-file dir)))
+        (is (.isFile (pb/device-auth-receipt-file dir)))
+        (is (not (re-find #"private-device-poll-token"
+                          (slurp (pb/device-auth-file dir))))))
       (finally
         (pb/stop-http! rt)))))
+
+(deftest device-authority-result-must-match-the-exact-origin-and-device
+  (let [dir (java.io.File. (str (System/getProperty "java.io.tmpdir")
+                                "/aiueos-device-bind-deny-" (System/nanoTime)))
+        started (atom nil)
+        client (fn [operation request]
+                 (case operation
+                   :start
+                   (do (reset! started request)
+                       {:status 201
+                        :body {:flowId "flow_0123456789abcdefghijklmnopqrstuvwxyzHIJKLM"
+                               :pollToken "poll_0123456789abcdefghijklmnopqrstuvwxyzHIJKLM"
+                               :verificationUri "https://auth.kotoba.cloud/aiueos/device"
+                               :verificationUriComplete
+                               "https://auth.kotoba.cloud/aiueos/device?flow=flow_0123456789abcdefghijklmnopqrstuvwxyzHIJKLM"
+                               :expiresIn 300 :interval 2}})
+                   :poll
+                   {:status 200
+                    :body {:valid true
+                           :flowId "flow_0123456789abcdefghijklmnopqrstuvwxyzHIJKLM"
+                           :deviceDid (:deviceDid @started)
+                           :challenge (:challenge @started)
+                           :model (:model @started)
+                           :method (:method @started)
+                           :principalId "urn:kotoba:principal:test"
+                           :accountDid "did:kotoba:account:test"
+                           :activeDid "did:key:z6MkPhonePasskey"
+                           :authority "https://evil.example"
+                           :rpId "auth.kotoba.cloud"
+                           :deviceSigningPublicKey (:deviceSigningPublicKey @started)
+                           :deviceEncryptionPublicKey (:deviceEncryptionPublicKey @started)
+                           :userPresent true :userVerified true
+                           :passkeyVerified true}}))
+        rt (pb/make-runtime {:dir dir :listen-port 0
+                             :device-auth-authority-client client})
+        challenge (pb/handle-device-auth-challenge rt "passkey")
+        denied (pb/handle-device-auth-complete rt {:verified true})]
+    (is (= 200 (:http-status challenge)))
+    (is (= 401 (:http-status denied)))
+    (is (= "authority-result-binding-invalid" (:reason denied)))
+    (is (nil? @(:device-auth-flow rt))
+        "a malformed 200 result cannot be retried into a grant")
+    (is (not (.isFile (pb/device-auth-file dir))))
+    (is (not (.isFile (pb/device-auth-receipt-file dir))))))
 
 (deftest clojure-m-test-is-not-the-p1b-gate
   (is (nil? (System/getenv "AIUEOS_PHONE_BIND_COUNTED_UNRELATED_SUITE"))

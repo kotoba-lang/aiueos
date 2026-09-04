@@ -594,4 +594,18 @@
                 w2 (s-store out workspace 6 32 (* 0 wr))]
             (+ 1 (* 0 w2))))))))
 
+(defn aiueos-ecdsa-p256-public [priv out workspace]
+  (let [ld (s-load priv workspace 2 0)
+        fn (e-fill workspace 27 1 (* 0 ld))
+        fp (e-fill workspace 28 0 (* 0 fn))
+        gx (e-fill workspace 13 2 (* 0 fp))
+        gy (e-fill workspace 14 3 (* 0 gx))
+        inf (e-jac-set-inf workspace)
+        sm (e-scalarmul workspace 2 13 14 (+ 255 (* 0 (+ inf gy))))
+        af (e-to-affine workspace)]
+    (if (= (e-jac-inf? workspace) 1) 0
+      (let [wx (s-store out workspace 10 0 (* 0 af))
+            wy (s-store out workspace 11 32 (* 0 wx))]
+        (+ 1 (* 0 wy))))))
+
 (defn main [] 0)

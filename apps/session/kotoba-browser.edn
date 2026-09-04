@@ -1,0 +1,23 @@
+{:aiueos.ui/contract-version 1
+ :aiueos.ui/engine :kotoba-lang/browser
+ :aiueos.ui/document :aiueos/session
+ :aiueos.ui/design-system :jp-go-dds
+ :aiueos.ui/desktop-backend {:contract-version 1
+                             :required-capabilities [:frame/present :input/events]
+                             :privileged-capabilities [:clipboard/read
+                                                       :clipboard/write
+                                                       :file-picker/open
+                                                       :file-picker/save]
+                             :privileged-effects :grant-brokered}
+ :aiueos.ui/actions {:device-auth/start-passkey
+                     {:requires [:account/passkey :device/challenge]
+                      :completes :device/claim}
+                     :device-auth/start-phone-scan
+                     {:requires [:phone/passkey :phone/approval :device/challenge]
+                      :completes :device/claim}}
+ :aiueos.ui/hosted-adapter {:runtime :html-js
+                            :scope :verification-only
+                            :counts-as-native-kotoba-browser? false}
+ :aiueos.ui/native-runtime {:runtime :kotoba-clj/wasm
+                            :state :pending-native-browser-guest
+                            :javascript-required? false}}

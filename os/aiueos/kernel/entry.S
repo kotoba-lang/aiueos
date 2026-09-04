@@ -50,12 +50,92 @@ aiueos_load_idt:
 .type aiueos_isr_invalid_opcode,@function
 aiueos_isr_invalid_opcode:
   cli
-  mov $6, %edi
+  pushq $0
+  pushq $6
+  jmp aiueos_fatal_common
+
+/* Every CPU exception this kernel does not otherwise service ends here
+   (ADR-0199).  Mechanism only: it hands the frame the CPU pushed to the C
+   reporter, which renders one line and terminates the machine through
+   isa-debug-exit.  The old shape -- `hlt; jmp .` -- is what made a dead guest
+   indistinguishable from a QEMU flake: the process kept running and the
+   harness could only time out.
+
+   The frame this expects, built by the stubs below:
+     0(%rsp) vector   8(%rsp) error code (0 when the CPU pushes none)
+    16(%rsp) RIP     24(%rsp) CS        32(%rsp) RFLAGS
+    40(%rsp) RSP     48(%rsp) SS
+   %rsp is realigned only AFTER the reads, so the offsets stay literal. */
+.global aiueos_fatal_common
+.type aiueos_fatal_common,@function
+aiueos_fatal_common:
+  mov 0(%rsp), %rdi
+  mov 8(%rsp), %rsi
+  mov 16(%rsp), %rdx
+  mov 40(%rsp), %rcx
+  mov %cr2, %r8
+  mov 32(%rsp), %r9
   and $-16, %rsp
   call aiueos_exception_dispatch
 3:
+  cli
   hlt
   jmp 3b
+
+/* Two stub shapes because the CPU pushes an error code for ten of the
+   thirty-two vectors and not for the rest.  Pushing a zero in the no-error
+   case keeps ONE frame layout, so the common path above has no branch and
+   cannot read the RIP from the wrong slot -- a mistake that would print a
+   plausible address for the wrong instruction. */
+.macro AIUEOS_FATAL_NOERR vector
+.global aiueos_isr_fatal_\vector
+.type aiueos_isr_fatal_\vector,@function
+aiueos_isr_fatal_\vector:
+  cli
+  pushq $0
+  pushq $\vector
+  jmp aiueos_fatal_common
+.endm
+
+.macro AIUEOS_FATAL_ERR vector
+.global aiueos_isr_fatal_\vector
+.type aiueos_isr_fatal_\vector,@function
+aiueos_isr_fatal_\vector:
+  cli
+  pushq $\vector
+  jmp aiueos_fatal_common
+.endm
+
+AIUEOS_FATAL_NOERR 0
+AIUEOS_FATAL_NOERR 1
+AIUEOS_FATAL_NOERR 2
+AIUEOS_FATAL_NOERR 3
+AIUEOS_FATAL_NOERR 4
+AIUEOS_FATAL_NOERR 5
+AIUEOS_FATAL_NOERR 7
+AIUEOS_FATAL_ERR   8
+AIUEOS_FATAL_NOERR 9
+AIUEOS_FATAL_ERR   10
+AIUEOS_FATAL_ERR   11
+AIUEOS_FATAL_ERR   12
+AIUEOS_FATAL_ERR   13
+AIUEOS_FATAL_NOERR 15
+AIUEOS_FATAL_NOERR 16
+AIUEOS_FATAL_ERR   17
+AIUEOS_FATAL_NOERR 18
+AIUEOS_FATAL_NOERR 19
+AIUEOS_FATAL_NOERR 20
+AIUEOS_FATAL_ERR   21
+AIUEOS_FATAL_NOERR 22
+AIUEOS_FATAL_NOERR 23
+AIUEOS_FATAL_NOERR 24
+AIUEOS_FATAL_NOERR 25
+AIUEOS_FATAL_NOERR 26
+AIUEOS_FATAL_NOERR 27
+AIUEOS_FATAL_NOERR 28
+AIUEOS_FATAL_ERR   29
+AIUEOS_FATAL_ERR   30
+AIUEOS_FATAL_NOERR 31
 
 .global aiueos_isr_apic_timer
 .type aiueos_isr_apic_timer,@function
@@ -278,10 +358,14 @@ aiueos_isr_page_fault:
   add $8, %rsp
   iretq
 6:
+  /* Not one of the three deliberate probes: a real page fault.  Restore the
+     scratch register and the CPU's own frame, then take the same reporting
+     path as every other fatal vector.  It used to write 0x7b and jump into
+     the #UD stub's halt loop -- one number, no vector, no faulting address,
+     and (before ADR-0199) reachable only after the kernel owned its IDT. */
   pop %rax
-  mov $0x7b, %eax
-  outl %eax, $0xf4
-  jmp 3b
+  pushq $14
+  jmp aiueos_fatal_common
 
 .global aiueos_probe_write_protect
 .type aiueos_probe_write_protect,@function

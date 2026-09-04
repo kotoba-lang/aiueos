@@ -82,8 +82,8 @@
   (let [contract (edn/read-string (slurp contract-path))
         result (compiler/compile-project
                 {'aiueos.value-handle-arena (slurp arena-source)
-                 'aiueos.value-runtime-sha256 (slurp sha-source)
-                 'aiueos.value-runtime-digest-equal (slurp digest-source)
+                 'aiueos.sha256 (slurp sha-source)
+                 'aiueos.digest-equal (slurp digest-source)
                  'aiueos.value-runtime-cas-verify (slurp cas-source)
                  'aiueos.value-runtime-provider-transport (slurp transport-source)}
                 'aiueos.value-runtime-provider-transport

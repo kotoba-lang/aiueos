@@ -1,17 +1,11 @@
 #include <stdint.h>
 #include <stddef.h>
+#include "../include/boot_info.h"
 
 #define EFI_CONVENTIONAL_MEMORY 7U
 #define PAGE_SIZE 4096ULL
 #define IDENTITY_LIMIT 0x40000000ULL
 
-struct aiueos_boot_info {
-  uint64_t magic, version;
-  void *memory_map; uint64_t memory_map_size, descriptor_size, descriptor_version;
-  void *acpi_rsdp;
-  uint64_t framebuffer_base, framebuffer_size;
-  uint32_t framebuffer_width, framebuffer_height, framebuffer_stride, framebuffer_format;
-};
 struct efi_memory_descriptor_prefix {
   uint32_t type, padding;
   uint64_t physical_start, virtual_start, number_of_pages, attributes;
@@ -82,6 +76,29 @@ void *aiueos_allocate_physical_page(void) {
     }
   }
   if (page) zero_page(page); unlock(); return page;
+}
+
+/* Reserve one boot-lifetime contiguous arena without consuming the small
+   individually-freeable allocation record table.  Model decode state is
+   never returned during this native boot, so recording tens of thousands of
+   component pages would add metadata without enabling a valid free path. */
+void *aiueos_allocate_contiguous_physical_pages(uint64_t page_count) {
+  if (!page_count || page_count > UINT64_MAX / PAGE_SIZE) return 0;
+  lock();
+  uint64_t bytes = page_count * PAGE_SIZE;
+  uint64_t start = next_page;
+  if (!start || page_count > remaining_pages ||
+      start >= IDENTITY_LIMIT || bytes > IDENTITY_LIMIT - start) {
+    unlock();
+    return 0;
+  }
+  next_page += bytes;
+  remaining_pages -= page_count;
+  unlock();
+  uint8_t *memory = (uint8_t *)(uintptr_t)start;
+  for (uint64_t page = 0; page < page_count; page++)
+    zero_page(memory + page * PAGE_SIZE);
+  return memory;
 }
 
 int aiueos_free_physical_page(void *page) {

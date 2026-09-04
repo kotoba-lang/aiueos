@@ -2,7 +2,8 @@
   "AES-256-GCM component-state snapshots with external key custody,
   monotonic versions, bounded files, verified backup/restore and deletion."
   (:require [clojure.edn :as edn]
-            [clojure.java.io :as io])
+            [clojure.java.io :as io]
+            [kotoba.security.information-flow :as sec-info-flow])
   (:import [java.nio.charset StandardCharsets]
            [java.nio.file Files StandardCopyOption]
            [java.security SecureRandom]

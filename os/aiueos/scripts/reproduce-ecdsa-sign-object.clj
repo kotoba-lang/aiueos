@@ -44,10 +44,12 @@
         (str/replace entries-anchor
           (str "'aiueos-cpu-apic-id {:arity 0 :symbol \"kotoba_aiueos_cpu_apic_id\"}\n"
                "   'aiueos-ecdsa-p256-sha256-verify {:arity 5 :symbol \"kotoba_aiueos_ecdsa_p256_sha256_verify\"}\n"
-               "   'aiueos-ecdsa-p256-sign {:arity 5 :symbol \"kotoba_aiueos_ecdsa_p256_sign\"}})"))
+               "   'aiueos-ecdsa-p256-sign {:arity 5 :symbol \"kotoba_aiueos_ecdsa_p256_sign\"}\n"
+               "   'aiueos-ecdsa-p256-public {:arity 3 :symbol \"kotoba_aiueos_ecdsa_p256_public\"}})"))
         (str/replace rsa-anchor
           (str "rsa-fuel? (contains? '#{aiueos-rsa2048-sha256-verify aiueos-x25519 "
-               "aiueos-ecdsa-p256-sha256-verify aiueos-ecdsa-p256-sign}")))))
+               "aiueos-ecdsa-p256-sha256-verify aiueos-ecdsa-p256-sign "
+               "aiueos-ecdsa-p256-public}")))))
 
 (load-string (patch (slurp elf-src)))
 (require '[kotoba.compiler.core :as c] '[kotoba.native.elf64 :as elf])
@@ -56,10 +58,26 @@
 (let [source (slurp "os/aiueos/kotoba/ecdsa-p256-sign.kotoba")
       result (c/compile-source source :x86_64-aiueos-kernel-v1 {})
       bytes (:bytes (:object result))
-      fuel (subvec (vec bytes) 75 79)]
+      fuel (subvec (vec bytes) 75 79)
+      ;; The kernel object ABI intentionally has one exported entry per
+      ;; object. Compile the public-point entry from the same reviewed source
+      ;; with the sign entry renamed out of the allow-list; this avoids a
+      ;; second hand-maintained copy of the P-256 arithmetic.
+      public-source (str/replace source
+                                 "(defn aiueos-ecdsa-p256-sign"
+                                 "(defn ecdsa-p256-sign-internal")
+      public-result (c/compile-source public-source :x86_64-aiueos-kernel-v1 {})
+      public-bytes (:bytes (:object public-result))
+      public-fuel (subvec (vec public-bytes) 75 79)]
   (assert (= [128 178 230 14] (mapv #(bit-and % 0xff) fuel))
           "fuel immediate is not the 250,000,000 tier")
+  (assert (= [128 178 230 14] (mapv #(bit-and % 0xff) public-fuel))
+          "public-point fuel immediate is not the 250,000,000 tier")
   (with-open [o (io/output-stream "os/aiueos/kotoba/ecdsa-p256-sign.o")]
     (.write o (byte-array (map unchecked-byte bytes))))
+  (with-open [o (io/output-stream "os/aiueos/kotoba/ecdsa-p256-public.o")]
+    (.write o (byte-array (map unchecked-byte public-bytes))))
   (println "AIUEOS_ECDSA_SIGN_OBJECT_OK bytes" (count bytes)
-           "symbol kotoba_aiueos_ecdsa_p256_sign fuel 250000000"))
+           "symbol kotoba_aiueos_ecdsa_p256_sign fuel 250000000")
+  (println "AIUEOS_ECDSA_PUBLIC_OBJECT_OK bytes" (count public-bytes)
+           "symbol kotoba_aiueos_ecdsa_p256_public fuel 250000000"))

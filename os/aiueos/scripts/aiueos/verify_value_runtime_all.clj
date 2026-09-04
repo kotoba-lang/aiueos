@@ -1,9 +1,12 @@
 (ns aiueos.verify-value-runtime-all
   "Run every value-runtime verifier and write down what happened.
 
-  The eleven `verify_value_*.clj` next to this file each compile one Kotoba
-  object and check it against its contract. Measured 2026-08-18: **nothing in
-  this repository invoked any of them** — no task, no script, no test, no doc
+  The verifiers next to this file each compile one Kotoba object and check it
+  against its contract. Nine remain here. Four left on 2026-08-31 for
+  `os/aiueos/scripts/verify-admissions.cljs`, which runs on nbb with no JVM;
+  coverage moved rather than dropped, and `:value-runtime/moved-to` in the
+  receipt names where.
+  Measured 2026-08-18: **nothing in this repository invoked any of them** — no task, no script, no test, no doc
   mentions them. They are not a check that passes; they are a check nobody
   runs, which reports the same green as one that ran (ADR-2608136000 question
   2, and ADR-0050 here).
@@ -12,9 +15,13 @@
   a receipt naming the compiler it measured against, so the numbers cannot be
   quoted without their date and closure.
 
-  Two objects have no verifier of their own — `value-runtime-sha256` and
-  `value-runtime-digest-equal` — because they are *inputs* to the ones that do,
-  and are compiled as part of them. They are covered, not missing.
+  Two modules have no verifier of their own — `aiueos.sha256` and
+  `aiueos.digest-equal` — because they are *inputs* to the ones that do, and are
+  compiled as part of them. They are covered, not missing. They used to be
+  `value-runtime-sha256.kotoba` and `value-runtime-digest-equal.kotoba`, which
+  were byte-for-byte copies of the sources the kernel's own `sha256.o` and
+  `digest-equal.o` are built from; ADR-0141 deleted the copies and left the
+  originals, imported rather than pasted in.
 
   The eleventh verifier, `verify_value_runtime_kernel_image`, is not a
   per-object verifier: it composes every value module plus
@@ -41,8 +48,14 @@
 (defn- c [n] (str "os/aiueos/contracts/" n "-v1.edn"))
 
 (def arena (k "value-handle-arena"))
-(def sha256 (k "value-runtime-sha256"))
-(def digest (k "value-runtime-digest-equal"))
+;; `value-runtime-sha256.kotoba` and `value-runtime-digest-equal.kotoba` were
+;; byte-for-byte copies of `sha256.kotoba` and `digest-equal.kotoba` -- the
+;; objects the kernel actually links -- differing only in their `ns` line. They
+;; are gone (ADR-0141); what stands here is the one remaining copy, at the path
+;; amu's module resolver derives from its namespace (`.` -> `/`, `-` -> `_`),
+;; because it is now IMPORTED rather than pasted in.
+(def sha256 (k "aiueos/sha256"))
+(def digest (k "aiueos/digest_equal"))
 (def cas (k "value-runtime-cas-verify"))
 (def transport (k "value-runtime-provider-transport"))
 (def dispatch (k "value-runtime-dispatch"))
@@ -58,10 +71,8 @@
      sha256 digest cas
      "os/aiueos/native/kernel.kotoba" "os/aiueos/native/value-runtime-kernel.kotoba"
      (c "value-runtime-kernel-image")]]
-   ["value-handle-arena" [arena (c "value-handle-arena")]]
    ["value-handle-plan" [(k "value-handle-plan") (c "value-handle-plan")]]
    ["value-runtime-capability-table" [table (c "value-runtime-capability-table")]]
-   ["value-runtime-cas-verify" [sha256 digest cas (c "value-runtime-cas-verify")]]
    ["value-runtime-dispatch" [arena sha256 digest cas transport dispatch
                               (c "value-runtime-dispatch")]]
    ["value-runtime-domain" [(k "value-runtime-domain") (c "value-runtime-domain")]]
@@ -72,7 +83,21 @@
    ["value-runtime-provider-transport" [arena sha256 digest cas transport
                                         (c "value-runtime-provider-transport")]]
    ["value-runtime-syscall-plan" [(k "value-runtime-syscall-plan")
-                                  (c "value-runtime-syscall-plan")]]])
+                                  (c "value-runtime-syscall-plan")]]
+   ;; `cid-v1-admit`, `unixfs-file-admit`, `value-runtime-cas-verify` and
+   ;; `value-handle-arena` were here and have LEFT, to
+   ;; `os/aiueos/scripts/verify-admissions.cljs`. They
+   ;; are the three whose verifiers execute the object rather than model it,
+   ;; and executing needs nothing this host provides: the linker
+   ;; (`kotoba.compiler.project`), the frontend (`kotoba.sema`) and the
+   ;; lowering and interpreter (`kotoba.kir`) are all `.cljc`. Only
+   ;; `kotoba.compiler.core/compile-project` was `.clj`, and it is a thin
+   ;; wrapper over the four. So they run on nbb with no JVM, which is what the
+   ;; workspace Q9 rule asks of acceptance.
+   ;;
+   ;; This receipt therefore covers ten objects and says so. Coverage did not
+   ;; drop; it moved, and `:value-runtime/moved-to` below names where.
+   ])
 
 (defn- measured-at
   "Today, read from the clock. It was a literal string until 2026-08-18, which
@@ -194,9 +219,19 @@
                  :value-runtime/upstream upstream
                  :value-runtime/upstream-by-cause upstream-by-cause
                  :value-runtime/results results
+                 ;; Named here so a shrinking object count reads as a move
+                 ;; and not as coverage quietly going away.
+                 :value-runtime/moved-to
+                 {:runner "os/aiueos/scripts/verify-admissions.cljs"
+                  :host :nbb
+                  :objects ["cid-v1-admit" "unixfs-file-admit"
+                            "value-runtime-cas-verify" "value-handle-arena"]
+                  :why "their verifiers execute the object, and executing needs
+                        only .cljc: the linker, the frontend, the lowering and
+                        the interpreter. No JVM."}
                  :value-runtime/no-verifier-of-their-own
-                 {"value-runtime-sha256" "an input to cas-verify, dispatch, entry and provider-transport; compiled as part of them"
-                  "value-runtime-digest-equal" "same — an input, not an uncovered object"}
+                 {"aiueos.sha256" "an input to cid-v1-admit, cas-verify, dispatch, entry and provider-transport; compiled as part of them. It is also the source of the LINKED sha256.o, so it is covered twice over."
+                  "aiueos.digest-equal" "same — an input, not an uncovered object, and also the source of digest-equal.o"}
                  ;; Resolved 2026-08-18 (ADR-0057): there was never a source to
                  ;; miss. `git log --all --diff-filter=AD` shows that
                  ;; value-runtime-kernel-image.kotoba has never existed on any

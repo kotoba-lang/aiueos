@@ -159,16 +159,38 @@
 (defn setup-view
   []
   (view-section {:id :setup :hidden? true}
-    (dds/heading 1 "機械を紐づける" {:size "32"})
+    (dds/heading 1 "この機械を追加" {:size "32"})
     [:p {:class "session-lede"}
-     "モニタもキーボードも使いません。筐体 QR の代わりにホストが印刷した payload です。"]
-    [:pre {:id "qr" :class "session-out"}]
-    (dds/form-field {:label "名前 / 所有者" :for "owner"}
-                    (dds/input-text {:id "owner" :name "owner"
-                                     :value "acct:local-demo"
-                                     :autocomplete "username"}))
-    (dds/button "電話から紐づける" {:id "bind" :size "md"})
-    [:pre {:id "bind-out" :class "session-out"}]))
+     "Passkey をこの画面で使うか、スマホでコードを読み取ります。どちらも同じアカウント確認を通り、Passkey の秘密鍵は Node へコピーしません。"]
+    (dds/card
+     (dds/heading 2 "Passkey で続ける" {:size "24"})
+     [:p "この機械の Kotoba Browser から、"
+      [:code "auth.kotoba.cloud"]
+      " の Passkey を確認します。"]
+     (dds/button "Passkey で確認" {:id "start-passkey" :size "md"
+                                     :attrs {:data-kotoba-action "device-auth/start-passkey"}}))
+    (dds/card
+     (dds/heading 2 "スマホで続ける" {:size "24"})
+     [:p "スマホ側でも Passkey を確認してから、この機械を承認します。表示する承認URLにアカウント鍵や端末トークンは含めません。"]
+     [:img {:id "device-auth-qr" :class "device-auth-qr"
+            :alt "AIUEOSの端末承認ページを開くQRコード" :hidden true}]
+     [:pre {:id "qr" :class "session-out"}]
+     [:a {:id "device-auth-link" :class "dads-link"
+          :href "#" :target "_blank" :rel "noopener noreferrer" :hidden true}
+      "承認ページを開く"]
+     (dds/button "スマホ用コードを準備" {:id "start-phone-scan" :size "md"
+                                           :attrs {:data-kotoba-action "device-auth/start-phone-scan"}}))
+    [:pre {:id "auth-out" :class "session-out" :aria-live "polite"}]
+    [:details {:class "session-details"}
+     [:summary "hosted 検証用"]
+     [:p {:class "session-lede"}
+      "現在の Mac/QEMU fixture を検証するための非権威経路です。実機の OS アカウント認証には数えません。"]
+     (dds/form-field {:label "fixture 所有者" :for "owner"}
+                     (dds/input-text {:id "owner" :name "owner"
+                                      :value "acct:local-demo"
+                                      :autocomplete "username"}))
+     (dds/button "fixture を実行" {:id "bind" :size "md"})
+     [:pre {:id "bind-out" :class "session-out"}]]))
 
 (defn manage-view
   []
@@ -185,7 +207,8 @@
   (view-section {:id :devices :hidden? true}
     (dds/heading 1 "機械" {:size "32"})
     [:p {:class "session-lede"}
-     "このホストの非権威 ledger。本番の check-in は kotobase.net。D1 ではない。"]
+     "アカウント確認後に端末鍵を証明すると Node 候補へ追加します。Murakumo の ready、Kekkai 接続、SSD キャッシュ同期は、それぞれ実測できるまで別の状態です。"]
+    [:pre {:id "device-plan-out" :class "session-out"}]
     [:pre {:id "devices-out" :class "session-out"}]))
 
 (defn operator-view
@@ -220,7 +243,7 @@
   []
   [:div {:class "session-shell"}
    [:header {:class "session-chrome"}
-    (dds/heading 1 "aiueos" {:size "20" :id "session-brand"})
+    (dds/heading 1 "aiueos · Kotoba Browser" {:size "20" :id "session-brand"})
     (route/nav :session)]
    [:main {:class "session-main"}
     (session-view)

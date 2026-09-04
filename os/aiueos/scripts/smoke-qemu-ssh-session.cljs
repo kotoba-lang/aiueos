@@ -14,8 +14,8 @@
          '[ssh.transport :as t] '[ssh.kex :as kex]
          '[ssh.keys :as keys] '[ssh.record :as rec] '[ssh.userauth :as ua]
          '[ssh.connection :as con])
-(def command "uname -a")
-(def expect-output (str "aiueos: " command "\n"))
+(def command "runtime status")
+(def expect-output "aiueos: runtime unavailable\n")
 
 (def fs (js/require "node:fs")) (def path (js/require "node:path"))
 (def cp (js/require "node:child_process")) (def net (js/require "node:net"))
@@ -28,7 +28,7 @@
 (def serial-log (.join path out "kernel-serial.log"))
 (def host-port 8022)
 (def client-id "SSH-2.0-realgate")
-(def username "root")
+(def username "runtime")
 
 ;; the authorized key's PRIVATE half (matches ssh_auth_x/y baked in the kernel)
 (def auth-d "8f71791cab5a5f45468c32abf8d67a35122bbd451d65986465d6f45b02536267")

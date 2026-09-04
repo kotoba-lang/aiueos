@@ -16,7 +16,9 @@
   What replaces them is `required-external-tcb-coordinates` below. Dropping a
   boundary from here without adding it there is the exact move this set exists
   to prevent, and the two are asserted together."
-  #{"src/aiueos/execute.cljc"
+  #{"src/aiueos/phone_bind.cljc"
+    "src/aiueos/device_auth.cljc"
+    "src/aiueos/execute.cljc"
     "src/aiueos/entropy.clj"
     "src/aiueos/watchdog.clj"
     "src/aiueos/launcher.cljc"
@@ -38,7 +40,9 @@
   A file digest and a git SHA are both content addresses; what changes across
   the repository boundary is the granularity, not whether the code is pinned.
   What must not change is that the boundary is named somewhere."
-  #{"io.github.kotoba-lang/grant"})
+  #{"io.github.kotoba-lang/grant"
+    "io.github.kotoba-lang/org-chainagnostic-cacao"
+    "io.nayuki/qrcodegen"})
 
 (deftest checked-in-tcb-inventory-has-no-drift
   ;; 28 -> 34: fleet onboarding and update admission joined the TCB
@@ -69,7 +73,13 @@
           ;; The platform entry stays: `:jdk` is still the default transport, so
           ;; the JDK's TLS is still in the TCB, and pretending otherwise would
           ;; be an inventory recording an intention.
-          :files 22 :external 8 :classpath 9 :properties 6 :errors []}
+          ;;
+          ;; 22 -> 24, 8 -> 10 and 9 -> 10: ADR-0113 adds the hosted device
+          ;; authorization adapter/state machine and the local QR renderer;
+          ;; the same inventory update also records the already-declared
+          ;; window-session-state dependency instead of leaving it outside the
+          ;; external closure. 10 -> 11: the device-owned CACAO implementation.
+          :files 24 :external 11 :classpath 10 :properties 6 :errors []}
          (tcb/validate (tcb/read-inventory)
                        (clojure.edn/read-string (slurp "deps.edn"))
                        (clojure.edn/read-string (slurp "security-adoption.edn"))
