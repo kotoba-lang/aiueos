@@ -623,15 +623,33 @@
           148
           ;; Gate N1, tranche one: IPv4 checksum admission (reserved status
           ;; 93).  The header spans bytes 14..33 of the received frame and the
-          ;; peer's checksum was computed over exactly those 20 bytes.  TCP
-          ;; checksum admission (96) follows as a separate tranche.
+          ;; peer's checksum was computed over exactly those 20 bytes.
           (if (= (ipv4-checksum-valid frame 14 20) 0)
             93
-            (if (= (transport/syn-ack-shape
-                    total tcp-header
-                    (kernel-load-u8-4k frame 4096 47)) 1)
-              69
-              149)))))))
+            ;; Gate N1, tranche two: TCP checksum admission (reserved status
+            ;; 96).  Same zero-fold admission as the IPv4 gate, over the
+            ;; received TCP header (frame bytes 34..53): the peer stored
+            ;; 65535 - fold(sum) computed with the pseudo-header seed, so
+            ;; folding the same primitives over those bytes INCLUDING the
+            ;; checksum field with the same seed yields exactly zero for a
+            ;; valid segment and nonzero after any single corruption.  The
+            ;; seed uses the addresses as seen ON THE WIRE: frame 26..29 is
+            ;; the source (gateway 172818433), frame 30..33 the destination
+            ;; (K16 172818442); the pseudo-header is symmetric, so the
+            ;; sender's mirrored pair folds the same sum -- verified on the
+            ;; host against a synthetic SYN-ACK (valid -> zero fold, corrupt
+            ;; window byte -> nonzero) before this gate.  Returns integer 1/0
+            ;; (the subset rejects mixed-type equality).
+            (if (= (- 65535
+                      (checksum-fold
+                       (checksum-sum frame 34 20 0 (tcp-pseudo-sum src dst 20))))
+                   0)
+              96
+              (if (= (transport/syn-ack-shape
+                      total tcp-header
+                      (kernel-load-u8-4k frame 4096 47)) 1)
+                69
+                149))))))))
 
 (defn tcp-receipt-byte [index]
   ;; ASCII payload: AIUEOS_NATIVE_TCP_OK.
