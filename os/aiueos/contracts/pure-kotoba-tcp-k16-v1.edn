@@ -66,6 +66,7 @@
                       :three-way-handshake
                       :client-ack-reset-and-udp-receipt]
              :incoming-checksum-admission :deferred-to-next-gate}
+            :repeat-run-2026-09-04
             {:state :passed
              :observed-at "2026-09-04T09:12:00+09:00"
              :kind :repeat-run-next-day-via-macos-pxe-server

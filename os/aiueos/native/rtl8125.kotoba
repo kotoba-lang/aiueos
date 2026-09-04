@@ -530,6 +530,18 @@
 (defn internet-checksum [frame base length seed]
   (- 65535 (checksum-fold (checksum-sum frame base length 0 seed))))
 
+(defn ipv4-checksum-valid [frame base length]
+  ;; The sender stores 65535 - fold(sum) into the checksum field, so the
+  ;; folded sum over the header INCLUDING that field is 0xFFFF and recomputing
+  ;; the same primitive over the received bytes yields exactly zero.  One
+  ;; primitive for both directions; verified on the host against a synthetic
+  ;; header (valid -> 0, single-bit corruption -> nonzero) before this gate.
+  ;; Returns the subset-language integer 1/0, not a boolean: the caller
+  ;; compares against 0 and the subset rejects mixed-type equality.
+  (if (= (- 65535 (checksum-fold (checksum-sum frame base length 0 0))) 0)
+    1
+    0))
+
 (defn tcp-pseudo-sum [src dst tcp-length]
   (+ (+ (quot src 65536) (bit-and src 65535))
      (+ (+ (quot dst 65536) (bit-and dst 65535))
@@ -609,11 +621,17 @@
                       (= (frame-be16 frame 36) 49155)
                       (= (frame-be32 frame 42) 2715820033)))
           148
-          (if (= (transport/syn-ack-shape
-                   total tcp-header
-                   (kernel-load-u8-4k frame 4096 47)) 1)
-            69
-            149))))))
+          ;; Gate N1, tranche one: IPv4 checksum admission (reserved status
+          ;; 93).  The header spans bytes 14..33 of the received frame and the
+          ;; peer's checksum was computed over exactly those 20 bytes.  TCP
+          ;; checksum admission (96) follows as a separate tranche.
+          (if (= (ipv4-checksum-valid frame 14 20) 0)
+            93
+            (if (= (transport/syn-ack-shape
+                    total tcp-header
+                    (kernel-load-u8-4k frame 4096 47)) 1)
+              69
+              149)))))))
 
 (defn tcp-receipt-byte [index]
   ;; ASCII payload: AIUEOS_NATIVE_TCP_OK.
