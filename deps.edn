@@ -113,14 +113,17 @@
                              {:git/url "https://github.com/kotoba-lang/webgpu.git"
                               :git/sha "17598c1206a31e594b0e028245f222e53b1b8b71"}
                              }
-                ;; No org-ietf-tcp here, and the parity test that needs it is
+                ;; No org-ietf-tcp here, and the parity tests that need it are
                 ;; not selected. **That repository is private**, and fleet nodes
                 ;; hold no credentials by invariant, so `clojure -P` on a node
                 ;; dies with "could not read Username for https://github.com"
                 ;; before a single test runs — which is how this alias failed
-                ;; its first real gate (ADR-0068).
+                ;; its first real gate (ADR-0068). tcp-stream-integration-test
+                ;; joined that list with the Gate N2 scaffold (ADR-0134): it
+                ;; requires tcp.seq/tcp.reassemble at load time for the same
+                ;; reason.
                 :main-opts ["-m" "cognitect.test-runner"
-                            "-r" "^aiueos\\.(?!tcp-seq-acceptable-parity-test).*$"]}
+                            "-r" "^aiueos\\.(?!tcp-seq-acceptable-parity-test|tcp-stream-integration-test).*$"]}
 
    ;; The nbb admission runner (os/aiueos/scripts/verify-admissions.cljs).
    ;; A SEPARATE alias with its OWN amu pin on purpose: the runner needs
