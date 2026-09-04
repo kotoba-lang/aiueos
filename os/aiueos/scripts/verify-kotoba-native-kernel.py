@@ -36,7 +36,7 @@ rw_start = segments[1][3]
 rw_end = rw_start + segments[1][6]
 if (rx_start != 0x101000 or rx_limit > rw_start
         or rw_start & 4095 or rw_end >= 0x40000000
-        or not (rw_start <= 0x110000 < rw_end)):
+        or rw_start != rx_limit):
     raise SystemExit("error: Kotoba-native RX/RW page boundary rejected")
 context_offset = segments[1][2]
 if segments[1][5] < 16 or struct.unpack_from("<Q", data, context_offset + 8)[0] != 1048576:
