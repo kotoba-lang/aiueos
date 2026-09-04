@@ -135,6 +135,32 @@ worker. A timeout is a failed run and boot cannot proceed. Production evidence
 must name this engine, bound its deadline and termination grace, and date a
 successful overrun test.
 
+## Timing profiles
+
+Timing is independent from the security profiles above. The default
+`:aiueos/timing-profile :best-effort` preserves current behavior. An image may
+name `:hard-real-time` only as the separate
+`x86_64-aiueos-rt-kernel-v1` native artifact defined by
+`os/aiueos/contracts/rt-kernel-v1.edn`. Linux, the JVM, GC and hosted adapters
+are not fallback paths for that artifact. The existing native-kernel receipt
+is explicitly `best-effort` and `rtos_qualified=false`; this is currently a
+contract, not a claim that an existing AIUEOS image has qualified as an RTOS.
+
+`aiueos-plc-v1` is an application profile above that separate RT kernel. Its
+engineering path compiles the admitted IEC 61131-3 Structured Text subset to a
+static `x86_64-aiueos-user-v1` ELF; deployed machines do not interpret ST. A
+PLC build is not deployable until its receipt binds the qualified RT kernel,
+exact I/O map and response-time admission analysis. Input snapshot, shadow
+output, watchdog and atomic commit are the only program capabilities. The
+native QEMU gate now proves bounded P-256 admission and tamper rejection, then
+100 absolute-tick releases of the same generated ELF at CPL3, capability
+syscalls, fixed-priority interrupt preemption, replenishment, those
+transactions and safe-state failures. It reports logical ticks, not
+milliseconds. Production signing authority, long-duration soak and physical
+timing qualification remain open; their receipt fields fail closed. The
+normative contract is
+`os/aiueos/contracts/plc-runtime-v1.edn`.
+
 Cross-machine topic samples use `aiueos.network-topic` protocol v1. Ed25519
 binds channel, publisher, topic, sequence, epoch and value. Registry topic
 allow-lists authorize publishers; sequence checkpoints prevent replay across

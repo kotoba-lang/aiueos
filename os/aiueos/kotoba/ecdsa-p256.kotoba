@@ -1,4 +1,5 @@
-(ns aiueos.ecdsa-p256)
+(ns aiueos.ecdsa-p256
+  (:export [aiueos-ecdsa-p256-sha256-verify main]))
 
 ;; Bounded ECDSA P-256 / SHA-256 admission for TLS 1.3 CertificateVerify.
 ;; ABI: [sig-64 r||s-BE, digest-32, pubkey-64 Qx||Qy-BE, workspace, workspace-length]

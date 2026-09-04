@@ -8,6 +8,47 @@ log="$out/uefi-debug.log"
 serial_log="$out/kernel-serial.log"
 blk_image="$out/virtio-blk-smoke.img"
 qemu=${QEMU_SYSTEM_X86_64:-qemu-system-x86_64}
+plc_signing=
+cleanup_plc_signing() {
+  [ -z "$plc_signing" ] || [ ! -d "$plc_signing" ] || {
+    rm -f "$plc_signing/key.pem" "$plc_signing/signature.der" \
+      "$plc_signing/public.der" "$plc_signing/signature.raw" \
+      "$plc_signing/public.raw"
+    rmdir "$plc_signing"
+  }
+}
+trap cleanup_plc_signing 0
+trap 'cleanup_plc_signing; exit 1' HUP INT TERM
+
+if [ "${AIUEOS_PLC_RT_SMOKE:-0}" = 1 ]; then
+  AIUEOS_PLC_ELF=${AIUEOS_PLC_ELF:-"$repo/build/plc-motor/program.elf"}
+  AIUEOS_PLC_RECEIPT=${AIUEOS_PLC_RECEIPT:-"$repo/build/plc-motor/program-receipt.json"}
+  if { [ -n "${AIUEOS_PLC_SIGNATURE:-}" ] && [ -z "${AIUEOS_PLC_PUBLIC_KEY:-}" ]; } || \
+     { [ -z "${AIUEOS_PLC_SIGNATURE:-}" ] && [ -n "${AIUEOS_PLC_PUBLIC_KEY:-}" ]; }; then
+    echo "error: PLC signature and public key must be supplied together" >&2
+    exit 1
+  fi
+  if [ -z "${AIUEOS_PLC_SIGNATURE:-}" ]; then
+    command -v openssl >/dev/null 2>&1 || {
+      echo "error: openssl is required to create RT smoke signature material" >&2
+      exit 1
+    }
+    plc_signing=$(mktemp -d "${TMPDIR:-/tmp}/aiueos-plc-signing.XXXXXX")
+    openssl ecparam -name prime256v1 -genkey -noout \
+      -out "$plc_signing/key.pem" 2>/dev/null
+    openssl dgst -sha256 -sign "$plc_signing/key.pem" \
+      -out "$plc_signing/signature.der" "$AIUEOS_PLC_ELF"
+    openssl ec -in "$plc_signing/key.pem" -pubout -conv_form uncompressed \
+      -outform DER -out "$plc_signing/public.der" 2>/dev/null
+    python3 "$aiueos/scripts/make-plc-signature-material.py" \
+      "$plc_signing/signature.der" "$plc_signing/public.der" \
+      "$plc_signing/signature.raw" "$plc_signing/public.raw" >/dev/null
+    AIUEOS_PLC_SIGNATURE="$plc_signing/signature.raw"
+    AIUEOS_PLC_PUBLIC_KEY="$plc_signing/public.raw"
+  fi
+  export AIUEOS_PLC_ELF AIUEOS_PLC_RECEIPT \
+    AIUEOS_PLC_SIGNATURE AIUEOS_PLC_PUBLIC_KEY
+fi
 
 # --- freshness floor (ADR-0155) ---------------------------------------------
 #
@@ -611,6 +652,20 @@ if [ "$status" -eq 124 ]; then
   echo "--- serial log tail ---" >&2
   test -f "$serial_log" && sed 's/\x1b\[[0-9;=]*[A-Za-z]//g' "$serial_log" | tail -40 >&2
   exit 1
+fi
+
+if [ "${AIUEOS_PLC_RT_SMOKE:-0}" = 1 ]; then
+  [ "$status" -eq 133 ] || {
+    echo "error: PLC RT smoke produced unexpected QEMU status $status" >&2
+    test -f "$serial_log" && tail -30 "$serial_log" >&2
+    exit 1
+  }
+  grep -F "AIUEOS_PLC_RT_OK profile=aiueos-plc-v1 scheduler=fixed-priority-preemptive priority=5 program=signed-cpl3-elf signature=ecdsa-p256-sha256 tamper=rejected scans=100 inputs=alternating-enable,sensor41..140 transport=syscall release=apic-absolute-ticks cycle=10ticks input=snapshot output=atomic-safe-state capabilities=16,17,18,19 failures=stage,watchdog,budget,deadline,program timing=logical-unqualified" "$serial_log" >/dev/null || {
+    echo "error: native PLC RT provider evidence was not observed" >&2
+    exit 1
+  }
+  echo "AIUEOS_PLC_RT_QEMU_OK scans=100 signed-elf tamper-rejected fixed-priority-preemption native-provider apic-release transactional-output safe-state"
+  exit 0
 fi
 
 if [ "${AIUEOS_CORRUPT_KERNEL:-0}" = 1 ]; then

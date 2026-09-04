@@ -864,6 +864,47 @@ calls would reserve ABI for work not done (ADR-0074, ADR-0076). **Read a
 `.kotoba` file's presence as a decision that was written, not one the kernel
 runs**; `build-uefi.sh` names every object it links.
 
+## Native PLC program profile
+
+`aiueos-plc-v1` compiles a bounded IEC 61131-3 Structured Text subset to a
+static, C-free `x86_64-aiueos-user-v1` program. The deployed program has only
+four capabilities: immutable input-image read, shadow-output stage, atomic
+output commit and watchdog checkpoint. It does not interpret ST at runtime.
+
+Build the included deterministic example with the pinned-compatible Amu
+checkout:
+
+```sh
+os/aiueos/scripts/build-plc-native-program.sh /path/to/amu \
+  os/aiueos/plc/examples/motor.st
+```
+
+The ordinary build receipt is intentionally not deployable. A deployment build
+must also set `AIUEOS_PLC_RT_KERNEL_RECEIPT`, `AIUEOS_PLC_IO_MAP`, and
+`AIUEOS_PLC_ADMISSION`; the receipt verifier refuses a missing or unqualified
+binding. See `contracts/plc-runtime-v1.edn` and ADR-0111. A generated program is
+not evidence that its signed ELF is already a periodic RT task or that a
+physical I/O driver is present.
+
+The RT-only QEMU gate signs the generated PLC ELF with an isolated test key,
+embeds only its raw P-256 signature and public key, and verifies it with the
+bounded Kotoba ECDSA object before mapping. It first proves a one-bit signature
+mutation is refused, then admits the exact capability context and runs the same
+task 100 times at CPL3 under the native fixed-priority interrupt switch path.
+Every scan proves absolute APIC-tick release/replenishment, its changing input
+and expected output, immutable input snapshotting, watchdog-gated atomic commit
+and safe-state failures:
+
+```sh
+AIUEOS_PLC_RT_SMOKE=1 os/aiueos/scripts/smoke-qemu-uefi.sh
+```
+
+This is a 100-scan logical-tick stress test with a test signing authority, not a
+calibrated 10 ms, long-duration soak, production-signed release or WCET claim.
+Deployment receipt generation separately verifies the supplied ELF signature
+and refuses missing physical-I/O qualification, measured RTA/WCET evidence or
+calibrated RT-kernel provenance. See ADR-0112 for the remaining boundary.
+
 ## USB removable-media boot
 
 The GPT release image above is what gets written to a USB stick, but producing
@@ -1224,6 +1265,32 @@ artifacts, and emits a dependency receipt:
 ./os/aiueos/scripts/build-kotoba-native-kernel.sh /path/to/kotoba/compiler
 ./os/aiueos/scripts/smoke-qemu-kotoba-native.sh /path/to/kotoba/compiler
 ```
+
+The C-free real-time functional slice is a separate Kotoba source and uses a
+pinned Amu compiler closure:
+
+```sh
+./os/aiueos/scripts/build-kotoba-rt-kernel.sh /path/to/amu
+./os/aiueos/scripts/smoke-qemu-kotoba-rt.sh /path/to/amu
+```
+
+The closed smoke requires the exact marker `IPMDAKRTS`: IDT installed, nine
+vendor-neutral PLC protocol profiles admitted, priority-ceiling mutex checked,
+transactional driver ABI admitted, APIC configured, kernel entered, and 100
+fixed-priority PLC scans returned
+successfully. Supplying `AIUEOS_PLC_RT_BUNDLE` also runs bounded SHA-256,
+ECDSA P-256 and canonical-ELF admission and expects `BHSDGVIPMDAKRTS`. That
+extended path is implemented but remains performance-unqualified: the current
+P-256 implementation exceeded a 700-second QEMU/TCG bound. The
+receipt explicitly says `rtos_qualified=false` and
+`timing=logical-qemu-unqualified`; it is not physical WCET, jitter, driver or
+safety-certification evidence.
+
+The device-profile registry covers MMIO, Modbus RTU/TCP, EtherCAT, PROFINET
+IRT, EtherNet/IP CIP Sync, CANopen, CC-Link IE TSN and OPC UA PubSub/TSN.
+It is the compatibility boundary for all models, not evidence that every
+vendor ASIC or physical network has been tested. Unknown and proprietary
+transports fail closed until a bounded adapter and hardware receipt are added.
 
 `build-kotoba-native-boot.sh` asks the Kotoba compiler to embed that ELF in a
 position-independent PE32+ UEFI application. The compiler-generated loader

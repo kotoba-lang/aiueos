@@ -342,6 +342,12 @@ uint64_t aiueos_syscall_dispatch(uint64_t number, uint64_t handle,
     if (!capability_admit(handle,AIUEOS_CAPABILITY_TYPE_KOTOBA_RUNTIME,
                           AIUEOS_CAPABILITY_RIGHT_RUNTIME,requester))
       return AIUEOS_ERR_BAD_HANDLE;
+#ifdef AIUEOS_PLC_RT_SMOKE
+    if (requester==4 && pointer>=16 && pointer<=19) {
+      extern uint64_t aiueos_plc_capability_call(uint64_t,uint64_t);
+      return aiueos_plc_capability_call(pointer,length);
+    }
+#endif
     /* Capability 2 is the bounded service-registry object read. The compiler
        admits the literal ID, and the kernel still checks both the domain-owned
        handle and the scalar object index on every transition. */
