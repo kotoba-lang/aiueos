@@ -18,7 +18,7 @@
 ;; with the reason. Wiring it means giving the probe in `kernel/pci.c` a second
 ;; call site, which is a change to the kernel and belongs in its own commit.
 
-(ns aiueos.tcp-seq-acceptable-parity-test
+(ns ^:ci-anon aiueos.tcp-seq-acceptable-parity-test
   (:require [clojure.java.io :as io]
             [clojure.test :refer [deftest is]]
             [kotoba.compiler.core :as compiler]
