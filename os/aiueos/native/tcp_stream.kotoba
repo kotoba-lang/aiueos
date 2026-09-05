@@ -549,11 +549,15 @@
              (= (frame-store-be16-stream tx-frame 20 16384) 16384)
              (= (kernel-store-u8-4k tx-frame 4096 22 64) 64)
              (= (kernel-store-u8-4k tx-frame 4096 23 6) 6)
+             (= (frame-store-be32-stream tx-frame 26 src) src)
+             (= (frame-store-be32-stream tx-frame 30 dst) dst)
+             ;; The IPv4 checksum covers 14..33, so it is stored AFTER the
+             ;; addresses. Computed before them (the first physical SYN) it
+             ;; hashed stale bytes 26..33 and macOS silently dropped every
+             ;; SYN — measured as STREAM A1/A2/A3 then A4, bridge saw nothing.
              (= (frame-store-be16-stream tx-frame 24
                                   (internet-checksum-sum-ipv4 tx-frame))
                 (frame-be16-stream tx-frame 24))
-             (= (frame-store-be32-stream tx-frame 26 src) src)
-             (= (frame-store-be32-stream tx-frame 30 dst) dst)
              (= (frame-store-be16-stream tx-frame 34 49155) 49155)
              (= (frame-store-be16-stream tx-frame 36 8443) 8443)
              (= (frame-store-be32-stream tx-frame 38 seq) seq)
