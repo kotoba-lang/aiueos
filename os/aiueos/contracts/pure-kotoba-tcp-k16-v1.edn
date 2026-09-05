@@ -112,7 +112,39 @@
              :checksum-fail-observations 0
              :incoming-checksum-admission :restored-both-tranches
              :proves [:ipv4-header-checksum-admission
-                      :tcp-header-checksum-admission]}}
+                      :tcp-header-checksum-admission]}
+            :gate-n2-tranche-one-wiring
+            {:state :wired-boot-pending-physical
+             :recorded-at "2026-09-05T09:30:00+09:00"
+             :what [:stream-entry-wired-into-pre-cr3-physical-path
+                    :screen-reports-192-plus-stream-status
+                    :291-delivery-ack-ran
+                    :213-ring-live-peer-silent
+                    :97-ring-install-fault
+                    :98-tcb-install-fault]
+             :compiler {:pin 5cec919625e4c5069950637ddf989e1acbfb3b0d
+                        :port-branch "kotoba-lang/amu k16-loader-port @ 46eeedae"
+                        :note "13d2f5df's :bool-boundary blocker was stale (lifted by 13d2f5df..5cec9196); boot-info-v4 loader + k16-preflight forward-ported, not cherry-picked"}
+             :build {:kernel-sha256
+                     "9cd1f8315a2bad5ae7e65f48059e26e1bc19639ceda7d94fe64903d50ed46520"
+                     :kernel-bytes 164120
+                     :boot-sha256
+                     "e07bd27ab27bcf82777c5d255e29d94f392afd4bb0104027848fd56580d87e70"
+                     :boot-bytes 183296
+                     :k16-preflight true
+                     :boot-info-v4 true
+                     :reproducible :byte-identical-second-build
+                     :verifier "AIUEOS_KOTOBA_NATIVE_BOOT_OK no-c no-crt no-linker imports=0"
+                     :host-parity "8 tests / 163 assertions, 0 failures"}
+             :qemu {:ovmf-boot :clean-return
+                    :note "OVMF boots the preflight image and returns cleanly; the pre-port 5cec loader failed the kernel boot-info gate at status 18"}
+             :pxe {:interface "en15"
+                   :server-ip "10.77.0.1"
+                   :served-sha256
+                   "e07bd27ab27bcf82777c5d255e29d94f392afd4bb0104027848fd56580d87e70"
+                   :netlog "10.77.0.1:7777"
+                   :ready true}
+             :pending :k16-power-cycle-and-wire-receipt}}
  :does-not-prove [:tls13-handshake
                   :x509-chain-or-san-admission
                   :https-response
