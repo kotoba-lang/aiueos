@@ -70,7 +70,13 @@
 
 ;; `ecdsa-p256-public.o` has no sibling source and is not sourceless:
 ;; `ecdsa-p256-sign.kotoba` defines both exports (ADR-0129).
-(def source-overrides {"ecdsa-p256-public.o" "ecdsa-p256-sign.kotoba"})
+;; `sha256.o`/`digest-equal.o` kept their names but their sources MOVED to
+;; `aiueos/sha256.kotoba` / `aiueos/digest_equal.kotoba` (bd8908b, ADR-0141);
+;; the stem-derived defaults no longer exist on disk, which is the
+;; NoSuchFileException this gate errored with in CI.
+(def source-overrides {"ecdsa-p256-public.o" "ecdsa-p256-sign.kotoba"
+                       "sha256.o" "aiueos/sha256.kotoba"
+                       "digest-equal.o" "aiueos/digest_equal.kotoba"})
 
 (defn- synthesized-receipt
   "What a fully attested object's receipt looks like: a Kotoba source, both
