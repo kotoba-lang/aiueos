@@ -36,7 +36,7 @@
             tcb-status tcb-init tcb-state-store held-table-store
             held-table-load accept-decision held-joinable delivery-advance
             deliver-held-run stage-payload-at build-ack
-            stream-connect receive-established]))
+            stream-connect stream-resident receive-established]))
 
 ;; ── TCP state codes, restated from tcp.state-core (wasm32-only) ───────────
 ;; state_core.kotoba: st-closed 0, st-listen 1, st-syn-sent 2,
@@ -925,3 +925,30 @@
                       (tcb-state-store tcb tcp-state-established)
                       26)
                     25))))))))))
+
+(defn stream-resident [win mmio tx-frame tcb staging]
+  ;; Plan A-2: the stream stage never halts the machine. Each cycle fully
+  ;; re-arms (ring + TCB), connects, runs one ESTABLISHED window, logs the
+  ;; outcome, and starts the next cycle. The cycle count rides
+  ;; tcb-slot-rto-windows (a slot the stream does not otherwise use) so every
+  ;; observation carries its attempt number: STREAM_C<cycles>. Reboot is
+  ;; then needed only when the Mac-side artifact changes.
+  (let [cycles (kernel-load-u64-4k tcb 4096 (* tcb-slot-rto-windows 8))
+        ring (rx-ring-init mmio win)
+        armed (if (= ring 0)
+                (tcb-init tcb 2715820034)
+                1)
+        seeded (if (and (= ring 0) (= armed 0))
+                 (do (kernel-store-u64-4k tcb 4096
+                                          (* tcb-slot-rto-windows 8)
+                                          (+ cycles 1))
+                     1)
+                 0)
+        connect (if (= seeded 1)
+                  (stream-connect win mmio tx-frame tcb staging)
+                  97)
+        result (if (= connect 0)
+                 (receive-established win tcb staging 8)
+                 connect)]
+    (stream-log win mmio tx-frame (+ 12 result (* 0 cycles)))
+    (stream-resident win mmio tx-frame tcb staging)))
