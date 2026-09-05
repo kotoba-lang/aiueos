@@ -856,6 +856,11 @@
         (if (= syn-len 0)
           (do (stream-log win mmio tx-frame 175) 35)
           (do (stream-log win mmio tx-frame 161)
+              (stream-log win mmio tx-frame
+                          (checksum-sum-stream tx-frame 14 20 0 0))
+              (stream-log win mmio tx-frame
+                          (checksum-fold-stream
+                           (checksum-sum-stream tx-frame 14 20 0 0)))
               (stream-log win mmio tx-frame (frame-be16-stream tx-frame 24))
               (stream-log win mmio tx-frame (frame-be16-stream tx-frame 50))
               (if (not (= (tx-submit-stream win mmio tx-frame syn-len) 0))
