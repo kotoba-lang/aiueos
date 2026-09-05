@@ -103,133 +103,41 @@ went non-zero would not distinguish "the file is wrong" from "the reader is".
 | ELF magic constant off by one | `KHSCN_b____Z` | `2 2 2 2 2 2` | `A` goes with `c d e f`: everything is refused at the first clause, so nothing downstream is measured any more |
 | `put-hex64` divides by 8 | `KHSCNAbcdefZ` | `0 2 5 24 23 41` | every marker holds and `entry` prints `0000000000000040`. The console writer and the admission verdicts fail independently |
 
-### A host oracle, because the CPU evidence was narrow
-
-`os/aiueos/contracts/uefi-elf-admit-v1.edn` runs the same module against the
-KIR interpreter, in the default `verify-admissions` set. It costs about five
-seconds and needs no firmware.
-
-The boot and the contract answer different questions, and the contract is the
-broader one. The smoke asserts **six** verdicts because six is what fits in one
-image's literal pool and one minute of TCG; the contract asserts **twenty-five**
-distinct reason codes over 28 vectors — every clause the module can produce
-except the four whose siblings already cover them.
-
-Each vector is the **same 176 bytes with one field changed**, and it names the
-field (`{:offset 88 :u64 32768}`) rather than carrying its own 352-character
-blob, because a contract of opaque hex is 352 chances per vector to transcribe
-one wrong and a reader cannot tell which byte was meant to differ.
-
-Two vectors are boundary pairs rather than single points:
-`:entry-just-inside-segment-0` (1052831) beside `:entry-outside-segment-0`
-(1052832), and `:unaligned-phoff` (65, which clause 9 would also refuse) beside
-`:unaligned-phoff-that-fits` (57, which only clause 8 refuses).
-
-**The reds, each measured rather than asserted:**
-
-| break | result |
-|---|---|
-| clause 8's alignment test made vacuous | `:unaligned-phoff-that-fits` **traps** — `:trap :kernel-memory-fault, :operation kernel-load-u32-4k, :check :misaligned-access, :width 4, :index 57`. This is the measurement behind "clause 8 turns a trap into a verdict"; without the isolating vector the claim was merely plausible, since clause 9 catches `phoff 65` on its own |
-| `paddr` floor 1048576 -> 1024 | `:segment-0-below-1mib` expected 24, actual 42 |
-| entry test `<` -> `<=` | `:entry-outside-segment-0` expected 42, actual 0 — caught only by the boundary pair |
-
-The contract declares no memory assertions, and that is correct rather than an
-omission: this object writes nothing. It answers a verdict, and the verdict is
-the whole of its output.
-
-### The placement rule gets one too
-
-`os/aiueos/contracts/uefi-window-reason-v1.edn`, also in the default set.
-FIRMWARE-STORE's `aiueos.uefi.memory/window-reason` is the only loader function
-that is **pure arithmetic** — three words in, one word out, no memory window and
-no firmware call — so unlike the allocators it can be exercised completely
-without a machine. 14 vectors, every reachable clause, about 0.6 s.
-
-The two boundaries the rule actually turns on are pairs:
-
-| pair | says |
-|---|---|
-| 4,607 pages -> 0, 4,606 -> 7 | the 511-page slack is **exact**, not merely large enough. The aligned block ends at exactly the last byte of the allocation |
-| `want` 68719476736 -> 6, 68719476737 -> 2 | "does not fit at all" and "does not fit HERE" are different sentences, and the ceiling is a limit rather than a maximum |
-
-**Clause 5 is declared and NOT exercised, and the contract says so.** It fires
-when aligning wraps, which needs `raw-base + 2097151` to overflow i64 — and
-every such base makes `aligned-up` answer a negative word, which clause 4
-refuses first because a negative is below 4 GiB. So it is unreachable *through
-this entry given the clause order*, not because the arithmetic cannot wrap.
-Recorded as `:declared-not-exercised {5 :shadowed-by-clause-4}` rather than left
-as a hole in the observed set.
-
-Three reds, each measured:
-
-| break | result |
-|---|---|
-| clause 7 `>` -> `>=` | `:misaligned-base-with-the-full-slack` 0 -> 7 — the exact boundary |
-| clause 3 moved after clause 4 | `:firmware-refused` 3 -> 4 |
-| min address 4 GiB -> 1 MiB | `:below-4gib` 4 -> 0 |
-
 ## Consequences
 
 - **This does not replace the K16 loader and the gate still refuses.** The K16
   profile also needs the model read, the embedded-release path and `BootNext`.
   `uefi/main.c` is unchanged and every byte of it still runs.
-- **`integrity` RUNS.** amu#764 made `--fuel` reach the image, and the digest
-  comparison — the loader's central security decision — now executes as
-  x86-64 machine code with SHA-256's 512-byte state in `kernel-scratch-region`:
+- **`integrity` is landed as source and has NEVER RETURNED ON A CPU** (2026-09-03,
+  after BOOT-SCRATCH landed `kernel-scratch-region`). It compiles, the scratch
+  region works, and `sha-block` traps with `#UD` inside a UEFI image while the
+  same `aiueos.lib.sha256-stream` runs correctly as a kernel object. Bisected
+  in the guest: scratch write/read back, a 64-byte `kernel-subregion` of a
+  `bytes-literal` read through the library's own window-64 accessor,
+  `store32`/`load32`, and `sha-init` all pass; `sha-block` does not. A separate
+  probe stored and read back offsets 0, 255, 256, 300, 360, 424, 455 and 511 of
+  the scratch state and exited 33, so the whole 512-byte window is sound.
 
-  ```
-  exit=33 debugcon="Kgh"
-  digest 0 4
-  ```
+  **The blocker is fuel, and `--fuel` is inert on this route.**
+  `sha256-region.kotoba` measures 1,772 fuel per 64-byte block; a UEFI image
+  runs on `native-fuel!`'s default of **512** (amu
+  `src/kotoba/compiler/nbb/cli.cljs:89`). The flag is read and validated —
+  250,000,000 is refused as `native fuel budget is not admitted`, 1,048,576 is
+  accepted — and then does not reach the image:
 
-  `g` is the 176 fixture bytes hashing to the digest `shasum -a 256` computes
-  for them off this machine (`db5502b1…`); `h` is that digest with one nibble
-  changed being refused, **and refused with reason 4** rather than merely
-  refused, so a comparison that rejected everything would not pass either.
-
-  **The discriminating red is one constant.** Changing the last nibble of
-  `g`'s expected digest, and nothing else:
-
-  | | debugcon | console |
-  |---|---|---|
-  | baseline | `Kgh` | `digest 0 4` |
-  | `…1825e1` -> `…1825e3` | `Kh` | `digest 4 4` |
-
-  Exactly that marker goes and exactly that verdict flips. Both exit 33, so it
-  is the assertion failing and not the boot.
-
-  **The fuel it actually consumes**, now that a real budget arrives — three
-  64-byte blocks and a 32-byte comparison per call:
-
-  | `--fuel` | result |
+  | `--fuel` | artifact sha256 |
   |---|---|
-  | 6,144 | traps before the first verdict — `K` |
-  | 16,384 | the FIRST verdict completes, the second traps — `Kg`, `digest 0` |
-  | 32,768 | both complete — `Kgh`, `digest 0 4` |
+  | 512 | `714a7509d057b654cb8ae4181284250ce82514626d50e7d25f624cc979872f29` |
+  | 1048576 | `714a7509d057b654cb8ae4181284250ce82514626d50e7d25f624cc979872f29` |
 
-  So one `verify` over 176 bytes costs between 6,144 and 16,384, two cost
-  between 16,384 and 32,768, and the budget is spent **cumulatively across the
-  whole `efi-main` call** rather than replenished per callee. Consistent with
-  `sha256-region.kotoba`'s measured 1,772 per block: 3 x 1,772 = 5,316 of
-  compression per call, plus padding, the comparison and the console writes.
+  **Byte-identical across a 2048x difference in the declared budget.** A
+  200-iteration arithmetic loop completes and a 2,000-iteration one traps,
+  identically, under both. A knob that is validated and then discarded looks
+  exactly like a knob that works — the failure ADR-2608136000 is about. The
+  module is deliberately NOT wired into `loader-probe.kotoba`, so the probe
+  stays green on what it can actually demonstrate; wiring it in is two lines
+  once the image installs the declared budget.
 
-  The earlier measurement is what made the failure legible and is worth keeping:
-  the image ran on a fixed 512 whatever `--fuel` said, and `--fuel 512` and
-  `--fuel 1048576` produced **byte-identical artifacts**
-  (`714a7509d057b654cb8ae4181284250ce82514626d50e7d25f624cc979872f29`). A knob
-  that is validated and then discarded looks exactly like a knob that works.
-
-- **The combined probe cannot be built today, and that is not this stream's
-  break.** `uefi/loader-probe.kotoba` now carries the two digest verdicts, and
-  it also exercises `aiueos.uefi.memory`, whose `kernel-uefi-alloc-region` is
-  not in amu main (amu#766 open). Measured on main's probe **unchanged**, at
-  every `--fuel` value including none: `aggregate ABI rejected:
-  call-abi-not-admitted`; and on a three-line module using only that operation,
-  the same. So the loader smoke is red on `aiueos` main until #766 lands.
-  `uefi/integrity-probe.kotoba` is the digest half on its own so the evidence
-  above does not wait on it, and it carries its own deletion condition — two
-  probes for one program is the shape ADR-2608080100 argues against, and this
-  one only earns its place while the other cannot be compiled.
 - **Three of the seven planned modules are BLOCKED, not deferred.** `memory`
   (`AllocatePages`), `fs` (`HandleProtocol`, `OpenVolume`, `Read`) and `exit`
   (`GetMemoryMap`) can now ALLOCATE and INSPECT — BOOT-SCRATCH's

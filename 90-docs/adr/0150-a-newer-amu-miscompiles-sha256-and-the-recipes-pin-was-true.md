@@ -168,15 +168,6 @@ the tooling and the manifest shape stay.
    regression to kotoba-native `da3b56b` and it is fixed upstream (kotoba-mir
    ADR 0038 / kotoba-native ADR 0076 / amu ADR 0326). Rebuilding at a compiler
    past kotoba-native `d7105581` measures `kotoba=80 unattested=0` AND boots.
-   **DONE 2026-09-03**: all 95 committed objects rebuilt at amu `6c245f69`
-   (kotoba-native `452422f`), 76 changed and 19 already byte-identical; the gate
-   went `kotoba 40 -> 80`, `unattested 40 -> 0`; the pure-native profile reports
-   `AIUEOS_K16_PURE_NATIVE_OK scanned=80 kotoba=80 foreign=0 unattested=0
-   kernel=linked`; `smoke-qemu-uefi.sh` exits 0 with every parity marker,
-   including the `AIUEOS_INITRAMFS_RECOVERY_ADMISSION_OK` that this ADR watched
-   #UD; and every receipt names one landed amu revision, so the tree is
-   reproducible from a single SHA. The four objects ADR-0190 baselined are
-   cleared, the baseline is empty, and `foreign=24` is all that is left -- the C.
 
 ## Consequences
 

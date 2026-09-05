@@ -1,10 +1,7 @@
 (ns aiueos.uefi-loader-probe
   (:require [aiueos.uefi.console :as console]
-            [aiueos.uefi.elf :as elf]
-            [aiueos.uefi.memory :as memory]
-            [aiueos.uefi.integrity :as integrity])
-  (:export [efi-main main mark-when present verdict window-verdict
-            digest-verdict]))
+            [aiueos.uefi.elf :as elf])
+  (:export [efi-main main mark-when present verdict]))
 
 ;; A BOOTX64.EFI, written in Kotoba, that says what it decided.
 ;;
@@ -54,46 +51,9 @@
 ;;   N  ClearScreen, SetAttribute and OutputString all returned EFI_SUCCESS
 ;;   A  the real kernel's headers were ADMITTED (reason 0)
 ;;   b c d e f  each mutation was refused with ITS OWN reason
-;;   P  a page the FIRMWARE allocated was WRITTEN and read back
-;;   W  the 4 GiB - 64 GiB placement rule answered all five of its clauses
-;;   g  those same 176 bytes hashed -- by SHA-256 running as x86-64 machine
-;;      code, with its 512-byte state in `kernel-scratch-region` -- to the
-;;      digest `shasum -a 256` computes for them off this machine
-;;   h  a digest one nibble different was refused, and refused with reason 4
-;;      rather than merely refused
 ;;   Z  kernel-system-table still answers, so R9 survived every call
 ;;
 ;; then `out 0xf4, 16`, so QEMU leaves with (16 << 1) | 1 = 33.
-;;
-;; ---------------------------------------------------------------------------
-;; P AND W -- THE THIRD MODULE
-;; ---------------------------------------------------------------------------
-;; `aiueos.uefi.memory` is the placement half of `main.c`'s
-;; `load_verified_model` (:684-712). It could not be written before
-;; `kernel-uefi-alloc-region`: `AllocatePages`' answer arrives through a load,
-;; and a base that came from a load is refused, so a loader could allocate a
-;; page and could not put a byte in it.
-;;
-;;   P  `(kernel-uefi-alloc-region bs 40 0 2 1 0)` -- AllocateAnyPages,
-;;      EfiLoaderData, one page -- answers with the page's BASE, and
-;;      `kernel-store-u64-4k` then `kernel-load-u64-4k` carry a pattern
-;;      through the CHECKED family, so the declared window and its emitted
-;;      bounds check are in the path. 81985529216486895 is 0x0123456789ABCDEF;
-;;      firmware memory does not arrive holding it.
-;;
-;;   W  five placements, printed on the firmware console beside the ELF
-;;      verdicts and each expected to name ITS OWN clause:
-;;
-;;        0  4 GiB, 32 MiB allocated, 16 MiB wanted        admitted
-;;        4  1 MiB aligned up to 2 MiB                     below 4 GiB
-;;        3  the firmware answered zero                    not allocated
-;;        6  64 GiB - 2 MiB, 16 MiB wanted                 ends above 64 GiB
-;;        7  4 GiB + 4 KiB, allocated EXACTLY 16 MiB       ends past the pages
-;;
-;;      The last is the clause the 511 pages of slack exist for, and the one a
-;;      loader gets wrong: aligning the base up to 2 MiB moves the END of the
-;;      block up by the same amount, so a request sized to the mapped bytes
-;;      alone lands past its own allocation.
 
 (defn mark-when [flag byte]
   (if (= flag 1) (kernel-out-u8 233 byte) 0))
@@ -108,30 +68,6 @@
         sp (console/put out (ucs2 " "))
         n (console/put-number out r)
         m (mark-when (if (= r expected) 1 0) marker)]
-    (+ r (* 0 (+ sp (+ n m))))))
-
-;; Prints one placement verdict beside the ELF ones and answers 1 when it is
-;; the clause this placement is supposed to produce.
-(defn window-verdict [out raw-base raw-pages want expected]
-  (let [r (memory/window-reason raw-base raw-pages want)
-        sp (console/put out (ucs2 " "))
-        n (console/put-number out r)]
-    (if (= r expected) (+ 1 (* 0 (+ sp n))) 0)))
-
-;; SHA-256 needs 512 bytes of state that survives between blocks, and
-;; `kernel-scratch-region` (boot-scratch) is where it lives. 16,384 is the
-;; reserved size; the library reads it through a 512-byte window.
-;;
-;; These two verdicts were written before they could run. Measured 2026-09-02,
-;; a UEFI image ran on a fixed budget of 512 whatever `--fuel` said -- `--fuel
-;; 512` and `--fuel 1048576` produced BYTE-IDENTICAL artifacts -- and one
-;; 64-byte SHA block costs about 1,772, so `sha-block` trapped at its own fuel
-;; guard. amu#764 made the declared budget reach the image.
-(defn digest-verdict [out src expected marker]
-  (let [r (integrity/verify (kernel-scratch-region) 16384 src 176 expected)
-        sp (console/put out (ucs2 " "))
-        n (console/put-number out r)
-        m (mark-when (if (= r (if (= marker 103) 0 4)) 1 0) marker)]
     (+ r (* 0 (+ sp (+ n m))))))
 
 (defn efi-main [image-handle system-table]
@@ -155,38 +91,6 @@
         v4 (verdict out (bytes-literal "7f454c4602010100000000000000000002003e00010000000010100000000000400000000000000018b0010000000000000000004000380002004000040003000100000005000000001000000000000000101000000000000010100000000000a000000000000000c00000000000000000100000000000000100000006000000008000000000000000801000000000000080100000000000003001000000000000300100000000000010000000000000")  110872 23 101)
         v5 (verdict out (bytes-literal "7f454c4602010100000000000000000002003e00010000000010100000000000400000000000000018b0010000000000000000004000380002004000040003000100000005000000001000000000000000101000000000000010100000000000a000000000000000a00000000000000000100000000000000100000007000000008000000000000000801000000000000080100000000000003001000000000000300100000000000010000000000000")  110872 41 102)
         nl1 (console/put out (ucs2 "\r\n"))
-
-        ;; P -- the page the firmware allocated is one this image may WRITE.
-        bs (console/boot-services system-table)
-        page (kernel-uefi-alloc-region bs 40 0 2 1 0)
-        stored (kernel-store-u64-4k page 4096 0 81985529216486895)
-        m6 (mark-when
-             (if (= (kernel-load-u64-4k page 4096 0) 81985529216486895) 1 0)
-             80)
-
-        ;; W -- and the placement rule says where such pages are allowed to be.
-        lw (console/put out (ucs2 "window"))
-        w0 (window-verdict out 4294967296 8192 16777216 0)
-        w1 (window-verdict out 1048576 8192 16777216 4)
-        w2 (window-verdict out 0 8192 16777216 3)
-        w3 (window-verdict out 68717379584 8192 16777216 6)
-        w4 (window-verdict out 4294971392 4096 16777216 7)
-        m7 (mark-when (if (= (+ w0 (+ w1 (+ w2 (+ w3 w4)))) 5) 1 0) 87)
-        nl2 (console/put out (ucs2 "\r\ndigest"))
-
-        ;; g / h -- the loader's central security decision, running as machine
-        ;; code: does this image hash to the digest we expected? The second
-        ;; call is what makes the first mean anything, and it asserts the
-        ;; REASON (4) rather than merely "non-zero", so a comparison that
-        ;; refused everything would not pass.
-        d0 (digest-verdict out (bytes-literal "7f454c4602010100000000000000000002003e00010000000010100000000000400000000000000018b0010000000000000000004000380002004000040003000100000005000000001000000000000000101000000000000010100000000000a000000000000000a00000000000000000100000000000000100000006000000008000000000000000801000000000000080100000000000003001000000000000300100000000000010000000000000")
-                           (bytes-literal "db5502b1e112b394008f0fa17a7a4cfe891411d3e79a537874c025187f1825e1")
-                           103)
-        d1 (digest-verdict out (bytes-literal "7f454c4602010100000000000000000002003e00010000000010100000000000400000000000000018b0010000000000000000004000380002004000040003000100000005000000001000000000000000101000000000000010100000000000a000000000000000a00000000000000000100000000000000100000006000000008000000000000000801000000000000080100000000000003001000000000000300100000000000010000000000000")
-                           (bytes-literal "db5502b1e112b394008f0fa17a7a4cfe891411d3e79a537874c025187f1825e2")
-                           104)
-        nl3 (console/put out (ucs2 "\r\n"))
-
         parked (kernel-system-table)
         m5 (mark-when (if (= parked system-table) 1 0) 90)
         done (kernel-out-u32 244 16)]
