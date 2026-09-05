@@ -36,7 +36,7 @@
             tcb-status tcb-init tcb-state-store held-table-store
             held-table-load accept-decision held-joinable delivery-advance
             deliver-held-run stage-payload-at build-ack
-            receive-established]))
+            stream-connect receive-established]))
 
 ;; ── TCP state codes, restated from tcp.state-core (wasm32-only) ───────────
 ;; state_core.kotoba: st-closed 0, st-listen 1, st-syn-sent 2,
@@ -264,7 +264,7 @@
         s10 (kernel-store-u64-4k tcb 4096 80 5)
         s11 (kernel-store-u64-4k tcb 4096 88 0)
         s12 (kernel-store-u64-4k tcb 4096 96 0)
-        s13 (kernel-store-u64-4k tcb 4096 104 0)
+        s13 (kernel-store-u64-4k tcb 4096 104 3)
         s14 (kernel-store-u64-4k tcb 4096 112 stream-status-listen)
         s15 (kernel-store-u64-4k tcb 4096 120 0)
         s16 (kernel-store-u64-4k tcb 4096 128 0)]
@@ -415,7 +415,365 @@
       (link/tx-wire-length (+ 14 total-length))
       0)))
 
-(defn receive-established [win dma-base tcb staging remaining]
+;; ── SYN_SENT tranche (ADR-0134): the stream owns the handshake ─────────────
+;;
+;; Until now the diagnostics profile owned the wire: it sent the proof SYN,
+;; admitted one SYN-ACK, and ACK-then-RST'd the peer. This tranche moves the
+;; handshake into the stream profile: the TCB drives a real SYN (flags 02)
+;; from its own ISS, the reply is admitted against THIS connection's ISS+1
+;; (read from the TCB, not a compiled constant), the peer's ISS comes off the
+;; wire, and ESTABLIFIED goes through the one tcb-state-store so the status
+;; slot can never drift from the state slot.
+;;
+;; The frame helpers below restate rtl8125.kotoba's private primitives (same
+;; bodies, same provenance) because amu#611 keeps that module's export list
+;; closed; the restatement rule is the one the state integers already follow.
+;; The TX mechanics restate the single-descriptor Own-bit discipline; the kick
+;; port is TPPOLL (rtl8125.h: +0x90 = 144).
+
+(defn frame-store-be16-stream [frame offset value]
+  (let [high (kernel-store-u8-4k frame 4096 offset
+                                 (bit-and (quot value 256) 255))
+        low (kernel-store-u8-4k frame 4096 (+ offset 1)
+                                (bit-and value 255))]
+    (+ low (* high 256))))
+
+(defn frame-store-be32-stream [frame offset value]
+  (let [b0 (kernel-store-u8-4k frame 4096 offset
+                               (bit-and (quot value 16777216) 255))
+        b1 (kernel-store-u8-4k frame 4096 (+ offset 1)
+                               (bit-and (quot value 65536) 255))
+        b2 (kernel-store-u8-4k frame 4096 (+ offset 2)
+                               (bit-and (quot value 256) 255))
+        b3 (kernel-store-u8-4k frame 4096 (+ offset 3)
+                               (bit-and value 255))]
+    (+ b3 (* b2 256) (* b1 65536) (* b0 16777216))))
+
+(defn frame-be16-stream [frame offset]
+  (+ (* (kernel-load-u8-4k frame 4096 offset) 256)
+     (kernel-load-u8-4k frame 4096 (+ offset 1))))
+
+(defn frame-be32-stream [frame offset]
+  (+ (* (kernel-load-u8-4k frame 4096 offset) 16777216)
+     (* (kernel-load-u8-4k frame 4096 (+ offset 1)) 65536)
+     (* (kernel-load-u8-4k frame 4096 (+ offset 2)) 256)
+     (kernel-load-u8-4k frame 4096 (+ offset 3))))
+
+(defn rx-buffer-region [win index]
+  ;; The frame helpers need a (base, 4096) pair whose base NAMES a region:
+  ;; each buffer is a static-offset subregion of the 16 KiB window (the same
+  ;; offsets rx-ring-init programmed into the descriptors).
+  (if (= index 0)
+    (kernel-subregion win 16384 rx-buffer-a-offset 4096)
+    (if (= index 1)
+      (kernel-subregion win 16384 rx-buffer-b-offset 4096)
+      (if (= index 2)
+        (kernel-subregion win 16384 rx-buffer-c-offset 4096)
+        (kernel-subregion win 16384 rx-buffer-d-offset 4096)))))
+
+(defn copy-device-mac-stream [frame frame-offset mmio index]
+  (if (= index 6)
+    1
+    (let [value (kernel-load-u8 mmio 512 index)
+          stored (kernel-store-u8-4k frame 4096 (+ frame-offset index) value)]
+      (if (= stored value)
+        (copy-device-mac-stream frame frame-offset mmio (+ index 1))
+        0))))
+
+(defn store-gateway-mac-stream [frame]
+  ;; rtl8125.kotoba/store-server-mac's constant: the Mac's en15 address,
+  ;; the fixed link peer of the direct K16 diagnostics link.
+  (if (and (= (kernel-store-u8-4k frame 4096 0 128) 128)
+           (= (kernel-store-u8-4k frame 4096 1 105) 105)
+           (= (kernel-store-u8-4k frame 4096 2 26) 26)
+           (= (kernel-store-u8-4k frame 4096 3 23) 23)
+           (= (kernel-store-u8-4k frame 4096 4 79) 79)
+           (= (kernel-store-u8-4k frame 4096 5 21) 21))
+    1
+    0))
+
+(defn checksum-word-stream [frame base length offset]
+  (if (>= offset length)
+    0
+    (+ (* (kernel-load-u8-4k frame 4096 (+ base offset)) 256)
+       (if (< (+ offset 1) length)
+         (kernel-load-u8-4k frame 4096 (+ base offset 1))
+         0))))
+
+(defn checksum-sum-stream [frame base length offset total]
+  (if (>= offset length)
+    total
+    (checksum-sum-stream frame base length (+ offset 2)
+                         (+ total (checksum-word-stream frame base length offset)))))
+
+(defn checksum-fold-stream [total]
+  (if (<= total 65535)
+    total
+    (checksum-fold-stream (+ (bit-and total 65535) (quot total 65536)))))
+
+(defn tcp-pseudo-sum-stream [src dst tcp-length]
+  (+ (+ (quot src 65536) (bit-and src 65535))
+     (+ (+ (quot dst 65536) (bit-and dst 65535))
+        (+ 6 tcp-length))))
+
+(defn internet-checksum-sum-ipv4 [frame]
+  ;; IPv4 header checksum over bytes 14..33, seed 0 (rtl8125.kotoba's
+  ;; build-tcp-segment discipline).
+  (- 65535 (checksum-fold-stream (checksum-sum-stream frame 14 20 0 0))))
+
+(defn build-tcp-segment-stream [tcb tx-frame mmio mode]
+  ;; mode 0: SYN (seq = snd-nxt = ISS, ack 0, window 1460, flags 02)
+  ;; mode 1: the handshake's pure ACK (seq = ISS+1, ack = peer ISS+1 -- both
+  ;;         already in the TCB when mode 1 runs). Full Ethernet + IPv4
+  ;;         (own checksum) + TCP (pseudo-header checksum). Returns the
+  ;;         wire length for tx-submit-stream, 0 on any store mismatch.
+  (let [src 172818442
+        dst 172818433
+        tcp-length 20
+        total-length 40
+        seq (if (= mode 0)
+              (seq-core/wrap (kernel-load-u64-4k tcb 4096 (* tcb-slot-snd-nxt 8)))
+              (seq-core/wrap (+ (kernel-load-u64-4k tcb 4096 (* tcb-slot-iss 8)) 1)))
+        ack (if (= mode 0)
+              0
+              (kernel-load-u64-4k tcb 4096 (* tcb-slot-rcv-nxt 8)))
+        flags (if (= mode 0) 2 16)
+        window (if (= mode 0) 1460 256)]
+    (if (and (= (store-gateway-mac-stream tx-frame) 1)
+             (= (copy-device-mac-stream tx-frame 6 mmio 0) 1)
+             (= (frame-store-be16-stream tx-frame 12 2048) 2048)
+             (= (kernel-store-u8-4k tx-frame 4096 14 69) 69)
+             (= (kernel-store-u8-4k tx-frame 4096 15 0) 0)
+             (= (frame-store-be16-stream tx-frame 16 total-length) total-length)
+             (= (frame-store-be16-stream tx-frame 18 1) 1)
+             (= (frame-store-be16-stream tx-frame 20 16384) 16384)
+             (= (kernel-store-u8-4k tx-frame 4096 22 64) 64)
+             (= (kernel-store-u8-4k tx-frame 4096 23 6) 6)
+             (= (frame-store-be16-stream tx-frame 24
+                                  (internet-checksum-sum-ipv4 tx-frame))
+                (frame-be16-stream tx-frame 24))
+             (= (frame-store-be32-stream tx-frame 26 src) src)
+             (= (frame-store-be32-stream tx-frame 30 dst) dst)
+             (= (frame-store-be16-stream tx-frame 34 49155) 49155)
+             (= (frame-store-be16-stream tx-frame 36 8443) 8443)
+             (= (frame-store-be32-stream tx-frame 38 seq) seq)
+             (= (frame-store-be32-stream tx-frame 42 ack) ack)
+             (= (kernel-store-u8-4k tx-frame 4096 46 80) 80)
+             (= (kernel-store-u8-4k tx-frame 4096 47 flags) flags)
+             (= (frame-store-be16-stream tx-frame 48 window) window)
+             (= (frame-store-be16-stream tx-frame 50 0) 0)
+             (= (frame-store-be16-stream tx-frame 52 0) 0)
+             (= (frame-store-be16-stream
+                 tx-frame 50
+                 (- 65535
+                    (checksum-fold-stream
+                     (checksum-sum-stream tx-frame 34 20 0
+                                          (tcp-pseudo-sum-stream src dst 20)))))
+                (frame-be16-stream tx-frame 50)))
+      (link/tx-wire-length (+ 14 total-length))
+      0)))
+
+(defn tx-submit-stream [win mmio tx-frame length]
+  ;; rtl8125.kotoba/tx-submit's single-descriptor discipline, restated over
+  ;; the stream window: Own-bit guard, descriptor address, fences, command,
+  ;; TPPOLL kick (+0x90 = 144).
+  (let [wire-length (link/tx-wire-length length)]
+    (if (or (= wire-length 0)
+            (not (= (bit-and (kernel-load-u32-16k win 16384 0) 2147483648) 0)))
+      5
+      (let [extension (kernel-store-u32-16k win 16384 4 0)
+            a0 (kernel-store-u8-16k win 16384 8 (bit-and tx-frame 255))
+            a1 (kernel-store-u8-16k win 16384 9
+                                    (bit-and (quot tx-frame 256) 255))
+            a2 (kernel-store-u8-16k win 16384 10
+                                    (bit-and (quot tx-frame 65536) 255))
+            a3 (kernel-store-u8-16k win 16384 11
+                                    (bit-and (quot tx-frame 16777216) 255))
+            a4 (kernel-store-u8-16k win 16384 12
+                                    (bit-and (quot tx-frame 4294967296) 255))
+            a5 (kernel-store-u8-16k win 16384 13
+                                    (bit-and (quot tx-frame 1099511627776) 255))
+            a6 (kernel-store-u8-16k win 16384 14
+                                    (bit-and (quot tx-frame 281474976710656) 255))
+            a7 (kernel-store-u8-16k win 16384 15
+                                    (bit-and (quot tx-frame 72057594037927936) 255))
+            before (dma/release-fence)
+            command (kernel-store-u32-16k win 16384 0 (dma/tx-command wire-length))
+            after (dma/release-fence)
+            kicked (kernel-store-u16 mmio 512 144 1)]
+        (if (and (= extension 0)
+                 (= a0 (bit-and tx-frame 255))
+                 (= a7 (bit-and (quot tx-frame 72057594037927936) 255))
+                 (= before 1)
+                 (= command (dma/tx-command wire-length))
+                 (= after 1)
+                 (= kicked 1))
+          0
+          1)))))
+
+(defn wait-tx-complete-stream [win remaining]
+  ;; rtl8125.kotoba/wait-tx-complete's Own-bit poll, restated. x86 TSO gives
+  ;; the descriptor load its acquire ordering; no serialising CPUID per poll.
+  (if (= (bit-and (kernel-load-u32-16k win 16384 0) 2147483648) 0)
+    1
+    (if (= remaining 0)
+      0
+      (let [paused (kernel-pause)]
+        (+ (wait-tx-complete-stream win (- remaining 1)) (* 0 paused))))))
+
+(defn submit-wire [win mmio tx-frame length]
+  (if (= length 0)
+    36
+    (if (not (= (tx-submit-stream win mmio tx-frame length) 0))
+      36
+      (if (= (wait-tx-complete-stream win 200000000) 1) 0 36))))
+
+(defn receive-syn-ack [win mmio tx-frame tcb staging]
+  ;; Admit the peer's SYN-ACK against THIS connection: Ethernet + IPv4 +
+  ;; ports + ack == ISS+1 (from the TCB), checksums by the same zero-fold,
+  ;; then the peer ISS (frame 38) seeds rcv-nxt = peer-iss+1, snd-nxt =
+  ;; ISS+1, and tcb-state-store moves SYN_SENT -> ESTABLISHED (status 99).
+  ;; The handshake's third packet (pure ACK) is built and submitted before
+  ;; returning 0. The window budget lives in tcb-slot-tick (five-argument
+  ;; ABI; stream-connect seeds it). Returns 0 on establishment, 21 window
+  ;; expiry, 30-series rearm faults, 93/96 checksum faults, 94 ports/ack.
+  (let [remaining (kernel-load-u64-4k tcb 4096 (* tcb-slot-tick 8))]
+    (if (= remaining 0)
+      21
+      (let [head (bit-and (kernel-load-u64-4k tcb 4096 (* tcb-slot-ring-head 8)) 3)
+            command (rx-ring-wait-command win head 250000)]
+        (if (= command 0)
+          (do (kernel-store-u64-4k tcb 4096 (* tcb-slot-tick 8) (- remaining 1))
+              (receive-syn-ack win mmio tx-frame tcb staging))
+          (let [bytes (bit-and command 16383)
+                valid-command (and (= (bit-and command 1048576) 0)
+                                   (not (= (bit-and command 33554432) 0))
+                                   (not (= (bit-and command 16777216) 0))
+                                   (>= bytes 58) (<= bytes 2048))
+                length (- bytes 4)
+                iss (kernel-load-u64-4k tcb 4096 (* tcb-slot-iss 8))
+                want-ack (seq-core/wrap (+ iss 1))
+                src 172818433
+                dst 172818442
+                peer-frame (if (= head 0)
+                             (kernel-subregion win 16384 rx-buffer-a-offset 4096)
+                             (if (= head 1)
+                               (kernel-subregion win 16384 rx-buffer-b-offset 4096)
+                               (if (= head 2)
+                                 (kernel-subregion win 16384 rx-buffer-c-offset 4096)
+                                 (kernel-subregion win 16384 rx-buffer-d-offset 4096))))
+                eth-ok (if (and (>= length 54)
+                                (= (frame-be16-stream peer-frame 12) 2048))
+                         1
+                         0)
+                shape-ok (if (not (= eth-ok 1))
+                           0
+                           (if (not (= (kernel-load-u8-4k peer-frame 4096 14) 69))
+                             0
+                             (if (not (= (kernel-load-u8-4k peer-frame 4096 23) 6))
+                               0
+                               (if (not (= (frame-be32-stream peer-frame 26) src))
+                                 0
+                                 (if (= (frame-be32-stream peer-frame 30) dst)
+                                   1
+                                   0)))))
+                ports-ok (if (not (= shape-ok 1))
+                           0
+                           (if (not (= (frame-be16-stream peer-frame 34) 8443))
+                             0
+                             (if (not (= (frame-be16-stream peer-frame 36) 49155))
+                               0
+                               (if (= (frame-be32-stream peer-frame 42) want-ack)
+                                 1
+                                 0))))
+                ipv4-ok (if (not (= ports-ok 1))
+                          0
+                          (if (= (- 65535
+                                    (checksum-fold-stream
+                                     (checksum-sum-stream peer-frame 14 20 0 0)))
+                                 0)
+                            1
+                            0))
+                tcp-ok (if (not (= ipv4-ok 1))
+                         0
+                         (if (= (- 65535
+                                   (checksum-fold-stream
+                                    (checksum-sum-stream
+                                     peer-frame 34 20 0
+                                     (tcp-pseudo-sum-stream src dst 20))))
+                              0)
+                           1
+                           0))
+                admit (if (not (= eth-ok 1))
+                        1
+                        (if (not (= shape-ok 1))
+                          1
+                          (if (not (= ports-ok 1))
+                            1
+                            (if (not (= ipv4-ok 1))
+                              1
+                              (if (not (= tcp-ok 1)) 1 0)))))
+                next-run (do (kernel-store-u64-4k tcb 4096 (* tcb-slot-tick 8) (- remaining 1))
+                             (receive-syn-ack win mmio tx-frame tcb staging))]
+            (if (not valid-command)
+              (if (= (rx-ring-rearm win win head) 1) next-run 30)
+              (if (not (= eth-ok 1))
+                (if (= (rx-ring-rearm win win head) 1) next-run 30)
+                (if (not (= shape-ok 1))
+                  (if (= (rx-ring-rearm win win head) 1) next-run 30)
+                  (if (not (= ports-ok 1))
+                    94
+                    (if (not (= ipv4-ok 1))
+                      93
+                      (if (not (= tcp-ok 1))
+                        96
+                        (if (= admit 1)
+                          95
+                          (let [peer-iss (frame-be32-stream peer-frame 38)
+                                w0 (kernel-store-u64-4k tcb 4096
+                                                        (* tcb-slot-rcv-nxt 8)
+                                                        (seq-core/wrap (+ peer-iss 1)))
+                                w1 (kernel-store-u64-4k tcb 4096
+                                                        (* tcb-slot-snd-nxt 8)
+                                                        (seq-core/wrap (+ iss 1)))
+                                w2 (kernel-store-u64-4k tcb 4096
+                                                        (* tcb-slot-irs 8)
+                                                        peer-iss)
+                                established (tcb-state-store tcb tcp-state-established)
+                                ack-len (build-tcp-segment-stream tcb tx-frame mmio 1)
+                                ack-result (submit-wire win mmio tx-frame ack-len)]
+                            (if (not (= w0 (seq-core/wrap (+ peer-iss 1))))
+                              25
+                              (if (not (= w1 (seq-core/wrap (+ iss 1))))
+                                25
+                                (if (not (= established 99))
+                                  98
+                                  (if (not (= ack-result 0))
+                                    36
+                                    0))))))))))))))))))
+
+
+(defn stream-connect [win mmio tx-frame tcb staging]
+  ;; SYN_SENT: send the SYN (the retransmit budget lives in
+  ;; tcb-slot-syn-retransmissions, seeded by tcb-init), then wait for the
+  ;; peer's SYN-ACK and transition. Returns 0 established; 35-series TX
+  ;; faults; 21 budget expiry; 94/93/96/98 admission faults.
+  (let [retransmits (kernel-load-u64-4k tcb 4096 (* tcb-slot-syn-retransmissions 8))]
+    (if (<= retransmits 0)
+      21
+      (let [syn-len (build-tcp-segment-stream tcb tx-frame mmio 0)]
+        (if (= syn-len 0)
+          35
+          (if (not (= (tx-submit-stream win mmio tx-frame syn-len) 0))
+            35
+            (if (= (wait-tx-complete-stream win 200000000) 1)
+              (do (kernel-store-u64-4k tcb 4096 (* tcb-slot-tick 8) 8)
+                  (receive-syn-ack win mmio tx-frame tcb staging))
+              (do (kernel-store-u64-4k tcb 4096 (* tcb-slot-syn-retransmissions 8)
+                                       (- retransmits 1))
+                  (stream-connect win mmio tx-frame tcb staging)))))))))
+
+(defn receive-established [win tcb staging remaining]
   ;; ESTABLISHED-state receive, one bounded window. Status semantics per ADR
   ;; section 6: 99 is live while the stream is open; a queue-full refusal is
   ;; a delivery stall inside 99 (no new code); timeouts keep 21/30-series.
@@ -424,7 +782,7 @@
     (let [head (bit-and (kernel-load-u64-4k tcb 4096 (* tcb-slot-ring-head 8)) 3)
           command (rx-ring-wait-command win head 250000)]
       (if (= command 0)
-        (receive-established win dma-base tcb staging (- remaining 1))
+        (receive-established win tcb staging (- remaining 1))
         (let [bytes (bit-and command 16383)
               valid-command (and (= (bit-and command 1048576) 0)
                                  (not (= (bit-and command 33554432) 0))
@@ -436,8 +794,8 @@
               held-bytes (kernel-load-u64-4k tcb 4096 (* tcb-slot-held-bytes 8))
               verdict (if valid-command 0 3)]
           (if (not (= verdict 0))
-            (if (= (rx-ring-rearm win dma-base head) 1)
-              (receive-established win dma-base tcb staging (- remaining 1))
+            (if (= (rx-ring-rearm win win head) 1)
+              (receive-established win tcb staging (- remaining 1))
               30)
             (let [segment-start rcv-nxt
                   decision (accept-decision rcv-nxt rcv-wnd held-bytes
@@ -446,12 +804,12 @@
                 ;; duplicate (1) re-ACKs what was delivered; queue-full (2)
                 ;; stalls delivery inside status 99 and ACKs the advertised
                 ;; window; out-of-window (3) is dropped silently per RFC.
-                (let [rearmed (rx-ring-rearm win dma-base head)
+                (let [rearmed (rx-ring-rearm win win head)
                       head-next (kernel-store-u64-4k
                                  tcb 4096 (* tcb-slot-ring-head 8)
                                  (bit-and (+ head 1) 3))]
                   (if (and (= rearmed 1) (= head-next (bit-and (+ head 1) 3)))
-                    (receive-established win dma-base tcb staging (- remaining 1))
+                    (receive-established win tcb staging (- remaining 1))
                     30))
                 (let [head-buffer (bit-and head 3)
                       parked (kernel-store-u64-4k tcb 4096

@@ -503,6 +503,8 @@
                                                                 (- bar-a 1) 512)
                                   stream-win (kernel-subregion rtl-dma-pages
                                                                16384 0 16384)
+                                  stream-tx-frame (kernel-subregion
+                                                   rtl-dma-pages 16384 8192 4096)
                                   stream-tcb (kernel-subregion
                                               4096 549755809792
                                               (- twelfth-start 4096) 4096)
@@ -514,15 +516,20 @@
                                   tcb-status (if (= ring-status 0)
                                                (stream/tcb-init stream-tcb 2715820034)
                                                1)
-                                  stream-status
+                                  connect-status
                                   (if (and (= ring-status 0) (= tcb-status 0))
-                                    (stream/receive-established stream-win
-                                                                rtl-dma-pages
-                                                                stream-tcb
-                                                                stream-staging 8)
+                                    (stream/stream-connect stream-win
+                                                           stream-mmio
+                                                           stream-tx-frame
+                                                           stream-tcb
+                                                           stream-staging)
                                     (if (not (= ring-status 0))
                                       97
-                                      98))]
+                                      98))
+                                  stream-status
+                                  (if (= connect-status 0)
+                                    (stream/receive-established stream-win stream-tcb stream-staging 8)
+                                    connect-status)]
                               (kernel-out-u32 244 (+ 192 stream-status)))
                             (kernel-out-u32 244 (+ 96 pre-cr3-nic-status))))
                         (if (and (prepare-page-tables page-table-root pdpt pd pt)
