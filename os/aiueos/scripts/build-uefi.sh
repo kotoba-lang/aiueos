@@ -125,7 +125,11 @@ kotoba_digest_equal_object=${AIUEOS_KOTOBA_DIGEST_EQUAL_OBJECT:-"$aiueos/kotoba/
 kotoba_catalog_valid_object=${AIUEOS_KOTOBA_CATALOG_VALID_OBJECT:-"$aiueos/kotoba/app-catalog-valid.o"}
 kotoba_app_lookup_object=${AIUEOS_KOTOBA_APP_LOOKUP_OBJECT:-"$aiueos/kotoba/app-lookup-plan.o"}
 kotoba_user_elf_valid_object=${AIUEOS_KOTOBA_USER_ELF_VALID_OBJECT:-"$aiueos/kotoba/user-elf-valid.o"}
-kotoba_user_elf_valid_sha=d79cc375b46a6bc7c482e05c9f2e859f62c7a6ce186a8762b5161c2f2a426534
+# The rebuild (23dd642) replaced this object's bytes: the digest tracks the
+# committed os/aiueos/kotoba/user-elf-valid.o (ab027deff...), not the
+# pre-rebuild d79cc375... the PLC branch used to pin here. The PLC-RT-SMOKE
+# override below still swaps in plc-user-elf-valid.o with its own digest.
+kotoba_user_elf_valid_sha=ab027deff5062a0dec32d0fd7020dab572ce624e15ddcba852f3dab691e43744
 kotoba_user_context_object=${AIUEOS_KOTOBA_USER_CONTEXT_OBJECT:-"$aiueos/kotoba/user-context-build.o"}
 # The kernel-selector twin of the object above, for tasks `iret` enters at ring
 # 0. Same 160-byte frame in the same bounded 4 KiB stack; CS 0x08 / SS 0x10 and
@@ -831,7 +835,6 @@ python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_app_lookup_obj
   kotoba_aiueos_app_lookup_plan
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_user_elf_valid_object" \
   "$kotoba_user_elf_valid_sha" \
-  ab027deff5062a0dec32d0fd7020dab572ce624e15ddcba852f3dab691e43744 \
   kotoba_aiueos_user_elf_valid
 if [ "${AIUEOS_PLC_RT_SMOKE:-0}" = 1 ]; then
   python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_rt_dispatch_plan_object" \
@@ -1209,8 +1212,7 @@ zig ld.lld -nostdlib -static --strip-all $qualification_gc_link -z max-page-size
   "$kernel_scheduler_object" "$kernel_syscall_object" \
   "$kernel_process_object" "$kernel_loader_object" \
   "$kernel_smp_object" "$kernel_trampoline_object" \
-  "$kernel_ioapic_object" "$kernel_framebuffer_object" $plc_runtime_link $qualification_link "$kotoba_kernel_object" \
-  "$kernel_ioapic_object" "$kernel_framebuffer_object" $qualification_link \
+  "$kernel_ioapic_object" "$kernel_framebuffer_object" $plc_runtime_link $qualification_link \
   "$kotoba_kernel_object" \
   "$kotoba_journal_object" "$kotoba_fnv_object" "$kotoba_journal_valid_object" \
   "$kotoba_transaction_valid_object" "$kotoba_transaction_route_object" \

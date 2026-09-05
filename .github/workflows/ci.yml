@@ -15,8 +15,12 @@ jobs:
       - uses: mlugg/setup-zig@v2
         with:
           version: 0.14.1
-      - name: Install QEMU, OVMF, and GRUB
-        run: sudo apt-get update && sudo apt-get install -y qemu-system-x86 ovmf grub-pc-bin grub-efi-amd64-bin xorriso mtools
+      - name: Install QEMU, OVMF, GRUB, and nbb
+        run: |
+          sudo apt-get update && sudo apt-get install -y qemu-system-x86 ovmf grub-pc-bin grub-efi-amd64-bin xorriso mtools
+          # build-uefi.sh refuses to build without nbb (image freshness receipt,
+          # ADR-0155); the runner needs it on PATH.
+          sudo npm install -g nbb
       - name: Build PE32+ loader and ELF64 kernel
         run: os/aiueos/scripts/build-uefi.sh
       - name: Boot and recover the committed journal (no Linux guest)
@@ -47,7 +51,7 @@ jobs:
         with:
           cli: latest
       - name: Verify shared security adoption
-        run: clojure -M -m kotoba.security.adoption
+        run: clojure -M:security-adoption
       - name: Test CLJC contract
         run: clojure -M:test
       - name: Lint

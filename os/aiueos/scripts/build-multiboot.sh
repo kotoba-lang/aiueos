@@ -74,21 +74,21 @@ mkdir -p "$mb"
 # The compiler-emitted Kotoba probe object is admitted by the same fail-closed
 # verifier the UEFI path uses; a hosted or import-bearing object is rejected.
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$probe" \
-  aad9e7ebe54f8a1509b8dabdd2ed2c90a4397871cf993bdb4893ff8c9338f7cc
+  3f7409bff00efaa79ec2e260b6734f740e9d7da002a9eb22a747344591e5d327
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_msr_read_object" \
-  f9985d1504326f61040c4cb8418708764c42fd7d8d3c7ce9ddfca1ad9fa12c4c \
+  da3add0a82de4562a8da117105e9a40a67e87c8086ca9b71851c4a9d9e673e0c \
   kotoba_aiueos_msr_read
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_msr_write_object" \
-  25b9ec1d0d789a2b21ba6624a40072d1733973c1d5d8bc74baef17f6ba8300db \
+  a6ae6efbe7c3a7543b391b01a9203906532b3c4328fb38bafb2d093b37bfe20d \
   kotoba_aiueos_msr_write
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_acpi_checksum_object" \
-  ca592d688a60f29e60edd8eeeb905429ca75687921bc19bdb8042e7823f3a08c \
+  90d2d2385552a30dbd6e47317143bdaee54907798df4667310ac23c8178f366a \
   kotoba_aiueos_acpi_checksum_ok
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_acpi_table_valid_object" \
-  441d326c311144b6a6b512e5a84c597c1052d903a0b7964d34ef8195baf2d241 \
+  9ab5a3c2d4f11ff6921aeb87c03d3f759f4f25b2c212e8b07dd496d434961b77 \
   kotoba_aiueos_acpi_table_valid
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_pic_disable_object" \
-  9c36989f2807db1143b408bbc2a9f43e9d92863e8cc618280cb378aba8257eb7 \
+  c88ff01d1eb89f9cf549f4c0ca24f34928f948cab4a96cad82a8ab518bf7fad1 \
   kotoba_aiueos_pic_disable
 
 zig cc -target x86_64-freestanding-none \
