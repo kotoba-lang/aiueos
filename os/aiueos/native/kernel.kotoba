@@ -488,7 +488,43 @@
                           ;; 0x60 is the pure TCP qualification base. Provider
                           ;; zero means both the earlier ARP/UDP receipt and the
                           ;; new 8443 SYN/SYN-ACK exchange completed.
-                          (kernel-out-u32 244 (+ 96 pre-cr3-nic-status)))
+                          (if (= pre-cr3-nic-status 0)
+                            ;; Gate N2 tranche one (ADR-0134): with the
+                            ;; diagnostics qualification green under the
+                            ;; known-good pre-CR3 mapping, install the stream
+                            ;; profile's 4-descriptor RX ring, arm the TCB, and
+                            ;; run one bounded ESTABLISHED-state receive window
+                            ;; on the fixed 4-tuple. The wire status is honest:
+                            ;; 192 + 99 (0x123) = a delivery+ACK ran, 192 + 21 =
+                            ;; the ring is live but the peer sent nothing inside
+                            ;; the window, 192 + 30/26/25 = the specific stream
+                            ;; fault. Diagnostics codes 96..96+0 stay untouched.
+                            (let [stream-mmio (kernel-subregion 1 549755813887
+                                                                (- bar-a 1) 512)
+                                  stream-win (kernel-subregion rtl-dma-pages
+                                                               16384 0 16384)
+                                  stream-tcb (kernel-subregion
+                                              4096 549755809792
+                                              (- twelfth-start 4096) 4096)
+                                  stream-staging (kernel-subregion
+                                                  4096 549755809792
+                                                  (- thirteenth-start 4096) 4096)
+                                  ring-status (stream/rx-ring-init
+                                               stream-mmio rtl-dma-pages)
+                                  tcb-status (if (= ring-status 0)
+                                               (stream/tcb-init stream-tcb 2715820034)
+                                               1)
+                                  stream-status
+                                  (if (and (= ring-status 0) (= tcb-status 0))
+                                    (stream/receive-established stream-win
+                                                                rtl-dma-pages
+                                                                stream-tcb
+                                                                stream-staging 8)
+                                    (if (not (= ring-status 0))
+                                      97
+                                      98))]
+                              (kernel-out-u32 244 (+ 192 stream-status)))
+                            (kernel-out-u32 244 (+ 96 pre-cr3-nic-status))))
                         (if (and (prepare-page-tables page-table-root pdpt pd pt)
                                  (prepare-low-page-table pt rx-limit rw-start)
                                  (prepare-rtl-page-tables
