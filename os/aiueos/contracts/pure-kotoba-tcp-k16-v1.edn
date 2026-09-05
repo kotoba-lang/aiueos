@@ -144,7 +144,27 @@
                    "e07bd27ab27bcf82777c5d255e29d94f392afd4bb0104027848fd56580d87e70"
                    :netlog "10.77.0.1:7777"
                    :ready true}
-             :pending :k16-power-cycle-and-wire-receipt}}
+             :pending :k16-power-cycle-and-wire-receipt}
+            :gate-n2-tranche-one-physical
+            {:state :stream-live-peer-silent
+             :observed-at "2026-09-05T14:30:00+09:00"
+             :boot {:boot-sha256
+                    "8c33f755479d4b727da36b6b560d097d8a8f8fe94241d92e7cb50615282c260b"
+                    :kernel-fix "rx-ring-init rx-lo check compared the ring base low 32 bits to 0 (commit 0a351f2); fixed to compare against the ring base halves"}
+             :screen {:preflight-status "21"
+                      :decoded "0x121 = 192 + 97 = rx-ring-init failure (previous boot, artifact e07bd27a)"
+                      :after-fix "D5 = 0xD5 = 192 + 21 = receive-established window exhausted with no peer data"}
+             :wire {:sequence ["AIUEOS_NATIVE_ARP_OK" "AIUEOS_NATIVE_NIC_40"
+                               "AIUEOS_NATIVE_NIC_43" "AIUEOS_NATIVE_NIC_44"
+                               "AIUEOS_NATIVE_NIC_45" "AIUEOS_NATIVE_TCP_OK"]}
+             :what-proved [:rx-ring-init-passes-on-hardware
+                           :tcb-armed
+                           :stream-receive-window-ran-to-bound
+                           :screen-reports-stream-status-honestly]
+             :notes ["D5 is the honest normal outcome: the diagnostics profile ACKs then RSTs the peer, so no data arrives in the stream window."
+                     "Next tranche: replace the ACK-then-RST proof path with the stream profile's handshake so peer data (or the bridge's TLS bytes) feeds receive-established."]}
+            :environment-note
+            {:nic-60 "2026-09-05 morning boots showed NIC_60 (TCP checksum admission fail) only while the k16-bridge was down; macOS's own offloaded frames reached the checksum gate. With the bridge restored the wire returned to ARP_OK/40/43/44/45/TCP_OK across every boot. Compiler regression ruled out by byte-diffing identical-source probes at both pins (16 bytes: alignment padding + header fields)."}}
  :does-not-prove [:tls13-handshake
                   :x509-chain-or-san-admission
                   :https-response
