@@ -813,10 +813,18 @@
     1
     0))
 
+(defn fill-zero-stream [frame offset remaining]
+  (if (= remaining 0)
+    1
+    (let [stored (kernel-store-u8-4k frame 4096 offset 0)]
+      (if (= stored 0)
+        (fill-zero-stream frame (+ offset 1) (- remaining 1))
+        0))))
+
 (defn stream-log [win mmio tx-frame status]
   ;; Fire-and-forget UDP/7777 receipt: AIUEOS_STREAM_<hex status>. Best
   ;; effort by construction — a log failure changes nothing downstream.
-  (let [frame-length (if (and (= (zero-prefix-stream tx-frame 62 0) 1)
+  (let [frame-length (if (and (= (fill-zero-stream tx-frame 0 62) 1)
                               (= (store-gateway-mac-stream tx-frame) 1)
                               (= (copy-device-mac-stream tx-frame 6 mmio 0) 1)
                               (= (frame-store-be16-stream tx-frame 12 2048) 2048)
