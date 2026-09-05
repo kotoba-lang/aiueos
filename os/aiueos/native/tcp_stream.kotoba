@@ -173,17 +173,26 @@
                                  (rx-ring-command rx-buffer-capacity 1))
         ad3 (kernel-store-u64-16k ring 1024 104 a3)
         fenced (dma/release-fence)
+        ring-base (rx-ring-descriptor-base dma-base)
         rx-lo (kernel-store-u32 mmio 512 228
-                                (bit-and (rx-ring-descriptor-base dma-base) 4294967295))
+                                (bit-and ring-base 4294967295))
         rx-hi (kernel-store-u32 mmio 512 232
-                                (quot (rx-ring-descriptor-base dma-base) 4294967296))]
+                                (quot ring-base 4294967296))]
+    ;; Stores return the value they wrote, so rx-lo must be checked against
+    ;; the ring base's low 32 bits -- not against 0. The original (= rx-lo 0)
+    ;; can only pass when dma-base is 4-GiB aligned, which the loader's
+    ;; fourteen-page EfiLoaderData allocation never is: measured on the K16
+    ;; 2026-09-05 as STATUS 21 (= 0x121 = 192 + 97, this function's failure).
+    ;; rx-hi vs 0 is right for the low-RAM scratch and stays.
     (if (and (= zero0 0) (= zero1 0)
              (= c0 (rx-ring-command rx-buffer-capacity 0))
              (= c1 (rx-ring-command rx-buffer-capacity 0))
              (= c2 (rx-ring-command rx-buffer-capacity 0))
              (= c3 (rx-ring-command rx-buffer-capacity 1))
              (= ad0 a0) (= ad1 a1) (= ad2 a2) (= ad3 a3)
-             (= fenced 1) (= rx-lo 0) (= rx-hi 0))
+             (= fenced 1)
+             (= rx-lo (bit-and ring-base 4294967295))
+             (= rx-hi (quot ring-base 4294967296)))
       0
       1)))
 
