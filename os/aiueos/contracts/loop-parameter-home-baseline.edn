@@ -1,47 +1,65 @@
-;; Objects committed to this tree that carry the stale parameter home described
-;; in ADR-0190, listed so `verify-loop-parameter-homes.cljs` can refuse a NEW
-;; one without being permanently red about them.
+;; Objects committed to this tree that already carry the stale parameter home
+;; described in ADR-0190, listed so `verify-loop-parameter-homes.cljs` can refuse
+;; a NEW one without being permanently red about these four.
 ;;
-;; EMPTY, and that is a measurement, not a default. The four entries this file
-;; carried -- hkdf-sha256.o, cid-v1-admit.o, value-runtime-cas-verify.o and
-;; qwen35-vocab-index-build.o -- were cleared on 2026-09-03 by rebuilding every
-;; committed object at amu 6c245f69, whose kotoba-native pin 452422f contains
-;; the reentry-spill fix d7105581. The checker was then run and reported them
-;; cleared BY NAME:
+;; This baseline is not a tolerance. Every entry is a real defect in a real
+;; committed object, produced by a compiler between kotoba-native `da3b56b` and
+;; `d7105581`. Each one disappears the moment its object is rebuilt at a compiler
+;; past `d7105581` -- measured: rebuilt at amu `ed78ffd1`, all four report
+;; `SCANNED 4 self-tail-loops=47 objects-with-findings=0`.
 ;;
-;;   SCANNED 95 self-tail-loops=423 findings=0 known=4 new=0 baseline-cleared=4
-;;   BASELINE-CLEARED hkdf-sha256.o function=0x18ea slot=0x60
-;;   BASELINE-CLEARED cid-v1-admit.o function=0x1971 slot=0x60
-;;   BASELINE-CLEARED value-runtime-cas-verify.o function=0x1971 slot=0x60
-;;   BASELINE-CLEARED qwen35-vocab-index-build.o function=0xcfb slot=0x20
+;; The rebuild belongs to the object-attestation stream (ADR-0150 decision 3),
+;; not here. When it lands, delete the cleared entries; the checker exits 4 and
+;; names them rather than passing quietly over a baseline that has gone stale.
 ;;
-;; Note 423 self-tail loops against 301 before the rebuild: the fixed compiler
-;; emits MORE direct reentry edges, so `findings=0` is a clean result over a
-;; larger search, not a checker that stopped looking.
+;; BLOCKED, measured 2026-09-03: amu main (b822a01b) pins kotoba-native
+;; 91033a9d, which does NOT contain d7105581, so no amu on main can produce a
+;; cleared object yet. kotoba-lang/amu#759 is that pin bump and
+;; kotoba-lang/amu#762 consolidates every pin; the rebuild waits on whichever
+;; lands rather than a third amu PR. Once one does, the whole follow-up is
 ;;
-;; The entries were deleted only after that run, never on the strength of the
-;; compiler version -- the rule this file was written to enforce. If one comes
-;; back, the checker exits 3 and names it; it does not belong here again unless
-;; a decision is taken to tolerate it.
+;;   nbb os/aiueos/scripts/reproduce-kotoba-objects.cljs --amu <checkout> --attest
+;;   nbb os/aiueos/scripts/sync-kernel-object-digests.cljs --write
+;;   nbb os/aiueos/scripts/verify-loop-parameter-homes.cljs   ; expect exit 4
 ;;
-;; CLASSIFY WITH THE CHECKER, NOT WITH A REBUILD. This checker answers "which
-;; committed objects carry this" for the whole tree from objdump alone -- no
-;; compile, no amu, seconds. Comparing a rebuild against the committed bytes
-;; answers the same question indirectly, costs a compile per object, and is
-;; asymmetric: bytes NOT moving is sound evidence of safety (though it assumes
-;; the fix is complete for the shape, which the checker need not assume), while
-;; bytes moving is not evidence of a defect at all. Measured on this very
-;; sweep: 76 of 95 objects changed bytes while the shape was present in 4.
-;; Reading movement as risk would have flagged 72 clean objects.
-;;
-;; A rebuild comparison is a good CORROBORATOR. Worked example: qwen35-attention.o
-;; and qwen35-recurrent-step.o were predicted clean by QWEN-KERNELS-2 from
-;; byte-identity across the fix, independently by this checker
-;; (`SCANNED 2 self-tail-loops=23 findings=0`), and the sweep then left both
-;; byte-identical -- 5cd0baa6... 17,872 B and 23308afe... 6,808 B, unchanged.
+;; and then the four entries below are deleted. Do not delete one without
+;; re-running the checker: an entry removed on the strength of a compiler
+;; version rather than a measurement is the assumption this file replaced.
 {:format :aiueos.loop-parameter-home/baseline-v1
  :recorded "2026-09-03"
  :adr "ADR-0190"
- :cleared-by "amu 6c245f69 (kotoba-native 452422f, containing d7105581)"
- :cleared-on "2026-09-03"
- :known []}
+ :cleared-by "any compiler pinning kotoba-native d7105581 or later"
+ :known
+ [{:object "hkdf-sha256.o" :function 0x18ea :slot 0x60
+   :note "NOT LINKED -- build-uefi.sh:157 says it 'does not return on this
+          machine'. This is why. Same shape as sha256's `round-block`, reached
+          through `copy-round`, which is what aiueos ADR-0136 (TLS-DIAG anomaly
+          2) measured and could not explain."}
+  {:object "cid-v1-admit.o" :function 0x1971 :slot 0x60
+   :note "NOT LINKED (built and shape-verified at build-uefi.sh:878; its .text
+          is not in KERNEL.ELF). Imports aiueos.sha256, so it carries the same
+          round-block at the same offset."}
+  {:object "value-runtime-cas-verify.o" :function 0x1971 :slot 0x60
+   :note "NOT LINKED (built at build-uefi.sh:881). Same import, same function,
+          same slot as cid-v1-admit."}
+  {:object "qwen35-vocab-index-build.o" :function 0xcfb :slot 0x20
+   :reachable-from-c false
+   :note "LINKED but UNREACHABLE, measured 2026-09-03. Its .text is in
+          KERNEL.ELF at 0x15f4c0 and a call with a count above 1 does not
+          terminate -- but nothing calls it. A kernel object is only ever
+          entered from C: the ABI gives each one a single exported symbol and
+          ZERO undefined symbols (verify-kotoba-kernel-object.py, and the
+          `undefined-symbol` clause of the K16 gate), so no object can call
+          another. Across os/aiueos/kernel, uefi and tools there are no
+          references to `kotoba_aiueos_qwen35_vocab_index_build` in any form:
+
+            git grep -c kotoba_aiueos_qwen35_vocab_index_build --
+              (over os/aiueos/kernel, os/aiueos/uefi, os/aiueos/tools)
+
+          0 hits, against a control of 2 for kotoba_aiueos_sha256 and 2 for
+          kotoba_aiueos_qwen35_tensor_table_bind. The whole tokenizer trio
+          (vocab-index-build, tokenize, detokenize) is 0 -- ADR-0139 landed the
+          objects; no C path calls them yet. So the defect is in the shipped
+          image as dead bytes, not as a hang the boot can reach. This is a
+          statement about TODAY's callers: the first C call site added for the
+          tokenizer reaches a non-terminating object unless it is rebuilt first."}]}

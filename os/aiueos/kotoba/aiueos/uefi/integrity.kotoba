@@ -1,20 +1,48 @@
+;; ===========================================================================
+;; THIS MODULE HAS NEVER RETURNED ON A CPU. IT IS BLOCKED, AND HERE IS WHY.
+;; ===========================================================================
+;; It compiles, and every part of it was exercised under OVMF except the one
+;; that matters. Measured 2026-09-03, `sha-block` traps with #UD inside a
+;; Kotoba UEFI image while the SAME library runs correctly as a kernel object
+;; (`sha256-stream.o`, `sha256-region.o`).
+;;
+;; The cause is not this module and not the memory it touches. Bisected in the
+;; guest, one boot per step, marking the debug console after each:
+;;
+;;   K1        `kernel-scratch-region` written and read back
+;;   K12       a 64-byte `kernel-subregion` of a `bytes-literal`, bytes 0 and
+;;             63 both correct through the library's own window-64 accessor
+;;   K123      `store32`/`load32` round trip, then `sha-init`
+;;   -> #UD    `sha-block` over that block and that state
+;;
+;; and a separate probe stored and read back all eight of offsets 0, 255, 256,
+;; 300, 360, 424, 455 and 511 in the scratch state, exit 33 -- so the whole
+;; 512-byte window the library uses is sound.
+;;
+;; THE BLOCKER IS FUEL, AND THE FLAG THAT WOULD RAISE IT IS INERT.
+;; `sha256-region.kotoba` measures 1,772 fuel per 64-byte block; a UEFI image
+;; runs on `native-fuel!`'s default of 512 (amu
+;; `src/kotoba/compiler/nbb/cli.cljs:89`). `--fuel` is READ AND VALIDATED on
+;; this route -- 250,000,000 is refused as "native fuel budget is not
+;; admitted", 1,048,576 is accepted -- and then does not reach the image:
+;;
+;;   --fuel 512      -> sha256 714a7509d057b654cb8ae4181284250ce82514626d50e7d25f624cc979872f29
+;;   --fuel 1048576  -> sha256 714a7509d057b654cb8ae4181284250ce82514626d50e7d25f624cc979872f29
+;;
+;; BYTE-IDENTICAL across a 2048x difference in the declared budget, and a
+;; 2,000-iteration arithmetic loop traps identically under both while a
+;; 200-iteration one completes under both. A knob that is validated and then
+;; discarded looks exactly like a knob that works, which is the failure this
+;; repository's six questions are about.
+;;
+;; So this module is landed as source and is NOT wired into
+;; `uefi/loader-probe.kotoba`: the probe stays green on what it can actually
+;; demonstrate. When the image route installs the declared budget, add the two
+;; digest verdicts to the probe and this becomes measurable in one boot -- the
+;; call is `(verify (kernel-scratch-region) 16384 src src-len expected)`.
+;; ===========================================================================
+
 ;; Does this kernel hash to the digest we expected?
-;;
-;; ---------------------------------------------------------------------------
-;; IT DID NOT RUN AT FIRST, AND WHY IS WORTH KEEPING
-;; ---------------------------------------------------------------------------
-;; Written 2026-09-02 against `kernel-scratch-region`, this trapped with #UD in
-;; `sha-block` while the SAME library ran correctly as a kernel object. The
-;; cause was not this module: a UEFI image ran on a fixed budget of 512
-;; whatever `--fuel` said, and `--fuel 512` and `--fuel 1048576` produced
-;; BYTE-IDENTICAL artifacts. One 64-byte SHA block costs about 1,772, so the
-;; fuel guard fired on the first one. amu#764 made the declared budget reach
-;; the image on every route.
-;;
-;; The measurement that made it legible is the byte identity, not the trap --
-;; a knob that is validated and then discarded looks exactly like a knob that
-;; works. `uefi/loader-probe.kotoba` now carries two verdicts from this module
-;; and the loader smoke asserts both.
 ;;
 ;; `os/aiueos/uefi/main.c` asks that twice -- once over a model read from a
 ;; volume (:676) and once over the embedded release payload, where
