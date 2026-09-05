@@ -856,8 +856,10 @@
         (if (= syn-len 0)
           (do (stream-log win mmio tx-frame 175) 35)
           (do (stream-log win mmio tx-frame 161)
+              (stream-log win mmio tx-frame (frame-be16-stream tx-frame 12))
+              (stream-log win mmio tx-frame (kernel-load-u8-4k tx-frame 4096 14))
               (stream-log win mmio tx-frame
-                          (checksum-sum-stream tx-frame 14 20 0 0))
+                          (checksum-word-stream tx-frame 14 20 0))
               (stream-log win mmio tx-frame
                           (checksum-fold-stream
                            (checksum-sum-stream tx-frame 14 20 0 0)))
