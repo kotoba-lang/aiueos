@@ -50,6 +50,8 @@ jobs:
       - uses: DeLaGuardo/setup-clojure@13.4
         with:
           cli: latest
+      - name: Install nbb (smoke-task / image-freshness / k16 gate tests assert it is on PATH)
+        run: sudo npm install -g nbb
       - name: Verify shared security adoption
         run: clojure -M:security-adoption
       - name: Test CLJC contract
