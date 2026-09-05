@@ -639,7 +639,7 @@
   ;; expiry, 30-series rearm faults, 93/96 checksum faults, 94 ports/ack.
   (let [remaining (kernel-load-u64-4k tcb 4096 (* tcb-slot-tick 8))]
     (if (= remaining 0)
-      21
+      (do (stream-log win mmio tx-frame 164) 21)
       (let [head (bit-and (kernel-load-u64-4k tcb 4096 (* tcb-slot-ring-head 8)) 3)
             command (rx-ring-wait-command win head 250000)]
         (if (= command 0)
@@ -722,11 +722,11 @@
                 (if (not (= shape-ok 1))
                   (if (= (rx-ring-rearm win win head) 1) next-run 30)
                   (if (not (= ports-ok 1))
-                    94
+                    (do (stream-log win mmio tx-frame 166) 94)
                     (if (not (= ipv4-ok 1))
-                      93
+                      (do (stream-log win mmio tx-frame 167) 93)
                       (if (not (= tcp-ok 1))
-                        96
+                        (do (stream-log win mmio tx-frame 168) 96)
                         (if (= admit 1)
                           95
                           (let [peer-iss (frame-be32-stream peer-frame 38)
@@ -753,25 +753,108 @@
                                     0))))))))))))))))))
 
 
+(defn zero-prefix-stream [frame bytes offset]
+  (if (= offset bytes)
+    1
+    (if (= (kernel-load-u8-4k frame 4096 offset) 0)
+      (zero-prefix-stream frame bytes (+ offset 1))
+      0)))
+
+;; ── stream netlog: the same UDP receipt the diagnostics profile emits, ──────
+;; restated so the stream can report its own stages to the Mac's 7777 logger
+;; without a reboot per hypothesis. Message body: AIUEOS_STREAM_<2 hex digits>.
+
+(defn hex-digit-stream [value]
+  (if (< value 10) (+ value 48) (+ value 55)))
+
+(defn stream-log-byte [index status]
+  (if (= index 0) 65
+    (if (= index 1) 73
+      (if (= index 2) 85
+        (if (= index 3) 69
+          (if (= index 4) 79
+            (if (= index 5) 83
+              (if (= index 6) 95
+                (if (= index 7) 83
+                  (if (= index 8) 84
+                    (if (= index 9) 82
+                      (if (= index 10) 69
+                        (if (= index 11) 65
+                          (if (= index 12) 77
+                            (if (= index 13) 95
+                              (if (= index 14)
+                                (hex-digit-stream (bit-and (quot status 16) 15))
+                                (hex-digit-stream (bit-and status 15))))))))))))))))))
+
+(defn store-stream-log [frame offset index status]
+  (if (= index 16)
+    1
+    (let [value (stream-log-byte index status)
+          stored (kernel-store-u8-4k frame 4096 (+ offset index) value)]
+      (if (= stored value)
+        (store-stream-log frame offset (+ index 1) status)
+        0))))
+
+(defn build-udp-log-header [frame]
+  (if (and (= (kernel-store-u8-4k frame 4096 14 69) 69)
+           (= (kernel-store-u8-4k frame 4096 15 0) 0)
+           (= (frame-store-be16-stream frame 16 48) 48)
+           (= (frame-store-be16-stream frame 18 0) 0)
+           (= (frame-store-be16-stream frame 20 0) 0)
+           (= (kernel-store-u8-4k frame 4096 22 64) 64)
+           (= (kernel-store-u8-4k frame 4096 23 17) 17)
+           (= (frame-store-be16-stream frame 24 26137) 26137)
+           (= (frame-store-be32-stream frame 26 172818442) 172818442)
+           (= (frame-store-be32-stream frame 30 172818433) 172818433)
+           (= (frame-store-be16-stream frame 34 7779) 7779)
+           (= (frame-store-be16-stream frame 36 7777) 7777)
+           (= (frame-store-be16-stream frame 38 28) 28)
+           (= (frame-store-be16-stream frame 40 0) 0))
+    1
+    0))
+
+(defn stream-log [win mmio tx-frame status]
+  ;; Fire-and-forget UDP/7777 receipt: AIUEOS_STREAM_<hex status>. Best
+  ;; effort by construction — a log failure changes nothing downstream.
+  (let [frame-length (if (and (= (zero-prefix-stream tx-frame 62 0) 1)
+                              (= (store-gateway-mac-stream tx-frame) 1)
+                              (= (copy-device-mac-stream tx-frame 6 mmio 0) 1)
+                              (= (frame-store-be16-stream tx-frame 12 2048) 2048)
+                              (= (build-udp-log-header tx-frame) 1)
+                              (= (store-stream-log tx-frame 42 0 status) 1))
+                       62
+                       0)]
+    (if (= frame-length 0)
+      0
+      (if (not (= (tx-submit-stream win mmio tx-frame frame-length) 0))
+        0
+        (wait-tx-complete-stream win 200000000)))))
+
 (defn stream-connect [win mmio tx-frame tcb staging]
   ;; SYN_SENT: send the SYN (the retransmit budget lives in
   ;; tcb-slot-syn-retransmissions, seeded by tcb-init), then wait for the
-  ;; peer's SYN-ACK and transition. Returns 0 established; 35-series TX
-  ;; faults; 21 budget expiry; 94/93/96/98 admission faults.
+  ;; peer's SYN-ACK and transition. Every stage fires a stream-log receipt:
+  ;; A1 syn built, A2 submitted, A3 tx complete, AE budget gone, AF build
+  ;; fail, B0 submit fail. Returns 0 established; 35-series TX faults; 21
+  ;; budget expiry; 94/93/96/98 admission faults.
   (let [retransmits (kernel-load-u64-4k tcb 4096 (* tcb-slot-syn-retransmissions 8))]
     (if (<= retransmits 0)
-      21
+      (do (stream-log win mmio tx-frame 174) 21)
       (let [syn-len (build-tcp-segment-stream tcb tx-frame mmio 0)]
         (if (= syn-len 0)
-          35
-          (if (not (= (tx-submit-stream win mmio tx-frame syn-len) 0))
-            35
-            (if (= (wait-tx-complete-stream win 200000000) 1)
-              (do (kernel-store-u64-4k tcb 4096 (* tcb-slot-tick 8) 8)
-                  (receive-syn-ack win mmio tx-frame tcb staging))
-              (do (kernel-store-u64-4k tcb 4096 (* tcb-slot-syn-retransmissions 8)
-                                       (- retransmits 1))
-                  (stream-connect win mmio tx-frame tcb staging)))))))))
+          (do (stream-log win mmio tx-frame 175) 35)
+          (do (stream-log win mmio tx-frame 161)
+              (if (not (= (tx-submit-stream win mmio tx-frame syn-len) 0))
+                (do (stream-log win mmio tx-frame 176) 35)
+                (do (stream-log win mmio tx-frame 162)
+                    (if (= (wait-tx-complete-stream win 200000000) 1)
+                      (do (stream-log win mmio tx-frame 163)
+                          (kernel-store-u64-4k tcb 4096 (* tcb-slot-tick 8) 8)
+                          (receive-syn-ack win mmio tx-frame tcb staging))
+                      (do (kernel-store-u64-4k
+                           tcb 4096 (* tcb-slot-syn-retransmissions 8)
+                           (- retransmits 1))
+                          (stream-connect win mmio tx-frame tcb staging)))))))))))
 
 (defn receive-established [win tcb staging remaining]
   ;; ESTABLISHED-state receive, one bounded window. Status semantics per ADR
