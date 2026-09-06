@@ -367,6 +367,36 @@ for 10.10.10.2 are broadcasts, so if bus3 is on that wire `debug-poll` sees
 them and answers `1` ("not ours"), which the loop logs as `D9 01`. That
 requires a live kernel, which is what the fuel change is for.
 
+## The fuel mechanism is confirmed
+
+Budget doubled to 2097152. Predicted ~556 cycles. **Measured 582.**
+
+| budget | cycles | fuel/cycle |
+|---|---|---|
+| 1048576 | 278, 277, 280 | ~3,760 |
+| 2097152 | 582 | ~3,600 |
+
+The count moved with the budget. The loop stops because it runs out of fuel,
+and for no other reason. The prediction was made before the reading and the
+reading was not adjusted to fit it.
+
+The doubled budget still ran out before the wiring test could be sent, so the
+`D9` question is still unanswered: **not measured**, not negative.
+
+The budget is now 1073741824 (2^30) — 512x the original, roughly 143,000
+cycles. That number is chosen to outlast a working session, **not** because it
+is the maximum: taking the ceiling as the budget is exactly the mistake that
+produced 1048576 in the first place. It is a bucket, not a fix. A loop that is
+genuinely resident needs a replenish in `package-aiueos-boot` (the receipt
+still says `"replenishable": false`), and that is a compiler change, not a
+larger literal.
+
+`netstat -I en8` moved 27 -> 34 across the 582-cycle boot. Seven frames is not
+nothing and not an explanation; the interface counter cannot say what they
+were, and without BPF neither can anything else on this machine. It is
+recorded because it is the only en8 evidence that moved, not because it
+supports a conclusion.
+
 ## Status of the artifacts
 
 - Commit `e09e4f1` (Phase 1 — bus3 single-shot) is superseded by commit
