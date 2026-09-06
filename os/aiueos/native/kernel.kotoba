@@ -6,7 +6,8 @@
   ;; with and without it -- code sha c3bd9664…, binary sha b64afc94…, both
   ;; unchanged, and the export symbol stays kotoba_aiueos_probe.
   (:require [native.rtl8125 :as rtl]
-            [native.tcp-stream :as stream])
+            [native.tcp-stream :as stream]
+            [native.debug-link :as debug])
   (:export [main]))
 
 ;; Gate N2 (ADR-0134): the persistent TCP byte stream runtime profile links
@@ -401,6 +402,15 @@
                 twelfth-start (+ physical-start 45056)
                 thirteenth-start (+ physical-start 49152)
                 fourteenth-start (+ physical-start 53248)
+                ;; LAN2 debug plane (gate: second RTL8125, bus3/bar-b). The
+                ;; K16 has two 2.5GbE; hardware link order on this board is
+                ;; bus2 (PXE stream) and bus3 (debug). A 16 KiB window needs 4
+                ;; contiguous low pages: 14..17. They are physically above
+                ;; the stream tcb/staging pages and unused today.
+                fifteenth-start (+ physical-start 57344)
+                sixteenth-start (+ physical-start 61440)
+                seventeenth-start (+ physical-start 65536)
+                eighteenth-start (+ physical-start 69632)
                 bar-a (rtl/bar-for-bus 2)
                 bar-b (rtl/bar-for-bus 3)]
             (if (and (five-distinct physical-start second-start third-start
@@ -432,7 +442,11 @@
                      (> twelfth-start eleventh-start)
                      (> thirteenth-start twelfth-start)
                      (> fourteenth-start thirteenth-start)
-                     (< fourteenth-start 549755813888))
+                     (> fifteenth-start fourteenth-start)
+                     (> sixteenth-start fifteenth-start)
+                     (> seventeenth-start sixteenth-start)
+                     (> eighteenth-start seventeenth-start)
+                     (< eighteenth-start 549755813888))
                   ;; The literal parent names the admitted 512 GiB physical
                   ;; window. Boot-info values select only checked offsets.
                   (let [state (kernel-subregion 4096 549755809792
@@ -457,6 +471,11 @@
                                                           (- tenth-start 4096) 4096)
                         rtl-dma-pages (kernel-subregion 4096 549755809792
                                                        (- eleventh-start 4096) 16384)
+                        ;; LAN2 debug plane: dedicated 16 KiB DMA window for
+                        ;; bus3 (bar-b), physically pages 14..17. Untouched by
+                        ;; the bus2 stream window above.
+                        bus3-dma-pages (kernel-subregion 4096 549755809792
+                                                      (- fifteenth-start 4096) 16384)
                         owned-status (prepare-owned-pages
                                       state page-table-root pdpt pd pt)
                         extra-status (prepare-extra-pages
@@ -524,12 +543,26 @@
                               ;; cycle re-arms, connects, receives, and logs
                               ;; over UDP. The screen write happens before
                               ;; entering the loop; outcomes ride STREAM_C.
+                              ;; LAN2 debug plane: install a bus3 TX ring and
+                              ;; emit one debug log over the Mac's second NIC.
                               (do (kernel-out-u32 244 (+ 192 stream-status))
-                                  (stream/stream-resident stream-win
-                                                          stream-mmio
-                                                          stream-tx-frame
-                                                          stream-tcb
-                                                          stream-staging)))
+                                  (let [bus3-mmio (if (> bar-b 0)
+                                                    (kernel-subregion
+                                                     1 549755813887 (- bar-b 1) 512)
+                                                    0)
+                                        dbg-init (if (> bar-b 0)
+                                                   (debug/debug-init bus3-mmio
+                                                                     bus3-dma-pages)
+                                                   0)
+                                        dbg-sent (if (and (> bar-b 0) (= dbg-init 0))
+                                                   (debug/debug-send bus3-mmio
+                                                                     bus3-dma-pages)
+                                                   0)]
+                                    (stream/stream-resident stream-win
+                                                            stream-mmio
+                                                            stream-tx-frame
+                                                            stream-tcb
+                                                            stream-staging))))
                             (kernel-out-u32 244 (+ 96 pre-cr3-nic-status))))
                         (if (and (prepare-page-tables page-table-root pdpt pd pt)
                                  (prepare-low-page-table pt rx-limit rw-start)

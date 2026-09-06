@@ -1,0 +1,130 @@
+(ns native.debug-link
+  ;; Gate: LAN2 (bus3, bar-b) debug console. The K16 has two RTL8125BG;
+  ;; bus2/bar-a carries the PXE stream profile, bus3/bar-b is wired to the
+  ;; Mac's second NIC (en8) as the debug/control plane.
+  ;;
+  ;; This module owns a MINIMAL raw-Ethernet UDP TX on bus3: a fixed
+  ;; 10.10.10.<k16>:9000 log the Mac receives with
+  ;;   socat -u UDP-RECV:9000,reuseaddr -
+  ;;
+  ;; RAW only: no ARP, no IP stack beyond the fixed 4-tuple. The Mac en8 is
+  ;; static 10.10.10.1 and its MAC is baked in, so the Ethernet header is
+  ;; complete without a lookup. This is the Phase-1 debug substrate: RTL8125
+  ;; Tx + Ethernet + IPv4 + UDP, nothing more.
+  ;;
+  ;; It deliberately runs as a SINGLE-SHOT send on bus3 per call, using its
+  ;; own 16 KiB DMA window (kernel pages 14..17) that never overlaps the
+  ;; persistent bus2 stream window. The TX ring is installed once by
+  ;; debug-init, then debug-send reuses it.
+  (:require [capability.link.frame :as link]
+            [capability.dma.map :as dma]
+            [capability.mmio.map :as mapped]
+            [native.rtl8125 :as rtl])
+  (:export [debug-init debug-send debug-send-status]))
+
+;; ── fixed debug 4-tuple ──────────────────────────────────────────────────
+;; K16 bus3 = 10.10.10.2, Mac en8 = 10.10.10.1, UDP 9000 -> 9000.
+(def k16-debug-ip 168493058)    ; 0x0A0A0A02
+(def mac-debug-ip 168493057)    ; 0x0A0A0A01
+(def debug-udp-port 9000)
+
+;; Mac en8 NIC MAC (3c:18:a0:d5:82:a8), the fixed debug peer.
+(defn store-peer-mac [frame]
+  (if (and (= (kernel-store-u8-4k frame 4096 0 60) 60)
+           (= (kernel-store-u8-4k frame 4096 1 24) 24)
+           (= (kernel-store-u8-4k frame 4096 2 160) 160)
+           (= (kernel-store-u8-4k frame 4096 3 213) 213)
+           (= (kernel-store-u8-4k frame 4096 4 130) 130)
+           (= (kernel-store-u8-4k frame 4096 5 168) 168))
+    1
+    0))
+
+(defn store-device-mac [frame mmio index]
+  (if (= index 6)
+    1
+    (let [value (kernel-load-u8 mmio 512 index)
+          stored (kernel-store-u8-4k frame 4096 (+ 6 index)
+                                     (bit-and value 255))]
+      (if (and (= stored (bit-and value 255))
+               (= (kernel-store-u8-4k frame 4096 (+ 6 index) stored) stored))
+        (store-device-mac frame mmio (+ index 1))
+        0))))
+
+(defn store-be16 [frame offset value]
+  (let [hi (kernel-store-u8-4k frame 4096 offset
+                               (bit-and (quot value 256) 255))
+        lo (kernel-store-u8-4k frame 4096 (+ offset 1)
+                               (bit-and value 255))]
+    (if (and (= hi (bit-and (quot value 256) 255))
+             (= lo (bit-and value 255)))
+      value
+      0)))
+
+(defn store-be32 [frame offset value]
+  (let [b0 (kernel-store-u8-4k frame 4096 offset
+                               (bit-and (quot value 16777216) 255))
+        b1 (kernel-store-u8-4k frame 4096 (+ offset 1)
+                               (bit-and (quot value 65536) 255))
+        b2 (kernel-store-u8-4k frame 4096 (+ offset 2)
+                               (bit-and (quot value 256) 255))
+        b3 (kernel-store-u8-4k frame 4096 (+ offset 3)
+                               (bit-and value 255))
+        ok (and (= b0 (bit-and (quot value 16777216) 255))
+                (= b1 (bit-and (quot value 65536) 255))
+                (= b2 (bit-and (quot value 256) 255))
+                (= b3 (bit-and value 255)))]
+    (if ok value 0)))
+
+(defn zero-prefix [frame bytes offset]
+  (if (= offset bytes)
+    1
+    (let [stored (kernel-store-u8-4k frame 4096 offset 0)]
+      (if (= stored 0) (zero-prefix frame bytes (+ offset 1)) 0))))
+
+;; payload: short fixed ASCII; a richer kprintf comes later. (placeholder
+;; single byte 'Z'; the stream netlog body is the richer format.)
+
+(defn build-udp-debug-frame [frame mmio]
+  ;; 14 eth + 20 ip + 8 udp = 42 header; payload 1 byte placeholder.
+  (let [total 43]
+    (if (and (= (zero-prefix frame 60 0) 1)
+             (= (store-peer-mac frame) 1)
+             (= (store-device-mac frame mmio 0) 1)
+             (= (store-be16 frame 12 2048) 2048)           ; ethertype IPv4
+             (= (kernel-store-u8-4k frame 4096 14 69) 69)  ; v4/IHL
+             (= (kernel-store-u8-4k frame 4096 15 0) 0)
+             (= (store-be16 frame 16 total) total)         ; total length
+             (= (kernel-store-u8-4k frame 4096 22 64) 64)  ; TTL
+             (= (kernel-store-u8-4k frame 4096 23 17) 17)  ; UDP proto
+             (= (store-be32 frame 26 k16-debug-ip) k16-debug-ip)
+             (= (store-be32 frame 30 mac-debug-ip) mac-debug-ip)
+             (= (store-be16 frame 34 debug-udp-port) debug-udp-port)
+             (= (store-be16 frame 36 debug-udp-port) debug-udp-port)
+             (= (store-be16 frame 38 9) 9)                 ; udp len
+             (= (kernel-store-u8-4k frame 4096 42 90) 90)  ; 'Z' payload
+             (= (store-be16 frame 40 0) 0))                ; udp checksum 0
+      total
+      0)))
+
+(defn debug-init [mmio dma-pages]
+  ;; Install a single TX ring on bus3 and leave the engine running. Returns
+  ;; 0 on success, 4 (fifo) / 1 (install) on failure.
+  (if (not (rtl/mac-valid mmio))
+    7
+    (rtl/rings-start mmio (rtl/revision mmio) dma-pages)))
+
+(defn debug-send [mmio dma-pages]
+  ;; Single-shot UDP :9000 log on bus3. Returns frame-length (>0) on submit,
+  ;; 0 if build failed, 5 if submit faulted.
+  (let [tx dma-pages
+        tx-frame (kernel-subregion dma-pages 16384 8192 4096)
+        len (build-udp-debug-frame tx-frame mmio)]
+    (if (= len 0)
+      0
+      (rtl/tx-submit mmio tx tx-frame len))))
+
+(defn debug-send-status [mmio dma-pages]
+  (let [frame (kernel-subregion dma-pages 16384 8192 4096)
+        sent (debug-send mmio dma-pages)]
+    ;; return a status the kernel can log
+    (if (= sent 0) 1 (if (= sent 5) 6 0))))

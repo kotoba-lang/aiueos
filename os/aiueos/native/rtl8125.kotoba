@@ -7,7 +7,8 @@
             [capability.dma.map :as dma]
             [capability.mmio.map :as mapped]
             [capability.net.transport :as transport])
-  (:export [bar-for-bus install-bar-page install-directory qualify quiesce]))
+  (:export [bar-for-bus install-bar-page install-directory qualify quiesce
+            rings-start tx-submit revision mac-valid]))
 
 (defn pci-address [bus offset]
   (bit-or 2147483648
