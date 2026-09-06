@@ -645,6 +645,71 @@ hundred cycles to prove itself, so the next artifact is built at **1048576** —
 not because that is a ceiling, but because it is what the instrument can read.
 A budget is a choice about the whole rig, not just about the kernel.
 
+## The bus2 stream: from `21` on every cycle to a completed handshake on every cycle
+
+With the netlog instrument rebuilt and the board resetting itself at the end of
+each run (0xCF9), iterations cost about two minutes and no hand on a button.
+What that bought, in order, each step measured on the K16 before the next:
+
+| # | defect | how it showed | fix | wire after |
+|---|---|---|---|---|
+| 1 | `stream-log` built its receipt in `tx-frame`, overwriting the SYN between build and submit | Mac never saw a SYN; netlog fine | separate log page in one `scratch` region (log +0, tx +4096, staging +8192) | SYN reaches the Mac (`SYN_RCVD`) |
+| 2 | IPv4 checksum summed over the previous cycle's checksum field | fold alternated `FF`/`D4`, field `2B`/`00`, 139 vs 138 | zero the field first | `FF 2B` every cycle |
+| 3 | SYN carried seq 0; `receive-syn-ack` wanted ack ISS+1 | offline TCP checksum matched seq 0, not the ISS | `tcb-init` seeds snd-nxt = ISS | TCP checksum byte `8B`→`A8` (= recomputed for ISS) |
+| 4 | stream RX ring wrote opts1 @+0 / addr @+8; NIC (RxDescV3) reads addr @+16, opts1 @+28 | poll read a zero OWN forever; `A4` every cycle | rings-start's layout, zeroed descriptors, EOR only on the last | — (masked by 5) |
+| 5 | RDSAR written into a running receiver is not latched | still `A4` after 4 | StopReq → FIFO drain → ChipCmd 0 → RDSAR → RE\|TE | frames arrive: `A8` (checksum path reached) |
+| 6 | TCP checksum verified over 20 bytes; a macOS SYN-ACK carries 20–24 bytes of options | MAC/IP/ports/ack all passed, every frame fell to 168/96 | TCP length = IPv4 total − 20 | **`K16_STREAM_CONNECTED from 10.77.0.10`** |
+| 7 | the retry was a `let` binding: ran before the frame was judged | `A4` then eight `A8` | a call, made only in the not-ours branches, advancing the ring head | clean single verdicts |
+| 8 | ESTABLISHED poll 250000 × 8 ≈ 2M calls; a boot has 2^20 fuel, no replenish | `A9 E8 E7` then silence until reset | 8000 per tick, and a note that fuel is the budget | window completes: `E8 … E0 21` |
+| 9 | `rcv-wnd` seeded 0 | every data segment out-of-window | 8192 | — |
+| 10 | fixed source port 49155 every cycle | cycle N+1's SYN hit the peer's FIN-WAIT-1 for cycle N: `A6`/94 on every cycle after the first | port and ISS move per cycle | **every cycle completes the handshake** (ports 49636, 49637, …; no lingering 8443 states) |
+| 11 | the ESTABLISHED window had no 4-tuple check; DHCP/ARP broadcasts were judged as TCP | `F5` on the first frame of every window | ethertype / IHL / proto / addresses / ports, stray = one tick | `F6` never fires — the remaining `F5` frame is ours |
+
+Also in the same run of work: the segment is now parsed rather than assumed
+(data offset from byte 46, payload = IPv4 total − 20 − doff, seq from the
+header; it used to be `bytes − 54` starting at rcv-nxt, which counted options,
+pad and FCS as data and copied from byte 0 of the frame); delivered data is
+acknowledged with a real segment (`build-ack` wrote no Ethernet header and no
+checksums into the staging page and was never submitted); a peer FIN is
+acknowledged and answered with our own FIN\|ACK (result 100 = `0x70` on the
+wire). These are landed and not yet exercised: every window so far has ended
+on one out-of-window frame followed by an empty window.
+
+### Open at this revision
+
+The first frame after every handshake is ours (passes the 4-tuple filter) and
+is judged out-of-window by `seq-core/acceptable?`. A build is on the board
+that emits the verdict's inputs after `F5`: flags, payload length, seq low
+byte, rcv-nxt low byte. Until it is read, this is **not measured**.
+
+### Instruments, and the two that were dead
+
+- `netstat -s -p tcp` on this Mac reports **zero for everything**, including a
+  connection made from this machine that the bridge logged at that moment.
+  Every "0 connection request" recorded above came from it. Dead; do not use.
+- The bridge (`k16-bridge.py`, 10.77.0.1:8443) was validated by connecting to
+  it directly (`K16_STREAM_CONNECTED from 10.77.0.1:…`). It is the handshake
+  oracle. `netstat -an -p tcp | grep 8443` shows the peer's state
+  (`SYN_RCVD` / `ESTABLISHED` / `FIN_WAIT_1`) and is live.
+- The netlog is `tools/k16-netlog-standalone.py` on 10.77.0.1:7777; the PXE
+  server's own receiver thread is dead and the process cannot be restarted by
+  this user (UDP 67/69 need root). Validate with a control datagram before
+  reading a null.
+
+### Wire bytes (one table — collisions cost a whole iteration today)
+
+`A1` SYN built · `A2` submitted · `A3` TX complete · `A4` SYN-ACK window
+expired · `A6` ports/ack mismatch → 94 · `A7` IPv4 checksum → 93 · `A8` TCP
+checksum → 96 · `A9` handshake complete · `AE` retransmit budget gone · `AF`
+build failed · `B0` submit failed · `B7` census sentinel · `B8` bus3 sentinel ·
+`D9` bus3 event · `DA` bus3 MAC sentinel · `DE` run end → reset · `E0–E8`
+ESTABLISHED window entry with ticks remaining · `F1` empty poll · `F2` bad
+descriptor · `F3` duplicate · `F4` queue full · `F5` out-of-window (+4 bytes
+of inputs) · `F6` not ours · `F7` admitted · `F8` staged · `F9` delivered ·
+`0x0C+result` cycle result (`21` window expired, `6A` 94, `6F` 99, `70` 100).
+The first instrumentation used `B0`, `B6`, `B7`, `B8` and was unreadable by
+construction.
+
 ## Status of the artifacts
 
 - Commit `e09e4f1` (Phase 1 — bus3 single-shot) is superseded by commit

@@ -91,6 +91,12 @@
 (def tcb-slot-ring-head 15)
 (def tcb-slot-acked-tick 16)
 (def tcb-slot-delivered-run-base 17)
+;; The local port moves with the ISS. Every cycle used 49155, so cycle N+1's
+;; SYN reached a peer still holding cycle N's connection on the same 4-tuple
+;; (FIN-WAIT-1 on the Mac, because its FIN had been dropped as a stray frame)
+;; and was answered with that connection's ACK -- seen as A6/94 (ack mismatch)
+;; on every cycle after the first. 49152 + 10 bits of the ISS's high half.
+(def tcb-slot-local-port 18)
 ;; Held table: 4 entries x (seq, len, buffer-index, tick) at slots 32..79.
 ;; Capacity 4 entries x 2048-byte buffers = the ADR section 2 held bound of
 ;; 8192 bytes; reassembly loops over at most 4 entries, so fuel is bounded
@@ -155,63 +161,114 @@
          (if (= index 2) rx-buffer-c-offset rx-buffer-d-offset)))))
 
 (defn rx-ring-command [capacity last-descriptor]
-  ;; OWN immediately (a receive ring with nothing in it drops every frame)
-  ;; plus the ring-end marker on the last descriptor. The flag is the integer
-  ;; 1/0, not a :bool: the kernel target admits only one-word native types in
-  ;; an entry module's exported signatures (measured: a :bool parameter in
-  ;; this module's exports fails with :kotoba/target-rejected; the required
-  ;; org-ietf-tcp cores keep their :bool parameters and are admitted).
-  (dma/rx-command (+ capacity (if (= last-descriptor 1) descriptor-eor 0))))
+  ;; opts1 for one RX descriptor: OWN (the NIC may write it) + buffer length,
+  ;; and EOR only on the LAST descriptor. Not built through dma/rx-command:
+  ;; that constructor bakes EOR into every word (it was written for the
+  ;; diagnostics profile's one-descriptor ring), so routed through it every
+  ;; descriptor here was an end-of-ring and the four-entry ring was a
+  ;; one-entry ring. The flag is the integer 1/0, not a :bool: the kernel
+  ;; target admits only one-word native types in an entry module's exported
+  ;; signatures (measured: a :bool parameter here fails :kotoba/target-rejected).
+  (+ descriptor-own capacity (if (= last-descriptor 1) descriptor-eor 0)))
 
 (defn rx-ring-init [mmio dma-base]
   ;; Install the 4-descriptor RX ring at the ADR section 2 offsets and point
   ;; RDSAR (MMIO 228/232) at the new ring start. TX keeps its single
   ;; descriptor at +0 for this tranche; the stream re-lays out RX only.
-  ;; Every kernel memory op's BASE names a kernel-subregion (provenance), the
-  ;; same discipline the diagnostics profile uses for its rings.
+  ;;
+  ;; DESCRIPTOR LAYOUT. This NIC (RTL8125B) reads the 32-byte RX descriptor
+  ;; the way rtl8125.kotoba's rings-start writes it -- and that path receives
+  ;; on every boot (ARP_OK, TCP_OK): buffer address at +16, a zero word at
+  ;; +24, opts1 (OWN | EOR | length) at +28. This function used to write opts1
+  ;; at +0 and the address at +8 -- the 16-byte layout -- while its own poll
+  ;; and rearm read and wrote +28. So the NIC saw opts1 == 0 at +28 (OWN
+  ;; clear: host-owned, do not write), never DMA'd a frame into this ring,
+  ;; and the poll read that same zero forever. Measured 2026-09-06: the Mac
+  ;; showed SYN_RCVD for 10.77.0.10:49155 (SYN accepted, SYN-ACK sent) while
+  ;; the kernel reported A4 (no frame) on every one of 256 cycles.
   (let [win (kernel-subregion dma-base dma-window-bytes 0 dma-window-bytes)
         ring (kernel-subregion dma-base dma-window-bytes rx-ring-offset 1024)
-        zero0 (kernel-store-u8-16k win dma-window-bytes rx-ring-offset 0)
-        zero1 (kernel-store-u8-16k win dma-window-bytes (+ rx-ring-offset 31) 0)
+        z (rx-ring-zero ring 0)
         a0 (rx-ring-buffer-base dma-base 0)
         a1 (rx-ring-buffer-base dma-base 1)
         a2 (rx-ring-buffer-base dma-base 2)
         a3 (rx-ring-buffer-base dma-base 3)
-        c0 (kernel-store-u32-16k ring 1024 0
+        ad0 (kernel-store-u64-16k ring 1024 16 a0)
+        ad1 (kernel-store-u64-16k ring 1024 48 a1)
+        ad2 (kernel-store-u64-16k ring 1024 80 a2)
+        ad3 (kernel-store-u64-16k ring 1024 112 a3)
+        fenced0 (dma/release-fence)
+        c0 (kernel-store-u32-16k ring 1024 28
                                  (rx-ring-command rx-buffer-capacity 0))
-        ad0 (kernel-store-u64-16k ring 1024 8 a0)
-        c1 (kernel-store-u32-16k ring 1024 32
+        c1 (kernel-store-u32-16k ring 1024 60
                                  (rx-ring-command rx-buffer-capacity 0))
-        ad1 (kernel-store-u64-16k ring 1024 40 a1)
-        c2 (kernel-store-u32-16k ring 1024 64
+        c2 (kernel-store-u32-16k ring 1024 92
                                  (rx-ring-command rx-buffer-capacity 0))
-        ad2 (kernel-store-u64-16k ring 1024 72 a2)
-        c3 (kernel-store-u32-16k ring 1024 96
+        c3 (kernel-store-u32-16k ring 1024 124
                                  (rx-ring-command rx-buffer-capacity 1))
-        ad3 (kernel-store-u64-16k ring 1024 104 a3)
         fenced (dma/release-fence)
         ring-base (rx-ring-descriptor-base dma-base)
+        ;; RDSAR is latched when the receiver is ENABLED, not when the register
+        ;; is written. rings-start knows this -- it stops the engine, programs
+        ;; the rings, then sets RE|TE -- and it receives on every boot. This
+        ;; function wrote RDSAR into a running engine, which kept the ring it
+        ;; already had: rings-start's one descriptor at dma+4096, pointing at
+        ;; dma+12288. So every frame the peer sent landed in the OLD ring --
+        ;; whose descriptor page is where stream-tcb now lives -- while the
+        ;; stream polled the new ring at +1024 that the NIC had never been told
+        ;; about. Measured 2026-09-06 after the descriptor layout was already
+        ;; corrected: the Mac in SYN_RCVD, the kernel at A4 on every cycle.
+        ;; Same discipline as rings-start: StopReq, bounded FIFO drain,
+        ;; ChipCmd 0, program, ChipCmd RE|TE (0x0C).
+        chip (kernel-load-u8 mmio 512 55)
+        stopped (kernel-store-u8 mmio 512 55 (bit-or chip 128))
+        drained (rx-ring-fifo-drain mmio 300000)
+        disabled (kernel-store-u8 mmio 512 55 0)
         rx-lo (kernel-store-u32 mmio 512 228
                                 (bit-and ring-base 4294967295))
         rx-hi (kernel-store-u32 mmio 512 232
-                                (quot ring-base 4294967296))]
+                                (quot ring-base 4294967296))
+        started (kernel-store-u8 mmio 512 55 12)]
     ;; Stores return the value they wrote, so rx-lo must be checked against
     ;; the ring base's low 32 bits -- not against 0. The original (= rx-lo 0)
     ;; can only pass when dma-base is 4-GiB aligned, which the loader's
     ;; fourteen-page EfiLoaderData allocation never is: measured on the K16
     ;; 2026-09-05 as STATUS 21 (= 0x121 = 192 + 97, this function's failure).
     ;; rx-hi vs 0 is right for the low-RAM scratch and stays.
-    (if (and (= zero0 0) (= zero1 0)
+    (if (and (= z 1)
              (= c0 (rx-ring-command rx-buffer-capacity 0))
              (= c1 (rx-ring-command rx-buffer-capacity 0))
              (= c2 (rx-ring-command rx-buffer-capacity 0))
              (= c3 (rx-ring-command rx-buffer-capacity 1))
              (= ad0 a0) (= ad1 a1) (= ad2 a2) (= ad3 a3)
-             (= fenced 1)
+             (= fenced0 1) (= fenced 1)
+             (= stopped (bit-or chip 128)) (= disabled 0) (= started 12)
              (= rx-lo (bit-and ring-base 4294967295))
-             (= rx-hi (quot ring-base 4294967296)))
+             (= rx-hi 0))
+      (+ 0 (* 0 drained))
+      97)))
+
+(defn rx-ring-fifo-drain [mmio remaining]
+  ;; rings-start's wait-fifo-empty, local to this module (native.rtl8125 does
+  ;; not export it): MMIO 211 bits 4|5 both set = TX and RX FIFOs empty. A
+  ;; sticky flag must not hide the stage, so the caller proceeds either way
+  ;; and this returns 1 (drained) or 0 (budget spent) for the record.
+  (if (= (bit-and (kernel-load-u8 mmio 512 211) 48) 48)
+    1
+    (if (= remaining 0)
       0
-      1)))
+      (let [paused (kernel-pause)]
+        (+ (rx-ring-fifo-drain mmio (- remaining 1)) (* 0 paused))))))
+
+(defn rx-ring-zero [ring offset]
+  ;; Zero the four 32-byte descriptors (128 bytes) before populating them, so
+  ;; the reserved words at +0..+15 and +24 are 0 rather than whatever the
+  ;; previous cycle -- or the diagnostics profile's ring -- left there.
+  (if (= offset 128)
+    1
+    (if (= (kernel-store-u8-16k ring 1024 offset 0) 0)
+      (rx-ring-zero ring (+ offset 1))
+      0)))
 
 (defn rx-ring-descriptor-own [win index]
   ;; OWN-bit discipline (wait-rx-command's bit-31 poll), per descriptor.
@@ -237,22 +294,23 @@
           (+ (rx-ring-wait-command win index (- remaining 1)) (* 0 paused)))))))
 
 (defn rx-ring-rearm [win dma-base index]
-  ;; rx-rearm's address + fenced command rewrite, per descriptor.
+  ;; rx-rearm's address + fenced command rewrite, per descriptor, in the
+  ;; layout the NIC reads (address +16, zero +24, opts1 +28 -- see
+  ;; rx-ring-init). The address used to go to +8, where the NIC never looks.
   (let [d (rx-ring-descriptor-address 0 index)
-        address (kernel-store-u64-16k win dma-window-bytes (+ d 8)
+        address (kernel-store-u64-16k win dma-window-bytes (+ d 16)
                                       (rx-ring-buffer-base dma-base index))
+        extension (kernel-store-u32-16k win dma-window-bytes (+ d 24) 0)
         fenced (dma/release-fence)
         command (kernel-store-u32-16k win dma-window-bytes (+ d 28)
                                       (rx-ring-command rx-buffer-capacity
                                                        (if (= index 3) 1 0)))
         after (dma/release-fence)]
-    (if (and (= fenced 1) (= after 1)
+    (if (and (= extension 0) (= fenced 1) (= after 1)
              (= command (rx-ring-command rx-buffer-capacity
                                          (if (= index 3) 1 0))))
       (+ 1 (* 0 address))
       0)))
-
-;; ── bounded TCB helpers ────────────────────────────────────────────────────
 
 (defn tcb-status [state]
   ;; The ADR section 6 assignment, as a pure function. LISTEN -> 97,
@@ -270,10 +328,18 @@
   ;; on the TCP wire yet. Zero the state slots, then write the fixed fields.
   (let [s0 (kernel-store-u64-4k tcb 4096 0 tcp-state-listen)
         s1 (kernel-store-u64-4k tcb 4096 8 0)
-        s2 (kernel-store-u64-4k tcb 4096 16 0)
+        ;; snd-nxt = ISS. It was seeded 0, so the SYN went out with seq 0
+        ;; (offline recomputation of the wire TCP checksum matched seq 0,
+        ;; not the ISS) while receive-syn-ack demands ack == ISS+1. Once RX
+        ;; works, every SYN-ACK would have been rejected as 94.
+        s2 (kernel-store-u64-4k tcb 4096 16 iss)
         s3 (kernel-store-u64-4k tcb 4096 24 0)
         s4 (kernel-store-u64-4k tcb 4096 32 0)
-        s5 (kernel-store-u64-4k tcb 4096 40 0)
+        ;; rcv-wnd = the reassembly queue. It was seeded 0, and with a zero
+        ;; window seq-core/acceptable? refuses every segment that carries
+        ;; data -- measured as F5 (out-of-window) on the first frame after
+        ;; every completed handshake.
+        s5 (kernel-store-u64-4k tcb 4096 40 reassembly-max-bytes)
         s6 (kernel-store-u64-4k tcb 4096 48 iss)
         s7 (kernel-store-u64-4k tcb 4096 56 0)
         s8 (kernel-store-u64-4k tcb 4096 64 1460)
@@ -284,10 +350,12 @@
         s13 (kernel-store-u64-4k tcb 4096 104 3)
         s14 (kernel-store-u64-4k tcb 4096 112 stream-status-listen)
         s15 (kernel-store-u64-4k tcb 4096 120 0)
-        s16 (kernel-store-u64-4k tcb 4096 128 0)]
+        s16 (kernel-store-u64-4k tcb 4096 128 0)
+        s18 (kernel-store-u64-4k tcb 4096 (* tcb-slot-local-port 8)
+                                 (+ 49152 (bit-and (quot iss 65536) 1023)))]
     (if (= (+ (* 0 s0) (* 0 s1) (* 0 s2) (* 0 s3) (* 0 s4) (* 0 s5) (* 0 s6)
               (* 0 s7) (* 0 s8) (* 0 s9) (* 0 s10) (* 0 s11) (* 0 s12)
-              (* 0 s13) (* 0 s14) (* 0 s15) (* 0 s16))
+              (* 0 s13) (* 0 s14) (* 0 s15) (* 0 s16) (* 0 s18))
             0)
       0
       1)))
@@ -377,21 +445,22 @@
             at))
         (deliver-held-run win tcb staging at (+ index 1))))))
 
-(defn stage-payload-at [win buffer-index staging-offset count staging]
-  ;; stage-payload with the write offset decoupled from the read offset: the
-  ;; buffer contributes bytes 0..count, the staging page receives them at
-  ;; their position in the delivered run. The recursion counts down and
-  ;; writes the byte at position count-1 first, so both offsets stay inside
-  ;; the five-argument ABI; a copy's store order is not observable.
+(defn stage-payload-at [win source-offset staging-offset count staging]
+  ;; Copy `count` bytes from window offset `source-offset` (the TCP payload's
+  ;; first byte, i.e. buffer base + 14 + 20 + data offset) to the staging
+  ;; page at `staging-offset`. This used to take a buffer INDEX and copy from
+  ;; byte 0 of the buffer -- the Ethernet header -- so a delivered "payload"
+  ;; was the frame's own headers. The recursion counts down and writes the
+  ;; byte at position count-1 first, so both offsets stay inside the
+  ;; five-argument ABI; a copy's store order is not observable.
   (if (= count 0)
     1
     (let [value (kernel-load-u8-16k win dma-window-bytes
-                                    (+ (rx-ring-buffer-base 0 buffer-index)
-                                       (- count 1)))
+                                    (+ source-offset (- count 1)))
           stored (kernel-store-u8-4k staging 4096
                                      (+ staging-offset (- count 1)) value)]
       (if (= stored value)
-        (stage-payload-at win buffer-index staging-offset (- count 1) staging)
+        (stage-payload-at win source-offset staging-offset (- count 1) staging)
         0))))
 
 (defn build-ack [tcb tx-frame]
@@ -540,21 +609,25 @@
 
 (defn build-tcp-segment-stream [tcb tx-frame mmio mode]
   ;; mode 0: SYN (seq = snd-nxt = ISS, ack 0, window 1460, flags 02)
-  ;; mode 1: the handshake's pure ACK (seq = ISS+1, ack = peer ISS+1 -- both
-  ;;         already in the TCB when mode 1 runs). Full Ethernet + IPv4
+  ;; mode 1: pure ACK (seq = snd-nxt, ack = rcv-nxt from the TCB)
+  ;; mode 2: FIN|ACK, same fields, flags 0x11 -- the active close after the
+  ;;         peer's FIN has been acknowledged. Full Ethernet + IPv4
   ;;         (own checksum) + TCP (pseudo-header checksum). Returns the
   ;;         wire length for tx-submit-stream, 0 on any store mismatch.
   (let [src 172818442
         dst 172818433
         tcp-length 20
         total-length 40
-        seq (if (= mode 0)
-              (seq-core/wrap (kernel-load-u64-4k tcb 4096 (* tcb-slot-snd-nxt 8)))
-              (seq-core/wrap (+ (kernel-load-u64-4k tcb 4096 (* tcb-slot-iss 8)) 1)))
+        ;; seq is snd-nxt in every mode: the handshake stores ISS+1 there
+        ;; before the third packet is built, so mode 1 no longer needs to
+        ;; recompute it from the ISS -- and a data ACK later in the stream
+        ;; must not be pinned to ISS+1.
+        seq (seq-core/wrap (kernel-load-u64-4k tcb 4096 (* tcb-slot-snd-nxt 8)))
         ack (if (= mode 0)
               0
               (kernel-load-u64-4k tcb 4096 (* tcb-slot-rcv-nxt 8)))
-        flags (if (= mode 0) 2 16)
+        local-port (kernel-load-u64-4k tcb 4096 (* tcb-slot-local-port 8))
+        flags (if (= mode 0) 2 (if (= mode 2) 17 16))   ; 2 SYN, 16 ACK, 17 FIN|ACK
         window (if (= mode 0) 1460 256)]
     (if (and (= (store-gateway-mac-stream tx-frame) 1)
              (= (copy-device-mac-stream tx-frame 6 mmio 0) 1)
@@ -585,7 +658,7 @@
              (= (frame-store-be16-stream tx-frame 24
                                   (internet-checksum-sum-ipv4 tx-frame))
                 (frame-be16-stream tx-frame 24))
-             (= (frame-store-be16-stream tx-frame 34 49155) 49155)
+             (= (frame-store-be16-stream tx-frame 34 local-port) local-port)
              (= (frame-store-be16-stream tx-frame 36 8443) 8443)
              (= (frame-store-be32-stream tx-frame 38 seq) seq)
              (= (frame-store-be32-stream tx-frame 42 ack) ack)
@@ -659,6 +732,18 @@
       36
       (if (= (wait-tx-complete-stream win 200000000) 1) 0 36))))
 
+(defn receive-syn-ack-retry [win mmio scratch remaining head-next]
+  ;; A frame that was not ours has been re-armed; spend one tick of the
+  ;; window, advance the ring head past it, and look again. Was a `let`
+  ;; binding inside receive-syn-ack, which in a strict language means it ran
+  ;; on EVERY arrival before the frame had been judged -- so the first
+  ;; frame consumed the whole 8-tick window against the same descriptor,
+  ;; then the verdict was logged eight times on the way back up.
+  (let [tcb (kernel-subregion win dma-window-bytes 4096 4096)
+        tick (kernel-store-u64-4k tcb 4096 (* tcb-slot-tick 8) (- remaining 1))
+        head (kernel-store-u64-4k tcb 4096 (* tcb-slot-ring-head 8) head-next)]
+    (+ (receive-syn-ack win mmio scratch) (* 0 (+ tick head)))))
+
 (defn receive-syn-ack [win mmio scratch]
   ;; Admit the peer's SYN-ACK against THIS connection: Ethernet + IPv4 +
   ;; ports + ack == ISS+1 (from the TCB), checksums by the same zero-fold,
@@ -719,7 +804,8 @@
                            0
                            (if (not (= (frame-be16-stream peer-frame 34) 8443))
                              0
-                             (if (not (= (frame-be16-stream peer-frame 36) 49155))
+                             (if (not (= (frame-be16-stream peer-frame 36)
+                                       (kernel-load-u64-4k tcb 4096 (* tcb-slot-local-port 8))))
                                0
                                (if (= (frame-be32-stream peer-frame 42) want-ack)
                                  1
@@ -732,16 +818,33 @@
                                  0)
                             1
                             0))
+                ;; The peer's SYN-ACK carries options (a macOS SYN-ACK has MSS,
+                ;; window scale, SACK-permitted and timestamps: a 40- or
+                ;; 44-byte TCP header). This used to sum exactly 20 bytes with
+                ;; a pseudo-header length of 20, so a well-formed SYN-ACK
+                ;; could never verify. Measured 2026-09-06 once RX finally
+                ;; delivered frames: MAC, IPv4, ports and ack==ISS+1 all
+                ;; passed and every frame fell here (168 -> 96), while the Mac
+                ;; sat in SYN_RCVD waiting for the third packet. The TCP
+                ;; length is what IPv4 says it is: total length (bytes 16..17)
+                ;; minus the 20-byte header shape-ok already pinned (0x45).
+                tcp-len (- (frame-be16-stream peer-frame 16) 20)
+                tcp-len-ok (if (and (>= tcp-len 20)
+                                    (<= (+ 34 tcp-len) length))
+                             1
+                             0)
                 tcp-ok (if (not (= ipv4-ok 1))
                          0
-                         (if (= (- 65535
-                                   (checksum-fold-stream
-                                    (checksum-sum-stream
-                                     peer-frame 34 20 0
-                                     (tcp-pseudo-sum-stream src dst 20))))
-                              0)
-                           1
-                           0))
+                         (if (not (= tcp-len-ok 1))
+                           0
+                           (if (= (- 65535
+                                     (checksum-fold-stream
+                                      (checksum-sum-stream
+                                       peer-frame 34 tcp-len 0
+                                       (tcp-pseudo-sum-stream src dst tcp-len))))
+                                  0)
+                             1
+                             0)))
                 admit (if (not (= eth-ok 1))
                         1
                         (if (not (= shape-ok 1))
@@ -751,14 +854,16 @@
                             (if (not (= ipv4-ok 1))
                               1
                               (if (not (= tcp-ok 1)) 1 0)))))
-                next-run (do (kernel-store-u64-4k tcb 4096 (* tcb-slot-tick 8) (- remaining 1))
-                             (receive-syn-ack win mmio scratch))]
+                head-next (bit-and (+ head 1) 3)]
             (if (not valid-command)
-              (if (= (rx-ring-rearm win win head) 1) next-run 30)
+              (if (= (rx-ring-rearm win win head) 1)
+                (receive-syn-ack-retry win mmio scratch remaining head-next) 30)
               (if (not (= eth-ok 1))
-                (if (= (rx-ring-rearm win win head) 1) next-run 30)
+                (if (= (rx-ring-rearm win win head) 1)
+                  (receive-syn-ack-retry win mmio scratch remaining head-next) 30)
                 (if (not (= shape-ok 1))
-                  (if (= (rx-ring-rearm win win head) 1) next-run 30)
+                  (if (= (rx-ring-rearm win win head) 1)
+                    (receive-syn-ack-retry win mmio scratch remaining head-next) 30)
                   (if (not (= ports-ok 1))
                     (do (stream-log win mmio log-frame 166) 94)
                     (if (not (= ipv4-ok 1))
@@ -924,36 +1029,101 @@
                            (- retransmits 1))
                           (stream-connect win mmio scratch))))))))))))
 
-(defn receive-established [win scratch remaining]
+(defn receive-established [win mmio scratch remaining]
   ;; ESTABLISHED-state receive, one bounded window. Status semantics per ADR
   ;; section 6: 99 is live while the stream is open; a queue-full refusal is
   ;; a delivery stall inside 99 (no new code); timeouts keep 21/30-series.
   (let [tcb (kernel-subregion win dma-window-bytes 4096 4096)
         staging (kernel-subregion scratch scratch-window-bytes
-                                  scratch-staging-offset 4096)]
+                                  scratch-staging-offset 4096)
+        log-frame (kernel-subregion scratch scratch-window-bytes
+                                    scratch-log-offset 4096)
+        ;; E0+remaining on entry (E8..E1). The first instrumentation used
+        ;; B0+remaining and C1..C6, and B7 / B8 / B6 are already the census,
+        ;; bus3 and MAC bytes -- the trace was unreadable by construction.
+        ;; Keep one table of wire bytes; these are E0-E8 and F1-F9.
+        entered (stream-log win mmio log-frame (+ 224 remaining))]
    (if (= remaining 0)
-    21
+    (+ 21 (* 0 entered))
+    ;; POLL BUDGET IS FUEL. A boot has 2^20 fuel and no replenish, and every
+    ;; iteration of rx-ring-wait-command is a call. 250000 iterations x 8
+    ;; ticks is ~2M calls: one EMPTY window cannot finish inside the budget.
+    ;; That is what the wire showed after the first successful handshake:
+    ;; A9, entry(8), entry(7), then nothing until the board reset -- the
+    ;; peer (a TLS server waiting for our ClientHello) sent nothing, the
+    ;; poll spun, fuel ran out, `ud2`. Before the RX ring was fixed the poll
+    ;; returned instantly (OWN was never set), which is why 280 cycles fit.
+    ;; 8000 x 8 = 64k calls leaves the rest of the run its budget. The real
+    ;; fix is a replenish in package-aiueos-boot (ADR-0156); this is sizing
+    ;; a debug window to the fuel that exists, and saying so.
     (let [head (bit-and (kernel-load-u64-4k tcb 4096 (* tcb-slot-ring-head 8)) 3)
-          command (rx-ring-wait-command win head 250000)]
+          command (rx-ring-wait-command win head 8000)]
       (if (= command 0)
-        (receive-established win scratch (- remaining 1))
+        (let [l (stream-log win mmio log-frame 241)]              ; F1 empty
+          (+ (receive-established win mmio scratch (- remaining 1)) (* 0 l)))
         (let [bytes (bit-and command 16383)
+              head-buffer (bit-and head 3)
+              frame (if (= head-buffer 0)
+                      (kernel-subregion win 16384 rx-buffer-a-offset 4096)
+                      (if (= head-buffer 1)
+                        (kernel-subregion win 16384 rx-buffer-b-offset 4096)
+                        (if (= head-buffer 2)
+                          (kernel-subregion win 16384 rx-buffer-c-offset 4096)
+                          (kernel-subregion win 16384 rx-buffer-d-offset 4096))))
+              ;; The segment says where its payload is; it was being assumed.
+              ;; payload = bytes - 54 counted TCP options AND the Ethernet
+              ;; pad/FCS as data (a 60-byte FIN read as 6 bytes of payload),
+              ;; and segment-start was taken to BE rcv-nxt rather than read
+              ;; from the header. Data offset is byte 46 >> 4, in words.
+              ip-total (frame-be16-stream frame 16)
+              doff (* (quot (kernel-load-u8-4k frame 4096 46) 16) 4)
+              flags (kernel-load-u8-4k frame 4096 47)
+              payload-start (+ 34 doff)
+              payload (- (- ip-total 20) doff)
+              seg-seq (frame-be32-stream frame 38)
               valid-command (and (= (bit-and command 1048576) 0)
                                  (not (= (bit-and command 33554432) 0))
                                  (not (= (bit-and command 16777216) 0))
-                                 (>= bytes 58) (<= bytes 2048))
-              payload (- bytes 54)
+                                 (>= bytes 58) (<= bytes 2048)
+                                 (>= doff 20) (>= payload 0)
+                                 (<= (+ payload-start payload) (- bytes 4)))
+              fin (bit-and flags 1)
+              ;; Is this frame this connection's? The window had no such test,
+              ;; so the LAN's DHCP and ARP broadcasts were parsed as TCP and
+              ;; judged out-of-window (F5 on the first frame after every
+              ;; handshake), and the peer's real FIN was lost among them.
+              ;; Ethertype, IHL, protocol, both addresses, both ports -- the
+              ;; same shape receive-syn-ack demands.
+              ours (if (and (= (frame-be16-stream frame 12) 2048)
+                            (= (kernel-load-u8-4k frame 4096 14) 69)
+                            (= (kernel-load-u8-4k frame 4096 23) 6)
+                            (= (frame-be32-stream frame 26) 172818433)
+                            (= (frame-be32-stream frame 30) 172818442)
+                            (= (frame-be16-stream frame 34) 8443)
+                            (= (frame-be16-stream frame 36)
+                               (kernel-load-u64-4k tcb 4096 (* tcb-slot-local-port 8))))
+                     1
+                     0)
               rcv-nxt (seq-core/wrap (kernel-load-u64-4k tcb 4096 (* tcb-slot-rcv-nxt 8)))
               rcv-wnd (kernel-load-u64-4k tcb 4096 (* tcb-slot-rcv-wnd 8))
               held-bytes (kernel-load-u64-4k tcb 4096 (* tcb-slot-held-bytes 8))
-              verdict (if valid-command 0 3)]
+              verdict (if (not valid-command) 3 (if (= ours 1) 0 4))]
           (if (not (= verdict 0))
-            (if (= (rx-ring-rearm win win head) 1)
-              (receive-established win scratch (- remaining 1))
-              30)
-            (let [segment-start rcv-nxt
+            ;; F2 = bad descriptor, F6 = not ours. Either way: re-arm, step the
+            ;; ring head past it, look again -- a stray frame costs one tick,
+            ;; it does not end the window.
+            (let [rearmed (rx-ring-rearm win win head)
+                  head-next (kernel-store-u64-4k tcb 4096 (* tcb-slot-ring-head 8)
+                                                (bit-and (+ head 1) 3))]
+              (if (and (= rearmed 1) (= head-next (bit-and (+ head 1) 3)))
+                (let [l (stream-log win mmio log-frame (if (= verdict 4) 246 242))]
+                  (+ (receive-established win mmio scratch (- remaining 1)) (* 0 l)))
+                30))
+            (let [segment-start seg-seq
+                  ;; A FIN occupies one sequence number; admit it like a
+                  ;; 1-byte segment so accept-decision judges it at rcv-nxt.
                   decision (accept-decision rcv-nxt rcv-wnd held-bytes
-                                            segment-start payload)]
+                                            segment-start (+ payload fin))]
               (if (not (= decision 0))
                 ;; duplicate (1) re-ACKs what was delivered; queue-full (2)
                 ;; stalls delivery inside status 99 and ACKs the advertised
@@ -963,24 +1133,71 @@
                                  tcb 4096 (* tcb-slot-ring-head 8)
                                  (bit-and (+ head 1) 3))]
                   (if (and (= rearmed 1) (= head-next (bit-and (+ head 1) 3)))
-                    (receive-established win scratch (- remaining 1))
+                    ;; F3 dup / F4 full / F5 out-of-window, then -- for F5 only --
+                    ;; the four numbers the verdict was made from: flags, payload
+                    ;; length, seg-seq low byte, rcv-nxt low byte. Every cycle's
+                    ;; first frame after the handshake is OURS (F6 never fires)
+                    ;; and is judged out-of-window; these say why.
+                    (let [l (stream-log win mmio log-frame (+ 242 decision))
+                          d1 (if (= decision 3) (stream-log win mmio log-frame flags) 0)
+                          d2 (if (= decision 3) (stream-log win mmio log-frame (bit-and payload 255)) 0)
+                          d3 (if (= decision 3) (stream-log win mmio log-frame (bit-and seg-seq 255)) 0)
+                          d4 (if (= decision 3) (stream-log win mmio log-frame (bit-and rcv-nxt 255)) 0)]
+                      (+ (receive-established win mmio scratch (- remaining 1))
+                         (* 0 (+ l d1 d2 d3 d4))))
                     30))
-                (let [head-buffer (bit-and head 3)
+                (let [admitted (stream-log win mmio log-frame (+ 247 (* 0 0)))   ; F7 admitted
+                      tx-frame (kernel-subregion scratch scratch-window-bytes
+                                                 scratch-tx-offset 4096)
                       parked (kernel-store-u64-4k tcb 4096
                                                  (* tcb-slot-delivered-run-base 8)
                                                  rcv-nxt)
-                      staged (stage-payload-at win head-buffer 0 payload staging)
+                      ;; the trim-skip for a segment that starts below rcv-nxt
+                      ;; is handled by accept-decision (duplicate / admit);
+                      ;; an admitted in-order segment starts at rcv-nxt.
+                      staged (stage-payload-at win
+                                               (+ (rx-ring-buffer-base 0 head-buffer)
+                                                  payload-start)
+                                               0 payload staging)
+                      staged-log (stream-log win mmio log-frame (+ 248 (* 0 (+ admitted staged))))   ; F8
                       delivered (deliver-held-run win tcb staging rcv-nxt 0)
-                      advanced (reassemble/seg-end segment-start payload)
+                      delivered-log (stream-log win mmio log-frame (+ 249 (* 0 (+ staged-log delivered))))   ; F9
+                      advanced (reassemble/seg-end segment-start (+ payload fin))
                       w0 (kernel-store-u64-4k tcb 4096 (* tcb-slot-rcv-nxt 8) advanced)
                       w1 (kernel-store-u64-4k tcb 4096 (* tcb-slot-rcv-wnd 8)
                                               (- reassembly-max-bytes held-bytes))
-                      ack-length (build-ack tcb staging)]
+                      ;; ACK what we just took. build-ack wrote a header with no
+                      ;; Ethernet, no checksums, into the STAGING page and was
+                      ;; never submitted; the peer was never acknowledged once.
+                      ack-len (build-tcp-segment-stream tcb tx-frame mmio 1)
+                      ack-sent (submit-wire win mmio tx-frame ack-len)
+                      rearmed (rx-ring-rearm win win head)
+                      head-next (kernel-store-u64-4k tcb 4096 (* tcb-slot-ring-head 8)
+                                                    (bit-and (+ head 1) 3))]
                   (if (and (= parked rcv-nxt)
-                           (= staged 1) (= w0 advanced) (= w1 (- reassembly-max-bytes held-bytes)))
-                    (if (not (= ack-length 0))
-                      (tcb-state-store tcb tcp-state-established)
-                      26)
+                           (= staged 1) (= w0 advanced) (= w1 (- reassembly-max-bytes held-bytes))
+                           (= rearmed 1) (= head-next (bit-and (+ head 1) 3)))
+                    (if (not (= ack-sent 0))
+                      26
+                      (if (= fin 1)
+                        ;; Peer closed. Acknowledged above; now our FIN|ACK,
+                        ;; so the peer can leave FIN-WAIT rather than retransmit
+                        ;; into a stream that has stopped listening. 100 on the
+                        ;; wire (0x70 after +12) = closed cleanly.
+                        (let [fin-len (build-tcp-segment-stream tcb tx-frame mmio 2)
+                              fin-sent (submit-wire win mmio tx-frame fin-len)
+                              snd (kernel-store-u64-4k
+                                   tcb 4096 (* tcb-slot-snd-nxt 8)
+                                   (seq-core/wrap (+ (kernel-load-u64-4k tcb 4096 (* tcb-slot-snd-nxt 8)) 1)))
+                              closed (tcb-state-store tcb tcp-state-closed)]
+                          (if (and (= fin-sent 0) (= closed stream-status-closed))
+                            (+ stream-status-closed (* 0 snd))
+                            27))
+                        ;; Data delivered and acknowledged; keep the window open
+                        ;; for the next segment.
+                        (let [live (tcb-state-store tcb tcp-state-established)]
+                          (+ (receive-established win mmio scratch (- remaining 1))
+                             (* 0 live)))))
                     25)))))))))))
 
 ;; How many cycles one debug run makes before resetting the board. A CADENCE,
@@ -1046,8 +1263,12 @@
                       (stream-log win mmio log-frame
                                   (+ bus3 (* 0 bus3-mark))))
         ring (rx-ring-init mmio win)
+        ;; The ISS moves 65536 per cycle. With a fixed ISS every cycle's SYN
+        ;; is the same connection the peer may still hold in FIN-WAIT-2 or
+        ;; TIME-WAIT from the previous cycle, and it is answered with an ACK
+        ;; or RST rather than a SYN-ACK.
         armed (if (= ring 0)
-                (tcb-init tcb 2715820034)
+                (tcb-init tcb (seq-core/wrap (+ 2715820034 (* cycles 65536))))
                 1)
         seeded (if (and (= ring 0) (= armed 0))
                  (do (kernel-store-u64-4k tcb 4096
@@ -1058,8 +1279,13 @@
         connect (if (= seeded 1)
                   (stream-connect win mmio scratch)
                   97)
+        ;; A9 = the handshake completed and the ESTABLISHED window is about to
+        ;; run. After the first successful handshake the wire went silent for
+        ;; the rest of the run (no result byte, no DE), so this byte splits
+        ;; "never got past connect" from "receive-established never returned".
+        connected (if (= connect 0) (stream-log win mmio log-frame 169) 0)
         result (if (= connect 0)
-                 (receive-established win scratch 8)
+                 (+ (receive-established win mmio scratch 8) (* 0 connected))
                  connect)]
     (stream-log win mmio log-frame
                 (+ 12 result (* 0 (+ cycles bus3-logged))))
