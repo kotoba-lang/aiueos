@@ -21,6 +21,24 @@ static uint64_t allocator_reuse_count;
 struct allocation_record { void *page; uint8_t active; };
 static struct allocation_record allocation_records[ALLOCATION_RECORDS];
 
+/* The record-table decision -- which slot to claim for a fresh page, and
+ * whether a page being freed is the one a live record names -- lives in the
+ * compiler-emitted Kotoba object kotoba_aiueos_allocator_plan (allocator-plan
+ * allow-list entry, kernel-object ABI). C keeps the mechanism: the lock, the
+ * next_page/remaining_pages advance, the free-list pointer write, and zeroing.
+ *
+ *   request == 0 : return the one-based index of a free record, or 0 if the
+ *                  table is full.
+ *   request != 0 : HIGH 32 bits = page address, LOW 16 bits = record index to
+ *                  release. Returns 1 only when that live record names that
+ *                  page; 0 on double free / unknown / mismatch.
+ *
+ * The table layout matches struct allocation_record: page @0..7, active @8,
+ * stride 16, and the object requires exactly (length,count,stride) =
+ * (4096,256,16). */
+extern uint64_t kotoba_aiueos_allocator_plan(uint64_t table, uint64_t length,
+  uint64_t count, uint64_t stride, uint64_t request);
+
 static void lock(void) { while (__atomic_test_and_set(&allocator_lock,__ATOMIC_ACQUIRE)) __asm__ volatile("pause"); }
 static void unlock(void) { __atomic_clear(&allocator_lock,__ATOMIC_RELEASE); }
 static void zero_page(void *page) {
@@ -70,9 +88,18 @@ void *aiueos_allocate_physical_page(void) {
     for (uint32_t i=0;i<ALLOCATION_RECORDS;i++)
       if (allocation_records[i].page==page) { allocation_records[i].active=1; break; }
   } else if (remaining_pages && next_page && next_page<IDENTITY_LIMIT) {
-    for (uint32_t i=0;i<ALLOCATION_RECORDS;i++) if (!allocation_records[i].page) {
-      page=(void *)(uintptr_t)next_page; next_page+=PAGE_SIZE; remaining_pages--;
-      allocation_records[i]=(struct allocation_record){page,1}; break;
+    /* The record to claim is a Kotoba decision: scan the bounded 4096,256,16
+     * table for the first free record, and refuse when full. C only advances
+     * next_page / consumes remaining_pages and stores the record. */
+    uint64_t slot = kotoba_aiueos_allocator_plan(
+      (uint64_t)(uintptr_t)allocation_records, ALLOCATION_RECORDS*16ULL,
+      ALLOCATION_RECORDS, 16ULL, 0);
+    if (slot >= 1 && slot <= ALLOCATION_RECORDS) {
+      uint32_t i = (uint32_t)(slot - 1);
+      if (!allocation_records[i].page && !allocation_records[i].active) {
+        page=(void *)(uintptr_t)next_page; next_page+=PAGE_SIZE; remaining_pages--;
+        allocation_records[i]=(struct allocation_record){page,1};
+      }
     }
   }
   if (page) zero_page(page); unlock(); return page;
@@ -104,8 +131,16 @@ void *aiueos_allocate_contiguous_physical_pages(uint64_t page_count) {
 int aiueos_free_physical_page(void *page) {
   if (!page || ((uintptr_t)page&(PAGE_SIZE-1)) || (uintptr_t)page>=IDENTITY_LIMIT) return 0;
   lock();
+  /* Find the record that names this page (mechanism: a bounded linear scan),
+   * then ask Kotoba whether that live active record may be released. Kotoba
+   * owns the decision: a double free, an unknown page, or a page named by an
+   * already-inactive record is refused before C zeroes or re-links anything. */
   for (uint32_t i=0;i<ALLOCATION_RECORDS;i++) if (allocation_records[i].page==page) {
-    if (!allocation_records[i].active) { unlock(); return 0; }
+    uint64_t admitted = kotoba_aiueos_allocator_plan(
+      (uint64_t)(uintptr_t)allocation_records, ALLOCATION_RECORDS*16ULL,
+      ALLOCATION_RECORDS, 16ULL,
+      (((uint64_t)(uint32_t)(uintptr_t)page) << 32) | (uint64_t)(i + 1));
+    if (!admitted || !allocation_records[i].active) { unlock(); return 0; }
     allocation_records[i].active=0; zero_page(page); *(void **)page=free_pages; free_pages=page;
     unlock(); return 1;
   }
