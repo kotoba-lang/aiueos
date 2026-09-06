@@ -8,7 +8,7 @@
             [capability.mmio.map :as mapped]
             [capability.net.transport :as transport])
   (:export [bar-for-bus install-bar-page install-directory qualify quiesce
-            rings-start tx-submit revision mac-valid]))
+            rings-start tx-submit revision mac-valid bus-probe]))
 
 (defn pci-address [bus offset]
   (bit-or 2147483648
@@ -141,6 +141,34 @@
     (and (not (= (bit-or mac0 mac4) 0))
          (not (and (= mac0 4294967295) (= mac4 65535)))
          (= (bit-and mac0 1) 0))))
+
+;; Read-only bus census. Touches nothing: no PCI write, no MMIO write, no DMA,
+;; no ring. Returns one byte the caller can put on the bus2 netlog, so the
+;; state of a NIC that has never been qualified is observable without giving
+;; it a DMA window first.
+;;   bit0  1 = 10EC:8125 answers config space at <bus>:00.0
+;;   bit1  2 = a memory BAR decoded inside the admitted window
+;;   bit2  4 = PCI command MEMORY-SPACE-ENABLE set
+;;   bit3  8 = PCI command BUS-MASTER-ENABLE set
+;;   bit4 16 = ChipCmd revision recognised (i.e. the BAR really reads back)
+;;   bit5 32 = IDR0..5 holds a plausible unicast MAC
+;;   bit6 64 = PHYstatus (MMIO 108) reports LinkStatus
+;; A qualified NIC reads 0x7F. Bits 4..6 are only meaningful when bit2 is set;
+;; an undecoded window returns all-ones and would otherwise fake bit6.
+(defn bus-probe [bus]
+  (if (not (= (pci-read bus 0) 2166690028))
+    0
+    (let [bar (bar-for-bus bus)
+          command (pci-read bus 4)
+          space (if (= (bit-and command 2) 0) 0 4)
+          master (if (= (bit-and command 4) 0) 0 8)]
+      (if (= bar 0)
+        (+ 1 space master)
+        (let [mmio (kernel-subregion 1 549755813887 (- bar 1) 512)
+              revision-bit (if (= (revision mmio) 0) 0 16)
+              mac-bit (if (mac-valid mmio) 32 0)
+              link-bit (if (= (bit-and (mmio-load-u16 mmio 108) 2) 0) 0 64)]
+          (+ 1 2 space master revision-bit mac-bit link-bit))))))
 
 (defn wait-fifo-empty [mmio remaining]
   (if (= (bit-and (mmio-load-u8 mmio 211) 48) 48)

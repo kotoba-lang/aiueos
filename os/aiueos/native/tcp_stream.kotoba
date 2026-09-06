@@ -36,7 +36,7 @@
             tcb-status tcb-init tcb-state-store held-table-store
             held-table-load accept-decision held-joinable delivery-advance
             deliver-held-run stage-payload-at build-ack
-            stream-connect stream-resident receive-established]))
+            stream-connect stream-resident receive-established stream-log]))
 
 ;; ── TCP state codes, restated from tcp.state-core (wasm32-only) ───────────
 ;; state_core.kotoba: st-closed 0, st-listen 1, st-syn-sent 2,

@@ -471,11 +471,6 @@
                                                           (- tenth-start 4096) 4096)
                         rtl-dma-pages (kernel-subregion 4096 549755809792
                                                        (- eleventh-start 4096) 16384)
-                        ;; LAN2 debug plane: dedicated 16 KiB DMA window for
-                        ;; bus3 (bar-b), physically pages 14..17. Untouched by
-                        ;; the bus2 stream window above.
-                        bus3-dma-pages (kernel-subregion 4096 549755809792
-                                                      (- fifteenth-start 4096) 16384)
                         owned-status (prepare-owned-pages
                                       state page-table-root pdpt pd pt)
                         extra-status (prepare-extra-pages
@@ -543,21 +538,29 @@
                               ;; cycle re-arms, connects, receives, and logs
                               ;; over UDP. The screen write happens before
                               ;; entering the loop; outcomes ride STREAM_C.
-                              ;; LAN2 debug plane: install a bus3 TX ring and
-                              ;; emit one debug log over the Mac's second NIC.
+                              ;; LAN2 debug plane, step 0: census only. The
+                              ;; bus3 send is withheld until the census says
+                              ;; the NIC can DMA -- and until bus3 has a
+                              ;; loader-OWNED window, which pages 14..17 are
+                              ;; not (the loader allocates exactly 14). Three
+                              ;; bytes ride the known-good bus2 netlog once,
+                              ;; before the resident loop: B7 sentinel, then
+                              ;; bus3's census, then bus2's as the control
+                              ;; (a qualified NIC reads 7F).
                               (do (kernel-out-u32 244 (+ 192 stream-status))
-                                  (let [bus3-mmio (if (> bar-b 0)
-                                                    (kernel-subregion
-                                                     1 549755813887 (- bar-b 1) 512)
-                                                    0)
-                                        dbg-init (if (> bar-b 0)
-                                                   (debug/debug-init bus3-mmio
-                                                                     bus3-dma-pages)
-                                                   0)
-                                        dbg-sent (if (and (> bar-b 0) (= dbg-init 0))
-                                                   (debug/debug-send bus3-mmio
-                                                                     bus3-dma-pages)
-                                                   0)]
+                                  (let [census-b (rtl/bus-probe 3)
+                                        census-a (rtl/bus-probe 2)
+                                        mark (stream/stream-log
+                                              stream-win stream-mmio
+                                              stream-tx-frame 183)
+                                        logged-b (stream/stream-log
+                                                  stream-win stream-mmio
+                                                  stream-tx-frame
+                                                  (+ census-b (* 0 mark)))]
+                                    (stream/stream-log stream-win stream-mmio
+                                                       stream-tx-frame
+                                                       (+ census-a
+                                                          (* 0 logged-b)))
                                     (stream/stream-resident stream-win
                                                             stream-mmio
                                                             stream-tx-frame

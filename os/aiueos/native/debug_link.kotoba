@@ -96,6 +96,14 @@
              (= (store-be16 frame 16 total) total)         ; total length
              (= (kernel-store-u8-4k frame 4096 22 64) 64)  ; TTL
              (= (kernel-store-u8-4k frame 4096 23 17) 17)  ; UDP proto
+             ;; IPv4 header checksum. Every other field of this header is a
+             ;; compile-time constant, so the checksum is one too: 0x52AC
+             ;; over 45 00 / 00 2B / 0000 / 0000 / 40 11 / 0000 /
+             ;; 10.10.10.2 / 10.10.10.1. Leaving it zero (the state
+             ;; zero-prefix leaves) makes the Mac drop the datagram in
+             ;; ip_input before socat ever sees it -- the same reason
+             ;; rtl8125/build-ipv4-udp-header bakes in its own 0x6619.
+             (= (store-be16 frame 24 21164) 21164)
              (= (store-be32 frame 26 k16-debug-ip) k16-debug-ip)
              (= (store-be32 frame 30 mac-debug-ip) mac-debug-ip)
              (= (store-be16 frame 34 debug-udp-port) debug-udp-port)
