@@ -106,6 +106,21 @@
 ;; reassembler's refusal boundary is never the ring's failure mode in
 ;; disguise (the two numbers are the same number on purpose).
 (def dma-window-bytes 16384)
+;; The stream's THREE CPU-side buffers, in one named region so no two of them
+;; can ever be the same page by accident. They were separate parameters, and
+;; two of them were separately computed to the same address for months
+;; (ADR-0156): tx-frame and staging were both rtl-dma-pages+8192, which is also
+;; rx-buffer-a. And stream-log built its receipt in tx-frame, so the SYN was
+;; overwritten between being built and being submitted -- measured on the Mac
+;; as `0 connection request` across ~363,000 attempts.
+;;
+;; A log buffer that is nobody else's buffer is the fix. Deriving all three
+;; from one base is what keeps it that way: a future edit cannot quietly point
+;; two names at one page without changing these offsets.
+(def scratch-window-bytes 12288)
+(def scratch-log-offset 0)
+(def scratch-tx-offset 4096)
+(def scratch-staging-offset 8192)
 (def tx-ring-offset 0)                       ; 2 descriptors x 32 B
 (def rx-ring-offset 1024)                    ; 4 descriptors x 32 B
 (def rx-descriptor-count 4)
@@ -633,7 +648,7 @@
       36
       (if (= (wait-tx-complete-stream win 200000000) 1) 0 36))))
 
-(defn receive-syn-ack [win mmio tx-frame tcb staging]
+(defn receive-syn-ack [win mmio scratch]
   ;; Admit the peer's SYN-ACK against THIS connection: Ethernet + IPv4 +
   ;; ports + ack == ISS+1 (from the TCB), checksums by the same zero-fold,
   ;; then the peer ISS (frame 38) seeds rcv-nxt = peer-iss+1, snd-nxt =
@@ -642,14 +657,21 @@
   ;; returning 0. The window budget lives in tcb-slot-tick (five-argument
   ;; ABI; stream-connect seeds it). Returns 0 on establishment, 21 window
   ;; expiry, 30-series rearm faults, 93/96 checksum faults, 94 ports/ack.
-  (let [remaining (kernel-load-u64-4k tcb 4096 (* tcb-slot-tick 8))]
+  (let [tcb (kernel-subregion win dma-window-bytes 4096 4096)
+        log-frame (kernel-subregion scratch scratch-window-bytes
+                                    scratch-log-offset 4096)
+        tx-frame (kernel-subregion scratch scratch-window-bytes
+                                   scratch-tx-offset 4096)
+        staging (kernel-subregion scratch scratch-window-bytes
+                                  scratch-staging-offset 4096)]
+   (let [remaining (kernel-load-u64-4k tcb 4096 (* tcb-slot-tick 8))]
     (if (= remaining 0)
-      (do (stream-log win mmio tx-frame 164) 21)
+      (do (stream-log win mmio log-frame 164) 21)
       (let [head (bit-and (kernel-load-u64-4k tcb 4096 (* tcb-slot-ring-head 8)) 3)
             command (rx-ring-wait-command win head 250000)]
         (if (= command 0)
           (do (kernel-store-u64-4k tcb 4096 (* tcb-slot-tick 8) (- remaining 1))
-              (receive-syn-ack win mmio tx-frame tcb staging))
+              (receive-syn-ack win mmio scratch))
           (let [bytes (bit-and command 16383)
                 valid-command (and (= (bit-and command 1048576) 0)
                                    (not (= (bit-and command 33554432) 0))
@@ -719,7 +741,7 @@
                               1
                               (if (not (= tcp-ok 1)) 1 0)))))
                 next-run (do (kernel-store-u64-4k tcb 4096 (* tcb-slot-tick 8) (- remaining 1))
-                             (receive-syn-ack win mmio tx-frame tcb staging))]
+                             (receive-syn-ack win mmio scratch))]
             (if (not valid-command)
               (if (= (rx-ring-rearm win win head) 1) next-run 30)
               (if (not (= eth-ok 1))
@@ -727,11 +749,11 @@
                 (if (not (= shape-ok 1))
                   (if (= (rx-ring-rearm win win head) 1) next-run 30)
                   (if (not (= ports-ok 1))
-                    (do (stream-log win mmio tx-frame 166) 94)
+                    (do (stream-log win mmio log-frame 166) 94)
                     (if (not (= ipv4-ok 1))
-                      (do (stream-log win mmio tx-frame 167) 93)
+                      (do (stream-log win mmio log-frame 167) 93)
                       (if (not (= tcp-ok 1))
-                        (do (stream-log win mmio tx-frame 168) 96)
+                        (do (stream-log win mmio log-frame 168) 96)
                         (if (= admit 1)
                           95
                           (let [peer-iss (frame-be32-stream peer-frame 38)
@@ -755,7 +777,7 @@
                                   98
                                   (if (not (= ack-result 0))
                                     36
-                                    0))))))))))))))))))
+                                    0)))))))))))))))))))
 
 
 (defn zero-prefix-stream [frame bytes offset]
@@ -826,68 +848,84 @@
         (fill-zero-stream frame (+ offset 1) (- remaining 1))
         0))))
 
-(defn stream-log [win mmio tx-frame status]
+(defn stream-log [win mmio log-frame status]
   ;; Fire-and-forget UDP/7777 receipt: AIUEOS_STREAM_<hex status>. Best
   ;; effort by construction — a log failure changes nothing downstream.
-  (let [frame-length (if (and (= (fill-zero-stream tx-frame 0 62) 1)
-                              (= (store-gateway-mac-stream tx-frame) 1)
-                              (= (copy-device-mac-stream tx-frame 6 mmio 0) 1)
-                              (= (frame-store-be16-stream tx-frame 12 2048) 2048)
-                              (= (build-udp-log-header tx-frame) 1)
-                              (= (store-stream-log tx-frame 42 0 status) 1))
+  ;;
+  ;; `log-frame` MUST NOT be the frame any pending transmit is built in. This
+  ;; function zeroes 62 bytes of it and hands it to the NIC, and callers log
+  ;; between a submit and its completion (A2 is emitted before
+  ;; wait-tx-complete), so sharing it corrupts a frame the NIC is reading. No
+  ;; ordering fixes that; only a separate buffer does.
+  (let [frame-length (if (and (= (fill-zero-stream log-frame 0 62) 1)
+                              (= (store-gateway-mac-stream log-frame) 1)
+                              (= (copy-device-mac-stream log-frame 6 mmio 0) 1)
+                              (= (frame-store-be16-stream log-frame 12 2048) 2048)
+                              (= (build-udp-log-header log-frame) 1)
+                              (= (store-stream-log log-frame 42 0 status) 1))
                        62
                        0)]
     (if (= frame-length 0)
       0
-      (if (not (= (tx-submit-stream win mmio tx-frame frame-length) 0))
+      (if (not (= (tx-submit-stream win mmio log-frame frame-length) 0))
         0
         (wait-tx-complete-stream win 200000000)))))
 
-(defn stream-connect [win mmio tx-frame tcb staging]
+(defn stream-connect [win mmio scratch]
   ;; SYN_SENT: send the SYN (the retransmit budget lives in
   ;; tcb-slot-syn-retransmissions, seeded by tcb-init), then wait for the
   ;; peer's SYN-ACK and transition. Every stage fires a stream-log receipt:
   ;; A1 syn built, A2 submitted, A3 tx complete, AE budget gone, AF build
   ;; fail, B0 submit fail. Returns 0 established; 35-series TX faults; 21
   ;; budget expiry; 94/93/96/98 admission faults.
-  (let [retransmits (kernel-load-u64-4k tcb 4096 (* tcb-slot-syn-retransmissions 8))]
+  (let [tcb (kernel-subregion win dma-window-bytes 4096 4096)
+        log-frame (kernel-subregion scratch scratch-window-bytes
+                                    scratch-log-offset 4096)
+        tx-frame (kernel-subregion scratch scratch-window-bytes
+                                   scratch-tx-offset 4096)
+        staging (kernel-subregion scratch scratch-window-bytes
+                                  scratch-staging-offset 4096)]
+   (let [retransmits (kernel-load-u64-4k tcb 4096 (* tcb-slot-syn-retransmissions 8))]
     (if (<= retransmits 0)
-      (do (stream-log win mmio tx-frame 174) 21)
+      (do (stream-log win mmio log-frame 174) 21)
       (let [syn-len (build-tcp-segment-stream tcb tx-frame mmio 0)]
         (if (= syn-len 0)
-          (do (stream-log win mmio tx-frame 175) 35)
-          (do (stream-log win mmio tx-frame 161)
-              (stream-log win mmio tx-frame (frame-be16-stream tx-frame 12))
-              (stream-log win mmio tx-frame (kernel-load-u8-4k tx-frame 4096 14))
-              (stream-log win mmio tx-frame
+          (do (stream-log win mmio log-frame 175) 35)
+          (do (stream-log win mmio log-frame 161)
+              (stream-log win mmio log-frame (frame-be16-stream tx-frame 12))
+              (stream-log win mmio log-frame (kernel-load-u8-4k tx-frame 4096 14))
+              (stream-log win mmio log-frame
                           (checksum-word-stream tx-frame 14 20 0))
-              (stream-log win mmio tx-frame
+              (stream-log win mmio log-frame
                           (checksum-fold-stream
                            (checksum-sum-stream tx-frame 14 20 0 0)))
-              (stream-log win mmio tx-frame (frame-be16-stream tx-frame 24))
-              (stream-log win mmio tx-frame (frame-be16-stream tx-frame 50))
+              (stream-log win mmio log-frame (frame-be16-stream tx-frame 24))
+              (stream-log win mmio log-frame (frame-be16-stream tx-frame 50))
               (if (not (= (tx-submit-stream win mmio tx-frame syn-len) 0))
-                (do (stream-log win mmio tx-frame 176) 35)
-                (do (stream-log win mmio tx-frame 162)
+                (do (stream-log win mmio log-frame 176) 35)
+                (do (stream-log win mmio log-frame 162)
                     (if (= (wait-tx-complete-stream win 200000000) 1)
-                      (do (stream-log win mmio tx-frame 163)
+                      (do (stream-log win mmio log-frame 163)
                           (kernel-store-u64-4k tcb 4096 (* tcb-slot-tick 8) 8)
-                          (receive-syn-ack win mmio tx-frame tcb staging))
+                          (receive-syn-ack win mmio scratch))
                       (do (kernel-store-u64-4k
                            tcb 4096 (* tcb-slot-syn-retransmissions 8)
                            (- retransmits 1))
-                          (stream-connect win mmio tx-frame tcb staging)))))))))))
+                          (stream-connect win mmio scratch))))))))))))
 
-(defn receive-established [win tcb staging remaining]
+(defn receive-established [win scratch remaining]
   ;; ESTABLISHED-state receive, one bounded window. Status semantics per ADR
   ;; section 6: 99 is live while the stream is open; a queue-full refusal is
   ;; a delivery stall inside 99 (no new code); timeouts keep 21/30-series.
-  (if (= remaining 0)
+  (let [tcb (kernel-subregion win dma-window-bytes 4096 4096)
+        staging (kernel-subregion scratch scratch-window-bytes
+                                  scratch-staging-offset 4096)]
+   (if (= remaining 0)
     21
     (let [head (bit-and (kernel-load-u64-4k tcb 4096 (* tcb-slot-ring-head 8)) 3)
           command (rx-ring-wait-command win head 250000)]
       (if (= command 0)
-        (receive-established win tcb staging (- remaining 1))
+        (receive-established win scratch (- remaining 1))
         (let [bytes (bit-and command 16383)
               valid-command (and (= (bit-and command 1048576) 0)
                                  (not (= (bit-and command 33554432) 0))
@@ -900,7 +938,7 @@
               verdict (if valid-command 0 3)]
           (if (not (= verdict 0))
             (if (= (rx-ring-rearm win win head) 1)
-              (receive-established win tcb staging (- remaining 1))
+              (receive-established win scratch (- remaining 1))
               30)
             (let [segment-start rcv-nxt
                   decision (accept-decision rcv-nxt rcv-wnd held-bytes
@@ -914,7 +952,7 @@
                                  tcb 4096 (* tcb-slot-ring-head 8)
                                  (bit-and (+ head 1) 3))]
                   (if (and (= rearmed 1) (= head-next (bit-and (+ head 1) 3)))
-                    (receive-established win tcb staging (- remaining 1))
+                    (receive-established win scratch (- remaining 1))
                     30))
                 (let [head-buffer (bit-and head 3)
                       parked (kernel-store-u64-4k tcb 4096
@@ -932,9 +970,9 @@
                     (if (not (= ack-length 0))
                       (tcb-state-store tcb tcp-state-established)
                       26)
-                    25))))))))))
+                    25)))))))))))
 
-(defn stream-resident [win mmio tx-frame staging bus3-dma]
+(defn stream-resident [win mmio scratch bus3-dma]
   ;; Plan A-2: the stream stage never halts the machine. Each cycle fully
   ;; re-arms (ring + TCB), connects, runs one ESTABLISHED window, logs the
   ;; outcome, and starts the next cycle. The cycle count rides
@@ -957,6 +995,10 @@
   ;; timing-sensitive operation on. Polling inside the receive window is the
   ;; next step, not this one.
   (let [tcb (kernel-subregion win dma-window-bytes 4096 4096)
+        ;; The log frame is the stream's OWN page and nothing else's. Every
+        ;; receipt below is emitted while a transmit may still be in flight.
+        log-frame (kernel-subregion scratch scratch-window-bytes
+                                    scratch-log-offset 4096)
         cycles (kernel-load-u64-4k tcb 4096 (* tcb-slot-rto-windows 8))
         bus3 (if (= bus3-dma 0)
                0
@@ -967,10 +1009,10 @@
         ;; D9 is the sentinel; the byte after it is debug-tick's value, and
         ;; every value it returns fits in one byte (0, 1, 2, 64..71, 96..103),
         ;; which is why the offset that would have been added here is not.
-        bus3-mark (if (= bus3 0) 0 (stream-log win mmio tx-frame 217))
+        bus3-mark (if (= bus3 0) 0 (stream-log win mmio log-frame 217))
         bus3-logged (if (= bus3 0)
                       0
-                      (stream-log win mmio tx-frame
+                      (stream-log win mmio log-frame
                                   (+ bus3 (* 0 bus3-mark))))
         ring (rx-ring-init mmio win)
         armed (if (= ring 0)
@@ -983,11 +1025,11 @@
                      1)
                  0)
         connect (if (= seeded 1)
-                  (stream-connect win mmio tx-frame tcb staging)
+                  (stream-connect win mmio scratch)
                   97)
         result (if (= connect 0)
-                 (receive-established win tcb staging 8)
+                 (receive-established win scratch 8)
                  connect)]
-    (stream-log win mmio tx-frame
+    (stream-log win mmio log-frame
                 (+ 12 result (* 0 (+ cycles bus3-logged))))
-    (stream-resident win mmio tx-frame staging bus3-dma)))
+    (stream-resident win mmio scratch bus3-dma)))

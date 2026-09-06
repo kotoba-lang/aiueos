@@ -397,6 +397,77 @@ were, and without BPF neither can anything else on this machine. It is
 recorded because it is the only en8 evidence that moved, not because it
 supports a conclusion.
 
+## Root cause of the persistent `21`: the SYN was overwritten before it was sent
+
+`stream-log` built its UDP/7777 receipt **in `tx-frame`** — it zeroes 62 bytes
+of that page, writes a log datagram, and submits it. `stream-connect` builds
+the SYN into `tx-frame`, then calls `stream-log` **seven times on the same
+page**, and only then submits `tx-frame` as the SYN. What went on the wire was
+the last log frame, truncated to `syn-len`. Every cycle. About 363,000 times
+in the last boot alone.
+
+### The Mac's own counters are unambiguous
+
+```
+netstat -s -p tcp:  0 connection request
+                    0 discarded for bad checksum
+                    0 discarded because packet too short
+netstat -s -p ip:  10 bad header checksums   (whole machine, whole uptime)
+lsof -nP -iTCP:8443: the bridge IS listening on 10.77.0.1:8443
+bridge.log:         no K16_STREAM_CONNECTED since it started, 2026-09-05
+```
+
+Not "saw the SYN and rejected it" — **never received one**. Meanwhile the
+netlog UDP from the same NIC, the same submit path and the same MAC helpers
+arrives fine, which is what made the frame contents the only variable left.
+
+### This was found once before, and the fix was reverted for a good reason
+
+Commit `18bf9bd` (2026-09-06 00:44) diagnosed exactly this and pointed
+`stream-log` at `staging`. Commit `485ed76` reverted it with no message.
+The revert was right: **at that time `staging` and `tx-frame` were the same
+page** (both `rtl-dma-pages + 8192`), so the fix was a no-op and would have
+looked like it did nothing.
+
+So the aliasing fix earlier in this document was not refuted after all — it
+was refuted *as an explanation of `21`*, which it is not, and it is *the
+precondition* for this fix to be able to work at all. Two separate defects
+sharing one page, where removing either alone changes nothing.
+
+### Why no ordering fixes it
+
+`A2` is logged **after `tx-submit-stream` and before `wait-tx-complete-stream`**
+— i.e. while the NIC owns the descriptor and is reading the frame. Moving the
+seven diagnostics after the submit would still corrupt the SYN mid-DMA. Only a
+separate buffer works.
+
+### The fix: one scratch region, three fixed offsets
+
+`stream-scratch` is 12 KiB at `second-start` (`page-table-root`, `pdpt`, `pd` —
+contiguous, zeroed by `prepare-owned-pages`, and never installed in this branch
+because `prepare-page-tables` is in the CR3 arm). Inside it: **log at +0, tx at
++4096, staging at +8192.**
+
+`stream-connect`, `receive-syn-ack`, `receive-established` and
+`stream-resident` now take `scratch` and derive all three, plus `tcb` from
+`win + 4096`. Three separately-computed addresses became one region with fixed
+offsets, so a future edit cannot quietly point two names at one page without
+changing an offset.
+
+That also answers the reason `18bf9bd` gave for not doing this ("a dedicated
+netlog page would need a 6th arity and is rejected by the compiler"): `tcb` is
+derivable from `win`, which frees the slot. The arity ceiling was real; the
+conclusion drawn from it was not.
+
+The seven diagnostics now *read* `tx-frame` and *write* to `log-frame`, so for
+the first time they report the actual SYN's ethertype, IHL, IP checksum fold
+and TCP checksum rather than the previous log frame's.
+
+**Predicted, before the boot:** `netstat -s -p tcp` "connection request"
+becomes non-zero and `bridge.log` gains `K16_STREAM_CONNECTED`. If neither
+moves, this diagnosis is wrong and the frame contents are the next suspect —
+the diagnostics will then be reading the real SYN and can say so.
+
 ## Status of the artifacts
 
 - Commit `e09e4f1` (Phase 1 — bus3 single-shot) is superseded by commit
