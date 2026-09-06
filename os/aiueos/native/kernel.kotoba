@@ -694,7 +694,8 @@
                                                             stream-scratch
                                                             (if (= dbg-init 0)
                                                               bus3-dma-pages
-                                                              0)))))
+                                                              0)
+                                                            (stream/debug-run-cycles)))))
                             (kernel-out-u32 244 (+ 96 pre-cr3-nic-status))))
                         (if (and (prepare-page-tables page-table-root pdpt pd pt)
                                  (prepare-low-page-table pt rx-limit rw-start)

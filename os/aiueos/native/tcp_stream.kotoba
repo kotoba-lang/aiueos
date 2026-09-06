@@ -37,7 +37,8 @@
             tcb-status tcb-init tcb-state-store held-table-store
             held-table-load accept-decision held-joinable delivery-advance
             deliver-held-run stage-payload-at build-ack
-            stream-connect stream-resident receive-established stream-log]))
+            stream-connect stream-resident receive-established stream-log
+            debug-run-cycles]))
 
 ;; ── TCP state codes, restated from tcp.state-core (wasm32-only) ───────────
 ;; state_core.kotoba: st-closed 0, st-listen 1, st-syn-sent 2,
@@ -571,6 +572,16 @@
              ;; addresses. Computed before them (the first physical SYN) it
              ;; hashed stale bytes 26..33 and macOS silently dropped every
              ;; SYN — measured as STREAM A1/A2/A3 then A4, bridge saw nothing.
+             ;; ...and over a ZERO checksum field. This buffer is not
+             ;; cleared between cycles, so bytes 24..25 still held the
+             ;; PREVIOUS cycle's checksum and it was summed into the new one.
+             ;; The netlog caught it the moment the diagnostics began reading
+             ;; the real SYN instead of the log frame: the fold alternated
+             ;; 0x..FF (correct) / 0x..D4 (wrong) and the stored field
+             ;; alternated 0x..2B / 0x..00, every other cycle, 139 against
+             ;; 138. Half of every run emitted a header the peer must drop.
+             ;; The TCP checksum below already zeroes its own field first.
+             (= (frame-store-be16-stream tx-frame 24 0) 0)
              (= (frame-store-be16-stream tx-frame 24
                                   (internet-checksum-sum-ipv4 tx-frame))
                 (frame-be16-stream tx-frame 24))
@@ -972,7 +983,14 @@
                       26)
                     25)))))))))))
 
-(defn stream-resident [win mmio scratch bus3-dma]
+;; How many cycles one debug run makes before resetting the board. A CADENCE,
+;; not a ceiling: it exists so a fix can be deployed and read without a human
+;; at the power button. 256 sits just inside what the 2^20 fuel budget buys
+;; (277-280 measured), so the run ends on this bound rather than on fuel
+;; exhaustion -- a deliberate return is observable, a `ud2` is not.
+(defn debug-run-cycles [] 256)
+
+(defn stream-resident [win mmio scratch bus3-dma remaining]
   ;; Plan A-2: the stream stage never halts the machine. Each cycle fully
   ;; re-arms (ring + TCB), connects, runs one ESTABLISHED window, logs the
   ;; outcome, and starts the next cycle. The cycle count rides
@@ -994,7 +1012,20 @@
   ;; "answer a ping", and it is NOT a control channel anyone should build a
   ;; timing-sensitive operation on. Polling inside the receive window is the
   ;; next step, not this one.
-  (let [tcb (kernel-subregion win dma-window-bytes 4096 4096)
+  (if (= remaining 0)
+   ;; End of run: say so on the wire, then reset the platform through the reset
+   ;; control register (0xCF9 <- 0x06 = SYS_RST|RST_CPU). Firmware returns
+   ;; through PXE and picks up whatever is in the serve directory, so a deploy
+   ;; is the whole iteration. If the chipset refuses the write we fall through
+   ;; and return 223, which the loader prints as STATUS DF -- a reset that did
+   ;; not happen must not look like one that did.
+   (let [ended (stream-log win mmio
+                           (kernel-subregion scratch scratch-window-bytes
+                                             scratch-log-offset 4096)
+                           222)
+         reset (kernel-out-u8 3321 6)]
+     (+ 223 (* 0 (+ ended reset))))
+   (let [tcb (kernel-subregion win dma-window-bytes 4096 4096)
         ;; The log frame is the stream's OWN page and nothing else's. Every
         ;; receipt below is emitted while a transmit may still be in flight.
         log-frame (kernel-subregion scratch scratch-window-bytes
@@ -1032,4 +1063,4 @@
                  connect)]
     (stream-log win mmio log-frame
                 (+ 12 result (* 0 (+ cycles bus3-logged))))
-    (stream-resident win mmio scratch bus3-dma)))
+    (stream-resident win mmio scratch bus3-dma (- remaining 1)))))
