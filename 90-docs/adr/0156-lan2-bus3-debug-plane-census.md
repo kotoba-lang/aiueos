@@ -542,6 +542,51 @@ Next step for that path is to name what writes `0x110100`: the fault IP is
 `0x11a424`, both addresses are stable across runs, and the sequence is
 deterministic.
 
+## Two silent boots, and a retraction of the explanation for each
+
+Boot of `4d75d6bb` (banner loader, kernel `93ead90d`): silent.
+Boot of `f21cdc14` (banner loader, kernel `3b949b08`, SYN fix): silent.
+Boot of `cb41be47` (pre-banner loader, kernel `93ead90d`) before them: 363,313
+cycles.
+
+Silent means silent: `netstat -I en15` shows **zero packets received in 30
+seconds**, twice. The K16 transmits nothing. The panel shows ENTER, BUILD and
+RTL8125 — so the loader completed segment copy, `AllocateAnyPages`,
+`GetMemoryMap` and the PCI check, and called the kernel. `STATUS` never
+appears, so `main` has not returned.
+
+**Retraction 1 — the torn image.** The first silence was attributed to a
+non-atomic deploy: `cp` onto the live path while the server was reading it,
+with both artifacts exactly 211968 bytes so the seam would be invisible. The
+second boot was deployed with `rename(2)` and was silent too. The atomic
+deploy is a correct fix and stays; **it was not the explanation.**
+
+**Retraction 2 — the banner loader.** With `93ead90d` failing under the new
+loader and succeeding under the old one, the loader looked like the common
+factor. It is not: the two `.text` sections were compared instruction by
+instruction. The insertion is 26 bytes in the intended place, **all fourteen
+subsequent rip displacements are corrected by exactly 26**, the two absolute
+addresses the preflight hands the kernel (`context 0x11c000`,
+`returnable-entry 0x11bac1`) are unchanged, and the BUILD string's reference
+resolves to the right `.data` offset — verified against where the bytes
+actually sit in the file. PE section layout is consistent (`.text`
+0x21e -> 0x238, `.data` 0x33252 -> 0x332c4, same vaddrs, same `SizeOfImage`,
+same file size). **The loader is byte-correct.**
+
+So "the banner is the common factor" was an inference from three data points,
+and the code says it is wrong. What else changed between the last working boot
+and the first silent one: the machine had just run **363,313 cycles**, roughly
+four million frames through bus2 — three orders of magnitude more than any
+boot before it.
+
+**Next reboot re-runs the control**, `cb41be47` itself. Two nulls have now been
+read off a rig whose baseline was last confirmed before that long run, and the
+whole of this document is a record of what happens when a null is read from an
+instrument nobody re-checked. If the control is silent, the machine changed and
+every artifact reading since is void. If it runs, the variable really is in the
+newer artifacts and the bisect continues with the pre-banner build of the SYN
+fix (`04aa5988`), which is built and waiting.
+
 ## Status of the artifacts
 
 - Commit `e09e4f1` (Phase 1 — bus3 single-shot) is superseded by commit
