@@ -90,35 +90,48 @@
 ;; payload: short fixed ASCII; a richer kprintf comes later. (placeholder
 ;; single byte 'Z'; the stream netlog body is the richer format.)
 
+;; Two lengths that must not be confused. The IPv4 total-length field counts
+;; the IP header and everything after it; the value handed to tx-submit counts
+;; the Ethernet header as well. The first revision of this function wrote the
+;; FRAME length (43) into the IP total-length field, where 29 belongs, and
+;; baked a checksum consistent with that wrong value. The Mac still delivered
+;; it, because the RTL8125 pads every frame to 60 bytes and 43 fits inside the
+;; 46-byte Ethernet payload that arrives -- so ip_input trimmed rather than
+;; rejected. That is luck, not correctness: it stops being true the moment the
+;; payload grows past 17 bytes, and it would have shown up as a debug plane
+;; that works until you ask it to say something.
+(def ip-total-length 29)                       ; 20 ip + 8 udp + 1 payload
+(def frame-total-length 43)                    ; + 14 ethernet
+
 (defn build-udp-debug-frame [frame mmio]
-  ;; 14 eth + 20 ip + 8 udp = 42 header; payload 1 byte placeholder.
-  (let [total 43]
-    (if (and (= (zero-prefix frame 60 0) 1)
-             (= (store-peer-mac frame) 1)
-             (= (store-device-mac frame mmio 0) 1)
-             (= (store-be16 frame 12 2048) 2048)           ; ethertype IPv4
-             (= (kernel-store-u8-4k frame 4096 14 69) 69)  ; v4/IHL
-             (= (kernel-store-u8-4k frame 4096 15 0) 0)
-             (= (store-be16 frame 16 total) total)         ; total length
-             (= (kernel-store-u8-4k frame 4096 22 64) 64)  ; TTL
-             (= (kernel-store-u8-4k frame 4096 23 17) 17)  ; UDP proto
-             ;; IPv4 header checksum. Every other field of this header is a
-             ;; compile-time constant, so the checksum is one too: 0x52AC
-             ;; over 45 00 / 00 2B / 0000 / 0000 / 40 11 / 0000 /
-             ;; 10.10.10.2 / 10.10.10.1. Leaving it zero (the state
-             ;; zero-prefix leaves) makes the Mac drop the datagram in
-             ;; ip_input before socat ever sees it -- the same reason
-             ;; rtl8125/build-ipv4-udp-header bakes in its own 0x6619.
-             (= (store-be16 frame 24 21164) 21164)
-             (= (store-be32 frame 26 k16-debug-ip) k16-debug-ip)
-             (= (store-be32 frame 30 mac-debug-ip) mac-debug-ip)
-             (= (store-be16 frame 34 debug-udp-port) debug-udp-port)
-             (= (store-be16 frame 36 debug-udp-port) debug-udp-port)
-             (= (store-be16 frame 38 9) 9)                 ; udp len
-             (= (kernel-store-u8-4k frame 4096 42 90) 90)  ; 'Z' payload
-             (= (store-be16 frame 40 0) 0))                ; udp checksum 0
-      total
-      0)))
+  (if (and (= (zero-prefix frame 60 0) 1)
+           (= (store-peer-mac frame) 1)
+           (= (store-device-mac frame mmio 0) 1)
+           (= (store-be16 frame 12 2048) 2048)           ; ethertype IPv4
+           (= (kernel-store-u8-4k frame 4096 14 69) 69)  ; v4/IHL
+           (= (kernel-store-u8-4k frame 4096 15 0) 0)
+           (= (store-be16 frame 16 ip-total-length) ip-total-length)
+           (= (kernel-store-u8-4k frame 4096 22 64) 64)  ; TTL
+           (= (kernel-store-u8-4k frame 4096 23 17) 17)  ; UDP proto
+           ;; IPv4 header checksum. Every other field of this header is a
+           ;; compile-time constant, so the checksum is one too: 0x52BA, the
+           ;; one's complement of
+           ;;   4500 + 001D + 0000 + 0000 + 4011 + 0000 + 0A0A + 0A02
+           ;;        + 0A0A + 0A01 = AD45.
+           ;; Leaving it zero (what zero-prefix leaves) makes the Mac drop the
+           ;; datagram in ip_input before socat ever sees it -- the same reason
+           ;; rtl8125/build-ipv4-udp-header bakes in its own 0x6619. If
+           ;; ip-total-length ever changes, this constant changes with it.
+           (= (store-be16 frame 24 21178) 21178)
+           (= (store-be32 frame 26 k16-debug-ip) k16-debug-ip)
+           (= (store-be32 frame 30 mac-debug-ip) mac-debug-ip)
+           (= (store-be16 frame 34 debug-udp-port) debug-udp-port)
+           (= (store-be16 frame 36 debug-udp-port) debug-udp-port)
+           (= (store-be16 frame 38 9) 9)                 ; udp len: 8 + 1
+           (= (kernel-store-u8-4k frame 4096 42 90) 90)  ; 'Z' payload
+           (= (store-be16 frame 40 0) 0))                ; udp checksum 0
+    frame-total-length
+    0))
 
 (defn debug-init [bus mmio dma-pages]
   ;; Bring bus3 to the same footing `rtl/qualify` gives bus2, then install a

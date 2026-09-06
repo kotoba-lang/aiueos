@@ -213,6 +213,79 @@ again identically before and after this change. Both directions were measured;
 neither gate is a regression signal here, and neither is claimed as one. The
 physical K16 is the only instrument this branch has.
 
+## The step-1 boot (K16, 2026-09-06, artifact `730b1293…`)
+
+```
+AIUEOS_NATIVE_TCP_OK
+AIUEOS_STREAM_B7      sentinel
+AIUEOS_STREAM_7F      bus3 census
+AIUEOS_STREAM_7F      bus2 census
+AIUEOS_STREAM_B8      bus3 attempt
+AIUEOS_STREAM_00      debug-init  = ready
+AIUEOS_STREAM_00      debug-send  = submitted AND the engine cleared OWN
+AIUEOS_STREAM_A1      resident loop resumes
+```
+
+and `Z` — the payload byte this module writes — arrived on the Mac's en8
+UDP :9000. **LAN2 one-way debug output works end to end**: bus master armed,
+ring installed, PHY up, descriptor submitted, OWN cleared, `ip_input`
+accepted, listener delivered.
+
+### The listener was the third instrument to fail silently today
+
+The first reading of en8 said *empty*. That reading was void:
+`socat -u UDP-RECV:9000 CREATE:<file>` held the datagram and wrote nothing
+until the process was killed. A control datagram sent from the Mac to its own
+en8 address was also not recorded, which is what exposed it —
+`OPEN:<file>,creat,append` records both. **Validate the instrument with a
+control before reading a null result as evidence.** This is the same shape as
+the `LC_ALL` grep above and the two QEMU gates below: three different tools, in
+one session, answering "nothing" when they meant "I did not run".
+
+### A defect the boot did not expose
+
+`build-udp-debug-frame` wrote the **frame** length (43) into the IPv4
+**total-length** field, where 29 belongs (20 ip + 8 udp + 1 payload), and
+baked a checksum consistent with that wrong value. The Mac delivered it
+anyway: the RTL8125 pads every frame to 60 bytes, so 46 bytes of Ethernet
+payload arrive and `ip_input` trims to 43 instead of rejecting. That is luck.
+It stops being true as soon as the payload passes 17 bytes — i.e. the first
+time this plane is asked to carry a real message. Fixed to 29 with checksum
+0x52BA (`~(4500+001D+4011+0A0A+0A02+0A0A+0A01)`), and the two lengths are now
+separately named so they cannot be confused again.
+
+**A green wire receipt is not a correct frame.** The send byte reports what
+the NIC did with the descriptor; it cannot report what the header says.
+
+## What LAN2 can and cannot do today
+
+| | state |
+|---|---|
+| K16 → Mac, one-way UDP log | **works** (this boot) |
+| K16 → Mac, more than one message | not wired — `debug-send` is called once, before the resident loop |
+| K16 → Mac, arbitrary text | not wired — the payload is a fixed byte, and there is no integer→ASCII path |
+| Mac → K16 control | **not wired at all** |
+
+Control is the larger gap and it is not a matter of enabling something.
+`rings-start` installs an RX descriptor on bus3, but nothing reads it: this
+module has no receive path, no ARP, no demultiplex, and the resident loop
+services bus2 only. A LAN2 control plane needs an RX poll in that loop, a
+frame filter, and a command decode — and every command it accepts is authority
+crossing into the kernel, so it needs the admission discipline the rest of
+this OS uses, not a raw byte switch.
+
+### Prerequisite on the bus2 side
+
+§5's aliasing is confirmed by arithmetic, and it is narrower and worse than
+"could be eating received bytes": `stream-tx-frame` = `rtl-dma-pages + 8192`,
+`stream-staging` = `thirteenth-start` = `rtl-dma-pages + 8192`, and the
+stream's own `rx-buffer-a-offset` is 8192. All three are one page. Every
+netlog byte the resident loop emits is written into RX descriptor 0's DMA
+target while the NIC owns it. The loop's persistent `21` (window exhausted,
+peer sent nothing) is consistent with that. (`stream-tcb` at
+`rtl-dma-pages + 4096` is *not* aliased — the RX ring is at +1024, 1024 bytes
+wide, and +4096..+8192 is unused.)
+
 ## Status of the artifacts
 
 - Commit `e09e4f1` (Phase 1 — bus3 single-shot) is superseded by commit
@@ -230,15 +303,20 @@ physical K16 is the only instrument this branch has.
   207872 bytes, k16-preflight on, `kernel_scratch.pages = 14`. Staged to
   `/tmp/aiueos-k16-pxe/BOOTX64.EFI`; the census EFI is kept beside it as
   `BOOTX64.CENSUS-810e0523.EFI`.
-- **Not yet run.** The kernel is resident, so the K16 does not reboot itself;
-  the step-1 boot needs a power cycle. `socat -u UDP-RECV:9000,reuseaddr
-  CREATE:/tmp/k16-bus3-en8.log` is listening on the Mac (the previous listener
-  was an orphan writing to a discarded stdout). `tcpdump` is unavailable —
-  BPF needs root on this machine — so a frame the Mac's `ip_input` drops would
-  not be seen; that is what the bus2 send byte is for.
-- Until that boot is read, bus3 debug is **not** operational. The honest
-  ceiling from the previous revision stands, with one clause discharged: the
-  NIC is qualified.
+- Step 1 RAN (owner power-cycled the K16): `B7 7F 7F B8 00 00` on bus2 and
+  `Z` on en8. The one-way LAN2 debug output is operational.
+- Step 2 build (IPv4 total-length fix): `AIUEOS_KOTOBA_NATIVE_BOOT_OK no-c
+  no-crt no-linker imports=0`, byte-identical reproducible,
+  `boot c078201e7b1c3ee2e45a3de2a31e38f79054aa7e1a47e3b4e6c66fb114a8abf5`,
+  207872 bytes, k16-preflight on. Staged; `BOOTX64.STEP1-730b1293.EFI` and
+  `BOOTX64.CENSUS-810e0523.EFI` are kept beside it. **Not yet run** — it needs
+  a power cycle, and nothing observable is expected to change, because the
+  defect it fixes was masked by Ethernet padding at this payload size.
+- The listener is now `socat -u UDP-RECV:9000,reuseaddr
+  OPEN:/tmp/k16-bus3-en8.log,creat,append`, validated with a control datagram
+  before and after each reading. `tcpdump` remains unavailable (BPF needs root),
+  so a frame the Mac drops in `ip_input` is still invisible; the bus2 send byte
+  is what separates that case from a NIC that never transmitted.
 
 ## Consequences
 
