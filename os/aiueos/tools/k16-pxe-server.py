@@ -951,8 +951,44 @@ def netlog_server():
             target=resume_murakumo_job,
             args=(MURAKUMO_RESUME_BOOT, sock, (CLIENT_IP, 7779)),
             daemon=True).start()
+    # This loop had no exception handling, and on 2026-09-06 it died --
+    # `Exception in thread Thread-3 (netlog_server)` -- while the process kept
+    # serving DHCP and TFTP. Three consecutive kernel boots were then recorded
+    # as "the machine transmits nothing" when the machine was in fact sending
+    # 3.7 MILLION frames per boot: `netstat -I` counted them at 61.8 bytes
+    # average, which is this netlog's 62-byte frame. A dead receiver and a
+    # quiet wire produced the same empty log.
+    #
+    # So: never let one datagram kill the instrument, keep the exception text
+    # (a status without a body cannot be diagnosed -- the original traceback
+    # went to stderr, which nothing captured, and the log holds zero `File "`
+    # lines), and emit a liveness line so silence is distinguishable from
+    # death without reading counters on another machine.
+    received = 0
+    failures = 0
     while True:
-        payload, peer = sock.recvfrom(4096)
+        try:
+            payload, peer = sock.recvfrom(4096)
+        except Exception as exc:               # noqa: BLE001 - must not die
+            failures += 1
+            print(f"AIUEOS_NETLOG_RECV_FAIL failures={failures} "
+                  f"exc={type(exc).__name__}: {exc}", flush=True)
+            continue
+        received += 1
+        if received % 10000 == 0:
+            print(f"AIUEOS_NETLOG_ALIVE received={received} "
+                  f"failures={failures}", flush=True)
+        try:
+            netlog_handle(sock, payload, peer)
+        except Exception as exc:               # noqa: BLE001 - must not die
+            failures += 1
+            print(f"AIUEOS_NETLOG_HANDLE_FAIL failures={failures} "
+                  f"from={peer[0]}:{peer[1]} bytes={len(payload)} "
+                  f"exc={type(exc).__name__}: {exc}", flush=True)
+
+
+def netlog_handle(sock, payload, peer):
+    if True:
         message = payload.decode("ascii", "replace").rstrip("\r\n")
         print(f"AIUEOS_NETLOG_RX from={peer[0]}:{peer[1]} "
               f"message={message}", flush=True)

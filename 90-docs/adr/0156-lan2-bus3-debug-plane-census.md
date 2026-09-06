@@ -587,6 +587,64 @@ every artifact reading since is void. If it runs, the variable really is in the
 newer artifacts and the bisect continues with the pre-banner build of the SYN
 fix (`04aa5988`), which is built and waiting.
 
+## The three silent boots were a dead logger. The machine never stopped.
+
+`netstat -I en15` decided it, and the deciding number was the packet SIZE:
+
+```
+delta pkts  = 3,728,295
+delta bytes = 230,535,288
+average     = 61.8 bytes/packet     <- the netlog frame is 62 bytes
+3,728,295 / 12 frames per cycle = 310,691 cycles
+```
+
+310,691 against the 310,553 that the last *logged* boot ran. The control
+transmitted a full fuel-exhaustion run and **the Mac received every frame**.
+Walking the counter backwards, the interval covering the `f21cdc14` boot shows
+`+3,728,288` — the same run. Those boots were never silent.
+
+`lsof -nP -iUDP:7777` returns nothing: the PXE server's netlog thread is gone.
+The log holds the epitaph at line 4026326 —
+`Exception in thread Thread-3 (netlog_server)` — and nothing else, because the
+traceback went to stderr and nothing captured it (`grep -c 'File "'` over the
+whole 270 MB file: **0**). The process kept serving DHCP and TFTP throughout,
+so from outside it looked healthy.
+
+**I caused this.** The receive loop had no exception handling, and raising the
+fuel budget to 2^30 raised the netlog from ~3,400 lines per boot to
+**3.7 million**. The instrument was fine at the budget it was designed under
+and died at the one I chose without asking what it would cost.
+
+Three conclusions rest on those readings and all three are withdrawn:
+
+| conclusion | status |
+|---|---|
+| the deploy tore the image | withdrawn (retracted once already; still not it) |
+| the banner loader broke the boot | withdrawn (and the loader was separately proven byte-correct) |
+| the machine degraded: 310k -> 52k -> 0 -> 0 | **withdrawn** — the decline is the logger dying mid-run, not the machine |
+| the aliasing is not what eats the SYN-ACK | **stands** — measured at boot 20384, before the logger died |
+| fuel determines the cycle count | **stands** — 2^20 gave 277-280 five times, 2^21 gave 582 |
+
+### What replaced the instrument
+
+The PXE server binds UDP 67 and 69 and **cannot be restarted by this user** —
+binding any port below 1024 is EPERM here, so killing it would end PXE booting
+with no way back. It was left alone. The netlog port is 7777, unprivileged, so
+the receiver was rebuilt beside it: `tools/k16-netlog-standalone.py`, which
+never dies on a datagram, keeps the exception text, and prints a liveness line
+every 10,000 receipts so that a dead receiver and a quiet wire can no longer
+produce the same empty file. It was validated with a control datagram before
+anything was read from it. The same guard is applied to the server's own loop
+for whenever it is next restarted.
+
+### And the budget goes back down
+
+2^30 was chosen to outlast a session. What it actually bought was 3.7 million
+log lines per boot, which is what killed the receiver. The SYN fix needs a few
+hundred cycles to prove itself, so the next artifact is built at **1048576** —
+not because that is a ceiling, but because it is what the instrument can read.
+A budget is a choice about the whole rig, not just about the kernel.
+
 ## Status of the artifacts
 
 - Commit `e09e4f1` (Phase 1 — bus3 single-shot) is superseded by commit
