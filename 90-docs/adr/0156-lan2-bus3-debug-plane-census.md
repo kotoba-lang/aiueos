@@ -468,6 +468,44 @@ becomes non-zero and `bridge.log` gains `K16_STREAM_CONNECTED`. If neither
 moves, this diagnosis is wrong and the frame contents are the next suspect —
 the diagnostics will then be reading the real SYN and can say so.
 
+## A silent kernel that was a deploy bug, not a code bug
+
+The banner earned its place on its first boot. The panel read
+`AIUEOS K16 BUILD 93ead90d392de1f5 42838f3-dirty` — **one artifact behind what
+was being served.** Without it the next reading (`0 connection request`) would
+have been recorded as "the SYN fix did not work", when the fix had not been on
+the machine at all.
+
+That boot then produced **no netlog at all** — not one line — while the
+previous boot of a **byte-identical kernel** (`93ead90d`, only the loader
+differed) had produced 363,313 cycles. Both artifacts boot correctly under
+QEMU, printing ENTER and BUILD and reaching the kernel's `M` marker on the
+debug port. And the panel showed ENTER, BUILD and RTL8125, so the loader had
+completed everything and called the kernel.
+
+The cause is the deploy, not the code. The PXE server does
+`content = selected.read_bytes()` at request time, and the artifact was being
+installed with `cp` **onto the live path**, which truncates and rewrites in
+place. Both builds are **exactly 211968 bytes** — the two note strings happen
+to be the same length, so the layouts match — so a transfer overlapping a
+deploy reads a full-length file whose head and tail come from different
+builds. Nothing downstream can see that: the size is right, the loader runs,
+the banner (near the end of the file) reads from one build while the kernel
+(near the start) comes from another.
+
+The deduction, rather than the guess: the panel proves the tail was
+`4d75d6bb`; `4d75d6bb`'s kernel is byte-identical to one that had just run
+363,313 cycles, so a *pure* `4d75d6bb` would have produced netlog; it produced
+none; therefore what ran was not a pure `4d75d6bb`.
+
+`scripts/k16-pxe-deploy.sh` now writes a temporary file beside the target and
+`mv`s it. `rename(2)` on one filesystem is atomic: a reader gets the old file
+or the new one, never a seam.
+
+**This is the same shape as everything else in this document** — an unmeasured
+assumption ("copying a file is atomic") producing a result that looks exactly
+like a failure of the thing under test. It is the seventh instance today.
+
 ## Status of the artifacts
 
 - Commit `e09e4f1` (Phase 1 — bus3 single-shot) is superseded by commit
