@@ -8,7 +8,8 @@
             [capability.mmio.map :as mapped]
             [capability.net.transport :as transport])
   (:export [bar-for-bus install-bar-page install-directory qualify quiesce
-            rings-start tx-submit revision mac-valid bus-probe]))
+            rings-start tx-submit wait-tx-complete revision mac-valid
+            bus-probe arm-bus-master link-up]))
 
 (defn pci-address [bus offset]
   (bit-or 2147483648
@@ -169,6 +170,25 @@
               mac-bit (if (mac-valid mmio) 32 0)
               link-bit (if (= (bit-and (mmio-load-u16 mmio 108) 2) 0) 0 64)]
           (+ 1 2 space master revision-bit mac-bit link-bit))))))
+
+;; The two prerequisites `qualify` performs inline, named so a second bus can
+;; ask for them without going through the whole ARP qualification.
+(defn arm-bus-master [bus]
+  ;; MEMORY-SPACE-ENABLE | BUS-MASTER-ENABLE, then read the register back.
+  ;; Returns 1 only when the device itself reports both bits set. Idempotent:
+  ;; bus3's census already read 7F (bits 2 and 3 set), so on this board it
+  ;; normally changes nothing -- it exists so a DMA submit never depends on
+  ;; firmware having left them on.
+  (let [command (pci-read bus 4)
+        written (pci-write bus 4 (bit-or (bit-and command 65535) 6))
+        readback (pci-read bus 4)]
+    (if (= (bit-and (+ readback (* 0 written)) 6) 6) 1 0)))
+
+(defn link-up [mmio]
+  ;; PHYstatus (MMIO 108) LinkStatus. 1 = up. Submitting into a down PHY
+  ;; leaves the descriptor owned forever, which is indistinguishable from a
+  ;; ring fault unless the gate runs first.
+  (if (= (bit-and (mmio-load-u16 mmio 108) 2) 0) 0 1))
 
 (defn wait-fifo-empty [mmio remaining]
   (if (= (bit-and (mmio-load-u8 mmio 211) 48) 48)

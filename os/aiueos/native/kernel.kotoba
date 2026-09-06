@@ -402,15 +402,12 @@
                 twelfth-start (+ physical-start 45056)
                 thirteenth-start (+ physical-start 49152)
                 fourteenth-start (+ physical-start 53248)
-                ;; LAN2 debug plane (gate: second RTL8125, bus3/bar-b). The
-                ;; K16 has two 2.5GbE; hardware link order on this board is
-                ;; bus2 (PXE stream) and bus3 (debug). A 16 KiB window needs 4
-                ;; contiguous low pages: 14..17. They are physically above
-                ;; the stream tcb/staging pages and unused today.
-                fifteenth-start (+ physical-start 57344)
-                sixteenth-start (+ physical-start 61440)
-                seventeenth-start (+ physical-start 65536)
-                eighteenth-start (+ physical-start 69632)
+                ;; No page 14..17 extension. The Amu loader allocates exactly
+                ;; fourteen pages (kernel_scratch.pages = 14, checked above),
+                ;; so naming +57344.. would hand the NIC memory the kernel
+                ;; does not own. The LAN2 debug plane takes its 16 KiB from
+                ;; the pages the CR3 branch would have used instead; see the
+                ;; stream branch below (ADR-0156).
                 bar-a (rtl/bar-for-bus 2)
                 bar-b (rtl/bar-for-bus 3)]
             (if (and (five-distinct physical-start second-start third-start
@@ -442,11 +439,7 @@
                      (> twelfth-start eleventh-start)
                      (> thirteenth-start twelfth-start)
                      (> fourteenth-start thirteenth-start)
-                     (> fifteenth-start fourteenth-start)
-                     (> sixteenth-start fifteenth-start)
-                     (> seventeenth-start sixteenth-start)
-                     (> eighteenth-start seventeenth-start)
-                     (< eighteenth-start 549755813888))
+                     (< fourteenth-start 549755813888))
                   ;; The literal parent names the admitted 512 GiB physical
                   ;; window. Boot-info values select only checked offsets.
                   (let [state (kernel-subregion 4096 549755809792
@@ -538,15 +531,29 @@
                               ;; cycle re-arms, connects, receives, and logs
                               ;; over UDP. The screen write happens before
                               ;; entering the loop; outcomes ride STREAM_C.
-                              ;; LAN2 debug plane, step 0: census only. The
-                              ;; bus3 send is withheld until the census says
-                              ;; the NIC can DMA -- and until bus3 has a
-                              ;; loader-OWNED window, which pages 14..17 are
-                              ;; not (the loader allocates exactly 14). Three
-                              ;; bytes ride the known-good bus2 netlog once,
-                              ;; before the resident loop: B7 sentinel, then
-                              ;; bus3's census, then bus2's as the control
-                              ;; (a qualified NIC reads 7F).
+                              ;; LAN2 debug plane, step 1. The census (B7 7F
+                              ;; 7F, read on the K16 2026-09-06) said bus3
+                              ;; answers config space, decodes its BAR, has
+                              ;; MEM-SPACE and BUS-MASTER set, reads back its
+                              ;; revision and MAC, and has PHY link -- so the
+                              ;; NIC can DMA. What it still lacked was a
+                              ;; loader-OWNED window.
+                              ;;
+                              ;; This branch never replaces CR3 (bar-a > 0, so
+                              ;; prepare-page-tables / activate-page-tables are
+                              ;; in the other arm), which leaves pt,
+                              ;; reusable-page, frame-page and stack-page
+                              ;; allocated by the loader, zeroed by
+                              ;; prepare-owned-pages / prepare-extra-pages, and
+                              ;; idle for the life of this branch. They are
+                              ;; four contiguous pages = the 16 KiB bus3 needs.
+                              ;;
+                              ;; Six bytes ride the known-good bus2 netlog once
+                              ;; before the resident loop: B7 sentinel, bus3
+                              ;; census, bus2 census (control), B8 sentinel,
+                              ;; debug-init status, debug-send status. Phase 1
+                              ;; observed none of this and was therefore
+                              ;; useless whatever the wire did (ADR-0156).
                               (do (kernel-out-u32 244 (+ 192 stream-status))
                                   (let [census-b (rtl/bus-probe 3)
                                         census-a (rtl/bus-probe 2)
@@ -556,11 +563,46 @@
                                         logged-b (stream/stream-log
                                                   stream-win stream-mmio
                                                   stream-tx-frame
-                                                  (+ census-b (* 0 mark)))]
+                                                  (+ census-b (* 0 mark)))
+                                        logged-a (stream/stream-log
+                                                  stream-win stream-mmio
+                                                  stream-tx-frame
+                                                  (+ census-a (* 0 logged-b)))
+                                        bus3-dma-pages (kernel-subregion
+                                                        4096 549755809792
+                                                        (- fifth-start 4096)
+                                                        16384)
+                                        bus3-mmio (if (> bar-b 0)
+                                                    (kernel-subregion
+                                                     1 549755813887
+                                                     (- bar-b 1) 512)
+                                                    0)
+                                        ;; 6 = bar-b never decoded, so there is
+                                        ;; no MMIO to init. Distinct from every
+                                        ;; code debug-init itself returns.
+                                        dbg-init (if (> bar-b 0)
+                                                   (debug/debug-init
+                                                    3 bus3-mmio bus3-dma-pages)
+                                                   6)
+                                        ;; 7 = not attempted, because init
+                                        ;; refused. Never confuse "skipped"
+                                        ;; with "sent".
+                                        dbg-sent (if (= dbg-init 0)
+                                                   (debug/debug-send
+                                                    bus3-mmio bus3-dma-pages)
+                                                   7)
+                                        mark-b (stream/stream-log
+                                                stream-win stream-mmio
+                                                stream-tx-frame
+                                                (+ 184 (* 0 logged-a)))
+                                        logged-init (stream/stream-log
+                                                     stream-win stream-mmio
+                                                     stream-tx-frame
+                                                     (+ dbg-init (* 0 mark-b)))]
                                     (stream/stream-log stream-win stream-mmio
                                                        stream-tx-frame
-                                                       (+ census-a
-                                                          (* 0 logged-b)))
+                                                       (+ dbg-sent
+                                                          (* 0 logged-init)))
                                     (stream/stream-resident stream-win
                                                             stream-mmio
                                                             stream-tx-frame

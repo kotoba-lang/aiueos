@@ -110,6 +110,109 @@ either way.
    follow-up: it is a plausible contributor to the persistent `21` (bus2
    stream never sees the peer's SYN-ACK).
 
+## The census answer (read on the K16, 2026-09-06)
+
+The census EFI `810e0523…` booted and the three bytes arrived on the bus2
+netlog, once, between `AIUEOS_NATIVE_TCP_OK` and the resident loop's first
+`A1`:
+
+```
+AIUEOS_STREAM_B7      sentinel
+AIUEOS_STREAM_7F      bus3 census
+AIUEOS_STREAM_7F      bus2 census (control)
+```
+
+Order is `census-b` (bus 3) then `census-a` (bus 2), read from the source, not
+inferred from the wire. **bus3 = 0x7F is every bit set**: the 8125 answers
+config space, a memory BAR decodes inside the admitted window, MEM-SPACE-ENABLE
+and BUS-MASTER-ENABLE are already on, ChipCmd reads back a revision, IDR0..5
+holds a plausible unicast MAC, and PHYstatus reports link. The NIC can DMA.
+bus2 reads the same, which is what makes the bus3 reading trustworthy rather
+than a constant.
+
+So the Phase-1 silence was not the NIC. It was the two faults in §2 and §3
+plus the unobservability in §4.
+
+Reading note: `grep` on this machine returns *no match* on `server.log` under a
+UTF-8 locale, because the file carries a byte that is not valid UTF-8 and
+macOS grep then reports every line as unmatched rather than erroring. `LC_ALL=C
+grep` finds the census. A search that could not run and a search that found
+nothing returned the same answer.
+
+## Step 1 — the send, with an owned window and every stage observable
+
+1. **Window.** `bus3-dma-pages` is bound inside the stream branch at
+   `(kernel-subregion 4096 549755809792 (- fifth-start 4096) 16384)` =
+   `fifth-start` .. +32768 = `pt`, `reusable-page`, `frame-page`, `stack-page`.
+   The stream branch never replaces CR3 (that is the other arm of the `if`), so
+   those four pages are allocated by the loader, zeroed by
+   `prepare-owned-pages` / `prepare-extra-pages`, and idle for the life of this
+   branch. They do not overlap `rtl-dma-pages` (`eleventh-start` .. +57344),
+   `stream-tcb` or `stream-staging`. The pages 14..17 bindings and their five
+   guard clauses are deleted; `kernel_scratch.pages` stays 14 and the receipt
+   still says so.
+
+2. **Prerequisites.** `rtl/arm-bus-master` and `rtl/link-up` name the two
+   things `rtl/qualify` already did inline for bus2, so bus3 can ask for them
+   without the whole ARP qualification. `arm-bus-master` writes
+   MEM-SPACE|BUS-MASTER and then **reads the register back**, returning 1 only
+   if the device reports both — the census says bus3 already has them, so on
+   this board the write changes nothing; it exists so a submit never depends on
+   firmware having left them on. `link-up` gates on PHYstatus before submitting,
+   because a submit into a down PHY leaves the descriptor owned forever, which
+   is indistinguishable from a ring fault.
+
+3. **Observability.** This is the fault §4 named, and it is the one that made
+   Phase 1 worthless regardless of what the wire did. Every stage now has its
+   own code and all of them ride the bus2 netlog:
+
+   | byte | meaning |
+   |---|---|
+   | `B8` | sentinel: the bus3 attempt starts here |
+   | init `0` | ready |
+   | init `6` | bar-b never decoded — no MMIO to init |
+   | init `9` | the device would not report MEM-SPACE\|BUS-MASTER after the write |
+   | init `7` | IDR0..5 is not a plausible unicast MAC |
+   | init `2` | ChipCmd revision unreadable |
+   | init `8` | PHY reports no link |
+   | init `10+n` | `rings-start` refused with n (4 fifo, 1 install) |
+   | send `0` | submitted **and** the engine cleared OWN — bytes left the NIC |
+   | send `1` | the frame could not be built |
+   | send `5` | descriptor still owned, or the wire length was rejected |
+   | send `3` | a descriptor store did not read back |
+   | send `4` | submitted, but OWN never cleared — the engine is not consuming |
+   | send `7` | not attempted, because init refused |
+
+   `debug-send` previously returned **0 both when the frame failed to build and
+   when it was submitted** (`rtl/tx-submit` returns 0 on success, and the
+   build-failure arm also returned 0), and `debug-send-status` then mapped
+   success to 1 and a store fault to 0. That function is deleted rather than
+   fixed: nothing called it. This is the workspace's recurring shape — a check
+   that could not run returning the same value as a check that ran and found
+   nothing — appearing inside the very module written to diagnose.
+
+4. **What the pair of readings discriminates.** bus2 says whether the NIC
+   transmitted (`send 0` means the engine consumed the descriptor). en8 says
+   whether the Mac accepted it. `send 0` with nothing on en8 would isolate the
+   frame contents (checksum, MACs) from the NIC; `send 4` would isolate the
+   engine. Neither reading alone can do that, which is why both are taken.
+
+The IPv4 header checksum stays 0x52AC, verified by hand against the header
+this module writes: `0x4500 + 0x002B + 0x4011 + 0x0A0A + 0x0A02 + 0x0A0A +
+0x0A01 = 0xAD53`, and `~0xAD53 = 0x52AC`. The peer MAC baked into
+`store-peer-mac` (3c:18:a0:d5:82:a8) matches the Mac's live en8.
+
+### No automated gate discriminates on this branch
+
+The QEMU smokes are pinned to compiler `13d2f5df`, which now **refuses this
+branch's kernel outright** (`:kotoba/target-rejected`, "typed values currently
+require …") — measured on the unmodified source as well as the modified one.
+Repointed at the `46eeedae` pin the build succeeds but the gate's expected
+QEMU exit (33 / marker `MPRCD`) does not match the k16-loader-port loader —
+again identically before and after this change. Both directions were measured;
+neither gate is a regression signal here, and neither is claimed as one. The
+physical K16 is the only instrument this branch has.
+
 ## Status of the artifacts
 
 - Commit `e09e4f1` (Phase 1 — bus3 single-shot) is superseded by commit
@@ -117,10 +220,25 @@ either way.
   bus3-dma-pages binding and adds the census.
 - Build on commit `05a3142`: `AIUEOS_KOTOBA_NATIVE_BOOT_OK no-c no-crt
   no-linker imports=0`, byte-identical reproducible, `boot 810e0523…`,
-  207872 bytes, k16-preflight on. Not staged to the PXE serve dir by Claude.
-- The census boot has NOT yet been run on the K16. PXE serves the census EFI
-  `810e0523…` (deployed by itonami after this ADR was drafted). Reading the
-  census answer is the next decisive step.
+  207872 bytes, k16-preflight on.
+- The census boot RAN on the K16 and answered `B7 7F 7F` (above). The serve
+  dir's previous file hashed `810e0523…`, which confirms independently that
+  the census EFI is what booted.
+- Step 1 build: `AIUEOS_KOTOBA_NATIVE_BOOT_OK no-c no-crt no-linker
+  imports=0`, byte-identical reproducible across two packagings,
+  `boot 730b1293d930acd7030139d206c69b5bd1b54c1000c5bd5a437ed77b16f8bb80`,
+  207872 bytes, k16-preflight on, `kernel_scratch.pages = 14`. Staged to
+  `/tmp/aiueos-k16-pxe/BOOTX64.EFI`; the census EFI is kept beside it as
+  `BOOTX64.CENSUS-810e0523.EFI`.
+- **Not yet run.** The kernel is resident, so the K16 does not reboot itself;
+  the step-1 boot needs a power cycle. `socat -u UDP-RECV:9000,reuseaddr
+  CREATE:/tmp/k16-bus3-en8.log` is listening on the Mac (the previous listener
+  was an orphan writing to a discarded stdout). `tcpdump` is unavailable —
+  BPF needs root on this machine — so a frame the Mac's `ip_input` drops would
+  not be seen; that is what the bus2 send byte is for.
+- Until that boot is read, bus3 debug is **not** operational. The honest
+  ceiling from the previous revision stands, with one clause discharged: the
+  NIC is qualified.
 
 ## Consequences
 
