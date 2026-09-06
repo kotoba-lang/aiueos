@@ -4,7 +4,7 @@ set -eu
 repo=$(CDPATH= cd -- "$(dirname -- "$0")/../../.." && pwd)
 aiueos="$repo/os/aiueos"
 compiler=${1:?usage: build-kotoba-native-kernel.sh /path/to/compiler}
-expected=46eeedae4ab765e5ea572927a411fec40c8f218e
+expected=3c6d035aac317de6635f08177781062e623edcb2
 actual=$(git -C "$compiler" rev-parse HEAD)
 [ "$actual" = "$expected" ] || {
   echo "error: compiler HEAD is $actual; expected $expected" >&2; exit 1;

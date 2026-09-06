@@ -4,7 +4,7 @@ set -eu
 repo=$(CDPATH= cd -- "$(dirname -- "$0")/../../.." && pwd)
 aiueos="$repo/os/aiueos"
 compiler=${1:?usage: build-kotoba-native-boot.sh /path/to/compiler}
-expected=46eeedae4ab765e5ea572927a411fec40c8f218e
+expected=3c6d035aac317de6635f08177781062e623edcb2
 actual=$(git -C "$compiler" rev-parse HEAD)
 [ "$actual" = "$expected" ] || {
   echo "error: compiler HEAD is $actual; expected $expected" >&2; exit 1;
@@ -18,10 +18,22 @@ AIUEOS_NATIVE_OUT="$native_out" \
   "$aiueos/scripts/build-kotoba-native-kernel-46eeedae.tmp.sh" "$compiler" >/dev/null
 mkdir -p "$(dirname -- "$efi")"
 set -- package-aiueos-boot "$native_out/KERNEL.ELF" --output "$efi"
-if [ "${AIUEOS_NATIVE_K16_PREFLIGHT:-0}" = 1 ]; then set -- "$@" --k16-preflight; fi
+if [ "${AIUEOS_NATIVE_K16_PREFLIGHT:-0}" = 1 ]; then
+  set -- "$@" --k16-preflight
+  # A note for the panel beside the build digest. Derived from the tree, not
+  # the clock: the same commit packages to the same bytes, which is what the
+  # cmp below checks. -dirty is the honest case while iterating.
+  set -- "$@" --k16-note "${AIUEOS_K16_NOTE:-$(git -C "$repo" describe --always --dirty 2>/dev/null || echo local)}"
+fi
 "$compiler/bin/kotoba-compiler" "$@"
 set -- package-aiueos-boot "$native_out/KERNEL.ELF" --output "$second"
-if [ "${AIUEOS_NATIVE_K16_PREFLIGHT:-0}" = 1 ]; then set -- "$@" --k16-preflight; fi
+if [ "${AIUEOS_NATIVE_K16_PREFLIGHT:-0}" = 1 ]; then
+  set -- "$@" --k16-preflight
+  # A note for the panel beside the build digest. Derived from the tree, not
+  # the clock: the same commit packages to the same bytes, which is what the
+  # cmp below checks. -dirty is the honest case while iterating.
+  set -- "$@" --k16-note "${AIUEOS_K16_NOTE:-$(git -C "$repo" describe --always --dirty 2>/dev/null || echo local)}"
+fi
 "$compiler/bin/kotoba-compiler" "$@"
 cmp "$efi" "$second"; rm -f "$second"
 python3 "$aiueos/scripts/verify-kotoba-native-boot.py" \
