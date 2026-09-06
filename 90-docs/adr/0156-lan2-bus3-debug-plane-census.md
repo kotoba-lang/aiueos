@@ -286,6 +286,87 @@ peer sent nothing) is consistent with that. (`stream-tcb` at
 `rtl-dma-pages + 4096` is *not* aliased — the RX ring is at +1024, 1024 bytes
 wide, and +4096..+8192 is unused.)
 
+## The A+B boot, and two results that overturn earlier claims
+
+Artifact `8d2d73c1…` (aliasing fix + LAN2 receive path + MAC report) booted.
+
+```
+B7 7F 7F              census
+B8 00                 bus3 init = ready
+DA 70 70 FC 0B B6 31  bus3 MAC = 70:70:fc:0b:b6:31
+00                    bus3 send = submitted AND the engine cleared OWN
+A1 ... 21             the resident loop, 280 times, then silence
+```
+
+### 1. The aliasing was real and is NOT what eats the SYN-ACK
+
+`stream-tx-frame` and `stream-staging` now live on pages 8 and 9, disjoint
+from `rx-buffer-a`. The loop still reports `21` — 279 times in this boot.
+The hypothesis is refuted. The overlap was genuine and worth removing, but
+the persistent "peer sent nothing" has a different cause, still unknown.
+
+### 2. The loop is not resident. It has never been resident.
+
+|  boot | artifact | completed cycles |
+|---|---|---|
+| 14220.. | `810e0523` census | 278 |
+| 17312.. | `730b1293` step 1 | 277 |
+| 20369.. | `8d2d73c1` A+B | 280 |
+
+Three artifacts, three boots, the same stop. The kernel is built with
+`--fuel 1048576` and the receipt says `"replenishable": false` — one budget
+for the whole boot, no top-up (ADR-0034's per-call replenish is emitted by
+`package-kernel-object`; this artifact comes from `package-aiueos-boot`).
+At roughly 3,760 fuel per cycle that budget buys about 280 cycles.
+
+**A loop designed never to end, under a budget that is spent once, cannot
+both be true.** Plan A-2's "the stream never halts the machine" has been
+false on every boot since it was written, and nothing looked, because the
+symptom is a log that stops rather than an error.
+
+`1048576` is 2^20, which was `max-native-fuel` when the line was written. The
+ceiling moved to 2^53-1 on 2026-09-03 (kotoba-kir ADR 0268). **The budget was
+never a decision — it was the old maximum, kept after the maximum moved.**
+
+The next boot doubles it to 2097152 and predicts ~556 cycles. If it stops near
+280 again the mechanism is something else and the number goes back. It is
+raised to be *measured*, not to be a fix; a bigger finite number is still a
+finite number, and a genuinely resident loop needs a replenish, not a bigger
+bucket.
+
+Raising it required editing five places that each carried the literal (two
+`--fuel` flags, the sealed-context check, the receipt and the OK line), and
+the policy EDN turned out to be the authority — `--fuel` alone changed
+nothing and the build failed naming the old value. The build script now
+generates the policy from one variable. This is the same shape the
+`excessive-native-fuel-policy` fixture documents: *the fifth place the
+ceiling was written down.*
+
+### 3. Retraction: the 'Z' on en8 is not proof
+
+The previous revision recorded 'Z' arriving on en8 as end-to-end proof. **That
+claim is withdrawn.** On this boot `debug-send` again returned 0 (submitted,
+OWN cleared) and **nothing reached en8** — with a listener validated by a
+control datagram immediately before and after. `netstat -I en8` shows 27
+packets received in the machine's entire uptime.
+
+The one reading that showed 'Z' came from the listener whose sink was broken,
+recovered when that process was killed, so it cannot be timestamped or
+attributed to a boot; another session was experimenting on this same wire that
+afternoon. One unrepeatable reading from a defective instrument is not
+evidence, and it should not have been written down as if it were.
+
+What is established: bus3 census 7F, `debug-init` ready, and the TX engine
+clearing OWN. What is NOT established: that any byte left the NIC, or that
+bus3 is cabled to en8 at all. `wait-tx-complete` reads the OWN bit and not the
+descriptor's error bits, so it cannot tell those apart — and without `tcpdump`
+(BPF needs root here) neither can the Mac.
+
+The cheapest test of the wiring costs nothing extra: the Mac's ARP requests
+for 10.10.10.2 are broadcasts, so if bus3 is on that wire `debug-poll` sees
+them and answers `1` ("not ours"), which the loop logs as `D9 01`. That
+requires a live kernel, which is what the fuel change is for.
+
 ## Status of the artifacts
 
 - Commit `e09e4f1` (Phase 1 — bus3 single-shot) is superseded by commit

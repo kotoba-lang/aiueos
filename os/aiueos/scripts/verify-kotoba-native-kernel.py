@@ -2,6 +2,7 @@
 import hashlib
 import json
 import pathlib
+import os
 import struct
 import sys
 
@@ -39,8 +40,15 @@ if (rx_start != 0x101000 or rx_limit > rw_start
         or rw_start != rx_limit):
     raise SystemExit("error: Kotoba-native RX/RW page boundary rejected")
 context_offset = segments[1][2]
-if segments[1][5] < 16 or struct.unpack_from("<Q", data, context_offset + 8)[0] != 1048576:
-    raise SystemExit("error: Kotoba-native kernel context does not carry sealed fuel 1048576")
+sealed_fuel = int(os.environ.get("AIUEOS_NATIVE_FUEL", "1048576"))
+# The number the kernel is built with was written down in five places at once
+# (two --fuel flags, this check, the receipt and the OK line). Four of them
+# were literals, so raising the budget failed here with a message naming the
+# old value -- the same shape kotoba-kir ADR 0268 hit when max-native-fuel
+# moved. The CHECK stays; only its duplication goes.
+if segments[1][5] < 16 or struct.unpack_from("<Q", data, context_offset + 8)[0] != sealed_fuel:
+    raise SystemExit(
+        "error: Kotoba-native kernel context does not carry sealed fuel %d" % sealed_fuel)
 cr3_read_encodings = (b"\x0f\x20\xd8", b"\x41\x0f\x20\xda")
 cr3_write_encodings = (b"\x0f\x22\xd8", b"\x41\x0f\x22\xda")
 invlpg_encodings = (b"\x0f\x01\x38", b"\x41\x0f\x01\x3a")
@@ -115,7 +123,7 @@ payload = {
     "c_sources": [],
     "imports": [],
     "dynamic_dependencies": [],
-    "fuel": {"initial": 1048576, "replenishable": False},
+    "fuel": {"initial": sealed_fuel, "replenishable": False},
     "allocator": {"page_bytes": 4096, "published_pages": 14,
                   "allocation_source": "amu-uefi-loader-rw-tail",
                   "zero_before_publish": True,
@@ -151,4 +159,4 @@ payload = {
                    "sealed_probe": present_probes[0] if present_probes else None},
 }
 receipt.write_text(json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n", encoding="ascii")
-print("AIUEOS_KOTOBA_NATIVE_KERNEL_OK no-c no-crt no-linker imports=0 fuel=1048576 allocator-pages=14 ownership-bitmap page-table-root identity-1g rtl8125-pci-mmio-dma guard-unmapped text-rx state-rw-nx nxe cr0-wp cr3-activated invlpg idt14-sidt-readback pf-cr2-error-code recovery-frame dedicated-handler-stack reuse double-free-rejected descriptors<=410 zero-before-publish")
+print("AIUEOS_KOTOBA_NATIVE_KERNEL_OK no-c no-crt no-linker imports=0 fuel=%d " % sealed_fuel + "allocator-pages=14 ownership-bitmap page-table-root identity-1g rtl8125-pci-mmio-dma guard-unmapped text-rx state-rw-nx nxe cr0-wp cr3-activated invlpg idt14-sidt-readback pf-cr2-error-code recovery-frame dedicated-handler-stack reuse double-free-rejected descriptors<=410 zero-before-publish")
