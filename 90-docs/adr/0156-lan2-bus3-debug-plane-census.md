@@ -506,6 +506,42 @@ or the new one, never a seam.
 assumption ("copying a file is atomic") producing a result that looks exactly
 like a failure of the thing under test. It is the seventh instance today.
 
+## Why no automated gate discriminates: the CR3 path triple-faults, and always has
+
+Earlier this document recorded that the QEMU smokes do not discriminate and
+left it there. They do not discriminate for a *reason*, and the reason is a
+real defect:
+
+```
+v=0e e=0003  page fault, PRESENT + WRITE   CR2=0x110100  IP=0x11a424
+             -> v=0d (#GP) -> v=08 (double) -> Triple fault -> reset
+```
+
+The receipt's own `protection` block says `kernel_text 0x101000-0x11bfff` is
+**RX** and `kernel_state 0x11c000-0x12efff` is RW-NX. **CR2 `0x110100` is
+inside the kernel's own read-only text.** So once `enable-page-protection`
+sets CR0.WP, a write into text that had been silently tolerated becomes a
+fault — and the #PF handler is installed *later* in the same branch, so there
+is nothing to catch it. Double fault, triple fault, reset. With `-no-reboot`
+QEMU then exits 0, which is why the gate's "expected 33" never matches and why
+the failure has looked like a stale expectation rather than a crash.
+
+Measured across four artifacts spanning the whole of this work — including
+`810e0523`, the census build this ADR was originally written about — the
+debug port emits exactly `M` (the map marker) and nothing else. Not one of
+them reaches `P`, `R`, `C` or `D`. **The CR3 branch has never completed under
+QEMU during any of this work.**
+
+The K16 does not take that branch (`bar-a > 0`), which is why the physical
+machine has been the only instrument. But it also means the one automated
+signal this kernel has was dead the whole time, and "the gate's expected value
+is stale" — written in this document a few hours ago — was the wrong reading
+of the same evidence. The expectation is fine; the guest crashes.
+
+Next step for that path is to name what writes `0x110100`: the fault IP is
+`0x11a424`, both addresses are stable across runs, and the sequence is
+deterministic.
+
 ## Status of the artifacts
 
 - Commit `e09e4f1` (Phase 1 — bus3 single-shot) is superseded by commit
