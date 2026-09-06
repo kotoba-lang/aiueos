@@ -510,14 +510,35 @@
                                                                 (- bar-a 1) 512)
                                   stream-win (kernel-subregion rtl-dma-pages
                                                                16384 0 16384)
+                                  ;; ADR-0156 section 5, now arithmetic rather
+                                  ;; than suspicion. These two used to be
+                                  ;; rtl-dma-pages + 8192 and thirteenth-start,
+                                  ;; which is the same address -- and it is the
+                                  ;; stream's own rx-buffer-a-offset (8192).
+                                  ;; So every netlog byte the resident loop
+                                  ;; emitted was written by the CPU into RX
+                                  ;; descriptor 0's DMA target while the NIC
+                                  ;; owned it. The loop reporting 21 (window
+                                  ;; exhausted, peer sent nothing) forever is
+                                  ;; what that looks like from outside.
+                                  ;;
+                                  ;; rtl-directory-a/b are the free pages: only
+                                  ;; prepare-rtl-page-tables uses them as page
+                                  ;; directories, and that runs in the CR3 arm,
+                                  ;; not this one. prepare-nic-pages has already
+                                  ;; zeroed both. They are outside rtl-dma-pages
+                                  ;; (pages 10..13) and outside the bus3 window
+                                  ;; (pages 4..7), so nothing else can reach
+                                  ;; them.
                                   stream-tx-frame (kernel-subregion
-                                                   rtl-dma-pages 16384 8192 4096)
+                                                   4096 549755809792
+                                                   (- ninth-start 4096) 4096)
                                   stream-tcb (kernel-subregion
                                               4096 549755809792
                                               (- twelfth-start 4096) 4096)
                                   stream-staging (kernel-subregion
                                                   4096 549755809792
-                                                  (- thirteenth-start 4096) 4096)
+                                                  (- tenth-start 4096) 4096)
                                   ring-status (stream/rx-ring-init
                                                stream-mmio rtl-dma-pages)
                                   tcb-status (if (= ring-status 0)
