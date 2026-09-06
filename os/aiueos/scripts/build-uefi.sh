@@ -102,6 +102,7 @@ kotoba_cpu_feature_syscall_object=${AIUEOS_KOTOBA_CPU_FEATURE_SYSCALL_OBJECT:-"$
 kotoba_cpu_apic_id_object=${AIUEOS_KOTOBA_CPU_APIC_ID_OBJECT:-"$aiueos/kotoba/cpu-apic-id.o"}
 kotoba_syscall_range_object=${AIUEOS_KOTOBA_SYSCALL_RANGE_OBJECT:-"$aiueos/kotoba/syscall-range-valid.o"}
 kotoba_copy_in_object=${AIUEOS_KOTOBA_COPY_IN_OBJECT:-"$aiueos/kotoba/copy-in.o"}
+kotoba_allocator_plan_object=${AIUEOS_KOTOBA_ALLOCATOR_PLAN_OBJECT:-"$aiueos/kotoba/allocator-plan.o"}
 kotoba_capability_object=${AIUEOS_KOTOBA_CAPABILITY_OBJECT:-"$aiueos/kotoba/capability-plan.o"}
 kotoba_capability_mutation_object=${AIUEOS_KOTOBA_CAPABILITY_MUTATION_OBJECT:-"$aiueos/kotoba/capability-mutation-plan.o"}
 kotoba_service_lifecycle_object=${AIUEOS_KOTOBA_SERVICE_LIFECYCLE_OBJECT:-"$aiueos/kotoba/service-lifecycle.o"}
@@ -785,6 +786,9 @@ python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_syscall_range_
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_copy_in_object" \
   f663a81d882c6ce87c058e947c105cb2d57a174bf594497ff69a40920ce60600 \
   kotoba_aiueos_copy_in
+python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_allocator_plan_object" \
+  b649d5e41fce7debeabe98a2376545d231337e7888e416897694fc82fea85d95 \
+  kotoba_aiueos_allocator_plan
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_capability_object" \
   32b398da53886afe2dc7dca67bba54779e7791bed9373bad52c0cf527c55697b \
   kotoba_aiueos_capability_plan
@@ -1239,6 +1243,7 @@ zig ld.lld -nostdlib -static --strip-all $qualification_gc_link -z max-page-size
   "$kotoba_cpu_feature_nx_object" "$kotoba_cpu_feature_syscall_object" \
   "$kotoba_cpu_apic_id_object" \
   "$kotoba_syscall_range_object" "$kotoba_copy_in_object" \
+  "$kotoba_allocator_plan_object" \
   "$kotoba_capability_object" "$kotoba_capability_mutation_object" \
   "$kotoba_service_lifecycle_object" \
   "$kotoba_service_registry_object" "$kotoba_service_registry_state_object" \
