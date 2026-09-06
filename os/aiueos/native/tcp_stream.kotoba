@@ -29,7 +29,8 @@
             [capability.mmio.map :as mapped]
             [capability.net.transport :as transport]
             [tcp.seq-core :as seq-core]
-            [tcp.reassemble-core :as reassemble])
+            [tcp.reassemble-core :as reassemble]
+            [native.debug-link :as debug])
   (:export [rx-ring-descriptor-base rx-ring-descriptor-address
             rx-ring-buffer-base rx-ring-command rx-ring-init
             rx-ring-descriptor-own rx-ring-wait-command rx-ring-rearm
@@ -933,14 +934,44 @@
                       26)
                     25))))))))))
 
-(defn stream-resident [win mmio tx-frame tcb staging]
+(defn stream-resident [win mmio tx-frame staging bus3-dma]
   ;; Plan A-2: the stream stage never halts the machine. Each cycle fully
   ;; re-arms (ring + TCB), connects, runs one ESTABLISHED window, logs the
   ;; outcome, and starts the next cycle. The cycle count rides
   ;; tcb-slot-rto-windows (a slot the stream does not otherwise use) so every
   ;; observation carries its attempt number: STREAM_C<cycles>. Reboot is
   ;; then needed only when the Mac-side artifact changes.
-  (let [cycles (kernel-load-u64-4k tcb 4096 (* tcb-slot-rto-windows 8))
+  ;;
+  ;; LAN2 rides along: one non-blocking look at bus3's RX descriptor per
+  ;; cycle. `bus3-dma` is 0 unless debug-init returned ready, so a board
+  ;; without the second NIC skips it entirely and never touches that window.
+  ;;
+  ;; `tcb` is derived here rather than passed: it has always been
+  ;; `win + 4096` (the stream lays its RX ring at +1024 and its buffers at
+  ;; +8192, leaving +4096..+8192 unused), and the native ABI caps a function
+  ;; at five parameters -- which this one was already using.
+  ;;
+  ;; ONCE PER CYCLE is the honest latency, and a cycle is a whole connect plus
+  ;; a receive window with 200M-iteration bounded waits. That is fine for
+  ;; "answer a ping", and it is NOT a control channel anyone should build a
+  ;; timing-sensitive operation on. Polling inside the receive window is the
+  ;; next step, not this one.
+  (let [tcb (kernel-subregion win dma-window-bytes 4096 4096)
+        cycles (kernel-load-u64-4k tcb 4096 (* tcb-slot-rto-windows 8))
+        bus3 (if (= bus3-dma 0)
+               0
+               (debug/debug-tick bus3-dma))
+        ;; Quiet when nothing arrived -- which is every cycle until someone
+        ;; sends. Speaking only on an event keeps the bus2 netlog readable and
+        ;; keeps 0 ("no frame") from being the most common byte on the wire.
+        ;; D9 is the sentinel; the byte after it is debug-tick's value, and
+        ;; every value it returns fits in one byte (0, 1, 2, 64..71, 96..103),
+        ;; which is why the offset that would have been added here is not.
+        bus3-mark (if (= bus3 0) 0 (stream-log win mmio tx-frame 217))
+        bus3-logged (if (= bus3 0)
+                      0
+                      (stream-log win mmio tx-frame
+                                  (+ bus3 (* 0 bus3-mark))))
         ring (rx-ring-init mmio win)
         armed (if (= ring 0)
                 (tcb-init tcb 2715820034)
@@ -957,5 +988,6 @@
         result (if (= connect 0)
                  (receive-established win tcb staging 8)
                  connect)]
-    (stream-log win mmio tx-frame (+ 12 result (* 0 cycles)))
-    (stream-resident win mmio tx-frame tcb staging)))
+    (stream-log win mmio tx-frame
+                (+ 12 result (* 0 (+ cycles bus3-logged))))
+    (stream-resident win mmio tx-frame staging bus3-dma)))

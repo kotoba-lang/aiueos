@@ -619,16 +619,81 @@
                                         logged-init (stream/stream-log
                                                      stream-win stream-mmio
                                                      stream-tx-frame
-                                                     (+ dbg-init (* 0 mark-b)))]
+                                                     (+ dbg-init (* 0 mark-b)))
+                                        ;; DA then six bytes: bus3's MAC. The
+                                        ;; Mac cannot reach 10.10.10.2 without
+                                        ;; it, because this plane answers UDP
+                                        ;; and not ARP. Emitted once, and only
+                                        ;; when bus3 came up ready.
+                                        mark-c (if (= dbg-init 0)
+                                                 (stream/stream-log
+                                                  stream-win stream-mmio
+                                                  stream-tx-frame
+                                                  (+ 218 (* 0 logged-init)))
+                                                 0)
+                                        m0 (if (= dbg-init 0)
+                                             (stream/stream-log
+                                              stream-win stream-mmio
+                                              stream-tx-frame
+                                              (+ (debug/debug-mac-byte
+                                                  bus3-mmio 0)
+                                                 (* 0 mark-c)))
+                                             0)
+                                        m1 (if (= dbg-init 0)
+                                             (stream/stream-log
+                                              stream-win stream-mmio
+                                              stream-tx-frame
+                                              (+ (debug/debug-mac-byte
+                                                  bus3-mmio 1)
+                                                 (* 0 m0)))
+                                             0)
+                                        m2 (if (= dbg-init 0)
+                                             (stream/stream-log
+                                              stream-win stream-mmio
+                                              stream-tx-frame
+                                              (+ (debug/debug-mac-byte
+                                                  bus3-mmio 2)
+                                                 (* 0 m1)))
+                                             0)
+                                        m3 (if (= dbg-init 0)
+                                             (stream/stream-log
+                                              stream-win stream-mmio
+                                              stream-tx-frame
+                                              (+ (debug/debug-mac-byte
+                                                  bus3-mmio 3)
+                                                 (* 0 m2)))
+                                             0)
+                                        m4 (if (= dbg-init 0)
+                                             (stream/stream-log
+                                              stream-win stream-mmio
+                                              stream-tx-frame
+                                              (+ (debug/debug-mac-byte
+                                                  bus3-mmio 4)
+                                                 (* 0 m3)))
+                                             0)
+                                        m5 (if (= dbg-init 0)
+                                             (stream/stream-log
+                                              stream-win stream-mmio
+                                              stream-tx-frame
+                                              (+ (debug/debug-mac-byte
+                                                  bus3-mmio 5)
+                                                 (* 0 m4)))
+                                             0)]
                                     (stream/stream-log stream-win stream-mmio
                                                        stream-tx-frame
-                                                       (+ dbg-sent
-                                                          (* 0 logged-init)))
+                                                       (+ dbg-sent (* 0 m5)))
+                                    ;; LAN2 stays in the loop only if bus3 came
+                                    ;; up ready. On a board without the second
+                                    ;; NIC bus3-mmio is 0, and the loop must
+                                    ;; never dereference it -- so the gate is
+                                    ;; the init status, not the pointer.
                                     (stream/stream-resident stream-win
                                                             stream-mmio
                                                             stream-tx-frame
-                                                            stream-tcb
-                                                            stream-staging))))
+                                                            stream-staging
+                                                            (if (= dbg-init 0)
+                                                              bus3-dma-pages
+                                                              0)))))
                             (kernel-out-u32 244 (+ 96 pre-cr3-nic-status))))
                         (if (and (prepare-page-tables page-table-root pdpt pd pt)
                                  (prepare-low-page-table pt rx-limit rw-start)

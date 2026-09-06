@@ -26,7 +26,8 @@
             [capability.dma.map :as dma]
             [capability.mmio.map :as mapped]
             [native.rtl8125 :as rtl])
-  (:export [debug-init debug-send]))
+  (:export [debug-init debug-send debug-send-byte debug-poll
+            debug-tick debug-mac-byte]))
 
 ;; ── fixed debug 4-tuple ──────────────────────────────────────────────────
 ;; K16 bus3 = 10.10.10.2, Mac en8 = 10.10.10.1, UDP 9000 -> 9000.
@@ -103,7 +104,7 @@
 (def ip-total-length 29)                       ; 20 ip + 8 udp + 1 payload
 (def frame-total-length 43)                    ; + 14 ethernet
 
-(defn build-udp-debug-frame [frame mmio]
+(defn build-udp-debug-frame [frame mmio payload]
   (if (and (= (zero-prefix frame 60 0) 1)
            (= (store-peer-mac frame) 1)
            (= (store-device-mac frame mmio 0) 1)
@@ -128,10 +129,17 @@
            (= (store-be16 frame 34 debug-udp-port) debug-udp-port)
            (= (store-be16 frame 36 debug-udp-port) debug-udp-port)
            (= (store-be16 frame 38 9) 9)                 ; udp len: 8 + 1
-           (= (kernel-store-u8-4k frame 4096 42 90) 90)  ; 'Z' payload
+           (= (kernel-store-u8-4k frame 4096 42 payload) payload)
            (= (store-be16 frame 40 0) 0))                ; udp checksum 0
     frame-total-length
     0))
+
+(defn debug-mac-byte [mmio index]
+  ;; One byte of IDR0..5, so the kernel can put bus3's MAC on the bus2 netlog.
+  ;; The Mac needs it: this module answers UDP but not ARP, so nothing on the
+  ;; wire can resolve 10.10.10.2 without being told. An ARP responder here
+  ;; would remove the need, and is the obvious next slice.
+  (bit-and (kernel-load-u8 mmio 512 index) 255))
 
 (defn debug-init [bus mmio dma-pages]
   ;; Bring bus3 to the same footing `rtl/qualify` gives bus2, then install a
@@ -155,8 +163,8 @@
               (+ 10 started)
               (if (= (rtl/link-up mmio) 0) 8 0))))))))
 
-(defn debug-send [mmio dma-pages]
-  ;; Single-shot UDP :9000 log on bus3:
+(defn debug-send-byte [mmio dma-pages payload]
+  ;; Single-shot UDP :9000 datagram on bus3:
   ;;   0  the descriptor was submitted AND the engine cleared OWN
   ;;   1  the frame could not be built
   ;;   5  the descriptor was still owned, or the wire length was rejected
@@ -165,7 +173,7 @@
   ;; 0 must mean exactly one thing: bytes left the NIC.
   (let [tx dma-pages
         tx-frame (kernel-subregion dma-pages 16384 8192 4096)
-        len (build-udp-debug-frame tx-frame mmio)]
+        len (build-udp-debug-frame tx-frame mmio payload)]
     (if (= len 0)
       1
       (let [submitted (rtl/tx-submit mmio tx tx-frame len)]
@@ -174,3 +182,85 @@
           (if (not (= submitted 0))
             3
             (if (= (rtl/wait-tx-complete tx 200000000) 0) 4 0)))))))
+
+(defn debug-send [mmio dma-pages]
+  (debug-send-byte mmio dma-pages 90))          ; 'Z'
+
+;; ── LAN2 control: receive ────────────────────────────────────────────────
+;; rtl/rings-start already installed and armed ONE RX descriptor on bus3
+;; (ring at dma-pages+4096, buffer at dma-pages+12288, capacity 2048). Until
+;; now nothing read it, which is why bus3 was output-only.
+;;
+;; What follows accepts frames off a wire, so it is written to grant NOTHING.
+;; The command set is closed, every command is answered with a single byte,
+;; and no command reaches kernel state -- there is no code here that stores
+;; anywhere except this module's own TX frame. A control plane that can change
+;; the machine needs the admission discipline the rest of this OS uses, and
+;; that is a separate decision, not a bigger switch statement.
+
+(defn control-frame-valid [frame bytes]
+  ;; eth 14 + ip 20 + udp 8 + 1 payload. Checked positionally against the
+  ;; fixed debug 4-tuple; a frame that is not exactly this is not ours.
+  (and (>= bytes 43)
+       (= (kernel-load-u8-4k frame 4096 12) 8)     ; ethertype 0x0800
+       (= (kernel-load-u8-4k frame 4096 13) 0)
+       (= (kernel-load-u8-4k frame 4096 14) 69)    ; IPv4, IHL 20
+       (= (kernel-load-u8-4k frame 4096 23) 17)    ; UDP
+       (= (kernel-load-u8-4k frame 4096 30) 10)    ; dst 10.10.10.2
+       (= (kernel-load-u8-4k frame 4096 31) 10)
+       (= (kernel-load-u8-4k frame 4096 32) 10)
+       (= (kernel-load-u8-4k frame 4096 33) 2)
+       (= (kernel-load-u8-4k frame 4096 36) 35)    ; dst port 9000 = 0x2328
+       (= (kernel-load-u8-4k frame 4096 37) 40)))
+
+(defn debug-poll [mmio dma-pages]
+  ;; ONE non-blocking look (rtl/wait-rx-command with a zero budget reads the
+  ;; descriptor once and returns 0 if the NIC still owns it). The descriptor
+  ;; is re-armed on every path that consumed it, so a frame we ignore does not
+  ;; wedge the ring.
+  ;;   0        nothing arrived
+  ;;   1        a frame arrived, but it is not ours (re-armed, dropped)
+  ;;   2        a frame arrived and the re-arm failed -- the ring is now dead
+  ;;   128+cmd  a well-formed control datagram carrying command byte cmd
+  (let [rx (kernel-subregion dma-pages 16384 4096 4096)
+        rx-frame (kernel-subregion dma-pages 16384 12288 4096)
+        command (rtl/wait-rx-command rx 0)]
+    (if (= command 0)
+      0
+      (let [bytes (bit-and command 16383)
+            valid-command (and (= (bit-and command 1048576) 0)
+                               (not (= (bit-and command 33554432) 0))
+                               (not (= (bit-and command 16777216) 0))
+                               (>= bytes 22) (<= bytes 2048))
+            payload (if (and valid-command
+                             (control-frame-valid rx-frame (- bytes 4)))
+                      (bit-and (kernel-load-u8-4k rx-frame 4096 42) 127)
+                      0)
+            rearmed (rtl/rx-rearm rx rx-frame)]
+        (if (= rearmed 0)
+          2
+          (if (= payload 0) 1 (+ 128 payload)))))))
+
+(defn debug-tick [dma-pages]
+  ;; Poll once, answer at most once. Returns what the kernel logs:
+  ;;   0        nothing arrived (or bus3's BAR no longer decodes)
+  ;;   1        a frame arrived that was not ours
+  ;;   2        the RX ring is dead (re-arm failed)
+  ;;   64+n     'P' (ping) answered with 'p'; n is the send status
+  ;;   96+n     an unrecognised command answered with '?'; n is the send status
+  ;; The two answered cases are 64..71 and 96..103, so no encoding collides.
+  ;;
+  ;; This resolves its own MMIO rather than taking it: the native ABI caps a
+  ;; function at five parameters, and the resident loop was already at five.
+  ;; Two PCI config reads per cycle is nothing beside a full connect plus a
+  ;; receive window -- and it means the loop carries one bus3 value, not two.
+  (let [bar (rtl/bar-for-bus 3)]
+    (if (= bar 0)
+      0
+      (let [mmio (kernel-subregion 1 549755813887 (- bar 1) 512)
+            seen (debug-poll mmio dma-pages)]
+        (if (< seen 128)
+          seen
+          (if (= (- seen 128) 80)                       ; 'P'
+            (+ 64 (debug-send-byte mmio dma-pages 112))    ; 'p'
+            (+ 96 (debug-send-byte mmio dma-pages 63))))))))  ; '?'
