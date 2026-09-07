@@ -23,7 +23,12 @@
   ;;
   ;; Subset discipline: the kernel target rejects mixed-type equality, so
   ;; every predicate this module defines returns the integer 1/0 and callers
-  ;; compare against 0/1 (the N1 commit's subset-language note).
+  ;; compare with (= x 1). That discipline came from a MEASUREMENT at compiler
+  ;; 13d2f5df, where a :bool parameter on an exported kernel-target function
+  ;; failed :kotoba/target-rejected. Re-measured 2026-09-07 at 3c6d035: a module
+  ;; exporting (defn pick [x :i64 b :bool] :i64 ...) compiles to
+  ;; x86_64-aiueos-kernel-v1 (exit 0). The ceiling moved; the 1/0 idiom here is
+  ;; legacy, not a requirement, and may be retired module by module (lang-h3).
   (:require [capability.link.frame :as link]
             [capability.dma.map :as dma]
             [capability.mmio.map :as mapped]
@@ -353,13 +358,19 @@
         s16 (kernel-store-u64-4k tcb 4096 128 0)
         s18 (kernel-store-u64-4k tcb 4096 (* tcb-slot-local-port 8)
                                  (+ 49152 (bit-and (quot iss 65536) 1023)))]
-    ;; This used to sum (* 0 sN) and compare to 0 -- a check that could not
-    ;; fail. Stores echo the value they wrote; compare each to what was asked.
-    (if (and (= s0 tcp-state-listen) (= s1 0) (= s2 iss) (= s3 0) (= s4 0)
-             (= s5 reassembly-max-bytes) (= s6 iss) (= s7 0) (= s8 1460) (= s9 0)
-             (= s10 5) (= s11 0) (= s12 0) (= s13 3) (= s14 stream-status-listen)
-             (= s15 0) (= s16 0)
-             (= s18 (+ 49152 (bit-and (quot iss 65536) 1023))))
+    ;; Two checks that could not fail, in a row. The original summed (* 0 sN)
+    ;; and compared to 0. The 2026-09-07 rewrite compared each store to the
+    ;; value it was asked to store -- but a kernel store RETURNS its operand and
+    ;; an out-of-range store traps, so that was a tautology too (lang-h13).
+    ;; The only check that can fail is a READ-BACK of the slots that matter.
+    (if (and (= (kernel-load-u64-4k tcb 4096 0) tcp-state-listen)
+             (= (kernel-load-u64-4k tcb 4096 16) iss)
+             (= (kernel-load-u64-4k tcb 4096 40) reassembly-max-bytes)
+             (= (kernel-load-u64-4k tcb 4096 48) iss)
+             (= (kernel-load-u64-4k tcb 4096 112) stream-status-listen)
+             (= (kernel-load-u64-4k tcb 4096 (* tcb-slot-local-port 8))
+                (+ 49152 (bit-and (quot iss 65536) 1023)))
+             (= 0 (* 0 (+ s0 s1 s2 s3 s4 s5 s6 s7 s8 s9 s10 s11 s12 s13 s14 s15 s16 s18))))
       0
       1)))
 
@@ -378,7 +389,12 @@
         s1 (kernel-store-u64-4k tcb 4096 (* (+ slot 1) 8) len)
         s2 (kernel-store-u64-4k tcb 4096 (* (+ slot 2) 8) buffer-index)
         s3 (kernel-store-u64-4k tcb 4096 (* (+ slot 3) 8) (kernel-load-u64-4k tcb 4096 (* tcb-slot-tick 8)))]
-    (if (and (= s0 seq) (= s1 len) (= s2 buffer-index) (= s3 s3)) 1 0)))
+    ;; read-back, not operand echo (lang-h13)
+    (if (and (= (kernel-load-u64-4k tcb 4096 (* slot 8)) seq)
+             (= (kernel-load-u64-4k tcb 4096 (* (+ slot 1) 8)) len)
+             (= (kernel-load-u64-4k tcb 4096 (* (+ slot 2) 8)) buffer-index)
+             (= 0 (* 0 (+ s0 s1 s2 s3))))
+      1 0)))
 
 (defn held-table-load [tcb index field]
   (kernel-load-u64-4k tcb 4096
