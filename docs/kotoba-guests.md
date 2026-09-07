@@ -1,6 +1,6 @@
 # Kotoba guests
 
-Eleven namespaces in this repository compile as pure Kotoba guests.
+Twelve namespaces in this repository compile as pure Kotoba guests.
 `90-docs/adr/0202-first-kernel-guests-are-kotoba-only-and-carry-no-capability.md`
 is the decision record; this page is the working reference.
 
@@ -19,6 +19,7 @@ is the decision record; this page is the working reference.
 | `aiueos/bare_metal.kotoba` | `src/aiueos/bare_metal.cljc` | `p2-result` -- P2 boot classification |
 | `aiueos/virtio.kotoba` | `src/aiueos/virtio.cljc` | interrupt-status decoding, device-type mapping, irq-line validation |
 | `aiueos/image.kotoba` | `src/aiueos/image.cljc` | `boot-input-errors` -- which missing/malformed initramfs input is a refusal |
+| `aiueos/compositor/ime.kotoba` | `src/aiueos/compositor/ime.cljc` | `lookup` + `convert-buf` -- the romaji conversion core (111-entry mora table in 4 chunk maps) |
 
 ## Building
 
@@ -33,7 +34,7 @@ amu compile aiueos/topic.kotoba --target wasm32-browser --output topic.wasm
 A guest that only moves immutable documents **infers** an empty effect row
 and compiles with zero capability lines. All eleven guests in the workspace
 (org-ietf-{smtp,pop3,imap,ed25519,x25519,ical,cbor}, mail, mailer, and the
-eleven here) landed with `:effects #{}`.
+twelve here) landed with `:effects #{}`.
 
 - Effect inference is the default; the row is derived from the body.
 - `perform :kind/op v` is the only capability spelling, used only when an
@@ -57,6 +58,7 @@ permanently excluded — ADR-2608650000).
 | no `document-is-null` lowering | absence is read as `document-count = 0` |
 | no `rem` / `mod` lowering | spelled `quot`-and-subtract |
 | CID strings unbounded | the guest receives CID EQUALITY as booleans |
+| document-map entry limit (32) | the IME mora table (111 entries, measured) splits into 4 chunk maps scanned in order |
 
 ## What stays in the host
 
