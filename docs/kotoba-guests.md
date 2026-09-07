@@ -1,6 +1,6 @@
 # Kotoba guests
 
-Nine namespaces in this repository compile as pure Kotoba guests.
+Ten namespaces in this repository compile as pure Kotoba guests.
 `90-docs/adr/0202-first-kernel-guests-are-kotoba-only-and-carry-no-capability.md`
 is the decision record; this page is the working reference.
 
@@ -17,6 +17,7 @@ is the decision record; this page is the working reference.
 | `aiueos/hardware_qualification.kotoba` | `src/aiueos/hardware_qualification.cljc` | `qualify` -- fail-closed receipt classification |
 | `aiueos/pid1.kotoba` | `src/aiueos/pid1.cljc` | `pid1-argv0?` -- the rdinit=/init contract |
 | `aiueos/bare_metal.kotoba` | `src/aiueos/bare_metal.cljc` | `p2-result` -- P2 boot classification |
+| `aiueos/virtio.kotoba` | `src/aiueos/virtio.cljc` | interrupt-status decoding, device-type mapping, irq-line validation |
 
 ## Building
 
@@ -31,7 +32,7 @@ amu compile aiueos/topic.kotoba --target wasm32-browser --output topic.wasm
 A guest that only moves immutable documents **infers** an empty effect row
 and compiles with zero capability lines. All eleven guests in the workspace
 (org-ietf-{smtp,pop3,imap,ed25519,x25519,ical,cbor}, mail, mailer, and the
-nine here) landed with `:effects #{}`.
+ten here) landed with `:effects #{}`.
 
 - Effect inference is the default; the row is derived from the body.
 - `perform :kind/op v` is the only capability spelling, used only when an
