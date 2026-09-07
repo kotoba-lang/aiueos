@@ -37,14 +37,24 @@
 
 ;; Mac en8 NIC MAC (3c:18:a0:d5:82:a8), the fixed debug peer.
 (defn store-peer-mac [frame]
-  (if (and (= (kernel-store-u8-4k frame 4096 0 60) 60)
-           (= (kernel-store-u8-4k frame 4096 1 24) 24)
-           (= (kernel-store-u8-4k frame 4096 2 160) 160)
-           (= (kernel-store-u8-4k frame 4096 3 213) 213)
-           (= (kernel-store-u8-4k frame 4096 4 130) 130)
-           (= (kernel-store-u8-4k frame 4096 5 168) 168))
-    1
-    0))
+  ;; A kernel store returns its operand, so comparing the store to the byte it
+  ;; was asked to write cannot fail (lang-h13). The check that can is reading
+  ;; the six bytes back.
+  (let [s0 (kernel-store-u8-4k frame 4096 0 60)
+        s1 (kernel-store-u8-4k frame 4096 1 24)
+        s2 (kernel-store-u8-4k frame 4096 2 160)
+        s3 (kernel-store-u8-4k frame 4096 3 213)
+        s4 (kernel-store-u8-4k frame 4096 4 130)
+        s5 (kernel-store-u8-4k frame 4096 5 168)]
+    (if (and (= (kernel-load-u8-4k frame 4096 0) 60)
+             (= (kernel-load-u8-4k frame 4096 1) 24)
+             (= (kernel-load-u8-4k frame 4096 2) 160)
+             (= (kernel-load-u8-4k frame 4096 3) 213)
+             (= (kernel-load-u8-4k frame 4096 4) 130)
+             (= (kernel-load-u8-4k frame 4096 5) 168)
+             (= 0 (* 0 (+ s0 s1 s2 s3 s4 s5))))
+      1
+      0)))
 
 (defn store-device-mac [frame mmio index]
   (if (= index 6)
@@ -52,8 +62,10 @@
     (let [value (kernel-load-u8 mmio 512 index)
           stored (kernel-store-u8-4k frame 4096 (+ 6 index)
                                      (bit-and value 255))]
-      (if (and (= stored (bit-and value 255))
-               (= (kernel-store-u8-4k frame 4096 (+ 6 index) stored) stored))
+      ;; Read the frame byte back (lang-h13). The earlier form compared the
+      ;; store to its operand and then stored the same byte a second time.
+      (if (= (+ (kernel-load-u8-4k frame 4096 (+ 6 index)) (* 0 stored))
+             (bit-and value 255))
         (store-device-mac frame mmio (+ index 1))
         0))))
 
@@ -62,8 +74,11 @@
                                (bit-and (quot value 256) 255))
         lo (kernel-store-u8-4k frame 4096 (+ offset 1)
                                (bit-and value 255))]
-    (if (and (= hi (bit-and (quot value 256) 255))
-             (= lo (bit-and value 255)))
+    (if (and (= (kernel-load-u8-4k frame 4096 offset)
+                (bit-and (quot value 256) 255))
+             (= (kernel-load-u8-4k frame 4096 (+ offset 1))
+                (bit-and value 255))
+             (= 0 (* 0 (+ hi lo))))
       value
       0)))
 
@@ -76,17 +91,24 @@
                                (bit-and (quot value 256) 255))
         b3 (kernel-store-u8-4k frame 4096 (+ offset 3)
                                (bit-and value 255))
-        ok (and (= b0 (bit-and (quot value 16777216) 255))
-                (= b1 (bit-and (quot value 65536) 255))
-                (= b2 (bit-and (quot value 256) 255))
-                (= b3 (bit-and value 255)))]
+        ok (and (= (kernel-load-u8-4k frame 4096 offset)
+                   (bit-and (quot value 16777216) 255))
+                (= (kernel-load-u8-4k frame 4096 (+ offset 1))
+                   (bit-and (quot value 65536) 255))
+                (= (kernel-load-u8-4k frame 4096 (+ offset 2))
+                   (bit-and (quot value 256) 255))
+                (= (kernel-load-u8-4k frame 4096 (+ offset 3))
+                   (bit-and value 255))
+                (= 0 (* 0 (+ b0 b1 b2 b3))))]
     (if ok value 0)))
 
 (defn zero-prefix [frame bytes offset]
   (if (= offset bytes)
     1
     (let [stored (kernel-store-u8-4k frame 4096 offset 0)]
-      (if (= stored 0) (zero-prefix frame bytes (+ offset 1)) 0))))
+      (if (= (+ (kernel-load-u8-4k frame 4096 offset) (* 0 stored)) 0)
+        (zero-prefix frame bytes (+ offset 1))
+        0))))
 
 ;; payload: short fixed ASCII; a richer kprintf comes later. (placeholder
 ;; single byte 'Z'; the stream netlog body is the richer format.)
@@ -109,11 +131,15 @@
            (= (store-peer-mac frame) 1)
            (= (store-device-mac frame mmio 0) 1)
            (= (store-be16 frame 12 2048) 2048)           ; ethertype IPv4
-           (= (kernel-store-u8-4k frame 4096 14 69) 69)  ; v4/IHL
-           (= (kernel-store-u8-4k frame 4096 15 0) 0)
+           (= 0 (* 0 (kernel-store-u8-4k frame 4096 14 69)))  ; v4/IHL
+           (= (kernel-load-u8-4k frame 4096 14) 69)
+           (= 0 (* 0 (kernel-store-u8-4k frame 4096 15 0)))
+           (= (kernel-load-u8-4k frame 4096 15) 0)
            (= (store-be16 frame 16 ip-total-length) ip-total-length)
-           (= (kernel-store-u8-4k frame 4096 22 64) 64)  ; TTL
-           (= (kernel-store-u8-4k frame 4096 23 17) 17)  ; UDP proto
+           (= 0 (* 0 (kernel-store-u8-4k frame 4096 22 64)))  ; TTL
+           (= (kernel-load-u8-4k frame 4096 22) 64)
+           (= 0 (* 0 (kernel-store-u8-4k frame 4096 23 17)))  ; UDP proto
+           (= (kernel-load-u8-4k frame 4096 23) 17)
            ;; IPv4 header checksum. Every other field of this header is a
            ;; compile-time constant, so the checksum is one too: 0x52BA, the
            ;; one's complement of
@@ -129,7 +155,8 @@
            (= (store-be16 frame 34 debug-udp-port) debug-udp-port)
            (= (store-be16 frame 36 debug-udp-port) debug-udp-port)
            (= (store-be16 frame 38 9) 9)                 ; udp len: 8 + 1
-           (= (kernel-store-u8-4k frame 4096 42 payload) payload)
+           (= 0 (* 0 (kernel-store-u8-4k frame 4096 42 payload)))
+           (= (kernel-load-u8-4k frame 4096 42) payload)
            (= (store-be16 frame 40 0) 0))                ; udp checksum 0
     frame-total-length
     0))
