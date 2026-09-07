@@ -20,7 +20,7 @@
   repository can be cloned with no credentials; the fleet finds out the hard
   way if it is wrong."
   #{'io.github.cognitect-labs/test-runner
-    'io.github.kotoba-lang/kotoba-kir
+    'io.github.kotoba-lang/osaho
     'io.github.kotoba-lang/amu
     'io.github.kotoba-lang/security
     'io.github.kotoba-lang/abi})
