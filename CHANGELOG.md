@@ -5,6 +5,26 @@ All notable changes to **aiueos** are documented here. The format follows
 
 ## [Unreleased]
 
+### Kotoba guests: topic bus, os-update, model-channel (ADR-0202)
+- `aiueos/topic.kotoba`, `aiueos/os_update.kotoba` and
+  `aiueos/model_channel.kotoba` compile as pure Kotoba guests
+  (`amu compile --target wasm32-browser`); the `.cljc` sources stay as
+  parity oracles. The topic bus guest carries the whole public surface
+  (publish / latest / take-sample / pending / topic-count / tick /
+  advance).
+- None of the three declares or calls a capability: effect inference
+  answers `:effects #{}` for a guest that only moves immutable documents
+  (ADR-0202 records the rule — a pure guest is written with zero
+  capability lines; a guest that touches the world declares exactly the
+  capabilities it uses, through `perform`).
+- Measured bounds stated in each header: `:container-items 32` (a 33rd
+  queued sample traps `document-vector-too-large`, fail-closed),
+  `max-parameters 5` (booleans as an i64 flags vector), no
+  `document-is-null` lowering (absence is `document-count = 0`), no
+  `rem`/`mod` lowering. Regexes over wire bytes and the publisher
+  closures stay in the host.
+- Reference: `docs/kotoba-guests.md`.
+
 ### Passkey-bound device addition (ADR-0113)
 - The Kotoba Browser setup surface now starts and polls the one-time device
   authorization flow at the formal authority `auth.kotoba.cloud`, under the

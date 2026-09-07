@@ -159,6 +159,26 @@ documented now.
 decision. Which topics a component may publish to is decided in
 `grant.manifest`; carrying the messages is this repository's job.
 
+### Kotoba guests (ADR-0202)
+
+Three namespaces now compile as pure Kotoba guests, the `.cljc` staying as
+the parity oracle (ADR-0202): `aiueos/topic.kotoba` (the whole topic bus —
+publish / latest / take-sample / pending / topic-count / tick / advance),
+`aiueos/os_update.kotoba` (health-status, boot-selection, the non-regex
+manifest faults) and `aiueos/model_channel.kotoba` (the four
+sequence-history rules and the boot decision). All three compile
+(`amu compile --target wasm32-browser`), none declares or calls a
+capability: effect inference answers `:effects #{}` for a guest that only
+moves immutable documents, and the pure-product profile would reject a
+capabilities declaration outright. Measured bounds are stated in each
+guest's header — `:container-items 32` (a 33rd queued sample traps
+`document-vector-too-large`, fail-closed), `max-parameters 5` (booleans
+travel as an i64 flags vector), no `rem`/`mod` lowering (spelled
+`quot`-and-subtract). Regexes over wire bytes, publisher closures and the
+clock stay in the host. The rule the ADR records: a pure guest is written
+with zero capability lines; a guest that touches the world declares
+exactly the capabilities it uses, through `perform`, and nothing else.
+
 What is left here executes, boots and drives hardware.
 
 
