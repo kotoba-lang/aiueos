@@ -5,16 +5,18 @@ All notable changes to **aiueos** are documented here. The format follows
 
 ## [Unreleased]
 
-### Kotoba guests: topic bus, os-update, model-channel, runtime-update, device-auth (ADR-0202)
+### Kotoba guests: nine kernel-adjacent namespaces (ADR-0202)
 - `aiueos/topic.kotoba`, `aiueos/os_update.kotoba`,
-  `aiueos/model_channel.kotoba`, `aiueos/runtime_update.kotoba` and
-  `aiueos/device_auth.kotoba` compile as pure Kotoba guests
+  `aiueos/model_channel.kotoba`, `aiueos/runtime_update.kotoba`,
+  `aiueos/device_auth.kotoba`, `aiueos/vm.kotoba`,
+  `aiueos/hardware_qualification.kotoba`, `aiueos/pid1.kotoba` and
+  `aiueos/bare_metal.kotoba` compile as pure Kotoba guests
   (`amu compile --target wasm32-browser`); the `.cljc` sources stay as
   parity oracles. The topic bus guest carries the whole public surface
   (publish / latest / take-sample / pending / topic-count / tick /
   advance); device-auth carries all sixteen proof refusal reasons in the
   oracle's order, as a linear scan of numbered checks.
-- None of the five declares or calls a capability: effect inference
+- None of the nine declares or calls a capability: effect inference
   answers `:effects #{}` for a guest that only moves immutable documents
   (ADR-0202 records the rule — a pure guest is written with zero
   capability lines; a guest that touches the world declares exactly the

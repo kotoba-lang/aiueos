@@ -1,6 +1,6 @@
 # Kotoba guests
 
-Five namespaces in this repository compile as pure Kotoba guests.
+Nine namespaces in this repository compile as pure Kotoba guests.
 `90-docs/adr/0202-first-kernel-guests-are-kotoba-only-and-carry-no-capability.md`
 is the decision record; this page is the working reference.
 
@@ -13,6 +13,10 @@ is the decision record; this page is the working reference.
 | `aiueos/model_channel.kotoba` | `src/aiueos/model_channel.cljc` | `continuity-errors` `boot-decision` |
 | `aiueos/runtime_update.kotoba` | `src/aiueos/runtime_update.cljc` | `health-status` `manifest-local-errors` `artifact-set-error?` (blue/green) |
 | `aiueos/device_auth.kotoba` | `src/aiueos/device_auth.cljc` | `proof-problem` -- the sixteen-refusal decision chain |
+| `aiueos/vm.kotoba` | `src/aiueos/vm.cljc` | `plan-errors` -- boot-plan validation decisions |
+| `aiueos/hardware_qualification.kotoba` | `src/aiueos/hardware_qualification.cljc` | `qualify` -- fail-closed receipt classification |
+| `aiueos/pid1.kotoba` | `src/aiueos/pid1.cljc` | `pid1-argv0?` -- the rdinit=/init contract |
+| `aiueos/bare_metal.kotoba` | `src/aiueos/bare_metal.cljc` | `p2-result` -- P2 boot classification |
 
 ## Building
 
@@ -27,7 +31,7 @@ amu compile aiueos/topic.kotoba --target wasm32-browser --output topic.wasm
 A guest that only moves immutable documents **infers** an empty effect row
 and compiles with zero capability lines. All eleven guests in the workspace
 (org-ietf-{smtp,pop3,imap,ed25519,x25519,ical,cbor}, mail, mailer, and the
-five here) landed with `:effects #{}`.
+nine here) landed with `:effects #{}`.
 
 - Effect inference is the default; the row is derived from the body.
 - `perform :kind/op v` is the only capability spelling, used only when an

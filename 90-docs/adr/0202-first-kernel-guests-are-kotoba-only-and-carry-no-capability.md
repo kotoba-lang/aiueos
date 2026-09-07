@@ -9,7 +9,7 @@
 
 ## Decision
 
-Five namespaces whose decisions are arithmetic and keywords, not bytes, are
+Nine namespaces whose decisions are arithmetic and keywords, not bytes, are
 now **kotoba-only** — the guest is the component, the `.cljc` stays as the
 parity oracle:
 
@@ -20,8 +20,12 @@ parity oracle:
 | `aiueos/model_channel.kotoba` | `src/aiueos/model_channel.cljc` | continuity-errors (the four sequence-history rules), boot-decision |
 | `aiueos/runtime_update.kotoba` | `src/aiueos/runtime_update.cljc` | blue/green health-status, manifest faults incl. `:incompatible-runtime-abi` |
 | `aiueos/device_auth.kotoba` | `src/aiueos/device_auth.cljc` | the proof-problem chain: all sixteen refusal reasons, in the oracle's order |
+| `aiueos/vm.kotoba` | `src/aiueos/vm.cljc` | boot-plan validation (unknown arch / graphics / console, display-requires-graphics) |
+| `aiueos/hardware_qualification.kotoba` | `src/aiueos/hardware_qualification.cljc` | fail-closed receipt classification, destructive markers need explicit authority |
+| `aiueos/pid1.kotoba` | `src/aiueos/pid1.cljc` | the rdinit=/init argv0 contract, positional scan |
+| `aiueos/bare_metal.kotoba` | `src/aiueos/bare_metal.cljc` | P2 boot classification; the :host-fetch-does-not-count gate kept verbatim |
 
-All five compile (`amu compile --target wasm32-browser`), all pass
+All nine compile (`amu compile --target wasm32-browser`), all pass
 `amu check`, none declares or calls a capability. The device-auth guest
 runs its chain as a linear scan over numbered checks -- each a small
 (state, flags, method) function -- so the refusal order can be diffed
