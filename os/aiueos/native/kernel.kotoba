@@ -627,11 +627,19 @@
                                                      stream-win stream-mmio
                                                      stream-log-frame
                                                      (+ dbg-init (* 0 mark-b)))
-                                        ;; DA then six bytes: bus3's MAC. The
-                                        ;; Mac cannot reach 10.10.10.2 without
-                                        ;; it, because this plane answers UDP
-                                        ;; and not ARP. Emitted once, and only
-                                        ;; when bus3 came up ready.
+                                        ;; bus3's MAC as six DA <byte> PAIRS
+                                        ;; (12 datagrams). The Mac cannot reach
+                                        ;; 10.10.10.2 without it, because this
+                                        ;; plane answers UDP and not ARP.
+                                        ;; Emitted once, only when bus3 came up
+                                        ;; ready. One DA before EVERY byte: the
+                                        ;; wire is one byte per datagram, and
+                                        ;; with a single DA followed by six
+                                        ;; positional bytes a MAC byte FC was
+                                        ;; read as the FC checksum verdict
+                                        ;; (measured 2026-09-07, lang-h9b).
+                                        ;; After a DA the reader consumes
+                                        ;; exactly one byte, whatever its value.
                                         mark-c (if (= dbg-init 0)
                                                  (stream/stream-log
                                                   stream-win stream-mmio
@@ -646,45 +654,75 @@
                                                   bus3-mmio 0)
                                                  (* 0 mark-c)))
                                              0)
+                                        da1 (if (= dbg-init 0)
+                                              (stream/stream-log
+                                               stream-win stream-mmio
+                                               stream-log-frame
+                                               (+ 218 (* 0 m0)))
+                                              0)
                                         m1 (if (= dbg-init 0)
                                              (stream/stream-log
                                               stream-win stream-mmio
                                               stream-log-frame
                                               (+ (debug/debug-mac-byte
                                                   bus3-mmio 1)
-                                                 (* 0 m0)))
+                                                 (* 0 da1)))
                                              0)
+                                        da2 (if (= dbg-init 0)
+                                              (stream/stream-log
+                                               stream-win stream-mmio
+                                               stream-log-frame
+                                               (+ 218 (* 0 m1)))
+                                              0)
                                         m2 (if (= dbg-init 0)
                                              (stream/stream-log
                                               stream-win stream-mmio
                                               stream-log-frame
                                               (+ (debug/debug-mac-byte
                                                   bus3-mmio 2)
-                                                 (* 0 m1)))
+                                                 (* 0 da2)))
                                              0)
+                                        da3 (if (= dbg-init 0)
+                                              (stream/stream-log
+                                               stream-win stream-mmio
+                                               stream-log-frame
+                                               (+ 218 (* 0 m2)))
+                                              0)
                                         m3 (if (= dbg-init 0)
                                              (stream/stream-log
                                               stream-win stream-mmio
                                               stream-log-frame
                                               (+ (debug/debug-mac-byte
                                                   bus3-mmio 3)
-                                                 (* 0 m2)))
+                                                 (* 0 da3)))
                                              0)
+                                        da4 (if (= dbg-init 0)
+                                              (stream/stream-log
+                                               stream-win stream-mmio
+                                               stream-log-frame
+                                               (+ 218 (* 0 m3)))
+                                              0)
                                         m4 (if (= dbg-init 0)
                                              (stream/stream-log
                                               stream-win stream-mmio
                                               stream-log-frame
                                               (+ (debug/debug-mac-byte
                                                   bus3-mmio 4)
-                                                 (* 0 m3)))
+                                                 (* 0 da4)))
                                              0)
+                                        da5 (if (= dbg-init 0)
+                                              (stream/stream-log
+                                               stream-win stream-mmio
+                                               stream-log-frame
+                                               (+ 218 (* 0 m4)))
+                                              0)
                                         m5 (if (= dbg-init 0)
                                              (stream/stream-log
                                               stream-win stream-mmio
                                               stream-log-frame
                                               (+ (debug/debug-mac-byte
                                                   bus3-mmio 5)
-                                                 (* 0 m4)))
+                                                 (* 0 da5)))
                                              0)]
                                     (stream/stream-log stream-win stream-mmio
                                                        stream-log-frame
