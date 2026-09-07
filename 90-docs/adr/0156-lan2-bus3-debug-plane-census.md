@@ -731,7 +731,7 @@ inside an 8 s grace window: the instrument is validated, the budget is not.
 | bridge | TCP connect → 10.77.0.1:8443, closed at once | `K16_STREAM_CONNECTED from <our addr:port>` in bridge.log (netstat -an -p tcp as fallback) |
 | pxe-dhcp | DHCPDISCOVER from MAC `02:52:49:<nonce>` → :67 | `AIUEOS_PXE_DHCP_IGNORED mac=02:52:49:…` (the server offers nothing to a foreign MAC) |
 | pxe-tftp | RRQ for `k16-rig-ctrl-<nonce>` → :69 | `AIUEOS_PXE_TFTP_REJECT … file=k16-rig-ctrl-<nonce>` (only the boot file is served) |
-| bus3-sink | UDP `K16_RIG_CTRL_<nonce>` → 10.10.10.1:9000 | the nonce in the sink named by socat's own argv |
+| bus3-sink | UDP `K16_RIG_CTRL_<nonce>` → 10.10.10.1:9000 | the nonce in the sink named by the receiver's own argv (`k16-bus3-sink.cljs --sink <path>`, where it appears as the `hex=` of the datagram; socat's `OPEN:<path>` form is still recognised) |
 | pxe-process, served-image, bus2-if, bus3-if | none (passive) | pid + log mtime; sha256 + size + the UTF-16 `K16 BUILD` note; `inet` present |
 
 The board is not an instrument. It gets one `BOARD last-seen` line and is
@@ -763,13 +763,44 @@ and the line reports an interval.
   on 09-06 was not tested — that thread is dead and cannot be probed; the
   DHCP and TFTP sockets, which carry the same `IP_BOUND_IF en15`, did receive
   the local controls today.
-- **The bus3 sink is unreadable, and has been since it was unlinked.** socat
-  pid 30661 (`UDP-RECV:9000 … OPEN:/tmp/k16-bus3-en8.log`) is alive and bound,
-  and `lsof` shows fd 6 open for write on that path — but the path does not
-  exist on disk. Datagrams are being appended to an inode nobody can open.
-  The check reports `bus3-sink FAIL` for this on every run; the earlier claim
-  that the listener is "validated before and after each reading" has been
-  false since the file was removed.
+- **The bus3 sink was unreadable from the moment it was unlinked.** socat
+  pid 30661 (`UDP-RECV:9000 … OPEN:/tmp/k16-bus3-en8.log`) was alive and bound,
+  and `lsof` showed fd 6 open for write on that path — but the path did not
+  exist on disk. Datagrams were being appended to an inode nobody could open.
+  The check reported `bus3-sink FAIL` for this on every run; the earlier claim
+  that the listener is "validated before and after each reading" had been
+  false since the file was removed. The coordinator restarted socat at 11:20
+  JST; the sink below replaced it at 11:43 JST.
+
+### The bus3 sink opens its file by name, so it cannot hold a dead inode (2026-09-07)
+
+`tools/k16-bus3-sink.cljs` (nbb; rig-h2 of rank-02) replaces the socat
+listener. socat opened the sink once and kept the fd, which is exactly the
+state the rig check catches; the new sink never keeps the file open. Every
+datagram is `fs.appendFileSync` — open by name, append, close — so an unlink
+between two datagrams costs the file's history and nothing else: the next
+datagram recreates the path, and the file that exists on disk is always the
+file receiving receipts. One line per datagram, `K16_BUS3_RX from=<ip>:<port>
+bytes=<n> hex=<hex> t=<iso>`, plus `K16_BUS3_SINK_READY` on start (also to
+the sink, so the file exists from the first second the socket is bound),
+`K16_BUS3_SINK_ALIVE received=<n> write-failures=<f>` every `--liveness-s`
+(default 300) and `K16_BUS3_SINK_STOP` on a signal — a dead sink and a quiet
+wire no longer look the same, the netlog receiver's rule. It refuses to start
+(exit 2) when the sink directory is missing (`reason=sink-dir-missing`) or
+the address cannot be bound (`reason=bind-failed code=EADDRINUSE|…`), measured
+for all three. Proof on a scratch port, 2026-09-07 02:38Z: datagram one landed
+in inode 2046095454; `rm sink.log`; datagram two recreated the path as inode
+2046095479 holding `K16_BUS3_RX … hex=4b31365f50524f4f465f74776f0a`; SIGTERM
+wrote the STOP line and exited 0. The rig check now recognises both receiver
+shapes and, for the nbb one, treats an absent file as recoverable: it sends
+the control anyway and PASSes with "(sink was absent before the control; the
+receiver recreated it by name)" — measured, alongside FAIL for a stopped sink
+and PASS for the socat shape. First live run after the swap (02:43Z, load
+24.8): `bus3-sink PASS control K16_RIG_CTRL_7ef03b5f -> 10.10.10.1:9000
+recorded after 105ms ; process=nbb pid 17394`, `SUMMARY pass=9 … exit=0`.
+Process discovery requires the command's first token to be the interpreter:
+a `zsh -c '… nbb k16-bus3-sink.cljs --sink $S/x'` wrapper carries the same
+substring and was picked first during this work, with an unexpanded `$S`.
 
 ### Measured output
 
@@ -834,12 +865,14 @@ bridge.
   `BOOTX64.CENSUS-810e0523.EFI` are kept beside it. **Not yet run** — it needs
   a power cycle, and nothing observable is expected to change, because the
   defect it fixes was masked by Ethernet padding at this payload size.
-- The listener is `socat -u UDP-RECV:9000,reuseaddr
-  OPEN:/tmp/k16-bus3-en8.log,creat,append` (pid 30661), and as of 2026-09-07
-  its sink file no longer exists on disk while the process still holds the
-  fd: every bus3 receipt since the unlink is unreadable. `k16-rig-check.cljs`
-  reports it as `bus3-sink FAIL` until socat is restarted with a file that
-  exists; validate with a control datagram before and after each reading. `tcpdump` remains unavailable (BPF needs root),
+- The listener is `nbb os/aiueos/tools/k16-bus3-sink.cljs` (pid 17394 since
+  2026-09-07 11:43 JST, `nohup … >> /tmp/k16-bus3-sink.out`), writing
+  `/tmp/k16-bus3-en8.log` by name on every datagram. It replaced `socat -u
+  UDP-RECV:9000,reuseaddr OPEN:/tmp/k16-bus3-en8.log,creat,append`, whose
+  single long-lived fd made every receipt unreadable once the file was
+  unlinked (2026-09-07, pid 30661). `k16-rig-check.cljs` validates it with a
+  control datagram before and after each reading; the socat shape is still
+  recognised, so a rollback to it is measured rather than UNMEASURED. `tcpdump` remains unavailable (BPF needs root),
   so a frame the Mac drops in `ip_input` is still invisible; the bus2 send byte
   is what separates that case from a NIC that never transmitted.
 
