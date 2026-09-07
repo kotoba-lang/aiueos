@@ -4,7 +4,7 @@ set -eu
 repo=$(CDPATH= cd -- "$(dirname -- "$0")/../../.." && pwd)
 aiueos="$repo/os/aiueos"
 compiler=${1:?usage: build-kotoba-native-boot.sh /path/to/compiler}
-expected=3c6d035aac317de6635f08177781062e623edcb2
+expected=94f8fe37eabac8bf401b75b709fb25fedbbf0878
 actual=$(git -C "$compiler" rev-parse HEAD)
 [ "$actual" = "$expected" ] || {
   echo "error: compiler HEAD is $actual; expected $expected" >&2; exit 1;
@@ -14,6 +14,7 @@ out=${AIUEOS_NATIVE_BOOT_OUT:-"$repo/build/aiueos-native-boot"}
 efi="$out/esp/EFI/BOOT/BOOTX64.EFI"
 second="$out/BOOTX64.reproduced.EFI"
 receipt="$out/receipt.json"
+mkdir -p "$native_out"
 AIUEOS_NATIVE_OUT="$native_out" \
   "$aiueos/scripts/build-kotoba-native-kernel-46eeedae.tmp.sh" "$compiler" >"$native_out/kernel-build.log"
 # The kernel build's own verifier prints one OK line; it used to go to /dev/null,

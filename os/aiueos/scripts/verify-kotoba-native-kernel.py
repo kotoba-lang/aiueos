@@ -54,6 +54,22 @@ cr3_write_encodings = (b"\x0f\x22\xd8", b"\x41\x0f\x22\xda")
 invlpg_encodings = (b"\x0f\x01\x38", b"\x41\x0f\x01\x3a")
 cr0_read_encodings = (b"\x0f\x20\xc0", b"\x41\x0f\x20\xc2")
 cr0_write_encodings = (b"\x0f\x22\xc0", b"\x41\x0f\x22\xc2")
+# The page-fault-recovery configurator's first store names a kernel context
+# slot. Until kotoba-native #153 (4ca092eb, in amu >= 94f8fe37 / f040b483) it
+# was `mov [0x110100],r10` -- an absolute disp32 that the packager had since
+# moved into RX text, so under CR0.WP it page-faulted before the kernel's own
+# #PF gate existed (ADR-0156: CR2=0x110100 -> #GP -> #DF -> triple fault). The
+# slot block now lives at r9+0x160 in the RW context page
+# (`kotoba.native.interrupt-abi/context-slot-block-offset`), and r9 is the
+# context register in compiled Kotoba, so the store is `mov [r9+0x160],r10`.
+# The old absolute form is refused below: a kernel that re-hardcodes the slot
+# is the defect, not older evidence.
+context_slot_store = b"\x4d\x89\x91\x60\x01\x00\x00"
+absolute_context_slot_store = b"\x4c\x89\x14\x25\x00\x01\x11\x00"
+if absolute_context_slot_store in data:
+    raise SystemExit(
+        "error: kernel context slot addressed by absolute disp32 0x110100 "
+        "(inside RX text; kotoba-native #153 moved the slot block to r9+0x160)")
 page_fault_frame_encodings = (
     b"\x41\x0f\x20\xd2\x4c\x8b\x1c\x24",
     b"\x41\x0f\x20\xd2\x4c\x8b\x5c\x24\x30",
@@ -71,7 +87,7 @@ if (not any(encoding in data for encoding in cr3_read_encodings)
         or b"\x41\x0f\x01\x1a" not in data
         or b"\x0f\x01\x0c\x24" not in data
         or not any(encoding in data for encoding in page_fault_frame_encodings)
-        or b"\x4c\x89\x14\x25\x00\x01\x11\x00" not in data
+        or context_slot_store not in data
         or b"\xed" not in data
         or b"\xee" not in data or b"\xef" not in data):
     raise SystemExit("error: privileged paging/protection lowering evidence is absent")
