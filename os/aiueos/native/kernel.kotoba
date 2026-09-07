@@ -42,13 +42,17 @@
      (* (kernel-load-u8 base 96 (+ offset 7)) 72057594037927936)))
 
 ;; Keep only one effectful write live at a time.  This uses less sealed fuel
-;; than retaining sixteen store results and reducing them after the writes,
-;; while still proving every byte writable and zero before publication.
+;; than retaining sixteen store results and reducing them after the writes.
+;; The store proves the byte writable (an out-of-range store traps); it does
+;; NOT prove it zero -- a kernel store returns its operand, so `(= stored 0)`
+;; here was a tautology (lang-h13). The byte is not read back per iteration:
+;; that is one extra load for every byte of every page against the sealed
+;; fuel budget, and the publication gates read the pages they depend on.
 (defn zero-page [page offset]
   (if (= offset 4096)
     1
     (let [stored (kernel-store-u8-4k page 4096 offset 0)]
-      (if (= stored 0)
+      (if (= 0 (* 0 stored))
         (zero-page page (+ offset 1))
         0))))
 
@@ -57,16 +61,14 @@
 ;; transient scalar control flow, so later claims observe earlier decisions.
 (defn claim-slot [state slot]
   (if (= (kernel-load-u8-4k state 4096 slot) 0)
-    (if (= (kernel-store-u8-4k state 4096 slot 1) 1)
-      (if (= (kernel-load-u8-4k state 4096 slot) 1) 1 0)
-      0)
+    (let [claimed (kernel-store-u8-4k state 4096 slot 1)]
+      (if (= (+ (kernel-load-u8-4k state 4096 slot) (* 0 claimed)) 1) 1 0))
     0))
 
 (defn release-slot [state slot]
   (if (= (kernel-load-u8-4k state 4096 slot) 1)
-    (if (= (kernel-store-u8-4k state 4096 slot 0) 0)
-      (if (= (kernel-load-u8-4k state 4096 slot) 0) 1 0)
-      0)
+    (let [released (kernel-store-u8-4k state 4096 slot 0)]
+      (if (= (+ (kernel-load-u8-4k state 4096 slot) (* 0 released)) 0) 1 0))
     0))
 
 (defn load64-page [page offset]
@@ -98,7 +100,7 @@
 ;; literals are unsigned page-table entries.
 (defn store64-nx-page [page offset value]
   (if (and (= (store64-page page offset value) 1)
-           (= (kernel-store-u8-4k page 4096 (+ offset 7) 128) 128)
+           (= 0 (* 0 (kernel-store-u8-4k page 4096 (+ offset 7) 128)))
            (= (kernel-load-u8-4k page 4096 (+ offset 7)) 128))
     1
     0))
@@ -153,9 +155,11 @@
                     (if (= (kernel-load-u8-4k pt 4096 4095) 0) 0 39)))))))))))
 
 (defn claim-eight-status [state]
+  ;; 71 ("the store did not return 1") was unreachable: a store returns its
+  ;; operand (lang-h13). 72 -- the slot does not read back as 1 -- is the check.
   (if (not (= (kernel-load-u8-4k state 4096 0) 0)) 70
-    (if (not (= (kernel-store-u8-4k state 4096 0 1) 1)) 71
-      (if (not (= (kernel-load-u8-4k state 4096 0) 1)) 72
+    (let [claimed (kernel-store-u8-4k state 4096 0 1)]
+      (if (not (= (+ (kernel-load-u8-4k state 4096 0) (* 0 claimed)) 1)) 72
         (if (not (= (claim-slot state 1) 1)) 51
           (if (not (= (claim-slot state 2) 1)) 52
             (if (not (= (claim-slot state 3) 1)) 53
@@ -318,12 +322,13 @@
              (> selector 0) (<= selector 65535)
              (= (store64-page idt-page 224 gate-low) 1)
              (= (store64-page idt-page 232 handler-high) 1)
-             (= (kernel-store-u8-4k idt-page 4096 512 239) 239)
-             (= (kernel-store-u8-4k idt-page 4096 513 0) 0)
+             (= 0 (* 0 (kernel-store-u8-4k idt-page 4096 512 239)))
+             (= 0 (* 0 (kernel-store-u8-4k idt-page 4096 513 0)))
              (= (store64-page idt-page 514 idt-page) 1)
              (= (load64-page idt-page 224) gate-low)
              (= (load64-page idt-page 232) handler-high)
              (= (kernel-load-u8-4k idt-page 4096 512) 239)
+             (= (kernel-load-u8-4k idt-page 4096 513) 0)
              (= (load64-page idt-page 514) idt-page))
       (let [descriptor (kernel-subregion idt-page 4096 512 10)]
         (kernel-load-idt descriptor 10))
