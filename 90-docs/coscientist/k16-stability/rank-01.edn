@@ -52,6 +52,6 @@
   {:id "amu-h9"  :decision :constraint-on "amu-h1" :note "use replenish-bytes, never a hand imm32"}]
  :meta
  {:instruments-failed-this-iteration
-  ["netlog receiver: bound, alive, not recording; local probes to 10.77.0.1 not delivered on any port/binary while 127.0.0.1 is -- unexplained; board frames may still arrive via en15 (untested until the board reboots)"
+  ["netlog receiver 10.77.0.1:7777: MEASURED 2026-09-07 by tools/k16-rig-check.cljs -- local control datagrams to 10.77.0.1 ARE delivered and recorded (from=10.77.0.1:<ephemeral>), 300-1600ms after send at load 113-128, 0 of 14 dropped; one run missed a 2s window on all three UDP controls and every datagram was in the log afterwards (receiver scheduling, not the wire). The 09-06 'not delivered' reading was taken inside that latency as far as this can say; the dead in-process IP_BOUND_IF socket itself could not be probed, but the PXE DHCP/TFTP sockets with the same IP_BOUND_IF en15 received local controls. Board frames DO arrive via en15: netlog.log holds AIUEOS_NETLOG_RX from=10.77.0.10:7779 through AIUEOS_STREAM_45 at 02:03Z on 09-07. NEW instrument failure found by the same check: socat bus3 sink /tmp/k16-bus3-en8.log is unlinked while pid 30661 still writes to it (bus3-sink FAIL)"
    "the board did not self-reset after the 220160-byte boot: with the RX ring live a cycle costs ~64k+ calls, 2^20 buys ~6-12 cycles, debug-run-cycles 256 was never reached, the run ended in a silent ud2 (tcp-h4)"
    "two Generate agents died on a session rate limit at ~23:00 JST; relaunched 09:10"]}}

@@ -710,6 +710,104 @@ of inputs) · `F6` not ours · `F7` admitted · `F8` staged · `F9` delivered ·
 The first instrumentation used `B0`, `B6`, `B7`, `B8` and was unreadable by
 construction.
 
+## The rig check: every instrument echoes a nonce before it is read (2026-09-07)
+
+Four instruments went silent in two days and each silence was read as the
+board's (the dead netlog thread, the unflushed socat sink, grep returning
+nothing, the local UDP probe that "was not delivered"). The instrument's null
+and the board's null had the same shape every time. `tools/k16-rig-check.cljs`
+(nbb, no new .sh or .py) gives each instrument a control it must echo, tagged
+with a fresh nonce so that a stale log cannot satisfy it, and prints one line
+per instrument: `INSTRUMENT<TAB>name<TAB>PASS|SLOW|FAIL|UNMEASURED<TAB>evidence`.
+Exit 0 = every control came back; 1 = a control did not (the line names it and
+why); 2 = something could not be measured at all (a log path that does not
+exist is not a failed instrument, it is a question that was not asked). 2 wins
+over 1. `SLOW` means the nonce came back after the 2 s reading budget but
+inside an 8 s grace window: the instrument is validated, the budget is not.
+
+| instrument | control | must appear as |
+|---|---|---|
+| netlog | UDP `K16_RIG_CTRL_<nonce>` → 10.77.0.1:7777 | `AIUEOS_NETLOG_RX from=10.77.0.1:… message=K16_RIG_CTRL_<nonce>` in netlog.log |
+| bridge | TCP connect → 10.77.0.1:8443, closed at once | `K16_STREAM_CONNECTED from <our addr:port>` in bridge.log (netstat -an -p tcp as fallback) |
+| pxe-dhcp | DHCPDISCOVER from MAC `02:52:49:<nonce>` → :67 | `AIUEOS_PXE_DHCP_IGNORED mac=02:52:49:…` (the server offers nothing to a foreign MAC) |
+| pxe-tftp | RRQ for `k16-rig-ctrl-<nonce>` → :69 | `AIUEOS_PXE_TFTP_REJECT … file=k16-rig-ctrl-<nonce>` (only the boot file is served) |
+| bus3-sink | UDP `K16_RIG_CTRL_<nonce>` → 10.10.10.1:9000 | the nonce in the sink named by socat's own argv |
+| pxe-process, served-image, bus2-if, bus3-if | none (passive) | pid + log mtime; sha256 + size + the UTF-16 `K16 BUILD` note; `inet` present |
+
+The board is not an instrument. It gets one `BOARD last-seen` line and is
+never a failure: PXE log lines carry no clock, so the bound comes from the
+mtime of any log whose newest line is the board's. Because the check's own
+controls push that line off the end of every log, the tightest bound ever
+measured is carried in `/private/tmp/aiueos-k16-pxe/rig-check-receipt.edn`
+and the line reports an interval.
+
+### Three things the check measured that were not known before it ran
+
+- **`grep` on server.log is blind without `-a`, in any locale.** `grep` on
+  this Mac is ugrep 7.8.4; server.log holds 4.0 million of the board's
+  NUL-padded netlog frames from before the in-process receiver died, so the
+  file is classified binary and every pattern matches nothing. With `-a`,
+  442 `AIUEOS_PXE_TFTP_RRQ` lines. The check never shells out to grep; it
+  reads bytes and decodes latin1, and prints `nul-bytes=present(grep needs -a)`
+  on the pxe-process line so the next reader does not rediscover this.
+- **Local UDP to 10.77.0.1 is delivered — slowly.** Every control datagram sent
+  to 10.77.0.1:7777/:67/:69 over nine runs was recorded, and recorded with the
+  source `from=10.77.0.1:<ephemeral>`. Latency at load average 113–128 was
+  300–1600 ms; one run missed the 2 s window on all three UDP instruments and
+  every one of those datagrams was in the log when looked for afterwards. A
+  burst of five datagrams 200 ms apart was recorded as one block ~1.1 s after
+  the first send, none dropped: the wait is the receiver process waiting to be
+  scheduled, not the wire. So the 2026-09-06 "not delivered" reading (rank-01)
+  was, as far as this measurement can say, a reading taken inside the latency.
+  Whether the in-process receiver's `IP_BOUND_IF` socket behaved differently
+  on 09-06 was not tested — that thread is dead and cannot be probed; the
+  DHCP and TFTP sockets, which carry the same `IP_BOUND_IF en15`, did receive
+  the local controls today.
+- **The bus3 sink is unreadable, and has been since it was unlinked.** socat
+  pid 30661 (`UDP-RECV:9000 … OPEN:/tmp/k16-bus3-en8.log`) is alive and bound,
+  and `lsof` shows fd 6 open for write on that path — but the path does not
+  exist on disk. Datagrams are being appended to an inode nobody can open.
+  The check reports `bus3-sink FAIL` for this on every run; the earlier claim
+  that the listener is "validated before and after each reading" has been
+  false since the file was removed.
+
+### Measured output
+
+Live rig, 2026-09-07 02:13:53Z, load 128 (abridged; evidence columns cut):
+
+```
+INSTRUMENT  bus2-if       PASS  en15 inet 10.77.0.1 status: active
+INSTRUMENT  bus3-if       PASS  en8 inet 10.10.10.1 status: active
+INSTRUMENT  pxe-process   PASS  pid 11960 since Sat Sep 5 09:39:28 2026 ; bytes=270032435 nul-bytes=present(grep needs -a)
+INSTRUMENT  served-image  PASS  sha256=3170dcd9… bytes=224256 build=utf16le:K16 BUILD 47b8c20985da0d0f 7713901-dirty ; last board RRQ served this size
+INSTRUMENT  bus3-sink     FAIL  sink /tmp/k16-bus3-en8.log does not exist on disk while the receiver is alive -- its fd points at an unlinked inode
+INSTRUMENT  bridge        PASS  connected from 10.77.0.1:56273 ; logged after 506ms as: K16_STREAM_CONNECTED from 10.77.0.1:56273
+INSTRUMENT  netlog        PASS  control K16_RIG_CTRL_89ddf0cb sent to 10.77.0.1:7777 recorded after 710ms as: AIUEOS_NETLOG_RX from=10.77.0.1:61246 message=K16_RIG_CTRL_89ddf0cb
+INSTRUMENT  pxe-dhcp      PASS  DHCPDISCOVER from 02:52:49:70:6c:95 -> 10.77.0.1:67 logged after 1221ms as: AIUEOS_PXE_DHCP_IGNORED mac=02:52:49:70:6c:95
+INSTRUMENT  pxe-tftp      PASS  RRQ k16-rig-ctrl-f805267d -> 10.77.0.1:69 logged after 1325ms as: AIUEOS_PXE_TFTP_REJECT from=10.77.0.1:55849 file=k16-rig-ctrl-f805267d
+SUMMARY     pass=8 slow=0 fail=1 unmeasured=0 exit=1 failed=bus3-sink
+```
+
+`BOARD last-seen between 2026-09-07T02:03:22.950Z and 2026-09-07T02:12:55.701Z`
+— the board booted the 224256-byte `47b8c209…` image at 02:03Z (11:03 JST):
+`bridge.log` ended with `K16_STREAM_CONNECTED from 10.77.0.10:49636` and
+netlog.log with `AIUEOS_STREAM_45` at that minute, and the last TFTP RRQ in
+server.log served exactly 224256 bytes.
+
+Broken on purpose, `--netlog-port 7778`, same rig one minute later:
+
+```
+INSTRUMENT  pxe-tftp  SLOW  RRQ k16-rig-ctrl-8a5df637 -> 10.77.0.1:69 logged after 2028ms as: AIUEOS_PXE_TFTP_REJECT …
+INSTRUMENT  netlog    FAIL  control K16_RIG_CTRL_b704864c sent to 10.77.0.1:7778 NOT recorded in /private/tmp/aiueos-k16-pxe/netlog.log within 10000ms (never arrived, or receiver not scheduled) ; process=pid 45443 … socket=not-bound
+SUMMARY     pass=6 slow=1 fail=2 unmeasured=0 exit=1 failed=netlog,bus3-sink
+```
+
+It fails for the reason it names (`socket=not-bound` on 7778), and the `SLOW`
+line is the 28 ms by which a 2 s reader would have called TFTP dead.
+`--bridge-port 8444` exits 1 with `connect ECONNREFUSED`; `--bridge-log
+/nonexistent` exits 2 with `UNMEASURED`, not 1 — a missing log is not a dead
+bridge.
+
 ## Status of the artifacts
 
 - Commit `e09e4f1` (Phase 1 — bus3 single-shot) is superseded by commit
@@ -736,9 +834,12 @@ construction.
   `BOOTX64.CENSUS-810e0523.EFI` are kept beside it. **Not yet run** — it needs
   a power cycle, and nothing observable is expected to change, because the
   defect it fixes was masked by Ethernet padding at this payload size.
-- The listener is now `socat -u UDP-RECV:9000,reuseaddr
-  OPEN:/tmp/k16-bus3-en8.log,creat,append`, validated with a control datagram
-  before and after each reading. `tcpdump` remains unavailable (BPF needs root),
+- The listener is `socat -u UDP-RECV:9000,reuseaddr
+  OPEN:/tmp/k16-bus3-en8.log,creat,append` (pid 30661), and as of 2026-09-07
+  its sink file no longer exists on disk while the process still holds the
+  fd: every bus3 receipt since the unlink is unreadable. `k16-rig-check.cljs`
+  reports it as `bus3-sink FAIL` until socat is restarted with a file that
+  exists; validate with a control datagram before and after each reading. `tcpdump` remains unavailable (BPF needs root),
   so a frame the Mac drops in `ip_input` is still invisible; the bus2 send byte
   is what separates that case from a NIC that never transmitted.
 
