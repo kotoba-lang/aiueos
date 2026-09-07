@@ -1,0 +1,26 @@
+;; Evolve 01 — 2026-09-07 10:5x JST. What the Evolve agents produced before a
+;; session rate limit (reset 11:00) cut all six off, what was salvaged from
+;; their worktrees, and what was measured by hand afterwards.
+{:kernel
+ {:served {:kernel "47b8c209" :efi "3170dcd9" :bytes 224256 :panel "AIUEOS K16 BUILD 47b8c20985da0d0f"
+           :contains ["tcp-h1" "tcp-h3" "tcp-h4" "tcp-h7" "tcp-h9" "tcp-h10" "tcp-h14 (read-back form)" "lang-h3 header correction"]
+           :measured :not-yet   ;; board down since 2026-09-06 22:0x; power cycle pending
+           :note "da7699c7 (tier 1 with the tautological tcp-h14) was served 09:0x-10:3x and never booted"}}
+ :agents
+ [{:id "E1" :repo "kotoba-native" :hyps ["cr3-h1" "cr3-h4"] :worktree "/private/tmp/claude-501/wt-kotoba-native-cr3" :branch "agent/cr3-context-slots"
+   :state :cut-off :left "1 dirty file (interrupt_abi.cljc): slot block + mini-assembler in progress; 0 commits" :resume :send-message}
+  {:id "E2" :repo "amu" :hyps ["amu-h5" "amu-h6" "amu-h10"] :worktree "/private/tmp/claude-501/wt-amu-fuel" :branch "agent/fuel-threading-diagnostics"
+   :state :cut-off :left "12 dirty files across cli.clj core.clj diagnostic.cljc nbb/cli.cljs nbb/project_source.cljs; 0 commits" :resume :send-message}
+  {:id "E4" :repo "kototama" :hyps ["koto-h2" "koto-h3" "koto-h7" "koto-h9"] :worktree "/private/tmp/claude-501/wt-kototama-gates" :branch "agent/gates-that-can-fail"
+   :state :partially-landed :pr "https://github.com/kotoba-lang/kototama/pull/135"
+   :measured "by hand 10:4x: cli-test + maturity-test + browser-test = Ran 27 tests, 373 assertions, 0 failures (sibling :local/root deps symlinked; h7 WIP stashed). Break: cmd-doctor forced to {:ok? true} -> FAIL doctor-goes-red-when-a-report-disagrees (cli_test.clj:103,104); unbreak -> green."
+   :left "koto-h7 uncommitted WIP (runtime_conformance.clj + test); koto-h9 not started" :resume :send-message}
+  {:id "E5" :repo "root" :hyps ["silence-h3" "silence-h8" "silence-h9" "silence-h12"] :worktree "/private/tmp/claude-501/wt-root-silence3" :branch "agent/silence-detectors-3"
+   :state :landed-as-draft :pr "https://github.com/com-junkawasaki/root/pull/2977"
+   :measured "catch-swallow: aiueos 184/18, kototama 107/28, empty exit 2. fuel-literal-vs-policy: aiueos 285/12 (policy 1048576), kototama exit 2 (no policy), empty exit 2. checker-floors: kototama SCANNED 1 CLEAN, kotoba-lang SCANNED 4 CLEAN, empty exit 2 -- NOT DISCRIMINATING yet: the known floorless checkers crash (exit 1) on a missing input instead of printing PASS; the hazard is an empty-but-present input. Registry: 3 entries added, EDN parses (70 detectors)."
+   :note "pushed twice into the west-pin guard because origin/main advanced pins between fetch and push; re-seated by cherry-pick on the newest main (west.yml untouched)"}
+  {:id "E6" :repo "kotoba-sema" :hyps ["lang-h12" "lang-h6" "lang-h5"] :state :not-started :note "died before its first edit; relaunch"}
+  {:id "G6" :theme "rig/instruments (+ the 10.77.0.1 local-UDP delivery mystery)" :state :not-started :note "died twice on rate limits; relaunch"}]
+ :meta
+ ["Six agents were cut off by one session limit; work in worktrees survived and was salvaged by hand. Salvage cost ~45 min and found one real defect in the salvage itself: cherry-pick -q | tail swallowed a failure (0 commits landed, push went through with nothing) -- the $? class again."
+  "verify-checker-floors was written to the hypothesis, not to a measured red; the hypothesis was about empty-but-present inputs and the detector probes missing inputs. Same lesson as the kernel: a gate is landed when it has been seen red on the thing it names."]}
