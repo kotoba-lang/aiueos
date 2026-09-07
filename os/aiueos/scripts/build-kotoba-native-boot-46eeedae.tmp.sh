@@ -14,6 +14,7 @@ out=${AIUEOS_NATIVE_BOOT_OUT:-"$repo/build/aiueos-native-boot"}
 efi="$out/esp/EFI/BOOT/BOOTX64.EFI"
 second="$out/BOOTX64.reproduced.EFI"
 receipt="$out/receipt.json"
+mkdir -p "$native_out"
 AIUEOS_NATIVE_OUT="$native_out" \
   "$aiueos/scripts/build-kotoba-native-kernel-46eeedae.tmp.sh" "$compiler" >"$native_out/kernel-build.log"
 # The kernel build's own verifier prints one OK line; it used to go to /dev/null,
