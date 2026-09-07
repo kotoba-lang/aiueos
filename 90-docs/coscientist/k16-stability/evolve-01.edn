@@ -2,10 +2,11 @@
 ;; session rate limit (reset 11:00) cut all six off, what was salvaged from
 ;; their worktrees, and what was measured by hand afterwards.
 {:kernel
- {:served {:kernel "47b8c209" :efi "3170dcd9" :bytes 224256 :panel "AIUEOS K16 BUILD 47b8c20985da0d0f"
-           :contains ["tcp-h1" "tcp-h3" "tcp-h4" "tcp-h7" "tcp-h9" "tcp-h10" "tcp-h14 (read-back form)" "lang-h3 header correction"]
-           :measured :not-yet   ;; board down since 2026-09-06 22:0x; power cycle pending
-           :note "da7699c7 (tier 1 with the tautological tcp-h14) was served 09:0x-10:3x and never booted"}}
+ {:served {:kernel "dca9d47c" :efi "f039f387" :bytes 224256 :panel "AIUEOS K16 BUILD dca9d47c578b7f3b 964da2e" :deployed "2026-09-07 11:3x"
+           :contains ["everything in 47b8c209" "debug-run-cycles 4" "(rig) k16-bridge.cljs debug mode: greeting + RST close"]
+           :reproducible "two builds, identical sha (image f039f387 / kernel 92d35d92)"
+           :measured :not-yet   ;; board is in ud2 from the 47b8c209 run; power cycle pending
+           :previous {:kernel "47b8c209" :booted "2026-09-07 11:03 JST" :measured "1 boot; 5 cycles reached A9 and the bridge logged all five (ports 49632-49636); each ESTABLISHED window = E8 F1 ... E0 F1 then 21 (nine empty polls, no F5 -- tcp-h1 held, no F7 -- the forwarder bridge never speaks first); cycle 6 = A2 A3 A4 (its SYN hit the previous boot's still-open 4-tuple, same ports every boot); a 7th A1 then silence -- no DE, the run died in ud2 at cadence 6. The single FC on the wire is a MAC byte inside the DA block (70 70 FC 0B B6 31), not a checksum verdict -- the DA channel is the collision class the wire-bytes registry now names."}}
  :agents
  [{:id "E1" :repo "kotoba-native" :hyps ["cr3-h1" "cr3-h4"] :worktree "(retired)" :branch "agent/cr3-context-slots"
    :state :landed :pr "https://github.com/kotoba-lang/kotoba-native/pull/153" :main "4ca092eb2902" :base "df681ff7"
@@ -37,6 +38,9 @@
    :measured "verify-store-tautology.cljs on the K16 tip: SCANNED 10 .kotoba files, 230 kernel-store-* forms, FINDINGS 129 (tcp_stream 69, rtl8125 33, debug_link 20, kernel 7; direct/tautology 73, let-bound/tautology 55, let-bound/operand-echo 1), exit 1. reflect-01's 36 = the direct (= (kernel-store-...) v) lines in tcp_stream alone; the let-bound form (s bound to a store, then (= s v)) adds 33 there. The f752e1f READ-BACK sites in tcb-init / held-table-store (tcp_stream 343-398): 0 reported. Fixture with only the read-back form -> exit 0; empty dir and an unparseable file -> exit 2."
    :left "the corpus rewrite of the 129 sites is NOT done (kernel-rebuilding change, separate hypothesis). tcp_stream.kotoba:252 (= rx-hi 0) is the one operand-echo -- a real check of the ring base's high half, reported under its own class on purpose, not to be rewritten as a read-back blindly. Not covered: wrapper stores store-be16 / frame-store-be16-stream (75 direct-compare lines by grep in the three netlog modules); their return contract was not asserted."
    :note "tcp_stream.kotoba:237-251 already says 'Stores return the value they wrote' and line 251 then compares rx-lo to the value it stored. The knowledge was in the comment and not in the code -- which is what a detector is for."}]
+  {:id "K1" :repo "aiueos" :hyps ["tcp-h5 (bridge greeting)" "tcp-h4 (cadence 4)" "rig: bridge RST-close"] :worktree ".claude/worktrees/aiueos-k16" :branch "k16-stream-20260906"
+   :state :deployed-unmeasured :commit "964da2e"
+   :note "coordinator, not an agent. k16-bridge.cljs (nbb) replaces the Python forwarder: greeting on connect, RX logged as hex, RST after 1000 ms so the Mac holds no 4-tuple state; loopback proof + k16-rig-check 9/9 PASS after the swap (bus3 sink restarted: its fd pointed at an unlinked inode). Boot build now refuses when the kernel verifier's OK line is missing (it went to /dev/null before). Prediction for f039f387: A9 then F7 F8 (greeting admitted, staged) and a data ACK, then FA/70 on the RST; DE after 4 cycles and a self-reset through 0xCF9."}
  :meta
  ["11:0x: /Users/junkawasaki/github/wt (the aiueos-n2-tranche1 worktree and two others) was removed from disk at ~10:48 by something outside this session; everything committed was already on origin/k16-stream-20260906 (b0f6c1e, 10:39). Ledger edits continue from a fresh worktree of that tip."
   "Six agents were cut off by one session limit; work in worktrees survived and was salvaged by hand. Salvage cost ~45 min and found one real defect in the salvage itself: cherry-pick -q | tail swallowed a failure (0 commits landed, push went through with nothing) -- the $? class again."

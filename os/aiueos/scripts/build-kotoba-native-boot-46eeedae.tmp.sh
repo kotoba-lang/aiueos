@@ -15,7 +15,12 @@ efi="$out/esp/EFI/BOOT/BOOTX64.EFI"
 second="$out/BOOTX64.reproduced.EFI"
 receipt="$out/receipt.json"
 AIUEOS_NATIVE_OUT="$native_out" \
-  "$aiueos/scripts/build-kotoba-native-kernel-46eeedae.tmp.sh" "$compiler" >/dev/null
+  "$aiueos/scripts/build-kotoba-native-kernel-46eeedae.tmp.sh" "$compiler" >"$native_out/kernel-build.log"
+# The kernel build's own verifier prints one OK line; it used to go to /dev/null,
+# so a boot build that skipped verification and one that passed it printed the
+# same three lines. Re-say the line here or refuse.
+grep -a 'AIUEOS_KOTOBA_NATIVE_KERNEL_OK' "$native_out/kernel-build.log" || {
+  echo "error: kernel build log has no AIUEOS_KOTOBA_NATIVE_KERNEL_OK line ($native_out/kernel-build.log)" >&2; exit 1; }
 mkdir -p "$(dirname -- "$efi")"
 set -- package-aiueos-boot "$native_out/KERNEL.ELF" --output "$efi"
 if [ "${AIUEOS_NATIVE_K16_PREFLIGHT:-0}" = 1 ]; then
