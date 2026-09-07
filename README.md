@@ -44,8 +44,12 @@ Windows or macOS is not claimed.
 ## What it is not
 
 - **Not a desktop, not a phone, not an embedded target.** The only ISA with a
-  bare-metal kernel is x86-64. The AArch64 artifacts under `resources/hvt/`
-  are hypervisor-guest spikes, not a second port. There is no Android, iOS,
+  complete bare-metal kernel is x86-64. The AArch64 material under
+  `os/aiueos/aarch64/` is a bare-metal **bootstrap** (UEFI loader + freestanding
+  kernel with a self-built `TTBR0_EL1` and enforced W^X, ADR-2608080600 tracks
+  a1/a2) — it does not yet reach a userspace or full kernel, so it is not a
+  second port. The AArch64 artifacts under `resources/hvt/` are
+  hypervisor-guest spikes. There is no Android, iOS,
   Raspberry Pi or IoT profile, and nothing here claims one.
 - **Not POSIX.** The first syscall ABI is capability-handle based. POSIX is an
   optional service, not the kernel authority (ADR-0013).

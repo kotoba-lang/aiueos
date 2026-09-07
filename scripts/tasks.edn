@@ -45,6 +45,16 @@
  {:cmd ["nbb" "os/aiueos/scripts/smoke-qemu-offline-floor.cljs"]
   :doc "Boot with and without a NIC and require the difference to be exactly the three network markers. Needs KERNEL.ELF and BOOTX64.EFI built first."}
 
+;; AArch64 bare-metal boot path (root ADR-2608080600 tracks a1/a2, landed).
+;; Gate written in nbb per the 2026-07-14 owner rule. Requires an AArch64
+;; toolchain (clang --target=aarch64, aarch64 lld), qemu-system-aarch64 with
+;; AAVMF firmware at /usr/share/AAVMF/, and mkfs.vfat/mtools. The x86_64 host
+;; that runs the rest of the smoke chain may not have these — status is
+;; unmeasured on this Mac until the AAVMF firmware set is provisioned.
+ :aarch64-boot-smoke
+ {:cmd ["nbb" "os/aiueos/aarch64/smoke-qemu-aarch64-uefi.cljs"]
+  :doc "Boot the AArch64 UEFI loader + kernel (loaded from an ESP under AAVMF) and require every AIUEOS_AARCH64_ marker on PL011 serial, with SCTLR_EL1.M actually set, tables from the page allocator, and both W^X directions faulting at the exact ESR class. --expect-fail runs three negative controls. Needs clang/lld(aarch64)/qemu-system-aarch64/AAVMF/mkfs.vfat/mtools."}
+
  ;; SSH passive-open listener (ssh-v1.edn / ADR-0102). Build the SSH kernel
  ;; variant, then boot it and have a real external client complete an inbound
  ;; TCP connection + SSH identification exchange. No crypto -- this proves the
