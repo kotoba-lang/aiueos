@@ -231,25 +231,34 @@
         disabled (kernel-store-u8 mmio 512 55 0)
         rx-lo (kernel-store-u32 mmio 512 228
                                 (bit-and ring-base 4294967295))
-        rx-hi (kernel-store-u32 mmio 512 232
-                                (quot ring-base 4294967296))
+        ;; The ring must sit in the low 4 GiB: RDSAR-high is written, but the
+        ;; real check is on the VALUE (the operand), which is why it is named
+        ;; before the store rather than recovered from the store's return.
+        ring-hi (quot ring-base 4294967296)
+        rx-hi (kernel-store-u32 mmio 512 232 ring-hi)
         started (kernel-store-u8 mmio 512 55 12)]
-    ;; Stores return the value they wrote, so rx-lo must be checked against
-    ;; the ring base's low 32 bits -- not against 0. The original (= rx-lo 0)
-    ;; can only pass when dma-base is 4-GiB aligned, which the loader's
-    ;; fourteen-page EfiLoaderData allocation never is: measured on the K16
-    ;; 2026-09-05 as STATUS 21 (= 0x121 = 192 + 97, this function's failure).
-    ;; rx-hi vs 0 is right for the low-RAM scratch and stays.
+    ;; A kernel store returns its operand, so `(= c0 (rx-ring-command ...))`,
+    ;; `(= ad0 a0)`, `(= rx-lo (bit-and ring-base ...))` and their neighbours
+    ;; could never be false (lang-h13). What CAN fail, and is checked:
+    ;;   - the four buffer addresses read back from the ring (the NIC never
+    ;;     writes +16 of a descriptor, so this is race-free);
+    ;;   - ring-hi = 0 -- the low-RAM scratch check. The original (= rx-lo 0)
+    ;;     could only pass when dma-base was 4-GiB aligned, which the loader's
+    ;;     fourteen-page EfiLoaderData allocation never is: measured on the
+    ;;     K16 2026-09-05 as STATUS 21 (= 0x121 = 192 + 97, this function).
+    ;; NOT read back, only sequenced: the four OWN words (a running engine may
+    ;; clear OWN before the load returns) and the MMIO writes (ChipCmd's
+    ;; StopReq self-clears; whether RDSAR echoes is a register question this
+    ;; rewrite does not settle).
     (if (and (= z 1)
-             (= c0 (rx-ring-command rx-buffer-capacity 0))
-             (= c1 (rx-ring-command rx-buffer-capacity 0))
-             (= c2 (rx-ring-command rx-buffer-capacity 0))
-             (= c3 (rx-ring-command rx-buffer-capacity 1))
-             (= ad0 a0) (= ad1 a1) (= ad2 a2) (= ad3 a3)
+             (= (kernel-load-u64-16k ring 1024 16) a0)
+             (= (kernel-load-u64-16k ring 1024 48) a1)
+             (= (kernel-load-u64-16k ring 1024 80) a2)
+             (= (kernel-load-u64-16k ring 1024 112) a3)
              (= fenced0 1) (= fenced 1)
-             (= stopped (bit-or chip 128)) (= disabled 0) (= started 12)
-             (= rx-lo (bit-and ring-base 4294967295))
-             (= rx-hi 0))
+             (= ring-hi 0)
+             (= 0 (* 0 (+ c0 c1 c2 c3 ad0 ad1 ad2 ad3
+                          stopped disabled started rx-lo rx-hi))))
       (+ 0 (* 0 drained))
       97)))
 
@@ -269,9 +278,12 @@
   ;; Zero the four 32-byte descriptors (128 bytes) before populating them, so
   ;; the reserved words at +0..+15 and +24 are 0 rather than whatever the
   ;; previous cycle -- or the diagnostics profile's ring -- left there.
+  ;; Sequenced, not read back (lang-h13): this ring can still be NIC-owned
+  ;; from the previous cycle, and a completion landing mid-loop would make a
+  ;; per-byte read-back refuse a ring that is about to be re-armed anyway.
   (if (= offset 128)
     1
-    (if (= (kernel-store-u8-16k ring 1024 offset 0) 0)
+    (if (= 0 (* 0 (kernel-store-u8-16k ring 1024 offset 0)))
       (rx-ring-zero ring (+ offset 1))
       0)))
 
@@ -306,15 +318,17 @@
         address (kernel-store-u64-16k win dma-window-bytes (+ d 16)
                                       (rx-ring-buffer-base dma-base index))
         extension (kernel-store-u32-16k win dma-window-bytes (+ d 24) 0)
+        ;; read back before the OWN word is written (lang-h13)
+        extension-read (kernel-load-u32-16k win dma-window-bytes (+ d 24))
         fenced (dma/release-fence)
         command (kernel-store-u32-16k win dma-window-bytes (+ d 28)
                                       (rx-ring-command rx-buffer-capacity
                                                        (if (= index 3) 1 0)))
         after (dma/release-fence)]
-    (if (and (= extension 0) (= fenced 1) (= after 1)
-             (= command (rx-ring-command rx-buffer-capacity
-                                         (if (= index 3) 1 0))))
-      (+ 1 (* 0 address))
+    ;; The OWN word is sequenced, not read back: it hands the descriptor to a
+    ;; running engine, which may clear OWN before the load returns.
+    (if (and (= extension-read 0) (= fenced 1) (= after 1))
+      (+ 1 (* 0 (+ address extension command)))
       0)))
 
 (defn tcb-status [state]
@@ -478,7 +492,10 @@
                                     (+ source-offset (- count 1)))
           stored (kernel-store-u8-4k staging 4096
                                      (+ staging-offset (- count 1)) value)]
-      (if (= stored value)
+      ;; Sequenced, not read back (lang-h13): this runs once per payload byte
+      ;; inside the resident window, and a load per byte is fuel the sealed
+      ;; budget was not measured against.
+      (if (= 0 (* 0 stored))
         (stage-payload-at win source-offset staging-offset (- count 1) staging)
         0))))
 
@@ -498,25 +515,46 @@
         ack (kernel-load-u64-4k tcb 4096 (* tcb-slot-rcv-nxt 8))
         peer-seq (seq-core/wrap ack)
         own-seq (seq-core/wrap seq)]
-    (if (and (= (kernel-store-u8-16k tx-frame 4096 0 0) 0)
-             (= (kernel-store-u8-4k tx-frame 4096 14 69) 69)
-             (= (kernel-store-u8-4k tx-frame 4096 15 0) 0)
-             (= (kernel-store-u16-16k tx-frame 4096 16 total-length) total-length)
-             (= (kernel-store-u16-16k tx-frame 4096 18 1) 1)
-             (= (kernel-store-u16-16k tx-frame 4096 20 16384) 16384)
-             (= (kernel-store-u8-4k tx-frame 4096 22 64) 64)
-             (= (kernel-store-u8-4k tx-frame 4096 23 6) 6)
-             (= (kernel-store-u32-4k tx-frame 4096 26 src) src)
-             (= (kernel-store-u32-4k tx-frame 4096 30 dst) dst)
-             (= (kernel-store-u16-4k tx-frame 4096 34 49155) 49155)
-             (= (kernel-store-u16-4k tx-frame 4096 36 8443) 8443)
-             (= (kernel-store-u32-4k tx-frame 4096 38 own-seq) own-seq)
-             (= (kernel-store-u32-4k tx-frame 4096 42 peer-seq) peer-seq)
-             (= (kernel-store-u8-4k tx-frame 4096 46 80) 80)
-             (= (kernel-store-u8-4k tx-frame 4096 47 16) 16)
-             (= (kernel-store-u16-4k tx-frame 4096 48 256) 256)
-             (= (kernel-store-u16-4k tx-frame 4096 50 0) 0)
-             (= (kernel-store-u16-4k tx-frame 4096 52 0) 0))
+    ;; Each field is stored where it was and then READ BACK at the same width
+    ;; (lang-h13); the store's own return is only its operand.
+    (if (and (= 0 (* 0 (kernel-store-u8-16k tx-frame 4096 0 0)))
+             (= (kernel-load-u8-16k tx-frame 4096 0) 0)
+             (= 0 (* 0 (kernel-store-u8-4k tx-frame 4096 14 69)))
+             (= (kernel-load-u8-4k tx-frame 4096 14) 69)
+             (= 0 (* 0 (kernel-store-u8-4k tx-frame 4096 15 0)))
+             (= (kernel-load-u8-4k tx-frame 4096 15) 0)
+             (= 0 (* 0 (kernel-store-u16-16k tx-frame 4096 16 total-length)))
+             (= (kernel-load-u16-16k tx-frame 4096 16) total-length)
+             (= 0 (* 0 (kernel-store-u16-16k tx-frame 4096 18 1)))
+             (= (kernel-load-u16-16k tx-frame 4096 18) 1)
+             (= 0 (* 0 (kernel-store-u16-16k tx-frame 4096 20 16384)))
+             (= (kernel-load-u16-16k tx-frame 4096 20) 16384)
+             (= 0 (* 0 (kernel-store-u8-4k tx-frame 4096 22 64)))
+             (= (kernel-load-u8-4k tx-frame 4096 22) 64)
+             (= 0 (* 0 (kernel-store-u8-4k tx-frame 4096 23 6)))
+             (= (kernel-load-u8-4k tx-frame 4096 23) 6)
+             (= 0 (* 0 (kernel-store-u32-4k tx-frame 4096 26 src)))
+             (= (kernel-load-u32-4k tx-frame 4096 26) src)
+             (= 0 (* 0 (kernel-store-u32-4k tx-frame 4096 30 dst)))
+             (= (kernel-load-u32-4k tx-frame 4096 30) dst)
+             (= 0 (* 0 (kernel-store-u16-4k tx-frame 4096 34 49155)))
+             (= (kernel-load-u16-4k tx-frame 4096 34) 49155)
+             (= 0 (* 0 (kernel-store-u16-4k tx-frame 4096 36 8443)))
+             (= (kernel-load-u16-4k tx-frame 4096 36) 8443)
+             (= 0 (* 0 (kernel-store-u32-4k tx-frame 4096 38 own-seq)))
+             (= (kernel-load-u32-4k tx-frame 4096 38) own-seq)
+             (= 0 (* 0 (kernel-store-u32-4k tx-frame 4096 42 peer-seq)))
+             (= (kernel-load-u32-4k tx-frame 4096 42) peer-seq)
+             (= 0 (* 0 (kernel-store-u8-4k tx-frame 4096 46 80)))
+             (= (kernel-load-u8-4k tx-frame 4096 46) 80)
+             (= 0 (* 0 (kernel-store-u8-4k tx-frame 4096 47 16)))
+             (= (kernel-load-u8-4k tx-frame 4096 47) 16)
+             (= 0 (* 0 (kernel-store-u16-4k tx-frame 4096 48 256)))
+             (= (kernel-load-u16-4k tx-frame 4096 48) 256)
+             (= 0 (* 0 (kernel-store-u16-4k tx-frame 4096 50 0)))
+             (= (kernel-load-u16-4k tx-frame 4096 50) 0)
+             (= 0 (* 0 (kernel-store-u16-4k tx-frame 4096 52 0)))
+             (= (kernel-load-u16-4k tx-frame 4096 52) 0))
       (link/tx-wire-length (+ 14 total-length))
       0)))
 
@@ -581,21 +619,31 @@
     1
     (let [value (kernel-load-u8 mmio 512 index)
           stored (kernel-store-u8-4k frame 4096 (+ frame-offset index) value)]
-      (if (= stored value)
+      (if (= (+ (kernel-load-u8-4k frame 4096 (+ frame-offset index))
+                (* 0 stored))
+             value)
         (copy-device-mac-stream frame frame-offset mmio (+ index 1))
         0))))
 
 (defn store-gateway-mac-stream [frame]
   ;; rtl8125.kotoba/store-server-mac's constant: the Mac's en15 address,
   ;; the fixed link peer of the direct K16 diagnostics link.
-  (if (and (= (kernel-store-u8-4k frame 4096 0 128) 128)
-           (= (kernel-store-u8-4k frame 4096 1 105) 105)
-           (= (kernel-store-u8-4k frame 4096 2 26) 26)
-           (= (kernel-store-u8-4k frame 4096 3 23) 23)
-           (= (kernel-store-u8-4k frame 4096 4 79) 79)
-           (= (kernel-store-u8-4k frame 4096 5 21) 21))
-    1
-    0))
+  (let [s0 (kernel-store-u8-4k frame 4096 0 128)
+        s1 (kernel-store-u8-4k frame 4096 1 105)
+        s2 (kernel-store-u8-4k frame 4096 2 26)
+        s3 (kernel-store-u8-4k frame 4096 3 23)
+        s4 (kernel-store-u8-4k frame 4096 4 79)
+        s5 (kernel-store-u8-4k frame 4096 5 21)]
+    ;; read-back, not operand echo (lang-h13)
+    (if (and (= (kernel-load-u8-4k frame 4096 0) 128)
+             (= (kernel-load-u8-4k frame 4096 1) 105)
+             (= (kernel-load-u8-4k frame 4096 2) 26)
+             (= (kernel-load-u8-4k frame 4096 3) 23)
+             (= (kernel-load-u8-4k frame 4096 4) 79)
+             (= (kernel-load-u8-4k frame 4096 5) 21)
+             (= 0 (* 0 (+ s0 s1 s2 s3 s4 s5))))
+      1
+      0)))
 
 (defn checksum-word-stream [frame base length offset]
   (if (>= offset length)
@@ -657,13 +705,17 @@
     (if (and (= (store-gateway-mac-stream tx-frame) 1)
              (= (copy-device-mac-stream tx-frame 6 mmio 0) 1)
              (= (frame-store-be16-stream tx-frame 12 2048) 2048)
-             (= (kernel-store-u8-4k tx-frame 4096 14 69) 69)
-             (= (kernel-store-u8-4k tx-frame 4096 15 0) 0)
+             (= 0 (* 0 (kernel-store-u8-4k tx-frame 4096 14 69)))
+             (= (kernel-load-u8-4k tx-frame 4096 14) 69)
+             (= 0 (* 0 (kernel-store-u8-4k tx-frame 4096 15 0)))
+             (= (kernel-load-u8-4k tx-frame 4096 15) 0)
              (= (frame-store-be16-stream tx-frame 16 total-length) total-length)
              (= (frame-store-be16-stream tx-frame 18 1) 1)
              (= (frame-store-be16-stream tx-frame 20 16384) 16384)
-             (= (kernel-store-u8-4k tx-frame 4096 22 64) 64)
-             (= (kernel-store-u8-4k tx-frame 4096 23 6) 6)
+             (= 0 (* 0 (kernel-store-u8-4k tx-frame 4096 22 64)))
+             (= (kernel-load-u8-4k tx-frame 4096 22) 64)
+             (= 0 (* 0 (kernel-store-u8-4k tx-frame 4096 23 6)))
+             (= (kernel-load-u8-4k tx-frame 4096 23) 6)
              (= (frame-store-be32-stream tx-frame 26 src) src)
              (= (frame-store-be32-stream tx-frame 30 dst) dst)
              ;; The IPv4 checksum covers 14..33, so it is stored AFTER the
@@ -687,8 +739,10 @@
              (= (frame-store-be16-stream tx-frame 36 8443) 8443)
              (= (frame-store-be32-stream tx-frame 38 seq) seq)
              (= (frame-store-be32-stream tx-frame 42 ack) ack)
-             (= (kernel-store-u8-4k tx-frame 4096 46 80) 80)
-             (= (kernel-store-u8-4k tx-frame 4096 47 flags) flags)
+             (= 0 (* 0 (kernel-store-u8-4k tx-frame 4096 46 80)))
+             (= (kernel-load-u8-4k tx-frame 4096 46) 80)
+             (= 0 (* 0 (kernel-store-u8-4k tx-frame 4096 47 flags)))
+             (= (kernel-load-u8-4k tx-frame 4096 47) flags)
              (= (frame-store-be16-stream tx-frame 48 window) window)
              (= (frame-store-be16-stream tx-frame 50 0) 0)
              (= (frame-store-be16-stream tx-frame 52 0) 0)
@@ -726,17 +780,23 @@
                                     (bit-and (quot tx-frame 281474976710656) 255))
             a7 (kernel-store-u8-16k win 16384 15
                                     (bit-and (quot tx-frame 72057594037927936) 255))
+            ;; Read back while the descriptor is still ours -- before the OWN
+            ;; word and the kick (lang-h13).
+            extension-read (kernel-load-u32-16k win 16384 4)
+            a0-read (kernel-load-u8-16k win 16384 8)
+            a7-read (kernel-load-u8-16k win 16384 15)
             before (dma/release-fence)
             command (kernel-store-u32-16k win 16384 0 (dma/tx-command wire-length))
             after (dma/release-fence)
             kicked (kernel-store-u16 mmio 512 144 1)]
-        (if (and (= extension 0)
-                 (= a0 (bit-and tx-frame 255))
-                 (= a7 (bit-and (quot tx-frame 72057594037927936) 255))
+        ;; The OWN word and the TPPOLL kick are sequenced, not read back: after
+        ;; the kick the engine clears OWN, and TPPOLL's NPQ bit self-clears.
+        (if (and (= extension-read 0)
+                 (= a0-read (bit-and tx-frame 255))
+                 (= a7-read (bit-and (quot tx-frame 72057594037927936) 255))
                  (= before 1)
-                 (= command (dma/tx-command wire-length))
                  (= after 1)
-                 (= kicked 1))
+                 (= 0 (* 0 (+ extension a0 a7 command kicked))))
           0
           1)))))
 
@@ -921,15 +981,22 @@
                                                                  (bit-and (+ head 1) 3))
                                 ack-len (build-tcp-segment-stream tcb tx-frame mmio 1)
                                 ack-result (submit-wire win mmio tx-frame ack-len)]
-                            (if (not (= w0 (seq-core/wrap (+ peer-iss 1))))
+                            ;; TCB slots read back (lang-h13); the stores
+                            ;; w0/w1/w2/head-stepped are sequenced below.
+                            (if (not (= (kernel-load-u64-4k tcb 4096 (* tcb-slot-rcv-nxt 8))
+                                        (seq-core/wrap (+ peer-iss 1))))
                               25
-                              (if (not (= w1 (seq-core/wrap (+ iss 1))))
+                              (if (not (= (kernel-load-u64-4k tcb 4096 (* tcb-slot-snd-nxt 8))
+                                          (seq-core/wrap (+ iss 1))))
                                 25
                                 (if (not (= established 99))
                                   98
                                   (if (not (= ack-result 0))
                                     36
-                                    (if (and (= rearmed 1) (= head-stepped (bit-and (+ head 1) 3)))
+                                    (if (and (= rearmed 1)
+                                             (= (kernel-load-u64-4k tcb 4096 (* tcb-slot-ring-head 8))
+                                                (bit-and (+ head 1) 3))
+                                             (= 0 (* 0 (+ w0 w1 w2 head-stepped))))
                                       0
                                       30))))))))))))))))))))
 
@@ -972,18 +1039,23 @@
     1
     (let [value (stream-log-byte index status)
           stored (kernel-store-u8-4k frame 4096 (+ offset index) value)]
-      (if (= stored value)
+      (if (= (+ (kernel-load-u8-4k frame 4096 (+ offset index)) (* 0 stored))
+             value)
         (store-stream-log frame offset (+ index 1) status)
         0))))
 
 (defn build-udp-log-header [frame]
-  (if (and (= (kernel-store-u8-4k frame 4096 14 69) 69)
-           (= (kernel-store-u8-4k frame 4096 15 0) 0)
+  (if (and (= 0 (* 0 (kernel-store-u8-4k frame 4096 14 69)))
+           (= (kernel-load-u8-4k frame 4096 14) 69)
+           (= 0 (* 0 (kernel-store-u8-4k frame 4096 15 0)))
+           (= (kernel-load-u8-4k frame 4096 15) 0)
            (= (frame-store-be16-stream frame 16 48) 48)
            (= (frame-store-be16-stream frame 18 0) 0)
            (= (frame-store-be16-stream frame 20 0) 0)
-           (= (kernel-store-u8-4k frame 4096 22 64) 64)
-           (= (kernel-store-u8-4k frame 4096 23 17) 17)
+           (= 0 (* 0 (kernel-store-u8-4k frame 4096 22 64)))
+           (= (kernel-load-u8-4k frame 4096 22) 64)
+           (= 0 (* 0 (kernel-store-u8-4k frame 4096 23 17)))
+           (= (kernel-load-u8-4k frame 4096 23) 17)
            (= (frame-store-be16-stream frame 24 26137) 26137)
            (= (frame-store-be32-stream frame 26 172818442) 172818442)
            (= (frame-store-be32-stream frame 30 172818433) 172818433)
@@ -998,7 +1070,7 @@
   (if (= remaining 0)
     1
     (let [stored (kernel-store-u8-4k frame 4096 offset 0)]
-      (if (= stored 0)
+      (if (= (+ (kernel-load-u8-4k frame 4096 offset) (* 0 stored)) 0)
         (fill-zero-stream frame (+ offset 1) (- remaining 1))
         0))))
 
@@ -1196,7 +1268,10 @@
             (let [rearmed (rx-ring-rearm win win head)
                   head-next (kernel-store-u64-4k tcb 4096 (* tcb-slot-ring-head 8)
                                                 (bit-and (+ head 1) 3))]
-              (if (and (= rearmed 1) (= head-next (bit-and (+ head 1) 3)))
+              (if (and (= rearmed 1)
+                       (= (+ (kernel-load-u64-4k tcb 4096 (* tcb-slot-ring-head 8))
+                             (* 0 head-next))
+                          (bit-and (+ head 1) 3)))
                 (let [l (stream-log win mmio log-frame
                                     (if (= verdict 4) 246
                                       (if (= verdict 6) 251 (if (= verdict 7) 252 242))))]
@@ -1215,7 +1290,10 @@
                       head-next (kernel-store-u64-4k
                                  tcb 4096 (* tcb-slot-ring-head 8)
                                  (bit-and (+ head 1) 3))]
-                  (if (and (= rearmed 1) (= head-next (bit-and (+ head 1) 3)))
+                  (if (and (= rearmed 1)
+                           (= (+ (kernel-load-u64-4k tcb 4096 (* tcb-slot-ring-head 8))
+                                 (* 0 head-next))
+                              (bit-and (+ head 1) 3)))
                     ;; F3 dup / F4 full / F5 out-of-window, then -- for F5 only --
                     ;; the four numbers the verdict was made from: flags, payload
                     ;; length, seg-seq low byte, rcv-nxt low byte. Every cycle's
@@ -1257,9 +1335,17 @@
                       rearmed (rx-ring-rearm win win head)
                       head-next (kernel-store-u64-4k tcb 4096 (* tcb-slot-ring-head 8)
                                                     (bit-and (+ head 1) 3))]
-                  (if (and (= parked rcv-nxt)
-                           (= staged 1) (= w0 advanced) (= w1 (- reassembly-max-bytes held-bytes))
-                           (= rearmed 1) (= head-next (bit-and (+ head 1) 3)))
+                  ;; TCB slots read back, stores sequenced (lang-h13)
+                  (if (and (= (kernel-load-u64-4k tcb 4096 (* tcb-slot-delivered-run-base 8))
+                              rcv-nxt)
+                           (= staged 1)
+                           (= (kernel-load-u64-4k tcb 4096 (* tcb-slot-rcv-nxt 8)) advanced)
+                           (= (kernel-load-u64-4k tcb 4096 (* tcb-slot-rcv-wnd 8))
+                              (- reassembly-max-bytes held-bytes))
+                           (= rearmed 1)
+                           (= (kernel-load-u64-4k tcb 4096 (* tcb-slot-ring-head 8))
+                              (bit-and (+ head 1) 3))
+                           (= 0 (* 0 (+ parked w0 w1 head-next))))
                     (if (not (= ack-sent 0))
                       26
                       (if (= fin 1)

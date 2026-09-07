@@ -111,13 +111,13 @@
    :meaning "Boot census starts. Followed by 2 DATA bytes: rtl/bus-probe 3 (bus3), rtl/bus-probe 2 (bus2 control). Observed B7 7F 7F."}
   {:channel :netlog :value 184 :hex "B8" :name :bus3-sentinel
    :emitter "os/aiueos/native/kernel.kotoba"
-   :meaning "The bus3 (LAN2) bring-up starts here. Followed by 1 DATA byte: debug-init status (0 ready / 6 bar-b never decoded / 9 no MEM-SPACE|BUS-MASTER / 7 MAC implausible / 2 revision unreadable / 8 PHY no link / 10+n rings-start refused n). Then, only if ready, DA + 6 MAC bytes. Then 1 DATA byte: debug-send status (0 submitted and OWN cleared / 1 build failed / 5 owned or length rejected / 3 descriptor store did not read back / 4 OWN never cleared / 7 not attempted)."}
+   :meaning "The bus3 (LAN2) bring-up starts here. Followed by 1 DATA byte: debug-init status (0 ready / 6 bar-b never decoded / 9 no MEM-SPACE|BUS-MASTER / 7 MAC implausible / 2 revision unreadable / 8 PHY no link / 10+n rings-start refused n). Then, only if ready, six DA <mac-byte> pairs (12 datagrams). Then 1 DATA byte: debug-send status (0 submitted and OWN cleared / 1 build failed / 5 owned or length rejected / 3 descriptor store did not read back / 4 OWN never cleared / 7 not attempted)."}
   {:channel :netlog :value 217 :hex "D9" :name :bus3-event
    :emitter "os/aiueos/native/tcp_stream.kotoba"
    :meaning "A bus3 event this cycle (debug-tick returned non-zero). Followed by 1 DATA byte: the debug-tick value (1 not ours / 2 RX ring dead / 64+n 'P' answered with 'p', n = send status / 96+n unknown command answered '?'). Emitted only on an event so 00 is not the most common byte on the wire."}
   {:channel :netlog :value 218 :hex "DA" :name :bus3-mac-sentinel
    :emitter "os/aiueos/native/kernel.kotoba"
-   :meaning "bus3's MAC follows: 6 DATA bytes IDR0..5 (observed 70 70 FC 0B B6 31). Emitted once, only when debug-init returned ready. Readers MUST consume 6 positional bytes: the MAC can contain FC/B6 (both are or were sentinels)."}
+   :meaning "ONE MAC byte follows this DA. The kernel emits DA before EVERY byte of bus3's MAC: DA IDR0 DA IDR1 DA IDR2 DA IDR3 DA IDR4 DA IDR5 = 12 datagrams, once, only when debug-init returned ready (would read DA 70 DA 70 DA FC DA 0B DA B6 DA 31 for 70:70:fc:0b:b6:31). A reader consumes exactly one positional byte after each DA, whatever its value -- the MAC can contain FC, B6 or DA itself and the byte after a DA is never a sentinel. Shape changed 2026-09-07 (lang-h9b): the earlier form was one DA followed by six positional bytes, and on the 1-byte-per-datagram wire a MAC byte FC was read as the FC checksum verdict (measured 2026-09-07)."}
   {:channel :netlog :value 222 :hex "DE" :name :run-end-reset
    :emitter "os/aiueos/native/tcp_stream.kotoba"
    :meaning "debug-run-cycles exhausted; the kernel is about to write 0x06 to port 0xCF9 (SYS_RST|RST_CPU). If DE never appears the run died in ud2 (fuel) before its deliberate end."}
@@ -227,8 +227,8 @@
  [{:after :syn-built :count 6 :what "SYN frame fields, low byte each: be16@12 ethertype, u8@14 v4/IHL, checksum-word@14, checksum-fold of the IPv4 header, be16@24 IPv4 checksum, be16@50 TCP checksum (observed 00 45 00 FF 19 52)"}
   {:after :census-sentinel :count 2 :what "rtl/bus-probe 3, rtl/bus-probe 2 (bit census; qualified = 7F)"}
   {:after :bus3-sentinel :count 1 :what "debug-init status"}
-  {:after :bus3-mac-sentinel :count 6 :what "IDR0..5"}
-  {:after :bus3-sentinel :count 1 :what "debug-send status (after the optional DA block)" :note "order on the wire: B8 <init> [DA <6 mac>] <send>"}
+  {:after :bus3-mac-sentinel :count 1 :what "one MAC byte; DA is emitted before each of IDR0..5, so the MAC arrives as six DA <byte> pairs in IDR order"}
+  {:after :bus3-sentinel :count 1 :what "debug-send status (after the optional DA pairs)" :note "order on the wire: B8 <init> [DA <m0> DA <m1> DA <m2> DA <m3> DA <m4> DA <m5>] <send>"}
   {:after :bus3-event :count 1 :what "debug-tick value"}
   {:after :frame-verdict-or-accept-decision :offset 3 :count 4 :what "F5 only: flags, payload&255, seg-seq&255, rcv-nxt&255"}]
 

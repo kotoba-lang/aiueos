@@ -702,7 +702,11 @@ byte, rcv-nxt low byte. Until it is read, this is **not measured**.
 expired · `A6` ports/ack mismatch → 94 · `A7` IPv4 checksum → 93 · `A8` TCP
 checksum → 96 · `A9` handshake complete · `AE` retransmit budget gone · `AF`
 build failed · `B0` submit failed · `B7` census sentinel · `B8` bus3 sentinel ·
-`D9` bus3 event · `DA` bus3 MAC sentinel · `DE` run end → reset · `E0–E8`
+`D9` bus3 event · `DA` one bus3 MAC byte follows (emitted before **each** of
+the six MAC bytes: `DA m0 DA m1 … DA m5`, 12 datagrams; after a `DA` the reader
+consumes exactly one byte whatever its value — it can be `FC`, `B6` or `DA`.
+Until 2026-09-07 it was one `DA` + six positional bytes, and a MAC byte `FC`
+was read as the `FC` checksum verdict) · `DE` run end → reset · `E0–E8`
 ESTABLISHED window entry with ticks remaining · `F1` empty poll · `F2` bad
 descriptor · `F3` duplicate · `F4` queue full · `F5` out-of-window (+4 bytes
 of inputs) · `F6` not ours · `F7` admitted · `F8` staged · `F9` delivered ·
