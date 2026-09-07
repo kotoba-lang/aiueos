@@ -1291,9 +1291,14 @@
 ;; cost ~3,700 fuel. Now an empty ESTABLISHED window alone is 8 x 8000 polls,
 ;; so 2^20 buys ~6-12 cycles and a 256 cadence is never reached -- the run
 ;; ends in a silent `ud2` and the board does not reset (measured 2026-09-06/07:
-;; no DE in any boot since the ring fix). 6 ends every run on the deliberate
-;; path; the real fix is a per-cycle replenish (ADR-0156, amu-h1).
-(defn debug-run-cycles [] 6)
+;; no DE in any boot since the ring fix). 6 was predicted to end every run on
+;; the deliberate path; measured 2026-09-07 on 47b8c209 it did NOT: five cycles
+;; completed (A9, nine empty polls each), the sixth handshake failed (A4 --
+;; its SYN hit the previous boot's still-open 4-tuple on the Mac), and the run
+;; died in `ud2` with no DE. 4 buys the deliberate end while the bridge learns
+;; to close with RST (k16-bridge.cljs debug mode) and cycles get cheaper; the
+;; real fix is still a per-cycle replenish (ADR-0156, amu-h1).
+(defn debug-run-cycles [] 4)
 
 (defn stream-resident [win mmio scratch bus3-dma remaining]
   ;; Plan A-2: the stream stage never halts the machine. Each cycle fully
