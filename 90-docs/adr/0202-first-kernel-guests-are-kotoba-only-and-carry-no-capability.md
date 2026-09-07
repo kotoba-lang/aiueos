@@ -9,7 +9,7 @@
 
 ## Decision
 
-Eleven namespaces whose decisions are arithmetic and keywords, not bytes, are
+Twelve namespaces whose decisions are arithmetic and keywords, not bytes, are
 now **kotoba-only** — the guest is the component, the `.cljc` stays as the
 parity oracle:
 
@@ -26,8 +26,9 @@ parity oracle:
 | `aiueos/bare_metal.kotoba` | `src/aiueos/bare_metal.cljc` | P2 boot classification; the :host-fetch-does-not-count gate kept verbatim |
 | `aiueos/virtio.kotoba` | `src/aiueos/virtio.cljc` | interrupt-status bit decoding, device-id mapping, irq-line validation |
 | `aiueos/image.kotoba` | `src/aiueos/image.cljc` | boot-input refusal decisions (file existence / ELF checks stay in the host) |
+| `aiueos/compositor/ime.kotoba` | `src/aiueos/compositor/ime.cljc` | the romaji conversion core: 111-entry mora table split into 4 chunk maps (the 32-entry document-map limit), greedy longest-match conversion |
 
-All eleven compile (`amu compile --target wasm32-browser`), all pass
+All twelve compile (`amu compile --target wasm32-browser`), all pass
 `amu check`, none declares or calls a capability. The device-auth guest
 runs its chain as a linear scan over numbered checks -- each a small
 (state, flags, method) function -- so the refusal order can be diffed
