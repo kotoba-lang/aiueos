@@ -675,22 +675,48 @@ acknowledged and answered with our own FIN\|ACK (result 100 = `0x70` on the
 wire). These are landed and not yet exercised: every window so far has ended
 on one out-of-window frame followed by an empty window.
 
+### Measured 2026-09-07 11:03 (kernel 47b8c209): no F5, no frame at all
+
+The build with tcp-h1 (rearm + head step before the ACK) booted at 11:03 JST.
+Five cycles reached `A9` and the bridge logged all five connections (ports
+49632–49636). Every ESTABLISHED window read `E8 F1 E7 F1 … E0 F1 21`: nine
+empty polls, then the window expired. No `F5` — the out-of-window verdict is
+gone — and no `F7` either, because **nothing arrived**: the bridge was a byte
+forwarder to a TLS server (`api.murakumo.cloud:443`), which never speaks first,
+and the board's stream never sends. The window was empty by construction
+(tcp-h5). Cycle 6 read `A2 A3 A4`: its SYN reused the previous boot's cycle-0
+4-tuple (the ISS moved per cycle from a constant base, so every boot used the
+same ports) and the Mac's still-ESTABLISHED socket answered with a challenge
+ACK. A seventh `A1` and then silence: the run died in `ud2` before `DE` —
+cadence 6 did not fit in 2^20 either. The single `FC` on the wire was a MAC
+byte inside the `DA` block (`70 70 FC 0B B6 31`), not a checksum verdict; the
+DA channel put raw bytes on the sentinel wire (fixed below).
+
 ### Open at this revision
 
-The first frame after every handshake is ours (passes the 4-tuple filter) and
-is judged out-of-window by `seq-core/acceptable?`. A build is on the board
-that emits the verdict's inputs after `F5`: flags, payload length, seq low
-byte, rcv-nxt low byte. Until it is read, this is **not measured**.
+Kernel `f039f387` (cadence 4, otherwise 47b8c209) is served and unread; the
+debug bridge that greets and closes with RST is live. Prediction for the next
+boot: `A9 F7 F8` (greeting admitted and staged), a data ACK, `FA`/`0x70` when
+the RST arrives, `DE` after four cycles and a self-reset through 0xCF9. Behind
+it, two more images are built and held: `599e64a8` (129 tautological store
+checks rewritten to READ-BACK or sequencing; `DA <byte>` pairs) and `f6af155d`
+(tcp-h15: ISS salted per boot from `kernel-rdtsc`, TCB slot 19). They are read
+one at a time, in that order.
 
 ### Instruments, and the two that were dead
 
 - `netstat -s -p tcp` on this Mac reports **zero for everything**, including a
   connection made from this machine that the bridge logged at that moment.
   Every "0 connection request" recorded above came from it. Dead; do not use.
-- The bridge (`k16-bridge.py`, 10.77.0.1:8443) was validated by connecting to
-  it directly (`K16_STREAM_CONNECTED from 10.77.0.1:…`). It is the handshake
-  oracle. `netstat -an -p tcp | grep 8443` shows the peer's state
-  (`SYN_RCVD` / `ESTABLISHED` / `FIN_WAIT_1`) and is live.
+- The bridge is `nbb os/aiueos/tools/k16-bridge.cljs --mode debug` on
+  10.77.0.1:8443 (since 2026-09-07 11:25 JST; it replaced the Python forwarder
+  `k16-bridge.py`, kept as `--mode forward`). On connect it logs
+  `K16_STREAM_CONNECTED from <ip>:<port>` (the rig check's contract line),
+  sends one `K16_BRIDGE_HELLO nnnn <iso>` greeting, logs any bytes back as
+  hex, and after `--hold-ms` (1000) closes with RST (`resetAndDestroy`) so the
+  Mac holds no state for the 4-tuple. Loopback proof: greeting received, 14 RX
+  bytes logged, client sees ECONNRESET. `netstat -an -p tcp | grep 8443` shows
+  the peer's state and is live; `netstat -s` is not.
 - The netlog is `tools/k16-netlog-standalone.py` on 10.77.0.1:7777; the PXE
   server's own receiver thread is dead and the process cannot be restarted by
   this user (UDP 67/69 need root). Validate with a control datagram before
@@ -843,6 +869,28 @@ line is the 28 ms by which a 2 s reader would have called TFTP dead.
 /nonexistent` exits 2 with `UNMEASURED`, not 1 — a missing log is not a dead
 bridge.
 
+## The forwarder never spoke; the bridge now greets and closes with RST (2026-09-07)
+
+Three changes on `k16-stream-20260906` after the 11:03 reading, each measured
+off the board where the board could not yet measure it:
+
+| change | why | measured |
+|---|---|---|
+| `k16-bridge.cljs` debug mode (greeting, RX log, RST after 1 s) | the forwarder to a TLS server never sends first, so every window was empty; and its ESTABLISHED sockets outlived the boot and challenged the next boot's SYN | loopback: greeting received, RX logged, ECONNRESET after the hold; `k16-rig-check` 9/9 PASS after the swap |
+| `debug-run-cycles` 6 → 4 | 5 completed cycles + 1 failed handshake exhausted 2^20; no `DE` | fits by construction; the board says |
+| tcp-h15: ISS = base + (salt + cycles)·65536, salt drawn once per boot from `kernel-rdtsc` into TCB slot 19 (tcb-init leaves slots 17 and 19 alone) | same ports every boot → challenge ACK from the previous boot's socket | decisive test is two boots with disjoint port sets in bridge.log; built as `f6af155d` |
+| 129 tautological store checks → READ-BACK or sequencing (E8, PR #292/#295); `DA <byte>` pairs | `kernel-store-*` returns its operand, so `(= (store …) v)` could not fail; a MAC byte read as `FC` | `verify-store-tautology` 129 → 0, `verify-wire-bytes` 66 emissions / 39 entries / 0 findings; kernel builds bit-identical twice; built as `599e64a8` |
+| boot build re-says the kernel verifier's OK line or refuses | the line went to `/dev/null`, so a skipped verification printed the same three lines as a passed one | `AIUEOS_KOTOBA_NATIVE_KERNEL_OK … fuel=1048576` surfaced |
+
+Landed in the toolchain the same day, reaching the board only after amu's
+kotoba-native pin advances (sibling PR amu#857) and the K16 build's amu
+(`/private/tmp/amu-5cec` @ 3c6d035) is re-pinned: kotoba-native#153 (context
+slots in the RW page, no absolute `0x1101xx` stores), #155 (vector 6 writes
+`'U'` to 0xE9 on fuel exhaustion — QEMU `"DU"`/59 vs control `"D"`/33), #156 +
+#162 and five sibling repos (gmir/kir/sema/lang/verifier) admitting
+`kernel-undefined-opcode-handler-address` so the kernel can install gate 6.
+Until then a fuel death on the board is still inferred from a missing `DE`.
+
 ## Status of the artifacts
 
 - Commit `e09e4f1` (Phase 1 — bus3 single-shot) is superseded by commit
@@ -869,6 +917,12 @@ bridge.
   `BOOTX64.CENSUS-810e0523.EFI` are kept beside it. **Not yet run** — it needs
   a power cycle, and nothing observable is expected to change, because the
   defect it fixes was masked by Ethernet padding at this payload size.
+- Served since 2026-09-07 11:3x: `f039f387404fd48d…` (224256 bytes, kernel
+  `dca9d47c…`, panel `AIUEOS K16 BUILD dca9d47c578b7f3b 964da2e`), kept beside
+  the previous `BOOTX64.PREV-47b8c209.EFI`. Built twice bit-identically. Held
+  in the session scratchpad, not served: `599e64a8…` (236544 bytes, note
+  `079587e`) and `f6af155d…` (236544 bytes, note `d3a1466`). **None of the
+  three has booted yet**; the board has been in `ud2` since the 47b8c209 run.
 - The listener is `nbb os/aiueos/tools/k16-bus3-sink.cljs` (pid 17394 since
   2026-09-07 11:43 JST, `nohup … >> /tmp/k16-bus3-sink.out`), writing
   `/tmp/k16-bus3-en8.log` by name on every datagram. It replaced `socat -u
