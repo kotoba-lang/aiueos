@@ -9,7 +9,7 @@
 
 ## Decision
 
-Three namespaces whose decisions are arithmetic and keywords, not bytes, are
+Five namespaces whose decisions are arithmetic and keywords, not bytes, are
 now **kotoba-only** — the guest is the component, the `.cljc` stays as the
 parity oracle:
 
@@ -18,9 +18,14 @@ parity oracle:
 | `aiueos/topic.kotoba` | `src/aiueos/topic.cljc` | the whole topic bus: publish / latest / take-sample / pending / topic-count / tick / advance |
 | `aiueos/os_update.kotoba` | `src/aiueos/os_update.cljc` | health-status, boot-selection, non-regex manifest faults |
 | `aiueos/model_channel.kotoba` | `src/aiueos/model_channel.cljc` | continuity-errors (the four sequence-history rules), boot-decision |
+| `aiueos/runtime_update.kotoba` | `src/aiueos/runtime_update.cljc` | blue/green health-status, manifest faults incl. `:incompatible-runtime-abi` |
+| `aiueos/device_auth.kotoba` | `src/aiueos/device_auth.cljc` | the proof-problem chain: all sixteen refusal reasons, in the oracle's order |
 
-All three compile (`amu compile --target wasm32-browser`), all pass
-`amu check`, none declares or calls a capability.
+All five compile (`amu compile --target wasm32-browser`), all pass
+`amu check`, none declares or calls a capability. The device-auth guest
+runs its chain as a linear scan over numbered checks -- each a small
+(state, flags, method) function -- so the refusal order can be diffed
+against the oracle's cond line by line.
 
 ## The capability question, measured
 
