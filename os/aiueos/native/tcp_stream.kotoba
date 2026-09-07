@@ -102,6 +102,12 @@
 ;; and was answered with that connection's ACK -- seen as A6/94 (ack mismatch)
 ;; on every cycle after the first. 49152 + 10 bits of the ISS's high half.
 (def tcb-slot-local-port 18)
+;; Per-boot salt for the ISS (tcp-h15). tcb-init writes slots 0..16 and 18 and
+;; leaves this one alone, so it survives the per-cycle re-arm; the DMA window is
+;; zeroed before publish, so 0 means "not yet drawn". Drawn once per boot from
+;; kernel-rdtsc bits 16.. (the low bits are too regular at boot), forced into
+;; 1..1023 so an unset slot can never be mistaken for a drawn one.
+(def tcb-slot-boot-salt 19)
 ;; Held table: 4 entries x (seq, len, buffer-index, tick) at slots 32..79.
 ;; Capacity 4 entries x 2048-byte buffers = the ADR section 2 held bound of
 ;; 8192 bytes; reassembly loops over at most 4 entries, so fuel is bounded
@@ -1446,8 +1452,20 @@
         ;; is the same connection the peer may still hold in FIN-WAIT-2 or
         ;; TIME-WAIT from the previous cycle, and it is answered with an ACK
         ;; or RST rather than a SYN-ACK.
+        ;; tcp-h15: and it moved from the SAME base every boot, so boot N+1's
+        ;; cycle 0 reused boot N's cycle 0 4-tuple (measured 2026-09-07 on
+        ;; 47b8c209: cycle 6 hit the previous boot's still-open connection and
+        ;; got a challenge ACK, A4). A per-boot salt, drawn once from rdtsc and
+        ;; kept in the TCB, moves the whole run's port set; the decisive test is
+        ;; two boots with disjoint port sets in bridge.log.
+        salt-slot (kernel-load-u64-4k tcb 4096 (* tcb-slot-boot-salt 8))
+        salt (if (= salt-slot 0)
+               (let [fresh (+ 1 (bit-and (quot (kernel-rdtsc) 65536) 1022))
+                     kept (kernel-store-u64-4k tcb 4096 (* tcb-slot-boot-salt 8) fresh)]
+                 (+ fresh (* 0 kept)))
+               salt-slot)
         armed (if (= ring 0)
-                (tcb-init tcb (seq-core/wrap (+ 2715820034 (* cycles 65536))))
+                (tcb-init tcb (seq-core/wrap (+ 2715820034 (* (+ salt cycles) 65536))))
                 1)
         seeded (if (and (= ring 0) (= armed 0))
                  (do (kernel-store-u64-4k tcb 4096
