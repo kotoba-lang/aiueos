@@ -102,3 +102,25 @@ re-derive it:
   arithmetic and keywords, it is a guest; if it opens a socket, holds a
   clock or runs a regex over wire bytes, it stays in the host until the
   capability kit for it exists.
+
+
+## 適用記録 (2026-09-07 closing)
+
+この ADR が初めて全 13 guest として着地したのは main `4ca9496` (merge of
+`agent/kotoba-guests-imekey`)。検証は 2 段階:
+
+1. **compile 実測** — 全 guest が `amu check` と
+   `amu compile --target wasm32-browser` を通過 (wasm 2.3KB〜8.0KB)。
+   `:effects #{}` と `:admission {:required #{}}` は全件の check 出力で確認。
+2. **capability ゼロの確認** — 全 13 ファイルに `perform` も `cap-call` も
+   `:capabilities` 宣言も含まれない (上記 1-3 の規則の正の実例)。
+
+テーブルが書いた通りに動いた実例: mora テーブル 111 エントリが
+document-map の 32-entry limit に当たり、4 chunk map への分割という
+機構解で通った (13 番目の guest)。limit を「推定」ではなく「実測」として
+扱ったから、分割は最初から設計に含まれた。
+
+未着手 (次の最初の一手): `phone_bind` / `hvt` / `launcher` / `cloud_live`
+は JVM/FFM/chicory 直結が本体で、capability kit 設計が前提。
+`compositor` 本体の残部は string-heavy で、IME と同じ slice 単位で
+続けられる — `feed` と `latin-leaked?` が次の 2 つ。
