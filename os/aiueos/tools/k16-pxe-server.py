@@ -1364,16 +1364,42 @@ def tftp_oack(options, size):
 
 
 def wait_for_ack(sock, peer, block, payload):
-    for _ in range(6):
+    """Send until the peer ACKs `block`. Return (ok, note) describing what was
+    heard when it did not.
+
+    `AIUEOS_PXE_TFTP_FAIL stage=oack` used to be the entire story, and it
+    cannot tell apart three situations with three different causes: nothing
+    came back at all (the reply never reached the board, or the board never
+    sent one), something came back from a different TID (a duplicate RRQ's
+    handler won the race and this one is the loser -- expected noise, not a
+    fault), and something came back that was not an ACK for this block.
+
+    Measured 2026-09-08: the board failed ten OACK handshakes in a row and
+    never fetched an image, while the workstation sat at load average 105 and
+    the whole log said only `stage=oack` ten times. The elapsed time is in the
+    note for the same reason -- a `select` that was supposed to wait one second
+    and waited four is scheduling starvation, and that is not visible from a
+    boolean."""
+    heard = []
+    started = time.monotonic()
+    for attempt in range(6):
+        sent_at = time.monotonic()
         sock.sendto(payload, peer)
         ready, _, _ = select.select([sock], [], [], 1.0)
         if not ready:
+            heard.append(f"{attempt}:silent/{time.monotonic() - sent_at:.2f}s")
             continue
         response, source = sock.recvfrom(2048)
-        if source == peer and len(response) >= 4 and response[:2] == b"\0\4" and \
-                struct.unpack("!H", response[2:4])[0] == block:
-            return True
-    return False
+        if source != peer:
+            heard.append(f"{attempt}:tid-{source[0]}:{source[1]}")
+        elif len(response) < 4 or response[:2] != b"\0\4":
+            heard.append(f"{attempt}:opcode-{response[:2].hex()}")
+        elif struct.unpack("!H", response[2:4])[0] != block:
+            heard.append(f"{attempt}:ack-{struct.unpack('!H', response[2:4])[0]}")
+        else:
+            return True, ""
+    return False, (f"heard=[{','.join(heard)}] "
+                   f"elapsed={time.monotonic() - started:.2f}s")
 
 
 def tftp_transfer(peer, request):
@@ -1399,17 +1425,22 @@ def tftp_transfer(peer, request):
           f"artifact={selected.name} bytes={len(content)} options={options}",
           flush=True)
     oack, block_size = tftp_oack(options, len(content))
-    if oack is not None and not wait_for_ack(sock, peer, 0, oack):
-        print("AIUEOS_PXE_TFTP_FAIL stage=oack", flush=True)
-        sock.close()
-        return
+    if oack is not None:
+        acked, note = wait_for_ack(sock, peer, 0, oack)
+        if not acked:
+            print(f"AIUEOS_PXE_TFTP_FAIL stage=oack peer={peer[0]}:{peer[1]} "
+                  f"{note}", flush=True)
+            sock.close()
+            return
     block = 1
     position = 0
     while True:
         chunk = content[position:position + block_size]
         payload = struct.pack("!HH", 3, block) + chunk
-        if not wait_for_ack(sock, peer, block, payload):
-            print(f"AIUEOS_PXE_TFTP_FAIL stage=data block={block}", flush=True)
+        acked, note = wait_for_ack(sock, peer, block, payload)
+        if not acked:
+            print(f"AIUEOS_PXE_TFTP_FAIL stage=data block={block} "
+                  f"peer={peer[0]}:{peer[1]} {note}", flush=True)
             sock.close()
             return
         position += len(chunk)
