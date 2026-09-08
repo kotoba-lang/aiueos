@@ -264,15 +264,25 @@ the NIC did with the descriptor; it cannot report what the header says.
 | K16 → Mac, one-way UDP log | **works** (this boot) |
 | K16 → Mac, more than one message | not wired — `debug-send` is called once, before the resident loop |
 | K16 → Mac, arbitrary text | not wired — the payload is a fixed byte, and there is no integer→ASCII path |
-| Mac → K16 control | **not wired at all** |
+| Mac → K16 control | **wired, one command byte per `stream-resident` cycle** (`debug-tick`, 2026-09-07/08): `P` → `p`; `R` → `r`, then `DB` on bus2 and the 0xCF9 reset; anything else → `?`. Sender: `nbb os/aiueos/tools/k16-control.cljs <P\|R>`. **Not yet exercised on the board** (halted in `ud2` since the 47b8c209 run); proven against a loopback sink + fake board only. |
 
-Control is the larger gap and it is not a matter of enabling something.
-`rings-start` installs an RX descriptor on bus3, but nothing reads it: this
-module has no receive path, no ARP, no demultiplex, and the resident loop
-services bus2 only. A LAN2 control plane needs an RX poll in that loop, a
-frame filter, and a command decode — and every command it accepts is authority
-crossing into the kernel, so it needs the admission discipline the rest of
-this OS uses, not a raw byte switch.
+(As first written, 2026-09-06, this row read "not wired at all": `rings-start`
+installed an RX descriptor on bus3 but nothing read it. The RX poll, the
+positional 4-tuple filter and the closed command decode landed on 2026-09-07;
+`R` on 2026-09-08 — owner decision: LAN2 carries debug output *and* control so
+bus2 is only PXE plus the stream under test, and nobody presses the power
+button.) What still holds: every command the board accepts is authority
+crossing into the kernel. `R` is admitted because a platform reset is the one
+thing the run already does to itself at its deliberate end (`DE`, 0xCF9 ←
+0x06); it grants nothing new, it only lets the Mac choose *when*. Anything
+beyond that needs the admission discipline the rest of this OS uses, not a
+bigger switch statement. The reset is issued by `stream-resident`, not by
+`debug-tick`: the tick answers `r` first (its send waits for TX completion, so
+the Mac holds the acknowledgement before the board goes away) and returns
+80+n; the resident loop, which owns the bus2 netlog, logs `D9 <80+n> DB` and
+then writes 0xCF9. If execution continues the chipset ignored the write and
+`DC` says so — `DB` without `DC` is the only shape that means the board went
+down.
 
 ### Prerequisite on the bus2 side
 
@@ -721,6 +731,19 @@ one at a time, in that order.
   server's own receiver thread is dead and the process cannot be restarted by
   this user (UDP 67/69 need root). Validate with a control datagram before
   reading a null.
+- The LAN2 control sender is `nbb os/aiueos/tools/k16-control.cljs <P|R>`
+  (2026-09-08): one datagram 10.10.10.1 → 10.10.10.2:9000, then it watches the
+  bus3 sink file (`/tmp/k16-bus3-en8.log`) **from the offset it had when the
+  datagram left** — a line already in the file cannot satisfy it — for one
+  `K16_BUS3_RX from=10.10.10.2:… bytes=1` line, and prints
+  `CONTROL\t<cmd>\t<answer|timeout>` (exit 0 answered / 1 timeout / 2
+  could-not-send). Proven on loopback against `k16-bus3-sink.cljs` and a
+  fake board: `P`→`p`, `R`→`r`, `X`→`?` exit 0; with the board gone and the
+  same sink file still holding those answers, exit 1 `timeout` (the stale
+  lines were not read); `--from` an address this host does not own, exit 2.
+  The board round trip is **not measured** (board halted). Written in nbb
+  because kbb hosts no UDP send (E14; re-measured 2026-09-08: `lib/kbb` is
+  browse edn env fs git proc str) — a migration candidate, not a precedent.
 
 ### Wire bytes (one table — collisions cost a whole iteration today)
 
@@ -732,13 +755,20 @@ build failed · `B0` submit failed · `B7` census sentinel · `B8` bus3 sentinel
 the six MAC bytes: `DA m0 DA m1 … DA m5`, 12 datagrams; after a `DA` the reader
 consumes exactly one byte whatever its value — it can be `FC`, `B6` or `DA`.
 Until 2026-09-07 it was one `DA` + six positional bytes, and a MAC byte `FC`
-was read as the `FC` checksum verdict) · `DE` run end → reset · `E0–E8`
+was read as the `FC` checksum verdict) · `DB` bus3 `R` received and `r`
+answered, 0xCF9 reset follows (2026-09-08) · `DC` that reset returned — the
+chipset ignored it, the cycle continues · `DE` run end → reset · `E0–E8`
 ESTABLISHED window entry with ticks remaining · `F1` empty poll · `F2` bad
 descriptor · `F3` duplicate · `F4` queue full · `F5` out-of-window (+4 bytes
 of inputs) · `F6` not ours · `F7` admitted · `F8` staged · `F9` delivered ·
 `0x0C+result` cycle result (`21` window expired, `6A` 94, `6F` 99, `70` 100).
 The first instrumentation used `B0`, `B6`, `B7`, `B8` and was unreadable by
-construction.
+construction. The byte after `D9` is `debug-tick`'s value: `01` not ours, `02`
+RX ring dead, `40+n` `P` answered, `50+n` `R` answered, `60+n` unknown
+answered, n = send status. On bus3 itself (UDP 9000, its own channel in
+`wire-bytes.edn`): `Z` hello, `p`, `r`, `?`. The registry
+`os/aiueos/native/wire-bytes.edn` is the one table; this paragraph is its
+prose, checked by `nbb os/aiueos/tools/verify-wire-bytes.cljs`.
 
 ## The rig check: every instrument echoes a nonce before it is read (2026-09-07)
 
