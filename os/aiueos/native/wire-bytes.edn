@@ -179,6 +179,9 @@
   {:channel :netlog :value 210 :hex "D2" :name :watchdog-refused-halt-locked
    :emitted-by "kernel.kotoba main, three times, immediately before the stream loop"
    :meaning "No watchdog, and this is the interesting one: the LPC bridge is Intel, the ACPI base is sane, the registers are where they should be -- and TCO_TMR_HLT did not read back cleared. The platform is refusing, which is what a No-Reboot strap or a locked-down TCO looks like. Nothing in software fixes this; it is a firmware setting or a board that will not self-reset."}
+  {:channel :netlog :value 208 :hex "D0" :name :previous-run-died-on-ud
+   :emitted-by "kernel.kotoba main, three times, before the watchdog mark"
+   :meaning "The PREVIOUS run on this board ended in #UD, and this boot is reporting it. The #UD handler writes vector 6 to offset 1024 of the IDT page and resets the platform; DRAM survives a warm reset, so the byte is still there when the next boot reads it, and it is cleared once read so the answer belongs to one boot only. #UD is where a spent fuel budget arrives -- the prologue ends an out-of-budget run with ud2 -- so D0 is the first direct evidence this rig has ever had that a run died of exhaustion rather than of something else. Its ABSENCE after a death is equally informative: it means the run did not die on #UD."}
   {:channel :netlog :value 213 :hex "D5" :name :watchdog-armed-after-timeout
    :emitted-by "kernel.kotoba main, three times, immediately before the stream loop"
    :meaning "The watchdog is armed AND the chipset was still holding a timeout status from a previous expiry (TCO1_STS.TIMEOUT at +0x04 bit 3, or TCO2_STS.SECOND_TO_STS at +0x06 bit 1). Read: the previous boot ended because the watchdog fired, not because the board died some other way -- the hardware's own record of why it restarted, read before it is cleared. D3 means armed with no such evidence."}
