@@ -7,7 +7,7 @@
   keyword rather than silence."
   (:require [aiueos.bare-metal :as bm]
             [clojure.java.io :as io]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing]]))
 
 (def ^:private consumed

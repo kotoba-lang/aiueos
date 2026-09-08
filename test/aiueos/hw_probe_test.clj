@@ -1,6 +1,6 @@
 (ns aiueos.hw-probe-test
   (:require [clojure.java.io :as io]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing]]))
 
 (def source (slurp (io/file "os/aiueos/hw-probe/main.c")))

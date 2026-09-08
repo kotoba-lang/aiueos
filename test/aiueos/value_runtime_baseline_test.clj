@@ -11,7 +11,7 @@
   sha is checked, and a stale receipt is red rather than quietly quoted."
   (:require [clojure.edn :as edn]
             [clojure.java.io :as io]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing]]))
 
 (def ^:private receipt-path "qualification/value-runtime-baseline.edn")

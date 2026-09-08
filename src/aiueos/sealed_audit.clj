@@ -9,7 +9,7 @@
   suffix truncation requires an externally retained signed head/checkpoint."
   (:require [clojure.edn :as edn]
             [clojure.java.io :as io]
-            [clojure.string :as str])
+            [kotoba.lang.text :as str])
   (:import [java.nio.charset StandardCharsets]
            [java.nio.file Files StandardCopyOption]
            [java.security KeyFactory KeyPairGenerator MessageDigest

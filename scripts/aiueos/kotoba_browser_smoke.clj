@@ -7,7 +7,7 @@
   (:require [browser.core :as browser]
             [browser.desktop-backend :as desktop]
             [clojure.java.io :as io]
-            [clojure.string :as str]))
+            [kotoba.lang.text :as str]))
 
 (defn -main [& [html-path]]
   (let [html-file (io/file (or html-path "apps/session/index.html"))

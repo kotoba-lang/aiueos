@@ -22,7 +22,7 @@
 ;; (add the entry + the fuel tier); this file documents and reproduces the fix
 ;; until that pin advances.
 
-(require '[clojure.java.io :as io] '[clojure.string :as str])
+(require '[clojure.java.io :as io] '[kotoba.lang.text :as str])
 
 (def ^:private elf-src
   ;; The pinned kotoba-native's kernel packaging. Resolve it from the git-libs

@@ -20,7 +20,7 @@
   is not this slice. Compositor and real-machine qualification are later
   units. Consumer smoke does not require itonami; the operator fragment is
   `/api/session/operator` and a separate command."
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [kotoba.security.crypto-policy :as sec-crypto]
             [aiueos.device-auth :as device-auth]
             #?(:clj [cacao.core :as cacao])

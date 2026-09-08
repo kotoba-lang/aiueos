@@ -38,7 +38,7 @@
   directly or through an importer — because that is the one whose answer should
   never be no by accident."
   (:require [clojure.java.io :as io]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is]]))
 
 (def ^:private kotoba-dir (io/file "os" "aiueos" "kotoba"))

@@ -12,7 +12,7 @@
   a probe that answers a different question than the one asked is the defect
   this series keeps finding, here in its own preparation."
   (:require [clojure.edn :as edn]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is]]))
 
 (def ^:private anonymous-deps

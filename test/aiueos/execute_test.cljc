@@ -12,7 +12,7 @@
             #?(:clj [grant.signing :as signing])
             [aiueos.topic :as topic]
             [clojure.test :refer [deftest is testing]]
-            #?(:clj [clojure.string :as str])))
+            #?(:clj [kotoba.lang.text :as str])))
 
 ;; Compiled Wasm binaries, base64-embedded rather than checked in as binary
 ;; .wasm files -- this repo's .gitignore excludes *.wasm as a matter of

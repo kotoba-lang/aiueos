@@ -33,7 +33,7 @@
   a run that checked all of them returns."
   (:require [clojure.edn :as edn]
             [clojure.java.io :as io]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing]]
             [sha2.core :as sha2]))
 

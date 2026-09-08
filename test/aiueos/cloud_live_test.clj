@@ -8,7 +8,7 @@
   (:require [grant.cloud :as cloud]
             [aiueos.cloud-live :as live]
             [aiueos.provider.cloud :as provider]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing]]))
 
 ;; -- three values, and the order they take precedence in -------------------

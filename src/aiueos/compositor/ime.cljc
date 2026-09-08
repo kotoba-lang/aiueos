@@ -10,7 +10,7 @@
   IME is on is the named red (`:ime-bypass`). IME-off is that red path
   on purpose so the kana gate can discriminate. Space that commits kana
   while the dictionary has か is leftover `:kanji-absent`."
-  (:require [clojure.string :as str]))
+  (:require [kotoba.lang.text :as str]))
 
 (def mora
   "Longest-match romaji → hiragana. Enough to prove conversion; not mozc."
@@ -118,7 +118,7 @@
       (= s "Backspace") "Backspace"
       (= s " ") "Space"
       (= s "Space") "Space"
-      :else (str/lower-case s))))
+      :else (str/lower s))))
 
 (defn- flush-preedit
   "Fold remaining romaji into `:preedit` (n→ん)."
