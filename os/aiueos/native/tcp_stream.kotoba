@@ -108,6 +108,15 @@
 ;; kernel-rdtsc bits 16.. (the low bits are too regular at boot), forced into
 ;; 1..1023 so an unset slot can never be mistaken for a drawn one.
 (def tcb-slot-boot-salt 19)
+
+;; The per-boot nonce the murakumo relay binds a job to. Drawn once from
+;; rdtsc, masked to 60 bits so `store-hex` -- which divides -- never sees a
+;; negative i64, and forced non-zero so the "not yet drawn" test stays
+;; unambiguous. The relay requires the boot in AIUEOS_NODE_HELLO_V1 and in
+;; AIUEOS_JOB_RESULT_V1 to be the same 16 hex characters; that is what makes a
+;; result attributable to the boot that claimed the job rather than to any
+;; board that can spell the format.
+(def tcb-slot-boot-nonce 20)
 ;; Held table: 4 entries x (seq, len, buffer-index, tick) at slots 32..79.
 ;; Capacity 4 entries x 2048-byte buffers = the ADR section 2 held bound of
 ;; 8192 bytes; reassembly loops over at most 4 entries, so fuel is bounded
@@ -1433,9 +1442,32 @@
         log-frame (kernel-subregion scratch scratch-window-bytes
                                     scratch-log-offset 4096)
         cycles (kernel-load-u64-4k tcb 4096 (* tcb-slot-rto-windows 8))
+        ;; Drawn before anything on bus3 speaks, because both the hello and
+        ;; every answer carry it.
+        nonce-slot (kernel-load-u64-4k tcb 4096 (* tcb-slot-boot-nonce 8))
+        nonce (if (= nonce-slot 0)
+                (let [fresh (+ 1 (bit-and (kernel-rdtsc) 1152921504606846975))
+                      kept (kernel-store-u64-4k tcb 4096
+                                                (* tcb-slot-boot-nonce 8) fresh)]
+                  (+ fresh (* 0 kept)))
+                nonce-slot)
+        ;; AIUEOS_NODE_HELLO_V1, once per boot on the first cycle. This is what
+        ;; starts the relay: until the Mac sees a hello it enrolls nothing and
+        ;; enqueues nothing, so a board that never says it is here is a board
+        ;; that never gets a job. D8 is the sentinel, the byte after it is
+        ;; debug-hello's status (0 = the line left the NIC).
+        hello (if (and (= cycles 0) (not (= bus3-dma 0)))
+                (debug/debug-hello bus3-dma nonce)
+                0)
+        hello-mark (if (and (= cycles 0) (not (= bus3-dma 0)))
+                     (stream-log win mmio log-frame 216)
+                     0)
+        hello-logged (if (and (= cycles 0) (not (= bus3-dma 0)))
+                       (stream-log win mmio log-frame (+ hello (* 0 hello-mark)))
+                       0)
         bus3 (if (= bus3-dma 0)
                0
-               (debug/debug-tick bus3-dma))
+               (+ (debug/debug-tick bus3-dma nonce) (* 0 hello-logged)))
         ;; Quiet when nothing arrived -- which is every cycle until someone
         ;; sends. Speaking only on an event keeps the bus2 netlog readable and
         ;; keeps 0 ("no frame") from being the most common byte on the wire.

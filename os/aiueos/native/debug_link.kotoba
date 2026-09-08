@@ -31,9 +31,13 @@
   (:require [capability.link.frame :as link]
             [capability.dma.map :as dma]
             [capability.mmio.map :as mapped]
-            [native.rtl8125 :as rtl])
+            [native.rtl8125 :as rtl]
+            [native.relay-text :as text]
+            [native.relay-line :as relay]
+            [native.micro-infer :as mi])
   (:export [debug-init debug-send debug-send-byte debug-poll
-            debug-tick debug-mac-byte debug-phy-byte debug-frame-byte]))
+            debug-tick debug-hello debug-mac-byte debug-phy-byte
+            debug-frame-byte]))
 
 ;; ── fixed debug 4-tuple ──────────────────────────────────────────────────
 ;; K16 bus3 = 10.10.10.2, Mac en8 = 10.10.10.1, UDP 9000 -> 9000.
@@ -545,8 +549,39 @@
             ;; Answered here rather than in debug-tick because the reply is
             ;; built FROM this buffer and the re-arm below gives it back.
             answered (if (= arp 1) (answer-arp mmio dma-pages rx-frame) 0)
+            ;; A job request passes control-frame-valid too -- it is the same
+            ;; 4-tuple -- and its first payload byte is 'A', which would have
+            ;; been answered with '?' as an unrecognised one-byte command. So
+            ;; the job shape is tested FIRST and excluded from `payload`.
+            job (if (and valid-command
+                         (= arp 0)
+                         (control-frame-valid rx-frame (- bytes 4))
+                         (= (relay/template-match rx-frame 42 4 0
+                                                  (text/job-prefix-length)) 1))
+                  1
+                  0)
+            ;; The datagram's own UDP length, not the descriptor's byte count:
+            ;; the NIC pads every frame to 60 and the tail of a short line
+            ;; would otherwise be read as prompt.
+            job-length (if (= job 1)
+                         (let [n (- (relay/frame-be16 rx-frame 38) 8)]
+                           (if (< n 2) 0 (if (> n 255) 0 n)))
+                         0)
+            ;; Staged BEFORE the re-arm below hands this buffer to the NIC.
+            staged (if (= job-length 0)
+                     0
+                     (let [tx (kernel-subregion dma-pages 16384 8192 4096)]
+                       (if (and (= (relay/store-byte tx staged-length-offset
+                                                     job-length) 1)
+                                (= (copy-frame-bytes tx rx-frame 0 6 6) 1)
+                                (= (relay/copy-bytes tx rx-frame
+                                                     staged-payload-offset 42
+                                                     job-length) 1))
+                         1
+                         0)))
             payload (if (and valid-command
                              (= arp 0)
+                             (= job 0)
                              (control-frame-valid rx-frame (- bytes 4)))
                       (bit-and (kernel-load-u8-4k rx-frame 4096 42) 127)
                       0)
@@ -562,11 +597,156 @@
           2
           (if (= arp 1)
             (+ 16 answered)
-            (if (= payload 0)
-              1
-              (if (= reply-to 1) (+ 128 payload) 1))))))))
+            (if (= job 1)
+              ;; 512 = a job request is staged and ready to be answered.
+              ;; 8 = it was a job request whose staging failed, which is NOT
+              ;; the same as "not ours" and must not be reported as one.
+              (if (= staged 1) 512 8)
+              (if (= payload 0)
+                1
+                (if (= reply-to 1) (+ 128 payload) 1)))))))))
 
-(defn debug-tick [dma-pages]
+
+;; ── the murakumo relay on bus3 ───────────────────────────────────────────
+;; Everything above this line moves ONE byte. A job request and its answer are
+;; ASCII lines of 91..205 bytes, so they need a datagram whose length is not a
+;; compile-time constant -- which means the IPv4 header checksum is not one
+;; either. `relay/header-checksum` computes it; the two baked constants above
+;; stay for the one-byte plane they were derived for.
+;;
+;; The staged request lives at tx-frame offset 2048, well past the 205 bytes a
+;; frame can occupy, because `debug-poll` must hand the RX buffer back to the
+;; NIC before anything is parsed out of it. Byte 2047 carries the staged
+;; length. The requester's own MAC is copied to bytes 0..5 in the same breath,
+;; so the answer goes back to whoever asked rather than to a constant.
+(def staged-length-offset 2047)
+(def staged-payload-offset 2048)
+;; "AIUEOS_JOB_V1 boot=" (19) + 16 hex + " " + "id=" (3) = 39.
+(def staged-id-offset 2087)
+
+(defn build-line-frame [frame mmio payload-length destination]
+  ;; eth 14 + ip 20 + udp 8 + `payload-length`, with the payload ALREADY at
+  ;; offset 42 and the Ethernet destination already at 0..5. Returns the wire
+  ;; length, or 0 if any field did not read back.
+  (if (and (= (zero-prefix frame 42 6) 1)
+           (= (store-device-mac frame mmio 0) 1)
+           (= (store-be16 frame 12 2048) 2048)
+           (= 0 (* 0 (kernel-store-u8-4k frame 4096 14 69)))     ; v4/IHL 20
+           (= (kernel-load-u8-4k frame 4096 14) 69)
+           (= (store-be16 frame 16 (+ 28 payload-length)) (+ 28 payload-length))
+           (= 0 (* 0 (kernel-store-u8-4k frame 4096 22 64)))     ; TTL
+           (= (kernel-load-u8-4k frame 4096 22) 64)
+           (= 0 (* 0 (kernel-store-u8-4k frame 4096 23 17)))     ; UDP
+           (= (kernel-load-u8-4k frame 4096 23) 17)
+           (= (store-be32 frame 26 k16-debug-ip) k16-debug-ip)
+           (= (store-be32 frame 30 destination) destination)
+           (= (store-be16 frame 34 debug-udp-port) debug-udp-port)
+           (= (store-be16 frame 36 debug-udp-port) debug-udp-port)
+           (= (store-be16 frame 38 (+ 8 payload-length)) (+ 8 payload-length)))
+    ;; The checksum is computed LAST, over a header whose own field zero-prefix
+    ;; left at zero. Getting this wrong is invisible from here -- the Mac drops
+    ;; the datagram in ip_input and both ends still read as healthy.
+    (let [sum (relay/header-checksum frame 14)]
+      (if (= (store-be16 frame 24 sum) sum)
+        (+ 42 payload-length)
+        0))
+    0))
+
+(defn send-hello-line [mmio dma-pages boot]
+  ;; AIUEOS_NODE_HELLO_V1, broadcast. This is what starts the relay: the Mac
+  ;; matches it, enrolls the node, and only then enqueues a job.
+  ;;   0  the line left the NIC
+  ;;   1  the line could not be written
+  ;;   2  the header could not be built
+  ;;   3+n  submit refused (n from submit-bus3-frame)
+  (let [tx (kernel-subregion dma-pages 16384 8192 4096)]
+    (if (and (= (store-broadcast-mac tx 0 0) 1)
+             (= (relay/store-template tx 42 0 0 (text/template-length 0)) 1)
+             (= (relay/store-hex tx (+ 42 (text/hello-boot-offset)) boot 16) 1)
+             (= (relay/store-mac-hex tx (+ 42 (text/hello-mac-offset)) mmio 0) 1))
+      (let [len (build-line-frame tx mmio (text/template-length 0)
+                                  limited-broadcast-ip)]
+        (if (= len 0)
+          2
+          (let [sent (submit-bus3-frame mmio dma-pages len)]
+            (if (= sent 0) 0 (+ 3 sent)))))
+      1)))
+
+(defn answer-job-line [mmio dma-pages boot]
+  ;; Read the staged AIUEOS_JOB_V1, run aiueos-char-bigram-v1 over its prompt,
+  ;; and answer AIUEOS_JOB_RESULT_V1 to the MAC the request came from.
+  ;;   0   the answer left the NIC
+  ;;   1   the request is not the shape the relay sends
+  ;;   2   the prompt is empty or carries something outside " a-z"
+  ;;   3   the transition row is empty -- no next token (the C reference's
+  ;;       `!total || !score` refusal)
+  ;;   4   the answer could not be written
+  ;;   5   the header could not be built
+  ;;   6+n submit refused (n from submit-bus3-frame)
+  (let [tx (kernel-subregion dma-pages 16384 8192 4096)
+        total (kernel-load-u8-4k tx 4096 staged-length-offset)
+        id-len (relay/digits-run tx staged-id-offset 20 0)
+        middle-at (+ staged-id-offset id-len)
+        hex-at (+ middle-at (text/job-middle-length))
+        hex-len (- (+ staged-payload-offset total) hex-at)]
+    (if (not (and (> id-len 0)
+                  (>= hex-len 2)
+                  (= (relay/template-match tx middle-at 5 0
+                                           (text/job-middle-length)) 1)))
+      1
+      (let [vocab (relay/prompt-scan tx hex-at hex-len 27)]
+        (if (= vocab 27)
+          2
+          ;; The TSC delta across the reduction is what the contract calls
+          ;; :native-compute :serialized-tsc-cycle-delta. It is the only number
+          ;; in the answer the Mac cannot predict, which is precisely why it is
+          ;; there -- and it is NOT a wall time until the TSC frequency is
+          ;; measured, as the contract also says.
+          (let [started (kernel-rdtsc)
+                row (mi/micro-infer-row vocab)
+                elapsed (- (kernel-rdtsc) started)
+                cycles (if (< elapsed 0)
+                         0
+                         (if (> elapsed 9999999999999999) 9999999999999999 elapsed))]
+            (if (= row 0)
+              3
+              (let [tail-at (+ 42 (+ (text/result-head-length) id-len))
+                    payload-length (+ (text/result-head-length)
+                                      (+ id-len (text/result-tail-length)))]
+                (if (not (and (= (relay/store-template tx 42 1 0
+                                                       (text/result-head-length)) 1)
+                              (= (relay/store-hex tx (+ 42 (text/result-boot-offset))
+                                                  boot 16) 1)
+                              (= (relay/copy-bytes tx tx
+                                                   (+ 42 (text/result-head-length))
+                                                   staged-id-offset id-len) 1)
+                              (= (relay/store-template tx tail-at 2 0
+                                                       (text/result-tail-length)) 1)
+                              (= (relay/store-hex tx (+ tail-at (text/result-token-offset))
+                                                  (mi/micro-infer-token row) 2) 1)
+                              (= (relay/store-dec tx (+ tail-at (text/result-score-offset))
+                                                  (mi/micro-infer-score row) 2) 1)
+                              (= (relay/store-dec tx (+ tail-at (text/result-total-offset))
+                                                  (mi/micro-infer-total row) 2) 1)
+                              (= (relay/store-dec tx (+ tail-at (text/result-cycles-offset))
+                                                  cycles 16) 1)))
+                  4
+                  (let [len (build-line-frame tx mmio payload-length mac-debug-ip)]
+                    (if (= len 0)
+                      5
+                      (let [sent (submit-bus3-frame mmio dma-pages len)]
+                        (if (= sent 0) 0 (+ 6 sent))))))))))))))
+
+(defn debug-hello [dma-pages boot]
+  ;; Resolve bus3's BAR and announce the node once. 3 = the BAR no longer
+  ;; decodes, which must not read as "sent".
+  (let [bar (rtl/bar-for-bus 3)]
+    (if (= bar 0)
+      3
+      (send-hello-line (kernel-subregion 1 549755813887 (- bar 1) 512)
+                       dma-pages boot))))
+
+(defn debug-tick [dma-pages boot]
   ;; Poll once, answer at most once. Returns what the kernel logs:
   ;;   0        nothing arrived
   ;;   1        a frame arrived that was not ours
@@ -579,8 +759,13 @@
   ;;            itself is the caller's, after its bus2 receipt (DB). This
   ;;            function has no bus2 handle and must not reset behind it.
   ;;   96+n     an unrecognised command answered with '?'; n is the send status
-  ;; The three answered cases are 64..71, 80..87 and 96..103, so no encoding
-  ;; collides (n is 0..5, see debug-send-byte).
+  ;;   8        a job request arrived and could not be staged
+  ;;   112+n    an AIUEOS_JOB_V1 was answered; n is answer-job-line's status,
+  ;;            0..11, so 112 means the result line left the NIC and 113..123
+  ;;            say where it stopped. Deliberately above 103 so it collides
+  ;;            with nothing already on this wire.
+  ;; The three one-byte answered cases are 64..71, 80..87 and 96..103, so no
+  ;; encoding collides (n is 0..5, see debug-send-byte).
   ;;
   ;; This resolves its own MMIO rather than taking it: the native ABI caps a
   ;; function at five parameters, and the resident loop was already at five.
@@ -594,10 +779,12 @@
       3
       (let [mmio (kernel-subregion 1 549755813887 (- bar 1) 512)
             seen (debug-poll mmio dma-pages)]
-        (if (< seen 128)
-          seen
-          (if (= (- seen 128) 80)                       ; 'P'
-            (+ 64 (answer-byte mmio dma-pages 112))       ; 'p'
-            (if (= (- seen 128) 82)                     ; 'R'
-              (+ 80 (answer-byte mmio dma-pages 114))     ; 'r'
-              (+ 96 (answer-byte mmio dma-pages 63)))))))))  ; '?'
+        (if (= seen 512)
+          (+ 112 (answer-job-line mmio dma-pages boot))
+          (if (< seen 128)
+            seen
+            (if (= (- seen 128) 80)                     ; 'P'
+              (+ 64 (answer-byte mmio dma-pages 112))     ; 'p'
+              (if (= (- seen 128) 82)                   ; 'R'
+                (+ 80 (answer-byte mmio dma-pages 114))   ; 'r'
+                (+ 96 (answer-byte mmio dma-pages 63))))))))))  ; '?'

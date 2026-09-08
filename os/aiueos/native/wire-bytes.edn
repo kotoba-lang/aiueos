@@ -50,7 +50,8 @@
 {:registry/id :aiueos-wire-bytes
  :registry/version 1
  :registry/reconciled "2026-09-07"
- :registry/amended ["2026-09-08 bus3 'R' reboot command: netlog DB (0xDB) / DC (0xDC), bus3-udp 'r' (0x72); :port-cf9 0x06 gains a second emission site"]
+ :registry/amended ["2026-09-08 bus3 'R' reboot command: netlog DB (0xDB) / DC (0xDC), bus3-udp 'r' (0x72); :port-cf9 0x06 gains a second emission site"
+                    "2026-09-08 the murakumo relay on bus3: netlog D8 (0xD8) announces AIUEOS_NODE_HELLO_V1, and D9's follower gains 8 and 112..123 for AIUEOS_JOB_V1. The relay's own traffic is ASCII LINES on bus3 UDP/9000, not single bytes, so it is deliberately NOT registered on :bus3-udp -- that channel's contract is one byte per datagram and a 91..205 byte line would break every reader of it. The lines are checked against the relay's own regexes by os/aiueos/tools/gen-relay-text.cljs instead."]
  :registry/authorities ["os/aiueos/native/tcp_stream.kotoba (per-function comments)"
                         "os/aiueos/native/kernel.kotoba"
                         "os/aiueos/native/debug_link.kotoba"
@@ -125,8 +126,24 @@
               0 nothing, 1 not ours, 2 ring dead, 16+n an ARP request for
               10.10.10.2 answered, 64+n 'P' answered with 'p', 80+n 'R'
               answered with 'r' (the caller then logs DB and resets),
-              96+n an unrecognised command answered with '?'. n is
+              96+n an unrecognised command answered with '?',
+              8 a job request arrived that could not be staged,
+              112+n an AIUEOS_JOB_V1 was answered (112 = the result line left
+              the NIC; 113 not the shape the relay sends; 114 prompt outside
+              \" a-z\"; 115 empty transition row; 116 answer unwritable;
+              117 header unbuildable; 118+n submit refused). n is
               submit-bus3-frame's status, 0..5."}
+  {:channel :netlog :value 216 :hex "D8" :name :relay-hello-sentinel
+   :emitter "os/aiueos/native/tcp_stream.kotoba"
+   :meaning "AIUEOS_NODE_HELLO_V1 was attempted on bus3, once, on the first
+             cycle of the run. The byte AFTER it is debug-hello's status:
+             0 the line left the NIC / 1 the line could not be written /
+             2 the header could not be built / 3 bus3's BAR no longer decodes /
+             3+n submit refused with n. Emitted on EVERY first cycle, including
+             when it fails, so 'the board never announced itself' and 'the
+             board announced itself and the Mac heard nothing' are different
+             shapes on this wire. Added 2026-09-08 with the murakumo relay."
+   :data-followers 1}
   {:channel :netlog :value 219 :hex "DB" :name :bus3-reboot-command
    :emitter "os/aiueos/native/tcp_stream.kotoba"
    :meaning "'R' (reboot) arrived on bus3 and was answered 'r' (the D9 <80+n> pair precedes this). The kernel is about to write 0x06 to port 0xCF9 (SYS_RST|RST_CPU) -- the same write the run end does after DE. Order on the wire: D9 <80+n> DB, then either silence (the board reset) or DC (the chipset ignored the write). Added 2026-09-08 (owner: LAN2 carries control so nobody presses the power button)."}
