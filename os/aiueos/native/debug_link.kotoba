@@ -46,8 +46,15 @@
 ;; header checksum (measured 2026-09-08: exactly two per boot, the two
 ;; greetings), and answered no ARP because the request asked for 10.11.0.1.
 ;; One wrong digit is the whole history of "bus3 is output-only".
-(def k16-debug-ip (+ (* 10 16777216) (* 10 65536) (* 10 256) 2))   ; 10.10.10.2
-(def mac-debug-ip (+ (* 10 16777216) (* 10 65536) (* 10 256) 1))   ; 10.10.10.1
+;; `def` takes a literal, so the octets cannot be written as arithmetic and the
+;; only defence is that these four numbers are checked against each other:
+;;   10.10.10.2 = 0x0A0A0A02 = 168430082
+;;   10.10.10.1 = 0x0A0A0A01 = 168430081
+;; and the two header checksums below are computed FROM these values. If any of
+;; the six changes, all six are re-derived together or the plane goes silent
+;; again in a way every status reports as success.
+(def k16-debug-ip 168430082)    ; 0x0A0A0A02 = 10.10.10.2
+(def mac-debug-ip 168430081)    ; 0x0A0A0A01 = 10.10.10.1
 (def debug-udp-port 9000)
 
 ;; Mac en8 NIC MAC (3c:18:a0:d5:82:a8), the fixed debug peer.

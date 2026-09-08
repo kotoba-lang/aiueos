@@ -1070,6 +1070,65 @@ answers `P` and `R`, the sink listens on the wildcard so it will hear either
 shape on either interface, and the PXE server accepts both NICs so the board can
 boot from whichever port has a wire.
 
+## LAN2 works. It was one transposed decimal literal. (2026-09-08)
+
+```
+(def k16-debug-ip 168493058)    ; 0x0A0A0A02
+```
+
+`0x0A0A0A02` is **168430082**. `168493058` is **10.11.0.2**. The peer constant
+was wrong the same way (10.11.0.1), and the two baked header checksums were
+computed from the addresses in the *comments*, so the frames and their checksums
+could never agree. Every datagram this plane sent since it was written carried a
+source address on a network that does not exist and was dropped by the Mac in
+`ip_input`; every ARP request asked for 10.11.0.1, which nothing answers.
+
+The frames were always arriving. `netstat -s -p ip` had been counting them the
+whole time — **bad header checksums rose by exactly two per boot**, the two
+greetings — and nobody had looked, because the board's own receipts all said
+success and the Mac's sink said nothing, and neither side is where the drop is
+recorded.
+
+What found it: emitting the built IPv4 header on the bus2 netlog as `DD <byte>`
+pairs.
+
+```
+45 00 00 1D 00 00 00 00 40 11 66 C5 0A 0B 00 02 FF FF FF FF
+                                     ^^^^^^^^^^^ 10.11.0.2
+stored checksum 0x66C5 · computed over those bytes 0x70C4
+```
+
+### Measured after the fix
+
+| | before | after |
+|---|---|---|
+| `netstat -s -p ip` bad header checksums | +2 per boot | **+0** |
+| bus3 greeting in the Mac's sink | never, in the plane's whole history | `from=10.10.10.2:9000 bytes=1 hex=42` — **every boot** |
+| `arp -an` | `10.10.10.2 (incomplete)` | **`10.10.10.2 at 70:70:fc:b:b6:31 on en8`** |
+| `P` → | nothing | **`hex=70` (`p`)**, netlog `D9 40` |
+| `R` → | nothing | **`hex=72` (`r`)**, netlog `DB`, and the board reboots |
+
+So LAN2 now carries what the owner asked for on 2026-09-08: debug output and
+control, including reboot, on the second NIC — while bus2 carries PXE and the
+stream experiment. The button is not in the loop for either plane.
+
+### What the day cost, and what it is worth writing down
+
+Six correct measurements were spent ruling out things that were never wrong —
+the cabling (twice), the destination MAC, the IP shape, the rings, the DMA, the
+PHY — and each of them produced a real improvement that stays: the plane now
+speaks ARP, broadcasts what it starts, answers whoever asked, refuses to confuse
+"polled, nothing there" with "never polled", and carries a MAC-loopback
+self-test. But the defect was one digit, in a constant with the right value
+written beside it in a comment.
+
+The general lesson is not "check your constants". It is that **the drop was
+counted on the third machine** — not by the sender, not by the receiver's
+application, but by the receiving kernel's statistics, which neither end of a
+two-sided debugging session thinks to read. `netstat -s` is the first place to
+look the moment "it says it sent and nothing arrived", and it cost a day to
+remember that.
+
 ## Status of the artifacts
 
 - Commit `e09e4f1` (Phase 1 — bus3 single-shot) is superseded by commit
