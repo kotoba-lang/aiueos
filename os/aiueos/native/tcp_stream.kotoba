@@ -1408,7 +1408,7 @@
 ;; died in `ud2` with no DE. 4 buys the deliberate end while the bridge learns
 ;; to close with RST (k16-bridge.cljs debug mode) and cycles get cheaper; the
 ;; real fix is still a per-cycle replenish (ADR-0156, amu-h1).
-(defn debug-run-cycles [] 1024)
+(defn debug-run-cycles [] 64)
 ;; 4 until 2026-09-08. Measured that day: four cycles complete in 12 ms and the
 ;; run then resets through PXE, which takes 19.7 s -- the board was ALIVE FOR
 ;; 0.1% OF ITS LIFE. A node reachable for 12 ms in 20 s cannot be handed a job:
@@ -1420,11 +1420,24 @@
 ;; machine and nothing resets it, so the board waits for a human at the power
 ;; button -- the one thing this rig is built not to need.
 ;;
-;; 1024 since 2026-09-08, at a 2^30 budget. The arithmetic, stated rather than
-;; hoped: the only per-cycle cost anyone has MEASURED is an upper bound of
-;; 262,144 -- the 4-cycle configuration completed inside 2^20. 1024 cycles is
-;; therefore at most 268 million against 1,073 million, a fourfold margin on
-;; that bound, for roughly 3 s of uptime per reboot instead of 0.19.
+;; 1024 from 2026-09-08 at a 2^30 budget, and BACK TO 64 the same day. The
+;; arithmetic that justified 1024 was: the only per-cycle cost anyone had
+;; MEASURED was an upper bound of 262,144 (the 4-cycle configuration completed
+;; inside 2^20), so 1024 cycles is at most 268 million against 1,073 million --
+;; a fourfold margin.
+;;
+;; That margin was extrapolated from FOUR cycles, and the cost per cycle is not
+;; constant: every cycle re-arms the ring and the TCB and opens a connection,
+;; and the polls and retries grow as the peer's state accumulates. The bound
+;; was an upper bound on the cheap end of the curve quoted as an upper bound on
+;; all of it.
+;;
+;; Measured 2026-09-08: the board self-rebooted every 19.7-20.4 s until
+;; 15:43:32 and then stopped, and since then has run exactly once per human
+;; power cycle -- three times, ending mid-cycle with no DE. That is the halt
+;; this comment predicts two paragraphs up, and the PXE server log is the
+;; non-lossy witness for it: zero unattended re-fetches, one per power cycle.
+;; 64 is the largest count with a RECORDED clean ending (`21 DE DE DE`).
 ;;
 ;; This constant exists only because the budget is a LIFETIME cap for a
 ;; bootable image -- "a delayed trap", in kotoba-native's own words about the
@@ -1485,8 +1498,36 @@
                              (kernel-subregion scratch scratch-window-bytes
                                                scratch-log-offset 4096)
                              (+ 222 (* 0 ended-2)))
-         reset (kernel-out-u8 3321 6)]
-     (+ 223 (* 0 (+ ended-3 reset))))
+         ;; D7, then DRAIN, then the reset. Measured 2026-09-08: the board
+         ;; emitted DE DE DE, printed no STATUS, and froze with the panel still
+         ;; on screen -- no POST, so no reset, and `main` never returned. The
+         ;; only statement between the last DE and that return is the 0xCF9
+         ;; write, so the write itself is where it stops.
+         ;;
+         ;; 0x06 is SYS_RST|RST_CPU: a WARM reset, which does not reset PCIe
+         ;; devices. Three fire-and-forget transmits were handed to the RTL8125
+         ;; immediately before it, so the NIC is still bus-mastering when the
+         ;; CPU is reset and the platform never completes. That is a race, and
+         ;; it behaves like one: DE-three-times landed at 15:10 and the 19.7 s
+         ;; cadence ran until 15:43 before stopping for good.
+         ;;
+         ;; So wait for the last descriptor's Own bit to clear before writing.
+         ;; The marker goes BEFORE the drain deliberately -- `stream-log` is
+         ;; itself a DMA submit, so a receipt emitted after the drain would
+         ;; re-arm the very thing being drained. D7 is drained along with the
+         ;; three DEs, and its presence on the wire says the run reached the
+         ;; quiesce; its absence with DE present says it did not.
+         ;;
+         ;; The reset value stays 0x06. One variable moves. If the board still
+         ;; freezes with D7 on the wire, the drain was not the problem and the
+         ;; next thing to try is 0x0E (FULL_RST), which resets PCIe too.
+         quiescing (stream-log win mmio
+                               (kernel-subregion scratch scratch-window-bytes
+                                                 scratch-log-offset 4096)
+                               (+ 215 (* 0 ended-3)))
+         drained (wait-tx-complete-stream win (+ 200000000 (* 0 quiescing)))
+         reset (kernel-out-u8 3321 (+ 6 (* 0 drained)))]
+     (+ 223 (* 0 reset)))
    (let [tcb (kernel-subregion win dma-window-bytes 4096 4096)
         ;; The log frame is the stream's OWN page and nothing else's. Every
         ;; receipt below is emitted while a transmit may still be in flight.

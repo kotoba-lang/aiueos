@@ -202,6 +202,72 @@ the server log. Nothing here attributes the wedge to the tender — that image
 has never run — and nothing here attributes it to `0576a52e` either; one boot
 followed by silence is not yet a cause.
 
+### On hardware, 2026-09-08 evening: the tender runs, and the reset is the wound
+
+The tender image booted and the node came up:
+
+```
+AIUEOS_PXE_TFTP_OK bytes=261120
+AIUEOS_NODE_HELLO_V1 boot=...
+AIUEOS_MURAKUMO_RELAY state=live-not-ready enrollment-status=200 heartbeat-status=201
+```
+
+Behaviour is unchanged with the mechanism present, which is what step 1 asked.
+Every boot since enrolls `200`/`201` with the node's own did:key.
+
+What that exposed is a separate defect that had been eating the rig all day:
+**the board stops at the platform reset.** The end-of-run path is
+
+```
+DE DE DE                 three fire-and-forget DMA transmits
+(kernel-out-u8 3321 6)   0xCF9 <- 0x06 = SYS_RST|RST_CPU
+223                      -> loader prints STATUS DF
+```
+
+Three facts bracket the failure to one instruction: `DE DE DE` reached the
+wire, so the transmits were submitted; the panel showed `RTL8125` and **no
+`STATUS`**, so `main` never returned, and the only statement between the last
+DE and that return is the 0xCF9 write; and the panel text was still on screen,
+so no POST happened and therefore no reset happened either.
+
+`0x06` is a WARM reset and does not reset PCIe devices. Three transmits had
+just been handed to the RTL8125, so the NIC is still bus-mastering when the CPU
+is reset. It behaves like the race it is: DE-three-times landed at 15:10 and
+the 19.7 s cadence ran until 15:43 before stopping for good.
+
+The fix drains the last transmit descriptor's Own bit
+(`wait-tx-complete-stream`, which already existed) before the write, with a D7
+receipt emitted BEFORE the drain -- `stream-log` is itself a DMA submit, so a
+receipt after the drain would re-arm what was just drained.
+
+| image | self-resets observed |
+|---|---|
+| 1024 cycles | **0** across 3 power cycles |
+| 64 cycles | 1 |
+| 64 cycles + drain | **2** (21 s and 158 s apart), 3 boots, all enrolled |
+
+Better, and not yet the steady 19.7 s cadence. After the last run the board
+sent **no DHCP at all**, so it stops on its own rather than because the server
+failed to answer.
+
+### Two things measured today that were wrong when first claimed
+
+**`AIUEOS_PXE_TFTP_FAIL stage=oack` is not a fault.** This firmware fetches in
+two phases: an RRQ carrying `tsize` to learn the size, then a second RRQ
+without it for the transfer. It abandons the probe TID with a TFTP ERROR
+(`opcode-0005`) once it has the size, so **one benign FAIL per boot is normal**.
+A reading of "50 OK / 61 FAIL" as a 45% success rate, and the load-starvation
+hypothesis built on it, were both wrong. The diagnostic added that day is what
+disproved them.
+
+**Marker counts per boot are not evidence of where a run ended.** The netlog is
+fire-and-forget UDP and ADR-0203 already recorded that only 216 of 259 runs
+carried a DE *while the board kept rebooting throughout*. Separately, an
+analysis that segments boots on time gaps misattributes markers across
+boundaries, because lines without a timestamp inherit the previous one. The
+non-lossy witness for "did the run end" is the PXE server's fetch log, and
+nothing else.
+
 ## Order, and what not to do
 
 1. ~~**The image entry becomes a host loop**~~ — **landed 2026-09-08**, see
