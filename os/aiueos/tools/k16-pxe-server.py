@@ -1087,11 +1087,60 @@ def dhcp_server():
     bind_interface(sock, 67)
     print(f"AIUEOS_PXE_DHCP_READY interface={INTERFACE} server={SERVER_IP} "
           f"offer={CLIENT_IP}", flush=True)
+    # This loop had no exception handling and it runs on the MAIN thread, so any
+    # error here did not fail a boot -- it ended the process. Measured
+    # 2026-09-08, the first hour the node was resident: a transient
+    # `OSError: [Errno 65] No route to host` from the broadcast reply took down
+    # DHCP, TFTP, HTTP, the netlog and the murakumo relay together, and the only
+    # trace was a traceback in a log nobody reads while the board is up.
+    #
+    # This is the exact mirror of the netlog loop's own comment, which records
+    # the same shape from the other side ("a dead receiver and a quiet wire
+    # produced the same empty log"). One datagram must not be able to end the
+    # instrument, the error TEXT is kept because a status without a body cannot
+    # be diagnosed, and a liveness line makes silence distinguishable from death
+    # without reading counters somewhere else.
+    served = 0
+    failures = 0
     while True:
-        packet, address = sock.recvfrom(4096)
+        try:
+            packet, address = sock.recvfrom(4096)
+        except Exception as exc:                # noqa: BLE001 - must not die
+            failures += 1
+            print(f"AIUEOS_PXE_DHCP_RECV_FAIL failures={failures} "
+                  f"exc={type(exc).__name__}: {exc}", flush=True)
+            continue
+        served += 1
+        if served % 500 == 0:
+            print(f"AIUEOS_PXE_DHCP_ALIVE served={served} "
+                  f"failures={failures}", flush=True)
+        failures = dhcp_step(sock, packet, failures)
+
+
+def dhcp_step(sock, packet, failures):
+    """One guarded datagram. Returns the new failure count and NEVER raises.
+
+    A function rather than a bare `except` in the loop so the guard itself can
+    be tested: a loop that has only ever been fed good packets is not known to
+    survive a bad one, and the failure this exists for -- a transient
+    `No route to host` on the broadcast reply -- is not one a test can wait for.
+    """
+    try:
+        dhcp_handle(sock, packet)
+        return failures
+    except Exception as exc:                    # noqa: BLE001 - must not die
+        failures += 1
+        print(f"AIUEOS_PXE_DHCP_HANDLE_FAIL failures={failures} "
+              f"bytes={len(packet)} exc={type(exc).__name__}: {exc}",
+              flush=True)
+        return failures
+
+
+def dhcp_handle(sock, packet):
+    if True:
         values = parse_options(packet)
         if len(packet) < 34 or packet[0] != 1 or 53 not in values:
-            continue
+            return
         message_type = values[53][0]
         architecture = struct.unpack("!H", values.get(93, b"\xff\xff")[:2])[0]
         vendor = values.get(60, b"").decode("ascii", "replace")
@@ -1101,19 +1150,19 @@ def dhcp_server():
         if not expected_dhcp_client(packet):
             print(f"AIUEOS_PXE_DHCP_IGNORED mac={mac} "
                   f"expected={','.join(PXE_EXPECTED_MACS)}", flush=True)
-            continue
+            return
         if message_type == 1:
             reply_type, label = 2, "OFFER"
         elif message_type == 3:
             selected = values.get(54)
             requested = values.get(50)
             if selected and selected != ipv4(SERVER_IP):
-                continue
+                return
             if requested and requested != ipv4(CLIENT_IP):
-                continue
+                return
             reply_type, label = 5, "ACK"
         else:
-            continue
+            return
         reply = dhcp_reply(packet, reply_type)
         sock.sendto(reply, ("255.255.255.255", 68))
         boot = HTTP_BOOT_URI if vendor.startswith("HTTPClient") else BOOT_FILE
@@ -1384,6 +1433,42 @@ def tftp_server():
                              daemon=True).start()
 
 
+def selftest_dhcp_guard():
+    """The DHCP loop runs on the MAIN thread, so an unguarded error there does
+    not fail a boot -- it ends the process, taking TFTP, HTTP, the netlog and
+    the murakumo relay with it. Measured 2026-09-08 in the first hour the node
+    was resident: OSError(65) on the broadcast reply did exactly that."""
+    request = bytearray(300)
+    request[0] = 1
+    request[28:34] = bytes.fromhex(PXE_EXPECTED_MAC.replace(":", ""))
+    request[236:240] = MAGIC
+    request[240:243] = bytes([53, 1, 3])        # DHCPREQUEST
+    request[243:247] = bytes([93, 2, 0, 16])    # arch 16
+    request[247] = 255
+
+    class Raising:
+        def sendto(self, *_a):
+            raise OSError(65, "No route to host")
+
+    class Sending:
+        def __init__(self): self.sent = 0
+        def sendto(self, *_a): self.sent += 1
+
+    # the handler does not swallow it ...
+    raised = False
+    try:
+        dhcp_handle(Raising(), bytes(request))
+    except OSError:
+        raised = True
+    assert raised, "dhcp_handle must not hide a send failure"
+    # ... and the guard counts it instead of ending the process
+    assert dhcp_step(Raising(), bytes(request), 7) == 8
+    # a healthy packet is served and does not count as a failure
+    ok = Sending()
+    assert dhcp_step(ok, bytes(request), 0) == 0
+    assert ok.sent == 1
+
+
 def selftest_authorization():
     """Which credential each route gets, and that "no credential" is its own
     value rather than a blank Bearer -- an empty bearer reads as a token
@@ -1475,6 +1560,7 @@ def selftest():
     assert http_reply[108:108 + len(http_uri)] == http_uri
     oack, size = tftp_oack({"blksize": "1024", "tsize": "0"}, 13312)
     assert size == 1024 and b"tsize\00013312\000" in oack
+    selftest_dhcp_guard()
     selftest_authorization()
     ready = "AIUEOS_CONTROL_READY nonce=0123456789abcdef commands=ping,reboot-pxe"
     assert extract_control_nonce(ready) == "0123456789abcdef"
