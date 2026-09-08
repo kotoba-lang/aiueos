@@ -125,6 +125,46 @@ budget that is too small halts a working machine and requires physical access.
   `build-kotoba-native-boot-46eeedae.tmp.sh` (pin 94f8fe37), and that is the
   one that moved.
 
+## The instrument this ADR measured with is lossy, and two of its numbers go
+
+**Measured 2026-09-08, after the fact.** The table above was built by timing
+every `D8` (run start) to its `DE` (deliberate end) on the bus2 netlog. That
+netlog is fire-and-forget UDP, one datagram per byte, and at 64 cycles the
+board emits a burst the receiver does not keep up with. Across the 259 runs of
+this configuration only **216** carried a `DE`, and **2 of the last 20** did --
+while the board went on rebooting every ~20 seconds throughout, which is proof
+those runs ended normally.
+
+**`DE` absent does not mean the run died.** It usually means one datagram was
+dropped. So "up per run" and "duty cycle" in the table were computed from the
+runs whose `DE` survived -- exactly the runs that emitted fewest bytes and lost
+fewest datagrams, not a random sample. Read 12 ms and 185 ms as the right order
+of magnitude, not as measurements.
+
+The `A9` counts make the loss visible directly: across recent runs they land on
+4, 5, 6, 7, 8, 9, 11, 12, 13, 22, 23, 28, 29, 32, 33, 64 and 65 handshakes for
+a configuration that always attempts 64. **A fuel exhaustion would stop at a
+CONSISTENT cycle** -- the budget is fixed and the per-cycle cost roughly
+constant -- so a scatter like that is datagram loss, not a bound being reached.
+
+**This is why the wedge of 2026-09-08 is NOT attributed to fuel here.** It was,
+briefly, on the shape of a run that carried no `DE`; the full record says such
+runs are ordinary. The board stopped after a run indistinguishable from the
+others on this wire, the preflight panel shows no `STATUS` line (so `main`
+never returned), and the netlog cannot say more. The budget was raised to 2^30
+afterwards regardless -- headroom is cheap against a 2^53-1 ceiling -- but that
+was a precaution, not a diagnosis.
+
+**The real gap is that a dying native kernel says nothing.** ADR-0199 gave the
+C kernel a gate for every fatal vector, one greppable line and a deliberate
+exit. The Kotoba native kernel installs one gate, for `#PF`, and there is no
+invalid-opcode handler builtin for the fuel guard's `ud2` to reach -- the four
+that exist are `kernel-page-fault-handler-address`,
+`kernel-page-fault-recovery-handler-address`,
+`kernel-double-fault-handler-address` and `kernel-rt-timer-handler-address`.
+Applying ADR-0199's decision to this kernel is worth more than any further
+tuning of this number, and it is the next increment.
+
 ## What this does not claim
 
 - **2^26 is not a bound derived from analysis.** It is a measured-completing
@@ -134,11 +174,10 @@ budget that is too small halts a working machine and requires physical access.
   times as often.** 0.91 % is better than 0.1 % and is still a machine that is
   mostly rebooting. The dispatcher must still send across the whole window
   rather than in a burst after the announcement.
-- **The period doubled and this ADR does not explain it.** Uptime grew by
-  173 ms; the gap between runs grew from 19.7 s to 39.8 s — twenty seconds that
-  the longer run does not account for. It is recorded because it was measured,
-  not because it is understood. The reboot path (reset → firmware → DHCP →
-  TFTP) is where to look, and it is not this change's subject.
+- **The period did not double.** An earlier revision of this ADR recorded a
+  jump from 19.7 s to 39.8 s as an unexplained measurement. It came from three
+  runs; across all 259 runs of this configuration the cadence is unchanged at
+  ~20 s. Withdrawn.
 - Nothing here says what the *right* duty cycle is. The reboot, not the run,
   dominates the period; a node that wants to be reachable most of the time
   needs a run that does not end, which is a different decision about fuel
