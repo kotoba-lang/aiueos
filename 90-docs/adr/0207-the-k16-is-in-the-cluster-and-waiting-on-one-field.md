@@ -68,11 +68,56 @@ gap exists, and routing around it would make the tier meaningless.
 Nothing in `k16-pxe-server.py` can or should change it; the string appears in
 that file exactly once, in an unrelated job-stage error.
 
+## The mechanism, read rather than guessed
+
+`cloud-murakumo-api`, `src/local_murakumo/control_plane.cljc`:
+
+```clojure
+(defn requested-node-tier [body]              ; public enrolment defaults to
+  (trust/normalize (or (:node/trust-tier body) :community)))   ; Community
+
+(when (and (trust/secure? tier) (not operator-authorized?))
+  (throw (ex-info "AWAI Secure Cloud enrollment requires operator authorization"
+                  {:type :secure-enrollment-unauthorized})))
+
+:node/admission (if (trust/secure? tier) :accepted :pending)
+:node/provider  (if (trust/secure? tier) "did:web:awai.network" (:node/did body))
+```
+
+So `admission` is a **pure function of the declared tier** -- there is no
+separate approval queue and nothing is waiting to be clicked. The node may
+declare `awai-secure` in its own enrollment body; what it cannot do is be
+*operator-authorized* while doing so. And `provider` is set to
+`did:web:awai.network` by that same branch, which is why the old admitted
+record carries it: it was enrolled through this path.
+
+`write_gate.cljc/operator-authorized?` says what that means, and it is
+**exactly two things**:
+
+1. the shared service bearer token, or
+2. a passkey-rooted operator Biscuit that the identity service verified **for
+   this route's action** (the function refuses an arity without a required
+   action, deliberately, so that a grant over the model registry cannot reach
+   another route).
+
+The K16 presents a CACAO signed by its own did:key. That satisfies
+`cacao-authorized?`, a different gate on the same worker -- which is precisely
+why it enrolls, heartbeats and is dispatched jobs, and is `pending`.
+
+There is a third fact in the same file worth knowing before anyone tries the
+obvious thing: an existing **Secure** record can be updated only by the
+operator (`401`), and a name cannot be re-pointed to a different DID (`409`).
+So `gmktec-k16` is not reusable by this relay even with the right tier.
+
 ## The decision, which is the owner's
 
-Either `gmktec-k16-lan2` is promoted to `awai-secure` with
-`provider did:web:awai.network`, or the K16 stays a `community`-tier enrolled
-node -- live, heart-beating, capability-declared, and dispatched jobs of its
+Either the relay enrols once as `awai-secure` from an operator-authorized
+context -- which in practice means giving it the shared service token, since
+`murakumo_authorization` already prefers a Bearer over the CACAO when one is
+set, plus `AIUEOS_MURAKUMO_TRUST_TIER=awai-secure`; note the secrets map
+records `LOCAL_MURAKUMO_SERVICE_TOKEN` as **absent**, so this is a credential
+to provide rather than to look up -- or the K16 stays a `community`-tier
+enrolled node -- live, heart-beating, capability-declared, and dispatched jobs of its
 declared kind -- which is a coherent end state and may be the right one for a
 board on an unisolated qualification network.
 
