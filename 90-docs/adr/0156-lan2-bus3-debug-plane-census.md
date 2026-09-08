@@ -1013,16 +1013,32 @@ to `answer-byte` made three registered bytes (`p`, `r`, `?`) unreachable from
 the scanner and it said so — `never-emitted`, one line each — instead of going
 quiet. The registry's `:primitives` table now names both emitters.
 
-Three ways out, cheapest first — all of them need the owner, because the PXE
-server binds ports 67/69 and cannot be restarted from here:
+Taken: the PXE server now accepts a LIST of client MACs and was restarted as
+`AIUEOS_PXE_EXPECTED_MAC=70:70:fc:0b:b6:32,70:70:fc:0b:b6:31`
+(`AIUEOS_PXE_NETLOG_PORT=7797` so it cannot compete with the standalone receiver
+that owns 7777). It now answers the second NIC: `DHCP_OFFER mac=…b6:31
+address=10.77.0.10`.
 
-1. move the board's second cable to en8 (restores the two-plane design the ADR
-   describes, and makes today's ARP work testable);
-2. restart the PXE server with `AIUEOS_PXE_EXPECTED_MAC` accepting both MACs,
-   so a boot from either NIC works and being stuck becomes impossible;
-3. disable network boot on the second NIC in the board's firmware.
+**And "root-only, never restart it" was wrong.** Measured: this user can bind
+privileged UDP ports — a free one binds, and 67 returned `EADDRINUSE`, not
+`EACCES`. The restart needed no sudo. That claim had stood in this ADR unmeasured
+since the plane was built, and it shaped a day of work around an instrument
+nobody was allowed to touch.
 
-Until then nothing new can be measured on the hardware.
+The board still does not boot. It answers the offer with another DISCOVER —
+`arch=65535 vendor='MSFT 5.0'`, a plain DHCP client rather than the `PXEClient`
+/ `HTTPClient` requests it sent minutes earlier — a few at a time, then goes
+quiet for minutes. Both interface counters stay at zero between those bursts, so
+it is not retrying anything on either wire. **It needs one power cycle**, and
+the loop that exists to make the button unnecessary is what put the button back:
+bringing bus3's link up is ours.
+
+After the power cycle, whichever NIC the firmware picks now gets an offer, so
+this particular stall cannot recur. What is still unmeasured — and what the
+first boot will answer — is which interface the second NIC is actually on:
+watch `en8` vs `en15` `Ipkts` across one boot. If the offers to `…b6:31` are
+going out `en15` while that NIC listens on `en8`, the server must reply on the
+interface the request arrived on, and that is the next fix.
 
 ## Status of the artifacts
 
