@@ -921,6 +921,48 @@ slots in the RW page, no absolute `0x1101xx` stores), #155 (vector 6 writes
 `kernel-undefined-opcode-handler-address` so the kernel can install gate 6.
 Until then a fuel death on the board is still inferred from a missing `DE`.
 
+## bus3 speaks ARP, because nothing else could reach it (2026-09-08)
+
+`arp -an` said `10.10.10.2 (incomplete)` on en8 for as long as the plane has
+existed, so every Mac→board datagram — including the `P` ping and the new `R`
+reboot command — died in the Mac's own stack before reaching the wire. The
+module answered UDP and nothing else; a debug plane that can only be spoken to
+by a peer that already knows its MAC is not reachable.
+
+`debug_link.kotoba` now:
+
+- asks for **10.10.10.1** once, at the end of `debug-init` (broadcast ARP
+  request). A request addressed to the Mac is what makes a BSD stack record the
+  sender; a gratuitous announcement for our own address only refreshes an entry
+  that already exists, which is exactly the case that was missing. `debug-init`
+  returns `16+n` when the ring is up but that request did not go out — the
+  outbound half still works, so it is not a refusal to start, but it must not
+  read as ready either.
+- answers **ARP requests for 10.10.10.2** inside `debug-poll`, before the RX
+  descriptor is re-armed (the reply is built from that buffer, and a re-arm
+  hands it back to the NIC). `debug-tick` returns `16+n`, which the kernel logs
+  after the `D9` sentinel like every other bus3 event.
+
+Measured on this revision: `verify-store-tautology` 234 store forms / FINDINGS
+0, `verify-wire-bytes` 70 emissions / 42 entries / FINDINGS 0, kernel builds
+`AIUEOS_KOTOBA_NATIVE_KERNEL_OK … fuel=1048576`, QEMU smoke `MPRCD` / 33.
+**Not yet measured on the board**: whether `arp -an` resolves and whether the
+`P`/`R` round trip completes.
+
+### The outbound half has never been seen either
+
+`debug-init` reports ready and `debug-send` reports 0 — "the descriptor was
+submitted AND the engine cleared OWN", i.e. bytes left the NIC — on every boot,
+and the Mac's sink has received **two** datagrams in 21 hours, both of them the
+rig check's own loopback controls from 10.10.10.1. The destination MAC in the
+frame is correct (`3c:18:a0:d5:82:a8`, en8's own address, and the IPv4 header
+checksum 0x52BA verifies), so the frame that leaves is addressed to a listener
+that is up. The one `Z` per boot goes out immediately after `rings-start` has
+reset the chip, which is the worst moment on a link that has just renegotiated.
+The ARP request above is a second frame at the same moment; if neither is ever
+seen while the ping reply (sent seconds later, in response to a packet that
+arrived) is, the answer is link timing, not addressing.
+
 ## Status of the artifacts
 
 - Commit `e09e4f1` (Phase 1 — bus3 single-shot) is superseded by commit
