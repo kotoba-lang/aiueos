@@ -33,7 +33,7 @@
   ;; 2 armed AND the chipset was still holding a timeout status from a previous
   ;; expiry -- which is the difference between "the board died and nothing
   ;; recovered it" and "the watchdog already recovered it once".
-  (:export [arm kick tco-base]))
+  (:export [arm kick tco-base refusal]))
 
 ;; PCI configuration mechanism #1 with full device/function addressing.
 ;; rtl8125's `pci-address` folds only a bus number, because every device it
@@ -82,6 +82,28 @@
     (let [abase (acpi-base)]
       (if (and (> abase 0) (< abase 65536)) (+ abase 96) 0))
     0))
+
+;; WHY there is no watchdog, as a value rather than a shrug.
+;;
+;; Measured on hardware 2026-09-08: D4 six times, D3 and D5 never -- the timer
+;; refused to arm on both entries of the run. `arm` returning 0 could mean
+;; three different things with three different answers, and the byte said only
+;; "one of them". That is the same defect as `stage=oack` naming three
+;; situations with one string, found and fixed in this repository the same day;
+;; the addressing was already eliminated as a cause by checking cfg-address
+;; against canonical values, so what is left is exactly these three.
+;;
+;;   1  the LPC bridge at 00:1f.0 is not Intel     -> nothing here applies
+;;   2  its ACPI base reads zero or out of range   -> TCO is not where we look
+;;   3  TCO_TMR_HLT would not clear                -> a No-Reboot strap or a
+;;                                                    locked TCO; the registers
+;;                                                    are right and the
+;;                                                    platform is saying no
+(defn refusal []
+  (if (not (intel-lpc?))
+    1
+    (let [abase (acpi-base)]
+      (if (not (and (> abase 0) (< abase 65536))) 2 3))))
 
 ;; TCO_RLD is one byte at +0x00. Any write reloads the countdown. This is the
 ;; kick, and it is deliberately the cheapest operation in the file: it runs

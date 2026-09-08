@@ -173,6 +173,12 @@
              sentinel somewhere. link-up reads bit 1 of this register; the whole
              register carries the negotiated speed and duplex beside it."
    :data-followers 1}
+  {:channel :netlog :value 214 :hex "D6" :name :watchdog-refused-no-acpi-base
+   :emitted-by "kernel.kotoba main, three times, immediately before the stream loop"
+   :meaning "No watchdog: the LPC bridge IS Intel, but its ACPI base register (0x40 of 00:1f.0) reads zero or outside the I/O range, so the TCO register file is not where this code would look for it. Split out of D4 on 2026-09-08 after the board reported D4 six times and the byte could not say which of three refusals it meant."}
+  {:channel :netlog :value 210 :hex "D2" :name :watchdog-refused-halt-locked
+   :emitted-by "kernel.kotoba main, three times, immediately before the stream loop"
+   :meaning "No watchdog, and this is the interesting one: the LPC bridge is Intel, the ACPI base is sane, the registers are where they should be -- and TCO_TMR_HLT did not read back cleared. The platform is refusing, which is what a No-Reboot strap or a locked-down TCO looks like. Nothing in software fixes this; it is a firmware setting or a board that will not self-reset."}
   {:channel :netlog :value 213 :hex "D5" :name :watchdog-armed-after-timeout
    :emitted-by "kernel.kotoba main, three times, immediately before the stream loop"
    :meaning "The watchdog is armed AND the chipset was still holding a timeout status from a previous expiry (TCO1_STS.TIMEOUT at +0x04 bit 3, or TCO2_STS.SECOND_TO_STS at +0x06 bit 1). Read: the previous boot ended because the watchdog fired, not because the board died some other way -- the hardware's own record of why it restarted, read before it is cleared. D3 means armed with no such evidence."}
