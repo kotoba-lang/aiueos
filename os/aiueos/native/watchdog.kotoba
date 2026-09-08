@@ -29,6 +29,10 @@
   ;; surprise leaves the timer halted -- which is exactly today's behaviour, a
   ;; board that waits for a human. Nothing here can make the situation worse
   ;; than it already is; the worst outcome is that it does nothing.
+  ;; `arm` returns 0 refused, 1 armed with no evidence of a previous timeout,
+  ;; 2 armed AND the chipset was still holding a timeout status from a previous
+  ;; expiry -- which is the difference between "the board died and nothing
+  ;; recovered it" and "the watchdog already recovered it once".
   (:export [arm kick tco-base]))
 
 ;; PCI configuration mechanism #1 with full device/function addressing.
@@ -97,7 +101,17 @@
           ;; two, and the cycle cannot run again.
           ;;
           ;; So a watchdog that never clears them works exactly twice. It did.
-          status-1 (kernel-out-u8 (+ base 4) 8)
+          ;; READ before clearing: those two bits are the only record the
+          ;; hardware keeps of why the last boot happened, and clearing them
+          ;; without looking throws away the answer to "did the watchdog fire,
+          ;; or did the board die some other way". They are reported as a
+          ;; distinct return value so the netlog can say which.
+          prior-1 (kernel-in-u8 (+ base 4))
+          prior-2 (kernel-in-u8 (+ base 6))
+          prior (if (= (bit-and (+ prior-1 (* 0 prior-2)) 8) 8)
+                  1
+                  (if (= (bit-and prior-2 2) 2) 1 0))
+          status-1 (kernel-out-u8 (+ base 4) (+ 8 (* 0 prior)))
           status-2 (kernel-out-u8 (+ base 6) (+ 2 (* 0 status-1)))
           timer-low (kernel-out-u8 (+ base 18) (+ 16 (* 0 status-2)))
           timer-high (kernel-out-u8 (+ base 19) (* 0 timer-low))
@@ -112,4 +126,6 @@
           ;; a "No Reboot" strap or a locked-down TCO -- and saying so is worth
           ;; more than assuming it worked.
           readback (kernel-in-u8 (+ base 9))]
-      (if (= (bit-and (+ readback (* 0 started)) 8) 0) 1 0))))
+      (if (= (bit-and (+ readback (* 0 started)) 8) 0)
+        (+ 1 prior)
+        0))))

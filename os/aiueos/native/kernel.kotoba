@@ -802,10 +802,34 @@
                                     ;; a human, which is what it needed before.
                                     (let [wd (watchdog/tco-base)
                                           wd-armed (watchdog/arm wd)
+                                          ;; D3 armed, D5 armed after a
+                                          ;; previous timeout, D4 refused.
+                                          ;;
+                                          ;; THREE COPIES, for the reason
+                                          ;; ADR-0203 already recorded about
+                                          ;; DE: this wire is fire-and-forget
+                                          ;; UDP, one datagram per byte, and a
+                                          ;; single copy of a byte that decides
+                                          ;; an interpretation is a byte whose
+                                          ;; absence means nothing. Measured
+                                          ;; 2026-09-08: a boot that armed the
+                                          ;; watchdog delivered NEITHER mark,
+                                          ;; and the question "did it arm?"
+                                          ;; could not be answered at all.
+                                          wd-byte (if (= wd-armed 0)
+                                                    212
+                                                    (if (= wd-armed 2) 213 211))
+                                          wd-m1 (stream/stream-log
+                                                 stream-win stream-mmio
+                                                 stream-log-frame wd-byte)
+                                          wd-m2 (stream/stream-log
+                                                 stream-win stream-mmio
+                                                 stream-log-frame
+                                                 (+ wd-byte (* 0 wd-m1)))
                                           wd-mark (stream/stream-log
                                                    stream-win stream-mmio
                                                    stream-log-frame
-                                                   (if (= wd-armed 1) 211 212))]
+                                                   (+ wd-byte (* 0 wd-m2)))]
                                       (stream/stream-resident
                                        stream-win
                                        stream-mmio
