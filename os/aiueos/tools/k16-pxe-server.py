@@ -197,8 +197,21 @@ MURAKUMO_SERVICE_TOKEN = os.environ.get(
     os.environ.get("MURAKUMO_SERVICE_TOKEN", "")) or \
     private_file_text(os.environ.get("AIUEOS_MURAKUMO_SERVICE_TOKEN_FILE", ""),
                       "Murakumo service token file", 512)
-MURAKUMO_EXPECTED_MAC = os.environ.get(
-    "AIUEOS_MURAKUMO_EXPECTED_MAC", "70-70-fc-0b-b6-32").lower()
+# The board announces itself with the MAC of the NIC the announcement LEAVES
+# BY, and that is bus3 (…b6:31), because the relay rides LAN2 -- bus2 has no
+# UDP receive path. This was a single accepted value of bus2's MAC (…b6:32)
+# until 2026-09-08, so the first hello the board ever sent was rejected as
+# `unexpected-mac` while every log on both ends read healthy. One physical
+# board, two ports; the guarantee this list is protecting is "one board under
+# qualification", not "one cable". The first entry is the one this server
+# SPEAKS AS when it synthesises a hello on resume.
+MURAKUMO_EXPECTED_MACS = tuple(
+    m.strip().lower()
+    for m in os.environ.get(
+        "AIUEOS_MURAKUMO_EXPECTED_MAC",
+        "70-70-fc-0b-b6-31,70-70-fc-0b-b6-32").split(",")
+    if m.strip())
+MURAKUMO_EXPECTED_MAC = MURAKUMO_EXPECTED_MACS[0]
 # One K16, two NICs, and the firmware will netboot from either once both have
 # link. Accepting only the first one is how the board got stuck on 2026-09-08:
 # bus3 (…b6:31) asked, was ignored, and the machine never fell back to bus2.
@@ -588,7 +601,7 @@ def qualify_murakumo_job(message, sock, peer, opener=urllib.request.urlopen,
     if not match or not MURAKUMO_JOB_QUALIFICATION:
         return {"state": "disabled", "reason": "job-qualification-off"}
     boot, mac = match.groups()
-    if mac != MURAKUMO_EXPECTED_MAC or not murakumo_relay_configured():
+    if mac not in MURAKUMO_EXPECTED_MACS or not murakumo_relay_configured():
         return {"state": "disabled", "reason": "identity-token-or-mac"}
     last_race = None
     for _attempt in range(8):
@@ -763,7 +776,7 @@ def register_murakumo_hello(message, opener=urllib.request.urlopen):
     if not match:
         return {"state": "ignored", "reason": "invalid-hello"}
     boot, mac = match.groups()
-    if mac != MURAKUMO_EXPECTED_MAC:
+    if mac not in MURAKUMO_EXPECTED_MACS:
         return {"state": "ignored", "reason": "unexpected-mac"}
     if not murakumo_relay_configured():
         return {"state": "disabled", "reason": "identity-or-token-unset"}
@@ -1179,6 +1192,31 @@ def selftest():
     assert node_ack_payload(hello) == \
         b"AIUEOS_NODE_ACK_V1 boot=0123456789abcdef state=accepted"
     assert node_ack_payload(hello.replace("0123456789abcdef", "short")) is None
+    # Both of the board's NICs are the same board, and the announcement leaves
+    # by bus3 (…b6:31). The bus3 case is the one that was rejected in
+    # production on 2026-09-08; a foreign MAC must still be refused, or this
+    # list would mean "any board".
+    bus3_hello = hello.replace("b6-32", "b6-31")
+    foreign_hello = hello.replace("70-70-fc-0b-b6-32", "aa-bb-cc-dd-ee-ff")
+    assert NODE_HELLO.fullmatch(bus3_hello).group(2) in MURAKUMO_EXPECTED_MACS
+    assert NODE_HELLO.fullmatch(hello).group(2) in MURAKUMO_EXPECTED_MACS
+    assert NODE_HELLO.fullmatch(foreign_hello).group(2) not in MURAKUMO_EXPECTED_MACS
+    assert register_murakumo_hello(foreign_hello) == \
+        {"state": "ignored", "reason": "unexpected-mac"}
+    # The result line the physical board actually returned on 2026-09-08 for
+    # the contract's known-answer prompt, verbatim off the wire. It is here so
+    # a change to JOB_RESULT or to the expectation table has to face a real
+    # measurement rather than a hand-written sample.
+    measured = ("AIUEOS_JOB_RESULT_V1 boot=0000000e8debe541 id=352 "
+                "model=aiueos-char-bigram-v1 token=6f score=02 total=05 "
+                "cycles=0000000000001152")
+    assert verified_job_result(measured, "0000000e8debe541", "352", "murakum") == {
+        "text": "o", "model": MURAKUMO_JOB_MODEL, "score": 2, "total": 5,
+        "inference-cycles": 1152, "prompt": "murakum",
+        "corpus-sha256": MURAKUMO_JOB_CORPUS_SHA256,
+        "boot": "0000000e8debe541"}
+    assert verified_job_result(measured, "0000000e8debe541", "352", "kotoba") is None
+    assert verified_job_result(measured, "0000000e8debe541", "353", "murakum") is None
     old_did, old_token = MURAKUMO_NODE_DID, MURAKUMO_SERVICE_TOKEN
     try:
         globals()["MURAKUMO_NODE_DID"] = "did:key:z6MkK16Selftest"
