@@ -8,7 +8,7 @@
   (:require [grant.cloud :as cloud]
             [grant.json :as json]
             [aiueos.provider.cloud :as provider]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing]])
   (:import [com.sun.net.httpserver HttpExchange HttpHandler HttpServer]
            [java.net InetSocketAddress]))

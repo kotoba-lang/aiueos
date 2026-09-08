@@ -5,7 +5,7 @@
   argv. This ns is the second runtime: the gate command must not need a
   JVM, hosted WM serial must stay red, and unanswered QEMU is exit 3."
   (:require [aiueos.compositor.guest :as guest]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing]]))
 
 (deftest gate-cmd-is-nbb-not-clojure

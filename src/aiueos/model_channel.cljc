@@ -4,7 +4,7 @@
   The network and disk drivers are ports. This namespace decides whether a
   verified IPNS head may replace the locally committed model and which
   immutable raw blocks are missing. It never fetches a URL or writes a disk."
-  (:require [clojure.string :as str]))
+  (:require [kotoba.lang.text :as str]))
 
 (def schema "aiueos.model-channel/v1")
 (def max-block-bytes (* 95 1024 1024))

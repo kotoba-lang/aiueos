@@ -75,7 +75,7 @@
   (:require [aiueos.compositor.desktop :as desktop]
             [aiueos.compositor.guest :as guest]
             [aiueos.phone-bind :as pb]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             #?(:clj [clojure.edn :as edn])
             #?(:clj [clojure.java.io :as io])
             #?(:clj [clojure.pprint :as pprint])))
@@ -1369,7 +1369,7 @@
        compositor remaining: smoke / gpu / wm / ime / kanji / kami / serve."
        [profile]
        (let [cmd (guest/gate-cmd profile)
-             tag (str/replace (str/upper-case profile) "-" "_")]
+             tag (str/replace (str/upper profile) "-" "_")]
          (println (str "AIUEOS_COMPOSITOR_" tag " leftover=:jvm-gate-runner"))
          (println (str "evidence=" cmd))
          (flush)

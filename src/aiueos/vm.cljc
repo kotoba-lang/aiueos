@@ -9,7 +9,7 @@
 
   JVM-only (`#?(:clj ...)` throughout) -- process I/O, same as
   `aiueos.image`/`aiueos.launcher`."
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             #?(:clj [grant.deployment-profile :as deployment-profile])
             #?(:clj [grant.boot-admission :as boot-admission])
             #?(:clj [grant.signing :as signing])))

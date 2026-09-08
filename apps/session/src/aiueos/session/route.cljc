@@ -6,7 +6,7 @@
   reachable. Unknown, empty and nil fragments land on the default rather
   than rendering nothing."
   (:require [jp-go-dds.core :as dds]
-            [clojure.string :as str]))
+            [kotoba.lang.text :as str]))
 
 (def views
   "Nav order. `:session` is the daily-driver default; `#desktop` is the compositor face; `#setup` is the

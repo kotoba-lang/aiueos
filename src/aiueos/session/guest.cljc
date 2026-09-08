@@ -12,7 +12,7 @@
   a successful store.
 
   JVM-only for execute + sockets (`#?(:clj …)`), same as `aiueos.execute`."
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             #?(:clj [aiueos.cloud-live :as cloud-live])
             #?(:clj [aiueos.execute :as execute])
             #?(:clj [aiueos.provider.cloud :as provider])
@@ -69,7 +69,7 @@
 (defn parse-grant-mode
   "Unknown grant strings refuse rather than 500."
   [x]
-  (let [s (str/lower-case (str (or x "")))]
+  (let [s (str/lower (str (or x "")))]
     (if (contains? #{"allow" ":allow" "grant"} s) :allow :deny)))
 
 #?(:clj (def empty-graph (graph/build [])))

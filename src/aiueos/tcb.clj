@@ -17,7 +17,7 @@
   (:require [grant.key-lifecycle :as kl]
             [clojure.edn :as edn]
             [clojure.java.io :as io]
-            [clojure.string :as str])
+            [kotoba.lang.text :as str])
   (:import [java.security MessageDigest]))
 
 (def inventory-path "qualification/tcb-inventory.edn")

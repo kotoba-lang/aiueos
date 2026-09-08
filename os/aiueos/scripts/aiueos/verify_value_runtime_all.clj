@@ -40,7 +40,7 @@
   (:require [clojure.edn :as edn]
             [clojure.pprint]
             [clojure.java.io :as io]
-            [clojure.string :as str]))
+            [kotoba.lang.text :as str]))
 
 (def receipt-path "qualification/value-runtime-baseline.edn")
 

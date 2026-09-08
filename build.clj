@@ -1,6 +1,6 @@
 (ns build
   (:require [clojure.java.io :as io]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [clojure.tools.build.api :as b]))
 
 (def lib 'io.github.kotoba-lang/aiueos)

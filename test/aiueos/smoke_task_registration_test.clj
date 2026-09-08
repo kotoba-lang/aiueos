@@ -25,7 +25,7 @@
   hand — which is a statement about how this OS is tested, not a defect list."
   (:require [clojure.edn :as edn]
             [clojure.java.io :as io]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing]]))
 
 (def ^:private tasks-path "scripts/tasks.edn")

@@ -11,7 +11,7 @@
             [aiueos.compositor.guest :as guest]
             [aiueos.phone-bind :as pb]
             [clojure.java.io :as io]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing]]))
 
 (deftest boot-desktop-owns-surfaces

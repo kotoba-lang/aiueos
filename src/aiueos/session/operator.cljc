@@ -11,7 +11,7 @@
   public reason `:operator-grant-required`. Allow drops that import so
   grant admits, then HTTP uses `resources/aiueos/operator_itonami.edn`
   (itonami.cloud only)."
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             #?(:clj [aiueos.cloud-live :as cloud-live])
             #?(:clj [aiueos.provider.cloud :as provider])
             #?(:clj [clojure.edn :as edn])
@@ -71,7 +71,7 @@
 
 (defn parse-grant-mode
   [x]
-  (let [s (str/lower-case (str (or x "")))]
+  (let [s (str/lower (str (or x "")))]
     (if (contains? #{"allow" ":allow" "grant"} s) :allow :deny)))
 
 (defn violation-kind

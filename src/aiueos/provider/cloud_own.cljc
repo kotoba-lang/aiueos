@@ -50,7 +50,7 @@
   *primitives* are not -- `tls.provider.jvm` is the JDK's AES-GCM, SHA-256,
   HMAC, X25519 and ECDSA, and the socket is `java.net.Socket`. Calling this
   path \"no JDK\" would be false; what left is `java.net.http`."
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [grant.cloud :as cloud]
             [grant.json :as json]
             [kotoba.lang.http :as http]
@@ -150,7 +150,7 @@
 ;; ── translating one request ────────────────────────────────────────────────
 
 (defn- header-present? [headers nm]
-  (some #(= (str/lower-case (str %)) nm) (keys headers)))
+  (some #(= (str/lower (str %)) nm) (keys headers)))
 
 (defn wire-request
   "A `kotoba.lang.http` request for `grant.cloud`'s REQUEST, or
