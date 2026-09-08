@@ -816,8 +816,15 @@
                                           ;; watchdog delivered NEITHER mark,
                                           ;; and the question "did it arm?"
                                           ;; could not be answered at all.
+                                          ;; Refused? say WHICH refusal.
+                                          ;; D4 not-Intel, D6 no ACPI base,
+                                          ;; D2 the halt bit would not clear.
+                                          wd-why (if (= wd-armed 0)
+                                                   (watchdog/refusal)
+                                                   0)
                                           wd-byte (if (= wd-armed 0)
-                                                    212
+                                                    (if (= wd-why 1) 212
+                                                      (if (= wd-why 2) 214 210))
                                                     (if (= wd-armed 2) 213 211))
                                           wd-m1 (stream/stream-log
                                                  stream-win stream-mmio
