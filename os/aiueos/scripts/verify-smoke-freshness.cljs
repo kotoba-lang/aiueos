@@ -26,7 +26,7 @@
   (:require ["node:fs" :as fs]
             ["node:path" :as path]
             [clojure.edn :as edn]
-            [clojure.string :as str]))
+            [kotoba.lang.text :as str]))
 
 (def script-dir (path/dirname *file*))
 (def default-root (path/resolve (path/join script-dir ".." ".." "..")))
@@ -129,7 +129,7 @@
               " unattested=" (count unattested)
               " baseline=" (count allowed)))
 (doseq [row booting]
-  (println (str "  " (str/upper-case (clojure.core/name (:how row))) " " (:name row))))
+  (println (str "  " (str/upper (clojure.core/name (:how row))) " " (:name row))))
 
 (cond
   (seq added)

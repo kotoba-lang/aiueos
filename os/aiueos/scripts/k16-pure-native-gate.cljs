@@ -25,7 +25,7 @@
 ;; revision that the repository records?
 (ns k16-pure-native-gate
   (:require [clojure.edn :as edn]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             ["node:crypto" :as crypto]
             ["node:fs" :as fs]
             ["node:path" :as path]))
@@ -266,7 +266,7 @@
 
 (defn- foreign-source? [s]
   (and (string? s)
-       (contains? foreign-source-extensions (str/lower-case (path/extname s)))))
+       (contains? foreign-source-extensions (str/lower (path/extname s)))))
 
 (defn- classify
   "One object -> `{:class ...}` or `{:reason <literal>}`. Order matters and is

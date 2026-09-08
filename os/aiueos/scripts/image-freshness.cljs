@@ -45,7 +45,7 @@
             ["node:fs" :as fs]
             ["node:path" :as path]
             [clojure.edn :as edn]
-            [clojure.string :as str]))
+            [kotoba.lang.text :as str]))
 
 (def exit-fresh 0)
 (def exit-could-not-run 3)

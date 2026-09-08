@@ -27,7 +27,7 @@
 ;; Exit codes: 0 admitted (inspect) or installed / 2 refused with reasons /
 ;; 3 could-not-answer / 4 existing-install-found (rescue/inspect).
 
-(require '[clojure.string :as str])
+(require '[kotoba.lang.text :as str])
 
 (def fs (js/require "node:fs"))
 (def path (js/require "node:path"))

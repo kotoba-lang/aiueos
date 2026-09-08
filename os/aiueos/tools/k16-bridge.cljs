@@ -24,7 +24,7 @@
 ;;                 [--mode debug|forward] [--hold-ms 1000] [--upstream host:443]
 (ns k16-bridge
   (:require ["node:net" :as net]
-            [clojure.string :as str]))
+            [kotoba.lang.text :as str]))
 
 (defn- opt [argv flag default]
   (let [i (.indexOf argv flag)]

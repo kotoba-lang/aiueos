@@ -1,4 +1,4 @@
-(ns litpool (:require [clojure.string :as str] ["fs" :as fs]))
+(ns litpool (:require [kotoba.lang.text :as str] ["fs" :as fs]))
 (def args (vec *command-line-args*))
 (def parts (->> (str/split-lines (fs/readFileSync (first args) "utf8"))
                 (remove str/blank?) vec))

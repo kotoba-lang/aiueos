@@ -33,7 +33,7 @@
 (ns k16-cacao-mint
   (:require [cacao.edge.mint :as mint]
             [cacao.edge.verify :as verify]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             ["node:crypto" :as ncrypto]
             ["fs" :as fs]))
 

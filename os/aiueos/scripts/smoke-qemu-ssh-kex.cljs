@@ -18,7 +18,7 @@
 ;;       orgs/kotoba-lang/aiueos/os/aiueos/scripts/smoke-qemu-ssh-kex.cljs
 ;; Build the kernel with AIUEOS_SSH_LISTEN=1 first (the KEX KAT rides under it).
 
-(require '[clojure.string :as str]
+(require '[kotoba.lang.text :as str]
          '[ssh.transport :as t])   ; <- imported from kotoba-lang/org-ietf-ssh
 
 (def fs (js/require "node:fs"))

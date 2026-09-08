@@ -31,7 +31,7 @@
 ;; design, which is what `aiueos.qwen35-tensor-table-parity-test` exists to
 ;; keep true.
 
-(require '[clojure.string :as str])
+(require '[kotoba.lang.text :as str])
 (def fs (js/require "node:fs"))
 (def os (js/require "node:os"))
 (def path (js/require "node:path"))

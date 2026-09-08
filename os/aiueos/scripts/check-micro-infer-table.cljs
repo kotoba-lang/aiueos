@@ -19,7 +19,7 @@
 ;; Exit 0 = clean, 1 = findings, 2 = REFUSED (could not answer).
 (ns check-micro-infer-table
   (:require ["fs" :as fs] ["os" :as os] ["path" :as path]
-            ["child_process" :as cp] [clojure.string :as str]))
+            ["child_process" :as cp] [kotoba.lang.text :as str]))
 
 (defn arg [flag] (let [a (vec *command-line-args*) i (.indexOf a flag)]
                    (when (>= i 0) (nth a (inc i) nil))))

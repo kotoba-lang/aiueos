@@ -19,7 +19,7 @@
 ;; The receipt names the compiler it measured, because a reproduction count
 ;; without one is a number with no closure.
 (ns measure-object-producer
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             ["fs" :as fs]
             ["path" :as path]
             ["os" :as os]
@@ -174,6 +174,6 @@
      (catch :default e
        (println "FAILED:" (ex-message e))
        (println "  " (pr-str (ex-data e)))
-       (println (first (clojure.string/split-lines (or (.-stack e) ""))))
-       (doseq [l (take 5 (rest (clojure.string/split-lines (or (.-stack e) ""))))] (println "   " l))
+       (println (first (str/split-lines (or (.-stack e) ""))))
+       (doseq [l (take 5 (rest (str/split-lines (or (.-stack e) ""))))] (println "   " l))
        (set! (.-exitCode js/process) 1)))

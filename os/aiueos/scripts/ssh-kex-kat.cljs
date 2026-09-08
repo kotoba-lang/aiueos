@@ -21,7 +21,7 @@
 ;;   nbb --classpath <org-ietf-ssh>/src os/aiueos/scripts/ssh-kex-kat.cljs
 
 (require '[clojure.edn :as edn]
-         '[clojure.string :as str])
+         '[kotoba.lang.text :as str])
 
 (def fs (js/require "node:fs"))
 (def path (js/require "node:path"))

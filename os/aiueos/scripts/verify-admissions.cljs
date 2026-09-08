@@ -57,7 +57,7 @@
 ;; verification carry no JVM, not an accident.
 (ns verify-admissions
   (:require [clojure.edn :as edn]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [kotoba.compiler.project :as project]
             [kotoba.sema :as sema]
             [kotoba.kir :as ir]

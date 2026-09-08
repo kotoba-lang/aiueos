@@ -30,7 +30,7 @@
 ;; and build-kotoba-native-boot.sh), the same inputs smoke-qemu-uefi.sh needs.
 
 (require '[clojure.set :as set]
-         '[clojure.string :as str])
+         '[kotoba.lang.text :as str])
 
 (def fs (js/require "node:fs"))
 (def path (js/require "node:path"))

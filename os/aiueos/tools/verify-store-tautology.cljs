@@ -39,7 +39,7 @@
   Usage: nbb os/aiueos/tools/verify-store-tautology.cljs [<repo-root>] [--dir <rel>]
   Exit 0 clean / 1 findings / 2 refused. Evidence: SCANNED<TAB>n."
   (:require ["fs" :as fs] ["path" :as p]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [edamame.core :as e]))
 
 ;; nbb: process.argv = [node, nbb, <this script>, args...]; take what follows the

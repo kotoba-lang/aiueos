@@ -23,7 +23,7 @@
 ;; build that fails on the first of 70 tells you about one.
 (ns sync-kernel-object-digests
   (:require [clojure.edn :as edn]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             ["node:fs" :as fs]
             ["node:path" :as path]))
 
