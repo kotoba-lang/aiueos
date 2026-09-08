@@ -1518,16 +1518,57 @@
          ;; three DEs, and its presence on the wire says the run reached the
          ;; quiesce; its absence with DE present says it did not.
          ;;
-         ;; The reset value stays 0x06. One variable moves. If the board still
-         ;; freezes with D7 on the wire, the drain was not the problem and the
-         ;; next thing to try is 0x0E (FULL_RST), which resets PCIe too.
+         ;; THE RUN NO LONGER RESETS THE PLATFORM. It returns 250, and the
+         ;; image's tender loop replenishes the budget and re-enters `main`
+         ;; (ADR-0204, ADR-0205 step 2). Everything below is the reasoning for
+         ;; abandoning the reset here rather than continuing to repair it.
+         ;;
+         ;; Three reset variants were measured on hardware 2026-09-08, with the
+         ;; workstation's load average recorded beside each because it moved by
+         ;; 5x during the session and the board's PXE round trip depends on it:
+         ;;
+         ;;   image                      load      boots   self-resets
+         ;;   1024 cycles                 --         1x3       0
+         ;;   64 cycles                  ~30          2        1
+         ;;   64 + drain                 ~35          3        2
+         ;;   64 + drain + 0x0E        98-188         1        0
+         ;;   64 + drain + 0x0E         ~100          2        1
+         ;;
+         ;; Every variant does a handful of boots and stops, and the spread is
+         ;; 0..2 -- too small to separate from the load, which moved more than
+         ;; the effect did. Repairing the reset further would be measuring the
+         ;; wrong thing: as ADR-0205 puts it, the reboot is not a lifecycle
+         ;; event, it is the only mechanism this board has, doing three jobs.
+         ;; Fuel replenishment, code arrival and state erasure are separate
+         ;; concerns and only the third one wants a reset.
+         ;;
+         ;; Returning 250 removes the other two from the reset's job:
+         ;;   - the budget is replenished by the caller, per re-entry, so the
+         ;;     lifetime cap that ends in `ud2` cannot be reached at all;
+         ;;   - the cadence stops depending on whether 0xCF9 works, on the
+         ;;     firmware finding its network boot entry, and on a 19.7 s PXE
+         ;;     round trip through a workstation at load 100.
+         ;;
+         ;; The cost is explicit and has an escape hatch that already exists:
+         ;; A DEPLOY NO LONGER TAKES EFFECT BY ITSELF, because the board stops
+         ;; re-fetching the image. Send 'R' on bus3 (`k16-control.cljs R`) and
+         ;; the site below still writes 0xCF9 <- 0x06 to fetch a new one. That
+         ;; site KEEPS the warm value deliberately: it is now the only reset in
+         ;; the system, it is human-triggered rather than per-cycle, and 0x0E
+         ;; was never shown to beat it.
+         ;;
+         ;; The drain stays. Nothing is being reset now, but letting the last
+         ;; transmit retire before handing control back to the tender is what
+         ;; makes the hand-back mean "this step is finished".
          quiescing (stream-log win mmio
                                (kernel-subregion scratch scratch-window-bytes
                                                  scratch-log-offset 4096)
                                (+ 215 (* 0 ended-3)))
-         drained (wait-tx-complete-stream win (+ 200000000 (* 0 quiescing)))
-         reset (kernel-out-u8 3321 (+ 6 (* 0 drained)))]
-     (+ 223 (* 0 reset)))
+         drained (wait-tx-complete-stream win (+ 200000000 (* 0 quiescing)))]
+     ;; 250 = the tender's continue sentinel. Any other value falls through to
+     ;; the loader's STATUS panel and holds, so a step that ends some other way
+     ;; is still visible rather than silently re-entered.
+     (+ 250 (* 0 drained)))
    (let [tcb (kernel-subregion win dma-window-bytes 4096 4096)
         ;; The log frame is the stream's OWN page and nothing else's. Every
         ;; receipt below is emitted while a transmit may still be in flight.
