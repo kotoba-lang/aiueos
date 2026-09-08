@@ -1518,15 +1518,28 @@
          ;; three DEs, and its presence on the wire says the run reached the
          ;; quiesce; its absence with DE present says it did not.
          ;;
-         ;; The reset value stays 0x06. One variable moves. If the board still
-         ;; freezes with D7 on the wire, the drain was not the problem and the
-         ;; next thing to try is 0x0E (FULL_RST), which resets PCIe too.
+         ;; The reset value was 0x06 through the drain experiment and is 0x0E
+         ;; from 2026-09-08 evening. The drain measurably helped -- self-resets
+         ;; per power cycle went 0 (at 1024 cycles) -> 1 (at 64) -> 2 (at 64 +
+         ;; drain), every boot enrolling 200/201 -- but the cadence still
+         ;; stopped, and after the last run the board sent no DHCP at all, so it
+         ;; stops on its own rather than because the server failed to answer.
+         ;;
+         ;; 0x0E is FULL_RST|RST_CPU|SYS_RST: a COLD reset, which resets PCIe
+         ;; devices as well. If the residue is the NIC surviving a warm reset --
+         ;; still holding bus-master state, still owning its rings, across a
+         ;; CPU-only reset -- then draining the last descriptor is necessary and
+         ;; not sufficient, and this is the part the drain cannot reach.
+         ;;
+         ;; ONE VARIABLE. The bus3 'R' reboot site below deliberately stays at
+         ;; 0x06 until this is settled; when it is, both move together and this
+         ;; note goes away.
          quiescing (stream-log win mmio
                                (kernel-subregion scratch scratch-window-bytes
                                                  scratch-log-offset 4096)
                                (+ 215 (* 0 ended-3)))
          drained (wait-tx-complete-stream win (+ 200000000 (* 0 quiescing)))
-         reset (kernel-out-u8 3321 (+ 6 (* 0 drained)))]
+         reset (kernel-out-u8 3321 (+ 14 (* 0 drained)))]
      (+ 223 (* 0 reset)))
    (let [tcb (kernel-subregion win dma-window-bytes 4096 4096)
         ;; The log frame is the stream's OWN page and nothing else's. Every

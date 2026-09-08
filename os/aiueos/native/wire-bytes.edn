@@ -284,7 +284,7 @@
   ;; ── :port-cf9  reset control ─────────────────────────────────────────────
   {:channel :port-cf9 :value 6 :hex "06" :name :sys-rst-rst-cpu
    :emitter "os/aiueos/native/tcp_stream.kotoba"
-   :meaning "0xCF9 <- 0x06 = SYS_RST|RST_CPU: deliberate platform reset. Two emission sites, both in stream-resident: at run end (after DE; if the chipset ignores it the kernel returns 223, STATUS DF) and on the bus3 'R' command (after DB; if the chipset ignores it the kernel logs DC and the cycle continues). Same value, same port, two reasons -- the preceding netlog byte says which."}]
+   :meaning "Deliberate platform reset on port 0xCF9. Two emission sites in stream-resident, and since 2026-09-08 evening they carry DIFFERENT VALUES on purpose. Run end (after DE, then D7, then a transmit drain) writes 0x0E = FULL_RST|RST_CPU|SYS_RST, a COLD reset that resets PCIe devices too; if the chipset ignores it the kernel returns 223, STATUS DF. The bus3 'R' command (after DB) still writes 0x06 = SYS_RST|RST_CPU, a WARM reset; if the chipset ignores it the kernel logs DC and the cycle continues. The split is a one-variable experiment: 0x06 at run end froze the board with the NIC still bus-mastering across a CPU-only reset, and draining the last descriptor helped (self-resets per power cycle 0 -> 1 -> 2) without fixing it. When 0x0E settles it, both sites move together. The preceding netlog byte says which site fired."}]
 
  ;; Bytes on the :netlog wire that are DATA, not sentinels: emitted through the
  ;; same stream-log primitive but with a computed argument. The verifier counts
