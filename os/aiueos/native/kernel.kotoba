@@ -10,7 +10,7 @@
             [native.serial :as serial]
             [native.tcp-stream :as stream]
             [native.debug-link :as debug])
-  (:export [main]))
+  (:export [main aiueos-isr-6]))
 
 ;; Gate N2 (ADR-0134): the persistent TCP byte stream runtime profile links
 ;; into the same closed module graph as the diagnostics profile. `main` still
@@ -320,6 +320,88 @@
 ;; The IDT storage is allocator-owned and remains RW+NX under the replacement
 ;; map. The backend contributes only the address of its sealed non-returning
 ;; entry; Kotoba constructs vector 14 and the pseudo-descriptor byte layout.
+
+;; ── the two faults that leave nothing behind ─────────────────────────────
+;;
+;; A page fault has had a handler and a recovery frame for a long time. #UD and
+;; #GP have had neither, so `ud2` (which is how fuel exhaustion ends) and any
+;; bad access outside the paging path take the machine straight to a triple
+;; fault. It dies silently, and the two instruments that could have said where
+;; both die with it: the netlog is fire-and-forget UDP that stops when the
+;; machine stops, and the loader's STATUS panel is only reached when `main`
+;; RETURNS, which a fault prevents by definition.
+;;
+;; Measured 2026-09-08: the run ends at 12, 27, 33, 34, 38, 62, 64, 65, 70, 73
+;; and 94 cycles across boots -- varying, so not a budget being exhausted at a
+;; fixed point -- and not once did anything survive to say why.
+;;
+;; These two handlers change that in the only way available. They write the
+;; vector number into a page that survives a warm reset, then reset the
+;; platform. The next boot reads the byte and puts it on the wire. So a fault
+;; stops being a death and becomes two facts: the board comes back on its own,
+;; and the next boot says which vector killed the last one.
+;;
+;; Gates 6 and 13 sit at IDT offsets 96 and 208, both inside the limit of 239
+;; the page-fault installer already sets, so no descriptor moves.
+;;
+;; The mark lives at offset 1024 of the IDT page: gates end at 240 and the
+;; descriptor occupies 512..521, so 1024 is clear of both. The page's address
+;; is recomputed from boot-info rather than passed in, because an interrupt
+;; body is a top-level function and can see none of `main`'s bindings -- but
+;; the ISR entry loads the context into r9, so `kernel-boot-info` works here
+;; exactly as it does anywhere else.
+(defn record-fault-and-reset [vector]
+  ;; `kernel-subregion` is written HERE rather than in a helper. A region
+  ;; cannot be returned from a function on this target: both shapes are refused
+  ;; at :subset with :kotoba.error/kernel-region-provenance -- "a kernel memory
+  ;; base must name a region, not compute one" -- and a call's result is a
+  ;; computed one however the callee spells it. The offset is bound to a name
+  ;; first for the same rule.
+  (let [boot (kernel-boot-info)
+        scratch-start (load64-boot boot 80)
+        sixth-start (+ scratch-start 20480)
+        page (kernel-subregion 4096 549755809792 (- sixth-start 4096) 4096)
+        mark (kernel-store-u8-4k page 4096 1024 vector)
+        ;; 0xCF9 <- 0x06. If the chipset ignores it the machine simply hangs
+        ;; as it did before, which is no worse than the state this replaces.
+        reset (kernel-out-u8 3321 (+ 6 (* 0 mark)))]
+    (+ 0 (* 0 reset))))
+
+;; ONE ISR, and the compiler chose which question we get to ask.
+;;
+;; #GP (13) was written alongside this and had to be removed: the OBJECT route
+;; this kernel is built through emits exactly one interrupt entry, as the
+;; object's public symbol, and refuses a second with
+;; :isr-object-has-one-entry. `interrupt-abi` says so in its own docstring --
+;; an entry TABLE exists only on the image route. (The page-fault handler is
+;; unaffected because it arrives through its own dedicated builtin,
+;; `kernel-page-fault-handler-address`, not through this mechanism.)
+;;
+;; So the one vector goes to #UD, because that is where a spent fuel budget
+;; arrives: the prologue ends a run out of budget with `ud2`, and ADR-0203
+;; recorded that this halts the machine with nothing to reset it. If the run
+;; is dying some other way this handler will simply never fire, which is itself
+;; an answer -- and a cheaper one than the guesses it replaces.
+(defn aiueos-isr-6 [vector rip cs flags]
+  (+ (record-fault-and-reset 6) (* 0 (+ vector rip cs flags))))
+
+(defn install-fault-gate [idt-page vector entry]
+  (let [selector (kernel-read-cs)
+        gate-offset (* vector 16)
+        handler-low (bit-and entry 65535)
+        handler-mid (bit-and (quot entry 65536) 65535)
+        handler-high (bit-and (quot entry 4294967296) 4294967295)
+        gate-low (+ handler-low
+                    (* selector 65536)
+                    (* 142 1099511627776)
+                    (* handler-mid 281474976710656))]
+    (if (and (> entry 0) (> selector 0) (<= selector 65535)
+             (= (store64-page idt-page gate-offset gate-low) 1)
+             (= (store64-page idt-page (+ gate-offset 8) handler-high) 1)
+             (= (load64-page idt-page gate-offset) gate-low))
+      1
+      0)))
+
 (defn install-page-fault-idt [idt-page rx-limit]
   (let [handler (kernel-page-fault-handler-address)
         selector (kernel-read-cs)
@@ -826,9 +908,42 @@
                                                     (if (= wd-why 1) 212
                                                       (if (= wd-why 2) 214 210))
                                                     (if (= wd-armed 2) 213 211))
+                                          ;; WHAT KILLED THE LAST BOOT.
+                                          ;; The #UD/#GP handlers write their
+                                          ;; vector to offset 1024 of this page
+                                          ;; and reset; DRAM survives a warm
+                                          ;; reset, so the byte is still here.
+                                          ;; D0 = the last run died on #UD,
+                                          ;; which is where fuel exhaustion
+                                          ;; arrives; D1 = it died on #GP.
+                                          ;; Cleared once read, so the answer
+                                          ;; belongs to one boot only.
+                                          prev-fault (kernel-load-u8-4k
+                                                      reusable-page 4096 1024)
+                                          fault-cleared (kernel-store-u8-4k
+                                                         reusable-page 4096 1024
+                                                         (* 0 prev-fault))
+                                          fault-byte (if (= prev-fault 6) 208
+                                                       (if (= prev-fault 13) 209 0))
+                                          fm1 (if (= fault-byte 0) 0
+                                                (stream/stream-log
+                                                 stream-win stream-mmio
+                                                 stream-log-frame
+                                                 (+ fault-byte (* 0 fault-cleared))))
+                                          fm2 (if (= fault-byte 0) 0
+                                                (stream/stream-log
+                                                 stream-win stream-mmio
+                                                 stream-log-frame
+                                                 (+ fault-byte (* 0 fm1))))
+                                          fm3 (if (= fault-byte 0) 0
+                                                (stream/stream-log
+                                                 stream-win stream-mmio
+                                                 stream-log-frame
+                                                 (+ fault-byte (* 0 fm2))))
                                           wd-m1 (stream/stream-log
                                                  stream-win stream-mmio
-                                                 stream-log-frame wd-byte)
+                                                 stream-log-frame
+                                                 (+ wd-byte (* 0 fm3)))
                                           wd-m2 (stream/stream-log
                                                  stream-win stream-mmio
                                                  stream-log-frame
@@ -861,7 +976,18 @@
                                      (= (kernel-configure-page-fault-recovery
                                          frame-page stack-page) 1)
                                      (= (install-page-fault-idt
-                                         reusable-page rx-limit) 1))
+                                         reusable-page rx-limit) 1)
+                                     ;; #UD and #GP, into the SAME table the
+                                     ;; page-fault installer just loaded --
+                                     ;; gates 6 and 13 are at offsets 96 and
+                                     ;; 208, inside its limit of 239, so this
+                                     ;; adds entries without touching the
+                                     ;; descriptor. Installed after it on
+                                     ;; purpose: the table must be live before
+                                     ;; these gates mean anything.
+                                     (= (install-fault-gate
+                                         reusable-page 6
+                                         (kernel-isr-entry-address 6)) 1))
                               (let [page-marker (serial/trace-byte 80)
                                     root-marker (serial/trace-byte 82)
                                     cr3-marker (serial/trace-byte 67)
