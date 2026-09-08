@@ -45,6 +45,24 @@
                   (bit-or (* device 2048)
                           (bit-or (* function 256) (bit-and offset 252))))))
 
+;; CHECKED AGAINST CANONICAL VALUES 2026-09-08, because every register this
+;; file touches is derived from this one function and a wrong encoding would
+;; read a different device's configuration space and then write timer values
+;; into whatever happened to answer:
+;;
+;;   cfg-address 0 31 0 0x40  ->  0x8000F840   the LPC bridge's ACPI base
+;;   cfg-address 0 31 0 0x00  ->  0x8000F800   its vendor/device
+;;   cfg-address 2  0 0 0x00  ->  0x80020000   equals rtl8125's own
+;;                                             `pci-address 2 0`, which is the
+;;                                             independent cross-check
+;;
+;; and the register file that follows from a typical ABASE of 0x1801:
+;;
+;;   base 0x1800 -> TCO 0x1860, RLD +0x00, TCO1_STS +0x04, TCO2_STS +0x06,
+;;                  TCO1_CNT high byte +0x09, TCO_TMR +0x12
+;;
+;; So if a board reports D4, or arms and never fires, the addressing is not the
+;; explanation -- look at the No-Reboot strap or a locked TCO instead.
 (defn cfg-read [bus device function offset]
   (let [addressed (kernel-out-u32 3320 (cfg-address bus device function offset))]
     (+ (kernel-in-u32 3324) (* 0 addressed))))
