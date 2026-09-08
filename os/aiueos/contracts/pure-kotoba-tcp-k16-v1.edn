@@ -122,7 +122,7 @@
                     :213-ring-live-peer-silent
                     :97-ring-install-fault
                     :98-tcb-install-fault]
-             :compiler {:pin 5cec919625e4c5069950637ddf989e1acbfb3b0d
+             :compiler {:pin "5cec919625e4c5069950637ddf989e1acbfb3b0d"
                         :port-branch "kotoba-lang/amu k16-loader-port @ 46eeedae"
                         :note "13d2f5df's :bool-boundary blocker was stale (lifted by 13d2f5df..5cec9196); boot-info-v4 loader + k16-preflight forward-ported, not cherry-picked"}
              :build {:kernel-sha256
