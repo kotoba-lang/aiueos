@@ -5,7 +5,8 @@
   ;; single-source compile the build script runs emits byte-identical artifacts
   ;; with and without it -- code sha c3bd9664…, binary sha b64afc94…, both
   ;; unchanged, and the export symbol stays kotoba_aiueos_probe.
-  (:require [native.rtl8125 :as rtl]
+  (:require [native.watchdog :as watchdog]
+             [native.rtl8125 :as rtl]
             [native.serial :as serial]
             [native.tcp-stream :as stream]
             [native.debug-link :as debug])
@@ -792,13 +793,33 @@
                                     ;; NIC bus3-mmio is 0, and the loop must
                                     ;; never dereference it -- so the gate is
                                     ;; the init status, not the pointer.
-                                    (stream/stream-resident stream-win
-                                                            stream-mmio
-                                                            stream-scratch
-                                                            (if (= dbg-init 0)
-                                                              bus3-dma-pages
-                                                              0)
-                                                            (stream/debug-run-cycles)))))
+                                    ;; Arm the chipset watchdog before the
+                                    ;; loop that will kick it. D3 says it is
+                                    ;; running, D4 that the platform refused --
+                                    ;; not an Intel PCH, no ACPI base, or a
+                                    ;; locked TCO. D4 is not a failure to act
+                                    ;; on here: it means the board still needs
+                                    ;; a human, which is what it needed before.
+                                    (let [wd (watchdog/tco-base)
+                                          wd-armed (watchdog/arm wd)
+                                          wd-mark (stream/stream-log
+                                                   stream-win stream-mmio
+                                                   stream-log-frame
+                                                   (if (= wd-armed 1) 211 212))]
+                                      (stream/stream-resident
+                                       stream-win
+                                       stream-mmio
+                                       stream-scratch
+                                       (if (= dbg-init 0) bus3-dma-pages 0)
+                                       ;; The sequencing multiply rides the
+                                       ;; CYCLE COUNT, not the DMA region: a
+                                       ;; kernel memory base must NAME a region
+                                       ;; rather than compute one, and
+                                       ;; `(+ bus3-dma-pages (* 0 wd-mark))`
+                                       ;; computes one. Refused at :subset with
+                                       ;; :kotoba.error/kernel-region-provenance.
+                                       (+ (stream/debug-run-cycles)
+                                          (* 0 wd-mark)))))))
                             (kernel-out-u32 244 (+ 96 pre-cr3-nic-status))))
                         (if (and (prepare-page-tables page-table-root pdpt pd pt)
                                  (prepare-low-page-table pt rx-limit rw-start)

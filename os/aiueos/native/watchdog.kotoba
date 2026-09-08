@@ -1,0 +1,98 @@
+(ns native.watchdog
+  ;; The board's own way back from a run that stopped.
+  ;;
+  ;; Measured 2026-09-08: six power cycles in one afternoon. Every one of them
+  ;; was this file's job. The run dies somewhere mid-cycle, the machine holds
+  ;; whatever it was doing, and nothing on the LAN can help -- the two remote
+  ;; paths that exist both depend on the thing that failed. `k16-control.cljs R`
+  ;; is answered by `debug-tick`, which is polled once per stream cycle, so a
+  ;; kernel that stopped cycling never reads it: a remote reset that works only
+  ;; while nothing is wrong. The loader's STATUS panel is printed through UEFI
+  ;; ConOut, and the loader has no network stack -- the NIC belongs to the
+  ;; kernel, which by then is the part that died.
+  ;;
+  ;; So the recovery cannot be remote. It has to be the platform resetting
+  ;; itself, which is what a watchdog is.
+  ;;
+  ;; WHY THE CHIPSET TIMER RATHER THAN THE LOCAL APIC. ADR-0205 step 3 says
+  ;; "the timer becomes the run-time bound, borrowing rt-kernel.kotoba's APIC",
+  ;; and that would work for a `hlt`. It would not work for the cases this
+  ;; board actually presents: a hang with interrupts disabled, or a triple
+  ;; fault, or a wedge inside the reset write itself -- all of which an APIC
+  ;; timer cannot interrupt. The chipset timer is outside the CPU and does not
+  ;; care what state the CPU is in. It also costs no page mapping: 0xFEE00000
+  ;; is not inside the 1 GiB identity map and every one of the loader's
+  ;; fourteen allocator pages is already spoken for, so an APIC watchdog would
+  ;; have to widen the image's page budget. This one is port I/O only.
+  ;;
+  ;; FAIL-SAFE AT EVERY STEP. Each stage checks before it writes, and any
+  ;; surprise leaves the timer halted -- which is exactly today's behaviour, a
+  ;; board that waits for a human. Nothing here can make the situation worse
+  ;; than it already is; the worst outcome is that it does nothing.
+  (:export [arm kick tco-base]))
+
+;; PCI configuration mechanism #1 with full device/function addressing.
+;; rtl8125's `pci-address` folds only a bus number, because every device it
+;; talks to is function 0 of device 0 on its own bus. The LPC bridge is
+;; 00:1f.0, so the device field has to be real here.
+(defn cfg-address [bus device function offset]
+  (bit-or 2147483648
+          (bit-or (* bus 65536)
+                  (bit-or (* device 2048)
+                          (bit-or (* function 256) (bit-and offset 252))))))
+
+(defn cfg-read [bus device function offset]
+  (let [addressed (kernel-out-u32 3320 (cfg-address bus device function offset))]
+    (+ (kernel-in-u32 3324) (* 0 addressed))))
+
+;; 0x8086. The gate: on anything that is not an Intel PCH the register map
+;; below means something else, so the only safe action is none.
+(defn intel-lpc? []
+  (= (bit-and (cfg-read 0 31 0 0) 65535) 32902))
+
+;; ACPI base (ABASE/PMBASE) lives at 0x40 of the LPC bridge. Bit 0 is the
+;; enable; the address is the rest, aligned to 128 bytes. TCO is at +0x60.
+(defn acpi-base []
+  (bit-and (cfg-read 0 31 0 64) 65408))
+
+(defn tco-base []
+  (if (intel-lpc?)
+    (let [abase (acpi-base)]
+      (if (and (> abase 0) (< abase 65536)) (+ abase 96) 0))
+    0))
+
+;; TCO_RLD is one byte at +0x00. Any write reloads the countdown. This is the
+;; kick, and it is deliberately the cheapest operation in the file: it runs
+;; once per stream cycle and must never be the reason a cycle is slow.
+(defn kick [base]
+  (if (= base 0)
+    0
+    (kernel-out-u8 base 1)))
+
+;; TCO_TMR is at +0x12, in ticks of 0.6 s, and the hardware clamps it to
+;; 4..1023. 16 ticks is about 9.6 s.
+;;
+;; The margin is chosen in the safe direction. A run at 64 cycles takes about
+;; one second, so 9.6 s is roughly ten times the longest healthy run -- and the
+;; two errors are not symmetric. A watchdog that is too long only means the
+;; board takes longer to come back, which is strictly better than never. A
+;; watchdog that is too short resets a healthy board mid-work, which would
+;; destroy the thing it is meant to protect and would look exactly like the
+;; fault it is meant to fix.
+(defn arm [base]
+  (if (= base 0)
+    0
+    (let [timer-low (kernel-out-u8 (+ base 18) 16)
+          timer-high (kernel-out-u8 (+ base 19) (* 0 timer-low))
+          reloaded (kernel-out-u8 base (+ 1 (* 0 timer-high)))
+          ;; TCO1_CNT is 16 bits at +0x08; TCO_TMR_HLT is bit 11, which is bit
+          ;; 3 of the high byte. Clearing it starts the countdown. Read first:
+          ;; the other bits of that byte are the chipset's, not ours.
+          control (kernel-in-u8 (+ base 9))
+          started (kernel-out-u8 (+ base 9)
+                                 (bit-and (+ control (* 0 reloaded)) 247))
+          ;; Read back. If the halt bit did not clear, the platform refused --
+          ;; a "No Reboot" strap or a locked-down TCO -- and saying so is worth
+          ;; more than assuming it worked.
+          readback (kernel-in-u8 (+ base 9))]
+      (if (= (bit-and (+ readback (* 0 started)) 8) 0) 1 0))))
