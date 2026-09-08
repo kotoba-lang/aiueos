@@ -101,11 +101,111 @@ tender moves a name. LAN2 already carries commands and already answers them;
 this is that channel doing the job it was shaped for. Reset survives for what
 only firmware can change.
 
+## Step 1 is landed: the image entry is a host loop
+
+`kotoba.compiler.packaging.pe32plus/k16-preflight-tokens` now emits, in the
+`--k16-preflight` image only:
+
+```
+        movabs r9, 0x128000        ; the guest's context
+        mov    rax, [r9+8]         ; the budget the COMPILER sealed
+        mov    [rip+tender-fuel], rax
+tender_step:
+        lea    rdi, [rip+boot-info]
+        movabs r9, 0x128000
+        mov    [r9+0x50], rdi
+        mov    rax, [rip+tender-fuel]
+        mov    [r9+8], rax         ; replenish
+        movabs rax, returnable-entry
+        call   rax
+        mov    r15, rax
+        cmp    r15, 250            ; "that was one step; call me again"
+        je     tender_step
+```
+
+**The loader does not know the number.** It reads the word the compiler wrote
+and writes that word back. This is not a stylistic choice; it removes two
+whole failure modes. The loader cannot disagree with the artifact — that word
+is the same one `elf64/artifact-fuel` checked `:limits :fuel` and `:fuel-abi
+:initial` against, so it *is* the receipt. And there is no immediate to
+overflow.
+
+The first version of this did use an immediate: `mov qword [r9+8], imm32`,
+with a guard refusing any budget at or above 2^31 because the field is
+sign-extended. That guard was correct and the design was wrong. ADR-0203
+raised `ir/max-fuel` to 2^53-1 specifically so the bound would stop being a
+knob; a tender whose ceiling is the width of one instruction field puts the
+knob straight back, one layer lower, where nobody would look for it. **Do not
+re-introduce the immediate form.**
+
+The snapshot is deliberately *outside* the loop and the replenish inside: the
+budget is read once, before the guest has had an opportunity to touch
+anything. `rdi` and `r9` are re-materialised every iteration because both are
+caller-saved and the guest may clobber them.
+
+`250` (`FA`) is the sentinel because the panel renders the low byte of this
+same register as STATUS. A sentinel colliding with an ordinary return would
+make a running node and a finished one print the same two characters.
+
+### What was measured, 2026-09-08
+
+| control | result |
+|---|---|
+| non-preflight image, unmodified compiler vs modified | **byte-identical**, `b3cc1297...` both — the change is scoped to `--k16-preflight` |
+| preflight image byte scan | exactly one snapshot (context `0x128000`), one replenish, one `cmp r15,250 / je` |
+| `je` target vs loop head | target `0x384`; snapshot begins `0x36f` and is 21 bytes, ending `0x384`. The branch lands on the instruction after the snapshot, which is the loop head |
+| sealed word in `KERNEL.ELF` at `0x128000+8` | `1073741824` = 2^30, equal to the kernel verifier's `fuel=1073741824` |
+| QEMU, preflight image `20728546...` (261,120 bytes) | exit 33, debugcon exactly `MPRCD` |
+
+The 16-byte slot the tender saves into is at the **tail** of `.data`, after
+every message, so boot-info, the memory map and all four messages keep the
+offsets they had. A preflight image with the tender differs from one without
+it in `.text` and in those 16 bytes, and nowhere else.
+
+### What this does NOT show
+
+**The loop has never been taken, and nothing here shows that it can be.** Two
+independent reasons, both by construction:
+
+- Under QEMU there is no RTL8125, so the preflight path branches to
+  `:exit-boot` on the PCI ID mismatch *before* reaching the tender. The QEMU
+  pass says the image is still structurally sound and boots identically. It
+  says nothing about the loop.
+- On the board the tender *is* reached, but the guest's `main` does not
+  return at all — it runs `debug-run-cycles` and then resets. Zero iterations
+  complete.
+
+So the honest claim is exactly the one step 1 was for: **the mechanism is
+present, and behaviour is unchanged because nothing yet returns the
+sentinel.** A control that takes the branch is not available until step 2
+makes the guest return per step. Until then, do not report that the tender
+runs.
+
+### The hardware measurement is pending, and why
+
+The tender image (`36d81484...`, 261,120 bytes, compiler `a6102cda`) was
+written to the PXE root at 16:42 JST and **has not been fetched.** The board
+stopped speaking at `2026-09-08T07:02:39Z` (16:02 JST), 40 minutes before that
+deploy, after fetching and booting the previous image (`0576a52e`): it sent one
+`AIUEOS_NODE_HELLO_V1`, reached `state=live-not-ready enrollment-status=200
+heartbeat-status=201`, and then went silent.
+
+It is wedged, not off. Both host links report `status: active`,
+`1000baseT <full-duplex>`, and both board MACs are still in the ARP cache; what
+is absent is DHCP, netlog, bus3 and ICMP. A powered-down mini-PC would drop
+link. This is the same failure ADR-0203 recorded once before and could not
+attribute — it needed two power cycles then, and needs a person now.
+
+So: **the tender is proven in the image and unproven on the machine.** Do not
+close step 1 as measured-on-hardware until a boot of `36d81484...` appears in
+the server log. Nothing here attributes the wedge to the tender — that image
+has never run — and nothing here attributes it to `0576a52e` either; one boot
+followed by silence is not yet a cause.
+
 ## Order, and what not to do
 
-1. **The image entry becomes a host loop** (ADR-0204 step 1). That *is* the
-   minimal tender: replenish, call, re-enter. Nothing else is possible before
-   it, and everything else is easier after it.
+1. ~~**The image entry becomes a host loop**~~ — **landed 2026-09-08**, see
+   above. It is the minimal tender: replenish, call, re-enter.
 2. **The tender gains a definition table**, so "which code runs" is a name, not
    an image.
 3. **The timer becomes the run-time bound**, borrowing `rt-kernel.kotoba`'s
