@@ -1040,6 +1040,36 @@ watch `en8` vs `en15` `Ipkts` across one boot. If the offers to `…b6:31` are
 going out `en15` while that NIC listens on `en8`, the server must reply on the
 interface the request arrived on, and that is the next fix.
 
+## What bus3 is, measured until nothing was left to guess (2026-09-08)
+
+Six measurements, each one removing a candidate, in the order they were taken:
+
+| measured | result | rules out |
+|---|---|---|
+| `debug-init` / `debug-send` receipts | `B8 00`, `dbg-sent 00` | the ring is installed, the engine consumed every frame |
+| Mac→board broadcast, **en8**, 199 datagrams over 5 boots | no `D9` | the board's RX is not seeing that wire |
+| Mac→board broadcast, **en15**, 199 datagrams over 5 boots | no `D9` | nor that one |
+| greeting to `10.10.10.1` **and** to `255.255.255.255` | both report sent, neither arrives | the ip_input rule about a unicast address in a broadcast frame |
+| **MAC loopback self-test** (TxConfig 17\|18) | **0 — the frame came back** | the descriptors, the DMA addresses and BOTH engines are correct |
+| `PHYstatus` on the wire (`DD 00 DD 93`) | **0x0093 = link up, 1000 Mbps, full duplex** | a PHY that had not finished negotiating after the reset |
+
+The loopback is the one that matters: a frame handed back inside the MAC proves
+every part of this module that we own. And 0x0093 proves the port has a live
+gigabit link — a link needs a partner, so bus3 is plugged into *something*.
+
+**What is left is physical.** That something carries nothing to or from this
+Mac: neither the board's frames (broadcast, so no address can be wrong) nor the
+Mac's (broadcast, on both of its interfaces). The one contrary datum — DHCP
+requests bearing bus3's MAC reaching the PXE server — is a request the firmware
+*composed* with that MAC, and says nothing about which port it left by.
+
+So the ask is at the cable, not in the code: **the K16's second Ethernet port is
+connected to something that is not the Mac's en8.** Everything else is ready and
+measured — the kernel answers ARP and broadcasts its greeting, `debug-tick`
+answers `P` and `R`, the sink listens on the wildcard so it will hear either
+shape on either interface, and the PXE server accepts both NICs so the board can
+boot from whichever port has a wire.
+
 ## Status of the artifacts
 
 - Commit `e09e4f1` (Phase 1 — bus3 single-shot) is superseded by commit
