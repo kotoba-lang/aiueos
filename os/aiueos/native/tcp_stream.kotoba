@@ -1442,12 +1442,32 @@
    ;; is the whole iteration. If the chipset refuses the write we fall through
    ;; and return 223, which the loader prints as STATUS DF -- a reset that did
    ;; not happen must not look like one that did.
+   ;; DE goes out THREE TIMES. This netlog is fire-and-forget UDP, one datagram
+   ;; per byte, and DE is the single byte that separates "the run ended the way
+   ;; it meant to" from "the kernel died". Measured 2026-09-08 across 259 runs
+   ;; of the 64-cycle configuration: only 216 carried a DE, and 2 of the last
+   ;; 20 -- while the board went on rebooting every ~20 s throughout, which
+   ;; proves those runs ended normally. One lost datagram was reading as a
+   ;; death, and it did: a wedge was attributed to fuel exhaustion on exactly
+   ;; that evidence, wrongly (ADR-0203).
+   ;;
+   ;; Three copies do not make the wire lossless. They make the ABSENCE of DE
+   ;; mean something -- three losses in a row on a two-host segment is a very
+   ;; different claim from one -- which is the whole value of the byte.
    (let [ended (stream-log win mmio
                            (kernel-subregion scratch scratch-window-bytes
                                              scratch-log-offset 4096)
                            222)
+         ended-2 (stream-log win mmio
+                             (kernel-subregion scratch scratch-window-bytes
+                                               scratch-log-offset 4096)
+                             (+ 222 (* 0 ended)))
+         ended-3 (stream-log win mmio
+                             (kernel-subregion scratch scratch-window-bytes
+                                               scratch-log-offset 4096)
+                             (+ 222 (* 0 ended-2)))
          reset (kernel-out-u8 3321 6)]
-     (+ 223 (* 0 (+ ended reset))))
+     (+ 223 (* 0 (+ ended-3 reset))))
    (let [tcb (kernel-subregion win dma-window-bytes 4096 4096)
         ;; The log frame is the stream's OWN page and nothing else's. Every
         ;; receipt below is emitted while a transmit may still be in flight.

@@ -43,7 +43,7 @@ context_offset = segments[1][2]
 # Default moved 1048576 -> 67108864 with the build script's, ADR-0203. The two
 # must move together: this check is one of the copies the comment below counts,
 # and a stale default here refuses a correctly-built kernel.
-sealed_fuel = int(os.environ.get("AIUEOS_NATIVE_FUEL", "67108864"))
+sealed_fuel = int(os.environ.get("AIUEOS_NATIVE_FUEL", "1073741824"))
 # The number the kernel is built with was written down in five places at once
 # (two --fuel flags, this check, the receipt and the OK line). Four of them
 # were literals, so raising the budget failed here with a message naming the

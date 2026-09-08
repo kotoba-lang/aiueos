@@ -163,7 +163,7 @@
    :data-followers 1}
   {:channel :netlog :value 222 :hex "DE" :name :run-end-reset
    :emitter "os/aiueos/native/tcp_stream.kotoba"
-   :meaning "debug-run-cycles exhausted; the kernel is about to write 0x06 to port 0xCF9 (SYS_RST|RST_CPU). If DE never appears the run died in ud2 (fuel) before its deliberate end."}
+   :meaning "debug-run-cycles exhausted; the kernel is about to write 0x06 to port 0xCF9 (SYS_RST|RST_CPU). Emitted THREE TIMES in a row since 2026-09-08. This wire is fire-and-forget UDP, one datagram per byte, and DE is the single byte separating a deliberate end from a death -- measured across 259 runs of the 64-cycle configuration, only 216 carried a DE and 2 of the last 20 did, while the board went on rebooting throughout. One lost datagram was reading as a death, and a wedge was attributed to fuel exhaustion on exactly that evidence, wrongly (ADR-0203). Three copies do not make the wire lossless; they make the ABSENCE of DE mean something. A reader should treat one DE as 'ended deliberately' and zero DE across a whole run as evidence of death only because three losses in a row is a much stronger claim than one."}
 
   ;; ── :netlog  E-series: ESTABLISHED window entry, one byte per tick ───────
   {:channel :netlog :value 224 :hex "E0" :span 9 :name :established-window-entry
