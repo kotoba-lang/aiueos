@@ -57,7 +57,18 @@ mkdir -p "$out"
 # handler -- the board halts and a person presses the power button -- so the
 # budget is raised BEFORE the run is lengthened and by more (64x fuel for 16x
 # cycles = 4x the per-cycle margin). ADR-0203.
-native_fuel=${AIUEOS_NATIVE_FUEL:-67108864}
+# 2^30 since 2026-09-08. 2^26 replaced 2^20 (which was the compiler's old
+# admission ceiling, not a choice); 2^30 is a further precaution, NOT a
+# diagnosis -- fuel was briefly and wrongly blamed for a wedge, and ADR-0203
+# records the retraction.
+#
+# Why a large budget is the right direction here and not a lazy one: when this
+# guard fires it does not fail a run, it halts the machine with no handler and
+# nothing to reset it, so recovery is a person at the power button. Catching a
+# runaway SOONER buys nothing, because the outcome is the same halt either way.
+# The budget stays large until a dying kernel can say so and leave (ADR-0199
+# applied to this kernel); then it can come back down.
+native_fuel=${AIUEOS_NATIVE_FUEL:-1073741824}
 # The budget is written down in the policy EDN, the --fuel flag, the sealed
 # context check, the receipt and the OK line. The policy is the authority --
 # --fuel alone is silently not enough -- so generate the policy from the same
