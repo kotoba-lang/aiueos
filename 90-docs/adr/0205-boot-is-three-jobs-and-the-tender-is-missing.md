@@ -272,11 +272,29 @@ nothing else.
 
 1. ~~**The image entry becomes a host loop**~~ — **landed 2026-09-08**, see
    above. It is the minimal tender: replenish, call, re-enter.
-2. **The tender gains a definition table**, so "which code runs" is a name, not
+2. ~~**The guest returns per step**~~ -- **on main 2026-09-08, and NOT YET
+   MEASURED ON HARDWARE.** `stream-resident`'s end of run no longer writes
+   0xCF9; it drains the last transmit and returns 250, and the tender
+   replenishes and re-enters. QEMU passes (exit 33, `MPRCD`); the board was
+   stopped when this landed and has not run it.
+
+   ⚠ It reached main by accident. It was committed to the branch with "branch
+   only, not merged" in its own message, and a later branch->main merge for an
+   unrelated fix carried it along, because merging a branch merges everything
+   on it. Nothing is being reverted -- the reset path it replaces is the one
+   that demonstrably halts the board, and main is not deployed automatically --
+   but "unmeasured" is a property of the change, not of which ref it sits on,
+   and the merge message that says "on the branch" is wrong.
+
+   The cost is explicit: **a deploy no longer takes effect by itself**, because
+   the board stops re-fetching. `k16-control.cljs R --to 10.10.10.2:9000` still
+   resets at the one remaining 0xCF9 site.
+
+3. **The tender gains a definition table**, so "which code runs" is a name, not
    an image.
-3. **The timer becomes the run-time bound**, borrowing `rt-kernel.kotoba`'s
+4. **The timer becomes the run-time bound**, borrowing `rt-kernel.kotoba`'s
    APIC and periodic release rather than writing a second one.
-4. **Definitions arrive over LAN2.** Deploy without reset.
+5. **Definitions arrive over LAN2.** Deploy without reset.
 
 Not to do, each for a reason already recorded here:
 
