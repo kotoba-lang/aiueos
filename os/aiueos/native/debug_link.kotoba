@@ -410,15 +410,43 @@
           (+ 3 (* 0 (+ restored settled rearmed)))
           (if (= rearmed 0) 4 0))))))
 
+(defn wait-link [mmio remaining]
+  ;; Polls left when the PHY came up, 0 if it never did. rings-start resets the
+  ;; chip, and a gigabit PHY renegotiates in SECONDS -- while this kernel's
+  ;; whole run is about twelve milliseconds. link-up reads PHYstatus once, and
+  ;; a frame submitted into a PHY that has not finished negotiating is dropped
+  ;; by the MAC with the descriptor still completing: exactly the "everything
+  ;; reports success and nothing arrives" this plane has shown all day. The
+  ;; loopback self-test passes through it because loopback never reaches a PHY.
+  (if (= (rtl/link-up mmio) 1)
+    remaining
+    (if (= remaining 0)
+      0
+      (let [paused (kernel-pause)]
+        (+ (wait-link mmio (- remaining 1)) (* 0 paused))))))
+
+(defn link-bucket [mmio]
+  ;; 0 up on the first look · 1 within 1,000 polls · 2 within 200,000
+  ;; · 3 still down after 200,000. One byte, four answers, and the greeting
+  ;; below is sent only after this has looked.
+  (let [left (wait-link mmio 200000)]
+    (if (= left 200000)
+      0
+      (if (= left 0)
+        3
+        (if (> left 199000) 1 2)))))
+
 (defn debug-send [mmio dma-pages]
-  ;; The self-test first, then both greeting shapes, once per boot. Returns
-  ;;   (32 * loopback) + (8 * Z-status) + B-status
-  ;; so 0 still means everything worked, and the byte on the netlog says which
-  ;; of the three failed. 32.. is the interesting range: the rings themselves.
-  (let [l (loopback-selftest mmio dma-pages)
+  ;; Wait for the PHY, then both greeting shapes, once per boot. Returns
+  ;;   (64 * link-bucket) + (8 * Z-status) + B-status
+  ;; so 0 still means everything worked and the link was already up. The
+  ;; loopback self-test answered its question on 2026-09-08 -- rings, DMA and
+  ;; both engines are correct, 0 on every boot -- so its slot now carries the
+  ;; question that remains.
+  (let [l (link-bucket mmio)
         z (debug-send-byte mmio dma-pages 90)        ; 'Z' -> 10.10.10.1
         b (broadcast-byte mmio dma-pages 66)]        ; 'B' -> 255.255.255.255
-    (+ (* 32 l) (* 8 z) b)))
+    (+ (* 64 l) (* 8 z) b)))
 
 ;; ── LAN2 control: receive ────────────────────────────────────────────────
 ;; rtl/rings-start already installed and armed ONE RX descriptor on bus3
