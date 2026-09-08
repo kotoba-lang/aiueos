@@ -4,7 +4,7 @@ set -eu
 repo=$(CDPATH= cd -- "$(dirname -- "$0")/../../.." && pwd)
 aiueos="$repo/os/aiueos"
 compiler=${1:?usage: build-kotoba-native-kernel.sh /path/to/compiler}
-expected=13d2f5dfe1adeaa99b7e9e6c04fcf8cb8fc15a4b
+expected=5cec919625e4c5069950637ddf989e1acbfb3b0d
 actual=$(git -C "$compiler" rev-parse HEAD)
 [ "$actual" = "$expected" ] || {
   echo "error: compiler HEAD is $actual; expected $expected" >&2; exit 1;
@@ -56,6 +56,7 @@ mkdir -p "$out"
   --source-path "$mmio_map_source" \
   --source-path "$net_transport_source" \
   --source-path "$org_ietf_tcp_source" --unpinned \
+  --policy "$aiueos/scripts/native-kernel-fuel-policy.edn" \
   --target x86_64-aiueos-kernel-v1 --artifact image --fuel 1048576 --output "$kernel"
 "$compiler/bin/kotoba-compiler" compile "$source" \
   --source-path "$aiueos" \
@@ -64,6 +65,7 @@ mkdir -p "$out"
   --source-path "$mmio_map_source" \
   --source-path "$net_transport_source" \
   --source-path "$org_ietf_tcp_source" --unpinned \
+  --policy "$aiueos/scripts/native-kernel-fuel-policy.edn" \
   --target x86_64-aiueos-kernel-v1 --artifact image --fuel 1048576 --output "$second"
 cmp "$kernel" "$second"
 rm -f "$second"

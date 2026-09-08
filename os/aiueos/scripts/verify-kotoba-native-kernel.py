@@ -2,6 +2,7 @@
 import hashlib
 import json
 import pathlib
+import os
 import struct
 import sys
 
@@ -36,16 +37,42 @@ rw_start = segments[1][3]
 rw_end = rw_start + segments[1][6]
 if (rx_start != 0x101000 or rx_limit > rw_start
         or rw_start & 4095 or rw_end >= 0x40000000
-        or not (rw_start <= 0x110000 < rw_end)):
+        or rw_start != rx_limit):
     raise SystemExit("error: Kotoba-native RX/RW page boundary rejected")
 context_offset = segments[1][2]
-if segments[1][5] < 16 or struct.unpack_from("<Q", data, context_offset + 8)[0] != 1048576:
-    raise SystemExit("error: Kotoba-native kernel context does not carry sealed fuel 1048576")
+# Default moved 1048576 -> 67108864 with the build script's, ADR-0203. The two
+# must move together: this check is one of the copies the comment below counts,
+# and a stale default here refuses a correctly-built kernel.
+sealed_fuel = int(os.environ.get("AIUEOS_NATIVE_FUEL", "67108864"))
+# The number the kernel is built with was written down in five places at once
+# (two --fuel flags, this check, the receipt and the OK line). Four of them
+# were literals, so raising the budget failed here with a message naming the
+# old value -- the same shape kotoba-kir ADR 0268 hit when max-native-fuel
+# moved. The CHECK stays; only its duplication goes.
+if segments[1][5] < 16 or struct.unpack_from("<Q", data, context_offset + 8)[0] != sealed_fuel:
+    raise SystemExit(
+        "error: Kotoba-native kernel context does not carry sealed fuel %d" % sealed_fuel)
 cr3_read_encodings = (b"\x0f\x20\xd8", b"\x41\x0f\x20\xda")
 cr3_write_encodings = (b"\x0f\x22\xd8", b"\x41\x0f\x22\xda")
 invlpg_encodings = (b"\x0f\x01\x38", b"\x41\x0f\x01\x3a")
 cr0_read_encodings = (b"\x0f\x20\xc0", b"\x41\x0f\x20\xc2")
 cr0_write_encodings = (b"\x0f\x22\xc0", b"\x41\x0f\x22\xc2")
+# The page-fault-recovery configurator's first store names a kernel context
+# slot. Until kotoba-native #153 (4ca092eb, in amu >= 94f8fe37 / f040b483) it
+# was `mov [0x110100],r10` -- an absolute disp32 that the packager had since
+# moved into RX text, so under CR0.WP it page-faulted before the kernel's own
+# #PF gate existed (ADR-0156: CR2=0x110100 -> #GP -> #DF -> triple fault). The
+# slot block now lives at r9+0x160 in the RW context page
+# (`kotoba.native.interrupt-abi/context-slot-block-offset`), and r9 is the
+# context register in compiled Kotoba, so the store is `mov [r9+0x160],r10`.
+# The old absolute form is refused below: a kernel that re-hardcodes the slot
+# is the defect, not older evidence.
+context_slot_store = b"\x4d\x89\x91\x60\x01\x00\x00"
+absolute_context_slot_store = b"\x4c\x89\x14\x25\x00\x01\x11\x00"
+if absolute_context_slot_store in data:
+    raise SystemExit(
+        "error: kernel context slot addressed by absolute disp32 0x110100 "
+        "(inside RX text; kotoba-native #153 moved the slot block to r9+0x160)")
 page_fault_frame_encodings = (
     b"\x41\x0f\x20\xd2\x4c\x8b\x1c\x24",
     b"\x41\x0f\x20\xd2\x4c\x8b\x5c\x24\x30",
@@ -63,7 +90,7 @@ if (not any(encoding in data for encoding in cr3_read_encodings)
         or b"\x41\x0f\x01\x1a" not in data
         or b"\x0f\x01\x0c\x24" not in data
         or not any(encoding in data for encoding in page_fault_frame_encodings)
-        or b"\x4c\x89\x14\x25\x00\x01\x11\x00" not in data
+        or context_slot_store not in data
         or b"\xed" not in data
         or b"\xee" not in data or b"\xef" not in data):
     raise SystemExit("error: privileged paging/protection lowering evidence is absent")
@@ -108,7 +135,8 @@ payload = {
          "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}
         for module, (path, revision) in zip(
             ["capability.link.frame", "capability.dma.map",
-             "capability.mmio.map", "capability.net.transport"],
+             "capability.mmio.map", "capability.net.transport",
+             "tcp.seq-core", "tcp.reassemble-core"][:len(capability_sources)],
             zip(capability_sources, [revision for _, revision in capability_inputs]),
         )
     ],
@@ -118,7 +146,7 @@ payload = {
     "c_sources": [],
     "imports": [],
     "dynamic_dependencies": [],
-    "fuel": {"initial": 1048576, "replenishable": False},
+    "fuel": {"initial": sealed_fuel, "replenishable": False},
     "allocator": {"page_bytes": 4096, "published_pages": 14,
                   "allocation_source": "amu-uefi-loader-rw-tail",
                   "zero_before_publish": True,
@@ -154,4 +182,4 @@ payload = {
                    "sealed_probe": present_probes[0] if present_probes else None},
 }
 receipt.write_text(json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n", encoding="ascii")
-print("AIUEOS_KOTOBA_NATIVE_KERNEL_OK no-c no-crt no-linker imports=0 fuel=1048576 allocator-pages=14 ownership-bitmap page-table-root identity-1g rtl8125-pci-mmio-dma guard-unmapped text-rx state-rw-nx nxe cr0-wp cr3-activated invlpg idt14-sidt-readback pf-cr2-error-code recovery-frame dedicated-handler-stack reuse double-free-rejected descriptors<=410 zero-before-publish")
+print("AIUEOS_KOTOBA_NATIVE_KERNEL_OK no-c no-crt no-linker imports=0 fuel=%d " % sealed_fuel + "allocator-pages=14 ownership-bitmap page-table-root identity-1g rtl8125-pci-mmio-dma guard-unmapped text-rx state-rw-nx nxe cr0-wp cr3-activated invlpg idt14-sidt-readback pf-cr2-error-code recovery-frame dedicated-handler-stack reuse double-free-rejected descriptors<=410 zero-before-publish")

@@ -4,7 +4,7 @@ set -eu
 repo=$(CDPATH= cd -- "$(dirname -- "$0")/../../.." && pwd)
 aiueos="$repo/os/aiueos"
 compiler=${1:?usage: build-kotoba-native-kernel.sh /path/to/compiler}
-expected=13d2f5dfe1adeaa99b7e9e6c04fcf8cb8fc15a4b
+expected=46eeedae4ab765e5ea572927a411fec40c8f218e
 actual=$(git -C "$compiler" rev-parse HEAD)
 [ "$actual" = "$expected" ] || {
   echo "error: compiler HEAD is $actual; expected $expected" >&2; exit 1;
@@ -49,6 +49,16 @@ require_source_commit mmio/map "$mmio_map_source" "$mmio_map_commit"
 require_source_commit net/transport "$net_transport_source" "$net_transport_commit"
 require_source_commit org-ietf-tcp "$org_ietf_tcp_source" "$org_ietf_tcp_commit"
 mkdir -p "$out"
+native_fuel=${AIUEOS_NATIVE_FUEL:-1048576}
+# The budget is written down in the policy EDN, the --fuel flag, the sealed
+# context check, the receipt and the OK line. The policy is the authority --
+# --fuel alone is silently not enough -- so generate the policy from the same
+# variable everything else reads, instead of keeping five copies in step by
+# hand. Default is the shipped 1048576, so an unset environment builds exactly
+# what it built before.
+fuel_policy="$out/native-kernel-fuel-policy.edn"
+mkdir -p "$out"
+printf '{:budgets {:fuel %s}}\n' "$native_fuel" >"$fuel_policy"
 "$compiler/bin/kotoba-compiler" compile "$source" \
   --source-path "$aiueos" \
   --source-path "$link_frame_source" \
@@ -56,7 +66,8 @@ mkdir -p "$out"
   --source-path "$mmio_map_source" \
   --source-path "$net_transport_source" \
   --source-path "$org_ietf_tcp_source" --unpinned \
-  --target x86_64-aiueos-kernel-v1 --artifact image --fuel 1048576 --output "$kernel"
+  --policy "$fuel_policy" \
+  --target x86_64-aiueos-kernel-v1 --artifact image --fuel "$native_fuel" --output "$kernel"
 "$compiler/bin/kotoba-compiler" compile "$source" \
   --source-path "$aiueos" \
   --source-path "$link_frame_source" \
@@ -64,7 +75,8 @@ mkdir -p "$out"
   --source-path "$mmio_map_source" \
   --source-path "$net_transport_source" \
   --source-path "$org_ietf_tcp_source" --unpinned \
-  --target x86_64-aiueos-kernel-v1 --artifact image --fuel 1048576 --output "$second"
+  --policy "$fuel_policy" \
+  --target x86_64-aiueos-kernel-v1 --artifact image --fuel "$native_fuel" --output "$second"
 cmp "$kernel" "$second"
 rm -f "$second"
 python3 "$aiueos/scripts/verify-kotoba-native-kernel.py" \

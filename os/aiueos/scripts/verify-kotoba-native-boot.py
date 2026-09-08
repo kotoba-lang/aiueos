@@ -24,7 +24,13 @@ if data.count(payload)!=1: raise SystemExit("error: embedded Kotoba kernel ident
 scratch_pages=14
 scratch_allocation=(b"\xb9\x00\x00\x00\x00\xba\x02\x00\x00\x00"
                     b"\x41\xb8"+struct.pack("<I",scratch_pages))
-if scratch_allocation not in data:
+# The allocator-explicit loader twin (amu 5cec91, kotoba-native adeb1b0f)
+# expresses the same fourteen-page reservation as mov edx,0x1000 (page bytes)
+# followed by mov r8d,14 (page count). Both shapes name the same
+# loader-owned allocation contract; accept either, require one.
+scratch_allocation_alloc=(b"\xba\x00\x10\x00\x00\x41\xb8"
+                          +struct.pack("<I",scratch_pages))
+if (scratch_allocation not in data) and (scratch_allocation_alloc not in data):
     raise SystemExit("error: loader-owned fourteen-page kernel scratch allocation is absent")
 preflight=os.environ.get("AIUEOS_NATIVE_K16_PREFLIGHT","0")=="1"
 k16_pci_probe=(b"\x66\xba\xf8\x0c\xb8\x00\x00\x02\x80\xef"

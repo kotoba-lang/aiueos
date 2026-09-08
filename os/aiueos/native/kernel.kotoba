@@ -5,12 +5,35 @@
   ;; single-source compile the build script runs emits byte-identical artifacts
   ;; with and without it -- code sha c3bd9664…, binary sha b64afc94…, both
   ;; unchanged, and the export symbol stays kotoba_aiueos_probe.
-  (:require [native.rtl8125 :as rtl])
+  (:require [native.rtl8125 :as rtl]
+            [native.tcp-stream :as stream]
+            [native.debug-link :as debug])
   (:export [main]))
+
+;; Gate N2 (ADR-0134): the persistent TCP byte stream runtime profile links
+;; into the same closed module graph as the diagnostics profile. `main` still
+;; runs only rtl/qualify -- the diagnostics path is byte-identical in behavior
+;; -- but the stream profile's module (its RX ring re-layout, bounded TCB,
+;; ESTABLISHED-state receive and the org-ietf-tcp seq/reassemble cores) is
+;; compiled, linked and receipt-recorded in every N2-era artifact. The
+;; physical tranche wires its entry into the post-qualification flow.
 
 ;; The compiler-emitted loader keeps the final UEFI memory map in a bounded
 ;; region directly after the 64-byte boot-info prefix.  The kernel derives that
 ;; region; it never turns the pointer stored by firmware into authority.
+(defn dump-bus3-ip-header [win mmio log-frame bus3-dma index]
+  ;; DD <byte> for offsets 14..33 of the last bus3 frame: the whole IPv4 header
+  ;; as it sits in the buffer the NIC transmitted from. One DD per byte, the
+  ;; shape lang-h9b requires, because any of these bytes can be a sentinel.
+  (if (> index 33)
+    1
+    (let [mark (stream/stream-log win mmio log-frame 221)
+          b (stream/stream-log win mmio log-frame
+                               (+ (debug/debug-frame-byte bus3-dma index)
+                                  (* 0 mark)))]
+      (+ (dump-bus3-ip-header win mmio log-frame bus3-dma (+ index 1))
+         (* 0 b)))))
+
 (defn load64 [base length offset]
   (+ (kernel-load-u8-16k base length offset)
      (* (kernel-load-u8-16k base length (+ offset 1)) 256)
@@ -32,13 +55,17 @@
      (* (kernel-load-u8 base 96 (+ offset 7)) 72057594037927936)))
 
 ;; Keep only one effectful write live at a time.  This uses less sealed fuel
-;; than retaining sixteen store results and reducing them after the writes,
-;; while still proving every byte writable and zero before publication.
+;; than retaining sixteen store results and reducing them after the writes.
+;; The store proves the byte writable (an out-of-range store traps); it does
+;; NOT prove it zero -- a kernel store returns its operand, so `(= stored 0)`
+;; here was a tautology (lang-h13). The byte is not read back per iteration:
+;; that is one extra load for every byte of every page against the sealed
+;; fuel budget, and the publication gates read the pages they depend on.
 (defn zero-page [page offset]
   (if (= offset 4096)
     1
     (let [stored (kernel-store-u8-4k page 4096 offset 0)]
-      (if (= stored 0)
+      (if (= 0 (* 0 stored))
         (zero-page page (+ offset 1))
         0))))
 
@@ -47,16 +74,14 @@
 ;; transient scalar control flow, so later claims observe earlier decisions.
 (defn claim-slot [state slot]
   (if (= (kernel-load-u8-4k state 4096 slot) 0)
-    (if (= (kernel-store-u8-4k state 4096 slot 1) 1)
-      (if (= (kernel-load-u8-4k state 4096 slot) 1) 1 0)
-      0)
+    (let [claimed (kernel-store-u8-4k state 4096 slot 1)]
+      (if (= (+ (kernel-load-u8-4k state 4096 slot) (* 0 claimed)) 1) 1 0))
     0))
 
 (defn release-slot [state slot]
   (if (= (kernel-load-u8-4k state 4096 slot) 1)
-    (if (= (kernel-store-u8-4k state 4096 slot 0) 0)
-      (if (= (kernel-load-u8-4k state 4096 slot) 0) 1 0)
-      0)
+    (let [released (kernel-store-u8-4k state 4096 slot 0)]
+      (if (= (+ (kernel-load-u8-4k state 4096 slot) (* 0 released)) 0) 1 0))
     0))
 
 (defn load64-page [page offset]
@@ -88,7 +113,7 @@
 ;; literals are unsigned page-table entries.
 (defn store64-nx-page [page offset value]
   (if (and (= (store64-page page offset value) 1)
-           (= (kernel-store-u8-4k page 4096 (+ offset 7) 128) 128)
+           (= 0 (* 0 (kernel-store-u8-4k page 4096 (+ offset 7) 128)))
            (= (kernel-load-u8-4k page 4096 (+ offset 7)) 128))
     1
     0))
@@ -143,9 +168,11 @@
                     (if (= (kernel-load-u8-4k pt 4096 4095) 0) 0 39)))))))))))
 
 (defn claim-eight-status [state]
+  ;; 71 ("the store did not return 1") was unreachable: a store returns its
+  ;; operand (lang-h13). 72 -- the slot does not read back as 1 -- is the check.
   (if (not (= (kernel-load-u8-4k state 4096 0) 0)) 70
-    (if (not (= (kernel-store-u8-4k state 4096 0 1) 1)) 71
-      (if (not (= (kernel-load-u8-4k state 4096 0) 1)) 72
+    (let [claimed (kernel-store-u8-4k state 4096 0 1)]
+      (if (not (= (+ (kernel-load-u8-4k state 4096 0) (* 0 claimed)) 1)) 72
         (if (not (= (claim-slot state 1) 1)) 51
           (if (not (= (claim-slot state 2) 1)) 52
             (if (not (= (claim-slot state 3) 1)) 53
@@ -308,12 +335,13 @@
              (> selector 0) (<= selector 65535)
              (= (store64-page idt-page 224 gate-low) 1)
              (= (store64-page idt-page 232 handler-high) 1)
-             (= (kernel-store-u8-4k idt-page 4096 512 239) 239)
-             (= (kernel-store-u8-4k idt-page 4096 513 0) 0)
+             (= 0 (* 0 (kernel-store-u8-4k idt-page 4096 512 239)))
+             (= 0 (* 0 (kernel-store-u8-4k idt-page 4096 513 0)))
              (= (store64-page idt-page 514 idt-page) 1)
              (= (load64-page idt-page 224) gate-low)
              (= (load64-page idt-page 232) handler-high)
              (= (kernel-load-u8-4k idt-page 4096 512) 239)
+             (= (kernel-load-u8-4k idt-page 4096 513) 0)
              (= (load64-page idt-page 514) idt-page))
       (let [descriptor (kernel-subregion idt-page 4096 512 10)]
         (kernel-load-idt descriptor 10))
@@ -392,6 +420,12 @@
                 twelfth-start (+ physical-start 45056)
                 thirteenth-start (+ physical-start 49152)
                 fourteenth-start (+ physical-start 53248)
+                ;; No page 14..17 extension. The Amu loader allocates exactly
+                ;; fourteen pages (kernel_scratch.pages = 14, checked above),
+                ;; so naming +57344.. would hand the NIC memory the kernel
+                ;; does not own. The LAN2 debug plane takes its 16 KiB from
+                ;; the pages the CR3 branch would have used instead; see the
+                ;; stream branch below (ADR-0156).
                 bar-a (rtl/bar-for-bus 2)
                 bar-b (rtl/bar-for-bus 3)]
             (if (and (five-distinct physical-start second-start third-start
@@ -479,7 +513,288 @@
                           ;; 0x60 is the pure TCP qualification base. Provider
                           ;; zero means both the earlier ARP/UDP receipt and the
                           ;; new 8443 SYN/SYN-ACK exchange completed.
-                          (kernel-out-u32 244 (+ 96 pre-cr3-nic-status)))
+                          (if (= pre-cr3-nic-status 0)
+                            ;; Gate N2 tranche one (ADR-0134): with the
+                            ;; diagnostics qualification green under the
+                            ;; known-good pre-CR3 mapping, install the stream
+                            ;; profile's 4-descriptor RX ring, arm the TCB, and
+                            ;; run one bounded ESTABLISHED-state receive window
+                            ;; on the fixed 4-tuple. The wire status is honest:
+                            ;; 192 + 99 (0x123) = a delivery+ACK ran, 192 + 21 =
+                            ;; the ring is live but the peer sent nothing inside
+                            ;; the window, 192 + 30/26/25 = the specific stream
+                            ;; fault. Diagnostics codes 96..96+0 stay untouched.
+                            (let [stream-mmio (kernel-subregion 1 549755813887
+                                                                (- bar-a 1) 512)
+                                  stream-win (kernel-subregion rtl-dma-pages
+                                                               16384 0 16384)
+                                  ;; The stream's three CPU-side buffers, in
+                                  ;; ONE region with fixed offsets (log +0,
+                                  ;; tx +4096, staging +8192) so that no two of
+                                  ;; them can be the same page by accident.
+                                  ;; They were three separately-computed
+                                  ;; addresses, and two of them landed on the
+                                  ;; same page for months: tx-frame and staging
+                                  ;; were both rtl-dma-pages + 8192, which is
+                                  ;; also the stream's rx-buffer-a. Worse,
+                                  ;; stream-log built its receipt in the TX
+                                  ;; frame, so the SYN was overwritten between
+                                  ;; being built and being submitted -- which
+                                  ;; the Mac measured as `0 connection request`
+                                  ;; over ~363,000 attempts (ADR-0156).
+                                  ;;
+                                  ;; page-table-root, pdpt and pd are the free
+                                  ;; pages here and they are contiguous. Only
+                                  ;; prepare-page-tables installs them, and that
+                                  ;; runs in the CR3 arm, not this one;
+                                  ;; prepare-owned-pages has already zeroed
+                                  ;; them. They sit below the bus3 window
+                                  ;; (pages 4..7) and far below rtl-dma-pages
+                                  ;; (pages 10..13).
+                                  stream-scratch (kernel-subregion
+                                                  4096 549755809792
+                                                  (- second-start 4096) 12288)
+                                  stream-log-frame (kernel-subregion
+                                                    stream-scratch 12288 0 4096)
+                                  stream-tcb (kernel-subregion
+                                              4096 549755809792
+                                              (- twelfth-start 4096) 4096)
+                                  ring-status (stream/rx-ring-init
+                                               stream-mmio rtl-dma-pages)
+                                  tcb-status (if (= ring-status 0)
+                                               (stream/tcb-init stream-tcb 2715820034)
+                                               1)
+                                  stream-status
+                                  (if (and (= ring-status 0) (= tcb-status 0))
+                                    0
+                                    (if (not (= ring-status 0)) 97 98))]
+                              ;; Plan A-2: the stream runs resident — every
+                              ;; cycle re-arms, connects, receives, and logs
+                              ;; over UDP. The screen write happens before
+                              ;; entering the loop; outcomes ride STREAM_C.
+                              ;; LAN2 debug plane, step 1. The census (B7 7F
+                              ;; 7F, read on the K16 2026-09-06) said bus3
+                              ;; answers config space, decodes its BAR, has
+                              ;; MEM-SPACE and BUS-MASTER set, reads back its
+                              ;; revision and MAC, and has PHY link -- so the
+                              ;; NIC can DMA. What it still lacked was a
+                              ;; loader-OWNED window.
+                              ;;
+                              ;; This branch never replaces CR3 (bar-a > 0, so
+                              ;; prepare-page-tables / activate-page-tables are
+                              ;; in the other arm), which leaves pt,
+                              ;; reusable-page, frame-page and stack-page
+                              ;; allocated by the loader, zeroed by
+                              ;; prepare-owned-pages / prepare-extra-pages, and
+                              ;; idle for the life of this branch. They are
+                              ;; four contiguous pages = the 16 KiB bus3 needs.
+                              ;;
+                              ;; Six bytes ride the known-good bus2 netlog once
+                              ;; before the resident loop: B7 sentinel, bus3
+                              ;; census, bus2 census (control), B8 sentinel,
+                              ;; debug-init status, debug-send status. Phase 1
+                              ;; observed none of this and was therefore
+                              ;; useless whatever the wire did (ADR-0156).
+                              (do (kernel-out-u32 244 (+ 192 stream-status))
+                                  (let [census-b (rtl/bus-probe 3)
+                                        census-a (rtl/bus-probe 2)
+                                        mark (stream/stream-log
+                                              stream-win stream-mmio
+                                              stream-log-frame 183)
+                                        logged-b (stream/stream-log
+                                                  stream-win stream-mmio
+                                                  stream-log-frame
+                                                  (+ census-b (* 0 mark)))
+                                        logged-a (stream/stream-log
+                                                  stream-win stream-mmio
+                                                  stream-log-frame
+                                                  (+ census-a (* 0 logged-b)))
+                                        bus3-dma-pages (kernel-subregion
+                                                        4096 549755809792
+                                                        (- fifth-start 4096)
+                                                        16384)
+                                        bus3-mmio (if (> bar-b 0)
+                                                    (kernel-subregion
+                                                     1 549755813887
+                                                     (- bar-b 1) 512)
+                                                    0)
+                                        ;; 6 = bar-b never decoded, so there is
+                                        ;; no MMIO to init. Distinct from every
+                                        ;; code debug-init itself returns.
+                                        dbg-init (if (> bar-b 0)
+                                                   (debug/debug-init
+                                                    3 bus3-mmio bus3-dma-pages)
+                                                   6)
+                                        ;; 7 = not attempted, because init
+                                        ;; refused. Never confuse "skipped"
+                                        ;; with "sent".
+                                        ;; What the PHY reports, as DD <hi>
+                                        ;; DD <lo> -- the same one-DA-per-byte
+                                        ;; shape the MAC block uses, and for
+                                        ;; the same reason (lang-h9b: a raw
+                                        ;; byte on this wire is a sentinel
+                                        ;; somewhere). Emitted before the
+                                        ;; greeting, because the greeting's
+                                        ;; status is only meaningful beside it.
+                                        phy-hi-mark (if (= dbg-init 0)
+                                                      (stream/stream-log
+                                                       stream-win stream-mmio
+                                                       stream-log-frame 221)
+                                                      0)
+                                        phy-hi (if (= dbg-init 0)
+                                                 (stream/stream-log
+                                                  stream-win stream-mmio
+                                                  stream-log-frame
+                                                  (+ (debug/debug-phy-byte
+                                                      bus3-mmio 0)
+                                                     (* 0 phy-hi-mark)))
+                                                 0)
+                                        phy-lo-mark (if (= dbg-init 0)
+                                                      (stream/stream-log
+                                                       stream-win stream-mmio
+                                                       stream-log-frame
+                                                       (+ 221 (* 0 phy-hi)))
+                                                      0)
+                                        phy-lo (if (= dbg-init 0)
+                                                 (stream/stream-log
+                                                  stream-win stream-mmio
+                                                  stream-log-frame
+                                                  (+ (debug/debug-phy-byte
+                                                      bus3-mmio 1)
+                                                     (* 0 phy-lo-mark)))
+                                                 0)
+                                        dbg-sent (if (= dbg-init 0)
+                                                   (+ (debug/debug-send
+                                                       bus3-mmio bus3-dma-pages)
+                                                      (* 0 phy-lo))
+                                                   7)
+                                        hdr (if (= dbg-init 0)
+                                              (dump-bus3-ip-header
+                                               stream-win stream-mmio
+                                               stream-log-frame
+                                               bus3-dma-pages 14)
+                                              0)
+                                        mark-b (stream/stream-log
+                                                stream-win stream-mmio
+                                                stream-log-frame
+                                                (+ 184 (* 0 (+ logged-a hdr))))
+                                        logged-init (stream/stream-log
+                                                     stream-win stream-mmio
+                                                     stream-log-frame
+                                                     (+ dbg-init (* 0 mark-b)))
+                                        ;; bus3's MAC as six DA <byte> PAIRS
+                                        ;; (12 datagrams). The Mac cannot reach
+                                        ;; 10.10.10.2 without it, because this
+                                        ;; plane answers UDP and not ARP.
+                                        ;; Emitted once, only when bus3 came up
+                                        ;; ready. One DA before EVERY byte: the
+                                        ;; wire is one byte per datagram, and
+                                        ;; with a single DA followed by six
+                                        ;; positional bytes a MAC byte FC was
+                                        ;; read as the FC checksum verdict
+                                        ;; (measured 2026-09-07, lang-h9b).
+                                        ;; After a DA the reader consumes
+                                        ;; exactly one byte, whatever its value.
+                                        mark-c (if (= dbg-init 0)
+                                                 (stream/stream-log
+                                                  stream-win stream-mmio
+                                                  stream-log-frame
+                                                  (+ 218 (* 0 logged-init)))
+                                                 0)
+                                        m0 (if (= dbg-init 0)
+                                             (stream/stream-log
+                                              stream-win stream-mmio
+                                              stream-log-frame
+                                              (+ (debug/debug-mac-byte
+                                                  bus3-mmio 0)
+                                                 (* 0 mark-c)))
+                                             0)
+                                        da1 (if (= dbg-init 0)
+                                              (stream/stream-log
+                                               stream-win stream-mmio
+                                               stream-log-frame
+                                               (+ 218 (* 0 m0)))
+                                              0)
+                                        m1 (if (= dbg-init 0)
+                                             (stream/stream-log
+                                              stream-win stream-mmio
+                                              stream-log-frame
+                                              (+ (debug/debug-mac-byte
+                                                  bus3-mmio 1)
+                                                 (* 0 da1)))
+                                             0)
+                                        da2 (if (= dbg-init 0)
+                                              (stream/stream-log
+                                               stream-win stream-mmio
+                                               stream-log-frame
+                                               (+ 218 (* 0 m1)))
+                                              0)
+                                        m2 (if (= dbg-init 0)
+                                             (stream/stream-log
+                                              stream-win stream-mmio
+                                              stream-log-frame
+                                              (+ (debug/debug-mac-byte
+                                                  bus3-mmio 2)
+                                                 (* 0 da2)))
+                                             0)
+                                        da3 (if (= dbg-init 0)
+                                              (stream/stream-log
+                                               stream-win stream-mmio
+                                               stream-log-frame
+                                               (+ 218 (* 0 m2)))
+                                              0)
+                                        m3 (if (= dbg-init 0)
+                                             (stream/stream-log
+                                              stream-win stream-mmio
+                                              stream-log-frame
+                                              (+ (debug/debug-mac-byte
+                                                  bus3-mmio 3)
+                                                 (* 0 da3)))
+                                             0)
+                                        da4 (if (= dbg-init 0)
+                                              (stream/stream-log
+                                               stream-win stream-mmio
+                                               stream-log-frame
+                                               (+ 218 (* 0 m3)))
+                                              0)
+                                        m4 (if (= dbg-init 0)
+                                             (stream/stream-log
+                                              stream-win stream-mmio
+                                              stream-log-frame
+                                              (+ (debug/debug-mac-byte
+                                                  bus3-mmio 4)
+                                                 (* 0 da4)))
+                                             0)
+                                        da5 (if (= dbg-init 0)
+                                              (stream/stream-log
+                                               stream-win stream-mmio
+                                               stream-log-frame
+                                               (+ 218 (* 0 m4)))
+                                              0)
+                                        m5 (if (= dbg-init 0)
+                                             (stream/stream-log
+                                              stream-win stream-mmio
+                                              stream-log-frame
+                                              (+ (debug/debug-mac-byte
+                                                  bus3-mmio 5)
+                                                 (* 0 da5)))
+                                             0)]
+                                    (stream/stream-log stream-win stream-mmio
+                                                       stream-log-frame
+                                                       (+ dbg-sent (* 0 m5)))
+                                    ;; LAN2 stays in the loop only if bus3 came
+                                    ;; up ready. On a board without the second
+                                    ;; NIC bus3-mmio is 0, and the loop must
+                                    ;; never dereference it -- so the gate is
+                                    ;; the init status, not the pointer.
+                                    (stream/stream-resident stream-win
+                                                            stream-mmio
+                                                            stream-scratch
+                                                            (if (= dbg-init 0)
+                                                              bus3-dma-pages
+                                                              0)
+                                                            (stream/debug-run-cycles)))))
+                            (kernel-out-u32 244 (+ 96 pre-cr3-nic-status))))
                         (if (and (prepare-page-tables page-table-root pdpt pd pt)
                                  (prepare-low-page-table pt rx-limit rw-start)
                                  (prepare-rtl-page-tables

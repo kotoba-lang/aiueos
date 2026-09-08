@@ -22,8 +22,25 @@
              :liveness-pong "AIUEOS_NODE_PONG_V1"
              :binds [:boot-nonce :job-id :liveness-sequence]
              :result-fields [:token :score :row-total :inference-cycles]
-             :relay-udp {:server "10.77.0.1:7777"
-                         :node "10.77.0.10:7779"}}
+             ;; Measured 2026-09-08.  This said bus2 (10.77.0.1:7777 <->
+             ;; 10.77.0.10:7779) from the day it was written, and bus2 has no
+             ;; UDP receive path -- the board can only TRANSMIT there, so no
+             ;; job could ever have arrived on the wire this contract named.
+             ;; The relay rides LAN2/bus3, whose ring is installed once at
+             ;; debug-init and polled every cycle, and where a job request and
+             ;; its answer have now crossed four times.
+             :relay-udp {:plane :lan2-bus3
+                         :server "10.10.10.1:9000"
+                         :node "10.10.10.2:9000"
+                         :retired {:plane :bus2-netlog
+                                   :server "10.77.0.1:7777"
+                                   :node "10.77.0.10:7779"
+                                   :reason :no-receive-path-on-that-plane}}
+             ;; The node announces itself with the MAC of the NIC the
+             ;; announcement LEAVES BY, which is bus3.  The relay accepted only
+             ;; bus2's until 2026-09-08 and rejected the board's own first
+             ;; hello as `unexpected-mac`.
+             :node-mac ["70-70-fc-0b-b6-31" "70-70-fc-0b-b6-32"]}
  :murakumo {:enqueue [:post "/infer/queue"]
              :target-field :target-did
              :target-value :node-did
@@ -46,6 +63,42 @@
           :service-token-in-efi? false
           :credential-files-mode "0600"
           :bounded-input? true}
+ ;; What has actually crossed the wire, so a reader can tell the specified
+ ;; from the demonstrated.  Four prompts chosen by the Mac, four answers the
+ ;; board computed, each verified against MURAKUMO_MICRO_INFER_ROWS by the
+ ;; relay's own regex; 173 datagrams carrying prompts the board must refuse
+ ;; produced zero result lines.  Nothing has been enqueued at, claimed from or
+ ;; posted to api.murakumo.cloud -- no credential is configured -- so the
+ ;; murakumo half of :requires is UNPROVEN, not met.
+ :measured {:date "2026-09-08"
+            :image-sha256-prefix "6e6df6bd"
+            :answers [{:prompt "murakum" :token "o" :score 2 :row-total 5 :tsc-cycles 1152}
+                      {:prompt "aiueos"  :token " " :score 5 :row-total 7 :tsc-cycles 1344}
+                      {:prompt "kotoba"  :token "i" :score 2 :row-total 8 :tsc-cycles 800}
+                      {:prompt "wave"    :token " " :score 2 :row-total 9 :tsc-cycles 864}]
+            :refusals {:datagrams 173 :results 0
+                       :prompts ["z" "aQ"]
+                       :netlog "D9 73 empty-transition-row, D9 72 outside-vocabulary"}
+            :cross-check "bus2 netlog counted D8 00 on 21 boots and D9 70 four times"
+            ;; Met later the same day, unattended and with no shared secret:
+            ;; the node authenticates every route with a CACAO signed by its
+            ;; own did:key.  7 of 7 jobs completed once the dispatcher's
+            ;; cadence was derived from the board's measured reachability
+            ;; (ADR-0203); the 47 before that failed against a machine that had
+            ;; already reset.
+            :murakumo {:node-name "gmktec-k16-lan2"
+                       :node-did "did:key:z6MkpqcztvoBjMyMD7xdBKhJ96ae2o2TjCttmZfgiSJhXb7g"
+                       :credential :cacao-self-signed
+                       :trust-tier :community
+                       :jobs-completed 7
+                       :jobs-failed-before-cadence-fix 47
+                       :example-job "1788842600269348"
+                       :relay-round-trip-ms 15197}
+            :unproven []
+            ;; Not met, and not a credential problem: `awai-secure` is admitted
+            ;; only through the operator boundary and describes AWAI's own
+            ;; hardware, which this board is not.
+            :not-claimed [:awai-secure-tier :accepted-admission]}
  :scope :native-micro-inference-qualification
  :does-not-prove [:production-llm :gguf-runtime :gpu-inference
                   :production-throughput :ssd-installation
