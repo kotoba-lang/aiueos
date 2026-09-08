@@ -866,17 +866,54 @@
                                     root-marker (serial/trace-byte 82)
                                     cr3-marker (serial/trace-byte 67)
                                     idt-marker (serial/trace-byte 68)
-                                    probe (page-fault-probe)
+                                    ;; IS THIS A STEP, OR A BOOT?
+                                    ;;
+                                    ;; The tender re-enters `main` without a
+                                    ;; platform reset (ADR-0204/0205 step 2),
+                                    ;; and measured 2026-09-08 the SECOND entry
+                                    ;; died in 60 ms, twice. A re-entry is not
+                                    ;; a reboot: the machine it starts on is
+                                    ;; not the machine a reboot starts on, and
+                                    ;; two things below only make sense from
+                                    ;; cold.
+                                    ;;
+                                    ;; No flag has to be stored anywhere. The
+                                    ;; state is already in the hardware: CR3
+                                    ;; holds the firmware's tables on a real
+                                    ;; boot and holds OURS from
+                                    ;; `activate-page-tables` onward, and
+                                    ;; nothing between entries puts it back.
+                                    ;; `activate-page-tables` compares
+                                    ;; `kernel-read-cr3` against this same
+                                    ;; region to check its own work, so the
+                                    ;; comparison is the one the machine
+                                    ;; already trusts.
+                                    step? (= cr3 page-table-root)
+                                    ;; `page-fault-probe` takes a DELIBERATE
+                                    ;; page fault to prove recovery works. That
+                                    ;; is a cold-boot assertion; taking it again
+                                    ;; while the NIC holds live DMA is asking
+                                    ;; the machine to survive something it was
+                                    ;; never asked to survive. 424242 is
+                                    ;; `recoverable-frame-valid`'s own bypass.
+                                    probe (if step? 424242 (page-fault-probe))
                                     core-ok (and (= page-marker 80)
                                                  (= root-marker 82)
                                                  (= cr3-marker 67)
                                                  (= idt-marker 68)
                                                  (= (recoverable-frame-valid
                                                      frame-page stack-page probe) 1))
-                                    nic-status (if core-ok
-                                                 (qualify-rtl8125
-                                                  bar-a bar-b rtl-dma-pages)
-                                                 -2)
+                                    ;; And do not re-qualify a NIC that is
+                                    ;; already up: qualification RESETS the
+                                    ;; device, and the previous step's rings and
+                                    ;; descriptors are still live. 0 is the
+                                    ;; status a good qualification returns.
+                                    nic-status (if step?
+                                                 0
+                                                 (if core-ok
+                                                   (qualify-rtl8125
+                                                    bar-a bar-b rtl-dma-pages)
+                                                   -2))
                                     nic-marker (if (= nic-status 0)
                                                  (serial/trace-byte 78)
                                                  (if (>= nic-status 0)
