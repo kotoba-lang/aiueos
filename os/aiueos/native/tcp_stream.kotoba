@@ -35,7 +35,8 @@
             [capability.net.transport :as transport]
             [tcp.seq-core :as seq-core]
             [tcp.reassemble-core :as reassemble]
-            [native.debug-link :as debug])
+            [native.debug-link :as debug]
+            [native.serial :as serial])
   (:export [rx-ring-descriptor-base rx-ring-descriptor-address
             rx-ring-buffer-base rx-ring-command rx-ring-init
             rx-ring-descriptor-own rx-ring-wait-command rx-ring-rearm
@@ -1098,7 +1099,15 @@
   ;; between a submit and its completion (A2 is emitted before
   ;; wait-tx-complete), so sharing it corrupts a frame the NIC is reading. No
   ;; ordering fixes that; only a separate buffer does.
-  (let [frame-length (if (and (= (fill-zero-stream log-frame 0 62) 1)
+  ;; The SAME byte goes to COM1 first, unconditionally and before anything
+  ;; touches the NIC. Serial needs no DMA, no ring, no link and no peer, so it
+  ;; is the transport that still works when the network one does not -- and it
+  ;; is not lossy, which is the property the netlog turned out to lack exactly
+  ;; where it mattered most (the run-end byte; ADR-0203). Two transports is
+  ;; what the C kernel had and it is why that one could say "the node started"
+  ;; and keep saying things.
+  (let [_serial (if (= (serial/serial-hex-byte status) 1) (serial/serial-eol) 0)
+        frame-length (if (and (= (fill-zero-stream log-frame 0 62) 1)
                               (= (store-gateway-mac-stream log-frame) 1)
                               (= (copy-device-mac-stream log-frame 6 mmio 0) 1)
                               (= (frame-store-be16-stream log-frame 12 2048) 2048)
