@@ -218,12 +218,16 @@
 ;; (ring at dma-pages+4096, buffer at dma-pages+12288, capacity 2048). Until
 ;; now nothing read it, which is why bus3 was output-only.
 ;;
-;; What follows accepts frames off a wire, so it is written to grant NOTHING.
-;; The command set is closed, every command is answered with a single byte,
-;; and no command reaches kernel state -- there is no code here that stores
-;; anywhere except this module's own TX frame. A control plane that can change
-;; the machine needs the admission discipline the rest of this OS uses, and
-;; that is a separate decision, not a bigger switch statement.
+;; What follows accepts frames off a wire, so it is written to grant NOTHING
+;; here. The command set is closed, every command is answered with a single
+;; byte, and no code in this module stores anywhere except its own TX frame.
+;; ONE command changes the machine -- 'R' (reboot, owner decision 2026-09-08:
+;; LAN2 carries control so nobody presses the power button) -- and even that
+;; one is not executed here: debug-tick answers 'r' and returns 80+n, and the
+;; caller (tcp-stream/stream-resident, which owns the bus2 netlog) logs DB and
+;; writes 0x06 to 0xCF9, the same write the run end does after DE. Anything
+;; beyond a platform reset needs the admission discipline the rest of this OS
+;; uses, and that is a separate decision, not a bigger switch statement.
 
 (defn control-frame-valid [frame bytes]
   ;; eth 14 + ip 20 + udp 8 + 1 payload. Checked positionally against the
@@ -274,8 +278,14 @@
   ;;   1        a frame arrived that was not ours
   ;;   2        the RX ring is dead (re-arm failed)
   ;;   64+n     'P' (ping) answered with 'p'; n is the send status
+  ;;   80+n     'R' (reboot) answered with 'r'; n is the send status. The
+  ;;            answer goes out FIRST (debug-send-byte waits for TX completion,
+  ;;            so the Mac holds the 'r' before the board goes away); the reset
+  ;;            itself is the caller's, after its bus2 receipt (DB). This
+  ;;            function has no bus2 handle and must not reset behind it.
   ;;   96+n     an unrecognised command answered with '?'; n is the send status
-  ;; The two answered cases are 64..71 and 96..103, so no encoding collides.
+  ;; The three answered cases are 64..71, 80..87 and 96..103, so no encoding
+  ;; collides (n is 0..5, see debug-send-byte).
   ;;
   ;; This resolves its own MMIO rather than taking it: the native ABI caps a
   ;; function at five parameters, and the resident loop was already at five.
@@ -290,4 +300,6 @@
           seen
           (if (= (- seen 128) 80)                       ; 'P'
             (+ 64 (debug-send-byte mmio dma-pages 112))    ; 'p'
-            (+ 96 (debug-send-byte mmio dma-pages 63))))))))  ; '?'
+            (if (= (- seen 128) 82)                     ; 'R'
+              (+ 80 (debug-send-byte mmio dma-pages 114))  ; 'r'
+              (+ 96 (debug-send-byte mmio dma-pages 63)))))))))  ; '?'

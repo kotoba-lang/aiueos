@@ -50,6 +50,7 @@
 {:registry/id :aiueos-wire-bytes
  :registry/version 1
  :registry/reconciled "2026-09-07"
+ :registry/amended ["2026-09-08 bus3 'R' reboot command: netlog DB (0xDB) / DC (0xDC), bus3-udp 'r' (0x72); :port-cf9 0x06 gains a second emission site"]
  :registry/authorities ["os/aiueos/native/tcp_stream.kotoba (per-function comments)"
                         "os/aiueos/native/kernel.kotoba"
                         "os/aiueos/native/debug_link.kotoba"
@@ -114,7 +115,13 @@
    :meaning "The bus3 (LAN2) bring-up starts here. Followed by 1 DATA byte: debug-init status (0 ready / 6 bar-b never decoded / 9 no MEM-SPACE|BUS-MASTER / 7 MAC implausible / 2 revision unreadable / 8 PHY no link / 10+n rings-start refused n). Then, only if ready, six DA <mac-byte> pairs (12 datagrams). Then 1 DATA byte: debug-send status (0 submitted and OWN cleared / 1 build failed / 5 owned or length rejected / 3 descriptor store did not read back / 4 OWN never cleared / 7 not attempted)."}
   {:channel :netlog :value 217 :hex "D9" :name :bus3-event
    :emitter "os/aiueos/native/tcp_stream.kotoba"
-   :meaning "A bus3 event this cycle (debug-tick returned non-zero). Followed by 1 DATA byte: the debug-tick value (1 not ours / 2 RX ring dead / 64+n 'P' answered with 'p', n = send status / 96+n unknown command answered '?'). Emitted only on an event so 00 is not the most common byte on the wire."}
+   :meaning "A bus3 event this cycle (debug-tick returned non-zero). Followed by 1 DATA byte: the debug-tick value (1 not ours / 2 RX ring dead / 64+n 'P' answered with 'p', n = send status / 80+n 'R' answered with 'r', n = send status -- DB follows, see :bus3-reboot-command / 96+n unknown command answered '?'). Emitted only on an event so 00 is not the most common byte on the wire."}
+  {:channel :netlog :value 219 :hex "DB" :name :bus3-reboot-command
+   :emitter "os/aiueos/native/tcp_stream.kotoba"
+   :meaning "'R' (reboot) arrived on bus3 and was answered 'r' (the D9 <80+n> pair precedes this). The kernel is about to write 0x06 to port 0xCF9 (SYS_RST|RST_CPU) -- the same write the run end does after DE. Order on the wire: D9 <80+n> DB, then either silence (the board reset) or DC (the chipset ignored the write). Added 2026-09-08 (owner: LAN2 carries control so nobody presses the power button)."}
+  {:channel :netlog :value 220 :hex "DC" :name :bus3-reboot-ignored
+   :emitter "os/aiueos/native/tcp_stream.kotoba"
+   :meaning "The 0xCF9 write requested by 'R' returned: execution continued, so the chipset ignored the reset. The cycle goes on. A reset that did not happen must not look like one that did -- DB without DC is the only shape that means the board went down."}
   {:channel :netlog :value 218 :hex "DA" :name :bus3-mac-sentinel
    :emitter "os/aiueos/native/kernel.kotoba"
    :meaning "ONE MAC byte follows this DA. The kernel emits DA before EVERY byte of bus3's MAC: DA IDR0 DA IDR1 DA IDR2 DA IDR3 DA IDR4 DA IDR5 = 12 datagrams, once, only when debug-init returned ready (would read DA 70 DA 70 DA FC DA 0B DA B6 DA 31 for 70:70:fc:0b:b6:31). A reader consumes exactly one positional byte after each DA, whatever its value -- the MAC can contain FC, B6 or DA itself and the byte after a DA is never a sentinel. Shape changed 2026-09-07 (lang-h9b): the earlier form was one DA followed by six positional bytes, and on the 1-byte-per-datagram wire a MAC byte FC was read as the FC checksum verdict (measured 2026-09-07)."}
@@ -183,6 +190,9 @@
   {:channel :bus3-udp :value 112 :hex "70" :name :ping-reply-p
    :emitter "os/aiueos/native/debug_link.kotoba"
    :meaning "'p': answer to a well-formed control datagram carrying 'P' (debug-tick 64+n)."}
+  {:channel :bus3-udp :value 114 :hex "72" :name :reboot-ack-r
+   :emitter "os/aiueos/native/debug_link.kotoba"
+   :meaning "'r': answer to a well-formed control datagram carrying 'R' (debug-tick 80+n). Sent BEFORE the reset (debug-send-byte waits for TX completion), so the Mac holds the acknowledgement before the board goes away; the reset itself is stream-resident's, after DB on bus2. Mac side: os/aiueos/tools/k16-control.cljs R."}
   {:channel :bus3-udp :value 63 :hex "3F" :name :unknown-command
    :emitter "os/aiueos/native/debug_link.kotoba"
    :meaning "'?': answer to a well-formed control datagram whose command byte is not in the closed set (debug-tick 96+n)."}
@@ -216,7 +226,7 @@
   ;; ── :port-cf9  reset control ─────────────────────────────────────────────
   {:channel :port-cf9 :value 6 :hex "06" :name :sys-rst-rst-cpu
    :emitter "os/aiueos/native/tcp_stream.kotoba"
-   :meaning "0xCF9 <- 0x06 = SYS_RST|RST_CPU: deliberate platform reset at run end (after DE). If the chipset ignores it the kernel returns 223 (STATUS DF)."}]
+   :meaning "0xCF9 <- 0x06 = SYS_RST|RST_CPU: deliberate platform reset. Two emission sites, both in stream-resident: at run end (after DE; if the chipset ignores it the kernel returns 223, STATUS DF) and on the bus3 'R' command (after DB; if the chipset ignores it the kernel logs DC and the cycle continues). Same value, same port, two reasons -- the preceding netlog byte says which."}]
 
  ;; Bytes on the :netlog wire that are DATA, not sentinels: emitted through the
  ;; same stream-log primitive but with a computed argument. The verifier counts
@@ -229,7 +239,7 @@
   {:after :bus3-sentinel :count 1 :what "debug-init status"}
   {:after :bus3-mac-sentinel :count 1 :what "one MAC byte; DA is emitted before each of IDR0..5, so the MAC arrives as six DA <byte> pairs in IDR order"}
   {:after :bus3-sentinel :count 1 :what "debug-send status (after the optional DA pairs)" :note "order on the wire: B8 <init> [DA <m0> DA <m1> DA <m2> DA <m3> DA <m4> DA <m5>] <send>"}
-  {:after :bus3-event :count 1 :what "debug-tick value"}
+  {:after :bus3-event :count 1 :what "debug-tick value (1 / 2 / 64+n / 80+n / 96+n); when it is 80..87 the sentinel DB follows, then DC only if the reset was ignored"}
   {:after :frame-verdict-or-accept-decision :offset 3 :count 4 :what "F5 only: flags, payload&255, seg-seq&255, rcv-nxt&255"}]
 
  ;; Where the two authorities disagreed on 2026-09-07, and which won (SOURCE).

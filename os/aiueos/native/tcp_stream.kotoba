@@ -1440,13 +1440,33 @@
         ;; sends. Speaking only on an event keeps the bus2 netlog readable and
         ;; keeps 0 ("no frame") from being the most common byte on the wire.
         ;; D9 is the sentinel; the byte after it is debug-tick's value, and
-        ;; every value it returns fits in one byte (0, 1, 2, 64..71, 96..103),
-        ;; which is why the offset that would have been added here is not.
+        ;; every value it returns fits in one byte (0, 1, 2, 64..71, 80..87,
+        ;; 96..103), which is why the offset that would have been added here
+        ;; is not.
         bus3-mark (if (= bus3 0) 0 (stream-log win mmio log-frame 217))
         bus3-logged (if (= bus3 0)
                       0
                       (stream-log win mmio log-frame
                                   (+ bus3 (* 0 bus3-mark))))
+        ;; 'R' on LAN2 = reboot (debug-tick 80..87; owner decision 2026-09-08:
+        ;; control rides bus3 so bus2 stays PXE + the stream, and nobody presses
+        ;; the power button). debug-tick has already answered 'r' on bus3 -- the
+        ;; Mac holds the acknowledgement before the board goes away -- but it
+        ;; owns no bus2 handle, so the bus2 receipt and the reset live here, in
+        ;; that order: DB on bus2, then 0xCF9 <- 0x06 (SYS_RST|RST_CPU), the
+        ;; same write the run end does after DE. If execution continues the
+        ;; chipset ignored the write: DC says so on bus2, and the cycle goes on
+        ;; -- a reset that did not happen must not look like one that did.
+        reboot (if (< bus3 80) 0 (if (< bus3 88) 1 0))
+        reboot-mark (if (= reboot 1)
+                      (stream-log win mmio log-frame (+ 219 (* 0 bus3-logged)))
+                      0)
+        reboot-reset (if (= reboot 1)
+                       (kernel-out-u8 3321 (+ 6 (* 0 reboot-mark)))
+                       0)
+        reboot-ignored (if (= reboot 1)
+                         (stream-log win mmio log-frame (+ 220 (* 0 reboot-reset)))
+                         0)
         ring (rx-ring-init mmio win)
         ;; The ISS moves 65536 per cycle. With a fixed ISS every cycle's SYN
         ;; is the same connection the peer may still hold in FIN-WAIT-2 or
@@ -1485,5 +1505,5 @@
                  (+ (receive-established win mmio scratch 8) (* 0 connected))
                  connect)]
     (stream-log win mmio log-frame
-                (+ 12 result (* 0 (+ cycles bus3-logged))))
+                (+ 12 result (* 0 (+ cycles bus3-logged reboot-ignored))))
     (stream-resident win mmio scratch bus3-dma (- remaining 1)))))
