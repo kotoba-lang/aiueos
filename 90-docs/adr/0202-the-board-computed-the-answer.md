@@ -111,17 +111,57 @@ one-byte plane could. Getting that wrong is invisible from the board — the Mac
 drops it in `ip_input` and both ends read as healthy. That cost this plane a
 day on 2026-09-08 and is why `relay_line/header-checksum` exists.
 
-## What is NOT shown
+## The murakumo half, later the same day
 
-No murakumo credential is configured on this machine. Nothing has been
-enqueued at, claimed from, or posted to `api.murakumo.cloud`. The
-`:requires` clauses `:claimed-job-id`, `:result-persisted-before-ready` and
-`:fresh-liveness-renewal` are **unproven, not met**, and the contract now says
-so in `:measured :unproven`.
+**Superseded within hours, and the reason is worth keeping.** This section said
+the relay needed `AIUEOS_MURAKUMO_SERVICE_TOKEN`, a shared operator secret that
+is not in kagi and cannot be re-issued without 401-ing every other caller. That
+was read off `worker_entry.js`, whose comment says the node heartbeat and queue
+routes are "service-bearer only, on purpose".
 
-Turning the last hop on needs two values this session must not go looking for:
-`AIUEOS_MURAKUMO_NODE_DID` (`did:key:…`) and `AIUEOS_MURAKUMO_SERVICE_TOKEN`,
-supplied through a credential tool or the environment of the PXE server.
+**The live server disagrees.** Every route the relay uses answers `401` with
+*"requires either a matching CACAO ... or a valid MURAKUMO_SERVICE_TOKEN
+bearer"*, and `write_gate/cacao-authorized?` admits a CACAO whose `:iss` equals
+the `:did` the body claims. The node holds that key. The comment described the
+edge pre-filter; the compiled Worker behind it decides.
+
+So the missing credential was one the node could make for itself:
+`did:key:z6MkpqcztvoBjMyMD7xdBKhJ96ae2o2TjCttmZfgiSJhXb7g`, generated and
+verified four ways (round trip, shape, two independent base58btc
+implementations agreeing, and a signature verified under a key recovered from
+the DID string — the last being the one ADR-2607320000 says is the only check
+that catches an identifier which looks right and cannot sign).
+
+Measured, unattended, with no shared secret anywhere in the path:
+
+```
+AIUEOS_MURAKUMO_JOB state=ready boot=0000000e7c7bb021 job-id=1788842600269348
+  model=aiueos-char-bigram-v1 token=o prompt=murakum inference-cycles=1152
+  relay-round-trip-ms=15197
+```
+
+**7 of 7 jobs completed** after the dispatcher's cadence was derived from the
+board (ADR-0203) rather than from habit; the 47 before it all failed
+`k16-result-timeout` against a machine that had already reset. Cycle counts
+vary across completions (1120, 1152), so the board is recomputing rather than
+repeating. murakumo's own view of the node: `gmktec-k16-lan2`, liveness
+`fresh`, `live? true`, provider its own did:key.
+
+`:claimed-job-id`, `:result-persisted-before-ready` and
+`:fresh-liveness-renewal` are now **met**.
+
+## What is still NOT shown
+
+- **The tier is `community`, not `awai-secure`.** The server admits the latter
+  only through the operator boundary, and the honest reason is the same: this
+  is a machine on a desk relayed through a Mac. `admission` is `pending`.
+- **`ready?` flaps.** Each boot's announcement sends a not-ready heartbeat and
+  the ready one only follows a completed job, so the steady state between jobs
+  reads not-ready. That is the relay's own rule — capacity and a model are
+  withheld until a real job has returned — meeting a board that reboots every
+  40 seconds. It is a real mismatch, not a display bug.
+- **The name `gmktec-k16` still belongs to an operator-issued DID** whose key
+  this session does not hold; re-enrolling it was correctly refused 409.
 
 Liveness ping/pong (`AIUEOS_NODE_PING_V1` / `_PONG_V1`, the contract's
 `:idle-proof :physical-ping-pong`) is written and **does not fit**. The native

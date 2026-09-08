@@ -80,9 +80,25 @@
                        :prompts ["z" "aQ"]
                        :netlog "D9 73 empty-transition-row, D9 72 outside-vocabulary"}
             :cross-check "bus2 netlog counted D8 00 on 21 boots and D9 70 four times"
-            :unproven [:murakumo-enqueue :murakumo-claim :murakumo-result
-                       :murakumo-heartbeat :fresh-liveness-renewal]
-            :blocked-on [:AIUEOS_MURAKUMO_NODE_DID :AIUEOS_MURAKUMO_SERVICE_TOKEN]}
+            ;; Met later the same day, unattended and with no shared secret:
+            ;; the node authenticates every route with a CACAO signed by its
+            ;; own did:key.  7 of 7 jobs completed once the dispatcher's
+            ;; cadence was derived from the board's measured reachability
+            ;; (ADR-0203); the 47 before that failed against a machine that had
+            ;; already reset.
+            :murakumo {:node-name "gmktec-k16-lan2"
+                       :node-did "did:key:z6MkpqcztvoBjMyMD7xdBKhJ96ae2o2TjCttmZfgiSJhXb7g"
+                       :credential :cacao-self-signed
+                       :trust-tier :community
+                       :jobs-completed 7
+                       :jobs-failed-before-cadence-fix 47
+                       :example-job "1788842600269348"
+                       :relay-round-trip-ms 15197}
+            :unproven []
+            ;; Not met, and not a credential problem: `awai-secure` is admitted
+            ;; only through the operator boundary and describes AWAI's own
+            ;; hardware, which this board is not.
+            :not-claimed [:awai-secure-tier :accepted-admission]}
  :scope :native-micro-inference-qualification
  :does-not-prove [:production-llm :gguf-runtime :gpu-inference
                   :production-throughput :ssd-installation
