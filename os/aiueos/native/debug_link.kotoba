@@ -364,12 +364,61 @@
                                                    ip-checksum-broadcast))
       1)))
 
+;; ── does this ring work at all? ──────────────────────────────────────────
+;; Measured 2026-09-08: bus3 reports the ring up, the link up, and every frame
+;; consumed by the engine (OWN cleared), and NOTHING arrives at the Mac in
+;; either direction -- 199 broadcasts on each of the Mac's two wires produced
+;; no receive event across ten boots. Either the cable is not where we think,
+;; or these rings do not work and every status has been a plausible lie.
+;;
+;; MAC loopback (TxConfig bits 17|18, the r8169 driver's TxLoopBack) hands a
+;; transmitted frame straight back to the receiver inside the MAC: no PHY, no
+;; cable, no peer. If the frame comes back, the descriptors, the DMA addresses
+;; and both engines are correct and the fault is outside this board. If it does
+;; not, the fault is ours and no amount of cabling will fix it.
+(def tx-loopback-bits 393216)                  ; (1 << 17) | (1 << 18)
+
+(defn loopback-selftest [mmio dma-pages]
+  ;; 0  the frame came back -- rings, DMA and both engines work
+  ;; 1  the frame could not be built
+  ;; 2  the transmit did not complete
+  ;; 3  the transmit completed but nothing was received
+  ;; 4  received, but the re-arm for normal operation failed
+  (let [rx (kernel-subregion dma-pages 16384 4096 4096)
+        rx-frame (kernel-subregion dma-pages 16384 12288 4096)
+        tx-frame (kernel-subregion dma-pages 16384 8192 4096)
+        saved (kernel-load-u32 mmio 512 64)
+        looped (kernel-store-u32 mmio 512 64 (bit-or saved tx-loopback-bits))
+        fenced (dma/release-fence)
+        built (if (= (store-broadcast-mac tx-frame 0 0) 1)
+                (build-udp-debug-frame-to tx-frame mmio 76      ; 'L'
+                                          limited-broadcast-ip
+                                          ip-checksum-broadcast)
+                0)
+        sent (if (= built 0) 1 (submit-bus3-frame mmio dma-pages built))
+        ;; The frame is handed back inside the MAC, so it is there by the time
+        ;; the transmit completes; a bounded look is still bounded.
+        seen (if (= sent 0) (rtl/wait-rx-command rx 1000000) 0)
+        restored (kernel-store-u32 mmio 512 64 (+ saved (* 0 (+ looped fenced))))
+        settled (dma/release-fence)
+        rearmed (rtl/rx-rearm rx rx-frame)]
+    (if (= built 0)
+      (+ 1 (* 0 (+ restored settled rearmed)))
+      (if (not (= sent 0))
+        (+ 2 (* 0 (+ restored settled rearmed)))
+        (if (= seen 0)
+          (+ 3 (* 0 (+ restored settled rearmed)))
+          (if (= rearmed 0) 4 0))))))
+
 (defn debug-send [mmio dma-pages]
-  ;; Both shapes, once per boot, so one boot says which one the Mac accepts.
-  ;; Returns (8 * Z-status) + B-status: 0 still means every byte left the NIC.
-  (let [z (debug-send-byte mmio dma-pages 90)        ; 'Z' -> 10.10.10.1
+  ;; The self-test first, then both greeting shapes, once per boot. Returns
+  ;;   (32 * loopback) + (8 * Z-status) + B-status
+  ;; so 0 still means everything worked, and the byte on the netlog says which
+  ;; of the three failed. 32.. is the interesting range: the rings themselves.
+  (let [l (loopback-selftest mmio dma-pages)
+        z (debug-send-byte mmio dma-pages 90)        ; 'Z' -> 10.10.10.1
         b (broadcast-byte mmio dma-pages 66)]        ; 'B' -> 255.255.255.255
-    (+ (* 8 z) b)))
+    (+ (* 32 l) (* 8 z) b)))
 
 ;; ── LAN2 control: receive ────────────────────────────────────────────────
 ;; rtl/rings-start already installed and armed ONE RX descriptor on bus3
