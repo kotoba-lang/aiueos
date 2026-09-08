@@ -8,7 +8,12 @@
 # atomic: a reader gets the old file or the new one, never a seam.
 set -eu
 src=${1:?usage: k16-deploy.sh <BOOTX64.EFI>}
-dir=/tmp/aiueos-k16-pxe
+# The serve directory. /tmp is the historical default and stays the default so
+# an unset environment behaves exactly as before -- but a node that is meant to
+# come back after a reboot cannot keep its artifact there, so the resident
+# LaunchAgent (os/aiueos/deploy/com.gftd.k16-murakumo-node.plist) points both
+# this and the server at ~/.gftd/k16.
+dir=${AIUEOS_PXE_SERVE_DIR:-/tmp/aiueos-k16-pxe}
 tmp="$dir/.BOOTX64.EFI.incoming.$$"
 cp "$src" "$tmp"
 chmod 600 "$tmp"
