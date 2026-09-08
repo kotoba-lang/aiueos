@@ -259,18 +259,36 @@ MURAKUMO_CACAO_TIMEOUT = int(os.environ.get("AIUEOS_MURAKUMO_CACAO_TIMEOUT", "30
 MURAKUMO_CACAO_RETRY_S = int(os.environ.get("AIUEOS_MURAKUMO_CACAO_RETRY_S", "5"))
 # How hard the dispatcher tries, in the units the BOARD sets.
 #
-# The board is reachable for 185 ms per 39.8-second boot (ADR-0203). A job is
-# dispatched just after an announcement, so at best the tail of that uptime is
-# left; at 0.2 s between sends that is one datagram, and a 30-second deadline
-# expires before the next boot arrives -- the dispatcher got exactly one shot
-# per job and usually missed. Measured: three consecutive k16-result-timeouts
-# with a single D9 event per run on the other wire.
+# RE-DERIVED 2026-09-08. The previous derivation opened "the board is reachable
+# for 185 ms per 39.8-second boot (ADR-0203)" -- and ADR-0203 is the ADR that
+# WITHDREW 39.8 s, as a number measured through a lossy instrument. This file
+# went on citing it as the basis for both constants while saying, four lines
+# later, that they are re-derived rather than kept when the board changes. It
+# also contradicted itself: the comment above stream_resident in this same file
+# says 19.7 s.
 #
-# 0.05 s puts about four datagrams inside a 185 ms window, and 90 s spans more
-# than two boot periods, so a job that misses one window still meets the next.
-# 20 datagrams per second on a two-host debug segment is not a load; the
-# board's own reachability is what these numbers are made of, so if the run
-# length or the reboot time changes, they are re-derived, not kept.
+# What is actually measured, and how:
+#   period   19.7-20.4 s   consecutive PXE fetches in the server's own log,
+#                          which is the non-lossy witness (DHCP + TFTP), not
+#                          the fire-and-forget netlog
+#   uptime   ~1 s          span of one boot's netlog markers at 64 cycles
+#                          (0.80, 0.87, 1.15 s across three boots)
+#
+# So reachability is roughly 1 s in 20, not 185 ms in 39.8 -- about 5% of the
+# period rather than 0.5%. At 0.05 s between sends that is ~20 datagrams inside
+# a window instead of ~4, and 90 s spans about four and a half periods, so a
+# job that misses one window still meets several more.
+#
+# THE VALUES ARE UNCHANGED, deliberately: the re-derivation moved the margin in
+# the direction of comfort, so there is nothing to fix. What was wrong was the
+# reasoning, and a justification resting on a withdrawn number is worth exactly
+# as much as no justification.
+#
+# ⚠ This whole model has a period in it because the board reboots. ADR-0205
+# step 2 removes the reboot from the cadence -- the run hands the step back to
+# the image's tender instead of resetting the platform -- and if that lands on
+# hardware the board is reachable continuously and these two constants stop
+# describing anything. Re-derive them again then; do not keep them.
 MURAKUMO_JOB_RETRY_WAIT = float(
     os.environ.get("AIUEOS_MURAKUMO_JOB_RETRY_WAIT", "0.05"))
 MURAKUMO_JOB_DEADLINE = float(
@@ -1037,8 +1055,14 @@ def relay_murakumo_hello(message, sock=None, peer=None):
                     target=maintain_murakumo_liveness,
                     args=(job_result["boot"], sock, peer), daemon=True).start()
     except Exception as error:
+        # The text, not just the class. Every other handler in this file
+        # prints `: {exc}`; this one did not, and it is the handler that fires
+        # when the board goes away mid-qualification -- so the one place the
+        # reason mattered most was the one place it was discarded. Measured
+        # 2026-09-08: `error=OSError` and nothing else, for a send to a board
+        # that had stopped.
         print(f"AIUEOS_MURAKUMO_RELAY state=failed stage=client "
-              f"error={type(error).__name__}", flush=True)
+              f"error={type(error).__name__}: {error}", flush=True)
 
 
 def send_control(command, nonce):
