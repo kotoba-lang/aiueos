@@ -251,6 +251,24 @@ MURAKUMO_CACAO_CLASSPATH = os.environ.get(
 MURAKUMO_TRUST_TIER = os.environ.get(
     "AIUEOS_MURAKUMO_TRUST_TIER", "community")
 MURAKUMO_CACAO_TTL = int(os.environ.get("AIUEOS_MURAKUMO_CACAO_TTL", "600"))
+# How hard the dispatcher tries, in the units the BOARD sets.
+#
+# The board is reachable for 185 ms per 39.8-second boot (ADR-0203). A job is
+# dispatched just after an announcement, so at best the tail of that uptime is
+# left; at 0.2 s between sends that is one datagram, and a 30-second deadline
+# expires before the next boot arrives -- the dispatcher got exactly one shot
+# per job and usually missed. Measured: three consecutive k16-result-timeouts
+# with a single D9 event per run on the other wire.
+#
+# 0.05 s puts about four datagrams inside a 185 ms window, and 90 s spans more
+# than two boot periods, so a job that misses one window still meets the next.
+# 20 datagrams per second on a two-host debug segment is not a load; the
+# board's own reachability is what these numbers are made of, so if the run
+# length or the reboot time changes, they are re-derived, not kept.
+MURAKUMO_JOB_RETRY_WAIT = float(
+    os.environ.get("AIUEOS_MURAKUMO_JOB_RETRY_WAIT", "0.05"))
+MURAKUMO_JOB_DEADLINE = float(
+    os.environ.get("AIUEOS_MURAKUMO_JOB_DEADLINE", "90"))
 MURAKUMO_CACAO_CACHE = {}
 MURAKUMO_CACAO_LOCK = threading.Lock()
 MURAKUMO_EXPECTED_MACS = tuple(
@@ -694,7 +712,7 @@ def dispatch_murakumo_job(
         boot, job, sock, peer, opener=urllib.request.urlopen,
         result_queue=MURAKUMO_JOB_RESULTS, sleeper=time.sleep,
         monotonic=time.monotonic, monotonic_ns=time.monotonic_ns,
-        retry_wait=0.2):
+        retry_wait=MURAKUMO_JOB_RETRY_WAIT, deadline_s=MURAKUMO_JOB_DEADLINE):
     job_id = str(job.get("job-id", "")) if isinstance(job, dict) else ""
     payload = job_payload(boot, job or {})
     if not payload:
@@ -708,7 +726,7 @@ def dispatch_murakumo_job(
                 "stage": "claim", "status": claim_status,
                 "job-id": job_id}
     started_ns = monotonic_ns()
-    deadline = monotonic() + 30
+    deadline = monotonic() + deadline_s
     output = None
     # Resend for the WHOLE window rather than five times in the first second.
     # The board is reachable for about 12 ms per 19.7-second boot, so a burst
