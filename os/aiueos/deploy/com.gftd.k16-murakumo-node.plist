@@ -91,6 +91,20 @@
   </dict>
   <key>StandardOutPath</key><string>/Users/junkawasaki/.gftd/k16/server.log</string>
   <key>StandardErrorPath</key><string>/Users/junkawasaki/.gftd/k16/server.log</string>
-  <key>ProcessType</key><string>Background</string>
+  <!-- Adaptive, not Background.  `Background` is not merely a CPU priority on
+       macOS: it also applies IOPOL_THROTTLE to the process's disk I/O.  This
+       daemon answers a TFTP OACK handshake whose whole budget is one second
+       per retry, six retries, and the board's firmware gives up after about
+       five minutes of failures.
+       Measured 2026-09-08: with the workstation at load average 126 from
+       concurrent sessions, a restart of this job took over ten minutes to
+       reach its first `print`.  A `sample` of the stopped process showed every
+       stack in `os_listdir` inside Python's own codec-registry import -- an
+       ordinary stdlib directory scan, throttled.  During that window nothing
+       was bound to UDP 67 or 69, so the board could DHCP and never fetch.
+       Adaptive starts at background priority and is promoted to standard when
+       the process is doing work, which is the behaviour this wants: cheap when
+       the board is quiet, responsive the moment it PXE-boots. -->
+  <key>ProcessType</key><string>Adaptive</string>
 </dict>
 </plist>
