@@ -22,6 +22,20 @@
   EnvironmentVariables. There is one K16, so they are written out rather than
   templated.
 
+  ⚠ RESTARTING THIS SERVICE CAN COST A POWER CYCLE. The board PXE-fetches the
+  image on every one of its ~40-second boots, so a restart has a real chance of
+  landing inside a transfer. Measured 2026-09-08, the first time this service
+  was installed: the server was replaced while the firmware was reading, the
+  board took whatever it got, and it has been silent ever since -- no DHCP, no
+  ARP, zero packets on either NIC. The kernel's fuel guard is `ud2` with no
+  handler and nothing resets it (ADR-0203), so recovery is a human at the power
+  button, which is the one thing this rig exists not to need.
+
+  Restart between boots, not during one: watch for the run-end byte on the
+  netlog (DE) or for a hello on the bus3 sink, and act in the ~39 seconds the
+  board spends rebooting. `launchctl kickstart -k` is immediate and does not
+  wait for anything.
+
   Install:
     cp os/aiueos/deploy/com.gftd.k16-murakumo-node.plist ~/Library/LaunchAgents/
     launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.gftd.k16-murakumo-node.plist
