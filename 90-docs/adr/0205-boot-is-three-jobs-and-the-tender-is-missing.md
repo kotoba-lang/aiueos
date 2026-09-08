@@ -290,6 +290,55 @@ nothing else.
    the board stops re-fetching. `k16-control.cljs R --to 10.10.10.2:9000` still
    resets at the one remaining 0xCF9 site.
 
+### Step 2 ran on hardware, and named its own next step
+
+Measured 2026-09-08, 21:40 and 21:52. `B7` is the boot-census byte `main`
+emits, so counting it counts entries into `main`:
+
+```
+21:40:48.320                 one PXE fetch
+21:40:49.053   +0.73s        the tender re-entered
+21:52:05.700                 one PXE fetch
+21:52:05.756   +0.06s        the tender re-entered, and died in 60 ms
+```
+
+**The tender loop is taken.** The run completes, emits DE three times and D7,
+drains the last transmit, returns 250, and the image replenishes the sealed
+budget and calls `main` again -- with no platform reset anywhere. That is the
+mechanism ADR-0204 asked for, running.
+
+**And the second entry dies immediately, both times.** The first runs its full
+~0.7 s, 64 cycles; the second lasts 60 ms.
+
+That is the answer to a question this ADR deferred when step 2 was scoped. The
+note then said the one design judgement was "where the boot-once flag goes",
+and the implementation chose the other option -- let `main` re-run its whole
+init on every re-entry, on the reasoning that a re-entry is no worse than a
+reboot minus the firmware. The measurement says otherwise: re-activating page
+tables, re-installing the IDT and re-initialising a NIC that is already live
+kills the machine in 60 ms. **A re-entry is not a reboot; the machine it starts
+on is not the machine a reboot starts on.**
+
+So step 2 is half landed. The tender re-enters, which was the hard part and is
+now proven; what is missing is the flag that makes the second entry a STEP
+rather than a second boot. It has to live somewhere that survives across
+entries and that only the guest writes -- the guest's own RW segment does, and
+its address is stable because boot-info is re-installed identically each
+iteration.
+
+### The watchdog will not help here, and the board said why
+
+`D4` nine times, `D6` and `D2` never: **the LPC bridge at 00:1f.0 is not
+Intel.** The TCO timer is an Intel PCH mechanism, so there is nothing on this
+board for that code to arm, and no software change to this file will produce
+one. Splitting D4 into three reasons the tick before is what turned "the
+watchdog refused" into a finished line of enquiry rather than an open one.
+
+This matters for the order of work: a watchdog would have papered over a run
+that dies, letting the board recover in ten seconds instead of waiting for a
+person. It is not available, so the dying run has to be fixed rather than
+survived -- and step 2's boot-once flag is the fix, not a workaround.
+
 3. **The tender gains a definition table**, so "which code runs" is a name, not
    an image.
 4. **The timer becomes the run-time bound**, borrowing `rt-kernel.kotoba`'s
