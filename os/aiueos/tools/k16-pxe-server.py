@@ -7,6 +7,7 @@ K16 qualification setup.
 """
 
 import argparse
+import collections
 import hashlib
 import http.server
 import json
@@ -18,6 +19,7 @@ import socket
 import stat
 import struct
 import tempfile
+import subprocess
 import threading
 import time
 import urllib.error
@@ -212,9 +214,12 @@ MURAKUMO_API = os.environ.get(
     "AIUEOS_MURAKUMO_API", "https://api.murakumo.cloud").rstrip("/")
 MURAKUMO_NODE_NAME = os.environ.get(
     "AIUEOS_MURAKUMO_NODE_NAME", "gmktec-k16")
+# The path is kept, not just the value: the CACAO minter is a separate process
+# and takes the DID by file so the two never disagree about which identity is
+# signing.
+MURAKUMO_NODE_DID_FILE = os.environ.get("AIUEOS_MURAKUMO_NODE_DID_FILE", "")
 MURAKUMO_NODE_DID = os.environ.get("AIUEOS_MURAKUMO_NODE_DID", "") or \
-    private_file_text(os.environ.get("AIUEOS_MURAKUMO_NODE_DID_FILE", ""),
-                      "Murakumo node DID file", 256)
+    private_file_text(MURAKUMO_NODE_DID_FILE, "Murakumo node DID file", 256)
 MURAKUMO_SERVICE_TOKEN = os.environ.get(
     "AIUEOS_MURAKUMO_SERVICE_TOKEN",
     os.environ.get("MURAKUMO_SERVICE_TOKEN", "")) or \
@@ -228,6 +233,26 @@ MURAKUMO_SERVICE_TOKEN = os.environ.get(
 # board, two ports; the guarantee this list is protecting is "one board under
 # qualification", not "one cable". The first entry is the one this server
 # SPEAKS AS when it synthesises a hello on resume.
+# The node signs with its OWN did:key instead of presenting the shared operator
+# secret. Measured 2026-09-08 against the live server: every route this relay
+# uses accepts `Authorization: CACAO <base64>` whose :iss equals the :did the
+# body claims. MURAKUMO_SERVICE_TOKEN is not in kagi, is write-only on the
+# Worker, and is shared by two gates -- re-issuing it 401s every other caller.
+# The bearer path stays for an operator who has that secret; without it the
+# relay is no longer blocked.
+MURAKUMO_NODE_KEY_FILE = os.environ.get("AIUEOS_MURAKUMO_NODE_KEY_FILE", "")
+MURAKUMO_CACAO_MINT = os.environ.get(
+    "AIUEOS_MURAKUMO_CACAO_MINT", "")
+MURAKUMO_CACAO_CLASSPATH = os.environ.get(
+    "AIUEOS_MURAKUMO_CACAO_CLASSPATH", "")
+# `awai-secure` is admitted only by the operator boundary and describes AWAI's
+# own hardware. This board is a machine on a desk relayed through a Mac, so the
+# truthful tier is the one it can authorize for itself.
+MURAKUMO_TRUST_TIER = os.environ.get(
+    "AIUEOS_MURAKUMO_TRUST_TIER", "community")
+MURAKUMO_CACAO_TTL = int(os.environ.get("AIUEOS_MURAKUMO_CACAO_TTL", "600"))
+MURAKUMO_CACAO_CACHE = {}
+MURAKUMO_CACAO_LOCK = threading.Lock()
 MURAKUMO_EXPECTED_MACS = tuple(
     m.strip().lower()
     for m in os.environ.get(
@@ -286,6 +311,23 @@ NODE_PONG = re.compile(
 NEXT_BOOT_LOCK = threading.Lock()
 MURAKUMO_BOOT_LOCK = threading.Lock()
 MURAKUMO_SEEN_BOOTS = set()
+# Every boot nonce this node has announced on the wire, most recent last.
+#
+# WHY. Measured 2026-09-08: the board is UP FOR 12 MILLISECONDS out of every
+# 19.7 seconds -- four cycles, then the fuel-bounded run ends and the board
+# resets through PXE. Duty cycle 0.1%. A job dispatched when a hello arrives
+# reaches a machine that has ~12 ms left to live, and the answer therefore
+# comes back under a LATER boot nonce, which `verified_job_result` correctly
+# refused: three k16-result-timeouts while the other wire (bus2 netlog) showed
+# D9 70 -- the board HAD answered.
+#
+# The fix is not to drop the boot binding. It is to bind to the right thing:
+# the answering boot must be one this node ANNOUNCED, which is what makes the
+# answer attributable to the physical board rather than to anything that can
+# spell the format. The board writes its OWN nonce into the result (it ignores
+# the `boot=` in the request), so the nonce in an answer is evidence about who
+# computed it either way.
+MURAKUMO_ANNOUNCED_BOOTS = collections.deque(maxlen=256)
 MURAKUMO_JOB_RESULTS = queue.Queue()
 MURAKUMO_LIVENESS_RESULTS = queue.Queue()
 
@@ -405,19 +447,98 @@ def node_ack_payload(message):
     return f"AIUEOS_NODE_ACK_V1 boot={boot} state=accepted".encode("ascii")
 
 
+def murakumo_cacao(aud):
+    """One CACAO for one audience, minted by the workspace's own minter.
+
+    Shelling out rather than re-implementing: a CACAO's signature covers a SIWE
+    plaintext that mint and verify must agree on byte-for-byte, and that
+    agreement already exists in `cacao.edge.mint` / `cacao.edge.verify`.
+    A second implementation here would be a second chance to be silently wrong,
+    which is the whole subject of ADR-2607320000.
+
+    Cached per audience until a minute before expiry. Returns "" on any
+    failure -- and the failure text is printed, because a blank credential and
+    a mint that refused must not look the same from the call site.
+    """
+    if not (MURAKUMO_CACAO_MINT and MURAKUMO_NODE_KEY_FILE and
+            MURAKUMO_NODE_DID_FILE):
+        return ""
+    now = time.monotonic()
+    with MURAKUMO_CACAO_LOCK:
+        cached = MURAKUMO_CACAO_CACHE.get(aud)
+        if cached and cached[1] > now:
+            return cached[0]
+    command = ["nbb"]
+    if MURAKUMO_CACAO_CLASSPATH:
+        command += ["--classpath", MURAKUMO_CACAO_CLASSPATH]
+    command += [MURAKUMO_CACAO_MINT,
+                "--key", MURAKUMO_NODE_KEY_FILE,
+                "--did", MURAKUMO_NODE_DID_FILE,
+                "--aud", aud,
+                "--ttl-s", str(MURAKUMO_CACAO_TTL)]
+    try:
+        done = subprocess.run(command, capture_output=True, timeout=30)
+    except Exception as exc:                    # noqa: BLE001
+        print(f"AIUEOS_MURAKUMO_CACAO_FAIL aud={aud} "
+              f"exc={type(exc).__name__}: {exc}", flush=True)
+        return ""
+    blob = done.stdout.decode("ascii", "replace").strip()
+    if done.returncode != 0 or not blob:
+        print(f"AIUEOS_MURAKUMO_CACAO_REFUSED aud={aud} rc={done.returncode} "
+              f"err={done.stderr.decode('ascii', 'replace').strip()[:200]}",
+              flush=True)
+        return ""
+    with MURAKUMO_CACAO_LOCK:
+        MURAKUMO_CACAO_CACHE[aud] = (blob, now + max(30, MURAKUMO_CACAO_TTL - 60))
+    return blob
+
+
+def murakumo_authorization(path):
+    """The Authorization header value for one route, or "".
+
+    The operator bearer wins when it is configured, so an operator-run relay
+    keeps behaving exactly as before; otherwise the node signs for itself.
+    """
+    if MURAKUMO_SERVICE_TOKEN:
+        return f"Bearer {MURAKUMO_SERVICE_TOKEN}"
+    # The audience is the API ORIGIN, not the exact route. Per-route audiences
+    # were tried first and cost the node its jobs: /infer/queue/<id>/claim and
+    # .../result carry a fresh job id, so every dispatch minted two new CACAOs,
+    # each a subprocess, and the four mints around one hello pushed the
+    # dispatch past the end of the board's ~20-second run. The result then
+    # arrived under a DIFFERENT boot nonce and was correctly rejected -- three
+    # k16-result-timeouts with a D9 70 on the other wire saying the board HAD
+    # answered (measured 2026-09-08). The server does not scope by audience, so
+    # narrowing it bought nothing and cost the thing the node exists to do.
+    blob = murakumo_cacao(MURAKUMO_API)
+    return f"CACAO {blob}" if blob else ""
+
+
 def murakumo_relay_configured():
-    return bool(MURAKUMO_SERVICE_TOKEN and
-                MURAKUMO_NODE_DID.startswith("did:key:"))
+    # Either credential suffices. The DID is required for both: it is the
+    # account the work is credited to, and with CACAO it is also what the
+    # signature is checked against.
+    if not MURAKUMO_NODE_DID.startswith("did:key:"):
+        return False
+    if MURAKUMO_SERVICE_TOKEN:
+        return True
+    return bool(MURAKUMO_NODE_KEY_FILE and MURAKUMO_CACAO_MINT and
+                MURAKUMO_NODE_DID_FILE)
 
 
 def murakumo_enrollment():
     return {
+        # `did` (not just `node/did`) because that is the key the server reads
+        # as the CLAIMED ACTOR and compares against the CACAO's :iss. Without
+        # it a perfectly valid signature authorizes nothing, and the 401 says
+        # "requires a matching CACAO" -- which reads as a signing problem.
+        "did": MURAKUMO_NODE_DID,
         "node/name": MURAKUMO_NODE_NAME,
         "node/did": MURAKUMO_NODE_DID,
         "node/tier": "native",
         "node/connect": "mac-relay",
         "node/needs-relay?": True,
-        "node/trust-tier": "awai-secure",
+        "node/trust-tier": MURAKUMO_TRUST_TIER,
         "node/caps": {
             "engine": "aiueos-native",
             "qualification-model": MURAKUMO_JOB_MODEL,
@@ -451,7 +572,7 @@ def murakumo_post(path, body, opener=urllib.request.urlopen):
         data=json.dumps(body, separators=(",", ":")).encode("utf-8"),
         method="POST",
         headers={
-            "authorization": f"Bearer {MURAKUMO_SERVICE_TOKEN}",
+            "authorization": murakumo_authorization(path),
             "content-type": "application/json",
             "user-agent": "aiueos-k16-relay/1",
         })
@@ -473,7 +594,7 @@ def murakumo_get(path, opener=urllib.request.urlopen):
         MURAKUMO_API + path,
         method="GET",
         headers={
-            "authorization": f"Bearer {MURAKUMO_SERVICE_TOKEN}",
+            "authorization": murakumo_authorization(path),
             "accept": "application/json",
             "user-agent": "aiueos-k16-relay/1",
         })
@@ -537,12 +658,25 @@ def micro_infer_expected(prompt):
     return MURAKUMO_MICRO_INFER_ROWS.get(prompt[-1])
 
 
+def announced_boot(boot):
+    """Did this node announce `boot` on the wire? A bounded membership test,
+    not a string comparison against one remembered nonce -- see the comment on
+    MURAKUMO_ANNOUNCED_BOOTS for the 12-millisecond reason."""
+    with MURAKUMO_BOOT_LOCK:
+        return boot in MURAKUMO_ANNOUNCED_BOOTS
+
+
 def verified_job_result(message, boot, job_id, prompt):
     match = JOB_RESULT.fullmatch(message)
     if not match:
         return None
     got_boot, got_id, token_hex, score, total, cycles = match.groups()
-    if got_boot != boot or got_id != str(job_id):
+    # The dispatching boot is accepted, and so is any other boot this node has
+    # announced: the board that answers is usually a LATER boot than the one
+    # whose hello started the dispatch, because a run lasts 12 ms.
+    if not (got_boot == boot or announced_boot(got_boot)):
+        return None
+    if got_id != str(job_id):
         return None
     token = bytes.fromhex(token_hex).decode("ascii", "strict")
     expected = micro_infer_expected(prompt)
@@ -576,10 +710,14 @@ def dispatch_murakumo_job(
     started_ns = monotonic_ns()
     deadline = monotonic() + 30
     output = None
-    for _attempt in range(5):
+    # Resend for the WHOLE window rather than five times in the first second.
+    # The board is reachable for about 12 ms per 19.7-second boot, so a burst
+    # that finishes before the first reboot is a burst aimed at a machine that
+    # is already gone. One datagram every `retry_wait` for 30 seconds crosses
+    # at least one live window; five in the first second usually crosses none.
+    while output is None and monotonic() < deadline:
         sock.sendto(payload, peer)
-        attempt_deadline = deadline if _attempt == 4 else \
-            min(deadline, monotonic() + retry_wait)
+        attempt_deadline = min(deadline, monotonic() + retry_wait)
         while output is None:
             remaining = attempt_deadline - monotonic()
             if remaining <= 0:
@@ -590,8 +728,6 @@ def dispatch_murakumo_job(
                 break
             if candidate_peer == peer:
                 output = verified_job_result(candidate, boot, job_id, prompt)
-        if output is not None:
-            break
     if output is None:
         return {"state": "failed", "stage": "k16-result-timeout",
                 "job-id": job_id}
@@ -634,7 +770,8 @@ def qualify_murakumo_job(message, sock, peer, opener=urllib.request.urlopen,
     for _attempt in range(8):
         enqueue_status, enqueue = murakumo_post(
             "/infer/queue",
-            {"kind": MURAKUMO_JOB_KIND,
+            {"did": MURAKUMO_NODE_DID,
+             "kind": MURAKUMO_JOB_KIND,
              "input": {"model": MURAKUMO_JOB_MODEL,
                        "prompt": MURAKUMO_JOB_PROMPT},
              "price": 0,
@@ -805,6 +942,9 @@ def register_murakumo_hello(message, opener=urllib.request.urlopen):
     boot, mac = match.groups()
     if mac not in MURAKUMO_EXPECTED_MACS:
         return {"state": "ignored", "reason": "unexpected-mac"}
+    with MURAKUMO_BOOT_LOCK:
+        if boot not in MURAKUMO_ANNOUNCED_BOOTS:
+            MURAKUMO_ANNOUNCED_BOOTS.append(boot)
     if not murakumo_relay_configured():
         return {"state": "disabled", "reason": "identity-or-token-unset"}
     with MURAKUMO_BOOT_LOCK:
@@ -1226,6 +1366,42 @@ def tftp_server():
                              daemon=True).start()
 
 
+def selftest_authorization():
+    """Which credential each route gets, and that "no credential" is its own
+    value rather than a blank Bearer -- an empty bearer reads as a token
+    problem at the far end, which is the wrong thing to go looking at."""
+    saved = (MURAKUMO_SERVICE_TOKEN, MURAKUMO_NODE_KEY_FILE,
+             MURAKUMO_CACAO_MINT, MURAKUMO_NODE_DID_FILE)
+    try:
+        globals()["MURAKUMO_SERVICE_TOKEN"] = "operator-secret"
+        MURAKUMO_CACAO_CACHE.clear()
+        assert murakumo_authorization("/infer/nodes") == "Bearer operator-secret"
+        globals()["MURAKUMO_SERVICE_TOKEN"] = ""
+        globals()["MURAKUMO_NODE_KEY_FILE"] = ""
+        globals()["MURAKUMO_CACAO_MINT"] = ""
+        assert murakumo_authorization("/infer/nodes") == ""
+        assert murakumo_relay_configured() is False
+        # A mint that REFUSES must yield "", never a half-formed header.
+        with tempfile.TemporaryDirectory() as work:
+            stub = Path(work) / "refuse.cljs"
+            stub.write_text('(binding [*print-fn* *print-err-fn*]'
+                            ' (println "K16_CACAO_REFUSED stub"))'
+                            '(js/process.exit 2)\n', encoding="ascii")
+            keyf = Path(work) / "k.pem"
+            keyf.write_text("x", encoding="ascii")
+            didf = Path(work) / "k.did"
+            didf.write_text("did:key:zStub\n", encoding="ascii")
+            globals()["MURAKUMO_NODE_KEY_FILE"] = str(keyf)
+            globals()["MURAKUMO_NODE_DID_FILE"] = str(didf)
+            globals()["MURAKUMO_CACAO_MINT"] = str(stub)
+            MURAKUMO_CACAO_CACHE.clear()
+            assert murakumo_authorization("/infer/nodes") == ""
+    finally:
+        (globals()["MURAKUMO_SERVICE_TOKEN"], globals()["MURAKUMO_NODE_KEY_FILE"],
+         globals()["MURAKUMO_CACAO_MINT"], globals()["MURAKUMO_NODE_DID_FILE"]) = saved
+        MURAKUMO_CACAO_CACHE.clear()
+
+
 def selftest():
     with tempfile.TemporaryDirectory() as directory:
         private_path = Path(directory) / "credential"
@@ -1281,6 +1457,7 @@ def selftest():
     assert http_reply[108:108 + len(http_uri)] == http_uri
     oack, size = tftp_oack({"blksize": "1024", "tsize": "0"}, 13312)
     assert size == 1024 and b"tsize\00013312\000" in oack
+    selftest_authorization()
     ready = "AIUEOS_CONTROL_READY nonce=0123456789abcdef commands=ping,reboot-pxe"
     assert extract_control_nonce(ready) == "0123456789abcdef"
     assert control_payload("ping", "0123456789abcdef") == \
@@ -1315,6 +1492,13 @@ def selftest():
         "boot": "0000000e8debe541"}
     assert verified_job_result(measured, "0000000e8debe541", "352", "kotoba") is None
     assert verified_job_result(measured, "0000000e8debe541", "353", "murakum") is None
+    # A LATER boot may answer -- but only one this node announced. Without the
+    # second half the binding is decoration: any sender could pick a nonce.
+    MURAKUMO_ANNOUNCED_BOOTS.clear()
+    assert verified_job_result(measured, "ffffffffffffffff", "352", "murakum") is None
+    MURAKUMO_ANNOUNCED_BOOTS.append("0000000e8debe541")
+    assert verified_job_result(measured, "ffffffffffffffff", "352", "murakum") is not None
+    MURAKUMO_ANNOUNCED_BOOTS.clear()
     # The bus3 socket must treat 10.10.10.2 as the board, and must NOT treat
     # the netlog's client as one -- a handler that answered to both would let
     # either wire drive the other's relay.
@@ -1364,7 +1548,10 @@ def selftest():
         assert captured[0][2] == "Bearer selftest-token"
         enrollment = json.loads(captured[0][1])
         heartbeat = json.loads(captured[1][1])
-        assert enrollment["node/trust-tier"] == "awai-secure"
+        assert enrollment["node/trust-tier"] == MURAKUMO_TRUST_TIER
+        # The claimed actor. A CACAO authorizes nothing without it, and the
+        # 401 that results names the CACAO rather than the missing field.
+        assert enrollment["did"] == MURAKUMO_NODE_DID
         assert enrollment["node/needs-relay?"] is True
         assert heartbeat["node/ready?"] is False
         assert "node/capacity" not in heartbeat and "node/model" not in heartbeat
