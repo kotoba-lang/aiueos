@@ -7,10 +7,16 @@
   ;; 10.10.10.<k16>:9000 log the Mac receives with
   ;;   socat -u UDP-RECV:9000,reuseaddr -
   ;;
-  ;; RAW only: no ARP, no IP stack beyond the fixed 4-tuple. The Mac en8 is
-  ;; static 10.10.10.1 and its MAC is baked in, so the Ethernet header is
-  ;; complete without a lookup. This is the Phase-1 debug substrate: RTL8125
-  ;; Tx + Ethernet + IPv4 + UDP, nothing more.
+  ;; The Mac en8 is static 10.10.10.1 and its MAC is baked in, so OUR Ethernet
+  ;; header is complete without a lookup. The Mac's is not: it will not send a
+  ;; frame to 10.10.10.2 until ARP resolves it, and for a day it could not --
+  ;; `arp -an` said `10.10.10.2 (incomplete)` and every control datagram died
+  ;; in the Mac's own stack (measured 2026-09-07/08). So this module now speaks
+  ;; exactly as much ARP as a two-host debug wire needs: it asks for
+  ;; 10.10.10.1 once at init (a request addressed to the Mac, which is what
+  ;; makes a BSD stack record the sender -- a gratuitous announcement does not
+  ;; create an entry, it only refreshes one) and it answers requests for
+  ;; 10.10.10.2. No cache, no timers, no IP stack beyond the fixed 4-tuple.
   ;;
   ;; It deliberately runs as a SINGLE-SHOT send on bus3 per call, using a
   ;; 16 KiB DMA window the CALLER supplies. That window must be loader-owned:
@@ -56,17 +62,43 @@
       1
       0)))
 
-(defn store-device-mac [frame mmio index]
+(defn store-mac-at [frame mmio offset index]
+  ;; IDR0..5 at `offset`. Ethernet wants our MAC at 6; an ARP body wants the
+  ;; same six bytes again at 22, which is why this takes the offset.
   (if (= index 6)
     1
     (let [value (kernel-load-u8 mmio 512 index)
-          stored (kernel-store-u8-4k frame 4096 (+ 6 index)
+          stored (kernel-store-u8-4k frame 4096 (+ offset index)
                                      (bit-and value 255))]
       ;; Read the frame byte back (lang-h13). The earlier form compared the
       ;; store to its operand and then stored the same byte a second time.
-      (if (= (+ (kernel-load-u8-4k frame 4096 (+ 6 index)) (* 0 stored))
+      (if (= (+ (kernel-load-u8-4k frame 4096 (+ offset index)) (* 0 stored))
              (bit-and value 255))
-        (store-device-mac frame mmio (+ index 1))
+        (store-mac-at frame mmio offset (+ index 1))
+        0))))
+
+(defn store-device-mac [frame mmio index]
+  (store-mac-at frame mmio 6 index))
+
+(defn store-broadcast-mac [frame offset index]
+  (if (= index 6)
+    1
+    (let [stored (kernel-store-u8-4k frame 4096 (+ offset index) 255)]
+      (if (= (+ (kernel-load-u8-4k frame 4096 (+ offset index)) (* 0 stored))
+             255)
+        (store-broadcast-mac frame offset (+ index 1))
+        0))))
+
+(defn copy-frame-bytes [tx rx tx-offset rx-offset count]
+  ;; An ARP reply is mostly the request read back out: the requester's MAC
+  ;; becomes our destination and the reply's target, its IP becomes the
+  ;; target IP. Five parameters is the native ABI cap, and this is at it.
+  (if (= count 0)
+    1
+    (let [value (kernel-load-u8-4k rx 4096 rx-offset)
+          stored (kernel-store-u8-4k tx 4096 tx-offset value)]
+      (if (= (+ (kernel-load-u8-4k tx 4096 tx-offset) (* 0 stored)) value)
+        (copy-frame-bytes tx rx (+ tx-offset 1) (+ rx-offset 1) (- count 1))
         0))))
 
 (defn store-be16 [frame offset value]
@@ -168,6 +200,94 @@
   ;; would remove the need, and is the obvious next slice.
   (bit-and (kernel-load-u8 mmio 512 index) 255))
 
+;; ── ARP on bus3 ──────────────────────────────────────────────────────────
+;; 28-byte ARP body after a 14-byte Ethernet header; the wire frame is padded
+;; to 60 either way, and we send 60 so the padding is ours and deterministic
+;; rather than whatever the NIC leaves in the buffer.
+(def arp-ethertype 2054)                       ; 0x0806
+(def arp-opcode-request 1)
+(def arp-opcode-reply 2)
+(def arp-frame-length 60)
+
+(defn build-arp-common [frame mmio opcode]
+  ;; Everything an ARP frame of ours carries whichever direction it goes:
+  ;; our MAC as the Ethernet source AND as the ARP sender, our IP as the ARP
+  ;; sender IP, and the fixed ethernet/IPv4 shape.
+  (if (and (= (store-mac-at frame mmio 6 0) 1)
+           (= (store-be16 frame 12 arp-ethertype) arp-ethertype)
+           (= (store-be16 frame 14 1) 1)               ; HTYPE ethernet
+           (= (store-be16 frame 16 2048) 2048)         ; PTYPE IPv4
+           (= 0 (* 0 (kernel-store-u8-4k frame 4096 18 6)))
+           (= (kernel-load-u8-4k frame 4096 18) 6)     ; HLEN
+           (= 0 (* 0 (kernel-store-u8-4k frame 4096 19 4)))
+           (= (kernel-load-u8-4k frame 4096 19) 4)     ; PLEN
+           (= (store-be16 frame 20 opcode) opcode)
+           (= (store-mac-at frame mmio 22 0) 1)        ; sender MAC = ours
+           (= (store-be32 frame 28 k16-debug-ip) k16-debug-ip))
+    1
+    0))
+
+(defn build-arp-request-frame [frame mmio]
+  ;; "Who has 10.10.10.1? Tell 10.10.10.2", broadcast. Addressed TO the Mac,
+  ;; because a BSD stack records the sender of an ARP aimed at one of its own
+  ;; addresses; a gratuitous announcement for our own IP would not create the
+  ;; entry that is missing.
+  (if (and (= (zero-prefix frame arp-frame-length 0) 1)
+           (= (store-broadcast-mac frame 0 0) 1)
+           (= (build-arp-common frame mmio arp-opcode-request) 1)
+           (= (store-be32 frame 38 mac-debug-ip) mac-debug-ip))
+    arp-frame-length
+    0))
+
+(defn build-arp-reply-frame [tx rx mmio]
+  ;; Answer the requester with its own address pair reflected back.
+  (if (and (= (zero-prefix tx arp-frame-length 0) 1)
+           (= (copy-frame-bytes tx rx 0 6 6) 1)        ; eth dst = requester
+           (= (build-arp-common tx mmio arp-opcode-reply) 1)
+           (= (copy-frame-bytes tx rx 32 6 6) 1)       ; target MAC
+           (= (copy-frame-bytes tx rx 38 28 4) 1))     ; target IP
+    arp-frame-length
+    0))
+
+(defn arp-request-for-us [frame bytes]
+  ;; Positional, like control-frame-valid: an ARP request whose target
+  ;; protocol address is 10.10.10.2. Anything else on this wire is not ours.
+  (and (>= bytes 42)
+       (= (kernel-load-u8-4k frame 4096 12) 8)         ; 0x0806
+       (= (kernel-load-u8-4k frame 4096 13) 6)
+       (= (kernel-load-u8-4k frame 4096 20) 0)         ; opcode 1 = request
+       (= (kernel-load-u8-4k frame 4096 21) 1)
+       (= (kernel-load-u8-4k frame 4096 38) 10)        ; target 10.10.10.2
+       (= (kernel-load-u8-4k frame 4096 39) 10)
+       (= (kernel-load-u8-4k frame 4096 40) 10)
+       (= (kernel-load-u8-4k frame 4096 41) 2)))
+
+(defn submit-bus3-frame [mmio dma-pages len]
+  ;; The TX half of debug-send-byte, over a frame someone else built. Same
+  ;; status codes, so 0 keeps meaning exactly one thing: bytes left the NIC.
+  (if (= len 0)
+    1
+    (let [tx dma-pages
+          tx-frame (kernel-subregion dma-pages 16384 8192 4096)
+          submitted (rtl/tx-submit mmio tx tx-frame len)]
+      (if (= submitted 5)
+        5
+        (if (not (= submitted 0))
+          3
+          (if (= (rtl/wait-tx-complete tx 200000000) 0) 4 0))))))
+
+(defn announce-arp [mmio dma-pages]
+  (let [tx-frame (kernel-subregion dma-pages 16384 8192 4096)]
+    (submit-bus3-frame mmio dma-pages
+                       (build-arp-request-frame tx-frame mmio))))
+
+(defn answer-arp [mmio dma-pages rx-frame]
+  ;; Built and submitted BEFORE the RX descriptor is re-armed: the requester's
+  ;; address pair lives in that buffer, and a re-arm hands it back to the NIC.
+  (let [tx-frame (kernel-subregion dma-pages 16384 8192 4096)]
+    (submit-bus3-frame mmio dma-pages
+                       (build-arp-reply-frame tx-frame rx-frame mmio))))
+
 (defn debug-init [bus mmio dma-pages]
   ;; Bring bus3 to the same footing `rtl/qualify` gives bus2, then install a
   ;; single TX ring and leave the engine running. Each refusal has its own
@@ -178,6 +298,10 @@
   ;;   2  ChipCmd revision unreadable (the BAR does not read back)
   ;;   8  PHY reports no link -- a submit here is owned forever
   ;;   10+n  rtl/rings-start refused with n (4 fifo, 1 install)
+  ;;   16+n  the ring is up but the ARP request did not go out (n from
+  ;;         submit-bus3-frame). The plane still works in the outbound
+  ;;         direction, so this is not a refusal to start -- but the Mac may
+  ;;         not be able to reach us, and that must not read as ready.
   (if (= (rtl/arm-bus-master bus) 0)
     9
     (if (not (rtl/mac-valid mmio))
@@ -188,7 +312,10 @@
           (let [started (rtl/rings-start mmio revision-id dma-pages)]
             (if (not (= started 0))
               (+ 10 started)
-              (if (= (rtl/link-up mmio) 0) 8 0))))))))
+              (if (= (rtl/link-up mmio) 0)
+                8
+                (let [announced (announce-arp mmio dma-pages)]
+                  (if (= announced 0) 0 (+ 16 announced)))))))))))
 
 (defn debug-send-byte [mmio dma-pages payload]
   ;; Single-shot UDP :9000 datagram on bus3:
@@ -252,6 +379,8 @@
   ;;   0        nothing arrived
   ;;   1        a frame arrived, but it is not ours (re-armed, dropped)
   ;;   2        a frame arrived and the re-arm failed -- the ring is now dead
+  ;;   16+n     an ARP request for 10.10.10.2 was answered (n from
+  ;;            submit-bus3-frame; 16 means the reply left the NIC)
   ;;   128+cmd  a well-formed control datagram carrying command byte cmd
   (let [rx (kernel-subregion dma-pages 16384 4096 4096)
         rx-frame (kernel-subregion dma-pages 16384 12288 4096)
@@ -263,20 +392,31 @@
                                (not (= (bit-and command 33554432) 0))
                                (not (= (bit-and command 16777216) 0))
                                (>= bytes 22) (<= bytes 2048))
+            arp (if (and valid-command
+                         (arp-request-for-us rx-frame (- bytes 4)))
+                  1
+                  0)
+            ;; Answered here rather than in debug-tick because the reply is
+            ;; built FROM this buffer and the re-arm below gives it back.
+            answered (if (= arp 1) (answer-arp mmio dma-pages rx-frame) 0)
             payload (if (and valid-command
+                             (= arp 0)
                              (control-frame-valid rx-frame (- bytes 4)))
                       (bit-and (kernel-load-u8-4k rx-frame 4096 42) 127)
                       0)
             rearmed (rtl/rx-rearm rx rx-frame)]
         (if (= rearmed 0)
           2
-          (if (= payload 0) 1 (+ 128 payload)))))))
+          (if (= arp 1)
+            (+ 16 answered)
+            (if (= payload 0) 1 (+ 128 payload))))))))
 
 (defn debug-tick [dma-pages]
   ;; Poll once, answer at most once. Returns what the kernel logs:
   ;;   0        nothing arrived (or bus3's BAR no longer decodes)
   ;;   1        a frame arrived that was not ours
   ;;   2        the RX ring is dead (re-arm failed)
+  ;;   16+n     an ARP request for 10.10.10.2 was answered (debug-poll)
   ;;   64+n     'P' (ping) answered with 'p'; n is the send status
   ;;   80+n     'R' (reboot) answered with 'r'; n is the send status. The
   ;;            answer goes out FIRST (debug-send-byte waits for TX completion,

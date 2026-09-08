@@ -115,7 +115,12 @@
    :meaning "The bus3 (LAN2) bring-up starts here. Followed by 1 DATA byte: debug-init status (0 ready / 6 bar-b never decoded / 9 no MEM-SPACE|BUS-MASTER / 7 MAC implausible / 2 revision unreadable / 8 PHY no link / 10+n rings-start refused n). Then, only if ready, six DA <mac-byte> pairs (12 datagrams). Then 1 DATA byte: debug-send status (0 submitted and OWN cleared / 1 build failed / 5 owned or length rejected / 3 descriptor store did not read back / 4 OWN never cleared / 7 not attempted)."}
   {:channel :netlog :value 217 :hex "D9" :name :bus3-event
    :emitter "os/aiueos/native/tcp_stream.kotoba"
-   :meaning "A bus3 event this cycle (debug-tick returned non-zero). Followed by 1 DATA byte: the debug-tick value (1 not ours / 2 RX ring dead / 64+n 'P' answered with 'p', n = send status / 80+n 'R' answered with 'r', n = send status -- DB follows, see :bus3-reboot-command / 96+n unknown command answered '?'). Emitted only on an event so 00 is not the most common byte on the wire."}
+   :meaning "Sentinel for a bus3 event; the byte AFTER it is debug-tick's value:
+              0 nothing, 1 not ours, 2 ring dead, 16+n an ARP request for
+              10.10.10.2 answered, 64+n 'P' answered with 'p', 80+n 'R'
+              answered with 'r' (the caller then logs DB and resets),
+              96+n an unrecognised command answered with '?'. n is
+              submit-bus3-frame's status, 0..5."}
   {:channel :netlog :value 219 :hex "DB" :name :bus3-reboot-command
    :emitter "os/aiueos/native/tcp_stream.kotoba"
    :meaning "'R' (reboot) arrived on bus3 and was answered 'r' (the D9 <80+n> pair precedes this). The kernel is about to write 0x06 to port 0xCF9 (SYS_RST|RST_CPU) -- the same write the run end does after DE. Order on the wire: D9 <80+n> DB, then either silence (the board reset) or DC (the chipset ignored the write). Added 2026-09-08 (owner: LAN2 carries control so nobody presses the power button)."}
