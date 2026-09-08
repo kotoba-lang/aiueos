@@ -82,7 +82,24 @@
 (defn arm [base]
   (if (= base 0)
     0
-    (let [timer-low (kernel-out-u8 (+ base 18) 16)
+    (let [;; CLEAR THE TIMEOUT STATUS FIRST. Measured 2026-09-08 on the first
+          ;; hardware run of this file: the board recovered itself twice at
+          ;; 21.0 and 21.1 s -- the watchdog firing, since ADR-0205 step 2 left
+          ;; no reset in the kernel but the bus3 'R' path, which nobody
+          ;; triggered -- and then stopped for good on the third boot.
+          ;;
+          ;; That is the shape of TCO's two-stage timeout. The first expiry
+          ;; sets TCO1_STS.TIMEOUT (bit 3 at +0x04); the second sets
+          ;; TCO2_STS.SECOND_TO_STS (bit 1 at +0x06) and is the one that
+          ;; actually resets the platform. Those bits are write-1-to-clear and
+          ;; they SURVIVE THE RESET -- that is their purpose, to tell the next
+          ;; boot why it happened. Left set, the machine is already at stage
+          ;; two, and the cycle cannot run again.
+          ;;
+          ;; So a watchdog that never clears them works exactly twice. It did.
+          status-1 (kernel-out-u8 (+ base 4) 8)
+          status-2 (kernel-out-u8 (+ base 6) (+ 2 (* 0 status-1)))
+          timer-low (kernel-out-u8 (+ base 18) (+ 16 (* 0 status-2)))
           timer-high (kernel-out-u8 (+ base 19) (* 0 timer-low))
           reloaded (kernel-out-u8 base (+ 1 (* 0 timer-high)))
           ;; TCO1_CNT is 16 bits at +0x08; TCO_TMR_HLT is bit 11, which is bit
