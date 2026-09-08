@@ -6,6 +6,7 @@
   ;; with and without it -- code sha c3bd9664…, binary sha b64afc94…, both
   ;; unchanged, and the export symbol stays kotoba_aiueos_probe.
   (:require [native.rtl8125 :as rtl]
+            [native.serial :as serial]
             [native.tcp-stream :as stream]
             [native.debug-link :as debug])
   (:export [main]))
@@ -355,7 +356,7 @@
              (= (bit-and (load64-page frame-page 8) 3) 2)
              (> (load64-page frame-page 16) 1052672)
              (= (load64-page frame-page 24) (+ stack-page 4080)))
-      (if (= (kernel-out-u8 233 69) 69) 1 0)
+      (if (= (serial/trace-byte 69) 69) 1 0)
       0)))
 
 ;; Mutation scripts replace this exact body with one sealed hardware access.
@@ -365,7 +366,11 @@
   (+ 424200 42))
 
 (defn main []
-  (let [boot (kernel-boot-info)
+  ;; The UART comes up before anything has something to say. It costs seven
+  ;; port writes and it is the only transport this kernel has that survives the
+  ;; NIC not being ready -- or being reset out from under it.
+  (let [_uart (serial/serial-init)
+        boot (kernel-boot-info)
         cr3 (kernel-read-cr3)
         map-size (load64-boot boot 24)
         descriptor-size (load64-boot boot 32)
@@ -402,7 +407,7 @@
              (= (bit-and scratch-start 4095) 0)
              (= scratch-pages 14)
              (<= (+ scratch-start 57344) 549755813888))
-      (let [map-marker (kernel-out-u8 233 77)
+      (let [map-marker (serial/trace-byte 77)
             ;; Boot-info v4 carries the exact fourteen-page EfiLoaderData
             ;; allocation made by Amu before the final memory map.
             physical-start scratch-start]
@@ -805,10 +810,10 @@
                                          frame-page stack-page) 1)
                                      (= (install-page-fault-idt
                                          reusable-page rx-limit) 1))
-                              (let [page-marker (kernel-out-u8 233 80)
-                                    root-marker (kernel-out-u8 233 82)
-                                    cr3-marker (kernel-out-u8 233 67)
-                                    idt-marker (kernel-out-u8 233 68)
+                              (let [page-marker (serial/trace-byte 80)
+                                    root-marker (serial/trace-byte 82)
+                                    cr3-marker (serial/trace-byte 67)
+                                    idt-marker (serial/trace-byte 68)
                                     probe (page-fault-probe)
                                     core-ok (and (= page-marker 80)
                                                  (= root-marker 82)
@@ -821,9 +826,9 @@
                                                   bar-a bar-b rtl-dma-pages)
                                                  -2)
                                     nic-marker (if (= nic-status 0)
-                                                 (kernel-out-u8 233 78)
+                                                 (serial/trace-byte 78)
                                                  (if (>= nic-status 0)
-                                                   (kernel-out-u8 233 70)
+                                                   (serial/trace-byte 70)
                                                    0))]
                                 (kernel-out-u32 244
                                                 (+ (if core-ok 16 17)

@@ -75,7 +75,19 @@
               answer-byte     {:byte-arg 3 :channel :bus3-udp}
               broadcast-byte  {:byte-arg 3 :channel :bus3-udp}
               kernel-out-u8   {:byte-arg 2 :port-arg 1
-                               :ports {233 :port-e9 3321 :port-cf9}}}
+                               :ports {233 :port-e9 3321 :port-cf9}}
+              ;; The boot markers stopped being literal `kernel-out-u8 233`
+              ;; calls on 2026-09-08: they now go through serial/trace-byte,
+              ;; which writes the SAME character to 0xE9 and to COM1. The
+              ;; detector said so immediately -- three registered port-e9 bytes
+              ;; with no emitter -- which is the shape it was built for, and
+              ;; the same one it caught when the bus3 emitters split in two.
+              ;;
+              ;; Registered on :port-e9 rather than a new channel because the
+              ;; byte and its meaning are unchanged; what changed is that it
+              ;; now also leaves the machine on a wire that exists outside
+              ;; QEMU. A reader of either transport sees the same characters.
+              trace-byte      {:byte-arg 1 :channel :port-e9}}
 
  :entries
  [;; ── :netlog  A-series: the active open (stream-connect / receive-syn-ack) ──
