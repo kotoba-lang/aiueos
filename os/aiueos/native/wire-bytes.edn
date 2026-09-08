@@ -72,6 +72,7 @@
               ;; detector said so -- three registered bytes with no emitter.
               debug-send-byte {:byte-arg 3 :channel :bus3-udp}
               answer-byte     {:byte-arg 3 :channel :bus3-udp}
+              broadcast-byte  {:byte-arg 3 :channel :bus3-udp}
               kernel-out-u8   {:byte-arg 2 :port-arg 1
                                :ports {233 :port-e9 3321 :port-cf9}}}
 
@@ -194,6 +195,13 @@
              100 "0x70 = 100 CLOSED (FIN|ACK sent, or peer RST via FA)"}}
 
   ;; ── :bus3-udp  single-byte payloads on LAN2 (debug-send-byte) ────────────
+  {:channel :bus3-udp :value 66 :hex "42" :name :hello-B-limited-broadcast
+   :emitter "os/aiueos/native/debug_link.kotoba"
+   :meaning "The same boot greeting as Z, addressed to 255.255.255.255 instead
+             of 10.10.10.1. Both are sent once per boot: a broadcast Ethernet
+             frame carrying a unicast IP destination is a shape BSD's ip_input
+             rejects, so if B arrives and Z does not, that rule is why this
+             plane was never heard."}
   {:channel :bus3-udp :value 90 :hex "5A" :name :hello-Z
    :emitter "os/aiueos/native/debug_link.kotoba"
    :meaning "'Z': the one-shot bring-up datagram debug-send fires after debug-init returned ready."}

@@ -149,7 +149,24 @@
 (def ip-total-length 29)                       ; 20 ip + 8 udp + 1 payload
 (def frame-total-length 43)                    ; + 14 ethernet
 
-(defn build-udp-debug-frame [frame mmio payload]
+;; Two destinations, because a broadcast Ethernet frame carrying a UNICAST IP
+;; destination is a shape BSD's ip_input rejects, and that may be why the plane
+;; has never been heard: the frames leave the NIC (the engine clears OWN) and
+;; en8's counter moves during a boot, yet nothing is delivered. One boot
+;; discriminates: 'Z' goes to 10.10.10.1 exactly as before, 'B' goes to the
+;; limited broadcast 255.255.255.255, which no stack can call a unicast in a
+;; broadcast frame. Whichever arrives says which rule bit us -- and if neither
+;; does while the interface counter still moves, the frames are on a wire the
+;; Mac is not on, and the answer is cabling rather than code.
+(def limited-broadcast-ip 4294967295)          ; 255.255.255.255
+;; Header checksums: every other field is constant, so each destination has one
+;; constant too. 0x52BA for 10.10.10.1 (see below), and for 255.255.255.255:
+;;   4500 + 001D + 0000 + 0000 + 4011 + 0A0A + 0A02 + FFFF + FFFF = 993A
+;;   ~993A = 66C5.
+(def ip-checksum-to-mac 21178)                 ; 0x52BA -> 10.10.10.1
+(def ip-checksum-broadcast 26309)              ; 0x66C5 -> 255.255.255.255
+
+(defn build-udp-debug-frame-to [frame mmio payload destination checksum]
   ;; Bytes 0..5 (the Ethernet destination) belong to the CALLER: broadcast for
   ;; anything we start, the requester's own MAC for an answer. Zeroing starts
   ;; at 6 so that choice survives.
@@ -174,9 +191,9 @@
            ;; datagram in ip_input before socat ever sees it -- the same reason
            ;; rtl8125/build-ipv4-udp-header bakes in its own 0x6619. If
            ;; ip-total-length ever changes, this constant changes with it.
-           (= (store-be16 frame 24 21178) 21178)
+           (= (store-be16 frame 24 checksum) checksum)
            (= (store-be32 frame 26 k16-debug-ip) k16-debug-ip)
-           (= (store-be32 frame 30 mac-debug-ip) mac-debug-ip)
+           (= (store-be32 frame 30 destination) destination)
            (= (store-be16 frame 34 debug-udp-port) debug-udp-port)
            (= (store-be16 frame 36 debug-udp-port) debug-udp-port)
            (= (store-be16 frame 38 9) 9)                 ; udp len: 8 + 1
@@ -185,6 +202,9 @@
            (= (store-be16 frame 40 0) 0))                ; udp checksum 0
     frame-total-length
     0))
+
+(defn build-udp-debug-frame [frame mmio payload]
+  (build-udp-debug-frame-to frame mmio payload mac-debug-ip ip-checksum-to-mac))
 
 (defn debug-mac-byte [mmio index]
   ;; One byte of IDR0..5, so the kernel can put bus3's MAC on the bus2 netlog.
@@ -333,8 +353,23 @@
     (submit-bus3-frame mmio dma-pages
                        (build-udp-debug-frame tx-frame mmio payload))))
 
+(defn broadcast-byte [mmio dma-pages payload]
+  ;; Ethernet broadcast AND IP limited broadcast: the shape no stack can refuse
+  ;; on the grounds that a unicast address arrived in a broadcast frame.
+  (let [tx-frame (kernel-subregion dma-pages 16384 8192 4096)]
+    (if (= (store-broadcast-mac tx-frame 0 0) 1)
+      (submit-bus3-frame mmio dma-pages
+                         (build-udp-debug-frame-to tx-frame mmio payload
+                                                   limited-broadcast-ip
+                                                   ip-checksum-broadcast))
+      1)))
+
 (defn debug-send [mmio dma-pages]
-  (debug-send-byte mmio dma-pages 90))          ; 'Z'
+  ;; Both shapes, once per boot, so one boot says which one the Mac accepts.
+  ;; Returns (8 * Z-status) + B-status: 0 still means every byte left the NIC.
+  (let [z (debug-send-byte mmio dma-pages 90)        ; 'Z' -> 10.10.10.1
+        b (broadcast-byte mmio dma-pages 66)]        ; 'B' -> 255.255.255.255
+    (+ (* 8 z) b)))
 
 ;; ── LAN2 control: receive ────────────────────────────────────────────────
 ;; rtl/rings-start already installed and armed ONE RX descriptor on bus3

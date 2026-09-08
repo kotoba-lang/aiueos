@@ -1,6 +1,13 @@
 #!/usr/bin/env nbb
 ;; k16-bus3-sink.cljs -- the Mac end of bus3 (LAN2, en8): a UDP receipt sink
-;; on 10.10.10.1:9000 that cannot hold a dead inode.
+;; on 0.0.0.0:9000 that cannot hold a dead inode.
+;;
+;; It binds the WILDCARD address, not 10.10.10.1: the board's boot greeting
+;; is sent to the limited broadcast 255.255.255.255 as well as to
+;; 10.10.10.1, and a socket bound to one unicast address never sees the
+;; broadcast one. Binding the wildcard receives both, and receives them
+;; whichever interface the debug NIC turns out to be cabled to -- which is
+;; still unmeasured (2026-09-08).
 ;;
 ;; Why this exists (ADR-0156, rig-h2). The previous sink was
 ;;   socat -u UDP-RECV:9000,reuseaddr OPEN:/tmp/k16-bus3-en8.log,creat,append
@@ -55,7 +62,7 @@
             [clojure.string :as str]))
 
 (def defaults
-  {"listen" "10.10.10.1:9000"
+  {"listen" "0.0.0.0:9000"
    "sink" "/tmp/k16-bus3-en8.log"
    "liveness-s" "300"})
 
