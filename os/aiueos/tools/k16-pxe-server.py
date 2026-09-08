@@ -199,8 +199,19 @@ MURAKUMO_SERVICE_TOKEN = os.environ.get(
                       "Murakumo service token file", 512)
 MURAKUMO_EXPECTED_MAC = os.environ.get(
     "AIUEOS_MURAKUMO_EXPECTED_MAC", "70-70-fc-0b-b6-32").lower()
-PXE_EXPECTED_MAC = os.environ.get(
-    "AIUEOS_PXE_EXPECTED_MAC", "70:70:fc:0b:b6:32").lower().replace("-", ":")
+# One K16, two NICs, and the firmware will netboot from either once both have
+# link. Accepting only the first one is how the board got stuck on 2026-09-08:
+# bus3 (…b6:31) asked, was ignored, and the machine never fell back to bus2.
+# A comma-separated list keeps the "one physical board under qualification"
+# guarantee while letting that board boot from whichever port it chooses.
+PXE_EXPECTED_MACS = tuple(
+    m.strip().lower().replace("-", ":")
+    for m in os.environ.get(
+        "AIUEOS_PXE_EXPECTED_MAC", "70:70:fc:0b:b6:32").split(",")
+    if m.strip())
+# The one this server SPEAKS AS when it synthesises a request (line ~1134);
+# the acceptance test below uses the whole list.
+PXE_EXPECTED_MAC = PXE_EXPECTED_MACS[0]
 MURAKUMO_JOB_QUALIFICATION = os.environ.get(
     "AIUEOS_MURAKUMO_JOB_QUALIFICATION", "0") == "1"
 MURAKUMO_RESUME_BOOT = ""
@@ -321,7 +332,7 @@ def mac_address(packet):
 
 def expected_dhcp_client(packet):
     """Accept DHCP only from the one physical K16 under qualification."""
-    return len(packet) >= 34 and mac_address(packet) == PXE_EXPECTED_MAC
+    return len(packet) >= 34 and mac_address(packet) in PXE_EXPECTED_MACS
 
 
 def bind_interface(sock, port, address=""):
@@ -891,7 +902,7 @@ def dhcp_server():
               f"arch={architecture} vendor={vendor!r}", flush=True)
         if not expected_dhcp_client(packet):
             print(f"AIUEOS_PXE_DHCP_IGNORED mac={mac} "
-                  f"expected={PXE_EXPECTED_MAC}", flush=True)
+                  f"expected={','.join(PXE_EXPECTED_MACS)}", flush=True)
             continue
         if message_type == 1:
             reply_type, label = 2, "OFFER"
