@@ -506,9 +506,10 @@
 ;; beyond a platform reset needs the admission discipline the rest of this OS
 ;; uses, and that is a separate decision, not a bigger switch statement.
 
-(defn control-frame-valid [frame bytes]
-  ;; eth 14 + ip 20 + udp 8 + 1 payload. Checked positionally against the
-  ;; fixed debug 4-tuple; a frame that is not exactly this is not ours.
+(defn debug-frame-valid [frame bytes]
+  ;; eth 14 + ip 20 + udp 8 + at least one payload byte, checked positionally
+  ;; against the fixed debug 4-tuple. A frame that is not exactly this is not
+  ;; ours. Says nothing about the payload's LENGTH -- see control-frame-valid.
   (and (>= bytes 43)
        (= (kernel-load-u8-4k frame 4096 12) 8)     ; ethertype 0x0800
        (= (kernel-load-u8-4k frame 4096 13) 0)
@@ -520,6 +521,17 @@
        (= (kernel-load-u8-4k frame 4096 33) 2)
        (= (kernel-load-u8-4k frame 4096 36) 35)    ; dst port 9000 = 0x2328
        (= (kernel-load-u8-4k frame 4096 37) 40)))
+
+(defn control-frame-valid [frame bytes]
+  ;; A ONE-BYTE command, and exactly that: the UDP length field must read 9
+  ;; (8 header + 1 payload). Without this the plane answered '?' to every
+  ;; multi-byte line on the wire -- measured 2026-09-08, the Mac's own
+  ;; 55-byte AIUEOS_NODE_ACK_V1 came back as a 0x3f on every boot, because
+  ;; the first payload byte of that line is 'A' and 'A' is not P or R. The
+  ;; NIC pads short frames to 60, so the descriptor's byte count cannot tell
+  ;; a one-byte datagram from a 46-byte one; the UDP length field can.
+  (and (debug-frame-valid frame bytes)
+       (= (relay/frame-be16 frame 38) 9)))
 
 (defn debug-poll [mmio dma-pages]
   ;; ONE non-blocking look (rtl/wait-rx-command with a zero budget reads the
@@ -555,7 +567,7 @@
             ;; the job shape is tested FIRST and excluded from `payload`.
             job (if (and valid-command
                          (= arp 0)
-                         (control-frame-valid rx-frame (- bytes 4))
+                         (debug-frame-valid rx-frame (- bytes 4))
                          (= (relay/template-match rx-frame 42 4 0
                                                   (text/job-prefix-length)) 1))
                   1
@@ -563,10 +575,10 @@
             ;; The datagram's own UDP length, not the descriptor's byte count:
             ;; the NIC pads every frame to 60 and the tail of a short line
             ;; would otherwise be read as prompt.
-            job-length (if (= job 1)
+            job-length (if (= job 0)
+                         0
                          (let [n (- (relay/frame-be16 rx-frame 38) 8)]
-                           (if (< n 2) 0 (if (> n 255) 0 n)))
-                         0)
+                           (if (< n 2) 0 (if (> n 255) 0 n))))
             ;; Staged BEFORE the re-arm below hands this buffer to the NIC.
             staged (if (= job-length 0)
                      0
@@ -623,6 +635,9 @@
 (def staged-payload-offset 2048)
 ;; "AIUEOS_JOB_V1 boot=" (19) + 16 hex + " " + "id=" (3) = 39.
 (def staged-id-offset 2087)
+;; "AIUEOS_NODE_PING_V1 boot=" (25) + 16 hex + " seq=" (5) = 46. Kept for the
+;; PONG slice, which does not fit in the lowered-program budget today.
+(def staged-seq-offset 2094)
 
 (defn build-line-frame [frame mmio payload-length destination]
   ;; eth 14 + ip 20 + udp 8 + `payload-length`, with the payload ALREADY at
@@ -760,6 +775,10 @@
   ;;            function has no bus2 handle and must not reset behind it.
   ;;   96+n     an unrecognised command answered with '?'; n is the send status
   ;;   8        a job request arrived and could not be staged
+  ;;   (48+n is reserved for the PONG this cannot yet carry: the kernel is at
+  ;;    the native frontend's hard 100,000-node lowered-program budget, and
+  ;;    answer-ping-line put it over. Measured 2026-09-08; the templates and
+  ;;    relay/decimal-value are in place for it.)
   ;;   112+n    an AIUEOS_JOB_V1 was answered; n is answer-job-line's status,
   ;;            0..11, so 112 means the result line left the NIC and 113..123
   ;;            say where it stopped. Deliberately above 103 so it collides

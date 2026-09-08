@@ -124,8 +124,37 @@ Turning the last hop on needs two values this session must not go looking for:
 supplied through a credential tool or the environment of the PXE server.
 
 Liveness ping/pong (`AIUEOS_NODE_PING_V1` / `_PONG_V1`, the contract's
-`:idle-proof :physical-ping-pong`) has its template on the board but no
-handler yet. That is the next board slice.
+`:idle-proof :physical-ping-pong`) is written and **does not fit**. The native
+frontend has a hard 100,000-node lowered-program budget for the whole program
+(`max-lowered-nodes` in `kotoba-sema`, not a flag), and `answer-ping-line` put
+the kernel over it: `:kotoba.error/subset-reject — lowered program budget
+exhausted`. The templates, the offsets and `relay_line/decimal-value` are in
+place; the handler is not.
+
+Moving the bigram self-check into its own module — `micro_infer_check.kotoba`,
+which the kernel deliberately does not require — bought some room and was not
+enough. **The K16 kernel is now at the language's ceiling**, and the next
+feature on this board has to buy its space rather than add to it. That is a
+measurement about the compiler, not about the relay.
+
+## The board was answering the Mac's acknowledgement with a shrug
+
+`control-frame-valid` accepted any datagram of at least 43 bytes on the debug
+4-tuple and read byte 42 as a one-byte command. The Mac's own 55-byte
+`AIUEOS_NODE_ACK_V1` begins with `A`, which is neither `P` nor `R`, so the
+board answered `?` — one spurious transmit per boot, and a shape that would
+have swallowed any future multi-byte line.
+
+The NIC pads short frames to 60 bytes, so the descriptor's byte count cannot
+tell a one-byte datagram from a 46-byte one. The UDP length field can, and
+`control-frame-valid` now requires it to read exactly 9.
+
+Measured across the window in which the relay was acknowledging:
+
+| image | boots | spurious `?` |
+|---|---|---|
+| `6e6df6bd` | 23 | 22 |
+| `fca7d1aa` | 4 | 0 |
 
 ## Gates
 

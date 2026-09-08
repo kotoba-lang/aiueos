@@ -40,9 +40,12 @@
 
 (def aiueos (path/join root "os/aiueos"))
 (def table (path/join aiueos "native/micro_infer.kotoba"))
+;; The expected values -- and therefore the control -- live in the check
+;; module, which the KERNEL deliberately does not carry.
+(def check-table (path/join aiueos "native/micro_infer_check.kotoba"))
 (def relay (path/join aiueos "tools/k16-pxe-server.py"))
 (def contract (path/join aiueos "contracts/micro-inference-qualification-v1.edn"))
-(doseq [p [table relay contract]]
+(doseq [p [table check-table relay contract]]
   (when-not (fs/existsSync p) (refuse! (str "missing input " p))))
 
 (def work (fs/mkdtempSync (path/join (os/tmpdir) "micro-infer-gate-")))
@@ -59,8 +62,8 @@
 
 ;; ---- 2. every row reduces to its expected value (oracle folds main) ------
 (def probe-src
-  (str "(ns gate.rows (:require [native.micro-infer :as mi]) (:export [main]))\n"
-       "(defn main [] (quot 1 (- 1 (mi/self-check))))\n"))
+  (str "(ns gate.rows (:require [native.micro-infer-check :as mic]) (:export [main]))\n"
+       "(defn main [] (quot 1 (- 1 (mic/self-check))))\n"))
 (def probe-path (path/join work "gate_rows.kotoba"))
 (fs/writeFileSync probe-path probe-src)
 
@@ -86,15 +89,17 @@
 ;; one row the qualification actually names.
 (def mirror (path/join work "mirror"))
 (fs/mkdirSync (path/join mirror "native") #js {:recursive true})
-(let [text (fs/readFileSync table "utf8")
+(let [text (fs/readFileSync check-table "utf8")
       head (subs text 0 (str/index-of text "(defn expected-row [input]"))
       tail (subs text (str/index-of text "(defn expected-row [input]"))
       needle "(if (= input 13) 983557"]
   (if-not (str/includes? tail needle)
     (refuse! "control anchor missing: expected-row has no literal 983557 for row 13"
              "(the contract's known answer is token o score 2 total 5 = 15*65536+2*256+5)")
-    (fs/writeFileSync (path/join mirror "native/micro_infer.kotoba")
-                      (str head (str/replace-first tail needle "(if (= input 13) 983558")))))
+    (do (fs/copyFileSync table (path/join mirror "native/micro_infer.kotoba"))
+        (fs/writeFileSync (path/join mirror "native/micro_infer_check.kotoba")
+                          (str head (str/replace-first tail needle
+                                                       "(if (= input 13) 983558"))))))
 (if-not base-green?
   (println "MICRO_INFER_CONTROL skipped reason=base-table-already-red")
   (let [r (compile-probe mirror (path/join work "gate_bad.kexe"))

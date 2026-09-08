@@ -20,8 +20,12 @@
   ;; the argmax is deliberately NOT precomputed, because a precomputed argmax
   ;; would make this a lookup table and the point of the qualification is that
   ;; the physical K16 performed the reduction.
+  ;; The SELF-CHECK lives in native/micro_infer_check.kotoba, not here. The
+  ;; native target has a hard 100,000-node lowered-program budget shared by the
+  ;; whole kernel, and 27 rows of expected values plus their walk is weight the
+  ;; board would carry for a function it never calls.
   (:export [vocab-index vocab-value micro-infer-row micro-infer-token
-            micro-infer-score micro-infer-total micro-infer-index self-check]))
+            micro-infer-score micro-infer-total micro-infer-index]))
 
 ;; Vocabulary: 0 = space, 1..26 = a..z.  -1 (returned as 27) is "not in the
 ;; vocabulary", which the caller must treat as a refusal rather than a token.
@@ -126,47 +130,3 @@
 (defn micro-infer-score [row] (bit-and (quot row 256) 255))
 (defn micro-infer-total [row] (bit-and row 255))
 (defn micro-infer-token [row] (vocab-value (micro-infer-index row)))
-
-;; The same 27 answers, as literals, so the board checks its own unpack-and-
-;; reduce against the value this generator computed from the C matrix rather
-;; than against itself.  Declared before its caller: the native frontend
-;; resolves names in order.
-(defn expected-row [input]
-    (if (= input 0) 66317
-     (if (= input 1) 590344
-      (if (= input 2) 0
-       (if (= input 3) 327937
-        (if (= input 4) 0
-         (if (= input 5) 521
-          (if (= input 6) 327937
-           (if (= input 7) 257
-            (if (= input 8) 0
-             (if (= input 9) 918280
-              (if (= input 10) 983297
-               (if (= input 11) 1376771
-                (if (= input 12) 0
-                 (if (= input 13) 983557
-                  (if (= input 14) 263
-                   (if (= input 15) 519
-                    (if (= input 16) 327937
-                     (if (= input 17) 0
-                      (if (= input 18) 66309
-                       (if (= input 19) 1287
-                        (if (= input 20) 590340
-                         (if (= input 21) 328198
-                          (if (= input 22) 327937
-                           (if (= input 23) 852225
-                            (if (= input 24) 0
-                             (if (= input 25) 983297
-                              0)))))))))))))))))))))))))))
-
-;; Self-check: the number of rows whose reduction disagrees with the expected
-;; value.  A COUNT, not a boolean -- a boolean cannot tell one drifted row from
-;; a table that failed to load at all.  0 is the only passing value.
-(defn check-row [input failures]
-  (if (= input 27)
-    failures
-    (check-row (+ input 1)
-               (+ failures (if (= (micro-infer-row input) (expected-row input)) 0 1)))))
-
-(defn self-check [] (check-row 0 0))

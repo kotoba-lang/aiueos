@@ -16,8 +16,8 @@
   (:require [native.relay-text :as text]
             [native.micro-infer :as mi])
   (:export [store-byte store-template store-hex store-dec store-mac-hex
-            template-match header-checksum digits-run hex-pair prompt-scan
-            copy-bytes frame-be16]))
+            template-match header-checksum digits-run decimal-value
+            hex-pair prompt-scan copy-bytes frame-be16]))
 
 ;; ── writing ──────────────────────────────────────────────────────────────
 
@@ -130,6 +130,15 @@
       (if (and (>= c 48) (<= c 57))
         (digits-run frame offset limit (+ count 1))
         count))))
+
+(defn decimal-value [frame offset count acc]
+  ;; The value of `count` decimal digits at `offset`. The relay compares the
+  ;; liveness sequence numerically (int(seq) == sequence), so unlike `id` this
+  ;; one is parsed and re-emitted at a fixed width rather than copied.
+  (if (= count 0)
+    acc
+    (decimal-value frame (+ offset 1) (- count 1)
+                   (+ (* acc 10) (- (kernel-load-u8-4k frame 4096 offset) 48)))))
 
 (defn hex-value [c]
   (if (and (>= c 48) (<= c 57))

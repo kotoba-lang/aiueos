@@ -179,6 +179,29 @@ BOOT_FILE = BOOT_PATH.name
 HTTP_PORT = int(os.environ.get("AIUEOS_PXE_HTTP_PORT", "8000"))
 HTTP_BOOT_URI = f"http://{SERVER_IP}:{HTTP_PORT}/{BOOT_FILE}"
 NETLOG_PORT = int(os.environ.get("AIUEOS_PXE_NETLOG_PORT", "7777"))
+# LAN2/bus3 is where the murakumo relay actually rides: bus2 has no UDP
+# receive path, so the board can only TRANSMIT there.  See ADR-0202.  The
+# board uses 9000 for both source and destination, so this socket is the one
+# that both hears the announcement and sends the job.
+BUS3_ENABLED = os.environ.get("AIUEOS_PXE_BUS3_RELAY", "1") == "1"
+BUS3_INTERFACE = os.environ.get("AIUEOS_PXE_BUS3_INTERFACE", "en8")
+BUS3_SERVER_IP = os.environ.get("AIUEOS_PXE_BUS3_SERVER_IP", "10.10.10.1")
+# WILDCARD, not 10.10.10.1.  The board announces itself to the limited
+# broadcast 255.255.255.255 as well as to us -- deliberately, because an
+# unsolicited unicast IP inside a broadcast Ethernet frame is a shape BSD's
+# ip_input rejects -- and a socket bound to one unicast address never sees
+# it.  IP_BOUND_IF still pins this socket to bus3's interface, so the
+# wildcard does not make it listen on the PXE wire.  k16-bus3-sink.cljs
+# learned the same thing and its header says so too.
+BUS3_BIND_IP = os.environ.get("AIUEOS_PXE_BUS3_BIND_IP", "")
+BUS3_CLIENT_IP = os.environ.get("AIUEOS_PXE_BUS3_CLIENT_IP", "10.10.10.2")
+BUS3_PORT = int(os.environ.get("AIUEOS_PXE_BUS3_PORT", "9000"))
+# Receipts in k16-bus3-sink.cljs's own format, so the record of this wire
+# survives the sink being replaced by this thread.  Only ONE process can own
+# the port; if the standalone sink holds it this thread refuses by name rather
+# than racing it.
+BUS3_SINK_PATH = Path(os.environ.get(
+    "AIUEOS_PXE_BUS3_SINK", "/tmp/k16-bus3-en8.log"))
 CONTROL_PORT = int(os.environ.get("AIUEOS_PXE_CONTROL_PORT", "7778"))
 CONTROL_STATE_PATH = Path(os.environ.get(
     "AIUEOS_PXE_CONTROL_STATE", "/tmp/aiueos-k16-pxe-control-nonce"))
@@ -348,11 +371,15 @@ def expected_dhcp_client(packet):
     return len(packet) >= 34 and mac_address(packet) in PXE_EXPECTED_MACS
 
 
-def bind_interface(sock, port, address=""):
+def bind_interface(sock, port, address="", interface=None):
+    # `interface` was a module global until 2026-09-08, when a second wire
+    # arrived: the PXE/netlog plane is bus2 (en15) and the murakumo relay is
+    # bus3 (en8).  Binding the relay socket to en15 would have made it deaf on
+    # the only wire the board answers on, while every log read healthy.
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
     sock.setsockopt(socket.IPPROTO_IP, IP_BOUND_IF,
-                    socket.if_nametoindex(INTERFACE))
+                    socket.if_nametoindex(interface or INTERFACE))
     sock.bind((address, port))
 
 
@@ -1011,7 +1038,12 @@ def netlog_server():
                   f"exc={type(exc).__name__}: {exc}", flush=True)
 
 
-def netlog_handle(sock, payload, peer):
+def netlog_handle(sock, payload, peer, client_ip=None):
+    # `client_ip` is which address counts as THE BOARD on this socket: bus2's
+    # 10.77.0.10 for the netlog, bus3's 10.10.10.2 for the relay.  It was a
+    # module global until 2026-09-08, which is why one process could not serve
+    # both wires.
+    CLIENT = CLIENT_IP if client_ip is None else client_ip
     if True:
         message = payload.decode("ascii", "replace").rstrip("\r\n")
         print(f"AIUEOS_NETLOG_RX from={peer[0]}:{peer[1]} "
@@ -1023,22 +1055,88 @@ def netlog_handle(sock, payload, peer):
         if inference:
             print(f"{inference} from={peer[0]}:{peer[1]}", flush=True)
         ack = node_ack_payload(message)
-        if ack and peer[0] == CLIENT_IP:
+        if ack and peer[0] == CLIENT:
             sock.sendto(ack, peer)
             print(f"AIUEOS_NODE_RELAY_ACK to={peer[0]}:{peer[1]} "
                   f"bytes={len(ack)} scope=diagnostic-only", flush=True)
             threading.Thread(target=relay_murakumo_hello,
                              args=(message, sock, peer),
                              daemon=True).start()
-        if JOB_RESULT.fullmatch(message) and peer[0] == CLIENT_IP:
+        if JOB_RESULT.fullmatch(message) and peer[0] == CLIENT:
             MURAKUMO_JOB_RESULTS.put((message, peer))
-        if NODE_PONG.fullmatch(message) and peer[0] == CLIENT_IP:
+        if NODE_PONG.fullmatch(message) and peer[0] == CLIENT:
             MURAKUMO_LIVENESS_RESULTS.put((message, peer))
         nonce = extract_control_nonce(message)
-        if nonce and peer[0] == CLIENT_IP:
+        if nonce and peer[0] == CLIENT:
             CONTROL_STATE_PATH.write_text(nonce + "\n", encoding="ascii")
             print(f"AIUEOS_CONTROL_STATE nonce={nonce} "
                   f"path={CONTROL_STATE_PATH}", flush=True)
+
+
+def bus3_sink_receipt(payload, peer):
+    """One line per datagram, in k16-bus3-sink.cljs's format.
+
+    Opened by name and closed every time, for the reason that sink documents:
+    a receiver that holds the fd keeps writing into an unlinked inode after the
+    log is removed, and `ps` and `lsof` both look healthy while every receipt
+    goes nowhere.
+    """
+    line = (f"K16_BUS3_RX from={peer[0]}:{peer[1]} bytes={len(payload)} "
+            f"hex={payload.hex()} t={time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())}\n")
+    with open(BUS3_SINK_PATH, "a", encoding="ascii") as sink:
+        sink.write(line)
+
+
+def bus3_relay_server():
+    """The Mac end of LAN2: hears AIUEOS_NODE_HELLO_V1 and sends the job.
+
+    Refuses by name rather than racing.  Two readers of one UDP port is a coin
+    toss, and a relay that silently lost the toss would report that the board
+    never answered.  Stop k16-bus3-sink.cljs before this thread can start; this
+    thread writes the same receipts to the same file.
+    """
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        bind_interface(sock, BUS3_PORT, BUS3_BIND_IP, BUS3_INTERFACE)
+    except OSError as error:
+        print(f"AIUEOS_BUS3_RELAY_REFUSED reason=bind-failed "
+              f"errno={error.errno} interface={BUS3_INTERFACE} "
+              f"listen={BUS3_BIND_IP or '0.0.0.0'}:{BUS3_PORT} "
+              f"hint=stop k16-bus3-sink.cljs", flush=True)
+        return
+    print(f"AIUEOS_BUS3_RELAY_READY interface={BUS3_INTERFACE} "
+          f"listen={BUS3_BIND_IP or '0.0.0.0'}:{BUS3_PORT} "
+          f"node={BUS3_CLIENT_IP} sink={BUS3_SINK_PATH} "
+          f"relay-configured={murakumo_relay_configured()}", flush=True)
+    received = 0
+    failures = 0
+    while True:
+        try:
+            payload, peer = sock.recvfrom(4096)
+        except Exception as exc:                # noqa: BLE001 - must not die
+            failures += 1
+            print(f"AIUEOS_BUS3_RECV_FAIL failures={failures} "
+                  f"exc={type(exc).__name__}: {exc}", flush=True)
+            continue
+        received += 1
+        try:
+            bus3_sink_receipt(payload, peer)
+        except Exception as exc:                # noqa: BLE001
+            failures += 1
+            print(f"AIUEOS_BUS3_SINK_FAIL failures={failures} "
+                  f"exc={type(exc).__name__}: {exc}", flush=True)
+        # One byte is the debug plane's own vocabulary (greeting, ping answer,
+        # reboot acknowledgement); it is not relay traffic and must not be
+        # decoded as a line.
+        if len(payload) < 2:
+            continue
+        try:
+            netlog_handle(sock, payload, peer, BUS3_CLIENT_IP)
+        except Exception as exc:                # noqa: BLE001
+            failures += 1
+            print(f"AIUEOS_BUS3_HANDLE_FAIL failures={failures} "
+                  f"from={peer[0]}:{peer[1]} bytes={len(payload)} "
+                  f"exc={type(exc).__name__}: {exc}", flush=True)
 
 
 def tftp_oack(options, size):
@@ -1217,6 +1315,25 @@ def selftest():
         "boot": "0000000e8debe541"}
     assert verified_job_result(measured, "0000000e8debe541", "352", "kotoba") is None
     assert verified_job_result(measured, "0000000e8debe541", "353", "murakum") is None
+    # The bus3 socket must treat 10.10.10.2 as the board, and must NOT treat
+    # the netlog's client as one -- a handler that answered to both would let
+    # either wire drive the other's relay.
+    class _Silent:
+        def sendto(self, *_args):
+            raise AssertionError("bus3 routing selftest must not transmit")
+    while not MURAKUMO_JOB_RESULTS.empty():
+        MURAKUMO_JOB_RESULTS.get_nowait()
+    netlog_handle(_Silent(), measured.encode("ascii"),
+                  (BUS3_CLIENT_IP, BUS3_PORT), BUS3_CLIENT_IP)
+    assert MURAKUMO_JOB_RESULTS.qsize() == 1
+    MURAKUMO_JOB_RESULTS.get_nowait()
+    netlog_handle(_Silent(), measured.encode("ascii"),
+                  ("10.99.99.99", BUS3_PORT), BUS3_CLIENT_IP)
+    assert MURAKUMO_JOB_RESULTS.qsize() == 0
+    netlog_handle(_Silent(), measured.encode("ascii"),
+                  (CLIENT_IP, NETLOG_PORT))
+    assert MURAKUMO_JOB_RESULTS.qsize() == 1
+    MURAKUMO_JOB_RESULTS.get_nowait()
     old_did, old_token = MURAKUMO_NODE_DID, MURAKUMO_SERVICE_TOKEN
     try:
         globals()["MURAKUMO_NODE_DID"] = "did:key:z6MkK16Selftest"
@@ -1467,6 +1584,11 @@ def main():
     threading.Thread(target=tftp_server, daemon=True).start()
     threading.Thread(target=http_server, daemon=True).start()
     threading.Thread(target=netlog_server, daemon=True).start()
+    if BUS3_ENABLED:
+        threading.Thread(target=bus3_relay_server, daemon=True).start()
+    else:
+        print("AIUEOS_BUS3_RELAY_DISABLED reason=AIUEOS_PXE_BUS3_RELAY!=1",
+              flush=True)
     dhcp_server()
 
 
