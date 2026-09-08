@@ -173,11 +173,14 @@
              sentinel somewhere. link-up reads bit 1 of this register; the whole
              register carries the negotiated speed and duplex beside it."
    :data-followers 1}
+  {:channel :netlog :value 213 :hex "D5" :name :watchdog-armed-after-timeout
+   :emitted-by "kernel.kotoba main, three times, immediately before the stream loop"
+   :meaning "The watchdog is armed AND the chipset was still holding a timeout status from a previous expiry (TCO1_STS.TIMEOUT at +0x04 bit 3, or TCO2_STS.SECOND_TO_STS at +0x06 bit 1). Read: the previous boot ended because the watchdog fired, not because the board died some other way -- the hardware's own record of why it restarted, read before it is cleared. D3 means armed with no such evidence."}
   {:channel :netlog :value 211 :hex "D3" :name :watchdog-armed
-   :emitted-by "kernel.kotoba main, immediately before the stream loop"
+   :emitted-by "kernel.kotoba main, three times, immediately before the stream loop"
    :meaning "The chipset TCO watchdog is counting and the stream loop will kick it once per cycle. From here a run that stops resets the board by itself, which is the whole point: measured 2026-09-08, six power cycles in one afternoon were all this timer's job. Neither remote path could do it -- `k16-control.cljs R` is answered by debug-tick, polled once per stream cycle, so a kernel that stopped cycling never reads it; and the loader's STATUS panel goes to UEFI ConOut, and the loader has no NIC."}
   {:channel :netlog :value 212 :hex "D4" :name :watchdog-refused
-   :emitted-by "kernel.kotoba main, immediately before the stream loop"
+   :emitted-by "kernel.kotoba main, three times, immediately before the stream loop"
    :meaning "No watchdog. One of: the LPC bridge at 00:1f.0 is not Intel (vendor != 0x8086), its ACPI base register reads zero or out of range, or TCO_TMR_HLT would not clear on read-back -- a No-Reboot strap or a locked TCO. This is NOT a fault to act on at run time: it means the board still needs a human to power-cycle it, which is exactly what it needed before the watchdog existed. It IS the byte to look for when a board stops coming back on its own."}
   {:channel :netlog :value 215 :hex "D7" :name :run-end-quiesce
    :emitted-by "stream-resident (tcp_stream.kotoba), run end, after the three DEs"
