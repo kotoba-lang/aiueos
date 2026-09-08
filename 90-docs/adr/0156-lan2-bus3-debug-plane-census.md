@@ -998,6 +998,21 @@ board no longer reaches bus2: **0 boots and 0 TFTP in 150 s**, where the loop
 had been running at ~1.2 boots/min since 09:02. The last image it fetched is
 `fd0a0030` (236544 bytes); `efc5d540`, deployed 09:29, has never been served.
 
+### The plane no longer depends on knowing which socket the cable is in
+
+The baked-in peer MAC is gone. Unsolicited bus3 frames (the boot `Z`, the ARP
+request) go to **broadcast**: every NIC on whatever segment bus3 is attached to
+accepts them, and the Mac's stack delivers a datagram addressed to one of its
+own IPs whichever interface it arrived on. Answers to commands go back to the
+MAC the request came from — `debug-poll` copies it out of the request before
+re-arming the descriptor, which is the only moment it exists. So the plane is
+correct on either wire, and swapping cables can no longer silently disable it.
+
+`verify-wire-bytes` earned its keep in the same commit: renaming the answer path
+to `answer-byte` made three registered bytes (`p`, `r`, `?`) unreachable from
+the scanner and it said so — `never-emitted`, one line each — instead of going
+quiet. The registry's `:primitives` table now names both emitters.
+
 Three ways out, cheapest first — all of them need the owner, because the PXE
 server binds ports 67/69 and cannot be restarted from here:
 

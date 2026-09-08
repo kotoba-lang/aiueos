@@ -66,7 +66,12 @@
  ;; -> which argument position (0 = head) carries the byte, and the channel.
  ;; kernel-out-u8's channel depends on its port argument.
  :primitives {stream-log      {:byte-arg 4 :channel :netlog}
+              ;; Two bus3 emitters, not one: debug-send-byte broadcasts what we
+              ;; start, answer-byte replies to the MAC a request came from. The
+              ;; split was invisible to this table for exactly one run, and the
+              ;; detector said so -- three registered bytes with no emitter.
               debug-send-byte {:byte-arg 3 :channel :bus3-udp}
+              answer-byte     {:byte-arg 3 :channel :bus3-udp}
               kernel-out-u8   {:byte-arg 2 :port-arg 1
                                :ports {233 :port-e9 3321 :port-cf9}}}
 

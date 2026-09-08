@@ -42,25 +42,16 @@
 (def debug-udp-port 9000)
 
 ;; Mac en8 NIC MAC (3c:18:a0:d5:82:a8), the fixed debug peer.
-(defn store-peer-mac [frame]
-  ;; A kernel store returns its operand, so comparing the store to the byte it
-  ;; was asked to write cannot fail (lang-h13). The check that can is reading
-  ;; the six bytes back.
-  (let [s0 (kernel-store-u8-4k frame 4096 0 60)
-        s1 (kernel-store-u8-4k frame 4096 1 24)
-        s2 (kernel-store-u8-4k frame 4096 2 160)
-        s3 (kernel-store-u8-4k frame 4096 3 213)
-        s4 (kernel-store-u8-4k frame 4096 4 130)
-        s5 (kernel-store-u8-4k frame 4096 5 168)]
-    (if (and (= (kernel-load-u8-4k frame 4096 0) 60)
-             (= (kernel-load-u8-4k frame 4096 1) 24)
-             (= (kernel-load-u8-4k frame 4096 2) 160)
-             (= (kernel-load-u8-4k frame 4096 3) 213)
-             (= (kernel-load-u8-4k frame 4096 4) 130)
-             (= (kernel-load-u8-4k frame 4096 5) 168)
-             (= 0 (* 0 (+ s0 s1 s2 s3 s4 s5))))
-      1
-      0)))
+;; The peer MAC was baked in here (3c:18:a0:d5:82:a8, the Mac's en8). Every
+;; frame this module ever sent carried it, and not one was delivered: measured
+;; 2026-09-08, the wire bus3 is actually on does not have that NIC listening
+;; on it, so its own NIC dropped every frame before any IP stack saw it. A
+;; debug plane must not depend on knowing which socket its cable is in.
+;;
+;; Unsolicited frames therefore go to BROADCAST: every NIC on the segment
+;; accepts them, and the Mac's stack delivers a datagram for one of its own
+;; addresses whichever interface it arrived on. Answers go back to the MAC the
+;; request came from, which is better than any constant.
 
 (defn store-mac-at [frame mmio offset index]
   ;; IDR0..5 at `offset`. Ethernet wants our MAC at 6; an ARP body wants the
@@ -159,8 +150,10 @@
 (def frame-total-length 43)                    ; + 14 ethernet
 
 (defn build-udp-debug-frame [frame mmio payload]
-  (if (and (= (zero-prefix frame 60 0) 1)
-           (= (store-peer-mac frame) 1)
+  ;; Bytes 0..5 (the Ethernet destination) belong to the CALLER: broadcast for
+  ;; anything we start, the requester's own MAC for an answer. Zeroing starts
+  ;; at 6 so that choice survives.
+  (if (and (= (zero-prefix frame 60 6) 1)
            (= (store-device-mac frame mmio 0) 1)
            (= (store-be16 frame 12 2048) 2048)           ; ethertype IPv4
            (= 0 (* 0 (kernel-store-u8-4k frame 4096 14 69)))  ; v4/IHL
@@ -318,24 +311,27 @@
                   (if (= announced 0) 0 (+ 16 announced)))))))))))
 
 (defn debug-send-byte [mmio dma-pages payload]
-  ;; Single-shot UDP :9000 datagram on bus3:
+  ;; Single-shot UDP :9000 datagram on bus3, BROADCAST at the Ethernet layer
+  ;; (see the note above store-mac-at). Statuses:
   ;;   0  the descriptor was submitted AND the engine cleared OWN
   ;;   1  the frame could not be built
   ;;   5  the descriptor was still owned, or the wire length was rejected
   ;;   3  a descriptor store did not read back
   ;;   4  submitted, but OWN never cleared -- the engine is not consuming
   ;; 0 must mean exactly one thing: bytes left the NIC.
-  (let [tx dma-pages
-        tx-frame (kernel-subregion dma-pages 16384 8192 4096)
-        len (build-udp-debug-frame tx-frame mmio payload)]
-    (if (= len 0)
-      1
-      (let [submitted (rtl/tx-submit mmio tx tx-frame len)]
-        (if (= submitted 5)
-          5
-          (if (not (= submitted 0))
-            3
-            (if (= (rtl/wait-tx-complete tx 200000000) 0) 4 0)))))))
+  (let [tx-frame (kernel-subregion dma-pages 16384 8192 4096)]
+    (if (= (store-broadcast-mac tx-frame 0 0) 1)
+      (submit-bus3-frame mmio dma-pages
+                         (build-udp-debug-frame tx-frame mmio payload))
+      1)))
+
+(defn answer-byte [mmio dma-pages payload]
+  ;; The reply to a command. debug-poll has already copied the requester's MAC
+  ;; into bytes 0..5 of this frame, from the request, before re-arming the RX
+  ;; descriptor -- so this answers whoever asked rather than a constant.
+  (let [tx-frame (kernel-subregion dma-pages 16384 8192 4096)]
+    (submit-bus3-frame mmio dma-pages
+                       (build-udp-debug-frame tx-frame mmio payload))))
 
 (defn debug-send [mmio dma-pages]
   (debug-send-byte mmio dma-pages 90))          ; 'Z'
@@ -404,12 +400,21 @@
                              (control-frame-valid rx-frame (- bytes 4)))
                       (bit-and (kernel-load-u8-4k rx-frame 4096 42) 127)
                       0)
+            ;; The answer goes back to whoever asked. Copied HERE because the
+            ;; re-arm below hands the request's buffer back to the NIC.
+            reply-to (if (= payload 0)
+                       1
+                       (copy-frame-bytes
+                        (kernel-subregion dma-pages 16384 8192 4096)
+                        rx-frame 0 6 6))
             rearmed (rtl/rx-rearm rx rx-frame)]
         (if (= rearmed 0)
           2
           (if (= arp 1)
             (+ 16 answered)
-            (if (= payload 0) 1 (+ 128 payload))))))))
+            (if (= payload 0)
+              1
+              (if (= reply-to 1) (+ 128 payload) 1))))))))
 
 (defn debug-tick [dma-pages]
   ;; Poll once, answer at most once. Returns what the kernel logs:
@@ -439,7 +444,7 @@
         (if (< seen 128)
           seen
           (if (= (- seen 128) 80)                       ; 'P'
-            (+ 64 (debug-send-byte mmio dma-pages 112))    ; 'p'
+            (+ 64 (answer-byte mmio dma-pages 112))       ; 'p'
             (if (= (- seen 128) 82)                     ; 'R'
-              (+ 80 (debug-send-byte mmio dma-pages 114))  ; 'r'
-              (+ 96 (debug-send-byte mmio dma-pages 63)))))))))  ; '?'
+              (+ 80 (answer-byte mmio dma-pages 114))     ; 'r'
+              (+ 96 (answer-byte mmio dma-pages 63)))))))))  ; '?'
