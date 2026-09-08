@@ -1409,7 +1409,7 @@
 ;; died in `ud2` with no DE. 4 buys the deliberate end while the bridge learns
 ;; to close with RST (k16-bridge.cljs debug mode) and cycles get cheaper; the
 ;; real fix is still a per-cycle replenish (ADR-0156, amu-h1).
-(defn debug-run-cycles [] 64)
+(defn debug-run-cycles [] 4)
 ;; 4 until 2026-09-08. Measured that day: four cycles complete in 12 ms and the
 ;; run then resets through PXE, which takes 19.7 s -- the board was ALIVE FOR
 ;; 0.1% OF ITS LIFE. A node reachable for 12 ms in 20 s cannot be handed a job:
@@ -1421,7 +1421,28 @@
 ;; machine and nothing resets it, so the board waits for a human at the power
 ;; button -- the one thing this rig is built not to need.
 ;;
-;; 1024 from 2026-09-08 at a 2^30 budget, and BACK TO 64 the same day. The
+;; BACK TO 4 on 2026-09-08 evening, and the direction of this constant has
+;; INVERTED. Everything below about raising it was written when a run that
+;; ended cost a 19.7 s PXE round trip, so more cycles per boot meant more
+;; uptime and the number wanted to be as large as the budget allowed.
+;;
+;; With the tender (ADR-0205 step 2) a run that ends costs nothing: it returns
+;; 250 and the image calls `main` again, measured at 60 ms. So the quantity
+;; worth maximising is no longer cycles-per-run, it is runs-that-COMPLETE --
+;; and a step that does not finish returns no sentinel, so the tender never
+;; re-enters and the board waits for a person.
+;;
+;; Measured across 69 image fetches: 67 produced exactly one entry, meaning the
+;; run died before finishing 64 cycles and never handed the step back. Two
+;; produced two entries. None produced three. At 4 cycles this loop completed
+;; in 12 ms and did so reliably for hundreds of boots.
+;;
+;; So: the smallest step that does useful work, not the largest that fits the
+;; budget. That is ADR-0204's "the step is the unit" applied to the constant it
+;; was written about, and it is why this function is now deleted rather than
+;; tuned once definitions arrive over LAN2.
+;;
+;; 1024 from 2026-09-08 at a 2^30 budget, and back to 64 the same day. The
 ;; arithmetic that justified 1024 was: the only per-cycle cost anyone had
 ;; MEASURED was an upper bound of 262,144 (the 4-cycle configuration completed
 ;; inside 2^20), so 1024 cycles is at most 268 million against 1,073 million --
