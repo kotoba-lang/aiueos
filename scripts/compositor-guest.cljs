@@ -18,7 +18,7 @@
   (:require ["node:fs" :as fs]
             ["node:path" :as path]
             ["node:child_process" :as cp]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [aiueos.compositor.guest :as guest]))
 
 (def repo (.resolve path (.dirname path *file*) ".."))
@@ -77,11 +77,11 @@
                        :serial-path (:serial-path boot)
                        :note (str "Green only on KERNEL.ELF serial. Hosted clojure -M:compositor wm does not count. Native component runtime remains. P5 UNVERIFIED."))]
     (write-receipt! profile receipt)
-    (println (str "AIUEOS_COMPOSITOR_" (str/replace (str/upper-case profile) "-" "_")
+    (println (str "AIUEOS_COMPOSITOR_" (str/replace (str/upper profile) "-" "_")
                   "_PROFILE=uefi-qemu-nbb"))
-    (println (str "AIUEOS_COMPOSITOR_" (str/replace (str/upper-case profile) "-" "_")
+    (println (str "AIUEOS_COMPOSITOR_" (str/replace (str/upper profile) "-" "_")
                   "_SERIAL=" (:serial-path boot)))
-    (println (str "AIUEOS_COMPOSITOR_" (str/replace (str/upper-case profile) "-" "_")
+    (println (str "AIUEOS_COMPOSITOR_" (str/replace (str/upper profile) "-" "_")
                   "_LEFTOVER=" (pr-str (:leftover r))))
     (when (:serial boot)
       (let [marker (guest/serial-marker profile)]
@@ -90,6 +90,6 @@
           (println (str/replace line #"\r$" "")))))
     (if (:green? r)
       (println (guest/ok-print profile))
-      (println (str "AIUEOS_COMPOSITOR_" (str/replace (str/upper-case profile) "-" "_")
+      (println (str "AIUEOS_COMPOSITOR_" (str/replace (str/upper profile) "-" "_")
                     " not-green leftover=" (pr-str (:leftover r)))))
     (.exit js/process (int (:exit r)))))

@@ -29,7 +29,7 @@
 ;; exit status for the shared suite; boot 2/3 are green on the aiueos boot
 ;; markers and an evidence floor, with the terminal status recorded.
 
-(require '[clojure.string :as str])
+(require '[kotoba.lang.text :as str])
 
 (def fs (js/require "node:fs"))
 (def path (js/require "node:path"))

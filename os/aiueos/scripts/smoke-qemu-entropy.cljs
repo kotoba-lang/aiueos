@@ -6,7 +6,7 @@
 ;; AIUEOS_SSH_LISTEN=1 (the self-test lives behind that flag); driven by
 ;; smoke-qemu-uefi.sh, the harness proven to boot fully on this machine.
 
-(require '[clojure.string :as str])
+(require '[kotoba.lang.text :as str])
 
 (def fs (js/require "node:fs"))
 (def path (js/require "node:path"))

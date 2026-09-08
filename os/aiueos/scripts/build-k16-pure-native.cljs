@@ -23,7 +23,7 @@
 ;; expected outcome, and the refusal names why).
 (ns build-k16-pure-native
   (:require [clojure.edn :as edn]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             ["node:child_process" :as child]
             ["node:crypto" :as crypto]
             ["node:fs" :as fs]

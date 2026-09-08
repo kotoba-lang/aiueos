@@ -34,7 +34,7 @@
 ;; the answer is a byte comparison.
 (ns reproduce-kotoba-objects
   (:require [clojure.edn :as edn]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             ["node:child_process" :as child]
             ["node:crypto" :as crypto]
             ["node:fs" :as fs]

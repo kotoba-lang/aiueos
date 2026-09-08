@@ -32,7 +32,7 @@
                 [--registry <path>] [--findings]
   Exit 0 clean / 1 findings / 2 refused. Evidence lines: SCANNED<TAB>n."
   (:require ["fs" :as fs] ["path" :as p]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [cljs.reader :as reader]
             [edamame.core :as e]))
 
@@ -69,7 +69,7 @@
 
 (def entries (vec (:entries registry)))
 (defn span [en] (or (:span en) 1))
-(defn hex2 [n] (str/upper-case (.padStart (.toString n 16) 2 "0")))
+(defn hex2 [n] (str/upper (.padStart (.toString n 16) 2 "0")))
 
 ;; ── source scanning ────────────────────────────────────────────────────────
 (def primitives (:primitives registry))
@@ -150,7 +150,7 @@
                   "overlaps" (str "0x" (hex2 (:value b)) " " (:name b) " [" (:value b) "," (+ (:value b) (span b)) ")"))))
     (doseq [[nm xs] (group-by :name ens) :when (> (count xs) 1)]
       (finding! :duplicate (name ch) "name" nm "used by" (count xs) "entries"))))
-(doseq [en entries :when (and (:hex en) (not= (str/upper-case (:hex en)) (hex2 (:value en))))]
+(doseq [en entries :when (and (:hex en) (not= (str/upper (:hex en)) (hex2 (:value en))))]
   (finding! :hex-mismatch (name (:channel en)) (:name en) ":hex" (:hex en) "but :value" (:value en) "=" (hex2 (:value en))))
 
 ;; (b) sources -> registry

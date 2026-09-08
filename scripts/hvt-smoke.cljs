@@ -15,7 +15,7 @@
 (ns hvt-smoke
   (:require ["child_process" :as cp]
             [clojure.edn :as edn]
-            [clojure.string :as str]))
+            [kotoba.lang.text :as str]))
 
 (def expected-serial "HI\n")
 (def elf-fixture "resources/hvt/guest-aarch64.elf")

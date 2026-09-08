@@ -25,7 +25,7 @@
   (:require ["node:child_process" :as cp]
             ["node:fs" :as fs]
             ["node:path" :as path]
-            [clojure.string :as str]))
+            [kotoba.lang.text :as str]))
 
 ;; nbb does not expose `import.meta.url`; `*file*` is the script path and
 ;; process.argv is [node, nbb, script, ...user args].

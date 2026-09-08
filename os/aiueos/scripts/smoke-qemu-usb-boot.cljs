@@ -25,7 +25,7 @@
 ;; transport cannot pass here, neither transport is claimed to pass -- but the
 ;; transports are still proven indistinguishable.
 
-(require '[clojure.string :as str])
+(require '[kotoba.lang.text :as str])
 
 (def fs (js/require "node:fs"))
 (def path (js/require "node:path"))

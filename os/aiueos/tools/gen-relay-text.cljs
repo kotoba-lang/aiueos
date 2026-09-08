@@ -25,7 +25,7 @@
 ;; `--check` re-derives and fails if the committed file has drifted.
 ;; Exit 0 clean / 1 drift / 2 refused.
 (ns gen-relay-text
-  (:require ["fs" :as fs] ["path" :as path] [clojure.string :as str]))
+  (:require ["fs" :as fs] ["path" :as path] [kotoba.lang.text :as str]))
 
 (def root (or (first (remove #(str/starts-with? % "--") *command-line-args*)) "."))
 (def check? (some #(= % "--check") *command-line-args*))

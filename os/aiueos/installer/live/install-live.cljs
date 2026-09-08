@@ -18,7 +18,7 @@
 ;; unattended mode the INTENT is the owner's confirmation; every device-level
 ;; guard (whole/internal/empty/system-disk/identity) still runs below.
 
-(require '[clojure.string :as str])
+(require '[kotoba.lang.text :as str])
 
 (def fs (js/require "node:fs"))
 (def cp (js/require "node:child_process"))
@@ -58,10 +58,10 @@
   (and (= "disk" (:type d))
        (not= (:path d) usb-disk)
        (not (contains? #{1 true "1"} (:rm d)))
-       (let [want (str/lower-case (or (:model td) ""))
-             got (str/lower-case (or (:model d) ""))]
+       (let [want (str/lower (or (:model td) ""))
+             got (str/lower (or (:model d) ""))]
          (and (seq want) (str/includes? got want)))
-       (= (str/lower-case (or (:tran d) "")) (str/lower-case (:transport td)))
+       (= (str/lower (or (:tran d) "")) (str/lower (:transport td)))
        (number? (:size d))
        (<= (:minBytes td) (:size d) (:maxBytes td))))
 

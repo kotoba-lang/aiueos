@@ -19,7 +19,7 @@
 ;;
 ;; Usage: nbb os/aiueos/scripts/smoke-qemu-dot-f32.cljs /path/to/compiler
 (ns smoke-qemu-dot-f32
-  (:require ["child_process" :as cp]
+  (:require [kotoba.lang.text] ["child_process" :as cp]
             ["crypto" :as crypto]
             ["fs" :as fs]
             ["os" :as os]
@@ -124,7 +124,7 @@
   (or (some #(when (fs/existsSync %) %) (cons (.. js/process -env -OVMF_CODE)
                                               ovmf-candidates))
       (unmeasured (str "ovmf-missing. Looked at: "
-                       (clojure.string/join ", " ovmf-candidates)))))
+                       (kotoba.lang.text/join ", " ovmf-candidates)))))
 
 (defn build! [compiler out]
   (let [kernel (path/join out "KERNEL.ELF")
@@ -249,8 +249,8 @@
                   "distinguishes the arms")))
       (let [arms (set (map :arm decoded))]
         (println (str "AIUEOS_DOT_F32_QEMU digits=" expected-digits
-                      " arms-exercised=" (clojure.string/join "," (sort arms))
-                      " models=" (clojure.string/join "," cpu-models)))
+                      " arms-exercised=" (kotoba.lang.text/join "," (sort arms))
+                      " models=" (kotoba.lang.text/join "," cpu-models)))
         (if (contains? arms "avx2")
           (do (println (str "AIUEOS_DOT_F32_QEMU_OK both-arms-executed"
                             " and-agree-with-kotoba-kir exit=" expected-status))
@@ -273,9 +273,9 @@
           ;; missing.
           (do (js/console.error
                (str "AIUEOS_DOT_F32_QEMU_AVX2_ARM_NOT_EXERCISED"
-                    " enable=" (clojure.string/join
+                    " enable=" (kotoba.lang.text/join
                                 "," (map #(str (:cpu %) ":" (:enabled %)) decoded))
-                    " features=" (clojure.string/join
+                    " features=" (kotoba.lang.text/join
                                   "," (map #(str (:cpu %) ":" (:value %)) decoded))
                     " -- the scalar arm ran on both models and agrees with"
                     " kotoba.kir; the AVX2 arm did not run, so this says"

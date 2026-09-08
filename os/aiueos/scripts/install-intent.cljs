@@ -25,7 +25,7 @@
 ;; not look like an inspection that ran clean, and must also be
 ;; distinguishable from this script itself crashing.
 
-(require '[clojure.string :as str])
+(require '[kotoba.lang.text :as str])
 
 (def fs (js/require "node:fs"))
 (def path (js/require "node:path"))
@@ -149,8 +149,8 @@
       (refuse! "intent-expired"))
     (when-not (= (get-in intent [:release :disk :sha256]) (:sha256 image))
       (refuse! "intent-release-digest-mismatch"))
-    (let [want (str/lower-case (or (:model td) ""))
-          got (str/lower-case (or (:model target) ""))]
+    (let [want (str/lower (or (:model td) ""))
+          got (str/lower (or (:model target) ""))]
       (when-not (and (seq want) (str/includes? got want))
         (refuse! "target-model-mismatch")))
     (let [bytes (:bytes target)]
@@ -159,8 +159,8 @@
         (refuse! "target-capacity-out-of-bounds")))
     (cond
       (nil? (:transport target)) (refuse! "target-transport-unmeasured")
-      (not= (str/lower-case (:transport target))
-            (str/lower-case (:transport td))) (refuse! "target-transport-mismatch"))
+      (not= (str/lower (:transport target))
+            (str/lower (:transport td))) (refuse! "target-transport-mismatch"))
     (when (:serialSha256 td)
       (cond
         (nil? probed-serial) (refuse! "target-serial-unmeasured")

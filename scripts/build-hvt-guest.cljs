@@ -16,7 +16,7 @@
   (:require ["child_process" :as cp]
             ["crypto" :as crypto]
             ["fs" :as fs]
-            [clojure.string :as str]))
+            [kotoba.lang.text :as str]))
 
 (def ld-script "resources/hvt/guest-aarch64.ld")
 

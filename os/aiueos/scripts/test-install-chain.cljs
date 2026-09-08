@@ -14,7 +14,7 @@
 ;; matches -- a harness that silently ran fewer cases must not look like one
 ;; that ran them all.
 
-(require '[clojure.string :as str])
+(require '[kotoba.lang.text :as str])
 
 (def fs (js/require "node:fs"))
 (def path (js/require "node:path"))
