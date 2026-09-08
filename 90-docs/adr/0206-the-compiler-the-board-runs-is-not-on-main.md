@@ -59,6 +59,30 @@ pinned checkout is present, so every build for weeks has passed.
   packaging test failures on the branch (`v2` vs `v3`, boot-info v4 offsets)
   are stale assertions that the merge will have to settle first.
 
+## Proposed, 2026-09-08 evening: kotoba-lang/amu#899
+
+The precondition this ADR named is cleared. amu's suite is green on
+`k16-loader-port` -- 1335 tests, 9603 assertions, 0 failures, 0 errors. The
+four assertions that were red described the `/v2` embedded-kernel format and
+the pre-v4 boot-info; they now assert the layout the running kernel validates
+field by field (magic `AIUEBOOT`, version word 4, memory-map pointer, and
+`kernel-scratch-pages` exactly 14), which is the layout a board that boots and
+answers inference jobs is running.
+
+The PR is `MERGEABLE`, **3 files, +345/-28**, from merge-base `715138d0`.
+
+⚠ A two-dot `git diff origin/main origin/k16-loader-port` shows +785/-6078
+across 37 files and looks like a mass revert of main. It is not one. That diff
+compares the branch's whole tree against main's, so everything main has added
+in its 47 newer commits appears as a deletion. The three-dot diff from the
+merge-base -- which is what a merge actually applies, and what GitHub's PR
+shows -- is the +345/-28. **Do not read a two-dot diff as a merge preview**;
+the rule this workspace already has about long branches reverting current work
+is real, and this is how you check whether it applies rather than assume it.
+
+The PR state is `BLOCKED`: amu's `main` requires a pull request and status
+checks. That is a review boundary, not a defect, and not one to route around.
+
 ## What this ADR does not claim
 
 That the branch is *ready* to merge. Its test suite is red in four assertions
