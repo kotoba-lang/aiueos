@@ -21,6 +21,7 @@ import struct
 import tempfile
 import subprocess
 import threading
+import types
 import time
 import urllib.error
 import urllib.parse
@@ -251,6 +252,11 @@ MURAKUMO_CACAO_CLASSPATH = os.environ.get(
 MURAKUMO_TRUST_TIER = os.environ.get(
     "AIUEOS_MURAKUMO_TRUST_TIER", "community")
 MURAKUMO_CACAO_TTL = int(os.environ.get("AIUEOS_MURAKUMO_CACAO_TTL", "600"))
+# How long one mint may take, and how long a FAILED mint is remembered. The
+# second number is the one that matters: without it a refused or timed-out mint
+# is retried by the very next caller, which is how a stampede restarts itself.
+MURAKUMO_CACAO_TIMEOUT = int(os.environ.get("AIUEOS_MURAKUMO_CACAO_TIMEOUT", "30"))
+MURAKUMO_CACAO_RETRY_S = int(os.environ.get("AIUEOS_MURAKUMO_CACAO_RETRY_S", "5"))
 # How hard the dispatcher tries, in the units the BOARD sets.
 #
 # The board is reachable for 185 ms per 39.8-second boot (ADR-0203). A job is
@@ -477,15 +483,39 @@ def murakumo_cacao(aud):
     Cached per audience until a minute before expiry. Returns "" on any
     failure -- and the failure text is printed, because a blank credential and
     a mint that refused must not look the same from the call site.
+
+    SINGLE-FLIGHT, and failures are cached too. Until 2026-09-08 the lock was
+    released before the subprocess, so every caller that missed the cache
+    spawned its own `nbb`. That is a cache stampede with a positive feedback
+    loop: the liveness maintainer retries once per stale boot nonce, six of
+    them were live at once, none could populate the cache because none could
+    finish, and every failure guaranteed the next round would also have an
+    empty cache. Measured that day -- 177 mint timeouts before a restart and 46
+    after, while the SAME command run once by hand took 0.24 s at load 145.
+    A 30 s timeout was never the problem; six of them at once was.
+
+    So the mint happens under the lock. Concurrent callers wait for the one
+    result instead of racing to produce six, which is also why holding a lock
+    across a subprocess is right here rather than merely tolerable: every
+    waiter wanted exactly this value.
+
+    A failure is cached for MURAKUMO_CACAO_RETRY_S. Without that, a refused or
+    timed-out mint re-enters the loop on the very next call and the stampede
+    restarts by itself.
     """
     if not (MURAKUMO_CACAO_MINT and MURAKUMO_NODE_KEY_FILE and
             MURAKUMO_NODE_DID_FILE):
         return ""
-    now = time.monotonic()
     with MURAKUMO_CACAO_LOCK:
-        cached = MURAKUMO_CACAO_CACHE.get(aud)
-        if cached and cached[1] > now:
-            return cached[0]
+        return _murakumo_cacao_locked(aud)
+
+
+def _murakumo_cacao_locked(aud):
+    """Mint one CACAO. The caller holds MURAKUMO_CACAO_LOCK."""
+    now = time.monotonic()
+    cached = MURAKUMO_CACAO_CACHE.get(aud)
+    if cached and cached[1] > now:
+        return cached[0]
     command = ["nbb"]
     if MURAKUMO_CACAO_CLASSPATH:
         command += ["--classpath", MURAKUMO_CACAO_CLASSPATH]
@@ -495,19 +525,21 @@ def murakumo_cacao(aud):
                 "--aud", aud,
                 "--ttl-s", str(MURAKUMO_CACAO_TTL)]
     try:
-        done = subprocess.run(command, capture_output=True, timeout=30)
+        done = subprocess.run(command, capture_output=True,
+                              timeout=MURAKUMO_CACAO_TIMEOUT)
     except Exception as exc:                    # noqa: BLE001
         print(f"AIUEOS_MURAKUMO_CACAO_FAIL aud={aud} "
               f"exc={type(exc).__name__}: {exc}", flush=True)
+        MURAKUMO_CACAO_CACHE[aud] = ("", now + MURAKUMO_CACAO_RETRY_S)
         return ""
     blob = done.stdout.decode("ascii", "replace").strip()
     if done.returncode != 0 or not blob:
         print(f"AIUEOS_MURAKUMO_CACAO_REFUSED aud={aud} rc={done.returncode} "
               f"err={done.stderr.decode('ascii', 'replace').strip()[:200]}",
               flush=True)
+        MURAKUMO_CACAO_CACHE[aud] = ("", now + MURAKUMO_CACAO_RETRY_S)
         return ""
-    with MURAKUMO_CACAO_LOCK:
-        MURAKUMO_CACAO_CACHE[aud] = (blob, now + max(30, MURAKUMO_CACAO_TTL - 60))
+    MURAKUMO_CACAO_CACHE[aud] = (blob, now + max(30, MURAKUMO_CACAO_TTL - 60))
     return blob
 
 
@@ -1500,6 +1532,72 @@ def selftest_dhcp_guard():
     assert ok.sent == 1
 
 
+def selftest_cacao_single_flight():
+    """One mint per miss, and a failed mint remembered.
+
+    Until 2026-09-08 the cache lock was released before the subprocess, so
+    every caller that missed spawned its own `nbb`. The liveness maintainer
+    retries once per stale boot nonce, six were live at once, and none could
+    populate the cache because none could finish -- 177 mint timeouts before a
+    restart and 46 after, while the same command run once by hand took 0.24 s
+    at load 145.
+
+    This asserts the COUNT of subprocess invocations, not just that a blob came
+    back, because the stampede returned perfectly good blobs; it was the number
+    of them that was the defect. Against the unmodified file this fails with
+    `STAMPEDE: 8 concurrent mints`."""
+    saved = (MURAKUMO_CACAO_MINT, MURAKUMO_NODE_KEY_FILE,
+             MURAKUMO_NODE_DID_FILE, MURAKUMO_CACAO_CLASSPATH, subprocess.run)
+    calls = []
+
+    def fake(command, capture_output=None, timeout=None):
+        calls.append(1)
+        time.sleep(0.2)
+        return types.SimpleNamespace(returncode=0, stdout=b"BLOB", stderr=b"")
+
+    def fake_timeout(command, capture_output=None, timeout=None):
+        calls.append(1)
+        time.sleep(0.1)
+        raise subprocess.TimeoutExpired(command, timeout or 1)
+
+    def race(fn):
+        calls.clear()
+        MURAKUMO_CACAO_CACHE.clear()
+        globals()["subprocess"].run = fn
+        out = []
+        threads = [threading.Thread(target=lambda: out.append(
+            murakumo_cacao("https://selftest.invalid"))) for _ in range(8)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        return len(calls), out
+
+    try:
+        globals()["MURAKUMO_CACAO_MINT"] = "/selftest/mint"
+        globals()["MURAKUMO_NODE_KEY_FILE"] = "/selftest/key"
+        globals()["MURAKUMO_NODE_DID_FILE"] = "/selftest/did"
+        globals()["MURAKUMO_CACAO_CLASSPATH"] = ""
+
+        spawned, out = race(fake)
+        assert spawned == 1, f"STAMPEDE: {spawned} concurrent mints"
+        assert out == ["BLOB"] * 8, out
+
+        spawned, out = race(fake_timeout)
+        assert spawned == 1, f"STAMPEDE on failure: {spawned} mints"
+        assert out == [""] * 8, out
+
+        calls.clear()
+        assert murakumo_cacao("https://selftest.invalid") == ""
+        assert not calls, "a failed mint was not negative-cached"
+    finally:
+        (globals()["MURAKUMO_CACAO_MINT"], globals()["MURAKUMO_NODE_KEY_FILE"],
+         globals()["MURAKUMO_NODE_DID_FILE"],
+         globals()["MURAKUMO_CACAO_CLASSPATH"]) = saved[:4]
+        globals()["subprocess"].run = saved[4]
+        MURAKUMO_CACAO_CACHE.clear()
+
+
 def selftest_authorization():
     """Which credential each route gets, and that "no credential" is its own
     value rather than a blank Bearer -- an empty bearer reads as a token
@@ -1592,6 +1690,7 @@ def selftest():
     oack, size = tftp_oack({"blksize": "1024", "tsize": "0"}, 13312)
     assert size == 1024 and b"tsize\00013312\000" in oack
     selftest_dhcp_guard()
+    selftest_cacao_single_flight()
     selftest_authorization()
     ready = "AIUEOS_CONTROL_READY nonce=0123456789abcdef commands=ping,reboot-pxe"
     assert extract_control_nonce(ready) == "0123456789abcdef"
@@ -1863,7 +1962,7 @@ def selftest():
         raise AssertionError("unsupported control command accepted")
     except ValueError:
         pass
-    print("AIUEOS_PXE_SELFTEST_OK dhcp=pxe+http+mac-bound tftp=oack control=token-bound "
+    print("AIUEOS_PXE_SELFTEST_OK dhcp=pxe+http+mac-bound tftp=oack cacao=single-flight control=token-bound "
           "node-relay=request-bound murakumo=qualify+poll+claim+result+renew+recover "
           "interface-bound=yes")
 
