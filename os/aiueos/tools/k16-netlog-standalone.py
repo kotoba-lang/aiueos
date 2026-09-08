@@ -31,7 +31,9 @@ while True:
     n += 1
     try:
         message = payload.decode("ascii", "replace").rstrip("\r\n")
-        print(f"AIUEOS_NETLOG_RX from={peer[0]}:{peer[1]} message={message}",
+        # t= is the receiver's wall clock in ms: window durations (A9 -> 21) and
+        # bridge latency are measured from it; without it the log had no time.
+        print(f"AIUEOS_NETLOG_RX from={peer[0]}:{peer[1]} message={message} t={time.time()*1000:.0f}",
               flush=True)
     except Exception as exc:                      # noqa: BLE001
         fails += 1

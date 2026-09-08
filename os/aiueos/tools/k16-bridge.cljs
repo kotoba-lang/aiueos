@@ -36,7 +36,9 @@
 
 (defn- now [] (.toISOString (js/Date.)))
 
-(defn- say [& parts] (println (str/join " " (map str parts))))
+;; Every receipt ends with t=<iso>: the greeting latency (CONNECTED -> GREETING_SENT)
+;; and the board's window (netlog A9 -> 21) are only comparable with clocks on both.
+(defn- say [& parts] (println (str (str/join " " (map str parts)) " t=" (now))))
 
 (defn- hex [buf] (.toString buf "hex"))
 
