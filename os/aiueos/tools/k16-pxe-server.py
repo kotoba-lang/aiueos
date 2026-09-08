@@ -251,6 +251,13 @@ MURAKUMO_CACAO_CLASSPATH = os.environ.get(
 # truthful tier is the one it can authorize for itself.
 MURAKUMO_TRUST_TIER = os.environ.get(
     "AIUEOS_MURAKUMO_TRUST_TIER", "community")
+# How many consecutive failures a boot's liveness thread tolerates before it
+# stops. It must be finite: while it runs it heartbeats, and a heartbeat is
+# what the server derives liveness from, so an unbounded thread keeps a dead
+# board marked live. 12 at retry_interval 5 s is about a minute of trying,
+# against a board whose whole run is one second.
+MURAKUMO_LIVENESS_MAX_FAILURES = int(
+    os.environ.get("AIUEOS_MURAKUMO_LIVENESS_MAX_FAILURES", "12"))
 MURAKUMO_CACAO_TTL = int(os.environ.get("AIUEOS_MURAKUMO_CACAO_TTL", "600"))
 # How long one mint may take, and how long a FAILED mint is remembered. The
 # second number is the one that matters: without it a refused or timed-out mint
@@ -881,7 +888,31 @@ def maintain_murakumo_liveness(
         result_queue=MURAKUMO_LIVENESS_RESULTS, sleeper=time.sleep,
         rounds=None, interval=30, timeout=10,
         job_result_queue=MURAKUMO_JOB_RESULTS,
-        max_failures=None, retry_interval=5):
+        max_failures=MURAKUMO_LIVENESS_MAX_FAILURES, retry_interval=5):
+    """Keep one boot's job lease alive, and STOP when that boot is gone.
+
+    `max_failures` used to default to None, which meant this loop never
+    terminated. Measured 2026-09-08: the board was hung for 91 minutes, links
+    up, answering nothing -- and the cluster showed the node
+    `live? true, heartbeat-age 15s`, because these threads were still running
+    for six long-dead boot nonces and still posting heartbeats. The log carried
+    `failures=100`, `failures=271` and climbing.
+
+    Two separate things were wrong and only one of them is obvious.
+
+    The obvious one: a thread per dead boot, forever, which is also what fed
+    the CACAO mint stampede -- six concurrent authorizations, none able to
+    finish, cache never populating.
+
+    The subtle one: `retry_or_return(mark_stale=True)` posts
+    `murakumo_heartbeat(False)` to say "not ready", and that post REFRESHES
+    heartbeat-at. Liveness on the server is derived from heartbeat recency, so
+    a heartbeat saying "not ready" still asserts "here". "I am not ready" and
+    "I am not here" are different claims and only silence makes the second.
+    So the fix is not a better heartbeat body -- it is stopping.
+
+    A bounded loop gives both: the thread exits, nothing heartbeats, and the
+    node goes stale on its own, which is the true statement."""
     sequence = 1
     renewed = 0
     executed = 0
@@ -902,6 +933,10 @@ def maintain_murakumo_liveness(
               f"renewed={renewed} executed={executed}", flush=True)
         if max_failures is not None and \
                 consecutive_failures >= max_failures:
+            print(f"AIUEOS_MURAKUMO_LIVENESS state=gave-up boot={boot} "
+                  f"stage={result.get('stage')} failures={consecutive_failures} "
+                  f"-- no further heartbeats for this boot, so the node goes "
+                  f"stale rather than claiming to be here", flush=True)
             return dict(result, failures=consecutive_failures)
         sleeper(retry_interval)
         return None
