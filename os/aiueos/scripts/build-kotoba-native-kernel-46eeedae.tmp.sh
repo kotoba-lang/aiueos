@@ -49,7 +49,15 @@ require_source_commit mmio/map "$mmio_map_source" "$mmio_map_commit"
 require_source_commit net/transport "$net_transport_source" "$net_transport_commit"
 require_source_commit org-ietf-tcp "$org_ietf_tcp_source" "$org_ietf_tcp_commit"
 mkdir -p "$out"
-native_fuel=${AIUEOS_NATIVE_FUEL:-1048576}
+# 2^26. Was 1048576 = 2^20 -- which was not a chosen budget but exactly the
+# `max-native-fuel` the compiler admitted until 2026-09-03; the ceiling is now
+# 2^53-1 and the number outlived its reason. At 2^20 the run had to stop after
+# four cycles, and the board was ALIVE FOR 12 MILLISECONDS PER 19.7 SECONDS.
+# Fuel here is per BOOT and non-replenishable, and its guard is `ud2` with no
+# handler -- the board halts and a person presses the power button -- so the
+# budget is raised BEFORE the run is lengthened and by more (64x fuel for 16x
+# cycles = 4x the per-cycle margin). ADR-0203.
+native_fuel=${AIUEOS_NATIVE_FUEL:-67108864}
 # The budget is written down in the policy EDN, the --fuel flag, the sealed
 # context check, the receipt and the OK line. The policy is the authority --
 # --fuel alone is silently not enough -- so generate the policy from the same

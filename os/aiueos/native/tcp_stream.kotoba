@@ -1399,7 +1399,19 @@
 ;; died in `ud2` with no DE. 4 buys the deliberate end while the bridge learns
 ;; to close with RST (k16-bridge.cljs debug mode) and cycles get cheaper; the
 ;; real fix is still a per-cycle replenish (ADR-0156, amu-h1).
-(defn debug-run-cycles [] 4)
+(defn debug-run-cycles [] 64)
+;; 4 until 2026-09-08. Measured that day: four cycles complete in 12 ms and the
+;; run then resets through PXE, which takes 19.7 s -- the board was ALIVE FOR
+;; 0.1% OF ITS LIFE. A node reachable for 12 ms in 20 s cannot be handed a job:
+;; three murakumo dispatches timed out while the bus2 netlog showed the board
+;; HAD answered one, under a later boot nonce.
+;;
+;; Raised WITH the fuel budget and never ahead of it (ADR-0203). Fuel
+;; exhaustion here is not a graceful stop: the prologue's `ud2` halts the
+;; machine and nothing resets it, so the board waits for a human at the power
+;; button -- the one thing this rig is built not to need. So the budget goes up
+;; first and by more: 64x the fuel for 16x the cycles leaves four times the
+;; margin per cycle that 4-on-2^20 had.
 
 (defn stream-resident [win mmio scratch bus3-dma remaining]
   ;; Plan A-2: the stream stage never halts the machine. Each cycle fully
