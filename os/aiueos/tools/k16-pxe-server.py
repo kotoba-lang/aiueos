@@ -359,7 +359,49 @@ NODE_PONG = re.compile(
     r"seq=([0-9]{1,10}) state=ready$")
 NEXT_BOOT_LOCK = threading.Lock()
 MURAKUMO_BOOT_LOCK = threading.Lock()
-MURAKUMO_SEEN_BOOTS = set()
+class BoundedSeen:
+    """The boots this relay has already enrolled, with a ceiling.
+
+    It was a plain `set()`, which is correct and unbounded -- one entry per
+    boot, discarded only when enrollment or the heartbeat fails. That is fine
+    for a board that boots when a person presses a button, and it is a leak the
+    moment the board recovers itself: the chipset watchdog landed 2026-09-08
+    resets a stopped run in about ten seconds, and a board on a ~21 s cycle
+    enrolls roughly four thousand times a day, forever, in a daemon that is
+    meant never to be restarted.
+
+    This is the shape of defect that only appears once the system starts
+    WORKING, which is when nobody is looking at it any more. Bounded now,
+    while the boot rate is still zero.
+
+    512 is two of ANNOUNCED_BOOTS' 256 -- deliberately larger, because a boot
+    that is evicted from here would be enrolled a second time, and this set is
+    what makes enrollment idempotent."""
+
+    def __init__(self, capacity=512):
+        self.capacity = capacity
+        self._seen = collections.OrderedDict()
+
+    def __contains__(self, boot):
+        return boot in self._seen
+
+    def add(self, boot):
+        self._seen[boot] = None
+        self._seen.move_to_end(boot)
+        while len(self._seen) > self.capacity:
+            self._seen.popitem(last=False)
+
+    def discard(self, boot):
+        self._seen.pop(boot, None)
+
+    def clear(self):
+        self._seen.clear()
+
+    def __len__(self):
+        return len(self._seen)
+
+
+MURAKUMO_SEEN_BOOTS = BoundedSeen()
 # Every boot nonce this node has announced on the wire, most recent last.
 #
 # WHY. Measured 2026-09-08: the board is UP FOR 12 MILLISECONDS out of every
@@ -1591,6 +1633,28 @@ def selftest_dhcp_guard():
     assert ok.sent == 1
 
 
+def selftest_bounded_seen():
+    """The enrolled-boots set has a ceiling, and keeps the RECENT boots.
+
+    Asserts the bound, not just that membership works, because membership
+    worked perfectly well when it was an unbounded set -- growing without limit
+    was the whole defect. A board that recovers itself enrolls about four
+    thousand times a day, so this only matters once the watchdog works."""
+    seen = BoundedSeen(capacity=4)
+    for n in range(10):
+        seen.add(f"boot{n}")
+    assert len(seen) == 4, len(seen)
+    assert "boot9" in seen and "boot6" in seen, "dropped a recent boot"
+    assert "boot5" not in seen and "boot0" not in seen, "kept an evicted boot"
+    seen.add("boot6")                       # re-adding refreshes rather than grows
+    assert len(seen) == 4, len(seen)
+    seen.discard("boot9")
+    assert "boot9" not in seen and len(seen) == 3
+    seen.discard("boot9")                   # discarding twice is not an error
+    seen.clear()
+    assert len(seen) == 0
+
+
 def selftest_cacao_single_flight():
     """One mint per miss, and a failed mint remembered.
 
@@ -1749,6 +1813,7 @@ def selftest():
     oack, size = tftp_oack({"blksize": "1024", "tsize": "0"}, 13312)
     assert size == 1024 and b"tsize\00013312\000" in oack
     selftest_dhcp_guard()
+    selftest_bounded_seen()
     selftest_cacao_single_flight()
     selftest_authorization()
     ready = "AIUEOS_CONTROL_READY nonce=0123456789abcdef commands=ping,reboot-pxe"
@@ -2021,7 +2086,7 @@ def selftest():
         raise AssertionError("unsupported control command accepted")
     except ValueError:
         pass
-    print("AIUEOS_PXE_SELFTEST_OK dhcp=pxe+http+mac-bound tftp=oack cacao=single-flight control=token-bound "
+    print("AIUEOS_PXE_SELFTEST_OK dhcp=pxe+http+mac-bound tftp=oack cacao=single-flight seen=bounded control=token-bound "
           "node-relay=request-bound murakumo=qualify+poll+claim+result+renew+recover "
           "interface-bound=yes")
 
