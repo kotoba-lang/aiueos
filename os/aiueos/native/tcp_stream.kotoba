@@ -29,7 +29,8 @@
   ;; exporting (defn pick [x :i64 b :bool] :i64 ...) compiles to
   ;; x86_64-aiueos-kernel-v1 (exit 0). The ceiling moved; the 1/0 idiom here is
   ;; legacy, not a requirement, and may be retired module by module (lang-h3).
-  (:require [capability.link.frame :as link]
+  (:require [native.watchdog :as watchdog]
+             [capability.link.frame :as link]
             [capability.dma.map :as dma]
             [capability.mmio.map :as mapped]
             [capability.net.transport :as transport]
@@ -1569,7 +1570,16 @@
      ;; the loader's STATUS panel and holds, so a step that ends some other way
      ;; is still visible rather than silently re-entered.
      (+ 250 (* 0 drained)))
-   (let [tcb (kernel-subregion win dma-window-bytes 4096 4096)
+   (let [;; Kick the chipset watchdog once per cycle. This is the whole
+         ;; contract: a cycle that completes reloads the countdown, and a run
+         ;; that stops stops reloading it, so the platform resets itself
+         ;; without a person at the power button. `tco-base` is recomputed
+         ;; rather than threaded through -- it is three PCI config reads, which
+         ;; is nothing beside a connect and a receive window, and threading a
+         ;; base address through this function's arity would put a second thing
+         ;; in it that a cycle does not otherwise need.
+         watchdog-kicked (watchdog/kick (watchdog/tco-base))
+         tcb (kernel-subregion win dma-window-bytes 4096 4096)
         ;; The log frame is the stream's OWN page and nothing else's. Every
         ;; receipt below is emitted while a transmit may still be in flight.
         log-frame (kernel-subregion scratch scratch-window-bytes
