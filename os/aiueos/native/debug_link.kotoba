@@ -543,7 +543,7 @@
 
 (defn debug-tick [dma-pages]
   ;; Poll once, answer at most once. Returns what the kernel logs:
-  ;;   0        nothing arrived (or bus3's BAR no longer decodes)
+  ;;   0        nothing arrived
   ;;   1        a frame arrived that was not ours
   ;;   2        the RX ring is dead (re-arm failed)
   ;;   16+n     an ARP request for 10.10.10.2 was answered (debug-poll)
@@ -561,9 +561,12 @@
   ;; function at five parameters, and the resident loop was already at five.
   ;; Two PCI config reads per cycle is nothing beside a full connect plus a
   ;; receive window -- and it means the loop carries one bus3 value, not two.
+  ;;   3        bus3's BAR no longer decodes -- this used to return 0, the same
+  ;;            value as "nothing arrived", and that conflation is why a silent
+  ;;            receive path could not be told from an absent one (2026-09-08).
   (let [bar (rtl/bar-for-bus 3)]
     (if (= bar 0)
-      0
+      3
       (let [mmio (kernel-subregion 1 549755813887 (- bar 1) 512)
             seen (debug-poll mmio dma-pages)]
         (if (< seen 128)

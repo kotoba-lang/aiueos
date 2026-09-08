@@ -1443,8 +1443,15 @@
         ;; every value it returns fits in one byte (0, 1, 2, 64..71, 80..87,
         ;; 96..103), which is why the offset that would have been added here
         ;; is not.
-        bus3-mark (if (= bus3 0) 0 (stream-log win mmio log-frame 217))
-        bus3-logged (if (= bus3 0)
+        ;; Logged on EVERY first cycle of a run, not only when something
+        ;; arrived: `0` from debug-tick means "polled, nothing there", and until
+        ;; now that was indistinguishable from "the tick never ran". 174
+        ;; broadcasts sent at this board produced no receipt on 2026-09-08 and
+        ;; there was no way to tell which of the two it was.
+        bus3-mark (if (and (= bus3 0) (not (= cycles 0)))
+                    0
+                    (stream-log win mmio log-frame 217))
+        bus3-logged (if (and (= bus3 0) (not (= cycles 0)))
                       0
                       (stream-log win mmio log-frame
                                   (+ bus3 (* 0 bus3-mark))))
