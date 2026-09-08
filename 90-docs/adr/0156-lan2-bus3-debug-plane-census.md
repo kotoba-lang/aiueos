@@ -963,6 +963,52 @@ The ARP request above is a second frame at the same moment; if neither is ever
 seen while the ping reply (sent seconds later, in response to a packet that
 arrived) is, the answer is link timing, not addressing.
 
+## bus3 is not on en8's wire, and that is the whole story (2026-09-08)
+
+Two silences, one cause, found by asking the PXE server what it hears:
+
+```
+AIUEOS_PXE_DHCP_RX      mac=70:70:fc:0b:b6:31 arch=7 vendor='PXEClient:...'
+AIUEOS_PXE_DHCP_IGNORED mac=70:70:fc:0b:b6:31 expected=70:70:fc:0b:b6:32
+```
+
+`70:70:fc:0b:b6:31` is the board's SECOND NIC — bus3, the debug plane. Its DHCP
+broadcasts are arriving at a socket the server binds with `IP_BOUND_IF` to
+**en15**, the PXE wire. So bus3 is cabled to en15's segment, not to en8.
+
+Everything follows:
+
+- **board → Mac was never deliverable.** The frames are addressed to
+  `3c:18:a0:d5:82:a8`, which is **en8's** MAC. On en15's wire that is neither
+  en15's address (`80:69:1a:17:4f:15`) nor broadcast, so en15's NIC drops them
+  before any IP stack sees them. `debug-send` reporting 0 was true: the bytes
+  did leave the NIC.
+- **Mac → board was never deliverable.** `10.10.10.0/24` is en8's, so the Mac's
+  ARP for `10.10.10.2` goes out en8, where nothing answers. The ARP responder
+  added earlier today is correct and still cannot help on that wire.
+- The `Z` recorded on en8 in the Phase-1 census was measured when the cable
+  was somewhere else. A cabling fact is not a property of the code, and this
+  ADR carried it as one for two days.
+
+### And it has now stopped the loop
+
+With bus3's link up, the firmware tries to netboot from it. The server accepts
+one MAC (`PXE_EXPECTED_MAC`, bus2's), so every bus3 attempt is ignored and the
+board no longer reaches bus2: **0 boots and 0 TFTP in 150 s**, where the loop
+had been running at ~1.2 boots/min since 09:02. The last image it fetched is
+`fd0a0030` (236544 bytes); `efc5d540`, deployed 09:29, has never been served.
+
+Three ways out, cheapest first — all of them need the owner, because the PXE
+server binds ports 67/69 and cannot be restarted from here:
+
+1. move the board's second cable to en8 (restores the two-plane design the ADR
+   describes, and makes today's ARP work testable);
+2. restart the PXE server with `AIUEOS_PXE_EXPECTED_MAC` accepting both MACs,
+   so a boot from either NIC works and being stuck becomes impossible;
+3. disable network boot on the second NIC in the board's firmware.
+
+Until then nothing new can be measured on the hardware.
+
 ## Status of the artifacts
 
 - Commit `e09e4f1` (Phase 1 — bus3 single-shot) is superseded by commit
