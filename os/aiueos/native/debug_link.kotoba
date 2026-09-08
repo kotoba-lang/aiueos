@@ -33,12 +33,21 @@
             [capability.mmio.map :as mapped]
             [native.rtl8125 :as rtl])
   (:export [debug-init debug-send debug-send-byte debug-poll
-            debug-tick debug-mac-byte debug-phy-byte]))
+            debug-tick debug-mac-byte debug-phy-byte debug-frame-byte]))
 
 ;; ── fixed debug 4-tuple ──────────────────────────────────────────────────
 ;; K16 bus3 = 10.10.10.2, Mac en8 = 10.10.10.1, UDP 9000 -> 9000.
-(def k16-debug-ip 168493058)    ; 0x0A0A0A02
-(def mac-debug-ip 168493057)    ; 0x0A0A0A01
+;; Written as octets, not as a decimal literal. The literals used to be
+;; 168493058 and 168493057 with `; 0x0A0A0A02` beside them -- and 0x0A0A0A02 is
+;; 168430082. The transposed pair says 10.11.0.2 / 10.11.0.1, so every frame
+;; this plane ever sent carried a source address on a network that does not
+;; exist, while the baked header checksum was computed from the address in the
+;; COMMENT. The Mac received them and dropped every one in ip_input as a bad
+;; header checksum (measured 2026-09-08: exactly two per boot, the two
+;; greetings), and answered no ARP because the request asked for 10.11.0.1.
+;; One wrong digit is the whole history of "bus3 is output-only".
+(def k16-debug-ip (+ (* 10 16777216) (* 10 65536) (* 10 256) 2))   ; 10.10.10.2
+(def mac-debug-ip (+ (* 10 16777216) (* 10 65536) (* 10 256) 1))   ; 10.10.10.1
 (def debug-udp-port 9000)
 
 ;; Mac en8 NIC MAC (3c:18:a0:d5:82:a8), the fixed debug peer.
@@ -218,6 +227,15 @@
   (if (= index 0)
     (bit-and (quot (kernel-load-u16 mmio 512 108) 256) 255)
     (bit-and (kernel-load-u16 mmio 512 108) 255)))
+
+(defn debug-frame-byte [dma-pages index]
+  ;; One byte of the LAST frame built in the bus3 TX buffer. The Mac counts a
+  ;; bad IPv4 header checksum for exactly two frames per boot -- the two
+  ;; greetings -- so the header it receives is not the header this file thinks
+  ;; it writes, and the only way to settle that is to put the bytes on the wire.
+  (bit-and (kernel-load-u8-4k (kernel-subregion dma-pages 16384 8192 4096)
+                              4096 index)
+           255))
 
 (defn debug-mac-byte [mmio index]
   ;; One byte of IDR0..5, so the kernel can put bus3's MAC on the bus2 netlog.

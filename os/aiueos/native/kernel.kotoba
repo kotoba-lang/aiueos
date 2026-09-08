@@ -21,6 +21,19 @@
 ;; The compiler-emitted loader keeps the final UEFI memory map in a bounded
 ;; region directly after the 64-byte boot-info prefix.  The kernel derives that
 ;; region; it never turns the pointer stored by firmware into authority.
+(defn dump-bus3-ip-header [win mmio log-frame bus3-dma index]
+  ;; DD <byte> for offsets 14..33 of the last bus3 frame: the whole IPv4 header
+  ;; as it sits in the buffer the NIC transmitted from. One DD per byte, the
+  ;; shape lang-h9b requires, because any of these bytes can be a sentinel.
+  (if (> index 33)
+    1
+    (let [mark (stream/stream-log win mmio log-frame 221)
+          b (stream/stream-log win mmio log-frame
+                               (+ (debug/debug-frame-byte bus3-dma index)
+                                  (* 0 mark)))]
+      (+ (dump-bus3-ip-header win mmio log-frame bus3-dma (+ index 1))
+         (* 0 b)))))
+
 (defn load64 [base length offset]
   (+ (kernel-load-u8-16k base length offset)
      (* (kernel-load-u8-16k base length (+ offset 1)) 256)
@@ -655,10 +668,16 @@
                                                        bus3-mmio bus3-dma-pages)
                                                       (* 0 phy-lo))
                                                    7)
+                                        hdr (if (= dbg-init 0)
+                                              (dump-bus3-ip-header
+                                               stream-win stream-mmio
+                                               stream-log-frame
+                                               bus3-dma-pages 14)
+                                              0)
                                         mark-b (stream/stream-log
                                                 stream-win stream-mmio
                                                 stream-log-frame
-                                                (+ 184 (* 0 logged-a)))
+                                                (+ 184 (* 0 (+ logged-a hdr))))
                                         logged-init (stream/stream-log
                                                      stream-win stream-mmio
                                                      stream-log-frame
