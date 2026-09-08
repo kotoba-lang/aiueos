@@ -33,7 +33,7 @@
             [capability.mmio.map :as mapped]
             [native.rtl8125 :as rtl])
   (:export [debug-init debug-send debug-send-byte debug-poll
-            debug-tick debug-mac-byte]))
+            debug-tick debug-mac-byte debug-phy-byte]))
 
 ;; ── fixed debug 4-tuple ──────────────────────────────────────────────────
 ;; K16 bus3 = 10.10.10.2, Mac en8 = 10.10.10.1, UDP 9000 -> 9000.
@@ -205,6 +205,19 @@
 
 (defn build-udp-debug-frame [frame mmio payload]
   (build-udp-debug-frame-to frame mmio payload mac-debug-ip ip-checksum-to-mac))
+
+(defn debug-phy-byte [mmio index]
+  ;; PHYstatus (MMIO 108) as two bytes, so the kernel can put what the PHY
+  ;; actually reports on the bus2 netlog. link-up reads bit 1 of this register
+  ;; and answered "up" on the first look of every boot, immediately after
+  ;; rings-start reset the chip -- which is either true or a latch. The whole
+  ;; register says which: on an RTL8125 it carries the negotiated speed
+  ;; (10/100/1000/2500), full-duplex, and the link bit together, so a link that
+  ;; is up at a speed nothing else on the wire speaks is visible here and
+  ;; nowhere else.
+  (if (= index 0)
+    (bit-and (quot (kernel-load-u16 mmio 512 108) 256) 255)
+    (bit-and (kernel-load-u16 mmio 512 108) 255)))
 
 (defn debug-mac-byte [mmio index]
   ;; One byte of IDR0..5, so the kernel can put bus3's MAC on the bus2 netlog.

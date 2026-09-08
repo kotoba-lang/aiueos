@@ -136,6 +136,14 @@
   {:channel :netlog :value 218 :hex "DA" :name :bus3-mac-sentinel
    :emitter "os/aiueos/native/kernel.kotoba"
    :meaning "ONE MAC byte follows this DA. The kernel emits DA before EVERY byte of bus3's MAC: DA IDR0 DA IDR1 DA IDR2 DA IDR3 DA IDR4 DA IDR5 = 12 datagrams, once, only when debug-init returned ready (would read DA 70 DA 70 DA FC DA 0B DA B6 DA 31 for 70:70:fc:0b:b6:31). A reader consumes exactly one positional byte after each DA, whatever its value -- the MAC can contain FC, B6 or DA itself and the byte after a DA is never a sentinel. Shape changed 2026-09-07 (lang-h9b): the earlier form was one DA followed by six positional bytes, and on the 1-byte-per-datagram wire a MAC byte FC was read as the FC checksum verdict (measured 2026-09-07)."}
+  {:channel :netlog :value 221 :hex "DD" :name :bus3-phy-status-sentinel
+   :emitter "os/aiueos/native/kernel.kotoba"
+   :meaning "Emitted TWICE at boot when bus3 came up ready, each time followed
+             by ONE byte of PHYstatus (MMIO 108): DD <hi> DD <lo>. One DD per
+             byte for the reason lang-h9b names -- a raw byte on this wire is a
+             sentinel somewhere. link-up reads bit 1 of this register; the whole
+             register carries the negotiated speed and duplex beside it."
+   :data-followers 1}
   {:channel :netlog :value 222 :hex "DE" :name :run-end-reset
    :emitter "os/aiueos/native/tcp_stream.kotoba"
    :meaning "debug-run-cycles exhausted; the kernel is about to write 0x06 to port 0xCF9 (SYS_RST|RST_CPU). If DE never appears the run died in ud2 (fuel) before its deliberate end."}

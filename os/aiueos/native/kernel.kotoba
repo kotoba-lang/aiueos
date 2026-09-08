@@ -615,9 +615,45 @@
                                         ;; 7 = not attempted, because init
                                         ;; refused. Never confuse "skipped"
                                         ;; with "sent".
+                                        ;; What the PHY reports, as DD <hi>
+                                        ;; DD <lo> -- the same one-DA-per-byte
+                                        ;; shape the MAC block uses, and for
+                                        ;; the same reason (lang-h9b: a raw
+                                        ;; byte on this wire is a sentinel
+                                        ;; somewhere). Emitted before the
+                                        ;; greeting, because the greeting's
+                                        ;; status is only meaningful beside it.
+                                        phy-hi-mark (if (= dbg-init 0)
+                                                      (stream/stream-log
+                                                       stream-win stream-mmio
+                                                       stream-log-frame 221)
+                                                      0)
+                                        phy-hi (if (= dbg-init 0)
+                                                 (stream/stream-log
+                                                  stream-win stream-mmio
+                                                  stream-log-frame
+                                                  (+ (debug/debug-phy-byte
+                                                      bus3-mmio 0)
+                                                     (* 0 phy-hi-mark)))
+                                                 0)
+                                        phy-lo-mark (if (= dbg-init 0)
+                                                      (stream/stream-log
+                                                       stream-win stream-mmio
+                                                       stream-log-frame
+                                                       (+ 221 (* 0 phy-hi)))
+                                                      0)
+                                        phy-lo (if (= dbg-init 0)
+                                                 (stream/stream-log
+                                                  stream-win stream-mmio
+                                                  stream-log-frame
+                                                  (+ (debug/debug-phy-byte
+                                                      bus3-mmio 1)
+                                                     (* 0 phy-lo-mark)))
+                                                 0)
                                         dbg-sent (if (= dbg-init 0)
-                                                   (debug/debug-send
-                                                    bus3-mmio bus3-dma-pages)
+                                                   (+ (debug/debug-send
+                                                       bus3-mmio bus3-dma-pages)
+                                                      (* 0 phy-lo))
                                                    7)
                                         mark-b (stream/stream-log
                                                 stream-win stream-mmio
