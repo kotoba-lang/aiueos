@@ -64,7 +64,23 @@
               -- and the remaining work is an IVRS parser and AMD-Vi device
               table, which is substantial C and testable without the board.
               The mode asserts nothing yet on purpose: there is no AMD path to
-              assert, and a permanently red gate is worse than none."}
+              assert, and a permanently red gate is worse than none."
+   :correction "Later the same day, and this walks back the sentence above.
+                NOT hardware-gated was too strong. QEMU has the amd-iommu
+                DEVICE and does not give the guest an IVRS TABLE: with the
+                device attached, with and without intremap=on, the guest
+                reports AIUEOS_IVRS_ABSENT no-amd-iommu-described. So the AMD
+                path cannot be exercised here after all, and this node is
+                gated on either a QEMU configuration that presents IVRS or the
+                board itself.
+                What the step did produce: acpi.c now discovers and validates
+                IVRS with the same fail-closed shape as DMAR, and the guest
+                reports three distinguishable states rather than one. seen
+                versus present matters because collapsing them makes -this
+                machine has no IOMMU- and -this machine has one we could not
+                read- look identical, and the first is permission to run
+                unisolated. The parser is correct by construction and untested
+                against a real table, and is written down that way."}
 
   :tpm-key-binding
   {:title "Keys bound to a hardware root of trust"

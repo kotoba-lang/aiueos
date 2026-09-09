@@ -238,6 +238,14 @@ if [ "${AIUEOS_TEST_DMAR:-0}" = 1 ]; then iommu_args="-device intel-iommu,intrem
 # `amd-iommu`, and asserts NOTHING yet: no AMD path exists to assert. It is
 # here to observe what the guest does on the platform it will actually run on,
 # which had never been executed. Assertions arrive with the IVRS parser.
+#
+# MEASURED 2026-09-09: this does not yet exercise the AMD path. QEMU accepts
+# the device on q35 without complaint, with or without intremap=on, but the
+# guest reports AIUEOS_IVRS_ABSENT -- no IVRS table reaches it through OVMF.
+# So the device exists in QEMU and the TABLE does not, and the AMD-Vi path
+# stays unexercisable here until that changes or the board is powered. Kept
+# because the boot itself is worth having: it is the only way to run this OS
+# on its own platform's IOMMU class without the hardware.
 if [ "${AIUEOS_TEST_IVRS:-0}" = 1 ]; then iommu_args="-device amd-iommu"; fi
 # A NIC is attached only when asked for, so every existing gate keeps booting
 # the exact machine it booted before. SLIRP ("-netdev user") is a real peer with

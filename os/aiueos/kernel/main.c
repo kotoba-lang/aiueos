@@ -641,6 +641,8 @@ extern int aiueos_desktop_wm_paint(uint64_t front);
 extern uint32_t aiueos_desktop_wm_stored_color(uint64_t window_id);
 extern uint32_t aiueos_desktop_sample_pixel(uint32_t x, uint32_t y);
 extern int aiueos_acpi_initialize(const void *rsdp);
+extern uint32_t aiueos_acpi_ivrs_present(void);
+extern uint32_t aiueos_acpi_ivrs_seen(void);
 extern int aiueos_dma_test_policy_allows_unisolated(void);
 extern int aiueos_vtd_initialize(void);
 extern int aiueos_vtd_translation_enabled(void);
@@ -2200,6 +2202,21 @@ qwen_runtime_boot_complete:
     }
     debug_string("AIUEOS_ACPI_OK rsdp-xsdt-madt cpu>=2\n");
     serial_string("AIUEOS_ACPI_OK rsdp-xsdt-madt cpu>=2\r\n");
+    /* Emitted only where the table exists, which is the point: this marker
+       says "an AMD IOMMU was described to us and we read its header", and on a
+       machine without one there is nothing to claim. It does NOT say the IOMMU
+       is programmed -- the DMA policy still reports unisolated until an IVHD
+       parser and a device table exist. */
+    if (aiueos_acpi_ivrs_present()) {
+      debug_string("AIUEOS_IVRS_OK table-validated ivinfo-read not-yet-programmed\n");
+      serial_string("AIUEOS_IVRS_OK table-validated ivinfo-read not-yet-programmed\r\n");
+    } else if (aiueos_acpi_ivrs_seen()) {
+      debug_string("AIUEOS_IVRS_FAIL described-but-refused\n");
+      serial_string("AIUEOS_IVRS_FAIL described-but-refused\r\n");
+    } else {
+      debug_string("AIUEOS_IVRS_ABSENT no-amd-iommu-described\n");
+      serial_string("AIUEOS_IVRS_ABSENT no-amd-iommu-described\r\n");
+    }
 #ifdef AIUEOS_PHYSICAL_QUALIFICATION
 #ifdef AIUEOS_PHYSICAL_NETWORK_QUALIFICATION
     /* A second, explicitly test-only physical slice. The native-core gate has

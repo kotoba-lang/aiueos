@@ -95,4 +95,29 @@
          Verified both directions: AMD-Vi-only evidence now reads isolation 3/6
          with DMA_POLICY unproven, and evidence containing a real VT-d boot
          still reads 6/6. The union stays 74/114 because it genuinely contains
-         an isolated boot."}]
+         an isolated boot."}
+ {:at "2026-09-09"
+  :evidence ["evidence-all.log" "evidence-esp-uefi.log"]
+  :profile :uefi-suite-union
+  :core {:emitted 74 :declared 115 :pct 64.3}
+  :route :b-a-gap-closed-halfway-and-the-denominator-grew
+  :note "64.9 to 64.3, and down is right. acpi.c now discovers and validates
+         IVRS -- AMD's counterpart to DMAR, and the table that actually exists
+         on this board -- with the same fail-closed shape as DMAR: a table that
+         claims to be IVRS and does not validate stops the boot rather than
+         being skipped, because skipping leaves the present flag at 0, which is
+         indistinguishable from a machine with no IOMMU, and that is exactly
+         the state the DMA policy reads as permission to run unisolated.
+         The guest now reports three distinguishable states instead of one:
+         IVRS_OK validated, IVRS_FAIL described-but-refused, IVRS_ABSENT
+         no-amd-iommu-described.
+         AIUEOS_IVRS joins the isolation row, so :declared grows to 115 and the
+         headline falls. That is the honest direction and the reason :declared
+         is recorded beside :emitted: the tree grew a capability it has not
+         proven.
+         And a correction to this session's own claim. I wrote that
+         amd-ivrs-isolation was NOT hardware-gated because QEMU 10.0.3 offers
+         amd-iommu. QEMU has the DEVICE and does not hand the guest an IVRS
+         TABLE: attached, with and without intremap=on, the guest reports
+         IVRS_ABSENT. The parser is correct by construction and untested
+         against a real table. Marked as such rather than counted."}]

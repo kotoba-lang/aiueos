@@ -133,7 +133,7 @@
                 :note "bounded PCI scan, no hotplug, no suspend/resume"}
   :isolation   {:relevance :core
                 :markers [:DMA_POLICY :VTD :VTD_IR :CAPABILITY_TRANSFER
-                          :DYNAMIC_CAPABILITY :KOTOBA_CAPABILITY]
+                          :DYNAMIC_CAPABILITY :KOTOBA_CAPABILITY :IVRS]
                 :linux "IOMMU groups, VFIO"
                 :chromeos "same, enforced by default"
                 :note "VT-d present; AMD-IVRS is NOT, which is why the physical

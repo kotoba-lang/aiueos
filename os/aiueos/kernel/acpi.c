@@ -22,6 +22,9 @@ static uint32_t discovered_cpu_count;
 static uint32_t discovered_ioapic_address;
 static uint32_t discovered_ioapic_gsi_base;
 static uint32_t discovered_timer_gsi;
+static uint32_t discovered_ivrs_seen;
+static uint32_t discovered_ivrs_present;
+static uint32_t discovered_ivrs_info;
 static uint32_t discovered_dmar_drhd_count;
 static uint64_t discovered_dmar_register_base;
 static uint16_t discovered_dmar_segment;
@@ -39,6 +42,18 @@ int aiueos_dma_test_policy_allows_unisolated(void) {
   return discovered_dmar_drhd_count == 0 || vtd_translation_enabled;
 }
 uint32_t aiueos_acpi_dmar_drhd_count(void) { return discovered_dmar_drhd_count; }
+/* SEEN and PRESENT are different questions and the pair is the diagnostic:
+   seen=0 means the firmware described no AMD IOMMU at all, seen=1 present=0
+   means it described one and we refused the table. Collapsing them would make
+   "this machine has no IOMMU" and "this machine has one we could not read"
+   look identical -- and the first is permission to run unisolated. */
+uint32_t aiueos_acpi_ivrs_seen(void) { return discovered_ivrs_seen; }
+uint32_t aiueos_acpi_ivrs_present(void) { return discovered_ivrs_present; }
+/* IVinfo, the dword at offset 36. Reported rather than acted on: it carries the
+   physical and virtual address sizes an AMD-Vi device table has to agree with,
+   so it is the first field a parser will need and the first one worth proving
+   we can read. */
+uint32_t aiueos_acpi_ivrs_info(void) { return discovered_ivrs_info; }
 uint64_t aiueos_acpi_dmar_register_base(void) { return discovered_dmar_register_base; }
 uint16_t aiueos_acpi_dmar_segment(void) { return discovered_dmar_segment; }
 int aiueos_acpi_dmar_include_all(void) { return discovered_dmar_include_all; }
@@ -65,6 +80,12 @@ extern uint64_t kotoba_aiueos_acpi_table_valid(uint64_t table, uint64_t length,
 #define ACPI_SIGNATURE_RSDT 0x52534454ULL /* 'R','S','D','T' */
 #define ACPI_SIGNATURE_APIC 0x41504943ULL /* 'A','P','I','C' */
 #define ACPI_SIGNATURE_DMAR 0x444d4152ULL /* 'D','M','A','R' */
+/* AMD's counterpart to DMAR. The K16 is an AMD Ryzen 7 7735HS, so on the
+   machine this OS is built for, DMAR is the table that is absent and IVRS is
+   the one that is there -- every VT-d capability this tree proves is proved
+   against silicon the board does not have. Discovery first: parsing IVHD
+   entries and programming a device table is the next step and is not this one. */
+#define ACPI_SIGNATURE_IVRS 0x49565253ULL /* 'I','V','R','S' */
 
 static int bytes_equal(const char *a, const char *b, uint64_t count) {
   while (count--) if (*a++ != *b++) return 0; return 1;
@@ -192,6 +213,19 @@ int aiueos_acpi_initialize(const void *rsdp_pointer) {
     } else if (bytes_equal(candidate->signature, "DMAR", 4)) {
       if (dmar || !valid_sdt(candidate, ACPI_SIGNATURE_DMAR)) return 0;
       dmar = candidate;
+    } else if (bytes_equal(candidate->signature, "IVRS", 4)) {
+      /* Same fail-closed shape as DMAR above, and for the same reason: a table
+         that CLAIMS to be IVRS and does not validate must stop the boot, not be
+         skipped. Skipping would leave `discovered_ivrs_present` at 0, which is
+         indistinguishable from a machine that has no IOMMU -- and that is
+         exactly the state the DMA policy treats as permission to run
+         unisolated. A malformed table must never buy that permission. */
+      discovered_ivrs_seen = 1;
+      if (discovered_ivrs_present || !valid_sdt(candidate, ACPI_SIGNATURE_IVRS) ||
+          candidate->length < 48) return 0;
+      discovered_ivrs_present = 1;
+      discovered_ivrs_info =
+          *(const uint32_t *)(const void *)((const uint8_t *)candidate + 36);
     }
   }
   if (!madt) return 0;
