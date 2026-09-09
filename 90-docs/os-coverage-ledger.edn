@@ -414,4 +414,34 @@
          Found by opening the file the label pointed at instead of trusting the
          label, one iteration after writing it. That is the same check this
          branch applies to other people's contracts, applied to my own, and it
-         is the sixth claim here to need retracting."}]
+         is the sixth claim here to need retracting."}
+ {:at "2026-09-09"
+  :profile :ssh-session-evidence-preserved
+  :core {:emitted 89 :declared 116 :pct 76.7}
+  :note "SSH_SESSION closed, and the way it closed is the entry.
+         The gate printed a bare AIUEOS_SSH_SESSION_OK with no payload, while
+         the guest's line reads 'session channel exec channel-data streamed'.
+         I took that as a sign the gate might be synthesising its own verdict,
+         which would make feeding it to the coverage script a way of counting
+         the gate's opinion as proof. Reading the script reversed it: line 229
+         does str/includes? on the guest's serial log, and the branch that
+         prints the guest's raw line is guarded by when-not kernel-ok -- so the
+         payload is withheld exactly on SUCCESS. The bare label was faithful.
+         The real defect was next to it. The gate concludes early on purpose
+         (waiting for qemu_exit past the timeout triggers a reboot that
+         overwrites the serial) and kills the process group, so
+         smoke-qemu-uefi.sh never reaches its own append. AUTH_OK and
+         KEX_REPLY_OK were in evidence-all.log four times each; SESSION_OK was
+         there zero times. The proof existed only as gate stdout, which no
+         evidence log ever sees. Same one-transport family as the overwrite bug
+         fixed earlier on this branch, in the one gate that concludes early.
+         conclude now appends the serial before kill-group. Measured rather
+         than assumed: evidence-all.log 348459 -> 356762 bytes, SESSION_OK
+         0 -> 1, and the line that arrived carries the full payload.
+         remote 4/6 -> 5/6. What remains there is RTL8125_SSH_SESSION, which
+         is board-gated, so the group an agent can close without a credential,
+         a board, an artifact or a firmware is now empty.
+         Also cleared a stale QEMU from the previous session's early conclude:
+         it still held hostfwd 8022 and had the deleted serial open, which is
+         why the run before this one died on 'Could not set up host forwarding
+         rule'. kill-group kills the wrapper's group; that QEMU outlived it."}]
