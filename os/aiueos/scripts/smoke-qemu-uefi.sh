@@ -528,6 +528,19 @@ PY
   done
   wait "$qemu_pid"
   status=$?
+  # Keep every scenario's serial output, not just the last one's. AFTER
+  # status=$? on purpose -- a cat here would clobber the exit code this whole
+  # function is built to read.
+  #
+  # $serial_log is one path reused by every scenario, so each run overwrites the
+  # last and no surviving file holds what the suite proved. That is not a
+  # cosmetic loss: measured 2026-09-09, a run with AIUEOS_TEST_NET=1 and
+  # AIUEOS_TEST_DMAR=1 exited 0 -- which those switches only permit when
+  # AIUEOS_DHCP_OK, AIUEOS_VTD_OK and AIUEOS_DMA_POLICY_OK are all present,
+  # since the gates below assert them by grep -- yet the file left on disk
+  # afterwards held four markers from a later, shorter scenario and none of
+  # those three. The suite proved capabilities its own evidence could not show.
+  cat "$serial_log" >> "$out/evidence-all.log" 2>/dev/null || true
   # Normalised to 124 on purpose: every branch below, and fifteen sibling
   # scripts, already know what 124 means. WHICH limit ended the attempt is
   # carried in $quiet_fired and reported, not encoded in a new status nobody

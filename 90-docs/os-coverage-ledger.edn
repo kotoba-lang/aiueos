@@ -46,4 +46,30 @@
          that version it emits AIUEOS_VIRTIO_INPUT_OK and finishes
          AIUEOS_UEFI_SMOKE_OK with exit 0. The gate's downgrade is the release
          IMAGE, not the host -- the build passes the suite and the release
-         image does not, and the release image is what would run on a node."}]
+         image does not, and the release image is what would run on a node."}
+ {:at "2026-09-09"
+  :evidence ["evidence-all.log" "evidence-esp-uefi.log"]
+  :profile :uefi-suite-union-of-three-modes
+  :core {:emitted 74 :declared 114 :pct 64.9}
+  :route :a-evidence-from-profiles-that-already-pass
+  :closed [:VIRTIO_NET :DHCP :IPV4 :TCP :VTD :VTD_IR :DMA_POLICY :ECDSA_PUBLIC]
+  :note "58.8 to 64.9, again with no capability change, and the reason is worth
+         more than the number. The suite's switches are MUTUALLY EXCLUSIVE
+         MODES, not additive flags: AIUEOS_ECDSA_PUBLIC_KAT makes the guest run
+         that KAT instead of the full boot. And every scenario wrote to one
+         reused path, so each run overwrote the last.
+         Both together meant the suite proved things no surviving file showed.
+         Measured: a run with AIUEOS_TEST_NET=1 and AIUEOS_TEST_DMAR=1 exited
+         0, which those switches only permit when AIUEOS_DHCP_OK, AIUEOS_VTD_OK
+         and AIUEOS_DMA_POLICY_OK are all present -- the gates grep for them --
+         yet the file left behind held four markers from a later, shorter mode
+         and none of those three. smoke-qemu-uefi.sh now appends each run's
+         serial output to evidence-all.log, after the exit status is captured
+         so the copy cannot clobber it.
+         net-link and net-stack were profile scope exactly as suspected, and
+         are no longer zero.
+         CAVEAT ON THE 100 PERCENT: isolation reads 6/6 on VT-d markers
+         measured under QEMU emulating Intel. The K16 is an AMD Ryzen 7 7735HS.
+         That row's coverage transfers to this board not at all, and it is the
+         one place where a rising number here means less rather than more.
+         Next lever, untried: AIUEOS_SSH_HOSTFWD against remote 0/6."}]
