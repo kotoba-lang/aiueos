@@ -23,7 +23,11 @@
     'io.github.kotoba-lang/osaho
     'io.github.kotoba-lang/amu
     'io.github.kotoba-lang/security
-    'io.github.kotoba-lang/abi})
+    'io.github.kotoba-lang/abi
+    ;; verified public 2026-09-09 (gh repo view --json isPrivate -> false for all three)
+    'io.github.kotoba-lang/kotoba-native
+    'io.github.kotoba-lang/org-nist-sha2
+    'io.github.kotoba-lang/webgpu})
 
 (def ^:private deps (delay (edn/read-string (slurp "deps.edn"))))
 
