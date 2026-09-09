@@ -33,7 +33,17 @@
               point also moves -- GUEST_INPUT on one run, APIC_TIMER on two
               others. The ESP boot of the same sources reaches 76 markers with
               PCI_RESULT input-rng-base=111 and VIRTIO_INPUT_OK, so the code
-              path itself is sound."
+              path itself is sound.
+              SHARPENED the same day, and the earlier restatement was half
+              wrong. Every 0x6f exit now names its own line, and the release
+              image stops at main.c:3058 -- the branch taken when
+              `pci_result & 4` is clear, the virtio-input bit. The bits read
+              input-rng-base=011 on the GPT image against 111 on the ESP
+              build, through the SAME suite with the same devices and the same
+              QMP input injection, so it is not an artifact of a hand-built
+              command. So this IS an enumeration difference after all; the run
+              that showed no PCI line at all is a second, earlier failure mode
+              that remains uncharacterised."
    :why-first "Nothing else can be proved on the shipping artifact while it
                stops partway. Largest measured gap: 76 markers on the build
                against about 30 on the image."}
