@@ -264,6 +264,17 @@ static int blk_msix_active;
 static uint16_t blk_wait_used, blk_wait_target;
 static uint64_t blk_wait_irq;
 static int blk_wait_overshot;
+/* The slowest SUCCESSFUL wait, so the healthy case can be compared with the
+   sick one instead of guessed at. If every wait completes on the first look the
+   used index never has room to run ahead of target and the overshoot theory is
+   dead; if some waits take many iterations, it has room. Only the success path
+   can say which, and the failure path cannot. */
+static uint32_t blk_slowest_iters;
+static uint16_t blk_slow_used, blk_slow_target;
+unsigned aiueos_virtio_blk_slowest_wait(void) { return blk_slowest_iters; }
+unsigned aiueos_virtio_blk_slow_used(void) { return blk_slow_used; }
+unsigned aiueos_virtio_blk_slow_target(void) { return blk_slow_target; }
+
 int aiueos_virtio_blk_wait_overshot(void) { return blk_wait_overshot; }
 unsigned aiueos_virtio_blk_wait_used(void) { return blk_wait_used; }
 unsigned aiueos_virtio_blk_wait_target(void) { return blk_wait_target; }
@@ -391,6 +402,10 @@ static int virtio_blk_sector_io(struct virtio_blk_request *request, uint8_t *sec
       uint32_t expected = type == VIRTIO_BLK_T_IN ? 513 : 1;
       if (completion->id != 0 || completion->length != expected || *status != VIRTIO_BLK_S_OK)
         return 0;
+      if (budget >= blk_slowest_iters) {
+        blk_slowest_iters = budget; blk_slow_used = used->index;
+        blk_slow_target = target;
+      }
       *submitted = target;
       return 1;
     }
@@ -908,6 +923,8 @@ static int setup_blk_msix(uint8_t b, uint8_t d, uint8_t f,
   config_write(b,d,f,pointer,header | (1U << 31));
   if (!(config_read(b,d,f,pointer) & (1U << 31))) return 0;
   aiueos_virtio_blk_irq_count = 0;
+  blk_slowest_iters = 0; blk_slow_used = 0; blk_slow_target = 0;
+  blk_slowest_iters = 0; blk_slow_used = 0; blk_slow_target = 0;
   return 1;
 }
 

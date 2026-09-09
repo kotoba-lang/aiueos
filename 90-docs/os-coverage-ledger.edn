@@ -224,4 +224,26 @@
          changed timing enough to hide the race, or the hang has another source
          that seven runs did not sample. What is established is that the boot
          became deterministic where it was not, and what is not established is
-         why."}]
+         why."}
+ {:at "2026-09-09"
+  :profile :blk-wait-measured-on-the-healthy-path
+  :note "A negative result, and it is against my own hypothesis.
+         The overshoot theory needed the used index to have room to run ahead
+         of target. Measuring the SUCCESS path says it does not: on both
+         profiles the slowest wait that ever succeeded took ONE iteration, with
+         used equal to target -- 49 requests on the build, 55 on the release
+         image. A completion that is seen on the first look cannot arrive twice
+         before anyone checks.
+         Combined with the overshoot detector never firing across nine runs, of
+         which zero hung, the honest position is: the hang no longer reproduces
+         and nothing here explains why it did. The obvious candidate -- that
+         adding the check fixed it -- is not supported: it never triggered. The
+         likelier story is that some other change between those builds moved the
+         timing, since several landed in between, and that is a story rather
+         than a measurement.
+         The check stays on its own merits. An exact-equality wait on a
+         monotone counter beside an inequality on the counter next to it is
+         fragile whether or not it is what bit us, and now it fails with
+         numbers instead of spinning. But the node is NOT closed and the cause
+         is NOT known, and the difference between those and a green run is the
+         whole point of keeping this ledger."}]

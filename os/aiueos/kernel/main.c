@@ -649,6 +649,9 @@ extern int aiueos_pci_input_fail_reason(void);
 extern int aiueos_virtio_blk_wait_overshot(void);
 extern unsigned aiueos_virtio_blk_wait_used(void);
 extern unsigned aiueos_virtio_blk_wait_target(void);
+extern unsigned aiueos_virtio_blk_slowest_wait(void);
+extern unsigned aiueos_virtio_blk_slow_used(void);
+extern unsigned aiueos_virtio_blk_slow_target(void);
 extern int aiueos_dma_test_policy_allows_unisolated(void);
 extern int aiueos_vtd_initialize(void);
 extern int aiueos_vtd_translation_enabled(void);
@@ -2953,7 +2956,20 @@ qwen_runtime_boot_complete:
       qemu_exit(0x71);
     }
     debug_string("AIUEOS_VIRTIO_BLK_OK capacity-bounded sector=0 bytes=512 readonly\n");
-    serial_string("AIUEOS_VIRTIO_BLK_OK capacity-bounded sector=0 bytes=512 readonly\r\n");
+    serial_string("AIUEOS_VIRTIO_BLK_OK capacity-bounded sector=0 bytes=512 readonly");
+    /* The slowest wait that SUCCEEDED. Near zero means completions are seen on
+       the first look, so the used index has no room to run ahead of target and
+       the overshoot theory has nowhere to live. Measured on the healthy path
+       because the failing path cannot answer it. */
+    serial_string(" slowest-wait=");
+    { unsigned v[3]; v[0]=aiueos_virtio_blk_slowest_wait();
+      v[1]=aiueos_virtio_blk_slow_used(); v[2]=aiueos_virtio_blk_slow_target();
+      for (int k = 0; k < 3; k++) {
+        char q[12]; unsigned i = 0, n = v[k];
+        if (!n) q[i++] = '0';
+        while (n) { q[i++] = (char)('0' + (n % 10)); n /= 10; }
+        while (i--) { char one[2]; one[0]=q[i]; one[1]=0; serial_string(one); }
+        serial_string(k == 0 ? " used=" : k == 1 ? " target=" : "\r\n"); } }
     if (aiueos_virtio_blk_irq_count < 5) {
       serial_string("AIUEOS_VIRTIO_BLK_MSIX_FAIL irq-count\r\n"); evidence_stop(__LINE__);
     }
