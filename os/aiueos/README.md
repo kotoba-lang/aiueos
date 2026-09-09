@@ -976,13 +976,15 @@ Narrowed further the same day, by rebuilding rather than reasoning:
   source emits `AIUEOS_VIRTIO_INPUT_OK`. Same QEMU, same sources, different
   container — so the suspect is device enumeration or queue setup shifting
   when the boot disk occupies a slot, and that is a hypothesis, not a result.
-- **The build is not byte-reproducible.** Three builds of an unchanged tree
-  produced three different `KERNEL.ELF` hashes (`5e5cb2bc…`, `f259b5d5…`,
-  `0556cba0…`), because build identity is embedded. That is worth naming
-  separately: it means two images cannot be compared by hash, and for an
-  appliance OS measured against ChromeOS — where an image's identity is the
-  point — reproducibility is a gap in its own right, not a build-system
-  detail.
+- ~~**The build is not byte-reproducible.**~~ **Wrong, and retracted the same
+  day.** Those three builds had different C sources — I was editing between
+  them — and the identity header carries version, `commit[:12]` and a dirty
+  flag with no timestamp, so it could not have caused it. Measured properly:
+  two builds back to back with nothing touched give a byte-identical
+  `KERNEL.ELF`, and building into a different output directory gives the same
+  bytes again. **The build is reproducible here and path-independent.** Not
+  claimed, because not measured: reproducibility across machines, toolchain
+  versions or clocks.
 
 `flash-usb.cljs` writes the image to a physical stick. Because that is
 irreversible, it is deny-by-default: without `--confirm` it only inspects, and

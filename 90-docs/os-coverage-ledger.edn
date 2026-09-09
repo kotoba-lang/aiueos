@@ -246,4 +246,24 @@
          fragile whether or not it is what bit us, and now it fails with
          numbers instead of spinning. But the node is NOT closed and the cause
          is NOT known, and the difference between those and a green run is the
-         whole point of keeping this ledger."}]
+         whole point of keeping this ledger."}
+ {:at "2026-09-09"
+  :profile :reproducible-build-node-closed
+  :note "A node closed by discovering it never existed.
+         It said three builds of an unchanged tree gave three KERNEL.ELF
+         hashes because build identity is embedded. The tree was NOT unchanged
+         -- I had been editing C sources between those builds -- and the
+         identity header holds version, commit[:12] and a dirty flag, with no
+         timestamp anywhere in it, so it could not have produced the difference
+         I blamed it for. I read three hashes and inferred a mechanism instead
+         of testing one.
+         Tested: two builds back to back with nothing touched give a
+         byte-identical KERNEL.ELF, 6eb33f67..., and building into a different
+         output directory gives the same bytes again. Reproducible here, and
+         path-independent.
+         NOT claimed: across machines, toolchain versions or clocks. Never
+         measured, so the node asserts nothing about them.
+         This is the fourth claim of mine to be retracted in this branch, and
+         all four have the same shape -- a mechanism inferred from an
+         observation that had a simpler explanation. The three before it were
+         about the release image."}]

@@ -15,14 +15,33 @@
 ;; node so their position is honest, but the loop must not spin on them.
 {:format :aiueos.maturity-plan/v1
  :benchmark :chromeos
- :measured-baseline {:build {:core 67 :of 114 :pct 58.8}
-                     :release-image {:core 29 :of 114 :pct 25.4}
-                     :at "2026-09-09" :by "os/aiueos/scripts/os-coverage.cljs"}
+ :measured-baseline {:union {:core 75 :of 115 :pct 65.2}
+                     :release-image {:core 66 :of 115 :pct 57.4}
+                     :build {:core 63 :of 115 :pct 54.8}
+                     :at "2026-09-09" :by "os/aiueos/scripts/os-coverage.cljs"
+                     :note "The release image reads HIGHER than the build. The
+                             earlier 25.4 measured it built without a define its
+                             own gate requires."}
 
  :nodes
  {:release-image-boots-to-completion
   {:title "The release image boot reaches the end instead of stopping partway"
    :needs []
+   ;; Two halves, and neither is stalled for want of effort.
+   ;;
+   ;; The hang does not reproduce: nine runs, zero hangs, and the detector
+   ;; written for it never fired once. Chasing a bug that will not appear is
+   ;; how a loop spends a day producing nothing, so this waits for a
+   ;; recurrence rather than for another guess. The instrumentation to catch
+   ;; it is already in place, which is what makes waiting reasonable rather
+   ;; than lazy -- the next occurrence will name itself.
+   ;;
+   ;; The other half is understood and is not an OS defect: the suite requires
+   ;; a fabricated input event that a shipping image must not contain, so it
+   ;; cannot pass a production image by construction. That is a gate design
+   ;; decision with a real trade-off -- whether a BOOT TRANSPORT gate should
+   ;; assert input at all -- and it is the owner's to make, not an agent's.
+   :blocked-on :no-reproduction-and-a-gate-design-question
    :evidence "Restated 2026-09-09 after measuring, and the restatement is the
               point. This was filed as an enumeration difference because the
               GPT boot emitted no VIRTIO_GPU_OK or VIRTIO_INPUT_OK while PCI_OK
@@ -113,12 +132,21 @@
   :reproducible-build
   {:title "Two builds of one tree produce one image"
    :needs []
-   :evidence "Three builds of an unchanged tree gave three KERNEL.ELF hashes
-              (5e5cb2bc, f259b5d5, 0556cba0) because build identity is embedded.
-              Measured 2026-09-09."
-   :why-first "Independent of everything and blocks verification of everything:
-               two images cannot be compared by hash. On the ChromeOS benchmark
-               an image's identity is the point, not a build-system detail."}
+   :done true
+   :evidence "CLOSED 2026-09-09, and the node was founded on my own error.
+              It said three builds of an unchanged tree gave three KERNEL.ELF
+              hashes because build identity is embedded. The tree was not
+              unchanged -- I had been editing C sources between those builds --
+              and the identity header holds version, commit[:12] and a dirty
+              flag, with no timestamp in it, so it could not have caused this.
+              Measured properly: two builds back to back with nothing touched
+              give a byte-identical KERNEL.ELF (6eb33f67...), and building into
+              a different output directory gives the same bytes again. So the
+              build is reproducible on this machine and path-independent.
+              NOT claimed: reproducibility across machines, toolchain versions
+              or clocks. Those were never measured and the node does not assert
+              them."
+   :why-first "Was: two images cannot be compared by hash. They can."}
 
   :amd-ivrs-isolation
   {:title "DMA isolation on AMD (IVRS), not only VT-d"

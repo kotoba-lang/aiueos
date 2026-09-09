@@ -68,7 +68,13 @@
       ;; credential or a decision; hardware-gated needs the board powered. Both
       ;; stay IN the order, so their position stays honest -- what changes is
       ;; only which node a loop is told to pick up.
-      blocked? #(let [n (get nodes %)] (or (:owner-gated n) (:hardware-gated n)))
+      ;; :blocked-on is the third kind, and it earns its place: a bug that does
+      ;; not reproduce cannot be worked on by trying harder, and a loop that
+      ;; keeps being handed one spends the day producing nothing. It differs
+      ;; from the other two in that it can lift on its own -- a recurrence
+      ;; unblocks it -- so it is a state, not a category.
+      blocked? #(let [n (get nodes %)]
+                  (or (:done n) (:owner-gated n) (:hardware-gated n) (:blocked-on n)))
       open (remove blocked? order)
       next-id (first open)]
 
@@ -90,6 +96,8 @@
                       "  (unblocks " (leverage id) ")"
                       (when (:owner-gated n) "   [owner-gated]")
                       (when (:hardware-gated n) "   [hardware-gated]")
+                      (when-let [b (:blocked-on n)] (str "   [blocked: " (name b) "]"))
+                      (when (:done n) "   [done]")
                       (when (= id next-id) "   <- next")))
         (println (str "     " (apply str (repeat d "    ")) (:title n)))
         (when (seq (:needs n))
