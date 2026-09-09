@@ -85,7 +85,17 @@
     <key>AIUEOS_MURAKUMO_NODE_DID_FILE</key><string>/Users/junkawasaki/.gftd/k16-murakumo-node.did</string>
     <key>AIUEOS_MURAKUMO_NODE_KEY_FILE</key><string>/Users/junkawasaki/.gftd/k16-murakumo-node.pem</string>
     <key>AIUEOS_MURAKUMO_CACAO_MINT</key><string>/Users/junkawasaki/github/com-junkawasaki/orgs/kotoba-lang/aiueos/os/aiueos/tools/k16-cacao-mint.cljs</string>
-    <key>AIUEOS_MURAKUMO_CACAO_CLASSPATH</key><string>/Users/junkawasaki/github/com-junkawasaki/orgs/kotoba-lang/org-chainagnostic-cacao/src</string>
+    <!-- The mint's classpath. `text/src` joined it on 2026-09-09 because
+       k16-cacao-mint.cljs moved from clojure.string to kotoba.lang.text
+       (aiueos e4187d5, 07:19) and this file did not follow. The resident node
+       had been failing every mint since:
+
+         AIUEOS_MURAKUMO_CACAO_REFUSED ... Could not find namespace: kotoba.lang.text
+
+       and the symptom downstream was `stage=enroll status=401`, which reads as
+       a signing problem and is not one. A source change landed without its
+       deployment counterpart; nothing checks that these two agree. -->
+  <key>AIUEOS_MURAKUMO_CACAO_CLASSPATH</key><string>/Users/junkawasaki/github/com-junkawasaki/orgs/kotoba-lang/org-chainagnostic-cacao/src:/Users/junkawasaki/github/com-junkawasaki/orgs/kotoba-lang/text/src</string>
     <key>AIUEOS_MURAKUMO_TRUST_TIER</key><string>community</string>
     <key>AIUEOS_MURAKUMO_JOB_QUALIFICATION</key><string>1</string>
   </dict>
