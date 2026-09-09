@@ -109,8 +109,14 @@ if "+" in spec:
     # "<prefix>+<required>...": the loader's tender stages must lead, and every
     # part after the first must appear somewhere. Order beyond the prefix is the
     # guest's business and varies with QEMU's PCI enumeration -- runs of one
-    # image have given MPRCD, MPRCDF, MPRCDX and MPRCDXF, the F being the
-    # guest's own nic marker.
+    # image have given MPRCD, MPRCDX, MPRCDXQ and MPRCDXF.
+    #
+    # Q is the guest's nic marker. F is NOT: it is a fail-closed receipt, and
+    # the one kotoba-native emits (interrupt_abi/fail-closed-receipt, the fail
+    # arm of the two handlers that can return) writes 0x1f to the debug-exit
+    # port in the same breath -- which is exactly exit 63. F and 63 are one
+    # event, not a marker and a separate symptom. This comment previously said
+    # F was the nic marker, and that reading cost several days.
     #
     # X is the load-bearing part. The loader emits it after `call rax` returns,
     # so it is the one byte here that only code running AFTER the handoff came

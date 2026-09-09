@@ -1165,7 +1165,23 @@
                                     nic-marker (if (= nic-status 0)
                                                  (serial/trace-byte 78)
                                                  (if (>= nic-status 0)
-                                                   (serial/trace-byte 70)
+                                                   ;; 'Q', not 'F'. Three
+                                                   ;; different things emit
+                                                   ;; 'F' on this port: this
+                                                   ;; marker, the loader's
+                                                   ;; :fail arm, and
+                                                   ;; kotoba-native's
+                                                   ;; fail-closed-receipt --
+                                                   ;; and the last of those
+                                                   ;; also writes 0x1f to the
+                                                   ;; debug-exit port, which
+                                                   ;; is where exit 63 comes
+                                                   ;; from. The collision is
+                                                   ;; why exit 63 was read for
+                                                   ;; days as a guest status:
+                                                   ;; the trailing byte looked
+                                                   ;; like this line.
+                                                   (serial/trace-byte 81)
                                                    0))]
                                 (kernel-out-u32 244
                                                 (+ (if core-ok 16 17)

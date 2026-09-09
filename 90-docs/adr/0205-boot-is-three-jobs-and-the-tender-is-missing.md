@@ -685,3 +685,44 @@ the same defect it was meant to diagnose, and would have had the next reader
 waiting for a byte that cannot arrive.
 
 exit 63 is unattributed again, and that is the accurate state.
+
+## exit 63 is an interrupt receipt, and `F` means three different things
+
+Found by reading, after the retraction above ruled out every status the
+guest can write. It was never a guest status. `kotoba-native`'s
+`interrupt_abi.cljc`:
+
+    ;; 'F' on the debugcon port, 0x1f on isa-debug-exit.
+    (def fail-closed-receipt
+      [[0xb0 0x46 0x66 0xba 0xe9 0x00 0xee]
+       [0xb8 0x1f 0x00 0x00 0x00 0x66 0xba 0xf4 0x00 0xef]])
+
+`0x1f` is 31, and `(31 << 1) | 1` is 63. **`F` and exit 63 are one event** --
+the fail arm of the two interrupt handlers that can return, the recoverable
+`#PF` and the timer. Not a marker plus a separate symptom, which is how the
+pair had been carried.
+
+That it took this long has a specific cause: **three unrelated things emit
+`F` on this port.** The guest's nic marker (`serial/trace-byte 70`), the
+loader's `:fail` arm (`0xb0 0x46`), and this receipt. The smoke's own comment
+asserted the trailing `F` was the guest's nic marker, so every trace ending
+in `F` was read as a healthy run with a nic detail, and the accompanying
+exit 63 as an unexplained status needing a search through nine call sites.
+Two of those days were spent inside that search.
+
+The guest's marker is now **`Q`**. The collision is removed where this repo
+owns the byte; `F` on this port now means a fail-closed receipt in both of
+its remaining senses, which is coherent.
+
+This also explains why exit 63 became rare exactly when it did. It is an
+interrupt-handler failure, and the previous iteration masked interrupts
+across the CR3 switch. The same window, the same cause: **the abort and
+exit 63 were two faces of interrupts arriving where nothing could service
+them.** One triple-faulted because the firmware IDT was still live; the
+other reached a Kotoba handler that closed fail. Neither was a coin flip.
+
+Method note, because it generalises. Every step that moved this forward was
+a static one -- reading the emitter for the profile maximum, computing which
+values can reach the port, enumerating status ranges, grepping for the port
+constant. The runs only ever confirmed. The two conclusions that had to be
+retracted were both produced by reasoning from a trace.
