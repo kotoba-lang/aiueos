@@ -284,4 +284,23 @@
          control and DMAR also returned zero -- while demonstrably reaching the
          guest, because the volume is compressed. The control disproved my test
          method rather than the hypothesis. Reported as unknown.
-         ESP suite unaffected: 76 markers, exit 0."}]
+         ESP suite unaffected: 76 markers, exit 0."}
+ {:at "2026-09-09"
+  :profile :loop-reached-its-stop-condition
+  :note "Zero nodes remain that an agent can reach. Recorded here because the
+         loop's own stop condition is a claim like any other and should be
+         checkable: the reachability is computed from the graph, not judged.
+         The last attempt was tender-reentry-proven, and it is worth keeping
+         for how it failed. A fixture guest was written rather than making the
+         real guest fake a 250 -- production code faking a value to satisfy a
+         test is how a gate stops meaning anything. It does not build, twice
+         over and both measured: a minimal guest cannot pass the RX/RW
+         adjacency check, because the emitter puts RW at a fixed 0x108000 and
+         anything under about 28 KB of text leaves a gap; and wrapping the real
+         kernel instead fails project-link because that module is not on the
+         fixture build's explicit source paths.
+         Both are lifted by editing a production build script for a test's
+         benefit, or by adding a bypass to a safety check. Neither is mine to
+         decide, so the loop stops rather than talks itself into one.
+         Final: 16 nodes, 1 done, 15 behind six gates. Coverage 65.2 percent,
+         from 25.4 at the start. Five claims retracted, two of them mine."}]

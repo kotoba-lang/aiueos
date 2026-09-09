@@ -294,7 +294,29 @@
    :evidence "The post-return path is exercised -- X, O and K all print -- but
               r15 is never 250 in QEMU, so :tender-step is reached once and the
               second T never appears. Seventeen re-entries were observed on
-              hardware and nowhere else."}
+              hardware and nowhere else."
+   :attempt "2026-09-09: a fixture guest was written --
+             native/tender_fixture.kotoba, which counts its own entries in the
+             loader-owned scratch page, prints each ordinal, and returns 250
+             until the fourth. Deliberately a fixture rather than a change to
+             the real guest: making production code fake a 250 to satisfy a
+             test is how a gate stops meaning anything.
+             It does not build, for two independent reasons, both measured.
+             (1) A MINIMAL guest cannot pass verify-kotoba-native-kernel.py.
+             The emitter places the RW segment at a fixed 0x108000, so a guest
+             with less than about 28 KB of text leaves a gap and the checker
+             refuses it for rw_start != rx_limit. Measured: rx ended 0x101950,
+             rx_limit 0x102000, rw_start 0x108000. That is a latent constraint
+             of the build path, not of the fixture.
+             (2) WRAPPING the real kernel instead -- which would satisfy the
+             size honestly and end the run the way an ordinary one does --
+             fails project-link: aiueos.native.kernel is not on the fixture
+             build's explicit source paths.
+             Lifting either means editing a production build script for a
+             test's benefit, or adding a bypass flag to a safety check.
+             Neither is worth doing without the owner's word, so the file is
+             kept as the concrete starting point and the node stops here."
+   :blocked-on :fixture-cannot-be-built-without-changing-a-production-gate}
 
   :cluster-membership
   {:title "The node is admitted to the murakumo cluster"
