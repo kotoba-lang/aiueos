@@ -1269,6 +1269,49 @@ def dhcp_step(sock, packet, failures):
         return failures
 
 
+def dhcp_send_reply(sock, reply):
+    """Put one DHCP reply on the wire, and say which way it went.
+
+    Measured 2026-09-09: the board was asking -- `DHCP_RX` every few seconds,
+    both HTTPClient and PXEClient -- and every reply raised
+    `OSError: [Errno 65] No route to host` on the listener socket. Twelve in a
+    row, no OFFER, no ACK, so no boot. The `dhcp_step` guard did its job and
+    kept the process alive, which is exactly why this went unnoticed for two
+    hours: the board looked dead, and it was US not answering.
+
+    WHAT IS KNOWN, and the root cause is not among it. en15 is UP and RUNNING
+    with 10.77.0.1/24, the route to the client resolves through it, and a
+    FRESHLY CREATED socket of the same shape -- SO_REUSEADDR, SO_BROADCAST,
+    IP_BOUND_IF en15, bound to a port -- sends to 255.255.255.255,
+    10.77.0.255 and 10.77.0.10 without error, all five variants, at the moment
+    the long-lived listener was failing. Restarting the service did not fix it,
+    so it is not a stale interface index latched at startup either.
+
+    So this does not pretend to know why. It uses the difference that WAS
+    measured: fresh sockets work. The listener is tried first because it is
+    free when it works, then a fresh interface-bound socket, then the subnet
+    broadcast. `via=` names which one carried the reply, because a fallback
+    that silently succeeds would hide the fault it exists for -- and the first
+    thing anyone will want to know is whether the listener has started working
+    again."""
+    try:
+        sock.sendto(reply, ("255.255.255.255", 68))
+        return "listener"
+    except OSError as first:
+        for label, destination in (("fresh", ("255.255.255.255", 68)),
+                                   ("fresh-subnet", (BROADCAST_IP, 68))):
+            spare = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            try:
+                bind_interface(spare, 0)
+                spare.sendto(reply, destination)
+                return label
+            except OSError:
+                continue
+            finally:
+                spare.close()
+        raise first
+
+
 def dhcp_handle(sock, packet):
     if True:
         values = parse_options(packet)
@@ -1297,10 +1340,10 @@ def dhcp_handle(sock, packet):
         else:
             return
         reply = dhcp_reply(packet, reply_type)
-        sock.sendto(reply, ("255.255.255.255", 68))
+        path = dhcp_send_reply(sock, reply)
         boot = HTTP_BOOT_URI if vendor.startswith("HTTPClient") else BOOT_FILE
         print(f"AIUEOS_PXE_DHCP_{label} mac={mac} address={CLIENT_IP} "
-              f"boot={boot}", flush=True)
+              f"boot={boot} via={path}", flush=True)
 
 
 class HttpBootHandler(http.server.BaseHTTPRequestHandler):
