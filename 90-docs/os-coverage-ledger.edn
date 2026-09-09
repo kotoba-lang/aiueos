@@ -303,4 +303,31 @@
          benefit, or by adding a bypass to a safety check. Neither is mine to
          decide, so the loop stops rather than talks itself into one.
          Final: 16 nodes, 1 done, 15 behind six gates. Coverage 65.2 percent,
-         from 25.4 at the start. Five claims retracted, two of them mine."}]
+         from 25.4 at the start. Five claims retracted, two of them mine."}
+ {:at "2026-09-09"
+  :evidence ["evidence-all.log" "evidence-esp-suite.log" "evidence-release-image.log"]
+  :profile :union-plus-ssh-gates
+  :core {:emitted 78 :declared 116 :pct 67.2}
+  :route :a-three-gates-that-could-not-run-now-run
+  :closed [:SSH_LISTEN :SSH_KEX]
+  :note "65.2 to 67.2, with the denominator also growing by one as TPM2 joined
+         the crypto row after the drift check reported it. Recorded after the
+         stop entry above rather than before it: the loop stopped because no
+         PLAN node was reachable, and coverage work is not a plan node.
+         Three SSH gates were neither green nor red -- smoke-qemu-ssh-kex,
+         -auth and -session all died on `Could not find namespace:
+         ssh.transport` while org-ietf-ssh sits checked out. Same shape as the
+         kotoba.lang.text breakage this repo already fixed, and fixed the same
+         way, with the worktree caveat written down beside it: those sibling
+         paths resolve relative to nbb.edn, so they work in the west checkout
+         and not under .claude/worktrees, where .. is the worktree directory.
+         With them running they discriminate. ssh and ssh-kex pass; auth and
+         session fail for a REAL reason -- AIUEOS_SSH_KEX_REPLY_INCOMPLETE
+         stage=2, then AIUEOS_SSH_LISTEN_INCOMPLETE stage=0. remote stops at
+         LISTEN and KEX because the kernel's SSH is incomplete past there,
+         which is a gap to close rather than a lever to pull.
+         A watchdog comparison with an empty operand was guarded; it printed
+         `<timestamp>: integer expression expected` once per tick and buried
+         the gates' verdicts. NOT fully fixed -- the noise fell from hundreds
+         of lines to twenty, so at least one more unguarded comparison
+         remains."}]
