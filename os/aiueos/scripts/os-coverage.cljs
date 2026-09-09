@@ -51,8 +51,22 @@
   (boolean (some #(str/includes? % want)
                  (re-seq (re-pattern (str "AIUEOS_" (name marker) "_OK[^\n\r]*")) text))))
 
-(defn- emitted-in [text requires]
-  (let [named (markers-in text)]
+;; The same reasoning one level up, applied to the log rather than the line.
+;; smoke-qemu-physical-{persistent,pxe} run the qualification image under QEMU
+;; and legitimately require AIUEOS_PHYSICAL_QUALIFICATION_OK -- the kernel
+;; prints it on any host that reaches the native core. But those gates end by
+;; declaring physical-k16=unverified, and the claim the marker carries
+;; ("internal-disk-writes=none") is vacuous where no internal disk exists. So a
+;; log that says it did not verify the board cannot witness the markers the
+;; taxonomy classes as :board; counting them would prove from a QEMU run
+;; exactly what the run says it has not proven.
+(defn- board-unverified? [text] (str/includes? text "physical-k16=unverified"))
+
+(defn- emitted-in [text requires board-markers]
+  (let [named (markers-in text)
+        named (if (board-unverified? text)
+                (set/difference named board-markers)
+                named)]
     (set (remove (fn [m]
                    (when-let [want (get requires m)]
                      (not (payload-ok? text m want))))
@@ -81,7 +95,10 @@
                                       [(.join path aiueos "kernel")
                                        (.join path aiueos "uefi")])))
         requires (:requires-payload spec)
-        emitted (reduce set/union (map #(emitted-in (read-file %) requires) args))
+        board-markers (set (keep (fn [[m why]] (when (= why :board) m))
+                                 (:unproven-because spec)))
+        emitted (reduce set/union
+                        (map #(emitted-in (read-file %) requires board-markers) args))
         ;; A log can only prove markers the sources still declare. One that
         ;; names a marker the tree no longer has is stale evidence, and saying
         ;; so is the point -- a green report from a log of a build that no
