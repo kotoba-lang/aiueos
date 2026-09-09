@@ -20,15 +20,23 @@
                      :at "2026-09-09" :by "os/aiueos/scripts/os-coverage.cljs"}
 
  :nodes
- {:release-image-enumerates-devices
-  {:title "The release image enumerates virtio-gpu and virtio-input"
+ {:release-image-boots-to-completion
+  {:title "The release image boot reaches the end instead of stopping partway"
    :needs []
-   :evidence "ESP boot emits VIRTIO_GPU_OK and VIRTIO_INPUT_OK; the GPT boot of
-              the same source emits neither line at all, while PCI_OK
-              bounded-scan appears in both. Measured 2026-09-09."
+   :evidence "Restated 2026-09-09 after measuring, and the restatement is the
+              point. This was filed as an enumeration difference because the
+              GPT boot emitted no VIRTIO_GPU_OK or VIRTIO_INPUT_OK while PCI_OK
+              appeared in both. Making pci_result observable showed something
+              simpler: in that run the GPT boot emitted no PCI line AT ALL,
+              neither PCI_OK nor PCI_FAIL, and ended at APIC_TIMER. It is not
+              enumerating differently, it is stopping earlier. The stopping
+              point also moves -- GUEST_INPUT on one run, APIC_TIMER on two
+              others. The ESP boot of the same sources reaches 76 markers with
+              PCI_RESULT input-rng-base=111 and VIRTIO_INPUT_OK, so the code
+              path itself is sound."
    :why-first "Nothing else can be proved on the shipping artifact while it
-               stops here. It is the single largest measured gap: 58.8 percent
-               on the build against 25.4 on the image."}
+               stops partway. Largest measured gap: 76 markers on the build
+               against about 30 on the image."}
 
   :reproducible-build
   {:title "Two builds of one tree produce one image"
@@ -43,6 +51,14 @@
   :amd-ivrs-isolation
   {:title "DMA isolation on AMD (IVRS), not only VT-d"
    :needs []
+   ;; The discovery half is done and landed. The rest -- IVHD parsing and an
+   ;; AMD-Vi device table -- cannot be exercised here: QEMU has the amd-iommu
+   ;; device and does not present the guest an IVRS table, measured with and
+   ;; without intremap=on. Writing a parser against a table no run can produce
+   ;; is writing it blind, so this waits for the board rather than being
+   ;; guessed at. Marked so --next moves on instead of returning here every
+   ;; twenty minutes.
+   :hardware-gated true
    :evidence "kernel/main.c gates the RTL8125 path behind
               AIUEOS_PHYSICAL_NETWORK_QUALIFICATION and its own comment calls it
               test-only because AMD-IVRS isolation is not implemented."
@@ -106,7 +122,7 @@
 
   :release-image-passes-suite
   {:title "The shipping image passes the shared UEFI suite"
-   :needs [:release-image-enumerates-devices]
+   :needs [:release-image-boots-to-completion]
    :evidence "Build passes with 76 markers and exit 0; the release image emits
               32 and returns 1. Rebuilding reproduced it, and AIUEOS_DISK_IMAGE
               only swaps the boot drive, so it is neither staleness nor a

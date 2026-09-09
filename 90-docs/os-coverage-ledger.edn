@@ -120,4 +120,25 @@
          amd-iommu. QEMU has the DEVICE and does not hand the guest an IVRS
          TABLE: attached, with and without intremap=on, the guest reports
          IVRS_ABSENT. The parser is correct by construction and untested
-         against a real table. Marked as such rather than counted."}]
+         against a real table. Marked as such rather than counted."}
+ {:at "2026-09-09"
+  :evidence ["evidence-all.log" "evidence-esp-suite.log"]
+  :profile :uefi-suite-union-narrower-evidence
+  :core {:emitted 71 :declared 115 :pct 61.7}
+  :note "64.3 to 61.7, and this one is a measurement artifact rather than a
+         change in the system: the second log is a single fresh ESP run, where
+         the earlier reading paired the union with a wider capture. Recorded
+         rather than smoothed, because a series that only moves when the news
+         is good is not a series.
+         The node advanced instead. release-image-enumerates-devices is
+         renamed release-image-boots-to-completion, because measuring it
+         changed what it is. pci_result is now printed as
+         AIUEOS_PCI_RESULT -- deliberately not an _OK, since it is a datum and
+         this benchmark counts verdicts -- and with it visible, the GPT boot
+         turned out to emit no PCI line at all in that run, neither PCI_OK nor
+         PCI_FAIL, ending at APIC_TIMER. It is not enumerating differently. It
+         is stopping earlier, at a point that moves between runs.
+         The ESP profile is unregressed at 76 markers with
+         input-rng-base=111, checked because two of these edits touched the
+         boot path and a regression would otherwise have been read as a
+         finding."}]

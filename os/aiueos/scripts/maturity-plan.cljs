@@ -64,7 +64,12 @@
       depth (fn depth [id]
               (let [needs (:needs (get nodes id))]
                 (if (empty? needs) 0 (inc (apply max (map depth needs))))))
-      open (remove #(:owner-gated (get nodes %)) order)
+      ;; --next skips what no amount of agent work moves. Owner-gated needs a
+      ;; credential or a decision; hardware-gated needs the board powered. Both
+      ;; stay IN the order, so their position stays honest -- what changes is
+      ;; only which node a loop is told to pick up.
+      blocked? #(let [n (get nodes %)] (or (:owner-gated n) (:hardware-gated n)))
+      open (remove blocked? order)
       next-id (first open)]
 
   (if (some #{"--next"} *command-line-args*)
@@ -84,6 +89,7 @@
                       (name id)
                       "  (unblocks " (leverage id) ")"
                       (when (:owner-gated n) "   [owner-gated]")
+                      (when (:hardware-gated n) "   [hardware-gated]")
                       (when (= id next-id) "   <- next")))
         (println (str "     " (apply str (repeat d "    ")) (:title n)))
         (when (seq (:needs n))
@@ -92,6 +98,6 @@
       (println)
       (println "  Depth 0 nodes are startable now. The next actionable node is"
                (str (name next-id) "."))
-      (println "  Owner-gated nodes are sorted in place so their position is honest,")
-      (println "  but no amount of agent work moves them.")))
+      (println "  Gated nodes stay in the order so their position is honest;")
+      (println "  --next skips them because no amount of agent work moves them.")))
   (js/process.exit 0))

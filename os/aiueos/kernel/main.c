@@ -2820,6 +2820,23 @@ qwen_runtime_boot_complete:
     }
     debug_string("AIUEOS_PCI_OK bounded-scan virtio-vendor=1af4\n");
     serial_string("AIUEOS_PCI_OK bounded-scan virtio-vendor=1af4\r\n");
+    /* The enumeration result, as bits, because every virtio decision below
+       reads one of them and none of them was observable. Deliberately NOT an
+       _OK marker: it is a datum, not a verdict, and the coverage benchmark
+       counts verdicts. Added while chasing why a GPT-image boot reports
+       VIRTIO_INPUT_FAIL where an ESP boot of the same sources reports
+       VIRTIO_INPUT_OK -- the branch turns on `pci_result & 4`, so the two
+       boots enumerate differently, and until now the value that says so was
+       invisible in both. */
+    { char bits[4]; unsigned v = (unsigned)pci_result;
+      bits[0] = (char)('0' + ((v >> 2) & 1));
+      bits[1] = (char)('0' + ((v >> 1) & 1));
+      bits[2] = (char)('0' + (v & 1));
+      bits[3] = 0;
+      debug_string("AIUEOS_PCI_RESULT input-rng-base=");
+      debug_string(bits); debug_string("\n");
+      serial_string("AIUEOS_PCI_RESULT input-rng-base=");
+      serial_string(bits); serial_string("\r\n"); }
     if (pci_result < 2) {
       debug_string("AIUEOS_VIRTIO_FAIL rng-queue\n");
       serial_string("AIUEOS_VIRTIO_FAIL rng-queue\r\n");
