@@ -389,7 +389,17 @@
         scratch-start (load64-boot boot 80)
         sixth-start (+ scratch-start 20480)
         page (kernel-subregion 4096 549755809792 (- sixth-start 4096) 4096)
-        mark (kernel-store-u8-4k page 4096 1024 vector)
+        ;; Say so on the debug port BEFORE resetting.  A reset under -no-reboot
+        ;; makes QEMU exit 0 with the trace simply stopping, which is
+        ;; indistinguishable from a triple fault, a firmware dead-loop, or a
+        ;; hang -- three different bugs with one appearance.  These two bytes
+        ;; are the only thing that tells them apart, and the scratch-page record
+        ;; below cannot: it is read by the NEXT boot, and -no-reboot means there
+        ;; isn't one.
+        bang (serial/trace-byte 33)
+        digit (serial/trace-byte (+ 48 (if (< vector 10) vector 9)))
+        mark (kernel-store-u8-4k page 4096 1024
+                                 (+ vector (* 0 (+ bang digit))))
         ;; 0xCF9 <- 0x06. If the chipset ignores it the machine simply hangs
         ;; as it did before, which is no worse than the state this replaces.
         reset (kernel-out-u8 3321 (+ 6 (* 0 mark)))]
@@ -1028,16 +1038,44 @@
                                           (* 0 wd-mark)))))))
                             (kernel-out-u32 244 (+ 96 pre-cr3-nic-status))))
                         (if (and (prepare-page-tables page-table-root pdpt pd pt)
-                                 ;; 'a' before the far read, 'b' after it,
-                                 ;; 'c' after the NX clear. One run says which
-                                 ;; of the two hangs; last iteration only knew
-                                 ;; that the guest stopped after 'M'.
                                  (= (allow-loader-exec
                                      pd (load64-boot-far boot 16368)) 1)
                                  (prepare-low-page-table pt rx-limit rw-start)
                                  (prepare-rtl-page-tables
                                   pdpt rtl-directory-a rtl-directory-b bar-a bar-b))
                             (if (and (enable-page-protection)
+                                     ;; MASK INTERRUPTS FIRST. Between the CR3
+                                     ;; load and `install-page-fault-idt` below,
+                                     ;; the firmware's IDT is still the live one
+                                     ;; -- and every one of its handlers sits
+                                     ;; above 2 MiB, which this map has just
+                                     ;; made NX. Any interrupt delivered in that
+                                     ;; window vectors into a page that cannot
+                                     ;; be fetched: #PF, whose firmware handler
+                                     ;; is equally unfetchable, so it recurses
+                                     ;; until the stack is gone and the machine
+                                     ;; triple faults.
+                                     ;;
+                                     ;; That is not hypothetical. It is what the
+                                     ;; roughly one-run-in-five QEMU abort was,
+                                     ;; measured 2026-09-09 with -d int: a
+                                     ;; healthy run logs 157 events, all APIC
+                                     ;; timer; the aborted run logs 97,886, of
+                                     ;; which the first 149 are the same timer
+                                     ;; and the 150th is a #PF. Tick 149 is the
+                                     ;; only one whose IP is in guest text
+                                     ;; (0x125058) rather than firmware -- the
+                                     ;; tick that arrived after the switch. The
+                                     ;; error code is 0x11 throughout: present,
+                                     ;; instruction fetch.
+                                     ;;
+                                     ;; Nothing re-enables interrupts here. The
+                                     ;; guest runs to its own return with them
+                                     ;; masked, which is what it did in every
+                                     ;; run that already passed -- it just did
+                                     ;; it by not being interrupted rather than
+                                     ;; by saying so.
+                                     (= (kernel-cli) 0)
                                      (activate-page-tables page-table-root)
                                      (= (kernel-configure-page-fault-recovery
                                          frame-page stack-page) 1)
