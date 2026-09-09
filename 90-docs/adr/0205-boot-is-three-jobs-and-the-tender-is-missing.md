@@ -343,12 +343,38 @@ the K16 it evidently does -- 17 re-entries were measured from one image load.
 Under QEMU, UEFI puts the loader somewhere the guest's map does not reach, and
 the `ret` goes nowhere.
 
+**The mechanism, found in the guest's own comment.** `fill-identity-pd` writes
+its PDEs through `store64-nx-page`, which sets byte 7 of each entry to 128 --
+the NX bit -- and the line above it says so plainly:
+
+> PDE 0 points to a 4 KiB PT. The remaining 2 MiB leaves preserve the first
+> GiB identity map but are RW+NX rather than executable.
+
+So from the instant the guest loads CR3, **everything in the first GiB except
+the low 2 MiB is non-executable**. The loader's code is wherever UEFI put it.
+Under OVMF in QEMU that is above 2 MiB, so the guest's `ret` becomes an
+instruction fetch on an NX page and dies there. That is why `X` has never
+appeared.
+
+On the K16 the same map is installed and the return works, seventeen times from
+one image load -- which means the board's firmware happens to place the loader
+inside the low 2 MiB that PDE 0 maps at 4 KiB granularity. **The tender has been
+working there by luck**, and the luck is a property of one firmware's
+allocator.
+
 **Do not "fix" this by having the guest avoid returning.** The tender's whole
 contract is that the guest hands the step back, and it demonstrably works on
 the board. What is missing is that the guest's page tables must map the caller
-it intends to return to -- which is a real requirement of the tender design
-that nobody had written down, and which the hardware satisfied by luck rather
-than by construction.
+it intends to return to -- a real requirement of the tender design that nobody
+had written down, and which the hardware satisfied by luck rather than by
+construction.
+
+The fix has a shape: the loader knows its own base and size and already writes
+boot-info, so it can name its executable range there, and the guest can map
+that range RX instead of inheriting the blanket NX. That keeps W^X -- the point
+is not to weaken the map but to stop it from unmapping the one caller the guest
+has promised to return to. Widening boot-info is the honest cost; nothing else
+in the guest knows where the loader is.
 
 ## Order, and what not to do
 
