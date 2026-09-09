@@ -394,4 +394,24 @@
          the stage: AIUEOS_SSH_KEX_REPLY_INCOMPLETE stage=2.
          A marker absent from the map counts as :unclassified and says so,
          because 'not attributed' is not 'unblocked' and the difference is
-         exactly what this benchmark keeps getting caught on."}]
+         exactly what this benchmark keeps getting caught on."}
+ {:at "2026-09-09"
+  :profile :ssh-group-reclassified
+  :core {:emitted 86 :declared 116 :pct 74.1}
+  :note "Correcting the classification landed one iteration ago, and the
+         correction is the entry.
+         SSH_KEX_REPLY, SSH_AUTH and SSH_SESSION were labelled :unwritten. The
+         code is all there -- pci.c drives ssh_kex_stage 1 through 16 and
+         main.c reports at 5, 12 and 16. What fails is the LIVE exchange, and
+         it fails differently between runs: one reached stage 2, the client's
+         KEXINIT received and KEX_ECDH_INIT never arriving, and the next
+         produced no client banner at all.
+         So the actionable conclusion survives -- this is still the only group
+         an agent can close without a credential, a board, an artifact or a
+         firmware -- but 'write the missing code' was wrong and would have sent
+         the next reader hunting for code that already exists. Relabelled
+         :live-exchange-stalls.
+         Found by opening the file the label pointed at instead of trusting the
+         label, one iteration after writing it. That is the same check this
+         branch applies to other people's contracts, applied to my own, and it
+         is the sixth claim here to need retracting."}]

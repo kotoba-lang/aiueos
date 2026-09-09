@@ -82,10 +82,19 @@
   :QWEN35_WORKSPACE :model-artifact
   ;; needs a profile nothing here runs
   :NETBOOT_EMBEDDED :profile  :LOADER_RECOVERY :profile
-  ;; NOT blocked: unwritten code. The auth gate names the stage --
-  ;; AIUEOS_SSH_KEX_REPLY_INCOMPLETE stage=2 -- so this is the one group on
-  ;; this list that an agent could close without anyone's help.
-  :SSH_KEX_REPLY :unwritten  :SSH_AUTH :unwritten  :SSH_SESSION :unwritten
+  ;; NOT blocked, and NOT unwritten -- corrected 2026-09-09, one iteration
+  ;; after this map first said :unwritten. The code is all there: pci.c drives
+  ;; stages 1..16 and main.c reports at 5, 12 and 16. What fails is the LIVE
+  ;; exchange, and it fails differently between runs: one reached stage 2 --
+  ;; the client's KEXINIT received, then KEX_ECDH_INIT never arriving -- and
+  ;; the next produced no client banner at all.
+  ;; Still the one group an agent can close without a credential, a board, an
+  ;; artifact or a firmware. But "write the missing code" was the wrong
+  ;; description and would have sent the next reader hunting for code that is
+  ;; already written.
+  :SSH_KEX_REPLY :live-exchange-stalls
+  :SSH_AUTH :live-exchange-stalls
+  :SSH_SESSION :live-exchange-stalls
   :RTL8125_SSH_SESSION :board}
 
  :subsystems

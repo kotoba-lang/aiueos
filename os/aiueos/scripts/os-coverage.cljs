@@ -138,8 +138,13 @@
       (println)
       (println "  UNPROVEN CORE MARKERS BY WHAT THEY WAIT ON")
       (doseq [[k n] (sort-by (juxt #(- (val %)) #(name (key %))) tally)]
-        (println (str "    " (subs (str (name k) "              ") 0 15) n
-                      (when (= k :unwritten) "   <- the only group an agent can close alone")
+        ;; width from the content, not a constant: a fixed 15 truncated
+        ;; "live-exchange-stalls" and ran the count into the label.
+        (println (str "    " (let [nm (name k)]
+                               (str nm (apply str (repeat (- (+ 2 (apply max (map (comp count name) (keys tally))))
+                                                             (count nm)) " ")))) n
+                      (when (= k :live-exchange-stalls)
+                        "   <- the only group an agent can close alone")
                       (when (= k :unclassified) "   <- not yet attributed; not the same as unblocked")))))
     (when (seq unmeasured)
       (println "  UNMEASURED (no declared marker in source, excluded from the total):"
