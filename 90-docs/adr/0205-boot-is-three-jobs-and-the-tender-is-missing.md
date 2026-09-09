@@ -553,3 +553,57 @@ traps is indistinguishable from a hang unless something downstream is listening
 for the trap.** The guest installs a `#UD` gate; this code runs before it. Any
 guest code that runs before its own fault gates should be read with that in
 mind.
+
+## The one-in-five abort was an interrupt, not a mystery (2026-09-09)
+
+About one QEMU run in five stopped with the trace cut short after `M` and
+exit 0. It had been carried as a standing symptom, alongside "exit 63", for
+long enough that single green runs were being read as evidence.
+
+`-d int,cpu_reset` named it in one captured run. A healthy run logs 157
+events, every one an APIC timer tick. The aborted run logs **97,886**: the
+first 149 are the same timer, the 150th is a `#PF`, and the remainder are
+that `#PF` re-entering itself with SP falling 0x30 each time until `#DF`
+and `Triple fault`. Error code is `0x11` throughout — present, instruction
+fetch — and `CR2` equals `RIP`.
+
+Tick 149 is the only one whose IP is in guest text (`0x125058`) rather than
+firmware. That is the tick that arrived after the CR3 switch.
+
+Between the CR3 load and `install-page-fault-idt`, the firmware's IDT is
+still live and every one of its handlers sits above 2 MiB, which
+`fill-identity-pd` has just made NX. An interrupt in that window vectors
+into a page that cannot be fetched; the `#PF` handler is equally
+unfetchable. The fix is one call: `kernel-cli` before
+`activate-page-tables`. It existed in the guest grammar and was never used.
+
+Ten runs after: no aborts, all ten reached the full marker.
+
+**The guest already depended on not being interrupted. It just had no way
+to say so** — which is why this read as a coin flip rather than as a bug.
+
+## The trailing byte is a race, and so is the exit code (2026-09-09)
+
+`exit 63` and the wandering last byte (`MPRCD` / `MPRCDF` / `MPRCDX` /
+`MPRCDXZ`) are one thing: **the guest writes the debug-exit port and then
+keeps running.** The exit code is fixed at that write; everything printed
+afterwards is a race against QEMU tearing down, and how much escapes varies
+with `-smp` (a diagnostic byte on the tender fall-through appeared in 3 of
+4 runs at `-smp 1` and in 0 of 3 at `-smp 2`).
+
+How this was pinned down matters more than the conclusion. After `X`,
+neither successor of the tender compare fired: no second `T` from the
+loop-back, no marker from the fall-through. Both were instrumented, so
+"neither branch ran" was a measurement, not an inference — and the `je`
+was verified statically to resolve to the `T` byte at `0x3a7`, so a
+mis-encoded displacement was excluded without a run.
+
+Consequences for the gate: the marker's **prefix and required substrings
+are trustworthy; its tail is not**, which is why `X` is asserted as a
+substring. The exit code is trustworthy only as the value the guest chose
+to write. `exit 63` therefore reports a guest status of 31 from a write
+site that the 16/17 ladder does not explain — still open, and now a
+specific question rather than a symptom.
+
+On hardware none of this applies: there is no `isa-debug-exit`, the guest
+simply returns, and the tender takes it.
