@@ -77,6 +77,25 @@
   ;; absence of a TPM. Re-test with:
   ;;   AIUEOS_TEST_TPM2=1 sh os/aiueos/scripts/smoke-qemu-uefi.sh
   :TPM2 :firmware
+  ;; blocked in the compiler, not in aiueos. MEASURED 2026-09-10 against the
+  ;; WEST-PINNED amu (fac4176c -- the shared checkout at orgs/kotoba-lang/amu is
+  ;; diverged from it and fails differently, which is why the pin is named here):
+  ;; cap-call crashes the native backend even though the PLC policy grants it.
+  ;;   echo '(ns p (:export [main])) (defn main [] (cap-call 16 0))' > /tmp/p.kotoba
+  ;;   <amu>/bin/kotoba-compiler compile /tmp/p.kotoba \
+  ;;     --target x86_64-aiueos-user-v1 \
+  ;;     --policy os/aiueos/kotoba/plc-runtime-policy.edn --output /tmp/p.elf
+  ;;   -> exit 70, :kotoba/internal-error
+  ;; The target itself is fine: (defn main [] 0) compiles to 8560 bytes, and so
+  ;; do the generated plc-dint helper and its 2^32 arithmetic. Only cap-call
+  ;; fails, and plc-runtime-policy.edn allows [:cap/call 16..19] explicitly, so
+  ;; this is not a refusal wearing the wrong message -- a permitted form is
+  ;; crashing the backend.
+  ;; Second, smaller gap: build-plc-native-program.sh writes
+  ;; build/aiueos-plc/<name>/program.elf while smoke-qemu-uefi.sh defaults
+  ;; AIUEOS_PLC_ELF to build/plc-motor/program.elf, so even a fixed compiler
+  ;; leaves the documented profile not running unless the path is passed by hand.
+  :PLC_RT :compiler
   ;; needs the owner: a credential or an install intent, never auto-created
   :MURAKUMO_NODE :owner  :MURAKUMO_HEARTBEAT :owner  :MURAKUMO_JOB_POLL :owner
   :MURAKUMO_JOB_RESULT :owner  :MURAKUMO_CONTROL_ACK :owner

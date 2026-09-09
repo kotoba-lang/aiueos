@@ -555,4 +555,48 @@
          same TPM2 verdict, exit 1 -> exit 0.
          Remaining 25 -- owner 9, board 8, model-artifact 7, firmware 1 -- and
          none is agent-closable on this machine without a credential, a board,
-         11 GB of disk, or a different OVMF."}]
+         11 GB of disk, or a different OVMF."}
+ {:at "2026-09-10"
+  :profile :plc-rt-classified-compiler-gap
+  :core {:emitted 91 :declared 116 :pct 78.4}
+  :note "First: I was wrong last iteration to say the loop had reached its stop
+         condition. I had read only the CORE rows. The report also carries two
+         rows measured but excluded from the headline -- display 13/16 and
+         realtime 0/1 -- and all four of their markers (PLC_RT, GOP_DISCOVERY,
+         GUEST_INPUT, GUEST_SCANOUT_TWO) are UNCLASSIFIED in :unproven-because.
+         The contract says in as many words that unclassified is not unblocked.
+         Excluded from the headline is exactly where an unexamined marker can
+         sit forever, and I nearly closed the loop on top of four of them.
+         PLC_RT is now classified :compiler, and getting there took four
+         measurements that each overturned the previous conclusion:
+         (1) build-plc-native-program.sh against the shared amu checkout ->
+             exit 70 :kotoba/internal-error. Not a compiler bug: that checkout
+             (72e67e5e) is DIVERGED from the west pin (fac4176c), neither an
+             ancestor of the other, pin +27. README asks for the pinned one.
+         (2) A detached worktree at the pin -> MODULE_NOT_FOUND nbb/cli.js.
+             Still not about the compiler; a fresh worktree is not installed.
+             Did not npm install onto a 99%-full disk. Checked instead whether
+             the existing install is VALID for the pin: package-lock.json and
+             nbb.edn identical, and the three dependency maps hash identically;
+             the only package.json difference is one npm script line. Symlinked.
+         (3) Pinned amu, deps present -> exit 70, same :kotoba/internal-error.
+             NOW it is evidence, and it reproduces on the pinned toolchain.
+         (4) Bisected, because 'the compiler crashes' is not actionable:
+             (defn main [] 0) compiles to 8560 bytes, plc-dint and its 2^32
+             arithmetic compile, and (defn main [] (cap-call 16 0)) crashes.
+             plc-runtime-policy.edn allows [:cap/call 16..19] explicitly, so a
+             PERMITTED form is crashing the backend -- not a refusal wearing a
+             bad message.
+         So PLC_RT is (b), a real gap, and it is in amu rather than aiueos.
+         Recorded with the three-line repro and the pin SHA next to the
+         classification. Nothing closed: 91/116 78.4% unchanged, realtime still
+         0/1. A classification is not a marker.
+         Second, smaller gap found on the way: build-plc-native-program.sh
+         writes build/aiueos-plc/<name>/program.elf while smoke-qemu-uefi.sh
+         defaults AIUEOS_PLC_ELF to build/plc-motor/program.elf. Even a fixed
+         compiler leaves this documented profile not running unless someone
+         passes the path by hand.
+         Also worth its own attention, outside this loop: the shared amu
+         checkout is diverged from its west pin. The toolchain-sync rule exists
+         because that once made a real capability look absent for days. Not
+         touched -- it holds uncommitted work."}]
