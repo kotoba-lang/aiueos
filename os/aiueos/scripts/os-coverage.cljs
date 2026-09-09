@@ -104,6 +104,12 @@
                 :coverage (when (pos? (count d))
                             (/ (js/Math.round (* 1000 (/ (count e) (count d)))) 10.0))})
         rows (sort-by (juxt #(if (= :core (:relevance %)) 0 1) :subsystem) rows)
+        because (:unproven-because spec)
+        ;; What every unproven marker is waiting on, counted. A single number
+        ;; for "unproven" hides that these need five different things and that
+        ;; only one group is code anyone could write.
+        tally (frequencies (map #(get because % :unclassified)
+                                (mapcat :missing (filter #(= :core (:relevance %)) rows))))
         core (filter #(and (= :core (:relevance %)) (pos? (:declared %))) rows)
         unmeasured (filter #(zero? (:declared %)) rows)
         core-d (reduce + (map :declared core))
@@ -128,6 +134,13 @@
     (println "  CORE (the headline; ~ rows are measured but excluded):"
              core-e "/" core-d
              (str (/ (js/Math.round (* 1000 (/ core-e core-d))) 10.0) "%"))
+    (when (seq tally)
+      (println)
+      (println "  UNPROVEN CORE MARKERS BY WHAT THEY WAIT ON")
+      (doseq [[k n] (sort-by (juxt #(- (val %)) #(name (key %))) tally)]
+        (println (str "    " (subs (str (name k) "              ") 0 15) n
+                      (when (= k :unwritten) "   <- the only group an agent can close alone")
+                      (when (= k :unclassified) "   <- not yet attributed; not the same as unblocked")))))
     (when (seq unmeasured)
       (println "  UNMEASURED (no declared marker in source, excluded from the total):"
                (str/join " " (map (comp name :subsystem) unmeasured))))

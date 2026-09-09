@@ -54,6 +54,40 @@
  ;; the control instead of trusting the substring.
  :requires-payload {:DMA_POLICY "validated"}
 
+ ;; WHY a marker is unproven, where it is known. Without this the report says
+ ;; thirty markers are unproven and treats them alike, when they need five
+ ;; different things and only one of them is code someone could sit down and
+ ;; write. That flattening is the exact error this file warns about in its
+ ;; header: a zero that means "this profile did not exercise it" read as a zero
+ ;; that means "it does not work".
+ ;;
+ ;; A marker absent from this map is unclassified, which is not the same as
+ ;; unblocked -- the report says so rather than implying a lever exists.
+ :unproven-because
+ {;; needs the physical K16 powered; QEMU cannot present the device or table
+  :IVRS :board  :PHYSICAL_NETWORK :board  :RTL8125 :board
+  :PHYSICAL_DIRECT_HTTPS :board  :PHYSICAL_QUALIFICATION :board
+  :PHYSICAL_QWEN35 :board  :PHYSICAL_MODEL_HANDOFF :board
+  ;; needs a firmware this machine does not have (TPM-enabled OVMF)
+  :TPM2 :firmware
+  ;; needs the owner: a credential or an install intent, never auto-created
+  :MURAKUMO_NODE :owner  :MURAKUMO_HEARTBEAT :owner  :MURAKUMO_JOB_POLL :owner
+  :MURAKUMO_JOB_RESULT :owner  :MURAKUMO_CONTROL_ACK :owner
+  :MURAKUMO_PERSISTENT_BOOT :owner  :PHYSICAL_JOB :owner
+  :PHYSICAL_LIVENESS :owner  :PHYSICAL_RELAY :owner
+  ;; needs the 10.9 GB GGUF artifact on hand
+  :LOADER_MODEL :model-artifact  :MODEL_SLOT :model-artifact
+  :MODEL_HANDOFF :model-artifact  :QWEN35_ADMISSION :model-artifact
+  :QWEN35_GENERATE :model-artifact  :QWEN35_GRAPH :model-artifact
+  :QWEN35_WORKSPACE :model-artifact
+  ;; needs a profile nothing here runs
+  :NETBOOT_EMBEDDED :profile  :LOADER_RECOVERY :profile
+  ;; NOT blocked: unwritten code. The auth gate names the stage --
+  ;; AIUEOS_SSH_KEX_REPLY_INCOMPLETE stage=2 -- so this is the one group on
+  ;; this list that an agent could close without anyone's help.
+  :SSH_KEX_REPLY :unwritten  :SSH_AUTH :unwritten  :SSH_SESSION :unwritten
+  :RTL8125_SSH_SESSION :board}
+
  :subsystems
  {:boot        {:relevance :core
                 :markers [:LOADER :LOADER_INTEGRITY :LOADER_RECOVERY :LOADER_MODEL

@@ -373,4 +373,25 @@
          LOADER_MODEL_OK needs a real GGUF handoff, NETBOOT_EMBEDDED_OK the
          PXE-embedded image path, and LOADER_RECOVERY_OK a corruption that
          actually forces the fallback -- the three AIUEOS_CORRUPT_* modes all
-         pass without reaching it."}]
+         pass without reaching it."}
+ {:at "2026-09-09"
+  :profile :unproven-markers-classified
+  :core {:emitted 86 :declared 116 :pct 74.1}
+  :note "No number moved; the report learned to answer a question it could not.
+         ACPI_RETAIN turned out already proven once both transports were
+         collected, so platform is 7/8 and thirty core markers remain unproven.
+         A single count treated them alike when they need five different
+         things, which is the flattening this file's own header warns about --
+         a zero meaning 'this profile did not exercise it' read as a zero
+         meaning 'it does not work'.
+         The report now says what each waits on:
+           owner 9, board 8, model-artifact 7, unwritten 3, profile 2,
+           firmware 1.
+         The useful line is the third from the end. THREE markers are unwritten
+         code -- SSH_KEX_REPLY, SSH_AUTH, SSH_SESSION -- and they are the only
+         group an agent can close without a credential, a powered board, a
+         10.9 GB artifact or a different firmware. The auth gate already names
+         the stage: AIUEOS_SSH_KEX_REPLY_INCOMPLETE stage=2.
+         A marker absent from the map counts as :unclassified and says so,
+         because 'not attributed' is not 'unblocked' and the difference is
+         exactly what this benchmark keeps getting caught on."}]
