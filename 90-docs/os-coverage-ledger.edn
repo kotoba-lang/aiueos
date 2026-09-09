@@ -599,4 +599,55 @@
          Also worth its own attention, outside this loop: the shared amu
          checkout is diverged from its west pin. The toolchain-sync rule exists
          because that once made a real capability look absent for days. Not
-         touched -- it holds uncommitted work."}]
+         touched -- it holds uncommitted work."}
+ {:at "2026-09-10"
+  :profile :display-row-two-closed-one-classified
+  :core {:emitted 91 :declared 116 :pct 78.4}
+  :display {:emitted 15 :declared 16 :pct 93.8}
+  :note "The display row, which last iteration's correction opened up. Its three
+         unclassified markers turned out to be three different things, and the
+         only way to tell was to measure each.
+         GUEST_INPUT: (a). AIUEOS_GUEST_INPUT=1 is a run flag that builds
+         WITHOUT AIUEOS_INPUT_SMOKE_SYNTHETIC (hence the required synthetic=0),
+         attaches an id'd keyboard plus a QMP socket, and injects real key events
+         from python. Complete profile, simply never run. Landed
+         AIUEOS_GUEST_INPUT_OK eventq-used=1 synthetic=0.
+         GOP_DISCOVERY: (a), and subtler. It prints only under
+         if (gop_used_protocol_scan), so it marks the FALLBACK discovery path.
+         Under OVMF the ConsoleOut handle carries the GOP, the fast path always
+         wins, and the marker can never appear no matter how many times the
+         normal gate is green. The build define that forces the fallback,
+         AIUEOS_GOP_FORCE_PROTOCOL_SCAN, already existed and was already wired
+         into build-uefi.sh. Landed AIUEOS_GOP_DISCOVERY_OK source=protocol-scan.
+         display 13/16 -> 15/16 93.8%. CORE unchanged at 91/116 78.4%, because
+         display is an excluded row -- these two do not move the headline and
+         should not be read as if they did.
+         GUEST_SCANOUT_TWO: (b), a real gap, classified :code. No new boot was
+         needed -- the kernel prints its own failure branch and the logs already
+         on hand said it: 'leftover=one-scanout enabled=1', 36x in one and 7x in
+         another, while AIUEOS_GUEST_GPU_TWO_OK resources=2 flush=2 passes in the
+         SAME boots and QEMU runs with max_outputs=2. Two GPU resources bind and
+         one scanout enables. The number to move is aiueos_gpu_enabled_scanouts()
+         -> 2. Evidence for a gap was sitting in logs measured four iterations
+         ago; nothing had ever read the failure branch.
+         Also fixed a fragility that cost a run. The gate derives its QMP socket
+         path from $out and a UNIX socket path is capped at 104 bytes. My
+         scratchpad out gave 135 and QEMU died with a message naming neither the
+         profile nor the cause. The DEFAULT out measures 99 -- five bytes of
+         headroom -- so a checkout directory a few characters longer silently
+         makes this documented profile unrunnable. It now refuses early and says
+         which path, how long, and what the limit is. Discriminated both ways:
+         135-byte path -> exit 1 with that message; short path -> exit 0,
+         refusal silent, AIUEOS_UEFI_SMOKE_OK.
+         k16 smoke green, but honestly: attempt 1 gave PSTCMPRCD without X and
+         it passed on attempt 2. That is the known teardown race, which the gate
+         absorbs by requiring X in one of four attempts. Green by contract, not
+         green in one shot.
+         Remaining: CORE 25 (owner 9, board 8, model-artifact 7, firmware 1),
+         plus GUEST_SCANOUT_TWO :code and PLC_RT :compiler in the excluded rows.
+         Verified rather than asserted, and the scope matters: the report's
+         reason tally sums to exactly 25 with no unclassified bucket, which
+         covers the CORE rows only. The two excluded-row markers were
+         classified by hand this iteration, so nothing in either group is
+         unclassified now -- but only the core half of that is machine-checked,
+         and the report has no equivalent tally for the excluded rows."}]

@@ -398,6 +398,18 @@ qmp_args=""
 kbd_args="-device virtio-keyboard-pci,disable-legacy=on"
 if [ "${AIUEOS_GUEST_INPUT:-0}" = 1 ]; then
   kbd_args="-device virtio-keyboard-pci,disable-legacy=on,id=kbd0"
+  # The QMP socket path comes from $out, and a UNIX socket path is capped at
+  # 104 bytes. The default out leaves FIVE bytes of headroom, so a checkout
+  # directory a few characters longer silently makes this documented profile
+  # unrunnable -- and the symptom is a QEMU startup error naming neither the
+  # profile nor the cause. Refuse here, where the message can say both.
+  qmp_len=$(printf '%s' "$qmp_path" | wc -c | tr -d ' ')
+  if [ "$qmp_len" -ge 104 ]; then
+    echo "error: AIUEOS_GUEST_INPUT needs a QMP socket at $qmp_path" >&2
+    echo "       that path is $qmp_len bytes and the UNIX limit is 104." >&2
+    echo "       Set AIUEOS_OUT to a shorter directory." >&2
+    exit 1
+  fi
   qmp_args="-qmp unix:${qmp_path},server,nowait"
 fi
 pristine_blk=
