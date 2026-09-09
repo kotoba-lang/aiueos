@@ -809,3 +809,48 @@ in the fail-closed halt -- a board that stops after `F` with nothing further.
 That is what "the board is dead again" has looked like, and the status string
 this path exists to print is the one thing it could not print. Unverified on
 hardware: the board is not powered, and this is stated as a prediction.
+
+## The tail race has a mechanism: isa-debug-exit does not stop the vCPU
+
+The last thing left unexplained -- runs that exit 33 yet print `X`, the
+loader's post-return marker, when the only writer of 16 is the guest before
+it returns -- is closed, and it was not a contradiction.
+
+Two measurements, neither of them a trace reading:
+
+**The guest's write is the terminator.** Changing its terminal value from 16
+to 21 changed the exit from 33 to 43, three runs for three. Nothing else in
+either tree writes a value congruent to 21 mod 128.
+
+**And execution continues past it.** A byte `W` placed immediately before
+that write gives, three runs for three:
+
+    P S T C M P R C D W X O K      exit 43
+
+`W` is the last instruction before the `out`, and `X`, `O` and `K` are all
+loader bytes emitted after the guest returns. So the exit code is fixed at
+the write while the vCPU carries on: the guest returns, the loader runs its
+entire post-return path, and the process tears down a moment later with the
+code already decided.
+
+That is the mechanism behind the tail race this ADR has been describing as a
+symptom since the start. **How far execution gets after the write varies,
+which is why the same image ends at `D`, at `X`, or at `X O K`.** The
+trailing bytes were never nondeterministic guest behaviour; they are a
+footrace with process teardown.
+
+Two things follow that matter beyond this bug:
+
+- **The exit code is trustworthy and the tail is not** -- the opposite of how
+  they had been read. The code is written by one instruction at a known point;
+  the tail is whatever escaped before teardown.
+- **The tender's post-return path IS exercised in QEMU**, just after the
+  outcome is fixed. `O` and `K` prove the loader resumes and completes a
+  firmware call under the restored CR3. What QEMU still does not exercise is
+  re-entry: `r15` is never 250 here, so `:tender-step` is reached once and the
+  second `T` never appears. That remains hardware-only evidence.
+
+Method, once more: every step here was a measurement designed to have two
+distinguishable outcomes -- change the value and see which code appears, put
+a byte before the write and see which side of it the loader's bytes land on.
+The readings of the trace alone produced three wrong answers in this file.
