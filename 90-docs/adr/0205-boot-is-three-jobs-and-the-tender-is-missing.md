@@ -499,3 +499,57 @@ or be a distinct artifact the loader hands control to. Both keep the handler
 outside the computation, which is the property that matters; the choice is
 about who owns the bytes, and it should be made with kototama rather than for
 it.
+
+## The tender's return path, closed 2026-09-09
+
+The tender re-enters the loader after the guest returns 250, and in QEMU the
+loader never ran again: the guest returned (`R`) and the loader's own `T`/`X`
+never printed. The cause was the guest's NX identity map covering the page the
+loader would resume on. Fixing it needed the loader's text address, which only
+UEFI knows, so the loader publishes it and the guest clears NX on the covering
+PDE.
+
+Publishing it was easy; **reading it took four runs, and each one was worth
+more than the fix.** The slot first went after the 16 KiB memory map, growing
+boot-info to 16480 bytes, and a copy of the accessor bounded at 16480 hung.
+
+What the four runs established, one claim each:
+
+| Run | Change | Trace | What it acquitted |
+|---|---|---|---|
+| 1 | marker before/after the read | `PSTCMa` | — the read does not return |
+| 2 | marker in an `if` condition, not `(* 0 marker)` | `PSTCMa` | constant folding |
+| 3 | same read at declared offset 0 | `PSTCMa` | the offset |
+| 4 | marker on function entry | `PSTCMad` | the call |
+
+Run 2 is the one to keep. The first marker was placed in a `(* 0 marker)`
+addend, the sequencing idiom this codebase uses everywhere, and a foldable zero
+multiply means **"the read hung" and "the compiler dropped the marker" print
+exactly the same thing — nothing.** The conclusion from run 1 was right, but it
+was not yet evidence; run 2 is what made it evidence.
+
+What remained was the declared bound, and the emitter says why:
+`kernel-load-u8` carries a profile maximum of 512 bytes, and
+`emit-kernel-load-u8` compares the declared length against it and falls through
+to **UD2** (`kotoba/native/x86_64.cljc`). A too-wide bound does not read wide.
+It executes an undefined instruction, and at that point in boot the guest has
+no `#UD` gate installed, so the firmware's handler takes it and dead-loops —
+which is why it looked like a hang and not a fault. `-4k` and `-16k` variants
+exist at 4096 and 16384; 16480 exceeds all three.
+
+So narrow first and read second. The slot moved into the **last 16 bytes of the
+map window**, and the read goes through `kernel-subregion` and
+`kernel-load-u8-16k`, whose maximum is exactly that window. boot-info does not
+grow, no ABI offset moves, and no bound wider than an op's profile is declared
+anywhere. The guest's map bound drops 16384 -> 16368 so that a map reaching the
+slot is refused rather than read back with an overwritten tail.
+
+QEMU marker is now `PSTCMPRCDX`, exit 0. **`X` is the loader running after the
+guest returned** — by construction rather than by luck, which is what ADR-0204
+asked for and what the hardware run of 17 re-entries could not by itself prove.
+
+The general lesson is not about this bound. It is that **a bounds check that
+traps is indistinguishable from a hang unless something downstream is listening
+for the trap.** The guest installs a `#UD` gate; this code runs before it. Any
+guest code that runs before its own fault gates should be read with that in
+mind.
