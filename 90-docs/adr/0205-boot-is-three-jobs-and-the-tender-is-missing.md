@@ -773,3 +773,39 @@ it already re-materialises rdi and r9 every iteration for the same reason.
 Still unexplained, and stated as such: runs that exit 33 print `X`, which
 means the loader resumed, yet the only writer of 16 is the guest before it
 returns. One of those two readings is wrong and I have not established which.
+
+## The ConOut attribution, falsified and then confirmed (2026-09-09)
+
+The section above named the loader's ConOut call as the fault. That was a
+hypothesis from a trace, and the previous two of those had to be retracted,
+so it was tested before being believed.
+
+**First control: it looked wrong.** A build with the CR3 restore removed and
+a marker `O` before the call reached `O` twice in six runs and exited 33 both
+times, with no `F`. Read straight, that acquits the call.
+
+**It was the control that was wrong.** `O` says the path was entered. It does
+not say the path was left. Adding `K` after the call settled it in one build:
+
+    without the restore   ...X O F   exit 63, twice; K never appears
+    with the restore      ...X O K   exit 33, no F in fourteen runs
+
+The call does not return. The instruction fetch faults, reaches the guest's
+recoverable `#PF` handler, fails its `CR2 == 0x100000` test, and closes fail
+-- the `F` receipt and the `0x1f` it writes, which is exit 63.
+
+The fix is in `amu`: snapshot UEFI's CR3 beside the loader text address and
+reload it before the status path touches firmware. Both halves live in the
+16-byte slot inside the map window, so nothing about the boot-info ABI moves.
+
+**Both markers stay.** The first control was not merely inconclusive, it
+pointed the wrong way, and it did so because it could see a path being
+entered and not whether it was left. A marker before a call and a marker
+after it are two different measurements; only the pair can distinguish
+"never went there" from "went there and never came back".
+
+On the K16 there is no `isa-debug-exit`, so this same fault has been ending
+in the fail-closed halt -- a board that stops after `F` with nothing further.
+That is what "the board is dead again" has looked like, and the status string
+this path exists to print is the one thing it could not print. Unverified on
+hardware: the board is not powered, and this is stated as a prediction.
