@@ -726,3 +726,50 @@ a static one -- reading the emitter for the profile maximum, computing which
 values can reach the port, enumerating status ranges, grepping for the port
 constant. The runs only ever confirmed. The two conclusions that had to be
 retracted were both produced by reasoning from a trace.
+
+## exit 63 is the triple fault, caught -- and it predicts a hardware failure
+
+Two logs from the batch after the interrupt mask landed, kept on disk and
+re-read rather than re-run. Both exit-63 runs carry exactly one page fault
+and it is the last event before exit:
+
+    v=0e e=0011 cpl=0 IP=0038:0000000006af1cee CR2=0000000006af1cee
+
+Identical in both. `e=0011` is present + instruction fetch and `CR2` equals
+`RIP` -- the same signature as the triple fault documented above, at a
+different firmware address. The seven runs that exited 33 have no page fault
+at all.
+
+So **exit 63 and the triple fault are one bug at two stages of treatment.**
+Before the mask, an interrupt reached the still-live firmware IDT and there
+was no handler that could be fetched, so it tripled. After it, the fault
+reaches the guest's own recoverable `#PF` handler, which requires
+`CR2 == 0x100000`, sees a firmware address, and fails closed. The mask did
+not remove the cause; it converted an unrecoverable machine reset into a
+receipt. That is what fail-closed is for, and it is also why the symptom
+looked new.
+
+The trace says when: `...D X F`. `X` is the loader resuming after the guest
+returned, so the fault happens **after** control is back in the loader --
+and the loader's fall-through calls UEFI ConOut to keep the status string on
+the panel. ConOut is firmware text, above 2 MiB, and `fill-identity-pd` has
+made everything up there NX. `allow-loader-exec` un-NXes the loader's own
+page and nothing else, so the loader can run but cannot call the firmware
+that loaded it.
+
+**This is not a QEMU artifact.** On the K16 there is no `isa-debug-exit`, so
+the same fault ends in the fail-closed halt instead of an exit code -- a
+board that stops with `F` and no further output, which is what "the board is
+dead again" has looked like. The status string that path exists to print is
+the one thing it cannot print.
+
+Three candidate fixes, none applied yet: the loader saves UEFI's CR3 before
+calling the guest and restores it before touching firmware; or the guest is
+told the firmware text range as it is told the loader's; or the fall-through
+stops calling firmware and reports through a port it already owns. The first
+is the smallest and is the one that matches the tender's existing shape --
+it already re-materialises rdi and r9 every iteration for the same reason.
+
+Still unexplained, and stated as such: runs that exit 33 print `X`, which
+means the loader resumed, yet the only writer of 16 is the guest before it
+returns. One of those two readings is wrong and I have not established which.
