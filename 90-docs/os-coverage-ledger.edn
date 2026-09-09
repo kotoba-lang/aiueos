@@ -181,4 +181,25 @@
          Also worth keeping: the number was read wrong once more before it was
          read right. input-fail-line printed 128, which is not a line in the
          function -- my own grep window truncated 1284. The instrument, not the
-         system."}]
+         system."}
+ {:at "2026-09-09"
+  :evidence ["short-int.txt" "kernel.map"]
+  :profile :release-gpt-image-hang-localised
+  :note "No coverage change; a diagnosis. The release image's long-running
+         nondeterministic stop is a HANG -- exit 124, and not one exception in
+         the entire interrupt log, only timer and MSI-X.
+         build-uefi.sh now emits a link map beside the stripped kernel, which
+         is what made the address readable. Every numeric diagnosis in this
+         tree has needed one and none had it: exit 63 took days, 0x6f named
+         twenty-seven call sites, and this hang could be seen but not named.
+         The map costs nothing at runtime and ships nowhere.
+         With it: the BSP spins in virtio_blk_sector_io at 0x1163c2 while
+         vector 0x23 -- 35, the virtio-blk MSI-X vector by the evidence's own
+         account -- fires repeatedly. The completion arrives and the loop never
+         finishes. A storage-path hang.
+         Two readings were discarded first, both the same error. The log's last
+         events are in task_loop, which is the IDLE AP rather than the stuck
+         BSP; the two stack pointers differing by exactly 0x1000 were two CPUs.
+         And -smp 1 does not isolate the BSP -- this guest requires cpu>=2 and
+         fails ACPI honestly, exit 241. Filtering events by address against the
+         map is what separated the processors."}]

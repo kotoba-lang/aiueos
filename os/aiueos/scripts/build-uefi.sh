@@ -1204,7 +1204,15 @@ if [ -n "${AIUEOS_K16_LINK_LIST_OUT:-}" ]; then
   done
   echo "AIUEOS_K16_LINK_LIST_WRITTEN entries=$(wc -l < "$AIUEOS_K16_LINK_LIST_OUT" | tr -d ' ') path=$AIUEOS_K16_LINK_LIST_OUT"
 fi
+# -Map: the image stays stripped (the symbol tables are never loaded and the
+# reason for --strip-all is unchanged), but the link map is written beside it so
+# a runtime address can be turned back into a function without rebuilding.
+# Every numeric diagnosis in this tree has needed that and none of them had it:
+# exit 63 took days to attribute, 0x6f named twenty-seven call sites, and a
+# hang at RIP 0x123a41 could be seen but not named. The map is a build-time
+# file that ships nowhere.
 zig ld.lld -nostdlib -static --strip-all $qualification_gc_link -z max-page-size=0x1000 \
+  -Map "$out/kernel.map" \
   -T "$aiueos/kernel/linker.ld" -o "$kernel" \
   "$kernel_entry_object" "$kernel_object" "$kernel_paging_object" \
   "$kernel_acpi_object" "$kernel_vtd_object" "$kernel_apic_object" "$kernel_memory_object" \

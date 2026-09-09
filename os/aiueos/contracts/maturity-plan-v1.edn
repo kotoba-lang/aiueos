@@ -90,7 +90,22 @@
               stop in the same place, not because the boot is deterministic.
               So the node's real content is the nondeterministic stop, and the
               gate needs to reach the same point twice before its equivalence
-              assertion means anything."
+              assertion means anything.
+              LOCALISED 2026-09-09. The early stop is a HANG, not a fault:
+              exit 124, no exception in the whole interrupt log, only timer and
+              MSI-X. The link map now emitted beside the kernel resolves the
+              spinning address: the BSP sits in virtio_blk_sector_io at
+              0x1163c2, taking vector 0x23 -- 35, which the evidence names as
+              the virtio-blk MSI-X vector -- over and over. The completion
+              interrupt ARRIVES, repeatedly, and the wait loop never finishes.
+              So the long-running nondeterministic stop is a storage-path hang,
+              not input and not enumeration.
+              Two wrong readings were discarded on the way, both from the same
+              mistake. The last events in the log sit in task_loop, which is the
+              idle AP, not the stuck BSP -- the two stack pointers differing by
+              exactly 0x1000 were two CPUs. And -smp 1 does not isolate the BSP:
+              this guest requires cpu>=2 and fails ACPI honestly. Filtering
+              events by address, against the map, was what separated them."
    :why-first "Nothing else can be proved on the shipping artifact while it
                stops partway. Largest measured gap: 76 markers on the build
                against about 30 on the image."}
