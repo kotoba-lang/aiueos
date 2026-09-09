@@ -1,0 +1,148 @@
+;; The remaining distance to an appliance OS, as a dependency graph.
+;;
+;; The ORDER IS NOT WRITTEN HERE. Each node states only what it needs, and
+;; os/aiueos/scripts/maturity-plan.cljs computes a reverse topological order --
+;; dependencies first, dependents after -- and refuses on a cycle. That split is
+;; deliberate: a hand-written sequence is an assertion nobody can check, and it
+;; goes stale the moment one edge changes. An order derived from edges cannot
+;; disagree with the edges.
+;;
+;; :evidence is how we know a node is open, and it names a measurement or a
+;; contract rather than an opinion. A node with no evidence is a belief.
+;;
+;; :owner-gated marks work that cannot be done by an agent at all -- a
+;; credential, a hardware decision, a purchase. These are sorted like any other
+;; node so their position is honest, but the loop must not spin on them.
+{:format :aiueos.maturity-plan/v1
+ :benchmark :chromeos
+ :measured-baseline {:build {:core 67 :of 114 :pct 58.8}
+                     :release-image {:core 29 :of 114 :pct 25.4}
+                     :at "2026-09-09" :by "os/aiueos/scripts/os-coverage.cljs"}
+
+ :nodes
+ {:release-image-enumerates-devices
+  {:title "The release image enumerates virtio-gpu and virtio-input"
+   :needs []
+   :evidence "ESP boot emits VIRTIO_GPU_OK and VIRTIO_INPUT_OK; the GPT boot of
+              the same source emits neither line at all, while PCI_OK
+              bounded-scan appears in both. Measured 2026-09-09."
+   :why-first "Nothing else can be proved on the shipping artifact while it
+               stops here. It is the single largest measured gap: 58.8 percent
+               on the build against 25.4 on the image."}
+
+  :reproducible-build
+  {:title "Two builds of one tree produce one image"
+   :needs []
+   :evidence "Three builds of an unchanged tree gave three KERNEL.ELF hashes
+              (5e5cb2bc, f259b5d5, 0556cba0) because build identity is embedded.
+              Measured 2026-09-09."
+   :why-first "Independent of everything and blocks verification of everything:
+               two images cannot be compared by hash. On the ChromeOS benchmark
+               an image's identity is the point, not a build-system detail."}
+
+  :amd-ivrs-isolation
+  {:title "DMA isolation on AMD (IVRS), not only VT-d"
+   :needs []
+   :evidence "kernel/main.c gates the RTL8125 path behind
+              AIUEOS_PHYSICAL_NETWORK_QUALIFICATION and its own comment calls it
+              test-only because AMD-IVRS isolation is not implemented."
+   :checked "2026-09-09: suspected this was the wrong requirement for the board
+             and it was not. The K16 is an AMD Ryzen 7 7735HS, so IVRS is
+             exactly right and Intel VT-d is the part that does not apply here.
+             Recorded so the next reader does not re-run the check."
+   :consequence "The isolation row's proven markers are Intel VT-d, measured
+                 under QEMU emulating Intel. On this board that coverage
+                 transfers to nothing -- the one row where a QEMU number is
+                 actively misleading about the hardware."}
+
+  :tpm-key-binding
+  {:title "Keys bound to a hardware root of trust"
+   :needs []
+   :evidence "contracts/os-coverage-v1.edn crypto row: TLS 1.3 records exist
+              in-kernel, no TPM binding. Named there as the clearest single gap
+              against ChromeOS."}
+
+  :murakumo-service-token
+  {:title "Service token and trust tier for admission"
+   :needs []
+   :owner-gated true
+   :evidence "admission: pending. Needs MURAKUMO_SERVICE_TOKEN and
+              AIUEOS_MURAKUMO_TRUST_TIER=awai-secure, which are the owner's to
+              supply and must never enter the image."}
+
+  :install-intent
+  {:title "An install intent for the installer USB"
+   :needs []
+   :owner-gated true
+   :evidence "hostname, target model, transport, min/max GB and an SSH public
+              key. Deliberately never auto-created."}
+
+  :release-image-passes-suite
+  {:title "The shipping image passes the shared UEFI suite"
+   :needs [:release-image-enumerates-devices]
+   :evidence "Build passes with 76 markers and exit 0; the release image emits
+              32 and returns 1. Rebuilding reproduced it, and AIUEOS_DISK_IMAGE
+              only swaps the boot drive, so it is neither staleness nor a
+              reduced test."}
+
+  :usb-boot-claimed
+  {:title "The USB gate reports AIUEOS_USB_BOOT_OK, not EQUIVALENT"
+   :needs [:release-image-passes-suite]
+   :evidence "The gate deliberately refuses to claim a pass neither transport
+              earned, so it downgrades to EQUIVALENT while the suite fails. The
+              transports are already proved indistinguishable, 57 identical
+              evidence lines."}
+
+  :physical-nic-production
+  {:title "The physical NIC path leaves the test-only profile"
+   :needs [:amd-ivrs-isolation]
+   :evidence "The driver exists and ships in every profile; what is missing is
+              production status. Corrected in usb-boot-v1.edn 2026-09-09, which
+              had said the driver did not exist."}
+
+  :net-stack-on-hardware
+  {:title "DHCP, TCP and HTTPS over the physical NIC"
+   :needs [:physical-nic-production]
+   :evidence "net-link 0/3 and net-stack 0/4 in both measured profiles. ARP and
+              a UDP receipt are already passed on the board by the
+              Kotoba-native provider, so the link layer is not the open part."}
+
+  :verified-boot-parity
+  {:title "Verified boot equivalent to the ChromeOS root of trust"
+   :needs [:tpm-key-binding :reproducible-build]
+   :evidence "Signed object admission is already stricter than either
+              reference -- nothing runs unsigned. What is absent is the hardware
+              root and a comparable image identity."}
+
+  :ab-update-parity
+  {:title "A/B slots with automatic rollback"
+   :needs [:release-image-passes-suite :reproducible-build]
+   :evidence "The dual-slot journal is A/B under another name, per the storage
+              row; what it lacks is a whole-image slot pair and a rollback
+              trigger."}
+
+  :tender-reentry-proven
+  {:title "The tender's re-entry proved under QEMU, not only on hardware"
+   :needs []
+   :evidence "The post-return path is exercised -- X, O and K all print -- but
+              r15 is never 250 in QEMU, so :tender-step is reached once and the
+              second T never appears. Seventeen re-entries were observed on
+              hardware and nowhere else."}
+
+  :cluster-membership
+  {:title "The node is admitted to the murakumo cluster"
+   :needs [:net-stack-on-hardware :murakumo-service-token]
+   :evidence "cluster 0/9 in both profiles. murakumo-node-v1.edn: deciding to
+              join is not joining."}
+
+  :inference-on-node
+  {:title "Inference runs on the node from a delivered model"
+   :needs [:net-stack-on-hardware :install-intent]
+   :evidence "inference 0/7 in both profiles. The in-kernel runtime is the row
+              where AIUEOS is ahead of both references, and it is the product."}
+
+  :node-live
+  {:title "K16 serves inference as a cluster member"
+   :needs [:cluster-membership :inference-on-node :ab-update-parity
+           :verified-boot-parity]
+   :evidence "The stated goal. Every edge into it is measured above."}}}
