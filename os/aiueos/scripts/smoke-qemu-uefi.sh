@@ -17,8 +17,18 @@ cleanup_plc_signing() {
     rmdir "$plc_signing"
   }
 }
-trap cleanup_plc_signing 0
-trap 'cleanup_plc_signing; exit 1' HUP INT TERM
+# One cleanup, one pair of traps. A second `trap ... EXIT` anywhere below would
+# REPLACE these rather than add to them, and cleanup_plc_signing would silently
+# stop running -- so anything else needing teardown hangs itself here instead.
+tpm_state=
+tpm_pid=
+cleanup_tpm() {
+  [ -z "$tpm_pid" ] || kill "$tpm_pid" 2>/dev/null || true
+  [ -z "$tpm_state" ] || rm -rf "$tpm_state"
+}
+cleanup_all() { cleanup_plc_signing; cleanup_tpm; }
+trap cleanup_all 0
+trap 'cleanup_all; exit 1' HUP INT TERM
 
 if [ "${AIUEOS_PLC_RT_SMOKE:-0}" = 1 ]; then
   AIUEOS_PLC_ELF=${AIUEOS_PLC_ELF:-"$repo/build/plc-motor/program.elf"}
@@ -247,6 +257,36 @@ if [ "${AIUEOS_TEST_DMAR:-0}" = 1 ]; then iommu_args="-device intel-iommu,intrem
 # because the boot itself is worth having: it is the only way to run this OS
 # on its own platform's IOMMU class without the hardware.
 if [ "${AIUEOS_TEST_IVRS:-0}" = 1 ]; then iommu_args="-device amd-iommu"; fi
+
+# TPM2 the same way IVRS is done: attach the device only when asked for, so
+# every existing gate boots the machine it booted before. swtpm supplies the
+# device; whether the guest ever SEES a TPM2 ACPI table is the firmware's
+# decision, and that is the thing actually under test here -- the taxonomy
+# records TPM2 as blocked on "a firmware this machine does not have", which is
+# a claim about OVMF, not about the device, and was never measured.
+tpm_args=
+if [ "${AIUEOS_TEST_TPM2:-0}" = 1 ]; then
+  if command -v swtpm >/dev/null 2>&1; then
+    tpm_state=$(mktemp -d "${TMPDIR:-/tmp}/aiueos-swtpm.XXXXXX")
+    swtpm socket --tpm2 --tpmstate "dir=$tpm_state" \
+      --ctrl "type=unixio,path=$tpm_state/sock" --flags startup-clear \
+      >"$tpm_state/swtpm.log" 2>&1 &
+    tpm_pid=$!
+    tpm_wait=0
+    while [ ! -S "$tpm_state/sock" ] && [ "$tpm_wait" -lt 50 ]; do
+      tpm_wait=$((tpm_wait + 1)); sleep 0.1
+    done
+    if [ -S "$tpm_state/sock" ]; then
+      tpm_args="-chardev socket,id=chrtpm,path=$tpm_state/sock -tpmdev emulator,id=tpm0,chardev=chrtpm -device tpm-tis,tpmdev=tpm0"
+    else
+      echo "error: swtpm did not create its control socket" >&2
+      exit 1
+    fi
+  else
+    echo "error: AIUEOS_TEST_TPM2=1 but swtpm is not installed" >&2
+    exit 1
+  fi
+fi
 # A NIC is attached only when asked for, so every existing gate keeps booting
 # the exact machine it booted before. SLIRP ("-netdev user") is a real peer with
 # a fixed topology — it answers ARP for 10.0.2.2 — which is what lets the first
@@ -508,6 +548,7 @@ PY
     -chardev file,id=debug,path="$log" \
     -device isa-debug-exit,iobase=0xf4,iosize=0x04 \
     $iommu_args \
+    $tpm_args \
     $usb_args \
     $net_args \
     -device virtio-rng-pci \

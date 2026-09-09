@@ -518,4 +518,41 @@
          which would have made the gate answer about a tree that is not the one
          being qualified.
          Remaining core unproven 25: owner 9, board 8, model-artifact 7,
-         firmware 1. The profile-gated group is now empty."}]
+         firmware 1. The profile-gated group is now empty."}
+ {:at "2026-09-10"
+  :profile :tpm2-measured-absent-no-marker-closed
+  :core {:emitted 91 :declared 116 :pct 78.4}
+  :note "Nothing closed. 91/116 is unchanged and that is the result, not a
+         pause before one.
+         Two reasons in the taxonomy were beliefs; both are now measurements.
+         TPM2 said 'needs a firmware this machine does not have (TPM-enabled
+         OVMF)'. That is two claims and neither had been tested. swtpm and
+         swtpm_setup ARE installed here and QEMU has the emulator backend, so
+         the device side was available all along -- the reason as written would
+         have let a reader conclude the whole thing was unavailable. Added an
+         AIUEOS_TEST_TPM2 hook mirroring the existing IVRS one and ran it: with
+         a real software TPM attached the guest reports
+         AIUEOS_TPM2_ABSENT no-root-of-trust-described, twice. So the blocker is
+         OVMF declining to publish a TPM2 ACPI table, not the absence of a TPM.
+         The reason was right for a reason nobody had checked. Hook kept, and
+         the re-test command is now written next to the classification.
+         model-artifact (7) is correctly classified -- NOT a mislabelled
+         :profile like the two before it. But its reason was incomplete:
+         Qwen3.8-27B-UD-IQ3_XXS.gguf (10,934,860,704 B) is absent AND the volume
+         has 16 GB free of 927 GB at 99% full, which the release-image builds
+         also write into. 'Needs the artifact on hand' invites 'one download
+         away'; on this machine the download would take 68% of the remaining
+         headroom. Recorded, not fetched -- that is a decision about the owner's
+         disk, not a coverage decision.
+         I also broke something and caught it only because two outputs
+         disagreed. The TPM block used `trap ... EXIT HUP INT TERM`, which
+         REPLACES rather than adds, silently removing the script's existing
+         cleanup_plc_signing traps. The run printed AIUEOS_UEFI_SMOKE_OK and
+         exited 1. Had the marker verdict been all I looked at, I would have
+         reported TPM2_ABSENT and left a disabled cleanup behind. Folded into a
+         single cleanup_all with one pair of traps and a comment at the trap
+         site saying why a second EXIT trap below would break it. Discriminated:
+         same TPM2 verdict, exit 1 -> exit 0.
+         Remaining 25 -- owner 9, board 8, model-artifact 7, firmware 1 -- and
+         none is agent-closable on this machine without a credential, a board,
+         11 GB of disk, or a different OVMF."}]

@@ -68,14 +68,26 @@
   :IVRS :board  :PHYSICAL_NETWORK :board  :RTL8125 :board
   :PHYSICAL_DIRECT_HTTPS :board  :PHYSICAL_QUALIFICATION :board
   :PHYSICAL_QWEN35 :board  :PHYSICAL_MODEL_HANDOFF :board
-  ;; needs a firmware this machine does not have (TPM-enabled OVMF)
+  ;; needs a firmware this machine does not have (TPM-enabled OVMF).
+  ;; MEASURED 2026-09-10, not assumed: swtpm and swtpm_setup ARE installed and
+  ;; QEMU has the emulator backend, so the device side is available. With a
+  ;; real software TPM attached the guest still reports
+  ;;   AIUEOS_TPM2_ABSENT no-root-of-trust-described
+  ;; so the blocker is OVMF declining to publish a TPM2 ACPI table, not the
+  ;; absence of a TPM. Re-test with:
+  ;;   AIUEOS_TEST_TPM2=1 sh os/aiueos/scripts/smoke-qemu-uefi.sh
   :TPM2 :firmware
   ;; needs the owner: a credential or an install intent, never auto-created
   :MURAKUMO_NODE :owner  :MURAKUMO_HEARTBEAT :owner  :MURAKUMO_JOB_POLL :owner
   :MURAKUMO_JOB_RESULT :owner  :MURAKUMO_CONTROL_ACK :owner
   :MURAKUMO_PERSISTENT_BOOT :owner  :PHYSICAL_JOB :owner
   :PHYSICAL_LIVENESS :owner  :PHYSICAL_RELAY :owner
-  ;; needs the 10.9 GB GGUF artifact on hand
+  ;; needs the 10.9 GB GGUF artifact on hand -- and, on this machine, room for
+  ;; it. MEASURED 2026-09-10: Qwen3.8-27B-UD-IQ3_XXS.gguf (10,934,860,704 B) is
+  ;; absent, and the volume has 16 GB free of 927 GB at 99% full, which the
+  ;; release-image builds also write into. "One download away" is the reading
+  ;; this line invites and it is wrong here; the fetch is a decision about the
+  ;; owner's disk, not a coverage decision.
   :LOADER_MODEL :model-artifact  :MODEL_SLOT :model-artifact
   :MODEL_HANDOFF :model-artifact  :QWEN35_ADMISSION :model-artifact
   :QWEN35_GENERATE :model-artifact  :QWEN35_GRAPH :model-artifact
