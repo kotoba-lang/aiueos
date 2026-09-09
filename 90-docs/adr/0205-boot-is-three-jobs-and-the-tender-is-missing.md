@@ -268,6 +268,52 @@ boundaries, because lines without a timestamp inherit the previous one. The
 non-lossy witness for "did the run end" is the PXE server's fetch log, and
 nothing else.
 
+### QEMU can reach the tender now, and the first thing it found was unfinished
+
+2026-09-09. The preflight image branched to `:exit-boot` on the missing
+RTL8125, so the emulator ran the ordinary halting entry and the tender was
+never exercised there. `exit 33 / MPRCD` had been green for a week of runs in
+which the changed code was not reached -- a control for absence. Four defects
+found on hardware that week were pure control flow with no packet in them.
+
+The branch now skips only the RTL8125 banner, and the loader marks its stages
+on port 0xE9 (free on hardware, which ignores the port; and it is the only
+channel the LOADER has, since the netlog belongs to the guest's NIC and the
+ConOut panel only prints when `main` returns). The smoke asserts `PSTC` as a
+prefix and `MPRCD` as a substring, verified red with a wrong prefix.
+
+It earned itself on the first run: `PTC`, and the marker that was MISSING named
+the defect -- the branch target sat below the snapshot, so `tender-fuel` was
+never written and the guest was called with a zero budget.
+
+### The open question, stated so the next attempt starts ahead of this one
+
+**Making the guest return 250 under QEMU does not produce a second entry, and
+does produce exit 63.**
+
+What is eliminated, by measurement rather than reasoning:
+
+- **The markers are in the image.** A byte scan for
+  `mov dx,0xE9; mov al,c; out dx,al` finds exactly one site each for
+  P, S, T, C, N, X and the loader's fail `F`. So a missing letter means the
+  path was not taken, not that the instrument is absent.
+- **`X` has never appeared, in any configuration.** X sits immediately after
+  the tender's `call`, so on this evidence the guest has never returned through
+  that call site here -- including the runs where it returns 250 rather than
+  writing 0xF4.
+- **Exit 63 appears only when the guest is made to return 250.** 63 is
+  isa-debug-exit's `(31 << 1) | 1`, and 31 is `prepare-owned-pages`' code for
+  `zero-page pml4` failing -- zeroing the page tables the machine is running
+  on. Guarding that with the CR3 test did NOT change the exit, and a marker on
+  the decision itself printed once and never a second time.
+
+So something writes 31 without the tender re-entering, and the two facts do not
+yet fit together. Three guesses were made and spent here (the NIC, the
+page-fault probe, the ownership block); each produced a defensible guard and
+none was the cause. The next attempt should place a marker immediately before
+every `kernel-out-u32 244` site rather than reason about which one fires --
+there are nine, and one run would name it.
+
 ## Order, and what not to do
 
 1. ~~**The image entry becomes a host loop**~~ — **landed 2026-09-08**, see
