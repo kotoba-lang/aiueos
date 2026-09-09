@@ -46,6 +46,34 @@
      (* (kernel-load-u8-16k base length (+ offset 6)) 281474976710656)
      (* (kernel-load-u8-16k base length (+ offset 7)) 72057594037927936)))
 
+(defn load64-boot-far [boot offset]
+  ;; The loader publishes its own text address -- the one thing only UEFI
+  ;; knows -- in the last 16 bytes of the 16 KiB memory-map window, at window
+  ;; offset 16368.
+  ;;
+  ;; It cannot be read with `load64-boot`, whose accessor is `kernel-load-u8`:
+  ;; that op's profile maximum is 512 bytes, and the emitter compares the
+  ;; length against the maximum and falls through to UD2 when it is exceeded
+  ;; (`kotoba/native/x86_64.cljc`, `emit-kernel-load-u8`). A declared length of
+  ;; 16480 therefore does not read anything -- it executes an undefined
+  ;; instruction. This runs before the guest's own #UD gate is installed, so
+  ;; the firmware's handler takes it and dead-loops: measured 2026-09-09, the
+  ;; marker before the read printed and every marker after it did not, at
+  ;; offset 16464 and at offset 0 alike.
+  ;;
+  ;; So narrow first and read second. `kernel-subregion` yields the 16 KiB
+  ;; window, and `load64` reads it with `kernel-load-u8-16k`, whose maximum is
+  ;; 16384 -- exactly the window. No wider bound is declared anywhere.
+  (let [window (kernel-subregion boot 16480 96 16384)]
+    (load64 window 16384 offset)))
+
+(defn allow-loader-exec [pd loader-text]
+  (let [index (quot loader-text 2097152)]
+    (if (and (> loader-text 0) (< index 512))
+      (let [value (+ (* index 2097152) 131)]
+        (if (= (store64-page pd (* index 8) value) 1) 1 0))
+      1)))
+
 (defn load64-boot [base offset]
   (+ (kernel-load-u8 base 96 offset)
      (* (kernel-load-u8 base 96 (+ offset 1)) 256)
@@ -475,7 +503,11 @@
              (= (load64-boot boot 8) 4)
              (= (load64-boot boot 16) memory-map)
              (> map-size 0)
-             (<= map-size 16384)
+             ;; 16368, not 16384: the last 16 bytes of the map window hold
+             ;; the loader's own text address, which the loader writes after
+             ;; the map.  A map that reaches them would be read back with its
+             ;; tail overwritten, so refuse it instead of trusting the tail.
+             (<= map-size 16368)
              (>= descriptor-size 40)
              (<= descriptor-size map-size)
              (> (load64-boot boot 40) 0)
@@ -996,6 +1028,12 @@
                                           (* 0 wd-mark)))))))
                             (kernel-out-u32 244 (+ 96 pre-cr3-nic-status))))
                         (if (and (prepare-page-tables page-table-root pdpt pd pt)
+                                 ;; 'a' before the far read, 'b' after it,
+                                 ;; 'c' after the NX clear. One run says which
+                                 ;; of the two hangs; last iteration only knew
+                                 ;; that the guest stopped after 'M'.
+                                 (= (allow-loader-exec
+                                     pd (load64-boot-far boot 16368)) 1)
                                  (prepare-low-page-table pt rx-limit rw-start)
                                  (prepare-rtl-page-tables
                                   pdpt rtl-directory-a rtl-directory-b bar-a bar-b))
