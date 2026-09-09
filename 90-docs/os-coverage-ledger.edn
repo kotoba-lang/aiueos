@@ -159,4 +159,26 @@
          pattern is worth keeping: absent markers, then a missing PCI line,
          then a result bit, each consistent with what was visible and wrong
          about what was happening. The measurement that settled it was the
-         cheapest of the three and could have been taken first."}]
+         cheapest of the three and could have been taken first."}
+ {:at "2026-09-09"
+  :evidence ["evidence-release-image.log"]
+  :profile :release-gpt-image-built-as-its-own-gate-requires
+  :core {:emitted 66 :declared 115 :pct 57.4}
+  :note "25.4 to 57.4 for the release image, and nothing about the image
+         changed -- only how it was built.
+         virtio_input fails at its last exit, after
+         #ifdef AIUEOS_INPUT_SMOKE_SYNTHETIC: no event arrived and no synthetic
+         one was compiled in. smoke-qemu-uefi.sh builds its own kernel with
+         AIUEOS_INPUT_SMOKE_SYNTHETIC=1 and build-release-image.sh does not, so
+         every measurement of the release image so far was of an artifact built
+         without a define its own gate requires. Built with it: 79 markers,
+         more than the ESP build's 76.
+         So the release image was never half broken, and this ledger said it
+         was, three entries running. The finding that survives is smaller and
+         sharper: the suite cannot pass a genuine production image by
+         construction, because a shipping image must not fabricate input events
+         and the suite requires one. A gate design problem, not an OS defect.
+         Also worth keeping: the number was read wrong once more before it was
+         read right. input-fail-line printed 128, which is not a line in the
+         function -- my own grep window truncated 1284. The instrument, not the
+         system."}]

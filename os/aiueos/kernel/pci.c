@@ -174,7 +174,17 @@ static int desktop_input_eventq_empty;
    one up worked. input_ok alone cannot tell "no such device on this machine"
    from "the device is there and we failed it", and those want opposite fixes. */
 static int virtio_input_devices_seen;
+/* Which of virtio_input()'s four failure exits was taken. The device is
+   present in BOTH profiles and only one of them brings it up, so "it failed"
+   is now the least useful thing known about it: the four exits want four
+   different fixes -- transport negotiation, page allocation, the doorbell, or
+   no event arriving. Zero means it succeeded.
+   Set by line number inside virtio_input only. The three sibling probes share
+   these exact source lines, so a text replace would have instrumented all of
+   them and reported whichever ran last. */
+static int virtio_input_fail_line;
 int aiueos_pci_input_devices_seen(void) { return virtio_input_devices_seen; }
+int aiueos_pci_input_fail_line(void) { return virtio_input_fail_line; }
 int aiueos_desktop_input_event_ready(void) { return desktop_input_ready; }
 int aiueos_desktop_input_from_eventq(void) { return desktop_input_from_eventq; }
 int aiueos_desktop_input_eventq_empty(void) { return desktop_input_eventq_empty; }
@@ -1214,12 +1224,12 @@ static int virtio_input(uint8_t b, uint8_t d, uint8_t f) {
   volatile struct virtio_common_cfg *cfg;
   uint64_t notify_base;
   if (!find_virtio_caps(b,d,f,&caps) ||
-      !map_transport(b,d,f,&caps,&cfg,&notify_base) || !negotiate(cfg)) return 0;
+      !map_transport(b,d,f,&caps,&cfg,&notify_base) || !negotiate(cfg)) { virtio_input_fail_line = __LINE__; return 0; }
   struct virtq_desc *desc = aiueos_allocate_physical_page();
   struct virtq_avail *avail = aiueos_allocate_physical_page();
   struct virtq_used *used = aiueos_allocate_physical_page();
   struct virtio_input_event *event = aiueos_allocate_physical_page();
-  if (!desc || !avail || !used || !event) return 0;
+  if (!desc || !avail || !used || !event) { virtio_input_fail_line = __LINE__; return 0; }
   /* Four slots so EV_KEY + EV_SYN from virtio-keyboard both fit. Queue
      size 1 dropped SYN and could refuse a real key. */
   for (uint16_t i = 0; i < 4; i++) {
@@ -1229,7 +1239,7 @@ static int virtio_input(uint8_t b, uint8_t d, uint8_t f) {
   }
   __asm__ volatile("" ::: "memory"); avail->index = 4;
   volatile uint16_t *doorbell = prepare_queue(cfg,&caps,notify_base,4,desc,avail,used);
-  if (!doorbell) return 0;
+  if (!doorbell) { virtio_input_fail_line = __LINE__; return 0; }
   cfg->device_status |= VIRTIO_STATUS_DRIVER_OK;
   *doorbell = 0;
 #ifdef AIUEOS_INPUT_SMOKE_SYNTHETIC
@@ -1271,6 +1281,7 @@ static int virtio_input(uint8_t b, uint8_t d, uint8_t f) {
   return 1;
 #endif
   desktop_input_eventq_empty = 1;
+  virtio_input_fail_line = __LINE__;
   return 0;
 }
 
@@ -5387,6 +5398,7 @@ int aiueos_pci_enumerate(void) {
   desktop_input_from_eventq = 0;
   desktop_input_eventq_empty = 0;
   virtio_input_devices_seen = 0;
+  virtio_input_fail_line = 0;
   for (uint16_t bus = 0; bus < 256; bus++) for (uint8_t dev = 0; dev < 32; dev++) {
     uint32_t id0 = config_read((uint8_t)bus,dev,0,0);
     if ((id0 & 0xffffU) == 0xffffU) continue;

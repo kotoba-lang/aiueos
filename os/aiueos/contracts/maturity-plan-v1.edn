@@ -58,7 +58,25 @@
               Next: what inside virtio_input() fails. A plausible line, not yet
               measured, is memory layout -- the GPT image is far larger than
               the ESP directory, so firmware allocation differs and the DMA
-              pages the probe needs may land differently."
+              pages the probe needs may land differently.
+              SETTLED, and the answer retires the alarm this node was built
+              on. virtio_input fails at its LAST exit, the one after
+              #ifdef AIUEOS_INPUT_SMOKE_SYNTHETIC -- no event arrived and no
+              synthetic one was compiled in. smoke-qemu-uefi.sh builds ITS
+              kernel with AIUEOS_INPUT_SMOKE_SYNTHETIC=1;
+              build-release-image.sh does not. So the gate was booting an image
+              built without a test-only define through a suite that requires
+              the event that define fabricates.
+              Built with it, the release image reports input-rng-base=111,
+              input-fail-line=0 and 79 markers -- MORE than the ESP build's 76
+              -- and measures 57.4 percent rather than 25.4.
+              The release image was never half broken. What is real, and is
+              the honest residue of this node, is that the suite cannot pass a
+              genuine production image by construction: a shipping image must
+              not fabricate input events, and the suite requires one. That is a
+              gate design problem, not an OS defect, and
+              smoke-qemu-release-image.sh already shows the intended shape by
+              setting the define before it builds."
    :why-first "Nothing else can be proved on the shipping artifact while it
                stops partway. Largest measured gap: 76 markers on the build
                against about 30 on the image."}
