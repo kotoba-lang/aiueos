@@ -649,9 +649,37 @@
                                               (- twelfth-start 4096) 4096)
                                   ring-status (stream/rx-ring-init
                                                stream-mmio rtl-dma-pages)
-                                  tcb-status (if (= ring-status 0)
-                                               (stream/tcb-init stream-tcb 2715820034)
-                                               1)
+                                  ;; A STEP KEEPS ITS TCB. `tcb-init` zeroes
+                                  ;; the block, including the boot-nonce slot
+                                  ;; and the cycle counter, and the tender
+                                  ;; re-enters `main` every ~76 ms -- so with
+                                  ;; it the board drew a FRESH NONCE PER STEP
+                                  ;; and announced itself as a new node
+                                  ;; thirteen times a second. Measured
+                                  ;; 2026-09-09: 54 hellos and 55 entries from
+                                  ;; two image loads, which buried the relay's
+                                  ;; single-flight mint under a burst it was
+                                  ;; never shaped for (its window was derived
+                                  ;; for one hello per 20 s) and turned every
+                                  ;; enrolment into a 401.
+                                  ;;
+                                  ;; The nonce slot is already written once and
+                                  ;; reused while non-zero; it was the
+                                  ;; re-initialisation underneath it that made
+                                  ;; that pointless. Keeping the block also
+                                  ;; keeps `cycles`, which gates the hello on
+                                  ;; `(= cycles 0)` -- so the hello returns to
+                                  ;; once per COLD BOOT, which is what it
+                                  ;; always meant.
+                                  ;;
+                                  ;; Same CR3 test as the page-fault probe and
+                                  ;; the NIC qualification: the hardware
+                                  ;; already knows whether init has run.
+                                  tcb-status (if (= cr3 page-table-root)
+                                               0
+                                               (if (= ring-status 0)
+                                                 (stream/tcb-init stream-tcb 2715820034)
+                                                 1))
                                   stream-status
                                   (if (and (= ring-status 0) (= tcb-status 0))
                                     0
