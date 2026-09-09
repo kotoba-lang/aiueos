@@ -44,7 +44,18 @@ DEBIAN_IMAGE = "debian:stable-slim"
 # the container resolves each name to an insmod-ordered dependency closure.
 MODULES = ["nvme", "virtio_blk", "virtio_pci", "virtio_scsi", "xhci_pci",
            "ehci_pci", "usb_storage", "uas", "sd_mod", "ahci",
-           "vfat", "nls_cp437", "nls_ascii", "nls_iso8859-1"]
+           "vfat", "nls_cp437", "nls_ascii", "nls_iso8859-1",
+           # Networking. The live environment installs offline, but a box that
+           # is going to become a murakumo node has to be able to answer its
+           # own enrolment challenge, and that starts here.
+           "virtio_net",                       # QEMU
+           "r8169", "igc", "e1000e", "e1000",  # the K16's RTL8125, and common wired NICs
+           # A phone shared over USB is the keyboard-free way onto a network
+           # for a box with no ethernet run to it (root ADR adr-2609092800 D6
+           # route B). These are the classes `aiueos.network-bootstrap` admits
+           # to CARRY first boot -- and refuses to record as the machine's own.
+           "usbnet", "cdc_ether", "cdc_ncm", "cdc_subset", "rndis_host",
+           "ipheth", "r8152"]
 # blkid probes PART_ENTRY_UUID directly from the device; lsblk's PARTUUID
 # column is udev-fed and comes back EMPTY in this udev-less initramfs
 # (measured: all three disks enumerated, every PARTUUID blank).
@@ -56,6 +67,29 @@ PAYLOAD_PARTUUID = "6de0f34d-549a-5d00-92c2-df27f49691be"
 # The shebang names busybox itself: at exec time /bin/sh does not exist yet
 # (busybox --install creates it two lines later), and a #!/bin/sh init dies
 # with exactly the "Failed to execute /init (error -2)" panic this replaced.
+UDHCPC_SCRIPT = """#!/bin/busybox sh
+# busybox ships udhcpc but no lease handler; this is that handler. It writes
+# only what a node needs to reach an enrolment endpoint: address, default
+# route, resolver.
+[ -n "$interface" ] || exit 1
+case "$1" in
+  bound|renew)
+    if command -v ip >/dev/null 2>&1; then
+      ip addr flush dev "$interface" 2>/dev/null
+      ip addr add "$ip/${mask:-24}" dev "$interface" 2>/dev/null
+      [ -n "$router" ] && ip route add default via "${router%% *}" dev "$interface" 2>/dev/null
+    else
+      ifconfig "$interface" "$ip" netmask "${subnet:-255.255.255.0}" up
+      [ -n "$router" ] && route add default gw "${router%% *}" dev "$interface"
+    fi
+    mkdir -p /etc
+    : > /etc/resolv.conf
+    for d in $dns; do echo "nameserver $d" >> /etc/resolv.conf; done
+    ;;
+esac
+exit 0
+"""
+
 INIT_SCRIPT = """#!/bin/busybox sh
 # aiueos live-installer init: mechanism only. Mount kernel filesystems, load
 # storage drivers, find the install-USB payload by its GPT partition GUID,
@@ -71,6 +105,37 @@ echo AIUEOS_LIVE_INIT start
 while read m; do
   insmod /modules/"$m" 2>/dev/null || echo "AIUEOS_LIVE_INSMOD_SKIP $m"
 done < /modules/modules.list
+# Networking. Reported in three distinct states on purpose: a lease, no lease,
+# and no interface at all are different facts, and an installer that printed
+# one marker for all three would look the same whether the box was offline or
+# had no NIC driver.
+mkdir -p /usr/share/udhcpc /etc
+cp /udhcpc.script /usr/share/udhcpc/default.script 2>/dev/null
+chmod +x /usr/share/udhcpc/default.script 2>/dev/null
+NETIF=""
+for i in $(ls /sys/class/net 2>/dev/null); do
+  [ "$i" = lo ] && continue
+  NETIF="$NETIF $i"
+  ip link set "$i" up 2>/dev/null || ifconfig "$i" up 2>/dev/null
+done
+if [ -z "$NETIF" ]; then
+  echo AIUEOS_LIVE_NET_NO_INTERFACE
+else
+  echo "AIUEOS_LIVE_NET_INTERFACES$NETIF"
+  LEASED=""
+  for i in $NETIF; do
+    if udhcpc -i "$i" -n -q -t 4 -T 2 -s /usr/share/udhcpc/default.script >/dev/null 2>&1; then
+      LEASED="$i"
+      ADDR=$(ip -4 -o addr show dev "$i" 2>/dev/null | awk '{print $4}')
+      [ -z "$ADDR" ] && ADDR=$(ifconfig "$i" 2>/dev/null | awk '/inet /{print $2}')
+      echo "AIUEOS_LIVE_NET_LEASE $i $ADDR"
+      break
+    fi
+  done
+  [ -z "$LEASED" ] && echo AIUEOS_LIVE_NET_NO_LEASE
+fi
+export AIUEOS_LIVE_NET_IFACE="$LEASED"
+
 i=0
 PAYLOAD=""
 while [ "$i" -lt 60 ]; do
@@ -235,6 +300,11 @@ def build_initramfs(parts):
     for d in ("bin", "lib", "lib64", "modules", "proc", "sys", "dev", "run", "payload", "tmp"):
         cpio.directory(d)
     cpio.file("init", INIT_SCRIPT.encode(), 0o755)
+    # /init copies this to /usr/share/udhcpc/default.script before running the
+    # client. Carried as its own file rather than heredoc'd from /init: a
+    # here-document inside a here-document is how a shell script quietly stops
+    # being the script that was written.
+    cpio.file("udhcpc.script", UDHCPC_SCRIPT.encode(), 0o755)
     for name in sorted(p.name for p in (parts / "bin").iterdir()):
         cpio.file(f"bin/{name}", (parts / "bin" / name).read_bytes(), 0o755)
     for name in sorted(p.name for p in (parts / "lib").iterdir()):

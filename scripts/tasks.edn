@@ -5,7 +5,12 @@
 ;; bare-metal build/smoke chain under os/aiueos/scripts stays as it is — those
 ;; are the OS's own dependency-minimal build tools (sh + python stdlib only),
 ;; and pulling them behind nbb would put Node in the boot-evidence path.
-{:device-attest-agent
+{:live-network-smoke
+ {:cmd ["nbb" "os/aiueos/scripts/smoke-qemu-live-network.cljs"]
+  :pass-args? true
+  :doc "Boot the live installer under OVMF with and without a NIC; require a lease in one and no-interface in the other."}
+
+ :device-attest-agent
  {:cmd ["nbb" "--classpath" "../grant/src:../text/src"
         "os/aiueos/scripts/device-attest-agent.cljs"]
   :pass-args? true
