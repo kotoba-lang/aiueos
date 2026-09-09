@@ -1,0 +1,166 @@
+;; What fraction of what AIUEOS CLAIMS does a real boot actually prove, and how
+;; does the shape of that claim compare to the two operating systems worth
+;; comparing against?
+;;
+;; The measured column is deliberately NOT source presence. The tree declares
+;; 131 distinct AIUEOS_*_OK markers; a release boot emits far fewer. That gap
+;; is the whole point: a marker in a .c file is an intention, a marker in a
+;; serial log is a proof. Only the second counts here.
+;;
+;; TWO BENCHMARKS, AND THEY ARE NOT THE SAME QUESTION.
+;;
+;; Linux is the wrong yardstick for almost every row and is kept only as
+;; context. It is a general-purpose kernel with a driver matrix no scoped OS
+;; will ever match, and "Linux has it" is true of nearly everything, so it
+;; discriminates nothing. Chasing it produces a plan measured in person-decades
+;; and tells you nothing about whether the node works.
+;;
+;; ChromeOS is the right yardstick. It is an appliance OS: verified boot, A/B
+;; slots with automatic rollback, a minimal userland, no general package
+;; management, and a fixed hardware set per device. That is the same shape
+;; AIUEOS is aiming at, so the comparison is actionable -- and in several rows
+;; AIUEOS is already closer to ChromeOS than to Linux, because signed object
+;; admission and a dual-slot journal ARE verified boot and A/B updates under
+;; different names.
+;;
+;; :unmeasured is not zero (the property is borrowed from
+;; kotoba-lang/catalog-maturity). A subsystem no evidence log covers is
+;; excluded from the total and reported in :measured-weight, so silence is
+;; never scored as failure -- and the report refuses to produce a number at
+;; all when given no evidence.
+{:format :aiueos.os-coverage/v1
+ :measured-by "os/aiueos/scripts/os-coverage.cljs"
+ :evidence-is :emitted-markers-in-a-real-boot-log
+ :not-evidence :markers-present-in-source
+
+ ;; :relevance says whether a row is on the path to the stated target, which is
+ ;; an appliance inference node -- not a workstation. Rows marked :context are
+ ;; measured and reported but excluded from the headline number, because
+ ;; scoring an inference node on desktop compositing would make the number
+ ;; move for reasons nobody acts on.
+ :subsystems
+ {:boot        {:relevance :core
+                :markers [:LOADER :LOADER_INTEGRITY :LOADER_RECOVERY :LOADER_MODEL
+                          :KERNEL :NETBOOT_EMBEDDED :INITRAMFS
+                          :INITRAMFS_RECOVERY_ADMISSION :KOTOBA_NATIVE]
+                :linux "GRUB or systemd-boot; signature optional, rollback external"
+                :chromeos "verified boot from a write-protected root of trust"
+                :note "signed admission plus a recovery path is the ChromeOS shape"}
+  :memory      {:relevance :core
+                :markers [:PAGING :PHYSICAL_ALLOCATOR :ADDRESS_SPACE :COPYIN :PAGE_FAULT
+                          :KOTOBA_COPY_IN]
+                :linux "full VM: demand paging, swap, overcommit, THP"
+                :chromeos "same kernel, zram, no swap file"
+                :note "AIUEOS has an identity map with NX and W^X, not demand paging"}
+  :interrupts  {:relevance :core
+                :markers [:DESCRIPTOR_TABLES :EXCEPTION :FATAL_IDT :IOAPIC :PIC
+                          :APIC_TIMER :FAULT_RECEIPT :PANIC_RECEIPT :CRASH_RECEIPT]
+                :linux "full IRQ subsystem, threaded IRQs, NMI watchdog"
+                :chromeos "same"
+                :note "receipts are a property neither reference has: a fault
+                       produces a signed artifact rather than a dmesg line"}
+  :smp         {:relevance :core
+                :markers [:SMP :SCHEDULER :SCHEDULER_CR3]
+                :linux "CFS/EEVDF, cgroups, NUMA"
+                :chromeos "same"
+                :note "AIUEOS schedules, it does not time-share fairly"}
+  :process     {:relevance :core
+                :markers [:PROCESS_CREATE :PROCESS_FOUNDATION :PROCESS_REAP :RING3
+                          :SYSCALL :SYSRET :USER_SYSCALL :KOTOBA_ELF_PROCESS
+                          :KOTOBA_USER_RUNTIME :KOTOBA_SYSCALL_PLANNER]
+                :linux "POSIX processes, fork/exec, ~400 syscalls"
+                :chromeos "same, plus a seccomp-heavy sandbox"
+                :note "AIUEOS admits signed objects rather than running arbitrary
+                       binaries; the syscall surface is deliberately tiny"}
+  :storage     {:relevance :core
+                :markers [:VIRTIO_BLK :VIRTIO_BLK_MSIX :OBJECT_STORE
+                          :OBJECT_STORE_RESTORE :OBJECT_TXN :OBJECT_TXN_REPLAY
+                          :JOURNAL :JOURNAL_RECOVERY :KOTOBA_JOURNAL_PLAN
+                          :KOTOBA_STORAGE_READ_VALIDATION :KOTOBA_STORAGE_WRITE
+                          :MODEL_SLOT :KOTOBA_FNV :KOTOBA_FNV_VECTOR
+                          :KOTOBA_OBJECT_REPLAY :KOTOBA_OBJECT_WRITE
+                          :KOTOBA_STORE_VECTOR]
+                :linux "ext4/btrfs/xfs, page cache, fsync semantics"
+                :chromeos "ext4 on a dm-verity root, stateful partition"
+                :note "aiuefs-v3 is content-addressed with a dual-slot journal;
+                       closer to dm-verity plus A/B than to a general filesystem"}
+  :net-link    {:relevance :core
+                :markers [:VIRTIO_NET :RTL8125 :PHYSICAL_NETWORK]
+                :linux "thousands of drivers"
+                :chromeos "a fixed set per device"
+                :note "one physical driver (RTL8125) plus virtio-net; a fixed set
+                       per device is exactly the ChromeOS bargain"}
+  :net-stack   {:relevance :core
+                :markers [:IPV4 :DHCP :TCP :PHYSICAL_DIRECT_HTTPS]
+                :linux "full dual-stack, netfilter, XDP"
+                :chromeos "same kernel stack"
+                :note "IPv4 only, no listen path beyond SSH, no firewall"}
+  :crypto      {:relevance :core
+                :markers [:AES_GCM :HMAC_HKDF :X25519 :ECDSA_P256 :ECDSA_PUBLIC
+                          :ECDSA_SIGN :TLS13_RECORD :RANDOM]
+                :linux "kernel crypto API plus userspace TLS libraries"
+                :chromeos "same, plus a TPM-backed key hierarchy"
+                :note "TLS 1.3 records in-kernel; no TPM binding yet, which is
+                       the clearest single gap against ChromeOS"}
+  :remote      {:relevance :core
+                :markers [:SSH_LISTEN :SSH_KEX :SSH_KEX_REPLY :SSH_AUTH
+                          :SSH_SESSION :RTL8125_SSH_SESSION]
+                :linux "OpenSSH, full shell"
+                :chromeos "no SSH by default; developer mode only"
+                :note "AIUEOS exposes named commands and no shell, which is
+                       nearer the ChromeOS posture than the Linux one"}
+  :platform    {:relevance :core
+                :markers [:ACPI :ACPI_RETAIN :PCI :KOTOBA_PCI_PLANNER :SERIAL
+                          :VIRTIO_RNG :VIRTIO_RNG_MSIX :PHYSICAL_QUALIFICATION]
+                :linux "ACPI, PCI hotplug, power management"
+                :chromeos "same, plus firmware-verified device list"
+                :note "bounded PCI scan, no hotplug, no suspend/resume"}
+  :isolation   {:relevance :core
+                :markers [:DMA_POLICY :VTD :VTD_IR :CAPABILITY_TRANSFER
+                          :DYNAMIC_CAPABILITY :KOTOBA_CAPABILITY]
+                :linux "IOMMU groups, VFIO"
+                :chromeos "same, enforced by default"
+                :note "VT-d present; AMD-IVRS is NOT, which is why the physical
+                       NIC path is still test-only"}
+  :services    {:relevance :core
+                :markers [:SERVICE_REGISTRY :SERVICE_IPC :SERVICE_RUNTIME
+                          :KOTOBA_SERVICE_IPC :PERSISTENT_SERVICE_BOOTSTRAP]
+                :linux "systemd"
+                :chromeos "upstart, minimal service set"
+                :note "a registry with generations and restart counts"}
+  :admission   {:relevance :core
+                :markers [:KOTOBA_APP_ADMISSION :APP_CATALOG_LOOKUP
+                          :KOTOBA_CATALOG_POLICY_SELFTEST :KOTOBA_RECORD_VALIDATION]
+                :linux "none by default; IMA/EVM optional"
+                :chromeos "verified boot plus signed updates"
+                :note "AIUEOS is stricter than both: nothing runs unsigned, ever"}
+  :inference   {:relevance :core
+                :markers [:QWEN35_ADMISSION :QWEN35_GENERATE :QWEN35_GRAPH
+                          :QWEN35_WORKSPACE :MODEL_HANDOFF :PHYSICAL_QWEN35
+                          :PHYSICAL_MODEL_HANDOFF]
+                :linux "userspace runtimes"
+                :chromeos "userspace runtimes"
+                :note "neither reference does this in the kernel; this row is
+                       where AIUEOS is ahead of both, and it is the product"}
+  :cluster     {:relevance :core
+                :markers [:MURAKUMO_NODE :MURAKUMO_HEARTBEAT :MURAKUMO_JOB_POLL
+                          :MURAKUMO_JOB_RESULT :MURAKUMO_CONTROL_ACK
+                          :MURAKUMO_PERSISTENT_BOOT :PHYSICAL_JOB
+                          :PHYSICAL_LIVENESS :PHYSICAL_RELAY]
+                :linux "none; an application concern"
+                :chromeos "none"
+                :note "the actual goal; no reference OS has an opinion here"}
+  :realtime    {:relevance :context
+                :markers [:PLC_RT]
+                :linux "PREEMPT_RT"
+                :chromeos "not offered"}
+  :display     {:relevance :context
+                :markers [:FRAMEBUFFER :GOP_DISCOVERY :GOP_HANDOFF :VIRTIO_GPU
+                          :VIRTIO_INPUT :DESKTOP_SURFACE :DESKTOP_INPUT
+                          :GUEST_WM :GUEST_PAINT :GUEST_IME :GUEST_SCANOUT_TWO
+                          :GUEST_SESSION :GUEST_BROKER :GUEST_GPU_TWO
+                          :GUEST_INPUT :BROWSER_DESKTOP_TRANSPORT]
+                :linux "DRM/KMS, Wayland, full input stack"
+                :chromeos "same, plus Ash/Aura"
+                :note "measured but excluded from the headline: an inference
+                       node is not scored on compositing"}}}

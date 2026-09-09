@@ -1,0 +1,127 @@
+#!/usr/bin/env nbb
+;; How much of what AIUEOS claims does a real boot actually prove?
+;;
+;; Usage: nbb os/aiueos/scripts/os-coverage.cljs <evidence-log> [<evidence-log>...]
+;;
+;; Exit 0 measured, 1 findings, 2 REFUSED (could not measure). The third code
+;; exists because "no evidence" and "nothing passed" must not look alike: given
+;; no readable log this refuses to print a number rather than printing 0%.
+;;
+;; DECLARED comes from the sources, EMITTED from the logs, and only EMITTED
+;; counts. A marker in a .c file is an intention; a marker in a serial log is a
+;; proof. The gap between them is the measurement.
+;;
+;; Written for nbb, against the workspace's kbb-first rule for new tooling:
+;; there is no kbb repo in the manifest and no kbb on PATH, so kbb-first is not
+;; achievable here today. Port when it lands -- skill nbb-to-kbb-migration.
+(require '[clojure.string :as str]
+         '[clojure.set :as set])
+
+(def fs (js/require "node:fs"))
+(def path (js/require "node:path"))
+
+(def aiueos (.resolve path (.dirname path *file*) ".."))
+(def contract (.join path aiueos "contracts" "os-coverage-v1.edn"))
+
+(defn- die [code & msg]
+  (.write js/process.stderr (str (str/join " " msg) "\n"))
+  (js/process.exit code))
+
+(defn- read-file [p] (.readFileSync fs p "utf8"))
+
+(defn- walk-sources [dir]
+  (if-not (.existsSync fs dir)
+    []
+    (mapcat (fn [e]
+              (let [p (.join path dir e)]
+                (cond (.isDirectory (.statSync fs p)) (walk-sources p)
+                      (re-find #"\.(c|h)$" e) [p]
+                      :else [])))
+            (.readdirSync fs dir))))
+
+(defn- markers-in [text]
+  (set (map #(keyword (str/replace (str/replace % "AIUEOS_" "") #"_OK$" ""))
+            (re-seq #"AIUEOS_[A-Z0-9_]+_OK" text))))
+
+;; *command-line-args*, not (drop 2 js/process.argv). Under nbb that drop
+;; leaves this script's own path in the list, so the run "measured" itself and
+;; printed 0% instead of refusing -- the precise failure this file exists to
+;; prevent, and its own control caught it on the first execution.
+(let [args (vec *command-line-args*)]
+  (when (empty? args)
+    (die 2 "REFUSED: no evidence log given."
+         "\nThis measures what a boot EMITTED, not what the sources declare."
+         "\nWithout a log there is nothing to measure, and 0% would be a lie."
+         "\nusage: nbb os/aiueos/scripts/os-coverage.cljs <evidence-log> [...]"))
+  (let [missing (remove #(.existsSync fs %) args)]
+    (when (seq missing)
+      (die 2 "REFUSED: unreadable evidence log(s):" (str/join " " missing))))
+
+  (let [spec (cljs.reader/read-string (read-file contract))
+        subsystems (:subsystems spec)
+        declared (reduce set/union
+                         (map (comp markers-in read-file)
+                              (mapcat walk-sources
+                                      [(.join path aiueos "kernel")
+                                       (.join path aiueos "uefi")])))
+        emitted (reduce set/union (map (comp markers-in read-file) args))
+        ;; A log can only prove markers the sources still declare. One that
+        ;; names a marker the tree no longer has is stale evidence, and saying
+        ;; so is the point -- a green report from a log of a build that no
+        ;; longer exists is the exact failure this file is guarding against.
+        stale (set/difference emitted declared)
+        taxonomised (set (mapcat :markers (vals subsystems)))
+        untaxonomised (set/difference declared taxonomised)
+        rows (for [[k v] subsystems
+                   :let [ms (set (:markers v))
+                         d (set/intersection ms declared)
+                         e (set/intersection ms emitted)]]
+               {:subsystem k
+                :relevance (:relevance v)
+                :declared (count d)
+                :emitted (count e)
+                :missing (sort (set/difference d e))
+                ;; declared-but-absent-from-source: the taxonomy naming a
+                ;; marker the tree does not have. Reported, never scored.
+                :phantom (sort (set/difference ms declared))
+                :coverage (when (pos? (count d))
+                            (/ (js/Math.round (* 1000 (/ (count e) (count d)))) 10.0))})
+        rows (sort-by (juxt #(if (= :core (:relevance %)) 0 1) :subsystem) rows)
+        core (filter #(and (= :core (:relevance %)) (pos? (:declared %))) rows)
+        unmeasured (filter #(zero? (:declared %)) rows)
+        core-d (reduce + (map :declared core))
+        core-e (reduce + (map :emitted core))]
+
+    (when (zero? core-d)
+      (die 2 "REFUSED: no core subsystem declares a marker the sources contain."
+           "\nEither the taxonomy or the tree moved; a number here would be noise."))
+
+    (println "AIUEOS OS COVERAGE -- emitted / declared, from" (count args) "evidence log(s)")
+    (println (str "  " (str/join "  " (map #(.basename path %) args))))
+    (println)
+    (doseq [{:keys [subsystem relevance declared emitted coverage missing]} rows]
+      (println (str "  " (if (= :core relevance) " " "~") " "
+                    (let [n (name subsystem)] (str n (apply str (repeat (max 0 (- 12 (count n))) " "))))
+                    "  " emitted "/" declared
+                    (when coverage (str "  " coverage "%"))
+                    (when (seq missing)
+                      (str "   unproven: " (str/join " " (map name (take 4 missing)))
+                           (when (> (count missing) 4) (str " +" (- (count missing) 4))))))))
+    (println)
+    (println "  CORE (the headline; ~ rows are measured but excluded):"
+             core-e "/" core-d
+             (str (/ (js/Math.round (* 1000 (/ core-e core-d))) 10.0) "%"))
+    (when (seq unmeasured)
+      (println "  UNMEASURED (no declared marker in source, excluded from the total):"
+               (str/join " " (map (comp name :subsystem) unmeasured))))
+    (when (seq untaxonomised)
+      (println)
+      (println "  DECLARED BUT NOT IN THE TAXONOMY --" (count untaxonomised) "marker(s).")
+      (println "  The tree grew capabilities the benchmark does not know about;")
+      (println "  add them to os-coverage-v1.edn or the number drifts silently:")
+      (println "   " (str/join " " (map name (sort untaxonomised)))))
+    (when (seq stale)
+      (println)
+      (println "  IN THE LOG BUT NOT IN THE SOURCES --" (count stale) "marker(s).")
+      (println "  The evidence is older than the tree:" (str/join " " (map name (sort stale)))))
+    (js/process.exit (if (or (seq untaxonomised) (seq stale)) 1 0))))

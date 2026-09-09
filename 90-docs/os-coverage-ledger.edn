@@ -1,0 +1,28 @@
+;; Append-only measurement series (the documented exception to "documents hold
+;; current state only" -- a time series IS the value). Each entry is one run of
+;; os/aiueos/scripts/os-coverage.cljs. Never rewrite an entry: a coverage number
+;; that improves because someone edited history is worth nothing.
+;;
+;; :core is emitted/declared over :relevance :core rows. It is scoped to the
+;; evidence supplied, and a zero row usually means "this profile did not
+;; exercise it", not "it does not work" -- several zeros here are contradicted
+;; by physical contracts (physical-kotoba-native-k16-v1.edn has
+;; :arp-request-reply :passed while net-link reads 0/3, because the log that
+;; proves it is not one of these logs). Raising the number therefore has two
+;; honest routes and one dishonest one: feed evidence from profiles that
+;; already pass, close real gaps, or widen the taxonomy denominator. The third
+;; is why :declared is recorded alongside :emitted.
+[{:at "2026-09-09"
+  :evidence ["usb-gate-disk.out"]
+  :profile :release-image-qemu-disk-boot
+  :core {:emitted 29 :declared 114 :pct 25.4}
+  :note "First measurement. The evidence is a single QEMU release boot, and
+         that boot itself does not pass the shared UEFI suite (it stops at
+         AIUEOS_VIRTIO_INPUT_FAIL, a QEMU 10.0.3 device-model difference), so
+         everything after that point in the sequence is unproven here for a
+         reason unrelated to AIUEOS. cluster, inference, net-link, net-stack,
+         process, remote and isolation all read 0 for profile reasons rather
+         than capability reasons.
+         The taxonomy reported ten markers it did not know about on its first
+         run and they were added; that check exists because a benchmark whose
+         denominator silently stops growing flatters itself over time."}]
