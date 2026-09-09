@@ -314,6 +314,42 @@ none was the cause. The next attempt should place a marker immediately before
 every `kernel-out-u32 244` site rather than reason about which one fires --
 there are nine, and one run would name it.
 
+### Narrowed 2026-09-09: the guest returns, and the return does not arrive
+
+Marking all nine `kernel-out-u32 244` exits in `kernel.kotoba` with distinct
+digits and running once eliminated every one of them: **no digit appeared, and
+QEMU still exited 63.** So the 31 that produces that exit is not written by any
+of the guest's exit paths, which is three more guesses retired than reasoning
+would have retired in a day.
+
+What the same run DID show:
+
+```
+PSTCMPRCD R F   ->  exit 63
+          ^ R: the guest reached its hand-back and returned 250
+            ^ X never appears, in any configuration tried
+```
+
+`X` is the byte immediately after `call rax; mov r15, rax` in the tender. If
+the guest returns, X prints. **R fires and X does not**, so what is lost is not
+the value -- the guest computed and returned it -- but the RETURN ITSELF.
+Control never reaches the instruction after the call.
+
+That has an obvious candidate and it explains the hardware/QEMU split. The
+guest installs its own page tables and loads CR3 before it gets anywhere near
+returning; from that instant the loader's code, its stack and the return
+address on it are only reachable if the guest's map happens to cover them. On
+the K16 it evidently does -- 17 re-entries were measured from one image load.
+Under QEMU, UEFI puts the loader somewhere the guest's map does not reach, and
+the `ret` goes nowhere.
+
+**Do not "fix" this by having the guest avoid returning.** The tender's whole
+contract is that the guest hands the step back, and it demonstrably works on
+the board. What is missing is that the guest's page tables must map the caller
+it intends to return to -- which is a real requirement of the tender design
+that nobody had written down, and which the hardware satisfied by luck rather
+than by construction.
+
 ## Order, and what not to do
 
 1. ~~**The image entry becomes a host loop**~~ — **landed 2026-09-08**, see
