@@ -963,6 +963,27 @@ samples. What is established is the split: **the build passes the suite and the
 release image does not**, and the release image is the artifact that would run
 on a node.
 
+Narrowed further the same day, by rebuilding rather than reasoning:
+
+- **It is not staleness.** Rebuilding the release image from the current tree
+  reproduced the failure exactly — 57 lines, status 1. The image is not an old
+  artifact left behind.
+- **It is not a reduced test.** `AIUEOS_DISK_IMAGE` only swaps the boot drive
+  in `smoke-qemu-uefi.sh`; the suite is otherwise identical. So the two runs
+  are the same suite against two artifacts.
+- **The failure has a name.** The GPT boot emits
+  `AIUEOS_VIRTIO_INPUT_FAIL queue-or-envelope`; the ESP boot of the same
+  source emits `AIUEOS_VIRTIO_INPUT_OK`. Same QEMU, same sources, different
+  container — so the suspect is device enumeration or queue setup shifting
+  when the boot disk occupies a slot, and that is a hypothesis, not a result.
+- **The build is not byte-reproducible.** Three builds of an unchanged tree
+  produced three different `KERNEL.ELF` hashes (`5e5cb2bc…`, `f259b5d5…`,
+  `0556cba0…`), because build identity is embedded. That is worth naming
+  separately: it means two images cannot be compared by hash, and for an
+  appliance OS measured against ChromeOS — where an image's identity is the
+  point — reproducibility is a gap in its own right, not a build-system
+  detail.
+
 `flash-usb.cljs` writes the image to a physical stick. Because that is
 irreversible, it is deny-by-default: without `--confirm` it only inspects, and
 `--confirm` must repeat the same device path so the destination is stated twice
