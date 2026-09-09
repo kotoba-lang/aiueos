@@ -607,3 +607,33 @@ specific question rather than a symptom.
 
 On hardware none of this applies: there is no `isa-debug-exit`, the guest
 simply returns, and the tender takes it.
+
+## exit 63 has exactly one possible source (2026-09-09)
+
+Reading the code rather than running it: **31 is producible at exactly one
+point in this kernel** -- the branch of `zero-five-status` taken when
+`(zero-page pml4 0)` does not return 1. It reaches the debug-exit port as
+`owned-status`, through `prepare-owned-pages` and the status ladder. Every
+other status producer has a disjoint range (25-28, 30, 32-39, 40-44, 73-78,
+79-84), and the healthy terminal writes 16 or 17.
+
+So `exit 63` means one thing: **zeroing the PML4 page did not succeed.**
+
+Both that branch and the ladder now emit a byte -- `p` and `l` -- BEFORE
+the port write. Before matters: the guest keeps running after it writes the
+port, so anything printed after a write is a race, and anything printed
+before one is not. Both sites are failure paths, so a healthy run prints
+neither.
+
+Ten runs with the labels in place: all exit 33, identical traces, neither
+label fired. **That is not evidence the fault is gone.** At the 2-in-10
+rate previously observed, a clean run of ten has about an 11% probability,
+and machine load was 101 during these runs against 37 during the batch that
+produced two -- so load does not explain the difference either. The honest
+state is that exit 63 has a name and a label waiting for it, and has not
+been seen since.
+
+What changed is the cost of the next occurrence. Before, a numeric exit code
+had to be matched back to one of nine `kernel-out-u32 244` call sites by
+hand, with a trailing marker that could not be trusted. Now the run says so
+itself.

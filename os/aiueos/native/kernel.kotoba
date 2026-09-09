@@ -187,7 +187,11 @@
 
 (defn zero-five-status [state pml4 pdpt pd pt]
   (if (not (= (zero-page state 0) 1)) 30
-    (if (not (= (zero-page pml4 0) 1)) 31
+    ;; 'p' -- the ONLY branch in this kernel that can produce status 31, and
+    ;; therefore the only possible source of a QEMU exit of 63. That exit had
+    ;; been carried as a standing symptom; it is this and nothing else. The
+    ;; byte costs nothing in a healthy run because this branch is a failure.
+    (if (not (= (zero-page pml4 0) 1)) (if (= (serial/trace-byte 112) 112) 31 31)
       (if (not (= (zero-page pdpt 0) 1)) 32
         (if (not (= (zero-page pd 0) 1)) 33
           (if (not (= (zero-page pt 0) 1)) 34
@@ -1154,14 +1158,22 @@
                                                    (* 0 nic-marker))))
                               (kernel-out-u32 244 24))
                           (kernel-out-u32 244 23)))
+                      ;; 'l' -- this ladder is a failure exit, so say which
+                      ;; writer produced the status. Without it a numeric exit
+                      ;; code has to be matched back to one of nine call sites
+                      ;; by hand, and the trailing bytes cannot help: the guest
+                      ;; keeps running after it writes the port, so everything
+                      ;; printed AFTER a write is a race. A byte printed BEFORE
+                      ;; one is not.
                       (kernel-out-u32 244
+                                      (if (= (serial/trace-byte 108) 108)
                                       (if (not (= owned-status 0))
                                         owned-status
                                         (if (not (= extra-status 0))
                                           extra-status
                                           (if (not (= nic-owned-status 0))
                                             nic-owned-status
-                                            nic-pages-status))))))
+                                            nic-pages-status))) 0))))
               (kernel-out-u32 244 20)))
           (kernel-out-u32 244 19)))
       (kernel-out-u32 244 18))))
