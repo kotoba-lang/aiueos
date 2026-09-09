@@ -968,10 +968,20 @@ images have booted far enough on the physical machine to return bounded stage
 codes, but a normal AIUEOS boot is still unproved.  Real-hardware firmware
 quirks and the complete native runtime therefore remain qualification gates. The bare-metal
 profile's network stack (ADR-0020..0087: virtio-net, DHCPv4, DNS, TCP,
-TLS 1.3, HTTPS GET with CID verification) is proved under QEMU only — the one
-link-layer driver is virtio-net-pci, so on a physical machine the node boots
-on the offline floor (`AIUEOS_VIRTIO_NET_ABSENT`) until a physical-NIC driver
-exists. ADR-0019's original "no network stack at all" was superseded by that
+TLS 1.3, HTTPS GET with CID verification) is proved under QEMU only — its
+link-layer driver is virtio-net-pci, so in the default profile a physical
+machine boots on the offline floor (`AIUEOS_VIRTIO_NET_ABSENT`).
+
+⚠ That is a profile boundary, **not a missing driver**, and this paragraph
+said otherwise until 2026-09-09. `kernel/rtl8125.c` is compiled into every
+profile — `build-uefi.sh` says so in its own comment — and the release chain
+carries physical qualification, direct HTTPS, a device worker and an SSH
+session marker over it. What that path lacks is production status: it sits
+behind `AIUEOS_PHYSICAL_QUALIFICATION` / `AIUEOS_PHYSICAL_NETWORK_QUALIFICATION`,
+and its own comment calls it an explicitly test-only slice because AMD-IVRS
+isolation is not implemented, making it evidence for the link driver rather
+than production DMA qualification. **The remaining work is isolation and
+default-profile wiring over a driver that exists, not writing one.** ADR-0019's original "no network stack at all" was superseded by that
 chain; see `contracts/usb-boot-v1.edn` `:gaps` for the current split.
 
 The RTL8125 physical-link slice is in `kernel/rtl8125.c`. It is a

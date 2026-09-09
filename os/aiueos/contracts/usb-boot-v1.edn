@@ -80,13 +80,25 @@
  :gaps {:network {:virtio :present-qemu-proven
                   :physical :unverified}
         :nic-driver {:virtio-net-pci :present
-                     :physical :absent}
+                     :physical :present-test-only}
         :real-hardware-boot :unverified
         :real-hardware-dhcp :unverified
         :note "USB boot is proved under OVMF in QEMU. No physical machine has
                booted this image; firmware quirks on real hardware (USB 2 vs 3
                enumeration, per-vendor fallback-path handling) remain untested.
-               Wired DHCP on real hardware needs a physical-NIC driver that
-               does not exist yet; the install contract (install-v1.edn)
-               refuses to call headless bootstrap green until an external
-               client completes a real SSH handshake."}}
+               Wired DHCP on real hardware is not production-ready, but the
+               reason changed and this note said the old one until 2026-09-09:
+               a physical-NIC driver DOES exist. kernel/rtl8125.c is compiled
+               into every profile (build-uefi.sh, which says so itself), and
+               the release chain carries physical qualification, direct HTTPS,
+               a device worker, and an SSH session marker over it. What is
+               missing is production status, not the driver: that path sits
+               behind AIUEOS_PHYSICAL_QUALIFICATION and
+               AIUEOS_PHYSICAL_NETWORK_QUALIFICATION, and its own comment
+               calls it an explicitly test-only slice because AMD-IVRS
+               isolation is not implemented, so it is evidence for the link
+               driver rather than production DMA qualification. The remaining
+               work is isolation and default-profile wiring over an existing
+               driver, not writing one. The install contract (install-v1.edn)
+               still refuses to call headless bootstrap green until an
+               external client completes a real SSH handshake."}}
