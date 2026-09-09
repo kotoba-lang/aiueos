@@ -77,9 +77,11 @@
   ;; absence of a TPM. Re-test with:
   ;;   AIUEOS_TEST_TPM2=1 sh os/aiueos/scripts/smoke-qemu-uefi.sh
   :TPM2 :firmware
-  ;; blocked in the compiler, not in aiueos. MEASURED 2026-09-10 against the
-  ;; WEST-PINNED amu (fac4176c -- the shared checkout at orgs/kotoba-lang/amu is
-  ;; diverged from it and fails differently, which is why the pin is named here):
+  ;; blocked in the compiler, not in aiueos. MEASURED 2026-09-10 against THREE
+  ;; amu revisions -- the shared checkout (72e67e5e), the west pin (fac4176c),
+  ;; and origin/main (2abd9843, fetched, pin is its ancestor, +2). Identical
+  ;; exit 70 :kotoba/internal-error at all three, so ADVANCING THE PIN DOES NOT
+  ;; FIX THIS and that hypothesis need not be retried:
   ;; cap-call crashes the native backend even though the PLC policy grants it.
   ;;   echo '(ns p (:export [main])) (defn main [] (cap-call 16 0))' > /tmp/p.kotoba
   ;;   <amu>/bin/kotoba-compiler compile /tmp/p.kotoba \
@@ -90,7 +92,11 @@
   ;; do the generated plc-dint helper and its 2^32 arithmetic. Only cap-call
   ;; fails, and plc-runtime-policy.edn allows [:cap/call 16..19] explicitly, so
   ;; this is not a refusal wearing the wrong message -- a permitted form is
-  ;; crashing the backend.
+  ;; crashing the backend. Nor is it a missing lowering: cap-call is present in
+  ;; amu (capability_names, backend/cljs, elaboration-pipeline "scalar cap-call
+  ;; path first") and in kotoba-native (machine_ir, elf64, peephole, aarch64).
+  ;; Diagnosing further means working inside those two repos, which is not this
+  ;; contract's job; what belongs here is the repro and the three SHAs.
   ;; Second, smaller gap: build-plc-native-program.sh writes
   ;; build/aiueos-plc/<name>/program.elf while smoke-qemu-uefi.sh defaults
   ;; AIUEOS_PLC_ELF to build/plc-motor/program.elf, so even a fixed compiler

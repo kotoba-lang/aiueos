@@ -685,4 +685,39 @@
          Every display marker now passes. Remaining: CORE 25 (owner 9, board 8,
          model-artifact 7, firmware 1) and PLC_RT :compiler. Nothing left that an
          agent can close on this machine: PLC_RT needs amu to stop crashing on a
-         cap-call its own policy permits."}]
+         cap-call its own policy permits."}
+ {:at "2026-09-10"
+  :profile :plc-rt-confirmed-blocked-upstream
+  :core {:emitted 91 :declared 116 :pct 78.4}
+  :note "Nothing closed. The iteration eliminated a hypothesis instead, which is
+         worth an entry because it stops the next reader repeating it.
+         Last time I wrote that the agent-closable set was empty. Having been
+         wrong about exactly that twice this session, I checked one avenue I had
+         never examined: I had tested the cap-call crash against the shared amu
+         checkout and the west pin, both DIVERGED from amu's real origin/main. If
+         the crash were fixed upstream, PLC_RT would be reachable by advancing
+         the pin -- a sanctioned operation.
+         Fetched and measured. origin/main is 2abd9843, the pin IS its ancestor,
+         +2 commits, so a pin advance would be a clean fast-forward. Built a
+         detached worktree there (dependency manifests identical to the installed
+         tree, so the existing node_modules is valid) and ran the same three-line
+         repro: exit 70, :kotoba/internal-error, identical. So the crash holds at
+         all THREE revisions -- 72e67e5e, fac4176c, 2abd9843 -- and advancing the
+         pin does not fix it. Recorded in the taxonomy so the hypothesis is not
+         retried.
+         Also narrowed what it is NOT. cap-call is not an unimplemented form: it
+         is present in amu (capability_names, backend/cljs, and
+         elaboration-pipeline calls it \"scalar cap-call path first\") and in
+         kotoba-native (machine_ir, elf64, peephole, aarch64). So this is not a
+         missing lowering reported badly. I tried to surface the underlying
+         exception by invoking the nbb entry directly; their print-classpath
+         helper returned nothing and the namespace would not resolve. I stopped
+         there rather than half-diagnose: going further means working inside amu
+         and kotoba-native, which is a different task from this loop, and a
+         half-finished diagnosis in this ledger would be worse than none.
+         State unchanged and now checked on both halves of the report: CORE
+         91/116 78.4% (owner 9, board 8, model-artifact 7, firmware 1), display
+         16/16, realtime 0/1 blocked on PLC_RT :compiler. k16 smoke green.
+         Nothing here is closable by an agent on this machine. The next real move
+         is someone else's: the amu bug, the disk, the token, the board, or a
+         TPM-enabled OVMF."}]
