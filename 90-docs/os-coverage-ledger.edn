@@ -330,4 +330,26 @@
          `<timestamp>: integer expression expected` once per tick and buried
          the gates' verdicts. NOT fully fixed -- the noise fell from hundreds
          of lines to twenty, so at least one more unguarded comparison
-         remains."}]
+         remains."}
+ {:at "2026-09-09"
+  :evidence ["evidence-all.log" "evidence-esp-suite.log" "evidence-release-image.log"]
+  :profile :union-plus-receipts
+  :core {:emitted 83 :declared 116 :pct 71.6}
+  :route :a-triggers-paired-with-their-expectations
+  :closed [:FAULT_RECEIPT :CRASH_RECEIPT :PANIC_RECEIPT :ECDSA_SIGN]
+  :note "67.2 to 71.6. interrupts reaches 9/9, crypto 8/9, storage 16/17, and
+         six rows are now complete: admission, interrupts, memory, process,
+         services, smp.
+         The receipts took two tries because the first was the wrong shape.
+         AIUEOS_EXPECT_FAULT is an EXPECTATION, not a trigger -- running it
+         alone asserts a fault that nothing injected. The trigger is a build
+         define, AIUEOS_FAULT_RECEIPT_SMOKE, and the two only work as a pair.
+         smoke-qemu-journal-recovery.sh already pairs the crash ones, and
+         reading an existing gate was faster than deducing the pairing.
+         That is the same distinction the release image turned on: a run flag
+         and a build define are different things, and a gate that needs both
+         fails silently when given one. Third time this pattern has cost a
+         wrong reading in this branch.
+         What remains unproven is now mostly not a lever: cluster and inference
+         need the owner, PHYSICAL_* and IVRS and TPM2 need the board or a
+         firmware, and remote needs the kernel's SSH finished past KEX."}]
