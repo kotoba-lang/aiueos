@@ -203,7 +203,31 @@
    :needs []
    :evidence "contracts/os-coverage-v1.edn crypto row: TLS 1.3 records exist
               in-kernel, no TPM binding. Named there as the clearest single gap
-              against ChromeOS."}
+              against ChromeOS.
+              VERIFIED 2026-09-09 rather than quoted: zero files in the tree
+              mention tpm, tcg2 or measured boot. The claim is true and this is
+              from scratch.
+              ADVANCED: acpi.c now discovers and validates the TPM2 table with
+              the same fail-closed shape as DMAR and IVRS -- a table that claims
+              to describe a root of trust and does not validate stops the boot,
+              because a skipped one leaves present at 0, and no TPM is what a
+              policy reads as permission to proceed without one. The guest
+              reports TPM2_OK, TPM2_FAIL or TPM2_ABSENT.
+              swtpm 0.10.2 is installed, so the emulator half exists now."
+   :blocked-on :no-tpm2-table-reaches-the-guest
+   :blocked-detail "With swtpm running and -device tpm-tis attached, QEMU and
+                    swtpm report no error and the guest still reports
+                    TPM2_ABSENT. The firmware never mentions a TPM. So an
+                    emulated TPM does not become visible to this guest with the
+                    OVMF build available here, and writing a TPM 2.0 command
+                    layer against a root of trust nothing presents is the same
+                    blind work IVRS was.
+                    The cause is NOT established. The obvious test -- looking
+                    for TPM strings in the firmware volume -- is invalid, and
+                    its own control says so: DMAR also returns zero hits while
+                    demonstrably reaching the guest, because the volume is
+                    compressed. Lifting this needs a TPM-enabled OVMF, or the
+                    board."}
 
   :murakumo-service-token
   {:title "Service token and trust tier for admission"

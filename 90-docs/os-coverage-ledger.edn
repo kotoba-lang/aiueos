@@ -266,4 +266,22 @@
          This is the fourth claim of mine to be retracted in this branch, and
          all four have the same shape -- a mechanism inferred from an
          observation that had a simpler explanation. The three before it were
-         about the release image."}]
+         about the release image."}
+ {:at "2026-09-09"
+  :profile :tpm-node-advanced-then-blocked
+  :note "No coverage change. tpm-key-binding verified before it was quoted:
+         zero files in the tree mention tpm, tcg2 or measured boot, so the
+         contract's claim is true and the work is from scratch.
+         Landed the same first step that worked for IVRS -- TPM2 ACPI table
+         discovery, fail-closed, three reported states -- and installed swtpm
+         0.10.2 so the emulator half exists.
+         Then measured before building further, which is the whole lesson of
+         the IVRS iteration: with swtpm running and tpm-tis attached, QEMU and
+         swtpm report no error and the guest still says TPM2_ABSENT. An
+         emulated TPM does not reach this guest with the OVMF available here.
+         The cause is not established, and the obvious test was invalid: I
+         checked the firmware volume for TPM strings and got zero, then ran the
+         control and DMAR also returned zero -- while demonstrably reaching the
+         guest, because the volume is compressed. The control disproved my test
+         method rather than the hypothesis. Reported as unknown.
+         ESP suite unaffected: 76 markers, exit 0."}]

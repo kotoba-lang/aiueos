@@ -643,6 +643,8 @@ extern uint32_t aiueos_desktop_sample_pixel(uint32_t x, uint32_t y);
 extern int aiueos_acpi_initialize(const void *rsdp);
 extern uint32_t aiueos_acpi_ivrs_present(void);
 extern uint32_t aiueos_acpi_ivrs_seen(void);
+extern uint32_t aiueos_acpi_tpm2_seen(void);
+extern uint32_t aiueos_acpi_tpm2_present(void);
 extern int aiueos_pci_input_devices_seen(void);
 extern int aiueos_pci_input_fail_line(void);
 extern int aiueos_pci_input_fail_reason(void);
@@ -2246,6 +2248,18 @@ qwen_runtime_boot_complete:
     if (aiueos_acpi_ivrs_present()) {
       debug_string("AIUEOS_IVRS_OK table-validated ivinfo-read not-yet-programmed\n");
       serial_string("AIUEOS_IVRS_OK table-validated ivinfo-read not-yet-programmed\r\n");
+    }
+    if (aiueos_acpi_tpm2_present()) {
+      debug_string("AIUEOS_TPM2_OK table-validated not-yet-bound\n");
+      serial_string("AIUEOS_TPM2_OK table-validated not-yet-bound\r\n");
+    } else if (aiueos_acpi_tpm2_seen()) {
+      debug_string("AIUEOS_TPM2_FAIL described-but-refused\n");
+      serial_string("AIUEOS_TPM2_FAIL described-but-refused\r\n");
+    } else {
+      debug_string("AIUEOS_TPM2_ABSENT no-root-of-trust-described\n");
+      serial_string("AIUEOS_TPM2_ABSENT no-root-of-trust-described\r\n");
+    }
+    if (0) {
     } else if (aiueos_acpi_ivrs_seen()) {
       debug_string("AIUEOS_IVRS_FAIL described-but-refused\n");
       serial_string("AIUEOS_IVRS_FAIL described-but-refused\r\n");
