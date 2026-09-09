@@ -478,4 +478,44 @@
          hardware -- but both read AIUEOS_ALLOW_DIRTY_QUALIFICATION_BUILD and
          this worktree is dirty, so they may refuse rather than run. A refusal
          is a third outcome, neither pass nor gap, and must not be recorded as
-         either."}]
+         either."}
+ {:at "2026-09-10"
+  :profile :netboot-evidence-preserved-board-guard
+  :core {:emitted 91 :declared 116 :pct 78.4}
+  :note "NETBOOT_EMBEDDED was case (a): smoke-qemu-physical-persistent needs no
+         board (timeout + qemu only -- 'physical' names the boot path), it
+         exits 0, and it then DELETED the only record of it, because the debug
+         log lives in a mktemp dir under `trap rm -rf EXIT`. A gate that proves
+         a marker on every green run and destroys the proof is indistinguishable
+         from one that never ran. It now appends debug+serial to an evidence log
+         before the trap fires. boot 7/9 -> 8/9, core 90 -> 91 of 116.
+         Preserving it alone would have been wrong, and this is the part worth
+         keeping. The same log carries AIUEOS_PHYSICAL_QUALIFICATION_OK, which
+         the taxonomy classes :board; kernel/main.c:2816 prints it on any host
+         that reaches the native core, so os-coverage would have counted it the
+         moment the log was added. The gate answers this itself -- it ends with
+         physical-k16=unverified -- and the claim the marker carries,
+         internal-disk-writes=none, is vacuous where no internal disk exists.
+         Counting it would prove from a QEMU run exactly what that run says it
+         has not proven. Not (c) by widening the denominator, but (c) by
+         loosening what counts as proof, which is the same thing one level down.
+         So the provenance line is written INTO the evidence and os-coverage
+         drops :board markers from any log declaring physical-k16=unverified.
+         That is the existing payload-ok? reasoning ('the name alone credited an
+         explicitly unisolated boot with isolation') moved from the line to the
+         log.
+         The guard was measured in both directions, on the same bytes: with the
+         provenance line 91/116 78.4% and platform 7/8; with only that line
+         removed 92/116 79.3% and platform 8/8. So the guard is worth exactly
+         one marker and the temptation it removes was real -- without it this
+         entry would have claimed 79.3%. Regression: on the two logs that carry
+         no such line the report is unchanged at 90/116.
+         Also recorded: the gate REFUSED a run mid-iteration --
+         'qualification release must be built from a clean tracked tree' --
+         because my own uncommitted edits had dirtied it. That is a third
+         outcome, neither pass nor gap, and the fix was to commit and satisfy
+         the rule rather than set AIUEOS_ALLOW_DIRTY_QUALIFICATION_BUILD=1,
+         which would have made the gate answer about a tree that is not the one
+         being qualified.
+         Remaining core unproven 25: owner 9, board 8, model-artifact 7,
+         firmware 1. The profile-gated group is now empty."}]
