@@ -376,6 +376,35 @@ is not to weaken the map but to stop it from unmapping the one caller the guest
 has promised to return to. Widening boot-info is the honest cost; nothing else
 in the guest knows where the loader is.
 
+### Confirmed 2026-09-09: the return works before CR3, and not after
+
+Publishing an address the loader executes from -- `lea rax,[rip+0]` -- widened
+the loader's variable block by 16 bytes, which moved the memory map, which the
+guest rejects because it hardcodes the map at boot-info offset 96. So the guest
+failed its own validation early, returned 18, and QEMU exited 37.
+
+**And `X` printed.** `PSTCX`: the guest was called, it returned, and control
+reached the instruction after the call. That is the first time X has ever
+appeared, and it appeared on the one run where the guest returned WITHOUT
+having installed its page tables.
+
+That closes the question. The return path is sound; what breaks it is the
+guest's own map. Before CR3 the loader is executable and the `ret` lands;
+after CR3 it is NX above the low 2 MiB and the `ret` faults. The tender's
+contract needs the guest to keep its caller executable, and nothing in the
+guest currently knows where that caller is.
+
+Two things the next attempt must carry, both learned by breaking them:
+
+- **The guest hardcodes the memory map at boot-info offset 96**
+  (`kernel-subregion boot 16480 96 16384`). Growing the loader's variable block
+  moves the map and the guest rejects the whole boot-info. Either the new field
+  goes after the map, or the offset and the version move together.
+- **A base is not what to publish.** `data-address` is not in scope where the
+  preflight tokens are built -- it depends on the token stream's own length --
+  and the guest clears NX at 2 MiB granularity anyway, so an address inside the
+  loader's text is both sufficient and the only thing cheaply available.
+
 ## Order, and what not to do
 
 1. ~~**The image entry becomes a host loop**~~ — **landed 2026-09-08**, see
