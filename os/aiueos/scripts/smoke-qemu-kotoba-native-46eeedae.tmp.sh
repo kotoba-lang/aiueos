@@ -22,8 +22,15 @@ expected_status=${AIUEOS_NATIVE_EXPECT_STATUS:-33}
 #
 # So this string is a claim about the PATH, not just the outcome. If the tender
 # stops being taken, PSTC disappears and this goes red.
+#
+# ⚠ The preflight form is a PREFIX plus a required substring, not an equality.
+# Measured 2026-09-09: two runs of the same image gave PSTCMPRCD and
+# PSTCMPRCDF. The trailing F is the GUEST's nic marker (`serial/trace-byte 70`
+# when nic-status is non-zero but not negative) and it depends on how QEMU
+# enumerates PCI that run. An equality assertion would have pinned a detail
+# that is not the claim, and gone red for the wrong reason.
 if [ "${AIUEOS_NATIVE_K16_PREFLIGHT:-0}" = 1 ]; then
-  expected_marker=${AIUEOS_NATIVE_EXPECT_MARKER:-PSTCMPRCD}
+  expected_marker=${AIUEOS_NATIVE_EXPECT_MARKER:-PSTC+MPRCD}
 else
   expected_marker=${AIUEOS_NATIVE_EXPECT_MARKER:-MPRCD}
 fi
@@ -67,12 +74,24 @@ set -e
 python3 - "$log" "$expected_marker" <<'PY'
 from pathlib import Path
 import sys
-data=Path(sys.argv[1]).read_bytes()
-expected=sys.argv[2].encode("ascii")
-if data != expected:
-    raise SystemExit(f"error: Kotoba-native marker was {data!r}, expected {expected!r}")
+data = Path(sys.argv[1]).read_bytes()
+spec = sys.argv[2]
+if "+" in spec:
+    # "<prefix>+<contains>": the loader's tender stages must lead, and the
+    # guest's own markers must appear. What follows them is the guest's
+    # business and varies with QEMU's PCI enumeration.
+    prefix, contains = (part.encode("ascii") for part in spec.split("+", 1))
+    if not data.startswith(prefix):
+        raise SystemExit(f"error: marker {data!r} does not start with {prefix!r} "
+                         "-- the tender was not taken")
+    if contains not in data:
+        raise SystemExit(f"error: marker {data!r} lacks {contains!r} "
+                         "-- the guest did not reach its boot markers")
+else:
+    if data != spec.encode("ascii"):
+        raise SystemExit(f"error: Kotoba-native marker was {data!r}, expected {spec!r}")
 PY
-if [ "$expected_marker" = MPRCD ] || [ "$expected_marker" = PSTCMPRCD ]; then
+if [ "$expected_marker" = MPRCD ] || [ "$expected_marker" = "PSTC+MPRCD" ]; then
   echo "AIUEOS_KOTOBA_NATIVE_QEMU_OK no-c-boot-chain memory-map-v2 allocator-pages=14 ownership-bitmap page-table-root identity-1g rtl8125-no-device-bounded guard-unmapped text-rx state-rw-nx nxe cr0-wp cr3-activated invlpg idt14-sidt-readback recovery-frame dedicated-handler-stack reuse double-free-rejected zero-before-publish exit-boot-services"
 else
   echo "AIUEOS_KOTOBA_NATIVE_QEMU_REJECTION_OK marker=$expected_marker status=$expected_status"
