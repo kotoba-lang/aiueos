@@ -25,4 +25,25 @@
          than capability reasons.
          The taxonomy reported ten markers it did not know about on its first
          run and they were added; that check exists because a benchmark whose
-         denominator silently stops growing flatters itself over time."}]
+         denominator silently stops growing flatters itself over time."}
+ {:at "2026-09-09"
+  :evidence ["kernel-serial.log" "uefi-debug.log" "usb-gate-disk.out"]
+  :profile :uefi-suite-default-build-plus-release-image
+  :core {:emitted 67 :declared 114 :pct 58.8}
+  :route :a-evidence-from-a-profile-that-already-passes
+  :note "25.4 to 58.8 with no capability change. The first measurement read a
+         log from the USB gate, which attaches no NIC and boots the release
+         image; running the shared suite directly produced 76 distinct markers
+         against that log's 39. admission, memory, process and smp are 100
+         percent and were never below it -- the earlier number was measuring
+         the wrong boot.
+         net-link and net-stack remain 0 and are still profile scope, not
+         capability: no profile run so far attaches virtio-net AND reaches the
+         stack. Closing them needs a network-bearing run, which is the next
+         honest route (a).
+         Found on the way, and larger than the number: the README claimed the
+         suite fails on QEMU 10.0.3 at AIUEOS_VIRTIO_INPUT_FAIL. On exactly
+         that version it emits AIUEOS_VIRTIO_INPUT_OK and finishes
+         AIUEOS_UEFI_SMOKE_OK with exit 0. The gate's downgrade is the release
+         IMAGE, not the host -- the build passes the suite and the release
+         image does not, and the release image is what would run on a node."}]

@@ -943,12 +943,25 @@ bring-up, not to the boot medium, and the shared gate asserts the SMP evidence
 itself; comparison therefore starts at each line's own `AIUEOS_` marker.
 
 The gate does not hardcode a passing exit status, so it stays honest on a host
-where the shared UEFI suite fails for an unrelated reason. On QEMU 10.0.3 the
-suite fails at `AIUEOS_VIRTIO_INPUT_FAIL queue-or-envelope` — a virtio-input
-device-model difference that has nothing to do with boot transport — and the
-gate reports `AIUEOS_USB_BOOT_EQUIVALENT` with the shared status instead of
-claiming a pass neither transport earned. When the suite passes, it reports
-`AIUEOS_USB_BOOT_OK`.
+where the shared UEFI suite fails for an unrelated reason. It reports
+`AIUEOS_USB_BOOT_EQUIVALENT` with the shared status instead of claiming a pass
+neither transport earned, and `AIUEOS_USB_BOOT_OK` when the suite passes.
+
+⚠ This paragraph used to attribute that downgrade to the host: *"On QEMU 10.0.3
+the suite fails at `AIUEOS_VIRTIO_INPUT_FAIL queue-or-envelope`."* **Measured
+2026-09-09 on exactly QEMU 10.0.3, that is false.** Run directly, the suite
+emits `AIUEOS_VIRTIO_INPUT_OK`, no `_FAIL` marker at all, and finishes
+`AIUEOS_UEFI_SMOKE_OK` with exit 0 — 76 distinct `_OK` markers.
+
+The downgrade is the **image**, not the environment. The gate passes
+`AIUEOS_DISK_IMAGE`, so it boots the release GPT image rather than the freshly
+built ESP, and that run emits 39 markers and stops — with no `_FAIL` marker,
+which is why it was easy to attribute to the host. Two runs of it stopped at
+different points (`GUEST_INPUT` once, `AIUEOS_APIC_TIMER_OK` the next), so the
+stopping point is not yet characterised and no regression is claimed from two
+samples. What is established is the split: **the build passes the suite and the
+release image does not**, and the release image is the artifact that would run
+on a node.
 
 `flash-usb.cljs` writes the image to a physical stick. Because that is
 irreversible, it is deny-by-default: without `--confirm` it only inspects, and
