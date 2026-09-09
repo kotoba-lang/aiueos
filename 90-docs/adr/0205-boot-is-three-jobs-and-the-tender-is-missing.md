@@ -608,7 +608,7 @@ specific question rather than a symptom.
 On hardware none of this applies: there is no `isa-debug-exit`, the guest
 simply returns, and the tender takes it.
 
-## exit 63 has exactly one possible source (2026-09-09)
+## exit 63 has exactly one possible source (2026-09-09) -- WRONG, see below
 
 Reading the code rather than running it: **31 is producible at exactly one
 point in this kernel** -- the branch of `zero-five-status` taken when
@@ -637,3 +637,51 @@ What changed is the cost of the next occurrence. Before, a numeric exit code
 had to be matched back to one of nine `kernel-out-u32 244` call sites by
 hand, with a trailing marker that could not be trusted. Now the run says so
 itself.
+
+## Retraction: that source is dead code, and the code is full of dead checks
+
+The section above is wrong in both of its steps, and the way it is wrong is
+worth more than the conclusion was.
+
+**The branch cannot execute.** `zero-page` returns 1 and nothing else:
+
+    (let [stored (kernel-store-u8-4k page 4096 offset 0)]
+      (if (= 0 (* 0 stored))        ; true for every value of `stored`
+        (zero-page page (+ offset 1))
+        0))
+
+`(* 0 stored)` is 0 whatever the store returns, so the failure arm is
+unreachable. Every status that depends on it is therefore unreachable too:
+**30-34** in `zero-five-status`, **25-27** in `prepare-extra-pages`, and
+**79-84** in `prepare-nic-pages`. Fourteen status codes that no run can
+produce, several of them quoted in receipts as though they were outcomes.
+
+Nor could the check work as written. `kernel-store-u8-4k` returns its
+operand, so there is no failure value to test, and an out-of-range offset
+does not return at all -- the emitter falls through to UD2, the same
+mechanism that produced the earlier boot-info hang. The real check is the
+readback beside it (35-39), which loads a byte and compares it.
+
+**And the arithmetic was wrong.** `exit()` truncates to 8 bits, so
+`exit 63` does not mean the guest wrote 31. It means the guest wrote a
+value congruent to 31 mod 128 -- 31, 159, 287. `(+ 96 pre-cr3-nic-status)`
+with `qualify-rtl8125` returning -1..3 gives 95..99, i.e. exits 191..199,
+so that site is excluded on the corrected arithmetic and not on the old one.
+
+What is now established about the terminator, by removing the device rather
+than reasoning about it: with `isa-debug-exit` gone the run reaches 124 and
+prints `PSTCMPRCDXF`, so the guest's port write **is** what ends QEMU, and
+the natural trace is longer than the one the gate normally sees.
+
+The tail still cannot order events: at `-smp 1` it ends `X Z` (both loader
+bytes) and at `-smp 2` it ends `X F` (loader then guest). Bytes from
+different CPUs interleave there. Only the prefix is evidence -- which is why
+the gate asserts a prefix and required substrings and never a suffix.
+
+The dead branches are marked in place rather than deleted, because removing
+them renumbers a vocabulary that receipts already quote. **The label put on
+the 31 branch yesterday has been removed**: a marker on unreachable code is
+the same defect it was meant to diagnose, and would have had the next reader
+waiting for a byte that cannot arrive.
+
+exit 63 is unattributed again, and that is the accurate state.

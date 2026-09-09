@@ -187,11 +187,25 @@
 
 (defn zero-five-status [state pml4 pdpt pd pt]
   (if (not (= (zero-page state 0) 1)) 30
-    ;; 'p' -- the ONLY branch in this kernel that can produce status 31, and
-    ;; therefore the only possible source of a QEMU exit of 63. That exit had
-    ;; been carried as a standing symptom; it is this and nothing else. The
-    ;; byte costs nothing in a healthy run because this branch is a failure.
-    (if (not (= (zero-page pml4 0) 1)) (if (= (serial/trace-byte 112) 112) 31 31)
+    ;; UNREACHABLE, and so are 30 and 32-34 below. `zero-page` cannot return
+    ;; anything but 1: its failure branch is guarded by `(= 0 (* 0 stored))`,
+    ;; which is true for every value of `stored`. The same shape makes 25-27
+    ;; in prepare-extra-pages and 79-84 in prepare-nic-pages unreachable.
+    ;;
+    ;; Nor could it be otherwise. `kernel-store-u8-4k` returns its operand, so
+    ;; there is no failure value to test, and an out-of-range offset does not
+    ;; return at all -- the emitter compares the declared length against the
+    ;; op's profile maximum and falls through to UD2.
+    ;;
+    ;; The real check is the readback immediately below (35-39), which loads
+    ;; the last byte and compares it. That one can fail and says so.
+    ;;
+    ;; Left in place rather than deleted: removing them renumbers a status
+    ;; vocabulary that receipts and ADRs already quote. Marked instead, so the
+    ;; next reader does not spend a run waiting for a code that cannot arrive
+    ;; -- which is what happened here on 2026-09-09, when exit 63 was
+    ;; attributed to this branch and a label was put on it.
+    (if (not (= (zero-page pml4 0) 1)) 31
       (if (not (= (zero-page pdpt 0) 1)) 32
         (if (not (= (zero-page pd 0) 1)) 33
           (if (not (= (zero-page pt 0) 1)) 34
