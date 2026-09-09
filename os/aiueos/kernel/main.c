@@ -645,6 +645,7 @@ extern uint32_t aiueos_acpi_ivrs_present(void);
 extern uint32_t aiueos_acpi_ivrs_seen(void);
 extern int aiueos_pci_input_devices_seen(void);
 extern int aiueos_pci_input_fail_line(void);
+extern int aiueos_pci_input_fail_reason(void);
 extern int aiueos_dma_test_policy_allows_unisolated(void);
 extern int aiueos_vtd_initialize(void);
 extern int aiueos_vtd_translation_enabled(void);
@@ -3064,7 +3065,22 @@ qwen_runtime_boot_complete:
     /* The input result bit is set only after a validated event has been copied
        into the browser envelope; no second mutable readiness check is needed. */
     if (!(pci_result & 4)) {
-      serial_string("AIUEOS_VIRTIO_INPUT_FAIL queue-or-envelope\r\n");
+      /* Say WHICH exit. "queue-or-envelope" covered four different failures
+         wanting four different fixes, and the commonest of them is not a
+         failure of this OS at all: reason 4 is a kernel built without
+         AIUEOS_INPUT_SMOKE_SYNTHETIC on a host that cannot deliver a real
+         virtio-keyboard event, which is how a production image behaves and
+         should. */
+      switch (aiueos_pci_input_fail_reason()) {
+        case 1: serial_string("AIUEOS_VIRTIO_INPUT_FAIL transport-or-negotiate\r\n");
+                debug_string("AIUEOS_VIRTIO_INPUT_FAIL transport-or-negotiate\n"); break;
+        case 2: serial_string("AIUEOS_VIRTIO_INPUT_FAIL queue-pages\r\n");
+                debug_string("AIUEOS_VIRTIO_INPUT_FAIL queue-pages\n"); break;
+        case 3: serial_string("AIUEOS_VIRTIO_INPUT_FAIL doorbell\r\n");
+                debug_string("AIUEOS_VIRTIO_INPUT_FAIL doorbell\n"); break;
+        default: serial_string("AIUEOS_VIRTIO_INPUT_FAIL no-event-no-synthetic-build\r\n");
+                 debug_string("AIUEOS_VIRTIO_INPUT_FAIL no-event-no-synthetic-build\n"); break;
+      }
       if (aiueos_desktop_input_eventq_empty()) {
         debug_string("AIUEOS_GUEST_INPUT leftover=eventq-empty\n");
         serial_string("AIUEOS_GUEST_INPUT leftover=eventq-empty\r\n");

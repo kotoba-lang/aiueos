@@ -76,7 +76,21 @@
               not fabricate input events, and the suite requires one. That is a
               gate design problem, not an OS defect, and
               smoke-qemu-release-image.sh already shows the intended shape by
-              setting the define before it builds."
+              setting the define before it builds.
+              REMAINING, and it is the original observation with the noise
+              removed: the release image does not stop in the same place twice.
+              virtio_input's exit now names itself
+              (no-event-no-synthetic-build, one of four reasons rather than a
+              line number that moves), and with that in place the USB gate
+              began failing on transport DIVERGENCE instead -- one run with the
+              disk side short, the next with the usb side short. The gate's
+              central claim is that the two transports produce identical
+              evidence, and it compares two single samples of a boot whose
+              stopping point moves. It was passing because both samples used to
+              stop in the same place, not because the boot is deterministic.
+              So the node's real content is the nondeterministic stop, and the
+              gate needs to reach the same point twice before its equivalence
+              assertion means anything."
    :why-first "Nothing else can be proved on the shipping artifact while it
                stops partway. Largest measured gap: 76 markers on the build
                against about 30 on the image."}
