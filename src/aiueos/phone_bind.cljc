@@ -116,6 +116,20 @@
 (def device-auth-poll
   (str device-auth-authority "/v1/aiueos/device/poll"))
 
+(def advertised-methods
+  "What the chassis label, setup.json and the plan document tell a phone this
+  box will accept -- DERIVED from `device-auth/supported-methods` rather than
+  written out again beside it.
+
+  It was written out again, and the copies drifted: the literals here said
+  `passkey,phone-scan` while the authority's own default method had become
+  :siwe-erc1271. A label that names fewer methods than the box admits sends
+  people to a door they do not have a key for; one that names more sends them
+  to a door that is not there. Neither is visible from either copy alone."
+  (vec (sort (map name device-auth/supported-methods))))
+
+(def advertised-methods-csv (str/join "," advertised-methods))
+
 (defn bind-via
   "The only P1b-green path is `:phone-http`. A guest VGA/keyboard attempt is
   `:local-console-required` — that is the named red for 'operator used the
@@ -477,7 +491,7 @@
         :model (:model device)
         :endpoint endpoint
         :auth-authority device-auth-authority
-        :auth-methods "passkey,phone-scan"})
+        :auth-methods advertised-methods-csv})
 
      (defn chassis-qr
        [device endpoint]
@@ -485,7 +499,7 @@
          (str "aiueos:2;did=" did
               ";model=" model
               ";endpoint=" endpoint
-              ";auth=passkey,phone-scan;claim-secret=none")))
+              ";auth=" advertised-methods-csv ";claim-secret=none")))
 
      (defn setup-url [listen-port]
        (str "http://127.0.0.1:" listen-port "/#setup"))
@@ -498,7 +512,7 @@
                            :setup_url setup-url
                            :qr qr
                            :auth_authority device-auth-authority
-                           :auth_methods ["passkey" "phone-scan"]
+                           :auth_methods advertised-methods
                            :claim_secret_exposed false
                            :chassis "host-helper"
                            :guest_framebuffer "not-an-operator-console"
@@ -1022,7 +1036,7 @@
          {:engine "kotoba-lang/browser"
           :surface "aiueos/session"
           :state (name (:aiueos.device-auth/state state))
-          :methods ["passkey" "phone-scan"]
+          :methods advertised-methods
           :same_ceremony true
           :authority (:auth/authority state)
           :rp_id (:auth/rp-id state)

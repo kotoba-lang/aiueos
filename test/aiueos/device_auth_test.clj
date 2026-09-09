@@ -82,3 +82,120 @@
                                      :proof-valid? true}
                                     1200)]
       (is (= :device/did-mismatch (:aiueos.device-auth/reason denied))))))
+
+;; ── the wallet family (root ADR adr-2609092800 D5) ────────────────────────
+;;
+;; What these pin is that a wallet proof is admitted on its OWN requirements.
+;; The passkey conditions are not renamed to fit it: a SIWE assertion has no
+;; user presence, no RP id and no signature counter, so a table that reused
+;; them would either refuse every wallet or, relaxed, admit one proving
+;; nothing.
+
+(def siwe-proof
+  {:auth/method :siwe-erc1271
+   :auth/challenge "once"
+   :authority/verified? true
+   :siwe/address "0x00000000000000000000000000000000000000a1"
+   :siwe/chain-id 8453
+   :siwe/domain "auth.kotoba.cloud"
+   :siwe/uri "https://auth.kotoba.cloud"
+   :siwe/nonce-server-issued? true
+   :siwe/nonce-consumed-atomically? true
+   :siwe/chain-admitted? true
+   :siwe/not-expired? true
+   :siwe/signature-verified? true
+   :siwe/contract-authority-current? true
+   :account/principal-id "urn:kotoba:principal:wallet"
+   :account/did "did:pkh:eip155:8453:0x00000000000000000000000000000000000000a1"})
+
+(deftest a-wallet-account-can-complete-a-claim
+  (testing "the method the authority defaults to is admitted at all"
+    (let [account (auth/authenticate-account (issued) siwe-proof 1100)]
+      (is (= :account-authenticated (:aiueos.device-auth/state account)))
+      (is (= :siwe-erc1271 (:auth/method account)))
+      (is (= "0x00000000000000000000000000000000000000a1" (:siwe/address account)))))
+  (testing "an EOA signature is the same ceremony minus the contract check"
+    (is (= :account-authenticated
+           (:aiueos.device-auth/state
+            (auth/authenticate-account
+             (issued)
+             (-> siwe-proof
+                 (assoc :auth/method :siwe-erc191)
+                 (dissoc :siwe/contract-authority-current?))
+             1100)))))
+  (testing "a wallet claim reaches a node plan, like a passkey one"
+    (let [claimed (auth/prove-device
+                   (auth/authenticate-account (issued) siwe-proof 1100)
+                   {:device-did "did:aiueos:k16:one"
+                    :public-key "ed25519:device" :proof-valid? true}
+                   1200)]
+      (is (auth/claimed? claimed))
+      (is (false? (get-in (auth/node-plan claimed) [:murakumo :ready?]))))))
+
+(deftest each-wallet-binding-is-refused-by-its-own-name
+  (doseq [[expected mutate]
+          [[:siwe/address-required             #(dissoc % :siwe/address)]
+           [:siwe/nonce-not-server-issued      #(assoc % :siwe/nonce-server-issued? false)]
+           [:siwe/nonce-not-consumed-atomically #(assoc % :siwe/nonce-consumed-atomically? false)]
+           [:siwe/domain-mismatch              #(assoc % :siwe/domain "evil.example")]
+           [:siwe/uri-mismatch                 #(assoc % :siwe/uri "https://evil.example")]
+           [:siwe/chain-not-admitted           #(assoc % :siwe/chain-admitted? false)]
+           [:siwe/expired                      #(assoc % :siwe/not-expired? false)]
+           [:siwe/signature-required           #(assoc % :siwe/signature-verified? false)]
+           [:siwe/contract-authority-stale     #(assoc % :siwe/contract-authority-current? false)]
+           [:authority/not-verified            #(assoc % :authority/verified? false)]
+           [:account/did-required              #(dissoc % :account/did)]]]
+    (is (= expected
+           (:aiueos.device-auth/reason
+            (auth/authenticate-account (issued) (mutate siwe-proof) 1100)))
+        (str "expected " expected))))
+
+(deftest a-connected-wallet-is-not-an-authenticated-one
+  ;; policy: :wallet/connection-is-authentication? false. An address and a
+  ;; chain id prove nothing; the signature is what is required.
+  (is (= :siwe/signature-required
+         (:aiueos.device-auth/reason
+          (auth/authenticate-account
+           (issued) (dissoc siwe-proof :siwe/signature-verified?) 1100)))))
+
+(deftest an-unverifiable-contract-authority-fails-closed
+  ;; Missing is not "assume current": ERC-1271 authority that cannot be
+  ;; checked is refused, same as one checked and found stale.
+  (is (= :siwe/contract-authority-stale
+         (:aiueos.device-auth/reason
+          (auth/authenticate-account
+           (issued) (dissoc siwe-proof :siwe/contract-authority-current?) 1100)))))
+
+(deftest widening-the-vocabulary-fails-closed
+  ;; The load-bearing safety property of the table: a method may be in the
+  ;; vocabulary and still be refused, because nothing says what it must prove.
+  (with-redefs [auth/supported-methods (conj auth/supported-methods :magic-link)]
+    (is (= :method/requirements-undeclared
+           (:aiueos.device-auth/reason
+            (auth/authenticate-account
+             (issued) (assoc siwe-proof :auth/method :magic-link) 1100)))))
+  (testing "and a method outside the vocabulary is refused earlier"
+    (is (= :method/unsupported
+           (:aiueos.device-auth/reason
+            (auth/authenticate-account
+             (issued) (assoc siwe-proof :auth/method :password) 1100))))))
+
+(deftest boolean-flags-must-be-boolean
+  ;; An authority adapter that drifts to strings should be loud, not admitted.
+  (is (= :siwe/signature-required
+         (:aiueos.device-auth/reason
+          (auth/authenticate-account
+           (issued) (assoc siwe-proof :siwe/signature-verified? "yes") 1100))))
+  (is (= :passkey/user-not-present
+         (:aiueos.device-auth/reason
+          (auth/authenticate-account
+           (issued) (assoc passkey-proof :auth/user-present? "yes") 1100)))))
+
+(deftest passkey-conditions-do-not-leak-onto-wallets
+  ;; The regression this table prevents: a wallet proof carries none of the
+  ;; WebAuthn fields, and must not be refused for lacking them.
+  (is (nil? (:siwe/domain passkey-proof)))
+  (is (nil? (:auth/user-present? siwe-proof)))
+  (is (= :account-authenticated
+         (:aiueos.device-auth/state
+          (auth/authenticate-account (issued) siwe-proof 1100)))))
