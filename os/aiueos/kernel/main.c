@@ -643,6 +643,7 @@ extern uint32_t aiueos_desktop_sample_pixel(uint32_t x, uint32_t y);
 extern int aiueos_acpi_initialize(const void *rsdp);
 extern uint32_t aiueos_acpi_ivrs_present(void);
 extern uint32_t aiueos_acpi_ivrs_seen(void);
+extern int aiueos_pci_input_devices_seen(void);
 extern int aiueos_dma_test_policy_allows_unisolated(void);
 extern int aiueos_vtd_initialize(void);
 extern int aiueos_vtd_translation_enabled(void);
@@ -2861,9 +2862,14 @@ qwen_runtime_boot_complete:
       bits[2] = (char)('0' + (v & 1));
       bits[3] = 0;
       debug_string("AIUEOS_PCI_RESULT input-rng-base=");
-      debug_string(bits); debug_string("\n");
+      debug_string(bits);
       serial_string("AIUEOS_PCI_RESULT input-rng-base=");
-      serial_string(bits); serial_string("\r\n"); }
+      serial_string(bits); serial_string(" input-devices-seen=");
+      debug_string(" input-devices-seen=");
+      { unsigned seen = (unsigned)aiueos_pci_input_devices_seen();
+        char d[2]; d[0] = (char)('0' + (seen > 9 ? 9 : seen)); d[1] = 0;
+        debug_string(d); serial_string(d); }
+      debug_string("\n"); serial_string("\r\n"); }
     if (pci_result < 2) {
       debug_string("AIUEOS_VIRTIO_FAIL rng-queue\n");
       serial_string("AIUEOS_VIRTIO_FAIL rng-queue\r\n");

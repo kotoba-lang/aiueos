@@ -170,6 +170,11 @@ static struct aiueos_desktop_input_event desktop_input_event;
 static int desktop_input_ready;
 static int desktop_input_from_eventq;
 static int desktop_input_eventq_empty;
+/* How many virtio-input devices the scan SAW, independent of whether bringing
+   one up worked. input_ok alone cannot tell "no such device on this machine"
+   from "the device is there and we failed it", and those want opposite fixes. */
+static int virtio_input_devices_seen;
+int aiueos_pci_input_devices_seen(void) { return virtio_input_devices_seen; }
 int aiueos_desktop_input_event_ready(void) { return desktop_input_ready; }
 int aiueos_desktop_input_from_eventq(void) { return desktop_input_from_eventq; }
 int aiueos_desktop_input_eventq_empty(void) { return desktop_input_eventq_empty; }
@@ -5381,6 +5386,7 @@ int aiueos_pci_enumerate(void) {
   desktop_input_ready = 0;
   desktop_input_from_eventq = 0;
   desktop_input_eventq_empty = 0;
+  virtio_input_devices_seen = 0;
   for (uint16_t bus = 0; bus < 256; bus++) for (uint8_t dev = 0; dev < 32; dev++) {
     uint32_t id0 = config_read((uint8_t)bus,dev,0,0);
     if ((id0 & 0xffffU) == 0xffffU) continue;
@@ -5395,8 +5401,10 @@ int aiueos_pci_enumerate(void) {
             virtio_rng((uint8_t)bus,dev,fn)) rng_ok = 1;
         if ((device_id == VIRTIO_BLK_MODERN_ID || device_id == VIRTIO_BLK_TRANSITIONAL_ID) &&
             virtio_blk((uint8_t)bus,dev,fn)) blk_ok = 1;
-        if ((device_id == VIRTIO_INPUT_MODERN_ID || device_id == VIRTIO_INPUT_TRANSITIONAL_ID) &&
-            virtio_input((uint8_t)bus,dev,fn)) input_ok = 1;
+        if (device_id == VIRTIO_INPUT_MODERN_ID || device_id == VIRTIO_INPUT_TRANSITIONAL_ID) {
+          virtio_input_devices_seen++;
+          if (virtio_input((uint8_t)bus,dev,fn)) input_ok = 1;
+        }
         if ((device_id == VIRTIO_GPU_MODERN_ID || device_id == VIRTIO_GPU_TRANSITIONAL_ID) &&
             virtio_gpu((uint8_t)bus,dev,fn)) gpu_ok = 1;
         /* Reported through `aiueos_virtio_net_ready` rather than the return

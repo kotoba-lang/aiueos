@@ -141,4 +141,22 @@
          The ESP profile is unregressed at 76 markers with
          input-rng-base=111, checked because two of these edits touched the
          boot path and a regression would otherwise have been read as a
-         finding."}]
+         finding."}
+ {:at "2026-09-09"
+  :evidence ["evidence-all.log" "evidence-esp-suite.log"]
+  :profile :uefi-suite-union
+  :core {:emitted 74 :declared 115 :pct 64.3}
+  :note "The number did not move and the diagnosis did, twice.
+         Every 0x6f exit now names its own line -- it is reached from
+         twenty-seven places, so the code named a class and not a failure, the
+         same position exit 63 was in. The release image stops at main.c:3058,
+         the branch for pci_result & 4 clear.
+         Then counting devices seen settled what that meant. Both profiles
+         report input-devices-seen=1: the virtio-input device is PRESENT in the
+         release image's boot, and virtio_input() fails to bring it up. Not an
+         enumeration difference, not an early stop -- device initialisation.
+         That is the third reading of this node in three iterations, and the
+         pattern is worth keeping: absent markers, then a missing PCI line,
+         then a result bit, each consistent with what was visible and wrong
+         about what was happening. The measurement that settled it was the
+         cheapest of the three and could have been taken first."}]

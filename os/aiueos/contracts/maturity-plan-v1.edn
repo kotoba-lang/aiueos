@@ -43,7 +43,22 @@
               QMP input injection, so it is not an artifact of a hand-built
               command. So this IS an enumeration difference after all; the run
               that showed no PCI line at all is a second, earlier failure mode
-              that remains uncharacterised."
+              that remains uncharacterised.
+              CORRECTED AGAIN, and this is the third reading of this node in
+              three iterations. Counting the devices the scan SAW settles it:
+              both profiles report input-devices-seen=1. The device is present
+              in the release image's boot exactly as in the build's. What
+              differs is that virtio_input() FAILS TO BRING IT UP -- seen=1,
+              ok=0 -- so this is neither an enumeration difference nor an early
+              stop. It is device initialisation.
+              Each earlier reading came from a coarser signal: absent markers,
+              then a missing PCI line, then a result bit. Each was consistent
+              with what was visible and wrong about what was happening. The
+              measurement that settled it was the cheapest of the three.
+              Next: what inside virtio_input() fails. A plausible line, not yet
+              measured, is memory layout -- the GPT image is far larger than
+              the ESP directory, so firmware allocation differs and the DMA
+              pages the probe needs may land differently."
    :why-first "Nothing else can be proved on the shipping artifact while it
                stops partway. Largest measured gap: 76 markers on the build
                against about 30 on the image."}
