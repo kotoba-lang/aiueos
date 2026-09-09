@@ -96,14 +96,26 @@
   ;; AIUEOS_PLC_ELF to build/plc-motor/program.elf, so even a fixed compiler
   ;; leaves the documented profile not running unless the path is passed by hand.
   :PLC_RT :compiler
-  ;; a real gap in aiueos itself, not a profile that was never run. MEASURED
-  ;; 2026-09-10 from evidence already on hand: the kernel prints its own failure
-  ;; branch, "AIUEOS_GUEST_SCANOUT_TWO leftover=one-scanout enabled=1" (36x in
-  ;; one log, 7x in another), while AIUEOS_GUEST_GPU_TWO_OK resources=2 flush=2
-  ;; passes in the same boots and QEMU is started with max_outputs=2. So two GPU
-  ;; RESOURCES bind and only one SCANOUT is enabled. The number to move is
-  ;; aiueos_gpu_enabled_scanouts() -> 2.
-  :GUEST_SCANOUT_TWO :code
+  ;; CORRECTED 2026-09-10, same day. This was recorded as :code -- "a real gap
+  ;; in aiueos itself" -- on the strength of the kernel's own failure branch,
+  ;; "leftover=one-scanout enabled=1", appearing 36x and 7x in two logs while
+  ;; AIUEOS_GUEST_GPU_TWO_OK passed in the same boots under max_outputs=2. The
+  ;; evidence was real and the inference was not checked: nobody asked whether a
+  ;; profile existed that changes the INPUT to that branch. One does.
+  ;; QEMU sets enabled_output_bitmask=1 at realize and a head becomes enabled
+  ;; only when a UI frontend calls ui_info with a non-zero size
+  ;; (hw/display/virtio-gpu-base.c). `-display none` never does, so under the
+  ;; default backend GET_DISPLAY_INFO CANNOT report two scanouts however correct
+  ;; the guest is -- and the guest declining to drive a head the host calls
+  ;; disabled is right, not a gap. AIUEOS_GUEST_SCANOUT_TWO=1 switches to the
+  ;; dbus backend and enables head 1 via gdbus SetUIInfo on Console_1; it needs
+  ;; dbus-daemon (brew install dbus). Run that way the guest emits
+  ;; AIUEOS_GUEST_SCANOUT_TWO_OK scanouts=2 resource-0=1 resource-1=2 kotoba-n=2
+  ;; and display reaches 16/16.
+  ;; Kept as a record: a failure branch tells you what happened, not why, and
+  ;; reading one as a gap without checking the profile is the error this file's
+  ;; own header warns about.
+  :GUEST_SCANOUT_TWO :profile
   ;; needs the owner: a credential or an install intent, never auto-created
   :MURAKUMO_NODE :owner  :MURAKUMO_HEARTBEAT :owner  :MURAKUMO_JOB_POLL :owner
   :MURAKUMO_JOB_RESULT :owner  :MURAKUMO_CONTROL_ACK :owner

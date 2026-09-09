@@ -650,4 +650,39 @@
          covers the CORE rows only. The two excluded-row markers were
          classified by hand this iteration, so nothing in either group is
          unclassified now -- but only the core half of that is machine-checked,
-         and the report has no equivalent tally for the excluded rows."}]
+         and the report has no equivalent tally for the excluded rows."}
+ {:at "2026-09-10"
+  :profile :scanout-two-closed-my-classification-was-wrong
+  :core {:emitted 91 :declared 116 :pct 78.4}
+  :display {:emitted 16 :declared 16 :pct 100.0}
+  :note "GUEST_SCANOUT_TWO closed, and the entry is the retraction.
+         Yesterday I classified it :code -- 'a real gap in aiueos itself' -- on
+         the strength of the kernel's own failure branch: leftover=one-scanout
+         enabled=1, 36x in one log and 7x in another, while GUEST_GPU_TWO_OK
+         resources=2 flush=2 passed in the same boots under max_outputs=2. The
+         evidence was real. The inference was not checked. I never asked whether
+         a profile existed that changes the INPUT to that branch.
+         One does, and the script documents it fifteen lines above the QEMU
+         invocation. QEMU sets enabled_output_bitmask=1 at realize and a head
+         becomes enabled only when a UI frontend calls ui_info with a non-zero
+         size. `-display none` never does, so under the default backend
+         GET_DISPLAY_INFO CANNOT report two scanouts however correct the guest
+         is -- and the guest refusing to drive a head the host calls disabled is
+         correct behaviour, not a gap. AIUEOS_GUEST_SCANOUT_TWO=1 selects the
+         dbus backend and enables head 1 with gdbus SetUIInfo on Console_1.
+         Only dbus-daemon was missing; installed it (the gate's own error
+         message names brew install dbus). Ran it: AIUEOS_GUEST_SCANOUT_TWO_OK
+         scanouts=2 resource-0=1 resource-1=2 kotoba-n=2, exit 0.
+         display 15/16 -> 16/16 100%. CORE unchanged at 91/116 78.4%; display is
+         an excluded row and closing it does not move the headline.
+         This is the same shape as GOP_DISCOVERY one iteration earlier -- a
+         marker a passing gate structurally cannot produce -- and I had written
+         that lesson down in the previous report before making its mirror image
+         here. Reading a failure branch as a gap is easy precisely because the
+         branch is honest about what happened; it says nothing about why, and
+         the why was one grep away. Corrected in place to :profile with the
+         mechanism, rather than swapped quietly.
+         Every display marker now passes. Remaining: CORE 25 (owner 9, board 8,
+         model-artifact 7, firmware 1) and PLC_RT :compiler. Nothing left that an
+         agent can close on this machine: PLC_RT needs amu to stop crashing on a
+         cap-call its own policy permits."}]
