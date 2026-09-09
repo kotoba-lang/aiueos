@@ -533,7 +533,12 @@ PY
       if [ -f "$watchdog_file" ]; then
         watchdog_t=$(stat -f %m "$watchdog_file" 2>/dev/null || \
                      stat -c %Y "$watchdog_file" 2>/dev/null || echo 0)
-        [ "$watchdog_t" -gt "$watchdog_seen" ] && watchdog_seen=$watchdog_t
+        # Both operands defaulted: an empty one makes `[ -gt ]` print
+        # "<number>: integer expression expected" once per watchdog tick, which
+        # buried the SSH gates' actual verdict under hundreds of lines of it.
+        # The watchdog then also silently stops advancing, so a quiet guest is
+        # measured from the wrong instant.
+        [ "${watchdog_t:-0}" -gt "${watchdog_seen:-0}" ] && watchdog_seen=$watchdog_t
       fi
     done
     if [ $(( watchdog_now - watchdog_seen )) -ge "$quiet_limit" ]; then

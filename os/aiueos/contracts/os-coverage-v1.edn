@@ -113,7 +113,7 @@
                 :note "IPv4 only, no listen path beyond SSH, no firewall"}
   :crypto      {:relevance :core
                 :markers [:AES_GCM :HMAC_HKDF :X25519 :ECDSA_P256 :ECDSA_PUBLIC
-                          :ECDSA_SIGN :TLS13_RECORD :RANDOM]
+                          :ECDSA_SIGN :TLS13_RECORD :RANDOM :TPM2]
                 :linux "kernel crypto API plus userspace TLS libraries"
                 :chromeos "same, plus a TPM-backed key hierarchy"
                 :note "TLS 1.3 records in-kernel; no TPM binding yet, which is
