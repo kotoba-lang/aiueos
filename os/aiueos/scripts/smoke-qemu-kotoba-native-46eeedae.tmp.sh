@@ -8,7 +8,25 @@ boot_out=${AIUEOS_NATIVE_BOOT_OUT:-"$repo/build/aiueos-native-boot"}
 qemu=${QEMU_SYSTEM_X86_64:-qemu-system-x86_64}
 qemu_timeout=${AIUEOS_QEMU_TIMEOUT:-300}
 expected_status=${AIUEOS_NATIVE_EXPECT_STATUS:-33}
-expected_marker=${AIUEOS_NATIVE_EXPECT_MARKER:-MPRCD}
+# The guest's own boot markers are MPRCD. Under --k16-preflight the LOADER
+# prefixes its tender stages, and asserting them is the point: P (the PCI
+# probe), S (the sealed budget snapshotted), T (top of the tender loop), C
+# (about to call the guest), then the guest's MPRCD.
+#
+# Until 2026-09-09 QEMU could not reach the tender at all -- no RTL8125, so the
+# preflight image branched to :exit-boot and took the ordinary halting entry.
+# `exit 33 / MPRCD` was green for a run in which the changed code was never
+# executed, which is this workspace's seventh question asked of itself and
+# answered wrong for a week. Four defects found on hardware in that time were
+# pure control flow with no packet in them.
+#
+# So this string is a claim about the PATH, not just the outcome. If the tender
+# stops being taken, PSTC disappears and this goes red.
+if [ "${AIUEOS_NATIVE_K16_PREFLIGHT:-0}" = 1 ]; then
+  expected_marker=${AIUEOS_NATIVE_EXPECT_MARKER:-PSTCMPRCD}
+else
+  expected_marker=${AIUEOS_NATIVE_EXPECT_MARKER:-MPRCD}
+fi
 "$aiueos/scripts/build-kotoba-native-boot-46eeedae.tmp.sh" "$compiler" >/dev/null
 if [ -z "${OVMF_CODE:-}" ]; then
   for candidate in /opt/homebrew/share/qemu/edk2-x86_64-code.fd \
@@ -54,7 +72,7 @@ expected=sys.argv[2].encode("ascii")
 if data != expected:
     raise SystemExit(f"error: Kotoba-native marker was {data!r}, expected {expected!r}")
 PY
-if [ "$expected_marker" = MPRCD ]; then
+if [ "$expected_marker" = MPRCD ] || [ "$expected_marker" = PSTCMPRCD ]; then
   echo "AIUEOS_KOTOBA_NATIVE_QEMU_OK no-c-boot-chain memory-map-v2 allocator-pages=14 ownership-bitmap page-table-root identity-1g rtl8125-no-device-bounded guard-unmapped text-rx state-rw-nx nxe cr0-wp cr3-activated invlpg idt14-sidt-readback recovery-frame dedicated-handler-stack reuse double-free-rejected zero-before-publish exit-boot-services"
 else
   echo "AIUEOS_KOTOBA_NATIVE_QEMU_REJECTION_OK marker=$expected_marker status=$expected_status"
