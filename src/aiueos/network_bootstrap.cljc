@@ -15,7 +15,7 @@
   is unreachable with nothing in the record explaining why.
 
   Pure: probe facts in, decisions out. No I/O, no interface enumeration."
-  (:require [clojure.string :as str]))
+  (:require [kotoba.lang.text :as str]))
 
 (def interface-classes
   "How an interface presents, and what that earns it.

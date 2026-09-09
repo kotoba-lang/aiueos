@@ -20,7 +20,7 @@
 ;;     os/aiueos/scripts/device-attest-agent-loop-test.cljs ../grant/src:../text/src
 
 (require '[grant.device-attest :as attest]
-         '[clojure.string :as str]
+         '[kotoba.lang.text :as str]
          '["node:crypto" :as crypto]
          '["node:http" :as http]
          '["node:fs" :as fs]

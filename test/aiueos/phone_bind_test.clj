@@ -7,7 +7,7 @@
   (:require [aiueos.phone-bind :as pb]
             [aiueos.device-auth :as auth]
             [cacao.core :as cacao]
-            [clojure.string :as string]
+            [kotoba.lang.text :as string]
             [clojure.test :refer [deftest is testing]]
             [grant.enroll :as enroll]))
 

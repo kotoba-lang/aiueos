@@ -25,7 +25,7 @@
 ;; read my signature and refused it" (1) without parsing this output.
 
 (require '[grant.device-attest :as attest]
-         '[clojure.string :as str]
+         '[kotoba.lang.text :as str]
          '["node:crypto" :as crypto]
          '["node:fs" :as fs])
 

@@ -23,7 +23,7 @@
          '["node:fs" :as fs]
          '["node:os" :as os]
          '["node:path" :as path]
-         '[clojure.string :as str])
+         '[kotoba.lang.text :as str])
 
 (def argv (vec *command-line-args*))
 (defn- opt [f d] (let [i (.indexOf argv f)] (if (neg? i) d (nth argv (inc i)))))
