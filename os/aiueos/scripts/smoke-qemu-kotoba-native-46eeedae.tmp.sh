@@ -82,12 +82,54 @@ set -- "$@" \
 attempts=${AIUEOS_NATIVE_QEMU_ATTEMPTS:-4}
 attempt=1
 aborted=0
+marker_missed=0
+# The marker check runs INSIDE the attempt loop, because X is a tail byte and
+# the tail is a race: measured 2026-09-09, three runs of one unchanged image
+# gave ...D X, ...D and ...D X O. The guest writes the debug-exit port and
+# execution continues, so how much escapes before teardown varies.
+#
+# So a single run missing X proves nothing -- but every run missing it does.
+# Requiring X in AT LEAST ONE of N attempts keeps the discrimination that
+# matters (with the NX clear disabled X never appears, verified) without going
+# red on a race. The first version of this gate hard-failed on the first miss,
+# which made it flaky by construction against a property this same file
+# documents two sections down.
+check_marker() {
+  python3 - "$log" "$expected_marker" <<'PY'
+from pathlib import Path
+import sys
+data = Path(sys.argv[1]).read_bytes()
+spec = sys.argv[2]
+parts = spec.split("+")
+prefix = parts[0].encode("ascii")
+if not data.startswith(prefix):
+    print(f"marker {data!r} does not start with {prefix!r} -- the tender was not taken")
+    raise SystemExit(1)
+for part in parts[1:]:
+    required = part.encode("ascii")
+    if required not in data:
+        why = ("the guest returned but the loader did not run again"
+               if required == b"X" else "the guest did not reach its boot markers")
+        print(f"marker {data!r} lacks {required!r} -- {why}")
+        raise SystemExit(1)
+PY
+}
 while : ; do
   set +e
   timeout "$qemu_timeout" "$qemu" "$@"
   qemu_status=$?
   set -e
-  if [ "$qemu_status" = "$expected_status" ]; then break; fi
+  if [ "$qemu_status" = "$expected_status" ]; then
+    set +e; marker_why=$(check_marker); marker_ok=$?; set -e
+    if [ "$marker_ok" = 0 ]; then break; fi
+    if [ "$attempt" -ge "$attempts" ]; then
+      echo "error: $marker_why (attempt $attempt of $attempts)" >&2; exit 1
+    fi
+    marker_missed=$((marker_missed + 1))
+    attempt=$((attempt + 1))
+    echo "note: $marker_why; retrying, attempt $attempt of $attempts" >&2
+    continue
+  fi
   # An early abort is retryable; anything else is reported as-is.
   if [ "$qemu_status" != 0 ] || [ "$attempt" -ge "$attempts" ]; then
     echo "error: Kotoba-native QEMU exit was $qemu_status, expected $expected_status" \
@@ -100,6 +142,7 @@ while : ; do
        "retrying, attempt $attempt of $attempts" >&2
 done
 [ "$aborted" = 0 ] || echo "note: $aborted of $attempt run(s) aborted early -- known nondeterminism" >&2
+[ "$marker_missed" = 0 ] || echo "note: $marker_missed run(s) lost a trailing marker to the teardown race" >&2
 python3 - "$log" "$expected_marker" <<'PY'
 from pathlib import Path
 import sys
