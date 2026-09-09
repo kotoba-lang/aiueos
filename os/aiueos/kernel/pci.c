@@ -255,6 +255,18 @@ extern uint64_t kotoba_aiueos_journal_plan(uint64_t valid0, uint64_t sequence0,
                                            uint64_t valid1, uint64_t sequence1);
 volatile uint64_t aiueos_virtio_blk_irq_count;
 static int blk_msix_active;
+/* Recorded when the completion wait proves futile rather than merely slow.
+   The wait below tests `used->index == target` -- exact equality on a counter
+   that only advances -- so if the used index ever gets PAST target the loop can
+   never succeed, and it keeps taking the device's MSI-X for a completion it has
+   already missed. That is a hang, not a delay, and it is worth separating the
+   two: a delay is waited out, a hang is a bug. */
+static uint16_t blk_wait_used, blk_wait_target;
+static uint64_t blk_wait_irq;
+static int blk_wait_overshot;
+int aiueos_virtio_blk_wait_overshot(void) { return blk_wait_overshot; }
+unsigned aiueos_virtio_blk_wait_used(void) { return blk_wait_used; }
+unsigned aiueos_virtio_blk_wait_target(void) { return blk_wait_target; }
 int aiueos_object_store_ready(void) { return object_store_ready; }
 extern uint64_t kotoba_aiueos_app_lookup_plan(
   const uint8_t[16],const struct kotoba_app_metadata*,uint64_t,uint64_t,uint64_t);
@@ -381,6 +393,15 @@ static int virtio_blk_sector_io(struct virtio_blk_request *request, uint8_t *sec
         return 0;
       *submitted = target;
       return 1;
+    }
+    /* Futile, not slow: the used index has passed the value this wait is
+       looking for, so no future completion can make the equality true. Fail
+       now with the numbers instead of spinning until the harness times out. */
+    if (used->index != target &&
+        (uint16_t)(used->index - target) < 0x8000) {
+      blk_wait_used = used->index; blk_wait_target = target;
+      blk_wait_irq = aiueos_virtio_blk_irq_count; blk_wait_overshot = 1;
+      return 0;
     }
     if (blk_msix_active) __asm__ volatile("sti; hlt; cli" ::: "memory");
     else __asm__ volatile("pause");

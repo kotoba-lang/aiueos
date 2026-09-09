@@ -646,6 +646,9 @@ extern uint32_t aiueos_acpi_ivrs_seen(void);
 extern int aiueos_pci_input_devices_seen(void);
 extern int aiueos_pci_input_fail_line(void);
 extern int aiueos_pci_input_fail_reason(void);
+extern int aiueos_virtio_blk_wait_overshot(void);
+extern unsigned aiueos_virtio_blk_wait_used(void);
+extern unsigned aiueos_virtio_blk_wait_target(void);
 extern int aiueos_dma_test_policy_allows_unisolated(void);
 extern int aiueos_vtd_initialize(void);
 extern int aiueos_vtd_translation_enabled(void);
@@ -2930,8 +2933,23 @@ qwen_runtime_boot_complete:
     }
 #endif
     if ((pci_result & 3) != 3) {
-      debug_string("AIUEOS_VIRTIO_BLK_FAIL capacity-or-read\n");
-      serial_string("AIUEOS_VIRTIO_BLK_FAIL capacity-or-read\r\n");
+      if (aiueos_virtio_blk_wait_overshot()) {
+        /* Distinct because the fix is different: this is not a device that
+           failed to answer, it is a wait this kernel can no longer satisfy. */
+        debug_string("AIUEOS_VIRTIO_BLK_FAIL completion-wait-overshot\n");
+        serial_string("AIUEOS_VIRTIO_BLK_FAIL completion-wait-overshot used=");
+        { unsigned v[2]; v[0]=aiueos_virtio_blk_wait_used();
+          v[1]=aiueos_virtio_blk_wait_target();
+          for (int k = 0; k < 2; k++) {
+            char q[8]; unsigned i = 0, n = v[k];
+            if (!n) q[i++] = '0';
+            while (n) { q[i++] = (char)('0' + (n % 10)); n /= 10; }
+            while (i--) { char one[2]; one[0]=q[i]; one[1]=0; serial_string(one); }
+            serial_string(k == 0 ? " target=" : "\r\n"); } }
+      } else {
+        debug_string("AIUEOS_VIRTIO_BLK_FAIL capacity-or-read\n");
+        serial_string("AIUEOS_VIRTIO_BLK_FAIL capacity-or-read\r\n");
+      }
       qemu_exit(0x71);
     }
     debug_string("AIUEOS_VIRTIO_BLK_OK capacity-bounded sector=0 bytes=512 readonly\n");

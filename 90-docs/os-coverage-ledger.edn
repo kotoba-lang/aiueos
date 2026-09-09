@@ -202,4 +202,26 @@
          BSP; the two stack pointers differing by exactly 0x1000 were two CPUs.
          And -smp 1 does not isolate the BSP -- this guest requires cpu>=2 and
          fails ACPI honestly, exit 241. Filtering events by address against the
-         map is what separated the processors."}]
+         map is what separated the processors."}
+ {:at "2026-09-09"
+  :profile :release-gpt-image-hang-no-longer-reproduces
+  :note "No coverage change. The wait that hangs tests
+         `used->index == target` -- exact equality on a counter that only
+         advances -- while the IRQ half of the same condition uses >=. If the
+         used index ever passes target the loop can never succeed, and it keeps
+         taking the device's MSI-X for a completion it has already missed. That
+         is a hang rather than a delay, and the two want different treatment.
+         virtio_blk_sector_io now detects exactly that condition -- used index
+         past target, which no future completion can undo -- and returns with
+         the numbers instead of spinning until the harness gives up. It is a
+         LOGICAL bound, not a timing one: no threshold to tune and nothing that
+         fires on a slow but healthy device.
+         Measured after: the ESP profile is unaffected, VIRTIO_BLK_OK and exit
+         0. The release image stopped hanging -- seven runs, all reaching the
+         same deterministic stop, the already-explained input one.
+         STATED CAREFULLY: the overshoot detector did NOT fire. So the cause is
+         not confirmed. Either the check catches nothing and its presence
+         changed timing enough to hide the race, or the hang has another source
+         that seven runs did not sample. What is established is that the boot
+         became deterministic where it was not, and what is not established is
+         why."}]
