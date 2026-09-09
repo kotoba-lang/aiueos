@@ -231,6 +231,14 @@ else
 fi
 iommu_args=
 if [ "${AIUEOS_TEST_DMAR:-0}" = 1 ]; then iommu_args="-device intel-iommu,intremap=on"; fi
+# The board's own IOMMU class. The K16 is an AMD Ryzen 7 7735HS, so every VT-d
+# marker this suite can prove is proved against silicon the machine does not
+# have -- isolation reads 6/6 on hardware that would score 0. This mode boots
+# the same guest behind AMD-Vi instead, which QEMU 10.0.3 provides as
+# `amd-iommu`, and asserts NOTHING yet: no AMD path exists to assert. It is
+# here to observe what the guest does on the platform it will actually run on,
+# which had never been executed. Assertions arrive with the IVRS parser.
+if [ "${AIUEOS_TEST_IVRS:-0}" = 1 ]; then iommu_args="-device amd-iommu"; fi
 # A NIC is attached only when asked for, so every existing gate keeps booting
 # the exact machine it booted before. SLIRP ("-netdev user") is a real peer with
 # a fixed topology — it answers ARP for 10.0.2.2 — which is what lets the first

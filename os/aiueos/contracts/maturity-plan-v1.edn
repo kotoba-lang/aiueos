@@ -53,7 +53,18 @@
    :consequence "The isolation row's proven markers are Intel VT-d, measured
                  under QEMU emulating Intel. On this board that coverage
                  transfers to nothing -- the one row where a QEMU number is
-                 actively misleading about the hardware."}
+                 actively misleading about the hardware."
+   :progress "2026-09-09: NOT hardware-gated, which was the open question.
+              QEMU 10.0.3 provides `amd-iommu`, so the board's IOMMU class can
+              be emulated, and AIUEOS_TEST_IVRS=1 now boots the guest behind
+              AMD-Vi. First run of aiueos on that platform: it boots, the suite
+              exits 0, ACPI is fine, and DMA policy reports
+              `dmar=absent test-only-unisolated`. So the guest fails SAFE on the
+              real platform -- it declines to claim isolation it does not have
+              -- and the remaining work is an IVRS parser and AMD-Vi device
+              table, which is substantial C and testable without the board.
+              The mode asserts nothing yet on purpose: there is no AMD path to
+              assert, and a permanently red gate is worse than none."}
 
   :tpm-key-binding
   {:title "Keys bound to a hardware root of trust"

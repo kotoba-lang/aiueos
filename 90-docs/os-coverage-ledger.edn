@@ -72,4 +72,27 @@
          measured under QEMU emulating Intel. The K16 is an AMD Ryzen 7 7735HS.
          That row's coverage transfers to this board not at all, and it is the
          one place where a rising number here means less rather than more.
-         Next lever, untried: AIUEOS_SSH_HOSTFWD against remote 0/6."}]
+         Next lever, untried: AIUEOS_SSH_HOSTFWD against remote 0/6."}
+ {:at "2026-09-09"
+  :evidence ["evidence-all.log" "evidence-esp-uefi.log"]
+  :profile :uefi-suite-union-plus-amd-vi-observation
+  :core {:emitted 74 :declared 114 :pct 64.9}
+  :route :b-a-defect-in-the-measurement-itself
+  :note "The headline did not move and the measurement got better, which is the
+         only combination this ledger should ever be pleased about.
+         Booting the guest behind AMD-Vi for the first time -- the K16's actual
+         IOMMU class, which QEMU 10.0.3 can emulate -- showed
+         AIUEOS_DMA_POLICY_OK emitted as `dmar=absent test-only-unisolated`.
+         Under VT-d the same marker reads `dmar=validated dma=vtd-isolated`.
+         One name, two opposite meanings, and this script counted names: it was
+         crediting an explicitly unisolated boot with isolation.
+         Fixed by letting the taxonomy require a payload substring for markers
+         whose _OK is a report rather than a verdict. The first substring chosen
+         was `isolated` and it discriminated NOTHING, because
+         `test-only-unisolated` contains it -- the negative case is spelled as
+         the positive with a prefix. Caught by running the control rather than
+         trusting the string; `validated` separates them.
+         Verified both directions: AMD-Vi-only evidence now reads isolation 3/6
+         with DMA_POLICY unproven, and evidence containing a real VT-d boot
+         still reads 6/6. The union stays 74/114 because it genuinely contains
+         an isolated boot."}]

@@ -43,6 +43,21 @@
   (set (map #(keyword (str/replace (str/replace % "AIUEOS_" "") #"_OK$" ""))
             (re-seq #"AIUEOS_[A-Z0-9_]+_OK" text))))
 
+;; Markers whose _OK is a report rather than a verdict need their line read, not
+;; just their name counted. AIUEOS_DMA_POLICY_OK is emitted both as
+;; `dmar=validated dma=vtd-isolated` and as `dmar=absent test-only-unisolated`,
+;; so the name alone credited an explicitly unisolated boot with isolation.
+(defn- payload-ok? [text marker want]
+  (boolean (some #(str/includes? % want)
+                 (re-seq (re-pattern (str "AIUEOS_" (name marker) "_OK[^\n\r]*")) text))))
+
+(defn- emitted-in [text requires]
+  (let [named (markers-in text)]
+    (set (remove (fn [m]
+                   (when-let [want (get requires m)]
+                     (not (payload-ok? text m want))))
+                 named))))
+
 ;; *command-line-args*, not (drop 2 js/process.argv). Under nbb that drop
 ;; leaves this script's own path in the list, so the run "measured" itself and
 ;; printed 0% instead of refusing -- the precise failure this file exists to
@@ -59,12 +74,14 @@
 
   (let [spec (cljs.reader/read-string (read-file contract))
         subsystems (:subsystems spec)
+        _ nil
         declared (reduce set/union
                          (map (comp markers-in read-file)
                               (mapcat walk-sources
                                       [(.join path aiueos "kernel")
                                        (.join path aiueos "uefi")])))
-        emitted (reduce set/union (map (comp markers-in read-file) args))
+        requires (:requires-payload spec)
+        emitted (reduce set/union (map #(emitted-in (read-file %) requires) args))
         ;; A log can only prove markers the sources still declare. One that
         ;; names a marker the tree no longer has is stale evidence, and saying
         ;; so is the point -- a green report from a log of a build that no

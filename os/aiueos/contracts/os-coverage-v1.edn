@@ -38,6 +38,22 @@
  ;; measured and reported but excluded from the headline number, because
  ;; scoring an inference node on desktop compositing would make the number
  ;; move for reasons nobody acts on.
+ ;; Some markers are emitted with an _OK suffix in BOTH the state they name and
+ ;; its opposite, so their NAME is not proof. AIUEOS_DMA_POLICY_OK is the
+ ;; measured case: under VT-d it reads `dmar=validated dma=vtd-isolated`, and on
+ ;; a machine with no DMAR it reads `dmar=absent test-only-unisolated` -- the
+ ;; same marker announcing that isolation is absent. Counting the name credited
+ ;; an explicitly unisolated boot as a proven capability.
+ ;;
+ ;; A marker listed here counts only when its line also contains the substring.
+ ;; Keep this small: it is for markers whose _OK is a report rather than a
+ ;; verdict, not a place to encode every payload.
+ ;; "validated", not "isolated". The first attempt used "isolated" and did not
+ ;; discriminate at all, because `test-only-unisolated` contains it -- the
+ ;; negative case is spelled as the positive with a prefix. Caught by running
+ ;; the control instead of trusting the substring.
+ :requires-payload {:DMA_POLICY "validated"}
+
  :subsystems
  {:boot        {:relevance :core
                 :markers [:LOADER :LOADER_INTEGRITY :LOADER_RECOVERY :LOADER_MODEL
