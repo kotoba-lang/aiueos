@@ -444,4 +444,38 @@
          Also cleared a stale QEMU from the previous session's early conclude:
          it still held hostfwd 8022 and had the deleted serial open, which is
          why the run before this one died on 'Could not set up host forwarding
-         rule'. kill-group kills the wrapper's group; that QEMU outlived it."}]
+         rule'. kill-group kills the wrapper's group; that QEMU outlived it."}
+ {:at "2026-09-10"
+  :profile :release-image-evidence-collected
+  :core {:emitted 90 :declared 116 :pct 77.6}
+  :note "LOADER_RECOVERY was case (a) -- a profile that already passes whose
+         evidence was never collected -- and confirming which case it was is
+         most of the work. uefi/main.c:1081 emits it, its gate
+         smoke-qemu-release-image.sh already checks BOTH directions (requires
+         the marker at line 99, requires its absence in the control at 160),
+         the gate needs no board, and it exits 0. So nothing was broken; the
+         log simply was not being measured. Added relout/evidence-all.log to
+         the measurement. boot 6/9 -> 7/9, core 89 -> 90 of 116.
+         The side finding is worth more than the marker. That gate printed
+         '[: integer expression expected' on every watchdog tick -- 80 times in
+         one run -- while exiting 0. GNU coreutils stat is first on PATH here;
+         it reads -f as FILESYSTEM status, says %m is not a filesystem format,
+         prints the blob for the file anyway, and EXITS 0. So
+         'stat -f %m || stat -c %Y || echo 0' never reaches either fallback and
+         watchdog_t silently becomes that blob. A probe that fails while
+         reporting success, whose own guard is unreachable because of the
+         success. The comment above the line already described the symptom
+         (the watchdog stops advancing, so a quiet guest is measured from the
+         wrong instant); what nobody had noticed is that the fallback written
+         to prevent it could not run.
+         Fixed by validating the FORMAT (case ...*[!0-9]*) instead of the exit
+         code. Measured both directions standalone -- real file 1786801082,
+         missing file 0 -- and then in situ: same script, same out dir,
+         80 errors -> 0, AIUEOS_UEFI_SMOKE_OK, exit 0.
+         Remaining profile-gated: NETBOOT_EMBEDDED alone. Its two gates
+         (smoke-qemu-physical-{persistent,pxe}.sh) need only timeout and
+         qemu-system-x86_64 -- 'physical' names the boot path, not the
+         hardware -- but both read AIUEOS_ALLOW_DIRTY_QUALIFICATION_BUILD and
+         this worktree is dirty, so they may refuse rather than run. A refusal
+         is a third outcome, neither pass nor gap, and must not be recorded as
+         either."}]

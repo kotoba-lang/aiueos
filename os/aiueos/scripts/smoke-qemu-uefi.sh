@@ -531,8 +531,16 @@ PY
     watchdog_seen=$qemu_started
     for watchdog_file in "$serial_log" "$log"; do
       if [ -f "$watchdog_file" ]; then
-        watchdog_t=$(stat -f %m "$watchdog_file" 2>/dev/null || \
-                     stat -c %Y "$watchdog_file" 2>/dev/null || echo 0)
+        # Pick the mtime by VALIDATING THE FORMAT, not the exit code. GNU
+        # coreutils stat (which is first on PATH here) reads -f as "filesystem
+        # status", complains that %m is not a filesystem format, prints the
+        # blob for the file anyway -- and EXITS 0. So an exit-code fallback
+        # never fires and watchdog_t silently becomes that blob.
+        watchdog_t=$(stat -f %m "$watchdog_file" 2>/dev/null | head -1)
+        case ${watchdog_t:-} in ''|*[!0-9]*)
+          watchdog_t=$(stat -c %Y "$watchdog_file" 2>/dev/null | head -1) ;;
+        esac
+        case ${watchdog_t:-} in ''|*[!0-9]*) watchdog_t=0 ;; esac
         # Both operands defaulted: an empty one makes `[ -gt ]` print
         # "<number>: integer expression expected" once per watchdog tick, which
         # buried the SSH gates' actual verdict under hundreds of lines of it.
