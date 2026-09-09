@@ -352,4 +352,25 @@
          wrong reading in this branch.
          What remains unproven is now mostly not a lever: cluster and inference
          need the owner, PHYSICAL_* and IVRS and TPM2 need the board or a
-         firmware, and remote needs the kernel's SSH finished past KEX."}]
+         firmware, and remote needs the kernel's SSH finished past KEX."}
+ {:at "2026-09-09"
+  :evidence ["evidence-all.log" "evidence-esp-suite.log" "evidence-release-image.log"]
+  :profile :union-with-both-transports
+  :core {:emitted 86 :declared 116 :pct 74.1}
+  :route :a-half-the-evidence-was-never-collected
+  :closed [:KERNEL :LOADER_INTEGRITY]
+  :note "71.6 to 74.1, and the capability did not change: the accumulator was
+         collecting half of what the guest says.
+         The guest writes to TWO transports and they do not carry the same
+         markers. AIUEOS_KERNEL_OK and AIUEOS_LOADER_INTEGRITY_OK are loader
+         stage and go to debugcon, never to serial, so an accumulator that took
+         only kernel-serial.log reported them unproven while every boot emitted
+         them. smoke-qemu-uefi.sh now appends both.
+         Noticed by asking why a marker the release image demonstrably printed
+         was reading as unproven -- the same question that found the overwriting
+         problem. Both times the measurement was wrong and the system was fine.
+         boot stops at 6/9. The three that remain are not levers:
+         LOADER_MODEL_OK needs a real GGUF handoff, NETBOOT_EMBEDDED_OK the
+         PXE-embedded image path, and LOADER_RECOVERY_OK a corruption that
+         actually forces the fallback -- the three AIUEOS_CORRUPT_* modes all
+         pass without reaching it."}]

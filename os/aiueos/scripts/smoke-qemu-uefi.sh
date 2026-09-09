@@ -561,7 +561,13 @@ PY
   # since the gates below assert them by grep -- yet the file left on disk
   # afterwards held four markers from a later, shorter scenario and none of
   # those three. The suite proved capabilities its own evidence could not show.
+  # BOTH logs. The guest writes to two transports and they do not carry the
+  # same markers: the loader stage reports AIUEOS_KERNEL_OK and
+  # AIUEOS_LOADER_INTEGRITY_OK on debugcon and never on serial, so an
+  # accumulator that took only $serial_log was collecting half the evidence and
+  # reporting the other half as unproven. Measured 2026-09-09.
   cat "$serial_log" >> "$out/evidence-all.log" 2>/dev/null || true
+  cat "$log"        >> "$out/evidence-all.log" 2>/dev/null || true
   # Normalised to 124 on purpose: every branch below, and fifteen sibling
   # scripts, already know what 124 means. WHICH limit ended the attempt is
   # carried in $quiet_fired and reported, not encoded in a new status nobody
