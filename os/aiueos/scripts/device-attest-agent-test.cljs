@@ -16,7 +16,7 @@
 ;;   nbb --classpath ../grant/src:../text/src \
 ;;     os/aiueos/scripts/device-attest-agent-test.cljs
 
-(require '[grant.device-attest :as attest]
+(require '[kotoba.lang.text] '[grant.device-attest :as attest]
          '["node:crypto" :as crypto])
 
 (def subtle (.-subtle (.-webcrypto crypto)))
@@ -97,6 +97,6 @@
          (println)
          (println (str "checks=" total " failed=" (count failed)))
          (when (seq failed)
-           (println (str "failed: " (clojure.string/join ", " (map first failed)))))
+           (println (str "failed: " (kotoba.lang.text/join ", " (map first failed)))))
          (println (if (empty? failed) "DEVICE_ATTEST_AGENT_OK" "DEVICE_ATTEST_AGENT_FAIL"))
          (js/process.exit (if (empty? failed) 0 1))))))
