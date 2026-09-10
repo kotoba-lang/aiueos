@@ -900,4 +900,60 @@
          line for line -- their union carries physical-K16 evidence this one has
          no access to, which is why the same 25 remaining markers sort into
          different buckets here (board 13, model-artifact 6, owner 4,
-         firmware 1, live-exchange-stalls 1)."}]
+         firmware 1, live-exchange-stalls 1)."}
+ {:at "2026-09-10"
+  :profile :session-closing-second
+  :core {:emitted 91 :declared 116 :pct 78.4}
+  :note "Second closing for this session, covering what happened after the first.
+         ON MAIN, verified by ancestry: #324 89418a77, #325 d97df3cb,
+         #326 380de632, #327 3fa7013c, #328 792c962a, #329 d129329d. Nothing of
+         mine is unlanded; no open PRs, branches or worktrees of mine remain.
+         WHAT LANDED AFTER THE FIRST CLOSING.
+         #327: the murakumo cluster is board-gated, not owner-gated. I went
+         looking for a way to obtain MURAKUMO_SERVICE_TOKEN and found the token
+         was never the constraint -- the node plane takes CACAO on every relay
+         route, and kernel/main.c emits the marker only under if(direct_https_ok)
+         over the PHYSICAL rtl8125. Recording those five as :owner had implied a
+         lever that does not exist. board 8 -> 13, owner 9 -> 4; coverage
+         unchanged, because this changes why, not how many.
+         #328/#329: PLC_RT diagnosed. `internal compiler error` was an artifact
+         of the reporting -- amu's error-report reads (ex-data error), finds no
+         :phase, and DISCARDS the message. The real exception was
+         `Cannot mix BigInt and other types`. Bisected to the native-package
+         stage by instrumenting amu's own support/timed, which already labels
+         every stage.
+         WHERE THIS COST TIME, HONESTLY. A concurrent session reached the same
+         root cause and got there better: I bisected by PHASE and concluded
+         \"x86_64 native emission\", which sent readers to a file whose coercion
+         was already correct; they widened by TARGET and named the function.
+         Their commit says so and the criticism is fair. I then opened
+         kotoba-lang/amu#922 for a pin advance they had already opened as #921
+         twenty-one minutes earlier, and closed mine as the duplicate.
+         What survived: the latent little-endian BigInt hazard on the same code
+         path (unit-reproduced, does not currently trigger), carried onto #921
+         as a comment rather than lost with the closed PR; and the discovery
+         that #921 is RED -- 10 of 13 checks pass, and the whole test matrix
+         fails one assertion, because aggregate_abi_test.clj is a pin ratchet
+         that asserts the sha literally. My own #922 had the identical defect: I
+         verified the compile end to end and never ran amu's own tests. Both of
+         us verified the thing we were looking at and missed the check the repo
+         already had.
+         TWO OF MY STANDING CLAIMS WERE WRONG AND ARE NOW CORRECTED BY OTHERS.
+         The disk is 192 GB free, not 14 -- `du` reported two 137 GB copies that
+         were one copy with two names, settled by one stat call. I had declined
+         to fetch the model on that basis for several turns. And the model
+         artifact has since landed with a matching SHA-256, so :model-artifact
+         waits on gates being run, not on the file.
+         RESUME POINTS. (1) amu#921 needs the ratchet literal moved to
+         5f2717c243ab769eacd9db74417759c73e448482 with a note in the file's
+         established style; until it merges, build-plc-native-program.sh works
+         only from a locally-pinned worktree. (2) The inference gates are now
+         runnable -- 6 to 7 markers, the largest agent-closable block left.
+         (3) The PLC_RT gate is intermittent: 3 green of 7, the rest
+         `AIUEOS_PLC_RT_FAIL embedded-elf-provider-or-safe-state loader=7`. It
+         emits; it is not yet reliable, and one green run is not evidence.
+         (4) The TCB inventory still carries 13 digest-drift entries needing
+         owner review before regeneration -- unchanged, and still not mine to
+         rubber-stamp. (5) aiueos CI: bb is fixed and the bare-metal smoke is
+         green; CLJC contract tests remains red on a pre-existing backlog it was
+         hiding."}]
