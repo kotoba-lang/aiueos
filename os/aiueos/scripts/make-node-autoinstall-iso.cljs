@@ -19,6 +19,10 @@
 ;;     --ssh-key ~/.ssh/id_ed25519.pub \
 ;;     --endpoint https://murakumo.cloud \
 ;;     --output build/aiueos/aiueos-node-autoinstall.iso
+;;
+;; For one NAMED box, drive this from the registry instead, so the arguments are
+;; written down rather than remembered: `scripts/make-node-installer.cljs
+;; --machine <id>` (contracts/node-machines-v1.edn).
 
 (require '[clojure.string :as str]
          '["node:fs" :as fs]
@@ -54,6 +58,7 @@
 
 (def no-console-password? (flag? "--no-console-password"))
 (def no-tailscale? (flag? "--no-tailscale"))
+(def no-hw-record? (flag? "--no-hw-record"))
 (def ubuntu-codename (opt "--ubuntu-codename" "noble"))
 (def tailscale-authkey
   ;; A FILE only. A tailnet auth key is a real credential and this one ends up
@@ -215,7 +220,60 @@
        "      tar xzf /cdrom/aiueos-node-agent.tar.gz -C /target/opt\n"
        "      cd /target/opt/aiueos-node-agent\n"
        "      ./node-linux-x64 nbb-bundle/node_modules/nbb/cli.js install.cljs \\\n"
-       "        --endpoint " endpoint " --root /target 2>&1 | tee -a /target/var/log/aiueos-node-install.log\n"))
+       "        --endpoint " endpoint " --root /target 2>&1 | tee -a /target/var/log/aiueos-node-install.log\n"
+
+       ;; ── the box measures itself ──────────────────────────────────────────
+       ;;
+       ;; A box this repository has not met arrives with every field
+       ;; :unverified (contracts/node-machines-v1.edn), and the cheapest moment
+       ;; to read its NIC, its disk serial and its board off it is the one boot
+       ;; that is happening anyway. `record-node-machine-probe.cljs` turns this
+       ;; file into those fields.
+       ;;
+       ;; From SYSFS and util-linux ONLY, deliberately. `lspci` and `dmidecode`
+       ;; live in packages the live installer is not required to carry, and a
+       ;; probe that reports nothing because a tool was absent looks exactly
+       ;; like a box with no NICs. /sys/class/{dmi,net}, /proc/cpuinfo and
+       ;; `lsblk` are always there. lspci is appended if it happens to exist,
+       ;; as a bonus and never as the source.
+       ;;
+       ;; `lsblk -P` rather than columns: a disk MODEL contains spaces, and a
+       ;; positional read of four fields silently shifts the size into the model
+       ;; on exactly the machines whose model is worth recording.
+       ;;
+       ;; And NOT `set -eu`. This measures; it does not decide. A measurement
+       ;; that can fail an install costs more than it is worth, so every command
+       ;; is guarded and the block ends in `exit 0`.
+       (if no-hw-record?
+         ""
+         (str "    - |\n"
+              "      rec=/target/var/log/aiueos-node-hwprobe.txt\n"
+              "      mkdir -p /target/var/log 2>/dev/null || true\n"
+              "      { date -u +'AIUEOS_NODE_HWPROBE_V1 %Y-%m-%dT%H:%M:%SZ'\n"
+              "        echo '--- dmi'\n"
+              "        for f in sys_vendor product_name board_name bios_version; do\n"
+              "          v=$(cat /sys/class/dmi/id/$f 2>/dev/null) || v=\n"
+              "          printf '%s=%s\\n' \"$f\" \"$v\"\n"
+              "        done\n"
+              "        echo '--- cpu'\n"
+              "        printf 'model=%s\\n' \"$(sed -n 's/^model name[[:space:]]*: //p' /proc/cpuinfo | head -1)\"\n"
+              "        printf 'cpus=%s\\n' \"$(grep -c '^processor' /proc/cpuinfo)\"\n"
+              "        echo '--- net'\n"
+              "        for n in /sys/class/net/*; do\n"
+              "          i=$(basename \"$n\")\n"
+              "          [ \"$i\" = lo ] && continue\n"
+              "          d=$(basename \"$(readlink -f \"$n/device/driver\" 2>/dev/null)\" 2>/dev/null)\n"
+              "          vd=$(cat \"$n/device/vendor\" 2>/dev/null)\n"
+              "          dv=$(cat \"$n/device/device\" 2>/dev/null)\n"
+              "          printf 'iface=%s driver=%s mac=%s pcivendor=%s pcidevice=%s\\n' \\\n"
+              "            \"$i\" \"$d\" \"$(cat \"$n/address\" 2>/dev/null)\" \\\n"
+              "            \"${vd#0x}\" \"${dv#0x}\"\n"
+              "        done\n"
+              "        echo '--- disk'\n"
+              "        lsblk -dn -P -o NAME,TYPE,RM,HOTPLUG,SERIAL,MODEL,SIZE,ROTA 2>/dev/null || true\n"
+              "        if command -v lspci >/dev/null 2>&1; then echo '--- lspci'; lspci -nn; fi\n"
+              "      } 2>&1 | tee -a \"$rec\" || true\n"
+              "      exit 0\n"))))
 
 ;; ── repack ────────────────────────────────────────────────────────────────
 ;;
@@ -306,6 +364,10 @@
               (cond no-tailscale? "not installed"
                     tailscale-authkey "installed; joins the tailnet unattended on first boot, with ssh"
                     :else "installed, NOT joined -- one `sudo tailscale up --ssh` at the box")))
+(println (str "hw-record: "
+              (if no-hw-record?
+                "NOT written -- this box measures nothing about itself"
+                "/var/log/aiueos-node-hwprobe.txt, and printed on the installer console")))
 (println (str "console: "
               (cond
                 (= console-password published-console-password)
@@ -372,7 +434,13 @@
                      :console {:password-set (boolean console-password)
                                :published-default (= console-password published-console-password)}
                      :tailscale {:installed (not no-tailscale?)
-                                 :joins-unattended (boolean tailscale-authkey)}})
+                                 :joins-unattended (boolean tailscale-authkey)}
+                     ;; Recorded either way. A reader who had to tell "no probe
+                     ;; was asked for" from "this receipt predates the probe" by
+                     ;; an absent key would be guessing -- the same reason the
+                     ;; intent key stays present for a guided stick.
+                     :hw-record {:written (not no-hw-record?)
+                                 :path "/var/log/aiueos-node-hwprobe.txt"}})
            nil 2) "\n"))
     (println (str "iso     " output))
     (println (str "bytes   " bytes))

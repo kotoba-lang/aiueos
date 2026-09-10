@@ -905,6 +905,76 @@ Deployment receipt generation separately verifies the supplied ELF signature
 and refuses missing physical-I/O qualification, measured RTA/WCET evidence or
 calibrated RT-kernel provenance. See ADR-0112 for the remaining boundary.
 
+## Node install stick: one named box at a time
+
+This is the route that produced a working node. The bespoke initramfs above lost
+to hardware rather than to the product — an RTL8125 wanting optional firmware
+that does not exist upstream, an ACPI table the BIOS gets wrong, a UEFI that
+would not start a hand-built UKI — and the same board runs Ubuntu. So the agent
+goes onto a distribution that already boots, and the distribution's installer
+does the part distributions are good at.
+
+`make-node-autoinstall-iso.cljs` is therefore **machine-agnostic**: nothing in it
+is CPU- or NIC-specific. What IS per-box is six arguments, and those are what
+`contracts/node-machines-v1.edn` holds (ADR-0214), with a provenance on every
+field — `:measured` (read off the machine, by a named command, on a named date),
+`:owner-stated` (the owner said so), `:unverified` (**nobody has looked** — not
+absent, not false).
+
+```sh
+nbb scripts/run-task.cljs node-agent-bundle --node build/aiueos/node-linux-x64 \
+  --nbb build/aiueos/nbb-bundle/node_modules
+nbb scripts/run-task.cljs node-installer-build --machine amd-6600hs \
+  --iso ubuntu-24.04.4-live-server-amd64.iso --ssh-key ~/.ssh/id_ed25519.pub
+nbb os/aiueos/scripts/flash-usb.cljs --device /dev/diskN --image <the iso> --confirm /dev/diskN
+```
+
+The driver prints every fact with its provenance before it builds, so *the stick
+built* cannot be read as *these facts about the box are right*. For a box nobody
+has met it prints `0 measured`.
+
+**Storage is interactive unless the disk serial is measured.** A stick built from
+a plausible-looking serial installs unattended onto whatever disk matches, which
+is the failure the install chain exists to prevent — `install-v1.edn` already
+refuses "largest disk" and "first NVMe" for this reason. `--unattended` demands
+the measured field and refuses without it, naming the command that would measure
+it. Until then the stick **asks a person which disk to erase**, which also means
+it cannot be left plugged in and forgotten.
+
+The box measures itself on the way in: the autoinstall writes
+`/var/log/aiueos-node-hwprobe.txt` and prints it on the installer console
+(`--no-hw-record` turns it off). It reads sysfs, `/proc/cpuinfo` and `lsblk`
+only — `lspci` and `dmidecode` live in packages the live installer is not
+required to carry, and a probe that reports nothing because a tool was absent
+looks exactly like a box with no NICs. It is read-only, guarded command by
+command, and ends in `exit 0`: a measurement that can fail an install costs more
+than it measures.
+
+```sh
+scp aiueos@<host>:/var/log/aiueos-node-hwprobe.txt .
+nbb scripts/run-task.cljs node-machine-probe-record --machine amd-6600hs \
+  --probe aiueos-node-hwprobe.txt          # --dry-run to see it decide first
+```
+
+The ingest writes `:measured` only for fields the probe actually carries and
+refuses the file rather than recording a measured nil. It excludes the install
+stick — a removable disk is still a disk with a serial, and recording that one
+would point an unattended install at itself — and it asks `lsblk` whether a disk
+is removable instead of keying on `nvme*`, because a box with a SATA SSD has no
+`nvme*` and its serial could otherwise never be measured. Two internal disks is
+not a target: which of them may be erased is the owner's statement.
+
+`:node-installer-test` is the offline evidence (55 cases, ADR-0214): the registry
+typed rather than parsed, every refusal pinned to its named reason, the probe
+block extracted from the builder's own output and executed, and the loop closed
+end to end — ingest a probe into a registry copy, then require the driver to
+build the unattended stick with the serial that probe carried.
+
+⚠ **No ISO has been built from this, for any box.** The autoinstall is measured
+(valid YAML, every late-command valid `sh`), the probe block is measured on
+Linux, and the repack is exercised only through its refusal path. Gates I6 and I7
+are unchanged: no physical probe receipt and no physical install.
+
 ## USB removable-media boot
 
 The GPT release image above is what gets written to a USB stick, but producing
