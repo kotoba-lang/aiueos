@@ -115,6 +115,29 @@
   ;; cap-id))` -- with a comment naming this exact TypeError, and the copy amu
   ;; actually pins (kotoba-native edbbe987) carries that coercion too. The mix
   ;; is somewhere else on that emission path.
+  ;; NARROWED FURTHER 2026-09-10 by instrumenting a throwaway amu worktree.
+  ;; Everything below is an ELIMINATION, so the next person does not re-walk it:
+  ;;   - x86_64 `emit-cap-call` is NEVER REACHED (probe never fires) and its
+  ;;     cap-id is already coerced with (js/Number cap-id) in the pinned copy.
+  ;;   - machine_ir `capability-id` already coerces via i64/bigint-value?.
+  ;;   - GMIR cap-call lowering IS reached (4x) and does not throw.
+  ;;   - `lower-kir-module` does not throw, checked with the lazy seq forced
+  ;;     inside the try -- the first probe here was INCONCLUSIVE because the
+  ;;     structure is lazy and the exception realized outside the catch.
+  ;;   - `entry-fuel-prefixes` does not throw; nor does `compile-kir-module`.
+  ;;     So `emit-program` COMPLETES. The fault is not in code generation.
+  ;; What is left is the post-emission path: kexe/ELF packaging, provenance,
+  ;; the manifest writers, or the artifact digest -- which is where this
+  ;; codebase already documents BigInt sensitivity ("EDN has no i64 type
+  ;; marker: the writer prints an nbb bigint as the same plain integer token").
+  ;; The cap-call trigger is consistent with that: a program containing one is
+  ;; the only shape whose artifact carries a capability effect row to serialize.
+  ;; The interpreted stack is useless for locating it -- every frame is inside
+  ;; nbb_core.js, because SCI-interpreted code carries no source frames. Bisect
+  ;; by wrapping stages, and force lazy seqs inside the try.
+  ;;
+  ;; That elimination was right, and it stopped one step short of the
+  ;; function. What follows names it.
   ;;
   ;; FOUND AND FIXED 2026-09-10, later the same day, and PLC_RT IS NOW EMITTED.
   ;; It was not on the emission path. It was in PACKAGING:
