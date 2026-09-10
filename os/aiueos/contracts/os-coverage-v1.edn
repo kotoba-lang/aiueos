@@ -95,8 +95,29 @@
   ;; crashing the backend. Nor is it a missing lowering: cap-call is present in
   ;; amu (capability_names, backend/cljs, elaboration-pipeline "scalar cap-call
   ;; path first") and in kotoba-native (machine_ir, elf64, peephole, aarch64).
-  ;; Diagnosing further means working inside those two repos, which is not this
-  ;; contract's job; what belongs here is the repro and the three SHAs.
+  ;; DIAGNOSED 2026-09-10. The real error is not "internal compiler error" --
+  ;; that string is an artifact of the reporting. amu's nbb CLI
+  ;; (compiler/nbb/cli_support.cljs `error-report`) reads (ex-data error) and,
+  ;; finding no :phase, defaults to :internal and DISCARDS the message. The
+  ;; underlying exception is a plain JS TypeError with nil ex-data:
+  ;;   TypeError: Cannot mix BigInt and other types, use explicit conversions
+  ;; i.e. a Number/BigInt mix on the nbb path, where i64 literals are BigInt.
+  ;; Bisected by phase, so the search space is small:
+  ;;   amu check <src> --policy <p>            -> :ok true (frontend, link,
+  ;;                                              typecheck, admission all fine)
+  ;;   amu compile --target js                 -> :ok true, 58076 bytes
+  ;;   amu compile --target x86_64-aiueos-user-v1 -> exit 70, the TypeError
+  ;; So it is the x86_64 NATIVE EMISSION only. Trigger is any cap-call at all:
+  ;;   (cap-call 16 0) / (cap-call 17 0) / (let [x (cap-call 16 0)] 0) all fail;
+  ;;   (defn main [] 0) compiles. Independent of which id and of nesting.
+  ;; NOT the obvious suspect: kotoba-native x86_64.cljc `emit-cap-call` already
+  ;; coerces the id once up front -- `cap-id #?(:clj cap-id :cljs (js/Number
+  ;; cap-id))` -- with a comment naming this exact TypeError, and the copy amu
+  ;; actually pins (kotoba-native edbbe987) carries that coercion too. The mix
+  ;; is somewhere else on that emission path.
+  ;; Two fixes are wanted upstream and they are separable: the Number/BigInt mix
+  ;; itself, and `error-report` throwing away the message of an exception that
+  ;; carries no :phase -- the second is why the first read as unactionable.
   ;; Second, smaller gap: build-plc-native-program.sh writes
   ;; build/aiueos-plc/<name>/program.elf while smoke-qemu-uefi.sh defaults
   ;; AIUEOS_PLC_ELF to build/plc-motor/program.elf, so even a fixed compiler
