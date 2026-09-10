@@ -86,7 +86,15 @@ before writing a line.
 `os-coverage.cljs` recognises exactly `/AIUEOS_[A-Z0-9_]+_OK/`. The TSC
 calibration in `uefi/main.c` (`info.tsc_hz = elapsed * 10ULL`) is real, reaches
 the kernel, and drives `aiueos_wait_seconds` — and scored nothing for as long
-as it announced nothing. That is why `:time`'s marker is a declared phantom.
+as it announced nothing.
+
+⚠ **But it is `#ifdef AIUEOS_QWEN38_MODEL_HANDOFF`.** Measured 2026-09-10 by
+emitting a marker and booting: it did not appear, because in the default smoke
+build `tsc_hz` is zero — the calibration is compiled out. The TSC is calibrated
+in the Qwen model-handoff profile and nowhere else, so **the profile that
+usually boots here has no calibrated clock**, and ADR-0116's "raw TSC until a
+calibrated frequency exists" is right about it. Do not say this OS calibrates
+its clock without naming the build profile.
 
 ### `os-coverage.cljs` refuses without an evidence log, on purpose
 
