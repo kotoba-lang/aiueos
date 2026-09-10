@@ -3,7 +3,10 @@
 ;; adr-2608251418). /init (mechanism) has already mounted the install-USB
 ;; payload, extracted the bundle to a tmpfs, and handed over. This script:
 ;;
-;;   1. reads the install intent shipped on the USB;
+;;   1. gets the install intent: reads the one shipped on the USB, or -- on a
+;;      stick that carries none -- runs guided-install.cljs to author one at
+;;      the machine (ADR-0210). Both end here with the same artifact, and
+;;      everything after this step is the same path;
 ;;   2. enumerates whole disks and keeps those matching the intent's model /
 ;;      transport / capacity bounds, never the disk we booted from;
 ;;   3. refuses unless EXACTLY ONE candidate remains -- zero is a machine the
