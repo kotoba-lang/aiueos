@@ -151,6 +151,40 @@ no `-icount` hook — it reads `AIUEOS_QEMU_TIMEOUT`, `_QUIET`, `_ATTEMPTS`,
 Neither is OS work. Both touch shared boot-evidence code, so neither is done
 here.
 
+### Route 1 was tried and is refuted (2026-09-10)
+
+Before adding the icount passthrough, the instrument it implies was measured.
+QEMU here has `-plugin` support but ships no plugins, so
+`os/aiueos/scripts/qemu-insn-count-plugin.c` was written to count executed
+guest instructions and print the total at exit. It works. It is also the wrong
+instrument, by four orders of magnitude:
+
+| | guest instructions |
+|---|---|
+| one unmodified image, run 1 | 1,532,182,814 |
+| the SAME image, run 2 | 1,528,370,810 |
+| run-to-run noise | **3,812,004** |
+| two images differing by 30 loop iterations | 16,949,555 apart |
+| the signal wanted (30 x 15) | **450** |
+
+**`-icount` makes the guest CLOCK deterministic; it does not make OVMF's
+device-polling loops spin the same number of times**, and the firmware is
+~1.5e9 instructions of the total. The same session's in-guest bracket was
+byte-identical across three runs (`000001EA000003AC`) precisely because it runs
+after boot and touches no devices.
+
+So route 1 is struck: an `AIUEOS_QEMU_ICOUNT` passthrough would produce a
+number, and the number would be noise. **The boundary has to be bracketed
+inside the guest** -- which means the counter must be read either side of the
+`syscall` in the CPL3 path, and that is a change to `kernel/main.c` or to the
+PLC program, not to a smoke's argument list. Route 2 survives, with the added
+constraint that its two programs must be bracketed rather than merely
+differenced across whole runs.
+
+The plugin is kept, with its resolution limit written at the top of the file,
+because it is the only instruction counter available here and it is right for
+coarse whole-run questions. What it must not be used for is this one.
+
 The smoke still prints `NOT-MEASURED` for the boundary, because it still has
 not been measured — but nothing structural is in the way any more.
 
