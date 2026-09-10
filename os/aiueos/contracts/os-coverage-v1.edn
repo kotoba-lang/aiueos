@@ -292,12 +292,12 @@
   ;; emits no such marker, so no evidence log can carry it and no row could
   ;; count it.
   ;;
-  ;; :TSC_CALIBRATED is therefore a PHANTOM on purpose -- the taxonomy naming a
-  ;; marker the tree does not have, which os-coverage reports and never scores.
-  ;; It changes no percentage (a phantom is outside :declared), which is the
-  ;; honest outcome: nothing new was measured, a hole was named. Closing it is
-  ;; one serial line in the kernel where tsc_hz arrives, and then this row
-  ;; starts scoring on its own.
+  ;; :TSC_CALIBRATED was a PHANTOM when this row was added -- the taxonomy
+  ;; naming a marker the tree did not have. It is real as of 2026-09-10:
+  ;; kernel/main.c emits AIUEOS_TSC_CALIBRATED_OK with the frequency, right
+  ;; after AIUEOS_SERIAL_OK, and only when the loader actually calibrated one.
+  ;; So this row now scores like any other, and a boot that does not calibrate
+  ;; reports 0/1 rather than being invisible.
   ;;
   ;; :APIC_TIMER is deliberately NOT repeated here; it is scored under
   ;; :interrupts, and a marker counted in two subsystems would be counted twice.
