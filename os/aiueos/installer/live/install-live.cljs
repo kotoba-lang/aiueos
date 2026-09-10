@@ -3,7 +3,10 @@
 ;; adr-2608251418). /init (mechanism) has already mounted the install-USB
 ;; payload, extracted the bundle to a tmpfs, and handed over. This script:
 ;;
-;;   1. reads the install intent shipped on the USB;
+;;   1. gets the install intent: reads the one shipped on the USB, or -- on a
+;;      stick that carries none -- runs guided-install.cljs to author one at
+;;      the machine (ADR-0210). Both end here with the same artifact, and
+;;      everything after this step is the same path;
 ;;   2. enumerates whole disks and keeps those matching the intent's model /
 ;;      transport / capacity bounds, never the disk we booted from;
 ;;   3. refuses unless EXACTLY ONE candidate remains -- zero is a machine the
@@ -30,8 +33,39 @@
 (def usb-payload-dev (or (.-AIUEOS_LIVE_PAYLOAD_DEV js/process.env)
                          (die 3 "AIUEOS_LIVE_PAYLOAD_DEV is not set; run from /init")))
 
+;; A stick may carry an intent or ask for one. Both are products
+;; (install-v1.edn :install-usb :authoring, ADR-0210): a stick that carries
+;; one installs unattended, a stick that asks installs nothing without a
+;; person. Which one this is, is decided by what is in the tmpfs -- and the
+;; bundle only contains install-intent.json when the USB carried INTENT.JSN.
+;;
+;; The guided program runs with the console attached and writes the intent
+;; here. It opens no block device; everything below this line is unchanged,
+;; including the fresh-probe verification of the intent it just wrote. An
+;; intent authored ten seconds ago is not more trusted than one authored last
+;; week.
+(def intent-file "install-intent.json")
+
+(when-not (.existsSync fs intent-file)
+  (println "AIUEOS_LIVE_NO_INTENT this stick asks; starting the guided installer")
+  (let [r (.spawnSync cp "nbb"
+                      #js ["guided-install.cljs"
+                           "--release-receipt" "release-receipt.json"
+                           "--out-intent" "install-intent.json"
+                           "--out-answers" "install-answers.json"]
+                      #js {:stdio "inherit" :shell false})
+        status (or (.-status r) 3)]
+    ;; The guided program's exit codes are kept, not flattened: 2 is a named
+    ;; refusal and 3 is could-not-answer, and an installer that reported both
+    ;; as "failed" would send the operator looking for the wrong thing.
+    (when-not (zero? status)
+      (println "AIUEOS_LIVE_GUIDED_ABORTED" (str "status=" status))
+      (.exit js/process status))
+    (when-not (.existsSync fs intent-file)
+      (die 3 "guided installer exited 0 without writing" intent-file))))
+
 (def intent
-  (try (js->clj (.parse js/JSON (.readFileSync fs "install-intent.json" "utf8"))
+  (try (js->clj (.parse js/JSON (.readFileSync fs intent-file "utf8"))
                 :keywordize-keys true)
        (catch :default e (die 3 "cannot read install-intent.json:" (.-message e)))))
 (when-not (= "aiueos.install-intent.v1" (:schema intent))

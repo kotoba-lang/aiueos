@@ -148,6 +148,11 @@
                                  confirm a disk chosen a minute ago"}
                       :writes-no-block-device true
                       :authority :none-added
+                      ;; Reached two ways: run by hand to author an intent
+                      ;; ahead of time, or run BY install-live.cljs on a stick
+                      ;; that carries none (ADR-0210).
+                      :entry-points ["operator runs it"
+                                     "install-live.cljs when install-intent.json is absent"]
                       :probe :read-only-lsblk-nodeps
                       :fake-probe :two-key-gated ; NODE_ENV=test AND AIUEOS_GUIDED_ALLOW_FAKE_PROBE=1
                       :refuses [:answers-schema-unknown
@@ -225,6 +230,37 @@
  ;; release ESP/recovery as removable media, plus a payload partition carrying
  ;; the release image, its receipt, the intent, and the installer bundle. The
  ;; receipt chain closes over all of them.
+ ;; Two products from one builder (aiueos ADR-0210). They differ by one
+ ;; payload file and by who is allowed to erase a disk without being asked.
+ ;; Which one a stick is, is decided from the image alone and cross-checked:
+ ;; a payload carrying an intent nobody digested, or digesting one it does not
+ ;; carry, is neither product and is refused by name.
+ :authoring
+ {:authored-ahead-of-time
+  {:built-with "--intent <file>"
+   :payload-carries :INTENT.JSN
+   :install :unattended-when-the-intent-says-so
+   :receipt {:intent {:authoring "authored-ahead-of-time" :sha256 :present}}}
+  :guided-at-the-machine
+  {:built-with "--guided"
+   :payload-carries :no-intent
+   :install "install-live.cljs finds no intent and runs guided-install.cljs
+             with the console attached; the intent it writes goes through the
+             SAME fresh-probe verification and the same device-level guards.
+             An intent authored ten seconds ago is not more trusted than one
+             authored last week."
+   :property "a stick that asks cannot be left plugged in and forgotten"
+   :receipt {:intent {:authoring "guided-at-the-machine" :sha256 nil}}
+   :exit-codes :propagated ; 2 named refusal / 3 could-not-answer, never flattened
+   :chain-difference
+   "completion-chain step :intent-admits-exactly-one-named-whole-internal-disk
+    is preceded by authoring rather than by reading INTENT.JSN; every later
+    step is byte-for-byte the same path."}
+  :refuses [:guided-and-intent-together
+            :neither-guided-nor-intent
+            :payload-carries-an-intent-sha256s-does-not-list
+            :sha256s-lists-an-intent-the-payload-does-not-carry]}
+
  :install-usb {:image :aiueos-x86_64-install-usb.img
                :built-by "os/aiueos/scripts/make-install-usb-image.py"
                :receipt {:schema "aiueos.install-usb-receipt.v1"
