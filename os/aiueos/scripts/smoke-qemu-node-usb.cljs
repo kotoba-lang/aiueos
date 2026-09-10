@@ -1,0 +1,197 @@
+#!/usr/bin/env nbb
+;; Plug in the stick and watch the box become claimable.
+;;
+;; One boot, end to end, from a GPT image a firmware could actually boot: UEFI
+;; picks the live ESP, /init brings up a network, finds the node payload,
+;; hands over to node-boot, which mints a did and answers a challenge issued
+;; by a plane running on the host. Nothing is installed and no disk is written.
+;;
+;; The endpoint has to be decided BEFORE the image is built, because the node
+;; signs it -- so the plane is started first and its port is what goes into
+;; NODE.JSN. The guest reaches the host at 10.0.2.2 through QEMU's user
+;; networking.
+;;
+;; One boot. The other direction -- a plane holding a key that is not this
+;; node's, and the box saying its signature was refused rather than that the
+;; network was down -- is proven at the node-boot and agent levels, where it
+;; costs seconds instead of a TCG boot. What is left for a stick to show is
+;; that the same thing happens when it comes off a partition table.
+;;
+;;   nbb --classpath <grant>/src:<text>/src:<sekisho>/src \
+;;     os/aiueos/scripts/smoke-qemu-node-usb.cljs \
+;;     --live build/aiueos/live-node --out build/aiueos
+
+(require '[grant.device-attest :as attest]
+         '[sekisho.didkey :as didkey]
+         '[clojure.string :as str]
+         '["node:crypto" :as crypto]
+         '["node:http" :as http]
+         '["node:fs" :as fs]
+         '["node:os" :as os]
+         '["node:path" :as path]
+         '["node:child_process" :as cp])
+
+(def argv (vec *command-line-args*))
+(defn- opt [f d] (let [i (.indexOf argv f)] (if (neg? i) d (nth argv (inc i)))))
+(def live-dir (opt "--live" "build/aiueos/live-node"))
+(def out-dir (opt "--out" "build/aiueos"))
+(def repo-orgs (opt "--orgs" "/Users/junkawasaki/github/com-junkawasaki/orgs/kotoba-lang"))
+(def qemu (or (.-QEMU_SYSTEM_X86_64 js/process.env) "qemu-system-x86_64"))
+
+(defn- die [& m] (println (str "smoke-node-usb: " (str/join " " m))) (js/process.exit 2))
+(defn- first-existing [ps what]
+  (or (some #(when (fs/existsSync %) %) ps) (die "could not find" what)))
+
+(def ovmf (or (.-OVMF_CODE js/process.env)
+              (first-existing ["/opt/homebrew/share/qemu/edk2-x86_64-code.fd"
+                               "/usr/share/OVMF/OVMF_CODE_4M.fd"] "OVMF code")))
+(def ovmf-vars (or (.-OVMF_VARS js/process.env)
+                   (first-existing ["/opt/homebrew/share/qemu/edk2-i386-vars.fd"
+                                    "/usr/share/OVMF/OVMF_VARS_4M.fd"] "OVMF vars")))
+
+(def results (atom []))
+(defn- check! [name ok detail]
+  (swap! results conj [name ok])
+  (println (if ok "NODEUSB_OK  " "NODEUSB_FAIL") name (if ok "" (str "-- " detail))))
+
+(def subtle (.-subtle (.-webcrypto crypto)))
+(def nonce "node-usb-nonce-77b2")
+
+;; ── the plane, on the host ────────────────────────────────────────────────
+
+(defn- start-plane [expect seen]
+  (js/Promise.
+   (fn [resolve _]
+     (let [port (atom nil)
+           server
+           (http/createServer
+            (fn [req res]
+              (let [url (.-url req)
+                    did (some-> (second (re-find #"/api/devices/([^/]+)/" url))
+                                js/decodeURIComponent)]
+                (cond
+                  (str/ends-with? url "/challenge")
+                  (do (.writeHead res 200 #js {"content-type" "application/json"})
+                      (.end res (js/JSON.stringify
+                                 #js {"challenge" "c-usb" "nonce" nonce
+                                      "expiresAtMs" (+ (js/Date.now) 600000)})))
+                  (str/ends-with? url "/attest")
+                  (let [chunks (atom "")]
+                    (.on req "data" (fn [d] (swap! chunks str d)))
+                    (.on req "end"
+                         (fn []
+                           (let [body (js->clj (js/JSON.parse @chunks))
+                                 endpoint (str "http://10.0.2.2:" @port)
+                                 raw (if (= :node expect)
+                                       (js/Buffer.from (clj->js (didkey/public-key-of did)))
+                                       expect)
+                                 message (attest/signing-input
+                                          {:did did :endpoint endpoint :nonce nonce})]
+                             (-> (if-not (string? message)
+                                   (js/Promise.resolve false)
+                                   (-> (.importKey subtle "raw" raw #js {:name "Ed25519"}
+                                                   false #js ["verify"])
+                                       (.then (fn [k]
+                                                (.verify subtle #js {:name "Ed25519"} k
+                                                         (js/Buffer.from (get body "signature")
+                                                                         "base64url")
+                                                         (.encode (js/TextEncoder.) message))))
+                                       (.then (fn [ok] (true? ok)))
+                                       (.catch (fn [_] false))))
+                                 (.then (fn [ok]
+                                          (swap! seen conj {:did did :verified ok})
+                                          (.writeHead res (if ok 200 400)
+                                                      #js {"content-type" "application/json"})
+                                          (.end res (js/JSON.stringify
+                                                     (clj->js {"verified" ok}))))))))))
+                  :else (do (.writeHead res 404) (.end res "{}"))))))]
+       (.listen server 0 "127.0.0.1"
+                (fn [] (reset! port (.-port (.address server))) (resolve [server @port])))))))
+
+;; ── the stick ─────────────────────────────────────────────────────────────
+
+(defn- build-node-usb [port image]
+  (let [r (.spawnSync
+           cp "python3"
+           (clj->js ["os/aiueos/scripts/make-install-usb-image.py" "node-image"
+                     "--live-uki" (path/join live-dir "uki.efi")
+                     "--endpoint" (str "http://10.0.2.2:" port)
+                     "--interval" "3"
+                     "--classpath" (path/join repo-orgs "grant" "src")
+                     "--classpath" (path/join repo-orgs "text" "src")
+                     "--classpath" (path/join repo-orgs "sekisho" "src")
+                     "--node-binary" (path/join out-dir "node-linux-x64")
+                     "--nbb-dir" (path/join out-dir "nbb-bundle" "node_modules")
+                     "--receipt" (str image ".receipt.json")
+                     "--output" image])
+           #js {:encoding "utf8"})]
+    (when-not (zero? (.-status r))
+      (die "node-image build failed:" (.-stdout r) (.-stderr r)))
+    image))
+
+(defn- boot
+  "QEMU runs ASYNCHRONOUSLY on purpose. spawnSync blocks this process's event
+  loop for the whole boot, and the plane the guest is trying to reach is
+  served by that same loop -- so a synchronous boot cannot answer the very
+  request it exists to receive. Measured: the guest booted, minted a did, and
+  reported `control-plane-unreachable: fetch failed` four times while the
+  server sat in an unrunnable queue."
+  [image]
+  (js/Promise.
+   (fn [resolve _]
+     (let [vars (path/join (fs/mkdtempSync (path/join (os/tmpdir) "vars-")) "VARS.fd")]
+       (fs/copyFileSync ovmf-vars vars)
+       (let [child (cp/spawn
+                    qemu
+                    (clj->js ["-machine" "q35,accel=tcg" "-m" "1536" "-smp" "2"
+                              "-drive" (str "if=pflash,format=raw,readonly=on,file=" ovmf)
+                              "-drive" (str "if=pflash,format=raw,file=" vars)
+                              "-drive" (str "file=" image ",format=raw,if=none,id=stick,snapshot=on")
+                              "-device" "nvme,drive=stick,serial=AIUEOSNODE"
+                              "-netdev" "user,id=n0" "-device" "virtio-net-pci,netdev=n0"
+                              "-display" "none" "-serial" "stdio" "-no-reboot"])
+                    #js {:stdio "pipe"})
+             out (atom "")
+             killer (js/setTimeout #(.kill child "SIGKILL") 1500000)]
+         (.on (.-stdout child) "data" (fn [d] (swap! out str d)))
+         (.on (.-stderr child) "data" (fn [d] (swap! out str d)))
+         (.on child "close" (fn [_] (js/clearTimeout killer) (resolve @out))))))))
+
+(defn- finish []
+  (let [total (count @results) failed (remove second @results)]
+    (println)
+    (println (str "checks=" total " failed=" (count failed)))
+    (when (seq failed) (println (str "failed: " (str/join ", " (map first failed)))))
+    (println (if (empty? failed) "AIUEOS_NODE_USB_OK" "AIUEOS_NODE_USB_FAIL"))
+    (js/process.exit (if (empty? failed) 0 1))))
+
+(println "starting the plane, then building a stick that points at it…")
+
+(def seen (atom []))
+
+(-> (start-plane :node seen)
+    (.then
+     (fn [[server port]]
+       (let [image (build-node-usb port (path/join out-dir "aiueos-node-usb.img"))]
+         (println (str "built " image "; booting…"))
+         (-> (boot image)
+             (.then
+              (fn [out]
+                (let [tail-of (fn [] (str/join "\n" (take-last 15 (str/split-lines out))))]
+                  (.close server)
+                  (println (str "  serial: " (count out) " bytes"))
+                  (check! "the-stick-boots" (str/includes? out "AIUEOS_LIVE_INIT start") (tail-of))
+                  (check! "it-gets-a-lease" (str/includes? out "AIUEOS_LIVE_NET_LEASE") (tail-of))
+                  (check! "it-finds-the-node-payload"
+                          (str/includes? out "AIUEOS_LIVE_HANDOVER node-boot.cljs") (tail-of))
+                  (check! "it-announces-a-did"
+                          (some? (re-find #"AIUEOS_NODE_DID did:key:z6Mk" out)) (tail-of))
+                  (check! "the-plane-claimed-it" (true? (:verified (first @seen))) (pr-str @seen))
+                  (check! "the-did-matches-what-it-announced"
+                          (= (second (re-find #"AIUEOS_NODE_DID (\S+)" out)) (:did (first @seen)))
+                          (pr-str @seen))
+                  (check! "it-reports-claimable" (str/includes? out "AIUEOS_NODE_CLAIMABLE") (tail-of))
+                  (check! "it-installed-nothing"
+                          (not (str/includes? out "AIUEOS_LIVE_HANDOVER install-live.cljs"))
+                          "a node stick ran the installer")
+                  (finish)))))))))

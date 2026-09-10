@@ -46,6 +46,11 @@
 (def watch? (flag? "--watch"))
 (def dry-run? (flag? "--dry-run"))
 (def interval-ms (* 1000 (js/parseInt (or (opt "--interval") "15") 10)))
+;; A watcher with no bound cannot report the one thing a boot most needs to
+;; hear. Retrying forever turns "I never reached the plane" into silence, and
+;; silence is indistinguishable from still working. 0 means unbounded, which
+;; is right for a resident service and wrong for a boot.
+(def max-attempts (js/parseInt (or (opt "--attempts") "0") 10))
 
 (defn- die! [code msg]
   (binding [*print-fn* #(.error js/console %)] (println (str "device-attest: " msg)))
@@ -153,11 +158,17 @@
   ;; A watcher keeps going through the outcomes a retry can fix and stops on
   ;; the one it cannot: a signature the plane read and refused will be refused
   ;; again, and looping on it would turn a key fault into a quiet busy wait.
-  (letfn [(tick []
-            (-> (run-once)
-                (.then (fn [o]
-                         (cond
-                           (= :proved o) (js/process.exit 0)
-                           (= :rejected o) (js/process.exit (exit-for o))
-                           :else (js/setTimeout tick interval-ms))))))]
-    (tick)))
+  (let [attempts (atom 0)]
+    (letfn [(tick []
+              (swap! attempts inc)
+              (-> (run-once)
+                  (.then (fn [o]
+                           (cond
+                             (= :proved o) (js/process.exit 0)
+                             (= :rejected o) (js/process.exit (exit-for o))
+                             (and (pos? max-attempts) (>= @attempts max-attempts))
+                             (do (println (str "device-attest: giving up after "
+                                               @attempts " attempts"))
+                                 (js/process.exit (exit-for o)))
+                             :else (js/setTimeout tick interval-ms))))))]
+      (tick))))
