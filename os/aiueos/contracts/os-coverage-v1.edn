@@ -272,10 +272,27 @@
   ;; exchange, and it fails differently between runs: one reached stage 2 --
   ;; the client's KEXINIT received, then KEX_ECDH_INIT never arriving -- and
   ;; the next produced no client banner at all.
-  ;; Still the one group an agent can close without a credential, a board, an
-  ;; artifact or a firmware. But "write the missing code" was the wrong
-  ;; description and would have sent the next reader hunting for code that is
-  ;; already written.
+  ;; ⚠ CORRECTED 2026-09-10: this group is NOT closable without anything else,
+  ;; and the previous sentence here said it was. Measured by the same scan that
+  ;; attributed the six :profile markers above -- every SSH marker, these three
+  ;; included, is emitted from inside `#ifdef AIUEOS_SSH_LISTEN`:
+  ;;
+  ;;   :SSH_KEX_REPLY  pci.c:3120    :SSH_AUTH     main.c:3558
+  ;;   :SSH_SESSION    main.c:3563   :SSH_KEX      main.c:2955
+  ;;   :SSH_LISTEN     main.c:3539
+  ;;
+  ;; So in the DEFAULT build none of them can appear at all: the server is not
+  ;; compiled. The stall is real and is the nearest blocker for anyone who has
+  ;; the profile enabled, which is why the keyword stays -- but a build profile
+  ;; comes first, and a profile is one of the very things the other buckets are
+  ;; blocked on. Reading "the one group an agent can close alone" as written
+  ;; would send that agent to debug a handshake the default smoke never runs.
+  ;;
+  ;; The rest of the old note stands and is worth keeping: "write the missing
+  ;; code" was ALSO wrong once, and would have sent a reader hunting for code
+  ;; that is already written. pci.c drives stages 1..16 and main.c reports at
+  ;; 5, 12 and 16. Two wrong descriptions of the same three markers, a day
+  ;; apart, both pointing the next reader somewhere there was nothing to do.
   :SSH_KEX_REPLY :live-exchange-stalls
   :SSH_AUTH :live-exchange-stalls
   :SSH_SESSION :live-exchange-stalls

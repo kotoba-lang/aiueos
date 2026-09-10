@@ -161,7 +161,7 @@
                                (str nm (apply str (repeat (- (+ 2 (apply max (map (comp count name) (keys tally))))
                                                              (count nm)) " ")))) n
                       (when (= k :live-exchange-stalls)
-                        "   <- the only group an agent can close alone")
+                        "   <- nearest blocker once AIUEOS_SSH_LISTEN is built; not closable in the default build")
                       (when (= k :unclassified) "   <- not yet attributed; not the same as unblocked")))))
     (when (seq unmeasured)
       (println "  UNMEASURED (no declared marker in source, excluded from the total):"
