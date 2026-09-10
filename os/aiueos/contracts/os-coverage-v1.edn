@@ -272,6 +272,46 @@
   ;; exchange, and it fails differently between runs: one reached stage 2 --
   ;; the client's KEXINIT received, then KEX_ECDH_INIT never arriving -- and
   ;; the next produced no client banner at all.
+  ;; ── the sixteen still :unclassified, and what actually gates them ──────
+  ;; Measured 2026-09-10 and recorded as DATA, not as attribution. The :profile
+  ;; scan above reads preprocessor guards; these sixteen have unconditional
+  ;; emission, so their gate is a RUNTIME condition instead. Reading it does not
+  ;; by itself say which bucket a marker belongs in -- a device that QEMU could
+  ;; present but did not, and a device this machine will never have, look
+  ;; identical from the source -- so nothing here is promoted to a reason. It is
+  ;; written down because it was measured, and discarding it would make the next
+  ;; iteration measure it again.
+  ;;
+  ;;   marker                        site         ch      gate
+  ;;   :VIRTIO_NET                   main.c:3362  debug   aiueos_virtio_net_ready()
+  ;;   :IPV4                         main.c:3368  debug   aiueos_ipv4_ready()
+  ;;   :TCP                          main.c:3375  debug   aiueos_tcp_ready()
+  ;;   :DHCP                         main.c:3410  serial  aiueos_dhcp_ready()
+  ;;   :VTD                          main.c:2848  serial  aiueos_vtd_translation_enabled()
+  ;;   :VTD_IR                       main.c:3007  serial  !aiueos_vtd_interrupt_remapping_enabled() -> evidence_stop
+  ;;   :CRASH_RECEIPT                main.c:3059  debug   crash_reason == 42u && crash_sequence
+  ;;   :FAULT_RECEIPT                main.c:1382  debug   aiueos_crash_receipt_write_from_fault(vector)
+  ;;   :JOURNAL_RECOVERY             main.c:3105  debug   !aiueos_journal_recovered_sequence() || ...
+  ;;   :OBJECT_STORE_RESTORE         main.c:3022  debug   restored == 1
+  ;;   :KOTOBA_OBJECT_REPLAY         main.c:3122  debug   aiueos_user_object_replay_evidence_ready()
+  ;;   :OBJECT_TXN_REPLAY            main.c:3117  debug   !aiueos_scheduler_persistent_restore_evidence_ready()
+  ;;   :PERSISTENT_SERVICE_BOOTSTRAP main.c:3119  debug   (same predicate as :OBJECT_TXN_REPLAY)
+  ;;   :KERNEL                       main.c:1502  debug   unconditional
+  ;;   :ACPI_RETAIN                  main.c:1156  debug   ⚠ see below
+  ;;   :LOADER_INTEGRITY             main.c:1084  debug   ⚠ see below
+  ;;
+  ;; ⚠ The last two are MIS-DERIVED and are listed that way on purpose. The scan
+  ;; takes the nearest `if` above the emission, and for those two that `if` is a
+  ;; PRECEDING failure check (`if (!info.acpi_rsdp) return fail(...)`), not the
+  ;; marker's own gate. Their real gate is unread. A table that quietly showed
+  ;; the wrong condition for two rows would be worse than one that shows
+  ;; fourteen and admits two.
+  ;;
+  ;; THIRTEEN OF THE SIXTEEN GO TO DEBUGCON, not serial. That is the same fact
+  ;; that made every coverage number in the session that added this block low:
+  ;; scoring against kernel-serial.log alone cannot see them. Use the registered
+  ;; task (`nbb scripts/run-task.cljs os-coverage`), which passes all four logs.
+  ;;
   ;; ⚠ CORRECTED 2026-09-10: this group is NOT closable without anything else,
   ;; and the previous sentence here said it was. Measured by the same scan that
   ;; attributed the six :profile markers above -- every SSH marker, these three
