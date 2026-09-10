@@ -67,12 +67,53 @@ question for each file is which of three it is:
 Nothing in ADR-0212 distinguished 1 from 2, and it should have: `relay_protocol.c`
 was its top recommendation.
 
+## Measured after the fact: the retirement is not blocked, and neither are the 840
+
+The paragraph this replaces said the retirement "waits on nearly the whole
+conversion, or on linking the Kotoba object into the C build ahead of that —
+which of those is cheaper is not measured". It is measured now, and the premise
+was wrong: **the C kernel already calls Kotoba-emitted symbols, 99 of them.**
+
+    kotoba objects linked by build-uefi.sh          99
+    distinct kotoba_* symbols C declares extern     99
+    C files that call into Kotoba                   18 of 31
+
+`pci.c` — the file said to block this — **is already one of those callers**, of
+`kotoba_aiueos_dhcp_reply_valid`, `kotoba_aiueos_ecdsa_p256_sha256_verify`,
+`kotoba_aiueos_app_catalog_valid` and more. Adding one more call is routine, so
+retiring `relay_protocol.c` needs no part of the conversion order ahead of it.
+
+**And the interface shape un-blocks ADR-0212's 840 lines.** That ADR recorded
+six layer-0 files as blocked because they walk `const char *` fields out of a
+struct and a pointer loaded from memory cannot be a region root. True, and it
+does not follow that they cannot be converted — look at what the 99 existing
+calls actually pass:
+
+    extern int64_t kotoba_aiueos_device_worker_digest(uint8_t *st, int64_t st_len, …)
+
+A flat base and a length, which IS a region root. The established convention in
+this kernel is **C marshals, Kotoba judges**: the C side walks the struct and
+extracts the spans, the Kotoba side receives `(base, length)` and decides. The
+region-provenance rule never blocked conversion; it dictates the signature.
+
+So ADR-0212's blocked column should be read as "blocked while keeping the
+current C signature", not "blocked". Those components convert by changing their
+public surface to flat buffers — which whole-component migration explicitly
+permits as a versioned API decision, and which 99 existing symbols have already
+done. What is genuinely unmeasured is how much of each function is marshalling
+(stays C for now) versus judgment (moves).
+
 ## What is not done
 
-`pci.c` still calls the C, so nothing is deleted here. `pci.c` is layer 6 of
-eight, 5,482 lines, 16 dependencies — the second-to-last file in the order — so
-this retirement waits on nearly the whole conversion, or on linking the Kotoba
-object into the C build ahead of that. Which of those is cheaper is not measured.
+Nothing is deleted here: this ADR lands the parity evidence and the gate, not
+the repoint. The remaining work for this one file is small and now unblocked —
+emit the relay builders as a kernel object, repoint `pci.c:4038` and `:4109`,
+drop `relay_protocol.c` from `build-uefi.sh`.
+
+The gate covers the HELLO line. `aiueos_relay_ack_payload` and
+`aiueos_relay_ack_payload_valid` are not yet compared against a Kotoba
+counterpart; the ACK template is not among the seven kinds `relay_text.kotoba`
+generates, so that comparison has nothing to run against yet.
 
 The parity gate covers the HELLO line. `aiueos_relay_ack_payload` and
 `aiueos_relay_ack_payload_valid` are not yet compared against a Kotoba
