@@ -1,8 +1,21 @@
 # CLAUDE.md — aiueos
 
-Status: R3 — bare-metal boot and CPL3 execution are :implemented on QEMU/OVMF;
+Status: R2 — bare-metal boot and CPL3 execution are :implemented on QEMU/OVMF;
 P5 real-machine boot is :spec. See the README's capability table for the
 per-subsystem state; it is the authority and this file does not restate it.
+
+Why R2 and not higher, and a warning about the scale itself. This line is not
+decoration: `scripts/repo-maturity.cljs` parses it with
+`(?i)status[^a-zA-Z0-9]{0,10}R([0-5])\b` and turns it into `:maturity/stage-score`
+— R2 scores 0.4, R3 scores 0.6. **There is no published R0–R5 rubric anywhere in
+this workspace.** Every occurrence found is `R<n> — <free text>`, with no scale
+defining what any level requires, so the axis is scored against nothing and the
+numbers are not comparable between repos. Given that, the only defensible anchor
+is what peers declare: across the checked-out `kotoba-lang` repos the levels
+actually claimed are R0 (2), R1 (2), R2 (6), and **nobody claims R3, R4 or R5**.
+This file said R3 for about an hour on the strength of nothing, which is exactly
+the failure the rest of it warns about. If you raise it, raise it against
+evidence — and if you write the missing rubric, delete this paragraph.
 
 Agent instructions for `kotoba-lang/aiueos`. Everything below was measured in
 this repo, and most of it was measured *because an agent got it wrong first*.
