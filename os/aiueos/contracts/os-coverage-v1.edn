@@ -406,7 +406,20 @@
   :realtime    {:relevance :context
                 :markers [:PLC_RT]
                 :linux "PREEMPT_RT"
-                :chromeos "not offered"}
+                :chromeos "not offered"
+                ;; The only subsystem that carried a :linux comparison and no
+                ;; :note (found 2026-09-10 by reading every row with the EDN
+                ;; reader; a regex over the same file matched 8 of 18 and would
+                ;; have reported none).
+                :note "PREEMPT_RT makes a general-purpose kernel bounded by
+                       shrinking its non-preemptible sections; AIUEOS is
+                       bounded by construction and offers one fixed-priority
+                       preemptive profile instead. So this row is :context, not
+                       :core -- the comparison is real but the shapes do not
+                       line up, and PLC_RT passing says the profile ran, not
+                       that a general kernel was made real-time. The measured
+                       run reports timing=logical-unqualified for exactly that
+                       reason (see :time)."}
   :display     {:relevance :context
                 :markers [:FRAMEBUFFER :GOP_DISCOVERY :GOP_HANDOFF :VIRTIO_GPU
                           :VIRTIO_INPUT :DESKTOP_SURFACE :DESKTOP_INPUT
