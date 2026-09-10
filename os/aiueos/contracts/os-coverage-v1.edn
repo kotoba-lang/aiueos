@@ -122,9 +122,25 @@
   ;; reading one as a gap without checking the profile is the error this file's
   ;; own header warns about.
   :GUEST_SCANOUT_TWO :profile
-  ;; needs the owner: a credential or an install intent, never auto-created
-  :MURAKUMO_NODE :owner  :MURAKUMO_HEARTBEAT :owner  :MURAKUMO_JOB_POLL :owner
-  :MURAKUMO_JOB_RESULT :owner  :MURAKUMO_CONTROL_ACK :owner
+  ;; CORRECTED 2026-09-10. These five were recorded as :owner -- blocked on
+  ;; MURAKUMO_SERVICE_TOKEN. The token was never the binding constraint, and two
+  ;; measurements say so.
+  ;; (1) The secrets map records, re-measured 2026-09-08, that the node plane no
+  ;;     longer needs that token at all: api.murakumo.cloud accepts
+  ;;     `Authorization: CACAO <base64>` on every relay route, signed by
+  ;;     AIUEOS_K16_MURAKUMO_NODE_KEY, so a node needs no shared operator secret.
+  ;; (2) kernel/main.c emits AIUEOS_MURAKUMO_NODE_OK only under
+  ;;     `if (direct_https_ok)` and prints aiueos_rtl8125_direct_device_did() --
+  ;;     a real HTTPS session over the PHYSICAL RTL8125. QEMU reports
+  ;;     rtl8125-no-device-bounded; there is no such NIC there.
+  ;; So the wall is the board, not a credential. Recording them as :owner
+  ;; implied a lever that does not exist -- someone could have gone looking for
+  ;; a token that would not have helped.
+  ;; What DOES still need the owner is the operator plane: trust-tier
+  ;; `awai-secure` requires operator authorization and CACAO cannot reach it
+  ;; (401), so K16's correct tier is `community`.
+  :MURAKUMO_NODE :board  :MURAKUMO_HEARTBEAT :board  :MURAKUMO_JOB_POLL :board
+  :MURAKUMO_JOB_RESULT :board  :MURAKUMO_CONTROL_ACK :board
   :MURAKUMO_PERSISTENT_BOOT :owner  :PHYSICAL_JOB :owner
   :PHYSICAL_LIVENESS :owner  :PHYSICAL_RELAY :owner
   ;; needs the 10.9 GB GGUF artifact on hand -- and, on this machine, room for
