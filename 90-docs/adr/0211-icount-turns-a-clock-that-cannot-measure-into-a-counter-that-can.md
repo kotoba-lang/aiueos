@@ -73,18 +73,51 @@ measuring time at all.
    absent from it — and refuses (exit 3, neither 0 nor 1) if the mutation
    matched nothing, so that a red result cannot be red for the wrong reason.
 
-## What this does not say
+## What this does not say — and one thing it said wrongly
 
-**It does not compare aiueos with Ubuntu.** The comparison people want is an
-aiueos capability call against a Linux syscall, and the aiueos side does not
-exist to be measured: this repo's README says kernel execution is "not yet —
-context switch, preemptive scheduler, ring 3, syscall entry/exit, capability
-handle table all still reference-profile only", and ADR-0112, which had the
-general CPL3 signed-ELF transaction provider, is superseded as C-free evidence
-with a successor that "does not yet reproduce" it. Today's only aiueos arm is a
-CPL0 kernel object, which pays no privilege transition; setting that against a
-Linux userspace process would not be a comparison. The smoke prints this as
-`NOT-MEASURED` with its precondition rather than printing a ratio.
+**It does not compare aiueos with Ubuntu**, because the aiueos half has not
+been measured. But the reason recorded here first was WRONG, and the correction
+matters more than the original claim.
+
+The first draft of this ADR said the aiueos side "does not exist to be
+measured", citing the README's capability table (ring 3, syscall entry/exit and
+the capability handle table are "reference-profile only") and ADR-0112 being
+`superseded as C-free evidence`. **That was reading, not measuring, and it
+conflated two different things.** ADR-0112 is superseded as *C-free* evidence;
+that says nothing about whether the path RUNS. Measured 2026-09-10:
+
+- `os/aiueos/kernel/entry.S` has `aiueos_syscall_entry`, a native x86-64 CPL3
+  syscall path, and `main.c` emits `AIUEOS_PLC_RT_OK ... program=signed-cpl3-elf
+  ... transport=syscall ... capabilities=16,17,18,19 ... timing=logical-unqualified`.
+- `scripts/tasks.edn` carries `:plc-rt-qemu-smoke`, whose doc is "Boot the
+  receipt-bound PLC ELF at CPL3".
+- The PLC build compiles Structured Text to `x86_64-aiueos-user-v1` — the CPL3
+  user target — and its generated program is full of `(cap-call 16 0)`.
+
+So a CPL3 capability-call path exists, on the hybrid C kernel, and its own
+marker already admits the one thing this ADR is about: `timing=logical-unqualified`.
+
+**What actually blocked the measurement today was a stale dependency pin.**
+`./os/aiueos/scripts/build-plc-native-program.sh` fails at
+`--target x86_64-aiueos-user-v1` with `exit 70 :kotoba/internal-error`. That
+target routes through nbb (`bin/amu`'s `nbbNativeTargets`), so it loads the
+`.cljc` twin of `kotoba.native.elf64`, where a capability id arrives as a JS
+bigint and meets a plain number. kotoba-native fixed it in `b88a11b`
+(2026-09-10 10:35). **amu's `deps.edn` pins kotoba-native at `a5711bdc`
+(2026-09-08 12:36), which does not contain it.**
+
+Discriminated, same command, one variable:
+
+    kotoba-native src shadowed by the local checkout  -> :ok true, 8560-byte ELF
+    amu's pinned a5711bdc                             -> exit 70, internal error
+
+This is the failure mode the root CLAUDE.md names exactly: a fix on a base
+library's main does not reach a consumer until someone advances a `:git/sha`,
+and `deps.edn` pins have no gate the way west pins do. The next step for the
+boundary comparison is therefore **an amu pin advance**, not OS work.
+
+The smoke still prints `NOT-MEASURED` for the boundary, because it still has
+not been measured — but the precondition it names is now a pin, not a kernel.
 
 The precondition is an executable CPL3 path, so `x86_64-aiueos-user-v1` has a
 kernel to run under. That target's packaging was still being repaired on the
@@ -182,10 +215,11 @@ recorded rather than assumed: on this host every vulnerability file reads
 A host with PTI or retpolines active would measure a different boundary, and
 that difference would be the mitigations rather than the OS design.
 
-**What is still missing is the aiueos half, and only the aiueos half.** When a
-CPL3 path exists, the aiueos capability call is measured the same way in the
-same unit and the comparison is one subtraction. Until then this number sits
-here alone and is not divided by anything.
+**What is still missing is the aiueos half, and only the aiueos half.** See the
+correction below: the CPL3 path exists and the blocker is amu's kotoba-native
+pin, so this number is waiting on a pin advance rather than on OS work. Until
+the other half is taken on the same box, this number sits here alone and is not
+divided by anything.
 
 ## Two things that happened while landing, recorded rather than chased
 

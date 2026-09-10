@@ -31,16 +31,21 @@
 ;; WHAT IT REFUSES
 ;;
 ;; The thing actually wanted -- aiueos capability call against Linux syscall --
-;; is not measured here and cannot be, because the aiueos side does not exist
-;; to be measured. The repo README's own capability table says kernel execution
-;; is "not yet -- context switch, preemptive scheduler, ring 3, syscall
-;; entry/exit, capability handle table all still reference-profile only", and
-;; ADR-0112, which had the CPL3 signed-ELF provider, is `superseded as C-free
-;; evidence` and says its successor "does not yet reproduce this ADR's general
-;; CPL3 signed-ELF transaction provider". Comparing today's CPL0 kernel object
-;; against a Linux userspace process would compare a side that pays no
-;; privilege transition against a side that does. So this smoke prints that as
-;; NOT-MEASURED with the precondition, rather than printing a ratio.
+;; is not measured here. The reason is a PIN, not a missing kernel, and this
+;; comment said otherwise until it was measured (ADR-0211's correction).
+;;
+;; A CPL3 capability-call path does exist on the hybrid C kernel:
+;; `os/aiueos/kernel/entry.S` has `aiueos_syscall_entry`, `:plc-rt-qemu-smoke`
+;; boots a signed CPL3 ELF, and its marker already reports
+;; `timing=logical-unqualified`. What fails today is the BUILD:
+;; `--target x86_64-aiueos-user-v1` exits 70 with :kotoba/internal-error,
+;; because that target routes through nbb, loads the `.cljc` twin of
+;; `kotoba.native.elf64`, and amu's deps.edn pins kotoba-native at a5711bdc
+;; (2026-09-08) while the fix is b88a11b (2026-09-10). Shadowing the pinned
+;; source with a checkout that has the fix compiles the same program to an
+;; 8560-byte ELF; the pinned one does not. One variable.
+;;
+;; So this prints NOT-MEASURED with that precondition rather than a ratio.
 ;;
 ;; Usage: nbb os/aiueos/scripts/smoke-qemu-target-parity-icount.cljs /path/to/amu
 (ns smoke-qemu-target-parity-icount
@@ -339,18 +344,21 @@
 (defn report-not-measured! []
   (println (str "NOT-MEASURED boundary-cost aiueos-capability-call"
                 " vs linux-syscall"))
-  (println (str "  reason: the aiueos side does not exist to be measured."
-                " README's capability table: kernel execution is \"not yet --"
-                " context switch, preemptive scheduler, ring 3, syscall"
-                " entry/exit, capability handle table all still"
-                " reference-profile only\". ADR-0112 (CPL3 signed-ELF"
-                " provider) is superseded as C-free evidence and its successor"
-                " \"does not yet reproduce\" that provider."))
-  (println (str "  precondition: an executable CPL3 path, so that"
-                " x86_64-aiueos-user-v1 has a kernel to run under. Until then"
-                " the only aiueos arm is a CPL0 kernel object, which pays no"
-                " privilege transition and so cannot be compared with a Linux"
-                " userspace process.")))
+  (println (str "  linux half (banked, gad/Zen5, perf): 348.5 instructions,"
+                " ~184 cycles -- the syscall arm's 353.47 per iteration less"
+                " the null arm's 5.00 of loop bookkeeping."))
+  (println (str "  aiueos half: NOT the missing kernel this smoke first"
+                " claimed. A CPL3 capability path exists (kernel/entry.S"
+                " aiueos_syscall_entry; :plc-rt-qemu-smoke boots a signed CPL3"
+                " ELF; its marker says timing=logical-unqualified). The BUILD"
+                " is what fails: --target x86_64-aiueos-user-v1 exits 70"
+                " :kotoba/internal-error."))
+  (println (str "  precondition: advance amu's deps.edn pin of kotoba-native"
+                " past b88a11b (2026-09-10). It pins a5711bdc (2026-09-08),"
+                " which predates the fix; that target routes through nbb and"
+                " loads the .cljc twin where a capability id arrives as a"
+                " bigint. Shadowing the pin with a fixed checkout compiles the"
+                " same PLC program to an 8560-byte ELF; the pin does not.")))
 
 (defn -main [& args]
   (let [amu (or (first args)
