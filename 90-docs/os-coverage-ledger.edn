@@ -778,4 +778,64 @@
          disk at 99% with 16 GB free (7 markers), MURAKUMO_SERVICE_TOKEN plus
          install intent (9), powering the K16 (8), a TPM-enabled OVMF (1).
          (4) The shared amu checkout is diverged from its west pin and holds
-         uncommitted work -- untouched."}]
+         uncommitted work -- untouched."}
+ {:at "2026-09-10"
+  :profile :plc-rt-root-cause-fixed-and-emitted
+  :core {:emitted 91 :declared 116 :pct 78.4}
+  :realtime {:emitted 1 :declared 1 :pct 100.0}
+  :note "PLC_RT is emitted. The headline does not move -- realtime is an
+         excluded row -- and saying so first matters, because the work behind
+         this entry is larger than the number it changed.
+         WHERE IT WAS. Not on the emission path. kotoba-native elf64.cljc
+         capability-bitmap, reached from exactly one caller, package-user, the
+         aiueos CPL3 image route. It did (quot id 8) on an id that is a bigint
+         on cljs. The earlier entry had the right exception and the wrong
+         location, and the reason is instructive: it bisected by PHASE (check /
+         js / native) and concluded x86_64 native emission. Widening to
+         neighbouring TARGETS is what named the file -- the same source
+         compiles on wasm32, x86_64-linux, aarch64-macos and all three other
+         aiueos targets, and that target compiles fine without cap-call. A
+         failing case tells you what broke; only a passing neighbour tells you
+         where. Six passing neighbours were one command away for a day.
+         WHY NO TEST SAW IT. elf64_portable_test has packs-a-user-image, and it
+         declares no effects, so the reduce ran zero times: a user image with no
+         capabilities was proving the capability path. The added test hands in a
+         real bigint and asserts the bitmap BYTE across two ids that share a
+         bitmap index, because a coercion that silently lost the value would
+         also not throw. Control run both ways on the same tree: without the fix
+         the suite exits 1 with the TypeError at elf64.cljc:783 inside quot
+         inside capability-bitmap; with it, 68 tests / 638 assertions / 0
+         failures.
+         LANDED. kotoba-native b88a11b, merged 5f2717c; west pin 50c6480 ->
+         5f2717c (root eb5006c2); amu deps edbbe987 -> 5f2717c as
+         kotoba-lang/amu#921, which cannot be server-merged because amu main
+         requires a PR and two checks. The fix does not reach amu until that
+         lands -- deps.edn pins by :git/sha and there is no gate on those.
+         MEASURED. Repro exits 0, 8560 bytes. Bitmap bytes 1/2/4 for ids
+         16/17/18. Id 20 still refused :kotoba/admission-denied against a policy
+         granting 16..19. build-plc-native-program.sh reaches
+         AIUEOS_PLC_NATIVE_BUILD_OK with build and reproduction both 8560 bytes.
+         Kernel prints AIUEOS_PLC_RT_OK ... capabilities=16,17,18,19.
+         SECOND GAP CLOSED. smoke-qemu-uefi.sh defaulted AIUEOS_PLC_ELF to
+         build/plc-motor/, which nothing in the tree writes; it now defaults to
+         build/aiueos-plc/motor/. The profile could not run unaided before.
+         NOT SETTLED, and this is the part not to read as green: the gate is
+         INTERMITTENT. Seven runs today, 3 green and 4
+         AIUEOS_PLC_RT_FAIL embedded-elf-provider-or-safe-state loader=7 with
+         stage= 92, 25, 4, 19 -- a different stage each time, the shape of a
+         timing failure rather than a wrong path. Host load1 26-42 with a second
+         QEMU running throughout, and the asserted profile is
+         release=apic-absolute-ticks cycle=10ticks with deadline among its
+         failure modes. A loaded host is the first hypothesis and it has not
+         been tested on a quiet one. The marker is reachable and has been
+         emitted; the gate is not yet known to be reliable.
+         TWO OTHER BLOCKERS MOVED, both outside this repo. Disk: /private/tmp
+         held 202 GB in twenty runaway command outputs, none open by any
+         process, none touched since 2026-09-09 -- an 80 GB captured lsof and a
+         30 GB file of one repeated clojure warning among them. Removed:
+         14 GB free at 99 percent -> 204 GB at 79 percent. Model artifact:
+         Qwen3.8-27B-UD-IQ3_XXS.gguf fetched by the repo own pinned downloader,
+         AIUEOS_QWEN38_ARTIFACT_OK, byte count and SHA-256 both matching the
+         pin, at ~/models/aiueos. The seven :model-artifact markers are no
+         longer blocked on the artifact; they still need their gates run, which
+         another session was already doing when this was written."}]

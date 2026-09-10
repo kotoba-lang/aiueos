@@ -31,8 +31,15 @@ trap cleanup_all 0
 trap 'cleanup_all; exit 1' HUP INT TERM
 
 if [ "${AIUEOS_PLC_RT_SMOKE:-0}" = 1 ]; then
-  AIUEOS_PLC_ELF=${AIUEOS_PLC_ELF:-"$repo/build/plc-motor/program.elf"}
-  AIUEOS_PLC_RECEIPT=${AIUEOS_PLC_RECEIPT:-"$repo/build/plc-motor/program-receipt.json"}
+  # build-plc-native-program.sh writes build/aiueos-plc/<name>/, and this
+  # defaulted to build/plc-motor/ -- a directory nothing in the tree produces.
+  # The documented profile therefore could not run unless the caller passed
+  # both paths by hand, which is a gate that is green because it was never
+  # reached. Measured 2026-09-10: with the paths corrected the same command
+  # boots and the kernel prints AIUEOS_PLC_RT_OK.
+  plc_default="$repo/build/aiueos-plc/motor"
+  AIUEOS_PLC_ELF=${AIUEOS_PLC_ELF:-"$plc_default/program.elf"}
+  AIUEOS_PLC_RECEIPT=${AIUEOS_PLC_RECEIPT:-"$plc_default/program-receipt.json"}
   if { [ -n "${AIUEOS_PLC_SIGNATURE:-}" ] && [ -z "${AIUEOS_PLC_PUBLIC_KEY:-}" ]; } || \
      { [ -z "${AIUEOS_PLC_SIGNATURE:-}" ] && [ -n "${AIUEOS_PLC_PUBLIC_KEY:-}" ]; }; then
     echo "error: PLC signature and public key must be supplied together" >&2

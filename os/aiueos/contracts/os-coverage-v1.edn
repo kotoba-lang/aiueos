@@ -115,14 +115,60 @@
   ;; cap-id))` -- with a comment naming this exact TypeError, and the copy amu
   ;; actually pins (kotoba-native edbbe987) carries that coercion too. The mix
   ;; is somewhere else on that emission path.
-  ;; Two fixes are wanted upstream and they are separable: the Number/BigInt mix
-  ;; itself, and `error-report` throwing away the message of an exception that
-  ;; carries no :phase -- the second is why the first read as unactionable.
-  ;; Second, smaller gap: build-plc-native-program.sh writes
-  ;; build/aiueos-plc/<name>/program.elf while smoke-qemu-uefi.sh defaults
-  ;; AIUEOS_PLC_ELF to build/plc-motor/program.elf, so even a fixed compiler
-  ;; leaves the documented profile not running unless the path is passed by hand.
-  :PLC_RT :compiler
+  ;;
+  ;; FOUND AND FIXED 2026-09-10, later the same day, and PLC_RT IS NOW EMITTED.
+  ;; It was not on the emission path. It was in PACKAGING:
+  ;; kotoba-native `elf64.cljc`'s `capability-bitmap`, which is called from
+  ;; exactly one place -- `package-user`, the aiueos CPL3 image route -- and
+  ;; did `(quot id 8)` / `(mod id 8)` on an id that is a bigint on cljs.
+  ;;
+  ;; The bisect above stopped one target too early, and the missing control is
+  ;; the one that names the file: the SAME source compiles on wasm32,
+  ;; x86_64-linux, aarch64-macos, x86_64-aiueos-kernel-v1, aarch64-aiueos-
+  ;; kernel-v1 and x86_64-aiueos-uefi-v1, and fails ONLY on
+  ;; x86_64-aiueos-user-v1 -- while that target compiles fine without cap-call.
+  ;; "x86_64 native emission" was too wide by five targets, and the width is
+  ;; what sent the reader to x86_64.cljc, where the coercion was already right.
+  ;; A failing case tells you what broke; only a passing neighbour tells you
+  ;; where.
+  ;;
+  ;; Fixed in kotoba-native b88a11b (main 5f2717c) with a regression test that
+  ;; fails without it -- `packs-a-user-image` could not have caught this: its
+  ;; artifact declares no effects, so the reduce ran zero times and a user
+  ;; image with NO capabilities was proving the capability path. west pin
+  ;; advanced 50c6480 -> 5f2717c (root eb5006c2). amu's deps.edn pins
+  ;; kotoba-native by :git/sha, so the fix does not arrive until that advances:
+  ;; kotoba-lang/amu#921, edbbe987 -> 5f2717c.
+  ;;
+  ;; Measured end to end with the advanced pin: the three-line repro exits 0
+  ;; with an 8560-byte image; ids 16/17/18 give bitmap bytes 1/2/4; id 20 is
+  ;; still refused :kotoba/admission-denied against a policy granting 16..19;
+  ;; build-plc-native-program.sh reaches AIUEOS_PLC_NATIVE_BUILD_OK with both
+  ;; the build and its reproduction at 8560 bytes; and the kernel prints
+  ;; AIUEOS_PLC_RT_OK ... capabilities=16,17,18,19 -- realtime 1/1.
+  ;;
+  ;; `error-report` discarding the message of an exception with no :phase is
+  ;; still true and still worth fixing upstream: it cost a day here, and the
+  ;; whole diagnosis above is what one uncaught `(.-message e)` would have
+  ;; printed. Left as a separate upstream item, not as a blocker.
+  ;;
+  ;; The second gap is fixed too: smoke-qemu-uefi.sh defaulted AIUEOS_PLC_ELF
+  ;; to build/plc-motor/, a directory nothing in the tree writes, so the
+  ;; documented profile could not run unaided. It now defaults to
+  ;; build/aiueos-plc/motor/, where build-plc-native-program.sh puts it.
+  ;;
+  ;; WHAT IS NOT SETTLED: the gate is INTERMITTENT. Seven runs on 2026-09-10
+  ;; with the fixed toolchain gave 3 green and 4
+  ;; `AIUEOS_PLC_RT_FAIL embedded-elf-provider-or-safe-state loader=7` with
+  ;; stage= 92, 25, 4 and 19 -- a different stage each time, which is the shape
+  ;; of a timing failure rather than a wrong path (a wrong path fails
+  ;; identically). Host load1 was 26-42 with a second QEMU running throughout,
+  ;; and the profile it asserts is `release=apic-absolute-ticks cycle=10ticks`
+  ;; with `deadline` among its failure modes, so a loaded host is the first
+  ;; hypothesis and it has NOT been tested on a quiet one. Do not read the
+  ;; green as "the gate is reliable"; read it as "the marker is reachable and
+  ;; has been emitted". Measure it again on an idle machine before deciding
+  ;; whether the flakiness is the gate's or the host's.
   ;; CORRECTED 2026-09-10, same day. This was recorded as :code -- "a real gap
   ;; in aiueos itself" -- on the strength of the kernel's own failure branch,
   ;; "leftover=one-scanout enabled=1", appearing 36x and 7x in two logs while
