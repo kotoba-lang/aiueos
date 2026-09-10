@@ -87,6 +87,53 @@ migration explicitly permits), or add a provenance-preserving load to the
 language surface plan. `kernel-load-ptr` exists in the operation table and is
 the obvious place to look first.
 
+## The binding constraint is arity 5, not the provenance rule
+
+Measured 2026-09-10, twice and independently:
+
+    (defn f [p0 p1 p2 p3 p4]    …)   exit 0
+    (defn f [p0 p1 p2 p3 p4 p5] …)   exit 65
+        :kotoba.error/max-parameters
+        "function parameters exceed ABI-supported arity"
+
+**Five parameters. Six is refused.** This reshapes the "C marshals, Kotoba
+judges" convention that the rest of this ADR leans on: if every buffer arrives
+as a `(base, length)` PAIR, a function gets two and a half buffers before it
+runs out of arity. `aiueos_inference_status_valid` reads seventeen struct
+fields including three `const char *`; flattened to parameters that is roughly
+twenty, so it cannot be expressed that way at all.
+
+The way through is not more parameters but fewer: **C flattens the struct into
+one contiguous region and Kotoba reads it back by offset**, which is two
+parameters (`base`, `length`) regardless of how many fields there are. That is
+a different and larger marshalling job than "pass the spans", and every
+conversion of a wide struct needs it.
+
+## The conversion coefficient, measured once
+
+`kernel/job_protocol.c` was converted whole — all five public functions — and
+compiles for `x86_64-aiueos-kernel-v1`. The artifact is
+`native/job_protocol.kotoba`, landed unwired as evidence.
+
+| | |
+|---|---|
+| C, code lines (excl. comment/blank) | 163 |
+| Kotoba, code lines | 340 |
+| **expansion** | **2.09x** |
+| public functions | 5 C → 6 Kotoba |
+
+The function count grows because `aiueos_job_request_parse` fills an out-struct
+and there is no out-parameter across this boundary, so it splits into
+`job-request-verdict` and `job-request-prompt`. Expect that split wherever the
+C returns through a pointer.
+
+Projected onto the 13,481 kernel C lines that sit in functions touching no
+hardware, 2.09x is **roughly 28,000 lines of Kotoba to write**. Treat that as
+an order of magnitude and not a plan: **n = 1**. Two sibling measurements on
+`inference_status.c` and `qualification.c` were started and did not finish, so
+there is no spread, and protocol parsing is plausibly the friendliest shape in
+the tree.
+
 ## What is confirmed to work
 
 Probed on `x86_64-aiueos-kernel-v1`, all compiling:
