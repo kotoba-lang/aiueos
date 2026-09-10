@@ -15,10 +15,30 @@
 ;; already use for capability repos: $repo/../capability-link-frame/kotoba and
 ;; friends. It resolves relative to this file, so it follows the west layout
 ;; orgs/kotoba-lang/{aiueos,text} without naming an absolute path.
-{:paths ["src" "resources" "test" "../text/src"]
+;; "../org-ietf-ssh/src" joined on 2026-09-09 for the same reason and with the
+;; same shape. smoke-qemu-ssh-kex, -auth and -session all require ssh.transport
+;; and all three died on `Could not find namespace: ssh.transport`, while the
+;; library sits checked out at orgs/kotoba-lang/org-ietf-ssh. Three gates that
+;; could not run are three gates that were neither green nor red.
+;;
+;; ⚠ These sibling paths resolve relative to THIS FILE, so they work in the
+;; west checkout orgs/kotoba-lang/aiueos and NOT in a worktree under
+;; .claude/worktrees/, where ".." is the worktree directory. Measured
+;; 2026-09-09: neither ../text/src nor ../org-ietf-ssh resolves there. Running
+;; these scripts from a worktree needs an explicit --classpath; that is a
+;; property of the layout, not a defect in this file, and it is written down
+;; here because the failure is a missing namespace with no hint of why.
+{:paths ["src" "resources" "test" "../text/src" "../org-ietf-ssh/src"]
  :deps {
         ;; Declared HERE and not only in deps.edn: nbb reads nbb.edn and does NOT
         ;; read deps.edn or bb.edn, and the .cljs in this repo are run as
         ;; bare `nbb <file>`. A coordinate they cannot see is not a
         ;; declaration. sha and :paths are COPIED from deps.edn.
+        ;;
+        ;; org-ietf-ssh is NOT declared here as a coordinate, only as a sibling
+        ;; path above. Naming a :git/sha needs a sha someone has checked, and
+        ;; deps.edn pins have no gate the way west pins do (CLAUDE.md), so an
+        ;; invented one would be worse than the path that is already measured to
+        ;; work. Giving it the same treatment as text is follow-up, not a
+        ;; conflict resolution.
         io.github.kotoba-lang/text {:git/sha "73bdb13ae7a3d004b44bca08be03a3191157a38f"}}}

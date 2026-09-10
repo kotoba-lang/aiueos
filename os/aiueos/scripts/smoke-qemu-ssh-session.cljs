@@ -228,6 +228,15 @@
     (let [serial (if (.existsSync fs serial-log) (str/replace (.readFileSync fs serial-log "utf8") "\r" "") "")
           kernel-ok (str/includes? serial "AIUEOS_SSH_SESSION_OK")
           {:keys [authed reason banner]} @result]
+      ;; The gate concludes early (see the watch below) and kills the process
+       ;; group, so smoke-qemu-uefi.sh never reaches its own append -- without
+       ;; this the guest's serial, and with it the only first-hand record of
+       ;; AIUEOS_SSH_SESSION_OK, dies with the QEMU that produced it and the
+       ;; proof survives only as this gate's stdout.
+       (when (seq serial)
+         (.appendFileSync fs (.join path out "evidence-all.log")
+                          (str "\n=== smoke-qemu-ssh-session (concluded early, code=" code ") ===\n"
+                               serial "\n")))
       (println "AIUEOS_SSH_SESSION_GATE boot-exit code=" code)
       (println "AIUEOS_SSH_SESSION_GATE kernel-marker=" (if kernel-ok "AIUEOS_SSH_SESSION_OK" "absent"))
       (println "AIUEOS_SSH_SESSION_GATE client-banner=" (pr-str banner) "client-ok=" (pr-str authed) "reason=" (pr-str reason))

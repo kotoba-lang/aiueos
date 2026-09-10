@@ -499,3 +499,358 @@ or be a distinct artifact the loader hands control to. Both keep the handler
 outside the computation, which is the property that matters; the choice is
 about who owns the bytes, and it should be made with kototama rather than for
 it.
+
+## The tender's return path, closed 2026-09-09
+
+The tender re-enters the loader after the guest returns 250, and in QEMU the
+loader never ran again: the guest returned (`R`) and the loader's own `T`/`X`
+never printed. The cause was the guest's NX identity map covering the page the
+loader would resume on. Fixing it needed the loader's text address, which only
+UEFI knows, so the loader publishes it and the guest clears NX on the covering
+PDE.
+
+Publishing it was easy; **reading it took four runs, and each one was worth
+more than the fix.** The slot first went after the 16 KiB memory map, growing
+boot-info to 16480 bytes, and a copy of the accessor bounded at 16480 hung.
+
+What the four runs established, one claim each:
+
+| Run | Change | Trace | What it acquitted |
+|---|---|---|---|
+| 1 | marker before/after the read | `PSTCMa` | — the read does not return |
+| 2 | marker in an `if` condition, not `(* 0 marker)` | `PSTCMa` | constant folding |
+| 3 | same read at declared offset 0 | `PSTCMa` | the offset |
+| 4 | marker on function entry | `PSTCMad` | the call |
+
+Run 2 is the one to keep. The first marker was placed in a `(* 0 marker)`
+addend, the sequencing idiom this codebase uses everywhere, and a foldable zero
+multiply means **"the read hung" and "the compiler dropped the marker" print
+exactly the same thing — nothing.** The conclusion from run 1 was right, but it
+was not yet evidence; run 2 is what made it evidence.
+
+What remained was the declared bound, and the emitter says why:
+`kernel-load-u8` carries a profile maximum of 512 bytes, and
+`emit-kernel-load-u8` compares the declared length against it and falls through
+to **UD2** (`kotoba/native/x86_64.cljc`). A too-wide bound does not read wide.
+It executes an undefined instruction, and at that point in boot the guest has
+no `#UD` gate installed, so the firmware's handler takes it and dead-loops —
+which is why it looked like a hang and not a fault. `-4k` and `-16k` variants
+exist at 4096 and 16384; 16480 exceeds all three.
+
+So narrow first and read second. The slot moved into the **last 16 bytes of the
+map window**, and the read goes through `kernel-subregion` and
+`kernel-load-u8-16k`, whose maximum is exactly that window. boot-info does not
+grow, no ABI offset moves, and no bound wider than an op's profile is declared
+anywhere. The guest's map bound drops 16384 -> 16368 so that a map reaching the
+slot is refused rather than read back with an overwritten tail.
+
+QEMU marker is now `PSTCMPRCDX`, exit 0. **`X` is the loader running after the
+guest returned** — by construction rather than by luck, which is what ADR-0204
+asked for and what the hardware run of 17 re-entries could not by itself prove.
+
+The general lesson is not about this bound. It is that **a bounds check that
+traps is indistinguishable from a hang unless something downstream is listening
+for the trap.** The guest installs a `#UD` gate; this code runs before it. Any
+guest code that runs before its own fault gates should be read with that in
+mind.
+
+## The one-in-five abort was an interrupt, not a mystery (2026-09-09)
+
+About one QEMU run in five stopped with the trace cut short after `M` and
+exit 0. It had been carried as a standing symptom, alongside "exit 63", for
+long enough that single green runs were being read as evidence.
+
+`-d int,cpu_reset` named it in one captured run. A healthy run logs 157
+events, every one an APIC timer tick. The aborted run logs **97,886**: the
+first 149 are the same timer, the 150th is a `#PF`, and the remainder are
+that `#PF` re-entering itself with SP falling 0x30 each time until `#DF`
+and `Triple fault`. Error code is `0x11` throughout — present, instruction
+fetch — and `CR2` equals `RIP`.
+
+Tick 149 is the only one whose IP is in guest text (`0x125058`) rather than
+firmware. That is the tick that arrived after the CR3 switch.
+
+Between the CR3 load and `install-page-fault-idt`, the firmware's IDT is
+still live and every one of its handlers sits above 2 MiB, which
+`fill-identity-pd` has just made NX. An interrupt in that window vectors
+into a page that cannot be fetched; the `#PF` handler is equally
+unfetchable. The fix is one call: `kernel-cli` before
+`activate-page-tables`. It existed in the guest grammar and was never used.
+
+Ten runs after: no aborts, all ten reached the full marker.
+
+**The guest already depended on not being interrupted. It just had no way
+to say so** — which is why this read as a coin flip rather than as a bug.
+
+## The trailing byte is a race, and so is the exit code (2026-09-09)
+
+`exit 63` and the wandering last byte (`MPRCD` / `MPRCDF` / `MPRCDX` /
+`MPRCDXZ`) are one thing: **the guest writes the debug-exit port and then
+keeps running.** The exit code is fixed at that write; everything printed
+afterwards is a race against QEMU tearing down, and how much escapes varies
+with `-smp` (a diagnostic byte on the tender fall-through appeared in 3 of
+4 runs at `-smp 1` and in 0 of 3 at `-smp 2`).
+
+How this was pinned down matters more than the conclusion. After `X`,
+neither successor of the tender compare fired: no second `T` from the
+loop-back, no marker from the fall-through. Both were instrumented, so
+"neither branch ran" was a measurement, not an inference — and the `je`
+was verified statically to resolve to the `T` byte at `0x3a7`, so a
+mis-encoded displacement was excluded without a run.
+
+Consequences for the gate: the marker's **prefix and required substrings
+are trustworthy; its tail is not**, which is why `X` is asserted as a
+substring. The exit code is trustworthy only as the value the guest chose
+to write. `exit 63` therefore reports a guest status of 31 from a write
+site that the 16/17 ladder does not explain — still open, and now a
+specific question rather than a symptom.
+
+On hardware none of this applies: there is no `isa-debug-exit`, the guest
+simply returns, and the tender takes it.
+
+## exit 63 has exactly one possible source (2026-09-09) -- WRONG, see below
+
+Reading the code rather than running it: **31 is producible at exactly one
+point in this kernel** -- the branch of `zero-five-status` taken when
+`(zero-page pml4 0)` does not return 1. It reaches the debug-exit port as
+`owned-status`, through `prepare-owned-pages` and the status ladder. Every
+other status producer has a disjoint range (25-28, 30, 32-39, 40-44, 73-78,
+79-84), and the healthy terminal writes 16 or 17.
+
+So `exit 63` means one thing: **zeroing the PML4 page did not succeed.**
+
+Both that branch and the ladder now emit a byte -- `p` and `l` -- BEFORE
+the port write. Before matters: the guest keeps running after it writes the
+port, so anything printed after a write is a race, and anything printed
+before one is not. Both sites are failure paths, so a healthy run prints
+neither.
+
+Ten runs with the labels in place: all exit 33, identical traces, neither
+label fired. **That is not evidence the fault is gone.** At the 2-in-10
+rate previously observed, a clean run of ten has about an 11% probability,
+and machine load was 101 during these runs against 37 during the batch that
+produced two -- so load does not explain the difference either. The honest
+state is that exit 63 has a name and a label waiting for it, and has not
+been seen since.
+
+What changed is the cost of the next occurrence. Before, a numeric exit code
+had to be matched back to one of nine `kernel-out-u32 244` call sites by
+hand, with a trailing marker that could not be trusted. Now the run says so
+itself.
+
+## Retraction: that source is dead code, and the code is full of dead checks
+
+The section above is wrong in both of its steps, and the way it is wrong is
+worth more than the conclusion was.
+
+**The branch cannot execute.** `zero-page` returns 1 and nothing else:
+
+    (let [stored (kernel-store-u8-4k page 4096 offset 0)]
+      (if (= 0 (* 0 stored))        ; true for every value of `stored`
+        (zero-page page (+ offset 1))
+        0))
+
+`(* 0 stored)` is 0 whatever the store returns, so the failure arm is
+unreachable. Every status that depends on it is therefore unreachable too:
+**30-34** in `zero-five-status`, **25-27** in `prepare-extra-pages`, and
+**79-84** in `prepare-nic-pages`. Fourteen status codes that no run can
+produce, several of them quoted in receipts as though they were outcomes.
+
+Nor could the check work as written. `kernel-store-u8-4k` returns its
+operand, so there is no failure value to test, and an out-of-range offset
+does not return at all -- the emitter falls through to UD2, the same
+mechanism that produced the earlier boot-info hang. The real check is the
+readback beside it (35-39), which loads a byte and compares it.
+
+**And the arithmetic was wrong.** `exit()` truncates to 8 bits, so
+`exit 63` does not mean the guest wrote 31. It means the guest wrote a
+value congruent to 31 mod 128 -- 31, 159, 287. `(+ 96 pre-cr3-nic-status)`
+with `qualify-rtl8125` returning -1..3 gives 95..99, i.e. exits 191..199,
+so that site is excluded on the corrected arithmetic and not on the old one.
+
+What is now established about the terminator, by removing the device rather
+than reasoning about it: with `isa-debug-exit` gone the run reaches 124 and
+prints `PSTCMPRCDXF`, so the guest's port write **is** what ends QEMU, and
+the natural trace is longer than the one the gate normally sees.
+
+The tail still cannot order events: at `-smp 1` it ends `X Z` (both loader
+bytes) and at `-smp 2` it ends `X F` (loader then guest). Bytes from
+different CPUs interleave there. Only the prefix is evidence -- which is why
+the gate asserts a prefix and required substrings and never a suffix.
+
+The dead branches are marked in place rather than deleted, because removing
+them renumbers a vocabulary that receipts already quote. **The label put on
+the 31 branch yesterday has been removed**: a marker on unreachable code is
+the same defect it was meant to diagnose, and would have had the next reader
+waiting for a byte that cannot arrive.
+
+exit 63 is unattributed again, and that is the accurate state.
+
+## exit 63 is an interrupt receipt, and `F` means three different things
+
+Found by reading, after the retraction above ruled out every status the
+guest can write. It was never a guest status. `kotoba-native`'s
+`interrupt_abi.cljc`:
+
+    ;; 'F' on the debugcon port, 0x1f on isa-debug-exit.
+    (def fail-closed-receipt
+      [[0xb0 0x46 0x66 0xba 0xe9 0x00 0xee]
+       [0xb8 0x1f 0x00 0x00 0x00 0x66 0xba 0xf4 0x00 0xef]])
+
+`0x1f` is 31, and `(31 << 1) | 1` is 63. **`F` and exit 63 are one event** --
+the fail arm of the two interrupt handlers that can return, the recoverable
+`#PF` and the timer. Not a marker plus a separate symptom, which is how the
+pair had been carried.
+
+That it took this long has a specific cause: **three unrelated things emit
+`F` on this port.** The guest's nic marker (`serial/trace-byte 70`), the
+loader's `:fail` arm (`0xb0 0x46`), and this receipt. The smoke's own comment
+asserted the trailing `F` was the guest's nic marker, so every trace ending
+in `F` was read as a healthy run with a nic detail, and the accompanying
+exit 63 as an unexplained status needing a search through nine call sites.
+Two of those days were spent inside that search.
+
+The guest's marker is now **`Q`**. The collision is removed where this repo
+owns the byte; `F` on this port now means a fail-closed receipt in both of
+its remaining senses, which is coherent.
+
+This also explains why exit 63 became rare exactly when it did. It is an
+interrupt-handler failure, and the previous iteration masked interrupts
+across the CR3 switch. The same window, the same cause: **the abort and
+exit 63 were two faces of interrupts arriving where nothing could service
+them.** One triple-faulted because the firmware IDT was still live; the
+other reached a Kotoba handler that closed fail. Neither was a coin flip.
+
+Method note, because it generalises. Every step that moved this forward was
+a static one -- reading the emitter for the profile maximum, computing which
+values can reach the port, enumerating status ranges, grepping for the port
+constant. The runs only ever confirmed. The two conclusions that had to be
+retracted were both produced by reasoning from a trace.
+
+## exit 63 is the triple fault, caught -- and it predicts a hardware failure
+
+Two logs from the batch after the interrupt mask landed, kept on disk and
+re-read rather than re-run. Both exit-63 runs carry exactly one page fault
+and it is the last event before exit:
+
+    v=0e e=0011 cpl=0 IP=0038:0000000006af1cee CR2=0000000006af1cee
+
+Identical in both. `e=0011` is present + instruction fetch and `CR2` equals
+`RIP` -- the same signature as the triple fault documented above, at a
+different firmware address. The seven runs that exited 33 have no page fault
+at all.
+
+So **exit 63 and the triple fault are one bug at two stages of treatment.**
+Before the mask, an interrupt reached the still-live firmware IDT and there
+was no handler that could be fetched, so it tripled. After it, the fault
+reaches the guest's own recoverable `#PF` handler, which requires
+`CR2 == 0x100000`, sees a firmware address, and fails closed. The mask did
+not remove the cause; it converted an unrecoverable machine reset into a
+receipt. That is what fail-closed is for, and it is also why the symptom
+looked new.
+
+The trace says when: `...D X F`. `X` is the loader resuming after the guest
+returned, so the fault happens **after** control is back in the loader --
+and the loader's fall-through calls UEFI ConOut to keep the status string on
+the panel. ConOut is firmware text, above 2 MiB, and `fill-identity-pd` has
+made everything up there NX. `allow-loader-exec` un-NXes the loader's own
+page and nothing else, so the loader can run but cannot call the firmware
+that loaded it.
+
+**This is not a QEMU artifact.** On the K16 there is no `isa-debug-exit`, so
+the same fault ends in the fail-closed halt instead of an exit code -- a
+board that stops with `F` and no further output, which is what "the board is
+dead again" has looked like. The status string that path exists to print is
+the one thing it cannot print.
+
+Three candidate fixes, none applied yet: the loader saves UEFI's CR3 before
+calling the guest and restores it before touching firmware; or the guest is
+told the firmware text range as it is told the loader's; or the fall-through
+stops calling firmware and reports through a port it already owns. The first
+is the smallest and is the one that matches the tender's existing shape --
+it already re-materialises rdi and r9 every iteration for the same reason.
+
+Still unexplained, and stated as such: runs that exit 33 print `X`, which
+means the loader resumed, yet the only writer of 16 is the guest before it
+returns. One of those two readings is wrong and I have not established which.
+
+## The ConOut attribution, falsified and then confirmed (2026-09-09)
+
+The section above named the loader's ConOut call as the fault. That was a
+hypothesis from a trace, and the previous two of those had to be retracted,
+so it was tested before being believed.
+
+**First control: it looked wrong.** A build with the CR3 restore removed and
+a marker `O` before the call reached `O` twice in six runs and exited 33 both
+times, with no `F`. Read straight, that acquits the call.
+
+**It was the control that was wrong.** `O` says the path was entered. It does
+not say the path was left. Adding `K` after the call settled it in one build:
+
+    without the restore   ...X O F   exit 63, twice; K never appears
+    with the restore      ...X O K   exit 33, no F in fourteen runs
+
+The call does not return. The instruction fetch faults, reaches the guest's
+recoverable `#PF` handler, fails its `CR2 == 0x100000` test, and closes fail
+-- the `F` receipt and the `0x1f` it writes, which is exit 63.
+
+The fix is in `amu`: snapshot UEFI's CR3 beside the loader text address and
+reload it before the status path touches firmware. Both halves live in the
+16-byte slot inside the map window, so nothing about the boot-info ABI moves.
+
+**Both markers stay.** The first control was not merely inconclusive, it
+pointed the wrong way, and it did so because it could see a path being
+entered and not whether it was left. A marker before a call and a marker
+after it are two different measurements; only the pair can distinguish
+"never went there" from "went there and never came back".
+
+On the K16 there is no `isa-debug-exit`, so this same fault has been ending
+in the fail-closed halt -- a board that stops after `F` with nothing further.
+That is what "the board is dead again" has looked like, and the status string
+this path exists to print is the one thing it could not print. Unverified on
+hardware: the board is not powered, and this is stated as a prediction.
+
+## The tail race has a mechanism: isa-debug-exit does not stop the vCPU
+
+The last thing left unexplained -- runs that exit 33 yet print `X`, the
+loader's post-return marker, when the only writer of 16 is the guest before
+it returns -- is closed, and it was not a contradiction.
+
+Two measurements, neither of them a trace reading:
+
+**The guest's write is the terminator.** Changing its terminal value from 16
+to 21 changed the exit from 33 to 43, three runs for three. Nothing else in
+either tree writes a value congruent to 21 mod 128.
+
+**And execution continues past it.** A byte `W` placed immediately before
+that write gives, three runs for three:
+
+    P S T C M P R C D W X O K      exit 43
+
+`W` is the last instruction before the `out`, and `X`, `O` and `K` are all
+loader bytes emitted after the guest returns. So the exit code is fixed at
+the write while the vCPU carries on: the guest returns, the loader runs its
+entire post-return path, and the process tears down a moment later with the
+code already decided.
+
+That is the mechanism behind the tail race this ADR has been describing as a
+symptom since the start. **How far execution gets after the write varies,
+which is why the same image ends at `D`, at `X`, or at `X O K`.** The
+trailing bytes were never nondeterministic guest behaviour; they are a
+footrace with process teardown.
+
+Two things follow that matter beyond this bug:
+
+- **The exit code is trustworthy and the tail is not** -- the opposite of how
+  they had been read. The code is written by one instruction at a known point;
+  the tail is whatever escaped before teardown.
+- **The tender's post-return path IS exercised in QEMU**, just after the
+  outcome is fixed. `O` and `K` prove the loader resumes and completes a
+  firmware call under the restored CR3. What QEMU still does not exercise is
+  re-entry: `r15` is never 250 here, so `:tender-step` is reached once and the
+  second `T` never appears. That remains hardware-only evidence.
+
+Method, once more: every step here was a measurement designed to have two
+distinguishable outcomes -- change the value and see which code appears, put
+a byte before the write and see which side of it the loader's bytes land on.
+The readings of the trace alone produced three wrong answers in this file.

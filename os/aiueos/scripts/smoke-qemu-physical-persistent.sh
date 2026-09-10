@@ -85,5 +85,20 @@ assert receipt["return"]["watchdog"] == "disabled"
 assert receipt["safety"]["internal-disk-writes"] is False
 PY
 
+# Preserve the evidence before the EXIT trap removes $work. Without this the
+# gate proves NETBOOT_EMBEDDED on every run and then deletes the only record of
+# it, so the marker can never be measured no matter how often the gate is green.
+# The provenance line is written INTO the evidence, not just to stdout: this is
+# a QEMU run, so it cannot witness the :board markers the same log also carries
+# (AIUEOS_PHYSICAL_QUALIFICATION_OK among them), and a reader of the file alone
+# has to be able to see that.
+evidence=${AIUEOS_EVIDENCE_OUT:-"${AIUEOS_OUT:-$repo/build/aiueos}/evidence-all.log"}
+mkdir -p "$(dirname "$evidence")"
+{
+  echo "=== smoke-qemu-physical-persistent (QEMU) physical-k16=unverified ==="
+  cat "$work/native.debug"
+  cat "$work/native.serial"
+} >> "$evidence"
+
 printf '%s\n' \
   "AIUEOS_NATIVE_PERSISTENT_QEMU_OK watchdog=disabled reset=none internal-ssd-writes=none physical-k16=unverified"

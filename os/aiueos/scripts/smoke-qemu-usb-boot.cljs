@@ -34,6 +34,8 @@
 (def aiueos (.resolve path (.dirname path *file*) ".."))
 (def repo (.resolve path aiueos ".." ".."))
 (def out (or (.-AIUEOS_OUT js/process.env) (.join path repo "build" "aiueos")))
+;; Kept so the verdict below can quote a cause instead of guessing at one.
+(def evidence-text (atom {}))
 (def image (.join path out "aiueos-x86_64-gpt.img"))
 (def data (.join path out "aiueos-x86_64-data.img"))
 
@@ -63,6 +65,8 @@
                       #js [] #js {:encoding "utf8" :env env :shell false})]
     (.writeFileSync fs (.join path out (str "usb-gate-" transport ".out"))
                     (str (.-stdout r) (.-stderr r)))
+    (swap! evidence-text assoc (keyword transport)
+           (str (.-stdout r) (.-stderr r)))
     (doseq [[stream src] [["serial" "kernel-serial.log"] ["debug" "uefi-debug.log"]]]
       (.copyFileSync fs (.join path out src)
                      (.join path out (str "usb-gate-" transport "-" stream ".log"))))
@@ -154,6 +158,24 @@
                   "evidence-identical lines=" @evidence-lines
                   " status=" disk-status))
     (binding [*out* *err*]
-      (println "note: the shared UEFI suite does not pass in this environment for a")
-      (println "      reason unrelated to boot transport; both transports fail")
-      (println "      identically, so USB introduces no divergence. See README."))))
+      ;; Name the cause when the evidence names it. This note used to say the
+      ;; suite fails "in this environment", and for months the commonest reason
+      ;; was not the environment at all: the image under test was built without
+      ;; AIUEOS_INPUT_SMOKE_SYNTHETIC, a define smoke-qemu-uefi.sh sets when it
+      ;; builds its own kernel. Without it the guest waits for a virtio-keyboard
+      ;; event no host here delivers, and stops -- which is correct behaviour
+      ;; for a production image and a misconfigured test for this gate.
+      (if (re-find #"AIUEOS_VIRTIO_INPUT_FAIL no-event-no-synthetic-build"
+                   (str (:disk @evidence-text) (:usb @evidence-text)))
+        (do
+          (println "note: this image was built WITHOUT AIUEOS_INPUT_SMOKE_SYNTHETIC.")
+          (println "      The shared suite requires a keyboard event that only that")
+          (println "      define fabricates, so the image stops at virtio-input. That")
+          (println "      is the gate being misconfigured, not the image failing:")
+          (println "      rebuild with AIUEOS_INPUT_SMOKE_SYNTHETIC=1, as")
+          (println "      smoke-qemu-release-image.sh already does, and re-run.")
+          (println "      Nothing here says anything about boot transport."))
+        (do
+          (println "note: the shared UEFI suite does not pass in this environment for a")
+          (println "      reason unrelated to boot transport; both transports fail")
+          (println "      identically, so USB introduces no divergence. See README."))))))

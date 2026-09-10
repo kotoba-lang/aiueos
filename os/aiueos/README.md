@@ -943,12 +943,48 @@ bring-up, not to the boot medium, and the shared gate asserts the SMP evidence
 itself; comparison therefore starts at each line's own `AIUEOS_` marker.
 
 The gate does not hardcode a passing exit status, so it stays honest on a host
-where the shared UEFI suite fails for an unrelated reason. On QEMU 10.0.3 the
-suite fails at `AIUEOS_VIRTIO_INPUT_FAIL queue-or-envelope` — a virtio-input
-device-model difference that has nothing to do with boot transport — and the
-gate reports `AIUEOS_USB_BOOT_EQUIVALENT` with the shared status instead of
-claiming a pass neither transport earned. When the suite passes, it reports
-`AIUEOS_USB_BOOT_OK`.
+where the shared UEFI suite fails for an unrelated reason. It reports
+`AIUEOS_USB_BOOT_EQUIVALENT` with the shared status instead of claiming a pass
+neither transport earned, and `AIUEOS_USB_BOOT_OK` when the suite passes.
+
+⚠ This paragraph used to attribute that downgrade to the host: *"On QEMU 10.0.3
+the suite fails at `AIUEOS_VIRTIO_INPUT_FAIL queue-or-envelope`."* **Measured
+2026-09-09 on exactly QEMU 10.0.3, that is false.** Run directly, the suite
+emits `AIUEOS_VIRTIO_INPUT_OK`, no `_FAIL` marker at all, and finishes
+`AIUEOS_UEFI_SMOKE_OK` with exit 0 — 76 distinct `_OK` markers.
+
+The downgrade is the **image**, not the environment. The gate passes
+`AIUEOS_DISK_IMAGE`, so it boots the release GPT image rather than the freshly
+built ESP, and that run emits 39 markers and stops — with no `_FAIL` marker,
+which is why it was easy to attribute to the host. Two runs of it stopped at
+different points (`GUEST_INPUT` once, `AIUEOS_APIC_TIMER_OK` the next), so the
+stopping point is not yet characterised and no regression is claimed from two
+samples. What is established is the split: **the build passes the suite and the
+release image does not**, and the release image is the artifact that would run
+on a node.
+
+Narrowed further the same day, by rebuilding rather than reasoning:
+
+- **It is not staleness.** Rebuilding the release image from the current tree
+  reproduced the failure exactly — 57 lines, status 1. The image is not an old
+  artifact left behind.
+- **It is not a reduced test.** `AIUEOS_DISK_IMAGE` only swaps the boot drive
+  in `smoke-qemu-uefi.sh`; the suite is otherwise identical. So the two runs
+  are the same suite against two artifacts.
+- **The failure has a name.** The GPT boot emits
+  `AIUEOS_VIRTIO_INPUT_FAIL queue-or-envelope`; the ESP boot of the same
+  source emits `AIUEOS_VIRTIO_INPUT_OK`. Same QEMU, same sources, different
+  container — so the suspect is device enumeration or queue setup shifting
+  when the boot disk occupies a slot, and that is a hypothesis, not a result.
+- ~~**The build is not byte-reproducible.**~~ **Wrong, and retracted the same
+  day.** Those three builds had different C sources — I was editing between
+  them — and the identity header carries version, `commit[:12]` and a dirty
+  flag with no timestamp, so it could not have caused it. Measured properly:
+  two builds back to back with nothing touched give a byte-identical
+  `KERNEL.ELF`, and building into a different output directory gives the same
+  bytes again. **The build is reproducible here and path-independent.** Not
+  claimed, because not measured: reproducibility across machines, toolchain
+  versions or clocks.
 
 `flash-usb.cljs` writes the image to a physical stick. Because that is
 irreversible, it is deny-by-default: without `--confirm` it only inspects, and
@@ -968,10 +1004,20 @@ images have booted far enough on the physical machine to return bounded stage
 codes, but a normal AIUEOS boot is still unproved.  Real-hardware firmware
 quirks and the complete native runtime therefore remain qualification gates. The bare-metal
 profile's network stack (ADR-0020..0087: virtio-net, DHCPv4, DNS, TCP,
-TLS 1.3, HTTPS GET with CID verification) is proved under QEMU only — the one
-link-layer driver is virtio-net-pci, so on a physical machine the node boots
-on the offline floor (`AIUEOS_VIRTIO_NET_ABSENT`) until a physical-NIC driver
-exists. ADR-0019's original "no network stack at all" was superseded by that
+TLS 1.3, HTTPS GET with CID verification) is proved under QEMU only — its
+link-layer driver is virtio-net-pci, so in the default profile a physical
+machine boots on the offline floor (`AIUEOS_VIRTIO_NET_ABSENT`).
+
+⚠ That is a profile boundary, **not a missing driver**, and this paragraph
+said otherwise until 2026-09-09. `kernel/rtl8125.c` is compiled into every
+profile — `build-uefi.sh` says so in its own comment — and the release chain
+carries physical qualification, direct HTTPS, a device worker and an SSH
+session marker over it. What that path lacks is production status: it sits
+behind `AIUEOS_PHYSICAL_QUALIFICATION` / `AIUEOS_PHYSICAL_NETWORK_QUALIFICATION`,
+and its own comment calls it an explicitly test-only slice because AMD-IVRS
+isolation is not implemented, making it evidence for the link driver rather
+than production DMA qualification. **The remaining work is isolation and
+default-profile wiring over a driver that exists, not writing one.** ADR-0019's original "no network stack at all" was superseded by that
 chain; see `contracts/usb-boot-v1.edn` `:gaps` for the current split.
 
 The RTL8125 physical-link slice is in `kernel/rtl8125.c`. It is a

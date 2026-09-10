@@ -46,6 +46,34 @@
      (* (kernel-load-u8-16k base length (+ offset 6)) 281474976710656)
      (* (kernel-load-u8-16k base length (+ offset 7)) 72057594037927936)))
 
+(defn load64-boot-far [boot offset]
+  ;; The loader publishes its own text address -- the one thing only UEFI
+  ;; knows -- in the last 16 bytes of the 16 KiB memory-map window, at window
+  ;; offset 16368.
+  ;;
+  ;; It cannot be read with `load64-boot`, whose accessor is `kernel-load-u8`:
+  ;; that op's profile maximum is 512 bytes, and the emitter compares the
+  ;; length against the maximum and falls through to UD2 when it is exceeded
+  ;; (`kotoba/native/x86_64.cljc`, `emit-kernel-load-u8`). A declared length of
+  ;; 16480 therefore does not read anything -- it executes an undefined
+  ;; instruction. This runs before the guest's own #UD gate is installed, so
+  ;; the firmware's handler takes it and dead-loops: measured 2026-09-09, the
+  ;; marker before the read printed and every marker after it did not, at
+  ;; offset 16464 and at offset 0 alike.
+  ;;
+  ;; So narrow first and read second. `kernel-subregion` yields the 16 KiB
+  ;; window, and `load64` reads it with `kernel-load-u8-16k`, whose maximum is
+  ;; 16384 -- exactly the window. No wider bound is declared anywhere.
+  (let [window (kernel-subregion boot 16480 96 16384)]
+    (load64 window 16384 offset)))
+
+(defn allow-loader-exec [pd loader-text]
+  (let [index (quot loader-text 2097152)]
+    (if (and (> loader-text 0) (< index 512))
+      (let [value (+ (* index 2097152) 131)]
+        (if (= (store64-page pd (* index 8) value) 1) 1 0))
+      1)))
+
 (defn load64-boot [base offset]
   (+ (kernel-load-u8 base 96 offset)
      (* (kernel-load-u8 base 96 (+ offset 1)) 256)
@@ -159,6 +187,24 @@
 
 (defn zero-five-status [state pml4 pdpt pd pt]
   (if (not (= (zero-page state 0) 1)) 30
+    ;; UNREACHABLE, and so are 30 and 32-34 below. `zero-page` cannot return
+    ;; anything but 1: its failure branch is guarded by `(= 0 (* 0 stored))`,
+    ;; which is true for every value of `stored`. The same shape makes 25-27
+    ;; in prepare-extra-pages and 79-84 in prepare-nic-pages unreachable.
+    ;;
+    ;; Nor could it be otherwise. `kernel-store-u8-4k` returns its operand, so
+    ;; there is no failure value to test, and an out-of-range offset does not
+    ;; return at all -- the emitter compares the declared length against the
+    ;; op's profile maximum and falls through to UD2.
+    ;;
+    ;; The real check is the readback immediately below (35-39), which loads
+    ;; the last byte and compares it. That one can fail and says so.
+    ;;
+    ;; Left in place rather than deleted: removing them renumbers a status
+    ;; vocabulary that receipts and ADRs already quote. Marked instead, so the
+    ;; next reader does not spend a run waiting for a code that cannot arrive
+    ;; -- which is what happened here on 2026-09-09, when exit 63 was
+    ;; attributed to this branch and a label was put on it.
     (if (not (= (zero-page pml4 0) 1)) 31
       (if (not (= (zero-page pdpt 0) 1)) 32
         (if (not (= (zero-page pd 0) 1)) 33
@@ -361,7 +407,17 @@
         scratch-start (load64-boot boot 80)
         sixth-start (+ scratch-start 20480)
         page (kernel-subregion 4096 549755809792 (- sixth-start 4096) 4096)
-        mark (kernel-store-u8-4k page 4096 1024 vector)
+        ;; Say so on the debug port BEFORE resetting.  A reset under -no-reboot
+        ;; makes QEMU exit 0 with the trace simply stopping, which is
+        ;; indistinguishable from a triple fault, a firmware dead-loop, or a
+        ;; hang -- three different bugs with one appearance.  These two bytes
+        ;; are the only thing that tells them apart, and the scratch-page record
+        ;; below cannot: it is read by the NEXT boot, and -no-reboot means there
+        ;; isn't one.
+        bang (serial/trace-byte 33)
+        digit (serial/trace-byte (+ 48 (if (< vector 10) vector 9)))
+        mark (kernel-store-u8-4k page 4096 1024
+                                 (+ vector (* 0 (+ bang digit))))
         ;; 0xCF9 <- 0x06. If the chipset ignores it the machine simply hangs
         ;; as it did before, which is no worse than the state this replaces.
         reset (kernel-out-u8 3321 (+ 6 (* 0 mark)))]
@@ -475,7 +531,11 @@
              (= (load64-boot boot 8) 4)
              (= (load64-boot boot 16) memory-map)
              (> map-size 0)
-             (<= map-size 16384)
+             ;; 16368, not 16384: the last 16 bytes of the map window hold
+             ;; the loader's own text address, which the loader writes after
+             ;; the map.  A map that reaches them would be read back with its
+             ;; tail overwritten, so refuse it instead of trusting the tail.
+             (<= map-size 16368)
              (>= descriptor-size 40)
              (<= descriptor-size map-size)
              (> (load64-boot boot 40) 0)
@@ -996,10 +1056,44 @@
                                           (* 0 wd-mark)))))))
                             (kernel-out-u32 244 (+ 96 pre-cr3-nic-status))))
                         (if (and (prepare-page-tables page-table-root pdpt pd pt)
+                                 (= (allow-loader-exec
+                                     pd (load64-boot-far boot 16368)) 1)
                                  (prepare-low-page-table pt rx-limit rw-start)
                                  (prepare-rtl-page-tables
                                   pdpt rtl-directory-a rtl-directory-b bar-a bar-b))
                             (if (and (enable-page-protection)
+                                     ;; MASK INTERRUPTS FIRST. Between the CR3
+                                     ;; load and `install-page-fault-idt` below,
+                                     ;; the firmware's IDT is still the live one
+                                     ;; -- and every one of its handlers sits
+                                     ;; above 2 MiB, which this map has just
+                                     ;; made NX. Any interrupt delivered in that
+                                     ;; window vectors into a page that cannot
+                                     ;; be fetched: #PF, whose firmware handler
+                                     ;; is equally unfetchable, so it recurses
+                                     ;; until the stack is gone and the machine
+                                     ;; triple faults.
+                                     ;;
+                                     ;; That is not hypothetical. It is what the
+                                     ;; roughly one-run-in-five QEMU abort was,
+                                     ;; measured 2026-09-09 with -d int: a
+                                     ;; healthy run logs 157 events, all APIC
+                                     ;; timer; the aborted run logs 97,886, of
+                                     ;; which the first 149 are the same timer
+                                     ;; and the 150th is a #PF. Tick 149 is the
+                                     ;; only one whose IP is in guest text
+                                     ;; (0x125058) rather than firmware -- the
+                                     ;; tick that arrived after the switch. The
+                                     ;; error code is 0x11 throughout: present,
+                                     ;; instruction fetch.
+                                     ;;
+                                     ;; Nothing re-enables interrupts here. The
+                                     ;; guest runs to its own return with them
+                                     ;; masked, which is what it did in every
+                                     ;; run that already passed -- it just did
+                                     ;; it by not being interrupted rather than
+                                     ;; by saying so.
+                                     (= (kernel-cli) 0)
                                      (activate-page-tables page-table-root)
                                      (= (kernel-configure-page-fault-recovery
                                          frame-page stack-page) 1)
@@ -1071,21 +1165,45 @@
                                     nic-marker (if (= nic-status 0)
                                                  (serial/trace-byte 78)
                                                  (if (>= nic-status 0)
-                                                   (serial/trace-byte 70)
+                                                   ;; 'Q', not 'F'. Three
+                                                   ;; different things emit
+                                                   ;; 'F' on this port: this
+                                                   ;; marker, the loader's
+                                                   ;; :fail arm, and
+                                                   ;; kotoba-native's
+                                                   ;; fail-closed-receipt --
+                                                   ;; and the last of those
+                                                   ;; also writes 0x1f to the
+                                                   ;; debug-exit port, which
+                                                   ;; is where exit 63 comes
+                                                   ;; from. The collision is
+                                                   ;; why exit 63 was read for
+                                                   ;; days as a guest status:
+                                                   ;; the trailing byte looked
+                                                   ;; like this line.
+                                                   (serial/trace-byte 81)
                                                    0))]
                                 (kernel-out-u32 244
                                                 (+ (if core-ok 16 17)
                                                    (* 0 nic-marker))))
                               (kernel-out-u32 244 24))
                           (kernel-out-u32 244 23)))
+                      ;; 'l' -- this ladder is a failure exit, so say which
+                      ;; writer produced the status. Without it a numeric exit
+                      ;; code has to be matched back to one of nine call sites
+                      ;; by hand, and the trailing bytes cannot help: the guest
+                      ;; keeps running after it writes the port, so everything
+                      ;; printed AFTER a write is a race. A byte printed BEFORE
+                      ;; one is not.
                       (kernel-out-u32 244
+                                      (if (= (serial/trace-byte 108) 108)
                                       (if (not (= owned-status 0))
                                         owned-status
                                         (if (not (= extra-status 0))
                                           extra-status
                                           (if (not (= nic-owned-status 0))
                                             nic-owned-status
-                                            nic-pages-status))))))
+                                            nic-pages-status))) 0))))
               (kernel-out-u32 244 20)))
           (kernel-out-u32 244 19)))
       (kernel-out-u32 244 18))))

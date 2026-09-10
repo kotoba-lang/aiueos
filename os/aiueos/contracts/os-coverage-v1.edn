@@ -1,0 +1,282 @@
+;; What fraction of what AIUEOS CLAIMS does a real boot actually prove, and how
+;; does the shape of that claim compare to the two operating systems worth
+;; comparing against?
+;;
+;; The measured column is deliberately NOT source presence. The tree declares
+;; 131 distinct AIUEOS_*_OK markers; a release boot emits far fewer. That gap
+;; is the whole point: a marker in a .c file is an intention, a marker in a
+;; serial log is a proof. Only the second counts here.
+;;
+;; TWO BENCHMARKS, AND THEY ARE NOT THE SAME QUESTION.
+;;
+;; Linux is the wrong yardstick for almost every row and is kept only as
+;; context. It is a general-purpose kernel with a driver matrix no scoped OS
+;; will ever match, and "Linux has it" is true of nearly everything, so it
+;; discriminates nothing. Chasing it produces a plan measured in person-decades
+;; and tells you nothing about whether the node works.
+;;
+;; ChromeOS is the right yardstick. It is an appliance OS: verified boot, A/B
+;; slots with automatic rollback, a minimal userland, no general package
+;; management, and a fixed hardware set per device. That is the same shape
+;; AIUEOS is aiming at, so the comparison is actionable -- and in several rows
+;; AIUEOS is already closer to ChromeOS than to Linux, because signed object
+;; admission and a dual-slot journal ARE verified boot and A/B updates under
+;; different names.
+;;
+;; :unmeasured is not zero (the property is borrowed from
+;; kotoba-lang/catalog-maturity). A subsystem no evidence log covers is
+;; excluded from the total and reported in :measured-weight, so silence is
+;; never scored as failure -- and the report refuses to produce a number at
+;; all when given no evidence.
+{:format :aiueos.os-coverage/v1
+ :measured-by "os/aiueos/scripts/os-coverage.cljs"
+ :evidence-is :emitted-markers-in-a-real-boot-log
+ :not-evidence :markers-present-in-source
+
+ ;; :relevance says whether a row is on the path to the stated target, which is
+ ;; an appliance inference node -- not a workstation. Rows marked :context are
+ ;; measured and reported but excluded from the headline number, because
+ ;; scoring an inference node on desktop compositing would make the number
+ ;; move for reasons nobody acts on.
+ ;; Some markers are emitted with an _OK suffix in BOTH the state they name and
+ ;; its opposite, so their NAME is not proof. AIUEOS_DMA_POLICY_OK is the
+ ;; measured case: under VT-d it reads `dmar=validated dma=vtd-isolated`, and on
+ ;; a machine with no DMAR it reads `dmar=absent test-only-unisolated` -- the
+ ;; same marker announcing that isolation is absent. Counting the name credited
+ ;; an explicitly unisolated boot as a proven capability.
+ ;;
+ ;; A marker listed here counts only when its line also contains the substring.
+ ;; Keep this small: it is for markers whose _OK is a report rather than a
+ ;; verdict, not a place to encode every payload.
+ ;; "validated", not "isolated". The first attempt used "isolated" and did not
+ ;; discriminate at all, because `test-only-unisolated` contains it -- the
+ ;; negative case is spelled as the positive with a prefix. Caught by running
+ ;; the control instead of trusting the substring.
+ :requires-payload {:DMA_POLICY "validated"}
+
+ ;; WHY a marker is unproven, where it is known. Without this the report says
+ ;; thirty markers are unproven and treats them alike, when they need five
+ ;; different things and only one of them is code someone could sit down and
+ ;; write. That flattening is the exact error this file warns about in its
+ ;; header: a zero that means "this profile did not exercise it" read as a zero
+ ;; that means "it does not work".
+ ;;
+ ;; A marker absent from this map is unclassified, which is not the same as
+ ;; unblocked -- the report says so rather than implying a lever exists.
+ :unproven-because
+ {;; needs the physical K16 powered; QEMU cannot present the device or table
+  :IVRS :board  :PHYSICAL_NETWORK :board  :RTL8125 :board
+  :PHYSICAL_DIRECT_HTTPS :board  :PHYSICAL_QUALIFICATION :board
+  :PHYSICAL_QWEN35 :board  :PHYSICAL_MODEL_HANDOFF :board
+  ;; needs a firmware this machine does not have (TPM-enabled OVMF).
+  ;; MEASURED 2026-09-10, not assumed: swtpm and swtpm_setup ARE installed and
+  ;; QEMU has the emulator backend, so the device side is available. With a
+  ;; real software TPM attached the guest still reports
+  ;;   AIUEOS_TPM2_ABSENT no-root-of-trust-described
+  ;; so the blocker is OVMF declining to publish a TPM2 ACPI table, not the
+  ;; absence of a TPM. Re-test with:
+  ;;   AIUEOS_TEST_TPM2=1 sh os/aiueos/scripts/smoke-qemu-uefi.sh
+  :TPM2 :firmware
+  ;; blocked in the compiler, not in aiueos. MEASURED 2026-09-10 against THREE
+  ;; amu revisions -- the shared checkout (72e67e5e), the west pin (fac4176c),
+  ;; and origin/main (2abd9843, fetched, pin is its ancestor, +2). Identical
+  ;; exit 70 :kotoba/internal-error at all three, so ADVANCING THE PIN DOES NOT
+  ;; FIX THIS and that hypothesis need not be retried:
+  ;; cap-call crashes the native backend even though the PLC policy grants it.
+  ;;   echo '(ns p (:export [main])) (defn main [] (cap-call 16 0))' > /tmp/p.kotoba
+  ;;   <amu>/bin/kotoba-compiler compile /tmp/p.kotoba \
+  ;;     --target x86_64-aiueos-user-v1 \
+  ;;     --policy os/aiueos/kotoba/plc-runtime-policy.edn --output /tmp/p.elf
+  ;;   -> exit 70, :kotoba/internal-error
+  ;; The target itself is fine: (defn main [] 0) compiles to 8560 bytes, and so
+  ;; do the generated plc-dint helper and its 2^32 arithmetic. Only cap-call
+  ;; fails, and plc-runtime-policy.edn allows [:cap/call 16..19] explicitly, so
+  ;; this is not a refusal wearing the wrong message -- a permitted form is
+  ;; crashing the backend. Nor is it a missing lowering: cap-call is present in
+  ;; amu (capability_names, backend/cljs, elaboration-pipeline "scalar cap-call
+  ;; path first") and in kotoba-native (machine_ir, elf64, peephole, aarch64).
+  ;; Diagnosing further means working inside those two repos, which is not this
+  ;; contract's job; what belongs here is the repro and the three SHAs.
+  ;; Second, smaller gap: build-plc-native-program.sh writes
+  ;; build/aiueos-plc/<name>/program.elf while smoke-qemu-uefi.sh defaults
+  ;; AIUEOS_PLC_ELF to build/plc-motor/program.elf, so even a fixed compiler
+  ;; leaves the documented profile not running unless the path is passed by hand.
+  :PLC_RT :compiler
+  ;; CORRECTED 2026-09-10, same day. This was recorded as :code -- "a real gap
+  ;; in aiueos itself" -- on the strength of the kernel's own failure branch,
+  ;; "leftover=one-scanout enabled=1", appearing 36x and 7x in two logs while
+  ;; AIUEOS_GUEST_GPU_TWO_OK passed in the same boots under max_outputs=2. The
+  ;; evidence was real and the inference was not checked: nobody asked whether a
+  ;; profile existed that changes the INPUT to that branch. One does.
+  ;; QEMU sets enabled_output_bitmask=1 at realize and a head becomes enabled
+  ;; only when a UI frontend calls ui_info with a non-zero size
+  ;; (hw/display/virtio-gpu-base.c). `-display none` never does, so under the
+  ;; default backend GET_DISPLAY_INFO CANNOT report two scanouts however correct
+  ;; the guest is -- and the guest declining to drive a head the host calls
+  ;; disabled is right, not a gap. AIUEOS_GUEST_SCANOUT_TWO=1 switches to the
+  ;; dbus backend and enables head 1 via gdbus SetUIInfo on Console_1; it needs
+  ;; dbus-daemon (brew install dbus). Run that way the guest emits
+  ;; AIUEOS_GUEST_SCANOUT_TWO_OK scanouts=2 resource-0=1 resource-1=2 kotoba-n=2
+  ;; and display reaches 16/16.
+  ;; Kept as a record: a failure branch tells you what happened, not why, and
+  ;; reading one as a gap without checking the profile is the error this file's
+  ;; own header warns about.
+  :GUEST_SCANOUT_TWO :profile
+  ;; needs the owner: a credential or an install intent, never auto-created
+  :MURAKUMO_NODE :owner  :MURAKUMO_HEARTBEAT :owner  :MURAKUMO_JOB_POLL :owner
+  :MURAKUMO_JOB_RESULT :owner  :MURAKUMO_CONTROL_ACK :owner
+  :MURAKUMO_PERSISTENT_BOOT :owner  :PHYSICAL_JOB :owner
+  :PHYSICAL_LIVENESS :owner  :PHYSICAL_RELAY :owner
+  ;; needs the 10.9 GB GGUF artifact on hand -- and, on this machine, room for
+  ;; it. MEASURED 2026-09-10: Qwen3.8-27B-UD-IQ3_XXS.gguf (10,934,860,704 B) is
+  ;; absent, and the volume has 16 GB free of 927 GB at 99% full, which the
+  ;; release-image builds also write into. "One download away" is the reading
+  ;; this line invites and it is wrong here; the fetch is a decision about the
+  ;; owner's disk, not a coverage decision.
+  :LOADER_MODEL :model-artifact  :MODEL_SLOT :model-artifact
+  :MODEL_HANDOFF :model-artifact  :QWEN35_ADMISSION :model-artifact
+  :QWEN35_GENERATE :model-artifact  :QWEN35_GRAPH :model-artifact
+  :QWEN35_WORKSPACE :model-artifact
+  ;; needs a profile nothing here runs
+  :NETBOOT_EMBEDDED :profile  :LOADER_RECOVERY :profile
+  ;; NOT blocked, and NOT unwritten -- corrected 2026-09-09, one iteration
+  ;; after this map first said :unwritten. The code is all there: pci.c drives
+  ;; stages 1..16 and main.c reports at 5, 12 and 16. What fails is the LIVE
+  ;; exchange, and it fails differently between runs: one reached stage 2 --
+  ;; the client's KEXINIT received, then KEX_ECDH_INIT never arriving -- and
+  ;; the next produced no client banner at all.
+  ;; Still the one group an agent can close without a credential, a board, an
+  ;; artifact or a firmware. But "write the missing code" was the wrong
+  ;; description and would have sent the next reader hunting for code that is
+  ;; already written.
+  :SSH_KEX_REPLY :live-exchange-stalls
+  :SSH_AUTH :live-exchange-stalls
+  :SSH_SESSION :live-exchange-stalls
+  :RTL8125_SSH_SESSION :board}
+
+ :subsystems
+ {:boot        {:relevance :core
+                :markers [:LOADER :LOADER_INTEGRITY :LOADER_RECOVERY :LOADER_MODEL
+                          :KERNEL :NETBOOT_EMBEDDED :INITRAMFS
+                          :INITRAMFS_RECOVERY_ADMISSION :KOTOBA_NATIVE]
+                :linux "GRUB or systemd-boot; signature optional, rollback external"
+                :chromeos "verified boot from a write-protected root of trust"
+                :note "signed admission plus a recovery path is the ChromeOS shape"}
+  :memory      {:relevance :core
+                :markers [:PAGING :PHYSICAL_ALLOCATOR :ADDRESS_SPACE :COPYIN :PAGE_FAULT
+                          :KOTOBA_COPY_IN]
+                :linux "full VM: demand paging, swap, overcommit, THP"
+                :chromeos "same kernel, zram, no swap file"
+                :note "AIUEOS has an identity map with NX and W^X, not demand paging"}
+  :interrupts  {:relevance :core
+                :markers [:DESCRIPTOR_TABLES :EXCEPTION :FATAL_IDT :IOAPIC :PIC
+                          :APIC_TIMER :FAULT_RECEIPT :PANIC_RECEIPT :CRASH_RECEIPT]
+                :linux "full IRQ subsystem, threaded IRQs, NMI watchdog"
+                :chromeos "same"
+                :note "receipts are a property neither reference has: a fault
+                       produces a signed artifact rather than a dmesg line"}
+  :smp         {:relevance :core
+                :markers [:SMP :SCHEDULER :SCHEDULER_CR3]
+                :linux "CFS/EEVDF, cgroups, NUMA"
+                :chromeos "same"
+                :note "AIUEOS schedules, it does not time-share fairly"}
+  :process     {:relevance :core
+                :markers [:PROCESS_CREATE :PROCESS_FOUNDATION :PROCESS_REAP :RING3
+                          :SYSCALL :SYSRET :USER_SYSCALL :KOTOBA_ELF_PROCESS
+                          :KOTOBA_USER_RUNTIME :KOTOBA_SYSCALL_PLANNER]
+                :linux "POSIX processes, fork/exec, ~400 syscalls"
+                :chromeos "same, plus a seccomp-heavy sandbox"
+                :note "AIUEOS admits signed objects rather than running arbitrary
+                       binaries; the syscall surface is deliberately tiny"}
+  :storage     {:relevance :core
+                :markers [:VIRTIO_BLK :VIRTIO_BLK_MSIX :OBJECT_STORE
+                          :OBJECT_STORE_RESTORE :OBJECT_TXN :OBJECT_TXN_REPLAY
+                          :JOURNAL :JOURNAL_RECOVERY :KOTOBA_JOURNAL_PLAN
+                          :KOTOBA_STORAGE_READ_VALIDATION :KOTOBA_STORAGE_WRITE
+                          :MODEL_SLOT :KOTOBA_FNV :KOTOBA_FNV_VECTOR
+                          :KOTOBA_OBJECT_REPLAY :KOTOBA_OBJECT_WRITE
+                          :KOTOBA_STORE_VECTOR]
+                :linux "ext4/btrfs/xfs, page cache, fsync semantics"
+                :chromeos "ext4 on a dm-verity root, stateful partition"
+                :note "aiuefs-v3 is content-addressed with a dual-slot journal;
+                       closer to dm-verity plus A/B than to a general filesystem"}
+  :net-link    {:relevance :core
+                :markers [:VIRTIO_NET :RTL8125 :PHYSICAL_NETWORK]
+                :linux "thousands of drivers"
+                :chromeos "a fixed set per device"
+                :note "one physical driver (RTL8125) plus virtio-net; a fixed set
+                       per device is exactly the ChromeOS bargain"}
+  :net-stack   {:relevance :core
+                :markers [:IPV4 :DHCP :TCP :PHYSICAL_DIRECT_HTTPS]
+                :linux "full dual-stack, netfilter, XDP"
+                :chromeos "same kernel stack"
+                :note "IPv4 only, no listen path beyond SSH, no firewall"}
+  :crypto      {:relevance :core
+                :markers [:AES_GCM :HMAC_HKDF :X25519 :ECDSA_P256 :ECDSA_PUBLIC
+                          :ECDSA_SIGN :TLS13_RECORD :RANDOM :TPM2]
+                :linux "kernel crypto API plus userspace TLS libraries"
+                :chromeos "same, plus a TPM-backed key hierarchy"
+                :note "TLS 1.3 records in-kernel; no TPM binding yet, which is
+                       the clearest single gap against ChromeOS"}
+  :remote      {:relevance :core
+                :markers [:SSH_LISTEN :SSH_KEX :SSH_KEX_REPLY :SSH_AUTH
+                          :SSH_SESSION :RTL8125_SSH_SESSION]
+                :linux "OpenSSH, full shell"
+                :chromeos "no SSH by default; developer mode only"
+                :note "AIUEOS exposes named commands and no shell, which is
+                       nearer the ChromeOS posture than the Linux one"}
+  :platform    {:relevance :core
+                :markers [:ACPI :ACPI_RETAIN :PCI :KOTOBA_PCI_PLANNER :SERIAL
+                          :VIRTIO_RNG :VIRTIO_RNG_MSIX :PHYSICAL_QUALIFICATION]
+                :linux "ACPI, PCI hotplug, power management"
+                :chromeos "same, plus firmware-verified device list"
+                :note "bounded PCI scan, no hotplug, no suspend/resume"}
+  :isolation   {:relevance :core
+                :markers [:DMA_POLICY :VTD :VTD_IR :CAPABILITY_TRANSFER
+                          :DYNAMIC_CAPABILITY :KOTOBA_CAPABILITY :IVRS]
+                :linux "IOMMU groups, VFIO"
+                :chromeos "same, enforced by default"
+                :note "VT-d present; AMD-IVRS is NOT, which is why the physical
+                       NIC path is still test-only"}
+  :services    {:relevance :core
+                :markers [:SERVICE_REGISTRY :SERVICE_IPC :SERVICE_RUNTIME
+                          :KOTOBA_SERVICE_IPC :PERSISTENT_SERVICE_BOOTSTRAP]
+                :linux "systemd"
+                :chromeos "upstart, minimal service set"
+                :note "a registry with generations and restart counts"}
+  :admission   {:relevance :core
+                :markers [:KOTOBA_APP_ADMISSION :APP_CATALOG_LOOKUP
+                          :KOTOBA_CATALOG_POLICY_SELFTEST :KOTOBA_RECORD_VALIDATION]
+                :linux "none by default; IMA/EVM optional"
+                :chromeos "verified boot plus signed updates"
+                :note "AIUEOS is stricter than both: nothing runs unsigned, ever"}
+  :inference   {:relevance :core
+                :markers [:QWEN35_ADMISSION :QWEN35_GENERATE :QWEN35_GRAPH
+                          :QWEN35_WORKSPACE :MODEL_HANDOFF :PHYSICAL_QWEN35
+                          :PHYSICAL_MODEL_HANDOFF]
+                :linux "userspace runtimes"
+                :chromeos "userspace runtimes"
+                :note "neither reference does this in the kernel; this row is
+                       where AIUEOS is ahead of both, and it is the product"}
+  :cluster     {:relevance :core
+                :markers [:MURAKUMO_NODE :MURAKUMO_HEARTBEAT :MURAKUMO_JOB_POLL
+                          :MURAKUMO_JOB_RESULT :MURAKUMO_CONTROL_ACK
+                          :MURAKUMO_PERSISTENT_BOOT :PHYSICAL_JOB
+                          :PHYSICAL_LIVENESS :PHYSICAL_RELAY]
+                :linux "none; an application concern"
+                :chromeos "none"
+                :note "the actual goal; no reference OS has an opinion here"}
+  :realtime    {:relevance :context
+                :markers [:PLC_RT]
+                :linux "PREEMPT_RT"
+                :chromeos "not offered"}
+  :display     {:relevance :context
+                :markers [:FRAMEBUFFER :GOP_DISCOVERY :GOP_HANDOFF :VIRTIO_GPU
+                          :VIRTIO_INPUT :DESKTOP_SURFACE :DESKTOP_INPUT
+                          :GUEST_WM :GUEST_PAINT :GUEST_IME :GUEST_SCANOUT_TWO
+                          :GUEST_SESSION :GUEST_BROKER :GUEST_GPU_TWO
+                          :GUEST_INPUT :BROWSER_DESKTOP_TRANSPORT]
+                :linux "DRM/KMS, Wayland, full input stack"
+                :chromeos "same, plus Ash/Aura"
+                :note "measured but excluded from the headline: an inference
+                       node is not scored on compositing"}}}

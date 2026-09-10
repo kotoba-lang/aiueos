@@ -17,8 +17,18 @@ cleanup_plc_signing() {
     rmdir "$plc_signing"
   }
 }
-trap cleanup_plc_signing 0
-trap 'cleanup_plc_signing; exit 1' HUP INT TERM
+# One cleanup, one pair of traps. A second `trap ... EXIT` anywhere below would
+# REPLACE these rather than add to them, and cleanup_plc_signing would silently
+# stop running -- so anything else needing teardown hangs itself here instead.
+tpm_state=
+tpm_pid=
+cleanup_tpm() {
+  [ -z "$tpm_pid" ] || kill "$tpm_pid" 2>/dev/null || true
+  [ -z "$tpm_state" ] || rm -rf "$tpm_state"
+}
+cleanup_all() { cleanup_plc_signing; cleanup_tpm; }
+trap cleanup_all 0
+trap 'cleanup_all; exit 1' HUP INT TERM
 
 if [ "${AIUEOS_PLC_RT_SMOKE:-0}" = 1 ]; then
   AIUEOS_PLC_ELF=${AIUEOS_PLC_ELF:-"$repo/build/plc-motor/program.elf"}
@@ -231,6 +241,52 @@ else
 fi
 iommu_args=
 if [ "${AIUEOS_TEST_DMAR:-0}" = 1 ]; then iommu_args="-device intel-iommu,intremap=on"; fi
+# The board's own IOMMU class. The K16 is an AMD Ryzen 7 7735HS, so every VT-d
+# marker this suite can prove is proved against silicon the machine does not
+# have -- isolation reads 6/6 on hardware that would score 0. This mode boots
+# the same guest behind AMD-Vi instead, which QEMU 10.0.3 provides as
+# `amd-iommu`, and asserts NOTHING yet: no AMD path exists to assert. It is
+# here to observe what the guest does on the platform it will actually run on,
+# which had never been executed. Assertions arrive with the IVRS parser.
+#
+# MEASURED 2026-09-09: this does not yet exercise the AMD path. QEMU accepts
+# the device on q35 without complaint, with or without intremap=on, but the
+# guest reports AIUEOS_IVRS_ABSENT -- no IVRS table reaches it through OVMF.
+# So the device exists in QEMU and the TABLE does not, and the AMD-Vi path
+# stays unexercisable here until that changes or the board is powered. Kept
+# because the boot itself is worth having: it is the only way to run this OS
+# on its own platform's IOMMU class without the hardware.
+if [ "${AIUEOS_TEST_IVRS:-0}" = 1 ]; then iommu_args="-device amd-iommu"; fi
+
+# TPM2 the same way IVRS is done: attach the device only when asked for, so
+# every existing gate boots the machine it booted before. swtpm supplies the
+# device; whether the guest ever SEES a TPM2 ACPI table is the firmware's
+# decision, and that is the thing actually under test here -- the taxonomy
+# records TPM2 as blocked on "a firmware this machine does not have", which is
+# a claim about OVMF, not about the device, and was never measured.
+tpm_args=
+if [ "${AIUEOS_TEST_TPM2:-0}" = 1 ]; then
+  if command -v swtpm >/dev/null 2>&1; then
+    tpm_state=$(mktemp -d "${TMPDIR:-/tmp}/aiueos-swtpm.XXXXXX")
+    swtpm socket --tpm2 --tpmstate "dir=$tpm_state" \
+      --ctrl "type=unixio,path=$tpm_state/sock" --flags startup-clear \
+      >"$tpm_state/swtpm.log" 2>&1 &
+    tpm_pid=$!
+    tpm_wait=0
+    while [ ! -S "$tpm_state/sock" ] && [ "$tpm_wait" -lt 50 ]; do
+      tpm_wait=$((tpm_wait + 1)); sleep 0.1
+    done
+    if [ -S "$tpm_state/sock" ]; then
+      tpm_args="-chardev socket,id=chrtpm,path=$tpm_state/sock -tpmdev emulator,id=tpm0,chardev=chrtpm -device tpm-tis,tpmdev=tpm0"
+    else
+      echo "error: swtpm did not create its control socket" >&2
+      exit 1
+    fi
+  else
+    echo "error: AIUEOS_TEST_TPM2=1 but swtpm is not installed" >&2
+    exit 1
+  fi
+fi
 # A NIC is attached only when asked for, so every existing gate keeps booting
 # the exact machine it booted before. SLIRP ("-netdev user") is a real peer with
 # a fixed topology — it answers ARP for 10.0.2.2 — which is what lets the first
@@ -342,6 +398,18 @@ qmp_args=""
 kbd_args="-device virtio-keyboard-pci,disable-legacy=on"
 if [ "${AIUEOS_GUEST_INPUT:-0}" = 1 ]; then
   kbd_args="-device virtio-keyboard-pci,disable-legacy=on,id=kbd0"
+  # The QMP socket path comes from $out, and a UNIX socket path is capped at
+  # 104 bytes. The default out leaves FIVE bytes of headroom, so a checkout
+  # directory a few characters longer silently makes this documented profile
+  # unrunnable -- and the symptom is a QEMU startup error naming neither the
+  # profile nor the cause. Refuse here, where the message can say both.
+  qmp_len=$(printf '%s' "$qmp_path" | wc -c | tr -d ' ')
+  if [ "$qmp_len" -ge 104 ]; then
+    echo "error: AIUEOS_GUEST_INPUT needs a QMP socket at $qmp_path" >&2
+    echo "       that path is $qmp_len bytes and the UNIX limit is 104." >&2
+    echo "       Set AIUEOS_OUT to a shorter directory." >&2
+    exit 1
+  fi
   qmp_args="-qmp unix:${qmp_path},server,nowait"
 fi
 pristine_blk=
@@ -492,6 +560,7 @@ PY
     -chardev file,id=debug,path="$log" \
     -device isa-debug-exit,iobase=0xf4,iosize=0x04 \
     $iommu_args \
+    $tpm_args \
     $usb_args \
     $net_args \
     -device virtio-rng-pci \
@@ -515,9 +584,22 @@ PY
     watchdog_seen=$qemu_started
     for watchdog_file in "$serial_log" "$log"; do
       if [ -f "$watchdog_file" ]; then
-        watchdog_t=$(stat -f %m "$watchdog_file" 2>/dev/null || \
-                     stat -c %Y "$watchdog_file" 2>/dev/null || echo 0)
-        [ "$watchdog_t" -gt "$watchdog_seen" ] && watchdog_seen=$watchdog_t
+        # Pick the mtime by VALIDATING THE FORMAT, not the exit code. GNU
+        # coreutils stat (which is first on PATH here) reads -f as "filesystem
+        # status", complains that %m is not a filesystem format, prints the
+        # blob for the file anyway -- and EXITS 0. So an exit-code fallback
+        # never fires and watchdog_t silently becomes that blob.
+        watchdog_t=$(stat -f %m "$watchdog_file" 2>/dev/null | head -1)
+        case ${watchdog_t:-} in ''|*[!0-9]*)
+          watchdog_t=$(stat -c %Y "$watchdog_file" 2>/dev/null | head -1) ;;
+        esac
+        case ${watchdog_t:-} in ''|*[!0-9]*) watchdog_t=0 ;; esac
+        # Both operands defaulted: an empty one makes `[ -gt ]` print
+        # "<number>: integer expression expected" once per watchdog tick, which
+        # buried the SSH gates' actual verdict under hundreds of lines of it.
+        # The watchdog then also silently stops advancing, so a quiet guest is
+        # measured from the wrong instant.
+        [ "${watchdog_t:-0}" -gt "${watchdog_seen:-0}" ] && watchdog_seen=$watchdog_t
       fi
     done
     if [ $(( watchdog_now - watchdog_seen )) -ge "$quiet_limit" ]; then
@@ -528,6 +610,25 @@ PY
   done
   wait "$qemu_pid"
   status=$?
+  # Keep every scenario's serial output, not just the last one's. AFTER
+  # status=$? on purpose -- a cat here would clobber the exit code this whole
+  # function is built to read.
+  #
+  # $serial_log is one path reused by every scenario, so each run overwrites the
+  # last and no surviving file holds what the suite proved. That is not a
+  # cosmetic loss: measured 2026-09-09, a run with AIUEOS_TEST_NET=1 and
+  # AIUEOS_TEST_DMAR=1 exited 0 -- which those switches only permit when
+  # AIUEOS_DHCP_OK, AIUEOS_VTD_OK and AIUEOS_DMA_POLICY_OK are all present,
+  # since the gates below assert them by grep -- yet the file left on disk
+  # afterwards held four markers from a later, shorter scenario and none of
+  # those three. The suite proved capabilities its own evidence could not show.
+  # BOTH logs. The guest writes to two transports and they do not carry the
+  # same markers: the loader stage reports AIUEOS_KERNEL_OK and
+  # AIUEOS_LOADER_INTEGRITY_OK on debugcon and never on serial, so an
+  # accumulator that took only $serial_log was collecting half the evidence and
+  # reporting the other half as unproven. Measured 2026-09-09.
+  cat "$serial_log" >> "$out/evidence-all.log" 2>/dev/null || true
+  cat "$log"        >> "$out/evidence-all.log" 2>/dev/null || true
   # Normalised to 124 on purpose: every branch below, and fifteen sibling
   # scripts, already know what 124 means. WHICH limit ended the attempt is
   # carried in $quiet_fired and reported, not encoded in a new status nobody

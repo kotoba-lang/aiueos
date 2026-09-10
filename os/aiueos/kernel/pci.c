@@ -170,6 +170,28 @@ static struct aiueos_desktop_input_event desktop_input_event;
 static int desktop_input_ready;
 static int desktop_input_from_eventq;
 static int desktop_input_eventq_empty;
+/* How many virtio-input devices the scan SAW, independent of whether bringing
+   one up worked. input_ok alone cannot tell "no such device on this machine"
+   from "the device is there and we failed it", and those want opposite fixes. */
+static int virtio_input_devices_seen;
+/* Which of virtio_input()'s four failure exits was taken. The device is
+   present in BOTH profiles and only one of them brings it up, so "it failed"
+   is now the least useful thing known about it: the four exits want four
+   different fixes -- transport negotiation, page allocation, the doorbell, or
+   no event arriving. Zero means it succeeded.
+   Set by line number inside virtio_input only. The three sibling probes share
+   these exact source lines, so a text replace would have instrumented all of
+   them and reported whichever ran last. */
+static int virtio_input_fail_line;
+/* The same four exits as a stable code, because the line number moves with any
+   edit above it and a gate cannot key off that. 4 is the one that matters:
+   no event arrived AND no synthetic one was compiled in, which is what a
+   kernel built without AIUEOS_INPUT_SMOKE_SYNTHETIC does on a host that
+   cannot deliver a real virtio-keyboard event. */
+static int virtio_input_fail_reason;
+int aiueos_pci_input_devices_seen(void) { return virtio_input_devices_seen; }
+int aiueos_pci_input_fail_line(void) { return virtio_input_fail_line; }
+int aiueos_pci_input_fail_reason(void) { return virtio_input_fail_reason; }
 int aiueos_desktop_input_event_ready(void) { return desktop_input_ready; }
 int aiueos_desktop_input_from_eventq(void) { return desktop_input_from_eventq; }
 int aiueos_desktop_input_eventq_empty(void) { return desktop_input_eventq_empty; }
@@ -233,6 +255,29 @@ extern uint64_t kotoba_aiueos_journal_plan(uint64_t valid0, uint64_t sequence0,
                                            uint64_t valid1, uint64_t sequence1);
 volatile uint64_t aiueos_virtio_blk_irq_count;
 static int blk_msix_active;
+/* Recorded when the completion wait proves futile rather than merely slow.
+   The wait below tests `used->index == target` -- exact equality on a counter
+   that only advances -- so if the used index ever gets PAST target the loop can
+   never succeed, and it keeps taking the device's MSI-X for a completion it has
+   already missed. That is a hang, not a delay, and it is worth separating the
+   two: a delay is waited out, a hang is a bug. */
+static uint16_t blk_wait_used, blk_wait_target;
+static uint64_t blk_wait_irq;
+static int blk_wait_overshot;
+/* The slowest SUCCESSFUL wait, so the healthy case can be compared with the
+   sick one instead of guessed at. If every wait completes on the first look the
+   used index never has room to run ahead of target and the overshoot theory is
+   dead; if some waits take many iterations, it has room. Only the success path
+   can say which, and the failure path cannot. */
+static uint32_t blk_slowest_iters;
+static uint16_t blk_slow_used, blk_slow_target;
+unsigned aiueos_virtio_blk_slowest_wait(void) { return blk_slowest_iters; }
+unsigned aiueos_virtio_blk_slow_used(void) { return blk_slow_used; }
+unsigned aiueos_virtio_blk_slow_target(void) { return blk_slow_target; }
+
+int aiueos_virtio_blk_wait_overshot(void) { return blk_wait_overshot; }
+unsigned aiueos_virtio_blk_wait_used(void) { return blk_wait_used; }
+unsigned aiueos_virtio_blk_wait_target(void) { return blk_wait_target; }
 int aiueos_object_store_ready(void) { return object_store_ready; }
 extern uint64_t kotoba_aiueos_app_lookup_plan(
   const uint8_t[16],const struct kotoba_app_metadata*,uint64_t,uint64_t,uint64_t);
@@ -357,8 +402,21 @@ static int virtio_blk_sector_io(struct virtio_blk_request *request, uint8_t *sec
       uint32_t expected = type == VIRTIO_BLK_T_IN ? 513 : 1;
       if (completion->id != 0 || completion->length != expected || *status != VIRTIO_BLK_S_OK)
         return 0;
+      if (budget >= blk_slowest_iters) {
+        blk_slowest_iters = budget; blk_slow_used = used->index;
+        blk_slow_target = target;
+      }
       *submitted = target;
       return 1;
+    }
+    /* Futile, not slow: the used index has passed the value this wait is
+       looking for, so no future completion can make the equality true. Fail
+       now with the numbers instead of spinning until the harness times out. */
+    if (used->index != target &&
+        (uint16_t)(used->index - target) < 0x8000) {
+      blk_wait_used = used->index; blk_wait_target = target;
+      blk_wait_irq = aiueos_virtio_blk_irq_count; blk_wait_overshot = 1;
+      return 0;
     }
     if (blk_msix_active) __asm__ volatile("sti; hlt; cli" ::: "memory");
     else __asm__ volatile("pause");
@@ -865,6 +923,8 @@ static int setup_blk_msix(uint8_t b, uint8_t d, uint8_t f,
   config_write(b,d,f,pointer,header | (1U << 31));
   if (!(config_read(b,d,f,pointer) & (1U << 31))) return 0;
   aiueos_virtio_blk_irq_count = 0;
+  blk_slowest_iters = 0; blk_slow_used = 0; blk_slow_target = 0;
+  blk_slowest_iters = 0; blk_slow_used = 0; blk_slow_target = 0;
   return 1;
 }
 
@@ -1209,12 +1269,12 @@ static int virtio_input(uint8_t b, uint8_t d, uint8_t f) {
   volatile struct virtio_common_cfg *cfg;
   uint64_t notify_base;
   if (!find_virtio_caps(b,d,f,&caps) ||
-      !map_transport(b,d,f,&caps,&cfg,&notify_base) || !negotiate(cfg)) return 0;
+      !map_transport(b,d,f,&caps,&cfg,&notify_base) || !negotiate(cfg)) { virtio_input_fail_line = __LINE__; virtio_input_fail_reason = 1; return 0; }
   struct virtq_desc *desc = aiueos_allocate_physical_page();
   struct virtq_avail *avail = aiueos_allocate_physical_page();
   struct virtq_used *used = aiueos_allocate_physical_page();
   struct virtio_input_event *event = aiueos_allocate_physical_page();
-  if (!desc || !avail || !used || !event) return 0;
+  if (!desc || !avail || !used || !event) { virtio_input_fail_line = __LINE__; virtio_input_fail_reason = 2; return 0; }
   /* Four slots so EV_KEY + EV_SYN from virtio-keyboard both fit. Queue
      size 1 dropped SYN and could refuse a real key. */
   for (uint16_t i = 0; i < 4; i++) {
@@ -1224,7 +1284,7 @@ static int virtio_input(uint8_t b, uint8_t d, uint8_t f) {
   }
   __asm__ volatile("" ::: "memory"); avail->index = 4;
   volatile uint16_t *doorbell = prepare_queue(cfg,&caps,notify_base,4,desc,avail,used);
-  if (!doorbell) return 0;
+  if (!doorbell) { virtio_input_fail_line = __LINE__; virtio_input_fail_reason = 3; return 0; }
   cfg->device_status |= VIRTIO_STATUS_DRIVER_OK;
   *doorbell = 0;
 #ifdef AIUEOS_INPUT_SMOKE_SYNTHETIC
@@ -1266,6 +1326,7 @@ static int virtio_input(uint8_t b, uint8_t d, uint8_t f) {
   return 1;
 #endif
   desktop_input_eventq_empty = 1;
+  virtio_input_fail_line = __LINE__; virtio_input_fail_reason = 4;
   return 0;
 }
 
@@ -5381,6 +5442,9 @@ int aiueos_pci_enumerate(void) {
   desktop_input_ready = 0;
   desktop_input_from_eventq = 0;
   desktop_input_eventq_empty = 0;
+  virtio_input_devices_seen = 0;
+  virtio_input_fail_line = 0;
+  virtio_input_fail_reason = 0;
   for (uint16_t bus = 0; bus < 256; bus++) for (uint8_t dev = 0; dev < 32; dev++) {
     uint32_t id0 = config_read((uint8_t)bus,dev,0,0);
     if ((id0 & 0xffffU) == 0xffffU) continue;
@@ -5395,8 +5459,10 @@ int aiueos_pci_enumerate(void) {
             virtio_rng((uint8_t)bus,dev,fn)) rng_ok = 1;
         if ((device_id == VIRTIO_BLK_MODERN_ID || device_id == VIRTIO_BLK_TRANSITIONAL_ID) &&
             virtio_blk((uint8_t)bus,dev,fn)) blk_ok = 1;
-        if ((device_id == VIRTIO_INPUT_MODERN_ID || device_id == VIRTIO_INPUT_TRANSITIONAL_ID) &&
-            virtio_input((uint8_t)bus,dev,fn)) input_ok = 1;
+        if (device_id == VIRTIO_INPUT_MODERN_ID || device_id == VIRTIO_INPUT_TRANSITIONAL_ID) {
+          virtio_input_devices_seen++;
+          if (virtio_input((uint8_t)bus,dev,fn)) input_ok = 1;
+        }
         if ((device_id == VIRTIO_GPU_MODERN_ID || device_id == VIRTIO_GPU_TRANSITIONAL_ID) &&
             virtio_gpu((uint8_t)bus,dev,fn)) gpu_ok = 1;
         /* Reported through `aiueos_virtio_net_ready` rather than the return

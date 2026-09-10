@@ -641,6 +641,19 @@ extern int aiueos_desktop_wm_paint(uint64_t front);
 extern uint32_t aiueos_desktop_wm_stored_color(uint64_t window_id);
 extern uint32_t aiueos_desktop_sample_pixel(uint32_t x, uint32_t y);
 extern int aiueos_acpi_initialize(const void *rsdp);
+extern uint32_t aiueos_acpi_ivrs_present(void);
+extern uint32_t aiueos_acpi_ivrs_seen(void);
+extern uint32_t aiueos_acpi_tpm2_seen(void);
+extern uint32_t aiueos_acpi_tpm2_present(void);
+extern int aiueos_pci_input_devices_seen(void);
+extern int aiueos_pci_input_fail_line(void);
+extern int aiueos_pci_input_fail_reason(void);
+extern int aiueos_virtio_blk_wait_overshot(void);
+extern unsigned aiueos_virtio_blk_wait_used(void);
+extern unsigned aiueos_virtio_blk_wait_target(void);
+extern unsigned aiueos_virtio_blk_slowest_wait(void);
+extern unsigned aiueos_virtio_blk_slow_used(void);
+extern unsigned aiueos_virtio_blk_slow_target(void);
 extern int aiueos_dma_test_policy_allows_unisolated(void);
 extern int aiueos_vtd_initialize(void);
 extern int aiueos_vtd_translation_enabled(void);
@@ -1182,6 +1195,33 @@ __attribute__((noreturn)) static void qemu_exit(uint32_t value) {
   for (;;) __asm__ volatile("hlt");
 }
 
+/* 0x6f is this kernel's "an evidence check said no" exit, and it is reached
+   from twenty-six different places. The code alone therefore names a class,
+   not a failure -- exactly the position the K16 loader was in with exit 63,
+   where a numeric status had to be matched back to one of nine call sites by
+   hand and cost days.
+   So the site says which it is, before it exits. The line number is enough:
+   it is unambiguous, it costs nothing at runtime on a path that is already
+   terminating, and it cannot drift out of date the way a hand-written label
+   would. */
+__attribute__((noreturn)) static void evidence_stop(unsigned line) {
+  char digits[8]; unsigned i = 0, n = line;
+  if (!n) digits[i++] = '0';
+  while (n) { digits[i++] = (char)('0' + (n % 10)); n /= 10; }
+  debug_string("AIUEOS_EVIDENCE_STOP line=");
+  serial_string("AIUEOS_EVIDENCE_STOP line=");
+  while (i--) {
+    char one[2]; one[0] = digits[i]; one[1] = 0;
+    debug_string(one); serial_string(one);
+  }
+  debug_string("\n"); serial_string("\r\n");
+  /* qemu_exit, NOT evidence_stop. The blanket rewrite that created this helper
+     also rewrote the call inside it, so every evidence stop recursed until the
+     stack died -- and it reported its own line number while doing so, which is
+     the worst possible failure for a diagnostic: confidently wrong. */
+  qemu_exit(0x6f);
+}
+
 /* Splitting the 64-bit handler address across the descriptor's three offset
  * fields is bit-packing whose failure mode is a well-formed gate pointing at
  * the WRONG ring-0 address -- silent and exploitable rather than a crash -- so
@@ -1500,7 +1540,7 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
     static const uint8_t fnv_vector[3] = {'a', 'b', 'c'};
     if ((uint32_t)kotoba_aiueos_fnv1a(fnv_vector, 3) != 0x1a47e90bU) {
       serial_string("AIUEOS_KOTOBA_FNV_FAIL known-vector\r\n");
-      qemu_exit(0x6f);
+      evidence_stop(__LINE__);
     }
     serial_string("AIUEOS_KOTOBA_FNV_VECTOR_OK abc\r\n");
     uint64_t initramfs_files = 0;
@@ -1530,7 +1570,7 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
     if (!kotoba_aiueos_journal_record_build(journal_vector, sizeof(journal_vector), 1) ||
         !kotoba_aiueos_journal_record_valid(journal_vector, 64)) {
       serial_string("AIUEOS_KOTOBA_STORE_FAIL journal-vector\r\n");
-      qemu_exit(0x6f);
+      evidence_stop(__LINE__);
     }
     serial_string("AIUEOS_KOTOBA_STORE_VECTOR_OK journal-sequence=1\r\n");
 #ifdef AIUEOS_PHYSICAL_QUALIFICATION
@@ -1632,7 +1672,7 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
       if (!kotoba_aiueos_x25519(x_scalar, x_base, x_output, x_workspace) ||
           !kotoba_aiueos_digest_equal(x_output, x_expected, 32)) {
         serial_string("AIUEOS_X25519_FAIL rfc7748-base-point\r\n");
-        qemu_exit(0x6f);
+        evidence_stop(__LINE__);
       }
       debug_string("AIUEOS_X25519_OK rfc7748-base-point 32-bytes\n");
       serial_string("AIUEOS_X25519_OK rfc7748-base-point 32-bytes\r\n");
@@ -1641,7 +1681,7 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
       extern int aiueos_tls13_aes_selftest(void);
       if (!aiueos_tls13_aes_selftest()) {
         serial_string("AIUEOS_AES_GCM_FAIL nist-vectors\r\n");
-        qemu_exit(0x6f);
+        evidence_stop(__LINE__);
       }
       serial_string("AIUEOS_AES_GCM_OK aes-128-gcm nist\r\n");
     }
@@ -1649,7 +1689,7 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
       extern int aiueos_tls13_hmac_selftest(void);
       if (!aiueos_tls13_hmac_selftest()) {
         serial_string("AIUEOS_HMAC_HKDF_FAIL rfc4231-rfc5869\r\n");
-        qemu_exit(0x6f);
+        evidence_stop(__LINE__);
       }
       serial_string("AIUEOS_HMAC_HKDF_OK sha256 rfc4231-rfc5869\r\n");
     }
@@ -1657,7 +1697,7 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
       extern int aiueos_tls13_ecdsa_selftest(void);
       if (!aiueos_tls13_ecdsa_selftest()) {
         serial_string("AIUEOS_ECDSA_P256_FAIL rfc6979-sample\r\n");
-        qemu_exit(0x6f);
+        evidence_stop(__LINE__);
       }
       serial_string("AIUEOS_ECDSA_P256_OK rfc6979-sample s+1-refused\r\n");
     }
@@ -1665,7 +1705,7 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
       extern int aiueos_tls13_record_selftest(void);
       if (!aiueos_tls13_record_selftest()) {
         serial_string("AIUEOS_TLS13_RECORD_FAIL rfc8448-s3\r\n");
-        qemu_exit(0x6f);
+        evidence_stop(__LINE__);
       }
       debug_string("AIUEOS_TLS13_RECORD_OK rfc8448-s3 seq0 seal-open tamper-refused\n");
       serial_string("AIUEOS_TLS13_RECORD_OK rfc8448-s3 seq0 seal-open tamper-refused\r\n");
@@ -1688,7 +1728,7 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
         serial_decimal(aiueos_rtl8125_parity_detail);
         serial_string("\r\n");
         debug_string("NIC-PARITY mismatch\n");
-        qemu_exit(0x6f);
+        evidence_stop(__LINE__);
       }
       debug_string("NIC-PARITY ok rtl8125 identify link-up ring-build program tx-submit rx-poll\n");
       serial_string("NIC-PARITY ok rtl8125 identify link-up ring-build program tx-submit rx-poll\r\n");
@@ -1735,7 +1775,7 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
           serial_string("QWEN-PARITY ");
           serial_string(qwen_parity_names[index]);
           serial_string(" mismatch\r\n");
-          qemu_exit(0x6f);
+          evidence_stop(__LINE__);
         }
         serial_string("QWEN-PARITY ");
         serial_string(qwen_parity_names[index]);
@@ -1756,7 +1796,7 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
         serial_string("DEVCLIENT-PARITY canonical mismatch case=");
         serial_decimal((uint32_t)devclient_case);
         serial_string("\r\n");
-        qemu_exit(0x6f);
+        evidence_stop(__LINE__);
       }
       debug_string("DEVCLIENT-PARITY canonical ok\n");
       serial_string("DEVCLIENT-PARITY canonical ok v2-result v3-result refusal-5 refusal-7\r\n");
@@ -2200,6 +2240,33 @@ qwen_runtime_boot_complete:
     }
     debug_string("AIUEOS_ACPI_OK rsdp-xsdt-madt cpu>=2\n");
     serial_string("AIUEOS_ACPI_OK rsdp-xsdt-madt cpu>=2\r\n");
+    /* Emitted only where the table exists, which is the point: this marker
+       says "an AMD IOMMU was described to us and we read its header", and on a
+       machine without one there is nothing to claim. It does NOT say the IOMMU
+       is programmed -- the DMA policy still reports unisolated until an IVHD
+       parser and a device table exist. */
+    if (aiueos_acpi_ivrs_present()) {
+      debug_string("AIUEOS_IVRS_OK table-validated ivinfo-read not-yet-programmed\n");
+      serial_string("AIUEOS_IVRS_OK table-validated ivinfo-read not-yet-programmed\r\n");
+    }
+    if (aiueos_acpi_tpm2_present()) {
+      debug_string("AIUEOS_TPM2_OK table-validated not-yet-bound\n");
+      serial_string("AIUEOS_TPM2_OK table-validated not-yet-bound\r\n");
+    } else if (aiueos_acpi_tpm2_seen()) {
+      debug_string("AIUEOS_TPM2_FAIL described-but-refused\n");
+      serial_string("AIUEOS_TPM2_FAIL described-but-refused\r\n");
+    } else {
+      debug_string("AIUEOS_TPM2_ABSENT no-root-of-trust-described\n");
+      serial_string("AIUEOS_TPM2_ABSENT no-root-of-trust-described\r\n");
+    }
+    if (0) {
+    } else if (aiueos_acpi_ivrs_seen()) {
+      debug_string("AIUEOS_IVRS_FAIL described-but-refused\n");
+      serial_string("AIUEOS_IVRS_FAIL described-but-refused\r\n");
+    } else {
+      debug_string("AIUEOS_IVRS_ABSENT no-amd-iommu-described\n");
+      serial_string("AIUEOS_IVRS_ABSENT no-amd-iommu-described\r\n");
+    }
 #ifdef AIUEOS_PHYSICAL_QUALIFICATION
 #ifdef AIUEOS_PHYSICAL_NETWORK_QUALIFICATION
     /* A second, explicitly test-only physical slice. The native-core gate has
@@ -2803,6 +2870,35 @@ qwen_runtime_boot_complete:
     }
     debug_string("AIUEOS_PCI_OK bounded-scan virtio-vendor=1af4\n");
     serial_string("AIUEOS_PCI_OK bounded-scan virtio-vendor=1af4\r\n");
+    /* The enumeration result, as bits, because every virtio decision below
+       reads one of them and none of them was observable. Deliberately NOT an
+       _OK marker: it is a datum, not a verdict, and the coverage benchmark
+       counts verdicts. Added while chasing why a GPT-image boot reports
+       VIRTIO_INPUT_FAIL where an ESP boot of the same sources reports
+       VIRTIO_INPUT_OK -- the branch turns on `pci_result & 4`, so the two
+       boots enumerate differently, and until now the value that says so was
+       invisible in both. */
+    { char bits[4]; unsigned v = (unsigned)pci_result;
+      bits[0] = (char)('0' + ((v >> 2) & 1));
+      bits[1] = (char)('0' + ((v >> 1) & 1));
+      bits[2] = (char)('0' + (v & 1));
+      bits[3] = 0;
+      debug_string("AIUEOS_PCI_RESULT input-rng-base=");
+      debug_string(bits);
+      serial_string("AIUEOS_PCI_RESULT input-rng-base=");
+      serial_string(bits); serial_string(" input-devices-seen=");
+      debug_string(" input-devices-seen=");
+      { unsigned seen = (unsigned)aiueos_pci_input_devices_seen();
+        char d[2]; d[0] = (char)('0' + (seen > 9 ? 9 : seen)); d[1] = 0;
+        debug_string(d); serial_string(d); }
+      debug_string(" input-fail-line="); serial_string(" input-fail-line=");
+      { unsigned n = (unsigned)aiueos_pci_input_fail_line();
+        char q[8]; unsigned i = 0;
+        if (!n) q[i++] = '0';
+        while (n) { q[i++] = (char)('0' + (n % 10)); n /= 10; }
+        while (i--) { char one[2]; one[0] = q[i]; one[1] = 0;
+                      debug_string(one); serial_string(one); } }
+      debug_string("\n"); serial_string("\r\n"); }
     if (pci_result < 2) {
       debug_string("AIUEOS_VIRTIO_FAIL rng-queue\n");
       serial_string("AIUEOS_VIRTIO_FAIL rng-queue\r\n");
@@ -2811,7 +2907,7 @@ qwen_runtime_boot_complete:
     debug_string("AIUEOS_VIRTIO_RNG_OK modern-pci caps-bounded dma=4pages completion=32\n");
     serial_string("AIUEOS_VIRTIO_RNG_OK modern-pci caps-bounded dma=4pages completion=32\r\n");
     if (aiueos_virtio_rng_irq_count != 1) {
-      serial_string("AIUEOS_VIRTIO_RNG_MSIX_FAIL irq-count\r\n"); qemu_exit(0x6f);
+      serial_string("AIUEOS_VIRTIO_RNG_MSIX_FAIL irq-count\r\n"); evidence_stop(__LINE__);
     }
     debug_string("AIUEOS_VIRTIO_RNG_MSIX_OK vector=34 irq=1 table-pba-bounded\n");
     serial_string("AIUEOS_VIRTIO_RNG_MSIX_OK vector=34 irq=1 table-pba-bounded\r\n");
@@ -2854,19 +2950,47 @@ qwen_runtime_boot_complete:
     }
 #endif
     if ((pci_result & 3) != 3) {
-      debug_string("AIUEOS_VIRTIO_BLK_FAIL capacity-or-read\n");
-      serial_string("AIUEOS_VIRTIO_BLK_FAIL capacity-or-read\r\n");
+      if (aiueos_virtio_blk_wait_overshot()) {
+        /* Distinct because the fix is different: this is not a device that
+           failed to answer, it is a wait this kernel can no longer satisfy. */
+        debug_string("AIUEOS_VIRTIO_BLK_FAIL completion-wait-overshot\n");
+        serial_string("AIUEOS_VIRTIO_BLK_FAIL completion-wait-overshot used=");
+        { unsigned v[2]; v[0]=aiueos_virtio_blk_wait_used();
+          v[1]=aiueos_virtio_blk_wait_target();
+          for (int k = 0; k < 2; k++) {
+            char q[8]; unsigned i = 0, n = v[k];
+            if (!n) q[i++] = '0';
+            while (n) { q[i++] = (char)('0' + (n % 10)); n /= 10; }
+            while (i--) { char one[2]; one[0]=q[i]; one[1]=0; serial_string(one); }
+            serial_string(k == 0 ? " target=" : "\r\n"); } }
+      } else {
+        debug_string("AIUEOS_VIRTIO_BLK_FAIL capacity-or-read\n");
+        serial_string("AIUEOS_VIRTIO_BLK_FAIL capacity-or-read\r\n");
+      }
       qemu_exit(0x71);
     }
     debug_string("AIUEOS_VIRTIO_BLK_OK capacity-bounded sector=0 bytes=512 readonly\n");
-    serial_string("AIUEOS_VIRTIO_BLK_OK capacity-bounded sector=0 bytes=512 readonly\r\n");
+    serial_string("AIUEOS_VIRTIO_BLK_OK capacity-bounded sector=0 bytes=512 readonly");
+    /* The slowest wait that SUCCEEDED. Near zero means completions are seen on
+       the first look, so the used index has no room to run ahead of target and
+       the overshoot theory has nowhere to live. Measured on the healthy path
+       because the failing path cannot answer it. */
+    serial_string(" slowest-wait=");
+    { unsigned v[3]; v[0]=aiueos_virtio_blk_slowest_wait();
+      v[1]=aiueos_virtio_blk_slow_used(); v[2]=aiueos_virtio_blk_slow_target();
+      for (int k = 0; k < 3; k++) {
+        char q[12]; unsigned i = 0, n = v[k];
+        if (!n) q[i++] = '0';
+        while (n) { q[i++] = (char)('0' + (n % 10)); n /= 10; }
+        while (i--) { char one[2]; one[0]=q[i]; one[1]=0; serial_string(one); }
+        serial_string(k == 0 ? " used=" : k == 1 ? " target=" : "\r\n"); } }
     if (aiueos_virtio_blk_irq_count < 5) {
-      serial_string("AIUEOS_VIRTIO_BLK_MSIX_FAIL irq-count\r\n"); qemu_exit(0x6f);
+      serial_string("AIUEOS_VIRTIO_BLK_MSIX_FAIL irq-count\r\n"); evidence_stop(__LINE__);
     }
     debug_string("AIUEOS_VIRTIO_BLK_MSIX_OK vector=35 irq-completions-bounded table-pba-bounded\n");
     serial_string("AIUEOS_VIRTIO_BLK_MSIX_OK vector=35 irq-completions-bounded table-pba-bounded\r\n");
     if (aiueos_vtd_translation_enabled()) {
-      if (!aiueos_vtd_interrupt_remapping_enabled()) qemu_exit(0x6f);
+      if (!aiueos_vtd_interrupt_remapping_enabled()) evidence_stop(__LINE__);
       serial_string("AIUEOS_VTD_IR_OK irta=256 source-validated vector=35 remappable-msix\r\n");
     }
     if (!aiueos_object_store_ready()) {
@@ -2895,13 +3019,13 @@ qwen_runtime_boot_complete:
     if (!aiueos_journal_ready()) {
       debug_string("AIUEOS_JOURNAL_FAIL write-readback\n");
       serial_string("AIUEOS_JOURNAL_FAIL write-readback\r\n");
-      qemu_exit(0x6f);
+      evidence_stop(__LINE__);
     }
     if (!aiueos_journal_sequence() || aiueos_journal_slot() < 1 || aiueos_journal_slot() > 2)
-      qemu_exit(0x6f);
+      evidence_stop(__LINE__);
     debug_string("AIUEOS_JOURNAL_OK dual-slot committed append-readback\n");
     serial_string("AIUEOS_JOURNAL_OK dual-slot committed append-readback\r\n");
-    if (aiueos_object_transaction_sequence() != aiueos_journal_sequence()) qemu_exit(0x6f);
+    if (aiueos_object_transaction_sequence() != aiueos_journal_sequence()) evidence_stop(__LINE__);
     debug_string("AIUEOS_OBJECT_TXN_OK journal-first sector=3 apply-readback route=kotoba fixed-stack\n");
     serial_string("AIUEOS_OBJECT_TXN_OK journal-first sector=3 apply-readback route=kotoba fixed-stack\r\n");
     debug_string("AIUEOS_KOTOBA_JOURNAL_PLAN_OK latest-slot next-sequence rollback-preserved\n");
@@ -2958,25 +3082,25 @@ qwen_runtime_boot_complete:
       }
 #endif
     }
-    if (!aiueos_service_registry_ready()) qemu_exit(0x6f);
+    if (!aiueos_service_registry_ready()) evidence_stop(__LINE__);
     debug_string("AIUEOS_SERVICE_REGISTRY_OK journal-object ids=2 generation=2,1 restart=1,0 decoder=kotoba fixed-stack\n");
     serial_string("AIUEOS_SERVICE_REGISTRY_OK journal-object ids=2 generation=2,1 restart=1,0 decoder=kotoba fixed-stack\r\n");
     serial_string("AIUEOS_KOTOBA_PCI_PLANNER_OK cap extent msix-region\r\n");
     if (aiueos_journal_recovered()) {
       if (!aiueos_journal_recovered_sequence() ||
-          aiueos_journal_sequence() != aiueos_journal_recovered_sequence() + 1) qemu_exit(0x6f);
+          aiueos_journal_sequence() != aiueos_journal_recovered_sequence() + 1) evidence_stop(__LINE__);
       debug_string("AIUEOS_JOURNAL_RECOVERY_OK highest-valid selected alternate-slot-append\n");
       serial_string("AIUEOS_JOURNAL_RECOVERY_OK highest-valid selected alternate-slot-append\r\n");
-      if (!aiueos_object_transaction_replayed()) qemu_exit(0x6f);
-      if (!aiueos_service_registry_replayed()) qemu_exit(0x6f);
+      if (!aiueos_object_transaction_replayed()) evidence_stop(__LINE__);
+      if (!aiueos_service_registry_replayed()) evidence_stop(__LINE__);
       if (!aiueos_recovered_service_registry_ready() ||
           !aiueos_scheduler_restore_service_registry(
             aiueos_recovered_service_registry_state(0),
-            aiueos_recovered_service_registry_state(1))) qemu_exit(0x6f);
+            aiueos_recovered_service_registry_state(1))) evidence_stop(__LINE__);
       __asm__ volatile("sti");
       while (!aiueos_service_runtime_evidence_ready()) __asm__ volatile("hlt");
       __asm__ volatile("cli");
-      if (!aiueos_scheduler_persistent_restore_evidence_ready()) qemu_exit(0x6f);
+      if (!aiueos_scheduler_persistent_restore_evidence_ready()) evidence_stop(__LINE__);
       debug_string("AIUEOS_OBJECT_TXN_REPLAY_OK committed-redo idempotent-before-append\n");
       serial_string("AIUEOS_OBJECT_TXN_REPLAY_OK committed-redo idempotent-before-append\r\n");
       debug_string("AIUEOS_PERSISTENT_SERVICE_BOOTSTRAP_OK registry=replayed kotoba-spawn=2 generation=2,1\n");
@@ -2989,12 +3113,27 @@ qwen_runtime_boot_complete:
     /* The input result bit is set only after a validated event has been copied
        into the browser envelope; no second mutable readiness check is needed. */
     if (!(pci_result & 4)) {
-      serial_string("AIUEOS_VIRTIO_INPUT_FAIL queue-or-envelope\r\n");
+      /* Say WHICH exit. "queue-or-envelope" covered four different failures
+         wanting four different fixes, and the commonest of them is not a
+         failure of this OS at all: reason 4 is a kernel built without
+         AIUEOS_INPUT_SMOKE_SYNTHETIC on a host that cannot deliver a real
+         virtio-keyboard event, which is how a production image behaves and
+         should. */
+      switch (aiueos_pci_input_fail_reason()) {
+        case 1: serial_string("AIUEOS_VIRTIO_INPUT_FAIL transport-or-negotiate\r\n");
+                debug_string("AIUEOS_VIRTIO_INPUT_FAIL transport-or-negotiate\n"); break;
+        case 2: serial_string("AIUEOS_VIRTIO_INPUT_FAIL queue-pages\r\n");
+                debug_string("AIUEOS_VIRTIO_INPUT_FAIL queue-pages\n"); break;
+        case 3: serial_string("AIUEOS_VIRTIO_INPUT_FAIL doorbell\r\n");
+                debug_string("AIUEOS_VIRTIO_INPUT_FAIL doorbell\n"); break;
+        default: serial_string("AIUEOS_VIRTIO_INPUT_FAIL no-event-no-synthetic-build\r\n");
+                 debug_string("AIUEOS_VIRTIO_INPUT_FAIL no-event-no-synthetic-build\n"); break;
+      }
       if (aiueos_desktop_input_eventq_empty()) {
         debug_string("AIUEOS_GUEST_INPUT leftover=eventq-empty\n");
         serial_string("AIUEOS_GUEST_INPUT leftover=eventq-empty\r\n");
       }
-      qemu_exit(0x6f);
+      evidence_stop(__LINE__);
     }
     if (aiueos_desktop_input_from_eventq()) {
       debug_string("AIUEOS_VIRTIO_INPUT_OK modern-pci eventq configured used-ring\n");
@@ -3158,7 +3297,7 @@ qwen_runtime_boot_complete:
     }
     if (!(pci_result & 8) || !aiueos_desktop_surface_bind_scanout(
           aiueos_gpu_scanout_width(),aiueos_gpu_scanout_height())) {
-      serial_string("AIUEOS_VIRTIO_GPU_FAIL display-info-or-surface-binding\r\n"); qemu_exit(0x6f);
+      serial_string("AIUEOS_VIRTIO_GPU_FAIL display-info-or-surface-binding\r\n"); evidence_stop(__LINE__);
     }
     debug_string("AIUEOS_VIRTIO_GPU_OK modern-pci controlq display-info bounded\n");
     serial_string("AIUEOS_VIRTIO_GPU_OK modern-pci controlq display-info bounded\r\n");
@@ -3432,10 +3571,10 @@ qwen_runtime_boot_complete:
     serial_string("AIUEOS_SCHEDULER_OK tasks=2 policy=round-robin preemption=apic-timer\r\n");
     debug_string("AIUEOS_SCHEDULER_CR3_OK roots=3 private-pages=2 kernel-return\n");
     serial_string("AIUEOS_SCHEDULER_CR3_OK roots=3 private-pages=2 kernel-return\r\n");
-    if (!aiueos_service_runtime_evidence_ready()) qemu_exit(0x6f);
+    if (!aiueos_service_runtime_evidence_ready()) evidence_stop(__LINE__);
     debug_string("AIUEOS_SERVICE_RUNTIME_OK services=2 descriptors=8 kotoba-policy spawn-restart-terminate task=generic generation=2 budget=bounded\n");
     serial_string("AIUEOS_SERVICE_RUNTIME_OK services=2 descriptors=8 kotoba-policy spawn-restart-terminate task=generic generation=2 budget=bounded\r\n");
-    if (!aiueos_service_ipc_evidence_ready()) qemu_exit(0x6f);
+    if (!aiueos_service_ipc_evidence_ready()) evidence_stop(__LINE__);
     debug_string("AIUEOS_SERVICE_IPC_OK mailbox=bounded capability=owner-domain cross-cr3 sequence=1\n");
     serial_string("AIUEOS_SERVICE_IPC_OK mailbox=bounded capability=owner-domain cross-cr3 sequence=1\r\n");
     if (!aiueos_ioapic_route_legacy_timer()) {
