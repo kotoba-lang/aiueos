@@ -38,14 +38,39 @@
 (def hostname (opt "--hostname" "aiueos-node"))
 (def username (opt "--username" "aiueos"))
 (def target-serial (opt "--target-serial" nil))
+(def published-console-password
+  "The default console password, and it is PUBLISHED -- this repository is
+  public, so every box built without `--console-password` has this one and
+  anyone can read it here.
+
+  Owner decision, 2026-09-10, taken knowingly: the console is a door that
+  needs physical presence, and the first box built with a thrown-away hash had
+  no door at all when its network did not come up -- the user it created could
+  not even sudo. A known weak password on a physical port was judged the
+  better of the two. It is not a secret and must never be treated as one:
+  nothing else may be protected by it, and a box that leaves the LAN should be
+  given a real one with `--console-password`."
+  "260308")
+
+(def no-console-password? (flag? "--no-console-password"))
+(def no-tailscale? (flag? "--no-tailscale"))
+(def ubuntu-codename (opt "--ubuntu-codename" "noble"))
+(def tailscale-authkey
+  ;; A FILE only. A tailnet auth key is a real credential and this one ends up
+  ;; inside the ISO, so it must not also sit in argv and shell history. Use an
+  ;; ephemeral, pre-authorized, short-lived key: whoever holds the stick can
+  ;; join the tailnet with it until it expires.
+  (when-let [f (opt "--tailscale-authkey-file" nil)]
+    (str/trim (fs/readFileSync f "utf8"))))
+
 (def console-password
-  ;; A file, or the value. The file exists so the password does not sit in
-  ;; argv, where `ps` shows it to every process on the machine and the shell
-  ;; keeps it in history.
+  ;; A file, a value, or the published default. The file exists so a real
+  ;; password does not sit in argv, where `ps` shows it to every process on the
+  ;; machine and the shell keeps it in history.
   (or (when-let [f (opt "--console-password-file" nil)]
         (str/trim (fs/readFileSync f "utf8")))
-      (opt "--console-password" nil)))
-(def no-console-password? (flag? "--no-console-password"))
+      (opt "--console-password" nil)
+      (when-not no-console-password? published-console-password)))
 (def output (opt "--output" "build/aiueos/aiueos-node-autoinstall.iso"))
 
 (defn- die [& m] (println (str "make-node-autoinstall-iso: " (str/join " " m)))
@@ -115,11 +140,7 @@
 (def locked-hash
   (cond
     console-password (crypt-sha512 console-password)
-    no-console-password? throwaway-hash
-    :else (die "no --console-password. If the network does not come up, this box"
-               "has no door at all -- and the user it creates cannot sudo either."
-               "\n       Pass --console-password <pw>, or --no-console-password to"
-               "accept that deliberately.")))
+    :else throwaway-hash))
 
 (def autoinstall
   (str "#cloud-config\n"
@@ -141,6 +162,48 @@
          "    authorized-keys: []\n")
        storage-section
        "  late-commands:\n"
+       ;; Tailscale from its own signed apt repository, into the target rather
+       ;; than into the installer: `curtin in-target` runs inside the system
+       ;; being built, which is where it has to end up. Not `curl … | sh` --
+       ;; the packages are signed and the keyring is what checks them.
+       (if no-tailscale?
+         ""
+         (str "    - |\n"
+              "      set -eu\n"
+              "      curtin in-target --target=/target -- sh -c '"
+              "curl -fsSL https://pkgs.tailscale.com/stable/ubuntu/" ubuntu-codename
+              ".noarmor.gpg -o /usr/share/keyrings/tailscale-archive-keyring.gpg && "
+              "curl -fsSL https://pkgs.tailscale.com/stable/ubuntu/" ubuntu-codename
+              ".tailscale-keyring.list -o /etc/apt/sources.list.d/tailscale.list && "
+              "apt-get -qq update && DEBIAN_FRONTEND=noninteractive apt-get -qq install -y tailscale'\n"
+              (if tailscale-authkey
+                ;; A one-shot that joins on first boot and then never runs
+                ;; again, because `tailscale up` is not idempotent in the sense
+                ;; that matters: re-running it with a spent ephemeral key fails
+                ;; and would leave a unit failing for ever.
+                (str "      install -d -m 0700 /target/var/lib/aiueos-node\n"
+                     "      cat > /target/etc/systemd/system/aiueos-tailscale.service <<'UNIT'\n"
+                     "[Unit]\n"
+                     "Description=join the tailnet, with tailscale ssh\n"
+                     "After=network-online.target tailscaled.service\n"
+                     "Wants=network-online.target tailscaled.service\n"
+                     "ConditionPathExists=!/var/lib/aiueos-node/tailscale-joined\n"
+                     "\n[Service]\n"
+                     "Type=oneshot\n"
+                     "ExecStart=/usr/bin/tailscale up --ssh --hostname=" hostname
+                     " --auth-key=" tailscale-authkey "\n"
+                     "ExecStartPost=/usr/bin/touch /var/lib/aiueos-node/tailscale-joined\n"
+                     "\n[Install]\n"
+                     "WantedBy=multi-user.target\n"
+                     "UNIT\n"
+                     "      chmod 0600 /target/etc/systemd/system/aiueos-tailscale.service\n"
+                     "      curtin in-target --target=/target -- systemctl enable aiueos-tailscale.service\n")
+                ;; No key: install it and say so. Deliberately NOT a unit that
+                ;; runs `tailscale up` and waits -- that hangs, prints a login
+                ;; URL where nobody is reading, and reports a failure that is
+                ;; really a question nobody was asked.
+                (str "      echo 'AIUEOS_TAILSCALE_INSTALLED_NOT_JOINED"
+                     " -- run: sudo tailscale up --ssh' | tee -a /target/var/log/aiueos-node-install.log\n"))))
        ;; The agent is installed INTO the target, which is not running yet, so
        ;; install.cljs takes --root and enables the unit offline. It reports
        ;; ENABLED_OFFLINE rather than claiming the node is answering: those are
@@ -152,7 +215,7 @@
        "      tar xzf /cdrom/aiueos-node-agent.tar.gz -C /target/opt\n"
        "      cd /target/opt/aiueos-node-agent\n"
        "      ./node-linux-x64 nbb-bundle/node_modules/nbb/cli.js install.cljs \\\n"
-       "        --endpoint " endpoint " --root /target 2>&1 | tee /target/var/log/aiueos-node-install.log\n"))
+       "        --endpoint " endpoint " --root /target 2>&1 | tee -a /target/var/log/aiueos-node-install.log\n"))
 
 ;; ── repack ────────────────────────────────────────────────────────────────
 ;;
@@ -239,9 +302,17 @@
 (println (str "storage: " (if target-serial (str "unattended, serial " target-serial)
                               "INTERACTIVE -- a human picks the disk at the box")))
 (println (str "ssh: " (if ssh-key (str "key installed for " username) "NONE -- headless unreachable")))
-(println (str "console: " (if console-password
-                            (str "password set for " username " (console login and sudo work)")
-                            "NO PASSWORD -- console login and sudo are both impossible")))
+(println (str "tailscale: "
+              (cond no-tailscale? "not installed"
+                    tailscale-authkey "installed; joins the tailnet unattended on first boot, with ssh"
+                    :else "installed, NOT joined -- one `sudo tailscale up --ssh` at the box")))
+(println (str "console: "
+              (cond
+                (= console-password published-console-password)
+                (str "the PUBLISHED default password, readable in this repo by anyone. "
+                     "Fine on a LAN; pass --console-password before this box leaves one.")
+                console-password (str "password set for " username " (console login and sudo work)")
+                :else "NO PASSWORD -- console login and sudo are both impossible")))
 
 (let [r (.spawnSync cp "docker"
                     (clj->js ["run" "--rm" "--platform" "linux/amd64"
@@ -298,7 +369,10 @@
                      :storage (if target-serial {:unattended true :serial target-serial}
                                   {:unattended false :reason "no target named; a human picks the disk"})
                      :ssh {:key-installed (boolean ssh-key)}
-                     :console {:password-set (boolean console-password)}})
+                     :console {:password-set (boolean console-password)
+                               :published-default (= console-password published-console-password)}
+                     :tailscale {:installed (not no-tailscale?)
+                                 :joins-unattended (boolean tailscale-authkey)}})
            nil 2) "\n"))
     (println (str "iso     " output))
     (println (str "bytes   " bytes))
