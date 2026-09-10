@@ -186,6 +186,10 @@
  {:cmd ["sh" "-c" "AIUEOS_PLC_RT_SMOKE=1 ./os/aiueos/scripts/smoke-qemu-uefi.sh"]
   :doc "Boot the receipt-bound PLC ELF at CPL3 and prove fixed-priority preemption, APIC release, atomic output and safe-state failures."}
 
+ :os-coverage
+ {:cmd ["sh" "-c" "nbb os/aiueos/scripts/os-coverage.cljs build/aiueos/*.log"]
+  :doc "Score the last smoke's coverage against ALL of its evidence logs. Registered 2026-09-10 because there was no canonical invocation and picking one log silently lowers the number: measured, kernel-serial.log alone scores CORE 63/117 while the same boot's four logs score 66/117 -- ACPI_RETAIN, KERNEL and LOADER_INTEGRITY are the loader's markers and go to uefi-debug.log."}
+
  :relay-parity
  {:cmd ["nbb" "os/aiueos/scripts/relay-protocol-c-kotoba-parity.cljs"]
   :doc "kernel/relay_protocol.c and native/relay_{line,text}.kotoba are two live implementations of one wire protocol; prove they are the same bytes, and stay red if either is edited alone (ADR-0213)."}
