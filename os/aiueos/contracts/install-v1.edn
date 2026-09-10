@@ -283,6 +283,32 @@
                             :live-installer :uki-esp-plus-release-recovery-bytes}
                :flashed-by "os/aiueos/scripts/flash-usb.cljs --image ... --receipt ..."}
 
+ ;; The OTHER install product, and it is not one of this contract's gates.
+ ;;
+ ;; The bespoke route above is what I0-I7 are about. Alongside it there is a node
+ ;; stick that stands on Ubuntu Server (aiueos ADR-0214): the agent goes onto a
+ ;; distribution that already boots, because the bespoke initramfs lost to
+ ;; hardware rather than to the product. It is recorded HERE only so a reader of
+ ;; this contract knows the other route exists; it does not move a gate and is
+ ;; not evidence for one. Its own contract is the machine registry.
+ :node-stick
+ {:registry "os/aiueos/contracts/node-machines-v1.edn"
+  :driver "os/aiueos/scripts/make-node-installer.cljs"
+  :builder "os/aiueos/scripts/make-node-autoinstall-iso.cljs"
+  :evidence "os/aiueos/scripts/test-node-installer.cljs (:node-installer-test)"
+  :inherits
+  ;; The one rule this contract owns that the other route had to inherit
+  ;; outright. "Largest disk" and "first NVMe" are refused here for a reason that
+  ;; does not depend on which installer is running, so the node stick's unattended
+  ;; mode demands a MEASURED disk serial and otherwise builds the stick that asks.
+  [:unattended-install-is-admitted-by-a-statement-not-by-a-guess]
+  :differs
+  ;; Named rather than implied: the node stick has no install intent, no release
+  ;; receipt chain and no target receipt. Subiquity owns the write. Do not read a
+  ;; green :node-installer-test as evidence about I1, I2, I3 or I5.
+  [:no-intent :no-release-receipt-chain :no-target-receipt :write-owned-by-subiquity]
+  :physical :unbuilt}   ; no ISO has been built from it, for any box
+
  ;; Exit gates. Root ADR adr-2608251418 holds the authoritative wording; the
  ;; values here and there must match (gate I0). Update both or neither.
  :gates

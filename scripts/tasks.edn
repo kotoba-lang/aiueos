@@ -152,6 +152,30 @@
  {:cmd ["nbb" "os/aiueos/scripts/test-install-bundle.cljs"]
   :doc "The install USB bundle EXECUTED, not merely built (ADR-0209/0210): assemble both products, extract them, run every bundled entry point from inside them, and drive the real guided handover on a stick that carries no intent. Controls: without the classpath nothing loads; a stick that carries an intent never asks. 34 cases, offline."}
 
+ ;; The node stick: Ubuntu Server plus the agent, which is the route that
+ ;; produced a working node when the bespoke initramfs lost to hardware. These
+ ;; three were unregistered until ADR-0214 -- the tooling existed and the task
+ ;; registry, which is how anything here is found and run, did not mention it.
+
+ :node-agent-bundle
+ {:cmd ["nbb" "os/aiueos/scripts/make-node-agent-bundle.cljs"]
+  :pass-args? true
+  :doc "Pack the node agent (what decides something, plus a runtime to decide it with) for installation onto a Linux that already boots. Needs --node and --nbb; carries grant.device-attest and sekisho.didkey rather than restating them."}
+
+ :node-installer-build
+ {:cmd ["nbb" "os/aiueos/scripts/make-node-installer.cljs"]
+  :pass-args? true
+  :doc "Build the node install stick for ONE NAMED BOX from contracts/node-machines-v1.edn (ADR-0214). --machine <id> --iso <ubuntu.iso> --ssh-key <pub>. Storage is interactive unless that box's disk serial is MEASURED; --unattended demands it and refuses otherwise. --dry-run prints the plan and the builder argv."}
+
+ :node-machine-probe-record
+ {:cmd ["nbb" "os/aiueos/scripts/record-node-machine-probe.cljs"]
+  :pass-args? true
+  :doc "Turn the hardware record a box wrote about itself (/var/log/aiueos-node-hwprobe.txt) into :measured fields in the machine registry. --machine <id> --probe <file>. Writes only fields the probe actually carries; refuses the file rather than recording a measured nil."}
+
+ :node-installer-test
+ {:cmd ["nbb" "os/aiueos/scripts/test-node-installer.cljs"]
+  :doc "The per-machine node installer (ADR-0214), offline: the registry typed rather than parsed, every driver and ingest refusal by named reason, the probe block EXECUTED and parsed, and the loop closed -- ingest a probe into a registry copy, then require the driver to build the unattended stick with the serial it carried. 55 cases, no ISO, no block device."}
+
  :install-usb-build
  {:cmd ["nbb" "os/aiueos/scripts/run-install-usb-build.cljs"]
   :doc "Build + verify the install USB image and its chain receipt (gate I1). Pass --guided for the stick that carries no intent and asks at the machine (ADR-0210); otherwise an intent must already exist and is never auto-created."}
