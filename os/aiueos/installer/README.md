@@ -1,3 +1,67 @@
+# aiueos installer
+
+Three things live here: the **guided installer** (the screens a person answers
+at the machine), the **encrypted local-data image format**, and the
+**second-disk installer mechanism** that the whole chain writes through.
+
+## Guided installer (ADR-0208)
+
+The ubuntu-server installer's shape -- a screen sequence, an answer file, and
+`interactive-sections` -- on this repository's admission rules. It is an
+AUTHORING tool: it opens no block device, writes no partition table and erases
+nothing. What it produces is one `aiueos.install-intent.v1`, the artifact that
+already existed, which then goes through every guard described further down
+this file unchanged.
+
+```sh
+# ask every screen, write the intent and the answer file that reproduces it
+nbb os/aiueos/installer/live/guided-install.cljs \
+  --release-receipt build/aiueos/aiueos-x86_64-build-receipt.json \
+  --out-intent install-intent.json --out-answers install-answers.json
+
+# replay that run on the next identical machine, asking nothing
+nbb os/aiueos/installer/live/guided-install.cljs \
+  --answers install-answers.json \
+  --release-receipt build/aiueos/aiueos-x86_64-build-receipt.json \
+  --out-intent install-intent.json
+
+# take everything from the file except the disk, which is this machine's
+nbb os/aiueos/installer/live/guided-install.cljs \
+  --answers install-answers.json --interactive-sections storage \
+  --release-receipt ... --out-intent install-intent.json
+```
+
+Screens: `network`, `storage`, `identity`, `ssh`, `confirm`. A section already
+present in the answer file is skipped unless `--interactive-sections` names it
+(`*` re-asks everything); `confirm` is asked whenever any other screen was.
+
+**The storage screen does not record the disk it lists.** subiquity's
+autoinstall admits `path: /dev/sda`; decision 2 of `install-v1.edn` does not,
+because a bare device name eventually names the wrong machine's disk. The pick
+is recorded as the MATCH it implies -- model, transport, inclusive capacity
+bounds, and optionally the serial digest -- and the emitted intent contains no
+`/dev/` path at all. On the target machine `install-live.cljs` re-derives the
+device from that match and refuses unless exactly one disk matches.
+
+Exit codes: `0` intent written, `2` refused with named reasons on stdout
+(`AIUEOS_GUIDED_REFUSE <reason>`), `3` could-not-answer -- no probe, or stdin
+ended mid-question. `3` is neither `0` nor `1` on purpose: a run that could not
+ask must not look like a run that asked and got answers.
+
+The answer file is validated **before** the first probe, so a malformed
+unattended run fails while the target disk is untouched.
+
+```sh
+nbb os/aiueos/scripts/test-guided-install.cljs   # 53 cases, offline
+```
+
+What is not claimed: no hardware run (the interactive path is measured against
+a piped answer script, which takes the same fd-0 code path as a terminal), no
+fleet gate, and the live-installer UKI does not launch this program yet -- it
+still expects an intent already on the USB.
+
+---
+
 # aiueos encrypted storage and second-disk installer (first slice)
 
 > Ported to `main` 2026-08-25 from unmerged branch commit `95719d66`
