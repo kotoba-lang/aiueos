@@ -115,6 +115,45 @@ the instruction count stayed `000001EA000003AC`, because a different multiply
 constant is the same instruction shape. The counter counts instructions; the
 guest checks the values.
 
+## The instrument is calibrated against silicon
+
+An icount number is only useful if it means what a real machine would count.
+It does. The same 127 bytes were executed on `gad` (Ubuntu 24.04.2, AMD RYZEN
+AI MAX+ 395, load1 0.29-0.37 throughout) by `os/aiueos/scripts/perf-parity-body.c`,
+which mmaps them RX and calls them with the artifact's own ABI
+(`rdi`/`rsi`/`rdx`, `r9` = fuel context, counter at `[r9+8]`):
+
+| instrument | per iteration |
+|---|---|
+| `objdump` of the 127 bytes, counted by hand | **15** |
+| QEMU TCG under `-icount shift=0,sleep=off` | **15.00** |
+| `perf stat -e instructions` on Zen5 silicon | **15.0041** |
+
+Three instruments, one number. So an aiueos-side icount count and a Linux-side
+perf count are the same unit, and the comparison this whole line of work is
+for becomes legible the day the aiueos side has a boundary to measure.
+
+Two further facts fall out of the disassembly. The self-recursion is compiled
+to a LOOP -- the back edge is `jmp` at 0x63, not a call -- and **three of the
+fifteen instructions are fuel accounting** (`cmp [r9+8],0` / `jne` / `dec
+[r9+8]`; the `ud2` is not executed). That is 20% of this loop body, measured,
+against the codegen ladder's standing "four fuel instructions per call" item
+which it has never been able to price on a loaded host.
+
+On silicon the loop also costs 2.0371 cycles per iteration (IPC 7.37). A ns
+figure is deliberately not quoted: the two sizes imply different clocks
+(3.96 GHz from the n=30 run's own cycles and task-clock), which is the Ryzen
+boost-state variance the codegen ladder already reports as unmeetable for its
+separation heuristic. Cycles and instructions are the defensible units here.
+
+**The harness's answer check earned its place.** The first version declared
+`rdx` a plain asm input, and the callee clobbers it (`lea rdx,[rbx+0x1]`), so
+gcc believed `acc` survived the call and stopped reloading it: rep 0 returned
+1305 and rep 1 returned 30, i.e. `limit`. `perf` reported this happily --
+830,458 instructions for 30 iterations against 824,456 for 60, the larger loop
+apparently cheaper. Only the value comparison caught it. A counter that is not
+checked against an oracle will report the shape of a run that did not happen.
+
 ## Two things that happened while landing, recorded rather than chased
 
 **`CLJC contract tests` is red on main and was red before this branch.** Run
