@@ -22,7 +22,7 @@
 ;; Exit 0 = a verified answer, 1 = an answer that did not verify or none
 ;; arrived, 2 = REFUSED (could not answer: port busy, no table, ...).
 (ns k16-job-probe
-  (:require ["node:dgram" :as dgram] ["node:fs" :as fs] [clojure.string :as str]))
+  (:require ["node:dgram" :as dgram] ["node:fs" :as fs] [kotoba.lang.text :as str]))
 
 (defn arg [flag d] (let [a (vec *command-line-args*) i (.indexOf a flag)]
                      (if (>= i 0) (nth a (inc i) d) d)))

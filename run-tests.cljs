@@ -41,7 +41,7 @@
 (ns run-tests
   (:require ["node:fs" :as fs]
             ["node:path" :as path]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [clojure.test :as t]
             [nbb.core :refer [await]]))
 

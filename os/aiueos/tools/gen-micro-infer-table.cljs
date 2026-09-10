@@ -15,7 +15,7 @@
 ;; Run with `--check` to verify the committed .kotoba still matches the C
 ;; matrix.  Exit 0 = identical, 1 = drifted, 2 = could not answer.
 (ns gen-micro-infer-table
-  (:require ["fs" :as fs] ["path" :as path] [clojure.string :as str]))
+  (:require ["fs" :as fs] ["path" :as path] [kotoba.lang.text :as str]))
 
 (def root (or (first (filter #(not (str/starts-with? % "--")) *command-line-args*)) "."))
 (def check? (some #(= % "--check") *command-line-args*))

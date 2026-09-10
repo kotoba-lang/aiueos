@@ -59,7 +59,7 @@
   (:require ["node:dgram" :as dgram]
             ["node:fs" :as fs]
             ["node:path" :as path]
-            [clojure.string :as str]))
+            [kotoba.lang.text :as str]))
 
 (def defaults
   {"listen" "0.0.0.0:9000"

@@ -15,7 +15,7 @@
   (:require ["child_process" :as cp]
             ["crypto" :as crypto]
             ["fs" :as fs]
-            [clojure.string :as str]))
+            [kotoba.lang.text :as str]))
 
 (def compiler-bin "../compiler/bin/kotoba-compiler")
 (def target "aarch64-aiueos-kernel-v1")

@@ -72,7 +72,7 @@
   (:require [grant.cloud :as cloud]
             [grant.json :as json]
             [aiueos.provider.cloud-own :as own]
-            [clojure.string :as str])
+            [kotoba.lang.text :as str])
   (:import [java.io InputStream]
            [java.net URI]
            [java.net.http HttpClient HttpClient$Redirect HttpClient$Version
@@ -314,7 +314,7 @@
                      (.timeout (Duration/ofMillis (limit opts :request-timeout-ms))))
             headers (:headers opts)
             with-type (if (and (:has-body? body)
-                               (not (some #(= "content-type" (str/lower-case (str %)))
+                               (not (some #(= "content-type" (str/lower (str %)))
                                           (keys headers))))
                         (.header ^HttpRequest$Builder base "content-type" "application/json")
                         base)

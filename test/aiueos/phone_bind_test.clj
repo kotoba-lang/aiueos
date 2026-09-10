@@ -5,7 +5,9 @@
   `clojure -M:phone-bind smoke` (and `pre-enroll`). These tests name the
   reasons a bind is refused so a silent pass cannot stand in for a phone."
   (:require [aiueos.phone-bind :as pb]
+            [aiueos.device-auth :as auth]
             [cacao.core :as cacao]
+            [kotoba.lang.text :as string]
             [clojure.test :refer [deftest is testing]]
             [grant.enroll :as enroll]))
 
@@ -278,3 +280,26 @@
 (deftest clojure-m-test-is-not-the-p1b-gate
   (is (nil? (System/getenv "AIUEOS_PHONE_BIND_COUNTED_UNRELATED_SUITE"))
       "do not count unrelated clojure -M:test as P1b; run clojure -M:phone-bind smoke"))
+
+(deftest the-label-advertises-exactly-the-vocabulary
+  ;; The chassis QR, setup.json and the plan document used to write the method
+  ;; list out by hand, and the copies drifted from device-auth's vocabulary.
+  ;; Deriving them is only half the fix: this pins that what a phone reads is
+  ;; the vocabulary, so widening one without the other cannot go unnoticed.
+  (is (= (vec (sort (map name auth/supported-methods)))
+         pb/advertised-methods))
+  ;; lexicographic, not numeric: "siwe-erc1271" sorts BEFORE "siwe-erc191"
+  ;; because 2 < 9 at the fourth digit. Pinned as a literal rather than
+  ;; recomputed, so the string a phone actually reads is in the test.
+  (is (= "passkey,phone-scan,siwe-erc1271,siwe-erc191"
+         pb/advertised-methods-csv)
+      "the exact string a phone camera reads off the chassis")
+  (let [qr (pb/chassis-qr {:did "did:aiueos:k16:one" :model "gmktec-k16"}
+                          "https://example.invalid")]
+    (is (string/includes?
+         qr ";auth=passkey,phone-scan,siwe-erc1271,siwe-erc191;"))
+    (is (string/includes? qr ";claim-secret=none")
+        "the label still carries no secret"))
+  (is (= pb/advertised-methods-csv
+         (:auth-methods (pb/setup-fields {:did "d" :model "m"} "http://e")))
+      "setup.json and the chassis label agree"))

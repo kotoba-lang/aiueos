@@ -10,7 +10,7 @@
             [aiueos.provider.cloud :as provider]
             [aiueos.provider.cloud-own :as own]
             [clojure.java.io :as io]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing]]
             [grant.cloud :as cloud]
             [tls.cert :as cert]
@@ -81,7 +81,7 @@
                       (handle [_ exchange]
                         (swap! hits conj (str (.getPath (.getRequestURI ^HttpExchange exchange))))
                         (swap! headers conj
-                               (into {} (map (fn [[k v]] [(str/lower-case (str k)) (vec v)]))
+                               (into {} (map (fn [[k v]] [(str/lower (str k)) (vec v)]))
                                      (.getRequestHeaders ^HttpExchange exchange)))
                         (handler exchange))))
     (.start server)

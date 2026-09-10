@@ -29,7 +29,7 @@
   every local build claim the property the document exists to establish."
   (:require [aiueos.tcb :as tcb]
             [clojure.java.io :as io]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [kotoba.security.supply-chain :as supply-chain]))
 
 (defn gitlibs-root

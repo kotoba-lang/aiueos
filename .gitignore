@@ -7,3 +7,6 @@ out/
 __pycache__/
 node_modules/
 package-lock.json
+
+# nbb dependency cache -- a build artifact, not source
+.nbb/

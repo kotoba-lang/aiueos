@@ -28,7 +28,7 @@
 (require '["node:child_process" :as cp]
          '["node:fs" :as fs]
          '["node:path" :as path]
-         '[clojure.string :as str])
+         '[kotoba.lang.text :as str])
 
 (def argv (vec (drop 2 (js->clj (.-argv js/process)))))
 

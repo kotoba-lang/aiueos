@@ -5,7 +5,28 @@
 ;; bare-metal build/smoke chain under os/aiueos/scripts stays as it is — those
 ;; are the OS's own dependency-minimal build tools (sh + python stdlib only),
 ;; and pulling them behind nbb would put Node in the boot-evidence path.
-{:usb-boot-smoke
+{:live-network-smoke
+ {:cmd ["nbb" "os/aiueos/scripts/smoke-qemu-live-network.cljs"]
+  :pass-args? true
+  :doc "Boot the live installer under OVMF with and without a NIC; require a lease in one and no-interface in the other."}
+
+ :device-attest-agent
+ {:cmd ["nbb" "--classpath" "../grant/src:../text/src"
+        "os/aiueos/scripts/device-attest-agent.cljs"]
+  :pass-args? true
+  :doc "Prove possession of this device's key against a control plane. --did --endpoint --key [--watch]."}
+
+ :device-attest-agent-test
+ {:cmd ["nbb" "--classpath" "../grant/src:../text/src"
+        "os/aiueos/scripts/device-attest-agent-test.cljs"]
+  :doc "Sign the way the agent does, verify the way the Worker does; require every binding to hold."}
+
+ :device-attest-loop-test
+ {:cmd ["nbb" "--classpath" "../grant/src:../text/src"
+        "os/aiueos/scripts/device-attest-agent-loop-test.cljs" "../grant/src:../text/src"]
+  :doc "The whole claim loop against a server that verifies like the plane, in both directions."}
+
+ :usb-boot-smoke
  {:cmd ["nbb" "os/aiueos/scripts/smoke-qemu-usb-boot.cljs"]
   :doc "Boot the release image over both transports and require identical evidence."}
 

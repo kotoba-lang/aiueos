@@ -20,7 +20,7 @@
 ;; file is created 0600 and the seed is never echoed. `--emit-seed` is refused
 ;; outside NODE_ENV=test.
 
-(require '[clojure.string :as str])
+(require '[kotoba.lang.text :as str])
 
 (def fs (js/require "node:fs"))
 (def crypto (js/require "node:crypto"))

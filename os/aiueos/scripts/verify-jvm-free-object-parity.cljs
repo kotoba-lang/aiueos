@@ -13,7 +13,7 @@
 ;; its own exit code rather than reporting a clean parity.
 (ns verify-jvm-free-object-parity
   (:require [clojure.edn :as edn]
-            [clojure.string :as string]
+            [kotoba.lang.text :as string]
             ["node:child_process" :as child]
             ["node:crypto" :as crypto]
             ["node:fs" :as fs]

@@ -26,7 +26,7 @@
 ;; This never picks a device on its own. There is deliberately no "find the
 ;; USB stick" mode: the one-in-ten time it guesses wrong, it destroys a disk.
 
-(require '[clojure.string :as str])
+(require '[kotoba.lang.text :as str])
 
 (def fs (js/require "node:fs"))
 (def path (js/require "node:path"))

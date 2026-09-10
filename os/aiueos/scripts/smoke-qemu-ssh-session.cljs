@@ -10,7 +10,7 @@
 ;; kotoba-lang/org-ietf-ssh, so a different implementation logging in is the
 ;; proof the kernel's login is real.
 
-(require '[clojure.string :as str]
+(require '[kotoba.lang.text :as str]
          '[ssh.transport :as t] '[ssh.kex :as kex]
          '[ssh.keys :as keys] '[ssh.record :as rec] '[ssh.userauth :as ua]
          '[ssh.connection :as con])

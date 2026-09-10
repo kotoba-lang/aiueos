@@ -16,7 +16,7 @@
   forever, but also not duplicated inline in this namespace.
 
   JVM-only (`#?(:clj ...)` throughout) -- file I/O, same as `aiueos.launcher`."
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             #?(:clj [grant.anchors :as anchors])
             #?(:clj [grant.key-lifecycle :as kl])
             #?(:clj [clojure.java.io :as io])

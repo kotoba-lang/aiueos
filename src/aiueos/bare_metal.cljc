@@ -14,7 +14,7 @@
 
   Command: `clojure -M:bare-metal cloud`
   CertVerify: `clojure -M:bare-metal cert-verify`"
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             #?(:clj [clojure.java.io :as io])
             #?(:clj [clojure.pprint :as pprint])))
 

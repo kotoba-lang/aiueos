@@ -19,7 +19,7 @@
 ;; KEXINIT and KEX_ECDH_INIT so the guest can post a buffer between them. The
 ;; crypto and byte formats are real.
 
-(require '[clojure.string :as str]
+(require '[kotoba.lang.text :as str]
          '[ssh.transport :as t])
 
 (def fs (js/require "node:fs"))

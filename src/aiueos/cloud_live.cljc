@@ -58,7 +58,7 @@
   else."
   (:require [kotoba.security.information-flow :as sec-info-flow]
             [grant.cloud :as cloud]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             #?@(:clj [[aiueos.provider.cloud :as provider]
                       [clojure.edn :as edn]
                       [clojure.java.io :as io]
@@ -175,7 +175,7 @@
   [{:keys [leg outcome reason why measured fault]}]
   (str "LEG "
        (str/join (take 20 (concat (name leg) (repeat " "))))
-       (str/join (take 12 (concat (str/upper-case (name outcome)) (repeat " "))))
+       (str/join (take 12 (concat (str/upper (name outcome)) (repeat " "))))
        ;; The fault leads when there is one, for the same reason `outcome-of`
        ;; prefers it: a refused pin arrives with the reason `:response-unmeasured`
        ;; attached, and a line reading "REFUSED :response-unmeasured" would

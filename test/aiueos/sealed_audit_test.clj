@@ -3,7 +3,7 @@
             [aiueos.sealed-audit :as sealed]
             [clojure.edn :as edn]
             [clojure.java.io :as io]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is]])
   (:import [java.nio.file Files]))
 

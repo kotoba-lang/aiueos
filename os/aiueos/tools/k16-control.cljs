@@ -49,7 +49,7 @@
 (ns k16-control
   (:require ["node:dgram" :as dgram]
             ["node:fs" :as fs]
-            [clojure.string :as str]))
+            [kotoba.lang.text :as str]))
 
 (def defaults
   {"to" "10.10.10.2:9000"

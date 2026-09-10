@@ -28,4 +28,17 @@
 ;; these scripts from a worktree needs an explicit --classpath; that is a
 ;; property of the layout, not a defect in this file, and it is written down
 ;; here because the failure is a missing namespace with no hint of why.
-{:paths ["src" "resources" "test" "../text/src" "../org-ietf-ssh/src"]}
+{:paths ["src" "resources" "test" "../text/src" "../org-ietf-ssh/src"]
+ :deps {
+        ;; Declared HERE and not only in deps.edn: nbb reads nbb.edn and does NOT
+        ;; read deps.edn or bb.edn, and the .cljs in this repo are run as
+        ;; bare `nbb <file>`. A coordinate they cannot see is not a
+        ;; declaration. sha and :paths are COPIED from deps.edn.
+        ;;
+        ;; org-ietf-ssh is NOT declared here as a coordinate, only as a sibling
+        ;; path above. Naming a :git/sha needs a sha someone has checked, and
+        ;; deps.edn pins have no gate the way west pins do (CLAUDE.md), so an
+        ;; invented one would be worse than the path that is already measured to
+        ;; work. Giving it the same treatment as text is follow-up, not a
+        ;; conflict resolution.
+        io.github.kotoba-lang/text {:git/sha "73bdb13ae7a3d004b44bca08be03a3191157a38f"}}}

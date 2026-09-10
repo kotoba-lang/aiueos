@@ -16,7 +16,7 @@
   scanout-two is ADR-0095. Guest broker is ADR-0096. Guest session
   restore is ADR-0098. Native Phase 6 compositor leftover remains."
   (:require [aiueos.compositor.ime :as ime]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [kami.webgpu.ir :as ir]
             [window-session-state :as wss]
             [window-session-state.compositor :as compositor]

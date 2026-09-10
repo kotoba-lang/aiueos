@@ -30,7 +30,7 @@
             [aiueos.vm :as vm]
             #?(:clj [clojure.edn :as edn])
             #?(:clj [clojure.java.io :as io])
-            #?(:clj [clojure.string :as str])))
+            #?(:clj [kotoba.lang.text :as str])))
 
 #?(:clj
    (defn read-edn-file

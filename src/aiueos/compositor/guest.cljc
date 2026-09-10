@@ -5,7 +5,7 @@
   Hosted `clojure -M:compositor wm` / `ime` remain the named reds.
   Evidence command is `nbb --classpath src scripts/compositor-guest.cljs`
   plus a guest profile. QEMU/firmware/serial unanswered is exit 3."
-  (:require [clojure.string :as str]))
+  (:require [kotoba.lang.text :as str]))
 
 (def gate-prefix
   "nbb --classpath src scripts/compositor-guest.cljs")

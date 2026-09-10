@@ -41,7 +41,7 @@
 ;; this tree emits x86-64 kernel objects only, and the parser is AT&T syntax.
 (ns verify-loop-parameter-homes
   (:require [clojure.edn :as edn]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             ["node:child_process" :as child]
             ["node:fs" :as fs]
             ["node:path" :as path]))
