@@ -281,6 +281,37 @@
                 :chromeos "same"
                 :note "receipts are a property neither reference has: a fault
                        produces a signed artifact rather than a dmesg line"}
+  ;; Added 2026-09-10 by comparison against a running Ubuntu Server (gad,
+  ;; 24.04.2): that host exposes rtc, ptp and pps device classes and runs
+  ;; systemd-timesyncd, and this taxonomy had no row for a clock at all. The
+  ;; capability is not absent from AIUEOS -- uefi/main.c computes
+  ;; `info.tsc_hz = elapsed * 10ULL` over a stall and passes it in boot info,
+  ;; main.c re-exports it as AIUEOS_DWC_TSC_HZ and aiueos_wait_seconds()
+  ;; converts cycles to seconds with it. What is absent is any way to SCORE it:
+  ;; `markers-in` only recognises /AIUEOS_[A-Z0-9_]+_OK/, and the calibration
+  ;; emits no such marker, so no evidence log can carry it and no row could
+  ;; count it.
+  ;;
+  ;; :TSC_CALIBRATED is therefore a PHANTOM on purpose -- the taxonomy naming a
+  ;; marker the tree does not have, which os-coverage reports and never scores.
+  ;; It changes no percentage (a phantom is outside :declared), which is the
+  ;; honest outcome: nothing new was measured, a hole was named. Closing it is
+  ;; one serial line in the kernel where tsc_hz arrives, and then this row
+  ;; starts scoring on its own.
+  ;;
+  ;; :APIC_TIMER is deliberately NOT repeated here; it is scored under
+  ;; :interrupts, and a marker counted in two subsystems would be counted twice.
+  :time        {:relevance :core
+                :markers [:TSC_CALIBRATED]
+                :linux "RTC, clocksource selection with TSC-vs-HPET arbitration,
+                        NTP via systemd-timesyncd, PTP and PPS device classes"
+                :chromeos "same"
+                :note "AIUEOS calibrates the TSC in the loader and carries the
+                       frequency in boot info, but announces nothing, so every
+                       timing claim downstream has to say
+                       `timing=logical-unqualified` (the PLC RT marker does).
+                       This row exists to keep that visible until a marker
+                       exists."}
   :smp         {:relevance :core
                 :markers [:SMP :SCHEDULER :SCHEDULER_CR3]
                 :linux "CFS/EEVDF, cgroups, NUMA"
@@ -375,7 +406,20 @@
   :realtime    {:relevance :context
                 :markers [:PLC_RT]
                 :linux "PREEMPT_RT"
-                :chromeos "not offered"}
+                :chromeos "not offered"
+                ;; The only subsystem that carried a :linux comparison and no
+                ;; :note (found 2026-09-10 by reading every row with the EDN
+                ;; reader; a regex over the same file matched 8 of 18 and would
+                ;; have reported none).
+                :note "PREEMPT_RT makes a general-purpose kernel bounded by
+                       shrinking its non-preemptible sections; AIUEOS is
+                       bounded by construction and offers one fixed-priority
+                       preemptive profile instead. So this row is :context, not
+                       :core -- the comparison is real but the shapes do not
+                       line up, and PLC_RT passing says the profile ran, not
+                       that a general kernel was made real-time. The measured
+                       run reports timing=logical-unqualified for exactly that
+                       reason (see :time)."}
   :display     {:relevance :context
                 :markers [:FRAMEBUFFER :GOP_DISCOVERY :GOP_HANDOFF :VIRTIO_GPU
                           :VIRTIO_INPUT :DESKTOP_SURFACE :DESKTOP_INPUT
