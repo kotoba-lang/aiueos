@@ -203,6 +203,38 @@ node --test os/aiueos/installer/test/*.test.mjs
 Tests use temporary regular files and injected fake devices. They never open a
 real block device.
 
+## The bundled Node.js runtime, and what "pinned" means
+
+`smoke-qemu-install.cljs` and the node agent both want a linux-x64 Node binary,
+and the prerequisite hint says "download the pinned linux-x64 node binary (see
+installer README)". Until 2026-09-10 this README named no version and no digest,
+so the hint pointed at a file that did not answer it and the next person picked
+a different runtime. What is actually used is recorded here.
+
+    version   v26.7.0
+    tarball   https://nodejs.org/dist/v26.7.0/node-v26.7.0-linux-x64.tar.xz
+    tarball   sha256 982aa24dd8be4c889c6a8ab337ddff3b0896645b20f4239356e80552c16277ee
+    bin/node  sha256 ad19784f7e90ba789a099eccba77ede8dc90a778c424f1c10a70fed3ff903fdc
+    nbb       1.5.212  (npm install nbb --prefix build/aiueos/nbb-bundle)
+
+```sh
+cd <scratch>
+curl -fsSLO https://nodejs.org/dist/v26.7.0/SHASUMS256.txt
+curl -fsSLO https://nodejs.org/dist/v26.7.0/node-v26.7.0-linux-x64.tar.xz
+grep node-v26.7.0-linux-x64.tar.xz SHASUMS256.txt | shasum -a 256 -c -   # verify, then extract
+tar xJf node-v26.7.0-linux-x64.tar.xz node-v26.7.0-linux-x64/bin/node
+install -m 755 node-v26.7.0-linux-x64/bin/node <repo>/build/aiueos/node-linux-x64
+```
+
+Verify the tarball against `SHASUMS256.txt` from the same directory rather than
+against the line above: this README is a record of what was used, and a digest
+copied into prose is a digest nobody re-checked. The `bin/node` digest is here
+for the other direction — to tell whether a `build/aiueos/node-linux-x64` that
+is already sitting in a tree is this runtime or some other one.
+
+This is a version, not a requirement. Another runtime may work; it will produce
+a different bundle digest, and the receipt will say so.
+
 ## Offline Linux bundle
 
 `offline-linux-installer.sh` runs the same installer with a bundled official
