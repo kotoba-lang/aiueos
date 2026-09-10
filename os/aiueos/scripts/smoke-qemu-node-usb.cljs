@@ -130,7 +130,11 @@
     image))
 
 (defn- boot
-  "QEMU runs ASYNCHRONOUSLY on purpose. spawnSync blocks this process's event
+  "Writes are NOT discarded: `snapshot=on` would throw away the state
+  partition, which is the thing the second boot exists to read. The gate works
+  on a copy so the built artifact stays as it was built.
+
+  QEMU runs ASYNCHRONOUSLY on purpose. spawnSync blocks this process's event
   loop for the whole boot, and the plane the guest is trying to reach is
   served by that same loop -- so a synchronous boot cannot answer the very
   request it exists to receive. Measured: the guest booted, minted a did, and
@@ -146,7 +150,7 @@
                     (clj->js ["-machine" "q35,accel=tcg" "-m" "1536" "-smp" "2"
                               "-drive" (str "if=pflash,format=raw,readonly=on,file=" ovmf)
                               "-drive" (str "if=pflash,format=raw,file=" vars)
-                              "-drive" (str "file=" image ",format=raw,if=none,id=stick,snapshot=on")
+                              "-drive" (str "file=" image ",format=raw,if=none,id=stick")
                               "-device" "nvme,drive=stick,serial=AIUEOSNODE"
                               "-netdev" "user,id=n0" "-device" "virtio-net-pci,netdev=n0"
                               "-display" "none" "-serial" "stdio" "-no-reboot"])
@@ -172,26 +176,49 @@
 (-> (start-plane :node seen)
     (.then
      (fn [[server port]]
-       (let [image (build-node-usb port (path/join out-dir "aiueos-node-usb.img"))]
-         (println (str "built " image "; booting…"))
+       (let [built (build-node-usb port (path/join out-dir "aiueos-node-usb.img"))
+             ;; a copy, because these boots WRITE to the stick
+             image (path/join out-dir "aiueos-node-usb.boot.img")]
+         (fs/copyFileSync built image)
+         (println (str "built " built "; booting…"))
          (-> (boot image)
              (.then
-              (fn [out]
-                (let [tail-of (fn [] (str/join "\n" (take-last 15 (str/split-lines out))))]
-                  (.close server)
-                  (println (str "  serial: " (count out) " bytes"))
-                  (check! "the-stick-boots" (str/includes? out "AIUEOS_LIVE_INIT start") (tail-of))
-                  (check! "it-gets-a-lease" (str/includes? out "AIUEOS_LIVE_NET_LEASE") (tail-of))
+              (fn [out1]
+                (let [tail1 (fn [] (str/join "\n" (take-last 15 (str/split-lines out1))))]
+                  (check! "the-stick-boots" (str/includes? out1 "AIUEOS_LIVE_INIT start") (tail1))
+                  (check! "it-gets-a-lease" (str/includes? out1 "AIUEOS_LIVE_NET_LEASE") (tail1))
+                  (check! "it-mounts-its-state-partition"
+                          (str/includes? out1 "AIUEOS_LIVE_STATE /dev/") (tail1))
                   (check! "it-finds-the-node-payload"
-                          (str/includes? out "AIUEOS_LIVE_HANDOVER node-boot.cljs") (tail-of))
+                          (str/includes? out1 "AIUEOS_LIVE_HANDOVER node-boot.cljs") (tail1))
+                  (check! "the-first-boot-mints-a-durable-key"
+                          (some? (re-find #"AIUEOS_NODE_KEY minted durable " out1)) (tail1))
                   (check! "it-announces-a-did"
-                          (some? (re-find #"AIUEOS_NODE_DID did:key:z6Mk" out)) (tail-of))
+                          (some? (re-find #"AIUEOS_NODE_DID did:key:z6Mk" out1)) (tail1))
                   (check! "the-plane-claimed-it" (true? (:verified (first @seen))) (pr-str @seen))
                   (check! "the-did-matches-what-it-announced"
-                          (= (second (re-find #"AIUEOS_NODE_DID (\S+)" out)) (:did (first @seen)))
+                          (= (second (re-find #"AIUEOS_NODE_DID (\S+)" out1)) (:did (first @seen)))
                           (pr-str @seen))
-                  (check! "it-reports-claimable" (str/includes? out "AIUEOS_NODE_CLAIMABLE") (tail-of))
+                  (check! "it-reports-claimable" (str/includes? out1 "AIUEOS_NODE_CLAIMABLE") (tail1))
                   (check! "it-installed-nothing"
-                          (not (str/includes? out "AIUEOS_LIVE_HANDOVER install-live.cljs"))
+                          (not (str/includes? out1 "AIUEOS_LIVE_HANDOVER install-live.cljs"))
                           "a node stick ran the installer")
-                  (finish)))))))))
+                  (println "  rebooting the same stick…")
+                  (-> (boot image)
+                      (.then
+                       (fn [out2]
+                         (.close server)
+                         (let [tail2 (fn [] (str/join "\n" (take-last 15 (str/split-lines out2))))]
+                           (check! "the-second-boot-reuses-the-key"
+                                   (some? (re-find #"AIUEOS_NODE_KEY reused durable " out2)) (tail2))
+                           (check! "and-is-the-same-node"
+                                   (= (second (re-find #"AIUEOS_NODE_DID (\S+)" out1))
+                                      (second (re-find #"AIUEOS_NODE_DID (\S+)" out2)))
+                                   (str "boot1 "
+                                        (second (re-find #"AIUEOS_NODE_DID (\S+)" out1))
+                                        " boot2 "
+                                        (second (re-find #"AIUEOS_NODE_DID (\S+)" out2))))
+                           (check! "and-is-claimed-again"
+                                   (and (= 2 (count @seen)) (true? (:verified (second @seen))))
+                                   (pr-str @seen))
+                           (finish)))))))))))))

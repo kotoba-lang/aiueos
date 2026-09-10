@@ -63,6 +63,10 @@ USERLAND = ["/usr/bin/lsblk", "/usr/bin/findmnt", "/usr/sbin/blkid"]
 # The payload partition GUID make-install-usb-image.py stamps
 # (uuid5(NAMESPACE, "aiueos-install-payload-v1")). /init searches for it.
 PAYLOAD_PARTUUID = "6de0f34d-549a-5d00-92c2-df27f49691be"
+# The node stick's writable state partition (uuid5(NAMESPACE,
+# "aiueos-node-state-v1")). A node USB has one; an install USB does not, and
+# /init says which it found rather than assuming.
+NODE_STATE_PARTUUID = "6f9622db-44f5-5cea-8630-bbac5d26341e"
 
 # The shebang names busybox itself: at exec time /bin/sh does not exist yet
 # (busybox --install creates it two lines later), and a #!/bin/sh init dies
@@ -176,6 +180,27 @@ mount -o bind /payload /run/live/medium
 # erasing something.
 if [ -f /payload/NODE.JSN ]; then
   tar xzf /payload/NODE.TGZ -C /run || { echo AIUEOS_LIVE_NODE_EXTRACT_FAIL; poweroff -f; }
+  # The node's own writable state, if this stick has one. Reported in three
+  # states for the same reason the network is: a stick without the partition
+  # and a stick whose partition would not mount are different problems, and a
+  # node that silently fell back to tmpfs would mint a new identity every boot
+  # while looking like it had kept one.
+  mkdir -p /state
+  STATE=""
+  for dev in $(lsblk -rno PATH,TYPE 2>/dev/null | awk '$2=="part"{print $1}'); do
+    if [ "$(blkid -p -o value -s PART_ENTRY_UUID "$dev" 2>/dev/null)" = "__STATE_PARTUUID__" ]; then
+      STATE="$dev"
+      break
+    fi
+  done
+  if [ -z "$STATE" ]; then
+    echo AIUEOS_LIVE_STATE_ABSENT
+  elif mount -t vfat -o rw "$STATE" /state 2>/dev/null; then
+    echo "AIUEOS_LIVE_STATE $STATE"
+    export AIUEOS_NODE_STATE_DIR=/state
+  else
+    echo "AIUEOS_LIVE_STATE_MOUNT_FAIL $STATE"
+  fi
   cd /run/aiueos-node
   export AIUEOS_LIVE_MEDIA=/payload
   export AIUEOS_NODE_BUNDLE=/run/aiueos-node
@@ -198,7 +223,7 @@ rc=$?
 echo "AIUEOS_LIVE_EXIT rc=$rc"
 sync
 poweroff -f
-""".replace("__PAYLOAD_PARTUUID__", PAYLOAD_PARTUUID)
+""".replace("__PAYLOAD_PARTUUID__", PAYLOAD_PARTUUID).replace("__STATE_PARTUUID__", NODE_STATE_PARTUUID)
 
 EXTRACT_SCRIPT = r"""
 set -eu

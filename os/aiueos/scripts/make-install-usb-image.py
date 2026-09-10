@@ -50,6 +50,10 @@ NAMESPACE = uuid.UUID("18b3fb94-8713-54c4-9e3a-f0c78a88d192")
 DISK_GUID = uuid.uuid5(NAMESPACE, "aiueos-install-usb-disk-v1")
 PAYLOAD_GUID = uuid.uuid5(NAMESPACE, "aiueos-install-payload-v1")
 LIVE_ESP_GUID = uuid.uuid5(NAMESPACE, "aiueos-live-esp-v1")
+# The node's own writable state. A separate partition rather than a corner of
+# the payload: the payload is mounted read-only on purpose, and the filesystem
+# being written when the power goes should not be the one that boots.
+NODE_STATE_GUID = uuid.uuid5(NAMESPACE, "aiueos-node-state-v1")
 BASIC_DATA_TYPE = uuid.UUID("ebd0a0a2-b9e5-4433-87c0-68b6b72699c7")
 ESP_TYPE = uuid.UUID("c12a7328-f81f-11d2-ba4b-00a0c93ec93b")
 EPOCH = int(os.environ.get("SOURCE_DATE_EPOCH", "0"))
@@ -510,7 +514,13 @@ def build_node_image(args):
     esp_first = 2048
     payload_first = ((esp_first + esp_sectors + ALIGN - 1) // ALIGN) * ALIGN
     payload_last = payload_first + payload_sectors - 1
-    total = ((payload_last + 1 + GPT_ENTRY_SECTORS + 1 + ALIGN - 1) // ALIGN) * ALIGN
+    # p3: writable node state. FAT32 needs 65525 clusters, so it inherits the
+    # same floor the payload has -- the price of a filesystem every rescue
+    # environment can already read.
+    state_sectors = 68 * 1024 * 2
+    state_first = ((payload_last + 1 + ALIGN - 1) // ALIGN) * ALIGN
+    state_last = state_first + state_sectors - 1
+    total = ((state_last + 1 + GPT_ENTRY_SECTORS + 1 + ALIGN - 1) // ALIGN) * ALIGN
 
     disk = bytearray(total * SECTOR)
     disk[:SECTOR] = protective_mbr(total)
@@ -526,12 +536,23 @@ def build_node_image(args):
     entries[144:160] = PAYLOAD_GUID.bytes_le
     struct.pack_into("<QQQ", entries, 160, payload_first, payload_last, 0)
     entries[184:184 + len(payload_name)] = payload_name
+    state_name = "aiueos node state".encode("utf-16le")
+    entries[256:272] = BASIC_DATA_TYPE.bytes_le
+    entries[272:288] = NODE_STATE_GUID.bytes_le
+    struct.pack_into("<QQQ", entries, 288, state_first, state_last, 0)
+    entries[312:312 + len(state_name)] = state_name
     entries_crc = binascii.crc32(entries) & 0xFFFFFFFF
 
     disk[esp_first * SECTOR:(esp_first + esp_sectors) * SECTOR] = make_live_esp(esp_sectors, uki)
     disk[payload_first * SECTOR:(payload_last + 1) * SECTOR] = \
         make_payload_fat32(payload_sectors, files, payload_first,
                            names=["NODE.JSN", "NODE.TGZ", "SHA256S.TXT", "README.TXT"])
+    # Empty writable volume: one root entry so the FAT is valid, and otherwise
+    # free space for the key the node mints on its first boot.
+    disk[state_first * SECTOR:(state_last + 1) * SECTOR] = make_payload_fat32(
+        state_sectors,
+        {"README.TXT": b"aiueos node state. The device key lives here.\r\n"},
+        state_first, names=["README.TXT"])
     disk[2 * SECTOR:(2 + GPT_ENTRY_SECTORS) * SECTOR] = entries
     disk[SECTOR:2 * SECTOR] = gpt_header(1, total - 1, 2, entries_crc, total)
     backup_entries_lba = total - 1 - GPT_ENTRY_SECTORS
@@ -545,7 +566,10 @@ def build_node_image(args):
         "boot": {"mode": "live-node", "espFirstLba": esp_first, "espSectors": esp_sectors,
                  "uki": {"bytes": len(uki), "sha256": sha256_bytes(uki)}},
         "disk": {"bytes": len(disk), "sha256": sha256_bytes(bytes(disk))},
-        "node": {"endpoint": args.endpoint, "keyDurability": "ephemeral-tmpfs"},
+        "node": {"endpoint": args.endpoint,
+                 "keyDurability": "stick-state-partition",
+                 "stateGuid": str(NODE_STATE_GUID),
+                 "stateFirstLba": state_first, "stateSectors": state_sectors},
         "payload": {"firstLba": payload_first, "lastLba": payload_last,
                     "type": str(BASIC_DATA_TYPE), "guid": str(PAYLOAD_GUID),
                     "files": {n: {"bytes": len(files[n]), "sha256": sha256_bytes(files[n])}
