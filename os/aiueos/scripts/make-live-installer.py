@@ -218,7 +218,7 @@ export AIUEOS_LIVE_PAYLOAD_DEV="$PAYLOAD"
 export AIUEOS_LIVE_MEDIA=/payload
 export PATH=/run/aiueos-installer/bin:$PATH
 echo AIUEOS_LIVE_HANDOVER install-live.cljs
-./node-linux-x64 nbb-bundle/node_modules/nbb/cli.js install-live.cljs
+./node-linux-x64 nbb-bundle/node_modules/nbb/cli.js --classpath /run/aiueos-installer/cp install-live.cljs
 rc=$?
 echo "AIUEOS_LIVE_EXIT rc=$rc"
 sync

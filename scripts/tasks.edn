@@ -148,6 +148,10 @@
  {:cmd ["nbb" "os/aiueos/scripts/test-provision-record.cljs"]
   :doc "SSH provisioning record: host key derived to the RFC 8032 vector, authorized key = the intent's, injected-seed and non-ed25519 and tampered-intent refusals. Gate I4 provisioning half, offline."}
 
+ :install-bundle-test
+ {:cmd ["nbb" "os/aiueos/scripts/test-install-bundle.cljs"]
+  :doc "The install USB bundle EXECUTED, not merely built (ADR-0209): assemble it, extract it, and run every bundled entry point from inside it with only what the stick carries. Control: the same assembly without the classpath must fail to load. 17 cases, offline."}
+
  :install-usb-build
  {:cmd ["nbb" "os/aiueos/scripts/run-install-usb-build.cljs"]
   :doc "Create the install intent if missing, then build + verify the install USB image and its chain receipt (gate I1)."}
