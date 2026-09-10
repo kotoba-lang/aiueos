@@ -169,6 +169,24 @@ mount -t tmpfs tmpfs /run
 # system disk without touching the scope-frozen backend.
 mkdir -p /run/live/medium
 mount -o bind /payload /run/live/medium
+# A stick carries one of two payloads, and which one decides what this boot is
+# for. NODE.JSN means "become a claimable node"; INSTALL.TGZ means "write a
+# system to a disk". They are checked in that order and never both run: an
+# installer that also enrolled would make the enrolment a side effect of
+# erasing something.
+if [ -f /payload/NODE.JSN ]; then
+  tar xzf /payload/NODE.TGZ -C /run || { echo AIUEOS_LIVE_NODE_EXTRACT_FAIL; poweroff -f; }
+  cd /run/aiueos-node
+  export AIUEOS_LIVE_MEDIA=/payload
+  export AIUEOS_NODE_BUNDLE=/run/aiueos-node
+  export PATH=/run/aiueos-node/bin:$PATH
+  echo AIUEOS_LIVE_HANDOVER node-boot.cljs
+  ./node-linux-x64 nbb-bundle/node_modules/nbb/cli.js --classpath /run/aiueos-node/cp node-boot.cljs
+  rc=$?
+  echo "AIUEOS_LIVE_EXIT rc=$rc"
+  sync
+  poweroff -f
+fi
 tar xzf /payload/INSTALL.TGZ -C /run || { echo AIUEOS_LIVE_BUNDLE_EXTRACT_FAIL; poweroff -f; }
 cd /run/aiueos-installer
 export AIUEOS_LIVE_PAYLOAD_DEV="$PAYLOAD"

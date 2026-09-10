@@ -5,7 +5,24 @@
 ;; bare-metal build/smoke chain under os/aiueos/scripts stays as it is — those
 ;; are the OS's own dependency-minimal build tools (sh + python stdlib only),
 ;; and pulling them behind nbb would put Node in the boot-evidence path.
-{:live-network-smoke
+{:node-usb-image
+ {:cmd ["python3" "os/aiueos/scripts/make-install-usb-image.py" "node-image"]
+  :pass-args? true
+  :doc "Build a bootable node USB (live UKI + node payload). --live-uki --endpoint --classpath --node-binary --nbb-dir --output."}
+
+ :node-usb-smoke
+ {:cmd ["nbb" "--classpath" "../grant/src:../text/src:../sekisho/src"
+        "os/aiueos/scripts/smoke-qemu-node-usb.cljs"]
+  :pass-args? true
+  :doc "Build a stick pointed at a local plane, boot it under OVMF, and require the plane to claim it."}
+
+ :node-boot-test
+ {:cmd ["nbb" "--classpath" "../grant/src:../text/src:../sekisho/src"
+        "os/aiueos/scripts/node-boot-test.cljs"]
+  :pass-args? true
+  :doc "Everything the booted stick does after the network is up, without the boot. Both directions."}
+
+ :live-network-smoke
  {:cmd ["nbb" "os/aiueos/scripts/smoke-qemu-live-network.cljs"]
   :pass-args? true
   :doc "Boot the live installer under OVMF with and without a NIC; require a lease in one and no-interface in the other."}

@@ -113,7 +113,7 @@ def dirent(name, attr, cluster, size=0):
     return bytes(entry)
 
 
-def make_payload_fat32(total_sectors, files, first_lba=PAYLOAD_FIRST):
+def make_payload_fat32(total_sectors, files, first_lba=PAYLOAD_FIRST, names=None):
     """A FAT32 volume with the given {8.3-name: bytes} in the root directory.
     Same construction as the release ESP (make-release-image.py make_fat32),
     generalized to arbitrary root files and an adaptive cluster size so the
@@ -173,7 +173,10 @@ def make_payload_fat32(total_sectors, files, first_lba=PAYLOAD_FIRST):
         return first
 
     root = bytearray()
-    for name in PAYLOAD_NAMES:
+    # The install payload has a fixed set; a node payload has a different one.
+    # Taking the order from the caller rather than a module constant is what
+    # lets one FAT builder serve both without either guessing.
+    for name in (names or PAYLOAD_NAMES):
         data = files[name]
         root += dirent(name, 0x20, allocate(data), len(data))
     if len(root) > cluster_bytes:
@@ -418,6 +421,142 @@ def make_bundle_tgz(installer_dir, scripts_dir, intent_bytes, receipt_bytes, nod
     return buffer.getvalue()
 
 
+NODE_README = """aiueos node USB
+
+Boots the live environment, brings up a network, mints a device identity and
+answers its enrolment challenge. It is NOT an installer: it writes nothing to
+any internal disk.
+
+The device key is generated into a tmpfs, so it does not survive a reboot --
+this stick makes a claimable box, not a durable node identity. See
+os/aiueos/scripts/node-boot.cljs.
+"""
+
+
+def make_node_bundle_tgz(scripts_dir, classpath_dirs, node_binary, nbb_dir):
+    """The payload a node USB carries: the boot entry, the attest agent, and
+    the pure sources both of them decide with -- not restated here, copied from
+    the repositories that own them."""
+    buffer = io.BytesIO()
+    entries = []
+
+    def add(name, data, mode):
+        entries.append(("aiueos-node/" + name, data, mode))
+
+    for name in ("node-boot.cljs", "device-attest-agent.cljs"):
+        add(name, (Path(scripts_dir) / name).read_bytes(), 0o644)
+    for src in classpath_dirs:
+        base = Path(src)
+        for path in sorted(base.rglob("*.cljc")) + sorted(base.rglob("*.cljs")):
+            add("cp/" + path.relative_to(base).as_posix(), path.read_bytes(), 0o644)
+    if node_binary:
+        add("node-linux-x64", Path(node_binary).read_bytes(), 0o755)
+    if nbb_dir:
+        base = Path(nbb_dir)
+        for path in sorted(base.rglob("*")):
+            if path.is_file() and ".bin" not in path.parts:
+                add("nbb-bundle/node_modules/" + path.relative_to(base).as_posix(),
+                    path.read_bytes(), 0o644)
+    add("bin/node", b'#!/bin/sh\nDIR=$(dirname "$(readlink -f "$0")")/..\n'
+                    b'exec "$DIR/node-linux-x64" "$@"\n', 0o755)
+    add("bin/nbb", b'#!/bin/sh\nDIR=$(dirname "$(readlink -f "$0")")/..\n'
+                   b'exec "$DIR/node-linux-x64" "$DIR/nbb-bundle/node_modules/nbb/cli.js" "$@"\n',
+        0o755)
+
+    with gzip.GzipFile(fileobj=buffer, mode="wb", mtime=EPOCH) as gz:
+        with tarfile.open(fileobj=gz, mode="w", format=tarfile.USTAR_FORMAT) as tar:
+            for name, data, mode in sorted(entries):
+                info = tarfile.TarInfo(name)
+                info.size = len(data)
+                info.mode = mode
+                info.mtime = EPOCH
+                tar.addfile(info, io.BytesIO(data))
+    return buffer.getvalue()
+
+
+def protective_mbr(total_sectors):
+    """A GPT protective MBR with no boot code. The install USB copies the
+    release image's, which carries a BIOS refusal stub; a node stick has no
+    release image to copy from, so it gets the plain protective entry."""
+    mbr = bytearray(SECTOR)
+    mbr[446 + 4] = 0xEE
+    struct.pack_into("<II", mbr, 446 + 8, 1, min(total_sectors - 1, 0xFFFFFFFF))
+    mbr[510:512] = b"\x55\xaa"
+    return bytes(mbr)
+
+
+def build_node_image(args):
+    """A bootable node USB: p1 is the live UKI, p2 is the node payload. No
+    release image and no install intent, because this stick installs nothing --
+    which is also why it can exist while the bare-metal image still does not
+    boot on real hardware."""
+    uki = Path(args.live_uki).read_bytes()
+    scripts_dir = Path(__file__).resolve().parent
+    classpath = [d for d in (args.classpath or []) if d]
+    bundle = make_node_bundle_tgz(scripts_dir, classpath, args.node_binary, args.nbb_dir)
+    config = json.dumps({"schema": "aiueos.node-config.v1",
+                         "endpoint": args.endpoint,
+                         "intervalSeconds": args.interval}, indent=2, sort_keys=True) + "\n"
+    files = {"NODE.JSN": config.encode("utf-8"), "NODE.TGZ": bundle}
+    names = ["NODE.JSN", "NODE.TGZ"]
+    files["SHA256S.TXT"] = "".join(
+        "%s  %s\n" % (sha256_bytes(files[n]), n) for n in names).encode("ascii")
+    files["README.TXT"] = NODE_README.encode("utf-8")
+
+    content = sum(len(v) for v in files.values())
+    payload_sectors = ((content + content // 4) // SECTOR // ALIGN + 9) * ALIGN
+    payload_sectors = max(payload_sectors, 68 * 1024 * 2)
+    esp_sectors = max(((len(uki) * 2) // SECTOR // ALIGN + 2) * ALIGN, 68 * 1024 * 2)
+    esp_first = 2048
+    payload_first = ((esp_first + esp_sectors + ALIGN - 1) // ALIGN) * ALIGN
+    payload_last = payload_first + payload_sectors - 1
+    total = ((payload_last + 1 + GPT_ENTRY_SECTORS + 1 + ALIGN - 1) // ALIGN) * ALIGN
+
+    disk = bytearray(total * SECTOR)
+    disk[:SECTOR] = protective_mbr(total)
+
+    entries = bytearray(GPT_ENTRY_SECTORS * SECTOR)
+    esp_name = "aiueos live esp".encode("utf-16le")
+    entries[:16] = ESP_TYPE.bytes_le
+    entries[16:32] = LIVE_ESP_GUID.bytes_le
+    struct.pack_into("<QQQ", entries, 32, esp_first, esp_first + esp_sectors - 1, 0)
+    entries[56:56 + len(esp_name)] = esp_name
+    payload_name = "aiueos node payload".encode("utf-16le")
+    entries[128:144] = BASIC_DATA_TYPE.bytes_le
+    entries[144:160] = PAYLOAD_GUID.bytes_le
+    struct.pack_into("<QQQ", entries, 160, payload_first, payload_last, 0)
+    entries[184:184 + len(payload_name)] = payload_name
+    entries_crc = binascii.crc32(entries) & 0xFFFFFFFF
+
+    disk[esp_first * SECTOR:(esp_first + esp_sectors) * SECTOR] = make_live_esp(esp_sectors, uki)
+    disk[payload_first * SECTOR:(payload_last + 1) * SECTOR] = \
+        make_payload_fat32(payload_sectors, files, payload_first,
+                           names=["NODE.JSN", "NODE.TGZ", "SHA256S.TXT", "README.TXT"])
+    disk[2 * SECTOR:(2 + GPT_ENTRY_SECTORS) * SECTOR] = entries
+    disk[SECTOR:2 * SECTOR] = gpt_header(1, total - 1, 2, entries_crc, total)
+    backup_entries_lba = total - 1 - GPT_ENTRY_SECTORS
+    disk[backup_entries_lba * SECTOR:(backup_entries_lba + GPT_ENTRY_SECTORS) * SECTOR] = entries
+    disk[-SECTOR:] = gpt_header(total - 1, 1, backup_entries_lba, entries_crc, total)
+
+    Path(args.output).write_bytes(disk)
+    receipt = {
+        "schema": "aiueos.node-usb-receipt.v1",
+        "created": datetime.fromtimestamp(EPOCH, timezone.utc).isoformat().replace("+00:00", "Z"),
+        "boot": {"mode": "live-node", "espFirstLba": esp_first, "espSectors": esp_sectors,
+                 "uki": {"bytes": len(uki), "sha256": sha256_bytes(uki)}},
+        "disk": {"bytes": len(disk), "sha256": sha256_bytes(bytes(disk))},
+        "node": {"endpoint": args.endpoint, "keyDurability": "ephemeral-tmpfs"},
+        "payload": {"firstLba": payload_first, "lastLba": payload_last,
+                    "type": str(BASIC_DATA_TYPE), "guid": str(PAYLOAD_GUID),
+                    "files": {n: {"bytes": len(files[n]), "sha256": sha256_bytes(files[n])}
+                              for n in names}},
+    }
+    if args.receipt:
+        Path(args.receipt).write_text(json.dumps(receipt, indent=2, sort_keys=True) + "\n",
+                                      encoding="utf-8")
+    print(args.output)
+
+
 def gpt_header(current, backup, entries_lba, entries_crc, total_sectors):
     header = bytearray(SECTOR)
     last_usable = total_sectors - GPT_ENTRY_SECTORS - 2
@@ -643,13 +782,27 @@ def main():
     b.add_argument("--nbb-dir")
     b.add_argument("--live-uki")
     b.add_argument("--output", required=True)
+
     b.add_argument("--receipt", required=True)
+
+    n = sub.add_parser("node-image", help="bootable node USB: live UKI + node payload")
+    n.add_argument("--live-uki", required=True)
+    n.add_argument("--endpoint", required=True)
+    n.add_argument("--interval", type=int, default=15)
+    n.add_argument("--classpath", action="append",
+                   help="a source root to carry (repeatable): grant/src, text/src, sekisho/src")
+    n.add_argument("--node-binary", required=True)
+    n.add_argument("--nbb-dir", required=True)
+    n.add_argument("--receipt")
+    n.add_argument("--output", required=True)
     v = sub.add_parser("verify")
     v.add_argument("--image", required=True)
     v.add_argument("--release-image", required=True)
     args = parser.parse_args()
     if args.command == "build":
         build(args)
+    elif args.command == "node-image":
+        build_node_image(args)
     else:
         verify_image(args.image, args.release_image)
 
