@@ -36,6 +36,11 @@
 
 (def nonce "node-boot-nonce-3c81")
 
+;; Run 1's did, captured where run 3 can see it. Reading it out of `out` inside
+;; run 3 takes run TWO's output -- a different state dir, so a different did,
+;; and a failure that looks like the key was not reused when it was.
+(def run1-did (atom nil))
+
 (defn- raw-of-did [d] (js/Buffer.from (clj->js (didkey/public-key-of d))))
 
 ;; the plane's check, over grant's rule -- the node's did is whatever it minted
@@ -126,6 +131,7 @@
              (.then
               (fn [{:keys [code out]}]
                 (.close server)
+                (reset! run1-did (second (re-find #"AIUEOS_NODE_DID (\S+)" out)))
                 (check! "the-node-mints-a-did"
                         (some? (re-find #"AIUEOS_NODE_DID did:key:z6Mk" out))
                         (str/trim out))
@@ -133,9 +139,9 @@
                         (let [d (second (re-find #"AIUEOS_NODE_DID (\S+)" out))]
                           (and d (didkey/valid? d)))
                         (str/trim out))
-                (check! "it-says-the-key-is-ephemeral"
-                        (str/includes? out "AIUEOS_NODE_KEY generated-ephemeral")
-                        "a durable-looking marker would misreport a tmpfs key")
+                (check! "it-says-where-the-key-lives"
+                        (some? (re-find #"AIUEOS_NODE_KEY minted durable " out))
+                        "the first boot with a state dir should mint a durable key")
                 (check! "the-plane-claimed-it" (true? (:verified (first @seen)))
                         (pr-str @seen))
                 (check! "the-did-the-plane-saw-is-the-one-it-announced"
@@ -175,4 +181,25 @@
                                 (check! "the-plane-recorded-the-attempt"
                                         (false? (:verified (first @seen2)))
                                         (pr-str @seen2))
-                                (finish)))))))))))))))
+                                ;; ── run 3: the SAME state dir again. ──────
+                                ;; The property a claim depends on: an
+                                ;; identity that survives the boot that made
+                                ;; it. Without this, every reboot mints a new
+                                ;; did and the claim it was granted is for a
+                                ;; device that no longer exists.
+                                (let [seen3 (atom [])]
+                                  (-> (start-plane :node seen3)
+                                      (.then
+                                       (fn [server3]
+                                         (-> (run-node-boot (.-port (.address server3)) sd)
+                                             (.then
+                                              (fn [{:keys [out]}]
+                                                (.close server3)
+                                                (check! "a-second-boot-reuses-the-key"
+                                                        (some? (re-find #"AIUEOS_NODE_KEY reused durable " out))
+                                                        (str/trim out))
+                                                (check! "and-keeps-the-same-did"
+                                                        (= @run1-did
+                                                           (second (re-find #"AIUEOS_NODE_DID (\S+)" out)))
+                                                        (str "run 1 was " @run1-did))
+                                                (finish))))))))))))))))))))))

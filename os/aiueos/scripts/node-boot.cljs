@@ -11,13 +11,15 @@
 ;;   grant.device-attest   the one definition of what a device signs
 ;;   device-attest-agent   the loop itself, spawned as its own process
 ;;
-;; ⚠ THE KEY IS EPHEMERAL. It is generated into /run, which is a tmpfs, so a
-;; reboot produces a different key and therefore a different did. That is
-;; honest for a live stick and useless for a durable node: a claim binds an
-;; owner to a did, and a did that changes every boot cannot stay claimed.
-;; Making it durable means writing the key somewhere that survives, which is a
-;; custody decision (kagi's), not something to settle by picking a path here.
-;; The marker says which one this boot had.
+;; The key lives on the stick's own writable state partition, so the did
+;; survives a reboot and a claim can outlive the boot that made it. The stick
+;; is the device boundary: the key is minted on the box and never leaves the
+;; stick -- and equally, whoever holds the stick holds the identity, so a
+;; cloned stick is a cloned node.
+;;
+;; Without that partition it falls back to tmpfs, which is a node for exactly
+;; one boot. The marker says which of the two this boot had rather than
+;; leaving a reader to assume the good one.
 
 (require '[sekisho.didkey :as didkey]
          '[clojure.string :as str]
@@ -27,10 +29,16 @@
          '["node:child_process" :as cp])
 
 (def state-dir
-  ;; /run on the booted stick; overridable so this can be driven on a
-  ;; developer machine, where /run does not exist and debugging inside a QEMU
-  ;; boot costs minutes per attempt.
+  ;; /init sets this to a mounted state partition when the stick has one.
+  ;; Falling back to /run is a tmpfs, which is a working node for exactly one
+  ;; boot -- so the fallback is reported, not hidden.
   (or (.-AIUEOS_NODE_STATE_DIR js/process.env) "/run/aiueos-node"))
+
+(def durable?
+  "A key under a mounted partition survives the reboot a claim has to survive.
+  A key in tmpfs does not, and a node that reported the two the same way would
+  look like it had kept an identity while minting a new one every boot."
+  (some? (.-AIUEOS_NODE_STATE_DIR js/process.env)))
 (def key-path (path/join state-dir "device.pem"))
 (def config-path
   (or (first *command-line-args*)
@@ -83,7 +91,10 @@
 (when-not (didkey/valid? did)
   (die! 2 "AIUEOS_NODE_DID_INVALID" (str did)))
 
-(say "AIUEOS_NODE_KEY" (if (:fresh? loaded) "generated-ephemeral" "reused-this-boot"))
+(say "AIUEOS_NODE_KEY"
+     (if (:fresh? loaded) "minted" "reused")
+     (if durable? "durable" "ephemeral")
+     state-dir)
 (say "AIUEOS_NODE_DID" did)
 (say "AIUEOS_NODE_ENDPOINT" endpoint)
 
