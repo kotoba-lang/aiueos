@@ -956,4 +956,107 @@
          owner review before regeneration -- unchanged, and still not mine to
          rubber-stamp. (5) aiueos CI: bb is fixed and the bare-metal smoke is
          green; CLJC contract tests remains red on a pre-existing backlog it was
-         hiding."}]
+         hiding."}
+ {:at "2026-09-10"
+  :profile :session-closing-installer
+  :core :not-measured
+  :core-note "os-coverage.cljs REFUSED (exit 2): no evidence log was given
+              because this session produced no boot. The last measured value
+              stands where it was measured; carrying it forward would make an
+              unmeasured closing look like a measurement, which is the one
+              thing this file exists to prevent."
+  :note "Installer session. ON MAIN, verified by ancestry: #331 5c75a42a,
+         #332 12c4ba6f, #334 7906a908, #335 1c6aeba7. Root: fa49a8c8. West pins
+         960084c3, 67cc5440, 8d202e03, af02e6b4 -- aiueos is pinned at 1c6aeba7.
+         Nothing of mine is unlanded; no PR, branch or worktree of mine remains.
+         WHAT LANDED, in the order it was found.
+         (1) ADR-0208, the guided installer. install-v1.edn had said
+         :interactive :dry-run-report-only since 2026-08-25: an owner could
+         author an intent on another machine with nine flags, and a person
+         standing at the machine had nothing, though every flag but --hostname
+         describes hardware the authoring host cannot see. Modelled on the
+         ubuntu-server installer: screens as data, an answer file that may
+         pre-answer any of them, interactive-sections with its star, validation
+         before the first probe, and a run that emits the answer file
+         reproducing it. Refused from that model: subiquity admits
+         path: /dev/sda as a storage answer and decision 2 does not, so the
+         storage screen records the MATCH the pick implies and the emitted
+         intent carries no /dev/ path at all.
+         (2) ADR-0209, found only because (1) asked whether its program could
+         run from the stick. IT COULD NOT, AND NEITHER COULD ANYTHING ELSE.
+         /init extracts INSTALL.TGZ, hands over to install-live.cljs, and it
+         died on `Could not find namespace: kotoba.lang.text` -- as did
+         install-to-disk, install-intent and make-provision-record. The
+         2026-09-09 move to kotoba.lang.text was fixed in nbb.edn, and nbb.edn
+         is not on the USB. Nothing was red: the three test suites run those
+         scripts FROM THE REPOSITORY where nbb.edn resolves (22/22, 6/6, mjs
+         green with the bundle broken), install-usb-build digests the bundle
+         rather than running it, and gate I3 was measured two weeks before the
+         move. The node bundle forty lines away in the same builder had carried
+         a cp/ root and passed --classpath all along.
+         (3) ADR-0210, the tranche (1) named: --guided builds a stick carrying
+         no intent, install-live.cljs finds none and runs the guided program
+         with the console attached. The two products differ by one payload file
+         and by one property -- a stick that asks cannot be left plugged in and
+         forgotten. Nothing downstream changed: the authored intent goes through
+         the same admission against a FRESH probe and the same device-level
+         guards. Nothing in the chain reads authoredBy.
+         WHAT I HAD WRONG, IN ORDER.
+         The guided walk first keyed off the intent's :mode, conflating how the
+         INSTALL runs on the target with how the intent was AUTHORED: an
+         operator authoring an unattended intent at the machine was asked
+         nothing and got an empty intent. The measurement said pending=0 where
+         five screens were due.
+         The first draft of the bundle test passed its classpath roots to
+         python with pr-str; a Clojure vector prints as [\"a\" \"b\"] and python
+         reads adjacent string literals as ONE concatenated path. The builder
+         found nothing there and produced a clean bundle with no cp/ in it, in
+         silence. That is now a refusal inside the builder, not a lesson in a
+         comment.
+         The test's own bin/nbb shim execed nbb BY NAME while sitting first on
+         PATH, so it called itself, appending one --classpath per hop, forever.
+         The real shim execs the bundled node-linux-x64 and cannot re-enter
+         itself.
+         An ADR draft stated neighbouring suite counts I had not run. Measured
+         before landing: 22/22 and 6/6, not the numbers I had written.
+         WHAT IS MEASURED. install-bundle-test 34, guided-install-test 53,
+         install-chain-test 22, provision-record-test 6 -- all green from the
+         real west checkout, all offline, no block device opened. Every new
+         claim was measured by the break that turns it red rather than
+         asserted: flipping <= to < in verify-intent turns exactly the two
+         capacity-boundary cases red; deleting the early validation gate turns
+         exactly the ordering case red AND changes its exit from 2 to 1,
+         because the run then reaches a probe file that does not exist;
+         deleting the guided fallback turns exactly the four fallback cases
+         red; deleting the carried-vs-listed check turns exactly one case red
+         and it reports INTENT -- the stick verifying as the OTHER PRODUCT.
+         WHAT IS NOT MEASURED, AND STAYS THAT WAY. Gate I3 is green about the
+         tree of 2026-08-25. The bundle now loads, but nothing has re-run
+         smoke-qemu-install since the namespace move, and that gate covers the
+         unattended stick only -- a guided variant needs an interactive console
+         in QEMU. Both halves of the I3 matrix now say so (this contract and
+         root adr-2608251418), which is gate I0. I7 stays red: no hardware. The
+         screens are measured against a piped answer script, not a person at a
+         terminal -- the same fd-0 path with no test-only branch, which is the
+         most that can be said offline. None of the four suites is a fleet
+         gate; neither are installer-test or install-chain-test, so this
+         follows their placement rather than changing it.
+         RESUME POINT. The next honest step is re-running gate I3, because it
+         is the only thing standing between three landed ADRs and evidence
+         about the tree they are in: `nbb os/aiueos/scripts/smoke-qemu-install.cljs`
+         needs a release image, a live UKI, node-linux-x64 and an nbb tree in
+         build/aiueos. After that, a guided variant of the same gate.
+         OTHER PEOPLE'S WORK, UNTOUCHED. aiueos#333 (ADR-0211, a counter that
+         does not move when the host does) is open and is not mine; it took
+         0211 after 0210, so the numbering did not collide. Three worktrees
+         belonging to other sessions remain: _wt-aiueos-icount,
+         .claude/worktrees/aiueos-e22-ro, .claude/worktrees/aiueos-k16. The
+         superproject working tree has three files dirty from before this
+         session (net-kotobase-funnel-pulses.edn, observatory.datoms.edn,
+         orgs/kotoba-lang/logs/agent.log) and they were left alone.
+         ONE THING FOR A HUMAN. The superproject checkout has been unable to
+         fast-forward for this entire session: .git/index.lock, 0 bytes, created
+         11:07, with no git process alive to own it. Every pin advance went in
+         through the GitHub API and is on origin/main, so nothing here depends
+         on it -- but that checkout is 91 commits behind and every git write in
+         it fails. Removing another process's lock is not mine to do."}]
