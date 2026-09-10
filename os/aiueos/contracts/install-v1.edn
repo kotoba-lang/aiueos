@@ -34,7 +34,14 @@
  ;; "largest disk" or a bare device name. The intent binds these fields; the
  ;; installer refuses when the probed identity does not match.
  :intent {:schema "aiueos.install-intent.v1"
-          :created-by "os/aiueos/scripts/install-intent.cljs"
+          ;; Two producers, one artifact. install-intent.cljs authors an intent
+          ;; ahead of time on another host; guided-install.cljs authors the same
+          ;; intent at the machine, from a probe (see :guided below). A second
+          ;; intent SHAPE would have been a second admission surface, so there
+          ;; is not one -- both write this schema and both are verified by the
+          ;; same `install-intent.cljs verify`.
+          :created-by ["os/aiueos/scripts/install-intent.cljs"
+                       "os/aiueos/installer/live/guided-install.cljs"]
           :binds [:release-receipt-digest
                   :release-disk-digest
                   :machine-profile
@@ -81,6 +88,73 @@
                              "os/aiueos/installer/device-policy.mjs"
                              "os/aiueos/installer/receipt.mjs"
                              "os/aiueos/installer/offline-linux-installer.sh"]
+             ;; The guided installer (aiueos ADR-0208): the ubuntu-server
+             ;; installer's shape on this contract's admission rules. It is an
+             ;; AUTHORING tool, not a second installer -- it opens no block
+             ;; device, writes no partition table and erases nothing. What it
+             ;; produces is one aiueos.install-intent.v1, which then goes
+             ;; through every guard below unchanged.
+             ;;
+             ;; :interactive above stays :dry-run-report-only. That describes
+             ;; what install-live.cljs does with an interactive-mode intent on
+             ;; the target, and it is still true; the guided program runs
+             ;; before that, when the intent does not exist yet.
+             :guided {:program "os/aiueos/installer/live/guided-install.cljs"
+                      :decision-core "src/aiueos/installer/guided.cljc" ; pure, no host interop
+                      :test "os/aiueos/scripts/test-guided-install.cljs" ; 53 cases, offline
+                      :modelled-on :ubuntu-server-installer-subiquity
+                      :screens [:network :storage :identity :ssh :confirm]
+                      :borrowed [:screen-sequence-is-data
+                                 :answer-file-may-pre-answer-any-screen
+                                 :interactive-sections-with-star
+                                 :answers-validated-before-anything-is-probed
+                                 :run-emits-the-answer-file-that-reproduces-it]
+                      :refused {:device-path-as-a-storage-answer
+                                "subiquity admits `path: /dev/sda`; decision 2
+                                 does not. The storage screen records the MATCH
+                                 the operator's pick implies -- model,
+                                 transport, capacity bounds, serial digest --
+                                 and the emitted intent carries no /dev/ path."
+                                :language-keyboard-mirror-snap-screens
+                                "no keymap layer and no package mirror exist in
+                                 the live environment; a screen collecting an
+                                 answer nothing reads is theatre."}
+                      :answers {:schema "aiueos.install-answers.v1"
+                                :sections [:network :storage :identity :ssh :confirm]
+                                :complete-file-asks-nothing true
+                                :partial-file-asks-the-gap true
+                                ;; The walk does NOT key off :mode. That field
+                                ;; says how the INSTALL runs on the target, not
+                                ;; how the intent was authored; keying the walk
+                                ;; off it asked an operator nothing and wrote an
+                                ;; empty intent (ADR-0208).
+                                :confirm-rule
+                                "asked whenever any other screen was asked; a
+                                 confirmation carried in from a file cannot
+                                 confirm a disk chosen a minute ago"}
+                      :writes-no-block-device true
+                      :authority :none-added
+                      :probe :read-only-lsblk-nodeps
+                      :fake-probe :two-key-gated ; NODE_ENV=test AND AIUEOS_GUIDED_ALLOW_FAKE_PROBE=1
+                      :refuses [:answers-schema-unknown
+                                :answers-mode-invalid
+                                :answers-expiry-out-of-range
+                                :answers-interactive-section-unknown
+                                :answers-network-policy-unsupported
+                                :answers-storage-model-missing
+                                :answers-storage-transport-missing
+                                :answers-capacity-bounds-missing
+                                :answers-capacity-bounds-inverted
+                                :answers-hostname-invalid
+                                :answers-ssh-key-not-openssh
+                                :answers-missing-confirm
+                                :answers-confirm-mismatch
+                                :no-candidate-disks
+                                :guided-storage-pick-out-of-range
+                                :guided-storage-match-rejected]
+                      :exit-codes {0 :intent-written
+                                   2 :refused-with-named-reasons
+                                   3 :could-not-answer}}
              :orchestration "os/aiueos/scripts/install-to-disk.cljs"
              :real-writes :linux-only ; exclusive O_EXCL|O_NOFOLLOW block open; macOS inspects only
              :refuses [:partition

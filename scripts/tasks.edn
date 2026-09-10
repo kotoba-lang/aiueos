@@ -140,6 +140,10 @@
  {:cmd ["nbb" "os/aiueos/scripts/test-install-chain.cljs"]
   :doc "Intent admission refusals (named reasons), fake-device install, target receipt, repeat-erase refusal, provisioning record placement. Gates I2/I5, offline."}
 
+ :guided-install-test
+ {:cmd ["nbb" "os/aiueos/scripts/test-guided-install.cljs"]
+  :doc "Guided installer (ADR-0208): answer-file refusals by named reason, the screen walk, the derived match on both capacity boundaries, and the intent the guided run writes handed to the real install-intent.cljs verify. 53 cases, offline, no block device."}
+
  :provision-record-test
  {:cmd ["nbb" "os/aiueos/scripts/test-provision-record.cljs"]
   :doc "SSH provisioning record: host key derived to the RFC 8032 vector, authorized key = the intent's, injected-seed and non-ed25519 and tampered-intent refusals. Gate I4 provisioning half, offline."}
