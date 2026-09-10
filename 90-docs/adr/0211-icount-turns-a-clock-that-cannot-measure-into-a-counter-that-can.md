@@ -111,13 +111,48 @@ Discriminated, same command, one variable:
     kotoba-native src shadowed by the local checkout  -> :ok true, 8560-byte ELF
     amu's pinned a5711bdc                             -> exit 70, internal error
 
-This is the failure mode the root CLAUDE.md names exactly: a fix on a base
-library's main does not reach a consumer until someone advances a `:git/sha`,
-and `deps.edn` pins have no gate the way west pins do. The next step for the
-boundary comparison is therefore **an amu pin advance**, not OS work.
+That pin was stale **in the checkout**, not on amu's main. amu `origin/main` is
+`Merge PR #923 from deps/kotoba-native-5f2717c2` — already the merge of the fix.
+The shared checkout was one commit behind it. `checkout`, `pin` and `repo main`
+being three different things is the third time in this one session that the
+answer turned on that distinction.
+
+### And with amu at origin/main, the aiueos side builds AND boots
+
+    AIUEOS_PLC_NATIVE_BUILD_OK  :target :x86_64-aiueos-user-v1
+                                :artifact-bytes 8560   (two passes, byte-identical)
+
+    AIUEOS_PLC_RT_QEMU_OK scans=100 signed-elf tamper-rejected
+                          fixed-priority-preemption native-provider
+                          apic-release transactional-output safe-state
+
+**So the claim this ADR made twice — that the aiueos side does not exist to be
+measured — is false, and now measurably so.** aiueos runs a signed CPL3 ELF
+making `cap-call 16/17/18/19` through `aiueos_syscall_entry`, 100 scans, in
+QEMU. The first version of that claim blamed a missing kernel; the second
+blamed a dependency pin; the truth is that the path runs and neither reason
+held. What was wrong both times was the same thing: a documented limitation was
+quoted instead of executed.
+
+### What is genuinely left, and it is small
+
+Only the counting. The scan count is a literal in `os/aiueos/kernel/main.c`
+(`scans=100`) which `smoke-qemu-uefi.sh` greps for verbatim, and the smoke has
+no `-icount` hook — it reads `AIUEOS_QEMU_TIMEOUT`, `_QUIET`, `_ATTEMPTS`,
+`_DISPLAY` and nothing else. So a per-capability-call figure needs one of:
+
+1. an `AIUEOS_QEMU_ICOUNT` passthrough in the smoke, which alone yields a
+   deterministic TOTAL for the 100-scan run — the first reproducible number for
+   this path, and the end of `timing=logical-unqualified`; or
+2. two PLC programs differing only in their number of `cap-call`s, booted the
+   same way, so the difference isolates the boundary the way every other
+   measurement in this ADR does.
+
+Neither is OS work. Both touch shared boot-evidence code, so neither is done
+here.
 
 The smoke still prints `NOT-MEASURED` for the boundary, because it still has
-not been measured — but the precondition it names is now a pin, not a kernel.
+not been measured — but nothing structural is in the way any more.
 
 The precondition is an executable CPL3 path, so `x86_64-aiueos-user-v1` has a
 kernel to run under. That target's packaging was still being repaired on the

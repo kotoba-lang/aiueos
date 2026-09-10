@@ -347,18 +347,20 @@
   (println (str "  linux half (banked, gad/Zen5, perf): 348.5 instructions,"
                 " ~184 cycles -- the syscall arm's 353.47 per iteration less"
                 " the null arm's 5.00 of loop bookkeeping."))
-  (println (str "  aiueos half: NOT the missing kernel this smoke first"
-                " claimed. A CPL3 capability path exists (kernel/entry.S"
-                " aiueos_syscall_entry; :plc-rt-qemu-smoke boots a signed CPL3"
-                " ELF; its marker says timing=logical-unqualified). The BUILD"
-                " is what fails: --target x86_64-aiueos-user-v1 exits 70"
-                " :kotoba/internal-error."))
-  (println (str "  precondition: advance amu's deps.edn pin of kotoba-native"
-                " past b88a11b (2026-09-10). It pins a5711bdc (2026-09-08),"
-                " which predates the fix; that target routes through nbb and"
-                " loads the .cljc twin where a capability id arrives as a"
-                " bigint. Shadowing the pin with a fixed checkout compiles the"
-                " same PLC program to an 8560-byte ELF; the pin does not.")))
+  (println (str "  aiueos half: the path RUNS. This smoke claimed twice that"
+                " it did not exist -- first blaming a missing kernel, then a"
+                " stale dependency pin. Measured 2026-09-10 with amu at"
+                " origin/main: the CPL3 ELF builds (8560 bytes, two passes"
+                " byte-identical) and boots -- AIUEOS_PLC_RT_QEMU_OK scans=100"
+                " signed-elf ... capabilities=16,17,18,19, through"
+                " kernel/entry.S aiueos_syscall_entry."))
+  (println (str "  precondition: only the counting. scans=100 is a literal in"
+                " kernel/main.c that smoke-qemu-uefi.sh greps verbatim, and"
+                " that smoke has no -icount hook (only AIUEOS_QEMU_TIMEOUT /"
+                " _QUIET / _ATTEMPTS / _DISPLAY). Either add an icount"
+                " passthrough for a deterministic total, or boot two PLC"
+                " programs differing only in cap-call count and difference"
+                " them. Neither is OS work; both touch shared boot code.")))
 
 (defn -main [& args]
   (let [amu (or (first args)
