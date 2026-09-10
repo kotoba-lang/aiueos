@@ -1501,6 +1501,19 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
 #endif
     debug_string("AIUEOS_KERNEL_OK memory-map-v1\n");
     serial_string("AIUEOS_SERIAL_OK stack-v1 memory-map-v1\r\n");
+    /* The loader calibrates the TSC (uefi/main.c: info.tsc_hz = elapsed * 10)
+       and hands the frequency over in boot info, and aiueos_wait_seconds()
+       converts cycles to seconds with it -- but until 2026-09-10 nothing
+       announced it, so os-coverage.cljs, which recognises exactly
+       /AIUEOS_[A-Z0-9_]+_OK/, could not score a clock at all and the taxonomy
+       had no row for one. Emitted only when the frequency is non-zero: an
+       older boot-info version leaves it unset, and a marker claiming a
+       calibrated clock that was never calibrated is worse than silence. */
+    if (aiueos_owned_boot_info.tsc_hz) {
+      serial_string("AIUEOS_TSC_CALIBRATED_OK hz=");
+      serial_decimal64(aiueos_owned_boot_info.tsc_hz);
+      serial_string("\r\n");
+    }
 #ifdef AIUEOS_ECDSA_PUBLIC_KAT
     /* Run before the owned low-2MiB page table is installed. The standalone
        public-point object intentionally makes this one-purpose KAT image

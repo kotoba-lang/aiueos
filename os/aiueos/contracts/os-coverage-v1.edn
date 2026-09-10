@@ -245,6 +245,27 @@
   :QWEN35_WORKSPACE :model-artifact
   ;; needs a profile nothing here runs
   :NETBOOT_EMBEDDED :profile  :LOADER_RECOVERY :profile
+  ;; Attributed 2026-09-10 by MEASUREMENT rather than judgement: each of these
+  ;; markers is emitted from inside an `#ifdef`, so the default build cannot
+  ;; produce it however well the mechanism works. Derived mechanically by
+  ;; walking back from each emission site to its enclosing preprocessor guard,
+  ;; and the guard is named here so the claim can be rechecked in one grep
+  ;; rather than believed.
+  :ECDSA_PUBLIC :profile   ; main.c:1522  #ifdef AIUEOS_ECDSA_PUBLIC_KAT
+  :ECDSA_SIGN :profile     ; main.c:1534  #ifdef AIUEOS_ECDSA_SIGN_KAT
+  :PANIC_RECEIPT :profile  ; main.c:3092  #ifdef AIUEOS_CRASH_RECEIPT_SMOKE
+  :RANDOM :profile         ; main.c:2934  #ifdef AIUEOS_SSH_LISTEN
+  :SSH_KEX :profile        ; main.c:2955  #ifdef AIUEOS_SSH_LISTEN
+  :SSH_LISTEN :profile     ; main.c:3539  #ifdef AIUEOS_SSH_LISTEN
+  ;; :TSC_CALIBRATED is :profile for a DIFFERENT reason, and the difference is
+  ;; worth keeping: its emission is unconditional (main.c, after
+  ;; AIUEOS_SERIAL_OK), so the scan above classifies it as ungated. What is
+  ;; gated is the VALUE -- uefi/main.c calibrates tsc_hz only under
+  ;; `#ifdef AIUEOS_QWEN38_MODEL_HANDOFF`, so in the default build the
+  ;; frequency is zero and the marker correctly stays silent. Measured by
+  ;; emitting it and booting: it did not appear, and AIUEOS_SERIAL_OK did.
+  ;; A gating scan that only looks at emission sites would have missed this.
+  :TSC_CALIBRATED :profile
   ;; NOT blocked, and NOT unwritten -- corrected 2026-09-09, one iteration
   ;; after this map first said :unwritten. The code is all there: pci.c drives
   ;; stages 1..16 and main.c reports at 5, 12 and 16. What fails is the LIVE
@@ -292,12 +313,12 @@
   ;; emits no such marker, so no evidence log can carry it and no row could
   ;; count it.
   ;;
-  ;; :TSC_CALIBRATED is therefore a PHANTOM on purpose -- the taxonomy naming a
-  ;; marker the tree does not have, which os-coverage reports and never scores.
-  ;; It changes no percentage (a phantom is outside :declared), which is the
-  ;; honest outcome: nothing new was measured, a hole was named. Closing it is
-  ;; one serial line in the kernel where tsc_hz arrives, and then this row
-  ;; starts scoring on its own.
+  ;; :TSC_CALIBRATED was a PHANTOM when this row was added -- the taxonomy
+  ;; naming a marker the tree did not have. It is real as of 2026-09-10:
+  ;; kernel/main.c emits AIUEOS_TSC_CALIBRATED_OK with the frequency, right
+  ;; after AIUEOS_SERIAL_OK, and only when the loader actually calibrated one.
+  ;; So this row now scores like any other, and a boot that does not calibrate
+  ;; reports 0/1 rather than being invisible.
   ;;
   ;; :APIC_TIMER is deliberately NOT repeated here; it is scored under
   ;; :interrupts, and a marker counted in two subsystems would be counted twice.
