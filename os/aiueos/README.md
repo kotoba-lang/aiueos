@@ -970,10 +970,22 @@ block extracted from the builder's own output and executed, and the loop closed
 end to end — ingest a probe into a registry copy, then require the driver to
 build the unattended stick with the serial that probe carried.
 
-⚠ **No ISO has been built from this, for any box.** The autoinstall is measured
-(valid YAML, every late-command valid `sh`), the probe block is measured on
-Linux, and the repack is exercised only through its refusal path. Gates I6 and I7
-are unchanged: no physical probe receipt and no physical install.
+One stick has been built and booted (ADR-0214, 2026-09-10):
+`aiueos-node-autoinstall-amd-6600hs.iso`, from
+`ubuntu-24.04.4-live-server-amd64.iso` verified against `SHA256SUMS` fetched from
+releases.ubuntu.com. Under OVMF, attached behind `qemu-xhci` as
+`usb-storage,removable=on`, the firmware starts it as
+`"UEFI QEMU QEMU USB HARDDRIVE"`, GRUB 2.12 loads the kernel, and subiquity comes
+up on the **Guided storage configuration screen and only that one** — which is
+how you can tell it read `/autoinstall.yaml` off the media. The pristine Ubuntu
+ISO booted by the same script stops at the language screen instead, and the 16 GB
+target was 196K on disk before the run and 196K after it. The exact invocation is
+in the ADR; it is manual, because the verdict is a screenshot a person reads.
+
+⚠ **No physical hardware, and no completed install.** TCG emulation says nothing
+about the 6600HS board — not its NIC, not its BIOS, not its disk controller mode,
+which are the fields its registry entry marks `:unverified`. Nothing has
+installed, enrolled or heart-beaten. Gates I6 and I7 are unchanged.
 
 ## USB removable-media boot
 
