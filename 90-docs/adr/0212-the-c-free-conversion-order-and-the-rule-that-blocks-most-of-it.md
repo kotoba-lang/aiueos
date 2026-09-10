@@ -134,6 +134,56 @@ pointers in it. **The asm/volatile heuristic does not see marshalling at all.**
 Any projection built on it, including the ~28,000-line one below, is an upper
 bound of unknown looseness until judgment fraction is sampled more widely.
 
+### The boundary is ONE-WAY, and that is the real ordering constraint
+
+C calls Kotoba: 99 symbols, 18 of 31 files. **Kotoba cannot call C.** Probed
+directly — naming a C symbol from a `.kotoba` source gives
+`unknown operation: kotoba_aiueos_aes128_gcm is not a builtin, a sugar head, or
+a function of this module`, and there is no `extern` / FFI / foreign-call form
+in the subset. Kotoba CAN call Kotoba across modules — `relay_line.kotoba` does
+`(:require [native.relay-text :as text])` via the project route
+(`--source-path` / `--module-lock`).
+
+So a C file cannot become Kotoba while it still calls C. **Conversion is
+bottom-up only**: move a leaf of the call graph, or move everything below a
+file at once. That is a harder constraint than the eight dependency layers
+above, because those layers were computed over C-to-C symbol references — and
+this says every one of those edges must be eliminated *in order*, not merely
+respected.
+
+It also explains why marshalling stays C, and that it is not a style choice:
+the side that can call both is the C side.
+
+### The fuel model is about STATIC bounds, not loop size
+
+An earlier draft of this work claimed "a self-recursive loop compiles at depth
+100 and fails at 200". That is true and badly misleading. The same
+`accumulate` function, changing only its bound:
+
+    (accumulate 0 200 0)                                  exit 70  fuel-exhausted
+    (accumulate 0 (bit-and (kernel-rdtsc) 1048575) 0)     exit 0
+
+A LITERAL bound is statically charged against fuel and hits the ceiling almost
+immediately. A RUNTIME bound compiles to a real loop and is effectively
+unbounded — measured over a byte-compare loop at N = 8 … 2,000,000, every one
+exit 0 and every one producing the identical 1,288-byte object. Separately,
+NON-TAIL self-recursion is statically unrolled and dies at depth 52 whatever
+the bound.
+
+So: write loops tail-recursively with a runtime bound and fuel is a non-issue.
+Fuel constrains static unrolling, not iteration.
+
+### Bitwise: xor and or yes, variable-count shifts no
+
+`bit-xor` and `bit-or` compile. `bit-shift-left` and
+`unsigned-bit-shift-right` are refused —
+`unknown operation: bit-shift-left is not a builtin … nearest defined:
+i32-shift-left (builtin), i64-shift-left (builtin)` — and the builtins that do
+exist take a LITERAL count only: `i32 shift count must be an integer literal in
+[0,31]`. **Variable-count shift and rotate are not expressible**, which is
+enough to put AES and GHASH proper out of reach today, though not the glue
+around them.
+
 ### Four more language-surface facts, each measured
 
 - **No `kernel-load-u64`.** The op table has u8/u16/u32 only, so every 64-bit
