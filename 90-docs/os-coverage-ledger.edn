@@ -720,4 +720,62 @@
          16/16, realtime 0/1 blocked on PLC_RT :compiler. k16 smoke green.
          Nothing here is closable by an agent on this machine. The next real move
          is someone else's: the amu bug, the disk, the token, the board, or a
-         TPM-enabled OVMF."}]
+         TPM-enabled OVMF."}
+ {:at "2026-09-10"
+  :profile :session-closing
+  :core {:emitted 91 :declared 116 :pct 78.4}
+  :display {:emitted 16 :declared 16 :pct 100.0}
+  :note "Closing entry. What is ON MAIN, not on a branch: PR #324 (89418a77)
+         and PR #325 (d97df3cb), both verified by ancestry rather than by the
+         API saying merged.
+         COVERAGE. 86/116 74.1% -> 91/116 78.4%; display 13/16 -> 16/16.
+         Six markers closed, every one case (a) -- a profile that already passed
+         whose evidence never reached the measurement. Not one needed a feature
+         written. SSH_SESSION, LOADER_RECOVERY, NETBOOT_EMBEDDED, GUEST_INPUT,
+         GOP_DISCOVERY, GUEST_SCANOUT_TWO.
+         All 25 remaining core markers carry a measured reason: owner 9, board 8,
+         model-artifact 7, firmware 1; plus PLC_RT :compiler in an excluded row.
+         None is closable by an agent on this machine.
+         CI. Two of three jobs had been red on main since 47b81bd. Cause: nbb
+         resolves the :deps in nbb.edn by shelling out to `bb ... uberjar`, and
+         47b81bd added a :deps coordinate, making babashka a hard requirement of
+         every nbb invocation. bb: not found 126 -> 0. aiueos UEFI bare-metal
+         smoke red -> green.
+         CLJC contract tests is still red, and the honest reading is that fixing
+         bb made a backlog VISIBLE rather than creating one. The job now runs to
+         completion for the first time: 590 tests / 4089 assertions /
+         35 failures / 0 errors across 16 test names (tcb_test x6,
+         value_runtime_baseline x4, image_freshness x2,
+         smoke_task_registration x2, kotoba_object_reachability, sbom).
+         NOT DONE ON PURPOSE. The largest cluster is 13 :digest-drift entries in
+         the TCB inventory plus :external-undeclared io.github.kotoba-lang/text.
+         Regenerating the inventory would turn several tests green in one
+         command. I did not run it. That inventory exists to catch unreviewed
+         changes to the trusted computing base, the 13 files were last modified
+         2026-09-09 by the owner, and one of them is tcb.clj itself -- the file
+         that implements the checking. Blessing them wholesale is the
+         make-the-gate-green move this repo warns about, aimed at its own
+         security artifact. Review first, then regenerate as the record of it.
+         MY OWN ERRORS THIS SESSION, since a ledger that only records successes
+         teaches nothing. Three retractions: 'the stop condition is reached'
+         (had read only the CORE rows, missing four unclassified markers in the
+         excluded ones); GUEST_SCANOUT_TWO classified :code when it was a
+         profile; and a fleet-alias fix aimed at the wrong dependency -- I read
+         a truncated CI log line (io.github.ko...) and completed it as text from
+         context instead of reading deps.edn. The real coordinates were
+         kotoba-native, org-nist-sha2, webgpu. Same shape as the grep that once
+         truncated input-fail-line=1284 to 128.
+         RESUME POINTS. (1) TCB review, above. (2) kbb: it exists and works --
+         orgs/kotoba-lang/kotoba/bin/kbb ran an example to exit 0 with
+         capability receipts and a working denial path; needs --backend js on
+         arm64 since native is x86_64 (SIGILL). Two owner decisions block the
+         migration: whether kbb should learn to read kbb.edn (today it reads
+         deps.edn, so `nbb.edn -> kbb.edn` is a deletion at the END of migration,
+         not a rename -- nbb hardcodes the name and a rename would break every
+         nbb script), and which surface goes first (os/aiueos/scripts 45, or the
+         superproject scripts 425). CLAUDE.md names an nbb-to-kbb-migration
+         skill that does not exist on disk. (3) The four owner-side blockers:
+         disk at 99% with 16 GB free (7 markers), MURAKUMO_SERVICE_TOKEN plus
+         install intent (9), powering the K16 (8), a TPM-enabled OVMF (1).
+         (4) The shared amu checkout is diverged from its west pin and holds
+         uncommitted work -- untouched."}]
