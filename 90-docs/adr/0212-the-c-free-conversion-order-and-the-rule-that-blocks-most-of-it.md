@@ -109,7 +109,57 @@ parameters (`base`, `length`) regardless of how many fields there are. That is
 a different and larger marshalling job than "pass the spans", and every
 conversion of a wide struct needs it.
 
-## The conversion coefficient, measured once
+## The coefficient is stable at ~2.15x — on JUDGMENT lines, not on file size
+
+Three whole-surface conversions, all compiling for `x86_64-aiueos-kernel-v1`:
+
+| file | C code lines | of which judgment | Kotoba code lines | ratio on judgment |
+|---|---:|---:|---:|---:|
+| `job_protocol.c` | 163 | ~163 (~100%) | 340 | **2.09x** |
+| `inference_status.c` | 45 | 45 (100%) | 97 | **2.16x** |
+| `qualification.c` | 121 | 19 (16%) | 42 | **2.21x** |
+
+**The ratio barely moves: 2.09 / 2.16 / 2.21.** What moves enormously is the
+JUDGMENT FRACTION — 100%, 100%, 16%. So the size of this refactor is not
+"kernel C x some constant"; it is "judgment lines x 2.15", and judgment lines
+have to be counted per file.
+
+### Which means this ADR's own 13,481 figure is overstated
+
+That number came from classifying whole functions by whether they touch
+`__asm__`/`volatile`. `qualification.c` contains neither and lands in the
+"judgment-shaped" column — and is **84% marshalling**: EFI ABI typedefs, the
+`struct efi_runtime_services` layout, and seven indirect calls through function
+pointers in it. **The asm/volatile heuristic does not see marshalling at all.**
+Any projection built on it, including the ~28,000-line one below, is an upper
+bound of unknown looseness until judgment fraction is sampled more widely.
+
+### Four more language-surface facts, each measured
+
+- **No `kernel-load-u64`.** The op table has u8/u16/u32 only, so every 64-bit
+  field crosses as an `(hi, lo)` u32 pair.
+- **Words are signed.** `native/relay_line.kotoba` already says so in its own
+  comment — "a set bit 63 makes `quot` walk the wrong way". This is a
+  CORRECTNESS hazard, not a size one: `inference_status.c` carries the comment
+  `/* token bound above keeps tokens * 1e12 inside uint64_t. */`, true for C's
+  unsigned multiply and false here. For `tokens` in [9223373, 10000000] — the
+  top of the legal range — the product exceeds `INT64_MAX` and overflows
+  silently. A faithful port needs multi-limb arithmetic.
+- **No indirect call through a function pointer** with the firmware's `ms_abi`
+  convention. That is why `qualification.c` is 84% marshalling: its EFI runtime
+  services calls cannot move, and the struct describing them exists only to
+  make them.
+- **No preprocessor.** An `#ifdef` build branch becomes a runtime parameter the
+  C shim passes as a fixed literal.
+
+### And marshalling is sometimes new code, not moved code
+
+`inference_status.c` contains **zero** marshalling lines: it only ever reads an
+already-populated struct, never packs one. The flat-buffer shim its port
+implies is **entirely new C to write**. So "C marshals, Kotoba judges" does not
+always split an existing file — sometimes it adds a layer that did not exist.
+
+## The first conversion coefficient, measured once
 
 `kernel/job_protocol.c` was converted whole — all five public functions — and
 compiles for `x86_64-aiueos-kernel-v1`. The artifact is
