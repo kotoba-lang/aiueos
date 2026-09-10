@@ -64,6 +64,36 @@
   (let [r (.spawnSync cp cmd (to-array args) #js {:encoding "utf8" :shell false})]
     {:status (or (.-status r) 1) :out (or (.-stdout r) "") :err (or (.-stderr r) "")}))
 
+(defn- first-difference
+  "Where do these two byte streams first disagree, and what is around it?
+
+  A mismatch that cannot say where is a mismatch nobody can act on: a stick
+  whose data region was touched by the host after the write and a stick whose
+  flash lied about a sector produce the same digest failure and want opposite
+  responses. The offset separates them."
+  [a b limit]
+  (let [fa (.openSync fs a "r") fb (.openSync fs b "r")
+        ca (js/Buffer.alloc (* 1024 1024)) cb (js/Buffer.alloc (* 1024 1024))]
+    (try
+      (loop [base 0]
+        (if (>= base limit)
+          {:offset nil}
+          (let [want (min (- limit base) (.-length ca))
+                ga (.readSync fs fa ca 0 want) gb (.readSync fs fb cb 0 want)
+                n (min ga gb)]
+            (if (zero? n)
+              {:offset base :image "end of file" :device "end of file"}
+              (let [i (loop [k 0]
+                        (cond (>= k n) nil
+                              (not= (.readUInt8 ca k) (.readUInt8 cb k)) k
+                              :else (recur (inc k))))]
+                (if i
+                  {:offset (+ base i)
+                   :image (str "0x" (.toString (.readUInt8 ca i) 16))
+                   :device (str "0x" (.toString (.readUInt8 cb i) 16))}
+                  (recur (+ base n))))))))
+      (finally (.closeSync fs fa) (.closeSync fs fb)))))
+
 (defn- sha256-file
   "Digest at most LIMIT bytes of PATH, streaming in 4 MiB chunks so a device
   read never has to fit in memory."
@@ -207,6 +237,19 @@
 
 (print (:err dd))
 
+;; Quiesce before reading. macOS re-mounts the freshly written FAT volumes
+;; within a second or two of dd finishing and immediately writes .fseventsd
+;; and .Spotlight-V100 into them -- so a readback that starts straight away
+;; digests bytes the operating system changed after the write, and reports a
+;; SOUND stick as a corrupt one.
+;;
+;; Measured: the same stick and the same image passed at 24 MB/s and failed at
+;; 42 MB/s. A check whose answer depends on how fast the write went is not
+;; checking the write.
+(when (= platform "darwin")
+  (run "diskutil" ["unmountDisk" device]))
+(run "sync" [])
+
 ;; Readback. Cheap flash media can acknowledge a write and store something
 ;; else; only reading the bytes back proves what is actually on the stick.
 (println "verifying readback ...")
@@ -219,5 +262,10 @@
     (when (= platform "darwin")
       (run "diskutil" ["eject" device])
       (println "ejected" device)))
-  (die "readback digest" readback "does not match image" actual-digest
-       "\n       The stick does NOT contain the release image. Do not boot it."))
+  (let [where (first-difference image raw-device image-bytes)]
+    (die "readback digest" readback "does not match image" actual-digest
+         (str "\n       first difference at byte " (:offset where)
+              " of " image-bytes
+              (when (:partition where) (str " (inside " (:partition where) ")"))
+              "\n       image had " (:image where) ", device has " (:device where))
+         "\n       The stick does NOT contain the image. Do not boot it.")))
