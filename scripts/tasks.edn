@@ -189,4 +189,9 @@
  :plc-rt-policy-reproduce
  {:cmd ["./os/aiueos/scripts/reproduce-plc-rt-policy-objects.sh"]
   :pass-args? true
-  :doc "Reproduce the linked fixed-priority policy and PLC-specific C-free ELF admission objects with their exact measured Amu revisions."}}
+  :doc "Reproduce the linked fixed-priority policy and PLC-specific C-free ELF admission objects with their exact measured Amu revisions."}
+
+ :target-parity-icount
+ {:cmd ["nbb" "os/aiueos/scripts/smoke-qemu-target-parity-icount.cljs"]
+  :pass-args? true
+  :doc "Takes /path/to/amu. Measure that x86_64-linux and x86_64-aiueos-kernel-v1 emit the same bytes for one source, and count them under -icount as guest instructions rather than host time (ADR-0211)."}}

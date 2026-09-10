@@ -1,4 +1,4 @@
-# ADR-0210 — icount turns a clock that cannot measure into a counter that can
+# ADR-0211 — icount turns a clock that cannot measure into a counter that can
 
 - Status: accepted
 - Date: 2026-09-10
@@ -114,6 +114,23 @@ findings — the containment check and the guest's own arithmetic check — whil
 the instruction count stayed `000001EA000003AC`, because a different multiply
 constant is the same instruction shape. The counter counts instructions; the
 guest checks the values.
+
+## Two things that happened while landing, recorded rather than chased
+
+**`CLJC contract tests` is red on main and was red before this branch.** Run
+34435926740, on the base commit 12c4ba6 (Merge #332), has
+`CLJC contract tests -> failure` with `EDN examples and docs` and
+`aiueos UEFI bare-metal smoke` both green — the same shape this branch's run
+shows. Documented here rather than fixed, so that the next reader does not
+attribute it to the parity smoke; and stated explicitly because a PR that says
+nothing about a red check reads as if it had none.
+
+**This ADR was 0210 for about forty minutes.** ADR-0210 (`a stick that asks`)
+landed on main from a parallel session while this was being written, and the
+collision would have been SILENT: two files named `0210-*.md` are two different
+paths, so git merges them without a word and the number stops identifying a
+decision. Renumbered to 0211 after merging origin/main. The root CLAUDE.md's
+rule against bare `ADR-<number>` ids is the same failure seen from the id side.
 
 ## Not done
 
