@@ -21,7 +21,7 @@
 ;;
 ;; Usage: nbb os/aiueos/scripts/smoke-qemu-dequant-dot.cljs /path/to/compiler
 (ns smoke-qemu-dequant-dot
-  (:require [kotoba.lang.text] ["child_process" :as cp]
+  (:require ["child_process" :as cp]
             ["crypto" :as crypto]
             ["fs" :as fs]
             ["os" :as os]
@@ -134,7 +134,7 @@
   (or (some #(when (fs/existsSync %) %) (cons (.. js/process -env -OVMF_CODE)
                                               ovmf-candidates))
       (unmeasured (str "ovmf-missing. Looked at: "
-                       (kotoba.lang.text/join ", " ovmf-candidates)))))
+                       (clojure.string/join ", " ovmf-candidates)))))
 
 (defn build! [compiler out]
   (let [kernel (path/join out "KERNEL.ELF")
@@ -277,8 +277,8 @@
                   "distinguishes the arms")))
       (let [arms (set (map :arm decoded))]
         (println (str "AIUEOS_DEQUANT_DOT_QEMU digits=" expected-digits
-                      " arms-exercised=" (kotoba.lang.text/join "," (sort arms))
-                      " models=" (kotoba.lang.text/join "," cpu-models)))
+                      " arms-exercised=" (clojure.string/join "," (sort arms))
+                      " models=" (clojure.string/join "," cpu-models)))
         (if (contains? arms "avx2")
           (let [per (into {} (map (juxt :arm
                                         #(/ (- (js/parseInt (:elapsed %) 16)
@@ -325,9 +325,9 @@
           ;; missing.
           (do (js/console.error
                (str "AIUEOS_DEQUANT_DOT_QEMU_AVX2_ARM_NOT_EXERCISED"
-                    " enable=" (kotoba.lang.text/join
+                    " enable=" (clojure.string/join
                                 "," (map #(str (:cpu %) ":" (:enabled %)) decoded))
-                    " features=" (kotoba.lang.text/join
+                    " features=" (clojure.string/join
                                   "," (map #(str (:cpu %) ":" (:value %)) decoded))
                     " -- the scalar arm ran on both models and agrees with"
                     " kotoba.kir; the AVX2 arm did not run, so this says"

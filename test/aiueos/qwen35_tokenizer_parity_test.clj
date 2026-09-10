@@ -63,7 +63,7 @@
 
 (ns aiueos.qwen35-tokenizer-parity-test
   (:require [clojure.java.io :as io]
-            [kotoba.lang.text :as str]
+            [clojure.string :as str]
             [clojure.test :refer [deftest is]]
             [kotoba.kir :as ir]
             [kotoba.sema :as sema]))
