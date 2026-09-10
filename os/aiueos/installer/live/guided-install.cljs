@@ -163,7 +163,12 @@
   by an operator who did not deliberately ask for one."
   (when (and (= "1" (.-AIUEOS_GUIDED_ALLOW_FAKE_PROBE js/process.env))
              (= "test" (.-NODE_ENV js/process.env)))
-    (arg "--probe-file")))
+    ;; The env form exists because this program is also reached through a
+    ;; spawn: install-live.cljs runs it when the stick carries no intent, and
+    ;; passes only the four arguments the product needs. A fixture that could
+    ;; be injected on the command line but not through that chain would leave
+    ;; the actual product path untestable offline (ADR-0210).
+    (or (arg "--probe-file") (.-AIUEOS_GUIDED_PROBE_FILE js/process.env))))
 
 (defn- probe-disks!
   "Whole-disk inventory, read-only. `lsblk --nodeps` on Linux; on any other

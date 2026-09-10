@@ -150,11 +150,11 @@
 
  :install-bundle-test
  {:cmd ["nbb" "os/aiueos/scripts/test-install-bundle.cljs"]
-  :doc "The install USB bundle EXECUTED, not merely built (ADR-0209): assemble it, extract it, and run every bundled entry point from inside it with only what the stick carries. Control: the same assembly without the classpath must fail to load. 17 cases, offline."}
+  :doc "The install USB bundle EXECUTED, not merely built (ADR-0209/0210): assemble both products, extract them, run every bundled entry point from inside them, and drive the real guided handover on a stick that carries no intent. Controls: without the classpath nothing loads; a stick that carries an intent never asks. 34 cases, offline."}
 
  :install-usb-build
  {:cmd ["nbb" "os/aiueos/scripts/run-install-usb-build.cljs"]
-  :doc "Create the install intent if missing, then build + verify the install USB image and its chain receipt (gate I1)."}
+  :doc "Build + verify the install USB image and its chain receipt (gate I1). Pass --guided for the stick that carries no intent and asks at the machine (ADR-0210); otherwise an intent must already exist and is never auto-created."}
 
  :live-installer-build
  {:cmd ["python3" "os/aiueos/scripts/make-live-installer.py" "build"

@@ -60,6 +60,15 @@ EPOCH = int(os.environ.get("SOURCE_DATE_EPOCH", "0"))
 
 PAYLOAD_NAMES = ["RELEASE.IMG", "RECEIPT.JSN", "INTENT.JSN",
                  "INSTALL.TGZ", "SHA256S.TXT", "README.TXT"]
+# A guided stick carries no intent: it is authored at the machine by
+# guided-install.cljs (aiueos ADR-0208/0210). The two products differ by
+# exactly this one file, so the name list is derived from what is present
+# rather than assumed, and SHA256S.TXT is what decides -- see verify_image.
+GUIDED_PAYLOAD_NAMES = [n for n in PAYLOAD_NAMES if n != "INTENT.JSN"]
+
+
+def payload_names_for(guided):
+    return GUIDED_PAYLOAD_NAMES if guided else PAYLOAD_NAMES
 
 README_TEXT = """aiueos install USB payload (install-v1.edn)
 
@@ -83,6 +92,38 @@ From any Linux environment on the target machine:
   #   nbb install-to-disk.cljs --intent ./install-intent.json \
   #     --device /dev/nvmeXn1 --image "$MEDIA"/RELEASE.IMG \
   #     --receipt ./release-receipt.json
+All digests are in SHA256S.TXT; verify before trusting anything here.
+"""
+
+GUIDED_README_TEXT = """aiueos install USB payload, guided (install-v1.edn)
+
+This stick boots aiueos directly and carries everything an INSTALL needs
+EXCEPT the one thing that says which machine and which disk. There is no
+INTENT.JSN here on purpose: this stick asks.
+
+Booted as the live installer, /init hands over to install-live.cljs, which
+finds no intent and runs guided-install.cljs -- a screen sequence (network,
+storage, identity, ssh, confirm) that ends by writing an intent into the
+tmpfs. Every guard downstream is unchanged: the intent is verified against a
+fresh probe, the device-level refusals in install.mjs all still run, and the
+erase still needs its confirmation.
+
+A stick that asks cannot be left plugged in and forgotten: it installs
+nothing without a person. That is the difference from the unattended
+product, not an accident of packaging.
+
+From any Linux environment on the target machine, the same bundle also works
+by hand:
+
+  MEDIA=/path-to-this-partition
+  mkdir -p /tmp/aiueos && cd /tmp/aiueos
+  tar xzf "$MEDIA"/INSTALL.TGZ && cd aiueos-installer
+  nbb guided-install.cljs --release-receipt ./release-receipt.json \
+    --out-intent ./install-intent.json --out-answers ./install-answers.json
+  nbb install-to-disk.cljs --intent ./install-intent.json \
+    --device /dev/nvmeXn1 --image "$MEDIA"/RELEASE.IMG \
+    --receipt ./release-receipt.json
+
 All digests are in SHA256S.TXT; verify before trusting anything here.
 """
 
@@ -427,7 +468,10 @@ def make_bundle_tgz(installer_dir, scripts_dir, intent_bytes, receipt_bytes, nod
             raise ValueError("classpath root carries no .cljc/.cljs sources: " + str(src))
         for path in sources:
             add("cp/" + path.relative_to(base).as_posix(), path.read_bytes(), 0o644)
-    add("install-intent.json", intent_bytes, 0o644)
+    # A guided stick carries no intent: the bundle must not contain one
+    # either, or install-live.cljs would find one in the tmpfs and never ask.
+    if intent_bytes is not None:
+        add("install-intent.json", intent_bytes, 0o644)
     add("release-receipt.json", receipt_bytes, 0o644)
     if node_binary:
         add("node-linux-x64", Path(node_binary).read_bytes(), 0o755)
@@ -631,6 +675,13 @@ def gpt_header(current, backup, entries_lba, entries_crc, total_sectors):
 
 
 def build(args):
+    # Before any I/O: an argument error should not cost 64 MiB of reading, and
+    # more importantly it should not be reported after a release image failed
+    # to open, which is a different problem with a different fix.
+    if args.guided and args.intent:
+        raise ValueError("--guided and --intent name two different products; pick one")
+    if not args.guided and not args.intent:
+        raise ValueError("give --intent <file>, or --guided for a stick that asks")
     release = Path(args.release_image).read_bytes()
     release_receipt_bytes = Path(args.release_receipt).read_bytes()
     receipt_json = json.loads(release_receipt_bytes)
@@ -639,12 +690,21 @@ def build(args):
     if (len(release) != receipt_json["disk"]["bytes"]
             or sha256_bytes(release) != receipt_json["disk"]["sha256"]):
         raise ValueError("release image does not match its build receipt")
-    intent_bytes = Path(args.intent).read_bytes()
-    intent = json.loads(intent_bytes)
-    if intent.get("schema") != "aiueos.install-intent.v1":
-        raise ValueError("intent is not aiueos.install-intent.v1")
-    if intent["release"]["disk"]["sha256"] != receipt_json["disk"]["sha256"]:
-        raise ValueError("intent names a different release image digest")
+    # Not "intent if given": a forgotten --intent would quietly produce a
+    # different product, and the two differ in who is allowed to erase a disk
+    # without being asked. The absence of an intent has to be stated, not
+    # inferred. (Checked at the top of this function, before any I/O.)
+    if args.guided:
+        intent_bytes = None
+        intent = None
+    else:
+        intent_bytes = Path(args.intent).read_bytes()
+        intent = json.loads(intent_bytes)
+        if intent.get("schema") != "aiueos.install-intent.v1":
+            raise ValueError("intent is not aiueos.install-intent.v1")
+        if intent["release"]["disk"]["sha256"] != receipt_json["disk"]["sha256"]:
+            raise ValueError("intent names a different release image digest")
+    names = payload_names_for(args.guided)
 
     scripts_dir = Path(__file__).resolve().parent
     bundle = make_bundle_tgz(args.installer_dir, scripts_dir, intent_bytes,
@@ -653,13 +713,15 @@ def build(args):
     files = {
         "RELEASE.IMG": release,
         "RECEIPT.JSN": release_receipt_bytes,
-        "INTENT.JSN": intent_bytes,
         "INSTALL.TGZ": bundle,
     }
+    if intent_bytes is not None:
+        files["INTENT.JSN"] = intent_bytes
     sha_lines = "".join("%s  %s\n" % (sha256_bytes(files[n]), n)
-                        for n in ["RELEASE.IMG", "RECEIPT.JSN", "INTENT.JSN", "INSTALL.TGZ"])
+                        for n in names if n not in ("SHA256S.TXT", "README.TXT"))
     files["SHA256S.TXT"] = sha_lines.encode("ascii")
-    files["README.TXT"] = README_TEXT.encode("utf-8")
+    files["README.TXT"] = (GUIDED_README_TEXT if args.guided
+                           else README_TEXT).encode("utf-8")
 
     content = sum(len(v) for v in files.values())
     payload_sectors = ((content + content // 4) // SECTOR // ALIGN + 9) * ALIGN
@@ -679,7 +741,7 @@ def build(args):
         payload_first = ((p2_first + rec_sectors + ALIGN - 1) // ALIGN) * ALIGN
     else:
         payload_first = PAYLOAD_FIRST
-    payload = make_payload_fat32(payload_sectors, files, payload_first)
+    payload = make_payload_fat32(payload_sectors, files, payload_first, names)
 
     payload_last = payload_first + payload_sectors - 1
     total = payload_last + 1 + GPT_ENTRY_SECTORS + 1
@@ -739,17 +801,49 @@ def build(args):
         "disk": {"bytes": len(disk), "sha256": sha256_bytes(bytes(disk))},
         "release": {"receiptSha256": sha256_bytes(release_receipt_bytes),
                     "diskSha256": receipt_json["disk"]["sha256"]},
-        "intent": {"sha256": sha256_bytes(intent_bytes),
-                   "hostname": intent.get("hostname"),
-                   "mode": intent.get("mode")},
+        # The key is always present. A reader that had to tell "guided stick"
+        # from "receipt written before guided existed" by an absent key would
+        # be guessing.
+        "intent": ({"authoring": "guided-at-the-machine", "sha256": None}
+                   if intent_bytes is None else
+                   {"authoring": "authored-ahead-of-time",
+                    "sha256": sha256_bytes(intent_bytes),
+                    "hostname": intent.get("hostname"),
+                    "mode": intent.get("mode")}),
         "payload": {"firstLba": payload_first, "lastLba": payload_last,
                     "type": str(BASIC_DATA_TYPE), "guid": str(PAYLOAD_GUID),
                     "files": {n: {"bytes": len(files[n]), "sha256": sha256_bytes(files[n])}
-                              for n in PAYLOAD_NAMES}},
+                              for n in names}},
     }
     Path(args.receipt).write_text(json.dumps(receipt, indent=2, sort_keys=True) + "\n",
                                   encoding="utf-8")
     print(args.output)
+
+
+def check_payload_consistency(files):
+    """Decide which product a payload is, and refuse anything in between.
+
+    A guided stick carries no INTENT.JSN. That absence is the entire
+    difference between "installs unattended" and "installs nothing without a
+    person", so it is cross-checked against SHA256S.TXT rather than read off
+    the file list: a payload that carries an intent nobody digested, or
+    digests one it does not carry, is not a product this builder makes and
+    must not be verified into one.
+
+    Returns True for a guided payload, False for one carrying an intent."""
+    listed = set()
+    for line in files["SHA256S.TXT"].decode("ascii").splitlines():
+        digest, name = line.split("  ", 1)
+        listed.add(name)
+        if name not in files:
+            raise ValueError("SHA256S.TXT lists a file the payload does not carry: " + name)
+        if sha256_bytes(files[name]) != digest:
+            raise ValueError("payload digest mismatch for " + name)
+    carried = {n for n in files if n not in ("SHA256S.TXT", "README.TXT")}
+    if carried != listed:
+        raise ValueError("payload carries files SHA256S.TXT does not list: "
+                         + ",".join(sorted(carried - listed)))
+    return "INTENT.JSN" not in files
 
 
 def verify_image(path, release_image):
@@ -815,23 +909,29 @@ def verify_image(path, release_image):
 
     payload = disk[payload_first * SECTOR:(payload_last + 1) * SECTOR]
     files = read_payload_fat32(payload)
-    for name in PAYLOAD_NAMES:
+
+    # Which product this is, decided from the image alone. A guided stick
+    # carries no INTENT.JSN; the absence is the whole difference, so it is
+    # cross-checked against SHA256S.TXT rather than taken at face value --
+    # a stick that carries an intent nobody digested, or digests one it does
+    # not carry, is not a product this builder makes.
+    guided = check_payload_consistency(files)
+    for name in payload_names_for(guided):
         if name not in files:
             raise ValueError("payload is missing " + name)
     if files["RELEASE.IMG"] != release:
         raise ValueError("embedded RELEASE.IMG differs from the release image")
-    for line in files["SHA256S.TXT"].decode("ascii").splitlines():
-        digest, name = line.split("  ", 1)
-        if sha256_bytes(files[name]) != digest:
-            raise ValueError("payload digest mismatch for " + name)
-    intent = json.loads(files["INTENT.JSN"])
     release_receipt = json.loads(files["RECEIPT.JSN"])
-    if intent["release"]["disk"]["sha256"] != release_receipt["disk"]["sha256"]:
-        raise ValueError("embedded intent names a different release digest")
     if sha256_bytes(files["RELEASE.IMG"]) != release_receipt["disk"]["sha256"]:
         raise ValueError("embedded RELEASE.IMG does not match embedded receipt")
-    print("AIUEOS_INSTALL_USB_IMAGE_OK mode=%s bytes=%d files=%d"
-          % ("live-installer" if live else "aiueos-direct", len(disk), len(files)))
+    if not guided:
+        intent = json.loads(files["INTENT.JSN"])
+        if intent["release"]["disk"]["sha256"] != release_receipt["disk"]["sha256"]:
+            raise ValueError("embedded intent names a different release digest")
+    print("AIUEOS_INSTALL_USB_IMAGE_OK mode=%s authoring=%s bytes=%d files=%d"
+          % ("live-installer" if live else "aiueos-direct",
+             "guided-at-the-machine" if guided else "authored-ahead-of-time",
+             len(disk), len(files)))
 
 
 def main():
@@ -840,7 +940,12 @@ def main():
     b = sub.add_parser("build")
     b.add_argument("--release-image", required=True)
     b.add_argument("--release-receipt", required=True)
-    b.add_argument("--intent", required=True)
+    b.add_argument("--intent",
+                   help="the install intent this stick carries. Exactly one of "
+                        "--intent / --guided.")
+    b.add_argument("--guided", action="store_true",
+                   help="build a stick that carries NO intent and asks at the "
+                        "machine (guided-install.cljs, ADR-0208/0210).")
     b.add_argument("--installer-dir", required=True)
     b.add_argument("--classpath", action="append",
                    help="a source root the bundled .cljs require (repeatable): "
