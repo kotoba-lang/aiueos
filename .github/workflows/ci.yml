@@ -15,6 +15,11 @@ jobs:
       - uses: mlugg/setup-zig@v2
         with:
           version: 0.14.1
+      - uses: DeLaGuardo/setup-clojure@13.4
+        with:
+          # Same reason as the CLJC job: nbb shells out to bb to resolve the
+          # :deps in nbb.edn, so nbb without bb is nbb that cannot start.
+          bb: latest
       - name: Install QEMU, OVMF, GRUB, and nbb
         run: |
           sudo apt-get update && sudo apt-get install -y qemu-system-x86 ovmf grub-pc-bin grub-efi-amd64-bin xorriso mtools
@@ -53,6 +58,14 @@ jobs:
       - uses: DeLaGuardo/setup-clojure@13.4
         with:
           cli: latest
+          # bb is here for nbb, not for babashka scripts. nbb.edn declares
+          # :deps since 47b81bd, and nbb resolves those by shelling out to
+          # `bb ... uberjar` (nbb_deps.js). Without bb every nbb invocation
+          # dies with `/bin/sh: 1: bb: not found` and status 127 -- a message
+          # that names neither nbb.edn nor the dependency it was resolving.
+          # Measured: :paths-only nbb.edn runs fine with bb off PATH; adding
+          # :deps makes the identical invocation fail.
+          bb: latest
       - name: Install nbb (smoke-task / image-freshness / k16 gate tests assert it is on PATH)
         run: sudo npm install -g nbb
       - name: Verify shared security adoption
