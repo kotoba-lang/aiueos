@@ -838,4 +838,66 @@
          AIUEOS_QWEN38_ARTIFACT_OK, byte count and SHA-256 both matching the
          pin, at ~/models/aiueos. The seven :model-artifact markers are no
          longer blocked on the artifact; they still need their gates run, which
-         another session was already doing when this was written."}]
+         another session was already doing when this was written."} {:at "2026-09-10"
+  :profile :fresh-reproduction-from-an-empty-build-directory
+  :core {:emitted 90 :declared 116 :pct 77.6}
+  :note "Not an advance. A reproduction, run from an empty build directory to
+         find out whether the 91 on record is something a reader with only this
+         repo can obtain, or something that exists because a particular machine
+         accumulated the right logs. It is reproducible, and the recipe is the
+         value of this entry: one default run gives 66; the fifteen mode
+         switches of smoke-qemu-uefi.sh give 76; the seventeen gates that live
+         outside those switches give 87; the SSH gates, once the kernel is
+         built with AIUEOS_SSH_LISTEN=1, give 90. One short of the record, and
+         the missing one is SSH_SESSION -- the live-exchange stall this ledger
+         already knows about, which reported AIUEOS_SSH_KEX_REPLY_INCOMPLETE
+         stage=2 here.
+         FIVE GATES I CALLED RED WERE MY OWN INVOCATIONS. Worth the space
+         because each one, left as written, would have entered this ledger as a
+         regression. AIUEOS_EXPECT_FAULT and AIUEOS_EXPECT_CRASH only switch
+         which assertions run; the variables that inject the fault are
+         AIUEOS_FAULT_RECEIPT_SMOKE and AIUEOS_CRASH_RECEIPT_SMOKE, and
+         smoke-qemu-journal-recovery.sh already pairs them correctly. Run that
+         way, interrupts went 6/9 to 9/9 -- FAULT_RECEIPT, CRASH_RECEIPT and
+         PANIC_RECEIPT all emit. The three SSH gates need
+         --classpath orgs/kotoba-lang/org-ietf-ssh/src AND a kernel carrying the
+         KEX KAT string; both are in their own docstring and I read neither
+         until they failed. install and usb-boot need the release image built
+         first, which their error message says. Every one of the five announced
+         its prerequisite in the failure. The gates were right and the runner
+         was wrong.
+         TPM2 MEASURED AT A SECOND FIRMWARE, still absent. The taxonomy records
+         :firmware on the strength of one OVMF. Homebrew's
+         edk2-x86_64-code.fd contains zero TPM strings. Arch's edk2-ovmf
+         202608-1 contains them, so it was fetched and passed as OVMF_CODE with
+         swtpm attached; the guest still prints
+         AIUEOS_TPM2_ABSENT no-root-of-trust-described. So the claim survived a
+         firmware built with TPM support, which is more than it had before.
+         NOT measured, and the reason this is not yet a diagnosis: whether that
+         build actually publishes a TPM2 ACPI table. Strings in a file are not a
+         table in a guest, and I did not open the firmware volume to check.
+         THE RECLAIM PATH FOR THE 137 GB DATASET WAS ITSELF BROKEN, which is
+         this ledger's own class of defect wearing different clothes.
+         `nbb manifest/west_annex.cljs annex-drop` -- the documented way to
+         return m365-archive's annexed content to B2 -- exits 1 with
+         \"Could not find namespace: kotoba.lang.text\": secret-resolve moved off
+         clojure.string, and the classpath west_annex.cljs hands b2-creds was
+         never updated. Measured both ways: exit 1 with that message before,
+         credentials JSON after adding orgs/kotoba-lang/text/src. Fixed in the
+         superproject, not here. It fails loudly rather than silently, which is
+         the one good thing about it -- I first recorded it as exiting 0 and
+         that was my own shell reading the status of the wrong command.
+         AND THE TWO COPIES OF THAT DATASET ARE ONE. du reports 137 GB at
+         orgs/gftdcojp/m365-archive and 137 GB at github/wt-cs2/m365-archive.
+         Same inode, link count 2 on 197 of 200 sampled objects. Deleting either
+         path frees almost nothing; the blocks go when both links go. The
+         observation was real and the mechanism inferred from it -- two separate
+         copies -- was not checked. One stat call decided it.
+         CONCURRENCY. Another session moved PLC_RT, reclaimed 202 GB of runaway
+         command output from /private/tmp, and fetched the model artifact while
+         this ran. Those are theirs. This 90 was measured against 8cbb2dd,
+         before the PLC_RT fix landed, and is not comparable to the 91 above it
+         line for line -- their union carries physical-K16 evidence this one has
+         no access to, which is why the same 25 remaining markers sort into
+         different buckets here (board 13, model-artifact 6, owner 4,
+         firmware 1, live-exchange-stalls 1)."}]
