@@ -154,6 +154,39 @@ gcc believed `acc` survived the call and stopped reloading it: rep 0 returned
 apparently cheaper. Only the value comparison caught it. A counter that is not
 checked against an oracle will report the shape of a run that did not happen.
 
+## The Linux half of the boundary is measured and banked
+
+The comparison needs two numbers. One of them can be taken today, so it was,
+rather than waiting and then measuring both on a machine whose state has
+drifted. `os/aiueos/scripts/perf-linux-syscall-boundary.c`, on the same gad
+(load1 0.36-0.55 throughout):
+
+| arm | marginal instructions per iteration |
+|---|---|
+| `syscall(SYS_getpid)` in a loop | 353.47 |
+| the identical loop, syscall replaced by a volatile read | 5.00 |
+| **difference — the Linux syscall boundary** | **348.5** |
+
+~184 cycles. The second arm exists because the two-size difference cancels
+everything constant but NOT the loop's own bookkeeping, which scales 1:1 with
+syscalls; subtracting a null arm measures that instead of estimating it. It
+came out at exactly 5.00 instructions per iteration.
+
+For scale, in the unit this ADR establishes: **one Linux syscall costs about
+23 iterations of the amu compute loop.**
+
+`SYS_getpid` is chosen so the kernel-side work is close to nothing and what
+remains is the boundary. The mitigation state is part of the number and is
+recorded rather than assumed: on this host every vulnerability file reads
+`Not affected` except `spec_rstack_overflow: Mitigation: IBPB on VMEXIT only`.
+A host with PTI or retpolines active would measure a different boundary, and
+that difference would be the mitigations rather than the OS design.
+
+**What is still missing is the aiueos half, and only the aiueos half.** When a
+CPL3 path exists, the aiueos capability call is measured the same way in the
+same unit and the comparison is one subtraction. Until then this number sits
+here alone and is not divided by anything.
+
 ## Two things that happened while landing, recorded rather than chased
 
 **`CLJC contract tests` is red on main and was red before this branch.** Run
