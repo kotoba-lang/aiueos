@@ -373,13 +373,34 @@ def release_partition_entries(release):
 
 
 def make_bundle_tgz(installer_dir, scripts_dir, intent_bytes, receipt_bytes, node_binary,
-                    nbb_dir=None):
+                    nbb_dir=None, classpath_dirs=()):
     """Deterministic gzip'd tar of the installer bundle. Determinism is what
-    lets the receipt digest mean anything: same inputs, same bytes."""
+    lets the receipt digest mean anything: same inputs, same bytes.
+
+    `classpath_dirs` are source roots the bundled .cljs REQUIRE. They are not
+    optional in practice: on 2026-09-09 this repository's tooling moved from
+    clojure.string to kotoba.lang.text, the fix was written into nbb.edn, and
+    nbb.edn is not on the USB. Measured 2026-09-10 on main: /init hands over to
+    install-live.cljs and it dies with `Could not find namespace:
+    kotoba.lang.text` before doing anything -- as do install-to-disk.cljs,
+    install-intent.cljs and make-provision-record.cljs, the whole chain. The
+    node bundle beside this one already carried a cp/ root and already passed
+    --classpath; only the install bundle did not.
+
+    A source a script cannot see is not a dependency it has (CLAUDE.md). The
+    USB is the sharpest case of that: nothing else on the stick declares
+    anything."""
     buffer = io.BytesIO()
     entries = []
+    seen = {}
 
     def add(name, data, mode):
+        # Two roots merge into one cp/, so a shared relative path would make
+        # one file silently replace the other -- and the survivor is whichever
+        # root was passed last. Refuse instead.
+        if name in seen and seen[name] != data:
+            raise ValueError("bundle entry written twice with different bytes: " + name)
+        seen[name] = data
         entries.append(("aiueos-installer/" + name, data, mode))
 
     for path in sorted(Path(installer_dir).iterdir()):
@@ -394,6 +415,18 @@ def make_bundle_tgz(installer_dir, scripts_dir, intent_bytes, receipt_bytes, nod
     for name in ("install-intent.cljs", "install-to-disk.cljs",
                  "make-provision-record.cljs"):
         add(name, (Path(scripts_dir) / name).read_bytes(), 0o644)
+    for src in classpath_dirs:
+        base = Path(src)
+        sources = sorted(base.rglob("*.cljc")) + sorted(base.rglob("*.cljs"))
+        # A root that contributed nothing must not look like a root nobody
+        # asked for. Measured while writing the test for this very function: a
+        # misquoted argument passed one path that did not exist, rglob returned
+        # empty, the bundle was produced clean, and the scripts on it could not
+        # load. The build was green and the stick was dead.
+        if not sources:
+            raise ValueError("classpath root carries no .cljc/.cljs sources: " + str(src))
+        for path in sources:
+            add("cp/" + path.relative_to(base).as_posix(), path.read_bytes(), 0o644)
     add("install-intent.json", intent_bytes, 0o644)
     add("release-receipt.json", receipt_bytes, 0o644)
     if node_binary:
@@ -409,8 +442,14 @@ def make_bundle_tgz(installer_dir, scripts_dir, intent_bytes, receipt_bytes, nod
         # only writable, executable place on the box.
         add("bin/node", b'#!/bin/sh\nDIR=$(dirname "$(readlink -f "$0")")/..\n'
                         b'exec "$DIR/node-linux-x64" "$@"\n', 0o755)
+        # The classpath belongs in the shim, not only in /init: install-live.cljs
+        # spawns `nbb install-to-disk.cljs` BY NAME, so the second hop resolves
+        # through PATH and would otherwise start with an empty classpath even
+        # when the first hop had one.
+        cp_flag = (b'--classpath "$DIR/cp" ' if classpath_dirs else b'')
         add("bin/nbb", b'#!/bin/sh\nDIR=$(dirname "$(readlink -f "$0")")/..\n'
-                       b'exec "$DIR/node-linux-x64" "$DIR/nbb-bundle/node_modules/nbb/cli.js" "$@"\n',
+                       b'exec "$DIR/node-linux-x64" "$DIR/nbb-bundle/node_modules/nbb/cli.js" '
+                       + cp_flag + b'"$@"\n',
             0o755)
 
     with gzip.GzipFile(fileobj=buffer, mode="wb", mtime=EPOCH) as gz:
@@ -609,7 +648,8 @@ def build(args):
 
     scripts_dir = Path(__file__).resolve().parent
     bundle = make_bundle_tgz(args.installer_dir, scripts_dir, intent_bytes,
-                             release_receipt_bytes, args.node_binary, args.nbb_dir)
+                             release_receipt_bytes, args.node_binary, args.nbb_dir,
+                             classpath_dirs=[d for d in (args.classpath or []) if d])
     files = {
         "RELEASE.IMG": release,
         "RECEIPT.JSN": release_receipt_bytes,
@@ -802,6 +842,10 @@ def main():
     b.add_argument("--release-receipt", required=True)
     b.add_argument("--intent", required=True)
     b.add_argument("--installer-dir", required=True)
+    b.add_argument("--classpath", action="append",
+                   help="a source root the bundled .cljs require (repeatable): "
+                        "text/src, the aiueos src root. Without them the bundle "
+                        "extracts and every script dies on a missing namespace.")
     b.add_argument("--node-binary")
     b.add_argument("--nbb-dir")
     b.add_argument("--live-uki")

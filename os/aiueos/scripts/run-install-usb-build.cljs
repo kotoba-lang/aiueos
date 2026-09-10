@@ -54,12 +54,32 @@
        "\n    --ssh-public-key-file ~/.ssh/<key>.pub \\"
        "\n    --out" intent))
 
+;; The source roots the bundled .cljs require. `../text/src` is where
+;; kotoba.lang.text lives in the west layout -- the same sibling path nbb.edn
+;; names, and nbb.edn is not on the USB, which is how the whole bundled chain
+;; came to die on a missing namespace (ADR-0209). `src` carries
+;; aiueos.installer.guided for the guided installer (ADR-0208).
+;;
+;; Missing roots refuse the build. A USB that extracts and then dies on the
+;; machine is worse than one that was never written: the failure is discovered
+;; standing next to the box, with the installer already booted.
+(def text-src (.resolve path repo ".." "text" "src"))
+(def aiueos-src (.join path repo "src"))
+(doseq [[what dir] [["kotoba.lang.text (west sibling orgs/kotoba-lang/text)" text-src]
+                    ["aiueos.installer.guided" aiueos-src]]]
+  (when-not (.existsSync fs dir)
+    (die "classpath root for" what "not found:" dir
+         "\nThe bundled scripts require it. Building without it produces a USB"
+         "\nthat boots, extracts, and dies on a missing namespace.")))
+
 (def builder-args
   (concat ["build"
            "--release-image" release-image
            "--release-receipt" release-receipt
            "--intent" intent
            "--installer-dir" (.join path aiueos "installer")
+           "--classpath" text-src
+           "--classpath" aiueos-src
            "--output" (or (arg "--output") usb-image)
            "--receipt" (or (arg "--receipt") usb-receipt)]
           (when-let [node-bin (arg "--node-binary")]

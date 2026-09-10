@@ -83,6 +83,20 @@
                      zero and two-plus both refuse with named reasons"
                     :interactive :dry-run-report-only
                     :unattended :intent-is-the-owner-confirmation}
+             ;; What the bundle carries so the scripts on it can LOAD.
+             ;; nbb.edn is not on the USB, and a sibling path resolves relative
+             ;; to the file it is written in, so the 2026-09-09 move to
+             ;; kotoba.lang.text reached every caller in the repository and no
+             ;; caller on the medium. Measured broken 2026-09-10, fixed by
+             ;; aiueos ADR-0209.
+             :bundle {:classpath-root "cp/"           ; same shape as the node bundle beside it
+                      :carries [:kotoba-lang-text     ; from the west sibling orgs/kotoba-lang/text
+                                :aiueos-installer-guided]
+                      :passed-by [:init-handover :bin-nbb-shim] ; the shim: hop 2 spawns nbb by name
+                      :refuses [:classpath-root-with-no-sources
+                                :two-roots-differing-bytes-at-one-path]
+                      :test "os/aiueos/scripts/test-install-bundle.cljs"
+                      :executed-not-just-built true}
              :legacy-assets ["os/aiueos/installer/install.mjs"
                              "os/aiueos/installer/backends.mjs"
                              "os/aiueos/installer/device-policy.mjs"
@@ -259,7 +273,12 @@
                                existing-install and the disk digest is
                                unchanged; installed extent equals the release
                                receipt digest before and after. QEMU/OVMF with
-                               a VARS pflash; no physical machine yet (I7)."}
+                               a VARS pflash; no physical machine yet (I7).
+                               STALE: this green is about the tree as of
+                               2026-08-25, before the 2026-09-09 move to
+                               kotoba.lang.text. On 2026-09-10 the bundle on
+                               the USB could not load at all (aiueos ADR-0209,
+                               fixed); the gate has not been re-run since."}
   :i4-headless {:state :red
                 :provisioning :landed  ; the static half (ssh-v1.edn, ADR-0101)
                 :note "The SSH profile is designed (ssh-v1.edn) and the
