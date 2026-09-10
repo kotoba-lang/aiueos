@@ -42,7 +42,9 @@
        "\nhint: run os/aiueos/scripts/build-release-image.sh first"))
 (when-not (.existsSync fs release-receipt)
   (die "release receipt missing:" release-receipt))
-(when-not (.existsSync fs intent)
+(def guided? (>= (.indexOf (to-array (vec *command-line-args*)) "--guided") 0))
+
+(when (and (not guided?) (not (.existsSync fs intent)))
   (die "install intent missing:" intent
        "\nAn intent names the ONE disk an unattended install may erase, so it"
        "\nis never auto-created. Create it deliberately:"
@@ -75,9 +77,12 @@
 (def builder-args
   (concat ["build"
            "--release-image" release-image
-           "--release-receipt" release-receipt
-           "--intent" intent
-           "--installer-dir" (.join path aiueos "installer")
+           "--release-receipt" release-receipt]
+          ;; Exactly one of the two products. --guided is stated, never
+          ;; inferred from a missing file: a forgotten --intent would
+          ;; otherwise silently build the stick that asks (ADR-0210).
+          (if guided? ["--guided"] ["--intent" intent])
+          ["--installer-dir" (.join path aiueos "installer")
            "--classpath" text-src
            "--classpath" aiueos-src
            "--output" (or (arg "--output") usb-image)

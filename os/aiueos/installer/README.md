@@ -55,10 +55,34 @@ unattended run fails while the target disk is untouched.
 nbb os/aiueos/scripts/test-guided-install.cljs   # 53 cases, offline
 ```
 
-What is not claimed: no hardware run (the interactive path is measured against
-a piped answer script, which takes the same fd-0 code path as a terminal), no
-fleet gate, and the live-installer UKI does not launch this program yet -- it
-still expects an intent already on the USB.
+### A stick that asks (ADR-0210)
+
+`--guided` builds an install USB carrying **no** `INTENT.JSN`:
+
+```sh
+nbb os/aiueos/scripts/run-install-usb-build.cljs --guided \
+  --node-binary <linux-node> --nbb-dir <nbb tree> --live-uki <uki>
+```
+
+Booted as the live installer, `/init` hands over to `install-live.cljs`, which
+finds no intent and runs `guided-install.cljs` with the console attached. The
+intent the operator authors then goes through the SAME fresh-probe
+verification, the same single-candidate target selection and the same
+device-level refusals. An intent authored ten seconds ago is not more trusted
+than one authored last week.
+
+`--guided` and `--intent` are exclusive and one is required: a forgotten
+`--intent` must not quietly build the other product. `verify` decides which
+product an image is from the image alone and cross-checks it against
+`SHA256S.TXT`, so a payload between the two is refused by name.
+
+Guided exit codes are propagated by `install-live.cljs`, not flattened: `2` is
+a named refusal, `3` is nobody answered.
+
+What is not claimed: no hardware run and no QEMU run (the interactive path is
+measured against a piped answer script, which takes the same fd-0 code path as
+a terminal); no fleet gate; gate I3's evidence still predates the 2026-09-09
+namespace move (ADR-0209).
 
 ---
 
