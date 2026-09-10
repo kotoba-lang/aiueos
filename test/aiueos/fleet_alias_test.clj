@@ -24,16 +24,19 @@
     'io.github.kotoba-lang/amu
     'io.github.kotoba-lang/security
     'io.github.kotoba-lang/abi
-    ;; Added 2026-09-10 when this test first got far enough to run: the bb
-    ;; failure was aborting the job before it. Verified the way the docstring
-    ;; above demands -- not `gh api`, which answers with MY token and so
-    ;; answers a different question. Anonymous probe, credentials stripped:
+    ;; Added 2026-09-10, when the bb fix first let this test run at all -- the
+    ;; job had been dying before it. Each name is the claim the docstring
+    ;; describes, so each was probed the way a credential-less fleet node
+    ;; would, NOT with `gh api` (which answers with the caller's token and so
+    ;; answers a different question -- the exact defect this file warns about):
     ;;   env -u GITHUB_TOKEN -u GH_TOKEN GIT_TERMINAL_PROMPT=0 \
-    ;;     git ls-remote https://github.com/kotoba-lang/text HEAD
-    ;;   -> c3d69c54... rc=0
-    ;; with a negative control (a nonexistent repo) that prompts for a
-    ;; username and fails, so the probe is known to discriminate.
-    'io.github.kotoba-lang/text})
+    ;;     git ls-remote https://github.com/kotoba-lang/<name> HEAD
+    ;;   kotoba-native 50c6480c...  org-nist-sha2 158c757d...  webgpu fd738b13...
+    ;; with a negative control (a nonexistent repo under the same env prompts
+    ;; for a username and fails), so the probe discriminates.
+    'io.github.kotoba-lang/kotoba-native
+    'io.github.kotoba-lang/org-nist-sha2
+    'io.github.kotoba-lang/webgpu})
 
 (def ^:private deps (delay (edn/read-string (slurp "deps.edn"))))
 
