@@ -277,6 +277,83 @@ is either a statically linked runtime or a declared dependency, and choosing
 between those is a decision with its own evidence. Recorded so the next person
 does not read the docstring as a guarantee.
 
+## Where this stands, 2026-09-11
+
+The 6600HS is a murakumo node. Not "installed" -- answering, on a schedule
+nobody triggers:
+
+    aiueos-6600hs   tailscale 100.92.201.91   LAN 192.168.1.8 (netplan, persistent)
+    did:key:z6Mkf33VwWzUSWuBJ5eoj1ofjE177xx1vevEhoBqDh8c5VGj
+    register  201  {"state":"claimed"}
+    heartbeat 202  {"accepted":true}   <- from a timer run nobody started
+
+Verified by reboot, twice over: the box came back at `booted 2026-09-11
+03:35:55` with its address and its tailnet membership restored by itself, and
+`RunSSH`/`WantRunning` survived. The commands that measured it were run over
+that restored tailscale SSH, with no jump host -- the session is its own
+evidence.
+
+Registration is an operator step and was the only one that needed a credential:
+`accept-heartbeat` refuses `:unknown-device` before a row exists and
+`:not-claimed` until one has an owner, and the agent owns only the back half of
+the claim ceremony. What it took is now in the secrets index (root
+`9d077a2`), including the thing that cost the detour -- an absent entry in that
+index is not evidence the vault lacks the item.
+
+### Landed
+
+    cb77858  the registry, the driver, the ingest, the probe, 55 offline cases
+    f5b0753  the stick was built, and it boots (QEMU, removable USB, OVMF)
+    847b51d  a convenience must not be able to fail the install it rode in on
+    ba10659  the 6600HS measured itself; the .cljk literals in scripts/; the
+             test suite decoupled from the live contract
+    e4cc6e5  the node agent's own .cljk literals, incl. the unit's ExecStart
+
+    root df137de  the wired LAN, fully accounted for
+    root 9d077a2  the devices console admin token, in the index at last
+    west pin advanced with each; verify-west-pins green
+
+### What the install actually did, and did not
+
+The first install failed, and the box is the evidence: `/etc/netplan/` empty,
+`/var/log/installer/` holding two files where a completed run holds ten, and
+nothing at all from the late-commands -- no agent, no hw-record, no install log.
+Identity applied, everything after the first late-command did not. That is the
+shape of the tailscale block aborting under `set -eu` with no network, which is
+the defect `847b51d` fixed.
+
+⚠ **Reconstructed from state, not read.** The installer's own log was never
+copied to the target, so the error TEXT is unrecovered and this remains an
+inference with a very good fit rather than a measurement.
+
+### Open, in the order they will bite
+
+1. **`nbb` cannot resolve a namespace from a `.cljk` file.** Measured:
+   `demo/a.cljk` alone gives `Could not find namespace: demo.a`; adding
+   `demo/a.cljs` resolves it. So today's rename broke every nbb script that
+   requires a repo namespace -- `scripts/west-pin-put.cljk` and
+   `scripts/root-worktree.cljk` among them, both worked around here with a
+   throwaway classpath. This is the largest open item and it is not aiueos-only.
+2. **451 `.cljs` literals across 119 files, and zero `.cljs` files.** 38 sit in
+   runnable scripts. Fixed only where measured broken (13 in this repo). A
+   blanket rewrite would also hit docstrings and ADR text where `.cljs` is
+   historically correct, so it needs a rule, not a sed.
+3. **The bundled runtime needs `libatomic1`**, which Ubuntu Server does not
+   ship. Installed by hand here. Static runtime versus declared dependency is
+   the decision.
+4. **`node-boot-test` `it-reports-claimable` is red on main**, identically
+   before and after anything done here.
+
+### Resume point
+
+    ssh aiueos@100.92.201.91            # the node, over tailscale, keyless
+    journalctl -u aiueos-node.service -n 20 --no-pager
+
+The next box needs no browser and no detour: mint an ephemeral pre-authorized
+tailnet key, pass it as `--tailscale-authkey-file`, and register the device
+before first boot with the token now named in the secrets index. The 6600HS's
+disk serial is measured, so `--unattended` builds a stick that no longer asks.
+
 ## What this does not claim
 
 - **No physical hardware.** TCG emulation of an x86_64 machine says nothing about
