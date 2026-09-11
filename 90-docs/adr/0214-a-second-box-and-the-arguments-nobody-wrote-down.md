@@ -209,6 +209,55 @@ Then `screendump <file>.ppm` on the monitor socket. Run it a second time against
 the pristine Ubuntu ISO; without that half, "it reached the storage screen" is
 compatible with the installer having reached it for its own reasons.
 
+## The convenience could fail the install, and did not have to be able to
+
+Added 2026-09-11, after an install error on the 6600HS that I have not seen the
+text of. This section records a defect **measured in the shipped stick**, not a
+diagnosis of that error — the two are only connected by suspicion.
+
+The registry's `:nic` note already named this shape: "a NIC Ubuntu cannot drive
+turns into a late-command failure rather than a clear 'no network'". It was
+written as a property of the situation. It was also true of the code, and nobody
+checked.
+
+The tailscale late-command ran bare under `set -eu`:
+
+    set -eu
+    curtin in-target --target=/target -- sh -c 'curl … && apt-get -qq update && …'
+
+`apt-get update` inside the target needs the network. Measured with a stub
+`curtin` that exits 1: **the block exits 1, and curtin fails the install.** So a
+box with no network during the install gets a generic installer failure, and the
+operator is told nothing about the one thing they could act on.
+
+Tailscale is not what makes this box a node. A convenience that can fail the
+install it rode in on is a defect however well it works when it works — and the
+hw-record block two lines below it already knew that, which is why it is guarded
+and ends in `exit 0`.
+
+The failure is now TESTED rather than allowed to abort, the join unit is armed
+only if the package actually arrived, and every outcome is written to the install
+log — including `AIUEOS_TAILSCALE_NOT_INSTALLED … most often that means this box
+had no network during the install`.
+
+**The `if` is the operative change, not the missing `set -eu`**, and that is
+recorded because getting it wrong was measured. My first break test put `set -eu`
+back at the top of the fixed block and the block still exited 0: `set -e` does
+not abort on a command whose status an `if` consumes. A green mutation read as
+"the fix was unnecessary" until the right break — the shipped block itself, run
+with a failing `curtin` — turned it red.
+
+Evidence: four cases in `:node-installer-test`, run rather than read (a stub
+`curtin` on `PATH`, the block executed, its exit status taken). The shipped
+builder turns exactly those four red and leaves the agent-block control green.
+That control is the reason this is not "guard every late-command": the agent IS
+the point of the stick, still runs under `set -eu`, and is still allowed to fail
+the install.
+
+⚠ **This does not explain the 6600HS error.** I have not seen it. What is
+measured is that the stick which was flashed carries a block that can fail an
+install, and that it no longer can.
+
 ## What this does not claim
 
 - **No physical hardware.** TCG emulation of an x86_64 machine says nothing about

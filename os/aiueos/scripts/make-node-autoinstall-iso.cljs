@@ -171,23 +171,50 @@
        ;; than into the installer: `curtin in-target` runs inside the system
        ;; being built, which is where it has to end up. Not `curl … | sh` --
        ;; the packages are signed and the keyring is what checks them.
+       ;;
+       ;; The failure is TESTED, with `if`, instead of being allowed to abort.
+       ;; That -- not the missing `set -eu` -- is the operative change, and it is
+       ;; written down because getting it wrong was measured: putting `set -eu`
+       ;; back at the top of the fixed block leaves it exiting 0, since `set -e`
+       ;; does not abort on a command whose status an `if` consumes. The break
+       ;; that does discriminate is the shipped block itself, run with a `curtin`
+       ;; that exits 1: it exits 1, and curtin fails the install.
+       ;;
+       ;; Tailscale is a CONVENIENCE. It is not what makes this box a node, and
+       ;; an optional convenience that can fail the whole install is a defect
+       ;; however well it works when it works. `apt-get update` in the target
+       ;; needs the network, so on a box whose NIC the installer cannot drive --
+       ;; or one simply installed offline -- this step exits non-zero, the block
+       ;; exits non-zero with it, and curtin fails the install. The operator sees
+       ;; a generic installer failure rather than "there was no network", which
+       ;; is the one thing they needed to be told.
+       ;;
+       ;; The hw-record block below already worked this way. This one is now the
+       ;; same shape: every outcome is written to the install log, the join unit
+       ;; is armed only if the package actually arrived, and the block ends in
+       ;; `exit 0`.
        (if no-tailscale?
          ""
          (str "    - |\n"
-              "      set -eu\n"
-              "      curtin in-target --target=/target -- sh -c '"
+              "      log=/target/var/log/aiueos-node-install.log\n"
+              "      mkdir -p /target/var/log 2>/dev/null || true\n"
+              "      if curtin in-target --target=/target -- sh -c '"
               "curl -fsSL https://pkgs.tailscale.com/stable/ubuntu/" ubuntu-codename
               ".noarmor.gpg -o /usr/share/keyrings/tailscale-archive-keyring.gpg && "
               "curl -fsSL https://pkgs.tailscale.com/stable/ubuntu/" ubuntu-codename
               ".tailscale-keyring.list -o /etc/apt/sources.list.d/tailscale.list && "
-              "apt-get -qq update && DEBIAN_FRONTEND=noninteractive apt-get -qq install -y tailscale'\n"
+              "apt-get -qq update && DEBIAN_FRONTEND=noninteractive apt-get -qq install -y tailscale'; then\n"
               (if tailscale-authkey
                 ;; A one-shot that joins on first boot and then never runs
                 ;; again, because `tailscale up` is not idempotent in the sense
                 ;; that matters: re-running it with a spent ephemeral key fails
                 ;; and would leave a unit failing for ever.
-                (str "      install -d -m 0700 /target/var/lib/aiueos-node\n"
-                     "      cat > /target/etc/systemd/system/aiueos-tailscale.service <<'UNIT'\n"
+                ;;
+                ;; Armed only inside the success branch: a unit whose ExecStart
+                ;; is a binary that was never installed fails on every boot and
+                ;; says nothing about why.
+                (str "        install -d -m 0700 /target/var/lib/aiueos-node\n"
+                     "        cat > /target/etc/systemd/system/aiueos-tailscale.service <<'UNIT'\n"
                      "[Unit]\n"
                      "Description=join the tailnet, with tailscale ssh\n"
                      "After=network-online.target tailscaled.service\n"
@@ -201,14 +228,26 @@
                      "\n[Install]\n"
                      "WantedBy=multi-user.target\n"
                      "UNIT\n"
-                     "      chmod 0600 /target/etc/systemd/system/aiueos-tailscale.service\n"
-                     "      curtin in-target --target=/target -- systemctl enable aiueos-tailscale.service\n")
+                     "        chmod 0600 /target/etc/systemd/system/aiueos-tailscale.service\n"
+                     "        curtin in-target --target=/target -- systemctl enable aiueos-tailscale.service || true\n"
+                     "        echo 'AIUEOS_TAILSCALE_JOIN_ARMED' | tee -a \"$log\"\n")
                 ;; No key: install it and say so. Deliberately NOT a unit that
                 ;; runs `tailscale up` and waits -- that hangs, prints a login
                 ;; URL where nobody is reading, and reports a failure that is
                 ;; really a question nobody was asked.
-                (str "      echo 'AIUEOS_TAILSCALE_INSTALLED_NOT_JOINED"
-                     " -- run: sudo tailscale up --ssh' | tee -a /target/var/log/aiueos-node-install.log\n"))))
+                (str "        echo 'AIUEOS_TAILSCALE_INSTALLED_NOT_JOINED"
+                     " -- run: sudo tailscale up --ssh' | tee -a \"$log\"\n"))
+              ;; The failure branch is the whole point of this change. It names
+              ;; the likely cause, because the operator standing at the box can
+              ;; act on "no network" and cannot act on "late-command exited 1".
+              "      else\n"
+              "        echo 'AIUEOS_TAILSCALE_NOT_INSTALLED"
+              " -- the target could not reach pkgs.tailscale.com, or apt failed."
+              " Most often that means this box had no network during the install."
+              " The node does not need tailscale: install it later and run"
+              " sudo tailscale up --ssh.' | tee -a \"$log\"\n"
+              "      fi\n"
+              "      exit 0\n"))
        ;; The agent is installed INTO the target, which is not running yet, so
        ;; install.cljs takes --root and enables the unit offline. It reports
        ;; ENABLED_OFFLINE rather than claiming the node is answering: those are
