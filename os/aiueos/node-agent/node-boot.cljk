@@ -123,7 +123,7 @@
   (say "AIUEOS_NODE_ATTEST_START")
   (let [r (.spawnSync cp (path/join here "bin" "nbb")
                       (clj->js ["--classpath" (path/join here "cp")
-                                (path/join here "device-attest-agent.cljs")
+                                (path/join here "device-attest-agent.cljk")
                                 "--did" did
                                 "--endpoint" endpoint
                                 "--key" key-path

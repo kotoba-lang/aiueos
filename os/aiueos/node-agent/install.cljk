@@ -16,7 +16,7 @@
 ;; Run it with the runtime the bundle carries, so it works before any package
 ;; is installed:
 ;;
-;;   ./node-linux-x64 nbb-bundle/node_modules/nbb/cli.js install.cljs \
+;;   ./node-linux-x64 nbb-bundle/node_modules/nbb/cli.js install.cljk \
 ;;     --endpoint https://murakumo.cloud [--prefix /opt/aiueos-node] [--dry-run]
 
 (require '[clojure.string :as str]
@@ -78,7 +78,7 @@
 ;; run to understand.
 (when (and dry-run? blocker)
   (say "would refuse here:" blocker)
-  (say "plan:" (str/join ", " ["node-boot.cljs" "device-attest-agent.cljs"
+  (say "plan:" (str/join ", " ["node-boot.cljk" "device-attest-agent.cljk"
                                "cp/" "nbb-bundle/" "node-linux-x64"])
        "->" prefix "; key and config ->" state-dir
        "; units -> " unit-dir)
@@ -107,7 +107,7 @@
        "Environment=AIUEOS_NODE_BUNDLE=" prefix-rel "\n"
        "ExecStart=" prefix-rel "/node-linux-x64 "
        prefix-rel "/nbb-bundle/node_modules/nbb/cli.js --classpath " prefix-rel "/cp "
-       prefix-rel "/node-boot.cljs " state-rel "/node.json\n"
+       prefix-rel "/node-boot.cljk " state-rel "/node.json\n"
        ;; 1 is `rejected`: the plane read a signature this machine produced and
        ;; refused it. Retrying cannot fix a key, and a service that kept trying
        ;; would turn a key fault into a quiet busy wait.
@@ -149,7 +149,7 @@
 ;; ── copy ──────────────────────────────────────────────────────────────────
 
 (def payload
-  ["node-boot.cljs" "device-attest-agent.cljs" "node-linux-x64" "cp" "nbb-bundle" "bin"])
+  ["node-boot.cljk" "device-attest-agent.cljk" "node-linux-x64" "cp" "nbb-bundle" "bin"])
 
 (defn- copy! [name]
   (let [src (path/join here name) dst (path/join prefix name)]
