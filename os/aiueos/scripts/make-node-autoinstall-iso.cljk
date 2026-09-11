@@ -21,7 +21,7 @@
 ;;     --output build/aiueos/aiueos-node-autoinstall.iso
 ;;
 ;; For one NAMED box, drive this from the registry instead, so the arguments are
-;; written down rather than remembered: `scripts/make-node-installer.cljs
+;; written down rather than remembered: `scripts/make-node-installer.cljk
 ;; --machine <id>` (contracts/node-machines-v1.edn).
 
 (require '[clojure.string :as str]
@@ -249,7 +249,7 @@
               "      fi\n"
               "      exit 0\n"))
        ;; The agent is installed INTO the target, which is not running yet, so
-       ;; install.cljs takes --root and enables the unit offline. It reports
+       ;; install.cljk takes --root and enables the unit offline. It reports
        ;; ENABLED_OFFLINE rather than claiming the node is answering: those are
        ;; different states and the first boot is what turns one into the other.
        "    - |\n"
@@ -258,7 +258,7 @@
        "      cp /cdrom/aiueos-node-agent.tar.gz /target/opt/\n"
        "      tar xzf /cdrom/aiueos-node-agent.tar.gz -C /target/opt\n"
        "      cd /target/opt/aiueos-node-agent\n"
-       "      ./node-linux-x64 nbb-bundle/node_modules/nbb/cli.js install.cljs \\\n"
+       "      ./node-linux-x64 nbb-bundle/node_modules/nbb/cli.js install.cljk \\\n"
        "        --endpoint " endpoint " --root /target 2>&1 | tee -a /target/var/log/aiueos-node-install.log\n"
 
        ;; ── the box measures itself ──────────────────────────────────────────
@@ -266,7 +266,7 @@
        ;; A box this repository has not met arrives with every field
        ;; :unverified (contracts/node-machines-v1.edn), and the cheapest moment
        ;; to read its NIC, its disk serial and its board off it is the one boot
-       ;; that is happening anyway. `record-node-machine-probe.cljs` turns this
+       ;; that is happening anyway. `record-node-machine-probe.cljk` turns this
        ;; file into those fields.
        ;;
        ;; From SYSFS and util-linux ONLY, deliberately. `lspci` and `dmidecode`

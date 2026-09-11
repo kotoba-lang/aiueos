@@ -3,7 +3,7 @@
 ;; contracts/node-machines-v1.edn.
 ;;
 ;; The install writes /var/log/aiueos-node-hwprobe.txt on the box (the
-;; `--no-hw-record` switch of make-node-autoinstall-iso.cljs turns it off).
+;; `--no-hw-record` switch of make-node-autoinstall-iso.cljk turns it off).
 ;; Bring that file here and this reads it:
 ;;
 ;;   nbb os/aiueos/scripts/record-node-machine-probe.cljk \
@@ -386,5 +386,5 @@
       (say "recorded" (count measured) "measured fields for" machine-id "in" registry-path)
       (when (contains? measured :disk-serial)
         (say "This box now has a measured disk serial, so"
-             (str "`make-node-installer.cljs --machine " machine-id " --unattended`")
+             (str "`make-node-installer.cljk --machine " machine-id " --unattended`")
              "will build the stick that installs without a person."))))

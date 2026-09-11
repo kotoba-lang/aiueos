@@ -53,14 +53,17 @@
  {:amd-6600hs
   {:hostname "aiueos-6600hs"
    :facts
-   {:cpu {:value "AMD Ryzen 5 6600HS"
-          :provenance :owner-stated
-          :on "2026-09-10"
-          ;; Recorded because it is the one fact that does NOT need measuring
-          ;; to be actionable, and because it is the fact that makes this port
-          ;; cheap rather than hard: 6600HS is Rembrandt and the K16's 7735HS
-          ;; is Rembrandt-R, which is the same silicon rebadged. Same family
-          ;; 19h, same Zen 3+ core, same RDNA2 gfx1035 display block.
+   {:cpu {:value "AMD Ryzen 5 6600H with Radeon Graphics" :provenance :measured :on "2026-09-11" :by "aiueos-node-hwprobe sha256:d9a5c9f0002a"
+          ;; MEASURED 2026-09-11, and it corrected the owner's statement: the
+          ;; chip is a 6600H, not a 6600HS. The machine id and hostname still
+          ;; say 6600hs and are NOT being renamed -- a name is a discovery
+          ;; alias, the measured value is the fact, and churning the id would
+          ;; break the stick already built against it.
+          ;;
+          ;; The conclusion it was recorded for survives the correction: 6600H
+          ;; is Rembrandt and the K16's 7735HS is Rembrandt-R, the same silicon
+          ;; rebadged. Same family 19h, same Zen 3+ core, same RDNA2 gfx1035
+          ;; display block.
           ;;
           ;; The actionable consequence is a NEGATIVE one, and it is the whole
           ;; reason to write it down: this CPU change justifies no new kernel
@@ -74,8 +77,8 @@
     ;; Everything below is box-specific and nobody has looked. They are listed
     ;; rather than omitted, because an absent key reads as "not applicable" and
     ;; these are all applicable and all unknown.
-    :board       {:value nil :provenance :unverified}
-    :nic         {:value nil :provenance :unverified
+    :board       {:value "LXY MQ" :provenance :measured :on "2026-09-11" :by "aiueos-node-hwprobe sha256:d9a5c9f0002a"}
+    :nic         {:value "r8169 [10ec:8168], rtw89_8851be [10ec:b851]" :provenance :measured :on "2026-09-11" :by "aiueos-node-hwprobe sha256:d9a5c9f0002a"
                   ;; This is the field that can stop an install, and the only
                   ;; one the Ubuntu route can be relaxed about. The bespoke
                   ;; initramfs had to carry a driver and lost (an RTL8125
@@ -90,19 +93,29 @@
                   ;; a clear "no network" -- and the node is not a node until
                   ;; it can heartbeat.
                   :measure-by "the hw-record the install itself writes; see :hw-record below"}
-    :disk-model  {:value nil :provenance :unverified}
-    :disk-serial {:value nil :provenance :unverified
+    :disk-model  {:value "YXF800E3-256GT" :provenance :measured :on "2026-09-11" :by "aiueos-node-hwprobe sha256:d9a5c9f0002a"}
+    :disk-serial {:value "2025010918756132" :provenance :measured :on "2026-09-11" :by "aiueos-node-hwprobe sha256:d9a5c9f0002a"
                   ;; The one field that changes the PRODUCT rather than the
                   ;; record. With it the stick installs unattended; without it
                   ;; the stick stops and asks a person which disk to erase.
                   ;; Defaulting this to "the only NVMe" is the refusal
                   ;; install-v1 already carries, for the reason it carries it.
                   :measure-by "lsblk -dno NAME,SERIAL,MODEL,SIZE at the box"}
-    :nic-count   {:value nil :provenance :unverified
+    :nic-count   {:value 2 :provenance :measured :on "2026-09-11" :by "aiueos-node-hwprobe sha256:d9a5c9f0002a"
                   ;; Asked because the K16 turned out to have two, and the live
                   ;; node enrolled under `gmktec-k16-lan2` -- a name that only
                   ;; makes sense if you knew that. A second port is a naming
                   ;; decision before it is a networking one.
+                  ;;
+                  ;; ⚠ The two numbers here do NOT count the same thing, which
+                  ;; was noticed only when the probe filled this one in. The
+                  ;; K16's 2 is two ETHERNET ports, written by hand from
+                  ;; ADR-0207. This 2 is "interfaces a driver bound to", and it
+                  ;; is one ethernet plus one wifi -- read :nic, which names
+                  ;; both drivers, rather than this number. Recorded rather than
+                  ;; papered over: making the ingest count only ethernet would
+                  ;; silently change the K16's meaning too, and that is a
+                  ;; decision with its own evidence.
                   }}}
 
   ;; ── the board whose hardware facts this repo has actually measured ──────
