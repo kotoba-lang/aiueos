@@ -2,7 +2,7 @@
 ;; Build the node install stick for ONE NAMED BOX, from the registry rather
 ;; than from memory.
 ;;
-;; `make-node-autoinstall-iso.cljs` is already machine-agnostic -- it is Ubuntu
+;; `make-node-autoinstall-iso.cljk` is already machine-agnostic -- it is Ubuntu
 ;; Server plus an autoinstall plus the agent bundle, and nothing in it is CPU-
 ;; or NIC-specific. What was missing when the second box arrived was not code.
 ;; It was the ARGUMENTS: which hostname, which disk may be erased, which
@@ -210,7 +210,7 @@
 ;; digest are all load-bearing and all already measured; a second copy of any
 ;; of them would be a second thing to keep true.
 
-(def builder (path/join "os" "aiueos" "scripts" "make-node-autoinstall-iso.cljs"))
+(def builder (path/join "os" "aiueos" "scripts" "make-node-autoinstall-iso.cljk"))
 (when-not (fs/existsSync builder)
   (cannot-answer "the builder is missing at" builder))
 

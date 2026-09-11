@@ -1,11 +1,11 @@
 #!/usr/bin/env nbb
 ;; Offline proof of the per-machine node installer (ADR-0214):
-;; contracts/node-machines-v1.edn, scripts/make-node-installer.cljs and
-;; scripts/record-node-machine-probe.cljs. Temp copies of the registry and
+;; contracts/node-machines-v1.edn, scripts/make-node-installer.cljk and
+;; scripts/record-node-machine-probe.cljk. Temp copies of the registry and
 ;; fixture probe text only; builds no ISO, touches no block device, and never
 ;; writes the registry in the tree.
 ;;
-;; Discipline, inherited from test-guided-install.cljs and root ADR
+;; Discipline, inherited from test-guided-install.cljk and root ADR
 ;; adr-2608136000:
 ;;
 ;;   * every refusal pins the NAMED reason literal (question 6). A refusal that
@@ -35,10 +35,17 @@
 (def os-mod (js/require "node:os"))
 
 (def repo-root (.cwd js/process))
-(def driver (.join path "os" "aiueos" "scripts" "make-node-installer.cljs"))
-(def ingest (.join path "os" "aiueos" "scripts" "record-node-machine-probe.cljs"))
-(def builder (.join path "os" "aiueos" "scripts" "make-node-autoinstall-iso.cljs"))
+(def driver (.join path "os" "aiueos" "scripts" "make-node-installer.cljk"))
+(def ingest (.join path "os" "aiueos" "scripts" "record-node-machine-probe.cljk"))
+(def builder (.join path "os" "aiueos" "scripts" "make-node-autoinstall-iso.cljk"))
 (def registry (.join path "os" "aiueos" "contracts" "node-machines-v1.edn"))
+;; The live contract is read ONLY by the cases that are about it (its format,
+;; its vocabulary, that it still knows the machines). Everything that drives
+;; the driver or the ingest uses the fixture: pointing the behaviour cases at
+;; the contract made seven of them go red the first time a real box was
+;; measured, because each asserted a premise -- "nobody has measured this
+;; box" -- that the contract exists to stop being true of.
+(def fixture (.join path "os" "aiueos" "tests" "fixtures" "node-machines-fixture.edn"))
 (def fixtures (.join path "os" "aiueos" "tests" "fixtures"))
 
 (def tmp (.mkdtempSync fs (.join path (.tmpdir os-mod) "aiueos-node-installer-test-")))
@@ -92,10 +99,11 @@
 
 (defn- registry-copy [label]
   (let [p (.join path tmp (str "registry-" label ".edn"))]
-    (.copyFileSync fs registry p) p))
+    (.copyFileSync fs fixture p) p))
 
 (def base-args
-  ["--ssh-key" fake-key "--iso" fake-iso "--bundle" fake-bundle "--dry-run"])
+  ["--ssh-key" fake-key "--iso" fake-iso "--bundle" fake-bundle
+   "--registry" fixture "--dry-run"])
 
 ;; ── 1. the registry itself is typed, not merely parseable ─────────────────
 ;;
@@ -121,17 +129,17 @@
 
 ;; ── 2. which box is never inferred ────────────────────────────────────────
 
-(refuses! "driver-no-machine-refuses" driver [] 2 "no --machine")
-(refuses! "driver-unknown-machine-refuses" driver ["--machine" "no-such-box"] 2
+(refuses! "driver-no-machine-refuses" driver ["--registry" fixture] 2 "no --machine")
+(refuses! "driver-unknown-machine-refuses" driver ["--machine" "no-such-box" "--registry" fixture] 2
           "no machine `no-such-box`")
-(refuses! "driver-unknown-machine-lists-the-known" driver ["--machine" "no-such-box"] 2
+(refuses! "driver-unknown-machine-lists-the-known" driver ["--machine" "no-such-box" "--registry" fixture] 2
           "amd-6600hs")
 
 ;; ── 3. reachability is a decision, and so is its absence ──────────────────
 
-(refuses! "driver-no-ssh-key-refuses" driver ["--machine" "amd-6600hs"] 2 "no --ssh-key")
+(refuses! "driver-no-ssh-key-refuses" driver ["--machine" "amd-6600hs" "--registry" fixture] 2 "no --ssh-key")
 (refuses! "driver-ssh-key-and-no-ssh-refuses" driver
-          ["--machine" "amd-6600hs" "--ssh-key" fake-key "--no-ssh"] 2
+          ["--machine" "amd-6600hs" "--ssh-key" fake-key "--no-ssh" "--registry" fixture] 2
           "are both given")
 
 ;; ── 4. the field that changes the product ─────────────────────────────────
@@ -144,7 +152,7 @@
           "--unattended needs a MEASURED disk serial")
 (refuses! "driver-unattended-refusal-names-how-to-measure" driver
           (concat ["--machine" "amd-6600hs" "--unattended"] base-args) 2
-          "record-node-machine-probe.cljs")
+          "record-node-machine-probe.cljk")
 
 ;; Non-vacuous: the same arguments WITHOUT --unattended build a plan, so the
 ;; refusal above is about the serial and not about the driver being broken.
@@ -164,13 +172,13 @@
 ;; far enough to decide" send an operator to different places.
 
 (refuses! "driver-missing-iso-cannot-answer" driver
-          ["--machine" "amd-6600hs" "--ssh-key" fake-key "--bundle" fake-bundle
+          ["--machine" "amd-6600hs" "--ssh-key" fake-key "--bundle" fake-bundle "--registry" fixture
            "--iso" (.join path tmp "absent.iso") "--dry-run"] 3
           "the Ubuntu Server ISO")
 (refuses! "driver-missing-bundle-cannot-answer" driver
-          ["--machine" "amd-6600hs" "--ssh-key" fake-key "--iso" fake-iso
+          ["--machine" "amd-6600hs" "--ssh-key" fake-key "--iso" fake-iso "--registry" fixture
            "--bundle" (.join path tmp "absent.tar.gz") "--dry-run"] 3
-          "make-node-agent-bundle.cljs")
+          "make-node-agent-bundle.cljk")
 
 (let [wrong (.join path tmp "wrong-format.edn")]
   (.writeFileSync fs wrong "{:format :something-else :machines {}}\n")
@@ -186,11 +194,12 @@
           ["--machine" "amd-6600hs" "--probe" (.join path fixtures "node-hwprobe-not-a-probe.txt")] 2
           "AIUEOS_NODE_HWPROBE_V1 marker")
 (refuses! "ingest-marker-but-no-fields-refuses" ingest
-          ["--machine" "amd-6600hs" "--probe" (.join path fixtures "node-hwprobe-empty.txt")
-           "--dry-run"] 2
+          ["--machine" "amd-6600hs" "--registry" fixture
+           "--probe" (.join path fixtures "node-hwprobe-empty.txt") "--dry-run"] 2
           "none of the fields this records")
 (refuses! "ingest-unknown-machine-refuses" ingest
-          ["--machine" "no-such-box" "--probe" (.join path fixtures "node-hwprobe-6600hs.txt")] 2
+          ["--machine" "no-such-box" "--registry" fixture
+           "--probe" (.join path fixtures "node-hwprobe-6600hs.txt")] 2
           "no machine `no-such-box`")
 
 ;; ── 7. two internal disks is not a target ─────────────────────────────────
@@ -244,14 +253,14 @@
 ;; have thrown all of it away while reporting success.
 (let [text (.readFileSync fs reg "utf8")]
   (check! "rewrite-keeps-the-contract-commentary" true
-          (str/includes? text "A field with no record is :unverified"))
+          (str/includes? text "is testing the wrong thing"))
   ;; The header surviving proves nothing about the facts: the first rewriter
   ;; replaced each fact map WHOLE, deleting its commentary, its :measure-by and
   ;; its :same-silicon-as -- and this suite was green, because the only thing it
   ;; checked was a string in the header. These four are the cases that would
   ;; have been red.
   (check! "rewrite-keeps-the-per-fact-commentary" true
-          (str/includes? text "is Rembrandt-R, which is the same silicon rebadged"))
+          (str/includes? text "FIXTURE-COMMENT-SENTINEL"))
   (check! "rewrite-keeps-extra-keys-on-a-measured-fact" :gmktec-k16
           (get-in after [:machines :amd-6600hs :facts :cpu :same-silicon-as]))
   (check! "rewrite-keeps-measure-by-after-measuring" true

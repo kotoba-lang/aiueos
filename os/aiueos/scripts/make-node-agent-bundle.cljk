@@ -50,7 +50,7 @@
 (def agent-dir (path/join repo "os" "aiueos" "node-agent"))
 (def entries
   (concat
-   (for [n ["node-boot.cljs" "device-attest-agent.cljs" "install.cljs"]]
+   (for [n ["node-boot.cljk" "device-attest-agent.cljk" "install.cljk"]]
      [(need (path/join agent-dir n) n) n])
    (for [[src dst] sources] [(need src dst) dst])))
 
@@ -83,7 +83,7 @@
  (path/join root "README.txt")
  (str "aiueos murakumo node agent\n\n"
       "Installs onto a Linux that already boots. From inside this directory:\n\n"
-      "  sudo ./node-linux-x64 nbb-bundle/node_modules/nbb/cli.js install.cljs \\\n"
+      "  sudo ./node-linux-x64 nbb-bundle/node_modules/nbb/cli.js install.cljk \\\n"
       "    --endpoint https://murakumo.cloud\n\n"
       "The device key is minted on this machine into /var/lib/aiueos-node and\n"
       "never leaves it. The node's identity is the did:key that names it; it\n"
