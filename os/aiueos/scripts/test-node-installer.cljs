@@ -296,6 +296,86 @@
   (check! "removable-only-still-records-the-nic" :measured
           (:provenance (get-in doc [:machines :amd-6600hs :facts :nic]))))
 
+;; ── 8c. a convenience must not be able to fail the install ───────────────
+;;
+;; The tailscale late-command installs something the node does not need. It used
+;; to run bare under `set -eu`, so `apt-get update` inside the target -- which
+;; needs the network -- could fail the whole install, and the operator saw a
+;; generic curtin failure instead of "there was no network".
+;;
+;; EXECUTED with a stub `curtin` rather than inspected: the difference between
+;; the shipped block and the fixed one is one `if`, and reading for it is how
+;; the first attempt at this fix got the mechanism wrong. Measured: putting
+;; `set -eu` back at the top of the fixed block leaves it exiting 0, because
+;; `set -e` does not abort on a command whose status an `if` consumes.
+
+(defn- late-blocks
+  "The late-commands the builder emits, as shell text, from its own output."
+  [extra-args]
+  (let [r (.spawnSync cp "nbb"
+                      (to-array (concat [builder "--iso" fake-iso "--bundle" fake-bundle
+                                         "--ssh-key" fake-key "--hostname" "test-blocks"
+                                         "--output" (.join path tmp "never3.iso")]
+                                        extra-args))
+                      #js {:encoding "utf8" :shell false :cwd repo-root})
+        lines (str/split-lines (str (or (.-stdout r) "")))
+        start (.indexOf (to-array lines) "autoinstall.yaml:")]
+    (when-not (neg? start)
+      (->> (drop (inc start) lines)
+           (take-while #(str/starts-with? % "  "))
+           (map #(subs % 2))
+           (partition-by #(str/starts-with? % "    - |"))
+           (remove #(str/starts-with? (first %) "    - |"))
+           (map (fn [ls] (str/join "\n" (map #(str/replace % #"^      " "") ls))))
+           (filter #(str/includes? % "\n"))
+           vec))))
+
+(def blocks (late-blocks []))
+(def tailscale-block (first (filter #(str/includes? % "pkgs.tailscale.com") blocks)))
+(def agent-block (first (filter #(str/includes? % "aiueos-node-agent.tar.gz") blocks)))
+
+(defn- run-block-with-curtin
+  "Run one late-command with a `curtin` on PATH that exits `code`. Returns the
+  block's own exit status -- the thing curtin would see."
+  [block code]
+  (let [dir (.mkdtempSync fs (.join path tmp "stub-"))
+        stub (.join path dir "curtin")
+        script (.join path dir "block.sh")]
+    (.writeFileSync fs stub (str "#!/bin/sh\nexit " code "\n"))
+    (.chmodSync fs stub 0755)
+    (.writeFileSync fs script (str block "\n"))
+    (let [r (.spawnSync cp "sh" (to-array [script])
+                        #js {:encoding "utf8" :shell false
+                             :env (js/Object.assign
+                                   #js {} (.-env js/process)
+                                   #js {"PATH" (str dir ":" (.-PATH (.-env js/process)))})})]
+      (if (nil? (.-status r)) 3 (.-status r)))))
+
+(check! "builder-emits-a-tailscale-block" true (boolean tailscale-block))
+(check! "builder-emits-an-agent-block" true (boolean agent-block))
+(when tailscale-block
+  ;; The claim, and the only one that matters: a failing curtin does not fail
+  ;; the block, so it cannot fail the install.
+  (check! "tailscale-block-survives-a-failing-curtin" 0
+          (run-block-with-curtin tailscale-block 1))
+  ;; Non-vacuous: a block that could not run at all would also "survive".
+  (check! "tailscale-block-runs-when-curtin-succeeds" 0
+          (run-block-with-curtin tailscale-block 0))
+  ;; And it says which of the two happened, naming a cause the operator can act
+  ;; on. "late-command exited 1" is not something anyone can act on.
+  (check! "tailscale-failure-names-the-likely-cause" true
+          (str/includes? tailscale-block "AIUEOS_TAILSCALE_NOT_INSTALLED"))
+  (check! "tailscale-failure-says-network" true
+          (str/includes? tailscale-block "no network during the install")))
+(when agent-block
+  ;; The control, and the reason this is not just "guard every late-command":
+  ;; the agent IS the point of the stick. Its block still runs under `set -eu`
+  ;; and is still allowed to fail the install.
+  (check! "agent-block-is-still-allowed-to-fail-the-install" true
+          (str/includes? agent-block "set -eu"))
+  (check! "agent-block-does-not-swallow-its-own-failure" false
+          (str/includes? agent-block "AIUEOS_TAILSCALE_NOT_INSTALLED")))
+
 ;; ── 9. the probe block the ISO builder emits actually runs ────────────────
 ;;
 ;; Generated, extracted, executed, parsed. Run on THIS host, so the sections
@@ -342,7 +422,7 @@
 
 ;; ── summary ───────────────────────────────────────────────────────────────
 
-(def expected-cases 55)
+(def expected-cases 63)
 (def total (count @results))
 (def failed (filterv (complement :ok) @results))
 
