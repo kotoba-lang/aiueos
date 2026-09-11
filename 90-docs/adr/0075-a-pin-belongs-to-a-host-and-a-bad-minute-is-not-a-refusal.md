@@ -79,7 +79,7 @@ was sent.
 
 **And the contract made a claim across a repository boundary that nothing
 checked.** `resources/aiueos/cloud_contract.edn` lives in `kotoba-lang/grant`
-and names `src/aiueos/provider/cloud.clj`, `src/aiueos/cloud_live.cljc` and
+and names `src/aiueos/provider/cloud.cljk`, `src/aiueos/cloud_live.cljk` and
 `resources/aiueos/cloud_live.edn`. Naming them is right — a contract that
 stopped naming its own mechanism the day the mechanism moved would describe
 half a story — but a rename here broke a sentence there in silence.
@@ -426,12 +426,12 @@ changes.** It is kept, because the classification rule is worth asserting on
 its own; the assertion that would have caught the revert is the one in
 `aiueos.provider.cloud-test` that gets its 503 from a server.
 
-**The contract path check.** `src/aiueos/cloud_live.cljc` was moved out of the
+**The contract path check.** `src/aiueos/cloud_live.cljk` was moved out of the
 tree and the namespace was run: **one failure**,
 `every-file-the-contract-names-in-this-repository-exists`, on the assertion
 that reads that path, with the message
 `resources/aiueos/cloud_contract.edn (in kotoba-lang/grant) claims this
-repository has src/aiueos/cloud_live.cljc and it does not`. The premise test
+repository has src/aiueos/cloud_live.cljk and it does not`. The premise test
 beside it stayed green, which is right — the contract was still reachable and
 the working directory was still the repository root. Moving the file back
 restored exit 0.

@@ -1,5 +1,5 @@
 ;; aiueos.bare-metal -- P2 boot classification as a pure Kotoba guest
-;; (oracle: src/aiueos/bare_metal.cljc).
+;; (oracle: src/aiueos/bare_metal.cljk).
 ;;
 ;; p2-result classifies a bare-metal boot. The oracle's cond is three
 ;; booleans and a keyword answer -- exactly the arithmetic-and-keywords

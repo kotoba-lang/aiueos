@@ -1,5 +1,5 @@
 ;; aiueos.compositor.ime -- romaji conversion core as a pure Kotoba guest
-;; (oracle: src/aiueos/compositor/ime.cljc).
+;; (oracle: src/aiueos/compositor/ime.cljk).
 ;;
 ;; The oracle's mora table (111 entries, measured) exceeds the 32-entry
 ;; document-map limit by 3.5x, so the table splits into four chunk maps

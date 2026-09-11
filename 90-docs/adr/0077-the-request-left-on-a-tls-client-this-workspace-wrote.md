@@ -192,7 +192,7 @@ failures.
 
 `:files 21 → 22` and `:external 6 → 8`.
 
-The file is `src/aiueos/provider/cloud_own.cljc`. It belongs there because it
+The file is `src/aiueos/provider/cloud_own.cljk`. It belongs there because it
 holds the `:verify-chain` function, which **is** the peer decision on that path:
 a change that returned `[:ok …]` without asking `grant.cloud/admit-peer` would
 accept any peer, and nothing downstream would notice, because the handshake

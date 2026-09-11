@@ -46,7 +46,7 @@ question that has no answer.
 
 ## The cost, stated
 
-Editing `src/aiueos/tcb.clj` now takes two steps: record the file's new digest,
+Editing `src/aiueos/tcb.cljk` now takes two steps: record the file's new digest,
 then recompute the content digest that covers the record. The second depends on
 the first, so they cannot be done at once.
 

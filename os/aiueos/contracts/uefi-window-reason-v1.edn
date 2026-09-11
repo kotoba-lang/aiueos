@@ -7,7 +7,7 @@
 ;; `console` and `memory`'s allocators it can be exercised completely without a
 ;; machine, and unlike `elf` it needs no fixture bytes.
 ;;
-;; `os/aiueos/scripts/smoke-qemu-uefi-loader.cljs` boots it and asserts five of
+;; `os/aiueos/scripts/smoke-qemu-uefi-loader.cljk` boots it and asserts five of
 ;; these verdicts under OVMF. This asserts every reachable one plus the two
 ;; boundaries the slack rule turns on, in about a second.
 ;;
@@ -120,7 +120,7 @@
   :node-stack-size 4000
   :off-target :interpreter
   :pure-arithmetic true
-  :evidence "os/aiueos/scripts/smoke-qemu-uefi-loader.cljs"
+  :evidence "os/aiueos/scripts/smoke-qemu-uefi-loader.cljk"
   :note "The smoke boots the same module under OVMF and asserts the verdicts
          0 4 3 6 7 as x86-64 machine code. This asserts every reachable
          clause, and both sides of the two boundaries the slack turns on,

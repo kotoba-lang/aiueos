@@ -1,5 +1,5 @@
 ;; aiueos.model-channel -- continuity + boot decision as a pure Kotoba guest
-;; (oracle: src/aiueos/model_channel.cljc).
+;; (oracle: src/aiueos/model_channel.cljk).
 ;;
 ;; The oracle decides whether a verified IPNS head may replace the locally
 ;; committed model; network and disk drivers are ports. This guest owns the

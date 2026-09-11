@@ -16,7 +16,7 @@ owner could author an `aiueos.install-intent.v1` **on another machine, ahead
 of time**, with nine flags:
 
 ```
-nbb os/aiueos/scripts/install-intent.cljs create \
+nbb os/aiueos/scripts/install-intent.cljk create \
   --receipt ... --hostname ... --target-model ... --target-transport ... \
   --target-min-gb ... --target-max-gb ... --ssh-public-key-file ... \
   --confirm-create ... --out ...
@@ -108,7 +108,7 @@ ago. When nothing was asked, the file's own confirmation stands, exactly as
 
 ## Evidence
 
-`os/aiueos/scripts/test-guided-install.cljs`, 53 cases, offline, fake probe
+`os/aiueos/scripts/test-guided-install.cljk`, 53 cases, offline, fake probe
 fixtures and temp files only — no block device is opened. Registered as
 `:guided-install-test` in `scripts/tasks.edn`.
 

@@ -89,7 +89,7 @@ model — it is bit-equality of the arithmetic over synthetic inputs, which is
 exactly the property that survives having no weights.
 
 **In the interpreter.** `contracts/qwen35-{dequant-row,dot-f32,matvec}-v1.edn`
-through `os/aiueos/scripts/verify-admissions.cljs`: 58 vectors, 10 memory
+through `os/aiueos/scripts/verify-admissions.cljk`: 58 vectors, 10 memory
 assertions, every reachable reason code observed (`-6..0`, `-11..0`, and the
 dot product's four out-of-i32 refusals). The expected bytes come from an
 independent ClojureScript re-derivation of the C over `Float32Array`, so every

@@ -14,7 +14,7 @@
 ;; walks away, and nothing in the record explains why it went unreachable.
 {:format :aiueos.network-bootstrap/v1
  :profile #{:bare-metal-uefi :linux-hosted-pid1}
- :decision-authority "src/aiueos/network_bootstrap.cljc"
+ :decision-authority "src/aiueos/network_bootstrap.cljk"
  :depends-on :aiueos.install-contract/v1
 
  ;; What an interface earns by how it presents. :unknown is listed on purpose

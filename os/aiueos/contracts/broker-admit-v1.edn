@@ -11,5 +11,5 @@
                      :native-component-runtime]
  :verification {:off-target :impossible
                 :reason :kir-refuses-kernel-memory
-                :evidence "nbb --classpath src scripts/compositor-guest.cljs guest-broker"}
+                :evidence "nbb --classpath src scripts/compositor-guest.cljk guest-broker"}
 }

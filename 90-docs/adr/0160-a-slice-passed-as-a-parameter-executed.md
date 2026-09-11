@@ -40,7 +40,7 @@ function parameter**:
 Nothing reconstructs it from two i64s at a call site, which is the thing the
 carrier exists to stop.
 
-`os/aiueos/scripts/smoke-qemu-slice-carrier.cljs` compiles it
+`os/aiueos/scripts/smoke-qemu-slice-carrier.cljk` compiles it
 (`--artifact image`), packages it (`package-aiueos-boot`), runs it under
 q35 + OVMF with `isa-debugcon` at 0xe9, and reads the digits.
 

@@ -1,5 +1,5 @@
 ;; aiueos.compositor.ime -- handle-key state machine as a pure Kotoba guest
-;; (oracle: src/aiueos/compositor/ime.cljc, second slice).
+;; (oracle: src/aiueos/compositor/ime.cljk, second slice).
 ;;
 ;; handle-key is the product decision the kana gate tests: keys are consumed
 ;; into the romaji buffer, kana commits only on Enter/Space, and latin

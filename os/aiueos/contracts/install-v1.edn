@@ -40,8 +40,8 @@
           ;; intent SHAPE would have been a second admission surface, so there
           ;; is not one -- both write this schema and both are verified by the
           ;; same `install-intent.cljs verify`.
-          :created-by ["os/aiueos/scripts/install-intent.cljs"
-                       "os/aiueos/installer/live/guided-install.cljs"]
+          :created-by ["os/aiueos/scripts/install-intent.cljk"
+                       "os/aiueos/installer/live/guided-install.cljk"]
           :binds [:release-receipt-digest
                   :release-disk-digest
                   :machine-profile
@@ -76,7 +76,7 @@
              :live {:uki "os/aiueos/scripts/make-live-installer.py"
                     :kernel :debian-stable-generic ; versions pinned per-build in live-installer-receipt.json
                     :initramfs :mechanism-only     ; busybox + storage modules + lsblk/blkid
-                    :decision "os/aiueos/installer/live/install-live.cljs"
+                    :decision "os/aiueos/installer/live/install-live.cljk"
                     :target-selection
                     "exactly one whole disk matching the intent's model,
                      transport and capacity bounds, never the boot USB;
@@ -95,7 +95,7 @@
                       :passed-by [:init-handover :bin-nbb-shim] ; the shim: hop 2 spawns nbb by name
                       :refuses [:classpath-root-with-no-sources
                                 :two-roots-differing-bytes-at-one-path]
-                      :test "os/aiueos/scripts/test-install-bundle.cljs"
+                      :test "os/aiueos/scripts/test-install-bundle.cljk"
                       :executed-not-just-built true}
              :legacy-assets ["os/aiueos/installer/install.mjs"
                              "os/aiueos/installer/backends.mjs"
@@ -113,9 +113,9 @@
              ;; what install-live.cljs does with an interactive-mode intent on
              ;; the target, and it is still true; the guided program runs
              ;; before that, when the intent does not exist yet.
-             :guided {:program "os/aiueos/installer/live/guided-install.cljs"
-                      :decision-core "src/aiueos/installer/guided.cljc" ; pure, no host interop
-                      :test "os/aiueos/scripts/test-guided-install.cljs" ; 53 cases, offline
+             :guided {:program "os/aiueos/installer/live/guided-install.cljk"
+                      :decision-core "src/aiueos/installer/guided.cljk" ; pure, no host interop
+                      :test "os/aiueos/scripts/test-guided-install.cljk" ; 53 cases, offline
                       :modelled-on :ubuntu-server-installer-subiquity
                       :screens [:network :storage :identity :ssh :confirm]
                       :borrowed [:screen-sequence-is-data
@@ -174,7 +174,7 @@
                       :exit-codes {0 :intent-written
                                    2 :refused-with-named-reasons
                                    3 :could-not-answer}}
-             :orchestration "os/aiueos/scripts/install-to-disk.cljs"
+             :orchestration "os/aiueos/scripts/install-to-disk.cljk"
              :real-writes :linux-only ; exclusive O_EXCL|O_NOFOLLOW block open; macOS inspects only
              :refuses [:partition
                        :removable-or-usb-device
@@ -212,8 +212,8 @@
                        :same-handshake-after-reboot
                        :wrong-key-wrong-user-stale-hostkey-refused-with-reason]
             :provisioning {:record "aiueos.provision.v1"
-                           :generated-by "os/aiueos/scripts/make-provision-record.cljs"
-                           :placed-by "os/aiueos/scripts/install-to-disk.cljs"
+                           :generated-by "os/aiueos/scripts/make-provision-record.cljk"
+                           :placed-by "os/aiueos/scripts/install-to-disk.cljk"
                            :host-key :legacy-ed25519-record
                            :authorized-key :copied-from-intent
                            :state :not-consumed-by-current-p256-server}
@@ -281,7 +281,7 @@
                ;; mode.
                :boot-modes {:aiueos-direct :esp-and-recovery-byte-identical-to-release
                             :live-installer :uki-esp-plus-release-recovery-bytes}
-               :flashed-by "os/aiueos/scripts/flash-usb.cljs --image ... --receipt ..."}
+               :flashed-by "os/aiueos/scripts/flash-usb.cljk --image ... --receipt ..."}
 
  ;; The OTHER install product, and it is not one of this contract's gates.
  ;;
@@ -293,9 +293,9 @@
  ;; not evidence for one. Its own contract is the machine registry.
  :node-stick
  {:registry "os/aiueos/contracts/node-machines-v1.edn"
-  :driver "os/aiueos/scripts/make-node-installer.cljs"
-  :builder "os/aiueos/scripts/make-node-autoinstall-iso.cljs"
-  :evidence "os/aiueos/scripts/test-node-installer.cljs (:node-installer-test)"
+  :driver "os/aiueos/scripts/make-node-installer.cljk"
+  :builder "os/aiueos/scripts/make-node-autoinstall-iso.cljk"
+  :evidence "os/aiueos/scripts/test-node-installer.cljk (:node-installer-test)"
   :inherits
   ;; The one rule this contract owns that the other route had to inherit
   ;; outright. "Largest disk" and "first NVMe" are refused here for a reason that

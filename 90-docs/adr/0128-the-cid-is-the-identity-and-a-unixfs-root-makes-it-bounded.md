@@ -90,7 +90,7 @@ that is the kernel dying on bytes an attacker chose rather than refusing them.
 kotoba-kir `10fa46ce` takes an optional memory image, so `kir/execute` can now
 run an object against caller-supplied bytes. The runners ask the object --
 since 2026-08-31 all three are one nbb script,
-`os/aiueos/scripts/verify-admissions.cljs`, with no JVM anywhere in the
+`os/aiueos/scripts/verify-admissions.cljk`, with no JVM anywhere in the
 chain. They carry floors: a
 minimum vector count, and a requirement that every reachable reason code was
 actually produced by some vector. A run that executed nothing cannot return
@@ -156,7 +156,7 @@ the raw CID of zero bytes that ADR-0082 already fetches over TLS.
   refused for a digest mismatch and the Java model had agreed by coincidence.
 
 - **All three verifiers left the JVM on 2026-08-31.** They are one nbb runner,
-  `os/aiueos/scripts/verify-admissions.cljs`. Everything under
+  `os/aiueos/scripts/verify-admissions.cljk`. Everything under
   `kotoba.compiler.core/compile-project` was already portable -- the linker
   (`kotoba.compiler.project`), the frontend (`kotoba.sema`), the lowering and
   the interpreter (`kotoba.kir`) are all `.cljc` -- so the JVM was carried by

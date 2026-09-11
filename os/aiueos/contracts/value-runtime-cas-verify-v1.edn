@@ -26,7 +26,7 @@
  :verification
  {:off-target :executed
   :mechanism :kir-execute-with-a-supplied-memory-image
-  :runner "os/aiueos/scripts/verify-admissions.cljs"
+  :runner "os/aiueos/scripts/verify-admissions.cljk"
   :host :nbb
   :memory {:base 65536 :image-bytes 13056
            :expected-offset 0 :output-offset 64

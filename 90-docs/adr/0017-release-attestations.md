@@ -46,7 +46,7 @@ caveat is worse than one that omits the component.
 
 ### Nothing in the documents is asserted where it can be computed
 
-- `:sbom/generator-digest` is the digest of `src/aiueos/sbom.clj`, so a changed
+- `:sbom/generator-digest` is the digest of `src/aiueos/sbom.cljk`, so a changed
   generator cannot quietly produce the same claim. That file is now in
   `:tcb/files` as `:release-attestation-authority` — compromising it falsifies
   production evidence, which is exactly the inventory's stated scope.

@@ -35,7 +35,7 @@ never walked past is a larger number, not a larger bound.
 
 `os/aiueos/native/fuel-wide-probe.kotoba` is a self-recursive countdown in four
 stages, writing one character to the 0xe9 debug console after each, then
-exiting 33 through `isa-debug-exit`. `os/aiueos/scripts/smoke-qemu-fuel64.cljs`
+exiting 33 through `isa-debug-exit`. `os/aiueos/scripts/smoke-qemu-fuel64.cljk`
 compiles it **twice from one source**, differing only in `--fuel`, and boots
 both under OVMF.
 

@@ -59,7 +59,7 @@ already lives under:
 
 The record itself is in `:tcb/files` (`:adopted-property-record`). Otherwise a
 property quietly deleted from the list leaves no trace, since the checker only
-inspects the shape of what it finds there — the same reason `src/aiueos/tcb.clj`
+inspects the shape of what it finds there — the same reason `src/aiueos/tcb.cljk`
 is in the inventory it checks.
 
 The sibling contract for the other half of this workspace's borrowed ideas —
@@ -127,7 +127,7 @@ qualify.
 ## Not done
 
 - **The release-media second digest.** The guest fixtures are byte-compared by a
-  gate that runs (`scripts/build-hvt-guest.cljs`). The release media are
+  gate that runs (`scripts/build-hvt-guest.cljk`). The release media are
   deterministic under `SOURCE_DATE_EPOCH`, but no job builds them twice, so the
   second digest exists only when a caller supplies it. Recorded as
   `:release-media-second-build-not-produced` on the `:reproducible-build`

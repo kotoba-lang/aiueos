@@ -46,7 +46,7 @@ All notable changes to **aiueos** are documented here. The format follows
 
 ### nbb guest compositor gates (ADR-0100)
 - Guest KERNEL.ELF serial gates run on nbb:
-  `nbb --classpath src scripts/compositor-guest.cljs <profile>`.
+  `nbb --classpath src scripts/compositor-guest.cljk <profile>`.
   Classifiers live in portable `aiueos.compositor.guest`. Hosted JVM
   `clojure -M:compositor wm` / `ime` stay red. JVM `clojure -M:compositor
   guest-*` is leftover `:jvm-gate-runner`. Serial lines unchanged.
@@ -58,7 +58,7 @@ All notable changes to **aiueos** are documented here. The format follows
   `kotoba_aiueos_session_restore(2) == 2`, refuses packed 0 and packed 3,
   and `kotoba_aiueos_wm_hit` uses that front. Restore is Kotoba; C does
   not hardcode front. Gate host as of ADR-0100:
-  `nbb --classpath src scripts/compositor-guest.cljs guest-session`.
+  `nbb --classpath src scripts/compositor-guest.cljk guest-session`.
   Named red is hosted JVM `AIUEOS_COMPOSITOR_WM_OK` and restore that
   always returns 2 (`:always-front`). Default `gpu` / `guest-broker`
   boots stay green without requiring `GUEST_SESSION_OK`. Leftover
@@ -219,7 +219,7 @@ The Phase-0 substrate plus the runtime/robotics/agent work built on top of it.
   Ubuntu `/dev/kvm`. Pure parts (ioctl-number encoding, kvm_run/…-region
   struct offsets, the aarch64 PC core-reg id, the fixed guest program) are
   unit-tested on any JVM host; the live KVM loop is gated by
-  `scripts/hvt-smoke.cljs` (nbb) in a Linux/KVM VM (#110).
+  `scripts/hvt-smoke.cljk` (nbb) in a Linux/KVM VM (#110).
 - Deferred to V1+ (#110): real PSCI SYSTEM_OFF clean shutdown (the bare
   MMU-off guest's `hvc` did not raise `KVM_EXIT_SYSTEM_EVENT`, so V0 halts via
   the MMIO poweroff port), direct-loading the ADR-0013 kernel image, a virtio
@@ -248,9 +248,9 @@ The Phase-0 substrate plus the runtime/robotics/agent work built on top of it.
   RAM at the ELF's load base (the fixture links at `0x40000000` — an arbitrary
   non-zero GPA), copying PT_LOAD segments and setting PC = `e_entry`. Real
   fixture `resources/hvt/guest-aarch64.elf` (genuine `ld` output; reproducible
-  byte-identical via `scripts/build-hvt-guest.cljs`, nbb, SHA-pinned). Verified
+  byte-identical via `scripts/build-hvt-guest.cljk`, nbb, SHA-pinned). Verified
   on real KVM: `clojure -M:hvt elf …` boots it to `{:serial "HI\n" :shutdown?
-  true}`. `scripts/hvt-smoke.cljs` now gates both the raw-word (V0) and ELF (V1)
+  true}`. `scripts/hvt-smoke.cljk` now gates both the raw-word (V0) and ELF (V1)
   cases; `aiueos.hvt-test` is 11 tests / 57 assertions. The remaining
   kernel-boot gap is purely the x86_64 KVM host (Finding 1); the ELF-load
   mechanism is done.

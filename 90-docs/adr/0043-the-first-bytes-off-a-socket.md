@@ -98,7 +98,7 @@ names* as the unmodified tree. `clojure -M:tcb-check` is `{:valid? true :files
 
 ## The TCB grew a platform entry
 
-`src/aiueos/provider/cloud.clj` is pinned like every other decision file, and
+`src/aiueos/provider/cloud.cljk` is pinned like every other decision file, and
 `java.net.http` is now recorded as external with the gap named:
 **the machine's trust in the cloud is the JDK's default trust store**, which
 this repository neither owns nor pins. For an OS whose storage and inference

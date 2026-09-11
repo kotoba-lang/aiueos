@@ -1,5 +1,5 @@
 ;; aiueos.device-auth -- proof-problem decision chain as a pure Kotoba guest
-;; (oracle: src/aiueos/device_auth.cljc).
+;; (oracle: src/aiueos/device_auth.cljk).
 ;;
 ;; The oracle's docstring states the guest's shape: a pure ceremony, never
 ;; trusting a browser-supplied verified=true, never handling a private

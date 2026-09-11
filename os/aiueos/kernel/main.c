@@ -218,7 +218,7 @@ static int aiueos_device_worker_canonical_selftest(void) {
    digest as a literal.  Those literals come from an implementation that is
    not this one and are also carried by
    `contracts/{sha256-region,device-worker-digest}-v1.edn`, whose expectations
-   `test/aiueos/sha256_stream_parity_test.clj` re-derives from
+   `test/aiueos/sha256_stream_parity_test.cljk` re-derives from
    `kotoba-lang/org-nist-sha2` -- the pure `.cljc` reference.
 
    Cases 7 and 8 are the point of the whole stream.  The two 64-character

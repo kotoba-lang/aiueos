@@ -45,10 +45,10 @@
     in-repository file — and the closure that is actually loaded is recorded,
     not just the closure that is declared."
    :mechanism ["qualification/tcb-inventory.edn"
-               "src/aiueos/tcb.clj"
+               "src/aiueos/tcb.cljk"
                "deps.edn"
                "security-adoption.edn"]
-   :gate ["test/aiueos/tcb_test.clj"]
+   :gate ["test/aiueos/tcb_test.cljk"]
    :assurance-gaps [:git-commit-id-is-sha-1
                     :platform-runtime-not-content-addressed]}
 
@@ -56,11 +56,11 @@
    :statement
    "A build of the same source produces byte-identical output, and that claim is
     judged by an evaluator rather than asserted in prose."
-   :mechanism ["scripts/build-hvt-guest.cljs"
-               "scripts/build-hvt-kotoba-guest.cljs"
+   :mechanism ["scripts/build-hvt-guest.cljk"
+               "scripts/build-hvt-kotoba-guest.cljk"
                "os/aiueos/scripts/build-release-image.sh"
-               "src/aiueos/reproducibility.clj"]
-   :gate ["test/aiueos/reproducibility_test.clj"]
+               "src/aiueos/reproducibility.cljk"]
+   :gate ["test/aiueos/reproducibility_test.cljk"]
    ;; The guest fixtures are byte-compared by a gate that runs. The release
    ;; media are deterministic (`SOURCE_DATE_EPOCH`) but no job builds them
    ;; twice, so the second digest the evaluator wants is not produced yet.
@@ -113,16 +113,16 @@
    "An update either takes effect whole or not at all, and the previous system
     remains bootable — a byte-identical recovery partition, not a backup copy."
    :mechanism ["os/aiueos/scripts/make-release-image.py"
-               "src/aiueos/image.cljc"]
-   :gate ["test/aiueos/image_test.cljc"
+               "src/aiueos/image.cljk"]
+   :gate ["test/aiueos/image_test.cljk"
           "os/aiueos/scripts/smoke-qemu-release-image.sh"]}
 
   {:property :signed-supply-chain-attestation
    :statement
    "A release carries an SBOM and provenance derived from the same pinned
     closure it was built from, signed, and judged by a shared evaluator."
-   :mechanism ["src/aiueos/sbom.clj"]
-   :gate ["test/aiueos/sbom_test.clj"]
+   :mechanism ["src/aiueos/sbom.cljk"]
+   :gate ["test/aiueos/sbom_test.cljk"]
    :assurance-gaps [:documents-are-edn-not-in-toto-dsse
                     :release-pipeline-not-wired]}]
 

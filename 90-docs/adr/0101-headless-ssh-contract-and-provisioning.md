@@ -48,14 +48,14 @@ mirrors. Reference implementations for the crypto bricks:
 
 ## Landed and measured this tranche: provisioning
 
-`os/aiueos/scripts/make-provision-record.cljs` — the per-device SSH identity,
+`os/aiueos/scripts/make-provision-record.cljk` — the per-device SSH identity,
 generated **on the target at install time** (never at USB-build time): a
 one-time ed25519 host-key seed and the authorized key copied from the intent.
 The host key derived from RFC 8032 test-vector-1's seed equals that vector's
 public key, byte-for-byte — the generator makes the *right* key, not merely an
 ed25519-shaped one.
 
-`os/aiueos/scripts/install-to-disk.cljs` writes the record into a reserved
+`os/aiueos/scripts/install-to-disk.cljk` writes the record into a reserved
 16 KiB zone just below the target receipt (in the target's last MiB, outside
 the release extent), reads it back, and binds its digest into the target
 receipt — so a target that carries a receipt always has a matching SSH

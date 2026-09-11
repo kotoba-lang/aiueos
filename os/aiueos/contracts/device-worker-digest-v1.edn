@@ -80,7 +80,7 @@
  :verification
  {:off-target :executed
   :mechanism :kir-execute-with-a-supplied-memory-image
-  :runner "os/aiueos/scripts/verify-admissions.cljs"
+  :runner "os/aiueos/scripts/verify-admissions.cljk"
   :host :nbb
   :node-stack-size 60000
   :memory {:base 65536 :image-bytes 2048 :st-offset 0 :tok-offset 1024}
@@ -90,7 +90,7 @@
   ;; `device_p256_v3_test`. The rest were computed by an implementation that is
   ;; not this one, and every row is re-checked against
   ;; `kotoba-lang/org-nist-sha2` -- the pure `.cljc` reference -- by
-  ;; `test/aiueos/sha256_stream_parity_test.clj`.
+  ;; `test/aiueos/sha256_stream_parity_test.cljk`.
   :oracles {:server "network-awai/cloud-murakumo-api docs/device-worker-v3.md"
             :second-implementation "kotoba-lang/org-nist-sha2 (pure cljc)"}
   :floors {:minimum-vectors 10

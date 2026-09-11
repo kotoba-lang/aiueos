@@ -1,6 +1,6 @@
 ;; The PT_LOAD admission contract, run against the KIR interpreter.
 ;;
-;; `os/aiueos/scripts/smoke-qemu-uefi-loader.cljs` already executes this object
+;; `os/aiueos/scripts/smoke-qemu-uefi-loader.cljk` already executes this object
 ;; as x86-64 machine code under OVMF, and that is the stronger evidence -- but
 ;; it is also the SLOWER and the NARROWER. A boot costs a minute and asserts six
 ;; verdicts; this asserts every clause the module can produce, needs no QEMU,
@@ -171,7 +171,7 @@
   :fuel 1000000
   :node-stack-size 4000
   :off-target :interpreter
-  :evidence "os/aiueos/scripts/smoke-qemu-uefi-loader.cljs"
+  :evidence "os/aiueos/scripts/smoke-qemu-uefi-loader.cljk"
   :note "The smoke boots the same module under OVMF and asserts six of these
          verdicts as x86-64 machine code. This contract asserts all of them
          without a firmware."}}

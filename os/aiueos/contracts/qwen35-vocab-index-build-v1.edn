@@ -103,11 +103,11 @@
  :verification
  {:off-target :executed
   :mechanism :kir-execute-with-a-supplied-memory-image
-  :runner "os/aiueos/scripts/verify-admissions.cljs"
+  :runner "os/aiueos/scripts/verify-admissions.cljk"
   :host :nbb
   ;;   ulimit -s 65520
   ;;   node --stack-size=60000 "$(command -v nbb)" --classpath "$(clojure -Spath -M:verify-admissions)" \
-  ;;     os/aiueos/scripts/verify-admissions.cljs os/aiueos/contracts/qwen35-vocab-index-build-v1.edn
+  ;;     os/aiueos/scripts/verify-admissions.cljk os/aiueos/contracts/qwen35-vocab-index-build-v1.edn
   :node-stack-size 60000
   ;; The MINI vocabulary, not the artifact's: seven tokens and two merge rules,
   ;; whose bytes are `:fixture :model-hex` below. The real 248,320-entry array

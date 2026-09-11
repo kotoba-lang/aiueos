@@ -46,7 +46,7 @@ via `beginRenderPass` and reported instance counts without calling
 ## Decision
 
 1. Same SPA `#desktop` / `#kami-viewport`. One document. Presenter is
-   `apps/session/src/aiueos/session/kami_presenter.cljs`, compiled to
+   `apps/session/src/aiueos/session/kami_presenter.cljk`, compiled to
    `apps/session/kami-presenter.js` (`clojure -M:kami-presenter`) and
    served as `GET /kami-presenter.js`. Do not inline the 2.1 MB bundle
    into HTML twice.

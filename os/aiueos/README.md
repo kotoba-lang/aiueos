@@ -48,7 +48,7 @@ same verifier; a hosted or import-bearing object is rejected before link.
 ### The K16 pure-native profile boots through Amu and keeps the legacy link measurable
 
 `AIUEOS_K16_PURE_NATIVE=1 sh os/aiueos/scripts/build-uefi.sh` (or
-`nbb os/aiueos/scripts/build-k16-pure-native.cljs`) restricts the kernel link
+`nbb os/aiueos/scripts/build-k16-pure-native.cljk`) restricts the kernel link
 to Kotoba objects and Amu toolchain stubs, gates that exact list before
 `zig ld.lld` runs, and keeps the legacy C/assembly route fail-closed. Passing
 `--compiler /path/to/pinned-amu` instead emits a reproducible C-free PE32+
@@ -295,7 +295,7 @@ envelope (`pointer`, `key`, or `text`); raw virtio DMA memory stays kernel-only
 and IME interpretation belongs to the browser desktop authority. The default
 QEMU smoke still compiles with `AIUEOS_INPUT_SMOKE_SYNTHETIC` because gpu /
 guest-paint must stay green without a used-ring event. `nbb --classpath src
-scripts/compositor-guest.cljs guest-input` (ADR-0093) rebuilds without that ifdef and admits only a
+scripts/compositor-guest.cljk guest-input` (ADR-0093) rebuilds without that ifdef and admits only a
 virtio-keyboard used-ring event injected by QMP `input-send-event`. HMP
 `sendkey` is not that gate. Production builds do not enable the synthetic
 fallback.
@@ -922,11 +922,11 @@ field — `:measured` (read off the machine, by a named command, on a named date
 absent, not false).
 
 ```sh
-nbb scripts/run-task.cljs node-agent-bundle --node build/aiueos/node-linux-x64 \
+nbb scripts/run-task.cljk node-agent-bundle --node build/aiueos/node-linux-x64 \
   --nbb build/aiueos/nbb-bundle/node_modules
-nbb scripts/run-task.cljs node-installer-build --machine amd-6600hs \
+nbb scripts/run-task.cljk node-installer-build --machine amd-6600hs \
   --iso ubuntu-24.04.4-live-server-amd64.iso --ssh-key ~/.ssh/id_ed25519.pub
-nbb os/aiueos/scripts/flash-usb.cljs --device /dev/diskN --image <the iso> --confirm /dev/diskN
+nbb os/aiueos/scripts/flash-usb.cljk --device /dev/diskN --image <the iso> --confirm /dev/diskN
 ```
 
 The driver prints every fact with its provenance before it builds, so *the stick
@@ -952,7 +952,7 @@ than it measures.
 
 ```sh
 scp aiueos@<host>:/var/log/aiueos-node-hwprobe.txt .
-nbb scripts/run-task.cljs node-machine-probe-record --machine amd-6600hs \
+nbb scripts/run-task.cljk node-machine-probe-record --machine amd-6600hs \
   --probe aiueos-node-hwprobe.txt          # --dry-run to see it decide first
 ```
 
@@ -999,9 +999,9 @@ that is exercised when the same image is attached as a fixed drive.
 
 ```sh
 ./os/aiueos/scripts/build-release-image.sh
-nbb os/aiueos/scripts/smoke-qemu-usb-boot.cljs
-nbb os/aiueos/scripts/flash-usb.cljs --device /dev/diskN            # inspect
-nbb os/aiueos/scripts/flash-usb.cljs --device /dev/diskN --confirm /dev/diskN
+nbb os/aiueos/scripts/smoke-qemu-usb-boot.cljk
+nbb os/aiueos/scripts/flash-usb.cljk --device /dev/diskN            # inspect
+nbb os/aiueos/scripts/flash-usb.cljk --device /dev/diskN --confirm /dev/diskN
 ```
 
 `smoke-qemu-usb-boot.cljs` boots the **same image file** twice — once as a

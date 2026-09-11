@@ -31,7 +31,7 @@ the build system.
 
 `AIUEOS_K16_PURE_NATIVE=1` restricts the kernel link input to Kotoba objects
 and Amu toolchain stubs, hands that exact list to
-`os/aiueos/scripts/k16-pure-native-gate.cljs` *before* `zig ld.lld` runs, and
+`os/aiueos/scripts/k16-pure-native-gate.cljk` *before* `zig ld.lld` runs, and
 aborts on a non-zero exit. Artifacts are named `aiueos-k16-pure-native-*` and
 the gate receipt is written beside them.
 

@@ -13,7 +13,7 @@
  :medium {:class :usb-mass-storage
           :removable true
           :image :aiueos-x86_64-gpt.img
-          :written-by "os/aiueos/scripts/flash-usb.cljs"
+          :written-by "os/aiueos/scripts/flash-usb.cljk"
           ;; Whole-disk only. A GPT image written into a partition leaves the
           ;; partition table at the wrong offset and never boots.
           :target :whole-disk}
@@ -41,7 +41,7 @@
  ;; Equivalence is what the gate proves, and it is proved by comparing the two
  ;; runs' evidence rather than by each run passing separately -- a USB run that
  ;; merely also passed could still have diverged silently.
- :equivalence {:gate "os/aiueos/scripts/smoke-qemu-usb-boot.cljs"
+ :equivalence {:gate "os/aiueos/scripts/smoke-qemu-usb-boot.cljk"
                :transports [:disk :usb]
                :usb-attachment {:controller :qemu-xhci
                                 :device :usb-storage

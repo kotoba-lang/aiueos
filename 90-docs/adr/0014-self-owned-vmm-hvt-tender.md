@@ -126,10 +126,10 @@ per ADR-0013's own standard).
 
 ### V0 — landed 2026-07-17
 
-`src/aiueos/hvt.cljc` implements the option-C tender; `test/aiueos/hvt_test.cljc`
+`src/aiueos/hvt.cljk` implements the option-C tender; `test/aiueos/hvt_test.cljk`
 unit-tests the pure parts (ioctl-number encoding, kvm_run/memory-region struct
 offsets, the aarch64 PC core-reg id `0x6030000000100040`, the fixed guest
-program) on any JVM host; `scripts/hvt-smoke.cljs` (nbb) is the live gate.
+program) on any JVM host; `scripts/hvt-smoke.cljk` (nbb) is the live gate.
 
 Verified end-to-end on a **real** `/dev/kvm` (Apple M4 → Lima `vz`
 nested-virtualization → aarch64 Ubuntu 26.04). The VMM creates a VM, maps 2 MiB
@@ -197,7 +197,7 @@ a guest program (`{:program …}`), the PSCI diagnostic guest + its
 encoding/feature-bit unit tests (`aiueos.hvt-test`: 7 tests / 41 assertions,
 all green on any JVM host), a `clojure -M:hvt psci` diagnostic entry (documented
 as intentionally blocking — run under `timeout`), and `KVM_ARM_VCPU_INIT`
-return-code checking. The default (poweroff) path and `scripts/hvt-smoke.cljs`
+return-code checking. The default (poweroff) path and `scripts/hvt-smoke.cljk`
 gate remain green. (Repo-wide `clojure -M:test` is 279 tests / 802 assertions;
 the single error is a pre-existing `decide-subprocess-smoke-test` shelling to
 `bb decide` on the host — untouched by this change and unrelated to `hvt`.)
@@ -219,13 +219,13 @@ end-to-end** — the reusable half of "direct-load the kernel image."
   to its `vaddr`, and sets PC = `e_entry`.
 - **Real fixture, not synthetic**: `resources/hvt/guest-aarch64.elf` is a genuine
   `ld`-produced aarch64 ELF (source `guest-aarch64.S` + `guest-aarch64.ld`,
-  reproducible via `scripts/build-hvt-guest.cljs` — nbb, `--build-id=none -s`
+  reproducible via `scripts/build-hvt-guest.cljk` — nbb, `--build-id=none -s`
   for a byte-deterministic blob, SHA pinned). It writes `HI\n` to the serial
   MMIO port then the poweroff port, same as the raw guest.
 
 Verified on real KVM: `clojure -M:hvt elf resources/hvt/guest-aarch64.elf` boots
 the ELF and returns `{:serial "HI\n" :serial-ok? true :shutdown? true :steps 4}`.
-`scripts/hvt-smoke.cljs` now gates **both** cases (raw-word V0 + ELF V1) and the
+`scripts/hvt-smoke.cljk` now gates **both** cases (raw-word V0 + ELF V1) and the
 reproducibility build passes byte-identical. `aiueos.hvt-test` is 11 tests / 57
 assertions (adds `rd-le`, `elf-load-range`, a bad-magic rejection, and a parse
 of the real fixture). What remains for the kernel path is purely the x86_64 KVM
@@ -259,7 +259,7 @@ and poweroff ports — the first reuse of `aiueos.virtio`'s host-side logic
   handshake, and emits `HI\n` **only** if every step succeeds (else `E`) — so a
   receipt serial of exactly `HI\n` is a self-verifying proof the whole
   transport handshake ran. Reproducible byte-identical via
-  `scripts/build-hvt-guest.cljs` (now builds both guests, SHA-pinned).
+  `scripts/build-hvt-guest.cljk` (now builds both guests, SHA-pinned).
 
 Verified on real KVM: the 21-step trace shows 17 virtio register accesses
 (3 identity reads, the status/feature writes, the FEATURES_OK read-back, and
@@ -301,7 +301,7 @@ the first time the tender reads/writes **guest RAM**.
 - **A stack for C guests**: the tender now sets SP (core reg `0x3E`) to the top
   of the guest RAM window, so the driver guest could be written in freestanding
   C (`guest-virtqueue-aarch64.c`) rather than hand assembly — the virtqueue
-  setup is far clearer in C. Built via `scripts/build-hvt-guest.cljs` (now
+  setup is far clearer in C. Built via `scripts/build-hvt-guest.cljk` (now
   handles both `as` and `gcc`; the C guest's SHA is pinned for gcc 15).
 - **Two-way RAM coherency confirmed**: the guest writes the rings/buffer with
   its MMU off (non-cacheable), the tender reads them (`emitted "HI\n"`), the
@@ -420,7 +420,7 @@ freestanding AArch64 ELF, matching the repo's kotoba-first rule and the
   assertions green; x86_64 codegen unchanged (the three `os/aiueos` native build
   scripts' pinned compiler SHA advanced to `e5e278a`, output byte-identical).
 - **Guest** `resources/hvt/guest-serial.kotoba` → `guest-serial.elf`
-  (reproducible via `scripts/build-hvt-kotoba-guest.cljs`): a `(defn main …)`
+  (reproducible via `scripts/build-hvt-kotoba-guest.cljk`): a `(defn main …)`
   that writes `HI\n` to the serial MMIO port then the poweroff port. Because
   Kotoba is pure, ordered side effects thread each store's return value into the
   next store's index (`(- token value)` = 0) so none are dead-code-eliminated.

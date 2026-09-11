@@ -75,7 +75,7 @@ unanswered run also writes no intent, which is asserted rather than assumed.
 
 ## Evidence
 
-`os/aiueos/scripts/test-install-bundle.cljs`, now 34 cases, offline. The new
+`os/aiueos/scripts/test-install-bundle.cljk`, now 34 cases, offline. The new
 ones run the actual product path: `install-live.cljs`, from inside a real
 guided bundle, with a piped operator script and a two-key-gated probe fixture.
 It reaches the guided screens, writes an intent whose hostname and disk model

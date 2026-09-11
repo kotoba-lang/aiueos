@@ -27,5 +27,5 @@
                      :one-guest-scanout]
  :verification {:off-target :impossible
                 :reason :kir-refuses-kernel-memory
-                :evidence "nbb --classpath src scripts/compositor-guest.cljs guest-wm"}
+                :evidence "nbb --classpath src scripts/compositor-guest.cljk guest-wm"}
 }

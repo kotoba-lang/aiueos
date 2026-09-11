@@ -1,6 +1,6 @@
 ;; Append-only measurement series (the documented exception to "documents hold
 ;; current state only" -- a time series IS the value). Each entry is one run of
-;; os/aiueos/scripts/os-coverage.cljs. Never rewrite an entry: a coverage number
+;; os/aiueos/scripts/os-coverage.cljk. Never rewrite an entry: a coverage number
 ;; that improves because someone edited history is worth nothing.
 ;;
 ;; :core is emitted/declared over :relevance :core rows. It is scoped to the
@@ -1043,7 +1043,7 @@
          follows their placement rather than changing it.
          RESUME POINT. The next honest step is re-running gate I3, because it
          is the only thing standing between three landed ADRs and evidence
-         about the tree they are in: `nbb os/aiueos/scripts/smoke-qemu-install.cljs`
+         about the tree they are in: `nbb os/aiueos/scripts/smoke-qemu-install.cljk`
          needs a release image, a live UKI, node-linux-x64 and an nbb tree in
          build/aiueos. After that, a guided variant of the same gate.
          OTHER PEOPLE'S WORK, UNTOUCHED. aiueos#333 (ADR-0211, a counter that

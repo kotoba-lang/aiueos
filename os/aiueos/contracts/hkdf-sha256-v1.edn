@@ -74,14 +74,14 @@
  :verification
  {:off-target :executed
   :mechanism :kir-execute-with-a-supplied-memory-image
-  :runner "os/aiueos/scripts/verify-admissions.cljs"
+  :runner "os/aiueos/scripts/verify-admissions.cljk"
   :host :nbb
   ;; See the aes128-gcm contract's note: 4000 is enough for the ANALYZER and
   ;; not for the INTERPRETER on a deeply recursive object, and the limit is
   ;; timing-dependent because V8 shrinks frames once it tiers up.
   ;;   ulimit -s 65520
   ;;   node --stack-size=60000 "$(command -v nbb)" --classpath ... \
-  ;;     os/aiueos/scripts/verify-admissions.cljs os/aiueos/contracts/hkdf-sha256-v1.edn
+  ;;     os/aiueos/scripts/verify-admissions.cljk os/aiueos/contracts/hkdf-sha256-v1.edn
   :node-stack-size 60000
   :memory {:base 65536 :image-bytes 900 :ctx-offset 0}
   :fuel 4000000000

@@ -7,7 +7,7 @@ Date: 2026-08-25
 Accepted for a **discriminating JVM-off measurement slice** of root
 `adr-2608221625-aiueos-chromeos-cloud-desktop` Desktop leftover
 (README Desktop / compositor unit). **Guest session is green only when
-`nbb --classpath src scripts/compositor-guest.cljs guest-session`
+`nbb --classpath src scripts/compositor-guest.cljk guest-session`
 prints `AIUEOS_COMPOSITOR_GUEST_SESSION_OK`:** KERNEL.ELF serial has
 `AIUEOS_GUEST_SESSION_OK restored-front=2 packed=2 kotoba-front=2 hit=2`,
 and hosted JVM serial `AIUEOS_COMPOSITOR_WM_OK` does **not** count.
@@ -51,7 +51,7 @@ ns. Classifiers move to `aiueos.compositor.guest`.
 
 ## Decision
 
-1. Evidence command is `nbb --classpath src scripts/compositor-guest.cljs <profile>`.
+1. Evidence command is `nbb --classpath src scripts/compositor-guest.cljk <profile>`.
 2. One classifier implementation (`aiueos.compositor.guest`). nbb and
    JVM tests both require it.
 3. Same UEFI smoke script. Same extra env (`AIUEOS_GUEST_INPUT`,
@@ -69,7 +69,7 @@ hosted execute remain.
 
 ## Measurement
 
-Recorded by `nbb --classpath src scripts/compositor-guest.cljs guest-session`.
+Recorded by `nbb --classpath src scripts/compositor-guest.cljk guest-session`.
 **2026-08-25 this Mac:** printed
 `AIUEOS_COMPOSITOR_GUEST_SESSION_OK` and serial
 `AIUEOS_GUEST_SESSION_OK restored-front=2 packed=2 kotoba-front=2 hit=2`.

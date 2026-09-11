@@ -516,7 +516,7 @@ any internal disk.
 
 The device key is generated into a tmpfs, so it does not survive a reboot --
 this stick makes a claimable box, not a durable node identity. See
-os/aiueos/scripts/node-boot.cljs.
+os/aiueos/scripts/node-boot.cljk.
 """
 
 

@@ -32,7 +32,7 @@ neither in the object:
 
 ## The fix
 
-`os/aiueos/scripts/reproduce-ecdsa-sign-object.clj` patches those two absences
+`os/aiueos/scripts/reproduce-ecdsa-sign-object.cljk` patches those two absences
 into the pinned toolchain in-process — adds the two ecdsa entries to
 `kernel-object-entries`, adds them to the 250M fuel tier, stubs `package-kernel`
 — then compiles. Result:

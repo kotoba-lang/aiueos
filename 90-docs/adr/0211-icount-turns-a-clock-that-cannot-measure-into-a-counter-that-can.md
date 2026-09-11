@@ -27,7 +27,7 @@ defensible statement about speed is a COUNT.
 ## What was measured (2026-09-10)
 
 Two things, both on this workstation, both reproducible by
-`os/aiueos/scripts/smoke-qemu-target-parity-icount.cljs`.
+`os/aiueos/scripts/smoke-qemu-target-parity-icount.cljk`.
 
 **1. The two targets share an emitter, byte for byte.** The code image
 `target-parity-core.kotoba` emits for `x86_64-linux` is 180 bytes; those exact

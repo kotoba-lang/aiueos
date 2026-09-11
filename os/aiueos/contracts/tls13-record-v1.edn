@@ -78,13 +78,13 @@
  :verification
  {:off-target :executed
   :mechanism :kir-execute-with-a-supplied-memory-image
-  :runner "os/aiueos/scripts/verify-admissions.cljs"
+  :runner "os/aiueos/scripts/verify-admissions.cljk"
   :host :nbb
   ;; See aes128-gcm-v1.edn: 4000 is enough for the ANALYZER and not for the
   ;; INTERPRETER on this object, and the limit is timing-dependent.
   ;;   ulimit -s 65520
   ;;   node --stack-size=60000 "$(command -v nbb)" --classpath ... \
-  ;;     os/aiueos/scripts/verify-admissions.cljs os/aiueos/contracts/tls13-record-v1.edn
+  ;;     os/aiueos/scripts/verify-admissions.cljk os/aiueos/contracts/tls13-record-v1.edn
   :node-stack-size 60000
   :memory {:base 65536 :image-bytes 13600 :ctx-offset 0 :rec-offset 1280}
   :fuel 4000000000

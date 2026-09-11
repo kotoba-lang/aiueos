@@ -19,7 +19,7 @@ from looking at the part that was not.
 
 Already true, arrived at from the evidence side:
 
-- **reproducible artifacts** — `scripts/build-hvt-guest.cljs` and
+- **reproducible artifacts** — `scripts/build-hvt-guest.cljk` and
   `build-hvt-kotoba-guest.cljs` regenerate their fixtures and require
   byte-identical output; release media honour `SOURCE_DATE_EPOCH`;
 - **digest-gated admission** — `:aiueos/wasm-sha256` plus an Ed25519
@@ -148,7 +148,7 @@ to bound.
 
 ### 4b. The checker is in the inventory it checks (2026-08-03)
 
-`src/aiueos/tcb.clj` was not in `:tcb/files`. Every other authority in this
+`src/aiueos/tcb.cljk` was not in `:tcb/files`. Every other authority in this
 repository — including `sbom.clj`, added a day earlier — is digest-recorded, so
 editing it requires an inventory update in the same commit. The one file
 exempt from that discipline was the file that *enforces* it: weakening a check

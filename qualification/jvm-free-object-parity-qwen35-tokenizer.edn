@@ -1,6 +1,6 @@
 ;; SCOPED receipt, and the scope is the point. Produced by the SAME script as
 ;; `jvm-free-object-parity.edn` --
-;; `os/aiueos/scripts/verify-jvm-free-object-parity.cljs` -- run against a root
+;; `os/aiueos/scripts/verify-jvm-free-object-parity.cljk` -- run against a root
 ;; containing only these three sources and their objects.
 ;;
 ;; ⚠ THE RECEIPT BELOW IS ABOUT ARTIFACTS THIS TREE NO LONGER CARRIES.

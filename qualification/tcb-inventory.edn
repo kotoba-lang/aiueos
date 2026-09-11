@@ -30,12 +30,12 @@
    ;; poll secret and transport; the state machine owns the authenticated and
    ;; claimed transitions. Both can grant device authority and therefore belong
    ;; in this inventory.
-  {:path "src/aiueos/phone_bind.cljc" :role :device-authorization-hosted-adapter
+  {:path "src/aiueos/phone_bind.cljk" :role :device-authorization-hosted-adapter
    :sha256 "2442353584f3f244f8fa0b58767cc3851244a35d8639edcc81aa6066481b9582"}
-  {:path "src/aiueos/device_auth.cljc" :role :device-authorization-state-machine
+  {:path "src/aiueos/device_auth.cljk" :role :device-authorization-state-machine
    :sha256 "ebe85a848e343493408b2b84456e65feda9e3c87f44ce612e03b10d583ebf52f"}
    ;; Device key custody and possession proofs.
-  {:path "src/aiueos/provider/device.clj" :role :device-identity
+  {:path "src/aiueos/provider/device.cljk" :role :device-identity
    :sha256 "616f1aa9cde0f97c92a11b9379b0809e9a38539454a962185ec98b7b051432f5"}
   ;; The transport half of the remote authorities. `grant.net` decides which
   ;; URLs may be reached and `grant.cloud` decides which storage and inference
@@ -44,7 +44,7 @@
   ;; still here is the code that opens the connection once those three have
   ;; said yes -- which is TCB for a different reason: it is the last place that
   ;; could ignore them.
-  {:path "src/aiueos/provider/cloud.clj" :role :remote-authority-transport
+  {:path "src/aiueos/provider/cloud.cljk" :role :remote-authority-transport
    :sha256 "4e299a967c8c78af573df213cfe6c390153f54a2e4f1466066299613479023d5"}
   ;; The second transport (ADR-0077): the same requests over
   ;; `kotoba-lang/org-ietf-tls` and `kotoba.lang.http.wire` rather than
@@ -53,7 +53,7 @@
   ;; whole of the peer decision on that path. A change here that returned
   ;; `[:ok …]` without asking `grant.cloud/admit-peer` would accept any peer,
   ;; and nothing downstream would notice: the handshake would simply succeed.
-  {:path "src/aiueos/provider/cloud_own.cljc" :role :remote-authority-transport
+  {:path "src/aiueos/provider/cloud_own.cljk" :role :remote-authority-transport
    :sha256 "88853413380386a9efb8a05a7a721576cec1b03d33c26e5ab97473f0730f7c4a"}
   ;; The operator gate that leaves this machine (ADR-0073). Pinned because it
   ;; carries a trust manager that accepts ANY peer -- `pin` has to look at a key
@@ -63,31 +63,31 @@
   ;; `resources/aiueos/cloud_live.edn` is deliberately NOT pinned here: it is
   ;; deployment configuration, it is meant to change, and every key in it
   ;; carries the date and method it was measured by.
-  {:path "src/aiueos/cloud_live.cljc" :role :remote-authority-live-gate
+  {:path "src/aiueos/cloud_live.cljk" :role :remote-authority-live-gate
    :sha256 "3afa088304aa280f93bc7a544bdcb418db20b464d0f1dbadb07b3d11d639ff40"}
-  {:path "src/aiueos/execute.cljc" :role :wasm-host-abi
+  {:path "src/aiueos/execute.cljk" :role :wasm-host-abi
    :sha256 "0312c7c06bb2b4d9c2d704be73ebafdca794e3fe5aada5c3cd431d2bc7c2b438"}
-  {:path "src/aiueos/entropy.clj" :role :security-entropy-provider
+  {:path "src/aiueos/entropy.cljk" :role :security-entropy-provider
    :sha256 "9598756ca4093a0fe8756d7c2bf878729a34545f2dfbe264f9a806d71f067323"}
-  {:path "src/aiueos/watchdog.clj" :role :execution-deadline-containment
+  {:path "src/aiueos/watchdog.cljk" :role :execution-deadline-containment
    :sha256 "e6d3c257e09c1ea8968520ba735e5a2fa7320bf45411e3c11c3db7c2a48fd76b"}
-  {:path "src/aiueos/topic.cljc" :role :data-channel-isolation
+  {:path "src/aiueos/topic.cljk" :role :data-channel-isolation
    :sha256 "984e9235043e601f860772e54ecd5f621fd566f03ff6b8ef90acef61da4ef05a"}
-  {:path "src/aiueos/network_topic.clj" :role :cross-machine-channel-authentication
+  {:path "src/aiueos/network_topic.cljk" :role :cross-machine-channel-authentication
    :sha256 "2741526461b7fc6baaa0c6d64b874b0016a7ee428c9819709125e59f9247b0b3"}
-  {:path "src/aiueos/launcher.cljc" :role :component-launch-control
+  {:path "src/aiueos/launcher.cljk" :role :component-launch-control
    :sha256 "f628769a572a09bf40e36623c5fa4f1163509456476b70694cab3046665393da"}
-  {:path "src/aiueos/pid1.cljc" :role :boot-root
+  {:path "src/aiueos/pid1.cljk" :role :boot-root
    :sha256 "0da8bf4f556b5e0d1be9601749248713556ea24e9e4d01c4b49741e068923fc0"}
-  {:path "src/aiueos/sbom.clj" :role :release-attestation-authority
+  {:path "src/aiueos/sbom.cljk" :role :release-attestation-authority
    :sha256 "7289834de3c447f37ab614d79a981fbba77ffb99124816fa92663354da42e61f"}
-  {:path "src/aiueos/reproducibility.clj" :role :release-reproducibility-authority
+  {:path "src/aiueos/reproducibility.cljk" :role :release-reproducibility-authority
    :sha256 "fc227e69c03bcbe8856d1f6a0ab696ed1f78d58775735303c4c463f73f19ca02"}
   ;; The checker is in the inventory it checks. It was the one file whose
   ;; content decides whether drift is reported and whose own content nothing
   ;; recorded, so weakening a check left no trace here. No fixpoint problem:
   ;; the digest of the source lives in this sibling EDN, not in the source.
-  {:path "src/aiueos/tcb.clj" :role :tcb-inventory-authority
+  {:path "src/aiueos/tcb.cljk" :role :tcb-inventory-authority
    :sha256 "b537e0982800231af16715951c8eaa2a75a22e9a0534049a8843f2bdb56b04f6"}
   ;; The record of which supply-chain properties this repository holds on
   ;; purpose. Pinned for the same reason the checker is: a property quietly
@@ -95,22 +95,22 @@
   ;; checks the shape of what it finds there.
   {:path "qualification/build-identity.edn" :role :adopted-property-record
    :sha256 "ce7cf7f577b6596dc9ff10ec878c80518e5b88014c7efed2d8a5dc42b4f1a478"}
-  {:path "src/aiueos/sealed_audit.clj" :role :audit-confidentiality-integrity
+  {:path "src/aiueos/sealed_audit.cljk" :role :audit-confidentiality-integrity
    :sha256 "0ec696fa61a66dc4fdef5b0a418a51ee59ccc4ebed7998be8d46fd693c6bec17"}
-  {:path "src/aiueos/sealed_state.clj" :role :component-state-confidentiality-integrity
+  {:path "src/aiueos/sealed_state.cljk" :role :component-state-confidentiality-integrity
    :sha256 "6eb5f146b30ab16ed07d40e1f32b92f1e1338acf1f4a299e9b9d013fa055828d"}
-  {:path "src/aiueos/hvt.cljc" :role :hypervisor-boundary
+  {:path "src/aiueos/hvt.cljk" :role :hypervisor-boundary
    :sha256 "a3a4b3d47d59155ca74e5f25886609eaa2d0c554f68ad06b1c0b44c99decee39"}
-  {:path "src/aiueos/vfio.cljc" :role :iommu-device-boundary
+  {:path "src/aiueos/vfio.cljk" :role :iommu-device-boundary
    :sha256 "f96a9bb917b23d428f03667fbba1ccaec518a25dc7c9a4ccaceee9f43a19a77f"}
-  {:path "src/aiueos/virtio.cljc" :role :guest-device-boundary
+  {:path "src/aiueos/virtio.cljk" :role :guest-device-boundary
    :sha256 "30a39d7b260f5df318d58ac3532c668a261ab99db54c51c618c60cdc990c7205"}
   ;; What the hosted launcher is allowed to execute. Every other link in the
   ;; chain was checked and the artifact the machine actually boots was not
   ;; (ADR-0049).
-  {:path "src/aiueos/vm.cljc" :role :vm-launch
+  {:path "src/aiueos/vm.cljk" :role :vm-launch
    :sha256 "d87ffc7440a58c7a8afd0b6436d683c5912c4c1a0beac92cb9bc0aa15991cd32"}
-  {:path "src/aiueos/image.cljc" :role :boot-image-construction
+  {:path "src/aiueos/image.cljk" :role :boot-image-construction
    :sha256 "64aa845b025309365e4ed94639548ef936ea3e11716156fd9e71b42e029687e6"}]
  ;; Content addresses, not paths or bare version strings: a Maven entry's
  ;; `:sha256` is the digest of its resolved jar, a git entry's `:git-sha` is

@@ -84,7 +84,7 @@ both were found by running it rather than by reading it:
 ## Evidence
 
 `scripts/test-node-installer.cljs`, 55 cases, offline, registered as
-`:node-installer-test` and run through `scripts/run-task.cljs`. It ingests a
+`:node-installer-test` and run through `scripts/run-task.cljk`. It ingests a
 probe into a registry COPY and then requires the driver to build the unattended
 stick with the serial that probe carried — "the ingest printed six fields" is not
 "an unattended stick can now be built". The probe block is extracted from the

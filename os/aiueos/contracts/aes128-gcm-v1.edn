@@ -77,7 +77,7 @@
  :verification
  {:off-target :executed
   :mechanism :kir-execute-with-a-supplied-memory-image
-  :runner "os/aiueos/scripts/verify-admissions.cljs"
+  :runner "os/aiueos/scripts/verify-admissions.cljk"
   :host :nbb
   ;; `--stack-size=4000` is NOT enough for this contract. The ClojureScript
   ;; interpreter recurses once per Kotoba call and this object's GHASH is 4,565
@@ -87,7 +87,7 @@
   ;; interpreter tiers up. Run it as
   ;;   ulimit -s 65520
   ;;   node --stack-size=60000 "$(command -v nbb)" --classpath ... \
-  ;;     os/aiueos/scripts/verify-admissions.cljs os/aiueos/contracts/aes128-gcm-v1.edn
+  ;;     os/aiueos/scripts/verify-admissions.cljk os/aiueos/contracts/aes128-gcm-v1.edn
   ;; The runner refuses rather than reporting a mismatch when it sees that trap.
   :node-stack-size 60000
   :memory {:base 65536 :image-bytes 13840
