@@ -20,9 +20,11 @@ import stat
 import struct
 import tempfile
 import subprocess
+import sys
 import threading
 import types
 import time
+import traceback
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -502,6 +504,72 @@ def mac_address(packet):
 def expected_dhcp_client(packet):
     """Accept DHCP only from the one physical K16 under qualification."""
     return len(packet) >= 34 and mac_address(packet) in PXE_EXPECTED_MACS
+
+
+EXIT_PLANE_DOWN = 70          # EX_SOFTWARE: one listener escaped; whole process restarts
+INTERFACE_POLL_SECONDS = 10.0
+
+
+def interface_index(name):
+    """if_nametoindex, with "no such wire" as None instead of ENXIO."""
+    try:
+        return socket.if_nametoindex(name)
+    except OSError:
+        return None
+
+
+def wait_for_interfaces(names, index=interface_index, sleep=time.sleep,
+                        poll_seconds=INTERFACE_POLL_SECONDS):
+    """Block until every named interface exists; say once what is missing.
+
+    Before 2026-09-11 an unplugged adapter (`en15` -> ENXIO "Device not
+    configured") reached bind_interface() in four threads at once.  Three
+    daemon threads were still printing tracebacks to stderr while the main
+    thread finalised, and CPython aborted in flush_std_files() -- a crash
+    report every 30 s for 86 launchd respawns, none of which named the
+    missing wire.  Waiting is the launchd-shaped answer: the job stays
+    loaded, prints one line per absent interface, and serves when the
+    wire is back.  Returns the number of polls it waited.
+    """
+    announced = []
+    polls = 0
+    while True:
+        missing = [name for name in names if index(name) is None]
+        if not missing:
+            for name in announced:
+                print(f"AIUEOS_PXE_INTERFACE_PRESENT interface={name} "
+                      f"waited_polls={polls}", flush=True)
+            return polls
+        for name in missing:
+            if name not in announced:
+                print(f"AIUEOS_PXE_INTERFACE_ABSENT interface={name} "
+                      f"poll_seconds={poll_seconds:g} hint=plug-the-adapter",
+                      flush=True)
+                announced.append(name)
+        polls += 1
+        sleep(poll_seconds)
+
+
+def serve_plane(name, target, exit=os._exit):
+    """Run one listener; if it escapes, the whole process goes down.
+
+    A PXE server whose TFTP plane died is deaf while every other log reads
+    healthy, so a plane that raises names itself and exits with
+    EXIT_PLANE_DOWN; launchd KeepAlive brings a whole one back.  os._exit
+    is deliberate: interpreter finalisation is where the 2026-09-11 abort
+    happened (daemon threads writing stderr while the main thread flushed
+    it), and a thread that has already printed its traceback has nothing
+    left to flush.
+    """
+    try:
+        return target()
+    except Exception:
+        traceback.print_exc()
+        print(f"AIUEOS_PXE_PLANE_DOWN plane={name} exit={EXIT_PLANE_DOWN}",
+              flush=True)
+        sys.stdout.flush()
+        sys.stderr.flush()
+        exit(EXIT_PLANE_DOWN)
 
 
 def bind_interface(sock, port, address="", interface=None):
@@ -1800,6 +1868,35 @@ def selftest_authorization():
         MURAKUMO_CACAO_CACHE.clear()
 
 
+def selftest_interface_wait():
+    """The missing-wire path, both directions, and the real syscall as the
+    control: a name no adapter carries must come back None from the same
+    function main() gates on, or the wait is testing a stub of itself."""
+    assert interface_index("lo0") is not None
+    assert interface_index("aiueos-no-such-wire0") is None
+    slept = []
+    # Present from the first poll: no sleep, no wait.
+    assert wait_for_interfaces(["lo0"], sleep=slept.append) == 0
+    assert slept == []
+    # Absent for two polls, then present: exactly two sleeps of the period.
+    seen = iter([None, None, 15])
+    polls = wait_for_interfaces(["en-wait"], index=lambda _name: next(seen),
+                                sleep=slept.append, poll_seconds=0.25)
+    assert polls == 2 and slept == [0.25, 0.25], (polls, slept)
+    # A plane that escapes exits with EXIT_PLANE_DOWN, and exits exactly once.
+    exits = []
+
+    def broken():
+        raise OSError(6, "Device not configured")
+
+    serve_plane("selftest", broken, exit=exits.append)
+    assert exits == [EXIT_PLANE_DOWN], exits
+    # A plane that returns normally never touches exit.
+    assert serve_plane("selftest", lambda: "served", exit=exits.append) == \
+        "served"
+    assert exits == [EXIT_PLANE_DOWN]
+
+
 def selftest():
     with tempfile.TemporaryDirectory() as directory:
         private_path = Path(directory) / "credential"
@@ -1859,6 +1956,7 @@ def selftest():
     selftest_bounded_seen()
     selftest_cacao_single_flight()
     selftest_authorization()
+    selftest_interface_wait()
     ready = "AIUEOS_CONTROL_READY nonce=0123456789abcdef commands=ping,reboot-pxe"
     assert extract_control_nonce(ready) == "0123456789abcdef"
     assert control_payload("ping", "0123456789abcdef") == \
@@ -2131,7 +2229,7 @@ def selftest():
         pass
     print("AIUEOS_PXE_SELFTEST_OK dhcp=pxe+http+mac-bound tftp=oack cacao=single-flight seen=bounded control=token-bound "
           "node-relay=request-bound murakumo=qualify+poll+claim+result+renew+recover "
-          "interface-bound=yes")
+          "interface-bound=yes interface-wait=polled plane-down=exits")
 
 
 def main():
@@ -2169,15 +2267,21 @@ def main():
         globals()["MURAKUMO_RESUME_BOOT"] = args.resume_boot
     if not BOOT_PATH.is_file():
         raise SystemExit(f"missing boot file: {BOOT_PATH}")
-    threading.Thread(target=tftp_server, daemon=True).start()
-    threading.Thread(target=http_server, daemon=True).start()
-    threading.Thread(target=netlog_server, daemon=True).start()
+    # Only the PXE wire gates startup.  bus3 already refuses by name when
+    # its wire or port is not there, and a relay that is down must not keep
+    # the board from booting over the wire that is.
+    wait_for_interfaces([INTERFACE])
+    for name, target in (("tftp", tftp_server), ("http", http_server),
+                         ("netlog", netlog_server)):
+        threading.Thread(target=serve_plane, args=(name, target),
+                         name=name, daemon=True).start()
     if BUS3_ENABLED:
-        threading.Thread(target=bus3_relay_server, daemon=True).start()
+        threading.Thread(target=serve_plane, args=("bus3", bus3_relay_server),
+                         name="bus3", daemon=True).start()
     else:
         print("AIUEOS_BUS3_RELAY_DISABLED reason=AIUEOS_PXE_BUS3_RELAY!=1",
               flush=True)
-    dhcp_server()
+    serve_plane("dhcp", dhcp_server)
 
 
 if __name__ == "__main__":
