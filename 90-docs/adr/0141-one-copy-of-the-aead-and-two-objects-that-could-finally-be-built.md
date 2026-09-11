@@ -56,7 +56,7 @@ So the two closures behave exactly as `deps.edn` says they should. What was
 broken is that **`verify-admissions.cljs`'s own run instruction named the wrong
 alias.** Its header said
 
-    --classpath "$(clojure -Spath -M:test)"
+    --classpath "$(kbb -Spath -M:test)"
 
 while `package.json` said `-M:verify-admissions`, and the file's receipt reads
 the amu pin out of the `:verify-admissions` alias. Anyone following the

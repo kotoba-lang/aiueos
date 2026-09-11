@@ -5,61 +5,61 @@
   `smoke` is `-device virtio-gpu-pci` with `-display none` so P1b's
   no-keyboard bind path stays. That smoke does **not** prove guest 2D.
 
-  Guest 2D: `clojure -M:compositor gpu` boots KERNEL.ELF (existing
+  Guest 2D: `kbb -M:compositor gpu` boots KERNEL.ELF (existing
   UEFI smoke, virtio-vga = virtio-gpu protocol) and admits only serial
   `AIUEOS_VIRTIO_GPU_CREATE result=ok` **and** `AIUEOS_VIRTIO_GPU_FLUSH
   result=ok`. GET_DISPLAY_INFO, GOP-once, and QMP query-pci are reds.
 
-  Hosted WM: `clojure -M:compositor wm` admits two stacked surfaces,
+  Hosted WM: `kbb -M:compositor wm` admits two stacked surfaces,
   raise that changes z-order, DADS title bars, and pointer routing to
   the focused guest. WM does **not** require IME.
 
-  Hosted IME: `clojure -M:compositor ime` admits romaji→hiragana in this
+  Hosted IME: `kbb -M:compositor ime` admits romaji→hiragana in this
   process. IME-on consumes `ka` (guest does not see latin). Enter
   commits `か`. IME-off is the named red (`:ime-bypass`). Hosted kanji:
-  `clojure -M:compositor kanji` admits Space converting `か` to `加`.
+  `kbb -M:compositor kanji` admits Space converting `か` to `加`.
   Space that commits kana is leftover `:kanji-absent`. Guest IME:
-  `nbb --classpath src scripts/compositor-guest.cljk guest-ime` admits KERNEL.ELF Kotoba
+  `kbb --backend sci --classpath src scripts/compositor-guest.cljk guest-ime` admits KERNEL.ELF Kotoba
   `aiueos-ime-commit` (`k`+`a` → U+304B) on guest serial. Hosted JVM
   IME does not count. Guest 2D stays `gpu`. Hosted kami-engine: `clojure
   -M:compositor kami` admits `kami.webgpu/init!` then `draw!` on
   `#kami-viewport`. A sky-only `beginRenderPass` clear is leftover
-  `:clear-only-desktop`. Guest WM: `nbb --classpath src scripts/compositor-guest.cljk guest-wm`
+  `:clear-only-desktop`. Guest WM: `kbb --backend sci --classpath src scripts/compositor-guest.cljk guest-wm`
   admits KERNEL.ELF Kotoba `aiueos-wm-hit` (two overlapping boot
   rects, z-front at overlap is 2, miss-front at 40,40 is 1, raise
   is 1). Hosted JVM `wm` does not count. After guest WM, hosted
   leftover is still `:native-compositor-absent` (one virtio-gpu
   resource, virtio-input synthetic, P5). Guest paint:
-  `nbb --classpath src scripts/compositor-guest.cljk guest-paint` admits KERNEL.ELF painting both
+  `kbb --backend sci --classpath src scripts/compositor-guest.cljk guest-paint` admits KERNEL.ELF painting both
   boot rects in Kotoba z-order and sampling the overlap pixel. Hosted
   JVM `wm` does not count. A key-order paint (window 1 on top at
   overlap) is leftover `:key-order-paint`. After guest paint, hosted
   leftover is still `:native-compositor-absent` (permission
   broker, native component runtime, one virtio-gpu resource, P5).
-  Guest input: `nbb --classpath src scripts/compositor-guest.cljk guest-input` admits KERNEL.ELF
+  Guest input: `kbb --backend sci --classpath src scripts/compositor-guest.cljk guest-input` admits KERNEL.ELF
   consuming a virtio-keyboard used-ring event. C filling the envelope
   is leftover `:synthetic-smoke`. After guest input, hosted leftover
   is still `:native-compositor-absent` (permission broker, native
   component runtime, one virtio-gpu resource, P5).
-  Guest gpu-two: `nbb --classpath src scripts/compositor-guest.cljk guest-gpu-two` admits KERNEL.ELF
+  Guest gpu-two: `kbb --backend sci --classpath src scripts/compositor-guest.cljk guest-gpu-two` admits KERNEL.ELF
   creating and flushing two virtio-gpu 2D resources when Kotoba
   `kotoba_aiueos_wm_hit` admits n=2. C hardcoding resource count is
   leftover `:one-resource`. After guest gpu-two, hosted leftover is still
   `:native-compositor-absent` (permission broker, native component
   runtime, one virtio-gpu scanout, P5).
-  Guest scanout-two: `nbb --classpath src scripts/compositor-guest.cljk guest-scanout-two` admits
+  Guest scanout-two: `kbb --backend sci --classpath src scripts/compositor-guest.cljk guest-scanout-two` admits
   KERNEL.ELF binding scanout 1 onto resource 2 when Kotoba
   `kotoba_aiueos_scanout_bind` admits n=2. One scanout when Kotoba
   admits two is leftover `:one-scanout`. After guest scanout-two, hosted
   leftover is still `:native-compositor-absent` (permission broker,
   native component runtime, P5).
-  Guest broker: `nbb --classpath src scripts/compositor-guest.cljk guest-broker` admits KERNEL.ELF
+  Guest broker: `kbb --backend sci --classpath src scripts/compositor-guest.cljk guest-broker` admits KERNEL.ELF
   Kotoba `aiueos-broker-admit` (clipboard granted, file-picker refused
   on the clipboard-only boot grant). Hosted JVM `wm` does not count.
   Admitting picker on that grant is leftover `:always-grant`. After
   guest broker, hosted leftover is still `:native-compositor-absent`
   (session restore, native component runtime, P5).
-  Guest session: `nbb --classpath src scripts/compositor-guest.cljk guest-session` admits KERNEL.ELF
+  Guest session: `kbb --backend sci --classpath src scripts/compositor-guest.cljk guest-session` admits KERNEL.ELF
   Kotoba `aiueos-session-restore` unpacking packed front 2, refusing
   empty packed 0 and unknown packed 3, then wm-hit on that front.
   Hosted JVM `wm` does not count. Restore that always returns 2 is
@@ -69,8 +69,8 @@
   Exit 0 = the named command admitted. Exit 1 = refused. Exit 3 =
   QEMU/firmware/serial/browser could not be answered.
 
-  Hosted commands: `clojure -M:compositor smoke` | `gpu` | `wm` | `ime` | `kanji` | `kami` | `serve`.
-  Guest commands: `nbb --classpath src scripts/compositor-guest.cljk` plus a
+  Hosted commands: `kbb -M:compositor smoke` | `gpu` | `wm` | `ime` | `kanji` | `kami` | `serve`.
+  Guest commands: `kbb --backend sci --classpath src scripts/compositor-guest.cljk` plus a
   guest profile. JVM `guest-*` is leftover `:jvm-gate-runner`."
   (:require [aiueos.compositor.desktop :as desktop]
             [aiueos.compositor.guest :as guest]
@@ -339,7 +339,7 @@
 
      (defn start-gpu-qemu!
        "Firmware-only aarch64 virt with virtio-gpu-pci. `smoke` admits PCI
-       listing only. Guest 2D create/flush is `clojure -M:compositor gpu`."
+       listing only. Guest 2D create/flush is `kbb -M:compositor gpu`."
        [dir {:keys [accel] :as opts}]
        (let [firmware (pb/find-firmware)
              qemu (pb/find-qemu)
@@ -623,7 +623,7 @@
          (if-not (.isFile script)
            (let [r (gpu-2d-result {:qemu-unmeasured? true})]
              (write-gpu-receipt! (assoc r :measured-at (str (java.time.Instant/now))
-                                        :command "clojure -M:compositor gpu"
+                                        :command "kbb -M:compositor gpu"
                                         :why :smoke-script-missing))
              (println "AIUEOS_COMPOSITOR_GPU_2D leftover=:unmeasured")
              r)
@@ -635,7 +635,7 @@
                  receipt (assoc r
                                 :aiueos.compositor/gpu-receipt 1
                                 :measured-at (str (java.time.Instant/now))
-                                :command "clojure -M:compositor gpu"
+                                :command "kbb -M:compositor gpu"
                                 :profile :uefi-qemu-virtio-gpu-2d
                                 :uefi-smoke-exit (:exit boot)
                                 :serial-path (:serial-path boot)
@@ -663,7 +663,7 @@
            (let [r (guest-ime-result {:qemu-unmeasured? true})]
              (write-guest-ime-receipt!
               (assoc r :measured-at (str (java.time.Instant/now))
-                     :command "clojure -M:compositor guest-ime"
+                     :command "kbb -M:compositor guest-ime"
                      :why :smoke-script-missing))
              (println "AIUEOS_COMPOSITOR_GUEST_IME leftover=:unmeasured")
              r)
@@ -675,11 +675,11 @@
                  receipt (assoc r
                                 :aiueos.compositor/guest-ime-receipt 1
                                 :measured-at (str (java.time.Instant/now))
-                                :command "clojure -M:compositor guest-ime"
+                                :command "kbb -M:compositor guest-ime"
                                 :profile :uefi-qemu-guest-ime
                                 :uefi-smoke-exit (:exit boot)
                                 :serial-path (:serial-path boot)
-                                :note "Green only when guest serial has GUEST_IME_OK committed=u+304b latin-leak=0. Hosted clojure -M:compositor ime does not count. virtio-input synthetic-smoke remains. Native Phase 6 compositor leftover. P5 UNVERIFIED.")]
+                                :note "Green only when guest serial has GUEST_IME_OK committed=u+304b latin-leak=0. Hosted kbb -M:compositor ime does not count. virtio-input synthetic-smoke remains. Native Phase 6 compositor leftover. P5 UNVERIFIED.")]
              (write-guest-ime-receipt! receipt)
              (println "AIUEOS_COMPOSITOR_GUEST_IME_PROFILE=uefi-qemu")
              (println (str "AIUEOS_COMPOSITOR_GUEST_IME_SERIAL=" (:serial-path boot)))
@@ -705,7 +705,7 @@
            (let [r (guest-wm-result {:qemu-unmeasured? true})]
              (write-guest-wm-receipt!
               (assoc r :measured-at (str (java.time.Instant/now))
-                     :command "clojure -M:compositor guest-wm"
+                     :command "kbb -M:compositor guest-wm"
                      :why :smoke-script-missing))
              (println "AIUEOS_COMPOSITOR_GUEST_WM leftover=:unmeasured")
              r)
@@ -717,11 +717,11 @@
                  receipt (assoc r
                                 :aiueos.compositor/guest-wm-receipt 1
                                 :measured-at (str (java.time.Instant/now))
-                                :command "clojure -M:compositor guest-wm"
+                                :command "kbb -M:compositor guest-wm"
                                 :profile :uefi-qemu-guest-wm
                                 :uefi-smoke-exit (:exit boot)
                                 :serial-path (:serial-path boot)
-                                :note "Green only when guest serial has GUEST_WM_OK two-surfaces z-hit=2 miss-front=1 raise=1 one-surface=0. Hosted clojure -M:compositor wm does not count. virtio-input synthetic-smoke remains. Native Phase 6 compositor leftover. P5 UNVERIFIED.")]
+                                :note "Green only when guest serial has GUEST_WM_OK two-surfaces z-hit=2 miss-front=1 raise=1 one-surface=0. Hosted kbb -M:compositor wm does not count. virtio-input synthetic-smoke remains. Native Phase 6 compositor leftover. P5 UNVERIFIED.")]
              (write-guest-wm-receipt! receipt)
              (println "AIUEOS_COMPOSITOR_GUEST_WM_PROFILE=uefi-qemu")
              (println (str "AIUEOS_COMPOSITOR_GUEST_WM_SERIAL=" (:serial-path boot)))
@@ -747,7 +747,7 @@
            (let [r (guest-paint-result {:qemu-unmeasured? true})]
              (write-guest-paint-receipt!
               (assoc r :measured-at (str (java.time.Instant/now))
-                     :command "clojure -M:compositor guest-paint"
+                     :command "kbb -M:compositor guest-paint"
                      :why :smoke-script-missing))
              (println "AIUEOS_COMPOSITOR_GUEST_PAINT leftover=:unmeasured")
              r)
@@ -759,11 +759,11 @@
                  receipt (assoc r
                                 :aiueos.compositor/guest-paint-receipt 1
                                 :measured-at (str (java.time.Instant/now))
-                                :command "clojure -M:compositor guest-paint"
+                                :command "kbb -M:compositor guest-paint"
                                 :profile :uefi-qemu-guest-paint
                                 :uefi-smoke-exit (:exit boot)
                                 :serial-path (:serial-path boot)
-                                :note "Green only when guest serial has GUEST_PAINT_OK boot-overlap=2 raised-overlap=1 key-order=0. Hosted clojure -M:compositor wm does not count. virtio-input synthetic-smoke remains. Native Phase 6 compositor leftover. P5 UNVERIFIED.")]
+                                :note "Green only when guest serial has GUEST_PAINT_OK boot-overlap=2 raised-overlap=1 key-order=0. Hosted kbb -M:compositor wm does not count. virtio-input synthetic-smoke remains. Native Phase 6 compositor leftover. P5 UNVERIFIED.")]
              (write-guest-paint-receipt! receipt)
              (println "AIUEOS_COMPOSITOR_GUEST_PAINT_PROFILE=uefi-qemu")
              (println (str "AIUEOS_COMPOSITOR_GUEST_PAINT_SERIAL=" (:serial-path boot)))
@@ -789,7 +789,7 @@
            (let [r (guest-input-result {:qemu-unmeasured? true})]
              (write-guest-input-receipt!
               (assoc r :measured-at (str (java.time.Instant/now))
-                     :command "clojure -M:compositor guest-input"
+                     :command "kbb -M:compositor guest-input"
                      :why :smoke-script-missing))
              (println "AIUEOS_COMPOSITOR_GUEST_INPUT leftover=:unmeasured")
              r)
@@ -801,11 +801,11 @@
                  receipt (assoc r
                                 :aiueos.compositor/guest-input-receipt 1
                                 :measured-at (str (java.time.Instant/now))
-                                :command "clojure -M:compositor guest-input"
+                                :command "kbb -M:compositor guest-input"
                                 :profile :uefi-qemu-guest-input
                                 :uefi-smoke-exit (:exit boot)
                                 :serial-path (:serial-path boot)
-                                :note "Green only when guest serial has GUEST_INPUT_OK eventq-used=1 synthetic=0. Hosted clojure -M:compositor wm does not count. C synthetic-smoke is leftover. Permission broker and native component runtime remain. P5 UNVERIFIED.")]
+                                :note "Green only when guest serial has GUEST_INPUT_OK eventq-used=1 synthetic=0. Hosted kbb -M:compositor wm does not count. C synthetic-smoke is leftover. Permission broker and native component runtime remain. P5 UNVERIFIED.")]
              (write-guest-input-receipt! receipt)
              (println "AIUEOS_COMPOSITOR_GUEST_INPUT_PROFILE=uefi-qemu")
              (println (str "AIUEOS_COMPOSITOR_GUEST_INPUT_SERIAL=" (:serial-path boot)))
@@ -831,7 +831,7 @@
            (let [r (guest-gpu-two-result {:qemu-unmeasured? true})]
              (write-guest-gpu-two-receipt!
               (assoc r :measured-at (str (java.time.Instant/now))
-                     :command "clojure -M:compositor guest-gpu-two"
+                     :command "kbb -M:compositor guest-gpu-two"
                      :why :smoke-script-missing))
              (println "AIUEOS_COMPOSITOR_GUEST_GPU_TWO leftover=:unmeasured")
              r)
@@ -843,11 +843,11 @@
                  receipt (assoc r
                                 :aiueos.compositor/guest-gpu-two-receipt 1
                                 :measured-at (str (java.time.Instant/now))
-                                :command "clojure -M:compositor guest-gpu-two"
+                                :command "kbb -M:compositor guest-gpu-two"
                                 :profile :uefi-qemu-guest-gpu-two
                                 :uefi-smoke-exit (:exit boot)
                                 :serial-path (:serial-path boot)
-                                :note "Green only when guest serial has GUEST_GPU_TWO_OK resources=2 flush=2 kotoba-n=2. Hosted clojure -M:compositor wm does not count. One resource when Kotoba admits two is leftover. One scanout remains. P5 UNVERIFIED.")]
+                                :note "Green only when guest serial has GUEST_GPU_TWO_OK resources=2 flush=2 kotoba-n=2. Hosted kbb -M:compositor wm does not count. One resource when Kotoba admits two is leftover. One scanout remains. P5 UNVERIFIED.")]
              (write-guest-gpu-two-receipt! receipt)
              (println "AIUEOS_COMPOSITOR_GUEST_GPU_TWO_PROFILE=uefi-qemu")
              (println (str "AIUEOS_COMPOSITOR_GUEST_GPU_TWO_SERIAL=" (:serial-path boot)))
@@ -873,7 +873,7 @@
            (let [r (guest-scanout-two-result {:qemu-unmeasured? true})]
              (write-guest-scanout-two-receipt!
               (assoc r :measured-at (str (java.time.Instant/now))
-                     :command "clojure -M:compositor guest-scanout-two"
+                     :command "kbb -M:compositor guest-scanout-two"
                      :why :smoke-script-missing))
              (println "AIUEOS_COMPOSITOR_GUEST_SCANOUT_TWO leftover=:unmeasured")
              r)
@@ -890,11 +890,11 @@
                  receipt (assoc r
                                 :aiueos.compositor/guest-scanout-two-receipt 1
                                 :measured-at (str (java.time.Instant/now))
-                                :command "clojure -M:compositor guest-scanout-two"
+                                :command "kbb -M:compositor guest-scanout-two"
                                 :profile :uefi-qemu-guest-scanout-two
                                 :uefi-smoke-exit (:exit boot)
                                 :serial-path (:serial-path boot)
-                                :note "Green only when guest serial has GUEST_SCANOUT_TWO_OK scanouts=2 resource-0=1 resource-1=2 kotoba-n=2. Hosted clojure -M:compositor wm does not count. One scanout when Kotoba admits two is leftover. P5 UNVERIFIED.")]
+                                :note "Green only when guest serial has GUEST_SCANOUT_TWO_OK scanouts=2 resource-0=1 resource-1=2 kotoba-n=2. Hosted kbb -M:compositor wm does not count. One scanout when Kotoba admits two is leftover. P5 UNVERIFIED.")]
              (write-guest-scanout-two-receipt! receipt)
              (println "AIUEOS_COMPOSITOR_GUEST_SCANOUT_TWO_PROFILE=uefi-qemu")
              (println (str "AIUEOS_COMPOSITOR_GUEST_SCANOUT_TWO_SERIAL=" (:serial-path boot)))
@@ -921,7 +921,7 @@
            (let [r (guest-broker-result {:qemu-unmeasured? true})]
              (write-guest-broker-receipt!
               (assoc r :measured-at (str (java.time.Instant/now))
-                     :command "clojure -M:compositor guest-broker"
+                     :command "kbb -M:compositor guest-broker"
                      :why :smoke-script-missing))
              (println "AIUEOS_COMPOSITOR_GUEST_BROKER leftover=:unmeasured")
              r)
@@ -933,11 +933,11 @@
                  receipt (assoc r
                                 :aiueos.compositor/guest-broker-receipt 1
                                 :measured-at (str (java.time.Instant/now))
-                                :command "clojure -M:compositor guest-broker"
+                                :command "kbb -M:compositor guest-broker"
                                 :profile :uefi-qemu-guest-broker
                                 :uefi-smoke-exit (:exit boot)
                                 :serial-path (:serial-path boot)
-                                :note "Green only when guest serial has GUEST_BROKER_OK clipboard=1 picker=0 kotoba-clip=1 kotoba-pick=0. Hosted clojure -M:compositor wm does not count. Always-grant picker is leftover. Native component runtime remains. P5 UNVERIFIED.")]
+                                :note "Green only when guest serial has GUEST_BROKER_OK clipboard=1 picker=0 kotoba-clip=1 kotoba-pick=0. Hosted kbb -M:compositor wm does not count. Always-grant picker is leftover. Native component runtime remains. P5 UNVERIFIED.")]
              (write-guest-broker-receipt! receipt)
              (println "AIUEOS_COMPOSITOR_GUEST_BROKER_PROFILE=uefi-qemu")
              (println (str "AIUEOS_COMPOSITOR_GUEST_BROKER_SERIAL=" (:serial-path boot)))
@@ -964,7 +964,7 @@
            (let [r (guest-session-result {:qemu-unmeasured? true})]
              (write-guest-session-receipt!
               (assoc r :measured-at (str (java.time.Instant/now))
-                     :command "clojure -M:compositor guest-session"
+                     :command "kbb -M:compositor guest-session"
                      :why :smoke-script-missing))
              (println "AIUEOS_COMPOSITOR_GUEST_SESSION leftover=:unmeasured")
              r)
@@ -976,11 +976,11 @@
                  receipt (assoc r
                                 :aiueos.compositor/guest-session-receipt 1
                                 :measured-at (str (java.time.Instant/now))
-                                :command "clojure -M:compositor guest-session"
+                                :command "kbb -M:compositor guest-session"
                                 :profile :uefi-qemu-guest-session
                                 :uefi-smoke-exit (:exit boot)
                                 :serial-path (:serial-path boot)
-                                :note "Green only when guest serial has GUEST_SESSION_OK restored-front=2 packed=2 kotoba-front=2 hit=2. Hosted clojure -M:compositor wm does not count. Always-front restore is leftover. Native component runtime remains. P5 UNVERIFIED.")]
+                                :note "Green only when guest serial has GUEST_SESSION_OK restored-front=2 packed=2 kotoba-front=2 hit=2. Hosted kbb -M:compositor wm does not count. Always-front restore is leftover. Native component runtime remains. P5 UNVERIFIED.")]
              (write-guest-session-receipt! receipt)
              (println "AIUEOS_COMPOSITOR_GUEST_SESSION_PROFILE=uefi-qemu")
              (println (str "AIUEOS_COMPOSITOR_GUEST_SESSION_SERIAL=" (:serial-path boot)))
@@ -1459,6 +1459,6 @@
            "guest-session"
            (refuse-jvm-guest! "guest-session")
 
-           (do (println "usage: clojure -M:compositor [smoke|gpu|wm|ime|kanji|kami|serve]")
-               (println "guest gates: nbb --classpath src scripts/compositor-guest.cljk <guest-ime|guest-wm|guest-paint|guest-input|guest-gpu-two|guest-scanout-two|guest-broker|guest-session>")
+           (do (println "usage: kbb -M:compositor [smoke|gpu|wm|ime|kanji|kami|serve]")
+               (println "guest gates: kbb --backend sci --classpath src scripts/compositor-guest.cljk <guest-ime|guest-wm|guest-paint|guest-input|guest-gpu-two|guest-scanout-two|guest-broker|guest-session>")
                (System/exit 3)))))))

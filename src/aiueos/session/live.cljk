@@ -3,7 +3,7 @@
 
   Same provider and same policy as `aiueos.cloud-live`, but invoked from the
   session HTTP process when the SPA asks — which is the P1 green condition.
-  `clojure -M:cloud-live check` is a different gate and does not count."
+  `kbb -M:cloud-live check` is a different gate and does not count."
   (:require [aiueos.cloud-live :as live]
             [aiueos.provider.cloud :as provider]))
 

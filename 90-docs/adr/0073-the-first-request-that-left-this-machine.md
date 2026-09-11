@@ -188,7 +188,7 @@ ledger claimed, and a different one.
 
 ### A gate an operator runs, with three exit codes
 
-`clojure -M:cloud-live` has three subcommands.
+`kbb -M:cloud-live` has three subcommands.
 
 `pin <origin>…` **measures** a peer key and prints it. It writes no policy file,
 and its output says `MEASURED, NOT TRUSTED`. It exists because a first pin
@@ -239,7 +239,7 @@ an edit to one line.
 
 ## What the live run measured
 
-Verbatim, `clojure -M:cloud-live check`, 2026-08-22:
+Verbatim, `kbb -M:cloud-live check`, 2026-08-22:
 
 ```
 LEG model-resolve       ADMITTED    {:alias "murakumo-main", :alias-for "qwen3.8-27b", :byte-count 497, :endpoint "https://infer.murakumo.cloud/v1/chat/completions", :endpoint-source :resolved, :peer-spki "ec7f258fc32457d84295f081a479910ee9b5250d34158fcf3c92eafb9dbd1af1", :status 200}
@@ -355,14 +355,14 @@ happened. **A machine authorised by an omission has not been authorised.**
 
 Two repositories, both green.
 
-**`kotoba-lang/grant`** — `clojure -M:test`: **324 tests, 1056 assertions, 0
+**`kotoba-lang/grant`** — `kbb -M:test`: **324 tests, 1056 assertions, 0
 failures**, against a baseline at `7ed742b` of **291 / 918 / 0**. The 33 new
 tests are `grant.json-test` and the decision additions to `grant.cloud-test`.
 
-**`kotoba-lang/aiueos`** — `clojure -M:test`: **396 tests, 8694 assertions, 0 failures**, against a baseline
-at `25744d5` of **371 / 8580 / 0**. `clojure -M:test-fleet`: **393 tests, 1246 assertions, 0 failures** (baseline 368 / 1132 / 0).
-`clojure -M:tcb-check`: `{:valid? true :classpath-scope :measured :files 21
-:external 6 :classpath 9 :properties 6}`. `clojure -M:lint`: **0 errors, 56 warnings — the same 56 as the baseline**.
+**`kotoba-lang/aiueos`** — `kbb -M:test`: **396 tests, 8694 assertions, 0 failures**, against a baseline
+at `25744d5` of **371 / 8580 / 0**. `kbb -M:test-fleet`: **393 tests, 1246 assertions, 0 failures** (baseline 368 / 1132 / 0).
+`kbb -M:tcb-check`: `{:valid? true :classpath-scope :measured :files 21
+:external 6 :classpath 9 :properties 6}`. `kbb -M:lint`: **0 errors, 56 warnings — the same 56 as the baseline**.
 
 ADR-0065 recorded the suite as 635 tests with 12 expected failures. That is
 stale in both directions: the twelve upstream-blocked failures ADR-0050 owned

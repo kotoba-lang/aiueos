@@ -16,7 +16,7 @@ owner could author an `aiueos.install-intent.v1` **on another machine, ahead
 of time**, with nine flags:
 
 ```
-nbb os/aiueos/scripts/install-intent.cljk create \
+kbb --backend sci os/aiueos/scripts/install-intent.cljk create \
   --receipt ... --hostname ... --target-model ... --target-transport ... \
   --target-min-gb ... --target-max-gb ... --ssh-public-key-file ... \
   --confirm-create ... --out ...

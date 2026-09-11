@@ -1,18 +1,18 @@
-#!/usr/bin/env nbb
+#!/usr/bin/env kbb
 ;; Guest KERNEL.ELF compositor gates without a JVM (ADR-0100).
 ;;
 ;; Evidence:
-;;   nbb --classpath src scripts/compositor-guest.cljk guest-session
+;;   kbb --backend sci --classpath src scripts/compositor-guest.cljk guest-session
 ;;
-;; Same UEFI smoke as the old `clojure -M:compositor guest-*` path
+;; Same UEFI smoke as the old `kbb -M:compositor guest-*` path
 ;; (`os/aiueos/scripts/smoke-qemu-uefi.sh`). Classification is
 ;; `aiueos.compositor.guest` — one implementation. Hosted
-;; `clojure -M:compositor wm` serial does not count. QEMU/firmware/serial
+;; `kbb -M:compositor wm` serial does not count. QEMU/firmware/serial
 ;; unanswered is exit 3, not a silent pass.
 ;;
 ;; Hosted leftover after a green guest gate is still
 ;; `:native-compositor-absent` (native component runtime, P5).
-;; JVM `clojure -M:compositor guest-*` is leftover `:jvm-gate-runner`.
+;; JVM `kbb -M:compositor guest-*` is leftover `:jvm-gate-runner`.
 
 (ns compositor-guest
   (:require ["node:fs" :as fs]
@@ -59,7 +59,7 @@
 (let [profile (profile-arg)]
   (when-not (some #{profile} guest/guest-profiles)
     (binding [*out* *err*]
-      (println "usage: nbb --classpath src scripts/compositor-guest.cljk"
+      (println "usage: kbb --backend sci --classpath src scripts/compositor-guest.cljk"
                (str/join "|" guest/guest-profiles)))
     (.exit js/process 3))
   (let [boot (run-uefi! profile)
@@ -75,7 +75,7 @@
                        :profile (keyword (str "uefi-qemu-" profile))
                        :uefi-smoke-exit (:exit boot)
                        :serial-path (:serial-path boot)
-                       :note (str "Green only on KERNEL.ELF serial. Hosted clojure -M:compositor wm does not count. Native component runtime remains. P5 UNVERIFIED."))]
+                       :note (str "Green only on KERNEL.ELF serial. Hosted kbb -M:compositor wm does not count. Native component runtime remains. P5 UNVERIFIED."))]
     (write-receipt! profile receipt)
     (println (str "AIUEOS_COMPOSITOR_" (str/replace (str/upper profile) "-" "_")
                   "_PROFILE=uefi-qemu-nbb"))

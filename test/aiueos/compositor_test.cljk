@@ -1,8 +1,8 @@
 (ns aiueos.compositor-test
   "Discriminating tests for the compositor process.
 
-  `clojure -M:test` of this ns is not the Mac QEMU gate. Hosted surfaces
-  are `clojure -M:compositor smoke`. Guest 2D is `clojure -M:compositor gpu`.
+  `kbb -M:test` of this ns is not the Mac QEMU gate. Hosted surfaces
+  are `kbb -M:compositor smoke`. Guest 2D is `kbb -M:compositor gpu`.
   These tests name the reds so HTTP-only `#session` cannot stand in for a
   display session, a wiped desktop cannot count as restore, and query-pci
   cannot stand in for CREATE+FLUSH."
@@ -333,7 +333,7 @@
 
 (deftest generated-spa-is-the-guest-ime-face
   (is (comp/html-has-guest-ime-face? (pb/session-html))
-      "gate is red until #desktop names nbb --classpath src scripts/compositor-guest.cljk guest-ime")
+      "gate is red until #desktop names kbb --backend sci --classpath src scripts/compositor-guest.cljk guest-ime")
   (is (not (comp/html-has-guest-ime-face?
             (str "<html>href=\"#session\" href=\"#desktop\" "
                  "id=\"ime-bar\" id=\"ime-preedit\" id=\"ime-toggle\" "
@@ -344,14 +344,14 @@
 
 (deftest generated-spa-is-the-guest-wm-face
   (is (comp/html-has-guest-wm-face? (pb/session-html))
-      "gate is red until #desktop names nbb --classpath src scripts/compositor-guest.cljk guest-wm")
+      "gate is red until #desktop names kbb --backend sci --classpath src scripts/compositor-guest.cljk guest-wm")
   (is (not (comp/html-has-guest-wm-face?
             (str "<html>href=\"#session\" href=\"#desktop\" "
                  "id=\"ime-bar\" id=\"ime-preedit\" id=\"ime-toggle\" "
                  "data-ime id=\"ime-candidates\" id=\"wm-stage\" "
                  "class=\"wm-window\" class=\"wm-window\" wm-titlebar "
                  "dads-chip-label data-raise dads-heading kami.webgpu "
-                 "nbb --classpath src scripts/compositor-guest.cljk guest-ime native compositor</html>")))
+                 "kbb --backend sci --classpath src scripts/compositor-guest.cljk guest-ime native compositor</html>")))
       "guest-ime lede without the guest-wm command is not the guest WM face"))
 
 (deftest guest-paint-serial-is-the-guest-paint-gate
@@ -389,15 +389,15 @@
 
 (deftest generated-spa-is-the-guest-paint-face
   (is (comp/html-has-guest-paint-face? (pb/session-html))
-      "gate is red until #desktop names nbb --classpath src scripts/compositor-guest.cljk guest-paint")
+      "gate is red until #desktop names kbb --backend sci --classpath src scripts/compositor-guest.cljk guest-paint")
   (is (not (comp/html-has-guest-paint-face?
             (str "<html>href=\"#session\" href=\"#desktop\" "
                  "id=\"ime-bar\" id=\"ime-preedit\" id=\"ime-toggle\" "
                  "data-ime id=\"ime-candidates\" id=\"wm-stage\" "
                  "class=\"wm-window\" class=\"wm-window\" wm-titlebar "
                  "dads-chip-label data-raise dads-heading kami.webgpu "
-                 "nbb --classpath src scripts/compositor-guest.cljk guest-ime "
-                 "nbb --classpath src scripts/compositor-guest.cljk guest-wm native compositor</html>")))
+                 "kbb --backend sci --classpath src scripts/compositor-guest.cljk guest-ime "
+                 "kbb --backend sci --classpath src scripts/compositor-guest.cljk guest-wm native compositor</html>")))
       "guest-wm lede without the guest-paint command is not the guest paint face"))
 
 (deftest guest-input-serial-is-the-guest-input-gate
@@ -432,16 +432,16 @@
 
 (deftest generated-spa-is-the-guest-input-face
   (is (comp/html-has-guest-input-face? (pb/session-html))
-      "gate is red until #desktop names nbb --classpath src scripts/compositor-guest.cljk guest-input")
+      "gate is red until #desktop names kbb --backend sci --classpath src scripts/compositor-guest.cljk guest-input")
   (is (not (comp/html-has-guest-input-face?
             (str "<html>href=\"#session\" href=\"#desktop\" "
                  "id=\"ime-bar\" id=\"ime-preedit\" id=\"ime-toggle\" "
                  "data-ime id=\"ime-candidates\" id=\"wm-stage\" "
                  "class=\"wm-window\" class=\"wm-window\" wm-titlebar "
                  "dads-chip-label data-raise dads-heading kami.webgpu "
-                 "nbb --classpath src scripts/compositor-guest.cljk guest-ime "
-                 "nbb --classpath src scripts/compositor-guest.cljk guest-wm "
-                 "nbb --classpath src scripts/compositor-guest.cljk guest-paint native compositor</html>")))
+                 "kbb --backend sci --classpath src scripts/compositor-guest.cljk guest-ime "
+                 "kbb --backend sci --classpath src scripts/compositor-guest.cljk guest-wm "
+                 "kbb --backend sci --classpath src scripts/compositor-guest.cljk guest-paint native compositor</html>")))
       "guest-paint lede without the guest-input command is not the guest input face"))
 
 (deftest guest-gpu-two-serial-is-the-guest-gpu-two-gate
@@ -470,17 +470,17 @@
 
 (deftest generated-spa-is-the-guest-gpu-two-face
   (is (comp/html-has-guest-gpu-two-face? (pb/session-html))
-      "gate is red until #desktop names nbb --classpath src scripts/compositor-guest.cljk guest-gpu-two")
+      "gate is red until #desktop names kbb --backend sci --classpath src scripts/compositor-guest.cljk guest-gpu-two")
   (is (not (comp/html-has-guest-gpu-two-face?
             (str "<html>href=\"#session\" href=\"#desktop\" "
                  "id=\"ime-bar\" id=\"ime-preedit\" id=\"ime-toggle\" "
                  "data-ime id=\"ime-candidates\" id=\"wm-stage\" "
                  "class=\"wm-window\" class=\"wm-window\" wm-titlebar "
                  "dads-chip-label data-raise dads-heading kami.webgpu "
-                 "nbb --classpath src scripts/compositor-guest.cljk guest-ime "
-                 "nbb --classpath src scripts/compositor-guest.cljk guest-wm "
-                 "nbb --classpath src scripts/compositor-guest.cljk guest-paint "
-                 "nbb --classpath src scripts/compositor-guest.cljk guest-input native compositor</html>")))
+                 "kbb --backend sci --classpath src scripts/compositor-guest.cljk guest-ime "
+                 "kbb --backend sci --classpath src scripts/compositor-guest.cljk guest-wm "
+                 "kbb --backend sci --classpath src scripts/compositor-guest.cljk guest-paint "
+                 "kbb --backend sci --classpath src scripts/compositor-guest.cljk guest-input native compositor</html>")))
       "guest-input lede without the guest-gpu-two command is not the guest gpu-two face"))
 
 (deftest guest-scanout-two-serial-is-the-guest-scanout-two-gate
@@ -509,18 +509,18 @@
 
 (deftest generated-spa-is-the-guest-scanout-two-face
   (is (comp/html-has-guest-scanout-two-face? (pb/session-html))
-      "gate is red until #desktop names nbb --classpath src scripts/compositor-guest.cljk guest-scanout-two")
+      "gate is red until #desktop names kbb --backend sci --classpath src scripts/compositor-guest.cljk guest-scanout-two")
   (is (not (comp/html-has-guest-scanout-two-face?
             (str "<html>href=\"#session\" href=\"#desktop\" "
                  "id=\"ime-bar\" id=\"ime-preedit\" id=\"ime-toggle\" "
                  "data-ime id=\"ime-candidates\" id=\"wm-stage\" "
                  "class=\"wm-window\" class=\"wm-window\" wm-titlebar "
                  "dads-chip-label data-raise dads-heading kami.webgpu "
-                 "nbb --classpath src scripts/compositor-guest.cljk guest-ime "
-                 "nbb --classpath src scripts/compositor-guest.cljk guest-wm "
-                 "nbb --classpath src scripts/compositor-guest.cljk guest-paint "
-                 "nbb --classpath src scripts/compositor-guest.cljk guest-input "
-                 "nbb --classpath src scripts/compositor-guest.cljk guest-gpu-two native compositor</html>")))
+                 "kbb --backend sci --classpath src scripts/compositor-guest.cljk guest-ime "
+                 "kbb --backend sci --classpath src scripts/compositor-guest.cljk guest-wm "
+                 "kbb --backend sci --classpath src scripts/compositor-guest.cljk guest-paint "
+                 "kbb --backend sci --classpath src scripts/compositor-guest.cljk guest-input "
+                 "kbb --backend sci --classpath src scripts/compositor-guest.cljk guest-gpu-two native compositor</html>")))
       "guest-gpu-two lede without the guest-scanout-two command is not the guest scanout-two face"))
 
 (deftest guest-broker-serial-is-the-guest-broker-gate
@@ -554,19 +554,19 @@
 
 (deftest generated-spa-is-the-guest-broker-face
   (is (comp/html-has-guest-broker-face? (pb/session-html))
-      "gate is red until #desktop names nbb --classpath src scripts/compositor-guest.cljk guest-broker")
+      "gate is red until #desktop names kbb --backend sci --classpath src scripts/compositor-guest.cljk guest-broker")
   (is (not (comp/html-has-guest-broker-face?
             (str "<html>href=\"#session\" href=\"#desktop\" "
                  "id=\"ime-bar\" id=\"ime-preedit\" id=\"ime-toggle\" "
                  "data-ime id=\"ime-candidates\" id=\"wm-stage\" "
                  "class=\"wm-window\" class=\"wm-window\" wm-titlebar "
                  "dads-chip-label data-raise dads-heading kami.webgpu "
-                 "nbb --classpath src scripts/compositor-guest.cljk guest-ime "
-                 "nbb --classpath src scripts/compositor-guest.cljk guest-wm "
-                 "nbb --classpath src scripts/compositor-guest.cljk guest-paint "
-                 "nbb --classpath src scripts/compositor-guest.cljk guest-input "
-                 "nbb --classpath src scripts/compositor-guest.cljk guest-gpu-two "
-                 "nbb --classpath src scripts/compositor-guest.cljk guest-scanout-two native compositor</html>")))
+                 "kbb --backend sci --classpath src scripts/compositor-guest.cljk guest-ime "
+                 "kbb --backend sci --classpath src scripts/compositor-guest.cljk guest-wm "
+                 "kbb --backend sci --classpath src scripts/compositor-guest.cljk guest-paint "
+                 "kbb --backend sci --classpath src scripts/compositor-guest.cljk guest-input "
+                 "kbb --backend sci --classpath src scripts/compositor-guest.cljk guest-gpu-two "
+                 "kbb --backend sci --classpath src scripts/compositor-guest.cljk guest-scanout-two native compositor</html>")))
       "guest-scanout-two lede without the guest-broker command is not the guest broker face"))
 
 (deftest guest-session-serial-is-the-guest-session-gate
@@ -610,7 +610,7 @@
 
 (deftest generated-spa-is-the-guest-session-face
   (is (comp/html-has-guest-session-face? (pb/session-html))
-      "gate is red until #desktop names nbb --classpath src scripts/compositor-guest.cljk guest-session")
+      "gate is red until #desktop names kbb --backend sci --classpath src scripts/compositor-guest.cljk guest-session")
   (is (not (str/includes? (pb/session-html) "clojure -M:compositor guest-session"))
       "SPA must not name the JVM guest-session alias as evidence")
   (is (not (comp/html-has-guest-session-face?
@@ -619,13 +619,13 @@
                  "data-ime id=\"ime-candidates\" id=\"wm-stage\" "
                  "class=\"wm-window\" class=\"wm-window\" wm-titlebar "
                  "dads-chip-label data-raise dads-heading kami.webgpu "
-                 "nbb --classpath src scripts/compositor-guest.cljk guest-ime "
-                 "nbb --classpath src scripts/compositor-guest.cljk guest-wm "
-                 "nbb --classpath src scripts/compositor-guest.cljk guest-paint "
-                 "nbb --classpath src scripts/compositor-guest.cljk guest-input "
-                 "nbb --classpath src scripts/compositor-guest.cljk guest-gpu-two "
-                 "nbb --classpath src scripts/compositor-guest.cljk guest-scanout-two "
-                 "nbb --classpath src scripts/compositor-guest.cljk guest-broker native compositor</html>")))
+                 "kbb --backend sci --classpath src scripts/compositor-guest.cljk guest-ime "
+                 "kbb --backend sci --classpath src scripts/compositor-guest.cljk guest-wm "
+                 "kbb --backend sci --classpath src scripts/compositor-guest.cljk guest-paint "
+                 "kbb --backend sci --classpath src scripts/compositor-guest.cljk guest-input "
+                 "kbb --backend sci --classpath src scripts/compositor-guest.cljk guest-gpu-two "
+                 "kbb --backend sci --classpath src scripts/compositor-guest.cljk guest-scanout-two "
+                 "kbb --backend sci --classpath src scripts/compositor-guest.cljk guest-broker native compositor</html>")))
       "guest-broker lede without the guest-session command is not the guest session face"))
 
 (deftest presenter-bundle-is-kami-webgpu

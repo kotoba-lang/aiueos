@@ -21,7 +21,7 @@ probes, not stacks** (ADR-0081): one compiled QNAME for `kotobase.net`, then
 TCP :443 to the A, then a TLS ClientHello looking for a record. **Steps 4–5 closed on the QEMU UEFI profile on 2026-08-22** (ADR-0082): guest
 TLS 1.3 Finished (cipher `TLS_AES_128_GCM_SHA256`) and HTTPS GET of empty raw
 CID `bafkreihdwdcefgh4dqkjv67uzcmw7ojee6xedzdetojuzjevtenxquvyku`, body SHA-256
-admitted by `kotoba_aiueos_digest_equal`. `clojure -M:bare-metal cloud` EXIT=0,
+admitted by `kotoba_aiueos_digest_equal`. `kbb -M:bare-metal cloud` EXIT=0,
 leftover `[]`. CertificateVerify is ADR-0087; chain-to-anchor is still
 leftover. Hosted
 `cloud-live` / session smoke / a host curl still do not count.

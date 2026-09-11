@@ -1,4 +1,4 @@
-#!/usr/bin/env nbb
+#!/usr/bin/env kbb
 ;; Decision layer of the live installer environment (install-v1.edn, root ADR
 ;; adr-2608251418). /init (mechanism) has already mounted the install-USB
 ;; payload, extracted the bundle to a tmpfs, and handed over. This script:

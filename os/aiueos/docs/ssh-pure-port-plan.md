@@ -414,7 +414,7 @@ Common gate definitions:
 ```
 # host oracle for the H KAT (requires org-ietf-ssh on the nbb classpath)
 ORG_IETF_SSH_SRC=<org-ietf-ssh checkout> \
-  nbb --classpath <org-ietf-ssh>/src os/aiueos/scripts/ssh-kex-kat.cljk
+  kbb --backend sci --classpath <org-ietf-ssh>/src os/aiueos/scripts/ssh-kex-kat.cljk
 # expect: SSH_KEX_KAT_OK transcript-length got 173 want 173
 #         SSH_KEX_KAT_OK kat-h got 520a9ba70d60201af9365b0e53ffafa1a31446d17ec24315eb678a9b2e709833
 #         AIUEOS_SSH_KEX_KAT_PASS

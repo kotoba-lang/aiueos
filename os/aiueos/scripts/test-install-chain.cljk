@@ -1,4 +1,4 @@
-#!/usr/bin/env nbb
+#!/usr/bin/env kbb
 ;; Offline proof of the install chain's admission and refusal behavior
 ;; (install-v1.edn gates I2 and I5). Runs on fake devices and temp files;
 ;; never opens a real block device.

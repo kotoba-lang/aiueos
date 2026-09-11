@@ -1,6 +1,6 @@
 (ns aiueos.compositor.kami-browser
   "Headless Chrome eval of the hosted kami presenter. Loaded only by
-  `clojure -M:compositor kami`. Missing Chrome is leftover :unmeasured,
+  `kbb -M:compositor kami`. Missing Chrome is leftover :unmeasured,
   not a silent pass."
   (:require [clojure.java.io :as io])
   (:import [com.microsoft.playwright Playwright]

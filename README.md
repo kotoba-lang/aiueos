@@ -31,9 +31,9 @@ native only when its artifact receipt has empty `c_sources`,
 | Kernel execution | **not yet** — context switch, preemptive scheduler, ring 3, syscall entry/exit, capability handle table all still reference-profile only |
 | Hardware | **not yet** — PCI, DMA, IOMMU, MSI-X, virtio, NVMe, USB HID are reference C with QEMU evidence, not compiler-emitted |
 | Boot and release | **working** — deterministic GPT disk and El Torito ISO from one builder, byte-identical recovery ESP with proven firmware fallback, update and rollback receipts, RSA-2048 release-signature verification, durable crash receipts, initramfs, Multiboot2/GRUB |
-| Desktop | **partial** — hosted WM (ADR-0085) stacks two `window-session-state` surfaces in the same DADS `#desktop`; raise changes z-order; `clojure -M:compositor wm`. Guest 2D create/flush is `clojure -M:compositor gpu` (ADR-0084). hosted IME romaji→kana is `clojure -M:compositor ime` (ADR-0086). hosted kanji (Space converts か→加) is `clojure -M:compositor kanji` (ADR-0088). hosted kami.webgpu presenter (`init!`/`draw!` on `#kami-viewport`) is `clojure -M:compositor kami` (ADR-0089). Guest IME is KERNEL.ELF Kotoba `k`+`a`→U+304B (`nbb --classpath src scripts/compositor-guest.cljk guest-ime`, ADR-0090). Guest WM is KERNEL.ELF Kotoba z-hit of two overlapping boot rects (`nbb --classpath src scripts/compositor-guest.cljk guest-wm`, ADR-0091). Guest paint is KERNEL.ELF filling those rects in z-order (`nbb --classpath src scripts/compositor-guest.cljk guest-paint`, ADR-0092). Guest input is KERNEL.ELF consuming a virtio-keyboard used-ring event (`nbb --classpath src scripts/compositor-guest.cljk guest-input`, ADR-0093). Guest gpu-two is KERNEL.ELF creating two virtio-gpu 2D resources when Kotoba admits n=2 (`nbb --classpath src scripts/compositor-guest.cljk guest-gpu-two`, ADR-0094). Guest scanout-two is KERNEL.ELF binding scanout 1 to resource 2 (`nbb --classpath src scripts/compositor-guest.cljk guest-scanout-two`, ADR-0095). Guest broker is KERNEL.ELF Kotoba clipboard admit / picker refuse (`nbb --classpath src scripts/compositor-guest.cljk guest-broker`, ADR-0096). Guest session restore is KERNEL.ELF Kotoba packed front 2 (`nbb --classpath src scripts/compositor-guest.cljk guest-session`, ADR-0098). Leftover `:native-compositor-absent` (native component runtime, P5). **P5 UNVERIFIED**. Not a finished Chrome OS-shaped desktop |
+| Desktop | **partial** — hosted WM (ADR-0085) stacks two `window-session-state` surfaces in the same DADS `#desktop`; raise changes z-order; `kbb -M:compositor wm`. Guest 2D create/flush is `kbb -M:compositor gpu` (ADR-0084). hosted IME romaji→kana is `kbb -M:compositor ime` (ADR-0086). hosted kanji (Space converts か→加) is `kbb -M:compositor kanji` (ADR-0088). hosted kami.webgpu presenter (`init!`/`draw!` on `#kami-viewport`) is `kbb -M:compositor kami` (ADR-0089). Guest IME is KERNEL.ELF Kotoba `k`+`a`→U+304B (`kbb --backend sci --classpath src scripts/compositor-guest.cljk guest-ime`, ADR-0090). Guest WM is KERNEL.ELF Kotoba z-hit of two overlapping boot rects (`kbb --backend sci --classpath src scripts/compositor-guest.cljk guest-wm`, ADR-0091). Guest paint is KERNEL.ELF filling those rects in z-order (`kbb --backend sci --classpath src scripts/compositor-guest.cljk guest-paint`, ADR-0092). Guest input is KERNEL.ELF consuming a virtio-keyboard used-ring event (`kbb --backend sci --classpath src scripts/compositor-guest.cljk guest-input`, ADR-0093). Guest gpu-two is KERNEL.ELF creating two virtio-gpu 2D resources when Kotoba admits n=2 (`kbb --backend sci --classpath src scripts/compositor-guest.cljk guest-gpu-two`, ADR-0094). Guest scanout-two is KERNEL.ELF binding scanout 1 to resource 2 (`kbb --backend sci --classpath src scripts/compositor-guest.cljk guest-scanout-two`, ADR-0095). Guest broker is KERNEL.ELF Kotoba clipboard admit / picker refuse (`kbb --backend sci --classpath src scripts/compositor-guest.cljk guest-broker`, ADR-0096). Guest session restore is KERNEL.ELF Kotoba packed front 2 (`kbb --backend sci --classpath src scripts/compositor-guest.cljk guest-session`, ADR-0098). Leftover `:native-compositor-absent` (native component runtime, P5). **P5 UNVERIFIED**. Not a finished Chrome OS-shaped desktop |
 | Content addressing | **partial** — `cid-v1-admit` decides that a block is the content a binary CIDv1 names, reading version, codec, multihash and digest length rather than taking a caller's 32 bytes on trust; `unixfs-file-admit` decides a canonical UnixFS file root, so an artifact larger than the 12,288-byte SHA-256 bound is verified block by block against one name (ADR-0128). Both are checked by verifiers that EXECUTE them against their contracts — the first here that do, since kotoba-kir gained an optional memory image. **Neither is linked into `KERNEL.ELF` yet** (amu's kotoba-native pin), so no boot has run either, and the OTA and model-channel paths still verify by manifest digest |
-| Bare-metal net (P2) | **green on QEMU UEFI** — guest TLS 1.3 + HTTPS GET of empty raw CID with SHA-256 admit (ADR-0082). CertificateVerify ECDSA P-256 is `clojure -M:bare-metal cert-verify` (ADR-0087). Hosted `cloud-live` / session smoke / host curl do not count. Chain-to-anchor still leftover |
+| Bare-metal net (P2) | **green on QEMU UEFI** — guest TLS 1.3 + HTTPS GET of empty raw CID with SHA-256 admit (ADR-0082). CertificateVerify ECDSA P-256 is `kbb -M:bare-metal cert-verify` (ADR-0087). Hosted `cloud-live` / session smoke / host curl do not count. Chain-to-anchor still leftover |
 
 **Every gate above except P5's claim is QEMU/OVMF.** P5 real-machine boot is
 **UNVERIFIED** (ADR-0084): this Mac is the QEMU host; attached USB is an
@@ -214,7 +214,7 @@ What is left here executes, boots and drives hardware.
   also carries an ADDITIVE `:aiueos/run-receipt` (`grant.broker/run-receipt`,
   ADR-2607022900 follow-up 8): `:succeeded`/`:failed`/`:denied` status,
   `:started-at`/`:finished-at` (epoch ms), and the same audit events.
-  **JVM-only** — needs `clojure -M:test` (Chicory was never in babashka's class
+  **JVM-only** — needs `kbb -M:test` (Chicory was never in babashka's class
   allowlist, and babashka has since been retired outright).
 - `src/aiueos/launcher.cljk` is a real, runnable CLI: the retired Rust
   `bin/aiueos.rs`'s argv-parsing/file-I/O role, reimplemented as JVM Clojure.
@@ -224,7 +224,7 @@ What is left here executes, boots and drives hardware.
   granted component's declared `:aiueos/wasm`, not just decide; `up` boots the
   components due at a given ADR-0006 cycle (`--cycle N`, default 0) in
   `grant.graph/priority-boot-order`, stopping at the first
-  denied/quota-or-fuel-exceeded DUE component). Try it: `clojure -M -m
+  denied/quota-or-fuel-exceeded DUE component). Try it: `kbb -M -m
   aiueos.launcher up <system>.edn --cycle 3 --edn`. **`:aiueos/schedule`'s
   `:deadline-cycles` is NOT enforced** — see `grant.manifest/due-this-cycle?`'s
   docstring for why. **JVM-only**, same reason as `aiueos.execute`. Not wired:
@@ -254,13 +254,13 @@ already lives in `kotoba-lang/kotoba`'s `kototama`/`kotoba-clj` layer.
 ## Verify
 
 ```bash
-clojure -M:test   # full suite, including aiueos.execute-test (Chicory, JVM-only)
+kbb -M:test   # full suite, including aiueos.execute-test (Chicory, JVM-only)
 ./os/aiueos/scripts/smoke-qemu-journal-recovery.sh # no-Linux OVMF gate
 ```
 
 `scripts/tasks.edn` additionally registers the boot/flash gates:
 `multiboot-build`, `multiboot-smoke`, `grub-multiboot-smoke`, `usb-boot-smoke`,
-`usb-flash` — run through `nbb scripts/run-task.cljk <task>`.
+`usb-flash` — run through `kbb --backend sci scripts/run-task.cljk <task>`.
 
 **Two entrypoints this README used to document are unavailable.** babashka was
 retired as this workspace's script host by ADR-2607173000, and both bodies were
@@ -268,10 +268,10 @@ babashka-hosted `(require …)` + `run-tests` / subprocess forms that the
 conversion could not express, so they were dropped (ADR-2608131600). The
 recovered forms are in `scripts/tasks-complex.edn`.
 
-- **`bb test:cljc`** — the pure CLJC authority contract tests, i.e. everything
-  except `aiueos.execute-test`. `clojure -M:test` above still runs those
+- **`kbb -M:test:cljc`** — the pure CLJC authority contract tests, i.e. everything
+  except `aiueos.execute-test`. `kbb -M:test` above still runs those
   assertions; what is gone is the ability to run them *without* the JVM.
-- **`bb decide`** — the decision subprocess described above. `aiueos.decide` and
+- **`kbb -M:decide`** — the decision subprocess described above. `aiueos.decide` and
   `grant.cli` are unchanged, so a host adapter can still reach the same
   contract, but there is no packaged task entrypoint for it today.
 
@@ -309,10 +309,10 @@ by the product integration ADR in `kotoba-lang/kotoba`.
 
 Root contract: [`adr-2608221625-aiueos-chromeos-cloud-desktop`](https://github.com/com-junkawasaki/root/blob/main/90-docs/adr/2608221625-aiueos-chromeos-cloud-desktop.edn).
 This is the JVM hosted profile. It is **not** the bare-metal compositor, and
-`clojure -M:cloud-live check` does **not** green this gate.
+`kbb -M:cloud-live check` does **not** green this gate.
 
 ```bash
-clojure -M:session smoke
+kbb -M:session smoke
 ```
 
 Expected markers:
@@ -333,7 +333,7 @@ the session process**. Exit 1 is a refusal or a non-DADS document. Exit 3
 means a leg could not be answered.
 
 ```bash
-clojure -M:session serve   # open the printed URL on a phone-sized viewport
+kbb -M:session serve   # open the printed URL on a phone-sized viewport
 ```
 
 ## Mac VM phone-bind (P1b / P1c proving slice)
@@ -374,7 +374,7 @@ gate.
 
 ```bash
 # from this repository (worktree or clone)
-clojure -M:phone-bind smoke
+kbb -M:phone-bind smoke
 ```
 
 Expected markers on stdout:
@@ -389,13 +389,13 @@ cycle left the device claimed. Exit 1 is a refusal. Exit 3 means QEMU or
 firmware could not be answered (not a pass).
 
 ```bash
-clojure -M:phone-bind pre-enroll   # P1c: grant in the image, zero QR, copy refused
-clojure -M:phone-bind serve        # leave the phone SPA up; open the printed URL
+kbb -M:phone-bind pre-enroll   # P1c: grant in the image, zero QR, copy refused
+kbb -M:phone-bind serve        # leave the phone SPA up; open the printed URL
 ```
 
 The SPA is the DADS document at `apps/session` (fragments `#session` `#desktop` `#setup`
-`#manage` `#devices`). Phone-bind serves that one HTML. `clojure -M:session smoke`
-is P1 (kotobase + murakumo from the session process). `clojure -M:test` of
+`#manage` `#devices`). Phone-bind serves that one HTML. `kbb -M:session smoke`
+is P1 (kotobase + murakumo from the session process). `kbb -M:test` of
 unrelated suites is **not** this gate.
 
 The complete onboarding boundary is
@@ -411,20 +411,20 @@ Root contract: compositor unit of [`adr-2608221625`](https://github.com/com-junk
 The same `apps/session` DADS SPA is the shell. A compositor process owns `window-session-state` surfaces, persists them in `state/desktop.edn`, and restores after kill/relaunch. A wiped file is refused (`empty-desktop`), not an empty success. Hosted WM (ADR-0085) stacks two overlapping surfaces with DADS title bars; `raise` changes z-order; pointer hit-test is front-to-back. QEMU for `smoke` is started with `-device virtio-gpu-pci` and still `-display none` so P1b phone bind needs no local keyboard.
 
 ```bash
-clojure -M:compositor smoke   # hosted SPA + surfaces + PCI listing
-clojure -M:compositor gpu     # KERNEL.ELF CREATE+FLUSH (not PCI listing)
-clojure -M:compositor wm      # hosted WM: ≥2 surfaces, z-order, DADS, input routing
-clojure -M:compositor ime     # hosted IME: ka→か, off-path latin leak is red
-clojure -M:compositor kanji   # hosted IME: Space converts か→加; kana-only Space is red
-clojure -M:compositor kami    # hosted kami.webgpu init!/draw!; sky-clear is red
-nbb --classpath src scripts/compositor-guest.cljk guest-ime  # KERNEL.ELF Kotoba k+a→U+304B
-nbb --classpath src scripts/compositor-guest.cljk guest-wm   # KERNEL.ELF Kotoba z-hit of two overlapping rects
-nbb --classpath src scripts/compositor-guest.cljk guest-paint # KERNEL.ELF paints both rects in Kotoba z-order
-nbb --classpath src scripts/compositor-guest.cljk guest-input # KERNEL.ELF consumes a virtio-keyboard used-ring event
-nbb --classpath src scripts/compositor-guest.cljk guest-gpu-two # KERNEL.ELF two virtio-gpu 2D resources when Kotoba n=2
-nbb --classpath src scripts/compositor-guest.cljk guest-scanout-two # KERNEL.ELF scanout 1 → resource 2 when Kotoba n=2
-nbb --classpath src scripts/compositor-guest.cljk guest-broker # KERNEL.ELF Kotoba clipboard-only broker admit
-nbb --classpath src scripts/compositor-guest.cljk guest-session # KERNEL.ELF packed front 2 restore
+kbb -M:compositor smoke   # hosted SPA + surfaces + PCI listing
+kbb -M:compositor gpu     # KERNEL.ELF CREATE+FLUSH (not PCI listing)
+kbb -M:compositor wm      # hosted WM: ≥2 surfaces, z-order, DADS, input routing
+kbb -M:compositor ime     # hosted IME: ka→か, off-path latin leak is red
+kbb -M:compositor kanji   # hosted IME: Space converts か→加; kana-only Space is red
+kbb -M:compositor kami    # hosted kami.webgpu init!/draw!; sky-clear is red
+kbb --backend sci --classpath src scripts/compositor-guest.cljk guest-ime  # KERNEL.ELF Kotoba k+a→U+304B
+kbb --backend sci --classpath src scripts/compositor-guest.cljk guest-wm   # KERNEL.ELF Kotoba z-hit of two overlapping rects
+kbb --backend sci --classpath src scripts/compositor-guest.cljk guest-paint # KERNEL.ELF paints both rects in Kotoba z-order
+kbb --backend sci --classpath src scripts/compositor-guest.cljk guest-input # KERNEL.ELF consumes a virtio-keyboard used-ring event
+kbb --backend sci --classpath src scripts/compositor-guest.cljk guest-gpu-two # KERNEL.ELF two virtio-gpu 2D resources when Kotoba n=2
+kbb --backend sci --classpath src scripts/compositor-guest.cljk guest-scanout-two # KERNEL.ELF scanout 1 → resource 2 when Kotoba n=2
+kbb --backend sci --classpath src scripts/compositor-guest.cljk guest-broker # KERNEL.ELF Kotoba clipboard-only broker admit
+kbb --backend sci --classpath src scripts/compositor-guest.cljk guest-session # KERNEL.ELF packed front 2 restore
 ```
 
 Expected `smoke` markers:
@@ -450,27 +450,27 @@ Expected `smoke` markers:
 
 `kami` exit 0 means the SPA calls `kami.webgpu/init!` then `draw!` on `#kami-viewport` with a `render-ir` of ≥1 instance (ADR-0089). A sky-only `beginRenderPass` clear is leftover `:clear-only-desktop`. Exit 3 means the browser could not be answered. Native compositor leftover remains. That is **not** a finished desktop.
 
-`guest-ime` exit 0 means KERNEL.ELF serial has `AIUEOS_GUEST_IME_OK committed=u+304b latin-leak=0` from Kotoba `kotoba_aiueos_ime_commit` (ADR-0090). Hosted `clojure -M:compositor ime` / `AIUEOS_COMPOSITOR_IME_OK` is red. virtio-input is still synthetic. Leftover `:native-compositor-absent`. That is **not** a finished desktop.
+`guest-ime` exit 0 means KERNEL.ELF serial has `AIUEOS_GUEST_IME_OK committed=u+304b latin-leak=0` from Kotoba `kotoba_aiueos_ime_commit` (ADR-0090). Hosted `kbb -M:compositor ime` / `AIUEOS_COMPOSITOR_IME_OK` is red. virtio-input is still synthetic. Leftover `:native-compositor-absent`. That is **not** a finished desktop.
 
-`guest-wm` exit 0 means KERNEL.ELF serial has `AIUEOS_GUEST_WM_OK two-surfaces z-hit=2 miss-front=1 raise=1 one-surface=0` from Kotoba `kotoba_aiueos_wm_hit` (ADR-0091). Hosted `clojure -M:compositor wm` / `AIUEOS_COMPOSITOR_WM_OK` is red. virtio-input synthetic remains. Leftover `:native-compositor-absent`. That is **not** a finished desktop.
+`guest-wm` exit 0 means KERNEL.ELF serial has `AIUEOS_GUEST_WM_OK two-surfaces z-hit=2 miss-front=1 raise=1 one-surface=0` from Kotoba `kotoba_aiueos_wm_hit` (ADR-0091). Hosted `kbb -M:compositor wm` / `AIUEOS_COMPOSITOR_WM_OK` is red. virtio-input synthetic remains. Leftover `:native-compositor-absent`. That is **not** a finished desktop.
 
-`guest-paint` exit 0 means KERNEL.ELF serial has `AIUEOS_GUEST_PAINT_OK boot-overlap=2 raised-overlap=1 key-order=0` from painting both boot rects in Kotoba z-order and sampling the overlap pixel (ADR-0092). Hosted `clojure -M:compositor wm` is red. A key-order paint is leftover `:key-order-paint`. Default gpu/guest-paint boots still use synthetic input. Leftover `:native-compositor-absent`. That is **not** a finished desktop.
+`guest-paint` exit 0 means KERNEL.ELF serial has `AIUEOS_GUEST_PAINT_OK boot-overlap=2 raised-overlap=1 key-order=0` from painting both boot rects in Kotoba z-order and sampling the overlap pixel (ADR-0092). Hosted `kbb -M:compositor wm` is red. A key-order paint is leftover `:key-order-paint`. Default gpu/guest-paint boots still use synthetic input. Leftover `:native-compositor-absent`. That is **not** a finished desktop.
 
-`guest-input` exit 0 means KERNEL.ELF serial has `AIUEOS_GUEST_INPUT_OK eventq-used=1 synthetic=0` from a virtio-keyboard used-ring event (ADR-0093). Hosted `clojure -M:compositor wm` is red. C filling keycode 30 is leftover `:synthetic-smoke`. HMP `sendkey` is not this gate. QMP inject is not a laptop HID and not P5. Leftover `:native-compositor-absent` (permission broker, native component runtime, one virtio-gpu scanout). That is **not** a finished desktop.
+`guest-input` exit 0 means KERNEL.ELF serial has `AIUEOS_GUEST_INPUT_OK eventq-used=1 synthetic=0` from a virtio-keyboard used-ring event (ADR-0093). Hosted `kbb -M:compositor wm` is red. C filling keycode 30 is leftover `:synthetic-smoke`. HMP `sendkey` is not this gate. QMP inject is not a laptop HID and not P5. Leftover `:native-compositor-absent` (permission broker, native component runtime, one virtio-gpu scanout). That is **not** a finished desktop.
 
-`guest-gpu-two` exit 0 means KERNEL.ELF serial has `AIUEOS_GUEST_GPU_TWO_OK resources=2 flush=2 kotoba-n=2` from Kotoba-admitted count and two CREATE/FLUSH paths (ADR-0094). Hosted `clojure -M:compositor wm` is red. C hardcoding resource count is leftover `:one-resource`. Leftover `:native-compositor-absent`. That is **not** a finished desktop.
+`guest-gpu-two` exit 0 means KERNEL.ELF serial has `AIUEOS_GUEST_GPU_TWO_OK resources=2 flush=2 kotoba-n=2` from Kotoba-admitted count and two CREATE/FLUSH paths (ADR-0094). Hosted `kbb -M:compositor wm` is red. C hardcoding resource count is leftover `:one-resource`. Leftover `:native-compositor-absent`. That is **not** a finished desktop.
 
-`guest-scanout-two` exit 0 means KERNEL.ELF serial has `AIUEOS_GUEST_SCANOUT_TWO_OK scanouts=2 resource-0=1 resource-1=2 kotoba-n=2` from Kotoba-admitted bind count and SET_SCANOUT on scanout 1 (ADR-0095). Hosted `clojure -M:compositor wm` is red. One scanout when Kotoba admits two is leftover `:one-scanout`. Leftover `:native-compositor-absent`. That is **not** a finished desktop.
+`guest-scanout-two` exit 0 means KERNEL.ELF serial has `AIUEOS_GUEST_SCANOUT_TWO_OK scanouts=2 resource-0=1 resource-1=2 kotoba-n=2` from Kotoba-admitted bind count and SET_SCANOUT on scanout 1 (ADR-0095). Hosted `kbb -M:compositor wm` is red. One scanout when Kotoba admits two is leftover `:one-scanout`. Leftover `:native-compositor-absent`. That is **not** a finished desktop.
 
-`guest-broker` exit 0 means KERNEL.ELF serial has `AIUEOS_GUEST_BROKER_OK clipboard=1 picker=0 kotoba-clip=1 kotoba-pick=0` from Kotoba `kotoba_aiueos_broker_admit` (ADR-0096). Hosted `clojure -M:compositor wm` is red. Picker admitted on a clipboard-only grant is leftover `:always-grant`. Leftover `:native-compositor-absent`. That is **not** a finished desktop.
+`guest-broker` exit 0 means KERNEL.ELF serial has `AIUEOS_GUEST_BROKER_OK clipboard=1 picker=0 kotoba-clip=1 kotoba-pick=0` from Kotoba `kotoba_aiueos_broker_admit` (ADR-0096). Hosted `kbb -M:compositor wm` is red. Picker admitted on a clipboard-only grant is leftover `:always-grant`. Leftover `:native-compositor-absent`. That is **not** a finished desktop.
 
-`guest-session` exit 0 means KERNEL.ELF serial has `AIUEOS_GUEST_SESSION_OK restored-front=2 packed=2 kotoba-front=2 hit=2` from Kotoba `kotoba_aiueos_session_restore` (ADR-0098). Hosted `clojure -M:compositor wm` is red. Restore that always returns 2 is leftover `:always-front`. Leftover `:native-compositor-absent` (native component runtime, P5). That is **not** a finished desktop.
+`guest-session` exit 0 means KERNEL.ELF serial has `AIUEOS_GUEST_SESSION_OK restored-front=2 packed=2 kotoba-front=2 hit=2` from Kotoba `kotoba_aiueos_session_restore` (ADR-0098). Hosted `kbb -M:compositor wm` is red. Restore that always returns 2 is leftover `:always-front`. Leftover `:native-compositor-absent` (native component runtime, P5). That is **not** a finished desktop.
 
 ```bash
-clojure -M:compositor serve   # same SPA; compositor owns surfaces; Ctrl-C to stop
+kbb -M:compositor serve   # same SPA; compositor owns surfaces; Ctrl-C to stop
 ```
 
-`clojure -M:phone-bind smoke` stays headless **without** the GPU device. Display-present (動線 D) is extra, not the only bind path. Native compositor remains leftover. P5 remains UNVERIFIED. kami-engine as the daily desktop, CACAO write, and physical boot remain. The Chrome OS-shaped desktop goal is not complete.
+`kbb -M:phone-bind smoke` stays headless **without** the GPU device. Display-present (動線 D) is extra, not the only bind path. Native compositor remains leftover. P5 remains UNVERIFIED. kami-engine as the daily desktop, CACAO write, and physical boot remain. The Chrome OS-shaped desktop goal is not complete.
 
 
 ## Bare-metal cloud reach (P2) — green on QEMU UEFI
@@ -478,12 +478,12 @@ clojure -M:compositor serve   # same SPA; compositor owns surfaces; Ctrl-C to st
 Root contract: P2 of [`adr-2608221625`](https://github.com/com-junkawasaki/root/blob/main/90-docs/adr/2608221625-aiueos-chromeos-cloud-desktop.edn). This is QEMU **UEFI + KERNEL.ELF**, not the hosted JVM profile.
 
 ```bash
-clojure -M:bare-metal cloud
+kbb -M:bare-metal cloud
 ```
 
-The guest consumes its DHCP lease, resolves `kotobase.net`, completes TLS 1.3 (cipher 0x1301), GET `/ipfs/<empty-raw-cid>`, and admits the body SHA-256 (ADR-0082). **Exit 0 is guest HTTP GET + CID verify.** Handshake without HTTP is leftover `:http-absent`. A TLS record without Finished is `:tls-handshake-incomplete`. CertificateVerify (ECDSA P-256 against the leaf) is a separate gate: `clojure -M:bare-metal cert-verify` (ADR-0087). HTTP+CID without that serial line is leftover `:cert-verify-hashed-only`. Chain to a trust anchor is still leftover.
+The guest consumes its DHCP lease, resolves `kotobase.net`, completes TLS 1.3 (cipher 0x1301), GET `/ipfs/<empty-raw-cid>`, and admits the body SHA-256 (ADR-0082). **Exit 0 is guest HTTP GET + CID verify.** Handshake without HTTP is leftover `:http-absent`. A TLS record without Finished is `:tls-handshake-incomplete`. CertificateVerify (ECDSA P-256 against the leaf) is a separate gate: `kbb -M:bare-metal cert-verify` (ADR-0087). HTTP+CID without that serial line is leftover `:cert-verify-hashed-only`. Chain to a trust anchor is still leftover.
 
-`clojure -M:cloud-live check` and `clojure -M:session smoke` do **not** green this gate. A Mac-side fetch is `:host-fetch-does-not-count`.
+`kbb -M:cloud-live check` and `kbb -M:session smoke` do **not** green this gate. A Mac-side fetch is `:host-fetch-does-not-count`.
 
 
 ## Grant-limited guest in the shell (P3)
@@ -491,7 +491,7 @@ The guest consumes its DHCP lease, resolves `kotobase.net`, completes TLS 1.3 (c
 Root contract: P3 of [`adr-2608221625`](https://github.com/com-junkawasaki/root/blob/main/90-docs/adr/2608221625-aiueos-chromeos-cloud-desktop.edn). Same `apps/session` DADS SPA. `:app/notes` runs through `grant` + Chicory Wasm (`examples/apps/notes.wat`). A deny is HTTP 403 with `:unresolved-capability`, not a generic 500. POSIX `:fs/open` is not the store; kotobase write without a credential is `:write-unauthorized`.
 
 ```bash
-clojure -M:session guest
+kbb -M:session guest
 ```
 
 Expected markers:
@@ -503,7 +503,7 @@ Expected markers:
 - `AIUEOS_GUEST_ALLOW_LIST=` lists the guest under `guests`
 - `AIUEOS_GUEST_OK`
 
-Exit 0 means the SPA listed the guest, grant allow ran it, and grant deny was the named red. This is **not** the full Chrome OS-shaped desktop: P2 guest HTTPS to kotobase is green on QEMU; CertificateVerify is green on QEMU (ADR-0087); P4 itonami is green on hosted JVM; P5 a real machine is UNVERIFIED; kanji and CACAO write remain. Guest virtio-gpu 2D is `clojure -M:compositor gpu` (ADR-0084), not this guest-in-shell gate.
+Exit 0 means the SPA listed the guest, grant allow ran it, and grant deny was the named red. This is **not** the full Chrome OS-shaped desktop: P2 guest HTTPS to kotobase is green on QEMU; CertificateVerify is green on QEMU (ADR-0087); P4 itonami is green on hosted JVM; P5 a real machine is UNVERIFIED; kanji and CACAO write remain. Guest virtio-gpu 2D is `kbb -M:compositor gpu` (ADR-0084), not this guest-in-shell gate.
 
 ## Maturity
 

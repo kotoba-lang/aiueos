@@ -1,7 +1,7 @@
-#!/usr/bin/env nbb
+#!/usr/bin/env kbb
 ;; How much of what AIUEOS claims does a real boot actually prove?
 ;;
-;; Usage: nbb os/aiueos/scripts/os-coverage.cljk <evidence-log> [<evidence-log>...]
+;; Usage: kbb --backend sci os/aiueos/scripts/os-coverage.cljk <evidence-log> [<evidence-log>...]
 ;;
 ;; Exit 0 measured, 1 findings, 2 REFUSED (could not measure). The third code
 ;; exists because "no evidence" and "nothing passed" must not look alike: given
@@ -81,7 +81,7 @@
     (die 2 "REFUSED: no evidence log given."
          "\nThis measures what a boot EMITTED, not what the sources declare."
          "\nWithout a log there is nothing to measure, and 0% would be a lie."
-         "\nusage: nbb os/aiueos/scripts/os-coverage.cljk <evidence-log> [...]"))
+         "\nusage: kbb --backend sci os/aiueos/scripts/os-coverage.cljk <evidence-log> [...]"))
   (let [missing (remove #(.existsSync fs %) args)]
     (when (seq missing)
       (die 2 "REFUSED: unreadable evidence log(s):" (str/join " " missing))))

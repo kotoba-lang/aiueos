@@ -15,7 +15,7 @@
 ;; spans -- the banner, the separators, the profile suffix, and the total
 ;; length -- is compared byte for byte.
 ;;
-;; Usage: nbb os/aiueos/scripts/relay-protocol-c-kotoba-parity.cljk
+;; Usage: kbb --backend sci os/aiueos/scripts/relay-protocol-c-kotoba-parity.cljk
 (ns relay-protocol-c-kotoba-parity
   (:require ["fs" :as fs] ["path" :as path]))
 

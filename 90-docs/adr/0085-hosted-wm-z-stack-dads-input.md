@@ -6,16 +6,16 @@ Date: 2026-08-23
 
 Accepted for a **discriminating hosted WM slice** of root
 `adr-2608221625-aiueos-chromeos-cloud-desktop` compositor / Desktop 面.
-**WM is green only when `clojure -M:compositor wm` prints
+**WM is green only when `kbb -M:compositor wm` prints
 `AIUEOS_COMPOSITOR_WM_OK`:** two `window-session-state` surfaces stack,
 raising the back window changes who is front, overlap hit-test prefers
 z-order (not map key order), DADS title bars exist in the same
 `apps/session` `#desktop` document, and pointer routing names the
 focused guest.
 
-This file records the attempt. The receipt from `clojure -M:compositor wm`
+This file records the attempt. The receipt from `kbb -M:compositor wm`
 is the measurement. A single notes iframe is red. A JSON dump of surfaces
-is red. `clojure -M:compositor gpu` stays the guest 2D gate and is not
+is red. `kbb -M:compositor gpu` stays the guest 2D gate and is not
 this WM.
 
 Not executable, and stated here rather than at the end:
@@ -26,7 +26,7 @@ Not executable, and stated here rather than at the end:
 - **This is not a native guest WM.** Surfaces live in the hosted JVM
   compositor (`window-session-state`). No second WM was invented.
   `kuro` remains the terminal model. kami-engine remains GPU IR.
-- **Guest virtio-gpu 2D stays ADR-0084.** `clojure -M:compositor gpu`
+- **Guest virtio-gpu 2D stays ADR-0084.** `kbb -M:compositor gpu`
   must stay green. Phone-bind stays `-display none` without a guest
   keyboard.
 - **P5 a real machine is UNVERIFIED.** This Mac is the QEMU host. QEMU
@@ -64,12 +64,12 @@ red if `hit-window` ignores z-stack.
 3. HTTP: `POST /api/compositor/raise` and `POST /api/compositor/pointer`
    persist `state/desktop.edn` and return a flat WM event. SPA clicks
    call those routes.
-4. Gate: `clojure -M:compositor wm`. No QEMU. Exit 0 only when two
+4. Gate: `kbb -M:compositor wm`. No QEMU. Exit 0 only when two
    surfaces, one-surface red, z-order ≠ key-order, raise changes front,
    occlusion, input-target `[:panel focused]`, DADS SPA face, and HTTP
    raise/pointer agree. IME is not required. Leftover print is
    `:guest-ime-absent` once ADR-0088 lands.
-5. Keep `clojure -M:compositor gpu` and phone-bind headless argv.
+5. Keep `kbb -M:compositor gpu` and phone-bind headless argv.
 
 ## P5 — still UNVERIFIED
 

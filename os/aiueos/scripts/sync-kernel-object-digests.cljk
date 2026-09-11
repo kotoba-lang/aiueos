@@ -1,13 +1,13 @@
-#!/usr/bin/env nbb
+#!/usr/bin/env kbb
 ;; `build-uefi.sh` pins a sha256 for every Kotoba kernel object it links, and
 ;; `os/aiueos/kotoba/provenance.edn` records one too. Two copies of a pin are a
 ;; pin that can disagree with itself.
 ;;
-;;   nbb os/aiueos/scripts/sync-kernel-object-digests.cljk --check
+;;   kbb --backend sci os/aiueos/scripts/sync-kernel-object-digests.cljk --check
 ;;       exit 0 they agree, 3 they do not (and it names every one), 2 it could
 ;;       not tell (a digest slot it cannot resolve to an object).
 ;;
-;;   nbb os/aiueos/scripts/sync-kernel-object-digests.cljk --write
+;;   kbb --backend sci os/aiueos/scripts/sync-kernel-object-digests.cljk --write
 ;;       rewrite the shell's literals from the manifest.
 ;;
 ;; The manifest is the source: its digests are written by

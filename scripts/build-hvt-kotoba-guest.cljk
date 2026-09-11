@@ -1,4 +1,4 @@
-#!/usr/bin/env nbb
+#!/usr/bin/env kbb
 ;; Reproducibility recipe for the ADR-0014 V1 **kotoba-first** guest fixture
 ;; `resources/hvt/guest-serial.elf` (issue #110): a `.kotoba` program compiled by
 ;; `kotoba-lang/compiler` to a bare-metal AArch64 ELF via its
@@ -9,7 +9,7 @@
 ;; The .elf is checked in so tests need no toolchain; this only regenerates it
 ;; and confirms it is byte-identical.
 ;;
-;;   nbb scripts/build-hvt-kotoba-guest.cljk
+;;   kbb --backend sci scripts/build-hvt-kotoba-guest.cljk
 
 (ns build-hvt-kotoba-guest
   (:require ["child_process" :as cp]

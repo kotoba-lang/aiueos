@@ -1,4 +1,4 @@
-#!/usr/bin/env nbb
+#!/usr/bin/env kbb
 ;; Plug in the stick and watch the box become claimable.
 ;;
 ;; One boot, end to end, from a GPT image a firmware could actually boot: UEFI
@@ -17,7 +17,7 @@
 ;; costs seconds instead of a TCG boot. What is left for a stick to show is
 ;; that the same thing happens when it comes off a partition table.
 ;;
-;;   nbb --classpath <grant>/src:<text>/src:<sekisho>/src \
+;;   kbb --backend sci --classpath <grant>/src:<text>/src:<sekisho>/src \
 ;;     os/aiueos/scripts/smoke-qemu-node-usb.cljk \
 ;;     --live build/aiueos/live-node --out build/aiueos
 

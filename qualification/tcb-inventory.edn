@@ -208,7 +208,7 @@
  ;; `:scope :test` jars are on the classpath only under the `:test` alias and
  ;; are excluded from the TCB by `:tcb/excluded`; they are listed because the
  ;; check runs under that alias and an unrecorded classpath jar is an error.
- ;; Regenerate the digests with `clojure -M:test:tcb-check classpath`; roles are
+ ;; Regenerate the digests with `kbb -M:test:tcb-check classpath`; roles are
  ;; a human judgement and are not generated.
  :tcb/classpath
  [{:jar "clojure-1.12.5.jar" :role :language-runtime :scope :runtime

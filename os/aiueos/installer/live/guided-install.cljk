@@ -1,15 +1,15 @@
-#!/usr/bin/env nbb
+#!/usr/bin/env kbb
 ;; The guided aiueos installer -- the ubuntu-server installer's shape, on this
 ;; repository's admission rules (install-v1.edn, root ADR adr-2608251418,
 ;; aiueos ADR-0208).
 ;;
 ;;   ask + write the intent, nothing else:
-;;     nbb os/aiueos/installer/live/guided-install.cljk \
+;;     kbb --backend sci os/aiueos/installer/live/guided-install.cljk \
 ;;       --release-receipt release-receipt.json \
 ;;       --out-intent install-intent.json --out-answers install-answers.json
 ;;
 ;;   replay a previous run without a person (subiquity: autoinstall.yaml):
-;;     nbb os/aiueos/installer/live/guided-install.cljk \
+;;     kbb --backend sci os/aiueos/installer/live/guided-install.cljk \
 ;;       --answers install-answers.json --release-receipt release-receipt.json \
 ;;       --out-intent install-intent.json
 ;;
@@ -421,6 +421,6 @@
 (println "AIUEOS_GUIDED_NEXT"
          "nothing has been erased. On the target machine, the installer runs:")
 (println "  AIUEOS_LIVE_PAYLOAD_DEV=<usb-payload-part>"
-         "nbb os/aiueos/installer/live/install-live.cljk")
+         "kbb --backend sci os/aiueos/installer/live/install-live.cljk")
 (println "  (interactive intents report only; unattended intents install after")
 (println "   install-to-disk.cljk re-verifies this intent against its own probe)")

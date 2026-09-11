@@ -7,14 +7,14 @@ Date: 2026-08-23
 Accepted for a **discriminating guest paint slice** of root
 `adr-2608221625-aiueos-chromeos-cloud-desktop` Desktop leftover
 (README Desktop / compositor unit). **Guest paint is green only when
-`clojure -M:compositor guest-paint` prints `AIUEOS_COMPOSITOR_GUEST_PAINT_OK`:**
+`kbb -M:compositor guest-paint` prints `AIUEOS_COMPOSITOR_GUEST_PAINT_OK`:**
 KERNEL.ELF serial has `AIUEOS_GUEST_PAINT_OK boot-overlap=2 raised-overlap=1 key-order=0`,
 Kotoba (`kotoba_aiueos_wm_hit`) names the front id, C fills both
 boot-desktop rects back-then-front and samples the overlap pixel, and
 hosted JVM serial `AIUEOS_COMPOSITOR_WM_OK` does **not** count.
 
 This file records the attempt. The receipt from
-`clojure -M:compositor guest-paint` is the measurement. Painting window
+`kbb -M:compositor guest-paint` is the measurement. Painting window
 1 last at overlap is leftover `:key-order-paint`. Painting window 2
 last after raise-to-1 is leftover `:always-front-paint`. Rects that do
 not fit GOP are leftover `:fb-too-small`. A paint that never writes
@@ -23,7 +23,7 @@ unanswered is leftover `:unmeasured` (exit 3, not a silent pass).
 
 Not executable, and stated here rather than at the end:
 
-- **This is not hosted JVM WM.** `clojure -M:compositor wm` (ADR-0085)
+- **This is not hosted JVM WM.** `kbb -M:compositor wm` (ADR-0085)
   and `guest-wm` (ADR-0091) stay green **without** this serial line.
   Those gates must not start requiring `GUEST_PAINT_OK`.
 - **This is not two virtio-gpu resources.** KERNEL.ELF still has one
@@ -56,7 +56,7 @@ not pass.
 
 1. Same UEFI QEMU smoke as `gpu` / `guest-wm` (existing
    `smoke-qemu-uefi.sh`). No new `.sh`. New argv
-   `clojure -M:compositor guest-paint` — not folded into `guest-wm` /
+   `kbb -M:compositor guest-paint` — not folded into `guest-wm` /
    `wm` / `gpu`.
 2. Reuse `kotoba_aiueos_wm_hit`. No new Kotoba export, no native
    allow-list row, compiler pin stays amu `9cf3a0ac`.
@@ -67,7 +67,7 @@ not pass.
    2's stored color, then window 1's. Do not `qemu_exit` on paint miss
    — `gpu` / `cloud` / `guest-ime` / `guest-wm` stay green without this
    line.
-5. SPA `#desktop` names `clojure -M:compositor guest-paint`. One
+5. SPA `#desktop` names `kbb -M:compositor guest-paint`. One
    document. jp-go-dds. No second HTML. No liquid-glass. No Three.js.
 
 ## Consequences
@@ -78,7 +78,7 @@ complete.
 
 ## Measurement
 
-**2026-08-23 this Mac:** `clojure -M:compositor guest-paint` printed
+**2026-08-23 this Mac:** `kbb -M:compositor guest-paint` printed
 `AIUEOS_COMPOSITOR_GUEST_PAINT_OK` leftover `[]`. Serial:
 `AIUEOS_GUEST_PAINT_OK boot-overlap=2 raised-overlap=1 key-order=0`.
 Receipt `:reason :guest-paint-z-order`. Same boot still carries

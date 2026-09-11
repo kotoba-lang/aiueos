@@ -7,7 +7,7 @@ Date: 2026-08-22
 Accepted for a **discriminating slice** of root
 `adr-2608221625-aiueos-chromeos-cloud-desktop` **P2**. **P2 is not green.**
 
-`clojure -M:bare-metal cloud` boots the existing UEFI + `KERNEL.ELF` QEMU path
+`kbb -M:bare-metal cloud` boots the existing UEFI + `KERNEL.ELF` QEMU path
 (`AIUEOS_TEST_NET=1 ./os/aiueos/scripts/smoke-qemu-uefi.sh`, no new `.sh`). The
 guest:
 
@@ -26,9 +26,9 @@ Measured on this Mac's QEMU slirp: DNS A, TCP :443, TLS record type 22
 
 Not executable, and stated here rather than at the end:
 
-- **`clojure -M:cloud-live check` does not green P2.** That is the hosted JVM
+- **`kbb -M:cloud-live check` does not green P2.** That is the hosted JVM
   profile (ADR-0073 / ADR-0077).
-- **`clojure -M:session smoke` does not green P2.** That is the session process
+- **`kbb -M:session smoke` does not green P2.** That is the session process
   on the Mac host (ADR-0078).
 - **A host curl / `java.net.http` GET is `:host-fetch-does-not-count`.** Tests
   name that red; this namespace does not open a socket to kotobase.
@@ -75,7 +75,7 @@ and keeps new judgement out of C (ADR-0015).
    (`AIUEOS_DNS_PROBE`, `AIUEOS_TCP_CLOUD_PROBE`, `AIUEOS_TLS_PROBE`,
    `AIUEOS_HTTP_PROBE`, `AIUEOS_BARE_METAL_P2`). The result lives in the rest
    of the line so public-network failure does not make extras non-deterministic.
-4. Gate: `clojure -M:bare-metal cloud`. P1 / P1b / compositor / session guest
+4. Gate: `kbb -M:bare-metal cloud`. P1 / P1b / compositor / session guest
    smokes stay green. UEFI smoke with `AIUEOS_TEST_NET=1` requires
    `AIUEOS_DHCP_CONSUMED src=10.0.2.15`; it does not require public DNS/TCP.
 

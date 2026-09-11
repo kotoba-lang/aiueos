@@ -1,4 +1,4 @@
-#!/usr/bin/env nbb
+#!/usr/bin/env kbb
 ;; An Ubuntu Server install USB that leaves behind a murakumo node.
 ;;
 ;; The bespoke initramfs this replaces lost to hardware, not to the product:
@@ -13,7 +13,7 @@
 ;; arguments, which xorriso reports from the source image rather than anyone
 ;; writing them out again.
 ;;
-;;   nbb os/aiueos/scripts/make-node-autoinstall-iso.cljk \
+;;   kbb --backend sci os/aiueos/scripts/make-node-autoinstall-iso.cljk \
 ;;     --iso ubuntu-24.04.4-live-server-amd64.iso \
 ;;     --bundle build/aiueos/aiueos-node-agent.tar.gz \
 ;;     --ssh-key ~/.ssh/id_ed25519.pub \

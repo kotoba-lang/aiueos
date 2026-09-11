@@ -256,7 +256,7 @@
 (deftest every-recorded-classpath-entry-has-a-role
   ;; The stronger claim -- every jar the JVM *loaded* is recorded -- cannot be
   ;; answered under the `:test` alias, whose classpath is not the one the
-  ;; inventory describes. `clojure -M:tcb-check` asks it on the production
+  ;; inventory describes. `kbb -M:tcb-check` asks it on the production
   ;; classpath and is the only place it means anything; asserting it here
   ;; produced seventeen false drifts (ADR-0062).
   ;;

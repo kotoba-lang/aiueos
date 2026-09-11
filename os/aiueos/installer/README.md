@@ -15,18 +15,18 @@ this file unchanged.
 
 ```sh
 # ask every screen, write the intent and the answer file that reproduces it
-nbb os/aiueos/installer/live/guided-install.cljk \
+kbb --backend sci os/aiueos/installer/live/guided-install.cljk \
   --release-receipt build/aiueos/aiueos-x86_64-build-receipt.json \
   --out-intent install-intent.json --out-answers install-answers.json
 
 # replay that run on the next identical machine, asking nothing
-nbb os/aiueos/installer/live/guided-install.cljk \
+kbb --backend sci os/aiueos/installer/live/guided-install.cljk \
   --answers install-answers.json \
   --release-receipt build/aiueos/aiueos-x86_64-build-receipt.json \
   --out-intent install-intent.json
 
 # take everything from the file except the disk, which is this machine's
-nbb os/aiueos/installer/live/guided-install.cljk \
+kbb --backend sci os/aiueos/installer/live/guided-install.cljk \
   --answers install-answers.json --interactive-sections storage \
   --release-receipt ... --out-intent install-intent.json
 ```
@@ -52,7 +52,7 @@ The answer file is validated **before** the first probe, so a malformed
 unattended run fails while the target disk is untouched.
 
 ```sh
-nbb os/aiueos/scripts/test-guided-install.cljk   # 53 cases, offline
+kbb --backend sci os/aiueos/scripts/test-guided-install.cljk   # 53 cases, offline
 ```
 
 ### A stick that asks (ADR-0210)
@@ -60,7 +60,7 @@ nbb os/aiueos/scripts/test-guided-install.cljk   # 53 cases, offline
 `--guided` builds an install USB carrying **no** `INTENT.JSN`:
 
 ```sh
-nbb os/aiueos/scripts/run-install-usb-build.cljk --guided \
+kbb --backend sci os/aiueos/scripts/run-install-usb-build.cljk --guided \
   --node-binary <linux-node> --nbb-dir <nbb tree> --live-uki <uki>
 ```
 

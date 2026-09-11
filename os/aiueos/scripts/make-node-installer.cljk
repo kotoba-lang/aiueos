@@ -1,4 +1,4 @@
-#!/usr/bin/env nbb
+#!/usr/bin/env kbb
 ;; Build the node install stick for ONE NAMED BOX, from the registry rather
 ;; than from memory.
 ;;
@@ -9,7 +9,7 @@
 ;; console door, which tailnet. Those lived in one session's shell history, so
 ;; this is the part that gets written down (contracts/node-machines-v1.edn).
 ;;
-;;   nbb os/aiueos/scripts/make-node-installer.cljk \
+;;   kbb --backend sci os/aiueos/scripts/make-node-installer.cljk \
 ;;     --machine amd-6600hs \
 ;;     --iso ubuntu-24.04.4-live-server-amd64.iso \
 ;;     --ssh-key ~/.ssh/id_ed25519.pub
@@ -158,7 +158,7 @@
           (str "\n    " (or (:measure-by serial-fact)
                             "lsblk -dno NAME,SERIAL,MODEL,SIZE"))
           "\n  then record it:"
-          (str "\n    nbb os/aiueos/scripts/record-node-machine-probe.cljk"
+          (str "\n    kbb --backend sci os/aiueos/scripts/record-node-machine-probe.cljk"
                " --machine " machine-id " --probe <file>")
           "\n  Without --unattended this builds the stick that ASKS, which is the"
           "\n  right product for a box nobody has measured."))
@@ -199,7 +199,7 @@
         [[iso "the Ubuntu Server ISO (--iso)"
           "download ubuntu-24.04.x-live-server-amd64.iso from releases.ubuntu.com"]
          [bundle "the node agent bundle (--bundle)"
-          (str "nbb os/aiueos/scripts/make-node-agent-bundle.cljk --output " bundle)]]]
+          (str "kbb --backend sci os/aiueos/scripts/make-node-agent-bundle.cljk --output " bundle)]]]
   (when-not (and p (fs/existsSync p))
     (cannot-answer "missing" what (str "(" (pr-str p) ")") "\n  hint:" hint)))
 
@@ -269,5 +269,5 @@
         (say "After the first boot, collect the hardware record and fill in"
              (str machine-id "'s") "unverified facts:")
         (say "  scp" (str username "@" hostname ":/var/log/aiueos-node-hwprobe.txt") ".")
-        (say "  nbb os/aiueos/scripts/record-node-machine-probe.cljk --machine"
+        (say "  kbb --backend sci os/aiueos/scripts/record-node-machine-probe.cljk --machine"
              machine-id "--probe aiueos-node-hwprobe.txt"))))

@@ -1,11 +1,11 @@
-#!/usr/bin/env nbb
+#!/usr/bin/env kbb
 ;; Generate the per-device SSH provisioning record (ssh-v1.edn, install-v1.edn
 ;; decision 4). Run at install time on the target, never at USB-build time:
 ;; the host-key seed is a secret and the secret floor forbids it ever touching
 ;; the install USB, a log, or a reused stick. The authorized key is copied
 ;; from the install intent, never invented.
 ;;
-;;   nbb make-provision-record.cljs \
+;;   kbb --backend sci make-provision-record.cljk \
 ;;     --intent install-intent.json --out /path/provision.json
 ;;     [--host-seed <64-hex>]     ; TEST ONLY -- inject a fixed seed for vectors
 ;;

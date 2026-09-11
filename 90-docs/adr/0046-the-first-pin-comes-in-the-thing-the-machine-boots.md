@@ -76,7 +76,7 @@ rollback pass-through, which is the collision itself showing up; dropping the
 release-id check fails only the binding test.
 
 Full suite **588 tests, 9232 assertions, 19 failures** — the same 19 test names
-as the unmodified tree. `clojure -M:tcb-check` `{:valid? true :files 38 …}`.
+as the unmodified tree. `kbb -M:tcb-check` `{:valid? true :files 38 …}`.
 Lint unchanged.
 
 ## Remaining boundary

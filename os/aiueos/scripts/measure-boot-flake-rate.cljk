@@ -1,4 +1,4 @@
-#!/usr/bin/env nbb
+#!/usr/bin/env kbb
 ;; measure-boot-flake-rate.cljs -- boot ONE already-built image N times and say
 ;; what actually happened, run by run (ADR-0200).
 ;;
@@ -14,7 +14,7 @@
 ;; and a flake look alike. Point it at an AIUEOS_OUT that `build-uefi.sh` has
 ;; already filled.
 ;;
-;;   nbb os/aiueos/scripts/measure-boot-flake-rate.cljk \
+;;   kbb --backend sci os/aiueos/scripts/measure-boot-flake-rate.cljk \
 ;;       --out build/aiueos --runs 12 [--timeout 180]
 ;;
 ;; Exit codes, and they mean three different things:

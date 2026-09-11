@@ -1,8 +1,8 @@
-#!/usr/bin/env nbb
+#!/usr/bin/env kbb
 ;; The K16 pure-native NEGATIVE gate: refuse a link whose inputs are not all
 ;; Kotoba source compiled by Amu, or fixed stubs Amu itself emitted.
 ;;
-;;   nbb os/aiueos/scripts/k16-pure-native-gate.cljk \
+;;   kbb --backend sci os/aiueos/scripts/k16-pure-native-gate.cljk \
 ;;     --link-list <file> --provenance <file-or-dir> [--receipt-out <file>] [--root <dir>]
 ;;
 ;; Exit 0 = every input admitted.

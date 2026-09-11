@@ -1,7 +1,7 @@
 (ns aiueos.compositor-guest-test
   "nbb-loadable classifiers for KERNEL.ELF guest compositor gates (ADR-0100).
 
-  `clojure -M:test` of compositor_test.clj still covers hosted HTML/QEMU
+  `kbb -M:test` of compositor_test.clj still covers hosted HTML/QEMU
   argv. This ns is the second runtime: the gate command must not need a
   JVM, hosted WM serial must stay red, and unanswered QEMU is exit 3."
   (:require [aiueos.compositor.guest :as guest]
@@ -11,7 +11,7 @@
 (deftest gate-cmd-is-nbb-not-clojure
   (doseq [p guest/guest-profiles]
     (let [cmd (guest/gate-cmd p)]
-      (is (str/starts-with? cmd "nbb --classpath src scripts/compositor-guest.cljk "))
+      (is (str/starts-with? cmd "kbb --backend sci --classpath src scripts/compositor-guest.cljk "))
       (is (str/ends-with? cmd p))
       (is (not (str/includes? cmd "clojure -M"))
           "guest evidence must not be a JVM alias"))))

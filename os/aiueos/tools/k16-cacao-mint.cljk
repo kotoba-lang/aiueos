@@ -1,4 +1,4 @@
-#!/usr/bin/env nbb
+#!/usr/bin/env kbb
 ;; Mint one CACAO with the K16 node's own did:key, for one murakumo route.
 ;;
 ;; WHY THIS EXISTS. The relay authenticated to api.murakumo.cloud with the
@@ -23,7 +23,7 @@
 ;; (nbb rather than kbb: this reuses a .cljs library that needs WebCrypto.)
 ;;
 ;; Usage:
-;;   nbb os/aiueos/tools/k16-cacao-mint.cljk --key <pem> --did <did-file>
+;;   kbb --backend sci os/aiueos/tools/k16-cacao-mint.cljk --key <pem> --did <did-file>
 ;;       --aud <url> [--ttl-s 600]
 ;; Prints the base64 CACAO on stdout, nothing else. Exit 2 = REFUSED.
 ;;

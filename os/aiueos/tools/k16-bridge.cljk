@@ -1,4 +1,4 @@
-#!/usr/bin/env nbb
+#!/usr/bin/env kbb
 ;; K16 bridge -- the Mac end of bus2's TCP stream (10.77.0.1:8443).
 ;;
 ;; Two modes, chosen on the command line so the log says which one stood:
@@ -20,7 +20,7 @@
 ;;
 ;; Every line on stdout is a receipt; the rig check (k16-rig-check.cljs) greps
 ;; `K16_STREAM_CONNECTED from <ip>:<port>` verbatim, so that line's shape is a
-;; contract. Run:  nbb os/aiueos/tools/k16-bridge.cljk [--listen 10.77.0.1:8443]
+;; contract. Run:  kbb --backend sci os/aiueos/tools/k16-bridge.cljk [--listen 10.77.0.1:8443]
 ;;                 [--mode debug|forward] [--hold-ms 1000] [--upstream host:443]
 (ns k16-bridge
   (:require ["node:net" :as net]

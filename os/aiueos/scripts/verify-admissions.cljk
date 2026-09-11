@@ -1,4 +1,4 @@
-#!/usr/bin/env nbb
+#!/usr/bin/env kbb
 ;; Runs the admission objects against their contracts WITHOUT a JVM.
 ;;
 ;;   npm run verify-admissions -- [contract.edn ...]
@@ -6,7 +6,7 @@
 ;; which is
 ;;
 ;;   node --stack-size=4000 "$(command -v nbb)" \
-;;     --classpath "$(clojure -Spath -M:verify-admissions)" \
+;;     --classpath "$(kbb -Spath -M:verify-admissions)" \
 ;;     os/aiueos/scripts/verify-admissions.cljk [contract.edn ...]
 ;;
 ;; `-M:verify-admissions`, NOT `-M:test`. This line said `-M:test` from the day

@@ -1,4 +1,4 @@
-#!/usr/bin/env nbb
+#!/usr/bin/env kbb
 ;; Gate for the full publickey login (ssh-v1.edn / ADR-0108): an independent
 ;; real-crypto client completes the entire SSH exchange against the kernel over
 ;; QEMU's inbound hostfwd -- kex, NEWKEYS, then the aes128-gcm@openssh.com record

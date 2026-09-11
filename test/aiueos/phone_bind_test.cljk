@@ -1,8 +1,8 @@
 (ns aiueos.phone-bind-test
   "Discriminating tests for ADR-2608221625 P1b / P1c.
 
-  `clojure -M:test` of unrelated suites is not this gate. The Mac VM gate is
-  `clojure -M:phone-bind smoke` (and `pre-enroll`). These tests name the
+  `kbb -M:test` of unrelated suites is not this gate. The Mac VM gate is
+  `kbb -M:phone-bind smoke` (and `pre-enroll`). These tests name the
   reasons a bind is refused so a silent pass cannot stand in for a phone."
   (:require [aiueos.phone-bind :as pb]
             [aiueos.device-auth :as auth]
@@ -279,7 +279,7 @@
 
 (deftest clojure-m-test-is-not-the-p1b-gate
   (is (nil? (System/getenv "AIUEOS_PHONE_BIND_COUNTED_UNRELATED_SUITE"))
-      "do not count unrelated clojure -M:test as P1b; run clojure -M:phone-bind smoke"))
+      "do not count unrelated kbb -M:test as P1b; run kbb -M:phone-bind smoke"))
 
 (deftest the-label-advertises-exactly-the-vocabulary
   ;; The chassis QR, setup.json and the plan document used to write the method

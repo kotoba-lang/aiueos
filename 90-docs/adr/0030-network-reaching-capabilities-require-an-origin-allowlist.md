@@ -99,7 +99,7 @@ claims.
 
 ## Evidence
 
-- `clojure -M:test` — **428 tests / 1,295 assertions, 0 failures**
+- `kbb -M:test` — **428 tests / 1,295 assertions, 0 failures**
   (baseline on `634af93`: 425 / 1,256 / 0).
 - Mutation: narrowing `network-reaching-caps` back to `#{:net/fetch}` produces
   **19 failures**, including both new tests. The gate was verified to fail

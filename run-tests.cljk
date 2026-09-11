@@ -1,7 +1,7 @@
-#!/usr/bin/env nbb
+#!/usr/bin/env kbb
 ;; run-tests.cljk -- the aiueos suite on a SECOND runtime (nbb / SCI).
 ;;
-;; `clojure -M:test` on the JVM is the primary suite and this does not replace
+;; `kbb -M:test` on the JVM is the primary suite and this does not replace
 ;; it. What it adds is the class of defect that only a second runtime can see:
 ;; portable `.cljc` that is correct under Clojure and quietly wrong, or
 ;; unloadable, under ClojureScript. Measured on 1c11fcb, before any of it was

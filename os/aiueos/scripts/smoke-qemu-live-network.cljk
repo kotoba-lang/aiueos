@@ -1,4 +1,4 @@
-#!/usr/bin/env nbb
+#!/usr/bin/env kbb
 ;; Does the live installer come up with a network?
 ;;
 ;; A box that is going to become a murakumo node has to answer its own
@@ -16,7 +16,7 @@
 ;; It does not need an install USB: /init brings the network up before it looks
 ;; for the payload, so the run ends at AIUEOS_LIVE_PAYLOAD_ABSENT either way.
 ;;
-;;   nbb os/aiueos/scripts/smoke-qemu-live-network.cljk \
+;;   kbb --backend sci os/aiueos/scripts/smoke-qemu-live-network.cljk \
 ;;     --live build/aiueos/live-net
 
 (require '["node:child_process" :as cp]

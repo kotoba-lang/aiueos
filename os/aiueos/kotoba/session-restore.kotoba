@@ -5,7 +5,7 @@
 ;; C already hit-tests windows (wm-hit) and paints in z-order (mechanism).
 ;; WHICH front window a sealed boot session restores is a compositor
 ;; decision (root ADR-2608221625 / ADR-0013 Phase 6 session restore).
-;; Hosted `clojure -M:compositor wm` does not count. The named leftover
+;; Hosted `kbb -M:compositor wm` does not count. The named leftover
 ;; after this object is linked is still `:native-compositor-absent`
 ;; (native component runtime, P5).
 ;;

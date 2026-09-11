@@ -73,7 +73,7 @@ Tests sign with an ephemeral keypair, as the release-receipt signing gate does.
 
 ### The artifact digest is an input
 
-`clojure -M:attest <artifact-digest> <source-commit> [builder] [--isolated]`.
+`kbb -M:attest <artifact-digest> <source-commit> [builder] [--isolated]`.
 The digest is the release build receipt's `disk.sha256`. It is passed in rather
 than parsed out of `aiueos-x86_64-build-receipt.json`: this namespace is in the
 TCB inventory, and a hand-rolled JSON reader inside it would be new parsing
@@ -94,7 +94,7 @@ surface for no benefit.
 
 - **Wiring into the release pipeline — blocked on a workflow edit, not on
   design.** `os/aiueos/scripts/build-release-image.sh` does not call
-  `clojure -M:attest`, and no gate requires an attestation to exist for a
+  `kbb -M:attest`, and no gate requires an attestation to exist for a
   release. The generator is ready. The blocker is that the only job which
   builds release media — `bare-metal-uefi` — provisions no JDK, and
   `.github/workflows/` cannot be edited by a token without the `workflow`
@@ -117,7 +117,7 @@ surface for no benefit.
         run: |
           receipt=$(os/aiueos/scripts/build-release-image.sh)
           digest=$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["disk"]["sha256"])' "$receipt")
-          clojure -M:attest "sha256:$digest" "$GITHUB_SHA" "github-actions" --isolated \
+          kbb -M:attest "sha256:$digest" "$GITHUB_SHA" "github-actions" --isolated \
             > "$RUNNER_TEMP/release-attestation.edn"
   ```
 

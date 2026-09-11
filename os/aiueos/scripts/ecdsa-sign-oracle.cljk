@@ -1,4 +1,4 @@
-#!/usr/bin/env nbb
+#!/usr/bin/env kbb
 ;; The known-answer oracle for ecdsa-p256-sign.kotoba (ssh-v1.edn / ADR-0104):
 ;; the RFC 6979 A.2.5 P-256 / SHA-256 "sample" vector, and a BigInt reference
 ;; that computes r,s the exact way the Kotoba object does --

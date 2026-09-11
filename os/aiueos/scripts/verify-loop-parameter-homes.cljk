@@ -1,8 +1,8 @@
-#!/usr/bin/env nbb
+#!/usr/bin/env kbb
 ;; Refuse a Kotoba kernel object whose self-tail loop reads a frame slot that is
 ;; only ever written OUTSIDE the loop.
 ;;
-;;   nbb os/aiueos/scripts/verify-loop-parameter-homes.cljk [--root <dir>]
+;;   kbb --backend sci os/aiueos/scripts/verify-loop-parameter-homes.cljk [--root <dir>]
 ;;                                                          [--objects a.o,b.o]
 ;;                                                          [--objdump <path>]
 ;;                                                          [--baseline <edn>]

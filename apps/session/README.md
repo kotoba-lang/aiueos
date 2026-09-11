@@ -28,7 +28,7 @@ binding refusal, one-time consumption and secret non-disclosure. It is not a
 claim that the production authority route has been deployed or that a human
 Passkey ceremony has run on the physical K16.
 
-This is not `clojure -M:cloud-live check`. CID read and murakumo infer leave
+This is not `kbb -M:cloud-live check`. CID read and murakumo infer leave
 from the **session process** (`POST /api/session/read-cid`,
 `POST /api/session/infer`) when the operator presses a button in this
 document. P3 notes guest is `GET /api/session/guests` and
@@ -41,7 +41,7 @@ P4 operator is `GET/POST /api/session/operator` against `itonami.cloud`
 From a checkout that has `jp-go-digital-design-system`, `html`, and `css`:
 
 ```bash
-nbb --classpath "apps/session/src:<dds>/src:<dds>/resources:<html>/src:<css>/src" \
+kbb --backend sci --classpath "apps/session/src:<dds>/src:<dds>/resources:<html>/src:<css>/src" \
   apps/session/generate.cljk -- --repo . --dds-css <dds>/resources/jp_go_dds/dds.css
 ```
 
@@ -50,23 +50,23 @@ nbb --classpath "apps/session/src:<dds>/src:<dds>/resources:<html>/src:<css>/src
 ## Serve / prove
 
 ```bash
-clojure -M:session smoke   # HTTP only; real kotobase GET + murakumo infer
-clojure -M:session guest   # P3: grant-limited app/notes in this document
-clojure -M:session operator  # P4: grant-gated live itonami.cloud from this document
-clojure -M:session serve   # leave the SPA up
-clojure -M:phone-bind smoke  # P1b: same SPA, headless QEMU + phone HTTP bind
-clojure -M:compositor smoke  # named-partial desktop: same SPA + surfaces + virtio-gpu-pci
-clojure -M:compositor wm     # hosted WM: two stacked windows, z-order, DADS title bars
-clojure -M:compositor ime    # hosted IME: romaji→kana in the same document
-clojure -M:compositor kanji  # hosted IME: Space converts か→加
-nbb --classpath src scripts/compositor-guest.cljk guest-ime  # KERNEL.ELF Kotoba k+a→U+304B
-nbb --classpath src scripts/compositor-guest.cljk guest-wm   # KERNEL.ELF Kotoba two-surface z-hit
-nbb --classpath src scripts/compositor-guest.cljk guest-paint # KERNEL.ELF paints both rects in z-order
-nbb --classpath src scripts/compositor-guest.cljk guest-input # KERNEL.ELF virtio-keyboard used-ring event
-nbb --classpath src scripts/compositor-guest.cljk guest-gpu-two # KERNEL.ELF two virtio-gpu 2D resources
-nbb --classpath src scripts/compositor-guest.cljk guest-scanout-two # KERNEL.ELF scanout 1 bound to resource 2
-nbb --classpath src scripts/compositor-guest.cljk guest-broker # KERNEL.ELF Kotoba clipboard admit / picker refuse
-nbb --classpath src scripts/compositor-guest.cljk guest-session # KERNEL.ELF Kotoba packed front 2 restore
+kbb -M:session smoke   # HTTP only; real kotobase GET + murakumo infer
+kbb -M:session guest   # P3: grant-limited app/notes in this document
+kbb -M:session operator  # P4: grant-gated live itonami.cloud from this document
+kbb -M:session serve   # leave the SPA up
+kbb -M:phone-bind smoke  # P1b: same SPA, headless QEMU + phone HTTP bind
+kbb -M:compositor smoke  # named-partial desktop: same SPA + surfaces + virtio-gpu-pci
+kbb -M:compositor wm     # hosted WM: two stacked windows, z-order, DADS title bars
+kbb -M:compositor ime    # hosted IME: romaji→kana in the same document
+kbb -M:compositor kanji  # hosted IME: Space converts か→加
+kbb --backend sci --classpath src scripts/compositor-guest.cljk guest-ime  # KERNEL.ELF Kotoba k+a→U+304B
+kbb --backend sci --classpath src scripts/compositor-guest.cljk guest-wm   # KERNEL.ELF Kotoba two-surface z-hit
+kbb --backend sci --classpath src scripts/compositor-guest.cljk guest-paint # KERNEL.ELF paints both rects in z-order
+kbb --backend sci --classpath src scripts/compositor-guest.cljk guest-input # KERNEL.ELF virtio-keyboard used-ring event
+kbb --backend sci --classpath src scripts/compositor-guest.cljk guest-gpu-two # KERNEL.ELF two virtio-gpu 2D resources
+kbb --backend sci --classpath src scripts/compositor-guest.cljk guest-scanout-two # KERNEL.ELF scanout 1 bound to resource 2
+kbb --backend sci --classpath src scripts/compositor-guest.cljk guest-broker # KERNEL.ELF Kotoba clipboard admit / picker refuse
+kbb --backend sci --classpath src scripts/compositor-guest.cljk guest-session # KERNEL.ELF Kotoba packed front 2 restore
 ```
 
 From the superproject, the generated document can also be rendered by the
@@ -74,6 +74,6 @@ actual Kotoba Browser engine (no Chrome/Playwright engine):
 
 ```bash
 cd /tmp
-clojure -Sdeps '{:paths ["<aiueos>/scripts"] :deps {io.github.kotoba-lang/browser {:local/root "<superproject>/orgs/kotoba-lang/browser"}}}' \
+kbb -Sdeps '{:paths ["<aiueos>/scripts"] :deps {io.github.kotoba-lang/browser {:local/root "<superproject>/orgs/kotoba-lang/browser"}}}' \
   -M -m aiueos.kotoba-browser-smoke <aiueos>/apps/session/index.html
 ```

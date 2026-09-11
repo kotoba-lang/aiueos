@@ -68,7 +68,7 @@ have the same digest*, which fails when the sort is removed and passes when it
 is there — verified in both directions.
 
 Full suite **597 tests, 9258 assertions, 19 failures** — the same 19 test names
-as the unmodified tree. `clojure -M:tcb-check` `{:valid? true :files 38 …}`
+as the unmodified tree. `kbb -M:tcb-check` `{:valid? true :files 38 …}`
 with `image.cljc` and `anchors.cljc` re-pinned. Lint unchanged.
 
 ## Remaining boundary

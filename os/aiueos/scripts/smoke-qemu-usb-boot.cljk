@@ -1,4 +1,4 @@
-#!/usr/bin/env nbb
+#!/usr/bin/env kbb
 ;; USB removable-media boot gate (ADR-0019).
 ;;
 ;; A GPT release image only earns the claim "bootable from a USB stick" if the

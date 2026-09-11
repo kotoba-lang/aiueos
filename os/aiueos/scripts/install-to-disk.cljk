@@ -1,8 +1,8 @@
-#!/usr/bin/env nbb
+#!/usr/bin/env kbb
 ;; Orchestrate one guarded aiueos internal-disk install (install-v1.edn, root
 ;; ADR adr-2608251418).
 ;;
-;;   inspect: nbb os/aiueos/scripts/install-to-disk.cljk \
+;;   inspect: kbb --backend sci os/aiueos/scripts/install-to-disk.cljk \
 ;;              --intent install-intent.json --device /dev/nvme0n1 \
 ;;              --image aiueos-x86_64-gpt.img --receipt build-receipt.json
 ;;   install: same + --install --confirm-device /dev/nvme0n1 \

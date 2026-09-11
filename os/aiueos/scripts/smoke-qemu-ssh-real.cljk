@@ -1,4 +1,4 @@
-#!/usr/bin/env nbb
+#!/usr/bin/env kbb
 ;; Gate for the REAL curve25519-sha256 handshake (ssh-v1.edn / ADR-0107). An
 ;; independent real-crypto client connects to the kernel over QEMU's inbound
 ;; hostfwd, exchanges identification strings and KEXINIT, sends KEX_ECDH_INIT

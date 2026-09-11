@@ -4,7 +4,7 @@
 
   Root ADR-2608221625 / aiueos ADR-0041 steps 1–5 / ADR-0081.
 
-  `clojure -M:cloud-live check` is the hosted JVM profile. `clojure -M:session
+  `kbb -M:cloud-live check` is the hosted JVM profile. `kbb -M:session
   smoke` is the session process on the Mac host. Neither greens this gate.
   Fetching kotobase from this process is named `:host-fetch-does-not-count`.
 
@@ -12,8 +12,8 @@
   verification. Exit 1 = a leftover the serial named, or a host fetch
   standing in. Exit 3 = QEMU / OVMF / serial could not be answered.
 
-  Command: `clojure -M:bare-metal cloud`
-  CertVerify: `clojure -M:bare-metal cert-verify`"
+  Command: `kbb -M:bare-metal cloud`
+  CertVerify: `kbb -M:bare-metal cert-verify`"
   (:require [kotoba.lang.text :as str]
             #?(:clj [clojure.java.io :as io])
             #?(:clj [clojure.pprint :as pprint])))
@@ -189,7 +189,7 @@
          (if-not (.isFile script)
            (let [r (p2-result {:qemu-unmeasured? true})]
              (write-receipt! (assoc r :measured-at (str (java.time.Instant/now))
-                                    :command "clojure -M:bare-metal cloud"
+                                    :command "kbb -M:bare-metal cloud"
                                     :profile :bare-metal-uefi
                                     :host-fetch-does-not-count true
                                     :why :smoke-script-missing))
@@ -202,7 +202,7 @@
                  receipt (assoc r
                                 :aiueos.bare-metal/receipt 1
                                 :measured-at (str (java.time.Instant/now))
-                                :command "clojure -M:bare-metal cloud"
+                                :command "kbb -M:bare-metal cloud"
                                 :profile :bare-metal-uefi
                                 :expected-cid expected-cid
                                 :uefi-smoke-exit (:exit boot)
@@ -233,7 +233,7 @@
          (if-not (.isFile script)
            (let [r (cert-verify-result {:qemu-unmeasured? true})]
              (write-receipt! (assoc r :measured-at (str (java.time.Instant/now))
-                                    :command "clojure -M:bare-metal cert-verify"
+                                    :command "kbb -M:bare-metal cert-verify"
                                     :profile :bare-metal-uefi))
              r)
            (let [boot (run-uefi-net!)
@@ -243,7 +243,7 @@
                  receipt (assoc r
                                 :aiueos.bare-metal/receipt 1
                                 :measured-at (str (java.time.Instant/now))
-                                :command "clojure -M:bare-metal cert-verify"
+                                :command "kbb -M:bare-metal cert-verify"
                                 :profile :bare-metal-uefi
                                 :uefi-smoke-exit (:exit boot)
                                 :serial-path (:serial-path boot)
@@ -277,7 +277,7 @@
              (flush)
              (System/exit (int (:exit r))))
 
-           (do (println "usage: clojure -M:bare-metal cloud|cert-verify")
+           (do (println "usage: kbb -M:bare-metal cloud|cert-verify")
                (println "P2: QEMU UEFI guest DHCP/DNS/TCP/TLS/HTTP to kotobase.")
                (println "cert-verify: guest CertificateVerify (ECDSA P-256).")
                (println "Hosted cloud-live and session smoke do not count.")

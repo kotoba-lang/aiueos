@@ -1,4 +1,4 @@
-#!/usr/bin/env nbb
+#!/usr/bin/env kbb
 ;; aiueos AArch64 UEFI + kernel boot evidence gate (ADR-2608080600 tracks a1/a2).
 ;;
 ;; The x86_64 counterpart is `os/aiueos/scripts/smoke-qemu-uefi.sh`. This one is
@@ -17,9 +17,9 @@
 ;; one whose memory-admission judgement trusts the firmware map, and requires
 ;; this gate to reject both.
 ;;
-;;   nbb smoke-qemu-aarch64-uefi.cljs                  # boot evidence gate
-;;   nbb smoke-qemu-aarch64-uefi.cljs --display-matrix  # GOP probe across devices
-;;   nbb smoke-qemu-aarch64-uefi.cljs --expect-fail     # three negative controls
+;;   kbb --backend sci smoke-qemu-aarch64-uefi.cljk                  # boot evidence gate
+;;   kbb --backend sci smoke-qemu-aarch64-uefi.cljk --display-matrix  # GOP probe across devices
+;;   kbb --backend sci smoke-qemu-aarch64-uefi.cljk --expect-fail     # three negative controls
 
 (ns smoke-qemu-aarch64-uefi
   (:require ["node:child_process" :as cp]

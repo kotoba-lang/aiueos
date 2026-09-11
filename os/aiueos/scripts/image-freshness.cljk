@@ -1,4 +1,4 @@
-#!/usr/bin/env nbb
+#!/usr/bin/env kbb
 ;; image-freshness.cljs -- the receipt that makes a boot say WHICH kernel it ran.
 ;;
 ;; Why this exists (ADR-0155). Every acceptance claim in the K16 programme is a
@@ -33,11 +33,11 @@
 ;;   4  refused        -- the artifacts or the tree moved. `REFUSED stale-image`
 ;;
 ;; Usage:
-;;   nbb image-freshness.cljs record --out <receipt> [--root <repo>]
+;;   kbb --backend sci image-freshness.cljk record --out <receipt> [--root <repo>]
 ;;                                   [--scope <path>] <artifact>...
-;;   nbb image-freshness.cljs assert --receipt <receipt> [--root <repo>]
+;;   kbb --backend sci image-freshness.cljk assert --receipt <receipt> [--root <repo>]
 ;;                                   [--scope <path>] <artifact>...
-;;   nbb image-freshness.cljs show   --receipt <receipt>
+;;   kbb --backend sci image-freshness.cljk show   --receipt <receipt>
 
 (ns image-freshness
   (:require ["node:child_process" :as cp]

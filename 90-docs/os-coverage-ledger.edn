@@ -742,7 +742,7 @@
          every nbb invocation. bb: not found 126 -> 0. aiueos UEFI bare-metal
          smoke red -> green.
          CLJC contract tests is still red, and the honest reading is that fixing
-         bb made a backlog VISIBLE rather than creating one. The job now runs to
+         kbb -M:made a backlog VISIBLE rather than creating one. The job now runs to
          completion for the first time: 590 tests / 4089 assertions /
          35 failures / 0 errors across 16 test names (tcb_test x6,
          value_runtime_baseline x4, image_freshness x2,
@@ -878,7 +878,7 @@
          table in a guest, and I did not open the firmware volume to check.
          THE RECLAIM PATH FOR THE 137 GB DATASET WAS ITSELF BROKEN, which is
          this ledger's own class of defect wearing different clothes.
-         `nbb manifest/west_annex.cljs annex-drop` -- the documented way to
+         `kbb --backend sci manifest/west_annex.cljk annex-drop` -- the documented way to
          return m365-archive's annexed content to B2 -- exits 1 with
          \"Could not find namespace: kotoba.lang.text\": secret-resolve moved off
          clojure.string, and the classpath west_annex.cljs hands b2-creds was
@@ -1043,7 +1043,7 @@
          follows their placement rather than changing it.
          RESUME POINT. The next honest step is re-running gate I3, because it
          is the only thing standing between three landed ADRs and evidence
-         about the tree they are in: `nbb os/aiueos/scripts/smoke-qemu-install.cljk`
+         about the tree they are in: `kbb --backend sci os/aiueos/scripts/smoke-qemu-install.cljk`
          needs a release image, a live UKI, node-linux-x64 and an nbb tree in
          build/aiueos. After that, a guided variant of the same gate.
          OTHER PEOPLE'S WORK, UNTOUCHED. aiueos#333 (ADR-0211, a counter that

@@ -4,8 +4,8 @@ Date: 2026-08-18
 
 ## Status
 
-Accepted and executable. `clojure -M:test-fleet` is green — 631 tests, 0
-failures — and is what a murakumo fleet gate can run. `clojure -M:test` still
+Accepted and executable. `kbb -M:test-fleet` is green — 631 tests, 0
+failures — and is what a murakumo fleet gate can run. `kbb -M:test` still
 reports the twelve.
 
 ## Context
@@ -43,17 +43,17 @@ count ceiling, a namespace exclusion, a `:min-failures` fudge. That buys the
 same green and makes **every future failure invisible instead of one known one
 explicit**. This series has spent thirteen iterations on the difference.
 
-**The assertion stays where a person looks.** `clojure -M:test` still runs it
+**The assertion stays where a person looks.** `kbb -M:test` still runs it
 and still reports twelve. Deleting it, or quietly widening its
 `not-built-here` list, would have made the repository stop knowing something it
 knows.
 
 ## Executable evidence
 
-- `clojure -M:test-fleet`: **631 tests, 9339 assertions, 0 failures.**
-- `clojure -M:test`: **632 tests, 9411 assertions, 12 failures** — unchanged,
+- `kbb -M:test-fleet`: **631 tests, 9339 assertions, 0 failures.**
+- `kbb -M:test`: **632 tests, 9411 assertions, 12 failures** — unchanged,
   which is the point: the fleet alias hides nothing from the local one.
-- `clojure -M:tcb-check`: `{:valid? true :classpath-scope :measured :files 39
+- `kbb -M:tcb-check`: `{:valid? true :classpath-scope :measured :files 39
   :external 6 …}` — the new alias adds no dependency the inventory does not
   already carry.
 

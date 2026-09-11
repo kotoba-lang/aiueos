@@ -1,4 +1,4 @@
-#!/usr/bin/env nbb
+#!/usr/bin/env kbb
 ;; The GGUF admission (ADR-0145) EXECUTED on a CPU.
 ;;
 ;; ADR-0145 moved the whole of `kernel/qwen35_runtime.c`'s parser into three
@@ -12,7 +12,7 @@
 ;; reference parser on the host -- through the model-handoff path, and requires
 ;; the kernel to print the numbers the objects derived.
 ;;
-;;   nbb os/aiueos/scripts/smoke-qemu-qwen35-admission.cljk
+;;   kbb --backend sci os/aiueos/scripts/smoke-qemu-qwen35-admission.cljk
 ;;     the fixture is admitted; the kernel prints QWEN-ADMIT reason=0 stage=0
 ;;     and the four representative tensor offsets the host gate asserts.
 ;;

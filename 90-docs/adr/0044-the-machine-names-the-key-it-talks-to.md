@@ -83,7 +83,7 @@ the platform default makes aiueos unable to reach the server *at all*, which is
 the same fact from the other side.
 
 Full suite **563 tests, 9165 assertions, 19 failures** — the same 19 test names
-as the unmodified tree. `clojure -M:tcb-check` `{:valid? true :files 37
+as the unmodified tree. `kbb -M:tcb-check` `{:valid? true :files 37
 :external 6 …}`. Lint unchanged.
 
 ## What the TCB entry now says

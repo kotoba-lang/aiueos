@@ -236,7 +236,7 @@
 ;; read, and reading it is what ADR-0145 already did.
 ;;
 ;; Regenerate with
-;;   clojure -M:test -v aiueos.qwen35-tensor-table-parity-test/the-admitted-table-is-admitted \
+;;   kbb -M:test -v aiueos.qwen35-tensor-table-parity-test/the-admitted-table-is-admitted \
 ;;     -J-Daiueos.workspace-fixture-write=1
 ;; and commit the result; the assertion below then pins it in both directions.
 

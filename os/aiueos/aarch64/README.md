@@ -43,9 +43,9 @@ port I/O — while the decision the evidence encodes is identical.
 ## Running it
 
 ```bash
-nbb smoke-qemu-aarch64-uefi.cljs                   # boot evidence gate
-nbb smoke-qemu-aarch64-uefi.cljs --display-matrix   # GOP probe across devices
-nbb smoke-qemu-aarch64-uefi.cljs --expect-fail      # both negative controls
+kbb --backend sci smoke-qemu-aarch64-uefi.cljk                   # boot evidence gate
+kbb --backend sci smoke-qemu-aarch64-uefi.cljk --display-matrix   # GOP probe across devices
+kbb --backend sci smoke-qemu-aarch64-uefi.cljk --expect-fail      # both negative controls
 ```
 
 Needs `clang`, `lld-link`, `ld.lld`, `qemu-system-aarch64`, `mkfs.vfat`,

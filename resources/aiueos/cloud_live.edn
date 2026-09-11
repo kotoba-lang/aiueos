@@ -3,7 +3,7 @@
 ;; keys it will accept from them, and which block it asks for are things an
 ;; operator decides and a fleet changes without recompiling anything.
 ;;
-;; `clojure -M:cloud-live check` reads this. `clojure -M:cloud-live pin <origin>`
+;; `kbb -M:cloud-live check` reads this. `kbb -M:cloud-live pin <origin>`
 ;; MEASURES a peer key and prints it; it does not write here. Putting a
 ;; measured key into this file is a person deciding to trust it, and that
 ;; decision is the one thing a tool must not make on its own.
@@ -47,7 +47,7 @@
  ;;     | openssl x509 -pubkey -noout | openssl pkey -pubin -outform DER \
  ;;     | openssl dgst -sha256
  ;;
- ;;   clojure -M:cloud-live pin https://H
+ ;;   kbb -M:cloud-live pin https://H
  ;;
  ;; Until 2026-08-22 this was a flat set and the host each key came from lived
  ;; in a comment. That meant any one of these three keys was accepted from any
@@ -62,7 +62,7 @@
  ;; All three hosts are Cloudflare-fronted, so the leaf key is the edge's and
  ;; changes on its schedule. A person does this, in this file:
  ;;
- ;;   1. `clojure -M:cloud-live pin https://<host>` measures the new key. It
+ ;;   1. `kbb -M:cloud-live pin https://<host>` measures the new key. It
  ;;      prints MEASURED, NOT TRUSTED and writes nothing: deciding to trust a
  ;;      key is a person's act and a tool must not make it.
  ;;   2. Move that host's current `:pins` into `:previous`, put the measured
@@ -148,7 +148,7 @@
 
  ;; ── the write, for whoever holds the token ────────────────────────────────
  ;;
- ;; `clojure -M:cloud-live write` sends these bytes under this CID. The CID is
+ ;; `kbb -M:cloud-live write` sends these bytes under this CID. The CID is
  ;; the sha2-256 raw CIDv1 of exactly the text below, so the store's own digest
  ;; check (422 on mismatch) and `admit-write-payload`'s must agree.
  ;; Verified 404 on 2026-08-21, so it is a clean target rather than a re-put.

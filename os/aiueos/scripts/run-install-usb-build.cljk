@@ -1,8 +1,8 @@
-#!/usr/bin/env nbb
+#!/usr/bin/env kbb
 ;; Build the install USB image and close its receipt chain (install-v1.edn
 ;; gate I1, root ADR adr-2608251418).
 ;;
-;;   nbb os/aiueos/scripts/run-install-usb-build.cljk \
+;;   kbb --backend sci os/aiueos/scripts/run-install-usb-build.cljk \
 ;;     [--intent build/aiueos/install-intent.json] [--node-binary <path>]
 ;;
 ;; Orchestration only: the release image must already exist with its receipt
@@ -48,7 +48,7 @@
   (die "install intent missing:" intent
        "\nAn intent names the ONE disk an unattended install may erase, so it"
        "\nis never auto-created. Create it deliberately:"
-       "\n  nbb os/aiueos/scripts/install-intent.cljk create \\"
+       "\n  kbb --backend sci os/aiueos/scripts/install-intent.cljk create \\"
        "\n    --receipt" release-receipt "\\"
        "\n    --hostname <host> --confirm-create <host> \\"
        "\n    --target-model <model> --target-transport nvme \\"

@@ -68,7 +68,7 @@ because the build reports success.
   shape and the same name the node bundle beside it already used.
 - `/init`'s install handover passes `--classpath /run/aiueos-installer/cp`.
 - The bundled `bin/nbb` shim carries the same flag. `install-live.cljs` spawns
-  `nbb install-to-disk.cljs` **by name**, so the second hop resolves through
+  `kbb --backend sci install-to-disk.cljk` **by name**, so the second hop resolves through
   `PATH` and would otherwise start with an empty classpath even when the first
   hop had one.
 - `run-install-usb-build.cljs` passes `../text/src` and the aiueos `src` root

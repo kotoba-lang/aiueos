@@ -73,7 +73,7 @@ genuinely gained a field. It now asserts the new shape rather than being
 loosened to ignore it.
 
 Full suite **602 tests, 9271 assertions, 19 failures** — the same 19 test names
-as the unmodified tree. `clojure -M:tcb-check` `{:valid? true :files 38 …}`
+as the unmodified tree. `kbb -M:tcb-check` `{:valid? true :files 38 …}`
 with `pid1.cljc` re-pinned. Lint unchanged.
 
 ## Remaining boundary

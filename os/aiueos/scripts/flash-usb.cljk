@@ -1,8 +1,8 @@
-#!/usr/bin/env nbb
+#!/usr/bin/env kbb
 ;; Write the aiueos release image to a physical USB stick (ADR-0019).
 ;;
-;;   nbb os/aiueos/scripts/flash-usb.cljk --device /dev/diskN
-;;   nbb os/aiueos/scripts/flash-usb.cljk --device /dev/diskN --confirm /dev/diskN
+;;   kbb --backend sci os/aiueos/scripts/flash-usb.cljk --device /dev/diskN
+;;   kbb --backend sci os/aiueos/scripts/flash-usb.cljk --device /dev/diskN --confirm /dev/diskN
 ;;
 ;; Without `--confirm`, this only inspects and reports: it never opens the
 ;; device for writing. `--confirm` must repeat the same device path, so the

@@ -264,7 +264,7 @@ the NIC did with the descriptor; it cannot report what the header says.
 | K16 → Mac, one-way UDP log | **works** (this boot) |
 | K16 → Mac, more than one message | not wired — `debug-send` is called once, before the resident loop |
 | K16 → Mac, arbitrary text | not wired — the payload is a fixed byte, and there is no integer→ASCII path |
-| Mac → K16 control | **wired, one command byte per `stream-resident` cycle** (`debug-tick`, 2026-09-07/08): `P` → `p`; `R` → `r`, then `DB` on bus2 and the 0xCF9 reset; anything else → `?`. Sender: `nbb os/aiueos/tools/k16-control.cljk <P\|R>`. **Not yet exercised on the board** (halted in `ud2` since the 47b8c209 run); proven against a loopback sink + fake board only. |
+| Mac → K16 control | **wired, one command byte per `stream-resident` cycle** (`debug-tick`, 2026-09-07/08): `P` → `p`; `R` → `r`, then `DB` on bus2 and the 0xCF9 reset; anything else → `?`. Sender: `kbb --backend sci os/aiueos/tools/k16-control.cljk <P\|R>`. **Not yet exercised on the board** (halted in `ud2` since the 47b8c209 run); proven against a loopback sink + fake board only. |
 
 (As first written, 2026-09-06, this row read "not wired at all": `rings-start`
 installed an RX descriptor on bus3 but nothing read it. The RX poll, the
@@ -718,7 +718,7 @@ one at a time, in that order.
 - `netstat -s -p tcp` on this Mac reports **zero for everything**, including a
   connection made from this machine that the bridge logged at that moment.
   Every "0 connection request" recorded above came from it. Dead; do not use.
-- The bridge is `nbb os/aiueos/tools/k16-bridge.cljk --mode debug` on
+- The bridge is `kbb --backend sci os/aiueos/tools/k16-bridge.cljk --mode debug` on
   10.77.0.1:8443 (since 2026-09-07 11:25 JST; it replaced the Python forwarder
   `k16-bridge.py`, kept as `--mode forward`). On connect it logs
   `K16_STREAM_CONNECTED from <ip>:<port>` (the rig check's contract line),
@@ -731,7 +731,7 @@ one at a time, in that order.
   server's own receiver thread is dead and the process cannot be restarted by
   this user (UDP 67/69 need root). Validate with a control datagram before
   reading a null.
-- The LAN2 control sender is `nbb os/aiueos/tools/k16-control.cljk <P|R>`
+- The LAN2 control sender is `kbb --backend sci os/aiueos/tools/k16-control.cljk <P|R>`
   (2026-09-08): one datagram 10.10.10.1 → 10.10.10.2:9000, then it watches the
   bus3 sink file (`/tmp/k16-bus3-en8.log`) **from the offset it had when the
   datagram left** — a line already in the file cannot satisfy it — for one
@@ -768,7 +768,7 @@ RX ring dead, `40+n` `P` answered, `50+n` `R` answered, `60+n` unknown
 answered, n = send status. On bus3 itself (UDP 9000, its own channel in
 `wire-bytes.edn`): `Z` hello, `p`, `r`, `?`. The registry
 `os/aiueos/native/wire-bytes.edn` is the one table; this paragraph is its
-prose, checked by `nbb os/aiueos/tools/verify-wire-bytes.cljk`.
+prose, checked by `kbb --backend sci os/aiueos/tools/verify-wire-bytes.cljk`.
 
 ## The rig check: every instrument echoes a nonce before it is read (2026-09-07)
 
@@ -859,7 +859,7 @@ and PASS for the socat shape. First live run after the swap (02:43Z, load
 24.8): `bus3-sink PASS control K16_RIG_CTRL_7ef03b5f -> 10.10.10.1:9000
 recorded after 105ms ; process=nbb pid 17394`, `SUMMARY pass=9 … exit=0`.
 Process discovery requires the command's first token to be the interpreter:
-a `zsh -c '… nbb k16-bus3-sink.cljs --sink $S/x'` wrapper carries the same
+a `zsh -c '… kbb --backend sci k16-bus3-sink.cljk --sink $S/x'` wrapper carries the same
 substring and was picked first during this work, with an unexpanded `$S`.
 
 ### Measured output
@@ -1161,7 +1161,7 @@ remember that.
   in the session scratchpad, not served: `599e64a8…` (236544 bytes, note
   `079587e`) and `f6af155d…` (236544 bytes, note `d3a1466`). **None of the
   three has booted yet**; the board has been in `ud2` since the 47b8c209 run.
-- The listener is `nbb os/aiueos/tools/k16-bus3-sink.cljk` (pid 17394 since
+- The listener is `kbb --backend sci os/aiueos/tools/k16-bus3-sink.cljk` (pid 17394 since
   2026-09-07 11:43 JST, `nohup … >> /tmp/k16-bus3-sink.out`), writing
   `/tmp/k16-bus3-en8.log` by name on every datagram. It replaced `socat -u
   UDP-RECV:9000,reuseaddr OPEN:/tmp/k16-bus3-en8.log,creat,append`, whose

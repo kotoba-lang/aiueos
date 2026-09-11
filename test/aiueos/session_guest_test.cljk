@@ -1,6 +1,6 @@
 (ns aiueos.session-guest-test
   "Network-free P3 checks: grant is why notes runs, and a deny is the
-  grant kind, not a 500. Live kotobase/murakumo is `clojure -M:session guest`."
+  grant kind, not a 500. Live kotobase/murakumo is `kbb -M:session guest`."
   (:require [aiueos.session.guest :as guest]
             [clojure.test :refer [deftest is testing]]))
 

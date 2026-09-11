@@ -133,7 +133,7 @@ identical — always print the count of what you scanned.
 
 ## Landing
 
-- `scripts/tasks.edn` is the task registry: `nbb scripts/run-task.cljk <task>`.
+- `scripts/tasks.edn` is the task registry: `kbb --backend sci scripts/run-task.cljk <task>`.
   Register a new gate there and then *run it through the registry* — an entry is
   not a registration until something has invoked it that way.
 - ADR numbers collide. Two sessions took `0210` forty minutes apart, and the

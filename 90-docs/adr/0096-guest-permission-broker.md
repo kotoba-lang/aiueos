@@ -7,7 +7,7 @@ Date: 2026-08-25
 Accepted for a **discriminating guest permission-broker slice** of root
 `adr-2608221625-aiueos-chromeos-cloud-desktop` Desktop leftover
 (README Desktop / compositor unit). **Guest broker is green only when
-`clojure -M:compositor guest-broker` prints `AIUEOS_COMPOSITOR_GUEST_BROKER_OK`:**
+`kbb -M:compositor guest-broker` prints `AIUEOS_COMPOSITOR_GUEST_BROKER_OK`:**
 KERNEL.ELF serial has
 `AIUEOS_GUEST_BROKER_OK clipboard=1 picker=0 kotoba-clip=1 kotoba-pick=0`,
 clipboard was admitted and file-picker refused after Kotoba
@@ -16,14 +16,14 @@ clipboard was admitted and file-picker refused after Kotoba
 `AIUEOS_COMPOSITOR_WM_OK` does **not** count.
 
 This file records the attempt. The receipt from
-`clojure -M:compositor guest-broker` is the measurement. Kotoba admitting
+`kbb -M:compositor guest-broker` is the measurement. Kotoba admitting
 picker on a clipboard-only grant is leftover `:always-grant`. Refusing
 clipboard is leftover `:deny-all`. QEMU/firmware/serial unanswered is
 leftover `:unmeasured` (exit 3, not a silent pass).
 
 Not executable, and stated here rather than at the end:
 
-- **This is not hosted JVM gpu/wm.** `clojure -M:compositor gpu` /
+- **This is not hosted JVM gpu/wm.** `kbb -M:compositor gpu` /
   `guest-ime` / `guest-wm` / `guest-scanout-two` stay green **without**
   this serial line. Those gates must not start requiring `GUEST_BROKER_OK`.
 - **This is not a native component runtime, and not P5 physical boot.**
@@ -51,9 +51,9 @@ wholesale-advance amu. JVM loads `elf64.clj` ahead of `elf64.cljc`.
    `kotoba_aiueos_broker_admit(2, 1)`. Copy the clipboard scratch only
    when the first returns 1. Do not hardcode admit in C. Do not
    `qemu_exit`.
-3. Gate is `clojure -M:compositor guest-broker` via default UEFI smoke
+3. Gate is `kbb -M:compositor guest-broker` via default UEFI smoke
    (`run-uefi-2d!` with no extra env). It does not need dbus/`gdbus`.
-4. SPA `#desktop` names `clojure -M:compositor guest-broker`. One
+4. SPA `#desktop` names `kbb -M:compositor guest-broker`. One
    document. jp-go-dds. No second HTML. No liquid-glass. No Three.js.
 
 ## Consequences
@@ -63,5 +63,5 @@ Hosted leftover print after this slice stayed `:native-compositor-absent`
 
 ## Measurement
 
-Recorded by `clojure -M:compositor guest-broker` on this branch.
+Recorded by `kbb -M:compositor guest-broker` on this branch.
 QEMU ≠ P5.

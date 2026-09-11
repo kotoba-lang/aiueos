@@ -9,13 +9,13 @@ Accepted for a **discriminating slice** of root
 `:cert-verify-hashed-only`. **This gate is green only when QEMU serial
 contains `AIUEOS_CERTVERIFY_PROBE result=ok scheme=ecdsa_secp256r1_sha256`.**
 This file records the attempt. The receipt from
-`clojure -M:bare-metal cert-verify` is the measurement.
+`kbb -M:bare-metal cert-verify` is the measurement.
 
-`clojure -M:bare-metal cloud` stays green on HTTP+CID **without** requiring
+`kbb -M:bare-metal cloud` stays green on HTTP+CID **without** requiring
 this line. Host OpenSSL probe does not count.
 
-**Measured 2026-08-23** on this Mac (`clojure -M:bare-metal cert-verify`
-EXIT=0 leftover `[]`, and `clojure -M:bare-metal cloud` EXIT=0 leftover
+**Measured 2026-08-23** on this Mac (`kbb -M:bare-metal cert-verify`
+EXIT=0 leftover `[]`, and `kbb -M:bare-metal cloud` EXIT=0 leftover
 `[]` on the same firmware):
 
 ```
@@ -62,7 +62,7 @@ No P-256 ECDSA kernel object existed on main.
    scheme must be `0x0403`; transcript-hash **before** adding CertificateVerify
    (RFC 8446 4.4.3); content = 64×`0x20` + `"TLS 1.3, server CertificateVerify"`
    + `0x00` + transcript-hash. Finished requires `certverify_ok`.
-4. **Gate:** `clojure -M:bare-metal cert-verify`. HTTP+CID without the
+4. **Gate:** `kbb -M:bare-metal cert-verify`. HTTP+CID without the
    CertVerify serial line is leftover `:cert-verify-hashed-only`.
 
 ## P5 — still UNVERIFIED

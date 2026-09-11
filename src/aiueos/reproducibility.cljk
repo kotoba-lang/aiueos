@@ -120,7 +120,7 @@
 (defn -main
   "Judge two independent builds of the same source commit.
 
-      clojure -M:reproduce <source-commit> <digest-1> <digest-2> [--fresh-clone] [--hermetic]
+      kbb -M:reproduce <source-commit> <digest-1> <digest-2> [--fresh-clone] [--hermetic]
 
   The digests are two release build receipts' `disk.sha256` as `sha256:<hex>`,
   from builds that must not share a working tree. `--fresh-clone` and

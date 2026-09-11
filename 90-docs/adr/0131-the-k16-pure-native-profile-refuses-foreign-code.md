@@ -166,7 +166,7 @@ Kotoba objects rather than 67, because two ECDSA objects are conditional.
 ## Evidence
 
 `test/aiueos/k16-pure-native-gate-test` -- 9 tests, 41 assertions, run with
-`clojure -M:test -n aiueos.k16-pure-native-gate-test`. Every negative pins the
+`kbb -M:test -n aiueos.k16-pure-native-gate-test`. Every negative pins the
 **reason literal**, not just the exit code, because `object-sha256-mismatch`
 and `sections` are both exit 3 and confusing them would hide the difference
 between a swapped object and a C object.

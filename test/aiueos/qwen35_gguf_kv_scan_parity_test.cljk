@@ -251,7 +251,7 @@
 ;; a real run of this object produced.
 ;;
 ;; Regenerate with
-;;   clojure -M:test -v aiueos.qwen35-gguf-kv-scan-parity-test/the-admitted-metadata-is-admitted \
+;;   kbb -M:test -v aiueos.qwen35-gguf-kv-scan-parity-test/the-admitted-metadata-is-admitted \
 ;;     -J-Daiueos.workspace-fixture-write=1
 
 (def ^:private workspace-file

@@ -305,8 +305,8 @@ fault receipts for guard write, RX write, and NX execute.
 Hosted named partial (ADR-0079, 2026-08-22): a JVM compositor process owns
 `window-session-state` surfaces and QEMU lists `virtio-gpu-pci` under
 `-display none`. Guest 2D create/flush on KERNEL.ELF is ADR-0084
-(`clojure -M:compositor gpu`). Hosted WM (two stacked DADS-decorated
-surfaces, z-order input) is ADR-0085 (`clojure -M:compositor wm`) and
+(`kbb -M:compositor gpu`). Hosted WM (two stacked DADS-decorated
+surfaces, z-order input) is ADR-0085 (`kbb -M:compositor wm`) and
 still does **not** close this Phase 6 row: no IME, no native Kotoba
 compositor, no guest-side WM. P5 real machine is UNVERIFIED. Remaining
 still includes native Kotoba component runtime, IME/a11y, CertVerify,

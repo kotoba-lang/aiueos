@@ -1,14 +1,14 @@
-#!/usr/bin/env nbb
+#!/usr/bin/env kbb
 ;; Create and verify aiueos install intents (install-v1.edn, root ADR
 ;; adr-2608251418).
 ;;
-;;   create: nbb os/aiueos/scripts/install-intent.cljk create \
+;;   create: kbb --backend sci os/aiueos/scripts/install-intent.cljk create \
 ;;             --receipt build/aiueos/aiueos-x86_64-build-receipt.json \
 ;;             --hostname aiueos-b850m --target-model PNY \
 ;;             --target-transport nvme --target-min-gb 400 --target-max-gb 600 \
 ;;             --ssh-public-key-file ~/.ssh/id_ed25519.pub \
 ;;             --confirm-create aiueos-b850m --out build/aiueos/install-intent.json
-;;   verify: nbb os/aiueos/scripts/install-intent.cljk verify \
+;;   verify: kbb --backend sci os/aiueos/scripts/install-intent.cljk verify \
 ;;             --intent build/aiueos/install-intent.json --report report.json
 ;;
 ;; An unattended installer must never pick its own target: "largest disk" and

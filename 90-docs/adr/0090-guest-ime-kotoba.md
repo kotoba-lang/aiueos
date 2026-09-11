@@ -7,20 +7,20 @@ Date: 2026-08-23
 Accepted for a **discriminating guest IME slice** of root
 `adr-2608221625-aiueos-chromeos-cloud-desktop` Desktop leftover
 (README Desktop / compositor unit). **Guest IME is green only when
-`clojure -M:compositor guest-ime` prints `AIUEOS_COMPOSITOR_GUEST_IME_OK`:**
+`kbb -M:compositor guest-ime` prints `AIUEOS_COMPOSITOR_GUEST_IME_OK`:**
 KERNEL.ELF serial has `AIUEOS_GUEST_IME_OK committed=u+304b latin-leak=0`,
 the conversion is Kotoba (`kotoba_aiueos_ime_commit(107, 97)` → `12363`),
 and hosted JVM serial `AIUEOS_COMPOSITOR_IME_OK` does **not** count.
 
 This file records the attempt. The receipt from
-`clojure -M:compositor guest-ime` is the measurement. Echoing latin
+`kbb -M:compositor guest-ime` is the measurement. Echoing latin
 `k`/`a` is leftover `:latin-leak`. A miss of U+304B is leftover
 `:vector-miss`. QEMU/firmware/serial unanswered is leftover `:unmeasured`
 (exit 3, not a silent pass).
 
 Not executable, and stated here rather than at the end:
 
-- **This is not hosted JVM IME.** `clojure -M:compositor ime` (ADR-0086)
+- **This is not hosted JVM IME.** `kbb -M:compositor ime` (ADR-0086)
   and `kanji` (ADR-0088) stay green **without** this serial line. Those
   gates must not start requiring `GUEST_IME_OK`.
 - **This is not virtio-input from a real keyboard.** The kernel still
@@ -48,7 +48,7 @@ in Kotoba (ADR-0015).
 ## Decision
 
 1. Same UEFI QEMU smoke as `gpu` (existing `smoke-qemu-uefi.sh`). No new
-   `.sh`. New argv `clojure -M:compositor guest-ime` — not folded into
+   `.sh`. New argv `kbb -M:compositor guest-ime` — not folded into
    `ime` / `kanji` / `kami` / `gpu`.
 2. Object `os/aiueos/kotoba/ime-romaji.kotoba` exports
    `kotoba_aiueos_ime_commit`. Vector: latin `k`(107) + `a`(97) must
@@ -59,7 +59,7 @@ in Kotoba (ADR-0015).
    not wholesale-advance amu. Same DHCP/ECDSA pattern.
 4. C in `main.c` is call + serial only. Do not `qemu_exit` on IME miss
    — `gpu` / `cloud` stay green without this line.
-5. SPA `#desktop` names `clojure -M:compositor guest-ime`. One document.
+5. SPA `#desktop` names `kbb -M:compositor guest-ime`. One document.
    jp-go-dds. No second HTML. No liquid-glass. No Three.js.
 
 ## Consequences
@@ -70,7 +70,7 @@ lands. virtio-input synthetic-smoke remains. Native Phase 6 compositor
 
 ## Measurement
 
-**2026-08-23 this Mac:** `clojure -M:compositor guest-ime` printed
+**2026-08-23 this Mac:** `kbb -M:compositor guest-ime` printed
 `AIUEOS_COMPOSITOR_GUEST_IME_OK` leftover `[]`. Serial:
 `AIUEOS_GUEST_IME_OK committed=u+304b latin-leak=0`. Object SHA-256
 `ee11f50c9dfb30d03c820bead466b2f1bf18e4e64f3a2bfda98f5a5dd5d4ca34`.

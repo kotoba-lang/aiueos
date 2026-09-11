@@ -5,7 +5,7 @@ Date: 2026-08-22
 ## Status
 
 Accepted and executable **for the hosted profile, on an opt-in transport**. On
-2026-08-22 `clojure -M:cloud-live check --transport own` opened TLS 1.3
+2026-08-22 `kbb -M:cloud-live check --transport own` opened TLS 1.3
 connections to `api.murakumo.cloud`, `infer.murakumo.cloud` and `kotobase.net`
 using `kotoba-lang/org-ietf-tls`, framed HTTP/1.1 over them with
 `kotoba.lang.http.wire`, resolved the `murakumo-main` alias, obtained a
@@ -76,7 +76,7 @@ policy value, defaulting to the platform one.
 :aiueos.cloud/transport :own   ; org-ietf-tls + http.wire
 ```
 
-`clojure -M:cloud-live check --transport own` runs the same gate the other way,
+`kbb -M:cloud-live check --transport own` runs the same gate the other way,
 and the receipt carries `:transport`, so two runs are distinguishable.
 
 **The adapter lives here, beside the consumer, and not in a repository of its
@@ -120,14 +120,14 @@ a loopback server this suite generates a certificate for.
 ### The live gate, both ways
 
 ```
-$ clojure -M:cloud-live check                    → exit 0
+$ kbb -M:cloud-live check                    → exit 0
 LEG model-resolve       ADMITTED  :status 200  :host "api.murakumo.cloud"    :peer-spki "ec7f258f…1af1"  :byte-count 497
 LEG inference-liveness  ADMITTED  :status 200  :live? true                                               :byte-count 582
 LEG inference           ADMITTED  :status 200  :host "infer.murakumo.cloud"  :peer-spki "014bccd8…7038"  :completion-chars 4  :stop-reason "stop"
 LEG storage-read        ADMITTED  :status 200  :host "kotobase.net"          :peer-spki "50602ad3…473e"  :digest "e3b0c442…b855"
 LEG storage-absent      ADMITTED  :status 404  :refusal-reason :response-not-ok
 
-$ clojure -M:cloud-live check --transport own    → exit 0
+$ kbb -M:cloud-live check --transport own    → exit 0
 LEG model-resolve       ADMITTED  :status 200  :host "api.murakumo.cloud"    :peer-spki "ec7f258f…1af1"  :byte-count 497
 LEG inference-liveness  ADMITTED  :status 200  :live? true                                               :byte-count 582
 LEG inference           ADMITTED  :status 200  :host "infer.murakumo.cloud"  :peer-spki "014bccd8…7038"  :completion-chars 4  :stop-reason "stop"
@@ -166,10 +166,10 @@ have removed a check while claiming parity.
 
 | | before | after |
 |---|---|---|
-| `clojure -M:test` | 341 tests / 8,645 assertions / 0 failures | **361 / 8,752 / 0** |
-| `clojure -M:test-fleet` | 338 / 1,199 / 0 | **358 / 1,304 / 0** |
-| `clojure -M:tcb-check` | `:valid? true :files 21 :external 6 :classpath 9` | **`:valid? true :files 22 :external 8 :classpath 9`** |
-| `clojure -M:lint` | 0 errors / 56 warnings | **0 / 56** |
+| `kbb -M:test` | 341 tests / 8,645 assertions / 0 failures | **361 / 8,752 / 0** |
+| `kbb -M:test-fleet` | 338 / 1,199 / 0 | **358 / 1,304 / 0** |
+| `kbb -M:tcb-check` | `:valid? true :files 21 :external 6 :classpath 9` | **`:valid? true :files 22 :external 8 :classpath 9`** |
+| `kbb -M:lint` | 0 errors / 56 warnings | **0 / 56** |
 
 The **test** counts are exact and the **assertion** counts are not, which is
 worth saying rather than rounding: `aiueos.provider.cloud-own-test` contributes
@@ -183,9 +183,9 @@ behaviour proved on one and assumed on the other is the shape this ADR exists
 to avoid.
 
 The dependency suites, run from clean clones at the pinned commits:
-`org-ietf-tls` `clojure -M:test:report` prints `RFC8448-VECTORS-COMPARED 43`,
+`org-ietf-tls` `kbb -M:test:report` prints `RFC8448-VECTORS-COMPARED 43`,
 `REFUSALS-EXERCISED 40` and `ASSERTIONS 550 passed, 0 failed, 0 errored`;
-`kotoba-lang/http` `clojure -M:test` runs 69 tests / 268 assertions / 0
+`kotoba-lang/http` `kbb -M:test` runs 69 tests / 268 assertions / 0
 failures.
 
 ### The TCB grew, deliberately

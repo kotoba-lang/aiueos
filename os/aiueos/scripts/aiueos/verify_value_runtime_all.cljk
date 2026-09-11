@@ -32,7 +32,7 @@
   `-M <file>` loads this namespace and calls nothing, which is the same silent
   no-op this receipt exists to expose):
 
-    clojure -Sdeps '{:paths [\"os/aiueos/scripts\"]
+    kbb -Sdeps '{:paths [\"os/aiueos/scripts\"]
                      :deps {io.github.kotoba-lang/amu
                             {:git/url \"https://github.com/kotoba-lang/amu.git\"
                              :git/sha \"<the sha in deps.edn>\"}}}' \\

@@ -1,4 +1,4 @@
-#!/usr/bin/env nbb
+#!/usr/bin/env kbb
 ;; The Kotoba BOOTX64.EFI loader modules, executed on a firmware.
 ;;
 ;; `os/aiueos/uefi/loader-probe.kotoba` composes `aiueos.uefi.console` and
@@ -14,7 +14,7 @@
 ;; interpreter, and that the console module's output is bytes a real firmware
 ;; console driver rendered.
 ;;
-;; Usage: nbb os/aiueos/scripts/smoke-qemu-uefi-loader.cljk /path/to/amu
+;; Usage: kbb --backend sci os/aiueos/scripts/smoke-qemu-uefi-loader.cljk /path/to/amu
 ;;        [--expect-markers STR] [--expect-verdicts STR]
 ;;
 ;; The two --expect flags exist so a deliberately broken variant can say WHICH

@@ -921,12 +921,12 @@
        "Run the spike and print the run receipt as EDN on stdout. Exit 0 iff the
        guest emitted the expected serial AND halted (the #110 gate). Meant to
        run inside the Linux/KVM VM:
-         clojure -M:hvt              ; default raw-word guest (MMIO poweroff) --
+         kbb -M:hvt              ; default raw-word guest (MMIO poweroff) --
                                      ;   the working V0 path; exits 0.
-         clojure -M:hvt elf <path>  ; direct-load an ELF64 image (V1 loader) and
+         kbb -M:hvt elf <path>  ; direct-load an ELF64 image (V1 loader) and
                                      ;   boot it; exits 0 for a HI\\n+poweroff ELF
                                      ;   like resources/hvt/guest-aarch64.elf.
-         clojure -M:hvt psci        ; PSCI diagnostic (V1, #110). BLOCKS: on this
+         kbb -M:hvt psci        ; PSCI diagnostic (V1, #110). BLOCKS: on this
                                      ;   KVM the bare guest's `hvc` SYSTEM_OFF
                                      ;   neither raises a system-event nor returns
                                      ;   to the fall-through poweroff -- KVM_RUN

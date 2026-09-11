@@ -82,7 +82,7 @@ the previous set through a break-glass fails only
 all four pass-through assertions and nothing else.
 
 Full suite **578 tests, 9212 assertions, 19 failures** — the same 19 test names
-as the unmodified tree. `clojure -M:tcb-check` `{:valid? true :files 38 …}`;
+as the unmodified tree. `kbb -M:tcb-check` `{:valid? true :files 38 …}`;
 `aiueos.anchors` is inventoried, because compromising it is compromising every
 https connection the machine makes. Lint unchanged.
 

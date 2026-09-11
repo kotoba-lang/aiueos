@@ -6,12 +6,12 @@ Date: 2026-08-22
 
 Accepted for a **discriminating slice** of root
 `adr-2608221625-aiueos-chromeos-cloud-desktop` **P4**. **P4 is green only when
-`clojure -M:session operator` prints `AIUEOS_OPERATOR_OK`:** grant deny is 403
+`kbb -M:session operator` prints `AIUEOS_OPERATOR_OK`:** grant deny is 403
 `:operator-grant-required` with zero HTTP to itonami, and grant allow GETs
 `https://itonami.cloud/api/health` and `/api/fleet/metrics` from the session
 process with status 200 and host `itonami.cloud`.
 
-This file records the attempt. The receipt from `clojure -M:session operator`
+This file records the attempt. The receipt from `kbb -M:session operator`
 is the measurement. A host curl is not this gate.
 
 ## Context
@@ -36,7 +36,7 @@ stay green **without** itonami credentials or `itonami.cloud` in
 3. **Live HTTP is the session process** against
    `resources/aiueos/operator_itonami.edn` (`net-allow #{"itonami.cloud"}`,
    host-bound SPKI pin measured 2026-08-22 by
-   `clojure -M:cloud-live pin https://itonami.cloud`).
+   `kbb -M:cloud-live pin https://itonami.cloud`).
 4. **Inventory, not a DNS ping.** Allow GETs `/api/health` and
    `/api/fleet/metrics`. `/api/network-awai/cloud-itonami/state` is recorded
    as the CACAO-gated surface (401 without a credential is reachability, not
@@ -44,7 +44,7 @@ stay green **without** itonami credentials or `itonami.cloud` in
 
 Not executable, and stated here rather than at the end:
 
-- **`clojure -M:session smoke` does not green P4.**
+- **`kbb -M:session smoke` does not green P4.**
 - **A host curl is not this gate.**
 - **P5 a real machine, WM/IME/virtio-gpu 2D, and TLS CertVerify remain.**
   The Chrome OS-shaped desktop goal is not complete.

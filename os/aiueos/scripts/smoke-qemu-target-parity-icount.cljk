@@ -1,4 +1,4 @@
-#!/usr/bin/env nbb
+#!/usr/bin/env kbb
 ;; One source, two targets, and a counter that does not move when the host does.
 ;;
 ;; This smoke answers a question that keeps being asked as a performance
@@ -47,7 +47,7 @@
 ;;
 ;; So this prints NOT-MEASURED with that precondition rather than a ratio.
 ;;
-;; Usage: nbb os/aiueos/scripts/smoke-qemu-target-parity-icount.cljk /path/to/amu
+;; Usage: kbb --backend sci os/aiueos/scripts/smoke-qemu-target-parity-icount.cljk /path/to/amu
 (ns smoke-qemu-target-parity-icount
   (:require [kotoba.lang.text] ["child_process" :as cp]
             ["crypto" :as crypto]

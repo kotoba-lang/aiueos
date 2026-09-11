@@ -1,4 +1,4 @@
-#!/usr/bin/env nbb
+#!/usr/bin/env kbb
 ;; Does what this device signs verify where the control plane checks it?
 ;;
 ;; The agent signs with node's `crypto.sign`; the Worker verifies with
@@ -13,7 +13,7 @@
 ;; to be FALSE for the bare nonce and for a proof made for another endpoint,
 ;; because a check that only ever says true is not checking the binding.
 ;;
-;;   nbb --classpath ../grant/src:../text/src \
+;;   kbb --backend sci --classpath ../grant/src:../text/src \
 ;;     os/aiueos/scripts/device-attest-agent-test.cljk
 
 (require '[kotoba.lang.text] '[grant.device-attest :as attest]
