@@ -67,7 +67,7 @@
  :verification
  {:off-target :executed
   :mechanism :kir-execute-with-a-supplied-memory-image
-  :runner "os/aiueos/scripts/verify-admissions.cljs"
+  :runner "os/aiueos/scripts/verify-admissions.cljk"
   :host :nbb
   :node-stack-size 60000
   :memory {:base 65536 :image-bytes 2048 :st-offset 0 :src-offset 1024}
@@ -77,7 +77,7 @@
   ;; cases from Appendix B). The rest were computed by an implementation that
   ;; is not this one -- node's `crypto.createHash('sha256')` -- and every one
   ;; of them is also checked against `kotoba-lang/org-nist-sha2`, the pure
-  ;; `.cljc` reference, by `test/aiueos/sha256_stream_parity_test.clj`.
+  ;; `.cljc` reference, by `test/aiueos/sha256_stream_parity_test.cljk`.
   :oracles {:published "FIPS 180-4 Appendix B / RFC 6234 section 8.5"
             :second-implementation "kotoba-lang/org-nist-sha2 (pure cljc)"}
   ;; MEASURED, by bisecting the fuel each call needs to return, in the

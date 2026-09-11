@@ -23,7 +23,7 @@ boots the same way, finds one conventional page from the UEFI memory map, fills
 two f32 regions with known bit patterns, folds them with `kernel-dot-f32`, and
 writes the answer to the 0xe9 debug console as eight hex digits.
 
-`os/aiueos/scripts/smoke-qemu-dot-f32.cljs` — nbb, mirroring the `.sh` smoke
+`os/aiueos/scripts/smoke-qemu-dot-f32.cljk` — nbb, mirroring the `.sh` smoke
 scripts' QEMU invocation, run twice: `-cpu max` and `-cpu qemu64`.
 
 ## The vector names the tree

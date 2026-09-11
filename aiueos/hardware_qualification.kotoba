@@ -1,5 +1,5 @@
 ;; aiueos.hardware-qualification -- fail-closed boot receipt classification
-;; as a pure Kotoba guest (oracle: src/aiueos/hardware_qualification.cljc).
+;; as a pure Kotoba guest (oracle: src/aiueos/hardware_qualification.cljk).
 ;;
 ;; A QEMU result is conformance evidence, never qualification of a physical
 ;; machine. The guest owns the classification: every required capability is

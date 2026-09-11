@@ -18,9 +18,9 @@
 ;; kotoba-lang/amu#762 consolidates every pin; the rebuild waits on whichever
 ;; lands rather than a third amu PR. Once one does, the whole follow-up is
 ;;
-;;   nbb os/aiueos/scripts/reproduce-kotoba-objects.cljs --amu <checkout> --attest
-;;   nbb os/aiueos/scripts/sync-kernel-object-digests.cljs --write
-;;   nbb os/aiueos/scripts/verify-loop-parameter-homes.cljs   ; expect exit 4
+;;   nbb os/aiueos/scripts/reproduce-kotoba-objects.cljk --amu <checkout> --attest
+;;   nbb os/aiueos/scripts/sync-kernel-object-digests.cljk --write
+;;   nbb os/aiueos/scripts/verify-loop-parameter-homes.cljk   ; expect exit 4
 ;;
 ;; and then the four entries below are deleted. Do not delete one without
 ;; re-running the checker: an entry removed on the strength of a compiler

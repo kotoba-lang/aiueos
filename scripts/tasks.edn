@@ -1,4 +1,4 @@
-;; nbb scripts/run-task.cljs <task> [args…]
+;; nbb scripts/run-task.cljk <task> [args…]
 ;;
 ;; Originally generated from bb.edn (ADR-2607173000) and empty ever since; the
 ;; USB boot profile (ADR-0019) is the first thing registered here. The
@@ -12,43 +12,43 @@
 
  :node-usb-smoke
  {:cmd ["nbb" "--classpath" "../grant/src:../text/src:../sekisho/src"
-        "os/aiueos/scripts/smoke-qemu-node-usb.cljs"]
+        "os/aiueos/scripts/smoke-qemu-node-usb.cljk"]
   :pass-args? true
   :doc "Build a stick pointed at a local plane, boot it under OVMF, and require the plane to claim it."}
 
  :node-boot-test
  {:cmd ["nbb" "--classpath" "../grant/src:../text/src:../sekisho/src"
-        "os/aiueos/scripts/node-boot-test.cljs"]
+        "os/aiueos/scripts/node-boot-test.cljk"]
   :pass-args? true
   :doc "Everything the booted stick does after the network is up, without the boot. Both directions."}
 
  :live-network-smoke
- {:cmd ["nbb" "os/aiueos/scripts/smoke-qemu-live-network.cljs"]
+ {:cmd ["nbb" "os/aiueos/scripts/smoke-qemu-live-network.cljk"]
   :pass-args? true
   :doc "Boot the live installer under OVMF with and without a NIC; require a lease in one and no-interface in the other."}
 
  :device-attest-agent
  {:cmd ["nbb" "--classpath" "../grant/src:../text/src"
-        "os/aiueos/scripts/device-attest-agent.cljs"]
+        "os/aiueos/scripts/device-attest-agent.cljk"]
   :pass-args? true
   :doc "Prove possession of this device's key against a control plane. --did --endpoint --key [--watch]."}
 
  :device-attest-agent-test
  {:cmd ["nbb" "--classpath" "../grant/src:../text/src"
-        "os/aiueos/scripts/device-attest-agent-test.cljs"]
+        "os/aiueos/scripts/device-attest-agent-test.cljk"]
   :doc "Sign the way the agent does, verify the way the Worker does; require every binding to hold."}
 
  :device-attest-loop-test
  {:cmd ["nbb" "--classpath" "../grant/src:../text/src"
-        "os/aiueos/scripts/device-attest-agent-loop-test.cljs" "../grant/src:../text/src"]
+        "os/aiueos/scripts/device-attest-agent-loop-test.cljk" "../grant/src:../text/src"]
   :doc "The whole claim loop against a server that verifies like the plane, in both directions."}
 
  :usb-boot-smoke
- {:cmd ["nbb" "os/aiueos/scripts/smoke-qemu-usb-boot.cljs"]
+ {:cmd ["nbb" "os/aiueos/scripts/smoke-qemu-usb-boot.cljk"]
   :doc "Boot the release image over both transports and require identical evidence."}
 
  :usb-flash
- {:cmd ["nbb" "os/aiueos/scripts/flash-usb.cljs"]
+ {:cmd ["nbb" "os/aiueos/scripts/flash-usb.cljk"]
   :pass-args? true
   :doc "Write the release image to a USB stick. Inspects unless --confirm repeats --device."}
 
@@ -80,7 +80,7 @@
  ;; putting the sh chain behind nbb would put Node in the boot-evidence path,
  ;; does not apply to a gate that was written in nbb to begin with.
  :offline-floor-smoke
- {:cmd ["nbb" "os/aiueos/scripts/smoke-qemu-offline-floor.cljs"]
+ {:cmd ["nbb" "os/aiueos/scripts/smoke-qemu-offline-floor.cljk"]
   :doc "Boot with and without a NIC and require the difference to be exactly the three network markers. Needs KERNEL.ELF and BOOTX64.EFI built first."}
 
 ;; AArch64 bare-metal boot path (root ADR-2608080600 tracks a1/a2, landed).
@@ -90,7 +90,7 @@
 ;; that runs the rest of the smoke chain may not have these — status is
 ;; unmeasured on this Mac until the AAVMF firmware set is provisioned.
  :aarch64-boot-smoke
- {:cmd ["nbb" "os/aiueos/aarch64/smoke-qemu-aarch64-uefi.cljs"]
+ {:cmd ["nbb" "os/aiueos/aarch64/smoke-qemu-aarch64-uefi.cljk"]
   :doc "Boot the AArch64 UEFI loader + kernel (loaded from an ESP under AAVMF) and require every AIUEOS_AARCH64_ marker on PL011 serial, with SCTLR_EL1.M actually set, tables from the page allocator, and both W^X directions faulting at the exact ESR class. --expect-fail runs three negative controls. Needs clang/lld(aarch64)/qemu-system-aarch64/AAVMF/mkfs.vfat/mtools."}
 
  ;; SSH passive-open listener (ssh-v1.edn / ADR-0102). Build the SSH kernel
@@ -102,27 +102,27 @@
   :doc "Build the release image with the SSH passive-open listener compiled in (AIUEOS_SSH_LISTEN=1). Every other build is byte-for-byte unchanged."}
 
  :ssh-smoke
- {:cmd ["sh" "-c" "AIUEOS_SSH_LISTEN=1 AIUEOS_TEST_NET=1 AIUEOS_SSH_HOSTFWD=8022 nbb os/aiueos/scripts/smoke-qemu-ssh.cljs"]
+ {:cmd ["sh" "-c" "AIUEOS_SSH_LISTEN=1 AIUEOS_TEST_NET=1 AIUEOS_SSH_HOSTFWD=8022 nbb os/aiueos/scripts/smoke-qemu-ssh.cljk"]
   :doc "Boot the SSH kernel and require an external client to complete an inbound TCP connection on :22 and read exactly SSH-2.0-aiueos_0.1, with the kernel's AIUEOS_SSH_LISTEN_OK marker. Needs :ssh-build first."}
 
  :entropy-smoke
- {:cmd ["sh" "-c" "AIUEOS_SSH_LISTEN=1 AIUEOS_TEST_NET=1 nbb os/aiueos/scripts/smoke-qemu-entropy.cljs"]
+ {:cmd ["sh" "-c" "AIUEOS_SSH_LISTEN=1 AIUEOS_TEST_NET=1 nbb os/aiueos/scripts/smoke-qemu-entropy.cljk"]
   :doc "Boot and require AIUEOS_RANDOM_OK: aiueos_random_bytes delivers two distinct, non-constant 32-byte batches from the persisted virtio-rng. The entropy source an SSH handshake draws from (ADR-0103)."}
 
  :ecdsa-sign-oracle
- {:cmd ["nbb" "os/aiueos/scripts/ecdsa-sign-oracle.cljs"]
+ {:cmd ["nbb" "os/aiueos/scripts/ecdsa-sign-oracle.cljk"]
   :doc "The RFC 6979 A.2.5 known answer for ecdsa-p256-sign.kotoba: a BigInt reference proves the sign FORMULA and r||s ABI (ADR-0104)."}
 
  :reproduce-objects
- {:cmd ["nbb" "os/aiueos/scripts/reproduce-kotoba-objects.cljs"]
+ {:cmd ["nbb" "os/aiueos/scripts/reproduce-kotoba-objects.cljk"]
   :doc "Recompile every committed Kotoba kernel object from os/aiueos/kotoba/provenance.edn and compare the bytes. Needs --amu <checkout>; or --git-resolve to fetch each object's RECORDED revision; exit 0 all reproduce, 3 any differ, 2 could not run. Turns the recipes' pin from a claim into a measurement."}
 
  :kernel-object-digests
- {:cmd ["nbb" "os/aiueos/scripts/sync-kernel-object-digests.cljs" "--check"]
+ {:cmd ["nbb" "os/aiueos/scripts/sync-kernel-object-digests.cljk" "--check"]
   :doc "Do build-uefi.sh's pinned object digests still agree with provenance.edn? exit 3 when they do not; --write syncs them from the manifest."}
 
  :ecdsa-sign-kat
- {:cmd ["sh" "-c" "AIUEOS_ECDSA_SIGN_KAT=1 AIUEOS_TEST_NET=1 nbb os/aiueos/scripts/smoke-qemu-ecdsa-sign.cljs"]
+ {:cmd ["sh" "-c" "AIUEOS_ECDSA_SIGN_KAT=1 AIUEOS_TEST_NET=1 nbb os/aiueos/scripts/smoke-qemu-ecdsa-sign.cljk"]
   :doc "Build the kernel with the sign object linked and require AIUEOS_ECDSA_SIGN_OK: the object reproduces the RFC 6979 A.2.5 signature in a QEMU boot (ADR-0105)."}
 
  ;; Install chain (install-v1.edn, root ADR adr-2608251418). The installer
@@ -137,19 +137,19 @@
   :doc "Ported installer guard/readback and encrypted-image tests. Fake devices and temp files only."}
 
  :install-chain-test
- {:cmd ["nbb" "os/aiueos/scripts/test-install-chain.cljs"]
+ {:cmd ["nbb" "os/aiueos/scripts/test-install-chain.cljk"]
   :doc "Intent admission refusals (named reasons), fake-device install, target receipt, repeat-erase refusal, provisioning record placement. Gates I2/I5, offline."}
 
  :guided-install-test
- {:cmd ["nbb" "os/aiueos/scripts/test-guided-install.cljs"]
+ {:cmd ["nbb" "os/aiueos/scripts/test-guided-install.cljk"]
   :doc "Guided installer (ADR-0208): answer-file refusals by named reason, the screen walk, the derived match on both capacity boundaries, and the intent the guided run writes handed to the real install-intent.cljs verify. 53 cases, offline, no block device."}
 
  :provision-record-test
- {:cmd ["nbb" "os/aiueos/scripts/test-provision-record.cljs"]
+ {:cmd ["nbb" "os/aiueos/scripts/test-provision-record.cljk"]
   :doc "SSH provisioning record: host key derived to the RFC 8032 vector, authorized key = the intent's, injected-seed and non-ed25519 and tampered-intent refusals. Gate I4 provisioning half, offline."}
 
  :install-bundle-test
- {:cmd ["nbb" "os/aiueos/scripts/test-install-bundle.cljs"]
+ {:cmd ["nbb" "os/aiueos/scripts/test-install-bundle.cljk"]
   :doc "The install USB bundle EXECUTED, not merely built (ADR-0209/0210): assemble both products, extract them, run every bundled entry point from inside them, and drive the real guided handover on a stick that carries no intent. Controls: without the classpath nothing loads; a stick that carries an intent never asks. 34 cases, offline."}
 
  ;; The node stick: Ubuntu Server plus the agent, which is the route that
@@ -158,26 +158,26 @@
  ;; registry, which is how anything here is found and run, did not mention it.
 
  :node-agent-bundle
- {:cmd ["nbb" "os/aiueos/scripts/make-node-agent-bundle.cljs"]
+ {:cmd ["nbb" "os/aiueos/scripts/make-node-agent-bundle.cljk"]
   :pass-args? true
   :doc "Pack the node agent (what decides something, plus a runtime to decide it with) for installation onto a Linux that already boots. Needs --node and --nbb; carries grant.device-attest and sekisho.didkey rather than restating them."}
 
  :node-installer-build
- {:cmd ["nbb" "os/aiueos/scripts/make-node-installer.cljs"]
+ {:cmd ["nbb" "os/aiueos/scripts/make-node-installer.cljk"]
   :pass-args? true
   :doc "Build the node install stick for ONE NAMED BOX from contracts/node-machines-v1.edn (ADR-0214). --machine <id> --iso <ubuntu.iso> --ssh-key <pub>. Storage is interactive unless that box's disk serial is MEASURED; --unattended demands it and refuses otherwise. --dry-run prints the plan and the builder argv."}
 
  :node-machine-probe-record
- {:cmd ["nbb" "os/aiueos/scripts/record-node-machine-probe.cljs"]
+ {:cmd ["nbb" "os/aiueos/scripts/record-node-machine-probe.cljk"]
   :pass-args? true
   :doc "Turn the hardware record a box wrote about itself (/var/log/aiueos-node-hwprobe.txt) into :measured fields in the machine registry. --machine <id> --probe <file>. Writes only fields the probe actually carries; refuses the file rather than recording a measured nil."}
 
  :node-installer-test
- {:cmd ["nbb" "os/aiueos/scripts/test-node-installer.cljs"]
+ {:cmd ["nbb" "os/aiueos/scripts/test-node-installer.cljk"]
   :doc "The per-machine node installer (ADR-0214), offline: the registry typed rather than parsed, every driver and ingest refusal by named reason, the probe block EXECUTED and parsed, and the loop closed -- ingest a probe into a registry copy, then require the driver to build the unattended stick with the serial it carried. 55 cases, no ISO, no block device."}
 
  :install-usb-build
- {:cmd ["nbb" "os/aiueos/scripts/run-install-usb-build.cljs"]
+ {:cmd ["nbb" "os/aiueos/scripts/run-install-usb-build.cljk"]
   :doc "Build + verify the install USB image and its chain receipt (gate I1). Pass --guided for the stick that carries no intent and asks at the machine (ADR-0210); otherwise an intent must already exist and is never auto-created."}
 
  :live-installer-build
@@ -186,7 +186,7 @@
   :doc "Build the live-installer UKI (Debian kernel + thin initramfs mechanism) via docker. Decisions stay in the payload bundle."}
 
  :install-smoke
- {:cmd ["nbb" "os/aiueos/scripts/smoke-qemu-install.cljs"]
+ {:cmd ["nbb" "os/aiueos/scripts/smoke-qemu-install.cljk"]
   :doc "Gate I3+I5 under QEMU: USB-live install to a blank NVMe, boot the NVMe twice without the USB, then re-insert the USB and require the erase to be refused with the disk untouched. Needs release image, live UKI, node-linux-x64 and an nbb tree in build/aiueos."}
 
  :hw-probe-build
@@ -211,11 +211,11 @@
   :doc "Boot the receipt-bound PLC ELF at CPL3 and prove fixed-priority preemption, APIC release, atomic output and safe-state failures."}
 
  :os-coverage
- {:cmd ["sh" "-c" "nbb os/aiueos/scripts/os-coverage.cljs build/aiueos/*.log"]
+ {:cmd ["sh" "-c" "nbb os/aiueos/scripts/os-coverage.cljk build/aiueos/*.log"]
   :doc "Score the last smoke's coverage against ALL of its evidence logs. Registered 2026-09-10 because there was no canonical invocation and picking one log silently lowers the number: measured, kernel-serial.log alone scores CORE 63/117 while the same boot's four logs score 66/117 -- ACPI_RETAIN, KERNEL and LOADER_INTEGRITY are the loader's markers and go to uefi-debug.log."}
 
  :relay-parity
- {:cmd ["nbb" "os/aiueos/scripts/relay-protocol-c-kotoba-parity.cljs"]
+ {:cmd ["nbb" "os/aiueos/scripts/relay-protocol-c-kotoba-parity.cljk"]
   :doc "kernel/relay_protocol.c and native/relay_{line,text}.kotoba are two live implementations of one wire protocol; prove they are the same bytes, and stay red if either is edited alone (ADR-0213)."}
 
  :plc-rt-policy-reproduce
@@ -224,6 +224,6 @@
   :doc "Reproduce the linked fixed-priority policy and PLC-specific C-free ELF admission objects with their exact measured Amu revisions."}
 
  :target-parity-icount
- {:cmd ["nbb" "os/aiueos/scripts/smoke-qemu-target-parity-icount.cljs"]
+ {:cmd ["nbb" "os/aiueos/scripts/smoke-qemu-target-parity-icount.cljk"]
   :pass-args? true
   :doc "Takes /path/to/amu. Measure that x86_64-linux and x86_64-aiueos-kernel-v1 emit the same bytes for one source, and count them under -icount as guest instructions rather than host time (ADR-0211)."}}

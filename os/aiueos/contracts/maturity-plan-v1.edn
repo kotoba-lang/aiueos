@@ -1,7 +1,7 @@
 ;; The remaining distance to an appliance OS, as a dependency graph.
 ;;
 ;; The ORDER IS NOT WRITTEN HERE. Each node states only what it needs, and
-;; os/aiueos/scripts/maturity-plan.cljs computes a reverse topological order --
+;; os/aiueos/scripts/maturity-plan.cljk computes a reverse topological order --
 ;; dependencies first, dependents after -- and refuses on a cycle. That split is
 ;; deliberate: a hand-written sequence is an assertion nobody can check, and it
 ;; goes stale the moment one edge changes. An order derived from edges cannot
@@ -18,7 +18,7 @@
  :measured-baseline {:union {:core 75 :of 115 :pct 65.2}
                      :release-image {:core 66 :of 115 :pct 57.4}
                      :build {:core 63 :of 115 :pct 54.8}
-                     :at "2026-09-09" :by "os/aiueos/scripts/os-coverage.cljs"
+                     :at "2026-09-09" :by "os/aiueos/scripts/os-coverage.cljk"
                      :note "The release image reads HIGHER than the build. The
                              earlier 25.4 measured it built without a define its
                              own gate requires."}

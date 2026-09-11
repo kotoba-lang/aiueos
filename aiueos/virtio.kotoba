@@ -1,5 +1,5 @@
 ;; aiueos.virtio -- virtio protocol decision arithmetic as a pure Kotoba guest
-;; (oracle: src/aiueos/virtio.cljc).
+;; (oracle: src/aiueos/virtio.cljk).
 ;;
 ;; The oracle is the ~85% of the retired Rust module that was already pure;
 ;; the guest carries the decision arithmetic at the protocol's heart:

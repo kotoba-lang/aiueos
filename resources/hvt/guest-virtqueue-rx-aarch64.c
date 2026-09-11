@@ -10,7 +10,7 @@
  * writing into guest RAM, and the used-ring completion.
  *
  * Freestanding; SP is set by the tender. Built with the V1 ELF loader's linker
- * script; see scripts/build-hvt-guest.cljs.
+ * script; see scripts/build-hvt-guest.cljk.
  */
 typedef unsigned int   u32;
 typedef unsigned short u16;

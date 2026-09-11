@@ -18,7 +18,7 @@
 ;; scratch (0,1,22 mul; 15,16,20,21 inverse; 10/11/29 + 30-48 point).
 ;;
 ;; STATUS (ADR-0104): the FORMULA and ABI are verified against RFC 6979 A.2.5
-;; by os/aiueos/scripts/ecdsa-sign-oracle.cljs. The limb arithmetic reuses
+;; by os/aiueos/scripts/ecdsa-sign-oracle.cljk. The limb arithmetic reuses
 ;; ecdsa-p256.kotoba's proven verify helpers verbatim. It is NOT yet a working
 ;; kernel brick: the amu revision this checkout pins produces a code region for
 ;; the ecdsa objects (~52 KB) that exceeds the 32768-byte kernel-object region,

@@ -7,7 +7,7 @@
 ;; byte was assigned on top of an existing sentinel (B0/B6/B7/B8 -- ADR-0156)
 ;; and the collision was found on the wire, at the cost of a board iteration.
 ;; This registry is the place uniqueness is decided; the verifier
-;; os/aiueos/tools/verify-wire-bytes.cljs refuses overlapping values here and
+;; os/aiueos/tools/verify-wire-bytes.cljk refuses overlapping values here and
 ;; reports any literal the sources emit that is not here, or any entry here
 ;; that no source emits.
 ;;
@@ -51,7 +51,7 @@
  :registry/version 1
  :registry/reconciled "2026-09-07"
  :registry/amended ["2026-09-08 bus3 'R' reboot command: netlog DB (0xDB) / DC (0xDC), bus3-udp 'r' (0x72); :port-cf9 0x06 gains a second emission site"
-                    "2026-09-08 the murakumo relay on bus3: netlog D8 (0xD8) announces AIUEOS_NODE_HELLO_V1, and D9's follower gains 8 and 112..123 for AIUEOS_JOB_V1. The relay's own traffic is ASCII LINES on bus3 UDP/9000, not single bytes, so it is deliberately NOT registered on :bus3-udp -- that channel's contract is one byte per datagram and a 91..205 byte line would break every reader of it. The lines are checked against the relay's own regexes by os/aiueos/tools/gen-relay-text.cljs instead."]
+                    "2026-09-08 the murakumo relay on bus3: netlog D8 (0xD8) announces AIUEOS_NODE_HELLO_V1, and D9's follower gains 8 and 112..123 for AIUEOS_JOB_V1. The relay's own traffic is ASCII LINES on bus3 UDP/9000, not single bytes, so it is deliberately NOT registered on :bus3-udp -- that channel's contract is one byte per datagram and a 91..205 byte line would break every reader of it. The lines are checked against the relay's own regexes by os/aiueos/tools/gen-relay-text.cljk instead."]
  :registry/authorities ["os/aiueos/native/tcp_stream.kotoba (per-function comments)"
                         "os/aiueos/native/kernel.kotoba"
                         "os/aiueos/native/debug_link.kotoba"
@@ -268,7 +268,7 @@
    :meaning "'p': answer to a well-formed control datagram carrying 'P' (debug-tick 64+n)."}
   {:channel :bus3-udp :value 114 :hex "72" :name :reboot-ack-r
    :emitter "os/aiueos/native/debug_link.kotoba"
-   :meaning "'r': answer to a well-formed control datagram carrying 'R' (debug-tick 80+n). Sent BEFORE the reset (debug-send-byte waits for TX completion), so the Mac holds the acknowledgement before the board goes away; the reset itself is stream-resident's, after DB on bus2. Mac side: os/aiueos/tools/k16-control.cljs R."}
+   :meaning "'r': answer to a well-formed control datagram carrying 'R' (debug-tick 80+n). Sent BEFORE the reset (debug-send-byte waits for TX completion), so the Mac holds the acknowledgement before the board goes away; the reset itself is stream-resident's, after DB on bus2. Mac side: os/aiueos/tools/k16-control.cljk R."}
   {:channel :bus3-udp :value 63 :hex "3F" :name :unknown-command
    :emitter "os/aiueos/native/debug_link.kotoba"
    :meaning "'?': answer to a well-formed control datagram whose command byte is not in the closed set (debug-tick 96+n)."}

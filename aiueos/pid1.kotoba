@@ -1,5 +1,5 @@
 ;; aiueos.pid1 -- argv0 boot-condition check as a pure Kotoba guest
-;; (oracle: src/aiueos/pid1.cljc).
+;; (oracle: src/aiueos/pid1.cljk).
 ;;
 ;; pid1-argv0? is the kernel's rdinit=/init contract: argv0's basename is
 ;; exactly "init". The oracle splits on a regex; the guest scans positionally

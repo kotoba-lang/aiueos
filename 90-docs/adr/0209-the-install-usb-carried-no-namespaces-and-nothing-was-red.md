@@ -92,7 +92,7 @@ while this was being written:
 
 ## The detector
 
-`os/aiueos/scripts/test-install-bundle.cljs`, registered as
+`os/aiueos/scripts/test-install-bundle.cljk`, registered as
 `:install-bundle-test`. 17 cases, offline.
 
 It assembles the bundle through the real `make_bundle_tgz`, extracts it, and

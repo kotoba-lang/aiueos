@@ -31,7 +31,7 @@ native only when its artifact receipt has empty `c_sources`,
 | Kernel execution | **not yet** — context switch, preemptive scheduler, ring 3, syscall entry/exit, capability handle table all still reference-profile only |
 | Hardware | **not yet** — PCI, DMA, IOMMU, MSI-X, virtio, NVMe, USB HID are reference C with QEMU evidence, not compiler-emitted |
 | Boot and release | **working** — deterministic GPT disk and El Torito ISO from one builder, byte-identical recovery ESP with proven firmware fallback, update and rollback receipts, RSA-2048 release-signature verification, durable crash receipts, initramfs, Multiboot2/GRUB |
-| Desktop | **partial** — hosted WM (ADR-0085) stacks two `window-session-state` surfaces in the same DADS `#desktop`; raise changes z-order; `clojure -M:compositor wm`. Guest 2D create/flush is `clojure -M:compositor gpu` (ADR-0084). hosted IME romaji→kana is `clojure -M:compositor ime` (ADR-0086). hosted kanji (Space converts か→加) is `clojure -M:compositor kanji` (ADR-0088). hosted kami.webgpu presenter (`init!`/`draw!` on `#kami-viewport`) is `clojure -M:compositor kami` (ADR-0089). Guest IME is KERNEL.ELF Kotoba `k`+`a`→U+304B (`nbb --classpath src scripts/compositor-guest.cljs guest-ime`, ADR-0090). Guest WM is KERNEL.ELF Kotoba z-hit of two overlapping boot rects (`nbb --classpath src scripts/compositor-guest.cljs guest-wm`, ADR-0091). Guest paint is KERNEL.ELF filling those rects in z-order (`nbb --classpath src scripts/compositor-guest.cljs guest-paint`, ADR-0092). Guest input is KERNEL.ELF consuming a virtio-keyboard used-ring event (`nbb --classpath src scripts/compositor-guest.cljs guest-input`, ADR-0093). Guest gpu-two is KERNEL.ELF creating two virtio-gpu 2D resources when Kotoba admits n=2 (`nbb --classpath src scripts/compositor-guest.cljs guest-gpu-two`, ADR-0094). Guest scanout-two is KERNEL.ELF binding scanout 1 to resource 2 (`nbb --classpath src scripts/compositor-guest.cljs guest-scanout-two`, ADR-0095). Guest broker is KERNEL.ELF Kotoba clipboard admit / picker refuse (`nbb --classpath src scripts/compositor-guest.cljs guest-broker`, ADR-0096). Guest session restore is KERNEL.ELF Kotoba packed front 2 (`nbb --classpath src scripts/compositor-guest.cljs guest-session`, ADR-0098). Leftover `:native-compositor-absent` (native component runtime, P5). **P5 UNVERIFIED**. Not a finished Chrome OS-shaped desktop |
+| Desktop | **partial** — hosted WM (ADR-0085) stacks two `window-session-state` surfaces in the same DADS `#desktop`; raise changes z-order; `clojure -M:compositor wm`. Guest 2D create/flush is `clojure -M:compositor gpu` (ADR-0084). hosted IME romaji→kana is `clojure -M:compositor ime` (ADR-0086). hosted kanji (Space converts か→加) is `clojure -M:compositor kanji` (ADR-0088). hosted kami.webgpu presenter (`init!`/`draw!` on `#kami-viewport`) is `clojure -M:compositor kami` (ADR-0089). Guest IME is KERNEL.ELF Kotoba `k`+`a`→U+304B (`nbb --classpath src scripts/compositor-guest.cljk guest-ime`, ADR-0090). Guest WM is KERNEL.ELF Kotoba z-hit of two overlapping boot rects (`nbb --classpath src scripts/compositor-guest.cljk guest-wm`, ADR-0091). Guest paint is KERNEL.ELF filling those rects in z-order (`nbb --classpath src scripts/compositor-guest.cljk guest-paint`, ADR-0092). Guest input is KERNEL.ELF consuming a virtio-keyboard used-ring event (`nbb --classpath src scripts/compositor-guest.cljk guest-input`, ADR-0093). Guest gpu-two is KERNEL.ELF creating two virtio-gpu 2D resources when Kotoba admits n=2 (`nbb --classpath src scripts/compositor-guest.cljk guest-gpu-two`, ADR-0094). Guest scanout-two is KERNEL.ELF binding scanout 1 to resource 2 (`nbb --classpath src scripts/compositor-guest.cljk guest-scanout-two`, ADR-0095). Guest broker is KERNEL.ELF Kotoba clipboard admit / picker refuse (`nbb --classpath src scripts/compositor-guest.cljk guest-broker`, ADR-0096). Guest session restore is KERNEL.ELF Kotoba packed front 2 (`nbb --classpath src scripts/compositor-guest.cljk guest-session`, ADR-0098). Leftover `:native-compositor-absent` (native component runtime, P5). **P5 UNVERIFIED**. Not a finished Chrome OS-shaped desktop |
 | Content addressing | **partial** — `cid-v1-admit` decides that a block is the content a binary CIDv1 names, reading version, codec, multihash and digest length rather than taking a caller's 32 bytes on trust; `unixfs-file-admit` decides a canonical UnixFS file root, so an artifact larger than the 12,288-byte SHA-256 bound is verified block by block against one name (ADR-0128). Both are checked by verifiers that EXECUTE them against their contracts — the first here that do, since kotoba-kir gained an optional memory image. **Neither is linked into `KERNEL.ELF` yet** (amu's kotoba-native pin), so no boot has run either, and the OTA and model-channel paths still verify by manifest digest |
 | Bare-metal net (P2) | **green on QEMU UEFI** — guest TLS 1.3 + HTTPS GET of empty raw CID with SHA-256 admit (ADR-0082). CertificateVerify ECDSA P-256 is `clojure -M:bare-metal cert-verify` (ADR-0087). Hosted `cloud-live` / session smoke / host curl do not count. Chain-to-anchor still leftover |
 
@@ -182,7 +182,7 @@ exactly the capabilities it uses, through `perform`, and nothing else.
 What is left here executes, boots and drives hardware.
 
 
-- `src/aiueos/execute.cljc` **actually executes** a compiled `.kotoba` Wasm
+- `src/aiueos/execute.cljk` **actually executes** a compiled `.kotoba` Wasm
   component (ADR-2607022900), via [Chicory](https://github.com/dylibso/chicory).
   Verifies through `grant.broker/verify-one` first and refuses to run anything
   denied; the 7 non-hardware kernel capabilities (`log-write`/`clock-monotonic`/
@@ -216,7 +216,7 @@ What is left here executes, boots and drives hardware.
   `:started-at`/`:finished-at` (epoch ms), and the same audit events.
   **JVM-only** — needs `clojure -M:test` (Chicory was never in babashka's class
   allowlist, and babashka has since been retired outright).
-- `src/aiueos/launcher.cljc` is a real, runnable CLI: the retired Rust
+- `src/aiueos/launcher.cljk` is a real, runnable CLI: the retired Rust
   `bin/aiueos.rs`'s argv-parsing/file-I/O role, reimplemented as JVM Clojure.
   Ties `grant.cli` + `grant.manifest` + `grant.policy`/`grant.broker` +
   `aiueos.execute`/`aiueos.audit` together. `verify`/`run`/`admit`/`inspect`/
@@ -260,7 +260,7 @@ clojure -M:test   # full suite, including aiueos.execute-test (Chicory, JVM-only
 
 `scripts/tasks.edn` additionally registers the boot/flash gates:
 `multiboot-build`, `multiboot-smoke`, `grub-multiboot-smoke`, `usb-boot-smoke`,
-`usb-flash` — run through `nbb scripts/run-task.cljs <task>`.
+`usb-flash` — run through `nbb scripts/run-task.cljk <task>`.
 
 **Two entrypoints this README used to document are unavailable.** babashka was
 retired as this workspace's script host by ADR-2607173000, and both bodies were
@@ -417,14 +417,14 @@ clojure -M:compositor wm      # hosted WM: ≥2 surfaces, z-order, DADS, input r
 clojure -M:compositor ime     # hosted IME: ka→か, off-path latin leak is red
 clojure -M:compositor kanji   # hosted IME: Space converts か→加; kana-only Space is red
 clojure -M:compositor kami    # hosted kami.webgpu init!/draw!; sky-clear is red
-nbb --classpath src scripts/compositor-guest.cljs guest-ime  # KERNEL.ELF Kotoba k+a→U+304B
-nbb --classpath src scripts/compositor-guest.cljs guest-wm   # KERNEL.ELF Kotoba z-hit of two overlapping rects
-nbb --classpath src scripts/compositor-guest.cljs guest-paint # KERNEL.ELF paints both rects in Kotoba z-order
-nbb --classpath src scripts/compositor-guest.cljs guest-input # KERNEL.ELF consumes a virtio-keyboard used-ring event
-nbb --classpath src scripts/compositor-guest.cljs guest-gpu-two # KERNEL.ELF two virtio-gpu 2D resources when Kotoba n=2
-nbb --classpath src scripts/compositor-guest.cljs guest-scanout-two # KERNEL.ELF scanout 1 → resource 2 when Kotoba n=2
-nbb --classpath src scripts/compositor-guest.cljs guest-broker # KERNEL.ELF Kotoba clipboard-only broker admit
-nbb --classpath src scripts/compositor-guest.cljs guest-session # KERNEL.ELF packed front 2 restore
+nbb --classpath src scripts/compositor-guest.cljk guest-ime  # KERNEL.ELF Kotoba k+a→U+304B
+nbb --classpath src scripts/compositor-guest.cljk guest-wm   # KERNEL.ELF Kotoba z-hit of two overlapping rects
+nbb --classpath src scripts/compositor-guest.cljk guest-paint # KERNEL.ELF paints both rects in Kotoba z-order
+nbb --classpath src scripts/compositor-guest.cljk guest-input # KERNEL.ELF consumes a virtio-keyboard used-ring event
+nbb --classpath src scripts/compositor-guest.cljk guest-gpu-two # KERNEL.ELF two virtio-gpu 2D resources when Kotoba n=2
+nbb --classpath src scripts/compositor-guest.cljk guest-scanout-two # KERNEL.ELF scanout 1 → resource 2 when Kotoba n=2
+nbb --classpath src scripts/compositor-guest.cljk guest-broker # KERNEL.ELF Kotoba clipboard-only broker admit
+nbb --classpath src scripts/compositor-guest.cljk guest-session # KERNEL.ELF packed front 2 restore
 ```
 
 Expected `smoke` markers:

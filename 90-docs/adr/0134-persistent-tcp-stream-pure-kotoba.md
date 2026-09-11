@@ -8,7 +8,7 @@ host-side integration scaffold. It
 does not modify `native/rtl8125.kotoba`, does not build an artifact, does not
 run QEMU, and does not touch the PXE server. Companion artifacts on the same
 branch: `os/aiueos/scripts/k16-n2-import-integration-sketch.patch` (import
-integration sketch) and `test/aiueos/tcp_stream_integration_test.clj` (host
+integration sketch) and `test/aiueos/tcp_stream_integration_test.cljk` (host
 reassembly-parity test, green on this branch: 8 tests / 163 assertions).
 
 ## Context
@@ -259,7 +259,7 @@ an out-of-order arrival both delivered contiguously, the stream still open
 afterwards (no RST), with the `97 → 98 → 99` sequence on the wire/screen and a
 graceful FIN at close. Host-side preconditions, all runnable without hardware:
 
-1. `test/aiueos/tcp_stream_integration_test.clj` — the reassembly cores, at
+1. `test/aiueos/tcp_stream_integration_test.cljk` — the reassembly cores, at
    the pinned commit, hold the three properties this ADR names, on the same
    fixtures the org-ietf-tcp parity suite uses (green on this branch).
 2. The import integration compiles: the sketch's `--source-path` set

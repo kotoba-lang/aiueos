@@ -198,7 +198,7 @@
                 :main-opts ["-m" "cognitect.test-runner"
                             "-r" "^aiueos\\.(?!tcp-seq-acceptable-parity-test|tcp-stream-integration-test).*$"]}
 
-   ;; The nbb admission runner (os/aiueos/scripts/verify-admissions.cljs).
+   ;; The nbb admission runner (os/aiueos/scripts/verify-admissions.cljk).
    ;; A SEPARATE alias with its OWN amu pin on purpose: the runner needs
    ;; kotoba.compiler.project's ClojureScript printer fix (amu#714), while
    ;; :test keeps the compiler the committed value-runtime verdicts were
@@ -287,14 +287,14 @@
    ;;   clojure -M:compositor ime     ; romaji→kana; off-path latin is red
    ;;   clojure -M:compositor kanji   ; Space converts か→加; kana-only Space is red
    ;;   clojure -M:compositor kami    ; hosted kami.webgpu init!/draw!; clear-only is red
-   ;;   nbb --classpath src scripts/compositor-guest.cljs guest-ime ; KERNEL.ELF Kotoba k+a→U+304B; hosted JVM IME is red
-   ;;   nbb --classpath src scripts/compositor-guest.cljs guest-wm  ; KERNEL.ELF Kotoba two-surface z-hit; hosted JVM WM is red
-   ;;   nbb --classpath src scripts/compositor-guest.cljs guest-paint ; KERNEL.ELF paints both boot rects in z-order; key-order paint is red
-   ;;   nbb --classpath src scripts/compositor-guest.cljs guest-input ; KERNEL.ELF virtio-keyboard used-ring; C synthetic fill is red
-   ;;   nbb --classpath src scripts/compositor-guest.cljs guest-gpu-two ; KERNEL.ELF two virtio-gpu 2D resources; C hardcoded count is red
-   ;;   nbb --classpath src scripts/compositor-guest.cljs guest-scanout-two ; KERNEL.ELF scanout 1 onto resource 2; C hardcoded bind is red
-   ;;   nbb --classpath src scripts/compositor-guest.cljs guest-broker ; KERNEL.ELF clipboard admit / picker refuse; hosted JVM WM is red
-   ;;   nbb --classpath src scripts/compositor-guest.cljs guest-session ; KERNEL.ELF packed front 2 restore; hosted JVM WM is red
+   ;;   nbb --classpath src scripts/compositor-guest.cljk guest-ime ; KERNEL.ELF Kotoba k+a→U+304B; hosted JVM IME is red
+   ;;   nbb --classpath src scripts/compositor-guest.cljk guest-wm  ; KERNEL.ELF Kotoba two-surface z-hit; hosted JVM WM is red
+   ;;   nbb --classpath src scripts/compositor-guest.cljk guest-paint ; KERNEL.ELF paints both boot rects in z-order; key-order paint is red
+   ;;   nbb --classpath src scripts/compositor-guest.cljk guest-input ; KERNEL.ELF virtio-keyboard used-ring; C synthetic fill is red
+   ;;   nbb --classpath src scripts/compositor-guest.cljk guest-gpu-two ; KERNEL.ELF two virtio-gpu 2D resources; C hardcoded count is red
+   ;;   nbb --classpath src scripts/compositor-guest.cljk guest-scanout-two ; KERNEL.ELF scanout 1 onto resource 2; C hardcoded bind is red
+   ;;   nbb --classpath src scripts/compositor-guest.cljk guest-broker ; KERNEL.ELF clipboard admit / picker refuse; hosted JVM WM is red
+   ;;   nbb --classpath src scripts/compositor-guest.cljk guest-session ; KERNEL.ELF packed front 2 restore; hosted JVM WM is red
    ;; JVM leftover: clojure -M:compositor guest-* exits 1 (:jvm-gate-runner, ADR-0100)
    ;;   clojure -M:compositor serve
    ;; smoke Exit 0 = DADS SPA, window-session-state restore, wipe red,
@@ -370,7 +370,7 @@
   ;; ADR-0014 V0: run the self-owned VMM ("hvt tender") KVM boot spike.
   ;; Needs a real /dev/kvm (Linux) and FFM native access. Prints an EDN run
   ;; receipt on stdout; exit 0 iff the guest emitted "HI\n" and requested
-  ;; PSCI SYSTEM_OFF. Verified by `scripts/hvt-smoke.cljs`.
+  ;; PSCI SYSTEM_OFF. Verified by `scripts/hvt-smoke.cljk`.
   :hvt {:jvm-opts ["--enable-native-access=ALL-UNNAMED"]
         :main-opts ["-m" "aiueos.hvt"]}
 

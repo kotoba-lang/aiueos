@@ -23,7 +23,7 @@ unless r or s is zero (on which the caller retries with the next RFC 6979 k).
 
 ## What was proved
 
-`os/aiueos/scripts/ecdsa-sign-oracle.cljs` — the FORMULA and ABI, against the
+`os/aiueos/scripts/ecdsa-sign-oracle.cljk` — the FORMULA and ABI, against the
 RFC 6979 A.2.5 P-256/SHA-256 "sample" published vector. A BigInt reference
 computes r,s the exact way the object does and reproduces the published
 `efd48b2a…716` / `f7cb1c94…da8` byte-for-byte. So the design is not drifting

@@ -111,7 +111,7 @@ space, and there is no room for the `uint32_t *` out-parameter the C used.
 `os/aiueos/contracts/rtl8125-identify-v1.edn` (11 vectors, 11 memory
 assertions, all four reason codes) and `rtl8125-link-up-v1.edn` (6 vectors, 6
 memory assertions, both verdicts) run under
-`os/aiueos/scripts/verify-admissions.cljs` with no JVM, against a 4,096-byte
+`os/aiueos/scripts/verify-admissions.cljk` with no JVM, against a 4,096-byte
 software model of the BAR seeded from the fixture
 `os/aiueos/tests/rtl8125_handoff_model.c`:23-25 already uses.
 

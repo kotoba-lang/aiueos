@@ -453,7 +453,7 @@ the refusal moves to after the socket instead of before it.
 
 ## What the split did to the TCB record
 
-`src/aiueos/cloud_live.cljc` is pinned as `:remote-authority-live-gate` because
+`src/aiueos/cloud_live.cljk` is pinned as `:remote-authority-live-gate` because
 it carries the accept-any-peer trust manager `pin` needs, and a change that let
 `check` reach that code would remove the pinning `grant.cloud/admit-peer`
 exists for. That takes this inventory from 20 file entries to 21, asserted

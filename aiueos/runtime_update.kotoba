@@ -1,5 +1,5 @@
 ;; aiueos.runtime-update -- blue/green runtime update decisions as a pure
-;; Kotoba guest (oracle: src/aiueos/runtime_update.cljc).
+;; Kotoba guest (oracle: src/aiueos/runtime_update.cljk).
 ;;
 ;; Signed blue/green updates for the Kototama inference runtime: bundles are
 ;; pulled as immutable signed objects into an inactive runtime slot, probed

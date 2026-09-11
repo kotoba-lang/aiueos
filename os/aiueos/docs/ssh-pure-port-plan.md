@@ -19,7 +19,7 @@
    functions from those namespaces. The precedent is the C kernel's
    `aiueos_ssh_kex_h()` (`os/aiueos/kernel/main.c:386`), which mirrors
    `ssh.transport/h-transcript` and is proven equal to it by
-   `os/aiueos/scripts/smoke-qemu-ssh-kex.cljs`.
+   `os/aiueos/scripts/smoke-qemu-ssh-kex.cljk`.
 2. **Q9 whole-component migration.** The unit of migration is the whole SSH
    component: after the last tranche, every SSH *decision* (admission, framing
    validity, transcript assembly, key derivation, digest comparison, authorize,
@@ -36,7 +36,7 @@
    path — the measured precedent is `ecdsa-p256-sign.kotoba` (kernel object
    50864 bytes, ~52 KB region, `.o` file 52264 bytes / `.text` 51421 in this
    checkout), which needed the ADR-0105 recipe
-   (`os/aiueos/scripts/reproduce-ecdsa-sign-object.clj`: kernel-object entry +
+   (`os/aiueos/scripts/reproduce-ecdsa-sign-object.cljk`: kernel-object entry +
    250,000,000 fuel tier + `package-kernel` stub, pending an upstream pin
    advance).
 4. **Objects cannot call objects.** A Kotoba object is self-contained code
@@ -146,7 +146,7 @@ authority, what is MISSING, and the measured-size/fuel risk.
   suffices); verify the compiler-reported fuel ≤ 1,048,576. If the composite
   overshoots 32768, the fallback is the ADR-0105 recipe (kernel-object entry +
   fuel tier + `package-kernel` stub) — recorded here so nobody improvises it.
-- **Oracle already exists:** `os/aiueos/scripts/ssh-kex-kat.cljs` (landed with
+- **Oracle already exists:** `os/aiueos/scripts/ssh-kex-kat.cljk` (landed with
   this plan) computes H = `520a9ba70d60201af9365b0e53ffafa1a31446d17ec24315eb678a9b2e709833`
   and transcript length 173 from the org-ietf-ssh core for the exact fixed
   inputs the C KAT bakes (`main.c:390-398`) — the pure port gets the same
@@ -295,19 +295,19 @@ Common gate definitions:
 
 **T2 — ssh-kex-hash.kotoba (H)**
 - Depends: T1 (shared encodings), sha256.kotoba source.
-- Host KAT: **the** KAT — `os/aiueos/scripts/ssh-kex-kat.cljs` (landed with
+- Host KAT: **the** KAT — `os/aiueos/scripts/ssh-kex-kat.cljk` (landed with
   this plan) pins H = `520a9ba70d60201af9365b0e53ffafa1a31446d17ec24315eb678a9b2e709833`
   and transcript length 173 for the fixed inputs of `main.c:390-398` /
   ssh-v1.edn `:kat-h`. The object's boot KAT must hit the same values.
 - Compile gate: common; fuel ≤ 1,048,576 (SHA-256-dominated); region ≤ 32768
   (est. 19–21 KB; ADR-0105 recipe is the recorded fallback if exceeded).
 - QEMU gate: the existing `AIUEOS_SSH_KEX_H <hex>` marker emitted by the
-  object; `os/aiueos/scripts/smoke-qemu-ssh-kex.cljs` passes unchanged (same
+  object; `os/aiueos/scripts/smoke-qemu-ssh-kex.cljk` passes unchanged (same
   want[], new producer).
 - Physical gate: K16 PXE reboot emits the same H (extends the landed
   `:exchange-hash :landed` evidence to the pure object).
 - Existing tests: `org-ietf-ssh/test/ssh/transport_test.cljs`,
-  `os/aiueos/scripts/smoke-qemu-ssh-kex.cljs`, plus the new
+  `os/aiueos/scripts/smoke-qemu-ssh-kex.cljk`, plus the new
   `scripts/ssh-kex-kat.cljs`.
 
 **T3 — ssh-kex-reply.kotoba (K_S blob, signature blob, reply+NEWKEYS)**
@@ -318,12 +318,12 @@ Common gate definitions:
 - Compile gate: common (est. 3–5 KB; no new fuel tier — the 250M tier lives in
   the existing x25519/sign objects called from C).
 - QEMU gate: `AIUEOS_SSH_KEX_REPLY_OK` preserved;
-  `os/aiueos/scripts/smoke-qemu-ssh-real.cljs` passes — Node independently
+  `os/aiueos/scripts/smoke-qemu-ssh-real.cljk` passes — Node independently
   verifies the signature over H against the pinned host key.
 - Physical gate: external client completes the handshake after PXE boot
   (extends the landed ADR-0107 evidence).
 - Existing tests: `org-ietf-ssh/test/ssh/kex_test.cljs`,
-  `os/aiueos/scripts/smoke-qemu-ssh-real.cljs`.
+  `os/aiueos/scripts/smoke-qemu-ssh-real.cljk`.
 
 **T4 — ssh-session-keys.kotoba (RFC 4253 §7.2 ×4)**
 - Depends: T2 (K, H).
@@ -335,7 +335,7 @@ Common gate definitions:
   still completes; `AIUEOS_SSH_AUTH_OK` path unchanged.
 - Physical gate: login works on the metal after reboot.
 - Existing tests: `org-ietf-ssh/test/ssh/session_test.cljs`,
-  `os/aiueos/scripts/smoke-qemu-ssh-auth.cljs`.
+  `os/aiueos/scripts/smoke-qemu-ssh-auth.cljk`.
 
 **T5 — ssh-record.kotoba (aes128-gcm@openssh.com seal/open)**
 - Depends: T4 (keys), aes128-gcm.kotoba source (verbatim copy).
@@ -350,8 +350,8 @@ Common gate definitions:
 - Physical gate: the unprivileged Mac transport (`k16-ssh-transport.py` via
   OpenSSH ProxyCommand) completes a session.
 - Existing tests: `org-ietf-ssh/test/ssh/session_test.cljs`,
-  `os/aiueos/scripts/smoke-qemu-ssh-auth.cljs`,
-  `os/aiueos/scripts/smoke-qemu-ssh-session.cljs`.
+  `os/aiueos/scripts/smoke-qemu-ssh-auth.cljk`,
+  `os/aiueos/scripts/smoke-qemu-ssh-session.cljk`.
 
 **T6 — ssh-userauth-check.kotoba (publickey decision)**
 - Depends: T5 (requests arrive decrypted), existing ecdsa-p256.kotoba.
@@ -366,7 +366,7 @@ Common gate definitions:
   ssh-v1.edn `:blockers` (`:physical-negative-auth`) — wrong key and password
   refused on the metal. This tranche is where that gap closes.
 - Existing tests: `org-ietf-ssh/test/ssh/session_test.cljs`,
-  `os/aiueos/scripts/smoke-qemu-ssh-auth.cljs`.
+  `os/aiueos/scripts/smoke-qemu-ssh-auth.cljk`.
 
 **T7 — ssh-session-route.kotoba (channel open/exec/data plumbing)**
 - Depends: T5, T6.
@@ -378,7 +378,7 @@ Common gate definitions:
 - Physical gate: `runtime status` over the metal listener (extends the landed
   ADR-0109 evidence).
 - Existing tests: `org-ietf-ssh/test/ssh/session_channel_test.cljs`,
-  `os/aiueos/scripts/smoke-qemu-ssh-session.cljs`.
+  `os/aiueos/scripts/smoke-qemu-ssh-session.cljk`.
 
 **T8 — ssh-command-route.kotoba (the three commands) + whole-component check**
 - Depends: T7.
@@ -396,7 +396,7 @@ Common gate definitions:
   `kotoba check` and `amu check --jvm-free` run over the complete SSH object
   set; the C pump retains only recv/send/ACK/NVRAM/randomness mechanism.
 - Existing tests: `org-ietf-ssh/test/ssh/session_channel_test.cljs`,
-  `os/aiueos/scripts/smoke-qemu-ssh-session.cljs`, plus the physical
+  `os/aiueos/scripts/smoke-qemu-ssh-session.cljk`, plus the physical
   `runtime status` evidence recorded in ssh-v1.edn `:openssh-interop`.
 
 ## 5. What this plan deliberately does NOT do
@@ -414,7 +414,7 @@ Common gate definitions:
 ```
 # host oracle for the H KAT (requires org-ietf-ssh on the nbb classpath)
 ORG_IETF_SSH_SRC=<org-ietf-ssh checkout> \
-  nbb --classpath <org-ietf-ssh>/src os/aiueos/scripts/ssh-kex-kat.cljs
+  nbb --classpath <org-ietf-ssh>/src os/aiueos/scripts/ssh-kex-kat.cljk
 # expect: SSH_KEX_KAT_OK transcript-length got 173 want 173
 #         SSH_KEX_KAT_OK kat-h got 520a9ba70d60201af9365b0e53ffafa1a31446d17ec24315eb678a9b2e709833
 #         AIUEOS_SSH_KEX_KAT_PASS

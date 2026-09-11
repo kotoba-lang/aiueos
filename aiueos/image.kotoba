@@ -1,5 +1,5 @@
 ;; aiueos.image -- boot-input validation decisions as a pure Kotoba guest
-;; (oracle: src/aiueos/image.cljc).
+;; (oracle: src/aiueos/image.cljk).
 ;;
 ;; validate-boot-inputs! fails before packaging an initramfs which cannot
 ;; execute /init. The DECISION -- which missing or malformed input is a

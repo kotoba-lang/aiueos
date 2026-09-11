@@ -38,7 +38,7 @@
  :verification
  {:off-target :executed
   :mechanism :kir-execute-with-a-supplied-memory-image
-  :runner "os/aiueos/scripts/verify-admissions.cljs"
+  :runner "os/aiueos/scripts/verify-admissions.cljk"
   :host :nbb
   :concurrency :single-threaded-only
   :memory {:base 65536 :image-bytes 4096 :arena-offset 0}

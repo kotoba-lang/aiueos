@@ -14,7 +14,7 @@ lists it on `#session` / `#desktop`, and a deny grant answers **403** with
 Not executable, and stated here rather than at the end:
 
 - **This is not a second JS runtime.** The guest is the existing notes
-  fixture plus log_write Wasm. `examples/apps/notes.clj` is not the product
+  fixture plus log_write Wasm. `examples/apps/notes.cljk` is not the product
   face.
 - **POSIX `:fs/open` is not the store.** On-disk notes.edn still declares
   that import; the hosted allow path drops it. Local-disk-only write is P3

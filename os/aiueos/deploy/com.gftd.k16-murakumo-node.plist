@@ -84,7 +84,7 @@
     <key>AIUEOS_MURAKUMO_NODE_NAME</key><string>gmktec-k16-lan2</string>
     <key>AIUEOS_MURAKUMO_NODE_DID_FILE</key><string>/Users/junkawasaki/.gftd/k16-murakumo-node.did</string>
     <key>AIUEOS_MURAKUMO_NODE_KEY_FILE</key><string>/Users/junkawasaki/.gftd/k16-murakumo-node.pem</string>
-    <key>AIUEOS_MURAKUMO_CACAO_MINT</key><string>/Users/junkawasaki/github/com-junkawasaki/orgs/kotoba-lang/aiueos/os/aiueos/tools/k16-cacao-mint.cljs</string>
+    <key>AIUEOS_MURAKUMO_CACAO_MINT</key><string>/Users/junkawasaki/github/com-junkawasaki/orgs/kotoba-lang/aiueos/os/aiueos/tools/k16-cacao-mint.cljk</string>
     <!-- The mint's classpath. `text/src` joined it on 2026-09-09 because
        k16-cacao-mint.cljs moved from clojure.string to kotoba.lang.text
        (aiueos e4187d5, 07:19) and this file did not follow. The resident node

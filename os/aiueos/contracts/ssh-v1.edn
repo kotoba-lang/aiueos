@@ -101,8 +101,8 @@
    :state :physical-runtime-status-verified}
   :ssd-install-record
   {:schema "aiueos.provision.v1"
-   :written-by "os/aiueos/scripts/make-provision-record.cljs"
-   :placed-by "os/aiueos/scripts/install-to-disk.cljs"
+   :written-by "os/aiueos/scripts/make-provision-record.cljk"
+   :placed-by "os/aiueos/scripts/install-to-disk.cljk"
    :location :reserved-provision-partition
    :state :legacy-ed25519-record-not-consumed-by-current-p256-server
    :note "SSD install must migrate this record to the P-256 profile before it
@@ -140,7 +140,7 @@
  {:ecdsa-p256-sign
   {:object "os/aiueos/kotoba/ecdsa-p256-sign.kotoba"
    :vectors :rfc6979-p256-sha256          ; deterministic, so vectors are exact
-   :oracle "os/aiueos/scripts/ecdsa-sign-oracle.cljs"  ; RFC 6979 A.2.5, formula proved
+   :oracle "os/aiueos/scripts/ecdsa-sign-oracle.cljk"  ; RFC 6979 A.2.5, formula proved
    :reuses ["ecdsa-p256.kotoba P-256 field + scalar mult (copied, ADR-0030)"
             "hmac_sha256 (tls13.c) for the RFC 6979 nonce, in C"
             "sha256.kotoba"]

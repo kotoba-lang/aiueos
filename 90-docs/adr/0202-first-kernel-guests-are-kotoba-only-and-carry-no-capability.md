@@ -15,19 +15,19 @@ parity oracle:
 
 | guest | oracle | owns |
 |---|---|---|
-| `aiueos/topic.kotoba` | `src/aiueos/topic.cljc` | the whole topic bus: publish / latest / take-sample / pending / topic-count / tick / advance |
-| `aiueos/os_update.kotoba` | `src/aiueos/os_update.cljc` | health-status, boot-selection, non-regex manifest faults |
-| `aiueos/model_channel.kotoba` | `src/aiueos/model_channel.cljc` | continuity-errors (the four sequence-history rules), boot-decision |
-| `aiueos/runtime_update.kotoba` | `src/aiueos/runtime_update.cljc` | blue/green health-status, manifest faults incl. `:incompatible-runtime-abi` |
-| `aiueos/device_auth.kotoba` | `src/aiueos/device_auth.cljc` | the proof-problem chain: all sixteen refusal reasons, in the oracle's order |
-| `aiueos/vm.kotoba` | `src/aiueos/vm.cljc` | boot-plan validation (unknown arch / graphics / console, display-requires-graphics) |
-| `aiueos/hardware_qualification.kotoba` | `src/aiueos/hardware_qualification.cljc` | fail-closed receipt classification, destructive markers need explicit authority |
-| `aiueos/pid1.kotoba` | `src/aiueos/pid1.cljc` | the rdinit=/init argv0 contract, positional scan |
-| `aiueos/bare_metal.kotoba` | `src/aiueos/bare_metal.cljc` | P2 boot classification; the :host-fetch-does-not-count gate kept verbatim |
-| `aiueos/virtio.kotoba` | `src/aiueos/virtio.cljc` | interrupt-status bit decoding, device-id mapping, irq-line validation |
-| `aiueos/image.kotoba` | `src/aiueos/image.cljc` | boot-input refusal decisions (file existence / ELF checks stay in the host) |
-| `aiueos/compositor/ime.kotoba` | `src/aiueos/compositor/ime.cljc` | the romaji conversion core: 111-entry mora table split into 4 chunk maps (the 32-entry document-map limit), greedy longest-match conversion |
-| `aiueos/compositor/ime_key.kotoba` | `src/aiueos/compositor/ime.cljc` | the handle-key branch tree: bypass red, escape, backspace, space (kanji cycle / convert / kanji-absent), enter commit, compose |
+| `aiueos/topic.kotoba` | `src/aiueos/topic.cljk` | the whole topic bus: publish / latest / take-sample / pending / topic-count / tick / advance |
+| `aiueos/os_update.kotoba` | `src/aiueos/os_update.cljk` | health-status, boot-selection, non-regex manifest faults |
+| `aiueos/model_channel.kotoba` | `src/aiueos/model_channel.cljk` | continuity-errors (the four sequence-history rules), boot-decision |
+| `aiueos/runtime_update.kotoba` | `src/aiueos/runtime_update.cljk` | blue/green health-status, manifest faults incl. `:incompatible-runtime-abi` |
+| `aiueos/device_auth.kotoba` | `src/aiueos/device_auth.cljk` | the proof-problem chain: all sixteen refusal reasons, in the oracle's order |
+| `aiueos/vm.kotoba` | `src/aiueos/vm.cljk` | boot-plan validation (unknown arch / graphics / console, display-requires-graphics) |
+| `aiueos/hardware_qualification.kotoba` | `src/aiueos/hardware_qualification.cljk` | fail-closed receipt classification, destructive markers need explicit authority |
+| `aiueos/pid1.kotoba` | `src/aiueos/pid1.cljk` | the rdinit=/init argv0 contract, positional scan |
+| `aiueos/bare_metal.kotoba` | `src/aiueos/bare_metal.cljk` | P2 boot classification; the :host-fetch-does-not-count gate kept verbatim |
+| `aiueos/virtio.kotoba` | `src/aiueos/virtio.cljk` | interrupt-status bit decoding, device-id mapping, irq-line validation |
+| `aiueos/image.kotoba` | `src/aiueos/image.cljk` | boot-input refusal decisions (file existence / ELF checks stay in the host) |
+| `aiueos/compositor/ime.kotoba` | `src/aiueos/compositor/ime.cljk` | the romaji conversion core: 111-entry mora table split into 4 chunk maps (the 32-entry document-map limit), greedy longest-match conversion |
+| `aiueos/compositor/ime_key.kotoba` | `src/aiueos/compositor/ime.cljk` | the handle-key branch tree: bypass red, escape, backspace, space (kanji cycle / convert / kanji-absent), enter commit, compose |
 
 All thirteen compile (`amu compile --target wasm32-browser`), all pass
 `amu check`, none declares or calls a capability. The device-auth guest

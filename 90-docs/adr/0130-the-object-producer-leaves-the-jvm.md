@@ -107,7 +107,7 @@ time.
 
 ## Evidence
 
-`os/aiueos/scripts/verify-jvm-free-object-parity.cljs` compiles every kernel
+`os/aiueos/scripts/verify-jvm-free-object-parity.cljk` compiles every kernel
 source both ways in one pass and compares the two digests directly, so the
 answer never depends on a previously recorded run of the other route.
 

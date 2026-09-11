@@ -29,7 +29,7 @@
 ;; never scored as failure -- and the report refuses to produce a number at
 ;; all when given no evidence.
 {:format :aiueos.os-coverage/v1
- :measured-by "os/aiueos/scripts/os-coverage.cljs"
+ :measured-by "os/aiueos/scripts/os-coverage.cljk"
  :evidence-is :emitted-markers-in-a-real-boot-log
  :not-evidence :markers-present-in-source
 

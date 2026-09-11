@@ -115,7 +115,7 @@ transfers, the numbers should be re-measured per host with the tool.
 
 ## The tool
 
-`os/aiueos/scripts/measure-boot-flake-rate.cljs`. It exists because a retry
+`os/aiueos/scripts/measure-boot-flake-rate.cljk`. It exists because a retry
 budget nobody measured is not a measurement, and the next agent to change these
 numbers should change them against a file. Three exit codes, and the third is
 the point: `3` COULD-NOT-RUN when there is no image, no QEMU, no OVMF, or fewer

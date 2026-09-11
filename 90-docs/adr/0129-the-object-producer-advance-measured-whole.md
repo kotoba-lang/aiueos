@@ -27,7 +27,7 @@ sample never contained.
 
 ## What the whole inventory says
 
-`os/aiueos/scripts/measure-object-producer.cljs` compiles every committed
+`os/aiueos/scripts/measure-object-producer.cljk` compiles every committed
 object with a given compiler and compares the bytes. Against amu `0085e138`,
 with the same flags `reproduce-kotoba-kernel-object.sh` uses:
 

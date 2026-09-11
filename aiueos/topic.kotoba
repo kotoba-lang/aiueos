@@ -1,5 +1,5 @@
 ;; aiueos.topic -- the topic bus as a pure Kotoba guest (ADR-0002, ADR-2607022200)
-;; (oracle: src/aiueos/topic.cljc).
+;; (oracle: src/aiueos/topic.cljk).
 ;;
 ;; The oracle's design is already the guest's shape: the bus is an
 ;; immutable value and every operation is a pure (f bus ...) -> bus'. The

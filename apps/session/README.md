@@ -42,7 +42,7 @@ From a checkout that has `jp-go-digital-design-system`, `html`, and `css`:
 
 ```bash
 nbb --classpath "apps/session/src:<dds>/src:<dds>/resources:<html>/src:<css>/src" \
-  apps/session/generate.cljs -- --repo . --dds-css <dds>/resources/jp_go_dds/dds.css
+  apps/session/generate.cljk -- --repo . --dds-css <dds>/resources/jp_go_dds/dds.css
 ```
 
 `index.html` is generated. Do not hand-edit it.
@@ -59,14 +59,14 @@ clojure -M:compositor smoke  # named-partial desktop: same SPA + surfaces + virt
 clojure -M:compositor wm     # hosted WM: two stacked windows, z-order, DADS title bars
 clojure -M:compositor ime    # hosted IME: romaji→kana in the same document
 clojure -M:compositor kanji  # hosted IME: Space converts か→加
-nbb --classpath src scripts/compositor-guest.cljs guest-ime  # KERNEL.ELF Kotoba k+a→U+304B
-nbb --classpath src scripts/compositor-guest.cljs guest-wm   # KERNEL.ELF Kotoba two-surface z-hit
-nbb --classpath src scripts/compositor-guest.cljs guest-paint # KERNEL.ELF paints both rects in z-order
-nbb --classpath src scripts/compositor-guest.cljs guest-input # KERNEL.ELF virtio-keyboard used-ring event
-nbb --classpath src scripts/compositor-guest.cljs guest-gpu-two # KERNEL.ELF two virtio-gpu 2D resources
-nbb --classpath src scripts/compositor-guest.cljs guest-scanout-two # KERNEL.ELF scanout 1 bound to resource 2
-nbb --classpath src scripts/compositor-guest.cljs guest-broker # KERNEL.ELF Kotoba clipboard admit / picker refuse
-nbb --classpath src scripts/compositor-guest.cljs guest-session # KERNEL.ELF Kotoba packed front 2 restore
+nbb --classpath src scripts/compositor-guest.cljk guest-ime  # KERNEL.ELF Kotoba k+a→U+304B
+nbb --classpath src scripts/compositor-guest.cljk guest-wm   # KERNEL.ELF Kotoba two-surface z-hit
+nbb --classpath src scripts/compositor-guest.cljk guest-paint # KERNEL.ELF paints both rects in z-order
+nbb --classpath src scripts/compositor-guest.cljk guest-input # KERNEL.ELF virtio-keyboard used-ring event
+nbb --classpath src scripts/compositor-guest.cljk guest-gpu-two # KERNEL.ELF two virtio-gpu 2D resources
+nbb --classpath src scripts/compositor-guest.cljk guest-scanout-two # KERNEL.ELF scanout 1 bound to resource 2
+nbb --classpath src scripts/compositor-guest.cljk guest-broker # KERNEL.ELF Kotoba clipboard admit / picker refuse
+nbb --classpath src scripts/compositor-guest.cljk guest-session # KERNEL.ELF Kotoba packed front 2 restore
 ```
 
 From the superproject, the generated document can also be rendered by the

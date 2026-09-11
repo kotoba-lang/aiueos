@@ -269,7 +269,7 @@ declares no `:expect-memory` and no floor.
 
 ### A second implementation, on the JVM
 
-`test/aiueos/sha256_stream_parity_test.clj` re-derives **every** digest the
+`test/aiueos/sha256_stream_parity_test.cljk` re-derives **every** digest the
 three contracts assert, from the message each contract describes, using
 `sha2.core` from `kotoba-lang/org-nist-sha2` — a pure `.cljc` SHA-256 sharing
 no code, no author and no representation with `aiueos.lib.sha256-stream`.

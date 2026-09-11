@@ -66,7 +66,7 @@ harnesses that do not build at all, nothing was checked but existence.
 
 **A harness that boots an image must refuse to boot one it cannot attribute.**
 
-`os/aiueos/scripts/image-freshness.cljs` is the attribution. The builder runs
+`os/aiueos/scripts/image-freshness.cljk` is the attribution. The builder runs
 `record` immediately after producing the artifacts; the boot harness runs
 `assert` immediately before QEMU. The receipt carries two things, and both are
 compared:
@@ -111,7 +111,7 @@ receipt would put every downstream assert into could-not-run, which is the state
 this file exists to make impossible. `build-uefi.sh` refuses without it.
 
 **The remaining harnesses are written down, not forgotten.**
-`os/aiueos/scripts/verify-smoke-freshness.cljs` classifies all 42
+`os/aiueos/scripts/verify-smoke-freshness.cljk` classifies all 42
 `smoke-qemu-*` scripts. 30 boot an image: 15 are attested (4 assert directly, 11
 inherit it by delegating to `smoke-qemu-uefi.sh`), and 15 are not. Those 15 are
 recorded in `os/aiueos/contracts/smoke-freshness-baseline.edn`, the gate refuses

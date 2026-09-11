@@ -14,10 +14,10 @@
             "a Kotoba/Amu-produced PE32+ loader; its absence is the refusal"
             "AIUEOS_K16_LINK_LIST_OUT"
             "write the ordinary link's exact object list and change nothing else"}
-           :entry-point "os/aiueos/scripts/build-k16-pure-native.cljs"
+           :entry-point "os/aiueos/scripts/build-k16-pure-native.cljk"
            :bootable-invocation
-           "nbb os/aiueos/scripts/build-k16-pure-native.cljs --compiler /path/to/pinned-amu"
-           :gate "os/aiueos/scripts/k16-pure-native-gate.cljs"
+           "nbb os/aiueos/scripts/build-k16-pure-native.cljk --compiler /path/to/pinned-amu"
+           :gate "os/aiueos/scripts/k16-pure-native-gate.cljk"
            :provenance "os/aiueos/kotoba/provenance.edn"
            :artifacts {:kernel "aiueos-k16-pure-native-kernel.elf"
                        :link-list "aiueos-k16-pure-native-link-list.txt"
@@ -64,10 +64,10 @@
    :condition "The pure-native build FAILS if any C/ASM-derived object or
                unknown ELF enters the final link."
    :status :met
-   :evidence "os/aiueos/scripts/k16-pure-native-gate.cljs, wired into
+   :evidence "os/aiueos/scripts/k16-pure-native-gate.cljk, wired into
               build-uefi.sh under AIUEOS_K16_PURE_NATIVE=1 before zig ld.lld;
               shown in both directions by
-              test/aiueos/k16_pure_native_gate_test.clj."}]
+              test/aiueos/k16_pure_native_gate_test.cljk."}]
 
  ;; --- the receipt each object must carry ---------------------------------
  ;;

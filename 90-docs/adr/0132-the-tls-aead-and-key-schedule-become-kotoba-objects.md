@@ -125,7 +125,7 @@ not use them.
 
 ```
 node --stack-size=60000 nbb --classpath ... \
-  os/aiueos/scripts/verify-admissions.cljs os/aiueos/contracts/aes128-gcm-v1.edn
+  os/aiueos/scripts/verify-admissions.cljk os/aiueos/contracts/aes128-gcm-v1.edn
 CONTRACT :aiueos.aes128-gcm/v1 vectors=15 traps=1 memory=16
          observed=0,1,2,3,4,5 ms=586752
 ```

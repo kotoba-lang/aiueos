@@ -66,7 +66,7 @@ was made.
 ## Decision
 
 `os/aiueos/native/dequant-kquant-probe.kotoba` and
-`os/aiueos/scripts/smoke-qemu-dequant-kquant.cljs`, siblings of the Q8_0 pair
+`os/aiueos/scripts/smoke-qemu-dequant-kquant.cljk`, siblings of the Q8_0 pair
 and following ADR 0155's three outcomes (a disagreement is exit 1, an
 unanswerable question is exit 3, a stale artifact is exit 4) and its freshness
 receipt before every boot.

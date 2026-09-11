@@ -6,7 +6,7 @@
 ## Context
 
 `os/aiueos/uefi/main.c` is 1,214 lines of C and it is the whole of K16's
-`BOOTX64.EFI`. The K16 pure-native gate (`os/aiueos/scripts/k16-pure-native-gate.cljs`,
+`BOOTX64.EFI`. The K16 pure-native gate (`os/aiueos/scripts/k16-pure-native-gate.cljk`,
 ADR-0131) refuses the profile on exactly that file:
 
 ```
@@ -65,7 +65,7 @@ a caller.
 
 ## Evidence
 
-`os/aiueos/scripts/smoke-qemu-uefi-loader.cljs`, QEMU 10.1 with OVMF
+`os/aiueos/scripts/smoke-qemu-uefi-loader.cljk`, QEMU 10.1 with OVMF
 (`edk2-x86_64-code.fd`), q35, TCG, the image on a `fat:rw:` ESP.
 
 ```

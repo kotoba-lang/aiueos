@@ -69,7 +69,7 @@
  ;; flags are DIFFERENT enumerations that its loader assigns across without a
  ;; conversion. This object reads the GGUF value, which is what the file
  ;; carries. These vectors set slot 44 to 0; the token_type arms are exercised
- ;; in test/aiueos/qwen35_tokenizer_parity_test.clj.
+ ;; in test/aiueos/qwen35_tokenizer_parity_test.cljk.
  :token-type {:header-slot 44 :absent 0
               3 :renders-nothing 5 :renders-nothing
               4 :verbatim :otherwise :byte-decoded}
@@ -77,7 +77,7 @@
  :verification
  {:off-target :executed
   :mechanism :kir-execute-with-a-supplied-memory-image
-  :runner "os/aiueos/scripts/verify-admissions.cljs"
+  :runner "os/aiueos/scripts/verify-admissions.cljk"
   :host :nbb
   :node-stack-size 60000
   :memory {:base 65536 :image-bytes 19584

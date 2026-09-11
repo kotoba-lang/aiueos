@@ -147,7 +147,7 @@ the tree, and proving it by recompiling at that revision. It does not mean
 rebuilding at whatever is current.** The rebuild is reverted; the measurement,
 the tooling and the manifest shape stay.
 
-1. `os/aiueos/scripts/reproduce-kotoba-objects.cljs` is the one driver.
+1. `os/aiueos/scripts/reproduce-kotoba-objects.cljk` is the one driver.
    `--git-resolve` compiles each object at the revision **its own receipt
    records**, resolved from git by tools.deps, so no one needs that checkout on
    disk and the driver cannot quietly answer about a different compiler. Exit 0

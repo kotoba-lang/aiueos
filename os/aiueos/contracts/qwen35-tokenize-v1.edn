@@ -118,13 +118,13 @@
  :verification
  {:off-target :executed
   :mechanism :kir-execute-with-a-supplied-memory-image
-  :runner "os/aiueos/scripts/verify-admissions.cljs"
+  :runner "os/aiueos/scripts/verify-admissions.cljk"
   :host :nbb
   :node-stack-size 60000
   ;; The same mini vocabulary the index-build contract uses, and the same
   ;; reason: there is no GGUF on the machine that wrote this. The vectors that
   ;; matter for AGREEMENT WITH llama.cpp are in
-  ;; test/aiueos/qwen35_tokenizer_parity_test.clj, which trains a larger
+  ;; test/aiueos/qwen35_tokenizer_parity_test.cljk, which trains a larger
   ;; fixture and compares against a transcription of `llm_tokenizer_bpe` and
   ;; against java.util.regex. These vectors are the reason codes and a handful
   ;; of ids whose derivation is short enough to state.

@@ -125,7 +125,7 @@ available.** Measured 2026-09-02 on the workstation this ran on: no
 llama.cpp` names a directory that does not exist), no `.gguf` over 10 MB
 anywhere under `/Users` or `/Volumes`, and no ollama blobs. There are no
 golden token ids from the reference implementation, for this or any other Qwen
-vocabulary, and `test/aiueos/qwen35_tokenizer_parity_test.clj` says so in its
+vocabulary, and `test/aiueos/qwen35_tokenizer_parity_test.cljk` says so in its
 first paragraph rather than presenting its own transcription as one.
 
 The two portable tokenizers in this workspace were read and are **not** used:
@@ -152,7 +152,7 @@ What the parity test has instead, in descending order of independence:
 
 ### JVM-free vectors
 
-Three contracts through `os/aiueos/scripts/verify-admissions.cljs`, in nbb,
+Three contracts through `os/aiueos/scripts/verify-admissions.cljk`, in nbb,
 with no JVM in the run:
 
 ```

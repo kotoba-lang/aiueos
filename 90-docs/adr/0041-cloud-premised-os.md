@@ -43,7 +43,7 @@ removable boot is proved by transport equivalence — the same image booted over
 `disk` and `usb` must produce byte-identical aiueos evidence (ADR-0019, 33
 identical lines, `PciRoot(0x0)/Pci(0x2,0x0)/USB(0x0,0x0)`). That evidence is
 **OVMF-under-QEMU only**; no physical machine has booted this image. And there
-is no install path: `os/aiueos/scripts/flash-usb.cljs` writes a release image
+is no install path: `os/aiueos/scripts/flash-usb.cljk` writes a release image
 to a *removable* device and refuses internal disks by design. Today "boot
 install" means "flash a stick and boot it", not "install onto the machine".
 

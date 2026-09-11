@@ -83,7 +83,7 @@ object ever emitted.
 
 ### The objects on a CPU (QEMU 10.1, OVMF `edk2-x86_64-code.fd`)
 
-`nbb os/aiueos/scripts/smoke-qemu-qwen35-admission.cljs`, serial verbatim:
+`nbb os/aiueos/scripts/smoke-qemu-qwen35-admission.cljk`, serial verbatim:
 
 ```
 AIUEOS_PAGING_OK cr3-owned wx-v1 nx-wp

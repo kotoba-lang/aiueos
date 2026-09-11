@@ -1,8 +1,8 @@
 ;; SCOPED receipt, and the scope is the point (ADR-0141). Produced by
-;; `os/aiueos/scripts/verify-jvm-free-object-parity.cljs` run against a root
+;; `os/aiueos/scripts/verify-jvm-free-object-parity.cljk` run against a root
 ;; containing only the seven sources below and their objects:
 ;;
-;;   nbb os/aiueos/scripts/verify-jvm-free-object-parity.cljs <that root> \
+;;   nbb os/aiueos/scripts/verify-jvm-free-object-parity.cljk <that root> \
 ;;     --compiler <amu bb51dc14 + kotoba-native 8a8c510>
 ;;
 ;; and its output, verbatim:

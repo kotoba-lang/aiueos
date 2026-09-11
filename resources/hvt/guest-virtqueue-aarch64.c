@@ -12,7 +12,7 @@
  *
  * Freestanding: no libc, entry is _start, all state is on the stack (the tender
  * sets SP to the top of guest RAM). Built with the V1 ELF loader's linker
- * script; see scripts/build-hvt-guest.cljs.
+ * script; see scripts/build-hvt-guest.cljk.
  */
 typedef unsigned int   u32;
 typedef unsigned short u16;

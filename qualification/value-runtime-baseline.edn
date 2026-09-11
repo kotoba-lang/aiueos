@@ -112,7 +112,7 @@
                   ["os/aiueos/kotoba/value-runtime-syscall-plan.kotoba"
                    "os/aiueos/contracts/value-runtime-syscall-plan-v1.edn"]}],
                 :moved-to
-                {:runner "os/aiueos/scripts/verify-admissions.cljs",
+                {:runner "os/aiueos/scripts/verify-admissions.cljk",
                  :host :nbb,
                  :objects
                  ["cid-v1-admit"

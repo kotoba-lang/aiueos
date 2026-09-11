@@ -1,5 +1,5 @@
 ;; aiueos.os-update -- local A/B update decisions as a pure Kotoba guest
-;; (oracle: src/aiueos/os_update.cljc).
+;; (oracle: src/aiueos/os_update.cljk).
 ;;
 ;; The oracle decides when a signed update may be pulled, staged, tried and
 ;; committed; network and block I/O are provider mechanisms. The guest owns

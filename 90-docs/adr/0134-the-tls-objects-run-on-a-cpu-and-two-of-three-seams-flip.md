@@ -147,7 +147,7 @@ same way.  **Raising the tier is therefore NOT the fix, and no
 billion function calls for four SHA-256 compressions is not a bound problem.
 
 The object stays out of the link.  An object nothing may call has no business
-adding 13 KiB to an image, and `test/aiueos/kotoba_object_reachability_test.clj`
+adding 13 KiB to an image, and `test/aiueos/kotoba_object_reachability_test.cljk`
 carries the measurement as its `not-built-here` reason so that the next reader
 finds the number rather than the word "pending".
 

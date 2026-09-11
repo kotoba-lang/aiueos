@@ -116,7 +116,7 @@ Looking for the shape in the artifacts rather than in the compiler found it in
 the tree, today, in objects nobody had suspected:
 
 ```
-$ nbb os/aiueos/scripts/verify-loop-parameter-homes.cljs
+$ nbb os/aiueos/scripts/verify-loop-parameter-homes.cljk
 KNOWN-STALE-PARAMETER-HOME  cid-v1-admit.o             function=0x1971 slot=0x60(%rsp) …
 KNOWN-STALE-PARAMETER-HOME  hkdf-sha256.o              function=0x18ea slot=0x60(%rsp) …
 KNOWN-STALE-PARAMETER-HOME  qwen35-vocab-index-build.o function=0xcfb  slot=0x20(%rsp) …
@@ -160,7 +160,7 @@ findings=0`.
 
 ## The check that found them
 
-`os/aiueos/scripts/verify-loop-parameter-homes.cljs` reads the emitted objects,
+`os/aiueos/scripts/verify-loop-parameter-homes.cljk` reads the emitted objects,
 not the sources — nothing in `.kotoba` says where a spill goes — and refuses an
 object whose self-tail loop reloads a frame slot written exactly once, outside
 the loop. Its baseline is `os/aiueos/contracts/loop-parameter-home-baseline.edn`,

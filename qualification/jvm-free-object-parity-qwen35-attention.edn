@@ -3,7 +3,7 @@
 ;; as `jvm-free-object-parity.edn`, run against a root containing only these
 ;; two sources and their objects:
 ;;
-;;   nbb os/aiueos/scripts/verify-jvm-free-object-parity.cljs <that root> \
+;;   nbb os/aiueos/scripts/verify-jvm-free-object-parity.cljk <that root> \
 ;;     --compiler <amu with kotoba-native 2c4d6c3>
 ;;   SCANNED 2  MATCH 2  DIFFERS 0  COULD-NOT-RUN 0  FAILED 0  REACHED-A-JVM 0
 ;;
@@ -19,7 +19,7 @@
 ;;
 ;; IT SAYS NOTHING ABOUT WHETHER THEY COMPUTE THE RIGHT ANSWER. Two things do:
 ;; `contracts/qwen35-{attention,recurrent-step}-v1.edn` through
-;; `os/aiueos/scripts/verify-admissions.cljs` -- 29 vectors, 7 memory
+;; `os/aiueos/scripts/verify-admissions.cljk` -- 29 vectors, 7 memory
 ;; assertions -- against a ClojureScript re-derivation of the C; and the QEMU
 ;; boot self-test `QWEN-PARITY`, which is the EMITTED objects against the
 ;; COMPILED C on an x86-64 CPU. Only the second covers the backend, and only

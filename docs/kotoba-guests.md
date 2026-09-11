@@ -8,19 +8,19 @@ is the decision record; this page is the working reference.
 
 | guest | oracle (.cljc) | surface |
 |---|---|---|
-| `aiueos/topic.kotoba` | `src/aiueos/topic.cljc` | `empty-bus` `publish` `latest` `take-sample` `pending` `topic-count` `tick` `advance` |
-| `aiueos/os_update.kotoba` | `src/aiueos/os_update.cljc` | `health-status` `boot-selection` `manifest-local-errors` `artifact-set-error?` |
-| `aiueos/model_channel.kotoba` | `src/aiueos/model_channel.cljc` | `continuity-errors` `boot-decision` |
-| `aiueos/runtime_update.kotoba` | `src/aiueos/runtime_update.cljc` | `health-status` `manifest-local-errors` `artifact-set-error?` (blue/green) |
-| `aiueos/device_auth.kotoba` | `src/aiueos/device_auth.cljc` | `proof-problem` -- the sixteen-refusal decision chain |
-| `aiueos/vm.kotoba` | `src/aiueos/vm.cljc` | `plan-errors` -- boot-plan validation decisions |
-| `aiueos/hardware_qualification.kotoba` | `src/aiueos/hardware_qualification.cljc` | `qualify` -- fail-closed receipt classification |
-| `aiueos/pid1.kotoba` | `src/aiueos/pid1.cljc` | `pid1-argv0?` -- the rdinit=/init contract |
-| `aiueos/bare_metal.kotoba` | `src/aiueos/bare_metal.cljc` | `p2-result` -- P2 boot classification |
-| `aiueos/virtio.kotoba` | `src/aiueos/virtio.cljc` | interrupt-status decoding, device-type mapping, irq-line validation |
-| `aiueos/image.kotoba` | `src/aiueos/image.cljc` | `boot-input-errors` -- which missing/malformed initramfs input is a refusal |
-| `aiueos/compositor/ime.kotoba` | `src/aiueos/compositor/ime.cljc` | `lookup` + `convert-buf` -- the romaji conversion core (111-entry mora table in 4 chunk maps) |
-| `aiueos/compositor/ime_key.kotoba` | `src/aiueos/compositor/ime.cljc` | `handle-key` -- the full branch tree: bypass / escape / backspace / space / enter / compose |
+| `aiueos/topic.kotoba` | `src/aiueos/topic.cljk` | `empty-bus` `publish` `latest` `take-sample` `pending` `topic-count` `tick` `advance` |
+| `aiueos/os_update.kotoba` | `src/aiueos/os_update.cljk` | `health-status` `boot-selection` `manifest-local-errors` `artifact-set-error?` |
+| `aiueos/model_channel.kotoba` | `src/aiueos/model_channel.cljk` | `continuity-errors` `boot-decision` |
+| `aiueos/runtime_update.kotoba` | `src/aiueos/runtime_update.cljk` | `health-status` `manifest-local-errors` `artifact-set-error?` (blue/green) |
+| `aiueos/device_auth.kotoba` | `src/aiueos/device_auth.cljk` | `proof-problem` -- the sixteen-refusal decision chain |
+| `aiueos/vm.kotoba` | `src/aiueos/vm.cljk` | `plan-errors` -- boot-plan validation decisions |
+| `aiueos/hardware_qualification.kotoba` | `src/aiueos/hardware_qualification.cljk` | `qualify` -- fail-closed receipt classification |
+| `aiueos/pid1.kotoba` | `src/aiueos/pid1.cljk` | `pid1-argv0?` -- the rdinit=/init contract |
+| `aiueos/bare_metal.kotoba` | `src/aiueos/bare_metal.cljk` | `p2-result` -- P2 boot classification |
+| `aiueos/virtio.kotoba` | `src/aiueos/virtio.cljk` | interrupt-status decoding, device-type mapping, irq-line validation |
+| `aiueos/image.kotoba` | `src/aiueos/image.cljk` | `boot-input-errors` -- which missing/malformed initramfs input is a refusal |
+| `aiueos/compositor/ime.kotoba` | `src/aiueos/compositor/ime.cljk` | `lookup` + `convert-buf` -- the romaji conversion core (111-entry mora table in 4 chunk maps) |
+| `aiueos/compositor/ime_key.kotoba` | `src/aiueos/compositor/ime.cljk` | `handle-key` -- the full branch tree: bypass / escape / backspace / space / enter / compose |
 
 ## Building
 

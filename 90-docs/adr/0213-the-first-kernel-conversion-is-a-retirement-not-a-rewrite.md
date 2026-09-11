@@ -43,7 +43,7 @@ Identical outside the two variable spans the skeleton leaves as `'0'`
 (`boot=` at 26..41, `mac=` at 47..63). Same length, same banner, same
 separators, same suffix, same field offsets.
 
-`os/aiueos/scripts/relay-protocol-c-kotoba-parity.cljs` is that comparison as a
+`os/aiueos/scripts/relay-protocol-c-kotoba-parity.cljk` is that comparison as a
 gate, registered as `:relay-parity`. It proves its own discrimination on every
 run: flipping one byte of the fixed `profile=` suffix must make it disagree,
 and changing a byte inside `boot=` must not.

@@ -16,7 +16,7 @@
 
  ;; ---------------------------------------------------------------- task 1
  :verify-store-tautology/status :blocked
- :verify-store-tautology/oracle "os/aiueos/tools/verify-store-tautology.cljs (nbb) stays the oracle"
+ :verify-store-tautology/oracle "os/aiueos/tools/verify-store-tautology.cljk (nbb) stays the oracle"
  :verify-store-tautology/oracle-measured
  {:current-c878db8 {:exit 0 :scanned-files 10 :scanned-forms 230 :findings 0}
   :old-851bae938fd5 {:exit 1 :scanned-files 10 :scanned-forms 230 :findings 129}
