@@ -93,7 +93,7 @@ command -v nbb >/dev/null 2>&1 || {
   exit 3
 }
 freshness_status=0
-nbb "$aiueos/scripts/image-freshness.cljs" assert \
+nbb "$aiueos/scripts/image-freshness.cljk" assert \
   --receipt "$build/image-receipt.edn" --root "$root" || freshness_status=$?
 [ "$freshness_status" = 0 ] || exit "$freshness_status"
 # build-uefi.sh does NOT make this one -- smoke-qemu-uefi.sh does, and only

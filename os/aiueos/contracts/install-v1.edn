@@ -152,7 +152,7 @@
                       ;; ahead of time, or run BY install-live.cljs on a stick
                       ;; that carries none (ADR-0210).
                       :entry-points ["operator runs it"
-                                     "install-live.cljs when install-intent.json is absent"]
+                                     "install-live.cljk when install-intent.json is absent"]
                       :probe :read-only-lsblk-nodeps
                       :fake-probe :two-key-gated ; NODE_ENV=test AND AIUEOS_GUIDED_ALLOW_FAKE_PROBE=1
                       :refuses [:answers-schema-unknown
@@ -244,7 +244,7 @@
   :guided-at-the-machine
   {:built-with "--guided"
    :payload-carries :no-intent
-   :install "install-live.cljs finds no intent and runs guided-install.cljs
+   :install "install-live.cljk finds no intent and runs guided-install.cljk
              with the console attached; the intent it writes goes through the
              SAME fresh-probe verification and the same device-level guards.
              An intent authored ten seconds ago is not more trusted than one
@@ -326,7 +326,7 @@
                                     Not yet exercised against a live block
                                     device on the install path."}
   :i3-qemu-install {:state :green-qemu
-                    :evidence "smoke-qemu-install.cljs (2026-08-25): one gate,
+                    :evidence "smoke-qemu-install.cljk (2026-08-25): one gate,
                                four boots asserted together -- USB-booted live
                                installer installs to a blank NVMe (intent
                                admitted, readback verified), the NVMe boots
@@ -347,8 +347,8 @@
                        provisioning half is landed and measured: the installer
                        generates a per-device ed25519 host key on the target
                        and places the intent's authorized key, proved by
-                       test-provision-record.cljs (RFC 8032 vector),
-                       test-install-chain.cljs (22/22) and the QEMU install
+                       test-provision-record.cljk (RFC 8032 vector),
+                       test-install-chain.cljk (22/22) and the QEMU install
                        gate. I4 stays RED: no sshd, no served handshake. The
                        four blockers (no TCP passive-open, RX depth 1, no
                        entropy/sign primitive, no post-evidence service loop)
@@ -356,7 +356,7 @@
                        are named in ssh-v1.edn."}
   :i5-repeat-safety {:state :green-qemu
                      :evidence "fake devices in :install-chain-test, and the
-                                full chain in smoke-qemu-install.cljs boot4:
+                                full chain in smoke-qemu-install.cljk boot4:
                                 unattended re-boot of the same USB against its
                                 own installed target refuses (exit 4,
                                 existing-install) with the disk byte-identical

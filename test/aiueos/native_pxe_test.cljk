@@ -110,9 +110,16 @@
 (def physical-relay-build
   (slurp (io/file "os/aiueos/scripts/build-physical-relay-pxe.sh")))
 (def relay-protocol
-  (slurp (io/file "os/aiueos/kernel/relay_protocol.c")))
+  ;; The wire lines are Kotoba kernel objects since ADR-0215 (they were
+  ;; kernel/relay_protocol.c). Both sources, so the markers below are looked
+  ;; for in the objects pci.c actually links.
+  (str (slurp (io/file "os/aiueos/kotoba/relay-hello-payload.kotoba"))
+       (slurp (io/file "os/aiueos/kotoba/relay-ack-payload-valid.kotoba"))))
 (def relay-protocol-smoke
-  (slurp (io/file "os/aiueos/scripts/smoke-relay-protocol.sh")))
+  ;; The C model test (tests/relay_protocol_model.c + smoke-relay-protocol.sh)
+  ;; went with the C. The ACK admission is now exercised by this contract in
+  ;; the KIR oracle (verify-admissions.cljk).
+  (slurp (io/file "os/aiueos/contracts/relay-ack-valid-v1.edn")))
 (def physical-relay-smoke
   (slurp (io/file "os/aiueos/scripts/smoke-qemu-physical-relay.sh")))
 (def persistent-build
@@ -870,7 +877,7 @@
 (deftest k16-relay-round-trip-is-request-bound-and-not-enrollment
   (testing "the physical-only profile binds a UDP ACK to this boot's nonce"
     (doseq [marker ["AIUEOS_NODE_HELLO_V1" "AIUEOS_NODE_ACK_V1"
-                    "aiueos_relay_ack_payload_valid"]]
+                    "aiueos-relay-ack-payload-valid"]]
       (is (str/includes? relay-protocol marker)))
     (doseq [marker ["rtl8125_relay_ack_valid"
                     "aiueos_rtl8125_relay_qualification"]]
@@ -882,7 +889,7 @@
     (is (str/includes? physical-relay-build
                        "AIUEOS_PHYSICAL_RELAY_QUALIFICATION=1"))
     (is (str/includes? relay-protocol-smoke
-                       "relay_protocol_model.c"))
+                       ":ack-wrong-nonce-low-nibble"))
     (is (str/includes? physical-relay-smoke
                        "build-physical-relay-pxe.sh")))
   (testing "the evidence contract refuses to call a diagnostic ACK fleet participation"

@@ -101,8 +101,8 @@ This stick boots aiueos directly and carries everything an INSTALL needs
 EXCEPT the one thing that says which machine and which disk. There is no
 INTENT.JSN here on purpose: this stick asks.
 
-Booted as the live installer, /init hands over to install-live.cljs, which
-finds no intent and runs guided-install.cljs -- a screen sequence (network,
+Booted as the live installer, /init hands over to install-live.cljk, which
+finds no intent and runs guided-install.cljk -- a screen sequence (network,
 storage, identity, ssh, confirm) that ends by writing an intent into the
 tmpfs. Every guard downstream is unchanged: the intent is verified against a
 fresh probe, the device-level refusals in install.mjs all still run, and the
@@ -118,9 +118,9 @@ by hand:
   MEDIA=/path-to-this-partition
   mkdir -p /tmp/aiueos && cd /tmp/aiueos
   tar xzf "$MEDIA"/INSTALL.TGZ && cd aiueos-installer
-  nbb guided-install.cljs --release-receipt ./release-receipt.json \
+  nbb guided-install.cljk --release-receipt ./release-receipt.json \
     --out-intent ./install-intent.json --out-answers ./install-answers.json
-  nbb install-to-disk.cljs --intent ./install-intent.json \
+  nbb install-to-disk.cljk --intent ./install-intent.json \
     --device /dev/nvmeXn1 --image "$MEDIA"/RELEASE.IMG \
     --receipt ./release-receipt.json
 
@@ -422,9 +422,9 @@ def make_bundle_tgz(installer_dir, scripts_dir, intent_bytes, receipt_bytes, nod
     optional in practice: on 2026-09-09 this repository's tooling moved from
     clojure.string to kotoba.lang.text, the fix was written into nbb.edn, and
     nbb.edn is not on the USB. Measured 2026-09-10 on main: /init hands over to
-    install-live.cljs and it dies with `Could not find namespace:
-    kotoba.lang.text` before doing anything -- as do install-to-disk.cljs,
-    install-intent.cljs and make-provision-record.cljs, the whole chain. The
+    install-live.cljk and it dies with `Could not find namespace:
+    kotoba.lang.text` before doing anything -- as do install-to-disk.cljk,
+    install-intent.cljk and make-provision-record.cljk, the whole chain. The
     node bundle beside this one already carried a cp/ root and already passed
     --classpath; only the install bundle did not.
 
@@ -453,19 +453,28 @@ def make_bundle_tgz(installer_dir, scripts_dir, intent_bytes, receipt_bytes, nod
         for path in sorted(live_dir.iterdir()):
             if path.is_file():
                 add(path.name, path.read_bytes(), 0o644)
-    for name in ("install-intent.cljs", "install-to-disk.cljs",
-                 "make-provision-record.cljs"):
+    for name in ("install-intent.cljk", "install-to-disk.cljk",
+                 "make-provision-record.cljk"):
         add(name, (Path(scripts_dir) / name).read_bytes(), 0o644)
     for src in classpath_dirs:
         base = Path(src)
-        sources = sorted(base.rglob("*.cljc")) + sorted(base.rglob("*.cljs"))
+        # .cljk since the 2026-09-11 rename (root ADR adr-2609111500): every
+        # Clojure-shaped source in the workspace carries that extension now,
+        # and the scripts the bundle carries are .cljk too. The nbb tree given
+        # as --nbb-dir must therefore be the org-babashka-nbb fork, which is
+        # the only nbb whose classpath search resolves .cljk; stock nbb loads
+        # the entry script and then fails on its first require, which is
+        # exactly the ADR-0209 shape. The old extensions stay for a root that
+        # still has them.
+        sources = (sorted(base.rglob("*.cljk")) + sorted(base.rglob("*.cljc"))
+                   + sorted(base.rglob("*.cljs")))
         # A root that contributed nothing must not look like a root nobody
         # asked for. Measured while writing the test for this very function: a
         # misquoted argument passed one path that did not exist, rglob returned
         # empty, the bundle was produced clean, and the scripts on it could not
         # load. The build was green and the stick was dead.
         if not sources:
-            raise ValueError("classpath root carries no .cljc/.cljs sources: " + str(src))
+            raise ValueError("classpath root carries no .cljk/.cljc/.cljs sources: " + str(src))
         for path in sources:
             add("cp/" + path.relative_to(base).as_posix(), path.read_bytes(), 0o644)
     # A guided stick carries no intent: the bundle must not contain one
@@ -530,11 +539,12 @@ def make_node_bundle_tgz(scripts_dir, classpath_dirs, node_binary, nbb_dir):
     def add(name, data, mode):
         entries.append(("aiueos-node/" + name, data, mode))
 
-    for name in ("node-boot.cljs", "device-attest-agent.cljs"):
+    for name in ("node-boot.cljk", "device-attest-agent.cljk"):
         add(name, (Path(scripts_dir) / name).read_bytes(), 0o644)
     for src in classpath_dirs:
         base = Path(src)
-        for path in sorted(base.rglob("*.cljc")) + sorted(base.rglob("*.cljs")):
+        for path in (sorted(base.rglob("*.cljk")) + sorted(base.rglob("*.cljc"))
+                     + sorted(base.rglob("*.cljs"))):
             add("cp/" + path.relative_to(base).as_posix(), path.read_bytes(), 0o644)
     if node_binary:
         add("node-linux-x64", Path(node_binary).read_bytes(), 0o755)
@@ -945,7 +955,7 @@ def main():
                         "--intent / --guided.")
     b.add_argument("--guided", action="store_true",
                    help="build a stick that carries NO intent and asks at the "
-                        "machine (guided-install.cljs, ADR-0208/0210).")
+                        "machine (guided-install.cljk, ADR-0208/0210).")
     b.add_argument("--installer-dir", required=True)
     b.add_argument("--classpath", action="append",
                    help="a source root the bundled .cljs require (repeatable): "

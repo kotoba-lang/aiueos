@@ -31,7 +31,7 @@
       an answer nothing reads is theatre.
     * this namespace decides nothing about the disk itself. It renders an
       `aiueos.install-intent.v1` and hands it to the admission that already
-      exists (install-intent.cljs verify, install-to-disk.cljs, install.mjs).
+      exists (install-intent.cljk verify, install-to-disk.cljk, install.mjs).
       The guided path adds a way to AUTHOR an intent; it adds no authority.
 
   Everything here is pure: maps in, maps out, no host interop, no crypto.
@@ -255,7 +255,7 @@
   in this run -- a confirmation carried over from a file cannot be a
   confirmation of a hostname or a disk chosen a minute ago. When nothing was
   asked, the answer file's own confirmation stands, exactly as
-  install-intent.cljs accepts --confirm-create from a script.
+  install-intent.cljk accepts --confirm-create from a script.
 
   Note what this does NOT key off: the intent's :mode. That field says how the
   INSTALL runs on the target machine (install-v1.edn decision 2), not how the
@@ -283,7 +283,7 @@
 
   Kept out: anything that is not a whole disk, the disk the installer booted
   from, removable media, and anything smaller than the release image. This is
-  the same shape install-live.cljs already applies to an intent; here it runs
+  the same shape install-live.cljk already applies to an intent; here it runs
   BEFORE an intent exists, which is the whole point of a guided screen.
 
   Refusing to offer is not the same as refusing to erase. Every device-level
@@ -303,7 +303,7 @@
   `margin-pct` widens the capacity bounds around the probed size so that a
   replacement disk of the same model is still admitted, while a different
   model or a different size class is not. Bounds are inclusive on both ends
-  (install-intent.cljs verify uses `<=` on both), so a disk of exactly the
+  (install-intent.cljk verify uses `<=` on both), so a disk of exactly the
   derived minimum or exactly the derived maximum is admitted -- that is the
   boundary the guided test pins."
   ([disk] (disk->match disk 10))
@@ -335,9 +335,9 @@
   the answer file's key; `serial-sha256`/`serial-salt` are present only when
   the answer file named a serial.
 
-  The output shape is install-intent.cljs's, field for field, because it is
+  The output shape is install-intent.cljk's, field for field, because it is
   the SAME artifact -- it is verified by the same `verify`, consumed by the
-  same install-to-disk.cljs, and sealed into the same USB receipt chain. A
+  same install-to-disk.cljk, and sealed into the same USB receipt chain. A
   second intent shape would be a second admission surface."
   [{:keys [answers release ssh-fingerprint serial-sha256 serial-salt now-ms]}]
   (let [{:keys [ok reasons]} (validate-answers answers)]

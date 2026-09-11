@@ -140,7 +140,7 @@
                   (str "ssh-ed25519 " (.toString blob "base64") " install-gate\n")))
 
 (let [{:keys [status err]}
-      (run "nbb" [(.join path aiueos "scripts" "install-intent.cljs") "create"
+      (run "nbb" [(.join path aiueos "scripts" "install-intent.cljk") "create"
                   "--receipt" release-receipt
                   "--hostname" "aiueos-gate" "--confirm-create" "aiueos-gate"
                   "--machine-model" "QEMU q35 gate"
@@ -152,7 +152,7 @@
                   "--out" gate-intent] {})]
   (when-not (zero? status) (die "gate intent creation failed:" (str/trim err))))
 
-(let [{:keys [status err out*]} (run "nbb" [(.join path aiueos "scripts" "run-install-usb-build.cljs")
+(let [{:keys [status err out*]} (run "nbb" [(.join path aiueos "scripts" "run-install-usb-build.cljk")
                                             "--intent" gate-intent
                                             "--node-binary" node-linux
                                             "--nbb-dir" nbb-dir

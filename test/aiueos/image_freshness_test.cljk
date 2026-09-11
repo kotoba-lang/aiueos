@@ -21,8 +21,8 @@
            (java.nio.file.attribute FileAttribute)))
 
 (def repo (System/getProperty "user.dir"))
-(def tool (str (io/file repo "os" "aiueos" "scripts" "image-freshness.cljs")))
-(def gate (str (io/file repo "os" "aiueos" "scripts" "verify-smoke-freshness.cljs")))
+(def tool (str (io/file repo "os" "aiueos" "scripts" "image-freshness.cljk")))
+(def gate (str (io/file repo "os" "aiueos" "scripts" "verify-smoke-freshness.cljk")))
 
 (defn- on-path? [t]
   (some (fn [d] (let [f (io/file d t)] (and (.isFile f) (.canExecute f))))
@@ -182,8 +182,8 @@
           (is (pos? (Long/parseLong scanned)))
           (is (pos? (Long/parseLong booting)))))
       (testing "the hub and the three named harnesses are attested"
-        (doseq [n ["smoke-qemu-uefi.sh" "smoke-qemu-dot-f32.cljs"
-                   "smoke-qemu-qwen35-admission.cljs"
+        (doseq [n ["smoke-qemu-uefi.sh" "smoke-qemu-dot-f32.cljk"
+                   "smoke-qemu-qwen35-admission.cljk"
                    "smoke-qemu-firmware-matrix.sh"]]
           (is (re-find (re-pattern (str "ASSERTS " n)) (:out r))
               (str n " must assert image freshness")))))))

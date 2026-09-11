@@ -142,7 +142,7 @@
 
  :guided-install-test
  {:cmd ["nbb" "os/aiueos/scripts/test-guided-install.cljk"]
-  :doc "Guided installer (ADR-0208): answer-file refusals by named reason, the screen walk, the derived match on both capacity boundaries, and the intent the guided run writes handed to the real install-intent.cljs verify. 53 cases, offline, no block device."}
+  :doc "Guided installer (ADR-0208): answer-file refusals by named reason, the screen walk, the derived match on both capacity boundaries, and the intent the guided run writes handed to the real install-intent.cljk verify. 53 cases, offline, no block device."}
 
  :provision-record-test
  {:cmd ["nbb" "os/aiueos/scripts/test-provision-record.cljk"]
@@ -216,7 +216,11 @@
 
  :relay-parity
  {:cmd ["nbb" "os/aiueos/scripts/relay-protocol-c-kotoba-parity.cljk"]
-  :doc "kernel/relay_protocol.c and native/relay_{line,text}.kotoba are two live implementations of one wire protocol; prove they are the same bytes, and stay red if either is edited alone (ADR-0213)."}
+  :doc "native/relay_{line,text}.kotoba (the template pair) and the HELLO line the retired kernel/relay_protocol.c produced, as recorded in contracts/relay-hello-v1.edn, are the same bytes; stays red if either is edited alone (ADR-0213, ADR-0215)."}
+
+ :relay-line-verify
+ {:cmd ["sh" "-c" "node --stack-size=4000 \"$(command -v nbb)\" --classpath \"$(clojure -Spath -M:verify-admissions):../text/src\" os/aiueos/scripts/verify-admissions.cljk os/aiueos/contracts/relay-hello-v1.edn os/aiueos/contracts/relay-ack-valid-v1.edn"]
+  :doc "Execute the two relay kernel objects' sources in the KIR oracle against the bytes and verdicts kernel/relay_protocol.c produced before its retirement (ADR-0215): 6 HELLO vectors incl. the capacity boundary 90/91, 8 ACK vectors incl. both verdicts. Under a second."}
 
  :plc-rt-policy-reproduce
  {:cmd ["./os/aiueos/scripts/reproduce-plc-rt-policy-objects.sh"]

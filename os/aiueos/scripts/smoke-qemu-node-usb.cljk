@@ -190,7 +190,7 @@
                   (check! "it-mounts-its-state-partition"
                           (str/includes? out1 "AIUEOS_LIVE_STATE /dev/") (tail1))
                   (check! "it-finds-the-node-payload"
-                          (str/includes? out1 "AIUEOS_LIVE_HANDOVER node-boot.cljs") (tail1))
+                          (str/includes? out1 "AIUEOS_LIVE_HANDOVER node-boot.cljk") (tail1))
                   (check! "the-first-boot-mints-a-durable-key"
                           (some? (re-find #"AIUEOS_NODE_KEY minted durable " out1)) (tail1))
                   (check! "it-announces-a-did"
@@ -201,7 +201,7 @@
                           (pr-str @seen))
                   (check! "it-reports-claimable" (str/includes? out1 "AIUEOS_NODE_CLAIMABLE") (tail1))
                   (check! "it-installed-nothing"
-                          (not (str/includes? out1 "AIUEOS_LIVE_HANDOVER install-live.cljs"))
+                          (not (str/includes? out1 "AIUEOS_LIVE_HANDOVER install-live.cljk"))
                           "a node stick ran the installer")
                   (println "  rebooting the same stick…")
                   (-> (boot image)

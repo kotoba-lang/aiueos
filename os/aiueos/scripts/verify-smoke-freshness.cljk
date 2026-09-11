@@ -84,7 +84,7 @@
         ;; pinned literal. dot-f32 compiles into its own mkdtemp and compares
         ;; the digests it recorded; what makes it attested is that it REFUSES
         ;; with `REFUSED stale-image`, not which file the comparison lives in.
-        asserts? (or (str/includes? text "image-freshness.cljs")
+        asserts? (or (str/includes? text "image-freshness.cljk")
                      (str/includes? text "REFUSED stale-image"))]
     {:name name
      :boots? (boolean (or direct? delegates?))
@@ -104,7 +104,7 @@
                     (str (pr-str {:format :aiueos.smoke-freshness-baseline/v1
                                   :measured "2026-09-02"
                                   :note (str "Image-booting smoke harnesses with no "
-                                             "image-freshness.cljs assert. This list may "
+                                             "image-freshness.cljk assert. This list may "
                                              "only shrink.")
                                   :unattested unattested})
                          "\n"))
@@ -137,7 +137,7 @@
         (println "REFUSED unattested-boot-harness")
         (doseq [n added]
           (println (str "  " n " boots an image and never calls"
-                        " image-freshness.cljs assert"))))
+                        " image-freshness.cljk assert"))))
       (js/process.exit 1))
 
   (seq removed)

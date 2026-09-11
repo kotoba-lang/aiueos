@@ -54,7 +54,7 @@
    :ns "ssh.transport"
    :authority "RFC 4253 (transport) + RFC 8731/5656 (curve25519-sha256)"
    :kernel-mirror "aiueos_ssh_kex_h() in kernel/main.c mirrors ssh.transport/h-transcript byte-for-byte"
-   :verified-by "smoke-qemu-ssh-kex.cljs REQUIRES ssh.transport and asserts the
+   :verified-by "smoke-qemu-ssh-kex.cljk REQUIRES ssh.transport and asserts the
                  kernel's emitted H equals the core's H for the same fixed
                  inputs -- so a drift in the shared core turns the gate red even
                  though the kernel self-verifies against a baked want[]."}
@@ -77,7 +77,7 @@
   :algorithm "ecdsa-sha2-nistp256"  ; verified by the EXISTING kernel ECDSA P-256 verify
   :provision-note "The intent's authorized key is ecdsa-sha2-nistp256; the
                    owner supplies an ECDSA P-256 public key (or one is
-                   generated for the device pairing). make-provision-record.cljs
+                   generated for the device pairing). make-provision-record.cljk
                    places it the same way it places any authorized key."
   :against :provisioned-authorized-key
   :password :refused

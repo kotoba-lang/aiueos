@@ -2,7 +2,6 @@
 #include <stddef.h>
 #include "tls13.h"
 #include "rtl8125.h"
-#include "relay_protocol.h"
 #include "job_protocol.h"
 #include "device_result.h"
 #include "device_worker_protocol.h"
@@ -4033,10 +4032,24 @@ static uint64_t rtl8125_boot_nonce(void) {
   return ((uint64_t)high<<32)|low;
 }
 
+/* The relay HELLO line and the ACK admission are Kotoba objects (ADR-0215;
+   kotoba/relay-hello-payload.kotoba, kotoba/relay-ack-payload-valid.kotoba).
+   They replaced kernel/relay_protocol.c, which was the second implementation
+   of a wire line the Kotoba side already owned (ADR-0213). The nonce crosses
+   as two 32-bit halves: it is a raw rdtsc whose top bit may be set, and words
+   are signed on the other side of this boundary. */
+#define AIUEOS_RELAY_HELLO_CAPACITY 160U
+extern uint64_t kotoba_aiueos_relay_hello_payload(uint64_t out,uint64_t capacity,
+                                                  uint64_t nonce_hi,uint64_t nonce_lo,
+                                                  uint64_t mac);
+extern uint64_t kotoba_aiueos_relay_ack_payload_valid(uint64_t payload,uint64_t length,
+                                                      uint64_t nonce_hi,uint64_t nonce_lo);
+
 static uint32_t rtl8125_build_relay_hello(uint8_t *frame,uint64_t nonce) {
   uint8_t payload[AIUEOS_RELAY_HELLO_CAPACITY];
-  uint32_t payload_length=aiueos_relay_hello_payload(
-    payload,sizeof(payload),nonce,rtl8125_qualification_device.mac);
+  uint32_t payload_length=(uint32_t)kotoba_aiueos_relay_hello_payload(
+    (uint64_t)(uintptr_t)payload,sizeof(payload),nonce>>32,nonce&0xffffffffULL,
+    (uint64_t)(uintptr_t)rtl8125_qualification_device.mac);
   if(!payload_length)return 0;
   uint32_t udp_length=8U+payload_length,total=20U+udp_length;
   for(unsigned i=0;i<6;i++)frame[i]=rtl8125_peer_mac[i];
@@ -4106,7 +4119,8 @@ static int rtl8125_server_udp_payload(
 static int rtl8125_relay_ack_valid(const uint8_t *frame,uint32_t length,uint64_t nonce) {
   const uint8_t *payload;uint32_t payload_length;
   return rtl8125_server_udp_payload(frame,length,&payload,&payload_length)&&
-    aiueos_relay_ack_payload_valid(payload,payload_length,nonce);
+    kotoba_aiueos_relay_ack_payload_valid((uint64_t)(uintptr_t)payload,payload_length,
+                                          nonce>>32,nonce&0xffffffffULL)==1;
 }
 
 static int rtl8125_qualify_device(uint8_t b,uint8_t d,uint8_t f) {

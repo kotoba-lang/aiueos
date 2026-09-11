@@ -194,4 +194,4 @@
 (case command
   "create" (create!)
   "verify" (verify!)
-  (die 3 "usage: install-intent.cljs {create|verify} ..."))
+  (die 3 "usage: install-intent.cljk {create|verify} ..."))

@@ -54,7 +54,7 @@
     {:code (.-status r) :out (str (.-stdout r)) :err (str (.-stderr r))}))
 
 ;; ---- 1. the committed table still re-derives from the C matrix -----------
-(let [r (run "nbb" [(path/join aiueos "tools/gen-micro-infer-table.cljs") root "--check"])]
+(let [r (run "nbb" [(path/join aiueos "tools/gen-micro-infer-table.cljk") root "--check"])]
   (case (:code r)
     0 nil
     1 (finding! "table-drift native/micro_infer.kotoba no longer re-derives from kernel/micro_infer.c")
@@ -145,7 +145,7 @@
 
 ;; ---- 5. every row agrees with the Mac relay's expectation table ----------
 (def oracle-rows
-  (let [r (run "nbb" [(path/join aiueos "tools/gen-micro-infer-table.cljs") root])]
+  (let [r (run "nbb" [(path/join aiueos "tools/gen-micro-infer-table.cljk") root])]
     (when-not (zero? (:code r)) (refuse! "generator would not print its oracle"))
     (into {} (for [[_ k t s n] (re-seq #"ROW \"(.)\" -> \(\"(.)\" (\d+) (\d+)\)" (:out r))]
                [k [t (js/parseInt s 10) (js/parseInt n 10)]]))))

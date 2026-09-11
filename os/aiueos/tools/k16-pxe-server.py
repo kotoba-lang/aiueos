@@ -1525,7 +1525,7 @@ def netlog_handle(sock, payload, peer, client_ip=None):
 
 
 def bus3_sink_receipt(payload, peer):
-    """One line per datagram, in k16-bus3-sink.cljs's format.
+    """One line per datagram, in k16-bus3-sink.cljk's format.
 
     Opened by name and closed every time, for the reason that sink documents:
     a receiver that holds the fd keeps writing into an unlinked inode after the
@@ -1543,7 +1543,7 @@ def bus3_relay_server():
 
     Refuses by name rather than racing.  Two readers of one UDP port is a coin
     toss, and a relay that silently lost the toss would report that the board
-    never answered.  Stop k16-bus3-sink.cljs before this thread can start; this
+    never answered.  Stop k16-bus3-sink.cljk before this thread can start; this
     thread writes the same receipts to the same file.
     """
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -1553,7 +1553,7 @@ def bus3_relay_server():
         print(f"AIUEOS_BUS3_RELAY_REFUSED reason=bind-failed "
               f"errno={error.errno} interface={BUS3_INTERFACE} "
               f"listen={BUS3_BIND_IP or '0.0.0.0'}:{BUS3_PORT} "
-              f"hint=stop k16-bus3-sink.cljs", flush=True)
+              f"hint=stop k16-bus3-sink.cljk", flush=True)
         return
     print(f"AIUEOS_BUS3_RELAY_READY interface={BUS3_INTERFACE} "
           f"listen={BUS3_BIND_IP or '0.0.0.0'}:{BUS3_PORT} "

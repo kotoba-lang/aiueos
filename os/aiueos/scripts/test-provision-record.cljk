@@ -59,7 +59,7 @@
 
 ;; 1. host key from RFC 8032 vector-1 seed == the vector's public key.
 (def out1 (.join path tmp "p1.json"))
-(let [{:keys [status]} (run [(.join path scripts-dir "make-provision-record.cljs")
+(let [{:keys [status]} (run [(.join path scripts-dir "make-provision-record.cljk")
                              "--intent" intent "--out" out1
                              "--host-seed" "9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60"]
                             {:NODE_ENV "test"})
@@ -85,7 +85,7 @@
 
 ;; 4. --host-seed refused without NODE_ENV=test (a production run must not take
 ;;    an injected seed).
-(let [{:keys [status]} (run [(.join path scripts-dir "make-provision-record.cljs")
+(let [{:keys [status]} (run [(.join path scripts-dir "make-provision-record.cljk")
                              "--intent" intent "--out" (.join path tmp "p-refuse.json")
                              "--host-seed" "00"] {:NODE_ENV "production"})]
   (record! "injected-seed-refused-in-production" (= 3 status) (str "status=" status)))
@@ -95,7 +95,7 @@
 (write-intent! intent-rsa {:authorizedPrincipal "aiueos"
                            :publicKey "ssh-rsa AAAAB3NzaC1yc2E owner"
                            :fingerprint "SHA256:whatever"})
-(let [{:keys [status out]} (run [(.join path scripts-dir "make-provision-record.cljs")
+(let [{:keys [status out]} (run [(.join path scripts-dir "make-provision-record.cljk")
                                  "--intent" intent-rsa "--out" (.join path tmp "p-rsa.json")] {})]
   (record! "non-ed25519-authorized-refused"
            (and (= 2 status) (str/includes? out "ssh-ed25519 only"))
@@ -107,7 +107,7 @@
 (write-intent! intent-bad {:authorizedPrincipal "aiueos"
                            :publicKey (str "ssh-ed25519 " (.toString owner-blob "base64") " owner")
                            :fingerprint "SHA256:deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdead"})
-(let [{:keys [status out]} (run [(.join path scripts-dir "make-provision-record.cljs")
+(let [{:keys [status out]} (run [(.join path scripts-dir "make-provision-record.cljk")
                                  "--intent" intent-bad "--out" (.join path tmp "p-bad.json")] {})]
   (record! "inconsistent-intent-fingerprint-refused"
            (and (= 3 status) (str/includes? out "inconsistent")) (str "status=" status)))

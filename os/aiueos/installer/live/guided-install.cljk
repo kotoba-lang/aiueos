@@ -70,7 +70,7 @@
 
 (defn- ssh-fingerprint
   "OpenSSH fingerprint of an authorized_keys line, computed the same way
-  install-intent.cljs computes it -- the two must agree byte for byte or the
+  install-intent.cljk computes it -- the two must agree byte for byte or the
   same key would produce two different intents."
   [pubkey-line]
   (let [fields (str/split (str/trim pubkey-line) #"\s+")
@@ -423,4 +423,4 @@
 (println "  AIUEOS_LIVE_PAYLOAD_DEV=<usb-payload-part>"
          "nbb os/aiueos/installer/live/install-live.cljk")
 (println "  (interactive intents report only; unattended intents install after")
-(println "   install-to-disk.cljs re-verifies this intent against its own probe)")
+(println "   install-to-disk.cljk re-verifies this intent against its own probe)")

@@ -170,10 +170,10 @@
  ;; not. That is deliberate -- a measurement that can break an install would be
  ;; bought at the price of the thing it measures.
  :hw-record
- {:written-by "scripts/make-node-autoinstall-iso.cljs (unless --no-hw-record)"
+ {:written-by "scripts/make-node-autoinstall-iso.cljk (unless --no-hw-record)"
   :path "/var/log/aiueos-node-hwprobe.txt"
   :commands ["lscpu" "lspci -nn" "lsblk -dno NAME,SERIAL,MODEL,SIZE" "ip -o link"]
-  :ingested-by "scripts/record-node-machine-probe.cljs --machine <id> --probe <file>"
+  :ingested-by "scripts/record-node-machine-probe.cljk --machine <id> --probe <file>"
   :rule "The ingest writes :measured only for fields the probe text actually
          contains, and refuses the whole file rather than writing nil for the
          rest. A partially-filled entry that claims :measured is worse than an

@@ -110,7 +110,7 @@
         "this is the compiler's lowering and not a bound this repository can "
         "raise. It has a committed object; what it does not have is a link "
         "or a build script that names it. What executes it remains "
-        "contracts/hkdf-sha256-v1.edn through verify-admissions.cljs: 18 "
+        "contracts/hkdf-sha256-v1.edn through verify-admissions.cljk: 18 "
         "vectors from RFC 4231 section 4 and RFC 8448 section 3.")
 
    "murakumo-join-plan"

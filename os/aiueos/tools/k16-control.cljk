@@ -76,7 +76,7 @@
 
 (defn- usage! []
   (println (str/join "\n"
-                     ["nbb k16-control.cljs <P|R|c> [--flag value ...]"
+                     ["nbb k16-control.cljk <P|R|c> [--flag value ...]"
                       "flags (defaults in brackets):"
                       (str/join "\n" (map (fn [[k v]] (str "  --" k " [" v "]")) (sort-by first defaults)))
                       "stdout: CONTROL<TAB><cmd><TAB><answer|timeout>"

@@ -115,7 +115,7 @@
 
 (defn -main [& args]
   (let [compiler (or (first (remove #(str/starts-with? % "--") args))
-                     (die "usage: smoke-qemu-uefi-loader.cljs /path/to/amu"))
+                     (die "usage: smoke-qemu-uefi-loader.cljk /path/to/amu"))
         want-markers (flag args "--expect-markers" default-markers)
         want-verdicts (flag args "--expect-verdicts" default-verdicts)
         out (fs/mkdtempSync (path/join (os/tmpdir) "aiueos-uefi-loader-"))

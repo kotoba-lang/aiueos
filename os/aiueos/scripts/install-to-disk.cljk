@@ -207,11 +207,11 @@
           :else (die 3 "install.mjs not found beside or above" scripts-dir))))
 
 (def provision-script
-  (let [repo-form (.join path scripts-dir "make-provision-record.cljs")
-        flat-form (.join path scripts-dir "make-provision-record.cljs")]
+  (let [repo-form (.join path scripts-dir "make-provision-record.cljk")
+        flat-form (.join path scripts-dir "make-provision-record.cljk")]
     (cond (.existsSync fs repo-form) repo-form
           (.existsSync fs flat-form) flat-form
-          :else (die 3 "make-provision-record.cljs not found beside" scripts-dir))))
+          :else (die 3 "make-provision-record.cljk not found beside" scripts-dir))))
 
 (defn- installer-args [& extra]
   (let [base ["--device" (arg "--device")
@@ -272,7 +272,7 @@
   ;; 3. intent admission against the live report
   (let [tmp (.join path (.tmpdir os) (str "aiueos-inspect-" (.-pid js/process) ".json"))]
     (.writeFileSync fs tmp (.stringify js/JSON (clj->js report)))
-    (let [verify (run "nbb" (concat [(.join path scripts-dir "install-intent.cljs")
+    (let [verify (run "nbb" (concat [(.join path scripts-dir "install-intent.cljk")
                                      "verify" "--intent" intent-path "--report" tmp]
                                     (when-let [s (arg "--serial")] ["--serial" s])))]
       (.rmSync fs tmp)

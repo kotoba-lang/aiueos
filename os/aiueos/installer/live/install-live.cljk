@@ -49,7 +49,7 @@
 (when-not (.existsSync fs intent-file)
   (println "AIUEOS_LIVE_NO_INTENT this stick asks; starting the guided installer")
   (let [r (.spawnSync cp "nbb"
-                      #js ["guided-install.cljs"
+                      #js ["guided-install.cljk"
                            "--release-receipt" "release-receipt.json"
                            "--out-intent" "install-intent.json"
                            "--out-answers" "install-answers.json"]
@@ -122,7 +122,7 @@
          (str "model=" (pr-str (:model target)))
          (str "bytes=" (:size target)))
 
-(def base-args ["install-to-disk.cljs"
+(def base-args ["install-to-disk.cljk"
                 "--intent" "install-intent.json"
                 "--device" device
                 "--image" (str (.-AIUEOS_LIVE_MEDIA js/process.env) "/RELEASE.IMG")

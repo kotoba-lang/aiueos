@@ -10,7 +10,7 @@ The live environment is deliberately split in two:
                             payload partition by its fixed GPT partition GUID,
                             extracts INSTALL.TGZ to a tmpfs and hands over.
   payload INSTALL.TGZ       every decision -- the node runtime, the nbb
-                            orchestration (install-live.cljs -> intent
+                            orchestration (install-live.cljk -> intent
                             admission -> guarded install.mjs), the intent.
 
 Linux here is an install-time mechanism, not an aiueos runtime premise; the
@@ -205,8 +205,8 @@ if [ -f /payload/NODE.JSN ]; then
   export AIUEOS_LIVE_MEDIA=/payload
   export AIUEOS_NODE_BUNDLE=/run/aiueos-node
   export PATH=/run/aiueos-node/bin:$PATH
-  echo AIUEOS_LIVE_HANDOVER node-boot.cljs
-  ./node-linux-x64 nbb-bundle/node_modules/nbb/cli.js --classpath /run/aiueos-node/cp node-boot.cljs
+  echo AIUEOS_LIVE_HANDOVER node-boot.cljk
+  ./node-linux-x64 nbb-bundle/node_modules/nbb/cli.js --classpath /run/aiueos-node/cp node-boot.cljk
   rc=$?
   echo "AIUEOS_LIVE_EXIT rc=$rc"
   sync
@@ -217,8 +217,8 @@ cd /run/aiueos-installer
 export AIUEOS_LIVE_PAYLOAD_DEV="$PAYLOAD"
 export AIUEOS_LIVE_MEDIA=/payload
 export PATH=/run/aiueos-installer/bin:$PATH
-echo AIUEOS_LIVE_HANDOVER install-live.cljs
-./node-linux-x64 nbb-bundle/node_modules/nbb/cli.js --classpath /run/aiueos-installer/cp install-live.cljs
+echo AIUEOS_LIVE_HANDOVER install-live.cljk
+./node-linux-x64 nbb-bundle/node_modules/nbb/cli.js --classpath /run/aiueos-installer/cp install-live.cljk
 rc=$?
 echo "AIUEOS_LIVE_EXIT rc=$rc"
 sync

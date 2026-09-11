@@ -141,11 +141,20 @@
         ";;   :qemu                 the object was executed on a CPU under QEMU\n"
         ";;   :attested-unverified  produced and hashed, but nothing exercises it\n"
         ";;                         (the reason is in :verification-note)\n"
-        (pr-str (assoc old
-                       :objects objects
-                       :attested-with {:repo "kotoba-lang/amu" :sha amu-sha :pins pins}
-                       :recorded (count objects)
-                       :unrecorded []))
+        ;; MERGE into the receipts already recorded; never replace them. With
+        ;; `--objects a,b` the run only attested a and b, and writing `objects`
+        ;; alone dropped the other 98 receipts from the manifest -- measured
+        ;; 2026-09-11, the first `--attest --objects` ever run: the file came
+        ;; back with 2 objects, 91 recorded producers gone, and exit 0.
+        (let [merged (into (sorted-map) (merge (:objects old) objects))
+              unrecorded (->> merged
+                              (filter #(nil? (get-in (val %) [:compiler :sha])))
+                              (mapv key))]
+          (pr-str (assoc old
+                         :objects merged
+                         :attested-with {:repo "kotoba-lang/amu" :sha amu-sha :pins pins}
+                         :recorded (- (count merged) (count unrecorded))
+                         :unrecorded unrecorded)))
         "\n")
    "utf8"))
 

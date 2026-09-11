@@ -30,7 +30,7 @@
 ;; answer a question about the object.
 (def root (.resolve path
                     (or (first (filter #(not (.startsWith % "--")) *command-line-args*))
-                        (throw (js/Error. "usage: verify-jvm-free-object-parity.cljs <aiueos-root> --compiler <dir>")))))
+                        (throw (js/Error. "usage: verify-jvm-free-object-parity.cljk <aiueos-root> --compiler <dir>")))))
 (def compiler
   (let [args (vec *command-line-args*)
         i (.indexOf args "--compiler")]

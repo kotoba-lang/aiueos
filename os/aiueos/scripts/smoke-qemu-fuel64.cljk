@@ -188,7 +188,7 @@
     (+ 1 (reduce + (take reached stage-cost)))))
 
 (defn -main [& args]
-  (let [amu (or (first args) (die "usage: smoke-qemu-fuel64.cljs /path/to/amu [--stages]"))
+  (let [amu (or (first args) (die "usage: smoke-qemu-fuel64.cljk /path/to/amu [--stages]"))
         deadline (js/parseInt (or (.. js/process -env -FUEL64_TIMEOUT_MS) "3600000") 10)
         out (fs/mkdtempSync (path/join (os/tmpdir) "aiueos-fuel64-"))
         code (firmware)
