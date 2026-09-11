@@ -124,7 +124,7 @@ fi
 # the loader a damaged image on purpose, so they are allowed to move these bytes
 # afterwards. What is asserted is that they damaged a FRESH image.
 freshness_status=0
-nbb "$aiueos/scripts/image-freshness.cljs" assert \
+nbb "$aiueos/scripts/image-freshness.cljk" assert \
   --receipt "$receipt" --root "$repo" \
   "$efi_image" "$kernel_image" "$initrd_image" || freshness_status=$?
 [ "$freshness_status" = 0 ] || exit "$freshness_status"

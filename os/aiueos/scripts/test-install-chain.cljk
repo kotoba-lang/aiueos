@@ -81,7 +81,7 @@
         (str "ssh-ed25519 " (.toString owner-blob "base64") " install-chain-test\n"))
 
 (defn- create-intent! [out & extra]
-  (run "nbb" (concat [(.join path scripts-dir "install-intent.cljs") "create"
+  (run "nbb" (concat [(.join path scripts-dir "install-intent.cljk") "create"
                       "--receipt" receipt-path
                       "--hostname" "aiueos-test" "--confirm-create" "aiueos-test"
                       "--target-model" "FAKE" "--target-transport" "nvme"
@@ -113,7 +113,7 @@
   (let [rp (.join path tmp (str name "-report.json"))]
     (json! rp the-report)
     (let [{:keys [status out]}
-          (run "nbb" (concat [(.join path scripts-dir "install-intent.cljs") "verify"
+          (run "nbb" (concat [(.join path scripts-dir "install-intent.cljk") "verify"
                               "--intent" intent-path "--report" rp]
                              verify-args)
                {})]
@@ -144,7 +144,7 @@
   (let [rp (.join path tmp (str name "-report.json"))]
     (json! rp (report {}))
     (let [{:keys [status out]}
-          (run "nbb" (concat [(.join path scripts-dir "install-intent.cljs") "verify"
+          (run "nbb" (concat [(.join path scripts-dir "install-intent.cljk") "verify"
                               "--intent" serial-intent "--report" rp]
                              args)
                {})]
@@ -164,7 +164,7 @@
 (let [rp (.join path tmp "expired-report.json")]
   (json! rp (report {}))
   (let [{:keys [status out]}
-        (run "nbb" [(.join path scripts-dir "install-intent.cljs") "verify"
+        (run "nbb" [(.join path scripts-dir "install-intent.cljk") "verify"
                     "--intent" expired-intent "--report" rp] {})]
     (record! "refuse-expired"
              (and (= 2 status)
@@ -185,7 +185,7 @@
                     :outputPath fake-out})
 
 (defn- orchestrate [& extra]
-  (run "nbb" (concat [(.join path scripts-dir "install-to-disk.cljs")
+  (run "nbb" (concat [(.join path scripts-dir "install-to-disk.cljk")
                       "--intent" intent-path "--device" "/dev/fakedisk0"
                       "--image" image-path "--receipt" receipt-path
                       "--fake-device-config" fake-config]
@@ -282,7 +282,7 @@
                      :systemDisks ["/dev/fakesys0"]
                      :outputPath (.join path tmp "dirty-target.bin")})
 (let [{:keys [status out]}
-      (run "nbb" [(.join path scripts-dir "install-to-disk.cljs")
+      (run "nbb" [(.join path scripts-dir "install-to-disk.cljk")
                   "--intent" intent-path "--device" "/dev/fakedisk1"
                   "--image" image-path "--receipt" receipt-path
                   "--fake-device-config" dirty-config]

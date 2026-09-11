@@ -143,23 +143,23 @@
 ;; ------------------------------------------------------- what it carries
 
 (record! "bundle-carries-kotoba-lang-text"
-         (.existsSync fs (.join path (:dir with-cp) "cp/kotoba/lang/text.cljc"))
-         "cp/kotoba/lang/text.cljc")
+         (.existsSync fs (.join path (:dir with-cp) "cp/kotoba/lang/text.cljk"))
+         "cp/kotoba/lang/text.cljk")
 (record! "bundle-carries-the-guided-decision-core"
-         (.existsSync fs (.join path (:dir with-cp) "cp/aiueos/installer/guided.cljc"))
-         "cp/aiueos/installer/guided.cljc")
+         (.existsSync fs (.join path (:dir with-cp) "cp/aiueos/installer/guided.cljk"))
+         "cp/aiueos/installer/guided.cljk")
 (record! "bundle-carries-the-guided-program"
-         (.existsSync fs (.join path (:dir with-cp) "guided-install.cljs"))
-         "guided-install.cljs (flattened from installer/live/)")
+         (.existsSync fs (.join path (:dir with-cp) "guided-install.cljk"))
+         "guided-install.cljk (flattened from installer/live/)")
 
 ;; ---------------------------------------------------- the entry points run
 
 (def entry-points
-  ["install-live.cljs"        ; what /init hands over to
-   "install-to-disk.cljs"     ; what install-live spawns
-   "install-intent.cljs"      ; the admission
-   "make-provision-record.cljs"
-   "guided-install.cljs"])    ; ADR-0208
+  ["install-live.cljk"        ; what /init hands over to
+   "install-to-disk.cljk"     ; what install-live spawns
+   "install-intent.cljk"      ; the admission
+   "make-provision-record.cljk"
+   "guided-install.cljk"])    ; ADR-0208
 
 (defn- load-check
   "Run one bundled script from inside the bundle, with only what the stick
@@ -223,7 +223,7 @@
 (defn- shim!
   "The bundled bin/nbb, reproduced. In a real bundle the builder emits this
   shim and it is what carries the classpath to the SECOND hop: install-live
-  spawns `nbb guided-install.cljs` by name. A test that let hop 2 resolve
+  spawns `nbb guided-install.cljk` by name. A test that let hop 2 resolve
   through the host's nbb.edn would be testing something the stick does not
   have."
   [dir]
@@ -244,7 +244,7 @@
     bin))
 
 (defn- run-live [dir extra-env]
-  (run "nbb" ["--classpath" (.join path dir "cp") "install-live.cljs"]
+  (run "nbb" ["--classpath" (.join path dir "cp") "install-live.cljk"]
        {:cwd dir
         :input operator-script
         :env (js/Object.assign
@@ -293,7 +293,7 @@
 ;; (could-not-answer) when stdin ends mid-question, and install-live keeps
 ;; that code rather than flattening it to "failed" -- 2 is a named refusal and
 ;; 3 is nobody answered, and they send the operator to different places.
-(let [r (run "nbb" ["--classpath" (.join path (:dir guided-abort-bundle) "cp") "install-live.cljs"]
+(let [r (run "nbb" ["--classpath" (.join path (:dir guided-abort-bundle) "cp") "install-live.cljk"]
              {:cwd (:dir guided-abort-bundle)
               :input ""
               :env (js/Object.assign
@@ -407,7 +407,7 @@
 (def init-text (.readFileSync fs live-builder "utf8"))
 (record! "init-passes-the-classpath-on-the-install-handover"
          (str/includes? init-text
-                        "--classpath /run/aiueos-installer/cp install-live.cljs")
+                        "--classpath /run/aiueos-installer/cp install-live.cljk")
          "make-live-installer.py /init")
 
 ;; install-live.cljs spawns `nbb` BY NAME for the second hop, so the shim on
@@ -463,7 +463,7 @@
 
 (let [fake (.join path tmp "fake-root/kotoba/lang")]
   (.mkdirSync fs fake #js {:recursive true})
-  (.writeFileSync fs (.join path fake "text.cljc") "(ns kotoba.lang.text) ;; imposter\n")
+  (.writeFileSync fs (.join path fake "text.cljk") "(ns kotoba.lang.text) ;; imposter\n")
   (let [r (run "python3"
                ["-c" (str "import sys, importlib.util;\n"
                           "spec = importlib.util.spec_from_file_location('mk', " (pr-str builder) ");\n"

@@ -153,7 +153,7 @@
 
 (when-not device
   (binding [*out* *err*]
-    (println "usage: flash-usb.cljs --device /dev/diskN [--confirm /dev/diskN]")
+    (println "usage: flash-usb.cljk --device /dev/diskN [--confirm /dev/diskN]")
     (println "                      [--image <img> --receipt <receipt.json>]")
     (println "       without --confirm this inspects and reports only"))
   (.exit js/process 2))

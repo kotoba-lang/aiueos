@@ -83,7 +83,7 @@
 
 (defn- usage! []
   (println (str/join "\n"
-                     ["nbb k16-bus3-sink.cljs [--flag value ...]"
+                     ["nbb k16-bus3-sink.cljk [--flag value ...]"
                       "flags (defaults in brackets):"
                       (str/join "\n" (map (fn [[k v]] (str "  --" k " [" v "]")) (sort-by first defaults)))
                       "exit 2 = refused to start (K16_BUS3_SINK_REFUSED reason=...)"]))

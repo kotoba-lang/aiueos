@@ -202,7 +202,7 @@
 
 (defn -main [& args]
   (let [compiler (or (first args)
-                     (die "usage: smoke-qemu-dequant-kquant.cljs /path/to/compiler"))
+                     (die "usage: smoke-qemu-dequant-kquant.cljk /path/to/compiler"))
         out (fs/mkdtempSync (path/join (os/tmpdir) "aiueos-dequant-kquant-"))
         code (firmware)
         _ (qemu-binary)

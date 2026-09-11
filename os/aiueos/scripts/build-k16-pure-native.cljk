@@ -159,8 +159,16 @@
   "namespace -> {:verification ... :verification-note ...}"
   []
   (let [contracts-dir (path/join root "os" "aiueos" "contracts")
-        runner (path/join root "os" "aiueos" "scripts" "verify-admissions.cljs")
-        runner-text (if (.existsSync fs runner) (.readFileSync fs runner "utf8") "")
+        runner (path/join root "os" "aiueos" "scripts" "verify-admissions.cljk")
+        ;; Absent runner = REFUSE, not "no contract verifies anything". Measured
+        ;; 2026-09-11 after the .cljk rename: this line still said `.cljs`, the
+        ;; file was not found, `runner-text` became "", and one --emit-provenance
+        ;; demoted all 23 `:kir-vectors` objects to `:attested-unverified`
+        ;; without a word -- the manifest a gate reads said verified work had
+        ;; never happened.
+        runner-text (if (.existsSync fs runner)
+                      (.readFileSync fs runner "utf8")
+                      (die! 2 (str "UNANSWERED could-not-answer reason=runner-absent path=" runner)))
         tests-dir (path/join root "test" "aiueos")
         from-contracts
         (into {}
@@ -182,7 +190,7 @@
         from-tests
         (into {}
               (for [f (if (.existsSync fs tests-dir) (.readdirSync fs tests-dir) [])
-                    :when (str/ends-with? f ".clj")
+                    :when (str/ends-with? f ".cljk")
                     :let [t (.readFileSync fs (path/join tests-dir f) "utf8")
                           m (re-find #"\"os\" \"aiueos\" \"kotoba\" \"([a-z0-9-]+)\.kotoba\"" t)]
                     :when (and m (str/includes? t "kotoba.kir"))]
@@ -209,7 +217,7 @@
   source bytes. The moment either moves, the recorded revision is a claim about
   bytes that no longer exist, so it drops back to `:sha nil` and the gate
   refuses the object as `compiler-unrecorded` until
-  `reproduce-kotoba-objects.cljs --attest` measures it again."
+  `reproduce-kotoba-objects.cljk --attest` measures it again."
   []
   (let [dir (path/join root "os" "aiueos" "kotoba")
         out (path/join dir "provenance.edn")
@@ -296,7 +304,7 @@
             ";; K16 pure-native gate refuses those objects with reason=compiler-unrecorded.\n"
             ";;\n"
             ";; A `:compiler {:sha ...}` here IS a byte-level claim: it was written by\n"
-            ";; `reproduce-kotoba-objects.cljs --attest`, which compiled the source with\n"
+            ";; `reproduce-kotoba-objects.cljk --attest`, which compiled the source with\n"
             ";; that amu revision and hashed the result. This generator only carries such\n"
             ";; a claim forward while both digests it was made against still hold.\n"
             (pr-str {:format :aiueos.kotoba-object-provenance/v1

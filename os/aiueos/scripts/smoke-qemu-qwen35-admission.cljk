@@ -162,7 +162,7 @@
 (when-not (which "nbb")
   (unmeasured "nbb is required to check the image freshness receipt"))
 (let [r (.spawnSync cp "nbb"
-                    #js [(.join path aiueos "scripts" "image-freshness.cljs")
+                    #js [(.join path aiueos "scripts" "image-freshness.cljk")
                          "assert"
                          ;; build-physical-qualification-pxe.sh runs build-uefi.sh
                          ;; with AIUEOS_OUT=<out>/core and copies the result up,

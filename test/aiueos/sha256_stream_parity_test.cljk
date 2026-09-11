@@ -4,7 +4,7 @@
 
   ## What this is for
 
-  `verify-admissions.cljs` runs the objects and compares what they wrote
+  `verify-admissions.cljk` runs the objects and compares what they wrote
   against the `:digest-hex` in their contracts. That answers \"does the object
   agree with the contract\" and NOT \"is the contract right\" -- and a contract
   is where a transcription error lands. A digest copied one nibble wrong makes
@@ -48,7 +48,7 @@
 
 (defn- message-of
   "The bytes a SHA-256 vector describes, in the same two spellings
-  `verify-admissions.cljs` accepts. A vector this cannot read is a hard stop,
+  `verify-admissions.cljk` accepts. A vector this cannot read is a hard stop,
   never a skip: a skipped vector and a passing vector look identical in a
   summary line."
   [v]

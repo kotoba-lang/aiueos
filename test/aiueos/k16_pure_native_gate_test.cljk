@@ -18,7 +18,7 @@
 
 (def repo (System/getProperty "user.dir"))
 (def kotoba-dir (io/file repo "os" "aiueos" "kotoba"))
-(def gate (str (io/file repo "os" "aiueos" "scripts" "k16-pure-native-gate.cljs")))
+(def gate (str (io/file repo "os" "aiueos" "scripts" "k16-pure-native-gate.cljk")))
 (def amu-sha "9cf3a0ac07a1fb0d735a460230a7e5e9c97bc6a7")
 (def target "x86_64-aiueos-kernel-v1")
 

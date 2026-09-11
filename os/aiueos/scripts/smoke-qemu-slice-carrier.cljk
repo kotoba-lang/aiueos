@@ -119,7 +119,7 @@
 
 (defn -main [& args]
   (let [compiler (or (first args)
-                     (die "usage: smoke-qemu-slice-carrier.cljs /path/to/amu"))
+                     (die "usage: smoke-qemu-slice-carrier.cljk /path/to/amu"))
         out (fs/mkdtempSync (path/join (os/tmpdir) "aiueos-slice-carrier-"))
         code (firmware)
         _ (build! compiler out)

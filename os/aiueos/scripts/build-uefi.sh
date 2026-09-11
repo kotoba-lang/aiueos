@@ -25,7 +25,6 @@ kernel_apic_object="$out/kernel-apic.o"
 kernel_memory_object="$out/kernel-memory.o"
 kernel_pci_object="$out/kernel-pci.o"
 kernel_rtl8125_object="$out/kernel-rtl8125.o"
-kernel_relay_protocol_object="$out/kernel-relay-protocol.o"
 kernel_micro_infer_object="$out/kernel-micro-infer.o"
 kernel_inference_status_object="$out/kernel-inference-status.o"
 kernel_device_result_object="$out/kernel-device-result.o"
@@ -379,6 +378,10 @@ kotoba_tcp_checksum_object=${AIUEOS_KOTOBA_TCP_CHECKSUM_OBJECT:-"$aiueos/kotoba/
 kotoba_tcp_segment_object=${AIUEOS_KOTOBA_TCP_SEGMENT_OBJECT:-"$aiueos/kotoba/tcp-segment-valid.o"}
 kotoba_dhcp_reply_object=${AIUEOS_KOTOBA_DHCP_REPLY_OBJECT:-"$aiueos/kotoba/dhcp-reply-valid.o"}
 kotoba_dhcp_option_object=${AIUEOS_KOTOBA_DHCP_OPTION_OBJECT:-"$aiueos/kotoba/dhcp-option-u32.o"}
+# The murakumo relay HELLO line and ACK admission (ADR-0215). These replaced
+# kernel/relay_protocol.c; pci.c calls them where it called the C.
+kotoba_relay_hello_object=${AIUEOS_KOTOBA_RELAY_HELLO_OBJECT:-"$aiueos/kotoba/relay-hello-payload.o"}
+kotoba_relay_ack_object=${AIUEOS_KOTOBA_RELAY_ACK_OBJECT:-"$aiueos/kotoba/relay-ack-payload-valid.o"}
 kotoba_user_elf=${AIUEOS_KOTOBA_USER_ELF:-"$aiueos/kotoba/user-smoke.elf"}
 kotoba_fnv_sha=
 if [ -z "${AIUEOS_KOTOBA_FNV_OBJECT:-}" ]; then
@@ -625,7 +628,7 @@ if [ "${AIUEOS_K16_PURE_NATIVE:-0}" = 1 ]; then
   # be exercised. It is not a way to wave objects through: the override is still
   # a manifest the gate checks digest-for-digest against the bytes on disk.
   pure_provenance=${AIUEOS_K16_PURE_NATIVE_PROVENANCE:-"$aiueos/kotoba/provenance.edn"}
-  nbb "$aiueos/scripts/k16-pure-native-gate.cljs" \
+  nbb "$aiueos/scripts/k16-pure-native-gate.cljk" \
     --link-list "$pure_list" \
     --provenance "$pure_provenance" \
     --receipt-out "$pure_receipt" \
@@ -896,6 +899,12 @@ python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_dhcp_reply_obj
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_dhcp_option_object" \
   82794a814363e12697b068ada76fbd5670cd28ec5b97c063ced70af335333d61 \
   kotoba_aiueos_dhcp_option_u32
+python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_relay_hello_object" \
+  ad5623e3685c6e9e1b77a0f6c4aadb86e029f1bb0058026edf5e92f6e7764ce2 \
+  kotoba_aiueos_relay_hello_payload
+python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_relay_ack_object" \
+  8c44fd0f5d4d2d21a402998c41b75ae28e03e28dd50178c95d063bc22697c082 \
+  kotoba_aiueos_relay_ack_payload_valid
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_x25519_object" \
   8353ac0fcf6e2119d4538196197f0e1aead980cd87db2c30fe50e64ec6bb7588 \
   kotoba_aiueos_x25519
@@ -1043,9 +1052,6 @@ zig cc -target x86_64-freestanding-none -std=c11 -O2 \
 zig cc -target x86_64-freestanding-none -std=c11 -O2 \
   -ffreestanding -fno-stack-protector -mno-red-zone \
   -c -o "$kernel_rtl8125_object" "$aiueos/kernel/rtl8125.c"
-zig cc -target x86_64-freestanding-none -std=c11 -O2 \
-  -ffreestanding -fno-stack-protector -mno-red-zone \
-  -c -o "$kernel_relay_protocol_object" "$aiueos/kernel/relay_protocol.c"
 zig cc -target x86_64-freestanding-none -std=c11 -O2 \
   -ffreestanding -fno-stack-protector -mno-red-zone \
   -c -o "$kernel_micro_infer_object" "$aiueos/kernel/micro_infer.c"
@@ -1216,7 +1222,7 @@ zig ld.lld -nostdlib -static --strip-all $qualification_gc_link -z max-page-size
   -T "$aiueos/kernel/linker.ld" -o "$kernel" \
   "$kernel_entry_object" "$kernel_object" "$kernel_paging_object" \
   "$kernel_acpi_object" "$kernel_vtd_object" "$kernel_apic_object" "$kernel_memory_object" \
-  "$kernel_pci_object" "$kernel_rtl8125_object" "$kernel_relay_protocol_object" \
+  "$kernel_pci_object" "$kernel_rtl8125_object" \
   "$kernel_micro_infer_object" "$kernel_inference_status_object" \
   $device_result_link $model_handoff_link "$kernel_kototama_runtime_object" \
   "$kernel_job_protocol_object" \
@@ -1245,6 +1251,7 @@ zig ld.lld -nostdlib -static --strip-all $qualification_gc_link -z max-page-size
   "$kotoba_wm_object" "$kotoba_scanout_object" "$kotoba_broker_object" "$kotoba_session_object" \
   "$kotoba_mmio_map_admit_object" \
   "$kotoba_acpi_checksum_object" "$kotoba_acpi_table_valid_object" \
+  "$kotoba_relay_hello_object" "$kotoba_relay_ack_object" \
   "$kotoba_vtd_admit_object" \
   "$kotoba_msr_read_object" "$kotoba_msr_write_object" \
   "$kotoba_idt_gate_object" "$kotoba_pic_disable_object" \
@@ -1409,7 +1416,7 @@ command -v nbb >/dev/null 2>&1 || {
   echo "error: nbb is required to write the image freshness receipt" >&2
   exit 3
 }
-nbb "$aiueos/scripts/image-freshness.cljs" record \
+nbb "$aiueos/scripts/image-freshness.cljk" record \
   --out "$out/image-receipt.edn" --root "$repo" \
   "$efi" "$kernel" "$initramfs" >/dev/null
 

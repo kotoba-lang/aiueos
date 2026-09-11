@@ -364,7 +364,7 @@
 
 (defn -main [& args]
   (let [amu (or (first args)
-                (die "usage: smoke-qemu-target-parity-icount.cljs /path/to/amu"))
+                (die "usage: smoke-qemu-target-parity-icount.cljk /path/to/amu"))
         qemu (qemu-binary)
         code (firmware)
         out (fs/mkdtempSync (path/join (os/tmpdir) "target-parity-"))

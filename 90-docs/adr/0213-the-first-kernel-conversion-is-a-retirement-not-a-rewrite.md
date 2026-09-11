@@ -105,6 +105,12 @@ done. What is genuinely unmeasured is how much of each function is marshalling
 
 ## What is not done
 
+**Done on 2026-09-11 -- see ADR-0215.** The paragraphs below are what this ADR
+said the day it was written. The retirement did not reuse the template pair
+(it writes a frame page from MMIO, not a stack buffer from a held MAC); a new
+object with the C's shape was emitted instead, and the parity gate now holds
+the template pair against the C's recorded line.
+
 Nothing is deleted here: this ADR lands the parity evidence and the gate, not
 the repoint. The remaining work for this one file is small and now unblocked —
 emit the relay builders as a kernel object, repoint `pci.c:4038` and `:4109`,

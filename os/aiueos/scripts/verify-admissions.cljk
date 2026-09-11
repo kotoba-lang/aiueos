@@ -687,7 +687,13 @@
 ;; evidence is `aiueos_rtl8125_kotoba_selftest` running the EMITTED MACHINE CODE
 ;; against a software model under QEMU, which is a stronger claim about the same
 ;; program and a weaker one about portability.
-(defmethod prepare :aiueos.rtl8125/v1 [contract v]
+(defn- prepare-regions
+  "The region-and-seed builder: a contract lays out named regions, a vector
+  seeds bytes into the image and names regions (or `[region offset]`) in its
+  arguments. First written for the RTL8125 pair; the relay-line contracts use
+  the same shape, so they share the builder rather than carrying a copy that
+  could drift from it."
+  [contract v]
   (let [{:keys [base image-bytes regions]} (get-in contract [:verification :memory])
         entry (:entry contract)
         _ (when-not (symbol? entry)
@@ -709,7 +715,20 @@
      :base base
      :image image
      :args (mapv resolve-arg (:args v))
-     :expect-memory (:expect-memory v)}))
+     ;; `:hex` is admitted beside `:bytes` here for the same reason `:seed`
+     ;; admits it: a 91-byte wire line as a decimal vector is 91 chances to
+     ;; transcribe one wrong, and the C oracle prints hex.
+     :expect-memory (mapv (fn [e] (cond-> e (:hex e) (assoc :bytes (hex-bytes (:hex e)))))
+                          (:expect-memory v))}))
+
+(defmethod prepare :aiueos.rtl8125/v1 [contract v] (prepare-regions contract v))
+
+;; The murakumo relay lines (ADR-0215): HELLO written into a caller's buffer,
+;; ACK admitted from a received payload. Their expected bytes are the retired
+;; C's, recorded in the contracts; the object under test is the one
+;; `build-uefi.sh` links, so this is the host-side half of "retirement, not
+;; rewrite" and the QEMU/K16 relay gates are the other half.
+(defmethod prepare :aiueos.relay-line/v1 [contract v] (prepare-regions contract v))
 
 ;; --- the tokenizer family --------------------------------------------------
 ;;
