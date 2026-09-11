@@ -258,6 +258,25 @@ the install.
 measured is that the stick which was flashed carries a block that can fail an
 install, and that it no longer can.
 
+## The bundled runtime is not self-contained
+
+Added 2026-09-11, from installing the agent on the 6600HS by hand.
+
+`make-node-agent-bundle` says it carries "what decides something, plus a runtime
+to decide it with", and `install`'s usage says to run it with that runtime "so it
+works before any package is installed". Measured: the bundled `node-linux-x64`
+needs `libatomic.so.1`, and Ubuntu Server 24.04 does not ship `libatomic1`.
+
+    6600HS   libatomic1 absent  ->  error while loading shared libraries
+    K16      libatomic1 ii      ->  ldd reports 0 missing
+
+So the property held on the first box by accident. It is not a property of the
+bundle, and the ISO's agent late-command would have hit the same wall on this
+box even if the tailscale block had not failed first. Not fixed here -- the fix
+is either a statically linked runtime or a declared dependency, and choosing
+between those is a decision with its own evidence. Recorded so the next person
+does not read the docstring as a guarantee.
+
 ## What this does not claim
 
 - **No physical hardware.** TCG emulation of an x86_64 machine says nothing about

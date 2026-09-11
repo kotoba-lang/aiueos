@@ -142,7 +142,7 @@
                                         "intervalSeconds" 2})))
        (let [child (cp/spawn "nbb"
                              (clj->js ["--classpath" (path/join bundle "cp")
-                                       (path/join bundle "node-boot.cljs") cfg])
+                                       (path/join bundle "node-boot.cljk") cfg])
                              #js {:stdio "pipe"
                                   :env (js/Object.assign
                                         #js {} js/process.env
