@@ -2,7 +2,7 @@
 ;; `jvm-free-object-parity.edn` -- `os/aiueos/scripts/verify-jvm-free-object-parity.cljk`
 ;; -- run against a root containing only these three sources and their objects:
 ;;
-;;   nbb os/aiueos/scripts/verify-jvm-free-object-parity.cljk <that root> \
+;;   kbb --backend sci os/aiueos/scripts/verify-jvm-free-object-parity.cljk <that root> \
 ;;     --compiler <amu b1fdaad2 + kotoba-native 132be6c8>
 ;;   SCANNED 3  MATCH 3  DIFFERS 0  COULD-NOT-RUN 0  FAILED 0  REACHED-A-JVM 0
 ;;

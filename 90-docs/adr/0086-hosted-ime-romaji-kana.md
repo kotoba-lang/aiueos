@@ -6,15 +6,15 @@ Date: 2026-08-23
 
 Accepted for a **discriminating hosted IME slice** of root
 `adr-2608221625-aiueos-chromeos-cloud-desktop` Desktop leftover.
-**IME is green only when `clojure -M:compositor ime` prints
+**IME is green only when `kbb -M:compositor ime` prints
 `AIUEOS_COMPOSITOR_IME_OK`:** IME-on consumes `k` then `a` (the focused
 guest does not receive latin), Enter commits `か`, and IME-off is the
 named red (`:ime-bypass` delivers `ka`).
 
-This file records the attempt. The receipt from `clojure -M:compositor ime`
+This file records the attempt. The receipt from `kbb -M:compositor ime`
 is the measurement. Delivering `ka` to the guest while IME is on is red.
 A DADS title bar without `#ime-bar` is red for this gate.
-`clojure -M:compositor wm` stays green **without** requiring IME.
+`kbb -M:compositor wm` stays green **without** requiring IME.
 
 Not executable, and stated here rather than at the end:
 
@@ -45,10 +45,10 @@ while IME is on are the failure mode this gate exists to catch.
    `state/desktop.edn`. IME-on consumes letters into a romaji buffer and
    emits hiragana only on commit. IME-off (`POST /api/compositor/ime`
    `{"on?":false}`) is `:ime-bypass`.
-3. Gate: `clojure -M:compositor ime`. No QEMU. Exit 0 only when the SPA
+3. Gate: `kbb -M:compositor ime`. No QEMU. Exit 0 only when the SPA
    has the IME bar, on-path `ka`+Enter commits `か` with no latin leak,
    and off-path delivers `ka` (the named red must actually be red).
-4. `clojure -M:compositor wm` does not require conversion. Its leftover
+4. `kbb -M:compositor wm` does not require conversion. Its leftover
    print is `:guest-ime-absent` once ADR-0088 lands.
 
 ## P5 — still UNVERIFIED

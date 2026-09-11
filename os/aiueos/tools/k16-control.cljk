@@ -1,4 +1,4 @@
-#!/usr/bin/env nbb
+#!/usr/bin/env kbb
 ;; k16-control.cljs -- one LAN2 (bus3) control datagram from the Mac to the
 ;; K16, and its one-byte answer read back from the bus3 sink.
 ;;
@@ -10,7 +10,7 @@
 ;;   other       -> '?'
 ;; The answer does not come back to the sender's port: the board's TX is a
 ;; fixed 4-tuple to 10.10.10.1:9000, which is where the sink
-;; (`nbb os/aiueos/tools/k16-bus3-sink.cljk`) listens and appends one line per
+;; (`kbb --backend sci os/aiueos/tools/k16-bus3-sink.cljk`) listens and appends one line per
 ;; datagram to /tmp/k16-bus3-en8.log:
 ;;   K16_BUS3_RX from=<ip>:<port> bytes=<n> hex=<hex> t=<iso>
 ;; So this tool sends, then WATCHES THE SINK FILE from the offset it had when
@@ -38,12 +38,12 @@
 ;; not milliseconds. --wait-ms defaults to 20000 for that reason.
 ;;
 ;; Usage:
-;;   nbb os/aiueos/tools/k16-control.cljk <P|R|c> [--to 10.10.10.2:9000]
+;;   kbb --backend sci os/aiueos/tools/k16-control.cljk <P|R|c> [--to 10.10.10.2:9000]
 ;;       [--from 10.10.10.1] [--sink /tmp/k16-bus3-en8.log] [--wait-ms 20000]
 ;;       [--answer-from <ip>   (default: the host of --to)]
 ;; Loopback proof (no board): a sink on 127.0.0.1:19000, a fake board on
 ;; 127.0.0.1:19001 that answers into the sink, then
-;;   nbb os/aiueos/tools/k16-control.cljk R --to 127.0.0.1:19001 --from 127.0.0.1 \
+;;   kbb --backend sci os/aiueos/tools/k16-control.cljk R --to 127.0.0.1:19001 --from 127.0.0.1 \
 ;;       --sink /tmp/x/sink.log --wait-ms 2000        # CONTROL  R  r ; exit 0
 
 (ns k16-control
@@ -76,7 +76,7 @@
 
 (defn- usage! []
   (println (str/join "\n"
-                     ["nbb k16-control.cljk <P|R|c> [--flag value ...]"
+                     ["kbb --backend sci k16-control.cljk <P|R|c> [--flag value ...]"
                       "flags (defaults in brackets):"
                       (str/join "\n" (map (fn [[k v]] (str "  --" k " [" v "]")) (sort-by first defaults)))
                       "stdout: CONTROL<TAB><cmd><TAB><answer|timeout>"

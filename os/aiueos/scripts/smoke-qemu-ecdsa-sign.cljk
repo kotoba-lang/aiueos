@@ -1,4 +1,4 @@
-#!/usr/bin/env nbb
+#!/usr/bin/env kbb
 ;; Gate for the ECDSA P-256 sign object (ssh-v1.edn / ADR-0105): the object,
 ;; linked into the kernel, reproduces the RFC 6979 A.2.5 P-256/SHA-256 "sample"
 ;; signature in a boot. Green iff the serial shows AIUEOS_ECDSA_SIGN_OK.

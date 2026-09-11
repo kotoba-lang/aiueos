@@ -63,8 +63,8 @@ narrower than the suite, not a replacement for it.**
 
 | | tests | assertions |
 |---|---|---|
-| `clojure -M:test` | 647 | 9,440 |
-| `clojure -M:test-fleet` | 643 | **1,920** |
+| `kbb -M:test` | 647 | 9,440 |
+| `kbb -M:test-fleet` | 643 | **1,920** |
 
 The parity test is four tests carrying **7,520 assertions** — a matrix over
 every input the TCP window-acceptability decision takes, checked against

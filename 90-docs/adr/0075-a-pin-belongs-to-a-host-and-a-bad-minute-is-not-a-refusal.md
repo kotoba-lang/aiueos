@@ -20,7 +20,7 @@ as still open are closed, and each one is exercised in both directions:
 - the contract's cross-repository **file paths are checked**, in both
   repositories, by two tests that each check the half they can see.
 
-`clojure -M:cloud-live check` still exits **0** against the live
+`kbb -M:cloud-live check` still exits **0** against the live
 `kotobase.net`, `api.murakumo.cloud` and `infer.murakumo.cloud`, with a real
 completion on the inference leg. The receipt now says which host each accepted
 key was accepted *for*.
@@ -166,7 +166,7 @@ of them.
 **What a person does when the Cloudflare edge rotates**, which is the question
 ADR-0073 left unanswered:
 
-1. `clojure -M:cloud-live pin https://<host>` measures the new key and prints
+1. `kbb -M:cloud-live pin https://<host>` measures the new key and prints
    `MEASURED, NOT TRUSTED`. It writes nothing — deciding to trust a key is a
    person's act, and a tool must not make it.
 2. In `resources/aiueos/cloud_live.edn`, move that host's `:pins` into
@@ -247,7 +247,7 @@ too, in `grant`.
 
 ## What the live run measured
 
-Verbatim, `clojure -M:cloud-live check`, 2026-08-22, exit **0**:
+Verbatim, `kbb -M:cloud-live check`, 2026-08-22, exit **0**:
 
 ```
 LEG model-resolve       ADMITTED    {:alias "murakumo-main", :alias-for "qwen3.8-27b", :anchor-binding :host, :byte-count 497, :endpoint "https://infer.murakumo.cloud/v1/chat/completions", :endpoint-source :resolved, :host "api.murakumo.cloud", :peer-spki "ec7f258fc32457d84295f081a479910ee9b5250d34158fcf3c92eafb9dbd1af1", :status 200}
@@ -284,15 +284,15 @@ too late.
 
 ## Executable evidence
 
-**`kotoba-lang/grant`** — `clojure -M:test`: **340 tests, 1156 assertions, 0
+**`kotoba-lang/grant`** — `kbb -M:test`: **340 tests, 1156 assertions, 0
 failures**, against a baseline at `a8ed303` of **324 / 1056 / 0**.
 
-**`kotoba-lang/aiueos`** — `clojure -M:test`: **414 tests, 8785 assertions, 0
+**`kotoba-lang/aiueos`** — `kbb -M:test`: **414 tests, 8785 assertions, 0
 failures**, against a baseline at `5e8df52` of **396 / 8694 / 0**.
-`clojure -M:test-fleet`: **411 tests, 1337 assertions, 0 failures** (baseline
-393 / 1246 / 0). `clojure -M:tcb-check`:
+`kbb -M:test-fleet`: **411 tests, 1337 assertions, 0 failures** (baseline
+393 / 1246 / 0). `kbb -M:tcb-check`:
 `{:valid? true :classpath-scope :measured :files 21 :external 6 :classpath 9
-:properties 6}`. `clojure -M:lint`: **0 errors, 56 warnings — the same 56 as
+:properties 6}`. `kbb -M:lint`: **0 errors, 56 warnings — the same 56 as
 the baseline**.
 
 The TCB inventory is unchanged at 21 files: nothing new was added to the

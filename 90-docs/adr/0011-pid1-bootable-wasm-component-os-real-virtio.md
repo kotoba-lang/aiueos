@@ -157,11 +157,11 @@ virtio's feature bitsets and descriptor/status bytes need it. Until landed,
 process rather than as a compiled `.kotoba` guest component; they migrate to
 the guest side once the language gains the ops.
 
-**Verification for Phase 0**: `clojure -M:test` covers the ported pure
+**Verification for Phase 0**: `kbb -M:test` covers the ported pure
 protocol logic (mirrors the old Rust unit tests against in-memory fakes) without
 needing real hardware. End-to-end VFIO+QEMU verification needs a Linux guest
 with IOMMU enabled and a `vfio-pci`-bound virtio device — a `bb robot:*`-style
-smoke task (successor to the old `bb robot:block-smoke`/`console-smoke`)
+smoke task (successor to the old `kbb -M:robot:block-smoke`/`console-smoke`)
 exercises this against local QEMU (already installed) but is a separate,
 heavier verification step from the unit-tested pure logic and is called out
 explicitly rather than silently assumed passing.

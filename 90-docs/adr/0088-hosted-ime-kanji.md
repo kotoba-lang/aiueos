@@ -6,16 +6,16 @@ Date: 2026-08-23
 
 Accepted for a **discriminating hosted kanji slice** of root
 `adr-2608221625-aiueos-chromeos-cloud-desktop` Desktop leftover
-`:kanji-absent`. **Kanji is green only when `clojure -M:compositor kanji`
+`:kanji-absent`. **Kanji is green only when `kbb -M:compositor kanji`
 prints `AIUEOS_COMPOSITOR_KANJI_OK`:** IME-on consumes `ka`, Space converts
 `か` to first candidate `加` without delivering text to the guest, Enter
 commits `加`, and Space that commits kana while the dictionary has `か`
 is the named red (`kana-only-desktop`, leftover `:kanji-absent`).
 
 This file records the attempt. The receipt from
-`clojure -M:compositor kanji` is the measurement. An IME bar without
+`kbb -M:compositor kanji` is the measurement. An IME bar without
 `#ime-candidates` is red for this gate only.
-`clojure -M:compositor ime` stays the kana discriminator and stays green
+`kbb -M:compositor ime` stays the kana discriminator and stays green
 **without** requiring conversion.
 
 Not executable, and stated here rather than at the end:
@@ -27,7 +27,7 @@ Not executable, and stated here rather than at the end:
 - **This is not a guest-side IME.** Keys are handled in the hosted JVM
   compositor. Leftover after this slice is `:guest-ime-absent`.
   Guest virtio-gpu 2D stays ADR-0084. Hosted WM stays ADR-0085.
-  Hosted kana stays ADR-0086 (`clojure -M:compositor ime`).
+  Hosted kana stays ADR-0086 (`kbb -M:compositor ime`).
 - **P5 a real machine is UNVERIFIED.** This Mac is the QEMU host. QEMU
   ≠ P5. USB OVMF is forbidden as P5. No physical boot was invented.
 - **Hosted kanji is green.** The kami.webgpu presenter leftover is
@@ -50,10 +50,10 @@ kana was the named red of that leftover.
    does not set `:guest-text`. Enter commits the current candidate.
    `:kanji? false` (`kana-only-desktop`) Space commits kana
    (`:reason :kanji-absent`).
-3. Gate: `clojure -M:compositor kanji`. No QEMU. Exit 0 only when the
+3. Gate: `kbb -M:compositor kanji`. No QEMU. Exit 0 only when the
    SPA has `#ime-candidates`, the named red path stays red, and on-path
    `ka`+Space+Enter commits `加` with no latin leak.
-4. `clojure -M:compositor ime` does not require conversion. Its leftover
+4. `kbb -M:compositor ime` does not require conversion. Its leftover
    print is `:guest-ime-absent` once this slice lands.
 
 ## P5 — still UNVERIFIED

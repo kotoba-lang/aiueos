@@ -72,7 +72,7 @@ current `:next-slot` and pins it on first use, which is what both of its
 
 kotoba-native PR #114, merge `4391d683a80f9d78d35a9c664f8966601ae5abc4`,
 advances the pin (and kotoba-gmir with it: kotoba-mir now reads
-`gmir/rodata-content?`). `clojure -M:test` there: 302 tests, 4096 assertions,
+`gmir/rodata-content?`). `kbb -M:test` there: 302 tests, 4096 assertions,
 0 failures, no byte golden moved.
 
 Rebuilt against that toolchain, the temporary moves to slot `0x18`

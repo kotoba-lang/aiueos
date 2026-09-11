@@ -64,7 +64,7 @@ available and produces a green test that asserts something nobody chose.
 
 `aiueos.offline-floor-test`: **5 tests, 12 assertions, 0 failures.**
 Full suite **640 / 9428 / 12** (the twelve upstream-blocked).
-`clojure -M:test-fleet`: **639 / 9356 / 0.** Lint unchanged.
+`kbb -M:test-fleet`: **639 / 9356 / 0.** Lint unchanged.
 
 **Both directions**: making an empty allowlist permissive — one character in
 `aiueos.policy` — fails `the-uplink-being-down-is-a-refusal-not-a-downgrade`,

@@ -195,12 +195,12 @@ feature bit was counterproductive because "this KVM already defaults to PSCI
 Landed this pass (verified on the aarch64 KVM host): `spike` parametrized over
 a guest program (`{:program …}`), the PSCI diagnostic guest + its
 encoding/feature-bit unit tests (`aiueos.hvt-test`: 7 tests / 41 assertions,
-all green on any JVM host), a `clojure -M:hvt psci` diagnostic entry (documented
+all green on any JVM host), a `kbb -M:hvt psci` diagnostic entry (documented
 as intentionally blocking — run under `timeout`), and `KVM_ARM_VCPU_INIT`
 return-code checking. The default (poweroff) path and `scripts/hvt-smoke.cljk`
-gate remain green. (Repo-wide `clojure -M:test` is 279 tests / 802 assertions;
+gate remain green. (Repo-wide `kbb -M:test` is 279 tests / 802 assertions;
 the single error is a pre-existing `decide-subprocess-smoke-test` shelling to
-`bb decide` on the host — untouched by this change and unrelated to `hvt`.)
+`kbb -M:decide` on the host — untouched by this change and unrelated to `hvt`.)
 
 ### V1 progress — 2026-07-17 (ELF64 direct-loader, the arch-independent half)
 
@@ -223,7 +223,7 @@ end-to-end** — the reusable half of "direct-load the kernel image."
   for a byte-deterministic blob, SHA pinned). It writes `HI\n` to the serial
   MMIO port then the poweroff port, same as the raw guest.
 
-Verified on real KVM: `clojure -M:hvt elf resources/hvt/guest-aarch64.elf` boots
+Verified on real KVM: `kbb -M:hvt elf resources/hvt/guest-aarch64.elf` boots
 the ELF and returns `{:serial "HI\n" :serial-ok? true :shutdown? true :steps 4}`.
 `scripts/hvt-smoke.cljk` now gates **both** cases (raw-word V0 + ELF V1) and the
 reproducibility build passes byte-identical. `aiueos.hvt-test` is 11 tests / 57
@@ -433,7 +433,7 @@ freestanding AArch64 ELF, matching the repo's kotoba-first rule and the
   base-register addressing — register-offset `[x1,x3]` leaves ESR `ISV=0` so KVM
   cannot emulate the device store — fixed in the compiler intrinsic.)
 
-Verified on real KVM: `clojure -M:hvt elf resources/hvt/guest-serial.elf` boots
+Verified on real KVM: `kbb -M:hvt elf resources/hvt/guest-serial.elf` boots
 the Kotoba-compiled AArch64 guest and returns `{:serial "HI\n" :serial-ok? true
 :shutdown? true :halt :mmio-poweroff}`. The guest path is now kotoba-first; the
 remaining asm/C guests (virtio transport/tx/rx) can migrate to `.kotoba` on this

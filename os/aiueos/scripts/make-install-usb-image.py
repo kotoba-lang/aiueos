@@ -89,7 +89,7 @@ From any Linux environment on the target machine:
   # destructive arguments a real install additionally needs. Read its report
   # before adding them. With nbb available, prefer the intent-checking
   # orchestrator instead:
-  #   nbb install-to-disk.cljs --intent ./install-intent.json \
+  #   kbb --backend sci install-to-disk.cljk --intent ./install-intent.json \
   #     --device /dev/nvmeXn1 --image "$MEDIA"/RELEASE.IMG \
   #     --receipt ./release-receipt.json
 All digests are in SHA256S.TXT; verify before trusting anything here.
@@ -118,9 +118,9 @@ by hand:
   MEDIA=/path-to-this-partition
   mkdir -p /tmp/aiueos && cd /tmp/aiueos
   tar xzf "$MEDIA"/INSTALL.TGZ && cd aiueos-installer
-  nbb guided-install.cljk --release-receipt ./release-receipt.json \
+  kbb --backend sci guided-install.cljk --release-receipt ./release-receipt.json \
     --out-intent ./install-intent.json --out-answers ./install-answers.json
-  nbb install-to-disk.cljk --intent ./install-intent.json \
+  kbb --backend sci install-to-disk.cljk --intent ./install-intent.json \
     --device /dev/nvmeXn1 --image "$MEDIA"/RELEASE.IMG \
     --receipt ./release-receipt.json
 
@@ -496,7 +496,7 @@ def make_bundle_tgz(installer_dir, scripts_dir, intent_bytes, receipt_bytes, nod
         add("bin/node", b'#!/bin/sh\nDIR=$(dirname "$(readlink -f "$0")")/..\n'
                         b'exec "$DIR/node-linux-x64" "$@"\n', 0o755)
         # The classpath belongs in the shim, not only in /init: install-live.cljs
-        # spawns `nbb install-to-disk.cljs` BY NAME, so the second hop resolves
+        # spawns `kbb --backend sci install-to-disk.cljk` BY NAME, so the second hop resolves
         # through PATH and would otherwise start with an empty classpath even
         # when the first hop had one.
         cp_flag = (b'--classpath "$DIR/cp" ' if classpath_dirs else b'')

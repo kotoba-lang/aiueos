@@ -1,4 +1,4 @@
-#!/usr/bin/env nbb
+#!/usr/bin/env kbb
 (ns verify-store-tautology
   "Store checks that cannot fail (lang-h13).
 
@@ -36,7 +36,7 @@
   does not parse (an unmeasured file must not look like a clean file), or
   zero kernel-store forms found at all.
 
-  Usage: nbb os/aiueos/tools/verify-store-tautology.cljk [<repo-root>] [--dir <rel>]
+  Usage: kbb --backend sci os/aiueos/tools/verify-store-tautology.cljk [<repo-root>] [--dir <rel>]
   Exit 0 clean / 1 findings / 2 refused. Evidence: SCANNED<TAB>n."
   (:require ["fs" :as fs] ["path" :as p]
             [kotoba.lang.text :as str]

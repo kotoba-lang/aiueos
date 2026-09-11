@@ -1,4 +1,4 @@
-#!/usr/bin/env nbb
+#!/usr/bin/env kbb
 ;; verify-smoke-freshness.cljs -- which boot harnesses can still lie (ADR-0155).
 ;;
 ;; A harness that boots an image is making a claim about the tree in front of
@@ -19,7 +19,7 @@
 ;;   2  COULD-NOT-RUN: no smokes found, or the baseline is unreadable. An
 ;;      empty scan is never a pass.
 ;;
-;; Usage: nbb os/aiueos/scripts/verify-smoke-freshness.cljk [--root <repo>]
+;; Usage: kbb --backend sci os/aiueos/scripts/verify-smoke-freshness.cljk [--root <repo>]
 ;;                                                          [--write-baseline]
 
 (ns verify-smoke-freshness

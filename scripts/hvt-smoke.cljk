@@ -1,16 +1,16 @@
-#!/usr/bin/env nbb
+#!/usr/bin/env kbb
 ;; ADR-0014 V0+V1 smoke gate for `aiueos.hvt` (issue #110).
 ;;
-;; Runs the JVM/FFM self-owned-VMM boot spike (`clojure -M:hvt …`, which needs a
+;; Runs the JVM/FFM self-owned-VMM boot spike (`kbb -M:hvt …`, which needs a
 ;; real /dev/kvm) and asserts its EDN run receipt: the guest must emit the
 ;; expected serial string via MMIO traps AND halt. Two cases:
-;;   - default: the raw-word guest (`clojure -M:hvt`)               -- V0
+;;   - default: the raw-word guest (`kbb -M:hvt`)               -- V0
 ;;   - elf:     direct-load the aarch64 ELF fixture and boot it     -- V1 loader
 ;; The KVM syscalls are JVM-FFM (nbb has no FFM), so this harness orchestrates
 ;; the spike and checks the evidence rather than making the ioctls itself.
 ;;
 ;; Run inside the Linux/KVM VM (needs kvm-group access):
-;;   nbb scripts/hvt-smoke.cljk
+;;   kbb --backend sci scripts/hvt-smoke.cljk
 
 (ns hvt-smoke
   (:require ["child_process" :as cp]
@@ -50,7 +50,7 @@
   asserts the receipt's :console (the virtio-console output the tender pulled
   from the virtqueue) equals the expected string."
   [label argv require-console?]
-  (println (str "[hvt-smoke] " label ": clojure -M:hvt " (str/join " " argv) " ..."))
+  (println (str "[hvt-smoke] " label ": kbb -M:hvt " (str/join " " argv) " ..."))
   (let [{:keys [status stdout stderr]} (run-spike argv)
         line (last-edn-line stdout)
         receipt (when line (try (edn/read-string line) (catch :default _ nil)))]

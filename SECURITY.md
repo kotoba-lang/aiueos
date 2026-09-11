@@ -61,7 +61,7 @@ explicit grant, and that whatever does happen is **audited**.
    runtime/host ABI, production admission/audit path and hardware adapters are
    trusted. Apps, services, Wasm drivers and agents live outside it. The
    versioned file/role/external-dependency inventory is SHA-256 drift checked
-   by `clojure -M:tcb-check`; regulated admission binds its digest. See
+   by `kbb -M:tcb-check`; regulated admission binds its digest. See
    `docs/tcb-inventory.md`.
 4. **Wasm isolation + resource limits.** Each component runs in its own linear
    memory under a **fuel** budget (bounds CPU) and a **memory-page cap** (bounds

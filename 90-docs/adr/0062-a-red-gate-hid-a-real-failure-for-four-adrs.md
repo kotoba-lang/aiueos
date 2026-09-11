@@ -41,7 +41,7 @@ one it hid was mine.
 **A check that cannot see its subject says so instead of failing.**
 `tcb/validate` takes `{:classpath :measured | :not-in-scope}` and reports
 `:classpath-scope` in its result, so a skipped half and a passed half do not
-look the same. `clojure -M:tcb-check` — the production alias, the only place
+look the same. `kbb -M:tcb-check` — the production alias, the only place
 the question means anything — keeps `:measured`.
 
 `aiueos.sbom/regulated-evidence` threads the same option and records
@@ -64,7 +64,7 @@ test.
   failures** (were 7 failures between them).
 - Full suite **632 tests, 9411 assertions, 12 failures**. The nineteen this
   series has been quoting is now twelve, and future ADRs should quote twelve.
-- `clojure -M:tcb-check`: `{:valid? true :classpath-scope :measured :files 39
+- `kbb -M:tcb-check`: `{:valid? true :classpath-scope :measured :files 39
   :external 6 :classpath 9 :properties 6}`. Lint unchanged.
 
 **Both directions.** Forcing the classpath half out of scope unconditionally

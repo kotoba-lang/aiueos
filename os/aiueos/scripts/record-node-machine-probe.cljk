@@ -1,4 +1,4 @@
-#!/usr/bin/env nbb
+#!/usr/bin/env kbb
 ;; Turn the hardware record a box wrote about itself into MEASURED fields in
 ;; contracts/node-machines-v1.edn.
 ;;
@@ -6,7 +6,7 @@
 ;; `--no-hw-record` switch of make-node-autoinstall-iso.cljk turns it off).
 ;; Bring that file here and this reads it:
 ;;
-;;   nbb os/aiueos/scripts/record-node-machine-probe.cljk \
+;;   kbb --backend sci os/aiueos/scripts/record-node-machine-probe.cljk \
 ;;     --machine amd-6600hs --probe aiueos-node-hwprobe.txt
 ;;
 ;; The rule this exists to enforce: a field becomes :measured only if the probe

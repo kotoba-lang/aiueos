@@ -14,7 +14,7 @@
 
   GET / is the DADS document at apps/session (P1), not a temporary --hig-*
   face. Live kotobase/murakumo legs leave this process when the SPA posts
-  /api/session/*. `clojure -M:cloud-live check` is a different gate.
+  /api/session/*. `kbb -M:cloud-live check` is a different gate.
 
   User-mode/slirp networking stands in for Ethernet DHCP. Wi-Fi Easy Connect
   is not this slice. Compositor and real-machine qualification are later
@@ -1667,5 +1667,5 @@
              (flush)
              (System/exit (int (:exit r))))
 
-           (do (println "usage: clojure -M:phone-bind [smoke|serve|pre-enroll] [--pre-enroll]")
+           (do (println "usage: kbb -M:phone-bind [smoke|serve|pre-enroll] [--pre-enroll]")
                (System/exit 3)))))))

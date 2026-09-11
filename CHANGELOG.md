@@ -46,9 +46,9 @@ All notable changes to **aiueos** are documented here. The format follows
 
 ### nbb guest compositor gates (ADR-0100)
 - Guest KERNEL.ELF serial gates run on nbb:
-  `nbb --classpath src scripts/compositor-guest.cljk <profile>`.
+  `kbb --backend sci --classpath src scripts/compositor-guest.cljk <profile>`.
   Classifiers live in portable `aiueos.compositor.guest`. Hosted JVM
-  `clojure -M:compositor wm` / `ime` stay red. JVM `clojure -M:compositor
+  `kbb -M:compositor wm` / `ime` stay red. JVM `kbb -M:compositor
   guest-*` is leftover `:jvm-gate-runner`. Serial lines unchanged.
   Leftover `:native-compositor-absent` (native component runtime, P5).
   **P5 UNVERIFIED**.
@@ -58,7 +58,7 @@ All notable changes to **aiueos** are documented here. The format follows
   `kotoba_aiueos_session_restore(2) == 2`, refuses packed 0 and packed 3,
   and `kotoba_aiueos_wm_hit` uses that front. Restore is Kotoba; C does
   not hardcode front. Gate host as of ADR-0100:
-  `nbb --classpath src scripts/compositor-guest.cljk guest-session`.
+  `kbb --backend sci --classpath src scripts/compositor-guest.cljk guest-session`.
   Named red is hosted JVM `AIUEOS_COMPOSITOR_WM_OK` and restore that
   always returns 2 (`:always-front`). Default `gpu` / `guest-broker`
   boots stay green without requiring `GUEST_SESSION_OK`. Leftover
@@ -70,7 +70,7 @@ All notable changes to **aiueos** are documented here. The format follows
   `kotoba_aiueos_broker_admit(1, 1) == 1` and
   `kotoba_aiueos_broker_admit(2, 1) == 0`. Admit is Kotoba; C copies
   the clipboard scratch only when admitted. Gate:
-  `clojure -M:compositor guest-broker`. Named red is hosted JVM
+  `kbb -M:compositor guest-broker`. Named red is hosted JVM
   `AIUEOS_COMPOSITOR_WM_OK` and picker on a clipboard-only grant
   (`:always-grant`). Default `gpu` / `guest-scanout-two` boots stay
   green without requiring `GUEST_BROKER_OK`. Leftover
@@ -81,7 +81,7 @@ All notable changes to **aiueos** are documented here. The format follows
 - KERNEL.ELF `SET_SCANOUT` scanout 1 onto resource 2 when Kotoba
   `kotoba_aiueos_scanout_bind(2, enabled) == 2`. Bind count is Kotoba;
   C does not hardcode `2`. QEMU `virtio-vga` uses `max_outputs=2`.
-  Gate: `clojure -M:compositor guest-scanout-two`. Named red is hosted
+  Gate: `kbb -M:compositor guest-scanout-two`. Named red is hosted
   JVM `AIUEOS_COMPOSITOR_WM_OK` and one scanout when Kotoba admits two
   (`:one-scanout`). QEMU 10.1 enables extra heads only after a UI
   frontend `ui_info`; the gate owns a unix session bus and `gdbus`
@@ -93,7 +93,7 @@ All notable changes to **aiueos** are documented here. The format follows
 ### Guest gpu-two (ADR-0094)
 - KERNEL.ELF creates and flushes two virtio-gpu 2D resources when Kotoba
   `kotoba_aiueos_wm_hit(2, 2, 100, 80) == 2`. Count is Kotoba; C does not
-  hardcode `2`. Gate: `clojure -M:compositor guest-gpu-two`. Named red is
+  hardcode `2`. Gate: `kbb -M:compositor guest-gpu-two`. Named red is
   hosted JVM `AIUEOS_COMPOSITOR_WM_OK` and one resource when Kotoba admits
   two (`:one-resource`). Default `gpu` / `guest-input` / `guest-paint` boots
   stay green without requiring `GUEST_GPU_TWO_OK`. Leftover
@@ -105,7 +105,7 @@ All notable changes to **aiueos** are documented here. The format follows
 ### Guest input (ADR-0093)
 - KERNEL.ELF copies the desktop envelope from a virtio-keyboard
   used-ring event, not the `#ifdef AIUEOS_INPUT_SMOKE_SYNTHETIC` fill.
-  Gate: `clojure -M:compositor guest-input`. Named red is hosted JVM
+  Gate: `kbb -M:compositor guest-input`. Named red is hosted JVM
   `AIUEOS_COMPOSITOR_WM_OK` and C synthetic fill (`:synthetic-smoke`).
   Default `gpu` / `guest-ime` / `guest-wm` / `guest-paint` boots keep
   the synthetic ifdef so they stay green without this serial line.
@@ -118,7 +118,7 @@ All notable changes to **aiueos** are documented here. The format follows
 ### Guest paint (ADR-0092)
 - KERNEL.ELF paints both boot-desktop rects back-then-front from
   Kotoba `kotoba_aiueos_wm_hit` and samples the overlap pixel.
-  Gate: `clojure -M:compositor guest-paint`. Named red is hosted JVM
+  Gate: `kbb -M:compositor guest-paint`. Named red is hosted JVM
   `AIUEOS_COMPOSITOR_WM_OK` and a key-order paint (window 1 on top at
   overlap). `guest-wm` / `guest-ime` / `gpu` stay green without this
   serial line. Leftover `:native-compositor-absent`. virtio-input still
@@ -128,13 +128,13 @@ All notable changes to **aiueos** are documented here. The format follows
 
 ### Guest WM (ADR-0091)
 - KERNEL.ELF Kotoba `kotoba_aiueos_wm_hit` z-hits two overlapping boot
-  rects. Gate: `clojure -M:compositor guest-wm`. Named red is hosted JVM
+  rects. Gate: `kbb -M:compositor guest-wm`. Named red is hosted JVM
   `AIUEOS_COMPOSITOR_WM_OK`. Leftover after this slice was
   `:one-guest-scanout`. P5 UNVERIFIED.
 
 ### Guest IME (ADR-0090)
 - KERNEL.ELF Kotoba `kotoba_aiueos_ime_commit(107, 97)` returns U+304B.
-  Gate: `clojure -M:compositor guest-ime`. Named red is hosted JVM
+  Gate: `kbb -M:compositor guest-ime`. Named red is hosted JVM
   `AIUEOS_COMPOSITOR_IME_OK`. Latin echo is leftover `:latin-leak`.
   `ime` / `kanji` / `kami` / `gpu` stay green without this serial line.
   Leftover `:native-compositor-absent`. virtio-input still synthetic.
@@ -143,23 +143,23 @@ All notable changes to **aiueos** are documented here. The format follows
 
 ### Hosted kami.webgpu presenter (ADR-0089)
 - `#kami-viewport` calls `kami.webgpu/init!` then `draw!`. Gate:
-  `clojure -M:compositor kami`. Named red is `clear-only-desktop`
+  `kbb -M:compositor kami`. Named red is `clear-only-desktop`
   (sky-only `beginRenderPass`). IR is `kami.webgpu.ir/render-ir` with
   ≥1 instance. `kanji` / `ime` stay green without a kami frame.
   Leftover `:native-compositor-absent` after ADR-0090. P5 UNVERIFIED.
 
 ### Hosted IME kanji (ADR-0088)
 - Space converts `か` to first candidate `加`; Enter commits. Gate:
-  `clojure -M:compositor kanji`. Named red is `kana-only-desktop`
-  (Space commits kana). `clojure -M:compositor ime` stays kana-only.
+  `kbb -M:compositor kanji`. Named red is `kana-only-desktop`
+  (Space commits kana). `kbb -M:compositor ime` stays kana-only.
   Leftover `:native-compositor-absent` after ADR-0090. Not mozc. Hosted
   IME stays. P5 UNVERIFIED.
 
 ### Bare-metal net (P2, green on QEMU UEFI)
 - Guest TLS 1.3 (0x1301) + HTTPS GET of empty raw CID with SHA-256 admit
-  (ADR-0082). Gate: `clojure -M:bare-metal cloud` EXIT=0 leftover `[]`.
+  (ADR-0082). Gate: `kbb -M:bare-metal cloud` EXIT=0 leftover `[]`.
   Hosted `cloud-live` does not count. CertificateVerify is ADR-0087
-  (`clojure -M:bare-metal cert-verify`). Chain-to-anchor still leftover.
+  (`kbb -M:bare-metal cert-verify`). Chain-to-anchor still leftover.
   **Measured 2026-08-23:** `cert-verify` EXIT=0 leftover `[]` with
   `AIUEOS_CERTVERIFY_PROBE result=ok scheme=ecdsa_secp256r1_sha256`, and
   `cloud` still EXIT=0 leftover `[]` on the same firmware (ADR-0087).
@@ -238,7 +238,7 @@ The Phase-0 substrate plus the runtime/robotics/agent work built on top of it.
   vector-table-less guest spins on; forcing `KVM_ARM_VCPU_PSCI_0_2` regressed
   it further. A real PSCI shutdown needs a real-kernel guest (finding 1).
   Landed: `spike` parametrized over `{:program …}`, the PSCI diagnostic + tests
-  (7 tests / 41 assertions), a `clojure -M:hvt psci` diagnostic entry
+  (7 tests / 41 assertions), a `kbb -M:hvt psci` diagnostic entry
   (intentionally blocking — run under `timeout`), and `KVM_ARM_VCPU_INIT`
   return-code checking. Default poweroff path + smoke gate stay green.
 - **V1 progress (2026-07-17), ELF64 direct-loader** (ADR-0014 "V1 progress"):
@@ -249,7 +249,7 @@ The Phase-0 substrate plus the runtime/robotics/agent work built on top of it.
   non-zero GPA), copying PT_LOAD segments and setting PC = `e_entry`. Real
   fixture `resources/hvt/guest-aarch64.elf` (genuine `ld` output; reproducible
   byte-identical via `scripts/build-hvt-guest.cljk`, nbb, SHA-pinned). Verified
-  on real KVM: `clojure -M:hvt elf …` boots it to `{:serial "HI\n" :shutdown?
+  on real KVM: `kbb -M:hvt elf …` boots it to `{:serial "HI\n" :shutdown?
   true}`. `scripts/hvt-smoke.cljk` now gates both the raw-word (V0) and ELF (V1)
   cases; `aiueos.hvt-test` is 11 tests / 57 assertions. The remaining
   kernel-boot gap is purely the x86_64 KVM host (Finding 1); the ELF-load

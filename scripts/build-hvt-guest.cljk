@@ -1,11 +1,11 @@
-#!/usr/bin/env nbb
+#!/usr/bin/env kbb
 ;; Reproducibility recipe for the ADR-0014 V1 ELF-loader test-guest fixtures
 ;; (issue #110). Assembles the checked-in aarch64 sources + shared linker script
 ;; into the fixture ELFs and verifies each SHA-256.
 ;;
 ;; Runs inside the aarch64 Linux/KVM VM (needs GNU binutils `as`/`ld` targeting
 ;; aarch64 ELF -- the host is macOS/Mach-O, so this cannot build there):
-;;   nbb scripts/build-hvt-guest.cljk
+;;   kbb --backend sci scripts/build-hvt-guest.cljk
 ;;
 ;; The .elf files are checked in so tests need no toolchain; this script only
 ;; regenerates them and confirms they are byte-identical (reproducible build).

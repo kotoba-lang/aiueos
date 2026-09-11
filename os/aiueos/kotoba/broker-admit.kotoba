@@ -4,7 +4,7 @@
 ;;
 ;; C already has a clipboard scratch (mechanism). WHETHER clipboard or
 ;; file-picker may run is a grant decision (ADR-0013 Phase 6 permission
-;; broker). Hosted `clojure -M:compositor wm` does not count. The named
+;; broker). Hosted `kbb -M:compositor wm` does not count. The named
 ;; leftover after this object is linked is still
 ;; `:native-compositor-absent` (native component runtime, P5).
 ;;

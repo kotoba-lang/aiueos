@@ -13,7 +13,7 @@ component. Each entry has a role and SHA-256 digest.
 Run:
 
 ```sh
-clojure -M:tcb-check
+kbb -M:tcb-check
 ```
 
 The check fails on missing files, duplicate paths, unsupported inventory
@@ -74,7 +74,7 @@ every jar actually on the running classpath, by SHA-256. `org.clojure/clojure`,
 no `:deps` entry — and the loaded clojure is 1.12.5 where the declaration says
 1.12.4. A jar on the classpath and not recorded is an error; recorded-but-absent
 is not, because the check runs under more than one alias. Regenerate digests
-with `clojure -M:test:tcb-check classpath`; roles are a human judgement and are
+with `kbb -M:test:tcb-check classpath`; roles are a human judgement and are
 not generated.
 
 The inventory is also the SBOM's component list — `aiueos.sbom` derives release

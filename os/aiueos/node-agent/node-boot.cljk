@@ -1,4 +1,4 @@
-#!/usr/bin/env nbb
+#!/usr/bin/env kbb
 ;; What a booted node USB does after the network is up: hold an identity, say
 ;; what it is, and answer its enrolment challenge.
 ;;

@@ -1,4 +1,4 @@
-#!/usr/bin/env nbb
+#!/usr/bin/env kbb
 ;; Offline proof of the per-machine node installer (ADR-0214):
 ;; contracts/node-machines-v1.edn, scripts/make-node-installer.cljk and
 ;; scripts/record-node-machine-probe.cljk. Temp copies of the registry and

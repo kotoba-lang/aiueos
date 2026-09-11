@@ -15,7 +15,7 @@
 ;; (:object). aiueos links the relocatable object and never uses the image;
 ;; only the image hits the 32768 limit, so stubbing it lets the object build.
 ;;
-;;   clojure -Sdeps '{:deps {io.github.kotoba-lang/amu {:git/sha "9cf3a0a..." ...}}}' \
+;;   kbb -Sdeps '{:deps {io.github.kotoba-lang/amu {:git/sha "9cf3a0a..." ...}}}' \
 ;;     -M -e "(load-file \"os/aiueos/scripts/reproduce-ecdsa-sign-object.cljk\")"
 ;;
 ;; The proper long-term home for the two patches is kotoba-native upstream

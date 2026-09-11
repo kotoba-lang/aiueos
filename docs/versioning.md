@@ -38,6 +38,6 @@ A host adapter conforms when it consumes `aiueos.broker/verify-one` (or
 `:aiueos/run-plan`/`:aiueos/run-receipt` document, and never bypasses a
 `:denied` verdict. Current consumers: `kotoba-lang/kototama`'s
 `kototama.aiueos-adapter` (JVM, in-process via `aiueos.cli`) and
-`kotoba-lang/kototama`'s browser-native `actor-host.js` (via the `bb decide`
+`kotoba-lang/kototama`'s browser-native `actor-host.js` (via the `kbb -M:decide`
 subprocess bridge, `aiueos.decide`). See `docs/coverage.edn` for maturity
 evidence per stage.

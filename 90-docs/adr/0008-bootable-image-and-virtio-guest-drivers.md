@@ -41,9 +41,9 @@ Add two CLI surfaces:
 - `aiueos vm boot ... --console virtio-console [--console-socket path]` exposes
   a `virtio-serial-pci` device and named `virtconsole` socket while preserving
   the PL011 boot console for deterministic early logs.
-- `bb robot:block-smoke` builds the robot initramfs, creates a default raw block
+- `kbb -M:robot:block-smoke` builds the robot initramfs, creates a default raw block
   image when absent, boots with `--block`, waits for PID 1 idle, and stops QEMU.
-- `bb robot:console-smoke` boots the same image with the additional
+- `kbb -M:robot:console-smoke` boots the same image with the additional
   `virtio-console` device and stops QEMU after PID 1 idle.
 
 The `/init` process is the aiueos binary itself. When `argv[0]` is `init` and

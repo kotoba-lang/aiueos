@@ -7,7 +7,7 @@ Date: 2026-08-25
 Accepted for a **discriminating guest scanout-two slice** of root
 `adr-2608221625-aiueos-chromeos-cloud-desktop` Desktop leftover
 (README Desktop / compositor unit). **Guest scanout-two is green only when
-`clojure -M:compositor guest-scanout-two` prints `AIUEOS_COMPOSITOR_GUEST_SCANOUT_TWO_OK`:**
+`kbb -M:compositor guest-scanout-two` prints `AIUEOS_COMPOSITOR_GUEST_SCANOUT_TWO_OK`:**
 KERNEL.ELF serial has
 `AIUEOS_GUEST_SCANOUT_TWO_OK scanouts=2 resource-0=1 resource-1=2 kotoba-n=2`,
 scanout 1 was `SET_SCANOUT` onto resource 2 after Kotoba
@@ -15,13 +15,13 @@ scanout 1 was `SET_SCANOUT` onto resource 2 after Kotoba
 `AIUEOS_COMPOSITOR_WM_OK` does **not** count.
 
 This file records the attempt. The receipt from
-`clojure -M:compositor guest-scanout-two` is the measurement. C hardcoding
+`kbb -M:compositor guest-scanout-two` is the measurement. C hardcoding
 bind count `2` is leftover `:one-scanout`. QEMU/firmware/serial unanswered
 is leftover `:unmeasured` (exit 3, not a silent pass).
 
 Not executable, and stated here rather than at the end:
 
-- **This is not hosted JVM gpu.** `clojure -M:compositor gpu` /
+- **This is not hosted JVM gpu.** `kbb -M:compositor gpu` /
   `guest-gpu-two` stay green **without** this serial line.
   Those gates must not start requiring `GUEST_SCANOUT_TWO_OK`.
 - **This is not a permission broker, not a native component runtime, and
@@ -52,7 +52,7 @@ do not wholesale-advance amu.
 3. Default gpu / guest-gpu-two boots may print
    `GUEST_SCANOUT_TWO leftover=one-scanout` when the second scanout
    fails; they must not `qemu_exit` on that leftover.
-4. SPA `#desktop` names `clojure -M:compositor guest-scanout-two`. One
+4. SPA `#desktop` names `kbb -M:compositor guest-scanout-two`. One
    document. jp-go-dds. No second HTML. No liquid-glass. No Three.js.
 
 ## Consequences
@@ -62,7 +62,7 @@ component runtime, P5; permission broker is ADR-0096). Goal not complete.
 
 ## Measurement
 
-Recorded by `clojure -M:compositor guest-scanout-two` on this branch.
+Recorded by `kbb -M:compositor guest-scanout-two` on this branch.
 QEMU ≠ P5.
 
 QEMU 10.1 (`virtio-gpu-base.c`) sets `enabled_output_bitmask = 1` at

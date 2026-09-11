@@ -1,4 +1,4 @@
-#!/usr/bin/env nbb
+#!/usr/bin/env kbb
 ;; Standalone proof of the provisioning record generator (ssh-v1.edn,
 ;; make-provision-record.cljs). No devices, no install -- just the record.
 ;;

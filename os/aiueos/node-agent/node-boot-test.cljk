@@ -1,4 +1,4 @@
-#!/usr/bin/env nbb
+#!/usr/bin/env kbb
 ;; node-boot against a plane that verifies the way the control plane does.
 ;;
 ;; Everything the booted stick does after the network is up, minus the boot:
@@ -11,7 +11,7 @@
 ;; plane that holds a different key must refuse, and the node must say
 ;; SIGNATURE_REFUSED rather than blaming the network.
 ;;
-;;   nbb --classpath <grant>/src:<text>/src:<sekisho>/src \
+;;   kbb --backend sci --classpath <grant>/src:<text>/src:<sekisho>/src \
 ;;     os/aiueos/scripts/node-boot-test.cljk --bundle <staged-bundle-dir>
 
 (require '[grant.device-attest :as attest]

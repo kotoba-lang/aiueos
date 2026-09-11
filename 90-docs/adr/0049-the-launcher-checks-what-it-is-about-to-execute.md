@@ -72,7 +72,7 @@ dropping the `:aiueos.boot/verified? false` record fails only the
 not-checked test.
 
 Full suite **614 tests, 9297 assertions, 19 failures** — the same 19 test names
-as the unmodified tree. `clojure -M:tcb-check` `{:valid? true :files 39 …}`;
+as the unmodified tree. `kbb -M:tcb-check` `{:valid? true :files 39 …}`;
 `boot_admission.cljc` is inventoried, because it decides what the host is
 allowed to execute. Lint unchanged.
 

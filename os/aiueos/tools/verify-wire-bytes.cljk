@@ -1,4 +1,4 @@
-#!/usr/bin/env nbb
+#!/usr/bin/env kbb
 (ns verify-wire-bytes
   "The kernel's single-byte trace values against the one registry (lang-h9).
 
@@ -28,7 +28,7 @@
   an emitter file missing or unparseable, or zero emissions found. A scan that
   could not run must not return the value of a scan that ran and found nothing.
 
-  Usage: nbb os/aiueos/tools/verify-wire-bytes.cljk [<repo-root>]
+  Usage: kbb --backend sci os/aiueos/tools/verify-wire-bytes.cljk [<repo-root>]
                 [--registry <path>] [--findings]
   Exit 0 clean / 1 findings / 2 refused. Evidence lines: SCANNED<TAB>n."
   (:require ["fs" :as fs] ["path" :as p]

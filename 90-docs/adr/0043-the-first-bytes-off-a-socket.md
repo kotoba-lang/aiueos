@@ -93,7 +93,7 @@ widening the ceiling fails only
 `a-body-past-the-ceiling-is-a-fault-not-a-measurement`.
 
 Full suite: **554 tests, 9138 assertions, 19 failures** — the *same 19 test
-names* as the unmodified tree. `clojure -M:tcb-check` is `{:valid? true :files
+names* as the unmodified tree. `kbb -M:tcb-check` is `{:valid? true :files
 37 :external 6 …}`. Lint: no new findings.
 
 ## The TCB grew a platform entry

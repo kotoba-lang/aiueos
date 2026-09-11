@@ -1,4 +1,4 @@
-#!/usr/bin/env nbb
+#!/usr/bin/env kbb
 ;; Offline proof of the guided installer (install-v1.edn :guided, aiueos
 ;; ADR-0208). Fake probe fixtures and temp files only; never opens a block
 ;; device and never writes to one.

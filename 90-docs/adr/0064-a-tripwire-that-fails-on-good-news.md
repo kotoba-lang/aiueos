@@ -44,8 +44,8 @@ refusing to add.
 ## Executable evidence
 
 `aiueos.value-runtime-baseline-test`: **13 tests, 84 assertions, 0 failures**.
-`clojure -M:test-fleet`: **632 tests, 9340 assertions, 0 failures.**
-`clojure -M:test`: 633 / 9412 / 12, unchanged.
+`kbb -M:test-fleet`: **632 tests, 9340 assertions, 0 failures.**
+`kbb -M:test`: 633 / 9412 / 12, unchanged.
 
 **Both directions**: editing the receipt to claim two objects pass fires the
 tripwire with the full runbook — and also fires `the-failure-count-has-not-grown`

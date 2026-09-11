@@ -1,4 +1,4 @@
-#!/usr/bin/env nbb
+#!/usr/bin/env kbb
 ;; Pack the node agent so it can be installed onto a Linux that already boots.
 ;;
 ;; This is the half of the node USB worth keeping. The other half -- a hand
@@ -13,7 +13,7 @@
 ;; `grant.device-attest` is the one definition of what a device signs and
 ;; `sekisho.didkey` the one definition of what a did:key is.
 ;;
-;;   nbb os/aiueos/scripts/make-node-agent-bundle.cljk \
+;;   kbb --backend sci os/aiueos/scripts/make-node-agent-bundle.cljk \
 ;;     --orgs ../.. --node build/aiueos/node-linux-x64 \
 ;;     --nbb build/aiueos/nbb-bundle/node_modules \
 ;;     --output build/aiueos/aiueos-node-agent.tar.gz

@@ -1,4 +1,4 @@
-#!/usr/bin/env nbb
+#!/usr/bin/env kbb
 ;; Gate for the SSH passive-open listener (ssh-v1.edn / ADR-0102): the kernel
 ;; accepts ONE inbound TCP connection on port 22 and exchanges SSH-2.0
 ;; identification strings with a real external client. No crypto -- this proves

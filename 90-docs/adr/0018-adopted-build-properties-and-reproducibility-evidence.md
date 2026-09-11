@@ -99,7 +99,7 @@ into the evidence by `aiueos.sbom/regulated-evidence`:
   attest. Without that binding, a qualified reproduction of *something* would
   satisfy a release of something else.
 
-`clojure -M:reproduce <source-commit> <digest-1> <digest-2> [--fresh-clone]
+`kbb -M:reproduce <source-commit> <digest-1> <digest-2> [--fresh-clone]
 [--hermetic]` judges a pair of builds and exits non-zero when they do not
 qualify.
 
@@ -115,7 +115,7 @@ qualify.
   digests, a single build, a classpath that is not the pinned commit, and a
   reproduction of a different artifact.
 - Removing a mechanism from `:tcb/files`, deleting a property, or adding one
-  with neither gate nor gap now fails `clojure -M:tcb-check`.
+  with neither gate nor gap now fails `kbb -M:tcb-check`.
 - `aiueos.reproducibility` is the first namespace under `src/` to import
   `kotoba.security.supply-chain`, so `security-adoption.edn` gains the control
   namespace and the entrypoint edge. The adoption gate refused the commit until

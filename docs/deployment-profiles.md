@@ -71,7 +71,7 @@ Required:
 - root-signed monotonic lifecycle epoch, sealed checkpoint, delegation scope,
   convergence exercise and compromise-recovery exercise;
 - SBOM and SLSA/in-toto provenance for release artifacts, produced by
-  `clojure -M:attest <artifact-digest> <source-commit> [builder] [--isolated]`
+  `kbb -M:attest <artifact-digest> <source-commit> [builder] [--isolated]`
   (`aiueos.sbom`, ADR-0017). Components are derived from the TCB inventory
   rather than a second scan, so the two cannot disagree; `:tcb-drift-check?` is
   the inventory check's real verdict, and `:provenance/isolated-builder?` is

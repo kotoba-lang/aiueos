@@ -156,10 +156,10 @@
 (defn prepare-step [st blk i]
   (let [j (* i 4)]
     (store32 st i
-             (+ (* (bb blk j) 16777216)
-                (+ (* (bb blk (+ j 1)) 65536)
-                   (+ (* (bb blk (+ j 2)) 256)
-                      (bb blk (+ j 3))))))))
+             (+ (* (kbb -M:blk j) 16777216)
+                (+ (* (kbb -M:blk (+ j 1)) 65536)
+                   (+ (* (kbb -M:blk (+ j 2)) 256)
+                      (kbb -M:blk (+ j 3))))))))
 
 (defn prepare [st blk i]
   (if (= i 16) 1

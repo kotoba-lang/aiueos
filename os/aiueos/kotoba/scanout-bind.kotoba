@@ -5,7 +5,7 @@
 ;; C already CREATE/ATTACH/XFER/FLUSH 2D resources and issues SET_SCANOUT
 ;; (mechanism). HOW MANY enabled modes become bound scanouts is a
 ;; compositor decision. ADR-0094 greened two resources on scanout 0.
-;; Hosted `clojure -M:compositor wm` does not count as guest scanout-two.
+;; Hosted `kbb -M:compositor wm` does not count as guest scanout-two.
 ;; The named leftover after this object is linked is still
 ;; `:native-compositor-absent` (native component runtime, P5).
 ;;

@@ -7,13 +7,13 @@ Date: 2026-08-23
 Accepted for a **discriminating guest WM slice** of root
 `adr-2608221625-aiueos-chromeos-cloud-desktop` Desktop leftover
 (README Desktop / compositor unit). **Guest WM is green only when
-`clojure -M:compositor guest-wm` prints `AIUEOS_COMPOSITOR_GUEST_WM_OK`:**
+`kbb -M:compositor guest-wm` prints `AIUEOS_COMPOSITOR_GUEST_WM_OK`:**
 KERNEL.ELF serial has `AIUEOS_GUEST_WM_OK two-surfaces z-hit=2 miss-front=1 raise=1 one-surface=0`,
 the hit is Kotoba (`kotoba_aiueos_wm_hit`), and hosted JVM serial
 `AIUEOS_COMPOSITOR_WM_OK` does **not** count.
 
 This file records the attempt. The receipt from
-`clojure -M:compositor guest-wm` is the measurement. One-surface that
+`kbb -M:compositor guest-wm` is the measurement. One-surface that
 returns a window id is leftover `:one-surface-ignored`. Overlap that
 returns 1 (map key order) is leftover `:z-order-ignored`. A point only
 in window 1 that still returns 2 is leftover `:always-front`. Raise that
@@ -22,7 +22,7 @@ unanswered is leftover `:unmeasured` (exit 3, not a silent pass).
 
 Not executable, and stated here rather than at the end:
 
-- **This is not hosted JVM WM.** `clojure -M:compositor wm` (ADR-0085)
+- **This is not hosted JVM WM.** `kbb -M:compositor wm` (ADR-0085)
   stays green **without** this serial line. That gate must not start
   requiring `GUEST_WM_OK`.
 - **This is not two guest scanout surfaces.** KERNEL.ELF still has one
@@ -55,7 +55,7 @@ belongs in Kotoba (ADR-0015).
 
 1. Same UEFI QEMU smoke as `gpu` / `guest-ime` (existing
    `smoke-qemu-uefi.sh`). No new `.sh`. New argv
-   `clojure -M:compositor guest-wm` — not folded into `wm` / `gpu` /
+   `kbb -M:compositor guest-wm` — not folded into `wm` / `gpu` /
    `guest-ime`.
 2. Object `os/aiueos/kotoba/wm-hit.kotoba` exports
    `kotoba_aiueos_wm_hit`. Rects are hosted `boot-desktop`. Nested `if`,
@@ -67,7 +67,7 @@ belongs in Kotoba (ADR-0015).
    pattern.
 4. C in `main.c` is call + serial only. Do not `qemu_exit` on WM miss
    — `gpu` / `cloud` / `guest-ime` stay green without this line.
-5. SPA `#desktop` names `clojure -M:compositor guest-wm`. One document.
+5. SPA `#desktop` names `kbb -M:compositor guest-wm`. One document.
    jp-go-dds. No second HTML. No liquid-glass. No Three.js.
 
 ## Consequences
@@ -78,7 +78,7 @@ complete.
 
 ## Measurement
 
-**2026-08-23 this Mac:** `clojure -M:compositor guest-wm` printed
+**2026-08-23 this Mac:** `kbb -M:compositor guest-wm` printed
 `AIUEOS_COMPOSITOR_GUEST_WM_OK` leftover `[]`. Serial:
 `AIUEOS_GUEST_WM_OK two-surfaces z-hit=2 miss-front=1 raise=1 one-surface=0`.
 Object SHA-256

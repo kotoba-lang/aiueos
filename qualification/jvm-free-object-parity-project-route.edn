@@ -2,7 +2,7 @@
 ;; `os/aiueos/scripts/verify-jvm-free-object-parity.cljk` run against a root
 ;; containing only the seven sources below and their objects:
 ;;
-;;   nbb os/aiueos/scripts/verify-jvm-free-object-parity.cljk <that root> \
+;;   kbb --backend sci os/aiueos/scripts/verify-jvm-free-object-parity.cljk <that root> \
 ;;     --compiler <amu bb51dc14 + kotoba-native 8a8c510>
 ;;
 ;; and its output, verbatim:

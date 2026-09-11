@@ -1,4 +1,4 @@
-#!/usr/bin/env nbb
+#!/usr/bin/env kbb
 ;; The f32 dot product, executed.
 ;;
 ;; `kernel-dot-f32` (kotoba-gmir ADR 0010) selects ONE OF TWO instruction
@@ -17,7 +17,7 @@
 ;; This workstation is an Apple M4 and Rosetta exposes no AVX, so TCG is not a
 ;; convenience here: it is the only machine available that can answer at all.
 ;;
-;; Usage: nbb os/aiueos/scripts/smoke-qemu-dot-f32.cljk /path/to/compiler
+;; Usage: kbb --backend sci os/aiueos/scripts/smoke-qemu-dot-f32.cljk /path/to/compiler
 (ns smoke-qemu-dot-f32
   (:require [kotoba.lang.text] ["child_process" :as cp]
             ["crypto" :as crypto]

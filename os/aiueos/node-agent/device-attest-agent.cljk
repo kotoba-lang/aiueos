@@ -1,4 +1,4 @@
-#!/usr/bin/env nbb
+#!/usr/bin/env kbb
 ;; The device half of the claim ceremony: poll for a challenge, sign it with
 ;; the key that never leaves this box, post the signature back.
 ;;
@@ -11,7 +11,7 @@
 ;; checked there come from one function rather than two readings of one spec.
 ;; What is here is sockets, a private key, and an exit code.
 ;;
-;;   nbb --classpath ../grant/src:../text/src \
+;;   kbb --backend sci --classpath ../grant/src:../text/src \
 ;;     os/aiueos/scripts/device-attest-agent.cljk \
 ;;     --did did:key:z6Mk... --endpoint https://murakumo.cloud \
 ;;     --key /path/to/device-ed25519-pkcs8.pem [--watch --interval 15]

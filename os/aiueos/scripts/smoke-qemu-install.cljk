@@ -1,4 +1,4 @@
-#!/usr/bin/env nbb
+#!/usr/bin/env kbb
 ;; Gate I3 + I5 of install-v1.edn (root ADR adr-2608251418), measured under
 ;; QEMU/OVMF: one continuous chain from a USB-booted live installer to an
 ;; internal disk that boots aiueos on its own and refuses to be erased twice.

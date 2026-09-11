@@ -12,7 +12,7 @@
   Exit 1 = a leg was refused, or the document is not the DADS SPA.
   Exit 3 = a leg could not be answered.
 
-  QEMU is not this gate. Phone bind is `clojure -M:phone-bind smoke`."
+  QEMU is not this gate. Phone bind is `kbb -M:phone-bind smoke`."
   (:require [aiueos.phone-bind :as pb])
   (:import [java.io File]))
 
@@ -45,7 +45,7 @@
 
 (defn run-smoke
   "HTTP only. No guest display. Hits the SPA, then the two live legs through
-  the session process — not `clojure -M:cloud-live check`."
+  the session process — not `kbb -M:cloud-live check`."
   [{:keys [dir]}]
   (let [dir (File. (or dir (str (System/getProperty "java.io.tmpdir")
                                 "/aiueos-session-p1")))
@@ -237,5 +237,5 @@
         (flush)
         (System/exit (int (:exit r))))
 
-      (do (println "usage: clojure -M:session [smoke|guest|operator|serve]")
+      (do (println "usage: kbb -M:session [smoke|guest|operator|serve]")
           (System/exit 3)))))

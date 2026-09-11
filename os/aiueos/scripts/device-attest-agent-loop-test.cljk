@@ -1,4 +1,4 @@
-#!/usr/bin/env nbb
+#!/usr/bin/env kbb
 ;; The whole loop, against a server that verifies the way the control plane
 ;; does: issue a nonce, let the agent poll it, sign it and post it back, and
 ;; check the signature with WebCrypto over `grant.device-attest/signing-input`.
@@ -16,7 +16,7 @@
 ;; as an argument, because the child agent is a separate nbb process that
 ;; needs the same one.
 ;;
-;;   nbb --classpath ../grant/src:../text/src \
+;;   kbb --backend sci --classpath ../grant/src:../text/src \
 ;;     os/aiueos/scripts/device-attest-agent-loop-test.cljk ../grant/src:../text/src
 
 (require '[grant.device-attest :as attest]

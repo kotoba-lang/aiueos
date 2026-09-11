@@ -8,7 +8,7 @@ case "$ARCH" in
   *) echo "unsupported architecture: $ARCH" >&2; exit 2 ;;
 esac
 
-clojure -T:build uber
+kbb -T:build uber
 rm -rf target/jre-linux target/linux-runtime-root
 mkdir -p target
 

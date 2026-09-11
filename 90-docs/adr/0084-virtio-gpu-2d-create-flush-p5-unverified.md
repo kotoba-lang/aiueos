@@ -6,12 +6,12 @@ Date: 2026-08-22
 
 Accepted for a **discriminating slice** of root
 `adr-2608221625-aiueos-chromeos-cloud-desktop` compositor / Desktop 面.
-**Guest 2D is green only when `clojure -M:compositor gpu` prints
+**Guest 2D is green only when `kbb -M:compositor gpu` prints
 `AIUEOS_COMPOSITOR_GPU_2D green`:** KERNEL.ELF serial contains
 `AIUEOS_VIRTIO_GPU_CREATE result=ok` **and**
 `AIUEOS_VIRTIO_GPU_FLUSH result=ok`.
 
-This file records the attempt. The receipt from `clojure -M:compositor gpu`
+This file records the attempt. The receipt from `kbb -M:compositor gpu`
 is the measurement. QMP `query-pci` is not this gate.
 
 Not executable, and stated here rather than at the end:
@@ -19,7 +19,7 @@ Not executable, and stated here rather than at the end:
 - **This is not a window manager.** No IME, no decoration protocol, no
   z-stack in the guest. `#desktop` hosted surfaces (ADR-0079) remain a
   named partial JVM face.
-- **`clojure -M:compositor smoke` does not green 2D.** That gate still
+- **`kbb -M:compositor smoke` does not green 2D.** That gate still
   admits SPA + window-session-state + query-pci under `-display none`.
 - **GET_DISPLAY_INFO / GOP-once is not 2D.** Display-info stays the floor
   existing UEFI smokes grep. `gpu` is red if that line is present without
@@ -40,7 +40,7 @@ session framebuffer), not "PCI device listed".
 stays the hosted viewport. No Three.js. No CSS-as-compositor.
 
 P1b phone bind must keep `-display none` without a GPU device and
-without a guest keyboard. 2D is a **second argv**: `clojure -M:compositor gpu`
+without a guest keyboard. 2D is a **second argv**: `kbb -M:compositor gpu`
 reuses `os/aiueos/scripts/smoke-qemu-uefi.sh` (virtio-vga, same virtio-gpu
 protocol) **without** `AIUEOS_TEST_NET`.
 
@@ -58,7 +58,7 @@ CREATE/FLUSH can complete. Pixel contents are not a WM.
 2. Serial names the result:
    `AIUEOS_VIRTIO_GPU_CREATE result=ok|absent` and
    `AIUEOS_VIRTIO_GPU_FLUSH result=ok|absent`.
-3. `clojure -M:compositor gpu` admits only both `result=ok` lines.
+3. `kbb -M:compositor gpu` admits only both `result=ok` lines.
    PCI-only is `:pci-device-listed-does-not-count`. Missing QEMU/OVMF
    serial is exit 3, not a pass.
 4. Hosted `#desktop` is not guest scanout. IME stays leftover.

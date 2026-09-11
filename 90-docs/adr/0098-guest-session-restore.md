@@ -7,7 +7,7 @@ Date: 2026-08-25
 Accepted for a **discriminating guest session-restore slice** of root
 `adr-2608221625-aiueos-chromeos-cloud-desktop` Desktop leftover
 (README Desktop / compositor unit). **Guest session is green only when
-`clojure -M:compositor guest-session` prints `AIUEOS_COMPOSITOR_GUEST_SESSION_OK`:**
+`kbb -M:compositor guest-session` prints `AIUEOS_COMPOSITOR_GUEST_SESSION_OK`:**
 KERNEL.ELF serial has
 `AIUEOS_GUEST_SESSION_OK restored-front=2 packed=2 kotoba-front=2 hit=2`,
 Kotoba restored packed front 2, empty packed 0 and unknown packed 3
@@ -15,7 +15,7 @@ refused, `kotoba_aiueos_wm_hit` used that front, and hosted JVM serial
 `AIUEOS_COMPOSITOR_WM_OK` does **not** count.
 
 This file records the attempt. The receipt from
-`clojure -M:compositor guest-session` is the measurement. Restore that
+`kbb -M:compositor guest-session` is the measurement. Restore that
 returns 2 for packed 0 is leftover `:always-front`. Restore that
 returns 0 for packed 2 is leftover `:empty-session`. Restore that
 returns 3 for packed 3 is leftover `:unknown-surface`. wm-hit ignoring
@@ -24,7 +24,7 @@ unanswered is leftover `:unmeasured` (exit 3, not a silent pass).
 
 Not executable, and stated here rather than at the end:
 
-- **This is not hosted JVM gpu/wm.** `clojure -M:compositor gpu` /
+- **This is not hosted JVM gpu/wm.** `kbb -M:compositor gpu` /
   `guest-ime` / `guest-wm` / `guest-broker` stay green **without**
   this serial line. Those gates must not start requiring `GUEST_SESSION_OK`.
 - **This is not a native component runtime, and not P5 physical boot.**
@@ -55,9 +55,9 @@ different track.
 2. C calls `kotoba_aiueos_session_restore(2)`, `(0)`, and `(3)`, then
    `kotoba_aiueos_wm_hit(2, front, 100, 80)`. Do not hardcode front in
    C. Do not `qemu_exit`.
-3. Gate is `clojure -M:compositor guest-session` via default UEFI smoke
+3. Gate is `kbb -M:compositor guest-session` via default UEFI smoke
    (`run-uefi-2d!` with no extra env). It does not need dbus/`gdbus`.
-4. SPA `#desktop` names `clojure -M:compositor guest-session`. One
+4. SPA `#desktop` names `kbb -M:compositor guest-session`. One
    document. jp-go-dds. No second HTML. No liquid-glass. No Three.js.
 
 ## Consequences
@@ -67,5 +67,5 @@ component runtime, P5). Goal not complete.
 
 ## Measurement
 
-Recorded by `clojure -M:compositor guest-session` on this branch.
+Recorded by `kbb -M:compositor guest-session` on this branch.
 QEMU != P5.

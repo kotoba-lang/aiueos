@@ -2,13 +2,13 @@
   "KERNEL.ELF guest compositor serial classifiers (ADR-0100).
 
   Portable. nbb loads this namespace without kami / phone-bind / JVM.
-  Hosted `clojure -M:compositor wm` / `ime` remain the named reds.
-  Evidence command is `nbb --classpath src scripts/compositor-guest.cljk`
+  Hosted `kbb -M:compositor wm` / `ime` remain the named reds.
+  Evidence command is `kbb --backend sci --classpath src scripts/compositor-guest.cljk`
   plus a guest profile. QEMU/firmware/serial unanswered is exit 3."
   (:require [kotoba.lang.text :as str]))
 
 (def gate-prefix
-  "nbb --classpath src scripts/compositor-guest.cljk")
+  "kbb --backend sci --classpath src scripts/compositor-guest.cljk")
 
 (def guest-profiles
   ["guest-ime" "guest-wm" "guest-paint" "guest-input"
@@ -35,7 +35,7 @@
 
 (defn guest-ime-result
   "Classify a KERNEL.ELF boot for compositor `guest-ime`.
-  Hosted `clojure -M:compositor ime` is the named red."
+  Hosted `kbb -M:compositor ime` is the named red."
   [{:keys [serial qemu-unmeasured? hosted-ime?]}]
   (cond
     qemu-unmeasured?
@@ -70,7 +70,7 @@
 
 (defn guest-wm-result
   "Classify a KERNEL.ELF boot for compositor `guest-wm`.
-  Hosted `clojure -M:compositor wm` is the named red."
+  Hosted `kbb -M:compositor wm` is the named red."
   [{:keys [serial qemu-unmeasured? hosted-wm?]}]
   (cond
     qemu-unmeasured?
@@ -115,7 +115,7 @@
 
 (defn guest-paint-result
   "Classify a KERNEL.ELF boot for compositor `guest-paint`.
-  Hosted `clojure -M:compositor wm` is the named red."
+  Hosted `kbb -M:compositor wm` is the named red."
   [{:keys [serial qemu-unmeasured? hosted-wm?]}]
   (cond
     qemu-unmeasured?
@@ -161,7 +161,7 @@
 
 (defn guest-input-result
   "Classify a KERNEL.ELF boot for compositor `guest-input`.
-  Hosted `clojure -M:compositor wm` is the named red. C filling the
+  Hosted `kbb -M:compositor wm` is the named red. C filling the
   envelope is leftover `:synthetic-smoke`."
   [{:keys [serial qemu-unmeasured? hosted-wm?]}]
   (cond
@@ -198,7 +198,7 @@
 
 (defn guest-gpu-two-result
   "Classify a KERNEL.ELF boot for compositor `guest-gpu-two`.
-  Hosted `clojure -M:compositor wm` is the named red. One resource
+  Hosted `kbb -M:compositor wm` is the named red. One resource
   when Kotoba admits two is leftover `:one-resource`."
   [{:keys [serial qemu-unmeasured? hosted-wm?]}]
   (cond
@@ -232,7 +232,7 @@
 
 (defn guest-scanout-two-result
   "Classify a KERNEL.ELF boot for compositor `guest-scanout-two`.
-  Hosted `clojure -M:compositor wm` is the named red. One scanout
+  Hosted `kbb -M:compositor wm` is the named red. One scanout
   when Kotoba admits two is leftover `:one-scanout`."
   [{:keys [serial qemu-unmeasured? hosted-wm?]}]
   (cond
@@ -266,7 +266,7 @@
 
 (defn guest-broker-result
   "Classify a KERNEL.ELF boot for compositor `guest-broker`.
-  Hosted `clojure -M:compositor wm` is the named red. Picker admitted
+  Hosted `kbb -M:compositor wm` is the named red. Picker admitted
   on a clipboard-only grant is leftover `:always-grant`."
   [{:keys [serial qemu-unmeasured? hosted-wm?]}]
   (cond
@@ -302,7 +302,7 @@
 
 (defn guest-session-result
   "Classify a KERNEL.ELF boot for compositor `guest-session`.
-  Hosted `clojure -M:compositor wm` is the named red. Restore that
+  Hosted `kbb -M:compositor wm` is the named red. Restore that
   returns 2 for packed 0 is leftover `:always-front`."
   [{:keys [serial qemu-unmeasured? hosted-wm?]}]
   (cond

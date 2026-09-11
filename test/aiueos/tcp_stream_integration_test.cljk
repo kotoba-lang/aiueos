@@ -48,7 +48,7 @@
     2. a sibling checkout org-ietf-tcp/kotoba, where the native build
        script's default resolves the same commit;
     3. the gitlibs cache the :test alias itself materializes for the pinned
-       commit — usable wherever `clojure -M:test` has already resolved deps."
+       commit — usable wherever `kbb -M:test` has already resolved deps."
   []
   (letfn [(kotoba-dir [root] (io/file root "tcp"))]
     (or (when-let [env (System/getenv "AIUEOS_ORG_IETF_TCP_SOURCE_PATH")]

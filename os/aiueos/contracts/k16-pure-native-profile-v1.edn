@@ -16,7 +16,7 @@
             "write the ordinary link's exact object list and change nothing else"}
            :entry-point "os/aiueos/scripts/build-k16-pure-native.cljk"
            :bootable-invocation
-           "nbb os/aiueos/scripts/build-k16-pure-native.cljk --compiler /path/to/pinned-amu"
+           "kbb --backend sci os/aiueos/scripts/build-k16-pure-native.cljk --compiler /path/to/pinned-amu"
            :gate "os/aiueos/scripts/k16-pure-native-gate.cljk"
            :provenance "os/aiueos/kotoba/provenance.edn"
            :artifacts {:kernel "aiueos-k16-pure-native-kernel.elf"

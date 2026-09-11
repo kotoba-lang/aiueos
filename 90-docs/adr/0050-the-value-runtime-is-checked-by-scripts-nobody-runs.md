@@ -99,7 +99,7 @@ loop should do.
   disagrees with its rows fails only `the-failure-count-has-not-grown`.
   A mutation that does not apply looks exactly like a gate that does not
   discriminate.
-- `clojure -M:tcb-check` `{:valid? true :files 39 …}`. Lint unchanged.
+- `kbb -M:tcb-check` `{:valid? true :files 39 …}`. Lint unchanged.
 
 ## Remaining boundary
 

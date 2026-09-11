@@ -1,4 +1,4 @@
-#!/usr/bin/env nbb
+#!/usr/bin/env kbb
 ;; The install USB bundle, EXECUTED rather than merely built (aiueos ADR-0209,
 ;; root ADR adr-2608136000 question 8).
 ;;
@@ -223,7 +223,7 @@
 (defn- shim!
   "The bundled bin/nbb, reproduced. In a real bundle the builder emits this
   shim and it is what carries the classpath to the SECOND hop: install-live
-  spawns `nbb guided-install.cljk` by name. A test that let hop 2 resolve
+  spawns `kbb --backend sci guided-install.cljk` by name. A test that let hop 2 resolve
   through the host's nbb.edn would be testing something the stick does not
   have."
   [dir]

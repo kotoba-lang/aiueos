@@ -1,4 +1,4 @@
-#!/usr/bin/env nbb
+#!/usr/bin/env kbb
 ;; Gate-N2.5 host KAT oracle for the PURE-KOTOBA SSH port (planning:
 ;; os/aiueos/docs/ssh-pure-port-plan.md, tranche T2 ssh-kex-hash.kotoba).
 ;;
@@ -18,7 +18,7 @@
 ;;
 ;; Run (from a west superproject checkout the sibling repo is found
 ;; automatically; from a plain aiueos worktree set ORG_IETF_SSH_SRC):
-;;   nbb --classpath <org-ietf-ssh>/src os/aiueos/scripts/ssh-kex-kat.cljk
+;;   kbb --backend sci --classpath <org-ietf-ssh>/src os/aiueos/scripts/ssh-kex-kat.cljk
 
 (require '[clojure.edn :as edn]
          '[kotoba.lang.text :as str])
@@ -48,7 +48,7 @@
     (println "error: kotoba-lang/org-ietf-ssh not found.")
     (println "  set ORG_IETF_SSH_SRC to the repo checkout (e.g. the west")
     (println "  checkout <superproject>/orgs/kotoba-lang/org-ietf-ssh), then:")
-    (println "  nbb --classpath <dir>/src os/aiueos/scripts/ssh-kex-kat.cljk"))
+    (println "  kbb --backend sci --classpath <dir>/src os/aiueos/scripts/ssh-kex-kat.cljk"))
   (.exit js/process 2))
 
 ;; The classpath is org-ietf-ssh's OWN deps.edn :paths (currently ["src"]) --

@@ -1,11 +1,11 @@
-#!/usr/bin/env nbb
+#!/usr/bin/env kbb
 ;; Does the JDK-free route produce the SAME kernel object as the JVM?
 ;;
 ;; Compiles every aiueos kernel source both ways in one pass and compares the
 ;; two digests directly, so the answer never depends on a previously recorded
 ;; run of the other route. Both invocations go through `bin/amu`: the JVM-free
 ;; one with --jvm-free (which refuses rather than falling back), the other by
-;; calling `clojure -M:run` the way the launcher does before this change.
+;; calling `kbb -M:run` the way the launcher does before this change.
 ;;
 ;; Evidence floors (ADR-2608136000): a source that could not be compiled by
 ;; EITHER route is :could-not-run, never :differs -- an unanswered comparison

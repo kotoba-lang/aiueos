@@ -2,7 +2,7 @@
   "SSR `apps/session/index.html` through jp-go-dds. nbb, not sh.
   Invoked from a tree that can see jp-go-dds on the classpath:
 
-    nbb --classpath <session-src>:<dds/src>:<dds/resources>:<html/src>:<css/src> \\
+    kbb --backend sci --classpath <session-src>:<dds/src>:<dds/resources>:<html/src>:<css/src> \\
       apps/session/generate.cljk -- --repo <aiueos> --dds-css <dds.css>"
   (:require ["fs" :as fs]
             ["path" :as path]

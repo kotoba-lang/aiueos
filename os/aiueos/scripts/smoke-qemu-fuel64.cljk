@@ -1,4 +1,4 @@
-#!/usr/bin/env nbb
+#!/usr/bin/env kbb
 ;; fuel64: a fuel budget past 2^31, spent on a CPU.
 ;;
 ;; kotoba-native ADR 0078 widened the object replenish from an imm32 to a
@@ -32,7 +32,7 @@
 ;; slow enough that the honest answer to "did it spend 2^31" may be "here is
 ;; how far it got and here is the measured rate". `--stages` reports the split.
 ;;
-;; Usage: nbb os/aiueos/scripts/smoke-qemu-fuel64.cljk /path/to/amu [--stages]
+;; Usage: kbb --backend sci os/aiueos/scripts/smoke-qemu-fuel64.cljk /path/to/amu [--stages]
 (ns smoke-qemu-fuel64
   (:require ["child_process" :as cp]
             ["crypto" :as crypto]

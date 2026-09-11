@@ -1,4 +1,4 @@
-#!/usr/bin/env nbb
+#!/usr/bin/env kbb
 ;; k16-bus3-sink.cljs -- the Mac end of bus3 (LAN2, en8): a UDP receipt sink
 ;; on 0.0.0.0:9000 that cannot hold a dead inode.
 ;;
@@ -47,10 +47,10 @@
 ;; in that file. Keep `--sink` and `--listen` as literal argv tokens.
 ;;
 ;; Usage:
-;;   nbb os/aiueos/tools/k16-bus3-sink.cljk [--listen 10.10.10.1:9000]
+;;   kbb --backend sci os/aiueos/tools/k16-bus3-sink.cljk [--listen 10.10.10.1:9000]
 ;;       [--sink /tmp/k16-bus3-en8.log] [--liveness-s 300]
 ;; Prove the whole point on a scratch port:
-;;   nbb os/aiueos/tools/k16-bus3-sink.cljk --listen 127.0.0.1:19000 --sink /tmp/x/sink.log
+;;   kbb --backend sci os/aiueos/tools/k16-bus3-sink.cljk --listen 127.0.0.1:19000 --sink /tmp/x/sink.log
 ;;   python3 -c 'import socket;socket.socket(socket.AF_INET,socket.SOCK_DGRAM).sendto(b"one",("127.0.0.1",19000))'
 ;;   rm /tmp/x/sink.log
 ;;   python3 -c '... sendto(b"two", ...)'   # sink.log exists again and holds "two"
@@ -83,7 +83,7 @@
 
 (defn- usage! []
   (println (str/join "\n"
-                     ["nbb k16-bus3-sink.cljk [--flag value ...]"
+                     ["kbb --backend sci k16-bus3-sink.cljk [--flag value ...]"
                       "flags (defaults in brackets):"
                       (str/join "\n" (map (fn [[k v]] (str "  --" k " [" v "]")) (sort-by first defaults)))
                       "exit 2 = refused to start (K16_BUS3_SINK_REFUSED reason=...)"]))

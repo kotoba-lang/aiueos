@@ -1,4 +1,4 @@
-#!/usr/bin/env nbb
+#!/usr/bin/env kbb
 ;; The two K-quant fused dequantize-and-dot instructions, executed.
 ;;
 ;; `kernel-dequant-dot-q4-k` and `kernel-dequant-dot-q6-k` (kotoba-native ADR
@@ -17,7 +17,7 @@
 ;; equal the answer `kotoba.kir`'s reference interpreter gives for the same
 ;; bytes.
 ;;
-;; Usage: nbb os/aiueos/scripts/smoke-qemu-dequant-kquant.cljk /path/to/compiler
+;; Usage: kbb --backend sci os/aiueos/scripts/smoke-qemu-dequant-kquant.cljk /path/to/compiler
 (ns smoke-qemu-dequant-kquant
   (:require ["child_process" :as cp]
             ["crypto" :as crypto]

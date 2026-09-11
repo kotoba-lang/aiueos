@@ -1,4 +1,4 @@
-#!/usr/bin/env nbb
+#!/usr/bin/env kbb
 ;; k16-job-probe.cljs -- one aiueos-micro-infer job across bus3, end to end,
 ;; without murakumo credentials.
 ;;
@@ -17,7 +17,7 @@
 ;; report "the board never answered".
 ;;
 ;; Usage:
-;;   nbb os/aiueos/tools/k16-job-probe.cljk [--root .] [--prompt murakum]
+;;   kbb --backend sci os/aiueos/tools/k16-job-probe.cljk [--root .] [--prompt murakum]
 ;;       [--listen 0.0.0.0:9000] [--node 10.10.10.2:9000] [--wait-s 180]
 ;; Exit 0 = a verified answer, 1 = an answer that did not verify or none
 ;; arrived, 2 = REFUSED (could not answer: port busy, no table, ...).

@@ -70,7 +70,7 @@ assurance gaps.
 
 ## Executable evidence
 
-- `clojure -M:test -n aiueos.cloud-test`: **24 tests, 68 assertions, 0
+- `kbb -M:test -n aiueos.cloud-test`: **24 tests, 68 assertions, 0
   failures**. The CIDs and digests in it were computed outside the code under
   test, so the decoder is checked against an independent oracle rather than
   against itself.
@@ -83,7 +83,7 @@ assurance gaps.
 - Full suite: **540 tests, 9103 assertions, 19 failures** — the *same 19 test
   names* as the unmodified tree (516 / 9035 / 19). They are `aiueos.tcb-test`
   classpath assertions that fail under the `:test` alias's extra jars, and the
-  test itself says so. The production path `clojure -M:tcb-check` is
+  test itself says so. The production path `kbb -M:tcb-check` is
   `{:valid? true :files 36 :external 5 :classpath 9 :properties 6}`.
 
 ## `aiueos.net` was not in the TCB inventory

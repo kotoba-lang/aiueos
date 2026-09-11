@@ -1,6 +1,6 @@
 (ns aiueos.bare-metal-test
-  "Discriminating tests for P2. `clojure -M:test` of this ns is not the
-  QEMU gate. That gate is `clojure -M:bare-metal cloud`.
+  "Discriminating tests for P2. `kbb -M:test` of this ns is not the
+  QEMU gate. That gate is `kbb -M:bare-metal cloud`.
 
   These tests name the reds so a host curl / `java.net.http` GET cannot
   stand in for a guest HTTP to kotobase, and so leftover is a printed

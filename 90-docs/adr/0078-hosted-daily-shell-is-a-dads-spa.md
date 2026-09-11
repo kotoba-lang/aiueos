@@ -5,7 +5,7 @@ Date: 2026-08-22
 ## Status
 
 Accepted and executable **for the hosted JVM profile, P1 of root
-`adr-2608221625-aiueos-chromeos-cloud-desktop`**. `clojure -M:session smoke`
+`adr-2608221625-aiueos-chromeos-cloud-desktop`**. `kbb -M:session smoke`
 serves `apps/session` (jp-go-dds, one HTML document, fragments `#session`
 `#desktop` `#setup` `#manage` `#devices`) and, from **that same process**, GETs a known
 CID on `https://kotobase.net` and completes a `murakumo-main` infer.
@@ -18,19 +18,19 @@ Not executable, and stated here rather than at the end:
 - **This is not bare-metal.** Nothing in `os/aiueos/` changed here. The
   guest still cannot speak HTTP. Phone bind remains a hosted helper with
   QEMU `-display none`.
-- **`clojure -M:cloud-live check` does not green this gate.** That CLI
+- **`kbb -M:cloud-live check` does not green this gate.** That CLI
   proved the authorities. P1 is that the *session* invoked them.
 - **itonami (P4) and a real machine (P5) are not this change.**
 - **Guest apps (P3) are ADR-0080.** This ADR remains the P1 document +
-  kotobase/murakumo legs. `clojure -M:session smoke` does not execute the
-  guest; `clojure -M:session guest` does.
+  kotobase/murakumo legs. `kbb -M:session smoke` does not execute the
+  guest; `kbb -M:session guest` does.
 
 ## Context
 
 Root ADR-2608221625 P1 is a Chrome OS-shaped daily face: phone-sized
 viewport, one document, DADS, live kotobase read and murakumo infer from
 the shell. The P1b proving slice had already landed a headless Mac VM bind
-(`clojure -M:phone-bind smoke`) but its HTML was a temporary `--hig-*`
+(`kbb -M:phone-bind smoke`) but its HTML was a temporary `--hig-*`
 string, not `apps/session`, and `apps/` was absent.
 
 A second document, or a CLI that already talked to kotobase, would have
@@ -46,8 +46,8 @@ helper serves that document at `GET /`. The same helper answers
 policy. Model identity is the alias `murakumo-main`; no other model id is
 hardcoded.
 
-`clojure -M:session smoke` is the P1 gate (HTTP only, no QEMU).
-`clojure -M:phone-bind smoke` remains the P1b gate and must still exit 0
+`kbb -M:session smoke` is the P1 gate (HTTP only, no QEMU).
+`kbb -M:phone-bind smoke` remains the P1b gate and must still exit 0
 against this document (`-display none`).
 
 ## Consequences

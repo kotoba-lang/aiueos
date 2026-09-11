@@ -101,13 +101,13 @@
          :main-opts ["-m" "cognitect.test-runner"]
          :exec-fn cognitect.test-runner.api/test}
 
-   ;; The security adoption verifier (CI: `clojure -M:security-adoption`)
+   ;; The security adoption verifier (CI: `kbb -M:security-adoption`)
    ;; loads every entrypoint in security-adoption.edn to prove the
    ;; entrypoint-to-control dependency edges. `aiueos.phone-bind` transitively
    ;; requires `aiueos.compositor.desktop` -> `kami.webgpu.ir`, which is only
    ;; on the test classpath, so the verifier runs with the hosted kami IR
    ;; floor added (same pin as the test alias).
-   ;; CI's anonymous test suite (ci.yml: `clojure -M:ci`). org-ietf-tcp is
+   ;; CI's anonymous test suite (ci.yml: `kbb -M:ci`). org-ietf-tcp is
    ;; PRIVATE (issues #273/#274), so a GitHub Actions runner cannot resolve
    ;; the :test classpath -- "could not read Username for
    ;; 'https://github.com'" kills the run before a single test executes.
@@ -250,28 +250,28 @@
    ;; the murakumo fleet: fleet nodes hold no credentials by invariant and
    ;; their egress is not uniform, so a gate that needs an open path to three
    ;; named hosts cannot be a fleet gate.
-   ;;   clojure -M:cloud-live check
-   ;;   clojure -M:cloud-live pin https://kotobase.net https://api.murakumo.cloud
-   ;;   clojure -M:cloud-live write
+   ;;   kbb -M:cloud-live check
+   ;;   kbb -M:cloud-live pin https://kotobase.net https://api.murakumo.cloud
+   ;;   kbb -M:cloud-live write
    ;; Exit 0 = every attempted leg admitted, 1 = a leg was refused,
    ;; 3 = a leg could not be answered (no network, nothing to ask).
    :cloud-live {:main-opts ["-m" "aiueos.cloud-live"]}
 
    ;; Mac VM phone-bind proving slice (root ADR-2608221625 P1b / P1c).
-   ;;   clojure -M:phone-bind smoke
-   ;;   clojure -M:phone-bind pre-enroll
-   ;;   clojure -M:phone-bind serve
+   ;;   kbb -M:phone-bind smoke
+   ;;   kbb -M:phone-bind pre-enroll
+   ;;   kbb -M:phone-bind serve
    ;; Exit 0 = QEMU headless + HTTP phone bind (or pre-enroll) admitted,
    ;; 1 = refused, 3 = could not answer (no QEMU/firmware).
-   ;; This is not the C-free kernel gate and not clojure -M:test.
+   ;; This is not the C-free kernel gate and not kbb -M:test.
    :phone-bind {:jvm-opts ["--enable-native-access=ALL-UNNAMED"]
                 :main-opts ["-m" "aiueos.phone-bind"]}
 
    ;; Hosted daily shell (root ADR-2608221625 P1 / P3). Not cloud-live check.
-   ;;   clojure -M:session smoke
-   ;;   clojure -M:session guest
-   ;;   clojure -M:session operator
-   ;;   clojure -M:session serve
+   ;;   kbb -M:session smoke
+   ;;   kbb -M:session guest
+   ;;   kbb -M:session operator
+   ;;   kbb -M:session serve
    ;; smoke: DADS SPA + kotobase read + murakumo infer from this process.
    ;; guest: grant-limited :app/notes visible in the same SPA (P3).
    ;; operator: grant-gated live itonami.cloud from the same SPA (P4).
@@ -281,22 +281,22 @@
 
    ;; Named-partial hosted desktop + guest virtio-gpu 2D + hosted WM
    ;; (ADR-0079 / ADR-0084 / ADR-0085).
-   ;;   clojure -M:compositor smoke   ; SPA + surfaces + query-pci (not 2D)
-   ;;   clojure -M:compositor gpu     ; KERNEL.ELF CREATE+FLUSH serial
-   ;;   clojure -M:compositor wm      ; ≥2 surfaces, z-order, DADS, input
-   ;;   clojure -M:compositor ime     ; romaji→kana; off-path latin is red
-   ;;   clojure -M:compositor kanji   ; Space converts か→加; kana-only Space is red
-   ;;   clojure -M:compositor kami    ; hosted kami.webgpu init!/draw!; clear-only is red
-   ;;   nbb --classpath src scripts/compositor-guest.cljk guest-ime ; KERNEL.ELF Kotoba k+a→U+304B; hosted JVM IME is red
-   ;;   nbb --classpath src scripts/compositor-guest.cljk guest-wm  ; KERNEL.ELF Kotoba two-surface z-hit; hosted JVM WM is red
-   ;;   nbb --classpath src scripts/compositor-guest.cljk guest-paint ; KERNEL.ELF paints both boot rects in z-order; key-order paint is red
-   ;;   nbb --classpath src scripts/compositor-guest.cljk guest-input ; KERNEL.ELF virtio-keyboard used-ring; C synthetic fill is red
-   ;;   nbb --classpath src scripts/compositor-guest.cljk guest-gpu-two ; KERNEL.ELF two virtio-gpu 2D resources; C hardcoded count is red
-   ;;   nbb --classpath src scripts/compositor-guest.cljk guest-scanout-two ; KERNEL.ELF scanout 1 onto resource 2; C hardcoded bind is red
-   ;;   nbb --classpath src scripts/compositor-guest.cljk guest-broker ; KERNEL.ELF clipboard admit / picker refuse; hosted JVM WM is red
-   ;;   nbb --classpath src scripts/compositor-guest.cljk guest-session ; KERNEL.ELF packed front 2 restore; hosted JVM WM is red
-   ;; JVM leftover: clojure -M:compositor guest-* exits 1 (:jvm-gate-runner, ADR-0100)
-   ;;   clojure -M:compositor serve
+   ;;   kbb -M:compositor smoke   ; SPA + surfaces + query-pci (not 2D)
+   ;;   kbb -M:compositor gpu     ; KERNEL.ELF CREATE+FLUSH serial
+   ;;   kbb -M:compositor wm      ; ≥2 surfaces, z-order, DADS, input
+   ;;   kbb -M:compositor ime     ; romaji→kana; off-path latin is red
+   ;;   kbb -M:compositor kanji   ; Space converts か→加; kana-only Space is red
+   ;;   kbb -M:compositor kami    ; hosted kami.webgpu init!/draw!; clear-only is red
+   ;;   kbb --backend sci --classpath src scripts/compositor-guest.cljk guest-ime ; KERNEL.ELF Kotoba k+a→U+304B; hosted JVM IME is red
+   ;;   kbb --backend sci --classpath src scripts/compositor-guest.cljk guest-wm  ; KERNEL.ELF Kotoba two-surface z-hit; hosted JVM WM is red
+   ;;   kbb --backend sci --classpath src scripts/compositor-guest.cljk guest-paint ; KERNEL.ELF paints both boot rects in z-order; key-order paint is red
+   ;;   kbb --backend sci --classpath src scripts/compositor-guest.cljk guest-input ; KERNEL.ELF virtio-keyboard used-ring; C synthetic fill is red
+   ;;   kbb --backend sci --classpath src scripts/compositor-guest.cljk guest-gpu-two ; KERNEL.ELF two virtio-gpu 2D resources; C hardcoded count is red
+   ;;   kbb --backend sci --classpath src scripts/compositor-guest.cljk guest-scanout-two ; KERNEL.ELF scanout 1 onto resource 2; C hardcoded bind is red
+   ;;   kbb --backend sci --classpath src scripts/compositor-guest.cljk guest-broker ; KERNEL.ELF clipboard admit / picker refuse; hosted JVM WM is red
+   ;;   kbb --backend sci --classpath src scripts/compositor-guest.cljk guest-session ; KERNEL.ELF packed front 2 restore; hosted JVM WM is red
+   ;; JVM leftover: kbb -M:compositor guest-* exits 1 (:jvm-gate-runner, ADR-0100)
+   ;;   kbb -M:compositor serve
    ;; smoke Exit 0 = DADS SPA, window-session-state restore, wipe red,
    ;;   QEMU -device virtio-gpu-pci with -display none.
    ;; gpu Exit 0 = guest serial CREATE result=ok AND FLUSH result=ok.
@@ -329,7 +329,7 @@
                 :main-opts ["-m" "aiueos.compositor"]}
 
    ;; Compile the browser presenter that actually calls kami.webgpu.
-   ;;   clojure -M:kami-presenter
+   ;;   kbb -M:kami-presenter
    ;; Output: apps/session/kami-presenter.js (served as /kami-presenter.js).
    :kami-presenter {:extra-paths ["apps/session/src"]
                     :extra-deps {org.clojure/clojurescript {:mvn/version "1.11.132"}
@@ -343,25 +343,25 @@
                                 "-c" "aiueos.session.kami-presenter"]}
 
    ;; P2: QEMU UEFI + KERNEL.ELF reaches kotobase (ADR-0081 / ADR-0041).
-   ;;   clojure -M:bare-metal cloud
+   ;;   kbb -M:bare-metal cloud
    ;; Exit 0 = guest HTTP GET + CID verify. Exit 1 = named leftover
    ;; (`:http-absent`, `:tls-absent`, `:host-fetch-does-not-count`, …).
    ;; Exit 3 = QEMU/OVMF/serial unmeasured.
    ;; Hosted `cloud-live` and `session smoke` do not count.
-   ;;   clojure -M:bare-metal cert-verify
+   ;;   kbb -M:bare-metal cert-verify
    ;; Exit 0 = guest CertificateVerify (ECDSA P-256) admitted.
    ;; HTTP+CID without that serial line is leftover `:cert-verify-hashed-only`.
    :bare-metal {:jvm-opts ["--enable-native-access=ALL-UNNAMED"]
                 :main-opts ["-m" "aiueos.bare-metal"]}
 
    ;; Release attestations (SBOM + SLSA-style provenance) for a built artifact.
-   ;;   clojure -M:attest sha256:<disk-digest> <source-commit> <builder> --isolated
+   ;;   kbb -M:attest sha256:<disk-digest> <source-commit> <builder> --isolated
    :attest {:main-opts ["-m" "aiueos.sbom"]}
 
    ;; Judge two independent builds of the same source commit. The digests are
    ;; two release build receipts' `disk.sha256`; the flags are assertions about
    ;; the environment that produced them and are never defaulted true.
-   ;;   clojure -M:reproduce <source-commit> sha256:<d1> sha256:<d2> --fresh-clone --hermetic
+   ;;   kbb -M:reproduce <source-commit> sha256:<d1> sha256:<d2> --fresh-clone --hermetic
    :reproduce {:main-opts ["-m" "aiueos.reproducibility"]}
 
    :build {:deps {io.github.clojure/tools.build {:mvn/version "0.10.10"}}

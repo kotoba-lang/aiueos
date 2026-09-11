@@ -1,7 +1,7 @@
-#!/usr/bin/env nbb
+#!/usr/bin/env kbb
 ;; Reverse topological order of the remaining gaps: dependencies first.
 ;;
-;; Usage: nbb os/aiueos/scripts/maturity-plan.cljk [--next]
+;; Usage: kbb --backend sci os/aiueos/scripts/maturity-plan.cljk [--next]
 ;; Exit 0 sorted, 2 REFUSED (a cycle, or an edge to a node that does not exist).
 ;;
 ;; The order lives here rather than in the contract on purpose. A hand-written

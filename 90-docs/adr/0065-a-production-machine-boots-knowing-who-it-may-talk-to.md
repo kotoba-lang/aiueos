@@ -48,7 +48,7 @@ asserting it.
 
 `aiueos.deployment-profile-test`: **15 tests, 24 assertions, 0 failures**.
 Full suite **635 / 9416 / 12** — the twelve upstream-blocked, unchanged.
-`clojure -M:test-fleet`: **634 / 9344 / 0**. `-M:tcb-check` valid. Lint
+`kbb -M:test-fleet`: **634 / 9344 / 0**. `-M:tcb-check` valid. Lint
 unchanged.
 
 **Both directions**: disabling the absent check fails

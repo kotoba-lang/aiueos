@@ -1,4 +1,4 @@
-#!/usr/bin/env nbb
+#!/usr/bin/env kbb
 ;; The fused dequantize-and-dot, executed.
 ;;
 ;; `kernel-dequant-dot-q8-0` (kotoba-native ADR 0066) selects ONE OF TWO
@@ -19,7 +19,7 @@
 ;; the same code on the same emulator, which is the only thing available on a
 ;; workstation whose CPU has no AVX at all.
 ;;
-;; Usage: nbb os/aiueos/scripts/smoke-qemu-dequant-dot.cljk /path/to/compiler
+;; Usage: kbb --backend sci os/aiueos/scripts/smoke-qemu-dequant-dot.cljk /path/to/compiler
 (ns smoke-qemu-dequant-dot
   (:require [kotoba.lang.text] ["child_process" :as cp]
             ["crypto" :as crypto]

@@ -1,4 +1,4 @@
-#!/usr/bin/env nbb
+#!/usr/bin/env kbb
 ;; Make this machine a murakumo node, on a Linux that already boots.
 ;;
 ;; The bespoke initramfs this replaces spent its time on hardware the

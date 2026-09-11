@@ -1,4 +1,4 @@
-#!/usr/bin/env nbb
+#!/usr/bin/env kbb
 ;; The offline floor: a machine with no NIC still reaches its terminal state,
 ;; and losing the network loses nothing but the network.
 ;;

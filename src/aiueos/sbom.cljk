@@ -187,7 +187,7 @@
 (defn -main
   "Emit unsigned attestations for a built artifact.
 
-      clojure -M:attest <artifact-digest> <source-commit> [builder] [--isolated]
+      kbb -M:attest <artifact-digest> <source-commit> [builder] [--isolated]
 
   ARTIFACT-DIGEST is the release build receipt's `disk.sha256` as
   `sha256:<hex>`. It is passed in rather than parsed out of the receipt: this

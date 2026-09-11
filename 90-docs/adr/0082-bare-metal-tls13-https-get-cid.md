@@ -7,10 +7,10 @@ Date: 2026-08-22
 Accepted for a **discriminating slice** of root
 `adr-2608221625-aiueos-chromeos-cloud-desktop` **P2**. **P2 is green only when
 QEMU serial contains `AIUEOS_HTTP_PROBE result=ok` with `cid=`.** This file
-records the attempt; the receipt from `clojure -M:bare-metal cloud` is the
+records the attempt; the receipt from `kbb -M:bare-metal cloud` is the
 measurement.
 
-**Measured 2026-08-22** (`clojure -M:bare-metal cloud`, EXIT=0, leftover `[]`):
+**Measured 2026-08-22** (`kbb -M:bare-metal cloud`, EXIT=0, leftover `[]`):
 
 ```
 AIUEOS_DHCP_CONSUMED src=10.0.2.15 dns=10.0.2.3
@@ -29,7 +29,7 @@ The A is Cloudflare anycast; a later boot may print a different address. Hosted
 ADR-0081 got the UEFI guest as far as DHCP consumed, DNS A for `kotobase.net`,
 TCP :443, and a TLS record (type 22) after a compiled ClientHello with a dummy
 x25519 share. Leftover was `:tls-handshake-incomplete` and `:http-absent`.
-`clojure -M:bare-metal cloud` exited 1. AES-GCM is not a kotoba-native
+`kbb -M:bare-metal cloud` exited 1. AES-GCM is not a kotoba-native
 kernel-object, so a decision-free C record layer is the only way to finish the
 handshake on this target (ADR-0015: C is mechanism). X25519, SHA-256, and
 digest_equal were already linked.
@@ -61,8 +61,8 @@ as HTTP/1.1 200 with an empty body whose SHA-256 is the empty digest.
 
 Not executable, and stated here rather than at the end:
 
-- **`clojure -M:cloud-live check` does not green P2.**
-- **`clojure -M:session smoke` does not green P2.**
+- **`kbb -M:cloud-live check` does not green P2.**
+- **`kbb -M:session smoke` does not green P2.**
 - **A host curl is `:host-fetch-does-not-count`.**
 - **P4 itonami, P5 a real machine, and WM/IME/virtio-gpu 2D remain.** The
   Chrome OS-shaped desktop goal is not complete.

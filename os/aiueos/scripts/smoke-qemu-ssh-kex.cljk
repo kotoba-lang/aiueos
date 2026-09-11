@@ -1,4 +1,4 @@
-#!/usr/bin/env nbb
+#!/usr/bin/env kbb
 ;; Gate for the SSH curve25519-sha256 exchange hash H (ssh-v1.edn / ADR-0106):
 ;; the kernel assembles the RFC 5656 §4 transcript and SHA-256s it, and the H it
 ;; emits must equal the H that ssh.transport computes for the SAME fixed inputs.
@@ -14,7 +14,7 @@
 ;;
 ;; Run from the superproject root so the west checkout of org-ietf-ssh is on the
 ;; classpath:
-;;   nbb --classpath orgs/kotoba-lang/org-ietf-ssh/src \
+;;   kbb --backend sci --classpath orgs/kotoba-lang/org-ietf-ssh/src \
 ;;       orgs/kotoba-lang/aiueos/os/aiueos/scripts/smoke-qemu-ssh-kex.cljk
 ;; Build the kernel with AIUEOS_SSH_LISTEN=1 first (the KEX KAT rides under it).
 

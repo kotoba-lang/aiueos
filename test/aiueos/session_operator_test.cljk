@@ -1,7 +1,7 @@
 (ns aiueos.session-operator-test
   "Network-free P4 checks: grant is why itonami is called, and a deny
   is `:operator-grant-required` with zero HTTP. Live itonami is
-  `clojure -M:session operator`."
+  `kbb -M:session operator`."
   (:require [aiueos.session.operator :as op]
             [clojure.test :refer [deftest is testing]]))
 

@@ -5,7 +5,7 @@ Date: 2026-08-22
 ## Status
 
 Accepted and executable **for the hosted JVM profile, P3 of root
-`adr-2608221625-aiueos-chromeos-cloud-desktop`**. `clojure -M:session guest`
+`adr-2608221625-aiueos-chromeos-cloud-desktop`**. `kbb -M:session guest`
 serves the same `apps/session` DADS SPA, runs `:app/notes` through
 `grant` + `aiueos.execute` (Chicory Wasm, WAT in `examples/apps/notes.wat`),
 lists it on `#session` / `#desktop`, and a deny grant answers **403** with
@@ -24,7 +24,7 @@ Not executable, and stated here rather than at the end:
 - **This is not P2 / P4 / P5.** Bare-metal net, itonami, and a real machine
   remain later units. Full WM / IME / virtio-gpu 2D create/flush remain
   later than the named-partial compositor (ADR-0079).
-- **`clojure -M:session smoke` stays P1.** Guest execute is `guest`, not
+- **`kbb -M:session smoke` stays P1.** Guest execute is `guest`, not
   folded into smoke. The P1 document must still *list* the guest chrome.
 
 ## Context
@@ -51,7 +51,7 @@ document rendering the guest identity.
    buttons, `#guest-out`) and a named status on `#desktop`
    (`#guest-desktop-out`). Not a second HTML document. Not an anonymous
    compositor iframe.
-4. Gate: `clojure -M:session guest`. P1 / P1b / compositor smokes stay
+4. Gate: `kbb -M:session guest`. P1 / P1b / compositor smokes stay
    green, including headless bind (`-display none`).
 
 ## Consequences

@@ -88,7 +88,7 @@ with `deps.edn` — a path is not a weaker content address, it is not one.
 The jar digest check cannot be skipped by an unresolved environment: the jars
 must already be resolved for the JVM running the check to have started. This is
 deliberately the *weakest* environmental assumption available — it holds in CI
-without adding a CI step, since `clojure -M:test` runs `aiueos.tcb-test`.
+without adding a CI step, since `kbb -M:test` runs `aiueos.tcb-test`.
 
 ### 2. Git commits are accepted as content addresses, with the caveat stated
 
