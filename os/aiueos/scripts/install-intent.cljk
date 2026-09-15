@@ -181,7 +181,10 @@
       (when-not (and (:target report) (:image report))
         (die 3 "report has no target/image sections; run install.mjs inspect first"))
       (let [{:keys [admit reasons]}
-            (verify-intent intent report (arg "--serial") (js/Date.now))]
+          (verify-intent intent report (arg "--serial")
+                         (if-let [parity-now (.-AIUEOS_PARITY_NOW (.-env js/process))]
+                           (js/parseInt parity-now 10)
+                           (js/Date.now)))]
         (if admit
           (println "AIUEOS_INSTALL_INTENT_ADMIT"
                    (str "hostname=" (:hostname intent))
