@@ -72,6 +72,13 @@
  ;; only (mount, drivers, find payload by GPT GUID, extract, hand over) and
  ;; every decision -- target selection, intent admission, destruction -- runs
  ;; from the payload bundle under nbb.
+ ;;
+ ;; The intent ADMISSION decision also exists as a native Kotoba object
+ ;; (os/aiueos/kotoba/install-intent-admit.kotoba, committed .o, contract
+ ;; install-intent-admit-v1.edn, parity gate + :install-intent-admit-native
+ ;; gate; aiueos ADR-0218). The CLI keeps verdict ownership for the live
+ ;; flow via the parity gate -- same cases, same verdicts, machine-checked.
+ ;; The object is NOT yet linked into the kernel (that is the next tranche).
  :installer {:mechanism :auditable-linux-live-environment ; install-time only, not a runtime premise
              :live {:uki "os/aiueos/scripts/make-live-installer.py"
                     :kernel :debian-stable-generic ; versions pinned per-build in live-installer-receipt.json
