@@ -140,6 +140,18 @@
  {:cmd ["kbb" "--backend" "sci" "os/aiueos/scripts/test-install-chain.cljk"]
   :doc "Intent admission refusals (named reasons), fake-device install, target receipt, repeat-erase refusal, provisioning record placement. Gates I2/I5, offline."}
 
+ :install-intent-admit-contract
+ {:cmd ["sh" "-c" "node --stack-size=8000 \"$(command -v nbb)\" --classpath \"$(kbb -Spath -M:verify-admissions):../text/src\" os/aiueos/scripts/verify-admissions.cljk os/aiueos/contracts/install-intent-admit-v1.edn"]
+  :doc "The install intent admission DECISION as a Kotoba object (install-intent-admit-v1.edn): 17 vectors, reasons 0-9 all observed, real SHA-256 digests from node:crypto. The cljk CLI keeps JSON/IO; this owns the verdict."}
+
+ :install-intent-parity-test
+ {:cmd ["sh" "-c" "node --stack-size=8000 \"$(command -v nbb)\" --classpath \"$(kbb -Spath -M:verify-admissions):../text/src\" os/aiueos/scripts/test-install-intent-parity.cljk"]
+  :doc "Parity gate: the same (intent, report, serial) cases through BOTH the production install-intent.cljk CLI and the Kotoba object. A verdict mismatch in either direction fails; a tampered object was measured red (8 FAIL lines) before landing."}
+
+ :install-intent-admit-native
+ {:cmd ["sh" "-c" "set -eu; \"$AMU/bin/amu\" compile os/aiueos/kotoba/install-intent-admit.kotoba --source-path os/aiueos/kotoba --unpinned --target x86_64-aiueos-kernel-v1 --output /tmp/iia-gate.o > /dev/null; cmp /tmp/iia-gate.o os/aiueos/kotoba/install-intent-admit.o; python3 os/aiueos/scripts/verify-kotoba-kernel-object.py os/aiueos/kotoba/install-intent-admit.o \"\" kotoba_aiueos_install_intent_admit"]
+  :doc "The admission object COMPILES natively (x86_64-aiueos-kernel-v1, kotoba-native 7da60185's allowlist row), is byte-identical to the committed .o (determinism), and passes the kernel-object ABI verifier under its own symbol kotoba_aiueos_install_intent_admit with 0 imports. Needs AMU=<path to an amu checkout pinned at kotoba-native 7da60185>."}
+
  :guided-install-test
  {:cmd ["kbb" "--backend" "sci" "os/aiueos/scripts/test-guided-install.cljk"]
   :doc "Guided installer (ADR-0208): answer-file refusals by named reason, the screen walk, the derived match on both capacity boundaries, and the intent the guided run writes handed to the real install-intent.cljk verify. 53 cases, offline, no block device."}

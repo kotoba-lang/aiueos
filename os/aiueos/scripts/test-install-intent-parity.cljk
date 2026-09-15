@@ -1,0 +1,206 @@
+#!/usr/bin/env kbb
+;; Parity gate: the install intent admission, decided twice.
+;;
+;; `os/aiueos/scripts/install-intent.cljk` verify is the PRODUCTION decision
+;; the JSON CLI ships; `aiueos.install-intent-admit` is the Kotoba object the
+;; kernel will run (this session's ADR, install-v1.edn decision 2). Two
+;; programs that must agree and can drift are what a parity gate is for:
+;; each case is fed to BOTH and a verdict mismatch refuses in either
+;; direction, so an edit to one side alone turns red here.
+;;
+;; The cljk side runs through its real CLI on a temp report file (the shape
+;; test-install-chain.cljk already established); the object side encodes the
+;; SAME case into the 832-byte image with the same field derivations the
+;; verify-admissions runner uses -- digests from node:crypto, never
+;; transcribed.
+;;
+;; Exit 0 only when every case held AND the count matches. A mismatch prints
+;; AIUEOS_INSTALL_INTENT_PARITY_FAIL with the case, both verdicts, and exits 2.
+;;
+;; Run: node --stack-size=8000 $(command -v nbb) \
+;;        --classpath "$(kbb -Spath -M:verify-admissions):../text/src" \
+;;        os/aiueos/scripts/test-install-intent-parity.cljk
+
+(require '[kotoba.compiler.project :as p]
+         '[kotoba.sema :as s]
+         '[kotoba.kir :as ir]
+         '[kotoba.lang.text :as str])
+
+(def fs (js/require "node:fs"))
+(def path (js/require "node:path"))
+(def cp (js/require "node:child_process"))
+(def os-mod (js/require "node:os"))
+(def crypto (js/require "node:crypto"))
+
+(def scripts-dir (.dirname path *file*))
+(def tmp (.mkdtempSync fs (.join path (.tmpdir os-mod) "aiueos-parity-")))
+(def now-ms 1757900000000)
+(def salt "0123456789abcdef")
+
+(defn sha256-hex [buf]
+  (-> (.createHash crypto "sha256") (.update buf) (.digest "hex")))
+(defn serial-digest-hex [serial]
+  (sha256-hex (js/Buffer.from (str salt ":" (str/trim (str serial))) "utf8")))
+
+;; --------------------------------------------------------------- the cases
+;; Each case is ONE (intent, report, probed-serial) triple, named, with the
+;; object reason code and the cljk reason literal the case requires.
+(def cases
+  [{:name :admit-serial-bound-and-probed
+    :serial "PNY-SER-0001" :probe-serial "PNY-SER-0001"
+    :expect-code 0 :expect-literal nil}
+   {:name :admit-serial-probed-sysfs-padded
+    :serial "PNY-SER-0001" :probe-serial "PNY-SER-0001   "
+    :expect-code 0 :expect-literal nil}
+   {:name :refuse-serial-mismatch
+    :serial "PNY-SER-0001" :probe-serial "PNY-SER-9999"
+    :expect-code 8 :expect-literal "target-serial-mismatch"}
+   {:name :refuse-serial-unmeasured
+    :serial "PNY-SER-0001" :probe-serial nil
+    :expect-code 7 :expect-literal "target-serial-unmeasured"}
+   {:name :admit-no-serial-binding
+    :serial nil :probe-serial nil
+    :expect-code 0 :expect-literal nil}
+   {:name :refuse-expired
+    :serial nil :probe-serial nil :expires-now true
+    :expect-code 1 :expect-literal "intent-expired"}])
+
+(defn build-intent [{:keys [serial expires-now]}]
+  {:schema "aiueos.install-intent.v1"
+   :created (.toISOString (js/Date. now-ms))
+   :expires (.toISOString (js/Date. (if expires-now
+                                      (- now-ms 1000)
+                                      (+ now-ms (* 60 60 1000)))))
+   :mode "guided"
+   :confirmedBy "owner-phrase"
+   :release {:receiptSha256 "" :disk {:bytes 1 :sha256 ""}}
+   :machineProfile {:architecture "x86_64" :firmware "uefi" :model "PARITY-BOX"}
+   :targetDisk {:model "PNY" :transport "nvme"
+                :minBytes (* 400 1000 1000 1000)
+                :maxBytes (* 600 1000 1000 1000)
+                :serialSha256 (when serial (serial-digest-hex serial))
+                :serialSalt salt}
+   :hostname "parity"})
+
+(defn build-report [_case]
+  {:target {:path "/dev/parity0" :type "disk" :whole true :internal true
+            :empty true :mounted false :boot false :system false
+            :bytes (* 500 1000 1000 1000)
+            :model "PNY CS2241 500GB" :transport "nvme"}
+   :image {:bytes (* 500 1000 1000 1000) :sha256 ""}})
+
+;; ------------------------------------------------------------ the object side
+(defn le-i64 [img off v]
+  (apply assoc img (interleave (range off (+ off 8))
+                               (for [i (range 8)] (bit-and (js/Math.floor (/ v (js/Math.pow 256 i))) 0xff)))))
+(defn write-at [img off bytes]
+  (apply assoc img (interleave (range off (+ off (count bytes))) bytes)))
+(defn put-slot [img off s]
+  (let [u (mapv #(.charCodeAt % 0) (seq (or s "")))]
+    (-> (le-i64 img off (count u)) (write-at (+ off 8) u))))
+
+(defn load-kir []
+  (let [src-iia (.readFileSync fs "os/aiueos/kotoba/install-intent-admit.kotoba" "utf8")
+        src-sha (.readFileSync fs "os/aiueos/kotoba/aiueos/sha256.kotoba" "utf8")
+        linked (p/link-source {'aiueos.sha256 src-sha
+                               'aiueos.install-intent-admit src-iia}
+                              'aiueos.install-intent-admit)]
+    (-> (:source linked) (s/analyze {:admit-linked-synthetics? true}) ir/lower)))
+
+(defn encode-case [{:keys [serial probe-serial expires-now]}]
+  (let [img (volatile! (vec (repeat 832 0)))]
+    (vswap! img le-i64 0 (if expires-now (- now-ms 1000) (+ now-ms (* 60 60 1000))))
+    (vswap! img le-i64 8 now-ms)
+    ;; The release/report digest pair matches in every case here: the
+    ;; digest clauses have their own vectors in the contract suite. The
+    ;; model/transport/capacity/serial clauses are what parity exercises.
+    (vswap! img (fn [b] (write-at b 16 (vec (repeat 32 0)))))
+    (vswap! img (fn [b] (write-at b 48 (vec (repeat 32 0)))))
+    (vswap! img put-slot 80 "PNY")
+    (vswap! img put-slot 136 "PNY CS2241 500GB")
+    (vswap! img put-slot 192 "nvme")
+    (vswap! img put-slot 216 "nvme")
+    (vswap! img le-i64 240 (* 500 1000 1000 1000))
+    (vswap! img le-i64 248 (* 400 1000 1000 1000))
+    (vswap! img le-i64 256 (* 600 1000 1000 1000))
+    (vswap! img le-i64 264 (if serial 3 0))
+    (when serial
+      (vswap! img (fn [b] (write-at b 272 (mapv #(js/parseInt % 16)
+                                                (re-seq #".." (serial-digest-hex serial)))))))
+    (vswap! img (fn [b] (write-at b 304
+                                  (concat (mapv #(.charCodeAt % 0) (seq salt))
+                                          [58]
+                                          (concat (mapv #(.charCodeAt % 0) (seq (or probe-serial "")))
+                                                  (repeat (- 64 (count (or probe-serial ""))) 32))))))
+    (vswap! img (fn [b] (write-at b 400 (vec (repeat 416 0)))))
+    @img))
+
+(defn object-decision [kir case]
+  (let [page (volatile! (encode-case case))]
+    (js/Number (ir/execute kir 'aiueos-install-intent-admit
+                           [65536 832]
+                           {:memory {:base 65536 :bytes page}
+                            :fuel 2000000000}))))
+
+;; ------------------------------------------------------------- the cljk side
+;; The CLI compares against (js/Date.now) -- real wall time -- so the
+;; fixture's 2026 timestamps are in the past for it. Pin the CLI's clock by
+;; overriding Date.now for the child process: the parity question is "do the
+;; two programs agree on the same inputs", not "do they agree on what year
+;; it is".
+(defn- run-cljk [case]
+  (let [intent-path (.join path tmp "intent.json")
+        report-path (.join path tmp "report.json")]
+    (.writeFileSync fs intent-path (str (.stringify js/JSON (clj->js (build-intent case)) nil 2) "\n"))
+    (.writeFileSync fs report-path (str (.stringify js/JSON (clj->js (build-report case)) nil 2) "\n"))
+    (let [args (concat [(.join path scripts-dir "install-intent.cljk") "verify"
+                        "--intent" intent-path "--report" report-path]
+                       (when (:probe-serial case)
+                         ["--serial" (:probe-serial case)]))
+          r (.spawnSync cp "nbb" (to-array args)
+                        #js {:encoding "utf8" :shell false
+                             :env (js/Object.assign #js {} (.-env js/process)
+                                                    #js {:AIUEOS_PARITY_NOW (str now-ms)})})]
+      {:status (or (.-status r) 1)
+       :out (or (.-stdout r) "")
+       :refuses (->> (str/split (or (.-stdout r) "") #"\n")
+                     (filter #(str/includes? % "AIUEOS_INSTALL_INTENT_REFUSE"))
+                     (mapv #(str/trim (subs % (count "AIUEOS_INSTALL_INTENT_REFUSE")))))})))
+
+;; ------------------------------------------------------------------- parity
+(defn -main []
+  (println :loading-object)
+  (let [kir (load-kir)
+        results (atom [])
+        failures (atom 0)]
+    (doseq [case cases]
+      (let [code (object-decision kir case)
+            cljk (run-cljk case)
+            cljk-admitted (zero? (:status cljk))
+            object-admitted (zero? code)
+            literal-ok (if (:expect-literal case)
+                         (some #(str/includes? % (str (:expect-literal case))) (:refuses cljk))
+                         true)
+            agree (= cljk-admitted object-admitted)
+            case-ok (and agree literal-ok)]
+        (swap! results conj {:name (:name case) :ok case-ok})
+        (when-not case-ok
+          (swap! failures inc)
+          (println "AIUEOS_INSTALL_INTENT_PARITY_FAIL" (:name case)
+                   (str "object-code=" code)
+                   (str "cljk-status=" (:status cljk))
+                   (str "cljk-refuses=" (str/join "," (:refuses cljk))))))
+      (println (if (:ok (last @results))
+                 "AIUEOS_INSTALL_INTENT_PARITY_OK"
+                 "AIUEOS_INSTALL_INTENT_PARITY_FAIL")
+               (:name (last @results))))
+    (let [ran (count @results)
+          held (count (filter :ok @results))]
+      (println :summary (str "ran=" ran) (str "held=" held) (str "expected=" (count cases)))
+      (if (and (= @failures 0) (= held ran) (= ran (count cases)))
+        (println "AIUEOS_INSTALL_INTENT_PARITY_ALL_OK" (str "cases=" ran))
+        (do (println "AIUEOS_INSTALL_INTENT_PARITY_SUITE_FAILED"
+                     (str "held=" held) (str "expected=" (count cases)))
+            (.exit js/process 2))))))
+
+(-main)

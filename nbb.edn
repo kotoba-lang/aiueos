@@ -28,7 +28,22 @@
 ;; these scripts from a worktree needs an explicit --classpath; that is a
 ;; property of the layout, not a defect in this file, and it is written down
 ;; here because the failure is a missing namespace with no hint of why.
-{:paths ["src" "resources" "test" "../text/src" "../org-ietf-ssh/src"]
+{:paths ["src" "resources" "test" "../text/src" "../org-ietf-ssh/src"
+         ;; The verify-admissions runner's library closure, resolved as
+         ;; sibling paths because kbb resolves no git coordinates (the note
+         ;; above). Every path is the gitlibs cache entry of a pin stated in
+         ;; deps.edn (:verify-admissions) or in that pin's own deps.edn --
+         ;; amu ca869d79, kotoba-sema e42b74ef, artifact 86d88bd5,
+         ;; kotoba-hir ac8e7051, kotoba-kir 355d30e1, org-nist-sha2 3b4f7e93.
+         ;; A pin advance in deps.edn must move these in the same commit,
+         ;; or the runner runs a frontend the committed objects were not
+         ;; compiled with.
+         "/Users/junkawasaki/.gitlibs/libs/io.github.kotoba-lang/amu/ca869d79e118a3d1eb532602bcb4c39c87f6ea29/src"
+         "/Users/junkawasaki/.gitlibs/libs/io.github.kotoba-lang/kotoba-sema/e42b74eff72fdea0f55ec883a293c937421ca571/src"
+         "/Users/junkawasaki/.gitlibs/libs/io.github.kotoba-lang/artifact/86d88bd58299cf575e9dfa2ab4789a0baa166614/src"
+         "/Users/junkawasaki/.gitlibs/libs/io.github.kotoba-lang/kotoba-hir/ac8e70514ee3c9b87ae71324e6e714447acc971c/src"
+         "/Users/junkawasaki/.gitlibs/libs/io.github.kotoba-lang/kotoba-kir/355d30e142aadeb613b5ede15b675a49ac91c79b/src"
+         "/Users/junkawasaki/.gitlibs/libs/io.github.kotoba-lang/org-nist-sha2/3b4f7e93eff2c438c758383bab440b6f35627e31/src"]
  :deps {
         ;; Declared HERE and not only in deps.edn: nbb reads nbb.edn and does NOT
         ;; read deps.edn or bb.edn, and the .cljs in this repo are run as

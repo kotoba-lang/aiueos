@@ -99,6 +99,123 @@
             (+ base block-offset) (count block)
             (if (some? (:scratch v)) (:scratch v) (+ base scratch-offset))]}))
 
+;; --- the install intent admission (install-v1.edn decision 2) ---------------
+;;
+;; Every vector is an (intent, report, probed-serial) triple encoded into the
+;; 816-byte image the contract's :envelope :layout states. The encoder lives
+;; HERE, the layout lives in the CONTRACT, and the object knows only the
+;; layout: change the layout without changing the encoder and the vectors
+;; fail loudly, change the encoder without the layout and the parity gate
+;; catches the two programs reading different bytes.
+;;
+;; SHA-256 of the release image and of the serial are computed for real --
+;; with node:crypto, not with the object -- so a digest that stops matching
+;; means the ENCODING drifted, not that someone transcribed the wrong hex.
+
+(defn- le-i64 [bytes offset value]
+  (reduce (fn [acc i]
+            (assoc acc (+ offset i)
+                   (bit-and (js/Math.floor (/ value (js/Math.pow 256 i))) 0xff)))
+          bytes
+          (range 8)))
+
+(defn- ascii-bytes [s] (mapv #(.charCodeAt % 0) (seq s)))
+
+(defn- put-slot [bytes offset s]
+  ;; A slot is (len i64 LE + slot bytes); a missing string is a zero length.
+  (let [text (or s "")
+        utf8 (map #(bit-and % 0xff) (js/Array.from (.encode (js/TextEncoder.) text)))
+        len (count utf8)]
+    (when (> len 48)
+      (fail! "REFUSING TO REPORT A PASS: this vector's string overflows its slot"
+             {:string s :bytes len :max 48}))
+    (-> (le-i64 bytes offset len)
+        (write-at (+ offset 8) utf8))))
+
+(defn- slot-at [bytes offset]
+  ;; Read back a slot the encoder just wrote, for the substring equality the
+  ;; parity test needs.
+  (let [len (reduce (fn [acc i]
+                      (+ acc (* (nth bytes (+ offset i))
+                                (js/Math.pow 256 i))))
+                    0 (range 8))]
+    (apply str (map js/String.fromCharCode
+                    (subvec bytes (+ offset 8) (+ offset 8 len))))))
+
+(defmethod prepare :aiueos.install-intent-admit/v1 [contract v]
+  (let [{:keys [base image-bytes]} (get-in contract [:verification :memory])
+        {:keys [expires-ms now-ms intent-release-disk-sha256
+                report-image-sha256 intent-model report-model
+                intent-transport report-transport report-target-bytes
+                intent-min-bytes intent-max-bytes flags
+                intent-serial-digest serial-input scratch]}
+        (:layout (:envelope contract))
+        gb #(* 1000 1000 1000 %)
+        [min-gb max-gb probed-gb] (:capacity v)
+        ;; A bound serial with no probe still encodes the probe slot the
+        ;; JSON program would read as empty; a corrupting vector may name a
+        ;; serial it never probes.
+        probed-serial (if (contains? v :probe-serial)
+                        (:probe-serial v)
+                        (or (:serial v) ""))
+        now (or (:now-ms v) 1757900000000)
+        expires (+ now (* (or (:expires-in-minutes v) 60) 60 1000))
+        ;; Real digests, computed with node:crypto, never transcribed: the
+        ;; release pair matches unless the vector corrupts the intent side,
+        ;; and the serial digest covers the salt/':'/TRIMMED probed serial
+        ;; exactly as install-intent.cljk's serial-digest defines it.
+        release-digest (if (= (:corrupt v) :intent-release-digest)
+                         (doto (js/Buffer.alloc 32) (.fill 0xff 1 2))
+                         (js/Buffer.alloc 32))
+        report-digest (js/Buffer.alloc 32)
+        salt "0123456789abcdef"
+        serial-digest (when (:serial v)
+                        ;; The JSON program's contract: the intent stores the
+                        ;; digest of the BOUND (trimmed) serial, the probe
+                        ;; re-hashes the TRIMMED probed serial, and the
+                        ;; mismatch is what refuses. The runner must encode
+                        ;; the intent side's digest -- of the BOUND serial --
+                        ;; so the object's compare is what detects the diff.
+                        (-> (.createHash (js/require "crypto") "sha256")
+                            (.update (js/Buffer.from (str salt ":" (str/trim (:serial v)))
+                                                     "utf8"))
+                            (.digest)))
+        ;; The probed serial is written space-padded to 64, the way sysfs
+        ;; presents one, so the object's trimming is what is under test.
+        _ (when (< 64 (.-length (js/Buffer.from (or probed-serial "") "utf8")))
+            (fail! "REFUSING TO REPORT A PASS: this vector's serial overflows its slot"
+                   {:serial probed-serial}))
+        serial-slot (doto (js/Buffer.alloc 64 32)
+                      (.set (js/Buffer.from (or probed-serial "") "utf8") 0))
+        image
+        (-> (vec (repeat image-bytes 0))
+            (le-i64 expires-ms expires)
+            (le-i64 now-ms now)
+            (write-at intent-release-disk-sha256 (js/Array.from release-digest))
+            (write-at report-image-sha256 (js/Array.from report-digest))
+            (put-slot intent-model (:model v))
+            (put-slot report-model (:probe-model v))
+            (put-slot intent-transport (:transport v))
+            (put-slot report-transport (:probe-transport v))
+            (le-i64 report-target-bytes (gb probed-gb))
+            (le-i64 intent-min-bytes (gb min-gb))
+            (le-i64 intent-max-bytes (gb max-gb))
+            (le-i64 flags (or (:flags v) 0))
+            (write-at intent-serial-digest
+                      (if serial-digest (js/Array.from serial-digest)
+                        (vec (repeat 32 0))))
+            (write-at serial-input
+                      (concat (ascii-bytes salt)
+                              [58]                      ; ':'
+                              (js/Array.from serial-slot)))
+            (write-at scratch (vec (repeat 416 0))))]
+    {:entry 'aiueos-install-intent-admit
+     :base base
+     :image image
+     :args [(+ base 0) (if (= (:corrupt v) :image-length)
+                         (+ image-bytes 1)
+                         image-bytes)]}))
+
 ;; --- the UEFI loader's PT_LOAD admission ------------------------------------
 ;;
 ;; Every vector is the SAME 176 bytes with one field changed, so it names the
