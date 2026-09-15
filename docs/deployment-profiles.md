@@ -176,3 +176,36 @@ Regulated signing authority uses `docs/key-lifecycle.md`. The deployment binds
 the root fingerprint and current epoch digest; the launcher refuses unsigned,
 rolled-back, skipped, forked, expired or delegation-invalid lifecycle updates
 before manifest verification.
+
+## Confidential-VM postures: TDX and SEV-SNP (2026-09-15)
+
+aiueos can now detect and self-report as a confidential guest, and the
+monitor (`kotoba-lang/vmm`) can admit or refuse such a launch by decision —
+but no profile above yet claims TEE protection, and this file is where a
+claim would have to appear first.
+
+What exists (measured):
+
+- `os/aiueos/kotoba/tee-guest-detect.kotoba` — the guest's own decision:
+  TDX = CPUID leaf 0x21 virtualised AND the mapped firmware window in the
+  0xFE000000–4 GiB TDVF region; SEV-SNP = SEV (Fn8000_001F EDX 31) AND SNP
+  (EDX 11) bits. Route and test: `test/aiueos/tee_guest_detect_test.cljk`
+  (16 assertions green on the JVM amu→KIR route).
+- `kotoba-lang/vmm` `tee_core` — launch admission, hypercall decoding,
+  PSC error naming, port-I/O device model for both profiles; green on JVM
+  and kbb (see that repo's README for the boundary).
+
+What does not exist yet, stated plainly:
+
+- no `.o`: the detect object has no C call site (`kernel/cpu.c` probe) and
+  no compiled artifact pinned in `build-uefi.sh`; linking it is a kernel
+  change in its own commit;
+- no mechanism: `aiueos.hvt` issues no KVM_SEV_*/KVM_TDX_* ioctls; a TEE
+  launch on a non-TEE host must (and does, at the decision layer) refuse;
+- no attestation handling: TDREPORT / SNP report verification, quote
+  verification keys, and the secrets/CPUID page consumption are
+  unimplemented and unmeasured.
+
+Therefore: no deployment may claim confidential-computing protection.
+Until the mechanism exists and the attestation path is measured, TDX and
+SEV-SNP presence changes nothing in this table.
