@@ -1248,8 +1248,9 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
        inputs, which is exactly the property that survives having no weights. */
     {
       extern int aiueos_qwen35_kotoba_parity_selftest(uint32_t stage);
-      static const char *const qwen_parity_names[3] = {"dequant", "dot", "matvec"};
-      for (uint32_t stage = 0; stage < 3U; stage++) {
+      static const char *const qwen_parity_names[5] =
+        {"dequant", "dot", "matvec", "activation", "norm"};
+      for (uint32_t stage = 0; stage < 5U; stage++) {
         if (!aiueos_qwen35_kotoba_parity_selftest(stage)) {
           serial_string("QWEN-PARITY ");
           serial_string(qwen_parity_names[stage]);
