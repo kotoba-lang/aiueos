@@ -230,7 +230,8 @@ set -eu
 export DEBIAN_FRONTEND=noninteractive
 apt-get -qq update >/dev/null
 apt-get -qq install -y --no-install-recommends \
-  linux-image-amd64 busybox-static systemd-boot-efi binutils xz-utils util-linux >/dev/null
+  linux-image-amd64 busybox-static systemd-boot-efi binutils xz-utils util-linux \
+  libatomic1 >/dev/null
 KVER=$(ls /lib/modules | head -1)
 mkdir -p /out/modules /out/bin /out/lib
 # Start from a clean module set: a previous build's leftover .ko files would
@@ -264,8 +265,11 @@ cp -n /lib64/ld-linux-x86-64.so.2 /out/lib/ 2>/dev/null || true
 # The node runtime rides in the payload but resolves its shared libraries
 # from this initramfs; the official binary needs the C++ runtime on top of
 # the util-linux closure (measured: without libstdc++/libgcc_s the handover
-# died with rc=127 before a single line of the orchestration ran).
-for lib in libstdc++.so.6 libgcc_s.so.1 libm.so.6 libdl.so.2 libpthread.so.0 librt.so.1; do
+# died with rc=127 before a single line of the orchestration ran). libatomic
+# joined the closure when the pinned node moved to v26.7.0 (measured 2026-09-15:
+# boot1 died rc=127 "libatomic.so.1: cannot open shared object file" with the
+# previous list -- the install-smoke gate exists to catch exactly this).
+for lib in libstdc++.so.6 libgcc_s.so.1 libm.so.6 libdl.so.2 libpthread.so.0 librt.so.1 libatomic.so.1; do
   cp -n "/usr/lib/x86_64-linux-gnu/$lib" /out/lib/ 2>/dev/null || true
 done
 { echo "debian=$(cat /etc/debian_version)"
