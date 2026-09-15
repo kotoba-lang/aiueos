@@ -486,6 +486,22 @@ def make_bundle_tgz(installer_dir, scripts_dir, intent_bytes, receipt_bytes, nod
         add("node-linux-x64", Path(node_binary).read_bytes(), 0o755)
     if nbb_dir:
         base = Path(nbb_dir)
+        # The fork's version marker, checked where the mistake is made: the
+        # prerequisite text says "npm install nbb", which installs stock nbb,
+        # and stock nbb resolves no .cljk. Measured 2026-09-15 (aiueos
+        # ADR-0217): a stick built against stock nbb 1.5.212 extracted clean,
+        # passed install-bundle-test (which runs from the repository, where
+        # nbb.edn resolves), and died on the machine with the ADR-0209 shape.
+        # A build-time refusal turns that into a red build instead.
+        pkg = base / "nbb" / "package.json"
+        if not pkg.exists():
+            raise ValueError("--nbb-dir does not contain nbb/package.json (is this the nbb tree?): " + str(base))
+        version = json.loads(pkg.read_text()).get("version", "")
+        if "cljk" not in version:
+            raise ValueError(
+                "bundled nbb is not the org-babashka-nbb fork (version "
+                + version + " carries no cljk marker; stock nbb resolves no "
+                ".cljk and the bundle dies on the machine -- aiueos ADR-0217)")
         for path in sorted(base.rglob("*")):
             if path.is_file() and ".bin" not in path.parts:
                 add("nbb-bundle/node_modules/" + path.relative_to(base).as_posix(),

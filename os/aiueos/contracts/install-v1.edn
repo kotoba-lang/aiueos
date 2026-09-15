@@ -326,21 +326,25 @@
                                     Not yet exercised against a live block
                                     device on the install path."}
   :i3-qemu-install {:state :green-qemu
-                    :evidence "smoke-qemu-install.cljk (2026-08-25): one gate,
-                               four boots asserted together -- USB-booted live
-                               installer installs to a blank NVMe (intent
-                               admitted, readback verified), the NVMe boots
-                               aiueos twice with the USB detached (39 markers
-                               each), the re-inserted USB refuses with
-                               existing-install and the disk digest is
+                    :evidence "smoke-qemu-install.cljk re-run 2026-09-15 on the
+                               post-kbb-cutover tree: one gate, four boots
+                               asserted together -- USB-booted live installer
+                               installs to a blank NVMe (intent admitted,
+                               readback verified, AIUEOS_INSTALL_OK), the NVMe
+                               boots aiueos twice with the USB detached (58
+                               markers each), the re-inserted USB refuses with
+                               existing-install (exit 4) and the disk digest is
                                unchanged; installed extent equals the release
-                               receipt digest before and after. QEMU/OVMF with
-                               a VARS pflash; no physical machine yet (I7).
-                               STALE: this green is about the tree as of
-                               2026-08-25, before the 2026-09-09 move to
-                               kotoba.lang.text. On 2026-09-10 the bundle on
-                               the USB could not load at all (aiueos ADR-0209,
-                               fixed); the gate has not been re-run since."}
+                               receipt digest. QEMU/OVMF with a VARS pflash; no
+                               physical machine yet (I7). The 2026-08-25 green
+                               was stale after the 2026-09-09 kotoba.lang.text
+                               move (aiueos ADR-0209); this re-run retires that
+                               staleness. Two defects were caught BY the re-run
+                               (aiueos ADR-0217): the pinned node v26.7.0 needs
+                               libatomic.so.1 (shipped via libatomic1), and the
+                               bundled nbb had to be the org-babashka-nbb fork
+                               1.5.212-cljk.1 -- stock nbb resolves no .cljk and
+                               dies on kotoba.lang.text exactly as ADR-0209 did."}
   :i4-headless {:state :red
                 :provisioning :landed  ; the static half (ssh-v1.edn, ADR-0101)
                 :note "The SSH profile is designed (ssh-v1.edn) and the
