@@ -75,7 +75,14 @@
   Adding a name here is a claim about that object, not a way to quiet the test:
   say what does execute it, or that nothing does."
   (merge
-   {"tcp-seq-acceptable"
+   {"tee-guest-detect"
+    (str "The guest's own TDX / SEV-SNP self-report (CPUID leaf 0x21 + the "
+         "TDVF window; Fn8000_001F SEV+SNP). Nothing links it because the "
+         "CPUID probe in kernel/cpu.c has no call site yet -- a kernel change "
+         "in its own commit. It is driven through the KIR interpreter by "
+         "aiueos.tee-guest-detect-test, which compiles it with amu at test "
+         "time.")
+   "tcp-seq-acceptable"
    (str "RFC 9293 3.10.7.4, the window-acceptability decision. Nothing links "
         "it because nothing calls it yet: tcp-segment-valid stops before this "
         "question -- it says its own arity is spent -- and giving the probe in "
