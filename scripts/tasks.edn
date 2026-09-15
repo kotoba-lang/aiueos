@@ -149,8 +149,8 @@
   :doc "Parity gate: the same (intent, report, serial) cases through BOTH the production install-intent.cljk CLI and the Kotoba object. A verdict mismatch in either direction fails; a tampered object was measured red (8 FAIL lines) before landing."}
 
  :install-intent-admit-native
- {:cmd ["sh" "-c" "set -eu; \"$AMU/bin/amu\" compile os/aiueos/kotoba/install-intent-admit.kotoba --source-path os/aiueos/kotoba --unpinned --target x86_64-aiueos-kernel-v1 --output /tmp/iia-gate.o > /dev/null; cmp /tmp/iia-gate.o os/aiueos/kotoba/install-intent-admit.o; python3 os/aiueos/scripts/verify-kotoba-kernel-object.py os/aiueos/kotoba/install-intent-admit.o \"\" kotoba_aiueos_install_intent_admit"]
-  :doc "The admission object COMPILES natively (x86_64-aiueos-kernel-v1, kotoba-native 7da60185's allowlist row), is byte-identical to the committed .o (determinism), and passes the kernel-object ABI verifier under its own symbol kotoba_aiueos_install_intent_admit with 0 imports. Needs AMU=<path to an amu checkout pinned at kotoba-native 7da60185>."}
+ {:cmd ["sh" "-c" "set -eu; AMU=${AMU:-../amu}; \"$AMU/bin/amu\" compile os/aiueos/kotoba/install-intent-admit.kotoba --source-path os/aiueos/kotoba --unpinned --target x86_64-aiueos-kernel-v1 --output /tmp/iia-gate.o > /dev/null; cmp /tmp/iia-gate.o os/aiueos/kotoba/install-intent-admit.o; python3 os/aiueos/scripts/verify-kotoba-kernel-object.py os/aiueos/kotoba/install-intent-admit.o \"\" kotoba_aiueos_install_intent_admit"]
+  :doc "The admission object COMPILES natively (x86_64-aiueos-kernel-v1, kotoba-native 7da60185's allowlist row), is byte-identical to the committed .o (determinism), and passes the kernel-object ABI verifier under its own symbol kotoba_aiueos_install_intent_admit with 0 imports. AMU defaults to ../amu (superproject pin b2a52f48 or newer carries kotoba-native 7da60185); override AMU to point elsewhere."}
 
  :guided-install-test
  {:cmd ["kbb" "--backend" "sci" "os/aiueos/scripts/test-guided-install.cljk"]
