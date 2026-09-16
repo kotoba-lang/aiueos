@@ -6,6 +6,7 @@ work=$(mktemp -d "${TMPDIR:-/tmp}/aiueos-qwen35-decode-math.XXXXXX")
 trap 'rm -rf "$work"' EXIT HUP INT TERM
 
 ${CC:-cc} -std=c11 -O3 -Wall -Wextra -Werror \
+  -DAIUEOS_QWEN35_C_REFERENCE_MATVEC=1 \
   -DAIUEOS_QWEN35_SCALAR=1 -DAIUEOS_QWEN35_TESTING=1 \
   -I "$repo/os/aiueos/kernel" \
   "$repo/os/aiueos/kernel/qwen35_infer.c" \

@@ -497,16 +497,28 @@
 ;; against the compiled C on the CPU.
 
 (defn- row-bytes
-  "`aiueos_qwen35_quant_row_bytes` for the four types this tranche decodes."
+  "`aiueos_qwen35_quant_row_bytes` for the fifteen ggml types the object
+  decodes since ADR-0221 (block bytes per 256 elements; Q8_0 per 32). A type
+  the object refuses still has to be placed at SOME size for the vector that
+  provokes -6; 15 is not a ggml type and takes Q5_K's size."
   [qtype count]
   (case qtype
     0 (* count 4)
     8 (* (quot count 32) 34)
+    10 (* (quot count 256) 84)
+    11 (* (quot count 256) 110)
     12 (* (quot count 256) 144)
-    14 (* (quot count 256) 210)
-    ;; A type the object refuses. The runner still has to place SOMETHING, and
-    ;; a Q5_K row is the honest size for the vector that provokes -6/-5.
     13 (* (quot count 256) 176)
+    14 (* (quot count 256) 210)
+    16 (* (quot count 256) 66)
+    17 (* (quot count 256) 74)
+    18 (* (quot count 256) 98)
+    19 (* (quot count 256) 50)
+    21 (* (quot count 256) 110)
+    22 (* (quot count 256) 82)
+    23 (* (quot count 256) 136)
+    29 (* (quot count 256) 56)
+    15 (* (quot count 256) 176)
     (fail! "no row byte count for this quantisation type" {:qtype qtype})))
 
 (defmethod prepare :aiueos.qwen35-dequant-row/v1 [contract v]
@@ -1466,7 +1478,12 @@
                        ;; needs the 60,000 stack the AEAD contracts need.
                        "job-protocol-v1.edn"
                        "micro-infer-next-v1.edn"
-                       "aes128-gcm-selftest-v1.edn"]))
+                       "aes128-gcm-selftest-v1.edn"
+                       ;; C-free wave 3 (ADR-0221): the fifteen-type
+                       ;; dequantiser and the matvec over it. About four
+                       ;; minutes between them.
+                       "qwen35-dequant-row-v1.edn"
+                       "qwen35-matvec-v1.edn"]))
         results (mapv #(run-contract root-dir %) paths)]
     (doseq [r results]
       (println (str "CONTRACT\t" (:contract r)

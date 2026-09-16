@@ -1943,7 +1943,7 @@ static const uint8_t net_tcp_payload[NET_TCP_PAYLOAD] =
    Static rather than an allocated page because a failed allocation would have
    to fail the whole NIC probe that ARP and IPv4 have already passed, and this
    buffer is never touched by DMA -- only the CPU reads it. */
-static uint8_t net_tcp_scratch[4096] __attribute__((aligned(4096)));
+static uint8_t net_tcp_scratch[4096] __attribute__((section(".high_bss"), aligned(4096)));
 
 static uint16_t net_tcp_checksum(const uint8_t *frame, uint32_t tcp_length,
                                  uint32_t src, uint32_t dst) {

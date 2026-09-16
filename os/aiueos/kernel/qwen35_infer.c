@@ -326,6 +326,20 @@ static float dot(const float *left, const float *right, uint64_t count) {
   return dot_scalar(left, right, count);
 }
 
+#ifndef AIUEOS_QWEN35_C_REFERENCE_MATVEC
+extern uint64_t kotoba_aiueos_qwen35_dequant_row(uint64_t type,
+                                                 const uint8_t *source,
+                                                 uint64_t source_bytes,
+                                                 float *destination,
+                                                 uint64_t destination_bytes);
+#endif
+
+/* One row of a tensor as binary32. The dequantiser is the Kotoba object
+   `aiueos-qwen35-dequant-row` (ADR-0221; all fifteen of the artifact's
+   types); the C `aiueos_qwen35_dequantize_row` is the reference the parity
+   self-test compares it against and what the host smokes run
+   (`-DAIUEOS_QWEN35_C_REFERENCE_MATVEC`, a machine that cannot link a kernel
+   object). What stays here is the row's address arithmetic and its bound. */
 static int tensor_row(const struct aiueos_qwen35_tensor *tensor,
                       uint64_t row, float *output) {
   if (!tensor || !tensor->data || tensor->dimension_count != 2 ||
@@ -335,21 +349,123 @@ static int tensor_row(const struct aiueos_qwen35_tensor *tensor,
   if (!row_bytes || row > UINT64_MAX / row_bytes ||
       row * row_bytes > tensor->storage_bytes ||
       row_bytes > tensor->storage_bytes - row * row_bytes) return 0;
+#ifdef AIUEOS_QWEN35_C_REFERENCE_MATVEC
   return aiueos_qwen35_dequantize_row(
       tensor->type, tensor->data + row * row_bytes,
       tensor->dimensions[0], output);
+#else
+  return kotoba_aiueos_qwen35_dequant_row(
+      tensor->type, tensor->data + row * row_bytes, row_bytes,
+      output, tensor->dimensions[0] * 4U) == 0;
+#endif
 }
 
-static int matvec_range(const struct aiueos_qwen35_tensor *tensor,
-                        const float *input, uint64_t input_count,
-                        float *output, uint64_t first, uint64_t end,
-                        float *row_values) {
+/* The C matvec, KEPT AS THE REFERENCE and no longer the live path (ADR-0221).
+   The parity self-test (AIUEOS_QWEN35_KOTOBA_PARITY=1) compares the object
+   against it on the CPU. `-DAIUEOS_QWEN35_C_REFERENCE_MATVEC` makes it the
+   forward pass again, for two builds only: the host smokes (a machine that
+   cannot link a kernel object) and parity profiles 2-4 (which link only
+   their own stage's objects to fit the low region, build-uefi.sh). It leaves this file when the K16 has measured the
+   object's token rate (ADR-0221's next step). */
+#if AIUEOS_QWEN35_KOTOBA_PARITY == 1 || defined(AIUEOS_QWEN35_C_REFERENCE_MATVEC)
+static int matvec_range_c(const struct aiueos_qwen35_tensor *tensor,
+                          const float *input, uint64_t input_count,
+                          float *output, uint64_t first, uint64_t end,
+                          float *row_values) {
   for (uint64_t row = first; row < end; row++) {
     if (!tensor_row(tensor, row, row_values)) return 0;
     output[row] = dot(row_values, input, input_count);
   }
   return 1;
 }
+#endif
+
+#ifdef AIUEOS_QWEN35_C_REFERENCE_MATVEC
+static int matvec_range(const struct aiueos_qwen35_tensor *tensor,
+                        const float *input, uint64_t input_count,
+                        float *output, uint64_t first, uint64_t end,
+                        float *row_values) {
+  return matvec_range_c(tensor, input, input_count, output, first, end,
+                        row_values);
+}
+#else
+/* THE LIVE MATVEC IS THE KOTOBA OBJECT (ADR-0221). `aiueos-qwen35-matvec`
+   dequantises each row of a quantised tensor (all fifteen of the artifact's
+   types, ADR-0221) and takes its four-accumulator dot product with the input,
+   exactly as `matvec_range_c` above did, and the parity self-test holds the
+   two to the same bits. What stays here is MARSHALLING: the object takes
+   ONE arena and a 96-byte plan of offsets into it (five arguments cannot
+   carry four regions), so the arena is the identity-mapped address space
+   from page 1 to the 64 GiB model identity limit and every offset is an
+   address minus 4096 -- the object never touches a byte outside the four
+   regions the plan names, and its own bounds proof is the region check.
+
+   The object also caps the work of one call at 2,097,152 multiply-adds
+   (a fuel bound that does not move with the tensor, see its header), so a
+   tensor is handed over in row chunks of `2097152 / cols` -- 409 rows of
+   an EMBED-wide tensor, 120 of an FFN-wide one -- and a refusal partway
+   leaves the output half written, which the return value says. */
+extern uint64_t kotoba_aiueos_qwen35_matvec(uint8_t *arena, uint64_t arena_bytes,
+                                            const uint8_t *plan,
+                                            uint64_t plan_bytes);
+
+#define QWEN_MATVEC_ARENA_BASE 4096ULL
+#define QWEN_MATVEC_ARENA_END (64ULL * 1024ULL * 1024ULL * 1024ULL)
+#define QWEN_MATVEC_WORK_CEILING 2097152ULL
+
+static void qwen_plan_u32(uint8_t *plan, uint32_t at, uint32_t v) {
+  plan[at] = (uint8_t)v; plan[at + 1] = (uint8_t)(v >> 8);
+  plan[at + 2] = (uint8_t)(v >> 16); plan[at + 3] = (uint8_t)(v >> 24);
+}
+
+static void qwen_plan_u64(uint8_t *plan, uint32_t at, uint64_t v) {
+  qwen_plan_u32(plan, at, (uint32_t)v);
+  qwen_plan_u32(plan, at + 4, (uint32_t)(v >> 32));
+}
+
+static int matvec_range(const struct aiueos_qwen35_tensor *tensor,
+                        const float *input, uint64_t input_count,
+                        float *output, uint64_t first, uint64_t end,
+                        float *row_values) {
+  /* one plan per caller: the BSP and the AP run this concurrently under
+     AIUEOS_QWEN35_SMP, each with its own scratch, so the plan lives on the
+     stack (96 bytes) rather than in .bss */
+  uint8_t plan[96];
+  uint64_t rows, cols, row_bytes, chunk, row;
+  if (!tensor || !tensor->data || tensor->dimension_count != 2 ||
+      tensor->dimensions[0] != input_count || first > end ||
+      end > tensor->dimensions[1]) return 0;
+  rows = tensor->dimensions[1];
+  cols = tensor->dimensions[0];
+  row_bytes = aiueos_qwen35_quant_row_bytes(tensor->type, cols);
+  if (!row_bytes || rows * row_bytes > tensor->storage_bytes) return 0;
+  if ((uint64_t)(uintptr_t)tensor->data < QWEN_MATVEC_ARENA_BASE ||
+      (uint64_t)(uintptr_t)input < QWEN_MATVEC_ARENA_BASE ||
+      (uint64_t)(uintptr_t)output < QWEN_MATVEC_ARENA_BASE ||
+      (uint64_t)(uintptr_t)row_values < QWEN_MATVEC_ARENA_BASE) return 0;
+  for (row = 0; row < 96; row++) plan[row] = 0;
+  qwen_plan_u32(plan, 0, tensor->type);
+  qwen_plan_u64(plan, 8, rows);
+  qwen_plan_u64(plan, 16, cols);
+  qwen_plan_u64(plan, 24, (uint64_t)(uintptr_t)tensor->data - QWEN_MATVEC_ARENA_BASE);
+  qwen_plan_u64(plan, 32, rows * row_bytes);
+  qwen_plan_u64(plan, 40, (uint64_t)(uintptr_t)input - QWEN_MATVEC_ARENA_BASE);
+  qwen_plan_u64(plan, 48, (uint64_t)(uintptr_t)output - QWEN_MATVEC_ARENA_BASE);
+  qwen_plan_u64(plan, 56, (uint64_t)(uintptr_t)row_values - QWEN_MATVEC_ARENA_BASE);
+  chunk = QWEN_MATVEC_WORK_CEILING / cols;
+  if (!chunk) return 0;
+  for (row = first; row < end; row += chunk) {
+    uint64_t stop = end - row < chunk ? end : row + chunk;
+    qwen_plan_u64(plan, 64, row);
+    qwen_plan_u64(plan, 72, stop);
+    if (kotoba_aiueos_qwen35_matvec((uint8_t *)(uintptr_t)QWEN_MATVEC_ARENA_BASE,
+                                    QWEN_MATVEC_ARENA_END - QWEN_MATVEC_ARENA_BASE,
+                                    plan, 96) != 0)
+      return 0;
+  }
+  return 1;
+}
+#endif
 
 #ifdef AIUEOS_QWEN35_SMP
 struct matvec_ap_task {
@@ -1218,19 +1334,11 @@ static void qwen_parity_write_u64(uint8_t *plan, uint32_t offset, uint64_t v) {
 #define QWEN_PARITY_ROWS 4U
 #define QWEN_PARITY_MAX_ROW_BYTES 1024U
 
-extern uint64_t kotoba_aiueos_qwen35_dequant_row(uint64_t type,
-                                                 const uint8_t *source,
-                                                 uint64_t source_bytes,
-                                                 float *destination,
-                                                 uint64_t destination_bytes);
 extern uint64_t kotoba_aiueos_qwen35_dot_f32(const float *left,
                                              uint64_t left_bytes,
                                              const float *right,
                                              uint64_t right_bytes,
                                              uint64_t count);
-extern uint64_t kotoba_aiueos_qwen35_matvec(uint8_t *arena, uint64_t arena_bytes,
-                                            const uint8_t *plan,
-                                            uint64_t plan_bytes);
 
 static uint64_t qwen_parity_row_bytes(uint32_t type) {
   return aiueos_qwen35_quant_row_bytes(type, QWEN_PARITY_COLS);
@@ -1250,8 +1358,17 @@ static float __attribute__((section(".high_bss"))) qwen_parity_reference_out[QWE
 
 /* F32, Q8_0, Q4_K, Q6_K -- the four this object decodes.  The IQ types stay in
    the C for want of a rodata facility to hold their codebook grids. */
-static const uint32_t qwen_parity_types[4] = {
-  AIUEOS_GGML_F32, AIUEOS_GGML_Q8_0, AIUEOS_GGML_Q4_K, AIUEOS_GGML_Q6_K
+/* Every tensor type the admitted artifact holds (ADR-0221). Until then the
+   four whose equations need no codebook; the object decodes all fifteen now,
+   and the ones that dominate the model (IQ3_XXS, IQ3_S, IQ4_XS, IQ2_S) are
+   exactly the ones this self-test could not reach before. */
+#define QWEN_PARITY_TYPE_COUNT 15U
+static const uint32_t qwen_parity_types[QWEN_PARITY_TYPE_COUNT] = {
+  AIUEOS_GGML_F32, AIUEOS_GGML_Q8_0, AIUEOS_GGML_Q2_K, AIUEOS_GGML_Q3_K,
+  AIUEOS_GGML_Q4_K, AIUEOS_GGML_Q5_K, AIUEOS_GGML_Q6_K,
+  AIUEOS_GGML_IQ2_XXS, AIUEOS_GGML_IQ2_XS, AIUEOS_GGML_IQ3_XXS,
+  AIUEOS_GGML_IQ1_S, AIUEOS_GGML_IQ3_S, AIUEOS_GGML_IQ2_S,
+  AIUEOS_GGML_IQ4_XS, AIUEOS_GGML_IQ1_M
 };
 
 static int qwen_parity_dequant(uint32_t type) {
@@ -1341,9 +1458,9 @@ static int qwen_parity_matvec(uint32_t type) {
   tensor.dimension_count = 2;
   tensor.type = type;
   tensor.data = qwen_parity_arena;
-  if (!matvec_range(&tensor, input, QWEN_PARITY_COLS,
-                    qwen_parity_reference_out, 0, QWEN_PARITY_ROWS,
-                    qwen_parity_reference_row))
+  if (!matvec_range_c(&tensor, input, QWEN_PARITY_COLS,
+                      qwen_parity_reference_out, 0, QWEN_PARITY_ROWS,
+                      qwen_parity_reference_row))
     return 0;
 
   for (uint32_t index = 0; index < 96U; index++) qwen_parity_plan[index] = 0;
@@ -1817,13 +1934,13 @@ static int qwen_parity_recurrent(void) {
 int aiueos_qwen35_kotoba_parity_selftest(uint32_t stage) {
 #if AIUEOS_QWEN35_KOTOBA_PARITY == 1
   if (stage == 0) {
-    for (uint32_t index = 0; index < 4U; index++)
+    for (uint32_t index = 0; index < QWEN_PARITY_TYPE_COUNT; index++)
       if (!qwen_parity_dequant(qwen_parity_types[index])) return 0;
     return 1;
   }
   if (stage == 1) return qwen_parity_dot();
   if (stage == 2) {
-    for (uint32_t index = 0; index < 4U; index++)
+    for (uint32_t index = 0; index < QWEN_PARITY_TYPE_COUNT; index++)
       if (!qwen_parity_matvec(qwen_parity_types[index])) return 0;
     return 1;
   }

@@ -25,6 +25,7 @@ actual_sha=$(shasum -a 256 "$model" | awk '{print $1}')
 work=$(mktemp -d "${TMPDIR:-/tmp}/aiueos-qwen35-first-token.XXXXXX")
 trap 'rm -rf "$work"' EXIT HUP INT TERM
 ${CC:-cc} -std=c11 -O3 -Wall -Wextra -Werror \
+  -DAIUEOS_QWEN35_C_REFERENCE_MATVEC=1 \
   -I "$aiueos/kernel" \
   "$aiueos/tests/qwen35_first_token_model.c" \
   "$aiueos/kernel/qwen35_runtime.c" \

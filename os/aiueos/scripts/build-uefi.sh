@@ -980,9 +980,9 @@ if [ -n "$model_handoff_link" ] || [ -n "$qwen35_parity_cflags" ]; then
   python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_qwen35_dot_object" \
     4effd1be80404bd910f0df31dd6510391671b7af025a61d9974ffdecf05f1340 kotoba_aiueos_qwen35_dot_f32
   python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_qwen35_dequant_object" \
-    9eb567d148f09b5c26885846e44092ecc686da0c99c9e21e3d9cf8535132a4bc kotoba_aiueos_qwen35_dequant_row
+    2848f2d6704310764bc9233111b014785b0dec8e3a608f40505f8a364477a62d kotoba_aiueos_qwen35_dequant_row
   python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_qwen35_matvec_object" \
-    ec0e3352538e670db1b8165c51e14eff0250908a247a2b0f901484ea5571fa44 kotoba_aiueos_qwen35_matvec
+    27999dfcfeae51d3679d3ce149f1b67e232b159ea77c8d636fa7a4c2fb9c601a kotoba_aiueos_qwen35_matvec
   # FOUR parity profiles, each linking only the objects its stages call. The
   # low region (`aiueos_low_end <= 0x1f4000`) cannot hold every object at once
   # since the tokenizer objects landed -- measured, not assumed, and measured
@@ -1126,6 +1126,14 @@ if [ -z "$model_handoff_link" ] && [ -n "$qwen35_parity_cflags" ]; then
   # object, it would fail to link.
   qwen35_parity_section_cflags="-ffunction-sections -fdata-sections"
   qualification_gc_link="--gc-sections"
+  # Profiles 2-4 link only their own stage's objects (above), so the live
+  # matvec/dequant path -- the Kotoba objects since ADR-0221 -- has nothing
+  # to resolve against there; those profiles compile the inference C with
+  # its C reference as the forward pass. Profile 1 links the objects and
+  # compares them against that reference on the CPU.
+  case "${AIUEOS_QWEN35_KOTOBA_PARITY:-0}" in
+    2|3|4) qwen35_parity_section_cflags="$qwen35_parity_section_cflags -DAIUEOS_QWEN35_C_REFERENCE_MATVEC=1" ;;
+  esac
   zig cc -target x86_64-freestanding-none -std=c11 -O2 \
     -ffreestanding -fno-stack-protector -mno-red-zone \
     $qwen35_parity_section_cflags \
