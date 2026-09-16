@@ -353,7 +353,10 @@
                                       "compile" in-path "--target" target "--output" out-path]
                                      ["compile" in-path "--target" target
                                       "--output" out-path "--jvm-free"])
-                             project? (into ["--source-path" kotoba-dir]))
+                             project? (into ["--source-path" kotoba-dir
+                                             ;; the pure-native tree, for objects that
+                                             ;; require `native.*` modules (ADR-0220)
+                                             "--source-path" (path/join kotoba-dir "..")]))
                          p (.spawn child (if git-resolve? "clojure" (path/join amu-dir "bin" "amu"))
                                    (clj->js a)
                                    #js {:cwd (if git-resolve? root amu-dir)

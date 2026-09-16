@@ -137,6 +137,15 @@ uint64_t kotoba_aiueos_aes128_gcm(uint8_t *ctx, uint64_t ctx_len,
                   ctx + 32, mode == 1);
 }
 
+/* The boot known-answer test of the cipher object (ADR-0220) has nothing to
+   test here: this probe's cipher IS OpenSSL, and the KAT's evidence is the
+   object's own contract (contracts/aes128-gcm-selftest-v1.edn). Answers
+   "every step agreed" so the probe's selftest chain reads as before. */
+int64_t kotoba_aiueos_aes128_gcm_selftest(uint8_t *scratch, int64_t length) {
+  (void)scratch;
+  return length >= 1536 ? 0 : 6;
+}
+
 uint64_t kotoba_aiueos_tls13_record(uint8_t *ctx, uint64_t ctx_len,
                                     uint8_t *rec, uint64_t rec_len,
                                     uint64_t mode) {

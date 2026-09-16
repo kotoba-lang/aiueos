@@ -20,15 +20,15 @@ evidence — and if you write the missing rubric, delete this paragraph.
 Agent instructions for `kotoba-lang/aiueos`. Everything below was measured in
 this repo, and most of it was measured *because an agent got it wrong first*.
 
-## The five things that mislead readers of this repo
+## The six things that mislead readers of this repo
 
 ### 1. "C-free" forbids libc, a CRT, a JVM and Linux — not C
 
 ADR-0013's rule is about what the bare-metal profile may *depend on*. It is not
 a claim that the tree contains no C. Measured 2026-09-10:
 
-    os/aiueos/kernel    21,434 lines of C, asm and headers,  0 lines of .kotoba   (2026-09-16; 21,391 on 09-11, 21,457 on 09-10)
-    os/aiueos/native         0 lines of C,      7,684 lines of .kotoba
+    os/aiueos/kernel    21,294 lines of C, asm and headers,  0 lines of .kotoba   (2026-09-16 wave 2; 21,434 wave 1, 21,391 on 09-11)
+    os/aiueos/native         0 lines of C,      7,157 lines of .kotoba   (job_protocol.kotoba moved to kotoba/aiueos/ when it was wired)
 
 ⚠ The kernel C count went UP on 2026-09-16 while three more files lost their
 judgment (ADR-0219): a struct the object cannot walk is packed into a flat
@@ -55,9 +55,9 @@ and both were wrong. **Run `:plc-rt-qemu-smoke` before saying a path is absent.*
 
 ### 3. C marshals, Kotoba judges — and that is what the provenance rule means
 
-    kotoba objects linked by build-uefi.sh        103   (2026-09-16)
-    distinct kotoba_* symbols C declares extern   105
-    C files that call into Kotoba                 21 of 30
+    kotoba objects linked by build-uefi.sh        106   (2026-09-16 wave 2)
+    distinct kotoba_* symbols C declares extern   108
+    C files that call into Kotoba                 23 of 30
 
 The convention:
 
@@ -94,7 +94,21 @@ verified object. Budget for the road, not the file.
 
 Every C file is one of three: already in Kotoba (retire the C), not in Kotoba
 and expressible (write it), not in Kotoba and blocked (record it). Decide which
-before writing a line.
+before writing a line. ADR-0220 carries the disposition of every remaining
+file and what each waits on; read it before picking one.
+
+### 5. An object that links and passes its contract has not run
+
+Two objects landed in ADR-0215 and two in ADR-0219 walked string literals
+through `string-code-point-at` -- which lowered to a HOST CALL through context
+slot 144, and a kernel object has no host. Every one of them linked, passed its
+KIR contract, and would have jumped to address 0 the first time its path ran
+(measured 2026-09-16 under QEMU on the first such object that did run,
+ADR-0220). The oracle executes the SOURCE; the link proves the SYMBOL; neither
+executes the machine code. **Until a boot reaches the object, say so.** The
+same day showed the second shape: four objects packaged at the 1,024 fuel
+default `ud2` on a real input while passing every contract vector. Bisect the
+tier in the oracle and give kotoba-native the row (ADR-0220).
 
 ## Measuring things here
 

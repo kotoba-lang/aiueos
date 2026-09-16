@@ -1,181 +1,133 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 #include "job_protocol.h"
 
-static uint32_t text_length(const uint8_t *text,uint32_t bound) {
-  uint32_t n=0;
-  if(!text)return 0;
-  while(n<bound&&text[n])n++;
-  return n;
+/* MARSHALLING ONLY (ADR-0220). The four AIUEOS wire lines -- request,
+   result, commit, liveness -- are decided by `os/aiueos/kotoba/aiueos/
+   job_protocol.kotoba` behind the one kernel object
+   `kotoba/job-protocol-dispatch.kotoba` (mode word + four arguments). This
+   file packs the 48-byte input record that module's header lays out, hands
+   spans across, and unpacks the answers into the caller's struct. No wire
+   knowledge lives here: the id and prompt offsets are re-derived by the
+   object, which is why a parsed request costs three calls. */
+
+extern int64_t kotoba_aiueos_job_protocol(int64_t mode, int64_t a, int64_t b,
+                                          int64_t c, int64_t d);
+
+#define MODE_REQUEST_VERDICT 0
+#define MODE_REQUEST_PROMPT 1
+#define MODE_RESULT_WRITE 2
+#define MODE_COMMIT_VALID 3
+#define MODE_PING_VERDICT 4
+#define MODE_PONG_WRITE 5
+#define MODE_REQUEST_ID 6
+
+#define IN_BYTES 48U
+
+static void put_u32(uint8_t *at, uint32_t v) {
+  at[0] = (uint8_t)v; at[1] = (uint8_t)(v >> 8);
+  at[2] = (uint8_t)(v >> 16); at[3] = (uint8_t)(v >> 24);
 }
 
-static int take_text(
-    const uint8_t *payload,uint32_t length,uint32_t *at,const char *text) {
-  while(*text) {
-    if(*at>=length||payload[*at]!=(uint8_t)*text)return 0;
-    (*at)++;text++;
+static void put_u16(uint8_t *at, uint16_t v) {
+  at[0] = (uint8_t)v; at[1] = (uint8_t)(v >> 8);
+}
+
+/* The record: boot nonce and cycle count as two u32 halves each, the
+   micro-infer result, the sequence, and the id digits with their length. */
+static uint32_t pack_in(uint8_t in[IN_BYTES], uint64_t boot_nonce,
+                        uint64_t cycles,
+                        const struct aiueos_micro_infer_result *result,
+                        uint32_t sequence, const uint8_t *job_id) {
+  uint32_t i, id_length = 0;
+  for (i = 0; i < IN_BYTES; i++) in[i] = 0;
+  put_u32(in + 0, (uint32_t)boot_nonce);
+  put_u32(in + 4, (uint32_t)(boot_nonce >> 32));
+  put_u32(in + 8, (uint32_t)cycles);
+  put_u32(in + 12, (uint32_t)(cycles >> 32));
+  if (result) {
+    put_u16(in + 16, result->score);
+    put_u16(in + 18, result->total);
+    in[20] = result->token;
   }
-  return 1;
-}
-
-static int hex_digit(uint8_t value) {
-  if(value>='0'&&value<='9')return value-'0';
-  if(value>='a'&&value<='f')return value-'a'+10;
-  return -1;
-}
-
-static int take_hex64(
-    const uint8_t *payload,uint32_t length,uint32_t *at,uint64_t *value) {
-  uint64_t result=0;
-  for(unsigned i=0;i<16;i++) {
-    if(*at>=length)return 0;
-    int digit=hex_digit(payload[(*at)++]);
-    if(digit<0)return 0;
-    result=(result<<4)|(unsigned)digit;
+  put_u32(in + 24, sequence);
+  if (job_id) {
+    /* text_length(job_id, AIUEOS_JOB_ID_MAX + 1): at most 21 bytes read */
+    while (id_length <= AIUEOS_JOB_ID_MAX && job_id[id_length]) {
+      if (id_length < AIUEOS_JOB_ID_MAX) in[28 + id_length] = job_id[id_length];
+      id_length++;
+    }
+    in[21] = (uint8_t)(id_length > AIUEOS_JOB_ID_MAX ? 0 : id_length);
   }
-  *value=result;return 1;
-}
-
-static uint32_t append_text(
-    uint8_t *out,uint32_t capacity,uint32_t at,const char *text) {
-  while(*text) {
-    if(at>=capacity)return capacity+1U;
-    out[at++]=(uint8_t)*text++;
-  }
-  return at;
-}
-
-static uint32_t append_bytes(
-    uint8_t *out,uint32_t capacity,uint32_t at,const uint8_t *bytes,uint32_t n) {
-  if(!bytes||at+n>capacity)return capacity+1U;
-  for(uint32_t i=0;i<n;i++)out[at++]=bytes[i];
-  return at;
-}
-
-static uint32_t append_hex64(
-    uint8_t *out,uint32_t capacity,uint32_t at,uint64_t value) {
-  static const uint8_t hex[]="0123456789abcdef";
-  for(unsigned i=0;i<16;i++) {
-    if(at>=capacity)return capacity+1U;
-    out[at++]=hex[(value>>(60U-4U*i))&15U];
-  }
-  return at;
-}
-
-static uint32_t append_hex8(
-    uint8_t *out,uint32_t capacity,uint32_t at,uint8_t value) {
-  static const uint8_t hex[]="0123456789abcdef";
-  if(at+2U>capacity)return capacity+1U;
-  out[at++]=hex[value>>4];out[at++]=hex[value&15U];
-  return at;
-}
-
-static uint32_t append_decimal(
-    uint8_t *out,uint32_t capacity,uint32_t at,uint32_t value) {
-  uint8_t digits[10];unsigned n=0;
-  do { digits[n++]=(uint8_t)('0'+value%10U);value/=10U; } while(value&&n<10);
-  if(at+n>capacity)return capacity+1U;
-  while(n)out[at++]=digits[--n];
-  return at;
-}
-
-static uint32_t append_decimal64(
-    uint8_t *out,uint32_t capacity,uint32_t at,uint64_t value) {
-  uint8_t digits[20];unsigned n=0;
-  do { digits[n++]=(uint8_t)('0'+value%10U);value/=10U; } while(value&&n<20);
-  if(at+n>capacity)return capacity+1U;
-  while(n)out[at++]=digits[--n];
-  return at;
+  return id_length;
 }
 
 int aiueos_job_request_parse(
     const uint8_t *payload,uint32_t length,uint64_t expected_boot,
     struct aiueos_job_request *request) {
-  if(!payload||!request||!length||length>AIUEOS_JOB_REQUEST_CAPACITY)return 0;
-  uint32_t at=0,id_length=0,prompt_length=0;
-  uint64_t boot=0;
-  if(!take_text(payload,length,&at,"AIUEOS_JOB_V1 boot=")||
-     !take_hex64(payload,length,&at,&boot)||boot!=expected_boot||
-     !take_text(payload,length,&at," id="))return 0;
-  while(at<length&&payload[at]>='0'&&payload[at]<='9') {
-    if(id_length>=AIUEOS_JOB_ID_MAX)return 0;
-    request->job_id[id_length++]=payload[at++];
-  }
-  if(!id_length)return 0;
-  request->job_id[id_length]=0;
-  if(!take_text(payload,length,&at," kind=aiueos-micro-infer prompt="))return 0;
-  while(at<length) {
-    if(prompt_length>=AIUEOS_MICRO_INFER_PROMPT_MAX||at+2U>length)return 0;
-    int high=hex_digit(payload[at++]),low=hex_digit(payload[at++]);
-    if(high<0||low<0)return 0;
-    request->prompt[prompt_length++]=(uint8_t)((high<<4)|low);
-  }
-  if(!prompt_length)return 0;
-  request->boot_nonce=boot;request->prompt_length=prompt_length;
+  int64_t verdict, id_length, prompt_length;
+  uint32_t i;
+  if (!payload || !request) return 0;
+  verdict = kotoba_aiueos_job_protocol(
+      MODE_REQUEST_VERDICT, (int64_t)(uintptr_t)payload, (int64_t)length,
+      (int64_t)(uint32_t)(expected_boot >> 32), (int64_t)(uint32_t)expected_boot);
+  if (verdict <= 0) return 0;
+  for (i = 0; i < sizeof(request->job_id); i++) request->job_id[i] = 0;
+  id_length = kotoba_aiueos_job_protocol(
+      MODE_REQUEST_ID, (int64_t)(uintptr_t)payload, (int64_t)length,
+      (int64_t)(uintptr_t)request->job_id, (int64_t)AIUEOS_JOB_ID_MAX);
+  prompt_length = kotoba_aiueos_job_protocol(
+      MODE_REQUEST_PROMPT, (int64_t)(uintptr_t)payload, (int64_t)length,
+      (int64_t)(uintptr_t)request->prompt, (int64_t)AIUEOS_MICRO_INFER_PROMPT_MAX);
+  if (id_length <= 0 || prompt_length <= 0) return 0;
+  request->job_id[id_length] = 0;
+  request->boot_nonce = expected_boot;
+  request->prompt_length = (uint32_t)prompt_length;
   return 1;
 }
 
 uint32_t aiueos_job_result_payload(
     uint8_t *out,uint32_t capacity,uint64_t boot_nonce,const uint8_t *job_id,
     const struct aiueos_micro_infer_result *result,uint64_t inference_cycles) {
-  uint32_t id_length=text_length(job_id,AIUEOS_JOB_ID_MAX+1U);
-  if(!out||!capacity||!result||!id_length||id_length>AIUEOS_JOB_ID_MAX)return 0;
-  for(uint32_t i=0;i<id_length;i++)if(job_id[i]<'0'||job_id[i]>'9')return 0;
-  uint32_t n=append_text(out,capacity,0,"AIUEOS_JOB_RESULT_V1 boot=");
-  n=append_hex64(out,capacity,n,boot_nonce);
-  n=append_text(out,capacity,n," id=");
-  n=append_bytes(out,capacity,n,job_id,id_length);
-  n=append_text(out,capacity,n," model=" AIUEOS_MICRO_INFER_MODEL " token=");
-  n=append_hex8(out,capacity,n,result->token);
-  n=append_text(out,capacity,n," score=");
-  n=append_decimal(out,capacity,n,result->score);
-  n=append_text(out,capacity,n," total=");
-  n=append_decimal(out,capacity,n,result->total);
-  n=append_text(out,capacity,n," cycles=");
-  n=append_decimal64(out,capacity,n,inference_cycles);
-  return n<=capacity?n:0;
+  uint8_t in[IN_BYTES];
+  int64_t n;
+  if (!out || !capacity || !result) return 0;
+  pack_in(in, boot_nonce, inference_cycles, result, 0, job_id);
+  n = kotoba_aiueos_job_protocol(MODE_RESULT_WRITE, (int64_t)(uintptr_t)out,
+                                 (int64_t)capacity, (int64_t)(uintptr_t)in, 0);
+  return n > 0 ? (uint32_t)n : 0;
 }
 
 int aiueos_job_commit_valid(
     const uint8_t *payload,uint32_t length,uint64_t boot_nonce,
     const uint8_t *job_id) {
-  uint8_t expected[AIUEOS_JOB_COMMIT_CAPACITY];
-  uint32_t id_length=text_length(job_id,AIUEOS_JOB_ID_MAX+1U);
-  if(!payload||!job_id||!id_length||id_length>AIUEOS_JOB_ID_MAX)return 0;
-  uint32_t n=append_text(expected,sizeof(expected),0,"AIUEOS_JOB_COMMIT_V1 boot=");
-  n=append_hex64(expected,sizeof(expected),n,boot_nonce);
-  n=append_text(expected,sizeof(expected),n," id=");
-  n=append_bytes(expected,sizeof(expected),n,job_id,id_length);
-  n=append_text(expected,sizeof(expected),n," state=recorded");
-  if(n>sizeof(expected)||n!=length)return 0;
-  for(uint32_t i=0;i<n;i++)if(expected[i]!=payload[i])return 0;
-  return 1;
+  uint8_t in[IN_BYTES];
+  if (!payload || !job_id) return 0;
+  pack_in(in, boot_nonce, 0, 0, 0, job_id);
+  return kotoba_aiueos_job_protocol(MODE_COMMIT_VALID,
+                                    (int64_t)(uintptr_t)payload, (int64_t)length,
+                                    (int64_t)(uintptr_t)in, 0) == 1;
 }
 
 int aiueos_node_ping_parse(
     const uint8_t *payload,uint32_t length,uint64_t expected_boot,
     uint32_t *sequence) {
-  if(!payload||!sequence||!length||length>AIUEOS_NODE_LIVENESS_CAPACITY)return 0;
-  uint32_t at=0,value=0,digits=0;uint64_t boot=0;
-  if(!take_text(payload,length,&at,"AIUEOS_NODE_PING_V1 boot=")||
-     !take_hex64(payload,length,&at,&boot)||boot!=expected_boot||
-     !take_text(payload,length,&at," seq="))return 0;
-  while(at<length&&payload[at]>='0'&&payload[at]<='9') {
-    uint32_t digit=(uint32_t)(payload[at++]-'0');
-    if(digits++>=10U||value>429496729U||
-       (value==429496729U&&digit>5U))return 0;
-    value=value*10U+digit;
-  }
-  if(!digits||at!=length)return 0;
-  *sequence=value;return 1;
+  int64_t verdict;
+  if (!payload || !sequence) return 0;
+  verdict = kotoba_aiueos_job_protocol(
+      MODE_PING_VERDICT, (int64_t)(uintptr_t)payload, (int64_t)length,
+      (int64_t)(uint32_t)(expected_boot >> 32), (int64_t)(uint32_t)expected_boot);
+  if (verdict < 0) return 0;
+  *sequence = (uint32_t)verdict;
+  return 1;
 }
 
 uint32_t aiueos_node_pong_payload(
     uint8_t *out,uint32_t capacity,uint64_t boot_nonce,uint32_t sequence) {
-  if(!out||!capacity)return 0;
-  uint32_t n=append_text(out,capacity,0,"AIUEOS_NODE_PONG_V1 boot=");
-  n=append_hex64(out,capacity,n,boot_nonce);
-  n=append_text(out,capacity,n," seq=");
-  n=append_decimal(out,capacity,n,sequence);
-  n=append_text(out,capacity,n," state=ready");
-  return n<=capacity?n:0;
+  uint8_t in[IN_BYTES];
+  int64_t n;
+  if (!out || !capacity) return 0;
+  pack_in(in, boot_nonce, 0, 0, sequence, 0);
+  n = kotoba_aiueos_job_protocol(MODE_PONG_WRITE, (int64_t)(uintptr_t)out,
+                                 (int64_t)capacity, (int64_t)(uintptr_t)in, 0);
+  return n > 0 ? (uint32_t)n : 0;
 }

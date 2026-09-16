@@ -238,7 +238,9 @@ the tree.
 
 Probed on `x86_64-aiueos-kernel-v1`, all compiling:
 
-- string literals, and `string-code-point-at` over them
+- string literals, and `string-code-point-at` over them — **compiled, not
+  run: until kotoba-native #184 (ADR-0220) that operation was a host call and
+  jumped to address 0 in a kernel object**
 - `kernel-store-u8` / `-u16` / `-u32` into a parameter-rooted region
 - `kernel-load-u8` / `-u16` / `-u32` / `-ptr`
 
@@ -264,8 +266,9 @@ by the flat-record shape rather than by the language.
    language change.**
 4. the rest of layer 0, then layers 1-4 in order. **`inference_status.c`,
    `model_handoff.c`, `device_worker_protocol.c` done under ADR-0219**;
-   `job_protocol.c`, `micro_infer.c`, `qualification.c`, `acpi.c` remain
-   (ADR-0219 says what each waits on).
+   **`job_protocol.c`, `micro_infer.c` and `tls_aes_gcm.c`'s self-test done
+   under ADR-0220**; `qualification.c` and `acpi.c` remain, and ADR-0220
+   carries the disposition of every file in the kernel.
 5. `main.c`, `pci.c`, `loader.c` last — they depend on everything
 
 ## What this does not say

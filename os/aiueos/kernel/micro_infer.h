@@ -6,6 +6,9 @@
 
 #define AIUEOS_MICRO_INFER_MODEL "aiueos-char-bigram-v1"
 #define AIUEOS_MICRO_INFER_PROMPT_MAX 64U
+/* The flat record the Kotoba decision writes (ADR-0220); layout in
+   os/aiueos/kotoba/micro-infer-next.kotoba. */
+#define AIUEOS_MICRO_INFER_RESULT_RECORD_BYTES 8U
 
 struct aiueos_micro_infer_result {
   uint8_t token;

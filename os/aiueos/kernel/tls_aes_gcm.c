@@ -1,11 +1,13 @@
 #include "tls_aes_gcm.h"
 
 /* AES-128-GCM is `os/aiueos/kotoba/aes128-gcm.kotoba`, compiled to
-   `kotoba_aiueos_aes128_gcm` (ADR-0132).  What is left in this file is the
-   marshalling between the two shapes and nothing else: the S-box, the key
-   schedule, the cipher, GHASH, CTR and the tag comparison -- 185 lines that
-   held the whole confidentiality and integrity decision of every TLS 1.3
-   record and every SSH packet this kernel sends -- are gone.
+   `kotoba_aiueos_aes128_gcm` (ADR-0132), and its boot known-answer test is
+   `kotoba/aes128-gcm-selftest.kotoba` (ADR-0220). What is left in this file
+   is the marshalling between the two shapes and nothing else: the S-box, the
+   key schedule, the cipher, GHASH, CTR and the tag comparison -- 185 lines
+   that held the whole confidentiality and integrity decision of every TLS
+   1.3 record and every SSH packet this kernel sends -- are gone, and so are
+   the 120 lines of vectors and comparisons the self-test was.
 
    TWO SHAPES, AND THE DIFFERENCE IS NOT COSMETIC.
 
@@ -84,87 +86,21 @@ int aiueos_aes128_gcm_decrypt(const uint8_t key[16], const uint8_t nonce[12],
                                   (uint64_t)ct_len, 0) == 0;
 }
 
+extern int64_t kotoba_aiueos_aes128_gcm_selftest(uint8_t *scratch,
+                                                 int64_t length);
+
 int aiueos_aes128_gcm_selftest(void) {
-  /* SP 800-38D Appendix A: AES-128, 96-bit IV, empty AAD, empty PT.
-     Since ADR-0132 this is a KNOWN-ANSWER TEST ON THE OBJECT, run at boot on
-     the machine that will use it -- which is a stronger claim than the one it
-     made when the cipher was the C below it. */
-  static const uint8_t key[16] = {0};
-  static const uint8_t nonce[12] = {0};
-  static const uint8_t expect_tag[16] = {
-    0x58,0xe2,0xfc,0xce,0xfa,0x7e,0x30,0x61,
-    0x36,0x7f,0x1d,0x57,0xa4,0xe7,0x45,0x5a};
-  /* A zero-length body never reaches `kernel-subregion`, but the object is
-     handed a real region rather than a null one: the contract records that a
-     null base is a machine trap and not a reason code. */
-  static uint8_t empty_region[16];
-  uint8_t tag[16];
-  uint32_t i, diff = 0;
-  if (!aiueos_aes128_gcm_encrypt(key, nonce, 0, 0, empty_region, 0,
-                                 empty_region, tag))
-    return 0;
-  for (i = 0; i < 16; i++) diff |= (uint32_t)(tag[i] ^ expect_tag[i]);
-  if (diff) return 0;
-  /* SP 800-38D: 64-byte PT, 96-bit IV, empty AAD. */
-  {
-    static const uint8_t k2[16] = {
-      0xfe,0xff,0xe9,0x92,0x86,0x65,0x73,0x1c,
-      0x6d,0x6a,0x8d,0x03,0x40,0x31,0x4d,0xe8};
-    static const uint8_t n2[12] = {
-      0xca,0xfe,0xba,0xbe,0xfa,0xce,0xdb,0xad,0xde,0xca,0xf8,0x88};
-    static const uint8_t pt[64] = {
-      0xd9,0x31,0x32,0x25,0xf8,0x84,0x06,0xe5,0xa5,0x59,0x09,0xc5,0xaf,0xf5,0x26,0x9a,
-      0x86,0xa7,0xa9,0x53,0x15,0x34,0xf7,0xda,0x2e,0x4c,0x30,0x3d,0x8a,0x31,0x8a,0x72,
-      0x1c,0x3c,0x0c,0x95,0x95,0x68,0x09,0x53,0x2f,0xcf,0x0e,0x24,0x49,0xa6,0xb5,0x25,
-      0xb1,0x6a,0xed,0xf5,0xaa,0x0d,0xe6,0x57,0xba,0x63,0x7b,0x39,0x1a,0xaf,0xd2,0x55};
-    /* Empty-AAD companion of the SP 800-38D 64-byte PT (the published
-       appendix vector includes 20 bytes of AAD). Measured against
-       cryptography.hazmat AESGCM. */
-    static const uint8_t expect_ct[64] = {
-      0x4f,0xaa,0x3c,0xcb,0xf0,0x7a,0x91,0xcf,0xdd,0xce,0x27,0xc8,0x57,0x8a,0xba,0xa1,
-      0xed,0x73,0xbe,0xd1,0xc3,0xd0,0x8e,0xb8,0xb0,0x80,0x21,0xff,0x5d,0x35,0x49,0xd4,
-      0xa2,0x82,0xd3,0xa8,0x58,0x35,0xe5,0x2d,0x2d,0xa9,0xe4,0x96,0x27,0x34,0x74,0xdc,
-      0xcc,0xdb,0xc9,0xa2,0x86,0x61,0xdd,0x66,0xb8,0x7c,0x44,0x1b,0xd9,0xeb,0xbd,0xe7};
-    static const uint8_t expect_t2[16] = {
-      0x97,0xf7,0xb2,0x91,0x18,0xc8,0xfb,0x54,0x94,0x35,0x9b,0x19,0x1d,0x97,0x00,0x3e};
-    static uint8_t ct[64], pt2[64];
-    uint8_t t2[16];
-    if (!aiueos_aes128_gcm_encrypt(k2, n2, 0, 0, pt, 64, ct, t2)) return 0;
-    diff = 0;
-    for (i = 0; i < 64; i++) diff |= (uint32_t)(ct[i] ^ expect_ct[i]);
-    for (i = 0; i < 16; i++) diff |= (uint32_t)(t2[i] ^ expect_t2[i]);
-    if (diff) return 0;
-    if (!aiueos_aes128_gcm_decrypt(k2, n2, 0, 0, ct, 64, t2, pt2)) return 0;
-    diff = 0;
-    for (i = 0; i < 64; i++) diff |= (uint32_t)(pt2[i] ^ pt[i]);
-    if (diff) return 0;
-    /* A flipped tag bit must be REFUSED, and the buffer must still hold the
-       ciphertext: authenticate-before-decrypt is a property of the object and
-       this is the boot-time assertion of it. */
-    {
-      uint8_t bad[16];
-      for (i = 0; i < 16; i++) bad[i] = t2[i];
-      bad[15] = (uint8_t)(bad[15] ^ 1);
-      if (aiueos_aes128_gcm_decrypt(k2, n2, 0, 0, ct, 64, bad, pt2)) return 0;
-      diff = 0;
-      for (i = 0; i < 64; i++) diff |= (uint32_t)(pt2[i] ^ ct[i]);
-      if (diff) return 0;
-    }
-    /* AAD changes the tag only — the TLS record header is 5-byte AAD. */
-    {
-      static const uint8_t aad[20] = {
-        0xfe,0xed,0xfa,0xce,0xde,0xad,0xbe,0xef,0xfe,0xed,
-        0xfa,0xce,0xde,0xad,0xbe,0xef,0xab,0xad,0xda,0xd2};
-      static const uint8_t expect_t3[16] = {
-        0x2b,0x95,0x6e,0x81,0x82,0x06,0x64,0x24,0x2d,0x50,0x87,0x2b,0xa9,0xf5,0x21,0xee};
-      uint8_t t3[16];
-      if (!aiueos_aes128_gcm_encrypt(k2, n2, aad, 20, pt, 64, ct, t3)) return 0;
-      diff = 0;
-      for (i = 0; i < 16; i++) diff |= (uint32_t)(t3[i] ^ expect_t3[i]);
-      if (diff) return 0;
-    }
-  }
-  return 1;
+  /* The known-answer test is `os/aiueos/kotoba/aes128-gcm-selftest.kotoba`
+     (ADR-0220): SP 800-38D's empty-message tag, the 64-byte message's
+     ciphertext and tag, the round trip, a flipped tag bit refused with the
+     ciphertext left in place, and the 20-byte-AAD tag -- run at boot over
+     the SAME core module the linked cipher object is built from. Zero is
+     every step agreeing; a non-zero answer is the number of the step that
+     did not. The scratch is .bss for the same reason gcm_ctx is. */
+  static uint8_t scratch[1536];
+  uint32_t i;
+  for (i = 0; i < sizeof(scratch); i++) scratch[i] = 0;
+  return kotoba_aiueos_aes128_gcm_selftest(scratch, (int64_t)sizeof(scratch)) == 0;
 }
 
 #ifdef AIUEOS_TLS_AES_GCM_HOST_TEST

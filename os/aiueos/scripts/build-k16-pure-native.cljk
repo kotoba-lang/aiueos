@@ -98,7 +98,9 @@
         flat (str/replace namespace #"^aiueos\." "")]
     (first (filter #(.existsSync fs %)
                    [(path/join dir (str munged ".kotoba"))
-                    (path/join dir (str flat ".kotoba"))]))))
+                    (path/join dir (str flat ".kotoba"))
+                    ;; the pure-native tree, from the os/aiueos root (ADR-0220)
+                    (path/join dir ".." (str munged ".kotoba"))]))))
 
 (defn- module-closure
   "Every module the entry pulls in, transitively, as
