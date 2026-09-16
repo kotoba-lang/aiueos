@@ -1128,7 +1128,13 @@
   (let [munged (-> (str namespace) (str/replace "." "/") (str/replace "-" "_"))
         flat (str/replace (name namespace) #"^aiueos\." "")
         candidates [(path/join root-dir kotoba-dir (str munged ".kotoba"))
-                    (path/join root-dir kotoba-dir (str flat ".kotoba"))]
+                    (path/join root-dir kotoba-dir (str flat ".kotoba"))
+                    ;; A kernel object may require a module of the pure-native
+                    ;; tree (`native.micro-infer` -> os/aiueos/native/
+                    ;; micro_infer.kotoba), resolved from the os/aiueos root
+                    ;; exactly as build-kotoba-native-kernel.sh's
+                    ;; `--source-path "$aiueos"` resolves it (ADR-0220).
+                    (path/join root-dir "os/aiueos" (str munged ".kotoba"))]
         found (first (filter #(.existsSync fs %) candidates))]
     (when-not found
       (fail! "REFUSING TO REPORT A PASS: a declared module has no source file"
@@ -1452,7 +1458,15 @@
                        "inference-milli-tokens-per-second-v1.edn"
                        "model-mapping-plan-v1.edn"
                        "model-handoff-validate-v1.edn"
-                       "device-worker-poll-response-v1.edn"]))
+                       "device-worker-poll-response-v1.edn"
+                       ;; C-free wave 2 (ADR-0220). The job lines and the
+                       ;; bigram are seconds; the AES-GCM known-answer test
+                       ;; is five table builds and four AEADs in the
+                       ;; interpreter -- about two and a half minutes -- and
+                       ;; needs the 60,000 stack the AEAD contracts need.
+                       "job-protocol-v1.edn"
+                       "micro-infer-next-v1.edn"
+                       "aes128-gcm-selftest-v1.edn"]))
         results (mapv #(run-contract root-dir %) paths)]
     (doseq [r results]
       (println (str "CONTRACT\t" (:contract r)

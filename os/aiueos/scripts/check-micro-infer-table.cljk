@@ -2,7 +2,7 @@
 ;; expects, measured by executing the Kotoba module rather than by reading it.
 ;;
 ;; Four things can drift independently and three of them are silent:
-;;   1. native/micro_infer.kotoba vs kernel/micro_infer.c   (the frozen matrix)
+;;   1. native/micro_infer.kotoba vs contracts/micro-infer-transitions-v1.edn (the frozen matrix)
 ;;   2. the board's unpack-and-reduce vs the reduction itself
 ;;   3. the board's answers vs MURAKUMO_MICRO_INFER_ROWS     (the relay)
 ;;   4. the board's answer for "murakum" vs the contract's :known-answer
@@ -53,11 +53,11 @@
   (let [r (cp/spawnSync cmd (clj->js args) #js {:encoding "utf8"})]
     {:code (.-status r) :out (str (.-stdout r)) :err (str (.-stderr r))}))
 
-;; ---- 1. the committed table still re-derives from the C matrix -----------
-(let [r (run "nbb" [(path/join aiueos "tools/gen-micro-infer-table.cljk") root "--check"])]
+;; ---- 1. the committed table still re-derives from the EDN matrix ---------
+(let [r (run "kbb" ["--backend" "sci" (path/join aiueos "tools/gen-micro-infer-table.cljk") root "--check"])]
   (case (:code r)
     0 nil
-    1 (finding! "table-drift native/micro_infer.kotoba no longer re-derives from kernel/micro_infer.c")
+    1 (finding! "table-drift native/micro_infer.kotoba no longer re-derives from contracts/micro-infer-transitions-v1.edn")
     (refuse! "generator --check could not answer:" (str/trim (str (:out r) (:err r))))))
 
 ;; ---- 2. every row reduces to its expected value (oracle folds main) ------
@@ -145,7 +145,7 @@
 
 ;; ---- 5. every row agrees with the Mac relay's expectation table ----------
 (def oracle-rows
-  (let [r (run "nbb" [(path/join aiueos "tools/gen-micro-infer-table.cljk") root])]
+  (let [r (run "kbb" ["--backend" "sci" (path/join aiueos "tools/gen-micro-infer-table.cljk") root])]
     (when-not (zero? (:code r)) (refuse! "generator would not print its oracle"))
     (into {} (for [[_ k t s n] (re-seq #"ROW \"(.)\" -> \(\"(.)\" (\d+) (\d+)\)" (:out r))]
                [k [t (js/parseInt s 10) (js/parseInt n 10)]]))))

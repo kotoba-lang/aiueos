@@ -1143,8 +1143,8 @@ completion, RX FCS removal, rearming and the peer-bound ARP reply:
 
 ```sh
 os/aiueos/scripts/smoke-rtl8125-handoff.sh
-os/aiueos/scripts/smoke-micro-infer.sh
-os/aiueos/scripts/smoke-job-protocol.sh
+os/aiueos/scripts/smoke-micro-infer.sh          # the relay's rows vs the matrix's source of truth
+kbb --backend sci scripts/run-task.cljk cfree-wave-2-contracts   # micro-infer-next, job-protocol, aes128-gcm-selftest in the KIR oracle (ADR-0220)
 ```
 
 `AIUEOS_RTL8125_MODEL_OK` proves the register/descriptor state machine only.

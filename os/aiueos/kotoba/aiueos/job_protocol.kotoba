@@ -1,19 +1,16 @@
-;; NOT WIRED. This compiles for x86_64-aiueos-kernel-v1 and covers the whole
-;; public surface of kernel/job_protocol.c, but nothing calls it, no gate runs
-;; it, and the C is still the live implementation. It is landed as measured
-;; evidence for ADR-0212's conversion coefficient, not as a component.
-;;
-;; Before it can replace the C it needs: a C-side marshalling shim, the two
-;; call sites repointed, a differential gate against the C the way
-;; :relay-parity works, and its own entry in scripts/tasks.edn.
+;; WIRED (ADR-0220). Landed unwired in native/ as ADR-0212's conversion
+;; coefficient evidence; moved here as the shared module behind the kernel
+;; object `job-protocol-dispatch.kotoba`, which is what kernel/job_protocol.c
+;; now calls. The C keeps the struct packing (a 48-byte input record and the
+;; out-struct unpacking) and no decision.
 ;;
 ;; Note the shape the ABI forced: `aiueos_job_request_parse` fills an
 ;; out-struct in C, and there is no out-parameter here and no returning a
-;; record across the boundary, so it is TWO functions -- `job-request-verdict`
-;; and `job-request-prompt`. Expect that split wherever the C returns through
-;; a pointer.
+;; record across the boundary, so it is THREE functions -- `job-request-verdict`,
+;; `job-request-id` and `job-request-prompt`. Expect that split wherever the C
+;; returns through a pointer.
 ;;
-(ns native.job-protocol
+(ns aiueos.job-protocol
   ;; The JUDGMENT half of kernel/job_protocol.c: the four AIUEOS wire lines
   ;; (AIUEOS_JOB_V1 request, AIUEOS_JOB_RESULT_V1 answer, AIUEOS_JOB_COMMIT_V1
   ;; receipt, AIUEOS_NODE_PING_V1 / _PONG_V1 liveness) as decisions over flat
@@ -60,7 +57,7 @@
   ;; append propagates it, and the entry point converts a poisoned length
   ;; into 0.
   (:export [main
-            job-request-verdict job-request-prompt
+            job-request-verdict job-request-id job-request-prompt
             job-result-write job-commit-valid
             node-ping-verdict node-pong-write]))
 
@@ -257,6 +254,22 @@
                   0
                   (decode-hex (kernel-subregion payload length at rest)
                               out capacity 0 (quot rest 2)))))))))))
+
+(defn copy-id-bytes [payload length out capacity i]
+  ;; the id digits, payload[39 .. 39+idn) -> out[0 .. idn)
+  (if (>= i capacity)
+    i
+    (let [stored (kernel-store-u8 out capacity i (kernel-load-u8 payload length (+ 39 i)))]
+      (copy-id-bytes payload length out capacity (+ (+ i 1) (* 0 stored))))))
+
+(defn job-request-id [payload length out capacity]
+  ;; The job id digits, written into the caller's span. Returns the id length
+  ;; (1..20), or 0. Call only after job-request-verdict has accepted; like
+  ;; job-request-prompt it re-derives the id run at the fixed offset 39.
+  (let [idn (digits-run payload length 39 0 21)]
+    (if (or (= idn 0) (> idn 20) (> idn capacity))
+      0
+      (copy-id-bytes payload length out idn 0))))
 
 ;; ── writing a line ───────────────────────────────────────────────────────
 
@@ -511,17 +524,9 @@
       (if (<= n5 capacity) n5 0))))
 
 ;; ── entry ────────────────────────────────────────────────────────────────
-;; The kernel target wants a zero-arity `main`.  It REACHES every exported
-;; decision -- a `main` that returned a constant would let the whole file be
-;; dropped and the compile would still say :ok true.
+;; As a shared module this file has no entry: the kernel object is
+;; `job-protocol-dispatch.kotoba`, whose mode word reaches every export. (The
+;; single-object `main` this file carried while unwired used a literal region
+;; base the KIR oracle refuses; it went with the wiring.)
 
-(defn main []
-  (let [payload (kernel-subregion 1 549755813887 1048576 256)
-        out (kernel-subregion 1 549755813887 1049856 256)
-        in (kernel-subregion 1 549755813887 1050112 48)]
-    (+ (job-request-verdict payload 256 0 0)
-       (+ (job-request-prompt payload 256 out 256)
-          (+ (job-result-write out 256 in)
-             (+ (job-commit-valid payload 81 in)
-                (+ (node-ping-verdict payload 128 0 0)
-                   (node-pong-write out 256 in))))))))
+(defn main [] 0)

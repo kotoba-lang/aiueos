@@ -13,12 +13,15 @@ spec = importlib.util.spec_from_file_location("k16_pxe_server", server_path)
 server = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(server)
 
-source = (repo / "os/aiueos/kernel/micro_infer.c").read_text(encoding="utf-8")
-body = re.search(r"transitions\[27\]\[27\]=\{(.*?)\n\};", source, re.S)
-assert body, "missing frozen transition matrix"
+# The matrix's source of truth is the EDN contract (ADR-0220; it was the C
+# array in kernel/micro_infer.c until that file's decision moved to Kotoba).
+# Read with a real reader would be better than a regex; the rows are the only
+# bracketed integer runs after `:rows`, and the count is asserted.
+source = (repo / "os/aiueos/contracts/micro-infer-transitions-v1.edn").read_text(encoding="utf-8")
+body = source[source.index(":rows"):]
 rows = [list(map(int, re.findall(r"\d+", row)))
-        for row in re.findall(r"\{([^{}]+)\}", body.group(1))]
-assert len(rows) == 27 and all(len(row) == 27 for row in rows)
+        for row in re.findall(r"\[([0-9 ]+)\]", body)]
+assert len(rows) == 27 and all(len(row) == 27 for row in rows), len(rows)
 
 vocabulary = " abcdefghijklmnopqrstuvwxyz"
 projection = {}

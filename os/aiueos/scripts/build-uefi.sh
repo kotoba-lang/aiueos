@@ -40,6 +40,13 @@ kotoba_inference_rate_object=${AIUEOS_KOTOBA_INFERENCE_RATE_OBJECT:-"$aiueos/kot
 kotoba_model_mapping_plan_object=${AIUEOS_KOTOBA_MODEL_MAPPING_PLAN_OBJECT:-"$aiueos/kotoba/model-mapping-plan.o"}
 kotoba_model_handoff_validate_object=${AIUEOS_KOTOBA_MODEL_HANDOFF_VALIDATE_OBJECT:-"$aiueos/kotoba/model-handoff-validate.o"}
 kotoba_device_worker_poll_object=${AIUEOS_KOTOBA_DEVICE_WORKER_POLL_OBJECT:-"$aiueos/kotoba/device-worker-poll-response.o"}
+# C-free wave 2 (ADR-0220): job_protocol.c's four wire lines behind one mode
+# word, micro_infer.c's decision over the shared native.micro-infer table,
+# and tls_aes_gcm.c's known-answer test over the shared AES-GCM core. The C
+# files are marshalling only.
+kotoba_job_protocol_object=${AIUEOS_KOTOBA_JOB_PROTOCOL_OBJECT:-"$aiueos/kotoba/job-protocol-dispatch.o"}
+kotoba_micro_infer_next_object=${AIUEOS_KOTOBA_MICRO_INFER_NEXT_OBJECT:-"$aiueos/kotoba/micro-infer-next.o"}
+kotoba_aes128_gcm_selftest_object=${AIUEOS_KOTOBA_AES128_GCM_SELFTEST_OBJECT:-"$aiueos/kotoba/aes128-gcm-selftest.o"}
 kernel_qwen35_runtime_object="$out/kernel-qwen35-runtime.o"
 kernel_qwen35_quant_object="$out/kernel-qwen35-quant.o"
 kernel_qwen35_infer_object="$out/kernel-qwen35-infer.o"
@@ -910,10 +917,10 @@ python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_dhcp_option_ob
   82794a814363e12697b068ada76fbd5670cd28ec5b97c063ced70af335333d61 \
   kotoba_aiueos_dhcp_option_u32
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_relay_hello_object" \
-  ad5623e3685c6e9e1b77a0f6c4aadb86e029f1bb0058026edf5e92f6e7764ce2 \
+  4c38d1ec0602a46beea61a5759b450da0bef260bdd1f04aab1055d141134958d \
   kotoba_aiueos_relay_hello_payload
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_relay_ack_object" \
-  8c44fd0f5d4d2d21a402998c41b75ae28e03e28dd50178c95d063bc22697c082 \
+  e5bafb1b7fd0e57ecf2cc5e7521a9c960f9e7005a455c6bd7aecf2e359bd42bb \
   kotoba_aiueos_relay_ack_payload_valid
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_inference_status_valid_object" \
   7bffa1b85e1835493a624c85dd4cee15a63f48e180521055efd17d4e700d60a8 \
@@ -928,8 +935,17 @@ python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_model_handoff_
   057a0ba7a1d150b5eeca2a3e3d8c95642e3aa140181f6f20d5cdbb2f2a8a6c10 \
   kotoba_aiueos_model_handoff_validate
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_device_worker_poll_object" \
-  3f741f7873245b6ff0ababcf3c3bad46cb6369046c493e3bf89cecd32098b8c0 \
+  5d31e51fe0416756a5c2911760e2fa7ac4f9408ae675cf231fa729b4f15f424d \
   kotoba_aiueos_device_worker_poll_response
+python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_job_protocol_object" \
+  c8df3c8f8d4ea5534ad879f6a94eff9f1c0281ab44a456ed58c229c53456187b \
+  kotoba_aiueos_job_protocol
+python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_micro_infer_next_object" \
+  52dcbd0c677e9d619fb91090526e9bbe863624235ab22c359b2a515261ad4eed \
+  kotoba_aiueos_micro_infer_next
+python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_aes128_gcm_selftest_object" \
+  45cee00c5bbf25060691cb86e1cd178c317f9746bf43b6dfde82c3ad0745a3c9 \
+  kotoba_aiueos_aes128_gcm_selftest
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_x25519_object" \
   8353ac0fcf6e2119d4538196197f0e1aead980cd87db2c30fe50e64ec6bb7588 \
   kotoba_aiueos_x25519
@@ -1278,6 +1294,8 @@ zig ld.lld -nostdlib -static --strip-all $qualification_gc_link -z max-page-size
   "$kotoba_acpi_checksum_object" "$kotoba_acpi_table_valid_object" \
   "$kotoba_relay_hello_object" "$kotoba_relay_ack_object" \
   "$kotoba_inference_status_valid_object" "$kotoba_inference_rate_object" \
+  "$kotoba_job_protocol_object" "$kotoba_micro_infer_next_object" \
+  "$kotoba_aes128_gcm_selftest_object" \
   "$kotoba_vtd_admit_object" \
   "$kotoba_msr_read_object" "$kotoba_msr_write_object" \
   "$kotoba_idt_gate_object" "$kotoba_pic_disable_object" \
