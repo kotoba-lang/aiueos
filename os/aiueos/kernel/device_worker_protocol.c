@@ -1,77 +1,40 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 #include "device_worker_protocol.h"
 
-static int starts_at(const uint8_t *bytes, uint32_t length, uint32_t at,
-                     const char *text) {
-  while (*text) {
-    if (at >= length || bytes[at++] != (uint8_t)*text++) return 0;
-  }
-  return 1;
+/* MARSHALLING ONLY (ADR-0219). The parse of the murakumo poll response is
+   `os/aiueos/kotoba/device-worker-poll-response.kotoba`, linked by
+   build-uefi.sh; it writes a 32-byte record (layout in its header comment)
+   and this file unpacks that record into the caller's struct. No search and
+   no comparison lives here. */
+
+extern int64_t kotoba_aiueos_device_worker_poll_response(
+    const uint8_t *http, int64_t length, uint8_t *out);
+
+static uint32_t get_u32(const uint8_t *at) {
+  return (uint32_t)at[0] | ((uint32_t)at[1] << 8) | ((uint32_t)at[2] << 16) |
+         ((uint32_t)at[3] << 24);
 }
 
-static int find_text(const uint8_t *bytes, uint32_t length, const char *text,
-                     uint32_t *after) {
-  if (!bytes || !text || !after) return 0;
-  for (uint32_t at = 0; at < length; at++) {
-    if (starts_at(bytes, length, at, text)) {
-      while (*text) { at++; text++; }
-      *after = at;
-      return 1;
-    }
-  }
-  return 0;
-}
-
-static int decimal64(const uint8_t *bytes, uint32_t length, uint32_t *at,
-                     uint64_t *value) {
-  uint64_t parsed = 0;
-  uint32_t digits = 0;
-  while (*at < length && bytes[*at] >= '0' && bytes[*at] <= '9') {
-    uint32_t digit = bytes[(*at)++] - '0';
-    if (digits++ >= 20 || parsed > UINT64_MAX / 10U ||
-        (parsed == UINT64_MAX / 10U && digit > UINT64_MAX % 10U)) return 0;
-    parsed = parsed * 10U + digit;
-  }
-  if (!digits) return 0;
-  *value = parsed;
-  return 1;
+static uint64_t get_u64(const uint8_t *at) {
+  return (uint64_t)get_u32(at) | ((uint64_t)get_u32(at + 4) << 32);
 }
 
 int aiueos_device_worker_poll_response(
     const uint8_t *http, uint32_t length,
     struct aiueos_device_worker_poll *poll) {
-  uint32_t at = 0;
-  if (!http || !poll || length < 12 ||
-      !starts_at(http, length, 0, "HTTP/1.1 2") ||
-      !find_text(http, length, "\"accepted\":true", &at) ||
-      !find_text(http, length, "\"operation\":\"poll\"", &at)) return 0;
+  uint8_t out[AIUEOS_DEVICE_WORKER_POLL_RECORD_BYTES];
+  uint32_t i;
+  if (!http || !poll) return 0;
+  for (i = 0; i < sizeof(out); i++) out[i] = 0;
+  if (kotoba_aiueos_device_worker_poll_response(http, (int64_t)length, out) != 1)
+    return 0;
   *poll = (struct aiueos_device_worker_poll){0};
-  if (find_text(http, length, "\"ready\":true", &at)) poll->ready = 1;
-  if (find_text(http, length,
-                "\"control\":{\"action\":\"reboot-pxe\",\"command-id\":\"",
-                &at)) {
-    if (!decimal64(http, length, &at, &poll->control_id) ||
-        at >= length || http[at] != '"' || !poll->control_id) return 0;
-    poll->reboot_pxe = 1;
-    return 1;
-  }
-  if (find_text(http, length,
-                "\"control\":{\"action\":\"restart-runtime\",\"command-id\":\"",
-                &at)) {
-    if (!decimal64(http, length, &at, &poll->control_id) ||
-        at >= length || http[at] != '"' || !poll->control_id) return 0;
-    poll->restart_runtime = 1;
-    return 1;
-  }
-  if (!find_text(http, length, "\"job-id\":\"", &at)) {
-    return find_text(http, length, "\"job\":null", &at);
-  }
-  if (!decimal64(http, length, &at, &poll->job_id) ||
-      at >= length || http[at] != '"' || !poll->job_id ||
-      !find_text(http, length, "\"bos\":", &at)) return 0;
-  uint64_t bos = 0;
-  if (!decimal64(http, length, &at, &bos) || bos > UINT32_MAX) return 0;
-  poll->bos_token = (uint32_t)bos;
-  poll->has_job = 1;
+  poll->job_id = get_u64(out);
+  poll->control_id = get_u64(out + 8);
+  poll->bos_token = get_u32(out + 16);
+  poll->ready = out[20];
+  poll->has_job = out[21];
+  poll->reboot_pxe = out[22];
+  poll->restart_runtime = out[23];
   return 1;
 }

@@ -90,12 +90,15 @@
   (slurp (io/file
           "os/aiueos/scripts/build-qwen38-murakumo-node-pxe.sh")))
 (def device-worker-protocol
-  (slurp (io/file "os/aiueos/kernel/device_worker_protocol.c")))
+  ;; ADR-0219: the parse is the Kotoba object; the C file is marshalling only.
+  (slurp (io/file "os/aiueos/kotoba/device-worker-poll-response.kotoba")))
 (def device-result
   (slurp (io/file "os/aiueos/kernel/device_result.c")))
-(def device-worker-protocol-smoke
+(def device-worker-protocol-contract
+  ;; ADR-0219: the host C model harness is retired; the parse's evidence is
+  ;; the KIR contract, seeded with the retired C's own verdicts.
   (slurp (io/file
-          "os/aiueos/scripts/smoke-device-worker-protocol.sh")))
+          "os/aiueos/contracts/device-worker-poll-response-v1.edn")))
 (def kototama-runtime
   (slurp (io/file "os/aiueos/kernel/kototama_runtime.c")))
 (def kototama-runtime-smoke
@@ -292,8 +295,8 @@
                   "\\\"bos\\\":"
                   "\\\"job\\\":null"]]
     (is (str/includes? device-worker-protocol marker)))
-  (is (str/includes? device-worker-protocol-smoke
-                     "device_worker_protocol_model.c")))
+  (is (str/includes? device-worker-protocol-contract
+                     "aiueos-device-worker-poll-response")))
 
 (deftest physical-k16-ssh-is-device-bound-and-capability-limited
   (testing "the physical build fails closed without a pinned public key"

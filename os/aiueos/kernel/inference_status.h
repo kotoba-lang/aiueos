@@ -8,6 +8,9 @@
 #define AIUEOS_INFERENCE_STATUS_TEXT_MAX 32U
 #define AIUEOS_INFERENCE_TOKEN_MAX 10000000U
 #define AIUEOS_INFERENCE_UNMEASURED UINT64_MAX
+/* The flat record the Kotoba decision reads (ADR-0219); layout in
+   os/aiueos/kotoba/inference-status-valid.kotoba. */
+#define AIUEOS_INFERENCE_STATUS_RECORD_BYTES 200U
 
 enum aiueos_inference_phase {
   AIUEOS_INFERENCE_ADMISSION = 1,
@@ -44,6 +47,8 @@ struct aiueos_inference_status {
   uint64_t compute_cycles;
 };
 
+void aiueos_inference_status_pack(const struct aiueos_inference_status *status,
+                                  uint8_t record[AIUEOS_INFERENCE_STATUS_RECORD_BYTES]);
 int aiueos_inference_status_valid(const struct aiueos_inference_status *status);
 uint64_t aiueos_inference_milli_tokens_per_second(uint32_t tokens,
                                                   uint64_t elapsed_ns);

@@ -3,6 +3,10 @@
 
 #include <stdint.h>
 
+/* The flat record the Kotoba parse writes (ADR-0219); layout in
+   os/aiueos/kotoba/device-worker-poll-response.kotoba. */
+#define AIUEOS_DEVICE_WORKER_POLL_RECORD_BYTES 32U
+
 struct aiueos_device_worker_poll {
   uint64_t job_id;
   uint64_t control_id;

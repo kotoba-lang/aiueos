@@ -501,6 +501,11 @@ The display/telemetry model can be exercised without making a physical claim:
 ./os/aiueos/scripts/smoke-inference-status.sh
 ```
 
+Since ADR-0219 that harness tests the RENDERER with host stand-ins for the two
+decisions (validity, milli-tokens-per-second), which are Kotoba kernel objects
+verified by `contracts/inference-status-valid-v1.edn` and
+`contracts/inference-milli-tokens-per-second-v1.edn` (`cfree-wave-1-contracts`).
+
 For a FAT32 recovery USB, fetch the pinned artifact directly as three files.
 Every HTTPS 206 range is first checked in a bounded temporary chunk, interrupted
 parts resume from their verified prefix, and the final three-file stream must
@@ -542,7 +547,7 @@ them.
 The transport gates are reproducible without a physical claim:
 
 ```sh
-./os/aiueos/scripts/smoke-model-handoff.sh
+kbb --backend sci scripts/run-task.cljk cfree-wave-1-contracts   # the admission and plan objects in the KIR oracle (ADR-0219)
 ./os/aiueos/scripts/smoke-qemu-model-handoff.sh
 AIUEOS_MODEL_CORRUPT=1 ./os/aiueos/scripts/smoke-qemu-model-handoff.sh
 ```

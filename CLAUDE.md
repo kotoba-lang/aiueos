@@ -27,8 +27,12 @@ this repo, and most of it was measured *because an agent got it wrong first*.
 ADR-0013's rule is about what the bare-metal profile may *depend on*. It is not
 a claim that the tree contains no C. Measured 2026-09-10:
 
-    os/aiueos/kernel    21,391 lines of C, asm and headers,  0 lines of .kotoba   (2026-09-11; 21,457 the day before)
-    os/aiueos/native         0 lines of C,      7,157 lines of .kotoba
+    os/aiueos/kernel    21,434 lines of C, asm and headers,  0 lines of .kotoba   (2026-09-16; 21,391 on 09-11, 21,457 on 09-10)
+    os/aiueos/native         0 lines of C,      7,684 lines of .kotoba
+
+⚠ The kernel C count went UP on 2026-09-16 while three more files lost their
+judgment (ADR-0219): a struct the object cannot walk is packed into a flat
+record by new C. **Count judgment lines still in C, not C lines.**
 
 The `.kotoba` lives in `native/` as objects the C kernel links. **Do not tell
 anyone this OS is written only in Kotoba.** The end state is C-free; the
@@ -51,9 +55,9 @@ and both were wrong. **Run `:plc-rt-qemu-smoke` before saying a path is absent.*
 
 ### 3. C marshals, Kotoba judges — and that is what the provenance rule means
 
-    kotoba objects linked by build-uefi.sh        99
-    distinct kotoba_* symbols C declares extern   99
-    C files that call into Kotoba                 18 of 31
+    kotoba objects linked by build-uefi.sh        103   (2026-09-16)
+    distinct kotoba_* symbols C declares extern   105
+    C files that call into Kotoba                 21 of 30
 
 The convention:
 
@@ -65,7 +69,10 @@ region, not compute one" — refuses a pointer *loaded from memory* as a region
 root. So a Kotoba function cannot take `struct foo *` and walk its `char *`
 fields. It can take `(base, length)`. **The rule dictates the signature; it does
 not block the conversion.** Read a "blocked" note in ADR-0212 as "blocked while
-keeping the current C signature".
+keeping the current C signature". The signature that fits every width is ONE
+flat record the C packs and the object reads by offset (ADR-0219): the layout
+is the `.kotoba` header comment, and the contract's records are produced by
+the C packer, so a drift between the two turns the contract red.
 
 ### 4. Before writing Kotoba for a C file, look in `native/` AND `kotoba/`
 

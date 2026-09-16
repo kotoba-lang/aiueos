@@ -243,17 +243,29 @@ Probed on `x86_64-aiueos-kernel-v1`, all compiling:
 - `kernel-load-u8` / `-u16` / `-u32` / `-ptr`
 
 So `relay_protocol.c` — which writes literal banners into a caller's buffer and
-reads a 6-byte MAC parameter — has no missing primitive. It is the first
-conversion, and this ADR does not claim it is done: **zero files are converted
-as of this record.** What is done is knowing the order and the blocker.
+reads a 6-byte MAC parameter — has no missing primitive. It was the first
+conversion (ADR-0215). Zero files were converted as of this record's date;
+the order and the blocker were what it established. Two of the four
+"language-surface facts" below have since moved: `kernel-load-u64` exists
+(measured 2026-09-16, ADR-0219 uses it), and the 840-line block is answered
+by the flat-record shape rather than by the language.
 
 ## Order of work
 
-1. `relay_protocol.c` (63) — proven convertible, no missing primitive
-2. `tls_aes_gcm.c` (180) — proven convertible
+1. `relay_protocol.c` (63) — proven convertible, no missing primitive.
+   **Done 2026-09-11 (ADR-0215).**
+2. `tls_aes_gcm.c` (180) — proven convertible. Its cipher had already moved
+   (ADR-0132); what is left is a 45-line marshalling shim and a selftest.
+   Deferred behind step 4, not blocked.
 3. decide the pointer question (API change or language surface), because 840
-   lines of layer 0 and most of layers 1-4 wait behind it
-4. the rest of layer 0, then layers 1-4 in order
+   lines of layer 0 and most of layers 1-4 wait behind it.
+   **Decided 2026-09-16 (ADR-0219): the struct crosses as ONE flat
+   fixed-layout record the C packs and the object reads by offset. No
+   language change.**
+4. the rest of layer 0, then layers 1-4 in order. **`inference_status.c`,
+   `model_handoff.c`, `device_worker_protocol.c` done under ADR-0219**;
+   `job_protocol.c`, `micro_infer.c`, `qualification.c`, `acpi.c` remain
+   (ADR-0219 says what each waits on).
 5. `main.c`, `pci.c`, `loader.c` last — they depend on everything
 
 ## What this does not say
