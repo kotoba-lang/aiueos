@@ -504,7 +504,7 @@ static int initramfs_hex_field(const uint8_t *field, uint64_t *value) {
 
 /* Recovery materials copied out of the archive while the loader-pool buffer
    is still identity-mapped, sized by the same bound as catalog applications. */
-static uint8_t initramfs_recovery_elf[12288];
+static uint8_t __attribute__((section(".high_bss"), aligned(16))) initramfs_recovery_elf[12288];
 static uint8_t initramfs_recovery_signature[256];
 static uint64_t initramfs_recovery_elf_length;
 static int initramfs_recovery_signature_present;
@@ -1426,7 +1426,18 @@ static void aiueos_install_fatal_gates(void) {
 }
 
 __attribute__((noreturn))
+extern uint8_t aiueos_high_data_start[], aiueos_high_data_end[];
+
 void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
+  /* `.high_bss` is NOLOAD: the loader zeroes the two PT_LOAD segments it
+     admits and nothing else, so a buffer placed there starts with whatever
+     the firmware left at 4 MiB. Every user of the section zeroed its own
+     buffer before this line existed; the section is zeroed here once so that
+     a buffer moved out of `.bss` to make room in the low 2 MiB (ADR-0221:
+     the Kotoba objects grew past `aiueos_low_end`) keeps the zero-initialised
+     semantics C gave it in `.bss`. Still on the loader's identity map: the
+     window is ordinary RAM either way. */
+  for (uint8_t *p = aiueos_high_data_start; p < aiueos_high_data_end; p++) *p = 0;
   serial_init();
 #ifndef AIUEOS_SKIP_EARLY_FATAL_IDT
   /* Own the descriptor tables BEFORE the first Kotoba object runs (ADR-0199).

@@ -819,7 +819,8 @@ extern int64_t kotoba_aiueos_qwen35_tensor_table_bind(uint64_t table,
                                                       uint64_t plan_length);
 
 static uint8_t qwen35_kv_plan[AIUEOS_QWEN35_KV_PLAN_BYTES];
-static uint8_t qwen35_tt_plan[AIUEOS_QWEN35_TT_PLAN_BYTES];
+/* `.high_bss` since ADR-0221 (low-region budget; main.c zeroes the section at entry). */
+static uint8_t __attribute__((section(".high_bss"), aligned(64))) qwen35_tt_plan[AIUEOS_QWEN35_TT_PLAN_BYTES];
 
 int aiueos_qwen35_model_parse(const uint8_t *bytes,
                               uint64_t accessible_bytes,

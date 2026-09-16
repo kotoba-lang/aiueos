@@ -237,12 +237,19 @@
                  ;; admitted the `.o`. Pinning it directly rather than advancing
                  ;; the amu above keeps that amu's ClojureScript printer fix,
                  ;; which is the reason this alias exists.
+                 ;;
+                 ;; Advanced 2026-09-16 (ADR-0221) e42b74ef -> b8b01d09 and
+                 ;; osaho 08bdab8b -> 7dfafd78, the shas amu d7189340's lock
+                 ;; names: the older frontend did not yet admit `bytes-literal`
+                 ;; as a kernel region root, so the dequant core's grid reads
+                 ;; -- which amu compiles and links -- were refused by the
+                 ;; oracle with `kernel-region-provenance`.
                  io.github.kotoba-lang/kotoba-sema
                  {:git/url "https://github.com/kotoba-lang/kotoba-sema.git"
-                  :git/sha "e42b74eff72fdea0f55ec883a293c937421ca571"}
+                  :git/sha "b8b01d0980f7e6e10a67b5ec7a54f68dc844eb6b"}
                  io.github.kotoba-lang/osaho
                  {:git/url "https://github.com/kotoba-lang/osaho.git"
-                  :git/sha "08bdab8b1084160dcb58ac291a002b140a5abf13"}}}
+                  :git/sha "7dfafd78aa38819555b294c749e54f67b57799bf"}}}
 
    :tcb-check {:main-opts ["-m" "aiueos.tcb"]}
 

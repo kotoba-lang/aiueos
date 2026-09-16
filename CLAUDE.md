@@ -20,7 +20,7 @@ evidence — and if you write the missing rubric, delete this paragraph.
 Agent instructions for `kotoba-lang/aiueos`. Everything below was measured in
 this repo, and most of it was measured *because an agent got it wrong first*.
 
-## The six things that mislead readers of this repo
+## The five things that mislead readers of this repo
 
 ### 1. "C-free" forbids libc, a CRT, a JVM and Linux — not C
 
@@ -55,7 +55,7 @@ and both were wrong. **Run `:plc-rt-qemu-smoke` before saying a path is absent.*
 
 ### 3. C marshals, Kotoba judges — and that is what the provenance rule means
 
-    kotoba objects linked by build-uefi.sh        106   (2026-09-16 wave 2)
+    kotoba objects linked by build-uefi.sh        106   (2026-09-16 wave 3; the two Qwen objects grew ~64 KiB, see ADR-0221 on the low-region budget)
     distinct kotoba_* symbols C declares extern   108
     C files that call into Kotoba                 23 of 30
 
@@ -96,6 +96,13 @@ Every C file is one of three: already in Kotoba (retire the C), not in Kotoba
 and expressible (write it), not in Kotoba and blocked (record it). Decide which
 before writing a line. ADR-0220 carries the disposition of every remaining
 file and what each waits on; read it before picking one.
+
+⚠ **The image has ~24 KiB of low-region headroom** (ADR-0221). The kernel and
+every Kotoba object it links must end below `aiueos_low_end <= 0x1f4000`, the
+loader admits exactly two PT_LOAD segments, and objects are larger than the C
+they replace. Before the next object lands, either move more `.bss` scratch to
+`.high_bss` (zeroed at entry since ADR-0221) or give the loader a third R+X
+segment for Kotoba text.
 
 ### 5. An object that links and passes its contract has not run
 

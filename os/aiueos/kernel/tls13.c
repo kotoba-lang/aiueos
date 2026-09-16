@@ -19,6 +19,13 @@ extern uint64_t kotoba_aiueos_tls13_record(uint8_t *, uint64_t, uint8_t *,
 #define TLS_RX_MAX 12288
 #define TLS_APP_MAX 4096
 #define TLS_HS_MAX 12288
+/* Where the big buffers live: the kernel's `.high_bss` window; on the host
+   probe (a Mach-O or ELF userland with no such section) plain statics. */
+#ifdef AIUEOS_TLS13_HOST_PROBE
+#define TLS_SCRATCH
+#else
+#define TLS_SCRATCH __attribute__((section(".high_bss"), aligned(64)))
+#endif
 #define TLS_HOST_MAX 63
 #define TLS_HTTP_MAX 1024
 #define TLS_CH_MAX 256
@@ -39,13 +46,17 @@ static int certverify_parsed;
 static uint16_t certverify_scheme;
 static uint8_t cv_rs[64];
 static uint8_t cv_digest[32];
-static uint8_t hmac_block[64 + TLS_TR_MAX];
+/* The four record/transcript buffers live in `.high_bss` (4..6 MiB), not
+   `.bss`, since ADR-0221: the Kotoba objects grew the low 2 MiB past
+   `aiueos_low_end`, and 61 KiB of TLS scratch was the cheapest thing to move.
+   `main.c` zeroes the section at entry, so they start zero as they did. */
+static uint8_t TLS_SCRATCH hmac_block[64 + TLS_TR_MAX];
 
-static uint8_t transcript[TLS_TR_MAX];
+static uint8_t TLS_SCRATCH transcript[TLS_TR_MAX];
 static uint32_t transcript_len;
-static uint8_t rx[TLS_RX_MAX];
+static uint8_t TLS_SCRATCH rx[TLS_RX_MAX];
 static uint32_t rx_len;
-static uint8_t hs_partial[TLS_HS_MAX];
+static uint8_t TLS_SCRATCH hs_partial[TLS_HS_MAX];
 static uint32_t hs_partial_len;
 /* Application plaintext and the record decrypt staging are needed only after
    owned paging is live.  Keep them in the writable/NX 4..6 MiB kernel window
@@ -614,7 +625,7 @@ static int process_record(uint8_t *rec, uint32_t rec_len) {
   if (typ == 0x17) {
     uint8_t inner;
     uint32_t plen = 0;
-    static uint8_t plain[TLS_HS_MAX];
+    static uint8_t TLS_SCRATCH plain[TLS_HS_MAX];
     if (!have_hs_keys) return 0;
     if (!handshake_ready) {
       if (!unprotect(s_hs_key, s_hs_iv, s_hs_seq, rec, rec_len, plain, &plen, &inner))
