@@ -30,6 +30,16 @@ kernel_inference_status_object="$out/kernel-inference-status.o"
 kernel_device_result_object="$out/kernel-device-result.o"
 kernel_device_worker_protocol_object="$out/kernel-device-worker-protocol.o"
 kernel_model_handoff_object="$out/kernel-model-handoff.o"
+# C-free wave 1 (ADR-0219): the decisions of inference_status.c,
+# model_handoff.c and device_worker_protocol.c as flat-record objects. The
+# C files still exist and are marshalling only -- they pack the struct into
+# the record the object reads and call the symbol; kernel/main.c,
+# framebuffer.c, paging.c and pci.c call the C as before.
+kotoba_inference_status_valid_object=${AIUEOS_KOTOBA_INFERENCE_STATUS_VALID_OBJECT:-"$aiueos/kotoba/inference-status-valid.o"}
+kotoba_inference_rate_object=${AIUEOS_KOTOBA_INFERENCE_RATE_OBJECT:-"$aiueos/kotoba/inference-milli-tokens-per-second.o"}
+kotoba_model_mapping_plan_object=${AIUEOS_KOTOBA_MODEL_MAPPING_PLAN_OBJECT:-"$aiueos/kotoba/model-mapping-plan.o"}
+kotoba_model_handoff_validate_object=${AIUEOS_KOTOBA_MODEL_HANDOFF_VALIDATE_OBJECT:-"$aiueos/kotoba/model-handoff-validate.o"}
+kotoba_device_worker_poll_object=${AIUEOS_KOTOBA_DEVICE_WORKER_POLL_OBJECT:-"$aiueos/kotoba/device-worker-poll-response.o"}
 kernel_qwen35_runtime_object="$out/kernel-qwen35-runtime.o"
 kernel_qwen35_quant_object="$out/kernel-qwen35-quant.o"
 kernel_qwen35_infer_object="$out/kernel-qwen35-infer.o"
@@ -241,7 +251,7 @@ if [ "${AIUEOS_MURAKUMO_DEVICE_RESULT:-0}" = 1 ] ||
   ecdsa_public_link="$kotoba_ecdsa_public_object"
 fi
 if [ "${AIUEOS_MURAKUMO_DEVICE_RESULT:-0}" = 1 ]; then
-  device_result_link="$kernel_device_result_object $kernel_device_worker_protocol_object"
+  device_result_link="$kernel_device_result_object $kernel_device_worker_protocol_object $kotoba_device_worker_poll_object"
 fi
 physical_qualification_cflags=
 physical_network_qualification_cflags=
@@ -538,7 +548,7 @@ if [ "${AIUEOS_QWEN38_MODEL_HANDOFF:-0}" = 1 ] ||
     if [ "${AIUEOS_MODEL_TEST_FIXTURE:-0}" = 1 ]; then
       model_handoff_cflags="$model_handoff_cflags -DAIUEOS_MODEL_TEST_FIXTURE=1"
     fi
-    model_handoff_link="$kernel_model_handoff_object $kernel_qwen35_runtime_object $kernel_qwen35_quant_object $kernel_qwen35_infer_object $kotoba_qwen35_header_object $kotoba_qwen35_kv_object $kotoba_qwen35_tensor_object"
+    model_handoff_link="$kernel_model_handoff_object $kotoba_model_mapping_plan_object $kotoba_model_handoff_validate_object $kernel_qwen35_runtime_object $kernel_qwen35_quant_object $kernel_qwen35_infer_object $kotoba_qwen35_header_object $kotoba_qwen35_kv_object $kotoba_qwen35_tensor_object"
   fi
   if [ "${AIUEOS_MODEL_NVME_SLOTS:-0}" = 1 ]; then
     model_slots_cflags="-DAIUEOS_MODEL_NVME_SLOTS=1"
@@ -905,6 +915,21 @@ python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_relay_hello_ob
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_relay_ack_object" \
   8c44fd0f5d4d2d21a402998c41b75ae28e03e28dd50178c95d063bc22697c082 \
   kotoba_aiueos_relay_ack_payload_valid
+python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_inference_status_valid_object" \
+  7bffa1b85e1835493a624c85dd4cee15a63f48e180521055efd17d4e700d60a8 \
+  kotoba_aiueos_inference_status_valid
+python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_inference_rate_object" \
+  069d218c6a91a3ac4728d461a2089977f39f9d84b2a62dfa2800159d1450a41c \
+  kotoba_aiueos_inference_milli_tokens_per_second
+python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_model_mapping_plan_object" \
+  c636da1971323aeba566cec7d64a7c116cda77bf75e2248ad4371beda0587d35 \
+  kotoba_aiueos_model_mapping_plan
+python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_model_handoff_validate_object" \
+  057a0ba7a1d150b5eeca2a3e3d8c95642e3aa140181f6f20d5cdbb2f2a8a6c10 \
+  kotoba_aiueos_model_handoff_validate
+python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_device_worker_poll_object" \
+  3f741f7873245b6ff0ababcf3c3bad46cb6369046c493e3bf89cecd32098b8c0 \
+  kotoba_aiueos_device_worker_poll_response
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_x25519_object" \
   8353ac0fcf6e2119d4538196197f0e1aead980cd87db2c30fe50e64ec6bb7588 \
   kotoba_aiueos_x25519
@@ -1252,6 +1277,7 @@ zig ld.lld -nostdlib -static --strip-all $qualification_gc_link -z max-page-size
   "$kotoba_mmio_map_admit_object" \
   "$kotoba_acpi_checksum_object" "$kotoba_acpi_table_valid_object" \
   "$kotoba_relay_hello_object" "$kotoba_relay_ack_object" \
+  "$kotoba_inference_status_valid_object" "$kotoba_inference_rate_object" \
   "$kotoba_vtd_admit_object" \
   "$kotoba_msr_read_object" "$kotoba_msr_write_object" \
   "$kotoba_idt_gate_object" "$kotoba_pic_disable_object" \

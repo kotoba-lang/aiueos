@@ -846,6 +846,12 @@
 ;; `build-uefi.sh` links, so this is the host-side half of "retirement, not
 ;; rewrite" and the QEMU/K16 relay gates are the other half.
 (defmethod prepare :aiueos.relay-line/v1 [contract v] (prepare-regions contract v))
+;; Flat-record objects (ADR-0219): a C struct the guest cannot walk crosses as
+;; ONE contiguous record the C packs and the object reads by offset. Each such
+;; contract seeds records the C's own packer produced and expects the verdict
+;; the retired C decision gave. Same region-and-seed builder as the relay
+;; lines; the format name says what the bytes are.
+(defmethod prepare :aiueos.flat-record/v1 [contract v] (prepare-regions contract v))
 
 ;; --- the tokenizer family --------------------------------------------------
 ;;
@@ -1437,7 +1443,16 @@
                        ;; build first against the same page.
                        "qwen35-vocab-index-build-v1.edn"
                        "qwen35-tokenize-v1.edn"
-                       "qwen35-detokenize-v1.edn"]))
+                       "qwen35-detokenize-v1.edn"
+                       ;; C-free wave 1 (ADR-0219): the five flat-record
+                       ;; objects. Under 25 seconds between them; the poll
+                       ;; parse is the slow one because every search walks
+                       ;; the whole response in the interpreter.
+                       "inference-status-valid-v1.edn"
+                       "inference-milli-tokens-per-second-v1.edn"
+                       "model-mapping-plan-v1.edn"
+                       "model-handoff-validate-v1.edn"
+                       "device-worker-poll-response-v1.edn"]))
         results (mapv #(run-contract root-dir %) paths)]
     (doseq [r results]
       (println (str "CONTRACT\t" (:contract r)
