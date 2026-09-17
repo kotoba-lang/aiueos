@@ -673,6 +673,14 @@ PY
   for f in "$serial_log" "$log"; do
     if [ -f "$f" ]; then
       t=$(stat -f %m "$f" 2>/dev/null || stat -c %Y "$f" 2>/dev/null || echo 0)
+      # Same coreutils-stat trap the watchdog loop guards against (0b79c66):
+      # `stat -f %m` exits 0 printing a non-numeric blob, so the `|| stat -c`
+      # fallback never fires and `[ "$t" -gt ... ]` reports "Illegal number"
+      # once -- and last_write silently stays 0, misreporting quiet_for.
+      case ${t:-} in ''|*[!0-9]*)
+        t=$(stat -c %Y "$f" 2>/dev/null) ;;
+      esac
+      case ${t:-} in ''|*[!0-9]*) t=0 ;; esac
       [ "$t" -gt "$last_write" ] && last_write=$t
     fi
   done
