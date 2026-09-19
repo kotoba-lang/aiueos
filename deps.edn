@@ -239,6 +239,23 @@
                  {:git/url "https://github.com/kotoba-lang/osaho.git"
                   :git/sha "08bdab8b1084160dcb58ac291a002b140a5abf13"}}}
 
+   ;; The value-runtime verifier run (os/aiueos/scripts/aiueos/verify_value_runtime_all.clj).
+   ;; Eleven scripts each compile one Kotoba object against its contract and
+   ;; check its vectors; ADR-0050 measured that NOTHING here invoked any of them.
+   ;; -m is on purpose: -M <file> loads this namespace and calls nothing, which is
+   ;; the silent no-op the receipt exists to expose. The scripts dir must be on a
+   ;; classpath or -m cannot LOAD the namespace at all.
+   ;;
+   ;; amu is carried at the SAME pin :test holds, because the runner compiles
+   ;; against the compiler the committed value-runtime verdicts were measured at.
+   :verify-value-runtime
+   {:extra-paths ["os/aiueos/scripts"]
+    :jvm-opts ["--enable-native-access=ALL-UNNAMED"]
+    :extra-deps {io.github.kotoba-lang/amu
+                 {:git/url "https://github.com/kotoba-lang/amu.git"
+                  :git/sha "6889fa736750348863d2b98d69e688131a2ca515"}}
+    :main-opts ["-m" "aiueos.verify-value-runtime-all"]}
+
    :tcb-check {:main-opts ["-m" "aiueos.tcb"]}
 
    ;; The gate that leaves this machine (ADR-0073). An OPERATOR runs this, not
