@@ -60,7 +60,11 @@ is **two tensor codecs and one basis change** — nothing structural.
    Prism llama.cpp; stream A already holds it as `kdot_ptq1_dual_r1.comp` and
    `embed_iq4xs.comp -DPTQ1`, and its f64 oracle `dense_ref.py`. The block
    layout is `qs[24], qh[2], d` for PTQ1_0 and deliberately does NOT share
-   PQ2_0's `d, qs[32]` offsets (stream A, 2026-09-20). Contract vectors are
+   PQ2_0's `d, qs[32]` offsets (stream A, 2026-09-20). Block size pinned
+   2026-09-22 by tiling: **28 bytes per 128 elements** is the only size under
+   which the 851 extents end at the file's last byte
+   (`contracts/bonsai2-qwen35-runtime-v1.edn`, `bonsai2-qwen35-contract-test`).
+   Contract vectors are
    cut from the real artifact and graded by Prism llama.cpp, the way
    ADR-0221's were cut and graded by the C — one row per type, one and two
    blocks, and a deliberately broken decoder shown red on the named vector.
@@ -78,21 +82,35 @@ is **two tensor codecs and one basis change** — nothing structural.
    for exactly this reason — type 5 read unsigned turned −1 into
    4294967296 — and that is the bug to refuse here before the first boot,
    not after: a contract vector whose sign array holds −1 and whose expected
-   workspace word is the two's-complement pattern.
+   workspace word is the two's-complement pattern. Measured 2026-09-22: the
+   array is 28,672 entries (= 5120 + 6144 + 17408, the three folded input
+   widths), 114,688 bytes, values {−1, 1}. The kv-scan object bounds one
+   `kernel-load-u32` region at 512 bytes and its workspace at 128, so the
+   array cannot be COPIED at admission; the admission records its file offset
+   and count, and the Hadamard object reads signs from the read-only model
+   mapping at use.
 4. **A graph contract for the Bonsai artifact**,
    `contracts/bonsai2-qwen35-runtime-v1.edn`: exact byte length, sha256
    `53107f53…`, metadata count, the 64-layer schedule, the tensor table and
    the type distribution (PTQ1_0 / PQ2_0 / BF16 and whatever else the file
    holds — counted from the file, not copied from this ADR). The three
    admission objects take their constants from the contract, so the objects
-   do not change; the contract does.
+   do not change; the contract does. **Landed 2026-09-22** from the public
+   file's first 32 MiB: 49 metadata keys, 851 tensors in 23 roles
+   (48 × 9 + 16 × 6 + 64 × 5 + 3), types `PTQ1_0` 402 / `F32` 353 / `BF16`
+   96 — no `PQ2_0` in this file — data offset 11,120,992, no nextn key and no
+   MTP tensors. `test/aiueos/bonsai2_qwen35_contract_test.cljk` (6 tests, 43
+   assertions on the kbb engine; seen red on the tiling and sign identities
+   with the numbers broken) holds the document to its own arithmetic.
 5. **Transport is existing mechanism.** FAT32-safe split under `EFI/AIUEOS`
    and the contiguous 2-MiB-aligned LoaderData mapping (ADR-0117); NVMe A/B
-   slots for updates (ADR-0119, K16 write still unverified). **The Bonsai
-   file's byte count is not in any evidence file**; it is measured with
-   `ls -l` on the B70 before anything is split, and whether it fits the
-   16 GiB K16 beside the kernel is a number, not an assumption (Qwen3.8's
-   10.9 GB did fit).
+   slots for updates (ADR-0119, K16 write still unverified). The Bonsai
+   file is **5,946,648,928 bytes** (Hugging Face LFS size, 2026-09-22; the
+   B70's copy was not read — the session had no production access — so the
+   two copies have not been compared and the sha256 has not been recomputed
+   here). Split shape: 4,000,000,000 + 1,946,648,928. It is 4,988,211,776
+   bytes smaller than the Qwen3.8 file that did fit the 16 GiB K16 beside
+   the kernel; whether it fits is still a boot, not this subtraction.
 
 ### Stage B — the forward-pass cutover completes, and a second token exists
 
@@ -194,8 +212,9 @@ is **two tensor codecs and one basis change** — nothing structural.
 
 ## Not measured, and named as such
 
-The Bonsai artifact's byte count; whether it fits the 16 GiB K16 beside the
-kernel image; the CPU-bound rate of a PTQ1 matvec on the K16's Ryzen; the
+Whether the artifact fits the 16 GiB K16 beside the kernel image (its byte
+count is measured; the mapping is not); the B70 copy against the Hub copy;
+the sha256 recomputed by this repository; the CPU-bound rate of a PTQ1 matvec on the K16's Ryzen; the
 K16's NVMe slot write; sampling-distribution parity (stream A lists it as
 unmeasured too); contexts past 4,096 tokens; any board other than the K16
 booting AIUEOS on real hardware (P5 remains UNVERIFIED, ADR-0084).
