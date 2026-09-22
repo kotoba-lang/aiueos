@@ -68,6 +68,27 @@ is **two tensor codecs and one basis change** — nothing structural.
    cut from the real artifact and graded by Prism llama.cpp, the way
    ADR-0221's were cut and graded by the C — one row per type, one and two
    blocks, and a deliberately broken decoder shown red on the named vector.
+   **Landed 2026-09-22 (PTQ1_0 and BF16; PQ2_0 is not in the file).**
+   `aiueos.lib.qwen35-dequant-core` decodes type 143 (`ptq10-value`, a port
+   of `dequantize_row_ptq1_0` from PrismML-Eng/llama.cpp
+   `9a9394a895b96003ca842a6041cb28ac49a108f7`) and type 30 (`bits << 16`);
+   `qwen35-dequant-row` and `qwen35-matvec` gain both through the shared
+   core. Ten new contract vectors (48 total; 5 PTQ1_0 rows of which 3 are
+   real blocks from `blk.0.attn_gate.weight` and `output.weight`, 2 BF16 rows
+   of which 1 is `blk.0.ssm_alpha.weight`, 3 refusals), expected bytes from a
+   `cc -O2` harness holding the Prism C verbatim: the KIR oracle passes all
+   48 with 37 memory assertions and every reason observed, and goes red on
+   `:ptq1-0-128-real-blk0-attn-gate` with `3^1` changed to 4. Fuel: the
+   256-element PTQ1_0 row passes at 4,096 and traps `:fuel-exhausted` at
+   2,048 — 8–16 per element against the dequant tier's 256 and the matvec
+   tier's 119, so no kotoba-native row moves. Both objects recompile with the
+   pinned amu, byte-identical twice, ABI verifier green, no slot-144 host
+   call; `qwen35-dequant-row.o` 39,896 → 42,512 and `qwen35-matvec.o`
+   44,576 → 47,192 bytes — **5,232 bytes of the ~24 KiB low-region headroom
+   ADR-0221 left**, to be re-measured by the next QEMU boot. There is no C
+   twin of either type, so the in-kernel `QWEN-PARITY` self-test cannot
+   grade them; until a Bonsai boot the oracle vectors are their whole
+   evidence.
 2. **The signed Hadamard basis change as an object.** Normalized 1024-wide
    Sylvester blocks, explicit signs from GGUF metadata, inverse after the
    embedding, and the Qwen3.8 recurrent `ssm_out` reorder from tiled

@@ -1,5 +1,6 @@
 ;; The dequantisers of every tensor type the admitted Qwen artifact holds --
-;; fifteen, from F32 to the codebook IQ families -- as one shared module.
+;; fifteen, from F32 to the codebook IQ families -- plus the two the Ternary
+;; Bonsai 2 artifact adds (PTQ1_0, BF16; ADR-0222), as one shared module.
 ;;
 ;; Ports of `kernel/qwen35_quant.c` (whose equations and grids are adapted
 ;; from ggml-org/llama.cpp @3173a564, MIT). Four types (F32, Q8_0, Q4_K, Q6_K)
@@ -590,13 +591,72 @@
          (u32w (iq4xs-value src slen (* 136 (quot i 256)) (- i (* 256 (quot i 256))))))
         (iq4xs-el src slen dst count (+ i 1)))))
 
+;; ------------------------------------------------ PTQ1_0 (28-byte blocks)
+;;
+;; Prism's group-128 ternary (ggml type 143; ADR-0222 stage A). qs[24] @0
+;; (5 trits per byte, 120 values), qh[2] @24 (4 trits per byte, 8 values),
+;; d fp16 @26. Same base-3 packing as upstream TQ1_0 with one scale per 128.
+;; Port of `dequantize_row_ptq1_0`, PrismML-Eng/llama.cpp
+;; @9a9394a895b96003ca842a6041cb28ac49a108f7 (`ggml/src/ggml-quants.c:2255`,
+;; MIT), whose element order is: stage 16 -- qs[m] for n 0..4, m 0..15 (80
+;; values); stage 8 -- qs[16 + m] for n 0..4, m 0..7 (40); then qh[h] for
+;; n 0..3, h 0..1 (8). A trit is `((uint8)(byte * 3^n) * 3) >> 8` in 0..2 and
+;; the value is `(float)(trit - 1) * d` -- one multiply by -1, 0 or +1, so
+;; the C's operand order is the only order and the result is exact.
+;;
+;; Element e of a block: e < 80 -> byte qs[e mod 16], n = e / 16;
+;; 80 <= e < 120 -> q = e - 80, byte qs[16 + q mod 8], n = q / 8;
+;; e >= 120 -> q = e - 120, byte qh[q mod 2], n = q / 2.
+
+(defn pow3 [n]
+  (if (= n 0) 1 (if (= n 1) 3 (if (= n 2) 9 (if (= n 3) 27 81)))))
+
+(defn ptq10-trit [byte n]
+  ;; ((uint8_t)(byte * pow3[n]) * 3) >> 8
+  (quot (* (bit-and (* byte (pow3 n)) 255) 3) 256))
+
+(defn ptq10-value [src slen base e]
+  (let [b (if (< e 80)
+               (u8-at src slen (+ base (- e (* 16 (quot e 16)))))
+               (if (< e 120)
+                 (u8-at src slen (+ base (+ 16 (- (- e 80) (* 8 (quot (- e 80) 8))))))
+                 (u8-at src slen (+ base (+ 24 (- (- e 120) (* 2 (quot (- e 120) 2))))))))
+        n (if (< e 80) (quot e 16) (if (< e 120) (quot (- e 80) 8) (quot (- e 120) 2)))]
+    (f32-to-bits
+     (f32-mul (i64-to-f32-rounded (- (ptq10-trit b n) 1))
+              (f32-from-bits (fp16-at src slen (+ base 26)))))))
+
+(defn ptq10-el [src slen dst count i]
+  (if (>= i count)
+    0
+    (do (kernel-store-u32
+         (kernel-subregion dst (* count 4) (* i 4) 4) 4 0
+         (u32w (ptq10-value src slen (* 28 (quot i 128)) (- i (* 128 (quot i 128))))))
+        (ptq10-el src slen dst count (+ i 1)))))
+
+;; --------------------------------------------------------- BF16 (2 bytes)
+;;
+;; ggml type 30: the upper half of a binary32. y = bits << 16, no arithmetic
+;; (ggml `ggml_bf16_to_fp32`). Bonsai's `ssm_alpha` / `ssm_beta` projections.
+
+(defn bf16-el [src slen dst count i]
+  (if (>= i count)
+    0
+    (do (kernel-store-u32
+         (kernel-subregion dst (* count 4) (* i 4) 4) 4 0
+         (* 65536 (u16-at src slen (* i 2))))
+        (bf16-el src slen dst count (+ i 1)))))
+
 ;; ------------------------------------------------------------------ the row
 ;;
-;; `aiueos_qwen35_quant_row_bytes` for all fifteen types; -1 for a type not
-;; decoded here or a count that is not a multiple of the block, which cannot
-;; collide with a real byte count. ggml type ids: F32 0, Q8_0 8, Q2_K 10,
-;; Q3_K 11, Q4_K 12, Q5_K 13, Q6_K 14, IQ2_XXS 16, IQ2_XS 17, IQ3_XXS 18,
-;; IQ1_S 19, IQ3_S 21, IQ2_S 22, IQ4_XS 23, IQ1_M 29.
+;; `aiueos_qwen35_quant_row_bytes` for all fifteen Qwen3.8 types plus the two
+;; Bonsai adds (ADR-0222); -1 for a type not decoded here or a count that is
+;; not a multiple of the block, which cannot collide with a real byte count.
+;; ggml type ids: F32 0, Q8_0 8, Q2_K 10, Q3_K 11, Q4_K 12, Q5_K 13, Q6_K 14,
+;; IQ2_XXS 16, IQ2_XS 17, IQ3_XXS 18, IQ1_S 19, IQ3_S 21, IQ2_S 22, IQ4_XS 23,
+;; IQ1_M 29, BF16 30, PTQ1_0 143. The 256-element block table below does not
+;; hold BF16 (per element) or PTQ1_0 (128-element blocks); `row-bytes` names
+;; them first.
 
 (defn block-bytes [qtype]
   (if (= qtype 10) 84 (if (= qtype 11) 110 (if (= qtype 12) 144 (if (= qtype 13) 176
@@ -606,19 +666,25 @@
 
 (defn row-bytes [qtype count]
   (if (= qtype 0) (* count 4)
+   (if (= qtype 30) (* count 2)
+   (if (= qtype 143)
+     (if (= 0 (- count (* 128 (quot count 128)))) (* 28 (quot count 128)) -1)
     (if (= qtype 8)
       (if (= 0 (- count (* 32 (quot count 32)))) (* 34 (quot count 32)) -1)
       (if (< (block-bytes qtype) 0)
         -1
         (if (= 0 (- count (* 256 (quot count 256))))
           (* (block-bytes qtype) (quot count 256))
-          -1)))))
+          -1)))))))
 
 (defn supported [qtype]
-  (if (= qtype 0) 1 (if (= qtype 8) 1 (if (< (block-bytes qtype) 0) 0 1))))
+  (if (= qtype 0) 1 (if (= qtype 8) 1 (if (= qtype 30) 1 (if (= qtype 143) 1
+    (if (< (block-bytes qtype) 0) 0 1))))))
 
 (defn dequant-run [qtype src slen dst count]
   (if (= qtype 0) (f32-el src slen dst count 0)
+   (if (= qtype 30) (bf16-el src slen dst count 0)
+   (if (= qtype 143) (ptq10-el src slen dst count 0)
     (if (= qtype 8) (q80-el src slen dst count 0)
       (if (= qtype 10) (q2k-el src slen dst count 0)
         (if (= qtype 11) (q3k-el src slen dst count 0)
@@ -632,4 +698,4 @@
                         (if (= qtype 21) (iq3s-el src slen dst count 0)
                           (if (= qtype 22) (iq2s-el src slen dst count 0)
                             (if (= qtype 23) (iq4xs-el src slen dst count 0)
-                              (iq1m-el src slen dst count 0))))))))))))))))
+                              (iq1m-el src slen dst count 0))))))))))))))))))
