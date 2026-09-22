@@ -1079,6 +1079,60 @@
              []
              (:expectations (meta slots)))}))
 
+(defmethod prepare :aiueos.qwen35-hadamard/v1 [contract v]
+  ;; ADR-0222 stage A item 2. Arena: input (width*4) @0, signs (width*4 of
+  ;; int32 +-1) @width*4, output (width*4) @2*width*4; the 64-byte plan after
+  ;; the arena. `:width-override` and friends write a DIFFERENT value into the
+  ;; plan than the regions were laid out for, which is how the refusals are
+  ;; provoked; `:sign-patch [index word]` overwrites one sign word.
+  (let [{:keys [base image-bytes arena-offset]}
+        (get-in contract [:verification :memory])
+        width (:width v)
+        wb (* width 4)
+        input (hex-bytes (:input-hex v))
+        signs0 (hex-bytes (:signs-hex v))
+        signs (if-let [[i w] (:sign-patch v)]
+                (write-u32 signs0 (* i 4) (if (neg? w) (+ w 4294967296) w))
+                signs0)
+        [hd nk rep] (or (:perm-override v) (:perm v))
+        input-offset 0
+        signs-offset wb
+        output-offset (* 2 wb)
+        arena-bytes (* 3 wb)
+        plan-offset (+ arena-offset arena-bytes)
+        plan (-> (vec (repeat 64 0))
+                 (write-u32 0 (or (:mode-override v) (:mode v)))
+                 (write-u32 4 (or (:reserved-4 v) 0))
+                 (write-u64 8 (or (:width-override v) width))
+                 (write-u64 16 input-offset)
+                 (write-u64 24 signs-offset)
+                 (write-u64 32 (or (:output-offset-override v) output-offset))
+                 (write-u64 40 hd)
+                 (write-u64 48 nk)
+                 (write-u64 56 rep))]
+    (when (not= (count input) wb)
+      (fail! "REFUSING TO REPORT A PASS: input-hex is not width*4 bytes" {:vector (:name v)}))
+    (when (not= (count signs) wb)
+      (fail! "REFUSING TO REPORT A PASS: signs-hex is not width*4 bytes" {:vector (:name v)}))
+    (when (> (+ plan-offset 64) image-bytes)
+      (fail! "REFUSING TO REPORT A PASS: this vector's arena does not fit the contract's image"
+             {:vector (:name v) :needed (+ plan-offset 64) :image-bytes image-bytes}))
+    {:entry 'aiueos-qwen35-hadamard
+     :base base
+     :image (-> (vec (repeat image-bytes 0))
+                (write-at (+ arena-offset input-offset) input)
+                (write-at (+ arena-offset signs-offset) signs)
+                (write-at plan-offset plan))
+     :args [(if (some? (:arena-base-override v)) (:arena-base-override v) (+ base arena-offset))
+            arena-bytes
+            (if (some? (:plan-base-override v)) (:plan-base-override v) (+ base plan-offset))
+            (or (:plan-len-override v) 64)]
+     :expect-memory
+     (cond-> []
+       (:expect-output-hex v)
+       (conj {:label :output :offset (+ arena-offset output-offset)
+              :bytes (hex-bytes (:expect-output-hex v))}))}))
+
 (defmethod prepare :aiueos.qwen35-recurrent-step/v1 [contract v]
   (let [m (get-in contract [:verification :memory])]
     (arena-plan-prepare

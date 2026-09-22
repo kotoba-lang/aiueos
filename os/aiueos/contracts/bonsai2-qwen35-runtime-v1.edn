@@ -150,8 +150,11 @@
             :b70-copy-compared :not-done
             :physical-k16-graph-parse :unverified
             :fits-16-gib-k16-beside-kernel :not-measured}
- :next-gates [:hadamard-object
-              :kv-scan-int32-array-offset
+ :hadamard-object {:status :in-tree-oracle-graded-not-yet-booted
+                   :object "os/aiueos/kotoba/qwen35-hadamard.o"
+                   :contract "os/aiueos/contracts/qwen35-hadamard-v1.edn"
+                   :oracle "PrismML-Eng/llama.cpp 9a9394a895b96003ca842a6041cb28ac49a108f7 fwht + build_lora_mm / build_inp_embd"}
+ :next-gates [:kv-scan-int32-array-offset
               :split-fat32-bundle-and-loader-mapping
               :physical-k16-graph-parse]
  :does-not-prove [:any-token :physical-k16-generation :physical-k16-throughput
