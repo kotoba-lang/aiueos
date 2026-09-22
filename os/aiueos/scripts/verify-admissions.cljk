@@ -498,7 +498,8 @@
 
 (defn- row-bytes
   "`aiueos_qwen35_quant_row_bytes` for the fifteen ggml types the object
-  decodes since ADR-0221 (block bytes per 256 elements; Q8_0 per 32). A type
+  decodes since ADR-0221 (block bytes per 256 elements; Q8_0 per 32) plus
+  Bonsai's BF16 (per element) and PTQ1_0 (28 bytes per 128; ADR-0222). A type
   the object refuses still has to be placed at SOME size for the vector that
   provokes -6; 15 is not a ggml type and takes Q5_K's size."
   [qtype count]
@@ -518,6 +519,8 @@
     22 (* (quot count 256) 82)
     23 (* (quot count 256) 136)
     29 (* (quot count 256) 56)
+    30 (* count 2)
+    143 (* (quot count 128) 28)
     15 (* (quot count 256) 176)
     (fail! "no row byte count for this quantisation type" {:qtype qtype})))
 
