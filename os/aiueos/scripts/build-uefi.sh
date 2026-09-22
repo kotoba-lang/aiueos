@@ -965,7 +965,7 @@ python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_qwen35_kv_obje
   58df1be50a53c63332969963fa580e07101c6045f225367fb8a68de8ebbd5297 \
   kotoba_aiueos_qwen35_gguf_kv_scan
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_qwen35_tensor_object" \
-  06e0fbaac83d9802b86eef35057c279ea7af37ac607152353b5e952575ee4951 \
+  1a409350fbecd3b75b8814e406ee598a4e1f048bac7c0b1ccdba9a43391ccfaf \
   kotoba_aiueos_qwen35_tensor_table_bind
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_tls13_record_object" \
   9b2bb0226add042ccb472f6d6c2e6d431e0bd6b44a7afddfbcee61d8b9481c26 \
