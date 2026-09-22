@@ -3,6 +3,10 @@
 #include "inference_status.h"
 #include "kototama_runtime.h"
 #include "model_handoff.h"
+#ifdef AIUEOS_QWEN38_MODEL_HANDOFF
+#define AIUEOS_MODEL_IDENTITY_MACROS_ONLY
+#include "aiueos-model-identity.h"
+#endif
 #include "qwen35_infer.h"
 #include "qwen35_runtime.h"
 #include "device_result.h"
@@ -1920,8 +1924,8 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
       };
       (void)aiueos_framebuffer_inference_screen(&admitted);
     }
-    debug_string("AIUEOS_MODEL_HANDOFF_OK format=gguf-v3 parts=3 sha256=verified mapping=read-only-nx metrics=N/A\n");
-    serial_string("AIUEOS_MODEL_HANDOFF_OK format=gguf-v3 parts=3 sha256=verified mapping=read-only-nx metrics=N/A\r\n");
+    debug_string("AIUEOS_MODEL_HANDOFF_OK format=gguf-v3 parts=" AIUEOS_MODEL_PARTS_TEXT " sha256=verified mapping=read-only-nx metrics=N/A\n");
+    serial_string("AIUEOS_MODEL_HANDOFF_OK format=gguf-v3 parts=" AIUEOS_MODEL_PARTS_TEXT " sha256=verified mapping=read-only-nx metrics=N/A\r\n");
 #ifndef AIUEOS_MODEL_TEST_FIXTURE
     uint64_t calibrated_model_load_ns = AIUEOS_INFERENCE_UNMEASURED;
     if (boot->version >= AIUEOS_BOOT_INFO_VERSION_TSC_CALIBRATED && boot->tsc_hz) {
@@ -2849,8 +2853,8 @@ qwen_runtime_boot_complete:
       };
       (void)aiueos_framebuffer_inference_screen(&admitted);
     }
-    debug_string("AIUEOS_PHYSICAL_MODEL_HANDOFF_OK qwen38-27b runtime=not-yet-present internal-disk-writes=none\n");
-    serial_string("AIUEOS_PHYSICAL_MODEL_HANDOFF_OK qwen38-27b runtime=not-yet-present internal-disk-writes=none\r\n");
+    debug_string("AIUEOS_PHYSICAL_MODEL_HANDOFF_OK " AIUEOS_MODEL_NAME " runtime=not-yet-present internal-disk-writes=none\n");
+    serial_string("AIUEOS_PHYSICAL_MODEL_HANDOFF_OK " AIUEOS_MODEL_NAME " runtime=not-yet-present internal-disk-writes=none\r\n");
 #else
     (void)aiueos_framebuffer_inference_screen(&aiueos_qwen35_status);
     debug_string("AIUEOS_PHYSICAL_QWEN35_OK token=248046 reference=matched timing=raw-tsc internal-disk-writes=none\n");

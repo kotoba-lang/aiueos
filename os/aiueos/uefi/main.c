@@ -620,10 +620,22 @@ static efi_status read_verified_kernel(struct efi_boot_services *bs, efi_handle 
 #ifdef AIUEOS_QWEN38_MODEL_HANDOFF
 #define MODEL_READ_CHUNK (16ULL * 1024ULL * 1024ULL)
 #define MODEL_HUGE_PAGE_SIZE (2ULL * 1024ULL * 1024ULL)
-_Static_assert(AIUEOS_MODEL_PART_COUNT == 3U, "Qwen bundle part count changed");
+_Static_assert(AIUEOS_MODEL_PART_COUNT == 2U || AIUEOS_MODEL_PART_COUNT == 3U,
+               "model bundle is two (bonsai2) or three (qwen38) parts");
 _Static_assert(AIUEOS_MODEL_PART0_BYTES + AIUEOS_MODEL_PART1_BYTES +
                AIUEOS_MODEL_PART2_BYTES == AIUEOS_MODEL_TOTAL_BYTES,
-               "Qwen bundle lengths do not sum to the artifact length");
+               "model bundle lengths do not sum to the artifact length");
+_Static_assert(AIUEOS_MODEL_PART_COUNT == 3U || AIUEOS_MODEL_PART2_BYTES == 0ULL,
+               "a two-part bundle has no third part");
+
+struct model_part { const char16 *path; uint64_t bytes; };
+static const struct model_part model_parts[AIUEOS_MODEL_PART_COUNT] = {
+  { AIUEOS_MODEL_PART0_PATH, AIUEOS_MODEL_PART0_BYTES },
+  { AIUEOS_MODEL_PART1_PATH, AIUEOS_MODEL_PART1_BYTES },
+#if AIUEOS_MODEL_PART_COUNT == 3
+  { AIUEOS_MODEL_PART2_PATH, AIUEOS_MODEL_PART2_BYTES },
+#endif
+};
 
 static efi_status read_exact_model_part(struct efi_file *root,
                                         const char16 *path,
@@ -653,23 +665,18 @@ static efi_status read_exact_model_part(struct efi_file *root,
 
 static efi_status read_model_on_device(struct efi_boot_services *bs,
                                        efi_handle device, uint8_t *model) {
-  static const char16 part0[] = u"\\EFI\\AIUEOS\\Q38P0.BIN";
-  static const char16 part1[] = u"\\EFI\\AIUEOS\\Q38P1.BIN";
-  static const char16 part2[] = u"\\EFI\\AIUEOS\\Q38P2.BIN";
   struct efi_simple_file_system *fs = 0;
   struct efi_file *root = 0;
   if (bs->handle_protocol(device, &simple_fs_guid, (void **)&fs) != EFI_SUCCESS ||
       !fs || fs->open_volume(fs, &root) != EFI_SUCCESS || !root)
     return EFI_INVALID_PARAMETER;
-  efi_status status = read_exact_model_part(
-    root, part0, model, AIUEOS_MODEL_PART0_BYTES);
-  if (status == EFI_SUCCESS)
-    status = read_exact_model_part(root, part1,
-      model + AIUEOS_MODEL_PART0_BYTES, AIUEOS_MODEL_PART1_BYTES);
-  if (status == EFI_SUCCESS)
-    status = read_exact_model_part(root, part2,
-      model + AIUEOS_MODEL_PART0_BYTES + AIUEOS_MODEL_PART1_BYTES,
-      AIUEOS_MODEL_PART2_BYTES);
+  efi_status status = EFI_SUCCESS;
+  uint64_t offset = 0;
+  for (uint32_t i = 0; i < AIUEOS_MODEL_PART_COUNT && status == EFI_SUCCESS; i++) {
+    status = read_exact_model_part(root, model_parts[i].path, model + offset,
+                                   model_parts[i].bytes);
+    offset += model_parts[i].bytes;
+  }
   root->close(root);
   if (status != EFI_SUCCESS) return status;
   uint8_t digest[32];
@@ -756,8 +763,9 @@ static efi_status load_verified_model(struct efi_boot_services *bs,
   info->model_load_cycles = read_tsc() - started;
   info->model_paging_base = paging_base;
   info->model_paging_pages = paging_pages;
-  debug_string("AIUEOS_LOADER_MODEL_OK qwen38-27b gguf-v3 parts=3 sha256=verified\n");
-  console_ascii("Qwen3.8 27B model admitted. Entering native kernel.\r\n");
+  debug_string("AIUEOS_LOADER_MODEL_OK " AIUEOS_MODEL_NAME " gguf-v3 parts="
+               AIUEOS_MODEL_PARTS_TEXT " sha256=verified\n");
+  console_ascii(AIUEOS_MODEL_NAME " model admitted. Entering native kernel.\r\n");
   return EFI_SUCCESS;
 }
 #endif
