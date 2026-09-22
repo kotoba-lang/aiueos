@@ -117,6 +117,9 @@ object; (3) the SMP split and the workspace stay C until `smp.c` moves.
 **Expect a slower token rate**: the objects are scalar four-accumulator
 loops and the C is AVX2. That number is to be measured before the C
 reference is deleted, and reported, not hidden.
+ADR-0222 (2026-09-22) adds the Ternary Bonsai 2 27B `PTQ1_0` artifact to
+this cutover as a model stage — same `qwen35` graph, two new codecs and a
+Hadamard basis change — and orders it before the C reference leaves.
 
 **Layers 1–4 (network, TLS, scheduler, paging, process, syscall, SMP,
 VT-d, memory, framebuffer):** `tls13.c` (883) has five objects behind it
