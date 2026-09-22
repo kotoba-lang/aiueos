@@ -95,6 +95,28 @@ is **two tensor codecs and one basis change** — nothing structural.
    `[hd, nk, rep]` to grouped `[hd, rep, nk]` before the transform. It runs
    before every folded matvec, so it sits in the same arena plan as
    `qwen35-matvec` (ADR-0147's 96-byte plan, offsets 64-bit).
+   **Landed 2026-09-22** as `qwen35-hadamard.kotoba` (own object, own
+   64-byte plan: mode / width / input / signs / output / perm hd, nk, rep;
+   `[arena arena-length plan plan-length]`). The oracle is Prism llama.cpp
+   `9a9394a`'s own CPU path (`tests/prism_hadamard_oracle.c`: `build_lora_mm`
+   permute → `ggml_mul` signs → `fwht`; `build_inp_embd` fwht → signs; the
+   scalar butterfly loop of `ggml_compute_forward_fwht_impl`, whose SIMD pass
+   is the same function bit for bit). 22 contract vectors — 8 transforms
+   including the artifact's REAL 5120 and 6144 sign vectors and the ssm_out
+   [128 16 3] permutation, 14 refusals, reasons −10..0 all observed — pass
+   in the KIR oracle (`bonsai-hadamard-contract`, ~6 min); red with `u − v`
+   written `v − u`. Fuel bisected on the real 6144 case: passes 524,288,
+   traps 262,144 → 43–85 per element; kotoba-native #190 gives the object
+   its row and a 33,554,432 tier (6.0× the 65,536-element ceiling), amu
+   #1045 advances the pin (a9f8a3c → 207db01) — the previous pin refuses
+   the object by name ("declares an aiueos export with no admitted symbol",
+   measured). Native: 8,592 bytes, fuel word 33,554,432 in the object,
+   deterministic, ABI verifier green, no slot-144 call
+   (`bonsai-hadamard-native`). Found on the way: every element walk had to be
+   chunked per 1024-block — a 2,048-deep recursion exhausted node's stack in
+   the oracle where 1,024 did not; the machine code loops either way. Not
+   booted; not linked into `KERNEL.ELF`; the K16 caller that packs its plan is
+   stage B.
 3. **The GGUF metadata scan has to READ an `INT32` array it currently
    skips.** `prism.hadamard.sign_values` is GGUF type 5 (`INT32`) and holds
    −1. `qwen35-gguf-kv-scan.kotoba` today classes int32 arrays as "skip"
@@ -109,7 +131,12 @@ is **two tensor codecs and one basis change** — nothing structural.
    `kernel-load-u32` region at 512 bytes and its workspace at 128, so the
    array cannot be COPIED at admission; the admission records its file offset
    and count, and the Hadamard object reads signs from the read-only model
-   mapping at use.
+   mapping at use. The object now reads them exactly so — `sign_values` is
+   `+1` / `0xFFFFFFFF` as INT32 words at a plan offset, refused by reason
+   −10 for any other word — so what item 3 still owes is only the kv-scan
+   side: the Bonsai contract's required-key set (no `nextn_predict_layers`,
+   the `prism.hadamard.*` keys) and the offset+count of the sign array in the
+   workspace.
 4. **A graph contract for the Bonsai artifact**,
    `contracts/bonsai2-qwen35-runtime-v1.edn`: exact byte length, sha256
    `53107f53…`, metadata count, the 64-layer schedule, the tensor table and

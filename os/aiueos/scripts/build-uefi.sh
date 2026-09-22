@@ -161,7 +161,7 @@ kotoba_process_plan_object=${AIUEOS_KOTOBA_PROCESS_PLAN_OBJECT:-"$aiueos/kotoba/
 kotoba_teardown_plan_object=${AIUEOS_KOTOBA_TEARDOWN_PLAN_OBJECT:-"$aiueos/kotoba/process-teardown-plan.o"}
 kotoba_task_plan_object=${AIUEOS_KOTOBA_TASK_PLAN_OBJECT:-"$aiueos/kotoba/task-slot-plan.o"}
 kotoba_dispatch_plan_object=${AIUEOS_KOTOBA_DISPATCH_PLAN_OBJECT:-"$aiueos/kotoba/scheduler-dispatch-plan.o"}
-kotoba_rt_dispatch_plan_object="$aiueos/kotoba/rt-scheduler-dispatch-plan.o"
+kotoba_rt_dispatch_plan_object=${AIUEOS_KOTOBA_RT_DISPATCH_PLAN_OBJECT:-"$aiueos/kotoba/rt-scheduler-dispatch-plan.o"}
 kotoba_exit_route_object=${AIUEOS_KOTOBA_EXIT_ROUTE_OBJECT:-"$aiueos/kotoba/task-exit-route.o"}
 kotoba_service_task_object=${AIUEOS_KOTOBA_SERVICE_TASK_OBJECT:-"$aiueos/kotoba/service-task-transition.o"}
 kotoba_rsa2048_object=${AIUEOS_KOTOBA_RSA2048_OBJECT:-"$aiueos/kotoba/rsa2048.o"}
@@ -980,9 +980,9 @@ if [ -n "$model_handoff_link" ] || [ -n "$qwen35_parity_cflags" ]; then
   python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_qwen35_dot_object" \
     4effd1be80404bd910f0df31dd6510391671b7af025a61d9974ffdecf05f1340 kotoba_aiueos_qwen35_dot_f32
   python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_qwen35_dequant_object" \
-    2848f2d6704310764bc9233111b014785b0dec8e3a608f40505f8a364477a62d kotoba_aiueos_qwen35_dequant_row
+    2713ffbac10ad71dad46a899b782c2687820fc2896edab444806867ae62fd730 kotoba_aiueos_qwen35_dequant_row
   python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_qwen35_matvec_object" \
-    27999dfcfeae51d3679d3ce149f1b67e232b159ea77c8d636fa7a4c2fb9c601a kotoba_aiueos_qwen35_matvec
+    01403dc775674e08e82f2bcbe507c2627bf9fbb639647aad1995195446ef2c8e kotoba_aiueos_qwen35_matvec
   # FOUR parity profiles, each linking only the objects its stages call. The
   # low region (`aiueos_low_end <= 0x1f4000`) cannot hold every object at once
   # since the tokenizer objects landed -- measured, not assumed, and measured
