@@ -1127,6 +1127,30 @@
               (swap! image-file-cache assoc image-file image)
               image))))))
 
+(defmethod prepare :aiueos.qwen35-tensor-table-bind/v1 [contract v]
+  ;; The same file image as the kv-scan contract, with the object handed the
+  ;; TABLE: base = image + :table-offset. `:patch [[image-offset hex] ...]`
+  ;; mutates the in-memory copy, so a vector's offsets are file offsets and
+  ;; can be read straight out of a GGUF dump.
+  (let [{:keys [base image-bytes table-offset plan-offset plan-bytes]}
+        (get-in contract [:verification :memory])
+        image0 (image-from-file contract)
+        image (reduce (fn [img [off hex]] (write-at img off (hex-bytes hex)))
+                      image0 (:patch v))
+        image (into image (repeat plan-bytes 0))]
+    {:entry 'aiueos-qwen35-tensor-table-bind
+     :base base
+     :image image
+     :args [(if (some? (:table-base-override v)) (:table-base-override v) (+ base table-offset))
+            (:limit v)
+            (:metadata-end v)
+            (if (some? (:plan-base-override v)) (:plan-base-override v) (+ base plan-offset))
+            (or (:plan-len-override v) plan-bytes)]
+     :expect-memory
+     (cond-> []
+       (:expect-plan-hex v)
+       (conj {:label :plan :offset plan-offset :bytes (hex-bytes (:expect-plan-hex v))}))}))
+
 (defmethod prepare :aiueos.qwen35-gguf-kv-scan/v1 [contract v]
   (let [{:keys [base image-bytes plan-offset plan-bytes]} (get-in contract [:verification :memory])
         image0 (image-from-file contract)

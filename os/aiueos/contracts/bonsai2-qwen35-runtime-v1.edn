@@ -156,10 +156,11 @@
                    :oracle "PrismML-Eng/llama.cpp 9a9394a895b96003ca842a6041cb28ac49a108f7 fwht + build_lora_mm / build_inp_embd"}
  :admission-objects {:header-valid :profile-1-oracle-graded-not-yet-booted
              :kv-scan :profile-1-oracle-graded-not-yet-booted
-             :tensor-table-bind :qwen38-only
+             :tensor-table-bind :profile-1-oracle-graded-not-yet-booted
              :contracts ["os/aiueos/contracts/qwen35-gguf-header-valid-v1.edn"
-                         "os/aiueos/contracts/qwen35-gguf-kv-scan-v1.edn"]}
- :next-gates [:tensor-table-bind-profile-1
+                         "os/aiueos/contracts/qwen35-gguf-kv-scan-v1.edn"
+                         "os/aiueos/contracts/qwen35-tensor-table-bind-v1.edn"]}
+ :next-gates [:c-translation-into-struct-aiueos-qwen35-model
               :split-fat32-bundle-and-loader-mapping
               :physical-k16-graph-parse]
  :does-not-prove [:any-token :physical-k16-generation :physical-k16-throughput

@@ -1,4 +1,5 @@
-(ns aiueos.qwen35-tensor-table-bind)
+(ns aiueos.qwen35-tensor-table-bind
+  (:export [aiueos-qwen35-tensor-table-bind main]))
 
 ;; The 866-record GGUF tensor table of the Qwen3.8-27B artifact, against the
 ;; exact graph in `contracts/qwen38-qwen35-runtime-v1.edn`. A port of the
@@ -138,6 +139,24 @@
 
 (defn pget [plan off]
   (kernel-load-u32 (kernel-subregion plan 28160 off 4) 4 0))
+
+;; ----------------------------------------------------------------- profile
+;;
+;; Which artifact this table belongs to (ADR-0222 stage A). The entry decides
+;; it from `metadata-end`, which the caller already has to pass and which the
+;; kv-scan object derived: 10,945,379 is Qwen3.8-27B (profile 0, 866 records),
+;; 11,070,652 is Ternary Bonsai 2 27B PTQ1_0 (profile 1, 851), anything else
+;; is -4 as before. It is echoed into slot 28144 before the walk starts, so
+;; every function below reads the profile from the workspace rather than
+;; needing a sixth parameter the ABI does not have.
+(defn profile [plan]
+  (if (= (pget plan 28144) 11070652) 1 0))
+
+(defn records [plan] (if (= (profile plan) 1) 851 866))
+(defn artifact-bytes [plan] (if (= (profile plan) 1) 5946648928 10934860704))
+(defn data-offset [plan] (if (= (profile plan) 1) 11120992 10996640))
+(defn table-end [plan] (if (= (profile plan) 1) 11120982 10996621))
+(defn trunk-layers [plan] (if (= (profile plan) 1) 64 65))
 
 ;; --------------------------------------------------------- literal tables
 
@@ -302,36 +321,54 @@
 
 ;; Only the three model-level tensors have their ggml type fixed by
 ;; `exact_contract_valid`. Everything else is constrained by the histogram.
-(defn role-type [r]
-  (if (= r 24) 10 (if (= r 25) 0 (if (= r 26) 12 -1))))
+;; Bonsai's embedding and output head are PTQ1_0 where Qwen3.8's are Q2_K and
+;; Q4_K; `output_norm` is f32 in both.
+(defn role-type [plan r]
+  (if (= r 24) (if (= (profile plan) 1) 143 10)
+    (if (= r 25) 0
+      (if (= r 26) (if (= (profile plan) 1) 143 12) -1))))
 
 (defn type-block [t]
+  (if (= t 30) 1 (if (= t 143) 128
   (if (= t 0) 1 (if (= t 8) 32
   (if (= t 10) 256 (if (= t 11) 256 (if (= t 12) 256 (if (= t 13) 256
   (if (= t 14) 256 (if (= t 16) 256 (if (= t 17) 256 (if (= t 18) 256
   (if (= t 19) 256 (if (= t 21) 256 (if (= t 22) 256 (if (= t 23) 256
-  (if (= t 29) 256 0))))))))))))))))
+  (if (= t 29) 256 0))))))))))))))))))
 
 (defn type-bytes [t]
+  (if (= t 30) 2 (if (= t 143) 28
   (if (= t 0) 4 (if (= t 8) 34
   (if (= t 10) 84 (if (= t 11) 110 (if (= t 12) 144 (if (= t 13) 176
   (if (= t 14) 210 (if (= t 16) 66 (if (= t 17) 74 (if (= t 18) 98
   (if (= t 19) 50 (if (= t 21) 110 (if (= t 22) 82 (if (= t 23) 136
-  (if (= t 29) 56 0))))))))))))))))
+  (if (= t 29) 56 0))))))))))))))))))
 
-(defn expect-count [t]
+;; Type counter slot. The 32 counters are indexed by ggml type; PTQ1_0 is type
+;; 143 and would run off the end, so it takes slot 31, which no Qwen type
+;; uses (the artifact's 15 types are all below 30).
+(defn type-slot [t] (if (= t 143) 31 t))
+
+(defn expect-count-qwen [t]
   (if (= t 0) 360 (if (= t 8) 98
   (if (= t 10) 10 (if (= t 11) 6 (if (= t 12) 26 (if (= t 13) 7
   (if (= t 14) 6 (if (= t 16) 24 (if (= t 17) 12 (if (= t 18) 120
   (if (= t 19) 8 (if (= t 21) 106 (if (= t 22) 35 (if (= t 23) 45
   (if (= t 29) 3 0))))))))))))))))
 
+;; Bonsai carries three types: F32 353, BF16 96, PTQ1_0 402 (slot 31).
+(defn expect-count-bonsai [t]
+  (if (= t 0) 353 (if (= t 30) 96 (if (= t 31) 402 0))))
+
+(defn expect-count [plan t]
+  (if (= (profile plan) 1) (expect-count-bonsai t) (expect-count-qwen t)))
+
 ;; The hybrid schedule: every fourth trunk layer is full attention, the other
 ;; 48 are gated DeltaNet, and layer 64 is the MTP head, which carries a full
 ;; mixer AND the four nextn tensors. 16383 = roles 0..13, 1032223 = roles 0..4
 ;; and 14..19, 16760863 = that plus 20..23.
-(defn layer-mask [l]
-  (if (= l 64) 16760863
+(defn layer-mask [plan l]
+  (if (if (= l 64) (= (profile plan) 0) false) 16760863
     (if (= (- (+ l 1) (* 4 (quot (+ l 1) 4))) 0) 1032223 16383)))
 
 (defn mask-offset [layer]
@@ -366,20 +403,20 @@
                                   offset (u64-at base limit (+ after 4))
                                   block (type-block t)
                                   tbytes (type-bytes t)]
-                              (if (>= t 31) -13
+                              (if (if (= t 143) false (>= t 31)) -13
                                 (if (= block 0) -13
                                   (if (not (= 0 (- elements (* block (quot elements block))))) -14
                                     (let [blocks (quot elements block)]
                                       (if (= blocks 0) -15
-                                        (if (> blocks (quot 10934860704 tbytes)) -15
+                                        (if (> blocks (quot (artifact-bytes plan) tbytes)) -15
                                           (let [storage (* blocks tbytes)
                                                 expected (+ (pget plan 28136)
                                                             (* (pget plan 28140) 4294967296))]
                                             (if (= storage 0) -15
                                               (if (< offset 0) -16
                                                 (if (not (= offset expected)) -16
-                                                  (if (> offset 10934860704) -17
-                                                    (if (> storage (- 10934860704 offset)) -17
+                                                  (if (> offset (artifact-bytes plan)) -17
+                                                    (if (> storage (- (artifact-bytes plan) offset)) -17
                                                       (let [packed (resolve-role base limit noff nlen)]
                                                         (if (< packed 0) -18
                                                           (let [role (quot packed 128)
@@ -387,15 +424,15 @@
                                                                 moff (mask-offset layer)
                                                                 bit (if (>= role 24) (pow2 (- role 24)) (pow2 role))
                                                                 seen (pget plan moff)
-                                                                dfile (+ 10996640 offset)]
+                                                                dfile (+ (data-offset plan) offset)]
                                                             (if (= bit (bit-and seen bit)) -19
                                                               (if (not (= ndims (role-ndims role))) -20
                                                                 (if (not (= (u64-at base limit dimsoff) (role-d0 role))) -20
                                                                   (if (if (= ndims 1) false
                                                                         (not (= (u64-at base limit (+ dimsoff 8))
                                                                                 (role-d1 role)))) -20
-                                                                    (if (if (< (role-type role) 0) false
-                                                                          (not (= t (role-type role)))) -21
+                                                                    (if (if (< (role-type plan role) 0) false
+                                                                          (not (= t (role-type plan role)))) -21
                                                                       (do
                                                                         (pput plan (+ 32 (* 32 index)) (+ role 1))
                                                                         (pput plan (+ 36 (* 32 index)) layer)
@@ -408,8 +445,8 @@
                                                                         (pput plan (+ 56 (* 32 index)) (quot dfile 4294967296))
                                                                         (pput plan (+ 60 (* 32 index)) storage)
                                                                         (pput plan moff (bit-or seen bit))
-                                                                        (pput plan (+ 27744 (* 4 t))
-                                                                              (+ 1 (pget plan (+ 27744 (* 4 t)))))
+                                                                        (pput plan (+ 27744 (* 4 (type-slot t)))
+                                                                              (+ 1 (pget plan (+ 27744 (* 4 (type-slot t))))))
                                                                         ;; The `do` is load-bearing. A `let` whose body has two
                                                                         ;; forms compiles with `:ok true` and KEEPS ONLY THE
                                                                         ;; FIRST -- measured against amu b1fdaad2. Without it
@@ -427,16 +464,18 @@
 
 (defn types-ok [plan t]
   (if (= t 32) 0
-    (if (= (pget plan (+ 27744 (* 4 t))) (expect-count t))
+    (if (= (pget plan (+ 27744 (* 4 t))) (expect-count plan t))
       (types-ok plan (+ t 1))
       -24)))
 
 (defn layers-ok [plan l]
-  (if (= l 65) 0
-    (if (= (pget plan (+ 27876 (* 4 l))) (layer-mask l))
+  (if (= l (trunk-layers plan)) 0
+    (if (= (pget plan (+ 27876 (* 4 l))) (layer-mask plan l))
       (layers-ok plan (+ l 1))
       -25)))
 
+;; Under profile 1 the 64 trunk layers are all there is; under profile 0 the
+;; 65th is the MTP head and is not a trunk layer.
 (defn count-linear [plan l acc]
   (if (= l 64) acc
     (count-linear plan (+ l 1)
@@ -446,15 +485,15 @@
   (let [tie (+ (pget plan 28144) pos)
         dofs (* 32 (quot (+ tie 31) 32))
         nextoff (+ (pget plan 28136) (* (pget plan 28140) 4294967296))]
-    (if (not (= tie 10996621)) -22
-      (if (not (= dofs 10996640)) -22
-        (if (not (= nextoff (- 10934860704 dofs))) -23
+    (if (not (= tie (table-end plan))) -22
+      (if (not (= dofs (data-offset plan))) -22
+        (if (not (= nextoff (- (artifact-bytes plan) dofs))) -23
           (let [tk (types-ok plan 0)]
             (if (< tk 0) tk
               (let [lk (layers-ok plan 0)]
                 (if (< lk 0) lk
                   (if (not (= (pget plan 27872) 7)) -25
-                    (do (pput plan 0 866)
+                    (do (pput plan 0 (records plan))
                         (pput plan 4 (- dofs (* 4294967296 (quot dofs 4294967296))))
                         (pput plan 8 (quot dofs 4294967296))
                         (pput plan 12 32)
@@ -464,27 +503,64 @@
                         (pput plan 28 (- 64 (count-linear plan 0 0)))
                         0)))))))))))
 
+;; Both walks below are CHUNKED -- an inner loop of at most 64 steps under an
+;; outer loop over the chunks -- for the reason `qwen35-gguf-kv-scan`'s
+;; `skip-strings` gives: the machine turns a self tail call into a jump and
+;; does not care, but the KIR interpreter recurses on its host stack, so a
+;; 7,040-deep clear or an 851-deep record walk is a host stack overflow there
+;; rather than a verdict. Chunking makes the deepest host stack ~2 x sqrt(n).
+;; Measured 2026-09-22: unchunked, the oracle could not execute this object at
+;; all on node (--stack-size=60000); chunked, the whole 851-record walk runs.
+
+(defn plan-clear-chunk [plan off stop]
+  (if (>= off stop) 0
+    (do (pput plan off 0)
+        (plan-clear-chunk plan (+ off 4) stop))))
+
 (defn plan-clear [plan off]
   (if (>= off 28160) 0
-    (do (pput plan off 0)
-        (plan-clear plan (+ off 4)))))
+    (let [stop (if (> (+ off 256) 28160) 28160 (+ off 256))]
+      (do (plan-clear-chunk plan off stop)
+          (plan-clear plan stop)))))
+
+;; A file offset is positive and every verdict is negative, so one word
+;; carries both: the chunk answers where it stopped, or why it refused.
+;; The chunk boundary is DERIVED from the index rather than carried: the ABI
+;; admits five parameters and a sixth would have been one too many. Every
+;; index inside one 64-block answers the same end, so the inner walk can ask
+;; for it itself.
+(defn chunk-end [plan index]
+  (let [e (* 64 (+ 1 (quot index 64)))]
+    (if (> e (records plan)) (records plan) e)))
+
+(defn walk-chunk [base limit plan pos index]
+  (let [nxt (tensor-record base limit plan pos index)]
+    (if (< nxt 0)
+      (do (pput plan 28148 index) nxt)
+      (if (>= (+ index 1) (chunk-end plan index))
+        nxt
+        (walk-chunk base limit plan nxt (+ index 1))))))
 
 (defn walk [base limit plan pos index]
-  (if (= index 866) (finish plan pos)
-    (let [nxt (tensor-record base limit plan pos index)]
-      (if (< nxt 0)
-        (do (pput plan 28148 index) nxt)
-        (walk base limit plan nxt (+ index 1))))))
+  (if (= index (records plan)) (finish plan pos)
+    (let [nxt (walk-chunk base limit plan pos index)]
+      (if (< nxt 0) nxt (walk base limit plan nxt (chunk-end plan index))))))
+
+;; The smallest table each profile can have: 866 records of the shortest
+;; admissible shape, and 851 of it. Derived from `metadata-end` rather than
+;; from the workspace, because this check runs before the walk writes it.
+(defn table-floor [metadata-end]
+  (if (= metadata-end 11070652) 50330 51242))
 
 (defn aiueos-qwen35-tensor-table-bind [table limit metadata-end plan plan-length]
   (if (= table 0) -1
     (if (= plan 0) -2
       (if (not (= plan-length 28160)) -3
-        (if (not (= metadata-end 10945379)) -4
-          (if (< limit 51242) -5
+        (if (if (= metadata-end 10945379) false (not (= metadata-end 11070652))) -4
+          (if (< limit (table-floor metadata-end)) -5
             (do (plan-clear plan 0)
                 (pput plan 28144 metadata-end)
-                (pput plan 28148 866)
+                (pput plan 28148 (records plan))
                 (walk table limit plan 0 0))))))))
 
 (defn main [] 0)

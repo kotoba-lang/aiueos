@@ -199,9 +199,30 @@ is **two tensor codecs and one basis change** — nothing structural.
    nesting exhausted the host stack"), so `reproduce-kotoba-objects` against
    the current amu could not have reproduced the committed object; the key
    tables are now balanced comparison trees (depth ~8) generated from the
-   canonical strings and re-evaluated against them. Still Qwen3.8-only:
-   `qwen35-tensor-table-bind` (851 records, 23 roles, PTQ1_0/BF16 types —
-   the next item) and the C translation into `struct aiueos_qwen35_model`.
+   canonical strings and re-evaluated against them. **`qwen35-tensor-table-bind` followed the same day**: its profile is
+   `metadata-end`, which the caller already passes and the kv-scan object
+   derived (10,945,379 / 11,070,652), echoed into workspace slot 28144 — so
+   again no new argument and no new slot. The two artifacts share every role
+   SHAPE (checked: all 23 Bonsai roles carry the dimensions Qwen3.8's do);
+   what differs is the record count (851), the artifact length, the data
+   offset (11,120,992), the type histogram (`F32` 353 / `BF16` 96 / `PTQ1_0`
+   402, counted in slot 31 because 143 would run off a 32-entry table), the
+   model-level types (`token_embd` and `output` are PTQ1_0 where Qwen3.8's
+   are Q2_K and Q4_K) and the absent MTP layer 64. 12 vectors in the oracle
+   over the same fixture, 98.5 s: the admitted case's **28,160-byte
+   workspace equals one computed independently in python** (851 binding
+   slots, the type counters, the 65 role masks, the cursor), the profile
+   mix-up refuses on the table floor (−5: the window that fills a Bonsai
+   table cannot hold a Qwen3.8 one), and one mutation per refusal class
+   (−21 retype, −20 dimension, −18 name, −16 offset, −13 unknown type).
+   Both of its walks had to be chunked for the interpreter, like the kv-scan
+   string walk: 851 records and a 7,040-word clear are host-stack overflows
+   on node, and the chunk boundary is derived from the index because the ABI
+   admits five parameters. After all three objects changed, the Qwen3.8
+   profile was booted again: `QWEN-ADMIT reason=0 stage=0 admitted=1`,
+   `AIUEOS_QWEN35_ADMISSION_QEMU_OK objects=3 offsets=match-host-reference`.
+   Still Qwen3.8-only: the C translation into `struct aiueos_qwen35_model`
+   (`aiueos_qwen35_model_translate`), which is what a Bonsai boot needs next.
 4. **A graph contract for the Bonsai artifact**,
    `contracts/bonsai2-qwen35-runtime-v1.edn`: exact byte length, sha256
    `53107f53…`, metadata count, the 64-layer schedule, the tensor table and
