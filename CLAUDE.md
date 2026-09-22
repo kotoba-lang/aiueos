@@ -97,7 +97,8 @@ and expressible (write it), not in Kotoba and blocked (record it). Decide which
 before writing a line. ADR-0220 carries the disposition of every remaining
 file and what each waits on; read it before picking one.
 
-⚠ **The image has ~24 KiB of low-region headroom** (ADR-0221). The kernel and
+⚠ **The production node image has 32 KiB of low-region headroom** (ADR-0222;
+receipt `os/aiueos/qualification/low-region-budget.edn`). The kernel and
 every Kotoba object it links must end below `aiueos_low_end <= 0x1f4000`, the
 loader admits exactly two PT_LOAD segments, and objects are larger than the C
 they replace. Before the next object lands, either move more `.bss` scratch to

@@ -388,18 +388,32 @@ is **two tensor codecs and one basis change** — nothing structural.
    but never executed at that width); `smoke-qwen35-first-token-model.sh`
    (needs the real GGUF, not run).
 
-   **The production node image does not link, and did not before this
-   step.** `build-qwen38-murakumo-node-pxe.sh`'s flags
-   (`AIUEOS_PHYSICAL_NETWORK_QUALIFICATION`, `…_DIRECT_HTTPS_…`,
+   **The production node image links again: `aiueos_low_end` is 0x1ec000,
+   32 KiB under 0x1f4000.** Before, with `build-qwen38-murakumo-node-pxe.sh`'s
+   flags (`AIUEOS_PHYSICAL_NETWORK_QUALIFICATION`, `…_DIRECT_HTTPS_…`,
    `AIUEOS_MURAKUMO_DEVICE_RESULT`, `AIUEOS_QWEN38_MODEL_HANDOFF`,
-   `AIUEOS_PERSISTENT_BOOT`) → `ld.lld: low kernel/user layout overlaps
-   process-private aperture` at origin/main 231fe0b too. Measured by
-   relaxing the ASSERT in a scratch copy of `linker.ld` and reading the
-   section headers: `aiueos_low_end` is 0x1f8000 at 231fe0b (16 KiB over
-   0x1f4000) and 0x1fa000 with this step (24 KiB over; `.text` +9,776 B).
-   `.bss` is 215 KiB of the low region — the ADR-0221 remedy (scratch to
-   `.high_bss`) or a third loader segment is what closes it; until then
-   the K16 image in item 8 cannot be built.
+   `AIUEOS_PERSISTENT_BOOT`), `ld.lld` failed with `low kernel/user layout
+   overlaps process-private aperture`: the low region ended at 0x1f8000 at
+   231fe0b and at 0x1fa000 after this step (`.text` +9,776 B). `paging.c`'s
+   `pci_pdpts` (16 KiB) and `pci_directories` (32 KiB) moved to `.high_bss`.
+   Both are kernel-only page tables, reached through the kernel map that every
+   process space copies, and zeroed explicitly in `aiueos_paging_initialize`.
+   `.bss` went from 215,400 B to 158,056 B. `.high_bss` now ends at 0x486000,
+   against its 0x600000 limit. Receipt:
+   `os/aiueos/qualification/low-region-budget.edn`. To reproduce, run the
+   build with `AIUEOS_ALLOW_DIRTY_QUALIFICATION_BUILD=1` if the tree is dirty
+   and read the `aiueos_low_end`, `.bss` and `.high_bss` lines of
+   `build/aiueos-qwen38-murakumo-node-pxe/core/kernel.map`. Seen red: on
+   origin/main without the move, the same build fails with that `ld.lld`
+   error, exit 1. Boots with the move: `smoke-qemu-uefi.sh` →
+   `AIUEOS_UEFI_SMOKE_OK`. There, virtio modern and MSI-X are mapped through
+   `aiueos_map_pci_mmio`, so the moved tables are walked. `bonsai-qemu-admission`
+   → `AIUEOS_BONSAI_ADMISSION_QEMU_OK`. **Not measured**: the production node
+   image booting on the physical K16. The next object that grows `.text` by
+   more than 32 KiB needs the next move; the candidates left are the TLS and
+   NIC scratch (tls13 8.8 KiB, rtl8125 8.3 KiB, main 6.8 KiB) or a third
+   loader segment. The 64 KiB boot stack cannot move, because it is in use
+   before `.high_bss` is zeroed.
    Rope's C uses x87 `fsincos`, Amu emits no x87, and `f64-sin-bounded`
    exists in the language; the Kotoba rope will not be bit-identical to
    `fsincos`, so for that stage the reference becomes the object and the

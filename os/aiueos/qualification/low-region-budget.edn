@@ -1,0 +1,23 @@
+;; The low-region budget of the production node image (ADR-0222 item 6).
+;; kernel/linker.ld asserts `aiueos_low_end <= 0x1f4000`; this records where
+;; the production node image ends, measured from the link map, and how to
+;; re-measure it. Values are hex strings as the map prints them.
+{:low-region/image "os/aiueos/scripts/build-qwen38-murakumo-node-pxe.sh"
+ :low-region/limit "0x1f4000"
+ :low-region/measured-on "bc2a3df + pci page tables in .high_bss"
+ :low-region/before {:aiueos-low-end "0x1fa000" :bss-bytes 215400
+                     :links? false
+                     :error "ld.lld: error: low kernel/user layout overlaps process-private aperture"}
+ :low-region/after {:aiueos-low-end "0x1ec000" :bss-bytes 158056
+                    :headroom-bytes 32768
+                    :high-bss-end "0x486000" :high-bss-limit "0x600000"
+                    :links? true}
+ :low-region/moved [{:symbol "pci_pdpts" :file "os/aiueos/kernel/paging.c" :bytes 16384}
+                    {:symbol "pci_directories" :file "os/aiueos/kernel/paging.c" :bytes 32768}]
+ :low-region/boots ["os/aiueos/scripts/smoke-qemu-uefi.sh -> AIUEOS_UEFI_SMOKE_OK (virtio modern + MSI-X mapped through aiueos_map_pci_mmio)"
+                    "kbb --backend sci scripts/run-task.cljk bonsai-qemu-admission -> AIUEOS_BONSAI_ADMISSION_QEMU_OK"]
+ :low-region/not-measured ["the production node image booted on the physical K16"]
+ :low-region/reproduce
+ ["AIUEOS_ALLOW_DIRTY_QUALIFICATION_BUILD=1 os/aiueos/scripts/build-qwen38-murakumo-node-pxe.sh"
+  "grep -E 'aiueos_low_end|aiueos_kernel_end| \\.(bss|high_bss)$' build/aiueos-qwen38-murakumo-node-pxe/core/kernel.map"
+  "to see the overflow without the move: relax the ASSERT in a scratch linker.ld and read the same map lines"]}
