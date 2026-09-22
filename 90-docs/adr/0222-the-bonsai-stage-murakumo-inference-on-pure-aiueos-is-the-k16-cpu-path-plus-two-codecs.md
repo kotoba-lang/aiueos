@@ -18,6 +18,29 @@
 
 ## Two streams that have not met
 
+**Measured on the B70 2026-09-22, and it changes what stream A's row means:**
+the unit `murakumo-b70-bonsai-native.service` is active but its ExecStart is
+the Prism **llama-server** on :8093; :8092 is `murakumo-mishima-fleet-router`,
+whose heads include that llama-server; no `kexe-loader` / `serve_http` /
+`resident-replay` process runs and no unit under `/etc/systemd/system`
+mentions either. So the native guest is **not serving today** — traffic for
+`prism-ml/Ternary-Bonsai-2-27B-PTQ1_0` is answered by llama.cpp. That does
+not touch the 2026-09-20 measurements (they were taken with the guest
+running, and the artifact digest is now confirmed identical); it means the
+row "stream A serves Bonsai natively" is a past measurement, not a running
+system — and stage D's point, that nothing here holds a service across a
+restart, is the same point one box over. Recorded in
+kotoba-lang/inference `verify/evidence/ternary-bonsai-ptq1-native-e2e-20260920.json`.
+
+Also 2026-09-22: the wire-42 GPU path gained a **fourth backend** — Apple
+GPUs through MoltenVK (amu PR #1046: a portability driver is invisible to the
+Vulkan loader unless the instance asks for `VK_KHR_portability_enumeration`,
+so every Mac had answered `VK_ERROR_INCOMPATIBLE_DRIVER`). An M1 Max runs the
+same guests at 146–163 GB/s (B70 160, Xavier 54, K16 44), `dot.kotoba` matching
+an f64 twin to 3.1e-4. It does not move this ADR's plan: the AIUEOS path is
+still CPU (stage A of this document), and no weights were mapped on that
+backend.
+
 Everything below is measured state as of 2026-09-22, read from the ADRs and
 evidence files named. Nothing was booted for this ADR.
 
@@ -198,7 +221,11 @@ is **two tensor codecs and one basis change** — nothing structural.
    file is **5,946,648,928 bytes** (Hugging Face LFS size, 2026-09-22; the
    B70's copy was not read — the session had no production access — so the
    two copies have not been compared and the sha256 has not been recomputed
-   here). Split shape: 4,000,000,000 + 1,946,648,928. It is 4,988,211,776
+   here). **Measured 2026-09-22**: `sha256sum` of the B70's copy
+   (`/root/kgpu/models/Ternary-Bonsai-2-27B-PTQ1_0.gguf` on aiueos-6600hs)
+   is `53107f53…`, equal to the value stream A's evidence records and to the
+   graph contract here, so the two copies are the same bytes and the digest
+   is no longer taken on trust. Split shape: 4,000,000,000 + 1,946,648,928. It is 4,988,211,776
    bytes smaller than the Qwen3.8 file that did fit the 16 GiB K16 beside
    the kernel; whether it fits is still a boot, not this subtraction.
 
@@ -303,8 +330,7 @@ is **two tensor codecs and one basis change** — nothing structural.
 ## Not measured, and named as such
 
 Whether the artifact fits the 16 GiB K16 beside the kernel image (its byte
-count is measured; the mapping is not); the B70 copy against the Hub copy;
-the sha256 recomputed by this repository; the CPU-bound rate of a PTQ1 matvec on the K16's Ryzen; the
+count is measured; the mapping is not); the CPU-bound rate of a PTQ1 matvec on the K16's Ryzen; the
 K16's NVMe slot write; sampling-distribution parity (stream A lists it as
 unmeasured too); contexts past 4,096 tokens; any board other than the K16
 booting AIUEOS on real hardware (P5 remains UNVERIFIED, ADR-0084).
