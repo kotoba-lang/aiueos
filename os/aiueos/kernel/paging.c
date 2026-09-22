@@ -43,8 +43,15 @@ static uint64_t apic_page_directory[ENTRY_COUNT] __attribute__((aligned(PAGE_SIZ
 static uint64_t framebuffer_page_directory[ENTRY_COUNT] __attribute__((aligned(PAGE_SIZE)));
 #define PCI_PDPT_SLOTS 4
 #define PCI_DIRECTORY_SLOTS 8
-static uint64_t pci_pdpts[PCI_PDPT_SLOTS][ENTRY_COUNT] __attribute__((aligned(PAGE_SIZE)));
-static uint64_t pci_directories[PCI_DIRECTORY_SLOTS][ENTRY_COUNT] __attribute__((aligned(PAGE_SIZE)));
+/* 48 KiB of the low region was these two arrays; they live in `.high_bss`
+ * (the 4..6 MiB writable-NX window) so the production node image links under
+ * `aiueos_low_end <= 0x1f4000` (ADR-0222). They are kernel-only, reached
+ * through the kernel map every process space copies, and zeroed explicitly in
+ * aiueos_paging_initialize while the loader's identity map is still live. */
+static uint64_t pci_pdpts[PCI_PDPT_SLOTS][ENTRY_COUNT]
+  __attribute__((section(".high_bss"), aligned(PAGE_SIZE)));
+static uint64_t pci_directories[PCI_DIRECTORY_SLOTS][ENTRY_COUNT]
+  __attribute__((section(".high_bss"), aligned(PAGE_SIZE)));
 static uint16_t pci_pdpt_owner[PCI_PDPT_SLOTS];
 static uint32_t pci_directory_owner[PCI_DIRECTORY_SLOTS];
 
