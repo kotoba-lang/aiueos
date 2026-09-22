@@ -493,11 +493,30 @@ qwen35_smp_cflags=
 qwen35_vector_cflags=
 model_slots_cflags=
 model_slots_link=
-model_total=${AIUEOS_MODEL_TOTAL_BYTES:-10934860704}
-model_part0=${AIUEOS_MODEL_PART0_BYTES:-4000000000}
-model_part1=${AIUEOS_MODEL_PART1_BYTES:-4000000000}
-model_part2=${AIUEOS_MODEL_PART2_BYTES:-2934860704}
-model_sha256=${AIUEOS_MODEL_SHA256:-c0b7c3038681ed2e3040456c1dd45f9858b6c2290bed172c70388a94874f3eee}
+# The split artifact the loader admits (ADR-0117).  Two production identities,
+# selected by name and never by lengths: qwen38 is three FAT32-safe parts
+# Q38P0..2, bonsai2 (Ternary-Bonsai-2-27B-PTQ1_0, ADR-0222 step 5) is two parts
+# B2P0..1.  A two-part profile has part2 = 0.
+model_profile=${AIUEOS_MODEL_PROFILE:-qwen38}
+case "$model_profile" in
+  qwen38)
+    model_name=qwen38-27b model_file_prefix=Q38P
+    pinned_total=10934860704 pinned_part0=4000000000 pinned_part1=4000000000
+    pinned_part2=2934860704 pinned_parts=3
+    pinned_sha256=c0b7c3038681ed2e3040456c1dd45f9858b6c2290bed172c70388a94874f3eee ;;
+  bonsai2)
+    model_name=bonsai2-27b model_file_prefix=B2P
+    pinned_total=5946648928 pinned_part0=4000000000 pinned_part1=1946648928
+    pinned_part2=0 pinned_parts=2
+    pinned_sha256=53107f530aa52eb00912263ab1ee29bd199261c87cd7b4ad4ca1318c1fe33ee3 ;;
+  *) echo "error: AIUEOS_MODEL_PROFILE must be qwen38 or bonsai2" >&2; exit 1 ;;
+esac
+model_parts=$pinned_parts
+model_total=${AIUEOS_MODEL_TOTAL_BYTES:-$pinned_total}
+model_part0=${AIUEOS_MODEL_PART0_BYTES:-$pinned_part0}
+model_part1=${AIUEOS_MODEL_PART1_BYTES:-$pinned_part1}
+model_part2=${AIUEOS_MODEL_PART2_BYTES:-$pinned_part2}
+model_sha256=${AIUEOS_MODEL_SHA256:-$pinned_sha256}
 model_min_address=${AIUEOS_MODEL_MIN_ADDRESS:-4294967296}
 model_max_address=${AIUEOS_MODEL_MAX_ADDRESS:-68719476735}
 # The Kotoba/C parity self-test for the Qwen3.5 forward-pass objects
@@ -518,11 +537,11 @@ esac
 if [ "${AIUEOS_QWEN38_MODEL_HANDOFF:-0}" = 1 ] ||
    [ "${AIUEOS_MODEL_NVME_SLOTS:-0}" = 1 ]; then
   if [ "${AIUEOS_MODEL_TEST_FIXTURE:-0}" != 1 ]; then
-    [ "$model_total" = 10934860704 ] &&
-    [ "$model_part0" = 4000000000 ] &&
-    [ "$model_part1" = 4000000000 ] &&
-    [ "$model_part2" = 2934860704 ] &&
-    [ "$model_sha256" = c0b7c3038681ed2e3040456c1dd45f9858b6c2290bed172c70388a94874f3eee ] &&
+    [ "$model_total" = "$pinned_total" ] &&
+    [ "$model_part0" = "$pinned_part0" ] &&
+    [ "$model_part1" = "$pinned_part1" ] &&
+    [ "$model_part2" = "$pinned_part2" ] &&
+    [ "$model_sha256" = "$pinned_sha256" ] &&
     [ "$model_min_address" = 4294967296 ] &&
     [ "$model_max_address" = 68719476735 ] || {
       echo "error: production Qwen handoff identity is pinned; overrides require AIUEOS_MODEL_TEST_FIXTURE=1" >&2
@@ -540,6 +559,22 @@ if [ "${AIUEOS_QWEN38_MODEL_HANDOFF:-0}" = 1 ] ||
   [ $((model_part0 + model_part1 + model_part2)) -eq "$model_total" ] || {
     echo "error: model part lengths do not sum to total bytes" >&2; exit 1;
   }
+  # FAT32 caps a file at 4,294,967,295 bytes; every declared part must be a
+  # non-empty file under it, and a two-part profile has no third part.
+  for value in "$model_part0" "$model_part1"; do
+    [ "$value" -ge 1 ] && [ "$value" -le 4294967295 ] || {
+      echo "error: model part length must be 1..4294967295 (FAT32)" >&2; exit 1; }
+  done
+  if [ "$model_parts" = 3 ]; then
+    [ "$model_part2" -ge 1 ] && [ "$model_part2" -le 4294967295 ] || {
+      echo "error: model part length must be 1..4294967295 (FAT32)" >&2; exit 1; }
+  else
+    [ "$model_part2" = 0 ] || {
+      echo "error: two-part model profile $model_profile has no third part" >&2; exit 1; }
+  fi
+  if [ "${AIUEOS_MODEL_NVME_SLOTS:-0}" = 1 ] && [ "$model_parts" != 3 ]; then
+    echo "error: NVMe model slots stage the three-part qwen38 bundle only" >&2; exit 1
+  fi
   if [ "${AIUEOS_QWEN38_MODEL_HANDOFF:-0}" = 1 ]; then
     model_handoff_cflags="-DAIUEOS_QWEN38_MODEL_HANDOFF=1"
     case "${AIUEOS_QWEN35_SMP:-1}" in
@@ -707,11 +742,12 @@ Path(out).write_text(
 PYBUILD
 python3 - "$model_identity_header" "$model_total" "$model_part0" \
   "$model_part1" "$model_part2" "$model_sha256" "$model_min_address" \
-  "$model_max_address" <<'PYMODEL'
+  "$model_max_address" "$model_parts" "$model_name" "$model_file_prefix" <<'PYMODEL'
 from pathlib import Path
 import sys
 
-out, total, part0, part1, part2, digest, minimum, maximum = sys.argv[1:]
+(out, total, part0, part1, part2, digest, minimum, maximum, parts, name,
+ prefix) = sys.argv[1:]
 values = ",".join(f"0x{int(digest[i:i+2], 16):02x}" for i in range(0, 64, 2))
 Path(out).write_text(
     "#ifndef AIUEOS_MODEL_IDENTITY_H\n#define AIUEOS_MODEL_IDENTITY_H\n"
@@ -720,10 +756,17 @@ Path(out).write_text(
     f"#define AIUEOS_MODEL_PART0_BYTES {part0}ULL\n"
     f"#define AIUEOS_MODEL_PART1_BYTES {part1}ULL\n"
     f"#define AIUEOS_MODEL_PART2_BYTES {part2}ULL\n"
-    "#define AIUEOS_MODEL_PART_COUNT 3U\n"
+    f"#define AIUEOS_MODEL_PART_COUNT {parts}U\n"
+    f'#define AIUEOS_MODEL_PARTS_TEXT "{parts}"\n'
+    f'#define AIUEOS_MODEL_NAME "{name}"\n'
+    f'#define AIUEOS_MODEL_PART0_PATH u"\\\\EFI\\\\AIUEOS\\\\{prefix}0.BIN"\n'
+    f'#define AIUEOS_MODEL_PART1_PATH u"\\\\EFI\\\\AIUEOS\\\\{prefix}1.BIN"\n'
+    f'#define AIUEOS_MODEL_PART2_PATH u"\\\\EFI\\\\AIUEOS\\\\{prefix}2.BIN"\n'
     f"#define AIUEOS_MODEL_MIN_ADDRESS {minimum}ULL\n"
     f"#define AIUEOS_MODEL_MAX_ADDRESS {maximum}ULL\n"
+    "#ifndef AIUEOS_MODEL_IDENTITY_MACROS_ONLY\n"
     "static const uint8_t aiueos_expected_model_sha256[32]={" + values + "};\n"
+    "#endif\n"
     "#endif\n", encoding="ascii")
 PYMODEL
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_kernel_object" "$kotoba_kernel_sha"

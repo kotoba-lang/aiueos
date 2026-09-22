@@ -26,26 +26,34 @@ fi
 work=$(mktemp -d "${TMPDIR:-/tmp}/aiueos-model-handoff-smoke.XXXXXX")
 trap 'rm -rf "$work"' EXIT HUP INT TERM
 mkdir -p "$work/esp/EFI/BOOT" "$work/esp/EFI/AIUEOS"
-python3 - "$work/esp/EFI/AIUEOS" <<'PY'
+# AIUEOS_MODEL_PROFILE=bonsai2 boots the two-part B2P0..1 split (ADR-0222
+# step 5); the default is the three-part qwen38 Q38P0..2 split (ADR-0117).
+profile=${AIUEOS_MODEL_PROFILE:-qwen38}
+case "$profile" in
+  qwen38) name=qwen38-27b prefix=Q38P parts=3 ;;
+  bonsai2) name=bonsai2-27b prefix=B2P parts=2 ;;
+  *) echo "error: AIUEOS_MODEL_PROFILE must be qwen38 or bonsai2" >&2; exit 1 ;;
+esac
+python3 - "$work/esp/EFI/AIUEOS" "$prefix" "$parts" <<'PY'
 from pathlib import Path
 import sys
-root = Path(sys.argv[1])
-(root / "Q38P0.BIN").write_bytes(b"GGUF\x03\x00\x00\x00fixture")
-(root / "Q38P1.BIN").write_bytes(b"weights")
-(root / "Q38P2.BIN").write_bytes(b"tokens-v1")
+root, prefix, parts = Path(sys.argv[1]), sys.argv[2], int(sys.argv[3])
+bodies = [b"GGUF\x03\x00\x00\x00fixture", b"weights", b"tokens-v1"][:parts]
+for i, body in enumerate(bodies):
+    (root / f"{prefix}{i}.BIN").write_bytes(body)
 PY
-part0=$(wc -c < "$work/esp/EFI/AIUEOS/Q38P0.BIN" | tr -d ' ')
-part1=$(wc -c < "$work/esp/EFI/AIUEOS/Q38P1.BIN" | tr -d ' ')
-part2=$(wc -c < "$work/esp/EFI/AIUEOS/Q38P2.BIN" | tr -d ' ')
+part0=$(wc -c < "$work/esp/EFI/AIUEOS/${prefix}0.BIN" | tr -d ' ')
+part1=$(wc -c < "$work/esp/EFI/AIUEOS/${prefix}1.BIN" | tr -d ' ')
+part2=0
+[ "$parts" = 2 ] || part2=$(wc -c < "$work/esp/EFI/AIUEOS/${prefix}2.BIN" | tr -d ' ')
 total=$((part0 + part1 + part2))
-fixture_sha=$(cat "$work/esp/EFI/AIUEOS/Q38P0.BIN" \
-                  "$work/esp/EFI/AIUEOS/Q38P1.BIN" \
-                  "$work/esp/EFI/AIUEOS/Q38P2.BIN" | shasum -a 256 | awk '{print $1}')
+fixture_sha=$(cat "$work/esp/EFI/AIUEOS/${prefix}"?.BIN | shasum -a 256 | awk '{print $1}')
 
 AIUEOS_OUT="$work/release" \
 AIUEOS_ALLOW_DIRTY_QUALIFICATION_BUILD=1 \
 AIUEOS_QWEN38_MODEL_HANDOFF=1 \
 AIUEOS_MODEL_TEST_FIXTURE=1 \
+AIUEOS_MODEL_PROFILE="$profile" \
 AIUEOS_MODEL_TOTAL_BYTES="$total" \
 AIUEOS_MODEL_PART0_BYTES="$part0" \
 AIUEOS_MODEL_PART1_BYTES="$part1" \
@@ -58,7 +66,7 @@ AIUEOS_PERSISTENT_BOOT=1 SOURCE_DATE_EPOCH=0 \
 cp "$work/release/aiueos-k16-native-pxe.efi" "$work/esp/EFI/BOOT/BOOTX64.EFI"
 cp "$OVMF_VARS" "$work/vars.fd"
 if [ "${AIUEOS_MODEL_CORRUPT:-0}" = 1 ]; then
-  python3 - "$work/esp/EFI/AIUEOS/Q38P1.BIN" <<'PY'
+  python3 - "$work/esp/EFI/AIUEOS/${prefix}1.BIN" <<'PY'
 from pathlib import Path
 import sys
 path = Path(sys.argv[1])
@@ -89,14 +97,14 @@ if [ "${AIUEOS_MODEL_CORRUPT:-0}" = 1 ]; then
     echo "error: corrupt split model reached the native kernel" >&2; exit 1
   fi
   printf '%s\n' \
-    "AIUEOS_QWEN38_MODEL_HANDOFF_QEMU_REFUSAL_OK reason=sha256-mismatch kernel-entry=none"
+    "AIUEOS_QWEN38_MODEL_HANDOFF_QEMU_REFUSAL_OK profile=$profile reason=sha256-mismatch kernel-entry=none"
   exit 0
 fi
 [ "$rc" -eq 124 ] || { echo "error: model handoff guest did not remain running (rc=$rc)" >&2; exit 1; }
 for marker in \
-  "AIUEOS_LOADER_MODEL_OK qwen38-27b gguf-v3 parts=3 sha256=verified" \
-  "AIUEOS_MODEL_HANDOFF_OK format=gguf-v3 parts=3 sha256=verified mapping=read-only-nx metrics=N/A" \
-  "AIUEOS_PHYSICAL_MODEL_HANDOFF_OK qwen38-27b runtime=not-yet-present internal-disk-writes=none"; do
+  "AIUEOS_LOADER_MODEL_OK $name gguf-v3 parts=$parts sha256=verified" \
+  "AIUEOS_MODEL_HANDOFF_OK format=gguf-v3 parts=$parts sha256=verified mapping=read-only-nx metrics=N/A" \
+  "AIUEOS_PHYSICAL_MODEL_HANDOFF_OK $name runtime=not-yet-present internal-disk-writes=none"; do
   grep -F "$marker" "$work/native.debug" >/dev/null || {
     echo "error: model handoff evidence is absent: $marker" >&2
     tail -80 "$work/native.debug" >&2 || true
@@ -107,4 +115,4 @@ if grep -F "AIUEOS_MODEL_HANDOFF_FAIL" "$work/native.debug" >/dev/null; then
   echo "error: kernel refused the admitted model" >&2; exit 1
 fi
 printf '%s\n' \
-  "AIUEOS_QWEN38_MODEL_HANDOFF_QEMU_OK source=split-fat32 mapping=read-only-nx generation=not-yet-present physical-k16=unverified"
+  "AIUEOS_QWEN38_MODEL_HANDOFF_QEMU_OK profile=$profile parts=$parts source=split-fat32 mapping=read-only-nx generation=not-yet-present physical-k16=unverified"
