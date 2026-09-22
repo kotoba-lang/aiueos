@@ -18,6 +18,13 @@
 #define AIUEOS_QWEN35_DATA_OFFSET 10996640ULL
 #define AIUEOS_QWEN35_ARTIFACT_BYTES 10934860704ULL
 #define AIUEOS_QWEN35_MAX_GGML_TYPE 31U
+/* One counter per ggml type slot. PTQ1_0 is type 143 and would run off a
+   table indexed by the type, so it counts in slot 31 -- the slot no Qwen3.8
+   type uses -- exactly as `qwen35-tensor-table-bind.kotoba`'s `type-slot`
+   does. The two must agree: the object counts the histogram it checks
+   against the contract, and this array is the C's copy of that histogram. */
+#define AIUEOS_QWEN35_TYPE_SLOT_COUNT 32U
+#define AIUEOS_QWEN35_PTQ1_0_TYPE_SLOT 31U
 
 enum aiueos_ggml_type {
   AIUEOS_GGML_F32 = 0,
@@ -34,7 +41,11 @@ enum aiueos_ggml_type {
   AIUEOS_GGML_IQ3_S = 21,
   AIUEOS_GGML_IQ2_S = 22,
   AIUEOS_GGML_IQ4_XS = 23,
-  AIUEOS_GGML_IQ1_M = 29
+  AIUEOS_GGML_IQ1_M = 29,
+  /* The Bonsai profile's two weight types (ADR-0222). BF16 is a 16-bit load;
+     PTQ1_0 is 128 elements in 28 bytes (qs[24] qh[2] d). */
+  AIUEOS_GGML_BF16 = 30,
+  AIUEOS_GGML_PTQ1_0 = 143
 };
 
 struct aiueos_qwen35_tensor {
@@ -118,7 +129,7 @@ struct aiueos_qwen35_model {
   uint32_t nextn_layer_count;
   uint32_t linear_layer_count;
   uint32_t full_layer_count;
-  uint32_t ggml_type_counts[AIUEOS_QWEN35_MAX_GGML_TYPE];
+  uint32_t ggml_type_counts[AIUEOS_QWEN35_TYPE_SLOT_COUNT];
   struct aiueos_qwen35_tensor token_embedding;
   struct aiueos_qwen35_tensor output_norm;
   struct aiueos_qwen35_tensor output;
@@ -140,12 +151,18 @@ int aiueos_qwen35_model_bind(struct aiueos_qwen35_model *model,
                              uint64_t accessible_bytes);
 
 /* The workspace -> struct translation of the Kotoba admission (ADR-0145), on
-   its own. `kv_plan` is the 128-byte workspace `kotoba_aiueos_qwen35_gguf_kv_scan`
-   filled and `tt_plan` the 28,160-byte one
-   `kotoba_aiueos_qwen35_tensor_table_bind` filled. It decides nothing the
-   objects have not already decided; it copies, and refuses rather than masks
-   when the workspace and this struct disagree. Declared unconditionally so the
-   host gate can call it, defined only in the delegating branch. */
+   its own. `kv_plan` is the workspace `kotoba_aiueos_qwen35_gguf_kv_scan`
+   filled -- 128 bytes under the Qwen3.8 profile, 144 under the Bonsai one --
+   and `tt_plan` the 28,160-byte one `kotoba_aiueos_qwen35_tensor_table_bind`
+   filled. It decides nothing the objects have not already decided; it copies,
+   and refuses rather than masks when the workspace and this struct disagree.
+
+   TWO PROFILES since ADR-0222: which one this is comes from bit 31 of kv_plan
+   slot 124, which the kv-scan object wrote, and everything that differs
+   between them -- record count, metadata count, artifact length, metadata end
+   -- is CHECKED against that profile rather than assumed. Declared
+   unconditionally so the host gate can call it, defined only in the
+   delegating branch. */
 int aiueos_qwen35_model_translate(const uint8_t *bytes,
                                   uint64_t accessible_bytes,
                                   uint64_t artifact_bytes,

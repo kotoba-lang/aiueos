@@ -643,9 +643,45 @@ int aiueos_qwen35_model_parse(const uint8_t *bytes,
    and compare the two structs field by field. Before that seam existed the
    translation had been read but never run (ADR-0145 left it that way). */
 
+/* The kv workspace is the profile's length and the object refuses any other:
+   128 bytes for Qwen3.8, 144 for Bonsai, whose last four words carry the
+   Hadamard sign array's file offset and count and `general.file_type`. The
+   buffer is the larger of the two; which length is PASSED is decided below by
+   asking the object, not by parsing the header here. */
 #define AIUEOS_QWEN35_KV_PLAN_BYTES 128U
+#define AIUEOS_BONSAI2_KV_PLAN_BYTES 144U
 #define AIUEOS_QWEN35_TT_PLAN_BYTES 28160U
 #define AIUEOS_QWEN35_TT_SLOT_BYTES 32U
+
+/* The two artifacts this file translates (ADR-0222). The profile is not
+   chosen here: `qwen35-gguf-header-valid.kotoba` ties the artifact length to
+   the header's two counts, `qwen35-gguf-kv-scan.kotoba` publishes which
+   profile it admitted in bit 31 of workspace slot 124, and
+   `qwen35-tensor-table-bind.kotoba` decides the same profile from
+   `metadata-end`. This table is how the C checks that those three and the
+   caller's artifact length are talking about ONE file: a Bonsai tensor table
+   walked under the Qwen3.8 record count is fifteen records of another model's
+   arithmetic, and it would not look wrong on the way past. */
+struct qwen35_profile {
+  uint64_t artifact_bytes;
+  uint64_t metadata_end;
+  uint32_t tensor_count;
+  uint32_t metadata_count;
+};
+
+#define AIUEOS_QWEN35_PROFILE_COUNT 2U
+
+static const struct qwen35_profile
+    qwen35_profiles[AIUEOS_QWEN35_PROFILE_COUNT] = {
+  /* 0 -- Qwen3.8-27B, contracts/qwen38-qwen35-runtime-v1.edn */
+  { AIUEOS_QWEN35_ARTIFACT_BYTES, 10945379ULL,
+    AIUEOS_QWEN35_TENSOR_COUNT, AIUEOS_QWEN35_METADATA_COUNT },
+  /* 1 -- Ternary Bonsai 2 27B PTQ1_0, contracts/bonsai2-qwen35-runtime-v1.edn.
+     The metadata count is here and not in the workspace because no workspace
+     slot carries it: the header object is what checked it (-8), against this
+     same artifact length. */
+  { 5946648928ULL, 11070652ULL, 851U, 49U }
+};
 
 /* The last verdict an object handed back, and which object handed it back.
    Diagnostics only: nothing reads these to decide anything. They exist because
@@ -722,11 +758,39 @@ int aiueos_qwen35_model_translate(const uint8_t *bytes,
   for (uint64_t i = 0; i < sizeof(*model); i++) clear[i] = 0;
   uint64_t metadata_end = plan_u32(qwen35_kv_plan, 0);
 
+  /* Bit 31 of the required-key mask is the profile the kv-scan object
+     admitted: it sets that bit before the walk under profile 1 and never
+     under profile 0, so the bit is the object's answer and not a guess made
+     from the numbers below it. */
+  uint32_t profile = plan_u32(qwen35_kv_plan, 124) >> 31;
+  const struct qwen35_profile *expected = &qwen35_profiles[profile];
+  uint32_t tensor_count = plan_u32(qwen35_tt_plan, 0);
+
+  /* The three refusals that say the two workspaces and the caller are not
+     describing one artifact. Each is a disagreement between the objects and
+     this struct, which is what this function refuses on; none of them can be
+     repaired by continuing with one of the two answers. */
+  if (tensor_count != expected->tensor_count) {
+    aiueos_qwen35_admission_verdict = -106;
+    aiueos_qwen35_admission_stage = 4;
+    return 0;
+  }
+  if (artifact_bytes != expected->artifact_bytes) {
+    aiueos_qwen35_admission_verdict = -107;
+    aiueos_qwen35_admission_stage = 4;
+    return 0;
+  }
+  if (metadata_end != expected->metadata_end) {
+    aiueos_qwen35_admission_verdict = -108;
+    aiueos_qwen35_admission_stage = 4;
+    return 0;
+  }
+
   model->bytes = bytes;
   model->accessible_bytes = accessible_bytes;
   model->artifact_bytes = artifact_bytes;
-  model->tensor_count = AIUEOS_QWEN35_TENSOR_COUNT;
-  model->metadata_count = AIUEOS_QWEN35_METADATA_COUNT;
+  model->tensor_count = tensor_count;
+  model->metadata_count = expected->metadata_count;
   model->metadata_end = metadata_end;
   model->tensor_info_end = plan_u64(qwen35_tt_plan, 16);
   model->data_offset = plan_u64(qwen35_tt_plan, 4);
@@ -749,14 +813,53 @@ int aiueos_qwen35_model_translate(const uint8_t *bytes,
     model->rope_sections[section] = plan_u32(qwen35_kv_plan, 64 + 4 * section);
   model->nextn_layer_count = plan_u32(qwen35_kv_plan, 80);
   model->vocab_size = plan_u32(qwen35_kv_plan, 84);
+  /* The trunk is every block that is not the MTP head: 65 - 1 under Qwen3.8,
+     64 - 0 under Bonsai, both of them 64. It is DERIVED from the two words
+     the kv-scan object published rather than written as 64, so a third
+     artifact with another block count is refused here instead of silently
+     losing its last layers -- `layers[]` holds 64 trunk layers and one head
+     and cannot be told to hold more. */
+  if (model->block_count < model->nextn_layer_count ||
+      model->block_count - model->nextn_layer_count !=
+        AIUEOS_QWEN35_TRUNK_LAYER_COUNT) {
+    aiueos_qwen35_admission_verdict = -109;
+    aiueos_qwen35_admission_stage = 4;
+    return 0;
+  }
   model->trunk_layer_count = AIUEOS_QWEN35_TRUNK_LAYER_COUNT;
   model->linear_layer_count = plan_u32(qwen35_tt_plan, 24);
   model->full_layer_count = plan_u32(qwen35_tt_plan, 28);
-  for (uint32_t layer = 0; layer < AIUEOS_QWEN35_TRUNK_LAYER_COUNT; layer++)
-    model->layers[layer].linear_attention = ((layer + 1U) % 4U) != 0;
+  /* Every `full_attention_interval`-th layer is full attention and the rest
+     are gated DeltaNet. The interval is the metadata value the kv-scan object
+     read (4 in both artifacts), not a 4 written here: writing 4 would make
+     the schedule of one file a property of the translation. */
+  if (model->full_attention_interval == 0) {
+    aiueos_qwen35_admission_verdict = -110;
+    aiueos_qwen35_admission_stage = 4;
+    return 0;
+  }
+  uint32_t linear_derived = 0;
+  for (uint32_t layer = 0; layer < AIUEOS_QWEN35_TRUNK_LAYER_COUNT; layer++) {
+    uint32_t linear =
+      ((layer + 1U) % model->full_attention_interval) != 0 ? 1U : 0U;
+    model->layers[layer].linear_attention = linear;
+    linear_derived += linear;
+  }
   model->layers[AIUEOS_QWEN35_TRUNK_LAYER_COUNT].linear_attention = 0;
+  /* The object counted the same schedule a different way -- from the role
+     mask each layer actually carried -- so the two counts disagreeing means
+     the roles landed in layers this schedule calls something else, and the
+     union in `struct aiueos_qwen35_layer` would then be read as the wrong
+     arm. That is the one disagreement whose damage is silent. */
+  if (linear_derived != model->linear_layer_count ||
+      model->linear_layer_count + model->full_layer_count !=
+        AIUEOS_QWEN35_TRUNK_LAYER_COUNT) {
+    aiueos_qwen35_admission_verdict = -111;
+    aiueos_qwen35_admission_stage = 4;
+    return 0;
+  }
 
-  for (uint64_t index = 0; index < AIUEOS_QWEN35_TENSOR_COUNT; index++) {
+  for (uint64_t index = 0; index < model->tensor_count; index++) {
     const uint8_t *slot = qwen35_tt_plan + 32 +
                           index * AIUEOS_QWEN35_TT_SLOT_BYTES;
     uint32_t role = plan_u32(slot, 0);
@@ -782,23 +885,37 @@ int aiueos_qwen35_model_translate(const uint8_t *bytes,
       aiueos_qwen35_admission_stage = 4;
       return 0;
     }
-    /* Refuse rather than mask. The object already refuses a type at or above
-       the table bound (-13), so this cannot fire; but `% MAX` would WRAP type
-       31 onto the F32 counter and make a corrupt table look like a valid one,
-       which is the shape a bounds guard must not have. */
-    if (plan_u32(slot, 8) >= AIUEOS_QWEN35_MAX_GGML_TYPE) {
+    /* Refuse rather than mask. The object already refuses a type it has no
+       block layout for (-13), so this cannot fire; but `% MAX` would WRAP
+       type 31 onto the F32 counter and make a corrupt table look like a valid
+       one, which is the shape a bounds guard must not have.
+
+       PTQ1_0 is the exception the Bonsai profile brings: ggml type 143, which
+       is a real type and not a corrupt word, and which counts in slot 31 --
+       the slot no Qwen3.8 type uses -- because a table indexed by 143 would
+       be 143 words of counters for two. `type-slot` in
+       qwen35-tensor-table-bind.kotoba does the same thing with the same two
+       numbers; the histogram the object checked against the contract and the
+       one below have to be the same histogram. */
+    uint32_t type = plan_u32(slot, 8);
+    if (type != AIUEOS_GGML_PTQ1_0 && type >= AIUEOS_QWEN35_MAX_GGML_TYPE) {
       aiueos_qwen35_admission_verdict = -105;
       aiueos_qwen35_admission_stage = 4;
       return 0;
     }
+    uint32_t type_slot = type == AIUEOS_GGML_PTQ1_0
+      ? AIUEOS_QWEN35_PTQ1_0_TYPE_SLOT : type;
     tensor->dimensions[0] = plan_u32(slot, 12);
     tensor->dimensions[1] = plan_u32(slot, 16);
     tensor->dimension_count = tensor->dimensions[1] ? 2U : 1U;
-    tensor->type = plan_u32(slot, 8);
+    /* The type stays the artifact's own 143 here. The counter slot is a
+       counting detail; a dequantiser handed this tensor must see the type
+       the file gave it. */
+    tensor->type = type;
     tensor->offset = file_offset - model->data_offset;
     tensor->storage_bytes = plan_u32(slot, 28);
     tensor->data = 0;
-    model->ggml_type_counts[tensor->type]++;
+    model->ggml_type_counts[type_slot]++;
   }
   return 1;
 }
@@ -818,7 +935,7 @@ extern int64_t kotoba_aiueos_qwen35_tensor_table_bind(uint64_t table,
                                                       uint64_t plan,
                                                       uint64_t plan_length);
 
-static uint8_t qwen35_kv_plan[AIUEOS_QWEN35_KV_PLAN_BYTES];
+static uint8_t qwen35_kv_plan[AIUEOS_BONSAI2_KV_PLAN_BYTES];
 /* `.high_bss` since ADR-0221 (low-region budget; main.c zeroes the section at entry). */
 static uint8_t __attribute__((section(".high_bss"), aligned(64))) qwen35_tt_plan[AIUEOS_QWEN35_TT_PLAN_BYTES];
 
@@ -829,7 +946,7 @@ int aiueos_qwen35_model_parse(const uint8_t *bytes,
   aiueos_qwen35_admission_verdict = 0;
   aiueos_qwen35_admission_stage = 0;
   if (!bytes || !model) return 0;
-  for (uint64_t i = 0; i < AIUEOS_QWEN35_KV_PLAN_BYTES; i++)
+  for (uint64_t i = 0; i < AIUEOS_BONSAI2_KV_PLAN_BYTES; i++)
     qwen35_kv_plan[i] = 0;
   for (uint64_t i = 0; i < AIUEOS_QWEN35_TT_PLAN_BYTES; i++)
     qwen35_tt_plan[i] = 0;
@@ -842,9 +959,20 @@ int aiueos_qwen35_model_parse(const uint8_t *bytes,
     aiueos_qwen35_admission_stage = 1;
     return 0;
   }
+  /* Which workspace length this artifact wants is the object's answer and not
+     a header field read here. Hand it the Qwen3.8 length first; -3 is "the
+     workspace is not this profile's length", and when the length passed IS
+     one of the two the object admits, -3 can only mean the OTHER profile. The
+     length is checked before anything is written, so the retry starts on a
+     workspace nothing has touched. A file that is neither refuses twice and
+     the second verdict is the one reported. */
   verdict = kotoba_aiueos_qwen35_gguf_kv_scan(
     base, accessible_bytes, (uint64_t)(uintptr_t)qwen35_kv_plan,
     AIUEOS_QWEN35_KV_PLAN_BYTES);
+  if (verdict == -3)
+    verdict = kotoba_aiueos_qwen35_gguf_kv_scan(
+      base, accessible_bytes, (uint64_t)(uintptr_t)qwen35_kv_plan,
+      AIUEOS_BONSAI2_KV_PLAN_BYTES);
   if (verdict != 0) {
     aiueos_qwen35_admission_verdict = verdict;
     aiueos_qwen35_admission_stage = 2;
@@ -900,6 +1028,14 @@ static int bind_common(struct aiueos_qwen35_model *model,
          bind_tensor(model, &layer->ffn_up);
 }
 
+/* STILL QWEN3.8-ONLY, and it fails closed (ADR-0222). Two clauses below are
+   about that artifact and not about binding: the data offset is compared with
+   Qwen3.8's 10,996,640, so Bonsai's 11,120,992 is refused here, and the tail
+   binds the four MTP tensors, which a 64-block artifact does not have and
+   whose zero `dimension_count` `bind_tensor` refuses. A Bonsai artifact
+   therefore translates and then does not bind -- it returns 0, it does not
+   fabricate a pointer. Making it bind is the floor after this one; it needs
+   the mapped 5.9 GB artifact to be graded, which the translation did not. */
 int aiueos_qwen35_model_bind(struct aiueos_qwen35_model *model,
                              const uint8_t *bytes,
                              uint64_t accessible_bytes) {
