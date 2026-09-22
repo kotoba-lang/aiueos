@@ -2,8 +2,10 @@
 
 - Status: accepted (stage A is landing item by item — the PTQ1_0 dequant,
   the Hadamard object, the two-profile admission objects, the graph
-  contract and the C translation are in the tree and graded; nothing in
-  stage B or later has executed, and the Bonsai profile has not booted)
+  contract and the C translation are in the tree and graded; stage B item 6's
+  first step — norm + activation live on the objects — is in the tree and
+  parity-checked on a CPU, but no forward pass has run through it on any
+  machine, and the Bonsai profile has not generated a token)
 - Date: 2026-09-22
 - Owner question: 「実際に amu native compiler, binary のみで書かれた aiueos の上で
   murakumo inference が動くようにするには? inference は ternary bonsai 2 27b ptq1
@@ -357,6 +359,47 @@ is **two tensor codecs and one basis change** — nothing structural.
 
 6. **The remaining stages of ADR-0220's cutover, in its order:**
    norm + activation → attention → recurrent-step (gated delta net) → rope.
+
+   **Norm + activation: LIVE on the objects.** In `kernel/qwen35_infer.c`
+   the forward pass's `rms_norm` (4 call sites), `rms_norm_heads_weighted`
+   (q/k norm) and `l2_norm_heads` call `aiueos-qwen35-norm` modes 0/2/1;
+   the FFN SwiGLU, the conv SiLU, the β sigmoid, the output-gate SiLU and
+   the decay `exp(a·softplus(α+dt))` call `aiueos-qwen35-activation` modes
+   4/0/1/0/2+3, each once over the whole vector. The C is kept as
+   `*_c` under `AIUEOS_QWEN35_KOTOBA_PARITY == 2 || AIUEOS_QWEN35_C_REFERENCE_NORM`;
+   the flag is set for the host smokes and parity profiles 1, 3 and 4 (which
+   do not link the two objects). Still C, by stage: the gated RMS reduction
+   of the linear-attention output (no norm mode matches it bit for bit — it
+   has no finiteness refusals and no rescaled fallback), the attention
+   gate sigmoid and softmax `exp` (attention stage), rope's `exp` (rope stage).
+   Reproduce: `AIUEOS_QWEN35_KOTOBA_PARITY=2 smoke-qemu-uefi.sh` →
+   `QWEN-PARITY activation ok` / `norm ok` in `build/aiueos/evidence-all.log`
+   (the smoke's exit does not grep them); the harness now calls the live
+   wrappers (`activate`, `rms_norm`, `l2_norm_heads`,
+   `rms_norm_heads_weighted`), so the argument order checked is the
+   forward pass's. Seen red: input/output swapped in the live `rms_norm`
+   → `QWEN-PARITY norm mismatch`, activation still `ok`, exit 1. Profile 1
+   still `dequant/dot/matvec ok`; `bonsai-qemu-admission` (model-handoff
+   image, now linking the two objects) → `AIUEOS_BONSAI_ADMISSION_QEMU_OK`;
+   `smoke-qwen35-decode-math.sh` → `AIUEOS_QWEN35_DECODE_MATH_OK`.
+   **Not measured**: a forward pass through these calls (QEMU has no model
+   path; the parity vectors are 128 wide, the live widths are 5,120 /
+   10,240 / 17,408 — inside both objects' admitted ceilings and fuel tiers,
+   but never executed at that width); `smoke-qwen35-first-token-model.sh`
+   (needs the real GGUF, not run).
+
+   **The production node image does not link, and did not before this
+   step.** `build-qwen38-murakumo-node-pxe.sh`'s flags
+   (`AIUEOS_PHYSICAL_NETWORK_QUALIFICATION`, `…_DIRECT_HTTPS_…`,
+   `AIUEOS_MURAKUMO_DEVICE_RESULT`, `AIUEOS_QWEN38_MODEL_HANDOFF`,
+   `AIUEOS_PERSISTENT_BOOT`) → `ld.lld: low kernel/user layout overlaps
+   process-private aperture` at origin/main 231fe0b too. Measured by
+   relaxing the ASSERT in a scratch copy of `linker.ld` and reading the
+   section headers: `aiueos_low_end` is 0x1f8000 at 231fe0b (16 KiB over
+   0x1f4000) and 0x1fa000 with this step (24 KiB over; `.text` +9,776 B).
+   `.bss` is 215 KiB of the low region — the ADR-0221 remedy (scratch to
+   `.high_bss`) or a third loader segment is what closes it; until then
+   the K16 image in item 8 cannot be built.
    Rope's C uses x87 `fsincos`, Amu emits no x87, and `f64-sin-bounded`
    exists in the language; the Kotoba rope will not be bit-identical to
    `fsincos`, so for that stage the reference becomes the object and the
