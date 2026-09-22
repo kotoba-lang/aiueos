@@ -84,11 +84,20 @@ is **two tensor codecs and one basis change** — nothing structural.
    tier's 119, so no kotoba-native row moves. Both objects recompile with the
    pinned amu, byte-identical twice, ABI verifier green, no slot-144 host
    call; `qwen35-dequant-row.o` 39,896 → 42,512 and `qwen35-matvec.o`
-   44,576 → 47,192 bytes — **5,232 bytes of the ~24 KiB low-region headroom
-   ADR-0221 left**, to be re-measured by the next QEMU boot. There is no C
-   twin of either type, so the in-kernel `QWEN-PARITY` self-test cannot
-   grade them; until a Bonsai boot the oracle vectors are their whole
-   evidence.
+   44,576 → 47,192 bytes — 5,232 bytes of the low-region headroom ADR-0221
+   left. **Re-measured by a QEMU boot 2026-09-22 at `624a01d`**
+   (`AIUEOS_QWEN35_KOTOBA_PARITY=1 smoke-qemu-uefi.sh`, exit 0,
+   `IMAGE-FRESH artifacts=3`): the parity profile links the grown objects,
+   `QWEN-PARITY dequant ok` / `dot ok` / `matvec ok` over the fifteen
+   C-twin types, `AIUEOS_UEFI_SMOKE_OK`, 76 distinct `_OK` markers.
+   `KERNEL.ELF` 635,528 bytes; its lowest PT_LOAD segments end at 0x186fd2 /
+   0x195fac / 0x1cc758 / 0x1cd14c against the 0x1f4000 limit (159,412 bytes
+   under it at the tightest), the 2.7 MB `.high_bss` above. That is the
+   `--gc-sections` parity image, not the production profile's two-segment
+   loader, so the production headroom is still ADR-0221's number minus
+   5,232 until that profile boots. There is no C twin of PTQ1_0 or BF16, so
+   the self-test cannot grade them; until a Bonsai boot the oracle vectors
+   are their whole evidence.
 2. **The signed Hadamard basis change as an object.** Normalized 1024-wide
    Sylvester blocks, explicit signs from GGUF metadata, inverse after the
    embedding, and the Qwen3.8 recurrent `ssm_out` reorder from tiled
