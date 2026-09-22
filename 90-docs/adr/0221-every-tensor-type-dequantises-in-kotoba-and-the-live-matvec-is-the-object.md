@@ -99,8 +99,9 @@ object's token rate.
 - No K16 run. The object's token rate is unmeasured; the C reference stays
   until it is. Expect it lower: the object is a scalar four-accumulator loop
   where the C was AVX2.
-- The other stages (norm/activation, attention, recurrent) remain
-  parity-only; `rope_heads` still needs a sine/cosine decision (ADR-0220).
+- Attention and recurrent remain parity-only (norm/activation went live
+  afterwards, ADR-0222 stage B item 6); `rope_heads` still needs a
+  sine/cosine decision (ADR-0220).
 - `qwen35_quant.c` is still compiled: it is the reference and its
   `aiueos_qwen35_quant_row_bytes` table is the marshalling's row arithmetic.
 - The amu checkout at `orgs/kotoba-lang/amu` carries a local commit that is

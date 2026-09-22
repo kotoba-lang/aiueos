@@ -511,9 +511,26 @@ static int matvec(const struct aiueos_qwen35_tensor *tensor,
                       dequantized);
 }
 
-static int rms_norm(const float *input,
-                    const struct aiueos_qwen35_tensor *weights,
-                    uint64_t count, float *output) {
+static const float *f32_vector(const struct aiueos_qwen35_tensor *tensor,
+                               uint64_t count) {
+  if (!tensor || !tensor->data || tensor->type != AIUEOS_GGML_F32 ||
+      tensor->dimension_count != 1 || tensor->dimensions[0] != count ||
+      tensor->storage_bytes != count * sizeof(float)) return 0;
+  return (const float *)(const void *)tensor->data;
+}
+
+/* The three normalisations and the elementwise activations, KEPT AS THE
+   REFERENCE and no longer the live path (ADR-0220 cutover stage 2): parity
+   profile 2 (AIUEOS_QWEN35_KOTOBA_PARITY=2) compares `aiueos-qwen35-norm` and
+   `aiueos-qwen35-activation` against them on the CPU, and
+   `-DAIUEOS_QWEN35_C_REFERENCE_NORM` makes them the forward pass again for
+   the builds that cannot link those two objects: the host smokes and parity
+   profiles 1, 3 and 4 (which link only their own stage's objects to fit the
+   low region, build-uefi.sh). */
+#if AIUEOS_QWEN35_KOTOBA_PARITY == 2 || defined(AIUEOS_QWEN35_C_REFERENCE_NORM)
+static int rms_norm_c(const float *input,
+                      const struct aiueos_qwen35_tensor *weights,
+                      uint64_t count, float *output) {
   if (!weights || !weights->data || weights->type != AIUEOS_GGML_F32 ||
       weights->dimension_count != 1 || weights->dimensions[0] != count ||
       weights->storage_bytes != count * sizeof(float)) return 0;
@@ -528,17 +545,9 @@ static int rms_norm(const float *input,
   return 1;
 }
 
-static const float *f32_vector(const struct aiueos_qwen35_tensor *tensor,
-                               uint64_t count) {
-  if (!tensor || !tensor->data || tensor->type != AIUEOS_GGML_F32 ||
-      tensor->dimension_count != 1 || tensor->dimensions[0] != count ||
-      tensor->storage_bytes != count * sizeof(float)) return 0;
-  return (const float *)(const void *)tensor->data;
-}
-
-static int rms_norm_heads_weighted(float *values, uint32_t heads,
-                                   uint32_t width,
-                                   const struct aiueos_qwen35_tensor *tensor) {
+static int rms_norm_heads_weighted_c(float *values, uint32_t heads,
+                                     uint32_t width,
+                                     const struct aiueos_qwen35_tensor *tensor) {
   const float *weights = f32_vector(tensor, width);
   if (!weights) return 0;
   for (uint32_t head = 0; head < heads; head++) {
@@ -578,7 +587,7 @@ static int rms_norm_heads_weighted(float *values, uint32_t heads,
   return 1;
 }
 
-static void l2_norm_heads(float *values, uint32_t heads, uint32_t width) {
+static void l2_norm_heads_c(float *values, uint32_t heads, uint32_t width) {
   for (uint32_t head = 0; head < heads; head++) {
     float *vector = values + head * width;
     double sum = 0.0;
@@ -588,6 +597,95 @@ static void l2_norm_heads(float *values, uint32_t heads, uint32_t width) {
     for (uint32_t index = 0; index < width; index++) vector[index] *= scale;
   }
 }
+
+#endif
+
+/* The activation modes of `aiueos-qwen35-activation`, in its own numbering. */
+#define QWEN_ACT_SILU 0U
+#define QWEN_ACT_SIGMOID 1U
+#define QWEN_ACT_SOFTPLUS 2U
+#define QWEN_ACT_EXP 3U
+#define QWEN_ACT_SILU_GATE 4U
+
+#if AIUEOS_QWEN35_KOTOBA_PARITY == 2 || !defined(AIUEOS_QWEN35_C_REFERENCE_NORM)
+extern uint64_t kotoba_aiueos_qwen35_activation(uint64_t mode, float *a,
+                                                const float *b, uint64_t count,
+                                                uint64_t spare);
+/* Every argument as a word: mode 0 reads `b` as a POINTER (the weights) while
+   modes 1 and 2 read it as a head COUNT, so a typed declaration would have to
+   lie about one of them. */
+extern uint64_t kotoba_aiueos_qwen35_norm(uint64_t mode, uint64_t a, uint64_t b,
+                                          uint64_t c, uint64_t d);
+#endif
+
+#ifdef AIUEOS_QWEN35_C_REFERENCE_NORM
+static int rms_norm(const float *input,
+                    const struct aiueos_qwen35_tensor *weights,
+                    uint64_t count, float *output) {
+  return rms_norm_c(input, weights, count, output);
+}
+
+static int rms_norm_heads_weighted(float *values, uint32_t heads,
+                                   uint32_t width,
+                                   const struct aiueos_qwen35_tensor *tensor) {
+  return rms_norm_heads_weighted_c(values, heads, width, tensor);
+}
+
+static int l2_norm_heads(float *values, uint32_t heads, uint32_t width) {
+  l2_norm_heads_c(values, heads, width);
+  return 1;
+}
+
+static int activate(uint32_t mode, float *values, const float *gate,
+                    uint64_t count) {
+  for (uint64_t index = 0; index < count; index++) {
+    float x = values[index];
+    values[index] =
+      mode == QWEN_ACT_SILU ? silu(x) :
+      mode == QWEN_ACT_SIGMOID ? sigmoid(x) :
+      mode == QWEN_ACT_SOFTPLUS ? softplus(x) :
+      mode == QWEN_ACT_EXP ? local_exp(x) :
+                             silu(x) * gate[index];
+  }
+  return 1;
+}
+#else
+/* THE LIVE NORMS AND ACTIVATIONS ARE THE KOTOBA OBJECTS (ADR-0220 cutover
+   stage 2). Both take raw addresses and write in place or into the output
+   the caller names; zero is success and every other value is a refusal the
+   caller turns into this file's failure stage, never ignores. What stays
+   here is the tensor's shape check -- the object is handed a weight
+   pointer, not a GGUF tensor. */
+static int rms_norm(const float *input,
+                    const struct aiueos_qwen35_tensor *weights,
+                    uint64_t count, float *output) {
+  const float *weight = f32_vector(weights, count);
+  if (!weight) return 0;
+  return kotoba_aiueos_qwen35_norm(0, (uint64_t)(uintptr_t)input,
+                                   (uint64_t)(uintptr_t)weight, count,
+                                   (uint64_t)(uintptr_t)output) == 0;
+}
+
+static int rms_norm_heads_weighted(float *values, uint32_t heads,
+                                   uint32_t width,
+                                   const struct aiueos_qwen35_tensor *tensor) {
+  const float *weights = f32_vector(tensor, width);
+  if (!weights) return 0;
+  return kotoba_aiueos_qwen35_norm(2, (uint64_t)(uintptr_t)values, heads,
+                                   width,
+                                   (uint64_t)(uintptr_t)weights) == 0;
+}
+
+static int l2_norm_heads(float *values, uint32_t heads, uint32_t width) {
+  return kotoba_aiueos_qwen35_norm(1, (uint64_t)(uintptr_t)values, heads,
+                                   width, 0) == 0;
+}
+
+static int activate(uint32_t mode, float *values, const float *gate,
+                    uint64_t count) {
+  return kotoba_aiueos_qwen35_activation(mode, values, gate, count, 0) == 0;
+}
+#endif
 
 static void rope_heads(float *values, uint32_t heads, uint32_t position) {
   if (!position) return;
@@ -646,10 +744,9 @@ static void recurrent_step(float *head_state,
 static int ffn(const struct aiueos_qwen35_layer *layer) {
   if (!rms_norm(state, &layer->post_attention_norm, EMBED, normalized) ||
       !matvec(&layer->ffn_gate, normalized, EMBED, scratch_a, FFN) ||
-      !matvec(&layer->ffn_up, normalized, EMBED, scratch_b, FFN))
+      !matvec(&layer->ffn_up, normalized, EMBED, scratch_b, FFN) ||
+      !activate(QWEN_ACT_SILU_GATE, scratch_a, scratch_b, FFN))
     return 0;
-  for (uint32_t index = 0; index < FFN; index++)
-    scratch_a[index] = silu(scratch_a[index]) * scratch_b[index];
   if (!matvec(&layer->ffn_down, scratch_a, FFN, scratch_b, EMBED)) return 0;
   for (uint32_t index = 0; index < EMBED; index++) state[index] += scratch_b[index];
   return 1;
@@ -709,11 +806,18 @@ static int linear_attention(const struct aiueos_qwen35_layer *layer,
       history[1] = history[2];
       history[2] = current;
     }
-    scratch_a[channel] = silu(mixed);
+    scratch_a[channel] = mixed;
   }
+  if (!activate(QWEN_ACT_SILU, scratch_a, 0, LINEAR_QKV))
+    return fail_at(AIUEOS_QWEN35_FAILURE_LINEAR_CONV);
 
-  l2_norm_heads(scratch_a, 16, LINEAR_HEAD_DIM);
-  l2_norm_heads(scratch_a + 2048, 16, LINEAR_HEAD_DIM);
+  if (!l2_norm_heads(scratch_a, 16, LINEAR_HEAD_DIM) ||
+      !l2_norm_heads(scratch_a + 2048, 16, LINEAR_HEAD_DIM))
+    return fail_at(AIUEOS_QWEN35_FAILURE_LINEAR_CONV);
+  /* beta_values holds sigmoid(beta) from here on: both branches below read
+     it only through the sigmoid, which is now one call over the 48 heads. */
+  if (!activate(QWEN_ACT_SIGMOID, beta_values, 0, 48))
+    return fail_at(AIUEOS_QWEN35_FAILURE_LINEAR_DECAY);
 
   if (!decode) {
     for (uint32_t head = 0; head < 48; head++) {
@@ -722,7 +826,7 @@ static int linear_attention(const struct aiueos_qwen35_layer *layer,
           dot(scratch_a + key_head * LINEAR_HEAD_DIM,
               scratch_a + 2048U + key_head * LINEAR_HEAD_DIM,
               LINEAR_HEAD_DIM) * INV_SQRT_LINEAR_HEAD_DIM;
-      coefficient *= sigmoid(beta_values[head]);
+      coefficient *= beta_values[head];
       for (uint32_t index = 0; index < LINEAR_HEAD_DIM; index++)
         scratch_c[head * LINEAR_HEAD_DIM + index] =
             scratch_a[4096U + head * LINEAR_HEAD_DIM + index] * coefficient;
@@ -733,6 +837,24 @@ static int linear_attention(const struct aiueos_qwen35_layer *layer,
     if (!a || !dt) return fail_at(AIUEOS_QWEN35_FAILURE_LINEAR_DECAY);
     float *layer_state = decode->recurrent +
       (uint64_t)linear_slot * 48U * LINEAR_HEAD_DIM * LINEAR_HEAD_DIM;
+    /* decay = exp(a * softplus(alpha + dt_bias)), per head, as two object
+       calls over the 48 heads with the product between them. ap_dequantized
+       holds the alpha projection (written above, read nowhere else) and is
+       turned into the decay in place. Every transition is checked finite
+       before any exponential is taken, as the per-head C did. */
+    if (decode->position) {
+      for (uint32_t head = 0; head < 48; head++)
+        ap_dequantized[head] = ap_dequantized[head] + dt[head];
+      if (!activate(QWEN_ACT_SOFTPLUS, ap_dequantized, 0, 48))
+        return fail_at(AIUEOS_QWEN35_FAILURE_LINEAR_DECAY);
+      for (uint32_t head = 0; head < 48; head++) {
+        ap_dequantized[head] = a[head] * ap_dequantized[head];
+        if (!finite_float(ap_dequantized[head]))
+          return fail_at(AIUEOS_QWEN35_FAILURE_LINEAR_DECAY);
+      }
+      if (!activate(QWEN_ACT_EXP, ap_dequantized, 0, 48))
+        return fail_at(AIUEOS_QWEN35_FAILURE_LINEAR_DECAY);
+    }
     for (uint32_t head = 0; head < 48; head++) {
       uint32_t key_head = head / LINEAR_KV_GROUP_SIZE;
       const float *query = scratch_a + key_head * LINEAR_HEAD_DIM;
@@ -740,12 +862,8 @@ static int linear_attention(const struct aiueos_qwen35_layer *layer,
       const float *value = scratch_a + 4096U + head * LINEAR_HEAD_DIM;
       float *head_state = layer_state +
         (uint64_t)head * LINEAR_HEAD_DIM * LINEAR_HEAD_DIM;
-      float transition = decode->position ?
-        a[head] * softplus(ap_dequantized[head] + dt[head]) : 0.0f;
-      if (!finite_float(transition))
-        return fail_at(AIUEOS_QWEN35_FAILURE_LINEAR_DECAY);
-      float decay = decode->position ? local_exp(transition) : 1.0f;
-      float beta = sigmoid(beta_values[head]);
+      float decay = decode->position ? ap_dequantized[head] : 1.0f;
+      float beta = beta_values[head];
       if (!finite_float(decay) || !finite_float(beta))
         return fail_at(AIUEOS_QWEN35_FAILURE_LINEAR_DECAY);
 
@@ -777,6 +895,12 @@ static int linear_attention(const struct aiueos_qwen35_layer *layer,
       linear->norm.dimensions[0] != LINEAR_HEAD_DIM)
     return fail_at(AIUEOS_QWEN35_FAILURE_LINEAR_OUTPUT);
   const float *weights = (const float *)(const void *)linear->norm.data;
+  /* The output gate: silu(gate) once over the inner width, then the gated
+     RMS below multiplies by it. The reduction itself stays C: it is not
+     `rms_norm_heads_weighted` (no finiteness refusals, no rescaled
+     fallback), so no mode of the norm object answers it bit for bit. */
+  if (!activate(QWEN_ACT_SILU, scratch_b, 0, LINEAR_INNER))
+    return fail_at(AIUEOS_QWEN35_FAILURE_LINEAR_OUTPUT);
   for (uint32_t head = 0; head < 48; head++) {
     float *vector = scratch_c + head * LINEAR_HEAD_DIM;
     double sum = 0.0;
@@ -787,7 +911,7 @@ static int linear_attention(const struct aiueos_qwen35_layer *layer,
     for (uint32_t index = 0; index < LINEAR_HEAD_DIM; index++) {
       uint32_t position = head * LINEAR_HEAD_DIM + index;
       vector[index] = vector[index] * scale * weights[index] *
-                      silu(scratch_b[position]);
+                      scratch_b[position];
     }
   }
 
@@ -1507,15 +1631,6 @@ static int qwen_parity_matvec(uint32_t type) {
    branches. */
 #define QWEN_PARITY_ACT 128U
 
-extern uint64_t kotoba_aiueos_qwen35_activation(uint64_t mode, float *a,
-                                                const float *b, uint64_t count,
-                                                uint64_t spare);
-/* Every argument as a word: mode 0 reads `b` as a POINTER (the weights) while
-   modes 1 and 2 read it as a head COUNT, so a typed declaration would have to
-   lie about one of them. */
-extern uint64_t kotoba_aiueos_qwen35_norm(uint64_t mode, uint64_t a, uint64_t b,
-                                          uint64_t c, uint64_t d);
-
 static float __attribute__((section(".high_bss"))) qwen_parity_act_in[QWEN_PARITY_ACT];
 static float __attribute__((section(".high_bss"))) qwen_parity_act_ref[QWEN_PARITY_ACT];
 static float __attribute__((section(".high_bss"))) qwen_parity_act_obj[QWEN_PARITY_ACT];
@@ -1544,9 +1659,10 @@ static int qwen_parity_activation(void) {
         mode == 3U ? local_exp(x) :
                      silu(x) * qwen_parity_act_gate[index];
     }
-    if (kotoba_aiueos_qwen35_activation(mode, qwen_parity_act_obj,
-                                        qwen_parity_act_gate,
-                                        QWEN_PARITY_ACT, 0) != 0)
+    /* Through `activate`, the forward pass's own entry to the object, so
+       what is compared is the live call and not a second one beside it. */
+    if (!activate(mode, qwen_parity_act_obj, qwen_parity_act_gate,
+                  QWEN_PARITY_ACT))
       return 0;
     for (index = 0; index < QWEN_PARITY_ACT; index++)
       if (qwen_parity_bits(qwen_parity_act_ref[index]) !=
@@ -1597,20 +1713,21 @@ static int qwen_parity_norm(void) {
   weights.data = (const uint8_t *)(const void *)qwen_parity_norm_w;
 
   /* mode 0: rms_norm, out of place. */
-  if (!rms_norm(qwen_parity_norm_in, &weights, QWEN_PARITY_NORM,
+  if (!rms_norm_c(qwen_parity_norm_in, &weights, QWEN_PARITY_NORM,
                 qwen_parity_norm_ref))
     return 0;
   for (index = 0; index < QWEN_PARITY_NORM; index++)
     qwen_parity_norm_obj[index] = 0.0f;
-  /* `[mode input weights count output]` -- the object's own order, which is
-     `rms_norm`'s. Getting this wrong is not a crash: it computes a norm of the
-     wrong vector into the wrong place and every bound still holds. Measured
-     2026-09-02 under QEMU, where an earlier draft of this harness passed the
-     output buffer as the input and the comparison said `norm mismatch`. */
-  if (kotoba_aiueos_qwen35_norm(0, (uint64_t)(uintptr_t)qwen_parity_norm_in,
-                                (uint64_t)(uintptr_t)qwen_parity_norm_w,
-                                QWEN_PARITY_NORM,
-                                (uint64_t)(uintptr_t)qwen_parity_norm_obj) != 0)
+  /* Through the live `rms_norm`, whose object call is
+     `[mode input weights count output]` -- the object's own order. Getting
+     this wrong is not a crash: it computes a norm of the wrong vector into the
+     wrong place and every bound still holds. Measured 2026-09-02 under QEMU,
+     where an earlier draft of this harness passed the output buffer as the
+     input and the comparison said `norm mismatch`. Since the cutover the
+     three norms below are called the way the forward pass calls them, so the
+     order being checked is the live one. */
+  if (!rms_norm(qwen_parity_norm_in, &weights, QWEN_PARITY_NORM,
+                qwen_parity_norm_obj))
     return 0;
   for (index = 0; index < QWEN_PARITY_NORM; index++)
     if (qwen_parity_bits(qwen_parity_norm_ref[index]) !=
@@ -1623,11 +1740,10 @@ static int qwen_parity_norm(void) {
     qwen_parity_norm_ref[index] = qwen_parity_norm_in[index];
     qwen_parity_norm_obj[index] = qwen_parity_norm_in[index];
   }
-  l2_norm_heads(qwen_parity_norm_ref, QWEN_PARITY_NORM_HEADS,
+  l2_norm_heads_c(qwen_parity_norm_ref, QWEN_PARITY_NORM_HEADS,
                 QWEN_PARITY_NORM_WIDTH);
-  if (kotoba_aiueos_qwen35_norm(1, (uint64_t)(uintptr_t)qwen_parity_norm_obj,
-                                QWEN_PARITY_NORM_HEADS,
-                                QWEN_PARITY_NORM_WIDTH, 0) != 0)
+  if (!l2_norm_heads(qwen_parity_norm_obj, QWEN_PARITY_NORM_HEADS,
+                     QWEN_PARITY_NORM_WIDTH))
     return 0;
   for (index = 0; index < QWEN_PARITY_NORM; index++)
     if (qwen_parity_bits(qwen_parity_norm_ref[index]) !=
@@ -1642,13 +1758,11 @@ static int qwen_parity_norm(void) {
   }
   weights.dimensions[0] = QWEN_PARITY_NORM_WIDTH;
   weights.storage_bytes = QWEN_PARITY_NORM_WIDTH * sizeof(float);
-  if (!rms_norm_heads_weighted(qwen_parity_norm_ref, QWEN_PARITY_NORM_HEADS,
+  if (!rms_norm_heads_weighted_c(qwen_parity_norm_ref, QWEN_PARITY_NORM_HEADS,
                                QWEN_PARITY_NORM_WIDTH, &weights))
     return 0;
-  if (kotoba_aiueos_qwen35_norm(2, (uint64_t)(uintptr_t)qwen_parity_norm_obj,
-                                QWEN_PARITY_NORM_HEADS,
-                                QWEN_PARITY_NORM_WIDTH,
-                                (uint64_t)(uintptr_t)qwen_parity_norm_w) != 0)
+  if (!rms_norm_heads_weighted(qwen_parity_norm_obj, QWEN_PARITY_NORM_HEADS,
+                               QWEN_PARITY_NORM_WIDTH, &weights))
     return 0;
   for (index = 0; index < QWEN_PARITY_NORM; index++)
     if (qwen_parity_bits(qwen_parity_norm_ref[index]) !=

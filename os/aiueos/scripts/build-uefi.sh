@@ -1032,11 +1032,18 @@ if [ -n "$model_handoff_link" ] || [ -n "$qwen35_parity_cflags" ]; then
   # again for the third tranche: attention (17,872 B) and recurrent-step
   # (6,808 B) together overflow it, and so does either one alone until the
   # parity build gained `--gc-sections` (ADR-0175).
+  # The norm and activation objects are the LIVE path since ADR-0220's
+  # cutover stage 2, so the model image links them beside the matvec trio;
+  # parity profile 2 links them alone and compares them against the C.
+  case "${AIUEOS_QWEN35_KOTOBA_PARITY:-0}" in
+    0|2)
+      python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_qwen35_activation_object" \
+        49556872a8110c3cf95eea7648df693e8352f0d65bf1755404c4f3d92e114b68 kotoba_aiueos_qwen35_activation
+      python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_qwen35_norm_object" \
+        faff9aefe51909376dc6a2bfe30fa720c88cc47db06a70df32fa7852b110eaee kotoba_aiueos_qwen35_norm
+      ;;
+  esac
   if [ "${AIUEOS_QWEN35_KOTOBA_PARITY:-0}" = 2 ]; then
-    python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_qwen35_activation_object" \
-      49556872a8110c3cf95eea7648df693e8352f0d65bf1755404c4f3d92e114b68 kotoba_aiueos_qwen35_activation
-    python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_qwen35_norm_object" \
-      faff9aefe51909376dc6a2bfe30fa720c88cc47db06a70df32fa7852b110eaee kotoba_aiueos_qwen35_norm
     qwen35_kotoba_link="$kotoba_qwen35_activation_object $kotoba_qwen35_norm_object"
   elif [ "${AIUEOS_QWEN35_KOTOBA_PARITY:-0}" = 3 ]; then
     python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_qwen35_attention_object" \
@@ -1049,7 +1056,7 @@ if [ -n "$model_handoff_link" ] || [ -n "$qwen35_parity_cflags" ]; then
       kotoba_aiueos_qwen35_recurrent_step
     qwen35_kotoba_link="$kotoba_qwen35_recurrent_object"
   else
-    qwen35_kotoba_link="$kotoba_qwen35_dot_object $kotoba_qwen35_dequant_object $kotoba_qwen35_matvec_object"
+    qwen35_kotoba_link="$kotoba_qwen35_dot_object $kotoba_qwen35_dequant_object $kotoba_qwen35_matvec_object $kotoba_qwen35_activation_object $kotoba_qwen35_norm_object"
   fi
 fi
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_device_worker_canonical_object" \
@@ -1174,8 +1181,13 @@ if [ -z "$model_handoff_link" ] && [ -n "$qwen35_parity_cflags" ]; then
   # to resolve against there; those profiles compile the inference C with
   # its C reference as the forward pass. Profile 1 links the objects and
   # compares them against that reference on the CPU.
+  # The same for the norm/activation objects (ADR-0220 cutover stage 2):
+  # only profile 2 links them, so profiles 1, 3 and 4 run the C norms.
   case "${AIUEOS_QWEN35_KOTOBA_PARITY:-0}" in
     2|3|4) qwen35_parity_section_cflags="$qwen35_parity_section_cflags -DAIUEOS_QWEN35_C_REFERENCE_MATVEC=1" ;;
+  esac
+  case "${AIUEOS_QWEN35_KOTOBA_PARITY:-0}" in
+    1|3|4) qwen35_parity_section_cflags="$qwen35_parity_section_cflags -DAIUEOS_QWEN35_C_REFERENCE_NORM=1" ;;
   esac
   zig cc -target x86_64-freestanding-none -std=c11 -O2 \
     -ffreestanding -fno-stack-protector -mno-red-zone \
