@@ -194,8 +194,9 @@ is **two tensor codecs and one basis change** — nothing structural.
    rebuilt objects on the CPU against the 10,996,640-byte Qwen3.8 fixture:
    `QWEN-ADMIT reason=0 stage=0 admitted=1`,
    `AIUEOS_QWEN35_ADMISSION_QEMU_OK objects=3 offsets=match-host-reference`.
-   The Bonsai profile has NOT been on a CPU, and the Bonsai profile is not
-   what the K16 image is built to hand off. **The fixture for that boot
+   **The Bonsai profile has been on a CPU since 2026-09-23** (below, after
+   the C translation). It is still not what the K16 image is built to hand
+   off in production — only the fixture branch accepts it. **The fixture for that boot
    landed 2026-09-22** — `tests/make-bonsai-boot-fixture.cljk`, task
    `bonsai-boot-fixture`. It does not SYNTHESISE a header the way
    `tests/make_qwen35_header_fixture.py` does for Qwen3.8: the Bonsai prefix
@@ -221,7 +222,7 @@ is **two tensor codecs and one basis change** — nothing structural.
    length-prefixed name from byte 0 finds the copy inside the metadata's
    `prism.hadamard.weight_names` array first, and the control that mutated it
    was ADMITTED — the records are located from `metadata-end` now. This is a
-   fixture and a walk; nothing has booted with it. Found on the way:
+   fixture and a walk; the boot that uses it is recorded below. Found on the way:
    amu `b36eb717` no longer compiles the PREVIOUS kv-scan object either —
    its 113-deep `if` key table exhausts the desugar stack ("desugared
    nesting exhausted the host stack"), so `reproduce-kotoba-objects` against
@@ -296,14 +297,35 @@ is **two tensor codecs and one basis change** — nothing structural.
    compares the data offset with Qwen3.8's 10,996,640 and binds the four MTP
    tensors, so a Bonsai model translates and then refuses to bind rather than
    fabricating a pointer. That is the floor after this one, and grading it
-   needs the mapped 5.9 GB artifact. Not measured here: the Bonsai profile has
-   still not been on a CPU — the boot fixture now exists but nothing has been
-   handed it — so this is evidence about the translation, not about a boot.
-   The floors in front of a Bonsai `QWEN-ADMIT` are the kernel's two Qwen3.8
-   constants: the fixture branch in `kernel/main.c` keys on
-   `boot->model_size == AIUEOS_QWEN35_DATA_OFFSET` (10,996,640) and hands the
-   admission `AIUEOS_QWEN35_ARTIFACT_BYTES`, and
-   `smoke-qemu-qwen35-admission.cljk` asserts the Qwen3.8 line.
+   needs the mapped 5.9 GB artifact.
+   **The Bonsai profile's admission has run on a CPU (2026-09-23).**
+   `kernel/main.c`'s fixture branch now takes two prefixes — Qwen3.8's
+   synthesised 10,996,640 bytes and Bonsai's real 11,120,992 — and hands the
+   objects the contract length that prefix belongs to
+   (`AIUEOS_BONSAI2_DATA_OFFSET` / `AIUEOS_BONSAI2_ARTIFACT_BYTES` in
+   `qwen35_runtime.h`). The prefix length chooses the LENGTH handed in; it
+   does not choose the profile. The objects work that out from the header
+   counts, and header-valid refuses a length that is not theirs. The
+   printed tail is the last block's post-attention norm, indexed by the
+   `block_count` the kv-scan object read: blk.64 under Qwen3.8 and blk.63
+   under Bonsai, which has no MTP head. The line also prints `artifact=`.
+   `smoke-qemu-qwen35-admission.cljk` with `AIUEOS_QWEN35_ADMISSION_BONSAI=1`
+   (task `bonsai-qemu-admission`) builds the fixture through
+   `tests/make-bonsai-boot-fixture.cljk` and reads its expected line from
+   that generator's receipt, so no Bonsai number is typed in the gate. To
+   reproduce, run `run-task.cljk bonsai-admission-fixture` and then the task
+   (build + tcg boot, a few minutes). The result:
+   `QWEN-ADMIT reason=0 stage=0 admitted=1`,
+   `AIUEOS_QWEN35_ADMISSION_OK tensors=851 linear=48 full=16
+   data-offset=11120992 embd=278138880 qkv=563159040 tail=5935507456
+   artifact=5946648928`, `AIUEOS_BONSAI_ADMISSION_QEMU_OK`. Adding
+   `AIUEOS_QWEN35_ADMISSION_MUTATE=1` retypes `token_embd.weight` from 143
+   to 30, searching from metadata-end, and the gate requires
+   `reason=-21 stage=3`. The Qwen3.8 line is unchanged except for the added
+   `artifact=10934860704`. NOT measured: bind (the prefix is not the artifact,
+   so `accessible != artifact` and bind is not reached), any tensor byte, and
+   any token. PTQ1_0 / BF16 have no C twin, so `QWEN-PARITY` cannot score
+   them.
 4. **A graph contract for the Bonsai artifact**,
    `contracts/bonsai2-qwen35-runtime-v1.edn`: exact byte length, sha256
    `53107f53…`, metadata count, the 64-layer schedule, the tensor table and
