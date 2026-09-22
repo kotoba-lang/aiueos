@@ -32,6 +32,15 @@
             :tensor-info-end 11120982
             :alignment 32
             :data-offset 11120992
+            ;; The metadata + tensor-table prefix itself, which IS obtainable:
+            ;; `run-task.cljk bonsai-admission-fixture` range-fetches exactly
+            ;; these bytes and checks this digest, the three admission objects
+            ;; were graded in the KIR oracle over them, and
+            ;; `tests/make-bonsai-boot-fixture.cljk` turns them into the boot
+            ;; fixture rather than synthesising a second header.
+            ;; MEASURED 2026-09-22 (shasum -a 256 of the range fetch).
+            :header-prefix {:bytes 11120992
+                            :sha256 "c2745c0473a980a45c99fe1d2fe85cbbf86f7eca41132d25beb55f249fe703fa"}
             :last-tensor {:name "blk.63.post_attention_norm.weight"
                           :offset 5935507456
                           :end 5935527936}}

@@ -194,9 +194,34 @@ is **two tensor codecs and one basis change** — nothing structural.
    rebuilt objects on the CPU against the 10,996,640-byte Qwen3.8 fixture:
    `QWEN-ADMIT reason=0 stage=0 admitted=1`,
    `AIUEOS_QWEN35_ADMISSION_QEMU_OK objects=3 offsets=match-host-reference`.
-   The Bonsai profile has NOT been on a CPU: no Bonsai boot fixture exists
-   yet, and the Bonsai profile is not what the K16 image is built to hand
-   off. Found on the way:
+   The Bonsai profile has NOT been on a CPU, and the Bonsai profile is not
+   what the K16 image is built to hand off. **The fixture for that boot
+   landed 2026-09-22** — `tests/make-bonsai-boot-fixture.cljk`, task
+   `bonsai-boot-fixture`. It does not SYNTHESISE a header the way
+   `tests/make_qwen35_header_fixture.py` does for Qwen3.8: the Bonsai prefix
+   is real and obtainable (the 11,120,992 sha256-pinned bytes
+   `bonsai-admission-fixture` range-fetches), and it is the same prefix the
+   three objects were graded over, so a synthesised second header would put
+   the boot on bytes nothing else has read (ADR-0165). What the generator
+   adds is the second arm: an independent walk of those bytes that derives —
+   from the file, against the graph contract — the metadata end 11,070,652
+   after walking 496,309 length-prefixed strings; the 28,672 INT32 signs at
+   file offset 13,360, read SIGNED and each one ±1, with the offset and count
+   cross-checked against slots 128/132 of the 144-byte workspace the kv-scan
+   OBJECT produced; the 851 records with role, dimensions and ggml type; the
+   48/16 schedule derived from `full_attention_interval` rather than assumed;
+   the histogram 402/353/96; and the extents tiling with no gap to exactly
+   `11,120,992 + 5,935,527,936 = 5,946,648,928`. It writes the fixture and a
+   receipt of every number the boot gate will assert, so the next gate types
+   none of them. Ten controls, each refused by its OWN reason literal
+   (`:not-gguf :gguf-version :tensor-count :metadata-count
+   :sign-value-not-unit :sign-values-count :unknown-role :role-dimensions
+   :role-type :extent-not-contiguous`); the prefix missing is exit 3, not a
+   pass. ~0.5 s. Found while writing it: searching for a tensor record by its
+   length-prefixed name from byte 0 finds the copy inside the metadata's
+   `prism.hadamard.weight_names` array first, and the control that mutated it
+   was ADMITTED — the records are located from `metadata-end` now. This is a
+   fixture and a walk; nothing has booted with it. Found on the way:
    amu `b36eb717` no longer compiles the PREVIOUS kv-scan object either —
    its 113-deep `if` key table exhausts the desugar stack ("desugared
    nesting exhausted the host stack"), so `reproduce-kotoba-objects` against
@@ -272,8 +297,13 @@ is **two tensor codecs and one basis change** — nothing structural.
    tensors, so a Bonsai model translates and then refuses to bind rather than
    fabricating a pointer. That is the floor after this one, and grading it
    needs the mapped 5.9 GB artifact. Not measured here: the Bonsai profile has
-   still not been on a CPU — no Bonsai boot fixture exists — so this is
-   evidence about the translation, not about a boot.
+   still not been on a CPU — the boot fixture now exists but nothing has been
+   handed it — so this is evidence about the translation, not about a boot.
+   The floors in front of a Bonsai `QWEN-ADMIT` are the kernel's two Qwen3.8
+   constants: the fixture branch in `kernel/main.c` keys on
+   `boot->model_size == AIUEOS_QWEN35_DATA_OFFSET` (10,996,640) and hands the
+   admission `AIUEOS_QWEN35_ARTIFACT_BYTES`, and
+   `smoke-qemu-qwen35-admission.cljk` asserts the Qwen3.8 line.
 4. **A graph contract for the Bonsai artifact**,
    `contracts/bonsai2-qwen35-runtime-v1.edn`: exact byte length, sha256
    `53107f53…`, metadata count, the 64-layer schedule, the tensor table and
