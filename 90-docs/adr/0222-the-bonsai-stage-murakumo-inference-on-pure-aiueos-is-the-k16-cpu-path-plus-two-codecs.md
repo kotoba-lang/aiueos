@@ -142,10 +142,43 @@ is **two tensor codecs and one basis change** — nothing structural.
    and count, and the Hadamard object reads signs from the read-only model
    mapping at use. The object now reads them exactly so — `sign_values` is
    `+1` / `0xFFFFFFFF` as INT32 words at a plan offset, refused by reason
-   −10 for any other word — so what item 3 still owes is only the kv-scan
-   side: the Bonsai contract's required-key set (no `nextn_predict_layers`,
-   the `prism.hadamard.*` keys) and the offset+count of the sign array in the
-   workspace.
+   −10 for any other word. **The kv-scan side landed 2026-09-22 (option (a),
+   owner's choice): the admission objects carry two profiles and no new
+   argument.** `qwen35-gguf-header-valid` names the profile from the
+   artifact byte length (10,934,860,704 / 5,946,648,928) and requires the
+   matching counts; `qwen35-gguf-kv-scan` names it from the header's counts
+   (866 / 50 vs 851 / 49), records it as bit 31 of the required-key mask,
+   and every constant follows — the 40 Bonsai keys (30 of Qwen3.8's, not
+   `nextn_predict_layers`, plus the ten `prism.hadamard.*`), `general.name`
+   "Hf", padding 248044, file type 143, block_count 64, metadata end
+   11,070,652, a 144-byte workspace whose four new words are the sign
+   array's file offset (13,360) and count (28,672), the file type and the
+   high mask. A Prism key under profile 0, or `nextn` under profile 1, is
+   refused as −13 rather than skipped. Evidence: the Bonsai profile's
+   contracts run in the KIR oracle over the REAL header (first 11,120,992
+   bytes of the public file, sha256-pinned, refetched by range, refused when
+   absent): header-valid 11/11; kv-scan **15/15 with the 144-byte workspace
+   equal to one computed independently in python from the same header**,
+   both profile mix-ups (−7, −201), one refusal per Prism key (−232, −237,
+   −238, −239, −240) and the two end-of-section scalars (−227, −230). ~32
+   minutes for the 15 (four full walks of 495,907 strings at ~7 min each).
+   The Qwen3.8 profile is byte-for-byte the old behaviour by construction
+   (128-byte workspace, same codes); the QEMU admission smoke
+   (`smoke-qemu-qwen35-admission.cljk`, 2026-09-22, this tree) booted the
+   rebuilt objects on the CPU against the 10,996,640-byte Qwen3.8 fixture:
+   `QWEN-ADMIT reason=0 stage=0 admitted=1`,
+   `AIUEOS_QWEN35_ADMISSION_QEMU_OK objects=3 offsets=match-host-reference`.
+   The Bonsai profile has NOT been on a CPU: no Bonsai boot fixture exists
+   yet, and the Bonsai profile is not what the K16 image is built to hand
+   off. Found on the way:
+   amu `b36eb717` no longer compiles the PREVIOUS kv-scan object either —
+   its 113-deep `if` key table exhausts the desugar stack ("desugared
+   nesting exhausted the host stack"), so `reproduce-kotoba-objects` against
+   the current amu could not have reproduced the committed object; the key
+   tables are now balanced comparison trees (depth ~8) generated from the
+   canonical strings and re-evaluated against them. Still Qwen3.8-only:
+   `qwen35-tensor-table-bind` (851 records, 23 roles, PTQ1_0/BF16 types —
+   the next item) and the C translation into `struct aiueos_qwen35_model`.
 4. **A graph contract for the Bonsai artifact**,
    `contracts/bonsai2-qwen35-runtime-v1.edn`: exact byte length, sha256
    `53107f53…`, metadata count, the 64-layer schedule, the tensor table and

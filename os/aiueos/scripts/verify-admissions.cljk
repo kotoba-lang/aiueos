@@ -62,6 +62,7 @@
             [kotoba.sema :as sema]
             [kotoba.kir :as ir]
             ["fs" :as fs]
+            ["node:crypto" :as crypto]
             ["path" :as path]))
 
 (defn- fail! [message data]
@@ -1078,6 +1079,73 @@
                  acc))
              []
              (:expectations (meta slots)))}))
+
+;; --- the two GGUF admission objects, Bonsai profile (ADR-0222 stage A 3) --
+;;
+;; `qwen35-gguf-header-valid` takes a 24-byte header; `qwen35-gguf-kv-scan`
+;; takes the artifact's metadata section, which is 11 MB of real token
+;; strings and lives in a FILE the contract names (`:verification :memory
+;; :image-file`, sha256-pinned). Both objects carry two profiles; the Qwen3.8
+;; profile's evidence is the JVM parity tests, these contracts are the Bonsai
+;; profile's.
+
+(defmethod prepare :aiueos.qwen35-gguf-header-valid/v1 [contract v]
+  (let [{:keys [base image-bytes]} (get-in contract [:verification :memory])
+        header (hex-bytes (:header-hex v))]
+    (when (not= 24 (count header))
+      (fail! "REFUSING TO REPORT A PASS: header-hex is not 24 bytes" {:vector (:name v)}))
+    {:entry 'aiueos-qwen35-gguf-header-valid
+     :base base
+     :image (write-at (vec (repeat image-bytes 0)) 0 header)
+     :args [(if (some? (:base-override v)) (:base-override v) base)
+            (:accessible v)
+            (:artifact v)]
+     :expect-memory []}))
+
+(def ^:private image-file-cache (atom {}))
+
+(defn- image-from-file
+  "The contract's `:image-file` as a byte vector, sha256-checked. Absent or
+  wrong bytes is a REFUSAL, never an empty image: a vector graded against
+  nothing would read as a pass of nothing."
+  [contract]
+  (let [{:keys [image-file image-sha256 image-bytes]} (get-in contract [:verification :memory])]
+    (or (get @image-file-cache image-file)
+        (do
+          (when-not (and image-file (.existsSync fs image-file))
+            (fail! "REFUSING TO REPORT A PASS: the contract's image file is absent (see the contract for the range fetch that produces it)"
+                   {:image-file image-file}))
+          (let [buf (.readFileSync fs image-file)
+                digest (-> (.createHash crypto "sha256") (.update buf) (.digest "hex"))]
+            (when (not= digest image-sha256)
+              (fail! "REFUSING TO REPORT A PASS: the image file's sha256 is not the pinned one"
+                     {:image-file image-file :expected image-sha256 :actual digest}))
+            (when (not= (.-length buf) image-bytes)
+              (fail! "REFUSING TO REPORT A PASS: the image file's length is not the declared one"
+                     {:image-file image-file :expected image-bytes :actual (.-length buf)}))
+            (let [image (vec (array-seq buf))]
+              (swap! image-file-cache assoc image-file image)
+              image))))))
+
+(defmethod prepare :aiueos.qwen35-gguf-kv-scan/v1 [contract v]
+  (let [{:keys [base image-bytes plan-offset plan-bytes]} (get-in contract [:verification :memory])
+        image0 (image-from-file contract)
+        image (reduce (fn [img [off hex]] (write-at img off (hex-bytes hex)))
+                      image0 (:patch v))
+        ;; the workspace follows the image; it is zero here and the object
+        ;; clears it again itself
+        image (into image (repeat plan-bytes 0))]
+    {:entry 'aiueos-qwen35-gguf-kv-scan
+     :base base
+     :image image
+     :args [(if (some? (:base-override v)) (:base-override v) base)
+            (:accessible v)
+            (if (some? (:plan-base-override v)) (:plan-base-override v) (+ base plan-offset))
+            (:plan-length v)]
+     :expect-memory
+     (cond-> []
+       (:expect-plan-hex v)
+       (conj {:label :plan :offset plan-offset :bytes (hex-bytes (:expect-plan-hex v))}))}))
 
 (defmethod prepare :aiueos.qwen35-hadamard/v1 [contract v]
   ;; ADR-0222 stage A item 2. Arena: input (width*4) @0, signs (width*4 of

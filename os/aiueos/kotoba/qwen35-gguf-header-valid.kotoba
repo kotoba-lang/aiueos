@@ -1,4 +1,5 @@
-(ns aiueos.qwen35-gguf-header-valid)
+(ns aiueos.qwen35-gguf-header-valid
+  (:export [aiueos-qwen35-gguf-header-valid main]))
 
 ;; GGUF v3 container header admission for the Qwen3.8-27B artifact this OS
 ;; boots with (`contracts/qwen38-qwen35-runtime-v1.edn`).
@@ -41,15 +42,28 @@
   (+ (u32-at base length offset)
      (* (u32-at base length (+ offset 4)) 4294967296)))
 
+;; Two artifacts since ADR-0222 stage A item 3: the artifact byte length names
+;; the profile -- 10,934,860,704 is Qwen3.8-27B (866 tensors, 50 pairs;
+;; contracts/qwen38-qwen35-runtime-v1.edn), 5,946,648,928 is Ternary Bonsai 2
+;; 27B PTQ1_0 (851, 49; contracts/bonsai2-qwen35-runtime-v1.edn) -- and the
+;; counts the header must carry follow from it. Any other length is -3, as
+;; before; a header whose counts belong to the OTHER artifact is -7 / -8, so
+;; the two cannot be mixed by handing one file the other's length.
+(defn expect-tensors [artifact]
+  (if (= artifact 5946648928) 851 866))
+
+(defn expect-pairs [artifact]
+  (if (= artifact 5946648928) 49 50))
+
 (defn aiueos-qwen35-gguf-header-valid [base accessible artifact]
   (if (= base 0) -1
     (if (< accessible 24) -2
-      (if (not (= artifact 10934860704)) -3
+      (if (if (= artifact 10934860704) false (not (= artifact 5946648928))) -3
         (if (> accessible artifact) -4
           (if (not (= (u32-at base accessible 0) 1179993927)) -5
             (if (not (= (u32-at base accessible 4) 3)) -6
-              (if (not (= (u64-at base accessible 8) 866)) -7
-                (if (not (= (u64-at base accessible 16) 50)) -8
+              (if (not (= (u64-at base accessible 8) (expect-tensors artifact))) -7
+                (if (not (= (u64-at base accessible 16) (expect-pairs artifact))) -8
                   0)))))))))
 
 (defn main [] 0)
