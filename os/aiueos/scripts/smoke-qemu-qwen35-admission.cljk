@@ -30,8 +30,21 @@
 ;; reference parser would admit the mutated fixture -- it refuses it too, by
 ;; design, which is what `aiueos.qwen35-tensor-table-parity-test` exists to
 ;; keep true.
+;;
+;;   AIUEOS_QWEN35_ADMISSION_BONSAI=1 kbb --backend sci …
+;;     the SAME image is handed the Bonsai profile's prefix instead (ADR-0222):
+;;     the real 11,120,992 bytes of Ternary-Bonsai-2-27B-PTQ1_0.gguf that
+;;     `bonsai-admission-fixture` range-fetches, turned into a fixture and a
+;;     receipt by `tests/make-bonsai-boot-fixture.cljk`. Every number the
+;;     kernel must print is read from that receipt -- an independent walk of
+;;     the bytes, not the objects -- so none is typed here. With
+;;     AIUEOS_QWEN35_ADMISSION_MUTATE=1 as well, `token_embd.weight`'s type
+;;     PTQ1_0 (143) becomes BF16 (30) and the kernel must refuse with
+;;     reason=-21 stage=3, the same clause under the other profile. No prefix
+;;     on this machine is exit 3.
 
 (require '[kotoba.lang.text :as str])
+(require '[clojure.edn :as edn])
 (def fs (js/require "node:fs"))
 (def os (js/require "node:os"))
 (def path (js/require "node:path"))
@@ -40,6 +53,7 @@
 
 (def aiueos (.resolve path (.dirname path *file*) ".."))
 (def mutate? (= "1" (.-AIUEOS_QWEN35_ADMISSION_MUTATE js/process.env)))
+(def bonsai? (= "1" (.-AIUEOS_QWEN35_ADMISSION_BONSAI js/process.env)))
 
 (defn- die [& msg]
   (binding [*out* *err*] (apply println (cons "error:" msg)))
@@ -86,34 +100,84 @@
 ;; ------------------------------------------------------------- the fixture
 
 (def fixture (.join path work "header.gguf"))
-(let [r (.spawnSync cp "python3"
-                    #js [(.join path aiueos "tests" "make_qwen35_header_fixture.py")
-                         fixture]
-                    #js {:stdio "inherit"})]
-  (when-not (zero? (.-status r)) (die "the header fixture generator failed")))
 
-(def fixture-bytes (.readFileSync fs fixture))
-(when-not (= 10996640 (.-length fixture-bytes))
-  (die "the fixture is" (.-length fixture-bytes) "bytes, not the contract's 10,996,640"))
-
-;; `token_embd.weight` is a 17-byte name, so its record is
-;;   u64 name-length | name | u32 dimension-count | u64 x 2 | u32 type | u64 offset
-;; and the type field is 8 + 17 + 4 + 16 = 45 bytes past the record start. The
-;; name is located rather than transcribed as an offset so that a change to the
-;; generator moves this with it instead of silently mutating a neighbour.
-(when mutate?
+;; Both mutations change ONE u32: the ggml type of the `token_embd.weight`
+;; record. The record is located by its length-prefixed name, searched from
+;; `from` -- for Bonsai that is metadata-end, because every tensor name also
+;; appears, length-prefixed the same way, inside the metadata's
+;; `prism.hadamard.weight_names` array, and a search from byte 0 mutates a
+;; string nothing checks (measured by make-bonsai-boot-fixture, 2026-09-22).
+;;   u64 name-length | name | u32 dimension-count | u64 x 2 | u32 type
+;; puts the type field 8 + 17 + 4 + 16 = 45 bytes past the record start.
+(defn- retype-token-embd! [buf from before after]
   (let [needle (js/Buffer.concat
                 #js [(doto (js/Buffer.alloc 8) (.writeUInt32LE 17 0))
                      (js/Buffer.from "token_embd.weight" "utf8")])
-        at (.indexOf fixture-bytes needle)]
-    (when (neg? at) (die "token_embd.weight is not in the fixture"))
+        at (.indexOf buf needle from)]
+    (when (neg? at) (die "token_embd.weight is not in the fixture past" from))
     (let [type-at (+ at 45)
-          before (.readUInt32LE fixture-bytes type-at)]
-      (when-not (= 10 before)
-        (die "expected token_embd.weight to be ggml type 10 (Q2_K), found" before))
-      (.writeUInt32LE fixture-bytes 12 type-at)
+          found (.readUInt32LE buf type-at)]
+      (when-not (= before found)
+        (die "expected token_embd.weight to be ggml type" before "found" found))
+      (.writeUInt32LE buf after type-at)
       (println "MUTATED token_embd.weight type" before "->"
-               (.readUInt32LE fixture-bytes type-at) "at file offset" type-at)))
+               (.readUInt32LE buf type-at) "at file offset" type-at))))
+
+;; What the kernel must print when it admits, and the length the prefix is.
+;; Qwen3.8's numbers are the host C reference's (tests/qwen35_runtime_model.c);
+;; Bonsai's come from the fixture generator's receipt.
+(def expectation
+  (if bonsai?
+    (let [header (or (.-AIUEOS_BONSAI_HEADER js/process.env)
+                     (.join path aiueos "tests" "fixtures" "large"
+                            "bonsai2-ptq1-header-11120992.bin"))
+          receipt-file (str fixture ".receipt.edn")
+          r (.spawnSync cp "kbb"
+                        #js ["--backend" "sci"
+                             (.join path aiueos "tests" "make-bonsai-boot-fixture.cljk")
+                             fixture "--header" header "--receipt" receipt-file
+                             "--no-controls"]
+                        #js {:stdio "inherit"})]
+      (case (.-status r)
+        0 nil
+        3 (unmeasured "no Bonsai prefix on this machine; run"
+                      "`kbb --backend sci scripts/run-task.cljk bonsai-admission-fixture`")
+        (die "the Bonsai boot fixture generator refused, status" (.-status r)))
+      (let [receipt (edn/read-string (.readFileSync fs receipt-file "utf8"))
+            {:keys [admission handoff fixture]} receipt
+            rep (:representative admission)]
+        {:profile "bonsai2"
+         :bytes (:bytes fixture)
+         :mutate-from (:metadata-end admission)
+         :mutate-types [(get-in rep [:token-embd :type]) 30]
+         :ok (str "AIUEOS_QWEN35_ADMISSION_OK tensors=" (:tensors admission)
+                  " linear=" (:linear admission) " full=" (:full admission)
+                  " data-offset=" (:data-offset handoff)
+                  " embd=" (get-in rep [:token-embd :offset])
+                  " qkv=" (get-in rep [:attn-qkv-0 :offset])
+                  " tail=" (get-in rep [:last :offset])
+                  " artifact=" (:artifact-bytes handoff))}))
+    (let [r (.spawnSync cp "python3"
+                        #js [(.join path aiueos "tests" "make_qwen35_header_fixture.py")
+                             fixture]
+                        #js {:stdio "inherit"})]
+      (when-not (zero? (.-status r)) (die "the header fixture generator failed"))
+      {:profile "qwen38"
+       :bytes 10996640
+       :mutate-from 0
+       :mutate-types [10 12]
+       :ok (str "AIUEOS_QWEN35_ADMISSION_OK tensors=866 linear=48 full=16 "
+                "data-offset=10996640 embd=715182080 qkv=1149091840 "
+                "tail=10923843584 artifact=10934860704")})))
+
+(def fixture-bytes (.readFileSync fs fixture))
+(when-not (= (:bytes expectation) (.-length fixture-bytes))
+  (die "the fixture is" (.-length fixture-bytes) "bytes, not the contract's"
+       (:bytes expectation)))
+
+(when mutate?
+  (let [[before after] (:mutate-types expectation)]
+    (retype-token-embd! fixture-bytes (:mutate-from expectation) before after))
   (.writeFileSync fs fixture fixture-bytes))
 
 (def part-lengths [4000000 4000000 (- (.-length fixture-bytes) 8000000)])
@@ -290,12 +354,12 @@
     (when (str/includes? serial "AIUEOS_QWEN35_ADMISSION_OK")
       (die "the mutated fixture was ALSO admitted"))
     (println (line-with serial "AIUEOS_QWEN35_ADMISSION_REFUSED"))
-    (println "AIUEOS_QWEN35_ADMISSION_QEMU_REFUSAL_OK"
+    (println (if bonsai? "AIUEOS_BONSAI_ADMISSION_QEMU_REFUSAL_OK"
+                 "AIUEOS_QWEN35_ADMISSION_QEMU_REFUSAL_OK")
+             "profile=" (:profile expectation)
              "reason=-21 object=qwen35-tensor-table-bind clause=token-embd-retyped"))
   (let [ok-line (line-with serial "AIUEOS_QWEN35_ADMISSION_OK")
-        expected (str "AIUEOS_QWEN35_ADMISSION_OK tensors=866 linear=48 full=16 "
-                      "data-offset=10996640 embd=715182080 qkv=1149091840 "
-                      "tail=10923843584")]
+        expected (:ok expectation)]
     (when-not (str/includes? admit-line "reason=0 stage=0 admitted=1")
       (die "the objects refused the exact-contract fixture:" admit-line))
     (when-not (str/includes? serial "AIUEOS_QWEN35_GRAPH_FIXTURE_DEFERRED")
@@ -306,5 +370,7 @@
     (println ok-line)
     (when-not (str/includes? debug "AIUEOS_QWEN35_ADMISSION_OK")
       (die "the debugcon copy of the marker is absent"))
-    (println "AIUEOS_QWEN35_ADMISSION_QEMU_OK"
-             "objects=3 translation=in-image offsets=match-host-reference")))
+    (println (if bonsai? "AIUEOS_BONSAI_ADMISSION_QEMU_OK" "AIUEOS_QWEN35_ADMISSION_QEMU_OK")
+             "profile=" (:profile expectation)
+             "objects=3 translation=in-image"
+             (if bonsai? "offsets=match-fixture-receipt" "offsets=match-host-reference"))))

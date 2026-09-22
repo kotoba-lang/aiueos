@@ -17,6 +17,13 @@
 #define AIUEOS_QWEN35_VOCAB_SIZE 248320U
 #define AIUEOS_QWEN35_DATA_OFFSET 10996640ULL
 #define AIUEOS_QWEN35_ARTIFACT_BYTES 10934860704ULL
+/* The Bonsai profile's pair (ADR-0222, contracts/bonsai2-qwen35-runtime-v1.edn).
+   The kernel only reads these to recognise the admission fixture -- the real
+   11,120,992-byte metadata + tensor-table prefix -- and to hand the objects
+   the artifact length that prefix belongs to. Which profile a file IS stays
+   the objects' answer: handed the wrong length, header-valid refuses. */
+#define AIUEOS_BONSAI2_DATA_OFFSET 11120992ULL
+#define AIUEOS_BONSAI2_ARTIFACT_BYTES 5946648928ULL
 #define AIUEOS_QWEN35_MAX_GGML_TYPE 31U
 /* One counter per ggml type slot. PTQ1_0 is type 143 and would run off a
    table indexed by the type, so it counts in slot 31 -- the slot no Qwen3.8

@@ -1889,7 +1889,8 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
        down, once the physical allocator can hold the graph. Saying
        "tiny-transport-fixture" for both would put a false line on the console
        of every run that then parses 866 tensor records. */
-    if (boot->model_size == AIUEOS_QWEN35_DATA_OFFSET) {
+    if (boot->model_size == AIUEOS_QWEN35_DATA_OFFSET ||
+        boot->model_size == AIUEOS_BONSAI2_DATA_OFFSET) {
       debug_string("AIUEOS_QWEN35_GRAPH_FIXTURE_DEFERRED admission-selftest\n");
       serial_string("AIUEOS_QWEN35_GRAPH_FIXTURE_DEFERRED admission-selftest\r\n");
     } else {
@@ -1994,8 +1995,19 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
        host gate passes, so the numbers printed below are comparable with it.
        QWEN-ADMIT carries the object's own reason code. The C in this image
        has no such number: the delegating branch returns 0 or 1 and every
-       negative value here was written in a .kotoba file. */
-    if (boot->model_size == AIUEOS_QWEN35_DATA_OFFSET) {
+       negative value here was written in a .kotoba file.
+       Two prefixes qualify: Qwen3.8's synthesised 10,996,640 bytes and the
+       Bonsai profile's real 11,120,992 (tests/make-bonsai-boot-fixture.cljk,
+       ADR-0222). The prefix length picks which contract length is handed in;
+       it does not pick the profile -- the objects derive that from the header
+       counts and refuse a length that does not belong to them. */
+    const uint64_t admission_artifact_bytes =
+      boot->model_size == AIUEOS_QWEN35_DATA_OFFSET
+        ? AIUEOS_QWEN35_ARTIFACT_BYTES
+        : boot->model_size == AIUEOS_BONSAI2_DATA_OFFSET
+            ? AIUEOS_BONSAI2_ARTIFACT_BYTES
+            : 0;
+    if (admission_artifact_bytes) {
       const uint64_t admission_pages =
         (sizeof(struct aiueos_qwen35_model) + 4095U) / 4096U;
       struct aiueos_qwen35_model *admitted =
@@ -2007,7 +2019,7 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
       }
       int admission_ok = aiueos_qwen35_model_parse(
         (const uint8_t *)(uintptr_t)boot->model_base, boot->model_size,
-        AIUEOS_QWEN35_ARTIFACT_BYTES, admitted);
+        admission_artifact_bytes, admitted);
       serial_string("QWEN-ADMIT reason=");
       if (aiueos_qwen35_admission_verdict < 0) {
         serial_string("-");
@@ -2043,8 +2055,20 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
       serial_decimal64(admitted->token_embedding.offset);
       serial_string(" qkv=");
       serial_decimal64(admitted->layers[0].mixer.linear.qkv.offset);
+      /* The tail is the LAST block's post-attention norm: blk.64 (the MTP
+         head) under Qwen3.8, blk.63 under Bonsai, which has no head. The
+         index is the block count the kv-scan object read, bounded by the
+         array, not a 64 written here. */
       serial_string(" tail=");
-      serial_decimal64(admitted->layers[64].post_attention_norm.offset);
+      if (admitted->block_count == 0 ||
+          admitted->block_count > AIUEOS_QWEN35_LAYER_COUNT) {
+        serial_string("unbounded");
+      } else {
+        serial_decimal64(
+          admitted->layers[admitted->block_count - 1U].post_attention_norm.offset);
+      }
+      serial_string(" artifact=");
+      serial_decimal64(admitted->artifact_bytes);
       serial_string("\r\n");
     } else {
       serial_string("AIUEOS_QWEN35_ADMISSION_SKIP tiny-transport-fixture\r\n");
