@@ -1,6 +1,9 @@
 # ADR-0222 — the Bonsai stage: Murakumo inference on pure AIUEOS is the K16 CPU path plus two codecs, not the B70 GPU path moved over
 
-- Status: accepted (plan; nothing in this ADR has executed)
+- Status: accepted (stage A is landing item by item — the PTQ1_0 dequant,
+  the Hadamard object, the two-profile admission objects, the graph
+  contract and the C translation are in the tree and graded; nothing in
+  stage B or later has executed, and the Bonsai profile has not booted)
 - Date: 2026-09-22
 - Owner question: 「実際に amu native compiler, binary のみで書かれた aiueos の上で
   murakumo inference が動くようにするには? inference は ternary bonsai 2 27b ptq1
@@ -221,8 +224,56 @@ is **two tensor codecs and one basis change** — nothing structural.
    admits five parameters. After all three objects changed, the Qwen3.8
    profile was booted again: `QWEN-ADMIT reason=0 stage=0 admitted=1`,
    `AIUEOS_QWEN35_ADMISSION_QEMU_OK objects=3 offsets=match-host-reference`.
-   Still Qwen3.8-only: the C translation into `struct aiueos_qwen35_model`
-   (`aiueos_qwen35_model_translate`), which is what a Bonsai boot needs next.
+   **The C translation followed the same day, and is graded.**
+   `aiueos_qwen35_model_translate` takes both profiles. Which one it is comes
+   from bit 31 of kv workspace slot 124 — the bit the kv-scan object sets —
+   and the four things that differ are CHECKED against that profile rather
+   than assumed: record count (−106), artifact length (−107), metadata end
+   (−108). The trunk is derived as `block_count − nextn` and refused unless
+   it is the 64 the struct can hold (−109); the linear/full schedule is
+   derived from the metadata's `full_attention_interval` rather than from a
+   4 written in the C (−110 for a zero interval) and cross-checked against
+   the count the object made from the role masks (−111), because a schedule
+   that disagrees reads the mixer union as the wrong arm and nothing else
+   would say so. PTQ1_0 (ggml type 143) counts in counter slot 31 — the slot
+   `type-slot` in the object uses — while the tensor keeps 143 as its own
+   type, so a dequantiser sees the file's number and the histogram stays the
+   one the object checked. `aiueos_qwen35_model_parse` asks the OBJECT which
+   workspace length this artifact wants instead of reading the header itself:
+   128 first, and −3 — with a length the object admits — can only mean the
+   other profile, so it retries with 144.
+   New gate `run-task.cljk bonsai-c-translation`
+   (`scripts/smoke-bonsai-runtime-translation.cljk` +
+   `tests/bonsai_runtime_translation.c`; host `cc`, no artifact and no QEMU,
+   because the translation records the model pointer and never dereferences
+   it). Its INPUT is the two admission contracts' `:expect-plan-hex` — the
+   144-byte and 28,160-byte workspaces computed independently in python and
+   pinned to what the objects really produce by `bonsai-admission-contracts` —
+   and its EXPECTATION is `contracts/bonsai2-qwen35-runtime-v1.edn`; no
+   number is typed in either gate file. Two walks in opposite directions:
+   851 shapes against the graph contract, and all 851 workspace records
+   against the field each role id names, with the id → name half DECODED from
+   the object's own `role-length` / `role-word` tables. The second walk is
+   there because shape is not identity: `ffn_gate` and `ffn_up` are both
+   5120 × 17408 PTQ1_0, and swapping them in `qwen35_slot` leaves the shape
+   walk green — measured — while the identity walk names
+   `blk.0.ffn_gate.weight`. Ten controls, every one seen red: the corrupted
+   record the shape walk must NAME, and nine refusals asserted by reason
+   literal (−103, −105, −106 twice, −107 … −111).
+   The Qwen3.8 profile is unchanged where it can be checked byte for byte:
+   `smoke-qwen35-runtime.sh` still reports 34 of 34 struct fields identical to
+   the C reference parser, and the QEMU admission smoke booted this kernel —
+   `QWEN-ADMIT reason=0 stage=0 admitted=1`,
+   `AIUEOS_QWEN35_ADMISSION_QEMU_OK objects=3 translation=in-image
+   offsets=match-host-reference` (2026-09-22, this tree, with the
+   two-call kv-scan probe and the 144-byte workspace in the image).
+   **Still Qwen3.8-only, and failing closed: `aiueos_qwen35_model_bind`.** It
+   compares the data offset with Qwen3.8's 10,996,640 and binds the four MTP
+   tensors, so a Bonsai model translates and then refuses to bind rather than
+   fabricating a pointer. That is the floor after this one, and grading it
+   needs the mapped 5.9 GB artifact. Not measured here: the Bonsai profile has
+   still not been on a CPU — no Bonsai boot fixture exists — so this is
+   evidence about the translation, not about a boot.
 4. **A graph contract for the Bonsai artifact**,
    `contracts/bonsai2-qwen35-runtime-v1.edn`: exact byte length, sha256
    `53107f53…`, metadata count, the 64-layer schedule, the tensor table and
