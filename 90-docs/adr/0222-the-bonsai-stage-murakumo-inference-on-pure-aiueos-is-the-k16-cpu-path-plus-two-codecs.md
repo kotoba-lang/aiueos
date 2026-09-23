@@ -371,7 +371,7 @@ is **two tensor codecs and one basis change** — nothing structural.
    do not link the two objects). Still C, by stage: the gated RMS reduction
    of the linear-attention output (no norm mode matches it bit for bit — it
    has no finiteness refusals and no rescaled fallback) and rope's `exp`
-   (rope stage).
+   (rope stage; the object exists and is not live, see below).
    Reproduce: `AIUEOS_QWEN35_KOTOBA_PARITY=2 smoke-qemu-uefi.sh` →
    `QWEN-PARITY activation ok` / `norm ok` in `build/aiueos/evidence-all.log`
    (the smoke's exit does not grep them); the harness now calls the live
@@ -481,10 +481,55 @@ is **two tensor codecs and one basis change** — nothing structural.
    NIC scratch (tls13 8.8 KiB, rtl8125 8.3 KiB, main 6.8 KiB) or a third
    loader segment. The 64 KiB boot stack cannot move, because it is in use
    before `.high_bss` is zeroed.
-   Rope's C uses x87 `fsincos`, Amu emits no x87, and `f64-sin-bounded`
-   exists in the language; the Kotoba rope will not be bit-identical to
-   `fsincos`, so for that stage the reference becomes the object and the
-   contract vectors are re-cut from Prism llama.cpp rather than from the C.
+   **Rope: the object exists and is NOT live.** `kotoba/qwen35-rope.kotoba`
+   (`[values values-bytes heads position]`, in place, reasons 0..−4) is
+   compiled and committed (6,152 B, fuel 16,777,216), but `full_attention`
+   still calls the C `rope_heads`; switching the call is a separate step.
+   The object is not a port of that C. The C takes its sine from x87
+   `fsincos`, which amu cannot emit, and its frequencies from `local_exp`, so
+   the reference is Prism llama.cpp 9a9394a instead: `ggml_rope_cache_init` +
+   `rotate_pairs` (theta starts at the position and is multiplied by
+   `powf(1e7, −2/64)` = `0x3f1ab32b` after each pair, NEOX pairs `i` / `i+32`
+   over the first 64 of 256 dimensions, binary32, unfused). For a text token
+   the model's imrope sections `[11 11 10 0]` reduce to exactly this. One
+   substitution: Prism calls `cosf` / `sinf`, the object evaluates the
+   language's `f64-cos-bounded` / `f64-sin-bounded` on the widened angle and
+   rounds to binary32. **The intrinsic is written out in binary64 in the
+   object rather than called.** `x86_64-aiueos-kernel-v1` rejects it (amu
+   8412d88, exit 70, "typed values currently require … qualified native …
+   features"). It exists in osaho's KIR interpreter, restricted JS and Wasm,
+   and has no kotoba-native lowering. The transcription keeps its constants,
+   its two-part reduction and its Horner order.
+   Positions above 25,735 are refused (−4). That is the intrinsic's
+   `8192·π` domain, because pair 0's angle is the position itself. It is
+   not a model limit: decode stops at 7 today and the context is 262,144,
+   so a longer context needs a wider reduction.
+   Reproduce: `cc -O2 -ffp-contract=off os/aiueos/tests/prism_rope_oracle.c
+   -lm` prints the contract's rotations; `--measure` compares every angle of
+   the admitted domain (823,552). The bounded answer differs from
+   `(float)sin((double)θ)` at 5 angles and from `cos` at 7, and from macOS
+   `sinf` / `cosf` at 149 / 328. `run-task bonsai-rope-contract` (KIR
+   oracle, 15 vectors: 1 / 2 / 4 / 24 heads, positions 0 1 5 6 7 4096 15975
+   25735, 7 refusals, 8 whole-head memory assertions, reasons −4..0 all
+   observed) → green. Seen red: `x1·cos` written `x1·sin`, and the low part
+   of π/2 dropped. With random inputs the second break stayed green at every
+   position, so the 15,975 vector sets pair 0 to (0, 1), which puts −sin in
+   dimension 0 unrounded. `AMU=../amu run-task bonsai-rope-native` →
+   `AIUEOS_BONSAI_ROPE_NATIVE_OK fuel=16777216 bytes=6152`; seen red with
+   amu's previous kotoba-native pin (exit 70, "no admitted symbol"). The
+   kotoba-native row is #191 and amu #1047 advances the pin. Fuel was
+   bisected in the oracle: 24 heads at position 6 pass at 81,920 and trap
+   at 65,536; one head at position 25,735 passes at 8,192 and traps at
+   6,144. The committed bytes are the `--jvm-free` recipe that
+   `reproduce-kotoba-objects` records. amu's `--unpinned --source-path`
+   route compiles the same source to different bytes (6,232), and which of
+   the two is right has not been executed.
+   **Not measured**: the object on a CPU (not linked into any image, not
+   booted, and no C twin exists for QWEN-PARITY to grade it against);
+   glibc's `cosf` / `sinf`, which Prism on Linux actually calls; whether
+   Prism's build contracts the rotation into FMAs; how far the object's
+   output is from `rope_heads` at positions 1..7, which is the change a
+   cutover would make to the forward pass.
 7. **`evaluate_token` becomes one object.** ADR-0196's estimate is
    5.62 × 10¹¹ fuel per token against the 2⁵³−1 ceiling — an estimate from
    shapes and a constant, not a measurement, and its three named errors all

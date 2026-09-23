@@ -1225,6 +1225,34 @@
        (conj {:label :output :offset (+ arena-offset output-offset)
               :bytes (hex-bytes (:expect-output-hex v))}))}))
 
+;; ADR-0222 stage B item 6. `heads` 256-float heads at `values-offset`,
+;; rotated in place. `:values-bytes-override` states a length the region was
+;; not laid out for, which is how -2 above the ceiling and -3 are provoked; the
+;; image only ever holds the heads the vector actually carries.
+(defmethod prepare :aiueos.qwen35-rope/v1 [contract v]
+  (let [{:keys [base image-bytes values-offset]}
+        (get-in contract [:verification :memory])
+        input (hex-bytes (or (:input-hex v) ""))
+        heads (:heads v)]
+    (when (and (:input-hex v) (not= (count input) (* heads 1024)))
+      (fail! "REFUSING TO REPORT A PASS: input-hex is not heads*1024 bytes" {:vector (:name v)}))
+    (when (> (+ values-offset (count input)) image-bytes)
+      (fail! "REFUSING TO REPORT A PASS: this vector's heads do not fit the contract's image"
+             {:vector (:name v) :needed (+ values-offset (count input)) :image-bytes image-bytes}))
+    {:entry 'aiueos-qwen35-rope
+     :base base
+     :image (-> (vec (repeat image-bytes 0))
+                (write-at values-offset input))
+     :args [(if (some? (:values-base-override v)) (:values-base-override v) (+ base values-offset))
+            (or (:values-bytes-override v) (* heads 1024))
+            heads
+            (:position v)]
+     :expect-memory
+     (cond-> []
+       (:expect-values-hex v)
+       (conj {:label :values :offset values-offset
+              :bytes (hex-bytes (:expect-values-hex v))}))}))
+
 (defmethod prepare :aiueos.qwen35-recurrent-step/v1 [contract v]
   (let [m (get-in contract [:verification :memory])]
     (arena-plan-prepare
