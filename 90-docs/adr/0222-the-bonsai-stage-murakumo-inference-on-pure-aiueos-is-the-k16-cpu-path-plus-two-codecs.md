@@ -563,6 +563,13 @@ source rather than here.
    push the number up. Bisect the tier in the oracle on the real row range
    (ADR-0220's finding: four objects packaged at the 1,024 default `ud2`'d
    on the first real input) and give kotoba-native the row.
+   **Not before rope is live.** `full_attention` still calls the C
+   `rope_heads` (no `kotoba_aiueos_qwen35_rope(` call site in
+   `kernel/qwen35_infer.c` at 194a5a3), so the forward pass this object
+   would absorb is not yet all objects. The loop's tick orders
+   `:cutover-rope` (checked at the call site, like the other four stages)
+   ahead of this floor. Before it did, the tick offered this floor as soon
+   as the rope object existed.
 8. **The `T02` failure is retried on the physical K16**, with the KV alias
    fix of ADR-0121's follow-up in place, until eight greedy tokens exist.
    The floor is stream A's: `Hello` → `11, 353, 2688, 264, 5286, 303, 279,
