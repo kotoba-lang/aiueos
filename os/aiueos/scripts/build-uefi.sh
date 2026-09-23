@@ -1035,6 +1035,15 @@ if [ -n "$model_handoff_link" ] || [ -n "$qwen35_parity_cflags" ]; then
   # The norm and activation objects are the LIVE path since ADR-0220's
   # cutover stage 2, so the model image links them beside the matvec trio;
   # parity profile 2 links them alone and compares them against the C.
+  # The attention object joins them at cutover stage 3; parity profile 3
+  # links it alone and compares it against the C.
+  case "${AIUEOS_QWEN35_KOTOBA_PARITY:-0}" in
+    0|3)
+      python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_qwen35_attention_object" \
+        5cd0baa60ed33c2158842b2ef7c24e6db954d04897bade1d4f663c96765b3049 \
+        kotoba_aiueos_qwen35_attention
+      ;;
+  esac
   case "${AIUEOS_QWEN35_KOTOBA_PARITY:-0}" in
     0|2)
       python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_qwen35_activation_object" \
@@ -1046,9 +1055,6 @@ if [ -n "$model_handoff_link" ] || [ -n "$qwen35_parity_cflags" ]; then
   if [ "${AIUEOS_QWEN35_KOTOBA_PARITY:-0}" = 2 ]; then
     qwen35_kotoba_link="$kotoba_qwen35_activation_object $kotoba_qwen35_norm_object"
   elif [ "${AIUEOS_QWEN35_KOTOBA_PARITY:-0}" = 3 ]; then
-    python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_qwen35_attention_object" \
-      5cd0baa60ed33c2158842b2ef7c24e6db954d04897bade1d4f663c96765b3049 \
-      kotoba_aiueos_qwen35_attention
     qwen35_kotoba_link="$kotoba_qwen35_attention_object"
   elif [ "${AIUEOS_QWEN35_KOTOBA_PARITY:-0}" = 4 ]; then
     python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_qwen35_recurrent_object" \
@@ -1056,7 +1062,7 @@ if [ -n "$model_handoff_link" ] || [ -n "$qwen35_parity_cflags" ]; then
       kotoba_aiueos_qwen35_recurrent_step
     qwen35_kotoba_link="$kotoba_qwen35_recurrent_object"
   else
-    qwen35_kotoba_link="$kotoba_qwen35_dot_object $kotoba_qwen35_dequant_object $kotoba_qwen35_matvec_object $kotoba_qwen35_activation_object $kotoba_qwen35_norm_object"
+    qwen35_kotoba_link="$kotoba_qwen35_dot_object $kotoba_qwen35_dequant_object $kotoba_qwen35_matvec_object $kotoba_qwen35_activation_object $kotoba_qwen35_norm_object $kotoba_qwen35_attention_object"
   fi
 fi
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_device_worker_canonical_object" \
@@ -1188,6 +1194,10 @@ if [ -z "$model_handoff_link" ] && [ -n "$qwen35_parity_cflags" ]; then
   esac
   case "${AIUEOS_QWEN35_KOTOBA_PARITY:-0}" in
     1|3|4) qwen35_parity_section_cflags="$qwen35_parity_section_cflags -DAIUEOS_QWEN35_C_REFERENCE_NORM=1" ;;
+  esac
+  # And the attention object (cutover stage 3): only profile 3 links it.
+  case "${AIUEOS_QWEN35_KOTOBA_PARITY:-0}" in
+    1|2|4) qwen35_parity_section_cflags="$qwen35_parity_section_cflags -DAIUEOS_QWEN35_C_REFERENCE_ATTENTION=1" ;;
   esac
   zig cc -target x86_64-freestanding-none -std=c11 -O2 \
     -ffreestanding -fno-stack-protector -mno-red-zone \

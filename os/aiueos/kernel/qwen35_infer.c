@@ -922,22 +922,25 @@ static int linear_attention(const struct aiueos_qwen35_layer *layer,
 }
 
 /* The de-interleave, the FUSED SOFTMAX and the position-zero reduction of
- * `full_attention`, lifted out of it so that `aiueos-qwen35-attention`'s
- * parity self-test compares the object against the code the model path runs
- * rather than against a second transcription of it.  No loop body below
- * changed: the geometry (24 heads, HEAD_DIM wide, six heads per KV head)
- * arrives as arguments so the self-test can drive a smaller one, and the
- * calls beneath pass exactly what was hard-coded here before.  ADR-0175. */
-static void attention_deinterleave(float *out, const float *qg,
-                                   uint32_t heads) {
+ * `full_attention`, KEPT AS THE REFERENCE and no longer the live path
+ * (ADR-0220 cutover stage 3): parity profile 3 (AIUEOS_QWEN35_KOTOBA_PARITY=3)
+ * compares `aiueos-qwen35-attention` against them on the CPU, and
+ * `-DAIUEOS_QWEN35_C_REFERENCE_ATTENTION` makes them the forward pass again
+ * for the builds that do not link that object: the host smokes and parity
+ * profiles 1, 2 and 4.  The geometry (24 heads, HEAD_DIM wide, six heads per
+ * KV head) arrives as arguments so the self-test can drive a smaller one.
+ * ADR-0175. */
+#if AIUEOS_QWEN35_KOTOBA_PARITY == 3 || defined(AIUEOS_QWEN35_C_REFERENCE_ATTENTION)
+static void attention_deinterleave_c(float *out, const float *qg,
+                                     uint32_t heads) {
   for (uint32_t head = 0; head < heads; head++)
     for (uint32_t index = 0; index < HEAD_DIM; index++)
       out[head * HEAD_DIM + index] = qg[head * HEAD_DIM * 2U + index];
 }
 
-static void attention_zero_position(float *out, const float *qg,
-                                    const float *value, uint32_t heads,
-                                    uint32_t group) {
+static void attention_zero_position_c(float *out, const float *qg,
+                                      const float *value, uint32_t heads,
+                                      uint32_t group) {
   for (uint32_t head = 0; head < heads; head++) {
     uint32_t value_head = head / group;
     for (uint32_t index = 0; index < HEAD_DIM; index++) {
@@ -953,11 +956,11 @@ static void attention_zero_position(float *out, const float *qg,
  * resolves once per prior rather than once per (head, prior), which repairs
  * the same rows -- the repair reads the whole 1,024-float row and does not
  * depend on the KV head, and it is idempotent. */
-static uint32_t attention_softmax_heads(float *qg, const float *query,
-                                        const float *key_slot,
-                                        const float *value_slot,
-                                        float *weights, uint32_t heads,
-                                        uint32_t group, uint32_t position) {
+static uint32_t attention_softmax_heads_c(float *qg, const float *query,
+                                          const float *key_slot,
+                                          const float *value_slot,
+                                          float *weights, uint32_t heads,
+                                          uint32_t group, uint32_t position) {
   for (uint32_t head = 0; head < heads; head++) {
     uint32_t kv_head = head / group;
     const float *q = query + head * HEAD_DIM;
@@ -1004,6 +1007,124 @@ static uint32_t attention_softmax_heads(float *qg, const float *query,
   }
   return AIUEOS_QWEN35_FAILURE_NONE;
 }
+#endif
+
+#if AIUEOS_QWEN35_KOTOBA_PARITY == 3 || !defined(AIUEOS_QWEN35_C_REFERENCE_ATTENTION)
+extern uint64_t kotoba_aiueos_qwen35_attention(uint8_t *arena,
+                                               uint64_t arena_bytes,
+                                               const uint8_t *plan,
+                                               uint64_t plan_bytes);
+#endif
+
+#ifdef AIUEOS_QWEN35_C_REFERENCE_ATTENTION
+static int attention_deinterleave(float *out, const float *qg,
+                                  uint32_t heads) {
+  attention_deinterleave_c(out, qg, heads);
+  return 1;
+}
+
+static int attention_zero_position(float *out, const float *qg,
+                                   const float *value, uint32_t heads,
+                                   uint32_t group) {
+  attention_zero_position_c(out, qg, value, heads, group);
+  return 1;
+}
+
+static uint32_t attention_softmax_heads(float *qg, const float *query,
+                                        const float *key_slot,
+                                        const float *value_slot,
+                                        float *scratch, uint32_t heads,
+                                        uint32_t group, uint32_t position) {
+  return attention_softmax_heads_c(qg, query, key_slot, value_slot, scratch,
+                                   heads, group, position);
+}
+#else
+/* THE LIVE ATTENTION ARITHMETIC IS THE KOTOBA OBJECT (ADR-0220 cutover
+ * stage 3).  The object takes ONE arena and a 96-byte plan of offsets into
+ * it (its own header says why: a five-argument ABI and `kernel-subregion`'s
+ * base rule).  The live regions are not one allocation -- the query/gate and
+ * output live in the workspace, the key and value rows in the decode
+ * context -- so the arena is the smallest span that covers every region the
+ * plan names, and each offset is that region's distance from the span's
+ * base.  The object bounds every region against the span, not against the
+ * allocation it came from; what keeps a region inside its own allocation is
+ * the extents below, which are the object's own `regions-fit` extents.
+ *
+ * The plan is words: slot k is byte 8k.  Word 0 is the u32 mode with the u32
+ * reserved field (zero) above it.  A slot whose `extent` is non-zero holds an
+ * ADDRESS until the rebase turns it into an offset; every other slot is a
+ * count or stays zero, which the object demands of a slot its mode does not
+ * use. */
+static uint64_t attention_call(uint64_t *plan, const uint64_t *extent) {
+  uint64_t low = ~0ULL, high = 0;
+  for (uint32_t slot = 0; slot < 12U; slot++) {
+    if (!extent[slot]) continue;
+    if (plan[slot] < low) low = plan[slot];
+    if (plan[slot] + extent[slot] > high) high = plan[slot] + extent[slot];
+  }
+  for (uint32_t slot = 0; slot < 12U; slot++)
+    if (extent[slot]) plan[slot] -= low;
+  return kotoba_aiueos_qwen35_attention((uint8_t *)(uintptr_t)low, high - low,
+                                        (const uint8_t *)(const void *)plan,
+                                        96);
+}
+
+static int attention_deinterleave(float *out, const float *qg,
+                                  uint32_t heads) {
+  uint64_t plan[12] = {0}, extent[12] = {0};
+  plan[0] = 0;
+  plan[1] = heads;
+  plan[2] = HEAD_DIM;
+  plan[3] = (uint64_t)(uintptr_t)out;  extent[3] = (uint64_t)heads * HEAD_DIM * 4U;
+  plan[4] = (uint64_t)(uintptr_t)qg;   extent[4] = (uint64_t)heads * HEAD_DIM * 8U;
+  return attention_call(plan, extent) == 0;
+}
+
+static int attention_zero_position(float *out, const float *qg,
+                                   const float *value, uint32_t heads,
+                                   uint32_t group) {
+  uint64_t plan[12] = {0}, extent[12] = {0};
+  plan[0] = 2;
+  plan[1] = heads;
+  plan[2] = HEAD_DIM;
+  plan[3] = (uint64_t)(uintptr_t)out;   extent[3] = (uint64_t)heads * HEAD_DIM * 4U;
+  plan[4] = (uint64_t)(uintptr_t)qg;    extent[4] = (uint64_t)heads * HEAD_DIM * 8U;
+  plan[5] = (uint64_t)(uintptr_t)value;
+  extent[5] = (uint64_t)((heads + group - 1U) / group) * HEAD_DIM * 4U;
+  plan[9] = group;
+  return attention_call(plan, extent) == 0;
+}
+
+/* `scratch` is 128 bytes the object owns for the call (eight binary64
+ * scores, eight binary32 weights, the maximum and the denominator); the C
+ * reference used the same pointer as its eight-float weight row. */
+static uint32_t attention_softmax_heads(float *qg, const float *query,
+                                        const float *key_slot,
+                                        const float *value_slot,
+                                        float *scratch, uint32_t heads,
+                                        uint32_t group, uint32_t position) {
+  uint64_t plan[12] = {0}, extent[12] = {0};
+  uint64_t prefix = (uint64_t)(position + 1U) * FULL_KV_WIDTH * 4U;
+  plan[0] = 1;
+  plan[1] = heads;
+  plan[2] = HEAD_DIM;
+  plan[4] = (uint64_t)(uintptr_t)qg;         extent[4] = (uint64_t)heads * HEAD_DIM * 8U;
+  plan[5] = (uint64_t)(uintptr_t)key_slot;   extent[5] = prefix;
+  plan[6] = (uint64_t)(uintptr_t)value_slot; extent[6] = prefix;
+  plan[7] = (uint64_t)(uintptr_t)query;      extent[7] = (uint64_t)heads * HEAD_DIM * 4U;
+  plan[8] = FULL_KV_WIDTH;
+  plan[9] = group;
+  plan[10] = position;
+  plan[11] = (uint64_t)(uintptr_t)scratch;   extent[11] = 128U;
+  uint64_t result = attention_call(plan, extent);
+  if (result == 0) return AIUEOS_QWEN35_FAILURE_NONE;
+  /* -11 is the object's non-finite query, `FULL_QUERY` in the C; every
+     other refusal -- a non-finite key or score, a denominator that is not
+     positive and finite, or a plan it would not admit -- is the softmax. */
+  return result == (uint64_t)(int64_t)-11 ? AIUEOS_QWEN35_FAILURE_FULL_QUERY
+                                          : AIUEOS_QWEN35_FAILURE_FULL_SOFTMAX;
+}
+#endif
 
 static int full_attention(const struct aiueos_qwen35_layer *layer,
                           struct qwen35_decode_context *decode,
@@ -1028,8 +1149,8 @@ static int full_attention(const struct aiueos_qwen35_layer *layer,
       return fail_at(AIUEOS_QWEN35_FAILURE_FULL_KEY);
 
     /* Remove the per-head Q/G interleave before normalization and RoPE. */
-    attention_deinterleave(scratch_c, scratch_a, 24);
-    if (!rms_norm_heads_weighted(scratch_c, 24, HEAD_DIM,
+    if (!attention_deinterleave(scratch_c, scratch_a, 24) ||
+        !rms_norm_heads_weighted(scratch_c, 24, HEAD_DIM,
                                  &full->query_norm) ||
         !rms_norm_heads_weighted(key_projection, 4, HEAD_DIM,
                                  &full->key_norm))
@@ -1081,7 +1202,8 @@ static int full_attention(const struct aiueos_qwen35_layer *layer,
        emitted activation must be bit-for-bit the same reduction as the
        physically-qualified cache-free first-token path.  A one-element
        softmax is algebraically equivalent, not floating-point equivalent. */
-    attention_zero_position(scratch_c, scratch_a, scratch_b, 24, 6);
+    if (!attention_zero_position(scratch_c, scratch_a, scratch_b, 24, 6))
+      return fail_at(AIUEOS_QWEN35_FAILURE_FULL_OUTPUT);
   }
   if (!matvec(&full->output, scratch_c, LINEAR_INNER, normalized, EMBED))
     return fail_at(AIUEOS_QWEN35_FAILURE_FULL_OUTPUT);
@@ -1825,11 +1947,6 @@ static int qwen_parity_same(const float *a, const float *b, uint32_t count) {
 }
 
 #if AIUEOS_QWEN35_KOTOBA_PARITY == 3
-extern uint64_t kotoba_aiueos_qwen35_attention(uint8_t *arena,
-                                               uint64_t arena_bytes,
-                                               const uint8_t *plan,
-                                               uint64_t plan_bytes);
-
 static uint8_t __attribute__((section(".high_bss"), aligned(16)))
   qwen_att_arena[QWEN_ATT_ARENA];
 static uint8_t __attribute__((section(".high_bss"), aligned(8))) qwen_att_plan[96];
@@ -1890,33 +2007,32 @@ static float __attribute__((section(".high_bss"))) qwen_rec_out[QWEN_REC_DIM];
 #if AIUEOS_QWEN35_KOTOBA_PARITY == 3
 
 /* Stage 5.  Three modes and a refusal.  The reference half is
- * `attention_deinterleave` / `attention_softmax_heads` /
- * `attention_zero_position` -- the functions `full_attention` itself calls,
- * not a second transcription of them. */
+ * `attention_deinterleave_c` / `attention_softmax_heads_c` /
+ * `attention_zero_position_c` -- what `full_attention` ran before the
+ * cutover -- and the object half is the live wrappers `full_attention` calls
+ * now, so the plan layout and the address rebase checked are the forward
+ * pass's own. */
 static int qwen_parity_attention(void) {
   uint32_t index;
 
   /* mode 0: the query/gate de-interleave. */
   qwen_parity_state = 0x0abcdef1u;
   qwen_att_fill(QWEN_ATT_QG, QWEN_ATT_HEADS * HEAD_DIM * 2U);
-  attention_deinterleave(qwen_att_reference, qwen_att_at(QWEN_ATT_QG),
-                         QWEN_ATT_HEADS);
+  attention_deinterleave_c(qwen_att_reference, qwen_att_at(QWEN_ATT_QG),
+                           QWEN_ATT_HEADS);
   for (index = 0; index < QWEN_ATT_HEADS * HEAD_DIM; index++)
     qwen_att_at(QWEN_ATT_OUT)[index] = 0.0f;
-  qwen_att_plan_clear();
-  qwen_parity_write_u32(qwen_att_plan, 0, 0);
-  qwen_parity_write_u64(qwen_att_plan, 8, QWEN_ATT_HEADS);
-  qwen_parity_write_u64(qwen_att_plan, 16, HEAD_DIM);
-  qwen_parity_write_u64(qwen_att_plan, 24, QWEN_ATT_OUT);
-  qwen_parity_write_u64(qwen_att_plan, 32, QWEN_ATT_QG);
-  if (kotoba_aiueos_qwen35_attention(qwen_att_arena, QWEN_ATT_ARENA,
-                                     qwen_att_plan, 96) != 0)
+  if (!attention_deinterleave(qwen_att_at(QWEN_ATT_OUT),
+                              qwen_att_at(QWEN_ATT_QG), QWEN_ATT_HEADS))
     return 0;
   if (!qwen_parity_same(qwen_att_reference, qwen_att_at(QWEN_ATT_OUT),
                      QWEN_ATT_HEADS * HEAD_DIM))
     return 0;
 
-  /* mode 1: the fused softmax over the causal prefix of the KV cache. */
+  /* mode 1: the fused softmax over the causal prefix of the KV cache. The
+     live wrapper is handed ADDRESSES, as `full_attention` hands it the
+     workspace and the decode context, and rebases them itself; every call
+     here therefore checks that rebase as well as the arithmetic. */
   qwen_parity_state = 0x13572468u;
   qwen_att_fill(QWEN_ATT_QG, QWEN_ATT_HEADS * HEAD_DIM * 2U);
   qwen_att_fill_narrow(QWEN_ATT_QUERY, QWEN_ATT_HEADS * HEAD_DIM);
@@ -1924,27 +2040,21 @@ static int qwen_parity_attention(void) {
   qwen_att_fill(QWEN_ATT_VALUE, QWEN_ATT_PRIORS * FULL_KV_WIDTH);
   for (index = 0; index < QWEN_ATT_HEADS * HEAD_DIM * 2U; index++)
     qwen_att_reference[index] = qwen_att_at(QWEN_ATT_QG)[index];
-  if (attention_softmax_heads(qwen_att_reference, qwen_att_at(QWEN_ATT_QUERY),
-                              qwen_att_at(QWEN_ATT_KEY),
-                              qwen_att_at(QWEN_ATT_VALUE), qwen_att_weights,
-                              QWEN_ATT_HEADS, QWEN_ATT_GROUP,
-                              QWEN_ATT_POSITION) !=
+  if (attention_softmax_heads_c(qwen_att_reference,
+                                qwen_att_at(QWEN_ATT_QUERY),
+                                qwen_att_at(QWEN_ATT_KEY),
+                                qwen_att_at(QWEN_ATT_VALUE), qwen_att_weights,
+                                QWEN_ATT_HEADS, QWEN_ATT_GROUP,
+                                QWEN_ATT_POSITION) !=
       AIUEOS_QWEN35_FAILURE_NONE)
     return 0;
-  qwen_att_plan_clear();
-  qwen_parity_write_u32(qwen_att_plan, 0, 1);
-  qwen_parity_write_u64(qwen_att_plan, 8, QWEN_ATT_HEADS);
-  qwen_parity_write_u64(qwen_att_plan, 16, HEAD_DIM);
-  qwen_parity_write_u64(qwen_att_plan, 32, QWEN_ATT_QG);
-  qwen_parity_write_u64(qwen_att_plan, 40, QWEN_ATT_KEY);
-  qwen_parity_write_u64(qwen_att_plan, 48, QWEN_ATT_VALUE);
-  qwen_parity_write_u64(qwen_att_plan, 56, QWEN_ATT_QUERY);
-  qwen_parity_write_u64(qwen_att_plan, 64, FULL_KV_WIDTH);
-  qwen_parity_write_u64(qwen_att_plan, 72, QWEN_ATT_GROUP);
-  qwen_parity_write_u64(qwen_att_plan, 80, QWEN_ATT_POSITION);
-  qwen_parity_write_u64(qwen_att_plan, 88, QWEN_ATT_SCRATCH);
-  if (kotoba_aiueos_qwen35_attention(qwen_att_arena, QWEN_ATT_ARENA,
-                                     qwen_att_plan, 96) != 0)
+  if (attention_softmax_heads(qwen_att_at(QWEN_ATT_QG),
+                              qwen_att_at(QWEN_ATT_QUERY),
+                              qwen_att_at(QWEN_ATT_KEY),
+                              qwen_att_at(QWEN_ATT_VALUE),
+                              qwen_att_at(QWEN_ATT_SCRATCH), QWEN_ATT_HEADS,
+                              QWEN_ATT_GROUP, QWEN_ATT_POSITION) !=
+      AIUEOS_QWEN35_FAILURE_NONE)
     return 0;
   if (!qwen_parity_same(qwen_att_reference, qwen_att_at(QWEN_ATT_QG),
                      QWEN_ATT_HEADS * HEAD_DIM))
@@ -1954,27 +2064,23 @@ static int qwen_parity_attention(void) {
   qwen_parity_state = 0x2468ace0u;
   qwen_att_fill(QWEN_ATT_QG, QWEN_ATT_HEADS * HEAD_DIM * 2U);
   qwen_att_fill(QWEN_ATT_VALUE, QWEN_ATT_KV_HEADS * HEAD_DIM);
-  attention_zero_position(qwen_att_reference, qwen_att_at(QWEN_ATT_QG),
-                          qwen_att_at(QWEN_ATT_VALUE), QWEN_ATT_HEADS,
-                          QWEN_ATT_GROUP);
+  attention_zero_position_c(qwen_att_reference, qwen_att_at(QWEN_ATT_QG),
+                            qwen_att_at(QWEN_ATT_VALUE), QWEN_ATT_HEADS,
+                            QWEN_ATT_GROUP);
   for (index = 0; index < QWEN_ATT_HEADS * HEAD_DIM; index++)
     qwen_att_at(QWEN_ATT_OUT)[index] = 0.0f;
-  qwen_att_plan_clear();
-  qwen_parity_write_u32(qwen_att_plan, 0, 2);
-  qwen_parity_write_u64(qwen_att_plan, 8, QWEN_ATT_HEADS);
-  qwen_parity_write_u64(qwen_att_plan, 16, HEAD_DIM);
-  qwen_parity_write_u64(qwen_att_plan, 24, QWEN_ATT_OUT);
-  qwen_parity_write_u64(qwen_att_plan, 32, QWEN_ATT_QG);
-  qwen_parity_write_u64(qwen_att_plan, 40, QWEN_ATT_VALUE);
-  qwen_parity_write_u64(qwen_att_plan, 72, QWEN_ATT_GROUP);
-  if (kotoba_aiueos_qwen35_attention(qwen_att_arena, QWEN_ATT_ARENA,
-                                     qwen_att_plan, 96) != 0)
+  if (!attention_zero_position(qwen_att_at(QWEN_ATT_OUT),
+                               qwen_att_at(QWEN_ATT_QG),
+                               qwen_att_at(QWEN_ATT_VALUE), QWEN_ATT_HEADS,
+                               QWEN_ATT_GROUP))
     return 0;
   if (!qwen_parity_same(qwen_att_reference, qwen_att_at(QWEN_ATT_OUT),
                      QWEN_ATT_HEADS * HEAD_DIM))
     return 0;
 
-  /* A refusal, so a run that never saw the object say no is not a pass. */
+  /* A refusal, so a run that never saw the object say no is not a pass.
+     Straight to the object: the live wrappers never build mode 3. */
+  qwen_att_plan_clear();
   qwen_parity_write_u32(qwen_att_plan, 0, 3);
   if (kotoba_aiueos_qwen35_attention(qwen_att_arena, QWEN_ATT_ARENA,
                                      qwen_att_plan, 96) !=
