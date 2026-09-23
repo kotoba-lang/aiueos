@@ -421,6 +421,39 @@ is **two tensor codecs and one basis change** — nothing structural.
    the decode context are separate allocations, so the span the object is
    handed is their distance apart, which no run has exercised.
 
+   **Recurrent-step: LIVE on the object.** `linear_attention`'s per-head
+   gated DeltaNet step (decay, `remembered`, the correction, the rank-one
+   update and the read-out, 48 heads × 48 layers) calls
+   `aiueos-qwen35-recurrent-step`. The wrapper `recurrent_step` builds the
+   96-byte plan (dimension 128, six region words, decay and β as binary32
+   bit patterns) and, as for attention, makes the arena the smallest span
+   covering the head state in `decode->recurrent` and the five workspace
+   vectors, rebasing each address against it. Still C in
+   `linear_attention`: the conv mix, the q/k L2 norm call sites, the decay
+   transition's `+ dt` and `a *` products, the position-zero reduction that
+   overwrites the output at position 0, and the gated RMS of the output.
+   The C is kept as `recurrent_step_c` under
+   `AIUEOS_QWEN35_KOTOBA_PARITY == 4 || AIUEOS_QWEN35_C_REFERENCE_RECURRENT`;
+   the flag is set for the host smokes and parity profiles 1, 2 and 3 (which
+   do not link the object). Any non-zero answer maps to `LINEAR RECURRENT`
+   (the caller has already refused a non-finite decay/β as `LINEAR DECAY`,
+   so the object's −6 is unreachable). Reproduce:
+   `AIUEOS_QWEN35_KOTOBA_PARITY=4 smoke-qemu-uefi.sh` → `QWEN-PARITY
+   recurrent ok` in `build/aiueos/kernel-serial.log`. The harness calls the
+   live wrapper with addresses, so the plan layout and the rebase checked
+   are the forward pass's. Seen red: key and query swapped in the live plan
+   → `QWEN-PARITY recurrent mismatch`, exit 1. Profiles 1/2/3 still
+   `dequant/dot/matvec ok`, `activation/norm ok`, `attention ok`;
+   `bonsai-qemu-admission` → `AIUEOS_BONSAI_ADMISSION_QEMU_OK`;
+   `smoke-qwen35-decode-math.sh` → `AIUEOS_QWEN35_DECODE_MATH_OK`. The
+   production node image links with it: `aiueos_low_end` 0x1f1000, 12,288 B
+   under 0x1f4000 (`.text` 0xb65a2). **Not measured**: a forward pass
+   through the call; the live arena span (state and workspace are separate
+   allocations — `decode->recurrent` is 150,994,944 B — so the span is their
+   distance apart, which no run has handed the object); the per-token cost
+   of 2,304 scalar calls where the C was an O3 loop.
+   `smoke-qwen35-first-token-model.sh` needs the Qwen3.8 GGUF and was not run.
+
    **The production node image links again: `aiueos_low_end` is 0x1ec000,
    32 KiB under 0x1f4000.** Before, with `build-qwen38-murakumo-node-pxe.sh`'s
    flags (`AIUEOS_PHYSICAL_NETWORK_QUALIFICATION`, `…_DIRECT_HTTPS_…`,
@@ -442,9 +475,9 @@ is **two tensor codecs and one basis change** — nothing structural.
    `AIUEOS_UEFI_SMOKE_OK`. There, virtio modern and MSI-X are mapped through
    `aiueos_map_pci_mmio`, so the moved tables are walked. `bonsai-qemu-admission`
    → `AIUEOS_BONSAI_ADMISSION_QEMU_OK`. **Not measured**: the production node
-   image booting on the physical K16. With the attention object linked the
-   headroom is 20,480 B; the next object that grows `.text` past it needs the
-   next move (recurrent-step is 7,432 B); the candidates left are the TLS and
+   image booting on the physical K16. With the attention and recurrent-step
+   objects linked the headroom is 12,288 B; the next object that grows
+   `.text` past it needs the next move; the candidates left are the TLS and
    NIC scratch (tls13 8.8 KiB, rtl8125 8.3 KiB, main 6.8 KiB) or a third
    loader segment. The 64 KiB boot stack cannot move, because it is in use
    before `.high_bss` is zeroed.

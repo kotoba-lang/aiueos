@@ -704,14 +704,22 @@ static void rope_heads(float *values, uint32_t heads, uint32_t position) {
   }
 }
 
-static void recurrent_step(float *head_state,
-                           const float *key,
-                           const float *query,
-                           const float *value,
-                           float decay,
-                           float beta,
-                           float *correction,
-                           float *output) {
+/* The gated DeltaNet step of one linear-attention head, KEPT AS THE
+ * REFERENCE and no longer the live path (ADR-0220 cutover stage 4): parity
+ * profile 4 (AIUEOS_QWEN35_KOTOBA_PARITY=4) compares
+ * `aiueos-qwen35-recurrent-step` against it on the CPU, and
+ * `-DAIUEOS_QWEN35_C_REFERENCE_RECURRENT` makes it the forward pass again for
+ * the builds that do not link that object: the host smokes and parity
+ * profiles 1, 2 and 3. */
+#if AIUEOS_QWEN35_KOTOBA_PARITY == 4 || defined(AIUEOS_QWEN35_C_REFERENCE_RECURRENT)
+static void recurrent_step_c(float *head_state,
+                             const float *key,
+                             const float *query,
+                             const float *value,
+                             float decay,
+                             float beta,
+                             float *correction,
+                             float *output) {
   for (uint32_t value_index = 0; value_index < LINEAR_HEAD_DIM;
        value_index++) {
     float remembered = 0.0f;
@@ -740,6 +748,70 @@ static void recurrent_step(float *head_state,
     output[value_index] = value_out * INV_SQRT_LINEAR_HEAD_DIM;
   }
 }
+#endif
+
+#if AIUEOS_QWEN35_KOTOBA_PARITY == 4 || !defined(AIUEOS_QWEN35_C_REFERENCE_RECURRENT)
+extern uint64_t kotoba_aiueos_qwen35_recurrent_step(uint8_t *arena,
+                                                    uint64_t arena_bytes,
+                                                    const uint8_t *plan,
+                                                    uint64_t plan_bytes);
+#endif
+
+#ifdef AIUEOS_QWEN35_C_REFERENCE_RECURRENT
+static int recurrent_step(float *head_state, const float *key,
+                          const float *query, const float *value,
+                          float decay, float beta, float *correction,
+                          float *output) {
+  recurrent_step_c(head_state, key, query, value, decay, beta, correction,
+                   output);
+  return 1;
+}
+#else
+/* THE LIVE RECURRENT STEP IS THE KOTOBA OBJECT (ADR-0220 cutover stage 4).
+ * Like the attention object, it takes ONE arena and a 96-byte plan of
+ * offsets.  The live regions are not one allocation -- the head state lives
+ * in `decode->recurrent`, the key/query/value, the correction row and the
+ * output in the workspace -- so the arena is the smallest span that covers
+ * all six and each offset is that region's distance from the span's base.
+ * The extents are the object's own `regions-fit` extents (`d*d*4` for the
+ * state, `d*4` for each vector), so the object cannot be asked to read past
+ * the region it was handed.
+ *
+ * The plan is words: slot k is byte 8k.  Word 0 is the reserved mode word
+ * (zero).  Word 1 is the dimension, words 2..7 the six regions, words 8 and
+ * 9 the binary32 bit patterns of decay and beta, words 10 and 11 reserved
+ * zero.  The decay and beta finiteness refusal (-6) is the object's; the
+ * caller checks the same thing first and reports LINEAR_DECAY, so a -6 here
+ * is unreachable and any non-zero answer is LINEAR_RECURRENT. */
+static int recurrent_step(float *head_state, const float *key,
+                          const float *query, const float *value,
+                          float decay, float beta, float *correction,
+                          float *output) {
+  union { float value; uint32_t bits; } decay_bits = {decay}, beta_bits = {beta};
+  uint64_t plan[12] = {0}, extent[12] = {0};
+  uint64_t low = ~0ULL, high = 0;
+  plan[1] = LINEAR_HEAD_DIM;
+  plan[2] = (uint64_t)(uintptr_t)head_state;
+  extent[2] = (uint64_t)LINEAR_HEAD_DIM * LINEAR_HEAD_DIM * 4U;
+  plan[3] = (uint64_t)(uintptr_t)key;        extent[3] = LINEAR_HEAD_DIM * 4U;
+  plan[4] = (uint64_t)(uintptr_t)query;      extent[4] = LINEAR_HEAD_DIM * 4U;
+  plan[5] = (uint64_t)(uintptr_t)value;      extent[5] = LINEAR_HEAD_DIM * 4U;
+  plan[6] = (uint64_t)(uintptr_t)correction; extent[6] = LINEAR_HEAD_DIM * 4U;
+  plan[7] = (uint64_t)(uintptr_t)output;     extent[7] = LINEAR_HEAD_DIM * 4U;
+  plan[8] = decay_bits.bits;
+  plan[9] = beta_bits.bits;
+  for (uint32_t slot = 0; slot < 12U; slot++) {
+    if (!extent[slot]) continue;
+    if (plan[slot] < low) low = plan[slot];
+    if (plan[slot] + extent[slot] > high) high = plan[slot] + extent[slot];
+  }
+  for (uint32_t slot = 0; slot < 12U; slot++)
+    if (extent[slot]) plan[slot] -= low;
+  return kotoba_aiueos_qwen35_recurrent_step(
+             (uint8_t *)(uintptr_t)low, high - low,
+             (const uint8_t *)(const void *)plan, 96) == 0;
+}
+#endif
 
 static int ffn(const struct aiueos_qwen35_layer *layer) {
   if (!rms_norm(state, &layer->post_attention_norm, EMBED, normalized) ||
@@ -870,9 +942,9 @@ static int linear_attention(const struct aiueos_qwen35_layer *layer,
       float *output = scratch_c + head * LINEAR_HEAD_DIM;
       /* S <- decay*S; delta <- beta*(v-k^T S); S <- S+k*delta;
          y <- (q/sqrt(d))^T S.  Rows are key dimension, columns value. */
-      recurrent_step(head_state, key, query, value, decay, beta,
-                     dequantized, output);
-      if (!finite_values(output, LINEAR_HEAD_DIM))
+      if (!recurrent_step(head_state, key, query, value, decay, beta,
+                          dequantized, output) ||
+          !finite_values(output, LINEAR_HEAD_DIM))
         return fail_at(AIUEOS_QWEN35_FAILURE_LINEAR_RECURRENT);
       if (!decode->position) {
         /* With an all-zero recurrent state the official delta rule reduces
@@ -1990,11 +2062,6 @@ static void qwen_att_plan_clear(void) {
   for (uint32_t index = 0; index < 96U; index++) qwen_att_plan[index] = 0;
 }
 #else
-extern uint64_t kotoba_aiueos_qwen35_recurrent_step(uint8_t *arena,
-                                                    uint64_t arena_bytes,
-                                                    const uint8_t *plan,
-                                                    uint64_t plan_bytes);
-
 static uint8_t __attribute__((section(".high_bss"), aligned(16)))
   qwen_rec_arena[QWEN_REC_ARENA];
 static uint8_t __attribute__((section(".high_bss"), aligned(8))) qwen_rec_plan[96];
@@ -2092,8 +2159,11 @@ static int qwen_parity_attention(void) {
 #endif /* == 3 */
 
 #if AIUEOS_QWEN35_KOTOBA_PARITY == 4
-/* Stage 6.  `recurrent_step` itself is the reference -- it is already a
- * standalone function and nothing had to be lifted out of it. */
+/* Stage 6.  The reference half is `recurrent_step_c` -- what
+ * `linear_attention` ran before the cutover -- and the object half is the
+ * live wrapper `linear_attention` calls now, handed ADDRESSES as the forward
+ * pass hands it `decode->recurrent` and the workspace, so the plan layout
+ * and the rebase checked are the forward pass's own. */
 static int qwen_parity_recurrent(void) {
   float *state = (float *)(void *)(qwen_rec_arena + QWEN_REC_STATE);
   float *key = (float *)(void *)(qwen_rec_arena + QWEN_REC_KEY);
@@ -2115,21 +2185,11 @@ static int qwen_parity_recurrent(void) {
   for (index = 0; index < QWEN_REC_DIM; index++) value[index] = qwen_parity_value();
   for (index = 0; index < QWEN_REC_DIM * QWEN_REC_DIM; index++)
     qwen_rec_state[index] = state[index];
-  recurrent_step(qwen_rec_state, key, query, value, decay, beta,
-                 qwen_rec_corr, qwen_rec_out);
+  recurrent_step_c(qwen_rec_state, key, query, value, decay, beta,
+                   qwen_rec_corr, qwen_rec_out);
 
-  for (index = 0; index < 96U; index++) qwen_rec_plan[index] = 0;
-  qwen_parity_write_u64(qwen_rec_plan, 8, QWEN_REC_DIM);
-  qwen_parity_write_u64(qwen_rec_plan, 16, QWEN_REC_STATE);
-  qwen_parity_write_u64(qwen_rec_plan, 24, QWEN_REC_KEY);
-  qwen_parity_write_u64(qwen_rec_plan, 32, QWEN_REC_QUERY);
-  qwen_parity_write_u64(qwen_rec_plan, 40, QWEN_REC_VALUE);
-  qwen_parity_write_u64(qwen_rec_plan, 48, QWEN_REC_CORR);
-  qwen_parity_write_u64(qwen_rec_plan, 56, QWEN_REC_OUT);
-  qwen_parity_write_u64(qwen_rec_plan, 64, qwen_parity_bits(decay));
-  qwen_parity_write_u64(qwen_rec_plan, 72, qwen_parity_bits(beta));
-  if (kotoba_aiueos_qwen35_recurrent_step(qwen_rec_arena, QWEN_REC_ARENA,
-                                          qwen_rec_plan, 96) != 0)
+  if (!recurrent_step(state, key, query, value, decay, beta,
+                      (float *)(void *)(qwen_rec_arena + QWEN_REC_CORR), out))
     return 0;
   /* BOTH halves of the answer: the 65,536-byte state the next token reads and
      the activation this token emits.  A port that got the rank-one update
@@ -2138,7 +2198,9 @@ static int qwen_parity_recurrent(void) {
     return 0;
   if (!qwen_parity_same(qwen_rec_out, out, QWEN_REC_DIM)) return 0;
 
-  /* A refusal: the dimension ceiling is 128 and this asks for 129. */
+  /* A refusal: the dimension ceiling is 128 and this asks for 129.
+     Straight to the object: the live wrapper always passes 128. */
+  for (index = 0; index < 96U; index++) qwen_rec_plan[index] = 0;
   qwen_parity_write_u64(qwen_rec_plan, 8, 129);
   if (kotoba_aiueos_qwen35_recurrent_step(qwen_rec_arena, QWEN_REC_ARENA,
                                           qwen_rec_plan, 96) !=
