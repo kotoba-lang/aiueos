@@ -44,10 +44,10 @@
     (is (<= 15 (count (smokes ".sh")))
         "the bare-metal smoke chain is a dozen-plus scripts; finding fewer means
          this test is looking in the wrong directory and would pass for that")
-    (is (<= 2 (count (smokes ".cljs"))))))
+    (is (<= 2 (count (smokes ".cljk"))))))
 
 (deftest every-nbb-smoke-is-registered-as-a-task
-  (doseq [smoke (smokes ".cljs")]
+  (doseq [smoke (smokes ".cljk")]
     ;; `true?` of a precomputed boolean rather than `str/includes?` inline:
     ;; clojure.test prints the failing form's arguments, and one of them is the
     ;; whole of tasks.edn. A message nobody can read is its own small version
