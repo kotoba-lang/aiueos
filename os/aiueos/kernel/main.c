@@ -1778,7 +1778,7 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
        inputs, which is exactly the property that survives having no weights. */
     {
       extern int aiueos_qwen35_kotoba_parity_selftest(uint32_t stage);
-      /* Four profiles, because the low region cannot hold every object at
+      /* Five profiles, because the low region cannot hold every object at
          once since the tokenizer landed (see qwen35_infer.c's own comment).
          Each links only the objects its stages call, and a stage the profile
          did not compile is REFUSED rather than reported ok. */
@@ -1791,9 +1791,12 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
 #elif AIUEOS_QWEN35_KOTOBA_PARITY == 3
       static const char *const qwen_parity_names[1] = {"attention"};
       uint32_t qwen_parity_first = 5U;
-#else
+#elif AIUEOS_QWEN35_KOTOBA_PARITY == 4
       static const char *const qwen_parity_names[1] = {"recurrent"};
       uint32_t qwen_parity_first = 6U;
+#else
+      static const char *const qwen_parity_names[1] = {"rope"};
+      uint32_t qwen_parity_first = 7U;
 #endif
       for (uint32_t index = 0;
            index < sizeof qwen_parity_names / sizeof qwen_parity_names[0];
@@ -1809,6 +1812,31 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
         serial_string(qwen_parity_names[index]);
         serial_string(" ok\r\n");
       }
+#if AIUEOS_QWEN35_KOTOBA_PARITY == 5
+      /* The rope object is checked against the Prism reference, not the C
+         (x87 fsincos cannot be matched), so the distance from the C it
+         replaced is a MEASUREMENT printed here, one line per decode position,
+         never a pass/fail. */
+      {
+        extern int aiueos_qwen35_rope_distance(uint32_t position,
+                                               uint32_t *differing,
+                                               uint32_t *max_ulp);
+        for (uint32_t position = 1U; position < 8U; position++) {
+          uint32_t differing = 0, max_ulp = 0;
+          if (!aiueos_qwen35_rope_distance(position, &differing, &max_ulp)) {
+            serial_string("QWEN-PARITY rope distance refused\r\n");
+            evidence_stop(__LINE__);
+          }
+          serial_string("QWEN-PARITY rope distance-from-c position=");
+          serial_decimal(position);
+          serial_string(" differing=");
+          serial_decimal(differing);
+          serial_string("/6144 max-ulp=");
+          serial_decimal(max_ulp);
+          serial_string("\r\n");
+        }
+      }
+#endif
     }
 #endif
     {

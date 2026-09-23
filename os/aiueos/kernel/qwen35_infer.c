@@ -196,6 +196,7 @@ static float softplus(float value) {
   return local_log1p(local_exp(value));
 }
 
+#if AIUEOS_QWEN35_KOTOBA_PARITY == 5 || defined(AIUEOS_QWEN35_C_REFERENCE_ROPE)
 static void local_sincos(float value, float *sine, float *cosine) {
 #if defined(__x86_64__)
   float s, c;
@@ -207,6 +208,7 @@ static void local_sincos(float value, float *sine, float *cosine) {
   *cosine = __builtin_cosf(value);
 #endif
 }
+#endif
 
 static float sigmoid(float value) {
   if (value >= 0.0f) {
@@ -687,7 +689,18 @@ static int activate(uint32_t mode, float *values, const float *gate,
 }
 #endif
 
-static void rope_heads(float *values, uint32_t heads, uint32_t position) {
+/* The C rotary embedding, KEPT AS A REFERENCE and no longer the live path
+ * (ADR-0220 cutover stage 5, ADR-0222 item 6).  Unlike the stages before it,
+ * the object is NOT bit-equal to this and is not meant to be: the sine here
+ * is x87 `fsincos` and the frequency `local_exp`, while the object follows
+ * Prism llama.cpp's iterated theta_scale and the language's bounded sine.
+ * Parity profile 5 (AIUEOS_QWEN35_KOTOBA_PARITY=5) checks the object bit for
+ * bit against the Prism reference and PRINTS how far this C is from it;
+ * `-DAIUEOS_QWEN35_C_REFERENCE_ROPE` makes it the forward pass again for the
+ * builds that do not link the object: the host smokes and parity profiles
+ * 1-4. */
+#if AIUEOS_QWEN35_KOTOBA_PARITY == 5 || defined(AIUEOS_QWEN35_C_REFERENCE_ROPE)
+static void rope_heads_c(float *values, uint32_t heads, uint32_t position) {
   if (!position) return;
   for (uint32_t pair = 0; pair < ROPE_HALF; pair++) {
     float frequency = local_exp(
@@ -703,6 +716,32 @@ static void rope_heads(float *values, uint32_t heads, uint32_t position) {
     }
   }
 }
+#endif
+
+#if AIUEOS_QWEN35_KOTOBA_PARITY == 5 || !defined(AIUEOS_QWEN35_C_REFERENCE_ROPE)
+extern uint64_t kotoba_aiueos_qwen35_rope(float *values, uint64_t values_bytes,
+                                          uint64_t heads, uint64_t position);
+#endif
+
+#ifdef AIUEOS_QWEN35_C_REFERENCE_ROPE
+static int rope_heads(float *values, uint32_t heads, uint32_t position) {
+  rope_heads_c(values, heads, position);
+  return 1;
+}
+#else
+/* THE LIVE ROTARY EMBEDDING IS THE KOTOBA OBJECT (ADR-0220 cutover stage 5).
+ * In place over `heads` consecutive 256-float heads; zero is success.  Its
+ * refusals are a null pointer, heads outside 1..64, a byte count that is not
+ * heads * 1024 and a position past 25,735 -- the first three cannot happen
+ * from the two call sites (24 and 4 heads of the workspace), the last cannot
+ * happen while decode stops at AIUEOS_QWEN35_GENERATION_TOKENS, so any
+ * non-zero answer is FULL KEY, the stage the rotation belongs to.  Position
+ * zero is computed, not skipped (the identity for finite values). */
+static int rope_heads(float *values, uint32_t heads, uint32_t position) {
+  return kotoba_aiueos_qwen35_rope(values, (uint64_t)heads * HEAD_DIM * 4U,
+                                   heads, position) == 0;
+}
+#endif
 
 /* The gated DeltaNet step of one linear-attention head, KEPT AS THE
  * REFERENCE and no longer the live path (ADR-0220 cutover stage 4): parity
@@ -1225,10 +1264,10 @@ static int full_attention(const struct aiueos_qwen35_layer *layer,
         !rms_norm_heads_weighted(scratch_c, 24, HEAD_DIM,
                                  &full->query_norm) ||
         !rms_norm_heads_weighted(key_projection, 4, HEAD_DIM,
-                                 &full->key_norm))
+                                 &full->key_norm) ||
+        !rope_heads(scratch_c, 24, decode->position) ||
+        !rope_heads(key_projection, 4, decode->position))
       return fail_at(AIUEOS_QWEN35_FAILURE_FULL_KEY);
-    rope_heads(scratch_c, 24, decode->position);
-    rope_heads(key_projection, 4, decode->position);
 
     uint64_t entry = ((uint64_t)full_slot * AIUEOS_QWEN35_GENERATION_TOKENS +
                       decode->position) * FULL_KV_WIDTH;
@@ -1530,7 +1569,7 @@ float aiueos_qwen35_test_softplus(float value) {
 }
 
 void aiueos_qwen35_test_rope(float values[HEAD_DIM], uint32_t position) {
-  rope_heads(values, 1, position);
+  (void)rope_heads(values, 1, position);
 }
 
 void aiueos_qwen35_test_recurrent_step(
@@ -2061,7 +2100,7 @@ static void qwen_att_fill_narrow(uint32_t offset, uint32_t count) {
 static void qwen_att_plan_clear(void) {
   for (uint32_t index = 0; index < 96U; index++) qwen_att_plan[index] = 0;
 }
-#else
+#elif AIUEOS_QWEN35_KOTOBA_PARITY == 4
 static uint8_t __attribute__((section(".high_bss"), aligned(16)))
   qwen_rec_arena[QWEN_REC_ARENA];
 static uint8_t __attribute__((section(".high_bss"), aligned(8))) qwen_rec_plan[96];
@@ -2211,6 +2250,167 @@ static int qwen_parity_recurrent(void) {
 
 #endif /* == 4 */
 
+#if AIUEOS_QWEN35_KOTOBA_PARITY == 5
+/* Stage 7, the rope stage, and the one stage whose reference is NOT the C.
+ * `rope_heads_c` takes its sine from x87 `fsincos` and its frequencies from
+ * `local_exp`; the object follows Prism llama.cpp 9a9394a instead (iterated
+ * theta_scale 0x3f1ab32b, the language's bounded binary64 sine/cosine on the
+ * widened angle, binary32 unfused rotation).  So the bit-equality checked here
+ * is against `tests/prism_rope_oracle.c`'s reference, transcribed below --
+ * the same C that cut the contract's vectors -- and the C's distance from the
+ * object is MEASURED and printed (`aiueos_qwen35_rope_distance`), not
+ * asserted.  The object half is the live wrapper `full_attention` calls. */
+#define QWEN_ROPE_HEADS 24U
+#define QWEN_ROPE_FLOATS (QWEN_ROPE_HEADS * HEAD_DIM)
+
+/* 72 KiB together, so outside the low region like the recurrent buffers. */
+static float __attribute__((section(".high_bss"))) qwen_rope_object[QWEN_ROPE_FLOATS];
+static float __attribute__((section(".high_bss"))) qwen_rope_reference[QWEN_ROPE_FLOATS];
+static float __attribute__((section(".high_bss"))) qwen_rope_c[QWEN_ROPE_FLOATS];
+
+static double qwen_rope_f64(uint64_t bits) {
+  union { uint64_t bits; double value; } representation = {bits};
+  return representation.value;
+}
+
+static double qwen_rope_sin_qt(double v) {
+  if (v == 0.0) return v;
+  double z = v * v;
+  double p = -7.647163731819816e-13 + z * 2.8114572543455206e-15;
+  p = 1.6059043836821613e-10 + z * p;
+  p = -2.505210838544172e-8 + z * p;
+  p = 2.7557319223985893e-6 + z * p;
+  p = -0.0001984126984126984 + z * p;
+  p = 0.008333333333333333 + z * p;
+  p = -0.16666666666666666 + z * p;
+  return v + (v * z) * p;
+}
+
+static double qwen_rope_cos_qt(double v) {
+  double z = v * v;
+  double p = -1.1470745597729725e-11 + z * 4.779477332387385e-14;
+  p = 2.08767569878681e-9 + z * p;
+  p = -2.755731922398589e-7 + z * p;
+  p = 0.0000248015873015873 + z * p;
+  p = -0.001388888888888889 + z * p;
+  p = 0.041666666666666664 + z * p;
+  p = -0.5 + z * p;
+  return 1.0 + z * p;
+}
+
+/* `reduce-bounded-angle` for the non-negative angles that reach it, where
+   round-half-away is floor(x + 0.5) and floor is truncation. */
+static void qwen_rope_bounded(float theta, float *sine, float *cosine) {
+  double v = (double)theta;
+  double nearest = (double)(int64_t)(v * 0.6366197723675814 + 0.5);
+  double r = (v - nearest * qwen_rope_f64(0x3ff921fb54442d18ULL)) -
+             nearest * qwen_rope_f64(0x3c91a62633145c07ULL);
+  uint32_t q = (uint32_t)((int64_t)nearest & 3);
+  double s = q == 0 ? qwen_rope_sin_qt(r) : q == 1 ? qwen_rope_cos_qt(r)
+           : q == 2 ? -qwen_rope_sin_qt(r) : -qwen_rope_cos_qt(r);
+  double c = q == 0 ? qwen_rope_cos_qt(r) : q == 1 ? -qwen_rope_sin_qt(r)
+           : q == 2 ? -qwen_rope_cos_qt(r) : qwen_rope_sin_qt(r);
+  *sine = (float)s;
+  *cosine = (float)c;
+}
+
+/* ggml_rope_cache_init + rotate_pairs, NEOX pairs i / i+32 of the first 64. */
+static void qwen_rope_prism(float *values, uint32_t heads, uint32_t position) {
+  union { uint32_t bits; float value; } scale = {0x3f1ab32bU};
+  float theta = (float)position;
+  for (uint32_t pair = 0; pair < ROPE_HALF; pair++) {
+    float sine, cosine;
+    qwen_rope_bounded(theta, &sine, &cosine);
+    for (uint32_t head = 0; head < heads; head++) {
+      float *vector = values + head * HEAD_DIM;
+      float x0 = vector[pair];
+      float x1 = vector[pair + ROPE_HALF];
+      vector[pair] = x0 * cosine - x1 * sine;
+      vector[pair + ROPE_HALF] = x0 * sine + x1 * cosine;
+    }
+    theta *= scale.value;
+  }
+}
+
+static void qwen_rope_fill(uint32_t seed, uint32_t count, int expose_pair0) {
+  qwen_parity_state = seed;
+  for (uint32_t index = 0; index < count; index++) {
+    float value = qwen_parity_value();
+    qwen_rope_object[index] = value;
+    qwen_rope_reference[index] = value;
+    qwen_rope_c[index] = value;
+  }
+  if (expose_pair0) {
+    /* x0 = 0, x1 = 1: dimension 0 is exactly -sin(position) and dimension 32
+       exactly cos(position), so one ulp in either is a changed bit. */
+    qwen_rope_object[0] = qwen_rope_reference[0] = 0.0f;
+    qwen_rope_object[ROPE_HALF] = qwen_rope_reference[ROPE_HALF] = 1.0f;
+  }
+}
+
+static int qwen_rope_case(uint32_t heads, uint32_t position, uint32_t seed,
+                          int expose_pair0) {
+  qwen_rope_fill(seed, heads * HEAD_DIM, expose_pair0);
+  qwen_rope_prism(qwen_rope_reference, heads, position);
+  if (!rope_heads(qwen_rope_object, heads, position)) return 0;
+  /* The WHOLE heads, so a write past dimension 63 is a mismatch too. */
+  return qwen_parity_same(qwen_rope_reference, qwen_rope_object,
+                          heads * HEAD_DIM);
+}
+
+static int qwen_parity_rope(void) {
+  /* The live geometry: 24 query heads and 4 key heads at every position the
+     decode reaches (0..7), then the admitted ceiling and the position whose
+     pair-0 sine needs the low part of pi/2. */
+  for (uint32_t position = 0; position < AIUEOS_QWEN35_GENERATION_TOKENS;
+       position++) {
+    if (!qwen_rope_case(QWEN_ROPE_HEADS, position, 0x51f15eedu + position, 0))
+      return 0;
+    if (!qwen_rope_case(4, position, 0x0badcafeu + position, 0)) return 0;
+  }
+  if (!qwen_rope_case(1, 25735, 0x13579bdfu, 0)) return 0;
+  if (!qwen_rope_case(1, 15975, 0x2468ace1u, 1)) return 0;
+  /* Refusals, straight to the object: the live wrapper cannot ask for them. */
+  if (kotoba_aiueos_qwen35_rope(qwen_rope_object, 1024, 1, 25736) !=
+      (uint64_t)(int64_t)-4)
+    return 0;
+  if (kotoba_aiueos_qwen35_rope(qwen_rope_object, 0, 0, 1) !=
+      (uint64_t)(int64_t)-2)
+    return 0;
+  return 1;
+}
+
+static int64_t qwen_rope_ordered(float value) {
+  uint32_t bits = qwen_parity_bits(value);
+  return (bits & 0x80000000U) ? -(int64_t)(bits & 0x7fffffffU) : (int64_t)bits;
+}
+
+/* The distance the cutover introduces, MEASURED: the object and `rope_heads_c`
+   over the same 24 query heads at one position.  `differing` counts floats
+   whose bits differ (of 6,144; dimensions 64..255 are untouched by both),
+   `max_ulp` is the largest distance in binary32 steps.  Returns 0 if the
+   object refused. */
+int aiueos_qwen35_rope_distance(uint32_t position, uint32_t *differing,
+                                uint32_t *max_ulp) {
+  uint32_t count = 0, widest = 0;
+  qwen_rope_fill(0x7e57d157u + position, QWEN_ROPE_FLOATS, 0);
+  rope_heads_c(qwen_rope_c, QWEN_ROPE_HEADS, position);
+  if (!rope_heads(qwen_rope_object, QWEN_ROPE_HEADS, position)) return 0;
+  for (uint32_t index = 0; index < QWEN_ROPE_FLOATS; index++) {
+    int64_t gap = qwen_rope_ordered(qwen_rope_object[index]) -
+                  qwen_rope_ordered(qwen_rope_c[index]);
+    if (gap < 0) gap = -gap;
+    if (gap) count++;
+    if ((uint64_t)gap > widest)
+      widest = gap > 0xffffffffLL ? 0xffffffffU : (uint32_t)gap;
+  }
+  *differing = count;
+  *max_ulp = widest;
+  return 1;
+}
+
+#endif /* == 5 */
+
 #endif /* AIUEOS_QWEN35_KOTOBA_PARITY >= 3 */
 
 int aiueos_qwen35_kotoba_parity_selftest(uint32_t stage) {
@@ -2231,8 +2431,10 @@ int aiueos_qwen35_kotoba_parity_selftest(uint32_t stage) {
   if (stage == 4) return qwen_parity_norm();
 #elif AIUEOS_QWEN35_KOTOBA_PARITY == 3
   if (stage == 5) return qwen_parity_attention();
-#else
+#elif AIUEOS_QWEN35_KOTOBA_PARITY == 4
   if (stage == 6) return qwen_parity_recurrent();
+#else
+  if (stage == 7) return qwen_parity_rope();
 #endif
   /* A stage this profile did not compile is a REFUSAL, not a pass: a loop that
      asked for one and got 1 would report `ok` for a comparison that never ran. */

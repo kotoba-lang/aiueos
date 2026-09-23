@@ -397,8 +397,8 @@ source rather than here.
    the flag is set for the host smokes and parity profiles 1, 3 and 4 (which
    do not link the two objects). Still C, by stage: the gated RMS reduction
    of the linear-attention output (no norm mode matches it bit for bit — it
-   has no finiteness refusals and no rescaled fallback) and rope's `exp`
-   (rope stage; the object exists and is not live, see below).
+   has no finiteness refusals and no rescaled fallback). Rope's `exp` left
+   the forward pass with `rope_heads` (rope stage, live, see below).
    Reproduce: `AIUEOS_QWEN35_KOTOBA_PARITY=2 smoke-qemu-uefi.sh` →
    `QWEN-PARITY activation ok` / `norm ok` in `build/aiueos/evidence-all.log`
    (the smoke's exit does not grep them); the harness now calls the live
@@ -424,7 +424,7 @@ source rather than here.
    object's 128-byte scratch) and the decode context's key/value rows, so
    `attention_call` makes the arena the smallest span covering every region
    the plan names and rebases each address against it. Still C in
-   `full_attention`: `rope_heads` (rope stage), the KV cache write, its FNV
+   `full_attention`: the KV cache write, its FNV
    hash and `resolved_cached_key` (custody, not arithmetic — the object
    header says why). The C is kept as `attention_*_c` under
    `AIUEOS_QWEN35_KOTOBA_PARITY == 3 || AIUEOS_QWEN35_C_REFERENCE_ATTENTION`;
@@ -502,16 +502,46 @@ source rather than here.
    `AIUEOS_UEFI_SMOKE_OK`. There, virtio modern and MSI-X are mapped through
    `aiueos_map_pci_mmio`, so the moved tables are walked. `bonsai-qemu-admission`
    → `AIUEOS_BONSAI_ADMISSION_QEMU_OK`. **Not measured**: the production node
-   image booting on the physical K16. With the attention and recurrent-step
-   objects linked the headroom is 12,288 B; the next object that grows
+   image booting on the physical K16. With the attention, recurrent-step and
+   rope objects linked `aiueos_low_end` is 0x1f2000 and the headroom is
+   8,192 B (`.text` 0xb7772); the next object that grows
    `.text` past it needs the next move; the candidates left are the TLS and
    NIC scratch (tls13 8.8 KiB, rtl8125 8.3 KiB, main 6.8 KiB) or a third
    loader segment. The 64 KiB boot stack cannot move, because it is in use
    before `.high_bss` is zeroed.
-   **Rope: the object exists and is NOT live.** `kotoba/qwen35-rope.kotoba`
-   (`[values values-bytes heads position]`, in place, reasons 0..−4) is
-   compiled and committed (6,152 B, fuel 16,777,216), but `full_attention`
-   still calls the C `rope_heads`; switching the call is a separate step.
+   **Rope: LIVE on the object.** `full_attention`'s rotation of the 24
+   query heads and the 4 key heads calls `aiueos-qwen35-rope`
+   (`kotoba/qwen35-rope.kotoba`, `[values values-bytes heads position]`, in
+   place, reasons 0..−4, 6,152 B, fuel 16,777,216) through the wrapper
+   `rope_heads`; a non-zero answer is `FULL KEY`, the stage whose checks
+   precede it (none of the four refusals is reachable from those two call
+   sites while decode stops at 7). Position 0 is computed rather than
+   skipped: the identity for finite values. The C is kept as `rope_heads_c`
+   under `AIUEOS_QWEN35_KOTOBA_PARITY == 5 || AIUEOS_QWEN35_C_REFERENCE_ROPE`;
+   the flag is set for the host smokes and parity profiles 1–4 (which do
+   not link the object). **This is the one stage whose parity is not
+   against the C.** Profile 5 checks the object bit for bit against the
+   Prism reference transcribed from `tests/prism_rope_oracle.c` — 24 and 4
+   heads at every decode position 0..7, one head at 25,735 and at 15,975
+   with pair 0 set to (0, 1), all 256 dimensions of every head — plus the
+   refusals −4 (position 25,736) and −2 (0 heads), and it PRINTS the
+   distance from `rope_heads_c` as a measurement, never a pass/fail.
+   Reproduce: `AIUEOS_QWEN35_KOTOBA_PARITY=5 smoke-qemu-uefi.sh` →
+   `QWEN-PARITY rope ok` and seven `QWEN-PARITY rope distance-from-c` lines
+   in `build/aiueos/kernel-serial.log`. Measured under QEMU tcg, 24 query
+   heads of synthetic inputs (magnitudes 2⁻⁷..2¹⁵, both signs), floats
+   whose bits differ of 6,144 / largest distance in binary32 steps:
+   position 1: 238 / 112, 2: 300 / 64, 3: 346 / 128, 4: 354 / 624,
+   5: 374 / 1,536, 6: 392 / 1,792, 7: 292 / 1,536. The other 4,096 floats
+   of each run (dimensions 64..255) are untouched by both. The large step
+   counts are cancellations in `x0·cos − x1·sin` — a small result measured
+   in its own ulps — not large absolute errors; the absolute error was not
+   printed. Seen red: the live wrapper passing `position + 1` →
+   `QWEN-PARITY rope mismatch`, `AIUEOS_EVIDENCE_STOP`, exit 1. Profile 1
+   still `dequant/dot/matvec ok`; `bonsai-qemu-admission` (model-handoff
+   image, now linking the object) → `AIUEOS_BONSAI_ADMISSION_QEMU_OK`;
+   `smoke-qwen35-decode-math.sh` → `AIUEOS_QWEN35_DECODE_MATH_OK` (C
+   reference); kernel object digests `--check` OK, scanned 101.
    The object is not a port of that C. The C takes its sine from x87
    `fsincos`, which amu cannot emit, and its frequencies from `local_exp`, so
    the reference is Prism llama.cpp 9a9394a instead: `ggml_rope_cache_init` +
@@ -551,25 +581,22 @@ source rather than here.
    `reproduce-kotoba-objects` records. amu's `--unpinned --source-path`
    route compiles the same source to different bytes (6,232), and which of
    the two is right has not been executed.
-   **Not measured**: the object on a CPU (not linked into any image, not
-   booted, and no C twin exists for QWEN-PARITY to grade it against);
-   glibc's `cosf` / `sinf`, which Prism on Linux actually calls; whether
-   Prism's build contracts the rotation into FMAs; how far the object's
-   output is from `rope_heads` at positions 1..7, which is the change a
-   cutover would make to the forward pass.
+   **Not measured**: the distance from `rope_heads_c` on real hardware —
+   QEMU tcg emulates `fsincos` through the host's binary64 `sin`/`cos`, so
+   the numbers above are the object against QEMU's x87, not the K16's; the
+   absolute size of the differences; their effect on a token (no forward
+   pass has run through the call — QEMU has no model path); glibc's
+   `cosf` / `sinf`, which Prism on Linux actually calls; whether Prism's
+   build contracts the rotation into FMAs.
 7. **`evaluate_token` becomes one object.** ADR-0196's estimate is
    5.62 × 10¹¹ fuel per token against the 2⁵³−1 ceiling — an estimate from
    shapes and a constant, not a measurement, and its three named errors all
    push the number up. Bisect the tier in the oracle on the real row range
    (ADR-0220's finding: four objects packaged at the 1,024 default `ud2`'d
    on the first real input) and give kotoba-native the row.
-   **Not before rope is live.** `full_attention` still calls the C
-   `rope_heads` (no `kotoba_aiueos_qwen35_rope(` call site in
-   `kernel/qwen35_infer.c` at 194a5a3), so the forward pass this object
-   would absorb is not yet all objects. The loop's tick orders
-   `:cutover-rope` (checked at the call site, like the other four stages)
-   ahead of this floor. Before it did, the tick offered this floor as soon
-   as the rope object existed.
+   Rope is live (above), so every arithmetic stage of the forward pass
+   this object would absorb is now an object; the loop's tick orders
+   `:cutover-rope` ahead of this floor and that floor is landed.
 8. **The `T02` failure is retried on the physical K16**, with the KV alias
    fix of ADR-0121's follow-up in place, until eight greedy tokens exist.
    The floor is stream A's: `Hello` → `11, 353, 2688, 264, 5286, 303, 279,

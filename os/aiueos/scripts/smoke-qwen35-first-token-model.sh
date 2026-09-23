@@ -29,6 +29,7 @@ ${CC:-cc} -std=c11 -O3 -Wall -Wextra -Werror \
   -DAIUEOS_QWEN35_C_REFERENCE_NORM=1 \
   -DAIUEOS_QWEN35_C_REFERENCE_ATTENTION=1 \
   -DAIUEOS_QWEN35_C_REFERENCE_RECURRENT=1 \
+  -DAIUEOS_QWEN35_C_REFERENCE_ROPE=1 \
   -I "$aiueos/kernel" \
   "$aiueos/tests/qwen35_first_token_model.c" \
   "$aiueos/kernel/qwen35_runtime.c" \
