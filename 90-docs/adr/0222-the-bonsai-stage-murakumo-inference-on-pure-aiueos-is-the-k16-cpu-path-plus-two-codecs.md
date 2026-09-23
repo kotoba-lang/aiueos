@@ -79,6 +79,33 @@ admission objects (`qwen35-gguf-header-valid`, `-kv-scan`,
 (ADR-0117/0119) were all built against exactly this graph. What Bonsai adds
 is **two tensor codecs and one basis change** — nothing structural.
 
+## Who does this, and how the next floor is chosen (2026-09-23)
+
+This programme is driven by a **local Claude loop**, not by whoever happens to
+read this document:
+
+- `scripts/bonsai-stage-tick.cljk` (superproject) measures the remaining
+  floors against `origin/main` -- never the working tree -- and answers
+  `:candidate` / `:no-candidates` / `:insufficient-scan` as three different
+  things. `:needs-a-human` floors (the physical K16, the fleet, the tender)
+  are never handed to an unattended run.
+- `scripts/bonsai-stage-loop.cljk` wakes `claude -p "/bonsai-stage"` only when
+  an unattended floor exists, holds a lock so two iterations cannot take one
+  floor, and records the outcome by comparing this repository's `origin/main`
+  sha before and after: a turn that ends without moving it is
+  `:ran-without-landing`, not `:ran`.
+- `.claude/skills/bonsai-stage/SKILL.md` is the runbook one iteration follows.
+- `cloud.itonami.bot.bonsai-stage` (LaunchAgent, 6 h) runs it unattended; the
+  ledger is `~/.itonami/bonsai-stage.ledger.edn`.
+
+Measured over the first nine iterations (2026-09-22/23): $1.17-$16.47 and
+2-49 minutes each, and the three defects the loop found in ITSELF are worth
+more than the average -- a `-p` turn that backgrounds work and ends is not a
+floor closed; a check keyed on a literal breaks the moment the floor removes
+that literal; a detector that cannot tell a parity self-test from the live
+call reports cutovers that never happened. Each is recorded in the loop's own
+source rather than here.
+
 ## The stages, in the order ADR-0212 imposes
 
 ### Stage A — Bonsai enters the model plane (new work is codec only)
