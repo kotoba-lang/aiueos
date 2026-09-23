@@ -370,8 +370,8 @@ is **two tensor codecs and one basis change** — nothing structural.
    the flag is set for the host smokes and parity profiles 1, 3 and 4 (which
    do not link the two objects). Still C, by stage: the gated RMS reduction
    of the linear-attention output (no norm mode matches it bit for bit — it
-   has no finiteness refusals and no rescaled fallback), the attention
-   gate sigmoid and softmax `exp` (attention stage), rope's `exp` (rope stage).
+   has no finiteness refusals and no rescaled fallback) and rope's `exp`
+   (rope stage).
    Reproduce: `AIUEOS_QWEN35_KOTOBA_PARITY=2 smoke-qemu-uefi.sh` →
    `QWEN-PARITY activation ok` / `norm ok` in `build/aiueos/evidence-all.log`
    (the smoke's exit does not grep them); the harness now calls the live
@@ -387,6 +387,39 @@ is **two tensor codecs and one basis change** — nothing structural.
    10,240 / 17,408 — inside both objects' admitted ceilings and fuel tiers,
    but never executed at that width); `smoke-qwen35-first-token-model.sh`
    (needs the real GGUF, not run).
+
+   **Attention: LIVE on the object.** `full_attention`'s query/gate
+   de-interleave, the fused softmax over the causal prefix of the KV cache
+   (score, `exp`, denominator, weighted sum, gate sigmoid) and the
+   position-zero reduction call `aiueos-qwen35-attention` modes 0/1/2. The
+   object takes one arena and a plan of offsets; the live regions are the
+   workspace (`scratch_a` / `scratch_c` / `scratch_b`, `beta_values` as the
+   object's 128-byte scratch) and the decode context's key/value rows, so
+   `attention_call` makes the arena the smallest span covering every region
+   the plan names and rebases each address against it. Still C in
+   `full_attention`: `rope_heads` (rope stage), the KV cache write, its FNV
+   hash and `resolved_cached_key` (custody, not arithmetic — the object
+   header says why). The C is kept as `attention_*_c` under
+   `AIUEOS_QWEN35_KOTOBA_PARITY == 3 || AIUEOS_QWEN35_C_REFERENCE_ATTENTION`;
+   the flag is set for the host smokes and parity profiles 1, 2 and 4 (which
+   do not link the object). A refusal maps to `FULL QUERY` (−11), `SOFTMAX`
+   (every other mode-1 refusal), `FULL KEY` (mode 0) or `FULL OUT` (mode 2).
+   Reproduce: `AIUEOS_QWEN35_KOTOBA_PARITY=3 smoke-qemu-uefi.sh` →
+   `QWEN-PARITY attention ok` in `build/aiueos/evidence-all.log` (appended
+   across runs; truncate it first). The harness calls the live wrappers with
+   addresses, so the plan layout and the rebase checked are the forward
+   pass's. Seen red: key and value cache swapped in the live softmax plan →
+   `QWEN-PARITY attention mismatch`, exit 1. Profiles 1/2/4 still
+   `dequant/dot/matvec ok`, `activation/norm ok`, `recurrent ok`;
+   `bonsai-qemu-admission` (model-handoff image, now linking the object) →
+   `AIUEOS_BONSAI_ADMISSION_QEMU_OK`; `smoke-qwen35-decode-math.sh` →
+   `AIUEOS_QWEN35_DECODE_MATH_OK`. The production node image links with it:
+   `aiueos_low_end` 0x1ef000, 20,480 B under 0x1f4000 (`.text` 0xb4f82).
+   **Not measured**: a forward pass through these calls (no model path in
+   QEMU; the parity geometry is 8 heads / group 2 / position 5, the live one
+   24 / 6 / 1..7), and a live arena span — in the model the workspace and
+   the decode context are separate allocations, so the span the object is
+   handed is their distance apart, which no run has exercised.
 
    **The production node image links again: `aiueos_low_end` is 0x1ec000,
    32 KiB under 0x1f4000.** Before, with `build-qwen38-murakumo-node-pxe.sh`'s
@@ -409,8 +442,9 @@ is **two tensor codecs and one basis change** — nothing structural.
    `AIUEOS_UEFI_SMOKE_OK`. There, virtio modern and MSI-X are mapped through
    `aiueos_map_pci_mmio`, so the moved tables are walked. `bonsai-qemu-admission`
    → `AIUEOS_BONSAI_ADMISSION_QEMU_OK`. **Not measured**: the production node
-   image booting on the physical K16. The next object that grows `.text` by
-   more than 32 KiB needs the next move; the candidates left are the TLS and
+   image booting on the physical K16. With the attention object linked the
+   headroom is 20,480 B; the next object that grows `.text` past it needs the
+   next move (recurrent-step is 7,432 B); the candidates left are the TLS and
    NIC scratch (tls13 8.8 KiB, rtl8125 8.3 KiB, main 6.8 KiB) or a third
    loader segment. The 64 KiB boot stack cannot move, because it is in use
    before `.high_bss` is zeroed.

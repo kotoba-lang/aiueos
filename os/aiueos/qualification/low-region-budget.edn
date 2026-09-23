@@ -12,6 +12,11 @@
                     :headroom-bytes 32768
                     :high-bss-end "0x486000" :high-bss-limit "0x600000"
                     :links? true}
+ :low-region/with-attention {:measured-on "371feeb + aiueos-qwen35-attention live (ADR-0220 cutover stage 3)"
+                             :aiueos-low-end "0x1ef000" :bss-bytes 158056
+                             :text-bytes 741250
+                             :headroom-bytes 20480
+                             :high-bss-end "0x486000" :links? true}
  :low-region/moved [{:symbol "pci_pdpts" :file "os/aiueos/kernel/paging.c" :bytes 16384}
                     {:symbol "pci_directories" :file "os/aiueos/kernel/paging.c" :bytes 32768}]
  :low-region/boots ["os/aiueos/scripts/smoke-qemu-uefi.sh -> AIUEOS_UEFI_SMOKE_OK (virtio modern + MSI-X mapped through aiueos_map_pci_mmio)"
