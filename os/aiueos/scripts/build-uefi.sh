@@ -212,6 +212,7 @@ kotoba_qwen35_activation_object=${AIUEOS_KOTOBA_QWEN35_ACTIVATION_OBJECT:-"$aiue
 kotoba_qwen35_norm_object=${AIUEOS_KOTOBA_QWEN35_NORM_OBJECT:-"$aiueos/kotoba/qwen35-norm.o"}
 kotoba_qwen35_attention_object=${AIUEOS_KOTOBA_QWEN35_ATTENTION_OBJECT:-"$aiueos/kotoba/qwen35-attention.o"}
 kotoba_qwen35_recurrent_object=${AIUEOS_KOTOBA_QWEN35_RECURRENT_OBJECT:-"$aiueos/kotoba/qwen35-recurrent-step.o"}
+kotoba_qwen35_rope_object=${AIUEOS_KOTOBA_QWEN35_ROPE_OBJECT:-"$aiueos/kotoba/qwen35-rope.o"}
 qwen35_kotoba_link=
 # device-client: the Murakumo device-P256 worker's signed canonical text,
 # v2 and v3 (ADR-0137). Linked unconditionally, not behind
@@ -531,8 +532,8 @@ qwen35_parity_cflags=
 qwen35_parity_link=
 case "${AIUEOS_QWEN35_KOTOBA_PARITY:-0}" in
   0) ;;
-  1|2|3|4) qwen35_parity_cflags="-DAIUEOS_QWEN35_KOTOBA_PARITY=${AIUEOS_QWEN35_KOTOBA_PARITY}" ;;
-  *) echo "error: AIUEOS_QWEN35_KOTOBA_PARITY must be 0, 1, 2, 3 or 4" >&2; exit 1 ;;
+  1|2|3|4|5) qwen35_parity_cflags="-DAIUEOS_QWEN35_KOTOBA_PARITY=${AIUEOS_QWEN35_KOTOBA_PARITY}" ;;
+  *) echo "error: AIUEOS_QWEN35_KOTOBA_PARITY must be 0, 1, 2, 3, 4 or 5" >&2; exit 1 ;;
 esac
 if [ "${AIUEOS_QWEN38_MODEL_HANDOFF:-0}" = 1 ] ||
    [ "${AIUEOS_MODEL_NVME_SLOTS:-0}" = 1 ]; then
@@ -1026,7 +1027,7 @@ if [ -n "$model_handoff_link" ] || [ -n "$qwen35_parity_cflags" ]; then
     2713ffbac10ad71dad46a899b782c2687820fc2896edab444806867ae62fd730 kotoba_aiueos_qwen35_dequant_row
   python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_qwen35_matvec_object" \
     01403dc775674e08e82f2bcbe507c2627bf9fbb639647aad1995195446ef2c8e kotoba_aiueos_qwen35_matvec
-  # FOUR parity profiles, each linking only the objects its stages call. The
+  # FIVE parity profiles, each linking only the objects its stages call. The
   # low region (`aiueos_low_end <= 0x1f4000`) cannot hold every object at once
   # since the tokenizer objects landed -- measured, not assumed, and measured
   # again for the third tranche: attention (17,872 B) and recurrent-step
@@ -1037,7 +1038,17 @@ if [ -n "$model_handoff_link" ] || [ -n "$qwen35_parity_cflags" ]; then
   # parity profile 2 links them alone and compares them against the C.
   # The attention object joins them at cutover stage 3; parity profile 3
   # links it alone and compares it against the C. The recurrent-step object
-  # joins them at cutover stage 4; parity profile 4 links it alone.
+  # joins them at cutover stage 4; parity profile 4 links it alone. The
+  # rope object joins them at cutover stage 5; parity profile 5 links it
+  # alone and compares it against the Prism reference, not the C (whose
+  # x87 sine no Kotoba object can match), and prints its distance from the C.
+  case "${AIUEOS_QWEN35_KOTOBA_PARITY:-0}" in
+    0|5)
+      python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_qwen35_rope_object" \
+        51405dd582722833216f7a29b76f43ed5dc14c4f6caccec3a8aa0db473fff914 \
+        kotoba_aiueos_qwen35_rope
+      ;;
+  esac
   case "${AIUEOS_QWEN35_KOTOBA_PARITY:-0}" in
     0|4)
       python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_qwen35_recurrent_object" \
@@ -1066,8 +1077,10 @@ if [ -n "$model_handoff_link" ] || [ -n "$qwen35_parity_cflags" ]; then
     qwen35_kotoba_link="$kotoba_qwen35_attention_object"
   elif [ "${AIUEOS_QWEN35_KOTOBA_PARITY:-0}" = 4 ]; then
     qwen35_kotoba_link="$kotoba_qwen35_recurrent_object"
+  elif [ "${AIUEOS_QWEN35_KOTOBA_PARITY:-0}" = 5 ]; then
+    qwen35_kotoba_link="$kotoba_qwen35_rope_object"
   else
-    qwen35_kotoba_link="$kotoba_qwen35_dot_object $kotoba_qwen35_dequant_object $kotoba_qwen35_matvec_object $kotoba_qwen35_activation_object $kotoba_qwen35_norm_object $kotoba_qwen35_attention_object $kotoba_qwen35_recurrent_object"
+    qwen35_kotoba_link="$kotoba_qwen35_dot_object $kotoba_qwen35_dequant_object $kotoba_qwen35_matvec_object $kotoba_qwen35_activation_object $kotoba_qwen35_norm_object $kotoba_qwen35_attention_object $kotoba_qwen35_recurrent_object $kotoba_qwen35_rope_object"
   fi
 fi
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_device_worker_canonical_object" \
@@ -1195,18 +1208,22 @@ if [ -z "$model_handoff_link" ] && [ -n "$qwen35_parity_cflags" ]; then
   # The same for the norm/activation objects (ADR-0220 cutover stage 2):
   # only profile 2 links them, so profiles 1, 3 and 4 run the C norms.
   case "${AIUEOS_QWEN35_KOTOBA_PARITY:-0}" in
-    2|3|4) qwen35_parity_section_cflags="$qwen35_parity_section_cflags -DAIUEOS_QWEN35_C_REFERENCE_MATVEC=1" ;;
+    2|3|4|5) qwen35_parity_section_cflags="$qwen35_parity_section_cflags -DAIUEOS_QWEN35_C_REFERENCE_MATVEC=1" ;;
   esac
   case "${AIUEOS_QWEN35_KOTOBA_PARITY:-0}" in
-    1|3|4) qwen35_parity_section_cflags="$qwen35_parity_section_cflags -DAIUEOS_QWEN35_C_REFERENCE_NORM=1" ;;
+    1|3|4|5) qwen35_parity_section_cflags="$qwen35_parity_section_cflags -DAIUEOS_QWEN35_C_REFERENCE_NORM=1" ;;
   esac
   # And the attention object (cutover stage 3): only profile 3 links it.
   case "${AIUEOS_QWEN35_KOTOBA_PARITY:-0}" in
-    1|2|4) qwen35_parity_section_cflags="$qwen35_parity_section_cflags -DAIUEOS_QWEN35_C_REFERENCE_ATTENTION=1" ;;
+    1|2|4|5) qwen35_parity_section_cflags="$qwen35_parity_section_cflags -DAIUEOS_QWEN35_C_REFERENCE_ATTENTION=1" ;;
   esac
   # And the recurrent-step object (cutover stage 4): only profile 4 links it.
   case "${AIUEOS_QWEN35_KOTOBA_PARITY:-0}" in
-    1|2|3) qwen35_parity_section_cflags="$qwen35_parity_section_cflags -DAIUEOS_QWEN35_C_REFERENCE_RECURRENT=1" ;;
+    1|2|3|5) qwen35_parity_section_cflags="$qwen35_parity_section_cflags -DAIUEOS_QWEN35_C_REFERENCE_RECURRENT=1" ;;
+  esac
+  # And the rope object (cutover stage 5): only profile 5 links it.
+  case "${AIUEOS_QWEN35_KOTOBA_PARITY:-0}" in
+    1|2|3|4) qwen35_parity_section_cflags="$qwen35_parity_section_cflags -DAIUEOS_QWEN35_C_REFERENCE_ROPE=1" ;;
   esac
   zig cc -target x86_64-freestanding-none -std=c11 -O2 \
     -ffreestanding -fno-stack-protector -mno-red-zone \
