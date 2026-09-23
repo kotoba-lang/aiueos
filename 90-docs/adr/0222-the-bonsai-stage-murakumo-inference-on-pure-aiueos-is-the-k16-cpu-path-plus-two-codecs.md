@@ -594,9 +594,35 @@ source rather than here.
    push the number up. Bisect the tier in the oracle on the real row range
    (ADR-0220's finding: four objects packaged at the 1,024 default `ud2`'d
    on the first real input) and give kotoba-native the row.
-   Rope is live (above), so every arithmetic stage of the forward pass
-   this object would absorb is now an object; the loop's tick orders
-   `:cutover-rope` ahead of this floor and that floor is landed.
+   **Not every stage this object would absorb is an object yet.** Rope is
+   live (above), but `qwen35_infer.c` at 8ffdbb4 still does two pieces of
+   the forward pass in C:
+   - **the output projection.** `evaluate_token` takes each of the 248,320
+     logits as `tensor_row` (the dequant object) followed by the C `dot`,
+     AVX2 when the CPU has it and scalar otherwise. It never goes through
+     the matvec object. This is the 1.271e9-MAC matrix ADR-0175 and
+     ADR-0196 costed. Whether the object's four-accumulator order gives
+     the same bits as `dot_avx2`, and so the same argmax, has not been
+     measured.
+   - **the rest of `linear_attention`,** which ADR-0175 already named: the
+     kernel-4 depthwise convolution with its three-step history, the gated
+     RMS of the output (no mode of the norm object gives it bit for bit,
+     as the comment at its call site says), and the `dot` coefficient on
+     the position-zero and cache-free paths.
+   The loop's tick lists these two as `:cutover-logits` and
+   `:cutover-linear-attention-rest`, ahead of this floor, in the same way
+   it put `:cutover-rope` first. It checks each one by reading the body of
+   the C function at origin/main, with comments stripped, for `dot(`,
+   `local_sqrt(` and `history[`. It is not checked by whether a file
+   exists. Its controls go both ways: `matvec_range_c` must read as open
+   and `ffn` as closed.
+   Two constraints this object also meets, and which are not about fuel:
+   a kernel object exports one symbol and cannot call another (ADR-0030),
+   so every stage would be inlined through `aiueos.lib.*`. The low region
+   has 8,192 B of headroom (rope, above), and the rope object alone is
+   6,152 B. The SMP split (item 12) hands each half of a matvec to its own
+   CPU from C, so one object would also have to either give that up or
+   come after it.
 8. **The `T02` failure is retried on the physical K16**, with the KV alias
    fix of ADR-0121's follow-up in place, until eight greedy tokens exist.
    The floor is stream A's: `Hello` → `11, 353, 2688, 264, 5286, 303, 279,
