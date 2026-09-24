@@ -135,3 +135,30 @@
     (is (= :no-pointer-event
            (:reason (guest/classify "guest-browser-text-raised" {:serial browser-text-ok}))))
     (is (= {"AIUEOS_GUEST_BROWSER" "1"} (guest/extra-env "guest-browser-text-raised")))))
+
+;; Guest browser typing (ADR-0225).
+(def ^:private raised-ok
+  (str browser-text-ok
+       "AIUEOS_GUEST_BROWSER_TEXT_RAISED_OK hit=1 ops=57 text-px=864 hash=5cd907f9\r\n"))
+
+(deftest guest-browser-type-classifier
+  (testing "the IME's commit, redrawn, matches the model"
+    (let [r (guest/classify "guest-browser-type"
+                            {:serial (str raised-ok "AIUEOS_GUEST_BROWSER_TYPE_OK presses=13 committed=5 ops=62 text-px=1052 hash=7caecfe8\r\n")})]
+      (is (:green? r))
+      (is (= :guest-browser-type (:reason r)))))
+  (testing "typing needs the raised text frame first"
+    (is (= :no-raised-text-frame
+           (:reason (guest/classify "guest-browser-type"
+                                    {:serial "AIUEOS_GUEST_BROWSER_TYPE_OK presses=13 committed=5 ops=62 text-px=1052 hash=7caecfe8\r\n"})))))
+  (testing "each named red keeps its reason"
+    (doseq [[line reason]
+            [["AIUEOS_GUEST_BROWSER_TYPE leftover=keys-missing presses=4\r\n" :keys-missing]
+             ["AIUEOS_GUEST_BROWSER_TYPE leftover=census-miss committed=4 refused=0 ops=61 text-px=1030 hash=00000000\r\n" :census-miss]
+             ["" :guest-browser-type-absent]]]
+      (is (= reason (:reason (guest/classify "guest-browser-type" {:serial (str raised-ok line)}))) line)))
+  (testing "a different commit count is not the pinned answer"
+    (is (not (:green? (guest/classify "guest-browser-type"
+                                      {:serial (str raised-ok "AIUEOS_GUEST_BROWSER_TYPE_OK presses=13 committed=4 ops=62 text-px=1052 hash=7caecfe8\r\n")})))))
+  (testing "the profile is the tablet one"
+    (is (= {"AIUEOS_GUEST_BROWSER" "1"} (guest/extra-env "guest-browser-type")))))

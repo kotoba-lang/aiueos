@@ -1286,6 +1286,61 @@ static int virtio_blk(uint8_t b, uint8_t d, uint8_t f) {
   }
 }
 
+/* The keyboard's ring, kept after its first key so the desktop can read the
+   keys that follow (ADR-0225). `kbd_seen` is how far the used ring has been
+   handed back; every entry up to it has been reposted to the device. */
+static struct virtq_desc *kbd_desc;
+static struct virtq_avail *kbd_avail;
+static struct virtq_used *kbd_used;
+static volatile uint16_t *kbd_doorbell;
+static struct virtio_input_event *kbd_event;
+static uint16_t kbd_seen;
+static int kbd_ready;
+
+/* Hand every used entry back to the device. Returns the last key PRESS among
+   them when `want_press`, else 0; the entries are recycled either way. */
+static uint32_t kbd_recycle(int want_press) {
+  uint32_t press = 0;
+  __asm__ volatile("" ::: "memory");
+  uint16_t n = kbd_used->index;
+  while (kbd_seen != n) {
+    uint32_t id = kbd_used->ring[kbd_seen % 4].id;
+    kbd_seen++;
+    if (id > 3) continue;
+    struct virtio_input_event *ev = kbd_event + id;
+    if (want_press && !press && ev->type == 1 && ev->value == 1 && ev->code)
+      press = ev->code;
+    kbd_avail->ring[kbd_avail->index % 4] = (uint16_t)id;
+    __asm__ volatile("" ::: "memory");
+    kbd_avail->index++;
+    *kbd_doorbell = 0;
+    if (press) break;
+  }
+  return press;
+}
+
+/* Discard whatever the keyboard delivered before now, for `rounds` polls. */
+int aiueos_keyboard_drain(uint32_t rounds) {
+  if (!kbd_ready) return 0;
+  for (uint32_t i = 0; i < rounds; i++) {
+    (void)kbd_recycle(0);
+    __asm__ volatile("pause");
+  }
+  return 1;
+}
+
+/* The next key press (Linux key code), or 0 when `budget` polls pass. */
+uint32_t aiueos_keyboard_next_press(uint32_t budget) {
+  if (!kbd_ready) return 0;
+  for (uint32_t i = 0; i < budget; i++) {
+    uint32_t press = kbd_recycle(1);
+    if (press) return press;
+    if ((i & 65535U) == 0) *kbd_doorbell = 0;
+    __asm__ volatile("pause");
+  }
+  return 0;
+}
+
 /* A virtio-input device is a pointer tablet when its config space answers a
    non-empty EV_BITS bitmap for EV_ABS (virtio 1.2 5.8.4: select 0x11,
    subsel = event type, size = bitmap length). Keyboards answer 0. A device
@@ -1399,6 +1454,8 @@ static int virtio_input(uint8_t b, uint8_t d, uint8_t f) {
           ev->value ? AIUEOS_DESKTOP_INPUT_PRESSED : 0};
         desktop_input_ready = 1;
         desktop_input_from_eventq = 1;
+        kbd_desc = desc; kbd_avail = avail; kbd_used = used;
+        kbd_doorbell = doorbell; kbd_event = event; kbd_ready = 1;
         return 1;
       }
     }

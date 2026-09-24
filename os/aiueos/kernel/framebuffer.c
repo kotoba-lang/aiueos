@@ -501,7 +501,7 @@ static uint32_t font_word(const uint8_t *font, uint64_t index) {
 int aiueos_desktop_present_ops2(const uint32_t *ops, uint64_t count,
                                 const uint8_t *font, uint64_t font_length) {
   uint64_t glyphs;
-  if (!desktop_surface_ready || !ops || count == 0 || count > 272 ||
+  if (!desktop_surface_ready || !ops || count == 0 || count > 261 ||
       !font || font_length < 16 || font_word(font, 0) != 0x46554941U) return 0;
   glyphs = font_word(font, 2);
   if (!glyphs || font_length < 16 + glyphs * 36) return 0;

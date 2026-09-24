@@ -5,6 +5,19 @@ All notable changes to **aiueos** are documented here. The format follows
 
 ## [Unreleased]
 
+### Guest browser desktop takes typing (ADR-0225)
+- `os/aiueos/kotoba/browser-ime.kotoba` (`kotoba_aiueos_browser_key`): the
+  hosted IME's `handle-key` as a kernel object -- romaji buffer, greedy mora
+  conversion, sokuon, Space conversion over the oracle's three readings,
+  Enter commit into the focused window's body. Romaji table generated from
+  the oracle by `os/aiueos/scripts/gen-ime-mora.cljk` (`--check`).
+- The keyboard ring is kept after its first key (`aiueos_keyboard_drain`,
+  `aiueos_keyboard_next_press`); the QMP injector types once at TYPE_GO.
+  Gate `guest-browser-type`; KIR-oracle contract `browser-ime-v1` (expected
+  values from the oracle).
+- Fixed: browser-frame2's scratch overlapped window 4's body; scratch moved to
+  words 416..431, ops to 480 (cap 261).
+
 ### Guest browser desktop draws text (ADR-0224)
 - `os/aiueos/fonts/aiueos-16.fnt`: GNU Unifont 17.0.05 `unifont_jp`, JIS X
   0208 + ASCII + U+3000 + U+FFFD (7,422 glyphs, 267,208 bytes), SIL OFL 1.1,

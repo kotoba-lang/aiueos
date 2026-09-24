@@ -14,7 +14,7 @@
   ["guest-ime" "guest-wm" "guest-paint" "guest-input"
    "guest-gpu-two" "guest-scanout-two" "guest-broker" "guest-session"
    "guest-browser-frame" "guest-browser-input"
-   "guest-browser-text" "guest-browser-text-raised"])
+   "guest-browser-text" "guest-browser-text-raised" "guest-browser-type"])
 
 (defn gate-cmd
   "SPA-visible evidence command for a guest profile. Not clojure -M."
@@ -497,6 +497,30 @@
       :else
       {:green? false :exit 1 :reason :no-pointer-event :leftover [:no-pointer-event]})))
 
+;; Guest browser typing (ADR-0225): n i h o n n g o Enter k a Space Enter,
+;; typed once by the host, through the Kotoba IME into window 1's body. The
+;; census is the model's for that body + にほんご加.
+
+(defn guest-browser-type-result
+  [{:keys [serial qemu-unmeasured?] :as opts}]
+  (let [s (or serial "")]
+    (cond
+      qemu-unmeasured? {:green? false :exit 3 :reason :unmeasured :leftover [:unmeasured]}
+      (not (re-find #"(?m)^AIUEOS_GUEST_BROWSER_TEXT_RAISED_OK hit=1 ops=57 text-px=864 hash=5cd907f9" s))
+      (let [r (guest-browser-text-raised-result opts)]
+        (assoc r :reason :no-raised-text-frame
+               :leftover (into [:no-raised-text-frame] (:leftover r))))
+      (re-find #"(?m)^AIUEOS_GUEST_BROWSER_TYPE_OK presses=13 committed=5 ops=62 text-px=1052 hash=7caecfe8" s)
+      {:green? true :exit 0 :reason :guest-browser-type
+       :leftover [:no-preedit-shown :no-flow-layout :three-reading-dictionary]}
+      (re-find #"(?m)^AIUEOS_GUEST_BROWSER_TYPE leftover=keys-missing" s)
+      {:green? false :exit 1 :reason :keys-missing :leftover [:keys-missing]}
+      (re-find #"(?m)^AIUEOS_GUEST_BROWSER_TYPE leftover=census-miss" s)
+      {:green? false :exit 1 :reason :census-miss :leftover [:census-miss]}
+      :else
+      {:green? false :exit 1 :reason :guest-browser-type-absent
+       :leftover [:guest-browser-type-absent]})))
+
 (defn extra-env
   "Env merged into smoke-qemu-uefi.sh. Default UEFI smoke is empty."
   [profile]
@@ -504,6 +528,7 @@
     "guest-input" {"AIUEOS_GUEST_INPUT" "1"}
     "guest-browser-input" {"AIUEOS_GUEST_BROWSER" "1"}
     "guest-browser-text-raised" {"AIUEOS_GUEST_BROWSER" "1"}
+    "guest-browser-type" {"AIUEOS_GUEST_BROWSER" "1"}
     "guest-scanout-two" {"AIUEOS_GUEST_SCANOUT_TWO" "1"
                          "AIUEOS_QEMU_TIMEOUT" "90"}
     nil))
@@ -523,6 +548,7 @@
     "guest-browser-input" (guest-browser-input-result opts)
     "guest-browser-text" (guest-browser-text-result opts)
     "guest-browser-text-raised" (guest-browser-text-raised-result opts)
+    "guest-browser-type" (guest-browser-type-result opts)
     {:green? false :exit 3 :reason :unmeasured :leftover [:unmeasured]}))
 
 (defn serial-marker
@@ -540,6 +566,7 @@
     "guest-browser-input" "AIUEOS_GUEST_BROWSER"
     "guest-browser-text" "AIUEOS_GUEST_BROWSER_TEXT"
     "guest-browser-text-raised" "AIUEOS_GUEST_BROWSER_TEXT"
+    "guest-browser-type" "AIUEOS_GUEST_BROWSER_TYPE"
     nil))
 
 (defn ok-print
@@ -557,4 +584,5 @@
     "guest-browser-input" "AIUEOS_COMPOSITOR_GUEST_BROWSER_INPUT_OK"
     "guest-browser-text" "AIUEOS_COMPOSITOR_GUEST_BROWSER_TEXT_OK"
     "guest-browser-text-raised" "AIUEOS_COMPOSITOR_GUEST_BROWSER_TEXT_RAISED_OK"
+    "guest-browser-type" "AIUEOS_COMPOSITOR_GUEST_BROWSER_TYPE_OK"
     nil))

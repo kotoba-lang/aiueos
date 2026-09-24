@@ -1,0 +1,373 @@
+;; Guest browser desktop input method: one key press -> the hosted IME's
+;; decision -> text committed into the focused window's body, on KERNEL.ELF
+;; (ADR-0225).
+;;
+;; WHY THIS IS A KOTOBA OBJECT AND NOT A C TABLE
+;;
+;; C reads Linux key codes off the virtio-keyboard ring (mechanism). Which
+;; character a key is, how romaji becomes kana, when a reading becomes a
+;; kanji and where committed text goes are input-method and browser
+;; decisions (browser.input `:text/input` goes to the focused window).
+;;
+;; THE ORACLE is src/aiueos/compositor/ime.cljk, and this object mirrors its
+;; `handle-key` branch by branch, quirks included:
+;;   letter     appended to the romaji buffer, then `convert-buf`: greedy
+;;              longest mora (3, 2, 1 bytes) from the start, sokuon (a doubled
+;;              k s t p c g z d b j) emits small tsu; what does not convert
+;;              stays in the buffer
+;;   Backspace  cancels a conversion, else drops the last romaji byte, else the
+;;              last preedit code point
+;;   Escape     cancels a conversion (preedit back to its reading), else
+;;              clears buffer and preedit
+;;   Space      flushes (a lone "n" becomes "nn"), then converts a reading the
+;;              three-entry dictionary knows (か 加可課, ひ 日火, あ 亜) or
+;;              cycles its candidates; otherwise commits the preedit
+;;   Enter      flushes and commits the preedit
+;;   other keys ignored ("-", "," and "." are in the oracle's table but its
+;;              letter test never lets them in, so they are ignored here too)
+;;   IME off    a letter goes straight to the window as latin; the rest is
+;;              ignored
+;; The romaji table between the GENERATED markers is written from the
+;; oracle's own `mora` by os/aiueos/scripts/gen-ime-mora.cljk (--check).
+;;
+;; Temporary native constraints (ADR-0223's removal condition): word types,
+;; at most five parameters, and bounded buffers the oracle does not have --
+;; 8 romaji bytes, 32 preedit code points, the window body's 64. A letter
+;; into a full romaji buffer and a commit into a body without room are
+;; refused with the state unchanged; kana past the 32nd preedit code point
+;; are dropped and the key answers -8.
+;;
+;; STATE, in the browser-frame2 surface (u32 words, 8192 bytes):
+;;   0..31 browser state (focus at 2)   160 + 64(id-1) body of window id
+;;   432 IME on   433 romaji length   434..441 romaji bytes
+;;   442 converting   443 candidate index   444 reading (one code point)
+;;   445 preedit length   446..477 preedit code points
+;;
+;; ABI: [surface surface-bytes key-code value] -> code points committed to
+;; the focused window by this key (0 for most keys), or
+;;   -1 null region / surface not 8192 bytes   -2 abi or n outside 1..4
+;;   -3 focus is not a window id 1..4          -5 the body would pass 64
+;;   -8 the romaji buffer is full, or the preedit overflowed
+;; A release or repeat (value != 1) changes nothing and returns 0.
+
+(ns aiueos.browser-ime
+  (:export [aiueos-browser-key main]))
+
+(defn w [s i]
+  (kernel-load-u32 (kernel-subregion s 8192 (* i 4) 4) 4 0))
+
+(defn wp [s i v]
+  (kernel-store-u32 (kernel-subregion s 8192 (* i 4) 4) 4 0 v))
+
+;; BEGIN GENERATED MORA
+;; 113 entries from aiueos.compositor.ime/mora.
+;; k is the key's bytes packed big-endian: a, a*256+b, a*65536+b*256+c.
+(defn mora1 [k]
+  (if (= k 44) 805371904
+    (if (= k 45) 821821440
+    (if (= k 46) 805437440
+    (if (= k 97) 809631744
+    (if (= k 101) 810024960
+    (if (= k 105) 809762816
+    (if (= k 111) 810156032
+    (if (= k 117) 809893888
+    0)))))))))
+
+(defn mora2 [k]
+  (if (= k 25185) 812646400
+    (if (= k 25189) 813236224
+    (if (= k 25193) 812843008
+    (if (= k 25199) 813432832
+    (if (= k 25205) 813039616
+    (if (= k 25697) 811597824
+    (if (= k 25701) 812056576
+    (if (= k 25705) 811728896
+    (if (= k 25711) 812187648
+    (if (= k 25717) 811925504
+    (if (= k 26229) 812974080
+    (if (= k 26465) 810287104
+    (if (= k 26469) 810680320
+    (if (= k 26473) 810418176
+    (if (= k 26479) 810811392
+    (if (= k 26485) 810549248
+    (if (= k 26721) 812580864
+    (if (= k 26725) 813170688
+    (if (= k 26729) 812777472
+    (if (= k 26735) 813367296
+    (if (= k 26741) 812974080
+    (if (= k 27233) 811085955
+    (if (= k 27241) 811073536
+    (if (= k 27247) 811085959
+    (if (= k 27253) 811085957
+    (if (= k 27489) 810221568
+    (if (= k 27493) 810614784
+    (if (= k 27497) 810352640
+    (if (= k 27503) 810745856
+    (if (= k 27509) 810483712
+    (if (= k 28001) 813563904
+    (if (= k 28005) 813760512
+    (if (= k 28009) 813629440
+    (if (= k 28015) 813826048
+    (if (= k 28021) 813694976
+    (if (= k 28199) 814940160
+    (if (= k 28257) 812253184
+    (if (= k 28261) 812449792
+    (if (= k 28265) 812318720
+    (if (= k 28270) 814940160
+    (if (= k 28271) 812515328
+    (if (= k 28277) 812384256
+    (if (= k 28769) 812711936
+    (if (= k 28773) 813301760
+    (if (= k 28777) 812908544
+    (if (= k 28783) 813498368
+    (if (= k 28789) 813105152
+    (if (= k 29281) 814284800
+    (if (= k 29285) 814481408
+    (if (= k 29289) 814350336
+    (if (= k 29295) 814546944
+    (if (= k 29301) 814415872
+    (if (= k 29537) 810876928
+    (if (= k 29541) 811270144
+    (if (= k 29545) 811008000
+    (if (= k 29551) 811401216
+    (if (= k 29557) 811139072
+    (if (= k 29793) 811532288
+    (if (= k 29797) 811991040
+    (if (= k 29801) 811663360
+    (if (= k 29807) 812122112
+    (if (= k 29813) 811859968
+    (if (= k 30561) 814678016
+    (if (= k 30575) 814874624
+    (if (= k 31073) 813957120
+    (if (= k 31087) 814219264
+    (if (= k 31093) 814088192
+    (if (= k 31329) 810942464
+    (if (= k 31333) 811335680
+    (if (= k 31337) 811073536
+    (if (= k 31343) 811466752
+    (if (= k 31349) 811204608
+    0)))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))
+
+(defn mora3 [k]
+  (if (= k 6453601) 812855427
+    (if (= k 6453615) 812855431
+    (if (= k 6453621) 812855429
+    (if (= k 6514785) 811675779
+    (if (= k 6514793) 811663360
+    (if (= k 6514799) 811675783
+    (if (= k 6514805) 811675781
+    (if (= k 6781281) 810430595
+    (if (= k 6781295) 810430599
+    (if (= k 6781301) 810430597
+    (if (= k 6846817) 812789891
+    (if (= k 6846831) 812789895
+    (if (= k 6846837) 812789893
+    (if (= k 7043425) 810365059
+    (if (= k 7043439) 810365063
+    (if (= k 7043445) 810365061
+    (if (= k 7174497) 813641859
+    (if (= k 7174511) 813641863
+    (if (= k 7174517) 813641861
+    (if (= k 7240033) 812331139
+    (if (= k 7240047) 812331143
+    (if (= k 7240053) 812331141
+    (if (= k 7371105) 812920963
+    (if (= k 7371119) 812920967
+    (if (= k 7371125) 812920965
+    (if (= k 7502177) 814362755
+    (if (= k 7502191) 814362759
+    (if (= k 7502197) 814362757
+    (if (= k 7563361) 811020419
+    (if (= k 7563369) 811008000
+    (if (= k 7563375) 811020423
+    (if (= k 7563381) 811020421
+    (if (= k 7631733) 811859968
+    0))))))))))))))))))))))))))))))))))
+;; END GENERATED MORA
+
+;; --- keys -------------------------------------------------------------------
+
+(defn letter-of [code]
+  ;; Linux evdev key codes, US layout, lower case. 0 for everything else.
+  (if (= code 30) 97 (if (= code 48) 98 (if (= code 46) 99 (if (= code 32) 100
+  (if (= code 18) 101 (if (= code 33) 102 (if (= code 34) 103 (if (= code 35) 104
+  (if (= code 23) 105 (if (= code 36) 106 (if (= code 37) 107 (if (= code 38) 108
+  (if (= code 50) 109 (if (= code 49) 110 (if (= code 24) 111 (if (= code 25) 112
+  (if (= code 16) 113 (if (= code 19) 114 (if (= code 31) 115 (if (= code 20) 116
+  (if (= code 22) 117 (if (= code 47) 118 (if (= code 17) 119 (if (= code 45) 120
+  (if (= code 21) 121 (if (= code 44) 122 0)))))))))))))))))))))))))))
+
+;; --- the focused window's body -----------------------------------------------
+
+(defn body-base [s]
+  (+ 160 (* 64 (- (w s 2) 1))))
+
+(defn body-len [s base i]
+  (if (>= i 64) 64
+    (if (= (w s (+ base i)) 0) i
+      (body-len s base (+ i 1)))))
+
+(defn copy-preedit [s base at i n]
+  (if (>= i n) 0
+    (do (wp s (+ base (+ at i)) (w s (+ 446 i)))
+        (copy-preedit s base at (+ i 1) n))))
+
+(defn clear-state [s]
+  (do (wp s 433 0) (wp s 445 0) (wp s 442 0) (wp s 443 0) (wp s 444 0) 0))
+
+(defn commit [s]
+  ;; The preedit onto the end of the focused body, whole or not at all.
+  (let [base (body-base s)
+        at (body-len s base 0)
+        n (w s 445)]
+    (if (> (+ at n) 64) -5
+      (do (copy-preedit s base at 0 n)
+          (clear-state s)
+          n))))
+
+;; --- preedit and romaji buffers ----------------------------------------------
+
+(defn pre-push [s cp]
+  (let [n (w s 445)]
+    (if (>= n 32) (do (wp s 478 1) 0)
+      (do (wp s (+ 446 n) cp) (wp s 445 (+ n 1)) 0))))
+
+(defn emit-kana [s r]
+  (do (pre-push s (quot r 65536))
+      (if (> (bit-and r 65535) 0) (pre-push s (bit-and r 65535)) 0)))
+
+(defn sokuon-letter [c]
+  (if (= c 107) 1 (if (= c 115) 1 (if (= c 116) 1 (if (= c 112) 1 (if (= c 99) 1
+  (if (= c 103) 1 (if (= c 122) 1 (if (= c 100) 1 (if (= c 98) 1 (if (= c 106) 1 0)))))))))))
+
+(defn b-at [s i] (w s (+ 434 i)))
+
+(defn sokuon-at [s p n]
+  (if (< n 2) 0
+    (if (not (= (b-at s p) (b-at s (+ p 1)))) 0
+      (sokuon-letter (b-at s p)))))
+
+(defn compact [s p i n]
+  ;; Move buffer bytes p.. down to 0.., n of them.
+  (if (>= i n) (wp s 433 n)
+    (do (wp s (+ 434 i) (b-at s (+ p i)))
+        (compact s p (+ i 1) n))))
+
+(defn convert-buf [s p]
+  (let [n (- (w s 433) p)]
+    (if (= n 0) (wp s 433 0)
+      (if (= (sokuon-at s p n) 1)
+        (do (pre-push s 12387) (convert-buf s (+ p 1)))
+        (let [r3 (if (>= n 3)
+                   (mora3 (+ (* (b-at s p) 65536) (* (b-at s (+ p 1)) 256) (b-at s (+ p 2))))
+                   0)]
+          (if (> r3 0) (do (emit-kana s r3) (convert-buf s (+ p 3)))
+            (let [r2 (if (>= n 2) (mora2 (+ (* (b-at s p) 256) (b-at s (+ p 1)))) 0)]
+              (if (> r2 0) (do (emit-kana s r2) (convert-buf s (+ p 2)))
+                (let [r1 (mora1 (b-at s p))]
+                  (if (> r1 0) (do (emit-kana s r1) (convert-buf s (+ p 1)))
+                    (compact s p 0 n)))))))))))
+
+(defn push-leftover [s i n]
+  (if (>= i n) 0
+    (do (pre-push s (b-at s i)) (push-leftover s (+ i 1) n))))
+
+(defn flush-preedit [s]
+  ;; A lone "n" is "nn"; convert; whatever is left goes in as latin.
+  (do (if (= (w s 433) 1)
+        (if (= (b-at s 0) 110) (do (wp s 435 110) (wp s 433 2)) 0)
+        0)
+      (convert-buf s 0)
+      (push-leftover s 0 (w s 433))
+      (wp s 433 0)))
+
+;; --- the dictionary -----------------------------------------------------------
+
+(defn cand-count [r]
+  (if (= r 12363) 3 (if (= r 12402) 2 (if (= r 12354) 1 0))))
+
+(defn cand-at [r i]
+  (if (= r 12363) (if (= i 0) 21152 (if (= i 1) 21487 35506))
+    (if (= r 12402) (if (= i 0) 26085 28779)
+      20124)))
+
+(defn set-preedit-one [s cp]
+  (do (wp s 446 cp) (wp s 445 1) 0))
+
+;; --- keys ---------------------------------------------------------------------
+
+(defn on-space [s]
+  (do (if (= (w s 442) 0) (flush-preedit s) 0)
+      (let [reading (if (= (w s 442) 1) (w s 444)
+                      (if (= (w s 445) 1) (w s 446) 0))
+            n (cand-count reading)]
+        (if (> n 0)
+          (if (= (w s 442) 1)
+            (let [idx (- (+ (w s 443) 1) (* n (quot (+ (w s 443) 1) n)))]
+              (do (wp s 443 idx) (set-preedit-one s (cand-at reading idx))))
+            (do (wp s 442 1) (wp s 444 reading) (wp s 443 0)
+                (set-preedit-one s (cand-at reading 0))))
+          (commit s)))))
+
+(defn on-enter [s]
+  (do (if (= (w s 442) 0) (flush-preedit s) 0)
+      (commit s)))
+
+(defn cancel [s]
+  (if (= (w s 442) 1)
+    (do (wp s 442 0) (wp s 443 0)
+        (set-preedit-one s (w s 444))
+        (wp s 444 0) 0)
+    (do (wp s 433 0) (wp s 445 0) 0)))
+
+(defn on-backspace [s]
+  (if (= (w s 442) 1) (cancel s)
+    (if (> (w s 433) 0) (do (wp s 433 (- (w s 433) 1)) 0)
+      (if (> (w s 445) 0) (do (wp s 445 (- (w s 445) 1)) 0)
+        0))))
+
+(defn on-letter [s c]
+  (if (>= (w s 433) 8) -8
+    (do (wp s (+ 434 (w s 433)) c)
+        (wp s 433 (+ (w s 433) 1))
+        (convert-buf s 0)
+        0)))
+
+(defn off-letter [s c]
+  (let [base (body-base s)
+        at (body-len s base 0)]
+    (if (>= at 64) -5
+      (do (wp s (+ base at) c) 1))))
+
+(defn key [s code]
+  (let [c (letter-of code)]
+    (if (= (w s 432) 0)
+      (if (> c 0) (off-letter s c) 0)
+      (if (> c 0) (on-letter s c)
+        (if (= code 57) (on-space s)
+          (if (= code 28) (on-enter s)
+            (if (= code 14) (on-backspace s)
+              (if (= code 1) (cancel s) 0))))))))
+
+;; --- admission ----------------------------------------------------------------
+
+(defn has-id [s n k id]
+  (if (>= k n) 0
+    (if (= (w s (+ 5 (* k 5))) id) 1
+      (has-id s n (+ k 1) id))))
+
+(defn aiueos-browser-key [s sb code value]
+  (if (= s 0) -1
+    (if (not (= sb 8192)) -1
+      (if (not (= (w s 0) 1)) -2
+        (if (< (w s 1) 1) -2
+          (if (> (w s 1) 4) -2
+            (if (< (w s 2) 1) -3
+              (if (> (w s 2) 4) -3
+                (if (= (has-id s (w s 1) 0 (w s 2)) 0) -3
+                  (if (not (= value 1)) 0
+                    (do (wp s 478 0)
+                        (let [r (key s code)]
+                          (if (= (w s 478) 1) -8 r)))))))))))))
+
+(defn main [] 0)
