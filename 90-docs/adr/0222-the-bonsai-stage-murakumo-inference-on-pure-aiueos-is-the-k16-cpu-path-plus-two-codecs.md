@@ -392,7 +392,9 @@ source rather than here.
    (q/k norm) and `l2_norm_heads` call `aiueos-qwen35-norm` modes 0/2/1;
    the FFN SwiGLU, the conv SiLU, the β sigmoid, the output-gate SiLU and
    the decay `exp(a·softplus(α+dt))` call `aiueos-qwen35-activation` modes
-   4/0/1/0/2+3, each once over the whole vector. The C is kept as
+   4/0/1/0/2+3, each once over the whole vector, and `linear_attention`'s
+   kernel-4 depthwise conv with its three-entry history calls modes 5/6
+   (conv section below). The C is kept as
    `*_c` under `AIUEOS_QWEN35_KOTOBA_PARITY == 2 || AIUEOS_QWEN35_C_REFERENCE_NORM`;
    the flag is set for the host smokes and parity profiles 1, 3 and 4 (which
    do not link the two objects). Still C, by stage: the gated RMS reduction
@@ -456,7 +458,7 @@ source rather than here.
    bit patterns) and, as for attention, makes the arena the smallest span
    covering the head state in `decode->recurrent` and the five workspace
    vectors, rebasing each address against it. Still C in
-   `linear_attention`: the conv mix, the q/k L2 norm call sites, the decay
+   `linear_attention`: the q/k L2 norm call sites, the decay
    transition's `+ dt` and `a *` products, the position-zero reduction that
    overwrites the output at position 0, and the gated RMS of the output.
    The C is kept as `recurrent_step_c` under
@@ -503,9 +505,11 @@ source rather than here.
    `aiueos_map_pci_mmio`, so the moved tables are walked. `bonsai-qemu-admission`
    → `AIUEOS_BONSAI_ADMISSION_QEMU_OK`. **Not measured**: the production node
    image booting on the physical K16. With the attention, recurrent-step and
-   rope objects linked `aiueos_low_end` is 0x1f2000 and the headroom is
-   8,192 B (`.text` 0xb7772); the next object that grows
-   `.text` past it needs the next move; the candidates left are the TLS and
+   rope objects linked `aiueos_low_end` was 0x1f2000 (`.text` 0xb7772); at
+   origin/main 20c8b88 it is 0x1f3000 (`.text` 0xb8fb2), and with the conv
+   modes (below) it is **0x1f4000 — the limit itself, 0 B of headroom**
+   (`.text` 0xb9832). The next object that grows `.text` at all needs the
+   next move; the candidates left are the TLS and
    NIC scratch (tls13 8.8 KiB, rtl8125 8.3 KiB, main 6.8 KiB) or a third
    loader segment. The 64 KiB boot stack cannot move, because it is in use
    before `.high_bss` is zeroed.
@@ -634,10 +638,43 @@ source rather than here.
      real token (no model is on the build machine; `ADR-0121`'s
      `248044 → 2005` has not been re-run), and the rate.
    - **the rest of `linear_attention`,** which ADR-0175 already named: the
-     kernel-4 depthwise convolution with its three-step history, the gated
-     RMS of the output (no mode of the norm object gives it bit for bit,
-     as the comment at its call site says), and the `dot` coefficient on
-     the position-zero and cache-free paths.
+     kernel-4 depthwise convolution with its three-step history (**LIVE on
+     the object**, see below), the gated RMS of the output (no mode of the
+     norm object gives it bit for bit, as the comment at its call site
+     says), and the `dot` coefficient on the position-zero and cache-free
+     paths. The last two are still C.
+
+     **Conv: LIVE on the object.** Modes 5 (`conv4-first`: position 0 or
+     no cache, `a·k3`, the history not read) and 6 (`conv4-next`:
+     `a·k3 + ((h0·k0 + h1·k1) + h2·k2)`, the C's association) of
+     `aiueos-qwen35-activation`, with the history's address in the fifth
+     ABI word. With a history, both modes shift it (h0←h1, h1←h2, h2←the
+     input before the conv). Mode 6 with a null history is −5. The
+     wrapper `conv4` picks the mode from `decode->position`. The C is kept
+     as `conv4_c` next to the other `*_c` references. Contract
+     `qwen35-activation-v1`: 18 vectors, 12 memory assertions, reasons
+     −5..0 all observed. The expectations come from the C loop itself,
+     compiled on the host (`tests/qwen35_conv4_oracle.c`,
+     `cc -O0 -ffp-contract=off`). Two channels are probes: current 0
+     against tap −1 with a zero history (mode 5 gives −0, mode 6 gives
+     +0), and 2^24 against a history sum of −(2^24−2), which gives 2 only in
+     the C's association. Seen red: `h0·k0 + (h1·k1 + h2·k2)` in the object
+     → `memory mismatch` at `:conv4-next` region `:a` (channel 1's probe).
+     Fuel, in the KIR oracle: the 24-channel mode-6 vector passes at 1,024
+     and traps at 512 (the limit rounds up to a power of two). That is ≤ 43
+     per channel, 2.8M at the 65,536 ceiling, under the existing 16,777,216
+     tier, so kotoba-native is unchanged. Parity profile 2 now also drives
+     `conv4` against `conv4_c` over 128 channels for five tokens (no cache,
+     first cached, three later), comparing values and history after each
+     token, plus the −2 (mode 7) and −5 refusals. Reproduce:
+     `AIUEOS_QWEN35_KOTOBA_PARITY=2 smoke-qemu-uefi.sh` → `QWEN-PARITY
+     activation ok` in `build/aiueos/kernel-serial.log`. Seen red:
+     `conv4_c`'s association changed the same way → `QWEN-PARITY
+     activation mismatch`, `AIUEOS_EVIDENCE_STOP`, exit 1.
+     `bonsai-qemu-admission` → `AIUEOS_BONSAI_ADMISSION_QEMU_OK`. The object
+     is 9,976 B (was 7,736 B). **Not measured**: a forward pass through the
+     conv at the live width of 10,240 channels (the oracle ran 24, the parity
+     boot 128), and the object on the physical K16.
    The loop's tick listed these as `:cutover-logits` (landed) and
    `:cutover-linear-attention-rest`, ahead of this floor, in the same way
    it put `:cutover-rope` first. It checks each one by reading the body of

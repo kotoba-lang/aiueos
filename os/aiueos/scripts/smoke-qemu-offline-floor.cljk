@@ -29,7 +29,7 @@
 ;; Requires a built KERNEL.ELF and BOOTX64.EFI (build-kotoba-native-kernel.sh
 ;; and build-kotoba-native-boot.sh), the same inputs smoke-qemu-uefi.sh needs.
 
-(require '[clojure.set :as set]
+(require '[kotoba.lang.coll :as set]
          '[kotoba.lang.text :as str])
 
 (def fs (js/require "node:fs"))

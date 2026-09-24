@@ -6,7 +6,7 @@
   the same server, because the claim is not that the own path works -- it is
   that the two paths answer the same question the same way. A behaviour proved
   on one and assumed on the other is the shape ADR-0077 exists to avoid."
-  (:require [aiueos.cloud-live :as live]
+  (:require [kotoba.bytes :as kbytes] [aiueos.cloud-live :as live]
             [aiueos.provider.cloud :as provider]
             [aiueos.provider.cloud-own :as own]
             [clojure.java.io :as io]
@@ -96,7 +96,7 @@
   (.close exchange))
 
 (defn- serve-hello [^HttpExchange exchange]
-  (respond! exchange 200 (.getBytes ^String hello "UTF-8")))
+  (respond! exchange 200 (kbytes/utf8-bytes ^String hello)))
 
 (defn- policy-for
   "The storage policy for ORIGIN on TRANSPORT, pinning the server's own key to
@@ -236,7 +236,7 @@
 
 (defn- serve-redirect [^HttpExchange exchange]
   (if (= "/elsewhere" (.getPath (.getRequestURI exchange)))
-    (respond! exchange 200 (.getBytes "somewhere else" "UTF-8"))
+    (respond! exchange 200 (kbytes/utf8-bytes "somewhere else"))
     (do (.add (.getResponseHeaders exchange) "Location" "/elsewhere")
         (respond! exchange 302 (byte-array 0)))))
 
@@ -321,7 +321,7 @@
             (.close listener)))))))
 
 (defn- echo-json [^HttpExchange exchange]
-  (respond! exchange 200 (.getBytes "{\"ok\":true}" "UTF-8")))
+  (respond! exchange 200 (kbytes/utf8-bytes "{\"ok\":true}")))
 
 (deftest a-credential-reaches-the-request-and-nothing-else
   ;; Two halves, and the first is what makes the second mean anything: the
@@ -360,7 +360,7 @@
               v (provider/infer! policy model {:messages [{:role "user" :content "ping"}]
                                                :max-tokens 8} {})
               seen (first @(:headers s))
-              sent (String. (byte-array (map unchecked-byte @body)) "UTF-8")]
+              sent (kbytes/utf8-string (byte-array (map unchecked-byte @body)))]
           (is (= ["application/json"] (get seen "content-type"))
               "the body was framed as JSON without the caller saying so")
           (is (= [(str (count @body))] (get seen "content-length"))
@@ -377,7 +377,7 @@
 
 (deftest bytes-a-caller-supplies-go-out-verbatim
   ;; `write-block!`'s rule: a block write must not be reshaped by a serialiser.
-  (let [payload (.getBytes ^String hello "UTF-8")
+  (let [payload (kbytes/utf8-bytes ^String hello)
         seen (atom nil)]
     (with-https-server (fn [^HttpExchange exchange]
                          (reset! seen (vec (.readAllBytes (.getRequestBody exchange))))

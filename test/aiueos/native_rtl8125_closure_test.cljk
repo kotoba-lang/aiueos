@@ -1,7 +1,7 @@
 (ns aiueos.native-rtl8125-closure-test
   (:require [clojure.edn :as edn]
-            [clojure.java.io :as io]
-            [clojure.java.shell :as shell]
+            [kotoba.io :as io]
+            [kotoba.process :as shell]
             [kotoba.lang.text :as str]
             [kotoba.test :refer [deftest is testing]]))
 

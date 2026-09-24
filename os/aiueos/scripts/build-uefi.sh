@@ -1070,7 +1070,7 @@ if [ -n "$model_handoff_link" ] || [ -n "$qwen35_parity_cflags" ]; then
   case "${AIUEOS_QWEN35_KOTOBA_PARITY:-0}" in
     0|2)
       python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_qwen35_activation_object" \
-        49556872a8110c3cf95eea7648df693e8352f0d65bf1755404c4f3d92e114b68 kotoba_aiueos_qwen35_activation
+        b869b92d850e7bf5044f402a6d014dec37838675234ebdb75370efb7e974b724 kotoba_aiueos_qwen35_activation
       python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_qwen35_norm_object" \
         faff9aefe51909376dc6a2bfe30fa720c88cc47db06a70df32fa7852b110eaee kotoba_aiueos_qwen35_norm
       ;;

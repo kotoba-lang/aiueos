@@ -5,7 +5,7 @@
   Dospara-class physical machine.  Each required capability is named
   independently so a static GOP frame cannot be mistaken for a working
   desktop and PCI enumeration cannot be mistaken for a usable driver."
-  (:require [clojure.set :as set]))
+  (:require [kotoba.lang.coll :as set]))
 
 (def format-version 1)
 

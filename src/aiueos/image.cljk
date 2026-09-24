@@ -20,7 +20,7 @@
             #?(:clj [grant.anchors :as anchors])
             #?(:clj [grant.key-lifecycle :as kl])
             #?(:clj [clojure.java.io :as io])
-            #?(:clj [clojure.java.shell :as shell])))
+            #?(:clj [kotoba.process :as shell])))
 
 (def default-guest-policy-path "/etc/aiueos/policy.edn")
 

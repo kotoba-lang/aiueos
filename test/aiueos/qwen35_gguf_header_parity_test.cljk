@@ -23,7 +23,7 @@
 ;; for the bounds and not only for the arithmetic.
 
 (ns aiueos.qwen35-gguf-header-parity-test
-  (:require [clojure.java.io :as io]
+  (:require [kotoba.io :as io]
             [kotoba.test :refer [deftest is testing]]
             [kotoba.kir :as ir]
             [kotoba.sema :as sema]))
@@ -36,7 +36,7 @@
   `aiueos.tcp-seq-acceptable-parity-test` gives: a `when`-guard here reports
   green on a checkout without the object, which is a skip wearing a pass."
   []
-  (let [present? (.exists source-file)]
+  (let [present? (io/exists? source-file)]
     (is present? (str "kotoba object not found at " source-file))
     present?))
 

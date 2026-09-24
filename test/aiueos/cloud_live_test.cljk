@@ -5,7 +5,7 @@
   exercised by running it against the internet is a gate whose exit code is not
   checked -- and the exit code is the whole product: it is what a person or a
   script reads to decide whether something is wrong."
-  (:require [grant.cloud :as cloud]
+  (:require [kotoba.bytes :as kbytes] [grant.cloud :as cloud]
             [aiueos.cloud-live :as live]
             [aiueos.provider.cloud :as provider]
             [kotoba.lang.text :as str]
@@ -234,10 +234,10 @@
          (cloud/admit-write-payload
           plan
           (provider/sha256-hex
-           (.getBytes ^String (:aiueos.cloud-live/write-text live) "UTF-8"))))
+           (kbytes/utf8-bytes ^String (:aiueos.cloud-live/write-text live)))))
         "otherwise the store answers 422 and the operator gets to work out why")
     (is (= digest (provider/sha256-hex
-                   (.getBytes ^String (:aiueos.cloud-live/write-text live) "UTF-8"))))))
+                   (kbytes/utf8-bytes ^String (:aiueos.cloud-live/write-text live)))))))
 
 (deftest the-inference-leg-is-configured-so-it-can-actually-answer
   ;; Three deployment values that each turned a working leg into a false

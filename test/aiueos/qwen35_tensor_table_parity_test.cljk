@@ -36,7 +36,7 @@
 ;; guard.
 
 (ns aiueos.qwen35-tensor-table-parity-test
-  (:require [clojure.java.io :as io]
+  (:require [kotoba.bytes :as kbytes] [kotoba.io :as kio] [clojure.java.io :as io]
             [kotoba.test :refer [deftest is testing]]
             [kotoba.kir :as ir]
             [kotoba.sema :as sema]))
@@ -149,7 +149,7 @@
                 storage (* (quot elements block) block-bytes)
                 start (.size out)]
             (is (zero? (mod elements block)) (str name " is a whole number of blocks"))
-            (let [b (.getBytes ^String name "UTF-8")]
+            (let [b (kbytes/utf8-bytes ^String name)]
               (put-le! out (alength b) 8)
               (.write out b 0 (alength b)))
             (put-le! out (count dimensions) 4)
@@ -345,7 +345,7 @@
                 (str "the committed workspace is missing at " workspace-file
                      "; tests/qwen35_runtime_model.c reads it"))
             (when (.exists workspace-file)
-              (let [committed (java.nio.file.Files/readAllBytes (.toPath workspace-file))]
+              (let [committed (kio/read-all-bytes workspace-file)]
                 (is (= plan-length (alength ^bytes committed))
                     "the committed workspace must be 28,160 bytes")
                 (is (= (hex produced) (hex committed))

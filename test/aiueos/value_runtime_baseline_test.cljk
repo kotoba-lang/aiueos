@@ -10,7 +10,7 @@
   does not re-measure, these numbers stop being about this repository — so the
   sha is checked, and a stale receipt is red rather than quietly quoted."
   (:require [clojure.edn :as edn]
-            [clojure.java.io :as io]
+            [kotoba.io :as io]
             [kotoba.lang.text :as str]
             [kotoba.test :refer [deftest is testing]]))
 
@@ -46,8 +46,8 @@
 (def ^:private receipt (delay (edn/read-string (slurp receipt-path))))
 
 (defn- value-sources []
-  (->> (.listFiles (io/file "os" "aiueos" "kotoba"))
-       (map #(.getName %))
+  (->> (io/list-files (io/file "os" "aiueos" "kotoba"))
+       (map #(io/file-name %))
        (filter #(and (str/starts-with? % "value-") (str/ends-with? % ".kotoba")))
        (map #(str/replace % #"\.kotoba$" ""))
        sort))
