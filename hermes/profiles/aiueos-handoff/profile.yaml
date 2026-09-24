@@ -1,0 +1,3 @@
+description: 'AIUEOS K16 pure-Kotoba handoff (ADR-2609031030): gate N1-N6 progression,
+  1 gate per tick, monitor-gated cron'
+description_auto: false
