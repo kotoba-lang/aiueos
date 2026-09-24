@@ -33,7 +33,9 @@
 ;;   160 + 64(id-1) body of window id, up to 64 code points, 0 ends it,
 ;;                  10 breaks the line
 ;;   416..431       scratch owned by this object (overwritten every call)
-;;   432..479       reserved for the input method (browser-ime.kotoba)
+;;   432..479       the input method's state (browser-ime.kotoba); this
+;;                  object reads 433 romaji length, 434..441 romaji bytes,
+;;                  445 preedit length, 446..477 preedit code points
 ;;   480 + 6j       op j: kind x y a b rgb
 ;;                  kind 1 rect:  a = width, b = height
 ;;                  kind 2 glyph: a = glyph index in the font, b = 8 or 16
@@ -42,6 +44,14 @@
 ;; (352..415): a fourth body longer than 48 code points was read back as the
 ;; object's own cursor words. Found while laying out the IME state; vector
 ;; `fourth-window-body-reads-all-64` was red on that layout.
+;;
+;; COMPOSITION (ADR-0227): while the focused window has a composition, it is
+;; laid right after that window's body text -- the preedit code points, then
+;; the romaji still in the buffer -- each drawn glyph with a 1 px #111111
+;; rule at its foot (y + 17), wrapping and cut like the body. A commit
+;; empties both, so the next frame has neither the glyphs nor the rule.
+;; browser.document-input keeps the composition on the text state apart from
+;; the committed text; this is where it becomes visible.
 ;; FONT: the aiueos-font/v1 blob (os/aiueos/scripts/make-font.cljk).
 ;;
 ;; ABI: [surface surface-bytes font font-bytes] -> op count, or
@@ -49,7 +59,9 @@
 ;;   -3 focus is not a window id               -4 a rect leaves the viewport
 ;;   -5 more than 261 ops                      -6 font refused (magic, version,
 ;;                                                count, length, no U+FFFD)
-;;   -7 a window id outside 1..4
+;;   -7 a window id outside 1..4               -8 the IME's lengths are past
+;;                                                its buffers (romaji > 8 or
+;;                                                preedit > 32)
 
 (ns aiueos.browser-frame2
   (:export [aiueos-browser-frame2 main]))
@@ -162,6 +174,28 @@
                 0)
               (do (place s f gi gw) (lay s f base (+ i 1))))))))))
 
+(defn comp-cp [s i]
+  ;; The i-th code point of the composition: preedit, then romaji bytes.
+  (if (< i (sw s 445)) (sw s (+ 446 i))
+    (sw s (+ 434 (- i (sw s 445))))))
+
+(defn place-ruled [s f gi gw]
+  ;; A composition glyph and its rule, if it fits under the bottom; advance.
+  (do (if (> (+ (sw s 418) 16) (sw s 421))
+        0
+        (do (put-glyph s (sw s 417) (sw s 418) gi gw)
+            (put-rect s (sw s 417) (+ (sw s 418) 17) gw 1)))
+      (sput s 417 (+ (sw s 417) gw))
+      0))
+
+(defn lay-comp [s f i n]
+  (if (>= i n) 0
+    (let [gi (glyph-of s f (comp-cp s i))
+          gw (glyph-width s f gi)]
+      (do (if (> (+ (sw s 417) gw) (sw s 420)) (newline s) 0)
+          (place-ruled s f gi gw)
+          (lay-comp s f (+ i 1) n)))))
+
 (defn text-block [s f base x y]
   ;; Right limit, bottom, wrap and limit are already in scratch.
   (do (sput s 417 x) (sput s 418 y) (sput s 419 x)
@@ -192,7 +226,9 @@
         ;; body: wrapped at the right inset, cut at the bottom inset
         (sput s 420 (- (+ x w) 8)) (sput s 421 (- (+ y h) 8))
         (sput s 426 1) (sput s 428 64)
-        (text-block s f (+ 160 (* 64 (- id 1))) (+ x 8) (+ y 36)))))
+        (text-block s f (+ 160 (* 64 (- id 1))) (+ x 8) (+ y 36))
+        ;; the composition, only in the focused window, after its body
+        (if (= focused 1) (lay-comp s f 0 (+ (sw s 445) (sw s 433))) 0))))
 
 (defn emit [s f k]
   (if (>= k (sw s 1)) 0
@@ -242,12 +278,14 @@
                 (if (= (ids-ok s n 0) 0) -7
                   (if (= (has-id s n 0 (sw s 2)) 0) -3
                     (if (= (rects-ok s n 0 vw vh) 0) -4
+                      (if (> (sw s 433) 8) -8
+                      (if (> (sw s 445) 32) -8
                       (if (= (font-ok s f fb) 0) -6
                         (do (sput s 416 0)
                             (sput s 427 0)
                             (sput s 422 16119544)
                             (put-rect s 0 0 vw vh)
                             (emit s f 0)
-                            (if (= (sw s 427) 1) -5 (sw s 416)))))))))))))))
+                            (if (= (sw s 427) 1) -5 (sw s 416)))))))))))))))))
 
 (defn main [] 0)

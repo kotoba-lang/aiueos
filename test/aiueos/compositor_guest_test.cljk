@@ -162,3 +162,26 @@
                                       {:serial (str raised-ok "AIUEOS_GUEST_BROWSER_TYPE_OK presses=13 committed=4 ops=62 text-px=1052 hash=7caecfe8\r\n")})))))
   (testing "the profile is the tablet one"
     (is (= {"AIUEOS_GUEST_BROWSER" "1"} (guest/extra-env "guest-browser-type")))))
+
+;; Guest browser preedit (ADR-0227).
+(def ^:private typed-ok
+  (str raised-ok "AIUEOS_GUEST_BROWSER_TYPE_OK presses=13 committed=5 ops=62 text-px=1052 hash=7caecfe8\r\n"))
+
+(deftest guest-browser-preedit-classifier
+  (testing "the ruled composition and its commit, both matching the model, are green"
+    (is (:green? (guest/classify "guest-browser-preedit"
+                                 {:serial (str typed-ok "AIUEOS_GUEST_BROWSER_PREEDIT_OK shown-ops=66 shown-px=1130 shown-hash=c9f528cb committed=2 ops=64 text-px=1112 hash=63e3fe67\r\n")}))))
+  (testing "preedit needs the typing frame first"
+    (is (= :no-typing-frame
+           (:reason (guest/classify "guest-browser-preedit"
+                                    {:serial "AIUEOS_GUEST_BROWSER_PREEDIT_OK shown-ops=66 shown-px=1130 shown-hash=c9f528cb committed=2 ops=64 text-px=1112 hash=63e3fe67\r\n"})))))
+  (testing "named reds"
+    (doseq [[line reason] [["AIUEOS_GUEST_BROWSER_PREEDIT leftover=keys-missing presses=1\r\n" :keys-missing]
+                           ["AIUEOS_GUEST_BROWSER_PREEDIT leftover=census-miss stray=0 committed=2 ops=64 text-px=1052 hash=7caecfe8\r\n" :census-miss]
+                           ["" :guest-browser-preedit-absent]]]
+      (is (= reason (:reason (guest/classify "guest-browser-preedit" {:serial (str typed-ok line)}))) line)))
+  (testing "a shown frame without its rule (same px as typed) is not green"
+    (is (not (:green? (guest/classify "guest-browser-preedit"
+                                      {:serial (str typed-ok "AIUEOS_GUEST_BROWSER_PREEDIT_OK shown-ops=66 shown-px=1116 shown-hash=c9f528cb committed=2 ops=64 text-px=1112 hash=63e3fe67\r\n")})))))
+  (testing "tablet profile"
+    (is (= {"AIUEOS_GUEST_BROWSER" "1"} (guest/extra-env "guest-browser-preedit")))))

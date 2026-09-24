@@ -14,7 +14,8 @@
   ["guest-ime" "guest-wm" "guest-paint" "guest-input"
    "guest-gpu-two" "guest-scanout-two" "guest-broker" "guest-session"
    "guest-browser-frame" "guest-browser-input"
-   "guest-browser-text" "guest-browser-text-raised" "guest-browser-type"])
+   "guest-browser-text" "guest-browser-text-raised" "guest-browser-type"
+   "guest-browser-preedit"])
 
 (defn gate-cmd
   "SPA-visible evidence command for a guest profile. Not clojure -M."
@@ -521,6 +522,30 @@
       {:green? false :exit 1 :reason :guest-browser-type-absent
        :leftover [:guest-browser-type-absent]})))
 
+;; Guest browser preedit (ADR-0227): after the typing frame, `k a n` leaves
+;; か preedit + `n` romaji drawn underlined after window 1's body; Enter
+;; commits かん and the rule goes. Both censuses are
+;; os/aiueos/scripts/browser-frame-model.cljk's.
+
+(defn guest-browser-preedit-result
+  [{:keys [serial qemu-unmeasured?] :as opts}]
+  (let [s (or serial "")]
+    (cond
+      qemu-unmeasured? {:green? false :exit 3 :reason :unmeasured :leftover [:unmeasured]}
+      (not (re-find #"(?m)^AIUEOS_GUEST_BROWSER_TYPE_OK presses=13 committed=5 ops=62 text-px=1052 hash=7caecfe8" s))
+      (let [r (guest-browser-type-result opts)]
+        (assoc r :reason :no-typing-frame :leftover (into [:no-typing-frame] (:leftover r))))
+      (re-find #"(?m)^AIUEOS_GUEST_BROWSER_PREEDIT_OK shown-ops=66 shown-px=1130 shown-hash=c9f528cb committed=2 ops=64 text-px=1112 hash=63e3fe67" s)
+      {:green? true :exit 0 :reason :guest-browser-preedit
+       :leftover [:no-caret :no-flow-layout :three-reading-dictionary]}
+      (re-find #"(?m)^AIUEOS_GUEST_BROWSER_PREEDIT leftover=keys-missing" s)
+      {:green? false :exit 1 :reason :keys-missing :leftover [:keys-missing]}
+      (re-find #"(?m)^AIUEOS_GUEST_BROWSER_PREEDIT leftover=census-miss" s)
+      {:green? false :exit 1 :reason :census-miss :leftover [:census-miss]}
+      :else
+      {:green? false :exit 1 :reason :guest-browser-preedit-absent
+       :leftover [:guest-browser-preedit-absent]})))
+
 (defn extra-env
   "Env merged into smoke-qemu-uefi.sh. Default UEFI smoke is empty."
   [profile]
@@ -529,6 +554,7 @@
     "guest-browser-input" {"AIUEOS_GUEST_BROWSER" "1"}
     "guest-browser-text-raised" {"AIUEOS_GUEST_BROWSER" "1"}
     "guest-browser-type" {"AIUEOS_GUEST_BROWSER" "1"}
+    "guest-browser-preedit" {"AIUEOS_GUEST_BROWSER" "1"}
     "guest-scanout-two" {"AIUEOS_GUEST_SCANOUT_TWO" "1"
                          "AIUEOS_QEMU_TIMEOUT" "90"}
     nil))
@@ -549,6 +575,7 @@
     "guest-browser-text" (guest-browser-text-result opts)
     "guest-browser-text-raised" (guest-browser-text-raised-result opts)
     "guest-browser-type" (guest-browser-type-result opts)
+    "guest-browser-preedit" (guest-browser-preedit-result opts)
     {:green? false :exit 3 :reason :unmeasured :leftover [:unmeasured]}))
 
 (defn serial-marker
@@ -567,6 +594,7 @@
     "guest-browser-text" "AIUEOS_GUEST_BROWSER_TEXT"
     "guest-browser-text-raised" "AIUEOS_GUEST_BROWSER_TEXT"
     "guest-browser-type" "AIUEOS_GUEST_BROWSER_TYPE"
+    "guest-browser-preedit" "AIUEOS_GUEST_BROWSER_PREEDIT"
     nil))
 
 (defn ok-print
@@ -585,4 +613,5 @@
     "guest-browser-text" "AIUEOS_COMPOSITOR_GUEST_BROWSER_TEXT_OK"
     "guest-browser-text-raised" "AIUEOS_COMPOSITOR_GUEST_BROWSER_TEXT_RAISED_OK"
     "guest-browser-type" "AIUEOS_COMPOSITOR_GUEST_BROWSER_TYPE_OK"
+    "guest-browser-preedit" "AIUEOS_COMPOSITOR_GUEST_BROWSER_PREEDIT_OK"
     nil))

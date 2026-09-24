@@ -233,6 +233,10 @@
  {:cmd ["kbb" "--backend" "sci" "--classpath" "src:../text/src" "os/aiueos/scripts/gen-ime-mora.cljk" "--check"]
   :doc "browser-ime.kotoba's romaji table is exactly the one generated from aiueos.compositor.ime/mora (ADR-0225)."}
 
+ :browser-desktop-model
+ {:cmd ["kbb" "--backend" "sci" "--classpath" "src:../text/src" "os/aiueos/scripts/browser-frame-model.cljk"]
+  :doc "The guest browser desktop's frame model (ADR-0227): reproduces the pinned text / text-raised / typed censuses, then prints the preedit scenes' answers. Exit 1 when a pinned scene is not reproduced."}
+
  :browser-desktop-guest
  {:cmd ["kbb" "--backend" "sci" "--classpath" "src" "scripts/compositor-guest.cljk" "guest-browser-input"]
   :doc "Guest browser desktop (ADR-0223) on KERNEL.ELF under QEMU: the Kotoba frame is presented and sampled, then a real virtio-tablet press is reduced by Kotoba to focus-and-raise and the redrawn frame is sampled again. Exit 3 = QEMU/firmware/serial unanswered, not a pass."}
