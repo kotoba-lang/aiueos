@@ -7,15 +7,14 @@
   outer SHA-256 chain makes reordering/replacement diagnostics deterministic;
   GCM supplies cryptographic authenticity and confidentiality. Detecting
   suffix truncation requires an externally retained signed head/checkpoint."
-  (:require [clojure.edn :as edn]
+  (:require [kotoba.bytes :as kbytes] [clojure.edn :as edn]
             [clojure.java.io :as io]
             [kotoba.lang.text :as str])
-  (:import [java.nio.charset StandardCharsets]
+  (:import
            [java.nio.file Files StandardCopyOption]
            [java.security KeyFactory KeyPairGenerator MessageDigest
             PrivateKey PublicKey SecureRandom Signature]
            [java.security.spec X509EncodedKeySpec]
-           [java.util Base64]
            [javax.crypto AEADBadTagException Cipher]
            [javax.crypto.spec GCMParameterSpec SecretKeySpec]))
 
@@ -33,13 +32,13 @@
     key))
 
 (defn- utf8-bytes [value]
-  (.getBytes (str value) StandardCharsets/UTF_8))
+  (kbytes/utf8-bytes (str value)))
 
 (defn- b64-encode [^bytes value]
-  (.encodeToString (Base64/getEncoder) value))
+  (kbytes/base64-encode value))
 
 (defn- b64-decode [value]
-  (.decode (Base64/getDecoder) ^String value))
+  (kbytes/base64-decode-bytes ^String value))
 
 (defn- hex [^bytes value]
   (apply str (map #(format "%02x" (bit-and (int %) 0xff)) value)))
@@ -84,8 +83,7 @@
              (SecretKeySpec. key "AES")
              (GCMParameterSpec. 128 (b64-decode (:nonce record))))
       (.updateAAD cipher (utf8-bytes (aad record)))
-      (String. (.doFinal cipher (b64-decode (:ciphertext record)))
-               StandardCharsets/UTF_8)
+      (kbytes/utf8-string (.doFinal cipher (b64-decode (:ciphertext record))))
       (catch AEADBadTagException _
         (fail! :authentication-failed
                "sealed audit record authentication failed"
@@ -152,7 +150,7 @@
   (.generateKeyPair (KeyPairGenerator/getInstance "Ed25519")))
 
 (defn head-public-key-base64 [key-pair]
-  (.encodeToString (Base64/getEncoder) (.getEncoded (.getPublic key-pair))))
+  (kbytes/base64-encode (.getEncoded (.getPublic key-pair))))
 
 (defn chain-head
   "Return the externally retainable head after verifying the complete log."
@@ -182,14 +180,14 @@
     (.initSign signer private-key)
     (.update signer (head-bytes head))
     (assoc head :signature
-           (.encodeToString (Base64/getEncoder) (.sign signer)))))
+           (kbytes/base64-encode (.sign signer)))))
 
 (defn- decode-head-public-key [value]
   (if (instance? PublicKey value)
     value
     (.generatePublic
      (KeyFactory/getInstance "Ed25519")
-     (X509EncodedKeySpec. (.decode (Base64/getDecoder) ^String value)))))
+     (X509EncodedKeySpec. (kbytes/base64-decode-bytes ^String value)))))
 
 (defn verify-chain-head!
   "Verify the head signature, then compare it to the current verified log.
@@ -202,7 +200,7 @@
             (.initVerify verifier (decode-head-public-key public-key))
             (.update verifier (head-bytes signed-head))
             (.verify verifier
-                     (.decode (Base64/getDecoder)
+                     (kbytes/base64-decode-bytes
                               ^String (:signature signed-head))))
           (catch Exception _ false))]
     (when-not valid-signature?

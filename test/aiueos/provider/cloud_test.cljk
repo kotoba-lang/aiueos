@@ -5,7 +5,7 @@
   arrived. What is proved here is the seam: the provider reports what it
   received, and `grant.cloud` decides whether that was what was asked for —
   including when it was not."
-  (:require [grant.cloud :as cloud]
+  (:require [kotoba.bytes :as kbytes] [grant.cloud :as cloud]
             [grant.json :as json]
             [aiueos.provider.cloud :as provider]
             [kotoba.lang.text :as str]
@@ -21,7 +21,7 @@
 (def cid-path (str "/ipfs/" raw-cid))
 
 (defn- respond! [^HttpExchange exchange status ^String body]
-  (let [bytes (.getBytes body "UTF-8")]
+  (let [bytes (kbytes/utf8-bytes body)]
     (.sendResponseHeaders exchange (int status) (alength bytes))
     (with-open [out (.getResponseBody exchange)]
       (.write out bytes))
@@ -168,7 +168,7 @@
         (is (= :digest-mismatch (:aiueos.cloud/reason (cloud/admit-block plan arrived))))))))
 
 (deftest sha256-of-known-bytes
-  (is (= hello-digest (provider/sha256-hex (.getBytes hello "UTF-8")))
+  (is (= hello-digest (provider/sha256-hex (kbytes/utf8-bytes hello)))
       "the measurement itself, against an oracle computed elsewhere"))
 
 (deftest a-denied-plan-is-not-performed
@@ -316,7 +316,7 @@
   (with-server (fn [ex] (respond! ex 200 "stored"))
     (fn [s]
       (let [v (provider/write-block! (policy-for (:origin s)) raw-cid
-                                     (.getBytes hello "UTF-8")
+                                     (kbytes/utf8-bytes hello)
                                      {:headers {"authorization" "Bearer t0ken"}})
             sent (first @(:requests s))]
         (is (cloud/allowed? v))
@@ -331,7 +331,7 @@
   (with-server (fn [ex] (respond! ex 401 "{\"error\":\"unauthorized\"}"))
     (fn [s]
       (let [v (provider/write-block! (policy-for (:origin s)) raw-cid
-                                     (.getBytes hello "UTF-8"))]
+                                     (kbytes/utf8-bytes hello))]
         (is (= :write-unauthorized (:aiueos.cloud/reason v))
             "which is what the live kotobase.net answered on 2026-08-21")
         (is (= 401 (:aiueos.cloud/status v)))
@@ -341,7 +341,7 @@
   (with-server (fn [ex] (respond! ex 200 "stored"))
     (fn [s]
       (let [v (provider/write-block! (policy-for (:origin s)) raw-cid
-                                     (.getBytes "other bytes" "UTF-8"))]
+                                     (kbytes/utf8-bytes "other bytes"))]
         (is (= :payload-digest-mismatch (:aiueos.cloud/reason v)))
         (is (= [] @(:hits s))
             "the store would have answered 422; refusing first means the wrong
@@ -352,7 +352,7 @@
     (fn [s]
       (let [v (provider/write-block! (policy-for (:origin s))
                                      "bafyreifzjut3te2nhyekklss27nh3k72ysco7y32koao5eei66wof36n5e"
-                                     (.getBytes hello "UTF-8"))]
+                                     (kbytes/utf8-bytes hello))]
         (is (= :cid-not-raw (:aiueos.cloud/reason v)))
         (is (= [] @(:hits s)))))))
 
@@ -395,7 +395,7 @@
   "Like `respond!`, with a content type of the server's choosing. The provider
   reports it and judges nothing; `grant.cloud` decides what it means."
   [^HttpExchange exchange status ^String content-type ^String body]
-  (let [bytes (.getBytes body "UTF-8")]
+  (let [bytes (kbytes/utf8-bytes body)]
     (.add (.getResponseHeaders exchange) "Content-Type" content-type)
     (.sendResponseHeaders exchange (int status) (alength bytes))
     (with-open [out (.getResponseBody exchange)]

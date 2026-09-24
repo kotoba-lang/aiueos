@@ -69,7 +69,7 @@
   one — measured 2026-08-21. The mechanism exists and is proved against a
   loopback server in both directions; the live write is unauthorised, which is
   a different sentence from unimplemented."
-  (:require [grant.cloud :as cloud]
+  (:require [kotoba.bytes :as kbytes] [grant.cloud :as cloud]
             [grant.json :as json]
             [aiueos.provider.cloud-own :as own]
             [kotoba.lang.text :as str])
@@ -213,7 +213,7 @@
     ;; of them as text to satisfy a key nobody reads is work this machine does
     ;; not need to do.
     (:decode-body? opts)
-    (assoc :body (String. body "UTF-8"))
+    (assoc :body (kbytes/utf8-string body))
 
     (:aiueos.cloud/peer-spki @verdict)
     (assoc :peer-spki (:aiueos.cloud/peer-spki @verdict)

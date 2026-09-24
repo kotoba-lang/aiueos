@@ -5,7 +5,7 @@
   set in its policy** and nothing else: the same certificate that the JDK's
   default trust store rejects is accepted when its key is pinned, and rejected
   when it is not."
-  (:require [grant.cloud :as cloud]
+  (:require [kotoba.bytes :as kbytes] [grant.cloud :as cloud]
             [aiueos.provider.cloud :as provider]
             [clojure.java.io :as io]
             [kotoba.test :refer [deftest is]])
@@ -79,7 +79,7 @@
       (finally (.stop server 0)))))
 
 (defn- serve-hello [^HttpExchange exchange]
-  (let [bytes (.getBytes ^String hello "UTF-8")]
+  (let [bytes (kbytes/utf8-bytes ^String hello)]
     (.sendResponseHeaders exchange 200 (alength bytes))
     (with-open [out (.getResponseBody exchange)]
       (.write out bytes))

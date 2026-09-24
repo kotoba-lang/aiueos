@@ -6,7 +6,7 @@
   stand in for a guest HTTP to kotobase, and so leftover is a printed
   keyword rather than silence."
   (:require [aiueos.bare-metal :as bm]
-            [clojure.java.io :as io]
+            [kotoba.io :as io]
             [kotoba.lang.text :as str]
             [kotoba.test :refer [deftest is testing]]))
 

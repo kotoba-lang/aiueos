@@ -13,19 +13,17 @@
   that must never be confused with each other or with 0. A test that merely
   asserted `(not= 0 exit)` would pass while the tool reported a missing receipt
   as a stale image -- root ADR-2608136000's sixth question."
-  (:require [clojure.java.io :as io]
+  (:require [kotoba.io :as io]
             [clojure.java.shell :as shell]
             [kotoba.lang.text :as str]
-            [kotoba.test :refer [deftest is testing]])
-  (:import (java.nio.file Files)
-           (java.nio.file.attribute FileAttribute)))
+            [kotoba.test :refer [deftest is testing]]))
 
 (def repo (System/getProperty "user.dir"))
 (def tool (str (io/file repo "os" "aiueos" "scripts" "image-freshness.cljk")))
 (def gate (str (io/file repo "os" "aiueos" "scripts" "verify-smoke-freshness.cljk")))
 
 (defn- on-path? [t]
-  (some (fn [d] (let [f (io/file d t)] (and (.isFile f) (.canExecute f))))
+  (some (fn [d] (let [f (io/file d t)] (and (io/file? f) (io/can-execute? f))))
         (str/split (or (System/getenv "PATH") "") #":")))
 
 (def nbb?
@@ -38,8 +36,7 @@
     {:exit (:exit r) :out (str (:out r) (:err r))}))
 
 (defn- tmpdir []
-  (.toFile (Files/createTempDirectory "aiueos-freshness"
-                                      (into-array FileAttribute []))))
+  (io/temp-dir "aiueos-freshness"))
 
 (defn- artifact! [dir name content]
   (let [f (io/file dir name)]
@@ -88,7 +85,7 @@
           a (artifact! dir "BOOTX64.EFI" "MZ-one")
           receipt (str (io/file dir "image-receipt.edn"))
           _ (run tool "record" "--out" receipt "--root" repo a)
-          _ (.delete (io/file a))
+          _ (io/delete (io/file a))
           bad (run tool "assert" "--receipt" receipt "--root" repo a)]
       (is (= 4 (:exit bad)))
       (is (str/includes? (:out bad) "found=absent")))))
@@ -101,7 +98,7 @@
       (let [dir (tmpdir)
             scope-root (tmpdir)
             src (io/file scope-root "os" "aiueos" "kernel")
-            _ (.mkdirs src)
+            _ (io/mkdirs src)
             _ (spit (io/file src "main.c") "int main(void){return 0;}\n")
             _ (shell/sh "git" "init" "-q" :dir scope-root)
             _ (shell/sh "git" "add" "-A" :dir scope-root)
@@ -196,8 +193,8 @@
       (let [root (tmpdir)
             scripts (io/file root "os" "aiueos" "scripts")
             contracts (io/file root "os" "aiueos" "contracts")
-            _ (.mkdirs scripts)
-            _ (.mkdirs contracts)
+            _ (io/mkdirs scripts)
+            _ (io/mkdirs contracts)
             _ (spit (io/file scripts "smoke-qemu-new.sh")
                     "#!/bin/sh\nqemu-system-x86_64 -display none\n")
             _ (spit (io/file contracts "smoke-freshness-baseline.edn")
@@ -218,7 +215,7 @@
   (is nbb?)
   (when nbb?
     (let [root (tmpdir)
-          _ (.mkdirs (io/file root "os" "aiueos" "scripts"))
+          _ (io/mkdirs (io/file root "os" "aiueos" "scripts"))
           r (run gate "--root" (str root))]
       (is (= 2 (:exit r)))
       (is (str/includes? (:out r) "COULD-NOT-RUN no-smokes-found")))))

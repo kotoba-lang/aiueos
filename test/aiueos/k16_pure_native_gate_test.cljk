@@ -7,13 +7,12 @@
   namespace is where that claim is kept honest: `object-sha256-mismatch` and
   `sections` are both exit 3, and confusing them would hide the difference
   between a swapped object and a C object."
-  (:require [clojure.edn :as edn]
+  (:require [kotoba.io :as kio] [clojure.edn :as edn]
             [clojure.java.io :as io]
             [clojure.java.shell :as shell]
             [kotoba.lang.text :as str]
             [kotoba.test :refer [deftest is testing]])
   (:import (java.nio ByteBuffer ByteOrder)
-           (java.nio.file Files)
            (java.security MessageDigest)))
 
 (def repo (System/getProperty "user.dir"))
@@ -44,9 +43,9 @@
        (map #(format "%02x" %))
        (apply str)))
 
-(defn- bytes-of [f] (Files/readAllBytes (.toPath (io/file f))))
+(defn- bytes-of [f] (kio/read-all-bytes (io/file f)))
 
-(defn- tmpdir [] (.toFile (Files/createTempDirectory "aiueos-k16-gate" (into-array java.nio.file.attribute.FileAttribute []))))
+(defn- tmpdir [] (kio/temp-dir "aiueos-k16-gate"))
 
 (defn- spit-list [dir paths]
   (let [f (io/file dir "link-list.txt")]

@@ -62,7 +62,7 @@
 ;; arithmetic -- but it is not the machine.
 
 (ns aiueos.qwen35-tokenizer-parity-test
-  (:require [clojure.java.io :as io]
+  (:require [kotoba.bytes :as kbytes] [clojure.java.io :as io]
             [kotoba.lang.text :as str]
             [kotoba.test :refer [deftest is]]
             [kotoba.kir :as ir]
@@ -96,9 +96,9 @@
 
 (def ^:private byte->char (mapv #(String. (Character/toChars (byte->cp %))) (range 256)))
 
-(defn- utf8 ^bytes [^String s] (.getBytes s "UTF-8"))
+(defn- utf8 ^bytes [^String s] (kbytes/utf8-bytes s))
 (defn- ubytes [^String s] (mapv #(bit-and % 255) (utf8 s)))
-(defn- from-utf8 [bs] (String. (byte-array (map unchecked-byte bs)) "UTF-8"))
+(defn- from-utf8 [bs] (kbytes/utf8-string (byte-array (map unchecked-byte bs))))
 
 (defn- byte-encode
   "`unicode_byte_encoding_process`: rebuild the text from its codepoints (so an

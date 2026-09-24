@@ -1,15 +1,12 @@
 (ns aiueos.sealed-state-test
   (:require [aiueos.sealed-state :as sealed]
             [clojure.edn :as edn]
-            [clojure.java.io :as io]
-            [kotoba.test :refer [deftest is]])
-  (:import [java.nio.file Files]))
+            [kotoba.io :as io]
+            [kotoba.test :refer [deftest is]]))
 
 (defn- temp-dir []
-  (.toFile
-   (Files/createTempDirectory
-    "aiueos-sealed-state-"
-    (make-array java.nio.file.attribute.FileAttribute 0))))
+  (io/temp-dir
+    "aiueos-sealed-state-"))
 
 (defn- failure-kind [f]
   (try (f) nil (catch Exception error (:kind (ex-data error)))))
@@ -106,4 +103,4 @@
     (sealed/seal! path keys :state/delete :app/profile 1 1000 {:n 1})
     (is (true? (:deleted?
                 (sealed/delete! path keys :app/profile 1))))
-    (is (false? (.exists path)))))
+    (is (false? (io/exists? path)))))
