@@ -5,6 +5,21 @@ All notable changes to **aiueos** are documented here. The format follows
 
 ## [Unreleased]
 
+### Guest browser desktop: frame and pointer on KERNEL.ELF (ADR-0223)
+- `os/aiueos/kotoba/browser-frame.kotoba` (`kotoba_aiueos_browser_frame`)
+  turns the 128-byte surface state into kotoba-lang/browser's retained draw
+  list -- workspace, then body + titlebar per window in `:surface/windows`
+  order, browser.surface's colours, browser.input's 28 px titlebar.
+- `os/aiueos/kotoba/browser-reduce.kotoba` (`kotoba_aiueos_browser_reduce`)
+  applies one event as browser.input + browser.surface do: pointer/down hits
+  the topmost window (inclusive), focuses and raises it; a key moves nothing.
+- C presents the list in order (`aiueos_desktop_present_ops`, whole frame or
+  nothing) and the virtio-input driver now tells a tablet from a keyboard and
+  records a BTN_LEFT press. `AIUEOS_GUEST_BROWSER=1` adds a virtio-tablet and
+  a QMP press. Gates `guest-browser-frame` / `guest-browser-input`; KIR-oracle
+  contracts `browser-frame-v1` / `browser-reduce-v1`. Leftover
+  `:no-text-raster`, `:no-pointer-capture`, `:no-text-edit`.
+
 ### Kotoba guests: thirteen kernel-adjacent namespaces (ADR-0202)
 - `aiueos/topic.kotoba`, `aiueos/os_update.kotoba`,
   `aiueos/model_channel.kotoba`, `aiueos/runtime_update.kotoba`,

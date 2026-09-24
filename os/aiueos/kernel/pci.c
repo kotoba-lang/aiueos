@@ -165,6 +165,29 @@ struct aiueos_desktop_input_event {
 #define AIUEOS_DESKTOP_INPUT_ABI 1
 #define AIUEOS_DESKTOP_INPUT_KEY 2
 #define AIUEOS_DESKTOP_INPUT_PRESSED 1
+/* Guest browser desktop pointer (ADR-0223). A virtio-tablet's absolute axes
+   as the device reported them, 0..32767, and the BTN_LEFT press that closed
+   them. C scales them to surface pixels; which window that lands on is
+   Kotoba's (`kotoba_aiueos_browser_reduce`). */
+struct aiueos_desktop_pointer_event {
+  uint32_t abi_version, byte_size;
+  uint64_t sequence;
+  uint32_t kind, abs_x, abs_y, flags;
+} __attribute__((packed));
+#define AIUEOS_DESKTOP_INPUT_POINTER_DOWN 3
+static struct aiueos_desktop_pointer_event desktop_pointer_event;
+static int desktop_pointer_ready;
+static int virtio_input_tablets_seen;
+/* What the tablet ring delivered, by kind, so a press that never arrives
+   says whether nothing arrived or the wrong things did. */
+static uint32_t tablet_events_used, tablet_events_abs, tablet_events_key;
+uint32_t aiueos_desktop_pointer_events_used(void) { return tablet_events_used; }
+uint32_t aiueos_desktop_pointer_events_abs(void) { return tablet_events_abs; }
+uint32_t aiueos_desktop_pointer_events_key(void) { return tablet_events_key; }
+int aiueos_desktop_pointer_ready(void) { return desktop_pointer_ready; }
+int aiueos_desktop_pointer_tablets_seen(void) { return virtio_input_tablets_seen; }
+uint32_t aiueos_desktop_pointer_abs_x(void) { return desktop_pointer_ready ? desktop_pointer_event.abs_x : 0; }
+uint32_t aiueos_desktop_pointer_abs_y(void) { return desktop_pointer_ready ? desktop_pointer_event.abs_y : 0; }
 static struct aiueos_desktop_input_event desktop_input_event;
 static int desktop_input_ready;
 static int desktop_input_from_eventq;
@@ -1263,12 +1286,77 @@ static int virtio_blk(uint8_t b, uint8_t d, uint8_t f) {
   }
 }
 
+/* A virtio-input device is a pointer tablet when its config space answers a
+   non-empty EV_BITS bitmap for EV_ABS (virtio 1.2 5.8.4: select 0x11,
+   subsel = event type, size = bitmap length). Keyboards answer 0. A device
+   whose config cannot be mapped is left on the keyboard path, which is what
+   every profile before ADR-0223 did with it. */
+static int virtio_input_is_tablet(uint8_t b, uint8_t d, uint8_t f,
+                                  const struct virtio_caps *caps) {
+  uint64_t device_bar;
+  if (!caps->have_device || caps->device.length < 8 ||
+      !read_bar(b,d,f,caps->device.bar,&device_bar) ||
+      device_bar + caps->device.offset < device_bar ||
+      !aiueos_map_pci_mmio(device_bar + caps->device.offset, caps->device.length)) return 0;
+  volatile uint8_t *config = (volatile uint8_t *)(uintptr_t)(device_bar + caps->device.offset);
+  config[0] = 0x11; /* VIRTIO_INPUT_CFG_EV_BITS */
+  config[1] = 0x03; /* EV_ABS */
+  __asm__ volatile("" ::: "memory");
+  return config[2] != 0;
+}
+
+/* The tablet half of virtio_input: descriptors are handed back after every
+   event, because a pointer press arrives as ABS_X, ABS_Y, SYN, BTN_LEFT, SYN
+   -- more than the four slots hold at once. Budget and doorbell cadence are
+   the keyboard's. Failure here does not touch virtio_input_fail_reason: that
+   code describes the keyboard, which the gates before ADR-0223 read. */
+static int virtio_tablet_poll(volatile uint16_t *doorbell, struct virtq_avail *avail,
+                              struct virtq_used *used,
+                              struct virtio_input_event *event) {
+  uint16_t seen = 0;
+  uint32_t abs_x = 0, abs_y = 0;
+  int have_x = 0, have_y = 0;
+  /* A tenth of the keyboard's budget: a missing press must leave a named
+     leftover in the serial, not a boot the watchdog kills as silent. */
+  for (uint32_t budget = 0; budget < 40000000U; budget++) {
+    __asm__ volatile("" ::: "memory");
+    uint16_t n = used->index;
+    while (seen != n) {
+      uint32_t id = used->ring[seen % 4].id;
+      seen++;
+      if (id > 3) continue;
+      struct virtio_input_event *ev = event + id;
+      tablet_events_used++;
+      if (ev->type == 3) tablet_events_abs++;
+      if (ev->type == 1) tablet_events_key++;
+      if (ev->type == 3 && ev->code == 0) { abs_x = ev->value; have_x = 1; }
+      else if (ev->type == 3 && ev->code == 1) { abs_y = ev->value; have_y = 1; }
+      else if (ev->type == 1 && ev->code == 272 && ev->value == 1 && have_x && have_y) {
+        desktop_pointer_event = (struct aiueos_desktop_pointer_event){
+          AIUEOS_DESKTOP_INPUT_ABI, sizeof(desktop_pointer_event), 1,
+          AIUEOS_DESKTOP_INPUT_POINTER_DOWN, abs_x, abs_y,
+          AIUEOS_DESKTOP_INPUT_PRESSED};
+        desktop_pointer_ready = 1;
+        return 1;
+      }
+      avail->ring[avail->index % 4] = (uint16_t)id;
+      __asm__ volatile("" ::: "memory");
+      avail->index++;
+      *doorbell = 0;
+    }
+    if ((budget & 65535U) == 0) *doorbell = 0;
+    __asm__ volatile("pause");
+  }
+  return 0;
+}
+
 static int virtio_input(uint8_t b, uint8_t d, uint8_t f) {
   struct virtio_caps caps;
   volatile struct virtio_common_cfg *cfg;
   uint64_t notify_base;
   if (!find_virtio_caps(b,d,f,&caps) ||
       !map_transport(b,d,f,&caps,&cfg,&notify_base) || !negotiate(cfg)) { virtio_input_fail_line = __LINE__; virtio_input_fail_reason = 1; return 0; }
+  int tablet = virtio_input_is_tablet(b,d,f,&caps);
   struct virtq_desc *desc = aiueos_allocate_physical_page();
   struct virtq_avail *avail = aiueos_allocate_physical_page();
   struct virtq_used *used = aiueos_allocate_physical_page();
@@ -1286,6 +1374,10 @@ static int virtio_input(uint8_t b, uint8_t d, uint8_t f) {
   if (!doorbell) { virtio_input_fail_line = __LINE__; virtio_input_fail_reason = 3; return 0; }
   cfg->device_status |= VIRTIO_STATUS_DRIVER_OK;
   *doorbell = 0;
+  if (tablet) {
+    virtio_input_tablets_seen++;
+    return virtio_tablet_poll(doorbell, avail, used, event);
+  }
 #ifdef AIUEOS_INPUT_SMOKE_SYNTHETIC
 #define AIUEOS_INPUT_POLL_BUDGET 1U
 #else

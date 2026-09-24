@@ -856,6 +856,13 @@
 
 (defmethod prepare :aiueos.rtl8125/v1 [contract v] (prepare-regions contract v))
 
+;; The guest browser desktop (ADR-0223): the 128-byte surface state at
+;; `:state`, the retained draw list at `:ops`. Same region builder; the frame
+;; vectors assert the whole op list, the reduce vectors the whole state after
+;; the event.
+(defmethod prepare :aiueos.browser-frame/v1 [contract v] (prepare-regions contract v))
+(defmethod prepare :aiueos.browser-reduce/v1 [contract v] (prepare-regions contract v))
+
 ;; The murakumo relay lines (ADR-0215): HELLO written into a caller's buffer,
 ;; ACK admitted from a received payload. Their expected bytes are the retired
 ;; C's, recorded in the contracts; the object under test is the one
