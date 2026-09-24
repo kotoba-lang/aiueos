@@ -59,6 +59,19 @@
 ;; `insert-text` leaves it. It does not wrap by itself: at the right inset it
 ;; stands in the inset. Not drawn when its foot (y + 16) passes the bottom
 ;; inset, like a glyph. Only the focused window has one; it does not blink.
+;; LAUNCHER AND CLOSE (ADR-0233): word 31 is the app register (bit k-1 = app
+;; k, whose title is title slot k). With it 0 nothing below is drawn and every
+;; earlier frame is unchanged. With it not 0, right after the background: the
+;; launcher row (0, 0, vw, 28) #edf0f5 (browser.surface `.launcher`
+;; background), and for each registered app k a button (6 + 102(k-1), 2, 96,
+;; 24) in the theme's :button-bg #e4e8ef with the app's title at (x + 6, 6),
+;; one line, clipped at x + 90. The row is under every window, as the list
+;; order says. And in each window at least 40 wide, after its title, a close
+;; control: (x + w - 24, y + 6, 16, 16) #e4e8ef with U+00D7 centred on it in
+;; the text colour; the title then clips at x + w - 28. The geometry is the
+;; kernel's -- browser.surface's launcher is a DOM row cssom lays out, and its
+;; window-node has no close control -- and browser-reduce.kotoba hit-tests
+;; the same numbers.
 ;; FONT: the aiueos-font/v1 blob (os/aiueos/scripts/make-font.cljk).
 ;;
 ;; ABI: [surface surface-bytes font font-bytes] -> op count, or
@@ -69,6 +82,7 @@
 ;;   -7 a window id outside 1..4               -8 the IME's lengths are past
 ;;                                                its buffers (romaji > 8 or
 ;;                                                preedit > 32)
+;;   -9 the app register has a bit past app 4
 
 (ns aiueos.browser-frame2
   (:export [aiueos-browser-frame2 main]))
@@ -216,6 +230,37 @@
       (sput s 422 1118481)
       (lay s f base 0)))
 
+;; --- launcher and close (ADR-0233) -------------------------------------------
+
+(defn app-bit [k] (if (= k 1) 1 (if (= k 2) 2 (if (= k 3) 4 8))))
+
+(defn button [s f k]
+  (if (= (bit-and (sw s 31) (app-bit k)) 0) 0
+    (let [x (+ 6 (* 102 (- k 1)))]
+      (do (sput s 422 15001839)
+          (put-rect s x 2 96 24)
+          (sput s 420 (+ x 90)) (sput s 421 28)
+          (sput s 426 0) (sput s 428 32)
+          (text-block s f (+ 32 (* 32 (- k 1))) (+ x 6) 6)))))
+
+(defn launcher [s f vw]
+  (if (= (sw s 31) 0) 0
+    (do (sput s 422 15593717)
+        (put-rect s 0 0 vw 28)
+        (button s f 1) (button s f 2) (button s f 3) (button s f 4))))
+
+(defn chrome [s w]
+  (if (= (sw s 31) 0) 0 (if (< w 40) 0 1)))
+
+(defn close-control [s f x y w]
+  (if (= (chrome s w) 0) 0
+    (let [gi (glyph-of s f 215)
+          gw (glyph-width s f gi)]
+      (do (sput s 422 15001839)
+          (put-rect s (- (+ x w) 24) (+ y 6) 16 16)
+          (sput s 422 1118481)
+          (put-glyph s (+ (- (+ x w) 24) (quot (- 16 gw) 2)) (+ y 6) gi gw)))))
+
 ;; --- windows ----------------------------------------------------------------
 
 (defn body-rgb [focused] (if (= focused 1) 16777215 15659509))
@@ -233,10 +278,12 @@
         (put-rect s x y w h)
         (sput s 422 (title-rgb focused))
         (put-rect s x y w 28)
-        ;; title: one line, clipped at the right inset, inside the titlebar
-        (sput s 420 (- (+ x w) 8)) (sput s 421 (+ y 28))
+        ;; title: one line, clipped at the right inset (or before the close
+        ;; control), inside the titlebar
+        (sput s 420 (- (+ x w) (+ 8 (* 20 (chrome s w))))) (sput s 421 (+ y 28))
         (sput s 426 0) (sput s 428 32)
         (text-block s f (+ 32 (* 32 (- id 1))) (+ x 8) (+ y 6))
+        (close-control s f x y w)
         ;; body: wrapped at the right inset, cut at the bottom inset
         (sput s 420 (- (+ x w) 8)) (sput s 421 (- (+ y h) 8))
         (sput s 426 1) (sput s 428 64)
@@ -297,12 +344,14 @@
                     (if (= (rects-ok s n 0 vw vh) 0) -4
                       (if (> (sw s 433) 8) -8
                       (if (> (sw s 445) 32) -8
+                      (if (> (sw s 31) 15) -9
                       (if (= (font-ok s f fb) 0) -6
                         (do (sput s 416 0)
                             (sput s 427 0)
                             (sput s 422 16119544)
                             (put-rect s 0 0 vw vh)
+                            (launcher s f vw)
                             (emit s f 0)
-                            (if (= (sw s 427) 1) -5 (sw s 416)))))))))))))))))
+                            (if (= (sw s 427) 1) -5 (sw s 416))))))))))))))))))
 
 (defn main [] 0)

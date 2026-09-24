@@ -32,6 +32,28 @@
 ;;                 `:window/resize` to (max 120 (w0 + px - x0)) x
 ;;                 (max 80 (h0 + py - y0)) -- browser.surface/resize-window,
 ;;                 which neither focuses, raises nor moves the origin.
+;;   launcher and close (ADR-0233) browser.surface launch-app / close-window,
+;;                 behind geometry the oracle does not have (its window-node
+;;                 has no close control and its launcher is a DOM row laid out
+;;                 by cssom): word 31 is the app register -- bit k-1 set means
+;;                 app k is registered, and app k's title and document are
+;;                 the title and body slots of window id k. With word 31 not
+;;                 0, a press that hits a window of at least 40 px width
+;;                 inside its close control (x + w - 24 .. x + w - 8,
+;;                 y + 6 .. y + 22, inclusive) is `:window/close`: the window
+;;                 leaves the stack, and if it had the focus, the focus goes to
+;;                 the window now on top (browser.surface close-window); the
+;;                 press raises nothing. A press that hits no window inside
+;;                 launcher button k (x 6 + 102(k-1) .. + 96, y 2 .. 26,
+;;                 inclusive) of a registered app is `:app/launch`: a window
+;;                 id k at browser.surface open-window's default rect
+;;                 (80, 80, 520, 360) goes on top and takes the focus. Both
+;;                 clear the capture: a press on the chrome ends a gesture.
+;;                 Named differences: one window per app (a launch of an app
+;;                 whose window is open raises and focuses it; the oracle
+;;                 opens another window) `:one-window-per-app`; the last
+;;                 window cannot be closed (-8; the oracle leaves none)
+;;                 `:the-last-window-stays`.
 ;; Not mirrored: text editing, IME. Named leftover `:no-text-edit`.
 ;; A move whose origin would be negative is refused (-6) and changes nothing:
 ;; the u32 surface has no negative coordinate; browser.surface would store it.
@@ -43,8 +65,9 @@
 ;; STATE (u32 words): 0..4 abi n focus vw vh, 5..24 id x y w h per window
 ;; (bottom first), 25 capture kind (0 none, 1 drag, 2 resize), 26 captured
 ;; window id, 27 28 the drag's offset from the window origin or the resize's
-;; press point, 29 30 the resize's size at the press (0 for a drag). 31 is not
-;; read.
+;; press point, 29 30 the resize's size at the press (0 for a drag). 31 the
+;; app register (ADR-0233): bits 0..3, app k = bit k-1; 0 = no launcher and
+;; no close controls.
 ;;
 ;; ABI: [state state-bytes kind a b], mutates state in place.
 ;;   kind 1 pointer/down at (a, b) -> focused window id, or 0 on a miss
@@ -52,10 +75,15 @@
 ;;   kind 3 pointer/move to (a, b) -> the moved or resized window id, or 0
 ;;          uncaptured
 ;;   kind 4 pointer/up -> 0, capture cleared
+;;   (kind 1 with an app register: a close answers the focused window id
+;;   after it, a launch the launched app's window id)
 ;;   -1 null region / wrong size   -2 abi or n out of range
 ;;   -3 focus is not a window id   -4 capture is not none, or a drag or resize
 ;;                                    of a window
 ;;   -5 unknown event kind         -6 the move would put the origin below 0
+;;   -7 the app register has a bit past app 4
+;;   -8 a close of the last window  -9 a launch whose default rect leaves the
+;;                                     viewport
 
 (ns aiueos.browser-reduce
   (:export [aiueos-browser-reduce main]))
@@ -156,10 +184,91 @@
             (set-capture st 0 0 0 0)
             (set-capture st 1 (w-at st b) (- px x) (- py y)))))))
 
+;; --- launcher and close (ADR-0233) -------------------------------------------
+
+(defn release-all [st]
+  (do (set-capture st 0 0 0 0) (w-put st 29 0) (w-put st 30 0)))
+
+;; The close control of stack index k: x + w - 24 .. x + w - 8, y + 6 .. y + 22,
+;; inclusive, on a window at least 40 wide.
+(defn in-close [st k px py]
+  (let [b (+ 5 (* k 5))
+        r (+ (w-at st (+ b 1)) (w-at st (+ b 3)))
+        y (w-at st (+ b 2))]
+    (if (< (w-at st (+ b 3)) 40) 0
+      (if (< px (- r 24)) 0
+        (if (> px (- r 8)) 0
+          (if (< py (+ y 6)) 0
+            (if (> py (+ y 22)) 0 1)))))))
+
+(defn clear-rec [st k]
+  (let [b (+ 5 (* k 5))]
+    (do (w-put st b 0) (w-put st (+ b 1) 0) (w-put st (+ b 2) 0)
+        (w-put st (+ b 3) 0) (w-put st (+ b 4) 0))))
+
+;; browser.surface close-window: remove, and if it had the focus, focus the
+;; window now on top.
+(defn close [st n k]
+  (if (= n 1) -8
+    (let [id (w-at st (+ 5 (* k 5)))]
+      (do (shift-down st k n)
+          (clear-rec st (- n 1))
+          (w-put st 1 (- n 1))
+          (if (= (w-at st 2) id)
+            (w-put st 2 (w-at st (+ 5 (* (- n 2) 5))))
+            0)
+          (release-all st)
+          (w-at st 2)))))
+
+(defn app-bit [k] (if (= k 1) 1 (if (= k 2) 2 (if (= k 3) 4 8))))
+
+;; The app whose launcher button is under (px, py), or 0. Button k (1..4):
+;; x 6 + 102(k-1) .. + 96, y 2 .. 26, inclusive, only if app k is registered.
+(defn button-at [st k px py]
+  (if (> k 4) 0
+    (let [x (+ 6 (* 102 (- k 1)))]
+      (if (< px x) 0
+        (if (> px (+ x 96))
+          (button-at st (+ k 1) px py)
+          (if (= (bit-and (w-at st 31) (app-bit k)) 0) 0 k))))))
+
+(defn on-launcher [st px py]
+  (if (< py 2) 0
+    (if (> py 26) 0 (button-at st 1 px py))))
+
+;; browser.surface launch-app -> open-window with its default rect
+;; [80 80 520 360], on top, focused. One window per app: an open one is raised.
+(defn launch [st n app]
+  (if (= (has-id st n 0 app) 1)
+    (do (release-all st)
+        (raise st (index-of st n 0 app) n))
+    (if (> 600 (w-at st 3)) -9
+      (if (> 440 (w-at st 4)) -9
+        (let [tb (+ 5 (* n 5))]
+          (do (w-put st tb app)
+              (w-put st (+ tb 1) 80)
+              (w-put st (+ tb 2) 80)
+              (w-put st (+ tb 3) 520)
+              (w-put st (+ tb 4) 360)
+              (w-put st 1 (+ n 1))
+              (w-put st 2 app)
+              (release-all st)
+              app))))))
+
+(defn press-miss [st n px py]
+  (if (= (w-at st 31) 0) 0
+    (let [app (on-launcher st px py)]
+      (if (= app 0) 0 (launch st n app)))))
+
 (defn press [st n k1 px py]
-  (if (= k1 0) 0
-    (do (capture st (- k1 1) px py)
-        (raise st (- k1 1) n))))
+  (if (= k1 0) (press-miss st n px py)
+    (if (= (w-at st 31) 0)
+      (do (capture st (- k1 1) px py)
+          (raise st (- k1 1) n))
+      (if (= (in-close st (- k1 1) px py) 1)
+        (close st n (- k1 1))
+        (do (capture st (- k1 1) px py)
+            (raise st (- k1 1) n))))))
 
 (defn move-to [st k nx ny]
   (let [b (+ 5 (* k 5))]
@@ -189,7 +298,7 @@
                (- px (w-at st 27)) (- py (w-at st 28))))))
 
 (defn release [st]
-  (do (set-capture st 0 0 0 0) (w-put st 29 0) (w-put st 30 0) 0))
+  (do (release-all st) 0))
 
 (defn aiueos-browser-reduce [st sb kind a b]
   (if (= st 0) -1
@@ -202,9 +311,10 @@
             (if (> n 4) -2
               (if (= (has-id st n 0 focus) 0) -3
                 (if (= (capture-ok st n) 0) -4
+                  (if (> (w-at st 31) 15) -7
                   (if (= kind 1) (press st n (hit st (- n 1) a b) a b)
                     (if (= kind 2) focus
                       (if (= kind 3) (drag st n a b)
-                        (if (= kind 4) (release st) -5)))))))))))))
+                        (if (= kind 4) (release st) -5))))))))))))))
 
 (defn main [] 0)

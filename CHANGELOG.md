@@ -5,6 +5,24 @@ All notable changes to **aiueos** are documented here. The format follows
 
 ## [Unreleased]
 
+### Guest browser desktop: a launcher opens a window, a close control closes it (ADR-0233)
+- Word 31 of the surface is the app register (bit k-1 = app k, whose title and
+  document are window slot k's). With it 0 nothing changes: every earlier
+  frame and vector is as it was.
+- browser-frame2, with a register: the launcher row (#edf0f5, 28 px) and a
+  #e4e8ef button per registered app right after the background, and in each
+  window at least 40 wide a 16 x 16 close control with U+00D7 after the title
+  (which now clips 20 px earlier). New reason -9 (register past app 4).
+- browser-reduce, with a register: a press on a close control is
+  browser.surface close-window (the focus goes to the window now on top only
+  if the closed one had it); a press on no window inside a launcher button is
+  launch-app at open-window's default rect (80, 80, 520, 360). Both clear the
+  capture. Named differences: one window per app, the last window stays (-8),
+  a default rect past the viewport is refused (-9); -7 a register past app 4.
+  browser-reduce-oracle.cljk writes the geometry apart from the object and
+  applies browser.surface's own actions; 27 new vectors.
+- Gate `guest-browser-launch` (840 s QEMU wall clock).
+
 ### Guest browser desktop: a caret, and Backspace deletes before it (ADR-0232)
 - browser-frame2 ends the focused window with a 1 x 16 #111111 caret where the
   next glyph would go (cssom sel-ops' collapsed selection), after the body and

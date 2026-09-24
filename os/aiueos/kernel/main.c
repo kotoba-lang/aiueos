@@ -4172,6 +4172,7 @@ qwen_runtime_boot_complete:
                             uint32_t k = 0, coff = 0, cpx = 0, chash = 0, cchain = 2166136261U;
                             uint32_t cidle = 0, cframes = 0, cx = 0, cy = 0, blen = 0;
                             int64_t cfo = 0;
+                            int caret_ok = 0;
                             (void)aiueos_keyboard_drain(4000000U);
                             serial_string("AIUEOS_GUEST_BROWSER_CARET_GO keys=5\r\n");
                             while (k < 5 && cidle < 60000U) {
@@ -4226,6 +4227,7 @@ qwen_runtime_boot_complete:
                             if (k == 5 && cframes == 5 && coff == 0 && cchain == 0xfba4ae02U &&
                                 cfo == 68 && cpx == 872 && chash == 0x5cacb661U && blen == 13 &&
                                 surface[433] == 0 && surface[445] == 0 && surface[2] == 2) {
+                              caret_ok = 1;
                               debug_string("AIUEOS_GUEST_BROWSER_CARET_OK\n");
                               serial_string("AIUEOS_GUEST_BROWSER_CARET_OK keys=5 answers=00000 body=13 caret=412,208 chain=fba4ae02 ops=68 text-px=872 hash=5cacb661\r\n");
                               browser_hold_for_screendump();
@@ -4251,6 +4253,123 @@ qwen_runtime_boot_complete:
                               serial_string(" preedit=");
                               serial_decimal(surface[445]);
                               serial_string("\r\n");
+                            }
+                            /* Launcher and close (ADR-0233). After the caret,
+                               the shell registers apps 1 2 3 -- word 31, the
+                               app register; app k's title and document are
+                               window slot k's, and slot 3 is written here --
+                               so browser-frame2 now draws the launcher row
+                               and a close control on each window. The host
+                               sends eight tablet batches, each after the
+                               previous frame line: a press on launcher button
+                               3 at (258, 14), release, a press on window 3's
+                               close control at (584, 94), release, the
+                               launcher again, release, a press on window 2's
+                               close control at (820, 186), release. What a
+                               press does is Kotoba `kotoba_aiueos_browser_reduce`'s
+                               (browser.surface launch-app / close-window
+                               behind the kernel's geometry): 3, then the focus
+                               moves to window 2 as window 3 closes, 3 again,
+                               and window 2 closing leaves the focus on 3.
+                               Answers, window counts, op counts and the census
+                               chain are browser-reduce-v1's and
+                               os/aiueos/scripts/browser-frame-model.cljk's. */
+                            if (caret_ok) {
+                              static const uint32_t title3[2] = {12513, 12514};
+                              /* ランチャーから開きました */
+                              static const uint32_t body3[12] = {12521, 12531, 12481, 12515, 12540, 12363,
+                                                                 12425, 38283, 12365, 12414, 12375, 12383};
+                              static const int64_t awant[8] = {3, 0, 2, 0, 3, 0, 3, 0};
+                              static const uint32_t asrc[8] = {1, 4, 1, 4, 1, 4, 1, 4};
+                              static const uint32_t aops[8] = {106, 106, 88, 88, 106, 106, 85, 85};
+                              static const uint32_t awin[8] = {3, 3, 2, 2, 3, 3, 2, 2};
+                              uint32_t e = 0, aoff = 0, apx = 0, ahash = 0, achain = 2166136261U;
+                              uint32_t aidle = 0, aframes = 0;
+                              int64_t afo = 0;
+                              for (unsigned i = 0; i < 2; i++) surface[96 + i] = title3[i];
+                              for (unsigned i = 0; i < 12; i++) surface[288 + i] = body3[i];
+                              surface[31] = 7;
+                              (void)aiueos_tablet_drain(4000000U);
+                              serial_string("AIUEOS_GUEST_BROWSER_LAUNCH_GO events=8 apps=7\r\n");
+                              while (e < 8 && aidle < 60000U) {
+                                uint32_t src = aiueos_tablet_next(1024U, &ax, &ay);
+                                uint32_t px, py;
+                                int64_t r;
+                                if (!src) { aidle++; continue; }
+                                aidle = 0;
+                                px = (uint32_t)(((uint64_t)ax * surface[3]) / 32768U);
+                                py = (uint32_t)(((uint64_t)ay * surface[4]) / 32768U);
+                                r = (int64_t)kotoba_aiueos_browser_reduce(sp, 128, src, px, py);
+                                afo = (int64_t)kotoba_aiueos_browser_frame2(sp, 8192,
+                                        (uint64_t)(uintptr_t)font, font_length);
+                                if (afo > 0 && aiueos_desktop_present_ops2(surface + 480, (uint64_t)afo,
+                                                                           font, font_length)) {
+                                  ahash = aiueos_desktop_colour_census(0x111111U, &apx);
+                                  (void)aiueos_desktop_show();
+                                  aframes++;
+                                  for (int b = 0; b < 4; b++) {
+                                    achain ^= (ahash >> (8 * b)) & 255U;
+                                    achain *= 16777619U;
+                                  }
+                                }
+                                if (src != asrc[e] || r != awant[e] || afo != (int64_t)aops[e] ||
+                                    surface[1] != awin[e]) aoff++;
+                                e++;
+                                serial_string("AIUEOS_GUEST_BROWSER_LAUNCH_FRAME n=");
+                                serial_decimal(e);
+                                serial_string(" src=");
+                                serial_decimal(src);
+                                serial_string(" at=");
+                                serial_decimal(px);
+                                serial_string(",");
+                                serial_decimal(py);
+                                serial_string(r < 0 ? " answer=-" : " answer=");
+                                serial_decimal((uint32_t)(r < 0 ? -r : r));
+                                serial_string(" windows=");
+                                serial_decimal(surface[1]);
+                                serial_string(" focus=");
+                                serial_decimal(surface[2]);
+                                serial_string(" ops=");
+                                serial_decimal((uint32_t)(afo < 0 ? -afo : afo));
+                                serial_string(" text-px=");
+                                serial_decimal(apx);
+                                serial_string(" hash=");
+                                serial_hex32(ahash);
+                                serial_string("\r\n");
+                              }
+                              /* stack [1 3]: words 5 and 10; the vacated record is zero */
+                              if (e == 8 && aframes == 8 && aoff == 0 && achain == 0xcff6ae89U &&
+                                  afo == 85 && apx == 776 && ahash == 0x9e714452U &&
+                                  surface[1] == 2 && surface[2] == 3 && surface[5] == 1 &&
+                                  surface[10] == 3 && surface[15] == 0 && surface[25] == 0) {
+                                debug_string("AIUEOS_GUEST_BROWSER_LAUNCH_OK\n");
+                                serial_string("AIUEOS_GUEST_BROWSER_LAUNCH_OK events=8 answers=30203030 windows=2 stack=1,3 focus=3 chain=cff6ae89 ops=85 text-px=776 hash=9e714452\r\n");
+                                browser_hold_for_screendump();
+                              } else if (e < 8) {
+                                debug_string("AIUEOS_GUEST_BROWSER_LAUNCH leftover=events-missing\n");
+                                serial_string("AIUEOS_GUEST_BROWSER_LAUNCH leftover=events-missing events=");
+                                serial_decimal(e);
+                                serial_string(" frames=");
+                                serial_decimal(aframes);
+                                serial_string("\r\n");
+                              } else {
+                                debug_string("AIUEOS_GUEST_BROWSER_LAUNCH leftover=census-miss\n");
+                                serial_string("AIUEOS_GUEST_BROWSER_LAUNCH leftover=census-miss off=");
+                                serial_decimal(aoff);
+                                serial_string(" frames=");
+                                serial_decimal(aframes);
+                                serial_string(" chain=");
+                                serial_hex32(achain);
+                                serial_string(" windows=");
+                                serial_decimal(surface[1]);
+                                serial_string(" stack=");
+                                serial_decimal(surface[5]);
+                                serial_string(",");
+                                serial_decimal(surface[10]);
+                                serial_string(" focus=");
+                                serial_decimal(surface[2]);
+                                serial_string("\r\n");
+                              }
                             }
                           }
                         }
