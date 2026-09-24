@@ -577,6 +577,25 @@ while time.time() < end:
                     recv_obj()
                     time.sleep(0.15)
             log("typed " + str(len(keys)) + " keys at " + go.decode())
+        # The titlebar drag (ADR-0229): press at (60, 50) on 1280x800, moves to
+        # (140, 90) (220, 120) (300, 150), release, one move after it. One
+        # batch per event: the press batch is x + y + BTN + SYN, exactly the
+        # four buffers the guest posts, so it only fits once the guest has
+        # drained the ring (it does before DRAG_GO).
+        if typing and b"AIUEOS_GUEST_BROWSER_DRAG_GO" in serial_now and not globals().get("drag_sent"):
+            globals()["drag_sent"] = True
+            def at(x, y):
+                return [{"type": "abs", "data": {"axis": "x", "value": x}},
+                        {"type": "abs", "data": {"axis": "y", "value": y}}]
+            for b in (at(1536, 2048) + [{"type": "btn", "data": {"down": True, "button": "left"}}],
+                      at(3584, 3687), at(5632, 4916), at(7680, 6144),
+                      [{"type": "btn", "data": {"down": False, "button": "left"}}],
+                      at(9728, 8192)):
+                sock.sendall((json.dumps({"execute": "input-send-event", "arguments": {"events": b}})
+                              + "\n").encode())
+                recv_obj()
+                time.sleep(0.3)
+            log("dragged 6 pointer events at DRAG_GO")
         i += 1
         # Guest browser desktop (ADR-0224): the screens a person can look at.
         # The kernel holds each desktop frame for a few seconds in this
@@ -594,7 +613,8 @@ while time.time() < end:
                                  (b"AIUEOS_GUEST_BROWSER_TYPE_OK", "guest-browser-typed.ppm"),
                                  (b"AIUEOS_GUEST_BROWSER_PREEDIT_SHOWN", "guest-browser-preedit.ppm"),
                                  (b"AIUEOS_GUEST_BROWSER_PREEDIT_OK", "guest-browser-preedit-committed.ppm"),
-                                 (b"AIUEOS_GUEST_BROWSER_IME_TOGGLE_OK", "guest-browser-ime-toggle.ppm")):
+                                 (b"AIUEOS_GUEST_BROWSER_IME_TOGGLE_OK", "guest-browser-ime-toggle.ppm"),
+                                 (b"AIUEOS_GUEST_BROWSER_DRAG_OK", "guest-browser-drag.ppm")):
                 if marker in serial_text and not globals().get(name):
                     globals()[name] = True
                     sock.sendall((json.dumps({"execute": "screendump",

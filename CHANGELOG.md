@@ -5,6 +5,15 @@ All notable changes to **aiueos** are documented here. The format follows
 
 ## [Unreleased]
 
+### Guest browser desktop: a titlebar drag moves the window (ADR-0229)
+- browser-reduce captures a drag on a titlebar press and moves the window to
+  the pointer minus the press offset on each pointer/move (kind 3); pointer/up
+  (kind 4) releases. Refusals -4 (bad capture) and -6 (origin below 0).
+- browser-reduce-v1: 30 vectors, success vectors printed from
+  kotoba-lang/browser by `os/aiueos/scripts/browser-reduce-oracle.cljk`.
+- The virtio-tablet ring stays live after its first press
+  (`aiueos_tablet_next`). Gate `guest-browser-drag`.
+
 ### Guest browser desktop: Hankaku/Zenkaku switches the IME (ADR-0228)
 - browser-ime turns the IME off and on at evdev 41 and discards the
   composition when it switches (the hosted desktop's `set-ime`); off, letters

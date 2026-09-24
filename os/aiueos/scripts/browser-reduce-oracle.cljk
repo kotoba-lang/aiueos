@@ -1,0 +1,126 @@
+#!/usr/bin/env kbb
+;; The expected answers of os/aiueos/contracts/browser-reduce-v1.edn's success
+;; vectors, taken from kotoba-lang/browser itself (ADR-0223, ADR-0229):
+;; browser.input/actions-for-event reduces each event against the input state
+;; (pointer capture) and browser.surface/apply-actions applies the actions.
+;; Neither browser-reduce.kotoba nor the kernel's C is consulted.
+;;
+;;   kbb --backend sci --classpath "$(cd ../browser && kbb -Spath)":os/aiueos/scripts \
+;;     os/aiueos/scripts/browser-reduce-oracle.cljk            ; print the vectors
+;;   ... browser-reduce-oracle.cljk --check os/aiueos/contracts/browser-reduce-v1.edn
+;;
+;; The 128-byte state is encoded as browser-reduce.kotoba's header says: words
+;; 0..4 abi n focus vw vh, 5..24 id x y w h per window bottom first, 25 capture
+;; kind (0 none, 1 drag), 26 captured id, 27 28 the capture offset.
+;;
+;; One deliberate difference, and it is printed, not hidden: a move whose new
+;; origin is below 0 is stored by browser.surface; the object refuses it (-6)
+;; and changes nothing, because the u32 surface has no negative coordinate.
+;;
+;; --check: exit 0 every generated vector equals the contract's vector of the
+;; same name (seed, args, expected, expected memory); 1 one differs or is
+;; missing; 2 could not run. It prints COMPARED<TAB>n; n = 0 is exit 2.
+;; When browser.input cannot be loaded (the classpath lacks kotoba-lang/browser
+;; or its deps), nbb stops before this file runs: exit 1 with no COMPARED line
+;; -- read the line, not only the exit code.
+(ns browser-reduce-oracle
+  (:require [browser.input :as input]
+            [browser.surface :as surface]
+            [clojure.edn :as edn]
+            ["node:fs" :as fs]))
+
+(defn- hex [words]
+  (let [buf (js/Buffer.alloc 128)]
+    (doseq [[i v] (map-indexed vector words)] (.writeUInt32LE buf v (* 4 i)))
+    (.toString buf "hex")))
+
+(defn- encode [{:keys [surface input vw vh]}]
+  (let [ws (:surface/windows surface)
+        cap (:pointer/capture input)
+        drag? (= :drag (:kind cap))]
+    (hex (concat [1 (count ws) (:surface/focus surface) vw vh]
+                 (mapcat (fn [w] (cons (:window/id w) (:window/rect w))) ws)
+                 (repeat (* 5 (- 4 (count ws))) 0)
+                 (if drag?
+                   [1 (:window-id cap) (first (:offset cap)) (second (:offset cap))]
+                   [0 0 0 0])
+                 [0 0 0]))))
+
+(defn- world [focus rects]
+  {:surface {:surface/windows (mapv (fn [[id x y w h]] {:window/id id :window/rect [x y w h]}) rects)
+             :surface/focus focus}
+   :input (input/empty-state)
+   :vw 1280 :vh 800})
+
+(def two (world 2 [[1 32 32 720 540] [2 96 72 640 480]]))
+(def three (world 3 [[1 32 32 720 540] [2 96 72 640 480] [3 400 300 300 200]]))
+
+(def ^:private kinds {:pointer/down 1 :keyboard/key 2 :pointer/move 3 :pointer/up 4})
+
+(defn- step
+  "Reduce one event through the oracle: [world' answer]."
+  [{:keys [surface input] :as w} [t a b]]
+  (let [ev (if (= t :keyboard/key)
+             {:event/type :keyboard/key :key a}
+             {:event/type t :x a :y b})
+        {input' :input actions :actions} (input/actions-for-event surface input ev)
+        surface' (surface/apply-actions surface actions)
+        act (first actions)
+        answer (case t
+                 :pointer/down (if act (:window-id act) 0)
+                 :keyboard/key (:surface/focus surface)
+                 :pointer/move (if act (:window-id act) 0)
+                 :pointer/up 0)
+        negative? (some neg? (:position act))]
+    (if negative?
+      [w -6]
+      [(assoc w :surface surface' :input input') answer])))
+
+(defn- run [w events] (reduce (fn [w e] (first (step w e))) w events))
+
+;; name, starting world, events before the one under test, the event.
+(def cases
+  [[:pointer-down-in-window-1-titlebar-raises-and-captures-a-drag two [] [:pointer/down 40 40]]
+   [:pointer-down-on-the-overlap-hits-the-front two [] [:pointer/down 100 80]]
+   [:pointer-down-on-the-inclusive-far-corner two [] [:pointer/down 752 572]]
+   [:pointer-down-one-past-the-corner-misses two [] [:pointer/down 753 572]]
+   [:pointer-down-on-the-bare-desktop-misses two [] [:pointer/down 1000 700]]
+   [:pointer-down-raises-from-the-bottom-of-three three [] [:pointer/down 40 40]]
+   [:key-goes-to-the-focused-window two [] [:keyboard/key 30 1]]
+   [:titlebar-foot-is-inclusive two [] [:pointer/down 40 60]]
+   [:one-below-the-titlebar-captures-nothing two [] [:pointer/down 40 61]]
+   [:a-body-press-clears-the-capture two [[:pointer/down 40 40]] [:pointer/down 200 300]]
+   [:a-resize-handle-press-clears-the-capture two [[:pointer/down 40 40]] [:pointer/down 752 572]]
+   [:a-miss-leaves-the-capture two [[:pointer/down 40 40]] [:pointer/down 1000 700]]
+   [:move-under-a-drag-moves-by-the-delta two [[:pointer/down 40 40]] [:pointer/move 140 90]]
+   [:second-move-is-from-the-press-not-the-last-move two [[:pointer/down 40 40] [:pointer/move 140 90]] [:pointer/move 300 150]]
+   [:dragging-window-2-leaves-window-1 two [[:pointer/down 100 80]] [:pointer/move 50 40]]
+   [:move-to-the-origin two [[:pointer/down 40 40]] [:pointer/move 8 8]]
+   [:move-one-past-the-origin-is-refused two [[:pointer/down 40 40]] [:pointer/move 7 8]]
+   [:move-without-a-capture-moves-nothing two [] [:pointer/move 500 500]]
+   [:up-clears-the-capture two [[:pointer/down 40 40] [:pointer/move 140 90]] [:pointer/up 140 90]]
+   [:move-after-up-moves-nothing two [[:pointer/down 40 40] [:pointer/move 140 90] [:pointer/up 140 90]] [:pointer/move 400 400]]
+   [:the-kernel-drag two [[:pointer/down 60 50] [:pointer/down 60 50] [:pointer/move 140 90] [:pointer/move 220 120]] [:pointer/move 300 150]]])
+
+(defn vectors []
+  (for [[nm w0 before [t a b :as ev]] cases
+        :let [w (run w0 before)
+              [w' answer] (step w ev)]]
+    {:name nm
+     :seed [{:offset 0 :hex (encode w)}]
+     :args [:state 128 (kinds t) a (or b 0)]
+     :expected answer
+     :expect-memory [{:label :state :offset 0 :hex (encode w')}]}))
+
+(def ^:private args (vec (remove #(= "--" %) *command-line-args*)))
+
+(if (= "--check" (first args))
+  (let [contract (try (edn/read-string (str (.readFileSync fs (second args))))
+                      (catch :default e (.error js/console "COULD-NOT-RUN" (str e)) (.exit js/process 2)))
+        by-name (into {} (map (juxt :name identity)) (:vectors contract))
+        gen (vectors)
+        bad (remove #(= % (select-keys (by-name (:name %)) [:name :seed :args :expected :expect-memory])) gen)]
+    (println (str "COMPARED\t" (count gen)))
+    (doseq [v bad] (println "DIFFERS" (:name v)))
+    (.exit js/process (cond (zero? (count gen)) 2 (seq bad) 1 :else 0)))
+  (doseq [v (vectors)] (prn v)))

@@ -208,3 +208,26 @@
                                       {:serial (str preedit-ok "AIUEOS_GUEST_BROWSER_IME_TOGGLE_OK presses=7 off=1 latin=0 committed=1 ime=1 ops=67 text-px=1189 hash=4aaf87ee\r\n")})))))
   (testing "tablet profile"
     (is (= {"AIUEOS_GUEST_BROWSER" "1"} (guest/extra-env "guest-browser-ime-toggle")))))
+
+;; Guest browser titlebar drag (ADR-0229).
+(def ^:private toggle-ok
+  (str preedit-ok "AIUEOS_GUEST_BROWSER_IME_TOGGLE_OK presses=7 off=0 latin=2 committed=1 ime=1 ops=67 text-px=1189 hash=4aaf87ee\r\n"))
+
+(deftest guest-browser-drag-classifier
+  (testing "press, three moves, release, a stray move: moved by the delta, matching the model, is green"
+    (is (:green? (guest/classify "guest-browser-drag"
+                                 {:serial (str toggle-ok "AIUEOS_GUEST_BROWSER_DRAG_OK events=6 answers=111100 from=32,32 to=272,132 capture=0 ops=67 text-px=1931 hash=6771f3fe\r\n")}))))
+  (testing "the drag needs the ime-toggle frame first"
+    (is (= :no-ime-toggle-frame
+           (:reason (guest/classify "guest-browser-drag"
+                                    {:serial (str preedit-ok "AIUEOS_GUEST_BROWSER_DRAG_OK events=6 answers=111100 from=32,32 to=272,132 capture=0 ops=67 text-px=1931 hash=6771f3fe\r\n")})))))
+  (testing "named reds"
+    (doseq [[line reason] [["AIUEOS_GUEST_BROWSER_DRAG leftover=events-missing events=1 off=0 frame=67\r\n" :events-missing]
+                           ["AIUEOS_GUEST_BROWSER_DRAG leftover=census-miss off=0 front=1 to=32,32 capture=1 ops=67 text-px=1189 hash=4aaf87ee\r\n" :census-miss]
+                           ["" :guest-browser-drag-absent]]]
+      (is (= reason (:reason (guest/classify "guest-browser-drag" {:serial (str toggle-ok line)}))) line)))
+  (testing "a window that did not move (the pre-drag census) is not green"
+    (is (not (:green? (guest/classify "guest-browser-drag"
+                                      {:serial (str toggle-ok "AIUEOS_GUEST_BROWSER_DRAG_OK events=6 answers=111100 from=32,32 to=32,32 capture=0 ops=67 text-px=1189 hash=4aaf87ee\r\n")})))))
+  (testing "tablet profile"
+    (is (= {"AIUEOS_GUEST_BROWSER" "1"} (guest/extra-env "guest-browser-drag")))))

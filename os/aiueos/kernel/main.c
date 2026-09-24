@@ -939,6 +939,8 @@ extern uint64_t kotoba_aiueos_browser_key(uint64_t surface, uint64_t surface_byt
                                           uint64_t code, uint64_t value);
 extern int aiueos_keyboard_drain(uint32_t rounds);
 extern uint32_t aiueos_keyboard_next_press(uint32_t budget);
+extern int aiueos_tablet_drain(uint32_t rounds);
+extern uint32_t aiueos_tablet_next(uint32_t budget, uint32_t *x, uint32_t *y);
 extern uint64_t kotoba_aiueos_browser_reduce(uint64_t state, uint64_t state_bytes,
                                              uint64_t kind, uint64_t a, uint64_t b);
 extern int aiueos_desktop_present_ops(const uint32_t *ops, uint64_t count);
@@ -3831,6 +3833,7 @@ qwen_runtime_boot_complete:
                      census is os/aiueos/scripts/browser-frame-model.cljk's. */
                   if (preedit_ok) {
                     uint32_t tp = 0, latin = 0, kana = 0, off_seen = 1, miss = 0;
+                    int toggle_ok = 0;
                     int64_t tog;
                     serial_string("AIUEOS_GUEST_BROWSER_IME_TOGGLE_GO keys=7\r\n");
                     while (tp < 7) {
@@ -3856,6 +3859,7 @@ qwen_runtime_boot_complete:
                           text_px == 1189 && text_hash == 0x4aaf87eeU) {
                         debug_string("AIUEOS_GUEST_BROWSER_IME_TOGGLE_OK\n");
                         serial_string("AIUEOS_GUEST_BROWSER_IME_TOGGLE_OK presses=7 off=0 latin=2 committed=1 ime=1 ops=67 text-px=1189 hash=4aaf87ee\r\n");
+                        toggle_ok = 1;
                       } else {
                         debug_string("AIUEOS_GUEST_BROWSER_IME_TOGGLE leftover=census-miss\n");
                         serial_string("AIUEOS_GUEST_BROWSER_IME_TOGGLE leftover=census-miss miss=");
@@ -3882,6 +3886,78 @@ qwen_runtime_boot_complete:
                       serial_string("AIUEOS_GUEST_BROWSER_IME_TOGGLE leftover=keys-missing presses=");
                       serial_decimal(tp);
                       serial_string("\r\n");
+                    }
+                    /* The titlebar drag (ADR-0229). The host presses the
+                       tablet at (60, 50) -- window 1's titlebar -- moves to
+                       (140, 90) (220, 120) (300, 150), releases, and moves
+                       once more to (380, 200). C scales each batch to surface
+                       pixels and hands it to Kotoba
+                       `kotoba_aiueos_browser_reduce`, which decides the
+                       capture and the move (browser.input's rules). C counts
+                       each answer against the vectors' 1 1 1 1 0 0 and reads
+                       where window 1 ended up. The census is
+                       os/aiueos/scripts/browser-frame-model.cljk's. */
+                    if (toggle_ok) {
+                      uint32_t ev = 0, off = 0, ax = 0, ay = 0;
+                      int64_t dragged;
+                      static const int64_t want[6] = {1, 1, 1, 1, 0, 0};
+                      static const uint32_t kinds[6] = {1, 3, 3, 3, 4, 3};
+                      (void)aiueos_tablet_drain(4000000U);
+                      serial_string("AIUEOS_GUEST_BROWSER_DRAG_GO events=6\r\n");
+                      while (ev < 6) {
+                        uint32_t kind = aiueos_tablet_next(60000000U, &ax, &ay);
+                        uint32_t px, py;
+                        int64_t r;
+                        if (!kind) break;
+                        px = (uint32_t)(((uint64_t)ax * surface[3]) / 32768U);
+                        py = (uint32_t)(((uint64_t)ay * surface[4]) / 32768U);
+                        r = (int64_t)kotoba_aiueos_browser_reduce(sp, 128, kind, px, py);
+                        if (kind != kinds[ev] || r != want[ev]) off++;
+                        ev++;
+                      }
+                      dragged = (int64_t)kotoba_aiueos_browser_frame2(sp, 8192,
+                                  (uint64_t)(uintptr_t)font, font_length);
+                      if (ev == 6 && dragged > 0 &&
+                          aiueos_desktop_present_ops2(surface + 480, (uint64_t)dragged, font, font_length)) {
+                        text_hash = aiueos_desktop_colour_census(0x111111U, &text_px);
+                        (void)aiueos_desktop_show();
+                        /* stack [2 1]: window 1 is words 10..14 */
+                        if (off == 0 && surface[10] == 1 && surface[11] == 272 &&
+                            surface[12] == 132 && surface[25] == 0 && dragged == 67 &&
+                            text_px == 1931 && text_hash == 0x6771f3feU) {
+                          debug_string("AIUEOS_GUEST_BROWSER_DRAG_OK\n");
+                          serial_string("AIUEOS_GUEST_BROWSER_DRAG_OK events=6 answers=111100 from=32,32 to=272,132 capture=0 ops=67 text-px=1931 hash=6771f3fe\r\n");
+                        } else {
+                          debug_string("AIUEOS_GUEST_BROWSER_DRAG leftover=census-miss\n");
+                          serial_string("AIUEOS_GUEST_BROWSER_DRAG leftover=census-miss off=");
+                          serial_decimal(off);
+                          serial_string(" front=");
+                          serial_decimal(surface[10]);
+                          serial_string(" to=");
+                          serial_decimal(surface[11]);
+                          serial_string(",");
+                          serial_decimal(surface[12]);
+                          serial_string(" capture=");
+                          serial_decimal(surface[25]);
+                          serial_string(" ops=");
+                          serial_decimal((uint32_t)dragged);
+                          serial_string(" text-px=");
+                          serial_decimal(text_px);
+                          serial_string(" hash=");
+                          serial_hex32(text_hash);
+                          serial_string("\r\n");
+                        }
+                        browser_hold_for_screendump();
+                      } else {
+                        debug_string("AIUEOS_GUEST_BROWSER_DRAG leftover=events-missing\n");
+                        serial_string("AIUEOS_GUEST_BROWSER_DRAG leftover=events-missing events=");
+                        serial_decimal(ev);
+                        serial_string(" off=");
+                        serial_decimal(off);
+                        serial_string(" frame=");
+                        serial_decimal((uint32_t)(dragged < 0 ? -dragged : dragged));
+                        serial_string("\r\n");
+                      }
                     }
                   }
                 }
