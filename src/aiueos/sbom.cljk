@@ -22,10 +22,10 @@
   same way. The production key stays offline; `-main` emits unsigned documents
   and the caller signs them, which is the same split the release-receipt
   signing already uses."
-  (:require [grant.key-lifecycle :as key-lifecycle]
+  (:require [kotoba.bytes :as kbytes] [grant.key-lifecycle :as key-lifecycle]
             [aiueos.tcb :as tcb]
             [clojure.edn :as edn]
-            [clojure.java.io :as io])
+            [kotoba.io :as io])
   (:import [java.security MessageDigest]))
 
 (def sbom-version 1)
@@ -49,7 +49,7 @@
    (apply str
           (map #(format "%02x" (bit-and (int %) 0xff))
                (.digest (MessageDigest/getInstance "SHA-256")
-                        (.getBytes text "UTF-8"))))))
+                        (kbytes/utf8-bytes text))))))
 
 (defn components
   "The SBOM component list, derived from the TCB inventory's three halves.

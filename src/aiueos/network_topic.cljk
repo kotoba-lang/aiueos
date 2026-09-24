@@ -6,12 +6,11 @@
   that publisher/topic. Partition rejoin applies a contiguous batch atomically;
   replay, gaps, forgery and cross-channel substitution fail closed."
   (:refer-clojure :exclude [partition])
-  (:require [aiueos.topic :as topic]
+  (:require [kotoba.bytes :as kbytes] [aiueos.topic :as topic]
             [clojure.edn :as edn])
-  (:import [java.nio.charset StandardCharsets]
+  (:import
            [java.security KeyFactory KeyPairGenerator PrivateKey PublicKey Signature]
-           [java.security.spec X509EncodedKeySpec]
-           [java.util Base64]))
+           [java.security.spec X509EncodedKeySpec]))
 
 (def envelope-version 1)
 (def max-wire-bytes 65536)
@@ -23,12 +22,12 @@
   (.generateKeyPair (KeyPairGenerator/getInstance "Ed25519")))
 
 (defn public-key-base64 [key-pair]
-  (.encodeToString (Base64/getEncoder) (.getEncoded (.getPublic key-pair))))
+  (kbytes/base64-encode (.getEncoded (.getPublic key-pair))))
 
 (defn encode-envelope
   "Canonical bounded EDN wire representation."
   [envelope]
-  (let [encoded (.getBytes (pr-str envelope) StandardCharsets/UTF_8)]
+  (let [encoded (kbytes/utf8-bytes (pr-str envelope))]
     (when (> (alength encoded) max-wire-bytes)
       (throw (ex-info "network topic envelope exceeds wire bound"
                       {:type :network-topic-wire-too-large
@@ -45,7 +44,7 @@
                      :actual-bytes (alength encoded)
                      :maximum-bytes max-wire-bytes})))
   (let [value (try
-                (edn/read-string (String. encoded StandardCharsets/UTF_8))
+                (edn/read-string (kbytes/utf8-string encoded))
                 (catch Exception error
                   (throw (ex-info "invalid network topic wire EDN"
                                   {:type :invalid-network-topic-wire}
@@ -61,7 +60,7 @@
     (string? value)
     (.generatePublic
      (KeyFactory/getInstance "Ed25519")
-     (X509EncodedKeySpec. (.decode (Base64/getDecoder) ^String value)))
+     (X509EncodedKeySpec. (kbytes/base64-decode-bytes ^String value)))
     :else nil))
 
 (defn- signed-fields [envelope]
@@ -75,13 +74,13 @@
    :value (:value envelope)))
 
 (defn- signed-bytes [envelope]
-  (.getBytes (pr-str (signed-fields envelope)) StandardCharsets/UTF_8))
+  (kbytes/utf8-bytes (pr-str (signed-fields envelope))))
 
 (defn- sign [^PrivateKey private-key envelope]
   (let [signature (Signature/getInstance "Ed25519")]
     (.initSign signature private-key)
     (.update signature (signed-bytes envelope))
-    (.encodeToString (Base64/getEncoder) (.sign signature))))
+    (kbytes/base64-encode (.sign signature))))
 
 (defn sender-state
   "Create sender state. Sequence space is per [publisher topic]."
@@ -149,7 +148,7 @@
       (.initVerify verifier public-key)
       (.update verifier (signed-bytes envelope))
       (.verify verifier
-               (.decode (Base64/getDecoder) ^String (:signature envelope))))
+               (kbytes/base64-decode-bytes ^String (:signature envelope))))
     (catch Exception _ false)))
 
 (defn- reject [state reason envelope]

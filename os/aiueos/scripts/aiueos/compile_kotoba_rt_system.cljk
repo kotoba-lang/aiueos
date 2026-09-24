@@ -1,6 +1,5 @@
 (ns aiueos.compile-kotoba-rt-system
-  (:require [kotoba.compiler.core :as compiler])
-  (:import [java.nio.file Files Path StandardOpenOption]))
+  (:require [kotoba.io :as kio] [kotoba.compiler.core :as compiler]))
 
 (defn- fail! [message data]
   (throw (ex-info message (assoc data :phase :aiueos-kotoba-rt-system))))
@@ -21,12 +20,9 @@
         binary (:binary result)]
     (when-not (empty? (:imports binary))
       (fail! "native RT image imports foreign code" {:imports (:imports binary)}))
-    (Files/write (Path/of output (make-array String 0))
+    (kio/write-bytes output
                  (byte-array (map unchecked-byte (:bytes binary)))
-                 (into-array StandardOpenOption
-                             [StandardOpenOption/CREATE
-                              StandardOpenOption/TRUNCATE_EXISTING
-                              StandardOpenOption/WRITE]))
+                 [:create :truncate-existing :write])
     (println (pr-str {:format :aiueos.kotoba-rt-system-build/v1
                       :modules (get-in result [:project :kotoba.module/order])
                       :entry (:entry binary)

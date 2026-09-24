@@ -15,7 +15,7 @@
 ;; there is no kbb repo in the manifest and no kbb on PATH, so kbb-first is not
 ;; achievable here today. Port when it lands -- skill nbb-to-kbb-migration.
 (require '[clojure.string :as str]
-         '[clojure.set :as set])
+         '[kotoba.lang.coll :as set])
 
 (def fs (js/require "node:fs"))
 (def path (js/require "node:path"))

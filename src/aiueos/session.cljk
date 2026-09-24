@@ -13,8 +13,7 @@
   Exit 3 = a leg could not be answered.
 
   QEMU is not this gate. Phone bind is `kbb -M:phone-bind smoke`."
-  (:require [aiueos.phone-bind :as pb])
-  (:import [java.io File]))
+  (:require [kotoba.io :as kio] [aiueos.phone-bind :as pb]))
 
 (defn- html-admitted?
   [html]
@@ -47,7 +46,7 @@
   "HTTP only. No guest display. Hits the SPA, then the two live legs through
   the session process — not `kbb -M:cloud-live check`."
   [{:keys [dir]}]
-  (let [dir (File. (or dir (str (System/getProperty "java.io.tmpdir")
+  (let [dir (kio/file (or dir (str (System/getProperty "java.io.tmpdir")
                                 "/aiueos-session-p1")))
         rt (pb/start-http! (pb/make-runtime {:dir dir :listen-port 0}))
         base (pb/base-url rt)]
@@ -94,7 +93,7 @@
   the guest. Live kotobase write without a credential must not look like
   a stored note."
   [{:keys [dir]}]
-  (let [dir (File. (or dir (str (System/getProperty "java.io.tmpdir")
+  (let [dir (kio/file (or dir (str (System/getProperty "java.io.tmpdir")
                                 "/aiueos-session-p3")))
         rt (pb/start-http! (pb/make-runtime {:dir dir :listen-port 0}))
         base (pb/base-url rt)]
@@ -159,7 +158,7 @@
   must not call itonami. Grant allow GETs itonami.cloud /api/health and
   /api/fleet/metrics from this process. Consumer smoke does not run this."
   [{:keys [dir]}]
-  (let [dir (File. (or dir (str (System/getProperty "java.io.tmpdir")
+  (let [dir (kio/file (or dir (str (System/getProperty "java.io.tmpdir")
                                 "/aiueos-session-p4")))
         rt (pb/start-http! (pb/make-runtime {:dir dir :listen-port 0}))
         base (pb/base-url rt)]
@@ -211,7 +210,7 @@
   [& args]
   (let [cmd (or (first args) "smoke")
         dir (or (System/getenv "AIUEOS_SESSION_DIR")
-                (.getPath (File. (System/getProperty "java.io.tmpdir")
+                (kio/path (kio/file (System/getProperty "java.io.tmpdir")
                                  "aiueos-session-p1")))]
     (case cmd
       "guest"

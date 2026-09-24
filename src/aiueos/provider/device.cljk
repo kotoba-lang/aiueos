@@ -40,10 +40,9 @@
     presented to a different one;
   - the **purpose**, so an enrolment proof cannot be lifted into a different
     protocol that happens to sign the same shape."
-  (:require [grant.key-lifecycle :as kl]
+  (:require [kotoba.bytes :as kbytes] [grant.key-lifecycle :as kl]
             [grant.signing :as signing])
-  (:import [java.security KeyPair PrivateKey]
-           [java.util Base64]))
+  (:import [java.security KeyPair PrivateKey]))
 
 (def challenge-version 1)
 (def signature-key :aiueos.device/signature)
@@ -136,4 +135,4 @@
   show next to a device. Not an identifier — the fleet plane's `did:key` is."
   [public-key-b64]
   (when public-key-b64
-    (subs (signing/sha256-hex (.decode (Base64/getDecoder) ^String public-key-b64)) 0 16)))
+    (subs (signing/sha256-hex (kbytes/base64-decode-bytes ^String public-key-b64)) 0 16)))

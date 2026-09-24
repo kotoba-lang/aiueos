@@ -24,7 +24,7 @@
   `os/aiueos/scripts/`, and most of those are entry points meant to be run by
   hand — which is a statement about how this OS is tested, not a defect list."
   (:require [clojure.edn :as edn]
-            [clojure.java.io :as io]
+            [kotoba.io :as io]
             [kotoba.lang.text :as str]
             [kotoba.test :refer [deftest is testing]]))
 
@@ -32,8 +32,8 @@
 (def ^:private smoke-dir (io/file "os" "aiueos" "scripts"))
 
 (defn- smokes [ext]
-  (->> (.listFiles smoke-dir)
-       (map #(.getName ^java.io.File %))
+  (->> (io/list-files smoke-dir)
+       (map #(io/file-name %))
        (filter #(and (str/starts-with? % "smoke-") (str/ends-with? % ext)))
        sort))
 
@@ -65,5 +65,5 @@
             arg cmd
             :when (and (string? arg) (str/includes? arg "os/aiueos/scripts/"))]
       (let [p (str/replace arg #"^\./" "")]
-        (is (.exists (io/file p))
+        (is (io/exists? (io/file p))
             (str task " runs " p ", which does not exist"))))))

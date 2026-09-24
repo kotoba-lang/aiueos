@@ -38,8 +38,8 @@
                              :git/sha \"<the sha in deps.edn>\"}}}' \\
       -M -m aiueos.verify-value-runtime-all"
   (:require [clojure.edn :as edn]
-            [clojure.pprint]
-            [clojure.java.io :as io]
+            [kotoba.pprint]
+            [kotoba.io :as io]
             [kotoba.lang.text :as str]))
 
 (def receipt-path "qualification/value-runtime-baseline.edn")
@@ -241,6 +241,6 @@
                  {"verify_value_runtime_kernel_image.clj"
                   "the whole-image verifier: compile-project over eleven value modules plus aiueos.native.kernel and aiueos.native.value-runtime-kernel, against value-runtime-kernel-image-v1.edn"}}]
     (io/make-parents receipt-path)
-    (spit receipt-path (with-out-str (clojure.pprint/pprint receipt)))
+    (spit receipt-path (with-out-str (kotoba.pprint/pprint receipt)))
     (println (format "%d objects, %d failing -> %s"
                      (count results) (count failed) receipt-path))))

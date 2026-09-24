@@ -32,7 +32,7 @@
   found no contracts, or a contract with no digests in it, must not return what
   a run that checked all of them returns."
   (:require [clojure.edn :as edn]
-            [clojure.java.io :as io]
+            [kotoba.io :as io]
             [kotoba.lang.text :as str]
             [kotoba.test :refer [deftest is testing]]
             [sha2.core :as sha2]))
@@ -41,9 +41,9 @@
 
 (defn- read-contract [name]
   (let [f (io/file contract-dir name)]
-    (when-not (.exists f)
+    (when-not (io/exists? f)
       (throw (ex-info "REFUSING TO REPORT A PASS: a contract this test is about is missing"
-                      {:file (.getPath f)})))
+                      {:file (io/path f)})))
     (edn/read-string (slurp f))))
 
 (defn- message-of

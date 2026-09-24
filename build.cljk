@@ -1,5 +1,5 @@
 (ns build
-  (:require [clojure.java.io :as io]
+  (:require [kotoba.io :as io]
             [kotoba.lang.text :as str]
             [clojure.tools.build.api :as b]))
 
@@ -31,11 +31,11 @@
     (throw (ex-info "aiueos PID1/VFIO requires JDK 22+" {:java-version (System/getProperty "java.version")})))
   (let [jlink (io/file (System/getProperty "java.home") "bin" "jlink")
         modules "java.base,java.logging,java.management,java.naming,java.xml,jdk.crypto.ec,jdk.unsupported"]
-    (when-not (.canExecute jlink)
-      (throw (ex-info "jlink not found in active JDK" {:path (.getPath jlink)})))
+    (when-not (io/can-execute? jlink)
+      (throw (ex-info "jlink not found in active JDK" {:path (io/path jlink)})))
     (b/delete {:path jre-dir})
     (let [{:keys [exit out err]}
-          (b/process {:command-args [(.getPath jlink) "--add-modules" modules
+          (b/process {:command-args [(io/path jlink) "--add-modules" modules
                                      "--strip-debug" "--no-header-files" "--no-man-pages"
                                      "--compress=zip-6" "--output" jre-dir]})]
       (when-not (zero? exit)

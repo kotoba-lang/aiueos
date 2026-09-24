@@ -36,7 +36,7 @@
 ;; bounds as well as the arithmetic -- but it is not the machine.
 
 (ns aiueos.qwen35-gguf-kv-scan-parity-test
-  (:require [clojure.java.io :as io]
+  (:require [kotoba.bytes :as kbytes] [kotoba.io :as kio] [clojure.java.io :as io]
             [kotoba.test :refer [deftest is testing]]
             [kotoba.kir :as ir]
             [kotoba.sema :as sema]))
@@ -73,7 +73,7 @@
     (.write out (int (bit-and (bit-shift-right (long value) (* 8 i)) 255)))))
 
 (defn- put-str! [^java.io.ByteArrayOutputStream out ^String s]
-  (let [b (.getBytes s "UTF-8")]
+  (let [b (kbytes/utf8-bytes s)]
     (put-le! out (alength b) 8)
     (.write out b 0 (alength b))))
 
@@ -175,7 +175,7 @@
   how the generator makes the exact contract's `metadata_end` hold."
   (delay
     (let [out (java.io.ByteArrayOutputStream. (+ metadata-end 64))]
-      (.write out (.getBytes "GGUF" "UTF-8") 0 4)
+      (.write out (kbytes/utf8-bytes "GGUF") 0 4)
       (put-le! out 3 4)
       (put-le! out 866 8)
       (put-le! out 50 8)
@@ -322,7 +322,7 @@
                 (str "the committed workspace is missing at " workspace-file
                      "; tests/qwen35_runtime_model.c reads it"))
             (when (.exists workspace-file)
-              (let [committed (java.nio.file.Files/readAllBytes (.toPath workspace-file))]
+              (let [committed (kio/read-all-bytes workspace-file)]
                 (is (= 128 (alength ^bytes committed))
                     "the committed workspace must be 128 bytes")
                 (is (= (hex produced) (hex committed))
