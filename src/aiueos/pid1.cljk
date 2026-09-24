@@ -20,7 +20,7 @@
 
   JVM-only (`#?(:clj ...)` throughout, same reason as `aiueos.execute`/
   `aiueos.vfio`: FFM + file I/O)."
-  (:require [grant.deployment-profile :as deployment-profile]
+  (:require [kotoba.ffi :as ffi] [grant.deployment-profile :as deployment-profile]
             [kotoba.lang.text :as str]
             #?(:clj [grant.anchors :as anchors])
             #?(:clj [clojure.edn :as edn])))
@@ -154,32 +154,27 @@
 #?(:clj
    (do
 
-     (import '[java.lang.foreign Arena Linker Linker$Option FunctionDescriptor
-               ValueLayout MemoryLayout])
+     (def ^:private linker (ffi/native-linker))
+     (def ^:private lookup (ffi/default-lookup linker))
 
-     (def ^:private linker (Linker/nativeLinker))
-     (def ^:private lookup (.defaultLookup linker))
-     (def ^:private no-linker-options (make-array Linker$Option 0))
-
-     (defn- fdesc [result args] (FunctionDescriptor/of result (into-array MemoryLayout args)))
+     (defn- fdesc [result args] (ffi/signature result args))
 
      (defn- lib-fn
        [name descriptor]
        (delay
-        (.downcallHandle linker
-                         (.orElseThrow (.find lookup name)
-                                       #(ex-info (str "libc symbol not found: " name) {:name name}))
-                         descriptor
-                         no-linker-options)))
+        (ffi/downcall linker
+                         (or (ffi/find-symbol lookup name)
+                                       (throw (#(ex-info (str "libc symbol not found: " name) {:name name}))))
+                         descriptor)))
 
      (defn- invoke-h [handle-delay & args]
-       (.invokeWithArguments ^java.lang.invoke.MethodHandle @handle-delay
-                             ^"[Ljava.lang.Object;" (into-array Object args)))
+       (ffi/invoke-list @handle-delay
+                             args))
 
      (def ^:private c-waitpid
-       (lib-fn "waitpid" (fdesc ValueLayout/JAVA_INT [ValueLayout/JAVA_INT ValueLayout/ADDRESS ValueLayout/JAVA_INT])))
+       (lib-fn "waitpid" (fdesc :i32 [:i32 :ptr :i32])))
      (def ^:private c-reboot
-       (lib-fn "reboot" (fdesc ValueLayout/JAVA_INT [ValueLayout/JAVA_INT])))
+       (lib-fn "reboot" (fdesc :i32 [:i32])))
 
      (def wnohang 1)
      ;; linux/reboot.h magic command values (glibc's `reboot(int howto)`
@@ -196,8 +191,8 @@
        errno 10 -- NOT an error worth throwing on: a freshly booted system
        with no components running yet has no children, and that is the
        normal steady state between spawns, not a fault)."
-       [^Arena arena]
-       (let [status-seg (.allocate arena ValueLayout/JAVA_INT)
+       [arena]
+       (let [status-seg (ffi/alloc arena :i32)
              rc (long (invoke-h c-waitpid (int -1) status-seg (int wnohang)))]
          (cond
            (>= rc 0) rc
@@ -206,7 +201,7 @@
      (defn reap-all-zombies!
        "Drain every already-exited child in one pass (loops `reap-one-zombie!`
        until it returns `0` or `nil`). Returns the count reaped."
-       [^Arena arena]
+       [arena]
        (loop [n 0]
          (let [reaped (reap-one-zombie! arena)]
            (if (and reaped (pos? reaped))
