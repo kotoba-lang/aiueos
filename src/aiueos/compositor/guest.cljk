@@ -15,7 +15,7 @@
    "guest-gpu-two" "guest-scanout-two" "guest-broker" "guest-session"
    "guest-browser-frame" "guest-browser-input"
    "guest-browser-text" "guest-browser-text-raised" "guest-browser-type"
-   "guest-browser-preedit" "guest-browser-ime-toggle"])
+   "guest-browser-preedit" "guest-browser-ime-toggle" "guest-browser-drag"])
 
 (defn gate-cmd
   "SPA-visible evidence command for a guest profile. Not clojure -M."
@@ -570,6 +570,31 @@
       {:green? false :exit 1 :reason :guest-browser-ime-toggle-absent
        :leftover [:guest-browser-ime-toggle-absent]})))
 
+;; Guest browser titlebar drag (ADR-0229): after the IME toggle, a tablet
+;; press on window 1's titlebar, three moves and a release; Kotoba
+;; browser-reduce captures the drag and moves the window by the pointer
+;; delta, and a move after the release moves nothing. The census is
+;; os/aiueos/scripts/browser-frame-model.cljk's.
+
+(defn guest-browser-drag-result
+  [{:keys [serial qemu-unmeasured?] :as opts}]
+  (let [s (or serial "")]
+    (cond
+      qemu-unmeasured? {:green? false :exit 3 :reason :unmeasured :leftover [:unmeasured]}
+      (not (re-find #"(?m)^AIUEOS_GUEST_BROWSER_IME_TOGGLE_OK presses=7 off=0 latin=2 committed=1 ime=1 ops=67 text-px=1189 hash=4aaf87ee" s))
+      (let [r (guest-browser-ime-toggle-result opts)]
+        (assoc r :reason :no-ime-toggle-frame :leftover (into [:no-ime-toggle-frame] (:leftover r))))
+      (re-find #"(?m)^AIUEOS_GUEST_BROWSER_DRAG_OK events=6 answers=111100 from=32,32 to=272,132 capture=0 ops=67 text-px=1931 hash=6771f3fe" s)
+      {:green? true :exit 0 :reason :guest-browser-drag
+       :leftover [:no-resize-capture :no-redraw-per-move :no-caret]}
+      (re-find #"(?m)^AIUEOS_GUEST_BROWSER_DRAG leftover=events-missing" s)
+      {:green? false :exit 1 :reason :events-missing :leftover [:events-missing]}
+      (re-find #"(?m)^AIUEOS_GUEST_BROWSER_DRAG leftover=census-miss" s)
+      {:green? false :exit 1 :reason :census-miss :leftover [:census-miss]}
+      :else
+      {:green? false :exit 1 :reason :guest-browser-drag-absent
+       :leftover [:guest-browser-drag-absent]})))
+
 (defn extra-env
   "Env merged into smoke-qemu-uefi.sh. Default UEFI smoke is empty."
   [profile]
@@ -580,6 +605,7 @@
     "guest-browser-type" {"AIUEOS_GUEST_BROWSER" "1"}
     "guest-browser-preedit" {"AIUEOS_GUEST_BROWSER" "1"}
     "guest-browser-ime-toggle" {"AIUEOS_GUEST_BROWSER" "1"}
+    "guest-browser-drag" {"AIUEOS_GUEST_BROWSER" "1"}
     "guest-scanout-two" {"AIUEOS_GUEST_SCANOUT_TWO" "1"
                          "AIUEOS_QEMU_TIMEOUT" "90"}
     nil))
@@ -602,6 +628,7 @@
     "guest-browser-type" (guest-browser-type-result opts)
     "guest-browser-preedit" (guest-browser-preedit-result opts)
     "guest-browser-ime-toggle" (guest-browser-ime-toggle-result opts)
+    "guest-browser-drag" (guest-browser-drag-result opts)
     {:green? false :exit 3 :reason :unmeasured :leftover [:unmeasured]}))
 
 (defn serial-marker
@@ -622,6 +649,7 @@
     "guest-browser-type" "AIUEOS_GUEST_BROWSER_TYPE"
     "guest-browser-preedit" "AIUEOS_GUEST_BROWSER_PREEDIT"
     "guest-browser-ime-toggle" "AIUEOS_GUEST_BROWSER_IME_TOGGLE"
+    "guest-browser-drag" "AIUEOS_GUEST_BROWSER_DRAG"
     nil))
 
 (defn ok-print
@@ -642,4 +670,5 @@
     "guest-browser-type" "AIUEOS_COMPOSITOR_GUEST_BROWSER_TYPE_OK"
     "guest-browser-preedit" "AIUEOS_COMPOSITOR_GUEST_BROWSER_PREEDIT_OK"
     "guest-browser-ime-toggle" "AIUEOS_COMPOSITOR_GUEST_BROWSER_IME_TOGGLE_OK"
+    "guest-browser-drag" "AIUEOS_COMPOSITOR_GUEST_BROWSER_DRAG_OK"
     nil))

@@ -1365,6 +1365,76 @@ static int virtio_input_is_tablet(uint8_t b, uint8_t d, uint8_t f,
    -- more than the four slots hold at once. Budget and doorbell cadence are
    the keyboard's. Failure here does not touch virtio_input_fail_reason: that
    code describes the keyboard, which the gates before ADR-0223 read. */
+/* The tablet ring after its first press (ADR-0229). The first press is what
+   every gate since ADR-0223 reads; a drag needs the events after it, so the
+   queue is kept and read one SYN-closed batch at a time. */
+static volatile uint16_t *tab_doorbell;
+static struct virtq_avail *tab_avail;
+static struct virtq_used *tab_used;
+static struct virtio_input_event *tab_event;
+static uint16_t tab_seen;
+static uint32_t tab_x, tab_y;
+static int tab_live, tab_batch_abs, tab_batch_btn;
+
+static void tab_give_back(uint32_t id) {
+  tab_avail->ring[tab_avail->index % 4] = (uint16_t)id;
+  __asm__ volatile("" ::: "memory");
+  tab_avail->index++;
+  *tab_doorbell = 0;
+}
+
+/* Discard whatever the tablet delivered before now, for `rounds` polls. */
+int aiueos_tablet_drain(uint32_t rounds) {
+  if (!tab_live) return 0;
+  for (uint32_t i = 0; i < rounds; i++) {
+    __asm__ volatile("" ::: "memory");
+    uint16_t n = tab_used->index;
+    while (tab_seen != n) {
+      uint32_t id = tab_used->ring[tab_seen % 4].id;
+      tab_seen++;
+      if (id <= 3) tab_give_back(id);
+    }
+    __asm__ volatile("pause");
+  }
+  tab_batch_abs = 0;
+  tab_batch_btn = 0;
+  return 1;
+}
+
+/* The next pointer event, one per SYN-closed batch: 1 pointer/down (BTN_LEFT
+   pressed in the batch), 4 pointer/up (released), 3 pointer/move (only axes
+   moved), with the tablet's absolute position after the batch in *x *y; 0
+   when `budget` polls pass. What the event does is Kotoba's
+   (`kotoba_aiueos_browser_reduce`). */
+uint32_t aiueos_tablet_next(uint32_t budget, uint32_t *x, uint32_t *y) {
+  if (!tab_live) return 0;
+  for (uint32_t i = 0; i < budget; i++) {
+    __asm__ volatile("" ::: "memory");
+    uint16_t n = tab_used->index;
+    while (tab_seen != n) {
+      uint32_t id = tab_used->ring[tab_seen % 4].id;
+      tab_seen++;
+      if (id > 3) continue;
+      struct virtio_input_event ev = tab_event[id];
+      tab_give_back(id);
+      if (ev.type == 3 && ev.code == 0) { tab_x = ev.value; tab_batch_abs = 1; }
+      else if (ev.type == 3 && ev.code == 1) { tab_y = ev.value; tab_batch_abs = 1; }
+      else if (ev.type == 1 && ev.code == 272) tab_batch_btn = ev.value ? 1 : 4;
+      else if (ev.type == 0 && (tab_batch_btn || tab_batch_abs)) {
+        uint32_t kind = tab_batch_btn ? (uint32_t)tab_batch_btn : 3U;
+        tab_batch_abs = 0;
+        tab_batch_btn = 0;
+        *x = tab_x;
+        *y = tab_y;
+        return kind;
+      }
+    }
+    if ((i & 65535U) == 0) *tab_doorbell = 0;
+    __asm__ volatile("pause");
+  }
+  return 0;
+}
+
 static int virtio_tablet_poll(volatile uint16_t *doorbell, struct virtq_avail *avail,
                               struct virtq_used *used,
                               struct virtio_input_event *event) {
@@ -1392,6 +1462,15 @@ static int virtio_tablet_poll(volatile uint16_t *doorbell, struct virtq_avail *a
           AIUEOS_DESKTOP_INPUT_POINTER_DOWN, abs_x, abs_y,
           AIUEOS_DESKTOP_INPUT_PRESSED};
         desktop_pointer_ready = 1;
+        tab_doorbell = doorbell;
+        tab_avail = avail;
+        tab_used = used;
+        tab_event = event;
+        tab_seen = seen;
+        tab_x = abs_x;
+        tab_y = abs_y;
+        tab_live = 1;
+        tab_give_back(id);
         return 1;
       }
       avail->ring[avail->index % 4] = (uint16_t)id;

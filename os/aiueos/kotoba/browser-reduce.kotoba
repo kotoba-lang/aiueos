@@ -17,18 +17,35 @@
 ;;                 window to the end of `:surface/windows` (raise).
 ;;   keyboard/key  browser.input: `:keyboard/key` on the focused window;
 ;;                 no geometry changes.
-;; Not mirrored: drag/resize capture on the titlebar and resize handle,
-;; text editing, IME. Named leftovers `:no-pointer-capture`, `:no-text-edit`.
+;;   pointer capture (ADR-0229) browser.input: a pointer/down that hits a
+;;                 window inside its titlebar (y .. y + 28, inclusive) and
+;;                 outside its 16 px resize handle captures `:drag` with the
+;;                 offset from the window origin; a hit anywhere else clears
+;;                 the capture; a miss leaves it as it was. pointer/move under
+;;                 `:drag` is `:window/move` to (point - offset) --
+;;                 browser.surface/move-window, which neither focuses nor
+;;                 raises. pointer/up clears the capture.
+;; Not mirrored: the resize capture (a handle press captures nothing here),
+;; text editing, IME. Named leftovers `:no-resize-capture`, `:no-text-edit`.
+;; A move whose origin would be negative is refused (-6) and changes nothing:
+;; the u32 surface has no negative coordinate; browser.surface would store it.
 ;;
 ;; Same 128-byte u32 state as browser-frame.kotoba (same temporary native
 ;; constraints -- word types, at most five parameters -- and the same removal
 ;; condition).
 ;;
+;; STATE (u32 words): 0..4 abi n focus vw vh, 5..24 id x y w h per window
+;; (bottom first), 25 capture kind (0 none, 1 drag), 26 captured window id,
+;; 27 28 offset x y from the window origin. 29..31 are not read.
+;;
 ;; ABI: [state state-bytes kind a b], mutates state in place.
 ;;   kind 1 pointer/down at (a, b) -> focused window id, or 0 on a miss
 ;;   kind 2 key (a = code, b = value) -> focused window id that receives it
+;;   kind 3 pointer/move to (a, b) -> the moved window id, or 0 uncaptured
+;;   kind 4 pointer/up -> 0, capture cleared
 ;;   -1 null region / wrong size   -2 abi or n out of range
-;;   -3 focus is not a window id   -5 unknown event kind
+;;   -3 focus is not a window id   -4 capture is not none or a drag of a window
+;;   -5 unknown event kind         -6 the move would put the origin below 0
 
 (ns aiueos.browser-reduce
   (:export [aiueos-browser-reduce main]))
@@ -93,6 +110,57 @@
         (w-put st 2 id)
         id)))
 
+;; Index of window id in the stack, or -1.
+(defn index-of [st n k id]
+  (if (>= k n) -1
+    (if (= (w-at st (+ 5 (* k 5))) id) k
+      (index-of st n (+ k 1) id))))
+
+(defn capture-ok [st n]
+  (if (= (w-at st 25) 0) 1
+    (if (= (w-at st 25) 1) (has-id st n 0 (w-at st 26)) 0)))
+
+;; browser.input in-resize-handle?: the last 16 px of both axes, inclusive.
+(defn in-handle [st k px py]
+  (let [b (+ 5 (* k 5))
+        r (+ (w-at st (+ b 1)) (w-at st (+ b 3)))
+        f (+ (w-at st (+ b 2)) (w-at st (+ b 4)))]
+    (if (< px (- r 16)) 0
+      (if (< py (- f 16)) 0 1))))
+
+;; Set the capture for a press on stack index k (before the raise moves it).
+(defn capture [st k px py]
+  (let [b (+ 5 (* k 5))
+        x (w-at st (+ b 1))
+        y (w-at st (+ b 2))]
+    (if (= (in-handle st k px py) 1)
+      (do (w-put st 25 0) (w-put st 26 0) (w-put st 27 0) (w-put st 28 0))
+      (if (> py (+ y 28))
+        (do (w-put st 25 0) (w-put st 26 0) (w-put st 27 0) (w-put st 28 0))
+        (do (w-put st 25 1) (w-put st 26 (w-at st b))
+            (w-put st 27 (- px x)) (w-put st 28 (- py y)))))))
+
+(defn press [st n k1 px py]
+  (if (= k1 0) 0
+    (do (capture st (- k1 1) px py)
+        (raise st (- k1 1) n))))
+
+(defn move-to [st k nx ny]
+  (let [b (+ 5 (* k 5))]
+    (if (< nx 0) -6
+      (if (< ny 0) -6
+        (do (w-put st (+ b 1) nx)
+            (w-put st (+ b 2) ny)
+            (w-at st b))))))
+
+(defn drag [st n px py]
+  (if (= (w-at st 25) 0) 0
+    (move-to st (index-of st n 0 (w-at st 26))
+             (- px (w-at st 27)) (- py (w-at st 28)))))
+
+(defn release [st]
+  (do (w-put st 25 0) (w-put st 26 0) (w-put st 27 0) (w-put st 28 0) 0))
+
 (defn aiueos-browser-reduce [st sb kind a b]
   (if (= st 0) -1
     (if (not (= sb 128)) -1
@@ -103,9 +171,10 @@
           (if (< n 1) -2
             (if (> n 4) -2
               (if (= (has-id st n 0 focus) 0) -3
-                (if (= kind 1)
-                  (let [k1 (hit st (- n 1) a b)]
-                    (if (= k1 0) 0 (raise st (- k1 1) n)))
-                  (if (= kind 2) focus -5))))))))))
+                (if (= (capture-ok st n) 0) -4
+                  (if (= kind 1) (press st n (hit st (- n 1) a b) a b)
+                    (if (= kind 2) focus
+                      (if (= kind 3) (drag st n a b)
+                        (if (= kind 4) (release st) -5)))))))))))))
 
 (defn main [] 0)

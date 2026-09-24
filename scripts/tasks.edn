@@ -215,7 +215,11 @@
 
  :browser-desktop-contracts
  {:cmd ["sh" "-c" "ulimit -s 65520; node --stack-size=4000 \"$(command -v nbb)\" --classpath \"$(kbb -Spath -M:verify-admissions):../text/src\" os/aiueos/scripts/verify-admissions.cljk os/aiueos/contracts/browser-frame-v1.edn os/aiueos/contracts/browser-reduce-v1.edn"]
-  :doc "Guest browser desktop (ADR-0223): browser-frame and browser-reduce executed in the KIR oracle at the default fuel tier 1024. Frame: 14 vectors, the whole op list asserted for 1/2/4 windows and the raised stack, reasons -5..-1. Reduce: 14 vectors, the whole state asserted after each event -- topmost hit, focus AND raise, inclusive far corner, one-past miss, raise from the bottom of three, key moves nothing, reasons -5 -3 -2 -1. About 2 seconds."}
+  :doc "Guest browser desktop (ADR-0223): browser-frame and browser-reduce executed in the KIR oracle at the default fuel tier 1024. Frame: 14 vectors, the whole op list asserted for 1/2/4 windows and the raised stack, reasons -5..-1. Reduce: 30 vectors, the whole state asserted after each event -- topmost hit, focus AND raise, titlebar drag capture / move / release (ADR-0229), inclusive far corner, one-past miss, raise from the bottom of three, key moves nothing, reasons -6..-1. About 2 seconds."}
+
+ :browser-desktop-reduce-oracle-check
+ {:cmd ["sh" "-c" "kbb --backend sci --classpath \"$(cd ../browser && kbb -Spath | tr ':' '\\n' | sed \"s|^\\([^/]\\)|$(cd ../browser && pwd)/\\1|\" | paste -sd: -)\" os/aiueos/scripts/browser-reduce-oracle.cljk --check os/aiueos/contracts/browser-reduce-v1.edn"]
+  :doc "browser-reduce-v1's 21 success vectors (ADR-0223, 0229) against kotoba-lang/browser's browser.input + browser.surface run as the oracle. Prints COMPARED n; exit 1 a vector differs, 2 could not run."}
 
  :browser-desktop-text-contract
  {:cmd ["sh" "-c" "ulimit -s 65520; node --stack-size=8000 \"$(command -v nbb)\" --classpath \"$(kbb -Spath -M:verify-admissions):../text/src\" os/aiueos/scripts/verify-admissions.cljk os/aiueos/contracts/browser-frame2-v1.edn"]
@@ -240,6 +244,10 @@
  :browser-desktop-ime-toggle
  {:cmd ["kbb" "--backend" "sci" "--classpath" "src" "scripts/compositor-guest.cljk" "guest-browser-ime-toggle"]
   :doc "Guest browser desktop IME toggle (ADR-0228) on KERNEL.ELF under QEMU: Hankaku/Zenkaku turns the IME off (k a lands as latin) and on again (k a Enter commits the kana); the profile env comes from guest.cljk extra-env; the frame matches browser-frame-model.cljk."}
+
+ :browser-desktop-drag
+ {:cmd ["kbb" "--backend" "sci" "--classpath" "src" "scripts/compositor-guest.cljk" "guest-browser-drag"]
+  :doc "Guest browser titlebar drag (ADR-0229) on KERNEL.ELF under QEMU: after the IME toggle, a tablet press on window 1's titlebar, three moves, a release and a stray move; Kotoba browser-reduce moves the window by the pointer delta and the frame matches browser-frame-model.cljk."}
 
  :browser-desktop-guest
  {:cmd ["kbb" "--backend" "sci" "--classpath" "src" "scripts/compositor-guest.cljk" "guest-browser-input"]
