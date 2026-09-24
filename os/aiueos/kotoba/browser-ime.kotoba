@@ -16,7 +16,13 @@
 ;;              k s t p c g z d b j) emits small tsu; what does not convert
 ;;              stays in the buffer
 ;;   Backspace  cancels a conversion, else drops the last romaji byte, else the
-;;              last preedit code point
+;;              last preedit code point, else -- nothing is being composed --
+;;              deletes the code point before the caret in the focused body
+;;              (browser.text-edit delete-backward; ADR-0232). Here the
+;;              object leaves its oracle on purpose: the hosted `handle-key`
+;;              consumes that Backspace and does nothing, but browser.input
+;;              maps Backspace to :text/edit :delete-backward, and a key the
+;;              IME has no use for belongs to the page.
 ;;   Escape     cancels a conversion (preedit back to its reading), else
 ;;              clears buffer and preedit
 ;;   Space      flushes (a lone "n" becomes "nn"), then converts a reading the
@@ -25,8 +31,8 @@
 ;;   Enter      flushes and commits the preedit
 ;;   other keys ignored ("-", "," and "." are in the oracle's table but its
 ;;              letter test never lets them in, so they are ignored here too)
-;;   IME off    a letter goes straight to the window as latin; the rest is
-;;              ignored
+;;   IME off    a letter goes straight to the window as latin, Backspace
+;;              deletes as above (ADR-0232); the rest is ignored
 ;;   Toggle     Hankaku/Zenkaku (evdev 41), in either state: the IME turns off
 ;;              if on, on if off, and whatever was being composed -- romaji,
 ;;              preedit, a conversion -- is discarded, not committed. The
@@ -326,11 +332,19 @@
         (wp s 444 0) 0)
     (do (wp s 433 0) (wp s 445 0) 0)))
 
+(defn delete-backward [s]
+  ;; browser.text-edit delete-backward with the caret at the end of the body
+  ;; (where insert-text leaves it): the last code point goes. Bodies hold
+  ;; code points, so there is no surrogate pair to keep whole.
+  (let [base (body-base s)
+        at (body-len s base 0)]
+    (if (> at 0) (do (wp s (+ base (- at 1)) 0) 0) 0)))
+
 (defn on-backspace [s]
   (if (= (w s 442) 1) (cancel s)
     (if (> (w s 433) 0) (do (wp s 433 (- (w s 433) 1)) 0)
       (if (> (w s 445) 0) (do (wp s 445 (- (w s 445) 1)) 0)
-        0))))
+        (delete-backward s)))))
 
 (defn on-letter [s c]
   (if (>= (w s 433) 8) -8
@@ -353,7 +367,8 @@
   (let [c (letter-of code)]
     (if (= code 41) (toggle s)
     (if (= (w s 432) 0)
-      (if (> c 0) (off-letter s c) 0)
+      (if (> c 0) (off-letter s c)
+        (if (= code 14) (delete-backward s) 0))
       (if (> c 0) (on-letter s c)
         (if (= code 57) (on-space s)
           (if (= code 28) (on-enter s)

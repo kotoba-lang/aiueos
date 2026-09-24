@@ -1,5 +1,5 @@
 #!/usr/bin/env kbb
-;; A model of the guest browser desktop frame (ADR-0224 .. 0230), written
+;; A model of the guest browser desktop frame (ADR-0224 .. 0232), written
 ;; apart from browser-frame2.kotoba and from the C blit, so a gate's known
 ;; answers do not come from the thing the gate measures.
 ;;
@@ -20,7 +20,7 @@
 ;; pixel's position (y * 65536 + x, four little-endian bytes) in raster order.
 ;;
 ;; The scenes marked :pinned are frames already pinned on KERNEL.ELF serial
-;; (ADR-0224, 0225, 0227, 0228, 0229, 0230); the model must reproduce them before its other
+;; (ADR-0224, 0225, 0227, 0228, 0229, 0230; re-pinned with the caret by ADR-0232); the model must reproduce them before its other
 ;; answers are used. Exit 0 all pinned scenes reproduced, 1 one did not, 2 could not
 ;; run (font unreadable).
 (ns browser-frame-model
@@ -99,10 +99,17 @@
                  c (when (and f? (seq composition))
                      (lay-line {:x (:x b) :y (:y b) :left (+ x 8) :right (- (+ x w) 8)
                                 :bottom (- (+ y h) 8) :wrap? true :underline? true}
-                               composition))]
+                               composition))
+                 ;; ADR-0232: the focused window's caret, cssom sel-ops'
+                 ;; collapsed selection -- 1 x 16 in the text colour, where
+                 ;; the next glyph would go (after the composition, if any);
+                 ;; not drawn when its foot passes the bottom inset.
+                 [cx cy] (if c [(:x c) (:y c)] [(:x b) (:y b)])
+                 caret (when (and f? (<= (+ cy 16) (- (+ y h) 8)))
+                         [[:rect cx cy 1 16 ink]])]
              (concat [[:rect x y w h (if f? 0xffffff 0xeef1f5)]
                       [:rect x y w 28 (if f? 0xd8e7ff 0xdde2ea)]]
-                     (:ops t) (:ops b) (:ops c)))))
+                     (:ops t) (:ops b) (:ops c) caret))))
         stack))
 
 ;; --- paint and census -----------------------------------------------------------
@@ -139,27 +146,27 @@
 (def ^:private nihongo-ka [12395 12411 12435 12372 21152])
 
 (def scenes
-  [{:name "text" :pinned {:ops 57 :text-px 1084 :hash "d2e7456a"}
+  [{:name "text" :pinned {:ops 58 :text-px 1100 :hash "4ab25516"}
     :scene {:vw 1280 :vh 800 :focus 2 :stack [w1 w2]}}
-   {:name "text-raised" :pinned {:ops 57 :text-px 864 :hash "5cd907f9"}
+   {:name "text-raised" :pinned {:ops 58 :text-px 880 :hash "ca6c2709"}
     :scene {:vw 1280 :vh 800 :focus 1 :stack [w2 w1]}}
-   {:name "typed" :pinned {:ops 62 :text-px 1052 :hash "7caecfe8"}
+   {:name "typed" :pinned {:ops 63 :text-px 1068 :hash "b741bf74"}
     :scene {:vw 1280 :vh 800 :focus 1 :stack [w2 (update w1 :body into nihongo-ka)]}}
    ;; ADR-0227: after typing `k a n`, the composition か + romaji n is drawn,
    ;; underlined, after the body; Enter commits かん and the rule is gone.
-   {:name "preedit" :pinned {:ops 66 :text-px 1130 :hash "c9f528cb"}
+   {:name "preedit" :pinned {:ops 67 :text-px 1146 :hash "04d93a5f"}
     :scene {:vw 1280 :vh 800 :focus 1 :stack [w2 (update w1 :body into nihongo-ka)]
             :composition [12363 110]}}
-   {:name "preedit-committed" :pinned {:ops 64 :text-px 1112 :hash "63e3fe67"}
+   {:name "preedit-committed" :pinned {:ops 65 :text-px 1128 :hash "e67d620b"}
     :scene {:vw 1280 :vh 800 :focus 1 :stack [w2 (update w1 :body into (concat nihongo-ka [12363 12435]))]}}
    ;; ADR-0228: Hankaku/Zenkaku turns the IME off, `k a` goes in as latin,
    ;; Hankaku/Zenkaku turns it back on, `k a` Enter commits か.
-   {:name "ime-toggle" :pinned {:ops 67 :text-px 1189 :hash "4aaf87ee"}
+   {:name "ime-toggle" :pinned {:ops 68 :text-px 1205 :hash "f516238a"}
     :scene {:vw 1280 :vh 800 :focus 1
             :stack [w2 (update w1 :body into (concat nihongo-ka [12363 12435] [107 97 12363]))]}}
    ;; ADR-0229: a titlebar press at (60, 50), moves to (140, 90) (220, 120)
    ;; (300, 150), release: window 1 is dragged by (240, 100) to (272, 132).
-   {:name "drag" :pinned {:ops 67 :text-px 1931 :hash "6771f3fe"}
+   {:name "drag" :pinned {:ops 68 :text-px 1947 :hash "a2969186"}
     :scene {:vw 1280 :vh 800 :focus 1
             :stack [w2 (-> w1
                            (update :body into (concat nihongo-ka [12363 12435] [107 97 12363]))
@@ -167,7 +174,7 @@
    ;; ADR-0230: a press in window 1's resize handle at (984, 664), moves to
    ;; (784, 564) (300, 200 -- clamped at 120 x 80) (504, 324), release:
    ;; window 1 is 240 x 200 at (272, 132), and its body wraps at the new width.
-   {:name "resize" :pinned {:ops 67 :text-px 1931 :hash "36069e52"}
+   {:name "resize" :pinned {:ops 68 :text-px 1947 :hash "4fa3baa2"}
     :scene {:vw 1280 :vh 800 :focus 1
             :stack [w2 (-> w1
                            (update :body into (concat nihongo-ka [12363 12435] [107 97 12363]))
@@ -193,6 +200,19 @@
    ["n" {:vw 1280 :vh 800 :focus 2 :stack [w1k w2m] :composition [110]}]
    ["i" {:vw 1280 :vh 800 :focus 2 :stack [w1k w2m] :composition [12395]}]
    ["enter" {:vw 1280 :vh 800 :focus 2 :stack [w1k (update w2m :body conj 12395)]}]])
+
+;; ADR-0232: the caret. After the loop, window 2 is focused with に committed.
+;; k a composes か (the caret after it), Backspace drops the preedit (the
+;; caret back after the body), and two more Backspaces delete に and 。 -- the
+;; code points before the caret (browser.text-edit delete-backward).
+(def ^:private w2n (update w2m :body conj 12395))
+
+(def caret-frames
+  [["k" {:vw 1280 :vh 800 :focus 2 :stack [w1k w2n] :composition [107]}]
+   ["a" {:vw 1280 :vh 800 :focus 2 :stack [w1k w2n] :composition [12363]}]
+   ["backspace" {:vw 1280 :vh 800 :focus 2 :stack [w1k w2n]}]
+   ["backspace" {:vw 1280 :vh 800 :focus 2 :stack [w1k w2m]}]
+   ["backspace" {:vw 1280 :vh 800 :focus 2 :stack [w1k (update w2m :body pop)]}]])
 
 (defn chain
   "FNV-1a over each frame's census hash (u32, little-endian), in order -- what
@@ -234,5 +254,17 @@
                         loop-frames)
         cs (vec cs)]
     (println (str "loop frames=" (count cs) " ops=" (apply str (interpose "," (map :ops cs)))
+                  " chain=" (chain (map #(js/parseInt (:hash %) 16) cs))
+                  " last-px=" (:text-px (peek cs)) " last-hash=" (:hash (peek cs)))))
+  (let [cs (vec (map-indexed (fn [i [ev scene]]
+                               (let [ops (frame scene)
+                                     c (census ops)
+                                     [_ cx cy] (peek ops)]
+                                 (println (str "caret-frame n=" (inc i) " " ev " ops=" (:ops c)
+                                               " text-px=" (:text-px c) " hash=" (:hash c)
+                                               " caret=" cx "," cy))
+                                 c))
+                             caret-frames))]
+    (println (str "caret frames=" (count cs) " ops=" (apply str (interpose "," (map :ops cs)))
                   " chain=" (chain (map #(js/parseInt (:hash %) 16) cs))
                   " last-px=" (:text-px (peek cs)) " last-hash=" (:hash (peek cs)))))))
