@@ -513,6 +513,17 @@ static uint8_t initramfs_recovery_signature[256];
 static uint64_t initramfs_recovery_elf_length;
 static int initramfs_recovery_signature_present;
 
+/* The desktop font (ADR-0224), aiueos-font/v1 from os/aiueos/fonts/. Copied
+   out of the archive for the same reason as the recovery ELF; 320 KiB bounds
+   it (the committed subset is 267,208 bytes). */
+#define AIUEOS_FONT_BYTES_MAX (320U * 1024U)
+static uint8_t __attribute__((section(".high_bss"), aligned(16))) initramfs_font[AIUEOS_FONT_BYTES_MAX];
+static uint64_t initramfs_font_length;
+const uint8_t *aiueos_initramfs_font(uint64_t *length) {
+  if (length) *length = initramfs_font_length;
+  return initramfs_font_length ? initramfs_font : 0;
+}
+
 const uint8_t *aiueos_initramfs_recovery_elf(uint64_t *length) {
   if (length) *length = initramfs_recovery_elf_length;
   return initramfs_recovery_elf_length ? initramfs_recovery_elf : 0;
@@ -559,6 +570,12 @@ static int initramfs_validate(uint64_t base, uint64_t size, uint64_t *files) {
       for (uint64_t i = 0; i < filesize; i++)
         initramfs_recovery_elf[i] = archive[data_offset + i];
       initramfs_recovery_elf_length = filesize;
+    }
+    if (initramfs_name_is(archive + name_offset, namesize, "font/aiueos-16.fnt") &&
+        filesize && filesize <= sizeof(initramfs_font)) {
+      for (uint64_t i = 0; i < filesize; i++)
+        initramfs_font[i] = archive[data_offset + i];
+      initramfs_font_length = filesize;
     }
     if (initramfs_name_is(archive + name_offset, namesize, "recovery/user-smoke.sig") &&
         filesize == sizeof(initramfs_recovery_signature)) {
@@ -911,6 +928,13 @@ extern uint64_t kotoba_aiueos_session_restore(uint64_t a);
    desktop, on KERNEL.ELF. */
 extern uint64_t kotoba_aiueos_browser_frame(uint64_t state, uint64_t state_bytes,
                                             uint64_t ops, uint64_t ops_bytes);
+extern uint64_t kotoba_aiueos_browser_frame2(uint64_t surface, uint64_t surface_bytes,
+                                             uint64_t font, uint64_t font_bytes);
+extern int aiueos_desktop_present_ops2(const uint32_t *ops, uint64_t count,
+                                       const uint8_t *font, uint64_t font_length);
+extern uint32_t aiueos_desktop_colour_census(uint32_t rgb, uint32_t *count_out);
+extern int aiueos_desktop_show(void);
+extern const uint8_t *aiueos_initramfs_font(uint64_t *length);
 extern uint64_t kotoba_aiueos_browser_reduce(uint64_t state, uint64_t state_bytes,
                                              uint64_t kind, uint64_t a, uint64_t b);
 extern int aiueos_desktop_present_ops(const uint32_t *ops, uint64_t count);
@@ -1007,6 +1031,26 @@ static void serial_rgb(uint32_t rgb) {
   serial_hex_byte((uint8_t)(rgb >> 16));
   serial_hex_byte((uint8_t)(rgb >> 8));
   serial_hex_byte((uint8_t)rgb);
+}
+
+/* Guest browser desktop (ADR-0224): only when a tablet press arrived --
+   the AIUEOS_GUEST_BROWSER profile -- hold the frame on screen for a few
+   seconds so the host can screendump it. Counted in `pause`s, not TSC: under
+   TCG on an arm64 host the guest TSC can tick at the host's 24 MHz counter,
+   and 400,000,000 pauses already outlasted a 228 s watchdog (ADR-0223), so
+   8,000,000 is seconds, not minutes. Every other profile passes straight
+   through. */
+static void browser_hold_for_screendump(void) {
+  extern int aiueos_desktop_pointer_ready(void);
+  if (!aiueos_desktop_pointer_ready()) return;
+  for (uint32_t i = 0; i < 8000000U; i++) __asm__ volatile("pause");
+}
+
+static void serial_hex32(uint32_t value) {
+  serial_hex_byte((uint8_t)(value >> 24));
+  serial_hex_byte((uint8_t)(value >> 16));
+  serial_hex_byte((uint8_t)(value >> 8));
+  serial_hex_byte((uint8_t)value);
 }
 
 static void serial_decimal64(uint64_t value) {
@@ -1596,13 +1640,13 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
     serial_string("AIUEOS_KOTOBA_FNV_VECTOR_OK abc\r\n");
     uint64_t initramfs_files = 0;
     if (!initramfs_validate(boot->initramfs_base, boot->initramfs_size,
-                            &initramfs_files) || initramfs_files != 3) {
+                            &initramfs_files) || initramfs_files != 4) {
       debug_string("AIUEOS_INITRAMFS_FAIL newc-structure\n");
       serial_string("AIUEOS_INITRAMFS_FAIL newc-structure\r\n");
       qemu_exit(0x68);
     }
-    debug_string("AIUEOS_INITRAMFS_OK newc entries=3 sha256-admitted bounded\n");
-    serial_string("AIUEOS_INITRAMFS_OK newc entries=3 sha256-admitted bounded\r\n");
+    debug_string("AIUEOS_INITRAMFS_OK newc entries=4 sha256-admitted bounded\n");
+    serial_string("AIUEOS_INITRAMFS_OK newc entries=4 sha256-admitted bounded\r\n");
     extern int aiueos_recovery_payload_admission(const uint8_t *, uint64_t, const uint8_t *);
     if (!initramfs_recovery_elf_length || !initramfs_recovery_signature_present ||
         !aiueos_recovery_payload_admission(initramfs_recovery_elf,
@@ -3555,6 +3599,116 @@ qwen_runtime_boot_complete:
             serial_rgb(overlap);
             serial_string("\r\n");
           }
+        }
+      }
+    }
+    /* Guest browser desktop with text (ADR-0224). The same boot-desktop,
+       now with window titles and bodies; Kotoba lays out rects AND glyphs in
+       one list (`kotoba_aiueos_browser_frame2`) against the font the loader
+       brought in the initramfs, C blits it. The known answers (op count,
+       count and FNV-1a of the #111111 pixels) come from a model of the same
+       frame written apart from both (ADR-0224). If a tablet press arrived,
+       it is reduced on this surface too and the frame is drawn again: the
+       back window's text must then cover the other's. Do not qemu_exit. */
+    {
+      static uint32_t __attribute__((section(".high_bss"), aligned(16))) surface[2048];
+      static const uint32_t boot[15] = {1, 2, 2, 0, 0,
+                                        1, 32, 32, 720, 540,
+                                        2, 96, 72, 640, 480};
+      /* aiueos / kotoba-lang/browser, then ブラウザが画面です */
+      static const uint32_t title1[] = {97, 105, 117, 101, 111, 115};
+      static const uint32_t body1[] = {107, 111, 116, 111, 98, 97, 45, 108, 97, 110, 103, 47, 98, 114, 111, 119, 115, 101, 114, 10, 12502, 12521, 12454, 12470, 12364, 30011, 38754, 12391, 12377};
+      /* ブラウザ / 日本語の文字も表示できます。 */
+      static const uint32_t title2[] = {12502, 12521, 12454, 12470};
+      static const uint32_t body2[] = {26085, 26412, 35486, 12398, 25991, 23383, 12418, 34920, 31034, 12391, 12365, 12414, 12377, 12290};
+      uint64_t font_length = 0;
+      const uint8_t *font = aiueos_initramfs_font(&font_length);
+      uint64_t sp = (uint64_t)(uintptr_t)surface;
+      uint32_t text_px = 0, text_hash = 0;
+      int64_t count;
+      int text_ok = 0;
+      for (int i = 0; i < 2048; i++) surface[i] = 0;
+      for (int i = 0; i < 15; i++) surface[i] = boot[i];
+      surface[3] = aiueos_desktop_width();
+      surface[4] = aiueos_desktop_height();
+      for (unsigned i = 0; i < sizeof(title1) / 4; i++) surface[32 + i] = title1[i];
+      for (unsigned i = 0; i < sizeof(body1) / 4; i++) surface[160 + i] = body1[i];
+      for (unsigned i = 0; i < sizeof(title2) / 4; i++) surface[64 + i] = title2[i];
+      for (unsigned i = 0; i < sizeof(body2) / 4; i++) surface[224 + i] = body2[i];
+      if (!font) {
+        debug_string("AIUEOS_GUEST_BROWSER_TEXT leftover=font-absent\n");
+        serial_string("AIUEOS_GUEST_BROWSER_TEXT leftover=font-absent\r\n");
+      } else {
+        count = (int64_t)kotoba_aiueos_browser_frame2(sp, 8192,
+                  (uint64_t)(uintptr_t)font, font_length);
+        if (count <= 0) {
+          debug_string("AIUEOS_GUEST_BROWSER_TEXT leftover=frame-refused\n");
+          serial_string("AIUEOS_GUEST_BROWSER_TEXT leftover=frame-refused reason=-");
+          serial_decimal((uint32_t)(-count));
+          serial_string("\r\n");
+        } else if (!aiueos_desktop_present_ops2(surface + 416, (uint64_t)count,
+                                                font, font_length)) {
+          debug_string("AIUEOS_GUEST_BROWSER_TEXT leftover=present-refused\n");
+          serial_string("AIUEOS_GUEST_BROWSER_TEXT leftover=present-refused\r\n");
+        } else {
+          text_hash = aiueos_desktop_colour_census(0x111111U, &text_px);
+          /* On the real display too (virtio-gpu scanout 0). Its own line:
+             the census above is of memory and does not depend on it. */
+          if (aiueos_desktop_show()) {
+            serial_string("AIUEOS_GUEST_BROWSER_SCANOUT_OK resource=7 scanout=0 source=gop-framebuffer\r\n");
+          } else {
+            serial_string("AIUEOS_GUEST_BROWSER_SCANOUT leftover=not-shown\r\n");
+          }
+          if (count == 57 && text_px == 1084 && text_hash == 0xd2e7456aU) {
+            text_ok = 1;
+            debug_string("AIUEOS_GUEST_BROWSER_TEXT_OK\n");
+            serial_string("AIUEOS_GUEST_BROWSER_TEXT_OK ops=57 text-px=1084 hash=d2e7456a font-bytes=");
+          } else {
+            debug_string("AIUEOS_GUEST_BROWSER_TEXT leftover=census-miss\n");
+            serial_string("AIUEOS_GUEST_BROWSER_TEXT leftover=census-miss ops=");
+            serial_decimal((uint32_t)count);
+            serial_string(" text-px=");
+            serial_decimal(text_px);
+            serial_string(" hash=");
+            serial_hex32(text_hash);
+            serial_string(" font-bytes=");
+          }
+          serial_decimal((uint32_t)font_length);
+          serial_string(" surface=");
+          serial_decimal(surface[3]);
+          serial_string("x");
+          serial_decimal(surface[4]);
+          serial_string("\r\n");
+          browser_hold_for_screendump();
+        }
+      }
+      if (text_ok && aiueos_desktop_pointer_ready()) {
+        uint32_t px = (uint32_t)(((uint64_t)aiueos_desktop_pointer_abs_x() * surface[3]) / 32768U);
+        uint32_t py = (uint32_t)(((uint64_t)aiueos_desktop_pointer_abs_y() * surface[4]) / 32768U);
+        int64_t hit = (int64_t)kotoba_aiueos_browser_reduce(sp, 128, 1, px, py);
+        int64_t again = hit > 0 ? (int64_t)kotoba_aiueos_browser_frame2(sp, 8192,
+                                     (uint64_t)(uintptr_t)font, font_length) : 0;
+        if (again > 0 && aiueos_desktop_present_ops2(surface + 416, (uint64_t)again,
+                                                    font, font_length)) {
+          text_hash = aiueos_desktop_colour_census(0x111111U, &text_px);
+          (void)aiueos_desktop_show();
+          if (hit == 1 && again == 57 && text_px == 864 && text_hash == 0x5cd907f9U) {
+            debug_string("AIUEOS_GUEST_BROWSER_TEXT_RAISED_OK\n");
+            serial_string("AIUEOS_GUEST_BROWSER_TEXT_RAISED_OK hit=1 ops=57 text-px=864 hash=5cd907f9\r\n");
+            browser_hold_for_screendump();
+          } else {
+            debug_string("AIUEOS_GUEST_BROWSER_TEXT_RAISED leftover=census-miss\n");
+            serial_string("AIUEOS_GUEST_BROWSER_TEXT_RAISED leftover=census-miss hit=");
+            serial_decimal((uint32_t)hit);
+            serial_string(" text-px=");
+            serial_decimal(text_px);
+            serial_string(" hash=");
+            serial_hex32(text_hash);
+            serial_string("\r\n");
+          }
+        } else {
+          debug_string("AIUEOS_GUEST_BROWSER_TEXT_RAISED leftover=frame-refused\n");
+          serial_string("AIUEOS_GUEST_BROWSER_TEXT_RAISED leftover=frame-refused\r\n");
         }
       }
     }

@@ -862,6 +862,7 @@
 ;; the event.
 (defmethod prepare :aiueos.browser-frame/v1 [contract v] (prepare-regions contract v))
 (defmethod prepare :aiueos.browser-reduce/v1 [contract v] (prepare-regions contract v))
+(defmethod prepare :aiueos.browser-frame2/v1 [contract v] (prepare-regions contract v))
 
 ;; The murakumo relay lines (ADR-0215): HELLO written into a caller's buffer,
 ;; ACK admitted from a received payload. Their expected bytes are the retired

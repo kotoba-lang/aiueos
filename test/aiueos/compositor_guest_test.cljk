@@ -102,3 +102,36 @@
   (testing "the profile boots with the tablet, the frame profile with nothing extra"
     (is (= {"AIUEOS_GUEST_BROWSER" "1"} (guest/extra-env "guest-browser-input")))
     (is (nil? (guest/extra-env "guest-browser-frame")))))
+
+;; Guest browser desktop with text (ADR-0224).
+(def ^:private browser-text-ok
+  "AIUEOS_GUEST_BROWSER_TEXT_OK ops=57 text-px=1084 hash=d2e7456a font-bytes=267208 surface=1280x800\r\n")
+
+(deftest guest-browser-text-classifier
+  (testing "the model's census on a 1280x800 surface is green"
+    (let [r (guest/classify "guest-browser-text" {:serial browser-text-ok})]
+      (is (:green? r))
+      (is (= :guest-browser-text (:reason r)))))
+  (testing "a census that differs from the model is red for that reason"
+    (doseq [[line reason]
+            [["AIUEOS_GUEST_BROWSER_TEXT leftover=census-miss ops=57 text-px=1083 hash=d2e7456a font-bytes=267208 surface=1280x800\r\n" :census-miss]
+             ["AIUEOS_GUEST_BROWSER_TEXT leftover=font-absent\r\n" :font-absent]
+             ["AIUEOS_GUEST_BROWSER_TEXT leftover=frame-refused reason=-6\r\n" :frame-refused]
+             ["AIUEOS_GUEST_BROWSER_TEXT leftover=present-refused\r\n" :present-refused]
+             ["AIUEOS_GUEST_BROWSER_FRAME_OK ops=5 overlap=d8e7ff win1-title=dde2ea surface=1280x800\r\n" :guest-browser-text-absent]]]
+      (let [r (guest/classify "guest-browser-text" {:serial line})]
+        (is (not (:green? r)) line)
+        (is (= reason (:reason r)) line))))
+  (testing "the right numbers on another surface size are not the pinned answer"
+    (is (not (guest/guest-browser-text-ok?
+              "AIUEOS_GUEST_BROWSER_TEXT_OK ops=57 text-px=1084 hash=d2e7456a font-bytes=267208 surface=1024x768\r\n"))))
+  (testing "raised needs the text frame first, then its own census"
+    (is (= :no-text-frame
+           (:reason (guest/classify "guest-browser-text-raised"
+                                    {:serial "AIUEOS_GUEST_BROWSER_TEXT_RAISED_OK hit=1 ops=57 text-px=864 hash=5cd907f9\r\n"}))))
+    (is (:green? (guest/classify "guest-browser-text-raised"
+                                 {:serial (str browser-text-ok
+                                               "AIUEOS_GUEST_BROWSER_TEXT_RAISED_OK hit=1 ops=57 text-px=864 hash=5cd907f9\r\n")})))
+    (is (= :no-pointer-event
+           (:reason (guest/classify "guest-browser-text-raised" {:serial browser-text-ok}))))
+    (is (= {"AIUEOS_GUEST_BROWSER" "1"} (guest/extra-env "guest-browser-text-raised")))))

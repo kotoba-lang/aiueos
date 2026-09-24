@@ -5,6 +5,20 @@ All notable changes to **aiueos** are documented here. The format follows
 
 ## [Unreleased]
 
+### Guest browser desktop draws text (ADR-0224)
+- `os/aiueos/fonts/aiueos-16.fnt`: GNU Unifont 17.0.05 `unifont_jp`, JIS X
+  0208 + ASCII + U+3000 + U+FFFD (7,422 glyphs, 267,208 bytes), SIL OFL 1.1,
+  built by `os/aiueos/scripts/make-font.cljk` (`--check` recompiles and
+  compares). Carried as the fourth initramfs entry
+  (`AIUEOS_INITRAMFS_OK newc entries=4`), copied to `.high_bss`.
+- `os/aiueos/kotoba/browser-frame2.kotoba` (`kotoba_aiueos_browser_frame2`):
+  rects and glyphs in one list, window by window in stack order; font
+  admission, binary-searched lookup, U+FFFD fallback, 8/16 advance, title
+  clip, body wrap at the right inset, bottom cut.
+- C `aiueos_desktop_present_ops2` blits the list; gates `guest-browser-text`
+  and `guest-browser-text-raised` compare the #111111 pixel census with a
+  model of the frame. KIR-oracle contract `browser-frame2-v1`.
+
 ### Guest browser desktop: frame and pointer on KERNEL.ELF (ADR-0223)
 - `os/aiueos/kotoba/browser-frame.kotoba` (`kotoba_aiueos_browser_frame`)
   turns the 128-byte surface state into kotoba-lang/browser's retained draw
