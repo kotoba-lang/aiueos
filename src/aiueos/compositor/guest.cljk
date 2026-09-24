@@ -16,7 +16,8 @@
    "guest-browser-frame" "guest-browser-input"
    "guest-browser-text" "guest-browser-text-raised" "guest-browser-type"
    "guest-browser-preedit" "guest-browser-ime-toggle" "guest-browser-drag"
-   "guest-browser-resize" "guest-browser-event-loop" "guest-browser-caret"])
+   "guest-browser-resize" "guest-browser-event-loop" "guest-browser-caret"
+   "guest-browser-launch"])
 
 (defn gate-cmd
   "SPA-visible evidence command for a guest profile. Not clojure -M."
@@ -690,6 +691,43 @@
       {:green? false :exit 1 :reason :guest-browser-caret-absent
        :leftover [:guest-browser-caret-absent]})))
 
+;; Guest browser launcher and close (ADR-0233): after the caret, the shell
+;; registers apps 1 2 3 and the host sends eight tablet batches -- launcher
+;; button 3, release, window 3's close control, release, the launcher again,
+;; release, window 2's close control, release -- a frame after each. Green needs
+;; all eight frame lines and the OK line: answers 3 0 2 0 3 0 3 0 (the focus
+;; moves to window 2 only when the focused window 3 closes), windows [1 3]
+;; focus 3 at the end, and the chain of os/aiueos/scripts/browser-frame-model.cljk's
+;; eight censuses.
+
+(def ^:private caret-ok-re
+  #"(?m)^AIUEOS_GUEST_BROWSER_CARET_OK keys=5 answers=00000 body=13 caret=412,208 chain=fba4ae02 ops=68 text-px=872 hash=5cacb661")
+
+(def ^:private launch-frame-numbers #{"1" "2" "3" "4" "5" "6" "7" "8"})
+
+(defn guest-browser-launch-result
+  [{:keys [serial qemu-unmeasured?] :as opts}]
+  (let [s (or serial "")
+        frames (set (map second (re-seq #"(?m)^AIUEOS_GUEST_BROWSER_LAUNCH_FRAME n=(\d+) " s)))
+        ok (re-find #"(?m)^AIUEOS_GUEST_BROWSER_LAUNCH_OK events=8 answers=30203030 windows=2 stack=1,3 focus=3 chain=cff6ae89 ops=85 text-px=776 hash=9e714452" s)]
+    (cond
+      qemu-unmeasured? {:green? false :exit 3 :reason :unmeasured :leftover [:unmeasured]}
+      (not (re-find caret-ok-re s))
+      (let [r (guest-browser-caret-result opts)]
+        (assoc r :reason :no-caret :leftover (into [:no-caret] (:leftover r))))
+      (and ok (not= frames launch-frame-numbers))
+      {:green? false :exit 1 :reason :frame-lines-missing :leftover [:frame-lines-missing]}
+      ok
+      {:green? true :exit 0 :reason :guest-browser-launch
+       :leftover [:one-window-per-app :the-last-window-stays :no-app-registry-beyond-the-slots]}
+      (re-find #"(?m)^AIUEOS_GUEST_BROWSER_LAUNCH leftover=events-missing" s)
+      {:green? false :exit 1 :reason :events-missing :leftover [:events-missing]}
+      (re-find #"(?m)^AIUEOS_GUEST_BROWSER_LAUNCH leftover=census-miss" s)
+      {:green? false :exit 1 :reason :census-miss :leftover [:census-miss]}
+      :else
+      {:green? false :exit 1 :reason :guest-browser-launch-absent
+       :leftover [:guest-browser-launch-absent]})))
+
 (defn extra-env
   "Env merged into smoke-qemu-uefi.sh. Default UEFI smoke is empty."
   [profile]
@@ -709,6 +747,9 @@
     ;; ADR-0232: the caret's five frames come after the loop's nine.
     "guest-browser-caret" {"AIUEOS_GUEST_BROWSER" "1"
                            "AIUEOS_QEMU_TIMEOUT" "720"}
+    ;; ADR-0233: the launcher's eight frames come after the caret's five.
+    "guest-browser-launch" {"AIUEOS_GUEST_BROWSER" "1"
+                            "AIUEOS_QEMU_TIMEOUT" "840"}
     "guest-scanout-two" {"AIUEOS_GUEST_SCANOUT_TWO" "1"
                          "AIUEOS_QEMU_TIMEOUT" "90"}
     nil))
@@ -735,6 +776,7 @@
     "guest-browser-resize" (guest-browser-resize-result opts)
     "guest-browser-event-loop" (guest-browser-event-loop-result opts)
     "guest-browser-caret" (guest-browser-caret-result opts)
+    "guest-browser-launch" (guest-browser-launch-result opts)
     {:green? false :exit 3 :reason :unmeasured :leftover [:unmeasured]}))
 
 (defn serial-marker
@@ -759,6 +801,7 @@
     "guest-browser-resize" "AIUEOS_GUEST_BROWSER_RESIZE"
     "guest-browser-event-loop" "AIUEOS_GUEST_BROWSER_LOOP"
     "guest-browser-caret" "AIUEOS_GUEST_BROWSER_CARET"
+    "guest-browser-launch" "AIUEOS_GUEST_BROWSER_LAUNCH"
     nil))
 
 (defn ok-print
@@ -783,4 +826,5 @@
     "guest-browser-resize" "AIUEOS_COMPOSITOR_GUEST_BROWSER_RESIZE_OK"
     "guest-browser-event-loop" "AIUEOS_COMPOSITOR_GUEST_BROWSER_EVENT_LOOP_OK"
     "guest-browser-caret" "AIUEOS_COMPOSITOR_GUEST_BROWSER_CARET_OK"
+    "guest-browser-launch" "AIUEOS_COMPOSITOR_GUEST_BROWSER_LAUNCH_OK"
     nil))

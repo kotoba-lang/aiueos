@@ -18,6 +18,20 @@
 ;; origin is below 0 is stored by browser.surface; the object refuses it (-6)
 ;; and changes nothing, because the u32 surface has no negative coordinate.
 ;;
+;; Launcher and close (ADR-0233). browser.surface has the actions
+;; (`launch-app`, `close-window`) but not the geometry: its window-node has no
+;; close control and its launcher is a DOM row cssom lays out. The geometry
+;; below is the kernel's, written here apart from the object: word 31 is the
+;; app register (bit k-1 = app k); with it not 0, a press on a window at least
+;; 40 wide inside x + w - 24 .. x + w - 8, y + 6 .. y + 22 (inclusive) is
+;; :window/close, and a press on no window inside launcher button k
+;; (x 6 + 102(k-1) .. + 96, y 2 .. 26) of a registered app is :app/launch. Both
+;; clear the capture. What the actions DO is browser.surface's. Printed
+;; differences: the launched window's id is the app's slot k, not open-window's
+;; "w<n>"; a launch of an app whose window is open focuses it (the oracle
+;; opens a second window); a close of the last window is refused (-8); a launch
+;; whose default rect leaves the viewport is refused (-9).
+;;
 ;; --check: exit 0 every generated vector equals the contract's vector of the
 ;; same name (seed, args, expected, expected memory); 1 one differs or is
 ;; missing; 2 could not run. It prints COMPARED<TAB>n; n = 0 is exit 2.
@@ -35,7 +49,7 @@
     (doseq [[i v] (map-indexed vector words)] (.writeUInt32LE buf v (* 4 i)))
     (.toString buf "hex")))
 
-(defn- encode [{:keys [surface input vw vh]}]
+(defn- encode [{:keys [surface input vw vh] :as w}]
   (let [ws (:surface/windows surface)
         cap (:pointer/capture input)]
     (hex (concat [1 (count ws) (:surface/focus surface) vw vh]
@@ -45,7 +59,7 @@
                    :drag [1 (:window-id cap) (first (:offset cap)) (second (:offset cap)) 0 0]
                    :resize (into [2 (:window-id cap)] (concat (:origin cap) (:start-size cap)))
                    [0 0 0 0 0 0])
-                 [0]))))
+                 [(or (:apps w) 0)]))))
 
 (defn- world [focus rects]
   {:surface {:surface/windows (mapv (fn [[id x y w h]] {:window/id id :window/rect [x y w h]}) rects)
@@ -54,14 +68,68 @@
    :vw 1280 :vh 800})
 
 (def two (world 2 [[1 32 32 720 540] [2 96 72 640 480]]))
+(defn- shell [w apps] (assoc w :apps apps))
 (def three (world 3 [[1 32 32 720 540] [2 96 72 640 480] [3 400 300 300 200]]))
 ;; After the kernel's drag (ADR-0229): window 1 raised and moved to (272, 132).
 (def dragged (world 1 [[2 96 72 640 480] [1 272 132 720 540]]))
+;; After the kernel's caret (ADR-0232): window 1 resized, window 2 moved and
+;; raised by the event loop.
+(def caret (world 2 [[1 272 132 240 200] [2 196 172 640 480]]))
 
 (def ^:private kinds {:pointer/down 1 :keyboard/key 2 :pointer/move 3 :pointer/up 4})
 
+(declare step-plain)
+
+(defn- in-close? [[px py] [x y w _h]]
+  (and (>= w 40) (<= (- (+ x w) 24) px (- (+ x w) 8)) (<= (+ y 6) py (+ y 22))))
+
+(defn- button-at [apps [px py]]
+  (when (<= 2 py 26)
+    (first (filter #(and (pos? (bit-and apps (bit-shift-left 1 (dec %))))
+                         (<= (+ 6 (* 102 (dec %))) px (+ 6 (* 102 (dec %)) 96)))
+                   [1 2 3 4]))))
+
+(defn- chrome-step
+  "A press on the kernel's chrome, or nil when the press is not on it."
+  [{:keys [surface input apps vw vh] :as w} point]
+  (let [hit (input/window-at surface point)
+        input' (assoc input :pointer/position point :pointer/capture nil)]
+    (cond
+      (and hit (in-close? point (:window/rect hit)))
+      (if (= 1 (count (:surface/windows surface)))
+        [w -8]
+        (let [s (surface/apply-action surface {:action :window/close :window-id (:window/id hit)})]
+          [(assoc w :surface s :input input') (:surface/focus s)]))
+
+      hit nil
+
+      :else
+      (when-let [k (button-at apps point)]
+        (cond
+          (some #(= k (:window/id %)) (:surface/windows surface))
+          (let [s (surface/apply-action surface {:action :window/focus :window-id k})]
+            [(assoc w :surface s :input input') k])
+
+          (or (< vw 600) (< vh 440)) [w -9]
+
+          :else
+          (let [s (surface/apply-action
+                   (assoc surface :surface/apps [{:app/id k}] :surface/next-window-id 1)
+                   {:action :app/launch :app-id k})
+                s (-> s
+                      (update :surface/windows
+                              (fn [ws] (mapv #(if (= "w1" (:window/id %)) (assoc % :window/id k) %) ws)))
+                      (assoc :surface/focus k))]
+            [(assoc w :surface s :input input') k]))))))
+
 (defn- step
   "Reduce one event through the oracle: [world' answer]."
+  [{:keys [surface input apps] :as w} [t a b]]
+  (or (when (and (= t :pointer/down) (pos? (or apps 0)))
+        (chrome-step w [a b]))
+      (step-plain w [t a b])))
+
+(defn- step-plain
   [{:keys [surface input] :as w} [t a b]]
   (let [ev (if (= t :keyboard/key)
              {:event/type :keyboard/key :key a}
@@ -123,7 +191,36 @@
    [:up-clears-a-resize two [[:pointer/down 752 572] [:pointer/move 800 600]] [:pointer/up 800 600]]
    [:move-after-a-resize-up-resizes-nothing two [[:pointer/down 752 572] [:pointer/move 800 600] [:pointer/up 800 600]] [:pointer/move 900 700]]
    [:the-kernel-resize-clamps dragged [[:pointer/down 984 664] [:pointer/move 784 564]] [:pointer/move 300 200]]
-   [:the-kernel-resize dragged [[:pointer/down 984 664] [:pointer/move 784 564] [:pointer/move 300 200]] [:pointer/move 504 324]]])
+   [:the-kernel-resize dragged [[:pointer/down 984 664] [:pointer/move 784 564] [:pointer/move 300 200]] [:pointer/move 504 324]]
+   ;; ADR-0233: launcher and close. Register 7 = apps 1 2 3. Button 3 is
+   ;; x 210..306; window 1's close control x 728..744, y 38..54 (window 2 is
+   ;; below y 72 there); window 3 of `three` has x 676..692, y 306..322.
+   [:a-launcher-press-opens-the-app-on-top-focused (shell two 7) [] [:pointer/down 258 14]]
+   [:the-launcher-button-top-left-is-inclusive (shell two 7) [] [:pointer/down 210 2]]
+   [:the-launcher-button-bottom-right-is-inclusive (shell two 7) [] [:pointer/down 306 26]]
+   [:one-right-of-a-launcher-button-misses (shell two 7) [] [:pointer/down 307 14]]
+   [:one-below-the-launcher-buttons-misses (shell two 7) [] [:pointer/down 258 27]]
+   [:an-unregistered-app-has-no-button (shell two 7) [] [:pointer/down 360 14]]
+   [:without-a-register-the-launcher-is-bare-desktop two [] [:pointer/down 258 14]]
+   [:launching-an-open-app-raises-and-focuses-it (shell two 7) [] [:pointer/down 54 14]]
+   [:a-launch-clears-a-capture (shell two 7) [[:pointer/down 40 40]] [:pointer/down 258 14]]
+   [:a-fourth-launch-fills-the-stack (shell three 15) [] [:pointer/down 360 14]]
+   [:a-close-of-the-focused-window-focuses-the-top (shell three 7) [] [:pointer/down 684 314]]
+   [:a-close-of-an-unfocused-window-keeps-the-focus (shell two 7) [] [:pointer/down 736 46]]
+   [:a-close-from-the-bottom-of-three-shifts-the-stack (shell three 7) [] [:pointer/down 736 46]]
+   [:the-close-control-top-left-is-inclusive (shell two 7) [] [:pointer/down 728 38]]
+   [:the-close-control-bottom-right-is-inclusive (shell two 7) [] [:pointer/down 744 54]]
+   [:one-right-of-the-close-control-is-titlebar (shell two 7) [] [:pointer/down 745 46]]
+   [:one-left-of-the-close-control-is-titlebar (shell two 7) [] [:pointer/down 727 46]]
+   [:one-below-the-close-control-is-titlebar (shell two 7) [] [:pointer/down 736 55]]
+   [:without-a-register-the-close-control-is-titlebar two [] [:pointer/down 736 46]]
+   [:a-window-under-40-wide-has-no-close-control (shell (world 2 [[1 32 32 720 540] [2 800 100 39 100]]) 7) [] [:pointer/down 820 110]]
+   [:a-close-clears-a-capture (shell two 7) [[:pointer/down 100 80]] [:pointer/down 736 46]]
+   [:closing-the-last-window-is-refused (shell (world 1 [[1 32 32 720 540]]) 7) [] [:pointer/down 736 46]]
+   [:a-launch-past-the-viewport-is-refused (assoc (shell two 7) :vw 599) [] [:pointer/down 258 14]]
+   [:the-kernel-launch (shell caret 7) [] [:pointer/down 258 14]]
+   [:the-kernel-close-of-3 (shell caret 7) [[:pointer/down 258 14] [:pointer/up 258 14]] [:pointer/down 584 94]]
+   [:the-kernel-close-of-2 (shell caret 7) [[:pointer/down 258 14] [:pointer/up 258 14] [:pointer/down 584 94] [:pointer/up 584 94] [:pointer/down 258 14] [:pointer/up 258 14]] [:pointer/down 820 186]]])
 
 (defn vectors []
   (for [[nm w0 before [t a b :as ev]] cases

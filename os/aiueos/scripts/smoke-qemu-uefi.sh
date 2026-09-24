@@ -668,6 +668,32 @@ while time.time() < end:
                     time.sleep(0.05)
                 globals()["caret_sent"] = k + 1
                 log("caret key " + str(k + 1) + " sent")
+        # Launcher and close (ADR-0233): a press on launcher button 3 at
+        # (258, 14), release, a press on window 3's close control at (584, 94),
+        # release, the launcher again, release, a press on window 2's close
+        # control at (820, 186), release -- each after the guest's frame line
+        # for the one before (and its screendump).
+        if typing and b"AIUEOS_GUEST_BROWSER_LAUNCH_GO" in serial_now and globals().get("launch_sent", 0) < 8:
+            k = globals().get("launch_sent", 0)
+            if k == 0 or (b"AIUEOS_GUEST_BROWSER_LAUNCH_FRAME n=%d " % k) in serial_now:
+                if k:
+                    shot = os.path.join(os.path.dirname(path), "guest-browser-launch-%d.ppm" % k)
+                    sock.sendall((json.dumps({"execute": "screendump", "arguments": {"filename": shot}})
+                                  + "\n").encode())
+                    recv_obj()
+                time.sleep(0.5)
+                def press(x, y):
+                    return [{"type": "abs", "data": {"axis": "x", "value": x}},
+                            {"type": "abs", "data": {"axis": "y", "value": y}},
+                            {"type": "btn", "data": {"down": True, "button": "left"}}]
+                up = [{"type": "btn", "data": {"down": False, "button": "left"}}]
+                ev = (press(6605, 574), up, press(14951, 3851), up,
+                      press(6605, 574), up, press(20992, 7619), up)[k]
+                sock.sendall((json.dumps({"execute": "input-send-event", "arguments": {"events": ev}})
+                              + "\n").encode())
+                recv_obj()
+                globals()["launch_sent"] = k + 1
+                log("launch event " + str(k + 1) + " sent")
         i += 1
         # Guest browser desktop (ADR-0224): the screens a person can look at.
         # The kernel holds each desktop frame for a few seconds in this
@@ -689,7 +715,8 @@ while time.time() < end:
                                  (b"AIUEOS_GUEST_BROWSER_DRAG_OK", "guest-browser-drag.ppm"),
                                  (b"AIUEOS_GUEST_BROWSER_RESIZE_OK", "guest-browser-resize.ppm"),
                                  (b"AIUEOS_GUEST_BROWSER_LOOP_OK", "guest-browser-loop.ppm"),
-                                 (b"AIUEOS_GUEST_BROWSER_CARET_OK", "guest-browser-caret.ppm")):
+                                 (b"AIUEOS_GUEST_BROWSER_CARET_OK", "guest-browser-caret.ppm"),
+                                 (b"AIUEOS_GUEST_BROWSER_LAUNCH_OK", "guest-browser-launch.ppm")):
                 if marker in serial_text and not globals().get(name):
                     globals()[name] = True
                     sock.sendall((json.dumps({"execute": "screendump",

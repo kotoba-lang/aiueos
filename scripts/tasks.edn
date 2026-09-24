@@ -261,6 +261,10 @@
  {:cmd ["kbb" "--backend" "sci" "--classpath" "src" "scripts/compositor-guest.cljk" "guest-browser-caret"]
   :doc "Guest browser caret (ADR-0232) on KERNEL.ELF under QEMU: after the event loop, k a and three Backspaces into window 2, a frame after each; every frame ends with the focused window's 1x16 caret, the first Backspace drops the preedit and the next two delete the code points before the caret (browser.text-edit delete-backward); the five censuses chain to browser-frame-model.cljk's."}
 
+ :browser-desktop-launch
+ {:cmd ["kbb" "--backend" "sci" "--classpath" "src" "scripts/compositor-guest.cljk" "guest-browser-launch"]
+  :doc "Guest browser launcher and close (ADR-0233) on KERNEL.ELF under QEMU: after the caret, the shell registers apps 1 2 3 (word 31), browser-frame2 draws a launcher row and a close control per window, and eight tablet batches -- launcher button 3, release, window 3's close control, release, the launcher again, release, window 2's close control, release -- are reduced by browser-reduce (browser.surface launch-app / close-window) with a frame after each; the focus moves to window 2 only when the focused window 3 closes."}
+
  :browser-desktop-guest
  {:cmd ["kbb" "--backend" "sci" "--classpath" "src" "scripts/compositor-guest.cljk" "guest-browser-input"]
   :doc "Guest browser desktop (ADR-0223) on KERNEL.ELF under QEMU: the Kotoba frame is presented and sampled, then a real virtio-tablet press is reduced by Kotoba to focus-and-raise and the redrawn frame is sampled again. Exit 3 = QEMU/firmware/serial unanswered, not a pass."}

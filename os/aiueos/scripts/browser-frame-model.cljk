@@ -1,5 +1,5 @@
 #!/usr/bin/env kbb
-;; A model of the guest browser desktop frame (ADR-0224 .. 0232), written
+;; A model of the guest browser desktop frame (ADR-0224 .. 0233), written
 ;; apart from browser-frame2.kotoba and from the C blit, so a gate's known
 ;; answers do not come from the thing the gate measures.
 ;;
@@ -84,16 +84,42 @@
               (recur (rest cps) (+ x gw) y ops)))))
       {:ops ops :x x :y y})))
 
+(defn- launcher
+  "ADR-0233: with an app register (:apps, bit k-1 = app k), the launcher row
+  under every window -- #edf0f5 across the top 28 px -- and one #e4e8ef
+  96 x 24 button per registered app at x 6 + 102(k-1), y 2, its title
+  (:titles k) from (x + 6, 6), one line, clipped at x + 90."
+  [{:keys [vw apps titles]}]
+  (when (pos? (or apps 0))
+    (into [[:rect 0 0 vw 28 0xedf0f5]]
+          (mapcat (fn [k]
+                    (let [x (+ 6 (* 102 (dec k)))]
+                      (when (pos? (bit-and apps (bit-shift-left 1 (dec k))))
+                        (into [[:rect x 2 96 24 0xe4e8ef]]
+                              (:ops (lay-line {:x (+ x 6) :y 6 :left (+ x 6) :right (+ x 90)
+                                               :bottom 28 :wrap? false}
+                                              (take 32 (get titles k))))))))
+                  [1 2 3 4]))))
+
 (defn frame
   "Ops for a scene: {:vw :vh :focus :stack [{:id :x :y :w :h :title :body}]
-  :composition [cp ...]} (stack bottom first)."
-  [{:keys [vw vh focus stack composition]}]
-  (into [[:rect 0 0 vw vh 0xf5f6f8]]
+  :composition [cp ...] :apps register :titles {k [cp ...]}} (stack bottom first)."
+  [{:keys [vw vh focus stack composition apps] :as scene}]
+  (into (into [[:rect 0 0 vw vh 0xf5f6f8]] (launcher scene))
         (mapcat
          (fn [{:keys [id x y w h title body]}]
            (let [f? (= id focus)
-                 t (lay-line {:x (+ x 8) :y (+ y 6) :left (+ x 8) :right (- (+ x w) 8)
+                 ;; ADR-0233: a close control in windows at least 40 wide
+                 ;; when there is an app register; the title then stops 4 px
+                 ;; before it.
+                 chrome? (and (pos? (or apps 0)) (>= w 40))
+                 t (lay-line {:x (+ x 8) :y (+ y 6) :left (+ x 8)
+                              :right (- (+ x w) (if chrome? 28 8))
                               :bottom (+ y 28) :wrap? false} (take 32 title))
+                 [xi xw] (glyph 215)
+                 close (when chrome?
+                         [[:rect (- (+ x w) 24) (+ y 6) 16 16 0xe4e8ef]
+                          [:glyph (+ (- (+ x w) 24) (quot (- 16 xw) 2)) (+ y 6) xi xw]])
                  b (lay-line {:x (+ x 8) :y (+ y 36) :left (+ x 8) :right (- (+ x w) 8)
                               :bottom (- (+ y h) 8) :wrap? true} (take 64 body))
                  c (when (and f? (seq composition))
@@ -109,7 +135,7 @@
                          [[:rect cx cy 1 16 ink]])]
              (concat [[:rect x y w h (if f? 0xffffff 0xeef1f5)]
                       [:rect x y w 28 (if f? 0xd8e7ff 0xdde2ea)]]
-                     (:ops t) (:ops b) (:ops c) caret))))
+                     (:ops t) close (:ops b) (:ops c) caret))))
         stack))
 
 ;; --- paint and census -----------------------------------------------------------
@@ -214,6 +240,29 @@
    ["backspace" {:vw 1280 :vh 800 :focus 2 :stack [w1k w2m]}]
    ["backspace" {:vw 1280 :vh 800 :focus 2 :stack [w1k (update w2m :body pop)]}]])
 
+;; ADR-0233: launcher and close. After the caret, the host registers apps 1 2
+;; 3 (window 3's title メモ and body ランチャーから開きました are its slot's)
+;; and sends eight tablet events: a press on launcher button 3 at (258, 14),
+;; release, a press on window 3's close control at (584, 94), release, the
+;; launcher again, release, a press on window 2's close control at (820, 186),
+;; release. A frame after each.
+(def ^:private w2c (update w2m :body pop))
+(def ^:private w3 {:id 3 :x 80 :y 80 :w 520 :h 360
+                   :title [12513 12514]
+                   :body [12521 12531 12481 12515 12540 12363 12425 38283 12365 12414 12375 12383]})
+(def ^:private shell {:vw 1280 :vh 800 :apps 7
+                      :titles {1 (:title w1) 2 (:title w2) 3 (:title w3)}})
+
+(def launch-frames
+  [["launch" (assoc shell :focus 3 :stack [w1k w2c w3])]
+   ["up" (assoc shell :focus 3 :stack [w1k w2c w3])]
+   ["close-3" (assoc shell :focus 2 :stack [w1k w2c])]
+   ["up" (assoc shell :focus 2 :stack [w1k w2c])]
+   ["launch" (assoc shell :focus 3 :stack [w1k w2c w3])]
+   ["up" (assoc shell :focus 3 :stack [w1k w2c w3])]
+   ["close-2" (assoc shell :focus 3 :stack [w1k w3])]
+   ["up" (assoc shell :focus 3 :stack [w1k w3])]])
+
 (defn chain
   "FNV-1a over each frame's census hash (u32, little-endian), in order -- what
   the kernel folds as it presents the loop's frames."
@@ -266,5 +315,14 @@
                                  c))
                              caret-frames))]
     (println (str "caret frames=" (count cs) " ops=" (apply str (interpose "," (map :ops cs)))
+                  " chain=" (chain (map #(js/parseInt (:hash %) 16) cs))
+                  " last-px=" (:text-px (peek cs)) " last-hash=" (:hash (peek cs)))))
+  (let [cs (vec (map-indexed (fn [i [ev scene]]
+                               (let [c (census (frame scene))]
+                                 (println (str "launch-frame n=" (inc i) " " ev " ops=" (:ops c)
+                                               " text-px=" (:text-px c) " hash=" (:hash c)))
+                                 c))
+                             launch-frames))]
+    (println (str "launch frames=" (count cs) " ops=" (apply str (interpose "," (map :ops cs)))
                   " chain=" (chain (map #(js/parseInt (:hash %) 16) cs))
                   " last-px=" (:text-px (peek cs)) " last-hash=" (:hash (peek cs)))))))
