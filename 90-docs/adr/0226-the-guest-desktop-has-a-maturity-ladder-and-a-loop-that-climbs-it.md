@@ -44,6 +44,20 @@ Progress on the desktop is one number with a reproducible source, and each
 step lands with its own gate. What the ladder does not contain is not
 claimed: P5 and the dictionary stay open until a person acts.
 
+## Ladder changes
+
+- **2026-09-25, extended to 22 floors.** With 13 of 16 closed and the rest
+  blocked or waiting on a person, the owner asked to continue: six browser
+  behaviours the kernel desktop lacks were added (pointer cursor, focus
+  cycle, scroll, selection, clipboard through the broker, damage-only
+  present). Maturity went from 13/16 to 13/22 by the denominator, not by
+  anything reopening.
+- **2026-09-25, the dictionary is generated in-repo** (owner decision): from
+  Unicode Unihan kJapaneseOn / kJapaneseKun (Unicode License v3), not from
+  SKK (GPL). It is no longer a `:needs-a-human` floor.
+- **`:browser-component` is `:blocked-by` amu** (measured walls in the floor
+  entry); amu work on those walls runs as a separate task.
+
 ## Measurement
 
 At adoption (2026-09-24, `origin/main` after ADR-0225): the tick counts

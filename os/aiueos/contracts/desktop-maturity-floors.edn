@@ -76,7 +76,32 @@
      "browser.surface requires cssom.layout and kotoba.wasm.dom (DOM data with string colours); neither has been compiled for a native target"]
     :reproduce "in an amu checkout at origin/main after npm ci: bin/amu compile <browser>/src/browser/{text_edit,input,surface}.cljk --target x86_64-aiueos-kernel-v1 --output /tmp/x.o, then again with --source-path <browser>/src --unpinned; exit 65 and the messages above"
     :until "amu admits browser.surface + browser.input + browser.text-edit unchanged (source as the hosted engine runs it) for x86_64-aiueos-kernel-v1: `amu check src/browser/surface.cljk --source-path src` exits 0"}}
-  {:id :dictionary :gate nil :needs-a-human "a larger kana-kanji dictionary needs a license decision (SKK dictionaries are GPL)"
-   :goal "a kana-kanji dictionary beyond the oracle's three readings"}
+  ;; Owner decision 2026-09-25: the dictionary is generated in-repo, not
+  ;; taken from SKK (GPL). The source is Unicode's Unihan readings, which
+  ;; carry the Unicode License v3.
+  {:id :dictionary :gate "guest-browser-dictionary"
+   :goal "Space converts a reading of any length through a kana-kanji dictionary generated in-repo from Unicode Unihan kJapaneseOn / kJapaneseKun (Unicode License v3) for every kanji the desktop font carries; the dictionary travels in the initramfs like the font, the hosted IME oracle reads the same generated file, and the candidates' order is a rule written in the generator"
+   :why "the oracle's three readings (か ひ あ) make conversion a demonstration, not an input method; SKK dictionaries are GPL"}
+  ;; Extended 2026-09-25 (owner: continue past 13/16). Each floor below is
+  ;; a browser behaviour the kernel desktop does not have yet; the order is
+  ;; the order the loop takes them.
+  {:id :pointer-cursor :gate "guest-browser-cursor"
+   :goal "the pointer is drawn every frame at the tablet position (a sprite laid out by Kotoba as ops, over everything), and moves with the pointer in the event loop"
+   :why "the desktop takes a pointer it never shows"}
+  {:id :focus-cycle :gate "guest-browser-focus-cycle"
+   :goal "a window-manager shortcut (Alt+Tab, evdev 56 + 15) focuses and raises the next window in stack order, as a :window/focus action through browser-reduce; the key does not reach the body"
+   :why "keyboard-only use cannot change the focused window"}
+  {:id :scroll :gate "guest-browser-scroll"
+   :goal "a wheel event over a window scrolls its body (browser.surface scroll-window: :window/scroll clamped at 0); the frame clips the scrolled body to the window"
+   :why "a body longer than its window is cut, not reachable"}
+  {:id :selection :gate "guest-browser-selection"
+   :goal "Shift+Left / Shift+Right extend a selection from the caret in the focused body (browser.text-edit move-caret with :extend?), drawn as a highlight behind the glyphs; Backspace deletes the selection"
+   :why "text editing stops at the caret"}
+  {:id :clipboard :gate "guest-browser-clipboard"
+   :goal "Ctrl+C copies the selection and Ctrl+V pastes it into the focused body only after the permission broker (broker-admit, ADR-0096) admits :clipboard; a refused grant pastes nothing"
+   :why "browser.desktop-backend brokers clipboard; the kernel desktop has no path to it"}
+  {:id :damage-present :gate "guest-browser-damage"
+   :goal "a frame transfers and flushes only the rectangle that changed since the last one (virtio-gpu TRANSFER_TO_HOST_2D / RESOURCE_FLUSH with the damage rect), and the display is pixel-identical to a full present"
+   :why "every event re-sends 1280 x 800 x 4 bytes"}
   {:id :p5 :gate nil :needs-a-human "a real machine with an aiueos image; QEMU is not P5"
    :goal "the same desktop on physical hardware"}]}
