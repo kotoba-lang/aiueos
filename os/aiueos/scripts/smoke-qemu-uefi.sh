@@ -596,6 +596,23 @@ while time.time() < end:
                 recv_obj()
                 time.sleep(0.3)
             log("dragged 6 pointer events at DRAG_GO")
+        # The resize (ADR-0230): press at (984, 664) -- window 1's resize
+        # handle after the drag -- moves to (784, 564) (300, 200) (504, 324),
+        # release, one move after it. Same batching as the drag.
+        if typing and b"AIUEOS_GUEST_BROWSER_RESIZE_GO" in serial_now and not globals().get("resize_sent"):
+            globals()["resize_sent"] = True
+            def at(x, y):
+                return [{"type": "abs", "data": {"axis": "x", "value": x}},
+                        {"type": "abs", "data": {"axis": "y", "value": y}}]
+            for b in (at(25191, 27198) + [{"type": "btn", "data": {"down": True, "button": "left"}}],
+                      at(20071, 23102), at(7680, 8192), at(12903, 13272),
+                      [{"type": "btn", "data": {"down": False, "button": "left"}}],
+                      at(23040, 28672)):
+                sock.sendall((json.dumps({"execute": "input-send-event", "arguments": {"events": b}})
+                              + "\n").encode())
+                recv_obj()
+                time.sleep(0.3)
+            log("resized with 6 pointer events at RESIZE_GO")
         i += 1
         # Guest browser desktop (ADR-0224): the screens a person can look at.
         # The kernel holds each desktop frame for a few seconds in this
@@ -614,7 +631,8 @@ while time.time() < end:
                                  (b"AIUEOS_GUEST_BROWSER_PREEDIT_SHOWN", "guest-browser-preedit.ppm"),
                                  (b"AIUEOS_GUEST_BROWSER_PREEDIT_OK", "guest-browser-preedit-committed.ppm"),
                                  (b"AIUEOS_GUEST_BROWSER_IME_TOGGLE_OK", "guest-browser-ime-toggle.ppm"),
-                                 (b"AIUEOS_GUEST_BROWSER_DRAG_OK", "guest-browser-drag.ppm")):
+                                 (b"AIUEOS_GUEST_BROWSER_DRAG_OK", "guest-browser-drag.ppm"),
+                                 (b"AIUEOS_GUEST_BROWSER_RESIZE_OK", "guest-browser-resize.ppm")):
                 if marker in serial_text and not globals().get(name):
                     globals()[name] = True
                     sock.sendall((json.dumps({"execute": "screendump",

@@ -1,6 +1,6 @@
 #!/usr/bin/env kbb
 ;; The expected answers of os/aiueos/contracts/browser-reduce-v1.edn's success
-;; vectors, taken from kotoba-lang/browser itself (ADR-0223, ADR-0229):
+;; vectors, taken from kotoba-lang/browser itself (ADR-0223, 0229, 0230):
 ;; browser.input/actions-for-event reduces each event against the input state
 ;; (pointer capture) and browser.surface/apply-actions applies the actions.
 ;; Neither browser-reduce.kotoba nor the kernel's C is consulted.
@@ -11,7 +11,8 @@
 ;;
 ;; The 128-byte state is encoded as browser-reduce.kotoba's header says: words
 ;; 0..4 abi n focus vw vh, 5..24 id x y w h per window bottom first, 25 capture
-;; kind (0 none, 1 drag), 26 captured id, 27 28 the capture offset.
+;; kind (0 none, 1 drag, 2 resize), 26 captured id, 27 28 the drag offset or
+;; the resize origin, 29 30 the resize's start size.
 ;;
 ;; One deliberate difference, and it is printed, not hidden: a move whose new
 ;; origin is below 0 is stored by browser.surface; the object refuses it (-6)
@@ -36,15 +37,15 @@
 
 (defn- encode [{:keys [surface input vw vh]}]
   (let [ws (:surface/windows surface)
-        cap (:pointer/capture input)
-        drag? (= :drag (:kind cap))]
+        cap (:pointer/capture input)]
     (hex (concat [1 (count ws) (:surface/focus surface) vw vh]
                  (mapcat (fn [w] (cons (:window/id w) (:window/rect w))) ws)
                  (repeat (* 5 (- 4 (count ws))) 0)
-                 (if drag?
-                   [1 (:window-id cap) (first (:offset cap)) (second (:offset cap))]
-                   [0 0 0 0])
-                 [0 0 0]))))
+                 (case (:kind cap)
+                   :drag [1 (:window-id cap) (first (:offset cap)) (second (:offset cap)) 0 0]
+                   :resize (into [2 (:window-id cap)] (concat (:origin cap) (:start-size cap)))
+                   [0 0 0 0 0 0])
+                 [0]))))
 
 (defn- world [focus rects]
   {:surface {:surface/windows (mapv (fn [[id x y w h]] {:window/id id :window/rect [x y w h]}) rects)
@@ -54,6 +55,8 @@
 
 (def two (world 2 [[1 32 32 720 540] [2 96 72 640 480]]))
 (def three (world 3 [[1 32 32 720 540] [2 96 72 640 480] [3 400 300 300 200]]))
+;; After the kernel's drag (ADR-0229): window 1 raised and moved to (272, 132).
+(def dragged (world 1 [[2 96 72 640 480] [1 272 132 720 540]]))
 
 (def ^:private kinds {:pointer/down 1 :keyboard/key 2 :pointer/move 3 :pointer/up 4})
 
@@ -100,7 +103,27 @@
    [:move-without-a-capture-moves-nothing two [] [:pointer/move 500 500]]
    [:up-clears-the-capture two [[:pointer/down 40 40] [:pointer/move 140 90]] [:pointer/up 140 90]]
    [:move-after-up-moves-nothing two [[:pointer/down 40 40] [:pointer/move 140 90] [:pointer/up 140 90]] [:pointer/move 400 400]]
-   [:the-kernel-drag two [[:pointer/down 60 50] [:pointer/down 60 50] [:pointer/move 140 90] [:pointer/move 220 120]] [:pointer/move 300 150]]])
+   [:the-kernel-drag two [[:pointer/down 60 50] [:pointer/down 60 50] [:pointer/move 140 90] [:pointer/move 220 120]] [:pointer/move 300 150]]
+   ;; ADR-0230: the resize capture. Window 1's handle is x 736..752, y 556..572.
+   [:a-handle-press-captures-a-resize two [] [:pointer/down 745 565]]
+   [:the-handle-corner-is-inclusive two [] [:pointer/down 736 556]]
+   [:one-left-of-the-handle-captures-nothing two [] [:pointer/down 735 572]]
+   [:one-above-the-handle-captures-nothing two [] [:pointer/down 752 555]]
+   [:a-titlebar-press-replaces-a-resize two [[:pointer/down 752 572]] [:pointer/down 40 40]]
+   [:a-handle-press-replaces-a-drag two [[:pointer/down 40 40]] [:pointer/down 752 572]]
+   [:resize-grows-by-the-travel two [[:pointer/down 752 572]] [:pointer/move 800 600]]
+   [:second-resize-move-is-from-the-press two [[:pointer/down 752 572] [:pointer/move 800 600]] [:pointer/move 700 500]]
+   [:width-121-is-not-clamped two [[:pointer/down 752 572]] [:pointer/move 153 572]]
+   [:width-120-exactly two [[:pointer/down 752 572]] [:pointer/move 152 572]]
+   [:width-119-clamps-to-120 two [[:pointer/down 752 572]] [:pointer/move 151 572]]
+   [:height-81-is-not-clamped two [[:pointer/down 752 572]] [:pointer/move 752 113]]
+   [:height-79-clamps-to-80 two [[:pointer/down 752 572]] [:pointer/move 752 111]]
+   [:travel-past-the-size-clamps-not-wraps two [[:pointer/down 752 572]] [:pointer/move 0 0]]
+   [:resizing-window-2-leaves-window-1 two [[:pointer/down 730 545]] [:pointer/move 830 645]]
+   [:up-clears-a-resize two [[:pointer/down 752 572] [:pointer/move 800 600]] [:pointer/up 800 600]]
+   [:move-after-a-resize-up-resizes-nothing two [[:pointer/down 752 572] [:pointer/move 800 600] [:pointer/up 800 600]] [:pointer/move 900 700]]
+   [:the-kernel-resize-clamps dragged [[:pointer/down 984 664] [:pointer/move 784 564]] [:pointer/move 300 200]]
+   [:the-kernel-resize dragged [[:pointer/down 984 664] [:pointer/move 784 564] [:pointer/move 300 200]] [:pointer/move 504 324]]])
 
 (defn vectors []
   (for [[nm w0 before [t a b :as ev]] cases

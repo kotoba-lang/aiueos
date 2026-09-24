@@ -3900,6 +3900,7 @@ qwen_runtime_boot_complete:
                     if (toggle_ok) {
                       uint32_t ev = 0, off = 0, ax = 0, ay = 0;
                       int64_t dragged;
+                      int drag_ok = 0;
                       static const int64_t want[6] = {1, 1, 1, 1, 0, 0};
                       static const uint32_t kinds[6] = {1, 3, 3, 3, 4, 3};
                       (void)aiueos_tablet_drain(4000000U);
@@ -3927,6 +3928,7 @@ qwen_runtime_boot_complete:
                             text_px == 1931 && text_hash == 0x6771f3feU) {
                           debug_string("AIUEOS_GUEST_BROWSER_DRAG_OK\n");
                           serial_string("AIUEOS_GUEST_BROWSER_DRAG_OK events=6 answers=111100 from=32,32 to=272,132 capture=0 ops=67 text-px=1931 hash=6771f3fe\r\n");
+                          drag_ok = 1;
                         } else {
                           debug_string("AIUEOS_GUEST_BROWSER_DRAG leftover=census-miss\n");
                           serial_string("AIUEOS_GUEST_BROWSER_DRAG leftover=census-miss off=");
@@ -3957,6 +3959,85 @@ qwen_runtime_boot_complete:
                         serial_string(" frame=");
                         serial_decimal((uint32_t)(dragged < 0 ? -dragged : dragged));
                         serial_string("\r\n");
+                      }
+                      /* The resize (ADR-0230). The host presses the tablet at
+                         (984, 664) -- inside window 1's 16 px resize handle
+                         after the drag -- moves to (784, 564) (300, 200)
+                         (504, 324), releases, and moves once more to
+                         (900, 700). Kotoba `kotoba_aiueos_browser_reduce`
+                         decides the capture and the size (browser.input's
+                         :resize, clamped at 120 x 80); C counts the answers
+                         against the vectors' 1 1 1 1 0 0, reads window 1's size
+                         after the third event (the clamp) and after the last.
+                         The census is os/aiueos/scripts/browser-frame-model.cljk's. */
+                      if (drag_ok) {
+                        uint32_t rev = 0, roff = 0, cw = 0, ch = 0;
+                        int64_t resized;
+                        (void)aiueos_tablet_drain(4000000U);
+                        serial_string("AIUEOS_GUEST_BROWSER_RESIZE_GO events=6\r\n");
+                        while (rev < 6) {
+                          uint32_t kind = aiueos_tablet_next(60000000U, &ax, &ay);
+                          uint32_t px, py;
+                          int64_t r;
+                          if (!kind) break;
+                          px = (uint32_t)(((uint64_t)ax * surface[3]) / 32768U);
+                          py = (uint32_t)(((uint64_t)ay * surface[4]) / 32768U);
+                          r = (int64_t)kotoba_aiueos_browser_reduce(sp, 128, kind, px, py);
+                          if (kind != kinds[rev] || r != want[rev]) roff++;
+                          if (rev == 2) { cw = surface[13]; ch = surface[14]; }
+                          rev++;
+                        }
+                        resized = (int64_t)kotoba_aiueos_browser_frame2(sp, 8192,
+                                    (uint64_t)(uintptr_t)font, font_length);
+                        if (rev == 6 && resized > 0 &&
+                            aiueos_desktop_present_ops2(surface + 480, (uint64_t)resized, font, font_length)) {
+                          text_hash = aiueos_desktop_colour_census(0x111111U, &text_px);
+                          (void)aiueos_desktop_show();
+                          /* stack [2 1]: window 1 is words 10..14 */
+                          if (roff == 0 && cw == 120 && ch == 80 && surface[10] == 1 &&
+                              surface[11] == 272 && surface[12] == 132 &&
+                              surface[13] == 240 && surface[14] == 200 && surface[25] == 0 &&
+                              resized == 67 && text_px == 1931 &&
+                              text_hash == 0x36069e52U) {
+                            debug_string("AIUEOS_GUEST_BROWSER_RESIZE_OK\n");
+                            serial_string("AIUEOS_GUEST_BROWSER_RESIZE_OK events=6 answers=111100 clamp=120x80 size=240x200 at=272,132 capture=0 ops=67 text-px=1931 hash=36069e52\r\n");
+                          } else {
+                            debug_string("AIUEOS_GUEST_BROWSER_RESIZE leftover=census-miss\n");
+                            serial_string("AIUEOS_GUEST_BROWSER_RESIZE leftover=census-miss off=");
+                            serial_decimal(roff);
+                            serial_string(" clamp=");
+                            serial_decimal(cw);
+                            serial_string("x");
+                            serial_decimal(ch);
+                            serial_string(" size=");
+                            serial_decimal(surface[13]);
+                            serial_string("x");
+                            serial_decimal(surface[14]);
+                            serial_string(" at=");
+                            serial_decimal(surface[11]);
+                            serial_string(",");
+                            serial_decimal(surface[12]);
+                            serial_string(" capture=");
+                            serial_decimal(surface[25]);
+                            serial_string(" ops=");
+                            serial_decimal((uint32_t)resized);
+                            serial_string(" text-px=");
+                            serial_decimal(text_px);
+                            serial_string(" hash=");
+                            serial_hex32(text_hash);
+                            serial_string("\r\n");
+                          }
+                          browser_hold_for_screendump();
+                        } else {
+                          debug_string("AIUEOS_GUEST_BROWSER_RESIZE leftover=events-missing\n");
+                          serial_string("AIUEOS_GUEST_BROWSER_RESIZE leftover=events-missing events=");
+                          serial_decimal(rev);
+                          serial_string(" off=");
+                          serial_decimal(roff);
+                          serial_string(" frame=");
+                          serial_decimal((uint32_t)(resized < 0 ? -resized : resized));
+                          serial_string("\r\n");
+                        }
                       }
                     }
                   }
