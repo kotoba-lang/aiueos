@@ -105,7 +105,7 @@
 
 ;; Guest browser desktop with text (ADR-0224).
 (def ^:private browser-text-ok
-  "AIUEOS_GUEST_BROWSER_TEXT_OK ops=57 text-px=1084 hash=d2e7456a font-bytes=267208 surface=1280x800\r\n")
+  "AIUEOS_GUEST_BROWSER_TEXT_OK ops=58 text-px=1100 hash=4ab25516 font-bytes=267208 surface=1280x800\r\n")
 
 (deftest guest-browser-text-classifier
   (testing "the model's census on a 1280x800 surface is green"
@@ -124,14 +124,14 @@
         (is (= reason (:reason r)) line))))
   (testing "the right numbers on another surface size are not the pinned answer"
     (is (not (guest/guest-browser-text-ok?
-              "AIUEOS_GUEST_BROWSER_TEXT_OK ops=57 text-px=1084 hash=d2e7456a font-bytes=267208 surface=1024x768\r\n"))))
+              "AIUEOS_GUEST_BROWSER_TEXT_OK ops=58 text-px=1100 hash=4ab25516 font-bytes=267208 surface=1024x768\r\n"))))
   (testing "raised needs the text frame first, then its own census"
     (is (= :no-text-frame
            (:reason (guest/classify "guest-browser-text-raised"
-                                    {:serial "AIUEOS_GUEST_BROWSER_TEXT_RAISED_OK hit=1 ops=57 text-px=864 hash=5cd907f9\r\n"}))))
+                                    {:serial "AIUEOS_GUEST_BROWSER_TEXT_RAISED_OK hit=1 ops=58 text-px=880 hash=ca6c2709\r\n"}))))
     (is (:green? (guest/classify "guest-browser-text-raised"
                                  {:serial (str browser-text-ok
-                                               "AIUEOS_GUEST_BROWSER_TEXT_RAISED_OK hit=1 ops=57 text-px=864 hash=5cd907f9\r\n")})))
+                                               "AIUEOS_GUEST_BROWSER_TEXT_RAISED_OK hit=1 ops=58 text-px=880 hash=ca6c2709\r\n")})))
     (is (= :no-pointer-event
            (:reason (guest/classify "guest-browser-text-raised" {:serial browser-text-ok}))))
     (is (= {"AIUEOS_GUEST_BROWSER" "1"} (guest/extra-env "guest-browser-text-raised")))))
@@ -139,18 +139,18 @@
 ;; Guest browser typing (ADR-0225).
 (def ^:private raised-ok
   (str browser-text-ok
-       "AIUEOS_GUEST_BROWSER_TEXT_RAISED_OK hit=1 ops=57 text-px=864 hash=5cd907f9\r\n"))
+       "AIUEOS_GUEST_BROWSER_TEXT_RAISED_OK hit=1 ops=58 text-px=880 hash=ca6c2709\r\n"))
 
 (deftest guest-browser-type-classifier
   (testing "the IME's commit, redrawn, matches the model"
     (let [r (guest/classify "guest-browser-type"
-                            {:serial (str raised-ok "AIUEOS_GUEST_BROWSER_TYPE_OK presses=13 committed=5 ops=62 text-px=1052 hash=7caecfe8\r\n")})]
+                            {:serial (str raised-ok "AIUEOS_GUEST_BROWSER_TYPE_OK presses=13 committed=5 ops=63 text-px=1068 hash=b741bf74\r\n")})]
       (is (:green? r))
       (is (= :guest-browser-type (:reason r)))))
   (testing "typing needs the raised text frame first"
     (is (= :no-raised-text-frame
            (:reason (guest/classify "guest-browser-type"
-                                    {:serial "AIUEOS_GUEST_BROWSER_TYPE_OK presses=13 committed=5 ops=62 text-px=1052 hash=7caecfe8\r\n"})))))
+                                    {:serial "AIUEOS_GUEST_BROWSER_TYPE_OK presses=13 committed=5 ops=63 text-px=1068 hash=b741bf74\r\n"})))))
   (testing "each named red keeps its reason"
     (doseq [[line reason]
             [["AIUEOS_GUEST_BROWSER_TYPE leftover=keys-missing presses=4\r\n" :keys-missing]
@@ -165,16 +165,16 @@
 
 ;; Guest browser preedit (ADR-0227).
 (def ^:private typed-ok
-  (str raised-ok "AIUEOS_GUEST_BROWSER_TYPE_OK presses=13 committed=5 ops=62 text-px=1052 hash=7caecfe8\r\n"))
+  (str raised-ok "AIUEOS_GUEST_BROWSER_TYPE_OK presses=13 committed=5 ops=63 text-px=1068 hash=b741bf74\r\n"))
 
 (deftest guest-browser-preedit-classifier
   (testing "the ruled composition and its commit, both matching the model, are green"
     (is (:green? (guest/classify "guest-browser-preedit"
-                                 {:serial (str typed-ok "AIUEOS_GUEST_BROWSER_PREEDIT_OK shown-ops=66 shown-px=1130 shown-hash=c9f528cb committed=2 ops=64 text-px=1112 hash=63e3fe67\r\n")}))))
+                                 {:serial (str typed-ok "AIUEOS_GUEST_BROWSER_PREEDIT_OK shown-ops=67 shown-px=1146 shown-hash=04d93a5f committed=2 ops=65 text-px=1128 hash=e67d620b\r\n")}))))
   (testing "preedit needs the typing frame first"
     (is (= :no-typing-frame
            (:reason (guest/classify "guest-browser-preedit"
-                                    {:serial "AIUEOS_GUEST_BROWSER_PREEDIT_OK shown-ops=66 shown-px=1130 shown-hash=c9f528cb committed=2 ops=64 text-px=1112 hash=63e3fe67\r\n"})))))
+                                    {:serial "AIUEOS_GUEST_BROWSER_PREEDIT_OK shown-ops=67 shown-px=1146 shown-hash=04d93a5f committed=2 ops=65 text-px=1128 hash=e67d620b\r\n"})))))
   (testing "named reds"
     (doseq [[line reason] [["AIUEOS_GUEST_BROWSER_PREEDIT leftover=keys-missing presses=1\r\n" :keys-missing]
                            ["AIUEOS_GUEST_BROWSER_PREEDIT leftover=census-miss stray=0 committed=2 ops=64 text-px=1052 hash=7caecfe8\r\n" :census-miss]
@@ -188,16 +188,16 @@
 
 ;; Guest browser IME toggle (ADR-0228).
 (def ^:private preedit-ok
-  (str typed-ok "AIUEOS_GUEST_BROWSER_PREEDIT_OK shown-ops=66 shown-px=1130 shown-hash=c9f528cb committed=2 ops=64 text-px=1112 hash=63e3fe67\r\n"))
+  (str typed-ok "AIUEOS_GUEST_BROWSER_PREEDIT_OK shown-ops=67 shown-px=1146 shown-hash=04d93a5f committed=2 ops=65 text-px=1128 hash=e67d620b\r\n"))
 
 (deftest guest-browser-ime-toggle-classifier
   (testing "latin while off, kana once back on, matching the model, is green"
     (is (:green? (guest/classify "guest-browser-ime-toggle"
-                                 {:serial (str preedit-ok "AIUEOS_GUEST_BROWSER_IME_TOGGLE_OK presses=7 off=0 latin=2 committed=1 ime=1 ops=67 text-px=1189 hash=4aaf87ee\r\n")}))))
+                                 {:serial (str preedit-ok "AIUEOS_GUEST_BROWSER_IME_TOGGLE_OK presses=7 off=0 latin=2 committed=1 ime=1 ops=68 text-px=1205 hash=f516238a\r\n")}))))
   (testing "the toggle needs the preedit frame first"
     (is (= :no-preedit-frame
            (:reason (guest/classify "guest-browser-ime-toggle"
-                                    {:serial (str typed-ok "AIUEOS_GUEST_BROWSER_IME_TOGGLE_OK presses=7 off=0 latin=2 committed=1 ime=1 ops=67 text-px=1189 hash=4aaf87ee\r\n")})))))
+                                    {:serial (str typed-ok "AIUEOS_GUEST_BROWSER_IME_TOGGLE_OK presses=7 off=0 latin=2 committed=1 ime=1 ops=68 text-px=1205 hash=f516238a\r\n")})))))
   (testing "named reds"
     (doseq [[line reason] [["AIUEOS_GUEST_BROWSER_IME_TOGGLE leftover=keys-missing presses=3\r\n" :keys-missing]
                            ["AIUEOS_GUEST_BROWSER_IME_TOGGLE leftover=census-miss miss=2 off=1 latin=0 committed=1 ime=0 ops=67 text-px=1189 hash=4aaf87ee\r\n" :census-miss]
@@ -211,16 +211,16 @@
 
 ;; Guest browser titlebar drag (ADR-0229).
 (def ^:private toggle-ok
-  (str preedit-ok "AIUEOS_GUEST_BROWSER_IME_TOGGLE_OK presses=7 off=0 latin=2 committed=1 ime=1 ops=67 text-px=1189 hash=4aaf87ee\r\n"))
+  (str preedit-ok "AIUEOS_GUEST_BROWSER_IME_TOGGLE_OK presses=7 off=0 latin=2 committed=1 ime=1 ops=68 text-px=1205 hash=f516238a\r\n"))
 
 (deftest guest-browser-drag-classifier
   (testing "press, three moves, release, a stray move: moved by the delta, matching the model, is green"
     (is (:green? (guest/classify "guest-browser-drag"
-                                 {:serial (str toggle-ok "AIUEOS_GUEST_BROWSER_DRAG_OK events=6 answers=111100 from=32,32 to=272,132 capture=0 ops=67 text-px=1931 hash=6771f3fe\r\n")}))))
+                                 {:serial (str toggle-ok "AIUEOS_GUEST_BROWSER_DRAG_OK events=6 answers=111100 from=32,32 to=272,132 capture=0 ops=68 text-px=1947 hash=a2969186\r\n")}))))
   (testing "the drag needs the ime-toggle frame first"
     (is (= :no-ime-toggle-frame
            (:reason (guest/classify "guest-browser-drag"
-                                    {:serial (str preedit-ok "AIUEOS_GUEST_BROWSER_DRAG_OK events=6 answers=111100 from=32,32 to=272,132 capture=0 ops=67 text-px=1931 hash=6771f3fe\r\n")})))))
+                                    {:serial (str preedit-ok "AIUEOS_GUEST_BROWSER_DRAG_OK events=6 answers=111100 from=32,32 to=272,132 capture=0 ops=68 text-px=1947 hash=a2969186\r\n")})))))
   (testing "named reds"
     (doseq [[line reason] [["AIUEOS_GUEST_BROWSER_DRAG leftover=events-missing events=1 off=0 frame=67\r\n" :events-missing]
                            ["AIUEOS_GUEST_BROWSER_DRAG leftover=census-miss off=0 front=1 to=32,32 capture=1 ops=67 text-px=1189 hash=4aaf87ee\r\n" :census-miss]
@@ -234,39 +234,39 @@
 
 ;; Guest browser resize (ADR-0230).
 (def ^:private drag-ok
-  (str toggle-ok "AIUEOS_GUEST_BROWSER_DRAG_OK events=6 answers=111100 from=32,32 to=272,132 capture=0 ops=67 text-px=1931 hash=6771f3fe\r\n"))
+  (str toggle-ok "AIUEOS_GUEST_BROWSER_DRAG_OK events=6 answers=111100 from=32,32 to=272,132 capture=0 ops=68 text-px=1947 hash=a2969186\r\n"))
 
 (deftest guest-browser-resize-classifier
   (testing "handle press, three moves (one clamped), release, a stray move: resized, matching the model, is green"
     (is (:green? (guest/classify "guest-browser-resize"
-                                 {:serial (str drag-ok "AIUEOS_GUEST_BROWSER_RESIZE_OK events=6 answers=111100 clamp=120x80 size=240x200 at=272,132 capture=0 ops=67 text-px=1931 hash=36069e52\r\n")}))))
+                                 {:serial (str drag-ok "AIUEOS_GUEST_BROWSER_RESIZE_OK events=6 answers=111100 clamp=120x80 size=240x200 at=272,132 capture=0 ops=68 text-px=1947 hash=4fa3baa2\r\n")}))))
   (testing "the resize needs the drag frame first"
     (is (= :no-drag-frame
            (:reason (guest/classify "guest-browser-resize"
-                                    {:serial (str toggle-ok "AIUEOS_GUEST_BROWSER_RESIZE_OK events=6 answers=111100 clamp=120x80 size=240x200 at=272,132 capture=0 ops=67 text-px=1931 hash=36069e52\r\n")})))))
+                                    {:serial (str toggle-ok "AIUEOS_GUEST_BROWSER_RESIZE_OK events=6 answers=111100 clamp=120x80 size=240x200 at=272,132 capture=0 ops=68 text-px=1947 hash=4fa3baa2\r\n")})))))
   (testing "named reds"
     (doseq [[line reason] [["AIUEOS_GUEST_BROWSER_RESIZE leftover=events-missing events=1 off=0 frame=67\r\n" :events-missing]
-                           ["AIUEOS_GUEST_BROWSER_RESIZE leftover=census-miss off=0 clamp=36x76 size=240x200 at=272,132 capture=0 ops=67 text-px=1931 hash=36069e52\r\n" :census-miss]
+                           ["AIUEOS_GUEST_BROWSER_RESIZE leftover=census-miss off=0 clamp=36x76 size=240x200 at=272,132 capture=0 ops=68 text-px=1947 hash=4fa3baa2\r\n" :census-miss]
                            ["" :guest-browser-resize-absent]]]
       (is (= reason (:reason (guest/classify "guest-browser-resize" {:serial (str drag-ok line)}))) line)))
   (testing "an unclamped resize (the clamp field differs) is not green"
     (is (not (:green? (guest/classify "guest-browser-resize"
-                                      {:serial (str drag-ok "AIUEOS_GUEST_BROWSER_RESIZE_OK events=6 answers=111100 clamp=36x76 size=240x200 at=272,132 capture=0 ops=67 text-px=1931 hash=36069e52\r\n")})))))
+                                      {:serial (str drag-ok "AIUEOS_GUEST_BROWSER_RESIZE_OK events=6 answers=111100 clamp=36x76 size=240x200 at=272,132 capture=0 ops=68 text-px=1947 hash=4fa3baa2\r\n")})))))
   (testing "a window that did not resize (the drag census) is not green"
     (is (not (:green? (guest/classify "guest-browser-resize"
-                                      {:serial (str drag-ok "AIUEOS_GUEST_BROWSER_RESIZE_OK events=6 answers=111100 clamp=120x80 size=720x540 at=272,132 capture=0 ops=67 text-px=1931 hash=6771f3fe\r\n")})))))
+                                      {:serial (str drag-ok "AIUEOS_GUEST_BROWSER_RESIZE_OK events=6 answers=111100 clamp=120x80 size=720x540 at=272,132 capture=0 ops=68 text-px=1947 hash=a2969186\r\n")})))))
   (testing "tablet profile"
     (is (= {"AIUEOS_GUEST_BROWSER" "1"} (guest/extra-env "guest-browser-resize")))))
 
 ;; Guest browser event loop (ADR-0231).
 (def ^:private resize-ok
-  (str drag-ok "AIUEOS_GUEST_BROWSER_RESIZE_OK events=6 answers=111100 clamp=120x80 size=240x200 at=272,132 capture=0 ops=67 text-px=1931 hash=36069e52\r\n"))
+  (str drag-ok "AIUEOS_GUEST_BROWSER_RESIZE_OK events=6 answers=111100 clamp=120x80 size=240x200 at=272,132 capture=0 ops=68 text-px=1947 hash=4fa3baa2\r\n"))
 
 (def ^:private loop-frames
   (apply str (for [n (range 1 10)] (str "AIUEOS_GUEST_BROWSER_LOOP_FRAME n=" n " src=key answer=0 ops=69 text-px=1958 hash=f7326f2e\r\n"))))
 
 (def ^:private loop-ok
-  "AIUEOS_GUEST_BROWSER_LOOP_OK events=9 frames=9 answers=001220001 focus=2 at=196,172 capture=0 chain=f999ccaa ops=69 text-px=890 hash=6bd523d7 idle-min=")
+  "AIUEOS_GUEST_BROWSER_LOOP_OK events=9 frames=9 answers=001220001 focus=2 at=196,172 capture=0 chain=1341d966 ops=70 text-px=906 hash=61ad1f7f idle-min=")
 
 (deftest guest-browser-event-loop-classifier
   (testing "nine interleaved events, a frame after each, the model's chain, the loop waiting: green"
@@ -297,3 +297,42 @@
       (is (= reason (:reason (guest/classify "guest-browser-event-loop" {:serial (str resize-ok line)}))) line)))
   (testing "tablet profile"
     (is (= {"AIUEOS_GUEST_BROWSER" "1" "AIUEOS_QEMU_TIMEOUT" "600"} (guest/extra-env "guest-browser-event-loop")))))
+
+;; Guest browser caret (ADR-0232).
+(def ^:private loop-ok-line
+  (str resize-ok loop-frames loop-ok "1734\r\n"))
+
+(def ^:private caret-frames
+  (apply str (for [n (range 1 6)] (str "AIUEOS_GUEST_BROWSER_CARET_FRAME n=" n " key=14 answer=0 ops=68 caret=412,208 text-px=872 hash=5cacb661\r\n"))))
+
+(def ^:private caret-ok
+  "AIUEOS_GUEST_BROWSER_CARET_OK keys=5 answers=00000 body=13 caret=412,208 chain=fba4ae02 ops=68 text-px=872 hash=5cacb661\r\n")
+
+(deftest guest-browser-caret-classifier
+  (testing "five keys, a frame after each ending with the caret, the model's chain: green"
+    (let [r (guest/classify "guest-browser-caret" {:serial (str loop-ok-line caret-frames caret-ok)})]
+      (is (= :guest-browser-caret (:reason r)))
+      (is (= 0 (:exit r)))))
+  (testing "the caret needs the event loop first, waiting"
+    (is (= :no-event-loop
+           (:reason (guest/classify "guest-browser-caret"
+                                    {:serial (str resize-ok caret-frames caret-ok)}))))
+    (is (= :no-event-loop
+           (:reason (guest/classify "guest-browser-caret"
+                                    {:serial (str resize-ok loop-frames loop-ok "0\r\n" caret-frames caret-ok)})))))
+  (testing "a frame line missing is not green"
+    (is (= :frame-lines-missing
+           (:reason (guest/classify "guest-browser-caret"
+                                    {:serial (str loop-ok-line (subs caret-frames 0 (* 4 (quot (count caret-frames) 5)))
+                                                  caret-ok)})))))
+  (testing "Backspace that did not delete (body=14, the hosted IME's consumed Backspace) is not green"
+    (is (not (:green? (guest/classify "guest-browser-caret"
+                                      {:serial (str loop-ok-line caret-frames
+                                                    "AIUEOS_GUEST_BROWSER_CARET_OK keys=5 answers=00000 body=14 caret=412,208 chain=fba4ae02 ops=68 text-px=872 hash=5cacb661\r\n")})))))
+  (testing "named reds"
+    (doseq [[line reason] [["AIUEOS_GUEST_BROWSER_CARET leftover=keys-missing keys=2 frames=2\r\n" :keys-missing]
+                           ["AIUEOS_GUEST_BROWSER_CARET leftover=census-miss off=5 frames=5 chain=0badf00d body=13 romaji=0 preedit=0\r\n" :census-miss]
+                           ["" :guest-browser-caret-absent]]]
+      (is (= reason (:reason (guest/classify "guest-browser-caret" {:serial (str loop-ok-line line)}))) line)))
+  (testing "tablet profile, with the loop's wall clock and more"
+    (is (= {"AIUEOS_GUEST_BROWSER" "1" "AIUEOS_QEMU_TIMEOUT" "720"} (guest/extra-env "guest-browser-caret")))))

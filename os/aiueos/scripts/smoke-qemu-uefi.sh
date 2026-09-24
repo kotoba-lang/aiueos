@@ -648,6 +648,26 @@ while time.time() < end:
                     recv_obj()
                 globals()["loop_sent"] = k + 1
                 log("loop event " + str(k + 1) + " sent")
+        # The caret (ADR-0232): k a, then Backspace three times, each after
+        # the guest's frame line for the key before (and its screendump).
+        if typing and b"AIUEOS_GUEST_BROWSER_CARET_GO" in serial_now and globals().get("caret_sent", 0) < 5:
+            k = globals().get("caret_sent", 0)
+            if k == 0 or (b"AIUEOS_GUEST_BROWSER_CARET_FRAME n=%d " % k) in serial_now:
+                if k:
+                    shot = os.path.join(os.path.dirname(path), "guest-browser-caret-%d.ppm" % k)
+                    sock.sendall((json.dumps({"execute": "screendump", "arguments": {"filename": shot}})
+                                  + "\n").encode())
+                    recv_obj()
+                time.sleep(0.5)
+                q = ("k", "a", "backspace", "backspace", "backspace")[k]
+                for down in (True, False):
+                    sock.sendall((json.dumps({"execute": "input-send-event", "arguments": {"events": [
+                        {"type": "key", "data": {"down": down, "key": {"type": "qcode", "data": q}}}]}})
+                                  + "\n").encode())
+                    recv_obj()
+                    time.sleep(0.05)
+                globals()["caret_sent"] = k + 1
+                log("caret key " + str(k + 1) + " sent")
         i += 1
         # Guest browser desktop (ADR-0224): the screens a person can look at.
         # The kernel holds each desktop frame for a few seconds in this
@@ -668,7 +688,8 @@ while time.time() < end:
                                  (b"AIUEOS_GUEST_BROWSER_IME_TOGGLE_OK", "guest-browser-ime-toggle.ppm"),
                                  (b"AIUEOS_GUEST_BROWSER_DRAG_OK", "guest-browser-drag.ppm"),
                                  (b"AIUEOS_GUEST_BROWSER_RESIZE_OK", "guest-browser-resize.ppm"),
-                                 (b"AIUEOS_GUEST_BROWSER_LOOP_OK", "guest-browser-loop.ppm")):
+                                 (b"AIUEOS_GUEST_BROWSER_LOOP_OK", "guest-browser-loop.ppm"),
+                                 (b"AIUEOS_GUEST_BROWSER_CARET_OK", "guest-browser-caret.ppm")):
                 if marker in serial_text and not globals().get(name):
                     globals()[name] = True
                     sock.sendall((json.dumps({"execute": "screendump",

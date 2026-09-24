@@ -257,6 +257,10 @@
  {:cmd ["kbb" "--backend" "sci" "--classpath" "src" "scripts/compositor-guest.cljk" "guest-browser-event-loop"]
   :doc "Guest browser event loop (ADR-0231) on KERNEL.ELF under QEMU: after the resize, one running loop polls the tablet and the keyboard and takes k a Enter, a titlebar press / move / release on window 2 and n i Enter, interleaved over several seconds, presenting a frame after each of the nine; every frame's census folds into a chain that matches browser-frame-model.cljk."}
 
+ :browser-desktop-caret
+ {:cmd ["kbb" "--backend" "sci" "--classpath" "src" "scripts/compositor-guest.cljk" "guest-browser-caret"]
+  :doc "Guest browser caret (ADR-0232) on KERNEL.ELF under QEMU: after the event loop, k a and three Backspaces into window 2, a frame after each; every frame ends with the focused window's 1x16 caret, the first Backspace drops the preedit and the next two delete the code points before the caret (browser.text-edit delete-backward); the five censuses chain to browser-frame-model.cljk's."}
+
  :browser-desktop-guest
  {:cmd ["kbb" "--backend" "sci" "--classpath" "src" "scripts/compositor-guest.cljk" "guest-browser-input"]
   :doc "Guest browser desktop (ADR-0223) on KERNEL.ELF under QEMU: the Kotoba frame is presented and sampled, then a real virtio-tablet press is reduced by Kotoba to focus-and-raise and the redrawn frame is sampled again. Exit 3 = QEMU/firmware/serial unanswered, not a pass."}
