@@ -1,6 +1,6 @@
 (ns aiueos.runtime-update-test
   (:require [aiueos.runtime-update :as runtime]
-            [clojure.test :refer [deftest is testing]]))
+            [kotoba.test :refer [deftest is testing]]))
 
 (def digest-a (apply str (repeat 64 "a")))
 (def digest-b (apply str (repeat 64 "b")))

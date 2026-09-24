@@ -1,6 +1,6 @@
 (ns aiueos.device-auth-test
   (:require [aiueos.device-auth :as auth]
-            [clojure.test :refer [deftest is testing]]))
+            [kotoba.test :refer [deftest is testing]]))
 
 (def base
   (auth/factory {:device-did "did:aiueos:k16:one"

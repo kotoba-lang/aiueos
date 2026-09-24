@@ -10,7 +10,7 @@
   (:require [aiueos.pid1 :as pid1]
             #?(:clj [grant.anchors :as anchors])
             #?(:clj [grant.cloud :as cloud])
-            [clojure.test :refer [deftest is testing]])
+            [kotoba.test :refer [deftest is testing]])
   #?(:clj (:import [java.lang.foreign Arena])))
 
 (deftest pid1-argv0-detection

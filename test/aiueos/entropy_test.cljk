@@ -1,6 +1,6 @@
 (ns aiueos.entropy-test
   (:require [aiueos.entropy :as entropy]
-            [clojure.test :refer [deftest is]]))
+            [kotoba.test :refer [deftest is]]))
 
 (defn- failure [f]
   (try (f) nil (catch Exception error (ex-data error))))

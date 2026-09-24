@@ -7,7 +7,7 @@
   (:require [grant.audit :as audit]
             [aiueos.launcher :as launcher]
             [aiueos.topic :as topic]
-            [clojure.test :refer [deftest is testing]]
+            [kotoba.test :refer [deftest is testing]]
             #?(:clj [clojure.java.io :as io])
             #?(:clj [kotoba.lang.text :as str])))
 

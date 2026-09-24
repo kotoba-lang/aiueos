@@ -1,6 +1,6 @@
 (ns aiueos.topic-test
   (:require [aiueos.topic :as topic]
-            [clojure.test :refer [deftest is testing]]))
+            [kotoba.test :refer [deftest is testing]]))
 
 (deftest publish-sets-latest-and-counts
   (testing "before any publish, latest and count are absent/zero"

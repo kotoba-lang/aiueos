@@ -8,7 +8,7 @@
   (:require [aiueos.bare-metal :as bm]
             [clojure.java.io :as io]
             [kotoba.lang.text :as str]
-            [clojure.test :refer [deftest is testing]]))
+            [kotoba.test :refer [deftest is testing]]))
 
 (def ^:private consumed
   "AIUEOS_DHCP_CONSUMED src=10.0.2.15 dns=10.0.2.3\r\n")

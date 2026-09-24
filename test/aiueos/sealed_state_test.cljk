@@ -2,7 +2,7 @@
   (:require [aiueos.sealed-state :as sealed]
             [clojure.edn :as edn]
             [clojure.java.io :as io]
-            [clojure.test :refer [deftest is]])
+            [kotoba.test :refer [deftest is]])
   (:import [java.nio.file Files]))
 
 (defn- temp-dir []

@@ -1,7 +1,7 @@
 (ns aiueos.provider.device-test
   (:require [aiueos.provider.device :as dev]
             [grant.enroll :as enroll]
-            [clojure.test :refer [deftest is testing]]))
+            [kotoba.test :refer [deftest is testing]]))
 
 (def kp (dev/generate-operational-keypair!))
 (def pub (dev/public-key-base64 kp))

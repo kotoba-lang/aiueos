@@ -2,7 +2,7 @@
   (:require [aiueos.tcb :as tcb]
             [clojure.edn :as edn]
             [clojure.java.io :as io]
-            [clojure.test :refer [deftest is]]))
+            [kotoba.test :refer [deftest is]]))
 
 (def required-tcb-paths
   "Boundaries that may not quietly leave the inventory.

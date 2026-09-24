@@ -2,7 +2,7 @@
   (:require [grant.deployment-profile :as profile]
             [grant.key-lifecycle :as key-lifecycle]
             [aiueos.sbom :as sbom]
-            [clojure.test :refer [deftest is]]
+            [kotoba.test :refer [deftest is]]
             [kotoba.security.supply-chain :as supply-chain]))
 
 (def artifact-digest (str "sha256:" (apply str (repeat 64 "a"))))

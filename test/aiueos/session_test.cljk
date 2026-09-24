@@ -4,7 +4,7 @@
   Live kotobase/murakumo is `kbb -M:session smoke`, not this ns."
   (:require [aiueos.phone-bind :as pb]
             [aiueos.session :as session]
-            [clojure.test :refer [deftest is]]))
+            [kotoba.test :refer [deftest is]]))
 
 (deftest p1-document-is-one-dads-spa
   (let [html (pb/session-html)]

@@ -7,7 +7,7 @@
   stops discriminating without saying so -- the failure this repository has hit
   often enough to write down (root ADR 2608136000)."
   (:require [aiueos.network-bootstrap :as nb]
-            [clojure.test :refer [deftest is testing]]))
+            [kotoba.test :refer [deftest is testing]]))
 
 (defn- are-reasons [pairs]
   (doseq [[expected iface] pairs]

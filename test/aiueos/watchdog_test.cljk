@@ -1,6 +1,6 @@
 (ns aiueos.watchdog-test
   (:require [aiueos.watchdog :as watchdog]
-            [clojure.test :refer [deftest is]]))
+            [kotoba.test :refer [deftest is]]))
 
 (deftest completes-and-returns-value
   (let [result (watchdog/run! 1000 (fn [] :ok))]

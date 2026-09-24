@@ -5,7 +5,7 @@
   (`aiueos.hvt/spike`) is exercised by the #110 smoke gate inside a Linux/KVM
   VM, not here (this suite runs on any JVM host, incl. macOS CI), mirroring
   `aiueos.vfio`'s hardware-honesty split."
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [kotoba.test :refer [deftest is testing]]
             #?(:clj [clojure.java.io :as io])
             [aiueos.hvt :as hvt]
             [aiueos.virtio :as vio]))

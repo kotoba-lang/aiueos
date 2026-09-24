@@ -13,7 +13,7 @@
 
 (ns aiueos.bonsai2-qwen35-contract-test
   (:require [clojure.edn :as edn]
-            [clojure.test :refer [deftest is]]
+            [kotoba.test :refer [deftest is]]
             #?(:clj [clojure.java.io :as io]
                :cljs ["fs" :as fs])))
 

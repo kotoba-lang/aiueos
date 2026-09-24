@@ -1,7 +1,7 @@
 (ns aiueos.network-topic-test
   (:require [aiueos.network-topic :as network]
             [aiueos.topic :as topic]
-            [clojure.test :refer [deftest is]]))
+            [kotoba.test :refer [deftest is]]))
 
 (defn- fixture []
   (let [keys (network/generate-key-pair)

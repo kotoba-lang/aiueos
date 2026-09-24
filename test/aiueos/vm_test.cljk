@@ -1,6 +1,6 @@
 (ns aiueos.vm-test
   (:require [aiueos.vm :as vm]
-            [clojure.test :refer [deftest is testing]]))
+            [kotoba.test :refer [deftest is testing]]))
 
 (deftest plan-defaults
   (let [p (vm/plan {:kernel "Image" :initramfs "init.cpio.gz"})]

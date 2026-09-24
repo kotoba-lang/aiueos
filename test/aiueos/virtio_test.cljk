@@ -1,6 +1,6 @@
 (ns aiueos.virtio-test
   (:require [aiueos.virtio :as virtio]
-            [clojure.test :refer [deftest is testing]]))
+            [kotoba.test :refer [deftest is testing]]))
 
 ;; ---------------------------------------------------------------------------
 ;; Features / negotiation
