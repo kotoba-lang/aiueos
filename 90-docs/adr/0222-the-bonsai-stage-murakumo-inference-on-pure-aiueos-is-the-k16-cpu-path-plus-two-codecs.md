@@ -459,8 +459,9 @@ source rather than here.
    covering the head state in `decode->recurrent` and the five workspace
    vectors, rebasing each address against it. Still C in
    `linear_attention`: the q/k L2 norm call sites, the decay
-   transition's `+ dt` and `a *` products, the position-zero reduction that
-   overwrites the output at position 0, and the gated RMS of the output.
+   transition's `+ dt` and `a *` products, the two scalar products and the
+   `v ·` loop of the position-zero reduction (its dot is the dot object, see
+   item 7), and the gated RMS of the output.
    The C is kept as `recurrent_step_c` under
    `AIUEOS_QWEN35_KOTOBA_PARITY == 4 || AIUEOS_QWEN35_C_REFERENCE_RECURRENT`;
    the flag is set for the host smokes and parity profiles 1, 2 and 3 (which
@@ -642,7 +643,7 @@ source rather than here.
      the object**, see below), the gated RMS of the output (no mode of the
      norm object gives it bit for bit, as the comment at its call site
      says), and the `dot` coefficient on the position-zero and cache-free
-     paths. The last two are still C.
+     paths (**LIVE on the object**, see below). The gated RMS is still C.
 
      **Conv: LIVE on the object.** Modes 5 (`conv4-first`: position 0 or
      no cache, `a·k3`, the history not read) and 6 (`conv4-next`:
@@ -675,6 +676,38 @@ source rather than here.
      is 9,976 B (was 7,736 B). **Not measured**: a forward pass through the
      conv at the live width of 10,240 channels (the oracle ran 24, the parity
      boot 128), and the object on the physical K16.
+
+     **Position-zero dot: LIVE on the object.** Both places that form
+     `β · dot(q, k) / √d` (the cache-free branch and the position-zero
+     overwrite) call the wrapper `linear_zero_coefficient`, whose dot is
+     `aiueos-qwen35-dot-f32` — already linked in the model image for the
+     matvec, so no new object and no new `.text` in the low region. The two
+     products and the `v ·` loop are still C. A refusal (an answer below
+     INT32_MIN) is `LINEAR RECURRENT`. The C is kept as
+     `linear_zero_coefficient_c` under `AIUEOS_QWEN35_KOTOBA_PARITY == 1 ||
+     AIUEOS_QWEN35_C_REFERENCE_MATVEC` (host smokes, parity profiles 2–5).
+     The reference is `dot_scalar`, not `dot`: the C it replaced was
+     `dot_avx2` on an AVX2 CPU, up to 1 ULP from this tree (the dot-avx2
+     distance above), so on an AVX2 CPU a position-zero coefficient can
+     move by 1 ULP. That is the same change the output projection made.
+     Parity profile 1's `dot` stage now also drives the live wrapper against
+     the twin over nine 128-wide query/key windows with nine betas.
+     Reproduce: `AIUEOS_QWEN35_KOTOBA_PARITY=1 node "$G" run build --
+     os/aiueos/scripts/smoke-qemu-uefi.sh` → `QWEN-PARITY dot ok` in
+     `build/aiueos/kernel-serial.log`. Seen red: the wrapper's count
+     128 → 127 → `QWEN-PARITY dot mismatch`, `AIUEOS_EVIDENCE_STOP`,
+     exit 1. `bonsai-qemu-admission` → `AIUEOS_BONSAI_ADMISSION_QEMU_OK`;
+     `smoke-qwen35-decode-math.sh` → `AIUEOS_QWEN35_DECODE_MATH_OK`;
+     `build-qwen38-murakumo-node-pxe.sh` links. Its `aiueos_low_end` is
+     still 0x1f4000, with 0 B of headroom. `qwen35_infer.o` at the
+     model-handoff flags (`zig cc -O3 -DAIUEOS_QWEN38_MODEL_HANDOFF=1`,
+     `objdump -h`) goes from `.text` 0x344f to 0x321f, because `dot_avx2` is
+     no longer reachable there. The link does not show those 560 B: they are
+     smaller than the page `aiueos_low_end` rounds up to. So the gated RMS,
+     the one C arithmetic left in `linear_attention`, still needs the
+     low-region move named above before any object can grow for it.
+     **Not measured**: a forward pass through the wrapper (no model path in
+     QEMU), and the 1-ULP effect on a real token.
    The loop's tick listed these as `:cutover-logits` (landed) and
    `:cutover-linear-attention-rest`, ahead of this floor, in the same way
    it put `:cutover-rope` first. It checks each one by reading the body of
