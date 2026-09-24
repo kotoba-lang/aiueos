@@ -18,6 +18,7 @@
   (:require ["node:fs" :as fs]
             ["node:path" :as path]
             ["node:child_process" :as cp]
+            [clojure.edn :as edn]
             [kotoba.lang.text :as str]
             [aiueos.compositor.guest :as guest]))
 
@@ -62,12 +63,22 @@
       (println "usage: kbb --backend sci --classpath src scripts/compositor-guest.cljk"
                (str/join "|" guest/guest-profiles)))
     (.exit js/process 3))
-  (let [boot (run-uefi! profile)
+  (let [;; ADR-0234: the hosted engine's answer for the flow-parity frame,
+        ;; read before the boot so a missing contract is exit 3, not a red
+        parity (when (= profile "guest-browser-flow-parity")
+                 (let [f (.join path repo "os" "aiueos" "contracts" "browser-flow-parity-v1.edn")]
+                   (when-not (.existsSync fs f)
+                     (die3 (str "AIUEOS_COMPOSITOR leftover=:unmeasured why=:parity-contract-missing path=" f)))
+                   (or (first (filter #(= "flow" (:name %))
+                                      (:scenes (edn/read-string (.readFileSync fs f "utf8")))))
+                       (die3 (str "AIUEOS_COMPOSITOR leftover=:unmeasured why=:no-flow-scene path=" f)))))
+        boot (run-uefi! profile)
         measured? (guest/serial-measured? (:serial boot))
         r (guest/classify profile {:serial (:serial boot)
                                    :qemu-unmeasured? (not measured?)
                                    :hosted-wm? false
-                                   :hosted-ime? false})
+                                   :hosted-ime? false
+                                   :flow-parity parity})
         receipt (assoc r
                        :aiueos.compositor/nbb-guest-receipt 1
                        :measured-at (.toISOString (js/Date.))
@@ -87,7 +98,13 @@
       (let [marker (guest/serial-marker profile)]
         (doseq [line (str/split-lines (:serial boot))
                 :when (and marker (str/includes? line marker))]
-          (println (str/replace line #"\r$" "")))))
+          ;; the flow-parity op list is ~7,600 characters: its head is enough
+          (let [line (str/replace line #"\r$" "")]
+            (println (if (> (count line) 240) (str (subs line 0 240) "...") line))))))
+    (when-let [d (:first-difference r)]
+      (println (str "AIUEOS_COMPOSITOR_FIRST_DIFFERENCE " (pr-str d))))
+    (when-let [n (:compared r)]
+      (println (str "AIUEOS_COMPOSITOR_COMPARED\t" n)))
     (if (:green? r)
       (println (guest/ok-print profile))
       (println (str "AIUEOS_COMPOSITOR_" (str/replace (str/upper profile) "-" "_")

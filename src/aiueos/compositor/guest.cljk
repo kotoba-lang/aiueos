@@ -17,7 +17,7 @@
    "guest-browser-text" "guest-browser-text-raised" "guest-browser-type"
    "guest-browser-preedit" "guest-browser-ime-toggle" "guest-browser-drag"
    "guest-browser-resize" "guest-browser-event-loop" "guest-browser-caret"
-   "guest-browser-launch"])
+   "guest-browser-launch" "guest-browser-flow-parity"])
 
 (defn gate-cmd
   "SPA-visible evidence command for a guest profile. Not clojure -M."
@@ -445,7 +445,7 @@
 ;; same frame written apart from the Kotoba object and from C.
 
 (def ^:private browser-text-ok-re
-  #"(?m)^AIUEOS_GUEST_BROWSER_TEXT_OK ops=58 text-px=1100 hash=4ab25516 font-bytes=\d+ surface=1280x800")
+  #"(?m)^AIUEOS_GUEST_BROWSER_TEXT_OK ops=58 text-px=1079 hash=89910f34 font-bytes=\d+ surface=1280x800")
 
 (defn guest-browser-text-ok?
   [serial]
@@ -476,7 +476,7 @@
        :leftover [:hosted-wm-does-not-count]}
       (guest-browser-text-ok? s)
       {:green? true :exit 0 :reason :guest-browser-text
-       :leftover [:no-flow-layout :no-text-edit]}
+       :leftover [:no-text-edit]}
       :else (browser-text-red s))))
 
 (defn guest-browser-text-raised-result
@@ -490,9 +490,9 @@
       (let [r (guest-browser-text-result opts)]
         (assoc r :reason :no-text-frame
                :leftover (into [:no-text-frame] (:leftover r))))
-      (re-find #"(?m)^AIUEOS_GUEST_BROWSER_TEXT_RAISED_OK hit=1 ops=58 text-px=880 hash=ca6c2709" s)
+      (re-find #"(?m)^AIUEOS_GUEST_BROWSER_TEXT_RAISED_OK hit=1 ops=58 text-px=880 hash=b9f96599" s)
       {:green? true :exit 0 :reason :guest-browser-text-raised
-       :leftover [:no-flow-layout :no-text-edit :no-pointer-capture]}
+       :leftover [:no-text-edit :no-pointer-capture]}
       (re-find #"(?m)^AIUEOS_GUEST_BROWSER_TEXT_RAISED leftover=census-miss" s)
       {:green? false :exit 1 :reason :census-miss :leftover [:census-miss]}
       (re-find #"(?m)^AIUEOS_GUEST_BROWSER_TEXT_RAISED leftover=frame-refused" s)
@@ -509,13 +509,13 @@
   (let [s (or serial "")]
     (cond
       qemu-unmeasured? {:green? false :exit 3 :reason :unmeasured :leftover [:unmeasured]}
-      (not (re-find #"(?m)^AIUEOS_GUEST_BROWSER_TEXT_RAISED_OK hit=1 ops=58 text-px=880 hash=ca6c2709" s))
+      (not (re-find #"(?m)^AIUEOS_GUEST_BROWSER_TEXT_RAISED_OK hit=1 ops=58 text-px=880 hash=b9f96599" s))
       (let [r (guest-browser-text-raised-result opts)]
         (assoc r :reason :no-raised-text-frame
                :leftover (into [:no-raised-text-frame] (:leftover r))))
-      (re-find #"(?m)^AIUEOS_GUEST_BROWSER_TYPE_OK presses=13 committed=5 ops=63 text-px=1068 hash=b741bf74" s)
+      (re-find #"(?m)^AIUEOS_GUEST_BROWSER_TYPE_OK presses=13 committed=5 ops=63 text-px=1068 hash=a92b8f58" s)
       {:green? true :exit 0 :reason :guest-browser-type
-       :leftover [:no-preedit-shown :no-flow-layout :three-reading-dictionary]}
+       :leftover [:no-preedit-shown :three-reading-dictionary]}
       (re-find #"(?m)^AIUEOS_GUEST_BROWSER_TYPE leftover=keys-missing" s)
       {:green? false :exit 1 :reason :keys-missing :leftover [:keys-missing]}
       (re-find #"(?m)^AIUEOS_GUEST_BROWSER_TYPE leftover=census-miss" s)
@@ -534,12 +534,12 @@
   (let [s (or serial "")]
     (cond
       qemu-unmeasured? {:green? false :exit 3 :reason :unmeasured :leftover [:unmeasured]}
-      (not (re-find #"(?m)^AIUEOS_GUEST_BROWSER_TYPE_OK presses=13 committed=5 ops=63 text-px=1068 hash=b741bf74" s))
+      (not (re-find #"(?m)^AIUEOS_GUEST_BROWSER_TYPE_OK presses=13 committed=5 ops=63 text-px=1068 hash=a92b8f58" s))
       (let [r (guest-browser-type-result opts)]
         (assoc r :reason :no-typing-frame :leftover (into [:no-typing-frame] (:leftover r))))
-      (re-find #"(?m)^AIUEOS_GUEST_BROWSER_PREEDIT_OK shown-ops=67 shown-px=1146 shown-hash=04d93a5f committed=2 ops=65 text-px=1128 hash=e67d620b" s)
+      (re-find #"(?m)^AIUEOS_GUEST_BROWSER_PREEDIT_OK shown-ops=67 shown-px=1146 shown-hash=566a1c8f committed=2 ops=65 text-px=1128 hash=193030b3" s)
       {:green? true :exit 0 :reason :guest-browser-preedit
-       :leftover [:no-flow-layout :three-reading-dictionary]}
+       :leftover [:three-reading-dictionary]}
       (re-find #"(?m)^AIUEOS_GUEST_BROWSER_PREEDIT leftover=keys-missing" s)
       {:green? false :exit 1 :reason :keys-missing :leftover [:keys-missing]}
       (re-find #"(?m)^AIUEOS_GUEST_BROWSER_PREEDIT leftover=census-miss" s)
@@ -558,10 +558,10 @@
   (let [s (or serial "")]
     (cond
       qemu-unmeasured? {:green? false :exit 3 :reason :unmeasured :leftover [:unmeasured]}
-      (not (re-find #"(?m)^AIUEOS_GUEST_BROWSER_PREEDIT_OK shown-ops=67 shown-px=1146 shown-hash=04d93a5f committed=2 ops=65 text-px=1128 hash=e67d620b" s))
+      (not (re-find #"(?m)^AIUEOS_GUEST_BROWSER_PREEDIT_OK shown-ops=67 shown-px=1146 shown-hash=566a1c8f committed=2 ops=65 text-px=1128 hash=193030b3" s))
       (let [r (guest-browser-preedit-result opts)]
         (assoc r :reason :no-preedit-frame :leftover (into [:no-preedit-frame] (:leftover r))))
-      (re-find #"(?m)^AIUEOS_GUEST_BROWSER_IME_TOGGLE_OK presses=7 off=0 latin=2 committed=1 ime=1 ops=68 text-px=1205 hash=f516238a" s)
+      (re-find #"(?m)^AIUEOS_GUEST_BROWSER_IME_TOGGLE_OK presses=7 off=0 latin=2 committed=1 ime=1 ops=68 text-px=1205 hash=322e206e" s)
       {:green? true :exit 0 :reason :guest-browser-ime-toggle
        :leftover [:no-ime-indicator :three-reading-dictionary]}
       (re-find #"(?m)^AIUEOS_GUEST_BROWSER_IME_TOGGLE leftover=keys-missing" s)
@@ -583,10 +583,10 @@
   (let [s (or serial "")]
     (cond
       qemu-unmeasured? {:green? false :exit 3 :reason :unmeasured :leftover [:unmeasured]}
-      (not (re-find #"(?m)^AIUEOS_GUEST_BROWSER_IME_TOGGLE_OK presses=7 off=0 latin=2 committed=1 ime=1 ops=68 text-px=1205 hash=f516238a" s))
+      (not (re-find #"(?m)^AIUEOS_GUEST_BROWSER_IME_TOGGLE_OK presses=7 off=0 latin=2 committed=1 ime=1 ops=68 text-px=1205 hash=322e206e" s))
       (let [r (guest-browser-ime-toggle-result opts)]
         (assoc r :reason :no-ime-toggle-frame :leftover (into [:no-ime-toggle-frame] (:leftover r))))
-      (re-find #"(?m)^AIUEOS_GUEST_BROWSER_DRAG_OK events=6 answers=111100 from=32,32 to=272,132 capture=0 ops=68 text-px=1947 hash=a2969186" s)
+      (re-find #"(?m)^AIUEOS_GUEST_BROWSER_DRAG_OK events=6 answers=111100 from=32,32 to=272,132 capture=0 ops=68 text-px=1947 hash=523440e0" s)
       {:green? true :exit 0 :reason :guest-browser-drag
        :leftover [:no-redraw-per-move]}
       (re-find #"(?m)^AIUEOS_GUEST_BROWSER_DRAG leftover=events-missing" s)
@@ -608,10 +608,10 @@
   (let [s (or serial "")]
     (cond
       qemu-unmeasured? {:green? false :exit 3 :reason :unmeasured :leftover [:unmeasured]}
-      (not (re-find #"(?m)^AIUEOS_GUEST_BROWSER_DRAG_OK events=6 answers=111100 from=32,32 to=272,132 capture=0 ops=68 text-px=1947 hash=a2969186" s))
+      (not (re-find #"(?m)^AIUEOS_GUEST_BROWSER_DRAG_OK events=6 answers=111100 from=32,32 to=272,132 capture=0 ops=68 text-px=1947 hash=523440e0" s))
       (let [r (guest-browser-drag-result opts)]
         (assoc r :reason :no-drag-frame :leftover (into [:no-drag-frame] (:leftover r))))
-      (re-find #"(?m)^AIUEOS_GUEST_BROWSER_RESIZE_OK events=6 answers=111100 clamp=120x80 size=240x200 at=272,132 capture=0 ops=68 text-px=1947 hash=4fa3baa2" s)
+      (re-find #"(?m)^AIUEOS_GUEST_BROWSER_RESIZE_OK events=6 answers=111100 clamp=120x80 size=240x200 at=272,132 capture=0 ops=68 text-px=1947 hash=523440e0" s)
       {:green? true :exit 0 :reason :guest-browser-resize
        :leftover [:no-redraw-per-move]}
       (re-find #"(?m)^AIUEOS_GUEST_BROWSER_RESIZE leftover=events-missing" s)
@@ -635,10 +635,10 @@
   [{:keys [serial qemu-unmeasured?] :as opts}]
   (let [s (or serial "")
         frames (set (map second (re-seq #"(?m)^AIUEOS_GUEST_BROWSER_LOOP_FRAME n=(\d+) " s)))
-        ok (re-find #"(?m)^AIUEOS_GUEST_BROWSER_LOOP_OK events=9 frames=9 answers=001220001 focus=2 at=196,172 capture=0 chain=1341d966 ops=70 text-px=906 hash=61ad1f7f idle-min=(\d+)" s)]
+        ok (re-find #"(?m)^AIUEOS_GUEST_BROWSER_LOOP_OK events=9 frames=9 answers=001220001 focus=2 at=196,172 capture=0 chain=b185dff1 ops=70 text-px=901 hash=7b0f9b05 idle-min=(\d+)" s)]
     (cond
       qemu-unmeasured? {:green? false :exit 3 :reason :unmeasured :leftover [:unmeasured]}
-      (not (re-find #"(?m)^AIUEOS_GUEST_BROWSER_RESIZE_OK events=6 answers=111100 clamp=120x80 size=240x200 at=272,132 capture=0 ops=68 text-px=1947 hash=4fa3baa2" s))
+      (not (re-find #"(?m)^AIUEOS_GUEST_BROWSER_RESIZE_OK events=6 answers=111100 clamp=120x80 size=240x200 at=272,132 capture=0 ops=68 text-px=1947 hash=523440e0" s))
       (let [r (guest-browser-resize-result opts)]
         (assoc r :reason :no-resize-frame :leftover (into [:no-resize-frame] (:leftover r))))
       (and ok (not= frames loop-frame-numbers))
@@ -664,7 +664,7 @@
 ;; folds the five censuses of os/aiueos/scripts/browser-frame-model.cljk.
 
 (def ^:private loop-ok-re
-  #"(?m)^AIUEOS_GUEST_BROWSER_LOOP_OK events=9 frames=9 answers=001220001 focus=2 at=196,172 capture=0 chain=1341d966 ops=70 text-px=906 hash=61ad1f7f idle-min=[1-9]")
+  #"(?m)^AIUEOS_GUEST_BROWSER_LOOP_OK events=9 frames=9 answers=001220001 focus=2 at=196,172 capture=0 chain=b185dff1 ops=70 text-px=901 hash=7b0f9b05 idle-min=[1-9]")
 
 (def ^:private caret-frame-numbers #{"1" "2" "3" "4" "5"})
 
@@ -672,7 +672,7 @@
   [{:keys [serial qemu-unmeasured?] :as opts}]
   (let [s (or serial "")
         frames (set (map second (re-seq #"(?m)^AIUEOS_GUEST_BROWSER_CARET_FRAME n=(\d+) " s)))
-        ok (re-find #"(?m)^AIUEOS_GUEST_BROWSER_CARET_OK keys=5 answers=00000 body=13 caret=412,208 chain=fba4ae02 ops=68 text-px=872 hash=5cacb661" s)]
+        ok (re-find #"(?m)^AIUEOS_GUEST_BROWSER_CARET_OK keys=5 answers=00000 body=13 caret=418,214 chain=62295970 ops=68 text-px=867 hash=d039564f" s)]
     (cond
       qemu-unmeasured? {:green? false :exit 3 :reason :unmeasured :leftover [:unmeasured]}
       (not (re-find loop-ok-re s))
@@ -701,7 +701,7 @@
 ;; eight censuses.
 
 (def ^:private caret-ok-re
-  #"(?m)^AIUEOS_GUEST_BROWSER_CARET_OK keys=5 answers=00000 body=13 caret=412,208 chain=fba4ae02 ops=68 text-px=872 hash=5cacb661")
+  #"(?m)^AIUEOS_GUEST_BROWSER_CARET_OK keys=5 answers=00000 body=13 caret=418,214 chain=62295970 ops=68 text-px=867 hash=d039564f")
 
 (def ^:private launch-frame-numbers #{"1" "2" "3" "4" "5" "6" "7" "8"})
 
@@ -709,7 +709,7 @@
   [{:keys [serial qemu-unmeasured?] :as opts}]
   (let [s (or serial "")
         frames (set (map second (re-seq #"(?m)^AIUEOS_GUEST_BROWSER_LAUNCH_FRAME n=(\d+) " s)))
-        ok (re-find #"(?m)^AIUEOS_GUEST_BROWSER_LAUNCH_OK events=8 answers=30203030 windows=2 stack=1,3 focus=3 chain=cff6ae89 ops=85 text-px=776 hash=9e714452" s)]
+        ok (re-find #"(?m)^AIUEOS_GUEST_BROWSER_LAUNCH_OK events=8 answers=30203030 windows=2 stack=1,3 focus=3 chain=2845aee9 ops=85 text-px=776 hash=98b595bd" s)]
     (cond
       qemu-unmeasured? {:green? false :exit 3 :reason :unmeasured :leftover [:unmeasured]}
       (not (re-find caret-ok-re s))
@@ -727,6 +727,90 @@
       :else
       {:green? false :exit 1 :reason :guest-browser-launch-absent
        :leftover [:guest-browser-launch-absent]})))
+
+;; Guest browser body flow (ADR-0234): the kernel lays out a four-window
+;; surface of its own and prints its whole op list (AIUEOS_GUEST_BROWSER_FLOW_OPS
+;; n=<ops> words=<kind x y a b rgb per op, 8 hex digits each>). Each window's
+;; body glyphs are read out of it by the span rule -- from the window's body
+;; rect (x y w h) followed by its titlebar rect (x y w 28) to the next window's,
+;; the glyph ops at or below y + 28, as [dx dy glyph width] from (x, y + 28) --
+;; and compared one by one with `:flow-parity`, what kotoba-lang/browser +
+;; cssom draw for the same surface (os/aiueos/contracts/browser-flow-parity-v1.edn,
+;; scene "flow", written by browser-flow-oracle.cljk). Green needs every glyph
+;; equal AND the OK line (the census of browser-frame-model.cljk). No tablet:
+;; it runs in the default profile.
+
+(def ^:private hex-digit
+  {\0 0 \1 1 \2 2 \3 3 \4 4 \5 5 \6 6 \7 7 \8 8 \9 9
+   \a 10 \b 11 \c 12 \d 13 \e 14 \f 15})
+
+(defn- hex-words [s]
+  (mapv (fn [w] (reduce (fn [acc c] (+ (* acc 16) (get hex-digit c 0))) 0 w))
+        (partition 8 s)))
+
+(defn flow-ops
+  "The op list of the AIUEOS_GUEST_BROWSER_FLOW_OPS line as [kind x y a b rgb]
+  vectors, or nil when the line is absent or its words do not make n ops."
+  [serial]
+  (when-let [[_ n words] (re-find #"(?m)^AIUEOS_GUEST_BROWSER_FLOW_OPS n=(\d+) words=([0-9a-f]*)" (or serial ""))]
+    (let [ws (hex-words words)]
+      (when (and (= (count words) (* 8 (count ws)))
+                 (= (count ws) (* 6 (parse-long n))))
+        (mapv vec (partition 6 ws))))))
+
+(defn flow-body-glyphs
+  "{id [[dx dy glyph width] ...]} read out of `ops` for the windows `stack`
+  (bottom first), by the span rule above."
+  [stack ops]
+  (let [starts (map (fn [{:keys [x y w h]}]
+                      (first (keep-indexed (fn [i o]
+                                             (when (and (= (take 5 o) [1 x y w h])
+                                                        (= (take 5 (get ops (inc i))) [1 x y w 28]))
+                                               i))
+                                           ops)))
+                    stack)]
+    (when (every? some? starts)
+      (into (sorted-map)
+            (map (fn [{:keys [id x y]} [a b]]
+                   [id (vec (for [[k gx gy gi gw] (subvec ops a b)
+                                  :when (= k 2)
+                                  :when (>= gy (+ y 28))]
+                              [(- gx x) (- gy (+ y 28)) gi gw]))])
+                 stack
+                 (partition 2 1 (concat starts [(count ops)])))))))
+
+(defn guest-browser-flow-parity-result
+  [{:keys [serial qemu-unmeasured? flow-parity]}]
+  (let [s (or serial "")
+        {:keys [scene bodies]} flow-parity
+        want-n (reduce + (map count (vals bodies)))
+        ops (flow-ops s)
+        got (when ops (flow-body-glyphs (:stack scene) ops))
+        diff (first (for [[id want] bodies
+                          :let [g (get got id)]
+                          :when (not= want g)
+                          :let [i (count (take-while true? (map = want g)))]]
+                      {:window id :glyph i :hosted (get want i) :kernel (get g i)}))
+        ok (re-find #"(?m)^AIUEOS_GUEST_BROWSER_FLOW_OK windows=4 ops=158 text-px=3593 hash=a19f95a8" s)]
+    (cond
+      qemu-unmeasured? {:green? false :exit 3 :reason :unmeasured :leftover [:unmeasured]}
+      (zero? want-n) {:green? false :exit 3 :reason :no-hosted-answer :leftover [:no-hosted-answer]}
+      (re-find #"(?m)^AIUEOS_GUEST_BROWSER_FLOW leftover=frame-refused" s)
+      {:green? false :exit 1 :reason :frame-refused :leftover [:frame-refused]}
+      (re-find #"(?m)^AIUEOS_GUEST_BROWSER_FLOW leftover=present-refused" s)
+      {:green? false :exit 1 :reason :present-refused :leftover [:present-refused]}
+      (nil? ops)
+      {:green? false :exit 1 :reason :guest-browser-flow-absent :leftover [:guest-browser-flow-absent]}
+      (nil? got)
+      {:green? false :exit 1 :reason :window-span-missing :leftover [:window-span-missing]}
+      diff
+      {:green? false :exit 1 :reason :body-differs-from-hosted :first-difference diff
+       :leftover [:body-differs-from-hosted]}
+      (not ok)
+      {:green? false :exit 1 :reason :census-miss :leftover [:census-miss]}
+      :else
+      {:green? true :exit 0 :reason :guest-browser-flow-parity :compared want-n
+       :leftover [:no-cjk-break-opportunity :windows-sit-at-their-rect :kernel-clips-the-body]})))
 
 (defn extra-env
   "Env merged into smoke-qemu-uefi.sh. Default UEFI smoke is empty."
@@ -777,6 +861,7 @@
     "guest-browser-event-loop" (guest-browser-event-loop-result opts)
     "guest-browser-caret" (guest-browser-caret-result opts)
     "guest-browser-launch" (guest-browser-launch-result opts)
+    "guest-browser-flow-parity" (guest-browser-flow-parity-result opts)
     {:green? false :exit 3 :reason :unmeasured :leftover [:unmeasured]}))
 
 (defn serial-marker
@@ -802,6 +887,7 @@
     "guest-browser-event-loop" "AIUEOS_GUEST_BROWSER_LOOP"
     "guest-browser-caret" "AIUEOS_GUEST_BROWSER_CARET"
     "guest-browser-launch" "AIUEOS_GUEST_BROWSER_LAUNCH"
+    "guest-browser-flow-parity" "AIUEOS_GUEST_BROWSER_FLOW"
     nil))
 
 (defn ok-print
@@ -827,4 +913,5 @@
     "guest-browser-event-loop" "AIUEOS_COMPOSITOR_GUEST_BROWSER_EVENT_LOOP_OK"
     "guest-browser-caret" "AIUEOS_COMPOSITOR_GUEST_BROWSER_CARET_OK"
     "guest-browser-launch" "AIUEOS_COMPOSITOR_GUEST_BROWSER_LAUNCH_OK"
+    "guest-browser-flow-parity" "AIUEOS_COMPOSITOR_GUEST_BROWSER_FLOW_PARITY_OK"
     nil))

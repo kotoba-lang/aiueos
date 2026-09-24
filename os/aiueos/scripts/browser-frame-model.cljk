@@ -20,8 +20,12 @@
 ;; pixel's position (y * 65536 + x, four little-endian bytes) in raster order.
 ;;
 ;; The scenes marked :pinned are frames already pinned on KERNEL.ELF serial
-;; (ADR-0224, 0225, 0227, 0228, 0229, 0230; re-pinned with the caret by ADR-0232); the model must reproduce them before its other
-;; answers are used. Exit 0 all pinned scenes reproduced, 1 one did not, 2 could not
+;; (ADR-0224, 0225, 0227, 0228, 0229, 0230; re-pinned with the caret by ADR-0232
+;; and with cssom's body flow by ADR-0234); the model must reproduce them before
+;; its other answers are used. Since ADR-0234 the body rule is also checked
+;; against the hosted engine itself: --parity compares every scene's body
+;; glyphs with os/aiueos/contracts/browser-flow-parity-v1.edn, which
+;; browser-flow-oracle.cljk writes from kotoba-lang/browser + cssom. Exit 0 all pinned scenes reproduced, 1 one did not, 2 could not
 ;; run (font unreadable).
 (ns browser-frame-model
   (:require [clojure.edn :as edn]
@@ -30,27 +34,36 @@
 (defn- die [code msg] (.error js/console msg) (.exit js/process code))
 
 (def ^:private args (vec (remove #(= "--" %) *command-line-args*)))
-(def ^:private ops-mode? (= "--ops" (first args)))
+(def ^:private mode (#{"--ops" "--scenes" "--parity" "--vectors"} (first args)))
+(def ^:private ops-mode? (= "--ops" mode))
 (def ^:private font-path
-  (or (if ops-mode? (get args 2) (first args)) "os/aiueos/fonts/aiueos-16.fnt"))
+  (or (if (#{"--ops"} mode) (get args 2) (if mode nil (first args))) "os/aiueos/fonts/aiueos-16.fnt"))
 
-(def ^:private font
-  (try (.readFileSync fs font-path) (catch :default e (die 2 (str "COULD-NOT-RUN font " font-path ": " e)))))
+(def ^:private font-state (atom nil))
 
-(defn- u32 [i] (.readUInt32LE font (* 4 i)))
-(def ^:private glyphs (u32 2))
+(defn use-font!
+  "Make `buf` (an aiueos-font/v1 Buffer) the font every layout below reads --
+  the committed font for the kernel's scenes, a contract's fixture for its
+  vectors."
+  [buf]
+  (let [u32 (fn [i] (.readUInt32LE buf (* 4 i)))
+        n (u32 2)]
+    (reset! font-state
+            {:buf buf :glyphs n
+             ;; code point -> [glyph index, width]
+             :index (into {} (for [i (range n)
+                                   :let [e (u32 (+ 4 i))]]
+                               [(bit-and e 16777215) [i (if (> e 16777215) 16 8)]]))})))
 
-(def ^:private index
-  ;; code point -> [glyph index, width]
-  (into {} (for [i (range glyphs)
-                 :let [e (u32 (+ 4 i))]]
-             [(bit-and e 16777215) [i (if (> e 16777215) 16 8)]])))
+(use-font! (try (.readFileSync fs font-path)
+                (catch :default e (die 2 (str "COULD-NOT-RUN font " font-path ": " e)))))
 
-(defn- glyph [cp] (or (index cp) (index 65533)))
+(defn glyph [cp] (let [{:keys [index]} @font-state] (or (index cp) (index 65533))))
 
 (defn- bits [gi]
   ;; positions [dx dy] of the set bits of glyph gi
-  (let [base (+ 16 (* 4 glyphs) (* 32 gi))]
+  (let [{font :buf glyphs :glyphs} @font-state
+        base (+ 16 (* 4 glyphs) (* 32 gi))]
     (for [row (range 16)
           :let [line (bit-or (bit-shift-left (aget font (+ base (* 2 row))) 8)
                              (aget font (+ base (* 2 row) 1)))]
@@ -83,6 +96,71 @@
                         ops)]
               (recur (rest cps) (+ x gw) y ops)))))
       {:ops ops :x x :y y})))
+
+(def ^:private white-space
+  ;; What cssom's text path collapses (a JS `\\s` run -> one U+0020), less 10,
+  ;; which the kernel's body uses as <br>. Measured against browser.surface +
+  ;; cssom.layout on 2026-09-25: U+3000, U+00A0, CR, FF, VT and TAB all
+  ;; collapse.
+  (into #{9 11 12 13 32 160 5760 8232 8233 8239 8287 12288 65279} (range 8192 8203)))
+
+(defn- width-of [cps] (reduce + (map (comp second glyph) cps)))
+
+(defn- words [cps] (remove #(white-space (first %)) (partition-by #(boolean (white-space %)) cps)))
+
+(defn- pack
+  "Lines (vectors of code points) of one run packed by words into `wmax`: the
+  first word of a line goes whatever its width, a next word joins with one
+  space when the line still fits, else it opens the next line."
+  [wmax cps]
+  (reduce (fn [lines word]
+            (let [line (peek lines)]
+              (cond
+                (nil? line) [(vec word)]
+                (empty? line) (conj (pop lines) (vec word))
+                (<= (+ (width-of line) (width-of [32]) (width-of word)) wmax)
+                (conj (pop lines) (into (conj line 32) word))
+                :else (conj lines (vec word)))))
+          [[]] (words cps)))
+
+(defn- segments
+  "The body split at each 10, empty segments kept: `x 10 10 y` is x, (), y."
+  [body]
+  (loop [cps body cur [] out []]
+    (if-let [c (first cps)]
+      (if (= c 10) (recur (rest cps) [] (conj out cur)) (recur (rest cps) (conj cur c) out))
+      (conj out cur))))
+
+(defn body-lines
+  "ADR-0234: the body's lines as browser.surface + cssom lay out the window's
+  document -- the body text, each 10 a <br> -- at line width `wmax`."
+  [wmax body]
+  (let [body (vec (take-while pos? body))]
+    (if (some #{10} body)
+      (vec (mapcat #(pack wmax %) (segments body)))
+      (let [collapsed (vec (mapcat #(if (white-space (first %)) [32] %)
+                                   (partition-by #(boolean (white-space %)) body)))]
+        (cond
+          (empty? (words body)) []
+          (<= (width-of collapsed) (max 0 wmax)) [collapsed]
+          :else (pack wmax body))))))
+
+(defn- lay-body
+  "The body's lines from (left, top), 20 apart: {:ops :x :y} with the pen after
+  the last glyph. A glyph whose foot passes `bottom` or whose right edge passes
+  `vw` is not drawn; the pen moves anyway."
+  [{:keys [left top bottom vw]} lines]
+  (reduce (fn [{:keys [ops]} [i line]]
+            (let [y (+ top (* 20 i))]
+              (loop [cps line x left ops ops]
+                (if-let [cp (first cps)]
+                  (let [[gi gw] (glyph cp)]
+                    (recur (rest cps) (+ x gw)
+                           (if (and (<= (+ y 16) bottom) (<= (+ x gw) vw))
+                             (conj ops [:glyph x y gi gw]) ops)))
+                  {:ops ops :x x :y y}))))
+          {:ops [] :x left :y top}
+          (map-indexed vector lines)))
 
 (defn- launcher
   "ADR-0233: with an app register (:apps, bit k-1 = app k), the launcher row
@@ -120,10 +198,13 @@
                  close (when chrome?
                          [[:rect (- (+ x w) 24) (+ y 6) 16 16 0xe4e8ef]
                           [:glyph (+ (- (+ x w) 24) (quot (- 16 xw) 2)) (+ y 6) xi xw]])
-                 b (lay-line {:x (+ x 8) :y (+ y 36) :left (+ x 8) :right (- (+ x w) 8)
-                              :bottom (- (+ y h) 8) :wrap? true} (take 64 body))
+                 ;; ADR-0234: the body flows as cssom lays out the window's
+                 ;; document: text 14 in from the body box (x, y + 28), lines
+                 ;; w - 28 wide.
+                 b (lay-body {:left (+ x 14) :top (+ y 42) :bottom (- (+ y h) 8) :vw vw}
+                             (body-lines (- w 28) (take 64 body)))
                  c (when (and f? (seq composition))
-                     (lay-line {:x (:x b) :y (:y b) :left (+ x 8) :right (- (+ x w) 8)
+                     (lay-line {:x (:x b) :y (:y b) :left (+ x 14) :right (- (+ x w) 14)
                                 :bottom (- (+ y h) 8) :wrap? true :underline? true}
                                composition))
                  ;; ADR-0232: the focused window's caret, cssom sel-ops'
@@ -131,7 +212,7 @@
                  ;; the next glyph would go (after the composition, if any);
                  ;; not drawn when its foot passes the bottom inset.
                  [cx cy] (if c [(:x c) (:y c)] [(:x b) (:y b)])
-                 caret (when (and f? (<= (+ cy 16) (- (+ y h) 8)))
+                 caret (when (and f? (<= (+ cy 16) (- (+ y h) 8)) (<= (+ cx 1) vw))
                          [[:rect cx cy 1 16 ink]])]
              (concat [[:rect x y w h (if f? 0xffffff 0xeef1f5)]
                       [:rect x y w 28 (if f? 0xd8e7ff 0xdde2ea)]]
@@ -172,27 +253,27 @@
 (def ^:private nihongo-ka [12395 12411 12435 12372 21152])
 
 (def scenes
-  [{:name "text" :pinned {:ops 58 :text-px 1100 :hash "4ab25516"}
+  [{:name "text" :pinned {:ops 58 :text-px 1079 :hash "89910f34"}
     :scene {:vw 1280 :vh 800 :focus 2 :stack [w1 w2]}}
-   {:name "text-raised" :pinned {:ops 58 :text-px 880 :hash "ca6c2709"}
+   {:name "text-raised" :pinned {:ops 58 :text-px 880 :hash "b9f96599"}
     :scene {:vw 1280 :vh 800 :focus 1 :stack [w2 w1]}}
-   {:name "typed" :pinned {:ops 63 :text-px 1068 :hash "b741bf74"}
+   {:name "typed" :pinned {:ops 63 :text-px 1068 :hash "a92b8f58"}
     :scene {:vw 1280 :vh 800 :focus 1 :stack [w2 (update w1 :body into nihongo-ka)]}}
    ;; ADR-0227: after typing `k a n`, the composition か + romaji n is drawn,
    ;; underlined, after the body; Enter commits かん and the rule is gone.
-   {:name "preedit" :pinned {:ops 67 :text-px 1146 :hash "04d93a5f"}
+   {:name "preedit" :pinned {:ops 67 :text-px 1146 :hash "566a1c8f"}
     :scene {:vw 1280 :vh 800 :focus 1 :stack [w2 (update w1 :body into nihongo-ka)]
             :composition [12363 110]}}
-   {:name "preedit-committed" :pinned {:ops 65 :text-px 1128 :hash "e67d620b"}
+   {:name "preedit-committed" :pinned {:ops 65 :text-px 1128 :hash "193030b3"}
     :scene {:vw 1280 :vh 800 :focus 1 :stack [w2 (update w1 :body into (concat nihongo-ka [12363 12435]))]}}
    ;; ADR-0228: Hankaku/Zenkaku turns the IME off, `k a` goes in as latin,
    ;; Hankaku/Zenkaku turns it back on, `k a` Enter commits か.
-   {:name "ime-toggle" :pinned {:ops 68 :text-px 1205 :hash "f516238a"}
+   {:name "ime-toggle" :pinned {:ops 68 :text-px 1205 :hash "322e206e"}
     :scene {:vw 1280 :vh 800 :focus 1
             :stack [w2 (update w1 :body into (concat nihongo-ka [12363 12435] [107 97 12363]))]}}
    ;; ADR-0229: a titlebar press at (60, 50), moves to (140, 90) (220, 120)
    ;; (300, 150), release: window 1 is dragged by (240, 100) to (272, 132).
-   {:name "drag" :pinned {:ops 68 :text-px 1947 :hash "a2969186"}
+   {:name "drag" :pinned {:ops 68 :text-px 1947 :hash "523440e0"}
     :scene {:vw 1280 :vh 800 :focus 1
             :stack [w2 (-> w1
                            (update :body into (concat nihongo-ka [12363 12435] [107 97 12363]))
@@ -200,7 +281,7 @@
    ;; ADR-0230: a press in window 1's resize handle at (984, 664), moves to
    ;; (784, 564) (300, 200 -- clamped at 120 x 80) (504, 324), release:
    ;; window 1 is 240 x 200 at (272, 132), and its body wraps at the new width.
-   {:name "resize" :pinned {:ops 68 :text-px 1947 :hash "4fa3baa2"}
+   {:name "resize" :pinned {:ops 68 :text-px 1947 :hash "523440e0"}
     :scene {:vw 1280 :vh 800 :focus 1
             :stack [w2 (-> w1
                            (update :body into (concat nihongo-ka [12363 12435] [107 97 12363]))
@@ -263,6 +344,52 @@
    ["close-2" (assoc shell :focus 3 :stack [w1k w3])]
    ["up" (assoc shell :focus 3 :stack [w1k w3])]])
 
+;; ADR-0234: the flow-parity frame. After everything above, the kernel lays
+;; out this surface on a surface of its own (no tablet needed): four windows
+;; whose bodies take each of cssom's rules -- packing by words with space runs,
+;; a tab and U+3000 collapsed (1); <br>s, an empty segment, leading and
+;; trailing spaces dropped per segment (2); a CJK run with no break
+;; opportunity overflowing the window (3); a body that fits kept as collapsed,
+;; its leading and trailing space included (4).
+(defn- cps [s] (vec (map #(.codePointAt % 0) (js/Array.from s))))
+
+(def flow-scene
+  {:vw 1280 :vh 800 :focus 4
+   ;; window 1's first line is exactly its 160 px (20 half-width glyphs), and
+   ;; its second would be 168 -- it fits the old inset (w - 16) and not
+   ;; cssom's (w - 28). Window 4's collapsed body is exactly its 152 px.
+   :stack [{:id 1 :x 16 :y 40 :w 188 :h 220 :title (cps "flow")
+            :body (cps "cssom  lays\tout words one by one,\u3000as hosted engine.")}
+           {:id 2 :x 220 :y 40 :w 420 :h 220 :title (cps "br")
+            :body (cps "  first  line  \n\n空行の次　全角空白も\nkotoba-lang/browser flows words")}
+           {:id 3 :x 656 :y 40 :w 200 :h 160 :title (cps "長い行")
+            :body (cps "ab 日本語の文字は単語の中で折り返さない cd")}
+           {:id 4 :x 16 :y 300 :w 180 :h 120 :title (cps "fits")
+            :body (cps " 画面　に　出る  text ")}]})
+
+(defn body-glyphs
+  "The span rule the flow-parity gate reads a kernel op list with: window k's
+  ops run from its body rect (x y w h) followed by its titlebar rect (x y w 28)
+  to the next window's; its body glyphs are the glyph ops there at or below
+  y + 28, as [dx dy glyph width] from (x, y + 28). Composition glyphs would
+  count too: a parity scene has none."
+  [{:keys [stack]} ops]
+  (let [starts (map (fn [{:keys [x y w h]}]
+                      (first (keep-indexed (fn [i o]
+                                             (when (and (= (vec (take 5 o)) [:rect x y w h])
+                                                        (= (vec (take 5 (get ops (inc i)))) [:rect x y w 28]))
+                                               i))
+                                           ops)))
+                    stack)]
+    (into (sorted-map)
+          (map (fn [{:keys [id x y]} [a b]]
+                 [id (vec (for [[k gx gy gi gw] (subvec ops a b)
+                                :when (= k :glyph)
+                                :when (>= gy (+ y 28))]
+                            [(- gx x) (- gy (+ y 28)) gi gw]))])
+               stack
+               (partition 2 1 (concat starts [(count ops)]))))))
+
 (defn chain
   "FNV-1a over each frame's census hash (u32, little-endian), in order -- what
   the kernel folds as it presents the loop's frames."
@@ -281,7 +408,61 @@
     (doseq [[i v] (map-indexed vector words)] (.writeUInt32LE buf v (* 4 i)))
     (.toString buf "hex")))
 
-(if ops-mode?
+(defn- named-scenes []
+  (concat (map #(select-keys % [:name :scene]) scenes)
+          (map-indexed (fn [i [ev s]] {:name (str "loop-" (inc i) "-" ev) :scene s}) loop-frames)
+          (map-indexed (fn [i [ev s]] {:name (str "caret-" (inc i) "-" ev) :scene s}) caret-frames)
+          (map-indexed (fn [i [ev s]] {:name (str "launch-" (inc i) "-" ev) :scene s}) launch-frames)
+          [{:name "flow" :scene flow-scene}]))
+
+(case mode
+  "--scenes"
+  ;; every scene, without its composition (not part of the body's layout)
+  (prn (mapv #(update % :scene dissoc :composition :apps :titles) (named-scenes)))
+
+  "--parity"
+  ;; the model's body glyphs, read out of its op list by the gate's span rule,
+  ;; against the hosted engine's (browser-flow-parity-v1.edn)
+  (let [contract (edn/read-string (str (.readFileSync fs (get args 1))))
+        diffs (for [{:keys [name scene bodies]} (:scenes contract)
+                    :let [mine (body-glyphs scene (frame scene))]
+                    id (keys bodies)
+                    :let [want (get bodies id) got (get mine id)]
+                    :when (not= want got)]
+                (let [i (count (take-while true? (map = want got)))]
+                  (str name " window " id " glyph " i ": hosted " (pr-str (get want i))
+                       " model " (pr-str (get got i)))))
+        n (reduce + (map (comp count :bodies) (:scenes contract)))]
+    (println (str "COMPARED\t" n))
+    (doseq [d diffs] (println "DIFFERS" d))
+    (.exit js/process (cond (zero? n) 2 (seq diffs) 1 :else 0)))
+
+  "--vectors"
+  ;; every success vector of browser-frame2-v1.edn: its seed decoded into a
+  ;; scene (surface words as the object's header lays them out) over its own
+  ;; fixture font, then `name count ops-hex`, one line each
+  (let [contract (edn/read-string (str (.readFileSync fs (get args 1))))]
+    (doseq [{:keys [name seed expect-memory]} (:vectors contract)
+            :when expect-memory
+            :let [surf (js/Buffer.from (:hex (first (filter #(= 0 (:offset %)) seed))) "hex")
+                  _ (use-font! (js/Buffer.from (:hex (first (filter #(= 8192 (:offset %)) seed))) "hex"))
+                  w (fn [i] (.readUInt32LE surf (* 4 i)))
+                  run (fn [base n] (vec (take-while pos? (map #(w (+ base %)) (range n)))))
+                  n (w 1)
+                  stack (mapv (fn [k] (let [b (+ 5 (* 5 k)) id (w b)]
+                                        {:id id :x (w (+ b 1)) :y (w (+ b 2)) :w (w (+ b 3)) :h (w (+ b 4))
+                                         :title (run (+ 32 (* 32 (dec id))) 32)
+                                         :body (run (+ 160 (* 64 (dec id))) 64)}))
+                              (range n))
+                  scene {:vw (w 3) :vh (w 4) :focus (w 2) :stack stack
+                         :composition (into (mapv #(w (+ 446 %)) (range (w 445)))
+                                            (map #(w (+ 434 %)) (range (w 433))))
+                         :apps (w 31)
+                         :titles (into {} (map (fn [k] [k (run (+ 32 (* 32 (dec k))) 32)]) [1 2 3 4]))}
+                  ops (frame scene)]]
+      (println (subs (str name) 1) (count ops) (apply str (map op-hex ops)))))
+
+  "--ops"
   (let [in (edn/read-string (str (.readFileSync fs (get args 1))))]
     ;; one scene, or a vector of scenes: one line each
     (doseq [scene (if (map? in) [in] in)
@@ -325,4 +506,8 @@
                              launch-frames))]
     (println (str "launch frames=" (count cs) " ops=" (apply str (interpose "," (map :ops cs)))
                   " chain=" (chain (map #(js/parseInt (:hash %) 16) cs))
-                  " last-px=" (:text-px (peek cs)) " last-hash=" (:hash (peek cs)))))))
+                  " last-px=" (:text-px (peek cs)) " last-hash=" (:hash (peek cs)))))
+  (let [ops (frame flow-scene)
+        c (census ops)]
+    (println (str "flow ops=" (:ops c) " text-px=" (:text-px c) " hash=" (:hash c)
+                  " body-glyphs=" (apply str (interpose "," (map count (vals (body-glyphs flow-scene ops))))))))))

@@ -716,7 +716,8 @@ while time.time() < end:
                                  (b"AIUEOS_GUEST_BROWSER_RESIZE_OK", "guest-browser-resize.ppm"),
                                  (b"AIUEOS_GUEST_BROWSER_LOOP_OK", "guest-browser-loop.ppm"),
                                  (b"AIUEOS_GUEST_BROWSER_CARET_OK", "guest-browser-caret.ppm"),
-                                 (b"AIUEOS_GUEST_BROWSER_LAUNCH_OK", "guest-browser-launch.ppm")):
+                                 (b"AIUEOS_GUEST_BROWSER_LAUNCH_OK", "guest-browser-launch.ppm"),
+                                 (b"AIUEOS_GUEST_BROWSER_FLOW_OK", "guest-browser-flow.ppm")):
                 if marker in serial_text and not globals().get(name):
                     globals()[name] = True
                     sock.sendall((json.dumps({"execute": "screendump",
