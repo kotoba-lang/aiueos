@@ -257,3 +257,43 @@
                                       {:serial (str drag-ok "AIUEOS_GUEST_BROWSER_RESIZE_OK events=6 answers=111100 clamp=120x80 size=720x540 at=272,132 capture=0 ops=67 text-px=1931 hash=6771f3fe\r\n")})))))
   (testing "tablet profile"
     (is (= {"AIUEOS_GUEST_BROWSER" "1"} (guest/extra-env "guest-browser-resize")))))
+
+;; Guest browser event loop (ADR-0231).
+(def ^:private resize-ok
+  (str drag-ok "AIUEOS_GUEST_BROWSER_RESIZE_OK events=6 answers=111100 clamp=120x80 size=240x200 at=272,132 capture=0 ops=67 text-px=1931 hash=36069e52\r\n"))
+
+(def ^:private loop-frames
+  (apply str (for [n (range 1 10)] (str "AIUEOS_GUEST_BROWSER_LOOP_FRAME n=" n " src=key answer=0 ops=69 text-px=1958 hash=f7326f2e\r\n"))))
+
+(def ^:private loop-ok
+  "AIUEOS_GUEST_BROWSER_LOOP_OK events=9 frames=9 answers=001220001 focus=2 at=196,172 capture=0 chain=f999ccaa ops=69 text-px=890 hash=6bd523d7 idle-min=")
+
+(deftest guest-browser-event-loop-classifier
+  (testing "nine interleaved events, a frame after each, the model's chain, the loop waiting: green"
+    (is (= :guest-browser-event-loop
+           (:reason (guest/classify "guest-browser-event-loop"
+                                    {:serial (str resize-ok loop-frames loop-ok "1734\r\n")})))))
+  (testing "the loop needs the resize frame first"
+    (is (= :no-resize-frame
+           (:reason (guest/classify "guest-browser-event-loop"
+                                    {:serial (str drag-ok loop-frames loop-ok "1734\r\n")})))))
+  (testing "an event that arrived before the loop polled (idle-min=0) is not a running loop"
+    (is (= :loop-not-waiting
+           (:reason (guest/classify "guest-browser-event-loop"
+                                    {:serial (str resize-ok loop-frames loop-ok "0\r\n")})))))
+  (testing "a frame line missing (one frame for two events) is not green"
+    (is (= :frame-lines-missing
+           (:reason (guest/classify "guest-browser-event-loop"
+                                    {:serial (str resize-ok (subs loop-frames 0 (* 8 (quot (count loop-frames) 9)))
+                                                  loop-ok "1734\r\n")})))))
+  (testing "a chain that is not the model's (one frame drawn from stale state) is not green"
+    (is (not (:green? (guest/classify "guest-browser-event-loop"
+                                      {:serial (str resize-ok loop-frames
+                                                    "AIUEOS_GUEST_BROWSER_LOOP_OK events=9 frames=9 answers=001220001 focus=2 at=196,172 capture=0 chain=00000000 ops=69 text-px=890 hash=6bd523d7 idle-min=1734\r\n")})))))
+  (testing "named reds"
+    (doseq [[line reason] [["AIUEOS_GUEST_BROWSER_LOOP leftover=events-missing events=4 frames=4\r\n" :events-missing]
+                           ["AIUEOS_GUEST_BROWSER_LOOP leftover=census-miss off=1 frames=9 chain=0badf00d focus=1 front=2 at=196,172 capture=0\r\n" :census-miss]
+                           ["" :guest-browser-event-loop-absent]]]
+      (is (= reason (:reason (guest/classify "guest-browser-event-loop" {:serial (str resize-ok line)}))) line)))
+  (testing "tablet profile"
+    (is (= {"AIUEOS_GUEST_BROWSER" "1" "AIUEOS_QEMU_TIMEOUT" "600"} (guest/extra-env "guest-browser-event-loop")))))

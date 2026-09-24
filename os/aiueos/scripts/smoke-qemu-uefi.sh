@@ -613,6 +613,41 @@ while time.time() < end:
                 recv_obj()
                 time.sleep(0.3)
             log("resized with 6 pointer events at RESIZE_GO")
+        # The event loop (ADR-0231): k a Enter, a press on window 2's titlebar
+        # at (150, 85), a move to (250, 185), a release, n i Enter. Each event
+        # goes only after the guest's frame line for the one before it (and
+        # that frame's screendump), half a second later: the order is ours,
+        # and the loop is seen waiting between events.
+        if typing and b"AIUEOS_GUEST_BROWSER_LOOP_GO" in serial_now and globals().get("loop_sent", 0) < 9:
+            k = globals().get("loop_sent", 0)
+            if k == 0 or (b"AIUEOS_GUEST_BROWSER_LOOP_FRAME n=%d " % k) in serial_now:
+                if k:
+                    shot = os.path.join(os.path.dirname(path), "guest-browser-loop-%d.ppm" % k)
+                    sock.sendall((json.dumps({"execute": "screendump", "arguments": {"filename": shot}})
+                                  + "\n").encode())
+                    recv_obj()
+                time.sleep(0.5)
+                def at(x, y):
+                    return [{"type": "abs", "data": {"axis": "x", "value": x}},
+                            {"type": "abs", "data": {"axis": "y", "value": y}}]
+                ev = (["k"], ["a"], ["ret"],
+                      at(3840, 3482) + [{"type": "btn", "data": {"down": True, "button": "left"}}],
+                      at(6400, 7578),
+                      [{"type": "btn", "data": {"down": False, "button": "left"}}],
+                      ["n"], ["i"], ["ret"])[k]
+                if isinstance(ev[0], str):
+                    for down in (True, False):
+                        sock.sendall((json.dumps({"execute": "input-send-event", "arguments": {"events": [
+                            {"type": "key", "data": {"down": down, "key": {"type": "qcode", "data": ev[0]}}}]}})
+                                      + "\n").encode())
+                        recv_obj()
+                        time.sleep(0.05)
+                else:
+                    sock.sendall((json.dumps({"execute": "input-send-event", "arguments": {"events": ev}})
+                                  + "\n").encode())
+                    recv_obj()
+                globals()["loop_sent"] = k + 1
+                log("loop event " + str(k + 1) + " sent")
         i += 1
         # Guest browser desktop (ADR-0224): the screens a person can look at.
         # The kernel holds each desktop frame for a few seconds in this
@@ -632,7 +667,8 @@ while time.time() < end:
                                  (b"AIUEOS_GUEST_BROWSER_PREEDIT_OK", "guest-browser-preedit-committed.ppm"),
                                  (b"AIUEOS_GUEST_BROWSER_IME_TOGGLE_OK", "guest-browser-ime-toggle.ppm"),
                                  (b"AIUEOS_GUEST_BROWSER_DRAG_OK", "guest-browser-drag.ppm"),
-                                 (b"AIUEOS_GUEST_BROWSER_RESIZE_OK", "guest-browser-resize.ppm")):
+                                 (b"AIUEOS_GUEST_BROWSER_RESIZE_OK", "guest-browser-resize.ppm"),
+                                 (b"AIUEOS_GUEST_BROWSER_LOOP_OK", "guest-browser-loop.ppm")):
                 if marker in serial_text and not globals().get(name):
                     globals()[name] = True
                     sock.sendall((json.dumps({"execute": "screendump",

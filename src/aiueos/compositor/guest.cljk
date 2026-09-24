@@ -16,7 +16,7 @@
    "guest-browser-frame" "guest-browser-input"
    "guest-browser-text" "guest-browser-text-raised" "guest-browser-type"
    "guest-browser-preedit" "guest-browser-ime-toggle" "guest-browser-drag"
-   "guest-browser-resize"])
+   "guest-browser-resize" "guest-browser-event-loop"])
 
 (defn gate-cmd
   "SPA-visible evidence command for a guest profile. Not clojure -M."
@@ -621,6 +621,40 @@
       {:green? false :exit 1 :reason :guest-browser-resize-absent
        :leftover [:guest-browser-resize-absent]})))
 
+;; Guest browser event loop (ADR-0231): after the resize, one running loop
+;; takes k a Enter, a press on window 2's titlebar, a move, a release and n i
+;; Enter -- interleaved, each sent after the previous frame -- and presents a
+;; frame after every one. Green needs all nine frame lines, the OK line whose
+;; chain folds the nine censuses of os/aiueos/scripts/browser-frame-model.cljk,
+;; and idle-min > 0 (every event found the loop waiting).
+
+(def ^:private loop-frame-numbers #{"1" "2" "3" "4" "5" "6" "7" "8" "9"})
+
+(defn guest-browser-event-loop-result
+  [{:keys [serial qemu-unmeasured?] :as opts}]
+  (let [s (or serial "")
+        frames (set (map second (re-seq #"(?m)^AIUEOS_GUEST_BROWSER_LOOP_FRAME n=(\d+) " s)))
+        ok (re-find #"(?m)^AIUEOS_GUEST_BROWSER_LOOP_OK events=9 frames=9 answers=001220001 focus=2 at=196,172 capture=0 chain=f999ccaa ops=69 text-px=890 hash=6bd523d7 idle-min=(\d+)" s)]
+    (cond
+      qemu-unmeasured? {:green? false :exit 3 :reason :unmeasured :leftover [:unmeasured]}
+      (not (re-find #"(?m)^AIUEOS_GUEST_BROWSER_RESIZE_OK events=6 answers=111100 clamp=120x80 size=240x200 at=272,132 capture=0 ops=67 text-px=1931 hash=36069e52" s))
+      (let [r (guest-browser-resize-result opts)]
+        (assoc r :reason :no-resize-frame :leftover (into [:no-resize-frame] (:leftover r))))
+      (and ok (not= frames loop-frame-numbers))
+      {:green? false :exit 1 :reason :frame-lines-missing :leftover [:frame-lines-missing]}
+      (and ok (= "0" (second ok)))
+      {:green? false :exit 1 :reason :loop-not-waiting :leftover [:loop-not-waiting]}
+      ok
+      {:green? true :exit 0 :reason :guest-browser-event-loop
+       :leftover [:no-caret :fixed-event-count]}
+      (re-find #"(?m)^AIUEOS_GUEST_BROWSER_LOOP leftover=events-missing" s)
+      {:green? false :exit 1 :reason :events-missing :leftover [:events-missing]}
+      (re-find #"(?m)^AIUEOS_GUEST_BROWSER_LOOP leftover=census-miss" s)
+      {:green? false :exit 1 :reason :census-miss :leftover [:census-miss]}
+      :else
+      {:green? false :exit 1 :reason :guest-browser-event-loop-absent
+       :leftover [:guest-browser-event-loop-absent]})))
+
 (defn extra-env
   "Env merged into smoke-qemu-uefi.sh. Default UEFI smoke is empty."
   [profile]
@@ -633,6 +667,10 @@
     "guest-browser-ime-toggle" {"AIUEOS_GUEST_BROWSER" "1"}
     "guest-browser-drag" {"AIUEOS_GUEST_BROWSER" "1"}
     "guest-browser-resize" {"AIUEOS_GUEST_BROWSER" "1"}
+    ;; ADR-0231: the resize alone ended at T+351 s of the 360 s wall clock
+    ;; (2026-09-25); the loop's nine frames come after it.
+    "guest-browser-event-loop" {"AIUEOS_GUEST_BROWSER" "1"
+                                "AIUEOS_QEMU_TIMEOUT" "600"}
     "guest-scanout-two" {"AIUEOS_GUEST_SCANOUT_TWO" "1"
                          "AIUEOS_QEMU_TIMEOUT" "90"}
     nil))
@@ -657,6 +695,7 @@
     "guest-browser-ime-toggle" (guest-browser-ime-toggle-result opts)
     "guest-browser-drag" (guest-browser-drag-result opts)
     "guest-browser-resize" (guest-browser-resize-result opts)
+    "guest-browser-event-loop" (guest-browser-event-loop-result opts)
     {:green? false :exit 3 :reason :unmeasured :leftover [:unmeasured]}))
 
 (defn serial-marker
@@ -679,6 +718,7 @@
     "guest-browser-ime-toggle" "AIUEOS_GUEST_BROWSER_IME_TOGGLE"
     "guest-browser-drag" "AIUEOS_GUEST_BROWSER_DRAG"
     "guest-browser-resize" "AIUEOS_GUEST_BROWSER_RESIZE"
+    "guest-browser-event-loop" "AIUEOS_GUEST_BROWSER_LOOP"
     nil))
 
 (defn ok-print
@@ -701,4 +741,5 @@
     "guest-browser-ime-toggle" "AIUEOS_COMPOSITOR_GUEST_BROWSER_IME_TOGGLE_OK"
     "guest-browser-drag" "AIUEOS_COMPOSITOR_GUEST_BROWSER_DRAG_OK"
     "guest-browser-resize" "AIUEOS_COMPOSITOR_GUEST_BROWSER_RESIZE_OK"
+    "guest-browser-event-loop" "AIUEOS_COMPOSITOR_GUEST_BROWSER_EVENT_LOOP_OK"
     nil))

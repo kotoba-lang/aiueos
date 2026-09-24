@@ -3973,6 +3973,7 @@ qwen_runtime_boot_complete:
                       if (drag_ok) {
                         uint32_t rev = 0, roff = 0, cw = 0, ch = 0;
                         int64_t resized;
+                        int resize_ok = 0;
                         (void)aiueos_tablet_drain(4000000U);
                         serial_string("AIUEOS_GUEST_BROWSER_RESIZE_GO events=6\r\n");
                         while (rev < 6) {
@@ -4001,6 +4002,7 @@ qwen_runtime_boot_complete:
                               text_hash == 0x36069e52U) {
                             debug_string("AIUEOS_GUEST_BROWSER_RESIZE_OK\n");
                             serial_string("AIUEOS_GUEST_BROWSER_RESIZE_OK events=6 answers=111100 clamp=120x80 size=240x200 at=272,132 capture=0 ops=67 text-px=1931 hash=36069e52\r\n");
+                            resize_ok = 1;
                           } else {
                             debug_string("AIUEOS_GUEST_BROWSER_RESIZE leftover=census-miss\n");
                             serial_string("AIUEOS_GUEST_BROWSER_RESIZE leftover=census-miss off=");
@@ -4037,6 +4039,117 @@ qwen_runtime_boot_complete:
                           serial_string(" frame=");
                           serial_decimal((uint32_t)(resized < 0 ? -resized : resized));
                           serial_string("\r\n");
+                        }
+                        /* The event loop (ADR-0231). Every gate above reads a
+                           fixed sequence from one device and draws once at its
+                           end; this one is a loop. It polls the tablet and the
+                           keyboard in turn, hands whatever arrives first to its
+                           Kotoba reducer (`kotoba_aiueos_browser_reduce` for a
+                           pointer batch, `kotoba_aiueos_browser_key` for a key
+                           press) and presents a frame after EVERY event. The
+                           host sends k a Enter, a press on window 2's titlebar
+                           at (150, 85), a move to (250, 185), a release, and
+                           n i Enter -- each only after the previous event's
+                           frame line, so the order is the host's and not the
+                           poll's. C decides nothing: routing by device is the
+                           mechanism; what an event does is the objects'. It
+                           counts the answers against 0 0 1 2 2 0 0 0 1 (a
+                           pointer answer is a window id: browser-reduce-v1's
+                           :dragging-window-2-leaves-window-1) and
+                           folds each frame's census hash into an FNV-1a chain;
+                           the per-frame censuses and the chain are
+                           os/aiueos/scripts/browser-frame-model.cljk's.
+                           `idle-min` is the fewest empty polls between two
+                           events: > 0 means each event found the loop waiting. */
+                        if (resize_ok) {
+                          static const int64_t lwant[9] = {0, 0, 1, 2, 2, 0, 0, 0, 1};
+                          static const uint32_t lsrc[9] = {0, 0, 0, 1, 3, 4, 0, 0, 0};
+                          static const uint32_t lops[9] = {69, 69, 68, 68, 68, 68, 70, 70, 69};
+                          uint32_t n = 0, loff = 0, lpx = 0, lhash = 0, chain = 2166136261U;
+                          uint32_t idle = 0, idle_min = 0xffffffffU, frames = 0;
+                          int64_t lastops = 0;
+                          (void)aiueos_tablet_drain(4000000U);
+                          (void)aiueos_keyboard_drain(4000000U);
+                          /* stack [1 2] once window 2 is raised: it is words 10..14 */
+                          serial_string("AIUEOS_GUEST_BROWSER_LOOP_GO events=9\r\n");
+                          while (n < 9 && idle < 60000U) {
+                            uint32_t src = aiueos_tablet_next(1024U, &ax, &ay);
+                            uint32_t code = 0;
+                            int64_t r, fo;
+                            if (src) {
+                              uint32_t px = (uint32_t)(((uint64_t)ax * surface[3]) / 32768U);
+                              uint32_t py = (uint32_t)(((uint64_t)ay * surface[4]) / 32768U);
+                              r = (int64_t)kotoba_aiueos_browser_reduce(sp, 128, src, px, py);
+                            } else {
+                              code = aiueos_keyboard_next_press(1024U);
+                              if (!code) { idle++; continue; }
+                              r = (int64_t)kotoba_aiueos_browser_key(sp, 8192, code, 1);
+                            }
+                            if (idle < idle_min) idle_min = idle;
+                            idle = 0;
+                            fo = (int64_t)kotoba_aiueos_browser_frame2(sp, 8192,
+                                   (uint64_t)(uintptr_t)font, font_length);
+                            if (fo > 0 && aiueos_desktop_present_ops2(surface + 480, (uint64_t)fo,
+                                                                      font, font_length)) {
+                              lhash = aiueos_desktop_colour_census(0x111111U, &lpx);
+                              (void)aiueos_desktop_show();
+                              frames++;
+                              for (int b = 0; b < 4; b++) {
+                                chain ^= (lhash >> (8 * b)) & 255U;
+                                chain *= 16777619U;
+                              }
+                            }
+                            if (src != lsrc[n] || r != lwant[n] || fo != (int64_t)lops[n]) loff++;
+                            lastops = fo;
+                            n++;
+                            serial_string("AIUEOS_GUEST_BROWSER_LOOP_FRAME n=");
+                            serial_decimal(n);
+                            serial_string(src ? " src=pointer answer=" : " src=key answer=");
+                            serial_decimal((uint32_t)(r < 0 ? -r : r));
+                            serial_string(" ops=");
+                            serial_decimal((uint32_t)(fo < 0 ? -fo : fo));
+                            serial_string(" text-px=");
+                            serial_decimal(lpx);
+                            serial_string(" hash=");
+                            serial_hex32(lhash);
+                            serial_string("\r\n");
+                          }
+                          if (n == 9 && frames == 9 && loff == 0 && chain == 0xf999ccaaU &&
+                              lastops == 69 && lpx == 890 && lhash == 0x6bd523d7U &&
+                              surface[2] == 2 && surface[10] == 2 && surface[11] == 196 &&
+                              surface[12] == 172 && surface[25] == 0) {
+                            debug_string("AIUEOS_GUEST_BROWSER_LOOP_OK\n");
+                            serial_string("AIUEOS_GUEST_BROWSER_LOOP_OK events=9 frames=9 answers=001220001 focus=2 at=196,172 capture=0 chain=f999ccaa ops=69 text-px=890 hash=6bd523d7 idle-min=");
+                            serial_decimal(idle_min);
+                            serial_string("\r\n");
+                            browser_hold_for_screendump();
+                          } else if (n < 9) {
+                            debug_string("AIUEOS_GUEST_BROWSER_LOOP leftover=events-missing\n");
+                            serial_string("AIUEOS_GUEST_BROWSER_LOOP leftover=events-missing events=");
+                            serial_decimal(n);
+                            serial_string(" frames=");
+                            serial_decimal(frames);
+                            serial_string("\r\n");
+                          } else {
+                            debug_string("AIUEOS_GUEST_BROWSER_LOOP leftover=census-miss\n");
+                            serial_string("AIUEOS_GUEST_BROWSER_LOOP leftover=census-miss off=");
+                            serial_decimal(loff);
+                            serial_string(" frames=");
+                            serial_decimal(frames);
+                            serial_string(" chain=");
+                            serial_hex32(chain);
+                            serial_string(" focus=");
+                            serial_decimal(surface[2]);
+                            serial_string(" front=");
+                            serial_decimal(surface[10]);
+                            serial_string(" at=");
+                            serial_decimal(surface[11]);
+                            serial_string(",");
+                            serial_decimal(surface[12]);
+                            serial_string(" capture=");
+                            serial_decimal(surface[25]);
+                            serial_string("\r\n");
+                          }
                         }
                       }
                     }

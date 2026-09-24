@@ -20,7 +20,7 @@
 ;; pixel's position (y * 65536 + x, four little-endian bytes) in raster order.
 ;;
 ;; The scenes marked :pinned are frames already pinned on KERNEL.ELF serial
-;; (ADR-0224, 0225, 0227, 0228, 0229); the model must reproduce them before its other
+;; (ADR-0224, 0225, 0227, 0228, 0229, 0230); the model must reproduce them before its other
 ;; answers are used. Exit 0 all pinned scenes reproduced, 1 one did not, 2 could not
 ;; run (font unreadable).
 (ns browser-frame-model
@@ -167,11 +167,44 @@
    ;; ADR-0230: a press in window 1's resize handle at (984, 664), moves to
    ;; (784, 564) (300, 200 -- clamped at 120 x 80) (504, 324), release:
    ;; window 1 is 240 x 200 at (272, 132), and its body wraps at the new width.
-   {:name "resize"
+   {:name "resize" :pinned {:ops 67 :text-px 1931 :hash "36069e52"}
     :scene {:vw 1280 :vh 800 :focus 1
             :stack [w2 (-> w1
                            (update :body into (concat nihongo-ka [12363 12435] [107 97 12363]))
                            (assoc :x 272 :y 132 :w 240 :h 200))]}}])
+
+;; ADR-0231: the event loop. After the resize, one running loop takes k a Enter
+;; (window 1), a press on window 2's titlebar at (150, 85), a move to
+;; (250, 185), a release, then n i Enter (window 2), and presents a frame after
+;; each of the nine. These are the nine frames, in order.
+(def ^:private w1r (-> w1
+                       (update :body into (concat nihongo-ka [12363 12435] [107 97 12363]))
+                       (assoc :x 272 :y 132 :w 240 :h 200)))
+(def ^:private w1k (update w1r :body conj 12363))
+(def ^:private w2m (assoc w2 :x 196 :y 172))
+
+(def loop-frames
+  [["k" {:vw 1280 :vh 800 :focus 1 :stack [w2 w1r] :composition [107]}]
+   ["a" {:vw 1280 :vh 800 :focus 1 :stack [w2 w1r] :composition [12363]}]
+   ["enter" {:vw 1280 :vh 800 :focus 1 :stack [w2 w1k]}]
+   ["down" {:vw 1280 :vh 800 :focus 2 :stack [w1k w2]}]
+   ["move" {:vw 1280 :vh 800 :focus 2 :stack [w1k w2m]}]
+   ["up" {:vw 1280 :vh 800 :focus 2 :stack [w1k w2m]}]
+   ["n" {:vw 1280 :vh 800 :focus 2 :stack [w1k w2m] :composition [110]}]
+   ["i" {:vw 1280 :vh 800 :focus 2 :stack [w1k w2m] :composition [12395]}]
+   ["enter" {:vw 1280 :vh 800 :focus 2 :stack [w1k (update w2m :body conj 12395)]}]])
+
+(defn chain
+  "FNV-1a over each frame's census hash (u32, little-endian), in order -- what
+  the kernel folds as it presents the loop's frames."
+  [hashes]
+  (let [h (reduce (fn [h v]
+                    (reduce (fn [h b]
+                              (let [h (bit-xor h (bit-and (unsigned-bit-shift-right v (* 8 b)) 255))]
+                                (unsigned-bit-shift-right (js/Math.imul h 16777619) 0)))
+                            h (range 4)))
+                  2166136261 hashes)]
+    (.padStart (.toString (unsigned-bit-shift-right h 0) 16) 8 "0")))
 
 (defn- op-hex [[k x y a b c]]
   (let [buf (js/Buffer.alloc 24)
@@ -192,4 +225,14 @@
                                         (= pinned c) " pinned=reproduced"
                                         :else (str " pinned=MISMATCH " pinned))))
                     (or (nil? pinned) (= pinned c))))]
-  (when-not (every? true? (doall results)) (.exit js/process 1))))
+  (when-not (every? true? (doall results)) (.exit js/process 1))
+  (let [cs (map-indexed (fn [i [ev scene]]
+                          (let [c (census (frame scene))]
+                            (println (str "loop-frame n=" (inc i) " " ev " ops=" (:ops c)
+                                          " text-px=" (:text-px c) " hash=" (:hash c)))
+                            c))
+                        loop-frames)
+        cs (vec cs)]
+    (println (str "loop frames=" (count cs) " ops=" (apply str (interpose "," (map :ops cs)))
+                  " chain=" (chain (map #(js/parseInt (:hash %) 16) cs))
+                  " last-px=" (:text-px (peek cs)) " last-hash=" (:hash (peek cs)))))))
