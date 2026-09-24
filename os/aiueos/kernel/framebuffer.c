@@ -456,6 +456,47 @@ int aiueos_desktop_wm_paint(uint64_t front) {
   return 1;
 }
 
+/* Guest browser desktop frame (ADR-0223). Present a retained draw list that
+   `kotoba_aiueos_browser_frame` wrote: 24-byte ops of kind 1 (rect), painted
+   in list order, which is the guest's z-order. C decides nothing here -- no
+   reorder, no colour, no skipping. An op kind it does not know, or a rect
+   that leaves the surface, refuses the whole frame (atomic replacement,
+   browser.desktop-backend `:frame/present`) rather than painting part of it. */
+uint32_t aiueos_desktop_width(void) { return desktop_surface_ready ? desktop_surface.width : 0; }
+uint32_t aiueos_desktop_height(void) { return desktop_surface_ready ? desktop_surface.height : 0; }
+
+int aiueos_desktop_present_ops(const uint32_t *ops, uint64_t count) {
+  if (!desktop_surface_ready || !ops || count == 0 || count > 64) return 0;
+  for (uint64_t i = 0; i < count; i++) {
+    const uint32_t *op = ops + i * 6;
+    if (op[0] != 1 || !wm_rect_fits(op[1], op[2], op[3], op[4])) return 0;
+  }
+  for (uint64_t i = 0; i < count; i++) {
+    const uint32_t *op = ops + i * 6;
+    rectangle(desktop_surface_pixels, desktop_surface.stride,
+              desktop_surface.pixel_format, op[1], op[2], op[3], op[4], op[5]);
+  }
+  desktop_surface.generation += 1;
+  desktop_surface.content_hash =
+    sample_hash(desktop_surface_pixels, desktop_surface.width,
+                desktop_surface.height, desktop_surface.stride);
+  desktop_surface.damage_x = 0;
+  desktop_surface.damage_y = 0;
+  desktop_surface.damage_width = desktop_surface.width;
+  desktop_surface.damage_height = desktop_surface.height;
+  return 1;
+}
+
+/* The sampled pixel as 0xRRGGBB, whatever the scanout's byte order, so a
+   gate compares it with the colour the draw list names. */
+uint32_t aiueos_desktop_sample_rgb(uint32_t x, uint32_t y) {
+  if (!desktop_surface_ready || x >= desktop_surface.width ||
+      y >= desktop_surface.height)
+    return 0xffffffffU;
+  return pixel(desktop_surface_pixels[(uint64_t)y * desktop_surface.stride + x],
+               desktop_surface.pixel_format) & 0x00ffffffU;
+}
+
 uint32_t aiueos_desktop_sample_pixel(uint32_t x, uint32_t y) {
   if (!desktop_surface_ready || x >= desktop_surface.width ||
       y >= desktop_surface.height)

@@ -98,6 +98,12 @@ command -v nbb >/dev/null 2>&1 || {
   exit 3
 }
 
+# Guest browser desktop (ADR-0223) is guest-input plus a virtio-tablet: the
+# same real keyboard (no synthetic event compiled in), and a pointer press the
+# QMP injector below sends through the tablet.
+if [ "${AIUEOS_GUEST_BROWSER:-0}" = 1 ]; then
+  AIUEOS_GUEST_INPUT=1
+fi
 build_status=0
 if [ "${AIUEOS_GUEST_INPUT:-0}" = 1 ]; then
   AIUEOS_CATALOG_POLICY_SELFTEST=1 \
@@ -405,6 +411,9 @@ qmp_args=""
 kbd_args="-device virtio-keyboard-pci,disable-legacy=on"
 if [ "${AIUEOS_GUEST_INPUT:-0}" = 1 ]; then
   kbd_args="-device virtio-keyboard-pci,disable-legacy=on,id=kbd0"
+  if [ "${AIUEOS_GUEST_BROWSER:-0}" = 1 ]; then
+    kbd_args="$kbd_args -device virtio-tablet-pci,disable-legacy=on,id=tab0"
+  fi
   # The QMP socket path comes from $out, and a UNIX socket path is capped at
   # 104 bytes. The default out leaves FIVE bytes of headroom, so a checkout
   # directory a few characters longer silently makes this documented profile
@@ -437,6 +446,7 @@ while :; do
   inject_pid=
   if [ "${AIUEOS_GUEST_INPUT:-0}" = 1 ]; then
     rm -f "$qmp_path"
+    AIUEOS_QMP_POINTER="${AIUEOS_GUEST_BROWSER:-0}" \
     AIUEOS_QMP_PATH="$qmp_path" AIUEOS_QMP_LOG="$out/guest-input-qmp.log" python3 - <<'PY' &
 import json, os, socket, sys, time
 path = os.environ["AIUEOS_QMP_PATH"]
@@ -501,15 +511,41 @@ events = [
     {"type": "key", "data": {"down": True, "key": key}},
     {"type": "key", "data": {"down": False, "key": key}},
 ]
-payload = json.dumps({"execute": "input-send-event", "arguments": {"events": events}}) + "\n"
-end = time.time() + 90
+# Guest browser desktop (ADR-0223): a left press through the virtio-tablet at
+# absolute (1536, 2048) of 0..32767. The guest scales by its own surface, so
+# on 1280x800 that is pixel (60, 50), and on any surface the hosted
+# boot-desktop fits (>= 752x572) it lands inside window 1 and outside window 2
+# -- the press that must raise the back window.
+#
+# Separate commands, and the release on its own: QEMU's virtio-input queues a
+# device's events up to the SYN and drops the whole batch unless that many
+# buffers are posted. The driver posts four, so x + y + press + SYN fits and
+# x + y + press + release + SYN (measured 2026-09-24: used=0 for the whole
+# boot) does not.
+batches = [events]
+if os.environ.get("AIUEOS_QMP_POINTER") == "1":
+    batches += [
+        [{"type": "abs", "data": {"axis": "x", "value": 1536}},
+         {"type": "abs", "data": {"axis": "y", "value": 2048}},
+         {"type": "btn", "data": {"down": True, "button": "left"}}],
+        [{"type": "btn", "data": {"down": False, "button": "left"}}],
+    ]
+payloads = [json.dumps({"execute": "input-send-event", "arguments": {"events": b}}) + "\n"
+            for b in batches]
+# The keyboard takes the first key it sees, so ninety seconds of repeats were
+# enough for guest-input. The tablet is brought up AFTER the keyboard has its
+# event, and measured 2026-09-24 it saw used=0 when this window closed at 90 s
+# -- so with a pointer the injector keeps sending until QEMU goes away (the
+# send fails and the loop breaks) or well past the boot's own timeout.
+end = time.time() + (900 if os.environ.get("AIUEOS_QMP_POINTER") == "1" else 90)
 i = 0
 while time.time() < end:
     try:
-        sock.sendall(payload.encode())
-        reply = recv_obj()
-        if reply and i < 8:
-            log("reply " + json.dumps(reply)[:400])
+        for payload in payloads:
+            sock.sendall(payload.encode())
+            reply = recv_obj()
+            if reply and i < 8:
+                log("reply " + json.dumps(reply)[:400])
         i += 1
     except OSError as e:
         log("send-error " + str(e))
@@ -1094,6 +1130,11 @@ if [ "${AIUEOS_GUEST_INPUT:-0}" = 1 ]; then
   grep -F "AIUEOS_GUEST_INPUT_OK eventq-used=1 synthetic=0" "$serial_log" >/dev/null || {
     echo "error: guest-input used-ring serial was not observed" >&2; exit 1;
   }
+  if [ "${AIUEOS_GUEST_BROWSER:-0}" = 1 ]; then
+    grep -F "AIUEOS_GUEST_BROWSER_INPUT_OK eventq-used=1 kind=pointer-down" "$serial_log" >/dev/null || {
+      echo "error: guest browser pointer serial was not observed" >&2; exit 1;
+    }
+  fi
 else
   grep -F "AIUEOS_VIRTIO_INPUT_OK modern-pci eventq configured synthetic-smoke" "$serial_log" >/dev/null || {
     echo "error: modern virtio-input configuration/synthetic transport evidence was not observed" >&2; exit 1;

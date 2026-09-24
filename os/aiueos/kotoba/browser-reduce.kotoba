@@ -1,0 +1,111 @@
+;; Guest browser desktop input: one canonical event -> kotoba-lang/browser
+;; surface action, applied to the surface state, on KERNEL.ELF (ADR-0223).
+;;
+;; WHY THIS IS A KOTOBA OBJECT AND NOT A C TABLE
+;;
+;; C owns the virtio-input rings and scales a tablet's absolute axes to
+;; surface pixels (mechanism). WHICH window a pointer lands on, and what that
+;; does to focus and stacking, is the browser guest's decision
+;; (kotoba-lang/browser ADR 0002). C never chooses a window.
+;;
+;; Mirrored from kotoba-lang/browser:
+;;   pointer/down  browser.input/actions-for-event: window-at walks
+;;                 `:surface/windows` in reverse (topmost first) with an
+;;                 inclusive point-in-rect; a hit yields `:window/focus`,
+;;                 a miss yields no action.
+;;   window/focus  browser.surface/focus-window: set focus AND move the
+;;                 window to the end of `:surface/windows` (raise).
+;;   keyboard/key  browser.input: `:keyboard/key` on the focused window;
+;;                 no geometry changes.
+;; Not mirrored: drag/resize capture on the titlebar and resize handle,
+;; text editing, IME. Named leftovers `:no-pointer-capture`, `:no-text-edit`.
+;;
+;; Same 128-byte u32 state as browser-frame.kotoba (same temporary native
+;; constraints -- word types, at most five parameters -- and the same removal
+;; condition).
+;;
+;; ABI: [state state-bytes kind a b], mutates state in place.
+;;   kind 1 pointer/down at (a, b) -> focused window id, or 0 on a miss
+;;   kind 2 key (a = code, b = value) -> focused window id that receives it
+;;   -1 null region / wrong size   -2 abi or n out of range
+;;   -3 focus is not a window id   -5 unknown event kind
+
+(ns aiueos.browser-reduce
+  (:export [aiueos-browser-reduce main]))
+
+;; The state size is checked once at the entry (it must be 128).
+(defn w-at [st i]
+  (kernel-load-u32 (kernel-subregion st 128 (* i 4) 4) 4 0))
+
+(defn w-put [st i v]
+  (kernel-store-u32 (kernel-subregion st 128 (* i 4) 4) 4 0 v))
+
+(defn has-id [st n k id]
+  (if (>= k n) 0
+    (if (= (w-at st (+ 5 (* k 5))) id) 1
+      (has-id st n (+ k 1) id))))
+
+(defn inside [st k px py]
+  (let [b (+ 5 (* k 5))
+        x (w-at st (+ b 1))
+        y (w-at st (+ b 2))
+        w (w-at st (+ b 3))
+        h (w-at st (+ b 4))]
+    (if (< px x) 0
+      (if (> px (+ x w)) 0
+        (if (< py y) 0
+          (if (> py (+ y h)) 0 1))))))
+
+;; Topmost first. Returns the stack index + 1, or 0.
+(defn hit [st k px py]
+  (if (< k 0) 0
+    (if (= (inside st k px py) 1) (+ k 1)
+      (hit st (- k 1) px py))))
+
+(defn copy-rec [st from to]
+  (let [fb (+ 5 (* from 5))
+        tb (+ 5 (* to 5))]
+    (do (w-put st tb (w-at st fb))
+        (w-put st (+ tb 1) (w-at st (+ fb 1)))
+        (w-put st (+ tb 2) (w-at st (+ fb 2)))
+        (w-put st (+ tb 3) (w-at st (+ fb 3)))
+        (w-put st (+ tb 4) (w-at st (+ fb 4))))))
+
+(defn shift-down [st k n]
+  (if (>= k (- n 1)) 0
+    (do (copy-rec st (+ k 1) k)
+        (shift-down st (+ k 1) n))))
+
+(defn raise [st k n]
+  (let [b (+ 5 (* k 5))
+        id (w-at st b)
+        x (w-at st (+ b 1))
+        y (w-at st (+ b 2))
+        w (w-at st (+ b 3))
+        h (w-at st (+ b 4))
+        tb (+ 5 (* (- n 1) 5))]
+    (do (shift-down st k n)
+        (w-put st tb id)
+        (w-put st (+ tb 1) x)
+        (w-put st (+ tb 2) y)
+        (w-put st (+ tb 3) w)
+        (w-put st (+ tb 4) h)
+        (w-put st 2 id)
+        id)))
+
+(defn aiueos-browser-reduce [st sb kind a b]
+  (if (= st 0) -1
+    (if (not (= sb 128)) -1
+      (let [abi (w-at st 0)
+            n (w-at st 1)
+            focus (w-at st 2)]
+        (if (not (= abi 1)) -2
+          (if (< n 1) -2
+            (if (> n 4) -2
+              (if (= (has-id st n 0 focus) 0) -3
+                (if (= kind 1)
+                  (let [k1 (hit st (- n 1) a b)]
+                    (if (= k1 0) 0 (raise st (- k1 1) n)))
+                  (if (= kind 2) focus -5))))))))))
+
+(defn main [] 0)

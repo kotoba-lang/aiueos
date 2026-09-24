@@ -907,6 +907,23 @@ extern uint64_t kotoba_aiueos_wm_hit(uint64_t n, uint64_t front,
                                      uint64_t px, uint64_t py);
 extern uint64_t kotoba_aiueos_broker_admit(uint64_t a, uint64_t b);
 extern uint64_t kotoba_aiueos_session_restore(uint64_t a);
+/* Guest browser desktop (ADR-0223): kotoba-lang/browser's surface as the
+   desktop, on KERNEL.ELF. */
+extern uint64_t kotoba_aiueos_browser_frame(uint64_t state, uint64_t state_bytes,
+                                            uint64_t ops, uint64_t ops_bytes);
+extern uint64_t kotoba_aiueos_browser_reduce(uint64_t state, uint64_t state_bytes,
+                                             uint64_t kind, uint64_t a, uint64_t b);
+extern int aiueos_desktop_present_ops(const uint32_t *ops, uint64_t count);
+extern uint32_t aiueos_desktop_sample_rgb(uint32_t x, uint32_t y);
+extern uint32_t aiueos_desktop_width(void);
+extern uint32_t aiueos_desktop_height(void);
+extern int aiueos_desktop_pointer_ready(void);
+extern int aiueos_desktop_pointer_tablets_seen(void);
+extern uint32_t aiueos_desktop_pointer_abs_x(void);
+extern uint32_t aiueos_desktop_pointer_abs_y(void);
+extern uint32_t aiueos_desktop_pointer_events_used(void);
+extern uint32_t aiueos_desktop_pointer_events_abs(void);
+extern uint32_t aiueos_desktop_pointer_events_key(void);
 extern void aiueos_scheduler_initialize(void);
 extern int aiueos_scheduler_restore_service_registry(uint64_t state0, uint64_t state1);
 extern int aiueos_scheduler_persistent_restore_evidence_ready(void);
@@ -984,6 +1001,12 @@ static void serial_decimal(uint32_t value) {
   if (!value) { serial_byte('0'); return; }
   while (value) { digits[count++] = (char)('0' + (value % 10)); value /= 10; }
   while (count) serial_byte((uint8_t)digits[--count]);
+}
+
+static void serial_rgb(uint32_t rgb) {
+  serial_hex_byte((uint8_t)(rgb >> 16));
+  serial_hex_byte((uint8_t)(rgb >> 8));
+  serial_hex_byte((uint8_t)rgb);
 }
 
 static void serial_decimal64(uint64_t value) {
@@ -3218,6 +3241,22 @@ qwen_runtime_boot_complete:
         serial_string("AIUEOS_KOTOBA_OBJECT_REPLAY_OK domains=4,5 journals=44-47 objects=42,43\r\n");
       }
     }
+    /* Guest browser desktop (ADR-0223): only a boot with a virtio-tablet
+       prints this, so every other profile's serial is unchanged. Printed
+       before the keyboard check, which may stop the boot. */
+    if (aiueos_desktop_pointer_tablets_seen()) {
+      serial_string("AIUEOS_GUEST_BROWSER_TABLET tablets=");
+      serial_decimal((uint32_t)aiueos_desktop_pointer_tablets_seen());
+      serial_string(" press=");
+      serial_decimal((uint32_t)aiueos_desktop_pointer_ready());
+      serial_string(" used=");
+      serial_decimal(aiueos_desktop_pointer_events_used());
+      serial_string(" abs=");
+      serial_decimal(aiueos_desktop_pointer_events_abs());
+      serial_string(" key=");
+      serial_decimal(aiueos_desktop_pointer_events_key());
+      serial_string("\r\n");
+    }
     /* The input result bit is set only after a validated event has been copied
        into the browser envelope; no second mutable readiness check is needed. */
     if (!(pci_result & 4)) {
@@ -3399,6 +3438,122 @@ qwen_runtime_boot_complete:
           } else {
             debug_string("AIUEOS_GUEST_PAINT leftover=vector-miss\n");
             serial_string("AIUEOS_GUEST_PAINT leftover=vector-miss\r\n");
+          }
+        }
+      }
+    }
+    /* Guest browser desktop (ADR-0223). kotoba-lang/browser ADR 0002: the
+       browser surface IS the desktop. The surface state below is the hosted
+       boot-desktop (window 1 at 32,32 720x540 under window 2 at 96,72
+       640x480, window 2 focused). Kotoba writes the retained draw list
+       (`kotoba_aiueos_browser_frame`); C paints it in list order and samples.
+       Then a real virtio-tablet press, scaled to surface pixels by C, is
+       reduced by Kotoba (`kotoba_aiueos_browser_reduce`: topmost hit, focus
+       and raise) and the frame is drawn again. Do not qemu_exit: every gate
+       before this one stays green without these lines. Hosted JVM/JS
+       desktop-backend frames do not count. */
+    {
+      static uint32_t browser_state[32];
+      static uint32_t browser_ops[64];
+      static const uint32_t boot[15] = {1, 2, 2, 0, 0,
+                                        1, 32, 32, 720, 540,
+                                        2, 96, 72, 640, 480};
+      uint64_t st = (uint64_t)(uintptr_t)browser_state;
+      uint64_t op = (uint64_t)(uintptr_t)browser_ops;
+      int64_t count;
+      int frame_ok = 0;
+      for (int i = 0; i < 32; i++) browser_state[i] = i < 15 ? boot[i] : 0;
+      browser_state[3] = aiueos_desktop_width();
+      browser_state[4] = aiueos_desktop_height();
+      count = (int64_t)kotoba_aiueos_browser_frame(st, 128, op, 256);
+      if (count <= 0) {
+        debug_string("AIUEOS_GUEST_BROWSER_FRAME leftover=frame-refused\n");
+        serial_string("AIUEOS_GUEST_BROWSER_FRAME leftover=frame-refused reason=-");
+        serial_decimal((uint32_t)(-count));
+        serial_string("\r\n");
+      } else if (!aiueos_desktop_present_ops(browser_ops, (uint64_t)count)) {
+        debug_string("AIUEOS_GUEST_BROWSER_FRAME leftover=fb-too-small\n");
+        serial_string("AIUEOS_GUEST_BROWSER_FRAME leftover=fb-too-small\r\n");
+      } else {
+        uint32_t overlap = aiueos_desktop_sample_rgb(100, 80);
+        uint32_t title1 = aiueos_desktop_sample_rgb(60, 50);
+        if (overlap == 0xeef1f5U || overlap == 0xdde2eaU) {
+          debug_string("AIUEOS_GUEST_BROWSER_FRAME leftover=key-order-paint\n");
+          serial_string("AIUEOS_GUEST_BROWSER_FRAME leftover=key-order-paint\r\n");
+        } else if (count == 5 && overlap == 0xd8e7ffU && title1 == 0xdde2eaU) {
+          frame_ok = 1;
+          debug_string("AIUEOS_GUEST_BROWSER_FRAME_OK\n");
+          serial_string("AIUEOS_GUEST_BROWSER_FRAME_OK ops=5 overlap=d8e7ff win1-title=dde2ea surface=");
+          serial_decimal(browser_state[3]);
+          serial_string("x");
+          serial_decimal(browser_state[4]);
+          serial_string("\r\n");
+        } else {
+          debug_string("AIUEOS_GUEST_BROWSER_FRAME leftover=colour-miss\n");
+          serial_string("AIUEOS_GUEST_BROWSER_FRAME leftover=colour-miss ops=");
+          serial_decimal((uint32_t)count);
+          serial_string(" overlap=");
+          serial_rgb(overlap);
+          serial_string(" win1-title=");
+          serial_rgb(title1);
+          serial_string("\r\n");
+        }
+      }
+      if (!frame_ok) {
+        /* Input is judged on a frame that was presented; without one it
+           would be judged on whatever the paint gate left behind. */
+      } else if (!aiueos_desktop_pointer_ready()) {
+        debug_string("AIUEOS_GUEST_BROWSER_INPUT leftover=no-pointer-event\n");
+        serial_string("AIUEOS_GUEST_BROWSER_INPUT leftover=no-pointer-event tablets=");
+        serial_decimal((uint32_t)aiueos_desktop_pointer_tablets_seen());
+        serial_string(" used=");
+        serial_decimal(aiueos_desktop_pointer_events_used());
+        serial_string(" abs=");
+        serial_decimal(aiueos_desktop_pointer_events_abs());
+        serial_string(" key=");
+        serial_decimal(aiueos_desktop_pointer_events_key());
+        serial_string("\r\n");
+      } else {
+        uint32_t px = (uint32_t)(((uint64_t)aiueos_desktop_pointer_abs_x() *
+                                  browser_state[3]) / 32768U);
+        uint32_t py = (uint32_t)(((uint64_t)aiueos_desktop_pointer_abs_y() *
+                                  browser_state[4]) / 32768U);
+        int64_t hit = (int64_t)kotoba_aiueos_browser_reduce(st, 128, 1, px, py);
+        if (hit <= 0) {
+          debug_string("AIUEOS_GUEST_BROWSER_INPUT leftover=pointer-miss\n");
+          serial_string("AIUEOS_GUEST_BROWSER_INPUT leftover=pointer-miss px=");
+          serial_decimal(px);
+          serial_string(" py=");
+          serial_decimal(py);
+          serial_string("\r\n");
+        } else {
+          int64_t again = (int64_t)kotoba_aiueos_browser_frame(st, 128, op, 256);
+          uint32_t overlap = 0, title1 = 0;
+          if (again > 0 && aiueos_desktop_present_ops(browser_ops, (uint64_t)again)) {
+            overlap = aiueos_desktop_sample_rgb(100, 80);
+            title1 = aiueos_desktop_sample_rgb(60, 50);
+          }
+          if (again <= 0 || overlap == 0) {
+            debug_string("AIUEOS_GUEST_BROWSER_INPUT leftover=frame-refused\n");
+            serial_string("AIUEOS_GUEST_BROWSER_INPUT leftover=frame-refused\r\n");
+          } else if (overlap == 0xd8e7ffU) {
+            debug_string("AIUEOS_GUEST_BROWSER_INPUT leftover=raise-not-painted\n");
+            serial_string("AIUEOS_GUEST_BROWSER_INPUT leftover=raise-not-painted\r\n");
+          } else if (hit == 1 && browser_state[2] == 1 && browser_state[10] == 1 &&
+                     overlap == 0xffffffU && title1 == 0xd8e7ffU) {
+            debug_string("AIUEOS_GUEST_BROWSER_INPUT_OK\n");
+            serial_string("AIUEOS_GUEST_BROWSER_INPUT_OK eventq-used=1 kind=pointer-down px=");
+            serial_decimal(px);
+            serial_string(" py=");
+            serial_decimal(py);
+            serial_string(" hit=1 front=1 overlap=ffffff win1-title=d8e7ff\r\n");
+          } else {
+            debug_string("AIUEOS_GUEST_BROWSER_INPUT leftover=vector-miss\n");
+            serial_string("AIUEOS_GUEST_BROWSER_INPUT leftover=vector-miss hit=");
+            serial_decimal((uint32_t)hit);
+            serial_string(" overlap=");
+            serial_rgb(overlap);
+            serial_string("\r\n");
           }
         }
       }

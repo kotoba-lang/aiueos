@@ -12,7 +12,8 @@
 
 (def guest-profiles
   ["guest-ime" "guest-wm" "guest-paint" "guest-input"
-   "guest-gpu-two" "guest-scanout-two" "guest-broker" "guest-session"])
+   "guest-gpu-two" "guest-scanout-two" "guest-broker" "guest-session"
+   "guest-browser-frame" "guest-browser-input"])
 
 (defn gate-cmd
   "SPA-visible evidence command for a guest profile. Not clojure -M."
@@ -334,11 +335,113 @@
      :leftover [:guest-session-absent]}))
 
 
+;; Guest browser desktop (ADR-0223). kotoba-lang/browser ADR 0002 makes the
+;; browser surface the aiueos desktop; these two gates are that surface on
+;; KERNEL.ELF. Hosted desktop-backend frames (JS/JVM) and hosted WM serial do
+;; not count.
+
+(def ^:private browser-frame-ok-re
+  #"(?m)^AIUEOS_GUEST_BROWSER_FRAME_OK ops=5 overlap=d8e7ff win1-title=dde2ea surface=\d+x\d+")
+
+(defn guest-browser-frame-ok?
+  "True only when KERNEL.ELF serial says the Kotoba browser frame was
+  presented: five ops, the overlap pixel is the FRONT window's focused
+  titlebar and window 1's titlebar is the unfocused colour."
+  [serial]
+  (boolean
+   (and (string? serial)
+        (re-find browser-frame-ok-re serial)
+        (not (re-find #"AIUEOS_COMPOSITOR_WM_OK" serial)))))
+
+(defn guest-browser-frame-result
+  "Classify a KERNEL.ELF boot for compositor `guest-browser-frame`."
+  [{:keys [serial qemu-unmeasured? hosted-wm?]}]
+  (let [s (or serial "")]
+    (cond
+      qemu-unmeasured?
+      {:green? false :exit 3 :reason :unmeasured :leftover [:unmeasured]}
+
+      (or hosted-wm? (re-find #"AIUEOS_COMPOSITOR_WM_OK" s))
+      {:green? false :exit 1 :reason :hosted-wm-does-not-count
+       :leftover [:hosted-wm-does-not-count]}
+
+      (guest-browser-frame-ok? s)
+      {:green? true :exit 0 :reason :guest-browser-frame :leftover [:no-text-raster]}
+
+      (re-find #"(?m)^AIUEOS_GUEST_BROWSER_FRAME leftover=frame-refused" s)
+      {:green? false :exit 1 :reason :frame-refused :leftover [:frame-refused]}
+
+      (re-find #"(?m)^AIUEOS_GUEST_BROWSER_FRAME leftover=fb-too-small" s)
+      {:green? false :exit 1 :reason :fb-too-small :leftover [:fb-too-small]}
+
+      (re-find #"(?m)^AIUEOS_GUEST_BROWSER_FRAME leftover=key-order-paint" s)
+      {:green? false :exit 1 :reason :key-order-paint :leftover [:key-order-paint]}
+
+      (re-find #"(?m)^AIUEOS_GUEST_BROWSER_FRAME leftover=colour-miss" s)
+      {:green? false :exit 1 :reason :colour-miss :leftover [:colour-miss]}
+
+      :else
+      {:green? false :exit 1 :reason :guest-browser-frame-absent
+       :leftover [:guest-browser-frame-absent]})))
+
+(defn guest-browser-input-ok?
+  "True only when KERNEL.ELF serial says a virtio-tablet press was reduced
+  by Kotoba to focus-and-raise of window 1 and the redrawn frame shows it:
+  the overlap pixel is now window 1's focused body. A frame that never
+  presented does not reach this line."
+  [serial]
+  (boolean
+   (and (string? serial)
+        (guest-browser-frame-ok? serial)
+        (re-find #"(?m)^AIUEOS_GUEST_BROWSER_INPUT_OK eventq-used=1 kind=pointer-down px=\d+ py=\d+ hit=1 front=1 overlap=ffffff win1-title=d8e7ff" serial)
+        (not (re-find #"AIUEOS_COMPOSITOR_WM_OK" serial)))))
+
+(defn guest-browser-input-result
+  "Classify a KERNEL.ELF boot for compositor `guest-browser-input`."
+  [{:keys [serial qemu-unmeasured? hosted-wm?] :as opts}]
+  (let [s (or serial "")]
+    (cond
+      qemu-unmeasured?
+      {:green? false :exit 3 :reason :unmeasured :leftover [:unmeasured]}
+
+      (or hosted-wm? (re-find #"AIUEOS_COMPOSITOR_WM_OK" s))
+      {:green? false :exit 1 :reason :hosted-wm-does-not-count
+       :leftover [:hosted-wm-does-not-count]}
+
+      (not (guest-browser-frame-ok? s))
+      (let [r (guest-browser-frame-result opts)]
+        (assoc r :reason :no-presented-frame
+               :leftover (into [:no-presented-frame] (:leftover r))))
+
+      (guest-browser-input-ok? s)
+      {:green? true :exit 0 :reason :guest-browser-pointer-raise
+       :leftover [:no-pointer-capture :no-text-raster]}
+
+      (re-find #"(?m)^AIUEOS_GUEST_BROWSER_INPUT leftover=no-pointer-event" s)
+      {:green? false :exit 1 :reason :no-pointer-event :leftover [:no-pointer-event]}
+
+      (re-find #"(?m)^AIUEOS_GUEST_BROWSER_INPUT leftover=pointer-miss" s)
+      {:green? false :exit 1 :reason :pointer-miss :leftover [:pointer-miss]}
+
+      (re-find #"(?m)^AIUEOS_GUEST_BROWSER_INPUT leftover=raise-not-painted" s)
+      {:green? false :exit 1 :reason :raise-not-painted :leftover [:raise-not-painted]}
+
+      (re-find #"(?m)^AIUEOS_GUEST_BROWSER_INPUT leftover=frame-refused" s)
+      {:green? false :exit 1 :reason :frame-refused :leftover [:frame-refused]}
+
+      (re-find #"(?m)^AIUEOS_GUEST_BROWSER_INPUT leftover=vector-miss" s)
+      {:green? false :exit 1 :reason :vector-miss :leftover [:vector-miss]}
+
+      :else
+      {:green? false :exit 1 :reason :guest-browser-input-absent
+       :leftover [:guest-browser-input-absent]})))
+
 (defn extra-env
   "Env merged into smoke-qemu-uefi.sh. Default UEFI smoke is empty."
   [profile]
   (case profile
     "guest-input" {"AIUEOS_GUEST_INPUT" "1"}
+    "guest-browser-input" {"AIUEOS_GUEST_BROWSER" "1"}
     "guest-scanout-two" {"AIUEOS_GUEST_SCANOUT_TWO" "1"
                          "AIUEOS_QEMU_TIMEOUT" "90"}
     nil))
@@ -354,6 +457,8 @@
     "guest-scanout-two" (guest-scanout-two-result opts)
     "guest-broker" (guest-broker-result opts)
     "guest-session" (guest-session-result opts)
+    "guest-browser-frame" (guest-browser-frame-result opts)
+    "guest-browser-input" (guest-browser-input-result opts)
     {:green? false :exit 3 :reason :unmeasured :leftover [:unmeasured]}))
 
 (defn serial-marker
@@ -367,6 +472,8 @@
     "guest-scanout-two" "AIUEOS_GUEST_SCANOUT_TWO"
     "guest-broker" "AIUEOS_GUEST_BROKER"
     "guest-session" "AIUEOS_GUEST_SESSION"
+    "guest-browser-frame" "AIUEOS_GUEST_BROWSER"
+    "guest-browser-input" "AIUEOS_GUEST_BROWSER"
     nil))
 
 (defn ok-print
@@ -380,4 +487,6 @@
     "guest-scanout-two" "AIUEOS_COMPOSITOR_GUEST_SCANOUT_TWO_OK"
     "guest-broker" "AIUEOS_COMPOSITOR_GUEST_BROKER_OK"
     "guest-session" "AIUEOS_COMPOSITOR_GUEST_SESSION_OK"
+    "guest-browser-frame" "AIUEOS_COMPOSITOR_GUEST_BROWSER_FRAME_OK"
+    "guest-browser-input" "AIUEOS_COMPOSITOR_GUEST_BROWSER_INPUT_OK"
     nil))

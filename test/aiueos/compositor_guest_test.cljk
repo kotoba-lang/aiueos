@@ -41,3 +41,64 @@
 (deftest nbb-html-command-is-not-clojure-substring
   (is (not (str/includes? (guest/gate-cmd "guest-ime") "clojure -M:compositor guest-ime")))
   (is (str/includes? (guest/gate-cmd "guest-session") "guest-session")))
+
+;; Guest browser desktop (ADR-0223). The reason each red names is pinned, not
+;; only that it is red.
+(def ^:private browser-frame-ok
+  "AIUEOS_GUEST_BROWSER_FRAME_OK ops=5 overlap=d8e7ff win1-title=dde2ea surface=1280x800\r\n")
+
+(def ^:private browser-input-ok
+  "AIUEOS_GUEST_BROWSER_INPUT_OK eventq-used=1 kind=pointer-down px=60 py=50 hit=1 front=1 overlap=ffffff win1-title=d8e7ff\r\n")
+
+(deftest guest-browser-frame-classifier
+  (testing "the presented Kotoba frame is green, with the text leftover named"
+    (let [r (guest/classify "guest-browser-frame" {:serial browser-frame-ok})]
+      (is (:green? r))
+      (is (= 0 (:exit r)))
+      (is (= [:no-text-raster] (:leftover r)))))
+  (testing "each named red keeps its own reason"
+    (doseq [[line reason]
+            [["AIUEOS_GUEST_BROWSER_FRAME leftover=frame-refused reason=-4\r\n" :frame-refused]
+             ["AIUEOS_GUEST_BROWSER_FRAME leftover=fb-too-small\r\n" :fb-too-small]
+             ["AIUEOS_GUEST_BROWSER_FRAME leftover=key-order-paint\r\n" :key-order-paint]
+             ["AIUEOS_GUEST_BROWSER_FRAME leftover=colour-miss ops=5 overlap=ffffff win1-title=dde2ea\r\n" :colour-miss]
+             ["AIUEOS_GUEST_PAINT_OK boot-overlap=2 raised-overlap=1 key-order=0\r\n" :guest-browser-frame-absent]]]
+      (let [r (guest/classify "guest-browser-frame" {:serial line})]
+        (is (not (:green? r)) line)
+        (is (= 1 (:exit r)))
+        (is (= reason (:reason r)) line))))
+  (testing "a frame line with the wrong overlap colour is not green"
+    (is (not (guest/guest-browser-frame-ok?
+              "AIUEOS_GUEST_BROWSER_FRAME_OK ops=5 overlap=eef1f5 win1-title=dde2ea surface=1280x800\r\n"))))
+  (testing "hosted WM serial does not count, unanswered QEMU is exit 3"
+    (is (= :hosted-wm-does-not-count
+           (:reason (guest/classify "guest-browser-frame"
+                                    {:serial (str browser-frame-ok "AIUEOS_COMPOSITOR_WM_OK\n")}))))
+    (is (= 3 (:exit (guest/classify "guest-browser-frame" {:qemu-unmeasured? true}))))))
+
+(deftest guest-browser-input-classifier
+  (testing "a tablet press reduced by Kotoba and redrawn is green"
+    (let [r (guest/classify "guest-browser-input" {:serial (str browser-frame-ok browser-input-ok)})]
+      (is (:green? r))
+      (is (= :guest-browser-pointer-raise (:reason r)))))
+  (testing "input without a presented frame is red for that reason"
+    (let [r (guest/classify "guest-browser-input" {:serial browser-input-ok})]
+      (is (not (:green? r)))
+      (is (= :no-presented-frame (:reason r)))))
+  (testing "each named red keeps its own reason"
+    (doseq [[line reason]
+            [["AIUEOS_GUEST_BROWSER_INPUT leftover=no-pointer-event tablets=0\r\n" :no-pointer-event]
+             ["AIUEOS_GUEST_BROWSER_INPUT leftover=pointer-miss px=900 py=700\r\n" :pointer-miss]
+             ["AIUEOS_GUEST_BROWSER_INPUT leftover=raise-not-painted\r\n" :raise-not-painted]
+             ["AIUEOS_GUEST_BROWSER_INPUT leftover=vector-miss hit=2 overlap=d8e7ff\r\n" :vector-miss]
+             ["" :guest-browser-input-absent]]]
+      (let [r (guest/classify "guest-browser-input" {:serial (str browser-frame-ok line)})]
+        (is (not (:green? r)) line)
+        (is (= reason (:reason r)) line))))
+  (testing "the synthetic keyboard gate alone is not a pointer"
+    (is (not (:green? (guest/classify "guest-browser-input"
+                                      {:serial (str browser-frame-ok
+                                                    "AIUEOS_GUEST_INPUT_OK eventq-used=1 synthetic=0\r\n")})))))
+  (testing "the profile boots with the tablet, the frame profile with nothing extra"
+    (is (= {"AIUEOS_GUEST_BROWSER" "1"} (guest/extra-env "guest-browser-input")))
+    (is (nil? (guest/extra-env "guest-browser-frame")))))
