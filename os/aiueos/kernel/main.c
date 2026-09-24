@@ -935,6 +935,10 @@ extern int aiueos_desktop_present_ops2(const uint32_t *ops, uint64_t count,
 extern uint32_t aiueos_desktop_colour_census(uint32_t rgb, uint32_t *count_out);
 extern int aiueos_desktop_show(void);
 extern const uint8_t *aiueos_initramfs_font(uint64_t *length);
+extern uint64_t kotoba_aiueos_browser_key(uint64_t surface, uint64_t surface_bytes,
+                                          uint64_t code, uint64_t value);
+extern int aiueos_keyboard_drain(uint32_t rounds);
+extern uint32_t aiueos_keyboard_next_press(uint32_t budget);
 extern uint64_t kotoba_aiueos_browser_reduce(uint64_t state, uint64_t state_bytes,
                                              uint64_t kind, uint64_t a, uint64_t b);
 extern int aiueos_desktop_present_ops(const uint32_t *ops, uint64_t count);
@@ -3646,7 +3650,7 @@ qwen_runtime_boot_complete:
           serial_string("AIUEOS_GUEST_BROWSER_TEXT leftover=frame-refused reason=-");
           serial_decimal((uint32_t)(-count));
           serial_string("\r\n");
-        } else if (!aiueos_desktop_present_ops2(surface + 416, (uint64_t)count,
+        } else if (!aiueos_desktop_present_ops2(surface + 480, (uint64_t)count,
                                                 font, font_length)) {
           debug_string("AIUEOS_GUEST_BROWSER_TEXT leftover=present-refused\n");
           serial_string("AIUEOS_GUEST_BROWSER_TEXT leftover=present-refused\r\n");
@@ -3688,7 +3692,7 @@ qwen_runtime_boot_complete:
         int64_t hit = (int64_t)kotoba_aiueos_browser_reduce(sp, 128, 1, px, py);
         int64_t again = hit > 0 ? (int64_t)kotoba_aiueos_browser_frame2(sp, 8192,
                                      (uint64_t)(uintptr_t)font, font_length) : 0;
-        if (again > 0 && aiueos_desktop_present_ops2(surface + 416, (uint64_t)again,
+        if (again > 0 && aiueos_desktop_present_ops2(surface + 480, (uint64_t)again,
                                                     font, font_length)) {
           text_hash = aiueos_desktop_colour_census(0x111111U, &text_px);
           (void)aiueos_desktop_show();
@@ -3696,6 +3700,58 @@ qwen_runtime_boot_complete:
             debug_string("AIUEOS_GUEST_BROWSER_TEXT_RAISED_OK\n");
             serial_string("AIUEOS_GUEST_BROWSER_TEXT_RAISED_OK hit=1 ops=57 text-px=864 hash=5cd907f9\r\n");
             browser_hold_for_screendump();
+            /* Typing into the focused window (ADR-0225). The host types
+               n i h o n n g o Enter k a Space Enter once, after TYPE_GO;
+               every press goes through Kotoba `kotoba_aiueos_browser_key`
+               (the hosted IME's rules), and the committed text lands in
+               window 1's body. TYPE_READY stops the host's repeated keys,
+               the drain discards what they already delivered. */
+            {
+              uint32_t presses = 0, committed = 0, refused = 0;
+              surface[432] = 1;
+              serial_string("AIUEOS_GUEST_BROWSER_TYPE_READY\r\n");
+              (void)aiueos_keyboard_drain(4000000U);
+              serial_string("AIUEOS_GUEST_BROWSER_TYPE_GO keys=13\r\n");
+              while (presses < 13) {
+                uint32_t code = aiueos_keyboard_next_press(60000000U);
+                int64_t r;
+                if (!code) break;
+                presses++;
+                r = (int64_t)kotoba_aiueos_browser_key(sp, 8192, code, 1);
+                if (r < 0) refused++; else committed += (uint32_t)r;
+              }
+              int64_t typed = (int64_t)kotoba_aiueos_browser_frame2(sp, 8192,
+                                (uint64_t)(uintptr_t)font, font_length);
+              if (presses == 13 && typed > 0 &&
+                  aiueos_desktop_present_ops2(surface + 480, (uint64_t)typed, font, font_length)) {
+                text_hash = aiueos_desktop_colour_census(0x111111U, &text_px);
+                (void)aiueos_desktop_show();
+                if (committed == 5 && refused == 0 && typed == 62 &&
+                    text_px == 1052 && text_hash == 0x7caecfe8U) {
+                  debug_string("AIUEOS_GUEST_BROWSER_TYPE_OK\n");
+                  serial_string("AIUEOS_GUEST_BROWSER_TYPE_OK presses=13 committed=5 ops=62 text-px=1052 hash=7caecfe8\r\n");
+                } else {
+                  debug_string("AIUEOS_GUEST_BROWSER_TYPE leftover=census-miss\n");
+                  serial_string("AIUEOS_GUEST_BROWSER_TYPE leftover=census-miss committed=");
+                  serial_decimal(committed);
+                  serial_string(" refused=");
+                  serial_decimal(refused);
+                  serial_string(" ops=");
+                  serial_decimal((uint32_t)typed);
+                  serial_string(" text-px=");
+                  serial_decimal(text_px);
+                  serial_string(" hash=");
+                  serial_hex32(text_hash);
+                  serial_string("\r\n");
+                }
+                browser_hold_for_screendump();
+              } else {
+                debug_string("AIUEOS_GUEST_BROWSER_TYPE leftover=keys-missing\n");
+                serial_string("AIUEOS_GUEST_BROWSER_TYPE leftover=keys-missing presses=");
+                serial_decimal(presses);
+                serial_string("\r\n");
+              }
+            }
           } else {
             debug_string("AIUEOS_GUEST_BROWSER_TEXT_RAISED leftover=census-miss\n");
             serial_string("AIUEOS_GUEST_BROWSER_TEXT_RAISED leftover=census-miss hit=");

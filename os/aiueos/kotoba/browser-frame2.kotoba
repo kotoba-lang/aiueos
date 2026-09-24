@@ -32,17 +32,22 @@
 ;;   32 + 32(id-1)  title of window id, up to 32 code points, 0 ends it
 ;;   160 + 64(id-1) body of window id, up to 64 code points, 0 ends it,
 ;;                  10 breaks the line
-;;   400..415       scratch owned by this object (overwritten every call)
-;;   416 + 6j       op j: kind x y a b rgb
+;;   416..431       scratch owned by this object (overwritten every call)
+;;   432..479       reserved for the input method (browser-ime.kotoba)
+;;   480 + 6j       op j: kind x y a b rgb
 ;;                  kind 1 rect:  a = width, b = height
 ;;                  kind 2 glyph: a = glyph index in the font, b = 8 or 16
-;;                  capacity 272 ops
+;;                  capacity 261 ops
+;; Until 2026-09-24 the scratch sat at 400..415, inside window 4's body
+;; (352..415): a fourth body longer than 48 code points was read back as the
+;; object's own cursor words. Found while laying out the IME state; vector
+;; `fourth-window-body-reads-all-64` was red on that layout.
 ;; FONT: the aiueos-font/v1 blob (os/aiueos/scripts/make-font.cljk).
 ;;
 ;; ABI: [surface surface-bytes font font-bytes] -> op count, or
 ;;   -1 null region / surface not 8192 bytes   -2 abi or n outside 1..4
 ;;   -3 focus is not a window id               -4 a rect leaves the viewport
-;;   -5 more than 272 ops                      -6 font refused (magic, version,
+;;   -5 more than 261 ops                      -6 font refused (magic, version,
 ;;                                                count, length, no U+FFFD)
 ;;   -7 a window id outside 1..4
 
@@ -50,10 +55,10 @@
   (:export [aiueos-browser-frame2 main]))
 
 ;; Scratch words.
-;;   400 next op slot   401 cursor x   402 cursor y   403 line left
-;;   404 right limit    405 bottom     406 colour     407 font bytes
-;;   408 glyph count    409 U+FFFD     410 wrap?      411 overflow
-;;   412 char limit
+;;   416 next op slot   417 cursor x   418 cursor y   419 line left
+;;   420 right limit    421 bottom     422 colour     423 font bytes
+;;   424 glyph count    425 U+FFFD     426 wrap?      427 overflow
+;;   428 char limit     429 b of the next op
 
 (defn sw [s i]
   (kernel-load-u32 (kernel-subregion s 8192 (* i 4) 4) 4 0))
@@ -62,31 +67,31 @@
   (kernel-store-u32 (kernel-subregion s 8192 (* i 4) 4) 4 0 v))
 
 (defn fw [s f i]
-  (kernel-load-u32 (kernel-subregion f (sw s 407) (* i 4) 4) 4 0))
+  (kernel-load-u32 (kernel-subregion f (sw s 423) (* i 4) 4) 4 0))
 
 ;; --- ops --------------------------------------------------------------------
 
 (defn put-op [s kind x y a]
-  ;; b and rgb come from the caller through scratch 413 and 406.
-  (let [j (sw s 400)]
-    (if (>= j 272)
-      (do (sput s 411 1) 0)
-      (let [base (+ 416 (* 6 j))]
+  ;; b and rgb come from the caller through scratch 429 and 422.
+  (let [j (sw s 416)]
+    (if (>= j 261)
+      (do (sput s 427 1) 0)
+      (let [base (+ 480 (* 6 j))]
         (do (sput s base kind)
             (sput s (+ base 1) x)
             (sput s (+ base 2) y)
             (sput s (+ base 3) a)
-            (sput s (+ base 4) (sw s 413))
-            (sput s (+ base 5) (sw s 406))
-            (sput s 400 (+ j 1))
+            (sput s (+ base 4) (sw s 429))
+            (sput s (+ base 5) (sw s 422))
+            (sput s 416 (+ j 1))
             0)))))
 
 (defn put-rect [s x y w h]
-  (do (sput s 413 h)
+  (do (sput s 429 h)
       (put-op s 1 x y w)))
 
 (defn put-glyph [s x y gi gw]
-  (do (sput s 413 gw)
+  (do (sput s 429 gw)
       (put-op s 2 x y gi)))
 
 ;; --- font -------------------------------------------------------------------
@@ -101,8 +106,8 @@
           (bsearch s f lo (- mid 1) cp))))))
 
 (defn glyph-of [s f cp]
-  (let [i (bsearch s f 0 (- (sw s 408) 1) cp)]
-    (if (< i 0) (sw s 409) i)))
+  (let [i (bsearch s f 0 (- (sw s 424) 1) cp)]
+    (if (< i 0) (sw s 425) i)))
 
 (defn glyph-width [s f gi]
   (if (> (fw s f (+ 4 gi)) 16777215) 16 8))
@@ -110,7 +115,7 @@
 (defn fffd-ok [s f n]
   (let [r (bsearch s f 0 (- n 1) 65533)]
     (if (< r 0) 0
-      (do (sput s 408 n) (sput s 409 r) 1))))
+      (do (sput s 424 n) (sput s 425 r) 1))))
 
 (defn font-header-ok [s f fb]
   ;; Scratch 407 already holds fb, so `fw` reads inside the font's bounds.
@@ -125,42 +130,42 @@
 ;; 1179994433 is 0x46554941, "AIUF" little-endian.
 (defn font-ok [s f fb]
   (if (< fb 16) 0
-    (do (sput s 407 fb)
+    (do (sput s 423 fb)
         (font-header-ok s f fb))))
 
 ;; --- text -------------------------------------------------------------------
 
 (defn newline [s]
-  (do (sput s 401 (sw s 403))
-      (sput s 402 (+ (sw s 402) 20))
+  (do (sput s 417 (sw s 419))
+      (sput s 418 (+ (sw s 418) 20))
       0))
 
 (defn place [s f gi gw]
   ;; The glyph at the cursor, if it fits under the bottom; then advance.
-  (do (if (> (+ (sw s 402) 16) (sw s 405))
+  (do (if (> (+ (sw s 418) 16) (sw s 421))
         0
-        (put-glyph s (sw s 401) (sw s 402) gi gw))
-      (sput s 401 (+ (sw s 401) gw))
+        (put-glyph s (sw s 417) (sw s 418) gi gw))
+      (sput s 417 (+ (sw s 417) gw))
       0))
 
 (defn lay [s f base i]
-  (if (>= i (sw s 412)) 0
+  (if (>= i (sw s 428)) 0
     (let [cp (sw s (+ base i))]
       (if (= cp 0) 0
         (if (= cp 10)
           (do (newline s) (lay s f base (+ i 1)))
           (let [gi (glyph-of s f cp)
                 gw (glyph-width s f gi)]
-            (if (> (+ (sw s 401) gw) (sw s 404))
-              (if (= (sw s 410) 1)
+            (if (> (+ (sw s 417) gw) (sw s 420))
+              (if (= (sw s 426) 1)
                 (do (newline s) (place s f gi gw) (lay s f base (+ i 1)))
                 0)
               (do (place s f gi gw) (lay s f base (+ i 1))))))))))
 
 (defn text-block [s f base x y]
   ;; Right limit, bottom, wrap and limit are already in scratch.
-  (do (sput s 401 x) (sput s 402 y) (sput s 403 x)
-      (sput s 406 1118481)
+  (do (sput s 417 x) (sput s 418 y) (sput s 419 x)
+      (sput s 422 1118481)
       (lay s f base 0)))
 
 ;; --- windows ----------------------------------------------------------------
@@ -176,17 +181,17 @@
         w (sw s (+ b 3))
         h (sw s (+ b 4))
         focused (if (= id (sw s 2)) 1 0)]
-    (do (sput s 406 (body-rgb focused))
+    (do (sput s 422 (body-rgb focused))
         (put-rect s x y w h)
-        (sput s 406 (title-rgb focused))
+        (sput s 422 (title-rgb focused))
         (put-rect s x y w 28)
         ;; title: one line, clipped at the right inset, inside the titlebar
-        (sput s 404 (- (+ x w) 8)) (sput s 405 (+ y 28))
-        (sput s 410 0) (sput s 412 32)
+        (sput s 420 (- (+ x w) 8)) (sput s 421 (+ y 28))
+        (sput s 426 0) (sput s 428 32)
         (text-block s f (+ 32 (* 32 (- id 1))) (+ x 8) (+ y 6))
         ;; body: wrapped at the right inset, cut at the bottom inset
-        (sput s 404 (- (+ x w) 8)) (sput s 405 (- (+ y h) 8))
-        (sput s 410 1) (sput s 412 64)
+        (sput s 420 (- (+ x w) 8)) (sput s 421 (- (+ y h) 8))
+        (sput s 426 1) (sput s 428 64)
         (text-block s f (+ 160 (* 64 (- id 1))) (+ x 8) (+ y 36)))))
 
 (defn emit [s f k]
@@ -238,11 +243,11 @@
                   (if (= (has-id s n 0 (sw s 2)) 0) -3
                     (if (= (rects-ok s n 0 vw vh) 0) -4
                       (if (= (font-ok s f fb) 0) -6
-                        (do (sput s 400 0)
-                            (sput s 411 0)
-                            (sput s 406 16119544)
+                        (do (sput s 416 0)
+                            (sput s 427 0)
+                            (sput s 422 16119544)
                             (put-rect s 0 0 vw vh)
                             (emit s f 0)
-                            (if (= (sw s 411) 1) -5 (sw s 400)))))))))))))))
+                            (if (= (sw s 427) 1) -5 (sw s 416)))))))))))))))
 
 (defn main [] 0)

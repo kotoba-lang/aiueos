@@ -541,11 +541,32 @@ end = time.time() + (900 if os.environ.get("AIUEOS_QMP_POINTER") == "1" else 90)
 i = 0
 while time.time() < end:
     try:
-        for payload in payloads:
-            sock.sendall(payload.encode())
-            reply = recv_obj()
-            if reply and i < 8:
-                log("reply " + json.dumps(reply)[:400])
+        # Guest browser typing (ADR-0225): once the kernel says TYPE_READY the
+        # repeated keys stop (they would be typed), and after TYPE_GO the
+        # sequence n i h o n n g o Enter k a Space Enter is typed exactly once.
+        typing = os.environ.get("AIUEOS_QMP_POINTER") == "1"
+        serial_now = b""
+        if typing:
+            try:
+                serial_now = open(os.environ.get("AIUEOS_SERIAL_LOG", ""), "rb").read()
+            except OSError:
+                serial_now = b""
+        if not (typing and b"AIUEOS_GUEST_BROWSER_TYPE_READY" in serial_now):
+            for payload in payloads:
+                sock.sendall(payload.encode())
+                reply = recv_obj()
+                if reply and i < 8:
+                    log("reply " + json.dumps(reply)[:400])
+        if typing and b"AIUEOS_GUEST_BROWSER_TYPE_GO" in serial_now and not globals().get("typed"):
+            globals()["typed"] = True
+            for q in ["n", "i", "h", "o", "n", "n", "g", "o", "ret", "k", "a", "spc", "ret"]:
+                for down in (True, False):
+                    sock.sendall((json.dumps({"execute": "input-send-event", "arguments": {"events": [
+                        {"type": "key", "data": {"down": down, "key": {"type": "qcode", "data": q}}}]}})
+                                  + "\n").encode())
+                    recv_obj()
+                    time.sleep(0.15)
+            log("typed 13 keys")
         i += 1
         # Guest browser desktop (ADR-0224): the screens a person can look at.
         # The kernel holds each desktop frame for a few seconds in this
@@ -559,7 +580,8 @@ while time.time() < end:
                 serial_text = b""
             outdir = os.path.dirname(path)
             for marker, name in ((b"AIUEOS_GUEST_BROWSER_TEXT_OK", "guest-browser-text.ppm"),
-                                 (b"AIUEOS_GUEST_BROWSER_TEXT_RAISED_OK", "guest-browser-text-raised.ppm")):
+                                 (b"AIUEOS_GUEST_BROWSER_TEXT_RAISED_OK", "guest-browser-text-raised.ppm"),
+                                 (b"AIUEOS_GUEST_BROWSER_TYPE_OK", "guest-browser-typed.ppm")):
                 if marker in serial_text and not globals().get(name):
                     globals()[name] = True
                     sock.sendall((json.dumps({"execute": "screendump",

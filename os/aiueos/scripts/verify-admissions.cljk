@@ -350,6 +350,23 @@
                 [(+ base arena-offset) (:bytes (:page contract))
                  operation handle descriptor])}))
 
+;; The guest browser desktop input method (ADR-0225): one 8192-byte surface
+;; seeded per vector, one key per step. A two-element step is [key-code
+;; value] against that surface; a four-element one names every argument
+;; (`:surface` for the seeded region), which is how the refusals of the
+;; surface itself are reached.
+(defmethod prepare-steps :aiueos.browser-ime/v1 [contract v]
+  (let [{:keys [base image-bytes]} (get-in contract [:verification :memory])]
+    {:entry 'aiueos-browser-key
+     :base base
+     :image (reduce (fn [img {:keys [offset hex]}] (write-at img offset (hex-bytes hex)))
+                    (vec (repeat image-bytes 0))
+                    (:seed v))
+     :args-of (fn [a]
+                (if (= 2 (count a))
+                  [base 8192 (first a) (second a)]
+                  (mapv #(if (= :surface %) base %) a)))}))
+
 (defmethod prepare-steps :default [contract _]
   (fail! "REFUSING TO REPORT A PASS: no step builder for this contract format"
          {:format (:format contract)}))
