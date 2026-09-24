@@ -602,6 +602,30 @@ static void l2_norm_heads_c(float *values, uint32_t heads, uint32_t width) {
   }
 }
 
+/* `linear_attention`'s kernel-4 depthwise conv, KEPT AS THE REFERENCE
+   (aiueos ADR-0222): activation modes 5 and 6 are the live path, and parity
+   profile 2 compares them against this.  `history` is the channel-major
+   three-entry cache or null; `position` nonzero reads it (mode 6), and a
+   history is shifted either way. */
+static void conv4_c(float *values, const float *kernel, float *history_base,
+                    uint64_t position, uint64_t count) {
+  for (uint64_t channel = 0; channel < count; channel++) {
+    float current = values[channel];
+    float mixed = current * kernel[channel * 4U + 3U];
+    if (history_base) {
+      float *history = history_base + channel * LINEAR_CONV_HISTORY;
+      if (position)
+        mixed += history[0] * kernel[channel * 4U + 0U] +
+                 history[1] * kernel[channel * 4U + 1U] +
+                 history[2] * kernel[channel * 4U + 2U];
+      history[0] = history[1];
+      history[1] = history[2];
+      history[2] = current;
+    }
+    values[channel] = mixed;
+  }
+}
+
 #endif
 
 /* The activation modes of `aiueos-qwen35-activation`, in its own numbering. */
@@ -610,6 +634,8 @@ static void l2_norm_heads_c(float *values, uint32_t heads, uint32_t width) {
 #define QWEN_ACT_SOFTPLUS 2U
 #define QWEN_ACT_EXP 3U
 #define QWEN_ACT_SILU_GATE 4U
+#define QWEN_ACT_CONV4_FIRST 5U
+#define QWEN_ACT_CONV4_NEXT 6U
 
 #if AIUEOS_QWEN35_KOTOBA_PARITY == 2 || !defined(AIUEOS_QWEN35_C_REFERENCE_NORM)
 extern uint64_t kotoba_aiueos_qwen35_activation(uint64_t mode, float *a,
@@ -653,6 +679,12 @@ static int activate(uint32_t mode, float *values, const float *gate,
   }
   return 1;
 }
+
+static int conv4(float *values, const float *kernel, float *history,
+                 uint64_t position, uint64_t count) {
+  conv4_c(values, kernel, history, position, count);
+  return 1;
+}
 #else
 /* THE LIVE NORMS AND ACTIVATIONS ARE THE KOTOBA OBJECTS (ADR-0220 cutover
    stage 2). Both take raw addresses and write in place or into the output
@@ -688,6 +720,16 @@ static int l2_norm_heads(float *values, uint32_t heads, uint32_t width) {
 static int activate(uint32_t mode, float *values, const float *gate,
                     uint64_t count) {
   return kotoba_aiueos_qwen35_activation(mode, values, gate, count, 0) == 0;
+}
+
+/* The conv is modes 5 and 6 of the activation object, with the history's
+   address in its fifth word. Mode 6 refuses a null history; a later token
+   without a cache is not a state this pass can reach. */
+static int conv4(float *values, const float *kernel, float *history,
+                 uint64_t position, uint64_t count) {
+  return kotoba_aiueos_qwen35_activation(
+    position ? QWEN_ACT_CONV4_NEXT : QWEN_ACT_CONV4_FIRST, values, kernel,
+    count, (uint64_t)(uintptr_t)history) == 0;
 }
 #endif
 
@@ -906,22 +948,9 @@ static int linear_attention(const struct aiueos_qwen35_layer *layer,
   const float *kernel = (const float *)(const void *)linear->conv1d.data;
   float *conv = decode ? decode->conv +
     (uint64_t)linear_slot * LINEAR_QKV * LINEAR_CONV_HISTORY : 0;
-  for (uint32_t channel = 0; channel < LINEAR_QKV; channel++) {
-    float current = scratch_a[channel];
-    float mixed = current * kernel[channel * 4U + 3U];
-    if (conv) {
-      float *history = conv + (uint64_t)channel * LINEAR_CONV_HISTORY;
-      if (decode->position)
-        mixed += history[0] * kernel[channel * 4U + 0U] +
-                 history[1] * kernel[channel * 4U + 1U] +
-                 history[2] * kernel[channel * 4U + 2U];
-      history[0] = history[1];
-      history[1] = history[2];
-      history[2] = current;
-    }
-    scratch_a[channel] = mixed;
-  }
-  if (!activate(QWEN_ACT_SILU, scratch_a, 0, LINEAR_QKV))
+  if (!conv4(scratch_a, kernel, conv, conv ? decode->position : 0,
+             LINEAR_QKV) ||
+      !activate(QWEN_ACT_SILU, scratch_a, 0, LINEAR_QKV))
     return fail_at(AIUEOS_QWEN35_FAILURE_LINEAR_CONV);
 
   if (!l2_norm_heads(scratch_a, 16, LINEAR_HEAD_DIM) ||
@@ -1970,6 +1999,9 @@ static float __attribute__((section(".high_bss"))) qwen_parity_act_in[QWEN_PARIT
 static float __attribute__((section(".high_bss"))) qwen_parity_act_ref[QWEN_PARITY_ACT];
 static float __attribute__((section(".high_bss"))) qwen_parity_act_obj[QWEN_PARITY_ACT];
 static float __attribute__((section(".high_bss"))) qwen_parity_act_gate[QWEN_PARITY_ACT];
+static float __attribute__((section(".high_bss"))) qwen_parity_conv_kernel[QWEN_PARITY_ACT * 4U];
+static float __attribute__((section(".high_bss"))) qwen_parity_conv_ref_h[QWEN_PARITY_ACT * LINEAR_CONV_HISTORY];
+static float __attribute__((section(".high_bss"))) qwen_parity_conv_obj_h[QWEN_PARITY_ACT * LINEAR_CONV_HISTORY];
 
 static const float qwen_parity_edges[16] = {
   0.0f, 1.0f, -1.0f, 20.0f, -20.0f, 20.5f, -20.5f, 87.0f,
@@ -2004,10 +2036,46 @@ static int qwen_parity_activation(void) {
           qwen_parity_bits(qwen_parity_act_obj[index]))
         return 0;
   }
-  /* A refusal, so the object is not merely believed to compute. */
-  if (kotoba_aiueos_qwen35_activation(5, qwen_parity_act_obj,
+  /* Modes 5 and 6, `linear_attention`'s conv, through `conv4` against
+     `conv4_c`: a token without a cache, the first token with one, and three
+     later tokens, so the history the object shifted is the history it then
+     reads. Values and history are compared after every token. */
+  for (index = 0; index < QWEN_PARITY_ACT * 4U; index++)
+    qwen_parity_conv_kernel[index] = qwen_parity_value();
+  for (index = 0; index < QWEN_PARITY_ACT * LINEAR_CONV_HISTORY; index++) {
+    qwen_parity_conv_ref_h[index] = qwen_parity_value();
+    qwen_parity_conv_obj_h[index] = qwen_parity_conv_ref_h[index];
+  }
+  for (uint32_t token = 0; token < 5U; token++) {
+    int cached = token != 0U;
+    uint64_t position = token > 1U ? token : 0U;
+    for (index = 0; index < QWEN_PARITY_ACT; index++) {
+      float x = qwen_parity_value();
+      qwen_parity_act_ref[index] = x;
+      qwen_parity_act_obj[index] = x;
+    }
+    conv4_c(qwen_parity_act_ref, qwen_parity_conv_kernel,
+            cached ? qwen_parity_conv_ref_h : 0, position, QWEN_PARITY_ACT);
+    if (!conv4(qwen_parity_act_obj, qwen_parity_conv_kernel,
+               cached ? qwen_parity_conv_obj_h : 0, position, QWEN_PARITY_ACT))
+      return 0;
+    for (index = 0; index < QWEN_PARITY_ACT; index++)
+      if (qwen_parity_bits(qwen_parity_act_ref[index]) !=
+          qwen_parity_bits(qwen_parity_act_obj[index]))
+        return 0;
+    for (index = 0; index < QWEN_PARITY_ACT * LINEAR_CONV_HISTORY; index++)
+      if (qwen_parity_bits(qwen_parity_conv_ref_h[index]) !=
+          qwen_parity_bits(qwen_parity_conv_obj_h[index]))
+        return 0;
+  }
+  /* Refusals, so the object is not merely believed to compute. */
+  if (kotoba_aiueos_qwen35_activation(7, qwen_parity_act_obj,
                                       qwen_parity_act_gate,
                                       QWEN_PARITY_ACT, 0) != (uint64_t)(int64_t)-2)
+    return 0;
+  if (kotoba_aiueos_qwen35_activation(QWEN_ACT_CONV4_NEXT, qwen_parity_act_obj,
+                                      qwen_parity_conv_kernel,
+                                      QWEN_PARITY_ACT, 0) != (uint64_t)(int64_t)-5)
     return 0;
   return 1;
 }

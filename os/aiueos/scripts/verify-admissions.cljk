@@ -995,25 +995,33 @@
 ;; which caught an argument-order mistake in its own harness that this
 ;; interpreter could not have.
 
+;; Modes 5 and 6 (the conv) read `spare` as the history's address; modes
+;; 0..4 are handed 0 there, as the forward pass hands them.
 (defmethod prepare :aiueos.qwen35-activation/v1 [contract v]
-  (let [{:keys [base image-bytes a-offset b-offset]}
+  (let [{:keys [base image-bytes a-offset b-offset h-offset]}
         (get-in contract [:verification :memory])
         a (hex-bytes (or (:a-hex v) ""))
-        b (hex-bytes (or (:b-hex v) ""))]
+        b (hex-bytes (or (:b-hex v) ""))
+        h (hex-bytes (or (:h-hex v) ""))]
     {:entry 'aiueos-qwen35-activation
      :base base
      :image (-> (vec (repeat image-bytes 0))
                 (write-at a-offset a)
-                (write-at b-offset b))
+                (write-at b-offset b)
+                (write-at h-offset h))
      :args [(:mode v)
             (if (some? (:a-base-override v)) (:a-base-override v) (+ base a-offset))
             (if (some? (:b-base-override v)) (:b-base-override v) (+ base b-offset))
             (:count v)
-            0]
+            (cond (some? (:h-base-override v)) (:h-base-override v)
+                  (#{5 6} (:mode v)) (+ base h-offset)
+                  :else 0)]
      :expect-memory
      (cond-> []
        (:expect-a-hex v)
-       (conj {:label :a :offset a-offset :bytes (hex-bytes (:expect-a-hex v))}))}))
+       (conj {:label :a :offset a-offset :bytes (hex-bytes (:expect-a-hex v))})
+       (:expect-h-hex v)
+       (conj {:label :h :offset h-offset :bytes (hex-bytes (:expect-h-hex v))}))}))
 
 ;; Three modes with three different argument meanings, which is why this is a
 ;; `case` rather than one shape: mode 0 reads `b` as a weights POINTER and
