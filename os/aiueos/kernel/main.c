@@ -1812,6 +1812,34 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
         serial_string(qwen_parity_names[index]);
         serial_string(" ok\r\n");
       }
+#if AIUEOS_QWEN35_KOTOBA_PARITY == 1
+      /* The object's dot against the C AVX2 dot (the output projection's old
+         path). A different reduction tree, so a DISTANCE, not a pass/fail;
+         `unavailable` is a CPU without AVX2 and is not a zero distance. */
+      {
+        extern int aiueos_qwen35_parity_dot_avx2(uint32_t *compared,
+                                                 uint32_t *differing,
+                                                 uint32_t *max_ulp);
+        uint32_t compared = 0, differing = 0, max_ulp = 0;
+        int verdict = aiueos_qwen35_parity_dot_avx2(&compared, &differing,
+                                                    &max_ulp);
+        if (verdict == 0) {
+          serial_string("QWEN-PARITY dot-avx2 refused\r\n");
+          evidence_stop(__LINE__);
+        }
+        if (verdict == 2) {
+          serial_string("QWEN-PARITY dot-avx2 unavailable\r\n");
+        } else {
+          serial_string("QWEN-PARITY dot-avx2 distance compared=");
+          serial_decimal(compared);
+          serial_string(" differing=");
+          serial_decimal(differing);
+          serial_string(" max-ulp=");
+          serial_decimal(max_ulp);
+          serial_string("\r\n");
+        }
+      }
+#endif
 #if AIUEOS_QWEN35_KOTOBA_PARITY == 5
       /* The rope object is checked against the Prism reference, not the C
          (x87 fsincos cannot be matched), so the distance from the C it
