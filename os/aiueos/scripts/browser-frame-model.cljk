@@ -19,9 +19,9 @@
 ;; aiueos_desktop_colour_census would report: the count, and FNV-1a over each
 ;; pixel's position (y * 65536 + x, four little-endian bytes) in raster order.
 ;;
-;; The first three scenes are the frames ADR-0224 / 0225 already pinned on
-;; KERNEL.ELF serial; the model must reproduce them before its other answers
-;; are used. Exit 0 all pinned scenes reproduced, 1 one did not, 2 could not
+;; The scenes marked :pinned are frames already pinned on KERNEL.ELF serial
+;; (ADR-0224, 0225, 0227); the model must reproduce them before its other
+;; answers are used. Exit 0 all pinned scenes reproduced, 1 one did not, 2 could not
 ;; run (font unreadable).
 (ns browser-frame-model
   (:require [clojure.edn :as edn]
@@ -147,11 +147,16 @@
     :scene {:vw 1280 :vh 800 :focus 1 :stack [w2 (update w1 :body into nihongo-ka)]}}
    ;; ADR-0227: after typing `k a n`, the composition か + romaji n is drawn,
    ;; underlined, after the body; Enter commits かん and the rule is gone.
-   {:name "preedit"
+   {:name "preedit" :pinned {:ops 66 :text-px 1130 :hash "c9f528cb"}
     :scene {:vw 1280 :vh 800 :focus 1 :stack [w2 (update w1 :body into nihongo-ka)]
             :composition [12363 110]}}
-   {:name "preedit-committed"
-    :scene {:vw 1280 :vh 800 :focus 1 :stack [w2 (update w1 :body into (concat nihongo-ka [12363 12435]))]}}])
+   {:name "preedit-committed" :pinned {:ops 64 :text-px 1112 :hash "63e3fe67"}
+    :scene {:vw 1280 :vh 800 :focus 1 :stack [w2 (update w1 :body into (concat nihongo-ka [12363 12435]))]}}
+   ;; ADR-0228: Hankaku/Zenkaku turns the IME off, `k a` goes in as latin,
+   ;; Hankaku/Zenkaku turns it back on, `k a` Enter commits か.
+   {:name "ime-toggle"
+    :scene {:vw 1280 :vh 800 :focus 1
+            :stack [w2 (update w1 :body into (concat nihongo-ka [12363 12435] [107 97 12363]))]}}])
 
 (defn- op-hex [[k x y a b c]]
   (let [buf (js/Buffer.alloc 24)
