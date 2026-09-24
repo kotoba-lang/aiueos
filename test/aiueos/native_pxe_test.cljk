@@ -2,7 +2,7 @@
   (:require [clojure.edn :as edn]
             [clojure.java.io :as io]
             [kotoba.lang.text :as str]
-            [clojure.test :refer [deftest is testing]]))
+            [kotoba.test :refer [deftest is testing]]))
 
 (def loader (slurp (io/file "os/aiueos/uefi/main.c")))
 (def probe (slurp (io/file "os/aiueos/dbc-probe/main.c")))

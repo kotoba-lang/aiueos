@@ -1,7 +1,7 @@
 (ns aiueos.dbc-live-test
   (:require [clojure.java.io :as io]
             [kotoba.lang.text :as str]
-            [clojure.test :refer [deftest is testing]]))
+            [kotoba.test :refer [deftest is testing]]))
 
 (def probe (slurp (io/file "os/aiueos/dbc-probe/main.c")))
 (def receiver (slurp (io/file "os/aiueos/tools/dbc-receiver.c")))

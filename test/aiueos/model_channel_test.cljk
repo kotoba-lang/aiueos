@@ -1,6 +1,6 @@
 (ns aiueos.model-channel-test
   (:require [aiueos.model-channel :as channel]
-            [clojure.test :refer [deftest is testing]]))
+            [kotoba.test :refer [deftest is testing]]))
 
 (def c0 (str "bafkrei" (apply str (repeat 52 "a"))))
 (def c1 (str "bafkrei" (apply str (repeat 52 "b"))))

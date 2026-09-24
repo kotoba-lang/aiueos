@@ -37,7 +37,7 @@
 
 (ns aiueos.qwen35-tensor-table-parity-test
   (:require [clojure.java.io :as io]
-            [clojure.test :refer [deftest is testing]]
+            [kotoba.test :refer [deftest is testing]]
             [kotoba.kir :as ir]
             [kotoba.sema :as sema]))
 

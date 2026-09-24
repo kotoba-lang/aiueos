@@ -5,7 +5,7 @@
   constants (`linux/vfio.h`) so a transcription error in the `_IOC` macro port
   would be caught even without hardware."
   (:require [aiueos.vfio :as vfio]
-            [clojure.test :refer [deftest is testing]]))
+            [kotoba.test :refer [deftest is testing]]))
 
 (deftest ioctl-numbers-match-real-linux-vfio-uapi
   (testing "VFIO_GET_API_VERSION = _IO(';', 100)"

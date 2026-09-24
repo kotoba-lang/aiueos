@@ -11,7 +11,7 @@
             [grant.policy :as policy]
             #?(:clj [grant.signing :as signing])
             [aiueos.topic :as topic]
-            [clojure.test :refer [deftest is testing]]
+            [kotoba.test :refer [deftest is testing]]
             #?(:clj [kotoba.lang.text :as str])))
 
 ;; Compiled Wasm binaries, base64-embedded rather than checked in as binary

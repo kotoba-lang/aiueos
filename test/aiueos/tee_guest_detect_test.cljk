@@ -12,7 +12,7 @@
 
 (ns ^:ci-anon aiueos.tee-guest-detect-test
   (:require [clojure.java.io :as io]
-            [clojure.test :refer [deftest is]]
+            [kotoba.test :refer [deftest is]]
             [kotoba.compiler.core :as compiler]
             [kotoba.kir :as ir]))
 

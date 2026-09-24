@@ -3,7 +3,7 @@
             [aiueos.reproducibility :as repro]
             [aiueos.sbom :as sbom]
             [aiueos.tcb :as tcb]
-            [clojure.test :refer [deftest is]]))
+            [kotoba.test :refer [deftest is]]))
 
 (def artifact-digest (str "sha256:" (apply str (repeat 64 "a"))))
 (def other-digest (str "sha256:" (apply str (repeat 64 "c"))))

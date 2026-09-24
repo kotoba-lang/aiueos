@@ -31,7 +31,7 @@
   of a check that ran and found nothing wrong."
   (:require [clojure.edn :as edn]
             [clojure.java.io :as io]
-            [clojure.test :refer [deftest is testing]]
+            [kotoba.test :refer [deftest is testing]]
             [clojure.walk :as walk]))
 
 (def contract-resource "aiueos/cloud_contract.edn")

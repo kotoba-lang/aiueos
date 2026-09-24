@@ -13,7 +13,7 @@
   this series keeps finding, here in its own preparation."
   (:require [clojure.edn :as edn]
             [kotoba.lang.text :as str]
-            [clojure.test :refer [deftest is]]))
+            [kotoba.test :refer [deftest is]]))
 
 (def ^:private anonymous-deps
   "Git dependencies known to be public. Adding a name here is a claim that the

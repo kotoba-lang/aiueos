@@ -4,7 +4,7 @@
   present on this dev machine, and this is the part of the retired Rust
   `InitramfsPlan` that's pure staging/packaging, safe to run in CI."
   (:require [aiueos.image :as image]
-            [clojure.test :refer [deftest is testing]]
+            [kotoba.test :refer [deftest is testing]]
             #?(:clj [clojure.java.shell :as shell]))
   #?(:clj (:import [java.io File])))
 

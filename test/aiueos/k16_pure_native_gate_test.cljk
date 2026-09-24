@@ -11,7 +11,7 @@
             [clojure.java.io :as io]
             [clojure.java.shell :as shell]
             [kotoba.lang.text :as str]
-            [clojure.test :refer [deftest is testing]])
+            [kotoba.test :refer [deftest is testing]])
   (:import (java.nio ByteBuffer ByteOrder)
            (java.nio.file Files)
            (java.security MessageDigest)))

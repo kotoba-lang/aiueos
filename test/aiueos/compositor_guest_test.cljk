@@ -6,7 +6,7 @@
   JVM, hosted WM serial must stay red, and unanswered QEMU is exit 3."
   (:require [aiueos.compositor.guest :as guest]
             [kotoba.lang.text :as str]
-            [clojure.test :refer [deftest is testing]]))
+            [kotoba.test :refer [deftest is testing]]))
 
 (deftest gate-cmd-is-nbb-not-clojure
   (doseq [p guest/guest-profiles]

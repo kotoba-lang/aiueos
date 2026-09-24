@@ -8,7 +8,7 @@
             [aiueos.device-auth :as auth]
             [cacao.core :as cacao]
             [kotoba.lang.text :as string]
-            [clojure.test :refer [deftest is testing]]
+            [kotoba.test :refer [deftest is testing]]
             [grant.enroll :as enroll]))
 
 (def factory

@@ -3,7 +3,7 @@
   is `:operator-grant-required` with zero HTTP. Live itonami is
   `kbb -M:session operator`."
   (:require [aiueos.session.operator :as op]
-            [clojure.test :refer [deftest is testing]]))
+            [kotoba.test :refer [deftest is testing]]))
 
 (deftest allow-drops-itonami-import
   (let [ok (op/allow-manifest)

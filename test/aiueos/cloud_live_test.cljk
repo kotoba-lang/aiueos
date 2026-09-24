@@ -9,7 +9,7 @@
             [aiueos.cloud-live :as live]
             [aiueos.provider.cloud :as provider]
             [kotoba.lang.text :as str]
-            [clojure.test :refer [deftest is testing]]))
+            [kotoba.test :refer [deftest is testing]]))
 
 ;; -- three values, and the order they take precedence in -------------------
 

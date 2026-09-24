@@ -1,5 +1,5 @@
 (ns aiueos.hardware-qualification-test
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [kotoba.test :refer [deftest is testing]]
             [aiueos.hardware-qualification :as qualification]))
 
 (def physical-receipt

@@ -12,7 +12,7 @@
             [aiueos.phone-bind :as pb]
             [clojure.java.io :as io]
             [kotoba.lang.text :as str]
-            [clojure.test :refer [deftest is testing]]))
+            [kotoba.test :refer [deftest is testing]]))
 
 (deftest boot-desktop-owns-surfaces
   (let [d (desktop/boot-desktop)]

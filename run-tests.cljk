@@ -42,7 +42,7 @@
   (:require ["node:fs" :as fs]
             ["node:path" :as path]
             [kotoba.lang.text :as str]
-            [clojure.test :as t]
+            [kotoba.test :as t]
             [nbb.core :refer [await]]))
 
 (def jvm-only

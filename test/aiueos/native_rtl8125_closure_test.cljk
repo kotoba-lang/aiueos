@@ -3,7 +3,7 @@
             [clojure.java.io :as io]
             [clojure.java.shell :as shell]
             [kotoba.lang.text :as str]
-            [clojure.test :refer [deftest is testing]]))
+            [kotoba.test :refer [deftest is testing]]))
 
 (def repo (System/getProperty "user.dir"))
 (def aiueos (io/file repo "os" "aiueos"))
