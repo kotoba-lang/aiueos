@@ -337,6 +337,13 @@ extern uint64_t kotoba_aiueos_qwen35_dequant_row(uint64_t type,
                                                  float *destination,
                                                  uint64_t destination_bytes);
 #endif
+#if AIUEOS_QWEN35_KOTOBA_PARITY == 1 || !defined(AIUEOS_QWEN35_C_REFERENCE_MATVEC)
+extern uint64_t kotoba_aiueos_qwen35_dot_f32(const float *left,
+                                             uint64_t left_bytes,
+                                             const float *right,
+                                             uint64_t right_bytes,
+                                             uint64_t count);
+#endif
 
 /* One row of a tensor as binary32. The dequantiser is the Kotoba object
    `aiueos-qwen35-dequant-row` (ADR-0221; all fifteen of the artifact's
@@ -896,6 +903,40 @@ static int recurrent_step(float *head_state, const float *key,
 }
 #endif
 
+/* The position-zero / cache-free coefficient of `linear_attention`,
+ * beta * dot(q, k) / sqrt(d).  The dot is the Kotoba object
+ * `aiueos-qwen35-dot-f32` (dot_scalar's tree, already linked in the model
+ * image); the two products stay C, like the decay transition's.  The C dot
+ * it replaces was `dot`, i.e. dot_avx2 on an AVX2 CPU, which is up to 1 ULP
+ * away from this tree (QWEN-PARITY dot-avx2, ADR-0222) -- the same move the
+ * output projection made.  `linear_zero_coefficient_c` is the reference:
+ * the host smokes and parity profiles 2-5 (`-DAIUEOS_QWEN35_C_REFERENCE_
+ * MATVEC`, no dot object linked) run it as the forward pass, and parity
+ * profile 1 compares the live wrapper against it. */
+#if AIUEOS_QWEN35_KOTOBA_PARITY == 1 || defined(AIUEOS_QWEN35_C_REFERENCE_MATVEC)
+static float linear_zero_coefficient_c(const float *query, const float *key,
+                                       float beta) {
+  return dot_scalar(query, key, LINEAR_HEAD_DIM) * INV_SQRT_LINEAR_HEAD_DIM *
+         beta;
+}
+#endif
+
+static int linear_zero_coefficient(const float *query, const float *key,
+                                   float beta, float *coefficient) {
+#ifdef AIUEOS_QWEN35_C_REFERENCE_MATVEC
+  *coefficient = linear_zero_coefficient_c(query, key, beta);
+  return 1;
+#else
+  uint64_t answer = kotoba_aiueos_qwen35_dot_f32(
+      query, LINEAR_HEAD_DIM * 4U, key, LINEAR_HEAD_DIM * 4U, LINEAR_HEAD_DIM);
+  /* A sum is its binary32 bits sign-extended; a refusal is below INT32_MIN. */
+  union { uint32_t bits; float value; } sum = {(uint32_t)answer};
+  if (answer != (uint64_t)(int64_t)(int32_t)sum.bits) return 0;
+  *coefficient = sum.value * INV_SQRT_LINEAR_HEAD_DIM * beta;
+  return 1;
+#endif
+}
+
 static int ffn(const struct aiueos_qwen35_layer *layer) {
   if (!rms_norm(state, &layer->post_attention_norm, EMBED, normalized) ||
       !matvec(&layer->ffn_gate, normalized, EMBED, scratch_a, FFN) ||
@@ -964,11 +1005,12 @@ static int linear_attention(const struct aiueos_qwen35_layer *layer,
   if (!decode) {
     for (uint32_t head = 0; head < 48; head++) {
       uint32_t key_head = head / LINEAR_KV_GROUP_SIZE;
-      float coefficient =
-          dot(scratch_a + key_head * LINEAR_HEAD_DIM,
+      float coefficient;
+      if (!linear_zero_coefficient(
+              scratch_a + key_head * LINEAR_HEAD_DIM,
               scratch_a + 2048U + key_head * LINEAR_HEAD_DIM,
-              LINEAR_HEAD_DIM) * INV_SQRT_LINEAR_HEAD_DIM;
-      coefficient *= beta_values[head];
+              beta_values[head], &coefficient))
+        return fail_at(AIUEOS_QWEN35_FAILURE_LINEAR_RECURRENT);
       for (uint32_t index = 0; index < LINEAR_HEAD_DIM; index++)
         scratch_c[head * LINEAR_HEAD_DIM + index] =
             scratch_a[4096U + head * LINEAR_HEAD_DIM + index] * coefficient;
@@ -1023,9 +1065,12 @@ static int linear_attention(const struct aiueos_qwen35_layer *layer,
            position-zero reduction order for the emitted activation.  The two
            forms are algebraically identical; fixing the association here
            prevents an IQ3 argmax from changing solely because the cache path
-           introduced a different float accumulation order. */
-        float coefficient = dot(query, key, LINEAR_HEAD_DIM) *
-                            INV_SQRT_LINEAR_HEAD_DIM * beta;
+           introduced a different float accumulation order.  The order kept
+           is the cache-free branch's, which is now the dot object's (on an
+           AVX2 CPU it was dot_avx2's, up to 1 ULP away; ADR-0222). */
+        float coefficient;
+        if (!linear_zero_coefficient(query, key, beta, &coefficient))
+          return fail_at(AIUEOS_QWEN35_FAILURE_LINEAR_RECURRENT);
         for (uint32_t index = 0; index < LINEAR_HEAD_DIM; index++)
           output[index] = value[index] * coefficient;
       }
@@ -1769,12 +1814,6 @@ static void qwen_parity_write_u64(uint8_t *plan, uint32_t offset, uint64_t v) {
 #define QWEN_PARITY_ROWS 4U
 #define QWEN_PARITY_MAX_ROW_BYTES 1024U
 
-extern uint64_t kotoba_aiueos_qwen35_dot_f32(const float *left,
-                                             uint64_t left_bytes,
-                                             const float *right,
-                                             uint64_t right_bytes,
-                                             uint64_t count);
-
 static uint64_t qwen_parity_row_bytes(uint32_t type) {
   return aiueos_qwen35_quant_row_bytes(type, QWEN_PARITY_COLS);
 }
@@ -1861,6 +1900,20 @@ static int qwen_parity_dot(void) {
       (uint64_t)(int64_t)-4294967299LL) return 0;
   if (kotoba_aiueos_qwen35_dot_f32(left, 16, right, 12, 4) !=
       (uint64_t)(int64_t)-4294967300LL) return 0;
+  /* `linear_attention`'s position-zero / cache-free coefficient: the live
+     wrapper (the object, with the forward pass's byte counts and geometry)
+     against its C twin, over nine query/key windows and nine betas. */
+  typedef char qwen_parity_linear_fits[
+      (LINEAR_HEAD_DIM + 128U <= QWEN_PARITY_COLS) ? 1 : -1];
+  for (uint32_t offset = 0; offset <= 128U; offset += 16U) {
+    float beta = qwen_parity_value();
+    float live = 0.0f;
+    if (!linear_zero_coefficient(left + offset, right + offset, beta, &live))
+      return 0;
+    if (qwen_parity_bits(live) != qwen_parity_bits(
+            linear_zero_coefficient_c(left + offset, right + offset, beta)))
+      return 0;
+  }
   return 1;
 }
 
