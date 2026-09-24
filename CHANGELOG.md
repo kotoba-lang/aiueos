@@ -5,6 +5,15 @@ All notable changes to **aiueos** are documented here. The format follows
 
 ## [Unreleased]
 
+### Guest browser desktop: one running loop drives the desktop (ADR-0231)
+- After the resize, one loop polls the tablet and the keyboard, hands each
+  event to browser-reduce or browser-key, and presents a frame after every
+  one: nine interleaved events (k a Enter, a titlebar drag of window 2,
+  n i Enter), each frame's census folded into a chain the frame model
+  reproduces. No object changes.
+- browser-frame-model pins the resize frame and lays out the nine loop frames.
+- Gate `guest-browser-event-loop` (600 s QEMU wall clock).
+
 ### Guest browser desktop: the resize handle resizes the window (ADR-0230)
 - browser-reduce captures a resize on a press in the 16 px resize handle
   (words 25..30: kind 2, id, press point, size at the press); pointer/move

@@ -253,6 +253,10 @@
  {:cmd ["kbb" "--backend" "sci" "--classpath" "src" "scripts/compositor-guest.cljk" "guest-browser-resize"]
   :doc "Guest browser resize (ADR-0230) on KERNEL.ELF under QEMU: after the drag, a tablet press in window 1's resize handle, three moves (one past the 120x80 floor), a release and a stray move; Kotoba browser-reduce resizes the window by the pointer travel, clamped, and the frame matches browser-frame-model.cljk."}
 
+ :browser-desktop-event-loop
+ {:cmd ["kbb" "--backend" "sci" "--classpath" "src" "scripts/compositor-guest.cljk" "guest-browser-event-loop"]
+  :doc "Guest browser event loop (ADR-0231) on KERNEL.ELF under QEMU: after the resize, one running loop polls the tablet and the keyboard and takes k a Enter, a titlebar press / move / release on window 2 and n i Enter, interleaved over several seconds, presenting a frame after each of the nine; every frame's census folds into a chain that matches browser-frame-model.cljk."}
+
  :browser-desktop-guest
  {:cmd ["kbb" "--backend" "sci" "--classpath" "src" "scripts/compositor-guest.cljk" "guest-browser-input"]
   :doc "Guest browser desktop (ADR-0223) on KERNEL.ELF under QEMU: the Kotoba frame is presented and sampled, then a real virtio-tablet press is reduced by Kotoba to focus-and-raise and the redrawn frame is sampled again. Exit 3 = QEMU/firmware/serial unanswered, not a pass."}
