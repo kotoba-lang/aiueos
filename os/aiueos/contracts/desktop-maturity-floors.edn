@@ -1,0 +1,59 @@
+;; The guest browser desktop's maturity ladder (ADR-0226).
+;;
+;; GOAL: kotoba-lang/browser's surface is the aiueos desktop you can use on
+;; KERNEL.ELF -- seen on the display, driven by pointer and keyboard in one
+;; running event loop, laid out as browser lays it out -- and then the browser
+;; component itself runs there.
+;;
+;; One floor is closed only by its gate: a `kbb --backend sci --classpath src
+;; scripts/compositor-guest.cljk <gate>` profile that
+;;   (a) is registered in src/aiueos/compositor/guest.cljk, AND
+;;   (b) has its "`<gate>` exit 0 means ..." paragraph in README.md
+;; on origin/main. The loop's tick reads exactly those two facts; a floor
+;; with no gate yet (:gate nil) is never counted as closed.
+;;
+;; Order is the order a loop takes them. :needs-a-human floors are skipped by
+;; the loop and reported. Editing this file (split a floor, reorder, add one)
+;; is part of an iteration when measuring shows the ladder was wrong -- say
+;; why in the commit.
+{:format :aiueos.desktop-maturity/v1
+ :goal "kotoba-lang/browser's surface as the usable aiueos desktop on KERNEL.ELF, then the browser component itself on the kernel"
+ :floors
+ [{:id :frame :gate "guest-browser-frame" :adr "0223"
+   :goal "Kotoba writes the retained draw list; C presents it in order"}
+  {:id :pointer :gate "guest-browser-input" :adr "0223"
+   :goal "a real virtio-tablet press focuses and raises the topmost window"}
+  {:id :text :gate "guest-browser-text" :adr "0224"
+   :goal "titles and bodies in Japanese and ASCII from the initramfs font, on the display"}
+  {:id :text-raise :gate "guest-browser-text-raised" :adr "0224"
+   :goal "a raise re-lays the text in stack order"}
+  {:id :typing :gate "guest-browser-type" :adr "0225"
+   :goal "virtio-keyboard through the Kotoba IME into the focused window"}
+  {:id :preedit :gate "guest-browser-preedit"
+   :goal "the composition (preedit) is drawn underlined at the end of the focused body while it is being typed, and disappears on commit"
+   :why "typing is blind until Enter; browser.document-input shows composition state"}
+  {:id :ime-toggle :gate "guest-browser-ime-toggle"
+   :goal "a toggle key (Hankaku/Zenkaku, evdev 41) switches the IME off and on; off sends latin straight in"
+   :why "the IME-off path exists in browser-ime but no key reaches it"}
+  {:id :drag :gate "guest-browser-drag"
+   :goal "press on a titlebar, move, release: the window moves by the pointer delta (browser.input pointer capture :drag)"
+   :why "browser.input captures titlebar drags; the kernel reduces only pointer/down"}
+  {:id :resize :gate "guest-browser-resize"
+   :goal "press on the 16 px resize handle, move, release: the window resizes, clamped at 120x80 (browser.input :resize)"}
+  {:id :event-loop :gate "guest-browser-event-loop"
+   :goal "one running loop takes interleaved pointer and key events over several seconds and presents a frame after each, instead of one scripted pass"
+   :why "every gate so far is a fixed sequence; a desktop is a loop"}
+  {:id :caret :gate "guest-browser-caret"
+   :goal "the focused body shows a caret; Backspace with an empty preedit deletes the code point before it (browser.text-edit delete-backward)"}
+  {:id :launch-close :gate "guest-browser-launch"
+   :goal "a launcher row opens a window (:app/launch) and a close control removes it, focus moving to the last remaining window (browser.surface close-window)"}
+  {:id :flow-layout :gate "guest-browser-flow-parity"
+   :goal "the kernel's body layout equals browser.surface + cssom's draw ops for the same surface, compared op by op against the hosted engine"
+   :why "the kernel places text by its own rules today (:no-flow-layout)"}
+  {:id :browser-component :gate nil
+   :goal "kotoba-lang/browser's surface/input reducers compiled as a whole component and linked into KERNEL.ELF, replacing the mirrored objects"
+   :why "the mirrored objects are the migration's scaffold, not its end"}
+  {:id :dictionary :gate nil :needs-a-human "a larger kana-kanji dictionary needs a license decision (SKK dictionaries are GPL)"
+   :goal "a kana-kanji dictionary beyond the oracle's three readings"}
+  {:id :p5 :gate nil :needs-a-human "a real machine with an aiueos image; QEMU is not P5"
+   :goal "the same desktop on physical hardware"}]}
