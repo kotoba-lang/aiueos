@@ -13,7 +13,11 @@
 ;; with no gate yet (:gate nil) is never counted as closed.
 ;;
 ;; Order is the order a loop takes them. :needs-a-human floors are skipped by
-;; the loop and reported. Editing this file (split a floor, reorder, add one)
+;; the loop and reported. :blocked-by floors are skipped the same way: a
+;; measured wall that another repo must remove first (the compiler, usually),
+;; with :reproduce -- the commands that show the wall -- and :until -- what
+;; has to be true before a loop takes the floor again. Re-run :reproduce
+;; before removing :blocked-by; do not remove it on belief. Editing this file (split a floor, reorder, add one)
 ;; is part of an iteration when measuring shows the ladder was wrong -- say
 ;; why in the commit.
 {:format :aiueos.desktop-maturity/v1
@@ -52,7 +56,26 @@
    :why "the kernel places text by its own rules today (:no-flow-layout)"}
   {:id :browser-component :gate nil
    :goal "kotoba-lang/browser's surface/input reducers compiled as a whole component and linked into KERNEL.ELF, replacing the mirrored objects"
-   :why "the mirrored objects are the migration's scaffold, not its end"}
+   :why "the mirrored objects are the migration's scaffold, not its end"
+   ;; Measured 2026-09-25 with amu origin/main 2dcaac74 and browser 6cbc1ee.
+   ;; x86_64-aiueos-kernel-v1 and aarch64-macos refuse the same forms with
+   ;; the same messages, so the wall is amu's application profile, not the
+   ;; kernel target. Rewriting browser.surface / browser.input into amu's
+   ;; typed primitives (vector-conj, typed-map-assoc, [:option T]) would be a
+   ;; second copy of the reducers, which is exactly what this floor retires.
+   :blocked-by
+   {:repo "kotoba-lang/amu"
+    :walls
+    ["project link: `amu compile src/browser/input.cljk --source-path src --unpinned` -> :kotoba/project-link-failed \"project module browser.input requires an explicit :export vector\" (browser.surface the same)"
+     "text_edit.cljk:6 -> :kotoba.error/map-literal-value: a keyword map whose value is nil (:text/composition nil) has no value type"
+     "(:window/x {:window/id id :window/x 10}) -> \"record-get without a type descriptor requires a record value; got :map\""
+     "(conj (filterv ...) id) on a vector -> \"conj requires a typed set\"; a vector answers only to vector-conj"
+     "a vector of maps -> \"expression type mismatch: expected i64, got map\""
+     "(count (str \"w\" a)) -> \"count requires a bounded vector ... got :string\""
+     "remove -> \"unknown operation: remove is not a builtin\""
+     "browser.surface requires cssom.layout and kotoba.wasm.dom (DOM data with string colours); neither has been compiled for a native target"]
+    :reproduce "in an amu checkout at origin/main after npm ci: bin/amu compile <browser>/src/browser/{text_edit,input,surface}.cljk --target x86_64-aiueos-kernel-v1 --output /tmp/x.o, then again with --source-path <browser>/src --unpinned; exit 65 and the messages above"
+    :until "amu admits browser.surface + browser.input + browser.text-edit unchanged (source as the hosted engine runs it) for x86_64-aiueos-kernel-v1: `amu check src/browser/surface.cljk --source-path src` exits 0"}}
   {:id :dictionary :gate nil :needs-a-human "a larger kana-kanji dictionary needs a license decision (SKK dictionaries are GPL)"
    :goal "a kana-kanji dictionary beyond the oracle's three readings"}
   {:id :p5 :gate nil :needs-a-human "a real machine with an aiueos image; QEMU is not P5"
