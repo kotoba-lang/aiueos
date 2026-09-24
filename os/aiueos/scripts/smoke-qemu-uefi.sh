@@ -562,7 +562,10 @@ while time.time() < end:
         for go, keys, after in ((b"AIUEOS_GUEST_BROWSER_TYPE_GO",
                                  ["n", "i", "h", "o", "n", "n", "g", "o", "ret", "k", "a", "spc", "ret"], None),
                                 (b"AIUEOS_GUEST_BROWSER_PREEDIT_GO", ["k", "a", "n"], None),
-                                (b"AIUEOS_GUEST_BROWSER_PREEDIT_ENTER", ["ret"], "guest-browser-preedit.ppm")):
+                                (b"AIUEOS_GUEST_BROWSER_PREEDIT_ENTER", ["ret"], "guest-browser-preedit.ppm"),
+                                # ADR-0228: Hankaku/Zenkaku is evdev 41, qcode grave_accent.
+                                (b"AIUEOS_GUEST_BROWSER_IME_TOGGLE_GO",
+                                 ["grave_accent", "k", "a", "grave_accent", "k", "a", "ret"], None)):
             if not (typing and go in serial_now) or globals().get(go) or (after and not globals().get(after)):
                 continue
             globals()[go] = True
@@ -590,7 +593,8 @@ while time.time() < end:
                                  (b"AIUEOS_GUEST_BROWSER_TEXT_RAISED_OK", "guest-browser-text-raised.ppm"),
                                  (b"AIUEOS_GUEST_BROWSER_TYPE_OK", "guest-browser-typed.ppm"),
                                  (b"AIUEOS_GUEST_BROWSER_PREEDIT_SHOWN", "guest-browser-preedit.ppm"),
-                                 (b"AIUEOS_GUEST_BROWSER_PREEDIT_OK", "guest-browser-preedit-committed.ppm")):
+                                 (b"AIUEOS_GUEST_BROWSER_PREEDIT_OK", "guest-browser-preedit-committed.ppm"),
+                                 (b"AIUEOS_GUEST_BROWSER_IME_TOGGLE_OK", "guest-browser-ime-toggle.ppm")):
                 if marker in serial_text and not globals().get(name):
                     globals()[name] = True
                     sock.sendall((json.dumps({"execute": "screendump",

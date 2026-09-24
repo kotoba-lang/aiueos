@@ -185,3 +185,26 @@
                                       {:serial (str typed-ok "AIUEOS_GUEST_BROWSER_PREEDIT_OK shown-ops=66 shown-px=1116 shown-hash=c9f528cb committed=2 ops=64 text-px=1112 hash=63e3fe67\r\n")})))))
   (testing "tablet profile"
     (is (= {"AIUEOS_GUEST_BROWSER" "1"} (guest/extra-env "guest-browser-preedit")))))
+
+;; Guest browser IME toggle (ADR-0228).
+(def ^:private preedit-ok
+  (str typed-ok "AIUEOS_GUEST_BROWSER_PREEDIT_OK shown-ops=66 shown-px=1130 shown-hash=c9f528cb committed=2 ops=64 text-px=1112 hash=63e3fe67\r\n"))
+
+(deftest guest-browser-ime-toggle-classifier
+  (testing "latin while off, kana once back on, matching the model, is green"
+    (is (:green? (guest/classify "guest-browser-ime-toggle"
+                                 {:serial (str preedit-ok "AIUEOS_GUEST_BROWSER_IME_TOGGLE_OK presses=7 off=0 latin=2 committed=1 ime=1 ops=67 text-px=1189 hash=4aaf87ee\r\n")}))))
+  (testing "the toggle needs the preedit frame first"
+    (is (= :no-preedit-frame
+           (:reason (guest/classify "guest-browser-ime-toggle"
+                                    {:serial (str typed-ok "AIUEOS_GUEST_BROWSER_IME_TOGGLE_OK presses=7 off=0 latin=2 committed=1 ime=1 ops=67 text-px=1189 hash=4aaf87ee\r\n")})))))
+  (testing "named reds"
+    (doseq [[line reason] [["AIUEOS_GUEST_BROWSER_IME_TOGGLE leftover=keys-missing presses=3\r\n" :keys-missing]
+                           ["AIUEOS_GUEST_BROWSER_IME_TOGGLE leftover=census-miss miss=2 off=1 latin=0 committed=1 ime=0 ops=67 text-px=1189 hash=4aaf87ee\r\n" :census-miss]
+                           ["" :guest-browser-ime-toggle-absent]]]
+      (is (= reason (:reason (guest/classify "guest-browser-ime-toggle" {:serial (str preedit-ok line)}))) line)))
+  (testing "a toggle the IME never saw (kana where latin should be) is not green"
+    (is (not (:green? (guest/classify "guest-browser-ime-toggle"
+                                      {:serial (str preedit-ok "AIUEOS_GUEST_BROWSER_IME_TOGGLE_OK presses=7 off=1 latin=0 committed=1 ime=1 ops=67 text-px=1189 hash=4aaf87ee\r\n")})))))
+  (testing "tablet profile"
+    (is (= {"AIUEOS_GUEST_BROWSER" "1"} (guest/extra-env "guest-browser-ime-toggle")))))

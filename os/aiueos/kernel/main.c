@@ -3756,6 +3756,7 @@ qwen_runtime_boot_complete:
                    three frames above. */
                 if (type_ok) {
                   uint32_t pressed = 0, stray = 0, pre_px = 0, pre_hash = 0;
+                  int preedit_ok = 0;
                   int64_t shown, landed = -1, after = 0;
                   serial_string("AIUEOS_GUEST_BROWSER_PREEDIT_GO keys=3\r\n");
                   while (pressed < 3) {
@@ -3798,6 +3799,7 @@ qwen_runtime_boot_complete:
                         landed == 2 && after == 64 && text_px == 1112 && text_hash == 0x63e3fe67U) {
                       debug_string("AIUEOS_GUEST_BROWSER_PREEDIT_OK\n");
                       serial_string("AIUEOS_GUEST_BROWSER_PREEDIT_OK shown-ops=66 shown-px=1130 shown-hash=c9f528cb committed=2 ops=64 text-px=1112 hash=63e3fe67\r\n");
+                      preedit_ok = 1;
                     } else {
                       debug_string("AIUEOS_GUEST_BROWSER_PREEDIT leftover=census-miss\n");
                       serial_string("AIUEOS_GUEST_BROWSER_PREEDIT leftover=census-miss stray=");
@@ -3818,6 +3820,69 @@ qwen_runtime_boot_complete:
                     serial_string("AIUEOS_GUEST_BROWSER_PREEDIT leftover=keys-missing presses=");
                     serial_decimal(pressed);
                     serial_string("\r\n");
+                  }
+                  /* The IME toggle (ADR-0228). The host types Hankaku/Zenkaku
+                     (evdev 41) k a, Hankaku/Zenkaku k a Enter. Kotoba
+                     `kotoba_aiueos_browser_key` decides what each key is: the
+                     first 41 turns the IME off, so `k a` lands as latin; the
+                     second turns it on, so `k a` Enter commits か. C only
+                     counts what the object answered, and whether each answer
+                     is the one ADR-0228's vectors give (0 1 1 0 0 0 1). The
+                     census is os/aiueos/scripts/browser-frame-model.cljk's. */
+                  if (preedit_ok) {
+                    uint32_t tp = 0, latin = 0, kana = 0, off_seen = 1, miss = 0;
+                    int64_t tog;
+                    serial_string("AIUEOS_GUEST_BROWSER_IME_TOGGLE_GO keys=7\r\n");
+                    while (tp < 7) {
+                      uint32_t code = aiueos_keyboard_next_press(60000000U);
+                      int64_t r;
+                      if (!code) break;
+                      r = (int64_t)kotoba_aiueos_browser_key(sp, 8192, code, 1);
+                      if (r != ((tp == 1 || tp == 2 || tp == 6) ? 1 : 0)) miss++;
+                      if (tp == 0) off_seen = surface[432];
+                      if (r > 0) {
+                        if (surface[432]) kana += (uint32_t)r; else latin += (uint32_t)r;
+                      }
+                      tp++;
+                    }
+                    tog = (int64_t)kotoba_aiueos_browser_frame2(sp, 8192,
+                            (uint64_t)(uintptr_t)font, font_length);
+                    if (tp == 7 && tog > 0 &&
+                        aiueos_desktop_present_ops2(surface + 480, (uint64_t)tog, font, font_length)) {
+                      text_hash = aiueos_desktop_colour_census(0x111111U, &text_px);
+                      (void)aiueos_desktop_show();
+                      if (miss == 0 && off_seen == 0 && latin == 2 && kana == 1 &&
+                          surface[432] == 1 && tog == 67 &&
+                          text_px == 1189 && text_hash == 0x4aaf87eeU) {
+                        debug_string("AIUEOS_GUEST_BROWSER_IME_TOGGLE_OK\n");
+                        serial_string("AIUEOS_GUEST_BROWSER_IME_TOGGLE_OK presses=7 off=0 latin=2 committed=1 ime=1 ops=67 text-px=1189 hash=4aaf87ee\r\n");
+                      } else {
+                        debug_string("AIUEOS_GUEST_BROWSER_IME_TOGGLE leftover=census-miss\n");
+                        serial_string("AIUEOS_GUEST_BROWSER_IME_TOGGLE leftover=census-miss miss=");
+                        serial_decimal(miss);
+                        serial_string(" off=");
+                        serial_decimal(off_seen);
+                        serial_string(" latin=");
+                        serial_decimal(latin);
+                        serial_string(" committed=");
+                        serial_decimal(kana);
+                        serial_string(" ime=");
+                        serial_decimal(surface[432]);
+                        serial_string(" ops=");
+                        serial_decimal((uint32_t)tog);
+                        serial_string(" text-px=");
+                        serial_decimal(text_px);
+                        serial_string(" hash=");
+                        serial_hex32(text_hash);
+                        serial_string("\r\n");
+                      }
+                      browser_hold_for_screendump();
+                    } else {
+                      debug_string("AIUEOS_GUEST_BROWSER_IME_TOGGLE leftover=keys-missing\n");
+                      serial_string("AIUEOS_GUEST_BROWSER_IME_TOGGLE leftover=keys-missing presses=");
+                      serial_decimal(tp);
+                      serial_string("\r\n");
+                    }
                   }
                 }
               } else {

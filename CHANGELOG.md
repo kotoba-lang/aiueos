@@ -5,6 +5,13 @@ All notable changes to **aiueos** are documented here. The format follows
 
 ## [Unreleased]
 
+### Guest browser desktop: Hankaku/Zenkaku switches the IME (ADR-0228)
+- browser-ime turns the IME off and on at evdev 41 and discards the
+  composition when it switches (the hosted desktop's `set-ime`); off, letters
+  go straight into the focused body as latin. Gate `guest-browser-ime-toggle`.
+- browser-ime-v1: 7 toggle vectors generated from the oracle (34 vectors,
+  124 steps, 94 memory assertions).
+
 ### Guest browser desktop shows the composition (ADR-0227)
 - browser-frame2 draws the focused window's preedit and pending romaji,
   underlined, after its body; gone once committed. Gate

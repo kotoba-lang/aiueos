@@ -27,6 +27,12 @@
 ;;              letter test never lets them in, so they are ignored here too)
 ;;   IME off    a letter goes straight to the window as latin; the rest is
 ;;              ignored
+;;   Toggle     Hankaku/Zenkaku (evdev 41), in either state: the IME turns off
+;;              if on, on if off, and whatever was being composed -- romaji,
+;;              preedit, a conversion -- is discarded, not committed. The
+;;              hosted `handle-key` has no toggle key; this is
+;;              aiueos.compositor.desktop `set-ime`, which the hosted desktop
+;;              calls with the flipped state (ADR-0228).
 ;; The romaji table between the GENERATED markers is written from the
 ;; oracle's own `mora` by os/aiueos/scripts/gen-ime-mora.cljk (--check).
 ;;
@@ -339,15 +345,20 @@
     (if (>= at 64) -5
       (do (wp s (+ base at) c) 1))))
 
+(defn toggle [s]
+  (do (wp s 432 (if (= (w s 432) 0) 1 0))
+      (clear-state s)))
+
 (defn key [s code]
   (let [c (letter-of code)]
+    (if (= code 41) (toggle s)
     (if (= (w s 432) 0)
       (if (> c 0) (off-letter s c) 0)
       (if (> c 0) (on-letter s c)
         (if (= code 57) (on-space s)
           (if (= code 28) (on-enter s)
             (if (= code 14) (on-backspace s)
-              (if (= code 1) (cancel s) 0))))))))
+              (if (= code 1) (cancel s) 0)))))))))
 
 ;; --- admission ----------------------------------------------------------------
 

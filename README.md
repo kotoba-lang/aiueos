@@ -482,6 +482,8 @@ Expected `smoke` markers:
 
 `guest-browser-preedit` exit 0 means the same boot then took `k a n`: the IME held か as preedit and `n` as romaji, Kotoba `kotoba_aiueos_browser_frame2` drew both underlined after window 1's body, and after Enter committed かん the frame had no rule -- both censuses equal `os/aiueos/scripts/browser-frame-model.cljk`, a model that reproduces the three earlier frames (`AIUEOS_GUEST_BROWSER_PREEDIT_OK shown-ops=66 shown-px=1130 ... committed=2 ops=64 text-px=1112 hash=63e3fe67`, ADR-0227). No caret yet.
 
+`guest-browser-ime-toggle` exit 0 means the same boot, after the preedit commit, took Hankaku/Zenkaku (evdev 41), `k a`, Hankaku/Zenkaku, `k a`, Enter, and Kotoba `kotoba_aiueos_browser_key` answered every key as ADR-0228's oracle vectors do: the first toggle turned the IME off (word 432 = 0), so `k a` went into window 1's body as latin; the second turned it back on, so `k a` Enter committed か. The frame that followed matched os/aiueos/scripts/browser-frame-model.cljk exactly (serial `AIUEOS_GUEST_BROWSER_IME_TOGGLE_OK presses=7 off=0 latin=2 committed=1 ime=1 ops=67 text-px=1189 hash=4aaf87ee`), and the screendump `guest-browser-ime-toggle.ppm` counts the same 1,189 #111111 px. It does not mean the IME state is shown on screen (`:no-ime-indicator`), or that a composition survives a toggle: switching discards it, as the hosted desktop's `set-ime` does.
+
 ```bash
 kbb -M:compositor serve   # same SPA; compositor owns surfaces; Ctrl-C to stop
 ```
