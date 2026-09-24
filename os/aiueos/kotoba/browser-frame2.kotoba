@@ -52,6 +52,13 @@
 ;; empties both, so the next frame has neither the glyphs nor the rule.
 ;; browser.document-input keeps the composition on the text state apart from
 ;; the committed text; this is where it becomes visible.
+;; CARET (ADR-0232): after the focused window's body and composition, one
+;; 1 x 16 #111111 rect where the next glyph would go -- cssom.layout's
+;; `sel-ops` collapsed selection (`:w 1 :h font-size :color (:fg theme)`) with
+;; the caret at the end of the text, which is where browser.text-edit
+;; `insert-text` leaves it. It does not wrap by itself: at the right inset it
+;; stands in the inset. Not drawn when its foot (y + 16) passes the bottom
+;; inset, like a glyph. Only the focused window has one; it does not blink.
 ;; FONT: the aiueos-font/v1 blob (os/aiueos/scripts/make-font.cljk).
 ;;
 ;; ABI: [surface surface-bytes font font-bytes] -> op count, or
@@ -196,6 +203,13 @@
           (place-ruled s f gi gw)
           (lay-comp s f (+ i 1) n)))))
 
+(defn caret [s]
+  ;; ADR-0232: 1 x 16 in the text colour at the cursor, if its foot is above
+  ;; the bottom inset. The cursor never wraps for it.
+  (if (> (+ (sw s 418) 16) (sw s 421)) 0
+    (do (sput s 422 1118481)
+        (put-rect s (sw s 417) (sw s 418) 1 16))))
+
 (defn text-block [s f base x y]
   ;; Right limit, bottom, wrap and limit are already in scratch.
   (do (sput s 417 x) (sput s 418 y) (sput s 419 x)
@@ -228,7 +242,10 @@
         (sput s 426 1) (sput s 428 64)
         (text-block s f (+ 160 (* 64 (- id 1))) (+ x 8) (+ y 36))
         ;; the composition, only in the focused window, after its body
-        (if (= focused 1) (lay-comp s f 0 (+ (sw s 445) (sw s 433))) 0))))
+        (if (= focused 1)
+          (do (lay-comp s f 0 (+ (sw s 445) (sw s 433)))
+              (caret s))
+          0))))
 
 (defn emit [s f k]
   (if (>= k (sw s 1)) 0

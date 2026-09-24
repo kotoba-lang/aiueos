@@ -5,6 +5,19 @@ All notable changes to **aiueos** are documented here. The format follows
 
 ## [Unreleased]
 
+### Guest browser desktop: a caret, and Backspace deletes before it (ADR-0232)
+- browser-frame2 ends the focused window with a 1 x 16 #111111 caret where the
+  next glyph would go (cssom sel-ops' collapsed selection), after the body and
+  composition; not drawn past the bottom inset.
+- browser-key: Backspace with nothing composed (or with the IME off) deletes
+  the focused body's last code point (browser.text-edit delete-backward). The
+  hosted IME consumes that Backspace; this object does not, on purpose.
+- Every frame2 frame gained the caret: the census constants of the text,
+  raised, type, preedit, ime-toggle, drag, resize and loop gates were re-pinned
+  from browser-frame-model, and the browser-frame2-v1 success vectors were
+  regenerated from it. browser-ime-v1 gains six delete vectors.
+- Gate `guest-browser-caret` (720 s QEMU wall clock).
+
 ### Guest browser desktop: one running loop drives the desktop (ADR-0231)
 - After the resize, one loop polls the tablet and the keyboard, hands each
   event to browser-reduce or browser-key, and presents a frame after every
