@@ -1,0 +1,175 @@
+#!/usr/bin/env kbb
+;; A model of the guest browser desktop frame (ADR-0224 .. 0227), written
+;; apart from browser-frame2.kotoba and from the C blit, so a gate's known
+;; answers do not come from the thing the gate measures.
+;;
+;;   kbb --backend sci os/aiueos/scripts/browser-frame-model.cljk [font.fnt]
+;;   kbb --backend sci os/aiueos/scripts/browser-frame-model.cljk --ops <scene.edn> <font>
+;;
+;; The second form prints the op count and the op list as the object would
+;; write it at word 480 (kind x y a b rgb, u32 LE) for one scene, or one line
+;; per scene for a vector of them -- how the
+;; success vectors of os/aiueos/contracts/browser-frame2-v1.edn got their
+;; expected memory.
+;;
+;; It lays out a surface by the rules in browser-frame2.kotoba's header (read
+;; as prose, not code), paints the ops as aiueos_desktop_present_ops2 does
+;; (rects fill, glyph bits set in the op's colour, later ops over earlier),
+;; and prints for each named scene the op count and the #111111 census that
+;; aiueos_desktop_colour_census would report: the count, and FNV-1a over each
+;; pixel's position (y * 65536 + x, four little-endian bytes) in raster order.
+;;
+;; The first three scenes are the frames ADR-0224 / 0225 already pinned on
+;; KERNEL.ELF serial; the model must reproduce them before its other answers
+;; are used. Exit 0 all pinned scenes reproduced, 1 one did not, 2 could not
+;; run (font unreadable).
+(ns browser-frame-model
+  (:require [clojure.edn :as edn]
+            ["node:fs" :as fs]))
+
+(defn- die [code msg] (.error js/console msg) (.exit js/process code))
+
+(def ^:private args (vec (remove #(= "--" %) *command-line-args*)))
+(def ^:private ops-mode? (= "--ops" (first args)))
+(def ^:private font-path
+  (or (if ops-mode? (get args 2) (first args)) "os/aiueos/fonts/aiueos-16.fnt"))
+
+(def ^:private font
+  (try (.readFileSync fs font-path) (catch :default e (die 2 (str "COULD-NOT-RUN font " font-path ": " e)))))
+
+(defn- u32 [i] (.readUInt32LE font (* 4 i)))
+(def ^:private glyphs (u32 2))
+
+(def ^:private index
+  ;; code point -> [glyph index, width]
+  (into {} (for [i (range glyphs)
+                 :let [e (u32 (+ 4 i))]]
+             [(bit-and e 16777215) [i (if (> e 16777215) 16 8)]])))
+
+(defn- glyph [cp] (or (index cp) (index 65533)))
+
+(defn- bits [gi]
+  ;; positions [dx dy] of the set bits of glyph gi
+  (let [base (+ 16 (* 4 glyphs) (* 32 gi))]
+    (for [row (range 16)
+          :let [line (bit-or (bit-shift-left (aget font (+ base (* 2 row))) 8)
+                             (aget font (+ base (* 2 row) 1)))]
+          col (range 16)
+          :when (pos? (bit-and line (unsigned-bit-shift-right 32768 col)))]
+      [col row])))
+
+;; --- layout -------------------------------------------------------------------
+
+(def ^:private ink 0x111111)
+
+(defn- lay-line
+  "Lay code points from cursor [x y]; returns {:ops :x :y}. Wrap at `right`
+  (or stop, when wrap? is false), skip glyphs whose foot passes `bottom`.
+  With underline? every drawn glyph gets a 1 px rule under it."
+  [{:keys [x y left right bottom wrap? underline?]} cps]
+  (loop [cps cps x x y y ops []]
+    (if-let [cp (first cps)]
+      (if (= cp 10)
+        (recur (rest cps) left (+ y 20) ops)
+        (let [[gi gw] (glyph cp)
+              cross? (> (+ x gw) right)]
+          (if (and cross? (not wrap?))
+            {:ops ops :x x :y y}
+            (let [[x y] (if cross? [left (+ y 20)] [x y])
+                  drawn? (<= (+ y 16) bottom)
+                  ops (if drawn?
+                        (cond-> (conj ops [:glyph x y gi gw])
+                          underline? (conj [:rect x (+ y 17) gw 1 ink]))
+                        ops)]
+              (recur (rest cps) (+ x gw) y ops)))))
+      {:ops ops :x x :y y})))
+
+(defn frame
+  "Ops for a scene: {:vw :vh :focus :stack [{:id :x :y :w :h :title :body}]
+  :composition [cp ...]} (stack bottom first)."
+  [{:keys [vw vh focus stack composition]}]
+  (into [[:rect 0 0 vw vh 0xf5f6f8]]
+        (mapcat
+         (fn [{:keys [id x y w h title body]}]
+           (let [f? (= id focus)
+                 t (lay-line {:x (+ x 8) :y (+ y 6) :left (+ x 8) :right (- (+ x w) 8)
+                              :bottom (+ y 28) :wrap? false} (take 32 title))
+                 b (lay-line {:x (+ x 8) :y (+ y 36) :left (+ x 8) :right (- (+ x w) 8)
+                              :bottom (- (+ y h) 8) :wrap? true} (take 64 body))
+                 c (when (and f? (seq composition))
+                     (lay-line {:x (:x b) :y (:y b) :left (+ x 8) :right (- (+ x w) 8)
+                                :bottom (- (+ y h) 8) :wrap? true :underline? true}
+                               composition))]
+             (concat [[:rect x y w h (if f? 0xffffff 0xeef1f5)]
+                      [:rect x y w 28 (if f? 0xd8e7ff 0xdde2ea)]]
+                     (:ops t) (:ops b) (:ops c)))))
+        stack))
+
+;; --- paint and census -----------------------------------------------------------
+
+(defn census [ops]
+  (let [ink-px (reduce
+                (fn [px [k x y a b c]]
+                  (case k
+                    :rect (if (= c ink)
+                            (into px (for [yy (range y (+ y b)) xx (range x (+ x a))] (+ (* yy 65536) xx)))
+                            (into #{} (remove (fn [p] (let [py (quot p 65536) pxx (mod p 65536)]
+                                                        (and (<= x pxx) (< pxx (+ x a)) (<= y py) (< py (+ y b)))))
+                                              px)))
+                    :glyph (into px (for [[dx dy] (bits a) :when (< dx b)] (+ (* (+ y dy) 65536) (+ x dx))))))
+                #{} ops)
+        h (reduce (fn [h p]
+                    (reduce (fn [h b]
+                              (let [h (bit-xor h (bit-and (unsigned-bit-shift-right p (* 8 b)) 255))]
+                                (unsigned-bit-shift-right (js/Math.imul h 16777619) 0)))
+                            h (range 4)))
+                  2166136261 (sort ink-px))]
+    {:ops (count ops) :text-px (count ink-px)
+     :hash (.padStart (.toString (unsigned-bit-shift-right h 0) 16) 8 "0")}))
+
+;; --- the kernel's scenes (os/aiueos/kernel/main.c, ADR-0224 .. 0227) ---------------
+
+(def ^:private w1 {:id 1 :x 32 :y 32 :w 720 :h 540
+                   :title [97 105 117 101 111 115]
+                   :body [107 111 116 111 98 97 45 108 97 110 103 47 98 114 111 119 115 101 114 10
+                          12502 12521 12454 12470 12364 30011 38754 12391 12377]})
+(def ^:private w2 {:id 2 :x 96 :y 72 :w 640 :h 480
+                   :title [12502 12521 12454 12470]
+                   :body [26085 26412 35486 12398 25991 23383 12418 34920 31034 12391 12365 12414 12377 12290]})
+(def ^:private nihongo-ka [12395 12411 12435 12372 21152])
+
+(def scenes
+  [{:name "text" :pinned {:ops 57 :text-px 1084 :hash "d2e7456a"}
+    :scene {:vw 1280 :vh 800 :focus 2 :stack [w1 w2]}}
+   {:name "text-raised" :pinned {:ops 57 :text-px 864 :hash "5cd907f9"}
+    :scene {:vw 1280 :vh 800 :focus 1 :stack [w2 w1]}}
+   {:name "typed" :pinned {:ops 62 :text-px 1052 :hash "7caecfe8"}
+    :scene {:vw 1280 :vh 800 :focus 1 :stack [w2 (update w1 :body into nihongo-ka)]}}
+   ;; ADR-0227: after typing `k a n`, the composition か + romaji n is drawn,
+   ;; underlined, after the body; Enter commits かん and the rule is gone.
+   {:name "preedit"
+    :scene {:vw 1280 :vh 800 :focus 1 :stack [w2 (update w1 :body into nihongo-ka)]
+            :composition [12363 110]}}
+   {:name "preedit-committed"
+    :scene {:vw 1280 :vh 800 :focus 1 :stack [w2 (update w1 :body into (concat nihongo-ka [12363 12435]))]}}])
+
+(defn- op-hex [[k x y a b c]]
+  (let [buf (js/Buffer.alloc 24)
+        words (if (= k :rect) [1 x y a b c] [2 x y a b ink])]
+    (doseq [[i v] (map-indexed vector words)] (.writeUInt32LE buf v (* 4 i)))
+    (.toString buf "hex")))
+
+(if ops-mode?
+  (let [in (edn/read-string (str (.readFileSync fs (get args 1))))]
+    ;; one scene, or a vector of scenes: one line each
+    (doseq [scene (if (map? in) [in] in)
+            :let [ops (frame scene)]]
+      (println (count ops) (apply str (map op-hex ops)))))
+(let [results (for [{:keys [name pinned scene]} scenes
+                    :let [c (census (frame scene))]]
+                (do (println (str name " ops=" (:ops c) " text-px=" (:text-px c) " hash=" (:hash c)
+                                  (cond (nil? pinned) ""
+                                        (= pinned c) " pinned=reproduced"
+                                        :else (str " pinned=MISMATCH " pinned))))
+                    (or (nil? pinned) (= pinned c))))]
+  (when-not (every? true? (doall results)) (.exit js/process 1))))

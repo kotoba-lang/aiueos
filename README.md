@@ -480,6 +480,8 @@ Expected `smoke` markers:
 
 ![typed into the focused window, QEMU display](docs/assets/guest-browser-typed.png)
 
+`guest-browser-preedit` exit 0 means the same boot then took `k a n`: the IME held か as preedit and `n` as romaji, Kotoba `kotoba_aiueos_browser_frame2` drew both underlined after window 1's body, and after Enter committed かん the frame had no rule -- both censuses equal `os/aiueos/scripts/browser-frame-model.cljk`, a model that reproduces the three earlier frames (`AIUEOS_GUEST_BROWSER_PREEDIT_OK shown-ops=66 shown-px=1130 ... committed=2 ops=64 text-px=1112 hash=63e3fe67`, ADR-0227). No caret yet.
+
 ```bash
 kbb -M:compositor serve   # same SPA; compositor owns surfaces; Ctrl-C to stop
 ```

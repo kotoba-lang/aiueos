@@ -557,16 +557,23 @@ while time.time() < end:
                 reply = recv_obj()
                 if reply and i < 8:
                     log("reply " + json.dumps(reply)[:400])
-        if typing and b"AIUEOS_GUEST_BROWSER_TYPE_GO" in serial_now and not globals().get("typed"):
-            globals()["typed"] = True
-            for q in ["n", "i", "h", "o", "n", "n", "g", "o", "ret", "k", "a", "spc", "ret"]:
+        # The preedit (ADR-0227): `k a n` at PREEDIT_GO, and Enter at
+        # PREEDIT_ENTER only once the composition's frame has been dumped.
+        for go, keys, after in ((b"AIUEOS_GUEST_BROWSER_TYPE_GO",
+                                 ["n", "i", "h", "o", "n", "n", "g", "o", "ret", "k", "a", "spc", "ret"], None),
+                                (b"AIUEOS_GUEST_BROWSER_PREEDIT_GO", ["k", "a", "n"], None),
+                                (b"AIUEOS_GUEST_BROWSER_PREEDIT_ENTER", ["ret"], "guest-browser-preedit.ppm")):
+            if not (typing and go in serial_now) or globals().get(go) or (after and not globals().get(after)):
+                continue
+            globals()[go] = True
+            for q in keys:
                 for down in (True, False):
                     sock.sendall((json.dumps({"execute": "input-send-event", "arguments": {"events": [
                         {"type": "key", "data": {"down": down, "key": {"type": "qcode", "data": q}}}]}})
                                   + "\n").encode())
                     recv_obj()
                     time.sleep(0.15)
-            log("typed 13 keys")
+            log("typed " + str(len(keys)) + " keys at " + go.decode())
         i += 1
         # Guest browser desktop (ADR-0224): the screens a person can look at.
         # The kernel holds each desktop frame for a few seconds in this
@@ -581,7 +588,9 @@ while time.time() < end:
             outdir = os.path.dirname(path)
             for marker, name in ((b"AIUEOS_GUEST_BROWSER_TEXT_OK", "guest-browser-text.ppm"),
                                  (b"AIUEOS_GUEST_BROWSER_TEXT_RAISED_OK", "guest-browser-text-raised.ppm"),
-                                 (b"AIUEOS_GUEST_BROWSER_TYPE_OK", "guest-browser-typed.ppm")):
+                                 (b"AIUEOS_GUEST_BROWSER_TYPE_OK", "guest-browser-typed.ppm"),
+                                 (b"AIUEOS_GUEST_BROWSER_PREEDIT_SHOWN", "guest-browser-preedit.ppm"),
+                                 (b"AIUEOS_GUEST_BROWSER_PREEDIT_OK", "guest-browser-preedit-committed.ppm")):
                 if marker in serial_text and not globals().get(name):
                     globals()[name] = True
                     sock.sendall((json.dumps({"execute": "screendump",

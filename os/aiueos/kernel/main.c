@@ -3708,6 +3708,7 @@ qwen_runtime_boot_complete:
                the drain discards what they already delivered. */
             {
               uint32_t presses = 0, committed = 0, refused = 0;
+              int type_ok = 0;
               surface[432] = 1;
               serial_string("AIUEOS_GUEST_BROWSER_TYPE_READY\r\n");
               (void)aiueos_keyboard_drain(4000000U);
@@ -3730,6 +3731,7 @@ qwen_runtime_boot_complete:
                     text_px == 1052 && text_hash == 0x7caecfe8U) {
                   debug_string("AIUEOS_GUEST_BROWSER_TYPE_OK\n");
                   serial_string("AIUEOS_GUEST_BROWSER_TYPE_OK presses=13 committed=5 ops=62 text-px=1052 hash=7caecfe8\r\n");
+                  type_ok = 1;
                 } else {
                   debug_string("AIUEOS_GUEST_BROWSER_TYPE leftover=census-miss\n");
                   serial_string("AIUEOS_GUEST_BROWSER_TYPE leftover=census-miss committed=");
@@ -3745,6 +3747,79 @@ qwen_runtime_boot_complete:
                   serial_string("\r\n");
                 }
                 browser_hold_for_screendump();
+                /* The preedit (ADR-0227). The host types `k a n`: the IME
+                   holds か as preedit and `n` as romaji, commits nothing, and
+                   Kotoba frame2 draws both, underlined, after window 1's body.
+                   Then Enter: かん is committed and the next frame has no
+                   rule. Both censuses are os/aiueos/scripts/
+                   browser-frame-model.cljk's, a model that reproduces the
+                   three frames above. */
+                if (type_ok) {
+                  uint32_t pressed = 0, stray = 0, pre_px = 0, pre_hash = 0;
+                  int64_t shown, landed = -1, after = 0;
+                  serial_string("AIUEOS_GUEST_BROWSER_PREEDIT_GO keys=3\r\n");
+                  while (pressed < 3) {
+                    uint32_t code = aiueos_keyboard_next_press(60000000U);
+                    if (!code) break;
+                    pressed++;
+                    if (kotoba_aiueos_browser_key(sp, 8192, code, 1) != 0) stray++;
+                  }
+                  shown = (int64_t)kotoba_aiueos_browser_frame2(sp, 8192,
+                            (uint64_t)(uintptr_t)font, font_length);
+                  if (pressed == 3 && shown > 0 &&
+                      aiueos_desktop_present_ops2(surface + 480, (uint64_t)shown, font, font_length)) {
+                    pre_hash = aiueos_desktop_colour_census(0x111111U, &pre_px);
+                    (void)aiueos_desktop_show();
+                    serial_string("AIUEOS_GUEST_BROWSER_PREEDIT_SHOWN ops=");
+                    serial_decimal((uint32_t)shown);
+                    serial_string(" text-px=");
+                    serial_decimal(pre_px);
+                    serial_string(" hash=");
+                    serial_hex32(pre_hash);
+                    serial_string(" preedit=");
+                    serial_decimal(surface[445]);
+                    serial_string(" romaji=");
+                    serial_decimal(surface[433]);
+                    serial_string("\r\n");
+                    browser_hold_for_screendump();
+                    serial_string("AIUEOS_GUEST_BROWSER_PREEDIT_ENTER keys=1\r\n");
+                    {
+                      uint32_t code = aiueos_keyboard_next_press(60000000U);
+                      if (code) landed = (int64_t)kotoba_aiueos_browser_key(sp, 8192, code, 1);
+                    }
+                    after = (int64_t)kotoba_aiueos_browser_frame2(sp, 8192,
+                              (uint64_t)(uintptr_t)font, font_length);
+                    if (after > 0 &&
+                        aiueos_desktop_present_ops2(surface + 480, (uint64_t)after, font, font_length)) {
+                      text_hash = aiueos_desktop_colour_census(0x111111U, &text_px);
+                      (void)aiueos_desktop_show();
+                    }
+                    if (stray == 0 && shown == 66 && pre_px == 1130 && pre_hash == 0xc9f528cbU &&
+                        landed == 2 && after == 64 && text_px == 1112 && text_hash == 0x63e3fe67U) {
+                      debug_string("AIUEOS_GUEST_BROWSER_PREEDIT_OK\n");
+                      serial_string("AIUEOS_GUEST_BROWSER_PREEDIT_OK shown-ops=66 shown-px=1130 shown-hash=c9f528cb committed=2 ops=64 text-px=1112 hash=63e3fe67\r\n");
+                    } else {
+                      debug_string("AIUEOS_GUEST_BROWSER_PREEDIT leftover=census-miss\n");
+                      serial_string("AIUEOS_GUEST_BROWSER_PREEDIT leftover=census-miss stray=");
+                      serial_decimal(stray);
+                      serial_string(" committed=");
+                      serial_decimal((uint32_t)landed);
+                      serial_string(" ops=");
+                      serial_decimal((uint32_t)after);
+                      serial_string(" text-px=");
+                      serial_decimal(text_px);
+                      serial_string(" hash=");
+                      serial_hex32(text_hash);
+                      serial_string("\r\n");
+                    }
+                    browser_hold_for_screendump();
+                  } else {
+                    debug_string("AIUEOS_GUEST_BROWSER_PREEDIT leftover=keys-missing\n");
+                    serial_string("AIUEOS_GUEST_BROWSER_PREEDIT leftover=keys-missing presses=");
+                    serial_decimal(pressed);
+                    serial_string("\r\n");
+                  }
+                }
               } else {
                 debug_string("AIUEOS_GUEST_BROWSER_TYPE leftover=keys-missing\n");
                 serial_string("AIUEOS_GUEST_BROWSER_TYPE leftover=keys-missing presses=");

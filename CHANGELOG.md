@@ -5,6 +5,14 @@ All notable changes to **aiueos** are documented here. The format follows
 
 ## [Unreleased]
 
+### Guest browser desktop shows the composition (ADR-0227)
+- browser-frame2 draws the focused window's preedit and pending romaji,
+  underlined, after its body; gone once committed. Gate
+  `guest-browser-preedit`.
+- `os/aiueos/scripts/browser-frame-model.cljk`: the independent model the
+  desktop gates' known answers come from; it must reproduce the frames
+  already pinned before its new answers are used.
+
 ### Guest browser desktop takes typing (ADR-0225)
 - `os/aiueos/kotoba/browser-ime.kotoba` (`kotoba_aiueos_browser_key`): the
   hosted IME's `handle-key` as a kernel object -- romaji buffer, greedy mora
