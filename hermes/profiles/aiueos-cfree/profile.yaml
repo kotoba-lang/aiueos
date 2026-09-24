@@ -1,0 +1,3 @@
+description: 'aiueos kernel C-free programme (ADR-0220): 1 step per tick, monitor-gated
+  cron'
+description_auto: false
