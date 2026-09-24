@@ -231,3 +231,29 @@
                                       {:serial (str toggle-ok "AIUEOS_GUEST_BROWSER_DRAG_OK events=6 answers=111100 from=32,32 to=32,32 capture=0 ops=67 text-px=1189 hash=4aaf87ee\r\n")})))))
   (testing "tablet profile"
     (is (= {"AIUEOS_GUEST_BROWSER" "1"} (guest/extra-env "guest-browser-drag")))))
+
+;; Guest browser resize (ADR-0230).
+(def ^:private drag-ok
+  (str toggle-ok "AIUEOS_GUEST_BROWSER_DRAG_OK events=6 answers=111100 from=32,32 to=272,132 capture=0 ops=67 text-px=1931 hash=6771f3fe\r\n"))
+
+(deftest guest-browser-resize-classifier
+  (testing "handle press, three moves (one clamped), release, a stray move: resized, matching the model, is green"
+    (is (:green? (guest/classify "guest-browser-resize"
+                                 {:serial (str drag-ok "AIUEOS_GUEST_BROWSER_RESIZE_OK events=6 answers=111100 clamp=120x80 size=240x200 at=272,132 capture=0 ops=67 text-px=1931 hash=36069e52\r\n")}))))
+  (testing "the resize needs the drag frame first"
+    (is (= :no-drag-frame
+           (:reason (guest/classify "guest-browser-resize"
+                                    {:serial (str toggle-ok "AIUEOS_GUEST_BROWSER_RESIZE_OK events=6 answers=111100 clamp=120x80 size=240x200 at=272,132 capture=0 ops=67 text-px=1931 hash=36069e52\r\n")})))))
+  (testing "named reds"
+    (doseq [[line reason] [["AIUEOS_GUEST_BROWSER_RESIZE leftover=events-missing events=1 off=0 frame=67\r\n" :events-missing]
+                           ["AIUEOS_GUEST_BROWSER_RESIZE leftover=census-miss off=0 clamp=36x76 size=240x200 at=272,132 capture=0 ops=67 text-px=1931 hash=36069e52\r\n" :census-miss]
+                           ["" :guest-browser-resize-absent]]]
+      (is (= reason (:reason (guest/classify "guest-browser-resize" {:serial (str drag-ok line)}))) line)))
+  (testing "an unclamped resize (the clamp field differs) is not green"
+    (is (not (:green? (guest/classify "guest-browser-resize"
+                                      {:serial (str drag-ok "AIUEOS_GUEST_BROWSER_RESIZE_OK events=6 answers=111100 clamp=36x76 size=240x200 at=272,132 capture=0 ops=67 text-px=1931 hash=36069e52\r\n")})))))
+  (testing "a window that did not resize (the drag census) is not green"
+    (is (not (:green? (guest/classify "guest-browser-resize"
+                                      {:serial (str drag-ok "AIUEOS_GUEST_BROWSER_RESIZE_OK events=6 answers=111100 clamp=120x80 size=720x540 at=272,132 capture=0 ops=67 text-px=1931 hash=6771f3fe\r\n")})))))
+  (testing "tablet profile"
+    (is (= {"AIUEOS_GUEST_BROWSER" "1"} (guest/extra-env "guest-browser-resize")))))

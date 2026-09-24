@@ -25,8 +25,14 @@
 ;;                 `:drag` is `:window/move` to (point - offset) --
 ;;                 browser.surface/move-window, which neither focuses nor
 ;;                 raises. pointer/up clears the capture.
-;; Not mirrored: the resize capture (a handle press captures nothing here),
-;; text editing, IME. Named leftovers `:no-resize-capture`, `:no-text-edit`.
+;;   resize capture (ADR-0230) browser.input: a pointer/down inside the 16 px
+;;                 resize handle (the last 16 px of both axes, inclusive)
+;;                 captures `:resize` with the press point and the window's
+;;                 size at the press. pointer/move under `:resize` is
+;;                 `:window/resize` to (max 120 (w0 + px - x0)) x
+;;                 (max 80 (h0 + py - y0)) -- browser.surface/resize-window,
+;;                 which neither focuses, raises nor moves the origin.
+;; Not mirrored: text editing, IME. Named leftover `:no-text-edit`.
 ;; A move whose origin would be negative is refused (-6) and changes nothing:
 ;; the u32 surface has no negative coordinate; browser.surface would store it.
 ;;
@@ -35,16 +41,20 @@
 ;; condition).
 ;;
 ;; STATE (u32 words): 0..4 abi n focus vw vh, 5..24 id x y w h per window
-;; (bottom first), 25 capture kind (0 none, 1 drag), 26 captured window id,
-;; 27 28 offset x y from the window origin. 29..31 are not read.
+;; (bottom first), 25 capture kind (0 none, 1 drag, 2 resize), 26 captured
+;; window id, 27 28 the drag's offset from the window origin or the resize's
+;; press point, 29 30 the resize's size at the press (0 for a drag). 31 is not
+;; read.
 ;;
 ;; ABI: [state state-bytes kind a b], mutates state in place.
 ;;   kind 1 pointer/down at (a, b) -> focused window id, or 0 on a miss
 ;;   kind 2 key (a = code, b = value) -> focused window id that receives it
-;;   kind 3 pointer/move to (a, b) -> the moved window id, or 0 uncaptured
+;;   kind 3 pointer/move to (a, b) -> the moved or resized window id, or 0
+;;          uncaptured
 ;;   kind 4 pointer/up -> 0, capture cleared
 ;;   -1 null region / wrong size   -2 abi or n out of range
-;;   -3 focus is not a window id   -4 capture is not none or a drag of a window
+;;   -3 focus is not a window id   -4 capture is not none, or a drag or resize
+;;                                    of a window
 ;;   -5 unknown event kind         -6 the move would put the origin below 0
 
 (ns aiueos.browser-reduce
@@ -118,7 +128,8 @@
 
 (defn capture-ok [st n]
   (if (= (w-at st 25) 0) 1
-    (if (= (w-at st 25) 1) (has-id st n 0 (w-at st 26)) 0)))
+    (if (= (w-at st 25) 1) (has-id st n 0 (w-at st 26))
+      (if (= (w-at st 25) 2) (has-id st n 0 (w-at st 26)) 0))))
 
 ;; browser.input in-resize-handle?: the last 16 px of both axes, inclusive.
 (defn in-handle [st k px py]
@@ -129,16 +140,21 @@
       (if (< py (- f 16)) 0 1))))
 
 ;; Set the capture for a press on stack index k (before the raise moves it).
+(defn set-capture [st kind id c d]
+  (do (w-put st 25 kind) (w-put st 26 id) (w-put st 27 c) (w-put st 28 d)))
+
 (defn capture [st k px py]
   (let [b (+ 5 (* k 5))
         x (w-at st (+ b 1))
         y (w-at st (+ b 2))]
-    (if (= (in-handle st k px py) 1)
-      (do (w-put st 25 0) (w-put st 26 0) (w-put st 27 0) (w-put st 28 0))
-      (if (> py (+ y 28))
-        (do (w-put st 25 0) (w-put st 26 0) (w-put st 27 0) (w-put st 28 0))
-        (do (w-put st 25 1) (w-put st 26 (w-at st b))
-            (w-put st 27 (- px x)) (w-put st 28 (- py y)))))))
+    (do (w-put st 29 0) (w-put st 30 0)
+        (if (= (in-handle st k px py) 1)
+          (do (set-capture st 2 (w-at st b) px py)
+              (w-put st 29 (w-at st (+ b 3)))
+              (w-put st 30 (w-at st (+ b 4))))
+          (if (> py (+ y 28))
+            (set-capture st 0 0 0 0)
+            (set-capture st 1 (w-at st b) (- px x) (- py y)))))))
 
 (defn press [st n k1 px py]
   (if (= k1 0) 0
@@ -153,13 +169,27 @@
             (w-put st (+ b 2) ny)
             (w-at st b))))))
 
+;; browser.input :resize: the size at the press plus the pointer's travel
+;; from the press point, never below 120 x 80. Signed arithmetic: a travel
+;; larger than the size clamps, it does not wrap.
+(defn at-least [v floor]
+  (if (< v floor) floor v))
+
+(defn resize-to [st k px py]
+  (let [b (+ 5 (* k 5))]
+    (do (w-put st (+ b 3) (at-least (+ (w-at st 29) (- px (w-at st 27))) 120))
+        (w-put st (+ b 4) (at-least (+ (w-at st 30) (- py (w-at st 28))) 80))
+        (w-at st b))))
+
 (defn drag [st n px py]
   (if (= (w-at st 25) 0) 0
-    (move-to st (index-of st n 0 (w-at st 26))
-             (- px (w-at st 27)) (- py (w-at st 28)))))
+    (if (= (w-at st 25) 2)
+      (resize-to st (index-of st n 0 (w-at st 26)) px py)
+      (move-to st (index-of st n 0 (w-at st 26))
+               (- px (w-at st 27)) (- py (w-at st 28))))))
 
 (defn release [st]
-  (do (w-put st 25 0) (w-put st 26 0) (w-put st 27 0) (w-put st 28 0) 0))
+  (do (set-capture st 0 0 0 0) (w-put st 29 0) (w-put st 30 0) 0))
 
 (defn aiueos-browser-reduce [st sb kind a b]
   (if (= st 0) -1

@@ -5,6 +5,14 @@ All notable changes to **aiueos** are documented here. The format follows
 
 ## [Unreleased]
 
+### Guest browser desktop: the resize handle resizes the window (ADR-0230)
+- browser-reduce captures a resize on a press in the 16 px resize handle
+  (words 25..30: kind 2, id, press point, size at the press); pointer/move
+  sets the size to the press size plus the travel, clamped at 120 x 80,
+  keeping the origin. -4 now also refuses a resize of an absent window.
+- browser-reduce-v1: 50 vectors (40 from the kotoba-lang/browser oracle).
+  Gate `guest-browser-resize`.
+
 ### Guest browser desktop: a titlebar drag moves the window (ADR-0229)
 - browser-reduce captures a drag on a titlebar press and moves the window to
   the pointer minus the press offset on each pointer/move (kind 3); pointer/up

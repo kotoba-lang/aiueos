@@ -1,5 +1,5 @@
 #!/usr/bin/env kbb
-;; A model of the guest browser desktop frame (ADR-0224 .. 0229), written
+;; A model of the guest browser desktop frame (ADR-0224 .. 0230), written
 ;; apart from browser-frame2.kotoba and from the C blit, so a gate's known
 ;; answers do not come from the thing the gate measures.
 ;;
@@ -20,7 +20,7 @@
 ;; pixel's position (y * 65536 + x, four little-endian bytes) in raster order.
 ;;
 ;; The scenes marked :pinned are frames already pinned on KERNEL.ELF serial
-;; (ADR-0224, 0225, 0227, 0228); the model must reproduce them before its other
+;; (ADR-0224, 0225, 0227, 0228, 0229); the model must reproduce them before its other
 ;; answers are used. Exit 0 all pinned scenes reproduced, 1 one did not, 2 could not
 ;; run (font unreadable).
 (ns browser-frame-model
@@ -159,11 +159,19 @@
             :stack [w2 (update w1 :body into (concat nihongo-ka [12363 12435] [107 97 12363]))]}}
    ;; ADR-0229: a titlebar press at (60, 50), moves to (140, 90) (220, 120)
    ;; (300, 150), release: window 1 is dragged by (240, 100) to (272, 132).
-   {:name "drag"
+   {:name "drag" :pinned {:ops 67 :text-px 1931 :hash "6771f3fe"}
     :scene {:vw 1280 :vh 800 :focus 1
             :stack [w2 (-> w1
                            (update :body into (concat nihongo-ka [12363 12435] [107 97 12363]))
-                           (assoc :x 272 :y 132))]}}])
+                           (assoc :x 272 :y 132))]}}
+   ;; ADR-0230: a press in window 1's resize handle at (984, 664), moves to
+   ;; (784, 564) (300, 200 -- clamped at 120 x 80) (504, 324), release:
+   ;; window 1 is 240 x 200 at (272, 132), and its body wraps at the new width.
+   {:name "resize"
+    :scene {:vw 1280 :vh 800 :focus 1
+            :stack [w2 (-> w1
+                           (update :body into (concat nihongo-ka [12363 12435] [107 97 12363]))
+                           (assoc :x 272 :y 132 :w 240 :h 200))]}}])
 
 (defn- op-hex [[k x y a b c]]
   (let [buf (js/Buffer.alloc 24)
