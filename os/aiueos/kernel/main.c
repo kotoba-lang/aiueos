@@ -3665,10 +3665,10 @@ qwen_runtime_boot_complete:
           } else {
             serial_string("AIUEOS_GUEST_BROWSER_SCANOUT leftover=not-shown\r\n");
           }
-          if (count == 58 && text_px == 1100 && text_hash == 0x4ab25516U) {
+          if (count == 58 && text_px == 1079 && text_hash == 0x89910f34U) {
             text_ok = 1;
             debug_string("AIUEOS_GUEST_BROWSER_TEXT_OK\n");
-            serial_string("AIUEOS_GUEST_BROWSER_TEXT_OK ops=58 text-px=1100 hash=4ab25516 font-bytes=");
+            serial_string("AIUEOS_GUEST_BROWSER_TEXT_OK ops=58 text-px=1079 hash=89910f34 font-bytes=");
           } else {
             debug_string("AIUEOS_GUEST_BROWSER_TEXT leftover=census-miss\n");
             serial_string("AIUEOS_GUEST_BROWSER_TEXT leftover=census-miss ops=");
@@ -3698,9 +3698,9 @@ qwen_runtime_boot_complete:
                                                     font, font_length)) {
           text_hash = aiueos_desktop_colour_census(0x111111U, &text_px);
           (void)aiueos_desktop_show();
-          if (hit == 1 && again == 58 && text_px == 880 && text_hash == 0xca6c2709U) {
+          if (hit == 1 && again == 58 && text_px == 880 && text_hash == 0xb9f96599U) {
             debug_string("AIUEOS_GUEST_BROWSER_TEXT_RAISED_OK\n");
-            serial_string("AIUEOS_GUEST_BROWSER_TEXT_RAISED_OK hit=1 ops=58 text-px=880 hash=ca6c2709\r\n");
+            serial_string("AIUEOS_GUEST_BROWSER_TEXT_RAISED_OK hit=1 ops=58 text-px=880 hash=b9f96599\r\n");
             browser_hold_for_screendump();
             /* Typing into the focused window (ADR-0225). The host types
                n i h o n n g o Enter k a Space Enter once, after TYPE_GO;
@@ -3730,9 +3730,9 @@ qwen_runtime_boot_complete:
                 text_hash = aiueos_desktop_colour_census(0x111111U, &text_px);
                 (void)aiueos_desktop_show();
                 if (committed == 5 && refused == 0 && typed == 63 &&
-                    text_px == 1068 && text_hash == 0xb741bf74U) {
+                    text_px == 1068 && text_hash == 0xa92b8f58U) {
                   debug_string("AIUEOS_GUEST_BROWSER_TYPE_OK\n");
-                  serial_string("AIUEOS_GUEST_BROWSER_TYPE_OK presses=13 committed=5 ops=63 text-px=1068 hash=b741bf74\r\n");
+                  serial_string("AIUEOS_GUEST_BROWSER_TYPE_OK presses=13 committed=5 ops=63 text-px=1068 hash=a92b8f58\r\n");
                   type_ok = 1;
                 } else {
                   debug_string("AIUEOS_GUEST_BROWSER_TYPE leftover=census-miss\n");
@@ -3797,10 +3797,10 @@ qwen_runtime_boot_complete:
                       text_hash = aiueos_desktop_colour_census(0x111111U, &text_px);
                       (void)aiueos_desktop_show();
                     }
-                    if (stray == 0 && shown == 67 && pre_px == 1146 && pre_hash == 0x04d93a5fU &&
-                        landed == 2 && after == 65 && text_px == 1128 && text_hash == 0xe67d620bU) {
+                    if (stray == 0 && shown == 67 && pre_px == 1146 && pre_hash == 0x566a1c8fU &&
+                        landed == 2 && after == 65 && text_px == 1128 && text_hash == 0x193030b3U) {
                       debug_string("AIUEOS_GUEST_BROWSER_PREEDIT_OK\n");
-                      serial_string("AIUEOS_GUEST_BROWSER_PREEDIT_OK shown-ops=67 shown-px=1146 shown-hash=04d93a5f committed=2 ops=65 text-px=1128 hash=e67d620b\r\n");
+                      serial_string("AIUEOS_GUEST_BROWSER_PREEDIT_OK shown-ops=67 shown-px=1146 shown-hash=566a1c8f committed=2 ops=65 text-px=1128 hash=193030b3\r\n");
                       preedit_ok = 1;
                     } else {
                       debug_string("AIUEOS_GUEST_BROWSER_PREEDIT leftover=census-miss\n");
@@ -3856,9 +3856,9 @@ qwen_runtime_boot_complete:
                       (void)aiueos_desktop_show();
                       if (miss == 0 && off_seen == 0 && latin == 2 && kana == 1 &&
                           surface[432] == 1 && tog == 68 &&
-                          text_px == 1205 && text_hash == 0xf516238aU) {
+                          text_px == 1205 && text_hash == 0x322e206eU) {
                         debug_string("AIUEOS_GUEST_BROWSER_IME_TOGGLE_OK\n");
-                        serial_string("AIUEOS_GUEST_BROWSER_IME_TOGGLE_OK presses=7 off=0 latin=2 committed=1 ime=1 ops=68 text-px=1205 hash=f516238a\r\n");
+                        serial_string("AIUEOS_GUEST_BROWSER_IME_TOGGLE_OK presses=7 off=0 latin=2 committed=1 ime=1 ops=68 text-px=1205 hash=322e206e\r\n");
                         toggle_ok = 1;
                       } else {
                         debug_string("AIUEOS_GUEST_BROWSER_IME_TOGGLE leftover=census-miss\n");
@@ -3925,9 +3925,9 @@ qwen_runtime_boot_complete:
                         /* stack [2 1]: window 1 is words 10..14 */
                         if (off == 0 && surface[10] == 1 && surface[11] == 272 &&
                             surface[12] == 132 && surface[25] == 0 && dragged == 68 &&
-                            text_px == 1947 && text_hash == 0xa2969186U) {
+                            text_px == 1947 && text_hash == 0x523440e0U) {
                           debug_string("AIUEOS_GUEST_BROWSER_DRAG_OK\n");
-                          serial_string("AIUEOS_GUEST_BROWSER_DRAG_OK events=6 answers=111100 from=32,32 to=272,132 capture=0 ops=68 text-px=1947 hash=a2969186\r\n");
+                          serial_string("AIUEOS_GUEST_BROWSER_DRAG_OK events=6 answers=111100 from=32,32 to=272,132 capture=0 ops=68 text-px=1947 hash=523440e0\r\n");
                           drag_ok = 1;
                         } else {
                           debug_string("AIUEOS_GUEST_BROWSER_DRAG leftover=census-miss\n");
@@ -3999,9 +3999,9 @@ qwen_runtime_boot_complete:
                               surface[11] == 272 && surface[12] == 132 &&
                               surface[13] == 240 && surface[14] == 200 && surface[25] == 0 &&
                               resized == 68 && text_px == 1947 &&
-                              text_hash == 0x4fa3baa2U) {
+                              text_hash == 0x523440e0U) {
                             debug_string("AIUEOS_GUEST_BROWSER_RESIZE_OK\n");
-                            serial_string("AIUEOS_GUEST_BROWSER_RESIZE_OK events=6 answers=111100 clamp=120x80 size=240x200 at=272,132 capture=0 ops=68 text-px=1947 hash=4fa3baa2\r\n");
+                            serial_string("AIUEOS_GUEST_BROWSER_RESIZE_OK events=6 answers=111100 clamp=120x80 size=240x200 at=272,132 capture=0 ops=68 text-px=1947 hash=523440e0\r\n");
                             resize_ok = 1;
                           } else {
                             debug_string("AIUEOS_GUEST_BROWSER_RESIZE leftover=census-miss\n");
@@ -4115,13 +4115,13 @@ qwen_runtime_boot_complete:
                             serial_hex32(lhash);
                             serial_string("\r\n");
                           }
-                          if (n == 9 && frames == 9 && loff == 0 && chain == 0x1341d966U &&
-                              lastops == 70 && lpx == 906 && lhash == 0x61ad1f7fU &&
+                          if (n == 9 && frames == 9 && loff == 0 && chain == 0xb185dff1U &&
+                              lastops == 70 && lpx == 901 && lhash == 0x7b0f9b05U &&
                               surface[2] == 2 && surface[10] == 2 && surface[11] == 196 &&
                               surface[12] == 172 && surface[25] == 0) {
                             loop_ok = 1;
                             debug_string("AIUEOS_GUEST_BROWSER_LOOP_OK\n");
-                            serial_string("AIUEOS_GUEST_BROWSER_LOOP_OK events=9 frames=9 answers=001220001 focus=2 at=196,172 capture=0 chain=1341d966 ops=70 text-px=906 hash=61ad1f7f idle-min=");
+                            serial_string("AIUEOS_GUEST_BROWSER_LOOP_OK events=9 frames=9 answers=001220001 focus=2 at=196,172 capture=0 chain=b185dff1 ops=70 text-px=901 hash=7b0f9b05 idle-min=");
                             serial_decimal(idle_min);
                             serial_string("\r\n");
                             browser_hold_for_screendump();
@@ -4168,7 +4168,7 @@ qwen_runtime_boot_complete:
                           if (loop_ok) {
                             static const uint32_t ccode[5] = {37, 30, 14, 14, 14};
                             static const uint32_t cops[5] = {72, 72, 70, 69, 68};
-                            static const uint32_t ccx[5] = {452, 460, 444, 428, 412};
+                            static const uint32_t ccx[5] = {458, 466, 450, 434, 418};
                             uint32_t k = 0, coff = 0, cpx = 0, chash = 0, cchain = 2166136261U;
                             uint32_t cidle = 0, cframes = 0, cx = 0, cy = 0, blen = 0;
                             int64_t cfo = 0;
@@ -4202,7 +4202,7 @@ qwen_runtime_boot_complete:
                                 }
                               }
                               if (code != ccode[k] || r != 0 || cfo != (int64_t)cops[k] ||
-                                  !caret_op || cx != ccx[k] || cy != 208) coff++;
+                                  !caret_op || cx != ccx[k] || cy != 214) coff++;
                               k++;
                               serial_string("AIUEOS_GUEST_BROWSER_CARET_FRAME n=");
                               serial_decimal(k);
@@ -4224,12 +4224,12 @@ qwen_runtime_boot_complete:
                             }
                             /* window 2's body: words 224.. up to its 0 */
                             while (blen < 64 && surface[224 + blen] != 0) blen++;
-                            if (k == 5 && cframes == 5 && coff == 0 && cchain == 0xfba4ae02U &&
-                                cfo == 68 && cpx == 872 && chash == 0x5cacb661U && blen == 13 &&
+                            if (k == 5 && cframes == 5 && coff == 0 && cchain == 0x62295970U &&
+                                cfo == 68 && cpx == 867 && chash == 0xd039564fU && blen == 13 &&
                                 surface[433] == 0 && surface[445] == 0 && surface[2] == 2) {
                               caret_ok = 1;
                               debug_string("AIUEOS_GUEST_BROWSER_CARET_OK\n");
-                              serial_string("AIUEOS_GUEST_BROWSER_CARET_OK keys=5 answers=00000 body=13 caret=412,208 chain=fba4ae02 ops=68 text-px=872 hash=5cacb661\r\n");
+                              serial_string("AIUEOS_GUEST_BROWSER_CARET_OK keys=5 answers=00000 body=13 caret=418,214 chain=62295970 ops=68 text-px=867 hash=d039564f\r\n");
                               browser_hold_for_screendump();
                             } else if (k < 5) {
                               debug_string("AIUEOS_GUEST_BROWSER_CARET leftover=keys-missing\n");
@@ -4338,12 +4338,12 @@ qwen_runtime_boot_complete:
                                 serial_string("\r\n");
                               }
                               /* stack [1 3]: words 5 and 10; the vacated record is zero */
-                              if (e == 8 && aframes == 8 && aoff == 0 && achain == 0xcff6ae89U &&
-                                  afo == 85 && apx == 776 && ahash == 0x9e714452U &&
+                              if (e == 8 && aframes == 8 && aoff == 0 && achain == 0x2845aee9U &&
+                                  afo == 85 && apx == 776 && ahash == 0x98b595bdU &&
                                   surface[1] == 2 && surface[2] == 3 && surface[5] == 1 &&
                                   surface[10] == 3 && surface[15] == 0 && surface[25] == 0) {
                                 debug_string("AIUEOS_GUEST_BROWSER_LAUNCH_OK\n");
-                                serial_string("AIUEOS_GUEST_BROWSER_LAUNCH_OK events=8 answers=30203030 windows=2 stack=1,3 focus=3 chain=cff6ae89 ops=85 text-px=776 hash=9e714452\r\n");
+                                serial_string("AIUEOS_GUEST_BROWSER_LAUNCH_OK events=8 answers=30203030 windows=2 stack=1,3 focus=3 chain=2845aee9 ops=85 text-px=776 hash=98b595bd\r\n");
                                 browser_hold_for_screendump();
                               } else if (e < 8) {
                                 debug_string("AIUEOS_GUEST_BROWSER_LAUNCH leftover=events-missing\n");
@@ -4397,6 +4397,85 @@ qwen_runtime_boot_complete:
         } else {
           debug_string("AIUEOS_GUEST_BROWSER_TEXT_RAISED leftover=frame-refused\n");
           serial_string("AIUEOS_GUEST_BROWSER_TEXT_RAISED leftover=frame-refused\r\n");
+        }
+      }
+      /* The flow-parity frame (ADR-0234). After everything above -- in the
+         default profile right after the text frame -- Kotoba lays out a
+         surface of its own whose four bodies take each of cssom's rules:
+         packing by words with space runs, a tab and U+3000 collapsed (1),
+         <br>s with an empty segment (2), a CJK run with no break opportunity
+         overflowing its window (3), a body that fits kept as collapsed (4).
+         The census is os/aiueos/scripts/browser-frame-model.cljk's. The op
+         list goes out on serial whole: the guest-browser-flow-parity gate
+         reads each window's body glyphs out of it and compares them, one by
+         one, with what kotoba-lang/browser + cssom draw for the same surface
+         (os/aiueos/contracts/browser-flow-parity-v1.edn). */
+      if (font) {
+        static uint32_t __attribute__((section(".high_bss"), aligned(16))) flow[2048];
+        static const uint32_t fstate[25] = {1, 4, 4, 0, 0,
+                                            1, 16, 40, 188, 220,
+                                            2, 220, 40, 420, 220,
+                                            3, 656, 40, 200, 160,
+                                            4, 16, 300, 180, 120};
+        /* flow / cssom  lays<TAB>out words one by one,<U+3000>as hosted engine. */
+        static const uint32_t ftitle1[] = {102, 108, 111, 119};
+        static const uint32_t fbody1[] = {99, 115, 115, 111, 109, 32, 32, 108, 97, 121, 115, 9, 111, 117, 116, 32, 119, 111, 114, 100, 115, 32, 111, 110, 101, 32, 98, 121, 32, 111, 110, 101, 44, 12288, 97, 115, 32, 104, 111, 115, 116, 101, 100, 32, 101, 110, 103, 105, 110, 101, 46};
+        /* br / "  first  line  " <br> <br> 空行の次　全角空白も <br> kotoba-lang/browser flows words */
+        static const uint32_t ftitle2[] = {98, 114};
+        static const uint32_t fbody2[] = {32, 32, 102, 105, 114, 115, 116, 32, 32, 108, 105, 110, 101, 32, 32, 10, 10, 31354, 34892, 12398, 27425, 12288, 20840, 35282, 31354, 30333, 12418, 10, 107, 111, 116, 111, 98, 97, 45, 108, 97, 110, 103, 47, 98, 114, 111, 119, 115, 101, 114, 32, 102, 108, 111, 119, 115, 32, 119, 111, 114, 100, 115};
+        /* 長い行 / ab 日本語の文字は単語の中で折り返さない cd */
+        static const uint32_t ftitle3[] = {38263, 12356, 34892};
+        static const uint32_t fbody3[] = {97, 98, 32, 26085, 26412, 35486, 12398, 25991, 23383, 12399, 21336, 35486, 12398, 20013, 12391, 25240, 12426, 36820, 12373, 12394, 12356, 32, 99, 100};
+        /* fits / " 画面　に　出る  text " */
+        static const uint32_t ftitle4[] = {102, 105, 116, 115};
+        static const uint32_t fbody4[] = {32, 30011, 38754, 12288, 12395, 12288, 20986, 12427, 32, 32, 116, 101, 120, 116, 32};
+        int64_t fcount;
+        uint32_t fpx = 0, fhash = 0;
+        for (int i = 0; i < 2048; i++) flow[i] = 0;
+        for (int i = 0; i < 25; i++) flow[i] = fstate[i];
+        flow[3] = aiueos_desktop_width();
+        flow[4] = aiueos_desktop_height();
+        for (unsigned i = 0; i < sizeof(ftitle1) / 4; i++) flow[32 + i] = ftitle1[i];
+        for (unsigned i = 0; i < sizeof(ftitle2) / 4; i++) flow[64 + i] = ftitle2[i];
+        for (unsigned i = 0; i < sizeof(ftitle3) / 4; i++) flow[96 + i] = ftitle3[i];
+        for (unsigned i = 0; i < sizeof(ftitle4) / 4; i++) flow[128 + i] = ftitle4[i];
+        for (unsigned i = 0; i < sizeof(fbody1) / 4; i++) flow[160 + i] = fbody1[i];
+        for (unsigned i = 0; i < sizeof(fbody2) / 4; i++) flow[224 + i] = fbody2[i];
+        for (unsigned i = 0; i < sizeof(fbody3) / 4; i++) flow[288 + i] = fbody3[i];
+        for (unsigned i = 0; i < sizeof(fbody4) / 4; i++) flow[352 + i] = fbody4[i];
+        fcount = (int64_t)kotoba_aiueos_browser_frame2((uint64_t)(uintptr_t)flow, 8192,
+                   (uint64_t)(uintptr_t)font, font_length);
+        if (fcount <= 0) {
+          debug_string("AIUEOS_GUEST_BROWSER_FLOW leftover=frame-refused\n");
+          serial_string("AIUEOS_GUEST_BROWSER_FLOW leftover=frame-refused reason=-");
+          serial_decimal((uint32_t)(-fcount));
+          serial_string("\r\n");
+        } else if (!aiueos_desktop_present_ops2(flow + 480, (uint64_t)fcount, font, font_length)) {
+          debug_string("AIUEOS_GUEST_BROWSER_FLOW leftover=present-refused\n");
+          serial_string("AIUEOS_GUEST_BROWSER_FLOW leftover=present-refused\r\n");
+        } else {
+          fhash = aiueos_desktop_colour_census(0x111111U, &fpx);
+          (void)aiueos_desktop_show();
+          /* kind x y a b rgb per op, each word as 8 hex digits */
+          serial_string("AIUEOS_GUEST_BROWSER_FLOW_OPS n=");
+          serial_decimal((uint32_t)fcount);
+          serial_string(" words=");
+          for (int64_t i = 0; i < fcount * 6; i++) serial_hex32(flow[480 + i]);
+          serial_string("\r\n");
+          if (fcount == 158 && fpx == 3593 && fhash == 0xa19f95a8U) {
+            debug_string("AIUEOS_GUEST_BROWSER_FLOW_OK\n");
+            serial_string("AIUEOS_GUEST_BROWSER_FLOW_OK windows=4 ops=158 text-px=3593 hash=a19f95a8\r\n");
+            browser_hold_for_screendump();
+          } else {
+            debug_string("AIUEOS_GUEST_BROWSER_FLOW leftover=census-miss\n");
+            serial_string("AIUEOS_GUEST_BROWSER_FLOW leftover=census-miss ops=");
+            serial_decimal((uint32_t)fcount);
+            serial_string(" text-px=");
+            serial_decimal(fpx);
+            serial_string(" hash=");
+            serial_hex32(fhash);
+            serial_string("\r\n");
+          }
         }
       }
     }

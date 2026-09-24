@@ -16,11 +16,35 @@
 ;;
 ;; Mirrored from kotoba-lang/browser: z-order and colours as browser-frame;
 ;; text colour browser.surface default-theme :fg #111111; body line height
-;; default-theme :line-height 20; body inset 8 (window-node `.window-body`
-;; padding 8); titlebar 28 (browser.input/titlebar-height), title inset 8.
-;; Not mirrored: cssom's flow layout (windows sit at :window/rect), word
-;; breaking (lines break at the glyph that would cross the right inset),
-;; bidi, combining marks, emphasis.
+;; default-theme :line-height 20; titlebar 28 (browser.input/titlebar-height),
+;; title inset 8. Not mirrored: where cssom puts the windows (its workspace
+;; stacks them in block flow; here they sit at :window/rect), bidi, combining
+;; marks, emphasis.
+;;
+;; BODY FLOW (ADR-0234): the body is laid out as browser.surface +
+;; cssom.layout lay out the window's document -- the body text, each 10 a
+;; <br> -- measured with this font (cssom's `:measure-text` hook), compared
+;; glyph for glyph against the hosted engine by the guest-browser-flow-parity
+;; gate:
+;;   - the body box is (x, y + 28); its text starts 14 in from its left and
+;;     top (`.window-body` padding 8 plus cssom's default-theme :padding 6 on
+;;     the text) and its lines are W = w - 28 wide, 20 apart;
+;;   - white space is what cssom's text path collapses, less 10: U+0009 000B
+;;     000C 000D 0020 00A0 1680 2000..200A 2028 2029 202F 205F 3000 FEFF; a run
+;;     of it is one U+0020;
+;;   - with no 10 in the body: only white space draws nothing; a collapsed
+;;     body at most W wide is one line as collapsed (a leading or trailing
+;;     space kept); a wider one is packed by words;
+;;   - with a 10: each 10 ends a line (an empty segment still takes one) and
+;;     each segment is packed by words;
+;;   - packing by words: a word is a run of non-white-space; the first word of
+;;     a line goes whatever its width -- it overflows the right edge, a CJK run
+;;     included, because cssom has no break opportunity inside a word; a next
+;;     word joins the line after one U+0020 if the line still fits in W, else it
+;;     opens the next line.
+;; The kernel's two clips, which the hosted engine does not have: a glyph whose
+;; foot passes the bottom inset (y + h - 8) or whose right edge passes the
+;; viewport is not drawn (the pen still moves).
 ;;
 ;; Temporary native constraints, with ADR-0223's removal condition: word types,
 ;; a bounded u32 surface window, at most five parameters (cursor state lives in
@@ -48,7 +72,9 @@
 ;; COMPOSITION (ADR-0227): while the focused window has a composition, it is
 ;; laid right after that window's body text -- the preedit code points, then
 ;; the romaji still in the buffer -- each drawn glyph with a 1 px #111111
-;; rule at its foot (y + 17), wrapping and cut like the body. A commit
+;; rule at its foot (y + 17), cut like the body and wrapping glyph by glyph
+;; at x + w - 14 (ADR-0234: the composition is not in cssom's document, so it
+;; is not packed by words; it continues from wherever the body ended). A commit
 ;; empties both, so the next frame has neither the glyphs nor the rule.
 ;; browser.document-input keeps the composition on the text state apart from
 ;; the committed text; this is where it becomes visible.
@@ -91,7 +117,7 @@
 ;;   416 next op slot   417 cursor x   418 cursor y   419 line left
 ;;   420 right limit    421 bottom     422 colour     423 font bytes
 ;;   424 glyph count    425 U+FFFD     426 wrap?      427 overflow
-;;   428 char limit     429 b of the next op
+;;   428 char limit     429 b of the next op  430 the body's window width
 
 (defn sw [s i]
   (kernel-load-u32 (kernel-subregion s 8192 (* i 4) 4) 4 0))
@@ -219,16 +245,123 @@
 
 (defn caret [s]
   ;; ADR-0232: 1 x 16 in the text colour at the cursor, if its foot is above
-  ;; the bottom inset. The cursor never wraps for it.
+  ;; the bottom inset (and, ADR-0234, it is inside the viewport: an
+  ;; overflowing body can leave the cursor past it). It never wraps.
   (if (> (+ (sw s 418) 16) (sw s 421)) 0
-    (do (sput s 422 1118481)
-        (put-rect s (sw s 417) (sw s 418) 1 16))))
+    (if (> (+ (sw s 417) 1) (sw s 3)) 0
+      (do (sput s 422 1118481)
+          (put-rect s (sw s 417) (sw s 418) 1 16)))))
 
 (defn text-block [s f base x y]
   ;; Right limit, bottom, wrap and limit are already in scratch.
   (do (sput s 417 x) (sput s 418 y) (sput s 419 x)
       (sput s 422 1118481)
       (lay s f base 0)))
+
+;; --- body flow (ADR-0234) -----------------------------------------------------
+
+(defn ws [cp]
+  ;; the white space cssom collapses (a JS regex whitespace class), less 10
+  (if (= cp 32) 1 (if (= cp 9) 1 (if (= cp 11) 1 (if (= cp 12) 1 (if (= cp 13) 1
+    (if (= cp 160) 1 (if (= cp 5760) 1 (if (< cp 8192) 0 (if (< cp 8203) 1
+      (if (= cp 8232) 1 (if (= cp 8233) 1 (if (= cp 8239) 1 (if (= cp 8287) 1
+        (if (= cp 12288) 1 (if (= cp 65279) 1 0))))))))))))))))
+
+(defn at [s base i]
+  ;; the body's i-th code point, 0 past its end or its limit
+  (if (>= i (sw s 428)) 0 (sw s (+ base i))))
+
+(defn adv [s f cp] (glyph-width s f (glyph-of s f cp)))
+
+(defn has-nl [s base i]
+  (let [c (at s base i)]
+    (if (= c 0) 0 (if (= c 10) 1 (has-nl s base (+ i 1))))))
+
+(defn inked [s base i]
+  (let [c (at s base i)]
+    (if (= c 0) 0 (if (= (ws c) 1) (inked s base (+ i 1)) 1))))
+
+(defn cwidth [s f base i pws]
+  ;; the width of the body with each white-space run one U+0020
+  (let [c (at s base i)]
+    (if (= c 0) 0
+      (if (= (ws c) 1)
+        (+ (if (= pws 1) 0 (adv s f 32)) (cwidth s f base (+ i 1) 1))
+        (+ (adv s f c) (cwidth s f base (+ i 1) 0))))))
+
+(defn place-body [s f cp]
+  ;; the glyph at the cursor unless it passes the bottom or the viewport; advance
+  (let [gi (glyph-of s f cp)
+        gw (glyph-width s f gi)]
+    (do (if (> (+ (sw s 418) 16) (sw s 421)) 0
+          (if (> (+ (sw s 417) gw) (sw s 3)) 0
+            (put-glyph s (sw s 417) (sw s 418) gi gw)))
+        (sput s 417 (+ (sw s 417) gw))
+        0)))
+
+(defn verbatim [s f base i pws]
+  (let [c (at s base i)]
+    (if (= c 0) 0
+      (if (= (ws c) 1)
+        (do (if (= pws 1) 0 (place-body s f 32))
+            (verbatim s f base (+ i 1) 1))
+        (do (place-body s f c)
+            (verbatim s f base (+ i 1) 0))))))
+
+(defn word-end [s base i]
+  (let [c (at s base i)]
+    (if (= c 0) i (if (= c 10) i (if (= (ws c) 1) i (word-end s base (+ i 1)))))))
+
+(defn word-width [s f base i e]
+  (if (>= i e) 0 (+ (adv s f (at s base i)) (word-width s f base (+ i 1) e))))
+
+(defn emit-run [s f base i e]
+  (if (>= i e) 0
+    (do (place-body s f (at s base i))
+        (emit-run s f base (+ i 1) e))))
+
+(defn put-word [s f base i e]
+  ;; the first word of a line goes whatever its width; a next one joins after
+  ;; a space if the line still fits in W = w - 28, else it opens the next line
+  (do (if (= (sw s 417) (sw s 419)) 0
+        (if (<= (+ (- (sw s 417) (sw s 419)) (+ (adv s f 32) (word-width s f base i e)))
+                (- (sw s 430) 28))
+          (place-body s f 32)
+          (newline s)))
+      (emit-run s f base i e)))
+
+(defn pack [s f base i]
+  (let [c (at s base i)]
+    (if (= c 0) 0
+      (if (= c 10)
+        (do (newline s) (pack s f base (+ i 1)))
+        (if (= (ws c) 1)
+          (pack s f base (+ i 1))
+          (let [e (word-end s base i)]
+            (do (put-word s f base i e)
+                (pack s f base e))))))))
+
+(defn fits [s f base]
+  ;; cssom: the collapsed text fits when its width is at most max(0, W)
+  (let [cw (cwidth s f base 0 0)
+        wm (- (sw s 430) 28)]
+    (if (< wm 0)
+      (if (= cw 0) 1 0)
+      (if (<= cw wm) 1 0))))
+
+(defn flow [s f base]
+  (if (= (has-nl s base 0) 1)
+    (pack s f base 0)
+    (if (= (inked s base 0) 0) 0
+      (if (= (fits s f base) 1)
+        (verbatim s f base 0 0)
+        (pack s f base 0)))))
+
+(defn body-block [s f base x y]
+  ;; Right limit, bottom, limit and window width are already in scratch.
+  (do (sput s 417 x) (sput s 418 y) (sput s 419 x)
+      (sput s 422 1118481)
+      (flow s f base)))
 
 ;; --- launcher and close (ADR-0233) -------------------------------------------
 
@@ -284,10 +417,12 @@
         (sput s 426 0) (sput s 428 32)
         (text-block s f (+ 32 (* 32 (- id 1))) (+ x 8) (+ y 6))
         (close-control s f x y w)
-        ;; body: wrapped at the right inset, cut at the bottom inset
-        (sput s 420 (- (+ x w) 8)) (sput s 421 (- (+ y h) 8))
-        (sput s 426 1) (sput s 428 64)
-        (text-block s f (+ 160 (* 64 (- id 1))) (+ x 8) (+ y 36))
+        ;; body: cssom's flow from (x + 14, y + 42), cut at the bottom inset;
+        ;; the composition after it wraps at x + w - 14 (0 when that is left
+        ;; of the viewport: every glyph then wraps, as a negative limit would)
+        (sput s 420 (if (< (+ x w) 14) 0 (- (+ x w) 14))) (sput s 421 (- (+ y h) 8))
+        (sput s 426 1) (sput s 428 64) (sput s 430 w)
+        (body-block s f (+ 160 (* 64 (- id 1))) (+ x 14) (+ y 42))
         ;; the composition, only in the focused window, after its body
         (if (= focused 1)
           (do (lay-comp s f 0 (+ (sw s 445) (sw s 433)))

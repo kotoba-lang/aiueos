@@ -5,6 +5,21 @@ All notable changes to **aiueos** are documented here. The format follows
 
 ## [Unreleased]
 
+### Guest browser desktop: window bodies laid out as cssom does (ADR-0234)
+- browser-frame2's body follows browser.surface + cssom.layout: text 14 in from
+  the body box (y + 28), lines w - 28 wide, a JS-whitespace run (U+3000, TAB
+  and NBSP included) one space, a fitting body one line as collapsed, otherwise
+  packed by words (no break inside a word, CJK included), each 10 a `<br>`.
+  Glyphs past the bottom inset or the viewport are not drawn; nor is a caret
+  past the viewport. The composition wraps at x + w - 14.
+- `browser-flow-oracle.cljk` renders every desktop scene through the hosted
+  engine and writes `contracts/browser-flow-parity-v1.edn` (68 window bodies);
+  `browser-frame-model.cljk --parity` and the new gate compare against it glyph
+  by glyph. The model gained `--scenes`, `--parity` and `--vectors`.
+- Every text frame the desktop gates pin moved (op counts unchanged) and was
+  re-pinned from the model; browser-frame2-v1 has 43 vectors (8 new).
+- Gate `guest-browser-flow-parity` (default profile, no tablet).
+
 ### Guest browser desktop: a launcher opens a window, a close control closes it (ADR-0233)
 - Word 31 of the surface is the app register (bit k-1 = app k, whose title and
   document are window slot k's). With it 0 nothing changes: every earlier
