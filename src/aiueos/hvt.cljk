@@ -32,7 +32,7 @@
   real `/dev/kvm`; running it is `spike`/`-main`, gated exactly like
   `aiueos.vfio`'s hardware note. Treat the FFM boot loop as new, unverified
   systems code until exercised against real KVM (see #110's smoke gate)."
-  (:require [aiueos.virtio :as vio]))
+  (:require [kotoba.ffi :as ffi] [aiueos.virtio :as vio]))
 
 ;; ---------------------------------------------------------------------------
 ;; ioctl number encoding (Linux `_IO`/`_IOW`/`_IOR` macros) -- pure,
@@ -515,35 +515,32 @@
 
 #?(:clj
    (do
-     (import '[java.lang.foreign Arena Linker Linker$Option FunctionDescriptor
-               ValueLayout MemoryLayout MemorySegment])
 
-     (def ^:private linker (Linker/nativeLinker))
-     (def ^:private lookup (.defaultLookup linker))
-     (def ^:private no-linker-options (make-array Linker$Option 0))
+     (def ^:private linker (ffi/native-linker))
+     (def ^:private lookup (ffi/default-lookup linker))
 
-     (defn- fdesc ^FunctionDescriptor [result args]
-       (FunctionDescriptor/of result (into-array MemoryLayout args)))
+     (defn- fdesc [result args]
+       (ffi/signature result args))
 
-     (defn- lib-fn [name ^FunctionDescriptor descriptor]
+     (defn- lib-fn [name descriptor]
        (delay
-        (.downcallHandle linker
-                         (.orElseThrow (.find lookup name)
-                                       #(ex-info (str "libc symbol not found: " name) {:name name}))
-                         descriptor no-linker-options)))
+        (ffi/downcall linker
+                         (or (ffi/find-symbol lookup name)
+                                       (throw (#(ex-info (str "libc symbol not found: " name) {:name name}))))
+                         descriptor)))
 
      (def ^:private c-open
-       (lib-fn "open" (fdesc ValueLayout/JAVA_INT [ValueLayout/ADDRESS ValueLayout/JAVA_INT])))
+       (lib-fn "open" (fdesc :i32 [:ptr :i32])))
      (def ^:private c-close
-       (lib-fn "close" (fdesc ValueLayout/JAVA_INT [ValueLayout/JAVA_INT])))
+       (lib-fn "close" (fdesc :i32 [:i32])))
      (def ^:private c-ioctl-ptr
-       (lib-fn "ioctl" (fdesc ValueLayout/JAVA_INT [ValueLayout/JAVA_INT ValueLayout/JAVA_LONG ValueLayout/ADDRESS])))
+       (lib-fn "ioctl" (fdesc :i32 [:i32 :i64 :ptr])))
      (def ^:private c-ioctl-value
-       (lib-fn "ioctl" (fdesc ValueLayout/JAVA_INT [ValueLayout/JAVA_INT ValueLayout/JAVA_LONG ValueLayout/JAVA_LONG])))
+       (lib-fn "ioctl" (fdesc :i32 [:i32 :i64 :i64])))
      (def ^:private c-mmap
-       (lib-fn "mmap" (fdesc ValueLayout/ADDRESS [ValueLayout/ADDRESS ValueLayout/JAVA_LONG
-                                                  ValueLayout/JAVA_INT ValueLayout/JAVA_INT
-                                                  ValueLayout/JAVA_INT ValueLayout/JAVA_LONG])))
+       (lib-fn "mmap" (fdesc :ptr [:ptr :i64
+                                                  :i32 :i32
+                                                  :i32 :i64])))
 
      (def ^:private o-rdwr 2)
      (def ^:private o-cloexec 0x80000)
@@ -551,21 +548,21 @@
      (def ^:private prot-write 2)
      (def ^:private map-shared 1)
 
-     (defn- c-str [^Arena arena s] (.allocateFrom arena ^String s))
+     (defn- c-str [arena s] (ffi/c-string arena ^String s))
 
      (defn- invoke-h [handle-delay & args]
-       (.invokeWithArguments ^java.lang.invoke.MethodHandle @handle-delay
-                             ^"[Ljava.lang.Object;" (into-array Object args)))
+       (ffi/invoke-list @handle-delay
+                             args))
 
-     (defn- seg-get-i32 [seg offset] (.get ^MemorySegment seg ValueLayout/JAVA_INT (long offset)))
-     (defn- seg-set-i32 [seg offset v] (.set ^MemorySegment seg ValueLayout/JAVA_INT (long offset) (int v)))
-     (defn- seg-get-i64 [seg offset] (.get ^MemorySegment seg ValueLayout/JAVA_LONG (long offset)))
-     (defn- seg-set-i64 [seg offset v] (.set ^MemorySegment seg ValueLayout/JAVA_LONG (long offset) (long v)))
-     (defn- seg-get-u8 [seg offset] (bit-and (long (.get ^MemorySegment seg ValueLayout/JAVA_BYTE (long offset))) 0xff))
+     (defn- seg-get-i32 [seg offset] (ffi/fetch seg :i32 (long offset)))
+     (defn- seg-set-i32 [seg offset v] (ffi/put! seg :i32 (long offset) (int v)))
+     (defn- seg-get-i64 [seg offset] (ffi/fetch seg :i64 (long offset)))
+     (defn- seg-set-i64 [seg offset v] (ffi/put! seg :i64 (long offset) (long v)))
+     (defn- seg-get-u8 [seg offset] (bit-and (long (ffi/fetch seg :i8 (long offset))) 0xff))
 
      (defn- kvm-open
        "open(\"/dev/kvm\", O_RDWR|O_CLOEXEC). Returns the fd."
-       [^Arena arena]
+       [arena]
        (let [fd (int (invoke-h c-open (c-str arena "/dev/kvm") (int (bit-or o-rdwr o-cloexec))))]
          (when (neg? fd)
            (throw (ex-info "open(/dev/kvm) failed -- no KVM, or not in the kvm group" {})))
@@ -582,8 +579,8 @@
      (defn- ioctl-struct
        "ioctl(fd, request, &buf); `init!` pre-populates the `size`-byte buffer.
        Returns the buffer segment for reading result fields back."
-       [^Arena arena fd request size init!]
-       (let [seg (.allocate arena (long size))]
+       [arena fd request size init!]
+       (let [seg (ffi/alloc-bytes arena (long size))]
          (when init! (init! seg))
          (let [rc (int (invoke-h c-ioctl-ptr (int fd) (long request) seg))]
            (when (neg? rc)
@@ -593,7 +590,7 @@
      (defn- load-guest!
        "Write `program` (a seq of 32-bit words) into `ram` at offset 0
        (little-endian, matching aarch64)."
-       [^MemorySegment ram program]
+       [ram program]
        (doseq [[i word] (map-indexed vector program)]
          (seg-set-i32 ram (* 4 i) (unchecked-int word)))
        ram)
@@ -619,10 +616,10 @@
             :pc entry
             :machine machine
             :label :elf
-            :load! (fn [^MemorySegment ram]
+            :load! (fn [ram]
                      (doseq [{:keys [offset vaddr filesz]} segments]
                        (dotimes [i filesz]
-                         (.set ^MemorySegment ram ValueLayout/JAVA_BYTE
+                         (ffi/put! ram :i8
                                (long (+ (- vaddr lo) i))
                                (aget elf (int (+ offset i)))))))})
          (let [program (:program opts guest-program-words)]
@@ -631,12 +628,12 @@
             :pc guest-load-gpa
             :machine (:aarch64 elf-machine)
             :label :raw
-            :load! (fn [^MemorySegment ram] (load-guest! ram program))})))
+            :load! (fn [ram] (load-guest! ram program))})))
 
      (defn- mmio-data-value
        "Read `len` little-endian bytes from the kvm_run mmio.data field into a
        long (the value the guest wrote, for a KVM_EXIT_MMIO write)."
-       [^MemorySegment run-seg len]
+       [run-seg len]
        (loop [i 0 acc 0]
          (if (= i len)
            acc
@@ -649,31 +646,31 @@
        "Write `value` as `len` little-endian bytes into the kvm_run mmio.data
        field -- how the tender answers a guest MMIO *read* before re-entering
        KVM_RUN."
-       [^MemorySegment run-seg len value]
+       [run-seg len value]
        (dotimes [i len]
-         (.set ^MemorySegment run-seg ValueLayout/JAVA_BYTE
+         (ffi/put! run-seg :i8
                (long (+ (:mmio-data kvm-run-layout) i))
                (unchecked-byte (bit-and (unsigned-bit-shift-right value (* 8 i)) 0xff)))))
 
      (defn- gram-rd
        "Byte accessor over guest RAM: gpa -> unsigned byte, via the mapped `ram`
        segment based at guest-physical `ram-gpa`."
-       [^MemorySegment ram ram-gpa]
+       [ram ram-gpa]
        (fn [gpa]
-         (bit-and (long (.get ^MemorySegment ram ValueLayout/JAVA_BYTE
+         (bit-and (long (ffi/fetch ram :i8
                               (long (- gpa ram-gpa)))) 0xff)))
 
      (defn- gram-set-le!
        "Write `value` as `n` little-endian bytes to guest RAM at `gpa`."
-       [^MemorySegment ram ram-gpa gpa n value]
+       [ram ram-gpa gpa n value]
        (dotimes [i n]
-         (.set ^MemorySegment ram ValueLayout/JAVA_BYTE
+         (ffi/put! ram :i8
                (long (+ (- gpa ram-gpa) i))
                (unchecked-byte (bit-and (unsigned-bit-shift-right value (* 8 i)) 0xff)))))
 
      (defn- write-used-ring!
        "Apply used-ring element writes + the used-idx bump to guest RAM."
-       [^MemorySegment ram ram-gpa device used used-idx]
+       [ram ram-gpa device used used-idx]
        (doseq [{:keys [slot id len]} used]
          (gram-set-le! ram ram-gpa (+ device 4 (* slot 8)) 4 id)
          (gram-set-le! ram ram-gpa (+ device 4 (* slot 8) 4) 4 len))
@@ -683,7 +680,7 @@
        "Service a transmit-queue notify against guest RAM: run the pure
        `virtqueue-plan` reading `ram`, apply its used-ring writes back to `ram`,
        and return `[emitted-string new-avail-seen]`."
-       [^MemorySegment ram ram-gpa config avail-seen]
+       [ram ram-gpa config avail-seen]
        (let [rd (gram-rd ram ram-gpa)
              {:keys [emitted used used-idx seen]} (virtqueue-plan rd config avail-seen)]
          (write-used-ring! ram ram-gpa (:device config) used used-idx)
@@ -694,7 +691,7 @@
        `virtqueue-rx-plan` to fill the driver's device-writable buffers with
        `input`, apply the buffer writes + used-ring writes back to `ram`, and
        return `[filled-string new-avail-seen]`."
-       [^MemorySegment ram ram-gpa config avail-seen input]
+       [ram ram-gpa config avail-seen input]
        (let [rd (gram-rd ram ram-gpa)
              {:keys [writes used used-idx seen]} (virtqueue-rx-plan rd config avail-seen input)]
          (doseq [{:keys [gpa byte]} writes]
@@ -707,7 +704,7 @@
        `{:phys-addr :is-write :len :byte :value}` -- `:byte` is the low data
        byte (serial output), `:value` the full `len`-byte little-endian value
        (virtio register writes)."
-       [^MemorySegment run-seg]
+       [run-seg]
        (let [len (seg-get-i32 run-seg (:mmio-len kvm-run-layout))]
          {:phys-addr (seg-get-i64 run-seg (:mmio-phys-addr kvm-run-layout))
           :is-write (pos? (seg-get-u8 run-seg (:mmio-is-write kvm-run-layout)))
@@ -735,7 +732,7 @@
        ([opts]
        (let [serial-expected (:serial-expected opts guest-serial-expected)
              {:keys [ram-gpa ram-size pc load!]} (boot-plan opts)]
-       (with-open [arena (Arena/ofConfined)]
+       (with-open [arena (ffi/confined-arena)]
          (let [kvm (kvm-open arena)
                api (ioctl-val kvm get-api-version 0)
                _ (when (not= api 12)
@@ -744,7 +741,7 @@
                ;; guest RAM: page-aligned native memory handed to KVM as slot 0
                ;; at `ram-gpa` (0 for a raw program; the ELF's load base for an
                ;; ELF image), staged by the boot plan's `load!`.
-               ram (.allocate arena (long ram-size) 4096)
+               ram (ffi/alloc-bytes arena (long ram-size) 4096)
                _ (load! ram)
                _ (ioctl-struct arena vm set-user-memory-region kvm-userspace-memory-region-size
                                (fn [s]
@@ -752,7 +749,7 @@
                                  (seg-set-i32 s (:flags mem-region-layout) 0)
                                  (seg-set-i64 s (:guest-phys-addr mem-region-layout) ram-gpa)
                                  (seg-set-i64 s (:memory-size mem-region-layout) ram-size)
-                                 (seg-set-i64 s (:userspace-addr mem-region-layout) (.address ^MemorySegment ram))))
+                                 (seg-set-i64 s (:userspace-addr mem-region-layout) (ffi/address ram))))
                vcpu (ioctl-val vm create-vcpu 0)
                ;; ARM: ask the VM for the preferred target and init the vcpu.
                ;; `:psci-0-2?` additionally sets the KVM_ARM_VCPU_PSCI_0_2 feature
@@ -774,38 +771,38 @@
                ;; MP_STATE_STOPPED on this KVM; force it RUNNABLE so KVM_RUN
                ;; doesn't block waiting for a power-on that never arrives.
                _ (when (:psci-0-2? opts)
-                   (let [s (.allocate arena (long kvm-mp-state-size))]
+                   (let [s (ffi/alloc-bytes arena (long kvm-mp-state-size))]
                      (seg-set-i32 s 0 (:runnable mp-state))
                      (invoke-h c-ioctl-ptr (int vcpu) (long set-mp-state) s)))
                ;; set PC = the boot plan's entry (0 for a raw program; e_entry
                ;; for an ELF) via KVM_SET_ONE_REG.
-               pc-val (.allocate arena ValueLayout/JAVA_LONG)
-               _ (.set ^MemorySegment pc-val ValueLayout/JAVA_LONG 0 (long pc))
+               pc-val (ffi/alloc arena :i64)
+               _ (ffi/put! pc-val :i64 0 (long pc))
                _ (ioctl-struct arena vcpu set-one-reg kvm-one-reg-size
                                (fn [s]
                                  (seg-set-i64 s 0 arm64-core-reg-pc)
-                                 (seg-set-i64 s 8 (.address ^MemorySegment pc-val))))
+                                 (seg-set-i64 s 8 (ffi/address pc-val))))
                ;; set SP = top of the guest RAM window (16-aligned) via
                ;; KVM_SET_ONE_REG -- a C guest needs a valid stack; harmless for
                ;; the register-only asm guests that never touch it.
-               sp-val (.allocate arena ValueLayout/JAVA_LONG)
-               _ (.set ^MemorySegment sp-val ValueLayout/JAVA_LONG 0
+               sp-val (ffi/alloc arena :i64)
+               _ (ffi/put! sp-val :i64 0
                        (long (bit-and (- (+ ram-gpa ram-size) 16) (bit-not 0xf))))
                _ (ioctl-struct arena vcpu set-one-reg kvm-one-reg-size
                                (fn [s]
                                  (seg-set-i64 s 0 arm64-core-reg-sp)
-                                 (seg-set-i64 s 8 (.address ^MemorySegment sp-val))))
+                                 (seg-set-i64 s 8 (ffi/address sp-val))))
                ;; mmap the per-vcpu kvm_run communication page.
                mmap-size (ioctl-val kvm get-vcpu-mmap-size 0)
-               run-addr (invoke-h c-mmap MemorySegment/NULL (long mmap-size)
+               run-addr (invoke-h c-mmap (ffi/null-segment) (long mmap-size)
                                   (int (bit-or prot-read prot-write)) (int map-shared)
                                   (int vcpu) (long 0))
-               _ (when (= -1 (.address ^MemorySegment run-addr))
+               _ (when (= -1 (ffi/address run-addr))
                    (throw (ex-info "mmap(kvm_run) failed" {:vcpu vcpu :size mmap-size})))
                ;; NB: bind the kvm_run segment to `run-seg`, not `run` -- the
                ;; latter is the top-level KVM_RUN ioctl number and shadowing it
                ;; here would pass the segment where the request number belongs.
-               run-seg (.reinterpret ^MemorySegment run-addr (long mmap-size))]
+               run-seg (ffi/reinterpret run-addr (long mmap-size))]
            (loop [step 0, serial (StringBuilder.), exits [], vstate {}, console (StringBuilder.)]
              (when (> step 1000)
                (throw (ex-info "KVM_RUN exceeded step budget without a halt"

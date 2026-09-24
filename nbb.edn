@@ -50,6 +50,9 @@
          "/Users/junkawasaki/.gitlibs/libs/io.github.kotoba-lang/osaho/6af5c2dfdc122ca660d44bc2724a3e31a2edf07b/src"
          "/Users/junkawasaki/.gitlibs/libs/io.github.kotoba-lang/org-nist-sha2/3b4f7e93eff2c438c758383bab440b6f35627e31/src"]
  :deps {
+        ;; kotoba.ffi replaced java.lang.foreign here (2026-09-25). An explicit
+        ;; floor: tools.deps takes the NEWEST sha it is shown.
+        io.github.kotoba-lang/ffi {:git/sha "604f212c190d5d97420a2f3a0e1ae6411e04cc8e"}
         ;; kotoba.bytes replaced java.util.Base64 here (2026-09-24). An explicit
         ;; floor: tools.deps takes the NEWEST sha it is shown.
         io.github.kotoba-lang/bytes {:git/sha "d5259f35ab7c4f5a66e63ca29ed4dcf7ba3f1ac5"}

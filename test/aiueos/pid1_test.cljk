@@ -7,11 +7,10 @@
   list, and the latter only replaces this JVM's own SIGTERM/SIGINT
   disposition, which is safe to exercise (and IS exercised, via `boot!`'s own
   shutdown below, since `Signal.raise` is how the test triggers shutdown)."
-  (:require [aiueos.pid1 :as pid1]
+  (:require [kotoba.ffi :as ffi] [aiueos.pid1 :as pid1]
             #?(:clj [grant.anchors :as anchors])
             #?(:clj [grant.cloud :as cloud])
-            [kotoba.test :refer [deftest is testing]])
-  #?(:clj (:import [java.lang.foreign Arena])))
+            [kotoba.test :refer [deftest is testing]]))
 
 (deftest pid1-argv0-detection
   (is (true? (pid1/pid1-argv0? "/init")))
@@ -57,7 +56,7 @@
 
 #?(:clj
    (deftest reap-zombie-calls-are-safe-with-no-children
-     (with-open [arena (Arena/ofConfined)]
+     (with-open [arena (ffi/confined-arena)]
        (is (nil? (pid1/reap-one-zombie! arena)))
        (is (= 0 (pid1/reap-all-zombies! arena))))))
 
@@ -66,7 +65,7 @@
      (let [up-calls (atom [])
            poweroff-calls (atom 0)
            boot-config {:aiueos/system "/etc/aiueos/system" :aiueos/policy nil}]
-       (with-open [arena (Arena/ofConfined)]
+       (with-open [arena (ffi/confined-arena)]
          (future
            (Thread/sleep 50)
            (sun.misc.Signal/raise (sun.misc.Signal. "TERM")))
@@ -81,7 +80,7 @@
 #?(:clj
    (deftest boot-smoke-mode-powers-off-immediately-after-success
      (let [poweroff-calls (atom 0)]
-       (with-open [arena (Arena/ofConfined)]
+       (with-open [arena (ffi/confined-arena)]
          (is (= :shutdown-after-boot
                 (pid1/boot! {:aiueos/system "/system"
                              :aiueos/shutdown-after-boot? true}
@@ -91,7 +90,7 @@
 
 #?(:clj
 (deftest boot-refuses-failed-component-graph
-     (with-open [arena (Arena/ofConfined)]
+     (with-open [arena (ffi/confined-arena)]
        (is (thrown? Exception
                     (pid1/boot! {:aiueos/system "/system"}
                                 (fn [_ _] {:aiueos.cli/ok? false})
@@ -100,7 +99,7 @@
 #?(:clj
    (deftest boot-refuses-incomplete-production-profile-before-up
      (let [up-called? (atom false)
-           failure (with-open [arena (Arena/ofConfined)]
+           failure (with-open [arena (ffi/confined-arena)]
                      (try
                        (pid1/boot!
                         {:aiueos/system "/system"
