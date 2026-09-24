@@ -595,21 +595,50 @@ source rather than here.
    (ADR-0220's finding: four objects packaged at the 1,024 default `ud2`'d
    on the first real input) and give kotoba-native the row.
    **Not every stage this object would absorb is an object yet.** Rope is
-   live (above), but `qwen35_infer.c` at 8ffdbb4 still does two pieces of
-   the forward pass in C:
-   - **the output projection.** `evaluate_token` takes each of the 248,320
-     logits as `tensor_row` (the dequant object) followed by the C `dot`,
-     AVX2 when the CPU has it and scalar otherwise. It never goes through
-     the matvec object. This is the 1.271e9-MAC matrix ADR-0175 and
-     ADR-0196 costed. Whether the object's four-accumulator order gives
-     the same bits as `dot_avx2`, and so the same argmax, has not been
-     measured.
+   live (above), and so is the output projection (below). `qwen35_infer.c`
+   still does one piece of the forward pass in C:
+   - **the output projection — live on the matvec object.** The 248,320
+     logits (the 1.271e9-MAC matrix ADR-0175 and ADR-0196 costed) used to
+     be `tensor_row` (the dequant object) plus the C `dot`, which was AVX2
+     when the CPU had it. They now go through `matvec`, so they use the
+     Kotoba object plus the SMP split. The workspace has no room for 248,320
+     floats. So `select_output_token` walks the tensor as views of at most
+     FFN = 17,408 rows (15 views). A view is the same bytes with a smaller
+     row count. Each view's logits land in `scratch_a`, which the trunk no
+     longer uses. The argmax and runner-up are still C comparisons in token
+     order. This part has no arithmetic.
+     **The object is not bit-identical to the AVX2 path it replaced.** The
+     object's dot is `dot_scalar`'s tree, `(s0+s1)+(s2+s3)`. `dot_avx2`
+     keeps the scalar accumulators as lanes, but it reduces them left to
+     right, and below eight elements it adds every product in sequence.
+     Its comment said the order was preserved, and that was wrong.
+     QWEN-PARITY profile 1 now prints the distance as a measurement, not
+     as a pass/fail:
+     `AIUEOS_QWEN35_KOTOBA_PARITY=1 node "$G" run build --
+     os/aiueos/scripts/smoke-qemu-uefi.sh`, then
+     `grep QWEN-PARITY build/aiueos/kernel-serial.log` →
+     `dot-avx2 distance compared=30 differing=4 max-ulp=1`. That covers
+     counts 0–17 and every multiple of 64 up to 768, under QEMU tcg
+     `-cpu max`. `unavailable` means the CPU has no AVX2. It is not a zero
+     distance. So on an AVX2 CPU a logit can move by 1 ULP, and a near-tie
+     argmax can flip. The token is now the scalar tree's token, the same
+     as the `AIUEOS_QWEN35_AVX2=0` build. Every other matvec already made
+     this change with ADR-0221. The view walk is checked on the host:
+     `sh os/aiueos/scripts/smoke-qwen35-decode-math.sh` → `output=views3`.
+     That run uses a synthetic 34,819-row tensor across 3 views, with the
+     winner planted in view 3 and the runner-up in view 1. The result is
+     compared bit for bit against the old per-row loop. Offsetting a view
+     by one row, or dropping the last view, turns it red on
+     `token == want`.
+     **Not measured:** the distance on the K16's own CPU, the effect on a
+     real token (no model is on the build machine; `ADR-0121`'s
+     `248044 → 2005` has not been re-run), and the rate.
    - **the rest of `linear_attention`,** which ADR-0175 already named: the
      kernel-4 depthwise convolution with its three-step history, the gated
      RMS of the output (no mode of the norm object gives it bit for bit,
      as the comment at its call site says), and the `dot` coefficient on
      the position-zero and cache-free paths.
-   The loop's tick lists these two as `:cutover-logits` and
+   The loop's tick listed these as `:cutover-logits` (landed) and
    `:cutover-linear-attention-rest`, ahead of this floor, in the same way
    it put `:cutover-rope` first. It checks each one by reading the body of
    the C function at origin/main, with comments stripped, for `dot(`,

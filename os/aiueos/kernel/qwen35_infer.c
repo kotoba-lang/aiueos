@@ -281,9 +281,11 @@ static float dot_avx2(const float *left, const float *right, uint64_t count) {
     qwen_v8f product = left8 * right8;
     qwen_v4f lower = __builtin_shufflevector(product, product, 0, 1, 2, 3);
     qwen_v4f upper = __builtin_shufflevector(product, product, 4, 5, 6, 7);
-    /* Preserve the scalar implementation's four-accumulator operation order.
-       Each SIMD lane is one original accumulator, and lower is added before
-       upper just like two consecutive four-element scalar iterations. */
+    /* Each SIMD lane is one of the scalar implementation's accumulators,
+       and lower is added before upper just like two consecutive four-element
+       scalar iterations. The final reduction below is NOT dot_scalar's
+       (s0+s1)+(s2+s3), nor is the under-eight tail: QWEN-PARITY dot-avx2
+       measures the distance (up to 1 ULP, ADR-0222). */
     sums += lower;
     sums += upper;
   }
@@ -1370,6 +1372,54 @@ static void configure_backend(void) {
 #endif
 }
 
+/* The logits of `normalized` against the output projection, and the two
+   largest of them. Zero on a malformed tensor, a refused matvec or a
+   non-finite logit; the caller names the failure stage. */
+static int select_output_token(const struct aiueos_qwen35_tensor *output,
+                               uint32_t vocab,
+                               struct qwen35_token_choice *choice) {
+  choice->token = UINT32_MAX;
+  choice->second_token = UINT32_MAX;
+  choice->logit = -3.402823466e+38f;
+  choice->second_logit = -3.402823466e+38f;
+  /* The output projection goes through `matvec` -- the Kotoba object since
+     ADR-0221 -- and not a per-row C `dot`. The workspace has no room for all
+     vocab logits, so the tensor is walked as views of at most FFN rows (the
+     same bytes with a smaller row count, so the object is told only about
+     the rows it writes) and each view's logits land in scratch_a, which the
+     trunk no longer needs. The selection is comparisons only, in token
+     order, as before. The object's dot is `dot_scalar`'s tree; the
+     `dot_avx2` this replaced on an AVX2 CPU reduces its lanes in another
+     order and is up to 1 ULP away (QWEN-PARITY dot-avx2, ADR-0222). */
+  uint64_t row_bytes = aiueos_qwen35_quant_row_bytes(output->type, EMBED);
+  if (output->dimension_count != 2 || output->dimensions[0] != EMBED ||
+      output->dimensions[1] != vocab || !row_bytes ||
+      (uint64_t)vocab * row_bytes > output->storage_bytes) return 0;
+  for (uint32_t first = 0; first < vocab; first += FFN) {
+    uint32_t count = vocab - first < FFN ? vocab - first : FFN;
+    struct aiueos_qwen35_tensor view = *output;
+    view.dimensions[1] = count;
+    view.data = output->data + (uint64_t)first * row_bytes;
+    view.storage_bytes = (uint64_t)count * row_bytes;
+    if (!matvec(&view, normalized, EMBED, scratch_a, count)) return 0;
+    for (uint32_t offset = 0; offset < count; offset++) {
+      uint32_t token = first + offset;
+      float logit = scratch_a[offset];
+      if (!finite_float(logit)) return 0;
+      if (logit > choice->logit) {
+        choice->second_logit = choice->logit;
+        choice->second_token = choice->token;
+        choice->logit = logit;
+        choice->token = token;
+      } else if (logit > choice->second_logit) {
+        choice->second_logit = logit;
+        choice->second_token = token;
+      }
+    }
+  }
+  return 1;
+}
+
 static int evaluate_token(const struct aiueos_qwen35_model *model,
                           uint32_t input_token,
                           struct qwen35_decode_context *decode,
@@ -1417,29 +1467,9 @@ static int evaluate_token(const struct aiueos_qwen35_model *model,
   }
   if (progress) progress(64, 64, 1);
 
-  choice->token = UINT32_MAX;
-  choice->second_token = UINT32_MAX;
-  choice->logit = -3.402823466e+38f;
-  choice->second_logit = -3.402823466e+38f;
-  for (uint32_t token = 0; token < model->vocab_size; token++) {
-    if (!tensor_row(&model->output, token, dequantized)) {
-      choice->failure_stage = AIUEOS_QWEN35_FAILURE_OUTPUT_LOGITS;
-      return 0;
-    }
-    float logit = dot(dequantized, normalized, EMBED);
-    if (!finite_float(logit)) {
-      choice->failure_stage = AIUEOS_QWEN35_FAILURE_OUTPUT_LOGITS;
-      return 0;
-    }
-    if (logit > choice->logit) {
-      choice->second_logit = choice->logit;
-      choice->second_token = choice->token;
-      choice->logit = logit;
-      choice->token = token;
-    } else if (logit > choice->second_logit) {
-      choice->second_logit = logit;
-      choice->second_token = token;
-    }
+  if (!select_output_token(&model->output, model->vocab_size, choice)) {
+    choice->failure_stage = AIUEOS_QWEN35_FAILURE_OUTPUT_LOGITS;
+    return 0;
   }
   uint64_t finished = read_cycles();
   choice->cycles = finished >= started ? finished - started : 0;
@@ -1564,6 +1594,25 @@ int aiueos_qwen35_generate(
 }
 
 #ifdef AIUEOS_QWEN35_TESTING
+/* The output projection's selection over a caller-built tensor: `input` is
+   the normalized state, `logits` and `row` are FFN floats of scratch. */
+int aiueos_qwen35_test_output_select(
+    const struct aiueos_qwen35_tensor *output, uint32_t vocab,
+    float *input, float *logits, float *row,
+    uint32_t *token, uint32_t *second_token,
+    float *logit, float *second_logit) {
+  struct qwen35_token_choice choice;
+  normalized = input;
+  scratch_a = logits;
+  dequantized = row;
+  if (!select_output_token(output, vocab, &choice)) return 0;
+  *token = choice.token;
+  *second_token = choice.second_token;
+  *logit = choice.logit;
+  *second_logit = choice.second_logit;
+  return 1;
+}
+
 float aiueos_qwen35_test_softplus(float value) {
   return softplus(value);
 }
@@ -1784,6 +1833,59 @@ static int qwen_parity_dot(void) {
   if (kotoba_aiueos_qwen35_dot_f32(left, 16, right, 12, 4) !=
       (uint64_t)(int64_t)-4294967300LL) return 0;
   return 1;
+}
+
+/* The object's dot against the C `dot_avx2` -- the path `dot` took on an
+   AVX2 CPU, and the one the output projection took until it moved to the
+   matvec object. `qwen_parity_dot` above holds the object to `dot_scalar`.
+   AVX2 is NOT the same tree (measured, ADR-0222): its lanes are the scalar
+   accumulators, but it reduces them left to right, ((s0+s1)+s2)+s3, where
+   the scalar does (s0+s1)+(s2+s3), and below eight elements it adds every
+   product sequentially. So this is a MEASUREMENT, printed by main.c as a
+   distance, like the rope's -- not a pass/fail. Returns 1 when measured,
+   2 when this CPU (or an AIUEOS_QWEN35_SCALAR build) has no AVX2, which
+   main.c prints as `unavailable`. */
+#define QWEN_PARITY_DOT_LONG 768U
+int aiueos_qwen35_parity_dot_avx2(uint32_t *compared, uint32_t *differing,
+                                  uint32_t *max_ulp) {
+  *compared = 0;
+  *differing = 0;
+  *max_ulp = 0;
+#if defined(__x86_64__) && !defined(AIUEOS_QWEN35_SCALAR)
+  typedef char qwen_parity_dot_long_fits[
+      (2U * QWEN_PARITY_DOT_LONG * 4U <= sizeof qwen_parity_arena) ? 1 : -1];
+  prepare_bsp_extended_state();
+  if (!cpu_has_avx2()) return 2;
+  float *left = (float *)(void *)qwen_parity_arena;
+  float *right = left + QWEN_PARITY_DOT_LONG;
+  qwen_parity_state = 0x13579bdu;
+  for (uint32_t index = 0; index < QWEN_PARITY_DOT_LONG; index++) {
+    left[index] = qwen_parity_value();
+    right[index] = qwen_parity_value();
+  }
+  for (uint32_t count = 0; count <= QWEN_PARITY_DOT_LONG; count++) {
+    if (count > 17U && count % 64U != 0U) continue;
+    uint64_t object = kotoba_aiueos_qwen35_dot_f32(left, count * 4U, right,
+                                                   count * 4U, count);
+    uint32_t a = (uint32_t)object;
+    uint32_t b = qwen_parity_bits(dot_avx2(left, right, count));
+    /* ordered integers: a float's bits, with the negative half flipped so
+       adjacent floats are adjacent integers across zero */
+    int64_t oa = (a & 0x80000000U) ? -(int64_t)(a & 0x7fffffffU) : (int64_t)a;
+    int64_t ob = (b & 0x80000000U) ? -(int64_t)(b & 0x7fffffffU) : (int64_t)b;
+    int64_t gap = oa > ob ? oa - ob : ob - oa;
+    if (object != (uint64_t)(int64_t)(int32_t)a) return 0;
+    (*compared)++;
+    if (gap) {
+      (*differing)++;
+      if (gap > (int64_t)*max_ulp)
+        *max_ulp = gap > 0xffffffffLL ? 0xffffffffU : (uint32_t)gap;
+    }
+  }
+  return 1;
+#else
+  return 2;
+#endif
 }
 
 static int qwen_parity_matvec(uint32_t type) {
