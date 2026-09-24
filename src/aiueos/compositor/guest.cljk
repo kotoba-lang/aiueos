@@ -13,7 +13,8 @@
 (def guest-profiles
   ["guest-ime" "guest-wm" "guest-paint" "guest-input"
    "guest-gpu-two" "guest-scanout-two" "guest-broker" "guest-session"
-   "guest-browser-frame" "guest-browser-input"])
+   "guest-browser-frame" "guest-browser-input"
+   "guest-browser-text" "guest-browser-text-raised"])
 
 (defn gate-cmd
   "SPA-visible evidence command for a guest profile. Not clojure -M."
@@ -436,12 +437,73 @@
       {:green? false :exit 1 :reason :guest-browser-input-absent
        :leftover [:guest-browser-input-absent]})))
 
+;; Guest browser desktop with text (ADR-0224). The known answers -- 57 ops,
+;; and the count and FNV-1a of the #111111 pixels -- come from a model of the
+;; same frame written apart from the Kotoba object and from C.
+
+(def ^:private browser-text-ok-re
+  #"(?m)^AIUEOS_GUEST_BROWSER_TEXT_OK ops=57 text-px=1084 hash=d2e7456a font-bytes=\d+ surface=1280x800")
+
+(defn guest-browser-text-ok?
+  [serial]
+  (boolean (and (string? serial) (re-find browser-text-ok-re serial)
+                (not (re-find #"AIUEOS_COMPOSITOR_WM_OK" serial)))))
+
+(defn- browser-text-red [s]
+  (cond
+    (re-find #"(?m)^AIUEOS_GUEST_BROWSER_TEXT leftover=font-absent" s)
+    {:green? false :exit 1 :reason :font-absent :leftover [:font-absent]}
+    (re-find #"(?m)^AIUEOS_GUEST_BROWSER_TEXT leftover=frame-refused" s)
+    {:green? false :exit 1 :reason :frame-refused :leftover [:frame-refused]}
+    (re-find #"(?m)^AIUEOS_GUEST_BROWSER_TEXT leftover=present-refused" s)
+    {:green? false :exit 1 :reason :present-refused :leftover [:present-refused]}
+    (re-find #"(?m)^AIUEOS_GUEST_BROWSER_TEXT leftover=census-miss" s)
+    {:green? false :exit 1 :reason :census-miss :leftover [:census-miss]}
+    :else
+    {:green? false :exit 1 :reason :guest-browser-text-absent
+     :leftover [:guest-browser-text-absent]}))
+
+(defn guest-browser-text-result
+  [{:keys [serial qemu-unmeasured? hosted-wm?]}]
+  (let [s (or serial "")]
+    (cond
+      qemu-unmeasured? {:green? false :exit 3 :reason :unmeasured :leftover [:unmeasured]}
+      (or hosted-wm? (re-find #"AIUEOS_COMPOSITOR_WM_OK" s))
+      {:green? false :exit 1 :reason :hosted-wm-does-not-count
+       :leftover [:hosted-wm-does-not-count]}
+      (guest-browser-text-ok? s)
+      {:green? true :exit 0 :reason :guest-browser-text
+       :leftover [:no-flow-layout :no-text-edit]}
+      :else (browser-text-red s))))
+
+(defn guest-browser-text-raised-result
+  "The tablet press raises window 1 over the text frame; its text must now
+  cover window 2's entirely (864 text pixels, a different hash)."
+  [{:keys [serial qemu-unmeasured? hosted-wm?] :as opts}]
+  (let [s (or serial "")]
+    (cond
+      qemu-unmeasured? {:green? false :exit 3 :reason :unmeasured :leftover [:unmeasured]}
+      (not (guest-browser-text-ok? s))
+      (let [r (guest-browser-text-result opts)]
+        (assoc r :reason :no-text-frame
+               :leftover (into [:no-text-frame] (:leftover r))))
+      (re-find #"(?m)^AIUEOS_GUEST_BROWSER_TEXT_RAISED_OK hit=1 ops=57 text-px=864 hash=5cd907f9" s)
+      {:green? true :exit 0 :reason :guest-browser-text-raised
+       :leftover [:no-flow-layout :no-text-edit :no-pointer-capture]}
+      (re-find #"(?m)^AIUEOS_GUEST_BROWSER_TEXT_RAISED leftover=census-miss" s)
+      {:green? false :exit 1 :reason :census-miss :leftover [:census-miss]}
+      (re-find #"(?m)^AIUEOS_GUEST_BROWSER_TEXT_RAISED leftover=frame-refused" s)
+      {:green? false :exit 1 :reason :frame-refused :leftover [:frame-refused]}
+      :else
+      {:green? false :exit 1 :reason :no-pointer-event :leftover [:no-pointer-event]})))
+
 (defn extra-env
   "Env merged into smoke-qemu-uefi.sh. Default UEFI smoke is empty."
   [profile]
   (case profile
     "guest-input" {"AIUEOS_GUEST_INPUT" "1"}
     "guest-browser-input" {"AIUEOS_GUEST_BROWSER" "1"}
+    "guest-browser-text-raised" {"AIUEOS_GUEST_BROWSER" "1"}
     "guest-scanout-two" {"AIUEOS_GUEST_SCANOUT_TWO" "1"
                          "AIUEOS_QEMU_TIMEOUT" "90"}
     nil))
@@ -459,6 +521,8 @@
     "guest-session" (guest-session-result opts)
     "guest-browser-frame" (guest-browser-frame-result opts)
     "guest-browser-input" (guest-browser-input-result opts)
+    "guest-browser-text" (guest-browser-text-result opts)
+    "guest-browser-text-raised" (guest-browser-text-raised-result opts)
     {:green? false :exit 3 :reason :unmeasured :leftover [:unmeasured]}))
 
 (defn serial-marker
@@ -474,6 +538,8 @@
     "guest-session" "AIUEOS_GUEST_SESSION"
     "guest-browser-frame" "AIUEOS_GUEST_BROWSER"
     "guest-browser-input" "AIUEOS_GUEST_BROWSER"
+    "guest-browser-text" "AIUEOS_GUEST_BROWSER_TEXT"
+    "guest-browser-text-raised" "AIUEOS_GUEST_BROWSER_TEXT"
     nil))
 
 (defn ok-print
@@ -489,4 +555,6 @@
     "guest-session" "AIUEOS_COMPOSITOR_GUEST_SESSION_OK"
     "guest-browser-frame" "AIUEOS_COMPOSITOR_GUEST_BROWSER_FRAME_OK"
     "guest-browser-input" "AIUEOS_COMPOSITOR_GUEST_BROWSER_INPUT_OK"
+    "guest-browser-text" "AIUEOS_COMPOSITOR_GUEST_BROWSER_TEXT_OK"
+    "guest-browser-text-raised" "AIUEOS_COMPOSITOR_GUEST_BROWSER_TEXT_RAISED_OK"
     nil))

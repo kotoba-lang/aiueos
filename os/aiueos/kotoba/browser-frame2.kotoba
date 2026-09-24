@@ -1,0 +1,248 @@
+;; Guest browser desktop frame with text: kotoba-lang/browser surface state and
+;; its window titles / bodies -> one retained draw list of rects AND glyphs, on
+;; KERNEL.ELF (ADR-0224, extending ADR-0223's browser-frame).
+;;
+;; WHY THIS IS A KOTOBA OBJECT AND NOT A C TABLE
+;;
+;; Which glyph a code point becomes, where it goes, where a line breaks, what
+;; is clipped and what stands in for a missing glyph are layout decisions --
+;; browser.surface renders `:window/title` in the titlebar and the document
+;; in the body, and cssom decides the lines. C blits the bitmaps this list
+;; names (mechanism) and never chooses a glyph or a position.
+;;
+;; ONE list, window by window in stack order (body rect, titlebar rect, title
+;; glyphs, body glyphs), so a back window's text can never be painted over a
+;; front window: z-order is the list order, as in ADR-0223.
+;;
+;; Mirrored from kotoba-lang/browser: z-order and colours as browser-frame;
+;; text colour browser.surface default-theme :fg #111111; body line height
+;; default-theme :line-height 20; body inset 8 (window-node `.window-body`
+;; padding 8); titlebar 28 (browser.input/titlebar-height), title inset 8.
+;; Not mirrored: cssom's flow layout (windows sit at :window/rect), word
+;; breaking (lines break at the glyph that would cross the right inset),
+;; bidi, combining marks, emphasis.
+;;
+;; Temporary native constraints, with ADR-0223's removal condition: word types,
+;; a bounded u32 surface window, at most five parameters (cursor state lives in
+;; the surface's scratch words rather than in arguments).
+;;
+;; SURFACE (u32 LE words, exactly 8192 bytes):
+;;   words 0..31    the browser-frame state: abi=1 n focus vw vh, then
+;;                  id x y w h per window, bottom first; ids are 1..4
+;;   32 + 32(id-1)  title of window id, up to 32 code points, 0 ends it
+;;   160 + 64(id-1) body of window id, up to 64 code points, 0 ends it,
+;;                  10 breaks the line
+;;   400..415       scratch owned by this object (overwritten every call)
+;;   416 + 6j       op j: kind x y a b rgb
+;;                  kind 1 rect:  a = width, b = height
+;;                  kind 2 glyph: a = glyph index in the font, b = 8 or 16
+;;                  capacity 272 ops
+;; FONT: the aiueos-font/v1 blob (os/aiueos/scripts/make-font.cljk).
+;;
+;; ABI: [surface surface-bytes font font-bytes] -> op count, or
+;;   -1 null region / surface not 8192 bytes   -2 abi or n outside 1..4
+;;   -3 focus is not a window id               -4 a rect leaves the viewport
+;;   -5 more than 272 ops                      -6 font refused (magic, version,
+;;                                                count, length, no U+FFFD)
+;;   -7 a window id outside 1..4
+
+(ns aiueos.browser-frame2
+  (:export [aiueos-browser-frame2 main]))
+
+;; Scratch words.
+;;   400 next op slot   401 cursor x   402 cursor y   403 line left
+;;   404 right limit    405 bottom     406 colour     407 font bytes
+;;   408 glyph count    409 U+FFFD     410 wrap?      411 overflow
+;;   412 char limit
+
+(defn sw [s i]
+  (kernel-load-u32 (kernel-subregion s 8192 (* i 4) 4) 4 0))
+
+(defn sput [s i v]
+  (kernel-store-u32 (kernel-subregion s 8192 (* i 4) 4) 4 0 v))
+
+(defn fw [s f i]
+  (kernel-load-u32 (kernel-subregion f (sw s 407) (* i 4) 4) 4 0))
+
+;; --- ops --------------------------------------------------------------------
+
+(defn put-op [s kind x y a]
+  ;; b and rgb come from the caller through scratch 413 and 406.
+  (let [j (sw s 400)]
+    (if (>= j 272)
+      (do (sput s 411 1) 0)
+      (let [base (+ 416 (* 6 j))]
+        (do (sput s base kind)
+            (sput s (+ base 1) x)
+            (sput s (+ base 2) y)
+            (sput s (+ base 3) a)
+            (sput s (+ base 4) (sw s 413))
+            (sput s (+ base 5) (sw s 406))
+            (sput s 400 (+ j 1))
+            0)))))
+
+(defn put-rect [s x y w h]
+  (do (sput s 413 h)
+      (put-op s 1 x y w)))
+
+(defn put-glyph [s x y gi gw]
+  (do (sput s 413 gw)
+      (put-op s 2 x y gi)))
+
+;; --- font -------------------------------------------------------------------
+
+(defn bsearch [s f lo hi cp]
+  (if (> lo hi) -1
+    (let [mid (quot (+ lo hi) 2)
+          e (bit-and (fw s f (+ 4 mid)) 16777215)]
+      (if (= e cp) mid
+        (if (< e cp)
+          (bsearch s f (+ mid 1) hi cp)
+          (bsearch s f lo (- mid 1) cp))))))
+
+(defn glyph-of [s f cp]
+  (let [i (bsearch s f 0 (- (sw s 408) 1) cp)]
+    (if (< i 0) (sw s 409) i)))
+
+(defn glyph-width [s f gi]
+  (if (> (fw s f (+ 4 gi)) 16777215) 16 8))
+
+(defn fffd-ok [s f n]
+  (let [r (bsearch s f 0 (- n 1) 65533)]
+    (if (< r 0) 0
+      (do (sput s 408 n) (sput s 409 r) 1))))
+
+(defn font-header-ok [s f fb]
+  ;; Scratch 407 already holds fb, so `fw` reads inside the font's bounds.
+  (let [n (fw s f 2)]
+    (if (not (= (fw s f 0) 1179994433)) 0
+      (if (not (= (fw s f 1) 1)) 0
+        (if (< n 1) 0
+          (if (> n 65536) 0
+            (if (< fb (+ 16 (* 36 n))) 0
+              (fffd-ok s f n))))))))
+
+;; 1179994433 is 0x46554941, "AIUF" little-endian.
+(defn font-ok [s f fb]
+  (if (< fb 16) 0
+    (do (sput s 407 fb)
+        (font-header-ok s f fb))))
+
+;; --- text -------------------------------------------------------------------
+
+(defn newline [s]
+  (do (sput s 401 (sw s 403))
+      (sput s 402 (+ (sw s 402) 20))
+      0))
+
+(defn place [s f gi gw]
+  ;; The glyph at the cursor, if it fits under the bottom; then advance.
+  (do (if (> (+ (sw s 402) 16) (sw s 405))
+        0
+        (put-glyph s (sw s 401) (sw s 402) gi gw))
+      (sput s 401 (+ (sw s 401) gw))
+      0))
+
+(defn lay [s f base i]
+  (if (>= i (sw s 412)) 0
+    (let [cp (sw s (+ base i))]
+      (if (= cp 0) 0
+        (if (= cp 10)
+          (do (newline s) (lay s f base (+ i 1)))
+          (let [gi (glyph-of s f cp)
+                gw (glyph-width s f gi)]
+            (if (> (+ (sw s 401) gw) (sw s 404))
+              (if (= (sw s 410) 1)
+                (do (newline s) (place s f gi gw) (lay s f base (+ i 1)))
+                0)
+              (do (place s f gi gw) (lay s f base (+ i 1))))))))))
+
+(defn text-block [s f base x y]
+  ;; Right limit, bottom, wrap and limit are already in scratch.
+  (do (sput s 401 x) (sput s 402 y) (sput s 403 x)
+      (sput s 406 1118481)
+      (lay s f base 0)))
+
+;; --- windows ----------------------------------------------------------------
+
+(defn body-rgb [focused] (if (= focused 1) 16777215 15659509))
+(defn title-rgb [focused] (if (= focused 1) 14215167 14541546))
+
+(defn emit-window [s f k]
+  (let [b (+ 5 (* k 5))
+        id (sw s b)
+        x (sw s (+ b 1))
+        y (sw s (+ b 2))
+        w (sw s (+ b 3))
+        h (sw s (+ b 4))
+        focused (if (= id (sw s 2)) 1 0)]
+    (do (sput s 406 (body-rgb focused))
+        (put-rect s x y w h)
+        (sput s 406 (title-rgb focused))
+        (put-rect s x y w 28)
+        ;; title: one line, clipped at the right inset, inside the titlebar
+        (sput s 404 (- (+ x w) 8)) (sput s 405 (+ y 28))
+        (sput s 410 0) (sput s 412 32)
+        (text-block s f (+ 32 (* 32 (- id 1))) (+ x 8) (+ y 6))
+        ;; body: wrapped at the right inset, cut at the bottom inset
+        (sput s 404 (- (+ x w) 8)) (sput s 405 (- (+ y h) 8))
+        (sput s 410 1) (sput s 412 64)
+        (text-block s f (+ 160 (* 64 (- id 1))) (+ x 8) (+ y 36)))))
+
+(defn emit [s f k]
+  (if (>= k (sw s 1)) 0
+    (do (emit-window s f k)
+        (emit s f (+ k 1)))))
+
+;; --- admission --------------------------------------------------------------
+
+(defn has-id [s n k id]
+  (if (>= k n) 0
+    (if (= (sw s (+ 5 (* k 5))) id) 1
+      (has-id s n (+ k 1) id))))
+
+(defn ids-ok [s n k]
+  (if (>= k n) 1
+    (let [id (sw s (+ 5 (* k 5)))]
+      (if (< id 1) 0
+        (if (> id 4) 0
+          (ids-ok s n (+ k 1)))))))
+
+(defn rect-ok [s k vw vh]
+  (let [b (+ 5 (* k 5))
+        x (sw s (+ b 1))
+        y (sw s (+ b 2))
+        w (sw s (+ b 3))
+        h (sw s (+ b 4))]
+    (if (< w 1) 0
+      (if (< h 29) 0
+        (if (> (+ x w) vw) 0
+          (if (> (+ y h) vh) 0 1))))))
+
+(defn rects-ok [s n k vw vh]
+  (if (>= k n) 1
+    (if (= (rect-ok s k vw vh) 0) 0
+      (rects-ok s n (+ k 1) vw vh))))
+
+(defn aiueos-browser-frame2 [s sb f fb]
+  (if (= s 0) -1
+    (if (= f 0) -1
+      (if (not (= sb 8192)) -1
+        (let [n (sw s 1)
+              vw (sw s 3)
+              vh (sw s 4)]
+          (if (not (= (sw s 0) 1)) -2
+            (if (< n 1) -2
+              (if (> n 4) -2
+                (if (= (ids-ok s n 0) 0) -7
+                  (if (= (has-id s n 0 (sw s 2)) 0) -3
+                    (if (= (rects-ok s n 0 vw vh) 0) -4
+                      (if (= (font-ok s f fb) 0) -6
+                        (do (sput s 400 0)
+                            (sput s 411 0)
+                            (sput s 406 16119544)
+                            (put-rect s 0 0 vw vh)
+                            (emit s f 0)
+                            (if (= (sw s 411) 1) -5 (sw s 400)))))))))))))))
+
+(defn main [] 0)

@@ -446,7 +446,7 @@ while :; do
   inject_pid=
   if [ "${AIUEOS_GUEST_INPUT:-0}" = 1 ]; then
     rm -f "$qmp_path"
-    AIUEOS_QMP_POINTER="${AIUEOS_GUEST_BROWSER:-0}" \
+    AIUEOS_QMP_POINTER="${AIUEOS_GUEST_BROWSER:-0}" AIUEOS_SERIAL_LOG="$serial_log" \
     AIUEOS_QMP_PATH="$qmp_path" AIUEOS_QMP_LOG="$out/guest-input-qmp.log" python3 - <<'PY' &
 import json, os, socket, sys, time
 path = os.environ["AIUEOS_QMP_PATH"]
@@ -547,6 +547,25 @@ while time.time() < end:
             if reply and i < 8:
                 log("reply " + json.dumps(reply)[:400])
         i += 1
+        # Guest browser desktop (ADR-0224): the screens a person can look at.
+        # The kernel holds each desktop frame for a few seconds in this
+        # profile; the injector watches the serial log and dumps the console
+        # the moment the frame's line appears. Periodic dumps missed both
+        # frames: the desktop is drawn in the last second before QEMU exits.
+        if os.environ.get("AIUEOS_QMP_POINTER") == "1":
+            try:
+                serial_text = open(os.environ.get("AIUEOS_SERIAL_LOG", ""), "rb").read()
+            except OSError:
+                serial_text = b""
+            outdir = os.path.dirname(path)
+            for marker, name in ((b"AIUEOS_GUEST_BROWSER_TEXT_OK", "guest-browser-text.ppm"),
+                                 (b"AIUEOS_GUEST_BROWSER_TEXT_RAISED_OK", "guest-browser-text-raised.ppm")):
+                if marker in serial_text and not globals().get(name):
+                    globals()[name] = True
+                    sock.sendall((json.dumps({"execute": "screendump",
+                                              "arguments": {"filename": os.path.join(outdir, name)}})
+                                  + "\n").encode())
+                    log("screendump " + name + " " + json.dumps(recv_obj())[:200])
     except OSError as e:
         log("send-error " + str(e))
         break
@@ -973,7 +992,7 @@ grep -F "AIUEOS_KERNEL_OK memory-map-v1" "$log" >/dev/null || {
   echo "error: kernel handoff was not observed" >&2
   exit 1
 }
-grep -F "AIUEOS_INITRAMFS_OK newc entries=3 sha256-admitted bounded" "$serial_log" >/dev/null || {
+grep -F "AIUEOS_INITRAMFS_OK newc entries=4 sha256-admitted bounded" "$serial_log" >/dev/null || {
   echo "error: bounded initramfs validation evidence was not observed" >&2
   exit 1
 }

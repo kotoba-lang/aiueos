@@ -487,6 +487,97 @@ int aiueos_desktop_present_ops(const uint32_t *ops, uint64_t count) {
   return 1;
 }
 
+/* Guest browser desktop frame with text (ADR-0224). The list
+   `kotoba_aiueos_browser_frame2` wrote: kind 1 rect as above, kind 2 glyph
+   (x, y, glyph index, width 8|16, rgb) whose 16 rows are read from the
+   aiueos-font/v1 blob. Painted in list order; the whole frame is refused if
+   any op is unknown, off the surface, or names a glyph the font lacks. */
+static uint32_t font_word(const uint8_t *font, uint64_t index) {
+  const uint8_t *p = font + index * 4;
+  return (uint32_t)p[0] | ((uint32_t)p[1] << 8) |
+         ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
+}
+
+int aiueos_desktop_present_ops2(const uint32_t *ops, uint64_t count,
+                                const uint8_t *font, uint64_t font_length) {
+  uint64_t glyphs;
+  if (!desktop_surface_ready || !ops || count == 0 || count > 272 ||
+      !font || font_length < 16 || font_word(font, 0) != 0x46554941U) return 0;
+  glyphs = font_word(font, 2);
+  if (!glyphs || font_length < 16 + glyphs * 36) return 0;
+  for (uint64_t i = 0; i < count; i++) {
+    const uint32_t *op = ops + i * 6;
+    if (op[0] == 1) {
+      if (!wm_rect_fits(op[1], op[2], op[3], op[4])) return 0;
+    } else if (op[0] == 2) {
+      if ((op[4] != 8 && op[4] != 16) || op[3] >= glyphs ||
+          !wm_rect_fits(op[1], op[2], op[4], 16)) return 0;
+    } else {
+      return 0;
+    }
+  }
+  for (uint64_t i = 0; i < count; i++) {
+    const uint32_t *op = ops + i * 6;
+    if (op[0] == 1) {
+      rectangle(desktop_surface_pixels, desktop_surface.stride,
+                desktop_surface.pixel_format, op[1], op[2], op[3], op[4], op[5]);
+    } else {
+      const uint8_t *bits = font + 16 + glyphs * 4 + (uint64_t)op[3] * 32;
+      uint32_t colour = pixel(op[5], desktop_surface.pixel_format);
+      for (uint32_t row = 0; row < 16; row++) {
+        uint32_t line = ((uint32_t)bits[row * 2] << 8) | bits[row * 2 + 1];
+        for (uint32_t column = 0; column < op[4]; column++)
+          if (line & (0x8000U >> column))
+            desktop_surface_pixels[(uint64_t)(op[2] + row) * desktop_surface.stride +
+                                   op[1] + column] = colour;
+      }
+    }
+  }
+  desktop_surface.generation += 1;
+  desktop_surface.content_hash =
+    sample_hash(desktop_surface_pixels, desktop_surface.width,
+                desktop_surface.height, desktop_surface.stride);
+  desktop_surface.damage_x = 0;
+  desktop_surface.damage_y = 0;
+  desktop_surface.damage_width = desktop_surface.width;
+  desktop_surface.damage_height = desktop_surface.height;
+  return 1;
+}
+
+/* Put what is in the framebuffer on the real display (ADR-0224): see
+   aiueos_gpu_present_desktop in pci.c. 1 shown, 0 not (no controlq, a
+   stride wider than the width, or a scanout of another size). */
+extern int aiueos_gpu_present_desktop(uint64_t address, uint32_t width, uint32_t height,
+                                      uint32_t stride, uint32_t pixel_format);
+int aiueos_desktop_show(void) {
+  if (!desktop_surface_ready) return 0;
+  return aiueos_gpu_present_desktop((uint64_t)(uintptr_t)desktop_surface_pixels,
+                                    desktop_surface.width, desktop_surface.height,
+                                    desktop_surface.stride, desktop_surface.pixel_format);
+}
+
+/* FNV-1a over the positions of every pixel of one colour, in raster order
+   (each position as the four little-endian bytes of y * 65536 + x), and how
+   many there were. What a gate compares against a model of the same frame. */
+uint32_t aiueos_desktop_colour_census(uint32_t rgb, uint32_t *count_out) {
+  uint32_t hash = 2166136261U, count = 0;
+  if (!desktop_surface_ready) { if (count_out) *count_out = 0; return 0; }
+  uint32_t want = pixel(rgb, desktop_surface.pixel_format) & 0x00ffffffU;
+  for (uint32_t y = 0; y < desktop_surface.height; y++)
+    for (uint32_t x = 0; x < desktop_surface.width; x++) {
+      if ((desktop_surface_pixels[(uint64_t)y * desktop_surface.stride + x] & 0x00ffffffU) != want)
+        continue;
+      uint32_t position = y * 65536U + x;
+      for (int b = 0; b < 4; b++) {
+        hash ^= (position >> (8 * b)) & 0xffU;
+        hash *= 16777619U;
+      }
+      count++;
+    }
+  if (count_out) *count_out = count;
+  return hash;
+}
+
 /* The sampled pixel as 0xRRGGBB, whatever the scanout's byte order, so a
    gate compares it with the colour the draw list names. */
 uint32_t aiueos_desktop_sample_rgb(uint32_t x, uint32_t y) {

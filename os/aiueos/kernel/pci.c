@@ -1472,6 +1472,17 @@ static int gpu_ctrl(struct virtq_desc *desc, struct virtq_avail *avail,
   return 0;
 }
 
+/* The controlq, kept after the PCI scan so the desktop can be presented
+   later (ADR-0224). `gpu_ctrlq_submitted` is the free-running avail index the
+   scan left behind; every later command continues from it. */
+static struct virtq_desc *gpu_ctrlq_desc;
+static struct virtq_avail *gpu_ctrlq_avail;
+static struct virtq_used *gpu_ctrlq_used;
+static volatile uint16_t *gpu_ctrlq_doorbell;
+static uint8_t *gpu_ctrlq_messages;
+static uint16_t gpu_ctrlq_submitted;
+static int gpu_ctrlq_ready;
+
 /* Guest 2D scanout that is not "PCI device listed" and not GOP-once.
    Display-info already completed on this controlq (submitted == 1).
    Failure here does not un-admit display-info: existing UEFI smokes stay
@@ -1481,7 +1492,7 @@ static void gpu_2d_resource_path(struct virtq_desc *desc, struct virtq_avail *av
                                  uint8_t *messages) {
   uint8_t *backing = aiueos_allocate_physical_page();
   struct virtio_gpu_ctrl_header *resp = (void *)(messages + 2048);
-  uint16_t submitted = 1;
+  gpu_ctrlq_submitted = 1;
   uint32_t *pixels;
   struct virtio_gpu_rect tile;
   if (!backing) return;
@@ -1497,7 +1508,7 @@ static void gpu_2d_resource_path(struct virtq_desc *desc, struct virtq_avail *av
   c2d->format = VIRTIO_GPU_FORMAT_B8G8R8X8_UNORM;
   c2d->width = VIRTIO_GPU_2D_W;
   c2d->height = VIRTIO_GPU_2D_H;
-  if (!gpu_ctrl(desc, avail, used, doorbell, &submitted,
+  if (!gpu_ctrl(desc, avail, used, doorbell, &gpu_ctrlq_submitted,
                 c2d, sizeof(*c2d), resp, 64, VIRTIO_GPU_RESP_OK_NODATA))
     return;
   gpu_2d_create_ok = 1;
@@ -1509,7 +1520,7 @@ static void gpu_2d_resource_path(struct virtq_desc *desc, struct virtq_avail *av
   att->nr_entries = 1;
   att->entries[0].addr = (uint64_t)(uintptr_t)backing;
   att->entries[0].length = VIRTIO_GPU_2D_W * VIRTIO_GPU_2D_H * 4U;
-  if (!gpu_ctrl(desc, avail, used, doorbell, &submitted,
+  if (!gpu_ctrl(desc, avail, used, doorbell, &gpu_ctrlq_submitted,
                 att, sizeof(*att), resp, 64, VIRTIO_GPU_RESP_OK_NODATA))
     return;
 
@@ -1519,7 +1530,7 @@ static void gpu_2d_resource_path(struct virtq_desc *desc, struct virtq_avail *av
   so->r = tile;
   so->scanout_id = 0;
   so->resource_id = VIRTIO_GPU_2D_RESOURCE;
-  (void)gpu_ctrl(desc, avail, used, doorbell, &submitted,
+  (void)gpu_ctrl(desc, avail, used, doorbell, &gpu_ctrlq_submitted,
                  so, sizeof(*so), resp, 64, VIRTIO_GPU_RESP_OK_NODATA);
 
   struct virtio_gpu_transfer_to_host_2d *xfer = (void *)messages;
@@ -1528,7 +1539,7 @@ static void gpu_2d_resource_path(struct virtq_desc *desc, struct virtq_avail *av
   xfer->r = tile;
   xfer->offset = 0;
   xfer->resource_id = VIRTIO_GPU_2D_RESOURCE;
-  if (!gpu_ctrl(desc, avail, used, doorbell, &submitted,
+  if (!gpu_ctrl(desc, avail, used, doorbell, &gpu_ctrlq_submitted,
                 xfer, sizeof(*xfer), resp, 64, VIRTIO_GPU_RESP_OK_NODATA))
     return;
 
@@ -1537,7 +1548,7 @@ static void gpu_2d_resource_path(struct virtq_desc *desc, struct virtq_avail *av
   flush->header.type = VIRTIO_GPU_CMD_RESOURCE_FLUSH;
   flush->r = tile;
   flush->resource_id = VIRTIO_GPU_2D_RESOURCE;
-  if (!gpu_ctrl(desc, avail, used, doorbell, &submitted,
+  if (!gpu_ctrl(desc, avail, used, doorbell, &gpu_ctrlq_submitted,
                 flush, sizeof(*flush), resp, 64, VIRTIO_GPU_RESP_OK_NODATA))
     return;
   gpu_2d_flush_ok = 1;
@@ -1560,7 +1571,7 @@ static void gpu_2d_resource_path(struct virtq_desc *desc, struct virtq_avail *av
     c2d->format = VIRTIO_GPU_FORMAT_B8G8R8X8_UNORM;
     c2d->width = VIRTIO_GPU_2D_W;
     c2d->height = VIRTIO_GPU_2D_H;
-    if (!gpu_ctrl(desc, avail, used, doorbell, &submitted,
+    if (!gpu_ctrl(desc, avail, used, doorbell, &gpu_ctrlq_submitted,
                   c2d, sizeof(*c2d), resp, 64, VIRTIO_GPU_RESP_OK_NODATA))
       return;
 
@@ -1570,7 +1581,7 @@ static void gpu_2d_resource_path(struct virtq_desc *desc, struct virtq_avail *av
     att->nr_entries = 1;
     att->entries[0].addr = (uint64_t)(uintptr_t)backing2;
     att->entries[0].length = VIRTIO_GPU_2D_W * VIRTIO_GPU_2D_H * 4U;
-    if (!gpu_ctrl(desc, avail, used, doorbell, &submitted,
+    if (!gpu_ctrl(desc, avail, used, doorbell, &gpu_ctrlq_submitted,
                   att, sizeof(*att), resp, 64, VIRTIO_GPU_RESP_OK_NODATA))
       return;
 
@@ -1579,7 +1590,7 @@ static void gpu_2d_resource_path(struct virtq_desc *desc, struct virtq_avail *av
     xfer->r = tile;
     xfer->offset = 0;
     xfer->resource_id = VIRTIO_GPU_2D_RESOURCE_2;
-    if (!gpu_ctrl(desc, avail, used, doorbell, &submitted,
+    if (!gpu_ctrl(desc, avail, used, doorbell, &gpu_ctrlq_submitted,
                   xfer, sizeof(*xfer), resp, 64, VIRTIO_GPU_RESP_OK_NODATA))
       return;
 
@@ -1587,7 +1598,7 @@ static void gpu_2d_resource_path(struct virtq_desc *desc, struct virtq_avail *av
     flush->header.type = VIRTIO_GPU_CMD_RESOURCE_FLUSH;
     flush->r = tile;
     flush->resource_id = VIRTIO_GPU_2D_RESOURCE_2;
-    if (!gpu_ctrl(desc, avail, used, doorbell, &submitted,
+    if (!gpu_ctrl(desc, avail, used, doorbell, &gpu_ctrlq_submitted,
                   flush, sizeof(*flush), resp, 64, VIRTIO_GPU_RESP_OK_NODATA))
       return;
     gpu_2d_two_ok = 1;
@@ -1602,11 +1613,85 @@ static void gpu_2d_resource_path(struct virtq_desc *desc, struct virtq_avail *av
     so->r = tile;
     so->scanout_id = 1;
     so->resource_id = VIRTIO_GPU_2D_RESOURCE_2;
-    if (!gpu_ctrl(desc, avail, used, doorbell, &submitted,
+    if (!gpu_ctrl(desc, avail, used, doorbell, &gpu_ctrlq_submitted,
                   so, sizeof(*so), resp, 64, VIRTIO_GPU_RESP_OK_NODATA))
       return;
     gpu_2d_scanout_two_ok = 1;
   }
+}
+
+/* Guest browser desktop on the real display (ADR-0224). Once the kernel has
+   spoken to virtio-gpu, QEMU's virtio-vga shows virtio-gpu scanouts, not the
+   GOP framebuffer -- so a desktop drawn into GOP memory is measurable and
+   invisible (measured 2026-09-24: screendumps froze on the framebuffer boot
+   screen). This makes the GOP framebuffer itself the backing of a full-size
+   2D resource on scanout 0, then transfers and flushes it on every call.
+   Mechanism only: what is in the pixels was decided before this is called. */
+#define VIRTIO_GPU_DESKTOP_RESOURCE 7
+#define VIRTIO_GPU_FORMAT_R8G8B8X8_UNORM 134
+static int gpu_desktop_resource_ready;
+int aiueos_gpu_present_desktop(uint64_t address, uint32_t width, uint32_t height,
+                               uint32_t stride, uint32_t pixel_format) {
+  struct virtio_gpu_ctrl_header *resp;
+  struct virtio_gpu_rect all;
+  if (!gpu_ctrlq_ready || !address || stride != width ||
+      width != gpu_scanout_width || height != gpu_scanout_height) return 0;
+  resp = (void *)(gpu_ctrlq_messages + 2048);
+  all = (struct virtio_gpu_rect){0, 0, width, height};
+  if (!gpu_desktop_resource_ready) {
+    struct virtio_gpu_resource_create_2d *c2d = (void *)gpu_ctrlq_messages;
+    gpu_zero(c2d, sizeof(*c2d));
+    c2d->header.type = VIRTIO_GPU_CMD_RESOURCE_CREATE_2D;
+    c2d->resource_id = VIRTIO_GPU_DESKTOP_RESOURCE;
+    /* framebuffer.c's `pixel` stores 0x00RRGGBB as is for format 0 --
+       bytes B, G, R, X, which is B8G8R8X8 -- and byte-swaps it for format
+       1, which is then R8G8B8X8. Measured 2026-09-24: the opposite mapping
+       put a #d8e7ff titlebar on screen as #ffe7d8. */
+    c2d->format = pixel_format ? VIRTIO_GPU_FORMAT_R8G8B8X8_UNORM
+                               : VIRTIO_GPU_FORMAT_B8G8R8X8_UNORM;
+    c2d->width = width;
+    c2d->height = height;
+    if (!gpu_ctrl(gpu_ctrlq_desc, gpu_ctrlq_avail, gpu_ctrlq_used, gpu_ctrlq_doorbell,
+                  &gpu_ctrlq_submitted, c2d, sizeof(*c2d), resp, 64,
+                  VIRTIO_GPU_RESP_OK_NODATA)) return 0;
+    struct virtio_gpu_resource_attach_backing *att = (void *)gpu_ctrlq_messages;
+    gpu_zero(att, sizeof(*att));
+    att->header.type = VIRTIO_GPU_CMD_RESOURCE_ATTACH_BACKING;
+    att->resource_id = VIRTIO_GPU_DESKTOP_RESOURCE;
+    att->nr_entries = 1;
+    att->entries[0].addr = address;
+    att->entries[0].length = stride * height * 4U;
+    if (!gpu_ctrl(gpu_ctrlq_desc, gpu_ctrlq_avail, gpu_ctrlq_used, gpu_ctrlq_doorbell,
+                  &gpu_ctrlq_submitted, att, sizeof(*att), resp, 64,
+                  VIRTIO_GPU_RESP_OK_NODATA)) return 0;
+    struct virtio_gpu_set_scanout *so = (void *)gpu_ctrlq_messages;
+    gpu_zero(so, sizeof(*so));
+    so->header.type = VIRTIO_GPU_CMD_SET_SCANOUT;
+    so->r = all;
+    so->scanout_id = 0;
+    so->resource_id = VIRTIO_GPU_DESKTOP_RESOURCE;
+    if (!gpu_ctrl(gpu_ctrlq_desc, gpu_ctrlq_avail, gpu_ctrlq_used, gpu_ctrlq_doorbell,
+                  &gpu_ctrlq_submitted, so, sizeof(*so), resp, 64,
+                  VIRTIO_GPU_RESP_OK_NODATA)) return 0;
+    gpu_desktop_resource_ready = 1;
+  }
+  struct virtio_gpu_transfer_to_host_2d *xfer = (void *)gpu_ctrlq_messages;
+  gpu_zero(xfer, sizeof(*xfer));
+  xfer->header.type = VIRTIO_GPU_CMD_TRANSFER_TO_HOST_2D;
+  xfer->r = all;
+  xfer->offset = 0;
+  xfer->resource_id = VIRTIO_GPU_DESKTOP_RESOURCE;
+  if (!gpu_ctrl(gpu_ctrlq_desc, gpu_ctrlq_avail, gpu_ctrlq_used, gpu_ctrlq_doorbell,
+                &gpu_ctrlq_submitted, xfer, sizeof(*xfer), resp, 64,
+                VIRTIO_GPU_RESP_OK_NODATA)) return 0;
+  struct virtio_gpu_resource_flush *flush = (void *)gpu_ctrlq_messages;
+  gpu_zero(flush, sizeof(*flush));
+  flush->header.type = VIRTIO_GPU_CMD_RESOURCE_FLUSH;
+  flush->r = all;
+  flush->resource_id = VIRTIO_GPU_DESKTOP_RESOURCE;
+  return gpu_ctrl(gpu_ctrlq_desc, gpu_ctrlq_avail, gpu_ctrlq_used, gpu_ctrlq_doorbell,
+                  &gpu_ctrlq_submitted, flush, sizeof(*flush), resp, 64,
+                  VIRTIO_GPU_RESP_OK_NODATA);
 }
 
 /* Modern controlq: GET_DISPLAY_INFO, then a 32×32 2D create/attach/transfer/flush.
@@ -1656,6 +1741,9 @@ static int virtio_gpu(uint8_t b, uint8_t d, uint8_t f) {
       }
       if (gpu_enabled_scanouts == 0) return 0;
       gpu_2d_resource_path(desc, avail, used, doorbell, messages);
+      gpu_ctrlq_desc = desc; gpu_ctrlq_avail = avail; gpu_ctrlq_used = used;
+      gpu_ctrlq_doorbell = doorbell; gpu_ctrlq_messages = messages;
+      gpu_ctrlq_ready = 1;
       return 1;
     }
     __asm__ volatile("pause");

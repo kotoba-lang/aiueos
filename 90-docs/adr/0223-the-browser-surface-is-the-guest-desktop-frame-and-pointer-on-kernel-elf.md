@@ -41,6 +41,11 @@ Not executable, and stated here rather than at the end:
 - **Not a new compositor repo.** The decisions live in `os/aiueos/kotoba/`
   beside `wm-hit` and `session-restore`.
 
+**Correction (ADR-0224).** The frames measured here were drawn into the GOP
+framebuffer after virtio-gpu had taken the display, so they were in memory
+and not on screen; the gates read memory and stay correct. ADR-0224 puts the
+desktop on virtio-gpu scanout 0.
+
 ## Context
 
 kotoba-lang/browser ADR 0002 decided that the browser guest owns windows,
