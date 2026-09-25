@@ -8,11 +8,13 @@
 ;;   kbb --backend sci make-provision-record.cljk \
 ;;     --intent install-intent.json --out /path/provision.json
 ;;     [--host-seed <64-hex>]     ; TEST ONLY -- inject a fixed seed for vectors
+;;     [--account-record <file>]  ; account-sync.cljk output (ADR-0239)
 ;;
 ;; Output record (aiueos.provision.v1):
 ;;   {hostname, deviceClaim?, installIntentSha256, createdAt,
 ;;    sshHostKey: {algo, seedSha256, public, openssh, fingerprint},
-;;    authorizedKeys: [{principal, algo, public, openssh, fingerprint}]}
+;;    authorizedKeys: [{principal, algo, public, openssh, fingerprint}],
+;;    account?: aiueos.account-sync.v1 (with --account-record, ADR-0239)}
 ;;
 ;; Only the PUBLIC halves are printed. The record file itself carries the seed
 ;; (the record is written to the target's private provision region, which is
@@ -121,6 +123,28 @@
   (die 3 "recomputed authorized-key fingerprint does not match the intent's;"
        "the intent's ssh.publicKey and ssh.fingerprint are inconsistent"))
 
+;; Optional (aiueos ADR-0239): the kotoba.cloud account link made at the
+;; installer console by account-sync.cljk. It carries the device's signing and
+;; encryption private keys, so it is admitted here by shape and then lives only
+;; where the SSH host seed lives. A record that does not have the shape is a
+;; refusal, not an install without an account: the person asked for the link.
+(def account
+  (when-let [p (arg "--account-record")]
+    (let [a (try (js->clj (.parse js/JSON (.readFileSync fs p "utf8")) :keywordize-keys true)
+                 (catch :default e (die 3 "cannot read --account-record:" (.-message e))))
+          b64url-32? (fn [v] (and (string? v) (= 43 (count v))
+                                  (boolean (re-matches #"[A-Za-z0-9_-]+" v))))]
+      (when-not (and (= "aiueos.account-sync.v1" (:schema a))
+                     (= "https://auth.kotoba.cloud" (:authority a))
+                     (string? (:accountDid a))
+                     (string? (:deviceDid a))
+                     (b64url-32? (get-in a [:deviceKeys :signingSeed]))
+                     (b64url-32? (get-in a [:deviceKeys :signingPublic]))
+                     (b64url-32? (get-in a [:deviceKeys :encryptionPrivate]))
+                     (b64url-32? (get-in a [:deviceKeys :encryptionPublic])))
+        (die 3 "--account-record is not an aiueos.account-sync.v1 record"))
+      a)))
+
 (def record
   {:schema "aiueos.provision.v1"
    :hostname (:hostname intent)
@@ -137,7 +161,8 @@
                      :algo "ssh-ed25519"
                      :public (.toString (:raw auth) "hex")
                      :openssh (authorized-line (:comment auth) auth-blob)
-                     :fingerprint (ssh-fingerprint auth-blob)}]})
+                     :fingerprint (ssh-fingerprint auth-blob)}]
+   :account account})
 
 ;; Compact (single line): the installer embeds this between a magic line and a
 ;; trailing newline, so the record must not carry newlines of its own.

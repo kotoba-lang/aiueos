@@ -88,8 +88,23 @@
                     "exactly one whole disk matching the intent's model,
                      transport and capacity bounds, never the boot USB;
                      zero and two-plus both refuse with named reasons"
-                    :interactive :dry-run-report-only
-                    :unattended :intent-is-the-owner-confirmation}
+                    ;; ADR-0239: an interactive intent authored AT THIS
+                    ;; CONSOLE installs once the person there types
+                    ;; `ERASE <device> FOR AIUEOS`, which install.mjs checks
+                    ;; exactly as it checks the unattended one. An interactive
+                    ;; intent carried on the stick has nobody to type it and
+                    ;; stays a dry run.
+                    :interactive {:carried-on-stick :dry-run-report-only
+                                  :authored-at-console :install-after-typed-destructive-phrase}
+                    :unattended :intent-is-the-owner-confirmation
+                    ;; ADR-0239 / ADR-0113: optional, console-authored only.
+                    :account-link {:program "os/aiueos/installer/live/account-sync.cljk"
+                                   :authority "https://auth.kotoba.cloud"
+                                   :method :phone-scan
+                                   :qr "src/aiueos/qr.cljk"
+                                   :device-keys :generated-on-target-at-install
+                                   :stored-in :provision-zone
+                                   :declined-or-failed :install-without-account-said-so}}
              ;; What the bundle carries so the scripts on it can LOAD.
              ;; nbb.edn is not on the USB, and a sibling path resolves relative
              ;; to the file it is written in, so the 2026-09-09 move to
@@ -98,7 +113,10 @@
              ;; aiueos ADR-0209.
              :bundle {:classpath-root "cp/"           ; same shape as the node bundle beside it
                       :carries [:kotoba-lang-text     ; from the west sibling orgs/kotoba-lang/text
-                                :aiueos-installer-guided]
+                                :aiueos-installer-guided
+                                :kotoba-security      ; orgs/kotoba-lang/security; aiueos.device-auth needs it (ADR-0239)
+                                :aiueos-device-auth
+                                :aiueos-qr]
                       :passed-by [:init-handover :bin-nbb-shim] ; the shim: hop 2 spawns nbb by name
                       :refuses [:classpath-root-with-no-sources
                                 :two-roots-differing-bytes-at-one-path]
@@ -116,13 +134,12 @@
              ;; produces is one aiueos.install-intent.v1, which then goes
              ;; through every guard below unchanged.
              ;;
-             ;; :interactive above stays :dry-run-report-only. That describes
-             ;; what install-live.cljs does with an interactive-mode intent on
-             ;; the target, and it is still true; the guided program runs
-             ;; before that, when the intent does not exist yet.
+             ;; Until ADR-0239 :interactive above was :dry-run-report-only for
+             ;; every interactive intent, including the one the guided program
+             ;; had just written -- so the stick that asks could not install.
              :guided {:program "os/aiueos/installer/live/guided-install.cljk"
                       :decision-core "src/aiueos/installer/guided.cljk" ; pure, no host interop
-                      :test "os/aiueos/scripts/test-guided-install.cljk" ; 53 cases, offline
+                      :test "os/aiueos/scripts/test-guided-install.cljk" ; 56 cases, offline
                       :modelled-on :ubuntu-server-installer-subiquity
                       :screens [:network :storage :identity :ssh :confirm]
                       :borrowed [:screen-sequence-is-data

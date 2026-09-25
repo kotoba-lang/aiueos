@@ -113,16 +113,18 @@
 
 (def text-src (.resolve path repo ".." "text" "src"))
 (def aiueos-src (.join path repo "src"))
+(def security-src (.resolve path repo ".." "security" "src"))
 
 (record! "west-sibling-text-src-exists" (.existsSync fs text-src) text-src)
+(record! "west-sibling-security-src-exists" (.existsSync fs security-src) security-src)
 
-(def with-cp (assemble! "with-cp" [text-src aiueos-src] intent-path))
+(def with-cp (assemble! "with-cp" [text-src aiueos-src security-src] intent-path))
 (def without-cp (assemble! "without-cp" [] intent-path))
 ;; The stick that asks (ADR-0210): the same bundle with no intent in it.
-(def guided-bundle (assemble! "guided" [text-src aiueos-src] nil))
+(def guided-bundle (assemble! "guided" [text-src aiueos-src security-src] nil))
 ;; A second copy, so the abort case starts from a stick that has not already
 ;; been answered: the first run writes an intent into its own tmpfs.
-(def guided-abort-bundle (assemble! "guided-abort" [text-src aiueos-src] nil))
+(def guided-abort-bundle (assemble! "guided-abort" [text-src aiueos-src security-src] nil))
 
 (record! "bundle-assembles-with-classpath" (:ok with-cp) (:dir with-cp))
 (record! "bundle-assembles-without-classpath" (:ok without-cp) (:dir without-cp))
@@ -159,7 +161,8 @@
    "install-to-disk.cljk"     ; what install-live spawns
    "install-intent.cljk"      ; the admission
    "make-provision-record.cljk"
-   "guided-install.cljk"])    ; ADR-0208
+   "guided-install.cljk"      ; ADR-0208
+   "account-sync.cljk"])      ; ADR-0239: device-auth + qr from the bundle
 
 (defn- load-check
   "Run one bundled script from inside the bundle, with only what the stick
@@ -483,7 +486,7 @@
 
 ;; ------------------------------------------------------------------ summary
 
-(def expected-cases 34)
+(def expected-cases 36)
 (def total (count @results))
 (def failed (filterv (complement :ok) @results))
 

@@ -154,10 +154,11 @@
   and write it into the provision zone, read back. The record's host-key seed
   is generated here, on the machine being installed -- it never travels on the
   USB. Returns {:offset :sha256 :host-fp :authorized-fp}."
-  [device disk-bytes intent-path record-script]
+  [device disk-bytes intent-path record-script account-record]
   (let [tmp (.join path (.tmpdir os) (str "aiueos-provision-" (.-pid js/process) ".json"))
         {:keys [status out err]}
-        (run "nbb" [record-script "--intent" intent-path "--out" tmp])]
+        (run "nbb" (concat [record-script "--intent" intent-path "--out" tmp]
+                           (when account-record ["--account-record" account-record])))]
     (when-not (zero? status)
       (die 3 "provision record generation failed:" (str/trim err)))
     (let [record-bytes (.readFileSync fs tmp)
@@ -181,6 +182,7 @@
             (die 3 "provision record readback does not match; the target has no"
                  "usable SSH identity, so headless boot cannot come up"))
           {:offset offset :sha256 (sha256-hex block)
+           :account-did (get-in record [:account :accountDid])
            :host-fp (get-in record [:sshHostKey :fingerprint])
            :authorized-fp (get-in record [:authorizedKeys 0 :fingerprint])})))))
 
@@ -311,13 +313,19 @@
             ;; BEFORE the target receipt: the receipt binds the provision
             ;; digest, so a target with a receipt always has a matching SSH
             ;; identity beside it.
-            prov (write-provision! zone-device disk-bytes intent-path provision-script)
+            account-record (arg "--account-record")
+            prov (write-provision! zone-device disk-bytes intent-path provision-script
+                                   account-record)
+            ;; the account record holds the device's private keys; its only
+            ;; durable home is the provision zone just written and read back
+            _ (when account-record (.rmSync fs account-record #js {:force true}))
             offset (write-target-receipt! zone-device disk-bytes intent-sha
                                           image-sha (:hostname intent) (:sha256 prov))]
         (println "AIUEOS_PROVISION_OK"
                  (str "offset=" (:offset prov))
                  (str "host-key=" (:host-fp prov))
-                 (str "authorized=" (:authorized-fp prov)))
+                 (str "authorized=" (:authorized-fp prov))
+                 (str "account=" (or (:account-did prov) "none")))
         (println "AIUEOS_INSTALL_OK"
                  (str "device=" (get-in report [:target :path]))
                  (str "image-sha256=" image-sha)

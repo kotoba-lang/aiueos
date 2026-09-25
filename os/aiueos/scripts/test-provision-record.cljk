@@ -112,7 +112,45 @@
   (record! "inconsistent-intent-fingerprint-refused"
            (and (= 3 status) (str/includes? out "inconsistent")) (str "status=" status)))
 
-(let [expected 6 ran (count @results) failed (count (remove identity @results))]
+;; 7-9. the kotoba.cloud account link (ADR-0239): carried whole when given,
+;;      refused by name when it is not an account-sync record, absent otherwise.
+(def b64-32 "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
+(def account-ok (.join path tmp "account.json"))
+(.writeFileSync fs account-ok
+  (.stringify js/JSON
+    (clj->js {:schema "aiueos.account-sync.v1"
+              :authority "https://auth.kotoba.cloud"
+              :accountDid "did:key:z6MkAccount"
+              :deviceDid "did:aiueos:gmktec-k16:00112233445566778899aabbccddeeff"
+              :deviceKeys {:signingAlgo "ed25519" :signingSeed b64-32 :signingPublic b64-32
+                           :encryptionAlgo "x25519" :encryptionPrivate b64-32
+                           :encryptionPublic b64-32}})))
+(let [out (.join path tmp "p-account.json")
+      {:keys [status]} (run [(.join path scripts-dir "make-provision-record.cljk")
+                             "--intent" intent "--out" out "--account-record" account-ok] {})
+      rec (when (zero? status)
+            (js->clj (.parse js/JSON (.readFileSync fs out "utf8")) :keywordize-keys true))]
+  (record! "account-record-carried-into-provision"
+           (and (= "did:key:z6MkAccount" (get-in rec [:account :accountDid]))
+                (= b64-32 (get-in rec [:account :deviceKeys :signingSeed])))
+           (str "status=" status " account=" (get-in rec [:account :accountDid]))))
+
+(def account-bad (.join path tmp "account-bad.json"))
+(.writeFileSync fs account-bad
+  (.stringify js/JSON (clj->js {:schema "aiueos.account-sync.v0"
+                                :authority "https://auth.kotoba.cloud"})))
+(let [{:keys [status out err]} (run [(.join path scripts-dir "make-provision-record.cljk")
+                                     "--intent" intent "--out" (.join path tmp "p-account-bad.json")
+                                     "--account-record" account-bad] {})]
+  (record! "malformed-account-record-refused"
+           (and (= 3 status) (str/includes? (str out err) "not an aiueos.account-sync.v1 record"))
+           (str "status=" status)))
+
+(let [rec (js->clj (.parse js/JSON (.readFileSync fs out1 "utf8")) :keywordize-keys true)]
+  (record! "no-account-record-no-account" (nil? (:account rec))
+           (str "account=" (pr-str (:account rec)))))
+
+(let [expected 9 ran (count @results) failed (count (remove identity @results))]
   (println (str "AIUEOS_PROVISION_TEST_SUMMARY ran=" ran " expected=" expected " failed=" failed))
   (.rmSync fs tmp #js {:recursive true :force true})
   (when (or (not= ran expected) (pos? failed)) (.exit js/process 1)))

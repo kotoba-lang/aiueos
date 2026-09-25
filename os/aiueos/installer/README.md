@@ -79,6 +79,23 @@ product an image is from the image alone and cross-checks it against
 Guided exit codes are propagated by `install-live.cljs`, not flattened: `2` is
 a named refusal, `3` is nobody answered.
 
+### Installing from the console, and the account link (ADR-0239)
+
+When the intent was authored at this console, `install-live.cljk` does not
+stop at the dry run. After every admission passes it offers to link the
+machine to a kotoba.cloud account -- `account-sync.cljk` draws the approval
+URL as a QR on the console, a phone approves with its Passkey, and the device
+keys generated here go into the provision zone -- and then asks the person to
+type `ERASE <device> FOR AIUEOS`, which `install.mjs` checks exactly as it
+checks the unattended phrase. Declining the link installs without an account
+and says so. An interactive intent carried ON the stick still only dry-runs.
+
+```sh
+# the link on its own, from any host with node + fetch (starts a real flow)
+kbb --backend sci --classpath src:../text/src:../security/src \
+  os/aiueos/installer/live/account-sync.cljk --model gmktec-k16 --out account.json
+```
+
 What is not claimed: no hardware run and no QEMU run (the interactive path is
 measured against a piped answer script, which takes the same fd-0 code path as
 a terminal); no fleet gate; gate I3's evidence still predates the 2026-09-09
