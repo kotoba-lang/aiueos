@@ -397,9 +397,9 @@ source rather than here.
    (conv section below). The C is kept as
    `*_c` under `AIUEOS_QWEN35_KOTOBA_PARITY == 2 || AIUEOS_QWEN35_C_REFERENCE_NORM`;
    the flag is set for the host smokes and parity profiles 1, 3 and 4 (which
-   do not link the two objects). Still C, by stage: the gated RMS reduction
-   of the linear-attention output (no norm mode matches it bit for bit — it
-   has no finiteness refusals and no rescaled fallback). Rope's `exp` left
+   do not link the two objects). The gated RMS of the linear-attention
+   output is mode 3 of the norm object followed by activation mode 4
+   (gated output norm, below). Rope's `exp` left
    the forward pass with `rope_heads` (rope stage, live, see below).
    Reproduce: `AIUEOS_QWEN35_KOTOBA_PARITY=2 smoke-qemu-uefi.sh` →
    `QWEN-PARITY activation ok` / `norm ok` in `build/aiueos/evidence-all.log`
@@ -461,7 +461,7 @@ source rather than here.
    `linear_attention`: the q/k L2 norm call sites, the decay
    transition's `+ dt` and `a *` products, the two scalar products and the
    `v ·` loop of the position-zero reduction (its dot is the dot object, see
-   item 7), and the gated RMS of the output.
+   item 7).
    The C is kept as `recurrent_step_c` under
    `AIUEOS_QWEN35_KOTOBA_PARITY == 4 || AIUEOS_QWEN35_C_REFERENCE_RECURRENT`;
    the flag is set for the host smokes and parity profiles 1, 2 and 3 (which
@@ -509,10 +509,16 @@ source rather than here.
    rope objects linked `aiueos_low_end` was 0x1f2000 (`.text` 0xb7772); at
    origin/main 20c8b88 it is 0x1f3000 (`.text` 0xb8fb2), and with the conv
    modes (below) it is **0x1f4000 — the limit itself, 0 B of headroom**
-   (`.text` 0xb9832). The next object that grows `.text` at all needs the
-   next move; the candidates left are the TLS and
-   NIC scratch (tls13 8.8 KiB, rtl8125 8.3 KiB, main 6.8 KiB) or a third
-   loader segment. The 64 KiB boot stack cannot move, because it is in use
+   (`.text` 0xb9832), and with the position-zero dot it was still 0x1f4000
+   (`.text` 0xb9ed2). The gated output norm (+792 B of object) put it at
+   0x1f5000 and the link failed with the `ld.lld` error above. So
+   `rtl8125.c`'s `rtl_parity_bar` (the NIC self-test's 4 KiB fake BAR,
+   zeroed by `rtl_parity_seed` before every use and only read through its
+   address) moved to `.high_bss`. Now `aiueos_low_end` is **0x1f3000, with
+   4 KiB of headroom** (`.text` 0xba0a2, `.bss` 0x24728, `.high_bss` ends
+   at 0x517000). The next move after that: the candidates left are the TLS
+   scratch (tls13 8.8 KiB), the rest of the NIC scratch, main's 6.8 KiB, or
+   a third loader segment. The 64 KiB boot stack cannot move, because it is in use
    before `.high_bss` is zeroed.
    **Rope: LIVE on the object.** `full_attention`'s rotation of the 24
    query heads and the 4 key heads calls `aiueos-qwen35-rope`
@@ -640,10 +646,10 @@ source rather than here.
      `248044 → 2005` has not been re-run), and the rate.
    - **the rest of `linear_attention`,** which ADR-0175 already named: the
      kernel-4 depthwise convolution with its three-step history (**LIVE on
-     the object**, see below), the gated RMS of the output (no mode of the
-     norm object gives it bit for bit, as the comment at its call site
-     says), and the `dot` coefficient on the position-zero and cache-free
-     paths (**LIVE on the object**, see below). The gated RMS is still C.
+     the object**, see below), the gated RMS of the output (**LIVE on the
+     objects**, see below), and the `dot` coefficient on the position-zero
+     and cache-free paths (**LIVE on the object**, see below). No `dot(`,
+     `local_sqrt(` or `history[` is left in the body of `linear_attention`.
 
      **Conv: LIVE on the object.** Modes 5 (`conv4-first`: position 0 or
      no cache, `a·k3`, the history not read) and 6 (`conv4-next`:
@@ -703,11 +709,50 @@ source rather than here.
      model-handoff flags (`zig cc -O3 -DAIUEOS_QWEN38_MODEL_HANDOFF=1`,
      `objdump -h`) goes from `.text` 0x344f to 0x321f, because `dot_avx2` is
      no longer reachable there. The link does not show those 560 B: they are
-     smaller than the page `aiueos_low_end` rounds up to. So the gated RMS,
-     the one C arithmetic left in `linear_attention`, still needs the
-     low-region move named above before any object can grow for it.
+     smaller than the page `aiueos_low_end` rounds up to.
      **Not measured**: a forward pass through the wrapper (no model path in
      QEMU), and the 1-ULP effect on a real token.
+
+     **Gated output norm: LIVE on the objects.** The per-head
+     `v · (1/√(mean(v²)+ε)) · w · silu(g)` over the 48 × 128 output is
+     `aiueos-qwen35-norm` mode 3 (`[3 values heads width weights]`, in
+     place) and then `aiueos-qwen35-activation` mode 4 with the gate as `a`
+     and the normed values as `b`, so the answer lands in the gate buffer
+     (`scratch_b`). The wrapper `linear_output_norm` returns where it
+     landed, and the output matvec reads from there. Mode 4 computes
+     `silu(g) · x`, and the C computed `x · silu(g)`. Binary32
+     multiplication commutes, so the two are the same bits, and there is
+     no sixth ABI word for a gate address anyway. Mode 3 is mode 2 without
+     the finiteness refusals and without the rescaled fallback, and its sum
+     takes a non-finite square in instead of skipping it, as this C did.
+     On finite inputs whose squares stay finite, modes 2 and 3 give the
+     same bits. The C is kept as `linear_output_norm_c` with the other
+     `*_c` references (it silu's the raw gate itself). Contract
+     `qwen35-norm-v1`: 20 vectors, 9 memory assertions, reasons −5..0
+     observed. The three mode-3 expectations come from the C loop compiled
+     on the host (`tests/qwen35_linear_output_norm_oracle.c`, `cc -O0
+     -ffp-contract=off`). One of them makes head 0's first square overflow
+     (2^70): the C gives scale 0 and signed zeros, and a skipping sum gives
+     a nonzero scale. Seen red: mode 3 summing with mode 2's skipping
+     `sumsq` → `memory mismatch` at `:linear-output-norm-overflowing-square`
+     region `:a`. Parity profile 2 now also drives `linear_output_norm`
+     against `linear_output_norm_c` over 4 × 32 values with a gate, and the
+     −2 probe moved from mode 3 to mode 4. Reproduce:
+     `AIUEOS_QWEN35_KOTOBA_PARITY=2 smoke-qemu-uefi.sh` → `QWEN-PARITY norm
+     ok` in `build/aiueos/kernel-serial.log`. Seen red: the wrapper's mode 4
+     → mode 0 (the gate silu'd but never multiplied) → `QWEN-PARITY norm
+     mismatch`, `AIUEOS_EVIDENCE_STOP`, exit 1. The object is 9,176 B (it
+     was 8,384 B). It is compiled by amu 6c245f6, the revision the receipt
+     already recorded. `smoke-qemu-uefi.sh` → `AIUEOS_UEFI_SMOKE_OK` and
+     `NIC-PARITY ok`. `bonsai-qemu-admission` →
+     `AIUEOS_BONSAI_ADMISSION_QEMU_OK`. `smoke-qwen35-decode-math.sh` →
+     `AIUEOS_QWEN35_DECODE_MATH_OK`. Low region: see the next-move note in
+     the low-region paragraph. **Not measured**: a forward pass through the
+     wrapper at the live 48 × 128 (no model path in QEMU; the oracle ran
+     2 × 8 and 4 × 32, the parity boot 4 × 32), the object on the physical
+     K16, and the fuel at the live width. The export's tier is unchanged,
+     and mode 3 does less work per element than mode 2, which the tier
+     already covers.
    The loop's tick listed these as `:cutover-logits` (landed) and
    `:cutover-linear-attention-rest`, ahead of this floor, in the same way
    it put `:cutover-rope` first. It checks each one by reading the body of

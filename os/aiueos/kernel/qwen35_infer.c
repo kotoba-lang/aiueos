@@ -633,6 +633,30 @@ static void conv4_c(float *values, const float *kernel, float *history_base,
   }
 }
 
+/* `linear_attention`'s output norm and gate, KEPT AS THE REFERENCE (aiueos
+   ADR-0222): norm mode 3 followed by activation mode 4 is the live path, and
+   parity profile 2 compares them against this.  The gate arrives raw and is
+   silu'd here; the per-head RMS has no finiteness refusals and no rescaled
+   fallback, which is why it is not `rms_norm_heads_weighted`. */
+static void linear_output_norm_c(float *values, float *gate, uint32_t heads,
+                                 uint32_t width, const float *weights) {
+  for (uint32_t index = 0; index < heads * width; index++)
+    gate[index] = silu(gate[index]);
+  for (uint32_t head = 0; head < heads; head++) {
+    float *vector = values + head * width;
+    double sum = 0.0;
+    for (uint32_t index = 0; index < width; index++)
+      sum += (double)(vector[index] * vector[index]);
+    float scale = 1.0f /
+        local_sqrt((float)(sum / (double)width) + EPSILON);
+    for (uint32_t index = 0; index < width; index++) {
+      uint32_t position = head * width + index;
+      vector[index] = vector[index] * scale * weights[index] *
+                      gate[position];
+    }
+  }
+}
+
 #endif
 
 /* The activation modes of `aiueos-qwen35-activation`, in its own numbering. */
@@ -692,6 +716,12 @@ static int conv4(float *values, const float *kernel, float *history,
   conv4_c(values, kernel, history, position, count);
   return 1;
 }
+
+static float *linear_output_norm(float *values, float *gate, uint32_t heads,
+                                 uint32_t width, const float *weights) {
+  linear_output_norm_c(values, gate, heads, width, weights);
+  return values;
+}
 #else
 /* THE LIVE NORMS AND ACTIVATIONS ARE THE KOTOBA OBJECTS (ADR-0220 cutover
    stage 2). Both take raw addresses and write in place or into the output
@@ -737,6 +767,22 @@ static int conv4(float *values, const float *kernel, float *history,
   return kotoba_aiueos_qwen35_activation(
     position ? QWEN_ACT_CONV4_NEXT : QWEN_ACT_CONV4_FIRST, values, kernel,
     count, (uint64_t)(uintptr_t)history) == 0;
+}
+
+/* The output norm is mode 3 of the norm object, in place over `values`; the
+   gate is then mode 4 of the activation object, `gate[i] = silu(gate[i]) *
+   values[i]`, which is the C's `values[i] * silu(gate[i])` because binary32
+   multiplication commutes.  The answer therefore lands in `gate`, and the
+   pointer returned is where the caller reads it (the reference returns
+   `values`).  Null is a refusal. */
+static float *linear_output_norm(float *values, float *gate, uint32_t heads,
+                                 uint32_t width, const float *weights) {
+  if (kotoba_aiueos_qwen35_norm(3, (uint64_t)(uintptr_t)values, heads, width,
+                                (uint64_t)(uintptr_t)weights) != 0 ||
+      kotoba_aiueos_qwen35_activation(QWEN_ACT_SILU_GATE, gate, values,
+                                      (uint64_t)heads * width, 0) != 0)
+    return 0;
+  return gate;
 }
 #endif
 
@@ -1082,27 +1128,15 @@ static int linear_attention(const struct aiueos_qwen35_layer *layer,
       linear->norm.dimensions[0] != LINEAR_HEAD_DIM)
     return fail_at(AIUEOS_QWEN35_FAILURE_LINEAR_OUTPUT);
   const float *weights = (const float *)(const void *)linear->norm.data;
-  /* The output gate: silu(gate) once over the inner width, then the gated
-     RMS below multiplies by it. The reduction itself stays C: it is not
-     `rms_norm_heads_weighted` (no finiteness refusals, no rescaled
-     fallback), so no mode of the norm object answers it bit for bit. */
-  if (!activate(QWEN_ACT_SILU, scratch_b, 0, LINEAR_INNER))
-    return fail_at(AIUEOS_QWEN35_FAILURE_LINEAR_OUTPUT);
-  for (uint32_t head = 0; head < 48; head++) {
-    float *vector = scratch_c + head * LINEAR_HEAD_DIM;
-    double sum = 0.0;
-    for (uint32_t index = 0; index < LINEAR_HEAD_DIM; index++)
-      sum += (double)(vector[index] * vector[index]);
-    float scale = 1.0f /
-        local_sqrt((float)(sum / (double)LINEAR_HEAD_DIM) + EPSILON);
-    for (uint32_t index = 0; index < LINEAR_HEAD_DIM; index++) {
-      uint32_t position = head * LINEAR_HEAD_DIM + index;
-      vector[index] = vector[index] * scale * weights[index] *
-                      scratch_b[position];
-    }
-  }
+  /* The gated output norm: per head RMS * weights * silu(gate), on the norm
+     object's mode 3 and the activation object's mode 4 (ADR-0222). The
+     answer is in scratch_b on the live path and scratch_c on the reference;
+     `gated` says which. */
+  const float *gated =
+      linear_output_norm(scratch_c, scratch_b, 48, LINEAR_HEAD_DIM, weights);
+  if (!gated) return fail_at(AIUEOS_QWEN35_FAILURE_LINEAR_OUTPUT);
 
-  if (!matvec(&linear->output, scratch_c, LINEAR_INNER, normalized, EMBED))
+  if (!matvec(&linear->output, gated, LINEAR_INNER, normalized, EMBED))
     return fail_at(AIUEOS_QWEN35_FAILURE_LINEAR_OUTPUT);
   for (uint32_t index = 0; index < EMBED; index++) state[index] += normalized[index];
   return 1;
@@ -2133,7 +2167,7 @@ static int qwen_parity_activation(void) {
   return 1;
 }
 
-/* Stage 4: the three normalisations.  The reference is this file's own
+/* Stage 4: the four normalisations.  The reference is this file's own
    `rms_norm`, `l2_norm_heads` and `rms_norm_heads_weighted`, which reduce in
    f64 over f32 squares and narrow at different points -- the property the port
    is most likely to get subtly wrong. */
@@ -2145,6 +2179,7 @@ static float __attribute__((section(".high_bss"))) qwen_parity_norm_in[QWEN_PARI
 static float __attribute__((section(".high_bss"))) qwen_parity_norm_ref[QWEN_PARITY_NORM];
 static float __attribute__((section(".high_bss"))) qwen_parity_norm_obj[QWEN_PARITY_NORM];
 static float __attribute__((section(".high_bss"))) qwen_parity_norm_w[QWEN_PARITY_NORM];
+static float __attribute__((section(".high_bss"))) qwen_parity_norm_gate[QWEN_PARITY_NORM];
 
 static void qwen_parity_norm_fill(uint32_t seed) {
   qwen_parity_state = seed;
@@ -2225,8 +2260,31 @@ static int qwen_parity_norm(void) {
         qwen_parity_bits(qwen_parity_norm_obj[index]))
       return 0;
 
-  /* A refusal: mode 3 does not exist. */
-  if (kotoba_aiueos_qwen35_norm(3, (uint64_t)(uintptr_t)qwen_parity_norm_obj,
+  /* mode 3 + activation mode 4: `linear_attention`'s gated output norm,
+     against `linear_output_norm_c`.  The live answer lands in the gate
+     buffer, the reference's in its values; `in` becomes the reference's
+     copy of the gate once the values are copied out of it. */
+  qwen_parity_norm_fill(0x3333333u);
+  for (index = 0; index < QWEN_PARITY_NORM; index++) {
+    qwen_parity_norm_ref[index] = qwen_parity_norm_in[index];
+    qwen_parity_norm_obj[index] = qwen_parity_norm_in[index];
+    qwen_parity_norm_gate[index] = qwen_parity_value();
+    qwen_parity_norm_in[index] = qwen_parity_norm_gate[index];
+  }
+  linear_output_norm_c(qwen_parity_norm_ref, qwen_parity_norm_in,
+                       QWEN_PARITY_NORM_HEADS, QWEN_PARITY_NORM_WIDTH,
+                       qwen_parity_norm_w);
+  if (linear_output_norm(qwen_parity_norm_obj, qwen_parity_norm_gate,
+                         QWEN_PARITY_NORM_HEADS, QWEN_PARITY_NORM_WIDTH,
+                         qwen_parity_norm_w) != qwen_parity_norm_gate)
+    return 0;
+  for (index = 0; index < QWEN_PARITY_NORM; index++)
+    if (qwen_parity_bits(qwen_parity_norm_ref[index]) !=
+        qwen_parity_bits(qwen_parity_norm_gate[index]))
+      return 0;
+
+  /* A refusal: mode 4 does not exist. */
+  if (kotoba_aiueos_qwen35_norm(4, (uint64_t)(uintptr_t)qwen_parity_norm_obj,
                                 1, 8, 0) != (uint64_t)(int64_t)-2)
     return 0;
   return 1;

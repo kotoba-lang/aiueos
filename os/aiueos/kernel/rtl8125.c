@@ -341,7 +341,13 @@ void aiueos_rtl8125_rx_rearm(struct aiueos_rtl8125 *device) {
    .bss for a buffer nothing touches is 4 KiB the kernel does not have. */
 #define RTL_PARITY_FRAME_BYTES 64U
 
-static uint8_t rtl_parity_bar[RTL_PARITY_BAR_BYTES] __attribute__((aligned(4096)));
+/* In .high_bss, not .bss: the production node image's low region was at
+   exactly `aiueos_low_end == 0x1f4000` when linear_attention's output norm
+   moved into the norm object (aiueos ADR-0222), and those 792 bytes crossed a
+   page.  This buffer is zeroed by `rtl_parity_seed` before every use and is
+   only ever read through its address, so where it lives is not observable. */
+static uint8_t rtl_parity_bar[RTL_PARITY_BAR_BYTES]
+    __attribute__((section(".high_bss"), aligned(4096)));
 static struct aiueos_rtl8125_tx_desc rtl_parity_tx __attribute__((aligned(256)));
 static struct aiueos_rtl8125_rx_desc rtl_parity_rx __attribute__((aligned(256)));
 static uint8_t rtl_parity_txframe[RTL_PARITY_FRAME_BYTES] __attribute__((aligned(64)));
