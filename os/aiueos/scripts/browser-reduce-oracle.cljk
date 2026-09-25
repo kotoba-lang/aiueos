@@ -32,6 +32,13 @@
 ;; opens a second window); a close of the last window is refused (-8); a launch
 ;; whose default rect leaves the viewport is refused (-9).
 ;;
+;; Window focus by id (ADR-0237): kind 5 is browser.surface's :window/focus
+;; action applied as it is -- apply-action, nothing of browser.input -- with
+;; the id the event names. The answer is that id when it is in the stack, 0
+;; when it is not (focus-window leaves the surface as it was). browser.input
+;; has no shortcut that yields this action; Alt+Tab's rule (the bottom
+;; window) is the key object's and has its own vectors in browser-ime-v2.
+;;
 ;; --check: exit 0 every generated vector equals the contract's vector of the
 ;; same name (seed, args, expected, expected memory); 1 one differs or is
 ;; missing; 2 could not run. It prints COMPARED<TAB>n; n = 0 is exit 2.
@@ -76,7 +83,8 @@
 ;; raised by the event loop.
 (def caret (world 2 [[1 272 132 240 200] [2 196 172 640 480]]))
 
-(def ^:private kinds {:pointer/down 1 :keyboard/key 2 :pointer/move 3 :pointer/up 4})
+(def ^:private kinds {:pointer/down 1 :keyboard/key 2 :pointer/move 3 :pointer/up 4
+                      :window/focus 5})
 
 (declare step-plain)
 
@@ -125,7 +133,11 @@
 (defn- step
   "Reduce one event through the oracle: [world' answer]."
   [{:keys [surface input apps] :as w} [t a b]]
-  (or (when (and (= t :pointer/down) (pos? (or apps 0)))
+  (or (when (= t :window/focus)
+        (let [s (surface/apply-action surface {:action :window/focus :window-id a})]
+          [(assoc w :surface s)
+           (if (some #(= a (:window/id %)) (:surface/windows surface)) a 0)]))
+      (when (and (= t :pointer/down) (pos? (or apps 0)))
         (chrome-step w [a b]))
       (step-plain w [t a b])))
 
@@ -220,7 +232,27 @@
    [:a-launch-past-the-viewport-is-refused (assoc (shell two 7) :vw 599) [] [:pointer/down 258 14]]
    [:the-kernel-launch (shell caret 7) [] [:pointer/down 258 14]]
    [:the-kernel-close-of-3 (shell caret 7) [[:pointer/down 258 14] [:pointer/up 258 14]] [:pointer/down 584 94]]
-   [:the-kernel-close-of-2 (shell caret 7) [[:pointer/down 258 14] [:pointer/up 258 14] [:pointer/down 584 94] [:pointer/up 584 94] [:pointer/down 258 14] [:pointer/up 258 14]] [:pointer/down 820 186]]])
+   [:the-kernel-close-of-2 (shell caret 7) [[:pointer/down 258 14] [:pointer/up 258 14] [:pointer/down 584 94] [:pointer/up 584 94] [:pointer/down 258 14] [:pointer/up 258 14]] [:pointer/down 820 186]]
+   ;; ADR-0237: :window/focus by id (kind 5), the action Alt+Tab becomes.
+   [:a-focus-action-raises-the-bottom-of-two two [] [:window/focus 1]]
+   [:a-focus-action-on-the-top-keeps-the-stack two [] [:window/focus 2]]
+   [:a-focus-action-raises-the-bottom-of-three three [] [:window/focus 1]]
+   [:a-focus-action-raises-the-middle-of-three three [] [:window/focus 2]]
+   [:a-focus-action-of-an-unknown-id-changes-nothing two [] [:window/focus 3]]
+   [:a-focus-action-of-id-0-changes-nothing two [] [:window/focus 0]]
+   [:a-focus-action-of-id-5-changes-nothing (world 1 [[1 32 32 720 540]]) [] [:window/focus 5]]
+   [:a-focus-action-keeps-a-drag-capture two [[:pointer/down 100 80]] [:window/focus 1]]
+   [:a-focus-action-keeps-a-resize-capture two [[:pointer/down 730 545]] [:window/focus 1]]
+   [:a-focus-action-keeps-the-app-register (shell three 7) [] [:window/focus 1]]
+   [:a-focus-action-in-a-full-stack (shell (world 4 [[1 32 32 720 540] [2 96 72 640 480] [3 400 300 300 200] [4 80 80 520 360]]) 15) [] [:window/focus 1]]
+   [:three-bottom-focuses-rotate-three-back (shell three 7) [[:window/focus 1] [:window/focus 2]] [:window/focus 3]]
+   [:the-kernel-focus-cycle (shell caret 7)
+    [[:pointer/down 258 14] [:pointer/up 258 14] [:pointer/down 584 94] [:pointer/up 584 94]
+     [:pointer/down 258 14] [:pointer/up 258 14] [:pointer/down 820 186] [:pointer/up 820 186]
+     [:pointer/move 400 300] [:pointer/move 700 450] [:pointer/move 1276 796]
+     [:pointer/down 1000 600] [:pointer/up 1000 600]
+     [:pointer/down 150 14] [:pointer/up 150 14] [:window/focus 1] [:window/focus 3]]
+    [:window/focus 2]]])
 
 (defn vectors []
   (for [[nm w0 before [t a b :as ev]] cases

@@ -1297,8 +1297,11 @@ static struct virtio_input_event *kbd_event;
 static uint16_t kbd_seen;
 static int kbd_ready;
 
-/* Hand every used entry back to the device. Returns the last key PRESS among
-   them when `want_press`, else 0; the entries are recycled either way. */
+/* Hand every used entry back to the device. Returns the first key PRESS among
+   them when `want_press` is 1, the first key event of any value as
+   code * 4 + value when it is 2 (ADR-0237: Alt is held from its press to its
+   release), else 0; the entries are recycled either way, up to the one
+   returned. */
 static uint32_t kbd_recycle(int want_press) {
   uint32_t press = 0;
   __asm__ volatile("" ::: "memory");
@@ -1308,8 +1311,10 @@ static uint32_t kbd_recycle(int want_press) {
     kbd_seen++;
     if (id > 3) continue;
     struct virtio_input_event *ev = kbd_event + id;
-    if (want_press && !press && ev->type == 1 && ev->value == 1 && ev->code)
+    if (want_press == 1 && !press && ev->type == 1 && ev->value == 1 && ev->code)
       press = ev->code;
+    if (want_press == 2 && !press && ev->type == 1 && ev->value <= 2 && ev->code)
+      press = (uint32_t)ev->code * 4U + ev->value;
     kbd_avail->ring[kbd_avail->index % 4] = (uint16_t)id;
     __asm__ volatile("" ::: "memory");
     kbd_avail->index++;
@@ -1335,6 +1340,20 @@ uint32_t aiueos_keyboard_next_press(uint32_t budget) {
   for (uint32_t i = 0; i < budget; i++) {
     uint32_t press = kbd_recycle(1);
     if (press) return press;
+    if ((i & 65535U) == 0) *kbd_doorbell = 0;
+    __asm__ volatile("pause");
+  }
+  return 0;
+}
+
+/* The next key event as evdev code * 4 + value (0 release, 1 press,
+   2 repeat) -- the form Kotoba browser-key takes -- or 0 when `budget` polls
+   pass (ADR-0237). */
+uint32_t aiueos_keyboard_next_key(uint32_t budget) {
+  if (!kbd_ready) return 0;
+  for (uint32_t i = 0; i < budget; i++) {
+    uint32_t key = kbd_recycle(2);
+    if (key) return key;
     if ((i & 65535U) == 0) *kbd_doorbell = 0;
     __asm__ volatile("pause");
   }

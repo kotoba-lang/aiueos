@@ -382,6 +382,25 @@
         ["move" "move" "move" "down" "up"]
         [[400 300] [700 450] [1276 796] [1000 600] [1000 600]]))
 
+;; ADR-0237: Alt+Tab. After the pointer, the host presses launcher button 2 at
+;; (150, 14) -- window 2 opens at open-window's default rect (80, 80, 520, 360)
+;; with its slot's title and body, on top of window 3 -- and releases; then
+;; Alt down, Tab down / up three times, Alt up, and a Tab alone (down, up).
+;; Each Tab
+;; press with Alt held focuses and raises the bottom window: [1 3 2] ->
+;; [3 2 1] -> [2 1 3] -> [1 3 2]. The lone Tab is the IME's, which ignores it.
+;; A frame after each of the twelve; the pointer stays at (150, 14).
+(def ^:private w3y (update w3 :body into [23665 20767]))
+(def ^:private w2l (assoc w2c :x 80 :y 80 :w 520 :h 360))
+
+(def focus-frames
+  (let [at (fn [focus stack] (assoc shell :focus focus :stack stack :pointer [150 14]))
+        a (at 2 [w1k w3y w2l])]
+    [["launch-2" a] ["up" a] ["alt" a]
+     ["tab" (at 1 [w3y w2l w1k])] ["tab-up" (at 1 [w3y w2l w1k])]
+     ["tab" (at 3 [w2l w1k w3y])] ["tab-up" (at 3 [w2l w1k w3y])]
+     ["tab" a] ["tab-up" a] ["alt-up" a] ["lone-tab" a] ["lone-tab-up" a]]))
+
 ;; ADR-0234: the flow-parity frame. After everything above, the kernel lays
 ;; out this surface on a surface of its own (no tablet needed): four windows
 ;; whose bodies take each of cssom's rules -- packing by words with space runs,
@@ -560,6 +579,16 @@
                                  c))
                              cursor-frames))]
     (println (str "cursor frames=" (count cs) " ops=" (apply str (interpose "," (map :ops cs)))
+                  " chain=" (chain (map #(js/parseInt (:hash %) 16) cs))
+                  " last-px=" (:text-px (peek cs)) " last-hash=" (:hash (peek cs)))))
+  (let [cs (vec (map-indexed (fn [i [ev scene]]
+                               (let [c (census (frame scene))]
+                                 (println (str "focus-frame n=" (inc i) " " ev " focus=" (:focus scene)
+                                               " stack=" (apply str (map :id (:stack scene)))
+                                               " ops=" (:ops c) " text-px=" (:text-px c) " hash=" (:hash c)))
+                                 c))
+                             focus-frames))]
+    (println (str "focus frames=" (count cs) " ops=" (apply str (interpose "," (map :ops cs)))
                   " chain=" (chain (map #(js/parseInt (:hash %) 16) cs))
                   " last-px=" (:text-px (peek cs)) " last-hash=" (:hash (peek cs)))))
   (let [ops (frame flow-scene)

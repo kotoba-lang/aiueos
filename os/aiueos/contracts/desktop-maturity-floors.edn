@@ -104,7 +104,7 @@
   {:id :pointer-cursor :gate "guest-browser-cursor" :adr "0236"
    :goal "the pointer is drawn every frame at the tablet position (a sprite laid out by Kotoba as ops, over everything), and moves with the pointer in the event loop"
    :why "the desktop takes a pointer it never shows"}
-  {:id :focus-cycle :gate "guest-browser-focus-cycle"
+  {:id :focus-cycle :gate "guest-browser-focus-cycle" :adr "0237"
    :goal "a window-manager shortcut (Alt+Tab, evdev 56 + 15) focuses and raises the next window in stack order, as a :window/focus action through browser-reduce; the key does not reach the body"
    :why "keyboard-only use cannot change the focused window"}
   {:id :scroll :gate "guest-browser-scroll"

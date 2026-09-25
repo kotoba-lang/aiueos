@@ -54,6 +54,14 @@
 ;;                 opens another window) `:one-window-per-app`; the last
 ;;                 window cannot be closed (-8; the oracle leaves none)
 ;;                 `:the-last-window-stays`.
+;;   window/focus (ADR-0237) browser.surface focus-window applied to an id
+;;                 the event names, not to a hit: the window-manager shortcut
+;;                 (Alt+Tab) is decided by browser-ime.kotoba, which answers the
+;;                 id to focus, and C hands that id here. The window is focused
+;;                 and raised exactly as a press raises it; the capture is left
+;;                 as it was (focus-window does not touch browser.input's
+;;                 state). An id not in the stack changes nothing and answers 0
+;;                 -- focus-window's own no-op for an unknown id.
 ;; Not mirrored: text editing, IME. Named leftover `:no-text-edit`.
 ;; A move whose origin would be negative is refused (-6) and changes nothing:
 ;; the u32 surface has no negative coordinate; browser.surface would store it.
@@ -75,6 +83,8 @@
 ;;   kind 3 pointer/move to (a, b) -> the moved or resized window id, or 0
 ;;          uncaptured
 ;;   kind 4 pointer/up -> 0, capture cleared
+;;   kind 5 window/focus of window id a (ADR-0237) -> a, focused and raised;
+;;          0 and nothing changed when a is not in the stack
 ;;   (kind 1 with an app register: a close answers the focused window id
 ;;   after it, a launch the launched app's window id)
 ;;   -1 null region / wrong size   -2 abi or n out of range
@@ -300,6 +310,12 @@
 (defn release [st]
   (do (release-all st) 0))
 
+;; browser.surface focus-window by id (ADR-0237): the same raise as a press,
+;; without touching the capture; an unknown id is a no-op.
+(defn focus-id [st n id]
+  (if (= (has-id st n 0 id) 0) 0
+    (raise st (index-of st n 0 id) n)))
+
 (defn aiueos-browser-reduce [st sb kind a b]
   (if (= st 0) -1
     (if (not (= sb 128)) -1
@@ -315,6 +331,7 @@
                   (if (= kind 1) (press st n (hit st (- n 1) a b) a b)
                     (if (= kind 2) focus
                       (if (= kind 3) (drag st n a b)
-                        (if (= kind 4) (release st) -5))))))))))))))
+                        (if (= kind 4) (release st)
+                          (if (= kind 5) (focus-id st n a) -5)))))))))))))))
 
 (defn main [] 0)

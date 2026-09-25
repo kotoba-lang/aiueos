@@ -56,7 +56,8 @@
 ;;   32 + 32(id-1)  title of window id, up to 32 code points, 0 ends it
 ;;   160 + 64(id-1) body of window id, up to 64 code points, 0 ends it,
 ;;                  10 breaks the line
-;;   416..431       scratch owned by this object (overwritten every call)
+;;   416..430       scratch owned by this object (overwritten every call)
+;;   431            Alt held, browser-ime.kotoba's (ADR-0237); not read here
 ;;   432..479       the input method's state (browser-ime.kotoba); this
 ;;                  object reads 433 romaji length, 434..441 romaji bytes,
 ;;                  445 preedit length, 446..477 preedit code points

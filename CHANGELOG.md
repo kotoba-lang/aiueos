@@ -5,6 +5,25 @@ All notable changes to **aiueos** are documented here. The format follows
 
 ## [Unreleased]
 
+### Guest browser desktop: Alt+Tab focuses and raises the next window (ADR-0237)
+- browser-ime.kotoba holds Alt (evdev 56) in surface word 431 from its press to
+  its release, and answers a Tab (15) press under it with 256 + the id of the
+  window at the bottom of the stack, touching nothing else: the key does not
+  reach the body or the composition. Word 431 is the one frame2's scratch
+  range named but never used (416..430 now).
+- browser-reduce.kotoba takes kind 5, `:window/focus` of the id in a --
+  browser.surface focus-window: focus and raise as a press does, capture and
+  app register untouched, an unknown id a no-op answering 0. C hands it the
+  id browser-key answered, without looking at it.
+- The keyboard ring hands releases too (`aiueos_keyboard_next_key`, code * 4 +
+  value). A new stage after the pointer, `guest-browser-focus-cycle`: open
+  window 2 from the launcher, Alt, Tab x3, Alt up, a lone Tab; stack 132 ->
+  321 -> 213 -> 132, twelve frames, every census from browser-frame-model.cljk.
+- Contracts: browser-reduce-v1 90 vectors (13 new, from browser.surface
+  through browser-reduce-oracle.cljk), browser-ime-v2 71 vectors / 232 steps
+  (16 new, the rule as ADR-0237 writes it). Fuel unchanged (key: trap 600 /
+  pass 640; reduce: pass 128) -- no kotoba-native row or amu pin change.
+
 ### Guest browser desktop: the pointer is drawn (ADR-0236)
 - browser-frame2.kotoba ends the draw list with the pointer when surface word
   2046 (x + 1; 0 = none) is set, 2047 its y: a 12-row arrow, #111111 outline
