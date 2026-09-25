@@ -786,6 +786,36 @@ while time.time() < end:
                 recv_obj()
                 globals()["scroll_sent"] = k + 1
                 log("scroll event " + str(k + 1) + " sent")
+        # Selection (ADR-0240): five wheel notches toward the end at the
+        # pointer (300, 300) -- window 4's offset to 100, line 20 inside it --
+        # then Shift down, Left down / up, Left down / up, Right down / up,
+        # Left down / up, Shift up, Backspace down / up, each after the
+        # guest's frame line for the one before (and its screendump). One key
+        # event per command, as for Alt+Tab.
+        if typing and b"AIUEOS_GUEST_BROWSER_SELECTION_GO" in serial_now and globals().get("selection_sent", 0) < 17:
+            k = globals().get("selection_sent", 0)
+            if k == 0 or (b"AIUEOS_GUEST_BROWSER_SELECTION_FRAME n=%d " % k) in serial_now:
+                if k:
+                    shot = os.path.join(os.path.dirname(path), "guest-browser-selection-%d.ppm" % k)
+                    sock.sendall((json.dumps({"execute": "screendump", "arguments": {"filename": shot}})
+                                  + "\n").encode())
+                    recv_obj()
+                time.sleep(0.5)
+                def notch(b):
+                    return [{"type": "btn", "data": {"down": True, "button": b}},
+                            {"type": "btn", "data": {"down": False, "button": b}}]
+                def key(q, down):
+                    return [{"type": "key", "data": {"down": down, "key": {"type": "qcode", "data": q}}}]
+                ev = ((notch("wheel-down"),) * 5
+                      + (key("shift", True), key("left", True), key("left", False),
+                         key("left", True), key("left", False), key("right", True), key("right", False),
+                         key("left", True), key("left", False), key("shift", False),
+                         key("backspace", True), key("backspace", False)))[k]
+                sock.sendall((json.dumps({"execute": "input-send-event", "arguments": {"events": ev}})
+                              + "\n").encode())
+                recv_obj()
+                globals()["selection_sent"] = k + 1
+                log("selection event " + str(k + 1) + " sent")
         i += 1
         # Guest browser desktop (ADR-0224): the screens a person can look at.
         # The kernel holds each desktop frame for a few seconds in this
@@ -814,6 +844,7 @@ while time.time() < end:
                                  (b"AIUEOS_GUEST_BROWSER_CURSOR_OK", "guest-browser-cursor.ppm"),
                                  (b"AIUEOS_GUEST_BROWSER_FOCUS_OK", "guest-browser-focus.ppm"),
                                  (b"AIUEOS_GUEST_BROWSER_SCROLL_OK", "guest-browser-scroll.ppm"),
+                                 (b"AIUEOS_GUEST_BROWSER_SELECTION_OK", "guest-browser-selection.ppm"),
                                  (b"AIUEOS_GUEST_BROWSER_FLOW_OK", "guest-browser-flow.ppm")):
                 if marker in serial_text and not globals().get(name):
                     globals()[name] = True

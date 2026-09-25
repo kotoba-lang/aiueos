@@ -52,6 +52,28 @@
 ;;              shortcut, so the rule is the kernel's (no oracle). Alt itself
 ;;              and a Tab without Alt reach the IME as before (it ignores both);
 ;;              every other key with Alt held is typed as without it.
+;;   Selection  (ADR-0240) Shift (evdev 42 or 54) is held in word 2035 from its
+;;              press to its release, as Alt is in 431. Shift+Left (105) and
+;;              Shift+Right (106) are browser.text-edit move-caret -1 / +1
+;;              with :extend? on the focused body, whose caret is at its end
+;;              until a selection moves it: the anchor stays at the end, the
+;;              caret moves, so the selection is always the last k code
+;;              points [n - k, n) and the caret sits at n - k. k is word 2037,
+;;              the window it belongs to word 2036 (0 and 0: none); a
+;;              selection of another window reads as none and is replaced by
+;;              the first Shift+Left here (`:one-selection-at-a-time`). k is
+;;              clamped to the body (normalize-selection); at 0 or at n the
+;;              key changes nothing. While something is composed the arrows
+;;              are the composition's and do nothing (`:no-arrows-in-a-
+;;              composition`). Backspace with a selection is delete-backward's
+;;              first branch: insert-text "" over it -- the k code points go
+;;              and the caret is at the end again. A letter with a selection
+;;              first does the same (insert-text replaces the selection; with
+;;              the IME on, the composition starts over the emptied place, as a
+;;              platform IME's compositionstart deletes the selection), then
+;;              goes on as before. Plain Left / Right, Home, End are still not
+;;              taken (`:caret-only-at-the-end` holds outside a selection), and
+;;              Shift does not case a letter (`:shift-does-not-case-letters`).
 ;; THE DICTIONARY is os/aiueos/ime/aiueos-kanji.dic (aiueos-dict/v1, written
 ;; by os/aiueos/scripts/gen-ime-dictionary.cljk from Unicode Unihan; the
 ;; format is described in that script's header), handed in by C from the
@@ -81,6 +103,10 @@
 ;;   478 overflow flag   479 the dictionary's bytes (written on every call,
 ;;   so a read of the dictionary is bounded by it, as frame2 keeps the
 ;;   font's at 423)
+;;   2035 Shift held (ADR-0240; 1 held, else not)   2036 the window id the
+;;   selection belongs to (0 none)   2037 its length, the code points before
+;;   the end of that window's body that are selected -- three of the words
+;;   freed by cutting frame2's op capacity from 260 to 259
 ;;
 ;; ABI: [surface surface-bytes dictionary dictionary-bytes key] where key is
 ;; the evdev key code * 4 + its value (0 release, 1 press, 2 repeat) -- five
@@ -94,7 +120,7 @@
 ;;      record a conversion needs is out of its bounds
 ;;   -8 the romaji buffer is full, or the preedit overflowed
 ;; A release or repeat (value != 1) changes nothing and returns 0, except
-;; Alt's release, which lets go of word 431. A header
+;; Alt's release, which lets go of word 431, and Shift's, of word 2035. A header
 ;; refusal changes nothing; a record refusal on Space comes after the flush,
 ;; so the romaji is in the preedit and nothing is committed or converted.
 
@@ -428,13 +454,63 @@
           (wp s 442 0) (wp s 443 0) (wp s 444 0) 0))
     (do (wp s 433 0) (wp s 445 0) 0)))
 
-(defn delete-backward [s]
-  ;; browser.text-edit delete-backward with the caret at the end of the body
-  ;; (where insert-text leaves it): the last code point goes. Bodies hold
-  ;; code points, so there is no surrogate pair to keep whole.
+;; --- the selection (ADR-0240) --------------------------------------------------
+
+(defn sel-len [s]
+  ;; the focused body's selection, clamped to the body as normalize-selection
+  ;; clamps it; 0 when there is none or it is another window's
+  (if (= (w s 2036) (w s 2))
+    (let [n (body-len s (body-base s) 0)]
+      (if (> (w s 2037) n) n (w s 2037)))
+    0))
+
+(defn set-sel [s k]
+  (if (= k 0) (do (wp s 2036 0) (wp s 2037 0) 0)
+    (do (wp s 2036 (w s 2)) (wp s 2037 k) 0)))
+
+(defn clear-from [s base i n]
+  (if (>= i n) 0
+    (do (wp s (+ base i) 0) (clear-from s base (+ i 1) n))))
+
+(defn drop-selection [s]
+  ;; insert-text "" over [n - k, n): the selected code points go, the caret
+  ;; is at the end of the body again
   (let [base (body-base s)
-        at (body-len s base 0)]
-    (if (> at 0) (do (wp s (+ base (- at 1)) 0) 0) 0)))
+        n (body-len s base 0)]
+    (do (clear-from s base (- n (sel-len s)) n)
+        (set-sel s 0))))
+
+(defn replace-selection [s]
+  (if (> (sel-len s) 0) (drop-selection s) 0))
+
+(defn composing [s]
+  (if (> (w s 433) 0) 1 (if (> (w s 445) 0) 1 (if (= (w s 442) 1) 1 0))))
+
+(defn extend-left [s]
+  ;; move-caret -1 :extend? -- one more code point before the end selected,
+  ;; none past the start of the body
+  (let [k (sel-len s)]
+    (if (< k (body-len s (body-base s) 0)) (set-sel s (+ k 1)) 0)))
+
+(defn extend-right [s]
+  ;; move-caret +1 :extend? -- the caret back toward the anchor at the end
+  (let [k (sel-len s)]
+    (if (> k 0) (set-sel s (- k 1)) 0)))
+
+(defn shift-arrow [s left]
+  (if (= (w s 2035) 0) 0
+    (if (= (composing s) 1) 0
+      (if (= left 1) (extend-left s) (extend-right s)))))
+
+(defn delete-backward [s]
+  ;; browser.text-edit delete-backward. With a selection (ADR-0240) the
+  ;; selection goes. Without one the caret is at the end of the body (where
+  ;; insert-text leaves it): the last code point goes. Bodies hold code
+  ;; points, so there is no surrogate pair to keep whole.
+  (if (> (sel-len s) 0) (drop-selection s)
+    (let [base (body-base s)
+          at (body-len s base 0)]
+      (if (> at 0) (do (wp s (+ base (- at 1)) 0) 0) 0))))
 
 (defn on-backspace [s d]
   (if (= (w s 442) 1) (cancel s d)
@@ -444,16 +520,21 @@
 
 (defn on-letter [s c]
   (if (>= (w s 433) 8) -8
-    (do (wp s (+ 434 (w s 433)) c)
+    (do (replace-selection s)
+        (wp s (+ 434 (w s 433)) c)
         (wp s 433 (+ (w s 433) 1))
         (convert-buf s 0)
         0)))
 
-(defn off-letter [s c]
+(defn put-latin [s c]
   (let [base (body-base s)
         at (body-len s base 0)]
     (if (>= at 64) -5
       (do (wp s (+ base at) c) 1))))
+
+(defn off-letter [s c]
+  (do (replace-selection s)
+      (put-latin s c)))
 
 (defn toggle [s]
   (do (wp s 432 (if (= (w s 432) 0) 1 0))
@@ -462,6 +543,8 @@
 (defn key [s d code]
   (let [c (letter-of code)]
     (if (= code 41) (toggle s)
+    (if (= code 105) (shift-arrow s 1)
+    (if (= code 106) (shift-arrow s 0)
     (if (= (w s 432) 0)
       (if (> c 0) (off-letter s c)
         (if (= code 14) (delete-backward s) 0))
@@ -469,7 +552,7 @@
         (if (= code 57) (on-space s d)
           (if (= code 28) (on-enter s)
             (if (= code 14) (on-backspace s d)
-              (if (= code 1) (cancel s d) 0)))))))))
+              (if (= code 1) (cancel s d) 0)))))))))))
 
 ;; --- admission ----------------------------------------------------------------
 
@@ -482,16 +565,24 @@
   (do (if (= value 1) (wp s 431 1) (if (= value 0) (wp s 431 0) 0))
       0))
 
+(defn hold-shift [s value]
+  (do (if (= value 1) (wp s 2035 1) (if (= value 0) (wp s 2035 0) 0))
+      0))
+
+(defn shift-code [code]
+  (if (= code 42) 1 (if (= code 54) 1 0)))
+
 (defn wm-key [s code]
   (if (= code 15) (if (= (w s 431) 1) 1 0) 0))
 
 (defn press [s d ev]
   (if (= (quot ev 4) 56) (hold-alt s (bit-and ev 3))
+    (if (= (shift-code (quot ev 4)) 1) (hold-shift s (bit-and ev 3))
     (if (not (= (bit-and ev 3) 1)) 0
       (if (= (wm-key s (quot ev 4)) 1) (+ 256 (w s 5))
         (do (wp s 478 0)
             (let [r (key s d (quot ev 4))]
-              (if (= (w s 478) 1) -8 r)))))))
+              (if (= (w s 478) 1) -8 r))))))))
 
 (defn admitted [s d ev]
   ;; after the surface checks: a dictionary that is there must be

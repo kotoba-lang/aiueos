@@ -64,7 +64,16 @@
 ;;   480 + 6j       op j: kind x y a b rgb
 ;;                  kind 1 rect:  a = width, b = height
 ;;                  kind 2 glyph: a = glyph index in the font, b = 8 or 16
-;;                  capacity 260 ops (words 480..2039; 261 until ADR-0238)
+;;                  capacity 259 ops (words 480..2033; 261 until ADR-0238,
+;;                  260 until ADR-0240)
+;;   2034           scratch owned by this object (ADR-0240): the first
+;;                  highlighted body index of the window being laid out, 64
+;;                  for none
+;;   2035           Shift held, browser-ime.kotoba's (ADR-0240); not read here
+;;   2036 2037      the selection, browser-ime.kotoba's (ADR-0240): the window
+;;                  id it belongs to (0 none) and its length k, the last k code
+;;                  points of that window's body
+;;   2038 2039      not assigned
 ;;   2040..2043     the vertical scroll offset of window id 1..4
 ;;                  (browser-reduce.kotoba's, ADR-0238), at most 65535
 ;;   2044 2045      scratch owned by this object (ADR-0238): the body's top
@@ -128,12 +137,25 @@
 ;; only as an op is written, so no coordinate is negative. The title, the close
 ;; control and the launcher do not scroll. With every offset 0 each frame is
 ;; the one before ADR-0238.
+;; SELECTION (ADR-0240): when word 2036 is the focused window's id and its
+;; body has code points, the last k = min(word 2037, the body's length) of them
+;; are selected. Each glyph drawn for a selected code point has, right before
+;; it, a rect of its own width and 16 high at its place in #b5cdf1 -- cssom.
+;; layout's sel-ops highlight, rgba(70,130,220,0.4), over the focused body's
+;; #ffffff, since the blit has no alpha -- so the highlight is behind the glyph,
+;; as the floor asks, where cssom lays its translucent rect over the text. A
+;; collapsed run of white space draws one U+0020 for the code point it is drawn
+;; for: the first of the run on a line kept as collapsed, the last before the
+;; word it precedes on a line packed by words; a 10 draws nothing. A glyph not
+;; drawn (cut by an inset or the viewport) has no highlight. With a selection
+;; there is no caret, as sel-ops draws a caret only for a collapsed selection.
+;; Composition, title and chrome glyphs are never highlighted.
 ;; FONT: the aiueos-font/v1 blob (os/aiueos/scripts/make-font.cljk).
 ;;
 ;; ABI: [surface surface-bytes font font-bytes] -> op count, or
 ;;   -1 null region / surface not 8192 bytes   -2 abi or n outside 1..4
 ;;   -3 focus is not a window id               -4 a rect leaves the viewport
-;;   -5 more than 260 ops                      -6 font refused (magic, version,
+;;   -5 more than 259 ops                      -6 font refused (magic, version,
 ;;                                                count, length, no U+FFFD)
 ;;   -7 a window id outside 1..4               -8 the IME's lengths are past
 ;;                                                its buffers (romaji > 8 or
@@ -166,7 +188,7 @@
 (defn put-op [s kind x y a]
   ;; b and rgb come from the caller through scratch 429 and 422.
   (let [j (sw s 416)]
-    (if (>= j 260)
+    (if (>= j 259)
       (do (sput s 427 1) 0)
       (let [base (+ 480 (* 6 j))]
         (do (sput s base kind)
@@ -327,15 +349,25 @@
         (+ (if (= pws 1) 0 (adv s f 32)) (cwidth s f base (+ i 1) 1))
         (+ (adv s f c) (cwidth s f base (+ i 1) 0))))))
 
-(defn place-body [s f cp]
-  ;; the glyph at the cursor unless it passes the bottom, the top inset
-  ;; (ADR-0238) or the viewport, drawn the offset higher; advance
+(defn highlight [s gw]
+  ;; ADR-0240: the selection behind the glyph about to be written, then the
+  ;; text colour back for it
+  (do (sput s 422 11914737)
+      (put-rect s (sw s 417) (- (sw s 418) (sw s 2045)) gw 16)
+      (sput s 422 1118481)))
+
+(defn place-body [s f cp j]
+  ;; the glyph for body code point j at the cursor unless it passes the
+  ;; bottom, the top inset (ADR-0238) or the viewport, drawn the offset
+  ;; higher, with the highlight behind it when j is selected (ADR-0240);
+  ;; advance
   (let [gi (glyph-of s f cp)
         gw (glyph-width s f gi)]
     (do (if (> (+ (sw s 418) 16) (sw s 421)) 0
           (if (< (sw s 418) (sw s 2044)) 0
             (if (> (+ (sw s 417) gw) (sw s 3)) 0
-              (put-glyph s (sw s 417) (- (sw s 418) (sw s 2045)) gi gw))))
+              (do (if (>= j (sw s 2034)) (highlight s gw) 0)
+                  (put-glyph s (sw s 417) (- (sw s 418) (sw s 2045)) gi gw)))))
         (sput s 417 (+ (sw s 417) gw))
         0)))
 
@@ -343,9 +375,9 @@
   (let [c (at s base i)]
     (if (= c 0) 0
       (if (= (ws c) 1)
-        (do (if (= pws 1) 0 (place-body s f 32))
+        (do (if (= pws 1) 0 (place-body s f 32 i))
             (verbatim s f base (+ i 1) 1))
-        (do (place-body s f c)
+        (do (place-body s f c i)
             (verbatim s f base (+ i 1) 0))))))
 
 (defn word-end [s base i]
@@ -357,7 +389,7 @@
 
 (defn emit-run [s f base i e]
   (if (>= i e) 0
-    (do (place-body s f (at s base i))
+    (do (place-body s f (at s base i) i)
         (emit-run s f base (+ i 1) e))))
 
 (defn put-word [s f base i e]
@@ -366,7 +398,7 @@
   (do (if (= (sw s 417) (sw s 419)) 0
         (if (<= (+ (- (sw s 417) (sw s 419)) (+ (adv s f 32) (word-width s f base i e)))
                 (- (sw s 430) 28))
-          (place-body s f 32)
+          (place-body s f 32 (- i 1))
           (newline s)))
       (emit-run s f base i e)))
 
@@ -396,6 +428,18 @@
       (if (= (fits s f base) 1)
         (verbatim s f base 0 0)
         (pack s f base 0)))))
+
+(defn blen [s base i]
+  (if (>= i 64) 64
+    (if (= (sw s (+ base i)) 0) i (blen s base (+ i 1)))))
+
+(defn sel-start [s id base]
+  ;; ADR-0240: the first selected index of window id's body, 64 for none
+  (if (= (sw s 2036) id)
+    (let [n (blen s base 0)
+          k (if (> (sw s 2037) n) n (sw s 2037))]
+      (if (= k 0) 64 (- n k)))
+    64))
 
 (defn body-block [s f base x y]
   ;; Right limit, bottom, limit and window width are already in scratch.
@@ -497,11 +541,14 @@
         (sput s 420 (if (< (+ x w) 14) 0 (- (+ x w) 14)))
         (sput s 421 (+ (- (+ y h) 8) (sw s 2045)))
         (sput s 426 1) (sput s 428 64) (sput s 430 w)
+        ;; ADR-0240: only the focused window's selection is drawn
+        (sput s 2034 (if (= focused 1) (sel-start s id (+ 160 (* 64 (- id 1)))) 64))
         (body-block s f (+ 160 (* 64 (- id 1))) (+ x 14) (+ y 42))
-        ;; the composition, only in the focused window, after its body
+        ;; the composition, only in the focused window, after its body; the
+        ;; caret only while nothing is selected (ADR-0240)
         (if (= focused 1)
           (do (lay-comp s f 0 (+ (sw s 445) (sw s 433)))
-              (caret s))
+              (if (= (sw s 2034) 64) (caret s) 0))
           0))))
 
 (defn emit [s f k]

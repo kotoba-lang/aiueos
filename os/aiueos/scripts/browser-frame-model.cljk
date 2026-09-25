@@ -106,20 +106,28 @@
 
 (defn- width-of [cps] (reduce + (map (comp second glyph) cps)))
 
-(defn- words [cps] (remove #(white-space (first %)) (partition-by #(boolean (white-space %)) cps)))
+;; ADR-0240: the layout below carries each code point with its index in the
+;; body, [cp i], so the selection can be found on the line it went to. A
+;; collapsed run's one U+0020 carries the index it stands for: the first of
+;; the run on a line kept as collapsed, the last before the word it precedes
+;; on a line packed by words.
+(defn- ws? [[c]] (white-space c))
+
+(defn- words [cps] (remove #(ws? (first %)) (partition-by #(boolean (ws? %)) cps)))
 
 (defn- pack
-  "Lines (vectors of code points) of one run packed by words into `wmax`: the
+  "Lines (vectors of [cp i]) of one run packed by words into `wmax`: the
   first word of a line goes whatever its width, a next word joins with one
   space when the line still fits, else it opens the next line."
   [wmax cps]
   (reduce (fn [lines word]
-            (let [line (peek lines)]
+            (let [line (peek lines)
+                  sp [32 (dec (second (first word)))]]
               (cond
                 (nil? line) [(vec word)]
                 (empty? line) (conj (pop lines) (vec word))
-                (<= (+ (width-of line) (width-of [32]) (width-of word)) wmax)
-                (conj (pop lines) (into (conj line 32) word))
+                (<= (+ (width-of (map first line)) (width-of [32]) (width-of (map first word))) wmax)
+                (conj (pop lines) (into (conj line sp) word))
                 :else (conj lines (vec word)))))
           [[]] (words cps)))
 
@@ -127,38 +135,54 @@
   "The body split at each 10, empty segments kept: `x 10 10 y` is x, (), y."
   [body]
   (loop [cps body cur [] out []]
-    (if-let [c (first cps)]
-      (if (= c 10) (recur (rest cps) [] (conj out cur)) (recur (rest cps) (conj cur c) out))
+    (if-let [[c :as p] (first cps)]
+      (if (= c 10) (recur (rest cps) [] (conj out cur)) (recur (rest cps) (conj cur p) out))
       (conj out cur))))
 
-(defn body-lines
+(defn body-lines-indexed
   "ADR-0234: the body's lines as browser.surface + cssom lay out the window's
-  document -- the body text, each 10 a <br> -- at line width `wmax`."
+  document -- the body text, each 10 a <br> -- at line width `wmax`; each
+  element [cp i] (ADR-0240)."
   [wmax body]
-  (let [body (vec (take-while pos? body))]
-    (if (some #{10} body)
+  (let [body (vec (map-indexed (fn [i c] [c i]) (take-while pos? body)))]
+    (if (some #(= 10 (first %)) body)
       (vec (mapcat #(pack wmax %) (segments body)))
-      (let [collapsed (vec (mapcat #(if (white-space (first %)) [32] %)
-                                   (partition-by #(boolean (white-space %)) body)))]
+      (let [collapsed (vec (mapcat #(if (ws? (first %)) [[32 (second (first %))]] %)
+                                   (partition-by #(boolean (ws? %)) body)))]
         (cond
           (empty? (words body)) []
-          (<= (width-of collapsed) (max 0 wmax)) [collapsed]
+          (<= (width-of (map first collapsed)) (max 0 wmax)) [collapsed]
           :else (pack wmax body))))))
 
+(defn body-lines
+  "The lines as code points alone."
+  [wmax body]
+  (mapv #(mapv first %) (body-lines-indexed wmax body)))
+
+(def ^:private highlight
+  ;; ADR-0240: cssom sel-ops' rgba(70,130,220,0.4) over the focused body's
+  ;; #ffffff, rounded per channel: 0.4 * c + 0.6 * 255
+  (let [mix (fn [c] (js/Math.round (+ (* 0.4 c) (* 0.6 255))))]
+    (+ (* 65536 (mix 70)) (* 256 (mix 130)) (mix 220))))
+
 (defn- lay-body
-  "The body's lines from (left, top), 20 apart: {:ops :x :y} with the pen after
-  the last glyph. A glyph whose foot passes `bottom` or whose right edge passes
-  `vw` is not drawn, nor (ADR-0238) one whose top is above `ceiling`; the pen
-  moves anyway."
-  [{:keys [left top bottom ceiling vw]} lines]
+  "The body's lines ([cp i] each) from (left, top), 20 apart: {:ops :x :y}
+  with the pen after the last glyph. A glyph whose foot passes `bottom` or
+  whose right edge passes `vw` is not drawn, nor (ADR-0238) one whose top is
+  above `ceiling`; the pen moves anyway. A drawn glyph whose index is at or
+  past `sel` has a highlight rect of its size right before it (ADR-0240)."
+  [{:keys [left top bottom ceiling vw sel]} lines]
   (reduce (fn [{:keys [ops]} [i line]]
             (let [y (+ top (* 20 i))]
               (loop [cps line x left ops ops]
-                (if-let [cp (first cps)]
+                (if-let [[cp j] (first cps)]
                   (let [[gi gw] (glyph cp)]
                     (recur (rest cps) (+ x gw)
                            (if (and (<= (+ y 16) bottom) (>= y ceiling) (<= (+ x gw) vw))
-                             (conj ops [:glyph x y gi gw]) ops)))
+                             (cond-> ops
+                               (and sel (>= j sel)) (conj [:rect x y gw 16 highlight])
+                               true (conj [:glyph x y gi gw]))
+                             ops)))
                   {:ops ops :x x :y y}))))
           {:ops [] :x left :y top}
           (map-indexed vector lines)))
@@ -197,9 +221,9 @@
 
 (defn frame
   "Ops for a scene: {:vw :vh :focus :stack [{:id :x :y :w :h :title :body}]
-  :composition [cp ...] :apps register :titles {k [cp ...]} :pointer [x y]}
-  (stack bottom first)."
-  [{:keys [vw vh focus stack composition apps] :as scene}]
+  :composition [cp ...] :apps register :titles {k [cp ...]} :pointer [x y]
+  :selection [id k]} (stack bottom first)."
+  [{:keys [vw vh focus stack composition apps selection] :as scene}]
   (into (into (into [[:rect 0 0 vw vh 0xf5f6f8]] (launcher scene))
         (mapcat
          (fn [{:keys [id x y w h title body scroll]}]
@@ -221,9 +245,14 @@
                  ;; ADR-0234: the body flows as cssom lays out the window's
                  ;; document: text 14 in from the body box (x, y + 28), lines
                  ;; w - 28 wide.
+                 ;; ADR-0240: the focused window's selection, when it is
+                 ;; this window's: the last min(k, n) code points
+                 n (count (take-while pos? (take 64 body)))
+                 k (if (and f? (= (first selection) id)) (min (second selection) n) 0)
+                 sel (when (pos? k) (- n k))
                  b (lay-body {:left (+ x 14) :top (- (+ y 42) sc) :bottom (- (+ y h) 8)
-                              :ceiling (+ y 36) :vw vw}
-                             (body-lines (- w 28) (take 64 body)))
+                              :ceiling (+ y 36) :vw vw :sel sel}
+                             (body-lines-indexed (- w 28) (take 64 body)))
                  c (when (and f? (seq composition))
                      (lay-line {:x (:x b) :y (:y b) :left (+ x 14) :right (- (+ x w) 14)
                                 :bottom (- (+ y h) 8) :ceiling (+ y 36) :wrap? true :underline? true}
@@ -233,7 +262,9 @@
                  ;; the next glyph would go (after the composition, if any);
                  ;; not drawn when its foot passes the bottom inset.
                  [cx cy] (if c [(:x c) (:y c)] [(:x b) (:y b)])
-                 caret (when (and f? (<= (+ cy 16) (- (+ y h) 8)) (>= cy (+ y 36)) (<= (+ cx 1) vw))
+                 ;; ADR-0240: no caret while something is selected (sel-ops
+                 ;; draws one only for a collapsed selection)
+                 caret (when (and f? (nil? sel) (<= (+ cy 16) (- (+ y h) 8)) (>= cy (+ y 36)) (<= (+ cx 1) vw))
                          [[:rect cx cy 1 16 ink]])]
              (concat [[:rect x y w h (if f? 0xffffff 0xeef1f5)]
                       [:rect x y w 28 (if f? 0xd8e7ff 0xdde2ea)]]
@@ -243,16 +274,22 @@
 
 ;; --- paint and census -----------------------------------------------------------
 
-(defn census [ops]
+(defn census
+  "The census of `colour` (default #111111) after painting `ops`: how many
+  pixels end that colour, and FNV-1a over their positions. A glyph's bits are
+  #111111 (ADR-0240 generalised this from the ink alone)."
+  ([ops] (census ink ops))
+  ([colour ops]
   (let [ink-px (reduce
                 (fn [px [k x y a b c]]
                   (case k
-                    :rect (if (= c ink)
+                    :rect (if (= c colour)
                             (into px (for [yy (range y (+ y b)) xx (range x (+ x a))] (+ (* yy 65536) xx)))
                             (into #{} (remove (fn [p] (let [py (quot p 65536) pxx (mod p 65536)]
                                                         (and (<= x pxx) (< pxx (+ x a)) (<= y py) (< py (+ y b)))))
                                               px)))
-                    :glyph (into px (for [[dx dy] (bits a) :when (< dx b)] (+ (* (+ y dy) 65536) (+ x dx))))))
+                    :glyph (let [g (for [[dx dy] (bits a) :when (< dx b)] (+ (* (+ y dy) 65536) (+ x dx)))]
+                             (if (= colour ink) (into px g) (reduce disj px g)))))
                 #{} ops)
         h (reduce (fn [h p]
                     (reduce (fn [h b]
@@ -261,7 +298,7 @@
                             h (range 4)))
                   2166136261 (sort ink-px))]
     {:ops (count ops) :text-px (count ink-px)
-     :hash (.padStart (.toString (unsigned-bit-shift-right h 0) 16) 8 "0")}))
+     :hash (.padStart (.toString (unsigned-bit-shift-right h 0) 16) 8 "0")})))
 
 ;; --- the kernel's scenes (os/aiueos/kernel/main.c, ADR-0224 .. 0227) ---------------
 
@@ -430,6 +467,32 @@
           scroll-offsets
           (concat (repeat 3 [360 14]) (repeat 14 [300 300])))))
 
+;; ADR-0240: the selection. After the wheel (window 4 on top and focused, its
+;; offset 0, the pointer at (300, 300)) the host sends five notches toward the
+;; end (offset 20 .. 100: line 20 and the caret inside the window), then Shift
+;; down, Left down / up twice (browser.text-edit move-caret -1 :extend?: "0",
+;; then "20" -- the last k code points of the body selected, highlighted behind
+;; their glyphs, no caret), Right down / up (move-caret +1 :extend?: "0"
+;; again), Left down / up ("20"), Shift up, and Backspace down / up:
+;; delete-backward removes the selection, the body ends with the 10 after 19,
+;; and the caret stands at the start of the empty line 20. A frame after each
+;; of the seventeen.
+(def selection-keys
+  ;; [event offset k body-drop]: body-drop code points gone from the end
+  [["wheel" 20 0 0] ["wheel" 40 0 0] ["wheel" 60 0 0] ["wheel" 80 0 0] ["wheel" 100 0 0]
+   ["shift" 100 0 0] ["left" 100 1 0] ["left-up" 100 1 0] ["left" 100 2 0] ["left-up" 100 2 0]
+   ["right" 100 1 0] ["right-up" 100 1 0] ["left" 100 2 0] ["left-up" 100 2 0]
+   ["shift-up" 100 2 0] ["backspace" 100 0 2] ["backspace-up" 100 0 2]])
+
+(def selection-frames
+  (let [shell4 (assoc shell :apps 15 :titles (assoc (:titles shell) 4 (:title w4)))]
+    (mapv (fn [[ev sc k drop]]
+            [ev (assoc shell4 :focus 4
+                       :stack [w1k w3y w2l (assoc w4 :scroll sc :body (vec (drop-last drop (:body w4))))]
+                       :pointer [300 300]
+                       :selection (if (pos? k) [4 k] [0 0]))])
+          selection-keys)))
+
 ;; ADR-0234: the flow-parity frame. After everything above, the kernel lays
 ;; out this surface on a surface of its own (no tablet needed): four windows
 ;; whose bodies take each of cssom's rules -- packing by words with space runs,
@@ -548,6 +611,7 @@
                                             (map #(w (+ 434 %)) (range (w 433))))
                          :apps (w 31)
                          :pointer (when (pos? (w 2046)) [(dec (w 2046)) (w 2047)])
+                         :selection [(w 2036) (w 2037)]
                          :titles (into {} (map (fn [k] [k (run (+ 32 (* 32 (dec k))) 32)]) [1 2 3 4]))}
                   ops (frame scene)]]
       (println (subs (str name) 1) (count ops) (apply str (map op-hex ops)))))
@@ -630,6 +694,21 @@
                              scroll-frames))]
     (println (str "scroll frames=" (count cs) " ops=" (apply str (interpose "," (map :ops cs)))
                   " chain=" (chain (map #(js/parseInt (:hash %) 16) cs))
+                  " last-px=" (:text-px (peek cs)) " last-hash=" (:hash (peek cs)))))
+  (let [cs (vec (map-indexed (fn [i [ev scene]]
+                               (let [ops (frame scene)
+                                     c (census ops)
+                                     h (census highlight ops)]
+                                 (println (str "selection-frame n=" (inc i) " " ev
+                                               " scroll=" (:scroll (peek (:stack scene)))
+                                               " sel=" (second (:selection scene))
+                                               " ops=" (:ops c) " text-px=" (:text-px c) " hash=" (:hash c)
+                                               " sel-px=" (:text-px h) " sel-hash=" (:hash h)))
+                                 (assoc c :sel h)))
+                             selection-frames))]
+    (println (str "selection frames=" (count cs) " ops=" (apply str (interpose "," (map :ops cs)))
+                  " chain=" (chain (map #(js/parseInt (:hash %) 16) cs))
+                  " sel-chain=" (chain (map #(js/parseInt (:hash (:sel %)) 16) cs))
                   " last-px=" (:text-px (peek cs)) " last-hash=" (:hash (peek cs)))))
   (let [ops (frame flow-scene)
         c (census ops)]

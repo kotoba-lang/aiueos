@@ -5,6 +5,26 @@ All notable changes to **aiueos** are documented here. The format follows
 
 ## [Unreleased]
 
+### Guest browser desktop: Shift+Left / Shift+Right select, Backspace deletes the selection (ADR-0240)
+- browser-ime.kotoba holds Shift (evdev 42 / 54) in surface word 2035 and takes
+  Shift+Left / Shift+Right as browser.text-edit `move-caret` with `:extend?` on
+  the focused body: the selection is the last k code points (word 2036 the
+  window id, 2037 k), clamped to the body. Backspace deletes a selection
+  (`delete-backward`), and a letter replaces it (`insert-text`; with the IME on
+  the composition starts over the emptied place). The arrows do nothing while
+  something is composed; plain arrows are still not taken.
+- browser-frame2.kotoba draws a #b5cdf1 rect (cssom sel-ops'
+  rgba(70,130,220,0.4) over #ffffff) behind each selected glyph of the focused
+  body and no caret while something is selected. The op capacity is 259
+  (words 480..2033); 2034 is its scratch.
+- main.c's new stage after the wheel: five notches (offset 100), Shift, Left,
+  Left, Right, Left, Shift up, Backspace; each frame's #111111 and #b5cdf1
+  census against browser-frame-model.cljk.
+- Gate `guest-browser-selection` (tablet profile, 2700 s):
+  `AIUEOS_GUEST_BROWSER_SELECTION_OK events=17 answers=44444000000000000 max-sel=2 body=48 focus=4 scroll=100 chain=2b46197d sel-chain=cb830579 ops=168 text-px=1058 hash=6ca5ee4a`.
+  browser-ime-v2 94 vectors (23 new, from browser.text-edit via
+  browser-selection-oracle.cljk), browser-frame2-v1 74 (11 new).
+
 ### Guest browser desktop: the wheel scrolls the window under the pointer (ADR-0238)
 - browser-reduce.kotoba takes a wheel notch at the pointer as kind 6 (toward
   the end, +20 px) or 7 (toward the start, -20): the window under it --
