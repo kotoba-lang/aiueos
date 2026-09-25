@@ -5,6 +5,14 @@ All notable changes to **aiueos** are documented here. The format follows
 
 ## [Unreleased]
 
+### sync-kernel-object-digests reads build-multiboot.sh too
+- The re-attest above left two literals stale in `build-multiboot.sh`
+  (`acpi-checksum-ok.o`, `acpi-table-valid.o`); `--check` read only
+  `build-uefi.sh` and reported OK, and the Multiboot boot failed closed in CI.
+  The gate now scans every script that pins a digest (111 slots in 2 scripts)
+  and names the script on each STALE line; both literals are synced and
+  `smoke-qemu-multiboot.sh` passes.
+
 ### Kernel objects re-attested with one amu
 - `reproduce-kotoba-objects.cljk --attest` with amu `53799cb` compiled all 115
   committed Kotoba objects and rewrote the 68 whose bytes changed; 46 were

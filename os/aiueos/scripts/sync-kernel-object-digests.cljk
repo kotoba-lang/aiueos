@@ -1,5 +1,5 @@
 #!/usr/bin/env kbb
-;; `build-uefi.sh` pins a sha256 for every Kotoba kernel object it links, and
+;; `build-uefi.sh` and `build-multiboot.sh` pin a sha256 for every Kotoba kernel object they link, and
 ;; `os/aiueos/kotoba/provenance.edn` records one too. Two copies of a pin are a
 ;; pin that can disagree with itself.
 ;;
@@ -32,7 +32,13 @@
 (defn- opt [f] (let [i (.indexOf args f)] (when-not (neg? i) (nth args (inc i) nil))))
 
 (def ^:private root (path/resolve (or (opt "--root") (.cwd js/process))))
-(def ^:private script (path/join root "os" "aiueos" "scripts" "build-uefi.sh"))
+;; Every shell that pins a digest. build-multiboot.sh was not here until
+;; 2026-09-25: re-attesting the objects with one amu left its six literals
+;; stale, --check reported OK over build-uefi.sh alone, and the Multiboot boot
+;; failed closed in CI ("fixture digest does not match the pinned compiler
+;; output"). A copy this gate does not read is a copy it cannot call stale.
+(def ^:private scripts
+  (mapv #(path/join root "os" "aiueos" "scripts" %) ["build-uefi.sh" "build-multiboot.sh"]))
 (def ^:private manifest (path/join root "os" "aiueos" "kotoba" "provenance.edn"))
 
 (defn- die! [code msg] (.error js/console msg) (.exit js/process code))
@@ -41,7 +47,7 @@
   "shell variable -> object basename, from the `<var>=${ENV:-\"$aiueos/kotoba/
   <name>.o\"}` defaults at the top of the script."
   [text]
-  (into {} (for [[_ v n] (re-seq #"(?m)^(kotoba_[a-z0-9_]+)=\$\{AIUEOS_[A-Z0-9_]+:-\"\$aiueos/kotoba/([a-z0-9-]+\.o)\"\}"
+  (into {} (for [[_ v n] (re-seq #"(?m)^([a-z_][a-z0-9_]*)=\$\{AIUEOS_[A-Z0-9_]+:-\"\$aiueos/kotoba/([a-z0-9-]+\.o)\"\}"
                                  text)]
              [v n])))
 
@@ -58,17 +64,18 @@
     {:object (get vars objvar) :objvar objvar :slot slot
      :empty? empty? :literal? (boolean literal?) :whole whole}))
 
-(defn -main []
+(defn- scan
+  "One script's digest slots, or a die! naming the script. Returns
+  {:script :text :slots :stale}."
+  [script want]
   (when-not (.existsSync fs script) (die! 2 (str "COULD-NOT-RUN reason=script-absent path=" script)))
-  (when-not (.existsSync fs manifest) (die! 2 (str "COULD-NOT-RUN reason=manifest-absent path=" manifest)))
   (let [text (.readFileSync fs script "utf8")
-        want (into {} (for [[o r] (:objects (edn/read-string (.readFileSync fs manifest "utf8")))]
-                        [o (:object-sha256 r)]))
+        where (str " script=" (path/basename script))
         vars (object-vars text)
         calls (vec (invocations text vars))
         unresolved (filterv #(nil? (:object %)) calls)]
     (when (empty? calls)
-      (die! 2 "COULD-NOT-RUN reason=no-verify-invocations (the call shape changed)"))
+      (die! 2 (str "COULD-NOT-RUN reason=no-verify-invocations (the call shape changed)" where)))
     ;; EVIDENCE FLOOR. This parse is a regular expression over shell, and its
     ;; failure mode is not "no match" but "fewer matches than there are calls"
     ;; -- which reports a clean sync over a set it quietly narrowed. Measured
@@ -81,10 +88,10 @@
       (when (not= n (count calls))
         (die! 2 (str "COULD-NOT-RUN reason=invocation-parse-incomplete calls=" n
                      " parsed=" (count calls)
-                     " (refusing to report a sync over a subset)"))))
+                     " (refusing to report a sync over a subset)" where))))
     (when (seq unresolved)
       (die! 2 (str "COULD-NOT-RUN reason=object-variable-unresolved n=" (count unresolved)
-                   " first=" (:objvar (first unresolved)))))
+                   " first=" (:objvar (first unresolved)) where)))
     ;; A slot that is a shell variable is resolved to its assignment, so the
     ;; three conditionally-pinned objects (kernel-probe, journal-plan, fnv1a)
     ;; are compared and rewritten like the rest instead of being skipped.
@@ -96,49 +103,68 @@
                                                        text)))]]
                   (assoc c :current current :expected (get want (:object c))))
           unknown (filterv #(nil? (:expected %)) slots)
-          unreadable (filterv #(nil? (:current %)) slots)
-          stale (filterv #(not= (:current %) (:expected %)) slots)]
+          unreadable (filterv #(nil? (:current %)) slots)]
       (when (seq unknown)
         (die! 2 (str "COULD-NOT-RUN reason=object-not-in-manifest n=" (count unknown)
-                     " first=" (:object (first unknown)))))
+                     " first=" (:object (first unknown)) where)))
       (when (seq unreadable)
         (die! 2 (str "COULD-NOT-RUN reason=digest-slot-unreadable n=" (count unreadable)
-                     " first=" (:objvar (first unreadable)))))
-      (doseq [s stale]
-        (println (str (if (:empty? s) "UNPINNED\t" "STALE\t")
-                      (:object s)
-                      (if (:empty? s)
-                        "\tshell=<empty>"
-                        (str "\tshell=" (subs (:current s) 0 12)))
-                      "\tmanifest=" (subs (:expected s) 0 12))))
-      (println (str "SCANNED\t" (count slots)))
-      (cond
-        (flag? "--write")
-        (let [out (reduce (fn [t s]
-                            (cond
-                              (= (:current s) (:expected s)) t
-                              ;; An empty slot is the two-character string `""`.
-                              ;; Replacing that globally would rewrite every
-                              ;; empty argument in the file, so rewrite the one
-                              ;; call that owns it.
-                              (:empty? s)
-                              (str/replace t (:whole s)
-                                           (str/replace (:whole s) "\"\"" (:expected s)))
-                              :else (str/replace t (:current s) (:expected s))))
-                          text stale)]
-          (.writeFileSync fs script out "utf8")
-          (println (str "SYNCED\tobjects=" (count slots) " rewritten=" (count stale)))
+                     " first=" (:objvar (first unreadable)) where)))
+      {:script script :text text :slots (vec slots)
+       :stale (filterv #(not= (:current %) (:expected %)) slots)})))
+
+(defn- rewrite
+  "The script text with every stale slot replaced by the manifest digest."
+  [{:keys [text stale]}]
+  (reduce (fn [t s]
+            (cond
+              (= (:current s) (:expected s)) t
+              ;; An empty slot is the two-character string `""`.
+              ;; Replacing that globally would rewrite every
+              ;; empty argument in the file, so rewrite the one
+              ;; call that owns it.
+              (:empty? s)
+              (str/replace t (:whole s)
+                           (str/replace (:whole s) "\"\"" (:expected s)))
+              :else (str/replace t (:current s) (:expected s))))
+          text stale))
+
+(defn -main []
+  (when-not (.existsSync fs manifest) (die! 2 (str "COULD-NOT-RUN reason=manifest-absent path=" manifest)))
+  (let [want (into {} (for [[o r] (:objects (edn/read-string (.readFileSync fs manifest "utf8")))]
+                        [o (:object-sha256 r)]))
+        scans (mapv #(scan % want) scripts)
+        slots (mapcat :slots scans)
+        stale (vec (mapcat :stale scans))]
+    (doseq [{:keys [script stale]} scans, s stale]
+      (println (str (if (:empty? s) "UNPINNED\t" "STALE\t")
+                    (:object s)
+                    (if (:empty? s)
+                      "\tshell=<empty>"
+                      (str "\tshell=" (subs (:current s) 0 12)))
+                    "\tmanifest=" (subs (:expected s) 0 12)
+                    "\tscript=" (path/basename script))))
+    (doseq [{:keys [script slots]} scans]
+      (println (str "SCANNED\t" (count slots) "\t" (path/basename script))))
+    (println (str "SCANNED\t" (count slots)))
+    (cond
+      (flag? "--write")
+      (do (doseq [sc scans :when (seq (:stale sc))]
+            (.writeFileSync fs (:script sc) (rewrite sc) "utf8"))
+          (println (str "SYNCED\tobjects=" (count slots) " rewritten=" (count stale)
+                        " scripts=" (count scans)))
           (.exit js/process 0))
 
-        (seq stale)
-        (do (println (str "AIUEOS_KERNEL_OBJECT_DIGESTS_STALE scanned=" (count slots)
-                          " stale=" (count (remove :empty? stale))
-                          " unpinned=" (count (filter :empty? stale))))
-            (.exit js/process 3))
+      (seq stale)
+      (do (println (str "AIUEOS_KERNEL_OBJECT_DIGESTS_STALE scanned=" (count slots)
+                        " stale=" (count (remove :empty? stale))
+                        " unpinned=" (count (filter :empty? stale))
+                        " scripts=" (count scans)))
+          (.exit js/process 3))
 
-        :else
-        (do (println (str "AIUEOS_KERNEL_OBJECT_DIGESTS_OK scanned=" (count slots)
-                          " stale=0 unpinned=0"))
-            (.exit js/process 0))))))
+      :else
+      (do (println (str "AIUEOS_KERNEL_OBJECT_DIGESTS_OK scanned=" (count slots)
+                        " stale=0 unpinned=0 scripts=" (count scans)))
+          (.exit js/process 0)))))
 
 (-main)
