@@ -21,7 +21,8 @@
 ;; unattended mode the INTENT is the owner's confirmation; every device-level
 ;; guard (whole/internal/empty/system-disk/identity) still runs below.
 
-(require '[kotoba.lang.text :as str])
+(require '[kotoba.lang.text :as str]
+         '[aiueos.installer.guided :as g])
 
 (def fs (js/require "node:fs"))
 (def cp (js/require "node:child_process"))
@@ -46,7 +47,13 @@
 ;; week.
 (def intent-file "install-intent.json")
 
-(when-not (.existsSync fs intent-file)
+;; Whether the intent is being authored HERE, by a person at this console. Only
+;; then may the installer ask anything further (ADR-0239): a stick that carries
+;; its intent must not ask, or the unattended product stops at a prompt nobody
+;; is standing at (ADR-0209/0210).
+(def asked-here? (not (.existsSync fs intent-file)))
+
+(when asked-here?
   (println "AIUEOS_LIVE_NO_INTENT this stick asks; starting the guided installer")
   (let [r (.spawnSync cp "nbb"
                       #js ["guided-install.cljk"
@@ -131,14 +138,111 @@
                    ["--serial" (str/trim (:serial target))]))
 
 (def unattended? (= "unattended" (:mode intent)))
-(def args (concat base-args serial-args
-                  (when unattended?
-                    ["--install" "--confirm-device" device
-                     "--destructive-phrase" (str "ERASE " device " FOR AIUEOS")])))
 
-(when-not unattended?
-  (println "AIUEOS_LIVE_INTERACTIVE dry-run only; no destructive action without an operator"))
+(defn- spawn-inherit [args]
+  (let [r (.spawnSync cp "nbb" (to-array args) #js {:stdio "inherit" :shell false})]
+    (or (.-status r) 3)))
 
-(let [r (.spawnSync cp "nbb" (to-array args)
-                    #js {:stdio "inherit" :shell false})]
-  (.exit js/process (or (.-status r) 3)))
+;; ---------------------------------------------------------------- unattended
+;; The owner's confirmation is the intent itself (install-v1.edn decision 2).
+
+(when unattended?
+  (.exit js/process
+         (spawn-inherit (concat base-args serial-args
+                                ["--install" "--confirm-device" device
+                                 "--destructive-phrase" (str "ERASE " device " FOR AIUEOS")]))))
+
+;; ---------------------------------------------------------------- interactive
+;; An interactive intent carried on the stick has nobody to confirm it here:
+;; it stays a dry run, as it always was.
+
+(when-not asked-here?
+  (println "AIUEOS_LIVE_INTERACTIVE dry-run only; no destructive action without an operator")
+  (.exit js/process (spawn-inherit (concat base-args serial-args))))
+
+;; A person answered the guided screens at this console (ADR-0239). Until
+;; 2026-09-25 this path, too, ended at the dry run and powered off: the stick
+;; that asks could not install. What makes it an install now is the same
+;; destructive guard the unattended path uses -- install.mjs refuses unless the
+;; device and the phrase `ERASE <device> FOR AIUEOS` match exactly -- with the
+;; phrase TYPED by that person instead of derived from the intent.
+
+(defn- sleep-ms! [ms]
+  (let [sab (js/SharedArrayBuffer. 4)]
+    (js/Atomics.wait (js/Int32Array. sab) 0 0 ms)))
+
+(defn- read-line!
+  "One line from fd 0, or nil at end of input (guided-install.cljk's reader:
+  a piped script and a terminal take the same path)."
+  []
+  (let [buf (js/Buffer.alloc 1)
+        acc (atom "")
+        got (atom false)]
+    (loop []
+      (let [n (try (.readSync fs 0 buf 0 1 nil)
+                   (catch :default e
+                     (case (.-code e)
+                       "EAGAIN" :again
+                       ("EOF" "ENXIO") 0
+                       (throw e))))]
+        (cond
+          (= :again n) (do (sleep-ms! 20) (recur))
+          (or (nil? n) (zero? n)) (when @got @acc)
+          :else (let [c (.toString buf "utf8" 0 1)]
+                  (reset! got true)
+                  (cond
+                    (= c "\n") @acc
+                    (= c "\r") (recur)
+                    :else (do (swap! acc str c) (recur)))))))))
+
+(defn- ask [prompt]
+  (.write js/process.stdout (str prompt ": "))
+  (or (some-> (read-line!) str/trim)
+      (do (println)
+          (println "AIUEOS_LIVE_UNANSWERED stdin ended; nothing was written")
+          (.exit js/process 3))))
+
+;; 1. the dry run: every admission the unattended path passes, nothing written
+(let [status (spawn-inherit (concat base-args serial-args))]
+  (when-not (zero? status)
+    (.exit js/process status)))
+
+;; 2. optional: link this machine to a kotoba.cloud account (ADR-0113 flow).
+;;    Declining or failing leaves an install without an account, said so.
+(def account-record "account-record.json")
+(def account-linked?
+  (let [model (g/account-model (get-in intent [:machineProfile :model]))]
+    (println)
+    (println "   Link this machine to a kotoba.cloud account now? A QR is shown;")
+    (println "   a phone approves with its Passkey. This can also be done later.")
+    (cond
+      (not (contains? #{"y" "yes"} (str/lower (ask "Link account? y/N"))))
+      (do (println "AIUEOS_LIVE_ACCOUNT not-linked reason=declined") false)
+
+      (nil? model)
+      (do (println "AIUEOS_LIVE_ACCOUNT not-linked reason=no-machine-model"
+                   "(the identity screen's model is what the flow binds)")
+          false)
+
+      :else
+      (let [status (spawn-inherit ["account-sync.cljk" "--model" model
+                                   "--out" account-record])]
+        (if (and (zero? status) (.existsSync fs account-record))
+          (do (println "AIUEOS_LIVE_ACCOUNT linked") true)
+          (do (println "AIUEOS_LIVE_ACCOUNT not-linked" (str "status=" status)) false))))))
+
+;; 3. the erase, confirmed by the person who is here
+(println)
+(println "   The install ERASES this whole disk:")
+(println (str "     " device "  model=" (pr-str (:model target)) "  bytes=" (:size target)))
+(println "   To proceed, type exactly:")
+(println (str "     ERASE " device " FOR AIUEOS"))
+(let [typed (ask "Phrase")]
+  (when (str/blank? typed)
+    (println "AIUEOS_LIVE_ERASE_NOT_CONFIRMED nothing was written")
+    (.exit js/process 2))
+  (.exit js/process
+         (spawn-inherit (concat base-args serial-args
+                                ["--install" "--confirm-device" device
+                                 "--destructive-phrase" typed]
+                                (when account-linked? ["--account-record" account-record])))))

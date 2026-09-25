@@ -67,8 +67,13 @@
 ;; standing next to the box, with the installer already booted.
 (def text-src (.resolve path repo ".." "text" "src"))
 (def aiueos-src (.join path repo "src"))
+;; kotoba.security.information-flow: aiueos.device-auth declares it
+;; (security-adoption.edn), and account-sync.cljk loads aiueos.device-auth
+;; (ADR-0239). Same west-sibling layout as text.
+(def security-src (.resolve path repo ".." "security" "src"))
 (doseq [[what dir] [["kotoba.lang.text (west sibling orgs/kotoba-lang/text)" text-src]
-                    ["aiueos.installer.guided" aiueos-src]]]
+                    ["aiueos.installer.guided" aiueos-src]
+                    ["kotoba.security (west sibling orgs/kotoba-lang/security)" security-src]]]
   (when-not (.existsSync fs dir)
     (die "classpath root for" what "not found:" dir
          "\nThe bundled scripts require it. Building without it produces a USB"
@@ -85,6 +90,7 @@
           ["--installer-dir" (.join path aiueos "installer")
            "--classpath" text-src
            "--classpath" aiueos-src
+           "--classpath" security-src
            "--output" (or (arg "--output") usb-image)
            "--receipt" (or (arg "--receipt") usb-receipt)]
           (when-let [node-bin (arg "--node-binary")]

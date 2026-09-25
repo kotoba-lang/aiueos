@@ -83,6 +83,19 @@
 
 (def section-ids (mapv :id flow))
 
+(defn account-model
+  "The model slug the kotoba.cloud device flow binds (aiueos ADR-0239): the
+  identity screen's free-text machine model, lower-cased, non-alphanumeric runs
+  collapsed to `-`, at most 63 characters. nil when nothing usable was typed --
+  `unspecified` names no model, and a flow bound to it would claim one."
+  [model]
+  (let [s (-> (str/lower (str model))
+              (str/replace #"[^a-z0-9]+" "-")
+              (str/replace #"^-+|-+$" ""))
+        s (if (> (count s) 63) (str/replace (subs s 0 63) #"-+$" "") s)]
+    (when-not (or (str/blank? s) (= s "unspecified"))
+      s)))
+
 (defn step-by-id [id] (first (filter #(= id (:id %)) flow)))
 
 ;; ------------------------------------------------------------------ validate

@@ -497,7 +497,15 @@
 
 ;; ---------------------------------------------------------------- summary
 
-(def expected-cases 53)
+;; ------------------------------------------ the account flow's model (ADR-0239)
+;; The identity screen's free text is what the kotoba.cloud flow binds; the
+;; slug must be stable, bounded, and refuse to name "unspecified" as a model.
+(check! "account-model-slugs-free-text" "gmktec-k16" (g/account-model "  GMKtec K16 "))
+(check! "account-model-unspecified-is-no-model" nil (g/account-model "unspecified"))
+(check! "account-model-bounded-at-63"
+        63 (count (g/account-model (apply str (repeat 70 "a")))))
+
+(def expected-cases 56)
 (def total (count @results))
 (def failed (filterv (complement :ok) @results))
 
