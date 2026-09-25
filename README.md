@@ -520,6 +520,10 @@ Expected `smoke` markers:
 
 ![window 4 scrolled by 120: lines 7 .. 20 and the caret, cut under the titlebar, QEMU display](docs/assets/guest-browser-scroll.png)
 
+`guest-browser-selection` exit 0 means the tablet boot, after the wheel, took seventeen events -- five wheel notches toward the end at (300, 300) (window 4's offset 20 .. 100, line 20 inside the window), then Shift down, Left down / up, Left down / up, Right down / up, Left down / up, Shift up, Backspace down / up -- and for each C handed the tablet batch to Kotoba `kotoba_aiueos_browser_reduce` with the whole surface or the key (code * 4 + value) to Kotoba `kotoba_aiueos_browser_key`, which held Shift in surface word 2035 and ran browser.text-edit `move-caret` with `:extend?` on the focused body -- the selection kept as the last k code points, word 2036 its window id and 2037 k: "0", "20", "0", "20" -- and `delete-backward`, which deleted the selected "20" (body 50 -> 48 code points, k 0); Kotoba `kotoba_aiueos_browser_frame2` drew a #b5cdf1 rect behind each selected glyph (cssom sel-ops' rgba(70,130,220,0.4) over #ffffff; the blit has no alpha) and no caret while something was selected, with its op capacity 259; a frame after each event, every op count, #111111 census and #b5cdf1 census equal to the frame model's (`AIUEOS_GUEST_BROWSER_SELECTION_OK events=17 answers=44444000000000000 max-sel=2 body=48 focus=4 scroll=100 chain=2b46197d sel-chain=cb830579 ops=168 text-px=1058 hash=6ca5ee4a`). The caret is still only at the end outside a selection, one window's selection is kept at a time, and the arrows do nothing while something is composed (ADR-0240).
+
+![window 4 at offset 100 with "20" selected: the highlight behind the glyphs, no caret, QEMU display](docs/assets/guest-browser-selection.png)
+
 ```bash
 kbb -M:compositor serve   # same SPA; compositor owns surfaces; Ctrl-C to stop
 ```

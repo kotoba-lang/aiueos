@@ -18,7 +18,8 @@
    "guest-browser-preedit" "guest-browser-ime-toggle" "guest-browser-drag"
    "guest-browser-resize" "guest-browser-event-loop" "guest-browser-caret"
    "guest-browser-launch" "guest-browser-flow-parity" "guest-browser-dictionary"
-   "guest-browser-cursor" "guest-browser-focus-cycle" "guest-browser-scroll"])
+   "guest-browser-cursor" "guest-browser-focus-cycle" "guest-browser-scroll"
+   "guest-browser-selection"])
 
 (defn gate-cmd
   "SPA-visible evidence command for a guest profile. Not clojure -M."
@@ -887,6 +888,50 @@
       {:green? false :exit 1 :reason :guest-browser-scroll-absent
        :leftover [:guest-browser-scroll-absent]})))
 
+;; Guest browser selection (ADR-0240): after the wheel, the host sends five
+;; notches toward the end at (300, 300) (window 4's offset to 100, line 20
+;; inside it), then Shift down, Left, Left, Right, Left (each down and up),
+;; Shift up, Backspace down and up. C hands each tablet batch to browser-reduce
+;; and each key to browser-key: Shift+Left / Shift+Right select the last one
+;; or two code points of window 4's body (browser.text-edit move-caret
+;; :extend?), Backspace deletes them (delete-backward), and browser-frame2
+;; draws a #b5cdf1 highlight behind each selected glyph and no caret while
+;; something is selected. Green needs the scroll stage's OK line, the GO line,
+;; all seventeen FRAME lines and the OK line: the answers, the selection's
+;; peak 2 and its end at 0, the body's 48 code points, each frame's op count,
+;; #111111 census and #b5cdf1 census equal to the frame model's, and both
+;; chains.
+
+(def ^:private scroll-ok-re
+  #"(?m)^AIUEOS_GUEST_BROWSER_SCROLL_OK events=17 answers=40004444444444444 max=120 stack=1324 focus=4 scroll=0 chain=7421f3aa ops=164 text-px=994 hash=78270fda")
+
+(def ^:private selection-frame-numbers (set (map str (range 1 18))))
+
+(defn guest-browser-selection-result
+  [{:keys [serial qemu-unmeasured?] :as opts}]
+  (let [s (or serial "")
+        go (re-find #"(?m)^AIUEOS_GUEST_BROWSER_SELECTION_GO events=17" s)
+        frames (set (map second (re-seq #"(?m)^AIUEOS_GUEST_BROWSER_SELECTION_FRAME n=(\d+) " s)))
+        ok (re-find #"(?m)^AIUEOS_GUEST_BROWSER_SELECTION_OK events=17 answers=44444000000000000 max-sel=2 body=48 focus=4 scroll=100 chain=2b46197d sel-chain=cb830579 ops=168 text-px=1058 hash=6ca5ee4a" s)]
+    (cond
+      qemu-unmeasured? {:green? false :exit 3 :reason :unmeasured :leftover [:unmeasured]}
+      (not (re-find scroll-ok-re s))
+      (let [r (guest-browser-scroll-result opts)]
+        (assoc r :reason :no-scroll :leftover (into [:no-scroll] (:leftover r))))
+      (and ok (not (and go (= frames selection-frame-numbers))))
+      {:green? false :exit 1 :reason :selection-lines-missing :leftover [:selection-lines-missing]}
+      ok
+      {:green? true :exit 0 :reason :guest-browser-selection
+       :leftover [:caret-only-at-the-end :one-selection-at-a-time :no-arrows-in-a-composition
+                  :shift-does-not-case-letters :opaque-highlight]}
+      (re-find #"(?m)^AIUEOS_GUEST_BROWSER_SELECTION leftover=events-missing" s)
+      {:green? false :exit 1 :reason :events-missing :leftover [:events-missing]}
+      (re-find #"(?m)^AIUEOS_GUEST_BROWSER_SELECTION leftover=census-miss" s)
+      {:green? false :exit 1 :reason :census-miss :leftover [:census-miss]}
+      :else
+      {:green? false :exit 1 :reason :guest-browser-selection-absent
+       :leftover [:guest-browser-selection-absent]})))
+
 ;; Guest browser body flow (ADR-0234): the kernel lays out a four-window
 ;; surface of its own and prints its whole op list (AIUEOS_GUEST_BROWSER_FLOW_OPS
 ;; n=<ops> words=<kind x y a b rgb per op, 8 hex digits each>). Each window's
@@ -1005,6 +1050,9 @@
     ;; ADR-0238: the wheel's seventeen frames come after Alt+Tab.
     "guest-browser-scroll" {"AIUEOS_GUEST_BROWSER" "1"
                             "AIUEOS_QEMU_TIMEOUT" "2400"}
+    ;; ADR-0240: the selection's seventeen frames come after the wheel.
+    "guest-browser-selection" {"AIUEOS_GUEST_BROWSER" "1"
+                               "AIUEOS_QEMU_TIMEOUT" "2700"}
     "guest-scanout-two" {"AIUEOS_GUEST_SCANOUT_TWO" "1"
                          "AIUEOS_QEMU_TIMEOUT" "90"}
     nil))
@@ -1037,6 +1085,7 @@
     "guest-browser-cursor" (guest-browser-cursor-result opts)
     "guest-browser-focus-cycle" (guest-browser-focus-cycle-result opts)
     "guest-browser-scroll" (guest-browser-scroll-result opts)
+    "guest-browser-selection" (guest-browser-selection-result opts)
     {:green? false :exit 3 :reason :unmeasured :leftover [:unmeasured]}))
 
 (defn serial-marker
@@ -1067,6 +1116,7 @@
     "guest-browser-cursor" "AIUEOS_GUEST_BROWSER_CURSOR"
     "guest-browser-focus-cycle" "AIUEOS_GUEST_BROWSER_FOCUS"
     "guest-browser-scroll" "AIUEOS_GUEST_BROWSER_SCROLL"
+    "guest-browser-selection" "AIUEOS_GUEST_BROWSER_SELECTION"
     nil))
 
 (defn ok-print
@@ -1097,4 +1147,5 @@
     "guest-browser-cursor" "AIUEOS_COMPOSITOR_GUEST_BROWSER_CURSOR_OK"
     "guest-browser-focus-cycle" "AIUEOS_COMPOSITOR_GUEST_BROWSER_FOCUS_CYCLE_OK"
     "guest-browser-scroll" "AIUEOS_COMPOSITOR_GUEST_BROWSER_SCROLL_OK"
+    "guest-browser-selection" "AIUEOS_COMPOSITOR_GUEST_BROWSER_SELECTION_OK"
     nil))

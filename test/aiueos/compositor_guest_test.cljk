@@ -653,3 +653,73 @@
     (is (= 3 (:exit (guest/classify "guest-browser-flow-parity" {:qemu-unmeasured? true :flow-parity flow-parity})))))
   (testing "no tablet: the default profile"
     (is (nil? (guest/extra-env "guest-browser-flow-parity")))))
+
+;; Guest browser selection (ADR-0240). The frame lines' numbers are the frame
+;; model's selection frames (os/aiueos/scripts/browser-frame-model.cljk).
+
+(def ^:private selection-lines
+  (str "AIUEOS_GUEST_BROWSER_SELECTION_GO events=17\r\n"
+       "AIUEOS_GUEST_BROWSER_SELECTION_FRAME n=1 src=6 key=0 answer=4 scroll=20 sel=0 ops=165 text-px=1017 hash=6c0a4440 sel-px=0 sel-hash=811c9dc5\r\n"
+       "AIUEOS_GUEST_BROWSER_SELECTION_FRAME n=2 src=6 key=0 answer=4 scroll=40 sel=0 ops=166 text-px=1027 hash=b5e126eb sel-px=0 sel-hash=811c9dc5\r\n"
+       "AIUEOS_GUEST_BROWSER_SELECTION_FRAME n=3 src=6 key=0 answer=4 scroll=60 sel=0 ops=167 text-px=1047 hash=40c08679 sel-px=0 sel-hash=811c9dc5\r\n"
+       "AIUEOS_GUEST_BROWSER_SELECTION_FRAME n=4 src=6 key=0 answer=4 scroll=80 sel=0 ops=168 text-px=1065 hash=f7ee3a0b sel-px=0 sel-hash=811c9dc5\r\n"
+       "AIUEOS_GUEST_BROWSER_SELECTION_FRAME n=5 src=6 key=0 answer=4 scroll=100 sel=0 ops=170 text-px=1103 hash=5793612f sel-px=0 sel-hash=811c9dc5\r\n"
+       "AIUEOS_GUEST_BROWSER_SELECTION_FRAME n=6 src=0 key=169 answer=0 scroll=100 sel=0 ops=170 text-px=1103 hash=5793612f sel-px=0 sel-hash=811c9dc5\r\n"
+       "AIUEOS_GUEST_BROWSER_SELECTION_FRAME n=7 src=0 key=421 answer=0 scroll=100 sel=1 ops=170 text-px=1087 hash=2602913b sel-px=104 sel-hash=e4f21595\r\n"
+       "AIUEOS_GUEST_BROWSER_SELECTION_FRAME n=8 src=0 key=420 answer=0 scroll=100 sel=1 ops=170 text-px=1087 hash=2602913b sel-px=104 sel-hash=e4f21595\r\n"
+       "AIUEOS_GUEST_BROWSER_SELECTION_FRAME n=9 src=0 key=421 answer=0 scroll=100 sel=2 ops=171 text-px=1087 hash=2602913b sel-px=211 sel-hash=49ff70dc\r\n"
+       "AIUEOS_GUEST_BROWSER_SELECTION_FRAME n=10 src=0 key=420 answer=0 scroll=100 sel=2 ops=171 text-px=1087 hash=2602913b sel-px=211 sel-hash=49ff70dc\r\n"
+       "AIUEOS_GUEST_BROWSER_SELECTION_FRAME n=11 src=0 key=425 answer=0 scroll=100 sel=1 ops=170 text-px=1087 hash=2602913b sel-px=104 sel-hash=e4f21595\r\n"
+       "AIUEOS_GUEST_BROWSER_SELECTION_FRAME n=12 src=0 key=424 answer=0 scroll=100 sel=1 ops=170 text-px=1087 hash=2602913b sel-px=104 sel-hash=e4f21595\r\n"
+       "AIUEOS_GUEST_BROWSER_SELECTION_FRAME n=13 src=0 key=421 answer=0 scroll=100 sel=2 ops=171 text-px=1087 hash=2602913b sel-px=211 sel-hash=49ff70dc\r\n"
+       "AIUEOS_GUEST_BROWSER_SELECTION_FRAME n=14 src=0 key=420 answer=0 scroll=100 sel=2 ops=171 text-px=1087 hash=2602913b sel-px=211 sel-hash=49ff70dc\r\n"
+       "AIUEOS_GUEST_BROWSER_SELECTION_FRAME n=15 src=0 key=168 answer=0 scroll=100 sel=2 ops=171 text-px=1087 hash=2602913b sel-px=211 sel-hash=49ff70dc\r\n"
+       "AIUEOS_GUEST_BROWSER_SELECTION_FRAME n=16 src=0 key=57 answer=0 scroll=100 sel=0 ops=168 text-px=1058 hash=6ca5ee4a sel-px=0 sel-hash=811c9dc5\r\n"
+       "AIUEOS_GUEST_BROWSER_SELECTION_FRAME n=17 src=0 key=56 answer=0 scroll=100 sel=0 ops=168 text-px=1058 hash=6ca5ee4a sel-px=0 sel-hash=811c9dc5\r\n"))
+
+(def ^:private selection-ok
+  "AIUEOS_GUEST_BROWSER_SELECTION_OK events=17 answers=44444000000000000 max-sel=2 body=48 focus=4 scroll=100 chain=2b46197d sel-chain=cb830579 ops=168 text-px=1058 hash=6ca5ee4a\r\n")
+
+(deftest guest-browser-selection-classifier
+  (testing "seventeen frames, the selection up to 2 and deleted, the model's censuses: green"
+    (let [r (guest/classify "guest-browser-selection"
+                            {:serial (str cursor-ok-line focus-ok scroll-lines scroll-ok selection-lines selection-ok)})]
+      (is (= :guest-browser-selection (:reason r)))
+      (is (= 0 (:exit r)))
+      (is (= [:caret-only-at-the-end :one-selection-at-a-time :no-arrows-in-a-composition
+              :shift-does-not-case-letters :opaque-highlight]
+             (:leftover r)))))
+  (testing "the selection needs the wheel stage first"
+    (is (= :no-scroll
+           (:reason (guest/classify "guest-browser-selection"
+                                    {:serial (str cursor-ok-line focus-ok selection-lines selection-ok)})))))
+  (testing "an OK line with a frame line missing is not green"
+    (is (= :selection-lines-missing
+           (:reason (guest/classify "guest-browser-selection"
+                                    {:serial (str cursor-ok-line focus-ok scroll-lines scroll-ok
+                                                  (.replace selection-lines "FRAME n=17 " "FRAME n=71 ")
+                                                  selection-ok)})))))
+  (testing "an OK line without the GO line is not green"
+    (is (= :selection-lines-missing
+           (:reason (guest/classify "guest-browser-selection"
+                                    {:serial (str cursor-ok-line focus-ok scroll-lines scroll-ok
+                                                  (.replace selection-lines "SELECTION_GO" "SELECTION_G0")
+                                                  selection-ok)})))))
+  (testing "a census that misses is red, by name"
+    (is (= :census-miss
+           (:reason (guest/classify "guest-browser-selection"
+                                    {:serial (str cursor-ok-line focus-ok scroll-lines scroll-ok selection-lines
+                                                  "AIUEOS_GUEST_BROWSER_SELECTION leftover=census-miss off=3 chain=00000000 sel-chain=00000000 sel=0 shift=0\r\n")})))))
+  (testing "missing events are red, by name"
+    (is (= :events-missing
+           (:reason (guest/classify "guest-browser-selection"
+                                    {:serial (str cursor-ok-line focus-ok scroll-lines scroll-ok
+                                                  "AIUEOS_GUEST_BROWSER_SELECTION leftover=events-missing events=5 frames=5\r\n")})))))
+  (testing "the wheel's OK line alone is not the selection"
+    (is (= :guest-browser-selection-absent
+           (:reason (guest/classify "guest-browser-selection"
+                                    {:serial (str cursor-ok-line focus-ok scroll-lines scroll-ok)})))))
+  (testing "unanswered QEMU is exit 3"
+    (is (= 3 (:exit (guest/classify "guest-browser-selection" {:qemu-unmeasured? true})))))
+  (testing "tablet profile, with the wheel's wall clock and more"
+    (is (= {"AIUEOS_GUEST_BROWSER" "1" "AIUEOS_QEMU_TIMEOUT" "2700"} (guest/extra-env "guest-browser-selection")))))

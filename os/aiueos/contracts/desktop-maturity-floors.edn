@@ -110,7 +110,7 @@
   {:id :scroll :gate "guest-browser-scroll" :adr "0238"
    :goal "a wheel event over a window scrolls its body (browser.surface scroll-window: :window/scroll clamped at 0); the frame clips the scrolled body to the window"
    :why "a body longer than its window is cut, not reachable"}
-  {:id :selection :gate "guest-browser-selection"
+  {:id :selection :gate "guest-browser-selection" :adr "0240"
    :goal "Shift+Left / Shift+Right extend a selection from the caret in the focused body (browser.text-edit move-caret with :extend?), drawn as a highlight behind the glyphs; Backspace deletes the selection"
    :why "text editing stops at the caret"}
   {:id :clipboard :gate "guest-browser-clipboard"

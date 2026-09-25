@@ -297,6 +297,10 @@
  {:cmd ["kbb" "--backend" "sci" "--classpath" "src" "scripts/compositor-guest.cljk" "guest-browser-scroll"]
   :doc "Guest browser wheel scroll (ADR-0238) on KERNEL.ELF under QEMU: after Alt+Tab, C registers app 4 (body: the lines 1 .. 20) and the host opens it from the launcher, sends a wheel notch over no window, moves to (300, 300), six notches down and seven up. C turns REL_WHEEL into tablet kind 6 / 7 and hands it to browser-reduce with the whole surface; the window under the pointer scrolls (browser.surface scroll-window, clamped at 0) by 20 px a notch, the offset in surface word 2039 + id, and browser-frame2 draws the body the offset higher, cut at the top inset. Offset 0 -> 120 -> 0; every census the frame model's. Tablet profile, 2400 s wall clock."}
 
+ :browser-desktop-selection
+ {:cmd ["kbb" "--backend" "sci" "--classpath" "src" "scripts/compositor-guest.cljk" "guest-browser-selection"]
+  :doc "Guest browser selection (ADR-0240) on KERNEL.ELF under QEMU: after the wheel, the host sends five notches toward the end (window 4's offset to 100, line 20 inside it), then Shift down, Left, Left, Right, Left, Shift up, Backspace (each key down and up). browser-key holds Shift in surface word 2035 and runs browser.text-edit move-caret :extend? on the focused body -- the selection is the last k code points, words 2036 (window id) and 2037 (k) -- and delete-backward deletes it; browser-frame2 draws a #b5cdf1 highlight behind each selected glyph and no caret while something is selected (op capacity 259). k 0 -> 1 -> 2 -> 1 -> 2 -> deleted; every #111111 and #b5cdf1 census the frame model's. Tablet profile, 2700 s wall clock."}
+
  :browser-desktop-guest
  {:cmd ["kbb" "--backend" "sci" "--classpath" "src" "scripts/compositor-guest.cljk" "guest-browser-input"]
   :doc "Guest browser desktop (ADR-0223) on KERNEL.ELF under QEMU: the Kotoba frame is presented and sampled, then a real virtio-tablet press is reduced by Kotoba to focus-and-raise and the redrawn frame is sampled again. Exit 3 = QEMU/firmware/serial unanswered, not a pass."}
