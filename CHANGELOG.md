@@ -5,6 +5,25 @@ All notable changes to **aiueos** are documented here. The format follows
 
 ## [Unreleased]
 
+### Guest browser desktop: the wheel scrolls the window under the pointer (ADR-0238)
+- browser-reduce.kotoba takes a wheel notch at the pointer as kind 6 (toward
+  the end, +20 px) or 7 (toward the start, -20): the window under it --
+  window-at, as a press hits -- scrolls, clamped at 0, with no focus, raise or
+  capture change (browser.input `:pointer/wheel` -> browser.surface
+  `scroll-window`); a miss answers 0. The offsets are surface words
+  2040..2043 (window id 1..4), so reduce now also takes the whole 8192-byte
+  surface (-10 on 128 bytes for a wheel; -11 a hit id outside 1..4; -12 past
+  65535). With the surface, a close zeroes the closed window's offset.
+- browser-frame2.kotoba draws each window's body, composition and caret the
+  offset higher, laid out unscrolled, and cuts them at the top inset (y + 36)
+  as at the bottom; -11 for an offset past 65535. The op capacity is 260
+  (words 480..2039); 2044..2045 are its scratch.
+- pci.c turns a REL_WHEEL batch (or a BTN_GEAR press) into tablet kind 6 / 7;
+  main.c's new stage after Alt+Tab registers app 4 (the lines 1 .. 20) and
+  takes seventeen events: offset 0 -> 120 -> 0.
+- Gate `guest-browser-scroll` (tablet profile, 2400 s):
+  `AIUEOS_GUEST_BROWSER_SCROLL_OK events=17 answers=40004444444444444 max=120 stack=1324 focus=4 scroll=0 chain=7421f3aa ops=164 text-px=994 hash=78270fda`.
+  browser-reduce-v1 115 vectors (25 new), browser-frame2-v1 63 (13 new).
 ### sync-kernel-object-digests reads build-multiboot.sh too
 - The re-attest above left two literals stale in `build-multiboot.sh`
   (`acpi-checksum-ok.o`, `acpi-table-valid.o`); `--check` read only

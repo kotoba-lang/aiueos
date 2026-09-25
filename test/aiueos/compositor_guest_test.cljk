@@ -520,6 +520,67 @@
   (testing "tablet profile, with the pointer's wall clock and more"
     (is (= {"AIUEOS_GUEST_BROWSER" "1" "AIUEOS_QEMU_TIMEOUT" "1260"} (guest/extra-env "guest-browser-focus-cycle")))))
 
+;; Guest browser wheel scroll (ADR-0238). The frame lines' numbers are the
+;; frame model's scroll frames (os/aiueos/scripts/browser-frame-model.cljk).
+
+(def ^:private scroll-lines
+  (str "AIUEOS_GUEST_BROWSER_SCROLL_GO events=17\r\n"
+       "AIUEOS_GUEST_BROWSER_SCROLL_FRAME n=1 src=1 answer=4 focus=4 scroll=0 ops=164 text-px=988 hash=16c7e9ce\r\n"
+       "AIUEOS_GUEST_BROWSER_SCROLL_FRAME n=2 src=4 answer=0 focus=4 scroll=0 ops=164 text-px=988 hash=16c7e9ce\r\n"
+       "AIUEOS_GUEST_BROWSER_SCROLL_FRAME n=3 src=6 answer=0 focus=4 scroll=0 ops=164 text-px=988 hash=16c7e9ce\r\n"
+       "AIUEOS_GUEST_BROWSER_SCROLL_FRAME n=4 src=3 answer=0 focus=4 scroll=0 ops=164 text-px=994 hash=78270fda\r\n"
+       "AIUEOS_GUEST_BROWSER_SCROLL_FRAME n=5 src=6 answer=4 focus=4 scroll=20 ops=165 text-px=1017 hash=6c0a4440\r\n"
+       "AIUEOS_GUEST_BROWSER_SCROLL_FRAME n=6 src=6 answer=4 focus=4 scroll=40 ops=166 text-px=1027 hash=b5e126eb\r\n"
+       "AIUEOS_GUEST_BROWSER_SCROLL_FRAME n=7 src=6 answer=4 focus=4 scroll=60 ops=167 text-px=1047 hash=40c08679\r\n"
+       "AIUEOS_GUEST_BROWSER_SCROLL_FRAME n=8 src=6 answer=4 focus=4 scroll=80 ops=168 text-px=1065 hash=f7ee3a0b\r\n"
+       "AIUEOS_GUEST_BROWSER_SCROLL_FRAME n=9 src=6 answer=4 focus=4 scroll=100 ops=170 text-px=1103 hash=5793612f\r\n"
+       "AIUEOS_GUEST_BROWSER_SCROLL_FRAME n=10 src=6 answer=4 focus=4 scroll=120 ops=169 text-px=1080 hash=2d9fc3f6\r\n"
+       "AIUEOS_GUEST_BROWSER_SCROLL_FRAME n=11 src=7 answer=4 focus=4 scroll=100 ops=170 text-px=1103 hash=5793612f\r\n"
+       "AIUEOS_GUEST_BROWSER_SCROLL_FRAME n=12 src=7 answer=4 focus=4 scroll=80 ops=168 text-px=1065 hash=f7ee3a0b\r\n"
+       "AIUEOS_GUEST_BROWSER_SCROLL_FRAME n=13 src=7 answer=4 focus=4 scroll=60 ops=167 text-px=1047 hash=40c08679\r\n"
+       "AIUEOS_GUEST_BROWSER_SCROLL_FRAME n=14 src=7 answer=4 focus=4 scroll=40 ops=166 text-px=1027 hash=b5e126eb\r\n"
+       "AIUEOS_GUEST_BROWSER_SCROLL_FRAME n=15 src=7 answer=4 focus=4 scroll=20 ops=165 text-px=1017 hash=6c0a4440\r\n"
+       "AIUEOS_GUEST_BROWSER_SCROLL_FRAME n=16 src=7 answer=4 focus=4 scroll=0 ops=164 text-px=994 hash=78270fda\r\n"
+       "AIUEOS_GUEST_BROWSER_SCROLL_FRAME n=17 src=7 answer=4 focus=4 scroll=0 ops=164 text-px=994 hash=78270fda\r\n"))
+
+(def ^:private scroll-ok
+  "AIUEOS_GUEST_BROWSER_SCROLL_OK events=17 answers=40004444444444444 max=120 stack=1324 focus=4 scroll=0 chain=7421f3aa ops=164 text-px=994 hash=78270fda\r\n")
+
+(deftest guest-browser-scroll-classifier
+  (testing "seventeen frames, the offset up to 120 and back to 0, the model's censuses: green"
+    (let [r (guest/classify "guest-browser-scroll" {:serial (str cursor-ok-line focus-ok scroll-lines scroll-ok)})]
+      (is (= :guest-browser-scroll (:reason r)))
+      (is (= 0 (:exit r)))
+      (is (= [:one-notch-is-one-line :vertical-only :no-upper-clamp :scroll-ceiling-65535] (:leftover r)))))
+  (testing "the wheel needs the Alt+Tab stage first"
+    (is (= :no-focus-cycle
+           (:reason (guest/classify "guest-browser-scroll"
+                                    {:serial (str cursor-ok-line scroll-lines scroll-ok)})))))
+  (testing "an OK line with a frame line missing is not green"
+    (is (= :scroll-lines-missing
+           (:reason (guest/classify "guest-browser-scroll"
+                                    {:serial (str cursor-ok-line focus-ok
+                                                  (.replace scroll-lines "FRAME n=17 " "FRAME n=71 ")
+                                                  scroll-ok)})))))
+  (testing "an OK line without the GO line is not green"
+    (is (= :scroll-lines-missing
+           (:reason (guest/classify "guest-browser-scroll"
+                                    {:serial (str cursor-ok-line focus-ok
+                                                  (.replace scroll-lines "SCROLL_GO" "SCROLL_G0")
+                                                  scroll-ok)})))))
+  (testing "an OK line naming a different peak is not this gate's"
+    (is (= :guest-browser-scroll-absent
+           (:reason (guest/classify "guest-browser-scroll"
+                                    {:serial (str cursor-ok-line focus-ok scroll-lines
+                                                  (.replace scroll-ok "max=120" "max=100"))})))))
+  (testing "named reds"
+    (doseq [[line reason] [["AIUEOS_GUEST_BROWSER_SCROLL leftover=events-missing events=3 frames=3\r\n" :events-missing]
+                           ["AIUEOS_GUEST_BROWSER_SCROLL leftover=census-miss off=13 max=0 chain=00000000 focus=4 scroll=0\r\n" :census-miss]
+                           ["" :guest-browser-scroll-absent]]]
+      (is (= reason (:reason (guest/classify "guest-browser-scroll" {:serial (str cursor-ok-line focus-ok line)}))) line)))
+  (testing "tablet profile, with Alt+Tab's wall clock and more"
+    (is (= {"AIUEOS_GUEST_BROWSER" "1" "AIUEOS_QEMU_TIMEOUT" "2400"} (guest/extra-env "guest-browser-scroll")))))
+
 ;; Guest browser body flow (ADR-0234). A one-window stand-in for the kernel's
 ;; op dump: the classifier's span rule and its comparison, not the real scene
 ;; (the real scene's hosted answer is os/aiueos/contracts/browser-flow-parity-v1.edn).

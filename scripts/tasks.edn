@@ -293,6 +293,10 @@
  {:cmd ["kbb" "--backend" "sci" "--classpath" "src" "scripts/compositor-guest.cljk" "guest-browser-focus-cycle"]
   :doc "Guest browser Alt+Tab (ADR-0237) on KERNEL.ELF under QEMU: after the pointer, the host opens window 2 from the launcher, then Alt down, Tab down / up three times, Alt up, a lone Tab. browser-key holds Alt in surface word 431 and answers 256 + the bottom window for each Tab under it; C hands the id to browser-reduce as :window/focus (kind 5), which raises it: stack 132 -> 321 -> 213 -> 132. Bodies unchanged, every census the frame model's. Tablet profile, 1260 s wall clock."}
 
+ :browser-desktop-scroll
+ {:cmd ["kbb" "--backend" "sci" "--classpath" "src" "scripts/compositor-guest.cljk" "guest-browser-scroll"]
+  :doc "Guest browser wheel scroll (ADR-0238) on KERNEL.ELF under QEMU: after Alt+Tab, C registers app 4 (body: the lines 1 .. 20) and the host opens it from the launcher, sends a wheel notch over no window, moves to (300, 300), six notches down and seven up. C turns REL_WHEEL into tablet kind 6 / 7 and hands it to browser-reduce with the whole surface; the window under the pointer scrolls (browser.surface scroll-window, clamped at 0) by 20 px a notch, the offset in surface word 2039 + id, and browser-frame2 draws the body the offset higher, cut at the top inset. Offset 0 -> 120 -> 0; every census the frame model's. Tablet profile, 2400 s wall clock."}
+
  :browser-desktop-guest
  {:cmd ["kbb" "--backend" "sci" "--classpath" "src" "scripts/compositor-guest.cljk" "guest-browser-input"]
   :doc "Guest browser desktop (ADR-0223) on KERNEL.ELF under QEMU: the Kotoba frame is presented and sampled, then a real virtio-tablet press is reduced by Kotoba to focus-and-raise and the redrawn frame is sampled again. Exit 3 = QEMU/firmware/serial unanswered, not a pass."}

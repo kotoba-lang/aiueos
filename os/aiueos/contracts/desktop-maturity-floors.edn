@@ -107,7 +107,7 @@
   {:id :focus-cycle :gate "guest-browser-focus-cycle" :adr "0237"
    :goal "a window-manager shortcut (Alt+Tab, evdev 56 + 15) focuses and raises the next window in stack order, as a :window/focus action through browser-reduce; the key does not reach the body"
    :why "keyboard-only use cannot change the focused window"}
-  {:id :scroll :gate "guest-browser-scroll"
+  {:id :scroll :gate "guest-browser-scroll" :adr "0238"
    :goal "a wheel event over a window scrolls its body (browser.surface scroll-window: :window/scroll clamped at 0); the frame clips the scrolled body to the window"
    :why "a body longer than its window is cut, not reachable"}
   {:id :selection :gate "guest-browser-selection"

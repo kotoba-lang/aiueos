@@ -754,6 +754,38 @@ while time.time() < end:
                 recv_obj()
                 globals()["focus_sent"] = k + 1
                 log("focus event " + str(k + 1) + " sent")
+        # Wheel scroll (ADR-0238): a press on launcher button 4 at (360, 14),
+        # the release, a wheel notch toward the end there (over no window), a
+        # move to (300, 300), six notches toward the end, seven toward the
+        # start -- each after the guest's frame line for the one before (and
+        # its screendump). A notch is the wheel button's press and release in
+        # one command: REL_WHEEL (or the gear key), the release, SYN -- three
+        # events, inside the four buffers the guest posts.
+        if typing and b"AIUEOS_GUEST_BROWSER_SCROLL_GO" in serial_now and globals().get("scroll_sent", 0) < 17:
+            k = globals().get("scroll_sent", 0)
+            if k == 0 or (b"AIUEOS_GUEST_BROWSER_SCROLL_FRAME n=%d " % k) in serial_now:
+                if k:
+                    shot = os.path.join(os.path.dirname(path), "guest-browser-scroll-%d.ppm" % k)
+                    sock.sendall((json.dumps({"execute": "screendump", "arguments": {"filename": shot}})
+                                  + "\n").encode())
+                    recv_obj()
+                time.sleep(0.5)
+                def notch(b):
+                    return [{"type": "btn", "data": {"down": True, "button": b}},
+                            {"type": "btn", "data": {"down": False, "button": b}}]
+                ev = ([{"type": "abs", "data": {"axis": "x", "value": 9216}},
+                       {"type": "abs", "data": {"axis": "y", "value": 574}},
+                       {"type": "btn", "data": {"down": True, "button": "left"}}],
+                      [{"type": "btn", "data": {"down": False, "button": "left"}}],
+                      notch("wheel-down"),
+                      [{"type": "abs", "data": {"axis": "x", "value": 7680}},
+                       {"type": "abs", "data": {"axis": "y", "value": 12288}}])
+                ev = (ev + (notch("wheel-down"),) * 6 + (notch("wheel-up"),) * 7)[k]
+                sock.sendall((json.dumps({"execute": "input-send-event", "arguments": {"events": ev}})
+                              + "\n").encode())
+                recv_obj()
+                globals()["scroll_sent"] = k + 1
+                log("scroll event " + str(k + 1) + " sent")
         i += 1
         # Guest browser desktop (ADR-0224): the screens a person can look at.
         # The kernel holds each desktop frame for a few seconds in this
@@ -781,6 +813,7 @@ while time.time() < end:
                                  (b"AIUEOS_GUEST_BROWSER_DICT_OK", "guest-browser-dictionary.ppm"),
                                  (b"AIUEOS_GUEST_BROWSER_CURSOR_OK", "guest-browser-cursor.ppm"),
                                  (b"AIUEOS_GUEST_BROWSER_FOCUS_OK", "guest-browser-focus.ppm"),
+                                 (b"AIUEOS_GUEST_BROWSER_SCROLL_OK", "guest-browser-scroll.ppm"),
                                  (b"AIUEOS_GUEST_BROWSER_FLOW_OK", "guest-browser-flow.ppm")):
                 if marker in serial_text and not globals().get(name):
                     globals()[name] = True

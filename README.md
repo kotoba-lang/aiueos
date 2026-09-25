@@ -516,6 +516,10 @@ Expected `smoke` markers:
 
 ![after the first Alt+Tab: window 1 focused and raised over windows 2 and 3, QEMU display](docs/assets/guest-browser-focus-cycle.png)
 
+`guest-browser-scroll` exit 0 means the tablet boot, after Alt+Tab, registered app 4 (title スクロール, its document the lines 1 .. 20) and took seventeen tablet events -- a press on launcher button 4 at (360, 14) and its release (window 4 opens at (80, 80, 520, 360) on top, fifteen of its twenty lines inside it), a wheel notch over no window at (360, 14), a move to (300, 300), six notches toward the end and seven toward the start -- and for each C handed the batch (a REL_WHEEL batch as tablet kind 6 or 7) to Kotoba `kotoba_aiueos_browser_reduce` with the whole 8192-byte surface, which scrolled the window under the pointer by 20 px a notch (browser.input `:pointer/wheel` -> browser.surface `scroll-window`, clamped at 0, no focus, no raise) in surface word 2039 + id, while the notch over no window scrolled nothing; Kotoba `kotoba_aiueos_browser_frame2` drew window 4's body the offset higher and cut it at the top inset (y + 36); the offset went 0 -> 120 -> 0, the seventh notch toward the start held it at 0, a frame after each event, every op count and #111111 census equal to the frame model's (`AIUEOS_GUEST_BROWSER_SCROLL_OK events=17 answers=40004444444444444 max=120 stack=1324 focus=4 scroll=0 chain=7421f3aa ops=164 text-px=994 hash=78270fda`). A notch is one 20 px line and only the vertical offset is kept; the offset has no upper clamp (as browser.surface) and a ceiling of 65535 (ADR-0238).
+
+![window 4 scrolled by 120: lines 7 .. 20 and the caret, cut under the titlebar, QEMU display](docs/assets/guest-browser-scroll.png)
+
 ```bash
 kbb -M:compositor serve   # same SPA; compositor owns surfaces; Ctrl-C to stop
 ```
