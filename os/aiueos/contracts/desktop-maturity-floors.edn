@@ -78,9 +78,12 @@
     :until "amu admits browser.surface + browser.input + browser.text-edit unchanged (source as the hosted engine runs it) for x86_64-aiueos-kernel-v1: `amu check src/browser/surface.cljk --source-path src` exits 0"}}
   ;; Owner decision 2026-09-25: the dictionary is generated in-repo, not
   ;; taken from SKK (GPL). The source is Unicode's Unihan readings, which
-  ;; carry the Unicode License v3.
-  {:id :dictionary :gate "guest-browser-dictionary"
-   :goal "Space converts a reading of any length through a kana-kanji dictionary generated in-repo from Unicode Unihan kJapaneseOn / kJapaneseKun (Unicode License v3) for every kanji the desktop font carries; the dictionary travels in the initramfs like the font, the hosted IME oracle reads the same generated file, and the candidates' order is a rule written in the generator"
+  ;; carry the Unicode License v3. Taken 2026-09-25 (ADR-0235): the
+  ;; generator reads kJapanese, the same readings in kana, rather than
+  ;; kJapaneseOn / kJapaneseKun, which carry them in romaji and fewer of them
+  ;; (U+4E0B: 14 against 5).
+  {:id :dictionary :gate "guest-browser-dictionary" :adr "0235"
+   :goal "Space converts a reading of any length through a kana-kanji dictionary generated in-repo from Unicode Unihan kJapanese (Unicode License v3) for every kanji the desktop font carries; the dictionary travels in the initramfs like the font, the hosted IME oracle reads the same generated file, and the candidates' order is a rule written in the generator"
    :why "the oracle's three readings (か ひ あ) make conversion a demonstration, not an input method; SKK dictionaries are GPL"}
   ;; Extended 2026-09-25 (owner: continue past 13/16). Each floor below is
   ;; a browser behaviour the kernel desktop does not have yet; the order is

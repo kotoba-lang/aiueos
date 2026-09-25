@@ -5,6 +5,25 @@ All notable changes to **aiueos** are documented here. The format follows
 
 ## [Unreleased]
 
+### Guest browser desktop: the IME converts through a Unihan dictionary (ADR-0235)
+- `os/aiueos/scripts/gen-ime-dictionary.cljk` writes `os/aiueos/ime/aiueos-kanji.dic`
+  (aiueos-dict/v1, 189,892 bytes) from Unicode 17.0.0 Unihan `kJapanese` for the
+  font's 6,355 kanji: 3,871 readings, 23,679 pairs, Unicode License v3. The
+  candidate order is a rule in the generator (Jouyou, Jinmeiyou, JIS level 1,
+  level 2; then the reading's place in the kanji's list; then code point).
+- browser-ime.kotoba takes `[surface surface-bytes dictionary dictionary-bytes key]`
+  (key = code * 4 + value), binary-searches the whole preedit as the reading,
+  keeps the record's offset at word 444 while converting, and puts the reading
+  back from it on Escape / Backspace. New refusal -6 (header or record).
+- The hosted oracle `aiueos.compositor.ime` reads the same file; か converts to
+  下 first (the hosted ADR-0088 admission and tests say so).
+- C carries `ime/aiueos-kanji.dic` from the initramfs to every key call. The type
+  gate types `kuwawaru` for 加 (19 presses, same census); the new
+  `guest-browser-dictionary` gate converts やま and しょう after the launcher.
+- Contract browser-ime-v1 -> v2: 55 vectors / 205 steps / 162 memory assertions
+  against the committed dictionary. kotoba-native fe3409bf: arity 5 and fuel tier
+  16,384 (bisected trap 600 / pass 640).
+
 ### Guest browser desktop: window bodies laid out as cssom does (ADR-0234)
 - browser-frame2's body follows browser.surface + cssom.layout: text 14 in from
   the body box (y + 28), lines w - 28 wide, a JS-whitespace run (U+3000, TAB

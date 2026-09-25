@@ -1134,7 +1134,7 @@ python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_browser_frame2
   2577f71eda1d710bbfa4d72b239b5a292eeffe554ac285409f0f248cda7707ad \
   kotoba_aiueos_browser_frame2
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_browser_ime_object" \
-  ab4041801091dc71570830abe6abd58a46d5bbe29c6c08f244d85d8fc6092d7f \
+  33d64b4f916ee632b4854012e93210bd897314c048a7d25e2aadae0d6d1af04e \
   kotoba_aiueos_browser_key
 python3 "$aiueos/scripts/verify-kotoba-user-elf.py" "$kotoba_user_elf" \
   1f0e5897831d0de6bbcb15eec82a6e0c4b402b436689cec051bc6de3b5c4e905
@@ -1469,6 +1469,7 @@ python3 "$aiueos/scripts/make-initramfs.py" \
   --entry "recovery/user-smoke.sig,$recovery_signature" \
   --entry "recovery/app-catalog.sig,$aiueos/kotoba/app-catalog.sig" \
   --entry "font/aiueos-16.fnt,$aiueos/fonts/aiueos-16.fnt" \
+  --entry "ime/aiueos-kanji.dic,$aiueos/ime/aiueos-kanji.dic" \
   --output "$initramfs" >/dev/null
 python3 - "$kernel" "$initramfs" "$identity_source" <<'PY'
 import hashlib, pathlib, sys

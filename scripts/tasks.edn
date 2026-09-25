@@ -230,8 +230,12 @@
   :doc "The committed font is what make-font.cljk builds from the recorded Unifont BDF (ADR-0224). Exit 2 without the BDF: could not run, not a pass."}
 
  :browser-desktop-ime-contract
- {:cmd ["sh" "-c" "ulimit -s 65520; node --stack-size=8000 \"$(command -v nbb)\" --classpath \"$(kbb -Spath -M:verify-admissions):../text/src\" os/aiueos/scripts/verify-admissions.cljk os/aiueos/contracts/browser-ime-v1.edn"]
-  :doc "Guest browser desktop input method (ADR-0225): browser-ime in the KIR oracle. 34 vectors / 124 key steps whose expected commits, romaji buffer, preedit and conversion words are the hosted aiueos.compositor.ime handle-key's, plus the object's own bounds (-1 -2 -3 -5 -8, release). About 6 seconds."}
+ {:cmd ["sh" "-c" "ulimit -s 65520; node --stack-size=8000 \"$(command -v nbb)\" --classpath \"$(kbb -Spath -M:verify-admissions):../text/src\" os/aiueos/scripts/verify-admissions.cljk os/aiueos/contracts/browser-ime-v2.edn"]
+  :doc "Guest browser desktop input method (ADR-0225, dictionary ADR-0235): browser-ime in the KIR oracle, every vector against the committed os/aiueos/ime/aiueos-kanji.dic (sha256-pinned). 55 vectors / 205 key steps whose expected commits, romaji buffer, preedit and conversion words are the hosted aiueos.compositor.ime handle-key's over the same file, plus the object's own bounds (-1 -2 -3 -5 -6 -8, release, repeat). About 80 seconds."}
+
+ :browser-desktop-ime-dictionary-check
+ {:cmd ["sh" "-c" "kbb --backend sci os/aiueos/scripts/gen-ime-dictionary.cljk --check \"${UNIHAN_DIR:?unpack https://www.unicode.org/Public/17.0.0/ucd/Unihan.zip and set UNIHAN_DIR}\" os/aiueos/fonts/aiueos-16.fnt os/aiueos/ime/aiueos-kanji.dic"]
+  :doc "The committed IME dictionary is what gen-ime-dictionary.cljk builds from Unicode 17.0.0 Unihan (kJapanese, kJoyoKanji, kJinmeiyoKanji) for the font's kanji (ADR-0235). Exit 1 differs, 2 could not run (no Unihan): not a pass."}
 
  :browser-desktop-ime-mora-check
  {:cmd ["kbb" "--backend" "sci" "--classpath" "src:../text/src" "os/aiueos/scripts/gen-ime-mora.cljk" "--check"]
@@ -276,6 +280,10 @@
  :browser-desktop-launch
  {:cmd ["kbb" "--backend" "sci" "--classpath" "src" "scripts/compositor-guest.cljk" "guest-browser-launch"]
   :doc "Guest browser launcher and close (ADR-0233) on KERNEL.ELF under QEMU: after the caret, the shell registers apps 1 2 3 (word 31), browser-frame2 draws a launcher row and a close control per window, and eight tablet batches -- launcher button 3, release, window 3's close control, release, the launcher again, release, window 2's close control, release -- are reduced by browser-reduce (browser.surface launch-app / close-window) with a frame after each; the focus moves to window 2 only when the focused window 3 closes."}
+
+ :browser-desktop-dictionary
+ {:cmd ["kbb" "--backend" "sci" "--classpath" "src" "scripts/compositor-guest.cljk" "guest-browser-dictionary"]
+  :doc "Guest browser dictionary (ADR-0235) on KERNEL.ELF under QEMU: after the launcher, y a m a Space converts やま through the initramfs dictionary (generated from Unicode Unihan) to 山 on record 44512, shown as the composition; Space Escape Space Enter s h o u Space Space Enter cycle, put the reading back and commit 山 and 償 into window 3. Answers are browser-ime-v2's, both censuses browser-frame-model.cljk's."}
 
  :browser-desktop-guest
  {:cmd ["kbb" "--backend" "sci" "--classpath" "src" "scripts/compositor-guest.cljk" "guest-browser-input"]

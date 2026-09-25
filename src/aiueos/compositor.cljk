@@ -17,7 +17,8 @@
   Hosted IME: `kbb -M:compositor ime` admits romaji→hiragana in this
   process. IME-on consumes `ka` (guest does not see latin). Enter
   commits `か`. IME-off is the named red (`:ime-bypass`). Hosted kanji:
-  `kbb -M:compositor kanji` admits Space converting `か` to `加`.
+  `kbb -M:compositor kanji` admits Space converting `か` to `下` (the
+  first candidate in ADR-0235's Unihan dictionary).
   Space that commits kana is leftover `:kanji-absent`. Guest IME:
   `kbb --backend sci --classpath src scripts/compositor-guest.cljk guest-ime` admits KERNEL.ELF Kotoba
   `aiueos-ime-commit` (`k`+`a` → U+304B) on guest serial. Hosted JVM
@@ -1212,11 +1213,11 @@
                  on-a (and (= 200 (:code k2))
                            (= "か" (or (:preedit (:parsed k2)) "")))
                  on-convert (and (= 200 (:code sp))
-                                 (= "加" (or (:preedit (:parsed sp)) ""))
+                                 (= "下" (or (:preedit (:parsed sp)) ""))
                                  (= "" (or (:guest-text (:parsed sp)) "")))
                  on-commit (and (= 200 (:code ent))
-                                (= "加" (or (:guest-text (:parsed ent)) ""))
-                                (str/includes? (str (:committed (:parsed ent))) "加"))
+                                (= "下" (or (:guest-text (:parsed ent)) ""))
+                                (str/includes? (str (:committed (:parsed ent))) "下"))
                  leaked? (or (true? (:latin-leaked? (:parsed k1)))
                              (true? (:latin-leaked? (:parsed k2)))
                              (true? (:latin-leaked? (:parsed sp)))

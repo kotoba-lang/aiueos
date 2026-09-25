@@ -17,7 +17,7 @@
    "guest-browser-text" "guest-browser-text-raised" "guest-browser-type"
    "guest-browser-preedit" "guest-browser-ime-toggle" "guest-browser-drag"
    "guest-browser-resize" "guest-browser-event-loop" "guest-browser-caret"
-   "guest-browser-launch" "guest-browser-flow-parity"])
+   "guest-browser-launch" "guest-browser-flow-parity" "guest-browser-dictionary"])
 
 (defn gate-cmd
   "SPA-visible evidence command for a guest profile. Not clojure -M."
@@ -513,7 +513,7 @@
       (let [r (guest-browser-text-raised-result opts)]
         (assoc r :reason :no-raised-text-frame
                :leftover (into [:no-raised-text-frame] (:leftover r))))
-      (re-find #"(?m)^AIUEOS_GUEST_BROWSER_TYPE_OK presses=13 committed=5 ops=63 text-px=1068 hash=a92b8f58" s)
+      (re-find #"(?m)^AIUEOS_GUEST_BROWSER_TYPE_OK presses=19 committed=5 ops=63 text-px=1068 hash=a92b8f58" s)
       {:green? true :exit 0 :reason :guest-browser-type
        :leftover [:no-preedit-shown :three-reading-dictionary]}
       (re-find #"(?m)^AIUEOS_GUEST_BROWSER_TYPE leftover=keys-missing" s)
@@ -534,7 +534,7 @@
   (let [s (or serial "")]
     (cond
       qemu-unmeasured? {:green? false :exit 3 :reason :unmeasured :leftover [:unmeasured]}
-      (not (re-find #"(?m)^AIUEOS_GUEST_BROWSER_TYPE_OK presses=13 committed=5 ops=63 text-px=1068 hash=a92b8f58" s))
+      (not (re-find #"(?m)^AIUEOS_GUEST_BROWSER_TYPE_OK presses=19 committed=5 ops=63 text-px=1068 hash=a92b8f58" s))
       (let [r (guest-browser-type-result opts)]
         (assoc r :reason :no-typing-frame :leftover (into [:no-typing-frame] (:leftover r))))
       (re-find #"(?m)^AIUEOS_GUEST_BROWSER_PREEDIT_OK shown-ops=67 shown-px=1146 shown-hash=566a1c8f committed=2 ops=65 text-px=1128 hash=193030b3" s)
@@ -728,6 +728,43 @@
       {:green? false :exit 1 :reason :guest-browser-launch-absent
        :leftover [:guest-browser-launch-absent]})))
 
+;; Guest browser dictionary (ADR-0235): after the launcher the host types
+;; y a m a Space, and after that frame's dump Space Escape Space Enter
+;; s h o u Space Space Enter. Every key goes through Kotoba
+;; `kotoba_aiueos_browser_key` against the initramfs dictionary (189,892
+;; bytes, generated from Unicode Unihan). Green needs the GO line to name the
+;; dictionary's bytes, the SHOWN line with やま converting on record 44512 to
+;; 山 and the model's census for that frame, and the OK line: sixteen answers
+;; as browser-ime-v2 gives them, 山 and 償 committed into window 3, and the
+;; model's census after.
+
+(def ^:private launch-ok-re
+  #"(?m)^AIUEOS_GUEST_BROWSER_LAUNCH_OK events=8 answers=30203030 windows=2 stack=1,3 focus=3 chain=2845aee9 ops=85 text-px=776 hash=98b595bd")
+
+(defn guest-browser-dictionary-result
+  [{:keys [serial qemu-unmeasured?] :as opts}]
+  (let [s (or serial "")
+        go (re-find #"(?m)^AIUEOS_GUEST_BROWSER_DICT_GO keys=5 dictionary-bytes=189892" s)
+        shown (re-find #"(?m)^AIUEOS_GUEST_BROWSER_DICT_SHOWN keys=5 converting=1 record=44512 preedit=1 cp=23665 ops=87 text-px=834 hash=e85b42b2" s)
+        ok (re-find #"(?m)^AIUEOS_GUEST_BROWSER_DICT_OK keys=16 answers=0000000010000001 record=44512 committed=23665,20767 shown-ops=87 shown-px=834 shown-hash=e85b42b2 ops=87 text-px=915 hash=eaa427b3" s)]
+    (cond
+      qemu-unmeasured? {:green? false :exit 3 :reason :unmeasured :leftover [:unmeasured]}
+      (not (re-find launch-ok-re s))
+      (let [r (guest-browser-launch-result opts)]
+        (assoc r :reason :no-launch :leftover (into [:no-launch] (:leftover r))))
+      (and ok (not (and go shown)))
+      {:green? false :exit 1 :reason :dictionary-lines-missing :leftover [:dictionary-lines-missing]}
+      ok
+      {:green? true :exit 0 :reason :guest-browser-dictionary
+       :leftover [:single-kanji-candidates :okurigana-unmarked :no-learning]}
+      (re-find #"(?m)^AIUEOS_GUEST_BROWSER_DICT leftover=keys-missing" s)
+      {:green? false :exit 1 :reason :keys-missing :leftover [:keys-missing]}
+      (re-find #"(?m)^AIUEOS_GUEST_BROWSER_DICT leftover=census-miss" s)
+      {:green? false :exit 1 :reason :census-miss :leftover [:census-miss]}
+      :else
+      {:green? false :exit 1 :reason :guest-browser-dictionary-absent
+       :leftover [:guest-browser-dictionary-absent]})))
+
 ;; Guest browser body flow (ADR-0234): the kernel lays out a four-window
 ;; surface of its own and prints its whole op list (AIUEOS_GUEST_BROWSER_FLOW_OPS
 ;; n=<ops> words=<kind x y a b rgb per op, 8 hex digits each>). Each window's
@@ -834,6 +871,9 @@
     ;; ADR-0233: the launcher's eight frames come after the caret's five.
     "guest-browser-launch" {"AIUEOS_GUEST_BROWSER" "1"
                             "AIUEOS_QEMU_TIMEOUT" "840"}
+    ;; ADR-0235: the dictionary's sixteen keys come after the launcher.
+    "guest-browser-dictionary" {"AIUEOS_GUEST_BROWSER" "1"
+                                "AIUEOS_QEMU_TIMEOUT" "960"}
     "guest-scanout-two" {"AIUEOS_GUEST_SCANOUT_TWO" "1"
                          "AIUEOS_QEMU_TIMEOUT" "90"}
     nil))
@@ -862,6 +902,7 @@
     "guest-browser-caret" (guest-browser-caret-result opts)
     "guest-browser-launch" (guest-browser-launch-result opts)
     "guest-browser-flow-parity" (guest-browser-flow-parity-result opts)
+    "guest-browser-dictionary" (guest-browser-dictionary-result opts)
     {:green? false :exit 3 :reason :unmeasured :leftover [:unmeasured]}))
 
 (defn serial-marker
@@ -888,6 +929,7 @@
     "guest-browser-caret" "AIUEOS_GUEST_BROWSER_CARET"
     "guest-browser-launch" "AIUEOS_GUEST_BROWSER_LAUNCH"
     "guest-browser-flow-parity" "AIUEOS_GUEST_BROWSER_FLOW"
+    "guest-browser-dictionary" "AIUEOS_GUEST_BROWSER_DICT"
     nil))
 
 (defn ok-print
@@ -914,4 +956,5 @@
     "guest-browser-caret" "AIUEOS_COMPOSITOR_GUEST_BROWSER_CARET_OK"
     "guest-browser-launch" "AIUEOS_COMPOSITOR_GUEST_BROWSER_LAUNCH_OK"
     "guest-browser-flow-parity" "AIUEOS_COMPOSITOR_GUEST_BROWSER_FLOW_PARITY_OK"
+    "guest-browser-dictionary" "AIUEOS_COMPOSITOR_GUEST_BROWSER_DICTIONARY_OK"
     nil))

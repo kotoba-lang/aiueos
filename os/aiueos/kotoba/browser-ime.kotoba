@@ -25,9 +25,10 @@
 ;;              IME has no use for belongs to the page.
 ;;   Escape     cancels a conversion (preedit back to its reading), else
 ;;              clears buffer and preedit
-;;   Space      flushes (a lone "n" becomes "nn"), then converts a reading the
-;;              three-entry dictionary knows (か 加可課, ひ 日火, あ 亜) or
-;;              cycles its candidates; otherwise commits the preedit
+;;   Space      flushes (a lone "n" becomes "nn"), then converts the whole
+;;              preedit -- a reading of any length -- that the dictionary
+;;              knows to its first candidate, or cycles the candidates;
+;;              otherwise commits the preedit (ADR-0235)
 ;;   Enter      flushes and commits the preedit
 ;;   other keys ignored ("-", "," and "." are in the oracle's table but its
 ;;              letter test never lets them in, so they are ignored here too)
@@ -39,6 +40,15 @@
 ;;              hosted `handle-key` has no toggle key; this is
 ;;              aiueos.compositor.desktop `set-ime`, which the hosted desktop
 ;;              calls with the flipped state (ADR-0228).
+;; THE DICTIONARY is os/aiueos/ime/aiueos-kanji.dic (aiueos-dict/v1, written
+;; by os/aiueos/scripts/gen-ime-dictionary.cljk from Unicode Unihan; the
+;; format is described in that script's header), handed in by C from the
+;; initramfs as it hands the font. The oracle reads the same file. A reading
+;; is found by binary search over the sorted records; while it is being
+;; converted, word 444 holds its record's word offset, so Escape and
+;; Backspace put the reading back from the dictionary, as the oracle puts
+;; back `:reading`. With no dictionary (a null region or 0 bytes) nothing
+;; converts and Space commits kana, as the oracle does with `:kanji? false`.
 ;; The romaji table between the GENERATED markers is written from the
 ;; oracle's own `mora` by os/aiueos/scripts/gen-ime-mora.cljk (--check).
 ;;
@@ -52,15 +62,25 @@
 ;; STATE, in the browser-frame2 surface (u32 words, 8192 bytes):
 ;;   0..31 browser state (focus at 2)   160 + 64(id-1) body of window id
 ;;   432 IME on   433 romaji length   434..441 romaji bytes
-;;   442 converting   443 candidate index   444 reading (one code point)
-;;   445 preedit length   446..477 preedit code points
+;;   442 converting   443 candidate index   444 word offset of the reading's
+;;   dictionary record   445 preedit length   446..477 preedit code points
+;;   478 overflow flag   479 the dictionary's bytes (written on every call,
+;;   so a read of the dictionary is bounded by it, as frame2 keeps the
+;;   font's at 423)
 ;;
-;; ABI: [surface surface-bytes key-code value] -> code points committed to
-;; the focused window by this key (0 for most keys), or
+;; ABI: [surface surface-bytes dictionary dictionary-bytes key] where key is
+;; the evdev key code * 4 + its value (0 release, 1 press, 2 repeat) -- five
+;; parameters is the native ceiling, so code and value share one -- ->
+;; code points committed to the focused window by this key (0 for most
+;; keys), or
 ;;   -1 null region / surface not 8192 bytes   -2 abi or n outside 1..4
 ;;   -3 focus is not a window id 1..4          -5 the body would pass 64
+;;   -6 a dictionary is given and is not aiueos-dict/v1 (header), or the
+;;      record a conversion needs is out of its bounds
 ;;   -8 the romaji buffer is full, or the preedit overflowed
-;; A release or repeat (value != 1) changes nothing and returns 0.
+;; A release or repeat (value != 1) changes nothing and returns 0. A header
+;; refusal changes nothing; a record refusal on Space comes after the flush,
+;; so the romaji is in the preedit and nothing is committed or converted.
 
 (ns aiueos.browser-ime
   (:export [aiueos-browser-key main]))
@@ -295,41 +315,101 @@
 
 ;; --- the dictionary -----------------------------------------------------------
 
-(defn cand-count [r]
-  (if (= r 12363) 3 (if (= r 12402) 2 (if (= r 12354) 1 0))))
+(defn dw [s d i]
+  (kernel-load-u32 (kernel-subregion d (w s 479) (* i 4) 4) 4 0))
 
-(defn cand-at [r i]
-  (if (= r 12363) (if (= i 0) 21152 (if (= i 1) 21487 35506))
-    (if (= r 12402) (if (= i 0) 26085 28779)
-      20124)))
+(defn dict-there [s d]
+  (if (= d 0) 0 (if (= (w s 479) 0) 0 1)))
+
+(defn dict-ok [s d]
+  ;; the aiueos-dict/v1 header: magic "AIUD", version 1, N index words
+  ;; inside W, W words inside the bytes handed in
+  (if (< (w s 479) 16) 0
+    (if (not (= (dw s d 0) 1146440001)) 0
+      (if (not (= (dw s d 1) 1)) 0
+        (if (> (* (dw s d 3) 4) (w s 479)) 0
+          (if (> (+ 4 (dw s d 2)) (dw s d 3)) 0 1))))))
+
+(defn rec-ok [s d o]
+  ;; record o: L (1..32) reading code points, C (>= 1) candidates, all
+  ;; inside W
+  (if (= (dict-there s d) 0) 0
+    (if (>= (+ o 1) (dw s d 3)) 0
+      (if (< (dw s d o) 1) 0
+        (if (> (dw s d o) 32) 0
+          (if (> (+ (+ o 2) (dw s d o)) (dw s d 3)) 0
+            (if (< (dw s d (+ (+ o 1) (dw s d o))) 1) 0
+              (if (> (+ (+ (+ o 2) (dw s d o)) (dw s d (+ (+ o 1) (dw s d o)))) (dw s d 3)) 0
+                1))))))))
+
+(defn rec-cmp [s d o i]
+  ;; record o's reading against the preedit, from code point i: <0 the
+  ;; record sorts first, 0 equal, >0 the preedit sorts first
+  (if (>= i (dw s d o)) (if (>= i (w s 445)) 0 -1)
+    (if (>= i (w s 445)) 1
+      (if (< (dw s d (+ (+ o 1) i)) (w s (+ 446 i))) -1
+        (if (> (dw s d (+ (+ o 1) i)) (w s (+ 446 i))) 1
+          (rec-cmp s d o (+ i 1)))))))
+
+(defn search [s d lo hi]
+  ;; the record whose reading is the preedit: its word offset, 0 none,
+  ;; -1 a record out of bounds
+  (if (>= lo hi) 0
+    (let [mid (quot (+ lo hi) 2)
+          o (dw s d (+ 4 mid))]
+      (if (= (rec-ok s d o) 0) -1
+        (let [c (rec-cmp s d o 0)]
+          (if (= c 0) o
+            (if (< c 0) (search s d (+ mid 1) hi)
+              (search s d lo mid))))))))
+
+(defn lookup [s d]
+  (if (= (dict-there s d) 0) 0
+    (if (= (w s 445) 0) 0
+      (search s d 0 (dw s d 2)))))
+
+(defn cand-count [s d o]
+  (dw s d (+ (+ o 1) (dw s d o))))
+
+(defn cand-at [s d o i]
+  (dw s d (+ (+ (+ o 2) (dw s d o)) i)))
 
 (defn set-preedit-one [s cp]
   (do (wp s 446 cp) (wp s 445 1) 0))
 
+(defn put-reading [s d o i]
+  ;; the record's reading back into the preedit
+  (if (>= i (dw s d o)) (wp s 445 i)
+    (do (wp s (+ 446 i) (dw s d (+ (+ o 1) i)))
+        (put-reading s d o (+ i 1)))))
+
 ;; --- keys ---------------------------------------------------------------------
 
-(defn on-space [s]
-  (do (if (= (w s 442) 0) (flush-preedit s) 0)
-      (let [reading (if (= (w s 442) 1) (w s 444)
-                      (if (= (w s 445) 1) (w s 446) 0))
-            n (cand-count reading)]
-        (if (> n 0)
-          (if (= (w s 442) 1)
-            (let [idx (- (+ (w s 443) 1) (* n (quot (+ (w s 443) 1) n)))]
-              (do (wp s 443 idx) (set-preedit-one s (cand-at reading idx))))
-            (do (wp s 442 1) (wp s 444 reading) (wp s 443 0)
-                (set-preedit-one s (cand-at reading 0))))
-          (commit s)))))
+(defn cycle [s d o]
+  (if (= (rec-ok s d o) 0) -6
+    (let [n (cand-count s d o)
+          idx (- (+ (w s 443) 1) (* n (quot (+ (w s 443) 1) n)))]
+      (do (wp s 443 idx) (set-preedit-one s (cand-at s d o idx))))))
+
+(defn on-space [s d]
+  (if (= (w s 442) 1) (cycle s d (w s 444))
+    (do (flush-preedit s)
+        (let [o (lookup s d)]
+          (if (< o 0) -6
+            (if (> o 0)
+              (do (wp s 442 1) (wp s 444 o) (wp s 443 0)
+                  (set-preedit-one s (cand-at s d o 0)))
+              (commit s)))))))
 
 (defn on-enter [s]
   (do (if (= (w s 442) 0) (flush-preedit s) 0)
       (commit s)))
 
-(defn cancel [s]
+(defn cancel [s d]
   (if (= (w s 442) 1)
-    (do (wp s 442 0) (wp s 443 0)
-        (set-preedit-one s (w s 444))
-        (wp s 444 0) 0)
+    (if (= (rec-ok s d (w s 444)) 0) -6
+      (do (put-reading s d (w s 444) 0)
+          (wp s 442 0) (wp s 443 0) (wp s 444 0) 0))
     (do (wp s 433 0) (wp s 445 0) 0)))
 
 (defn delete-backward [s]
@@ -340,8 +420,8 @@
         at (body-len s base 0)]
     (if (> at 0) (do (wp s (+ base (- at 1)) 0) 0) 0)))
 
-(defn on-backspace [s]
-  (if (= (w s 442) 1) (cancel s)
+(defn on-backspace [s d]
+  (if (= (w s 442) 1) (cancel s d)
     (if (> (w s 433) 0) (do (wp s 433 (- (w s 433) 1)) 0)
       (if (> (w s 445) 0) (do (wp s 445 (- (w s 445) 1)) 0)
         (delete-backward s)))))
@@ -363,17 +443,17 @@
   (do (wp s 432 (if (= (w s 432) 0) 1 0))
       (clear-state s)))
 
-(defn key [s code]
+(defn key [s d code]
   (let [c (letter-of code)]
     (if (= code 41) (toggle s)
     (if (= (w s 432) 0)
       (if (> c 0) (off-letter s c)
         (if (= code 14) (delete-backward s) 0))
       (if (> c 0) (on-letter s c)
-        (if (= code 57) (on-space s)
+        (if (= code 57) (on-space s d)
           (if (= code 28) (on-enter s)
-            (if (= code 14) (on-backspace s)
-              (if (= code 1) (cancel s) 0)))))))))
+            (if (= code 14) (on-backspace s d)
+              (if (= code 1) (cancel s d) 0)))))))))
 
 ;; --- admission ----------------------------------------------------------------
 
@@ -382,7 +462,20 @@
     (if (= (w s (+ 5 (* k 5))) id) 1
       (has-id s n (+ k 1) id))))
 
-(defn aiueos-browser-key [s sb code value]
+(defn press [s d ev]
+  (if (not (= (bit-and ev 3) 1)) 0
+    (do (wp s 478 0)
+        (let [r (key s d (quot ev 4))]
+          (if (= (w s 478) 1) -8 r)))))
+
+(defn admitted [s d ev]
+  ;; after the surface checks: a dictionary that is there must be
+  ;; aiueos-dict/v1 before any key is taken
+  (if (= (dict-there s d) 1)
+    (if (= (dict-ok s d) 0) -6 (press s d ev))
+    (press s d ev)))
+
+(defn aiueos-browser-key [s sb d db ev]
   (if (= s 0) -1
     (if (not (= sb 8192)) -1
       (if (not (= (w s 0) 1)) -2
@@ -391,9 +484,7 @@
             (if (< (w s 2) 1) -3
               (if (> (w s 2) 4) -3
                 (if (= (has-id s (w s 1) 0 (w s 2)) 0) -3
-                  (if (not (= value 1)) 0
-                    (do (wp s 478 0)
-                        (let [r (key s code)]
-                          (if (= (w s 478) 1) -8 r)))))))))))))
+                  (do (wp s 479 (if (= d 0) 0 db))
+                      (admitted s d ev)))))))))))
 
 (defn main [] 0)

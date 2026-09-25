@@ -350,22 +350,57 @@
                 [(+ base arena-offset) (:bytes (:page contract))
                  operation handle descriptor])}))
 
-;; The guest browser desktop input method (ADR-0225): one 8192-byte surface
-;; seeded per vector, one key per step. A two-element step is [key-code
-;; value] against that surface; a four-element one names every argument
-;; (`:surface` for the seeded region), which is how the refusals of the
-;; surface itself are reached.
-(defmethod prepare-steps :aiueos.browser-ime/v1 [contract v]
-  (let [{:keys [base image-bytes]} (get-in contract [:verification :memory])]
+;; The guest browser desktop input method (ADR-0225, ADR-0235): one 8192-byte
+;; surface seeded per vector, followed in the image by the committed
+;; dictionary (`:verification :memory :dictionary-file`, sha256- and
+;; length-pinned, read once) -- the vectors convert through the same file the
+;; kernel boots with. `:dictionary-patch [[offset hex] ...]` corrupts a
+;; vector's copy (offsets from the dictionary's first byte). One key per
+;; step: a two-element step is [key-code value] against that surface and
+;; dictionary; a four-element one is [surface surface-bytes key-code value]
+;; with the dictionary given; a five-element one names every argument
+;; (`:surface`, `:dictionary`, `:dictionary-bytes` for the seeded regions;
+;; the last is key-code * 4 + value, as the object takes it).
+(def ^:private dictionary-cache (atom {}))
+
+(defn- dictionary-image [contract]
+  (let [{:keys [dictionary-file dictionary-sha256 dictionary-bytes]}
+        (get-in contract [:verification :memory])]
+    (or (get @dictionary-cache dictionary-file)
+        (do
+          (when-not (and dictionary-file (.existsSync fs dictionary-file))
+            (fail! "REFUSING TO REPORT A PASS: the contract's dictionary file is absent"
+                   {:dictionary-file dictionary-file}))
+          (let [buf (.readFileSync fs dictionary-file)
+                digest (-> (.createHash crypto "sha256") (.update buf) (.digest "hex"))]
+            (when (not= digest dictionary-sha256)
+              (fail! "REFUSING TO REPORT A PASS: the dictionary file's sha256 is not the pinned one"
+                     {:dictionary-file dictionary-file :expected dictionary-sha256 :actual digest}))
+            (when (not= (.-length buf) dictionary-bytes)
+              (fail! "REFUSING TO REPORT A PASS: the dictionary file's length is not the declared one"
+                     {:dictionary-file dictionary-file :expected dictionary-bytes :actual (.-length buf)}))
+            (let [image (vec (array-seq buf))]
+              (swap! dictionary-cache assoc dictionary-file image)
+              image))))))
+
+(defmethod prepare-steps :aiueos.browser-ime/v2 [contract v]
+  (let [{:keys [base image-bytes dictionary-bytes]} (get-in contract [:verification :memory])
+        dict-base (+ base image-bytes)
+        dict (reduce (fn [img [off hex]] (write-at img off (hex-bytes hex)))
+                     (dictionary-image contract) (:dictionary-patch v))
+        named (fn [x] (case x :surface base :dictionary dict-base :dictionary-bytes dictionary-bytes x))]
     {:entry 'aiueos-browser-key
      :base base
-     :image (reduce (fn [img {:keys [offset hex]}] (write-at img offset (hex-bytes hex)))
-                    (vec (repeat image-bytes 0))
-                    (:seed v))
+     :image (into (reduce (fn [img {:keys [offset hex]}] (write-at img offset (hex-bytes hex)))
+                          (vec (repeat image-bytes 0))
+                          (:seed v))
+                  dict)
      :args-of (fn [a]
-                (if (= 2 (count a))
-                  [base 8192 (first a) (second a)]
-                  (mapv #(if (= :surface %) base %) a)))}))
+                (case (count a)
+                  2 [base 8192 dict-base dictionary-bytes (+ (* 4 (first a)) (second a))]
+                  4 [(named (nth a 0)) (named (nth a 1)) dict-base dictionary-bytes
+                     (+ (* 4 (nth a 2)) (nth a 3))]
+                  (mapv named a)))}))
 
 (defmethod prepare-steps :default [contract _]
   (fail! "REFUSING TO REPORT A PASS: no step builder for this contract format"

@@ -144,13 +144,13 @@
 (deftest guest-browser-type-classifier
   (testing "the IME's commit, redrawn, matches the model"
     (let [r (guest/classify "guest-browser-type"
-                            {:serial (str raised-ok "AIUEOS_GUEST_BROWSER_TYPE_OK presses=13 committed=5 ops=63 text-px=1068 hash=a92b8f58\r\n")})]
+                            {:serial (str raised-ok "AIUEOS_GUEST_BROWSER_TYPE_OK presses=19 committed=5 ops=63 text-px=1068 hash=a92b8f58\r\n")})]
       (is (:green? r))
       (is (= :guest-browser-type (:reason r)))))
   (testing "typing needs the raised text frame first"
     (is (= :no-raised-text-frame
            (:reason (guest/classify "guest-browser-type"
-                                    {:serial "AIUEOS_GUEST_BROWSER_TYPE_OK presses=13 committed=5 ops=63 text-px=1068 hash=a92b8f58\r\n"})))))
+                                    {:serial "AIUEOS_GUEST_BROWSER_TYPE_OK presses=19 committed=5 ops=63 text-px=1068 hash=a92b8f58\r\n"})))))
   (testing "each named red keeps its reason"
     (doseq [[line reason]
             [["AIUEOS_GUEST_BROWSER_TYPE leftover=keys-missing presses=4\r\n" :keys-missing]
@@ -159,13 +159,13 @@
       (is (= reason (:reason (guest/classify "guest-browser-type" {:serial (str raised-ok line)}))) line)))
   (testing "a different commit count is not the pinned answer"
     (is (not (:green? (guest/classify "guest-browser-type"
-                                      {:serial (str raised-ok "AIUEOS_GUEST_BROWSER_TYPE_OK presses=13 committed=4 ops=62 text-px=1052 hash=7caecfe8\r\n")})))))
+                                      {:serial (str raised-ok "AIUEOS_GUEST_BROWSER_TYPE_OK presses=19 committed=4 ops=62 text-px=1052 hash=7caecfe8\r\n")})))))
   (testing "the profile is the tablet one"
     (is (= {"AIUEOS_GUEST_BROWSER" "1"} (guest/extra-env "guest-browser-type")))))
 
 ;; Guest browser preedit (ADR-0227).
 (def ^:private typed-ok
-  (str raised-ok "AIUEOS_GUEST_BROWSER_TYPE_OK presses=13 committed=5 ops=63 text-px=1068 hash=a92b8f58\r\n"))
+  (str raised-ok "AIUEOS_GUEST_BROWSER_TYPE_OK presses=19 committed=5 ops=63 text-px=1068 hash=a92b8f58\r\n"))
 
 (deftest guest-browser-preedit-classifier
   (testing "the ruled composition and its commit, both matching the model, are green"
@@ -373,6 +373,49 @@
       (is (= reason (:reason (guest/classify "guest-browser-launch" {:serial (str caret-ok-line line)}))) line)))
   (testing "tablet profile, with the caret's wall clock and more"
     (is (= {"AIUEOS_GUEST_BROWSER" "1" "AIUEOS_QEMU_TIMEOUT" "840"} (guest/extra-env "guest-browser-launch")))))
+
+;; Guest browser dictionary (ADR-0235).
+(def ^:private launch-ok-line
+  (str caret-ok-line launch-frames launch-ok))
+
+(def ^:private dict-lines
+  (str "AIUEOS_GUEST_BROWSER_DICT_GO keys=5 dictionary-bytes=189892\r\n"
+       "AIUEOS_GUEST_BROWSER_DICT_SHOWN keys=5 converting=1 record=44512 preedit=1 cp=23665 ops=87 text-px=834 hash=e85b42b2\r\n"
+       "AIUEOS_GUEST_BROWSER_DICT_NEXT keys=11\r\n"))
+
+(def ^:private dict-ok
+  "AIUEOS_GUEST_BROWSER_DICT_OK keys=16 answers=0000000010000001 record=44512 committed=23665,20767 shown-ops=87 shown-px=834 shown-hash=e85b42b2 ops=87 text-px=915 hash=eaa427b3\r\n")
+
+(deftest guest-browser-dictionary-classifier
+  (testing "やま converts on its record, 山 and 償 committed, the model's censuses: green"
+    (let [r (guest/classify "guest-browser-dictionary" {:serial (str launch-ok-line dict-lines dict-ok)})]
+      (is (= :guest-browser-dictionary (:reason r)))
+      (is (= 0 (:exit r)))
+      (is (= [:single-kanji-candidates :okurigana-unmarked :no-learning] (:leftover r)))))
+  (testing "the dictionary needs the launcher first"
+    (is (= :no-launch
+           (:reason (guest/classify "guest-browser-dictionary"
+                                    {:serial (str caret-ok-line dict-lines dict-ok)})))))
+  (testing "an OK line without the SHOWN line is not green"
+    (is (= :dictionary-lines-missing
+           (:reason (guest/classify "guest-browser-dictionary"
+                                    {:serial (str launch-ok-line
+                                                  "AIUEOS_GUEST_BROWSER_DICT_GO keys=5 dictionary-bytes=189892\r\n"
+                                                  dict-ok)})))))
+  (testing "a boot without the dictionary (Space commits kana: bytes 0, not converting) is not green"
+    (is (= :dictionary-lines-missing
+           (:reason (guest/classify "guest-browser-dictionary"
+                                    {:serial (str launch-ok-line
+                                                  "AIUEOS_GUEST_BROWSER_DICT_GO keys=5 dictionary-bytes=0\r\n"
+                                                  "AIUEOS_GUEST_BROWSER_DICT_SHOWN keys=5 converting=0 record=0 preedit=0 cp=0 ops=85 text-px=776 hash=98b595bd\r\n"
+                                                  dict-ok)})))))
+  (testing "named reds"
+    (doseq [[line reason] [["AIUEOS_GUEST_BROWSER_DICT leftover=keys-missing keys=5\r\n" :keys-missing]
+                           ["AIUEOS_GUEST_BROWSER_DICT leftover=census-miss off=1 ops=87 text-px=915 hash=0badf00d body=23665,0\r\n" :census-miss]
+                           ["" :guest-browser-dictionary-absent]]]
+      (is (= reason (:reason (guest/classify "guest-browser-dictionary" {:serial (str launch-ok-line dict-lines line)}))) line)))
+  (testing "tablet profile, with the launcher's wall clock and more"
+    (is (= {"AIUEOS_GUEST_BROWSER" "1" "AIUEOS_QEMU_TIMEOUT" "960"} (guest/extra-env "guest-browser-dictionary")))))
 
 ;; Guest browser body flow (ADR-0234). A one-window stand-in for the kernel's
 ;; op dump: the classifier's span rule and its comparison, not the real scene
