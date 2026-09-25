@@ -703,6 +703,29 @@ while time.time() < end:
                 recv_obj()
                 globals()["launch_sent"] = k + 1
                 log("launch event " + str(k + 1) + " sent")
+        # The pointer (ADR-0236): moves to (400, 300) (700, 450) (1276, 796),
+        # a press at (1000, 600) on no window, the release -- each after the
+        # guest's frame line for the one before (and its screendump).
+        if typing and b"AIUEOS_GUEST_BROWSER_CURSOR_GO" in serial_now and globals().get("cursor_sent", 0) < 5:
+            k = globals().get("cursor_sent", 0)
+            if k == 0 or (b"AIUEOS_GUEST_BROWSER_CURSOR_FRAME n=%d " % k) in serial_now:
+                if k:
+                    shot = os.path.join(os.path.dirname(path), "guest-browser-cursor-%d.ppm" % k)
+                    sock.sendall((json.dumps({"execute": "screendump", "arguments": {"filename": shot}})
+                                  + "\n").encode())
+                    recv_obj()
+                time.sleep(0.5)
+                def at(x, y):
+                    return [{"type": "abs", "data": {"axis": "x", "value": x}},
+                            {"type": "abs", "data": {"axis": "y", "value": y}}]
+                ev = (at(10240, 12288), at(17920, 18432), at(32666, 32605),
+                      at(25600, 24576) + [{"type": "btn", "data": {"down": True, "button": "left"}}],
+                      [{"type": "btn", "data": {"down": False, "button": "left"}}])[k]
+                sock.sendall((json.dumps({"execute": "input-send-event", "arguments": {"events": ev}})
+                              + "\n").encode())
+                recv_obj()
+                globals()["cursor_sent"] = k + 1
+                log("cursor event " + str(k + 1) + " sent")
         i += 1
         # Guest browser desktop (ADR-0224): the screens a person can look at.
         # The kernel holds each desktop frame for a few seconds in this
@@ -728,6 +751,7 @@ while time.time() < end:
                                  (b"AIUEOS_GUEST_BROWSER_LAUNCH_OK", "guest-browser-launch.ppm"),
                                  (b"AIUEOS_GUEST_BROWSER_DICT_SHOWN", "guest-browser-dictionary-converting.ppm"),
                                  (b"AIUEOS_GUEST_BROWSER_DICT_OK", "guest-browser-dictionary.ppm"),
+                                 (b"AIUEOS_GUEST_BROWSER_CURSOR_OK", "guest-browser-cursor.ppm"),
                                  (b"AIUEOS_GUEST_BROWSER_FLOW_OK", "guest-browser-flow.ppm")):
                 if marker in serial_text and not globals().get(name):
                     globals()[name] = True

@@ -17,7 +17,8 @@
    "guest-browser-text" "guest-browser-text-raised" "guest-browser-type"
    "guest-browser-preedit" "guest-browser-ime-toggle" "guest-browser-drag"
    "guest-browser-resize" "guest-browser-event-loop" "guest-browser-caret"
-   "guest-browser-launch" "guest-browser-flow-parity" "guest-browser-dictionary"])
+   "guest-browser-launch" "guest-browser-flow-parity" "guest-browser-dictionary"
+   "guest-browser-cursor"])
 
 (defn gate-cmd
   "SPA-visible evidence command for a guest profile. Not clojure -M."
@@ -765,6 +766,45 @@
       {:green? false :exit 1 :reason :guest-browser-dictionary-absent
        :leftover [:guest-browser-dictionary-absent]})))
 
+;; Guest browser pointer (ADR-0236): after the dictionary, C writes each
+;; tablet event's position into surface words 2046 (x + 1) and 2047 (y) and
+;; browser-frame2 ends every list with a 12-row arrow there, over everything.
+;; The host moves to (400, 300) (700, 450) (1276, 796), presses at
+;; (1000, 600) on no window and releases. Green needs the GO line saying no
+;; frame before it had a pointer (before=0), all five FRAME lines, and the OK
+;; line: five zero answers, every frame's op count and #111111 census equal to
+;; the frame model's, the arrow's tip #111111 and its fill #ffffff read back
+;; from the framebuffer, and the census chain.
+
+(def ^:private dict-ok-re
+  #"(?m)^AIUEOS_GUEST_BROWSER_DICT_OK keys=16 answers=0000000010000001 record=44512 committed=23665,20767 shown-ops=87 shown-px=834 shown-hash=e85b42b2 ops=87 text-px=915 hash=eaa427b3")
+
+(def ^:private cursor-frame-numbers #{"1" "2" "3" "4" "5"})
+
+(defn guest-browser-cursor-result
+  [{:keys [serial qemu-unmeasured?] :as opts}]
+  (let [s (or serial "")
+        go (re-find #"(?m)^AIUEOS_GUEST_BROWSER_CURSOR_GO events=5 before=0" s)
+        frames (set (map second (re-seq #"(?m)^AIUEOS_GUEST_BROWSER_CURSOR_FRAME n=(\d+) " s)))
+        ok (re-find #"(?m)^AIUEOS_GUEST_BROWSER_CURSOR_OK events=5 answers=00000 before=0 at=1000,600 tip=111111 fill=ffffff chain=f4bb42d8 ops=108 text-px=948 hash=3e8be657" s)]
+    (cond
+      qemu-unmeasured? {:green? false :exit 3 :reason :unmeasured :leftover [:unmeasured]}
+      (not (re-find dict-ok-re s))
+      (let [r (guest-browser-dictionary-result opts)]
+        (assoc r :reason :no-dictionary :leftover (into [:no-dictionary] (:leftover r))))
+      (and ok (not (and go (= frames cursor-frame-numbers))))
+      {:green? false :exit 1 :reason :cursor-lines-missing :leftover [:cursor-lines-missing]}
+      ok
+      {:green? true :exit 0 :reason :guest-browser-cursor
+       :leftover [:pointer-only-from-the-cursor-stage :kernel-arrow-sprite :no-cursor-shapes]}
+      (re-find #"(?m)^AIUEOS_GUEST_BROWSER_CURSOR leftover=events-missing" s)
+      {:green? false :exit 1 :reason :events-missing :leftover [:events-missing]}
+      (re-find #"(?m)^AIUEOS_GUEST_BROWSER_CURSOR leftover=census-miss" s)
+      {:green? false :exit 1 :reason :census-miss :leftover [:census-miss]}
+      :else
+      {:green? false :exit 1 :reason :guest-browser-cursor-absent
+       :leftover [:guest-browser-cursor-absent]})))
+
 ;; Guest browser body flow (ADR-0234): the kernel lays out a four-window
 ;; surface of its own and prints its whole op list (AIUEOS_GUEST_BROWSER_FLOW_OPS
 ;; n=<ops> words=<kind x y a b rgb per op, 8 hex digits each>). Each window's
@@ -874,6 +914,9 @@
     ;; ADR-0235: the dictionary's sixteen keys come after the launcher.
     "guest-browser-dictionary" {"AIUEOS_GUEST_BROWSER" "1"
                                 "AIUEOS_QEMU_TIMEOUT" "960"}
+    ;; ADR-0236: the pointer's five frames come after the dictionary.
+    "guest-browser-cursor" {"AIUEOS_GUEST_BROWSER" "1"
+                            "AIUEOS_QEMU_TIMEOUT" "1080"}
     "guest-scanout-two" {"AIUEOS_GUEST_SCANOUT_TWO" "1"
                          "AIUEOS_QEMU_TIMEOUT" "90"}
     nil))
@@ -903,6 +946,7 @@
     "guest-browser-launch" (guest-browser-launch-result opts)
     "guest-browser-flow-parity" (guest-browser-flow-parity-result opts)
     "guest-browser-dictionary" (guest-browser-dictionary-result opts)
+    "guest-browser-cursor" (guest-browser-cursor-result opts)
     {:green? false :exit 3 :reason :unmeasured :leftover [:unmeasured]}))
 
 (defn serial-marker
@@ -930,6 +974,7 @@
     "guest-browser-launch" "AIUEOS_GUEST_BROWSER_LAUNCH"
     "guest-browser-flow-parity" "AIUEOS_GUEST_BROWSER_FLOW"
     "guest-browser-dictionary" "AIUEOS_GUEST_BROWSER_DICT"
+    "guest-browser-cursor" "AIUEOS_GUEST_BROWSER_CURSOR"
     nil))
 
 (defn ok-print
@@ -957,4 +1002,5 @@
     "guest-browser-launch" "AIUEOS_COMPOSITOR_GUEST_BROWSER_LAUNCH_OK"
     "guest-browser-flow-parity" "AIUEOS_COMPOSITOR_GUEST_BROWSER_FLOW_PARITY_OK"
     "guest-browser-dictionary" "AIUEOS_COMPOSITOR_GUEST_BROWSER_DICTIONARY_OK"
+    "guest-browser-cursor" "AIUEOS_COMPOSITOR_GUEST_BROWSER_CURSOR_OK"
     nil))
