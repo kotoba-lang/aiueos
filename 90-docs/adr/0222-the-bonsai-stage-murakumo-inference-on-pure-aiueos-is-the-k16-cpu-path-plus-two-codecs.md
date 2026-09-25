@@ -763,10 +763,28 @@ source rather than here.
    Two constraints this object also meets, and which are not about fuel:
    a kernel object exports one symbol and cannot call another (ADR-0030),
    so every stage would be inlined through `aiueos.lib.*`. The low region
-   has 8,192 B of headroom (rope, above), and the rope object alone is
-   6,152 B. The SMP split (item 12) hands each half of a matvec to its own
-   CPU from C, so one object would also have to either give that up or
-   come after it.
+   has 4 KiB of headroom (low-region paragraph, above). The nine objects
+   the forward pass calls today total 153,592 B (norm 9,664, activation
+   11,120, attention 18,672, recurrent-step 7,000, rope 6,152, matvec
+   47,192, dequant-row 42,512, hadamard 8,512, dot-f32 2,768; `git
+   cat-file -s origin/main:os/aiueos/kotoba/qwen35-<name>.o`). That sum is
+   an upper bound on one inlined object, not its size, since the objects
+   share `aiueos.lib.*` code; an object that replaces them in the image
+   frees their bytes. The SMP split (item 12) hands each half of a matvec
+   to its own CPU from C, so one object would also have to either give
+   that up or come after it.
+   **This floor waits on the owner, not on the loop.** The SMP split is on
+   in every image: `build-uefi.sh` defaults `AIUEOS_QWEN35_SMP` to 1, and
+   `matvec` in `qwen35_infer.c` calls `aiueos_smp_dispatch(matvec_ap, …)`
+   for any output of 512 rows or more when two worker threads exist. One
+   object that calls nothing cannot dispatch, so it runs every matvec on
+   one CPU. The choice is between two things. One is giving the split up,
+   which is a rate regression the stage-C comparison would carry. The
+   other is waiting for `smp.c` to move (ADR-0220 layers 3–5, item 12).
+   That is a decision, and an unattended loop does not make it. The tick
+   marks `:evaluate-token-object` `:needs-a-human`. It had offered the
+   floor 12 times since 2026-09-23 with nothing landed. **Not measured**:
+   the size of the inlined object, its fuel, and the single-CPU rate.
 8. **The `T02` failure is retried on the physical K16**, with the KV alias
    fix of ADR-0121's follow-up in place, until eight greedy tokens exist.
    The floor is stream A's: `Hello` → `11, 353, 2688, 264, 5286, 303, 279,
