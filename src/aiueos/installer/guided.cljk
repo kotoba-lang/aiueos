@@ -310,6 +310,42 @@
                       (or (nil? image-bytes) (>= (:size d) image-bytes))))
                blockdevices)))
 
+(defn blank-disk?
+  "MEASURED to carry no partition table and no filesystem signature. A disk
+  that was ever used carries one of the two; an empty second SSD neither
+  (ADR-0240).
+
+  Unmeasured is not blank. lsblk reads PTTYPE/FSTYPE from udev, and the live
+  installer has no udev -- on the QEMU trial it reported both fields empty for
+  a disk with a DOS partition table. So the probe asks `blkid -p` per disk and
+  sets `:signatures-measured?` only when blkid answered; without that flag a
+  disk is never called empty, whatever its fields say."
+  [d]
+  (and (true? (:signatures-measured? d))
+       (str/blank? (str (:pttype d)))
+       (str/blank? (str (:fstype d)))))
+
+(defn default-target
+  "The 1-based pick the storage screen offers as its default, or nil.
+
+  One candidate: that one (as before). Several: the one that is blank, but
+  only when exactly one is -- two empty disks are a choice the person makes,
+  and a default between them would be a guess. A default is only what Enter
+  means; the pick still goes through the match, the confirm screen and the
+  typed ERASE phrase."
+  [candidates]
+  (cond
+    (= 1 (count candidates)) 1
+    :else (let [blank (keep-indexed (fn [i d] (when (blank-disk? d) (inc i))) candidates)]
+            (when (= 1 (count blank)) (first blank)))))
+
+(defn default-hostname
+  "Hostname offered by default: the machine model's slug (DMI on the target),
+  or `aiueos` when there is no usable model. Always passes hostname-ok?."
+  [model]
+  (let [h (account-model model)]
+    (if (and h (hostname-ok? h)) h "aiueos")))
+
 (defn disk->match
   "The match an operator's pick implies.
 

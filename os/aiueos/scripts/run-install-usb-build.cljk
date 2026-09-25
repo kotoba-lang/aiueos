@@ -98,7 +98,9 @@
           (when-let [nbb-dir (arg "--nbb-dir")]
             ["--nbb-dir" nbb-dir])
           (when-let [uki (arg "--live-uki")]
-            ["--live-uki" uki])))
+            ["--live-uki" uki])
+          (when-let [k (arg "--default-ssh-key")]
+            ["--default-ssh-key" k])))
 
 (let [r (.spawnSync cp "python3"
                     (to-array (cons (.join path aiueos "scripts" "make-install-usb-image.py")

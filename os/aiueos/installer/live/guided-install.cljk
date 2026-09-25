@@ -170,6 +170,25 @@
     ;; the actual product path untestable offline (ADR-0210).
     (or (arg "--probe-file") (.-AIUEOS_GUIDED_PROBE_FILE js/process.env))))
 
+(defn- measure-signatures!
+  "Ask `blkid -p` (low-level probe, no cache, no udev) whether a whole disk
+  carries a partition table or a filesystem. Exit 0 = found, 2 = measured and
+  nothing there; anything else -- no blkid, no permission -- leaves the disk
+  unmeasured, which g/blank-disk? never treats as empty (ADR-0240)."
+  [d]
+  (if-not (= "disk" (:type d))
+    d
+    (let [r (.spawnSync cp "blkid" #js ["-p" "-o" "export" (:path d)]
+                        #js {:encoding "utf8" :shell false})
+          status (.-status r)
+          kv (into {} (keep #(when-let [[_ k v] (re-find #"^([A-Z_]+)=(.*)$" %)] [k v])
+                            (str/split-lines (or (.-stdout r) ""))))]
+      (if (contains? #{0 2} status)
+        (assoc d :signatures-measured? true
+                 :pttype (or (get kv "PTTYPE") (:pttype d))
+                 :fstype (or (get kv "TYPE") (:fstype d)))
+        d))))
+
 (defn- probe-disks!
   "Whole-disk inventory, read-only. `lsblk --nodeps` on Linux; on any other
   host there is no equivalent that reports transport and removability the same
@@ -180,12 +199,13 @@
         (:blockdevices (read-json fake-probe)))
     (let [r (.spawnSync cp "lsblk"
                         #js ["--json" "--bytes" "--nodeps" "--output"
-                             "PATH,TYPE,SIZE,MODEL,TRAN,SERIAL,RM"]
+                             "PATH,TYPE,SIZE,MODEL,TRAN,SERIAL,RM,PTTYPE,FSTYPE"]
                         #js {:encoding "utf8" :shell false})]
       (when-not (zero? (or (.-status r) 1))
         (die 3 "lsblk could not enumerate disks:"
              (str/trim (or (.-stderr r) "no stderr"))))
-      (:blockdevices (js->clj (.parse js/JSON (.-stdout r)) :keywordize-keys true)))))
+      (mapv measure-signatures!
+            (:blockdevices (js->clj (.parse js/JSON (.-stdout r)) :keywordize-keys true))))))
 
 (defn- boot-disk!
   "The disk this installer booted from, which is never offered as a target.
@@ -229,9 +249,12 @@
                     "  " (gb (:size d))
                     "  model=" (pr-str (str/trim (str (:model d))))
                     "  transport=" (or (:tran d) "unmeasured")
-                    "  serial=" (if (seq (str/trim (str (:serial d)))) "present" "unmeasured"))))
+                    "  serial=" (if (seq (str/trim (str (:serial d)))) "present" "unmeasured")
+                    (cond (g/blank-disk? d) "  [empty]"
+                          (:signatures-measured? d) (str "  [has data: " (or (:pttype d) (:fstype d)) "]")
+                          :else "  [unmeasured]"))))
     (println)
-    (let [pick (ask-validated "Disk to erase (number)" (when (= 1 (count candidates)) "1")
+    (let [pick (ask-validated "Disk to erase (number)" (some-> (g/default-target candidates) str)
                               (fn [s] (let [n (js/parseInt s 10)]
                                         (and (not (js/isNaN n)) (<= 1 n (count candidates)))))
                               "guided-storage-pick-out-of-range")
@@ -253,19 +276,44 @@
         (.exit js/process 2))
       (assoc answers :storage match))))
 
+(defn- dmi-model
+  "`<sys_vendor> <product_name>` from /sys/class/dmi/id, read-only, or nil.
+  Placeholder strings firmware vendors leave in are not a model."
+  []
+  (let [rd (fn [f] (try (str/trim (.readFileSync fs (str "/sys/class/dmi/id/" f) "utf8"))
+                        (catch :default _ nil)))
+        junk? (fn [s] (or (str/blank? s)
+                          (re-find #"(?i)to be filled|default string|system product name|not specified" s)))
+        v (rd "sys_vendor") p (rd "product_name")]
+    (when-not (junk? p)
+      (str/trim (str (when-not (or (junk? v) (str/starts-with? (str/lower p) (str/lower v))) (str v " ")) p)))))
+
 (defn- screen-identity [answers]
   (let [step (g/step-by-id "identity")]
     (banner step)
-    (let [h (ask-validated (:prompt step) nil g/hostname-ok? "answers-hostname-invalid")
-          m (ask "Machine model, for the receipt" "unspecified")]
+    ;; both default from DMI when the firmware reports a model (ADR-0240)
+    (let [dmi (dmi-model)
+          h (ask-validated (:prompt step) (g/default-hostname dmi)
+                           g/hostname-ok? "answers-hostname-invalid")
+          m (ask "Machine model, for the receipt" (or dmi "unspecified"))]
       (assoc answers :identity {:hostname h :machine-model m}))))
+
+(def default-key
+  "The public key the USB was built with (`--default-ssh-key`, ADR-0240), when
+  it is a valid OpenSSH ed25519 line; otherwise there is no default."
+  (let [f "default-authorized-key.pub"]
+    (when (.existsSync fs f)
+      (let [k (str/trim (.readFileSync fs f "utf8"))]
+        (when (g/openssh-public-key? k) k)))))
 
 (defn- screen-ssh [answers]
   (let [step (g/step-by-id "ssh")]
     (banner step)
     (println "   paste the key line, or give @/path/to/key.pub to read one")
+    (when default-key
+      (println (str "   the stick carries a key; Enter uses it: " (ssh-fingerprint default-key))))
     (let [raw (ask-validated
-               (:prompt step) nil
+               (:prompt step) default-key
                (fn [s]
                  (let [v (if (str/starts-with? s "@")
                            (let [p (subs s 1)]
