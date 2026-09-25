@@ -179,11 +179,27 @@
                                               (take 32 (get titles k))))))))
                   [1 2 3 4]))))
 
+(defn- pointer-sprite
+  "ADR-0236: the pointer's arrow, tip at [x y], 12 rows: row r an outline
+  (r + 1 wide, #111111) and in rows 2..10 a white fill (r - 1 wide from
+  x + 1) over it. Rows at or past vh are left out; every rect is cut at vw,
+  and a fill with no width left is left out."
+  [{:keys [vw vh pointer]}]
+  (when-let [[x y] pointer]
+    (vec (for [r (range 12)
+               :when (< (+ y r) vh)
+               op [[:rect x (+ y r) (min (inc r) (- vw x)) 1 ink]
+                   (when (and (<= 2 r 10) (pos? (min (dec r) (- vw x 1))))
+                     [:rect (inc x) (+ y r) (min (dec r) (- vw x 1)) 1 0xffffff])]
+               :when op]
+           op))))
+
 (defn frame
   "Ops for a scene: {:vw :vh :focus :stack [{:id :x :y :w :h :title :body}]
-  :composition [cp ...] :apps register :titles {k [cp ...]}} (stack bottom first)."
+  :composition [cp ...] :apps register :titles {k [cp ...]} :pointer [x y]}
+  (stack bottom first)."
   [{:keys [vw vh focus stack composition apps] :as scene}]
-  (into (into [[:rect 0 0 vw vh 0xf5f6f8]] (launcher scene))
+  (into (into (into [[:rect 0 0 vw vh 0xf5f6f8]] (launcher scene))
         (mapcat
          (fn [{:keys [id x y w h title body]}]
            (let [f? (= id focus)
@@ -217,7 +233,8 @@
              (concat [[:rect x y w h (if f? 0xffffff 0xeef1f5)]
                       [:rect x y w 28 (if f? 0xd8e7ff 0xdde2ea)]]
                      (:ops t) close (:ops b) (:ops c) caret))))
-        stack))
+        stack)
+        (pointer-sprite scene)))
 
 ;; --- paint and census -----------------------------------------------------------
 
@@ -353,6 +370,18 @@
   [["converting" (assoc shell :focus 3 :stack [w1k w3] :composition [23665])]
    ["committed" (assoc shell :focus 3 :stack [w1k (update w3 :body into [23665 20767])])]])
 
+;; ADR-0236: the pointer. After the dictionary, the host moves the tablet to
+;; (400, 300) -- over window 3 and window 1 under it -- (700, 450) over the
+;; background, (1276, 796) at the bottom-right corner (the arrow cut to 4 rows
+;; of at most 4 px), presses at (1000, 600) on no window and releases there. A
+;; frame after each; every one ends with the arrow at the pointer.
+(def ^:private dict-committed (assoc shell :focus 3 :stack [w1k (update w3 :body into [23665 20767])]))
+
+(def cursor-frames
+  (mapv (fn [ev at] [ev (assoc dict-committed :pointer at)])
+        ["move" "move" "move" "down" "up"]
+        [[400 300] [700 450] [1276 796] [1000 600] [1000 600]]))
+
 ;; ADR-0234: the flow-parity frame. After everything above, the kernel lays
 ;; out this surface on a surface of its own (no tablet needed): four windows
 ;; whose bodies take each of cssom's rules -- packing by words with space runs,
@@ -453,7 +482,9 @@
   (let [contract (edn/read-string (str (.readFileSync fs (get args 1))))]
     (doseq [{:keys [name seed expect-memory]} (:vectors contract)
             :when expect-memory
-            :let [surf (js/Buffer.from (:hex (first (filter #(= 0 (:offset %)) seed))) "hex")
+            :let [surf (js/Buffer.alloc 8192)
+                  _ (doseq [{:keys [offset hex]} seed :when (< offset 8192)]
+                      (.copy (js/Buffer.from hex "hex") surf offset))
                   _ (use-font! (js/Buffer.from (:hex (first (filter #(= 8192 (:offset %)) seed))) "hex"))
                   w (fn [i] (.readUInt32LE surf (* 4 i)))
                   run (fn [base n] (vec (take-while pos? (map #(w (+ base %)) (range n)))))
@@ -467,6 +498,7 @@
                          :composition (into (mapv #(w (+ 446 %)) (range (w 445)))
                                             (map #(w (+ 434 %)) (range (w 433))))
                          :apps (w 31)
+                         :pointer (when (pos? (w 2046)) [(dec (w 2046)) (w 2047)])
                          :titles (into {} (map (fn [k] [k (run (+ 32 (* 32 (dec k))) 32)]) [1 2 3 4]))}
                   ops (frame scene)]]
       (println (subs (str name) 1) (count ops) (apply str (map op-hex ops)))))
@@ -520,6 +552,16 @@
           :let [c (census (frame scene))]]
     (println (str "dict-frame n=" (inc i) " " ev " ops=" (:ops c)
                   " text-px=" (:text-px c) " hash=" (:hash c))))
+  (let [cs (vec (map-indexed (fn [i [ev scene]]
+                               (let [c (census (frame scene))
+                                     [x y] (:pointer scene)]
+                                 (println (str "cursor-frame n=" (inc i) " " ev " at=" x "," y
+                                               " ops=" (:ops c) " text-px=" (:text-px c) " hash=" (:hash c)))
+                                 c))
+                             cursor-frames))]
+    (println (str "cursor frames=" (count cs) " ops=" (apply str (interpose "," (map :ops cs)))
+                  " chain=" (chain (map #(js/parseInt (:hash %) 16) cs))
+                  " last-px=" (:text-px (peek cs)) " last-hash=" (:hash (peek cs)))))
   (let [ops (frame flow-scene)
         c (census ops)]
     (println (str "flow ops=" (:ops c) " text-px=" (:text-px c) " hash=" (:hash c)

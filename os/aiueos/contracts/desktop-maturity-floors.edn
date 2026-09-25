@@ -101,7 +101,7 @@
   ;; Extended 2026-09-25 (owner: continue past 13/16). Each floor below is
   ;; a browser behaviour the kernel desktop does not have yet; the order is
   ;; the order the loop takes them.
-  {:id :pointer-cursor :gate "guest-browser-cursor"
+  {:id :pointer-cursor :gate "guest-browser-cursor" :adr "0236"
    :goal "the pointer is drawn every frame at the tablet position (a sprite laid out by Kotoba as ops, over everything), and moves with the pointer in the event loop"
    :why "the desktop takes a pointer it never shows"}
   {:id :focus-cycle :gate "guest-browser-focus-cycle"

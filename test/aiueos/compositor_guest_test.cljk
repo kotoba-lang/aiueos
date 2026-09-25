@@ -417,6 +417,51 @@
   (testing "tablet profile, with the launcher's wall clock and more"
     (is (= {"AIUEOS_GUEST_BROWSER" "1" "AIUEOS_QEMU_TIMEOUT" "960"} (guest/extra-env "guest-browser-dictionary")))))
 
+;; Guest browser pointer (ADR-0236).
+(def ^:private dict-ok-line
+  (str launch-ok-line dict-lines dict-ok))
+
+(def ^:private cursor-lines
+  (str "AIUEOS_GUEST_BROWSER_CURSOR_GO events=5 before=0\r\n"
+       "AIUEOS_GUEST_BROWSER_CURSOR_FRAME n=1 src=3 at=400,300 answer=0 ops=108 text-px=948 hash=bc7b9ebc tip=111111 fill=ffffff\r\n"
+       "AIUEOS_GUEST_BROWSER_CURSOR_FRAME n=2 src=3 at=700,450 answer=0 ops=108 text-px=948 hash=0baecac3 tip=111111 fill=ffffff\r\n"
+       "AIUEOS_GUEST_BROWSER_CURSOR_FRAME n=3 src=3 at=1276,796 answer=0 ops=93 text-px=922 hash=531100a2 tip=111111 fill=ffffff\r\n"
+       "AIUEOS_GUEST_BROWSER_CURSOR_FRAME n=4 src=1 at=1000,600 answer=0 ops=108 text-px=948 hash=3e8be657 tip=111111 fill=ffffff\r\n"
+       "AIUEOS_GUEST_BROWSER_CURSOR_FRAME n=5 src=4 at=1000,600 answer=0 ops=108 text-px=948 hash=3e8be657 tip=111111 fill=ffffff\r\n"))
+
+(def ^:private cursor-ok
+  "AIUEOS_GUEST_BROWSER_CURSOR_OK events=5 answers=00000 before=0 at=1000,600 tip=111111 fill=ffffff chain=f4bb42d8 ops=108 text-px=948 hash=3e8be657\r\n")
+
+(deftest guest-browser-cursor-classifier
+  (testing "five frames, each ending with the arrow at the pointer, the model's censuses: green"
+    (let [r (guest/classify "guest-browser-cursor" {:serial (str dict-ok-line cursor-lines cursor-ok)})]
+      (is (= :guest-browser-cursor (:reason r)))
+      (is (= 0 (:exit r)))
+      (is (= [:pointer-only-from-the-cursor-stage :kernel-arrow-sprite :no-cursor-shapes] (:leftover r)))))
+  (testing "the pointer needs the dictionary first"
+    (is (= :no-dictionary
+           (:reason (guest/classify "guest-browser-cursor"
+                                    {:serial (str launch-ok-line cursor-lines cursor-ok)})))))
+  (testing "a frame before the stage that already had a pointer (before=1) is not green"
+    (is (= :cursor-lines-missing
+           (:reason (guest/classify "guest-browser-cursor"
+                                    {:serial (str dict-ok-line
+                                                  (.replace cursor-lines "before=0" "before=1")
+                                                  cursor-ok)})))))
+  (testing "an OK line with a frame line missing is not green"
+    (is (= :cursor-lines-missing
+           (:reason (guest/classify "guest-browser-cursor"
+                                    {:serial (str dict-ok-line
+                                                  (.replace cursor-lines "FRAME n=4 " "FRAME n=9 ")
+                                                  cursor-ok)})))))
+  (testing "named reds"
+    (doseq [[line reason] [["AIUEOS_GUEST_BROWSER_CURSOR leftover=events-missing events=2 frames=2\r\n" :events-missing]
+                           ["AIUEOS_GUEST_BROWSER_CURSOR leftover=census-miss off=5 before=0 chain=0badf00d fill=ffffff\r\n" :census-miss]
+                           ["" :guest-browser-cursor-absent]]]
+      (is (= reason (:reason (guest/classify "guest-browser-cursor" {:serial (str dict-ok-line line)}))) line)))
+  (testing "tablet profile, with the dictionary's wall clock and more"
+    (is (= {"AIUEOS_GUEST_BROWSER" "1" "AIUEOS_QEMU_TIMEOUT" "1080"} (guest/extra-env "guest-browser-cursor")))))
+
 ;; Guest browser body flow (ADR-0234). A one-window stand-in for the kernel's
 ;; op dump: the classifier's span rule and its comparison, not the real scene
 ;; (the real scene's hosted answer is os/aiueos/contracts/browser-flow-parity-v1.edn).

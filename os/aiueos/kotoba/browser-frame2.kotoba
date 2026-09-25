@@ -63,7 +63,10 @@
 ;;   480 + 6j       op j: kind x y a b rgb
 ;;                  kind 1 rect:  a = width, b = height
 ;;                  kind 2 glyph: a = glyph index in the font, b = 8 or 16
-;;                  capacity 261 ops
+;;                  capacity 261 ops (words 480..2045)
+;;   2046 2047      the pointer (ADR-0236): 2046 is its x + 1, 0 = no
+;;                  pointer to draw; 2047 its y. The two words past the
+;;                  op capacity, which nothing else reads or writes.
 ;; Until 2026-09-24 the scratch sat at 400..415, inside window 4's body
 ;; (352..415): a fourth body longer than 48 code points was read back as the
 ;; object's own cursor words. Found while laying out the IME state; vector
@@ -98,6 +101,17 @@
 ;; kernel's -- browser.surface's launcher is a DOM row cssom lays out, and its
 ;; window-node has no close control -- and browser-reduce.kotoba hit-tests
 ;; the same numbers.
+;; POINTER (ADR-0236): with word 2046 not 0, the list ends with the pointer
+;; at (x, y) = (word 2046 - 1, word 2047), over everything -- after the last
+;; window, so no window, glyph, caret or launcher can cover it. The sprite is
+;; the kernel's own (browser.surface draws none: the hosted desktop has the
+;; host's cursor): an arrow 12 rows tall with its tip at (x, y), row r
+;; (0..11) one #111111 rect (x, y + r, r + 1, 1) and, in rows 2..10, a
+;; #ffffff rect (x + 1, y + r, r - 1, 1) over it -- a white arrow with a 1 px
+;; outline, its left edge straight down from the tip, its right edge the
+;; diagonal, its foot row 11. Clipped to the viewport: a row whose y + r is
+;; at or past vh is not drawn, and every rect is cut at vw (a fill left with
+;; no width is not drawn). 21 ops unclipped.
 ;; FONT: the aiueos-font/v1 blob (os/aiueos/scripts/make-font.cljk).
 ;;
 ;; ABI: [surface surface-bytes font font-bytes] -> op count, or
@@ -109,6 +123,8 @@
 ;;                                                its buffers (romaji > 8 or
 ;;                                                preedit > 32)
 ;;   -9 the app register has a bit past app 4
+;;   -10 the pointer is outside the viewport (word 2046 - 1 >= vw or word
+;;       2047 >= vh with word 2046 not 0)
 
 (ns aiueos.browser-frame2
   (:export [aiueos-browser-frame2 main]))
@@ -394,6 +410,36 @@
           (sput s 422 1118481)
           (put-glyph s (+ (- (+ x w) 24) (quot (- 16 gw) 2)) (+ y 6) gi gw)))))
 
+;; --- pointer (ADR-0236) ---------------------------------------------------------
+
+(defn arrow-row [s x y r vw]
+  ;; row r: the outline (r + 1 wide), then in rows 2..10 the fill (r - 1 wide
+  ;; from x + 1); both cut at vw, a fill with no width left not drawn
+  (do (sput s 422 1118481)
+      (put-rect s x (+ y r) (if (< (+ r 1) (- vw x)) (+ r 1) (- vw x)) 1)
+      (if (< r 2) 0
+        (if (> r 10) 0
+          (if (< (- vw x) 2) 0
+            (do (sput s 422 16777215)
+                (put-rect s (+ x 1) (+ y r)
+                          (if (< (- r 1) (- vw (+ x 1))) (- r 1) (- vw (+ x 1))) 1)))))))
+
+(defn arrow [s x y r]
+  ;; rows r..11 above the viewport's bottom
+  (if (> r 11) 0
+    (if (>= (+ y r) (sw s 4)) 0
+      (do (arrow-row s x y r (sw s 3))
+          (arrow s x y (+ r 1))))))
+
+(defn pointer [s]
+  (if (= (sw s 2046) 0) 0
+    (arrow s (- (sw s 2046) 1) (sw s 2047) 0)))
+
+(defn pointer-ok [s vw vh]
+  (if (= (sw s 2046) 0) 1
+    (if (> (sw s 2046) vw) 0
+      (if (>= (sw s 2047) vh) 0 1))))
+
 ;; --- windows ----------------------------------------------------------------
 
 (defn body-rgb [focused] (if (= focused 1) 16777215 15659509))
@@ -480,6 +526,7 @@
                       (if (> (sw s 433) 8) -8
                       (if (> (sw s 445) 32) -8
                       (if (> (sw s 31) 15) -9
+                      (if (= (pointer-ok s vw vh) 0) -10
                       (if (= (font-ok s f fb) 0) -6
                         (do (sput s 416 0)
                             (sput s 427 0)
@@ -487,6 +534,7 @@
                             (put-rect s 0 0 vw vh)
                             (launcher s f vw)
                             (emit s f 0)
-                            (if (= (sw s 427) 1) -5 (sw s 416))))))))))))))))))
+                            (pointer s)
+                            (if (= (sw s 427) 1) -5 (sw s 416)))))))))))))))))))
 
 (defn main [] 0)

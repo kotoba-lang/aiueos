@@ -508,6 +508,10 @@ Expected `smoke` markers:
 
 ![the flow-parity frame, QEMU display](docs/assets/guest-browser-flow.png)
 
+`guest-browser-cursor` exit 0 means the tablet boot, after the dictionary, said no frame before it had drawn a pointer (`AIUEOS_GUEST_BROWSER_CURSOR_GO events=5 before=0`), then took five tablet events -- moves to (400, 300), (700, 450) and (1276, 796), a press at (1000, 600) on no window, the release -- and for each C wrote the tablet's position into surface words 2046 (x + 1) and 2047 (y), Kotoba `kotoba_aiueos_browser_reduce` answered 0, and Kotoba `kotoba_aiueos_browser_frame2` ended the draw list with a 12-row arrow at the pointer, over every window (clipped to 4 rows at the bottom-right corner); every frame's op count and #111111 census equal the frame model's, the arrow's tip reads back #111111 from the framebuffer in every frame and its fill #ffffff in the last (`AIUEOS_GUEST_BROWSER_CURSOR_OK events=5 answers=00000 before=0 at=1000,600 tip=111111 fill=ffffff chain=f4bb42d8 ops=108 text-px=948 hash=3e8be657`). The pointer is drawn only from this stage on; earlier frames keep their pinned censuses (ADR-0236).
+
+![the pointer over the background beside window 3, QEMU display](docs/assets/guest-browser-cursor.png)
+
 ```bash
 kbb -M:compositor serve   # same SPA; compositor owns surfaces; Ctrl-C to stop
 ```

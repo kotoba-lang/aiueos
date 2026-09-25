@@ -4458,6 +4458,121 @@ qwen_runtime_boot_complete:
                                     debug_string("AIUEOS_GUEST_BROWSER_DICT_OK\n");
                                     serial_string("AIUEOS_GUEST_BROWSER_DICT_OK keys=16 answers=0000000010000001 record=44512 committed=23665,20767 shown-ops=87 shown-px=834 shown-hash=e85b42b2 ops=87 text-px=915 hash=eaa427b3\r\n");
                                     browser_hold_for_screendump();
+                                    /* The pointer (ADR-0236). Every frame
+                                       above was drawn with word 2046 at 0 --
+                                       no pointer -- and is pinned so. From
+                                       here C writes each tablet event's
+                                       position into words 2046 (x + 1) and
+                                       2047 (y) before Kotoba reduces it, and
+                                       browser-frame2 ends every list with the
+                                       arrow there, over everything; C only
+                                       says where the tablet is. The host
+                                       sends five batches, each after the
+                                       previous frame line: moves to
+                                       (400, 300) (700, 450) (1276, 796), a
+                                       press at (1000, 600) on no window, the
+                                       release. Answers are browser-reduce's
+                                       (a move uncaptured, a miss and an up
+                                       are 0), op counts and censuses
+                                       os/aiueos/scripts/browser-frame-model.cljk's. */
+                                    {
+                                      static const uint32_t csrc[5] = {3, 3, 3, 1, 4};
+                                      static const uint32_t cops[5] = {108, 108, 93, 108, 108};
+                                      static const uint32_t cwpx[5] = {948, 948, 922, 948, 948};
+                                      static const uint32_t cwhash[5] = {0xbc7b9ebcU, 0x0baecac3U, 0x531100a2U, 0x3e8be657U,
+                                                                         0x3e8be657U};
+                                      static const uint32_t cat[10] = {400, 300, 700, 450, 1276, 796,
+                                                                       1000, 600, 1000, 600};
+                                      uint32_t ce = 0, coff = 0, cpx2 = 0, chash2 = 0, cchain = 2166136261U;
+                                      uint32_t cidle = 0, cframes = 0, before = surface[2046];
+                                      uint32_t tip = 0, fill = 0;
+                                      int64_t cfo = 0;
+                                      (void)aiueos_tablet_drain(4000000U);
+                                      serial_string("AIUEOS_GUEST_BROWSER_CURSOR_GO events=5 before=");
+                                      serial_decimal(before);
+                                      serial_string("\r\n");
+                                      while (ce < 5 && cidle < 60000U) {
+                                        uint32_t src = aiueos_tablet_next(1024U, &ax, &ay);
+                                        uint32_t px, py;
+                                        int64_t r;
+                                        if (!src) { cidle++; continue; }
+                                        cidle = 0;
+                                        px = (uint32_t)(((uint64_t)ax * surface[3]) / 32768U);
+                                        py = (uint32_t)(((uint64_t)ay * surface[4]) / 32768U);
+                                        surface[2046] = px + 1U;
+                                        surface[2047] = py;
+                                        r = (int64_t)kotoba_aiueos_browser_reduce(sp, 128, src, px, py);
+                                        cfo = (int64_t)kotoba_aiueos_browser_frame2(sp, 8192,
+                                                (uint64_t)(uintptr_t)font, font_length);
+                                        cpx2 = 0;
+                                        chash2 = 0;
+                                        tip = 0;
+                                        fill = 0;
+                                        if (cfo > 0 && aiueos_desktop_present_ops2(surface + 480, (uint64_t)cfo,
+                                                                                   font, font_length)) {
+                                          chash2 = aiueos_desktop_colour_census(0x111111U, &cpx2);
+                                          (void)aiueos_desktop_show();
+                                          tip = aiueos_desktop_sample_rgb(px, py);
+                                          fill = aiueos_desktop_sample_rgb(px + 1U, py + 5U);
+                                          cframes++;
+                                          for (int b = 0; b < 4; b++) {
+                                            cchain ^= (chash2 >> (8 * b)) & 255U;
+                                            cchain *= 16777619U;
+                                          }
+                                        }
+                                        if (src != csrc[ce] || r != 0 || px != cat[2 * ce] ||
+                                            py != cat[2 * ce + 1] || cfo != (int64_t)cops[ce] ||
+                                            cpx2 != cwpx[ce] || chash2 != cwhash[ce] || tip != 0x111111U) coff++;
+                                        ce++;
+                                        serial_string("AIUEOS_GUEST_BROWSER_CURSOR_FRAME n=");
+                                        serial_decimal(ce);
+                                        serial_string(" src=");
+                                        serial_decimal(src);
+                                        serial_string(" at=");
+                                        serial_decimal(px);
+                                        serial_string(",");
+                                        serial_decimal(py);
+                                        serial_string(r < 0 ? " answer=-" : " answer=");
+                                        serial_decimal((uint32_t)(r < 0 ? -r : r));
+                                        serial_string(" ops=");
+                                        serial_decimal((uint32_t)(cfo < 0 ? -cfo : cfo));
+                                        serial_string(" text-px=");
+                                        serial_decimal(cpx2);
+                                        serial_string(" hash=");
+                                        serial_hex32(chash2);
+                                        serial_string(" tip=");
+                                        serial_rgb(tip);
+                                        serial_string(" fill=");
+                                        serial_rgb(fill);
+                                        serial_string("\r\n");
+                                      }
+                                      if (ce == 5 && cframes == 5 && coff == 0 && before == 0 &&
+                                          cchain == 0xf4bb42d8U && surface[2046] == 1001 &&
+                                          surface[2047] == 600 && surface[2] == 3 && surface[25] == 0 &&
+                                          fill == 0xffffffU) {
+                                        debug_string("AIUEOS_GUEST_BROWSER_CURSOR_OK\n");
+                                        serial_string("AIUEOS_GUEST_BROWSER_CURSOR_OK events=5 answers=00000 before=0 at=1000,600 tip=111111 fill=ffffff chain=f4bb42d8 ops=108 text-px=948 hash=3e8be657\r\n");
+                                        browser_hold_for_screendump();
+                                      } else if (ce < 5) {
+                                        debug_string("AIUEOS_GUEST_BROWSER_CURSOR leftover=events-missing\n");
+                                        serial_string("AIUEOS_GUEST_BROWSER_CURSOR leftover=events-missing events=");
+                                        serial_decimal(ce);
+                                        serial_string(" frames=");
+                                        serial_decimal(cframes);
+                                        serial_string("\r\n");
+                                      } else {
+                                        debug_string("AIUEOS_GUEST_BROWSER_CURSOR leftover=census-miss\n");
+                                        serial_string("AIUEOS_GUEST_BROWSER_CURSOR leftover=census-miss off=");
+                                        serial_decimal(coff);
+                                        serial_string(" before=");
+                                        serial_decimal(before);
+                                        serial_string(" chain=");
+                                        serial_hex32(cchain);
+                                        serial_string(" fill=");
+                                        serial_rgb(fill);
+                                        serial_string("\r\n");
+                                      }
+                                    }
                                   } else if (dp < 16) {
                                     debug_string("AIUEOS_GUEST_BROWSER_DICT leftover=keys-missing\n");
                                     serial_string("AIUEOS_GUEST_BROWSER_DICT leftover=keys-missing keys=");

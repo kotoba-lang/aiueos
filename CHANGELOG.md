@@ -5,6 +5,22 @@ All notable changes to **aiueos** are documented here. The format follows
 
 ## [Unreleased]
 
+### Guest browser desktop: the pointer is drawn (ADR-0236)
+- browser-frame2.kotoba ends the draw list with the pointer when surface word
+  2046 (x + 1; 0 = none) is set, 2047 its y: a 12-row arrow, #111111 outline
+  and #ffffff fill, 21 rects, over everything, cut at the viewport. New
+  refusal -10 (pointer outside the viewport). Words 2046 / 2047 are the two
+  past the op area; nothing else used them.
+- C writes the scaled tablet position into them in a new stage after the
+  dictionary; `guest-browser-cursor` moves, presses on no window and
+  releases, a frame after each, every census from browser-frame-model.cljk.
+  Earlier frames are unchanged (word 2046 was 0 for all of them).
+- Contract browser-frame2-v1: 50 vectors (7 new: the arrow over a window, cut
+  at the right edge, at the bottom, at the last pixel; x at vw, y at vh,
+  y = 2^32 - 1 refused), 31 memory assertions. Fuel: trap 20,480 / pass
+  24,576 on the same worst vector as before, inside the 262,144 tier -- no
+  kotoba-native row or amu pin change.
+
 ### Guest browser desktop: the IME converts through a Unihan dictionary (ADR-0235)
 - `os/aiueos/scripts/gen-ime-dictionary.cljk` writes `os/aiueos/ime/aiueos-kanji.dic`
   (aiueos-dict/v1, 189,892 bytes) from Unicode 17.0.0 Unihan `kJapanese` for the
