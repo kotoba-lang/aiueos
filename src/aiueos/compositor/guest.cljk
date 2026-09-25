@@ -19,7 +19,7 @@
    "guest-browser-resize" "guest-browser-event-loop" "guest-browser-caret"
    "guest-browser-launch" "guest-browser-flow-parity" "guest-browser-dictionary"
    "guest-browser-cursor" "guest-browser-focus-cycle" "guest-browser-scroll"
-   "guest-browser-selection"])
+   "guest-browser-selection" "guest-browser-clipboard"])
 
 (defn gate-cmd
   "SPA-visible evidence command for a guest profile. Not clojure -M."
@@ -932,6 +932,51 @@
       {:green? false :exit 1 :reason :guest-browser-selection-absent
        :leftover [:guest-browser-selection-absent]})))
 
+;; Guest browser clipboard (ADR-0241): after the selection, the host sends
+;; Shift down, Left three times (each down and up), Shift up, Ctrl down, C down
+;; and up, Ctrl up, Backspace down and up, Ctrl down, V three times, Ctrl up.
+;; C hands each key to browser-key: Ctrl+C over the selection ("19" and its
+;; 10) answers a :clipboard/write request and Ctrl+V a :clipboard/read request;
+;; C asks Kotoba broker-admit (ADR-0096) with the stage's grant -- clipboard for
+;; the first nineteen events, file-picker only after -- and hands the
+;; completion only when it admits: the copy puts the three code points in the
+;; clipboard, the first two pastes append them after Backspace deleted the
+;; selection (45 -> 48 -> 51 code points), the refused third pastes nothing.
+;; Green needs the selection stage's OK line, the GO line, all twenty-two FRAME
+;; lines and the OK line: four requests, three admitted, one refused, the
+;; clipboard's 3 code points, the body's 51, each frame's op count, #111111
+;; census and #b5cdf1 census equal to the frame model's, and both chains.
+
+(def ^:private selection-ok-re
+  #"(?m)^AIUEOS_GUEST_BROWSER_SELECTION_OK events=17 answers=44444000000000000 max-sel=2 body=48 focus=4 scroll=100 chain=2b46197d sel-chain=cb830579 ops=168 text-px=1058 hash=6ca5ee4a")
+
+(def ^:private clipboard-frame-numbers (set (map str (range 1 23))))
+
+(defn guest-browser-clipboard-result
+  [{:keys [serial qemu-unmeasured?] :as opts}]
+  (let [s (or serial "")
+        go (re-find #"(?m)^AIUEOS_GUEST_BROWSER_CLIPBOARD_GO events=22" s)
+        frames (set (map second (re-seq #"(?m)^AIUEOS_GUEST_BROWSER_CLIPBOARD_FRAME n=(\d+) " s)))
+        ok (re-find #"(?m)^AIUEOS_GUEST_BROWSER_CLIPBOARD_OK events=22 requests=4 admitted=3 refused=1 copied=3 pasted=3,3 clip=3 body=51 focus=4 chain=9098b95f sel-chain=356612c5 ops=169 text-px=1080 hash=76577905" s)]
+    (cond
+      qemu-unmeasured? {:green? false :exit 3 :reason :unmeasured :leftover [:unmeasured]}
+      (not (re-find selection-ok-re s))
+      (let [r (guest-browser-selection-result opts)]
+        (assoc r :reason :no-selection :leftover (into [:no-selection] (:leftover r))))
+      (and ok (not (and go (= frames clipboard-frame-numbers))))
+      {:green? false :exit 1 :reason :clipboard-lines-missing :leftover [:clipboard-lines-missing]}
+      ok
+      {:green? true :exit 0 :reason :guest-browser-clipboard
+       :leftover [:text-only-clipboard :no-other-ctrl-shortcuts :no-clipboard-in-a-composition
+                  :grant-set-by-the-stage :no-host-clipboard]}
+      (re-find #"(?m)^AIUEOS_GUEST_BROWSER_CLIPBOARD leftover=events-missing" s)
+      {:green? false :exit 1 :reason :events-missing :leftover [:events-missing]}
+      (re-find #"(?m)^AIUEOS_GUEST_BROWSER_CLIPBOARD leftover=census-miss" s)
+      {:green? false :exit 1 :reason :census-miss :leftover [:census-miss]}
+      :else
+      {:green? false :exit 1 :reason :guest-browser-clipboard-absent
+       :leftover [:guest-browser-clipboard-absent]})))
+
 ;; Guest browser body flow (ADR-0234): the kernel lays out a four-window
 ;; surface of its own and prints its whole op list (AIUEOS_GUEST_BROWSER_FLOW_OPS
 ;; n=<ops> words=<kind x y a b rgb per op, 8 hex digits each>). Each window's
@@ -1053,6 +1098,9 @@
     ;; ADR-0240: the selection's seventeen frames come after the wheel.
     "guest-browser-selection" {"AIUEOS_GUEST_BROWSER" "1"
                                "AIUEOS_QEMU_TIMEOUT" "2700"}
+    ;; ADR-0241: the clipboard's twenty-two frames come after the selection.
+    "guest-browser-clipboard" {"AIUEOS_GUEST_BROWSER" "1"
+                               "AIUEOS_QEMU_TIMEOUT" "3000"}
     "guest-scanout-two" {"AIUEOS_GUEST_SCANOUT_TWO" "1"
                          "AIUEOS_QEMU_TIMEOUT" "90"}
     nil))
@@ -1086,6 +1134,7 @@
     "guest-browser-focus-cycle" (guest-browser-focus-cycle-result opts)
     "guest-browser-scroll" (guest-browser-scroll-result opts)
     "guest-browser-selection" (guest-browser-selection-result opts)
+    "guest-browser-clipboard" (guest-browser-clipboard-result opts)
     {:green? false :exit 3 :reason :unmeasured :leftover [:unmeasured]}))
 
 (defn serial-marker
@@ -1117,6 +1166,7 @@
     "guest-browser-focus-cycle" "AIUEOS_GUEST_BROWSER_FOCUS"
     "guest-browser-scroll" "AIUEOS_GUEST_BROWSER_SCROLL"
     "guest-browser-selection" "AIUEOS_GUEST_BROWSER_SELECTION"
+    "guest-browser-clipboard" "AIUEOS_GUEST_BROWSER_CLIPBOARD"
     nil))
 
 (defn ok-print
@@ -1148,4 +1198,5 @@
     "guest-browser-focus-cycle" "AIUEOS_COMPOSITOR_GUEST_BROWSER_FOCUS_CYCLE_OK"
     "guest-browser-scroll" "AIUEOS_COMPOSITOR_GUEST_BROWSER_SCROLL_OK"
     "guest-browser-selection" "AIUEOS_COMPOSITOR_GUEST_BROWSER_SELECTION_OK"
+    "guest-browser-clipboard" "AIUEOS_COMPOSITOR_GUEST_BROWSER_CLIPBOARD_OK"
     nil))

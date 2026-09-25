@@ -5,6 +5,23 @@ All notable changes to **aiueos** are documented here. The format follows
 
 ## [Unreleased]
 
+### Guest browser desktop: Ctrl+C / Ctrl+V through the permission broker (ADR-0241)
+- browser-ime.kotoba holds Ctrl (evdev 29 / 97) in surface word 2038. With it
+  held, C over a selection answers 512 (a `:clipboard/write` request) and V
+  answers 513 (`:clipboard/read`); neither changes anything. The admitted
+  request's completion is the same code with value 3 and the clipboard (260
+  bytes: a length word, 64 code points) in place of the dictionary: a write
+  copies the selection's text, a read is `insert-text` of the clipboard's text
+  (whole or -5). -7 refuses a completion's clipboard. Every other Ctrl
+  shortcut does nothing, and nothing is asked while something is composed.
+- main.c's new stage after the selection: C asks `kotoba_aiueos_broker_admit`
+  (ADR-0096) for each request with the stage's grant (clipboard, then
+  file-picker only) and hands the completion only on admit.
+- Gate `guest-browser-clipboard` (tablet profile, 3000 s):
+  `AIUEOS_GUEST_BROWSER_CLIPBOARD_OK events=22 requests=4 admitted=3 refused=1 copied=3 pasted=3,3 clip=3 body=51 focus=4 chain=9098b95f sel-chain=356612c5 ops=169 text-px=1080 hash=76577905`.
+  browser-ime-v2 120 vectors (26 new, from browser.desktop-backend `request`
+  and browser.text-edit via browser-clipboard-oracle.cljk).
+
 ### Guest browser desktop: Shift+Left / Shift+Right select, Backspace deletes the selection (ADR-0240)
 - browser-ime.kotoba holds Shift (evdev 42 / 54) in surface word 2035 and takes
   Shift+Left / Shift+Right as browser.text-edit `move-caret` with `:extend?` on

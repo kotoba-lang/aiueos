@@ -301,6 +301,10 @@
  {:cmd ["kbb" "--backend" "sci" "--classpath" "src" "scripts/compositor-guest.cljk" "guest-browser-selection"]
   :doc "Guest browser selection (ADR-0240) on KERNEL.ELF under QEMU: after the wheel, the host sends five notches toward the end (window 4's offset to 100, line 20 inside it), then Shift down, Left, Left, Right, Left, Shift up, Backspace (each key down and up). browser-key holds Shift in surface word 2035 and runs browser.text-edit move-caret :extend? on the focused body -- the selection is the last k code points, words 2036 (window id) and 2037 (k) -- and delete-backward deletes it; browser-frame2 draws a #b5cdf1 highlight behind each selected glyph and no caret while something is selected (op capacity 259). k 0 -> 1 -> 2 -> 1 -> 2 -> deleted; every #111111 and #b5cdf1 census the frame model's. Tablet profile, 2700 s wall clock."}
 
+ :browser-desktop-clipboard
+ {:cmd ["kbb" "--backend" "sci" "--classpath" "src" "scripts/compositor-guest.cljk" "guest-browser-clipboard"]
+  :doc "Guest browser clipboard (ADR-0241) on KERNEL.ELF under QEMU: after the selection, the host sends Shift, Left x3, Shift up, Ctrl, C, Ctrl up, Backspace, Ctrl, V x3, Ctrl up. browser-key holds Ctrl in surface word 2038 and answers Ctrl+C over a selection 512 (:clipboard/write) and Ctrl+V 513 (:clipboard/read), changing nothing; C asks broker-admit (ADR-0096) with the stage's grant (clipboard for events 1..19, file-picker only after) and hands the completion -- value 3, the 260-byte clipboard in place of the dictionary -- only on admit: copy \"19\\n\", delete, paste twice (45 -> 48 -> 51 code points), the refused third pastes nothing. Every census the frame model's. Tablet profile, 3000 s wall clock."}
+
  :browser-desktop-guest
  {:cmd ["kbb" "--backend" "sci" "--classpath" "src" "scripts/compositor-guest.cljk" "guest-browser-input"]
   :doc "Guest browser desktop (ADR-0223) on KERNEL.ELF under QEMU: the Kotoba frame is presented and sampled, then a real virtio-tablet press is reduced by Kotoba to focus-and-raise and the redrawn frame is sampled again. Exit 3 = QEMU/firmware/serial unanswered, not a pass."}

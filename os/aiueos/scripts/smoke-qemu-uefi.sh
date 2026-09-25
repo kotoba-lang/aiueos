@@ -816,6 +816,31 @@ while time.time() < end:
                 recv_obj()
                 globals()["selection_sent"] = k + 1
                 log("selection event " + str(k + 1) + " sent")
+        # Clipboard (ADR-0241): Shift down, Left down / up three times, Shift
+        # up, Ctrl down, C down / up, Ctrl up, Backspace down / up, Ctrl down,
+        # V down / up three times, Ctrl up -- each after the guest's frame line
+        # for the one before (and its screendump). One key event per command.
+        if typing and b"AIUEOS_GUEST_BROWSER_CLIPBOARD_GO" in serial_now and globals().get("clipboard_sent", 0) < 22:
+            k = globals().get("clipboard_sent", 0)
+            if k == 0 or (b"AIUEOS_GUEST_BROWSER_CLIPBOARD_FRAME n=%d " % k) in serial_now:
+                if k:
+                    shot = os.path.join(os.path.dirname(path), "guest-browser-clipboard-%d.ppm" % k)
+                    sock.sendall((json.dumps({"execute": "screendump", "arguments": {"filename": shot}})
+                                  + "\n").encode())
+                    recv_obj()
+                time.sleep(0.5)
+                def key(q, down):
+                    return [{"type": "key", "data": {"down": down, "key": {"type": "qcode", "data": q}}}]
+                def tap(q):
+                    return (key(q, True), key(q, False))
+                ev = ((key("shift", True),) + tap("left") * 3 + (key("shift", False), key("ctrl", True))
+                      + tap("c") + (key("ctrl", False),) + tap("backspace") + (key("ctrl", True),)
+                      + tap("v") * 3 + (key("ctrl", False),))[k]
+                sock.sendall((json.dumps({"execute": "input-send-event", "arguments": {"events": ev}})
+                              + "\n").encode())
+                recv_obj()
+                globals()["clipboard_sent"] = k + 1
+                log("clipboard event " + str(k + 1) + " sent")
         i += 1
         # Guest browser desktop (ADR-0224): the screens a person can look at.
         # The kernel holds each desktop frame for a few seconds in this
@@ -845,6 +870,7 @@ while time.time() < end:
                                  (b"AIUEOS_GUEST_BROWSER_FOCUS_OK", "guest-browser-focus.ppm"),
                                  (b"AIUEOS_GUEST_BROWSER_SCROLL_OK", "guest-browser-scroll.ppm"),
                                  (b"AIUEOS_GUEST_BROWSER_SELECTION_OK", "guest-browser-selection.ppm"),
+                                 (b"AIUEOS_GUEST_BROWSER_CLIPBOARD_OK", "guest-browser-clipboard.ppm"),
                                  (b"AIUEOS_GUEST_BROWSER_FLOW_OK", "guest-browser-flow.ppm")):
                 if marker in serial_text and not globals().get(name):
                     globals()[name] = True

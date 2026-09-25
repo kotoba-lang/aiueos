@@ -113,7 +113,7 @@
   {:id :selection :gate "guest-browser-selection" :adr "0240"
    :goal "Shift+Left / Shift+Right extend a selection from the caret in the focused body (browser.text-edit move-caret with :extend?), drawn as a highlight behind the glyphs; Backspace deletes the selection"
    :why "text editing stops at the caret"}
-  {:id :clipboard :gate "guest-browser-clipboard"
+  {:id :clipboard :gate "guest-browser-clipboard" :adr "0241"
    :goal "Ctrl+C copies the selection and Ctrl+V pastes it into the focused body only after the permission broker (broker-admit, ADR-0096) admits :clipboard; a refused grant pastes nothing"
    :why "browser.desktop-backend brokers clipboard; the kernel desktop has no path to it"}
   {:id :damage-present :gate "guest-browser-damage"

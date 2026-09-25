@@ -383,23 +383,36 @@
               (swap! dictionary-cache assoc dictionary-file image)
               image))))))
 
+;; ADR-0241: an admitted clipboard request's completion hands the object the
+;; clipboard (260 bytes: a length word and 64 code points) in place of the
+;; dictionary. It sits after the dictionary, zero or the vector's
+;; `:clipboard` hex; a six-element step [surface surface-bytes clipboard
+;; clipboard-bytes code value] names it, and its bytes are asserted at
+;; image-bytes + dictionary-bytes like any other offset.
 (defmethod prepare-steps :aiueos.browser-ime/v2 [contract v]
   (let [{:keys [base image-bytes dictionary-bytes]} (get-in contract [:verification :memory])
         dict-base (+ base image-bytes)
+        clip-base (+ dict-base dictionary-bytes)
         dict (reduce (fn [img [off hex]] (write-at img off (hex-bytes hex)))
                      (dictionary-image contract) (:dictionary-patch v))
-        named (fn [x] (case x :surface base :dictionary dict-base :dictionary-bytes dictionary-bytes x))]
+        clip (let [c (vec (repeat 260 0))]
+               (if (:clipboard v) (write-at c 0 (hex-bytes (:clipboard v))) c))
+        named (fn [x] (case x :surface base :dictionary dict-base :dictionary-bytes dictionary-bytes
+                        :clipboard clip-base x))]
     {:entry 'aiueos-browser-key
      :base base
-     :image (into (reduce (fn [img {:keys [offset hex]}] (write-at img offset (hex-bytes hex)))
-                          (vec (repeat image-bytes 0))
-                          (:seed v))
-                  dict)
+     :image (-> (reduce (fn [img {:keys [offset hex]}] (write-at img offset (hex-bytes hex)))
+                        (vec (repeat image-bytes 0))
+                        (:seed v))
+                (into dict)
+                (into clip))
      :args-of (fn [a]
                 (case (count a)
                   2 [base 8192 dict-base dictionary-bytes (+ (* 4 (first a)) (second a))]
                   4 [(named (nth a 0)) (named (nth a 1)) dict-base dictionary-bytes
                      (+ (* 4 (nth a 2)) (nth a 3))]
+                  6 [(named (nth a 0)) (named (nth a 1)) (named (nth a 2)) (named (nth a 3))
+                     (+ (* 4 (nth a 4)) (nth a 5))]
                   (mapv named a)))}))
 
 (defmethod prepare-steps :default [contract _]
