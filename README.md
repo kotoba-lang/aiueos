@@ -512,6 +512,10 @@ Expected `smoke` markers:
 
 ![the pointer over the background beside window 3, QEMU display](docs/assets/guest-browser-cursor.png)
 
+`guest-browser-focus-cycle` exit 0 means the tablet boot, after the pointer, took twelve events -- a press on launcher button 2 at (150, 14) and its release (window 2 opens on top: stack 1 3 2), Alt down, Tab down and up three times, Alt up, and a lone Tab down and up -- and for each key C handed code * 4 + value to Kotoba `kotoba_aiueos_browser_key`, which held Alt in surface word 431 and answered 256 + the bottom window's id for each Tab press under it (257, 259, 258); C handed that id to Kotoba `kotoba_aiueos_browser_reduce` as a `:window/focus` (kind 5), which focused and raised it -- stack 3 2 1, then 2 1 3, then 1 3 2 -- while Alt, the Tab releases and the lone Tab answered 0; a frame after each, every op count and #111111 census equal to the frame model's, the bodies (words 160..415) the same after the twelve keys as before them, and nothing left composing (`AIUEOS_GUEST_BROWSER_FOCUS_OK events=12 answers=200103020000 wm=3 stack=132 focus=2 bodies=unchanged chain=2254db31 ops=129 text-px=1082 hash=e90ed2bc`). The shortcut and its rule (the bottom window, so n presses visit every window) are the kernel's: browser.input has no window-manager shortcut (ADR-0237).
+
+![after the first Alt+Tab: window 1 focused and raised over windows 2 and 3, QEMU display](docs/assets/guest-browser-focus-cycle.png)
+
 ```bash
 kbb -M:compositor serve   # same SPA; compositor owns surfaces; Ctrl-C to stop
 ```

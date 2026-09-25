@@ -726,6 +726,34 @@ while time.time() < end:
                 recv_obj()
                 globals()["cursor_sent"] = k + 1
                 log("cursor event " + str(k + 1) + " sent")
+        # Alt+Tab (ADR-0237): a press on launcher button 2 at (150, 14), the
+        # release, Alt down, Tab down / up three times, Alt up, a lone Tab down
+        # and up -- each after the guest's frame line for the one before (and
+        # its screendump). One key event per command: key + SYN fits the four
+        # buffers the guest posts, and the guest reads releases here.
+        if typing and b"AIUEOS_GUEST_BROWSER_FOCUS_GO" in serial_now and globals().get("focus_sent", 0) < 12:
+            k = globals().get("focus_sent", 0)
+            if k == 0 or (b"AIUEOS_GUEST_BROWSER_FOCUS_FRAME n=%d " % k) in serial_now:
+                if k:
+                    shot = os.path.join(os.path.dirname(path), "guest-browser-focus-%d.ppm" % k)
+                    sock.sendall((json.dumps({"execute": "screendump", "arguments": {"filename": shot}})
+                                  + "\n").encode())
+                    recv_obj()
+                time.sleep(0.5)
+                def key(q, down):
+                    return [{"type": "key", "data": {"down": down, "key": {"type": "qcode", "data": q}}}]
+                ev = ([{"type": "abs", "data": {"axis": "x", "value": 3840}},
+                       {"type": "abs", "data": {"axis": "y", "value": 574}},
+                       {"type": "btn", "data": {"down": True, "button": "left"}}],
+                      [{"type": "btn", "data": {"down": False, "button": "left"}}],
+                      key("alt", True), key("tab", True), key("tab", False),
+                      key("tab", True), key("tab", False), key("tab", True), key("tab", False),
+                      key("alt", False), key("tab", True), key("tab", False))[k]
+                sock.sendall((json.dumps({"execute": "input-send-event", "arguments": {"events": ev}})
+                              + "\n").encode())
+                recv_obj()
+                globals()["focus_sent"] = k + 1
+                log("focus event " + str(k + 1) + " sent")
         i += 1
         # Guest browser desktop (ADR-0224): the screens a person can look at.
         # The kernel holds each desktop frame for a few seconds in this
@@ -752,6 +780,7 @@ while time.time() < end:
                                  (b"AIUEOS_GUEST_BROWSER_DICT_SHOWN", "guest-browser-dictionary-converting.ppm"),
                                  (b"AIUEOS_GUEST_BROWSER_DICT_OK", "guest-browser-dictionary.ppm"),
                                  (b"AIUEOS_GUEST_BROWSER_CURSOR_OK", "guest-browser-cursor.ppm"),
+                                 (b"AIUEOS_GUEST_BROWSER_FOCUS_OK", "guest-browser-focus.ppm"),
                                  (b"AIUEOS_GUEST_BROWSER_FLOW_OK", "guest-browser-flow.ppm")):
                 if marker in serial_text and not globals().get(name):
                     globals()[name] = True

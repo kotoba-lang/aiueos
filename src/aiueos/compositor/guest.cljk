@@ -18,7 +18,7 @@
    "guest-browser-preedit" "guest-browser-ime-toggle" "guest-browser-drag"
    "guest-browser-resize" "guest-browser-event-loop" "guest-browser-caret"
    "guest-browser-launch" "guest-browser-flow-parity" "guest-browser-dictionary"
-   "guest-browser-cursor"])
+   "guest-browser-cursor" "guest-browser-focus-cycle"])
 
 (defn gate-cmd
   "SPA-visible evidence command for a guest profile. Not clojure -M."
@@ -805,6 +805,46 @@
       {:green? false :exit 1 :reason :guest-browser-cursor-absent
        :leftover [:guest-browser-cursor-absent]})))
 
+;; Guest browser Alt+Tab (ADR-0237): after the pointer, the host presses
+;; launcher button 2 at (150, 14) and releases (window 2 opens on top: stack
+;; [1 3 2]), then Alt down, Tab down / up three times, Alt up and a lone Tab
+;; down / up. Kotoba browser-key holds Alt and answers 256 + the bottom
+;; window's id for each Tab press under it; C hands that id to
+;; browser-reduce as a :window/focus (kind 5), which raises it: [3 2 1],
+;; [2 1 3], [1 3 2]. Green needs the GO line, all twelve FRAME lines, and the
+;; OK line: the answers, three window-manager focuses, the stack and focus
+;; back where they started, the bodies unchanged by every key, each frame's
+;; op count and #111111 census equal to the frame model's, and the chain.
+
+(def ^:private cursor-ok-re
+  #"(?m)^AIUEOS_GUEST_BROWSER_CURSOR_OK events=5 answers=00000 before=0 at=1000,600 tip=111111 fill=ffffff chain=f4bb42d8 ops=108 text-px=948 hash=3e8be657")
+
+(def ^:private focus-frame-numbers (set (map str (range 1 13))))
+
+(defn guest-browser-focus-cycle-result
+  [{:keys [serial qemu-unmeasured?] :as opts}]
+  (let [s (or serial "")
+        go (re-find #"(?m)^AIUEOS_GUEST_BROWSER_FOCUS_GO events=12" s)
+        frames (set (map second (re-seq #"(?m)^AIUEOS_GUEST_BROWSER_FOCUS_FRAME n=(\d+) " s)))
+        ok (re-find #"(?m)^AIUEOS_GUEST_BROWSER_FOCUS_OK events=12 answers=200103020000 wm=3 stack=132 focus=2 bodies=unchanged chain=2254db31 ops=129 text-px=1082 hash=e90ed2bc" s)]
+    (cond
+      qemu-unmeasured? {:green? false :exit 3 :reason :unmeasured :leftover [:unmeasured]}
+      (not (re-find cursor-ok-re s))
+      (let [r (guest-browser-cursor-result opts)]
+        (assoc r :reason :no-cursor :leftover (into [:no-cursor] (:leftover r))))
+      (and ok (not (and go (= frames focus-frame-numbers))))
+      {:green? false :exit 1 :reason :focus-lines-missing :leftover [:focus-lines-missing]}
+      ok
+      {:green? true :exit 0 :reason :guest-browser-focus-cycle
+       :leftover [:kernel-focus-cycle-shortcut :left-alt-only :no-switcher-overlay]}
+      (re-find #"(?m)^AIUEOS_GUEST_BROWSER_FOCUS leftover=events-missing" s)
+      {:green? false :exit 1 :reason :events-missing :leftover [:events-missing]}
+      (re-find #"(?m)^AIUEOS_GUEST_BROWSER_FOCUS leftover=census-miss" s)
+      {:green? false :exit 1 :reason :census-miss :leftover [:census-miss]}
+      :else
+      {:green? false :exit 1 :reason :guest-browser-focus-cycle-absent
+       :leftover [:guest-browser-focus-cycle-absent]})))
+
 ;; Guest browser body flow (ADR-0234): the kernel lays out a four-window
 ;; surface of its own and prints its whole op list (AIUEOS_GUEST_BROWSER_FLOW_OPS
 ;; n=<ops> words=<kind x y a b rgb per op, 8 hex digits each>). Each window's
@@ -917,6 +957,9 @@
     ;; ADR-0236: the pointer's five frames come after the dictionary.
     "guest-browser-cursor" {"AIUEOS_GUEST_BROWSER" "1"
                             "AIUEOS_QEMU_TIMEOUT" "1080"}
+    ;; ADR-0237: Alt+Tab's twelve frames come after the pointer.
+    "guest-browser-focus-cycle" {"AIUEOS_GUEST_BROWSER" "1"
+                                 "AIUEOS_QEMU_TIMEOUT" "1260"}
     "guest-scanout-two" {"AIUEOS_GUEST_SCANOUT_TWO" "1"
                          "AIUEOS_QEMU_TIMEOUT" "90"}
     nil))
@@ -947,6 +990,7 @@
     "guest-browser-flow-parity" (guest-browser-flow-parity-result opts)
     "guest-browser-dictionary" (guest-browser-dictionary-result opts)
     "guest-browser-cursor" (guest-browser-cursor-result opts)
+    "guest-browser-focus-cycle" (guest-browser-focus-cycle-result opts)
     {:green? false :exit 3 :reason :unmeasured :leftover [:unmeasured]}))
 
 (defn serial-marker
@@ -975,6 +1019,7 @@
     "guest-browser-flow-parity" "AIUEOS_GUEST_BROWSER_FLOW"
     "guest-browser-dictionary" "AIUEOS_GUEST_BROWSER_DICT"
     "guest-browser-cursor" "AIUEOS_GUEST_BROWSER_CURSOR"
+    "guest-browser-focus-cycle" "AIUEOS_GUEST_BROWSER_FOCUS"
     nil))
 
 (defn ok-print
@@ -1003,4 +1048,5 @@
     "guest-browser-flow-parity" "AIUEOS_COMPOSITOR_GUEST_BROWSER_FLOW_PARITY_OK"
     "guest-browser-dictionary" "AIUEOS_COMPOSITOR_GUEST_BROWSER_DICTIONARY_OK"
     "guest-browser-cursor" "AIUEOS_COMPOSITOR_GUEST_BROWSER_CURSOR_OK"
+    "guest-browser-focus-cycle" "AIUEOS_COMPOSITOR_GUEST_BROWSER_FOCUS_CYCLE_OK"
     nil))

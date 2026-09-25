@@ -961,6 +961,7 @@ extern uint64_t kotoba_aiueos_browser_key(uint64_t surface, uint64_t surface_byt
                                           uint64_t key);
 extern int aiueos_keyboard_drain(uint32_t rounds);
 extern uint32_t aiueos_keyboard_next_press(uint32_t budget);
+extern uint32_t aiueos_keyboard_next_key(uint32_t budget);
 extern int aiueos_tablet_drain(uint32_t rounds);
 extern uint32_t aiueos_tablet_next(uint32_t budget, uint32_t *x, uint32_t *y);
 extern uint64_t kotoba_aiueos_browser_reduce(uint64_t state, uint64_t state_bytes,
@@ -4553,6 +4554,149 @@ qwen_runtime_boot_complete:
                                         debug_string("AIUEOS_GUEST_BROWSER_CURSOR_OK\n");
                                         serial_string("AIUEOS_GUEST_BROWSER_CURSOR_OK events=5 answers=00000 before=0 at=1000,600 tip=111111 fill=ffffff chain=f4bb42d8 ops=108 text-px=948 hash=3e8be657\r\n");
                                         browser_hold_for_screendump();
+                                        /* Alt+Tab (ADR-0237). After the
+                                           pointer, the host presses launcher
+                                           button 2 at (150, 14) and releases
+                                           -- window 2 opens on top -- then Alt
+                                           down, Tab down / up three times, Alt
+                                           up, and a lone Tab down / up: twelve
+                                           events, each after the previous
+                                           frame line. From here the keyboard
+                                           hands releases too, and every key
+                                           goes to Kotoba browser-key as code *
+                                           4 + value. An answer of 256 + id is
+                                           browser-key's Alt+Tab -- a
+                                           :window/focus -- and C hands the id
+                                           to Kotoba browser-reduce as kind 5
+                                           without looking at it: that Alt+Tab
+                                           is the window manager's, and which
+                                           window it focuses, are the objects'
+                                           decisions. Answers are
+                                           browser-reduce-v1's
+                                           :the-kernel-focus-cycle and
+                                           browser-ime-v2's Alt+Tab vectors';
+                                           op counts, censuses and the chain
+                                           os/aiueos/scripts/browser-frame-model.cljk's.
+                                           The bodies (words 160..415) must
+                                           come out of the stage as they went
+                                           in: no key of it reaches a body. */
+                                        {
+                                          static const uint32_t fsrc[12] = {1, 4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+                                          static const uint32_t fkey[12] = {0, 0, 225, 61, 60, 61, 60, 61, 60, 224, 61, 60};
+                                          static const int64_t fwant[12] = {2, 0, 0, 1, 0, 3, 0, 2, 0, 0, 0, 0};
+                                          static const uint32_t ffocus[12] = {2, 2, 2, 1, 1, 3, 3, 2, 2, 2, 2, 2};
+                                          static const uint32_t fwpx[12] = {1082, 1082, 1082, 2290, 2290, 946, 946,
+                                                                            1082, 1082, 1082, 1082, 1082};
+                                          static const uint32_t fwhash[12] = {0xe90ed2bcU, 0xe90ed2bcU, 0xe90ed2bcU,
+                                                                              0x47120e77U, 0x47120e77U, 0xc461a68fU,
+                                                                              0xc461a68fU, 0xe90ed2bcU, 0xe90ed2bcU,
+                                                                              0xe90ed2bcU, 0xe90ed2bcU, 0xe90ed2bcU};
+                                          uint32_t fe = 0, foff = 0, fpx2 = 0, fhash2 = 0, fchain = 2166136261U;
+                                          uint32_t fidle = 0, fframes = 0, wm = 0, bin = 2166136261U, bout = 2166136261U;
+                                          int64_t ffo = 0;
+                                          for (uint32_t i = 160; i < 416; i++) {
+                                            bin ^= surface[i];
+                                            bin *= 16777619U;
+                                          }
+                                          (void)aiueos_tablet_drain(4000000U);
+                                          (void)aiueos_keyboard_drain(4000000U);
+                                          serial_string("AIUEOS_GUEST_BROWSER_FOCUS_GO events=12\r\n");
+                                          while (fe < 12 && fidle < 60000U) {
+                                            uint32_t src = aiueos_tablet_next(1024U, &ax, &ay);
+                                            uint32_t key = 0;
+                                            int64_t r, kr = 0;
+                                            if (src) {
+                                              uint32_t px = (uint32_t)(((uint64_t)ax * surface[3]) / 32768U);
+                                              uint32_t py = (uint32_t)(((uint64_t)ay * surface[4]) / 32768U);
+                                              surface[2046] = px + 1U;
+                                              surface[2047] = py;
+                                              r = (int64_t)kotoba_aiueos_browser_reduce(sp, 128, src, px, py);
+                                            } else {
+                                              key = aiueos_keyboard_next_key(1024U);
+                                              if (!key) { fidle++; continue; }
+                                              kr = (int64_t)kotoba_aiueos_browser_key(sp, 8192, dict, dict_length, key);
+                                              r = kr;
+                                              if (kr > 256) {
+                                                r = (int64_t)kotoba_aiueos_browser_reduce(sp, 128, 5, (uint64_t)(kr - 256), 0);
+                                                wm++;
+                                              }
+                                            }
+                                            fidle = 0;
+                                            ffo = (int64_t)kotoba_aiueos_browser_frame2(sp, 8192,
+                                                    (uint64_t)(uintptr_t)font, font_length);
+                                            fpx2 = 0;
+                                            fhash2 = 0;
+                                            if (ffo > 0 && aiueos_desktop_present_ops2(surface + 480, (uint64_t)ffo,
+                                                                                      font, font_length)) {
+                                              fhash2 = aiueos_desktop_colour_census(0x111111U, &fpx2);
+                                              (void)aiueos_desktop_show();
+                                              fframes++;
+                                              for (int b = 0; b < 4; b++) {
+                                                fchain ^= (fhash2 >> (8 * b)) & 255U;
+                                                fchain *= 16777619U;
+                                              }
+                                            }
+                                            if (src != fsrc[fe] || key != fkey[fe] || r != fwant[fe] ||
+                                                surface[2] != ffocus[fe] || ffo != 129 ||
+                                                fpx2 != fwpx[fe] || fhash2 != fwhash[fe]) foff++;
+                                            fe++;
+                                            serial_string("AIUEOS_GUEST_BROWSER_FOCUS_FRAME n=");
+                                            serial_decimal(fe);
+                                            serial_string(" src=");
+                                            serial_decimal(src);
+                                            serial_string(" key=");
+                                            serial_decimal(key);
+                                            serial_string(kr < 0 ? " key-answer=-" : " key-answer=");
+                                            serial_decimal((uint32_t)(kr < 0 ? -kr : kr));
+                                            serial_string(r < 0 ? " answer=-" : " answer=");
+                                            serial_decimal((uint32_t)(r < 0 ? -r : r));
+                                            serial_string(" focus=");
+                                            serial_decimal(surface[2]);
+                                            serial_string(" stack=");
+                                            for (uint32_t k = 0; k < surface[1] && k < 4; k++)
+                                              serial_decimal(surface[5 + 5 * k]);
+                                            serial_string(" ops=");
+                                            serial_decimal((uint32_t)(ffo < 0 ? -ffo : ffo));
+                                            serial_string(" text-px=");
+                                            serial_decimal(fpx2);
+                                            serial_string(" hash=");
+                                            serial_hex32(fhash2);
+                                            serial_string("\r\n");
+                                          }
+                                          for (uint32_t i = 160; i < 416; i++) {
+                                            bout ^= surface[i];
+                                            bout *= 16777619U;
+                                          }
+                                          if (fe == 12 && fframes == 12 && foff == 0 && wm == 3 && bin == bout &&
+                                              fchain == 0x2254db31U && surface[1] == 3 && surface[5] == 1 &&
+                                              surface[10] == 3 && surface[15] == 2 && surface[2] == 2 &&
+                                              surface[431] == 0 && surface[433] == 0 && surface[445] == 0) {
+                                            debug_string("AIUEOS_GUEST_BROWSER_FOCUS_OK\n");
+                                            serial_string("AIUEOS_GUEST_BROWSER_FOCUS_OK events=12 answers=200103020000 wm=3 stack=132 focus=2 bodies=unchanged chain=2254db31 ops=129 text-px=1082 hash=e90ed2bc\r\n");
+                                            browser_hold_for_screendump();
+                                          } else if (fe < 12) {
+                                            debug_string("AIUEOS_GUEST_BROWSER_FOCUS leftover=events-missing\n");
+                                            serial_string("AIUEOS_GUEST_BROWSER_FOCUS leftover=events-missing events=");
+                                            serial_decimal(fe);
+                                            serial_string(" frames=");
+                                            serial_decimal(fframes);
+                                            serial_string("\r\n");
+                                          } else {
+                                            debug_string("AIUEOS_GUEST_BROWSER_FOCUS leftover=census-miss\n");
+                                            serial_string("AIUEOS_GUEST_BROWSER_FOCUS leftover=census-miss off=");
+                                            serial_decimal(foff);
+                                            serial_string(" wm=");
+                                            serial_decimal(wm);
+                                            serial_string(bin == bout ? " bodies=unchanged" : " bodies=changed");
+                                            serial_string(" chain=");
+                                            serial_hex32(fchain);
+                                            serial_string(" focus=");
+                                            serial_decimal(surface[2]);
+                                            serial_string(" alt=");
+                                            serial_decimal(surface[431]);
+                                            serial_string("\r\n");
+                                          }
+                                        }
                                       } else if (ce < 5) {
                                         debug_string("AIUEOS_GUEST_BROWSER_CURSOR leftover=events-missing\n");
                                         serial_string("AIUEOS_GUEST_BROWSER_CURSOR leftover=events-missing events=");

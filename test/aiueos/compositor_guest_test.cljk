@@ -462,6 +462,64 @@
   (testing "tablet profile, with the dictionary's wall clock and more"
     (is (= {"AIUEOS_GUEST_BROWSER" "1" "AIUEOS_QEMU_TIMEOUT" "1080"} (guest/extra-env "guest-browser-cursor")))))
 
+;; Guest browser Alt+Tab (ADR-0237). The lines are the first QEMU run's.
+(def ^:private cursor-ok-line
+  (str dict-ok-line cursor-lines cursor-ok))
+
+(def ^:private focus-lines
+  (str
+       "AIUEOS_GUEST_BROWSER_FOCUS_GO events=12\r\n"
+       "AIUEOS_GUEST_BROWSER_FOCUS_FRAME n=1 src=1 key=0 key-answer=0 answer=2 focus=2 stack=132 ops=129 text-px=1082 hash=e90ed2bc\r\n"
+       "AIUEOS_GUEST_BROWSER_FOCUS_FRAME n=2 src=4 key=0 key-answer=0 answer=0 focus=2 stack=132 ops=129 text-px=1082 hash=e90ed2bc\r\n"
+       "AIUEOS_GUEST_BROWSER_FOCUS_FRAME n=3 src=0 key=225 key-answer=0 answer=0 focus=2 stack=132 ops=129 text-px=1082 hash=e90ed2bc\r\n"
+       "AIUEOS_GUEST_BROWSER_FOCUS_FRAME n=4 src=0 key=61 key-answer=257 answer=1 focus=1 stack=321 ops=129 text-px=2290 hash=47120e77\r\n"
+       "AIUEOS_GUEST_BROWSER_FOCUS_FRAME n=5 src=0 key=60 key-answer=0 answer=0 focus=1 stack=321 ops=129 text-px=2290 hash=47120e77\r\n"
+       "AIUEOS_GUEST_BROWSER_FOCUS_FRAME n=6 src=0 key=61 key-answer=259 answer=3 focus=3 stack=213 ops=129 text-px=946 hash=c461a68f\r\n"
+       "AIUEOS_GUEST_BROWSER_FOCUS_FRAME n=7 src=0 key=60 key-answer=0 answer=0 focus=3 stack=213 ops=129 text-px=946 hash=c461a68f\r\n"
+       "AIUEOS_GUEST_BROWSER_FOCUS_FRAME n=8 src=0 key=61 key-answer=258 answer=2 focus=2 stack=132 ops=129 text-px=1082 hash=e90ed2bc\r\n"
+       "AIUEOS_GUEST_BROWSER_FOCUS_FRAME n=9 src=0 key=60 key-answer=0 answer=0 focus=2 stack=132 ops=129 text-px=1082 hash=e90ed2bc\r\n"
+       "AIUEOS_GUEST_BROWSER_FOCUS_FRAME n=10 src=0 key=224 key-answer=0 answer=0 focus=2 stack=132 ops=129 text-px=1082 hash=e90ed2bc\r\n"
+       "AIUEOS_GUEST_BROWSER_FOCUS_FRAME n=11 src=0 key=61 key-answer=0 answer=0 focus=2 stack=132 ops=129 text-px=1082 hash=e90ed2bc\r\n"
+       "AIUEOS_GUEST_BROWSER_FOCUS_FRAME n=12 src=0 key=60 key-answer=0 answer=0 focus=2 stack=132 ops=129 text-px=1082 hash=e90ed2bc\r\n"))
+
+(def ^:private focus-ok
+  "AIUEOS_GUEST_BROWSER_FOCUS_OK events=12 answers=200103020000 wm=3 stack=132 focus=2 bodies=unchanged chain=2254db31 ops=129 text-px=1082 hash=e90ed2bc\r\n")
+
+(deftest guest-browser-focus-cycle-classifier
+  (testing "twelve frames, three window-manager focuses, the model's censuses: green"
+    (let [r (guest/classify "guest-browser-focus-cycle" {:serial (str cursor-ok-line focus-lines focus-ok)})]
+      (is (= :guest-browser-focus-cycle (:reason r)))
+      (is (= 0 (:exit r)))
+      (is (= [:kernel-focus-cycle-shortcut :left-alt-only :no-switcher-overlay] (:leftover r)))))
+  (testing "Alt+Tab needs the pointer stage first"
+    (is (= :no-cursor
+           (:reason (guest/classify "guest-browser-focus-cycle"
+                                    {:serial (str dict-ok-line focus-lines focus-ok)})))))
+  (testing "an OK line with a frame line missing is not green"
+    (is (= :focus-lines-missing
+           (:reason (guest/classify "guest-browser-focus-cycle"
+                                    {:serial (str cursor-ok-line
+                                                  (.replace focus-lines "FRAME n=7 " "FRAME n=70 ")
+                                                  focus-ok)})))))
+  (testing "an OK line without the GO line is not green"
+    (is (= :focus-lines-missing
+           (:reason (guest/classify "guest-browser-focus-cycle"
+                                    {:serial (str cursor-ok-line
+                                                  (.replace focus-lines "FOCUS_GO" "FOCUS_G0")
+                                                  focus-ok)})))))
+  (testing "an OK line naming a different chain is not this gate's"
+    (is (= :guest-browser-focus-cycle-absent
+           (:reason (guest/classify "guest-browser-focus-cycle"
+                                    {:serial (str cursor-ok-line focus-lines
+                                                  (.replace focus-ok "chain=2254db31" "chain=1e19707d"))})))))
+  (testing "named reds"
+    (doseq [[line reason] [["AIUEOS_GUEST_BROWSER_FOCUS leftover=events-missing events=3 frames=3\r\n" :events-missing]
+                           ["AIUEOS_GUEST_BROWSER_FOCUS leftover=census-miss off=5 wm=3 bodies=unchanged chain=1e19707d focus=2 alt=0\r\n" :census-miss]
+                           ["" :guest-browser-focus-cycle-absent]]]
+      (is (= reason (:reason (guest/classify "guest-browser-focus-cycle" {:serial (str cursor-ok-line line)}))) line)))
+  (testing "tablet profile, with the pointer's wall clock and more"
+    (is (= {"AIUEOS_GUEST_BROWSER" "1" "AIUEOS_QEMU_TIMEOUT" "1260"} (guest/extra-env "guest-browser-focus-cycle")))))
+
 ;; Guest browser body flow (ADR-0234). A one-window stand-in for the kernel's
 ;; op dump: the classifier's span rule and its comparison, not the real scene
 ;; (the real scene's hosted answer is os/aiueos/contracts/browser-flow-parity-v1.edn).
