@@ -505,7 +505,24 @@
 (check! "account-model-bounded-at-63"
         63 (count (g/account-model (apply str (repeat 70 "a")))))
 
-(def expected-cases 56)
+;; ------------------------------------------------ defaults (ADR-0240)
+;; Enter picks the one EMPTY disk among several, never one that has data, and
+;; offers nothing when two are empty -- a default between them is a guess.
+(def d-used {:path "/dev/nvme0n1" :pttype "gpt" :fstype nil :signatures-measured? true})
+(def d-fs {:path "/dev/nvme2n1" :pttype nil :fstype "ext4" :signatures-measured? true})
+(def d-empty {:path "/dev/nvme1n1" :pttype nil :fstype nil :signatures-measured? true})
+;; what lsblk alone reports without udev: fields empty, nothing measured
+(def d-unmeasured {:path "/dev/nvme3n1" :pttype nil :fstype nil})
+(check! "default-target-is-the-one-empty-disk" 2 (g/default-target [d-used d-empty d-fs]))
+(check! "default-target-none-when-two-are-empty" nil (g/default-target [d-empty d-used d-empty]))
+(check! "default-target-none-when-all-have-data" nil (g/default-target [d-used d-fs]))
+(check! "default-target-single-candidate-is-it" 1 (g/default-target [d-used]))
+(check! "unmeasured-disk-is-never-empty" false (g/blank-disk? d-unmeasured))
+(check! "default-target-ignores-unmeasured" 2 (g/default-target [d-unmeasured d-empty]))
+(check! "default-hostname-from-dmi-model" "gmktec-k16" (g/default-hostname "GMKtec K16"))
+(check! "default-hostname-without-model" "aiueos" (g/default-hostname nil))
+
+(def expected-cases 64)
 (def total (count @results))
 (def failed (filterv (complement :ok) @results))
 

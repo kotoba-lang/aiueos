@@ -414,7 +414,7 @@ def release_partition_entries(release):
 
 
 def make_bundle_tgz(installer_dir, scripts_dir, intent_bytes, receipt_bytes, node_binary,
-                    nbb_dir=None, classpath_dirs=()):
+                    nbb_dir=None, classpath_dirs=(), default_ssh_key=None):
     """Deterministic gzip'd tar of the installer bundle. Determinism is what
     lets the receipt digest mean anything: same inputs, same bytes.
 
@@ -482,6 +482,11 @@ def make_bundle_tgz(installer_dir, scripts_dir, intent_bytes, receipt_bytes, nod
     if intent_bytes is not None:
         add("install-intent.json", intent_bytes, 0o644)
     add("release-receipt.json", receipt_bytes, 0o644)
+    # The key the guided SSH screen offers as its default (aiueos ADR-0240). A
+    # public key, so carrying it is not the secret floor's concern; the person
+    # at the console can still type another.
+    if default_ssh_key is not None:
+        add("default-authorized-key.pub", default_ssh_key, 0o644)
     if node_binary:
         add("node-linux-x64", Path(node_binary).read_bytes(), 0o755)
     if nbb_dir:
@@ -731,11 +736,20 @@ def build(args):
         if intent["release"]["disk"]["sha256"] != receipt_json["disk"]["sha256"]:
             raise ValueError("intent names a different release image digest")
     names = payload_names_for(args.guided)
+    default_ssh_key = None
+    if args.default_ssh_key:
+        if not args.guided:
+            raise ValueError("--default-ssh-key only means something on a --guided stick; "
+                             "an intent already names its key")
+        default_ssh_key = Path(args.default_ssh_key).read_bytes()
+        if not default_ssh_key.startswith(b"ssh-ed25519 "):
+            raise ValueError("--default-ssh-key must be one OpenSSH ssh-ed25519 public key line")
 
     scripts_dir = Path(__file__).resolve().parent
     bundle = make_bundle_tgz(args.installer_dir, scripts_dir, intent_bytes,
                              release_receipt_bytes, args.node_binary, args.nbb_dir,
-                             classpath_dirs=[d for d in (args.classpath or []) if d])
+                             classpath_dirs=[d for d in (args.classpath or []) if d],
+                             default_ssh_key=default_ssh_key)
     files = {
         "RELEASE.IMG": release,
         "RECEIPT.JSN": release_receipt_bytes,
@@ -980,6 +994,9 @@ def main():
     b.add_argument("--node-binary")
     b.add_argument("--nbb-dir")
     b.add_argument("--live-uki")
+    b.add_argument("--default-ssh-key",
+                   help="guided sticks only: an ssh-ed25519 public key file the SSH "
+                        "screen offers as its default (ADR-0240)")
     b.add_argument("--output", required=True)
 
     b.add_argument("--receipt", required=True)
