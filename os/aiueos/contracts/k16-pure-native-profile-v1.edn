@@ -164,15 +164,21 @@
           rather than c-source -- the gate reports what it read, and it read
           an object with nothing behind it."}
   :pure-native-profile-link
-  {:scanned 67
-   :kotoba-admitted 47
+  {:measured-at "2026-09-25"
+   :compiler "53799cb4077f5e104699e3445804bf3c03186abf"
+   :scanned 92
+   :kotoba-admitted 92
    :toolchain-stubs 0
    :foreign 0
-   :unattested 20
-   :note "The restricted link. NO committed Kotoba object is C-derived or
-          malformed. The 20 refusals are objects for which no recipe in this
-          repository names the Amu revision that produced them; see
-          os/aiueos/kotoba/provenance.edn :unrecorded."}
+   :unattested 0
+   :note "The restricted link, re-measured after every committed Kotoba
+          object was re-attested with one amu (reproduce-kotoba-objects.cljk
+          --attest: 115 compiled, 68 rewritten, then a strict run matched
+          115/115). NO committed Kotoba object is C-derived or malformed, and
+          provenance.edn names the producing amu for all 115 -- the 20
+          compiler-unrecorded refusals of 2026-09-02 are gone. The
+          :k16-production-link block above is still the 2026-09-02
+          measurement."}
   :native-boot
   {:compiler "13d2f5dfe1adeaa99b7e9e6c04fcf8cb8fc15a4b"
    :backend "ce85a36d5307e7e019c304caa17daf237abb9b9b"

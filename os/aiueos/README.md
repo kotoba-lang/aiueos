@@ -72,6 +72,12 @@ in this repository records the Amu revision that produced them -- refused as
 from foreign code so the C number stays readable. No committed Kotoba object
 is C-derived or malformed.
 
+Re-measured 2026-09-25 after re-attesting every committed Kotoba object with
+amu `53799cb` (`reproduce-kotoba-objects.cljk --attest`, then a strict run:
+`scanned=115 match=115`): the restricted K16 link scans 92 objects,
+`kotoba=92 foreign=0 unattested=0`, and `provenance.edn` records the producing
+amu for all 115 objects.
+
 Exit codes are `0` admitted, `2` could not answer, `3` refused; `scanned=0` is
 exit 2 and never a pass. Provenance lives in `os/aiueos/kotoba/provenance.edn`
 (regenerate with `--emit-provenance`); the acceptance conditions, receipt

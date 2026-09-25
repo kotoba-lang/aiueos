@@ -24,6 +24,24 @@ All notable changes to **aiueos** are documented here. The format follows
 - Gate `guest-browser-scroll` (tablet profile, 2400 s):
   `AIUEOS_GUEST_BROWSER_SCROLL_OK events=17 answers=40004444444444444 max=120 stack=1324 focus=4 scroll=0 chain=7421f3aa ops=164 text-px=994 hash=78270fda`.
   browser-reduce-v1 115 vectors (25 new), browser-frame2-v1 63 (13 new).
+### sync-kernel-object-digests reads build-multiboot.sh too
+- The re-attest above left two literals stale in `build-multiboot.sh`
+  (`acpi-checksum-ok.o`, `acpi-table-valid.o`); `--check` read only
+  `build-uefi.sh` and reported OK, and the Multiboot boot failed closed in CI.
+  The gate now scans every script that pins a digest (111 slots in 2 scripts)
+  and names the script on each STALE line; both literals are synced and
+  `smoke-qemu-multiboot.sh` passes.
+
+### Kernel objects re-attested with one amu
+- `reproduce-kotoba-objects.cljk --attest` with amu `53799cb` compiled all 115
+  committed Kotoba objects and rewrote the 68 whose bytes changed; 46 were
+  recorded against an older amu and 1 (`install-intent-admit.o`) had no
+  recorded compiler. A strict rerun matches 115/115.
+- `provenance.edn` regenerated (`--emit-provenance`: 115 recorded, 0
+  unrecorded); `sync-kernel-object-digests.cljk --write` rewrote 59 stale
+  digest pins in `build-uefi.sh` (`--check` then exit 0).
+- All 24 guest compositor gates pass on the rebuilt objects; the restricted
+  K16 link is now `kotoba=92 foreign=0 unattested=0`.
 
 ### Guest browser desktop: Alt+Tab focuses and raises the next window (ADR-0237)
 - browser-ime.kotoba holds Alt (evdev 56) in surface word 431 from its press to
