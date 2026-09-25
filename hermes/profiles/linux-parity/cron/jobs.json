@@ -24,7 +24,7 @@
       "script": "parity_evidence.py",
       "skill": null,
       "skills": [],
-      "workdir": "~/.itonami/worktrees/linux-parity"
+      "workdir": null
     }
   ]
 }
