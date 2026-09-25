@@ -283,9 +283,9 @@
         [d4 e4] (desktop/route-key d3 "Enter")]
     (is (= "か" (:preedit e2)))
     (is (= :convert (:reason e3)))
-    (is (= "加" (:preedit e3)))
+    (is (= "下" (:preedit e3)))
     (is (= "" (:guest-text e3)))
-    (is (= "加" (:guest-text e4)))
+    (is (= "下" (:guest-text e4)))
     (is (desktop/kanji-admitted? d4))
     (is (= :native-compositor-absent (:leftover (desktop/ime-leftover d4))))
     (is (not (re-find #"[a-zA-Z]" (str (get-in d4 [:ime :guest-log])))))))

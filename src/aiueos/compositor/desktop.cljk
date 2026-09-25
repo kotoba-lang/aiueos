@@ -10,7 +10,7 @@
   Hosted WM (ADR-0085): two overlapping surfaces, `raise` changes
   z-order, pointer hit-test is front-to-back, DADS title bars live in
   `apps/session` `#desktop`. Hosted IME is ADR-0086 (romaji→kana)
-  plus ADR-0088 (Space converts か→加). Hosted kami.webgpu presenter
+  plus ADR-0088 (Space converts か→下 since ADR-0235's dictionary). Hosted kami.webgpu presenter
   is ADR-0089. Guest IME is ADR-0090. Guest WM is ADR-0091
   (KERNEL.ELF Kotoba z-hit). Guest gpu-two is ADR-0094. Guest
   scanout-two is ADR-0095. Guest broker is ADR-0096. Guest session
@@ -268,7 +268,8 @@
     [d' (assoc ev :latin-leaked? (ime/latin-leaked? ev))]))
 
 (defn kanji-admitted?
-  "True when IME-on converted か to 加 and did not leak latin. The kana
+  "True when IME-on converted か to 下 (the dictionary's first candidate,
+  ADR-0235; 加 before it) and did not leak latin. The kana
   gate does not require this. `:kanji? false` is the named red."
   [desktop]
   (let [i (:ime desktop)
@@ -278,7 +279,7 @@
      (and i
           (:on? i)
           (not (false? (:kanji? i)))
-          (str/includes? committed "加")
+          (str/includes? committed "下")
           (not (re-find #"[a-zA-Z]" committed))
           (not (re-find #"[a-zA-Z]" guest))))))
 

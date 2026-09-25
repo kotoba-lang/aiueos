@@ -57,6 +57,10 @@ claimed: P5 and the dictionary stay open until a person acts.
   SKK (GPL). It is no longer a `:needs-a-human` floor.
 - **`:browser-component` is `:blocked-by` amu** (measured walls in the floor
   entry); amu work on those walls runs as a separate task.
+- **2026-09-25, `:dictionary` closed by ADR-0235.** The generator reads
+  Unihan `kJapanese` (the readings in kana) rather than the romaji
+  `kJapaneseOn` / `kJapaneseKun` the floor first named; the floor's goal says
+  so.
 
 ## Measurement
 

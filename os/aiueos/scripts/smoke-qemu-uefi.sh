@@ -543,7 +543,8 @@ while time.time() < end:
     try:
         # Guest browser typing (ADR-0225): once the kernel says TYPE_READY the
         # repeated keys stop (they would be typed), and after TYPE_GO the
-        # sequence n i h o n n g o Enter k a Space Enter is typed exactly once.
+        # sequence n i h o n n g o Enter k u w a w a r u Space Enter is typed
+        # exactly once (ADR-0235: くわわる -> 加 through the Unihan dictionary).
         typing = os.environ.get("AIUEOS_QMP_POINTER") == "1"
         serial_now = b""
         if typing:
@@ -560,12 +561,20 @@ while time.time() < end:
         # The preedit (ADR-0227): `k a n` at PREEDIT_GO, and Enter at
         # PREEDIT_ENTER only once the composition's frame has been dumped.
         for go, keys, after in ((b"AIUEOS_GUEST_BROWSER_TYPE_GO",
-                                 ["n", "i", "h", "o", "n", "n", "g", "o", "ret", "k", "a", "spc", "ret"], None),
+                                 ["n", "i", "h", "o", "n", "n", "g", "o", "ret",
+                                  "k", "u", "w", "a", "w", "a", "r", "u", "spc", "ret"], None),
                                 (b"AIUEOS_GUEST_BROWSER_PREEDIT_GO", ["k", "a", "n"], None),
                                 (b"AIUEOS_GUEST_BROWSER_PREEDIT_ENTER", ["ret"], "guest-browser-preedit.ppm"),
                                 # ADR-0228: Hankaku/Zenkaku is evdev 41, qcode grave_accent.
                                 (b"AIUEOS_GUEST_BROWSER_IME_TOGGLE_GO",
-                                 ["grave_accent", "k", "a", "grave_accent", "k", "a", "ret"], None)):
+                                 ["grave_accent", "k", "a", "grave_accent", "k", "a", "ret"], None),
+                                # ADR-0235: やま converts, and after that frame's dump the
+                                # candidates cycle, Escape puts the reading back, and
+                                # 山 and 償 (しょう's second) are committed.
+                                (b"AIUEOS_GUEST_BROWSER_DICT_GO", ["y", "a", "m", "a", "spc"], None),
+                                (b"AIUEOS_GUEST_BROWSER_DICT_NEXT",
+                                 ["spc", "esc", "spc", "ret", "s", "h", "o", "u", "spc", "spc", "ret"],
+                                 "guest-browser-dictionary-converting.ppm")):
             if not (typing and go in serial_now) or globals().get(go) or (after and not globals().get(after)):
                 continue
             globals()[go] = True
@@ -717,6 +726,8 @@ while time.time() < end:
                                  (b"AIUEOS_GUEST_BROWSER_LOOP_OK", "guest-browser-loop.ppm"),
                                  (b"AIUEOS_GUEST_BROWSER_CARET_OK", "guest-browser-caret.ppm"),
                                  (b"AIUEOS_GUEST_BROWSER_LAUNCH_OK", "guest-browser-launch.ppm"),
+                                 (b"AIUEOS_GUEST_BROWSER_DICT_SHOWN", "guest-browser-dictionary-converting.ppm"),
+                                 (b"AIUEOS_GUEST_BROWSER_DICT_OK", "guest-browser-dictionary.ppm"),
                                  (b"AIUEOS_GUEST_BROWSER_FLOW_OK", "guest-browser-flow.ppm")):
                 if marker in serial_text and not globals().get(name):
                     globals()[name] = True
@@ -1150,7 +1161,7 @@ grep -F "AIUEOS_KERNEL_OK memory-map-v1" "$log" >/dev/null || {
   echo "error: kernel handoff was not observed" >&2
   exit 1
 }
-grep -F "AIUEOS_INITRAMFS_OK newc entries=4 sha256-admitted bounded" "$serial_log" >/dev/null || {
+grep -F "AIUEOS_INITRAMFS_OK newc entries=5 sha256-admitted bounded" "$serial_log" >/dev/null || {
   echo "error: bounded initramfs validation evidence was not observed" >&2
   exit 1
 }

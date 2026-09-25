@@ -344,6 +344,15 @@
    ["close-2" (assoc shell :focus 3 :stack [w1k w3])]
    ["up" (assoc shell :focus 3 :stack [w1k w3])]])
 
+;; ADR-0235: the dictionary. After the launcher (windows [1 3], focus 3) the
+;; host types y a m a Space: やま converts through the Unihan dictionary to its
+;; first candidate 山, drawn as the composition after window 3's body. Then
+;; Space (岾) Escape (やま) Space (山) Enter, and s h o u Space Space (償,
+;; しょう's second) Enter: 山 and 償 are committed into window 3's body.
+(def dict-frames
+  [["converting" (assoc shell :focus 3 :stack [w1k w3] :composition [23665])]
+   ["committed" (assoc shell :focus 3 :stack [w1k (update w3 :body into [23665 20767])])]])
+
 ;; ADR-0234: the flow-parity frame. After everything above, the kernel lays
 ;; out this surface on a surface of its own (no tablet needed): four windows
 ;; whose bodies take each of cssom's rules -- packing by words with space runs,
@@ -507,6 +516,10 @@
     (println (str "launch frames=" (count cs) " ops=" (apply str (interpose "," (map :ops cs)))
                   " chain=" (chain (map #(js/parseInt (:hash %) 16) cs))
                   " last-px=" (:text-px (peek cs)) " last-hash=" (:hash (peek cs)))))
+  (doseq [[i [ev scene]] (map-indexed vector dict-frames)
+          :let [c (census (frame scene))]]
+    (println (str "dict-frame n=" (inc i) " " ev " ops=" (:ops c)
+                  " text-px=" (:text-px c) " hash=" (:hash c))))
   (let [ops (frame flow-scene)
         c (census ops)]
     (println (str "flow ops=" (:ops c) " text-px=" (:text-px c) " hash=" (:hash c)

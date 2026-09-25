@@ -524,6 +524,18 @@ const uint8_t *aiueos_initramfs_font(uint64_t *length) {
   return initramfs_font_length ? initramfs_font : 0;
 }
 
+/* The desktop IME's kana-kanji dictionary (ADR-0235), aiueos-dict/v1 from
+   os/aiueos/ime/, generated from Unicode Unihan. Copied out like the font;
+   256 KiB bounds it (the committed file is 189,892 bytes). C only carries
+   it: which reading converts to what is Kotoba `kotoba_aiueos_browser_key`. */
+#define AIUEOS_DICTIONARY_BYTES_MAX (256U * 1024U)
+static uint8_t __attribute__((section(".high_bss"), aligned(16))) initramfs_dictionary[AIUEOS_DICTIONARY_BYTES_MAX];
+static uint64_t initramfs_dictionary_length;
+const uint8_t *aiueos_initramfs_dictionary(uint64_t *length) {
+  if (length) *length = initramfs_dictionary_length;
+  return initramfs_dictionary_length ? initramfs_dictionary : 0;
+}
+
 const uint8_t *aiueos_initramfs_recovery_elf(uint64_t *length) {
   if (length) *length = initramfs_recovery_elf_length;
   return initramfs_recovery_elf_length ? initramfs_recovery_elf : 0;
@@ -576,6 +588,12 @@ static int initramfs_validate(uint64_t base, uint64_t size, uint64_t *files) {
       for (uint64_t i = 0; i < filesize; i++)
         initramfs_font[i] = archive[data_offset + i];
       initramfs_font_length = filesize;
+    }
+    if (initramfs_name_is(archive + name_offset, namesize, "ime/aiueos-kanji.dic") &&
+        filesize && filesize <= sizeof(initramfs_dictionary)) {
+      for (uint64_t i = 0; i < filesize; i++)
+        initramfs_dictionary[i] = archive[data_offset + i];
+      initramfs_dictionary_length = filesize;
     }
     if (initramfs_name_is(archive + name_offset, namesize, "recovery/user-smoke.sig") &&
         filesize == sizeof(initramfs_recovery_signature)) {
@@ -935,8 +953,12 @@ extern int aiueos_desktop_present_ops2(const uint32_t *ops, uint64_t count,
 extern uint32_t aiueos_desktop_colour_census(uint32_t rgb, uint32_t *count_out);
 extern int aiueos_desktop_show(void);
 extern const uint8_t *aiueos_initramfs_font(uint64_t *length);
+extern const uint8_t *aiueos_initramfs_dictionary(uint64_t *length);
+/* ADR-0235: key = evdev code * 4 + value (five parameters is the native
+   ceiling, and the dictionary took two). */
 extern uint64_t kotoba_aiueos_browser_key(uint64_t surface, uint64_t surface_bytes,
-                                          uint64_t code, uint64_t value);
+                                          uint64_t dictionary, uint64_t dictionary_bytes,
+                                          uint64_t key);
 extern int aiueos_keyboard_drain(uint32_t rounds);
 extern uint32_t aiueos_keyboard_next_press(uint32_t budget);
 extern int aiueos_tablet_drain(uint32_t rounds);
@@ -1646,13 +1668,13 @@ void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
     serial_string("AIUEOS_KOTOBA_FNV_VECTOR_OK abc\r\n");
     uint64_t initramfs_files = 0;
     if (!initramfs_validate(boot->initramfs_base, boot->initramfs_size,
-                            &initramfs_files) || initramfs_files != 4) {
+                            &initramfs_files) || initramfs_files != 5) {
       debug_string("AIUEOS_INITRAMFS_FAIL newc-structure\n");
       serial_string("AIUEOS_INITRAMFS_FAIL newc-structure\r\n");
       qemu_exit(0x68);
     }
-    debug_string("AIUEOS_INITRAMFS_OK newc entries=4 sha256-admitted bounded\n");
-    serial_string("AIUEOS_INITRAMFS_OK newc entries=4 sha256-admitted bounded\r\n");
+    debug_string("AIUEOS_INITRAMFS_OK newc entries=5 sha256-admitted bounded\n");
+    serial_string("AIUEOS_INITRAMFS_OK newc entries=5 sha256-admitted bounded\r\n");
     extern int aiueos_recovery_payload_admission(const uint8_t *, uint64_t, const uint8_t *);
     if (!initramfs_recovery_elf_length || !initramfs_recovery_signature_present ||
         !aiueos_recovery_payload_admission(initramfs_recovery_elf,
@@ -3629,6 +3651,8 @@ qwen_runtime_boot_complete:
       static const uint32_t body2[] = {26085, 26412, 35486, 12398, 25991, 23383, 12418, 34920, 31034, 12391, 12365, 12414, 12377, 12290};
       uint64_t font_length = 0;
       const uint8_t *font = aiueos_initramfs_font(&font_length);
+      uint64_t dict_length = 0;
+      uint64_t dict = (uint64_t)(uintptr_t)aiueos_initramfs_dictionary(&dict_length);
       uint64_t sp = (uint64_t)(uintptr_t)surface;
       uint32_t text_px = 0, text_hash = 0;
       int64_t count;
@@ -3703,7 +3727,10 @@ qwen_runtime_boot_complete:
             serial_string("AIUEOS_GUEST_BROWSER_TEXT_RAISED_OK hit=1 ops=58 text-px=880 hash=b9f96599\r\n");
             browser_hold_for_screendump();
             /* Typing into the focused window (ADR-0225). The host types
-               n i h o n n g o Enter k a Space Enter once, after TYPE_GO;
+               n i h o n n g o Enter k u w a w a r u Space Enter once, after
+               TYPE_GO (ADR-0235: through the Unihan dictionary くわわる has
+               the one candidate 加, the kanji this gate has always
+               committed; か's first is now 下);
                every press goes through Kotoba `kotoba_aiueos_browser_key`
                (the hosted IME's rules), and the committed text lands in
                window 1's body. TYPE_READY stops the host's repeated keys,
@@ -3714,25 +3741,25 @@ qwen_runtime_boot_complete:
               surface[432] = 1;
               serial_string("AIUEOS_GUEST_BROWSER_TYPE_READY\r\n");
               (void)aiueos_keyboard_drain(4000000U);
-              serial_string("AIUEOS_GUEST_BROWSER_TYPE_GO keys=13\r\n");
-              while (presses < 13) {
+              serial_string("AIUEOS_GUEST_BROWSER_TYPE_GO keys=19\r\n");
+              while (presses < 19) {
                 uint32_t code = aiueos_keyboard_next_press(60000000U);
                 int64_t r;
                 if (!code) break;
                 presses++;
-                r = (int64_t)kotoba_aiueos_browser_key(sp, 8192, code, 1);
+                r = (int64_t)kotoba_aiueos_browser_key(sp, 8192, dict, dict_length, (uint64_t)code * 4U + 1U);
                 if (r < 0) refused++; else committed += (uint32_t)r;
               }
               int64_t typed = (int64_t)kotoba_aiueos_browser_frame2(sp, 8192,
                                 (uint64_t)(uintptr_t)font, font_length);
-              if (presses == 13 && typed > 0 &&
+              if (presses == 19 && typed > 0 &&
                   aiueos_desktop_present_ops2(surface + 480, (uint64_t)typed, font, font_length)) {
                 text_hash = aiueos_desktop_colour_census(0x111111U, &text_px);
                 (void)aiueos_desktop_show();
                 if (committed == 5 && refused == 0 && typed == 63 &&
                     text_px == 1068 && text_hash == 0xa92b8f58U) {
                   debug_string("AIUEOS_GUEST_BROWSER_TYPE_OK\n");
-                  serial_string("AIUEOS_GUEST_BROWSER_TYPE_OK presses=13 committed=5 ops=63 text-px=1068 hash=a92b8f58\r\n");
+                  serial_string("AIUEOS_GUEST_BROWSER_TYPE_OK presses=19 committed=5 ops=63 text-px=1068 hash=a92b8f58\r\n");
                   type_ok = 1;
                 } else {
                   debug_string("AIUEOS_GUEST_BROWSER_TYPE leftover=census-miss\n");
@@ -3765,7 +3792,7 @@ qwen_runtime_boot_complete:
                     uint32_t code = aiueos_keyboard_next_press(60000000U);
                     if (!code) break;
                     pressed++;
-                    if (kotoba_aiueos_browser_key(sp, 8192, code, 1) != 0) stray++;
+                    if (kotoba_aiueos_browser_key(sp, 8192, dict, dict_length, (uint64_t)code * 4U + 1U) != 0) stray++;
                   }
                   shown = (int64_t)kotoba_aiueos_browser_frame2(sp, 8192,
                             (uint64_t)(uintptr_t)font, font_length);
@@ -3788,7 +3815,7 @@ qwen_runtime_boot_complete:
                     serial_string("AIUEOS_GUEST_BROWSER_PREEDIT_ENTER keys=1\r\n");
                     {
                       uint32_t code = aiueos_keyboard_next_press(60000000U);
-                      if (code) landed = (int64_t)kotoba_aiueos_browser_key(sp, 8192, code, 1);
+                      if (code) landed = (int64_t)kotoba_aiueos_browser_key(sp, 8192, dict, dict_length, (uint64_t)code * 4U + 1U);
                     }
                     after = (int64_t)kotoba_aiueos_browser_frame2(sp, 8192,
                               (uint64_t)(uintptr_t)font, font_length);
@@ -3840,7 +3867,7 @@ qwen_runtime_boot_complete:
                       uint32_t code = aiueos_keyboard_next_press(60000000U);
                       int64_t r;
                       if (!code) break;
-                      r = (int64_t)kotoba_aiueos_browser_key(sp, 8192, code, 1);
+                      r = (int64_t)kotoba_aiueos_browser_key(sp, 8192, dict, dict_length, (uint64_t)code * 4U + 1U);
                       if (r != ((tp == 1 || tp == 2 || tp == 6) ? 1 : 0)) miss++;
                       if (tp == 0) off_seen = surface[432];
                       if (r > 0) {
@@ -4084,7 +4111,7 @@ qwen_runtime_boot_complete:
                             } else {
                               code = aiueos_keyboard_next_press(1024U);
                               if (!code) { idle++; continue; }
-                              r = (int64_t)kotoba_aiueos_browser_key(sp, 8192, code, 1);
+                              r = (int64_t)kotoba_aiueos_browser_key(sp, 8192, dict, dict_length, (uint64_t)code * 4U + 1U);
                             }
                             if (idle < idle_min) idle_min = idle;
                             idle = 0;
@@ -4181,7 +4208,7 @@ qwen_runtime_boot_complete:
                               int caret_op = 0;
                               if (!code) { cidle++; continue; }
                               cidle = 0;
-                              r = (int64_t)kotoba_aiueos_browser_key(sp, 8192, code, 1);
+                              r = (int64_t)kotoba_aiueos_browser_key(sp, 8192, dict, dict_length, (uint64_t)code * 4U + 1U);
                               cfo = (int64_t)kotoba_aiueos_browser_frame2(sp, 8192,
                                       (uint64_t)(uintptr_t)font, font_length);
                               cx = cy = 0;
@@ -4345,6 +4372,114 @@ qwen_runtime_boot_complete:
                                 debug_string("AIUEOS_GUEST_BROWSER_LAUNCH_OK\n");
                                 serial_string("AIUEOS_GUEST_BROWSER_LAUNCH_OK events=8 answers=30203030 windows=2 stack=1,3 focus=3 chain=2845aee9 ops=85 text-px=776 hash=98b595bd\r\n");
                                 browser_hold_for_screendump();
+                                /* The dictionary (ADR-0235). The host types
+                                   y a m a Space at DICT_GO: Kotoba
+                                   `kotoba_aiueos_browser_key` finds やま in
+                                   the initramfs dictionary (generated from
+                                   Unicode Unihan) by binary search and
+                                   shows its first candidate 山 as the
+                                   composition. After that frame's dump, at
+                                   DICT_NEXT: Space (岾) Escape (the reading
+                                   back from its record) Space (山) Enter,
+                                   s h o u Space Space (償, しょう's second)
+                                   Enter -- 山 and 償 land in window 3's
+                                   body. C hands the dictionary's bytes over
+                                   and counts answers; it never looks a
+                                   reading up. Answers are browser-ime-v2's,
+                                   censuses os/aiueos/scripts/
+                                   browser-frame-model.cljk's. */
+                                {
+                                  static const int64_t dwant[16] = {0, 0, 0, 0, 0,
+                                                                    0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 1};
+                                  uint32_t dp = 0, doff = 0, dpx = 0, dhash = 0, cpx = 0, chash = 0;
+                                  uint32_t conv = 0, rec = 0, pre = 0, pre0 = 0;
+                                  int64_t dfo = 0, dfo2 = 0;
+                                  serial_string("AIUEOS_GUEST_BROWSER_DICT_GO keys=5 dictionary-bytes=");
+                                  serial_decimal((uint32_t)dict_length);
+                                  serial_string("\r\n");
+                                  while (dp < 5) {
+                                    uint32_t code = aiueos_keyboard_next_press(60000000U);
+                                    if (!code) break;
+                                    if ((int64_t)kotoba_aiueos_browser_key(sp, 8192, dict, dict_length,
+                                                                           (uint64_t)code * 4U + 1U) != dwant[dp]) doff++;
+                                    dp++;
+                                  }
+                                  conv = surface[442];
+                                  rec = surface[444];
+                                  pre = surface[445];
+                                  pre0 = surface[446];
+                                  dfo = (int64_t)kotoba_aiueos_browser_frame2(sp, 8192,
+                                          (uint64_t)(uintptr_t)font, font_length);
+                                  if (dfo > 0 && aiueos_desktop_present_ops2(surface + 480, (uint64_t)dfo,
+                                                                             font, font_length)) {
+                                    chash = aiueos_desktop_colour_census(0x111111U, &cpx);
+                                    (void)aiueos_desktop_show();
+                                  }
+                                  serial_string("AIUEOS_GUEST_BROWSER_DICT_SHOWN keys=");
+                                  serial_decimal(dp);
+                                  serial_string(" converting=");
+                                  serial_decimal(conv);
+                                  serial_string(" record=");
+                                  serial_decimal(rec);
+                                  serial_string(" preedit=");
+                                  serial_decimal(pre);
+                                  serial_string(" cp=");
+                                  serial_decimal(pre0);
+                                  serial_string(" ops=");
+                                  serial_decimal((uint32_t)(dfo < 0 ? -dfo : dfo));
+                                  serial_string(" text-px=");
+                                  serial_decimal(cpx);
+                                  serial_string(" hash=");
+                                  serial_hex32(chash);
+                                  serial_string("\r\n");
+                                  browser_hold_for_screendump();
+                                  if (dp == 5) {
+                                    serial_string("AIUEOS_GUEST_BROWSER_DICT_NEXT keys=11\r\n");
+                                    while (dp < 16) {
+                                      uint32_t code = aiueos_keyboard_next_press(60000000U);
+                                      if (!code) break;
+                                      if ((int64_t)kotoba_aiueos_browser_key(sp, 8192, dict, dict_length,
+                                                                             (uint64_t)code * 4U + 1U) != dwant[dp]) doff++;
+                                      dp++;
+                                    }
+                                    dfo2 = (int64_t)kotoba_aiueos_browser_frame2(sp, 8192,
+                                             (uint64_t)(uintptr_t)font, font_length);
+                                    if (dfo2 > 0 && aiueos_desktop_present_ops2(surface + 480, (uint64_t)dfo2,
+                                                                                font, font_length)) {
+                                      dhash = aiueos_desktop_colour_census(0x111111U, &dpx);
+                                      (void)aiueos_desktop_show();
+                                    }
+                                  }
+                                  if (dp == 16 && doff == 0 && conv == 1 && rec == 44512 && pre == 1 &&
+                                      pre0 == 23665 && dfo == 87 && cpx == 834 && chash == 0xe85b42b2U &&
+                                      dfo2 == 87 && dpx == 915 && dhash == 0xeaa427b3U &&
+                                      surface[300] == 23665 && surface[301] == 20767 && surface[302] == 0 &&
+                                      surface[442] == 0 && surface[445] == 0) {
+                                    debug_string("AIUEOS_GUEST_BROWSER_DICT_OK\n");
+                                    serial_string("AIUEOS_GUEST_BROWSER_DICT_OK keys=16 answers=0000000010000001 record=44512 committed=23665,20767 shown-ops=87 shown-px=834 shown-hash=e85b42b2 ops=87 text-px=915 hash=eaa427b3\r\n");
+                                    browser_hold_for_screendump();
+                                  } else if (dp < 16) {
+                                    debug_string("AIUEOS_GUEST_BROWSER_DICT leftover=keys-missing\n");
+                                    serial_string("AIUEOS_GUEST_BROWSER_DICT leftover=keys-missing keys=");
+                                    serial_decimal(dp);
+                                    serial_string("\r\n");
+                                  } else {
+                                    debug_string("AIUEOS_GUEST_BROWSER_DICT leftover=census-miss\n");
+                                    serial_string("AIUEOS_GUEST_BROWSER_DICT leftover=census-miss off=");
+                                    serial_decimal(doff);
+                                    serial_string(" ops=");
+                                    serial_decimal((uint32_t)(dfo2 < 0 ? -dfo2 : dfo2));
+                                    serial_string(" text-px=");
+                                    serial_decimal(dpx);
+                                    serial_string(" hash=");
+                                    serial_hex32(dhash);
+                                    serial_string(" body=");
+                                    serial_decimal(surface[300]);
+                                    serial_string(",");
+                                    serial_decimal(surface[301]);
+                                    serial_string("\r\n");
+                                  }
+                                }
                               } else if (e < 8) {
                                 debug_string("AIUEOS_GUEST_BROWSER_LAUNCH leftover=events-missing\n");
                                 serial_string("AIUEOS_GUEST_BROWSER_LAUNCH leftover=events-missing events=");
