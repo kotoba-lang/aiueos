@@ -131,6 +131,17 @@
         (f32-add (f32-from-bits (dot-lane a b count 2 0))
                  (f32-from-bits (dot-lane a b count 3 0)))))))
 
+;; The live dot. Every Qwen3.5 / Bonsai dimension is a multiple of eight, and
+;; there `kernel-dot-f32` (kotoba-gmir ADR 0010) is this same tree: its
+;; `cpuid`/`xgetbv` guard takes eight AVX2 lanes where the machine has them and
+;; the scalar arm where it does not, and both answer `dot-run`'s bits (ADR-0222
+;; item 11). A count that is not a multiple of eight keeps `dot-run`, whose
+;; scalar tail is the only one that agrees with `dot_scalar` there.
+(defn dot-row [a b count]
+  (if (= count (* 8 (quot count 8)))
+    (kernel-dot-f32 a (* count 4) b (* count 4) count)
+    (dot-run a b count)))
+
 ;; ------------------------------------------------------------ the row walk
 
 (defn row-bytes [qtype count] (dq/row-bytes qtype count))
@@ -150,7 +161,7 @@
         -12
         (do (kernel-store-u32
              (kernel-subregion arena alen (+ (plan-u64 plan 48) (* row 4)) 4) 4 0
-             (u32w (dot-run scratch
+             (u32w (dot-row scratch
                             (kernel-subregion arena alen (plan-u64 plan 40) (* cols 4))
                             cols)))
             (matvec-rows arena alen plan (+ row 1) end))))))

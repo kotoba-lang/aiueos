@@ -803,14 +803,51 @@ source rather than here.
 ### Stage C — the throughput lever is the compiler, not the OS
 
 11. **Vector ISA lowering in kotoba-native (AVX2 on x86-64, NEON on
-    AArch64).** `kotoba.native.vector-region` exists and emits scalar code;
-    the C the objects replace is AVX2. A ternary weight is a sign and a
-    magnitude, so PTQ1 matvecs are adds and subtracts over dequantised
-    bytes — the shape SIMD pays for most. Without this stage "runs in
-    Kotoba" is true and the rate is an order of magnitude under llama.cpp
-    on the same CPU; with it the comparison is fair. This is a
-    kotoba-native item, ordered after stage B so it optimises a measured
-    path.
+    AArch64).** A ternary weight is a sign and a magnitude, so PTQ1
+    matvecs are adds and subtracts over dequantised bytes — the shape SIMD
+    pays for most. Without this stage "runs in Kotoba" is true and the rate
+    is an order of magnitude under llama.cpp on the same CPU; with it the
+    comparison is fair. This is a kotoba-native item, ordered after stage B
+    so it optimises a measured path.
+
+    **Where it stands.** The lowering exists: kotoba-native emits
+    `kernel-dot-f32` (kotoba-gmir ADR 0010) as a `cpuid`/`xgetbv` guard
+    over an eight-lane AVX2 arm and a scalar arm with the same
+    accumulation tree, plus fused dequantise-and-dot primitives for Q8_0,
+    Q4_K, Q6_K and the IQ family. kotoba-verifier admits all of them
+    (its ADRs 0023 and 0043). The refusal `elf64.cljc` still describes
+    ("runtime KIR operation rejected", 2026-09-02) is gone.
+
+    **The live matvec now takes the AVX2 arm.** `qwen35-matvec.kotoba`
+    calls `kernel-dot-f32` for its row dot whenever `cols` is a multiple
+    of eight. Every Qwen3.5 and Bonsai dimension is. Other counts keep the
+    scalar `dot-run`. Reproduce:
+    `amu compile os/aiueos/kotoba/qwen35-matvec.kotoba --source-path
+    os/aiueos/kotoba --unpinned --target x86_64-aiueos-kernel-v1`, then
+    `objdump -d` shows `cpuid`, `xgetbv`, `vmulps %ymm…` and `vzeroupper`.
+    The contract `qwen35-matvec-v1.edn` passes in the KIR oracle for its
+    24 vectors that do not read an IQ codebook grid (f32, Q8_0, Q2_K,
+    Q4_K, Q5_K, Q6_K and every refusal; 7 output regions bit-exact
+    against the C `matvec_range`). Shortening the dot by eight elements
+    turns it red with `memory mismatch` on `f32-4x16`. The six IQ
+    vectors trap `:rodata-address-unavailable` on `bytes-literal`, and
+    they trap the same way at the previous commit, whose object is
+    unchanged by this. So the oracle cannot run the grid types right now.
+    That is a separate open fault, and it is not caused by this change.
+    Under QEMU TCG `-cpu max` (`AIUEOS_QWEN35_KOTOBA_PARITY=1
+    smoke-qemu-uefi.sh`), the serial log reads `QWEN-PARITY matvec ok`
+    over all fifteen types. `smoke-qemu-uefi.sh` does not grep that line,
+    so read `build/aiueos/kernel-serial.log`. Which arm the guard took on
+    that CPU is not observed directly, because both arms answer the same
+    bits.
+
+    **Not done, and not measured:**
+    - The row is still dequantised to f32 in memory by the scalar shared
+      core before the dot. PTQ1_0 has no fused
+      `kernel-dequant-dot-ptq1-0`, and that is where the ternary shape
+      would pay.
+    - NEON: `a64-kernel-dot-f32` exists, and the K16 is x86-64.
+    - The rate. No tok/s has been measured on any CPU for this object.
 12. **The SMP split stays C until `smp.c` moves** (ADR-0220 layer 3–5).
     Each half already calls the matvec object with its own row range and
     scratch (ADR-0221); the object does not change when the split does.
