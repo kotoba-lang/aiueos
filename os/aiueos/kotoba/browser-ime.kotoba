@@ -74,6 +74,30 @@
 ;;              goes on as before. Plain Left / Right, Home, End are still not
 ;;              taken (`:caret-only-at-the-end` holds outside a selection), and
 ;;              Shift does not case a letter (`:shift-does-not-case-letters`).
+;;   Clipboard  (ADR-0241) Ctrl (evdev 29 or 97) is held in word 2038 from its
+;;              press to its release, as Shift is in 2035. With Ctrl held a
+;;              C (46) press over a selection, nothing composed, is a
+;;              :clipboard/write request and a V (47) press, nothing composed,
+;;              a :clipboard/read request -- browser.desktop-backend `request`:
+;;              the key answers 512 (write) or 513 (read) and changes nothing,
+;;              because whether the host's clipboard may be touched is the
+;;              permission broker's (broker-admit.kotoba, ADR-0096), not the
+;;              page's. Only when the broker admits :clipboard does C hand the
+;;              object the completion: the same code with value 3 (a device
+;;              never sends 3; the keyboard ring passes 0..2 only) and, in
+;;              place of the dictionary, the clipboard -- 260 bytes, word 0 its
+;;              length L (0..64), words 1..L its code points. A write
+;;              completion copies the selected code points into it (the
+;;              selection's text, as browser.text-edit keeps it); a read
+;;              completion is insert-text of its text: the selection goes and
+;;              the text is appended at the caret, which is the end of the
+;;              body -- whole or not at all (-5). A refused request has no
+;;              completion, so nothing is copied or pasted (fail-closed, as
+;;              desktop-backend `request` produces no effect on a deny).
+;;              Every other press with Ctrl held changes nothing
+;;              (`:no-other-ctrl-shortcuts`: Ctrl+A select-all is not taken);
+;;              C with nothing selected, or C / V while something is composed,
+;;              asks for nothing (`:no-clipboard-in-a-composition`).
 ;; THE DICTIONARY is os/aiueos/ime/aiueos-kanji.dic (aiueos-dict/v1, written
 ;; by os/aiueos/scripts/gen-ime-dictionary.cljk from Unicode Unihan; the
 ;; format is described in that script's header), handed in by C from the
@@ -107,20 +131,30 @@
 ;;   selection belongs to (0 none)   2037 its length, the code points before
 ;;   the end of that window's body that are selected -- three of the words
 ;;   freed by cutting frame2's op capacity from 260 to 259
+;;   2038 Ctrl held (ADR-0241; 1 held, else not). The clipboard is not in
+;;   the surface: it is the host's, handed in only with an admitted
+;;   completion. 2039 is the surface's last unassigned word.
 ;;
 ;; ABI: [surface surface-bytes dictionary dictionary-bytes key] where key is
 ;; the evdev key code * 4 + its value (0 release, 1 press, 2 repeat) -- five
 ;; parameters is the native ceiling, so code and value share one -- ->
 ;; code points committed to the focused window by this key (0 for most
 ;; keys; at most 64, a body's size), or 256 + a window id for Alt+Tab (a
-;; :window/focus for browser-reduce, ADR-0237), or
+;; :window/focus for browser-reduce, ADR-0237), or 512 / 513 for Ctrl+C /
+;; Ctrl+V (a :clipboard/write / :clipboard/read request for the broker,
+;; ADR-0241); for a completion (value 3, the clipboard in place of the
+;; dictionary) the code points copied into the clipboard or pasted into the
+;; body; or
 ;;   -1 null region / surface not 8192 bytes   -2 abi or n outside 1..4
 ;;   -3 focus is not a window id 1..4          -5 the body would pass 64
 ;;   -6 a dictionary is given and is not aiueos-dict/v1 (header), or the
 ;;      record a conversion needs is out of its bounds
+;;   -7 a completion's clipboard is a null region, not 260 bytes, or its
+;;      length word is past 64
 ;;   -8 the romaji buffer is full, or the preedit overflowed
 ;; A release or repeat (value != 1) changes nothing and returns 0, except
-;; Alt's release, which lets go of word 431, and Shift's, of word 2035. A header
+;; Alt's release, which lets go of word 431, Shift's, of word 2035, and
+;; Ctrl's, of word 2038. A header
 ;; refusal changes nothing; a record refusal on Space comes after the flush,
 ;; so the romaji is in the preedit and nothing is committed or converted.
 
@@ -536,6 +570,62 @@
   (do (replace-selection s)
       (put-latin s c)))
 
+;; --- the clipboard (ADR-0241) --------------------------------------------------
+
+(defn cw [d i]
+  (kernel-load-u32 (kernel-subregion d 260 (* i 4) 4) 4 0))
+
+(defn cwp [d i v]
+  (kernel-store-u32 (kernel-subregion d 260 (* i 4) 4) 4 0 v))
+
+(defn ctrl-key [s code]
+  ;; with Ctrl held: C over a selection asks to write the clipboard, V asks
+  ;; to read it; nothing while composing, and no other shortcut
+  (if (= (composing s) 1) 0
+    (if (= code 46) (if (> (sel-len s) 0) 512 0)
+      (if (= code 47) 513 0))))
+
+(defn copy-out [s d from i k]
+  ;; from: the surface word of the first selected code point
+  (if (>= i k) (do (cwp d 0 k) k)
+    (do (cwp d (+ i 1) (w s (+ from i)))
+        (copy-out s d from (+ i 1) k))))
+
+(defn copy-sel [s d]
+  ;; the selection's text into the clipboard: the last k code points
+  (let [k (sel-len s)
+        base (body-base s)]
+    (if (= k 0) 0
+      (copy-out s d (+ base (- (body-len s base 0) k)) 0 k))))
+
+(defn paste-in [s d to i n]
+  ;; to: the surface word the first pasted code point goes to
+  (if (>= i n) n
+    (do (wp s (+ to i) (cw d (+ i 1)))
+        (paste-in s d to (+ i 1) n))))
+
+(defn paste [s d]
+  ;; insert-text of the clipboard's text: the selection goes, the text is
+  ;; appended at the caret (the end of the body), whole or not at all
+  (let [n (cw d 0)
+        base (body-base s)
+        k (sel-len s)
+        at (body-len s base 0)]
+    (if (= n 0) 0
+      (if (> (+ (- at k) n) 64) -5
+        (do (replace-selection s)
+            (paste-in s d (+ base (- at k)) 0 n))))))
+
+(defn complete [s d db code]
+  ;; an admitted request's completion; the clipboard in place of the
+  ;; dictionary
+  (if (= d 0) -7
+    (if (not (= db 260)) -7
+      (if (> (cw d 0) 64) -7
+        (if (= (composing s) 1) 0
+          (if (= code 46) (copy-sel s d)
+            (if (= code 47) (paste s d) 0)))))))
+
 (defn toggle [s]
   (do (wp s 432 (if (= (w s 432) 0) 1 0))
       (clear-state s)))
@@ -569,6 +659,13 @@
   (do (if (= value 1) (wp s 2035 1) (if (= value 0) (wp s 2035 0) 0))
       0))
 
+(defn hold-ctrl [s value]
+  (do (if (= value 1) (wp s 2038 1) (if (= value 0) (wp s 2038 0) 0))
+      0))
+
+(defn ctrl-code [code]
+  (if (= code 29) 1 (if (= code 97) 1 0)))
+
 (defn shift-code [code]
   (if (= code 42) 1 (if (= code 54) 1 0)))
 
@@ -578,11 +675,13 @@
 (defn press [s d ev]
   (if (= (quot ev 4) 56) (hold-alt s (bit-and ev 3))
     (if (= (shift-code (quot ev 4)) 1) (hold-shift s (bit-and ev 3))
+    (if (= (ctrl-code (quot ev 4)) 1) (hold-ctrl s (bit-and ev 3))
     (if (not (= (bit-and ev 3) 1)) 0
       (if (= (wm-key s (quot ev 4)) 1) (+ 256 (w s 5))
-        (do (wp s 478 0)
-            (let [r (key s d (quot ev 4))]
-              (if (= (w s 478) 1) -8 r))))))))
+        (if (= (w s 2038) 1) (ctrl-key s (quot ev 4))
+          (do (wp s 478 0)
+              (let [r (key s d (quot ev 4))]
+                (if (= (w s 478) 1) -8 r))))))))))
 
 (defn admitted [s d ev]
   ;; after the surface checks: a dictionary that is there must be
@@ -600,7 +699,8 @@
             (if (< (w s 2) 1) -3
               (if (> (w s 2) 4) -3
                 (if (= (has-id s (w s 1) 0 (w s 2)) 0) -3
-                  (do (wp s 479 (if (= d 0) 0 db))
-                      (admitted s d ev)))))))))))
+                  (if (= (bit-and ev 3) 3) (complete s d db (quot ev 4))
+                    (do (wp s 479 (if (= d 0) 0 db))
+                        (admitted s d ev))))))))))))
 
 (defn main [] 0)

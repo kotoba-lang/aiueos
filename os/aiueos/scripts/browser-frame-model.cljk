@@ -493,6 +493,35 @@
                        :selection (if (pos? k) [4 k] [0 0]))])
           selection-keys)))
 
+;; ADR-0241: the clipboard. After the selection (window 4 focused, offset 100,
+;; its body the lines 1 .. 19 each followed by a 10 -- 48 code points) the host
+;; sends Shift down, Left down / up three times ("19" and its 10 selected),
+;; Shift up, Ctrl down, C down / up -- a :clipboard/write the broker admits:
+;; the clipboard holds "19\n", nothing on the screen changes --, Ctrl up,
+;; Backspace down / up (the selection goes: 45 code points), Ctrl down, V down /
+;; up twice (two admitted :clipboard/read completions, each insert-text of
+;; "19\n": 48, then 51 code points), then -- the stage's grant now
+;; file-picker only -- V down / up (the broker refuses: nothing is pasted),
+;; Ctrl up. A frame after each of the twenty-two.
+(def clipboard-keys
+  ;; [event k body-length]
+  [["shift" 0 48] ["left" 1 48] ["left-up" 1 48] ["left" 2 48] ["left-up" 2 48]
+   ["left" 3 48] ["left-up" 3 48] ["shift-up" 3 48] ["ctrl" 3 48] ["c" 3 48] ["c-up" 3 48]
+   ["ctrl-up" 3 48] ["backspace" 0 45] ["backspace-up" 0 45] ["ctrl" 0 45]
+   ["v" 0 48] ["v-up" 0 48] ["v" 0 51] ["v-up" 0 51] ["v-refused" 0 51] ["v-up" 0 51]
+   ["ctrl-up" 0 51]])
+
+(def clipboard-frames
+  (let [shell4 (assoc shell :apps 15 :titles (assoc (:titles shell) 4 (:title w4)))
+        body48 (vec (drop-last 2 (:body w4)))
+        bodies {48 body48 45 (vec (drop-last 3 body48)) 51 (into body48 [49 57 10])}]
+    (mapv (fn [[ev k n]]
+            [ev (assoc shell4 :focus 4
+                       :stack [w1k w3y w2l (assoc w4 :scroll 100 :body (bodies n))]
+                       :pointer [300 300]
+                       :selection (if (pos? k) [4 k] [0 0]))])
+          clipboard-keys)))
+
 ;; ADR-0234: the flow-parity frame. After everything above, the kernel lays
 ;; out this surface on a surface of its own (no tablet needed): four windows
 ;; whose bodies take each of cssom's rules -- packing by words with space runs,
@@ -707,6 +736,21 @@
                                  (assoc c :sel h)))
                              selection-frames))]
     (println (str "selection frames=" (count cs) " ops=" (apply str (interpose "," (map :ops cs)))
+                  " chain=" (chain (map #(js/parseInt (:hash %) 16) cs))
+                  " sel-chain=" (chain (map #(js/parseInt (:hash (:sel %)) 16) cs))
+                  " last-px=" (:text-px (peek cs)) " last-hash=" (:hash (peek cs)))))
+  (let [cs (vec (map-indexed (fn [i [ev scene]]
+                               (let [ops (frame scene)
+                                     c (census ops)
+                                     h (census highlight ops)]
+                                 (println (str "clipboard-frame n=" (inc i) " " ev
+                                               " sel=" (second (:selection scene))
+                                               " body=" (count (:body (peek (:stack scene))))
+                                               " ops=" (:ops c) " text-px=" (:text-px c) " hash=" (:hash c)
+                                               " sel-px=" (:text-px h) " sel-hash=" (:hash h)))
+                                 (assoc c :sel h)))
+                             clipboard-frames))]
+    (println (str "clipboard frames=" (count cs) " ops=" (apply str (interpose "," (map :ops cs)))
                   " chain=" (chain (map #(js/parseInt (:hash %) 16) cs))
                   " sel-chain=" (chain (map #(js/parseInt (:hash (:sel %)) 16) cs))
                   " last-px=" (:text-px (peek cs)) " last-hash=" (:hash (peek cs)))))

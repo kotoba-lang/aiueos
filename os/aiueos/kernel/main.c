@@ -1231,8 +1231,8 @@ static int browser_scroll_stage(uint32_t *surface, const uint8_t *font, uint64_t
    os/aiueos/scripts/browser-frame-model.cljk's selection frames, and the
    #b5cdf1 census -- the highlight, which the ink census cannot see: it is
    behind the glyphs -- against the same model. */
-static void browser_selection_stage(uint32_t *surface, const uint8_t *font, uint64_t font_length,
-                                    uint64_t dict, uint64_t dict_length) {
+static int browser_selection_stage(uint32_t *surface, const uint8_t *font, uint64_t font_length,
+                                   uint64_t dict, uint64_t dict_length) {
   static const uint32_t lsrc[17] = {6, 6, 6, 6, 6, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
   static const uint32_t lkey[17] = {0, 0, 0, 0, 0, 169, 421, 420, 421, 420, 425, 424, 421, 420, 168, 57, 56};
   static const int64_t lwant[17] = {4, 4, 4, 4, 4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
@@ -1329,6 +1329,7 @@ static void browser_selection_stage(uint32_t *surface, const uint8_t *font, uint
     debug_string("AIUEOS_GUEST_BROWSER_SELECTION_OK\n");
     serial_string("AIUEOS_GUEST_BROWSER_SELECTION_OK events=17 answers=44444000000000000 max-sel=2 body=48 focus=4 scroll=100 chain=2b46197d sel-chain=cb830579 ops=168 text-px=1058 hash=6ca5ee4a\r\n");
     browser_hold_for_screendump();
+    return 1;
   } else if (le < 17) {
     debug_string("AIUEOS_GUEST_BROWSER_SELECTION leftover=events-missing\n");
     serial_string("AIUEOS_GUEST_BROWSER_SELECTION leftover=events-missing events=");
@@ -1350,6 +1351,177 @@ static void browser_selection_stage(uint32_t *surface, const uint8_t *font, uint
     serial_decimal(surface[2035]);
     serial_string("\r\n");
   }
+  return 0;
+}
+
+/* Clipboard (ADR-0241). After the selection (window 4 focused, offset 100, its
+   body 48 code points ending "19" 10), the host sends twenty-two key events,
+   each after the previous frame line: Shift down, Left down / up three times,
+   Shift up, Ctrl down, C down / up, Ctrl up, Backspace down / up, Ctrl down, V
+   down / up three times, Ctrl up. C hands each key, as code * 4 + value, to
+   Kotoba `kotoba_aiueos_browser_key`. That Ctrl is held, that Ctrl+C over a
+   selection is a :clipboard/write request (512) and Ctrl+V a :clipboard/read
+   request (513), and what a completion does -- copy the selection's text,
+   insert-text of the clipboard's -- are its decisions. Whether a request may
+   touch the clipboard is Kotoba `kotoba_aiueos_broker_admit` (ADR-0096) with
+   the stage's grant: clipboard for the first nineteen events, file-picker
+   only from the twentieth -- the (1, 2) -> 0 vector. C hands the completion
+   (the same code with value 3, which the keyboard ring never passes, and the
+   clipboard in place of the dictionary) only when the broker answers 1. The
+   clipboard itself is this 260-byte buffer, the host's: C never reads or
+   writes a code point in it. C only counts, as the selection stage does. */
+static uint32_t browser_clipboard[65];
+
+static int browser_clipboard_stage(uint32_t *surface, const uint8_t *font, uint64_t font_length,
+                                   uint64_t dict, uint64_t dict_length) {
+  static const uint32_t ckey[22] = {169, 421, 420, 421, 420, 421, 420, 168, 117, 185, 184,
+                                    116, 57, 56, 117, 189, 188, 189, 188, 189, 188, 116};
+  static const int64_t cwant[22] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 512, 0,
+                                    0, 0, 0, 0, 513, 0, 513, 0, 513, 0, 0};
+  /* the broker's answer: 1 admit, 0 refuse, 9 nothing was asked */
+  static const uint32_t cadmit[22] = {9, 9, 9, 9, 9, 9, 9, 9, 9, 1, 9,
+                                      9, 9, 9, 9, 1, 9, 1, 9, 0, 9, 9};
+  /* the completion's answer; 99 none was handed */
+  static const int64_t cdone[22] = {99, 99, 99, 99, 99, 99, 99, 99, 99, 3, 99,
+                                    99, 99, 99, 99, 3, 99, 3, 99, 99, 99, 99};
+  static const uint32_t csel[22] = {0, 1, 1, 2, 2, 3, 3, 3, 3, 3, 3,
+                                    3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+  static const uint32_t cbody[22] = {48, 48, 48, 48, 48, 48, 48, 48, 48, 48, 48,
+                                     48, 45, 45, 45, 48, 48, 51, 51, 51, 51, 51};
+  static const uint32_t cclip[22] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 3, 3,
+                                     3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3};
+  static const uint32_t cops[22] = {168, 167, 167, 168, 168, 169, 169, 169, 169, 169, 169,
+                                    169, 166, 166, 166, 168, 168, 169, 169, 169, 169, 169};
+  static const uint32_t cpx[22] = {1058, 1042, 1042, 1042, 1042, 1042, 1042, 1042, 1042, 1042, 1042,
+                                   1042, 1020, 1020, 1020, 1058, 1058, 1080, 1080, 1080, 1080, 1080};
+  static const uint32_t chash[22] = {0x6ca5ee4aU, 0xa42dfe1aU, 0xa42dfe1aU, 0xa42dfe1aU, 0xa42dfe1aU,
+                                     0xa42dfe1aU, 0xa42dfe1aU, 0xa42dfe1aU, 0xa42dfe1aU, 0xa42dfe1aU,
+                                     0xa42dfe1aU, 0xa42dfe1aU, 0x3f2fb2c5U, 0x3f2fb2c5U, 0x3f2fb2c5U,
+                                     0x6ca5ee4aU, 0x6ca5ee4aU, 0x76577905U, 0x76577905U, 0x76577905U,
+                                     0x76577905U, 0x76577905U};
+  static const uint32_t chpx[22] = {0, 0, 0, 106, 106, 218, 218, 218, 218, 218, 218,
+                                    218, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+  static const uint32_t chhash[22] = {0x811c9dc5U, 0x811c9dc5U, 0x811c9dc5U, 0xe0f5b50fU, 0xe0f5b50fU,
+                                      0xc1aab2b2U, 0xc1aab2b2U, 0xc1aab2b2U, 0xc1aab2b2U, 0xc1aab2b2U,
+                                      0xc1aab2b2U, 0xc1aab2b2U, 0x811c9dc5U, 0x811c9dc5U, 0x811c9dc5U,
+                                      0x811c9dc5U, 0x811c9dc5U, 0x811c9dc5U, 0x811c9dc5U, 0x811c9dc5U,
+                                      0x811c9dc5U, 0x811c9dc5U};
+  uint64_t sp = (uint64_t)(uintptr_t)surface;
+  uint64_t cp = (uint64_t)(uintptr_t)browser_clipboard;
+  uint32_t ce = 0, coff = 0, cpx2 = 0, chash2 = 0, chpx2 = 0, chhash2 = 0;
+  uint32_t cchain = 2166136261U, chchain = 2166136261U;
+  uint32_t cidle = 0, cframes = 0, asked = 0, admitted = 0, refused = 0;
+  int64_t cfo = 0;
+  for (int i = 0; i < 65; i++) browser_clipboard[i] = 0;
+  (void)aiueos_tablet_drain(4000000U);
+  (void)aiueos_keyboard_drain(4000000U);
+  serial_string("AIUEOS_GUEST_BROWSER_CLIPBOARD_GO events=22\r\n");
+  while (ce < 22 && cidle < 60000U) {
+    uint32_t key = aiueos_keyboard_next_key(1024U);
+    uint32_t admit = 9, body = 0;
+    int64_t r, done = 99;
+    if (!key) { cidle++; continue; }
+    cidle = 0;
+    r = (int64_t)kotoba_aiueos_browser_key(sp, 8192, dict, dict_length, key);
+    if (r == 512 || r == 513) {
+      asked++;
+      admit = (uint32_t)kotoba_aiueos_broker_admit(1, ce < 19 ? 1U : 2U);
+      if (admit == 1) {
+        admitted++;
+        done = (int64_t)kotoba_aiueos_browser_key(sp, 8192, cp, 260, (key & ~3U) | 3U);
+      } else {
+        refused++;
+      }
+    }
+    while (body < 64 && surface[352 + body]) body++;
+    cfo = (int64_t)kotoba_aiueos_browser_frame2(sp, 8192, (uint64_t)(uintptr_t)font, font_length);
+    cpx2 = 0;
+    chash2 = 0;
+    chpx2 = 0;
+    chhash2 = 0;
+    if (cfo > 0 && aiueos_desktop_present_ops2(surface + 480, (uint64_t)cfo, font, font_length)) {
+      chash2 = aiueos_desktop_colour_census(0x111111U, &cpx2);
+      chhash2 = aiueos_desktop_colour_census(0xb5cdf1U, &chpx2);
+      (void)aiueos_desktop_show();
+      cframes++;
+      for (int k = 0; k < 4; k++) {
+        cchain ^= (chash2 >> (8 * k)) & 255U;
+        cchain *= 16777619U;
+        chchain ^= (chhash2 >> (8 * k)) & 255U;
+        chchain *= 16777619U;
+      }
+    }
+    if (key != ckey[ce] || r != cwant[ce] || admit != cadmit[ce] || done != cdone[ce] ||
+        surface[2] != 4 || surface[2043] != 100 || body != cbody[ce] || surface[2037] != csel[ce] ||
+        surface[2036] != (csel[ce] ? 4U : 0U) || browser_clipboard[0] != cclip[ce] ||
+        cfo != (int64_t)cops[ce] || cpx2 != cpx[ce] || chash2 != chash[ce] ||
+        chpx2 != chpx[ce] || chhash2 != chhash[ce]) coff++;
+    ce++;
+    serial_string("AIUEOS_GUEST_BROWSER_CLIPBOARD_FRAME n=");
+    serial_decimal(ce);
+    serial_string(" key=");
+    serial_decimal(key);
+    serial_string(r < 0 ? " answer=-" : " answer=");
+    serial_decimal((uint32_t)(r < 0 ? -r : r));
+    serial_string(" broker=");
+    serial_string(admit == 9 ? "none" : (admit == 1 ? "admit" : "refuse"));
+    serial_string(done < 0 ? " done=-" : " done=");
+    serial_decimal((uint32_t)(done < 0 ? -done : done));
+    serial_string(" body=");
+    serial_decimal(body);
+    serial_string(" sel=");
+    serial_decimal(surface[2037]);
+    serial_string(" clip=");
+    serial_decimal(browser_clipboard[0]);
+    serial_string(" ops=");
+    serial_decimal((uint32_t)(cfo < 0 ? -cfo : cfo));
+    serial_string(" text-px=");
+    serial_decimal(cpx2);
+    serial_string(" hash=");
+    serial_hex32(chash2);
+    serial_string(" sel-px=");
+    serial_decimal(chpx2);
+    serial_string(" sel-hash=");
+    serial_hex32(chhash2);
+    serial_string("\r\n");
+  }
+  if (ce == 22 && cframes == 22 && coff == 0 && asked == 4 && admitted == 3 && refused == 1 &&
+      cchain == 0x9098b95fU && chchain == 0x356612c5U &&
+      surface[2] == 4 && surface[2035] == 0 && surface[2036] == 0 && surface[2037] == 0 &&
+      surface[2038] == 0 && surface[352 + 47] == 10 && surface[352 + 48] == 49 &&
+      surface[352 + 49] == 57 && surface[352 + 50] == 10 && surface[352 + 51] == 0 &&
+      browser_clipboard[0] == 3 && browser_clipboard[1] == 49 && browser_clipboard[2] == 57 &&
+      browser_clipboard[3] == 10 && surface[433] == 0 && surface[445] == 0) {
+    debug_string("AIUEOS_GUEST_BROWSER_CLIPBOARD_OK\n");
+    serial_string("AIUEOS_GUEST_BROWSER_CLIPBOARD_OK events=22 requests=4 admitted=3 refused=1 copied=3 pasted=3,3 clip=3 body=51 focus=4 chain=9098b95f sel-chain=356612c5 ops=169 text-px=1080 hash=76577905\r\n");
+    browser_hold_for_screendump();
+    return 1;
+  } else if (ce < 22) {
+    debug_string("AIUEOS_GUEST_BROWSER_CLIPBOARD leftover=events-missing\n");
+    serial_string("AIUEOS_GUEST_BROWSER_CLIPBOARD leftover=events-missing events=");
+    serial_decimal(ce);
+    serial_string(" frames=");
+    serial_decimal(cframes);
+    serial_string("\r\n");
+  } else {
+    debug_string("AIUEOS_GUEST_BROWSER_CLIPBOARD leftover=census-miss\n");
+    serial_string("AIUEOS_GUEST_BROWSER_CLIPBOARD leftover=census-miss off=");
+    serial_decimal(coff);
+    serial_string(" chain=");
+    serial_hex32(cchain);
+    serial_string(" sel-chain=");
+    serial_hex32(chchain);
+    serial_string(" requests=");
+    serial_decimal(asked);
+    serial_string(" admitted=");
+    serial_decimal(admitted);
+    serial_string(" clip=");
+    serial_decimal(browser_clipboard[0]);
+    serial_string(" ctrl=");
+    serial_decimal(surface[2038]);
+    serial_string("\r\n");
+  }
+  return 0;
 }
 
 #ifdef AIUEOS_QWEN38_MODEL_HANDOFF
@@ -4935,7 +5107,8 @@ qwen_runtime_boot_complete:
                                             serial_string("AIUEOS_GUEST_BROWSER_FOCUS_OK events=12 answers=200103020000 wm=3 stack=132 focus=2 bodies=unchanged chain=2254db31 ops=129 text-px=1082 hash=e90ed2bc\r\n");
                                             browser_hold_for_screendump();
                                             if (browser_scroll_stage(surface, font, font_length))
-                                              browser_selection_stage(surface, font, font_length, dict, dict_length);
+                                              if (browser_selection_stage(surface, font, font_length, dict, dict_length))
+                                                browser_clipboard_stage(surface, font, font_length, dict, dict_length);
                                           } else if (fe < 12) {
                                             debug_string("AIUEOS_GUEST_BROWSER_FOCUS leftover=events-missing\n");
                                             serial_string("AIUEOS_GUEST_BROWSER_FOCUS leftover=events-missing events=");

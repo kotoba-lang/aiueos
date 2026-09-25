@@ -723,3 +723,82 @@
     (is (= 3 (:exit (guest/classify "guest-browser-selection" {:qemu-unmeasured? true})))))
   (testing "tablet profile, with the wheel's wall clock and more"
     (is (= {"AIUEOS_GUEST_BROWSER" "1" "AIUEOS_QEMU_TIMEOUT" "2700"} (guest/extra-env "guest-browser-selection")))))
+
+;; Guest browser clipboard (ADR-0241). The lines are the serial of the first
+;; boot of these sources to reach the stage (QEMU tcg + OVMF, 2026-09-26); their
+;; numbers are the frame model's clipboard frames.
+
+(def ^:private clipboard-lines
+  (str
+       "AIUEOS_GUEST_BROWSER_CLIPBOARD_GO events=22\r\n"
+       "AIUEOS_GUEST_BROWSER_CLIPBOARD_FRAME n=1 key=169 answer=0 broker=none done=99 body=48 sel=0 clip=0 ops=168 text-px=1058 hash=6ca5ee4a sel-px=0 sel-hash=811c9dc5\r\n"
+       "AIUEOS_GUEST_BROWSER_CLIPBOARD_FRAME n=2 key=421 answer=0 broker=none done=99 body=48 sel=1 clip=0 ops=167 text-px=1042 hash=a42dfe1a sel-px=0 sel-hash=811c9dc5\r\n"
+       "AIUEOS_GUEST_BROWSER_CLIPBOARD_FRAME n=3 key=420 answer=0 broker=none done=99 body=48 sel=1 clip=0 ops=167 text-px=1042 hash=a42dfe1a sel-px=0 sel-hash=811c9dc5\r\n"
+       "AIUEOS_GUEST_BROWSER_CLIPBOARD_FRAME n=4 key=421 answer=0 broker=none done=99 body=48 sel=2 clip=0 ops=168 text-px=1042 hash=a42dfe1a sel-px=106 sel-hash=e0f5b50f\r\n"
+       "AIUEOS_GUEST_BROWSER_CLIPBOARD_FRAME n=5 key=420 answer=0 broker=none done=99 body=48 sel=2 clip=0 ops=168 text-px=1042 hash=a42dfe1a sel-px=106 sel-hash=e0f5b50f\r\n"
+       "AIUEOS_GUEST_BROWSER_CLIPBOARD_FRAME n=6 key=421 answer=0 broker=none done=99 body=48 sel=3 clip=0 ops=169 text-px=1042 hash=a42dfe1a sel-px=218 sel-hash=c1aab2b2\r\n"
+       "AIUEOS_GUEST_BROWSER_CLIPBOARD_FRAME n=7 key=420 answer=0 broker=none done=99 body=48 sel=3 clip=0 ops=169 text-px=1042 hash=a42dfe1a sel-px=218 sel-hash=c1aab2b2\r\n"
+       "AIUEOS_GUEST_BROWSER_CLIPBOARD_FRAME n=8 key=168 answer=0 broker=none done=99 body=48 sel=3 clip=0 ops=169 text-px=1042 hash=a42dfe1a sel-px=218 sel-hash=c1aab2b2\r\n"
+       "AIUEOS_GUEST_BROWSER_CLIPBOARD_FRAME n=9 key=117 answer=0 broker=none done=99 body=48 sel=3 clip=0 ops=169 text-px=1042 hash=a42dfe1a sel-px=218 sel-hash=c1aab2b2\r\n"
+       "AIUEOS_GUEST_BROWSER_CLIPBOARD_FRAME n=10 key=185 answer=512 broker=admit done=3 body=48 sel=3 clip=3 ops=169 text-px=1042 hash=a42dfe1a sel-px=218 sel-hash=c1aab2b2\r\n"
+       "AIUEOS_GUEST_BROWSER_CLIPBOARD_FRAME n=11 key=184 answer=0 broker=none done=99 body=48 sel=3 clip=3 ops=169 text-px=1042 hash=a42dfe1a sel-px=218 sel-hash=c1aab2b2\r\n"
+       "AIUEOS_GUEST_BROWSER_CLIPBOARD_FRAME n=12 key=116 answer=0 broker=none done=99 body=48 sel=3 clip=3 ops=169 text-px=1042 hash=a42dfe1a sel-px=218 sel-hash=c1aab2b2\r\n"
+       "AIUEOS_GUEST_BROWSER_CLIPBOARD_FRAME n=13 key=57 answer=0 broker=none done=99 body=45 sel=0 clip=3 ops=166 text-px=1020 hash=3f2fb2c5 sel-px=0 sel-hash=811c9dc5\r\n"
+       "AIUEOS_GUEST_BROWSER_CLIPBOARD_FRAME n=14 key=56 answer=0 broker=none done=99 body=45 sel=0 clip=3 ops=166 text-px=1020 hash=3f2fb2c5 sel-px=0 sel-hash=811c9dc5\r\n"
+       "AIUEOS_GUEST_BROWSER_CLIPBOARD_FRAME n=15 key=117 answer=0 broker=none done=99 body=45 sel=0 clip=3 ops=166 text-px=1020 hash=3f2fb2c5 sel-px=0 sel-hash=811c9dc5\r\n"
+       "AIUEOS_GUEST_BROWSER_CLIPBOARD_FRAME n=16 key=189 answer=513 broker=admit done=3 body=48 sel=0 clip=3 ops=168 text-px=1058 hash=6ca5ee4a sel-px=0 sel-hash=811c9dc5\r\n"
+       "AIUEOS_GUEST_BROWSER_CLIPBOARD_FRAME n=17 key=188 answer=0 broker=none done=99 body=48 sel=0 clip=3 ops=168 text-px=1058 hash=6ca5ee4a sel-px=0 sel-hash=811c9dc5\r\n"
+       "AIUEOS_GUEST_BROWSER_CLIPBOARD_FRAME n=18 key=189 answer=513 broker=admit done=3 body=51 sel=0 clip=3 ops=169 text-px=1080 hash=76577905 sel-px=0 sel-hash=811c9dc5\r\n"
+       "AIUEOS_GUEST_BROWSER_CLIPBOARD_FRAME n=19 key=188 answer=0 broker=none done=99 body=51 sel=0 clip=3 ops=169 text-px=1080 hash=76577905 sel-px=0 sel-hash=811c9dc5\r\n"
+       "AIUEOS_GUEST_BROWSER_CLIPBOARD_FRAME n=20 key=189 answer=513 broker=refuse done=99 body=51 sel=0 clip=3 ops=169 text-px=1080 hash=76577905 sel-px=0 sel-hash=811c9dc5\r\n"
+       "AIUEOS_GUEST_BROWSER_CLIPBOARD_FRAME n=21 key=188 answer=0 broker=none done=99 body=51 sel=0 clip=3 ops=169 text-px=1080 hash=76577905 sel-px=0 sel-hash=811c9dc5\r\n"
+       "AIUEOS_GUEST_BROWSER_CLIPBOARD_FRAME n=22 key=116 answer=0 broker=none done=99 body=51 sel=0 clip=3 ops=169 text-px=1080 hash=76577905 sel-px=0 sel-hash=811c9dc5\r\n"))
+
+(def ^:private clipboard-ok
+  "AIUEOS_GUEST_BROWSER_CLIPBOARD_OK events=22 requests=4 admitted=3 refused=1 copied=3 pasted=3,3 clip=3 body=51 focus=4 chain=9098b95f sel-chain=356612c5 ops=169 text-px=1080 hash=76577905\r\n")
+
+(deftest guest-browser-clipboard-classifier
+  (testing "twenty-two frames, four requests, three admitted, one refused: green"
+    (let [r (guest/classify "guest-browser-clipboard"
+                            {:serial (str cursor-ok-line focus-ok scroll-lines scroll-ok selection-lines selection-ok
+                                          clipboard-lines clipboard-ok)})]
+      (is (= :guest-browser-clipboard (:reason r)))
+      (is (= 0 (:exit r)))
+      (is (= [:text-only-clipboard :no-other-ctrl-shortcuts :no-clipboard-in-a-composition
+              :grant-set-by-the-stage :no-host-clipboard]
+             (:leftover r)))))
+  (testing "the clipboard needs the selection stage first"
+    (is (= :no-selection
+           (:reason (guest/classify "guest-browser-clipboard"
+                                    {:serial (str cursor-ok-line focus-ok scroll-lines scroll-ok
+                                                  clipboard-lines clipboard-ok)})))))
+  (testing "an OK line with a frame line missing is not green"
+    (is (= :clipboard-lines-missing
+           (:reason (guest/classify "guest-browser-clipboard"
+                                    {:serial (str cursor-ok-line focus-ok scroll-lines scroll-ok selection-lines selection-ok
+                                                  (.replace clipboard-lines "FRAME n=22 " "FRAME n=77 ")
+                                                  clipboard-ok)})))))
+  (testing "an OK line naming a different broker count is not green"
+    (is (= :guest-browser-clipboard-absent
+           (:reason (guest/classify "guest-browser-clipboard"
+                                    {:serial (str cursor-ok-line focus-ok scroll-lines scroll-ok selection-lines selection-ok
+                                                  clipboard-lines
+                                                  (.replace clipboard-ok "admitted=3 refused=1" "admitted=4 refused=0"))})))))
+  (testing "a census that misses is red, by name (the object before ADR-0241 types C and V)"
+    (is (= :census-miss
+           (:reason (guest/classify "guest-browser-clipboard"
+                                    {:serial (str cursor-ok-line focus-ok scroll-lines scroll-ok selection-lines selection-ok
+                                                  "AIUEOS_GUEST_BROWSER_CLIPBOARD leftover=census-miss off=13 chain=7137f641 sel-chain=c20c1401 requests=0 admitted=0 clip=0 ctrl=0\r\n")})))))
+  (testing "missing events are red, by name"
+    (is (= :events-missing
+           (:reason (guest/classify "guest-browser-clipboard"
+                                    {:serial (str cursor-ok-line focus-ok scroll-lines scroll-ok selection-lines selection-ok
+                                                  "AIUEOS_GUEST_BROWSER_CLIPBOARD leftover=events-missing events=9 frames=9\r\n")})))))
+  (testing "the selection's OK line alone is not the clipboard"
+    (is (= :guest-browser-clipboard-absent
+           (:reason (guest/classify "guest-browser-clipboard"
+                                    {:serial (str cursor-ok-line focus-ok scroll-lines scroll-ok selection-lines selection-ok)})))))
+  (testing "unanswered QEMU is exit 3"
+    (is (= 3 (:exit (guest/classify "guest-browser-clipboard" {:qemu-unmeasured? true})))))
+  (testing "tablet profile, with the selection's wall clock and more"
+    (is (= {"AIUEOS_GUEST_BROWSER" "1" "AIUEOS_QEMU_TIMEOUT" "3000"} (guest/extra-env "guest-browser-clipboard")))))

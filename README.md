@@ -524,6 +524,10 @@ Expected `smoke` markers:
 
 ![window 4 at offset 100 with "20" selected: the highlight behind the glyphs, no caret, QEMU display](docs/assets/guest-browser-selection.png)
 
+`guest-browser-clipboard` exit 0 means the tablet boot, after the selection, took twenty-two key events -- Shift down, Left down / up three times, Shift up, Ctrl down, C down / up, Ctrl up, Backspace down / up, Ctrl down, V down / up three times, Ctrl up -- and for each C handed the key (code * 4 + value) to Kotoba `kotoba_aiueos_browser_key`, which held Ctrl in surface word 2038, selected "19" and its 10, and answered Ctrl+C with a `:clipboard/write` request (512) and each Ctrl+V with a `:clipboard/read` request (513) without touching anything; C asked Kotoba `kotoba_aiueos_broker_admit` (ADR-0096) with the stage's grant -- clipboard for the first nineteen events, file-picker only from the twentieth -- and handed the completion (the same code with value 3, and the 260-byte clipboard in place of the dictionary) only when it answered 1: the copy put the three selected code points in the clipboard, Backspace deleted the selection (48 -> 45 code points), the two admitted pastes were browser.text-edit `insert-text` of "19\n" (45 -> 48 -> 51) and the refused third pasted nothing; a frame after each event, every op count, #111111 census and #b5cdf1 census equal to the frame model's (`AIUEOS_GUEST_BROWSER_CLIPBOARD_OK events=22 requests=4 admitted=3 refused=1 copied=3 pasted=3,3 clip=3 body=51 focus=4 chain=9098b95f sel-chain=356612c5 ops=169 text-px=1080 hash=76577905`). Only text, only Ctrl+C / Ctrl+V, nothing while something is composed, and the clipboard is the kernel's buffer, not the host's (ADR-0241).
+
+![window 4 after two admitted pastes: "19" twice at the end of the body, QEMU display](docs/assets/guest-browser-clipboard.png)
+
 ```bash
 kbb -M:compositor serve   # same SPA; compositor owns surfaces; Ctrl-C to stop
 ```
