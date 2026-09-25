@@ -32,7 +32,7 @@
   real `/dev/kvm`; running it is `spike`/`-main`, gated exactly like
   `aiueos.vfio`'s hardware note. Treat the FFM boot loop as new, unverified
   systems code until exercised against real KVM (see #110's smoke gate)."
-  (:require [kotoba.ffi :as ffi] [aiueos.virtio :as vio]))
+  (:require [kotoba.io :as kio] [kotoba.ffi :as ffi] [aiueos.virtio :as vio]))
 
 ;; ---------------------------------------------------------------------------
 ;; ioctl number encoding (Linux `_IO`/`_IOW`/`_IOR` macros) -- pure,
@@ -596,7 +596,7 @@
        ram)
 
      (defn read-file-bytes ^bytes [path]
-       (java.nio.file.Files/readAllBytes (java.nio.file.Path/of path (make-array String 0))))
+       (kio/read-all-bytes path))
 
      (defn- boot-plan
        "Compute `{:ram-gpa :ram-size :pc :machine :label :load!}` from `opts`:

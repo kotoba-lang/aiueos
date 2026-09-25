@@ -22,17 +22,17 @@
 ;; (add the entry + the fuel tier); this file documents and reproduces the fix
 ;; until that pin advances.
 
-(require '[clojure.java.io :as io] '[kotoba.lang.text :as str])
+(require '[kotoba.io :as io] '[kotoba.lang.text :as str])
 
 (def ^:private elf-src
   ;; The pinned kotoba-native's kernel packaging. Resolve it from the git-libs
   ;; cache the amu dep already populated.
   (let [base (io/file (System/getProperty "user.home") ".gitlibs" "libs"
                       "io.github.kotoba-lang" "kotoba-native")]
-    (->> (file-seq base)
-         (filter #(= "elf64.clj" (.getName %)))
-         (filter #(str/includes? (.getPath %) "native/elf64.clj"))
-         (map #(.getPath %))
+    (->> (io/file-seq base)
+         (filter #(= "elf64.clj" (io/file-name %)))
+         (filter #(str/includes? (io/path %) "native/elf64.clj"))
+         (map #(io/path %))
          first)))
 
 (defn- patch [src]

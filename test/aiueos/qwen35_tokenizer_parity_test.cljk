@@ -62,7 +62,7 @@
 ;; arithmetic -- but it is not the machine.
 
 (ns aiueos.qwen35-tokenizer-parity-test
-  (:require [kotoba.bytes :as kbytes] [clojure.java.io :as io]
+  (:require [kotoba.bytes :as kbytes] [kotoba.io :as io]
             [kotoba.lang.text :as str]
             [kotoba.test :refer [deftest is]]
             [kotoba.kir :as ir]
@@ -76,7 +76,7 @@
 (defn- sources-available? []
   (every? true? (for [n object-names]
                   (let [f (source-file n)
-                        present? (.exists f)]
+                        present? (io/exists? f)]
                     (is present? (str "kotoba object not found at " f))
                     present?))))
 

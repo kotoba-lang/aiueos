@@ -4,7 +4,7 @@
   `kbb -M:test` of unrelated suites is not this gate. The Mac VM gate is
   `kbb -M:phone-bind smoke` (and `pre-enroll`). These tests name the
   reasons a bind is refused so a silent pass cannot stand in for a phone."
-  (:require [aiueos.phone-bind :as pb]
+  (:require [kotoba.io :as kio] [aiueos.phone-bind :as pb]
             [aiueos.device-auth :as auth]
             [cacao.core :as cacao]
             [kotoba.lang.text :as string]
@@ -116,7 +116,7 @@
         "a copied grant must not bind a second VM")))
 
 (deftest p1b-http-phone-client-binds-without-guest-console
-  (let [dir (java.io.File. (str (System/getProperty "java.io.tmpdir")
+  (let [dir (kio/file (str (System/getProperty "java.io.tmpdir")
                                 "/aiueos-pb-http-" (System/nanoTime)))
         authority-state (atom {:polls 0})
         authority-client
@@ -172,7 +172,7 @@
       (let [bind (pb/phone-bind-http (pb/base-url rt) "acct:test")]
         (is (= 200 (:code bind)))
         (is (= "grant" (get-in bind [:parsed (keyword "aiueos/decision")])))
-        (is (.isFile (pb/receipt-file dir))))
+        (is (kio/file? (pb/receipt-file dir))))
       (let [plan (pb/http-get (str (pb/base-url rt) "/api/device-auth/plan"))
             challenge (pb/http-post
                        (str (pb/base-url rt) "/api/device-auth/challenge")
@@ -226,15 +226,15 @@
                         (get-in @authority-state [:start :deviceProof])))
         (is (re-matches #"[A-Za-z0-9_-]{86}"
                         (get-in @authority-state [:poll :deviceProof])))
-        (is (.isFile (pb/device-auth-file dir)))
-        (is (.isFile (pb/device-auth-receipt-file dir)))
+        (is (kio/file? (pb/device-auth-file dir)))
+        (is (kio/file? (pb/device-auth-receipt-file dir)))
         (is (not (re-find #"private-device-poll-token"
                           (slurp (pb/device-auth-file dir))))))
       (finally
         (pb/stop-http! rt)))))
 
 (deftest device-authority-result-must-match-the-exact-origin-and-device
-  (let [dir (java.io.File. (str (System/getProperty "java.io.tmpdir")
+  (let [dir (kio/file (str (System/getProperty "java.io.tmpdir")
                                 "/aiueos-device-bind-deny-" (System/nanoTime)))
         started (atom nil)
         client (fn [operation request]
@@ -274,8 +274,8 @@
     (is (= "authority-result-binding-invalid" (:reason denied)))
     (is (nil? @(:device-auth-flow rt))
         "a malformed 200 result cannot be retried into a grant")
-    (is (not (.isFile (pb/device-auth-file dir))))
-    (is (not (.isFile (pb/device-auth-receipt-file dir))))))
+    (is (not (kio/file? (pb/device-auth-file dir))))
+    (is (not (kio/file? (pb/device-auth-receipt-file dir))))))
 
 (deftest clojure-m-test-is-not-the-p1b-gate
   (is (nil? (System/getenv "AIUEOS_PHONE_BIND_COUNTED_UNRELATED_SUITE"))
