@@ -24,7 +24,7 @@
 ;; written down rather than remembered: `scripts/make-node-installer.cljk
 ;; --machine <id>` (contracts/node-machines-v1.edn).
 
-(require '[clojure.string :as str]
+(require '[kotoba.lang.text :as str]
          '["node:fs" :as fs]
          '["node:path" :as path]
          '["node:crypto" :as crypto]

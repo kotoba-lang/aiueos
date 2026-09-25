@@ -14,7 +14,7 @@
 ;; Written for nbb, against the workspace's kbb-first rule for new tooling:
 ;; there is no kbb repo in the manifest and no kbb on PATH, so kbb-first is not
 ;; achievable here today. Port when it lands -- skill nbb-to-kbb-migration.
-(require '[clojure.string :as str]
+(require '[kotoba.lang.text :as str]
          '[kotoba.lang.coll :as set])
 
 (def fs (js/require "node:fs"))

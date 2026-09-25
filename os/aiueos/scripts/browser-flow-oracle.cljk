@@ -35,7 +35,7 @@
 (ns browser-flow-oracle
   (:require [browser.surface :as surface]
             [clojure.edn :as edn]
-            [clojure.pprint :as pp]
+            [kotoba.pprint :as pp]
             ["node:fs" :as fs]))
 
 (defn- die [code msg] (.error js/console msg) (.exit js/process code))

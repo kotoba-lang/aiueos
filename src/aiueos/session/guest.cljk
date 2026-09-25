@@ -12,13 +12,13 @@
   a successful store.
 
   JVM-only for execute + sockets (`#?(:clj …)`), same as `aiueos.execute`."
-  (:require [kotoba.lang.text :as str]
+  (:require [kotoba.bytes :as kbytes] [kotoba.lang.text :as str]
             #?(:clj [aiueos.cloud-live :as cloud-live])
             #?(:clj [aiueos.execute :as execute])
             #?(:clj [aiueos.provider.cloud :as provider])
             #?(:clj [aiueos.session.live :as session-live])
             #?(:clj [clojure.edn :as edn])
-            #?(:clj [clojure.java.io :as io])
+            #?(:clj [kotoba.io :as io])
             #?(:clj [grant.graph :as graph])
             #?(:clj [grant.policy :as policy])))
 
@@ -34,7 +34,7 @@
 #?(:clj
    (defn notes-wasm
      []
-     (.decode (java.util.Base64/getDecoder) notes-wasm-b64)))
+     (kbytes/base64-decode-bytes notes-wasm-b64)))
 
 #?(:clj
    (defn load-notes-edn
@@ -42,7 +42,7 @@
      invented guest."
      []
      (let [f (io/file notes-edn-path)]
-       (when-not (.isFile f)
+       (when-not (io/file? f)
          (throw (ex-info "examples/apps/notes.edn missing"
                          {:aiueos.session.guest/reason :manifest-missing
                           :path notes-edn-path})))
@@ -114,7 +114,7 @@
                           (:aiueos/violations decision))
         :receipt-status (some-> (:aiueos/run-receipt decision) :aiueos/status name)})))
 
-#?(:clj (def ^:private hello-world-bytes (.getBytes "hello world" "UTF-8")))
+#?(:clj (def ^:private hello-world-bytes (kbytes/utf8-bytes "hello world")))
 
 (def hello-world-raw-cid
   "bafkreifzjut3te2nhyekklss27nh3k72ysco7y32koao5eei66wof36n5e")

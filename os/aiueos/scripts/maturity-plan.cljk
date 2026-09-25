@@ -17,7 +17,7 @@
 ;; the largest measured gap on the page. Leverage is derived from the same edges
 ;; as the order, so it cannot disagree with them; the name is kept as the final
 ;; tiebreak so two runs of an unchanged graph still print the same list.
-(require '[clojure.string :as str])
+(require '[kotoba.lang.text :as str])
 
 (def fs (js/require "node:fs"))
 (def path (js/require "node:path"))

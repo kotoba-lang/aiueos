@@ -20,7 +20,7 @@
 
   JVM-only (`#?(:clj ...)` throughout, same reason as `aiueos.execute`/
   `aiueos.vfio`: FFM + file I/O)."
-  (:require [kotoba.ffi :as ffi] [grant.deployment-profile :as deployment-profile]
+  (:require [kotoba.io :as kio] [kotoba.ffi :as ffi] [grant.deployment-profile :as deployment-profile]
             [kotoba.lang.text :as str]
             #?(:clj [grant.anchors :as anchors])
             #?(:clj [clojure.edn :as edn])))
@@ -95,7 +95,7 @@
      ([argv0] (pid1-mode? argv0 boot-edn-path))
      ([argv0 boot-path]
       (boolean (and (or (running-as-pid1?) (pid1-argv0? argv0))
-                    (.exists (java.io.File. ^String boot-path)))))))
+                    (kio/exists? (kio/file ^String boot-path)))))))
 
 #?(:clj
    (defn load-anchors
@@ -107,8 +107,8 @@
      which would otherwise both look like a machine with no pins."
      [config]
      (if-let [path (:aiueos/anchors config)]
-       (let [file (java.io.File. ^String path)]
-         (when-not (.exists file)
+       (let [file (kio/file ^String path)]
+         (when-not (kio/exists? file)
            (throw (ex-info (str path ": boot.edn names an anchor set that is not there")
                            {:type :anchors-missing :path path})))
          (let [doc (try (edn/read-string (slurp file))

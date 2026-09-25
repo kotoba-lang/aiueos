@@ -30,7 +30,7 @@
   Root ADR-2608136000: a check that could not run must never return the value
   of a check that ran and found nothing wrong."
   (:require [clojure.edn :as edn]
-            [clojure.java.io :as io]
+            [kotoba.io :as io]
             [kotoba.test :refer [deftest is testing]]
             [kotoba.lang.coll :as walk]))
 
@@ -65,11 +65,11 @@
            "io.github.kotoba-lang/grant; without it this namespace checks "
            "nothing and must not report that it checked everything"))
   (is (some? (contract)) "the contract is on the classpath and reads as EDN")
-  (is (.exists (io/file "deps.edn"))
+  (is (io/exists? (io/file "deps.edn"))
       (str "this test resolves paths relative to the repository root and was "
            "run from " (System/getProperty "user.dir")
            "; from there a missing file and a wrong directory look the same"))
-  (is (.exists (io/file "src/aiueos"))
+  (is (io/exists? (io/file "src/aiueos"))
       "and the root it found is this repository's, not another one's"))
 
 (deftest every-file-the-contract-names-in-this-repository-exists
@@ -81,7 +81,7 @@
              "is now checking nothing while reporting that it checked"))
     (testing "each one is on disk"
       (doseq [path named]
-        (is (.exists (io/file path))
+        (is (io/exists? (io/file path))
             (str "resources/aiueos/cloud_contract.edn (in kotoba-lang/grant) "
                  "claims this repository has " path " and it does not. Either "
                  "restore the file or amend the contract -- a claim nobody can "
@@ -107,7 +107,7 @@
     (is (= ["src/aiueos/provider/cloud.cljk" "src/aiueos/no_such_file.clj"] named)
         "found in a nested value as readily as a top-level one, and the other
          repository's files are not this test's to check")
-    (is (.exists (io/file (first named))))
-    (is (not (.exists (io/file (second named))))
+    (is (io/exists? (io/file (first named))))
+    (is (not (io/exists? (io/file (second named))))
         "so a contract naming a file that is not here fails the test above,
          which is the only reason that test means anything")))

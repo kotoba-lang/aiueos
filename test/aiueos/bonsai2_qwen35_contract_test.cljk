@@ -14,7 +14,7 @@
 (ns aiueos.bonsai2-qwen35-contract-test
   (:require [clojure.edn :as edn]
             [kotoba.test :refer [deftest is]]
-            #?(:clj [clojure.java.io :as io]
+            #?(:clj [kotoba.io :as io]
                :cljs ["fs" :as fs])))
 
 ;; Portable on purpose: `kbb -M:test` on a JVM-free workstation substitutes the
@@ -25,7 +25,7 @@
   "os/aiueos/contracts/bonsai2-qwen35-runtime-v1.edn")
 
 (defn- contract-exists? []
-  #?(:clj (.exists (io/file contract-path))
+  #?(:clj (io/exists? (io/file contract-path))
      :cljs (fs/existsSync contract-path)))
 
 (defn- contract []

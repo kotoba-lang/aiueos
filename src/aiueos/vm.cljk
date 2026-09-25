@@ -9,7 +9,7 @@
 
   JVM-only (`#?(:clj ...)` throughout) -- process I/O, same as
   `aiueos.image`/`aiueos.launcher`."
-  (:require [kotoba.lang.text :as str]
+  (:require [kotoba.io :as kio] [kotoba.lang.text :as str]
             #?(:clj [grant.deployment-profile :as deployment-profile])
             #?(:clj [grant.boot-admission :as boot-admission])
             #?(:clj [grant.signing :as signing])))
@@ -122,8 +122,8 @@
      (into {}
            (map (fn [[kind path]]
                   [kind (signing/sha256-hex
-                         (java.nio.file.Files/readAllBytes
-                          (.toPath (java.io.File. ^String path))))]))
+                         (kio/read-all-bytes
+                          (java.io.File. ^String path)))]))
            [[:kernel (:kernel p)] [:initramfs (:initramfs p)]])))
 
 #?(:clj
