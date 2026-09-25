@@ -64,7 +64,11 @@
 ;;   480 + 6j       op j: kind x y a b rgb
 ;;                  kind 1 rect:  a = width, b = height
 ;;                  kind 2 glyph: a = glyph index in the font, b = 8 or 16
-;;                  capacity 261 ops (words 480..2045)
+;;                  capacity 260 ops (words 480..2039; 261 until ADR-0238)
+;;   2040..2043     the vertical scroll offset of window id 1..4
+;;                  (browser-reduce.kotoba's, ADR-0238), at most 65535
+;;   2044 2045      scratch owned by this object (ADR-0238): the body's top
+;;                  clip and the offset of the window being laid out
 ;;   2046 2047      the pointer (ADR-0236): 2046 is its x + 1, 0 = no
 ;;                  pointer to draw; 2047 its y. The two words past the
 ;;                  op capacity, which nothing else reads or writes.
@@ -113,12 +117,23 @@
 ;; diagonal, its foot row 11. Clipped to the viewport: a row whose y + r is
 ;; at or past vh is not drawn, and every rect is cut at vw (a fill left with
 ;; no width is not drawn). 21 ops unclipped.
+;; SCROLL (ADR-0238): window id's body, composition and caret are laid out as
+;; above and drawn `offset` = word 2039 + id higher -- browser.surface's
+;; `:window/scroll`, which the hosted window-node does not draw (the hosted
+;; desktop leaves it to the host's overflow) -- and cut to the window: a glyph,
+;; rule or caret whose top is above the top inset (y + 36: the titlebar and
+;; the body's 8 px padding, the bottom inset's mirror) is not drawn, like one
+;; whose foot passes the bottom inset. The layout runs in unscrolled
+;; coordinates (the pen never goes above y + 42) and the offset is taken off
+;; only as an op is written, so no coordinate is negative. The title, the close
+;; control and the launcher do not scroll. With every offset 0 each frame is
+;; the one before ADR-0238.
 ;; FONT: the aiueos-font/v1 blob (os/aiueos/scripts/make-font.cljk).
 ;;
 ;; ABI: [surface surface-bytes font font-bytes] -> op count, or
 ;;   -1 null region / surface not 8192 bytes   -2 abi or n outside 1..4
 ;;   -3 focus is not a window id               -4 a rect leaves the viewport
-;;   -5 more than 261 ops                      -6 font refused (magic, version,
+;;   -5 more than 260 ops                      -6 font refused (magic, version,
 ;;                                                count, length, no U+FFFD)
 ;;   -7 a window id outside 1..4               -8 the IME's lengths are past
 ;;                                                its buffers (romaji > 8 or
@@ -126,6 +141,7 @@
 ;;   -9 the app register has a bit past app 4
 ;;   -10 the pointer is outside the viewport (word 2046 - 1 >= vw or word
 ;;       2047 >= vh with word 2046 not 0)
+;;   -11 a scroll offset (words 2040..2043) past 65535
 
 (ns aiueos.browser-frame2
   (:export [aiueos-browser-frame2 main]))
@@ -150,7 +166,7 @@
 (defn put-op [s kind x y a]
   ;; b and rgb come from the caller through scratch 429 and 422.
   (let [j (sw s 416)]
-    (if (>= j 261)
+    (if (>= j 260)
       (do (sput s 427 1) 0)
       (let [base (+ 480 (* 6 j))]
         (do (sput s base kind)
@@ -244,11 +260,14 @@
     (sw s (+ 434 (- i (sw s 445))))))
 
 (defn place-ruled [s f gi gw]
-  ;; A composition glyph and its rule, if it fits under the bottom; advance.
+  ;; A composition glyph and its rule, if it fits between the top inset
+  ;; (scratch 2044) and the bottom; drawn the offset (2045) higher; advance.
   (do (if (> (+ (sw s 418) 16) (sw s 421))
         0
-        (do (put-glyph s (sw s 417) (sw s 418) gi gw)
-            (put-rect s (sw s 417) (+ (sw s 418) 17) gw 1)))
+        (if (< (sw s 418) (sw s 2044))
+          0
+          (do (put-glyph s (sw s 417) (- (sw s 418) (sw s 2045)) gi gw)
+              (put-rect s (sw s 417) (+ (- (sw s 418) (sw s 2045)) 17) gw 1))))
       (sput s 417 (+ (sw s 417) gw))
       0))
 
@@ -264,10 +283,12 @@
   ;; ADR-0232: 1 x 16 in the text colour at the cursor, if its foot is above
   ;; the bottom inset (and, ADR-0234, it is inside the viewport: an
   ;; overflowing body can leave the cursor past it). It never wraps.
+  ;; ADR-0238: nor when its top is above the top inset; drawn the offset higher.
   (if (> (+ (sw s 418) 16) (sw s 421)) 0
-    (if (> (+ (sw s 417) 1) (sw s 3)) 0
-      (do (sput s 422 1118481)
-          (put-rect s (sw s 417) (sw s 418) 1 16)))))
+    (if (< (sw s 418) (sw s 2044)) 0
+      (if (> (+ (sw s 417) 1) (sw s 3)) 0
+        (do (sput s 422 1118481)
+            (put-rect s (sw s 417) (- (sw s 418) (sw s 2045)) 1 16))))))
 
 (defn text-block [s f base x y]
   ;; Right limit, bottom, wrap and limit are already in scratch.
@@ -307,12 +328,14 @@
         (+ (adv s f c) (cwidth s f base (+ i 1) 0))))))
 
 (defn place-body [s f cp]
-  ;; the glyph at the cursor unless it passes the bottom or the viewport; advance
+  ;; the glyph at the cursor unless it passes the bottom, the top inset
+  ;; (ADR-0238) or the viewport, drawn the offset higher; advance
   (let [gi (glyph-of s f cp)
         gw (glyph-width s f gi)]
     (do (if (> (+ (sw s 418) 16) (sw s 421)) 0
-          (if (> (+ (sw s 417) gw) (sw s 3)) 0
-            (put-glyph s (sw s 417) (sw s 418) gi gw)))
+          (if (< (sw s 418) (sw s 2044)) 0
+            (if (> (+ (sw s 417) gw) (sw s 3)) 0
+              (put-glyph s (sw s 417) (- (sw s 418) (sw s 2045)) gi gw))))
         (sput s 417 (+ (sw s 417) gw))
         0)))
 
@@ -466,8 +489,13 @@
         (close-control s f x y w)
         ;; body: cssom's flow from (x + 14, y + 42), cut at the bottom inset;
         ;; the composition after it wraps at x + w - 14 (0 when that is left
-        ;; of the viewport: every glyph then wraps, as a negative limit would)
-        (sput s 420 (if (< (+ x w) 14) 0 (- (+ x w) 14))) (sput s 421 (- (+ y h) 8))
+        ;; of the viewport: every glyph then wraps, as a negative limit would).
+        ;; ADR-0238: laid out unscrolled, so the insets move down by the
+        ;; window's offset and each op is written the offset higher.
+        (sput s 2045 (sw s (+ 2039 id)))
+        (sput s 2044 (+ (+ y 36) (sw s 2045)))
+        (sput s 420 (if (< (+ x w) 14) 0 (- (+ x w) 14)))
+        (sput s 421 (+ (- (+ y h) 8) (sw s 2045)))
         (sput s 426 1) (sput s 428 64) (sput s 430 w)
         (body-block s f (+ 160 (* 64 (- id 1))) (+ x 14) (+ y 42))
         ;; the composition, only in the focused window, after its body
@@ -511,6 +539,11 @@
     (if (= (rect-ok s k vw vh) 0) 0
       (rects-ok s n (+ k 1) vw vh))))
 
+(defn scroll-ok [s id]
+  (if (> id 4) 1
+    (if (> (sw s (+ 2039 id)) 65535) 0
+      (scroll-ok s (+ id 1)))))
+
 (defn aiueos-browser-frame2 [s sb f fb]
   (if (= s 0) -1
     (if (= f 0) -1
@@ -528,6 +561,7 @@
                       (if (> (sw s 445) 32) -8
                       (if (> (sw s 31) 15) -9
                       (if (= (pointer-ok s vw vh) 0) -10
+                      (if (= (scroll-ok s 1) 0) -11
                       (if (= (font-ok s f fb) 0) -6
                         (do (sput s 416 0)
                             (sput s 427 0)
@@ -536,6 +570,6 @@
                             (launcher s f vw)
                             (emit s f 0)
                             (pointer s)
-                            (if (= (sw s 427) 1) -5 (sw s 416)))))))))))))))))))
+                            (if (= (sw s 427) 1) -5 (sw s 416))))))))))))))))))))
 
 (defn main [] 0)

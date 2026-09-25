@@ -62,6 +62,23 @@
 ;;                 as it was (focus-window does not touch browser.input's
 ;;                 state). An id not in the stack changes nothing and answers 0
 ;;                 -- focus-window's own no-op for an unknown id.
+;;   pointer/wheel (ADR-0238) browser.input :pointer/wheel: window-at (the
+;;                 same topmost-first hit as a press) yields `:window/scroll`
+;;                 of the window under the pointer -- it neither focuses nor
+;;                 raises, and the capture is left as it was; a miss is no
+;;                 action. browser.surface scroll-window adds the delta to
+;;                 `:window/scroll` and clamps it at 0 (there is no upper
+;;                 clamp). The kernel's notch: kind 6 is one notch toward the
+;;                 end of the body (delta-y +20, one line), kind 7 one toward
+;;                 its start (-20) `:one-notch-is-one-line`; only the vertical
+;;                 offset is kept `:vertical-only`. The offsets are not in the
+;;                 128-byte state: surface words 2040..2043 hold window id
+;;                 1..4's, so a wheel needs the whole 8192-byte surface
+;;                 (state-bytes 8192; -10 on 128). An offset past 65535 is
+;;                 refused (-12) and changes nothing `:scroll-ceiling-65535`.
+;;                 With the whole surface a close zeroes the closed window's
+;;                 offset: browser.surface close-window drops the window and
+;;                 its scroll with it, and a later launch opens a new one at 0.
 ;; Not mirrored: text editing, IME. Named leftover `:no-text-edit`.
 ;; A move whose origin would be negative is refused (-6) and changes nothing:
 ;; the u32 surface has no negative coordinate; browser.surface would store it.
@@ -77,7 +94,9 @@
 ;; app register (ADR-0233): bits 0..3, app k = bit k-1; 0 = no launcher and
 ;; no close controls.
 ;;
-;; ABI: [state state-bytes kind a b], mutates state in place.
+;; ABI: [state state-bytes kind a b], mutates state in place. state-bytes is
+;; 128 (the state alone) or 8192 (the whole surface, whose first 128 bytes are
+;; the state; ADR-0238).
 ;;   kind 1 pointer/down at (a, b) -> focused window id, or 0 on a miss
 ;;   kind 2 key (a = code, b = value) -> focused window id that receives it
 ;;   kind 3 pointer/move to (a, b) -> the moved or resized window id, or 0
@@ -85,6 +104,9 @@
 ;;   kind 4 pointer/up -> 0, capture cleared
 ;;   kind 5 window/focus of window id a (ADR-0237) -> a, focused and raised;
 ;;          0 and nothing changed when a is not in the stack
+;;   kind 6 pointer/wheel one notch toward the body's end at (a, b), kind 7
+;;          toward its start (ADR-0238) -> the scrolled window id, or 0 on a
+;;          miss; needs state-bytes 8192
 ;;   (kind 1 with an app register: a close answers the focused window id
 ;;   after it, a launch the launched app's window id)
 ;;   -1 null region / wrong size   -2 abi or n out of range
@@ -94,11 +116,15 @@
 ;;   -7 the app register has a bit past app 4
 ;;   -8 a close of the last window  -9 a launch whose default rect leaves the
 ;;                                     viewport
+;;   -10 a wheel on the 128-byte state  -11 the wheel hit a window whose id is
+;;                                        outside 1..4 (no offset word)
+;;   -12 the offset would pass 65535
 
 (ns aiueos.browser-reduce
   (:export [aiueos-browser-reduce main]))
 
-;; The state size is checked once at the entry (it must be 128).
+;; The state size is checked once at the entry (128 or 8192); every word below
+;; 32 is inside both.
 (defn w-at [st i]
   (kernel-load-u32 (kernel-subregion st 128 (* i 4) 4) 4 0))
 
@@ -211,6 +237,40 @@
           (if (< py (+ y 6)) 0
             (if (> py (+ y 22)) 0 1)))))))
 
+;; --- scroll (ADR-0238) --------------------------------------------------------
+;; Window id's vertical offset, surface word 2039 + id. Only called with
+;; state-bytes 8192 and id in 1..4.
+(defn sc-at [st id]
+  (kernel-load-u32 (kernel-subregion st 8192 (* (+ 2039 id) 4) 4) 4 0))
+
+(defn sc-put [st id v]
+  (kernel-store-u32 (kernel-subregion st 8192 (* (+ 2039 id) 4) 4) 4 0 v))
+
+(defn slot-ok [id] (if (< id 1) 0 (if (> id 4) 0 1)))
+
+;; browser.surface scroll-window: (max 0 (+ offset delta)), delta +-20.
+(defn scroll-by [st id down]
+  (let [v (sc-at st id)]
+    (if (= down 1)
+      (if (> (+ v 20) 65535) -12
+        (do (sc-put st id (+ v 20)) id))
+      (do (sc-put st id (if (< v 20) 0 (- v 20))) id))))
+
+;; browser.input :pointer/wheel: the window under the pointer (k1 = stack
+;; index + 1, 0 = a miss) scrolls; nothing is focused, raised or captured.
+(defn wheel [st sb k1 down]
+  (if (not (= sb 8192)) -10
+    (if (= k1 0) 0
+      (let [id (w-at st (+ 5 (* (- k1 1) 5)))]
+        (if (= (slot-ok id) 0) -11
+          (scroll-by st id down))))))
+
+;; A closed window's offset goes with it (whole surface only).
+(defn drop-scroll [st sb id]
+  (if (= sb 8192)
+    (if (= (slot-ok id) 1) (sc-put st id 0) 0)
+    0))
+
 (defn clear-rec [st k]
   (let [b (+ 5 (* k 5))]
     (do (w-put st b 0) (w-put st (+ b 1) 0) (w-put st (+ b 2) 0)
@@ -218,10 +278,11 @@
 
 ;; browser.surface close-window: remove, and if it had the focus, focus the
 ;; window now on top.
-(defn close [st n k]
+(defn close [st sb n k]
   (if (= n 1) -8
     (let [id (w-at st (+ 5 (* k 5)))]
-      (do (shift-down st k n)
+      (do (drop-scroll st sb id)
+          (shift-down st k n)
           (clear-rec st (- n 1))
           (w-put st 1 (- n 1))
           (if (= (w-at st 2) id)
@@ -270,15 +331,16 @@
     (let [app (on-launcher st px py)]
       (if (= app 0) 0 (launch st n app)))))
 
-(defn press [st n k1 px py]
-  (if (= k1 0) (press-miss st n px py)
-    (if (= (w-at st 31) 0)
-      (do (capture st (- k1 1) px py)
-          (raise st (- k1 1) n))
-      (if (= (in-close st (- k1 1) px py) 1)
-        (close st n (- k1 1))
+(defn press [st sb k1 px py]
+  (let [n (w-at st 1)]
+    (if (= k1 0) (press-miss st n px py)
+      (if (= (w-at st 31) 0)
         (do (capture st (- k1 1) px py)
-            (raise st (- k1 1) n))))))
+            (raise st (- k1 1) n))
+        (if (= (in-close st (- k1 1) px py) 1)
+          (close st sb n (- k1 1))
+          (do (capture st (- k1 1) px py)
+              (raise st (- k1 1) n)))))))
 
 (defn move-to [st k nx ny]
   (let [b (+ 5 (* k 5))]
@@ -318,7 +380,7 @@
 
 (defn aiueos-browser-reduce [st sb kind a b]
   (if (= st 0) -1
-    (if (not (= sb 128)) -1
+    (if (= (if (= sb 128) 1 (if (= sb 8192) 1 0)) 0) -1
       (let [abi (w-at st 0)
             n (w-at st 1)
             focus (w-at st 2)]
@@ -328,10 +390,12 @@
               (if (= (has-id st n 0 focus) 0) -3
                 (if (= (capture-ok st n) 0) -4
                   (if (> (w-at st 31) 15) -7
-                  (if (= kind 1) (press st n (hit st (- n 1) a b) a b)
+                  (if (= kind 1) (press st sb (hit st (- n 1) a b) a b)
                     (if (= kind 2) focus
                       (if (= kind 3) (drag st n a b)
                         (if (= kind 4) (release st)
-                          (if (= kind 5) (focus-id st n a) -5)))))))))))))))
+                          (if (= kind 5) (focus-id st n a)
+                            (if (= kind 6) (wheel st sb (hit st (- n 1) a b) 1)
+                              (if (= kind 7) (wheel st sb (hit st (- n 1) a b) 0) -5)))))))))))))))))
 
 (defn main [] 0)

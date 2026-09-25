@@ -1393,7 +1393,7 @@ static struct virtq_used *tab_used;
 static struct virtio_input_event *tab_event;
 static uint16_t tab_seen;
 static uint32_t tab_x, tab_y;
-static int tab_live, tab_batch_abs, tab_batch_btn;
+static int tab_live, tab_batch_abs, tab_batch_btn, tab_batch_wheel;
 
 static void tab_give_back(uint32_t id) {
   tab_avail->ring[tab_avail->index % 4] = (uint16_t)id;
@@ -1417,6 +1417,7 @@ int aiueos_tablet_drain(uint32_t rounds) {
   }
   tab_batch_abs = 0;
   tab_batch_btn = 0;
+  tab_batch_wheel = 0;
   return 1;
 }
 
@@ -1424,7 +1425,12 @@ int aiueos_tablet_drain(uint32_t rounds) {
    pressed in the batch), 4 pointer/up (released), 3 pointer/move (only axes
    moved), with the tablet's absolute position after the batch in *x *y; 0
    when `budget` polls pass. What the event does is Kotoba's
-   (`kotoba_aiueos_browser_reduce`). */
+   (`kotoba_aiueos_browser_reduce`).
+   ADR-0238: 6 a wheel notch toward the end (REL_WHEEL below 0, or a
+   BTN_GEAR_DOWN press), 7 toward the start (REL_WHEEL above 0, BTN_GEAR_UP):
+   QEMU's virtio-tablet reports its wheel as REL_WHEEL +-1 and older ones as
+   the gear buttons. One kind per batch, whatever the count in it; a button
+   in the same batch wins. */
 uint32_t aiueos_tablet_next(uint32_t budget, uint32_t *x, uint32_t *y) {
   if (!tab_live) return 0;
   for (uint32_t i = 0; i < budget; i++) {
@@ -1439,10 +1445,15 @@ uint32_t aiueos_tablet_next(uint32_t budget, uint32_t *x, uint32_t *y) {
       if (ev.type == 3 && ev.code == 0) { tab_x = ev.value; tab_batch_abs = 1; }
       else if (ev.type == 3 && ev.code == 1) { tab_y = ev.value; tab_batch_abs = 1; }
       else if (ev.type == 1 && ev.code == 272) tab_batch_btn = ev.value ? 1 : 4;
-      else if (ev.type == 0 && (tab_batch_btn || tab_batch_abs)) {
-        uint32_t kind = tab_batch_btn ? (uint32_t)tab_batch_btn : 3U;
+      else if (ev.type == 2 && ev.code == 8 && ev.value != 0) tab_batch_wheel = (int32_t)ev.value < 0 ? 6 : 7;
+      else if (ev.type == 1 && ev.code == 336 && ev.value == 1) tab_batch_wheel = 6;
+      else if (ev.type == 1 && ev.code == 337 && ev.value == 1) tab_batch_wheel = 7;
+      else if (ev.type == 0 && (tab_batch_btn || tab_batch_abs || tab_batch_wheel)) {
+        uint32_t kind = tab_batch_btn ? (uint32_t)tab_batch_btn
+                      : tab_batch_wheel ? (uint32_t)tab_batch_wheel : 3U;
         tab_batch_abs = 0;
         tab_batch_btn = 0;
+        tab_batch_wheel = 0;
         *x = tab_x;
         *y = tab_y;
         return kind;

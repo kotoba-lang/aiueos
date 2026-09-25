@@ -1092,6 +1092,126 @@ static void serial_decimal64(uint64_t value) {
   while (count) serial_byte((uint8_t)digits[--count]);
 }
 
+/* Wheel scroll (ADR-0238). After Alt+Tab, the shell registers app 4 -- word
+   31 bit 3; its title スクロール and its document, the lines 1 .. 20 each
+   ended by a 10 (a <br>), are window slot 4's, written here as the launcher
+   stage wrote slot 3 -- and zeroes the four scroll offsets (surface words
+   2040..2043). The host sends seventeen tablet batches, each after the
+   previous frame line: a press on launcher button 4 at (360, 14) (window 4
+   opens at (80, 80, 520, 360) on top, fifteen of its twenty lines inside it),
+   the release, a wheel notch toward the end at (360, 14) over no window, a
+   move to (300, 300), six notches toward the end and seven toward the start.
+   C turns a REL_WHEEL batch into tablet kind 6 or 7 (pci.c) and hands every
+   batch to Kotoba `kotoba_aiueos_browser_reduce` with the whole surface
+   (state-bytes 8192): which window scrolls, by how much and where the offset
+   stops are its decisions (browser.input :pointer/wheel ->
+   browser.surface scroll-window), and browser-frame2 draws the body the
+   offset higher, cut to the window. Answers are browser-reduce-v1's
+   :the-kernel-scroll-* vectors'; op counts, censuses and the chain
+   os/aiueos/scripts/browser-frame-model.cljk's scroll frames. */
+static void browser_scroll_stage(uint32_t *surface, const uint8_t *font, uint64_t font_length) {
+  static const uint32_t title4[5] = {12473, 12463, 12525, 12540, 12523};
+  static const uint32_t ssrc[17] = {1, 4, 6, 3, 6, 6, 6, 6, 6, 6, 7, 7, 7, 7, 7, 7, 7};
+  static const int64_t swant[17] = {4, 0, 0, 0, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4};
+  static const uint32_t sscroll[17] = {0, 0, 0, 0, 20, 40, 60, 80, 100, 120, 100, 80, 60, 40, 20, 0, 0};
+  static const uint32_t sops[17] = {164, 164, 164, 164, 165, 166, 167, 168, 170, 169,
+                                    170, 168, 167, 166, 165, 164, 164};
+  static const uint32_t spx[17] = {988, 988, 988, 994, 1017, 1027, 1047, 1065, 1103, 1080,
+                                   1103, 1065, 1047, 1027, 1017, 994, 994};
+  static const uint32_t shash[17] = {0x16c7e9ceU, 0x16c7e9ceU, 0x16c7e9ceU, 0x78270fdaU, 0x6c0a4440U,
+                                     0xb5e126ebU, 0x40c08679U, 0xf7ee3a0bU, 0x5793612fU, 0x2d9fc3f6U,
+                                     0x5793612fU, 0xf7ee3a0bU, 0x40c08679U, 0xb5e126ebU, 0x6c0a4440U,
+                                     0x78270fdaU, 0x78270fdaU};
+  uint64_t sp = (uint64_t)(uintptr_t)surface;
+  uint32_t se = 0, soff = 0, spx2 = 0, shash2 = 0, schain = 2166136261U;
+  uint32_t sidle = 0, sframes = 0, smax = 0, ax = 0, ay = 0, b = 0;
+  int64_t sfo = 0;
+  for (unsigned i = 128; i < 160; i++) surface[i] = 0;
+  for (unsigned i = 0; i < 5; i++) surface[128 + i] = title4[i];
+  for (unsigned i = 352; i < 416; i++) surface[i] = 0;
+  for (uint32_t line = 1; line <= 20; line++) {
+    if (line >= 10) surface[352 + b++] = 48U + line / 10U;
+    surface[352 + b++] = 48U + line % 10U;
+    if (line < 20) surface[352 + b++] = 10U;
+  }
+  surface[31] |= 8U;
+  for (unsigned i = 2040; i < 2044; i++) surface[i] = 0;
+  (void)aiueos_tablet_drain(4000000U);
+  serial_string("AIUEOS_GUEST_BROWSER_SCROLL_GO events=17\r\n");
+  while (se < 17 && sidle < 60000U) {
+    uint32_t src = aiueos_tablet_next(1024U, &ax, &ay);
+    int64_t r;
+    if (!src) { sidle++; continue; }
+    sidle = 0;
+    uint32_t px = (uint32_t)(((uint64_t)ax * surface[3]) / 32768U);
+    uint32_t py = (uint32_t)(((uint64_t)ay * surface[4]) / 32768U);
+    surface[2046] = px + 1U;
+    surface[2047] = py;
+    r = (int64_t)kotoba_aiueos_browser_reduce(sp, 8192, src, px, py);
+    if (surface[2043] > smax) smax = surface[2043];
+    sfo = (int64_t)kotoba_aiueos_browser_frame2(sp, 8192, (uint64_t)(uintptr_t)font, font_length);
+    spx2 = 0;
+    shash2 = 0;
+    if (sfo > 0 && aiueos_desktop_present_ops2(surface + 480, (uint64_t)sfo, font, font_length)) {
+      shash2 = aiueos_desktop_colour_census(0x111111U, &spx2);
+      (void)aiueos_desktop_show();
+      sframes++;
+      for (int k = 0; k < 4; k++) {
+        schain ^= (shash2 >> (8 * k)) & 255U;
+        schain *= 16777619U;
+      }
+    }
+    if (src != ssrc[se] || r != swant[se] || surface[2] != 4 || surface[2043] != sscroll[se] ||
+        sfo != (int64_t)sops[se] || spx2 != spx[se] || shash2 != shash[se]) soff++;
+    se++;
+    serial_string("AIUEOS_GUEST_BROWSER_SCROLL_FRAME n=");
+    serial_decimal(se);
+    serial_string(" src=");
+    serial_decimal(src);
+    serial_string(r < 0 ? " answer=-" : " answer=");
+    serial_decimal((uint32_t)(r < 0 ? -r : r));
+    serial_string(" focus=");
+    serial_decimal(surface[2]);
+    serial_string(" scroll=");
+    serial_decimal(surface[2043]);
+    serial_string(" ops=");
+    serial_decimal((uint32_t)(sfo < 0 ? -sfo : sfo));
+    serial_string(" text-px=");
+    serial_decimal(spx2);
+    serial_string(" hash=");
+    serial_hex32(shash2);
+    serial_string("\r\n");
+  }
+  if (se == 17 && sframes == 17 && soff == 0 && smax == 120 && schain == 0x7421f3aaU &&
+      surface[1] == 4 && surface[5] == 1 && surface[10] == 3 && surface[15] == 2 &&
+      surface[20] == 4 && surface[2] == 4 && surface[25] == 0 && surface[2040] == 0 &&
+      surface[2041] == 0 && surface[2042] == 0 && surface[2043] == 0) {
+    debug_string("AIUEOS_GUEST_BROWSER_SCROLL_OK\n");
+    serial_string("AIUEOS_GUEST_BROWSER_SCROLL_OK events=17 answers=40004444444444444 max=120 stack=1324 focus=4 scroll=0 chain=7421f3aa ops=164 text-px=994 hash=78270fda\r\n");
+    browser_hold_for_screendump();
+  } else if (se < 17) {
+    debug_string("AIUEOS_GUEST_BROWSER_SCROLL leftover=events-missing\n");
+    serial_string("AIUEOS_GUEST_BROWSER_SCROLL leftover=events-missing events=");
+    serial_decimal(se);
+    serial_string(" frames=");
+    serial_decimal(sframes);
+    serial_string("\r\n");
+  } else {
+    debug_string("AIUEOS_GUEST_BROWSER_SCROLL leftover=census-miss\n");
+    serial_string("AIUEOS_GUEST_BROWSER_SCROLL leftover=census-miss off=");
+    serial_decimal(soff);
+    serial_string(" max=");
+    serial_decimal(smax);
+    serial_string(" chain=");
+    serial_hex32(schain);
+    serial_string(" focus=");
+    serial_decimal(surface[2]);
+    serial_string(" scroll=");
+    serial_decimal(surface[2043]);
+    serial_string("\r\n");
+  }
+}
+
 #ifdef AIUEOS_QWEN38_MODEL_HANDOFF
 static void aiueos_qwen35_progress(uint32_t completed_layers,
                                    uint32_t total_layers,
@@ -4674,6 +4794,7 @@ qwen_runtime_boot_complete:
                                             debug_string("AIUEOS_GUEST_BROWSER_FOCUS_OK\n");
                                             serial_string("AIUEOS_GUEST_BROWSER_FOCUS_OK events=12 answers=200103020000 wm=3 stack=132 focus=2 bodies=unchanged chain=2254db31 ops=129 text-px=1082 hash=e90ed2bc\r\n");
                                             browser_hold_for_screendump();
+                                            browser_scroll_stage(surface, font, font_length);
                                           } else if (fe < 12) {
                                             debug_string("AIUEOS_GUEST_BROWSER_FOCUS leftover=events-missing\n");
                                             serial_string("AIUEOS_GUEST_BROWSER_FOCUS leftover=events-missing events=");
