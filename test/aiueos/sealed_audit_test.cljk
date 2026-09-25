@@ -2,7 +2,7 @@
   (:require [kotoba.io :as kio] [grant.audit :as audit]
             [aiueos.sealed-audit :as sealed]
             [clojure.edn :as edn]
-            [clojure.java.io :as io]
+            [kotoba.io :as io]
             [kotoba.lang.text :as str]
             [kotoba.test :refer [deftest is]]))
 

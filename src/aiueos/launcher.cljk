@@ -16,7 +16,7 @@
 
   JVM-only (`#?(:clj ...)` throughout) -- file I/O and `aiueos.execute`'s
   Chicory dependency both require it; not runnable under babashka."
-  (:require [grant.audit :as audit]
+  (:require [kotoba.ffi :as ffi] [grant.audit :as audit]
             [grant.broker :as broker]
             [grant.cli :as cli]
             [grant.contract :as contract]
@@ -422,6 +422,6 @@
      [& argv]
      (if (pid1/pid1-mode?)
        (let [boot-config (pid1/load-boot-config pid1/boot-edn-path)]
-         (with-open [arena (java.lang.foreign.Arena/ofConfined)]
+         (with-open [arena (ffi/confined-arena)]
            (pid1/boot! boot-config up-command (fn [] (pid1/power-off!)) arena)))
        (dispatch argv))))

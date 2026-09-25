@@ -22,7 +22,7 @@
 ;; leaving a reader to assume the good one.
 
 (require '[sekisho.didkey :as didkey]
-         '[clojure.string :as str]
+         '[kotoba.lang.text :as str]
          '["node:crypto" :as crypto]
          '["node:fs" :as fs]
          '["node:path" :as path]

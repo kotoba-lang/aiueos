@@ -36,7 +36,7 @@
 ;; guard.
 
 (ns aiueos.qwen35-tensor-table-parity-test
-  (:require [kotoba.bytes :as kbytes] [kotoba.io :as kio] [clojure.java.io :as io]
+  (:require [kotoba.bytes :as kbytes] [kotoba.io :as kio] [kotoba.io :as io]
             [kotoba.test :refer [deftest is testing]]
             [kotoba.kir :as ir]
             [kotoba.sema :as sema]))
@@ -45,7 +45,7 @@
   (io/file "os" "aiueos" "kotoba" "qwen35-tensor-table-bind.kotoba"))
 
 (defn- source-available? []
-  (let [present? (.exists source-file)]
+  (let [present? (io/exists? source-file)]
     (is present? (str "kotoba object not found at " source-file))
     present?))
 
@@ -340,11 +340,11 @@
               (io/make-parents workspace-file)
               (with-open [o (io/output-stream workspace-file)]
                 (.write o produced))
-              (println "WROTE" (.getPath workspace-file) (alength produced) "bytes"))
-            (is (.exists workspace-file)
+              (println "WROTE" (io/path workspace-file) (alength produced) "bytes"))
+            (is (io/exists? workspace-file)
                 (str "the committed workspace is missing at " workspace-file
                      "; tests/qwen35_runtime_model.c reads it"))
-            (when (.exists workspace-file)
+            (when (io/exists? workspace-file)
               (let [committed (kio/read-all-bytes workspace-file)]
                 (is (= plan-length (alength ^bytes committed))
                     "the committed workspace must be 28,160 bytes")

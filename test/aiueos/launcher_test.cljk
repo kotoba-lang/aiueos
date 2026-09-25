@@ -4,7 +4,7 @@
   through `aiueos.launcher/verify-command`/`run-command`/`dispatch` exactly
   as a shell invocation of the CLI would -- genuine file I/O, not
   in-memory-only shortcuts."
-  (:require [grant.audit :as audit]
+  (:require [kotoba.bytes :as kbytes] [grant.audit :as audit]
             [aiueos.launcher :as launcher]
             [aiueos.topic :as topic]
             [kotoba.test :refer [deftest is testing]]
@@ -34,7 +34,7 @@
      ([manifest] (write-fixtures! manifest nil))
      ([manifest policy-overlay]
       (let [dir (temp-dir)
-            wasm-bytes (.decode (java.util.Base64/getDecoder)
+            wasm-bytes (kbytes/base64-decode-bytes
                                  (str/replace topic-publish-wasm-b64 "\n" ""))
             wasm-file (io/file dir "topic_publish.wasm")
             manifest-file (io/file dir "manifest.edn")
@@ -167,7 +167,7 @@
      run-command-reads-the-declared-wasm-path-and-really-executes above).
      Returns the system.edn path."
      [dir]
-     (let [wasm-bytes (.decode (java.util.Base64/getDecoder)
+     (let [wasm-bytes (kbytes/base64-decode-bytes
                                 (str/replace topic-publish-wasm-b64 "\n" ""))
            fs-manifest (io/file dir "fs.edn")
            app-manifest (io/file dir "app.edn")
@@ -276,7 +276,7 @@
      cycle), matching a real system where an always-on capability
      provider coexists with a periodic consumer."
      [dir]
-     (let [wasm-bytes (.decode (java.util.Base64/getDecoder)
+     (let [wasm-bytes (kbytes/base64-decode-bytes
                                 (str/replace topic-publish-wasm-b64 "\n" ""))
            fs-manifest (io/file dir "fs.edn")
            app-manifest (io/file dir "app.edn")

@@ -4,7 +4,7 @@
   grant.broker/verify-one, and actually EXECUTED on Chicory (no Rust,
   no wasmtime, no subprocess) -- closing the compile -> check -> emit ->
   verify -> RUN loop entirely on the JVM."
-  (:require [grant.contract :as contract]
+  (:require [kotoba.bytes :as kbytes] [grant.contract :as contract]
             [aiueos.execute :as execute]
             [grant.graph :as graph]
             [grant.manifest :as manifest]
@@ -23,7 +23,7 @@
 
 #?(:clj
    (defn- b64->bytes [s]
-     (.decode (java.util.Base64/getDecoder) (str/replace s "\n" ""))))
+     (kbytes/base64-decode-bytes (str/replace s "\n" ""))))
 
 ;; (ns demo-aiueos-execute-test)
 ;; (defn main [] (topic-publish 1 (i64 42)))

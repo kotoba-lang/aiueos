@@ -19,7 +19,7 @@
 ;;   ./node-linux-x64 nbb-bundle/node_modules/nbb/cli.js install.cljk \
 ;;     --endpoint https://murakumo.cloud [--prefix /opt/aiueos-node] [--dry-run]
 
-(require '[clojure.string :as str]
+(require '[kotoba.lang.text :as str]
          '["node:fs" :as fs]
          '["node:path" :as path]
          '["node:child_process" :as cp])

@@ -18,7 +18,7 @@
 ;;     --nbb build/aiueos/nbb-bundle/node_modules \
 ;;     --output build/aiueos/aiueos-node-agent.tar.gz
 
-(require '[clojure.string :as str]
+(require '[kotoba.lang.text :as str]
          '["node:fs" :as fs]
          '["node:os" :as os]
          '["node:path" :as path]

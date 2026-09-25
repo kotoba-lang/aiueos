@@ -16,7 +16,7 @@
 
 (require '[grant.device-attest :as attest]
          '[sekisho.didkey :as didkey]
-         '[clojure.string :as str]
+         '[kotoba.lang.text :as str]
          '["node:crypto" :as crypto]
          '["node:http" :as http]
          '["node:fs" :as fs]

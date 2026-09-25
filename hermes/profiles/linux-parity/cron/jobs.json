@@ -11,11 +11,11 @@
         "web"
       ],
       "id": "91b4e9900e9f",
-      "model": "qwen3.8-27b-whitehacker",
+      "model": "murakumo/free",
       "name": "linux-parity-tick",
       "no_agent": false,
       "prompt": "linux-parity bot。SOUL.md の「分担」に従い、4 時間に 1 反復を遂行せよ。\n\n【反復の型 (これを厳守)】\n1. 反復は最大 25 API call 相当で終える。それを超えたら何をしていようと打ち切り、\n   現状を報告して終了すること (次の反復に引き継ぐ。状態は worktree の untracked file か\n   ~/.hermes/profiles/linux-parity/memories/ に 1 行で残す)。\n2. terminal コマンドには必ず timeout を付ける (長いものは `timeout 120 ...`)。\n   clojure/bb の起動が 10 分以上帰らないことがある。待ち続けない。\n3. 反復の成功条件はこのどれか 1 つ: (a) PR を出す (b) gate を書いて壊して赤いことを確認し\n   commit まで (c) 測定 1 件を記録して「opened no PR」を報告。PR 出せない反復は (c) でよい。\n\n【手順】\n- scripts/parity_evidence.py をまず走らせる (worktree dirty なら REFUSED → 何もせず終了)。\n- 対象: amu#614 (kexe_loader.c が classpath に無い → io/resource で読めるようにする修正) か、\n  aiueos 側 ADR-2608153500 gap 台帳の未達 1 件。\n- gate 先行: テスト/スクリプトを書き、実装を壊して赤くなることを確認、直して緑、commit。\n- branch bot/parity-<日時>、1 PR、merge はしない (kotoba-merger の仕事)。\n- main 直 push・force-push・superproject orgs/ 直編集 禁止。",
-      "provider": "kotoba",
+      "provider": "murakumo",
       "schedule": {
         "kind": "cron",
         "expr": "37 2 * * *",

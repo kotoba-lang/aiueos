@@ -15,7 +15,7 @@
             #?(:clj [aiueos.cloud-live :as cloud-live])
             #?(:clj [aiueos.provider.cloud :as provider])
             #?(:clj [clojure.edn :as edn])
-            #?(:clj [clojure.java.io :as io])
+            #?(:clj [kotoba.io :as io])
             #?(:clj [grant.broker :as broker])
             #?(:clj [grant.cloud :as cloud])
             #?(:clj [grant.graph :as graph])

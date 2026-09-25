@@ -56,12 +56,12 @@
   A credential. The environment variable's *name* appears in the receipt, so a
   reader knows which one to set; the value reaches a request header and nothing
   else."
-  (:require [kotoba.security.information-flow :as sec-info-flow]
+  (:require [kotoba.bytes :as kbytes] [kotoba.security.information-flow :as sec-info-flow]
             [grant.cloud :as cloud]
             [kotoba.lang.text :as str]
             #?@(:clj [[aiueos.provider.cloud :as provider]
                       [clojure.edn :as edn]
-                      [clojure.java.io :as io]
+                      [kotoba.io :as io]
                       [clojure.pprint :as pprint]]))
   #?(:clj (:import [java.net URI]
                    [java.security.cert CertificateException X509Certificate]
@@ -429,7 +429,7 @@
        (let [live (with-clock policy)
              cid (:aiueos.cloud-live/write-cid live)
              text (:aiueos.cloud-live/write-text live)
-             bytes (.getBytes ^String (str text) "UTF-8")
+             bytes (kbytes/utf8-bytes ^String (str text))
              {:keys [env headers]} (credential live :write)
              leg (if (nil? headers)
                    {:leg :storage-write :outcome :unmeasured

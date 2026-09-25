@@ -6,7 +6,7 @@
   VM, not here (this suite runs on any JVM host, incl. macOS CI), mirroring
   `aiueos.vfio`'s hardware-honesty split."
   (:require [kotoba.test :refer [deftest is testing]]
-            #?(:clj [clojure.java.io :as io])
+            #?(:clj [kotoba.io :as io])
             [aiueos.hvt :as hvt]
             [aiueos.virtio :as vio]))
 
@@ -384,7 +384,7 @@
     (put-le! (+ desc-gpa 12) 0 2)              ; flags: not writable, no next
     (put-le! (+ desc-gpa 14) 0 2)              ; next
     (let [e (try (hvt/walk-descriptor-chain rd desc-gpa 8 0)
-                 (catch #?(:clj clojure.lang.ExceptionInfo :cljs :default) e e))]
+                 (catch :default e e))]
       (is (some? (ex-data e))
           "a 4 GiB descriptor was collected instead of rejected")
       (is (= (inc hvt/guest-ram-size) (:len (ex-data e))))
@@ -413,7 +413,7 @@
     (put-le! 0x100c (:next vio/desc-flag) 2)
     (put-le! 0x100e 4000 2)
     (let [e (try (hvt/walk-descriptor-chain rd 0x1000 8 0)
-                 (catch #?(:clj clojure.lang.ExceptionInfo :cljs :default) e e))]
+                 (catch :default e e))]
       (is (some? (ex-data e))
           "a chain stepped outside the descriptor table")
       (is (= 4000 (:descriptor (ex-data e))))
