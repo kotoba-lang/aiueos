@@ -5,6 +5,17 @@ All notable changes to **aiueos** are documented here. The format follows
 
 ## [Unreleased]
 
+### Kernel objects re-attested with one amu
+- `reproduce-kotoba-objects.cljk --attest` with amu `53799cb` compiled all 115
+  committed Kotoba objects and rewrote the 68 whose bytes changed; 46 were
+  recorded against an older amu and 1 (`install-intent-admit.o`) had no
+  recorded compiler. A strict rerun matches 115/115.
+- `provenance.edn` regenerated (`--emit-provenance`: 115 recorded, 0
+  unrecorded); `sync-kernel-object-digests.cljk --write` rewrote 59 stale
+  digest pins in `build-uefi.sh` (`--check` then exit 0).
+- All 24 guest compositor gates pass on the rebuilt objects; the restricted
+  K16 link is now `kotoba=92 foreign=0 unattested=0`.
+
 ### Guest browser desktop: Alt+Tab focuses and raises the next window (ADR-0237)
 - browser-ime.kotoba holds Alt (evdev 56) in surface word 431 from its press to
   its release, and answers a Tab (15) press under it with 256 + the id of the
