@@ -27,8 +27,19 @@
                         :text-bytes 751474
                         :headroom-bytes 8192
                         :high-bss-end "0x486000" :links? true}
+ :low-region/with-linear-output-norm {:measured-on "ff76c4f + norm mode 3 live in linear_attention + rtl_parity_bar in .high_bss (ADR-0222)"
+                                     :before-move {:aiueos-low-end "0x1f5000" :text-bytes 762018
+                                                   :links? false
+                                                   :error "ld.lld: error: low kernel/user layout overlaps process-private aperture"}
+                                     :origin-main {:aiueos-low-end "0x1f4000" :text-bytes 761554
+                                                   :headroom-bytes 0 :links? true}
+                                     :aiueos-low-end "0x1f3000" :bss-bytes 149288
+                                     :text-bytes 762018
+                                     :headroom-bytes 4096
+                                     :high-bss-end "0x517000" :links? true}
  :low-region/moved [{:symbol "pci_pdpts" :file "os/aiueos/kernel/paging.c" :bytes 16384}
-                    {:symbol "pci_directories" :file "os/aiueos/kernel/paging.c" :bytes 32768}]
+                    {:symbol "pci_directories" :file "os/aiueos/kernel/paging.c" :bytes 32768}
+                    {:symbol "rtl_parity_bar" :file "os/aiueos/kernel/rtl8125.c" :bytes 4096}]
  :low-region/boots ["os/aiueos/scripts/smoke-qemu-uefi.sh -> AIUEOS_UEFI_SMOKE_OK (virtio modern + MSI-X mapped through aiueos_map_pci_mmio)"
                     "kbb --backend sci scripts/run-task.cljk bonsai-qemu-admission -> AIUEOS_BONSAI_ADMISSION_QEMU_OK"]
  :low-region/not-measured ["the production node image booted on the physical K16"]

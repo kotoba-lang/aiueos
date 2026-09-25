@@ -1072,7 +1072,7 @@ if [ -n "$model_handoff_link" ] || [ -n "$qwen35_parity_cflags" ]; then
       python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_qwen35_activation_object" \
         b869b92d850e7bf5044f402a6d014dec37838675234ebdb75370efb7e974b724 kotoba_aiueos_qwen35_activation
       python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_qwen35_norm_object" \
-        faff9aefe51909376dc6a2bfe30fa720c88cc47db06a70df32fa7852b110eaee kotoba_aiueos_qwen35_norm
+        a9b9c00929ed7731d53f86cbc740496058dfec99c81e026761ac4a206c8b3aff kotoba_aiueos_qwen35_norm
       ;;
   esac
   if [ "${AIUEOS_QWEN35_KOTOBA_PARITY:-0}" = 2 ]; then

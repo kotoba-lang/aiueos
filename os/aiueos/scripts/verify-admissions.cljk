@@ -1058,9 +1058,9 @@
        (:expect-h-hex v)
        (conj {:label :h :offset h-offset :bytes (hex-bytes (:expect-h-hex v))}))}))
 
-;; Three modes with three different argument meanings, which is why this is a
+;; Four modes with three different argument meanings, which is why this is a
 ;; `case` rather than one shape: mode 0 reads `b` as a weights POINTER and
-;; `c` as an element count, modes 1 and 2 read them as a head count and a
+;; `c` as an element count, modes 1, 2 and 3 read them as a head count and a
 ;; width. Getting that wrong is not a crash -- it normalises the wrong vector
 ;; into the wrong place and every bound still holds.
 (defmethod prepare :aiueos.qwen35-norm/v1 [contract v]
@@ -1081,6 +1081,7 @@
              0 [0 base-a base-b (:count v) (+ base out-offset)]
              1 [1 base-a (:heads v) (:width v) 0]
              2 [2 base-a (:heads v) (:width v) base-d]
+             3 [3 base-a (:heads v) (:width v) base-d]
              ;; a mode the object refuses; the remaining words are still real
              ;; regions so the refusal is provoked by the MODE and nothing else
              [(:mode v) base-a (or (:heads v) 1) (or (:width v) (:count v) 8) 0])
