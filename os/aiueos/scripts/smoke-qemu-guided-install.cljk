@@ -1,0 +1,382 @@
+#!/usr/bin/env kbb
+;; The guided stick (ADR-0210/0239/0240) under QEMU/OVMF, answered on its
+;; serial console the way a person at a K16 with a second SSD would answer it.
+;;
+;;   machine  install USB (xHCI) + an 8 GiB disk with a DOS table and data
+;;            ("the existing SSD") + an empty 16 GiB disk + virtio-net
+;;   boot A   every screen answered; the ERASE phrase typed WRONG
+;;            -> refused by install.mjs, both disks byte-identical
+;;   boot B   the same, phrase typed as shown -> installed on the 16 GiB disk,
+;;            the 8 GiB disk byte-identical
+;;   boot C   the 16 GiB disk alone in boot order, USB detached -> aiueos up
+;;
+;; Asserted on the console, not only on the exit code: the listing marks the
+;; used disk `[has data: dos]` and the empty one `[empty]`, and the pick's
+;; default is the empty one (ADR-0240) -- boot B answers that prompt with Enter.
+;; Boot A exists so the typed-phrase guard is shown to REFUSE, by its own
+;; reason literal, rather than only shown to admit (root ADR-2608136000 q6).
+;;
+;;   kbb --backend sci os/aiueos/scripts/smoke-qemu-guided-install.cljk
+;;   kbb --backend sci os/aiueos/scripts/smoke-qemu-guided-install.cljk --interactive
+;;
+;; --interactive builds the same stick and machine and hands the serial console
+;; to your terminal: you answer, and `Link account? y` shows the kotoba.cloud
+;; QR (ADR-0239) for a phone to approve. Ctrl-A X quits QEMU. Nothing is
+;; asserted in that mode.
+;;
+;; Prerequisites are smoke-qemu-install.cljk's (AIUEOS_OUT: release image +
+;; receipt + data image, live/uki.efi, node-linux-x64, the nbb fork tree).
+;; TCG on an arm64 Mac: each live boot takes minutes.
+
+(require '[kotoba.lang.text :as str])
+
+(def fs (js/require "node:fs"))
+(def path (js/require "node:path"))
+(def cp (js/require "node:child_process"))
+(def crypto (js/require "node:crypto"))
+
+(def aiueos (.resolve path (.dirname path *file*) ".."))
+(def repo (.resolve path aiueos ".." ".."))
+(def out (or (.-AIUEOS_OUT js/process.env) (.join path repo "build" "aiueos")))
+(def gate-dir (.join path out "guided-install-gate"))
+(def release-image (.join path out "aiueos-x86_64-gpt.img"))
+(def release-receipt (.join path out "aiueos-x86_64-build-receipt.json"))
+(def data-image (.join path out "aiueos-x86_64-data.img"))
+(def uki (.join path out "live" "uki.efi"))
+(def node-linux (or (.-AIUEOS_NODE_LINUX js/process.env) (.join path out "node-linux-x64")))
+(def nbb-dir (or (.-AIUEOS_NBB_DIR js/process.env) (.join path out "nbb-bundle" "node_modules")))
+(def qemu (or (.-QEMU_SYSTEM_X86_64 js/process.env) "qemu-system-x86_64"))
+(defn- die [& msg]
+  (binding [*out* *err*] (apply println (cons "error:" msg)))
+  (.exit js/process 1))
+
+(def interactive? (>= (.indexOf (to-array (vec *command-line-args*)) "--interactive") 0))
+
+;; ---------------------------------------------------------- memory budget
+;; The whole gate -- this process and every process under it (the USB build,
+;; each QEMU) -- stays under AIUEOS_GUIDED_GATE_BUDGET_MIB, default 1000. At
+;; 2048M of guest RAM the first run stalled under host memory pressure and was
+;; reaped (2026-09-26); the owner's bound is 1 GB for the whole verification.
+;; So the live guest gets 512M and TCG's translation buffer 64 MiB (QEMU's
+;; default is up to 1 GiB), and the budget is not a hope: a governor sums the
+;; RSS of the process tree every second, records each stage's peak, and kills
+;; the tree and fails the gate by name the moment the sum crosses it.
+(def live-mem (or (.-AIUEOS_GUIDED_GATE_MEM js/process.env) "512M"))
+(def tb-size-mib (or (.-AIUEOS_GUIDED_GATE_TB_MIB js/process.env) "64"))
+(def budget-mib (js/parseInt (or (.-AIUEOS_GUIDED_GATE_BUDGET_MIB js/process.env) "1000") 10))
+
+(def used-bytes (* 8 1024 1024 1024))
+(def empty-bytes (* 16 1024 1024 1024))
+
+(doseq [[p hint] [[release-image "run os/aiueos/scripts/build-release-image.sh"]
+                  [release-receipt "run os/aiueos/scripts/build-release-image.sh"]
+                  [data-image "run os/aiueos/scripts/build-release-image.sh"]
+                  [uki "run make-live-installer.py build --output-dir build/aiueos/live"]
+                  [node-linux "download the pinned linux-x64 node binary (see installer README)"]
+                  [nbb-dir "npm install the org-babashka-nbb fork into build/aiueos/nbb-bundle"]]]
+  (when-not (.existsSync fs p)
+    (die "missing prerequisite:" p "\nhint:" hint)))
+
+(def ovmf
+  (or (.-OVMF_CODE js/process.env)
+      (some #(when (.existsSync fs %) %)
+            ["/opt/homebrew/share/qemu/edk2-x86_64-code.fd"
+             "/usr/share/OVMF/OVMF_CODE_4M.fd" "/usr/share/OVMF/OVMF_CODE.fd"])
+      (die "OVMF firmware not found; set OVMF_CODE")))
+;; a fresh writable VARS per boot: without one EDK2 writes NVVARS onto the
+;; first writable ESP -- the installed target (smoke-qemu-install.cljk)
+(def ovmf-vars-template
+  (or (.-OVMF_VARS js/process.env)
+      (some #(when (.existsSync fs %) %)
+            ["/opt/homebrew/share/qemu/edk2-i386-vars.fd"
+             "/usr/share/OVMF/OVMF_VARS_4M.fd" "/usr/share/OVMF/OVMF_VARS.fd"])
+      (die "OVMF VARS template not found; set OVMF_VARS")))
+
+;; stage -> peak MiB of the whole tree
+(def stage (atom "setup"))
+(def peaks (atom {}))
+
+(defn- tree-rss
+  "[total-MiB pids] for this process and all its descendants, from one ps."
+  []
+  (let [r (.spawnSync cp "ps" #js ["-axo" "pid=,ppid=,rss="] #js {:encoding "utf8"})
+        rows (keep #(when-let [[_ a b c] (re-find #"^\s*(\d+)\s+(\d+)\s+(\d+)" %)]
+                      [(js/parseInt a 10) (js/parseInt b 10) (js/parseInt c 10)])
+                   (str/split-lines (or (.-stdout r) "")))
+        kids (group-by second rows)
+        rss (into {} (map (fn [[p _ k]] [p k]) rows))
+        tree (loop [todo [(.-pid js/process)] seen []]
+               (if (empty? todo)
+                 seen
+                 (let [p (first todo)]
+                   (recur (into (vec (rest todo)) (map first (get kids p))) (conj seen p)))))]
+    [(quot (reduce + (map #(get rss % 0) tree)) 1024) tree]))
+
+(def governor
+  (js/setInterval
+   (fn []
+     (let [[mib tree] (tree-rss)]
+       (swap! peaks update @stage #(max (or % 0) mib))
+       (when (> mib budget-mib)
+         (doseq [p (rest tree)] (try (js/process.kill p "SIGKILL") (catch :default _ nil)))
+         (die "memory-budget-exceeded" (str "stage=" @stage) (str "rss=" mib "MiB")
+              (str "budget=" budget-mib "MiB")))))
+   1000))
+
+(defn- spawn-async
+  "Spawn without blocking the event loop, so the governor keeps sampling.
+  Resolves to {:status :out}. `timeout-s` kills the child and reports 124."
+  [cmd args timeout-s]
+  (js/Promise.
+   (fn [resolve _]
+     (let [child (.spawn cp cmd (to-array args) #js {:stdio #js ["ignore" "pipe" "pipe"]})
+           out (atom "")
+           t (js/setTimeout #(.kill child "SIGKILL") (* 1000 timeout-s))]
+       (.on (.-stdout child) "data" #(swap! out str %))
+       (.on (.-stderr child) "data" #(swap! out str %))
+       (.on child "exit" (fn [code sig]
+                           (js/clearTimeout t)
+                           (resolve {:status (if (= sig "SIGKILL") 124 (or code 1)) :out @out})))))))
+
+(defn- run [cmd args]
+  (let [r (.spawnSync cp cmd (to-array args) #js {:encoding "utf8" :shell false})]
+    {:status (or (.-status r) 1) :out (or (.-stdout r) "") :err (or (.-stderr r) "")}))
+
+(defn- sha256-file [p]
+  (let [h (.createHash crypto "sha256") fd (.openSync fs p "r")
+        buf (js/Buffer.alloc (* 8 1024 1024))]
+    (loop [] (let [n (.readSync fs fd buf 0 (.-length buf) nil)]
+               (when (pos? n) (.update h (.subarray buf 0 n)) (recur))))
+    (.closeSync fs fd)
+    (.digest h "hex")))
+
+;; ------------------------------------------------------------------ stick
+
+(.mkdirSync fs gate-dir #js {:recursive true})
+(def gate-key (.join path gate-dir "gate-key.pub"))
+(def gate-usb (.join path gate-dir "guided-usb.img"))
+
+(let [kp (.generateKeyPairSync crypto "ed25519")
+      spki (.export (.-publicKey kp) #js {:format "der" :type "spki"})
+      raw (.subarray spki (- (.-length spki) 32))
+      s (fn [b] (let [l (js/Buffer.alloc 4)] (.writeUInt32BE l (.-length b) 0)
+                  (js/Buffer.concat #js [l b])))
+      blob (js/Buffer.concat #js [(s (js/Buffer.from "ssh-ed25519" "utf8")) (s raw)])]
+  (.writeFileSync fs gate-key (str "ssh-ed25519 " (.toString blob "base64") " guided-gate\n")))
+
+(defn- build-usb! []
+  (reset! stage "usb-build")
+  (-> (spawn-async "nbb" [(.join path aiueos "scripts" "run-install-usb-build.cljk")
+                          "--guided"
+                          "--node-binary" node-linux
+                          "--nbb-dir" nbb-dir
+                          "--live-uki" uki
+                          "--default-ssh-key" gate-key
+                          "--output" gate-usb
+                          "--receipt" (.join path gate-dir "guided-usb-receipt.json")]
+                   900)
+      (.then (fn [{:keys [status out]}]
+               (when-not (zero? status) (die "guided USB build failed:" (str/trim out)))
+               (println "AIUEOS_GUIDED_GATE_USB built" gate-usb)))))
+
+;; ------------------------------------------------------------------ disks
+
+(def used-disk (.join path gate-dir "existing-ssd.img"))
+(def empty-disk (.join path gate-dir "second-disk.img"))
+
+(defn- sparse! [p bytes]
+  (when (.existsSync fs p) (.rmSync fs p))
+  (let [fd (.openSync fs p "w")] (.ftruncateSync fs fd bytes) (.closeSync fs fd)))
+
+(defn- make-disks! []
+  (sparse! used-disk used-bytes)
+  (let [fd (.openSync fs used-disk "r+")
+        data (js/Buffer.from (apply str (repeat 4096 "EXISTING-SSD ")) "utf8")
+        mbr (js/Buffer.alloc 66)]
+    (.writeSync fs fd data 0 (.-length data) 0)
+    (.writeSync fs fd data 0 (.-length data) (- used-bytes (.-length data)))
+    ;; one Linux partition from LBA 2048, and the 0x55AA signature: what
+    ;; `blkid -p` reports as PTTYPE=dos
+    (aset mbr 1 0x20) (aset mbr 2 0x21) (aset mbr 4 0x83)
+    (aset mbr 5 0xFE) (aset mbr 6 0xFF) (aset mbr 7 0xFF)
+    (.writeUInt32LE mbr 2048 8)
+    (.writeUInt32LE mbr (- (/ used-bytes 512) 2048) 12)
+    (aset mbr 64 0x55) (aset mbr 65 0xAA)
+    (.writeSync fs fd mbr 0 66 446)
+    (.closeSync fs fd))
+  (sparse! empty-disk empty-bytes))
+
+(defn- qemu-args [{:keys [label usb? mem]}]
+  (let [vars (.join path gate-dir (str label "-vars.fd"))
+        blk (.join path gate-dir (str label "-data.img"))]
+    (.copyFileSync fs ovmf-vars-template vars)
+    (.copyFileSync fs data-image blk)
+    (concat
+     ["-machine" "q35" "-accel" (str "tcg,tb-size=" tb-size-mib)
+      "-cpu" "max" "-m" mem "-smp" "2"
+      "-drive" (str "if=pflash,format=raw,readonly=on,file=" ovmf)
+      "-drive" (str "if=pflash,format=raw,file=" vars)]
+     (when usb?
+       ["-drive" (str "if=none,id=usb,format=raw,snapshot=on,file=" gate-usb)
+        "-device" "qemu-xhci,id=xhci"
+        "-device" "usb-storage,bus=xhci.0,drive=usb,removable=on,bootindex=0"])
+     ["-drive" (str "if=none,id=used,format=raw,file=" used-disk)
+      "-device" "nvme,drive=used,serial=GATEUSED0001"
+      "-drive" (str "if=none,id=empty,format=raw,file=" empty-disk)
+      "-device" (str "nvme,drive=empty,serial=GATEEMPTY002" (if usb? "" ",bootindex=0"))
+      "-netdev" "user,id=n0" "-device" "virtio-net-pci,netdev=n0"
+      "-device" "isa-debugcon,iobase=0xe9,chardev=debug"
+      "-chardev" (str "file,id=debug,path=" (.join path gate-dir (str label "-debug.log")))
+      "-device" "isa-debug-exit,iobase=0xf4,iosize=0x04"
+      "-device" "virtio-rng-pci"
+      "-drive" (str "if=none,id=aiueosblk,format=raw,file=" blk)
+      "-device" "virtio-blk-pci,drive=aiueosblk,disable-legacy=on"
+      "-device" "virtio-keyboard-pci"
+      "-device" "virtio-vga,disable-legacy=on,max_outputs=2"
+      "-display" "none" "-monitor" "none" "-no-reboot"])))
+
+(when interactive?
+  (-> (build-usb!)
+      (.then (fn [_]
+               ;; a person is at this console: no governor, no assertions
+               (js/clearInterval governor)
+               (make-disks!)
+               (println "AIUEOS_GUIDED_GATE interactive: answer on this console; Ctrl-A X quits QEMU")
+               (let [r (.spawnSync cp qemu (to-array (concat (qemu-args {:label "interactive" :usb? true :mem live-mem})
+                                                             ["-serial" "mon:stdio"]))
+                                   #js {:stdio "inherit"})]
+                 (.exit js/process (or (.-status r) 1)))))))
+
+;; ------------------------------------------------------------------ console
+
+(def ansi #"\u001b\[[0-9;]*m")
+
+(defn- live-boot
+  "Boot the stick and answer the console. `phrase-fn` gets the phrase the
+  console showed and returns what is typed. Resolves to
+  {:status :console :answered}."
+  [label phrase-fn]
+  (reset! stage label)
+  (js/Promise.
+   (fn [resolve _]
+     (let [log (.join path gate-dir (str label "-serial.log"))
+           log-fd (.openSync fs log "w")
+           since (atom "") all (atom "") answered (atom [])
+           confirm-host (atom nil)
+           child (.spawn cp qemu (to-array (concat (qemu-args {:label label :usb? true :mem live-mem})
+                                                   ["-serial" "stdio"]))
+                         #js {:stdio #js ["pipe" "pipe" "inherit"]})
+           rules [["Network policy" (constantly "")]
+                  ["Disk to erase (number)" (constantly "")]
+                  ["Bind the intent to this disk's serial" (constantly "")]
+                  ["Accept this match?" (constantly "")]
+                  ["Hostname of the installed machine"
+                   (fn [t] (reset! confirm-host
+                                   (second (re-find #"Hostname of the installed machine \[([^\]]+)\]" t)))
+                     "")]
+                  ["Machine model, for the receipt" (constantly "")]
+                  ["OpenSSH public key that may log in" (constantly "")]
+                  ["Principal that key logs in as" (constantly "")]
+                  ["Repeat the hostname to confirm the erase" (fn [_] (or @confirm-host ""))]
+                  ["Link account? y/N" (constantly "n")]
+                  ["Phrase:" (fn [_] (phrase-fn (second (re-find #"(ERASE /dev/\S+ FOR AIUEOS)" @all))))]]
+           timed-out (atom false)
+           timer (js/setTimeout #(do (reset! timed-out true) (.kill child))
+                                (* 40 60 1000))]
+       (.on (.-stdout child) "data"
+            (fn [chunk]
+              (.writeSync fs log-fd chunk)
+              (let [s (str/replace (str/replace (.toString chunk "utf8") "\r" "") ansi "")]
+                (swap! since str s)
+                (swap! all str s)
+                ;; answer only once the whole prompt line, default included,
+                ;; has arrived -- serial output splits anywhere
+                (when (str/ends-with? @since ": ")
+                  (when-let [[p f] (first (filter #(str/includes? @since (first %)) rules))]
+                    (let [answer (f @since)]
+                      (swap! answered conj p)
+                      (reset! since "")
+                      (.write (.-stdin child) (str answer "\n"))))))))
+       (.on child "exit"
+            (fn [code]
+              (js/clearTimeout timer)
+              (.closeSync fs log-fd)
+              ;; a boot that never reached the screens is its own failure --
+              ;; not "the listing was wrong" (measured 2026-09-26: a live boot
+              ;; under host memory pressure stalled after AIUEOS_LIVE_INIT)
+              (when @timed-out
+                (die label "timed out after 40 min; last console marker:"
+                     (or (last (filter #(str/includes? % "AIUEOS_") (str/split-lines @all)))
+                         "none")))
+              (resolve {:status code :console @all :answered @answered})))))))
+
+(defn- require-in [label console literals]
+  (doseq [l literals]
+    (when-not (str/includes? console l)
+      (die label "console lacks:" l "(see" (.join path gate-dir (str label "-serial.log")) ")")))
+  (println "AIUEOS_GUIDED_GATE" label "console carries:" (str/join " | " literals)))
+
+(defn- listing-checks [label console]
+  (let [lines (str/split-lines console)
+        used (some #(re-find #"^\s+(\d+)\) \S+\s+8\.6 GB.*\[has data: dos\]" %) lines)
+        empty (some #(re-find #"^\s+(\d+)\) \S+\s+17\.2 GB.*\[empty\]" %) lines)]
+    (when-not used (die label "the used disk is not listed [has data: dos]"))
+    (when-not empty (die label "the empty disk is not listed [empty]"))
+    (require-in label console [(str "Disk to erase (number) [" (second empty) "]")])))
+
+;; ------------------------------------------------------------------ boots
+
+(-> (if interactive? (js/Promise. (fn [_ _])) (build-usb!))
+    ;; boot A: the phrase typed wrong
+    (.then (fn [_]
+             (make-disks!)
+             (println "AIUEOS_GUIDED_GATE bootA wrong phrase (TCG; minutes)")
+             (live-boot "bootA" (fn [_] "ERASE /dev/not-this-disk FOR AIUEOS"))))
+    (.then (fn [{:keys [console]}]
+             (listing-checks "bootA" console)
+             (require-in "bootA" console ["AIUEOS_INSTALL_ADMIT dry-run"
+                                          "--destructive-phrase must exactly equal"])
+             (when (str/includes? console "AIUEOS_INSTALL_OK")
+               (die "bootA installed with a wrong phrase"))
+             (let [zero (do (sparse! (.join path gate-dir "zero.img") empty-bytes)
+                            (sha256-file (.join path gate-dir "zero.img")))]
+               (.rmSync fs (.join path gate-dir "zero.img"))
+               (when-not (= zero (sha256-file empty-disk))
+                 (die "bootA wrote to the empty disk although the phrase was refused")))
+             (println "AIUEOS_GUIDED_GATE bootA refused by its reason; nothing written")
+             ;; boot B: the phrase as shown
+             (make-disks!)
+             (let [before (sha256-file used-disk)]
+               (-> (live-boot "bootB" identity)
+                   (.then (fn [r] (assoc r :used-before before)))))))
+    (.then (fn [{:keys [console answered used-before]}]
+             (listing-checks "bootB" console)
+             (require-in "bootB" console ["AIUEOS_LIVE_ACCOUNT not-linked reason=declined"
+                                          (str "bytes=" empty-bytes)
+                                          "AIUEOS_INSTALL_OK"])
+             (when-not (= 11 (count answered))
+               (die "bootB answered" (count answered) "prompts, expected 11:" (pr-str answered)))
+             (when-not (= used-before (sha256-file used-disk))
+               (die "bootB CHANGED the existing disk"))
+             (println "AIUEOS_GUIDED_GATE bootB installed on the empty disk; existing disk byte-identical")
+             ;; boot C: the installed disk alone in boot order
+             (reset! stage "bootC")
+             (let [log (.join path gate-dir "bootC-serial.log")]
+               (-> (spawn-async qemu (concat (qemu-args {:label "bootC" :usb? false :mem "128M"})
+                                             ["-serial" (str "file:" log)])
+                                900)
+                   (.then (fn [r]
+                            (let [serial (str/replace (.readFileSync fs log "utf8") "\r" "")
+                                  n (count (filter #(str/includes? % "AIUEOS_") (str/split-lines serial)))]
+                              (when (= 124 (:status r)) (die "bootC timed out"))
+                              (when (< n 25) (die "bootC evidence floor: only" n "AIUEOS_ markers (need 25)"))
+                              (js/clearInterval governor)
+                              (println "AIUEOS_GUIDED_GATE bootC aiueos up from the second disk"
+                                       (str "markers=" n) (str "status=" (:status r)))
+                              (println "AIUEOS_GUIDED_GATE memory"
+                                       (str "budget=" budget-mib "MiB")
+                                       (str/join " " (for [[k v] @peaks] (str k "=" v "MiB"))))
+                              (println "AIUEOS_GUIDED_INSTALL_SMOKE_OK wrong-phrase-refused installed-on-empty-disk"
+                                       "existing-disk-byte-identical boots-from-second-disk"
+                                       (str "peak-rss-under=" budget-mib "MiB")))))))))
+    (.catch (fn [e] (die "unexpected:" (.-message e)))))
