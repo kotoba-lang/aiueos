@@ -1438,9 +1438,20 @@
 
 ;; --- run -------------------------------------------------------------------
 
+;; `:frames` is osaho's DETERMINISTIC call-depth budget (32 by default since
+;; its P4, 2026-09-24), which is sized for bin/amu's 4 MB stack. This runner is
+;; started with `ulimit -s 65520` and `--stack-size=60000` precisely so the
+;; interpreter's recursion fits, and it already refuses a host that runs out
+;; (`:host/stack-exhausted`, below). So it raises the budget to the ceiling and
+;; lets the HOST be the limit it reports by name -- "a caller that has the
+;; stack raises it per run with :frames" (osaho kir.cljk). Measured 2026-09-26:
+;; without this, `q8-0-3x64` traps `:budget/frames` at 32 in `q80-el`.
+(def ^:private oracle-frames 9007199254740991)
+
 (defn- execute-once [kir entry args base image fuel]
   (try (word (ir/execute kir entry args
-                         {:memory {:base base :bytes image} :fuel fuel}))
+                         {:memory {:base base :bytes image} :fuel fuel
+                          :frames oracle-frames}))
        (catch :default e (ex-data e))))
 
 (defn- refuse-on-trap! [contract label actual]
@@ -1457,7 +1468,8 @@
              ;; vectors of a cold run trapped and later ones passed, because V8
              ;; shrinks the interpreter's frames once it tiers up. Reported as a
              ;; refusal with the flag that names it, never as a mismatch.
-             (:host-stack-exhausted actual)
+             (or (:host-stack-exhausted actual)
+                 (= :host/stack-exhausted (:trap actual)))
              "REFUSING TO REPORT A PASS: node's stack was exhausted, so this vector was not executed -- rerun with a larger `ulimit -s` and `node --stack-size=...` (the contract's :verification :node-stack-size states what this one needs)"
              :else "vector trapped where a result was expected")
            {:contract (:format contract) :vector label :trap actual})))

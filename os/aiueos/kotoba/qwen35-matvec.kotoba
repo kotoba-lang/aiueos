@@ -147,24 +147,40 @@
 (defn row-bytes [qtype count] (dq/row-bytes qtype count))
 (defn supported [qtype] (dq/supported qtype))
 
+;; A PTQ1_0 row never becomes f32 in memory (ADR-0222 item 11). 402 of
+;; Bonsai's 851 tensors are PTQ1_0 (type 143), and
+;; `kernel-dequant-dot-ptq1-0` (kotoba-native ADR 0088) reads the 28-byte
+;; blocks and the activations directly: the same weights `dq/dequant-run`
+;; writes, folded by the same tree `kernel-dot-f32` folds, so the answer is the
+;; materialising path's to the bit. Its ceiling is 128 blocks, 16,384 columns;
+;; a wider row (Bonsai's `ffn_down`, 17,408) keeps the materialising path,
+;; because two calls would be a different accumulation tree.
+(defn fused-ptq1 [qtype cols]
+  (if (= qtype 143) (if (> cols 16384) 0 1) 0))
+
+(defn store-row [arena alen plan row bits]
+  (kernel-store-u32
+   (kernel-subregion arena alen (+ (plan-u64 plan 48) (* row 4)) 4) 4 0
+   (u32w bits)))
+
 (defn matvec-rows [arena alen plan row end]
   (if (>= row end)
     0
     (let [cols (plan-u64 plan 16)
           rb (row-bytes (plan-u32 plan 0) cols)
-          scratch (kernel-subregion arena alen (plan-u64 plan 56) (* cols 4))
-          verdict (dq/dequant-run (plan-u32 plan 0)
-                               (kernel-subregion arena alen
-                                                 (+ (plan-u64 plan 24) (* row rb)) rb)
-                               rb scratch cols)]
-      (if (not (= verdict 0))
-        -12
-        (do (kernel-store-u32
-             (kernel-subregion arena alen (+ (plan-u64 plan 48) (* row 4)) 4) 4 0
-             (u32w (dot-row scratch
-                            (kernel-subregion arena alen (plan-u64 plan 40) (* cols 4))
-                            cols)))
-            (matvec-rows arena alen plan (+ row 1) end))))))
+          weights (kernel-subregion arena alen (+ (plan-u64 plan 24) (* row rb)) rb)
+          input (kernel-subregion arena alen (plan-u64 plan 40) (* cols 4))]
+      (if (= 1 (fused-ptq1 (plan-u32 plan 0) cols))
+        (do (store-row arena alen plan row
+                       (kernel-dequant-dot-ptq1-0 weights rb input (* cols 4)
+                                                  (quot cols 128)))
+            (matvec-rows arena alen plan (+ row 1) end))
+        (let [scratch (kernel-subregion arena alen (plan-u64 plan 56) (* cols 4))
+              verdict (dq/dequant-run (plan-u32 plan 0) weights rb scratch cols)]
+          (if (not (= verdict 0))
+            -12
+            (do (store-row arena alen plan row (dot-row scratch input cols))
+                (matvec-rows arena alen plan (+ row 1) end))))))))
 
 ;; The four region bounds, checked here rather than left to `kernel-subregion`:
 ;; a subregion that runs past its parent TRAPS (`ud2`), and a trap is a triple
