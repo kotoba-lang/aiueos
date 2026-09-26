@@ -48,3 +48,32 @@ the console can still type another.
 
 The K16's DMI strings are not measured; if its firmware leaves a placeholder
 the model default is `unspecified` and the hostname default `aiueos`.
+
+## Reproducible smoke — landed as a script, NOT yet green (2026-09-26)
+
+`os/aiueos/scripts/smoke-qemu-guided-install.cljk` automates the trial above as
+three boots: A types the ERASE phrase wrong (must refuse with
+`--destructive-phrase must exactly equal`, nothing written), B takes every
+default (must install on the empty disk, the used disk byte-identical), C boots
+the installed disk alone (evidence floor 25 markers). `--interactive` hands the
+console to a person for the QR link.
+
+Owner bound: the whole verification under 1 GB. The live guest is 512M with
+`-accel tcg,tb-size=64` (QEMU's TCG buffer defaults up to 1 GiB), and a
+governor sums the RSS of the gate's process tree every second, records each
+stage's peak, and kills the tree by name over `AIUEOS_GUIDED_GATE_BUDGET_MIB`
+(default 1000).
+
+Measured: with the budget at 50 MiB the gate stops at
+`memory-budget-exceeded stage=usb-build rss=485MiB budget=50MiB` and leaves no
+child process — the governor refuses by its own reason. **Not measured:** a full
+run under the 1000 MiB budget, whether the live installer boots in 512M, and
+each stage's peak. The first attempt (2048M guest) stalled after
+`AIUEOS_LIVE_INIT start` under host memory pressure and was reaped; the second
+(1024M) was stopped by hand when the owner set the 1 GB bound.
+
+Resume: `AIUEOS_OUT=<aiueos>/build/aiueos kbb --backend sci
+os/aiueos/scripts/smoke-qemu-guided-install.cljk` from the west checkout (the
+USB build resolves `../text` and `../security`), and read the
+`AIUEOS_GUIDED_GATE memory` line. If the live boot does not reach the screens at
+512M, raise `AIUEOS_GUIDED_GATE_MEM` only as far as the budget allows.
