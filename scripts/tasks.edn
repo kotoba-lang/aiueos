@@ -305,6 +305,10 @@
  {:cmd ["kbb" "--backend" "sci" "--classpath" "src" "scripts/compositor-guest.cljk" "guest-browser-clipboard"]
   :doc "Guest browser clipboard (ADR-0241) on KERNEL.ELF under QEMU: after the selection, the host sends Shift, Left x3, Shift up, Ctrl, C, Ctrl up, Backspace, Ctrl, V x3, Ctrl up. browser-key holds Ctrl in surface word 2038 and answers Ctrl+C over a selection 512 (:clipboard/write) and Ctrl+V 513 (:clipboard/read), changing nothing; C asks broker-admit (ADR-0096) with the stage's grant (clipboard for events 1..19, file-picker only after) and hands the completion -- value 3, the 260-byte clipboard in place of the dictionary -- only on admit: copy \"19\\n\", delete, paste twice (45 -> 48 -> 51 code points), the refused third pastes nothing. Every census the frame model's. Tablet profile, 3000 s wall clock."}
 
+ :browser-desktop-damage
+ {:cmd ["kbb" "--backend" "sci" "--classpath" "src" "scripts/compositor-guest.cljk" "guest-browser-damage"]
+  :doc "Guest browser damage (ADR-0242) on KERNEL.ELF under QEMU: every show of the desktop sends only the rectangle Kotoba browser-damage answers (the bounding box of every op, in the previous list or this one, at a slot where they differ) through virtio-gpu TRANSFER_TO_HOST_2D / RESOURCE_FLUSH. After the clipboard the host moves the tablet, then Alt, Tab (Alt+Tab raises window 1), Tab up, Alt up; after each the display is screendumped, F12 makes the kernel send the whole screen, and it is screendumped again. Green: the five rectangles are browser-frame-model.cljk's (300,300,32,22 / none / 80,80,520,360 / none / none) and every damage screendump is byte-identical to the whole-screen one after it; missing or stale screendumps are exit 3."}
+
  :browser-desktop-guest
  {:cmd ["kbb" "--backend" "sci" "--classpath" "src" "scripts/compositor-guest.cljk" "guest-browser-input"]
   :doc "Guest browser desktop (ADR-0223) on KERNEL.ELF under QEMU: the Kotoba frame is presented and sampled, then a real virtio-tablet press is reduced by Kotoba to focus-and-raise and the redrawn frame is sampled again. Exit 3 = QEMU/firmware/serial unanswered, not a pass."}

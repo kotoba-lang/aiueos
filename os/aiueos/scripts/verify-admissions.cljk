@@ -928,6 +928,9 @@
 (defmethod prepare :aiueos.browser-frame/v1 [contract v] (prepare-regions contract v))
 (defmethod prepare :aiueos.browser-reduce/v1 [contract v] (prepare-regions contract v))
 (defmethod prepare :aiueos.browser-frame2/v1 [contract v] (prepare-regions contract v))
+;; ADR-0242: the current list at `:ops`, the caller's shadow (the previous
+;; list and the answer) at `:shadow`; the vectors assert the shadow after.
+(defmethod prepare :aiueos.browser-damage/v1 [contract v] (prepare-regions contract v))
 
 ;; The murakumo relay lines (ADR-0215): HELLO written into a caller's buffer,
 ;; ACK admitted from a received payload. Their expected bytes are the retired

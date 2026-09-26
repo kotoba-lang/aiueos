@@ -393,6 +393,7 @@ kotoba_browser_frame_object=${AIUEOS_KOTOBA_BROWSER_FRAME_OBJECT:-"$aiueos/kotob
 kotoba_browser_reduce_object=${AIUEOS_KOTOBA_BROWSER_REDUCE_OBJECT:-"$aiueos/kotoba/browser-reduce.o"}
 kotoba_browser_frame2_object=${AIUEOS_KOTOBA_BROWSER_FRAME2_OBJECT:-"$aiueos/kotoba/browser-frame2.o"}
 kotoba_browser_ime_object=${AIUEOS_KOTOBA_BROWSER_IME_OBJECT:-"$aiueos/kotoba/browser-ime.o"}
+kotoba_browser_damage_object=${AIUEOS_KOTOBA_BROWSER_DAMAGE_OBJECT:-"$aiueos/kotoba/browser-damage.o"}
 kotoba_net_arp_object=${AIUEOS_KOTOBA_NET_ARP_OBJECT:-"$aiueos/kotoba/net-arp-reply-valid.o"}
 kotoba_ipv4_checksum_object=${AIUEOS_KOTOBA_IPV4_CHECKSUM_OBJECT:-"$aiueos/kotoba/ipv4-checksum.o"}
 kotoba_ipv4_icmp_object=${AIUEOS_KOTOBA_IPV4_ICMP_OBJECT:-"$aiueos/kotoba/ipv4-icmp-reply-valid.o"}
@@ -1136,6 +1137,9 @@ python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_browser_frame2
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_browser_ime_object" \
   71076aa88782fc0b29376920157a9e98fef97befa223e8ecde1dfc85be96a1df \
   kotoba_aiueos_browser_key
+python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_browser_damage_object" \
+  5dc5c33880e39b2a656d701230156963b604f04c765298379c8d479d59745ecc \
+  kotoba_aiueos_browser_damage
 python3 "$aiueos/scripts/verify-kotoba-user-elf.py" "$kotoba_user_elf" \
   1f0e5897831d0de6bbcb15eec82a6e0c4b402b436689cec051bc6de3b5c4e905
 if [ -n "${AIUEOS_EXTERNAL_KERNEL_ELF:-}" ]; then
@@ -1406,6 +1410,7 @@ zig ld.lld -nostdlib -static --strip-all $qualification_gc_link -z max-page-size
   "$kotoba_device_worker_digest_object" \
   "$kotoba_wm_object" "$kotoba_scanout_object" "$kotoba_broker_object" "$kotoba_session_object" \
   "$kotoba_browser_frame_object" "$kotoba_browser_reduce_object" "$kotoba_browser_frame2_object" "$kotoba_browser_ime_object" \
+  "$kotoba_browser_damage_object" \
   "$kotoba_mmio_map_admit_object" \
   "$kotoba_acpi_checksum_object" "$kotoba_acpi_table_valid_object" \
   "$kotoba_relay_hello_object" "$kotoba_relay_ack_object" \

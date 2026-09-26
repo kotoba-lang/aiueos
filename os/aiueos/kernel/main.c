@@ -1524,6 +1524,182 @@ static int browser_clipboard_stage(uint32_t *surface, const uint8_t *font, uint6
   return 0;
 }
 
+/* Damage (ADR-0242). Every aiueos_desktop_show since this change sends only
+   the rectangle Kotoba browser-damage answers for the list just painted. This
+   stage shows it: after the clipboard, the host moves the tablet to
+   (320, 310), then sends Alt down, Tab down (Alt+Tab raises window 1), Tab up
+   and Alt up. After each, C presents the frame -- the damage only -- and
+   prints its rectangle; the host screendumps it and presses F12, and C sends
+   the whole screen, which the host screendumps again. The gate compares the
+   two screendumps. F12 (evdev 88) is the stage's request for the whole
+   screen and is never handed to Kotoba. */
+static int browser_damage_stage(uint32_t *surface, const uint8_t *font, uint64_t font_length,
+                                uint64_t dict, uint64_t dict_length) {
+  extern int aiueos_desktop_show_full(void);
+  extern void aiueos_desktop_damage_last(uint32_t *out);
+  extern void aiueos_desktop_damage_counts(uint32_t *out, uint64_t *bytes);
+  static const uint32_t dsrc[5] = {3, 0, 0, 0, 0};
+  static const uint32_t dkey[5] = {0, 225, 61, 60, 224};
+  static const int64_t dwant[5] = {0, 0, 1, 0, 0};
+  static const uint32_t dfocus[5] = {4, 4, 1, 1, 1};
+  static const uint32_t dops[5] = {169, 169, 170, 170, 170};
+  static const uint32_t dpx[5] = {1080, 1080, 2330, 2330, 2330};
+  static const uint32_t dhash[5] = {0x362c4193U, 0x362c4193U, 0x5581e21aU, 0x5581e21aU, 0x5581e21aU};
+  /* the frame model's damage: x y w h (w 0 = nothing sent) */
+  static const uint32_t drect[5][4] = {{300, 300, 32, 22}, {0, 0, 0, 0}, {80, 80, 520, 360},
+                                       {0, 0, 0, 0}, {0, 0, 0, 0}};
+  uint64_t sp = (uint64_t)(uintptr_t)surface;
+  uint32_t de = 0, doff = 0, dpx2 = 0, dhash2 = 0, dchain = 2166136261U;
+  uint32_t didle = 0, dframes = 0, fulls = 0, partial = 0, empty = 0, ax = 0, ay = 0;
+  uint32_t rect[4], counts[5];
+  uint64_t bytes = 0, run_bytes = 0;
+  int64_t dfo = 0;
+  (void)aiueos_tablet_drain(4000000U);
+  (void)aiueos_keyboard_drain(4000000U);
+  serial_string("AIUEOS_GUEST_BROWSER_DAMAGE_GO events=5\r\n");
+  while (de < 5 && didle < 60000U) {
+    uint32_t src = aiueos_tablet_next(1024U, &ax, &ay), key = 0, widle = 0, full = 0;
+    int64_t r, kr = 0;
+    if (src) {
+      uint32_t px = (uint32_t)(((uint64_t)ax * surface[3]) / 32768U);
+      uint32_t py = (uint32_t)(((uint64_t)ay * surface[4]) / 32768U);
+      surface[2046] = px + 1U;
+      surface[2047] = py;
+      r = (int64_t)kotoba_aiueos_browser_reduce(sp, 8192, src, px, py);
+    } else {
+      key = aiueos_keyboard_next_key(1024U);
+      if (!key) { didle++; continue; }
+      if ((key >> 2) == 88U) continue;
+      kr = (int64_t)kotoba_aiueos_browser_key(sp, 8192, dict, dict_length, key);
+      r = kr;
+      if (kr > 256) r = (int64_t)kotoba_aiueos_browser_reduce(sp, 8192, 5, (uint64_t)(kr - 256), 0);
+    }
+    didle = 0;
+    dfo = (int64_t)kotoba_aiueos_browser_frame2(sp, 8192, (uint64_t)(uintptr_t)font, font_length);
+    dpx2 = 0;
+    dhash2 = 0;
+    rect[0] = rect[1] = rect[2] = rect[3] = 0xffffffffU;
+    if (dfo > 0 && aiueos_desktop_present_ops2(surface + 480, (uint64_t)dfo, font, font_length)) {
+      dhash2 = aiueos_desktop_colour_census(0x111111U, &dpx2);
+      if (aiueos_desktop_show()) {
+        dframes++;
+        aiueos_desktop_damage_last(rect);
+        if (rect[2] && rect[3]) { partial++; bytes += (uint64_t)rect[2] * rect[3] * 4U; }
+        else empty++;
+      }
+      for (int k = 0; k < 4; k++) {
+        dchain ^= (dhash2 >> (8 * k)) & 255U;
+        dchain *= 16777619U;
+      }
+    }
+    if (src != dsrc[de] || key != dkey[de] || r != dwant[de] || surface[2] != dfocus[de] ||
+        dfo != (int64_t)dops[de] || dpx2 != dpx[de] || dhash2 != dhash[de] ||
+        rect[0] != drect[de][0] || rect[1] != drect[de][1] ||
+        rect[2] != drect[de][2] || rect[3] != drect[de][3]) doff++;
+    de++;
+    serial_string("AIUEOS_GUEST_BROWSER_DAMAGE_FRAME n=");
+    serial_decimal(de);
+    serial_string(" src=");
+    serial_decimal(src);
+    serial_string(" key=");
+    serial_decimal(key);
+    serial_string(r < 0 ? " answer=-" : " answer=");
+    serial_decimal((uint32_t)(r < 0 ? -r : r));
+    serial_string(" focus=");
+    serial_decimal(surface[2]);
+    serial_string(" ops=");
+    serial_decimal((uint32_t)(dfo < 0 ? -dfo : dfo));
+    serial_string(" text-px=");
+    serial_decimal(dpx2);
+    serial_string(" hash=");
+    serial_hex32(dhash2);
+    serial_string(" damage=");
+    serial_decimal(rect[0]);
+    serial_string(",");
+    serial_decimal(rect[1]);
+    serial_string(",");
+    serial_decimal(rect[2]);
+    serial_string(",");
+    serial_decimal(rect[3]);
+    serial_string(" bytes=");
+    serial_decimal(rect[2] == 0xffffffffU ? 0U : rect[2] * rect[3] * 4U);
+    serial_string("\r\n");
+    /* the host's F12: the same frame, the whole screen */
+    while (widle < 60000U) {
+      uint32_t k = aiueos_keyboard_next_key(1024U);
+      if (!k) { widle++; continue; }
+      if (k == 88U * 4U + 1U) break;
+    }
+    if (widle < 60000U) full = (uint32_t)aiueos_desktop_show_full();
+    fulls += full;
+    serial_string("AIUEOS_GUEST_BROWSER_DAMAGE_FULL n=");
+    serial_decimal(de);
+    serial_string(full ? " shown=whole\r\n" : " shown=none\r\n");
+    if (!full) break;
+  }
+  /* the host's F12 once more: its last whole-screen screendump is taken
+     before anything after this stage draws */
+  if (de == 5 && fulls == 5) {
+    uint32_t widle = 0;
+    while (widle < 60000U) {
+      uint32_t k = aiueos_keyboard_next_key(1024U);
+      if (!k) { widle++; continue; }
+      if (k == 88U * 4U + 1U) break;
+    }
+    if (widle >= 60000U) fulls = 4;
+  }
+  aiueos_desktop_damage_counts(counts, &run_bytes);
+  /* since boot: every show of the desktop, how it went */
+  serial_string("AIUEOS_GUEST_BROWSER_DAMAGE_RUN shows=");
+  serial_decimal(counts[0]);
+  serial_string(" partial=");
+  serial_decimal(counts[1]);
+  serial_string(" empty=");
+  serial_decimal(counts[2]);
+  serial_string(" whole=");
+  serial_decimal(counts[3]);
+  serial_string(" refused=");
+  serial_decimal(counts[4]);
+  serial_string(" bytes=");
+  serial_decimal64(run_bytes);
+  serial_string(" whole-bytes=");
+  serial_decimal64((uint64_t)counts[0] * surface[3] * surface[4] * 4U);
+  serial_string("\r\n");
+  if (de == 5 && dframes == 5 && fulls == 5 && doff == 0 && partial == 2 && empty == 3 &&
+      bytes == 751616U && dchain == 0x6653b143U && counts[4] == 0 &&
+      surface[2] == 1 && surface[431] == 0) {
+    debug_string("AIUEOS_GUEST_BROWSER_DAMAGE_OK\n");
+    serial_string("AIUEOS_GUEST_BROWSER_DAMAGE_OK events=5 partial=2 empty=3 bytes=751616 whole-bytes=20480000 focus=1 chain=6653b143 ops=170 text-px=2330 hash=5581e21a\r\n");
+    browser_hold_for_screendump();
+    return 1;
+  } else if (de < 5 || fulls < de) {
+    debug_string("AIUEOS_GUEST_BROWSER_DAMAGE leftover=events-missing\n");
+    serial_string("AIUEOS_GUEST_BROWSER_DAMAGE leftover=events-missing events=");
+    serial_decimal(de);
+    serial_string(" frames=");
+    serial_decimal(dframes);
+    serial_string(" wholes=");
+    serial_decimal(fulls);
+    serial_string("\r\n");
+  } else {
+    debug_string("AIUEOS_GUEST_BROWSER_DAMAGE leftover=damage-miss\n");
+    serial_string("AIUEOS_GUEST_BROWSER_DAMAGE leftover=damage-miss off=");
+    serial_decimal(doff);
+    serial_string(" chain=");
+    serial_hex32(dchain);
+    serial_string(" partial=");
+    serial_decimal(partial);
+    serial_string(" empty=");
+    serial_decimal(empty);
+    serial_string(" bytes=");
+    serial_decimal64(bytes);
+    serial_string(" refused=");
+    serial_decimal(counts[4]);
+    serial_string("\r\n");
+  }
+  return 0;
+}
+
 #ifdef AIUEOS_QWEN38_MODEL_HANDOFF
 static void aiueos_qwen35_progress(uint32_t completed_layers,
                                    uint32_t total_layers,
@@ -5108,7 +5284,8 @@ qwen_runtime_boot_complete:
                                             browser_hold_for_screendump();
                                             if (browser_scroll_stage(surface, font, font_length))
                                               if (browser_selection_stage(surface, font, font_length, dict, dict_length))
-                                                browser_clipboard_stage(surface, font, font_length, dict, dict_length);
+                                                if (browser_clipboard_stage(surface, font, font_length, dict, dict_length))
+                                                  browser_damage_stage(surface, font, font_length, dict, dict_length);
                                           } else if (fe < 12) {
                                             debug_string("AIUEOS_GUEST_BROWSER_FOCUS leftover=events-missing\n");
                                             serial_string("AIUEOS_GUEST_BROWSER_FOCUS leftover=events-missing events=");

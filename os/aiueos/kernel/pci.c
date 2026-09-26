@@ -1796,14 +1796,23 @@ static void gpu_2d_resource_path(struct virtq_desc *desc, struct virtq_avail *av
 #define VIRTIO_GPU_DESKTOP_RESOURCE 7
 #define VIRTIO_GPU_FORMAT_R8G8B8X8_UNORM 134
 static int gpu_desktop_resource_ready;
-int aiueos_gpu_present_desktop(uint64_t address, uint32_t width, uint32_t height,
-                               uint32_t stride, uint32_t pixel_format) {
+/* ADR-0242: the transfer and the flush carry the rectangle the caller names
+   -- the damage Kotoba browser-damage answered -- and the transfer's offset
+   is that rectangle's first byte in the backing, as virtio-gpu reads a
+   sub-rectangle row by row from offset + row * stride. A resource created by
+   this call is sent whole whatever the rectangle: the host has nothing of it
+   yet. */
+int aiueos_gpu_present_desktop_rect(uint64_t address, uint32_t width, uint32_t height,
+                                    uint32_t stride, uint32_t pixel_format,
+                                    uint32_t rx, uint32_t ry, uint32_t rw, uint32_t rh) {
   struct virtio_gpu_ctrl_header *resp;
   struct virtio_gpu_rect all;
   if (!gpu_ctrlq_ready || !address || stride != width ||
       width != gpu_scanout_width || height != gpu_scanout_height) return 0;
+  if (!rw || !rh || rx >= width || ry >= height || rw > width - rx || rh > height - ry) return 0;
   resp = (void *)(gpu_ctrlq_messages + 2048);
   all = (struct virtio_gpu_rect){0, 0, width, height};
+  if (!gpu_desktop_resource_ready) { rx = 0; ry = 0; rw = width; rh = height; }
   if (!gpu_desktop_resource_ready) {
     struct virtio_gpu_resource_create_2d *c2d = (void *)gpu_ctrlq_messages;
     gpu_zero(c2d, sizeof(*c2d));
@@ -1844,8 +1853,8 @@ int aiueos_gpu_present_desktop(uint64_t address, uint32_t width, uint32_t height
   struct virtio_gpu_transfer_to_host_2d *xfer = (void *)gpu_ctrlq_messages;
   gpu_zero(xfer, sizeof(*xfer));
   xfer->header.type = VIRTIO_GPU_CMD_TRANSFER_TO_HOST_2D;
-  xfer->r = all;
-  xfer->offset = 0;
+  xfer->r = (struct virtio_gpu_rect){rx, ry, rw, rh};
+  xfer->offset = ((uint64_t)ry * stride + rx) * 4U;
   xfer->resource_id = VIRTIO_GPU_DESKTOP_RESOURCE;
   if (!gpu_ctrl(gpu_ctrlq_desc, gpu_ctrlq_avail, gpu_ctrlq_used, gpu_ctrlq_doorbell,
                 &gpu_ctrlq_submitted, xfer, sizeof(*xfer), resp, 64,
@@ -1853,11 +1862,17 @@ int aiueos_gpu_present_desktop(uint64_t address, uint32_t width, uint32_t height
   struct virtio_gpu_resource_flush *flush = (void *)gpu_ctrlq_messages;
   gpu_zero(flush, sizeof(*flush));
   flush->header.type = VIRTIO_GPU_CMD_RESOURCE_FLUSH;
-  flush->r = all;
+  flush->r = (struct virtio_gpu_rect){rx, ry, rw, rh};
   flush->resource_id = VIRTIO_GPU_DESKTOP_RESOURCE;
   return gpu_ctrl(gpu_ctrlq_desc, gpu_ctrlq_avail, gpu_ctrlq_used, gpu_ctrlq_doorbell,
                   &gpu_ctrlq_submitted, flush, sizeof(*flush), resp, 64,
                   VIRTIO_GPU_RESP_OK_NODATA);
+}
+
+int aiueos_gpu_present_desktop(uint64_t address, uint32_t width, uint32_t height,
+                               uint32_t stride, uint32_t pixel_format) {
+  return aiueos_gpu_present_desktop_rect(address, width, height, stride, pixel_format,
+                                         0, 0, width, height);
 }
 
 /* Modern controlq: GET_DISPLAY_INFO, then a 32×32 2D create/attach/transfer/flush.

@@ -19,7 +19,7 @@
    "guest-browser-resize" "guest-browser-event-loop" "guest-browser-caret"
    "guest-browser-launch" "guest-browser-flow-parity" "guest-browser-dictionary"
    "guest-browser-cursor" "guest-browser-focus-cycle" "guest-browser-scroll"
-   "guest-browser-selection" "guest-browser-clipboard"])
+   "guest-browser-selection" "guest-browser-clipboard" "guest-browser-damage"])
 
 (defn gate-cmd
   "SPA-visible evidence command for a guest profile. Not clojure -M."
@@ -977,6 +977,79 @@
       {:green? false :exit 1 :reason :guest-browser-clipboard-absent
        :leftover [:guest-browser-clipboard-absent]})))
 
+;; Guest browser damage (ADR-0242): every show of the desktop sends only the
+;; rectangle Kotoba browser-damage answers for the list just painted. After
+;; the clipboard the host moves the tablet to (320, 310) -- the arrow alone
+;; moves -- then sends Alt down, Tab down (Alt+Tab raises window 1), Tab up and
+;; Alt up. After each, the kernel sends the damage and prints it (FRAME), the
+;; host screendumps the display and presses F12, the kernel sends the whole
+;; screen (FULL) and the host screendumps it again. Green needs the clipboard
+;; stage's OK line, the GO line, five FRAME lines whose rectangles are the
+;; frame model's (300,300,32,22 / nothing / 80,80,520,360 / nothing /
+;; nothing), five FULL lines, a RUN line with no refusal, the OK line, and
+;; `:damage-shots` -- the ten screendumps, read by compositor-guest.cljk --
+;; showing each damage screendump byte-identical to the whole-screen one
+;; after it, all written by this boot, and the raise visible (frame 3's
+;; screen is not frame 1's). Shots that are missing or older than the boot are
+;; exit 3: the display was not measured, which is not a pass.
+
+(def ^:private clipboard-ok-re
+  #"(?m)^AIUEOS_GUEST_BROWSER_CLIPBOARD_OK events=22 requests=4 admitted=3 refused=1 copied=3 pasted=3,3 clip=3 body=51 focus=4 chain=9098b95f sel-chain=356612c5 ops=169 text-px=1080 hash=76577905")
+
+(def damage-rects
+  "The frame model's damage for the stage's five frames (x,y,w,h; 0,0,0,0 is
+  nothing sent)."
+  ["300,300,32,22" "0,0,0,0" "80,80,520,360" "0,0,0,0" "0,0,0,0"])
+
+(defn damage-shots-verdict
+  "What the stage's ten screendumps say. `shots` is five maps, frame 1..5:
+  {:damage {:fresh? :header-ok? :digest} :full {...}} (nil for a file that is
+  not there). :unmeasured when any is missing, stale or not a 1280 x 800 P6;
+  :differs when a damage screendump is not its whole-screen one; :still when
+  the raise did not change the screen; else :identical."
+  [shots]
+  (let [ok? (fn [x] (and x (:fresh? x) (:header-ok? x) (:digest x)))]
+    (cond
+      (not (and (= 5 (count shots)) (every? #(and (ok? (:damage %)) (ok? (:full %))) shots)))
+      :unmeasured
+      (not (every? #(= (:digest (:damage %)) (:digest (:full %))) shots)) :differs
+      (= (:digest (:full (nth shots 0))) (:digest (:full (nth shots 2)))) :still
+      :else :identical)))
+
+(defn guest-browser-damage-result
+  [{:keys [serial qemu-unmeasured? damage-shots] :as opts}]
+  (let [s (or serial "")
+        go (re-find #"(?m)^AIUEOS_GUEST_BROWSER_DAMAGE_GO events=5" s)
+        rects (vec (map second (re-seq #"(?m)^AIUEOS_GUEST_BROWSER_DAMAGE_FRAME n=\d+ .* damage=(\d+,\d+,\d+,\d+) " s)))
+        fulls (set (map second (re-seq #"(?m)^AIUEOS_GUEST_BROWSER_DAMAGE_FULL n=(\d+) shown=whole" s)))
+        run (re-find #"(?m)^AIUEOS_GUEST_BROWSER_DAMAGE_RUN shows=\d+ partial=\d+ empty=\d+ whole=\d+ refused=0 " s)
+        ok (re-find #"(?m)^AIUEOS_GUEST_BROWSER_DAMAGE_OK events=5 partial=2 empty=3 bytes=751616 whole-bytes=20480000 focus=1 chain=6653b143 ops=170 text-px=2330 hash=5581e21a" s)
+        shots (when ok (damage-shots-verdict damage-shots))]
+    (cond
+      qemu-unmeasured? {:green? false :exit 3 :reason :unmeasured :leftover [:unmeasured]}
+      (not (re-find clipboard-ok-re s))
+      (let [r (guest-browser-clipboard-result opts)]
+        (assoc r :reason :no-clipboard :leftover (into [:no-clipboard] (:leftover r))))
+      (and ok (not (and go run (= rects damage-rects) (= fulls #{"1" "2" "3" "4" "5"}))))
+      {:green? false :exit 1 :reason :damage-lines-missing :leftover [:damage-lines-missing]}
+      (= shots :unmeasured)
+      {:green? false :exit 3 :reason :display-unmeasured :leftover [:display-unmeasured]}
+      (= shots :differs)
+      {:green? false :exit 1 :reason :display-differs :leftover [:display-differs]}
+      (= shots :still)
+      {:green? false :exit 1 :reason :display-still :leftover [:display-still]}
+      (= shots :identical)
+      {:green? true :exit 0 :reason :guest-browser-damage
+       :leftover [:one-rectangle-per-frame :slot-by-slot-not-smallest :no-vsync-or-fence
+                  :tcg-only]}
+      (re-find #"(?m)^AIUEOS_GUEST_BROWSER_DAMAGE leftover=events-missing" s)
+      {:green? false :exit 1 :reason :events-missing :leftover [:events-missing]}
+      (re-find #"(?m)^AIUEOS_GUEST_BROWSER_DAMAGE leftover=damage-miss" s)
+      {:green? false :exit 1 :reason :damage-miss :leftover [:damage-miss]}
+      :else
+      {:green? false :exit 1 :reason :guest-browser-damage-absent
+       :leftover [:guest-browser-damage-absent]})))
+
 ;; Guest browser body flow (ADR-0234): the kernel lays out a four-window
 ;; surface of its own and prints its whole op list (AIUEOS_GUEST_BROWSER_FLOW_OPS
 ;; n=<ops> words=<kind x y a b rgb per op, 8 hex digits each>). Each window's
@@ -1101,6 +1174,9 @@
     ;; ADR-0241: the clipboard's twenty-two frames come after the selection.
     "guest-browser-clipboard" {"AIUEOS_GUEST_BROWSER" "1"
                                "AIUEOS_QEMU_TIMEOUT" "3000"}
+    ;; ADR-0242: the damage stage's five frames come after the clipboard.
+    "guest-browser-damage" {"AIUEOS_GUEST_BROWSER" "1"
+                            "AIUEOS_QEMU_TIMEOUT" "3300"}
     "guest-scanout-two" {"AIUEOS_GUEST_SCANOUT_TWO" "1"
                          "AIUEOS_QEMU_TIMEOUT" "90"}
     nil))
@@ -1135,6 +1211,7 @@
     "guest-browser-scroll" (guest-browser-scroll-result opts)
     "guest-browser-selection" (guest-browser-selection-result opts)
     "guest-browser-clipboard" (guest-browser-clipboard-result opts)
+    "guest-browser-damage" (guest-browser-damage-result opts)
     {:green? false :exit 3 :reason :unmeasured :leftover [:unmeasured]}))
 
 (defn serial-marker
@@ -1167,6 +1244,7 @@
     "guest-browser-scroll" "AIUEOS_GUEST_BROWSER_SCROLL"
     "guest-browser-selection" "AIUEOS_GUEST_BROWSER_SELECTION"
     "guest-browser-clipboard" "AIUEOS_GUEST_BROWSER_CLIPBOARD"
+    "guest-browser-damage" "AIUEOS_GUEST_BROWSER_DAMAGE"
     nil))
 
 (defn ok-print
@@ -1199,4 +1277,5 @@
     "guest-browser-scroll" "AIUEOS_COMPOSITOR_GUEST_BROWSER_SCROLL_OK"
     "guest-browser-selection" "AIUEOS_COMPOSITOR_GUEST_BROWSER_SELECTION_OK"
     "guest-browser-clipboard" "AIUEOS_COMPOSITOR_GUEST_BROWSER_CLIPBOARD_OK"
+    "guest-browser-damage" "AIUEOS_COMPOSITOR_GUEST_BROWSER_DAMAGE_OK"
     nil))

@@ -522,6 +522,66 @@
                        :selection (if (pos? k) [4 k] [0 0]))])
           clipboard-keys)))
 
+;; ADR-0242: damage. After the clipboard (window 4 focused and on top, the
+;; pointer at (300, 300)) the host moves the tablet to (320, 310) -- only the
+;; arrow moves --, then Alt down, Tab down (Alt+Tab raises window 1 from the
+;; bottom: [1 3 2 4] -> [3 2 4 1], focus 1), Tab up and Alt up, which draw
+;; nothing new. After each, the kernel sends only the damage, then (the host's
+;; F12) the whole screen.
+(def damage-frames
+  (let [shell4 (assoc shell :apps 15 :titles (assoc (:titles shell) 4 (:title w4)))
+        w4c (assoc w4 :scroll 100 :body (into (vec (drop-last 2 (:body w4))) [49 57 10]))
+        at (fn [focus stack pointer] (assoc shell4 :focus focus :stack stack :pointer pointer
+                                            :selection [0 0]))
+        before (at 4 [w1k w3y w2l w4c] [300 300])
+        moved (at 4 [w1k w3y w2l w4c] [320 310])
+        raised (at 1 [w3y w2l w4c w1k] [320 310])]
+    {:before before
+     :frames [["move" moved] ["alt" moved] ["tab" raised] ["tab-up" raised] ["alt-up" raised]]}))
+
+(defn- op-box
+  "The pixels an op can set: a rect's own, a glyph's width x 16."
+  [[k x y a b]]
+  (if (= k :rect) [x y (+ x a) (+ y b)] [x y (+ x b) (+ y 16)]))
+
+(defn damage
+  "The rectangle a present sends after `prev` when `cur` is painted: the
+  bounding box of every op, in either list, at a position where the two
+  lists differ; the whole viewport after no list; nothing when they are the
+  same. Written from the rule in ADR-0242, not from browser-damage.kotoba."
+  [prev cur vw vh]
+  (if (nil? prev)
+    {:d (count cur) :rect [0 0 vw vh]}
+    (let [js (filter #(not= (get prev %) (get cur %)) (range (max (count prev) (count cur))))
+          boxes (for [j js o [(get prev j) (get cur j)] :when o] (op-box o))]
+      (if (empty? js)
+        {:d 0 :rect [0 0 0 0]}
+        (let [x0 (apply min (map #(nth % 0) boxes)) y0 (apply min (map #(nth % 1) boxes))
+              x1 (min vw (apply max (map #(nth % 2) boxes))) y1 (min vh (apply max (map #(nth % 3) boxes)))]
+          {:d (count js) :rect [x0 y0 (- x1 x0) (- y1 y0)]})))))
+
+(defn- paint
+  "The colour of every pixel after painting `ops` over black, as
+  aiueos_desktop_present_ops2 paints them."
+  [ops vw vh]
+  (let [px (js/Uint32Array. (* vw vh))]
+    (doseq [[k x y a b c] ops]
+      (if (= k :rect)
+        (doseq [yy (range y (+ y b))] (.fill px c (+ (* yy vw) x) (+ (* yy vw) x a)))
+        (doseq [[dx dy] (bits a) :when (< dx b)] (aset px (+ (* (+ y dy) vw) x dx) ink))))
+    px))
+
+(defn pixel-box
+  "The bounding box of the pixels that actually differ between two painted
+  lists, [x y w h], or nil -- what `damage` must contain."
+  [prev cur vw vh]
+  (let [a (paint prev vw vh) b (paint cur vw vh)
+        hits (filter #(not= (aget a %) (aget b %)) (range (* vw vh)))]
+    (when (seq hits)
+      (let [xs (map #(mod % vw) hits) ys (map #(quot % vw) hits)
+            x0 (apply min xs) y0 (apply min ys)]
+        [x0 y0 (- (inc (apply max xs)) x0) (- (inc (apply max ys)) y0)]))))
+
 ;; ADR-0234: the flow-parity frame. After everything above, the kernel lays
 ;; out this surface on a surface of its own (no tablet needed): four windows
 ;; whose bodies take each of cssom's rules -- packing by words with space runs,
@@ -754,6 +814,30 @@
                   " chain=" (chain (map #(js/parseInt (:hash %) 16) cs))
                   " sel-chain=" (chain (map #(js/parseInt (:hash (:sel %)) 16) cs))
                   " last-px=" (:text-px (peek cs)) " last-hash=" (:hash (peek cs)))))
+  (let [{:keys [before frames]} damage-frames
+        rows (loop [prev (frame before) [[ev scene] & more] frames i 1 out []]
+               (if-not ev
+                 out
+                 (let [ops (frame scene)
+                       c (census ops)
+                       {:keys [d rect]} (damage prev ops 1280 800)
+                       pb (pixel-box prev ops 1280 800)
+                       [x y w h] rect
+                       inside? (or (nil? pb)
+                                   (let [[px py pw ph] pb]
+                                     (and (<= x px) (<= y py) (<= (+ px pw) (+ x w)) (<= (+ py ph) (+ y h)))))]
+                   (println (str "damage-frame n=" i " " ev " focus=" (:focus scene)
+                                 " ops=" (:ops c) " text-px=" (:text-px c) " hash=" (:hash c)
+                                 " slots=" d " damage=" (apply str (interpose "," rect))
+                                 " bytes=" (* 4 w h)
+                                 " pixels=" (if pb (apply str (interpose "," pb)) "none")
+                                 (if inside? "" " PIXELS-OUTSIDE-DAMAGE")))
+                   (recur ops more (inc i) (conj out (assoc c :rect rect :inside? inside?))))))]
+    (println (str "damage frames=" (count rows) " ops=" (apply str (interpose "," (map :ops rows)))
+                  " chain=" (chain (map #(js/parseInt (:hash %) 16) rows))
+                  " bytes=" (reduce + (map (fn [{[_ _ w h] :rect}] (* 4 w h)) rows))
+                  " full-bytes=" (* (count rows) 4 1280 800)))
+    (when-not (every? :inside? rows) (.exit js/process 1)))
   (let [ops (frame flow-scene)
         c (census ops)]
     (println (str "flow ops=" (:ops c) " text-px=" (:text-px c) " hash=" (:hash c)
