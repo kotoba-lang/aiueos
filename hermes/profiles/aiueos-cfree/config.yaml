@@ -48,9 +48,9 @@ providers:
       qwen3.8-flash-next-whitehacker:
         context_length: 131072
 fallback_providers:
-- provider: openrouter-free
-  model: z-ai/glm-5.3-flash
-  base_url: https://openrouter.ai/api/v1
+  - provider: openrouter-free
+    model: z-ai/glm-5.3-flash
+    base_url: https://openrouter.ai/api/v1
 web:
   backend: nous
 browser:
@@ -110,18 +110,18 @@ moa:
   presets:
     default:
       reference_models:
-      - provider: kotoba
-        model: qwen3.8-27b-whitehacker
-        enabled: true
+        - provider: kotoba
+          model: qwen3.8-27b-whitehacker
+          enabled: true
       aggregator:
         provider: opencode-free
         model: deepseek-v4-flash-free
       degraded_reference_policy: loud
       fanout: user_turn
   reference_models:
-  - provider: kotoba
-    model: qwen3.8-27b-whitehacker
-    enabled: true
+    - provider: kotoba
+      model: qwen3.8-27b-whitehacker
+      enabled: true
   aggregator:
     provider: opencode-free
     model: deepseek-v4-flash-free
@@ -131,7 +131,7 @@ moa:
   enabled: true
 plugins:
   enabled: []
-_config_version: 45
+_config_version: 46
 image_gen:
   provider: nous
 agent:
@@ -143,3 +143,5 @@ agent:
 cron:
   bot_chat_delivery_timeout_seconds: 900
   max_parallel_jobs: 12
+gateway:
+  cron_only: true
