@@ -20,7 +20,7 @@
       "script": "handoff_gate.sh",
       "skill": null,
       "skills": [],
-      "workdir": "~/github/com-junkawasaki"
+      "workdir": null
     }
   ]
 }
