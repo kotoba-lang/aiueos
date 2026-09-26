@@ -825,29 +825,81 @@ source rather than here.
     `amu compile os/aiueos/kotoba/qwen35-matvec.kotoba --source-path
     os/aiueos/kotoba --unpinned --target x86_64-aiueos-kernel-v1`, then
     `objdump -d` shows `cpuid`, `xgetbv`, `vmulps %ymm…` and `vzeroupper`.
-    The contract `qwen35-matvec-v1.edn` passes in the KIR oracle for its
-    24 vectors that do not read an IQ codebook grid (f32, Q8_0, Q2_K,
-    Q4_K, Q5_K, Q6_K and every refusal; 7 output regions bit-exact
-    against the C `matvec_range`). Shortening the dot by eight elements
-    turns it red with `memory mismatch` on `f32-4x16`. The six IQ
-    vectors trap `:rodata-address-unavailable` on `bytes-literal`, and
-    they trap the same way at the previous commit, whose object is
-    unchanged by this. So the oracle cannot run the grid types right now.
-    That is a separate open fault, and it is not caused by this change.
-    Under QEMU TCG `-cpu max` (`AIUEOS_QWEN35_KOTOBA_PARITY=1
+    Shortening the dot by eight elements turned the contract red with
+    `memory mismatch` on `f32-4x16`. Under QEMU TCG `-cpu max` (`AIUEOS_QWEN35_KOTOBA_PARITY=1
     smoke-qemu-uefi.sh`), the serial log reads `QWEN-PARITY matvec ok`
     over all fifteen types. `smoke-qemu-uefi.sh` does not grep that line,
     so read `build/aiueos/kernel-serial.log`. Which arm the guard took on
     that CPU is not observed directly, because both arms answer the same
     bits.
 
+    **PTQ1_0 rows never become f32 (2026-09-26).** For type 143 with
+    `cols <= 16384` the live matvec calls `kernel-dequant-dot-ptq1-0`
+    on the packed row and the input directly; every other type and width
+    keeps dequant-then-`dot-row`. The fused op is the same weights the
+    shared core writes, folded by `kernel-dot-f32`'s tree, so the answer
+    is the materialising path's to the bit. The chain it took: grammar
+    `b70bb39e` (kotoba-lang, kotoba-sema frontend arity 5 / bases [0 2]),
+    kotoba-gmir ADR 0031 (28 bytes, 128 elements, limit 128 blocks),
+    kotoba-mir, kotoba-codegen, kotoba-verifier, osaho ADR 0272 (the
+    oracle), kotoba-native ADR 0088 (the x86-64 arms; AArch64 refuses
+    with Q4_K's `:x86-simd-target-mismatch`), and amu's pins (amu #1179,
+    merged as `faf7bc25`; the object's receipt records that revision).
+    - Oracle: `cfree-wave-3-contracts` passes `qwen35-matvec-v1.edn` with
+      31 vectors, 0 traps, 14 memory assertions, every reachable reason
+      observed. The new vector `ptq1-0-3x384` (3 rows of 3 blocks,
+      negative scales) takes its expected output from an independent
+      binary32 reference of Prism's `dequantize_row_ptq1_0` loops plus
+      `dot_scalar`'s tree. A left-to-right sum answers differently in all
+      three rows. Making the fused call drop its row's last block turns
+      exactly that vector red with `memory mismatch` on `:output`. The
+      six IQ vectors pass too. They trapped `:rodata-address-unavailable`
+      while a transitive `kotoba-kir` (1e00f830, whose `kotoba/kir.cljc`
+      precedes osaho's `kir.cljk` in `kbb -Spath -M:verify-admissions`)
+      shadowed osaho, so the task puts osaho's paths first and fails when
+      none resolve. The runner now passes osaho's `:frames` budget at the
+      ceiling (its default of 32 is sized for bin/amu's 4 MB stack; this
+      runner has 64 MB and reports `:host/stack-exhausted` by name).
+    - Both arms, executed: `run-task bonsai-ptq1-fused-arms` with
+      `PTQ1_AVX2_HOST=gad` compiles `native/dequant-ptq1-arms.kotoba`
+      (`--target x86_64-linux`) and runs it through amu's
+      `tools/kexe_loader.c`: the scalar arm under Rosetta 2, which
+      exposes no AVX, and the AVX2 arm on gad (AMD Ryzen AI MAX+ 395).
+      Both answer `C88A9DFA`, which is kotoba.kir's answer. The three
+      nearest wrong answers are `C88A9DFD` (upper half first),
+      `C88A9DF9` (left to right) and `C88AA001` (qh at the wrong digit).
+      Which machine ran which arm is tested, not assumed. Breaking the
+      AVX2 arm's `>> 8` moves only gad's answer, and breaking the scalar
+      arm's `sub rax,1` moves only Rosetta's. Without a host the task
+      exits 2 (AVX2 not exercised).
+    - Objects: `qwen35-matvec.o` is 58,416 bytes (48,000 before). The
+      new amu compiles the unchanged `qwen35-dequant-row` and the
+      previous matvec source byte-identically to their committed
+      objects, so the diff comes from the source alone.
+      `reproduce-kotoba-objects.cljk --amu <amu at faf7bc25> --objects
+      qwen35-matvec.o` reproduces it (match). Under QEMU
+      (`AIUEOS_QWEN35_KOTOBA_PARITY=1 smoke-qemu-uefi.sh`) this object
+      boots and `kernel-serial.log` reads `QWEN-PARITY matvec ok`. That
+      grades the fifteen C-twinned types through the new object, and not
+      the fused PTQ1_0 path (see below).
+
     **Not done, and not measured:**
-    - The row is still dequantised to f32 in memory by the scalar shared
-      core before the dot. PTQ1_0 has no fused
-      `kernel-dequant-dot-ptq1-0`, and that is where the ternary shape
-      would pay.
+    - **A 17,408-column row cannot be computed by the live matvec,
+      whatever its type.** `dot-row` hands `kernel-dot-f32` a
+      69,632-byte region, and the family's 65,536-byte ceiling traps it
+      (`:length-above-profile-maximum`, measured in the oracle
+      2026-09-26; 16,384 answers). That is Bonsai's `ffn_down` (and
+      Qwen's). Two calls would be a different accumulation tree. The
+      fused PTQ1_0 path has the same 16,384 ceiling, and wider rows
+      keep the materialising path that traps.
+    - QEMU: the K-quant probe route (`--artifact image` for
+      `x86_64-aiueos-kernel-v1`) left with amu's JVM route on
+      2026-09-11, so there is no in-kernel boot of the fused PTQ1_0
+      instruction. `QWEN-PARITY` cannot grade PTQ1_0 anyway (no C twin).
     - NEON: `a64-kernel-dot-f32` exists, and the K16 is x86-64.
-    - The rate. No tok/s has been measured on any CPU for this object.
+      PTQ1_0 has no AArch64 arm.
+    - The rate. No tok/s has been measured on any CPU for this object,
+      fused or not.
 12. **The SMP split stays C until `smp.c` moves** (ADR-0220 layer 3–5).
     Each half already calls the matvec object with its own row range and
     scratch (ADR-0221); the object does not change when the split does.

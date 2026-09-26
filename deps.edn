@@ -274,10 +274,10 @@
                  ;; oracle with `kernel-region-provenance`.
                  io.github.kotoba-lang/kotoba-sema
                  {:git/url "https://github.com/kotoba-lang/kotoba-sema.git"
-                  :git/sha "b8b01d0980f7e6e10a67b5ec7a54f68dc844eb6b"}
+                  :git/sha "5db8d90f5f5ff998cacc250464fc520a1ea3124e"}
                  io.github.kotoba-lang/osaho
                  {:git/url "https://github.com/kotoba-lang/osaho.git"
-                  :git/sha "7dfafd78aa38819555b294c749e54f67b57799bf"}}}
+                  :git/sha "1bb61f3d5616dcf638915c24236669a1ece7250d"}}}
 
    :tcb-check {:main-opts ["-m" "aiueos.tcb"]}
 
