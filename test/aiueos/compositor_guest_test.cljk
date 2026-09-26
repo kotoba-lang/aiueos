@@ -802,3 +802,88 @@
     (is (= 3 (:exit (guest/classify "guest-browser-clipboard" {:qemu-unmeasured? true})))))
   (testing "tablet profile, with the selection's wall clock and more"
     (is (= {"AIUEOS_GUEST_BROWSER" "1" "AIUEOS_QEMU_TIMEOUT" "3000"} (guest/extra-env "guest-browser-clipboard")))))
+
+;; Guest browser damage (ADR-0242). The lines are the serial of the first boot
+;; of these sources to reach the stage (QEMU tcg + OVMF, 2026-09-26); their
+;; rectangles and censuses are the frame model's damage frames.
+
+(def ^:private damage-lines
+  (str
+       "AIUEOS_GUEST_BROWSER_DAMAGE_GO events=5\r\n"
+       "AIUEOS_GUEST_BROWSER_DAMAGE_FRAME n=1 src=3 key=0 answer=0 focus=4 ops=169 text-px=1080 hash=362c4193 damage=300,300,32,22 bytes=2816\r\n"
+       "AIUEOS_GUEST_BROWSER_DAMAGE_FULL n=1 shown=whole\r\n"
+       "AIUEOS_GUEST_BROWSER_DAMAGE_FRAME n=2 src=0 key=225 answer=0 focus=4 ops=169 text-px=1080 hash=362c4193 damage=0,0,0,0 bytes=0\r\n"
+       "AIUEOS_GUEST_BROWSER_DAMAGE_FULL n=2 shown=whole\r\n"
+       "AIUEOS_GUEST_BROWSER_DAMAGE_FRAME n=3 src=0 key=61 answer=1 focus=1 ops=170 text-px=2330 hash=5581e21a damage=80,80,520,360 bytes=748800\r\n"
+       "AIUEOS_GUEST_BROWSER_DAMAGE_FULL n=3 shown=whole\r\n"
+       "AIUEOS_GUEST_BROWSER_DAMAGE_FRAME n=4 src=0 key=60 answer=0 focus=1 ops=170 text-px=2330 hash=5581e21a damage=0,0,0,0 bytes=0\r\n"
+       "AIUEOS_GUEST_BROWSER_DAMAGE_FULL n=4 shown=whole\r\n"
+       "AIUEOS_GUEST_BROWSER_DAMAGE_FRAME n=5 src=0 key=224 answer=0 focus=1 ops=170 text-px=2330 hash=5581e21a damage=0,0,0,0 bytes=0\r\n"
+       "AIUEOS_GUEST_BROWSER_DAMAGE_FULL n=5 shown=whole\r\n"
+       "AIUEOS_GUEST_BROWSER_DAMAGE_RUN shows=110 partial=66 empty=43 whole=1 refused=0 bytes=34076936 whole-bytes=450560000\r\n"))
+
+(def ^:private damage-ok
+  "AIUEOS_GUEST_BROWSER_DAMAGE_OK events=5 partial=2 empty=3 bytes=751616 whole-bytes=20480000 focus=1 chain=6653b143 ops=170 text-px=2330 hash=5581e21a\r\n")
+
+(defn- shots
+  "Five frames' screendumps: damage digest = whole-screen digest unless
+  `differs`, frame 3 onward raised unless `still`."
+  [& {:keys [differs still stale]}]
+  (mapv (fn [n]
+          (let [d (if (and (not still) (>= n 3)) "17ef" "f91a")
+                s {:fresh? (not= n stale) :header-ok? true :digest d}]
+            {:damage (if (= n differs) (assoc s :digest "aa2f") s) :full s}))
+        (range 1 6)))
+
+(defn- damage-serial [& more]
+  (apply str cursor-ok-line focus-ok scroll-lines scroll-ok selection-lines selection-ok
+         clipboard-lines clipboard-ok more))
+
+(deftest guest-browser-damage-classifier
+  (testing "five frames, their rectangles, every damage screendump its whole screen: green"
+    (let [r (guest/classify "guest-browser-damage"
+                            {:serial (damage-serial damage-lines damage-ok) :damage-shots (shots)})]
+      (is (= :guest-browser-damage (:reason r)))
+      (is (= 0 (:exit r)))
+      (is (= [:one-rectangle-per-frame :slot-by-slot-not-smallest :no-vsync-or-fence :tcg-only]
+             (:leftover r)))))
+  (testing "the damage needs the clipboard stage first"
+    (is (= :no-clipboard
+           (:reason (guest/classify "guest-browser-damage"
+                                    {:serial (str cursor-ok-line focus-ok scroll-lines scroll-ok selection-lines selection-ok
+                                                  damage-lines damage-ok)
+                                     :damage-shots (shots)})))))
+  (testing "a damage screendump that is not its whole screen is red, by name (h - 1 transferred)"
+    (is (= :display-differs
+           (:reason (guest/classify "guest-browser-damage"
+                                    {:serial (damage-serial damage-lines damage-ok) :damage-shots (shots :differs 3)})))))
+  (testing "a raise the display never showed is red"
+    (is (= :display-still
+           (:reason (guest/classify "guest-browser-damage"
+                                    {:serial (damage-serial damage-lines damage-ok) :damage-shots (shots :still true)})))))
+  (testing "a screendump older than the boot is not measured, not a pass"
+    (let [r (guest/classify "guest-browser-damage"
+                            {:serial (damage-serial damage-lines damage-ok) :damage-shots (shots :stale 4)})]
+      (is (= :display-unmeasured (:reason r)))
+      (is (= 3 (:exit r)))))
+  (testing "no screendumps at all is not measured"
+    (is (= 3 (:exit (guest/classify "guest-browser-damage"
+                                    {:serial (damage-serial damage-lines damage-ok) :damage-shots nil})))))
+  (testing "a rectangle that is not the model's is not green"
+    (is (= :damage-lines-missing
+           (:reason (guest/classify "guest-browser-damage"
+                                    {:serial (damage-serial (.replace damage-lines "damage=80,80,520,360" "damage=0,0,1280,800")
+                                                            damage-ok)
+                                     :damage-shots (shots)})))))
+  (testing "an OK line naming different bytes is not green"
+    (is (= :guest-browser-damage-absent
+           (:reason (guest/classify "guest-browser-damage"
+                                    {:serial (damage-serial damage-lines (.replace damage-ok "bytes=751616" "bytes=20480000"))
+                                     :damage-shots (shots)})))))
+  (testing "the clipboard's OK line alone is not the damage"
+    (is (= :guest-browser-damage-absent
+           (:reason (guest/classify "guest-browser-damage" {:serial (damage-serial) :damage-shots (shots)})))))
+  (testing "unanswered QEMU is exit 3"
+    (is (= 3 (:exit (guest/classify "guest-browser-damage" {:qemu-unmeasured? true})))))
+  (testing "tablet profile, with the clipboard's wall clock and more"
+    (is (= {"AIUEOS_GUEST_BROWSER" "1" "AIUEOS_QEMU_TIMEOUT" "3300"} (guest/extra-env "guest-browser-damage")))))

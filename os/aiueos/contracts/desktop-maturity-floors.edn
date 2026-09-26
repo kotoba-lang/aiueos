@@ -116,7 +116,7 @@
   {:id :clipboard :gate "guest-browser-clipboard" :adr "0241"
    :goal "Ctrl+C copies the selection and Ctrl+V pastes it into the focused body only after the permission broker (broker-admit, ADR-0096) admits :clipboard; a refused grant pastes nothing"
    :why "browser.desktop-backend brokers clipboard; the kernel desktop has no path to it"}
-  {:id :damage-present :gate "guest-browser-damage"
+  {:id :damage-present :gate "guest-browser-damage" :adr "0242"
    :goal "a frame transfers and flushes only the rectangle that changed since the last one (virtio-gpu TRANSFER_TO_HOST_2D / RESOURCE_FLUSH with the damage rect), and the display is pixel-identical to a full present"
    :why "every event re-sends 1280 x 800 x 4 bytes"}
   {:id :p5 :gate nil :needs-a-human "a real machine with an aiueos image; QEMU is not P5"

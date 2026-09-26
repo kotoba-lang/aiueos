@@ -41,6 +41,16 @@ static struct aiueos_desktop_surface desktop_surface;
 static int desktop_surface_ready;
 static volatile uint32_t *desktop_surface_pixels;
 static int inference_screen_initialized;
+/* ADR-0242: the last draw list aiueos_desktop_present_ops2 painted, the
+   generation it made and the one it painted over, the generation last sent
+   to the display, and the shadow Kotoba browser-damage keeps the previous
+   list in (its layout is the object's header). */
+static const uint32_t *desktop_list_ops;
+static uint64_t desktop_list_count, desktop_list_generation, desktop_list_base_generation;
+static uint64_t desktop_shown_generation;
+static uint32_t desktop_shadow[2048] __attribute__((aligned(16)));
+static uint32_t desktop_damage_last[4], desktop_damage_counts[5];
+static uint64_t desktop_damage_bytes;
 int aiueos_desktop_surface_ready(void) { return desktop_surface_ready; }
 const struct aiueos_desktop_surface *aiueos_desktop_surface(void) {
   return desktop_surface_ready ? &desktop_surface : 0;
@@ -533,6 +543,7 @@ int aiueos_desktop_present_ops2(const uint32_t *ops, uint64_t count,
       }
     }
   }
+  desktop_list_base_generation = desktop_surface.generation;
   desktop_surface.generation += 1;
   desktop_surface.content_hash =
     sample_hash(desktop_surface_pixels, desktop_surface.width,
@@ -541,19 +552,97 @@ int aiueos_desktop_present_ops2(const uint32_t *ops, uint64_t count,
   desktop_surface.damage_y = 0;
   desktop_surface.damage_width = desktop_surface.width;
   desktop_surface.damage_height = desktop_surface.height;
+  desktop_list_ops = ops;
+  desktop_list_count = count;
+  desktop_list_generation = desktop_surface.generation;
   return 1;
 }
 
 /* Put what is in the framebuffer on the real display (ADR-0224): see
-   aiueos_gpu_present_desktop in pci.c. 1 shown, 0 not (no controlq, a
-   stride wider than the width, or a scanout of another size). */
-extern int aiueos_gpu_present_desktop(uint64_t address, uint32_t width, uint32_t height,
-                                      uint32_t stride, uint32_t pixel_format);
+   aiueos_gpu_present_desktop_rect in pci.c. 1 shown (or nothing to show),
+   0 not (no controlq, a stride wider than the width, or a scanout of
+   another size).
+
+   ADR-0242: only the damage. When the framebuffer holds a list
+   aiueos_desktop_present_ops2 painted over exactly what was last sent, Kotoba
+   `kotoba_aiueos_browser_damage` compares that list with the last one it was
+   handed (kept in desktop_shadow) and answers the rectangle that can have
+   changed; this sends that rectangle, or nothing when it is empty. Anything
+   else -- a paint that was not such a list, a show with no new list, a list
+   painted over a frame that was never sent, a refusal, a failed transfer --
+   sends the whole screen and makes the next list compare against nothing.
+   C decides nothing about which pixels changed. */
+extern int aiueos_gpu_present_desktop_rect(uint64_t address, uint32_t width, uint32_t height,
+                                           uint32_t stride, uint32_t pixel_format,
+                                           uint32_t x, uint32_t y, uint32_t w, uint32_t h);
+extern int64_t kotoba_aiueos_browser_damage(uint64_t ops, uint64_t ops_bytes, uint64_t shadow,
+                                            uint64_t shadow_bytes, uint64_t count);
 int aiueos_desktop_show(void) {
+  uint32_t x = 0, y = 0, w, h;
+  int ok, listed;
   if (!desktop_surface_ready) return 0;
-  return aiueos_gpu_present_desktop((uint64_t)(uintptr_t)desktop_surface_pixels,
-                                    desktop_surface.width, desktop_surface.height,
-                                    desktop_surface.stride, desktop_surface.pixel_format);
+  w = desktop_surface.width;
+  h = desktop_surface.height;
+  listed = desktop_list_ops && desktop_list_generation == desktop_surface.generation;
+  if (!listed || desktop_list_base_generation != desktop_shown_generation)
+    desktop_shadow[0] = 0;
+  desktop_shadow[5] = desktop_surface.width;
+  desktop_shadow[6] = desktop_surface.height;
+  if (listed) {
+    int64_t d = (int64_t)kotoba_aiueos_browser_damage(
+      (uint64_t)(uintptr_t)desktop_list_ops, 261U * 24U,
+      (uint64_t)(uintptr_t)desktop_shadow, sizeof(desktop_shadow), desktop_list_count);
+    if (d < 0) {
+      desktop_damage_counts[4]++;
+      desktop_shadow[0] = 0;
+    } else {
+      x = desktop_shadow[1]; y = desktop_shadow[2];
+      w = desktop_shadow[3]; h = desktop_shadow[4];
+    }
+  }
+  desktop_list_ops = 0;
+  desktop_damage_last[0] = x; desktop_damage_last[1] = y;
+  desktop_damage_last[2] = w; desktop_damage_last[3] = h;
+  desktop_damage_counts[0]++;
+  if (!w || !h) {
+    desktop_damage_counts[2]++;
+    desktop_shown_generation = desktop_surface.generation;
+    return 1;
+  }
+  ok = aiueos_gpu_present_desktop_rect((uint64_t)(uintptr_t)desktop_surface_pixels,
+                                       desktop_surface.width, desktop_surface.height,
+                                       desktop_surface.stride, desktop_surface.pixel_format,
+                                       x, y, w, h);
+  if (!ok) {
+    desktop_shadow[0] = 0;
+    return 0;
+  }
+  desktop_damage_counts[(w == desktop_surface.width && h == desktop_surface.height) ? 3 : 1]++;
+  desktop_damage_bytes += (uint64_t)w * h * 4U;
+  desktop_shown_generation = desktop_surface.generation;
+  return 1;
+}
+
+/* The whole screen, whatever changed (ADR-0242): what a damage present is
+   compared with. The list the shadow holds is still the framebuffer's, so
+   the shadow is kept. */
+int aiueos_desktop_show_full(void) {
+  if (!desktop_surface_ready) return 0;
+  return aiueos_gpu_present_desktop_rect((uint64_t)(uintptr_t)desktop_surface_pixels,
+                                         desktop_surface.width, desktop_surface.height,
+                                         desktop_surface.stride, desktop_surface.pixel_format,
+                                         0, 0, desktop_surface.width, desktop_surface.height);
+}
+
+/* The last show's rectangle (x y w h; w 0 when nothing was sent), and since
+   boot: shows, partial sends, empty shows, whole-screen sends, refusals, and
+   the bytes sent. */
+void aiueos_desktop_damage_last(uint32_t *out) {
+  for (int i = 0; i < 4; i++) out[i] = desktop_damage_last[i];
+}
+void aiueos_desktop_damage_counts(uint32_t *out, uint64_t *bytes) {
+  for (int i = 0; i < 5; i++) out[i] = desktop_damage_counts[i];
+  *bytes = desktop_damage_bytes;
 }
 
 /* FNV-1a over the positions of every pixel of one colour, in raster order

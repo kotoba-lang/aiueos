@@ -528,6 +528,10 @@ Expected `smoke` markers:
 
 ![window 4 after two admitted pastes: "19" twice at the end of the body, QEMU display](docs/assets/guest-browser-clipboard.png)
 
+`guest-browser-damage` exit 0 means that on the tablet boot every show of the desktop sent the display only the rectangle Kotoba `kotoba_aiueos_browser_damage` answered -- the bounding box of every op, in the list last sent or the one just painted, at a slot where the two differ; nothing when they are the same; the whole screen when there is no previous list -- through virtio-gpu TRANSFER_TO_HOST_2D and RESOURCE_FLUSH with that rectangle (`AIUEOS_GUEST_BROWSER_DAMAGE_RUN shows=110 partial=66 empty=43 whole=1 refused=0`: one whole-screen send in the whole boot, and the eighteen earlier browser classifiers exit 0 on the same serial); that after the clipboard the host moved the tablet to (320, 310) and sent Alt down, Tab down (Alt+Tab raises window 1), Tab up and Alt up, and the five `AIUEOS_GUEST_BROWSER_DAMAGE_FRAME` rectangles were `os/aiueos/scripts/browser-frame-model.cljk`'s (300,300,32,22 / none / 80,80,520,360 / none / none, 751,616 bytes where five whole presents are 20,480,000); that after each frame the host screendumped the display, pressed F12 so the kernel sent the whole screen, and screendumped again, and all five damage screendumps are byte-identical to their whole-screen ones, all written by this boot, with the raise visible (frame 3's screen is not frame 1's); and `AIUEOS_GUEST_BROWSER_DAMAGE_OK events=5 partial=2 empty=3 bytes=751616 whole-bytes=20480000 focus=1 chain=6653b143 ops=170 text-px=2330 hash=5581e21a`. Screendumps missing or older than the boot are exit 3 (the display was not measured). It does not mean the smallest rectangle (the box is slot by slot, so a raise sends the whole union of both windows), more than one rectangle per frame, vsync or fences, or hardware other than QEMU TCG.
+
+![frame 3's damage rectangle (80,80,520,360) after Alt+Tab raised window 1 over window 4, QEMU display](docs/assets/guest-browser-damage.png)
+
 ```bash
 kbb -M:compositor serve   # same SPA; compositor owns surfaces; Ctrl-C to stop
 ```

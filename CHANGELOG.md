@@ -5,6 +5,19 @@ All notable changes to **aiueos** are documented here. The format follows
 
 ## [Unreleased]
 
+### Guest browser desktop: a frame sends only the rectangle that changed (ADR-0242)
+- browser-damage.kotoba (`kotoba_aiueos_browser_damage`) compares the list just
+  painted with the previous one (kept in the caller's 8,192-byte shadow) and
+  answers the bounding box of every op at a slot where the two differ; nothing
+  when they are the same; the whole viewport after no list.
+- framebuffer.c / pci.c send that rectangle with virtio-gpu
+  TRANSFER_TO_HOST_2D / RESOURCE_FLUSH, or nothing; anything the object did not
+  answer for sends the whole screen.
+- Gate `guest-browser-damage` (tablet profile, 3300 s):
+  `AIUEOS_GUEST_BROWSER_DAMAGE_OK events=5 partial=2 empty=3 bytes=751616 whole-bytes=20480000 focus=1 chain=6653b143 ops=170 text-px=2330 hash=5581e21a`,
+  and every damage screendump byte-identical to the whole-screen one after it.
+  browser-damage-v1 24 vectors (browser-damage-oracle.cljk).
+
 ### Guest browser desktop: Ctrl+C / Ctrl+V through the permission broker (ADR-0241)
 - browser-ime.kotoba holds Ctrl (evdev 29 / 97) in surface word 2038. With it
   held, C over a selection answers 512 (a `:clipboard/write` request) and V

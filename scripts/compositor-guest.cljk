@@ -57,6 +57,22 @@
      :serial serial
      :serial-path serial-path}))
 
+;; ADR-0242: the damage stage's ten screendumps, as damage-shots-verdict reads
+;; them -- each present, written after `started` (ms), a 1280 x 800 P6, and
+;; its sha256 -- five maps, frame 1..5.
+(defn- damage-shots [started]
+  (let [crypto (js/require "node:crypto")
+        shot (fn [name]
+               (let [f (.join path out name)]
+                 (when (.existsSync fs f)
+                   (let [buf (.readFileSync fs f)]
+                     {:fresh? (>= (.-mtimeMs (.statSync fs f)) started)
+                      :header-ok? (= "P6\n1280 800\n255\n" (.toString (.subarray buf 0 16) "latin1"))
+                      :digest (-> (.createHash crypto "sha256") (.update buf) (.digest "hex"))}))))]
+    (mapv (fn [n] {:damage (shot (str "guest-browser-damage-" n ".ppm"))
+                   :full (shot (str "guest-browser-damage-full-" n ".ppm"))})
+          (range 1 6))))
+
 (let [profile (profile-arg)]
   (when-not (some #{profile} guest/guest-profiles)
     (binding [*out* *err*]
@@ -72,13 +88,16 @@
                    (or (first (filter #(= "flow" (:name %))
                                       (:scenes (edn/read-string (.readFileSync fs f "utf8")))))
                        (die3 (str "AIUEOS_COMPOSITOR leftover=:unmeasured why=:no-flow-scene path=" f)))))
+        started (.now js/Date)
         boot (run-uefi! profile)
         measured? (guest/serial-measured? (:serial boot))
         r (guest/classify profile {:serial (:serial boot)
                                    :qemu-unmeasured? (not measured?)
                                    :hosted-wm? false
                                    :hosted-ime? false
-                                   :flow-parity parity})
+                                   :flow-parity parity
+                                   :damage-shots (when (= profile "guest-browser-damage")
+                                                   (damage-shots started))})
         receipt (assoc r
                        :aiueos.compositor/nbb-guest-receipt 1
                        :measured-at (.toISOString (js/Date.))
@@ -103,6 +122,13 @@
             (println (if (> (count line) 240) (str (subs line 0 240) "...") line))))))
     (when-let [d (:first-difference r)]
       (println (str "AIUEOS_COMPOSITOR_FIRST_DIFFERENCE " (pr-str d))))
+    (when (= profile "guest-browser-damage")
+      (let [shots (damage-shots started)]
+        (println (str "AIUEOS_COMPOSITOR_DAMAGE_SHOTS " (name (guest/damage-shots-verdict shots))
+                      " " (pr-str (mapv (fn [{:keys [damage full]}]
+                                          [(some-> (:digest damage) (subs 0 12))
+                                           (some-> (:digest full) (subs 0 12))])
+                                        shots))))))
     (when-let [n (:compared r)]
       (println (str "AIUEOS_COMPOSITOR_COMPARED\t" n)))
     (if (:green? r)

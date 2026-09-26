@@ -841,6 +841,56 @@ while time.time() < end:
                 recv_obj()
                 globals()["clipboard_sent"] = k + 1
                 log("clipboard event " + str(k + 1) + " sent")
+        # Damage (ADR-0242): after the clipboard, a tablet move to (320, 310),
+        # Alt down, Tab down, Tab up, Alt up. After each FRAME line (the
+        # damage only) the display is screendumped and F12 sent -- down, then
+        # up, one command each; after the FULL line (the whole screen) it is
+        # screendumped again and the next event sent. The gate compares
+        # guest-browser-damage-<n>.ppm with guest-browser-damage-full-<n>.ppm.
+        if typing and b"AIUEOS_GUEST_BROWSER_DAMAGE_GO" in serial_now:
+            k = globals().get("damage_sent", 0)
+            f = globals().get("damage_framed", 0)
+            def key(q, down):
+                return [{"type": "key", "data": {"down": down, "key": {"type": "qcode", "data": q}}}]
+            if f < k and (b"AIUEOS_GUEST_BROWSER_DAMAGE_FRAME n=%d " % k) in serial_now:
+                shot = os.path.join(os.path.dirname(path), "guest-browser-damage-%d.ppm" % k)
+                sock.sendall((json.dumps({"execute": "screendump", "arguments": {"filename": shot}})
+                              + "\n").encode())
+                recv_obj()
+                for down in (True, False):
+                    sock.sendall((json.dumps({"execute": "input-send-event",
+                                              "arguments": {"events": key("f12", down)}})
+                                  + "\n").encode())
+                    recv_obj()
+                globals()["damage_framed"] = k
+                log("damage frame " + str(k) + " screendumped, F12 sent")
+            elif k < 5 and (k == 0 or (b"AIUEOS_GUEST_BROWSER_DAMAGE_FULL n=%d " % k) in serial_now):
+                if k:
+                    shot = os.path.join(os.path.dirname(path), "guest-browser-damage-full-%d.ppm" % k)
+                    sock.sendall((json.dumps({"execute": "screendump", "arguments": {"filename": shot}})
+                                  + "\n").encode())
+                    recv_obj()
+                time.sleep(0.5)
+                ev = ([{"type": "abs", "data": {"axis": "x", "value": 8192}},
+                       {"type": "abs", "data": {"axis": "y", "value": 12698}}],
+                      key("alt", True), key("tab", True), key("tab", False), key("alt", False))[k]
+                sock.sendall((json.dumps({"execute": "input-send-event", "arguments": {"events": ev}})
+                              + "\n").encode())
+                recv_obj()
+                globals()["damage_sent"] = k + 1
+                log("damage event " + str(k + 1) + " sent")
+            elif k == 5 and not globals().get("damage_full_last") and b"AIUEOS_GUEST_BROWSER_DAMAGE_FULL n=5 " in serial_now:
+                shot = os.path.join(os.path.dirname(path), "guest-browser-damage-full-5.ppm")
+                sock.sendall((json.dumps({"execute": "screendump", "arguments": {"filename": shot}})
+                              + "\n").encode())
+                recv_obj()
+                for down in (True, False):
+                    sock.sendall((json.dumps({"execute": "input-send-event",
+                                              "arguments": {"events": key("f12", down)}})
+                                  + "\n").encode())
+                    recv_obj()
+                globals()["damage_full_last"] = True
+                log("damage frame 5 whole screen screendumped, F12 sent")
         i += 1
         # Guest browser desktop (ADR-0224): the screens a person can look at.
         # The kernel holds each desktop frame for a few seconds in this
@@ -871,6 +921,7 @@ while time.time() < end:
                                  (b"AIUEOS_GUEST_BROWSER_SCROLL_OK", "guest-browser-scroll.ppm"),
                                  (b"AIUEOS_GUEST_BROWSER_SELECTION_OK", "guest-browser-selection.ppm"),
                                  (b"AIUEOS_GUEST_BROWSER_CLIPBOARD_OK", "guest-browser-clipboard.ppm"),
+                                 (b"AIUEOS_GUEST_BROWSER_DAMAGE_OK", "guest-browser-damage.ppm"),
                                  (b"AIUEOS_GUEST_BROWSER_FLOW_OK", "guest-browser-flow.ppm")):
                 if marker in serial_text and not globals().get(name):
                     globals()[name] = True
