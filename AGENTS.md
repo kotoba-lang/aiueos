@@ -1,4 +1,4 @@
-# CLAUDE.md — aiueos
+# AGENTS.md — aiueos
 
 Status: R2 — bare-metal boot and CPL3 execution are :implemented on QEMU/OVMF;
 P5 real-machine boot is :spec. See the README's capability table for the

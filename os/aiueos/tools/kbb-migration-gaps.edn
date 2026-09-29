@@ -1,7 +1,7 @@
 ;; kbb-migration-gaps.edn -- what the kbb script host (kotoba-lang/kotoba
 ;; bin/kbb, lib/kbb, ADR-2609051100 / ADR-2609062200) would need before the
 ;; nbb rig tools in this directory can move to it under the kbb-first rule
-;; (superproject CLAUDE.md, owner 2026-09-07). Current state only; history is
+;; (superproject AGENTS.md, owner 2026-09-07). Current state only; history is
 ;; in git. Every :measured value below was produced by a probe in kbb-probes/
 ;; whose receipt is committed beside it. Nothing here is predicted.
 ;;
@@ -9,7 +9,7 @@
 ;; (origin/main 2026-09-07), amu ffd9adfa0ea73a0a17043419521d74c299dc628f
 ;; (the kotoba deps.edn pin), corpus os/aiueos/native at c878db8.
 {:kbb-migration/date "2026-09-07"
- :kbb-migration/rule "CLAUDE.md kbb-first: new ops are added on the kbb side (capability extension), never by shrinking the guest"
+ :kbb-migration/rule "AGENTS.md kbb-first: new ops are added on the kbb side (capability extension), never by shrinking the guest"
  :kbb-migration/skill-named-by-rule "nbb-to-kbb-migration"
  :kbb-migration/skill-exists? false
  :kbb-migration/skill-note "measured 2026-09-07: no such skill under .claude/skills nor anywhere in the superproject tree; the authorities used instead are root ADR-2609051100, ADR-2609062200, kotoba docs/ADR-kbb-jvm-free-front-door.md, docs/ADR-kbb-js-backend-oracle.md, examples/kbb/*, test/kotoba/kbb_js_test.clj"

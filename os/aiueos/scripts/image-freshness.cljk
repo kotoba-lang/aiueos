@@ -9,7 +9,7 @@
 ;; NOTHING connected the two halves: the boot consumed whatever bytes happened
 ;; to be sitting in the output directory. A run whose build never happened, or
 ;; happened three commits ago, printed the same markers as a run that measured
-;; the tree in front of you -- root CLAUDE.md's "a check that could not run
+;; the tree in front of you -- root AGENTS.md's "a check that could not run
 ;; returns the same value as a check that ran and found nothing wrong".
 ;;
 ;; Measured 2026-09-02 on aiueos c9f7506, before the fix:

@@ -10,7 +10,7 @@
 ;;          not on disk, a provenance manifest that does not read).
 ;; Exit 3 = REFUSED: at least one input is foreign.
 ;;
-;; WHY 2 AND 3 ARE DIFFERENT CODES. Root CLAUDE.md's six questions: a check
+;; WHY 2 AND 3 ARE DIFFERENT CODES. Root AGENTS.md's six questions: a check
 ;; that could not run must not return the value of a check that ran and found
 ;; nothing. `verify-kotoba-kernel-object.py` -- which this gate re-implements
 ;; per object -- exits 1 for both, and `build-uefi.sh` treats every non-zero

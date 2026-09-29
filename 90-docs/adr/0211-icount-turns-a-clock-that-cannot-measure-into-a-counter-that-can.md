@@ -304,7 +304,7 @@ nothing about a red check reads as if it had none.
 landed on main from a parallel session while this was being written, and the
 collision would have been SILENT: two files named `0210-*.md` are two different
 paths, so git merges them without a word and the number stops identifying a
-decision. Renumbered to 0211 after merging origin/main. The root CLAUDE.md's
+decision. Renumbered to 0211 after merging origin/main. The root AGENTS.md's
 rule against bare `ADR-<number>` ids is the same failure seen from the id side.
 
 ## Not done

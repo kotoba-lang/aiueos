@@ -84,7 +84,7 @@ the end.
    ADR saying so.
 
 3. **Inference authority is remote** — murakumo (`api.murakumo.cloud`). aiueos
-   never hardcodes a model id (root CLAUDE.md / ADR-2607173100): it resolves the
+   never hardcodes a model id (root AGENTS.md / ADR-2607173100): it resolves the
    `murakumo-main` alias, or takes an endpoint and follows whatever that
    endpoint serves. No inference runtime is admitted into the bare-metal
    profile.

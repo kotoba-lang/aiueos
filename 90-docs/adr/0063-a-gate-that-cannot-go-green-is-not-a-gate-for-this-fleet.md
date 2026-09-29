@@ -20,7 +20,7 @@ Two things had to be true first, and only one of them was.
 **Measured today**, on two reachable nodes: `repo1.maven.org` 200,
 `github.com` 200, `clojure` present. So the dependency resolution a
 `:jvm-test` gate needs works — *today, on those nodes*. Egress on this fleet is
-not uniform and is not a property to write down as a constant (root CLAUDE.md
+not uniform and is not a property to write down as a constant (root AGENTS.md
 says so, and says it about a section that had already turned its own
 measurement into one).
 

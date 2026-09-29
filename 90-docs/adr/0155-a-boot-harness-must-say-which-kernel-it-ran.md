@@ -18,7 +18,7 @@ Nothing connected the two halves. The build wrote into `build/aiueos`; the boot
 opened `build/aiueos/esp`; and no step compared what came out of the first with
 what went into the second. A harness in that shape answers the same way whether
 it measured the tree in front of you or a kernel from three commits ago -- root
-CLAUDE.md's recurring failure, "a check that could not run returns the same
+AGENTS.md's recurring failure, "a check that could not run returns the same
 value as a check that ran and found nothing wrong."
 
 Two measurements on `c9f7506`, both reproduced before anything was changed:

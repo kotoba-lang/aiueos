@@ -58,7 +58,7 @@ imports the definition in two concrete, load-bearing ways:
    moves, the kernel's emitted hex (still equal to the stale baked `want`) no
    longer matches, and the gate goes red — even though the kernel self-reports
    `AIUEOS_SSH_KEX_OK`. A gate that trusted only the kernel's own marker would be
-   a self-report; the CLAUDE.md rule "a negative test must reject for the reason
+   a self-report; the AGENTS.md rule "a negative test must reject for the reason
    it names" is why the core, not the kernel, holds the reference.
 
 ## Measured

@@ -792,7 +792,7 @@ source rather than here.
    the f64 oracle says which engine is right.
 9. **tok/s is counted, not read from a clock that is not calibrated.**
    ADR-0211's icount, or the TSC under the `AIUEOS_QWEN38_MODEL_HANDOFF`
-   profile — the only profile in which `tsc_hz` is non-zero (CLAUDE.md,
+   profile — the only profile in which `tsc_hz` is non-zero (AGENTS.md,
    measured 2026-09-10). `N/A` until then, never zero.
 10. **Tokenizer and template.** The `qwen35` tokenizer objects (ADR-0139)
     against Qwen3.5's tokenizer and chat template, including its default
@@ -952,7 +952,7 @@ source rather than here.
   by the same Prism vectors.
 - **Reading "links" or "passes its contract" as "ran".** Four objects landed
   green and would have jumped to address 0 on first execution (ADR-0220,
-  CLAUDE.md §5). Every stage above ends at a boot marker or a K16 receipt.
+  AGENTS.md §5). Every stage above ends at a boot marker or a K16 receipt.
 - **Predicting the token rate.** One measured CPU data point exists and it
   is 46.7 s to one token of a different quantisation in C. Bonsai's PTQ1 is
   fewer bytes per weight (memory-bound favours it) and adds a Hadamard per

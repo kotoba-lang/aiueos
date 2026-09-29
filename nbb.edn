@@ -85,7 +85,7 @@
         ;;
         ;; org-ietf-ssh is NOT declared here as a coordinate, only as a sibling
         ;; path above. Naming a :git/sha needs a sha someone has checked, and
-        ;; deps.edn pins have no gate the way west pins do (CLAUDE.md), so an
+        ;; deps.edn pins have no gate the way west pins do (AGENTS.md), so an
         ;; invented one would be worse than the path that is already measured to
         ;; work. Giving it the same treatment as text is follow-up, not a
         ;; conflict resolution.

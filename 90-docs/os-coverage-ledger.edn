@@ -773,7 +773,7 @@
          deps.edn, so `nbb.edn -> kbb.edn` is a deletion at the END of migration,
          not a rename -- nbb hardcodes the name and a rename would break every
          nbb script), and which surface goes first (os/aiueos/scripts 45, or the
-         superproject scripts 425). CLAUDE.md names an nbb-to-kbb-migration
+         superproject scripts 425). AGENTS.md names an nbb-to-kbb-migration
          skill that does not exist on disk. (3) The four owner-side blockers:
          disk at 99% with 16 GB free (7 markers), MURAKUMO_SERVICE_TOKEN plus
          install intent (9), powering the K16 (8), a TPM-enabled OVMF (1).

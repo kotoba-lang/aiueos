@@ -20,7 +20,7 @@ guest that had already died of `#UD` on the first boot and a guest that lost a
 wakeup in the ring-3 phase gave the same answer, and the answer named the
 second one.
 
-This is the workspace's forbidden shape (CLAUDE.md: *a check that could not
+This is the workspace's forbidden shape (AGENTS.md: *a check that could not
 answer returning the same value as a check that ran and found nothing wrong*)
 with an extra turn of the screw: the retry loop **converts a deterministic
 failure into a flaky-looking one**. A miscompiled object does not fail once and

@@ -61,4 +61,4 @@
   :instruments
   ["/Users/junkawasaki/github/wt was removed from disk at ~10:48 by something outside this session; committed work was on origin; worktrees now live under com-junkawasaki/.claude/worktrees (owner instruction 11:1x)"
    "the resource-guard build lock was held by a sibling session (agent-amu-pins) for minutes at a time; E4 waited, E2 waited, E6 ran one 5 s single-namespace JVM directly"
-   "amu main is protected with 13 GitHub checks; the PR is the only landing path there (CLAUDE.md 2026-09-06 correction confirmed)"]}}
+   "amu main is protected with 13 GitHub checks; the PR is the only landing path there (AGENTS.md 2026-09-06 correction confirmed)"]}}
