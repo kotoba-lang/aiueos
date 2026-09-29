@@ -428,7 +428,7 @@ def make_bundle_tgz(installer_dir, scripts_dir, intent_bytes, receipt_bytes, nod
     node bundle beside this one already carried a cp/ root and already passed
     --classpath; only the install bundle did not.
 
-    A source a script cannot see is not a dependency it has (CLAUDE.md). The
+    A source a script cannot see is not a dependency it has (AGENTS.md). The
     USB is the sharpest case of that: nothing else on the stick declares
     anything."""
     buffer = io.BytesIO()

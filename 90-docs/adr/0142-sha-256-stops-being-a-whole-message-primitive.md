@@ -424,4 +424,4 @@ branches are open, because the number is picked from a `main` that moves. The
 fix is not a rule about looking harder. It is either a number allocated at
 merge time or an identity that is not a number at all, which is what the
 superproject's own `:adr/id` slug form already decided (root
-CLAUDE.md, "`:adr/id` は slug 形").
+AGENTS.md, "`:adr/id` は slug 形").

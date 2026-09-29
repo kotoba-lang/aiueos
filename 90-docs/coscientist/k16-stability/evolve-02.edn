@@ -150,7 +150,7 @@
    identically, so the rejection was never about the new code."
   "`git push -q ... | tail` reports tail's exit. Measured again today; the
    push was fine, but the reading was not. Write to a file, take $?, then
-   read -- the same class the CLAUDE.md names."
+   read -- the same class the AGENTS.md names."
   "A python -c patch that asserts before it writes leaves the file untouched
    and the next command reports success about the OLD content. It happened
    twice today and both times the give-away was a print line that still had

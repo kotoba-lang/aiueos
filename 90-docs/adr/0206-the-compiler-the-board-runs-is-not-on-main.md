@@ -38,7 +38,7 @@ artifact it is about.
 
 The pin has no gate. `verify-west-pins.cljs` covers `manifest/west.yml`;
 nothing covers a SHA baked into a shell script, which is the same class
-CLAUDE.md already names for `deps.edn` (`:git/sha` pins have no gate). The
+AGENTS.md already names for `deps.edn` (`:git/sha` pins have no gate). The
 build script *does* check the pin — it refuses to run against any other
 commit — so the pin is loud about drift and silent about reachability. Those
 are different questions and only the first one is asked.

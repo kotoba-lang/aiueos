@@ -29,7 +29,7 @@
      :cljs (fs/existsSync contract-path)))
 
 (defn- contract []
-  ;; Fails rather than skips when the file is absent (CLAUDE.md: a `when`
+  ;; Fails rather than skips when the file is absent (AGENTS.md: a `when`
   ;; guard reports green on a checkout without the file).
   (is (contract-exists?) (str "contract not found at " contract-path))
   (edn/read-string #?(:clj (slurp contract-path)

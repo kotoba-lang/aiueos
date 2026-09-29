@@ -197,7 +197,7 @@ is the threat model -- provenance alone cannot be trusted, so the ELF is read.
 ## Alternatives considered
 
 **Extend `verify-kotoba-native-kernel.py`.** It is Python, and new scripts in
-this workspace are nbb `.cljs` (root CLAUDE.md). It also answers a different
+this workspace are nbb `.cljs` (root AGENTS.md). It also answers a different
 question -- it validates one whole-image artifact, not a link list.
 
 **Fail the ordinary K16 build on foreign objects.** That would break the only

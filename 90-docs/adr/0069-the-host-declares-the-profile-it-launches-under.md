@@ -24,7 +24,7 @@ levi, failed for a nameable reason, fixed, passed, recorded.
 
 One correction: yesterday's report said the ledger held no aiueos receipt. It
 did — **the local superproject checkout was behind**, which is the staleness
-trap CLAUDE.md documents, appearing in my own reporting rather than in code.
+trap AGENTS.md documents, appearing in my own reporting rather than in code.
 
 ## The question ADR-0065 left
 

@@ -46,7 +46,7 @@
 (defn opt [n d] (let [i (.indexOf argv n)] (if (neg? i) d (get argv (inc i) d))))
 ;; positional <repo-root>: the first argument that is neither a flag nor the
 ;; value of --registry (order-independent, so `--registry x .` and `. --registry x`
-;; both work -- the argv-order trap in CLAUDE.md "赤い gate を直す前に" item 2).
+;; both work -- the argv-order trap in AGENTS.md "赤い gate を直す前に" item 2).
 (def root (or (first (remove #(or (str/starts-with? % "--") (= % (opt "--registry" nil))) argv))
               "."))
 (def registry-path (opt "--registry" (p/join root "os/aiueos/native/wire-bytes.edn")))

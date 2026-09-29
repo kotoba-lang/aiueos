@@ -30,7 +30,7 @@ Two invariants this repo owns:
 
 ## Decision 1 — state the real C boundary instead of the "crt0 shim" story
 
-The workspace-level rule (com-junkawasaki/root CLAUDE.md, ADR-2607198300 era)
+The workspace-level rule (com-junkawasaki/root AGENTS.md, ADR-2607198300 era)
 describes the permitted non-CLJC/non-Kotoba code as "the minimal crt0-style
 entry shim an OS executable format requires." Measured reality in this repo
 (2026-07-24): `os/aiueos/kernel/` carries ~5,000+ lines of C/asm — `pci.c`
