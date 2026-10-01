@@ -84,10 +84,16 @@ distance, noise or phone models, and no run on the K16.
      `ack|<code>`.
 
 5. **The window is closed by default.** The box emits the beacon only while it is
-   unclaimed (factory state) and not online. The first successful claim, a received and
-   opened profile, or a timeout closes it. After that the only way to change Wi-Fi is
-   the authenticated path of ADR-0113. A profile accepted over this route is stored as
-   the encrypted message, never as plaintext in a log, file or process argument.
+   unclaimed (factory state) and not online. A received and opened profile, a timeout,
+   or the attempt limit closes the window; each message that does not open rotates the
+   code and counts as an attempt, and five close it. If the box is still offline after a
+   profile (a mistyped passphrase) a new window opens, so a wrong password does not
+   strand it. The first successful claim closes it for good. After that the only way to
+   change Wi-Fi is the authenticated path of ADR-0113. The box keeps the received
+   message **encrypted** and never writes the passphrase to a log, a process argument or
+   a file of its own. Applying the profile necessarily hands the plaintext to the
+   platform's network manager (item 7); that is the one place it exists, in the network
+   manager's own private store.
 
 6. **Order of events is sound, then network, then claim.** The acoustic route proves
    nothing about ownership. Once the box is online, ownership is established by the
@@ -99,7 +105,7 @@ distance, noise or phone models, and no run on the K16.
 
    | Platform | Gate |
    |---|---|
-   | NixOS node (Linux) | May apply now. Write a NetworkManager keyfile (mode 0600) and reload; never pass the passphrase as an `nmcli` argument, which is visible in the process list. |
+   | NixOS node (Linux) | May apply now. Write a NetworkManager keyfile (mode 0600) and reload; never pass the passphrase as an `nmcli` argument, which is visible in the process list. A value containing a newline is refused rather than escaped. |
    | aiueos bare metal | **Carry only.** ADR-0113 and `device-onboarding-v1` keep `:native-k16-application :pending-wifi-driver`; this ADR does not lift it. |
 
 8. **A PC helper is a first-class sender.** `murakumo node wifi-share` reads the
