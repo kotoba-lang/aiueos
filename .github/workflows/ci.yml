@@ -72,6 +72,8 @@ jobs:
         run: clojure -M:security-adoption
       - name: Test CLJC contract
         run: clojure -M:ci
+      - name: Run the value-runtime verifiers nobody runs
+        run: clojure -M:verify-value-runtime
       - name: Lint
         run: clojure -M:lint
   edn-contracts:
