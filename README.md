@@ -101,7 +101,8 @@ kotoba semantics -> amu -> kotoba-native freestanding ABI -> aiueos boot images
                                                      aiueos -> kototama (executes)
 ```
 
-`kototama` executes Components and `murakumo` places them in a fleet. Aiueos
+`kototama` executes Components and placement (`sahai` at T6, `murakumo` for
+its inference fleet) decides where they run. Aiueos
 supplies the named providers and the machine underneath them; it does not own
 another system's compiler or fleet scheduler, and since the split it does not
 own the grant vocabulary either.
