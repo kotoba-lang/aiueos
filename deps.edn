@@ -43,7 +43,7 @@
         ;; this repo silently rides whatever a sibling happens to name.
         io.github.kotoba-lang/text {:git/sha "73bdb13ae7a3d004b44bca08be03a3191157a38f"}
        io.github.kotoba-lang/grant {:git/url "https://github.com/kotoba-lang/grant.git"
-                                     :git/sha "86d15e306853bd3658efb1fdfde3f8508dba9ef3"}
+                                     :git/sha "557142a5592a08dac274c9b4a5c83cc509ffa103"}
         io.github.kotoba-lang/security {:git/url "https://github.com/kotoba-lang/security.git"
                                         :git/sha "74235d1cdf8034334f01dcb2f6faaff0c731146e"}
         ;; This workspace's own TLS 1.3 and HTTP/1.1, so a request can leave
@@ -107,7 +107,7 @@
                       ;; catch, so the coordinate follows the name.
                       io.github.kotoba-lang/amu
                       {:git/url "https://github.com/kotoba-lang/amu.git"
-                       :git/sha "6889fa736750348863d2b98d69e688131a2ca515"}
+                       :git/sha "09f4dcddedc088594ced1319c2d0d45ac93a86a4"}
                       io.github.kotoba-lang/org-ietf-tcp
                       {:git/url "https://github.com/kotoba-lang/org-ietf-tcp.git"
                        :git/sha "d8c15e23b6c169a4ed044cd7764923ecbb789be4"}
@@ -159,7 +159,7 @@
                       :git/sha "ff02fd24bfd24bf8a44373319a9fc0eec73a374e"}
                      io.github.kotoba-lang/amu
                      {:git/url "https://github.com/kotoba-lang/amu.git"
-                      :git/sha "6889fa736750348863d2b98d69e688131a2ca515"}
+                      :git/sha "09f4dcddedc088594ced1319c2d0d45ac93a86a4"}
                      io.github.kotoba-lang/webgpu
                      {:git/url "https://github.com/kotoba-lang/webgpu.git"
                       :git/sha "17598c1206a31e594b0e028245f222e53b1b8b71"}
@@ -197,7 +197,7 @@
                               :git/sha "ff02fd24bfd24bf8a44373319a9fc0eec73a374e"}
                              io.github.kotoba-lang/amu
                              {:git/url "https://github.com/kotoba-lang/amu.git"
-                              :git/sha "6889fa736750348863d2b98d69e688131a2ca515"}
+                              :git/sha "09f4dcddedc088594ced1319c2d0d45ac93a86a4"}
                              ;; Same reason as in `:test`, and it has to be here
                              ;; too: this alias selects every `aiueos.*`
                              ;; namespace except one, so
@@ -241,7 +241,7 @@
    :verify-admissions
    {:extra-deps {io.github.kotoba-lang/amu
                  {:git/url "https://github.com/kotoba-lang/amu.git"
-                  :git/sha "ca869d79e118a3d1eb532602bcb4c39c87f6ea29"}
+                  :git/sha "09f4dcddedc088594ced1319c2d0d45ac93a86a4"}
                  ;; Pinned explicitly, not taken through amu: amu's own pin
                  ;; predates `kir/execute`'s optional memory image, and without
                  ;; it every vector traps `:kernel-memory-unavailable`. The
