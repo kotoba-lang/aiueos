@@ -596,3 +596,14 @@ memory map, and has its first physical allocator slice; paging, interrupts,
 scheduling, CPL3/syscalls, capability tables, and native effect providers
 remain subsequent aiueos gates. The detailed, test-backed truth is the Phase
 table in ADR-0013, not the amount of reference C code present in this tree.
+
+## Target-neutral and distributed stack architecture
+
+Owns boot, memory, process and device mechanisms for the modern Kotoba Lisp machine direction. It enforces grant decisions and consumes verified native compiler artifacts. Wasm is an optional execution profile, not the language foundation. OS deployment does not require DHT, IPFS or global consensus. Existing hybrid, C-free, QEMU and physical qualification remain separate.
+
+See the [owner integration guide and dependency direction](docs/stack-architecture.md),
+[composition metadata](spec/stack-integration.edn), and
+[whole-stack refactor procedure](https://github.com/kotoba-lang/kotoba-lang/blob/main/docs/stack-refactor-procedure.md).
+The direction is adopted; runtime contract migration and qualification remain
+explicit, separately verified work. Tier labels are responsibility axes, not
+a single dependency ranking.
