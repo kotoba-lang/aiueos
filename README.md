@@ -16,6 +16,22 @@ makes decisions is compiled from Kotoba source rather than hand-written in C.
 Before that split this repository named an authority and a machine at once,
 and the two were nearly the same size.
 
+## Lisp machine architecture
+
+AiueOS is the OS for a modern Kotoba Lisp machine in development. Kototama
+is its implementation-independent Lisp VM contract: closed S-expression
+computation, IPLD state, bounded authority and content-addressed receipts.
+Amu checks and compiles code; grant decides permission; runtime hosts and OS
+mechanisms enforce the admitted boundary. Kototama also has hosted engines
+and does not require AiueOS for every execution.
+
+The [stack architecture](https://github.com/kotoba-lang/kotoba-lang/blob/main/docs/stack-architecture.md) separates responsibility, source/library
+and artifact dependencies. Its [composition contract](https://github.com/kotoba-lang/kotoba-lang/blob/main/lang/stack-architecture.edn) routes
+to each owner's specification; it is not a new language or runtime semantics.
+"Modern Lisp machine" describes the architectural direction. It does not
+certify a complete integrated debugger, live system modification, full heap
+image restore, selfhost compiler or physical-machine qualification.
+
 ## Where it actually is
 
 An operating system is a claim with a lot of surface, so here is the measured
@@ -305,7 +321,6 @@ JRE/JAR/runtime-root inputs and rejects a non-ELF guest Java executable.
 This is the ADR-0011 Linux-hosted profile, not the bare-metal kernel described
 by the product integration ADR in `kotoba-lang/kotoba`.
 
-
 ## Hosted daily shell (P1)
 
 Root contract: [`adr-2608221625-aiueos-chromeos-cloud-desktop`](https://github.com/com-junkawasaki/root/blob/main/90-docs/adr/2608221625-aiueos-chromeos-cloud-desktop.edn).
@@ -539,7 +554,6 @@ kbb -M:compositor serve   # same SPA; compositor owns surfaces; Ctrl-C to stop
 
 `kbb -M:phone-bind smoke` stays headless **without** the GPU device. Display-present (動線 D) is extra, not the only bind path. Native compositor remains leftover. P5 remains UNVERIFIED. kami-engine as the daily desktop, CACAO write, and physical boot remain. The Chrome OS-shaped desktop goal is not complete.
 
-
 ## Bare-metal cloud reach (P2) — green on QEMU UEFI
 
 Root contract: P2 of [`adr-2608221625`](https://github.com/com-junkawasaki/root/blob/main/90-docs/adr/2608221625-aiueos-chromeos-cloud-desktop.edn). This is QEMU **UEFI + KERNEL.ELF**, not the hosted JVM profile.
@@ -551,7 +565,6 @@ kbb -M:bare-metal cloud
 The guest consumes its DHCP lease, resolves `kotobase.net`, completes TLS 1.3 (cipher 0x1301), GET `/ipfs/<empty-raw-cid>`, and admits the body SHA-256 (ADR-0082). **Exit 0 is guest HTTP GET + CID verify.** Handshake without HTTP is leftover `:http-absent`. A TLS record without Finished is `:tls-handshake-incomplete`. CertificateVerify (ECDSA P-256 against the leaf) is a separate gate: `kbb -M:bare-metal cert-verify` (ADR-0087). HTTP+CID without that serial line is leftover `:cert-verify-hashed-only`. Chain to a trust anchor is still leftover.
 
 `kbb -M:cloud-live check` and `kbb -M:session smoke` do **not** green this gate. A Mac-side fetch is `:host-fetch-does-not-count`.
-
 
 ## Grant-limited guest in the shell (P3)
 

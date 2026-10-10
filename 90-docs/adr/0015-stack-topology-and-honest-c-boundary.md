@@ -8,25 +8,39 @@ topology and the full cross-repo cleanup list live there.
 
 ## Position in the stack topology
 
-```
-kotoba    = language + datom model
-compiler  = AOT compiler              (foundation; depends on nothing in the stack)
-kototama  = Wasm tender               (depends on: aiueos — "aiueos decides, kototama enforces")
-aiueos    = capability OS (THIS REPO) (deps.edn: security + chicory ONLY)
-kotobase  = datom database            (depends on: kotoba, never the reverse)
+Updated 2026-10-10 against fetched main manifests. The
+[stack architecture](https://github.com/kotoba-lang/kotoba-lang/blob/main/docs/stack-architecture.md) and
+[composition contract](https://github.com/kotoba-lang/kotoba-lang/blob/main/lang/stack-architecture.edn) distinguish responsibility, library,
+artifact and runtime/service graphs.
+
+```text
+kotoba-lang = language contracts (T1)
+kotoba      = CLI, libraries and Codebase
+amu         = compiler and project linker (T2)
+abi         = shared execution contract (T0)
+kototama    = Lisp VM contract; engines implement it (T3)
+grant       = pure permission decisions (T4); authority owns scope/delegation
+aiueos      = operating system (T5); enforces grant's answer
+sahai       = reusable placement (T6); murakumo operates its own inference fleet
+kotobase    = database and persistent data plane
 ```
 
-Two invariants this repo owns:
+AiueOS is the OS for a modern Kotoba Lisp machine in development; Kototama is
+its Lisp VM contract, also implemented by hosted engines. These are
+architectural roles, not completion/qualification claims.
 
-1. **aiueos stays dependency-minimal.** The decision plane must never depend
-   on `kototama`, `kotoba`, or `kotobase`. Enforcement layers import aiueos
-   (kototama's `aiueos_adapter` does today); aiueos imports nobody's
-   enforcement. This keeps the broker auditable in isolation.
-2. **The compiler edge is an artifact edge, not a library edge.** The
-   bare-metal kernel consumes compiler-emitted freestanding objects
-   (`x86_64-aiueos-kernel-v1` / `x86_64-aiueos-user-v1` ELF64, fail-closed
-   verified before link/load). aiueos never links the compiler as a library
-   into the kernel; the boundary is verified bytes.
+Library arrows mean consumer → dependency: Kotoba imports Amu and Kototama;
+Kototama imports grant and abi; AiueOS imports grant; grant imports authority
+and abi and does not import the OS. Amu imports contracts and multiple
+backends. Alias-only dependencies must be labelled separately.
+The booted kernel consumes verified compiler artifacts rather than linking
+the compiler. Host build/conformance aliases may import compiler libraries.
+The database/language boundary describes ownership, not a claim that every
+database runtime directly imports the Kotoba CLI.
+
+The July 2026 topology snapshot was corrected on 2026-10-10 after the grant
+split and VM-contract separation; its old dependency counts and “AiueOS
+decides” wording are not current invariants.
 
 ## Decision 1 — state the real C boundary instead of the "crt0 shim" story
 
