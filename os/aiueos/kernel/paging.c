@@ -34,11 +34,24 @@ static uint64_t low_page_table[ENTRY_COUNT] __attribute__((aligned(PAGE_SIZE)));
  * independent place to prove whether CR3 itself loaded or the first protected
  * access faulted.  This bounded transition root maps the first GiB with 2 MiB
  * leaves, then the kernel immediately replaces it with the final split map.
- * It is never published as kernel_cr3 and cannot survive successful init. */
-static uint64_t transition_pml4[ENTRY_COUNT] __attribute__((aligned(PAGE_SIZE)));
-static uint64_t transition_pml5[ENTRY_COUNT] __attribute__((aligned(PAGE_SIZE)));
-static uint64_t transition_pdpt[ENTRY_COUNT] __attribute__((aligned(PAGE_SIZE)));
-static uint64_t transition_page_directory[ENTRY_COUNT] __attribute__((aligned(PAGE_SIZE)));
+ * It is never published as kernel_cr3 and cannot survive successful init.
+ * The four tables live in `.high_bss` (the 4..6 MiB writable-NX window), not
+ * `.bss`, so the low kernel/user layout ends at `aiueos_low_end <= 0x1f4000`:
+ * 16 KiB of tables that are dead after init (4 x 4 KiB, page-aligned) sat
+ * above the process-private aperture. They are reached only while the
+ * firmware root is live -- zeroed and built in aiueos_paging_initialize
+ * before the first owned CR3, read by observe_cr3_roundtrip under the
+ * firmware root -- and the owned map covers 4..6 MiB from the first owned
+ * CR3 on, so the section change is invisible to every path that touches
+ * them. Same move and same justification as pci_pdpts/pci_directories below. */
+static uint64_t transition_pml4[ENTRY_COUNT]
+  __attribute__((section(".high_bss"), aligned(PAGE_SIZE)));
+static uint64_t transition_pml5[ENTRY_COUNT]
+  __attribute__((section(".high_bss"), aligned(PAGE_SIZE)));
+static uint64_t transition_pdpt[ENTRY_COUNT]
+  __attribute__((section(".high_bss"), aligned(PAGE_SIZE)));
+static uint64_t transition_page_directory[ENTRY_COUNT]
+  __attribute__((section(".high_bss"), aligned(PAGE_SIZE)));
 static uint64_t apic_page_directory[ENTRY_COUNT] __attribute__((aligned(PAGE_SIZE)));
 static uint64_t framebuffer_page_directory[ENTRY_COUNT] __attribute__((aligned(PAGE_SIZE)));
 #define PCI_PDPT_SLOTS 4
