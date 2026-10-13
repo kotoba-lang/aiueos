@@ -112,13 +112,15 @@ image does not yet embed this VM.
 
 For consensus-backed actor execution, the optional `:distributed` alias pins
 Inga and exposes `aiueos.kototama.inga/state-machine`. Pass that machine to
-`inga.replica/replica`; committed `:actor-call` operations then execute the
-same canonical program through Kotoba VM and contribute to Inga's content
-addressed state root. Each replica needs the same VM/profile, canonical blocks,
-fuel schedule, and deterministic block-store seams. The adapter does not start
-a replica or provide witness transport, caller authentication, or policy
-authority, and the ordinary `run`/`up` CLI still uses its hosted local path.
-This integration is not yet live-network qualified. Chicory fuel metering rides
+`inga.replica/replica` or supply it to `inga-node.node/start!` as `:machine`;
+committed `:actor-call` operations then execute the same canonical program
+through Kotoba VM and contribute to Inga's content-addressed state root. Each
+witness needs the same VM/profile, canonical blocks, fuel schedule, and
+deterministic block-store seams. `inga-node` provides process, transport, keys,
+and durable replica snapshots; the application still configures block decoding,
+caller authentication, storage, witness membership, and policy. The ordinary
+`run`/`up` CLI still uses its hosted local path. This integration is not yet
+live-network qualified. Chicory fuel metering rides
 `withUnsafeExecutionListener` -- documented unsafe, experimental,
 interpreter-path-only. Memory limits use a stable API.
 
