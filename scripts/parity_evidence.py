@@ -42,8 +42,14 @@ def main():
     for leaf in LEAF.values():
         path = os.path.join(wt, leaf)
         if not os.path.isdir(path):
-            report[leaf] = {"error": "checkout missing"}
-            continue
+            return refused(f"checkout missing: {path}")
+        rc, out, err = run(["git", "status", "--porcelain"], cwd=path)
+        if rc != 0:
+            return refused(f"git status failed in {path}: {err.strip()[:200]}")
+        if out.strip():
+            return refused(
+                f"leaf checkout dirty ({leaf}, {len(out.splitlines())} paths) — refusing to measure"
+            )
         entry = {}
         # 1) テストの存在と件数（観測量）
         rc, out, _ = run(["git", "ls-files", "test/", "fuzz/"], cwd=path)
@@ -69,7 +75,14 @@ def main():
             ["gh", "issue", "list", "--state", "open", "--limit", "200", "--json", "number"],
             cwd=path, timeout=30,
         )
-        entry["open_issues"] = len(json.loads(out)) if rc == 0 and out.strip() else None
+        if rc == 0 and out.strip():
+            try:
+                issues = json.loads(out)
+                entry["open_issues"] = len(issues) if isinstance(issues, list) else None
+            except Exception:  # noqa: BLE001
+                entry["open_issues"] = None
+        else:
+            entry["open_issues"] = None
         report[leaf] = entry
 
     print(json.dumps({"worktree": wt, "dirty": False, "report": report}, ensure_ascii=False, indent=1))
