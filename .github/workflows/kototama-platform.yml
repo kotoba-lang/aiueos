@@ -78,5 +78,5 @@ jobs:
             exit 1
           }
           printf '%s\n' "$result"
-          printf '%s\n' "$result" | grep -q '^Ran 21 tests containing 57 assertions\.$'
+          printf '%s\n' "$result" | grep -q '^Ran 21 tests containing 59 assertions\.$'
           printf '%s\n' "$result" | grep -q '^0 failures, 0 errors\.$'
