@@ -243,8 +243,9 @@ What is left here executes, boots and drives hardware.
   `bin/aiueos.rs`'s argv-parsing/file-I/O role, reimplemented as JVM Clojure.
   Ties `grant.cli` + `grant.manifest` + `grant.policy`/`grant.broker` +
   `aiueos.execute`/`aiueos.audit` together. `verify`/`run`/`admit`/`inspect`/
-  `surface`/`audit`/`up` are wired today (`run`/`admit` actually execute a
-  granted component's declared `:aiueos/wasm`, not just decide; `up` boots the
+  `surface`/`audit`/`up` are wired today (`run`/`admit` execute a granted
+  component's supported signed Kototama artifact when declared, with the
+  explicit legacy `:aiueos/wasm` compatibility path retained; `up` boots the
   components due at a given ADR-0006 cycle (`--cycle N`, default 0) in
   `grant.graph/priority-boot-order`, stopping at the first
   denied/quota-or-fuel-exceeded DUE component). Try it: `kbb -M -m
