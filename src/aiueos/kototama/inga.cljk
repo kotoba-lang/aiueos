@@ -152,9 +152,12 @@
   after the application's committed proposal decoder has verified that
   caller's signature over the call. A field copied from an untrusted proposal
   is not authentication. The host remains responsible for proposal decoding
-  and live consensus configuration."
+  and live consensus configuration. Optional `:authority-facts-fn` and
+  `:datalog-budget` are passed to Kotoba VM. The facts adapter must derive
+  source-authenticated, deterministic inputs from committed state; without it,
+  effect-bearing Kototama methods are denied."
   [{:keys [decode-block get-fn put! blind-fn encrypt-fn height-fn fuel
-           authority emit-fn]}]
+           authority emit-fn authority-facts-fn datalog-budget]}]
   (doseq [[key value] [[:decode-block decode-block]
                        [:get-fn get-fn]
                        [:put! put!]
@@ -219,7 +222,12 @@
                   :fuel fuel
                   :authority authority
                   :emit-fn (or emit-fn state/default-emit)
-                  :invoke-fn (kototama/invoke-fn {:get-fn get-fn :put! put!})})]
+                  :invoke-fn (kototama/invoke-fn
+                              (cond-> {:get-fn get-fn :put! put!}
+                                authority-facts-fn
+                                (assoc :authority-facts-fn authority-facts-fn)
+                                datalog-budget
+                                (assoc :datalog-budget datalog-budget)))})]
     (assoc machine
            :apply-fn (fn [current block]
                        ((:apply-fn machine) current

@@ -3,7 +3,9 @@
 
   This adapter exposes versioned canonical Kototama programs through Kotoba
   VM. The data-i64 profile adds portable data values to bounded i64 arithmetic;
-  both current profiles remain partial and reject effects."
+  both current profiles remain partial. Effect-bearing methods require an
+  injected Kotoba VM machine with authenticated authority-fact adapters; the
+  default local machine denies them."
   (:require [ipld.core :as ipld]
             [kotoba.vm :as vm]))
 
@@ -23,9 +25,11 @@
   `:program-bytes` must be canonical DAG-CBOR and `:expected-cid` must be the
   CID admitted by the caller. The adapter re-encodes the node and refuses if
   that CID differs. The declared artifact value profile must match PROFILE.
-  No host capabilities are attached. A host may inject a Kotoba VM `:machine` and prior `:actors`
-  map so storage and actor-state ownership can live outside this process.
-  The VM does not itself provide replication or consensus."
+  The default machine has no authority-fact provider and therefore denies
+  effect-bearing methods. A host may inject a Kotoba VM `:machine` with
+  deterministic, source-authenticating authority adapters and prior `:actors`
+  map so storage and actor-state ownership can live outside this process. The
+  VM does not itself provide replication or consensus."
   [{:keys [program-bytes expected-cid method args fuel actor machine actors]}
    profile-id]
   (when-not (and program-bytes expected-cid)
@@ -186,7 +190,7 @@
   state, together with the prior state CID and method. Every replica evaluates
   the same code CID/message and stores the same transition node. The call does
   not use kotoba.vm's separate `kotoba.vm/guest` actor format."
-  [{:keys [get-fn put!]}]
+  [{:keys [get-fn put! authority-facts-fn datalog-budget]}]
   (when-not (and (ifn? get-fn) (ifn? put!))
     (throw (ex-info "Kototama Inga invocation needs deterministic block-store seams"
                     {:type :aiueos.kototama/invalid-machine})))
@@ -197,7 +201,11 @@
         (let [result (run-program
                       {:program-bytes program-bytes :expected-cid code
                        :actor address :method method :args args :fuel fuel
-                       :machine {:get-fn get-fn :put! put!}})]
+                       :machine (cond-> {:get-fn get-fn :put! put!}
+                                  authority-facts-fn
+                                  (assoc :authority-facts-fn authority-facts-fn)
+                                  datalog-budget
+                                  (assoc :datalog-budget datalog-budget))})]
           (if (:ok? result)
             {:state (ipld/put-node!
                      put! {"kototama/state/v1" 1

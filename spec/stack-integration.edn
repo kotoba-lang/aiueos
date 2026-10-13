@@ -34,9 +34,11 @@
               :biscuit-delegation
               :kototama-receipt-v1]}
  :kototama/vm-source-candidate
- {:revision "b240780"
+ {:revision "2d900cb"
   :features [:bounded-positive-function-free-datalog
-             :five-origin-eligibility-join]
+             :five-origin-eligibility-join
+             :invoke-time-five-origin-authorization-gate
+             :authority-decisions-in-local-message-result]
   :status :not-yet-selected-by-aiueos-dependency-pin
   :aiueos-resolved-revision "36cd2472a2d81fbb44db39d9b0e5a6cecf4f53a1"}
  :qualification-claim :partial-hosted-kototama-core-v1}

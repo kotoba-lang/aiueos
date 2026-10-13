@@ -22,12 +22,14 @@ AiueOS's `:kototama/core-i64-subset-v1` and `:kototama/data-i64-v1` values
 select hosted value profiles; both implement the normative Kototama `:core/v1`
 contract through Kotoba VM. That engine declares `:core/v1` partial. Its
 current source candidate contains a bounded positive Datalog evaluator and
-five-origin eligibility join, but AiueOS still pins Kotoba VM at
-`36cd2472a2d81fbb44db39d9b0e5a6cecf4f53a1`, before that change. The candidate
-does not yet supply source-authenticated fact adapters or invocation-time
-authorization; actor-state/effect expressions, delegation and receipts also
-remain incomplete. These host selectors do not define a competing Kototama
-contract.
+five-origin eligibility join, and checks each declared effect before its
+method body runs. AiueOS still pins Kotoba VM at
+`36cd2472a2d81fbb44db39d9b0e5a6cecf4f53a1`, before that change; its adapter
+forwards a host authority-fact seam, while the default local and Inga paths
+deny effect-bearing methods unless a host supplies one. Source-authenticated
+fact adapters, actor-state/effect expressions, delegation and the canonical
+Kototama receipt remain incomplete. These host selectors do not define a
+competing Kototama contract.
 
 ## Contract dependency direction
 

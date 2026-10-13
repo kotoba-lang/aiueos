@@ -2,6 +2,7 @@
   (:require [aiueos.kototama :as kototama]
             [aiueos.kototama.admission :as admission]
             [ipld.core :as ipld]
+            [kotoba.vm :as vm]
             [grant.graph :as graph]
             [grant.policy :as policy]
             #?(:clj [kotoba.test :refer [deftest is]]
@@ -42,6 +43,27 @@
      "methods" {"echo" {"params" ["value"] "param-types" ["value"]
                          "result" "value" "effects" []
                          "body" ["var" "value"]}}}]))
+
+(defn- encoded-effect-program []
+  (ipld/node->block
+   ["kototama.vm/program" 1
+    {"entry" "write"
+     "value-profile" "kototama.data-i64/v1"
+     "methods" {"write" {"params" [] "param-types" []
+                           "result" "value" "effects" [["fs/write"]]
+                           "body" ["const" "done"]}}}]))
+
+(defn- effect-authority-facts [{:keys [actor program effect]}]
+  {:resource "/notes"
+   :origin-facts
+   {:vm [["vm:runs" actor program]
+         ["vm:requests" actor effect "/notes"]]
+    :amu [["amu:requires" program effect]
+          ["amu:world" program "world-1"]]
+    :grant [["grant:right" actor effect "/notes"]]
+    :policy [["policy:allows" actor effect "/notes"]]
+    :runtime [["runtime:world" "world-1"]
+              ["runtime:available" effect "/notes"]]}})
 
 (deftest canonical-kototama-program-runs-on-hosted-engine
   (let [{:keys [expected-cid program-bytes]} (encoded-program)
@@ -208,3 +230,19 @@
            (get-in result [:aiueos.kototama/result :receipt :return])))
     (is (= :kototama/data-i64-v1
            (get-in result [:aiueos.kototama/result :aiueos.kototama/vm-profile])))))
+
+(deftest hosted-adapter-requires-and-forwards-the-authority-facts-seam
+  (let [{:keys [cid bytes]} (encoded-effect-program)
+        request {:program-bytes bytes :expected-cid cid :method "write"
+                 :args [] :fuel 1000 :actor "alice"}
+        denied (kototama/run-data-i64 request)
+        store (vm/memory-store)
+        machine {:get-fn (:get-fn store) :put! (:put! store)
+                 :authority-facts-fn effect-authority-facts}
+        allowed (kototama/run-data-i64 (assoc request :machine machine))]
+    (is (not (:ok? denied)))
+    (is (= :unauthorized (get-in denied [:receipt :exit])))
+    (is (:ok? allowed))
+    (is (= "done" (get-in allowed [:receipt :return])))
+    (is (= "/notes"
+           (get-in allowed [:receipt :authority-decisions 0 :resource])))))
