@@ -40,7 +40,10 @@
 (defn- encoded-default-program []
   (let [root #?(:clj (or (System/getenv "AIUEOS_REPO_ROOT") ".")
                 :cljs (or (aget (.-env js/process) "AIUEOS_REPO_ROOT") "."))
-        path (str root "/test/fixtures/amu-kototama-default-v1.dagcbor")]
+        compiled-path #?(:clj (System/getenv "AMU_KOTOTAMA_PROGRAM_PATH")
+                         :cljs (aget (.-env js/process) "AMU_KOTOTAMA_PROGRAM_PATH"))
+        path (or compiled-path
+                 (str root "/test/fixtures/amu-kototama-default-v1.dagcbor"))]
     {:expected-cid amu-default-program-cid
      :program-bytes #?(:clj (java.nio.file.Files/readAllBytes
                              (java.nio.file.Paths/get path (make-array String 0)))
