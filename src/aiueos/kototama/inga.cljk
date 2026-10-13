@@ -10,7 +10,89 @@
   replica must use the same pinned VM, canonical code/state blocks, fuel
   schedule, and deterministic storage/crypto seams."
   (:require [inga.state :as state]
+            [ipld.core :as ipld]
+            [json.core :as json]
             [kotoba.vm :as vm]))
+
+(defn actor-call-payload
+  "Return the domain-separated caller-signature payload for a node proposal.
+
+  The signed envelope binds chain, caller, source ref/sequence, and the CID of
+  the canonical DAG-CBOR call body. The body itself is verified against that
+  CID before it becomes an Inga operation."
+  [chain-id {:keys [caller ref seq cid]}]
+  (when-not (and (every? string? [chain-id caller ref cid])
+                 (integer? seq) (not (neg? seq))
+                 (every? #(not (some (fn [ch] (or (= ch \newline) (= ch \return))) %))
+                         [chain-id caller ref cid]))
+    (throw (ex-info "invalid Kototama actor-call proposal identity"
+                    {:type :aiueos.kototama.inga/invalid-proposal})))
+  (str "kototama/actor-call/v1\n"
+       "chain=" chain-id "\n"
+       "caller=" caller "\n"
+       "ref=" ref "\n"
+       "seq=" seq "\n"
+       "cid=" cid "\n"))
+
+(def signed-proposal-authority
+  "Inga authority for operations emitted by signed-proposal-decoder."
+  {:caller-fn :caller})
+
+(defn signed-proposal-decoder
+  "Build a deterministic decoder for inga-node JSON proposals.
+
+  Each proposal is JSON with `ref`, `seq`, `cid`, `caller`, and `signature`.
+  `cid` addresses canonical DAG-CBOR ` [\"kototama.actor-call\" 1
+  {\"address\" string, \"method\" string, \"args\" [i64 …]}] `. The
+  caller signature covers `actor-call-payload`; `verify-caller-fn` must use
+  the same chain-specific identity registry on every replica.
+
+  Bad JSON, missing blocks, CID mismatches, malformed call bodies, and bad
+  signatures all become a deterministic unauthenticated call. Inga records
+  that as `:no-caller` when used with `{:authority {:caller-fn :caller}}`,
+  rather than letting an untrusted proposal crash block application. The
+  actor method must still implement replay protection for its signed `seq`.
+  This decoder authenticates callers; it does not implement account nonces."
+  [{:keys [chain-id get-fn put! verify-caller-fn]}]
+  (doseq [[key value] [[:chain-id chain-id] [:get-fn get-fn] [:put! put!]
+                       [:verify-caller-fn verify-caller-fn]]]
+    (when-not (ifn? value)
+      (throw (ex-info "signed Kototama proposal decoder needs callable seams"
+                      {:type :aiueos.kototama.inga/invalid-seam :seam key}))))
+  (let [invalid-call {:op :actor-call :address "" :caller nil
+                      :method "" :args []}]
+    (fn [block]
+      (mapv
+       (fn [proposal]
+         (try
+           (let [envelope (json/decode proposal)
+                 cid (get envelope "cid")
+                 caller (get envelope "caller")
+                 signature (get envelope "signature")
+                 payload (actor-call-payload
+                          chain-id {:caller caller :ref (get envelope "ref")
+                                    :seq (get envelope "seq") :cid cid})
+                 bytes (when (and (string? cid) (string? signature)
+                                  (string? caller)
+                                  (true? (verify-caller-fn caller payload signature)))
+                         (get-fn cid))
+                 body (when bytes (ipld/decode bytes))
+                 actual-cid (when body (ipld/put-node! put! body))
+                 call (when (and body (= (str actual-cid) cid)
+                                 (vector? body) (= "kototama.actor-call" (nth body 0 nil))
+                                 (= 1 (nth body 1 nil)) (map? (nth body 2 nil)))
+                        (nth body 2))
+                 address (get call "address")
+                 method (get call "method")
+                 args (get call "args")]
+             (if (and (string? address) (not-empty address)
+                      (string? method) (not-empty method)
+                      (vector? args) (every? integer? args))
+               {:op :actor-call :address address :caller caller
+                :method method :args args}
+               invalid-call))
+           (catch #?(:clj Exception :cljs :default) _ invalid-call)))
+       (:inga.block/proposals block)))))
 
 (defn state-machine
   "Build an Inga state machine whose committed `:actor-call` ops execute

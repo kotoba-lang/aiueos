@@ -117,12 +117,21 @@ committed `:actor-call` operations then execute the same canonical program
 through Kotoba VM and contribute to Inga's content-addressed state root. Each
 witness needs the same VM/profile, canonical blocks, fuel schedule, and
 deterministic block-store seams. `inga-node` provides process, transport, keys,
-and durable replica snapshots; the application still configures block decoding,
-caller authentication, storage, witness membership, and policy. The ordinary
+and durable replica snapshots; the application still configures the block
+decoder, caller-key verifier, content-addressed storage, witness membership,
+and policy. The ordinary
 `run`/`up` CLI still uses its hosted local path. This integration is not yet
 live-network qualified. Chicory fuel metering rides
 `withUnsafeExecutionListener` -- documented unsafe, experimental,
 interpreter-path-only. Memory limits use a stable API.
+
+`aiueos.kototama.inga/signed-proposal-decoder` provides the proposal boundary
+for `inga-node`'s JSON submissions: the record binds `chain-id`, caller, ref,
+sequence, and content CID; the CID must resolve to a canonical DAG-CBOR actor
+call before it becomes an Inga op. Supply a deterministic signature verifier
+and use `signed-proposal-authority` with that decoder. Its sequence is covered
+by the signature but is not an Inga account nonce; actor methods must enforce
+replay handling until nonce semantics are part of the VM/consensus contract.
 
 ## Position in the stack
 
