@@ -63,8 +63,11 @@
                             (:path artifact)))))))
 
 #?(:clj
-   (defn- run-kototama-artifact [m g policy* program-bytes admit?]
-     (kototama/execute-artifact m g policy* program-bytes admit?)))
+   (defn- run-kototama-artifact
+     ([m g policy* program-bytes admit?]
+      (run-kototama-artifact m g policy* program-bytes admit? {}))
+     ([m g policy* program-bytes admit? runtime]
+      (kototama/execute-artifact m g policy* program-bytes admit? runtime))))
 
 #?(:clj
    (defn- read-artifact-bytes [path]
@@ -124,8 +127,12 @@
      "The `run`/`admit` command bodies: load MANIFEST-PATH (+ POLICY-PATH),
      execute a supported signed Kototama artifact when declared, otherwise
      use the legacy explicit `:aiueos/wasm` compatibility path. Returns the
-     selected engine's result. Throws when no executable artifact is declared."
-     [manifest-path policy-path admit?]
+     selected engine's result. The optional RUNTIME map is forwarded to the
+     Kototama adapter for host-managed storage/state. Throws when no executable
+     artifact is declared."
+     ([manifest-path policy-path admit?]
+      (run-command manifest-path policy-path admit? {}))
+     ([manifest-path policy-path admit? runtime]
      (let [m (load-manifest manifest-path)
            kototama-path (resolve-kototama-path manifest-path m)
            wasm-path (resolve-wasm-path manifest-path m)
@@ -133,7 +140,8 @@
            g (graph/build [m])]
        (cond
          kototama-path
-         (run-kototama-artifact m g policy* (read-artifact-bytes kototama-path) admit?)
+         (run-kototama-artifact m g policy* (read-artifact-bytes kototama-path)
+                                admit? runtime)
 
          (:aiueos/artifact m)
          (throw (ex-info (str manifest-path ": unsupported executable artifact profile")
@@ -148,7 +156,7 @@
          :else
          (throw (ex-info (str manifest-path
                               ": no executable :aiueos/artifact or :aiueos/wasm declared")
-                         {:manifest m}))))))
+                         {:manifest m})))))))
 
 #?(:clj
    (defn verify-command
@@ -237,9 +245,14 @@
 
      The normalized `:aiueos.manifest/deadline-ms` is enforced as a wall
      watchdog around Chicory instantiation and execution. Timeout interrupts
-     the dedicated worker; boot stops after termination is observed."
-     ([system-path policy-path] (up-command system-path policy-path 0))
+     the dedicated worker; boot stops after termination is observed.
+     The four-argument form may receive a host RUNTIME map; Kototama actor
+     state is carried across due components and returned for host persistence.
+     Storage durability and consensus remain host responsibilities."
+     ([system-path policy-path] (up-command system-path policy-path 0 {}))
      ([system-path policy-path sched-cycle]
+      (up-command system-path policy-path sched-cycle {}))
+     ([system-path policy-path sched-cycle runtime]
       (let [entries (load-system-entries system-path)
             manifests (mapv :aiueos/manifest entries)
             priorities (mapv #(get-in % [:aiueos/schedule :aiueos.manifest/priority]) manifests)
@@ -249,19 +262,25 @@
         (if-let [cycle (:aiueos.graph/cycle order-result)]
           {:aiueos.cli/command :up :aiueos.cli/ok? false :aiueos.cli/code :graph/cycle
            :aiueos/cycle cycle}
-          (loop [indices (get-in order-result [:aiueos.graph/order]) results []]
+          (loop [indices (get-in order-result [:aiueos.graph/order])
+                 results [] runtime* runtime]
             (if (empty? indices)
-              {:aiueos.cli/command :up :aiueos.cli/ok? true :aiueos/boot-results results}
+              (cond-> {:aiueos.cli/command :up :aiueos.cli/ok? true
+                       :aiueos/boot-results results}
+                (contains? runtime* :aiueos.kototama/actors)
+                (assoc :aiueos.kototama/actors
+                       (:aiueos.kototama/actors runtime*)))
               (let [i (first indices)
                     {:aiueos.launcher/keys [path] :aiueos/keys [manifest]} (nth entries i)]
                 (if-not (manifest/due-this-cycle? (:aiueos/schedule manifest) sched-cycle)
-                  (recur (rest indices) results)
+                  (recur (rest indices) results runtime*)
                   (let [kototama-path (resolve-kototama-path path manifest)
                         wasm-path (resolve-wasm-path path manifest)
                         result (cond
                                  kototama-path
                                  (run-kototama-artifact manifest g policy*
-                                                        (read-artifact-bytes kototama-path) false)
+                                                        (read-artifact-bytes kototama-path)
+                                                        false runtime*)
                                  wasm-path
                                  (execute/execute manifest g policy*
                                                   (read-artifact-bytes wasm-path))
@@ -274,6 +293,10 @@
                                  :else
                                  (broker/verify-one manifest g policy*))
                         results' (conj results result)
+                        runtime' (if-let [actors (get-in result
+                                                         [:aiueos.kototama/result :actors])]
+                                   (assoc runtime* :aiueos.kototama/actors actors)
+                                   runtime*)
                         booted? (and (= :grant (:aiueos/decision result))
                                      (not (contains? result :aiueos.execute/quota-exceeded))
                                      (not (contains? result :aiueos.execute/fuel-exceeded))
@@ -281,9 +304,13 @@
                                      (not (contains? result :aiueos.execute/runtime-failed))
                                      (not (contains? result :aiueos.execute/capability-unlinked)))]
                     (if booted?
-                      (recur (rest indices) results')
-                      {:aiueos.cli/command :up :aiueos.cli/ok? false :aiueos/boot-results results'
-                       :aiueos/stopped-at (:aiueos/component manifest)})))))))))))
+                      (recur (rest indices) results' runtime')
+                      (cond-> {:aiueos.cli/command :up :aiueos.cli/ok? false
+                               :aiueos/boot-results results'
+                               :aiueos/stopped-at (:aiueos/component manifest)}
+                        (contains? runtime' :aiueos.kototama/actors)
+                        (assoc :aiueos.kototama/actors
+                               (:aiueos.kototama/actors runtime'))))))))))))))
 
 #?(:clj
    (defn surface-command
