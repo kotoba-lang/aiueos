@@ -233,16 +233,23 @@
 
 (deftest hosted-adapter-requires-and-forwards-the-authority-facts-seam
   (let [{:keys [cid bytes]} (encoded-effect-program)
+        observed (atom nil)
         request {:program-bytes bytes :expected-cid cid :method "write"
-                 :args [] :fuel 1000 :actor "alice"}
+                 :args [] :fuel 1000 :actor "alice" :caller "operator"
+                 :authority-proof {:proof/id "committed-proof-1"}}
         denied (kototama/run-data-i64 request)
         store (vm/memory-store)
         machine {:get-fn (:get-fn store) :put! (:put! store)
-                 :authority-facts-fn effect-authority-facts}
+                 :authority-facts-fn (fn [request]
+                                       (reset! observed request)
+                                       (effect-authority-facts request))}
         allowed (kototama/run-data-i64 (assoc request :machine machine))]
     (is (not (:ok? denied)))
     (is (= :unauthorized (get-in denied [:receipt :exit])))
     (is (:ok? allowed))
     (is (= "done" (get-in allowed [:receipt :return])))
+    (is (= "operator" (:caller @observed)))
+    (is (= {:proof/id "committed-proof-1"}
+           (:authority-proof @observed)))
     (is (= "/notes"
            (get-in allowed [:receipt :authority-decisions 0 :resource])))))

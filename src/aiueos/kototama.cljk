@@ -30,7 +30,8 @@
   deterministic, source-authenticating authority adapters and prior `:actors`
   map so storage and actor-state ownership can live outside this process. The
   VM does not itself provide replication or consensus."
-  [{:keys [program-bytes expected-cid method args fuel actor machine actors]}
+  [{:keys [program-bytes expected-cid method args fuel actor caller
+           authority-proof machine actors]}
    profile-id]
   (when-not (and program-bytes expected-cid)
     (throw (ex-info "Kototama execution requires program bytes and expected CID"
@@ -69,8 +70,9 @@
           result (vm/apply-message
                   machine
                   {:actors actors
-                   :from "aiueos:caller" :to actor :method method
-                   :args (or args []) :fuel fuel})]
+                   :from (or caller "aiueos:caller") :to actor :method method
+                   :args (or args []) :fuel fuel
+                   :authority-proof authority-proof})]
       (assoc result
              :aiueos.kototama/program-cid program-cid
              :aiueos.kototama/contract-profile contract-profile
@@ -194,13 +196,14 @@
   (when-not (and (ifn? get-fn) (ifn? put!))
     (throw (ex-info "Kototama Inga invocation needs deterministic block-store seams"
                     {:type :aiueos.kototama/invalid-machine})))
-  (fn [{:keys [address code state method args fuel]}]
+  (fn [{:keys [address caller code state method args fuel authority-proof]}]
     (let [program-bytes (get-fn code)]
       (if-not program-bytes
         {:refused :no-code}
         (let [result (run-program
                       {:program-bytes program-bytes :expected-cid code
-                       :actor address :method method :args args :fuel fuel
+                       :actor address :caller caller :method method :args args
+                       :fuel fuel :authority-proof authority-proof
                        :machine (cond-> {:get-fn get-fn :put! put!}
                                   authority-facts-fn
                                   (assoc :authority-facts-fn authority-facts-fn)
