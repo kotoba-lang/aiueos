@@ -85,7 +85,7 @@
          :git/sha "8bc2dde5ae47129e49a957131c40313b6b02731c"}
         io.github.kotoba-lang/kotoba-vm
         {:git/url "https://github.com/kotoba-lang/kotoba-vm.git"
-         :git/sha "36cd2472a2d81fbb44db39d9b0e5a6cecf4f53a1"}}
+         :git/sha "8a20814b13156a918dbf1c78d7a2a95da1d8a883"}}
  :aliases
   {;; Load only when an explicit legacy :aiueos/wasm artifact is selected.
    ;; Kototama execution and the ordinary launcher do not load a Wasm engine.

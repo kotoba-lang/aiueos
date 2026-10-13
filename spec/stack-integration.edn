@@ -30,7 +30,6 @@
               :authorization-expressions
               :general-effect-expression-set
               :source-authenticated-authority-fact-adapters
-              :invoke-time-authorization-integration
               :biscuit-delegation
               :kototama-receipt-v1]}
  :kototama/vm-source-candidate
@@ -40,6 +39,6 @@
              :invoke-time-five-origin-authorization-gate
              :authority-decisions-in-local-message-result
              :declared-capability-invoke-effect-port]
-  :status :not-yet-selected-by-aiueos-dependency-pin
-  :aiueos-resolved-revision "36cd2472a2d81fbb44db39d9b0e5a6cecf4f53a1"}
+  :status :selected-local-commit-not-yet-published
+  :aiueos-resolved-revision "8a20814b13156a918dbf1c78d7a2a95da1d8a883"}
  :qualification-claim :partial-hosted-kototama-core-v1}

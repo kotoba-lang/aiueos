@@ -25,10 +25,10 @@ Kotoba VM candidate has a bounded positive Datalog evaluator, five-origin
 eligibility join, pre-body method authorization, and a declared Amu
 `invoke-capability` expression that reaches a host effect port only after
 authorization. AiueOS adapters now expose that port for local and Inga hosts.
-AiueOS still pins Kotoba VM at
-`36cd2472a2d81fbb44db39d9b0e5a6cecf4f53a1`, before those changes; therefore
-this branch's adapter seam is not yet active with its declared dependency.
-Source-authenticated fact adapters, per-effect reservation/receipts, general
+This branch now pins the local Kotoba VM candidate at
+`8a20814b13156a918dbf1c78d7a2a95da1d8a883`; the VM commit still needs to be
+published before a clean external checkout can resolve it. Source-authenticated
+fact adapters, per-effect reservation/receipts, general
 actor-state/effect expressions, delegation and the canonical Kototama receipt
 remain incomplete. These host selectors do not define a competing Kototama
 contract.
