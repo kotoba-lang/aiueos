@@ -18,6 +18,12 @@ currently used to boot hardware, while Wasm is explicit legacy compatibility.
 The Kototama VM is not yet embedded in the bare-metal image. Existing hybrid,
 C-free, QEMU and physical qualification remain separate.
 
+AiueOS's `:kototama/core-i64-subset-v1` and `:kototama/data-i64-v1` values
+select hosted value profiles; both implement the normative Kototama `:core/v1`
+contract through Kotoba VM. That engine declares `:core/v1` partial and lists
+the missing actor-state, authority, effect, Datalog, delegation and receipt
+semantics. These host selectors do not define a competing Kototama contract.
+
 ## Contract dependency direction
 
 Arrows are consumer → contract dependency. These are intended entrypoint

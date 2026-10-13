@@ -13,5 +13,23 @@
  :aliases-recorded-separately true
  :runtime-migration-performed true
  :runtime-schema-changed true
- :supported-vm-profiles [:kototama/core-i64-subset-v1 :kototama/data-i64-v1]
- :qualification-claim :partial-hosted-kototama-data-i64}
+ :kototama/vm-contract
+ {:spec {:schema :kototama.vm/spec-v1
+         :version 1
+         :repository "https://github.com/kotoba-lang/kototama"
+         :profile :core/v1}
+  :implementation {:name :kotoba-vm
+                   :profile :core/v1
+                   :status :partial
+                   :declaration "https://github.com/kotoba-lang/kotoba-vm/blob/main/kototama-profile.edn"}
+  :host-selectors
+  {:kototama/core-i64-subset-v1 {:value-profile "kotoba.i64-wrap/v1"}
+   :kototama/data-i64-v1 {:value-profile "kototama.data-i64/v1"}}
+  :omissions [:complete-kototama-program-v1
+              :actor-state-expressions
+              :authorization-expressions
+              :effect-expressions
+              :bounded-datalog-authority
+              :biscuit-delegation
+              :kototama-receipt-v1]}
+ :qualification-claim :partial-hosted-kototama-core-v1}

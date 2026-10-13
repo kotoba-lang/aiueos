@@ -74,6 +74,7 @@
            (:aiueos.kototama/engine-profiles machine)))
     (is (= :inga.replica (:aiueos.kototama/consensus-owner machine)))
     (is (= :partial (:aiueos.kototama/conformance machine)))
+    (is (= :core/v1 (:aiueos.kototama/contract-profile machine)))
     (is (ifn? (:apply-fn machine)))
     (is (ifn? (:root-fn machine)))
     (is (ifn? (:hydrate-fn machine)))))

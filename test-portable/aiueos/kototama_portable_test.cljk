@@ -144,6 +144,7 @@
                  :method "echo" :args [value] :fuel 100})]
     (is (:ok? result))
     (is (= value (get-in result [:receipt :return])))
+    (is (= :core/v1 (:aiueos.kototama/contract-profile result)))
     (is (= :kototama/data-i64-v1 (:aiueos.kototama/vm-profile result)))
     (is (= :kotoba-vm/kototama-data-i64-v1
            (:aiueos.kototama/engine-profile result)))))

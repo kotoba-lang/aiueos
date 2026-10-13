@@ -228,6 +228,7 @@
                                        (dissoc block :aiueos.kototama/prepared-ops)))))
            :aiueos.kototama/vm-profiles
            [:kototama/core-i64-subset-v1 :kototama/data-i64-v1]
+           :aiueos.kototama/contract-profile :core/v1
            :aiueos.kototama/engine-profiles
            [:kotoba-vm/kototama-core-i64-subset-v1
             :kotoba-vm/kototama-data-i64-v1]

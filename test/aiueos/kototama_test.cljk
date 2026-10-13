@@ -52,6 +52,7 @@
     (is (= #?(:clj 42 :cljs (js/BigInt 42))
            (get-in result [:receipt :return])))
     (is (= expected-cid (:aiueos.kototama/program-cid result)))
+    (is (= :core/v1 (:aiueos.kototama/contract-profile result)))
     (is (= :kotoba-vm/kototama-core-i64-subset-v1
            (:aiueos.kototama/engine-profile result)))
     (is (= :kototama/core-i64-subset-v1

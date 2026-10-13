@@ -215,7 +215,8 @@ kotoba semantics -> amu -> kotoba-native freestanding ABI -> aiueos boot images
 format, analogous in stack position to EVM: Amu emits the canonical program,
 Kotoba VM supplies host-specific engines, and AiueOS dispatches the selected
 profile. This does not imply EVM bytecode compatibility or complete Kototama
-conformance; the current hosted engine is explicitly a partial i64 profile.
+conformance; the current engine declares partial conformance to normative
+`:core/v1`, with AiueOS i64 and data-i64 selectors mapped to that profile.
 Placement (`sahai` at T6, `murakumo` for its inference fleet) decides where
 components run. AiueOS supplies the named providers and the machine underneath
 them; it does not own

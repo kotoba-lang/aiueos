@@ -11,6 +11,7 @@
 (def engine-profile :kotoba-vm/kototama-core-i64-subset-v1)
 (def data-profile :kototama/data-i64-v1)
 (def data-engine-profile :kotoba-vm/kototama-data-i64-v1)
+(def contract-profile :core/v1)
 
 (def ^:private profiles
   {profile {:value-profile "kotoba.i64-wrap/v1" :engine engine-profile}
@@ -68,6 +69,7 @@
                    :args (or args []) :fuel fuel})]
       (assoc result
              :aiueos.kototama/program-cid program-cid
+             :aiueos.kototama/contract-profile contract-profile
              :aiueos.kototama/vm-profile profile-id
              :aiueos.kototama/engine-profile (:engine selected)
              :aiueos.kototama/conformance :partial
