@@ -145,7 +145,7 @@ $ <span class="c-acc">aiueos verify</span> examples/system.aiueos.edn   <span cl
       <li><b>Deny-by-default.</b> A component touches only granted capabilities — unresolved imports are denied before launch.</li>
       <li><b>Runtime gates, not convention.</b> Every host call is checked; attenuation holds — some caps never leak the rest.</li>
       <li><b>Small TCB.</b> The broker, runtime/host ABI, safe-checker and manifest reader are trusted; admitted code still runs within its selected execution profile.</li>
-      <li><b>Limits.</b> Per-component fuel (CPU) and memory-page caps; runaways trap, not hang.</li>
+      <li><b>Execution limits.</b> The hosted Kotoba VM charges fuel for the supported pure-i64 profile; memory and effect limits depend on the selected runtime profile.</li>
       <li><b>IOMMU/DMA rule.</b> Any <code>:dma</code> effect must require + be granted <code>:iommu</code>, or it's denied.</li>
       <li><b>AI containment.</b> <code>:ai-generated</code> components are untrusted, ephemeral, no network/secrets/persistence.</li>
       <li><b>Audit.</b> Every grant/deny/compile/run recorded as EDN.</li>
