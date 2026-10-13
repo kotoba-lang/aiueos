@@ -24,7 +24,7 @@ jobs:
           KOTOBA_REF: 4115c0e58805578c1c33f84a1fdc033f70036cdd
           ENGINE_REF: 1675e6aab65d5a99e37840cc5012bc2eca6f4a07
           IPLD_REF: 8bc2dde5ae47129e49a957131c40313b6b02731c
-          VM_REF: 36cd2472a2d81fbb44db39d9b0e5a6cecf4f53a1
+          VM_REF: 2e3eba19e3c1165649cd2d0ff996f620435de893
           GRANT_REF: a120d73580f3b3ca740c0a7e19e313c4562e3733
           BB_VERSION: 1.12.218
         run: |
@@ -78,5 +78,5 @@ jobs:
             exit 1
           }
           printf '%s\n' "$result"
-          printf '%s\n' "$result" | grep -q '^Ran 21 tests containing 59 assertions\.$'
+          printf '%s\n' "$result" | grep -q '^Ran 24 tests containing 74 assertions\.$'
           printf '%s\n' "$result" | grep -q '^0 failures, 0 errors\.$'
