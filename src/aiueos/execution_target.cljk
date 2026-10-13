@@ -1,0 +1,19 @@
+(ns aiueos.execution-target
+  "Portable selection rule for manifest-declared application artifacts.
+
+  This namespace is intentionally free of host, Grant, and engine imports so
+  every supported runtime can agree on the artifact selected for execution.")
+
+(defn select
+  "Choose the declared executable format in priority order.
+
+  A supported Kototama artifact is the application default. A manifest that
+  declares an unsupported Kototama artifact fails closed instead of silently
+  falling back to legacy Wasm. Wasm is considered only when no Kototama
+  artifact is declared."
+  [manifest kototama-path wasm-path]
+  (cond
+    kototama-path :kototama
+    (:aiueos/artifact manifest) :unsupported-artifact
+    wasm-path :wasm
+    :else :none))

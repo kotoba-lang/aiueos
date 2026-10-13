@@ -2,14 +2,16 @@
 {:stack.integration/version 1
  :status :accepted-architecture-direction
  :owner "kotoba-lang/aiueos"
- :role "OS mechanisms and enforcement"
+ :role "OS mechanisms, Kototama VM hosting and enforcement"
  :composition-authority "https://github.com/kotoba-lang/kotoba-lang/blob/main/lang/stack-architecture.edn"
  :architecture-direction "https://github.com/kotoba-lang/kotoba-lang/blob/main/lang/stack-architecture-target-neutral.edn"
  :refactor-procedure "https://github.com/kotoba-lang/kotoba-lang/blob/main/docs/stack-refactor-procedure.md"
- :intended-entrypoint-dependencies ["grant decision contracts" "neutral execution and selected native ABI contracts"]
+ :intended-entrypoint-dependencies ["grant decision contracts" "Kototama VM contract and kotoba-vm engine" "io-ipld content-addressed storage"]
  :observed-base "d3d5052926f2abd3095bef6a7fbb67c2abe5605f"
- :observed-selected-direct ["grant"]
+ :observed-selected-direct ["grant" "io-ipld" "kotoba-vm"]
+ :optional-distributed-dependency "inga and inga-node"
  :aliases-recorded-separately true
- :runtime-migration-performed false
- :runtime-schema-changed false
- :qualification-claim :none}
+ :runtime-migration-performed true
+ :runtime-schema-changed true
+ :supported-vm-profiles [:kototama/core-i64-subset-v1 :kototama/data-i64-v1]
+ :qualification-claim :partial-hosted-kototama-data-i64}

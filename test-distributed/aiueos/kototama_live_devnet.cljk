@@ -1,0 +1,232 @@
+(ns aiueos.kototama-live-devnet
+  "Four real inga-node transports with independent keys and block stores.
+
+  From the AiueOS repository, run `AIUEOS_LIVE_NETWORK=1 kbb -M:distributed
+  -e '(require (quote aiueos.kototama-live-devnet))'`. Set NODE_PATH so Node
+  resolves inga-node's installed `ws` dependency, and set AIUEOS_REPO_ROOT if
+  running from another directory. This is separate from in-memory consensus
+  tests because it binds local HTTP and WebSocket ports."
+  (:require [aiueos.kototama.inga :as kototama-inga]
+            [inga.replica :as replica]
+            [inga-node.identity :as identity]
+            [inga-node.node :as node]
+            [inga-node.seams :as seams]
+            [ipld.core :as ipld]
+            ["node:fs" :as fs]
+            ["node:os" :as os]
+            ["node:path" :as path]))
+
+(def ^:private witnesses ["w1" "w2" "w3" "w4"])
+(def ^:private chain-id "aiueos-kototama-live-v1")
+(def ^:private program-cid
+  "bafyreiddqnpygk2vba4uau2t2nh6lvlreewu6pyaa4slbjhoos6mbswz2e")
+
+(defn- sleep [ms]
+  (js/Promise. (fn [resolve] (js/setTimeout resolve ms))))
+
+(def ^:private promise-then-fn (.-then (.-prototype js/Promise)))
+
+(defn- then
+  ([promise on-fulfilled]
+   (.call promise-then-fn promise on-fulfilled))
+  ([promise on-fulfilled on-rejected]
+   (.call promise-then-fn promise on-fulfilled on-rejected)))
+
+(defn- port-of [base witness]
+  (+ base (.indexOf (to-array witnesses) witness)))
+
+(defn- http-json [base witness suffix]
+  (then (js/fetch (str "http://127.0.0.1:" (port-of base witness) suffix))
+        (fn [response]
+          (println "KOTOTAMA-LIVE-DEVNET http" witness suffix (.-status response))
+          (when-not (.-ok response)
+            (throw (js/Error. (str witness " HTTP " (.-status response)
+                                   " at " suffix))))
+          (.json response))))
+
+(defn- node-machine [blocks caller-pubkeys program-bytes proposal-blocks]
+  (let [get-fn (fn [cid] (get @blocks cid))
+        put! (fn [cid bytes]
+               (swap! blocks assoc cid bytes)
+               cid)
+        state-cid (ipld/put-node! put! {})
+        actor-put {:op :actor-put :address "app" :caller "app"
+                   :actor {:code program-cid :state state-cid
+                           :nonce 0 :balance 0}}
+        decoder (kototama-inga/signed-proposal-decoder
+                 {:chain-id chain-id
+                  :get-fn get-fn
+                  :put! put!
+                  :verify-caller-fn
+                  (fn [caller payload signature]
+                    ((seams/verify-fn caller-pubkeys)
+                     caller payload signature))})]
+    (swap! blocks merge proposal-blocks)
+    (swap! blocks assoc program-cid program-bytes)
+    {:get-fn get-fn
+     :put! put!
+     :machine
+     (kototama-inga/state-machine
+      {:decode-block
+       (fn [block]
+         (into (if (= 1 (:inga.block/height block)) [actor-put] [])
+               (decoder block)))
+       :get-fn get-fn
+       :put! put!
+       :blind-fn pr-str
+       :encrypt-fn identity
+       :height-fn :inga.block/height
+       :fuel {:budget-fn (fn [_] 1000)
+              :cost-fn (fn [op]
+                         (if (= :actor-call (:op op)) 500 1))}
+       :authority kototama-inga/signed-proposal-authority})}))
+
+(defn- result-at [node-state blocks]
+  (let [actor (get-in node-state [:machine-state :actors "app"])
+        cid (:state actor)]
+    (when cid
+      (get (ipld/get-node (fn [key] (get @blocks key)) cid) "return"))))
+
+(defn- start-node! [base root witness pubkeys caller-pubkeys seed-hex program-bytes proposal-blocks stores]
+  (let [blocks (atom {})
+        {:keys [machine]} (node-machine blocks caller-pubkeys program-bytes proposal-blocks)
+        port (port-of base witness)
+        peers (into {}
+                    (map (fn [peer]
+                           [peer (str "ws://127.0.0.1:" (port-of base peer))]))
+                    (remove #{witness} witnesses))
+        data-dir (path/join root witness)
+        node-state (node/start!
+                    {:witness witness
+                     :witnesses witnesses
+                     :peers peers
+                     :pubkeys pubkeys
+                     :seed-hex seed-hex
+                     :chain-id chain-id
+                     :host "127.0.0.1"
+                     :port port
+                     :tick-ms 200
+                     :view-ms 1600
+                     :data-dir data-dir
+                     :machine machine})]
+    (swap! stores assoc witness {:node node-state :blocks blocks})
+    node-state))
+
+(defn- all-results [stores]
+  (into {}
+        (map (fn [[witness {:keys [node blocks]}]]
+               [witness (result-at @(:state node) blocks)]))
+        @stores))
+
+(defn run!
+  "Start four actual node transports, submit an authenticated Amu call, and
+  require all four independent state machines to commit the same result and
+  content-addressed actor state.
+  Returns a Promise that resolves to the per-witness return values."
+  []
+  (let [base (+ 24000 (mod (.now js/Date) 30000))
+        root (path/join (os/tmpdir) (str "aiueos-kototama-live-" (.now js/Date)))
+        repo-root (or (aget (.-env js/process) "AIUEOS_REPO_ROOT")
+                      (.cwd js/process))
+        program-path (path/join repo-root "test/fixtures/amu-kototama-default-v1.dagcbor")
+        program-bytes (.readFileSync fs program-path)
+        stores (atom {})
+        stop-nodes! (fn []
+                      (doseq [[_ {:keys [node]}] @stores]
+                        (try ((:stop! node)) (catch :default _ nil))))]
+    (fs/mkdirSync root #js {:recursive true})
+    (let [seeds (into {} (map (fn [w]
+                                [w (identity/ensure-seed! (path/join root w))])
+                              witnesses))
+          witness-pubkeys (into {} (map (fn [[w seed]] [w (identity/public-hex seed)]) seeds))
+          caller-seed (identity/ensure-seed! (path/join root "caller"))
+          caller-pubkeys {"alice" (identity/public-hex caller-seed)}
+          sign-caller! (seams/sign-fn caller-seed)]
+      (let [proposal-blocks (atom {})
+            call-cid (ipld/put-node!
+                      (fn [cid bytes] (swap! proposal-blocks assoc cid bytes) cid)
+                      ["kototama.actor-call" 1
+                       {"address" "app" "method" "main" "args" []}])
+            envelope {:ref "-" :seq 0 :cid call-cid :caller "alice"}
+            payload (kototama-inga/actor-call-payload chain-id envelope)
+            record (assoc envelope :signature (sign-caller! payload))]
+      (let [started
+            (then (js/Promise.resolve nil)
+                  (fn [_]
+                    (doseq [witness witnesses]
+                      (start-node! base root witness witness-pubkeys caller-pubkeys
+                                   (get seeds witness) program-bytes @proposal-blocks stores))
+                    (println "KOTOTAMA-LIVE-DEVNET nodes-started")))
+            healthy
+            (then started
+                  (fn [_]
+                    (println "KOTOTAMA-LIVE-DEVNET checking-health")
+                    (js/Promise.all
+                     (into-array (map (fn [w] (http-json base w "/health"))
+                                      witnesses)))))
+            submitted
+            (then healthy
+                  (fn [health]
+                    (when-not (= (count witnesses) (count (array-seq health)))
+                      (throw (js/Error. "health check did not return all witnesses")))
+                    (println "KOTOTAMA-LIVE-DEVNET submitting")
+                    (js/fetch
+                     (str "http://127.0.0.1:" (port-of base "w1") "/submit")
+                     #js {:method "POST"
+                          :headers #js {"content-type" "application/json"}
+                          :body (js/JSON.stringify #js {:record (clj->js record)})})))
+            accepted
+            (then submitted
+                  (fn [response]
+                    (when-not (.-ok response)
+                      (throw (js/Error. (str "proposal submit returned "
+                                             (.-status response)))))
+                    (.json response)))
+            committed
+            (then accepted
+                  (fn [_]
+                    (then (sleep 12000)
+                          (fn [_]
+                            (then (js/Promise.all
+                                   (into-array (map (fn [w] (http-json base w "/health"))
+                                                    witnesses)))
+                                  (fn [health]
+                                    (println "KOTOTAMA-LIVE-DEVNET post-submit-health"
+                                             (js/JSON.stringify health))
+                                    (let [results (all-results stores)]
+                                      (when-not (every? (fn [[_ result]] (= "42" result)) results)
+                                        (throw (js/Error.
+                                                (str "witnesses did not all execute the call: "
+                                                     (pr-str results)))))
+                                      results)))))))
+            verified
+            (then committed
+                  (fn [results]
+                    (let [nodes (mapv :node (vals @stores))
+                          actors (mapv #(get-in @(:state %)
+                                               [:machine-state :actors "app"])
+                                       nodes)
+                          actor-states (mapv :state actors)]
+                      (when-not (and (every? some? actor-states)
+                                     (apply = actor-states))
+                        (throw (js/Error.
+                                (str "Kototama actor-state CIDs diverged: "
+                                     (pr-str actor-states)))))
+                      (println "KOTOTAMA-LIVE-DEVNET PASS"
+                               "witnesses=4 result=42 actor-state-cid="
+                               (first actor-states))
+                      results)))
+            cleaned
+            (then verified
+                  (fn [result]
+                    (stop-nodes!)
+                    result))]
+        (then cleaned identity
+              (fn [error]
+                (set! (.-exitCode js/process) 1)
+                (js/console.error "KOTOTAMA-LIVE-DEVNET FAIL"
+                                  (or (.-stack error) (.-message error)))
+                (stop-nodes!))))))))
+
+(when (= "1" (aget (.-env js/process) "AIUEOS_LIVE_NETWORK"))
+  (run!))

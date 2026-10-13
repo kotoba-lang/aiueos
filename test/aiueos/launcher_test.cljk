@@ -1,11 +1,11 @@
 (ns aiueos.launcher-test
-  "Real end-to-end proof for aiueos.launcher: writes a manifest EDN + a
-  compiled .kotoba Wasm binary to a real temp directory, then drives them
-  through `aiueos.launcher/verify-command`/`run-command`/`dispatch` exactly
-  as a shell invocation of the CLI would -- genuine file I/O, not
-  in-memory-only shortcuts."
+  "End-to-end launcher tests: write manifests and executable artifacts to
+  real temporary directories, then exercise verification and execution as a
+  CLI invocation would. Covers the preferred Kototama path and explicit
+  legacy Wasm compatibility with genuine file I/O."
   (:require [kotoba.bytes :as kbytes] [grant.audit :as audit]
             [aiueos.launcher :as launcher]
+            [ipld.core :as ipld]
             [aiueos.topic :as topic]
             [kotoba.test :refer [deftest is testing]]
             #?(:clj [clojure.java.io :as io])
@@ -49,6 +49,80 @@
                  (let [policy-file (io/file dir "policy.edn")]
                    (spit policy-file (pr-str policy-overlay))
                    (.getPath policy-file))))))))
+
+#?(:clj
+   (defn- write-kototama-fixture! []
+     (let [dir (temp-dir)
+           program (ipld/node->block
+                    ["kototama.vm/program" 1
+                     {"entry" "sum"
+                      "value-profile" "kototama.data-i64/v1"
+                      "methods" {"sum" {"params" ["a" "b"]
+                                          "param-types" ["i64" "i64"]
+                                          "result" "i64" "effects" []
+                                          "body" ["arith" "add"
+                                                  ["var" "a"] ["var" "b"]]}}}])
+           program-file (io/file dir "sum.dagcbor")
+           manifest-file (io/file dir "manifest.edn")
+           manifest {:aiueos/component :app/calc :aiueos/kind :app
+                     :aiueos/trust :trusted
+                     :aiueos/artifact {:kind :kototama/program-v1
+                                       :profile :kototama/data-i64-v1
+                                       :path "sum.dagcbor"
+                                       :cid (:cid program)}
+                     :aiueos/entry "sum" :aiueos/args [20 22]
+                     :aiueos/limits {:fuel 100}}]
+       (with-open [out (io/output-stream program-file)]
+         (.write out (:bytes program)))
+       (spit manifest-file (pr-str manifest))
+       (.getPath manifest-file))))
+
+#?(:clj
+   (defn- write-amu-default-kototama-fixture! []
+     (let [root (or (System/getenv "AIUEOS_REPO_ROOT") ".")
+           source (io/file root "test/fixtures/amu-kototama-default-v1.dagcbor")
+           dir (temp-dir)
+           program-file (io/file dir "answer.dagcbor")
+           wasm-file (io/file dir "legacy.wasm")
+           manifest-file (io/file dir "manifest.edn")
+           manifest {:aiueos/component :app/amu-answer
+                     :aiueos/kind :app
+                     :aiueos/trust :trusted
+                     :aiueos/imports #{:topic/publish}
+                     :aiueos/wasm "legacy.wasm"
+                     :aiueos/artifact {:kind :kototama/program-v1
+                                       :profile :kototama/core-i64-subset-v1
+                                       :path "answer.dagcbor"
+                                       :cid "bafyreiddqnpygk2vba4uau2t2nh6lvlreewu6pyaa4slbjhoos6mbswz2e"}
+                     :aiueos/entry "main"
+                     :aiueos/args []
+                     :aiueos/limits {:fuel 100}}]
+       (io/copy source program-file)
+       (io/copy (kbytes/base64-decode-bytes
+                 (str/replace topic-publish-wasm-b64 "\n" ""))
+                wasm-file)
+       (spit manifest-file (pr-str manifest))
+       (.getPath manifest-file))))
+
+#?(:clj
+   (deftest run-command-executes-the-declared-kototama-data-profile
+     (let [manifest-path (write-kototama-fixture!)
+           result (launcher/run-command manifest-path nil false)]
+       (is (= :grant (:aiueos/decision result)))
+       (is (:ok? (get-in result [:aiueos.kototama/result])))
+       (is (= 42 (get-in result [:aiueos.kototama/result :receipt :return])))
+       (is (= :kototama/data-i64-v1
+              (get-in result [:aiueos.kototama/result :aiueos.kototama/vm-profile]))))))
+
+#?(:clj
+   (deftest run-command-executes-the-current-amu-default-artifact
+     (let [manifest-path (write-amu-default-kototama-fixture!)
+           result (launcher/run-command manifest-path nil false)]
+       (is (= :grant (:aiueos/decision result)))
+       (is (:ok? (get-in result [:aiueos.kototama/result])))
+       (is (= 42 (get-in result [:aiueos.kototama/result :receipt :return])))
+       (is (= :kototama/core-i64-subset-v1
+              (get-in result [:aiueos.kototama/result :aiueos.kototama/vm-profile]))))))
 
 #?(:clj
    (deftest verify-command-reads-real-files-and-decides

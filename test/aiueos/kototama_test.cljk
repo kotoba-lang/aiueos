@@ -1,27 +1,47 @@
 (ns aiueos.kototama-test
   (:require [aiueos.kototama :as kototama]
+            [aiueos.kototama.admission :as admission]
             [ipld.core :as ipld]
             [grant.graph :as graph]
             [grant.policy :as policy]
-            [kotoba.test :refer [deftest is]]
-            [kotoba.vm :as vm]))
+            #?(:clj [kotoba.test :refer [deftest is]]
+               :cljs [cljs.test :refer [deftest is] :include-macros true])
+            #?(:cljs ["node:fs" :as fs])))
 
-(def ^:private sum-program
-  ["kototama.vm/program" 1
-   {"entry" "sum"
-    "value-profile" "kotoba.i64-wrap/v1"
-    "methods" {"sum" {"params" ["a" "b"]
-                       "param-types" ["i64" "i64"]
-                       "result" "i64"
-                       "effects" []
-                       "body" ["arith" "add"
-                               [["var" "a"] ["var" "b"]]]}}}])
+(def ^:private amu-program-cid
+  "bafyreiadqe4yzd45fvkz456jfesqq3tc46th46ufyzermn2mzvixu47edu")
+
+(def ^:private amu-default-program-cid
+  "bafyreiddqnpygk2vba4uau2t2nh6lvlreewu6pyaa4slbjhoos6mbswz2e")
 
 (defn- encoded-program []
-  (let [store (vm/memory-store)
-        cid (ipld/put-node! (:put! store) sum-program)]
-    {:expected-cid cid
-     :program-bytes ((:get-fn store) cid)}))
+  ;; Use the Amu-emitted block byte-for-byte; reconstructing this from a host
+  ;; map would only exercise the local DAG-CBOR encoder.
+  {:expected-cid amu-program-cid
+   :program-bytes
+   #?(:clj (java.nio.file.Files/readAllBytes
+            (java.nio.file.Paths/get "test/fixtures/amu-kototama-sum-v1.dagcbor"
+                                     (make-array String 0)))
+      :cljs (.readFileSync fs
+                           "test/fixtures/amu-kototama-sum-v1.dagcbor"))})
+
+(defn- encoded-default-program []
+  (let [root #?(:clj (or (System/getenv "AIUEOS_REPO_ROOT") ".")
+                :cljs (or (aget (.-env js/process) "AIUEOS_REPO_ROOT") "."))
+        path (str root "/test/fixtures/amu-kototama-default-v1.dagcbor")]
+    {:expected-cid amu-default-program-cid
+     :program-bytes #?(:clj (java.nio.file.Files/readAllBytes
+                             (java.nio.file.Paths/get path (make-array String 0)))
+                       :cljs (.readFileSync fs path))}))
+
+(defn- encoded-data-program []
+  (ipld/node->block
+   ["kototama.vm/program" 1
+    {"entry" "echo"
+     "value-profile" "kototama.data-i64/v1"
+     "methods" {"echo" {"params" ["value"] "param-types" ["value"]
+                         "result" "value" "effects" []
+                         "body" ["var" "value"]}}}]))
 
 (deftest canonical-kototama-program-runs-on-hosted-engine
   (let [{:keys [expected-cid program-bytes]} (encoded-program)
@@ -32,14 +52,36 @@
     (is (= #?(:clj 42 :cljs (js/BigInt 42))
            (get-in result [:receipt :return])))
     (is (= expected-cid (:aiueos.kototama/program-cid result)))
-    (is (= :kotoba-vm/core-i64-subset-v1
+    (is (= :kotoba-vm/kototama-core-i64-subset-v1
            (:aiueos.kototama/engine-profile result)))
+    (is (= :kototama/core-i64-subset-v1
+           (:aiueos.kototama/vm-profile result)))
     (is (= :process-local (:aiueos.kototama/state-scope result)))))
+
+(deftest canonical-kototama-program-runs-a-conditional-branch
+  (let [{:keys [expected-cid program-bytes]} (encoded-program)
+        result (kototama/run-core-i64-subset
+                {:program-bytes program-bytes :expected-cid expected-cid
+                 :method "choose" :args [0] :fuel 100})]
+    (is (:ok? result))
+    (is (= #?(:clj 7 :cljs (js/BigInt 7))
+           (get-in result [:receipt :return])))))
+
+(deftest independent-hosted-vm-stores-apply-the-same-transition
+  (let [{:keys [expected-cid program-bytes]} (encoded-program)
+        request {:program-bytes program-bytes :expected-cid expected-cid
+                 :method "sum" :args [20 22] :fuel 100}
+        left (kototama/run-core-i64-subset request)
+        right (kototama/run-core-i64-subset request)]
+    (is (= (:aiueos.kototama/program-cid left)
+           (:aiueos.kototama/program-cid right)))
+    (is (= (:receipt left) (:receipt right)))
+    (is (= (:actors left) (:actors right)))))
 
 (deftest kototama-program-cid-mismatch-refuses-before-execution
   (let [{:keys [program-bytes]} (encoded-program)]
     (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo
+         #?(:clj clojure.lang.ExceptionInfo :cljs js/Error)
          #"CID does not match"
          (kototama/run-core-i64-subset
           {:program-bytes program-bytes
@@ -60,19 +102,77 @@
                   :aiueos/kind :app
                   :aiueos/trust :trusted
                   :aiueos/artifact {:kind :kototama/program-v1
+                                    :profile :kototama/core-i64-subset-v1
                                     :path "sum.dagcbor"
                                     :cid (str expected-cid)}
                   :aiueos/entry "sum"
                   :aiueos/args [20 22]
                   :aiueos/limits {:fuel 100}}
-        result (kototama/execute-artifact
+        result (admission/execute-artifact
                 manifest (graph/build [manifest]) policy/default-policy
                 program-bytes false)]
     (is (= :grant (:aiueos/decision result)))
     (is (= #?(:clj 42 :cljs (js/BigInt 42))
            (get-in result [:aiueos.kototama/result :receipt :return])))))
 
+(deftest manifest-execution-runs-the-current-amu-default-artifact
+  (let [{:keys [expected-cid program-bytes]} (encoded-default-program)
+        manifest {:aiueos/component :app/amu-answer
+                  :aiueos/kind :app
+                  :aiueos/trust :trusted
+                  :aiueos/artifact {:kind :kototama/program-v1
+                                    :profile :kototama/core-i64-subset-v1
+                                    :cid expected-cid}
+                  :aiueos/entry "main"
+                  :aiueos/args []
+                  :aiueos/limits {:fuel 100}}
+        result (admission/execute-artifact
+                manifest (graph/build [manifest]) policy/default-policy
+                program-bytes false)]
+    (is (= :grant (:aiueos/decision result)))
+    (is (= #?(:clj 42 :cljs (js/BigInt 42))
+           (get-in result [:aiueos.kototama/result :receipt :return])))
+    (is (= :kototama/core-i64-subset-v1
+           (get-in result [:aiueos.kototama/result :aiueos.kototama/vm-profile])))))
+
 (deftest manifest-requiring-signatures-denies-before-vm-execution
+  (let [{:keys [expected-cid program-bytes]} (encoded-program)
+        manifest {:aiueos/component :app/calc
+                  :aiueos/kind :app
+                  :aiueos/trust :trusted
+                  :aiueos/artifact {:kind :kototama/program-v1
+                                    :profile :kototama/core-i64-subset-v1
+                                    :path "sum.dagcbor"
+                                    :cid (str expected-cid)}
+                  :aiueos/entry "sum"
+                  :aiueos/args [20 22]}
+        restricted (assoc policy/default-policy :aiueos.policy/require-signed true)
+        result (admission/execute-artifact
+                manifest (graph/build [manifest]) restricted program-bytes false)]
+    (is (= :deny (:aiueos/decision result)))
+    (is (nil? (:aiueos.kototama/result result)))))
+
+(deftest unknown-vm-profile-is-denied-before-engine-entry
+  (let [{:keys [expected-cid program-bytes]} (encoded-program)
+        manifest {:aiueos/component :app/calc
+                  :aiueos/kind :app
+                  :aiueos/trust :trusted
+                  :aiueos/artifact {:kind :kototama/program-v1
+                                    :profile :kototama/future-profile-v1
+                                    :path "sum.dagcbor"
+                                    :cid (str expected-cid)}
+                  :aiueos/entry "sum"
+                  :aiueos/args [20 22]}
+        result (admission/execute-artifact
+                manifest (graph/build [manifest]) policy/default-policy
+                program-bytes false)]
+    (is (= :deny (:aiueos/decision result)))
+    (is (= :unsupported-vm-profile
+           (get-in result [:aiueos/violations 0 :aiueos/kind])))
+    (is (= :kototama/future-profile-v1
+           (get-in result [:aiueos/violations 0 :aiueos/declared-profile])))))
+
+(deftest missing-vm-profile-is-denied
   (let [{:keys [expected-cid program-bytes]} (encoded-program)
         manifest {:aiueos/component :app/calc
                   :aiueos/kind :app
@@ -82,8 +182,28 @@
                                     :cid (str expected-cid)}
                   :aiueos/entry "sum"
                   :aiueos/args [20 22]}
-        restricted (assoc policy/default-policy :aiueos.policy/require-signed true)
-        result (kototama/execute-artifact
-                manifest (graph/build [manifest]) restricted program-bytes false)]
+        result (admission/execute-artifact
+                manifest (graph/build [manifest]) policy/default-policy
+                program-bytes false)]
     (is (= :deny (:aiueos/decision result)))
-    (is (nil? (:aiueos.kototama/result result)))))
+    (is (= :unsupported-vm-profile
+           (get-in result [:aiueos/violations 0 :aiueos/kind])))))
+
+(deftest signed-manifest-selects-data-i64-profile
+  (let [{:keys [cid bytes]} (encoded-data-program)
+        manifest {:aiueos/component :app/echo
+                  :aiueos/kind :app
+                  :aiueos/trust :trusted
+                  :aiueos/artifact {:kind :kototama/program-v1
+                                    :profile :kototama/data-i64-v1
+                                    :cid cid}
+                  :aiueos/entry "echo"
+                  :aiueos/args [{"greeting" "こんにちは" "ok" true}]
+                  :aiueos/limits {:fuel 100}}
+        result (admission/execute-artifact
+                manifest (graph/build [manifest]) policy/default-policy bytes false)]
+    (is (= :grant (:aiueos/decision result)))
+    (is (= {"greeting" "こんにちは" "ok" true}
+           (get-in result [:aiueos.kototama/result :receipt :return])))
+    (is (= :kototama/data-i64-v1
+           (get-in result [:aiueos.kototama/result :aiueos.kototama/vm-profile])))))

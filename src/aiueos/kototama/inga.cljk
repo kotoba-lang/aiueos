@@ -1,25 +1,25 @@
 (ns aiueos.kototama.inga
-  "Compose the portable Kotoba VM with Inga's committed actor state machine.
+  "Compose the portable Kototama VM with Inga's committed actor state machine.
 
   Load this namespace with the optional `:distributed` alias. It is the
   composition seam passed to `inga.replica/replica`; Inga applies it only to
   committed blocks. This does not start a network replica or provide a witness
   set, transport, authority policy, or durable block store.
 
-  The execution profile is intentionally the current pure i64 subset. Each
-  replica must use the same pinned VM, canonical code/state blocks, fuel
-  schedule, and deterministic storage/crypto seams."
+  Each replica selects the supported pure profile from the content-addressed
+  program. Every replica must use the same pinned VM, canonical code/state
+  blocks, fuel schedule, and deterministic storage/crypto seams."
   (:require [inga.state :as state]
+            [aiueos.kototama :as kototama]
             [ipld.core :as ipld]
-            [json.core :as json]
-            [kotoba.vm :as vm]))
+            [json.core :as json]))
 
 (defn actor-call-payload
   "Return the domain-separated caller-signature payload for a node proposal.
 
-  The signed envelope binds chain, caller, source ref/sequence, and the CID of
-  the canonical DAG-CBOR call body. The body itself is verified against that
-  CID before it becomes an Inga operation."
+  The signed envelope binds chain, caller, previous source-entry CID (or `-`
+  for genesis), sequence, and the CID of the canonical DAG-CBOR call body.
+  The body itself is verified against that CID before it becomes an Inga op."
   [chain-id {:keys [caller ref seq cid]}]
   (when-not (and (every? string? [chain-id caller ref cid])
                  (integer? seq) (not (neg? seq))
@@ -34,6 +34,28 @@
        "seq=" seq "\n"
        "cid=" cid "\n"))
 
+(defn- source-address [caller]
+  (str "kototama.source/v1:" caller))
+
+(defn- i64-call-value? [value]
+  #?(:clj (and (integer? value)
+               (<= Long/MIN_VALUE value Long/MAX_VALUE))
+     :cljs (or (and (number? value) (js/Number.isSafeInteger value))
+               (and (identical? js/BigInt (type value))
+                    (<= (js/BigInt "-9223372036854775808") value
+                        (js/BigInt "9223372036854775807"))))))
+
+(defn- data-call-value? [value]
+  (cond
+    (nil? value) true
+    (boolean? value) true
+    (string? value) true
+    (i64-call-value? value) true
+    (vector? value) (every? data-call-value? value)
+    (map? value) (every? (fn [[key item]]
+                           (and (string? key) (data-call-value? item))) value)
+    :else false))
+
 (def signed-proposal-authority
   "Inga authority for operations emitted by signed-proposal-decoder."
   {:caller-fn :caller})
@@ -42,8 +64,11 @@
   "Build a deterministic decoder for inga-node JSON proposals.
 
   Each proposal is JSON with `ref`, `seq`, `cid`, `caller`, and `signature`.
+  `ref` is the prior source-entry CID, or `-` for sequence zero. The decoder
+  emits a source-chain `:actor-advance` before the call; `state-machine`
+  admits the call only when that advance extends the committed caller head.
   `cid` addresses canonical DAG-CBOR ` [\"kototama.actor-call\" 1
-  {\"address\" string, \"method\" string, \"args\" [i64 …]}] `. The
+  {\"address\" string, \"method\" string, \"args\" [value …]}] `. The
   caller signature covers `actor-call-payload`; `verify-caller-fn` must use
   the same chain-specific identity registry on every replica.
 
@@ -51,10 +76,14 @@
   signatures all become a deterministic unauthenticated call. Inga records
   that as `:no-caller` when used with `{:authority {:caller-fn :caller}}`,
   rather than letting an untrusted proposal crash block application. The
-  actor method must still implement replay protection for its signed `seq`.
-  This decoder authenticates callers; it does not implement account nonces."
+  calls do not overwrite the application actor: source heads live under the
+  reserved `kototama.source/v1:` address prefix."
   [{:keys [chain-id get-fn put! verify-caller-fn]}]
-  (doseq [[key value] [[:chain-id chain-id] [:get-fn get-fn] [:put! put!]
+  (when-not (and (string? chain-id) (not-empty chain-id))
+    (throw (ex-info "signed Kototama proposal decoder needs a chain id"
+                    {:type :aiueos.kototama.inga/invalid-seam
+                     :seam :chain-id})))
+  (doseq [[key value] [[:get-fn get-fn] [:put! put!]
                        [:verify-caller-fn verify-caller-fn]]]
     (when-not (ifn? value)
       (throw (ex-info "signed Kototama proposal decoder needs callable seams"
@@ -62,7 +91,7 @@
   (let [invalid-call {:op :actor-call :address "" :caller nil
                       :method "" :args []}]
     (fn [block]
-      (mapv
+      (vec (mapcat
        (fn [proposal]
          (try
            (let [envelope (json/decode proposal)
@@ -84,19 +113,34 @@
                         (nth body 2))
                  address (get call "address")
                  method (get call "method")
-                 args (get call "args")]
+                 args (get call "args")
+                 args (cond
+                        (= "kototama.value-tree/v1" (get call "args-encoding"))
+                        (when (vector? args) (mapv kototama/decode-data-value args))
+                        (nil? (get call "args-encoding")) args
+                        :else nil)]
              (if (and (string? address) (not-empty address)
                       (string? method) (not-empty method)
-                      (vector? args) (every? integer? args))
-               {:op :actor-call :address address :caller caller
-                :method method :args args}
-               invalid-call))
+                      (vector? args) (every? data-call-value? args))
+               (let [source (source-address caller)
+                     token [source (get envelope "seq") cid]]
+                 [{:op :actor-advance :address source :caller source
+                   :seq (get envelope "seq")
+                   :prev-entry (when-not (= "-" (get envelope "ref"))
+                                 (get envelope "ref"))
+                   :entry cid
+                   :aiueos.kototama/source-caller caller
+                   :aiueos.kototama/source-token token}
+                  {:op :actor-call :address address :caller caller
+                   :method method :args args
+                   :aiueos.kototama/source-token token}])
+               [invalid-call]))
            (catch #?(:clj Exception :cljs :default) _ invalid-call)))
-       (:inga.block/proposals block)))))
+       (:inga.block/proposals block))))))
 
 (defn state-machine
   "Build an Inga state machine whose committed `:actor-call` ops execute
-  canonical Kototama programs through kotoba-vm.
+  canonical Kototama programs through the selected Kotoba VM engine.
 
   Required options are the application's deterministic block decoder,
   content-addressed block-store `:get-fn`/`:put!`, arrangement `:blind-fn` and
@@ -130,8 +174,43 @@
     (throw (ex-info "Kototama consensus execution requires authenticated callers"
                     {:type :aiueos.kototama.inga/invalid-authority})))
   (let [fuel (assoc fuel :height-fn height-fn)
+        decode (fn [current-state block]
+                 (let [ops (decode-block block)]
+                   (loop [remaining (seq ops) accepted [] valid-tokens #{}
+                          heads (:actors current-state)]
+                     (if-let [op (first remaining)]
+                       (let [token (:aiueos.kototama/source-token op)]
+                         (cond
+                           (= :actor-advance (:op op))
+                           (let [previous (get heads (:address op))
+                                 valid? (if previous
+                                          (and (= (:prev-entry op) (:state previous))
+                                               (= (:seq op) (inc (:nonce previous))))
+                                          (and (nil? (:prev-entry op)) (= 0 (:seq op))))
+                                 heads (if valid?
+                                         (assoc heads (:address op)
+                                                (assoc (merge {:nonce 0 :balance 0} previous)
+                                                       :state (:entry op)
+                                                       :nonce (:seq op)))
+                                         heads)]
+                             (recur (next remaining) (conj accepted op)
+                                    (if valid? (conj valid-tokens token) valid-tokens)
+                                    heads))
+
+                           (= :actor-call (:op op))
+                           (let [valid? (and token (contains? valid-tokens token))]
+                             (recur (next remaining)
+                                    (conj accepted (if valid? op (assoc op :caller nil)))
+                                    (if valid? (disj valid-tokens token) valid-tokens)
+                                    heads))
+
+                           :else (recur (next remaining) (conj accepted op)
+                                        valid-tokens heads)))
+                       accepted))))
         machine (state/machine
-                 {:decode-block decode-block
+                 {:decode-block (fn [block]
+                                  (or (:aiueos.kototama/prepared-ops block)
+                                      (decode {} block)))
                   :get-fn get-fn
                   :put! put!
                   :blind-fn blind-fn
@@ -140,9 +219,18 @@
                   :fuel fuel
                   :authority authority
                   :emit-fn (or emit-fn state/default-emit)
-                  :invoke-fn (vm/invoke-fn {:get-fn get-fn :put! put!})})]
+                  :invoke-fn (kototama/invoke-fn {:get-fn get-fn :put! put!})})]
     (assoc machine
-           :aiueos.kototama/engine-profile :kotoba-vm/core-i64-subset-v1
+           :apply-fn (fn [current block]
+                       ((:apply-fn machine) current
+                        (assoc block :aiueos.kototama/prepared-ops
+                               (decode current
+                                       (dissoc block :aiueos.kototama/prepared-ops)))))
+           :aiueos.kototama/vm-profiles
+           [:kototama/core-i64-subset-v1 :kototama/data-i64-v1]
+           :aiueos.kototama/engine-profiles
+           [:kotoba-vm/kototama-core-i64-subset-v1
+            :kotoba-vm/kototama-data-i64-v1]
            :aiueos.kototama/consensus-owner :inga.replica
            :aiueos.kototama/conformance :partial)))
 

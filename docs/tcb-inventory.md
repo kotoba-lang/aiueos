@@ -2,13 +2,17 @@
 
 Status: machine checked  
 Inventory version: 3  
-Date: 2026-08-29
+Date: 2026-10-14
 
 The authoritative inventory is
 `qualification/tcb-inventory.edn`. It lists every in-repository source boundary
 whose compromise can grant authority, escape Wasm isolation, falsify
 production admission or audit evidence, or access hardware outside a
 component. Each entry has a role and SHA-256 digest.
+
+Kototama execution and Grant-backed manifest admission are separate pinned
+source entries: portable VM qualification does not implicitly qualify the
+permission decision path.
 
 Run:
 
@@ -40,7 +44,8 @@ Three checks make the record non-decorative, all fail-closed:
    and the shared security commit must also equal `security-adoption.edn`'s, so
    the three records of one fact cannot disagree;
 3. **no dependency outside the inventory** — every coordinate in `deps.edn`'s
-   `:deps` must appear in `:tcb/external`.
+   base `:deps` and every profile named by `:tcb/profiles` must appear in
+   `:tcb/external`; each profile's entries are checked against that alias only.
 
 The digest check cannot be skipped by an unresolved environment: the jars must
 already be resolved for the JVM running the check to have started.
@@ -54,8 +59,9 @@ Both are the classes of error the checks above now reject.
 
 - authority schema, manifest identity, signing, signer lifecycle, policy and
   broker;
-- Wasm host ABI, security entropy provider, hard watchdog, launch control,
-  local topic isolation,
+- Kototama artifact admission and execution, its optional Inga state-machine
+  adapter, Wasm compatibility host ABI, security entropy provider, hard
+  watchdog, launch control, local topic isolation,
   authenticated network-topic protocol, graph and provider surface;
 - deployment admission and PID-1;
 - hosted `auth.kotoba.cloud` device authorization, its state machine, and
@@ -64,12 +70,17 @@ Both are the classes of error the checks above now reject.
   storage;
 - HVT, VFIO/IOMMU, virtio, VM launch and boot-image construction.
 
-The external TCB records the Chicory parser/runtime jars, the locally executed
-QR renderer, the shared security and capability-authority packages, the hosted
-desktop session-state package, the owned TLS/HTTP transports, and `java.base`.
+The base external TCB excludes Chicory. Its parser/runtime jars are recorded
+under the optional `:wasm-compat` profile, which is loaded only for explicit
+legacy Wasm artifacts. The `:distributed` profile separately inventories
+Inga, the committed-replica runtime. The base inventory records the Kototama
+engine and IPLD store, portable Kotoba primitives, QR renderer, shared
+security and capability-authority packages, hosted desktop session-state
+package, owned TLS/HTTP transports, and `java.base`.
 
 `:tcb/classpath` records the transitive closure `:tcb/external` cannot express:
-every jar actually on the running classpath, by SHA-256. `org.clojure/clojure`,
+every jar actually on the running classpath, by SHA-256. Chicory entries are
+scoped to `:wasm-compat`, not to the default runtime. `org.clojure/clojure`,
 `spec.alpha` and `core.specs.alpha` reach it via dependencies and are named by
 no `:deps` entry — and the loaded clojure is 1.12.5 where the declaration says
 1.12.4. A jar on the classpath and not recorded is an error; recorded-but-absent

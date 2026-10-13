@@ -14,14 +14,17 @@
   :adapter-required` like `grant.cli/command-result` does generically for
   a host-neutral caller.
 
-  JVM-only (`#?(:clj ...)` throughout) -- file I/O and `aiueos.execute`'s
-  Chicory dependency both require it; not runnable under babashka."
+  The command/file-I/O host is JVM-only; the execution-target selection rule
+  is portable. The Kototama path loads without a Wasm engine; the explicit
+  legacy `:aiueos/wasm` path loads Chicory on demand and requires the
+  `:wasm-compat` dependency alias."
   (:require [kotoba.ffi :as ffi] [grant.audit :as audit]
             [grant.broker :as broker]
             [grant.cli :as cli]
             [grant.contract :as contract]
-            [aiueos.execute :as execute]
+            [aiueos.execution-target :as execution-target]
             [aiueos.kototama :as kototama]
+            [aiueos.kototama.admission :as kototama-admission]
             [grant.graph :as graph]
             [aiueos.image :as image]
             #?(:clj [grant.key-lifecycle :as key-lifecycle])
@@ -32,6 +35,18 @@
             #?(:clj [clojure.edn :as edn])
             #?(:clj [clojure.java.io :as io])
             #?(:clj [kotoba.lang.text :as str])))
+
+#?(:clj
+   (defn- run-wasm
+     "Load the optional Wasm adapter only after a legacy Wasm artifact is selected."
+     [entry & args]
+     (let [runner (try
+                    (requiring-resolve (symbol "aiueos.execute" (name entry)))
+                    (catch Throwable e
+                      (throw (ex-info
+                              "Wasm compatibility execution needs the :wasm-compat alias"
+                              {:required-alias :wasm-compat :entry entry} e))))]
+       (apply runner args))))
 
 #?(:clj
    (defn read-edn-file
@@ -67,7 +82,7 @@
      ([m g policy* program-bytes admit?]
       (run-kototama-artifact m g policy* program-bytes admit? {}))
      ([m g policy* program-bytes admit? runtime]
-      (kototama/execute-artifact m g policy* program-bytes admit? runtime))))
+      (kototama-admission/execute-artifact m g policy* program-bytes admit? runtime))))
 
 #?(:clj
    (defn- read-artifact-bytes [path]
@@ -137,23 +152,24 @@
            kototama-path (resolve-kototama-path manifest-path m)
            wasm-path (resolve-wasm-path manifest-path m)
            policy* (load-policy policy-path)
-           g (graph/build [m])]
-       (cond
-         kototama-path
+           g (graph/build [m])
+           target (execution-target/select m kototama-path wasm-path)]
+       (case target
+         :kototama
          (run-kototama-artifact m g policy* (read-artifact-bytes kototama-path)
                                 admit? runtime)
 
-         (:aiueos/artifact m)
+         :unsupported-artifact
          (throw (ex-info (str manifest-path ": unsupported executable artifact profile")
                          {:manifest m}))
 
-         wasm-path
+         :wasm
          (let [wasm-bytes (read-artifact-bytes wasm-path)]
            (if admit?
-             (execute/execute-admission m g policy* wasm-bytes)
-             (execute/execute m g policy* wasm-bytes)))
+             (run-wasm 'execute-admission m g policy* wasm-bytes)
+             (run-wasm 'execute m g policy* wasm-bytes)))
 
-         :else
+         :none
          (throw (ex-info (str manifest-path
                               ": no executable :aiueos/artifact or :aiueos/wasm declared")
                          {:manifest m})))))))
@@ -276,21 +292,25 @@
                   (recur (rest indices) results runtime*)
                   (let [kototama-path (resolve-kototama-path path manifest)
                         wasm-path (resolve-wasm-path path manifest)
-                        result (cond
-                                 kototama-path
+                        target (execution-target/select manifest kototama-path wasm-path)
+                        result (case target
+                                 :kototama
                                  (run-kototama-artifact manifest g policy*
                                                         (read-artifact-bytes kototama-path)
                                                         false runtime*)
-                                 wasm-path
-                                 (execute/execute manifest g policy*
-                                                  (read-artifact-bytes wasm-path))
-                                 (:aiueos/artifact manifest)
+
+                                 :wasm
+                                 (run-wasm 'execute manifest g policy*
+                                           (read-artifact-bytes wasm-path))
+
+                                 :unsupported-artifact
                                  {:aiueos/decision :deny
                                   :aiueos/component (:aiueos/component manifest)
                                   :aiueos/violations [{:aiueos/component (:aiueos/component manifest)
                                                        :aiueos/kind :unsupported-artifact-profile
                                                        :aiueos/message "unsupported Kototama artifact profile"}]}
-                                 :else
+
+                                 :none
                                  (broker/verify-one manifest g policy*))
                         results' (conj results result)
                         runtime' (if-let [actors (get-in result
@@ -439,7 +459,8 @@
      are positionals/flags, shaped via `grant.cli/parse-argv`.
 
      `verify`/`run`/`admit <manifest-path> [--policy <path>] [--edn]` --
-     `run`/`admit` actually execute a granted component via `aiueos.execute`.
+     `run`/`admit` execute Kototama by default and load `aiueos.execute` only
+     for an explicit Wasm compatibility artifact (`:wasm-compat` alias).
      `inspect <system-path> [--edn]` -- capability providers/boot
      order/depths across a system's components.
      `surface <surface-id> [--edn]` -- a deployment surface's offered set.

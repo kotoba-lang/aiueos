@@ -1,0 +1,54 @@
+(ns aiueos.kototama.admission
+  "Grant-backed manifest admission around the portable Kototama VM.
+
+  The execution contract stays usable without the authority dependency. Hosts
+  that launch signed manifests compose this namespace at the admission edge."
+  (:require [aiueos.kototama :as kototama]
+            [grant.broker :as broker]))
+
+(defn execute-artifact
+  "Authorize and execute a manifest's signed Kototama program artifact.
+  The broker decision runs before VM entry; admission uses the broker's
+  untrusted-floor path. RUNTIME may inject a VM store and actor map."
+  ([manifest graph policy program-bytes admission?]
+   (execute-artifact manifest graph policy program-bytes admission? {}))
+  ([manifest graph policy program-bytes admission? runtime]
+   (let [decision (if admission?
+                    (broker/verify-admission manifest graph policy)
+                    (broker/verify-one manifest graph policy))
+         declared-profile (get-in manifest [:aiueos/artifact :profile])
+         runner (case declared-profile
+                  :kototama/core-i64-subset-v1 kototama/run-core-i64-subset
+                  :kototama/data-i64-v1 kototama/run-data-i64
+                  nil)]
+     (if-not (= :grant (:aiueos/decision decision))
+       decision
+       (if-not runner
+         {:aiueos/decision :deny
+          :aiueos/component (:aiueos/component manifest)
+          :aiueos/violations [{:aiueos/component (:aiueos/component manifest)
+                               :aiueos/kind :unsupported-vm-profile
+                               :aiueos/declared-profile declared-profile
+                               :aiueos/supported-profiles
+                               [kototama/profile kototama/data-profile]}]}
+         (try
+           (let [result (runner
+                         {:program-bytes program-bytes
+                          :expected-cid (get-in manifest [:aiueos/artifact :cid])
+                          :method (or (:aiueos/entry manifest) "main")
+                          :args (or (:aiueos/args manifest) [])
+                          :fuel (get-in manifest [:aiueos/limits :fuel])
+                          :actor (str (:aiueos/component manifest))
+                          :machine (:aiueos.kototama/machine runtime)
+                          :actors (:aiueos.kototama/actors runtime)})]
+             (cond-> (assoc decision :aiueos.kototama/result result)
+               (not (:ok? result))
+               (assoc :aiueos.execute/runtime-failed
+                      {:receipt (:receipt result)})))
+           (catch #?(:clj Exception :cljs :default) e
+             {:aiueos/decision :deny
+              :aiueos/component (:aiueos/component manifest)
+              :aiueos/violations [{:aiueos/component (:aiueos/component manifest)
+                                   :aiueos/kind :artifact-mismatch
+                                   :aiueos/message #?(:clj (.getMessage e)
+                                                      :cljs (.-message e))}]})))))))

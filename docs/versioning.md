@@ -8,7 +8,7 @@ command contract — not a package/library semver on its own, since the surface
 is data (EDN) consumed by multiple host adapters (`kototama.tender`,
 browser-native `actor-host.js`), not a single language's API. Kototama is the
 portable execution contract; the current hosted Kotoba VM profile is partial
-pure-i64. The Wasm boundary remains for existing components and is not the
+partial pure-i64 and data-i64. The Wasm boundary remains for existing components and is not the
 default program format.
 
 ## Compatibility Rules
@@ -26,7 +26,8 @@ default program format.
 - **Breaking (major)**: changing an existing `:aiueos/*` key's required
   shape or default, changing `resources/aiueos/component_boundary.edn`'s
   import/export contract, changing Kototama artifact identity or the meaning
-  of a declared VM profile, changing `aiueos.broker/verify-one`'s grant/deny
+  of a declared VM profile, making a previously optional artifact profile
+  required, changing `aiueos.broker/verify-one`'s grant/deny
   outcome for a manifest that previously validated, or removing a CLI
   command/option.
 - **The contract data is the compatibility surface, not the CLJC code.**

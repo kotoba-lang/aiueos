@@ -1,0 +1,170 @@
+(ns aiueos.kototama-portable-test
+  "Cross-platform tests for the portable VM contract, with no Grant dependency."
+  (:require [aiueos.kototama :as kototama]
+            [aiueos.execution-target :as execution-target]
+            [ipld.core :as ipld]
+            [kotoba.vm :as vm]
+            [kotoba.test :refer [deftest is]]
+            #?(:cljs ["node:fs" :as fs])))
+
+(deftest kototama-is-selected-before-legacy-wasm
+  (is (= :kototama
+         (execution-target/select
+          {:aiueos/artifact {:profile :kototama/core-i64-subset-v1}
+           :aiueos/wasm "legacy.wasm"}
+          "answer.dagcbor" "legacy.wasm")))
+  (is (= :unsupported-artifact
+         (execution-target/select
+          {:aiueos/artifact {:profile :kototama/unknown-v1}
+           :aiueos/wasm "legacy.wasm"}
+          nil "legacy.wasm")))
+  (is (= :wasm
+         (execution-target/select
+          {:aiueos/wasm "legacy.wasm"} nil "legacy.wasm"))))
+
+(def ^:private amu-program-cid
+  "bafyreiadqe4yzd45fvkz456jfesqq3tc46th46ufyzermn2mzvixu47edu")
+
+(def ^:private amu-default-program-cid
+  "bafyreiddqnpygk2vba4uau2t2nh6lvlreewu6pyaa4slbjhoos6mbswz2e")
+
+(defn- encoded-program []
+  (let [root #?(:clj (or (System/getenv "AIUEOS_REPO_ROOT") ".")
+                :cljs (or (aget (.-env js/process) "AIUEOS_REPO_ROOT") "."))
+        path (str root "/test/fixtures/amu-kototama-sum-v1.dagcbor")]
+    {:expected-cid amu-program-cid
+     :program-bytes #?(:clj (java.nio.file.Files/readAllBytes
+                             (java.nio.file.Paths/get path (make-array String 0)))
+                       :cljs (.readFileSync fs path))}))
+
+(defn- encoded-default-program []
+  (let [root #?(:clj (or (System/getenv "AIUEOS_REPO_ROOT") ".")
+                :cljs (or (aget (.-env js/process) "AIUEOS_REPO_ROOT") "."))
+        path (str root "/test/fixtures/amu-kototama-default-v1.dagcbor")]
+    {:expected-cid amu-default-program-cid
+     :program-bytes #?(:clj (java.nio.file.Files/readAllBytes
+                             (java.nio.file.Paths/get path (make-array String 0)))
+                       :cljs (.readFileSync fs path))}))
+
+(defn- cid-mismatch-rejected? [f]
+  (try
+    (f)
+    false
+    (catch #?(:clj Exception :cljs :default) e
+      (boolean (re-find #"CID does not match"
+                        #?(:clj (.getMessage e) :cljs (.-message e)))))))
+
+(defn- portable-value-program []
+  (ipld/node->block
+   ["kototama.vm/program" 1
+    {"entry" "echo"
+     "value-profile" "kototama.data-i64/v1"
+     "methods" {"echo" {"params" ["value"] "param-types" ["value"]
+                         "result" "value" "effects" []
+                         "body" ["var" "value"]}}}]))
+
+(deftest amu-program-runs-through-the-portable-vm
+  (let [{:keys [expected-cid program-bytes]} (encoded-program)
+        result (kototama/run-core-i64-subset
+                {:program-bytes program-bytes :expected-cid expected-cid
+                 :method "sum" :args [20 22] :fuel 100})]
+    (is (:ok? result))
+    (is (= #?(:clj 42 :cljs (js/BigInt 42))
+           (get-in result [:receipt :return])))
+    (is (= expected-cid (:aiueos.kototama/program-cid result)))
+    (is (= :kototama/core-i64-subset-v1 (:aiueos.kototama/vm-profile result)))
+    (is (= :kotoba-vm/kototama-core-i64-subset-v1
+           (:aiueos.kototama/engine-profile result)))))
+
+(deftest current-amu-default-artifact-runs-through-profile-dispatch
+  (let [{:keys [expected-cid program-bytes]} (encoded-default-program)
+        store (vm/memory-store)
+        result (kototama/run-program
+                {:program-bytes program-bytes :expected-cid expected-cid
+                 :method "main" :args [] :fuel 100
+                 :machine {:get-fn (:get-fn store) :put! (:put! store)}})
+        prior-state (ipld/put-node! (:put! store) {})
+        transition ((kototama/invoke-fn
+                     {:get-fn (:get-fn store) :put! (:put! store)})
+                    {:address "app" :code expected-cid :state prior-state
+                     :method "main" :args [] :fuel 100})
+        state (ipld/get-node (:get-fn store) (:state transition))]
+    (is (:ok? result))
+    (is (= #?(:clj 42 :cljs (js/BigInt 42))
+           (get-in result [:receipt :return])))
+    (is (= :kototama/core-i64-subset-v1
+           (:aiueos.kototama/vm-profile result)))
+    (is (nil? (:refused transition)))
+    (is (= "42" (get state "return")))))
+
+(deftest portable-vm-runs-a-conditional-branch
+  (let [{:keys [expected-cid program-bytes]} (encoded-program)
+        result (kototama/run-core-i64-subset
+                {:program-bytes program-bytes :expected-cid expected-cid
+                 :method "choose" :args [0] :fuel 100})]
+    (is (:ok? result))
+    (is (= #?(:clj 7 :cljs (js/BigInt 7))
+           (get-in result [:receipt :return])))))
+
+(deftest independent-process-local-stores-are-deterministic
+  (let [{:keys [expected-cid program-bytes]} (encoded-program)
+        request {:program-bytes program-bytes :expected-cid expected-cid
+                 :method "sum" :args [20 22] :fuel 100}
+        left (kototama/run-core-i64-subset request)
+        right (kototama/run-core-i64-subset request)]
+    (is (= (:aiueos.kototama/program-cid left)
+           (:aiueos.kototama/program-cid right)))
+    (is (= (:receipt left) (:receipt right)))
+    (is (= (:actors left) (:actors right)))))
+
+(deftest malformed-program-identity-is-rejected
+  (let [{:keys [program-bytes]} (encoded-program)
+        rejected? (cid-mismatch-rejected?
+                   (fn []
+                     (kototama/run-core-i64-subset
+                      {:program-bytes program-bytes
+                       :expected-cid "bafyreiaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                       :method "sum" :args [20 22]})))]
+    (is rejected?)))
+
+(deftest execution-fuel-is-bounded
+  (let [{:keys [expected-cid program-bytes]} (encoded-program)
+        result (kototama/run-core-i64-subset
+                {:program-bytes program-bytes :expected-cid expected-cid
+                 :method "sum" :args [20 22] :fuel 1})]
+    (is (false? (:ok? result)))
+    (is (= :fuel-exhausted (get-in result [:receipt :exit])))))
+
+(deftest data-i64-profile-runs-portable-lisp-values
+  (let [{:keys [cid bytes]} (portable-value-program)
+        value {"items" [#?(:clj 1 :cljs (js/BigInt 1)) true nil "ok"]
+               "nested" {"answer" #?(:clj 42 :cljs (js/BigInt 42))}}
+        result (kototama/run-data-i64
+                {:program-bytes bytes :expected-cid cid
+                 :method "echo" :args [value] :fuel 100})]
+    (is (:ok? result))
+    (is (= value (get-in result [:receipt :return])))
+    (is (= :kototama/data-i64-v1 (:aiueos.kototama/vm-profile result)))
+    (is (= :kotoba-vm/kototama-data-i64-v1
+           (:aiueos.kototama/engine-profile result)))))
+
+(deftest value-tree-preserves-nested-data-and-full-i64
+  (let [value {"items" [nil true "hello"
+                         #?(:clj Long/MAX_VALUE
+                            :cljs (js/BigInt "9223372036854775807"))]
+               "nested" {"answer" #?(:clj Long/MIN_VALUE
+                                     :cljs (js/BigInt "-9223372036854775808"))}}
+        encoded (kototama/encode-data-value value)]
+    (is (= value (kototama/decode-data-value encoded)))
+    (is (not= value encoded))))
+
+(deftest signed-profile-selection-must-match-program-value-profile
+  (let [{:keys [cid bytes]} (portable-value-program)]
+    (is (try
+          (kototama/run-core-i64-subset
+           {:program-bytes bytes :expected-cid cid
+            :method "echo" :args ["data"] :fuel 100})
+          false
+          (catch #?(:clj Exception :cljs :default) error
+            (= :aiueos.kototama/value-profile-mismatch
+               (:type (ex-data error))))))))

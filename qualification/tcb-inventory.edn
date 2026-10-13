@@ -1,10 +1,10 @@
 {:tcb/version 3
- :tcb/as-of "2026-08-29"
+ :tcb/as-of "2026-10-14"
  ;; Paired with :tcb/content-digest below (ADR-0067): the digest covers every
  ;; other field, so an entry cannot change without this date having to change
  ;; too. It said 2026-08-01 while the file was being edited that morning, and
  ;; nothing read it.
- :tcb/content-digest "592fb584258fb6db8079a0b2173034798337b7d21cb05d4673e155092d701cfb"
+ :tcb/content-digest "7ad53381bbefde1b3d711b46c2b9c46ac374751965db1f414270cb2ee9fc9228"
  :tcb/scope
  "Code whose compromise can grant authority, escape Wasm isolation, falsify
   production admission/audit evidence, or access hardware outside a component."
@@ -31,12 +31,12 @@
    ;; claimed transitions. Both can grant device authority and therefore belong
    ;; in this inventory.
   {:path "src/aiueos/phone_bind.cljk" :role :device-authorization-hosted-adapter
-   :sha256 "2442353584f3f244f8fa0b58767cc3851244a35d8639edcc81aa6066481b9582"}
+   :sha256 "9097aa23551bf715788cfad2ff69792853ad109920f0b8b76fcda533cb2344ed"}
   {:path "src/aiueos/device_auth.cljk" :role :device-authorization-state-machine
-   :sha256 "ebe85a848e343493408b2b84456e65feda9e3c87f44ce612e03b10d583ebf52f"}
+   :sha256 "7ba1f3dd6533503347ff55b319d0089b23860280480eb1668f77f0ba41e63058"}
    ;; Device key custody and possession proofs.
   {:path "src/aiueos/provider/device.cljk" :role :device-identity
-   :sha256 "616f1aa9cde0f97c92a11b9379b0809e9a38539454a962185ec98b7b051432f5"}
+   :sha256 "46be1e07b1d690eb09422b49cf3a5e25016b334a936bc3b4f1a80b56e706b1be"}
   ;; The transport half of the remote authorities. `grant.net` decides which
   ;; URLs may be reached and `grant.cloud` decides which storage and inference
   ;; requests are asked for at all (ADR-0041, ADR-0042); `grant.anchors` decides
@@ -45,7 +45,7 @@
   ;; said yes -- which is TCB for a different reason: it is the last place that
   ;; could ignore them.
   {:path "src/aiueos/provider/cloud.cljk" :role :remote-authority-transport
-   :sha256 "4e299a967c8c78af573df213cfe6c390153f54a2e4f1466066299613479023d5"}
+   :sha256 "04efae4553e5f534035c77877d4d83cb82f510c21c08a4be25c8a34c412b319f"}
   ;; The second transport (ADR-0077): the same requests over
   ;; `kotoba-lang/org-ietf-tls` and `kotoba.lang.http.wire` rather than
   ;; `java.net.http`. TCB for the same reason as the file above and one more of
@@ -54,7 +54,7 @@
   ;; `[:ok …]` without asking `grant.cloud/admit-peer` would accept any peer,
   ;; and nothing downstream would notice: the handshake would simply succeed.
   {:path "src/aiueos/provider/cloud_own.cljk" :role :remote-authority-transport
-   :sha256 "88853413380386a9efb8a05a7a721576cec1b03d33c26e5ab97473f0730f7c4a"}
+   :sha256 "5e85f59623f4caf1e1efcdb8d17b45e1f7730406678f683d57414714c25140c6"}
   ;; The operator gate that leaves this machine (ADR-0073). Pinned because it
   ;; carries a trust manager that accepts ANY peer -- `pin` has to look at a key
   ;; before anyone can decide to trust it -- and a change that let `check` reach
@@ -64,9 +64,15 @@
   ;; deployment configuration, it is meant to change, and every key in it
   ;; carries the date and method it was measured by.
   {:path "src/aiueos/cloud_live.cljk" :role :remote-authority-live-gate
-   :sha256 "3afa088304aa280f93bc7a544bdcb418db20b464d0f1dbadb07b3d11d639ff40"}
+   :sha256 "27172417229c1792ba41aff524607e612d94a376669685cb44deb2ffae83a8ea"}
   {:path "src/aiueos/execute.cljk" :role :wasm-host-abi
    :sha256 "0312c7c06bb2b4d9c2d704be73ebafdca794e3fe5aada5c3cd431d2bc7c2b438"}
+  {:path "src/aiueos/kototama.cljk" :role :portable-vm-execution
+   :sha256 "e59e22b3ed801f9284e31da1105a3e3350f36e5c95a2b0e48b396b9718ed5975"}
+  {:path "src/aiueos/kototama/admission.cljk" :role :manifest-execution-admission
+   :sha256 "776f0bf3447985a58cd43ef39460287393b0868a131aa7a88f505fcf1cd98396"}
+  {:path "src/aiueos/kototama/inga.cljk" :role :distributed-vm-state-transition
+   :sha256 "e323083888bb6f472f204c6e971a58cf7c4890577d69c3a23c648471dfaca8fd"}
   {:path "src/aiueos/entropy.cljk" :role :security-entropy-provider
    :sha256 "9598756ca4093a0fe8756d7c2bf878729a34545f2dfbe264f9a806d71f067323"}
   {:path "src/aiueos/watchdog.cljk" :role :execution-deadline-containment
@@ -74,33 +80,33 @@
   {:path "src/aiueos/topic.cljk" :role :data-channel-isolation
    :sha256 "984e9235043e601f860772e54ecd5f621fd566f03ff6b8ef90acef61da4ef05a"}
   {:path "src/aiueos/network_topic.cljk" :role :cross-machine-channel-authentication
-   :sha256 "2741526461b7fc6baaa0c6d64b874b0016a7ee428c9819709125e59f9247b0b3"}
+   :sha256 "df81950621ac609b897155281cd9de47548b81b829e9c8dcc600c2f3925968d1"}
   {:path "src/aiueos/launcher.cljk" :role :component-launch-control
-   :sha256 "f628769a572a09bf40e36623c5fa4f1163509456476b70694cab3046665393da"}
+   :sha256 "7eaa5df1b4cec35781c0173f51e5b63036ed24033dc40b3a2f8141620c810c69"}
   {:path "src/aiueos/pid1.cljk" :role :boot-root
-   :sha256 "0da8bf4f556b5e0d1be9601749248713556ea24e9e4d01c4b49741e068923fc0"}
+   :sha256 "e399465b950565897b05ce70452cd42ab86872afd0bb4cc2039ace5e31204039"}
   {:path "src/aiueos/sbom.cljk" :role :release-attestation-authority
-   :sha256 "7289834de3c447f37ab614d79a981fbba77ffb99124816fa92663354da42e61f"}
+   :sha256 "be1f06d6581298207aee2bc79e02fb9876d2edc0d5d0d3c22ebfddae8a930b40"}
   {:path "src/aiueos/reproducibility.cljk" :role :release-reproducibility-authority
-   :sha256 "fc227e69c03bcbe8856d1f6a0ab696ed1f78d58775735303c4c463f73f19ca02"}
+   :sha256 "110631378d0d076676e52740112a768cba9690ac009472d77b670af9ccecb623"}
   ;; The checker is in the inventory it checks. It was the one file whose
   ;; content decides whether drift is reported and whose own content nothing
   ;; recorded, so weakening a check left no trace here. No fixpoint problem:
   ;; the digest of the source lives in this sibling EDN, not in the source.
   {:path "src/aiueos/tcb.cljk" :role :tcb-inventory-authority
-   :sha256 "b537e0982800231af16715951c8eaa2a75a22e9a0534049a8843f2bdb56b04f6"}
+   :sha256 "d923cedc9a4868185277689b79b3c1dc36a7c4846f3508c9a50c455dd9bfb434"}
   ;; The record of which supply-chain properties this repository holds on
   ;; purpose. Pinned for the same reason the checker is: a property quietly
   ;; deleted from an unpinned list leaves no trace, and `aiueos.tcb` only
   ;; checks the shape of what it finds there.
   {:path "qualification/build-identity.edn" :role :adopted-property-record
-   :sha256 "ce7cf7f577b6596dc9ff10ec878c80518e5b88014c7efed2d8a5dc42b4f1a478"}
+   :sha256 "ceb4c7f3f28cc3cb56cc466936558b45446390f0aa73b33fa7d36ea41dc9fad7"}
   {:path "src/aiueos/sealed_audit.cljk" :role :audit-confidentiality-integrity
-   :sha256 "0ec696fa61a66dc4fdef5b0a418a51ee59ccc4ebed7998be8d46fd693c6bec17"}
+   :sha256 "d5ff7735f3d12cc282474e157e1a45ffc7365bb07e9083281715abdf50eaaa4d"}
   {:path "src/aiueos/sealed_state.cljk" :role :component-state-confidentiality-integrity
-   :sha256 "6eb5f146b30ab16ed07d40e1f32b92f1e1338acf1f4a299e9b9d013fa055828d"}
+   :sha256 "54e67f9cf15d170126d675d0127801be47358127cbf86399a8042f3983c0f1df"}
   {:path "src/aiueos/hvt.cljk" :role :hypervisor-boundary
-   :sha256 "a3a4b3d47d59155ca74e5f25886609eaa2d0c554f68ad06b1c0b44c99decee39"}
+   :sha256 "1ce5c8bd4e5aa5e6ae2aefeb32b3ffd46ffe557de26682db945fa62ba85bb127"}
   {:path "src/aiueos/vfio.cljk" :role :iommu-device-boundary
    :sha256 "f96a9bb917b23d428f03667fbba1ccaec518a25dc7c9a4ccaceee9f43a19a77f"}
   {:path "src/aiueos/virtio.cljk" :role :guest-device-boundary
@@ -109,15 +115,18 @@
   ;; chain was checked and the artifact the machine actually boots was not
   ;; (ADR-0049).
   {:path "src/aiueos/vm.cljk" :role :vm-launch
-   :sha256 "d87ffc7440a58c7a8afd0b6436d683c5912c4c1a0beac92cb9bc0aa15991cd32"}
+   :sha256 "87e4bb960c718ff45b745bf6615ea4fb1b95c4532f26e4b03129ef0647c25f2b"}
   {:path "src/aiueos/image.cljk" :role :boot-image-construction
-   :sha256 "64aa845b025309365e4ed94639548ef936ea3e11716156fd9e71b42e029687e6"}]
+   :sha256 "9b9e971e1a1e609e1e54bdbd3d687c56cf8faa7074e8911f8ae7010eadb9db34"}]
  ;; Content addresses, not paths or bare version strings: a Maven entry's
  ;; `:sha256` is the digest of its resolved jar, a git entry's `:git-sha` is
  ;; git's own content address for the tree. `aiueos.tcb` re-verifies both
  ;; against `deps.edn` (and, for the shared security package, against
  ;; `security-adoption.edn`) so the records cannot silently disagree, and
  ;; rejects any runtime dependency that never reached this list.
+ ;; Optional execution profiles whose dependencies affect runtime trust. The
+ ;; checker verifies every listed profile against deps.edn and this inventory.
+ :tcb/profiles [:distributed :wasm-compat]
  :tcb/external
  [{:coordinate "io.nayuki/qrcodegen" :version "1.8.0"
    :role :device-authorization-qr-renderer :source :maven
@@ -127,11 +136,59 @@
    :git-sha "cd98347a1b8460186dd1bb63ed818fb7d01ffd8a"
    :role :device-owned-cacao-mint-and-verify}
   {:coordinate "com.dylibso.chicory/wasm" :version "1.4.0"
-   :role :wasm-parser :source :maven
+   :profile :wasm-compat :role :wasm-parser :source :maven
    :sha256 "a850df5e77f60411648fd970144f825517a2c076dbb807ff6de95c6cfa439968"}
   {:coordinate "com.dylibso.chicory/runtime" :version "1.4.0"
-   :role :wasm-runtime :source :maven
+   :profile :wasm-compat :role :wasm-runtime :source :maven
    :sha256 "81245b1f832afcf52169e655d2db6a07009864dba352b174b90a444bf096bf6e"}
+  {:coordinate "io.github.kotoba-lang/inga" :profile :distributed :source :git
+   :git-url "https://github.com/kotoba-lang/inga.git"
+   :git-sha "4b8bcfcfc9320465d4134a075a84ff898548a878"
+   :role :distributed-consensus-node-runtime}
+  {:coordinate "io.github.kotoba-lang/inga-node" :profile :distributed :source :git
+   :git-url "https://github.com/kotoba-lang/inga-node.git"
+   :git-sha "43ea382c358389e225225b797d3d9f02b5fd2c6b"
+   :role :distributed-witness-transport-and-machine-host}
+  {:coordinate "io.github.kotoba-lang/io-ipld" :source :git
+   :git-url "https://github.com/kotoba-lang/io-ipld.git"
+   :git-sha "8bc2dde5ae47129e49a957131c40313b6b02731c"
+   :role :content-addressed-vm-storage}
+  {:coordinate "io.github.kotoba-lang/kotoba-vm" :source :git
+   :git-url "https://github.com/kotoba-lang/kotoba-vm.git"
+   :git-sha "36cd2472a2d81fbb44db39d9b0e5a6cecf4f53a1"
+   :role :kototama-core-data-i64-engine}
+  {:coordinate "io.github.kotoba-lang/ffi" :source :git
+   :git-url "https://github.com/kotoba-lang/ffi.git"
+   :git-sha "604f212c190d5d97420a2f3a0e1ae6411e04cc8e"
+   :role :foreign-function-boundary}
+  {:coordinate "io.github.kotoba-lang/bytes" :source :git
+   :git-url "https://github.com/kotoba-lang/bytes.git"
+   :git-sha "d5259f35ab7c4f5a66e63ca29ed4dcf7ba3f1ac5"
+   :role :portable-byte-primitives}
+  {:coordinate "io.github.kotoba-lang/io" :source :git
+   :git-url "https://github.com/kotoba-lang/io.git"
+   :git-sha "72dde04b4c32854d70d17a670b277f8f7957a784"
+   :role :portable-file-io}
+  {:coordinate "io.github.kotoba-lang/process" :source :git
+   :git-url "https://github.com/kotoba-lang/process.git"
+   :git-sha "db49ea936e53d0bc698be0db79bf96ad86b5f7d0"
+   :role :host-process-boundary}
+  {:coordinate "io.github.kotoba-lang/text" :source :git
+   :git-url "https://github.com/kotoba-lang/text.git"
+   :git-sha "73bdb13ae7a3d004b44bca08be03a3191157a38f"
+   :role :portable-text-primitives}
+  {:coordinate "io.github.kotoba-lang/coll" :source :git
+   :git-url "https://github.com/kotoba-lang/coll.git"
+   :git-sha "f74e248f0a07e8ae572885f50fab6bdb39dc24be"
+   :role :portable-collection-primitives}
+  {:coordinate "io.github.kotoba-lang/pprint" :source :git
+   :git-url "https://github.com/kotoba-lang/pprint.git"
+   :git-sha "5c9d4aea71d6caac529fffcf361aba0f87ee485e"
+   :role :diagnostic-value-printer}
+  {:coordinate "io.github.kotoba-lang/json" :source :git
+   :git-url "https://github.com/kotoba-lang/json.git"
+   :git-sha "3dacdfaa090e84f7faae927bca89286523cbfe03"
+   :role :json-value-codec}
   {:coordinate "io.github.kotoba-lang/security" :source :git
    :git-url "https://github.com/kotoba-lang/security.git"
    :git-sha "74235d1cdf8034334f01dcb2f6faaff0c731146e"
@@ -147,7 +204,7 @@
   ;; claim about a dependency none of its own files reach.
   {:coordinate "io.github.kotoba-lang/grant" :source :git
    :git-url "https://github.com/kotoba-lang/grant.git"
-   :git-sha "86d15e306853bd3658efb1fdfde3f8508dba9ef3"
+   :git-sha "a120d73580f3b3ca740c0a7e19e313c4562e3733"
    :role :capability-authority}
   ;; This workspace's own TLS 1.3 and HTTP/1.1, which `aiueos.provider.cloud-own`
   ;; runs on. They are TCB in the strongest sense available to this inventory:
@@ -219,9 +276,9 @@
    :sha256 "94cd99b6ea639641f37af4860a643b6ed399ee5a8be5d717cff0b663c8d75077"}
   {:jar "qrcodegen-1.8.0.jar" :role :device-authorization-qr-renderer :scope :runtime
    :sha256 "1d1aef3caea19387e7dd8034835054bab83db57a02b69cfc6dbc849746f0be21"}
-  {:jar "wasm-1.4.0.jar" :role :wasm-parser :scope :runtime
+  {:jar "wasm-1.4.0.jar" :role :wasm-parser :scope :wasm-compat
    :sha256 "a850df5e77f60411648fd970144f825517a2c076dbb807ff6de95c6cfa439968"}
-  {:jar "runtime-1.4.0.jar" :role :wasm-runtime :scope :runtime
+  {:jar "runtime-1.4.0.jar" :role :wasm-runtime :scope :wasm-compat
    :sha256 "81245b1f832afcf52169e655d2db6a07009864dba352b174b90a444bf096bf6e"}
   {:jar "java.classpath-1.0.0.jar" :role :test-tooling :scope :test
    :sha256 "c14e0e10304a5e5cfd2cc742fbdefac1f5293eec6070c2ffe8903fb5c7fe7d6f"}

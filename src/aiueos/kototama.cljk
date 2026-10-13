@@ -1,30 +1,48 @@
 (ns aiueos.kototama
   "Hosted entrypoint for canonical Kototama programs.
 
-  This adapter currently exposes only kotoba-vm's partial, pure i64 subset.
-  The VM validates the canonical program envelope and refuses unsupported
-  expressions, non-i64 methods, and effects. This is not the complete
-  Kototama core/v1 profile, a distributed state store, or a consensus layer."
+  This adapter exposes versioned canonical Kototama programs through Kotoba
+  VM. The data-i64 profile adds portable data values to bounded i64 arithmetic;
+  both current profiles remain partial and reject effects."
   (:require [ipld.core :as ipld]
-            [grant.broker :as broker]
             [kotoba.vm :as vm]))
 
-(def engine-profile :kotoba-vm/core-i64-subset-v1)
+(def profile :kototama/core-i64-subset-v1)
+(def engine-profile :kotoba-vm/kototama-core-i64-subset-v1)
+(def data-profile :kototama/data-i64-v1)
+(def data-engine-profile :kotoba-vm/kototama-data-i64-v1)
 
-(defn run-core-i64-subset
+(def ^:private profiles
+  {profile {:value-profile "kotoba.i64-wrap/v1" :engine engine-profile}
+   data-profile {:value-profile "kototama.data-i64/v1" :engine data-engine-profile}})
+
+(defn- run-profile
   "Run an Amu canonical Kototama program block through the hosted Kotoba VM.
 
   `:program-bytes` must be canonical DAG-CBOR and `:expected-cid` must be the
   CID admitted by the caller. The adapter re-encodes the node and refuses if
-  that CID differs. Only pure i64 methods are supported; no host capabilities
-  are attached. A host may inject a Kotoba VM `:machine` and prior `:actors`
+  that CID differs. The declared artifact value profile must match PROFILE.
+  No host capabilities are attached. A host may inject a Kotoba VM `:machine` and prior `:actors`
   map so storage and actor-state ownership can live outside this process.
   The VM does not itself provide replication or consensus."
-  [{:keys [program-bytes expected-cid method args fuel actor machine actors]}]
+  [{:keys [program-bytes expected-cid method args fuel actor machine actors]}
+   profile-id]
   (when-not (and program-bytes expected-cid)
     (throw (ex-info "Kototama execution requires program bytes and expected CID"
                     {:type :aiueos.kototama/invalid-request})))
-  (let [program (ipld/decode program-bytes)
+  (let [selected (get profiles profile-id)
+        _ (when-not selected
+            (throw (ex-info "unsupported Kototama VM profile"
+                            {:type :aiueos.kototama/unsupported-profile
+                             :profile profile-id})))
+        program (ipld/decode program-bytes)
+        actual-value-profile (when (and (vector? program) (map? (nth program 2 nil)))
+                               (get (nth program 2) "value-profile"))
+        _ (when-not (= (:value-profile selected) actual-value-profile)
+            (throw (ex-info "Kototama artifact value profile does not match its signed manifest"
+                            {:type :aiueos.kototama/value-profile-mismatch
+                             :expected (:value-profile selected)
+                             :actual actual-value-profile})))
         local-store (when-not machine (vm/memory-store))
         machine (or machine {:get-fn (:get-fn local-store)
                              :put! (:put! local-store)})
@@ -50,43 +68,150 @@
                    :args (or args []) :fuel fuel})]
       (assoc result
              :aiueos.kototama/program-cid program-cid
-             :aiueos.kototama/engine-profile engine-profile
+             :aiueos.kototama/vm-profile profile-id
+             :aiueos.kototama/engine-profile (:engine selected)
              :aiueos.kototama/conformance :partial
              :aiueos.kototama/state-scope
              (if local-store :process-local :host-injected)))))
 
-(defn execute-artifact
-  "Authorize and execute a manifest's signed Kototama program artifact.
-  The broker decision runs before VM entry; admission uses the broker's
-  untrusted-floor path. CID validation remains inside run-core-i64-subset.
-  RUNTIME may inject `:aiueos.kototama/machine` and
-  `:aiueos.kototama/actors`; the host owns persistence and consensus."
-  ([manifest graph policy program-bytes admission?]
-   (execute-artifact manifest graph policy program-bytes admission? {}))
-  ([manifest graph policy program-bytes admission? runtime]
-  (let [decision (if admission?
-                   (broker/verify-admission manifest graph policy)
-                   (broker/verify-one manifest graph policy))]
-    (if-not (= :grant (:aiueos/decision decision))
-      decision
-      (try
-        (let [result (run-core-i64-subset
-                      {:program-bytes program-bytes
-                       :expected-cid (get-in manifest [:aiueos/artifact :cid])
-                       :method (or (:aiueos/entry manifest) "main")
-                       :args (or (:aiueos/args manifest) [])
-                       :fuel (get-in manifest [:aiueos/limits :fuel])
-                       :actor (str (:aiueos/component manifest))
-                       :machine (:aiueos.kototama/machine runtime)
-                       :actors (:aiueos.kototama/actors runtime)})]
-          (cond-> (assoc decision :aiueos.kototama/result result)
-            (not (:ok? result))
-            (assoc :aiueos.execute/runtime-failed
-                   {:receipt (:receipt result)})))
-        (catch #?(:clj Exception :cljs :default) e
-          {:aiueos/decision :deny
-           :aiueos/component (:aiueos/component manifest)
-           :aiueos/violations [{:aiueos/component (:aiueos/component manifest)
-                                :aiueos/kind :artifact-mismatch
-                                :aiueos/message #?(:clj (.getMessage e)
-                                                   :cljs (.-message e))}]}))))))
+(defn run-core-i64-subset
+  "Run the backward-compatible pure i64 Kototama profile."
+  [request]
+  (run-profile request profile))
+
+(defn run-data-i64
+  "Run pure data-i64 programs: bounded i64 arithmetic and portable nil,
+  boolean, text, vector, and map values. Effects remain unsupported."
+  [request]
+  (run-profile request data-profile))
+
+(defn run-program
+  "Run a canonical Kototama program using the engine named by its value profile.
+
+  The content CID still binds the full program bytes; this dispatch only selects
+  one of the locally supported, fail-closed Kotoba VM profiles."
+  [{:keys [program-bytes] :as request}]
+  (let [program (ipld/decode program-bytes)
+        envelope (when (and (vector? program) (= "kototama.vm/program" (nth program 0 nil))
+                            (= 1 (nth program 1 nil)) (map? (nth program 2 nil)))
+                   (nth program 2))]
+    (case (get envelope "value-profile")
+      "kotoba.i64-wrap/v1" (run-core-i64-subset request)
+      "kototama.data-i64/v1" (run-data-i64 request)
+      (throw (ex-info "unsupported Kototama value profile"
+                      {:type :aiueos.kototama/unsupported-profile
+                       :value-profile (get envelope "value-profile")})))))
+
+(defn encode-data-value
+  "Encode a Kototama data-i64 value as the portable value-tree/v1 wire form.
+
+  i64 values are decimal text inside tagged vectors, so JS BigInt never has to
+  pass through JSON or the current DAG-CBOR Number encoder."
+  [value]
+  (cond
+    (nil? value) ["nil"]
+    (boolean? value) ["bool" value]
+    (string? value) ["text" value]
+    #?(:clj (and (integer? value)
+                 (<= Long/MIN_VALUE value Long/MAX_VALUE))
+       :cljs (or (and (number? value) (js/Number.isSafeInteger value))
+                 (and (identical? js/BigInt (type value))
+                      (<= (js/BigInt "-9223372036854775808") value
+                          (js/BigInt "9223372036854775807")))))
+    ["i64" (str value)]
+    (vector? value) ["vector" (mapv encode-data-value value)]
+    (map? value) (do
+                   (when-not (every? string? (keys value))
+                     (throw (ex-info "Kototama data map keys must be text"
+                                     {:type :aiueos.kototama/invalid-value})))
+                   ["map" (->> value
+                               (sort-by key)
+                               (mapv (fn [[key item]]
+                                       [key (encode-data-value item)])))] )
+    :else (throw (ex-info "unsupported Kototama data-i64 value"
+                          {:type :aiueos.kototama/invalid-value
+                           :value-type (type value)}))))
+
+(defn decode-data-value
+  "Decode and validate one canonical Kototama value-tree/v1 node."
+  [node]
+  (when-not (vector? node)
+    (throw (ex-info "invalid Kototama value-tree node"
+                    {:type :aiueos.kototama/invalid-value})))
+  (case (first node)
+    "nil" (if (= 1 (count node)) nil
+              (throw (ex-info "invalid nil Kototama value" {})))
+    "bool" (if (and (= 2 (count node)) (boolean? (nth node 1)))
+             (nth node 1)
+             (throw (ex-info "invalid boolean Kototama value" {})))
+    "text" (if (and (= 2 (count node)) (string? (nth node 1)))
+             (nth node 1)
+             (throw (ex-info "invalid text Kototama value" {})))
+    "i64" (let [text (nth node 1 nil)]
+            (when-not (and (= 2 (count node)) (string? text)
+                           (re-matches #"(0|-?[1-9][0-9]*)" text))
+              (throw (ex-info "invalid i64 Kototama value" {})))
+            #?(:clj (try (Long/parseLong text)
+                         (catch NumberFormatException e
+                           (throw (ex-info "Kototama i64 is out of range" {} e))))
+               :cljs (let [value (js/BigInt text)]
+                       (when (or (< value (js/BigInt "-9223372036854775808"))
+                                 (> value (js/BigInt "9223372036854775807")))
+                         (throw (ex-info "Kototama i64 is out of range" {})))
+                       value)))
+    "vector" (if (and (= 2 (count node)) (vector? (nth node 1)))
+               (mapv decode-data-value (nth node 1))
+               (throw (ex-info "invalid vector Kototama value" {})))
+    "map" (let [pairs (nth node 1 nil)
+                 keys (when (vector? pairs) (mapv first pairs))]
+            (when-not (and (= 2 (count node)) (vector? pairs)
+                           (every? (fn [pair]
+                                     (and (vector? pair) (= 2 (count pair))
+                                          (string? (first pair)))) pairs)
+                           (= keys (vec (sort keys)))
+                           (= (count keys) (count (distinct keys))))
+              (throw (ex-info "invalid map Kototama value" {})))
+            (into {} (map (fn [[key value]] [key (decode-data-value value)])) pairs))
+    (throw (ex-info "unknown Kototama value-tree tag"
+                    {:type :aiueos.kototama/invalid-value
+                     :tag (first node)}))))
+
+(defn invoke-fn
+  "Build Inga's deterministic actor-call seam for a Kototama program CID.
+
+  Kototama calls in the supported pure profiles cannot perform host effects.
+  Their successful return is therefore committed as the callee's next IPLD
+  state, together with the prior state CID and method. Every replica evaluates
+  the same code CID/message and stores the same transition node. The call does
+  not use kotoba.vm's separate `kotoba.vm/guest` actor format."
+  [{:keys [get-fn put!]}]
+  (when-not (and (ifn? get-fn) (ifn? put!))
+    (throw (ex-info "Kototama Inga invocation needs deterministic block-store seams"
+                    {:type :aiueos.kototama/invalid-machine})))
+  (fn [{:keys [address code state method args fuel]}]
+    (let [program-bytes (get-fn code)]
+      (if-not program-bytes
+        {:refused :no-code}
+        (let [result (run-program
+                      {:program-bytes program-bytes :expected-cid code
+                       :actor address :method method :args args :fuel fuel
+                       :machine {:get-fn get-fn :put! put!}})]
+          (if (:ok? result)
+            {:state (ipld/put-node!
+                     put! {"kototama/state/v1" 1
+                           "previous" state
+                           "method" method
+                           ;; CBOR has no JavaScript BigInt type. Keep the
+                           ;; full i64 value losslessly as decimal text on
+                           ;; every host, rather than rounding through Number.
+                           "return" (if (= data-profile
+                                          (:aiueos.kototama/vm-profile result))
+                                      ["kototama.value-tree/v1"
+                                       (encode-data-value
+                                        (get-in result [:receipt :return]))]
+                                      (str (get-in result [:receipt :return])) )})}
+            {:refused (case (get-in result [:receipt :exit])
+                        :fuel-exhausted :fuel-exhausted
+                        :no-code :no-code
+                        :not-callable :not-callable
+                        :call-failed)}))))))
