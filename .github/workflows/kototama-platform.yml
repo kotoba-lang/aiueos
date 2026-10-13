@@ -75,6 +75,8 @@ jobs:
           amu_output="$runner_temp/amu-default.dagcbor"
           amu_output_host="$(cygpath -m "$amu_output" 2>/dev/null || printf '%s' "$amu_output")"
           (cd "$amu_root" && node bin/amu compile examples/evm-answer.kotoba --jvm-free --output "$amu_output_host")
+          test -s "$amu_output"
+          test -s "$amu_output.provenance.edn"
           ipld_root="$(cygpath -m "$runner_temp/kbb/io-ipld")"
           vm_root="$(cygpath -m "$runner_temp/kbb/kotoba-vm")"
           grant_root="$(cygpath -m "$runner_temp/kbb/grant")"
