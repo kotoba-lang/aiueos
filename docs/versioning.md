@@ -2,10 +2,14 @@
 
 `aiueos` is pre-1.0 (Phase-0, per `CHANGELOG.md`). Its compatibility surface
 is the `:aiueos/*` EDN data contract — manifests, policy/grants, the
-`aiueos/component` Wasm Component Model boundary, and the CLI command
-contract — not a package/library semver on its own, since the surface is
-data (EDN) consumed by multiple host adapters (`kototama.tender`,
-browser-native `actor-host.js`), not a single language's API.
+versioned `:aiueos/artifact` Kototama program identity and VM profile,
+`aiueos/component` Wasm Component Model compatibility boundary, and the CLI
+command contract — not a package/library semver on its own, since the surface
+is data (EDN) consumed by multiple host adapters (`kototama.tender`,
+browser-native `actor-host.js`), not a single language's API. Kototama is the
+portable execution contract; the current hosted Kotoba VM profile is partial
+pure-i64. The Wasm boundary remains for existing components and is not the
+default program format.
 
 ## Compatibility Rules
 
@@ -21,7 +25,8 @@ browser-native `actor-host.js`), not a single language's API.
   that validated before still validates identically.
 - **Breaking (major)**: changing an existing `:aiueos/*` key's required
   shape or default, changing `resources/aiueos/component_boundary.edn`'s
-  import/export contract, changing `aiueos.broker/verify-one`'s grant/deny
+  import/export contract, changing Kototama artifact identity or the meaning
+  of a declared VM profile, changing `aiueos.broker/verify-one`'s grant/deny
   outcome for a manifest that previously validated, or removing a CLI
   command/option.
 - **The contract data is the compatibility surface, not the CLJC code.**
