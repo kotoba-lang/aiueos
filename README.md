@@ -144,9 +144,10 @@ for a hosted legacy Wasm launch. Test aliases keep Chicory for the existing
 Wasm adapter coverage. The bare-metal image does not yet embed this VM.
 Portable engine tests live in `test-portable` and do not load Grant; manifest
 admission remains in the separate `aiueos.kototama.admission` boundary. The
-Ubuntu/macOS/Windows platform workflow runs both suites: the portable VM and
-selection rules, plus the default-target Amu artifact through Grant admission
-and Kototama execution. The compiler output and provenance are recorded in
+Ubuntu/macOS/Windows platform workflow is configured to run both suites: the
+portable VM and selection rules, plus the default-target Amu artifact through
+Grant admission and Kototama execution. Cross-platform CI results are pending.
+The compiler output and provenance are recorded in
 `test/fixtures/amu-kototama-default-v1.*`.
 
 For consensus-backed actor execution, the optional `:distributed` alias pins
