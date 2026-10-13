@@ -53,6 +53,18 @@
                            "result" "value" "effects" [["fs/write"]]
                            "body" ["const" "done"]}}}]))
 
+(defn- encoded-capability-program []
+  (ipld/node->block
+   ["kototama.vm/program" 1
+    {"entry" "sign"
+     "value-profile" "kototama.data-i64/v1"
+     "methods" {"sign" {"params" ["value"] "param-types" ["value"]
+                         "result" "value"
+                         "effects" [[ ["keyword" "cap/call"] ["integer" "1"] ]]
+                         "body" ["effect" "invoke-capability"
+                                 [["const" ["integer" "1"]]
+                                  ["var" "value"]]]}}}]))
+
 (defn- effect-authority-facts [{:keys [actor program effect]}]
   {:resource "/notes"
    :origin-facts
@@ -253,3 +265,25 @@
            (:authority-proof @observed)))
     (is (= "/notes"
            (get-in allowed [:receipt :authority-decisions 0 :resource])))))
+
+(deftest hosted-adapter-forwards-authorized-capability-effects-to-the-host
+  (let [{:keys [cid bytes]} (encoded-capability-program)
+        store (vm/memory-store)
+        observed (atom nil)
+        request {:program-bytes bytes :expected-cid cid :method "sign"
+                 :args [21] :fuel 1000 :actor "alice" :caller "operator"}
+        denied (kototama/run-data-i64 request)
+        machine {:get-fn (:get-fn store) :put! (:put! store)
+                 :authority-facts-fn effect-authority-facts
+                 :effect-fn (fn [effect-request]
+                              (reset! observed effect-request)
+                              {:ok? true :value (second (:args effect-request))})}
+        allowed (kototama/run-data-i64 (assoc request :machine machine))]
+    (is (not (:ok? denied)))
+    (is (= :unauthorized (get-in denied [:receipt :exit])))
+    (is (:ok? allowed))
+    (is (= #?(:clj 21 :cljs (js/BigInt 21))
+           (get-in allowed [:receipt :return])))
+    (is (= [["keyword" "cap/call"] ["integer" "1"]]
+           (:effect @observed)))
+    (is (= "operator" (:caller @observed)))))

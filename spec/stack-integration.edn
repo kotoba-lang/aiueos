@@ -28,17 +28,18 @@
   :omissions [:complete-kototama-program-v1
               :actor-state-expressions
               :authorization-expressions
-              :effect-expressions
+              :general-effect-expression-set
               :source-authenticated-authority-fact-adapters
               :invoke-time-authorization-integration
               :biscuit-delegation
               :kototama-receipt-v1]}
  :kototama/vm-source-candidate
- {:revision "2d900cb"
+ {:revision "8a20814"
   :features [:bounded-positive-function-free-datalog
              :five-origin-eligibility-join
              :invoke-time-five-origin-authorization-gate
-             :authority-decisions-in-local-message-result]
+             :authority-decisions-in-local-message-result
+             :declared-capability-invoke-effect-port]
   :status :not-yet-selected-by-aiueos-dependency-pin
   :aiueos-resolved-revision "36cd2472a2d81fbb44db39d9b0e5a6cecf4f53a1"}
  :qualification-claim :partial-hosted-kototama-core-v1}

@@ -89,7 +89,9 @@
 
 (defn run-data-i64
   "Run pure data-i64 programs: bounded i64 arithmetic and portable nil,
-  boolean, text, vector, and map values. Effects remain unsupported."
+  boolean, text, vector, and map values. Effect expressions require an
+  injected Kotoba VM machine with authenticated authority facts and a trusted
+  bounded capability provider."
   [request]
   (run-profile request data-profile))
 
@@ -192,7 +194,7 @@
   state, together with the prior state CID and method. Every replica evaluates
   the same code CID/message and stores the same transition node. The call does
   not use kotoba.vm's separate `kotoba.vm/guest` actor format."
-  [{:keys [get-fn put! authority-facts-fn datalog-budget]}]
+  [{:keys [get-fn put! authority-facts-fn datalog-budget effect-fn]}]
   (when-not (and (ifn? get-fn) (ifn? put!))
     (throw (ex-info "Kototama Inga invocation needs deterministic block-store seams"
                     {:type :aiueos.kototama/invalid-machine})))
@@ -208,7 +210,9 @@
                                   authority-facts-fn
                                   (assoc :authority-facts-fn authority-facts-fn)
                                   datalog-budget
-                                  (assoc :datalog-budget datalog-budget))})]
+                                  (assoc :datalog-budget datalog-budget)
+                                  effect-fn
+                                  (assoc :effect-fn effect-fn))})]
           (if (:ok? result)
             {:state (ipld/put-node!
                      put! {"kototama/state/v1" 1
