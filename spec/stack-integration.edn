@@ -29,7 +29,8 @@
               :actor-state-expressions
               :authorization-expressions
               :effect-expressions
-              :bounded-datalog-authority
+              :source-authenticated-authority-fact-adapters
+              :invoke-time-authorization-integration
               :biscuit-delegation
               :kototama-receipt-v1]}
  :qualification-claim :partial-hosted-kototama-core-v1}
