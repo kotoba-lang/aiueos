@@ -1,0 +1,89 @@
+(ns aiueos.kototama-test
+  (:require [aiueos.kototama :as kototama]
+            [ipld.core :as ipld]
+            [grant.graph :as graph]
+            [grant.policy :as policy]
+            [kotoba.test :refer [deftest is]]
+            [kotoba.vm :as vm]))
+
+(def ^:private sum-program
+  ["kototama.vm/program" 1
+   {"entry" "sum"
+    "value-profile" "kotoba.i64-wrap/v1"
+    "methods" {"sum" {"params" ["a" "b"]
+                       "param-types" ["i64" "i64"]
+                       "result" "i64"
+                       "effects" []
+                       "body" ["arith" "add"
+                               [["var" "a"] ["var" "b"]]]}}}])
+
+(defn- encoded-program []
+  (let [store (vm/memory-store)
+        cid (ipld/put-node! (:put! store) sum-program)]
+    {:expected-cid cid
+     :program-bytes ((:get-fn store) cid)}))
+
+(deftest canonical-kototama-program-runs-on-hosted-engine
+  (let [{:keys [expected-cid program-bytes]} (encoded-program)
+        result (kototama/run-core-i64-subset
+                {:program-bytes program-bytes :expected-cid expected-cid
+                 :method "sum" :args [20 22] :fuel 100})]
+    (is (:ok? result))
+    (is (= #?(:clj 42 :cljs (js/BigInt 42))
+           (get-in result [:receipt :return])))
+    (is (= expected-cid (:aiueos.kototama/program-cid result)))
+    (is (= :kotoba-vm/core-i64-subset-v1
+           (:aiueos.kototama/engine-profile result)))
+    (is (= :process-local (:aiueos.kototama/state-scope result)))))
+
+(deftest kototama-program-cid-mismatch-refuses-before-execution
+  (let [{:keys [program-bytes]} (encoded-program)]
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"CID does not match"
+         (kototama/run-core-i64-subset
+          {:program-bytes program-bytes
+           :expected-cid "bafyreiaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+           :method "sum" :args [20 22]})))))
+
+(deftest kototama-subset-reports-fuel-exhaustion
+  (let [{:keys [expected-cid program-bytes]} (encoded-program)
+        result (kototama/run-core-i64-subset
+                {:program-bytes program-bytes :expected-cid expected-cid
+                 :method "sum" :args [20 22] :fuel 1})]
+    (is (false? (:ok? result)))
+    (is (= :fuel-exhausted (get-in result [:receipt :exit])))))
+
+(deftest manifest-execution-authorizes-before-entering-kototama
+  (let [{:keys [expected-cid program-bytes]} (encoded-program)
+        manifest {:aiueos/component :app/calc
+                  :aiueos/kind :app
+                  :aiueos/trust :trusted
+                  :aiueos/artifact {:kind :kototama/program-v1
+                                    :path "sum.dagcbor"
+                                    :cid (str expected-cid)}
+                  :aiueos/entry "sum"
+                  :aiueos/args [20 22]
+                  :aiueos/limits {:fuel 100}}
+        result (kototama/execute-artifact
+                manifest (graph/build [manifest]) policy/default-policy
+                program-bytes false)]
+    (is (= :grant (:aiueos/decision result)))
+    (is (= #?(:clj 42 :cljs (js/BigInt 42))
+           (get-in result [:aiueos.kototama/result :receipt :return])))))
+
+(deftest manifest-requiring-signatures-denies-before-vm-execution
+  (let [{:keys [expected-cid program-bytes]} (encoded-program)
+        manifest {:aiueos/component :app/calc
+                  :aiueos/kind :app
+                  :aiueos/trust :trusted
+                  :aiueos/artifact {:kind :kototama/program-v1
+                                    :path "sum.dagcbor"
+                                    :cid (str expected-cid)}
+                  :aiueos/entry "sum"
+                  :aiueos/args [20 22]}
+        restricted (assoc policy/default-policy :aiueos.policy/require-signed true)
+        result (kototama/execute-artifact
+                manifest (graph/build [manifest]) restricted program-bytes false)]
+    (is (= :deny (:aiueos/decision result)))
+    (is (nil? (:aiueos.kototama/result result)))))

@@ -3,8 +3,8 @@
   Rust `bin/aiueos.rs` argv-parsing/file-I/O role, reimplemented as JVM
   Clojure. Ties together `grant.cli` (command/request shaping),
   `grant.manifest` (normalization), `grant.policy`/`grant.broker`
-  (decisions), and `aiueos.execute` (real Chicory execution) into a single
-  runnable entry point.
+  (decisions), and hosted Kototama or compatibility Wasm execution into a
+  single runnable entry point.
 
   This is deliberately NOT the same thing as `grant.decide` (the
   bb-runnable, decision-only EDN-over-stdio subprocess for host adapters
@@ -21,6 +21,7 @@
             [grant.cli :as cli]
             [grant.contract :as contract]
             [aiueos.execute :as execute]
+            [aiueos.kototama :as kototama]
             [grant.graph :as graph]
             [aiueos.image :as image]
             #?(:clj [grant.key-lifecycle :as key-lifecycle])
@@ -53,6 +54,17 @@
      [manifest-path m]
      (when-let [wasm-rel (:aiueos/wasm m)]
        (.getPath (io/file (.getParentFile (io/file manifest-path)) wasm-rel)))))
+
+#?(:clj
+   (defn- resolve-kototama-path [manifest-path m]
+     (when-let [artifact (:aiueos/artifact m)]
+       (when (= :kototama/program-v1 (:kind artifact))
+         (.getPath (io/file (.getParentFile (io/file manifest-path))
+                            (:path artifact)))))))
+
+#?(:clj
+   (defn- run-kototama-artifact [m g policy* program-bytes admit?]
+     (kototama/execute-artifact m g policy* program-bytes admit?)))
 
 #?(:clj
    (defn- read-wasm-bytes [path]
@@ -116,15 +128,28 @@
      ex-info if the manifest declares no `:aiueos/wasm` -- nothing to run."
      [manifest-path policy-path admit?]
      (let [m (load-manifest manifest-path)
+           kototama-path (resolve-kototama-path manifest-path m)
            wasm-path (resolve-wasm-path manifest-path m)
-           _ (when-not wasm-path
-               (throw (ex-info (str manifest-path ": no :aiueos/wasm to run") {:manifest m})))
-           wasm-bytes (read-wasm-bytes wasm-path)
            policy* (load-policy policy-path)
            g (graph/build [m])]
-       (if admit?
-         (execute/execute-admission m g policy* wasm-bytes)
-         (execute/execute m g policy* wasm-bytes)))))
+       (cond
+         kototama-path
+         (run-kototama-artifact m g policy* (read-wasm-bytes kototama-path) admit?)
+
+         (:aiueos/artifact m)
+         (throw (ex-info (str manifest-path ": unsupported executable artifact profile")
+                         {:manifest m}))
+
+         wasm-path
+         (let [wasm-bytes (read-wasm-bytes wasm-path)]
+           (if admit?
+             (execute/execute-admission m g policy* wasm-bytes)
+             (execute/execute m g policy* wasm-bytes)))
+
+         :else
+         (throw (ex-info (str manifest-path
+                              ": no executable :aiueos/artifact or :aiueos/wasm declared")
+                         {:manifest m}))))))
 
 #?(:clj
    (defn verify-command
@@ -232,15 +257,29 @@
                     {:aiueos.launcher/keys [path] :aiueos/keys [manifest]} (nth entries i)]
                 (if-not (manifest/due-this-cycle? (:aiueos/schedule manifest) sched-cycle)
                   (recur (rest indices) results)
-                  (let [wasm-path (resolve-wasm-path path manifest)
-                        result (if wasm-path
-                                 (execute/execute manifest g policy* (read-wasm-bytes wasm-path))
+                  (let [kototama-path (resolve-kototama-path path manifest)
+                        wasm-path (resolve-wasm-path path manifest)
+                        result (cond
+                                 kototama-path
+                                 (run-kototama-artifact manifest g policy*
+                                                        (read-wasm-bytes kototama-path) false)
+                                 wasm-path
+                                 (execute/execute manifest g policy*
+                                                  (read-wasm-bytes wasm-path))
+                                 (:aiueos/artifact manifest)
+                                 {:aiueos/decision :deny
+                                  :aiueos/component (:aiueos/component manifest)
+                                  :aiueos/violations [{:aiueos/component (:aiueos/component manifest)
+                                                       :aiueos/kind :unsupported-artifact-profile
+                                                       :aiueos/message "unsupported Kototama artifact profile"}]}
+                                 :else
                                  (broker/verify-one manifest g policy*))
                         results' (conj results result)
                         booted? (and (= :grant (:aiueos/decision result))
                                      (not (contains? result :aiueos.execute/quota-exceeded))
                                      (not (contains? result :aiueos.execute/fuel-exceeded))
                                      (not (contains? result :aiueos.execute/watchdog-exceeded))
+                                     (not (contains? result :aiueos.execute/runtime-failed))
                                      (not (contains? result :aiueos.execute/capability-unlinked)))]
                     (if booted?
                       (recur (rest indices) results')

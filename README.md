@@ -102,12 +102,15 @@ No JVM **in what boots**: the C-free rule forbids libc, a CRT, a JVM, Linux
 and any hosted supervisor in the bare-metal profile, and the artifact receipt
 is what enforces it.
 
-A JVM **in the hosted profiles and in the toolchain**: `aiueos.execute` hosts
-compiled Kotoba Wasm through Chicory and is JVM-only, as is
-`aiueos.launcher`. Fuel metering rides Chicory's `withUnsafeExecutionListener`
--- documented unsafe, experimental, interpreter-path-only -- so treat it as a
-working prototype on an unofficial API rather than a guarantee. Memory limits
-use a stable API.
+A JVM **in the hosted profiles and in the toolchain**: `run`, `admit`, and
+`up` now select a signed `:aiueos/artifact` Kototama program before the legacy
+`:aiueos/wasm` path. The artifact identity signs its VM profile and canonical
+CID, independent of host paths. The hosted Kotoba VM currently implements only
+a partial pure-i64 Kototama profile; unsupported effects and instructions fail
+closed. Existing Wasm manifests remain a compatibility path. The bare-metal
+image does not yet embed this VM. Chicory fuel metering rides
+`withUnsafeExecutionListener` -- documented unsafe, experimental,
+interpreter-path-only. Memory limits use a stable API.
 
 ## Position in the stack
 
@@ -117,9 +120,14 @@ kotoba semantics -> amu -> kotoba-native freestanding ABI -> aiueos boot images
                                                      aiueos -> kototama (executes)
 ```
 
-`kototama` executes Components and placement (`sahai` at T6, `murakumo` for
-its inference fleet) decides where they run. Aiueos
-supplies the named providers and the machine underneath them; it does not own
+`Kototama` is the versioned virtual-machine contract and portable program
+format, analogous in stack position to EVM: Amu emits the canonical program,
+Kotoba VM supplies host-specific engines, and AiueOS dispatches the selected
+profile. This does not imply EVM bytecode compatibility or complete Kototama
+conformance; the current hosted engine is explicitly a partial i64 profile.
+Placement (`sahai` at T6, `murakumo` for its inference fleet) decides where
+components run. AiueOS supplies the named providers and the machine underneath
+them; it does not own
 another system's compiler or fleet scheduler, and since the split it does not
 own the grant vocabulary either.
 
@@ -153,9 +161,7 @@ ADR-2608110400.
 
 ## Reference stack topology and C mechanism boundary
 
-aiueos is the stack's **capability broker**: dependency-minimal by invariant
-(deps.edn carries `security` + Chicory only; enforcement layers like
-`kototama` import aiueos, never the reverse), consuming the Kotoba compiler
+aiueos is the stack's **capability broker**: it consumes the Kotoba compiler
 as **verified artifacts** (freestanding ELF objects), not as a library. The
 historical bare-metal split — C/asm owns mechanism only, every decision (crypto
 verification, admission, capability planning, dispatch planning) is

@@ -1,0 +1,76 @@
+(ns aiueos.kototama
+  "Hosted entrypoint for canonical Kototama programs.
+
+  This adapter currently exposes only kotoba-vm's partial, pure i64 subset.
+  The VM validates the canonical program envelope and refuses unsupported
+  expressions, non-i64 methods, and effects. This is not the complete
+  Kototama core/v1 profile, a distributed state store, or a consensus layer."
+  (:require [ipld.core :as ipld]
+            [grant.broker :as broker]
+            [kotoba.vm :as vm]))
+
+(def engine-profile :kotoba-vm/core-i64-subset-v1)
+
+(defn run-core-i64-subset
+  "Run an Amu canonical Kototama program block through the hosted Kotoba VM.
+
+  `:program-bytes` must be canonical DAG-CBOR and `:expected-cid` must be the
+  CID admitted by the caller. The adapter re-encodes the node and refuses if
+  that CID differs. Only pure i64 methods are supported; no host capabilities
+  are attached. State and receipts are currently process-local."
+  [{:keys [program-bytes expected-cid method args fuel actor]}]
+  (when-not (and program-bytes expected-cid)
+    (throw (ex-info "Kototama execution requires program bytes and expected CID"
+                    {:type :aiueos.kototama/invalid-request})))
+  (let [program (ipld/decode program-bytes)
+        store (vm/memory-store)
+        machine {:get-fn (:get-fn store) :put! (:put! store)}
+        program-cid (vm/put-code! (:put! machine) program)]
+    (when-not (= (str expected-cid) (str program-cid))
+      (throw (ex-info "Kototama program CID does not match admitted identity"
+                      {:type :aiueos.kototama/program-cid-mismatch
+                       :expected (str expected-cid)
+                       :actual (str program-cid)})))
+    (let [actor (or actor "aiueos:kototama-guest")
+          state-cid (ipld/put-node! (:put! machine) {})
+          result (vm/apply-message
+                  machine
+                  {:actors {actor {:code program-cid :state state-cid
+                                   :nonce 0 :balance 0}}
+                   :from "aiueos:caller" :to actor :method method
+                   :args (or args []) :fuel fuel})]
+      (assoc result
+             :aiueos.kototama/program-cid program-cid
+             :aiueos.kototama/engine-profile engine-profile
+             :aiueos.kototama/conformance :partial
+             :aiueos.kototama/state-scope :process-local))))
+
+(defn execute-artifact
+  "Authorize and execute a manifest's signed Kototama program artifact.
+  The broker decision runs before VM entry; admission uses the broker's
+  untrusted-floor path. CID validation remains inside run-core-i64-subset."
+  [manifest graph policy program-bytes admission?]
+  (let [decision (if admission?
+                   (broker/verify-admission manifest graph policy)
+                   (broker/verify-one manifest graph policy))]
+    (if-not (= :grant (:aiueos/decision decision))
+      decision
+      (try
+        (let [result (run-core-i64-subset
+                      {:program-bytes program-bytes
+                       :expected-cid (get-in manifest [:aiueos/artifact :cid])
+                       :method (or (:aiueos/entry manifest) "main")
+                       :args (or (:aiueos/args manifest) [])
+                       :fuel (get-in manifest [:aiueos/limits :fuel])
+                       :actor (str (:aiueos/component manifest))})]
+          (cond-> (assoc decision :aiueos.kototama/result result)
+            (not (:ok? result))
+            (assoc :aiueos.execute/runtime-failed
+                   {:receipt (:receipt result)})))
+        (catch #?(:clj Exception :cljs :default) e
+          {:aiueos/decision :deny
+           :aiueos/component (:aiueos/component manifest)
+           :aiueos/violations [{:aiueos/component (:aiueos/component manifest)
+                                :aiueos/kind :artifact-mismatch
+                                :aiueos/message #?(:clj (.getMessage e)
+                                                   :cljs (.-message e))}]})))))
