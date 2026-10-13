@@ -1,0 +1,60 @@
+(ns aiueos.kototama.inga
+  "Compose the portable Kotoba VM with Inga's committed actor state machine.
+
+  Load this namespace with the optional `:distributed` alias. It is the
+  composition seam passed to `inga.replica/replica`; Inga applies it only to
+  committed blocks. This does not start a network replica or provide a witness
+  set, transport, authority policy, or durable block store.
+
+  The execution profile is intentionally the current pure i64 subset. Each
+  replica must use the same pinned VM, canonical code/state blocks, fuel
+  schedule, and deterministic storage/crypto seams."
+  (:require [inga.state :as state]
+            [kotoba.vm :as vm]))
+
+(defn state-machine
+  "Build an Inga state machine whose committed `:actor-call` ops execute
+  canonical Kototama programs through kotoba-vm.
+
+  Required options are the application's deterministic block decoder,
+  content-addressed block-store `:get-fn`/`:put!`, arrangement `:blind-fn` and
+  `:encrypt-fn`, block `:height-fn`, and bounded `:fuel` schedule. The returned
+  map has Inga's `:init-fn`, `:apply-fn`, `:root-fn`, and `:hydrate-fn` contract
+  and can be passed to `inga.replica/replica` as `:machine`.
+
+  The host remains responsible for authenticating proposals/callers and
+  configuring live consensus. This function does not turn local execution into
+  distributed execution by itself."
+  [{:keys [decode-block get-fn put! blind-fn encrypt-fn height-fn fuel
+           authority emit-fn]}]
+  (doseq [[key value] [[:decode-block decode-block]
+                       [:get-fn get-fn]
+                       [:put! put!]
+                       [:blind-fn blind-fn]
+                       [:encrypt-fn encrypt-fn]
+                       [:height-fn height-fn]]]
+    (when-not (ifn? value)
+      (throw (ex-info "Kototama Inga adapter requires a callable deterministic seam"
+                      {:type :aiueos.kototama.inga/invalid-seam
+                       :seam key}))))
+  (when-not (and (map? fuel)
+                 (ifn? (:budget-fn fuel))
+                 (ifn? (:cost-fn fuel)))
+    (throw (ex-info "Kototama consensus execution requires bounded fuel"
+                    {:type :aiueos.kototama.inga/invalid-fuel})))
+  (let [fuel (assoc fuel :height-fn height-fn)
+        machine (state/machine
+                 {:decode-block decode-block
+                  :get-fn get-fn
+                  :put! put!
+                  :blind-fn blind-fn
+                  :encrypt-fn encrypt-fn
+                  :height-fn height-fn
+                  :fuel fuel
+                  :authority (or authority {})
+                  :emit-fn (or emit-fn state/default-emit)
+                  :invoke-fn (vm/invoke-fn {:get-fn get-fn :put! put!})})]
+    (assoc machine
+           :aiueos.kototama/engine-profile :kotoba-vm/core-i64-subset-v1
+           :aiueos.kototama/consensus-owner :inga.replica
+           :aiueos.kototama/conformance :partial)))

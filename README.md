@@ -108,7 +108,17 @@ A JVM **in the hosted profiles and in the toolchain**: `run`, `admit`, and
 CID, independent of host paths. The hosted Kotoba VM currently implements only
 a partial pure-i64 Kototama profile; unsupported effects and instructions fail
 closed. Existing Wasm manifests remain a compatibility path. The bare-metal
-image does not yet embed this VM. Chicory fuel metering rides
+image does not yet embed this VM.
+
+For consensus-backed actor execution, the optional `:distributed` alias pins
+Inga and exposes `aiueos.kototama.inga/state-machine`. Pass that machine to
+`inga.replica/replica`; committed `:actor-call` operations then execute the
+same canonical program through Kotoba VM and contribute to Inga's content
+addressed state root. Each replica needs the same VM/profile, canonical blocks,
+fuel schedule, and deterministic block-store seams. The adapter does not start
+a replica or provide witness transport, caller authentication, or policy
+authority, and the ordinary `run`/`up` CLI still uses its hosted local path.
+This integration is not yet live-network qualified. Chicory fuel metering rides
 `withUnsafeExecutionListener` -- documented unsafe, experimental,
 interpreter-path-only. Memory limits use a stable API.
 

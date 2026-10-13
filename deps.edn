@@ -92,7 +92,12 @@
         com.dylibso.chicory/wasm {:mvn/version "1.4.0"}
         com.dylibso.chicory/runtime {:mvn/version "1.4.0"}}
  :aliases
-  {:test {:extra-paths ["test"]
+  {;; Optional composition of Kotoba VM actor calls with Inga's committed
+   ;; state machine. Keep consensus off ordinary hosted and bare-metal paths.
+   :distributed {:extra-deps {io.github.kotoba-lang/inga
+                              {:git/url "https://github.com/kotoba-lang/inga.git"
+                               :git/sha "4b8bcfcfc9320465d4134a075a84ff898548a878"}}}
+   :test {:extra-paths ["test"]
           :jvm-opts ["--enable-native-access=ALL-UNNAMED"]
          ;; TEST-ONLY. The compiler and the KIR interpreter drive
          ;; `tcp-seq-acceptable.kotoba`; org-ietf-tcp supplies the reference
