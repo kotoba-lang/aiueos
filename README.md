@@ -132,6 +132,17 @@ call before it becomes an Inga op. Supply a deterministic signature verifier
 and use `signed-proposal-authority` with that decoder. Its sequence is covered
 by the signature but is not an Inga account nonce; actor methods must enforce
 replay handling until nonce semantics are part of the VM/consensus contract.
+Compose it without changing the node's other settings:
+
+```clojure
+(inga-node.node/start!
+ (aiueos.kototama.inga/with-node-machine
+  node-config
+  {:decode-block (aiueos.kototama.inga/signed-proposal-decoder decoder-options)
+   :authority aiueos.kototama.inga/signed-proposal-authority
+   :get-fn get-fn :put! put! :blind-fn blind-fn :encrypt-fn encrypt-fn
+   :height-fn height-fn :fuel fuel}))
+```
 
 ## Position in the stack
 

@@ -145,3 +145,16 @@
            :aiueos.kototama/engine-profile :kotoba-vm/core-i64-subset-v1
            :aiueos.kototama/consensus-owner :inga.replica
            :aiueos.kototama/conformance :partial)))
+
+(defn with-node-machine
+  "Attach the Kototama consensus machine to an inga-node `start!` config.
+
+  `node-config` is passed through with its witness, transport, key, and storage
+  settings unchanged; `machine-options` are the options accepted by
+  `state-machine`. This keeps the node process VM-neutral while making the
+  intended composition explicit."
+  [node-config machine-options]
+  (when-not (map? node-config)
+    (throw (ex-info "inga-node config must be a map"
+                    {:type :aiueos.kototama.inga/invalid-node-config})))
+  (assoc node-config :machine (state-machine machine-options)))
