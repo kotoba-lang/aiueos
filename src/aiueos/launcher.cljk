@@ -67,7 +67,7 @@
      (kototama/execute-artifact m g policy* program-bytes admit?)))
 
 #?(:clj
-   (defn- read-wasm-bytes [path]
+   (defn- read-artifact-bytes [path]
      (with-open [in (io/input-stream path)
                  out (java.io.ByteArrayOutputStream.)]
        (io/copy in out)
@@ -122,10 +122,9 @@
 #?(:clj
    (defn run-command
      "The `run`/`admit` command bodies: load MANIFEST-PATH (+ POLICY-PATH),
-     resolve+read its declared `:aiueos/wasm` bytes, and actually execute
-     via `aiueos.execute/execute` (or `execute-admission` when ADMIT? is
-     true). Returns the same shape `aiueos.execute/execute` does. Throws
-     ex-info if the manifest declares no `:aiueos/wasm` -- nothing to run."
+     execute a supported signed Kototama artifact when declared, otherwise
+     use the legacy explicit `:aiueos/wasm` compatibility path. Returns the
+     selected engine's result. Throws when no executable artifact is declared."
      [manifest-path policy-path admit?]
      (let [m (load-manifest manifest-path)
            kototama-path (resolve-kototama-path manifest-path m)
@@ -134,14 +133,14 @@
            g (graph/build [m])]
        (cond
          kototama-path
-         (run-kototama-artifact m g policy* (read-wasm-bytes kototama-path) admit?)
+         (run-kototama-artifact m g policy* (read-artifact-bytes kototama-path) admit?)
 
          (:aiueos/artifact m)
          (throw (ex-info (str manifest-path ": unsupported executable artifact profile")
                          {:manifest m}))
 
          wasm-path
-         (let [wasm-bytes (read-wasm-bytes wasm-path)]
+         (let [wasm-bytes (read-artifact-bytes wasm-path)]
            (if admit?
              (execute/execute-admission m g policy* wasm-bytes)
              (execute/execute m g policy* wasm-bytes)))
@@ -166,8 +165,8 @@
    (defn- resolve-system-component-paths
      "A system.aiueos.edn's `:aiueos/components` is a vector of manifest
      paths relative to the SYSTEM file itself (matches the retired Rust
-     `System::load` convention -- same base-directory rule
-     `resolve-wasm-path` applies to a single manifest's `:aiueos/wasm`)."
+     `System::load` convention; each executable artifact path is then
+     resolved relative to its component manifest)."
      [system-path components]
      (let [base (.getParentFile (io/file system-path))]
        (mapv #(.getPath (io/file base %)) components))))
@@ -180,9 +179,9 @@
      `:aiueos/components` declaration order (NOT boot order -- see
      `up-command` for that). Keeping each manifest's own file path
      alongside it (rather than just the normalized manifest, as
-     `load-system` returns) is what lets `up-command` resolve each
-     component's OWN `:aiueos/wasm` relative to ITS OWN manifest file,
-     exactly like `run-command` does for a single manifest."
+     `load-system` returns) lets `up-command` resolve each component's own
+     Kototama or legacy Wasm artifact relative to its own manifest file,
+     exactly like `run-command` does for one manifest."
      [system-path]
      (let [raw (read-edn-file system-path)
            validation (contract/validate-system raw)]
@@ -220,11 +219,11 @@
      not due this cycle is simply skipped (omitted from
      `:aiueos/boot-results`, not treated as stopped/denied).
 
-     Each due component is verified + (if granted and it declares
-     `:aiueos/wasm`) actually executed via `aiueos.execute/execute`,
-     exactly like `run-command` does for a single manifest; a component
-     with no `:aiueos/wasm` (a pure capability provider with nothing to
-     run) only gets a decision, matching `verify-command`.
+     Each due component is verified and, if granted, executes its declared
+     supported Kototama artifact; the legacy explicit `:aiueos/wasm` path
+     remains available for compatibility. A component with no executable
+     artifact (such as a pure capability provider) only gets a decision,
+     matching `verify-command`.
 
      Stops at the FIRST denied/quota-or-fuel-exceeded/capability-unlinked
      DUE component -- a system doesn't boot past a component that can't run, since later
@@ -262,10 +261,10 @@
                         result (cond
                                  kototama-path
                                  (run-kototama-artifact manifest g policy*
-                                                        (read-wasm-bytes kototama-path) false)
+                                                        (read-artifact-bytes kototama-path) false)
                                  wasm-path
                                  (execute/execute manifest g policy*
-                                                  (read-wasm-bytes wasm-path))
+                                                  (read-artifact-bytes wasm-path))
                                  (:aiueos/artifact manifest)
                                  {:aiueos/decision :deny
                                   :aiueos/component (:aiueos/component manifest)
