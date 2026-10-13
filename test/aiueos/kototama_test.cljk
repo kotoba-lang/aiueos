@@ -287,3 +287,21 @@
     (is (= [["keyword" "cap/call"] ["integer" "1"]]
            (:effect @observed)))
     (is (= "operator" (:caller @observed)))))
+
+(deftest replicated-invoke-adapter-does-not-run-external-effects
+  (let [{:keys [bytes]} (encoded-capability-program)
+        store (vm/memory-store)
+        program (ipld/decode bytes)
+        code (vm/put-code! (:put! store) program)
+        state (ipld/put-node! (:put! store) {})
+        calls (atom 0)
+        invoke (kototama/invoke-fn
+                {:get-fn (:get-fn store) :put! (:put! store)
+                 :authority-facts-fn effect-authority-facts
+                 ;; Even if accidentally supplied, consensus replay must not
+                 ;; run an irreversible provider on every witnessing node.
+                 :effect-fn (fn [_] (swap! calls inc) {:ok? true :value 1})})
+        result (invoke {:address "alice" :caller "operator" :code code
+                        :state state :method "sign" :args [21] :fuel 1000})]
+    (is (= {:refused :not-callable} result))
+    (is (zero? @calls))))

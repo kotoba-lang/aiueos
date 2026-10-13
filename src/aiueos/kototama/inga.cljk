@@ -153,13 +153,13 @@
   caller's signature over the call. A field copied from an untrusted proposal
   is not authentication. The host remains responsible for proposal decoding
   and live consensus configuration. Optional `:authority-facts-fn`,
-  `:datalog-budget`, and `:effect-fn` are passed to Kotoba VM. The facts adapter
-  must derive source-authenticated, deterministic inputs from committed state;
-  the effect provider must implement only granted bounded capabilities and be
-  deterministic across witnesses. Without the facts adapter, effects are
-  denied."
+  and `:datalog-budget` are passed to Kotoba VM. The facts adapter must derive
+  source-authenticated, deterministic inputs from committed state. This
+  replicated path intentionally does not install a host effect provider:
+  external effects are denied until an effect reservation and finality receipt
+  contract prevents replay across witnesses."
   [{:keys [decode-block get-fn put! blind-fn encrypt-fn height-fn fuel
-           authority emit-fn authority-facts-fn datalog-budget effect-fn]}]
+           authority emit-fn authority-facts-fn datalog-budget]}]
   (doseq [[key value] [[:decode-block decode-block]
                        [:get-fn get-fn]
                        [:put! put!]
@@ -229,9 +229,7 @@
                                 authority-facts-fn
                                 (assoc :authority-facts-fn authority-facts-fn)
                                 datalog-budget
-                                (assoc :datalog-budget datalog-budget)
-                                effect-fn
-                                (assoc :effect-fn effect-fn)))})]
+                                (assoc :datalog-budget datalog-budget)))})]
     (assoc machine
            :apply-fn (fn [current block]
                        ((:apply-fn machine) current

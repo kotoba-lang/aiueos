@@ -174,6 +174,10 @@ HTTP, and verifies that all four execute its `main` method and reach the same
 actor-state CID. This is loopback traffic among
 four processes on one host; it does not qualify separate physical hosts,
 independent fault domains, a public network, or production deployment.
+The Inga state machine deliberately does not install a host `:effect-fn`:
+effectful methods may be authorized for local execution, but replicated calls
+refuse them before external work until effect reservation and finality receipts
+make replay safe across witnesses.
 `inga-node` provides process, transport, keys, and durable replica snapshots;
 the application still configures the block decoder, caller-key verifier,
 content-addressed storage, witness membership, and policy. The ordinary

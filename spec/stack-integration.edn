@@ -31,6 +31,7 @@
               :general-effect-expression-set
               :source-authenticated-authority-fact-adapters
               :biscuit-delegation
+              :distributed-effect-finality-and-receipt
               :kototama-receipt-v1]}
  :kototama/vm-source-candidate
  {:revision "8a20814"

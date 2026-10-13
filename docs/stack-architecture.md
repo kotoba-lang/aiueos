@@ -24,7 +24,9 @@ contract through Kotoba VM. That engine declares `:core/v1` partial. The local
 Kotoba VM candidate has a bounded positive Datalog evaluator, five-origin
 eligibility join, pre-body method authorization, and a declared Amu
 `invoke-capability` expression that reaches a host effect port only after
-authorization. AiueOS adapters now expose that port for local and Inga hosts.
+authorization. AiueOS's local hosted adapter exposes that port. The replicated
+Inga path deliberately omits it until external-effect reservation and finality
+receipts can prevent replay across witnesses.
 This branch now pins the local Kotoba VM candidate at
 `8a20814b13156a918dbf1c78d7a2a95da1d8a883`; the VM commit still needs to be
 published before a clean external checkout can resolve it. Source-authenticated
