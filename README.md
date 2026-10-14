@@ -143,17 +143,14 @@ and loaded lazily only when that path is selected; add the `:wasm-compat` alias
 for a hosted legacy Wasm launch. Test aliases keep Chicory for the existing
 Wasm adapter coverage. The bare-metal image does not yet embed this VM.
 Portable engine tests live in `test-portable` and do not load Grant; manifest
-admission remains in the separate `aiueos.kototama.admission` boundary. The
-Ubuntu/macOS/Windows platform workflow is configured to run both suites: the
-portable VM and selection rules, plus the default-target Amu artifact through
-Grant admission and Kototama execution. Cross-platform CI results are pending.
-The Kotoba VM repository's platform workflow passed execution of the canonical
-Amu artifact on Ubuntu, macOS, and Windows. That confirms this artifact ran in
-those KBB environments; it does not establish AiueOS integration-suite results
-on those hosts. The AiueOS workflow below is configured for that broader
-portable-suite check, and its runner results are still required. Neither result
-qualifies every AiueOS subsystem, a JVM-specific engine, or separate-host
-distributed operation. The compiler output and provenance are recorded in
+admission remains in the separate `aiueos.kototama.admission` boundary. At
+head `a5c5dc3aadb8526a62b289dee9cd1f671eef26fe`, the Ubuntu/macOS/Windows
+platform workflow passed on all three runners. Each job compiled and verified
+the default-target Amu artifact, then ran the portable VM and selection-rule
+suites plus the artifact through Grant admission and Kototama execution. This
+qualifies that program path on those runners; it does not qualify every AiueOS
+subsystem, a JVM-specific engine, or separate-host distributed operation. The
+compiler output and provenance are recorded in
 `test/fixtures/amu-kototama-default-v1.*`.
 
 For consensus-backed actor execution, the optional `:distributed` alias pins
