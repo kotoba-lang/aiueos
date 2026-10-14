@@ -36,7 +36,7 @@
 (def ^:private witnesses ["w1" "w2" "w3" "w4"])
 (def ^:private chain-id "aiueos-kototama-live-v1")
 (def ^:private program-cid
-  "bafyreiddqnpygk2vba4uau2t2nh6lvlreewu6pyaa4slbjhoos6mbswz2e")
+  "bafyreihewgmseht6nsokbezrb5kx6hyietul3piqwzqhtxqvjczmerxtre")
 
 (defn- sleep [ms]
   (js/Promise. (fn [resolve] (js/setTimeout resolve ms))))

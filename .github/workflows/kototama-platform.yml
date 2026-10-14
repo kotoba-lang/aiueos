@@ -24,9 +24,9 @@ jobs:
           KOTOBA_REF: 4115c0e58805578c1c33f84a1fdc033f70036cdd
           ENGINE_REF: 1675e6aab65d5a99e37840cc5012bc2eca6f4a07
           IPLD_REF: 8bc2dde5ae47129e49a957131c40313b6b02731c
-          VM_REF: 2e3eba19e3c1165649cd2d0ff996f620435de893
-          GRANT_REF: a120d73580f3b3ca740c0a7e19e313c4562e3733
-          AMU_REF: 028286fd7ca6f01b255a83c31957376fdc3181a5
+          VM_REF: 7ed102517a961c2ab6a6a6b2c52a92283b664275
+          GRANT_REF: 08432a99bd98e33b3e81c70c6a19cae59b853fbc
+          AMU_REF: df1850895ba525ad38eb6755e5e0f862aa8b3d87
           BB_VERSION: 1.12.218
         run: |
           set -euo pipefail
@@ -77,6 +77,8 @@ jobs:
           (cd "$amu_root" && node bin/amu compile examples/evm-answer.kotoba --jvm-free --output "$amu_output_host")
           test -s "$amu_output"
           test -s "$amu_output.provenance.edn"
+          test -s "$amu_output.publication.edn"
+          (cd "$amu_root" && node bin/amu verify-output-set "$amu_output_host")
           ipld_root="$(cygpath -m "$runner_temp/kbb/io-ipld")"
           vm_root="$(cygpath -m "$runner_temp/kbb/kotoba-vm")"
           grant_root="$(cygpath -m "$runner_temp/kbb/grant")"

@@ -26,7 +26,7 @@
   "bafyreiadqe4yzd45fvkz456jfesqq3tc46th46ufyzermn2mzvixu47edu")
 
 (def ^:private amu-default-program-cid
-  "bafyreiddqnpygk2vba4uau2t2nh6lvlreewu6pyaa4slbjhoos6mbswz2e")
+  "bafyreihewgmseht6nsokbezrb5kx6hyietul3piqwzqhtxqvjczmerxtre")
 
 (defn- encoded-program []
   (let [root #?(:clj (or (System/getenv "AIUEOS_REPO_ROOT") ".")

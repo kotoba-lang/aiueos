@@ -204,7 +204,7 @@
   ;; claim about a dependency none of its own files reach.
   {:coordinate "io.github.kotoba-lang/grant" :source :git
    :git-url "https://github.com/kotoba-lang/grant.git"
-   :git-sha "a120d73580f3b3ca740c0a7e19e313c4562e3733"
+   :git-sha "08432a99bd98e33b3e81c70c6a19cae59b853fbc"
    :role :capability-authority}
   ;; This workspace's own TLS 1.3 and HTTP/1.1, which `aiueos.provider.cloud-own`
   ;; runs on. They are TCB in the strongest sense available to this inventory:

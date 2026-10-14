@@ -15,11 +15,13 @@ host-language map in the integration path.
 
 `amu-kototama-default-v1.dagcbor` is also compiled by Amu with no `--target`
 and `--jvm-free`, from `examples/evm-answer.kotoba` at Amu commit
-`1f8eb385f1b29c0bb28bce3583fab89d326b2c72`. The exact Amu provenance sidecar
-is checked in beside the block. This is the default `kototama-core-v1`
-program, not an EVM or native/Wasm deployment artifact.
+`df1850895ba525ad38eb6755e5e0f862aa8b3d87`. The exact Amu provenance sidecar
+and publication marker are
+checked in beside the block. This is the default `kototama-core-v1` program,
+not an EVM or native/Wasm deployment artifact.
 
-- Program CID: `bafyreiddqnpygk2vba4uau2t2nh6lvlreewu6pyaa4slbjhoos6mbswz2e`
-- File SHA-256: `63835f832b550839405353d34fe5d571212d4f3f000724b0a4ee74bcc0cad9d1`
+- Program CID: `bafyreihewgmseht6nsokbezrb5kx6hyietul3piqwzqhtxqvjczmerxtre`
+- File SHA-256: `e4b199221e7e6c9ca093310f557f1f0824e8bdbd10b66079de1548b2c246f389`
 - Entry: `main`, returns `42`
 - Value profile: `kotoba.i64-wrap/v1`
+- Exports: `main`

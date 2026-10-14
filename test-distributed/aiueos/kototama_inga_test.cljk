@@ -310,7 +310,7 @@
                                           (make-array String 0)))
            :cljs (.readFileSync fs
                                 "test/fixtures/amu-kototama-default-v1.dagcbor"))
-        program-cid "bafyreiddqnpygk2vba4uau2t2nh6lvlreewu6pyaa4slbjhoos6mbswz2e"
+        program-cid "bafyreihewgmseht6nsokbezrb5kx6hyietul3piqwzqhtxqvjczmerxtre"
         state-cid (ipld/put-node! put! {})
         _ (swap! blocks assoc program-cid program-bytes)
         call-cid (ipld/put-node!

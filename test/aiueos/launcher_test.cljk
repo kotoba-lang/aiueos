@@ -93,7 +93,7 @@
                      :aiueos/artifact {:kind :kototama/program-v1
                                        :profile :kototama/core-i64-subset-v1
                                        :path "answer.dagcbor"
-                                       :cid "bafyreiddqnpygk2vba4uau2t2nh6lvlreewu6pyaa4slbjhoos6mbswz2e"}
+                                       :cid "bafyreihewgmseht6nsokbezrb5kx6hyietul3piqwzqhtxqvjczmerxtre"}
                      :aiueos/entry "main"
                      :aiueos/args []
                      :aiueos/limits {:fuel 100}}]
