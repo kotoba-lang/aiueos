@@ -191,7 +191,7 @@
    :role :json-value-codec}
   {:coordinate "io.github.kotoba-lang/security" :source :git
    :git-url "https://github.com/kotoba-lang/security.git"
-   :git-sha "41739f8f1415a82590fd1b50d98df8c8d41af60f"
+   :git-sha "d1c0baedc5d6c8edf2eb3da9049f972c7c4c087e"
    :role :shared-security-primitives}
   ;; The decision plane. Everything this machine is allowed to do is decided
   ;; there, so it is the largest single external entry in this inventory --
