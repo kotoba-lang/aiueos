@@ -29,7 +29,7 @@
 ;; of any re-assignment.
 {:adoption/version 3
  :consumer/id :aiueos
- :security/git-sha "41739f8f1415a82590fd1b50d98df8c8d41af60f"
+ :security/git-sha "d1c0baedc5d6c8edf2eb3da9049f972c7c4c087e"
  :required-control-namespaces
  [kotoba.security.supply-chain kotoba.security.crypto-policy
   kotoba.security.information-flow]
