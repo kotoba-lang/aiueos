@@ -147,7 +147,13 @@ admission remains in the separate `aiueos.kototama.admission` boundary. The
 Ubuntu/macOS/Windows platform workflow is configured to run both suites: the
 portable VM and selection rules, plus the default-target Amu artifact through
 Grant admission and Kototama execution. Cross-platform CI results are pending.
-The compiler output and provenance are recorded in
+The Kotoba VM repository's platform workflow passed execution of the canonical
+Amu artifact on Ubuntu, macOS, and Windows. That confirms this artifact ran in
+those KBB environments; it does not establish AiueOS integration-suite results
+on those hosts. The AiueOS workflow below is configured for that broader
+portable-suite check, and its runner results are still required. Neither result
+qualifies every AiueOS subsystem, a JVM-specific engine, or separate-host
+distributed operation. The compiler output and provenance are recorded in
 `test/fixtures/amu-kototama-default-v1.*`.
 
 For consensus-backed actor execution, the optional `:distributed` alias pins
