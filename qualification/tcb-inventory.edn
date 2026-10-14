@@ -4,7 +4,7 @@
  ;; other field, so an entry cannot change without this date having to change
  ;; too. It said 2026-08-01 while the file was being edited that morning, and
  ;; nothing read it.
- :tcb/content-digest "7ad53381bbefde1b3d711b46c2b9c46ac374751965db1f414270cb2ee9fc9228"
+ :tcb/content-digest "989a45ad9f818f20b5d779e172e72621c347c53986e070156de8043d72ca93cb"
  :tcb/scope
  "Code whose compromise can grant authority, escape Wasm isolation, falsify
   production admission/audit evidence, or access hardware outside a component."
@@ -155,7 +155,7 @@
    :role :content-addressed-vm-storage}
   {:coordinate "io.github.kotoba-lang/kotoba-vm" :source :git
    :git-url "https://github.com/kotoba-lang/kotoba-vm.git"
-   :git-sha "36cd2472a2d81fbb44db39d9b0e5a6cecf4f53a1"
+   :git-sha "0773d5eecfc058e34782bf677b44231990a76db3"
    :role :kototama-core-data-i64-engine}
   {:coordinate "io.github.kotoba-lang/ffi" :source :git
    :git-url "https://github.com/kotoba-lang/ffi.git"
