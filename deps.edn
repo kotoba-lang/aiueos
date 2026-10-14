@@ -131,7 +131,7 @@
                       ;; catch, so the coordinate follows the name.
                       io.github.kotoba-lang/amu
                       {:git/url "https://github.com/kotoba-lang/amu.git"
-                       :git/sha "df1850895ba525ad38eb6755e5e0f862aa8b3d87"}
+                       :git/sha "56d0b0679265d9bc1374aca388d4870bcd8aed8f"}
                       io.github.kotoba-lang/org-ietf-tcp
                       {:git/url "https://github.com/kotoba-lang/org-ietf-tcp.git"
                        :git/sha "d8c15e23b6c169a4ed044cd7764923ecbb789be4"}
@@ -188,7 +188,7 @@
                       :git/sha "ff02fd24bfd24bf8a44373319a9fc0eec73a374e"}
                      io.github.kotoba-lang/amu
                      {:git/url "https://github.com/kotoba-lang/amu.git"
-                      :git/sha "df1850895ba525ad38eb6755e5e0f862aa8b3d87"}
+                      :git/sha "56d0b0679265d9bc1374aca388d4870bcd8aed8f"}
                      io.github.kotoba-lang/webgpu
                      {:git/url "https://github.com/kotoba-lang/webgpu.git"
                       :git/sha "17598c1206a31e594b0e028245f222e53b1b8b71"}
@@ -231,7 +231,7 @@
                               :git/sha "ff02fd24bfd24bf8a44373319a9fc0eec73a374e"}
                              io.github.kotoba-lang/amu
                              {:git/url "https://github.com/kotoba-lang/amu.git"
-                              :git/sha "df1850895ba525ad38eb6755e5e0f862aa8b3d87"}
+                              :git/sha "56d0b0679265d9bc1374aca388d4870bcd8aed8f"}
                              ;; Same reason as in `:test`, and it has to be here
                              ;; too: this alias selects every `aiueos.*`
                              ;; namespace except one, so
@@ -275,7 +275,7 @@
    :verify-admissions
    {:extra-deps {io.github.kotoba-lang/amu
                  {:git/url "https://github.com/kotoba-lang/amu.git"
-                  :git/sha "df1850895ba525ad38eb6755e5e0f862aa8b3d87"}
+                  :git/sha "56d0b0679265d9bc1374aca388d4870bcd8aed8f"}
                  ;; Pinned explicitly, not taken through amu: amu's own pin
                  ;; predates `kir/execute`'s optional memory image, and without
                  ;; it every vector traps `:kernel-memory-unavailable`. The

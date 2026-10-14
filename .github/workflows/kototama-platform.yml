@@ -26,7 +26,7 @@ jobs:
           IPLD_REF: 8bc2dde5ae47129e49a957131c40313b6b02731c
           VM_REF: 7ed102517a961c2ab6a6a6b2c52a92283b664275
           GRANT_REF: 08432a99bd98e33b3e81c70c6a19cae59b853fbc
-          AMU_REF: df1850895ba525ad38eb6755e5e0f862aa8b3d87
+          AMU_REF: 56d0b0679265d9bc1374aca388d4870bcd8aed8f
           BB_VERSION: 1.12.218
         run: |
           set -euo pipefail
