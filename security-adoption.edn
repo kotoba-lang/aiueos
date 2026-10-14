@@ -35,7 +35,6 @@
   kotoba.security.information-flow]
  :security-sensitive-entrypoints
  {aiueos.reproducibility [kotoba.security.supply-chain]
-  aiueos.sbom [kotoba.security.supply-chain]
   aiueos.device-auth [kotoba.security.information-flow]
   aiueos.phone-bind [kotoba.security.crypto-policy]
   aiueos.cloud-live [kotoba.security.information-flow]
