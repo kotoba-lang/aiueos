@@ -75,7 +75,7 @@ clang -O3 -mcpu=native \
   ./Ternary-Bonsai-2-27B-PTQ1_0.gguf 585748832
 ```
 
-The GGUF checksum pins the tensor table and therefore the payload offset used by this command. The captured native-code blob is 41,404 bytes with SHA-256 `04e372a41cf5f29efe862fad5d6a9f65365da62c435063d341a15622501cd7a4`.
+The GGUF checksum pins the tensor table and therefore the payload offset used by this command. The captured native-code blob is 41,704 bytes with SHA-256 `04e372a41cf5f29efe862fad5d6a9f65365da62c435063d341a15622501cd7a4`.
 
 ## Limits
 
