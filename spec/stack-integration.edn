@@ -2,14 +2,44 @@
 {:stack.integration/version 1
  :status :accepted-architecture-direction
  :owner "kotoba-lang/aiueos"
- :role "OS mechanisms and enforcement"
+ :role "OS mechanisms, Kototama VM hosting and enforcement"
  :composition-authority "https://github.com/kotoba-lang/kotoba-lang/blob/main/lang/stack-architecture.edn"
  :architecture-direction "https://github.com/kotoba-lang/kotoba-lang/blob/main/lang/stack-architecture-target-neutral.edn"
  :refactor-procedure "https://github.com/kotoba-lang/kotoba-lang/blob/main/docs/stack-refactor-procedure.md"
- :intended-entrypoint-dependencies ["grant decision contracts" "neutral execution and selected native ABI contracts"]
+ :intended-entrypoint-dependencies ["grant decision contracts" "Kototama VM contract and kotoba-vm engine" "io-ipld content-addressed storage"]
  :observed-base "d3d5052926f2abd3095bef6a7fbb67c2abe5605f"
- :observed-selected-direct ["grant"]
+ :observed-selected-direct ["grant" "io-ipld" "kotoba-vm"]
+ :optional-distributed-dependency "inga and inga-node"
  :aliases-recorded-separately true
- :runtime-migration-performed false
- :runtime-schema-changed false
- :qualification-claim :none}
+ :runtime-migration-performed true
+ :runtime-schema-changed true
+ :kototama/vm-contract
+ {:spec {:schema :kototama.vm/spec-v1
+         :version 1
+         :repository "https://github.com/kotoba-lang/kototama"
+         :profile :core/v1}
+  :implementation {:name :kotoba-vm
+                   :profile :core/v1
+                   :status :partial
+                   :declaration "https://github.com/kotoba-lang/kotoba-vm/blob/main/kototama-profile.edn"}
+  :host-selectors
+  {:kototama/core-i64-subset-v1 {:value-profile "kotoba.i64-wrap/v1"}
+   :kototama/data-i64-v1 {:value-profile "kototama.data-i64/v1"}}
+  :omissions [:complete-kototama-program-v1
+              :actor-state-expressions
+              :authorization-expressions
+              :general-effect-expression-set
+              :source-authenticated-authority-fact-adapters
+              :biscuit-delegation
+              :distributed-effect-finality-and-receipt
+              :kototama-receipt-v1]}
+ :kototama/vm-source-candidate
+ {:revision "8a20814"
+  :features [:bounded-positive-function-free-datalog
+             :five-origin-eligibility-join
+             :invoke-time-five-origin-authorization-gate
+             :authority-decisions-in-local-message-result
+             :declared-capability-invoke-effect-port]
+  :status :selected-local-commit-not-yet-published
+  :aiueos-resolved-revision "8a20814b13156a918dbf1c78d7a2a95da1d8a883"}
+ :qualification-claim :partial-hosted-kototama-core-v1}

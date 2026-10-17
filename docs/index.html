@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>aiueos — a capability-secure Wasm component OS</title>
-<meta name="description" content="aiueos: a capability-secure, Wasm-component operating system. Kotoba-defined, Kototama-executed, AI-agent-native. Built for containment under mythos-class adversaries, running on edge, robotics, cloud, browser and client." />
+<title>aiueos — a capability-secure Kototama VM operating system</title>
+<meta name="description" content="aiueos: a capability-secure operating system built around the Kototama portable VM contract. Kotoba-defined, Amu-compiled, AI-agent-native. The hosted Kotoba VM currently supports a partial i64 profile." />
 <style>
   :root{
     --bg:#0b0d12; --panel:#12151c; --line:#222838; --fg:#e6e9ef; --mut:#9aa4b2;
@@ -59,10 +59,11 @@
   <div class="wrap">
     <div class="logo">aiueos</div>
     <h1>aiueos</h1>
-    <p class="tag">A capability-secure, Wasm-component operating system —
-      Kotoba-defined, Kototama-executed, AI-agent-native.</p>
-    <div class="jp">OS を「プロセスの集合」ではなく
-「意味づけされた capability component の graph」として扱う。</div>
+    <p class="tag">A capability-secure operating system built around a
+      portable Kototama VM contract — Kotoba-defined, Amu-compiled,
+      AI-agent-native.</p>
+    <div class="jp">Kototama を共有 VM 契約として、
+Amu のプログラムを各ホストの Kotoba VM で実行する。</div>
     <div class="cta">
       <a class="btn p" href="https://github.com/kotoba-lang/aiueos">View on GitHub</a>
       <a class="btn s" href="#start">Quick start</a>
@@ -81,20 +82,21 @@
     <h2>Why aiueos</h2>
     <div class="grid">
       <div class="card">
-        <h3>Survives mythos-class adversaries</h3>
-        <p>Deny-by-default capabilities, a small TCB, Wasm isolation per
-        component, runtime-enforced gates, and an append-only audit trail. A
-        compromised component is a contained event — not a system-wide one.</p>
+        <h3>Capability-gated execution</h3>
+        <p>Deny-by-default policy, runtime-enforced host-call gates, and an
+        append-only audit trail constrain what an admitted program can ask the
+        host to do. The current hosted Kototama engine implements a partial
+        pure-i64 profile.</p>
       </div>
       <div class="card">
         <h3>One model, many surfaces</h3>
-        <p>Just <em>components + capabilities + manifests + audit</em> over Wasm,
-        so a component runs wherever a Wasm engine does. Capabilities differ per
-        deployment; the meaning model and the gate do not.</p>
+        <p>Amu emits canonical Kototama programs; Kotoba VM engines implement
+        the versioned execution contract on their host platforms. Wasm remains
+        an explicit compatibility profile, not the default program format.</p>
       </div>
       <div class="card">
         <h3>Code as data, AI-agent-native</h3>
-        <p>Components are <em>kotoba</em> — data the OS reasons over. An AI agent
+        <p>Kotoba programs are <em>data</em> the OS can reason over. An AI agent
         can author one; the OS treats it as <code>:ai-generated</code>:
         untrusted, ephemeral, denied network/secrets/persistence by default.</p>
       </div>
@@ -142,8 +144,8 @@ $ <span class="c-acc">aiueos verify</span> examples/system.aiueos.edn   <span cl
     <ul class="lean">
       <li><b>Deny-by-default.</b> A component touches only granted capabilities — unresolved imports are denied before launch.</li>
       <li><b>Runtime gates, not convention.</b> Every host call is checked; attenuation holds — some caps never leak the rest.</li>
-      <li><b>Small TCB.</b> Only broker, runtime/host ABI, safe-checker and manifest reader are trusted; drivers are evictable Wasm.</li>
-      <li><b>Limits.</b> Per-component fuel (CPU) and memory-page caps; runaways trap, not hang.</li>
+      <li><b>Small TCB.</b> The broker, runtime/host ABI, safe-checker and manifest reader are trusted; admitted code still runs within its selected execution profile.</li>
+      <li><b>Execution limits.</b> The hosted Kotoba VM charges fuel for the supported pure-i64 profile; memory and effect limits depend on the selected runtime profile.</li>
       <li><b>IOMMU/DMA rule.</b> Any <code>:dma</code> effect must require + be granted <code>:iommu</code>, or it's denied.</li>
       <li><b>AI containment.</b> <code>:ai-generated</code> components are untrusted, ephemeral, no network/secrets/persistence.</li>
       <li><b>Audit.</b> Every grant/deny/compile/run recorded as EDN.</li>
@@ -161,8 +163,9 @@ $ <span class="c-acc">aiueos verify</span> examples/system.aiueos.edn   <span cl
     <ul class="lean">
       <li><b>Phase 0 ✓</b> manifests · capability graph · policy reasoner · broker · safe-check · audit · staged boot</li>
       <li><b>Phase 0+ ✓</b> runtime-enforced capabilities (<code>aiueos:host</code>) · pub/sub topic bus · robot demo</li>
-      <li><b>Next</b> named topics → dataflow-aware boot · real-time scheduler · signed manifests/provenance</li>
-      <li><b>Later</b> microkernel · real device ABIs (CAN/I2C/SPI/GPIO) · per-surface capability providers · microVM image</li>
+      <li><b>Kototama path</b> signed canonical artifacts · Kototama-first launcher · hosted Kotoba VM with a partial pure-i64 profile</li>
+      <li><b>In progress</b> complete/versioned VM profile · deterministic host interfaces · distributed node qualification · bare-metal VM integration</li>
+      <li><b>Later</b> real-time scheduling · device ABIs (CAN/I2C/SPI/GPIO) · physical machine qualification</li>
     </ul>
   </div>
 </section>
@@ -171,8 +174,8 @@ $ <span class="c-acc">aiueos verify</span> examples/system.aiueos.edn   <span cl
   <div class="wrap">
     aiueos · MIT · built on
     <a href="https://github.com/kotoba-lang/kotoba">kotoba</a> +
-    <a href="https://github.com/kotoba-lang/kototama">kototama</a> +
-    <a href="https://bytecodealliance.org/">wasmtime</a>.
+    <a href="https://github.com/kotoba-lang/kototama">kototama</a>.
+    Wasm is retained as a compatibility execution profile.
   </div>
 </footer>
 </body>

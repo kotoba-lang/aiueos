@@ -2,7 +2,9 @@
   "P3: one grant-limited Kotoba guest visible in the hosted daily shell.
 
   Identity is `examples/apps/notes.edn` (`:app/notes`). Grant decides;
-  `aiueos.execute` runs Wasm only after `:grant`. POSIX `:fs/open` in the
+  the explicit legacy `aiueos.execute` adapter runs Wasm only after `:grant`.
+  Invoke this compatibility demo with the `:wasm-compat` dependency alias.
+  POSIX `:fs/open` in the
   on-disk fixture is the named deny (no fs provider in this shell — local
   disk write is P3 red). The hosted allow path drops that import and keeps
   kernel `:log/write`, which Chicory can actually link.
@@ -14,13 +16,23 @@
   JVM-only for execute + sockets (`#?(:clj …)`), same as `aiueos.execute`."
   (:require [kotoba.bytes :as kbytes] [kotoba.lang.text :as str]
             #?(:clj [aiueos.cloud-live :as cloud-live])
-            #?(:clj [aiueos.execute :as execute])
             #?(:clj [aiueos.provider.cloud :as provider])
             #?(:clj [aiueos.session.live :as session-live])
             #?(:clj [clojure.edn :as edn])
             #?(:clj [kotoba.io :as io])
             #?(:clj [grant.graph :as graph])
             #?(:clj [grant.policy :as policy])))
+
+#?(:clj
+   (defn- run-wasm
+     [manifest graph policy wasm]
+     (let [execute (try
+                     (requiring-resolve 'aiueos.execute/execute)
+                     (catch Throwable e
+                       (throw (ex-info
+                               "The session Wasm demo needs the :wasm-compat alias"
+                               {:required-alias :wasm-compat} e))))]
+       (execute manifest graph policy wasm))))
 
 (def notes-edn-path "examples/apps/notes.edn")
 
@@ -94,7 +106,7 @@
                                {:aiueos.session.guest/reason :unknown-grant-mode
                                 :mode mode})))
            wasm (notes-wasm)
-           decision (execute/execute m empty-graph default-policy wasm)
+           decision (run-wasm m empty-graph default-policy wasm)
            granted? (= :grant (:aiueos/decision decision))
            reason (when-not granted?
                     (or (violation-kind decision)

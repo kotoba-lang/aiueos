@@ -236,5 +236,6 @@
         (flush)
         (System/exit (int (:exit r))))
 
-      (do (println "usage: kbb -M:session [smoke|guest|operator|serve]")
+      (do (println "usage: kbb -M:session [smoke|operator|serve]")
+          (println "       kbb -M:session:wasm-compat guest")
           (System/exit 3)))))

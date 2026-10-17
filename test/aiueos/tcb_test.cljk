@@ -19,6 +19,9 @@
   #{"src/aiueos/phone_bind.cljk"
     "src/aiueos/device_auth.cljk"
     "src/aiueos/execute.cljk"
+    "src/aiueos/kototama.cljk"
+    "src/aiueos/kototama/admission.cljk"
+    "src/aiueos/kototama/inga.cljk"
     "src/aiueos/entropy.cljk"
     "src/aiueos/watchdog.cljk"
     "src/aiueos/launcher.cljk"
@@ -42,7 +45,21 @@
   What must not change is that the boundary is named somewhere."
   #{"io.github.kotoba-lang/grant"
     "io.github.kotoba-lang/org-chainagnostic-cacao"
-    "io.nayuki/qrcodegen"})
+    "io.nayuki/qrcodegen"
+    "io.github.kotoba-lang/inga"
+    "io.github.kotoba-lang/inga-node"
+    "io.github.kotoba-lang/io-ipld"
+    "io.github.kotoba-lang/kotoba-vm"
+    "io.github.kotoba-lang/ffi"
+    "io.github.kotoba-lang/bytes"
+    "io.github.kotoba-lang/io"
+    "io.github.kotoba-lang/process"
+    "io.github.kotoba-lang/text"
+    "io.github.kotoba-lang/coll"
+    "io.github.kotoba-lang/pprint"
+    "io.github.kotoba-lang/json"
+    "com.dylibso.chicory/wasm"
+    "com.dylibso.chicory/runtime"})
 
 (deftest checked-in-tcb-inventory-has-no-drift
   ;; 28 -> 34: fleet onboarding and update admission joined the TCB
@@ -58,10 +75,10 @@
   ;; already red for the classpath reason and one red hides another.
   (is (= {:valid? true :classpath-scope :not-in-scope
           ;; 39 before the grant split (root ADR-2608219500); 19 file entries
-          ;; became one external coordinate, so :external stays 6 -- abi left
-          ;; and grant arrived. The count is asserted rather than bounded
-          ;; because an inventory that silently shrinks is the failure this
-          ;; whole namespace is about.
+          ;; became one external coordinate as the decision plane moved to
+          ;; grant. The count is asserted rather than bounded because an
+          ;; inventory that silently shrinks is the failure this namespace
+          ;; is about.
           ;;
           ;; 20 -> 21: the operator gate that leaves this machine, which carries
           ;; the one trust manager here that accepts any peer (ADR-0073).
@@ -79,7 +96,11 @@
           ;; the same inventory update also records the already-declared
           ;; window-session-state dependency instead of leaving it outside the
           ;; external closure. 10 -> 11: the device-owned CACAO implementation.
-          :files 24 :external 11 :classpath 10 :properties 6 :errors []}
+          ;; 11 -> 22 records the remaining direct runtime dependencies and
+          ;; separates Inga and legacy Wasm into their named profiles.
+          ;; 24 -> 27 records Kototama execution, the Grant-backed admission
+          ;; edge, and its optional distributed state-machine adapter.
+          :files 27 :external 22 :classpath 10 :properties 6 :errors []}
          (tcb/validate (tcb/read-inventory)
                        (clojure.edn/read-string (slurp "deps.edn"))
                        (clojure.edn/read-string (slurp "security-adoption.edn"))

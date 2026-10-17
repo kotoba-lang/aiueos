@@ -56,8 +56,10 @@
     runtime. Every deftest is inside #?(:clj ...) already."
 
    'aiueos.launcher-test
-   "reads manifests and .wasm off disk and executes them on Chicory. Every
-    deftest is inside #?(:clj ...) already."
+   "reads manifests and executable artifacts from disk; runs Kototama through
+    the JVM launcher and legacy Wasm through Chicory. The file-system
+    execution tests are inside #?(:clj ...); portable target selection has its
+    own cross-runtime suite."
 
    'aiueos.image-test
    "aiueos.image is #?(:clj ...) throughout: it stages files and shells out to

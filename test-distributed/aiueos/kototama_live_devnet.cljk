@@ -1,0 +1,489 @@
+(ns aiueos.kototama-live-devnet
+  "Inga-node Kototama devnet for loopback and one-witness-per-host runs.
+
+  From the AiueOS repository, run `AIUEOS_LIVE_NETWORK=1 kbb -M:distributed
+  -e '(require (quote aiueos.kototama-live-devnet))'`. Set NODE_PATH so Node
+  resolves inga-node's installed `ws` dependency, and set AIUEOS_REPO_ROOT if
+  running from another directory. This is separate from in-memory consensus
+  tests because it binds HTTP and WebSocket ports.
+
+  For multiple hosts, first run once on each host with
+  `AIUEOS_LIVE_IDENTITY_ONLY=w1` (or w2/w3/w4) and a private, persistent
+  `AIUEOS_LIVE_DATA_DIR`; exchange only the printed public keys. Run the same
+  identity command with `AIUEOS_LIVE_IDENTITY_ONLY=caller` on the submitter
+  host and publish only its public key to the other test hosts. Then configure
+  `AIUEOS_LIVE_WITNESS`, `AIUEOS_LIVE_WITNESS_PUBKEYS_JSON`,
+  `AIUEOS_LIVE_CALLER_PUBLIC_KEY`, `AIUEOS_LIVE_HTTP_URLS_JSON`,
+  `AIUEOS_LIVE_WS_URLS_JSON`, `AIUEOS_LIVE_BIND_HOST`, and
+  `AIUEOS_LIVE_PORT` on each host and run with
+  `AIUEOS_LIVE_SINGLE_WITNESS=1`, including `AIUEOS_LIVE_CHAIN_ID` and the
+  same `AIUEOS_LIVE_DATA_DIR` used for that host's identity. Start all four
+  processes concurrently. The configured submitter (w1 by default) reads the
+  caller seed and submits the signed call. Every process prints its committed
+  result and actor-state CID for cross-host comparison.
+  Keep witness data directories private and separate; this devnet procedure
+  does not qualify a production deployment."
+  (:require [aiueos.kototama.inga :as kototama-inga]
+            [inga.replica :as replica]
+            [inga-node.identity :as identity]
+            [inga-node.node :as node]
+            [inga-node.seams :as seams]
+            [ipld.core :as ipld]
+            ["node:fs" :as fs]
+            ["node:os" :as os]
+            ["node:path" :as path]))
+
+(def ^:private witnesses ["w1" "w2" "w3" "w4"])
+(def ^:private chain-id "aiueos-kototama-live-v1")
+(def ^:private program-cid
+  "bafyreihewgmseht6nsokbezrb5kx6hyietul3piqwzqhtxqvjczmerxtre")
+
+(defn- sleep [ms]
+  (js/Promise. (fn [resolve] (js/setTimeout resolve ms))))
+
+(def ^:private promise-then-fn (.-then (.-prototype js/Promise)))
+
+(defn- then
+  ([promise on-fulfilled]
+   (.call promise-then-fn promise on-fulfilled))
+  ([promise on-fulfilled on-rejected]
+   (.call promise-then-fn promise on-fulfilled on-rejected)))
+
+(defn- port-of [base witness]
+  (+ base (.indexOf (to-array witnesses) witness)))
+
+(defn- http-json [base witness suffix]
+  (then (js/fetch (str "http://127.0.0.1:" (port-of base witness) suffix))
+        (fn [response]
+          (println "KOTOTAMA-LIVE-DEVNET http" witness suffix (.-status response))
+          (when-not (.-ok response)
+            (throw (js/Error. (str witness " HTTP " (.-status response)
+                                   " at " suffix))))
+          (.json response))))
+
+(defn- node-machine [chain-id blocks caller-pubkeys program-bytes proposal-blocks]
+  (let [get-fn (fn [cid] (get @blocks cid))
+        put! (fn [cid bytes]
+               (swap! blocks assoc cid bytes)
+               cid)
+        state-cid (ipld/put-node! put! {})
+        actor-put {:op :actor-put :address "app" :caller "app"
+                   :actor {:code program-cid :state state-cid
+                           :nonce 0 :balance 0}}
+        decoder (kototama-inga/signed-proposal-decoder
+                 {:chain-id chain-id
+                  :get-fn get-fn
+                  :put! put!
+                  :verify-caller-fn
+                  (fn [caller payload signature]
+                    ((seams/verify-fn caller-pubkeys)
+                     caller payload signature))})]
+    (swap! blocks merge proposal-blocks)
+    (swap! blocks assoc program-cid program-bytes)
+    {:get-fn get-fn
+     :put! put!
+     :machine
+     (kototama-inga/state-machine
+      {:decode-block
+       (fn [block]
+         (into (if (= 1 (:inga.block/height block)) [actor-put] [])
+               (decoder block)))
+       :get-fn get-fn
+       :put! put!
+       :blind-fn pr-str
+       :encrypt-fn identity
+       :height-fn :inga.block/height
+       :fuel {:budget-fn (fn [_] 1000)
+              :cost-fn (fn [op]
+                         (if (= :actor-call (:op op)) 500 1))}
+       :authority kototama-inga/signed-proposal-authority})}))
+
+(defn- result-at [node-state blocks]
+  (let [actor (get-in node-state [:machine-state :actors "app"])
+        cid (:state actor)]
+    (when cid
+      (get (ipld/get-node (fn [key] (get @blocks key)) cid) "return"))))
+
+(defn- start-node! [base root witness pubkeys caller-pubkeys seed-hex program-bytes proposal-blocks stores]
+  (let [blocks (atom {})
+        {:keys [machine]} (node-machine chain-id blocks caller-pubkeys program-bytes proposal-blocks)
+        port (port-of base witness)
+        peers (into {}
+                    (map (fn [peer]
+                           [peer (str "ws://127.0.0.1:" (port-of base peer))]))
+                    (remove #{witness} witnesses))
+        data-dir (path/join root witness)
+        node-state (node/start!
+                    {:witness witness
+                     :witnesses witnesses
+                     :peers peers
+                     :pubkeys pubkeys
+                     :seed-hex seed-hex
+                     :chain-id chain-id
+                     :host "127.0.0.1"
+                     :port port
+                     :tick-ms 200
+                     :view-ms 1600
+                     :data-dir data-dir
+                     :machine machine})]
+    (swap! stores assoc witness {:node node-state :blocks blocks})
+    node-state))
+
+(defn- all-results [stores]
+  (into {}
+        (map (fn [[witness {:keys [node blocks]}]]
+               [witness (result-at @(:state node) blocks)]))
+        @stores))
+
+(defn run!
+  "Start four actual node transports, submit an authenticated Amu call, and
+  require all four independent state machines to commit the same result and
+  content-addressed actor state.
+  Returns a Promise that resolves to the per-witness return values."
+  []
+  (let [base (+ 24000 (mod (.now js/Date) 30000))
+        root (path/join (os/tmpdir) (str "aiueos-kototama-live-" (.now js/Date)))
+        repo-root (or (aget (.-env js/process) "AIUEOS_REPO_ROOT")
+                      (.cwd js/process))
+        program-path (path/join repo-root "test/fixtures/amu-kototama-default-v1.dagcbor")
+        program-bytes (.readFileSync fs program-path)
+        stores (atom {})
+        stop-nodes! (fn []
+                      (doseq [[_ {:keys [node]}] @stores]
+                        (try ((:stop! node)) (catch :default _ nil))))]
+    (fs/mkdirSync root #js {:recursive true})
+    (let [seeds (into {} (map (fn [w]
+                                [w (identity/ensure-seed! (path/join root w))])
+                              witnesses))
+          witness-pubkeys (into {} (map (fn [[w seed]] [w (identity/public-hex seed)]) seeds))
+          caller-seed (identity/ensure-seed! (path/join root "caller"))
+          caller-pubkeys {"alice" (identity/public-hex caller-seed)}
+          sign-caller! (seams/sign-fn caller-seed)]
+      (let [proposal-blocks (atom {})
+            call-cid (ipld/put-node!
+                      (fn [cid bytes] (swap! proposal-blocks assoc cid bytes) cid)
+                      ["kototama.actor-call" 1
+                       {"address" "app" "method" "main" "args" []}])
+            envelope {:ref "-" :seq 0 :cid call-cid :caller "alice"}
+            payload (kototama-inga/actor-call-payload chain-id envelope)
+            record (assoc envelope :signature (sign-caller! payload))]
+      (let [started
+            (then (js/Promise.resolve nil)
+                  (fn [_]
+                    (doseq [witness witnesses]
+                      (start-node! base root witness witness-pubkeys caller-pubkeys
+                                   (get seeds witness) program-bytes @proposal-blocks stores))
+                    (println "KOTOTAMA-LIVE-DEVNET nodes-started")))
+            healthy
+            (then started
+                  (fn [_]
+                    (println "KOTOTAMA-LIVE-DEVNET checking-health")
+                    (js/Promise.all
+                     (into-array (map (fn [w] (http-json base w "/health"))
+                                      witnesses)))))
+            submitted
+            (then healthy
+                  (fn [health]
+                    (when-not (= (count witnesses) (count (array-seq health)))
+                      (throw (js/Error. "health check did not return all witnesses")))
+                    (println "KOTOTAMA-LIVE-DEVNET submitting")
+                    (js/fetch
+                     (str "http://127.0.0.1:" (port-of base "w1") "/submit")
+                     #js {:method "POST"
+                          :headers #js {"content-type" "application/json"}
+                          :body (js/JSON.stringify #js {:record (clj->js record)})})))
+            accepted
+            (then submitted
+                  (fn [response]
+                    (when-not (.-ok response)
+                      (throw (js/Error. (str "proposal submit returned "
+                                             (.-status response)))))
+                    (.json response)))
+            committed
+            (then accepted
+                  (fn [_]
+                    (then (sleep 12000)
+                          (fn [_]
+                            (then (js/Promise.all
+                                   (into-array (map (fn [w] (http-json base w "/health"))
+                                                    witnesses)))
+                                  (fn [health]
+                                    (println "KOTOTAMA-LIVE-DEVNET post-submit-health"
+                                             (js/JSON.stringify health))
+                                    (let [results (all-results stores)]
+                                      (when-not (every? (fn [[_ result]] (= "42" result)) results)
+                                        (throw (js/Error.
+                                                (str "witnesses did not all execute the call: "
+                                                     (pr-str results)))))
+                                      results)))))))
+            verified
+            (then committed
+                  (fn [results]
+                    (let [nodes (mapv :node (vals @stores))
+                          actors (mapv #(get-in @(:state %)
+                                               [:machine-state :actors "app"])
+                                       nodes)
+                          actor-states (mapv :state actors)]
+                      (when-not (and (every? some? actor-states)
+                                     (apply = actor-states))
+                        (throw (js/Error.
+                                (str "Kototama actor-state CIDs diverged: "
+                                     (pr-str actor-states)))))
+                      (println "KOTOTAMA-LIVE-DEVNET PASS"
+                               "witnesses=4 result=42 actor-state-cid="
+                               (first actor-states))
+                      results)))
+            cleaned
+            (then verified
+                  (fn [result]
+                    (stop-nodes!)
+                    result))]
+        (then cleaned identity
+              (fn [error]
+                (set! (.-exitCode js/process) 1)
+                (js/console.error "KOTOTAMA-LIVE-DEVNET FAIL"
+                                  (or (.-stack error) (.-message error)))
+                (stop-nodes!))))))))
+
+(when (and (= "1" (aget (.-env js/process) "AIUEOS_LIVE_NETWORK"))
+           (not= "1" (aget (.-env js/process) "AIUEOS_LIVE_SINGLE_WITNESS")))
+  (run!))
+
+(defn- live-env [key]
+  (aget (.-env js/process) key))
+
+(defn- required-live-env [key]
+  (or (live-env key)
+      (throw (ex-info (str "missing required environment variable " key)
+                      {:type :aiueos.kototama-live-devnet/missing-env
+                       :name key}))))
+
+(defn- live-json-map [key]
+  (let [raw (required-live-env key)
+        value (try (js->clj (js/JSON.parse raw))
+                   (catch :default e
+                     (throw (ex-info (str key " must be a JSON object")
+                                     {:type :aiueos.kototama-live-devnet/invalid-json
+                                      :name key}
+                                     e))))]
+    (when-not (map? value)
+      (throw (ex-info (str key " must be a JSON object")
+                      {:type :aiueos.kototama-live-devnet/invalid-map
+                       :name key})))
+    value))
+
+(defn- witness-map! [key value]
+  (when-not (and (= (set witnesses) (set (keys value)))
+                 (every? string? (vals value)))
+    (throw (ex-info (str key " must have one string value for every witness")
+                    {:type :aiueos.kototama-live-devnet/invalid-witness-map
+                     :name key
+                     :expected witnesses
+                     :actual (keys value)})))
+  value)
+
+(defn- trim-trailing-slash [value]
+  (if (and (pos? (count value))
+           (= "/" (subs value (dec (count value)))))
+    (subs value 0 (dec (count value)))
+    value))
+
+(defn- http-json-at [base witness expected-chain-id]
+  (let [url (str (trim-trailing-slash base) "/health")]
+    (then (js/fetch url)
+          (fn [response]
+            (when-not (.-ok response)
+              (throw (js/Error. (str witness " health returned HTTP "
+                                     (.-status response)))))
+            (then (.json response)
+                  (fn [body]
+                    (let [health (js->clj body)]
+                      (when-not (and (= true (get health "ok"))
+                                     (= witness (get health "witness"))
+                                     (= expected-chain-id (get health "chain-id")))
+                        (throw (js/Error. (str witness " health identity mismatch: "
+                                               (pr-str health)))))
+                      health)))))))
+
+(defn- wait-for-value [check predicate description timeout-ms]
+  (let [deadline (+ (.now js/Date) timeout-ms)]
+    (letfn [(poll []
+              (let [request (try (check)
+                                 (catch :default _ (js/Promise.resolve nil)))]
+                (then request
+                      (fn [value]
+                        (cond
+                          (predicate value) value
+                          (> (.now js/Date) deadline)
+                          (throw (js/Error. (str "timed out waiting for " description)))
+                          :else (then (sleep 500) (fn [_] (poll)))))
+                      (fn [_]
+                        (if (> (.now js/Date) deadline)
+                          (throw (js/Error. (str "timed out waiting for " description)))
+                          (then (sleep 500) (fn [_] (poll))))))))]
+      (poll))))
+
+(defn- run-live-identity-only! []
+  (let [identity-name (required-live-env "AIUEOS_LIVE_IDENTITY_ONLY")
+        root (path/resolve (required-live-env "AIUEOS_LIVE_DATA_DIR"))
+        owner (if (= "caller" identity-name)
+                "caller"
+                (do
+                  (when-not (some #{identity-name} witnesses)
+                    (throw (ex-info "identity-only name must be caller or a witness"
+                                    {:type :aiueos.kototama-live-devnet/invalid-identity})))
+                  identity-name))
+        seed (identity/ensure-seed! (path/join root owner))]
+    (println "KOTOTAMA-LIVE-DEVNET IDENTITY"
+             owner
+             "public-key=" (identity/public-hex seed))))
+
+(defn- run-single-witness! []
+  (let [witness (required-live-env "AIUEOS_LIVE_WITNESS")
+        _valid-witness (when-not (some #{witness} witnesses)
+                         (throw (ex-info "AIUEOS_LIVE_WITNESS is not a configured witness"
+                                         {:type :aiueos.kototama-live-devnet/invalid-witness
+                                          :witness witness})))
+        root (path/resolve (required-live-env "AIUEOS_LIVE_DATA_DIR"))
+        bind-host (or (live-env "AIUEOS_LIVE_BIND_HOST") "0.0.0.0")
+        port (js/parseInt (required-live-env "AIUEOS_LIVE_PORT") 10)
+        _valid-port (when-not (and (number? port) (<= 1024 port 65535))
+                      (throw (ex-info "AIUEOS_LIVE_PORT must be between 1024 and 65535"
+                                      {:type :aiueos.kototama-live-devnet/invalid-port})))
+        http-urls (witness-map! "AIUEOS_LIVE_HTTP_URLS_JSON"
+                                (live-json-map "AIUEOS_LIVE_HTTP_URLS_JSON"))
+        ws-urls (witness-map! "AIUEOS_LIVE_WS_URLS_JSON"
+                              (live-json-map "AIUEOS_LIVE_WS_URLS_JSON"))
+        witness-pubkeys (witness-map! "AIUEOS_LIVE_WITNESS_PUBKEYS_JSON"
+                                      (live-json-map "AIUEOS_LIVE_WITNESS_PUBKEYS_JSON"))
+        caller (or (live-env "AIUEOS_LIVE_CALLER") "alice")
+        caller-pubkey (required-live-env "AIUEOS_LIVE_CALLER_PUBLIC_KEY")
+        caller-pubkeys {caller caller-pubkey}
+        submitter (or (live-env "AIUEOS_LIVE_SUBMITTER") "w1")
+        _valid-submitter (when-not (some #{submitter} witnesses)
+                           (throw (ex-info "AIUEOS_LIVE_SUBMITTER must name a witness"
+                                           {:type :aiueos.kototama-live-devnet/invalid-submitter
+                                            :submitter submitter})))
+        chain-id (required-live-env "AIUEOS_LIVE_CHAIN_ID")
+        repo-root (or (live-env "AIUEOS_REPO_ROOT") (.cwd js/process))
+        program-path (path/join repo-root "test/fixtures/amu-kototama-default-v1.dagcbor")
+        program-bytes (.readFileSync fs program-path)
+        proposal-blocks (atom {})
+        call-cid (ipld/put-node!
+                  (fn [cid bytes] (swap! proposal-blocks assoc cid bytes) cid)
+                  ["kototama.actor-call" 1
+                   {"address" "app" "method" "main" "args" []}])
+        envelope {:ref "-" :seq 0 :cid call-cid :caller caller}
+        payload (kototama-inga/actor-call-payload chain-id envelope)
+        local-seed (identity/ensure-seed! (path/join root witness))
+        _witness-key-check (when-not (= (get witness-pubkeys witness)
+                                        (identity/public-hex local-seed))
+                             (throw (ex-info "local witness key does not match the shared public-key map"
+                                             {:type :aiueos.kototama-live-devnet/witness-key-mismatch
+                                              :witness witness})))
+        peers (dissoc ws-urls witness)
+        blocks (atom {})
+        node-state (node/start!
+                    {:witness witness
+                     :witnesses witnesses
+                     :peers peers
+                     :pubkeys witness-pubkeys
+                     :seed-hex local-seed
+                     :chain-id chain-id
+                     :host bind-host
+                     :port port
+                     :tick-ms 200
+                     :view-ms 1600
+                     :data-dir (path/join root witness)
+                     :machine (let [{:keys [machine]}
+                                    (node-machine chain-id blocks caller-pubkeys
+                                                  program-bytes @proposal-blocks)]
+                                machine)})
+        stop! (:stop! node-state)
+        health-check (fn []
+                       (js/Promise.all
+                        (into-array
+                         (map (fn [peer]
+                                (http-json-at (get http-urls peer) peer chain-id))
+                              witnesses))))]
+    (fs/mkdirSync root #js {:recursive true})
+    (.once js/process "SIGINT"
+           (fn []
+             (try (stop!) (catch :default _ nil))
+             (.exit js/process 0)))
+    (println "KOTOTAMA-LIVE-DEVNET witness-started"
+             witness "bind=" bind-host "port=" port "chain=" chain-id)
+    (let [ready (wait-for-value
+                 health-check
+                 (fn [health]
+                   (= (count witnesses) (count (array-seq health))))
+                 "all configured witness health endpoints"
+                 120000)
+          submitted (then ready
+                          (fn [_]
+                            (if (= witness submitter)
+                              (let [caller-seed (identity/ensure-seed! (path/join root "caller"))
+                                    _ (when-not (= caller-pubkey
+                                                   (identity/public-hex caller-seed))
+                                        (throw (ex-info "local caller key does not match the shared public key"
+                                                        {:type :aiueos.kototama-live-devnet/caller-key-mismatch})))
+                                    sign-caller! (seams/sign-fn caller-seed)
+                                    record (assoc envelope :signature (sign-caller! payload))]
+                                (then (js/fetch
+                                       (str (trim-trailing-slash (get http-urls witness)) "/submit")
+                                       #js {:method "POST"
+                                            :headers #js {"content-type" "application/json"}
+                                            :body (js/JSON.stringify #js {:record (clj->js record)})})
+                                      (fn [response]
+                                        (when-not (.-ok response)
+                                          (throw (js/Error. (str "proposal submit returned HTTP "
+                                                                 (.-status response)))))
+                                        (println "KOTOTAMA-LIVE-DEVNET proposal-submitted"
+                                                 "caller=" caller "cid=" call-cid))))
+                              (js/Promise.resolve nil))))
+          committed (then submitted
+                          (fn [_]
+                            (wait-for-value
+                             (fn [] (js/Promise.resolve (result-at @(:state node-state) blocks)))
+                             #(= "42" %)
+                             (str "local witness " witness " to commit result 42")
+                             120000)))
+          converged (then committed
+                          (fn [_]
+                            (wait-for-value
+                             health-check
+                             (fn [health]
+                               (let [heights (mapv #(get % "committed-height")
+                                                   (array-seq health))]
+                                 (and (= (count witnesses) (count heights))
+                                      (every? number? heights)
+                                      (apply = heights))))
+                             "all witnesses to reach the same committed height"
+                             120000)))]
+      (then converged
+            (fn [health]
+              (let [actor (get-in @(:state node-state)
+                                  [:machine-state :actors "app"])
+                    actor-state-cid (:state actor)
+                    committed-heights (mapv #(get % "committed-height")
+                                            (array-seq health))]
+                (when-not (some? actor-state-cid)
+                  (throw (js/Error. "local actor state CID is missing")))
+                (println "KOTOTAMA-LIVE-DEVNET WITNESS-PASS"
+                         "witness=" witness
+                         "witnesses=" (count witnesses)
+                         "result=42"
+                         "committed-height=" (first committed-heights)
+                         "actor-state-cid=" actor-state-cid
+                         "compare-this-CID-with-each-host-log=true")))
+            (fn [error]
+              (try (stop!) (catch :default _ nil))
+              (set! (.-exitCode js/process) 1)
+              (js/console.error "KOTOTAMA-LIVE-DEVNET WITNESS-FAIL"
+                                (or (.-stack error) (.-message error))))))))
+
+(when (some? (live-env "AIUEOS_LIVE_IDENTITY_ONLY"))
+  (run-live-identity-only!))
+
+(when (= "1" (live-env "AIUEOS_LIVE_SINGLE_WITNESS"))
+  (run-single-witness!))

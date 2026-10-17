@@ -1,0 +1,371 @@
+(ns aiueos.kototama-inga-test
+  (:require [aiueos.kototama.inga :as kototama-inga]
+            [aiueos.kototama :as kototama]
+            [inga.consensus :as consensus]
+            [inga.replica :as replica]
+            [inga-node.node :as inga-node]
+            [ipld.core :as ipld]
+            [json.core :as json]
+            [kotoba.test :refer [deftest is]]
+            #?(:cljs [kotoba.test :refer [async]])
+            #?(:cljs ["node:fs" :as fs])))
+
+(def ^:private witnesses [:w1 :w2 :w3 :w4])
+
+(defn- consensus-hash [block]
+  (str "h:" (consensus/canonical-block block)))
+
+(defn- deliver-all [replicas outbox now max-steps]
+  (loop [replicas replicas outbox outbox now now steps 0]
+    (if (or (empty? outbox) (>= steps max-steps))
+      [replicas outbox steps]
+      (let [[{:keys [from to msg]} & more] outbox
+            targets (if (= :all to) (sort (keys replicas)) [to])
+            [replicas' produced]
+            (reduce (fn [[rs out] witness]
+                      (if (= witness from)
+                        [rs out]
+                        (let [[next-state next-out]
+                              (replica/on-message (get rs witness) msg now)]
+                          [(assoc rs witness next-state)
+                           (into out (map #(assoc % :from witness) next-out))])))
+                    [replicas []] targets)]
+        (recur replicas' (vec (concat more produced)) (inc now) (inc steps))))))
+
+(defn- run-consensus-network [replicas leader]
+  (let [[leader-state out] (replica/start (get replicas leader) 1000)
+        replicas (assoc replicas leader leader-state)
+        [replicas _ _] (deliver-all replicas
+                                    (mapv #(assoc % :from leader) out)
+                                    1000 4000)]
+    (reduce
+     (fn [rs now]
+       (let [{next-replicas :replicas outbox :outbox}
+             (reduce (fn [{:keys [replicas outbox]} witness]
+                       (let [[next-state next-out]
+                             (replica/on-tick (get replicas witness) now)]
+                         {:replicas (assoc replicas witness next-state)
+                          :outbox (into outbox
+                                        (map #(assoc % :from witness) next-out))}))
+                     {:replicas rs :outbox []} (sort (keys rs)))
+             [settled _ _] (deliver-all next-replicas outbox now 4000)]
+         settled))
+     replicas (range 2000 2600 100))))
+
+(def ^:private base-options
+  {:decode-block (fn [_] [])
+   :get-fn (fn [_] nil)
+   :put! (fn [_ _] nil)
+   :blind-fn #?(:clj pr-str
+                :cljs (fn [x] (js/Promise.resolve (pr-str x))))
+   :encrypt-fn #?(:clj identity
+                  :cljs (fn [bytes] (js/Promise.resolve bytes)))
+   :height-fn :height
+   :fuel {:budget-fn (fn [_] 100)
+          :cost-fn (fn [_] 1)}
+   :authority {:caller-fn :caller}})
+
+(deftest inga-machine-declares-the-shared-vm-contract
+  (let [machine (kototama-inga/state-machine base-options)]
+    (is (= [:kototama/core-i64-subset-v1 :kototama/data-i64-v1]
+           (:aiueos.kototama/vm-profiles machine)))
+    (is (= [:kotoba-vm/kototama-core-i64-subset-v1
+            :kotoba-vm/kototama-data-i64-v1]
+           (:aiueos.kototama/engine-profiles machine)))
+    (is (= :inga.replica (:aiueos.kototama/consensus-owner machine)))
+    (is (= :partial (:aiueos.kototama/conformance machine)))
+    (is (= :core/v1 (:aiueos.kototama/contract-profile machine)))
+    (is (ifn? (:apply-fn machine)))
+    (is (ifn? (:root-fn machine)))
+    (is (ifn? (:hydrate-fn machine)))))
+
+(deftest signed-proposal-decoder-preserves-profile-tagged-data-values
+  (let [blocks (atom {})
+        get-fn (fn [cid] (get @blocks cid))
+        put! (fn [cid bytes] (swap! blocks assoc cid bytes) cid)
+        value {"items" [nil true "hello"
+                        #?(:clj Long/MAX_VALUE
+                           :cljs (js/BigInt "9223372036854775807"))]}
+        call-cid (ipld/put-node!
+                  put! ["kototama.actor-call" 1
+                        {"address" "echo" "method" "echo"
+                         "args-encoding" "kototama.value-tree/v1"
+                         "args" [(kototama/encode-data-value value)]}])
+        envelope {"ref" "-" "seq" 0 "cid" call-cid
+                  "caller" "alice" "signature" "valid"}
+        decoder (kototama-inga/signed-proposal-decoder
+                 {:chain-id "aiueos:test" :get-fn get-fn :put! put!
+                  :verify-caller-fn (fn [_ _ signature] (= signature "valid"))})
+        ops (decoder {:inga.block/proposals [(json/encode envelope)]})]
+    (is (= [value] (:args (last ops))))
+    (is (= "alice" (:caller (last ops))))))
+
+(deftest committed-invocation-dispatches-data-profile-and-persists-value-tree
+  (let [{:keys [cid bytes]}
+        (ipld/node->block
+         ["kototama.vm/program" 1
+          {"entry" "echo" "value-profile" "kototama.data-i64/v1"
+           "methods" {"echo" {"params" ["value"] "param-types" ["value"]
+                       "result" "value" "effects" []
+                       "body" ["var" "value"]}}}])
+        blocks (atom {cid bytes})
+        get-fn (fn [key] (get @blocks key))
+        put! (fn [key block] (swap! blocks assoc key block) key)
+        state-cid (ipld/put-node! put! {})
+        value {"nested" ["ok" true nil
+                          #?(:clj Long/MIN_VALUE
+                             :cljs (js/BigInt "-9223372036854775808"))]}
+        invoke (kototama/invoke-fn {:get-fn get-fn :put! put!})
+        result (invoke {:address "echo" :code cid :state state-cid
+                        :method "echo" :args [value] :fuel 100})
+        transition (ipld/get-node get-fn (:state result))
+        encoded-return (get transition "return")]
+    (is (nil? (:refused result)))
+    (is (= "kototama.value-tree/v1" (first encoded-return)))
+    (is (= value (kototama/decode-data-value (second encoded-return))))))
+
+(deftest inga-machine-fails-closed-without-authority-or-bounded-fuel
+  (is (thrown? #?(:clj Exception :cljs js/Error)
+               (kototama-inga/state-machine
+                (dissoc base-options :authority))))
+  (is (thrown? #?(:clj Exception :cljs js/Error)
+               (kototama-inga/state-machine
+                (dissoc base-options :fuel)))))
+
+(deftest node-composition-retains-transport-and-witness-settings
+  (let [node-config {:transport :transport :witnesses #{:a :b}}
+        composed (kototama-inga/with-node-machine node-config base-options)]
+    (is (= :transport (:transport composed)))
+    (is (= #{:a :b} (:witnesses composed)))
+    (is (= :inga.replica
+           (:aiueos.kototama/consensus-owner (:machine composed))))))
+
+(deftest inga-node-replica-options-retain-the-kototama-machine
+  (let [machine (kototama-inga/state-machine base-options)
+        options (inga-node/replica-options
+                 {:witness "w1" :witnesses ["w1" "w2" "w3"]
+                  :pubkeys {} :seed-hex (apply str (repeat 32 "00"))
+                  :chain-id "aiueos:test" :tick-ms 125 :machine machine})]
+    (is (identical? machine (:machine options)))
+    (let [replica-state (replica/replica options)]
+      (is (identical? machine (:machine replica-state)))
+      (is (= ((:init-fn machine)) (:machine-state replica-state))))
+    (is (= [:kototama/core-i64-subset-v1 :kototama/data-i64-v1]
+           (:aiueos.kototama/vm-profiles (:machine options))))
+    (is (= 2 (:quorum options)))
+    (is (= 1000 (get-in options [:params :base-timeout])))))
+
+(deftest signed-proposals-decode-only-after-caller-and-cid-verification
+  (let [blocks (atom {})
+        get-fn (fn [cid] (get @blocks cid))
+        put! (fn [cid bytes] (swap! blocks assoc cid bytes) cid)
+        call-body ["kototama.actor-call" 1
+                   {"address" "alice" "method" "sum" "args" [20 22]}]
+        cid (ipld/put-node! put! call-body)
+        verified (atom [])
+        decoder (kototama-inga/signed-proposal-decoder
+                 {:chain-id "aiueos:test"
+                  :get-fn get-fn :put! put!
+                  :verify-caller-fn
+                  (fn [caller payload signature]
+                    (swap! verified conj [caller payload signature])
+                    (= signature "valid-signature"))})
+        envelope {"ref" "-" "seq" 0 "cid" cid
+                  "caller" "alice" "signature" "valid-signature"}
+        ops (decoder {:inga.block/proposals [(json/encode envelope)]})]
+    (is (= 2 (count ops)))
+    (is (= :actor-advance (:op (first ops))))
+    (is (= :actor-call (:op (second ops))))
+    (is (= "alice" (:caller (second ops))))
+    (is (= [["alice" (kototama-inga/actor-call-payload
+                       "aiueos:test"
+                       {:caller "alice" :ref "-" :seq 0 :cid cid})
+             "valid-signature"]]
+           @verified))))
+
+(deftest signed-proposal-decoder-requires-a-string-chain-id
+  (is (thrown? #?(:clj Exception :cljs js/Error)
+               (kototama-inga/signed-proposal-decoder
+                {:chain-id :not-a-string
+                 :get-fn (fn [_] nil)
+                 :put! (fn [_ _] nil)
+                 :verify-caller-fn (fn [& _] false)}))))
+
+(deftest committed-source-head-refuses-replayed-proposals
+  (let [blocks (atom {})
+        get-fn (fn [cid] (get @blocks cid))
+        put! (fn [cid bytes] (swap! blocks assoc cid bytes) cid)
+        cid (ipld/put-node! put! ["kototama.actor-call" 1
+                                  {"address" "app" "method" "noop" "args" []}])
+        proposal (json/encode {"ref" "-" "seq" 0 "cid" cid
+                              "caller" "alice" "signature" "ok"})
+        decoder (kototama-inga/signed-proposal-decoder
+                 {:chain-id "test" :get-fn get-fn :put! put!
+                  :verify-caller-fn (fn [_ _ signature] (= "ok" signature))})
+        machine (kototama-inga/state-machine
+                 (assoc base-options
+                        :decode-block (fn [block] (decoder block))
+                        :get-fn get-fn :put! put!))
+        first-state ((:apply-fn machine) ((:init-fn machine))
+                     {:height 1 :inga.block/proposals [proposal]})
+        replayed ((:apply-fn machine) first-state
+                  {:height 2 :inga.block/proposals [proposal]})
+        source (get (:actors replayed) "kototama.source/v1:alice")]
+    (is (= 0 (:nonce source)))
+    (is (= cid (:state source)))
+    (is (nil? (get (:actors replayed) "app")))))
+
+(deftest invalid-signature-and-content-cid-become-unauthenticated-ops
+  (let [blocks (atom {})
+        get-fn (fn [cid] (get @blocks cid))
+        put! (fn [cid bytes] (swap! blocks assoc cid bytes) cid)
+        body ["kototama.actor-call" 1
+              {"address" "alice" "method" "sum" "args" [20 22]}]
+        cid (ipld/put-node! put! body)
+        envelope {"ref" "-" "seq" 0 "cid" cid
+                  "caller" "alice" "signature" "forged"}
+        decoder (kototama-inga/signed-proposal-decoder
+                 {:chain-id "aiueos:test" :get-fn get-fn :put! put!
+                  :verify-caller-fn (fn [_ _ signature]
+                                      (= signature "valid"))})
+        forged (decoder {:inga.block/proposals [(json/encode envelope)]})]
+    (is (nil? (:caller (last forged))))
+    (swap! blocks assoc cid (ipld/encode
+                             ["kototama.actor-call" 1
+                              {"address" "mallory" "method" "sum" "args" [20 22]}]))
+    (let [valid-signature (assoc envelope "signature" "valid")
+          wrong-content (decoder {:inga.block/proposals
+                                  [(json/encode valid-signature)]})]
+      (is (nil? (:caller (first wrong-content))))
+      (is (= "" (:address (first wrong-content)))))))
+
+(deftest independent-inga-machines-commit-the-same-kototama-call
+  (let [program-bytes
+        #?(:clj (java.nio.file.Files/readAllBytes
+                 (java.nio.file.Paths/get "test/fixtures/amu-kototama-sum-v1.dagcbor"
+                                          (make-array String 0)))
+           :cljs (.readFileSync fs
+                                "test/fixtures/amu-kototama-sum-v1.dagcbor"))
+        program-cid "bafyreiadqe4yzd45fvkz456jfesqq3tc46th46ufyzermn2mzvixu47edu"
+        build-replica
+        (fn []
+          (let [blocks (atom {})
+                get-fn (fn [cid] (get @blocks cid))
+                put! (fn [cid bytes] (swap! blocks assoc cid bytes) cid)
+                state-cid (ipld/put-node! put! {})
+                _ (swap! blocks assoc program-cid program-bytes)
+                call-cid (ipld/put-node!
+                          put! ["kototama.actor-call" 1
+                                {"address" "alice" "method" "sum" "args" [20 22]}])
+                proposal (json/encode
+                          {"ref" "-" "seq" 0 "cid" call-cid
+                           "caller" "bob" "signature" "valid-signature"})
+                decode-block (kototama-inga/signed-proposal-decoder
+                              {:chain-id "aiueos:test" :get-fn get-fn :put! put!
+                               :verify-caller-fn (fn [_ _ signature]
+                                                   (= signature "valid-signature"))})
+                machine (kototama-inga/state-machine
+                         (assoc base-options
+                                :decode-block (fn [block]
+                                                (into (:ops block) (decode-block block)))
+                                :get-fn get-fn :put! put!
+                                :fuel {:budget-fn (fn [_] 1000)
+                                       :cost-fn (fn [op]
+                                                  (if (= :actor-call (:op op)) 500 1))}))
+                actor-put {:op :actor-put :address "alice" :caller "alice"
+                           :actor {:code program-cid :state state-cid
+                                   :nonce 0 :balance 0}}
+                committed ((:apply-fn machine) ((:init-fn machine))
+                           {:height 1 :ops [actor-put]
+                            :inga.block/proposals [proposal]})]
+            {:blocks blocks :get-fn get-fn :put! put!
+             :machine machine :state state-cid :committed committed}))
+        left (build-replica)
+        right (build-replica)
+        left-actor (get (:actors (:committed left)) "alice")
+        right-actor (get (:actors (:committed right)) "alice")
+        left-transition (ipld/get-node (:get-fn left) (:state left-actor))
+        right-transition (ipld/get-node (:get-fn right) (:state right-actor))]
+    (is (not= (:state left) (:state left-actor)))
+    (is (= left-transition right-transition))
+    (is (= "42" (get left-transition "return")))
+    (let [roots [((:root-fn (:machine left)) (:committed left))
+                 ((:root-fn (:machine right)) (:committed right))]
+          assert-equal (fn [[left-root right-root]]
+                         (is (= left-root right-root)))]
+      #?(:clj (assert-equal roots)
+         :cljs (async done
+                 (-> (js/Promise.all (clj->js roots))
+                     (.then (fn [settled]
+                              (assert-equal (vec settled))
+                              (done)))))))))
+
+(deftest four-consensus-replicas-execute-an-amu-default-program
+  (let [blocks (atom {})
+        get-fn (fn [cid] (get @blocks cid))
+        put! (fn [cid bytes] (swap! blocks assoc cid bytes) cid)
+        program-bytes
+        #?(:clj (java.nio.file.Files/readAllBytes
+                 (java.nio.file.Paths/get "test/fixtures/amu-kototama-default-v1.dagcbor"
+                                          (make-array String 0)))
+           :cljs (.readFileSync fs
+                                "test/fixtures/amu-kototama-default-v1.dagcbor"))
+        program-cid "bafyreihewgmseht6nsokbezrb5kx6hyietul3piqwzqhtxqvjczmerxtre"
+        state-cid (ipld/put-node! put! {})
+        _ (swap! blocks assoc program-cid program-bytes)
+        call-cid (ipld/put-node!
+                  put! ["kototama.actor-call" 1
+                        {"address" "alice" "method" "main" "args" []}])
+        proposal (json/encode
+                  {"ref" "-" "seq" 0 "cid" call-cid
+                   "caller" "bob" "signature" "valid-signature"})
+        actor-put {:op :actor-put :address "alice" :caller "alice"
+                   :actor {:code program-cid :state state-cid
+                           :nonce 0 :balance 0}}
+        decoder (kototama-inga/signed-proposal-decoder
+                 {:chain-id "aiueos:test" :get-fn get-fn :put! put!
+                  :verify-caller-fn (fn [_ _ signature]
+                                      (= signature "valid-signature"))})
+        machine (kototama-inga/state-machine
+                 (assoc base-options
+                        :decode-block (fn [block]
+                                        (into (if (= 1 (:inga.block/height block))
+                                                [actor-put]
+                                                [])
+                                              (decoder block)))
+                        :get-fn get-fn :put! put!
+                        :fuel {:budget-fn (fn [_] 1000)
+                               :cost-fn (fn [op]
+                                          (if (= :actor-call (:op op)) 500 1))}))
+        replicas (into {}
+                       (map (fn [witness]
+                              [witness
+                               (replica/replica
+                                {:witness witness :witnesses witnesses
+                                 :quorum (consensus/quorum-size 4)
+                                 :hash-fn consensus-hash :machine machine})])
+                       witnesses))
+        leader (consensus/leader-for witnesses 1)
+        replicas (update replicas leader #(replica/submit % proposal))
+        settled (run-consensus-network replicas leader)
+        committed (mapv (comp replica/committed-height val) settled)
+        chains (mapv (fn [[_ r]]
+                       (mapv consensus-hash (:committed r))) settled)
+        machine-states (mapv (fn [[_ r]] (:machine-state r)) settled)
+        roots (mapv replica/state-root (vals settled))]
+    (is (every? #(>= % 1) committed))
+    (is (apply = chains))
+    (is (every? #(= "42"
+                    (get (ipld/get-node get-fn
+                                        (:state (get (:actors %) "alice")))
+                         "return"))
+                machine-states))
+    (let [assert-same-root (fn [values]
+                             (is (every? some? values))
+                             (is (apply = values)))]
+      #?(:clj (assert-same-root roots)
+         :cljs (async done
+                 (-> (js/Promise.all (clj->js roots))
+                     (.then (fn [values]
+                              (assert-same-root (vec values))
+                              (done)))))))))

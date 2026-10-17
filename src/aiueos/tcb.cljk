@@ -81,11 +81,12 @@
                                 [artifact version (str artifact "-" version ".jar")]))))
 
 (defn- declared-dependencies
-  "`deps.edn`'s `:deps` keyed by coordinate string. Alias dependencies are out
-  of scope on purpose: `:tcb/excluded` already excludes tests and qualification
-  fixtures, which is where they are used."
-  [deps]
-  (into {} (map (fn [[coordinate coords]] [(str coordinate) coords])) (:deps deps)))
+  "Base dependencies or one named optional profile, keyed by coordinate."
+  [deps profile]
+  (let [declared (if profile
+                   (get-in deps [:aliases profile :extra-deps])
+                   (:deps deps))]
+    (into {} (map (fn [[coordinate coords]] [(str coordinate) coords])) declared)))
 
 (defn- maven-entry-errors [repo {:keys [coordinate version sha256]} declared-dep]
   (cond
@@ -155,17 +156,30 @@
       [])))
 
 (defn- external-errors [inventory deps adoption]
-  (let [declared (declared-dependencies deps)
+  (let [entries (:tcb/external inventory)
         repo (maven-local-repo deps)
-        entries (:tcb/external inventory)
-        covered (into #{} (map :coordinate) entries)]
+        profiles (into (set (:tcb/profiles inventory)) (keep :profile entries))
+        declared-by-profile (into {nil (declared-dependencies deps nil)}
+                                  (map (fn [profile]
+                                         [profile (declared-dependencies deps profile)]))
+                                  profiles)
+        covered-by-profile (group-by :profile entries)]
     (concat
-     (mapcat #(entry-errors repo declared %) entries)
-     ;; A runtime dependency that never reached the inventory is the drift the
-     ;; per-entry checks above cannot see.
-     (for [coordinate (sort (keys declared))
-           :when (not (contains? covered coordinate))]
-       {:kind :external-undeclared :coordinate coordinate})
+     (for [profile profiles
+           :when (not (contains? (:aliases deps) profile))]
+       {:kind :external-profile-not-in-deps :profile profile})
+     (mapcat (fn [entry]
+               (entry-errors repo (get declared-by-profile (:profile entry)) entry))
+             entries)
+     ;; Base runtime dependencies and each inventoried optional profile are
+     ;; checked independently. An optional runtime cannot silently become a
+     ;; base dependency, or disappear from the profile that still ships it.
+     (for [[profile declared] declared-by-profile
+           coordinate (sort (keys declared))
+           :when (not (contains? (into #{} (map :coordinate)
+                                       (get covered-by-profile profile))
+                                 coordinate))]
+       {:kind :external-undeclared :coordinate coordinate :profile profile})
      (adoption-errors entries adoption))))
 
 ;; --- platform floor --------------------------------------------------------

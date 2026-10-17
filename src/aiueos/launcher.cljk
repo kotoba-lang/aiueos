@@ -3,8 +3,8 @@
   Rust `bin/aiueos.rs` argv-parsing/file-I/O role, reimplemented as JVM
   Clojure. Ties together `grant.cli` (command/request shaping),
   `grant.manifest` (normalization), `grant.policy`/`grant.broker`
-  (decisions), and `aiueos.execute` (real Chicory execution) into a single
-  runnable entry point.
+  (decisions), and hosted Kototama or compatibility Wasm execution into a
+  single runnable entry point.
 
   This is deliberately NOT the same thing as `grant.decide` (the
   bb-runnable, decision-only EDN-over-stdio subprocess for host adapters
@@ -14,13 +14,17 @@
   :adapter-required` like `grant.cli/command-result` does generically for
   a host-neutral caller.
 
-  JVM-only (`#?(:clj ...)` throughout) -- file I/O and `aiueos.execute`'s
-  Chicory dependency both require it; not runnable under babashka."
+  The command/file-I/O host is JVM-only; the execution-target selection rule
+  is portable. The Kototama path loads without a Wasm engine; the explicit
+  legacy `:aiueos/wasm` path loads Chicory on demand and requires the
+  `:wasm-compat` dependency alias."
   (:require [kotoba.ffi :as ffi] [grant.audit :as audit]
             [grant.broker :as broker]
             [grant.cli :as cli]
             [grant.contract :as contract]
-            [aiueos.execute :as execute]
+            [aiueos.execution-target :as execution-target]
+            [aiueos.kototama :as kototama]
+            [aiueos.kototama.admission :as kototama-admission]
             [grant.graph :as graph]
             [aiueos.image :as image]
             #?(:clj [grant.key-lifecycle :as key-lifecycle])
@@ -31,6 +35,18 @@
             #?(:clj [clojure.edn :as edn])
             #?(:clj [clojure.java.io :as io])
             #?(:clj [kotoba.lang.text :as str])))
+
+#?(:clj
+   (defn- run-wasm
+     "Load the optional Wasm adapter only after a legacy Wasm artifact is selected."
+     [entry & args]
+     (let [runner (try
+                    (requiring-resolve (symbol "aiueos.execute" (name entry)))
+                    (catch Throwable e
+                      (throw (ex-info
+                              "Wasm compatibility execution needs the :wasm-compat alias"
+                              {:required-alias :wasm-compat :entry entry} e))))]
+       (apply runner args))))
 
 #?(:clj
    (defn read-edn-file
@@ -55,7 +71,21 @@
        (.getPath (io/file (.getParentFile (io/file manifest-path)) wasm-rel)))))
 
 #?(:clj
-   (defn- read-wasm-bytes [path]
+   (defn- resolve-kototama-path [manifest-path m]
+     (when-let [artifact (:aiueos/artifact m)]
+       (when (= :kototama/program-v1 (:kind artifact))
+         (.getPath (io/file (.getParentFile (io/file manifest-path))
+                            (:path artifact)))))))
+
+#?(:clj
+   (defn- run-kototama-artifact
+     ([m g policy* program-bytes admit?]
+      (run-kototama-artifact m g policy* program-bytes admit? {}))
+     ([m g policy* program-bytes admit? runtime]
+      (kototama-admission/execute-artifact m g policy* program-bytes admit? runtime))))
+
+#?(:clj
+   (defn- read-artifact-bytes [path]
      (with-open [in (io/input-stream path)
                  out (java.io.ByteArrayOutputStream.)]
        (io/copy in out)
@@ -110,21 +140,39 @@
 #?(:clj
    (defn run-command
      "The `run`/`admit` command bodies: load MANIFEST-PATH (+ POLICY-PATH),
-     resolve+read its declared `:aiueos/wasm` bytes, and actually execute
-     via `aiueos.execute/execute` (or `execute-admission` when ADMIT? is
-     true). Returns the same shape `aiueos.execute/execute` does. Throws
-     ex-info if the manifest declares no `:aiueos/wasm` -- nothing to run."
-     [manifest-path policy-path admit?]
+     execute a supported signed Kototama artifact when declared, otherwise
+     use the legacy explicit `:aiueos/wasm` compatibility path. Returns the
+     selected engine's result. The optional RUNTIME map is forwarded to the
+     Kototama adapter for host-managed storage/state. Throws when no executable
+     artifact is declared."
+     ([manifest-path policy-path admit?]
+      (run-command manifest-path policy-path admit? {}))
+     ([manifest-path policy-path admit? runtime]
      (let [m (load-manifest manifest-path)
+           kototama-path (resolve-kototama-path manifest-path m)
            wasm-path (resolve-wasm-path manifest-path m)
-           _ (when-not wasm-path
-               (throw (ex-info (str manifest-path ": no :aiueos/wasm to run") {:manifest m})))
-           wasm-bytes (read-wasm-bytes wasm-path)
            policy* (load-policy policy-path)
-           g (graph/build [m])]
-       (if admit?
-         (execute/execute-admission m g policy* wasm-bytes)
-         (execute/execute m g policy* wasm-bytes)))))
+           g (graph/build [m])
+           target (execution-target/select m kototama-path wasm-path)]
+       (case target
+         :kototama
+         (run-kototama-artifact m g policy* (read-artifact-bytes kototama-path)
+                                admit? runtime)
+
+         :unsupported-artifact
+         (throw (ex-info (str manifest-path ": unsupported executable artifact profile")
+                         {:manifest m}))
+
+         :wasm
+         (let [wasm-bytes (read-artifact-bytes wasm-path)]
+           (if admit?
+             (run-wasm 'execute-admission m g policy* wasm-bytes)
+             (run-wasm 'execute m g policy* wasm-bytes)))
+
+         :none
+         (throw (ex-info (str manifest-path
+                              ": no executable :aiueos/artifact or :aiueos/wasm declared")
+                         {:manifest m})))))))
 
 #?(:clj
    (defn verify-command
@@ -141,8 +189,8 @@
    (defn- resolve-system-component-paths
      "A system.aiueos.edn's `:aiueos/components` is a vector of manifest
      paths relative to the SYSTEM file itself (matches the retired Rust
-     `System::load` convention -- same base-directory rule
-     `resolve-wasm-path` applies to a single manifest's `:aiueos/wasm`)."
+     `System::load` convention; each executable artifact path is then
+     resolved relative to its component manifest)."
      [system-path components]
      (let [base (.getParentFile (io/file system-path))]
        (mapv #(.getPath (io/file base %)) components))))
@@ -155,9 +203,9 @@
      `:aiueos/components` declaration order (NOT boot order -- see
      `up-command` for that). Keeping each manifest's own file path
      alongside it (rather than just the normalized manifest, as
-     `load-system` returns) is what lets `up-command` resolve each
-     component's OWN `:aiueos/wasm` relative to ITS OWN manifest file,
-     exactly like `run-command` does for a single manifest."
+     `load-system` returns) lets `up-command` resolve each component's own
+     Kototama or legacy Wasm artifact relative to its own manifest file,
+     exactly like `run-command` does for one manifest."
      [system-path]
      (let [raw (read-edn-file system-path)
            validation (contract/validate-system raw)]
@@ -195,11 +243,11 @@
      not due this cycle is simply skipped (omitted from
      `:aiueos/boot-results`, not treated as stopped/denied).
 
-     Each due component is verified + (if granted and it declares
-     `:aiueos/wasm`) actually executed via `aiueos.execute/execute`,
-     exactly like `run-command` does for a single manifest; a component
-     with no `:aiueos/wasm` (a pure capability provider with nothing to
-     run) only gets a decision, matching `verify-command`.
+     Each due component is verified and, if granted, executes its declared
+     supported Kototama artifact; the legacy explicit `:aiueos/wasm` path
+     remains available for compatibility. A component with no executable
+     artifact (such as a pure capability provider) only gets a decision,
+     matching `verify-command`.
 
      Stops at the FIRST denied/quota-or-fuel-exceeded/capability-unlinked
      DUE component -- a system doesn't boot past a component that can't run, since later
@@ -213,9 +261,14 @@
 
      The normalized `:aiueos.manifest/deadline-ms` is enforced as a wall
      watchdog around Chicory instantiation and execution. Timeout interrupts
-     the dedicated worker; boot stops after termination is observed."
-     ([system-path policy-path] (up-command system-path policy-path 0))
+     the dedicated worker; boot stops after termination is observed.
+     The four-argument form may receive a host RUNTIME map; Kototama actor
+     state is carried across due components and returned for host persistence.
+     Storage durability and consensus remain host responsibilities."
+     ([system-path policy-path] (up-command system-path policy-path 0 {}))
      ([system-path policy-path sched-cycle]
+      (up-command system-path policy-path sched-cycle {}))
+     ([system-path policy-path sched-cycle runtime]
       (let [entries (load-system-entries system-path)
             manifests (mapv :aiueos/manifest entries)
             priorities (mapv #(get-in % [:aiueos/schedule :aiueos.manifest/priority]) manifests)
@@ -225,27 +278,59 @@
         (if-let [cycle (:aiueos.graph/cycle order-result)]
           {:aiueos.cli/command :up :aiueos.cli/ok? false :aiueos.cli/code :graph/cycle
            :aiueos/cycle cycle}
-          (loop [indices (get-in order-result [:aiueos.graph/order]) results []]
+          (loop [indices (get-in order-result [:aiueos.graph/order])
+                 results [] runtime* runtime]
             (if (empty? indices)
-              {:aiueos.cli/command :up :aiueos.cli/ok? true :aiueos/boot-results results}
+              (cond-> {:aiueos.cli/command :up :aiueos.cli/ok? true
+                       :aiueos/boot-results results}
+                (contains? runtime* :aiueos.kototama/actors)
+                (assoc :aiueos.kototama/actors
+                       (:aiueos.kototama/actors runtime*)))
               (let [i (first indices)
                     {:aiueos.launcher/keys [path] :aiueos/keys [manifest]} (nth entries i)]
                 (if-not (manifest/due-this-cycle? (:aiueos/schedule manifest) sched-cycle)
-                  (recur (rest indices) results)
-                  (let [wasm-path (resolve-wasm-path path manifest)
-                        result (if wasm-path
-                                 (execute/execute manifest g policy* (read-wasm-bytes wasm-path))
+                  (recur (rest indices) results runtime*)
+                  (let [kototama-path (resolve-kototama-path path manifest)
+                        wasm-path (resolve-wasm-path path manifest)
+                        target (execution-target/select manifest kototama-path wasm-path)
+                        result (case target
+                                 :kototama
+                                 (run-kototama-artifact manifest g policy*
+                                                        (read-artifact-bytes kototama-path)
+                                                        false runtime*)
+
+                                 :wasm
+                                 (run-wasm 'execute manifest g policy*
+                                           (read-artifact-bytes wasm-path))
+
+                                 :unsupported-artifact
+                                 {:aiueos/decision :deny
+                                  :aiueos/component (:aiueos/component manifest)
+                                  :aiueos/violations [{:aiueos/component (:aiueos/component manifest)
+                                                       :aiueos/kind :unsupported-artifact-profile
+                                                       :aiueos/message "unsupported Kototama artifact profile"}]}
+
+                                 :none
                                  (broker/verify-one manifest g policy*))
                         results' (conj results result)
+                        runtime' (if-let [actors (get-in result
+                                                         [:aiueos.kototama/result :actors])]
+                                   (assoc runtime* :aiueos.kototama/actors actors)
+                                   runtime*)
                         booted? (and (= :grant (:aiueos/decision result))
                                      (not (contains? result :aiueos.execute/quota-exceeded))
                                      (not (contains? result :aiueos.execute/fuel-exceeded))
                                      (not (contains? result :aiueos.execute/watchdog-exceeded))
+                                     (not (contains? result :aiueos.execute/runtime-failed))
                                      (not (contains? result :aiueos.execute/capability-unlinked)))]
                     (if booted?
-                      (recur (rest indices) results')
-                      {:aiueos.cli/command :up :aiueos.cli/ok? false :aiueos/boot-results results'
-                       :aiueos/stopped-at (:aiueos/component manifest)})))))))))))
+                      (recur (rest indices) results' runtime')
+                      (cond-> {:aiueos.cli/command :up :aiueos.cli/ok? false
+                               :aiueos/boot-results results'
+                               :aiueos/stopped-at (:aiueos/component manifest)}
+                        (contains? runtime' :aiueos.kototama/actors)
+                        (assoc :aiueos.kototama/actors
+                               (:aiueos.kototama/actors runtime'))))))))))))))
 
 #?(:clj
    (defn surface-command
@@ -374,7 +459,8 @@
      are positionals/flags, shaped via `grant.cli/parse-argv`.
 
      `verify`/`run`/`admit <manifest-path> [--policy <path>] [--edn]` --
-     `run`/`admit` actually execute a granted component via `aiueos.execute`.
+     `run`/`admit` execute Kototama by default and load `aiueos.execute` only
+     for an explicit Wasm compatibility artifact (`:wasm-compat` alias).
      `inspect <system-path> [--edn]` -- capability providers/boot
      order/depths across a system's components.
      `surface <surface-id> [--edn]` -- a deployment surface's offered set.

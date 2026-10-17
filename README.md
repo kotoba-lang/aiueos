@@ -32,6 +32,18 @@ to each owner's specification; it is not a new language or runtime semantics.
 certify a complete integrated debugger, live system modification, full heap
 image restore, selfhost compiler or physical-machine qualification.
 
+## Application execution target
+
+The application contract is **Amu → canonical Kototama artifact → Kotoba VM**.
+AiueOS verifies the declared artifact identity and VM profile, asks Grant for
+admission, then dispatches the artifact to a supported Kotoba VM engine. This
+is the default direction for portable application execution; native
+`BOOTX64.EFI`/`KERNEL.ELF` artifacts remain the current way AiueOS boots on
+hardware, and are not the application bytecode contract. Wasm remains an
+explicit legacy compatibility format. Current hosted Kototama profiles are
+partial, the VM is not embedded in the bare-metal image, and cross-OS runner
+qualification is still pending.
+
 ## Where it actually is
 
 An operating system is a claim with a lot of surface, so here is the measured
@@ -102,12 +114,105 @@ No JVM **in what boots**: the C-free rule forbids libc, a CRT, a JVM, Linux
 and any hosted supervisor in the bare-metal profile, and the artifact receipt
 is what enforces it.
 
-A JVM **in the hosted profiles and in the toolchain**: `aiueos.execute` hosts
-compiled Kotoba Wasm through Chicory and is JVM-only, as is
-`aiueos.launcher`. Fuel metering rides Chicory's `withUnsafeExecutionListener`
--- documented unsafe, experimental, interpreter-path-only -- so treat it as a
-working prototype on an unofficial API rather than a guarantee. Memory limits
-use a stable API.
+The hosted Kototama path is not the host JVM: the portable VM contract and
+Amu-emitted artifact are exercised through Kotoba's JVM-free KBB/NBB engine.
+The checked-in platform workflow is configured to run that same artifact on
+Ubuntu, macOS, and Windows; runner results are still required to qualify those
+hosts. This does not qualify every AiueOS subsystem or a JVM-specific Kototama
+engine.
+Kototama is the versioned VM platform contract, in the architectural role
+that EVM fills for Ethereum: independent engines execute the same admitted
+program rules. This does not claim Ethereum bytecode, consensus, or client
+compatibility. Amu produces the program, Kotoba VM implements named execution
+profiles, AiueOS is one possible host, and Inga supplies a separate consensus
+layer when explicitly configured.
+`run`, `admit`, and `up` select a signed `:aiueos/artifact` Kototama program
+before the legacy `:aiueos/wasm` path. The artifact identity signs its VM
+profile and canonical CID, independent of host paths. The current required
+profiles are `:kototama/core-i64-subset-v1` and the additive
+`:kototama/data-i64-v1`, implemented here with Kotoba VM's canonical
+Kototama-program interpreter; the signed manifest profile must match the
+program's value profile, and missing or unknown profiles are denied. The
+Kototama declaration takes precedence when both artifact fields are present;
+an unsupported Kototama profile is denied without falling back to Wasm. The
+data profile adds nil, boolean, text, vector and map values with Lisp truth
+and structural equality while keeping bounded i64 arithmetic. Both profiles
+remain partial and unsupported effects and instructions fail closed. Existing Wasm
+manifests remain an explicit compatibility path. Chicory is absent from base runtime dependencies
+and loaded lazily only when that path is selected; add the `:wasm-compat` alias
+for a hosted legacy Wasm launch. Test aliases keep Chicory for the existing
+Wasm adapter coverage. The bare-metal image does not yet embed this VM.
+Portable engine tests live in `test-portable` and do not load Grant; manifest
+admission remains in the separate `aiueos.kototama.admission` boundary. At
+head `a5c5dc3aadb8526a62b289dee9cd1f671eef26fe`, the Ubuntu/macOS/Windows
+platform workflow passed on all three runners. Each job compiled and verified
+the default-target Amu artifact, then ran the portable VM and selection-rule
+suites plus the artifact through Grant admission and Kototama execution. This
+qualifies that program path on those runners; it does not qualify every AiueOS
+subsystem, a JVM-specific engine, or separate-host distributed operation. The
+compiler output and provenance are recorded in
+`test/fixtures/amu-kototama-default-v1.*`.
+
+For consensus-backed actor execution, the optional `:distributed` alias pins
+Inga and its `inga-node` process host, and exposes
+`aiueos.kototama.inga/state-machine`. Pass that machine to
+`inga.replica/replica` or supply it to `inga-node.node/start!` as `:machine`;
+committed `:actor-call` operations then execute the same canonical program
+through Kotoba VM and contribute to Inga's content-addressed state root. In the
+current pure-i64 profile, a successful call's return value and previous state
+CID are committed in the callee's next IPLD state; i64 returns are stored as
+decimal text so JavaScript hosts preserve all 64 bits. Each witness needs the
+same VM/profile, canonical blocks, fuel schedule, and deterministic block-store
+seams. Calls can carry portable data-i64 values by setting `args-encoding` to
+`kototama.value-tree/v1` in their signed DAG-CBOR body;
+i64 leaves use canonical decimal text so JavaScript does not round them through
+`Number`. Data-profile results use the same representation in committed actor
+state. The `test-distributed` suite checks independent state-machine roots and
+drives a signed proposal through a four-witness Inga consensus simulation;
+all simulated replicas commit the same call result and state root. The
+opt-in `test-distributed/aiueos/kototama_live_devnet.cljk` smoke test also
+starts four separate `inga-node` processes with independent keys and block
+stores, submits a signed call to the Amu default-target Kototama artifact over
+HTTP, and verifies that all four execute its `main` method and reach the same
+actor-state CID. This is loopback traffic among
+four processes on one host; it does not qualify separate physical hosts,
+independent fault domains, a public network, or production deployment.
+The same harness supports one witness per process with separately configured
+HTTP and WebSocket endpoints and private per-witness data directories. That
+mode has also been exercised with four separate processes on one host; no
+separate physical-host run is claimed.
+The Inga state machine deliberately does not install a host `:effect-fn`:
+effectful methods may be authorized for local execution, but replicated calls
+refuse them before external work until effect reservation and finality receipts
+make replay safe across witnesses.
+`inga-node` provides process, transport, keys, and durable replica snapshots;
+the application still configures the block decoder, caller-key verifier,
+content-addressed storage, witness membership, and policy. The ordinary
+`run`/`up` CLI still uses its hosted local path. Chicory fuel metering rides
+`withUnsafeExecutionListener` -- documented unsafe, experimental,
+interpreter-path-only. Memory limits use a stable API.
+
+`aiueos.kototama.inga/signed-proposal-decoder` provides the proposal boundary
+for `inga-node`'s JSON submissions: the record binds `chain-id`, caller, ref,
+sequence, and content CID; the CID must resolve to a canonical DAG-CBOR actor
+call before it becomes an Inga op. Supply a deterministic signature verifier
+and use `signed-proposal-authority` with that decoder. The decoder emits a
+source-chain `:actor-advance` followed by its call. The adapter checks the
+advance against the committed source head and admits only its paired call;
+replays, forks, gaps, and unsequenced calls are refused. Source records use the
+reserved `kototama.source/v1:` actor-address prefix, separate from application
+actors. The prefix must remain reserved by the host application.
+Compose it without changing the node's other settings:
+
+```clojure
+(inga-node.node/start!
+ (aiueos.kototama.inga/with-node-machine
+  node-config
+  {:decode-block (aiueos.kototama.inga/signed-proposal-decoder decoder-options)
+   :authority aiueos.kototama.inga/signed-proposal-authority
+   :get-fn get-fn :put! put! :blind-fn blind-fn :encrypt-fn encrypt-fn
+   :height-fn height-fn :fuel fuel}))
+```
 
 ## Position in the stack
 
@@ -117,9 +222,15 @@ kotoba semantics -> amu -> kotoba-native freestanding ABI -> aiueos boot images
                                                      aiueos -> kototama (executes)
 ```
 
-`kototama` executes Components and placement (`sahai` at T6, `murakumo` for
-its inference fleet) decides where they run. Aiueos
-supplies the named providers and the machine underneath them; it does not own
+`Kototama` is the versioned virtual-machine contract and portable program
+format, analogous in stack position to EVM: Amu emits the canonical program,
+Kotoba VM supplies host-specific engines, and AiueOS dispatches the selected
+profile. This does not imply EVM bytecode compatibility or complete Kototama
+conformance; the current engine declares partial conformance to normative
+`:core/v1`, with AiueOS i64 and data-i64 selectors mapped to that profile.
+Placement (`sahai` at T6, `murakumo` for its inference fleet) decides where
+components run. AiueOS supplies the named providers and the machine underneath
+them; it does not own
 another system's compiler or fleet scheduler, and since the split it does not
 own the grant vocabulary either.
 
@@ -153,9 +264,7 @@ ADR-2608110400.
 
 ## Reference stack topology and C mechanism boundary
 
-aiueos is the stack's **capability broker**: dependency-minimal by invariant
-(deps.edn carries `security` + Chicory only; enforcement layers like
-`kototama` import aiueos, never the reverse), consuming the Kotoba compiler
+aiueos is the stack's **capability broker**: it consumes the Kotoba compiler
 as **verified artifacts** (freestanding ELF objects), not as a library. The
 historical bare-metal split — C/asm owns mechanism only, every decision (crypto
 verification, admission, capability planning, dispatch planning) is
@@ -237,8 +346,9 @@ What is left here executes, boots and drives hardware.
   `bin/aiueos.rs`'s argv-parsing/file-I/O role, reimplemented as JVM Clojure.
   Ties `grant.cli` + `grant.manifest` + `grant.policy`/`grant.broker` +
   `aiueos.execute`/`aiueos.audit` together. `verify`/`run`/`admit`/`inspect`/
-  `surface`/`audit`/`up` are wired today (`run`/`admit` actually execute a
-  granted component's declared `:aiueos/wasm`, not just decide; `up` boots the
+  `surface`/`audit`/`up` are wired today (`run`/`admit` execute a granted
+  component's supported signed Kototama artifact when declared, with the
+  explicit legacy `:aiueos/wasm` compatibility path retained; `up` boots the
   components due at a given ADR-0006 cycle (`--cycle N`, default 0) in
   `grant.graph/priority-boot-order`, stopping at the first
   denied/quota-or-fuel-exceeded DUE component). Try it: `kbb -M -m
@@ -568,10 +678,10 @@ The guest consumes its DHCP lease, resolves `kotobase.net`, completes TLS 1.3 (c
 
 ## Grant-limited guest in the shell (P3)
 
-Root contract: P3 of [`adr-2608221625`](https://github.com/com-junkawasaki/root/blob/main/90-docs/adr/2608221625-aiueos-chromeos-cloud-desktop.edn). Same `apps/session` DADS SPA. `:app/notes` runs through `grant` + Chicory Wasm (`examples/apps/notes.wat`). A deny is HTTP 403 with `:unresolved-capability`, not a generic 500. POSIX `:fs/open` is not the store; kotobase write without a credential is `:write-unauthorized`.
+Root contract: P3 of [`adr-2608221625`](https://github.com/com-junkawasaki/root/blob/main/90-docs/adr/2608221625-aiueos-chromeos-cloud-desktop.edn). Same `apps/session` DADS SPA. `:app/notes` is a legacy Wasm compatibility demo and runs through `grant` + Chicory only when invoked with `kbb -M:session:wasm-compat guest` (`examples/apps/notes.wat`). The ordinary `:session` alias does not load Chicory. A deny is HTTP 403 with `:unresolved-capability`, not a generic 500. POSIX `:fs/open` is not the store; kotobase write without a credential is `:write-unauthorized`.
 
 ```bash
-kbb -M:session guest
+kbb -M:session:wasm-compat guest
 ```
 
 Expected markers:
@@ -599,7 +709,7 @@ table in ADR-0013, not the amount of reference C code present in this tree.
 
 ## Target-neutral and distributed stack architecture
 
-Owns boot, memory, process and device mechanisms for the modern Kotoba Lisp machine direction. It enforces grant decisions and consumes verified native compiler artifacts. Wasm is an optional execution profile, not the language foundation. OS deployment does not require DHT, IPFS or global consensus. Existing hybrid, C-free, QEMU and physical qualification remain separate.
+Owns boot, memory, process and device mechanisms for the modern Kotoba Lisp machine direction. Portable applications use Amu-produced Kototama artifacts and Kotoba VM profiles; native compiler artifacts remain the current hardware boot path, while Wasm is explicit legacy compatibility. AiueOS can run as one host without DHT, IPFS or global consensus. Existing hybrid, C-free, QEMU and physical qualification remain separate.
 
 See the [owner integration guide and dependency direction](docs/stack-architecture.md),
 [composition metadata](spec/stack-integration.edn), and
@@ -612,8 +722,9 @@ a single dependency ranking.
 
 Execution descriptors are owned by `kotoba.core.execution` in core-contracts;
 Component/WASI admission belongs to `kotoba.abi.component` in abi. Upstream
-consumer pins follow these entrypoints. Native remains an independent AMU target,
-and legacy v1 wire fields/CIDs remain compatible. See
+consumer pins follow these entrypoints. Native remains an independent AMU target
+for the hardware boot path; it is not the portable application format. Legacy
+v1 wire fields/CIDs remain compatible. See
 [the integration spec](spec/execution-profile-integration.edn) and
 [whole-stack procedure](https://github.com/kotoba-lang/kotoba-lang/blob/main/docs/stack-refactor-procedure.md).
 The dependency update does not enable default v2 runtime admission or qualify

@@ -1,0 +1,310 @@
+(ns aiueos.kototama-test
+  (:require [aiueos.kototama :as kototama]
+            [aiueos.kototama.admission :as admission]
+            [ipld.core :as ipld]
+            [kotoba.vm :as vm]
+            [grant.graph :as graph]
+            [grant.policy :as policy]
+            #?(:clj [kotoba.test :refer [deftest is]]
+               :cljs [cljs.test :refer [deftest is] :include-macros true])
+            #?(:cljs ["node:fs" :as fs])))
+
+(def ^:private amu-program-cid
+  "bafyreiadqe4yzd45fvkz456jfesqq3tc46th46ufyzermn2mzvixu47edu")
+
+(def ^:private amu-default-program-cid
+  "bafyreihewgmseht6nsokbezrb5kx6hyietul3piqwzqhtxqvjczmerxtre")
+
+(defn- encoded-program []
+  ;; Use the Amu-emitted block byte-for-byte; reconstructing this from a host
+  ;; map would only exercise the local DAG-CBOR encoder.
+  {:expected-cid amu-program-cid
+   :program-bytes
+   #?(:clj (java.nio.file.Files/readAllBytes
+            (java.nio.file.Paths/get "test/fixtures/amu-kototama-sum-v1.dagcbor"
+                                     (make-array String 0)))
+      :cljs (.readFileSync fs
+                           "test/fixtures/amu-kototama-sum-v1.dagcbor"))})
+
+(defn- encoded-default-program []
+  (let [root #?(:clj (or (System/getenv "AIUEOS_REPO_ROOT") ".")
+                :cljs (or (aget (.-env js/process) "AIUEOS_REPO_ROOT") "."))
+        compiled-path #?(:clj (System/getenv "AMU_KOTOTAMA_PROGRAM_PATH")
+                         :cljs (aget (.-env js/process) "AMU_KOTOTAMA_PROGRAM_PATH"))
+        path (or compiled-path
+                 (str root "/test/fixtures/amu-kototama-default-v1.dagcbor"))]
+    {:expected-cid amu-default-program-cid
+     :program-bytes #?(:clj (java.nio.file.Files/readAllBytes
+                             (java.nio.file.Paths/get path (make-array String 0)))
+                       :cljs (.readFileSync fs path))}))
+
+(defn- encoded-data-program []
+  (ipld/node->block
+   ["kototama.vm/program" 1
+    {"entry" "echo"
+     "value-profile" "kototama.data-i64/v1"
+     "methods" {"echo" {"params" ["value"] "param-types" ["value"]
+                         "result" "value" "effects" []
+                         "body" ["var" "value"]}}}]))
+
+(defn- encoded-effect-program []
+  (ipld/node->block
+   ["kototama.vm/program" 1
+    {"entry" "write"
+     "value-profile" "kototama.data-i64/v1"
+     "methods" {"write" {"params" [] "param-types" []
+                           "result" "value" "effects" [["fs/write"]]
+                           "body" ["const" "done"]}}}]))
+
+(defn- encoded-capability-program []
+  (ipld/node->block
+   ["kototama.vm/program" 1
+    {"entry" "sign"
+     "value-profile" "kototama.data-i64/v1"
+     "methods" {"sign" {"params" ["value"] "param-types" ["value"]
+                         "result" "value"
+                         "effects" [[ ["keyword" "cap/call"] ["integer" "1"] ]]
+                         "body" ["effect" "invoke-capability"
+                                 [["const" ["integer" "1"]]
+                                  ["var" "value"]]]}}}]))
+
+(defn- effect-authority-facts [{:keys [actor program effect]}]
+  {:resource "/notes"
+   :origin-facts
+   {:vm [["vm:runs" actor program]
+         ["vm:requests" actor effect "/notes"]]
+    :amu [["amu:requires" program effect]
+          ["amu:world" program "world-1"]]
+    :grant [["grant:right" actor effect "/notes"]]
+    :policy [["policy:allows" actor effect "/notes"]]
+    :runtime [["runtime:world" "world-1"]
+              ["runtime:available" effect "/notes"]]}})
+
+(deftest canonical-kototama-program-runs-on-hosted-engine
+  (let [{:keys [expected-cid program-bytes]} (encoded-program)
+        result (kototama/run-core-i64-subset
+                {:program-bytes program-bytes :expected-cid expected-cid
+                 :method "sum" :args [20 22] :fuel 100})]
+    (is (:ok? result))
+    (is (= #?(:clj 42 :cljs (js/BigInt 42))
+           (get-in result [:receipt :return])))
+    (is (= expected-cid (:aiueos.kototama/program-cid result)))
+    (is (= :core/v1 (:aiueos.kototama/contract-profile result)))
+    (is (= :kotoba-vm/kototama-core-i64-subset-v1
+           (:aiueos.kototama/engine-profile result)))
+    (is (= :kototama/core-i64-subset-v1
+           (:aiueos.kototama/vm-profile result)))
+    (is (= :process-local (:aiueos.kototama/state-scope result)))))
+
+(deftest canonical-kototama-program-runs-a-conditional-branch
+  (let [{:keys [expected-cid program-bytes]} (encoded-program)
+        result (kototama/run-core-i64-subset
+                {:program-bytes program-bytes :expected-cid expected-cid
+                 :method "choose" :args [0] :fuel 100})]
+    (is (:ok? result))
+    (is (= #?(:clj 7 :cljs (js/BigInt 7))
+           (get-in result [:receipt :return])))))
+
+(deftest independent-hosted-vm-stores-apply-the-same-transition
+  (let [{:keys [expected-cid program-bytes]} (encoded-program)
+        request {:program-bytes program-bytes :expected-cid expected-cid
+                 :method "sum" :args [20 22] :fuel 100}
+        left (kototama/run-core-i64-subset request)
+        right (kototama/run-core-i64-subset request)]
+    (is (= (:aiueos.kototama/program-cid left)
+           (:aiueos.kototama/program-cid right)))
+    (is (= (:receipt left) (:receipt right)))
+    (is (= (:actors left) (:actors right)))))
+
+(deftest kototama-program-cid-mismatch-refuses-before-execution
+  (let [{:keys [program-bytes]} (encoded-program)]
+    (is (thrown-with-msg?
+         #?(:clj clojure.lang.ExceptionInfo :cljs js/Error)
+         #"CID does not match"
+         (kototama/run-core-i64-subset
+          {:program-bytes program-bytes
+           :expected-cid "bafyreiaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+           :method "sum" :args [20 22]})))))
+
+(deftest kototama-subset-reports-fuel-exhaustion
+  (let [{:keys [expected-cid program-bytes]} (encoded-program)
+        result (kototama/run-core-i64-subset
+                {:program-bytes program-bytes :expected-cid expected-cid
+                 :method "sum" :args [20 22] :fuel 1})]
+    (is (false? (:ok? result)))
+    (is (= :fuel-exhausted (get-in result [:receipt :exit])))))
+
+(deftest manifest-execution-authorizes-before-entering-kototama
+  (let [{:keys [expected-cid program-bytes]} (encoded-program)
+        manifest {:aiueos/component :app/calc
+                  :aiueos/kind :app
+                  :aiueos/trust :trusted
+                  :aiueos/artifact {:kind :kototama/program-v1
+                                    :profile :kototama/core-i64-subset-v1
+                                    :path "sum.dagcbor"
+                                    :cid (str expected-cid)}
+                  :aiueos/entry "sum"
+                  :aiueos/args [20 22]
+                  :aiueos/limits {:fuel 100}}
+        result (admission/execute-artifact
+                manifest (graph/build [manifest]) policy/default-policy
+                program-bytes false)]
+    (is (= :grant (:aiueos/decision result)))
+    (is (= #?(:clj 42 :cljs (js/BigInt 42))
+           (get-in result [:aiueos.kototama/result :receipt :return])))))
+
+(deftest manifest-execution-runs-the-current-amu-default-artifact
+  (let [{:keys [expected-cid program-bytes]} (encoded-default-program)
+        manifest {:aiueos/component :app/amu-answer
+                  :aiueos/kind :app
+                  :aiueos/trust :trusted
+                  :aiueos/artifact {:kind :kototama/program-v1
+                                    :profile :kototama/core-i64-subset-v1
+                                    :cid expected-cid}
+                  :aiueos/entry "main"
+                  :aiueos/args []
+                  :aiueos/limits {:fuel 100}}
+        result (admission/execute-artifact
+                manifest (graph/build [manifest]) policy/default-policy
+                program-bytes false)]
+    (is (= :grant (:aiueos/decision result)))
+    (is (= #?(:clj 42 :cljs (js/BigInt 42))
+           (get-in result [:aiueos.kototama/result :receipt :return])))
+    (is (= :kototama/core-i64-subset-v1
+           (get-in result [:aiueos.kototama/result :aiueos.kototama/vm-profile])))))
+
+(deftest manifest-requiring-signatures-denies-before-vm-execution
+  (let [{:keys [expected-cid program-bytes]} (encoded-program)
+        manifest {:aiueos/component :app/calc
+                  :aiueos/kind :app
+                  :aiueos/trust :trusted
+                  :aiueos/artifact {:kind :kototama/program-v1
+                                    :profile :kototama/core-i64-subset-v1
+                                    :path "sum.dagcbor"
+                                    :cid (str expected-cid)}
+                  :aiueos/entry "sum"
+                  :aiueos/args [20 22]}
+        restricted (assoc policy/default-policy :aiueos.policy/require-signed true)
+        result (admission/execute-artifact
+                manifest (graph/build [manifest]) restricted program-bytes false)]
+    (is (= :deny (:aiueos/decision result)))
+    (is (nil? (:aiueos.kototama/result result)))))
+
+(deftest unknown-vm-profile-is-denied-before-engine-entry
+  (let [{:keys [expected-cid program-bytes]} (encoded-program)
+        manifest {:aiueos/component :app/calc
+                  :aiueos/kind :app
+                  :aiueos/trust :trusted
+                  :aiueos/artifact {:kind :kototama/program-v1
+                                    :profile :kototama/future-profile-v1
+                                    :path "sum.dagcbor"
+                                    :cid (str expected-cid)}
+                  :aiueos/entry "sum"
+                  :aiueos/args [20 22]}
+        result (admission/execute-artifact
+                manifest (graph/build [manifest]) policy/default-policy
+                program-bytes false)]
+    (is (= :deny (:aiueos/decision result)))
+    (is (= :unsupported-vm-profile
+           (get-in result [:aiueos/violations 0 :aiueos/kind])))
+    (is (= :kototama/future-profile-v1
+           (get-in result [:aiueos/violations 0 :aiueos/declared-profile])))))
+
+(deftest missing-vm-profile-is-denied
+  (let [{:keys [expected-cid program-bytes]} (encoded-program)
+        manifest {:aiueos/component :app/calc
+                  :aiueos/kind :app
+                  :aiueos/trust :trusted
+                  :aiueos/artifact {:kind :kototama/program-v1
+                                    :path "sum.dagcbor"
+                                    :cid (str expected-cid)}
+                  :aiueos/entry "sum"
+                  :aiueos/args [20 22]}
+        result (admission/execute-artifact
+                manifest (graph/build [manifest]) policy/default-policy
+                program-bytes false)]
+    (is (= :deny (:aiueos/decision result)))
+    (is (= :unsupported-vm-profile
+           (get-in result [:aiueos/violations 0 :aiueos/kind])))))
+
+(deftest signed-manifest-selects-data-i64-profile
+  (let [{:keys [cid bytes]} (encoded-data-program)
+        manifest {:aiueos/component :app/echo
+                  :aiueos/kind :app
+                  :aiueos/trust :trusted
+                  :aiueos/artifact {:kind :kototama/program-v1
+                                    :profile :kototama/data-i64-v1
+                                    :cid cid}
+                  :aiueos/entry "echo"
+                  :aiueos/args [{"greeting" "こんにちは" "ok" true}]
+                  :aiueos/limits {:fuel 100}}
+        result (admission/execute-artifact
+                manifest (graph/build [manifest]) policy/default-policy bytes false)]
+    (is (= :grant (:aiueos/decision result)))
+    (is (= {"greeting" "こんにちは" "ok" true}
+           (get-in result [:aiueos.kototama/result :receipt :return])))
+    (is (= :kototama/data-i64-v1
+           (get-in result [:aiueos.kototama/result :aiueos.kototama/vm-profile])))))
+
+(deftest hosted-adapter-requires-and-forwards-the-authority-facts-seam
+  (let [{:keys [cid bytes]} (encoded-effect-program)
+        observed (atom nil)
+        request {:program-bytes bytes :expected-cid cid :method "write"
+                 :args [] :fuel 1000 :actor "alice" :caller "operator"
+                 :authority-proof {:proof/id "committed-proof-1"}}
+        denied (kototama/run-data-i64 request)
+        store (vm/memory-store)
+        machine {:get-fn (:get-fn store) :put! (:put! store)
+                 :authority-facts-fn (fn [request]
+                                       (reset! observed request)
+                                       (effect-authority-facts request))}
+        allowed (kototama/run-data-i64 (assoc request :machine machine))]
+    (is (not (:ok? denied)))
+    (is (= :unauthorized (get-in denied [:receipt :exit])))
+    (is (:ok? allowed))
+    (is (= "done" (get-in allowed [:receipt :return])))
+    (is (= "operator" (:caller @observed)))
+    (is (= {:proof/id "committed-proof-1"}
+           (:authority-proof @observed)))
+    (is (= "/notes"
+           (get-in allowed [:receipt :authority-decisions 0 :resource])))))
+
+(deftest hosted-adapter-forwards-authorized-capability-effects-to-the-host
+  (let [{:keys [cid bytes]} (encoded-capability-program)
+        store (vm/memory-store)
+        observed (atom nil)
+        request {:program-bytes bytes :expected-cid cid :method "sign"
+                 :args [21] :fuel 1000 :actor "alice" :caller "operator"}
+        denied (kototama/run-data-i64 request)
+        machine {:get-fn (:get-fn store) :put! (:put! store)
+                 :authority-facts-fn effect-authority-facts
+                 :effect-fn (fn [effect-request]
+                              (reset! observed effect-request)
+                              {:ok? true :value (second (:args effect-request))})}
+        allowed (kototama/run-data-i64 (assoc request :machine machine))]
+    (is (not (:ok? denied)))
+    (is (= :unauthorized (get-in denied [:receipt :exit])))
+    (is (:ok? allowed))
+    (is (= #?(:clj 21 :cljs (js/BigInt 21))
+           (get-in allowed [:receipt :return])))
+    (is (= [["keyword" "cap/call"] ["integer" "1"]]
+           (:effect @observed)))
+    (is (= "operator" (:caller @observed)))))
+
+(deftest replicated-invoke-adapter-does-not-run-external-effects
+  (let [{:keys [bytes]} (encoded-capability-program)
+        store (vm/memory-store)
+        program (ipld/decode bytes)
+        code (vm/put-code! (:put! store) program)
+        state (ipld/put-node! (:put! store) {})
+        calls (atom 0)
+        invoke (kototama/invoke-fn
+                {:get-fn (:get-fn store) :put! (:put! store)
+                 :authority-facts-fn effect-authority-facts
+                 ;; Even if accidentally supplied, consensus replay must not
+                 ;; run an irreversible provider on every witnessing node.
+                 :effect-fn (fn [_] (swap! calls inc) {:ok? true :value 1})})
+        result (invoke {:address "alice" :caller "operator" :code code
+                        :state state :method "sign" :args [21] :fuel 1000})]
+    (is (= {:refused :not-callable} result))
+    (is (zero? @calls))))
