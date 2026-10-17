@@ -25,7 +25,7 @@ jobs:
           ENGINE_REF: 1675e6aab65d5a99e37840cc5012bc2eca6f4a07
           IPLD_REF: 8bc2dde5ae47129e49a957131c40313b6b02731c
           VM_REF: 0773d5eecfc058e34782bf677b44231990a76db3
-          GRANT_REF: 3247d01895395c084ea2d3a04b47b90c2a84ffaa
+          GRANT_REF: b8eb9f0ba0b1ca3c0b816c3984e158b34f4aed77
           AMU_REF: 0527a60332320b013e165d27ffe5af35edc9000d
           BB_VERSION: 1.12.218
         run: |
