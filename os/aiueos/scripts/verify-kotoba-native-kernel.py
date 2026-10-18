@@ -10,14 +10,30 @@ elf = pathlib.Path(sys.argv[1])
 source = pathlib.Path(sys.argv[2])
 rtl8125_source = source.with_name("rtl8125.kotoba")
 compiler = sys.argv[3]
-receipt = pathlib.Path(sys.argv[4])
-capability_inputs = list(zip(sys.argv[5::2], sys.argv[6::2]))
+kotoba_native_commit = None
+kotoba_native_worktree_sha256 = None
+if len(sys.argv) >= 8 and len(sys.argv[4]) == 64 and len(sys.argv[6]) == 64:
+    compiler_worktree_sha256 = sys.argv[4]
+    kotoba_native_commit = sys.argv[5]
+    kotoba_native_worktree_sha256 = sys.argv[6]
+    receipt = pathlib.Path(sys.argv[7])
+    capability_inputs = list(zip(sys.argv[8::2], sys.argv[9::2]))
+elif len(sys.argv) >= 6 and len(sys.argv[4]) == 64:
+    compiler_worktree_sha256 = sys.argv[4]
+    receipt = pathlib.Path(sys.argv[5])
+    capability_inputs = list(zip(sys.argv[6::2], sys.argv[7::2]))
+else:
+    # Older host-build paths still use the v5 verifier contract and do not
+    # claim a source-tree fingerprint or a closed six-file Amu source record.
+    compiler_worktree_sha256 = None
+    receipt = pathlib.Path(sys.argv[4])
+    capability_inputs = list(zip(sys.argv[5::2], sys.argv[6::2]))
 capability_sources = [pathlib.Path(value) for value, _ in capability_inputs]
 data = elf.read_bytes()
 if not rtl8125_source.is_file():
     raise SystemExit("error: closed native RTL8125 module is missing")
-if len(capability_sources) != 4 or not all(path.is_file() for path in capability_sources):
-    raise SystemExit("error: closed native device-I/O capability sources are missing")
+if len(capability_sources) not in (0, 4, 6) or not all(path.is_file() for path in capability_sources):
+    raise SystemExit("error: closed native capability/TCP source closure is incomplete")
 if data[:4] != b"\x7fELF" or data[4:7] != b"\x02\x01\x01":
     raise SystemExit("error: Kotoba-native kernel is not ELF64 little-endian")
 if struct.unpack_from("<H", data, 16)[0] != 2 or struct.unpack_from("<H", data, 18)[0] != 0x3E:
@@ -115,7 +131,9 @@ if len(present_probes) > 1:
     raise SystemExit("error: more than one sealed page-fault probe entered one artifact")
 recovery_handler = b"\x48\x89\x04\x25\x10\x01\x11\x00" in data
 payload = {
-    "format": "aiueos-kotoba-native-receipt/v5",
+    "format": "aiueos-kotoba-native-receipt/v7" if kotoba_native_worktree_sha256
+              else "aiueos-kotoba-native-receipt/v6" if compiler_worktree_sha256
+              else "aiueos-kotoba-native-receipt/v5",
     "target": "x86_64-aiueos-kernel-v1",
     "timing_profile": "best-effort",
     "rtos_qualified": False,
@@ -123,6 +141,13 @@ payload = {
     "runtime_jvm": False,
     "entry": "aiueos_kernel_entry",
     "compiler_commit": compiler,
+    **({"compiler_binary_sha256": os.environ["AIUEOS_AMU_SELFHOST_BINARY_SHA256"]}
+       if "AIUEOS_AMU_SELFHOST_BINARY_SHA256" in os.environ else {}),
+    **({"compiler_worktree_sha256": compiler_worktree_sha256}
+       if compiler_worktree_sha256 else {}),
+    **({"kotoba_native_commit": kotoba_native_commit,
+        "kotoba_native_worktree_sha256": kotoba_native_worktree_sha256}
+       if kotoba_native_worktree_sha256 else {}),
     "source_sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
     "source_closure": [
         {"module": "aiueos.native.kernel", "source": source.name,

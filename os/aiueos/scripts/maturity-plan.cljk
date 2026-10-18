@@ -2,6 +2,7 @@
 ;; Reverse topological order of the remaining gaps: dependencies first.
 ;;
 ;; Usage: kbb --backend sci os/aiueos/scripts/maturity-plan.cljk [--next]
+;; --next prints `none` when every remaining node is externally gated.
 ;; Exit 0 sorted, 2 REFUSED (a cycle, or an edge to a node that does not exist).
 ;;
 ;; The order lives here rather than in the contract on purpose. A hand-written
@@ -65,21 +66,27 @@
               (let [needs (:needs (get nodes id))]
                 (if (empty? needs) 0 (inc (apply max (map depth needs))))))
       ;; --next skips what no amount of agent work moves. Owner-gated needs a
-      ;; credential or a decision; hardware-gated needs the board powered. Both
-      ;; stay IN the order, so their position stays honest -- what changes is
-      ;; only which node a loop is told to pick up.
+      ;; credential or a decision; hardware-gated needs the board powered. A
+      ;; dependent cannot start while one of its prerequisites is gated, so
+      ;; propagate that state down the dependency graph as well. A completed
+      ;; prerequisite is satisfied and does not gate its dependents.
       ;; :blocked-on is the third kind, and it earns its place: a bug that does
       ;; not reproduce cannot be worked on by trying harder, and a loop that
       ;; keeps being handed one spends the day producing nothing. It differs
       ;; from the other two in that it can lift on its own -- a recurrence
       ;; unblocks it -- so it is a state, not a category.
-      blocked? #(let [n (get nodes %)]
-                  (or (:done n) (:owner-gated n) (:hardware-gated n) (:blocked-on n)))
-      open (remove blocked? order)
+      unavailable? (fn unavailable? [id]
+                     (let [n (get nodes id)]
+                       (and (not (:done n))
+                            (or (:owner-gated n)
+                                (:hardware-gated n)
+                                (:blocked-on n)
+                                (some unavailable? (:needs n))))))
+      open (remove #(or (:done (get nodes %)) (unavailable? %)) order)
       next-id (first open)]
 
   (if (some #{"--next"} *command-line-args*)
-    (println (name next-id))
+    (println (if next-id (name next-id) "none"))
     (do
       (println "AIUEOS MATURITY PLAN -- reverse topological order, dependencies first")
       (println (str "  baseline: build "
@@ -98,14 +105,15 @@
                       (when (:hardware-gated n) "   [hardware-gated]")
                       (when-let [b (:blocked-on n)] (str "   [blocked: " (name b) "]"))
                       (when (:done n) "   [done]")
-                      (when (= id next-id) "   <- next")))
+                      (when (and next-id (= id next-id)) "   <- next")))
         (println (str "     " (apply str (repeat d "    ")) (:title n)))
         (when (seq (:needs n))
           (println (str "     " (apply str (repeat d "    "))
                         "after: " (str/join ", " (map name (:needs n)))))))
       (println)
-      (println "  Depth 0 nodes are startable now. The next actionable node is"
-               (str (name next-id) "."))
+      (if next-id
+        (println "  The next actionable node is" (str (name next-id) "."))
+        (println "  No actionable nodes remain; every unfinished path is gated."))
       (println "  Gated nodes stay in the order so their position is honest;")
       (println "  --next skips them because no amount of agent work moves them.")))
   (js/process.exit 0))

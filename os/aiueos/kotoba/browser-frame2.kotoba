@@ -7,8 +7,9 @@
 ;; Which glyph a code point becomes, where it goes, where a line breaks, what
 ;; is clipped and what stands in for a missing glyph are layout decisions --
 ;; browser.surface renders `:window/title` in the titlebar and the document
-;; in the body, and cssom decides the lines. C blits the bitmaps this list
-;; names (mechanism) and never chooses a glyph or a position.
+;; in the body, and cssom decides the lines. The Kotoba native presenter
+;; blits the bitmaps this list names (mechanism) and never chooses a glyph or
+;; a position.
 ;;
 ;; ONE list, window by window in stack order (body rect, titlebar rect, title
 ;; glyphs, body glyphs), so a back window's text can never be painted over a
@@ -153,7 +154,7 @@
 ;; FONT: the aiueos-font/v1 blob (os/aiueos/scripts/make-font.cljk).
 ;;
 ;; ABI: [surface surface-bytes font font-bytes] -> op count, or
-;;   -1 null region / surface not 8192 bytes   -2 abi or n outside 1..4
+;;   -1 null region / surface not 8192 bytes   -2 abi or n outside 0..4
 ;;   -3 focus is not a window id               -4 a rect leaves the viewport
 ;;   -5 more than 259 ops                      -6 font refused (magic, version,
 ;;                                                count, length, no U+FFFD)
@@ -181,7 +182,16 @@
   (kernel-store-u32 (kernel-subregion s 8192 (* i 4) 4) 4 0 v))
 
 (defn fw [s f i]
-  (kernel-load-u32 (kernel-subregion f (sw s 423) (* i 4) 4) 4 0))
+  ;; Font blobs are larger than the base 512-byte native load window. Narrow
+  ;; to the containing 16 KiB slice before reading the aligned codepoint word.
+  (let [offset (* i 4)
+        length (sw s 423)
+        chunk-offset (* (quot offset 16384) 16384)
+        remaining (- length chunk-offset)
+        chunk-length (if (> remaining 16384) 16384 remaining)]
+    (kernel-load-u32-16k
+     (kernel-subregion f length chunk-offset chunk-length)
+     chunk-length (- offset chunk-offset))))
 
 ;; --- ops --------------------------------------------------------------------
 
@@ -466,6 +476,39 @@
         (put-rect s 0 0 vw 28)
         (button s f 1) (button s f 2) (button s f 3) (button s f 4))))
 
+;; The dock follows the same retained-op path as the launcher and windows.
+;; App colours and initial glyphs are presentation data; the native presenter
+;; still receives only the rectangle and glyph operations produced here.
+(defn dock-color [k]
+  (if (= k 1) 3900159
+    (if (= k 2) 3978018
+      (if (= k 3) 10123472 14651230))))
+
+(defn dock-letter [k]
+  (if (= k 1) 77 (if (= k 2) 73 (if (= k 3) 89 65))))
+
+(defn dock-icon [s f k vw vh]
+  (if (= (bit-and (sw s 31) (app-bit k)) 0) 0
+    (let [left (+ (quot (- vw 184) 2) 8 (* 44 (- k 1)))
+          top (+ (- vh 52) 6)
+          gi (glyph-of s f (dock-letter k))
+          gw (glyph-width s f gi)]
+      (do (sput s 422 (dock-color k))
+          (put-rect s left top 36 36)
+          (sput s 422 16777215)
+          (put-glyph s (+ left (quot (- 36 gw) 2)) (+ top 10) gi gw)))))
+
+(defn dock [s f vw vh]
+  (if (= (sw s 31) 0) 0
+    (let [left (quot (- vw 184) 2)
+          top (- vh 52)]
+      (do (sput s 422 14215167)
+          (put-rect s left top 184 48)
+          (dock-icon s f 1 vw vh)
+          (dock-icon s f 2 vw vh)
+          (dock-icon s f 3 vw vh)
+          (dock-icon s f 4 vw vh)))))
+
 (defn chrome [s w]
   (if (= (sw s 31) 0) 0 (if (< w 40) 0 1)))
 
@@ -513,6 +556,25 @@
 (defn body-rgb [focused] (if (= focused 1) 16777215 15659509))
 (defn title-rgb [focused] (if (= focused 1) 14215167 14541546))
 
+(defn window-shadow [s x y w h]
+  ;; The shadow belongs to the outside edge only. A filled offset rectangle
+  ;; hides the contents of every lower window it overlaps; these clipped
+  ;; right and bottom strips keep the retained painter order intact.
+  (let [vw (sw s 3)
+        vh (sw s 4)
+        right-room (- vw (+ x w))
+        bottom-room (- vh (+ y h))
+        right-width (if (> right-room 3) 3 right-room)
+        bottom-height (if (> bottom-room 3) 3 bottom-room)]
+    (do (if (> right-width 0)
+          (do (sput s 422 10137540)
+              (put-rect s (+ x w) (+ y 3) right-width (- h 3)))
+          0)
+        (if (> bottom-height 0)
+          (do (sput s 422 10137540)
+              (put-rect s (+ x 3) (+ y h) (- w 3) bottom-height))
+          0))))
+
 (defn emit-window [s f k]
   (let [b (+ 5 (* k 5))
         id (sw s b)
@@ -521,7 +583,8 @@
         w (sw s (+ b 3))
         h (sw s (+ b 4))
         focused (if (= id (sw s 2)) 1 0)]
-    (do (sput s 422 (body-rgb focused))
+    (do (window-shadow s x y w h)
+        (sput s 422 (body-rgb focused))
         (put-rect s x y w h)
         (sput s 422 (title-rgb focused))
         (put-rect s x y w 28)
@@ -563,6 +626,11 @@
     (if (= (sw s (+ 5 (* k 5))) id) 1
       (has-id s n (+ k 1) id))))
 
+(defn focus-ok [s n]
+  (if (= n 0)
+    (if (= (sw s 2) 0) 1 0)
+    (has-id s n 0 (sw s 2))))
+
 (defn ids-ok [s n k]
   (if (>= k n) 1
     (let [id (sw s (+ 5 (* k 5)))]
@@ -599,10 +667,9 @@
               vw (sw s 3)
               vh (sw s 4)]
           (if (not (= (sw s 0) 1)) -2
-            (if (< n 1) -2
-              (if (> n 4) -2
+            (if (> n 4) -2
                 (if (= (ids-ok s n 0) 0) -7
-                  (if (= (has-id s n 0 (sw s 2)) 0) -3
+                  (if (= (focus-ok s n) 0) -3
                     (if (= (rects-ok s n 0 vw vh) 0) -4
                       (if (> (sw s 433) 8) -8
                       (if (> (sw s 445) 32) -8
@@ -612,11 +679,12 @@
                       (if (= (font-ok s f fb) 0) -6
                         (do (sput s 416 0)
                             (sput s 427 0)
-                            (sput s 422 16119544)
+                            (sput s 422 9418200)
                             (put-rect s 0 0 vw vh)
                             (launcher s f vw)
                             (emit s f 0)
+                            (dock s f vw vh)
                             (pointer s)
-                            (if (= (sw s 427) 1) -5 (sw s 416))))))))))))))))))))
+                            (if (= (sw s 427) 1) -5 (sw s 416)))))))))))))))))))
 
 (defn main [] 0)

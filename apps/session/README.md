@@ -1,15 +1,33 @@
 # apps/session — hosted daily shell
 
-The product face of root ADR-2608221625 **P1**. The OS UI engine contract is
-`kotoba-lang/browser`; `kotoba-browser.edn` is the boundary. One HTML document, jp-go-dds
-(DADS), `--hig-*` via `jp-go-dds.tokens/skin-css`. Fragments `#session`
-`#desktop` `#setup` `#manage` `#devices` `#operator`. `#itonami` is the same operator view. `#desktop` is the hosted WM
-face (ADR-0085) plus hosted IME (ADR-0086 / ADR-0088) plus the hosted
-kami.webgpu presenter (ADR-0089, `/kami-presenter.js`); it is not a second document.
-The committed HTML/JavaScript build is a hosted verification adapter and does
-not count as the native Kotoba Browser guest. The native product target is the
-same document/action model in `kotoba-clj/WASM` through browser desktop-backend
-contract v1.
+The product face of root ADR-2608221625 **P1**. AIUEOS opens on an app desktop
+with launch links for Murakumo, Itonami, Yataverse, and Aozora. The app surfaces
+are `.cljk` markup rendered by `kotoba-lang/browser` using the `jp-go-dds`
+design tokens. Murakumo invokes the existing session inference route and
+Itonami invokes the existing grant-gated operator route. Yataverse and Aozora
+open their own app views; their service catalogs are not connected in this
+build. `#session`, `#compositor`, `#setup`, `#manage`, and `#devices` remain
+available as system views. `#operator` remains an alias for `#itonami`.
+
+The configured native app catalog and Browser desktop entrypoint live in
+`src/aiueos/session/native_desktop.cljk`. It registers all four apps as
+Browser-owned surface state; `browser.input` launches them from the app row or
+centered Dock and closes their windows, while `browser.surface` and
+`cssom.layout` produce a retained frame through `browser.desktop-backend` v1.
+Repeated launches focus the existing window. These native app windows are
+launchable shells; the Murakumo inference and Itonami operator API actions are
+currently in the hosted adapter. This path does not use the hosted document's
+JavaScript.
+`src/aiueos/session/app_catalog.cljk` supplies the app labels to the hosted
+Browser route and the Amu guest renderer from one ordered catalog; its Kotoba
+branch provides the title codepoints directly to the bounded framebuffer
+surface.
+
+The committed HTML/JavaScript output remains a hosted verification adapter. It
+does not count as the native Kotoba Browser guest or as a C-free AIUEOS boot.
+The Browser surface smoke runs on kbb's Node host. It does not compile or
+execute an Amu-built Browser guest, and the current C-free kernel still has no
+framebuffer/input transport for this session entrypoint.
 The formal Passkey authority, origin, and WebAuthn RP ID are
 `auth.kotoba.cloud`; `auth.itonami.cloud` is not an aiueos OS-auth route.
 
@@ -69,11 +87,17 @@ kbb --backend sci --classpath src scripts/compositor-guest.cljk guest-broker # K
 kbb --backend sci --classpath src scripts/compositor-guest.cljk guest-session # KERNEL.ELF Kotoba packed front 2 restore
 ```
 
-From the superproject, the generated document can also be rendered by the
-actual Kotoba Browser engine (no Chrome/Playwright engine):
+From the AIUEOS checkout, the configured `start-session` entrypoint renders
+through Kotoba Browser's surface and CSSOM pipeline. The smoke drives each app
+from both the launcher and Dock through Kotoba's input reducer, without
+JavaScript:
 
 ```bash
-cd /tmp
-kbb -Sdeps '{:paths ["<aiueos>/scripts"] :deps {io.github.kotoba-lang/browser {:local/root "<superproject>/orgs/kotoba-lang/browser"}}}' \
-  -M -m aiueos.kotoba-browser-smoke <aiueos>/apps/session/index.html
+BROWSER_ROOT="$(cd ../browser && pwd)"
+KBB_NO_NPM=1 kbb -Sdeps "{:paths [\"scripts\" \"apps/session/src\"] :deps {io.github.kotoba-lang/browser {:local/root \"$BROWSER_ROOT\"}}}" \
+  -M -m aiueos.kotoba-browser-smoke
 ```
+
+This executes the Kotoba Browser source through kbb's Node bootstrap host. It
+does not prove the Amu-built compiler or the C-free kernel can present the
+frame; that requires the kernel frame/input transport.

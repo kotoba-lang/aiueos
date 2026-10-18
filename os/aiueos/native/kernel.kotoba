@@ -21,7 +21,7 @@
 ;; physical tranche wires its entry into the post-qualification flow.
 
 ;; The compiler-emitted loader keeps the final UEFI memory map in a bounded
-;; region directly after the 64-byte boot-info prefix.  The kernel derives that
+;; region directly after the 160-byte boot-info prefix. The kernel derives that
 ;; region; it never turns the pointer stored by firmware into authority.
 (defn dump-bus3-ip-header [win mmio log-frame bus3-dma index]
   ;; DD <byte> for offsets 14..33 of the last bus3 frame: the whole IPv4 header
@@ -75,14 +75,20 @@
       1)))
 
 (defn load64-boot [base offset]
-  (+ (kernel-load-u8 base 96 offset)
-     (* (kernel-load-u8 base 96 (+ offset 1)) 256)
-     (* (kernel-load-u8 base 96 (+ offset 2)) 65536)
-     (* (kernel-load-u8 base 96 (+ offset 3)) 16777216)
-     (* (kernel-load-u8 base 96 (+ offset 4)) 4294967296)
-     (* (kernel-load-u8 base 96 (+ offset 5)) 1099511627776)
-     (* (kernel-load-u8 base 96 (+ offset 6)) 281474976710656)
-     (* (kernel-load-u8 base 96 (+ offset 7)) 72057594037927936)))
+  (+ (kernel-load-u8 base 160 offset)
+     (* (kernel-load-u8 base 160 (+ offset 1)) 256)
+     (* (kernel-load-u8 base 160 (+ offset 2)) 65536)
+     (* (kernel-load-u8 base 160 (+ offset 3)) 16777216)
+     (* (kernel-load-u8 base 160 (+ offset 4)) 4294967296)
+     (* (kernel-load-u8 base 160 (+ offset 5)) 1099511627776)
+     (* (kernel-load-u8 base 160 (+ offset 6)) 281474976710656)
+     (* (kernel-load-u8 base 160 (+ offset 7)) 72057594037927936)))
+
+(defn load32-boot [base offset]
+  (+ (kernel-load-u8 base 160 offset)
+     (* (kernel-load-u8 base 160 (+ offset 1)) 256)
+     (* (kernel-load-u8 base 160 (+ offset 2)) 65536)
+     (* (kernel-load-u8 base 160 (+ offset 3)) 16777216)))
 
 ;; Keep only one effectful write live at a time.  This uses less sealed fuel
 ;; than retaining sixteen store results and reducing them after the writes.
@@ -518,7 +524,13 @@
         rw-end (load64-boot boot 72)
         scratch-start (load64-boot boot 80)
         scratch-pages (load64-boot boot 88)
-        memory-map (kernel-subregion boot 16480 96 16384)]
+        framebuffer-base (load64-boot boot 112)
+        framebuffer-size (load64-boot boot 120)
+        framebuffer-width (load32-boot boot 128)
+        framebuffer-height (load32-boot boot 132)
+        framebuffer-stride (load32-boot boot 136)
+        framebuffer-format (load32-boot boot 140)
+        memory-map (kernel-subregion boot 16544 160 16384)]
     (if (and (> boot 0) (> cr3 0)
              (= (kernel-load-u8 boot 64 0) 65)
              (= (kernel-load-u8 boot 64 1) 73)
@@ -528,7 +540,7 @@
              (= (kernel-load-u8 boot 64 5) 79)
              (= (kernel-load-u8 boot 64 6) 79)
              (= (kernel-load-u8 boot 64 7) 84)
-             (= (load64-boot boot 8) 4)
+             (= (load64-boot boot 8) 5)
              (= (load64-boot boot 16) memory-map)
              (> map-size 0)
              ;; 16368, not 16384: the last 16 bytes of the map window hold
@@ -548,10 +560,20 @@
              (< rw-end 1073741824)
              (> scratch-start 0)
              (= (bit-and scratch-start 4095) 0)
-             (= scratch-pages 14)
-             (<= (+ scratch-start 57344) 549755813888))
+             (= scratch-pages 15)
+             ;; GOP is optional for the general boot profile; when present its
+             ;; geometry and pixel format must describe a bounded linear mode.
+             (or (= framebuffer-base 0)
+                 (and (> framebuffer-size 0)
+                      (>= framebuffer-width 320)
+                      (>= framebuffer-height 200)
+                      (>= framebuffer-stride framebuffer-width)
+                      (<= framebuffer-format 1)
+                      (<= (* (* framebuffer-stride framebuffer-height) 4)
+                          framebuffer-size)))
+             (<= (+ scratch-start 61440) 549755813888))
       (let [map-marker (serial/trace-byte 77)
-            ;; Boot-info v4 carries the exact fourteen-page EfiLoaderData
+            ;; Boot-info v5 carries the exact fifteen-page EfiLoaderData
             ;; allocation made by Amu before the final memory map.
             physical-start scratch-start]
         (if (> physical-start 0)
@@ -569,9 +591,10 @@
                 thirteenth-start (+ physical-start 49152)
                 fourteenth-start (+ physical-start 53248)
                 ;; No page 14..17 extension. The Amu loader allocates exactly
-                ;; fourteen pages (kernel_scratch.pages = 14, checked above),
-                ;; so naming +57344.. would hand the NIC memory the kernel
-                ;; does not own. The LAN2 debug plane takes its 16 KiB from
+                ;; fifteen pages (kernel_scratch.pages = 15, checked above).
+                ;; This network profile uses only its original fourteen pages;
+                ;; the fifteenth is reserved for the Browser desktop profile.
+                ;; The LAN2 debug plane takes its 16 KiB from
                 ;; the pages the CR3 branch would have used instead; see the
                 ;; stream branch below (ADR-0156).
                 bar-a (rtl/bar-for-bus 2)

@@ -45,7 +45,7 @@
        io.github.kotoba-lang/grant {:git/url "https://github.com/kotoba-lang/grant.git"
                                      :git/sha "557142a5592a08dac274c9b4a5c83cc509ffa103"}
         io.github.kotoba-lang/security {:git/url "https://github.com/kotoba-lang/security.git"
-                                        :git/sha "74235d1cdf8034334f01dcb2f6faaff0c731146e"}
+                                        :git/sha "fde703a1b2e5085d86f3c1fdf9b97558912e0275"}
         ;; This workspace's own TLS 1.3 and HTTP/1.1, so a request can leave
         ;; this machine without `java.net.http`. Both are RUNTIME dependencies
         ;; of `aiueos.provider.cloud-own` and both are TCB: a TLS client that
@@ -173,7 +173,7 @@
    {:extra-deps {io.github.kotoba-lang/webgpu
                  {:git/url "https://github.com/kotoba-lang/webgpu.git"
                   :git/sha "17598c1206a31e594b0e028245f222e53b1b8b71"}}
-    :main-opts ["-m" "kotoba.security.adoption"]}
+    :main-opts ["-i" "tools/cljk_loader.cljk" "-m" "kotoba.security.adoption"]}
 
    ;; The fleet's suite. It used to be `:test` minus `-e :upstream-blocked`,
    ;; which dropped exactly one test whose twelve failures ADR-0050 established
