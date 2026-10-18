@@ -507,7 +507,34 @@ def make_bundle_tgz(installer_dir, scripts_dir, intent_bytes, receipt_bytes, nod
                 "bundled nbb is not the org-babashka-nbb fork (version "
                 + version + " carries no cljk marker; stock nbb resolves no "
                 ".cljk and the bundle dies on the machine -- aiueos ADR-0217)")
+        # A symlinked nbb tree is refused, not followed. `npm install
+        # <folder>` (the natural way to install the fork from a sibling
+        # checkout) leaves node_modules/nbb as a SYMLINK, and the copy below
+        # walks real files only -- the symlink itself is a directory, so
+        # nothing under it is copied and the bundle contains no engine while
+        # every guard above stays green (the version check reads through the
+        # symlink). Measured 2026-10-18: the stick built clean, boot1 reached
+        # AIUEOS_LIVE_HANDOVER, and node died with
+        #   Error: Cannot find module
+        #   '/run/aiueos-installer/nbb-bundle/node_modules/nbb/cli.js'
+        # Install the fork from its tarball (npm pack, then install the
+        # .tgz) so node_modules/nbb is a real directory.
+        if (base / "nbb").is_symlink():
+            raise ValueError(
+                "--nbb-dir contains nbb as a symlink (" + str(base / "nbb")
+                + "); the bundle copy skips symlinked directories and the "
+                "stick would carry no nbb engine (measured: boot dies with "
+                "MODULE_NOT_FOUND on nbb/cli.js). Install the fork from its "
+                "tarball so node_modules/nbb is a real directory.")
         for path in sorted(base.rglob("*")):
+            if path.is_symlink() and ".bin" not in path.parts:
+                # .bin holds npm's own bin shims, which are symlinks and are
+                # excluded from the copy below; only a symlink where a real
+                # file must be copied is the silent-drop defect.
+                raise ValueError(
+                    "--nbb-dir contains a symlink (" + str(path) + "); "
+                    "symlinked entries are skipped by the bundle copy and "
+                    "the stick would be missing this file at runtime.")
             if path.is_file() and ".bin" not in path.parts:
                 add("nbb-bundle/node_modules/" + path.relative_to(base).as_posix(),
                     path.read_bytes(), 0o644)
