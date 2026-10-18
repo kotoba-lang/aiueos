@@ -205,4 +205,5 @@
   "test/aiueos/vfio_test.cljk" ".cljc"
   "test/aiueos/virtio_test.cljk" ".cljc"
   "test/aiueos/vm_test.cljk" ".cljc"
-  "test/aiueos/watchdog_test.cljk" ".clj"}}
+  "test/aiueos/watchdog_test.cljk" ".clj"
+  "tools/cljk_loader.cljk" ".clj"}}
