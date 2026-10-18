@@ -24,7 +24,7 @@
  :goal "kotoba-lang/browser's surface as the usable aiueos desktop on KERNEL.ELF, then the browser component itself on the kernel"
  :floors
  [{:id :frame :gate "guest-browser-frame" :adr "0223"
-   :goal "Kotoba writes the retained draw list; C presents it in order"}
+   :goal "Kotoba produces and presents the retained draw list; the native kernel presenter writes it to GOP"}
   {:id :pointer :gate "guest-browser-input" :adr "0223"
    :goal "a real virtio-tablet press focuses and raises the topmost window"}
   {:id :text :gate "guest-browser-text" :adr "0224"
@@ -63,32 +63,42 @@
    ;; `check` past --target), so x86_64-aiueos-kernel-v1 and aarch64-macos
    ;; are one measurement. Three walls were ordinary Clojure forms and
    ;; LANDED in the compiler: (:k m) on a map means get (amu#1088), conj on a
-   ;; vector appends (amu#1089), remove is filter negated (amu#1092). The
-   ;; rest are one language decision, written up as amu docs/adr 0352
-   ;; (proposed): browser's reducers are dynamically typed Clojure over open
-   ;; maps and hiccup, amu's application profile is closed and static on
-   ;; purpose. Rewriting browser.surface / browser.input into amu's typed
-   ;; primitives would still be a second copy of the reducers -- unless the
-   ;; hosted engine runs that typed source too (ADR 0352 option C).
+   ;; vector appends (amu#1089), remove is filter negated (amu#1092).
+   ;; The language decision is settled by Amu ADR 0353: one typed Browser
+   ;; source must serve both the hosted engine and the kernel. The measurements
+   ;; below are from 2026-09-25; remeasure them against current Browser/Amu
+   ;; sources before treating any listed wall as current.
+   ;; Remeasured 2026-10-17 with the available native Amu selfhost image
+   ;; (SHA-256 b65fcaf7cab41841249d87369cc6e7396ac40a3fa7a146fbf5abe6162688ee42)
+   ;; and a scratch source root containing the current Browser, CSSOM, DOM and
+   ;; Kotoba dependencies. The {:kotoba/export [...]} attr-map is now admitted:
+   ;; browser.text-edit checks with :ok true and exports [empty-state]. The
+   ;; complete browser.surface project graph fails in CSSOM at project-link
+   ;; with "invalid constant name"; checking cssom.layout alone gives the
+   ;; same refusal. A minimal source probe confirms `(def ^:private x 1)` is
+   ;; one trigger for this diagnostic, while `(def x 1)` and a Kotoba reader
+   ;; branch that removes host-only private metadata are admitted. Wrapping
+   ;; all CSSOM private constants did not clear the module-level refusal, so
+   ;; its remaining cause is not yet localized.
+   ;; Direct checking the legacy kotoba.wasm.dom.cljk still fails on a top-level
+   ;; form outside ns/def/defn/defn-. The dependency checkout now contains a
+   ;; typed dom.kotoba/dom_core.kotoba pair, and Amu resolves .kotoba first, but
+   ;; its inclusion in the Browser graph has not been measured. The current
+   ;; cssom.layout source is 1,083,354 bytes; this check did not establish a
+   ;; whole-component compile or native target qualification.
    :blocked-by
    {:repo "kotoba-lang/amu"
-    :decision "amu docs/adr/0352-browser-reducers-need-a-decision-not-more-builtins.md (proposed; owner decides A dynamic Clojure data / B caller-driven inference / C one typed source)"
+    :decision "amu docs/adr/0353-one-typed-source-for-browser-rows-absence-and-budgets.md (accepted: one typed Browser source for hosted and kernel engines)"
     :landed ["wall 3: (:k m) / (:k m d) on the bounded or typed map means get -- kotoba-sema 110cb48e, amu#1088"
              "wall 4: conj on a :vector-i64 / :vector-f64 appends at the end -- kotoba-sema 45913acc, amu#1089"
-             "wall 7: remove lowers to filter with the predicate negated -- kotoba-sema 05d8bd8a, amu#1092"]
+             "wall 7: remove lowers to filter with the predicate negated -- kotoba-sema 05d8bd8a, amu#1092"
+             "2026-10-17: native Amu project check accepts the {:kotoba/export [...]} namespace attr-map; browser.text-edit checks :ok true and exports [empty-state]"]
     :walls
-    ["project link: browser.text-edit / browser.input / browser.surface each -> \"project module ... requires an explicit :export vector\" (ADR 0005; the attr-map {:kotoba/export [...]} after the ns docstring is the designed, SCI-compatible spelling -- a browser change, not made here)"
-     "unannotated parameters are :i64 (callers do not inform them): (defn f [m] (:a m)) -> \"record-get without a type descriptor requires a record value; got :i64\"; every reducer takes an unannotated map"
-     "text_edit.cljk:6 -> :kotoba.error/map-literal-value: a keyword map whose value is nil (:text/composition nil) has no value type (no open maps; absence is [:option T])"
-     "text_edit code-unit-at is #?(:clj (.charAt ..) :cljs (.charCodeAt ..)) with no :kotoba/:default branch -> \"function body is empty\" (host interop is a permanent refusal); count of a string is refused BY DECISION (UTF-8 bytes vs UTF-16 code units); subs unknown"
-     "open-map operations on records: assoc of a new key, dissoc, merge, select-keys; a vector of records -> \"expected i64, got [:record ...]\""
-     "runtime type tests over hiccup (nil? string? vector? sequential? map?): string? unknown; the only dynamically shaped value is :document (ADR 0028: bounded, no functions, no truthiness)"
-     "a function stored in a map (:app/document-fn) -> exit 70 internal compiler error (a defect: must refuse, not crash)"
-     "for / concat / reverse / vec / nth (vector destructuring of a parameter) unknown; 2-arity some is refused by vocabulary (some is the option constructor)"
-     "native qualification, independent of the decision: the landed forms `amu check` clean but `amu compile --target x86_64-aiueos-kernel-v1` (and aarch64-macos) refuses them -- \"native target ... does not qualify map-new\" for a keyword map, \"does not qualify the boundary types [:vector-i64 :vector-i64] of function __kotoba_loop_1\" for filter/remove over a vector; (defn main [] (+ 40 2)) compiles for both (kotoba-lang/kotoba-native)"
-     "browser.surface requires cssom.layout and kotoba.wasm.dom; with cssom 9224d359 and dom-gpu f2d0eba9 on the source path the link stops at \"source exceeds 1 MiB admission limit\" (cssom/layout.cljk alone is 1,083,132 bytes; ADR 0005's linked-source bound)"]
-    :reproduce "in an amu checkout at origin/main after npm ci, with browser at B: bin/amu check $B/src/browser/{text_edit,input,surface}.cljk --source-path $B/src -> exit 65 at the export wall; add {:kotoba/export [...]} after each ns docstring in a scratch copy to reach the next walls (amu ADR 0352 ## Reproduce)"
-    :until "amu ADR 0352 is decided and amu admits browser.surface + browser.input + browser.text-edit unchanged (source as the hosted engine runs it) FOR THE KERNEL: `amu compile src/browser/surface.cljk --source-path src --unpinned --target x86_64-aiueos-kernel-v1` exits 0 -- `amu check` alone is target-independent and stops before native qualification"}}
+    ["current native selfhost measurement 2026-10-17: cssom.core and cssom.layout project-link fail with \"invalid constant name\". Direct checking the legacy kotoba.wasm.dom.cljk fails with \"only ns, def, defn, and defn- are allowed at top level\"; the dependency checkout now has .kotoba DOM facade/core sources that Amu prefers during project resolution, but their use in the Browser graph is unmeasured. The full browser.surface graph is not admitted yet."
+     "the 1 MiB source-bound report is historical: cssom/layout.cljk is now 1,083,354 bytes and the native graph reaches CSSOM link diagnostics, but no whole-component compile has established the source bound's current status"
+     "independent build wall: the available native seed image reports module-lock unavailable and refuses x86_64-aiueos-kernel-v1 as a cross-target; the existing C-free desktop artifact was built by Amu's Node/NBB launcher and is not Amu selfhost. Canonical build entrypoints now reject script launchers and bind the native executable SHA-256 into receipts, but no qualifying x86-64 Amu selfhost executable is available"]
+   :reproduce "with the native image SHA-256 b65fcaf7cab41841249d87369cc6e7396ac40a3fa7a146fbf5abe6162688ee42 and a scratch source root containing the current Browser/CSSOM/DOM/Kotoba dependencies: `amu check browser/text_edit.cljk --source-path <root> --jvm-free` -> :ok true; `amu check browser/surface.cljk --source-path <root> --jvm-free` -> project-link invalid constant name; direct-file `amu check kotoba/wasm/dom.cljk --source-path <root> --jvm-free` -> unsupported top-level form. The direct-file result does not measure project resolution, which now prefers the dependency's .kotoba DOM sources. Do not substitute the Node/NBB launcher for this selfhost measurement."
+    :until "the accepted ADR 0353 migration is implemented and amu admits the shared typed Browser surface/input/text-edit source with its CSSOM and DOM dependencies FOR THE KERNEL: the real project entry compiles through `amu compile --target x86_64-aiueos-kernel-v1` -- `amu check` alone is target-independent and stops before native qualification"}}
   ;; Owner decision 2026-09-25: the dictionary is generated in-repo, not
   ;; taken from SKK (GPL). The source is Unicode's Unihan readings, which
   ;; carry the Unicode License v3. Taken 2026-09-25 (ADR-0235): the

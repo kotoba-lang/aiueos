@@ -6,23 +6,39 @@
   reachable. Unknown, empty and nil fragments land on the default rather
   than rendering nothing."
   (:require [jp-go-dds.core :as dds]
+            [aiueos.session.app-catalog :as app-catalog]
             [kotoba.lang.text :as str]))
 
+(def app-entries
+  "The four launchable apps, with labels from the shared Kotoba catalog."
+  (mapv (fn [app-id]
+          (let [id (app-catalog/app-route-id app-id)
+                title (app-catalog/app-title app-id)]
+            {:id id
+             :fragment (str "#" (name id))
+             :label title
+             :icon (subs title 0 1)
+             :body (app-catalog/app-body app-id)}))
+        (range 1 (inc (app-catalog/app-count)))))
+
 (def views
-  "Nav order. `:session` is the daily-driver default; `#desktop` is the compositor face; `#setup` is the
-  phone-first bind (P1b); `#manage` / `#devices` are day-2."
-  [{:id :session :fragment "#session" :label "セッション"}
-   {:id :desktop :fragment "#desktop" :label "デスクトップ"}
-   {:id :setup :fragment "#setup" :label "セットアップ"}
-   {:id :manage :fragment "#manage" :label "管理"}
-   {:id :devices :fragment "#devices" :label "機械"}
-   {:id :operator :fragment "#operator" :label "運用"}])
+  "AIUEOS opens on the desktop. App routes share the Browser catalog; session
+  and compositor tools remain addressable as system apps."
+  (vec
+   (concat
+    [{:id :desktop :fragment "#desktop" :label "デスクトップ"}]
+    app-entries
+    [{:id :session :fragment "#session" :label "セッション"}
+     {:id :compositor :fragment "#compositor" :label "Compositor"}
+     {:id :setup :fragment "#setup" :label "セットアップ"}
+     {:id :manage :fragment "#manage" :label "管理"}
+     {:id :devices :fragment "#devices" :label "機械"}])))
 
 (def default-view (first views))
 
 (def fragment-aliases
-  "Same operator view. `#itonami` is the industrial name."
-  {"#itonami" "#operator"})
+  "Keep the prior operator fragment addressable after it became an app."
+  {"#operator" "#itonami"})
 
 (defn- normalize-fragment
   [fragment]

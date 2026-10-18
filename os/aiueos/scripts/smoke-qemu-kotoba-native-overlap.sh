@@ -3,7 +3,7 @@ set -eu
 
 repo=$(CDPATH= cd -- "$(dirname -- "$0")/../../.." && pwd)
 aiueos="$repo/os/aiueos"
-compiler=${1:?usage: smoke-qemu-kotoba-native-overlap.sh /path/to/compiler}
+amu=${1:?usage: smoke-qemu-kotoba-native-overlap.sh /path/to/amu}
 if [ -n "${AIUEOS_NATIVE_OVERLAP_WORK:-}" ]; then
   tmp=$AIUEOS_NATIVE_OVERLAP_WORK
   mkdir -p "$tmp"
@@ -24,10 +24,11 @@ grep -F "$needle" "$source" >/dev/null && {
 }
 
 if [ "${AIUEOS_NATIVE_OVERLAP_BUILD_ONLY:-0}" = 1 ]; then
+  AIUEOS_NATIVE_PROFILE=kernel \
   AIUEOS_NATIVE_KERNEL_SOURCE="$source" \
   AIUEOS_NATIVE_OUT="$tmp/native" \
   AIUEOS_NATIVE_BOOT_OUT="$tmp/boot" \
-    "$aiueos/scripts/build-kotoba-native-boot.sh" "$compiler"
+    "$aiueos/scripts/build-kotoba-native-boot.sh" "$amu"
   echo "AIUEOS_KOTOBA_NATIVE_OVERLAP_BUILD_OK out=$tmp/boot"
   exit 0
 fi
@@ -37,4 +38,4 @@ AIUEOS_NATIVE_OUT="$tmp/native" \
 AIUEOS_NATIVE_BOOT_OUT="$tmp/boot" \
 AIUEOS_NATIVE_EXPECT_STATUS=41 \
 AIUEOS_NATIVE_EXPECT_MARKER=M \
-  "$aiueos/scripts/smoke-qemu-kotoba-native.sh" "$compiler"
+  "$aiueos/scripts/smoke-qemu-kotoba-native.sh" "$amu"

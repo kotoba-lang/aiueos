@@ -27,6 +27,7 @@ grep -F "$needle" "$source" >/dev/null && {
 }
 
 if [ "${AIUEOS_NATIVE_WX_BUILD_ONLY:-0}" = 1 ]; then
+  AIUEOS_NATIVE_PROFILE=kernel \
   AIUEOS_NATIVE_KERNEL_SOURCE="$source" \
   AIUEOS_NATIVE_OUT="$tmp/native" \
   AIUEOS_NATIVE_BOOT_OUT="$tmp/boot" \

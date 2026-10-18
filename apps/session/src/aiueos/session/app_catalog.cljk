@@ -1,0 +1,190 @@
+(ns aiueos.session.app-catalog)
+
+;; One ordered app catalog shared by the hosted Kotoba Browser and the native
+;; framebuffer entry. The Kotoba branch exposes numeric title codepoints so
+;; the guest can fill its bounded renderer surface without a host string
+;; runtime.
+#?(:kotoba
+   (defn app-count [] :i64 4)
+   :default (defn app-count [] 4))
+
+#?(:kotoba
+   (defn app-title-length [id :i64] :i64
+     (if (= id 1) 8
+       (if (= id 2) 7
+         (if (= id 3) 9
+           (if (= id 4) 6 0)))))
+   :default nil)
+
+#?(:kotoba
+   (defn- murakumo-title-codepoint [index :i64] :i64
+     (if (= index 0) 77
+       (if (= index 1) 117
+         (if (= index 2) 114
+           (if (= index 3) 97
+             (if (= index 4) 107
+               (if (= index 5) 117
+                 (if (= index 6) 109
+                   (if (= index 7) 111 0)))))))))
+   :default nil)
+
+#?(:kotoba
+   (defn- itonami-title-codepoint [index :i64] :i64
+     (if (= index 0) 73
+       (if (= index 1) 116
+         (if (= index 2) 111
+           (if (= index 3) 110
+             (if (= index 4) 97
+               (if (= index 5) 109
+                 (if (= index 6) 105 0))))))))
+   :default nil)
+
+#?(:kotoba
+   (defn- yataverse-title-codepoint [index :i64] :i64
+     (if (= index 0) 89
+       (if (= index 1) 97
+         (if (= index 2) 116
+           (if (= index 3) 97
+             (if (= index 4) 118
+               (if (= index 5) 101
+                 (if (= index 6) 114
+                   (if (= index 7) 115
+                     (if (= index 8) 101 0))))))))))
+   :default nil)
+
+#?(:kotoba
+   (defn- aozora-title-codepoint [index :i64] :i64
+     (if (= index 0) 65
+       (if (= index 1) 111
+         (if (= index 2) 122
+           (if (= index 3) 111
+             (if (= index 4) 114
+               (if (= index 5) 97 0)))))))
+   :default nil)
+
+#?(:kotoba
+   (defn app-title-codepoint [id :i64 index :i64] :i64
+     (if (= id 1) (murakumo-title-codepoint index)
+       (if (= id 2) (itonami-title-codepoint index)
+         (if (= id 3) (yataverse-title-codepoint index)
+           (if (= id 4) (aozora-title-codepoint index) 0)))))
+   :default nil)
+
+#?(:kotoba
+   (defn- murakumo-body-codepoint [index :i64] :i64
+     (if (= index 0) 25512
+       (if (= index 1) 35542
+       (if (= index 2) 10
+       (if (= index 3) 25509
+       (if (= index 4) 32154
+       (if (= index 5) 20808
+       (if (= index 6) 26410
+       (if (= index 7) 30331
+       (if (= index 8) 37682
+       (if (= index 9) 12391
+       (if (= index 10) 12377
+       0))))))))))))
+   :default nil)
+
+#?(:kotoba
+   (defn- itonami-body-codepoint [index :i64] :i64
+     (if (= index 0) 36939
+       (if (= index 1) 29992
+       (if (= index 2) 10
+       (if (= index 3) 35377
+       (if (= index 4) 21487
+       (if (= index 5) 12364
+       (if (= index 6) 24517
+       (if (= index 7) 35201
+       (if (= index 8) 12391
+       (if (= index 9) 12377
+       0)))))))))))
+   :default nil)
+
+#?(:kotoba
+   (defn- yataverse-body-codepoint [index :i64] :i64
+     (if (= index 0) 12487
+       (if (= index 1) 12540
+       (if (= index 2) 12479
+       (if (= index 3) 20445
+       (if (= index 4) 23384
+       (if (= index 5) 10
+       (if (= index 6) 25509
+       (if (= index 7) 32154
+       (if (= index 8) 20808
+       (if (= index 9) 12364
+       (if (= index 10) 26410
+       (if (= index 11) 30331
+       (if (= index 12) 37682
+       (if (= index 13) 12391
+       (if (= index 14) 12377
+       0))))))))))))))))
+   :default nil)
+
+#?(:kotoba
+   (defn- aozora-body-codepoint [index :i64] :i64
+     (if (= index 0) 35501
+       (if (= index 1) 26360
+       (if (= index 2) 10
+       (if (= index 3) 34101
+       (if (= index 4) 26360
+       (if (= index 5) 12459
+       (if (= index 6) 12479
+       (if (= index 7) 12525
+       (if (= index 8) 12464
+       (if (= index 9) 12364
+       (if (= index 10) 26410
+       (if (= index 11) 30331
+       (if (= index 12) 37682
+       (if (= index 13) 12391
+       (if (= index 14) 12377
+       0))))))))))))))))
+   :default nil)
+
+#?(:kotoba
+   (defn app-body-length [id :i64] :i64
+     (if (= id 1) 11
+       (if (= id 2) 10
+       (if (= id 3) 15
+       (if (= id 4) 15
+       0)))))
+   :default nil)
+
+#?(:kotoba
+   (defn app-body-codepoint [id :i64 index :i64] :i64
+     (if (= id 1) (murakumo-body-codepoint index)
+       (if (= id 2) (itonami-body-codepoint index)
+       (if (= id 3) (yataverse-body-codepoint index)
+       (if (= id 4) (aozora-body-codepoint index)
+       0)))))
+   :default nil)
+
+#?(:kotoba nil
+   :default
+   (defn app-title [id]
+     (case id
+       1 "Murakumo"
+       2 "Itonami"
+       3 "Yataverse"
+       4 "Aozora"
+       "")))
+
+#?(:kotoba nil
+   :default
+   (defn app-route-id [id]
+     (case id
+       1 :murakumo
+       2 :itonami
+       3 :yataverse
+       4 :aozora
+       nil)))
+
+#?(:kotoba nil
+   :default
+   (defn app-body [id]
+     (case id
+       1 "推論\n接続先未登録です"
+       2 "運用\n許可が必要です"
+       3 "データ保存\n接続先が未登録です"
+       4 "読書\n蔵書カタログが未登録です"
+       "")))

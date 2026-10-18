@@ -4,26 +4,42 @@ window.__aiueosUiEngine = "kotoba-lang/browser";
 window.__aiueosHostedAdapter = "html-js-verification-only";
 
 function viewId() {
-  var raw = location.hash || "#session";
+  var raw = location.hash || "#desktop";
   var cut = raw.split("?")[0];
-  if (cut === "#" || cut === "#/" || cut === "") return "#session";
+  if (cut === "#" || cut === "#/" || cut === "") return "#desktop";
   if (cut.charAt(1) === "/") cut = "#" + cut.slice(2);
+  if (cut === "#operator") cut = "#itonami";
   return cut;
+}
+
+function syncChrome(h) {
+  var links = document.querySelectorAll(".session-nav a, .desktop-menu-link");
+  for (var i = 0; i < links.length; i++) {
+    var a = links[i];
+    if ((a.getAttribute("href") || "") === h) a.setAttribute("aria-current", "page");
+    else a.removeAttribute("aria-current");
+  }
+  var docks = document.querySelectorAll(".dock-app");
+  for (var j = 0; j < docks.length; j++) {
+    var d = docks[j];
+    if ((d.getAttribute("href") || "") === h) d.className = "dock-app is-active";
+    else d.className = "dock-app";
+  }
 }
 
 function show() {
   var h = viewId();
-  if (h === "#itonami") h = "#operator";
-  ["session", "desktop", "setup", "manage", "devices", "operator"].forEach(function (id) {
+  ["desktop", "murakumo", "itonami", "yataverse", "aozora", "session", "compositor", "setup", "manage", "devices"].forEach(function (id) {
     var el = document.getElementById(id);
     if (el) el.hidden = ("#" + id) !== h;
   });
+  syncChrome(h);
   if (h === "#manage") refreshStatus();
   if (h === "#devices") refreshDevices();
   if (h === "#setup") refreshSetup();
-  if (h === "#desktop") refreshDesktop();
-  if (h === "#session" || h === "#desktop") refreshGuest();
-  if (h === "#operator") refreshOperator();
+  if (h === "#compositor") refreshDesktop();
+  if (h === "#session") refreshGuest();
+  if (h === "#itonami") refreshOperator();
 }
 
 function pretty(x) {
@@ -437,6 +453,19 @@ async function runInfer() {
   el.textContent = pretty(await res.text());
 }
 
+async function runMurakumoApp() {
+  var el = document.getElementById("app-infer-out");
+  if (el) el.textContent = "murakumo-main へ推論を依頼しています…";
+  try {
+    var res = await fetch("/api/session/infer", {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: "{}"
+    });
+    if (el) el.textContent = pretty(await res.text());
+  } catch (e) {
+    if (el) el.textContent = String(e);
+  }
+}
+
 
 async function refreshGuest() {
   var el = document.getElementById("guest-out");
@@ -524,6 +553,8 @@ document.getElementById("start-phone-scan").addEventListener("click", function (
 document.getElementById("cycle").addEventListener("click", cycle);
 document.getElementById("read-cid").addEventListener("click", readCid);
 document.getElementById("run-infer").addEventListener("click", runInfer);
+var appInfer = document.getElementById("app-run-infer");
+if (appInfer) appInfer.addEventListener("click", runMurakumoApp);
 document.getElementById("run-guest").addEventListener("click", runGuest);
 document.getElementById("deny-guest").addEventListener("click", denyGuest);
 var runOp = document.getElementById("run-operator");

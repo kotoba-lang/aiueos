@@ -1,0 +1,90 @@
+(ns aiueos.session.native-desktop
+  "AIUEOS app catalog and Browser-owned desktop session.
+
+   This path uses Kotoba Browser's surface and input reducers directly. It has
+   no DOM script dependency; the embedding host supplies only a frame/input
+   backend."
+  (:require [aiueos.session.route :as route]
+            [browser.desktop-backend :as desktop-backend]
+            [browser.surface :as surface]))
+
+(def ^:private app-window-rects
+  {:murakumo [170 90 760 500]
+   :itonami [200 110 720 460]
+   :yataverse [230 130 680 420]
+   :aozora [260 150 640 400]})
+
+(def app-catalog
+  (mapv (fn [{:keys [id label icon body]}]
+          (let [rect (get app-window-rects id)]
+            {:app/id (name id)
+             :app/title label
+             :app/icon icon
+             :app/default-rect rect
+             :app/document [:main {:class "app-document"}
+                            [:h1 label]
+                            [:p body]]}))
+        route/app-entries))
+
+(defn desktop-surface
+  ([] (desktop-surface {}))
+  ([{:keys [viewport]}]
+   (reduce surface/register-app
+           (surface/empty-surface {:id "aiueos"
+                                   :title "AIUEOS"
+                                   :viewport (or viewport [1280 800])})
+           app-catalog)))
+
+(defn- render-desktop
+  [session]
+  (let [frame (desktop-backend/surface-frame (:desktop session)
+                                             (:surface session))
+        presented (desktop-backend/present (:desktop session) frame)
+        session (assoc session :desktop (:desktop presented))]
+    {:session session
+     :frame (get-in session [:desktop :desktop/last-frame])
+     :effects (:effects presented)}))
+
+(defn start-desktop
+  "Start the AIUEOS shell through Kotoba Browser's versioned desktop backend.
+
+   The caller receives an initial retained frame and a :frame/present effect;
+   a display host presents it and feeds normalized input to dispatch-desktop-input."
+  [{:keys [viewport] :as opts}]
+  (render-desktop
+   {:desktop (desktop-backend/empty-desktop
+              {:viewport (or viewport [1280 800])
+               :workspace-id "aiueos"})
+    :surface (desktop-surface opts)}))
+
+(defn dispatch-desktop-input
+  "Reduce one host event, then return the new retained frame and its
+   :frame/present effect through Browser desktop-backend v1."
+  [session event]
+  (let [reduced (desktop-backend/consume-input
+                 (:desktop session) (:surface session) event)
+        presented (render-desktop
+                   (assoc session
+                          :desktop (:desktop reduced)
+                          :surface (:surface reduced)))]
+    (assoc presented
+           :event (:event reduced)
+           :actions (:actions reduced))))
+
+(defn start-session
+  "Start the configured AIUEOS native entrypoint through Browser desktop v1.
+
+   The returned session owns the app catalog, windows, and retained frame.
+   The host handles only :frame/present and normalized input events."
+  [opts]
+  (start-desktop opts))
+
+(defn launch-app
+  [session app-id]
+  (render-desktop
+   (update session :surface surface/apply-action
+           {:action :app/launch :app-id app-id})))
+
+(defn dispatch-input
+  [session event]
+  (dispatch-desktop-input session event))

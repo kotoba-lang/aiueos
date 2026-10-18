@@ -3,6 +3,7 @@
 
 import hashlib
 import json
+import os
 import pathlib
 import struct
 import sys
@@ -10,8 +11,14 @@ import sys
 elf = pathlib.Path(sys.argv[1])
 source = pathlib.Path(sys.argv[2])
 compiler_commit = sys.argv[3]
-receipt = pathlib.Path(sys.argv[4])
-sources = [source] + [pathlib.Path(value) for value in sys.argv[5:]]
+if len(sys.argv) >= 6 and len(sys.argv[4]) == 64:
+    compiler_worktree_sha256 = sys.argv[4]
+    receipt = pathlib.Path(sys.argv[5])
+    sources = [source] + [pathlib.Path(value) for value in sys.argv[6:]]
+else:
+    compiler_worktree_sha256 = None
+    receipt = pathlib.Path(sys.argv[4])
+    sources = [source] + [pathlib.Path(value) for value in sys.argv[5:]]
 data = elf.read_bytes()
 if data[:7] != b"\x7fELF\x02\x01\x01":
     raise SystemExit("error: RT kernel is not ELF64 little-endian")
@@ -44,13 +51,17 @@ for forbidden in (b".interp", b".dynamic", b".dynsym", b"NEEDED", b"libc"):
     if forbidden in data:
         raise SystemExit("error: dynamic/C runtime dependency found")
 payload = {
-    "format": "aiueos-kotoba-native-rt-functional-receipt/v1",
+    "format": "aiueos-kotoba-native-rt-functional-receipt/v2" if compiler_worktree_sha256 else "aiueos-kotoba-native-rt-functional-receipt/v1",
     "target": "x86_64-aiueos-kernel-v1",
     "timing_profile": "logical-qemu-unqualified",
     "rtos_qualified": False,
     "runtime_linux": False, "runtime_jvm": False, "runtime_gc": False,
     "hosted_adapters": False,
     "compiler_commit": compiler_commit,
+    **({"compiler_binary_sha256": os.environ["AIUEOS_AMU_SELFHOST_BINARY_SHA256"]}
+       if "AIUEOS_AMU_SELFHOST_BINARY_SHA256" in os.environ else {}),
+    **({"compiler_worktree_sha256": compiler_worktree_sha256}
+       if compiler_worktree_sha256 else {}),
     "sources": {item.name: hashlib.sha256(item.read_bytes()).hexdigest()
                 for item in sources},
     "artifact_sha256": hashlib.sha256(data).hexdigest(),

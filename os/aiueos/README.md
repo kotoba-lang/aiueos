@@ -3,6 +3,66 @@
 This directory contains the Linux-independent aiueos boot path owned by the
 canonical `kotoba-lang/aiueos` OS repository.
 
+## Kotoba Browser desktop profile
+
+The default Amu boot build now produces a C-free desktop kernel:
+
+```sh
+AIUEOS_AMU_SELFHOST_BIN=/path/to/native/amu \
+  sh os/aiueos/scripts/build-kotoba-native-boot.sh /path/to/kotoba-lang/amu
+```
+
+Amu compiles `native/desktop.kotoba`, and the UEFI loader embeds the
+`aiueos-16.fnt` payload and passes GOP framebuffer geometry to the kernel.
+`aiueos.browser-frame2` owns the retained desktop frame and app windows; the
+Kotoba kernel rasterizes those frame operations into the framebuffer. The
+launcher and bottom dock list Murakumo, Itonami, Yataverse, and Aozora.
+Windows open in a centered cascade. Clicking either launcher opens an app or
+raises its existing window; clicking a window focuses and raises it, and its
+titlebar moves it while held. Its close control closes the window. Keyboard
+keys `1` through `4` also launch the apps, Tab cycles through open windows,
+and Escape closes the focused window. The desktop uses the PS/2 pointer when
+the firmware exposes that controller.
+
+The build writes a desktop-kernel receipt and a boot-image receipt, then
+repeats compilation and packaging to check byte-for-byte reproducibility. That
+proves the C-free artifact and loader contracts; it does not by itself prove a
+QEMU or physical boot. The build now requires an explicit native Amu executable
+through `AIUEOS_AMU_SELFHOST_BIN`, rejects script launchers such as `bin/amu`,
+and records the compiler executable SHA-256 in both receipts. The available
+native seed compiler is AArch64-only and runs through a C bootstrap loader, so
+it does not satisfy the fully selfhosted x86-64 build requirement. The AIUEOS
+selfhost build therefore remains blocked until Amu can provide a standalone
+compiler artifact that admits this target. Set `AIUEOS_NATIVE_PROFILE=kernel`
+to build the separate network and memory qualification kernel instead. Set
+`AIUEOS_NATIVE_DESKTOP_OUT=/path` to choose a fresh output directory.
+The shell build wrappers and Python ELF/PE receipt auditors are still host-side
+tools; the guest/kernel source is Kotoba, but the complete build-and-audit
+toolchain is not yet Kotoba/Amu selfhost.
+
+The available Amu selfhost image checks the standalone Kotoba desktop modules
+and now admits `browser.text-edit` with its explicit export map. It cannot lock
+the multi-module graph (`module-lock` is not implemented in that image) or
+compile this x86-64 target (the compiler only admits its loaded native ISA).
+The full Browser graph remains unresolved: `browser.surface` reaches
+`cssom.core`/`cssom.layout` and fails project linking with `invalid constant
+name`; a minimal probe confirms private `def` metadata can trigger that
+diagnostic, but the remaining module-wide cause is not yet localized.
+The direct legacy `kotoba.wasm.dom.cljk` file still has top-level forms this
+selfhost reader does not admit. Its dependency checkout now also has a typed
+`dom.kotoba`/`dom_core.kotoba` source pair, and the Amu project resolver prefers
+`.kotoba` over `.cljk`; inclusion of that pair in the complete Browser graph
+has not yet been measured.
+Until Amu can compile/link the shared Browser graph, the guest's
+`aiueos.browser-frame2` remains a behavior mirror rather than Browser/CSSOM
+output. The exact current native selfhost measurements are in
+`contracts/desktop-maturity-floors.edn`.
+
+The hosted app session uses Kotoba Browser's `browser.surface`, `browser.input`,
+and `cssom.layout`. The kernel path uses `aiueos.browser-frame2`, a separate
+Kotoba behavior mirror that emits framebuffer draw operations; shared Browser
+surface/CSSOM output is not yet transported to the kernel.
+
 ## Native target and current physical boundary
 
 The C-free hard-flip input is `native/kernel.kotoba`, compiled and packaged
@@ -1396,17 +1456,47 @@ Requirements are Zig 0.14 or newer and `qemu-system-x86_64` with an edk2/OVMF
 firmware image. Override firmware discovery with `OVMF_CODE=/path/to/code.fd`.
 
 The hard-flip path builds a separate kernel payload directly from Kotoba. It
-invokes no C compiler or linker, admits privileged x86-64 intrinsics only for
-the kernel target, reproduces the ELF byte-for-byte, rejects dynamic/foreign/C
-artifacts, and emits a dependency receipt:
+invokes Amu's `--jvm-free` compiler route, no C compiler or linker, admits
+privileged x86-64 intrinsics only for the kernel target, reproduces the ELF
+byte-for-byte, rejects dynamic/foreign/C artifacts, and emits a dependency
+receipt when the build completes. The receipt records the Amu commit and a hash
+of its tracked working tree diff, so an in-progress Amu change is distinguishable
+from a clean commit. On 2026-10-16, the default `browser-gop-desktop-v1` profile
+produced reproducible C-free kernel and UEFI images, and QEMU 10.0.3 reached
+the desktop. The default `build-kotoba-native-boot.sh` entrypoint produced
+byte-identical kernel and UEFI images in
+`build/aiueos-native-desktop-default-route-20261016T231500/`. Keyboard keys
+`1` through `4` opened the four app windows, and repeated Tab input moved focus
+across them; the QEMU receipt and screenshots are in
+`build/aiueos-native-desktop-20261016T154300/`. These runs were not physical
+boots.
+
+On 2026-10-17, a fresh `build-kotoba-native-desktop.sh` build using the current
+Amu `--jvm-free` route reproduced the C-free kernel and UEFI image. Manual QEMU
+10.0.3 input opened Murakumo, Itonami, Yataverse, and Aozora with keys `1` to
+`4`, and Tab changed focus. The 2026-10-17 UI v3 build also verifies that the
+four windows remain visible in stack order with edge-only shadows; its receipts
+and QEMU screenshots are in `build/aiueos-native-desktop-20261017-ui-v3/`.
+The captured app panels show their current offline/empty states; the run did
+not exercise app services, shared Browser surface/CSSOM transport, physical
+boot, or Amu selfhost.
+
+This is the Amu `--jvm-free` native driver running through its Node/nbb
+bootstrap launcher. It does not yet use an Amu-built compiler executable;
+the preserved native seed compiler has bounded project support but targets
+AArch64 and runs as a payload through a pinned C loader. It cannot produce this
+x86-64 AIUEOS profile through the requested C-free selfhost route. The verifier
+rejects C, CRT, JVM, and linker dependencies from the resulting guest
+artifacts. A C-free guest artifact and QEMU run do not qualify the host-side
+compiler as Amu selfhost.
 
 ```sh
-./os/aiueos/scripts/build-kotoba-native-kernel.sh /path/to/kotoba/compiler
-./os/aiueos/scripts/smoke-qemu-kotoba-native.sh /path/to/kotoba/compiler
+./os/aiueos/scripts/build-kotoba-native-kernel.sh /path/to/amu
+./os/aiueos/scripts/smoke-qemu-kotoba-native.sh /path/to/amu
 ```
 
-The C-free real-time functional slice is a separate Kotoba source and uses a
-pinned Amu compiler closure:
+The C-free real-time functional slice is a separate Kotoba source and uses the
+same Amu `--jvm-free` build entrypoint:
 
 ```sh
 ./os/aiueos/scripts/build-kotoba-rt-kernel.sh /path/to/amu
@@ -1431,7 +1521,7 @@ It is the compatibility boundary for all models, not evidence that every
 vendor ASIC or physical network has been tested. Unknown and proprietary
 transports fail closed until a bounded adapter and hardware receipt are added.
 
-`build-kotoba-native-boot.sh` asks the Kotoba compiler to embed that ELF in a
+`build-kotoba-native-boot.sh` asks Amu to embed that ELF in a
 position-independent PE32+ UEFI application. The compiler-generated loader
 uses only AllocatePages, CopyMem, GetMemoryMap, and
 ExitBootServices before entering the kernel. The hard-flip boot chain has no C,

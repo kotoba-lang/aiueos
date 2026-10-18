@@ -11,7 +11,7 @@
 
 (deftest kotoba-browser-is-the-os-ui-contract
   (is (= :kotoba-lang/browser (:aiueos.ui/engine contract)))
-  (is (= :kotoba-clj/wasm
+  (is (= :kotoba-browser/surface-session
          (get-in contract [:aiueos.ui/native-runtime :runtime])))
   (is (false? (get-in contract
                       [:aiueos.ui/hosted-adapter
