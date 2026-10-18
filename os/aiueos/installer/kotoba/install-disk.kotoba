@@ -1,0 +1,114 @@
+(ns aiueos.installer.install-disk
+  (:export [main]))
+
+;; install-to-disk on the selfhost substrate (owner direction 2026-10-18,
+;; Linear JUN-70 slice S2): the destructive half of the install chain with
+;; no node, nbb or npm. The DECISIONS are this program: the named target,
+;; the dry run first, the typed destructive phrase, the refusal names. The
+;; MECHANISM of byte movement and hashing is :process/spawn of the live
+;; environment's dd / sha256sum / stat -- the same "C marshals, Kotoba
+;; judges" rule the kernel follows.
+;;
+;; WHY not :fs/app-data streaming (MEASURED 2026-10-18): the static
+;; profile's string pool is a fixed ~64 KiB arena and the pair arena holds
+;; string handles, so reading or writing image-sized content through
+;; strings traps :budget/bytes {:arena :string-pool} (exit 124) on one
+;; 64 KiB file; a policy :budgets map does not reach the static packager.
+;; Spawn copies bytes outside the process; only the judgments run here.
+;;
+;; argv:
+;;   1  target device (canonical name; recorded nowhere else)
+;;   2  source image path
+;;   3  the destructive phrase the operator typed, verbatim ("" = ask on
+;;      stdin)
+;;   4  "install" to write; anything else is a DRY RUN and writes nothing
+;;
+;; The phrase is DERIVED here and compared exactly, as device-policy.mjs
+;; does: "ERASE " + <canonical device> + " FOR AIUEOS". A mismatch refuses
+;; with a named reason and the write never starts.
+;;
+;; Result line: 0 written and verified (or dry-run reported), 2 refused
+;; with AIUEOS_INSTALL_REFUSE <reason>, 3 nobody answered (an ask hit EOF).
+;; Device-level guards that stay with the QEMU gate: exclusive open,
+;; whole-disk inspection, second-disk rules, the target receipt.
+
+(defn emit [s :string] :string (typed-cap-call :io/write :string :string s))
+(defn stdin [s :string] :string (typed-cap-call :io/read :string :string s))
+(defn arg [i :string] :string (typed-cap-call :cli/args :string :string i))
+(defn spawn [s :string] :string (typed-cap-call :process/spawn :string :string s))
+
+(defn nl [] :string (string-substring "a
+b" 1 2))
+
+(defn sub [s :string i :i64 j :i64] :string
+  (let [n (string-byte-length s)]
+    (if (> j n) (sub s i n)
+      (if (>= i j) "" (string-substring s i j)))))
+
+(defn digit-value [c :string] :i64
+  (let [d (string-index-of "0123456789" c)]
+    (if (and (<= 0 d) (< d 10)) d -1)))
+
+(defn parse-u64-rec [s :string i :i64 n :i64 acc :i64] :i64
+  (if (= i n) acc
+    (let [d (digit-value (sub s i (+ i 1)))]
+      (if (< d 0) -1 (parse-u64-rec s (+ i 1) n (+ (* acc 10) d))))))
+
+(defn parse-u64 [s :string] :i64
+  (if (string=? s "") -1 (parse-u64-rec s 0 (string-byte-length s) 0)))
+
+(defn refuse [reason :string] :i64
+  (do (emit "AIUEOS_INSTALL_REFUSE ") (emit reason) (emit (nl)) 2))
+
+;; "ERASE <device> FOR AIUEOS" -- the phrase device-policy.mjs checks
+;; against, derived from the canonical device name, never typed into code.
+(defn destructive-phrase [device :string] :string
+  (string-concat "ERASE " (string-concat device " FOR AIUEOS")))
+
+(defn read-line-acc [acc :string] :string
+  (let [c (stdin "1")]
+    (if (string=? c "") acc
+      (if (string=? c (nl)) acc (read-line-acc (string-concat acc c))))))
+
+(defn ask-phrase [prompt :string] :string
+  (do (emit prompt)
+      (let [c (stdin "1")]
+        (if (string=? c "") "E" (read-line-acc c)))))
+
+;; ---- :process/spawn answers: "<exit>\n<stdout>" (capability-catalog) ----
+
+(defn spawn-exit [a :string] :i64
+  (let [p (string-index-of a (nl))]
+    (if (< p 0) -1 (parse-u64 (sub a 0 p)))))
+
+(defn spawn-out [a :string] :string
+  (let [p (string-index-of a (nl))]
+    (if (< p 0) "" (sub a (+ p 1) (string-byte-length a)))))
+
+;; stat -c %s <path>: the size in decimal, or -1.
+(defn first-line [s :string] :string
+  (let [p (string-index-of s (nl))]
+    (if (< p 0) s (sub s 0 p))))
+
+;; stat -c %s <path>: the size in decimal, or -1. stat ends its answer with
+;; a newline, so the line is cut before parsing (measured: parsing the raw
+;; output fails at the trailing newline).
+(defn size-of [p :string] :i64
+  (let [a (spawn (string-concat "stat" (string-concat "ARG_SEP-c" (string-concat "ARG_SEP%s" (string-concat "ARG_SEP" p)))))]
+    (if (= 0 (spawn-exit a)) (parse-u64 (first-line (spawn-out a))) -1)))
+
+;; sha256sum <path>: the 64-char hex digest, or "".
+(defn sha-of [p :string] :string
+  (let [a (spawn (string-concat "sha256sum" (string-concat "ARG_SEP" p)))]
+    (if (= 0 (spawn-exit a)) (sub (spawn-out a) 0 64) "")))
+
+(defn dd-request [src :string device :string] :string
+  (string-concat "dd"
+    (string-concat "ARG_SEPif="
+      (string-concat src
+        (string-concat "ARG_SEPof="
+          (string-concat device
+            (string-concat "ARG_SEPbs=1M" "ARG_SEPconv=fsync")))))))
+
+(defn main [] :i64
+  (let [device (arg "0") src (arg "1") given (arg "2") mode (arg "3")] (if (string=? device "") (refuse "no-device") (if (string=? src "") (refuse "no-image") (let [want (destructive-phrase device) size (size-of src)] (if (or (< size 0) (= size 0)) (refuse "image-missing-or-empty") (if (not (string=? mode "install")) (do (emit "AIUEOS_INSTALL_DRY_RUN ") (emit device) (emit " bytes=") (emit (string-from-i64 size)) (emit (nl)) (emit "to erase, re-run with the install flag and the phrase:") (emit (nl)) (emit "  ") (emit want) (emit (nl)) 0) (do (emit "Type the destructive phrase to proceed:") (emit (nl)) (let [typed (if (string=? given "") (ask-phrase "phrase: ") given)] (if (string=? typed "E") 3 (if (not (string=? typed want)) (refuse "destructive-phrase-mismatch") (let [w (spawn (dd-request src device))] (if (not (= 0 (spawn-exit w))) (refuse "write-failed") (let [hs (sha-of src) hd (sha-of device)] (if (or (string=? hs "") (string=? hd "")) (refuse "readback-hash-failed") (if (not (string=? hs hd)) (refuse "readback-mismatch") (do (emit "AIUEOS_INSTALL_WRITE_OK bytes=") (emit (string-from-i64 size)) (emit (nl)) (emit "AIUEOS_INSTALL_READBACK_OK sha256=") (emit hs) (emit (nl)) 0)))))))))))))))))
