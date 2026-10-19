@@ -148,6 +148,13 @@ b" 1 2))
 ;; install refuses while that marker is there -- the refusal touches
 ;; nothing. The window moves through the disk as one block, so no
 ;; image-sized content crosses the string pool.
+(defn dev-size-of [p :string] :i64
+  ;; stat -c %s is st_size and is 0 on a device node (measured: the receipt
+  ;; seek computed -1 on the NVMe). lsblk -bdno SIZE answers the device's
+  ;; bytes in decimal.
+  (let [a (spawn (string-concat "lsblk" (string-concat "ARG_SEP" (string-concat "-bdno" (string-concat "ARG_SEP" (string-concat "SIZE" (string-concat "ARG_SEP" p)))))))]
+    (if (= 0 (spawn-exit a)) (parse-u64 (first-line (spawn-out a))) -1)))
+
 (defn receipt-marker [] :string "AIUEOS-INSTALL-TARGET-RECEIPT-v1")
 (defn receipt-file [work :string] :string (string-concat work "/.aiueos-receipt"))
 (defn receipt-window [work :string] :string (string-concat work "/.aiueos-window"))
@@ -183,9 +190,9 @@ b" 1 2))
         (if (< vr 0) (refuse "readback-mismatch")
           (do (emit "AIUEOS_INSTALL_READBACK_OK pieces4k=") (emit (string-from-i64 (- e b))) (emit (nl)) 0)))
       (string=? mode "receipt-check")
-      (if (has-receipt? device work (size-of device)) (refuse "existing-install") 0)
+      (if (has-receipt? device work (dev-size-of device)) (refuse "existing-install") 0)
       (string=? mode "receipt-write")
-      (if (= 0 (write-receipt device work (size-of device)))
+      (if (= 0 (write-receipt device work (dev-size-of device)))
         (do (emit "AIUEOS_INSTALL_RECEIPT_OK") (emit (nl)) 0)
         (refuse "receipt-write-failed"))
-      :else (if (string=? device "") (refuse "no-device") (if (string=? src "") (refuse "no-image") (let [want (destructive-phrase device) size (size-of src) dev-size (size-of device)] (if (or (< size 0) (= size 0)) (refuse "image-missing-or-empty") (if (< dev-size 4096) (refuse "device-too-small") (if (not (string=? mode "install")) (do (emit "AIUEOS_INSTALL_DRY_RUN ") (emit device) (emit " bytes=") (emit (string-from-i64 size)) (emit (nl)) (emit "to erase, re-run with the install flag and the phrase:") (emit (nl)) (emit "  ") (emit want) (emit (nl)) 0) (do (emit "Type the destructive phrase to proceed:") (emit (nl)) (let [typed (if (string=? given "") (ask-phrase "phrase: ") given)] (if (string=? typed "E") 3 (if (not (string=? typed want)) (refuse "destructive-phrase-mismatch") (if (has-receipt? device work dev-size) (refuse "existing-install") (let [w (spawn (dd-request src device))] (if (not (= 0 (spawn-exit w))) (refuse "write-failed") (do (emit "AIUEOS_INSTALL_WRITE_OK bytes=") (emit (string-from-i64 size)) (emit (nl)) (let [total-blk (quot size 4096) tail (- size (* total-blk 4096)) vr (verify-pieces src device 0 total-blk tail)] (if (< vr 0) (refuse "readback-mismatch") (if (not (= 0 (write-receipt device work dev-size))) (refuse "receipt-write-failed") (do (emit "AIUEOS_INSTALL_READBACK_OK pieces4k=") (emit (string-from-i64 total-blk)) (emit (nl)) (emit "AIUEOS_INSTALL_RECEIPT_OK") (emit (nl)) 0)))))))))))))))))))))
+      :else (if (string=? device "") (refuse "no-device") (if (string=? src "") (refuse "no-image") (let [want (destructive-phrase device) size (size-of src) dev-size (size-of device)] (if (or (< size 0) (= size 0)) (refuse "image-missing-or-empty") (if (< dev-size 4096) (refuse "device-too-small") (if (not (string=? mode "install")) (do (emit "AIUEOS_INSTALL_DRY_RUN ") (emit device) (emit " bytes=") (emit (string-from-i64 size)) (emit (nl)) (emit "to erase, re-run with the install flag and the phrase:") (emit (nl)) (emit "  ") (emit want) (emit (nl)) 0) (do (emit "Type the destructive phrase to proceed:") (emit (nl)) (let [typed (if (string=? given "") (ask-phrase "phrase: ") given)] (if (string=? typed "E") 3 (if (not (string=? typed want)) (refuse "destructive-phrase-mismatch") (if (has-receipt? device work (dev-size-of device)) (refuse "existing-install") (let [w (spawn (dd-request src device))] (if (not (= 0 (spawn-exit w))) (refuse "write-failed") (do (emit "AIUEOS_INSTALL_WRITE_OK bytes=") (emit (string-from-i64 size)) (emit (nl)) (let [total-blk (quot size 4096) tail (- size (* total-blk 4096)) vr (verify-pieces src device 0 total-blk tail)] (if (< vr 0) (refuse "readback-mismatch") (if (not (= 0 (write-receipt device work (dev-size-of device)))) (refuse "receipt-write-failed") (do (emit "AIUEOS_INSTALL_READBACK_OK pieces4k=") (emit (string-from-i64 total-blk)) (emit (nl)) (emit "AIUEOS_INSTALL_RECEIPT_OK") (emit (nl)) 0)))))))))))))))))))))
