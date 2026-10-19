@@ -239,7 +239,10 @@ if [ -x ./guided-core.elf ]; then
   # working. Typing AT the screen still needs the tty0 input half
   # (tracked for I7).
   mkfifo /run/aiueos-installer/.console
-  ( ./guided-core.elf install /run/aiueos-installer/install-answers.json "" "" -1 ""     /run/aiueos-installer/install-live.elf /run/aiueos-installer/install-disk.elf     /payload/RELEASE.IMG < /dev/console > /run/aiueos-installer/.console 2>&1; echo $? > /run/aiueos-installer/.rc ) &
+  ( { ./guided-core.elf install /run/aiueos-installer/install-answers.json "" "" -1 ""     /run/aiueos-installer /run/aiueos-installer/install-disk.elf     /payload/RELEASE.IMG < /dev/console
+      echo AIUEOS_LIVE_HANDOVER install-live.elf
+      ./install-live.elf "" /payload/RELEASE.IMG /run/aiueos-installer/install-answers.json.match /run/aiueos-installer /run/aiueos-installer/install-disk.elf "" < /dev/console
+    } > /run/aiueos-installer/.console 2>&1; echo $? > /run/aiueos-installer/.rc ) &
   tee /dev/tty0 < /run/aiueos-installer/.console
   rc=$(cat /run/aiueos-installer/.rc)
 else

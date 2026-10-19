@@ -203,23 +203,25 @@ b" 1 2))
 
 ;; ---- hand the write to install-disk ------------------------------------
 
-(defn run-install [installer :string device :string image :string typed :string] :i64
-  (let [a (spawn (string-concat installer (string-concat "ARG_SEP" (string-concat device (string-concat "ARG_SEP" (string-concat image (string-concat "ARG_SEP" (string-concat typed (string-concat "ARG_SEP" "install")))))))))]
-    (do (emit (spawn-out a))
-        (spawn-exit a))))
+(defn fsq [s :string] :string (typed-cap-call :fs/app-data :string :string s))
+
+;; ---- the flat phase chain (JUN-70) --------------------------------------
+;; install-live runs as its OWN command under init (not a spawn child), so
+;; it has no wall and a fresh pair arena; every phase it spawns is short
+;; (the substrate kills a spawn child at 10 s -- measured 2026-10-19: the
+;; nested chain lost every marker to that wall, and the screens+phases in
+;; one process exhausted the pair arena instead).
+(defn disk-phase [disk-elf :string device :string src :string work :string mode :string e1 :string e2 :string] :string
+  (spawn (string-concat (string-concat (string-concat (string-concat disk-elf "ARG_SEP") (string-concat device "ARG_SEP")) (string-concat (string-concat src "ARG_SEP") (string-concat "-" "ARG_SEP"))) (string-concat (string-concat (string-concat mode "ARG_SEP") (string-concat work "ARG_SEP")) (string-concat (string-concat e1 "ARG_SEP") e2)))))
+
+(defn phase-failed? [out :string] :bool (string-contains? out "AIUEOS_INSTALL_REFUSE"))
+
+(defn verify-loop [disk-elf :string device :string src :string work :string blk :i64 end :i64] :i64
+  (if (>= blk end) 0
+    (let [n (if (< (+ blk 512) end) 512 (- end blk))
+          out (disk-phase disk-elf device src work "verify" (string-from-i64 blk) (string-from-i64 (+ blk n)))]
+      (if (phase-failed? out) -1
+        (do (emit out) (verify-loop disk-elf device src work (+ blk n) end))))))
 
 (defn main [] :i64
-  (let [records-arg (arg "0") image (arg "1") model (arg "2") tran (arg "3")
-        lo (parse-u64 (arg "4")) hi (parse-u64 (arg "5")) serial (arg "6") installer (arg "7")]
-    (if (string=? image "") (refuse "no-image")
-      (let [records (if (string=? records-arg "") (probe-disks) records-arg)]
-        (if (string=? records "") (refuse "probe-empty")
-          (let [d (derive records model tran lo hi serial)]
-            (if (r-tag d) (refuse (r-of d))
-              (let [rec (v-of d) device (field rec 1)]
-                (do (emit "AIUEOS_LIVE_TARGET ") (emit device) (emit (nl))
-                    (emit "Type the destructive phrase to proceed:") (emit (nl))
-                    (let [want (destructive-phrase device) typed (if (string=? (arg "8") "") (ask-phrase "phrase: ") (arg "8"))]
-                      (if (string=? typed "E") 3
-                        (if (not (string=? typed want)) (refuse "destructive-phrase-mismatch")
-                          (run-install installer device image typed)))))))))))))
+  (let [records-arg (arg "0") image (arg "1") matchfile (arg "2") work (arg "3") disk-elf (arg "4") given (arg "5")] (if (string=? image "") (refuse "no-image") (let [mf (fsq matchfile) mmodel (field mf 0) mtran (field mf 1) lo (parse-u64 (field mf 2)) hi (parse-u64 (field mf 3)) mserial (field mf 4) records (if (string=? records-arg "") (probe-disks) records-arg)] (if (string=? mf "") (refuse "match-missing") (if (string=? records "") (refuse "probe-empty") (let [d (derive records mmodel mtran lo hi mserial)] (if (r-tag d) (refuse (r-of d)) (let [rec (v-of d) device (field rec 1)] (do (emit "AIUEOS_LIVE_TARGET ") (emit device) (emit (nl)) (let [typed (if (string=? given "") (ask-phrase "phrase: ") given)] (if (string=? typed "E") 3 (if (not (string=? typed (destructive-phrase device))) (refuse "destructive-phrase-mismatch") (let [ck (disk-phase disk-elf device image work "receipt-check" "" "")] (if (phase-failed? ck) (do (emit ck) 2) (let [w (disk-phase disk-elf device image work "write" "" "")] (if (phase-failed? w) (do (emit w) 2) (do (emit w) (let [vr (verify-loop disk-elf device image work 0 (quot (size-of image) 4096))] (if (< vr 0) (refuse "readback-mismatch") (let [rq (disk-phase disk-elf device image work "receipt-write" "" "")] (if (phase-failed? rq) (do (emit rq) 2) (do (emit rq) 0)))))))))))))))))))))))
