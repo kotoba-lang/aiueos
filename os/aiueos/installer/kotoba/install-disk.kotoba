@@ -138,7 +138,31 @@ b" 1 2))
       (string-concat src
         (string-concat "ARG_SEPof="
           (string-concat device
-            (string-concat "ARG_SEPbs=1M" "ARG_SEPconv=fsync")))))))
+            (string-concat "ARG_SEPbs=1M" "ARG_SEPconv=fsync,notrunc")))))))
 
+(defn fsq [s :string] :string (typed-cap-call :fs/app-data :string :string s))
+
+;; ---- the target receipt (install-v1.edn repeat safety; JUN-70 S3a) -------
+;; After a verified install a receipt block is written into the target's
+;; LAST 4096-byte block (the shape install.mjs leaves behind), and a later
+;; install refuses while that marker is there -- the refusal touches
+;; nothing. The window moves through the disk as one block, so no
+;; image-sized content crosses the string pool.
+(defn receipt-marker [] :string "AIUEOS-INSTALL-TARGET-RECEIPT-v1")
+(defn receipt-file [work :string] :string (string-concat work "/.aiueos-receipt"))
+(defn receipt-window [work :string] :string (string-concat work "/.aiueos-window"))
+
+(defn extract-block [dev :string out :string block :i64] :i64
+  (spawn-exit (spawn (string-concat (string-concat (string-concat (string-concat "dd" "ARG_SEPif=") (string-concat dev "ARG_SEPof=")) (string-concat (string-concat out "ARG_SEPbs=4096") (string-concat "ARG_SEPskip=" (string-from-i64 block)))) "ARG_SEPcount=1"))))
+
+(defn has-receipt? [dev :string work :string size :i64] :bool
+  (if (not (= 0 (extract-block dev (receipt-window work) (- (quot size 4096) 1)))) false
+    (let [w (fsq (string-concat (receipt-window work) "RANGE_SEP0:64"))]
+      (if (string=? w "") false (string-contains? w (receipt-marker))))))
+
+(defn write-receipt [dev :string work :string size :i64] :i64
+  (let [body (string-concat (string-concat (string-concat (receipt-marker) (nl)) (string-concat "size=" (string-from-i64 size))) (nl))
+        w (fsq (string-concat (receipt-file work) (string-concat "WRITE_SEP" body)))]
+    (if (not (string=? w body)) -1 (spawn-exit (spawn (string-concat (string-concat (string-concat (string-concat "dd" "ARG_SEPif=") (string-concat (receipt-file work) "ARG_SEPof=")) (string-concat (string-concat dev "ARG_SEPbs=4096") (string-concat "ARG_SEPseek=" (string-from-i64 (- (quot size 4096) 1))))) (string-concat "ARG_SEPcount=1" "ARG_SEPconv=notrunc")))))))
 (defn main [] :i64
-  (let [device (arg "0") src (arg "1") given (arg "2") mode (arg "3")] (if (string=? device "") (refuse "no-device") (if (string=? src "") (refuse "no-image") (let [want (destructive-phrase device) size (size-of src)] (if (or (< size 0) (= size 0)) (refuse "image-missing-or-empty") (if (not (string=? mode "install")) (do (emit "AIUEOS_INSTALL_DRY_RUN ") (emit device) (emit " bytes=") (emit (string-from-i64 size)) (emit (nl)) (emit "to erase, re-run with the install flag and the phrase:") (emit (nl)) (emit "  ") (emit want) (emit (nl)) 0) (do (emit "Type the destructive phrase to proceed:") (emit (nl)) (let [typed (if (string=? given "") (ask-phrase "phrase: ") given)] (if (string=? typed "E") 3 (if (not (string=? typed want)) (refuse "destructive-phrase-mismatch") (let [w (spawn (dd-request src device))] (if (not (= 0 (spawn-exit w))) (refuse "write-failed") (do (emit "AIUEOS_INSTALL_WRITE_OK bytes=") (emit (string-from-i64 size)) (emit (nl)) (let [total-blk (quot size 4096) tail (- size (* total-blk 4096)) vr (verify-pieces src device 0 total-blk tail)] (if (< vr 0) (refuse "readback-mismatch") (do (emit "AIUEOS_INSTALL_READBACK_OK pieces4k=") (emit (string-from-i64 total-blk)) (emit (nl)) 0)))))))))))))))))
+  (let [device (arg "0") src (arg "1") given (arg "2") mode (arg "3") work (arg "4")] (if (string=? device "") (refuse "no-device") (if (string=? src "") (refuse "no-image") (let [want (destructive-phrase device) size (size-of src) dev-size (size-of device)] (if (or (< size 0) (= size 0)) (refuse "image-missing-or-empty") (if (< dev-size 4096) (refuse "device-too-small") (if (not (string=? mode "install")) (do (emit "AIUEOS_INSTALL_DRY_RUN ") (emit device) (emit " bytes=") (emit (string-from-i64 size)) (emit (nl)) (emit "to erase, re-run with the install flag and the phrase:") (emit (nl)) (emit "  ") (emit want) (emit (nl)) 0) (do (emit "Type the destructive phrase to proceed:") (emit (nl)) (let [typed (if (string=? given "") (ask-phrase "phrase: ") given)] (if (string=? typed "E") 3 (if (not (string=? typed want)) (refuse "destructive-phrase-mismatch") (if (has-receipt? device work dev-size) (refuse "existing-install") (let [w (spawn (dd-request src device))] (if (not (= 0 (spawn-exit w))) (refuse "write-failed") (do (emit "AIUEOS_INSTALL_WRITE_OK bytes=") (emit (string-from-i64 size)) (emit (nl)) (let [total-blk (quot size 4096) tail (- size (* total-blk 4096)) vr (verify-pieces src device 0 total-blk tail)] (if (< vr 0) (refuse "readback-mismatch") (if (not (= 0 (write-receipt device work dev-size))) (refuse "receipt-write-failed") (do (emit "AIUEOS_INSTALL_READBACK_OK pieces4k=") (emit (string-from-i64 total-blk)) (emit (nl)) (emit "AIUEOS_INSTALL_RECEIPT_OK") (emit (nl)) 0))))))))))))))))))))
