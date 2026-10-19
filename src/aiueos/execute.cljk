@@ -204,8 +204,17 @@
      `memory.grow` call can reach is capped, to
      `min(manifest-limit, module's-own-declared-max)`."
      [module manifest-limit]
-     (let [own-limits (.limits (.getMemory (.get (.memorySection module)) 0))]
-       (MemoryLimits. (.initialPages own-limits) (min manifest-limit (.maximumPages own-limits))))))
+     (let [ms (.memorySection module)]
+       (if (.isPresent ms)
+         (let [own-limits (.limits (.getMemory (.get ms) 0))]
+           (MemoryLimits. (.initialPages own-limits) (min manifest-limit (.maximumPages own-limits))))
+         ;; A module with no memory section (a pure computation guest) has
+         ;; nothing to grow: zero initial pages, capped at the manifest limit.
+         ;; Measured 2026-10-19: `amu compile --target wasm32-browser` output
+         ;; for a `:effects #{}` guest declares no memory section, and
+         ;; `(.get (.memorySection module))` threw NoSuchElementException
+         ;; before any guest code ran (itonami dapp bundles, JUN-116).
+         (MemoryLimits. 0 manifest-limit)))))
 
 #?(:clj
    (defn- device-access-stub
