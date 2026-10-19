@@ -98,9 +98,36 @@ b" 1 2))
     (if (= 0 (spawn-exit a)) (parse-u64 (first-line (spawn-out a))) -1)))
 
 ;; sha256sum <path>: the 64-char hex digest, or "".
-(defn sha-of [p :string] :string
+(defn piece-hash [p :string] :string
   (let [a (spawn (string-concat "sha256sum" (string-concat "ARG_SEP" p)))]
     (if (= 0 (spawn-exit a)) (sub (spawn-out a) 0 64) "")))
+
+;; dd one piece to /tmp: bs=4096 SKIP COUNT, or bs=1 SKIP COUNT for the
+;; tail (the tail must extract EXACTLY the same byte count on both sides).
+(defn extract-piece [path :string out :string skip :i64 count :i64 tail? :bool] :i64
+  (let [bs (if tail? "ARG_SEPbs=1" "ARG_SEPbs=4096")
+        req (string-concat (string-concat (string-concat (string-concat "dd" "ARG_SEPif=") (string-concat path "ARG_SEPof=")) (string-concat (string-concat out bs) (string-concat "ARG_SEPskip=" (string-from-i64 skip)))) (string-concat "ARG_SEPcount=" (string-from-i64 count)))]
+    (spawn-exit (spawn req))))
+
+(defn verify-tail [src :string dev :string skip :i64 tail :i64] :i64
+  (if (not (= 0 (extract-piece src "/tmp/aiueos-src.p" skip tail true))) -1
+    (if (not (= 0 (extract-piece dev "/tmp/aiueos-dev.p" skip tail true))) -1
+      (let [h1 (piece-hash "/tmp/aiueos-src.p") h2 (piece-hash "/tmp/aiueos-dev.p")]
+        (if (or (string=? h1 "") (not (string=? h1 h2))) -1 0)))))
+
+;; readback verification in 8 MiB pieces (2048 blocks of 4096), then the
+;; tail. One spawn gets 10 s (capability-catalog) and a whole-image
+;; sha256sum of 64 MiB exceeds that under QEMU TCG -- measured 2026-10-19:
+;; dd wrote 64 records and then sha256sum hit :spawn/timeout. Pieces keep
+;; every child far inside the deadline on any host.
+(defn verify-pieces [src :string dev :string blk :i64 total-blk :i64 tail :i64] :i64
+  (if (>= blk total-blk) (verify-tail src dev (* total-blk 4096) tail)
+    (let [n (if (< (+ blk 2048) total-blk) 2048 (- total-blk blk))]
+      (if (not (= 0 (extract-piece src "/tmp/aiueos-src.p" blk n false))) -1
+        (if (not (= 0 (extract-piece dev "/tmp/aiueos-dev.p" blk n false))) -1
+          (let [h1 (piece-hash "/tmp/aiueos-src.p") h2 (piece-hash "/tmp/aiueos-dev.p")]
+            (if (or (string=? h1 "") (not (string=? h1 h2))) -1
+              (verify-pieces src dev (+ blk n) total-blk tail))))))))
 
 (defn dd-request [src :string device :string] :string
   (string-concat "dd"
@@ -111,4 +138,4 @@ b" 1 2))
             (string-concat "ARG_SEPbs=1M" "ARG_SEPconv=fsync")))))))
 
 (defn main [] :i64
-  (let [device (arg "0") src (arg "1") given (arg "2") mode (arg "3")] (if (string=? device "") (refuse "no-device") (if (string=? src "") (refuse "no-image") (let [want (destructive-phrase device) size (size-of src)] (if (or (< size 0) (= size 0)) (refuse "image-missing-or-empty") (if (not (string=? mode "install")) (do (emit "AIUEOS_INSTALL_DRY_RUN ") (emit device) (emit " bytes=") (emit (string-from-i64 size)) (emit (nl)) (emit "to erase, re-run with the install flag and the phrase:") (emit (nl)) (emit "  ") (emit want) (emit (nl)) 0) (do (emit "Type the destructive phrase to proceed:") (emit (nl)) (let [typed (if (string=? given "") (ask-phrase "phrase: ") given)] (if (string=? typed "E") 3 (if (not (string=? typed want)) (refuse "destructive-phrase-mismatch") (let [w (spawn (dd-request src device))] (if (not (= 0 (spawn-exit w))) (refuse "write-failed") (let [hs (sha-of src) hd (sha-of device)] (if (or (string=? hs "") (string=? hd "")) (refuse "readback-hash-failed") (if (not (string=? hs hd)) (refuse "readback-mismatch") (do (emit "AIUEOS_INSTALL_WRITE_OK bytes=") (emit (string-from-i64 size)) (emit (nl)) (emit "AIUEOS_INSTALL_READBACK_OK sha256=") (emit hs) (emit (nl)) 0)))))))))))))))))
+  (let [device (arg "0") src (arg "1") given (arg "2") mode (arg "3")] (if (string=? device "") (refuse "no-device") (if (string=? src "") (refuse "no-image") (let [want (destructive-phrase device) size (size-of src)] (if (or (< size 0) (= size 0)) (refuse "image-missing-or-empty") (if (not (string=? mode "install")) (do (emit "AIUEOS_INSTALL_DRY_RUN ") (emit device) (emit " bytes=") (emit (string-from-i64 size)) (emit (nl)) (emit "to erase, re-run with the install flag and the phrase:") (emit (nl)) (emit "  ") (emit want) (emit (nl)) 0) (do (emit "Type the destructive phrase to proceed:") (emit (nl)) (let [typed (if (string=? given "") (ask-phrase "phrase: ") given)] (if (string=? typed "E") 3 (if (not (string=? typed want)) (refuse "destructive-phrase-mismatch") (let [w (spawn (dd-request src device))] (if (not (= 0 (spawn-exit w))) (refuse "write-failed") (do (emit "AIUEOS_INSTALL_WRITE_OK bytes=") (emit (string-from-i64 size)) (emit (nl)) (let [total-blk (quot size 4096) tail (- size (* total-blk 4096)) vr (verify-pieces src device 0 total-blk tail)] (if (< vr 0) (refuse "readback-mismatch") (do (emit "AIUEOS_INSTALL_READBACK_OK pieces4k=") (emit (string-from-i64 total-blk)) (emit (nl)) 0)))))))))))))))))
