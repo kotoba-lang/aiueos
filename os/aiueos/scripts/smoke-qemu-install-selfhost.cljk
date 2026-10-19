@@ -169,41 +169,44 @@
 ;; ------------------------------------------------------------ the VM run --
 ;; serial to a file, answers to stdin when each prompt appears.
 
-(def qemu-args
+(defn- qemu-args [vars-file]
   ["-machine" "q35" "-m" "2048" "-smp" "2"
    "-drive" (str "if=pflash,format=raw,readonly=on,file=" ovmf)
-   "-drive" (str "if=pflash,format=raw,file=" (.join path gate-dir "vars.fd"))
+   "-drive" (str "if=pflash,format=raw,file=" vars-file)
    "-drive" (str "if=none,id=stick,file=" stick ",format=raw,readonly=on")
    "-device" "qemu-xhci" "-device" "usb-storage,drive=stick"
    "-drive" (str "if=none,id=nvme0,file=" nvme-img ",format=raw")
    "-device" "nvme,drive=nvme0,serial=AIUEOSGATE1"
    "-display" "none" "-serial" "stdio" "-no-reboot"])
 
-;; stdio is the console and it is BIDIRECTIONAL: a file: chardev carries
-;; output only, so answers could never reach the guest (measured
-;; 2026-10-19). stdout is mirrored into serial.log as the evidence trail.
 (def serial-buf (atom ""))
-(def child (.spawn cp qemu (to-array qemu-args) (clj->js {:stdio ["pipe" "pipe" "ignore"]})))
-(.on (.-stdout child) "data"
-     (fn [d] (swap! serial-buf str d) (.appendFileSync fs serial-log d)))
+(def child (atom nil))
+
+(defn- start-vm! [vars-file]
+  (.copyFileSync fs ovmf-vars-template vars-file)
+  (reset! serial-buf "")
+  (let [c (.spawn cp qemu (to-array (qemu-args vars-file))
+                  (clj->js {:stdio ["pipe" "pipe" "ignore"]}))]
+    (reset! child c)
+    (.on (.-stdout c) "data"
+         (fn [d] (swap! serial-buf str d) (.appendFileSync fs serial-log d)))
+    true))
 
 (defn- serial-text [] @serial-buf)
 
-(def deadline (+ (.now js/Date) (* 900 1000)))
-
-;; Everything after spawn is ASYNC: a synchronous sleep (Atomics.wait)
-;; blocks Node's event loop, the stdout "data" handler can never run, the
-;; pipe fills, and QEMU wedges at ~0% CPU with no output at all (all three
-;; measured 2026-10-19). Promises + setTimeout keep the loop draining.
+(def deadline (atom 0))
 
 (defn- await-prompt [needle]
+  ;; Everything after spawn is ASYNC: a synchronous sleep blocks Node's
+  ;; event loop, the stdout handler can never run, the pipe fills, and
+  ;; QEMU wedges at ~0% CPU with no output (all measured 2026-10-19).
   (js/Promise.
     (fn [resolve reject]
       (letfn [(tick []
                 (let [t (serial-text)]
                   (cond
                     (str/includes? t needle) (resolve true)
-                    (> (.now js/Date) deadline)
+                    (> (.now js/Date) @deadline)
                     (reject (js/Error.
                               (str "timed out waiting for prompt: " needle "\n"
                                    (str/join "\n" (take-last 8 (str/split-lines t))))))
@@ -212,34 +215,73 @@
 
 (defn- feed [prompt answer]
   (.then (await-prompt prompt)
-         (fn [] (.write (.-stdin child) (str answer "\n")) true)))
+         (fn [] (.write (.-stdin @child) (str answer "\n")) true)))
 
 (defn- feed-all [answers]
   (reduce (fn [p pair] (.then p (fn [] (feed (first pair) (second pair)))))
           (js/Promise.resolve true) answers))
 
-(defn- assert-markers []
+(defn- assert-markers [markers label]
   (let [t (serial-text)]
-    (doseq [m required-markers]
+    (doseq [m markers]
       (when-not (str/includes? t m)
         (throw (js/Error.
-                 (str "serial log lacks required marker: " m "\n"
+                 (str label " serial log lacks required marker: " m "\n"
                       (str/join "\n" (take-last 8 (str/split-lines t))))))))))
+
+(defn- boot! [vars-file]
+  (reset! deadline (+ (.now js/Date) (* 900 1000)))
+  (start-vm! vars-file)
+  (-> (feed-all console-answers)
+      (.then (fn [] (await-prompt "AIUEOS_LIVE_EXIT")))
+      (.then (fn [] (await-prompt "reboot: Power down")))))
+
+(def boot1-markers
+  ["AIUEOS_LIVE_HANDOVER guided-core.elf"
+   "AIUEOS_GUIDED_ANSWERS_WRITTEN"
+   "AIUEOS_LIVE_TARGET /dev/nvme0n1"
+   "AIUEOS_INSTALL_WRITE_OK bytes="
+   "AIUEOS_INSTALL_READBACK_OK"
+   "AIUEOS_INSTALL_RECEIPT_OK"
+   "AIUEOS_LIVE_EXIT rc=0"])
+
+;; boot2 is the repeat-erase shape of the node gate's boot4: the same stick
+;; against its own installed target must refuse and leave the disk alone.
+(def boot2-markers
+  ["AIUEOS_LIVE_HANDOVER guided-core.elf"
+   "AIUEOS_INSTALL_REFUSE existing-install"
+   "AIUEOS_LIVE_EXIT"])
+
+(defn- rel-sha [] (sha256-file release-image))
 
 (defn- assert-extent []
   (let [rel (.statSync fs release-image)
-        rel-sha (sha256-file release-image)
+        rs (rel-sha)
         nvme-sha (sha256-range nvme-img (.-size rel))]
-    (when-not (= rel-sha nvme-sha)
+    (when-not (= rs nvme-sha)
       (throw (js/Error.
                (str "the NVMe extent does not match the release image\nrelease: "
-                    rel-sha "\nnvme:    " nvme-sha))))
-    (println "AIUEOS_INSTALL_SMOKE_OK selfhost-usb-live-install nvme-written"
-             "readback-verified extent-identical"
-             (str "sha256=" rel-sha))))
+                    rs "\nnvme:    " nvme-sha))))
+    rs))
 
-(-> (feed-all console-answers)
-    (.then (fn [] (await-prompt "AIUEOS_LIVE_EXIT")))
-    (.then (fn [] (await-prompt "reboot: Power down")))
-    (.then (fn [] (assert-markers) (assert-extent) (js/process.exit 0)))
+(def boot1-sha (atom nil))
+
+(-> (boot! (.join path gate-dir "vars-boot1.fd"))
+    (.then (fn []
+             (assert-markers boot1-markers "boot1")
+             (reset! boot1-sha (sha256-file nvme-img))
+             (assert-extent)))
+    (.then (fn [] (boot! (.join path gate-dir "vars-boot2.fd"))))
+    (.then (fn [] (assert-markers boot2-markers "boot2")))
+    (.then (fn []
+             (let [after (sha256-file nvme-img)]
+               (when-not (= @boot1-sha after)
+                 (throw (js/Error.
+                          (str "the NVMe changed across boot2\nbefore: " @boot1-sha
+                               "\nafter:  " after))))
+               (println "AIUEOS_INSTALL_SMOKE_OK selfhost-usb-live-install"
+                        "nvme-written readback-verified repeat-refused"
+                        "extent-identical disk-untouched"
+                        (str "sha256=" (rel-sha)))
+               (js/process.exit 0))))
     (.catch (fn [e] (die (str e)))))
