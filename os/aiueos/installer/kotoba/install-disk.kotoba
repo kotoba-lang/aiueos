@@ -171,7 +171,23 @@ b" 1 2))
   (let [body (string-concat (string-concat (string-concat (receipt-marker) (nl)) (string-concat "size=" (string-from-i64 size))) (nl))
         w (fsq (string-concat (receipt-file work) (string-concat "WRITE_SEP" body)))]
     (if (not (string=? w body)) -1 (spawn-exit (spawn (string-concat (string-concat (string-concat (string-concat "dd" "ARG_SEPif=") (string-concat (receipt-file work) "ARG_SEPof=")) (string-concat (string-concat dev "ARG_SEPbs=4096") (string-concat "ARG_SEPseek=" (string-from-i64 (- (quot size 4096) 1))))) (string-concat "ARG_SEPcount=1" "ARG_SEPconv=notrunc")))))))
-(defn main [] :i64
+
+;; ---- the blank-target guard (install.mjs rule 2; JUN-70) ----------------
+;; A target with a filesystem signature or a mounted child is refused:
+;; the K16 keeps its existing SSD, and this is the rule that keeps the
+;; installer away from it (the second-disk property of install.mjs).
+;; blkid -p answers exit 0 when a signature IS present, 2 when none is.
+(defn target-blank? [device :string] :string
+  ;; FAIL CLOSED: blkid -p exits 2 exactly when no signature is present.
+  ;; Anything else (0 = a signature, 1/-1 = blkid could not run) refuses.
+  ;; Measured 2026-10-19: a missing blkid passed as blank before this.
+  (let [b (spawn (string-concat (string-concat (string-concat "/usr/sbin/blkid" "ARG_SEP") (string-concat "-p" "ARG_SEP")) device))
+        mp (spawn (string-concat (string-concat (string-concat (string-concat "/bin/lsblk" "ARG_SEP") (string-concat "-n" "ARG_SEP")) (string-concat (string-concat "-o" "ARG_SEP") (string-concat "MOUNTPOINTS" "ARG_SEP"))) device))]
+    (if (= 2 (spawn-exit b))
+      (if (= 0 (spawn-exit mp))
+        (if (string-contains? (spawn-out mp) "/") "R:target-mounted" "V:ok")
+        "R:target-probe-failed")
+      (if (= 0 (spawn-exit b)) "R:target-not-empty" "R:target-probe-failed"))))(defn main [] :i64
   (let [device (arg "0") src (arg "1") given (arg "2") mode (arg "3") work (arg "4")]
     ;; Phase modes (JUN-70 flat chain): every :process/spawn child lives at
     ;; most the substrate's 10 s wall, so the console chain runs this
@@ -191,8 +207,12 @@ b" 1 2))
           (do (emit "AIUEOS_INSTALL_READBACK_OK pieces4k=") (emit (string-from-i64 (- e b))) (emit (nl)) 0)))
       (string=? mode "receipt-check")
       (if (has-receipt? device work (dev-size-of device)) (refuse "existing-install") 0)
+      (string=? mode "target-check")
+      (let [t (target-blank? device)]
+        (if (string=? t "V:ok") 0 (refuse (sub t 2 (string-byte-length t)))))
       (string=? mode "receipt-write")
       (if (= 0 (write-receipt device work (dev-size-of device)))
         (do (emit "AIUEOS_INSTALL_RECEIPT_OK") (emit (nl)) 0)
         (refuse "receipt-write-failed"))
-      :else (if (string=? device "") (refuse "no-device") (if (string=? src "") (refuse "no-image") (let [want (destructive-phrase device) size (size-of src) dev-size (size-of device)] (if (or (< size 0) (= size 0)) (refuse "image-missing-or-empty") (if (< dev-size 4096) (refuse "device-too-small") (if (not (string=? mode "install")) (do (emit "AIUEOS_INSTALL_DRY_RUN ") (emit device) (emit " bytes=") (emit (string-from-i64 size)) (emit (nl)) (emit "to erase, re-run with the install flag and the phrase:") (emit (nl)) (emit "  ") (emit want) (emit (nl)) 0) (do (emit "Type the destructive phrase to proceed:") (emit (nl)) (let [typed (if (string=? given "") (ask-phrase "phrase: ") given)] (if (string=? typed "E") 3 (if (not (string=? typed want)) (refuse "destructive-phrase-mismatch") (if (has-receipt? device work (dev-size-of device)) (refuse "existing-install") (let [w (spawn (dd-request src device))] (if (not (= 0 (spawn-exit w))) (refuse "write-failed") (do (emit "AIUEOS_INSTALL_WRITE_OK bytes=") (emit (string-from-i64 size)) (emit (nl)) (let [total-blk (quot size 4096) tail (- size (* total-blk 4096)) vr (verify-pieces src device 0 total-blk tail)] (if (< vr 0) (refuse "readback-mismatch") (if (not (= 0 (write-receipt device work (dev-size-of device)))) (refuse "receipt-write-failed") (do (emit "AIUEOS_INSTALL_READBACK_OK pieces4k=") (emit (string-from-i64 total-blk)) (emit (nl)) (emit "AIUEOS_INSTALL_RECEIPT_OK") (emit (nl)) 0)))))))))))))))))))))
+      :else (if (string=? device "") (refuse "no-device") (if (string=? src "") (refuse "no-image") (let [want (destructive-phrase device) size (size-of src) dev-size (size-of device)] (if (or (< size 0) (= size 0)) (refuse "image-missing-or-empty") (if (< dev-size 4096) (refuse "device-too-small") (if (not (string=? mode "install")) (do (emit "AIUEOS_INSTALL_DRY_RUN ") (emit device) (emit " bytes=") (emit (string-from-i64 size)) (emit (nl)) (emit "to erase, re-run with the install flag and the phrase:") (emit (nl)) (emit "  ") (emit want) (emit (nl)) 0) (do (emit "Type the destructive phrase to proceed:") (emit (nl)) (let [typed (if (string=? given "") (ask-phrase "phrase: ") given)] (if (string=? typed "E") 3 (if (not (string=? typed want)) (refuse "destructive-phrase-mismatch") (if (has-receipt? device work (dev-size-of device)) (refuse "existing-install") (if (not (string=? (target-blank? device) "V:ok")) (refuse "target-not-empty") (let [w (spawn (dd-request src device))] (if (not (= 0 (spawn-exit w))) (refuse "write-failed") (do (emit "AIUEOS_INSTALL_WRITE_OK bytes=") (emit (string-from-i64 size)) (emit (nl)) (let [total-blk (quot size 4096) tail (- size (* total-blk 4096)) vr (verify-pieces src device 0 total-blk tail)] (if (< vr 0) (refuse "readback-mismatch") (if (not (= 0 (write-receipt device work (dev-size-of device)))) (refuse "receipt-write-failed") (do (emit "AIUEOS_INSTALL_READBACK_OK pieces4k=") (emit (string-from-i64 total-blk)) (emit (nl)) (emit "AIUEOS_INSTALL_RECEIPT_OK") (emit (nl)) 0)))))))))))))))))))))
+)
