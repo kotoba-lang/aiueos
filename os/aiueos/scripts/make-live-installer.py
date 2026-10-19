@@ -224,7 +224,24 @@ export PATH=/run/aiueos-installer/bin:$PATH
 # layout. Without the ELF the stick is the node product, unchanged.
 if [ -x ./guided-core.elf ]; then
   echo AIUEOS_LIVE_HANDOVER guided-core.elf
-  ./guided-core.elf install /run/aiueos-installer/install-answers.json "" "" -1 ""     /run/aiueos-installer/install-live.elf /run/aiueos-installer/install-disk.elf     /payload/RELEASE.IMG
+  # The console is /dev/console (= the LAST console= line = ttyS0), so a
+  # person at the machine saw a BLACK screen: every prompt went to serial
+  # only (measured 2026-10-19 from a framebuffer screendump). tee mirrors
+  # the flow onto tty0 as well; stdin stays /dev/console so the gate's
+  # serial answers keep working. Typing AT the screen still needs the tty0
+  # input half (tracked for I7).
+  # The console is /dev/console (= the LAST console= line = ttyS0), so a
+  # person at the machine saw a BLACK screen: every prompt went to serial
+  # only (measured 2026-10-19 from a framebuffer screendump). The fifo +
+  # tee mirrors the flow onto tty0 as well AND keeps the real exit status
+  # -- a bare `cmd | tee` reports tee's zero and hides a failed install
+  # (measured). stdin stays /dev/console so the gate's serial answers keep
+  # working. Typing AT the screen still needs the tty0 input half
+  # (tracked for I7).
+  mkfifo /run/aiueos-installer/.console
+  ( ./guided-core.elf install /run/aiueos-installer/install-answers.json "" "" -1 ""     /run/aiueos-installer/install-live.elf /run/aiueos-installer/install-disk.elf     /payload/RELEASE.IMG > /run/aiueos-installer/.console 2>&1; echo $? > /run/aiueos-installer/.rc ) &
+  tee /dev/tty0 < /run/aiueos-installer/.console
+  rc=$(cat /run/aiueos-installer/.rc)
 else
   echo AIUEOS_LIVE_HANDOVER install-live.cljk
   ./node-linux-x64 nbb-bundle/node_modules/nbb/cli.js --classpath /run/aiueos-installer/cp install-live.cljk
