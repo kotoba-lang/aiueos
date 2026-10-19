@@ -161,6 +161,8 @@
   "test/aiueos/fleet_alias_test.cljk" ".clj"
   "test/aiueos/hardware_qualification_test.cljk" ".clj"
   "test/aiueos/hvt_test.cljk" ".cljc"
+  "test/aiueos/hvt_vmm_gate_test.cljk" ".cljc"
+  "test/aiueos/hvt_vmm_gate_runner.cljk" ".clj"
   "test/aiueos/hw_probe_test.cljk" ".clj"
   "test/aiueos/image_freshness_test.cljk" ".clj"
   "test/aiueos/image_test.cljk" ".cljc"

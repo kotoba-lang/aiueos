@@ -16,6 +16,10 @@
   :pass-args? true
   :doc "Build a stick pointed at a local plane, boot it under OVMF, and require the plane to claim it."}
 
+ :hvt-vmm-gate-test
+ {:cmd ["kbb" "-M:vmm-gate"]
+  :doc "The vmm call-site gate inside aiueos.hvt (test/aiueos/hvt_vmm_gate_test.cljk): boot planning, DTB bytes, exit decisions and the local-map drift pin, all executed from vmm's shipped KIR. No /dev/kvm needed; the live boot is :node-boot-test's kind of job."}
+
  :node-boot-test
  {:cmd ["kbb" "--backend" "sci" "--classpath" "../grant/src:../text/src:../sekisho/src"
         "os/aiueos/scripts/node-boot-test.cljk"]

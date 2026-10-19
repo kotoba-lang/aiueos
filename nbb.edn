@@ -48,7 +48,11 @@
          "/Users/junkawasaki/.gitlibs/libs/io.github.kotoba-lang/artifact/61f5d38d383d9520551ab6b3e75c2aa3143b3029/src"
          "/Users/junkawasaki/.gitlibs/libs/io.github.kotoba-lang/kotoba-hir/abe1774060fcd088c6bfdba38d23f739e5c45338/src"
          "/Users/junkawasaki/.gitlibs/libs/io.github.kotoba-lang/osaho/6af5c2dfdc122ca660d44bc2724a3e31a2edf07b/src"
-         "/Users/junkawasaki/.gitlibs/libs/io.github.kotoba-lang/org-nist-sha2/3b4f7e93eff2c438c758383bab440b6f35627e31/src"]
+         "/Users/junkawasaki/.gitlibs/libs/io.github.kotoba-lang/org-nist-sha2/3b4f7e93eff2c438c758383bab440b6f35627e31/src"
+         ;; vmm (pin copied from deps.edn, same rule as the rows above): the
+         ;; decision cores + their shipped KIR resources.
+         "/Users/junkawasaki/.gitlibs/libs/io.github.kotoba-lang/vmm/81e834a542f19f71518e83ecf6a6fde5aa4baffa/src"
+         "/Users/junkawasaki/.gitlibs/libs/io.github.kotoba-lang/vmm/81e834a542f19f71518e83ecf6a6fde5aa4baffa/resources"]
  :deps {
         ;; kotoba.ffi replaced java.lang.foreign here (2026-09-25). An explicit
         ;; floor: tools.deps takes the NEWEST sha it is shown.

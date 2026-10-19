@@ -13,6 +13,12 @@
         ;; kotoba.ffi replaced java.lang.foreign here (2026-09-25). An explicit
         ;; floor: tools.deps takes the NEWEST sha it is shown.
         io.github.kotoba-lang/ffi {:git/sha "604f212c190d5d97420a2f3a0e1ae6411e04cc8e"}
+        ;; vmm decision cores: where a foreign guest's Image, DTB and initrd go
+        ;; and what an MMIO/PSCI exit means are decisions in kotoba-lang/vmm,
+        ;; executed from its shipped KIR (root ADR-2608239100). Pinned to the
+        ;; commit where fdt_core landed (vmm PR #38); explicit floor.
+        io.github.kotoba-lang/vmm {:git/url "https://github.com/kotoba-lang/vmm.git"
+                                   :git/sha "81e834a542f19f71518e83ecf6a6fde5aa4baffa"}
         ;; kotoba.bytes replaced java.util.Base64 here (2026-09-24). An explicit
         ;; floor: tools.deps takes the NEWEST sha it is shown.
         io.github.kotoba-lang/bytes {:git/sha "d5259f35ab7c4f5a66e63ca29ed4dcf7ba3f1ac5"}
@@ -168,6 +174,11 @@
                       :git/sha "cb67e53e590e0999d741523797729a3d747cda95"}}
         :main-opts ["-m" "cognitect.test-runner"
                     "-r" "^aiueos\\.(?!tcp-seq-acceptable-parity-test|tcp-stream-integration-test).*$"]}
+
+   ;; Run just the vmm call-site gate (see test/aiueos/hvt_vmm_gate_runner.cljk
+   ;; for why it does not ride :test): `kbb -M:vmm-gate`
+   :vmm-gate {:extra-paths ["test"]
+              :main-opts ["-m" "aiueos.hvt-vmm-gate-runner"]}
 
    :security-adoption
    {:extra-deps {io.github.kotoba-lang/webgpu
