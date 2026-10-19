@@ -217,8 +217,18 @@ cd /run/aiueos-installer
 export AIUEOS_LIVE_PAYLOAD_DEV="$PAYLOAD"
 export AIUEOS_LIVE_MEDIA=/payload
 export PATH=/run/aiueos-installer/bin:$PATH
-echo AIUEOS_LIVE_HANDOVER install-live.cljk
-./node-linux-x64 nbb-bundle/node_modules/nbb/cli.js --classpath /run/aiueos-installer/cp install-live.cljk
+# Selfhost product (owner direction 2026-10-18, JUN-70 S5): the bundle's
+# install chain is kotoba ELFs and carries no node/nbb. The ELFs' spawn
+# grants are sealed at compile time and name these bundle paths
+# (/run/aiueos-installer/...), so the stick's ELFs must be built for this
+# layout. Without the ELF the stick is the node product, unchanged.
+if [ -x ./guided-core.elf ]; then
+  echo AIUEOS_LIVE_HANDOVER guided-core.elf
+  ./guided-core.elf install /run/aiueos-installer/install-answers.json "" "" -1 ""     /run/aiueos-installer/install-live.elf /run/aiueos-installer/install-disk.elf     /payload/RELEASE.IMG
+else
+  echo AIUEOS_LIVE_HANDOVER install-live.cljk
+  ./node-linux-x64 nbb-bundle/node_modules/nbb/cli.js --classpath /run/aiueos-installer/cp install-live.cljk
+fi
 rc=$?
 echo "AIUEOS_LIVE_EXIT rc=$rc"
 sync

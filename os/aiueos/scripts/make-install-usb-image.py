@@ -414,7 +414,8 @@ def release_partition_entries(release):
 
 
 def make_bundle_tgz(installer_dir, scripts_dir, intent_bytes, receipt_bytes, node_binary,
-                    nbb_dir=None, classpath_dirs=(), default_ssh_key=None):
+                    nbb_dir=None, classpath_dirs=(), default_ssh_key=None,
+                    selfhost_elfs=None):
     """Deterministic gzip'd tar of the installer bundle. Determinism is what
     lets the receipt digest mean anything: same inputs, same bytes.
 
@@ -487,7 +488,18 @@ def make_bundle_tgz(installer_dir, scripts_dir, intent_bytes, receipt_bytes, nod
     # at the console can still type another.
     if default_ssh_key is not None:
         add("default-authorized-key.pub", default_ssh_key, 0o644)
-    if node_binary:
+    if selfhost_elfs:
+        # The selfhost product (owner direction 2026-10-18, JUN-70 S5):
+        # the install chain is amu-compiled kotoba ELFs and the bundle
+        # carries NO node-linux-x64 and NO nbb-bundle. The ELFs' spawn
+        # grants are sealed at their compile time and name their own
+        # bundle paths -- build them with the layout the stick extracts to.
+        for elf in selfhost_elfs:
+            ep = Path(elf)
+            if not ep.is_file():
+                raise ValueError("--selfhost-elf is not a file: " + str(ep))
+            add(ep.name, ep.read_bytes(), 0o755)
+    if node_binary and not selfhost_elfs:
         add("node-linux-x64", Path(node_binary).read_bytes(), 0o755)
     if nbb_dir:
         base = Path(nbb_dir)
@@ -749,7 +761,8 @@ def build(args):
     bundle = make_bundle_tgz(args.installer_dir, scripts_dir, intent_bytes,
                              release_receipt_bytes, args.node_binary, args.nbb_dir,
                              classpath_dirs=[d for d in (args.classpath or []) if d],
-                             default_ssh_key=default_ssh_key)
+                             default_ssh_key=default_ssh_key,
+                             selfhost_elfs=args.selfhost_elf)
     files = {
         "RELEASE.IMG": release,
         "RECEIPT.JSN": release_receipt_bytes,
@@ -835,6 +848,8 @@ def build(args):
         "schema": "aiueos.install-usb-receipt.v1",
         "created": datetime.fromtimestamp(EPOCH, timezone.utc).isoformat().replace("+00:00", "Z"),
         "boot": ({"mode": "live-installer",
+                  "runtime": ("selfhost" if getattr(args, "selfhost_elf", None)
+                              else "node"),
                   "espFirstLba": esp_first, "espSectors": esp_sectors,
                   "uki": {"bytes": len(uki), "sha256": sha256_bytes(uki)}}
                  if uki is not None else {"mode": "aiueos-direct"}),
@@ -968,10 +983,23 @@ def verify_image(path, release_image):
         intent = json.loads(files["INTENT.JSN"])
         if intent["release"]["disk"]["sha256"] != release_receipt["disk"]["sha256"]:
             raise ValueError("embedded intent names a different release digest")
-    print("AIUEOS_INSTALL_USB_IMAGE_OK mode=%s authoring=%s bytes=%d files=%d"
+    # The runtime is decided from the bundle's own names (image alone):
+    # selfhost = the chain is kotoba ELFs and the bundle carries no
+    # node-linux-x64 (owner direction 2026-10-18, JUN-70 S5).
+    with tarfile.open(fileobj=io.BytesIO(gzip.decompress(files["INSTALL.TGZ"]))) as tar:
+        bundle_names = tar.getnames()
+    if any(n == "node-linux-x64" for n in bundle_names):
+        runtime = "node"
+    elif any(n.endswith(".elf") for n in bundle_names):
+        runtime = "selfhost"
+    else:
+        runtime = "scripts"
+    if runtime == "selfhost" and any(n == "node-linux-x64" for n in bundle_names):
+        raise ValueError("selfhost bundle carries node-linux-x64")
+    print("AIUEOS_INSTALL_USB_IMAGE_OK mode=%s authoring=%s runtime=%s bytes=%d files=%d"
           % ("live-installer" if live else "aiueos-direct",
              "guided-at-the-machine" if guided else "authored-ahead-of-time",
-             len(disk), len(files)))
+             runtime, len(disk), len(files)))
 
 
 def main():
@@ -993,6 +1021,9 @@ def main():
                         "extracts and every script dies on a missing namespace.")
     b.add_argument("--node-binary")
     b.add_argument("--nbb-dir")
+    b.add_argument("--selfhost-elf", action="append",
+                   help="an install-chain ELF to bundle (repeatable); the "
+                        "selfhost product then carries no node/nbb")
     b.add_argument("--live-uki")
     b.add_argument("--default-ssh-key",
                    help="guided sticks only: an ssh-ed25519 public key file the SSH "
