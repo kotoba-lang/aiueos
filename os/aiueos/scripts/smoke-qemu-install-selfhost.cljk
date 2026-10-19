@@ -1,0 +1,233 @@
+#!/usr/bin/env kbb
+;; The selfhost install USB under QEMU (Linear JUN-70, gate I6 shape):
+;; boot the selfhost stick in a VM on this host, answer the guided console
+;; as a person would, install to a blank NVMe, and verify the written
+;; extent. One command:
+;;
+;;   kbb --backend sci scripts/run-task.cljk install-smoke-selfhost
+;;
+;;   boot 1  selfhost USB (readonly) + blank 8 GB NVMe
+;;           -> guided console answered from this script
+;;           -> dd writes the release image, readback verified piecewise
+;;           -> AIUEOS_LIVE_EXIT rc=0
+;;   then    the NVMe's first 64 MiB is compared with the release image
+;;
+;; The console is driven PROMPT-BY-PROMPT: each answer is written to
+;; QEMU's stdin only after its prompt appears in the serial log. A pipe
+;; fed before boot is lost in the UART FIFO (measured 2026-10-19) -- that
+;; is the one difference from a person typing at the machine.
+;;
+;; Environment: AIUEOS_OUT (default build/aiueos) must hold the release
+;; image + receipt and live/uki.efi, and selfhost/ must hold the three
+;; stick ELFs, built with the /run/aiueos-installer spawn grants:
+;;   guided-core.elf  install-live.elf  install-disk.elf
+;; Hints name the commands when something is missing. OVMF_CODE / OVMF_VARS
+;; override the firmware paths.
+
+(require '[kotoba.lang.text :as str])
+
+(def fs (js/require "node:fs"))
+(def path (js/require "node:path"))
+(def cp (js/require "node:child_process"))
+(def crypto (js/require "node:crypto"))
+
+(def aiueos (.resolve path (.dirname path *file*) ".."))
+(def repo (.resolve path aiueos ".." ".."))
+(def out (or (.-AIUEOS_OUT js/process.env) (.join path repo "build" "aiueos")))
+(def gate-dir (.join path out "install-gate" "selfhost"))
+(def release-image (.join path out "aiueos-x86_64-gpt.img"))
+(def release-receipt (.join path out "aiueos-x86_64-build-receipt.json"))
+(def uki (.join path out "live" "uki.efi"))
+(def elf-dir (.join path out "selfhost"))
+(def stick (.join path gate-dir "stick.img"))
+(def nvme-img (.join path gate-dir "nvme.img"))
+(def serial-log (.join path gate-dir "serial.log"))
+(def qemu (or (.-QEMU_SYSTEM_X86_64 js/process.env) "qemu-system-x86_64"))
+
+;; The synthetic console person. The phrase names the ONE disk the probe
+;; must offer (the QEMU NVMe); if the probe offers anything else the
+;; AIUEOS_LIVE_TARGET assertion below fails by name.
+(def console-answers
+  [["Network policy for the installed machine" ""]
+   ["Disk to erase (number)" "1"]
+   ["Bind the intent to this disk serial digest" "y"]
+   ["Accept this match" "y"]
+   ["Hostname of the installed machine" ""]
+   ["Machine model, for the receipt" ""]
+   ["OpenSSH public key that may log in" "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBl6g2nUJZaNJMvqfLqBFiTPF9rWjXq/DB4XzJZq5j5j"]
+   ["Principal that key logs in as" ""]
+   ["Repeat the hostname to confirm the erase" "aiueos"]
+   ["phrase: " "ERASE /dev/nvme0n1 FOR AIUEOS"]])
+
+(def required-markers
+  ["AIUEOS_LIVE_HANDOVER guided-core.elf"
+   "AIUEOS_GUIDED_ANSWERS_WRITTEN"
+   "AIUEOS_LIVE_TARGET /dev/nvme0n1"
+   "AIUEOS_INSTALL_WRITE_OK bytes="
+   "AIUEOS_INSTALL_READBACK_OK"
+   "AIUEOS_LIVE_EXIT rc=0"])
+
+(defn- die [& msg]
+  (binding [*out* *err*] (apply println (cons "error:" msg)))
+  (.exit js/process 1))
+
+(defn- run [cmd args opts]
+  (let [r (.spawnSync cp cmd (to-array args)
+                      (clj->js (merge {:encoding "utf8" :shell false} opts)))]
+    {:status (or (.-status r) 1) :out (or (.-stdout r) "") :err (or (.-stderr r) "")}))
+
+(defn- sha256-file [p]
+  (let [fd (.openSync fs p "r")
+        chunk (js/Buffer.alloc (* 4 1024 1024))
+        h (.createHash crypto "sha256")]
+    (try
+      (loop []
+        (let [got (.readSync fs fd chunk 0 (.-length chunk))]
+          (when (pos? got)
+            (.update h (.subarray chunk 0 got))
+            (recur))))
+      (finally (.closeSync fs fd)))
+    (.digest h "hex")))
+
+(defn- sha256-range [p bytes]
+  (let [fd (.openSync fs p "r")
+        chunk (js/Buffer.alloc (* 4 1024 1024))
+        h (.createHash crypto "sha256")]
+    (try
+      (loop [remaining bytes]
+        (when (pos? remaining)
+          (let [want (min remaining (.-length chunk))
+                got (.readSync fs fd chunk 0 want)]
+            (when (pos? got)
+              (.update h (.subarray chunk 0 got))
+              (recur (- remaining got))))))
+      (finally (.closeSync fs fd)))
+    (.digest h "hex")))
+
+;; ------------------------------------------------------------ prerequisites
+
+(doseq [[p hint] [[release-image "run os/aiueos/scripts/build-release-image.sh"]
+                  [release-receipt "run os/aiueos/scripts/build-release-image.sh"]
+                  [uki "run make-live-installer.py build --output-dir build/aiueos/live"]
+                  [(.join path elf-dir "guided-core.elf") "amu compile os/aiueos/installer/kotoba/guided-core.kotoba --target x86_64-linux-static --jvm-free --policy os/aiueos/installer/kotoba/guided-core-stick-policy.edn"]
+                  [(.join path elf-dir "install-live.elf") "amu compile os/aiueos/installer/kotoba/install-live.kotoba --target x86_64-linux-static --jvm-free --policy os/aiueos/installer/kotoba/install-live-stick-policy.edn"]
+                  [(.join path elf-dir "install-disk.elf") "amu compile os/aiueos/installer/kotoba/install-disk.kotoba --target x86_64-linux-static --jvm-free --policy os/aiueos/installer/kotoba/install-disk-stick-policy.edn"]]]
+  (when-not (.existsSync fs p)
+    (die "missing prerequisite:" p "\nhint:" hint)))
+
+(def ovmf
+  (or (.-OVMF_CODE js/process.env)
+      (some #(when (.existsSync fs %) %)
+            ["/opt/homebrew/share/qemu/edk2-x86_64-code.fd"
+             "/usr/share/OVMF/OVMF_CODE_4M.fd"
+             "/usr/share/OVMF/OVMF_CODE.fd"])
+      (die "OVMF firmware not found; set OVMF_CODE")))
+
+;; A writable VARS pflash per boot, as in smoke-qemu-install.cljk: EDK2
+;; persists EFI variables, and a shared template would carry them across
+;; runs.
+(def ovmf-vars-template
+  (or (.-OVMF_VARS js/process.env)
+      (some #(when (.existsSync fs %) %)
+            ["/opt/homebrew/share/qemu/edk2-i386-vars.fd"
+             "/usr/share/OVMF/OVMF_VARS_4M.fd"
+             "/usr/share/OVMF/OVMF_VARS.fd"])
+      (die "OVMF VARS template not found; set OVMF_VARS")))
+
+(.mkdirSync fs gate-dir #js {:recursive true})
+
+;; ---------------------------------------------------------------- the stick
+
+(let [r (run "python3" [(.join path aiueos "scripts" "make-install-usb-image.py")
+                        "build"
+                        "--release-image" release-image
+                        "--release-receipt" release-receipt
+                        "--guided"
+                        "--installer-dir" (.join path aiueos "installer")
+                        "--classpath" (.resolve path repo ".." "text" "src")
+                        "--classpath" (.join path repo "src")
+                        "--classpath" (.resolve path repo ".." "security" "src")
+                        "--live-uki" uki
+                        "--selfhost-elf" (.join path elf-dir "guided-core.elf")
+                        "--selfhost-elf" (.join path elf-dir "install-live.elf")
+                        "--selfhost-elf" (.join path elf-dir "install-disk.elf")
+                        "--output" stick
+                        "--receipt" (.join path gate-dir "stick-receipt.json")]
+                       {})]
+  (when-not (zero? (:status r))
+    (die "selfhost stick build failed:" (:err r) (:out r)))
+  (when-not (str/includes? (:out r) "runtime=selfhost")
+    (die "the stick did not verify as the selfhost product:" (:out r)))
+  (println "AIUEOS_GATE_STICK" stick))
+
+(.copyFileSync fs ovmf-vars-template (.join path gate-dir "vars.fd"))
+(when (.existsSync fs nvme-img) (.rmSync fs nvme-img))
+(let [r (run "qemu-img" ["create" "-f" "raw" nvme-img "8G"] {})]
+  (when-not (zero? (:status r)) (die "qemu-img failed:" (:err r))))
+(when (.existsSync fs serial-log) (.rmSync fs serial-log))
+
+;; ------------------------------------------------------------ the VM run --
+;; serial to a file, answers to stdin when each prompt appears.
+
+(def qemu-args
+  ["-machine" "q35" "-m" "2048" "-smp" "2"
+   "-drive" (str "if=pflash,format=raw,readonly=on,file=" ovmf)
+   "-drive" (str "if=pflash,format=raw,file=" (.join path gate-dir "vars.fd"))
+   "-drive" (str "if=none,id=stick,file=" stick ",format=raw,readonly=on")
+   "-device" "qemu-xhci" "-device" "usb-storage,drive=stick"
+   "-drive" (str "if=none,id=nvme0,file=" nvme-img ",format=raw")
+   "-device" "nvme,drive=nvme0,serial=AIUEOSGATE1"
+   "-display" "none" "-serial" "stdio" "-no-reboot"])
+
+;; stdio is the console and it is BIDIRECTIONAL: a file: chardev carries
+;; output only, so answers could never reach the guest (measured
+;; 2026-10-19). stdout is mirrored into serial.log as the evidence trail.
+(def serial-buf (atom ""))
+(def child (.spawn cp qemu (to-array qemu-args) (clj->js {:stdio ["pipe" "pipe" "ignore"]})))
+(.on (.-stdout child) "data"
+     (fn [d] (swap! serial-buf str d) (.appendFileSync fs serial-log d)))
+
+(defn- serial-text [] @serial-buf)
+
+(def deadline (+ (.now js/Date) (* 900 1000)))
+
+(defn- await-prompt [needle]
+  ;; wait until NEEDLE is in the serial log; the answer then goes to stdin
+  ;; (the prompt has been printed and the guest is reading).
+  (loop []
+    (let [t (serial-text)]
+      (cond
+        (str/includes? t needle) true
+        (> (.now js/Date) deadline)
+        (die "timed out waiting for prompt:" needle "\nserial tail:\n"
+             (str/join "\n" (take-last 8 (str/split-lines t))))
+        :else (do (js/Atomics.wait (js/Int32Array. (js/SharedArrayBuffer. 4)) 0 0 250) (recur))))))
+
+(doseq [[prompt answer] console-answers]
+  (await-prompt prompt)
+  (.write (.-stdin child) (str answer "\n")))
+
+;; wait for the exit line the init prints after the handover returns.
+;; There is no "exit" handler that ends the process: the asserts below
+;; must run before this gate says anything.
+(await-prompt "AIUEOS_LIVE_EXIT")
+(await-prompt "reboot: Power down")
+
+;; ------------------------------------------------------------ the asserts --
+
+(let [t (serial-text)]
+  (doseq [m required-markers]
+    (when-not (str/includes? t m)
+      (die "serial log lacks required marker:" m "\nserial tail:\n"
+           (str/join "\n" (take-last 8 (str/split-lines t)))))))
+
+(let [written (.statSync fs nvme-img)
+      rel (.statSync fs release-image)
+      rel-sha (sha256-file release-image)
+      nvme-sha (sha256-range nvme-img (.-size rel))]
+  (when-not (= rel-sha nvme-sha)
+    (die "the NVMe extent does not match the release image"
+         "\nrelease:" rel-sha "\nnvme:    " nvme-sha))
+  (println "AIUEOS_INSTALL_SMOKE_OK selfhost-usb-live-install nvme-written"
+           "readback-verified extent-identical"
+           (str "sha256=" rel-sha)))

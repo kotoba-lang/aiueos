@@ -374,6 +374,10 @@
         "--output-dir" "build/aiueos/live"]
   :doc "Build the live-installer UKI (Debian kernel + thin initramfs mechanism) via docker. Decisions stay in the payload bundle."}
 
+ :install-smoke-selfhost
+ {:cmd ["kbb" "--backend" "sci" "os/aiueos/scripts/smoke-qemu-install-selfhost.cljk"]
+  :doc "Gate I6 shape for the SELFHOST product under QEMU: boot the selfhost stick, answer the guided console prompt-by-prompt (a pre-boot pipe is lost in the UART FIFO), install to a blank NVMe, and verify the readback markers plus the written extent against the release image. Needs the release image, the live UKI and the three stick ELFs (built with the /run/aiueos-installer spawn grants) in AIUEOS_OUT."}
+
  :install-smoke
  {:cmd ["kbb" "--backend" "sci" "os/aiueos/scripts/smoke-qemu-install.cljk"]
   :doc "Gate I3+I5 under QEMU: USB-live install to a blank NVMe, boot the NVMe twice without the USB, then re-insert the USB and require the erase to be refused with the disk untouched. Needs release image, live UKI, node-linux-x64 and an nbb tree in build/aiueos."}
