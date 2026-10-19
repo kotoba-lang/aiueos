@@ -191,43 +191,55 @@
 
 (def deadline (+ (.now js/Date) (* 900 1000)))
 
+;; Everything after spawn is ASYNC: a synchronous sleep (Atomics.wait)
+;; blocks Node's event loop, the stdout "data" handler can never run, the
+;; pipe fills, and QEMU wedges at ~0% CPU with no output at all (all three
+;; measured 2026-10-19). Promises + setTimeout keep the loop draining.
+
 (defn- await-prompt [needle]
-  ;; wait until NEEDLE is in the serial log; the answer then goes to stdin
-  ;; (the prompt has been printed and the guest is reading).
-  (loop []
-    (let [t (serial-text)]
-      (cond
-        (str/includes? t needle) true
-        (> (.now js/Date) deadline)
-        (die "timed out waiting for prompt:" needle "\nserial tail:\n"
-             (str/join "\n" (take-last 8 (str/split-lines t))))
-        :else (do (js/Atomics.wait (js/Int32Array. (js/SharedArrayBuffer. 4)) 0 0 250) (recur))))))
+  (js/Promise.
+    (fn [resolve reject]
+      (letfn [(tick []
+                (let [t (serial-text)]
+                  (cond
+                    (str/includes? t needle) (resolve true)
+                    (> (.now js/Date) deadline)
+                    (reject (js/Error.
+                              (str "timed out waiting for prompt: " needle "\n"
+                                   (str/join "\n" (take-last 8 (str/split-lines t))))))
+                    :else (js/setTimeout tick 250))))]
+        (tick)))))
 
-(doseq [[prompt answer] console-answers]
-  (await-prompt prompt)
-  (.write (.-stdin child) (str answer "\n")))
+(defn- feed [prompt answer]
+  (.then (await-prompt prompt)
+         (fn [] (.write (.-stdin child) (str answer "\n")) true)))
 
-;; wait for the exit line the init prints after the handover returns.
-;; There is no "exit" handler that ends the process: the asserts below
-;; must run before this gate says anything.
-(await-prompt "AIUEOS_LIVE_EXIT")
-(await-prompt "reboot: Power down")
+(defn- feed-all [answers]
+  (reduce (fn [p pair] (.then p (fn [] (feed (first pair) (second pair)))))
+          (js/Promise.resolve true) answers))
 
-;; ------------------------------------------------------------ the asserts --
+(defn- assert-markers []
+  (let [t (serial-text)]
+    (doseq [m required-markers]
+      (when-not (str/includes? t m)
+        (throw (js/Error.
+                 (str "serial log lacks required marker: " m "\n"
+                      (str/join "\n" (take-last 8 (str/split-lines t))))))))))
 
-(let [t (serial-text)]
-  (doseq [m required-markers]
-    (when-not (str/includes? t m)
-      (die "serial log lacks required marker:" m "\nserial tail:\n"
-           (str/join "\n" (take-last 8 (str/split-lines t)))))))
+(defn- assert-extent []
+  (let [rel (.statSync fs release-image)
+        rel-sha (sha256-file release-image)
+        nvme-sha (sha256-range nvme-img (.-size rel))]
+    (when-not (= rel-sha nvme-sha)
+      (throw (js/Error.
+               (str "the NVMe extent does not match the release image\nrelease: "
+                    rel-sha "\nnvme:    " nvme-sha))))
+    (println "AIUEOS_INSTALL_SMOKE_OK selfhost-usb-live-install nvme-written"
+             "readback-verified extent-identical"
+             (str "sha256=" rel-sha))))
 
-(let [written (.statSync fs nvme-img)
-      rel (.statSync fs release-image)
-      rel-sha (sha256-file release-image)
-      nvme-sha (sha256-range nvme-img (.-size rel))]
-  (when-not (= rel-sha nvme-sha)
-    (die "the NVMe extent does not match the release image"
-         "\nrelease:" rel-sha "\nnvme:    " nvme-sha))
-  (println "AIUEOS_INSTALL_SMOKE_OK selfhost-usb-live-install nvme-written"
-           "readback-verified extent-identical"
-           (str "sha256=" rel-sha)))
+(-> (feed-all console-answers)
+    (.then (fn [] (await-prompt "AIUEOS_LIVE_EXIT")))
+    (.then (fn [] (await-prompt "reboot: Power down")))
+    (.then (fn [] (assert-markers) (assert-extent) (js/process.exit 0)))
+    (.catch (fn [e] (die (str e)))))
