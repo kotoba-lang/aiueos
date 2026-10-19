@@ -425,11 +425,72 @@ b" 1 2))
 (defn refuse2 [reason :string] :i64
   (do (emit "AIUEOS_GUIDED_REFUSE ") (emit reason) (emit (nl)) 2))
 
+;; ---- probe + live handoff (Linear JUN-70 S5: the stick's console chain) ---
+
+(defn spawn [s :string] :string (typed-cap-call :process/spawn :string :string s))
+
+(defn spawn-exit [a :string] :i64
+  (let [p (string-index-of a (nl))]
+    (if (< p 0) -1 (parse-u64 (sub a 0 p)))))
+
+(defn spawn-out [a :string] :string
+  (let [p (string-index-of a (nl))]
+    (if (< p 0) "" (sub a (+ p 1) (string-byte-length a)))))
+
+(defn first-line [s :string] :string
+  (let [p (string-index-of s (nl))]
+    (if (< p 0) s (sub s 0 p))))
+
+(defn word-at [line :string from :i64 n :i64] :string
+  (if (= n 0)
+    (let [p (find-sep-in line from " ")]
+      (if (< p 0) (sub line from (string-byte-length line)) (sub line from p)))
+    (let [p (find-sep-in line from " ")]
+      (if (< p 0) "" (word-at line (+ p 1) (- n 1))))))
+
+;; one single-column lsblk query on a device (a model may contain spaces,
+;; so MODEL/TRAN/SERIAL are asked one column at a time -- measured).
+(defn q-col [path :string col :string] :string
+  (let [a (spawn (string-concat "lsblk" (string-concat "ARG_SEP" (string-concat "-bdno" (string-concat "ARG_SEP" (string-concat col (string-concat "ARG_SEP" path)))))))]
+    (if (= 0 (spawn-exit a)) (trim (first-line (spawn-out a))) "")))
+
+;; one `lsblk -bdno TYPE,PATH,SIZE,RM` line -> a full flat record
+(defn probe-line [line :string] :string
+  (let [typ (word-at line 0 0) path (word-at line 0 1) size (word-at line 0 2) rm (word-at line 0 3)]
+    (string-concat typ (string-concat "|" (string-concat path (string-concat "|" (string-concat size (string-concat "|" (string-concat rm (string-concat "|" (string-concat "0" (string-concat "|" (string-concat "" (string-concat "|" (string-concat "" (string-concat "|" (string-concat (q-col path "MODEL") (string-concat "|" (string-concat (q-col path "TRAN") (string-concat "|" (q-col path "SERIAL")))))))))))))))))))))
+
+(defn probe-records [acc :string from :i64 out :string] :string
+  (if (>= from (string-byte-length acc)) out
+    (let [e (find-sep-in acc from (nl))
+          line (if (< e 0) (sub acc from (string-byte-length acc)) (sub acc from e))
+          nxt (if (< e 0) (string-byte-length acc) (+ e 1))]
+      (if (string=? line "") (probe-records acc nxt out)
+        (let [rec (probe-line line)]
+          (probe-records acc nxt (if (string=? out "") rec (string-concat out (string-concat (nl) rec)))))))))
+
+(defn probe-disks [] :string
+  (let [a (spawn (string-concat "lsblk" (string-concat "ARG_SEP" (string-concat "-bdno" (string-concat "ARG_SEP" "TYPE,PATH,SIZE,RM")))))]
+    (if (= 0 (spawn-exit a)) (probe-records (spawn-out a) 0 "") "")))
+
+;; the live handoff: hand the recorded MATCH to install-live, which
+;; re-derives the device (exactly one) and runs the write. argv 6 is the
+;; install-live program, 7 the install-disk program, 8 the release image
+;; (all absolute; the spawn grants are sealed per program).
+(defn run-live [d :string size :i64 bind :string typed :string] :i64
+  (let [model (field d 7) tran (field d 8)
+        lo (match-min-gb size) hi (match-max-gb size)
+        serial (if (string=? (v-of bind) "yes") (field d 9) "")
+        live-elf (arg "6") disk-elf (arg "7") image (arg "8")
+        records (arg "2")]
+    (let [a (spawn (string-concat live-elf (string-concat "ARG_SEP" (string-concat records (string-concat "ARG_SEP" (string-concat image (string-concat "ARG_SEP" (string-concat model (string-concat "ARG_SEP" (string-concat tran (string-concat "ARG_SEP" (string-concat (string-from-i64 lo) (string-concat "ARG_SEP" (string-concat (string-from-i64 hi) (string-concat "ARG_SEP" (string-concat serial (string-concat "ARG_SEP" (string-concat disk-elf (string-concat "ARG_SEP" typed)))))))))))))))))))]
+      (do (emit (spawn-out a)) (spawn-exit a)))))
+
+
 (defn run-flow [out :string disks :string boot :string img :i64 model :string] :i64
-  (let [net (ask-valid "Network policy for the installed machine [wired-dhcp]: " "wired-dhcp" "policy" 0 3)] (if (e-tag net) 3 (if (r-tag net) (refuse2 (r-of net)) (let [cnt (walk-disks disks 0 boot img 0 0)] (if (string=? cnt "0") (refuse2 "no-candidate-disks") (do (emit "candidates:") (emit (nl)) (emit (string-concat cnt (string-concat " whole disk(s) may be offered" (nl)))) (let [pick (ask-valid "Disk to erase (number): " "1" "pick" (parse-u64 cnt) 3)] (if (e-tag pick) 3 (if (r-tag pick) (refuse2 (r-of pick)) (let [rec (walk-disks disks 0 boot img (parse-u64 (v-of pick)) 0)] (if (r-tag rec) (refuse2 (r-of rec)) (let [d (v-of rec) size (parse-u64 (field d 2))] (let [bind (if (string=? (field d 9) "") "V:no" (ask-y-n "Bind the intent to this disk serial digest? y/n [y]: " "y" 3))] (if (e-tag bind) 3 (if (r-tag bind) (refuse2 (r-of bind)) (do (emit "the intent will record this MATCH, not the device path:") (emit (nl)) (emit "  model      ") (emit (field d 7)) (emit (nl)) (emit "  transport  ") (emit (field d 8)) (emit (nl)) (emit "  capacity   ") (emit (string-from-i64 (match-min-gb size))) (emit " GB .. ") (emit (string-from-i64 (match-max-gb size))) (emit " GB (inclusive)") (emit (nl)) (emit "  serial     ") (emit (if (string=? (v-of bind) "yes") "bound by digest" "not bound")) (emit (nl)) (let [accm (ask-y-n "Accept this match? y/n [y]: " "y" 3)] (if (e-tag accm) 3 (if (r-tag accm) (refuse2 (r-of accm)) (if (no? (v-of accm)) (refuse2 "guided-storage-match-rejected") (let [host (ask-valid "Hostname of the installed machine [default from model]: " (default-hostname model) "host" 0 3)] (if (e-tag host) 3 (if (r-tag host) (refuse2 (r-of host)) (let [mm (ask-chunk (string-concat "Machine model, for the receipt [" (string-concat (if (string=? model "") "unspecified" model) "]: ")))] (if (string=? mm "E") 3 (let [mmv (if (string=? (line-of mm) "") (if (string=? model "") "unspecified" model) (line-of mm))] (let [key (ask-valid "OpenSSH public key that may log in: " "" "key" 0 3)] (if (e-tag key) 3 (if (r-tag key) (refuse2 (r-of key)) (let [pr (ask-valid "Principal that key logs in as [aiueos]: " "aiueos" "free" 0 3)] (if (e-tag pr) 3 (if (r-tag pr) (refuse2 (r-of pr)) (let [cf (ask-chunk "Repeat the hostname to confirm the erase: ")] (if (string=? cf "E") 3 (if (string=? (line-of cf) (v-of host)) (let [json (string-concat (string-concat (string-concat (string-concat (string-concat "{\"schema\":\"aiueos.install-answers.v1\"," "\"network\":{") (string-concat (jstr "policy" (v-of net)) "},")) (string-concat (string-concat "\"storage\":{" (jstr "model" (field d 7))) (string-concat "," (jstr "transport" (field d 8))))) (string-concat (string-concat (string-concat "," "\"min-gb\":") (string-concat (string-from-i64 (match-min-gb size)) ",")) (string-concat (string-concat "\"max-gb\":" (string-from-i64 (match-max-gb size))) (string-concat "," (jstr "serial-bound" (v-of bind)))))) (string-concat (string-concat (string-concat (string-concat "}," "\"identity\":{") (string-concat (jstr "hostname" (v-of host)) ",")) (string-concat (string-concat (jstr "machine-model" mmv) "},") (string-concat "\"ssh\":{" (jstr "principal" (v-of pr))))) (string-concat (string-concat "," (jstr "public-key" (v-of key))) "}}"))) w (fsq (string-concat out (string-concat "WRITE_SEP" json)))] (if (string=? w json) (do (emit "AIUEOS_GUIDED_ANSWERS_WRITTEN") (emit (nl)) 0) (refuse2 "answers-write-failed"))) (refuse2 "guided-confirm-mismatch")))))))))))))))))))))))))))))))))))))
+  (let [net (ask-valid "Network policy for the installed machine [wired-dhcp]: " "wired-dhcp" "policy" 0 3)] (if (e-tag net) 3 (if (r-tag net) (refuse2 (r-of net)) (let [cnt (walk-disks disks 0 boot img 0 0)] (if (string=? cnt "0") (refuse2 "no-candidate-disks") (do (emit "candidates:") (emit (nl)) (emit (string-concat cnt (string-concat " whole disk(s) may be offered" (nl)))) (let [pick (ask-valid "Disk to erase (number): " "1" "pick" (parse-u64 cnt) 3)] (if (e-tag pick) 3 (if (r-tag pick) (refuse2 (r-of pick)) (let [rec (walk-disks disks 0 boot img (parse-u64 (v-of pick)) 0)] (if (r-tag rec) (refuse2 (r-of rec)) (let [d (v-of rec) size (parse-u64 (field d 2))] (let [bind (if (string=? (field d 9) "") "V:no" (ask-y-n "Bind the intent to this disk serial digest? y/n [y]: " "y" 3))] (if (e-tag bind) 3 (if (r-tag bind) (refuse2 (r-of bind)) (do (emit "the intent will record this MATCH, not the device path:") (emit (nl)) (emit "  model      ") (emit (field d 7)) (emit (nl)) (emit "  transport  ") (emit (field d 8)) (emit (nl)) (emit "  capacity   ") (emit (string-from-i64 (match-min-gb size))) (emit " GB .. ") (emit (string-from-i64 (match-max-gb size))) (emit " GB (inclusive)") (emit (nl)) (emit "  serial     ") (emit (if (string=? (v-of bind) "yes") "bound by digest" "not bound")) (emit (nl)) (let [accm (ask-y-n "Accept this match? y/n [y]: " "y" 3)] (if (e-tag accm) 3 (if (r-tag accm) (refuse2 (r-of accm)) (if (no? (v-of accm)) (refuse2 "guided-storage-match-rejected") (let [host (ask-valid "Hostname of the installed machine [default from model]: " (default-hostname model) "host" 0 3)] (if (e-tag host) 3 (if (r-tag host) (refuse2 (r-of host)) (let [mm (ask-chunk (string-concat "Machine model, for the receipt [" (string-concat (if (string=? model "") "unspecified" model) "]: ")))] (if (string=? mm "E") 3 (let [mmv (if (string=? (line-of mm) "") (if (string=? model "") "unspecified" model) (line-of mm))] (let [key (ask-valid "OpenSSH public key that may log in: " "" "key" 0 3)] (if (e-tag key) 3 (if (r-tag key) (refuse2 (r-of key)) (let [pr (ask-valid "Principal that key logs in as [aiueos]: " "aiueos" "free" 0 3)] (if (e-tag pr) 3 (if (r-tag pr) (refuse2 (r-of pr)) (let [cf (ask-chunk "Repeat the hostname to confirm the erase: ")] (if (string=? cf "E") 3 (if (string=? (line-of cf) (v-of host)) (let [json (string-concat (string-concat (string-concat (string-concat (string-concat "{\"schema\":\"aiueos.install-answers.v1\"," "\"network\":{") (string-concat (jstr "policy" (v-of net)) "},")) (string-concat (string-concat "\"storage\":{" (jstr "model" (field d 7))) (string-concat "," (jstr "transport" (field d 8))))) (string-concat (string-concat (string-concat "," "\"min-gb\":") (string-concat (string-from-i64 (match-min-gb size)) ",")) (string-concat (string-concat "\"max-gb\":" (string-from-i64 (match-max-gb size))) (string-concat "," (jstr "serial-bound" (v-of bind)))))) (string-concat (string-concat (string-concat (string-concat "}," "\"identity\":{") (string-concat (jstr "hostname" (v-of host)) ",")) (string-concat (string-concat (jstr "machine-model" mmv) "},") (string-concat "\"ssh\":{" (jstr "principal" (v-of pr))))) (string-concat (string-concat "," (jstr "public-key" (v-of key))) "}}"))) w (fsq (string-concat out (string-concat "WRITE_SEP" json)))] (if (string=? w json) (do (emit "AIUEOS_GUIDED_ANSWERS_WRITTEN") (emit (nl)) (if (string=? (arg "6") "") 0 (do (emit "Type the destructive phrase to proceed:") (emit (nl)) (let [typed (ask-chunk "phrase: ")] (if (string=? typed "E") 3 (run-live d size bind typed)))))) (refuse2 "answers-write-failed"))) (refuse2 "guided-confirm-mismatch")))))))))))))))))))))))))))))))))))))
 
 (defn driver-main [] :i64
-  (let [out (arg "1") disks (arg "2") boot (arg "3") img (parse-u64 (arg "4")) model (arg "5")]
+  (let [out (arg "1") disks (if (string=? (arg "2") "") (probe-disks) (arg "2")) boot (arg "3") img (parse-u64 (arg "4")) model (arg "5")]
     (if (string=? out "") (refuse2 "no-out-path")
       (run-flow out disks boot img model))))
 

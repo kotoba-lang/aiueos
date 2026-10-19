@@ -14,6 +14,8 @@
 ;;   5  match min-gb     6  match max-gb
 ;;   7  match serial ("" = not bound)
 ;;   8  the install-disk program (absolute path; sealed in the spawn grant)
+;;   9  the phrase the console user typed ("" = ask on stdin; a spawned
+;;      child has stdin at EOF, so the console process ferries it)
 ;;
 ;; install-v1.edn decision 2: the pick is recorded as a MATCH, and on the
 ;; target machine the installer RE-DERIVES the device from that match and
@@ -217,7 +219,7 @@ b" 1 2))
               (let [rec (v-of d) device (field rec 1)]
                 (do (emit "AIUEOS_LIVE_TARGET ") (emit device) (emit (nl))
                     (emit "Type the destructive phrase to proceed:") (emit (nl))
-                    (let [want (destructive-phrase device) typed (ask-phrase "phrase: ")]
+                    (let [want (destructive-phrase device) typed (if (string=? (arg "8") "") (ask-phrase "phrase: ") (arg "8"))]
                       (if (string=? typed "E") 3
                         (if (not (string=? typed want)) (refuse "destructive-phrase-mismatch")
                           (run-install installer device image typed)))))))))))))
