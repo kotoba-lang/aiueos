@@ -187,7 +187,8 @@ b" 1 2))
       (if (= 0 (spawn-exit mp))
         (if (string-contains? (spawn-out mp) "/") "R:target-mounted" "V:ok")
         "R:target-probe-failed")
-      (if (= 0 (spawn-exit b)) "R:target-not-empty" "R:target-probe-failed"))))(defn main [] :i64
+      (if (= 0 (spawn-exit b)) (string-concat "S:" (first-line (spawn-out b)))
+        "R:target-probe-failed"))))(defn main [] :i64
   (let [device (arg "0") src (arg "1") given (arg "2") mode (arg "3") work (arg "4")]
     ;; Phase modes (JUN-70 flat chain): every :process/spawn child lives at
     ;; most the substrate's 10 s wall, so the console chain runs this
@@ -208,11 +209,18 @@ b" 1 2))
       (string=? mode "receipt-check")
       (if (has-receipt? device work (dev-size-of device)) (refuse "existing-install") 0)
       (string=? mode "target-check")
+      ;; NON-empty targets are ALLOWED (owner direction 2026-10-19): the
+      ;; signatures found are printed so the person at the console sees
+      ;; what they are about to erase. mounted and probe-failed still
+      ;; refuse -- those are a running system and an unprobed target.
       (let [t (target-blank? device)]
-        (if (string=? t "V:ok") 0 (refuse (sub t 2 (string-byte-length t)))))
+        (if (string=? t "V:ok") 0
+          (if (string=? t "R:target-mounted") (refuse "target-mounted")
+            (if (string=? t "R:target-probe-failed") (refuse "target-probe-failed")
+              (do (emit "AIUEOS_INSTALL_TARGET_SIGNATURES ") (emit (sub t 2 (string-byte-length t))) (emit (nl)) 0)))))
       (string=? mode "receipt-write")
       (if (= 0 (write-receipt device work (dev-size-of device)))
         (do (emit "AIUEOS_INSTALL_RECEIPT_OK") (emit (nl)) 0)
         (refuse "receipt-write-failed"))
-      :else (if (string=? device "") (refuse "no-device") (if (string=? src "") (refuse "no-image") (let [want (destructive-phrase device) size (size-of src) dev-size (size-of device)] (if (or (< size 0) (= size 0)) (refuse "image-missing-or-empty") (if (< dev-size 4096) (refuse "device-too-small") (if (not (string=? mode "install")) (do (emit "AIUEOS_INSTALL_DRY_RUN ") (emit device) (emit " bytes=") (emit (string-from-i64 size)) (emit (nl)) (emit "to erase, re-run with the install flag and the phrase:") (emit (nl)) (emit "  ") (emit want) (emit (nl)) 0) (do (emit "Type the destructive phrase to proceed:") (emit (nl)) (let [typed (if (string=? given "") (ask-phrase "phrase: ") given)] (if (string=? typed "E") 3 (if (not (string=? typed want)) (refuse "destructive-phrase-mismatch") (if (has-receipt? device work (dev-size-of device)) (refuse "existing-install") (if (not (string=? (target-blank? device) "V:ok")) (refuse "target-not-empty") (let [w (spawn (dd-request src device))] (if (not (= 0 (spawn-exit w))) (refuse "write-failed") (do (emit "AIUEOS_INSTALL_WRITE_OK bytes=") (emit (string-from-i64 size)) (emit (nl)) (let [total-blk (quot size 4096) tail (- size (* total-blk 4096)) vr (verify-pieces src device 0 total-blk tail)] (if (< vr 0) (refuse "readback-mismatch") (if (not (= 0 (write-receipt device work (dev-size-of device)))) (refuse "receipt-write-failed") (do (emit "AIUEOS_INSTALL_READBACK_OK pieces4k=") (emit (string-from-i64 total-blk)) (emit (nl)) (emit "AIUEOS_INSTALL_RECEIPT_OK") (emit (nl)) 0)))))))))))))))))))))
+      :else (if (string=? device "") (refuse "no-device") (if (string=? src "") (refuse "no-image") (let [want (destructive-phrase device) size (size-of src) dev-size (size-of device)] (if (or (< size 0) (= size 0)) (refuse "image-missing-or-empty") (if (< dev-size 4096) (refuse "device-too-small") (if (not (string=? mode "install")) (do (emit "AIUEOS_INSTALL_DRY_RUN ") (emit device) (emit " bytes=") (emit (string-from-i64 size)) (emit (nl)) (emit "to erase, re-run with the install flag and the phrase:") (emit (nl)) (emit "  ") (emit want) (emit (nl)) 0) (do (emit "Type the destructive phrase to proceed:") (emit (nl)) (let [typed (if (string=? given "") (ask-phrase "phrase: ") given)] (if (string=? typed "E") 3 (if (not (string=? typed want)) (refuse "destructive-phrase-mismatch") (if (has-receipt? device work (dev-size-of device)) (refuse "existing-install") (if (string=? (target-blank? device) "R:target-mounted") (refuse "target-mounted") (let [w (spawn (dd-request src device))] (if (not (= 0 (spawn-exit w))) (refuse "write-failed") (do (emit "AIUEOS_INSTALL_WRITE_OK bytes=") (emit (string-from-i64 size)) (emit (nl)) (let [total-blk (quot size 4096) tail (- size (* total-blk 4096)) vr (verify-pieces src device 0 total-blk tail)] (if (< vr 0) (refuse "readback-mismatch") (if (not (= 0 (write-receipt device work (dev-size-of device)))) (refuse "receipt-write-failed") (do (emit "AIUEOS_INSTALL_READBACK_OK pieces4k=") (emit (string-from-i64 total-blk)) (emit (nl)) (emit "AIUEOS_INSTALL_RECEIPT_OK") (emit (nl)) 0)))))))))))))))))))))
 )
