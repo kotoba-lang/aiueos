@@ -32,7 +32,11 @@
   real `/dev/kvm`; running it is `spike`/`-main`, gated exactly like
   `aiueos.vfio`'s hardware note. Treat the FFM boot loop as new, unverified
   systems code until exercised against real KVM (see #110's smoke gate)."
-  (:require [kotoba.io :as kio] [kotoba.ffi :as ffi] [aiueos.virtio :as vio]))
+  (:require [kotoba.io :as kio] [kotoba.ffi :as ffi] [aiueos.virtio :as vio]
+            [vmm.oracle :as vmm-kir]
+            [vmm.arm64-boot :as vmm-boot]
+            [vmm.exit :as vmm-exit]
+            [vmm.fdt :as vmm-fdt]))
 
 ;; ---------------------------------------------------------------------------
 ;; ioctl number encoding (Linux `_IO`/`_IOW`/`_IOR` macros) -- pure,
@@ -255,6 +259,108 @@
         hi (reduce max (map #(+ (:vaddr %) (:memsz %)) segments))]
     [(* page (quot lo page))
      (* page (quot (+ hi (dec page)) page))]))
+
+;; ---------------------------------------------------------------------------
+;; Foreign-guest (arm64 Linux) decisions -- delegated to kotoba-lang/vmm.
+;;
+;; Root ADR-2608239100: the decisions of hosting another environment live in
+;; vmm's Kotoba cores, executed from their shipped KIR; this tender keeps the
+;; mechanism (mapping RAM, writing bytes, servicing exits). The call sites
+;; below are that boundary. The in-repo guests above keep their own paths, and
+;; `test/aiueos/hvt_vmm_gate_test.cljk` pins both directions: the decisions
+;; this tender consults, and that this file's own map constants still agree
+;; with the exit core that describes the same map.
+
+(defn mmio-exit-decision
+  "Classify one KVM_EXIT_MMIO access through the vmm exit core (shipped KIR).
+  Returns `{:ok? true :device :uart|:virtio ...}` or
+  `{:ok? false :reason mmio/...}`. The tender's mechanism (reading
+  `kvm_run`, answering the access) stays here."
+  [{:keys [gpa len]}]
+  (vmm-exit/classify-mmio {:gpa gpa :len len}))
+
+(defn psci-exit-decision
+  "Which PSCI call an HVC exit carries, through the vmm exit core.
+  Returns `{:ok? true :value <action>}` or `{:ok? false :reason psci/...}`."
+  [fid]
+  (vmm-exit/psci-action fid))
+
+(defn foreign-guest-boot-plan
+  "Plan and stage a foreign arm64 Linux guest. Every placement decision comes
+  from the vmm cores executed from their shipped KIR: `vmm.arm64-boot/plan`
+  decides where the Image, DTB and initrd go and what PC/x0 are;
+  `vmm.fdt/build` builds the devicetree bytes. This tender parses the 64-byte
+  Image header (rd-le) and stages the bytes where the plan said.
+
+  The DTB's size does not depend on the initrd values it carries (they are
+  fixed u64 properties), so the build runs twice: once to learn the blob size
+  that feeds the placement plan, once with the real initrd addresses.
+
+  `opts`:
+    :image-bytes   byte array (Image; first 64 bytes are the booting.rst header)
+    :initrd-bytes  byte array or nil
+    :bootargs      string
+    :ram-base :ram-size
+    :uart-base :uart-size :gicd-base :gicd-size :gicr-base :gicr-size
+    :virtio-base :virtio-stride :virtio-count
+
+  Returns `{:ok? true :label :linux :ram-gpa :ram-size :pc :x0 :kernel-gpa
+  :dtb-gpa :initrd-gpa :initrd-end :dtb-bytes :load!}` or
+  `{:ok? false :reason arm64-boot/... | fdt/...}`. `:load!` is
+  `(fn [ram-seg])` and writes kernel, DTB and initrd into the mapped RAM."
+  [opts]
+  (let [{:keys [image-bytes initrd-bytes bootargs ram-base ram-size]} opts
+        rd (fn [off] (bit-and (long (aget image-bytes (int off))) 0xff))
+        magic (rd-le rd 56 4)
+        image-size (rd-le rd 16 8)
+        text-offset (rd-le rd 8 8)
+        flags (rd-le rd 24 8)
+        initrd-size (if initrd-bytes (alength ^bytes initrd-bytes) 0)
+        shape (fn [dtb-size]
+                (vmm-boot/plan {:magic magic :image-size image-size
+                                :text-offset text-offset :flags flags
+                                :ram-base ram-base :ram-size ram-size
+                                :dtb-size dtb-size
+                                :initrd-size initrd-size}))
+        dtb0 (vmm-fdt/build (merge opts {:bootargs bootargs
+                                         :ram-base ram-base
+                                         :ram-size ram-size
+                                         :initrd-start 0 :initrd-end 0}))]
+    (if-not (:ok? dtb0)
+      dtb0
+      (let [p (shape (count (:bytes dtb0)))]
+        (if-not (:ok? p)
+          p
+          (let [dtb (vmm-fdt/build
+                     (merge opts {:bootargs bootargs
+                                  :ram-base ram-base :ram-size ram-size
+                                  :initrd-start (:initrd-gpa p)
+                                  :initrd-end (:initrd-end p)}))]
+            (if-not (:ok? dtb)
+              dtb
+              (let [dtb-bytes (:bytes dtb)]
+                {:ok? true
+                 :label :linux
+                 :ram-gpa ram-base
+                 :ram-size ram-size
+                 :pc (:pc p)
+                 :x0 (:x0 p)
+                 :kernel-gpa (:kernel-gpa p)
+                 :dtb-gpa (:dtb-gpa p)
+                 :initrd-gpa (:initrd-gpa p)
+                 :initrd-end (:initrd-end p)
+                 :dtb-bytes dtb-bytes
+                 :load! (fn [ram]
+                          (let [stage (fn [gpa ^bytes bs]
+                                        (when bs
+                                          (dotimes [i (alength bs)]
+                                            (ffi/put! ram :i8
+                                              (long (+ (- gpa ram-base) i))
+                                              (aget bs (int i))))))]
+                            (stage (:kernel-gpa p) image-bytes)
+                            (stage (:dtb-gpa p) dtb-bytes)
+                            (stage (:initrd-gpa p) initrd-bytes)
+                            ram))}))))))))
 
 ;; ---------------------------------------------------------------------------
 ;; virtio-mmio device model (host/tender side) -- pure, host-testable. The
