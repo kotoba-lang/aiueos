@@ -211,6 +211,23 @@
 
 (defn- serial-text [] @serial-buf)
 
+(defn- ensure-boot-started
+  "QEMU occasionally wedges at startup with NO serial output (measured
+  2026-10-20 twice, including on the virtio-vga boot; the second launch
+  works). Watch for the first byte; if none lands in 30s, kill and
+  relaunch once."
+  [vars-file relaunch!]
+  (js/Promise.
+    (fn [resolve]
+      (letfn [(check [n]
+                (cond
+                  (pos? (count (serial-text))) (resolve true)
+                  (zero? n) (do (.kill @child)
+                                (relaunch!)
+                                (js/setTimeout (fn [] (resolve true)) 1000))
+                  :else (js/setTimeout (fn [] (check (- n 1))) 1000)))]
+        (check 30)))))
+
 (def deadline (atom 0))
 
 (defn- await-prompt [needle]
@@ -251,7 +268,8 @@
 (defn- boot! [vars-file]
   (reset! deadline (+ (.now js/Date) (* 900 1000)))
   (start-vm! vars-file)
-  (-> (feed-all console-answers)
+  (-> (ensure-boot-started vars-file (fn [] (start-vm! vars-file)))
+      (.then (fn [] (feed-all console-answers)))
       (.then (fn [] (await-prompt "AIUEOS_LIVE_EXIT")))
       (.then (fn [] @child-closed))))
 
@@ -286,18 +304,17 @@
                      (poll 60))))))))
 
 (defn- colour-census [ppm-path]
-  ;; P6 PPM: parse the header, then count distinct 24-bit colours and dark
-  ;; pixels (text ink). Measured calibration 2026-10-20 on the good text
-  ;; frame: 1280x800, 7 bucketed colours, 1382 dark pixels -- so text is
-  ;; the proof, colour count alone is not.
+  ;; P6 PPM as QEMU writes it: "P6\n<w> <h>\n255\n" then RGB triples.
+  ;; Count distinct colours and dark pixels (text ink). Measured on the
+  ;; good text frame: 7 bucketed colours / 1382 dark px; the blank
+  ;; virtio-gpu frame is dark~0.
   (let [buf (.readFileSync fs ppm-path)
         s (.toString buf "latin1")
-        m1 (.indexOf s " ")
-        rest1 (.substring s (+ m1 1))
-        m2 (.indexOf rest1 " ")
-        rest2 (.substring rest1 (+ m2 1))
-        m3 (.indexOf rest2 "\n")
-        header-end (+ m1 1 (+ m2 1) (+ m3 1))
+        ;; pixels begin after the third newline
+        n1 (.indexOf s "\n")
+        n2 (.indexOf s "\n" (+ n1 1))
+        n3 (.indexOf s "\n" (+ n2 1))
+        header-end (+ n3 1)
         colors (js/Set.)
         dark (atom 0)]
     (loop [i header-end]
@@ -353,36 +370,46 @@
                     rs "\nnvme:    " nvme-sha))))
     rs))
 
+(defn- start-vm-boot3! [vars sock]
+  (.copyFileSync fs ovmf-vars-template vars)
+  (when (.existsSync fs sock) (.rmSync fs sock))
+  (reset! serial-buf "")
+  (let [args ["-machine" "q35" "-m" "2048" "-smp" "2"
+              "-drive" (str "if=pflash,format=raw,readonly=on,file=" ovmf)
+              "-drive" (str "if=pflash,format=raw,file=" vars)
+              "-drive" (str "if=none,id=gatenvme,format=raw,file=" nvme-img)
+              "-device" "nvme,drive=gatenvme,serial=AIUEOSGATE1,bootindex=0"
+              "-device" "virtio-rng-pci"
+              "-drive" (str "if=none,id=aiueosblk,format=raw,file=" data-img)
+              "-device" "virtio-blk-pci,drive=aiueosblk,disable-legacy=on"
+              "-device" "virtio-keyboard-pci"
+              "-device" "virtio-vga,disable-legacy=on,max_outputs=2"
+              "-display" "none"
+              "-serial" "stdio"
+              "-monitor" (str "unix:" sock ",server,nowait")
+              "-no-reboot"]
+        c (.spawn cp qemu (to-array args) (clj->js {:stdio ["pipe" "pipe" "pipe"]}))]
+    (reset! child c)
+    (.on (.-stderr c) "data"
+         (fn [d] (.appendFileSync fs (str serial-log ".stderr") d)))
+    (.on (.-stdout c) "data"
+         (fn [d] (swap! serial-buf str d) (.appendFileSync fs serial-log d)))
+    (reset! child-closed (js/Promise. (fn [res] (.on c "close" (fn [] (res true)))))))
+  true)
+
 (defn- boot-desktop! []
   (let [vars (.join path gate-dir "vars-boot3.fd")
         sock (.join path gate-dir "mon-boot3.sock")
         ppm (.join path gate-dir "desktop.ppm")]
-    (.copyFileSync fs ovmf-vars-template vars)
-    (when (.existsSync fs sock) (.rmSync fs sock))
-    (reset! serial-buf "")
+    ;; A STALE ppm from a previous run passes the size poll before this
+    ;; run's screendump lands, and the census then reads a mid-write
+    ;; truncate (measured 2026-10-20: colours=0). Start clean.
+    (when (.existsSync fs ppm) (.rmSync fs ppm))
     (reset! deadline (+ (.now js/Date) (* 1200 1000)))
-    (let [args ["-machine" "q35" "-m" "2048" "-smp" "2"
-                "-drive" (str "if=pflash,format=raw,readonly=on,file=" ovmf)
-                "-drive" (str "if=pflash,format=raw,file=" vars)
-                "-drive" (str "if=none,id=gatenvme,format=raw,file=" nvme-img)
-                "-device" "nvme,drive=gatenvme,serial=AIUEOSGATE1,bootindex=0"
-                "-device" "virtio-rng-pci"
-                "-drive" (str "if=none,id=aiueosblk,format=raw,file=" data-img)
-                "-device" "virtio-blk-pci,drive=aiueosblk,disable-legacy=on"
-                "-device" "virtio-keyboard-pci"
-                "-device" "virtio-vga,disable-legacy=on,max_outputs=2"
-                "-display" "none"
-                "-serial" "stdio"
-                "-monitor" (str "unix:" sock ",server,nowait")
-                "-no-reboot"]
-          c (.spawn cp qemu (to-array args) (clj->js {:stdio ["pipe" "pipe" "pipe"]}))]
-      (reset! child c)
-      (.on (.-stdout c) "data"
-           (fn [d] (swap! serial-buf str d) (.appendFileSync fs serial-log d))))
+    (start-vm-boot3! vars sock)
     ;; The guest demo advances on input events. Feed keys EVERY 3 s until
     ;; the run's own end marker -- a fixed-size window missed the input
-    ;; stage when the host was busy (measured 2026-10-20: the gate timed
-    ;; out at APP_CATALOG with the feeder already spent).
+    ;; stage when the host was busy (measured 2026-10-20).
     (js/setTimeout
       (fn []
         (letfn [(feed []
@@ -394,9 +421,20 @@
                                         (fn [res] (js/setTimeout (fn [] (res (feed))) 3000))))))))]
           (feed)))
       30000)
-    (-> (await-prompt "AIUEOS_GUEST_BROWSER_FLOW_OK")
+    (-> (ensure-boot-started vars (fn [] (start-vm-boot3! vars sock)))
+        (.then (fn [] (await-prompt "AIUEOS_GUEST_BROWSER_FLOW_OK")))
         (.then (fn [] (monitor-send sock (str "screendump " ppm))))
-        (.then (fn [] (js/setTimeout (fn [] true) 1500)))
+        (.then (fn []
+               (js/Promise.
+                 (fn [resolve reject]
+                   (let [expect (* 1280 800 3)]
+                     (letfn [(poll [n]
+                               (cond
+                                 (and (.existsSync fs ppm) (>= (.-size (.statSync fs ppm)) expect))
+                                 (resolve true)
+                                 (< n 0) (reject (js/Error. "screendump never filled"))
+                                 :else (js/setTimeout (fn [] (poll (- n 1))) 500)))]
+                       (poll 60)))))))
         (.then (fn [] (assert-screen ppm "boot3"))))))
 
 (def boot1-sha (atom nil))
