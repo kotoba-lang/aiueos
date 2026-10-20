@@ -172,9 +172,17 @@
   (println "AIUEOS_GATE_STICK" stick))
 
 (.copyFileSync fs ovmf-vars-template (.join path gate-dir "vars.fd"))
-(when (.existsSync fs nvme-img) (.rmSync fs nvme-img))
-(let [r (run "qemu-img" ["create" "-f" "raw" nvme-img "8G"] {})]
-  (when-not (zero? (:status r)) (die "qemu-img failed:" (:err r))))
+;; AIUEOS_GATE_BOOT3_ONLY=1 runs just the screen boot -- for flake
+;; hunting (JUN-142) the install boots are already proven. It must NOT
+;; wipe the installed disk: the unconditional rm deleted nvme.img and the
+;; screen boot fell to the UEFI shell (measured 2026-10-20).
+(def boot3-only (= "1" (aget (.-env js/process) "AIUEOS_GATE_BOOT3_ONLY")))
+(when (and (not boot3-only) (.existsSync fs nvme-img)) (.rmSync fs nvme-img))
+(when-not boot3-only
+  ;; An unconditional create wipes the installed disk: boot3-only booted
+  ;; to the UEFI shell on a fresh empty image (measured 2026-10-20).
+  (let [r (run "qemu-img" ["create" "-f" "raw" nvme-img "8G"] {})]
+    (when-not (zero? (:status r)) (die "qemu-img failed:" (:err r)))))
 (when (.existsSync fs serial-log) (.rmSync fs serial-log))
 
 ;; ------------------------------------------------------------ the VM run --
@@ -241,6 +249,8 @@
                   (cond
                     (str/includes? t "AIUEOS_GATE_QEMU_EXITED_EARLY")
                     (reject (js/Error. (str "qemu exited early (" needle " never appeared)")))
+                    (str/includes? t "UEFI Interactive Shell")
+                    (reject (js/Error. (str "boot dropped to the UEFI shell (wanting: " needle ")")))
                     (str/includes? t needle) (resolve true)
                     (> (.now js/Date) @deadline)
                     (reject (js/Error.
@@ -435,28 +445,42 @@
                                  (< n 0) (reject (js/Error. "screendump never filled"))
                                  :else (js/setTimeout (fn [] (poll (- n 1))) 500)))]
                        (poll 60)))))))
-        (.then (fn [] (assert-screen ppm "boot3"))))))
+        (.then (fn [] (assert-screen ppm "boot3")))
+        ;; Tear the QEMU down on the SUCCESS path too: a surviving boot3
+        ;; holds the image lock and the next cycle's qemu-img refuses to
+        ;; start (measured 2026-10-20: all boot3-only cycles died on
+        ;; 'Failed to get write lock').
+        (.then (fn [] (do (when-let [c @child] (.kill c)) @child-closed))))))
 
 (def boot1-sha (atom nil))
 
-(-> (boot! (.join path gate-dir "vars-boot1.fd"))
-    (.then (fn []
-             (assert-markers boot1-markers "boot1")
-             (reset! boot1-sha (sha256-file nvme-img))
-             (assert-extent)))
-    (.then (fn [] (boot! (.join path gate-dir "vars-boot2.fd"))))
-    (.then (fn [] (assert-markers boot2-markers "boot2")))
+
+(-> (if boot3-only
+      (js/Promise.resolve true)
+      (-> (boot! (.join path gate-dir "vars-boot1.fd"))
+          (.then (fn []
+                   (assert-markers boot1-markers "boot1")
+                   (reset! boot1-sha (sha256-file nvme-img))
+                   (assert-extent)))
+          (.then (fn [] (boot! (.join path gate-dir "vars-boot2.fd"))))
+          (.then (fn [] (assert-markers boot2-markers "boot2")))))
     (.then (fn [] (boot-desktop!)))
     (.then (fn [] (assert-markers boot3-markers "boot3")))
     (.then (fn []
-             (let [after (sha256-file nvme-img)]
-               (when-not (= @boot1-sha after)
-                 (throw (js/Error.
-                          (str "the NVMe changed across boot2\nbefore: " @boot1-sha
-                               "\nafter:  " after))))
-               (println "AIUEOS_INSTALL_SMOKE_OK selfhost-usb-live-install"
-                        "nvme-written readback-verified repeat-refused"
-                        "extent-identical disk-untouched"
-                        (str "sha256=" (rel-sha)))
-               (js/process.exit 0))))
+             (if boot3-only
+               ;; the screen boot asserts the SCREEN only; the disk check
+               ;; belongs to the install boots (boot1-sha is nil here and
+               ;; tripped it -- measured 2026-10-20)
+               (do (println "AIUEOS_SCREEN_HUNT_OK boot3")
+                   (js/process.exit 0))
+               (let [after (sha256-file nvme-img)]
+                 (when-not (= @boot1-sha after)
+                   (throw (js/Error.
+                            (str "the NVMe changed across boot2\nbefore: " @boot1-sha
+                                 "\nafter:  " after))))
+                 (println "AIUEOS_INSTALL_SMOKE_OK selfhost-usb-live-install"
+                          "nvme-written readback-verified repeat-refused"
+                          "extent-identical disk-untouched"
+                          (str "sha256=" (rel-sha)))
+                 (js/process.exit 0)))))
     (.catch (fn [e] (die (str e)))))
