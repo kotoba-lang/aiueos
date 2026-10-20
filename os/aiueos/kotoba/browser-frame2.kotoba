@@ -553,8 +553,8 @@
 
 ;; --- windows ----------------------------------------------------------------
 
-(defn body-rgb [focused] (if (= focused 1) 16777215 15856114))
-(defn title-rgb [focused] (if (= focused 1) 15132390 15856114))
+(defn body-rgb [focused] (if (= focused 1) 16777215 16777215))
+(defn title-rgb [focused] (if (= focused 1) 13421772 15132390))
 
 (defn window-shadow [s x y w h]
   ;; The shadow belongs to the outside edge only. A filled offset rectangle
@@ -584,10 +584,17 @@
         h (sw s (+ b 4))
         focused (if (= id (sw s 2)) 1 0)]
     (do (window-shadow s x y w h)
+        ;; 2 px rounded corners as an ADDITIVE union of three rects
+        ;; (DADS form rules; JUN-143). No cuts: the painter order stays
+        ;; retained and the shape works over any surface below it.
         (sput s 422 (body-rgb focused))
-        (put-rect s x y w h)
+        (put-rect s (+ x 2) y (- w 4) h)
+        (put-rect s (+ x 1) (+ y 1) (- w 2) (- h 2))
+        (put-rect s x (+ y 2) w (- h 4))
         (sput s 422 (title-rgb focused))
-        (put-rect s x y w 28)
+        (put-rect s (+ x 2) y (- w 4) 28)
+        (put-rect s (+ x 1) (+ y 1) (- w 2) 28)
+        (put-rect s x (+ y 2) w 26)
         ;; title: one line, clipped at the right inset (or before the close
         ;; control), inside the titlebar
         (sput s 420 (- (+ x w) (+ 8 (* 20 (chrome s w))))) (sput s 421 (+ y 28))

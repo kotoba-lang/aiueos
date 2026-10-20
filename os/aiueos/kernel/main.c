@@ -5479,9 +5479,9 @@ qwen_runtime_boot_complete:
          (measured 2026-10-20 -- the rebuild's ink census is identical,
          3593 px / a19f95a8, and only the coloured rect count moved).
          The source is the truth. */
-      if (fcount == 166 && fpx == 3593 && fhash == 0xa19f95a8U) {
+      if (fcount == 182 && fpx == 3593 && fhash == 0xa19f95a8U) {
             debug_string("AIUEOS_GUEST_BROWSER_FLOW_OK\n");
-            serial_string("AIUEOS_GUEST_BROWSER_FLOW_OK windows=4 ops=166 text-px=3593 hash=a19f95a8\r\n");
+            serial_string("AIUEOS_GUEST_BROWSER_FLOW_OK windows=4 ops=182 text-px=3593 hash=a19f95a8\r\n");
             browser_hold_for_screendump();
           } else {
             debug_string("AIUEOS_GUEST_BROWSER_FLOW leftover=census-miss\n");
