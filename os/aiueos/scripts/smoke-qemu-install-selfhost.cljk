@@ -37,6 +37,7 @@
 (def gate-dir (.join path out "install-gate" "selfhost"))
 (def release-image (.join path out "aiueos-x86_64-gpt.img"))
 (def release-receipt (.join path out "aiueos-x86_64-build-receipt.json"))
+(def data-img (.join path out "aiueos-x86_64-data.img"))
 (def uki (.join path out "live" "uki.efi"))
 (def elf-dir (.join path out "selfhost"))
 (def stick (.join path gate-dir "stick.img"))
@@ -109,6 +110,7 @@
 (doseq [[p hint] [[release-image "run os/aiueos/scripts/build-release-image.sh"]
                   [release-receipt "run os/aiueos/scripts/build-release-image.sh"]
                   [uki "run make-live-installer.py build --output-dir build/aiueos/live"]
+                  [data-img "run os/aiueos/scripts/build-release-image.sh"]
                   [(.join path elf-dir "guided-core.elf") "amu compile os/aiueos/installer/kotoba/guided-core.kotoba --target x86_64-linux-static --jvm-free --policy os/aiueos/installer/kotoba/guided-core-stick-policy.edn"]
                   [(.join path elf-dir "install-live.elf") "amu compile os/aiueos/installer/kotoba/install-live.kotoba --target x86_64-linux-static --jvm-free --policy os/aiueos/installer/kotoba/install-live-stick-policy.edn"]
                   [(.join path elf-dir "install-disk.elf") "amu compile os/aiueos/installer/kotoba/install-disk.kotoba --target x86_64-linux-static --jvm-free --policy os/aiueos/installer/kotoba/install-disk-stick-policy.edn"]]]
@@ -236,6 +238,56 @@
       (.then (fn [] (await-prompt "AIUEOS_LIVE_EXIT")))
       (.then (fn [] (await-prompt "reboot: Power down")))))
 
+;; ---- the SCREEN check (owner direction 2026-10-20: 画面の確認も loop に) --
+;; The serial markers say the guest DREW text; this says the visible FRAME
+;; shows it. screendump through the QEMU human monitor, then a colour
+;; census of the PPM: a uniform frame (the blue failure state of
+;; AIUEOS_VIRTIO_GPU_FAIL display-info-or-surface-binding) has one colour,
+;; the desktop with text has hundreds.
+(defn- monitor-send [sock-path cmd]
+  (js/Promise.
+    (fn [resolve reject]
+      (let [net (js/require "node:net")
+            c (.connect net sock-path)]
+        (.on c "connect" (fn [] (.write c (str cmd "\n"))))
+        (.on c "data" (fn [_] (.end c) (resolve true)))
+        (.on c "error" (fn [e] (reject e)))))))
+
+(defn- screendump [sock-path out-ppm]
+  (monitor-send sock-path (str "screendump " out-ppm)))
+
+(defn- colour-census [ppm-path]
+  ;; P6 PPM: parse the header, then count distinct 24-bit colours.
+  (let [buf (.readFileSync fs ppm-path)
+        s (.toString buf "latin1")
+        m1 (.indexOf s " ")
+        ;; header: P6 <w> <h> <max>\n
+        rest1 (.substring s (+ m1 1))
+        m2 (.indexOf rest1 " ")
+        rest2 (.substring rest1 (+ m2 1))
+        m3 (.indexOf rest2 "\n")
+        header-end (+ m1 1 (+ m2 1) (+ m3 1))
+        colors (js/Set.)]
+    (loop [i header-end]
+      (when (< i (- (.-length buf) 2))
+        (.add colors (+ (* 65536 (aget buf i)) (* 256 (aget buf (+ i 1))) (aget buf (+ i 2))))
+        (recur (+ i 3))))
+    (.-size colors)))
+
+(defn- assert-screen [ppm-path label]
+  (let [n (colour-census ppm-path)]
+    (when (< n 100)
+      (throw (js/Error. (str label " screen looks blank: distinct colours=" n
+                             " (a uniform frame is the virtio-gpu binding failure)"))))
+    (println "AIUEOS_SCREEN_OK" label (str "colours=" n))))
+
+;; boot3: the INSTALLED system boots from the NVMe (USB detached) to the
+;; guest desktop, and the screen itself is verified -- the node gate's
+;; boot2 shape plus the frame check.
+(def boot3-markers
+  ["AIUEOS_GUEST_BROWSER_FLOW_OK"
+   "AIUEOS_EVIDENCE_STOP"])
+
 (def boot1-markers
   ["AIUEOS_LIVE_HANDOVER guided-core.elf"
    "AIUEOS_GUIDED_ANSWERS_WRITTEN"
@@ -264,6 +316,47 @@
                     rs "\nnvme:    " nvme-sha))))
     rs))
 
+(defn- boot-desktop! []
+  (let [vars (.join path gate-dir "vars-boot3.fd")
+        sock (.join path gate-dir "mon-boot3.sock")
+        ppm (.join path gate-dir "desktop.ppm")]
+    (.copyFileSync fs ovmf-vars-template vars)
+    (when (.existsSync fs sock) (.rmSync fs sock))
+    (reset! serial-buf "")
+    (reset! deadline (+ (.now js/Date) (* 600 1000)))
+    (let [args ["-machine" "q35" "-m" "2048" "-smp" "2"
+                "-drive" (str "if=pflash,format=raw,readonly=on,file=" ovmf)
+                "-drive" (str "if=pflash,format=raw,file=" vars)
+                "-drive" (str "if=none,id=gatenvme,format=raw,file=" nvme-img)
+                "-device" "nvme,drive=gatenvme,serial=AIUEOSGATE1,bootindex=0"
+                "-device" "virtio-rng-pci"
+                "-drive" (str "if=none,id=aiueosblk,format=raw,file=" data-img)
+                "-device" "virtio-blk-pci,drive=aiueosblk,disable-legacy=on"
+                "-device" "virtio-keyboard-pci"
+                "-device" "virtio-vga,disable-legacy=on,max_outputs=2"
+                "-display" "none"
+                "-serial" "stdio"
+                "-monitor" (str "unix:" sock ",server,nowait")
+                "-no-reboot"]
+          c (.spawn cp qemu (to-array args) (clj->js {:stdio ["pipe" "pipe" "ignore"]}))]
+      (reset! child c)
+      (.on (.-stdout c) "data"
+           (fn [d] (swap! serial-buf str d) (.appendFileSync fs serial-log d))))
+    ;; the guest demo advances on input events: a key every 3 s from 40 s
+    (js/setTimeout
+      (fn []
+        (letfn [(keys [n]
+                  (when (pos? n)
+                    (-> (monitor-send sock "sendkey a")
+                        (.catch (fn [_] nil))
+                        (.then (fn [] (js/setTimeout (fn [] (keys (- n 1))) 3000))))))]
+          (keys 25)))
+      40000)
+    (-> (await-prompt "AIUEOS_EVIDENCE_STOP")
+        (.then (fn [] (monitor-send sock (str "screendump " ppm))))
+        (.then (fn [] (js/setTimeout (fn [] true) 1500)))
+        (.then (fn [] (assert-screen ppm "boot3"))))))
+
 (def boot1-sha (atom nil))
 
 (-> (boot! (.join path gate-dir "vars-boot1.fd"))
@@ -273,6 +366,8 @@
              (assert-extent)))
     (.then (fn [] (boot! (.join path gate-dir "vars-boot2.fd"))))
     (.then (fn [] (assert-markers boot2-markers "boot2")))
+    (.then (fn [] (boot-desktop!)))
+    (.then (fn [] (assert-markers boot3-markers "boot3")))
     (.then (fn []
              (let [after (sha256-file nvme-img)]
                (when-not (= @boot1-sha after)
