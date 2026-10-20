@@ -1153,7 +1153,7 @@ static int browser_scroll_stage(uint32_t *surface, const uint8_t *font, uint64_t
     spx2 = 0;
     shash2 = 0;
     if (sfo > 0 && aiueos_desktop_present_ops2(surface + 480, (uint64_t)sfo, font, font_length)) {
-      shash2 = aiueos_desktop_colour_census(0x111111U, &spx2);
+      shash2 = aiueos_desktop_colour_census(0x333333U, &spx2);
       (void)aiueos_desktop_show();
       sframes++;
       for (int k = 0; k < 4; k++) {
@@ -1281,7 +1281,7 @@ static int browser_selection_stage(uint32_t *surface, const uint8_t *font, uint6
     lhpx2 = 0;
     lhhash2 = 0;
     if (lfo > 0 && aiueos_desktop_present_ops2(surface + 480, (uint64_t)lfo, font, font_length)) {
-      lhash2 = aiueos_desktop_colour_census(0x111111U, &lpx2);
+      lhash2 = aiueos_desktop_colour_census(0x333333U, &lpx2);
       lhhash2 = aiueos_desktop_colour_census(0xb5cdf1U, &lhpx2);
       (void)aiueos_desktop_show();
       lframes++;
@@ -1440,7 +1440,7 @@ static int browser_clipboard_stage(uint32_t *surface, const uint8_t *font, uint6
     chpx2 = 0;
     chhash2 = 0;
     if (cfo > 0 && aiueos_desktop_present_ops2(surface + 480, (uint64_t)cfo, font, font_length)) {
-      chash2 = aiueos_desktop_colour_census(0x111111U, &cpx2);
+      chash2 = aiueos_desktop_colour_census(0x333333U, &cpx2);
       chhash2 = aiueos_desktop_colour_census(0xb5cdf1U, &chpx2);
       (void)aiueos_desktop_show();
       cframes++;
@@ -1580,7 +1580,7 @@ static int browser_damage_stage(uint32_t *surface, const uint8_t *font, uint64_t
     dhash2 = 0;
     rect[0] = rect[1] = rect[2] = rect[3] = 0xffffffffU;
     if (dfo > 0 && aiueos_desktop_present_ops2(surface + 480, (uint64_t)dfo, font, font_length)) {
-      dhash2 = aiueos_desktop_colour_census(0x111111U, &dpx2);
+      dhash2 = aiueos_desktop_colour_census(0x333333U, &dpx2);
       if (aiueos_desktop_show()) {
         dframes++;
         aiueos_desktop_damage_last(rect);
@@ -4297,7 +4297,7 @@ qwen_runtime_boot_complete:
           debug_string("AIUEOS_GUEST_BROWSER_TEXT leftover=present-refused\n");
           serial_string("AIUEOS_GUEST_BROWSER_TEXT leftover=present-refused\r\n");
         } else {
-          text_hash = aiueos_desktop_colour_census(0x111111U, &text_px);
+          text_hash = aiueos_desktop_colour_census(0x333333U, &text_px);
           /* On the real display too (virtio-gpu scanout 0). Its own line:
              the census above is of memory and does not depend on it. */
           if (aiueos_desktop_show()) {
@@ -4336,7 +4336,7 @@ qwen_runtime_boot_complete:
                                      (uint64_t)(uintptr_t)font, font_length) : 0;
         if (again > 0 && aiueos_desktop_present_ops2(surface + 480, (uint64_t)again,
                                                     font, font_length)) {
-          text_hash = aiueos_desktop_colour_census(0x111111U, &text_px);
+          text_hash = aiueos_desktop_colour_census(0x333333U, &text_px);
           (void)aiueos_desktop_show();
           if (hit == 1 && again == 58 && text_px == 880 && text_hash == 0xb9f96599U) {
             debug_string("AIUEOS_GUEST_BROWSER_TEXT_RAISED_OK\n");
@@ -4370,7 +4370,7 @@ qwen_runtime_boot_complete:
                                 (uint64_t)(uintptr_t)font, font_length);
               if (presses == 19 && typed > 0 &&
                   aiueos_desktop_present_ops2(surface + 480, (uint64_t)typed, font, font_length)) {
-                text_hash = aiueos_desktop_colour_census(0x111111U, &text_px);
+                text_hash = aiueos_desktop_colour_census(0x333333U, &text_px);
                 (void)aiueos_desktop_show();
                 if (committed == 5 && refused == 0 && typed == 63 &&
                     text_px == 1068 && text_hash == 0xa92b8f58U) {
@@ -4414,7 +4414,7 @@ qwen_runtime_boot_complete:
                             (uint64_t)(uintptr_t)font, font_length);
                   if (pressed == 3 && shown > 0 &&
                       aiueos_desktop_present_ops2(surface + 480, (uint64_t)shown, font, font_length)) {
-                    pre_hash = aiueos_desktop_colour_census(0x111111U, &pre_px);
+                    pre_hash = aiueos_desktop_colour_census(0x333333U, &pre_px);
                     (void)aiueos_desktop_show();
                     serial_string("AIUEOS_GUEST_BROWSER_PREEDIT_SHOWN ops=");
                     serial_decimal((uint32_t)shown);
@@ -4437,7 +4437,7 @@ qwen_runtime_boot_complete:
                               (uint64_t)(uintptr_t)font, font_length);
                     if (after > 0 &&
                         aiueos_desktop_present_ops2(surface + 480, (uint64_t)after, font, font_length)) {
-                      text_hash = aiueos_desktop_colour_census(0x111111U, &text_px);
+                      text_hash = aiueos_desktop_colour_census(0x333333U, &text_px);
                       (void)aiueos_desktop_show();
                     }
                     if (stray == 0 && shown == 67 && pre_px == 1146 && pre_hash == 0x566a1c8fU &&
@@ -4495,7 +4495,7 @@ qwen_runtime_boot_complete:
                             (uint64_t)(uintptr_t)font, font_length);
                     if (tp == 7 && tog > 0 &&
                         aiueos_desktop_present_ops2(surface + 480, (uint64_t)tog, font, font_length)) {
-                      text_hash = aiueos_desktop_colour_census(0x111111U, &text_px);
+                      text_hash = aiueos_desktop_colour_census(0x333333U, &text_px);
                       (void)aiueos_desktop_show();
                       if (miss == 0 && off_seen == 0 && latin == 2 && kana == 1 &&
                           surface[432] == 1 && tog == 68 &&
@@ -4563,7 +4563,7 @@ qwen_runtime_boot_complete:
                                   (uint64_t)(uintptr_t)font, font_length);
                       if (ev == 6 && dragged > 0 &&
                           aiueos_desktop_present_ops2(surface + 480, (uint64_t)dragged, font, font_length)) {
-                        text_hash = aiueos_desktop_colour_census(0x111111U, &text_px);
+                        text_hash = aiueos_desktop_colour_census(0x333333U, &text_px);
                         (void)aiueos_desktop_show();
                         /* stack [2 1]: window 1 is words 10..14 */
                         if (off == 0 && surface[10] == 1 && surface[11] == 272 &&
@@ -4635,7 +4635,7 @@ qwen_runtime_boot_complete:
                                     (uint64_t)(uintptr_t)font, font_length);
                         if (rev == 6 && resized > 0 &&
                             aiueos_desktop_present_ops2(surface + 480, (uint64_t)resized, font, font_length)) {
-                          text_hash = aiueos_desktop_colour_census(0x111111U, &text_px);
+                          text_hash = aiueos_desktop_colour_census(0x333333U, &text_px);
                           (void)aiueos_desktop_show();
                           /* stack [2 1]: window 1 is words 10..14 */
                           if (roff == 0 && cw == 120 && ch == 80 && surface[10] == 1 &&
@@ -4735,7 +4735,7 @@ qwen_runtime_boot_complete:
                                    (uint64_t)(uintptr_t)font, font_length);
                             if (fo > 0 && aiueos_desktop_present_ops2(surface + 480, (uint64_t)fo,
                                                                       font, font_length)) {
-                              lhash = aiueos_desktop_colour_census(0x111111U, &lpx);
+                              lhash = aiueos_desktop_colour_census(0x333333U, &lpx);
                               (void)aiueos_desktop_show();
                               frames++;
                               for (int b = 0; b < 4; b++) {
@@ -4831,14 +4831,14 @@ qwen_runtime_boot_complete:
                               if (cfo > 0 && aiueos_desktop_present_ops2(surface + 480, (uint64_t)cfo,
                                                                          font, font_length)) {
                                 const uint32_t *op = surface + 480 + 6 * (uint32_t)(cfo - 1);
-                                chash = aiueos_desktop_colour_census(0x111111U, &cpx);
+                                chash = aiueos_desktop_colour_census(0x333333U, &cpx);
                                 (void)aiueos_desktop_show();
                                 cframes++;
                                 for (int b = 0; b < 4; b++) {
                                   cchain ^= (chash >> (8 * b)) & 255U;
                                   cchain *= 16777619U;
                                 }
-                                if (op[0] == 1 && op[3] == 1 && op[4] == 16 && op[5] == 0x111111U) {
+                                if (op[0] == 1 && op[3] == 1 && op[4] == 16 && op[5] == 0x333333U) {
                                   caret_op = 1;
                                   cx = op[1];
                                   cy = op[2];
@@ -4947,7 +4947,7 @@ qwen_runtime_boot_complete:
                                         (uint64_t)(uintptr_t)font, font_length);
                                 if (afo > 0 && aiueos_desktop_present_ops2(surface + 480, (uint64_t)afo,
                                                                            font, font_length)) {
-                                  ahash = aiueos_desktop_colour_census(0x111111U, &apx);
+                                  ahash = aiueos_desktop_colour_census(0x333333U, &apx);
                                   (void)aiueos_desktop_show();
                                   aframes++;
                                   for (int b = 0; b < 4; b++) {
@@ -5028,7 +5028,7 @@ qwen_runtime_boot_complete:
                                           (uint64_t)(uintptr_t)font, font_length);
                                   if (dfo > 0 && aiueos_desktop_present_ops2(surface + 480, (uint64_t)dfo,
                                                                              font, font_length)) {
-                                    chash = aiueos_desktop_colour_census(0x111111U, &cpx);
+                                    chash = aiueos_desktop_colour_census(0x333333U, &cpx);
                                     (void)aiueos_desktop_show();
                                   }
                                   serial_string("AIUEOS_GUEST_BROWSER_DICT_SHOWN keys=");
@@ -5062,7 +5062,7 @@ qwen_runtime_boot_complete:
                                              (uint64_t)(uintptr_t)font, font_length);
                                     if (dfo2 > 0 && aiueos_desktop_present_ops2(surface + 480, (uint64_t)dfo2,
                                                                                 font, font_length)) {
-                                      dhash = aiueos_desktop_colour_census(0x111111U, &dpx);
+                                      dhash = aiueos_desktop_colour_census(0x333333U, &dpx);
                                       (void)aiueos_desktop_show();
                                     }
                                   }
@@ -5126,7 +5126,7 @@ qwen_runtime_boot_complete:
                                         fill = 0;
                                         if (cfo > 0 && aiueos_desktop_present_ops2(surface + 480, (uint64_t)cfo,
                                                                                    font, font_length)) {
-                                          chash2 = aiueos_desktop_colour_census(0x111111U, &cpx2);
+                                          chash2 = aiueos_desktop_colour_census(0x333333U, &cpx2);
                                           (void)aiueos_desktop_show();
                                           tip = aiueos_desktop_sample_rgb(px, py);
                                           fill = aiueos_desktop_sample_rgb(px + 1U, py + 5U);
@@ -5138,7 +5138,7 @@ qwen_runtime_boot_complete:
                                         }
                                         if (src != csrc[ce] || r != 0 || px != cat[2 * ce] ||
                                             py != cat[2 * ce + 1] || cfo != (int64_t)cops[ce] ||
-                                            cpx2 != cwpx[ce] || chash2 != cwhash[ce] || tip != 0x111111U) coff++;
+                                            cpx2 != cwpx[ce] || chash2 != cwhash[ce] || tip != 0x333333U) coff++;
                                         ce++;
                                         serial_string("AIUEOS_GUEST_BROWSER_CURSOR_FRAME n=");
                                         serial_decimal(ce);
@@ -5243,7 +5243,7 @@ qwen_runtime_boot_complete:
                                             fhash2 = 0;
                                             if (ffo > 0 && aiueos_desktop_present_ops2(surface + 480, (uint64_t)ffo,
                                                                                       font, font_length)) {
-                                              fhash2 = aiueos_desktop_colour_census(0x111111U, &fpx2);
+                                              fhash2 = aiueos_desktop_colour_census(0x333333U, &fpx2);
                                               (void)aiueos_desktop_show();
                                               fframes++;
                                               for (int b = 0; b < 4; b++) {
@@ -5467,7 +5467,7 @@ qwen_runtime_boot_complete:
           debug_string("AIUEOS_GUEST_BROWSER_FLOW leftover=present-refused\n");
           serial_string("AIUEOS_GUEST_BROWSER_FLOW leftover=present-refused\r\n");
         } else {
-          fhash = aiueos_desktop_colour_census(0x111111U, &fpx);
+          fhash = aiueos_desktop_colour_census(0x333333U, &fpx);
           (void)aiueos_desktop_show();
           /* kind x y a b rgb per op, each word as 8 hex digits */
           serial_string("AIUEOS_GUEST_BROWSER_FLOW_OPS n=");

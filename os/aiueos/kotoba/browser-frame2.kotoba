@@ -319,13 +319,13 @@
   (if (> (+ (sw s 418) 16) (sw s 421)) 0
     (if (< (sw s 418) (sw s 2044)) 0
       (if (> (+ (sw s 417) 1) (sw s 3)) 0
-        (do (sput s 422 1118481)
+        (do (sput s 422 3355443)
             (put-rect s (sw s 417) (- (sw s 418) (sw s 2045)) 1 16))))))
 
 (defn text-block [s f base x y]
   ;; Right limit, bottom, wrap and limit are already in scratch.
   (do (sput s 417 x) (sput s 418 y) (sput s 419 x)
-      (sput s 422 1118481)
+      (sput s 422 3355443)
       (lay s f base 0)))
 
 ;; --- body flow (ADR-0234) -----------------------------------------------------
@@ -364,7 +364,7 @@
   ;; text colour back for it
   (do (sput s 422 11914737)
       (put-rect s (sw s 417) (- (sw s 418) (sw s 2045)) gw 16)
-      (sput s 422 1118481)))
+      (sput s 422 3355443)))
 
 (defn place-body [s f cp j]
   ;; the glyph for body code point j at the cursor unless it passes the
@@ -454,7 +454,7 @@
 (defn body-block [s f base x y]
   ;; Right limit, bottom, limit and window width are already in scratch.
   (do (sput s 417 x) (sput s 418 y) (sput s 419 x)
-      (sput s 422 1118481)
+      (sput s 422 3355443)
       (flow s f base)))
 
 ;; --- launcher and close (ADR-0233) -------------------------------------------
@@ -518,7 +518,7 @@
           gw (glyph-width s f gi)]
       (do (sput s 422 15132390)
           (put-rect s (- (+ x w) 24) (+ y 6) 16 16)
-          (sput s 422 1118481)
+          (sput s 422 3355443)
           (put-glyph s (+ (- (+ x w) 24) (quot (- 16 gw) 2)) (+ y 6) gi gw)))))
 
 ;; --- pointer (ADR-0236) ---------------------------------------------------------
@@ -526,7 +526,7 @@
 (defn arrow-row [s x y r vw]
   ;; row r: the outline (r + 1 wide), then in rows 2..10 the fill (r - 1 wide
   ;; from x + 1); both cut at vw, a fill with no width left not drawn
-  (do (sput s 422 1118481)
+  (do (sput s 422 3355443)
       (put-rect s x (+ y r) (if (< (+ r 1) (- vw x)) (+ r 1) (- vw x)) 1)
       (if (< r 2) 0
         (if (> r 10) 0
