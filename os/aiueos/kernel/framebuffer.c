@@ -621,8 +621,9 @@ int aiueos_desktop_show(void) {
     static int present_refusal_said;
     if (!present_refusal_said) {
       present_refusal_said = 1;
-      extern void serial_string(const char *);
-      serial_string("AIUEOS_DESKTOP_PRESENT_REFUSED\r\n");
+      /* 249: a desktop present refusal (JUN-142 diagnosis). This file's
+         evidence channel is the qualification progress code, not serial. */
+      FRAMEBUFFER_PROGRESS(249);
     }
     desktop_shadow[0] = 0;
     return 0;

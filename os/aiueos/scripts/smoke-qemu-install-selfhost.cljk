@@ -116,6 +116,11 @@
   (.exit js/process 1))
 
 
+;; The image is rebuilt EVERY run: skipping on existence meant kernel
+;; changes never reached the boots (measured 2026-10-20: the palette edit
+;; and the loader ABI change were both invisible in green runs).
+(let [r (run "sh" ["os/aiueos/scripts/build-release-image.sh"] {})]
+  (when-not (zero? (:status r)) (die "build-release-image failed:" (:err r))))
 (doseq [[p hint] [[release-image "run os/aiueos/scripts/build-release-image.sh"]
                   [release-receipt "run os/aiueos/scripts/build-release-image.sh"]
                   [uki "run make-live-installer.py build --output-dir build/aiueos/live"]

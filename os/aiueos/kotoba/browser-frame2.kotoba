@@ -464,7 +464,7 @@
 (defn button [s f k]
   (if (= (bit-and (sw s 31) (app-bit k)) 0) 0
     (let [x (+ 6 (* 102 (- k 1)))]
-      (do (sput s 422 15001839)
+      (do (sput s 422 15132390)
           (put-rect s x 2 96 24)
           (sput s 420 (+ x 90)) (sput s 421 28)
           (sput s 426 0) (sput s 428 32)
@@ -472,7 +472,7 @@
 
 (defn launcher [s f vw]
   (if (= (sw s 31) 0) 0
-    (do (sput s 422 15593717)
+    (do (sput s 422 15856114)
         (put-rect s 0 0 vw 28)
         (button s f 1) (button s f 2) (button s f 3) (button s f 4))))
 
@@ -502,7 +502,7 @@
   (if (= (sw s 31) 0) 0
     (let [left (quot (- vw 184) 2)
           top (- vh 52)]
-      (do (sput s 422 14215167)
+      (do (sput s 422 15132390)
           (put-rect s left top 184 48)
           (dock-icon s f 1 vw vh)
           (dock-icon s f 2 vw vh)
@@ -516,7 +516,7 @@
   (if (= (chrome s w) 0) 0
     (let [gi (glyph-of s f 215)
           gw (glyph-width s f gi)]
-      (do (sput s 422 15001839)
+      (do (sput s 422 15132390)
           (put-rect s (- (+ x w) 24) (+ y 6) 16 16)
           (sput s 422 1118481)
           (put-glyph s (+ (- (+ x w) 24) (quot (- 16 gw) 2)) (+ y 6) gi gw)))))
@@ -553,8 +553,8 @@
 
 ;; --- windows ----------------------------------------------------------------
 
-(defn body-rgb [focused] (if (= focused 1) 16777215 15659509))
-(defn title-rgb [focused] (if (= focused 1) 14215167 14541546))
+(defn body-rgb [focused] (if (= focused 1) 16777215 15856114))
+(defn title-rgb [focused] (if (= focused 1) 15132390 15856114))
 
 (defn window-shadow [s x y w h]
   ;; The shadow belongs to the outside edge only. A filled offset rectangle
@@ -567,11 +567,11 @@
         right-width (if (> right-room 3) 3 right-room)
         bottom-height (if (> bottom-room 3) 3 bottom-room)]
     (do (if (> right-width 0)
-          (do (sput s 422 10137540)
+          (do (sput s 422 13421772)
               (put-rect s (+ x w) (+ y 3) right-width (- h 3)))
           0)
         (if (> bottom-height 0)
-          (do (sput s 422 10137540)
+          (do (sput s 422 13421772)
               (put-rect s (+ x 3) (+ y h) (- w 3) bottom-height))
           0))))
 
@@ -679,7 +679,7 @@
                       (if (= (font-ok s f fb) 0) -6
                         (do (sput s 416 0)
                             (sput s 427 0)
-                            (sput s 422 9418200)
+                            (sput s 422 15856114)
                             (put-rect s 0 0 vw vh)
                             (launcher s f vw)
                             (emit s f 0)

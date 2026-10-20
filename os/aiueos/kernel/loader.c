@@ -22,10 +22,29 @@ static uint64_t load_u32(const uint8_t *value) {
 static int load_kotoba_process(unsigned process,const uint8_t *image,uint64_t size,
                                uint64_t *entry,uint64_t **result) {
   if (!image || !kotoba_aiueos_user_elf_valid(image,size)) return 0;
-  uint64_t text_size=load_u32(image+96);
-  if (!aiueos_address_space_map_user_image(process,image+ELF_TEXT_OFFSET,text_size,
-        image+ELF_DATA_OFFSET,88)) return 0;
-  *entry=ELF_TEXT_VA;
+  /* Segment offsets come from the program headers, not from the pinned
+     constants (JUN-145, measured 2026-10-20): every shipped user ELF is
+     catalog-signed, so a layout pin would orphan them the moment the
+     packager grew the text room. The phdrs carry the truth for both the
+     old 8 KiB-data artifacts and the new 64 KiB ones. */
+  uint64_t phoff=load_u32(image+32)|(load_u32(image+36)<<32);
+  uint64_t phentsize=load_u32(image+54)&0xffff;
+  uint64_t phnum=(load_u32(image+54)>>16)&0xffff;
+  uint64_t text_off=0,text_size=0,data_off=0,entry_va=0;
+  if (phentsize<56 || phoff+phnum*phentsize>size) return 0;
+  for (uint64_t i=0;i<phnum;i++) {
+    const uint8_t *ph=image+phoff+i*phentsize;
+    uint32_t flags=load_u32(ph+4);
+    uint64_t off=load_u32(ph+8)|(load_u32(ph+12)<<32);
+    uint64_t vaddr=load_u32(ph+16)|(load_u32(ph+20)<<32);
+    uint64_t filesz=load_u32(ph+32)|(load_u32(ph+36)<<32);
+    if (flags==0x5 && filesz) { text_off=off; text_size=filesz; entry_va=vaddr; }
+    if (flags==0x6) data_off=off;
+  }
+  if (!text_size || !data_off || text_off+text_size>size) return 0;
+  if (!aiueos_address_space_map_user_image(process,image+text_off,text_size,
+        image+data_off,88)) return 0;
+  *entry=entry_va?entry_va:ELF_TEXT_VA;
   *result=aiueos_address_space_user_data_backing(process);
   loader_evidence=*result!=0;
   return (int)loader_evidence;

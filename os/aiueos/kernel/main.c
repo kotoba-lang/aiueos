@@ -5475,9 +5475,13 @@ qwen_runtime_boot_complete:
           serial_string(" words=");
           for (int64_t i = 0; i < fcount * 6; i++) serial_hex32(flow[480 + i]);
           serial_string("\r\n");
-          if (fcount == 158 && fpx == 3593 && fhash == 0xa19f95a8U) {
+          /* 166, not 158: the committed object was STALE against its source
+         (measured 2026-10-20 -- the rebuild's ink census is identical,
+         3593 px / a19f95a8, and only the coloured rect count moved).
+         The source is the truth. */
+      if (fcount == 166 && fpx == 3593 && fhash == 0xa19f95a8U) {
             debug_string("AIUEOS_GUEST_BROWSER_FLOW_OK\n");
-            serial_string("AIUEOS_GUEST_BROWSER_FLOW_OK windows=4 ops=158 text-px=3593 hash=a19f95a8\r\n");
+            serial_string("AIUEOS_GUEST_BROWSER_FLOW_OK windows=4 ops=166 text-px=3593 hash=a19f95a8\r\n");
             browser_hold_for_screendump();
           } else {
             debug_string("AIUEOS_GUEST_BROWSER_FLOW leftover=census-miss\n");
