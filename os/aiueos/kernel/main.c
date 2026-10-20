@@ -5917,12 +5917,27 @@ qwen_runtime_boot_complete:
      interactive instead of halting blind. */
   for (;;) {
     uint32_t ax = 0, ay = 0, src = aiueos_tablet_next(200000U, &ax, &ay);
-    if (!src) { __asm__ volatile("sti; hlt"); continue; }
-    uint32_t px = (uint32_t)(((uint64_t)ax * flow[3]) / 32768U);
-    uint32_t py = (uint32_t)(((uint64_t)ay * flow[4]) / 32768U);
-    flow[2046] = px + 1U;
-    flow[2047] = py;
-    (void)kotoba_aiueos_browser_reduce((uint64_t)(uintptr_t)flow, 8192, src, px, py);
+    int touched = 0;
+    if (src) {
+      uint32_t px = (uint32_t)(((uint64_t)ax * flow[3]) / 32768U);
+      uint32_t py = (uint32_t)(((uint64_t)ay * flow[4]) / 32768U);
+      flow[2046] = px + 1U;
+      flow[2047] = py;
+      (void)kotoba_aiueos_browser_reduce((uint64_t)(uintptr_t)flow, 8192, src, px, py);
+      touched = 1;
+    } else {
+      /* Keyboard too (JUN-144): the IME-aware key path, with the
+         dictionary the input demos use. */
+      uint64_t dlen = 0;
+      const uint8_t *dict = aiueos_initramfs_dictionary(&dlen);
+      uint32_t key = aiueos_keyboard_next_key(1024U);
+      if (key && dict) {
+        (void)kotoba_aiueos_browser_key((uint64_t)(uintptr_t)flow, 8192,
+                                        (uint64_t)(uintptr_t)dict, dlen, key);
+        touched = 1;
+      }
+    }
+    if (!touched) { __asm__ volatile("sti; hlt"); continue; }
     { uint64_t flen = 0;
       const uint8_t *font = aiueos_initramfs_font(&flen);
       int64_t n = 0;
