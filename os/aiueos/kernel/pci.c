@@ -220,6 +220,28 @@ int aiueos_desktop_input_eventq_empty(void) { return desktop_input_eventq_empty;
 const struct aiueos_desktop_input_event *aiueos_desktop_input_event(void) {
   return desktop_input_ready ? &desktop_input_event : 0;
 }
+/* Take one key press from the event mailbox (JUN-144). The drain path
+   stores events HERE, one at a time; a keyboard_next_key consumer races
+   the drain and sees nothing (measured 2026-10-20: zero keys while the
+   mailbox held them). Returns 1 and clears the mailbox on a press. */
+/* How many input-ring events the poll has seen (JUN-144 diagnosis; pci.c
+   holds state, main.c prints it -- this file's evidence channel). */
+uint32_t aiueos_input_ring_events;
+uint32_t aiueos_input_ring(void) { return aiueos_input_ring_events; }
+
+int aiueos_desktop_input_take_key(uint32_t *code) {
+  if (desktop_input_ready &&
+      desktop_input_event.kind == AIUEOS_DESKTOP_INPUT_KEY &&
+      desktop_input_event.value) {
+    /* The form browser_key takes is code * 4 + value (press 1, repeat
+       2, release 0) -- the same kbd_recycle produces. A bare code is a
+       RELEASE and draws nothing (measured 2026-10-20). */
+    *code = desktop_input_event.code * 4U + (uint32_t)desktop_input_event.value;
+    desktop_input_ready = 0;
+    return 1;
+  }
+  return 0;
+}
 struct aiuefs_superblock {
   uint8_t magic[8]; uint32_t version, header_size, object_count, reserved;
   uint32_t object_offset, object_length, object_checksum;
@@ -1556,6 +1578,7 @@ static int virtio_input(uint8_t b, uint8_t d, uint8_t f) {
         uint32_t id = used->ring[i].id;
         if (id > 3) continue;
         struct virtio_input_event *ev = event + id;
+        aiueos_input_ring_events++;
         if (ev->type != 1 || ev->value > 2) continue; /* EV_KEY; up/down/repeat */
         desktop_input_event = (struct aiueos_desktop_input_event){
           AIUEOS_DESKTOP_INPUT_ABI, sizeof(desktop_input_event), 1,

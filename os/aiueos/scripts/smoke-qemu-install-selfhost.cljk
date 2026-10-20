@@ -324,26 +324,33 @@
 
 (defn- colour-census [ppm-path]
   ;; P6 PPM as QEMU writes it: "P6\n<w> <h>\n255\n" then RGB triples.
-  ;; Count distinct colours and dark pixels (text ink). Measured on the
-  ;; good text frame: 7 bucketed colours / 1382 dark px; the blank
-  ;; virtio-gpu frame is dark~0.
+  ;; Distinct colours, dark pixels (text ink), and an FNV-1a over dark
+  ;; pixel POSITIONS -- the same measure the guest census keeps, so a
+  ;; caret that moves is seen even when counts hold still.
   (let [buf (.readFileSync fs ppm-path)
         s (.toString buf "latin1")
-        ;; pixels begin after the third newline
         n1 (.indexOf s "\n")
         n2 (.indexOf s "\n" (+ n1 1))
         n3 (.indexOf s "\n" (+ n2 1))
         header-end (+ n3 1)
         colors (js/Set.)
-        dark (atom 0)]
+        dark (atom 0)
+        hash (atom 2166136261)
+        px-count 1280]
     (loop [i header-end]
       (when (< i (- (.-length buf) 2))
         (let [r (aget buf i) g (aget buf (+ i 1)) bl (aget buf (+ i 2))]
           (.add colors (+ (* 65536 r) (* 256 g) bl))
           (when (and (< r 80) (< g 80) (< bl 80))
-            (swap! dark inc)))
+            (swap! dark inc)
+            (let [idx (quot (- i header-end) 3)
+                  px (mod idx px-count)
+                  py (quot idx px-count)
+                  pos (+ (* py 65536) px)]
+              (dotimes [b 4]
+                (swap! hash (fn [h] (js/Math.imul (bit-xor h (bit-and (unsigned-bit-shift-right pos (* 8 b)) 255)) 16777619)))))))
         (recur (+ i 3))))
-    {:colours (.-size colors) :dark @dark}))
+    {:colours (.-size colors) :dark @dark :hash (bit-and @hash 0xffffffff)}))
 
 (defn- assert-screen [ppm-path label]
   (let [{:keys [colours dark]} (colour-census ppm-path)]
@@ -424,6 +431,11 @@
     ;; run's screendump lands, and the census then reads a mid-write
     ;; truncate (measured 2026-10-20: colours=0). Start clean.
     (when (.existsSync fs ppm) (.rmSync fs ppm))
+    ;; the second frame too: a stale -after passes its size poll and the
+    ;; comparison then reads two frames from an EARLIER run (measured
+    ;; 2026-10-20: the ink assertion fired on stale files while the real
+    ;; pair sat unwritten).
+    (when (.existsSync fs (str ppm "-after")) (.rmSync fs (str ppm "-after")))
     (reset! deadline (+ (.now js/Date) (* 1200 1000)))
     (start-vm-boot3! vars sock)
     ;; The guest demo advances on input events. Feed keys EVERY 3 s until
@@ -460,8 +472,19 @@
         ;; marker (measured 2026-10-20: a key sent at FLOW time was eaten
         ;; by a stage and the frames stayed identical) -- wait for the
         ;; job to end first.
-        (.then (fn [] (await-prompt "AIUEOS_EXCEPTION_OK")))
+        (.then (fn [] (await-prompt "AIUEOS_DESKTOP_LOOP_OK")))
         (.then (fn [] (js/Promise. (fn [res] (js/setTimeout (fn [] (res true)) 3000)))))
+        ;; Five presses, not one: a caret blink alone can differ between
+        ;; frames (measured 2026-10-20 -- one run 'responded', the next
+        ;; did not). Glyphs GROW ink; a blink cannot.
+        (.then (fn [] (monitor-send sock "sendkey a")))
+        (.then (fn [] (js/Promise. (fn [res] (js/setTimeout (fn [] (res true)) 600)))))
+        (.then (fn [] (monitor-send sock "sendkey a")))
+        (.then (fn [] (js/Promise. (fn [res] (js/setTimeout (fn [] (res true)) 600)))))
+        (.then (fn [] (monitor-send sock "sendkey a")))
+        (.then (fn [] (js/Promise. (fn [res] (js/setTimeout (fn [] (res true)) 600)))))
+        (.then (fn [] (monitor-send sock "sendkey a")))
+        (.then (fn [] (js/Promise. (fn [res] (js/setTimeout (fn [] (res true)) 600)))))
         (.then (fn [] (monitor-send sock "sendkey a")))
         (.then (fn [] (js/Promise. (fn [res] (js/setTimeout (fn [] (res true)) 3000)))))
         (.then (fn [] (monitor-send sock (str "screendump " ppm "-after"))))
@@ -482,7 +505,18 @@
                        b (.toString (.readFileSync fs (str ppm "-after")) "latin1")]
                    (if (= a b)
                      (throw (js/Error. "the desktop did not respond to a keypress (frames identical)"))
-                     (println "AIUEOS_DESKTOP_INPUT_OK frame-changed")))))
+                     (let [before (colour-census ppm)
+                           after (colour-census (str ppm "-after"))]
+                       ;; Ink must GROW, not merely change: the key draws a
+                       ;; glyph or preedit (IME path), which is the proof
+                       ;; the text pipeline is live in the persistent loop.
+                       (when-not (> (:dark after) (:dark before))
+                         (throw (js/Error.
+                                  (str "typing drew no ink (before=" (:dark before)
+                                       " after=" (:dark after)
+                                       ") -- a caret blink is not a response"))))
+                       (println "AIUEOS_DESKTOP_INPUT_OK ink-grew"
+                                (str "ink=" (:dark before) "->" (:dark after))))))))
         ;; Tear the QEMU down on the SUCCESS path too: a surviving boot3
         ;; holds the image lock and the next cycle's qemu-img refuses to
         ;; start (measured 2026-10-20: all boot3-only cycles died on

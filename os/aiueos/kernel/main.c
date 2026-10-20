@@ -5907,14 +5907,18 @@ qwen_runtime_boot_complete:
     }
     debug_string("AIUEOS_PAGE_FAULT_OK no-execute vector=14\n");
     serial_string("AIUEOS_PAGE_FAULT_OK no-execute vector=14\r\n");
-    extern volatile int aiueos_final_probe_expected;
-    aiueos_final_probe_expected = 1;
-    __asm__ volatile("ud2");
+    /* The end-of-boot #UD probe used to fire here -- and its handler
+       EXITS the machine (the last evidence, by design). The persistent
+       desktop (JUN-141) must live, so the probe yields its slot to the
+       loop marker; the vector-6 path is still proven by the exception
+       stage above. */
   }
   /* JUN-141: the persistent desktop. The evidence job is over; from here
      the machine serves input forever -- each tablet event reduces the
      browser state, the frame is redrawn, the desktop stays alive and
      interactive instead of halting blind. */
+  { debug_string("AIUEOS_DESKTOP_LOOP_OK persistent input service\n");
+    serial_string("AIUEOS_DESKTOP_LOOP_OK persistent input service\r\n"); }
   for (;;) {
     uint32_t ax = 0, ay = 0, src = aiueos_tablet_next(200000U, &ax, &ay);
     int touched = 0;
@@ -5925,16 +5929,36 @@ qwen_runtime_boot_complete:
       flow[2047] = py;
       (void)kotoba_aiueos_browser_reduce((uint64_t)(uintptr_t)flow, 8192, src, px, py);
       touched = 1;
-    } else {
-      /* Keyboard too (JUN-144): the IME-aware key path, with the
-         dictionary the input demos use. */
+    }
+    /* Keyboard is polled EVERY turn, not only when the tablet is silent
+       (JUN-144, measured 2026-10-20: an else-branch starved it behind a
+       tablet path that never idles). */
+    {
+      extern int aiueos_desktop_input_take_key(uint32_t *code);
       uint64_t dlen = 0;
       const uint8_t *dict = aiueos_initramfs_dictionary(&dlen);
-      uint32_t key = aiueos_keyboard_next_key(1024U);
-      if (key && dict) {
-        (void)kotoba_aiueos_browser_key((uint64_t)(uintptr_t)flow, 8192,
-                                        (uint64_t)(uintptr_t)dict, dlen, key);
-        touched = 1;
+      (void)aiueos_keyboard_drain(4000000U);
+      { extern uint32_t aiueos_input_ring(void);
+        static uint32_t ring_seen;
+        if (aiueos_input_ring() != ring_seen) {
+          ring_seen = aiueos_input_ring();
+          debug_string("AIUEOS_INPUT_RING ");
+          serial_string("AIUEOS_INPUT_RING n=");
+          serial_decimal(ring_seen);
+          serial_string("\r\n");
+        } }
+      uint32_t key = 0;
+      if (aiueos_desktop_input_take_key(&key)) {
+        debug_string("AIUEOS_DESKTOP_KEY ");
+        serial_string("AIUEOS_DESKTOP_KEY code=");
+        serial_decimal(key & 0xffffU);
+        serial_string("\r\n");
+        if (dict) {
+          (void)kotoba_aiueos_browser_key((uint64_t)(uintptr_t)flow, 8192,
+                                          (uint64_t)(uintptr_t)dict, dlen,
+                                          (uint64_t)key);
+          touched = 1;
+        }
       }
     }
     if (!touched) { __asm__ volatile("sti; hlt"); continue; }
