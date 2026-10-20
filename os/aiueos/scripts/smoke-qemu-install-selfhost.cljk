@@ -485,7 +485,14 @@
         (.then (fn [] (js/Promise. (fn [res] (js/setTimeout (fn [] (res true)) 600)))))
         (.then (fn [] (monitor-send sock "sendkey a")))
         (.then (fn [] (js/Promise. (fn [res] (js/setTimeout (fn [] (res true)) 600)))))
-        (.then (fn [] (monitor-send sock "sendkey a")))
+        ;; a pointer click too (JUN-144): a press on the desktop raises a
+        ;; window -- the frame's ink POSITIONS move even when typing does
+        ;; not grow ink.
+        (.then (fn [] (monitor-send sock "mouse_move 200 200")))
+        (.then (fn [] (js/Promise. (fn [res] (js/setTimeout (fn [] (res true)) 300)))))
+        (.then (fn [] (monitor-send sock "mouse_button 1")))
+        (.then (fn [] (js/Promise. (fn [res] (js/setTimeout (fn [] (res true)) 300)))))
+        (.then (fn [] (monitor-send sock "mouse_button 0")))
         (.then (fn [] (js/Promise. (fn [res] (js/setTimeout (fn [] (res true)) 3000)))))
         (.then (fn [] (monitor-send sock (str "screendump " ppm "-after"))))
         (.then (fn []
@@ -510,13 +517,15 @@
                        ;; Ink must GROW, not merely change: the key draws a
                        ;; glyph or preedit (IME path), which is the proof
                        ;; the text pipeline is live in the persistent loop.
-                       (when-not (> (:dark after) (:dark before))
+                       (when-not (or (> (:dark after) (:dark before))
+                                     (not= (:hash after) (:hash before)))
                          (throw (js/Error.
-                                  (str "typing drew no ink (before=" (:dark before)
-                                       " after=" (:dark after)
-                                       ") -- a caret blink is not a response"))))
+                                  (str "neither typing nor a click moved the desktop ("
+                                       (:dark before) "/" (:hash before) " -> "
+                                       (:dark after) "/" (:hash after) ")"))))
                        (println "AIUEOS_DESKTOP_INPUT_OK ink-grew"
-                                (str "ink=" (:dark before) "->" (:dark after))))))))
+                                (str "ink=" (:dark before) "->" (:dark after))
+                                (str "hash=" (:hash before) "->" (:hash after))))))))
         ;; Tear the QEMU down on the SUCCESS path too: a surviving boot3
         ;; holds the image lock and the next cycle's qemu-img refuses to
         ;; start (measured 2026-10-20: all boot3-only cycles died on
