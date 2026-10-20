@@ -19,7 +19,12 @@
     KOTOBA_AMU_ROOT=<amu checkout> \\
     java -cp \"$(clojure -Spath -M:test)\" clojure.main \\
       -i <kotoba>/tools/cljk_loader.cljk \\
-      -e \"(require 'aiueos.itonami-dapp-selfhost-test 'clojure.test) (clojure.test/run-tests 'aiueos.itonami-dapp-selfhost-test)\""
+      -e \"(require 'aiueos.itonami-dapp-selfhost-test 'clojure.test) (clojure.test/run-tests 'aiueos.itonami-dapp-selfhost-test)\"
+
+  The registered way to run both L2 namespaces is the count-judged gate:
+  `kbb --backend sci scripts/run-task.cljk itonami-dapp-l2-test` (the kbb
+  test-runner substitution runs 0 tests of these namespaces and still reports
+  green -- measured 2026-10-20; the gate's floor makes that a failure)."
   (:require [kotoba.bytes :as kbytes]
             [aiueos.itonami-dapp-bundle-test :as fix]
             [grant.broker :as broker]
