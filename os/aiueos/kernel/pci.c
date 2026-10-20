@@ -247,7 +247,7 @@ struct kotoba_app_metadata { uint8_t id[16]; uint32_t length; uint8_t ready; } _
 static struct kotoba_app_metadata kotoba_apps[KOTOBA_APP_CAPACITY];
 /* Catalog payloads are populated only by PCI storage discovery, after owned
    paging is active.  They are kernel data, never admitted user mappings. */
-static uint8_t kotoba_app_objects[KOTOBA_APP_CAPACITY][12288]
+static uint8_t kotoba_app_objects[KOTOBA_APP_CAPACITY][98304]
   __attribute__((section(".high_bss")));
 static uint32_t kotoba_app_count;
 static int journal_ready;
@@ -364,7 +364,7 @@ static int rsa2048_sha256_verify(const uint8_t signature[256],const uint8_t dige
 int aiueos_recovery_payload_admission(const uint8_t *elf, uint64_t elf_length,
                                       const uint8_t *signature) {
   uint8_t digest[32];
-  if (!elf || !elf_length || elf_length > 12288 || !signature) return 0;
+  if (!elf || !elf_length || elf_length > 98304 || !signature) return 0;
   if (!sha256(elf, elf_length, digest)) return 0;
   return rsa2048_sha256_verify(signature, digest);
 }

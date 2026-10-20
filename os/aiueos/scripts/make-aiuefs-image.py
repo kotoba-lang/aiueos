@@ -29,7 +29,7 @@ for specification in args.entry:
     if len(parts)!=3: raise SystemExit("entry must be ID,ELF,SIGNATURE")
     identity=parts[0].encode("ascii"); data=Path(parts[1]).read_bytes(); signature=Path(parts[2]).read_bytes()
     if not identity or len(identity)>15 or b"\0" in identity: raise SystemExit("app id must be 1..15 ASCII bytes")
-    if not data or len(data)>12288 or not verify_signature(data,signature): raise SystemExit("app extent or RSA signature is invalid")
+    if not data or len(data)>98304 or not verify_signature(data,signature): raise SystemExit("app extent or RSA signature is invalid")
     data_sector=next_sector; signature_sector=data_sector+(len(data)+511)//512
     next_sector=signature_sector+1
     apps.append((identity,data,signature,data_sector,signature_sector))

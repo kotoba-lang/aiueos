@@ -508,7 +508,7 @@ static int initramfs_hex_field(const uint8_t *field, uint64_t *value) {
 
 /* Recovery materials copied out of the archive while the loader-pool buffer
    is still identity-mapped, sized by the same bound as catalog applications. */
-static uint8_t __attribute__((section(".high_bss"), aligned(16))) initramfs_recovery_elf[12288];
+static uint8_t __attribute__((section(".high_bss"), aligned(16))) initramfs_recovery_elf[98304];
 static uint8_t initramfs_recovery_signature[256];
 static uint64_t initramfs_recovery_elf_length;
 static int initramfs_recovery_signature_present;

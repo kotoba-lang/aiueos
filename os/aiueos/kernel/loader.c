@@ -48,7 +48,7 @@ int aiueos_load_embedded_plc_process(unsigned process,uint64_t *entry,uint64_t *
   uint8_t actual[32],workspace[512],nonzero=0;
   uint64_t size=(uint64_t)(aiueos_plc_elf_end-aiueos_plc_elf_start);
   aiueos_plc_loader_stage=1;
-  if (!size || size>12288) return 0;
+  if (!size || size>98304) return 0;
   if (!kotoba_aiueos_sha256(aiueos_plc_elf_start,size,actual,workspace,sizeof(workspace))) return 0;
   aiueos_plc_loader_stage=2;
   if (!kotoba_aiueos_digest_equal(actual,aiueos_plc_elf_sha256,32)) return 0;
