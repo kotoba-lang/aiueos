@@ -5485,9 +5485,20 @@ qwen_runtime_boot_complete:
         }
       }
     }
-    if (!(pci_result & 8) || !aiueos_desktop_surface_bind_scanout(
+    if (!(pci_result & 8)) {
+      /* Name the failure before leaving (ADR-0199). These two used to
+         share one marker and the gate could not tell them apart: the
+         intermittent blank frame (JUN-142) measured 2026-10-20 leaves
+         both paths possible. */
+      serial_string("AIUEOS_VIRTIO_GPU_FAIL display-info-absent\r\n"); evidence_stop(__LINE__);
+    }
+    if (!aiueos_desktop_surface_bind_scanout(
           aiueos_gpu_scanout_width(),aiueos_gpu_scanout_height())) {
-      serial_string("AIUEOS_VIRTIO_GPU_FAIL display-info-or-surface-binding\r\n"); evidence_stop(__LINE__);
+      serial_string("AIUEOS_VIRTIO_GPU_FAIL surface-binding-scanout-w=");
+      serial_decimal(aiueos_gpu_scanout_width());
+      serial_string(" scanout-h=");
+      serial_decimal(aiueos_gpu_scanout_height());
+      serial_string("\r\n"); evidence_stop(__LINE__);
     }
     debug_string("AIUEOS_VIRTIO_GPU_OK modern-pci controlq display-info bounded\n");
     serial_string("AIUEOS_VIRTIO_GPU_OK modern-pci controlq display-info bounded\r\n");
