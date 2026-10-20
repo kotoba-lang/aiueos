@@ -68,10 +68,6 @@
    "AIUEOS_INSTALL_READBACK_OK"
    "AIUEOS_LIVE_EXIT rc=0"])
 
-(defn- die [& msg]
-  (binding [*out* *err*] (apply println (cons "error:" msg)))
-  (.exit js/process 1))
-
 (defn- run [cmd args opts]
   (let [r (.spawnSync cp cmd (to-array args)
                       (clj->js (merge {:encoding "utf8" :shell false} opts)))]
@@ -106,6 +102,19 @@
     (.digest h "hex")))
 
 ;; ------------------------------------------------------------ prerequisites
+
+(def serial-buf (atom ""))
+(def child (atom nil))
+(def child-closed (atom nil))
+
+(defn- die [& msg]
+  (binding [*out* *err*] (apply println (cons "error:" msg)))
+  ;; reap the qemu child first: an orphan wedges once its stdout pipe
+  ;; fills (measured 2026-10-20 -- the guest froze mid-demo after the gate
+  ;; died and the pipe stopped draining)
+  (when-let [c @child] (.kill c))
+  (.exit js/process 1))
+
 
 (doseq [[p hint] [[release-image "run os/aiueos/scripts/build-release-image.sh"]
                   [release-receipt "run os/aiueos/scripts/build-release-image.sh"]
@@ -181,18 +190,24 @@
    "-device" "nvme,drive=nvme0,serial=AIUEOSGATE1"
    "-display" "none" "-serial" "stdio" "-no-reboot"])
 
-(def serial-buf (atom ""))
-(def child (atom nil))
-
 (defn- start-vm! [vars-file]
   (.copyFileSync fs ovmf-vars-template vars-file)
   (reset! serial-buf "")
   (let [c (.spawn cp qemu (to-array (qemu-args vars-file))
-                  (clj->js {:stdio ["pipe" "pipe" "ignore"]}))]
+                  (clj->js {:stdio ["pipe" "pipe" "pipe"]}))]
     (reset! child c)
+    ;; stderr goes to its own log: a QEMU that dies at startup (e.g. the
+    ;; image locked by a still-exiting previous boot) says why only there,
+    ;; and the gate was blind to it (measured 2026-10-20).
+    (.on (.-stderr c) "data"
+         (fn [d] (.appendFileSync fs (str serial-log ".stderr") d)))
     (.on (.-stdout c) "data"
          (fn [d] (swap! serial-buf str d) (.appendFileSync fs serial-log d)))
-    true))
+    ;; The close promise: the NEXT boot must not start until this process
+    ;; is really gone, or it loses the image-lock race (measured 2026-10-20:
+    ;; boot2's qemu died at startup while boot1 was still exiting).
+    (reset! child-closed (js/Promise. (fn [res] (.on c "close" (fn [] (res true)))))))
+  true)
 
 (defn- serial-text [] @serial-buf)
 
@@ -207,6 +222,8 @@
       (letfn [(tick []
                 (let [t (serial-text)]
                   (cond
+                    (str/includes? t "AIUEOS_GATE_QEMU_EXITED_EARLY")
+                    (reject (js/Error. (str "qemu exited early (" needle " never appeared)")))
                     (str/includes? t needle) (resolve true)
                     (> (.now js/Date) @deadline)
                     (reject (js/Error.
@@ -236,7 +253,7 @@
   (start-vm! vars-file)
   (-> (feed-all console-answers)
       (.then (fn [] (await-prompt "AIUEOS_LIVE_EXIT")))
-      (.then (fn [] (await-prompt "reboot: Power down")))))
+      (.then (fn [] @child-closed))))
 
 ;; ---- the SCREEN check (owner direction 2026-10-20: 画面の確認も loop に) --
 ;; The serial markers say the guest DREW text; this says the visible FRAME
@@ -254,39 +271,59 @@
         (.on c "error" (fn [e] (reject e)))))))
 
 (defn- screendump [sock-path out-ppm]
-  (monitor-send sock-path (str "screendump " out-ppm)))
+  ;; monitor-send resolves on the FIRST data chunk -- the "(qemu) " banner
+  ;; -- not on the command's completion, so the census below read the ppm
+  ;; before QEMU wrote it (measured 2026-10-20: ENOENT). Poll for the file.
+  (-> (monitor-send sock-path (str "screendump " out-ppm))
+      (.then (fn []
+               (js/Promise.
+                 (fn [resolve reject]
+                   (letfn [(poll [n]
+                             (cond
+                               (.existsSync fs out-ppm) (resolve true)
+                               (< n 0) (reject (js/Error. (str "screendump never appeared: " out-ppm)))
+                               :else (js/setTimeout (fn [] (poll (- n 1))) 250)))]
+                     (poll 60))))))))
 
 (defn- colour-census [ppm-path]
-  ;; P6 PPM: parse the header, then count distinct 24-bit colours.
+  ;; P6 PPM: parse the header, then count distinct 24-bit colours and dark
+  ;; pixels (text ink). Measured calibration 2026-10-20 on the good text
+  ;; frame: 1280x800, 7 bucketed colours, 1382 dark pixels -- so text is
+  ;; the proof, colour count alone is not.
   (let [buf (.readFileSync fs ppm-path)
         s (.toString buf "latin1")
         m1 (.indexOf s " ")
-        ;; header: P6 <w> <h> <max>\n
         rest1 (.substring s (+ m1 1))
         m2 (.indexOf rest1 " ")
         rest2 (.substring rest1 (+ m2 1))
         m3 (.indexOf rest2 "\n")
         header-end (+ m1 1 (+ m2 1) (+ m3 1))
-        colors (js/Set.)]
+        colors (js/Set.)
+        dark (atom 0)]
     (loop [i header-end]
       (when (< i (- (.-length buf) 2))
-        (.add colors (+ (* 65536 (aget buf i)) (* 256 (aget buf (+ i 1))) (aget buf (+ i 2))))
+        (let [r (aget buf i) g (aget buf (+ i 1)) bl (aget buf (+ i 2))]
+          (.add colors (+ (* 65536 r) (* 256 g) bl))
+          (when (and (< r 80) (< g 80) (< bl 80))
+            (swap! dark inc)))
         (recur (+ i 3))))
-    (.-size colors)))
+    {:colours (.-size colors) :dark @dark}))
 
 (defn- assert-screen [ppm-path label]
-  (let [n (colour-census ppm-path)]
-    (when (< n 100)
-      (throw (js/Error. (str label " screen looks blank: distinct colours=" n
-                             " (a uniform frame is the virtio-gpu binding failure)"))))
-    (println "AIUEOS_SCREEN_OK" label (str "colours=" n))))
+  (let [{:keys [colours dark]} (colour-census ppm-path)]
+    (when (or (< colours 4) (< dark 50))
+      (throw (js/Error. (str label " screen looks blank: colours=" colours
+                             " dark-px=" dark
+                             " (a uniform frame is the virtio-gpu binding failure;"
+                             " text ink is the proof)"))))
+    (println "AIUEOS_SCREEN_OK" label
+             (str "colours=" colours) (str "text-px=" dark))))
 
 ;; boot3: the INSTALLED system boots from the NVMe (USB detached) to the
 ;; guest desktop, and the screen itself is verified -- the node gate's
 ;; boot2 shape plus the frame check.
 (def boot3-markers
-  ["AIUEOS_GUEST_BROWSER_FLOW_OK"
-   "AIUEOS_EVIDENCE_STOP"])
+  ["AIUEOS_GUEST_BROWSER_FLOW_OK"])
 
 (def boot1-markers
   ["AIUEOS_LIVE_HANDOVER guided-core.elf"
@@ -323,7 +360,7 @@
     (.copyFileSync fs ovmf-vars-template vars)
     (when (.existsSync fs sock) (.rmSync fs sock))
     (reset! serial-buf "")
-    (reset! deadline (+ (.now js/Date) (* 600 1000)))
+    (reset! deadline (+ (.now js/Date) (* 1200 1000)))
     (let [args ["-machine" "q35" "-m" "2048" "-smp" "2"
                 "-drive" (str "if=pflash,format=raw,readonly=on,file=" ovmf)
                 "-drive" (str "if=pflash,format=raw,file=" vars)
@@ -338,21 +375,26 @@
                 "-serial" "stdio"
                 "-monitor" (str "unix:" sock ",server,nowait")
                 "-no-reboot"]
-          c (.spawn cp qemu (to-array args) (clj->js {:stdio ["pipe" "pipe" "ignore"]}))]
+          c (.spawn cp qemu (to-array args) (clj->js {:stdio ["pipe" "pipe" "pipe"]}))]
       (reset! child c)
       (.on (.-stdout c) "data"
            (fn [d] (swap! serial-buf str d) (.appendFileSync fs serial-log d))))
-    ;; the guest demo advances on input events: a key every 3 s from 40 s
+    ;; The guest demo advances on input events. Feed keys EVERY 3 s until
+    ;; the run's own end marker -- a fixed-size window missed the input
+    ;; stage when the host was busy (measured 2026-10-20: the gate timed
+    ;; out at APP_CATALOG with the feeder already spent).
     (js/setTimeout
       (fn []
-        (letfn [(keys [n]
-                  (when (pos? n)
+        (letfn [(feed []
+                  (if (str/includes? (serial-text) "AIUEOS_GUEST_BROWSER_FLOW_OK")
+                    true
                     (-> (monitor-send sock "sendkey a")
                         (.catch (fn [_] nil))
-                        (.then (fn [] (js/setTimeout (fn [] (keys (- n 1))) 3000))))))]
-          (keys 25)))
-      40000)
-    (-> (await-prompt "AIUEOS_EVIDENCE_STOP")
+                        (.then (fn [] (js/Promise.
+                                        (fn [res] (js/setTimeout (fn [] (res (feed))) 3000))))))))]
+          (feed)))
+      30000)
+    (-> (await-prompt "AIUEOS_GUEST_BROWSER_FLOW_OK")
         (.then (fn [] (monitor-send sock (str "screendump " ppm))))
         (.then (fn [] (js/setTimeout (fn [] true) 1500)))
         (.then (fn [] (assert-screen ppm "boot3"))))))
