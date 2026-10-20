@@ -2143,6 +2143,11 @@ static void aiueos_install_fatal_gates(void) {
 __attribute__((noreturn))
 extern uint8_t aiueos_high_data_start[], aiueos_high_data_end[];
 
+/* The desktop surface state, shared by the evidence flow stage and the
+   persistent desktop loop (JUN-141). .high_bss: NOLOAD, aligned for the
+   ops the frame writer emits. */
+static uint32_t __attribute__((section(".high_bss"), aligned(16))) flow[2048];
+
 void aiueos_kernel_main(const struct aiueos_boot_info *boot) {
   /* `.high_bss` is NOLOAD: the loader zeroes the two PT_LOAD segments it
      admits and nothing else, so a buffer placed there starts with whatever
@@ -5424,7 +5429,6 @@ qwen_runtime_boot_complete:
          one, with what kotoba-lang/browser + cssom draw for the same surface
          (os/aiueos/contracts/browser-flow-parity-v1.edn). */
       if (font) {
-        static uint32_t __attribute__((section(".high_bss"), aligned(16))) flow[2048];
         static const uint32_t fstate[25] = {1, 4, 4, 0, 0,
                                             1, 16, 40, 188, 220,
                                             2, 220, 40, 420, 220,
@@ -5907,5 +5911,25 @@ qwen_runtime_boot_complete:
     aiueos_final_probe_expected = 1;
     __asm__ volatile("ud2");
   }
-  for (;;) __asm__ volatile("cli; hlt");
+  /* JUN-141: the persistent desktop. The evidence job is over; from here
+     the machine serves input forever -- each tablet event reduces the
+     browser state, the frame is redrawn, the desktop stays alive and
+     interactive instead of halting blind. */
+  for (;;) {
+    uint32_t ax = 0, ay = 0, src = aiueos_tablet_next(200000U, &ax, &ay);
+    if (!src) { __asm__ volatile("sti; hlt"); continue; }
+    uint32_t px = (uint32_t)(((uint64_t)ax * flow[3]) / 32768U);
+    uint32_t py = (uint32_t)(((uint64_t)ay * flow[4]) / 32768U);
+    flow[2046] = px + 1U;
+    flow[2047] = py;
+    (void)kotoba_aiueos_browser_reduce((uint64_t)(uintptr_t)flow, 8192, src, px, py);
+    { uint64_t flen = 0;
+      const uint8_t *font = aiueos_initramfs_font(&flen);
+      int64_t n = 0;
+      if (font) n = (int64_t)kotoba_aiueos_browser_frame2(
+                     (uint64_t)(uintptr_t)flow, 8192, (uint64_t)(uintptr_t)font, flen);
+      if (n > 0 && aiueos_desktop_present_ops2(flow + 480, (uint64_t)n, font, flen))
+        (void)aiueos_desktop_show();
+    }
+  }
 }
