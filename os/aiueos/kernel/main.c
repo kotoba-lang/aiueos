@@ -1923,11 +1923,18 @@ __attribute__((noreturn)) static void evidence_stop(unsigned line) {
     debug_string(one); serial_string(one);
   }
   debug_string("\n"); serial_string("\r\n");
-  /* qemu_exit, NOT evidence_stop. The blanket rewrite that created this helper
-     also rewrote the call inside it, so every evidence stop recursed until the
-     stack died -- and it reported its own line number while doing so, which is
-     the worst possible failure for a diagnostic: confidently wrong. */
-  qemu_exit(0x6f);
+  /* Do NOT kill the machine (JUN-141, measured 2026-10-20): a failed
+     evidence check on a user's machine must leave the desktop up, not
+     power the session down. The line is reported above; the CPU now idles
+     with whatever the desktop last drew scanned out. The gate treats this
+     line as a fast failure, so its fail-fast is unchanged.
+     qemu_exit, NOT evidence_stop -- see the recursion note below. */
+  /* qemu_exit, NOT evidence_stop. The blanket rewrite that created this
+     helper also rewrote the call inside it, so every evidence stop recursed
+     until the stack died -- and it reported its own line number while doing
+     so, which is the worst possible failure for a diagnostic: confidently
+     wrong. */
+  for (;;) __asm__ volatile("hlt");
 }
 
 /* Splitting the 64-bit handler address across the descriptor's three offset

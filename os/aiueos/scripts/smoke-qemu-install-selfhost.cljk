@@ -251,6 +251,10 @@
                     (reject (js/Error. (str "qemu exited early (" needle " never appeared)")))
                     (str/includes? t "UEFI Interactive Shell")
                     (reject (js/Error. (str "boot dropped to the UEFI shell (wanting: " needle ")")))
+                    ;; an evidence stop means the run FAILED; the machine
+                    ;; now idles instead of exiting, so reject at once
+                    (str/includes? t "AIUEOS_EVIDENCE_STOP")
+                    (reject (js/Error. (str "evidence stop (wanting: " needle ")")))
                     (str/includes? t needle) (resolve true)
                     (> (.now js/Date) @deadline)
                     (reject (js/Error.
