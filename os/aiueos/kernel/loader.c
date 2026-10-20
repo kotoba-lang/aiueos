@@ -3,7 +3,7 @@
 
 #define ELF_TEXT_VA 0x1e1000ULL
 #define ELF_TEXT_OFFSET 4096ULL
-#define ELF_DATA_OFFSET 8192ULL
+#define ELF_DATA_OFFSET 65536ULL /* JUN-145: matches the packager data-offset (16 pages); user text room was 1 page */
 
 extern int aiueos_kotoba_app_object(const uint8_t id[16],const uint8_t **data,uint64_t *length);
 extern int aiueos_address_space_map_user_image(unsigned process,
