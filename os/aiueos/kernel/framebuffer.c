@@ -614,6 +614,16 @@ int aiueos_desktop_show(void) {
                                        desktop_surface.stride, desktop_surface.pixel_format,
                                        x, y, w, h);
   if (!ok) {
+    /* The blank-frame flake (JUN-142) had a silent present refusal: the
+       flow computed and held, the screendump came back uniform, and
+       nothing said the desktop never reached the GPU. Say it once.
+       Measured 2026-10-20. */
+    static int present_refusal_said;
+    if (!present_refusal_said) {
+      present_refusal_said = 1;
+      extern void serial_string(const char *);
+      serial_string("AIUEOS_DESKTOP_PRESENT_REFUSED\r\n");
+    }
     desktop_shadow[0] = 0;
     return 0;
   }
