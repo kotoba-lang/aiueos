@@ -455,6 +455,34 @@
                                  :else (js/setTimeout (fn [] (poll (- n 1))) 500)))]
                        (poll 60)))))))
         (.then (fn [] (assert-screen ppm "boot3")))
+        ;; S1/S4 proof: the persistent desktop must RESPOND. The
+        ;; persistent loop only starts after the evidence job's last
+        ;; marker (measured 2026-10-20: a key sent at FLOW time was eaten
+        ;; by a stage and the frames stayed identical) -- wait for the
+        ;; job to end first.
+        (.then (fn [] (await-prompt "AIUEOS_EXCEPTION_OK")))
+        (.then (fn [] (js/Promise. (fn [res] (js/setTimeout (fn [] (res true)) 3000)))))
+        (.then (fn [] (monitor-send sock "sendkey a")))
+        (.then (fn [] (js/Promise. (fn [res] (js/setTimeout (fn [] (res true)) 3000)))))
+        (.then (fn [] (monitor-send sock (str "screendump " ppm "-after"))))
+        (.then (fn []
+                 (js/Promise.
+                   (fn [resolve reject]
+                     (let [expect (* 1280 800 3)]
+                       (letfn [(poll [n]
+                                 (cond
+                                   (and (.existsSync fs (str ppm "-after"))
+                                        (>= (.-size (.statSync fs (str ppm "-after"))) expect))
+                                   (resolve true)
+                                   (< n 0) (reject (js/Error. "second screendump never filled"))
+                                   :else (js/setTimeout (fn [] (poll (- n 1))) 500)))]
+                         (poll 60)))))))
+        (.then (fn []
+                 (let [a (.toString (.readFileSync fs ppm) "latin1")
+                       b (.toString (.readFileSync fs (str ppm "-after")) "latin1")]
+                   (if (= a b)
+                     (throw (js/Error. "the desktop did not respond to a keypress (frames identical)"))
+                     (println "AIUEOS_DESKTOP_INPUT_OK frame-changed")))))
         ;; Tear the QEMU down on the SUCCESS path too: a surviving boot3
         ;; holds the image lock and the next cycle's qemu-img refuses to
         ;; start (measured 2026-10-20: all boot3-only cycles died on
