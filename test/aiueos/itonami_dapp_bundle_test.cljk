@@ -14,7 +14,11 @@
   The bundles are pure (`:effects #{}`, `:aiueos/imports #{}`): grant with
   the default policy must admit them because they request no capability at
   all. Judgment values are read from the guests' own zero-arity `test-*`
-  exports (1 = pass, the same contract `amu test` uses)."
+  exports (1 = pass, the same contract `amu test` uses). Run both L2
+  namespaces through the count-judged gate
+  `kbb --backend sci scripts/run-task.cljk itonami-dapp-l2-test` -- the kbb
+  test-runner substitution finds 0 tests in this namespace and reports green
+  (measured 2026-10-20)."
   (:require [kotoba.bytes :as kbytes]
             [aiueos.execute :as execute]
             [grant.graph :as graph]
