@@ -295,7 +295,18 @@ int aiueos_process_enter_plc_rt(void) {
     } else if (!aiueos_scheduler_rearm_plc_task(p->task_slot,
         (void (*)(uint64_t))(uintptr_t)p->entry,p->argument,p->user_stack)) return 0;
     __asm__ volatile("sti");
-    while (!*result && !aiueos_plc_rt_failed()) __asm__ volatile("hlt");
+    /* Bounded (JUN-141, measured 2026-10-20): this wait froze the boot
+       twice when the scan result never came -- an unbounded hlt on a
+       timer race is indistinguishable from a dead machine. The caller
+       reports the failure; the boot must be able to end. */
+    { uint64_t waits = 0;
+      /* pause, not hlt: hlt waits for an interrupt, and the very race
+         being bounded can be the interrupt that never comes (measured
+         2026-10-20). A spin always terminates. */
+      while (!*result && !aiueos_plc_rt_failed()) {
+        __asm__ volatile("pause");
+        if (++waits > 2000000000ULL) return 0;
+      } }
     __asm__ volatile("cli");
     if (*result!=1 || !aiueos_plc_rt_result_ready(motor_on,command)) return 0;
   }
