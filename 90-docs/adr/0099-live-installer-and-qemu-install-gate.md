@@ -5,6 +5,16 @@ Accepted 2026-08-25. Tranche two of root ADR
 ADR-0097). This closes gate **I3** — under QEMU, not on hardware — and
 upgrades **I5** from fake-device-only to a measured full-chain refusal.
 
+**2026-10-18: decision 3's Node half is superseded by owner direction.**
+The install chain runs on amu-compiled kotoba (selfhost) only — no node,
+nbb or npm at install time or in the build procedure that assembles the
+USB. Linux stays an install-time mechanism; the Node/nbb payload this ADR
+landed is interim and its replacement is the tracked migration (Linear
+JUN-70, slices S1–S5). The decision layer already moved first:
+`install-intent-admit.kotoba` is a native kotoba object; the execution
+substrate is `kotoba.native.linux-static` (loader-less static ELF,
+capability handlers in `tools/linux_static_handlers.kotoba`).
+
 ## What landed
 
 - **`scripts/make-live-installer.py`** — builds a Linux UKI (Debian stable
