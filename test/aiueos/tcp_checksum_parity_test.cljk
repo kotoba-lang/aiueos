@@ -167,4 +167,18 @@
             swapped (aclone sealed)]
         (aset-byte swapped o (aget sealed (inc o)))
         (aset-byte swapped (inc o) (aget sealed o))
-        (is (pos? (bit-xor (fold (sum16 swapped 0 seg-len)) 0xFFFF)))))))
+        (is (pos? (bit-xor (fold (sum16 swapped 0 seg-len)) 0xFFFF)))))
+    (testing "a segment claiming a length that disagrees with the frame"
+      ;; ip-total-length 40 says a 20-byte TCP segment; the frame carries 16.
+      ;; The pseudo-header length is summed into the identity, so the object's
+      ;; claim (its ip-total-length argument) is what the identity is verified
+      ;; against: write the claimed TCP length where the identity sums it and
+      ;; the seal made under 16 no longer complements to 0.
+      ;; Rescued assertion from the 2026-09-07 stash (aiueos#342 / JUN-218);
+      ;; it went away when corruption-breaks-the-identity was rewritten to
+      ;; oracle level rather than being ported with it.
+      (let [claimed (aclone sealed)]
+        (setb! claimed 10 0)
+        (setb! claimed 11 (- 40 20))
+        (is (pos? (bit-xor (fold (sum16 claimed 0 seg-len)) 0xFFFF))
+            "ip-total-length 40 says a 20-byte TCP segment; the frame carries 16")))))
