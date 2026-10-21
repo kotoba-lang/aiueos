@@ -43,13 +43,28 @@
 (defn nl [] :string (string-substring "a
 b" 1 2))
 
+;; A carriage return is dropped wherever it appears, as the nbb console
+;; reader does (installer/live/guided-install.cljk, `(= c "\r") (recur)`):
+;; CRLF-piped input must not leave a trailing CR in the answer, and a blank
+;; CRLF line is an empty answer, not the answer "\r".
+(defn cr [] :string "\r")
+
 ;; Accumulate the rest of the line, one byte at a time, up to the newline
-;; or EOF. The newline itself is consumed, never returned.
+;; or EOF. The newline itself is consumed, never returned; CRs are dropped.
 (defn read-rest [acc :string] :string
   (let [c (stdin "1")]
     (if (string=? c "") acc
       (if (string=? c (nl)) acc
-        (read-rest (string-concat acc c))))))
+        (if (string=? c (cr)) (read-rest acc)
+          (read-rest (string-concat acc c)))))))
+
+;; The first byte of the line that is not a CR. A CR followed by EOF read
+;; SOMETHING, so it answers as an empty line (the newline), not as nobody
+;; answering -- the nbb reader's `got` flag.
+(defn read-first [seen-cr :i64] :string
+  (let [c (stdin "1")]
+    (if (string=? c (cr)) (read-first 1)
+      (if (and (= seen-cr 1) (string=? c "")) (nl) c))))
 
 (defn refuse [reason :string] :i64
   (do (emit "AIUEOS_GUIDED_REFUSE ") (emit reason) (emit (nl)) 2))
@@ -59,7 +74,7 @@ b" 1 2))
     (if (string=? q "") (refuse "no-question")
       (if (string=? out "") (refuse "no-out-path")
         (do (emit q) (emit (nl))
-          (let [c (stdin "1")]
+          (let [c (read-first 0)]
             (cond
               (string=? c "")
               (do (emit "AIUEOS_GUIDED_REFUSE nobody-answered") (emit (nl)) 3)
