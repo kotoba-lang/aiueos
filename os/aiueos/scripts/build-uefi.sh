@@ -469,6 +469,18 @@ if [ "${AIUEOS_SSH_LISTEN:-0}" = 1 ]; then
     input_smoke_cflags="$input_smoke_cflags -DAIUEOS_SSH_AUTHORIZED_KEY_HEADER=1"
   fi
 fi
+# Test-only. Re-arms the end-of-boot #UD probe (aiueos#436): 54ac566 removed
+# the probe so the persistent desktop loop can live past end-of-boot, which
+# also removed the only producer of AIUEOS_EXCEPTION_OK vector=6 -- the
+# terminal evidence smoke-qemu-uefi.sh's normal path asserts. Off by default
+# so every existing gate builds the exact kernel it built before; the
+# journal-recovery smoke sets it. With it, the machine ends its boot exactly
+# as it always used to: the probe fires at its old slot and its handler
+# writes the marker and terminates the machine through isa-debug-exit (0x30
+# -> harness status 97). Gates that need the persistent loop do not set it.
+if [ "${AIUEOS_SMOKE_FINAL_PROBE:-0}" = 1 ]; then
+  input_smoke_cflags="$input_smoke_cflags -DAIUEOS_SMOKE_FINAL_PROBE=1"
+fi
 # The ECDSA sign known-answer test (main.c). Its own flag so the ~50 KiB sign
 # object is only linked here, not in the SSH-listener build near the 1 MiB
 # ceiling (ADR-0105).

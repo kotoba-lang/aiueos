@@ -11,6 +11,13 @@ out=${AIUEOS_OUT:-"$repo/build/aiueos"}
 # ended and scored there; boots that exit earlier (corruption, crash, fault)
 # are unaffected because they never reach the loop.
 export AIUEOS_LOOP_EXIT_OK=1
+# And the smoke-profile kernel re-arms the end-of-boot #UD probe (aiueos#436)
+# so the terminal evidence -- AIUEOS_EXCEPTION_OK vector=6 invalid-opcode and
+# the isa-debug-exit status 97 the harness asserts -- is produced exactly as
+# before 54ac566. With this profile the probe ends the boot before the loop,
+# so the loop-exit scoring above stays as the fallback for default-profile
+# boots; both mechanisms are inert unless their marker appears.
+export AIUEOS_SMOKE_FINAL_PROBE=1
 
 "$aiueos/scripts/smoke-qemu-uefi.sh"
 # Model a reset after the sequence-1 journal commit but with a missing/torn

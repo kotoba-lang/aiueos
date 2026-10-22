@@ -5907,11 +5907,20 @@ qwen_runtime_boot_complete:
     }
     debug_string("AIUEOS_PAGE_FAULT_OK no-execute vector=14\n");
     serial_string("AIUEOS_PAGE_FAULT_OK no-execute vector=14\r\n");
-    /* The end-of-boot #UD probe used to fire here -- and its handler
-       EXITS the machine (the last evidence, by design). The persistent
-       desktop (JUN-141) must live, so the probe yields its slot to the
-       loop marker; the vector-6 path is still proven by the exception
-       stage above. */
+    /* The end-of-boot #UD probe: its handler EXITS the machine (the last
+       evidence, by design). The persistent desktop (JUN-141) must live, so
+       in the default build the probe yields its slot to the loop marker and
+       is disarmed. The smoke profile (AIUEOS_SMOKE_FINAL_PROBE, aiueos#436)
+       arms it exactly here again: the handler writes AIUEOS_EXCEPTION_OK
+       vector=6 invalid-opcode and terminates the machine through
+       isa-debug-exit, the terminal evidence and exit-status contract
+       smoke-qemu-uefi.sh's normal path asserts. Gates that need the loop to
+       live leave the flag unset and are unchanged from 54ac566. */
+#ifdef AIUEOS_SMOKE_FINAL_PROBE
+    extern volatile int aiueos_final_probe_expected;
+    aiueos_final_probe_expected = 1;
+    __asm__ volatile("ud2");
+#endif
   }
   /* JUN-141: the persistent desktop. The evidence job is over; from here
      the machine serves input forever -- each tablet event reduces the
