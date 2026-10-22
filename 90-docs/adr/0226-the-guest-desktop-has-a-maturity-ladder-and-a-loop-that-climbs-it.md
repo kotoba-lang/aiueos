@@ -61,6 +61,13 @@ claimed: P5 and the dictionary stay open until a person acts.
   Unihan `kJapanese` (the readings in kana) rather than the romaji
   `kJapaneseOn` / `kJapaneseKun` the floor first named; the floor's goal says
   so.
+- **2026-10-22, extended to 28 floors with six UIUX floors** (owner: take the
+  GUI's UIUX maturity to 100% and measure it): title-active, hover,
+  focus-ring, keyboard-activate, window-maximize, high-contrast. None of them
+  exists in the kernel desktop (checked by searching the browser objects and
+  kernel for hover / maximize / minimize / inactive / focus-ring / tooltip),
+  and none has a gate, so none counts as closed. Maturity went from 20/22 to
+  20/28 by the denominator, not by anything reopening.
 
 ## Measurement
 

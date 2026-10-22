@@ -130,5 +130,29 @@
   {:id :damage-present :gate "guest-browser-damage" :adr "0242"
    :goal "a frame transfers and flushes only the rectangle that changed since the last one (virtio-gpu TRANSFER_TO_HOST_2D / RESOURCE_FLUSH with the damage rect), and the display is pixel-identical to a full present"
    :why "every event re-sends 1280 x 800 x 4 bytes"}
+  ;; Extended 2026-10-22 (owner: bring the GUI's UIUX maturity to 100%, and
+  ;; measure it). The hosted session shell has these (chrome elevation, focus
+  ;; rings, aria-current, per-app accents); the kernel desktop has none:
+  ;; grep for hover / maximize / minimize / inactive / focus-ring / tooltip in
+  ;; os/aiueos/kotoba/browser-*.kotoba and the kernel finds nothing. Each is a
+  ;; floor with no gate yet, so none counts as closed until its gate lands.
+  {:id :title-active :gate nil
+   :goal "the focused window's titlebar is drawn in the active colour and every other window's in the inactive one, decided by Kotoba from the focus state, and a focus change repaints only the two titlebars"
+   :why "four windows look identical; the focused one is only known from where the caret is"}
+  {:id :hover :gate nil
+   :goal "the control under the pointer (close box, resize handle, launcher) is drawn in a hover state decided by Kotoba from the pointer position, and leaves it when the pointer leaves"
+   :why "controls give no sign that they take a click"}
+  {:id :focus-ring :gate nil
+   :goal "keyboard focus on a launcher or window control is drawn as a ring (2 px, contrast >= 3:1 against both neighbours), and Tab / Shift+Tab move it in document order"
+   :why "keyboard-only use cannot see or move focus; the hosted shell has focus rings"}
+  {:id :keyboard-activate :gate nil
+   :goal "Enter or Space on the focused control does what a click does (launch, close), and Escape closes the focused window, all as the same actions through browser-reduce as the pointer"
+   :why "every action but typing needs the pointer"}
+  {:id :window-maximize :gate nil
+   :goal "a maximize control and a double-click on the titlebar toggle the window between its rectangle and the work area, as a :window/maximize action through browser-reduce; restore returns the exact prior rectangle"
+   :why "a window can be moved and resized but not filled"}
+  {:id :high-contrast :gate nil
+   :goal "a keyboard toggle switches the desktop between the default and a high-contrast palette (text/background contrast >= 7:1), chosen by Kotoba, with the choice kept across frames"
+   :why "one fixed palette; the hosted shell follows the design tokens"}
   {:id :p5 :gate nil :needs-a-human "a real machine with an aiueos image; QEMU is not P5"
    :goal "the same desktop on physical hardware"}]}
