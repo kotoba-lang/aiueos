@@ -68,7 +68,12 @@
 ;;                  capacity 255 ops (words 480..2009; 259 until ADR-0248,
 ;;                  261 until ADR-0238,
 ;;                  260 until ADR-0240)
-;;   2010..2031     not assigned (ADR-0248 freed 2010..2033 from the op area)
+;;   2010..2025     ADR-0250: the rect a maximized window had, 4 words per window
+;;                  id 1..4 (x y w h), w 0 while it is not maximized -- browser-reduce.kotoba's
+;;   2026           not assigned
+;;   2027..2029     ADR-0250: the double press's bookkeeping (event count of the last
+;;                  titlebar press, its window, the event count now) -- browser-reduce.kotoba's
+;;   2030 2031      not assigned (ADR-0248 freed 2010..2033 from the op area)
 ;;   2032           ADR-0248: the keyboard focus ring: 0 none, 1..4 launcher
 ;;                  button k, 5 the focused window's close control. Kotoba's
 ;;                  browser-ime.kotoba moves it (F6, Shift+F6); this object draws it

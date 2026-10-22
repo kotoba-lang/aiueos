@@ -756,22 +756,35 @@ while time.time() < end:
                 recv_obj()
                 globals()["focus_sent"] = k + 1
                 log("focus event " + str(k + 1) + " sent")
-        # The keyboard stage (ADR-0247, 0248, 0249): after the damage stage,
+        # The keyboard stage (ADR-0247, 0248, 0249, 0250): after the damage stage,
         # F10 down and up twice (the high-contrast palette on, off), F6 down and
-        # up twice (the focus ring on launcher button 1, 2), Shift+F6 (back to 1), F6
-        # (2), Enter down and up (button 2 pressed), Escape down and up (the
-        # focused window closed) --
-        # each after the guest's line for the one before.
-        if typing and b"AIUEOS_GUEST_BROWSER_UIUX_GO" in serial_now and globals().get("uiux_sent", 0) < 18:
+        # up twice (the focus ring on launcher button 1, 2), Shift+F6 (back to 1),
+        # F6 (2), Enter down and up (button 2 pressed), Escape down and up (the
+        # focused window closed), then the tablet: a double press on window 1's
+        # titlebar at (380, 142) -- press, release, press, release -- and one at
+        # (380, 40) -- each after the guest's line for the one before.
+        if typing and b"AIUEOS_GUEST_BROWSER_UIUX_GO" in serial_now and globals().get("uiux_sent", 0) < 26:
             k = globals().get("uiux_sent", 0)
-            seen = (b"AIUEOS_GUEST_BROWSER_HC n=%d " % k) if k <= 4 else (b"AIUEOS_GUEST_BROWSER_KEY n=%d " % k)
+            seen = ((b"AIUEOS_GUEST_BROWSER_HC n=%d " % k) if k <= 4 else
+                    (b"AIUEOS_GUEST_BROWSER_KEY n=%d " % k) if k <= 18 else
+                    (b"AIUEOS_GUEST_BROWSER_MAX n=%d " % k))
             if k == 0 or seen in serial_now:
                 time.sleep(0.5)
-                qcode = ("f10", "f10", "f10", "f10", "f6", "f6", "f6", "f6", "shift", "f6", "f6", "shift",
-                         "f6", "f6", "ret", "ret", "esc", "esc")[k]
-                down = (True, False, True, False, True, False, True, False, True, True, False, False,
-                        True, False, True, False, True, False)[k]
-                ev = [{"type": "key", "data": {"down": down, "key": {"type": "qcode", "data": qcode}}}]
+                if k < 18:
+                    qcode = ("f10", "f10", "f10", "f10", "f6", "f6", "f6", "f6", "shift", "f6", "f6", "shift",
+                             "f6", "f6", "ret", "ret", "esc", "esc")[k]
+                    down = (True, False, True, False, True, False, True, False, True, True, False, False,
+                            True, False, True, False, True, False)[k]
+                    ev = [{"type": "key", "data": {"down": down, "key": {"type": "qcode", "data": qcode}}}]
+                else:
+                    t = k - 18
+                    if t % 2 == 0:
+                        ay = 5817 if t < 4 else 1639
+                        ev = [{"type": "abs", "data": {"axis": "x", "value": 9728}},
+                              {"type": "abs", "data": {"axis": "y", "value": ay}},
+                              {"type": "btn", "data": {"down": True, "button": "left"}}]
+                    else:
+                        ev = [{"type": "btn", "data": {"down": False, "button": "left"}}]
                 sock.sendall((json.dumps({"execute": "input-send-event", "arguments": {"events": ev}})
                               + "\n").encode())
                 recv_obj()
