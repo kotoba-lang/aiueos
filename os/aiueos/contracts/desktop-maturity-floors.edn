@@ -138,7 +138,7 @@
   ;; floor with no gate yet, so none counts as closed until its gate lands.
   {:id :title-active :gate nil
    :goal "the focused window's titlebar is drawn in the active colour and every other window's in the inactive one, decided by Kotoba from the focus state, and a focus change repaints only the two titlebars"
-   :why "four windows look identical; the focused one is only known from where the caret is"}
+   :why "CORRECTED 2026-10-22: the behaviour is already in browser-frame2.kotoba (title-rgb and body-rgb take the focus flag; emit-window paints the focused window in 13421772 and the others in 15132390), so the 'four windows look identical' reading was wrong. What is missing is a gate that asserts the two colours on the serial and the screendump, and the damage rectangle of a focus change. The floor stays open until that gate lands; it is a measurement gap, not a missing feature."}
   {:id :hover :gate nil
    :goal "the control under the pointer (close box, resize handle, launcher) is drawn in a hover state decided by Kotoba from the pointer position, and leaves it when the pointer leaves"
    :why "controls give no sign that they take a click"}
