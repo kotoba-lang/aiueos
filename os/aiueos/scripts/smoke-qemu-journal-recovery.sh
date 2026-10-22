@@ -5,6 +5,13 @@ repo=$(CDPATH= cd -- "$(dirname -- "$0")/../../.." && pwd)
 aiueos="$repo/os/aiueos"
 out=${AIUEOS_OUT:-"$repo/build/aiueos"}
 
+# Since 54ac566 (S4, JUN-144) a normal boot ends in the persistent desktop
+# loop instead of exiting the machine (aiueos#436). This gate's evidence is
+# complete at AIUEOS_DESKTOP_LOOP_OK, so every boot below opts in to being
+# ended and scored there; boots that exit earlier (corruption, crash, fault)
+# are unaffected because they never reach the loop.
+export AIUEOS_LOOP_EXIT_OK=1
+
 "$aiueos/scripts/smoke-qemu-uefi.sh"
 # Model a reset after the sequence-1 journal commit but with a missing/torn
 # object materialization. The next boot must redo the committed payload before
