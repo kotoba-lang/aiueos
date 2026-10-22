@@ -138,3 +138,7 @@ margin and a black ink, which ADR-0247 says.
 in the same change because it was two jobs: the visible control and a keyboard
 shortcut are `:maximize-control`, open. The ladder is 29 floors.
 
+`maximize-control` (ADR-0251) is closed. 27 of 29 floors have gates that were run
+on a real boot; the two open floors are `:browser-component` (blocked by amu,
+ADR 0373) and `:p5` (a real machine).
+

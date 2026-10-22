@@ -565,6 +565,24 @@
 (defn chrome [s w]
   (if (= (sw s 31) 0) 0 (if (< w 40) 0 1)))
 
+;; ADR-0251: a maximize control left of the close control, 16 x 16 at
+;; (x + w - 44, y + 6), on a window with a launcher at least 160 wide; its
+;; initial is U+25A1 in #595959 (#404040 in the high-contrast palette), a colour
+;; of its own and not the ink, so the ink census of every frame is unchanged.
+(defn max-ctl [s w]
+  (if (= (chrome s w) 0) 0 (if (< w 160) 0 1)))
+
+(defn icon-rgb [s] (if (= (hc s) 1) 4210752 5855577))
+
+(defn max-control [s f x y w]
+  (if (= (max-ctl s w) 0) 0
+    (let [gi (glyph-of s f 9633)
+          gw (glyph-width s f gi)]
+      (do (sput s 422 (if (= (hot s (- (+ x w) 44) (+ y 6) 16 16) 1) (hot-rgb s) (face-rgb s)))
+          (put-rect s (- (+ x w) 44) (+ y 6) 16 16)
+          (sput s 422 (icon-rgb s))
+          (put-glyph s (+ (- (+ x w) 44) (quot (- 16 gw) 2)) (+ y 6) gi gw)))))
+
 (defn close-control [s f x y w]
   (if (= (chrome s w) 0) 0
     (let [gi (glyph-of s f 215)
@@ -653,7 +671,7 @@
         (put-rect s x (+ y 2) w 26)
         ;; title: one line, clipped at the right inset (or before the close
         ;; control), inside the titlebar
-        (sput s 420 (- (+ x w) (+ 8 (* 20 (chrome s w))))) (sput s 421 (+ y 28))
+        (sput s 420 (- (+ x w) (+ 8 (+ (* 20 (chrome s w)) (* 20 (max-ctl s w)))))) (sput s 421 (+ y 28))
         (sput s 426 0) (sput s 428 32)
         (text-block s f (+ 32 (* 32 (- id 1))) (+ x 8) (+ y 6))
         (close-control s f x y w)
@@ -662,6 +680,7 @@
             (if (= (chrome s w) 1) (put-ring s (- (+ x w) 24) (+ y 6) 16 16) 0)
             0)
           0)
+        (max-control s f x y w)
         ;; body: cssom's flow from (x + 14, y + 42), cut at the bottom inset;
         ;; the composition after it wraps at x + w - 14 (0 when that is left
         ;; of the viewport: every glyph then wraps, as a negative limit would).

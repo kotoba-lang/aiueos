@@ -762,8 +762,9 @@ while time.time() < end:
         # F6 (2), Enter down and up (button 2 pressed), Escape down and up (the
         # focused window closed), then the tablet: a double press on window 1's
         # titlebar at (380, 142) -- press, release, press, release -- and one at
-        # (380, 40) -- each after the guest's line for the one before.
-        if typing and b"AIUEOS_GUEST_BROWSER_UIUX_GO" in serial_now and globals().get("uiux_sent", 0) < 26:
+        # (380, 40), a press on the maximize control at (476, 146), F11 down and up --
+        # each after the guest's line for the one before.
+        if typing and b"AIUEOS_GUEST_BROWSER_UIUX_GO" in serial_now and globals().get("uiux_sent", 0) < 30:
             k = globals().get("uiux_sent", 0)
             seen = ((b"AIUEOS_GUEST_BROWSER_HC n=%d " % k) if k <= 4 else
                     (b"AIUEOS_GUEST_BROWSER_KEY n=%d " % k) if k <= 18 else
@@ -776,7 +777,7 @@ while time.time() < end:
                     down = (True, False, True, False, True, False, True, False, True, True, False, False,
                             True, False, True, False, True, False)[k]
                     ev = [{"type": "key", "data": {"down": down, "key": {"type": "qcode", "data": qcode}}}]
-                else:
+                elif k < 26:
                     t = k - 18
                     if t % 2 == 0:
                         ay = 5817 if t < 4 else 1639
@@ -785,6 +786,17 @@ while time.time() < end:
                               {"type": "btn", "data": {"down": True, "button": "left"}}]
                     else:
                         ev = [{"type": "btn", "data": {"down": False, "button": "left"}}]
+                elif k < 28:
+                    # ADR-0251: a press on window 1's maximize control at (476, 146)
+                    if k == 26:
+                        ev = [{"type": "abs", "data": {"axis": "x", "value": 12186}},
+                              {"type": "abs", "data": {"axis": "y", "value": 5981}},
+                              {"type": "btn", "data": {"down": True, "button": "left"}}]
+                    else:
+                        ev = [{"type": "btn", "data": {"down": False, "button": "left"}}]
+                else:
+                    # F11 down and up: the maximized window's control pressed from the keyboard
+                    ev = [{"type": "key", "data": {"down": k == 28, "key": {"type": "qcode", "data": "f11"}}}]
                 sock.sendall((json.dumps({"execute": "input-send-event", "arguments": {"events": ev}})
                               + "\n").encode())
                 recv_obj()

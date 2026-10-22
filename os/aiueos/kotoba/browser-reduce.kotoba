@@ -388,10 +388,25 @@
               (release-all st)
               app))))))
 
+;; ADR-0251: the maximize control of stack index k: x + w - 44 .. x + w - 28,
+;; y + 6 .. y + 22, inclusive, on a window at least 160 wide (with a launcher).
+(defn in-max [st k px py]
+  (let [b (+ 5 (* k 5))
+        r (+ (w-at st (+ b 1)) (w-at st (+ b 3)))
+        y (w-at st (+ b 2))]
+    (if (< (w-at st (+ b 3)) 160) 0
+      (if (< px (- r 44)) 0
+        (if (> px (- r 28)) 0
+          (if (< py (+ y 6)) 0
+            (if (> py (+ y 22)) 0 1)))))))
+
 (defn title-press [st sb k px py]
   (if (not (= sb 8192)) 0
     (if (= (in-title st k px py) 0) 0
       (if (= (in-handle st k px py) 1) 0 1))))
+
+(defn max-press [st sb k px py]
+  (if (not (= sb 8192)) 0 (in-max st k px py)))
 
 (defn press-miss [st n px py]
   (if (= (w-at st 31) 0) 0
@@ -406,6 +421,9 @@
             (raise st (- k1 1) n))
         (if (= (in-close st (- k1 1) px py) 1)
           (close st sb n (- k1 1))
+          (if (= (max-press st sb (- k1 1) px py) 1)
+            (do (raise st (- k1 1) n)
+                (toggle-max st (- n 1)))
           (if (= (title-press st sb (- k1 1) px py) 1)
             (if (= (double-press st sb (- k1 1) px py) 1)
               (do (raise st (- k1 1) n)
@@ -414,7 +432,7 @@
                   (capture st (- k1 1) px py)
                   (raise st (- k1 1) n)))
             (do (capture st (- k1 1) px py)
-                (raise st (- k1 1) n))))))))
+                (raise st (- k1 1) n)))))))))
 
 (defn move-to [st k nx ny]
   (let [b (+ 5 (* k 5))]

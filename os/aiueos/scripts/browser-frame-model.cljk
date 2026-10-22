@@ -284,7 +284,7 @@
                  ;; before it.
                  chrome? (and (pos? (or apps 0)) (>= w 40))
                  t (lay-line {:x (+ x 8) :y (+ y 6) :left (+ x 8)
-                              :right (- (+ x w) (if chrome? 28 8))
+                              :right (- (+ x w) (cond (and chrome? (>= w 160)) 48 chrome? 28 :else 8))
                               :bottom (+ y 28) :wrap? false} (take 32 title))
                  [xi xw] (glyph 215)
                  close (when chrome?
@@ -334,6 +334,15 @@
                         [:rect x (+ y 2) w 26 tc]])
                      (:ops t) close
                      (when (and f? chrome? (= (:ring scene) 5)) (ring-ops hc (- (+ x w) 24) (+ y 6) 16 16))
+                     ;; ADR-0251: the maximize control, left of the close control, on a
+                     ;; window with a launcher at least 160 wide; its U+25A1 is #595959
+                     ;; (#404040 in the high-contrast palette), not the ink
+                     (when (and chrome? (>= w 160))
+                       (let [cx (- (+ x w) 44)
+                             [gi gw] (glyph 9633)]
+                         [[:rect cx (+ y 6) 16 16
+                           (if (hot? (:pointer scene) cx (+ y 6) 16 16) (if hc 0xffd400 hot-colour) (if hc 0xe0e0e0 0xe6e6e6))]
+                          [:glyph (+ cx (quot (- 16 gw) 2)) (+ y 6) gi gw (if hc 0x404040 0x595959)]]))
                      (:ops b) (:ops c) caret))))
         stack)
         (concat (dock scene) (pointer-sprite scene)))))
@@ -650,8 +659,15 @@
         s1 (at (assoc base :stack (stack-with maxed)) [380 142])
         s2 (at (assoc base :stack (stack-with maxed)) [380 40])
         s3 (at base [380 40])]
-    [["press" s0] ["release" s0] ["press-2-max" s1] ["release" s1]
-     ["press" s2] ["release" s2] ["press-2-restore" s3] ["release" s3]]))
+    (let [c (fn [scene] (at scene [476 146]))
+          s4 (c (assoc base :stack (stack-with maxed)))
+          s5 (c base)]
+      [["press" s0] ["release" s0] ["press-2-max" s1] ["release" s1]
+       ["press" s2] ["release" s2] ["press-2-restore" s3] ["release" s3]
+       ;; ADR-0251: a press on the maximize control at (476, 146) maximizes, F11 on
+       ;; the maximized window presses its control and restores
+       ["control-max" (c (assoc base :stack (stack-with maxed)))] ["release" s4]
+       ["f11-restore" s5] ["f11-up" s5]])))
 
 ;; The colours the kernel reads out of a draw list for AIUEOS_GUEST_BROWSER_HC:
 ;; the background (op 0), the first glyph's colour (the ink), and the distinct

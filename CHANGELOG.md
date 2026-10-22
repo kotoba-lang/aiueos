@@ -29,7 +29,7 @@ All notable changes to **aiueos** are documented here. The format follows
   TRANSFER_TO_HOST_2D / RESOURCE_FLUSH, or nothing; anything the object did not
   answer for sends the whole screen.
 - Gate `guest-browser-damage` (tablet profile, 3300 s):
-  `AIUEOS_GUEST_BROWSER_DAMAGE_OK events=5 partial=2 empty=3 bytes=1870144 whole-bytes=20480000 focus=1 chain=6653b143 ops=203 text-px=2330 hash=5581e21a`,
+  `AIUEOS_GUEST_BROWSER_DAMAGE_OK events=5 partial=2 empty=3 bytes=1870144 whole-bytes=20480000 focus=1 chain=6653b143 ops=211 text-px=2330 hash=5581e21a`,
   and every damage screendump byte-identical to the whole-screen one after it.
   browser-damage-v1 24 vectors (browser-damage-oracle.cljk).
 
@@ -46,7 +46,7 @@ All notable changes to **aiueos** are documented here. The format follows
   (ADR-0096) for each request with the stage's grant (clipboard, then
   file-picker only) and hands the completion only on admit.
 - Gate `guest-browser-clipboard` (tablet profile, 3000 s):
-  `AIUEOS_GUEST_BROWSER_CLIPBOARD_OK events=22 requests=4 admitted=3 refused=1 copied=3 pasted=3,3 clip=3 body=51 focus=4 chain=9098b95f sel-chain=356612c5 ops=202 text-px=1080 hash=76577905`.
+  `AIUEOS_GUEST_BROWSER_CLIPBOARD_OK events=22 requests=4 admitted=3 refused=1 copied=3 pasted=3,3 clip=3 body=51 focus=4 chain=9098b95f sel-chain=356612c5 ops=210 text-px=1080 hash=76577905`.
   browser-ime-v2 120 vectors (26 new, from browser.desktop-backend `request`
   and browser.text-edit via browser-clipboard-oracle.cljk).
 
@@ -66,7 +66,7 @@ All notable changes to **aiueos** are documented here. The format follows
   Left, Right, Left, Shift up, Backspace; each frame's #111111 and #b5cdf1
   census against browser-frame-model.cljk.
 - Gate `guest-browser-selection` (tablet profile, 2700 s):
-  `AIUEOS_GUEST_BROWSER_SELECTION_OK events=17 answers=44444000000000000 max-sel=2 body=48 focus=4 scroll=100 chain=2b46197d sel-chain=cb830579 ops=201 text-px=1058 hash=6ca5ee4a`.
+  `AIUEOS_GUEST_BROWSER_SELECTION_OK events=17 answers=44444000000000000 max-sel=2 body=48 focus=4 scroll=100 chain=2b46197d sel-chain=cb830579 ops=209 text-px=1058 hash=6ca5ee4a`.
   browser-ime-v2 94 vectors (23 new, from browser.text-edit via
   browser-selection-oracle.cljk), browser-frame2-v1 74 (11 new).
 
@@ -87,7 +87,7 @@ All notable changes to **aiueos** are documented here. The format follows
   main.c's new stage after Alt+Tab registers app 4 (the lines 1 .. 20) and
   takes seventeen events: offset 0 -> 120 -> 0.
 - Gate `guest-browser-scroll` (tablet profile, 2400 s):
-  `AIUEOS_GUEST_BROWSER_SCROLL_OK events=17 answers=40004444444444444 max=120 stack=1324 focus=4 scroll=0 chain=7421f3aa ops=197 text-px=994 hash=78270fda`.
+  `AIUEOS_GUEST_BROWSER_SCROLL_OK events=17 answers=40004444444444444 max=120 stack=1324 focus=4 scroll=0 chain=7421f3aa ops=205 text-px=994 hash=78270fda`.
   browser-reduce-v1 115 vectors (25 new), browser-frame2-v1 63 (13 new).
 ### sync-kernel-object-digests reads build-multiboot.sh too
 - The re-attest above left two literals stale in `build-multiboot.sh`
