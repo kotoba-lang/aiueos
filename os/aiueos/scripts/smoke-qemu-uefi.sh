@@ -976,6 +976,7 @@ PY
   set +e
   qemu_started=$(date +%s)
   quiet_fired=
+  loop_reached=
   # shellcheck disable=SC2086 # intentional optional groups of QEMU arguments
   timeout "$qemu_timeout" "$qemu" \
     -machine q35,accel=tcg -cpu max -m 128M -smp 2 \
@@ -1005,6 +1006,27 @@ PY
   while kill -0 "$qemu_pid" 2>/dev/null; do
     sleep 5
     kill -0 "$qemu_pid" 2>/dev/null || break
+    #54ac566 (S4, JUN-144) changed the end of a NORMAL boot: the end-of-boot
+    # probe no longer exits the machine -- it yields its slot to the
+    # persistent desktop loop and the guest stays up (aiueos#436). A gate
+    # whose evidence is complete at that marker opts in with
+    # AIUEOS_LOOP_EXIT_OK=1: the attempt ends here and is scored as the
+    # normal boot it replaces, instead of running out the wall clock and
+    # being normalised to a 124 timeout. Gates that drive the loop (key
+    # injection, post-loop exits) leave the flag unset and are untouched.
+    if [ -n "${AIUEOS_LOOP_EXIT_OK:-}" ] && [ -z "$loop_reached" ]; then
+      for loop_file in "$serial_log" "$log"; do
+        if [ -f "$loop_file" ] && grep -a -q -F "AIUEOS_DESKTOP_LOOP_OK" "$loop_file" 2>/dev/null; then
+          loop_reached=1
+          break
+        fi
+      done
+      if [ -n "$loop_reached" ]; then
+        sleep 2   # let the marker's own writes land on both transports
+        kill -TERM "$qemu_pid" 2>/dev/null || true
+        break
+      fi
+    fi
     watchdog_now=$(date +%s)
     watchdog_seen=$qemu_started
     for watchdog_file in "$serial_log" "$log"; do
@@ -1059,6 +1081,12 @@ PY
   # carried in $quiet_fired and reported, not encoded in a new status nobody
   # downstream reads.
   if [ -n "$quiet_fired" ]; then status=124; fi
+  # The persistent desktop loop is the normal boot's terminal state since
+  # 54ac566; when the gate opted in and the marker was reached, the attempt
+  # is scored as the end-of-boot success the machine used to exit with (97).
+  # Every other status keeps its exact per-mode contract (133/255/209/251/
+  # 185/227 below), and a 124 without the marker stays a real failure.
+  if [ -n "$loop_reached" ]; then status=97; fi
   qemu_elapsed=$(( $(date +%s) - qemu_started ))
   # Every boot's wall clock, appended, so the timeout above stays a
   # measurement. A run that reports "timed out" without saying how long it
