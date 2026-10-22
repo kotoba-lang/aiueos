@@ -675,9 +675,77 @@
 
 ;; ADR-0247: F10 (evdev 68) flips the high-contrast palette, word 2039,
 ;; browser-frame2.kotoba's. It is no text and no window action: the answer is 0.
+;; ADR-0248: the keyboard focus ring and keyboard activation. Word 2032 is the
+;; ring (browser-frame2.kotoba draws it): 0 none, 1..4 launcher button k when
+;; app k is registered, 5 the focused window's close control when the window is
+;; at least 40 wide and there is an app register. F6 moves it forward through
+;; the targets that exist and then off; Shift+F6 backward. Enter or Space on a
+;; ring target, and Escape for the focused window's close control, do what a
+;; pointer press at the control's centre does -- the answer is that press,
+;; 65536 + 2048 x + y, for C to hand to browser-reduce as a pointer/down, so
+;; the keyboard and the pointer are one action path. Enter and Space with a
+;; composition are the input method's, as before.
+(defn kbit [k] (if (= k 1) 1 (if (= k 2) 2 (if (= k 3) 4 8))))
+
+(defn idx [s n k id]
+  (if (>= k n) -1
+    (if (= (w s (+ 5 (* k 5))) id) k
+      (idx s n (+ k 1) id))))
+
+(defn close-ok [s]
+  (if (= (w s 31) 0) 0
+    (let [i (idx s (w s 1) 0 (w s 2))]
+      (if (< i 0) 0
+        (if (< (w s (+ 8 (* i 5))) 40) 0 1)))))
+
+(defn target-ok [s t]
+  (if (< t 1) 0
+    (if (< t 5)
+      (if (= (bit-and (w s 31) (kbit t)) 0) 0 1)
+      (if (= t 5) (close-ok s) 0))))
+
+(defn next-from [s t]
+  (if (> t 5) 0
+    (if (= (target-ok s t) 1) t
+      (next-from s (+ t 1)))))
+
+(defn prev-from [s t]
+  (if (< t 1) 0
+    (if (= (target-ok s t) 1) t
+      (prev-from s (- t 1)))))
+
+(defn ring-move [s]
+  (do (wp s 2032
+          (if (= (w s 2035) 1)
+            (prev-from s (if (= (w s 2032) 0) 5 (- (w s 2032) 1)))
+            (next-from s (+ (w s 2032) 1))))
+      0))
+
+(defn press-at [px py] (+ 65536 (+ (* px 2048) py)))
+
+(defn close-press [s]
+  (let [i (idx s (w s 1) 0 (w s 2))
+        b (+ 5 (* i 5))]
+    (press-at (- (+ (w s (+ b 1)) (w s (+ b 3))) 16) (+ (w s (+ b 2)) 14))))
+
+(defn ring-press [s]
+  (let [t (w s 2032)]
+    (if (= (target-ok s t) 0) 0
+      (if (= t 5) (close-press s)
+        (press-at (+ 54 (* 102 (- t 1))) 14)))))
+
 (defn hc-toggle [s]
   (do (wp s 2039 (if (= (w s 2039) 0) 1 0))
       0))
+
+(defn kbd-act [s code]
+  (if (= (composing s) 1) 0
+    (if (= code 28) (if (= (target-ok s (w s 2032)) 1) 1 0)
+      (if (= code 57) (if (= (target-ok s (w s 2032)) 1) 1 0)
+        (if (= code 1) (close-ok s) 0)))))
+
+(defn kbd-answer [s code]
+  (if (= code 1) (close-press s) (ring-press s)))
 
 (defn press [s d ev]
   (if (= (quot ev 4) 56) (hold-alt s (bit-and ev 3))
@@ -685,11 +753,13 @@
     (if (= (ctrl-code (quot ev 4)) 1) (hold-ctrl s (bit-and ev 3))
     (if (not (= (bit-and ev 3) 1)) 0
       (if (= (quot ev 4) 68) (hc-toggle s)
+      (if (= (quot ev 4) 64) (ring-move s)
+      (if (= (kbd-act s (quot ev 4)) 1) (kbd-answer s (quot ev 4))
       (if (= (wm-key s (quot ev 4)) 1) (+ 256 (w s 5))
         (if (= (w s 2038) 1) (ctrl-key s (quot ev 4))
           (do (wp s 478 0)
               (let [r (key s d (quot ev 4))]
-                (if (= (w s 478) 1) -8 r)))))))))))
+                (if (= (w s 478) 1) -8 r)))))))))))))
 
 (defn admitted [s d ev]
   ;; after the surface checks: a dictionary that is there must be

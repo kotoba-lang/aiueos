@@ -1719,34 +1719,64 @@ static int browser_damage_stage(uint32_t *surface, const uint8_t *font, uint64_t
   return 0;
 }
 
-/* ADR-0247: the high-contrast palette. After the damage stage the host sends
-   F10 down and up (Kotoba's browser-ime flips word 2039: the palette on),
-   F10 down and up (off). For each of the four events the frame is drawn and
-   the kernel prints what it reads out of the draw list it painted: the mode
-   word, the background (op 0), the first glyph's colour (the ink) and the
-   distinct colours, at most four, of the 28 px rects in the order they
-   first appear. The expected values are the frame model's. */
+/* ADR-0247 / ADR-0248 / ADR-0249: the keyboard stage. After the damage stage
+   the host sends eighteen key events, a frame for each:
+     1..4   F10 down and up, F10 down and up  (the high-contrast palette on, off)
+     5..8   F6 down and up, F6 down and up    (the focus ring on launcher button
+                                               1, then 2)
+     9..12  Shift down, F6 down and up,       (back to button 1)
+            Shift up
+     13..14 F6 down and up                    (button 2)
+     15..16 Enter down and up                 (button 2 is pressed: Kotoba
+                                               answers the press, C hands it to
+                                               browser-reduce)
+     17..18 Escape down and up                (the focused window's close
+                                               control is pressed the same way)
+   For each frame the kernel prints what it reads out of the draw list it
+   painted. The expected values are the frame model's. */
 static void browser_hc_hex(uint32_t v) { serial_hex32(v & 0xffffffU); }
 
 static int browser_uiux_stage(uint32_t *surface, const uint8_t *font, uint64_t font_length,
                               uint64_t dict, uint64_t dict_length) {
-  static const uint32_t ukey[4] = {68U * 4U + 1U, 68U * 4U, 68U * 4U + 1U, 68U * 4U};
-  static const uint32_t umode[4] = {1, 1, 0, 0};
-  static const uint32_t uops[4] = {203, 203, 203, 203};
-  static const uint32_t upx[4] = {2330, 2330, 2330, 2330};
-  static const uint32_t uhash[4] = {0x5581e21aU, 0x5581e21aU, 0x5581e21aU, 0x5581e21aU};
+  static const uint32_t ukey[18] = {68U * 4U + 1U, 68U * 4U, 68U * 4U + 1U, 68U * 4U,
+                                    64U * 4U + 1U, 64U * 4U, 64U * 4U + 1U, 64U * 4U,
+                                    42U * 4U + 1U, 64U * 4U + 1U, 64U * 4U, 42U * 4U,
+                                    64U * 4U + 1U, 64U * 4U,
+                                    28U * 4U + 1U, 28U * 4U, 1U * 4U + 1U, 1U * 4U};
+  static const int64_t uans[18] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 385038, 0, 1261662, 0};
+  static const int64_t ured[18] = {-100, -100, -100, -100, -100, -100, -100, -100, -100, -100, -100,
+                                   -100, -100, -100, 2, -100, 1, -100};
+  static const uint32_t umode[18] = {1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+  static const uint32_t uring[18] = {0, 0, 0, 0, 1, 1, 2, 2, 2, 1, 1, 1, 2, 2, 2, 2, 2, 2};
+  static const uint32_t uwin[18] = {4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 3, 3};
+  static const uint32_t ufoc[18] = {1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 1, 1};
+  static const uint32_t uops[18] = {203, 203, 203, 203, 207, 207, 207, 207, 207, 207, 207, 207, 207, 207,
+                                    207, 207, 180, 180};
+  static const uint32_t upx[18] = {2330, 2330, 2330, 2330, 2330, 2330, 2330, 2330, 2330, 2330, 2330, 2330,
+                                   2330, 2330, 1209, 1209, 2330, 2330};
+  static const uint32_t uhash[18] = {0x5581e21aU, 0x5581e21aU, 0x5581e21aU, 0x5581e21aU,
+                                     0x5581e21aU, 0x5581e21aU, 0x5581e21aU, 0x5581e21aU,
+                                     0x5581e21aU, 0x5581e21aU, 0x5581e21aU, 0x5581e21aU,
+                                     0x5581e21aU, 0x5581e21aU, 0xfc93d38dU, 0xfc93d38dU,
+                                     0x5581e21aU, 0x5581e21aU};
   uint64_t sp = (uint64_t)(uintptr_t)surface;
-  uint32_t ue = 0, uoff = 0, uidle = 0, uframes = 0;
+  uint32_t ue = 0, uoff = 0, uidle = 0, uframes = 0, hcoff = 0;
   (void)aiueos_tablet_drain(4000000U);
   (void)aiueos_keyboard_drain(4000000U);
-  serial_string("AIUEOS_GUEST_BROWSER_UIUX_GO events=4\r\n");
-  while (ue < 4 && uidle < 60000U) {
+  serial_string("AIUEOS_GUEST_BROWSER_UIUX_GO events=18\r\n");
+  while (ue < 18 && uidle < 60000U) {
     uint32_t key = aiueos_keyboard_next_key(1024U);
-    int64_t kr, ufo;
+    int64_t kr, ufo, red = -100;
     uint32_t upx2 = 0, uhash2 = 0, bars[4], nbars = 0, ink = 0, haveink = 0;
+    uint32_t rings = 0, rx = 0, ry = 0, rc = 0, face = 0, haveface = 0;
+    uint32_t bad;
     if (!key) { uidle++; continue; }
     uidle = 0;
     kr = (int64_t)kotoba_aiueos_browser_key(sp, 8192, dict, dict_length, key);
+    if (kr >= 65536) {
+      uint32_t at = (uint32_t)(kr - 65536);
+      red = (int64_t)kotoba_aiueos_browser_reduce(sp, 128, 1, at >> 11, at & 2047U);
+    }
     ufo = (int64_t)kotoba_aiueos_browser_frame2(sp, 8192, (uint64_t)(uintptr_t)font, font_length);
     if (ufo > 0 && aiueos_desktop_present_ops2(surface + 480, (uint64_t)ufo, font, font_length)) {
       uhash2 = aiueos_desktop_colour_census(surface[2039] ? 0x000000U : 0x333333U, &upx2);
@@ -1761,34 +1791,91 @@ static int browser_uiux_stage(uint32_t *surface, const uint8_t *font, uint64_t f
         for (uint32_t b = 0; b < nbars; b++) if (bars[b] == op[5]) seen = 1;
         if (!seen && nbars < 4U) bars[nbars++] = op[5];
       }
+      if (op[0] == 1 && op[5] == 1726171U) {
+        if (!rings) { rx = op[1]; ry = op[2]; rc = op[5]; }
+        rings++;
+      }
+      if (op[0] == 1 && op[3] == 96U && op[4] == 24U && !haveface) { face = op[5]; haveface = 1; }
     }
-    if (kr != 0 || key != ukey[ue] || surface[2039] != umode[ue] || ufo != (int64_t)uops[ue] ||
-        upx2 != upx[ue] || uhash2 != uhash[ue]) uoff++;
+    bad = (kr != uans[ue] || key != ukey[ue] || surface[2039] != umode[ue] || ufo != (int64_t)uops[ue] ||
+           upx2 != upx[ue] || uhash2 != uhash[ue]);
+    if (ue >= 4) {
+      if (red != ured[ue] || surface[2032] != uring[ue] || surface[1] != uwin[ue] || surface[2] != ufoc[ue])
+        bad = 1;
+    }
+    if (bad) { if (ue < 4) hcoff++; uoff++; }
     ue++;
-    serial_string("AIUEOS_GUEST_BROWSER_HC n=");
-    serial_decimal(ue);
-    serial_string(" mode=");
-    serial_decimal(surface[2039]);
-    serial_string(" bg=");
-    browser_hc_hex(ufo > 0 ? surface[480 + 5] : 0);
-    serial_string(" ink=");
-    browser_hc_hex(ink);
-    serial_string(" bars=");
-    for (uint32_t b = 0; b < nbars; b++) {
-      if (b) serial_string(",");
-      browser_hc_hex(bars[b]);
+    if (ue <= 4) {
+      serial_string("AIUEOS_GUEST_BROWSER_HC n=");
+      serial_decimal(ue);
+      serial_string(" mode=");
+      serial_decimal(surface[2039]);
+      serial_string(" bg=");
+      browser_hc_hex(ufo > 0 ? surface[480 + 5] : 0);
+      serial_string(" ink=");
+      browser_hc_hex(ink);
+      serial_string(" bars=");
+      for (uint32_t b = 0; b < nbars; b++) {
+        if (b) serial_string(",");
+        browser_hc_hex(bars[b]);
+      }
+      serial_string(" ops=");
+      serial_decimal((uint32_t)(ufo < 0 ? -ufo : ufo));
+      serial_string(" text-px=");
+      serial_decimal(upx2);
+      serial_string(" hash=");
+      serial_hex32(uhash2);
+      serial_string("\r\n");
+      if (ue == 4) {
+        if (hcoff == 0 && surface[2039] == 0) {
+          debug_string("AIUEOS_GUEST_BROWSER_UIUX_OK\n");
+          serial_string("AIUEOS_GUEST_BROWSER_UIUX_OK events=4 palette=default-high-contrast-default\r\n");
+        } else {
+          serial_string("AIUEOS_GUEST_BROWSER_UIUX leftover=census-miss part=palette\r\n");
+        }
+      }
+    } else {
+      serial_string("AIUEOS_GUEST_BROWSER_KEY n=");
+      serial_decimal(ue);
+      serial_string(" key=");
+      serial_decimal(key);
+      serial_string(" answer=");
+      serial_decimal64((uint64_t)kr);
+      serial_string(" reduce=");
+      if (red == -100) serial_string("none");
+      else serial_decimal64((uint64_t)red);
+      serial_string(" ring=");
+      serial_decimal(surface[2032]);
+      serial_string(" windows=");
+      serial_decimal(surface[1]);
+      serial_string(" focus=");
+      serial_decimal(surface[2]);
+      serial_string(" stack=");
+      for (uint32_t k = 0; k < surface[1] && k < 4U; k++) serial_decimal(surface[5 + 5 * k]);
+      serial_string(" rings=");
+      serial_decimal(rings);
+      serial_string(" at=");
+      serial_decimal(rx);
+      serial_string(",");
+      serial_decimal(ry);
+      serial_string(" ringc=");
+      browser_hc_hex(rc);
+      serial_string(" bar=");
+      browser_hc_hex(nbars ? bars[0] : 0);
+      serial_string(" face=");
+      browser_hc_hex(face);
+      serial_string(" ops=");
+      serial_decimal((uint32_t)(ufo < 0 ? -ufo : ufo));
+      serial_string(" text-px=");
+      serial_decimal(upx2);
+      serial_string(" hash=");
+      serial_hex32(uhash2);
+      serial_string("\r\n");
     }
-    serial_string(" ops=");
-    serial_decimal((uint32_t)(ufo < 0 ? -ufo : ufo));
-    serial_string(" text-px=");
-    serial_decimal(upx2);
-    serial_string(" hash=");
-    serial_hex32(uhash2);
-    serial_string("\r\n");
   }
-  if (ue == 4 && uframes == 4 && uoff == 0 && surface[2039] == 0) {
-    debug_string("AIUEOS_GUEST_BROWSER_UIUX_OK\n");
-    serial_string("AIUEOS_GUEST_BROWSER_UIUX_OK events=4 palette=default-high-contrast-default\r\n");
+  if (ue == 18 && uframes == 18 && uoff == 0 && surface[2039] == 0) {
+    debug_string("AIUEOS_GUEST_BROWSER_KEYS_OK\n");
+    serial_string("AIUEOS_GUEST_BROWSER_KEYS_OK events=18 ring=2 stack=341 focus=1\r\n");
     return 1;
   }
   debug_string("AIUEOS_GUEST_BROWSER_UIUX leftover=census-miss\n");

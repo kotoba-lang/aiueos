@@ -21,7 +21,8 @@
    "guest-browser-cursor" "guest-browser-focus-cycle" "guest-browser-scroll"
    "guest-browser-selection" "guest-browser-clipboard" "guest-browser-damage"
    "guest-browser-title-active" "guest-browser-hover"
-   "guest-browser-high-contrast"])
+   "guest-browser-high-contrast" "guest-browser-focus-ring"
+   "guest-browser-keyboard-activate"])
 
 (defn gate-cmd
   "SPA-visible evidence command for a guest profile. Not clojure -M."
@@ -911,6 +912,82 @@
       {:green? true :exit 0 :reason :guest-browser-high-contrast
        :leftover [:colours-in-op-list-not-pixels :dock-keeps-its-colours :no-persistence-across-boots]})))
 
+;; Guest browser keyboard (ADR-0248, ADR-0249): after the palette frames the host
+;; sends F6 down and up twice, Shift down, F6 down and up, Shift up, F6 down and
+;; up, Enter down and up, Escape down and up -- fourteen events, a frame for
+;; each. The kernel prints AIUEOS_GUEST_BROWSER_KEY for each: the key and
+;; Kotoba's answer to it (a pointer press, 65536 + 2048 x + y, for Enter and
+;; Escape), what browser-reduce answered to that press, the focus ring word, the
+;; windows, focus and stack, how many #1a56db rects the list has and where the
+;; first is, the launcher bar's and a button's colours, and the census. Two gates
+;; read the same lines: focus-ring (the ring: where, how many, in which order,
+;; and its contrast against the bar and the button, computed here) and
+;; keyboard-activate (the actions: the presses, the windows they left).
+
+(def ^:private key-want
+  (let [e (fn [n key ans red ring win foc stack at ops px hash]
+            {:n n :key key :answer ans :reduce red :ring ring :windows win :focus foc :stack stack
+             :rings 4 :at at :ringc 0x1a56db :bar 0xf1f1f2 :face 0xe6e6e6 :ops ops :px px :hash hash})]
+    [(e 5 257 0 "none" 1 4 1 "3241" "4,0" 207 2330 "5581e21a")
+     (e 6 256 0 "none" 1 4 1 "3241" "4,0" 207 2330 "5581e21a")
+     (e 7 257 0 "none" 2 4 1 "3241" "106,0" 207 2330 "5581e21a")
+     (e 8 256 0 "none" 2 4 1 "3241" "106,0" 207 2330 "5581e21a")
+     (e 9 169 0 "none" 2 4 1 "3241" "106,0" 207 2330 "5581e21a")
+     (e 10 257 0 "none" 1 4 1 "3241" "4,0" 207 2330 "5581e21a")
+     (e 11 256 0 "none" 1 4 1 "3241" "4,0" 207 2330 "5581e21a")
+     (e 12 168 0 "none" 1 4 1 "3241" "4,0" 207 2330 "5581e21a")
+     (e 13 257 0 "none" 2 4 1 "3241" "106,0" 207 2330 "5581e21a")
+     (e 14 256 0 "none" 2 4 1 "3241" "106,0" 207 2330 "5581e21a")
+     (e 15 113 385038 "2" 2 4 2 "3412" "106,0" 207 1209 "fc93d38d")
+     (e 16 112 0 "none" 2 4 2 "3412" "106,0" 207 1209 "fc93d38d")
+     (e 17 5 1261662 "1" 2 3 1 "341" "106,0" 180 2330 "5581e21a")
+     (e 18 4 0 "none" 2 3 1 "341" "106,0" 180 2330 "5581e21a")]))
+
+(defn- key-lines [serial]
+  (mapv (fn [[_ n key ans red ring win foc stack rings at ringc bar face ops px hash]]
+          {:n (parse-long n) :key (parse-long key) :answer (parse-long ans) :reduce red
+           :ring (parse-long ring) :windows (parse-long win) :focus (parse-long foc) :stack stack
+           :rings (parse-long rings) :at at :ringc (js/parseInt ringc 16) :bar (js/parseInt bar 16)
+           :face (js/parseInt face 16) :ops (parse-long ops) :px (parse-long px) :hash hash})
+        (re-seq #"(?m)^AIUEOS_GUEST_BROWSER_KEY n=(\d+) key=(\d+) answer=(\d+) reduce=(none|\d+) ring=(\d+) windows=(\d+) focus=(\d+) stack=(\d*) rings=(\d+) at=(\d+,\d+) ringc=([0-9a-f]{8}) bar=([0-9a-f]{8}) face=([0-9a-f]{8}) ops=(\d+) text-px=(\d+) hash=([0-9a-f]{8})\s*$" (or serial ""))))
+
+(defn- key-gate [serial qemu-unmeasured? fields reason leftover extra-red]
+  (let [got (key-lines serial)
+        pick (fn [m] (select-keys m fields))
+        ok-line? (re-find #"(?m)^AIUEOS_GUEST_BROWSER_KEYS_OK events=18 ring=2 stack=341 focus=1" (or serial ""))]
+    (cond
+      qemu-unmeasured? {:green? false :exit 3 :reason :unmeasured :leftover [:unmeasured]}
+      (empty? got) {:green? false :exit 1 :reason (keyword (str (name reason) "-absent")) :leftover [(keyword (str (name reason) "-absent"))]}
+      (not ok-line?) {:green? false :exit 1 :reason :keys-ok-missing :leftover [:keys-ok-missing]}
+      (extra-red got) (extra-red got)
+      (not= (mapv pick got) (mapv pick key-want))
+      {:green? false :exit 1 :reason (keyword (str (name reason) "-differs-from-model"))
+       :leftover [(keyword (str (name reason) "-differs-from-model"))]
+       :first-difference (first (remove nil? (map (fn [g w] (when (not= (pick g) (pick w)) {:kernel (pick g) :model (pick w)}))
+                                                 (concat got (repeat nil)) key-want)))}
+      :else {:green? true :exit 0 :reason reason :leftover leftover})))
+
+(defn guest-browser-focus-ring-result
+  [{:keys [serial qemu-unmeasured?]}]
+  (key-gate serial qemu-unmeasured?
+            [:n :ring :rings :at :ringc :bar :face :ops]
+            :guest-browser-focus-ring
+            [:ring-colour-in-op-list-not-pixels :f6-not-tab :launcher-and-close-only]
+            (fn [got]
+              (when-let [low (first (filter #(or (< (contrast-ratio (:ringc %) (:bar %)) 3.0)
+                                                 (< (contrast-ratio (:ringc %) (:face %)) 3.0))
+                                            got))]
+                {:green? false :exit 1 :reason :ring-contrast-below-3 :leftover [:ring-contrast-below-3]
+                 :first-difference {:kernel low}}))))
+
+(defn guest-browser-keyboard-activate-result
+  [{:keys [serial qemu-unmeasured?]}]
+  (key-gate serial qemu-unmeasured?
+            [:n :key :answer :reduce :windows :focus :stack :px :hash]
+            :guest-browser-keyboard-activate
+            [:enter-and-escape-only :space-is-enter-untested :no-menu-activation]
+            (fn [_] nil)))
+
 ;; Guest browser hover (ADR-0246): Kotoba `hot` decides, from the pointer in
 ;; surface words 2046/2047, that a launcher button or a close control under it
 ;; is drawn #d9d9d9 instead of #e6e6e6. On the scroll boot the kernel counts
@@ -1327,6 +1404,12 @@
     ;; ADR-0247: the F10 stage comes after the damage stage.
     "guest-browser-high-contrast" {"AIUEOS_GUEST_BROWSER" "1"
                                    "AIUEOS_QEMU_TIMEOUT" "3900"}
+    ;; ADR-0248 / ADR-0249: the key frames are printed by the stage after the
+    ;; palette; one boot serves both gates.
+    "guest-browser-focus-ring" {"AIUEOS_GUEST_BROWSER" "1"
+                                "AIUEOS_QEMU_TIMEOUT" "4500"}
+    "guest-browser-keyboard-activate" {"AIUEOS_GUEST_BROWSER" "1"
+                                       "AIUEOS_QEMU_TIMEOUT" "4500"}
     "guest-scanout-two" {"AIUEOS_GUEST_SCANOUT_TWO" "1"
                          "AIUEOS_QEMU_TIMEOUT" "90"}
     nil))
@@ -1364,6 +1447,8 @@
     "guest-browser-damage" (guest-browser-damage-result opts)
     "guest-browser-title-active" (guest-browser-title-active-result opts)
     "guest-browser-hover" (guest-browser-hover-result opts)
+    "guest-browser-focus-ring" (guest-browser-focus-ring-result opts)
+    "guest-browser-keyboard-activate" (guest-browser-keyboard-activate-result opts)
     "guest-browser-high-contrast" (guest-browser-high-contrast-result opts)
     {:green? false :exit 3 :reason :unmeasured :leftover [:unmeasured]}))
 
@@ -1400,6 +1485,8 @@
     "guest-browser-damage" "AIUEOS_GUEST_BROWSER_DAMAGE"
     "guest-browser-title-active" "AIUEOS_GUEST_BROWSER_FOCUS_TITLE"
     "guest-browser-hover" "AIUEOS_GUEST_BROWSER_HOT"
+    "guest-browser-focus-ring" "AIUEOS_GUEST_BROWSER_KEY"
+    "guest-browser-keyboard-activate" "AIUEOS_GUEST_BROWSER_KEY"
     "guest-browser-high-contrast" "AIUEOS_GUEST_BROWSER_HC"
     nil))
 
@@ -1436,5 +1523,7 @@
     "guest-browser-damage" "AIUEOS_COMPOSITOR_GUEST_BROWSER_DAMAGE_OK"
     "guest-browser-title-active" "AIUEOS_COMPOSITOR_GUEST_BROWSER_TITLE_ACTIVE_OK"
     "guest-browser-hover" "AIUEOS_COMPOSITOR_GUEST_BROWSER_HOVER_OK"
+    "guest-browser-focus-ring" "AIUEOS_COMPOSITOR_GUEST_BROWSER_FOCUS_RING_OK"
+    "guest-browser-keyboard-activate" "AIUEOS_COMPOSITOR_GUEST_BROWSER_KEYBOARD_ACTIVATE_OK"
     "guest-browser-high-contrast" "AIUEOS_COMPOSITOR_GUEST_BROWSER_HIGH_CONTRAST_OK"
     nil))

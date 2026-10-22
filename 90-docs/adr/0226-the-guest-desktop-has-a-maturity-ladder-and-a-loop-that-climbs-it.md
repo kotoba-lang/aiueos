@@ -122,3 +122,15 @@ tests pass (22 tests, 312 assertions). The other gate profiles were not run
 one by one; they read prefixes of the same serial that the damage gate's
 earlier-classifier chain already requires.
 
+### UIUX floors, 2026-10-23
+
+`title-active` (ADR-0245), `hover` (0246), `high-contrast` (0247), `focus-ring`
+(0248) and `keyboard-activate` (0249) have gates; `window-maximize` does not.
+Two floor goals were corrected in the same change because the gate that closed
+them measures something narrower or different from the first wording: the ring
+moves on F6 and Shift+F6, not Tab (Tab is the window switcher's and the input
+method's), and activation is gated for Enter and Escape, with Space sharing
+Enter's path without being pressed. The high-contrast floor's "7:1" was
+already met by the default palette (7.9:1); what the palette adds is a larger
+margin and a black ink, which ADR-0247 says.
+
