@@ -667,8 +667,8 @@ mkdir -p "$(dirname -- "$efi")" "$kernel_dir"
 # gate at all.
 # ---------------------------------------------------------------------------
 if [ "${AIUEOS_K16_PURE_NATIVE:-0}" = 1 ]; then
-  command -v nbb >/dev/null 2>&1 || {
-    echo "error: the K16 pure-native profile needs nbb to run its gate" >&2
+  command -v python3 >/dev/null 2>&1 || {
+    echo "error: the K16 pure-native profile needs python3 to run its gate" >&2
     exit 2
   }
   pure_prefix="$out/aiueos-k16-pure-native"
@@ -698,7 +698,7 @@ if [ "${AIUEOS_K16_PURE_NATIVE:-0}" = 1 ]; then
   # be exercised. It is not a way to wave objects through: the override is still
   # a manifest the gate checks digest-for-digest against the bytes on disk.
   pure_provenance=${AIUEOS_K16_PURE_NATIVE_PROVENANCE:-"$aiueos/kotoba/provenance.edn"}
-  nbb "$aiueos/scripts/k16-pure-native-gate.cljk" \
+  python3 "$aiueos/scripts/k16-pure-native-gate.py" \
     --link-list "$pure_list" \
     --provenance "$pure_provenance" \
     --receipt-out "$pure_receipt" \
@@ -1588,14 +1588,17 @@ magic=$(dd if="$efi" bs=1 count=2 2>/dev/null)
 # to have failed: `set -e` is on, and the receipt is therefore evidence that the
 # whole build ran, not merely that a file called BOOTX64.EFI exists.
 #
-# `nbb` absent is a REFUSAL, not a skip. A build that quietly shipped no
+# `python3` absent is a REFUSAL, not a skip. A build that quietly shipped no
 # receipt would put every downstream `assert` into could-not-run, which is
-# exactly the state this file exists to make impossible.
-command -v nbb >/dev/null 2>&1 || {
-  echo "error: nbb is required to write the image freshness receipt" >&2
+# exactly the state this file exists to make impossible. The checker is the
+# Node-free port (`image-freshness.py`): the nbb original stays in the tree as
+# the dev-time oracle only, and NBB/Node must not sit on the accepted build
+# path (JUN-31 acceptance).
+command -v python3 >/dev/null 2>&1 || {
+  echo "error: python3 is required to write the image freshness receipt" >&2
   exit 3
 }
-nbb "$aiueos/scripts/image-freshness.cljk" record \
+python3 "$aiueos/scripts/image-freshness.py" record \
   --out "$out/image-receipt.edn" --root "$repo" \
   "$efi" "$kernel" "$initramfs" >/dev/null
 
