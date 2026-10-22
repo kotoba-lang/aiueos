@@ -1114,8 +1114,8 @@ static int browser_scroll_stage(uint32_t *surface, const uint8_t *font, uint64_t
   static const uint32_t ssrc[17] = {1, 4, 6, 3, 6, 6, 6, 6, 6, 6, 7, 7, 7, 7, 7, 7, 7};
   static const int64_t swant[17] = {4, 0, 0, 0, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4};
   static const uint32_t sscroll[17] = {0, 0, 0, 0, 20, 40, 60, 80, 100, 120, 100, 80, 60, 40, 20, 0, 0};
-  static const uint32_t sops[17] = {164, 164, 164, 164, 165, 166, 167, 168, 170, 169,
-                                    170, 168, 167, 166, 165, 164, 164};
+  static const uint32_t sops[17] = {197, 197, 197, 197, 198, 199, 200, 201, 203, 202,
+                                    203, 201, 200, 199, 198, 197, 197};
   static const uint32_t spx[17] = {988, 988, 988, 994, 1017, 1027, 1047, 1065, 1103, 1080,
                                    1103, 1065, 1047, 1027, 1017, 994, 994};
   static const uint32_t shash[17] = {0x16c7e9ceU, 0x16c7e9ceU, 0x16c7e9ceU, 0x78270fdaU, 0x6c0a4440U,
@@ -1187,7 +1187,7 @@ static int browser_scroll_stage(uint32_t *surface, const uint8_t *font, uint64_t
       surface[20] == 4 && surface[2] == 4 && surface[25] == 0 && surface[2040] == 0 &&
       surface[2041] == 0 && surface[2042] == 0 && surface[2043] == 0) {
     debug_string("AIUEOS_GUEST_BROWSER_SCROLL_OK\n");
-    serial_string("AIUEOS_GUEST_BROWSER_SCROLL_OK events=17 answers=40004444444444444 max=120 stack=1324 focus=4 scroll=0 chain=7421f3aa ops=164 text-px=994 hash=78270fda\r\n");
+    serial_string("AIUEOS_GUEST_BROWSER_SCROLL_OK events=17 answers=40004444444444444 max=120 stack=1324 focus=4 scroll=0 chain=7421f3aa ops=197 text-px=994 hash=78270fda\r\n");
     browser_hold_for_screendump();
     return 1;
   } else if (se < 17) {
@@ -1238,8 +1238,8 @@ static int browser_selection_stage(uint32_t *surface, const uint8_t *font, uint6
   static const int64_t lwant[17] = {4, 4, 4, 4, 4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
   static const uint32_t lscroll[17] = {20, 40, 60, 80, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100};
   static const uint32_t lsel[17] = {0, 0, 0, 0, 0, 0, 1, 1, 2, 2, 1, 1, 2, 2, 2, 0, 0};
-  static const uint32_t lops[17] = {165, 166, 167, 168, 170, 170, 170, 170, 171, 171,
-                                    170, 170, 171, 171, 171, 168, 168};
+  static const uint32_t lops[17] = {198, 199, 200, 201, 203, 203, 203, 203, 204, 204,
+                                    203, 203, 204, 204, 204, 201, 201};
   static const uint32_t lpx[17] = {1017, 1027, 1047, 1065, 1103, 1103, 1087, 1087, 1087, 1087,
                                    1087, 1087, 1087, 1087, 1087, 1058, 1058};
   static const uint32_t lhash[17] = {0x6c0a4440U, 0xb5e126ebU, 0x40c08679U, 0xf7ee3a0bU, 0x5793612fU,
@@ -1327,7 +1327,7 @@ static int browser_selection_stage(uint32_t *surface, const uint8_t *font, uint6
       surface[2036] == 0 && surface[2037] == 0 && surface[352 + 47] == 10 && surface[352 + 48] == 0 &&
       surface[433] == 0 && surface[445] == 0) {
     debug_string("AIUEOS_GUEST_BROWSER_SELECTION_OK\n");
-    serial_string("AIUEOS_GUEST_BROWSER_SELECTION_OK events=17 answers=44444000000000000 max-sel=2 body=48 focus=4 scroll=100 chain=2b46197d sel-chain=cb830579 ops=168 text-px=1058 hash=6ca5ee4a\r\n");
+    serial_string("AIUEOS_GUEST_BROWSER_SELECTION_OK events=17 answers=44444000000000000 max-sel=2 body=48 focus=4 scroll=100 chain=2b46197d sel-chain=cb830579 ops=201 text-px=1058 hash=6ca5ee4a\r\n");
     browser_hold_for_screendump();
     return 1;
   } else if (le < 17) {
@@ -1390,8 +1390,8 @@ static int browser_clipboard_stage(uint32_t *surface, const uint8_t *font, uint6
                                      48, 45, 45, 45, 48, 48, 51, 51, 51, 51, 51};
   static const uint32_t cclip[22] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 3, 3,
                                      3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3};
-  static const uint32_t cops[22] = {168, 167, 167, 168, 168, 169, 169, 169, 169, 169, 169,
-                                    169, 166, 166, 166, 168, 168, 169, 169, 169, 169, 169};
+  static const uint32_t cops[22] = {201, 200, 200, 201, 201, 202, 202, 202, 202, 202, 202,
+                                    202, 199, 199, 199, 201, 201, 202, 202, 202, 202, 202};
   static const uint32_t cpx[22] = {1058, 1042, 1042, 1042, 1042, 1042, 1042, 1042, 1042, 1042, 1042,
                                    1042, 1020, 1020, 1020, 1058, 1058, 1080, 1080, 1080, 1080, 1080};
   static const uint32_t chash[22] = {0x6ca5ee4aU, 0xa42dfe1aU, 0xa42dfe1aU, 0xa42dfe1aU, 0xa42dfe1aU,
@@ -1493,7 +1493,7 @@ static int browser_clipboard_stage(uint32_t *surface, const uint8_t *font, uint6
       browser_clipboard[0] == 3 && browser_clipboard[1] == 49 && browser_clipboard[2] == 57 &&
       browser_clipboard[3] == 10 && surface[433] == 0 && surface[445] == 0) {
     debug_string("AIUEOS_GUEST_BROWSER_CLIPBOARD_OK\n");
-    serial_string("AIUEOS_GUEST_BROWSER_CLIPBOARD_OK events=22 requests=4 admitted=3 refused=1 copied=3 pasted=3,3 clip=3 body=51 focus=4 chain=9098b95f sel-chain=356612c5 ops=169 text-px=1080 hash=76577905\r\n");
+    serial_string("AIUEOS_GUEST_BROWSER_CLIPBOARD_OK events=22 requests=4 admitted=3 refused=1 copied=3 pasted=3,3 clip=3 body=51 focus=4 chain=9098b95f sel-chain=356612c5 ops=202 text-px=1080 hash=76577905\r\n");
     browser_hold_for_screendump();
     return 1;
   } else if (ce < 22) {
@@ -1542,11 +1542,11 @@ static int browser_damage_stage(uint32_t *surface, const uint8_t *font, uint64_t
   static const uint32_t dkey[5] = {0, 225, 61, 60, 224};
   static const int64_t dwant[5] = {0, 0, 1, 0, 0};
   static const uint32_t dfocus[5] = {4, 4, 1, 1, 1};
-  static const uint32_t dops[5] = {169, 169, 170, 170, 170};
+  static const uint32_t dops[5] = {202, 202, 203, 203, 203};
   static const uint32_t dpx[5] = {1080, 1080, 2330, 2330, 2330};
   static const uint32_t dhash[5] = {0x362c4193U, 0x362c4193U, 0x5581e21aU, 0x5581e21aU, 0x5581e21aU};
   /* the frame model's damage: x y w h (w 0 = nothing sent) */
-  static const uint32_t drect[5][4] = {{300, 300, 32, 22}, {0, 0, 0, 0}, {80, 80, 520, 360},
+  static const uint32_t drect[5][4] = {{300, 300, 32, 22}, {0, 0, 0, 0}, {80, 80, 652, 716},
                                        {0, 0, 0, 0}, {0, 0, 0, 0}};
   uint64_t sp = (uint64_t)(uintptr_t)surface;
   uint32_t de = 0, doff = 0, dpx2 = 0, dhash2 = 0, dchain = 2166136261U;
@@ -1666,10 +1666,10 @@ static int browser_damage_stage(uint32_t *surface, const uint8_t *font, uint64_t
   serial_decimal64((uint64_t)counts[0] * surface[3] * surface[4] * 4U);
   serial_string("\r\n");
   if (de == 5 && dframes == 5 && fulls == 5 && doff == 0 && partial == 2 && empty == 3 &&
-      bytes == 751616U && dchain == 0x6653b143U && counts[4] == 0 &&
+      bytes == 1870144U && dchain == 0x6653b143U && counts[4] == 0 &&
       surface[2] == 1 && surface[431] == 0) {
     debug_string("AIUEOS_GUEST_BROWSER_DAMAGE_OK\n");
-    serial_string("AIUEOS_GUEST_BROWSER_DAMAGE_OK events=5 partial=2 empty=3 bytes=751616 whole-bytes=20480000 focus=1 chain=6653b143 ops=170 text-px=2330 hash=5581e21a\r\n");
+    serial_string("AIUEOS_GUEST_BROWSER_DAMAGE_OK events=5 partial=2 empty=3 bytes=1870144 whole-bytes=20480000 focus=1 chain=6653b143 ops=203 text-px=2330 hash=5581e21a\r\n");
     browser_hold_for_screendump();
     return 1;
   } else if (de < 5 || fulls < de) {
@@ -4310,10 +4310,10 @@ qwen_runtime_boot_complete:
           } else {
             serial_string("AIUEOS_GUEST_BROWSER_SCANOUT leftover=not-shown\r\n");
           }
-          if (count == 58 && text_px == 1079 && text_hash == 0x89910f34U) {
+          if (count == 70 && text_px == 1079 && text_hash == 0x89910f34U) {
             text_ok = 1;
             debug_string("AIUEOS_GUEST_BROWSER_TEXT_OK\n");
-            serial_string("AIUEOS_GUEST_BROWSER_TEXT_OK ops=58 text-px=1079 hash=89910f34 font-bytes=");
+            serial_string("AIUEOS_GUEST_BROWSER_TEXT_OK ops=70 text-px=1079 hash=89910f34 font-bytes=");
           } else {
             debug_string("AIUEOS_GUEST_BROWSER_TEXT leftover=census-miss\n");
             serial_string("AIUEOS_GUEST_BROWSER_TEXT leftover=census-miss ops=");
@@ -4343,9 +4343,9 @@ qwen_runtime_boot_complete:
                                                     font, font_length)) {
           text_hash = aiueos_desktop_colour_census(0x333333U, &text_px);
           (void)aiueos_desktop_show();
-          if (hit == 1 && again == 58 && text_px == 880 && text_hash == 0xb9f96599U) {
+          if (hit == 1 && again == 70 && text_px == 880 && text_hash == 0xb9f96599U) {
             debug_string("AIUEOS_GUEST_BROWSER_TEXT_RAISED_OK\n");
-            serial_string("AIUEOS_GUEST_BROWSER_TEXT_RAISED_OK hit=1 ops=58 text-px=880 hash=b9f96599\r\n");
+            serial_string("AIUEOS_GUEST_BROWSER_TEXT_RAISED_OK hit=1 ops=70 text-px=880 hash=b9f96599\r\n");
             browser_hold_for_screendump();
             /* Typing into the focused window (ADR-0225). The host types
                n i h o n n g o Enter k u w a w a r u Space Enter once, after
@@ -4377,10 +4377,10 @@ qwen_runtime_boot_complete:
                   aiueos_desktop_present_ops2(surface + 480, (uint64_t)typed, font, font_length)) {
                 text_hash = aiueos_desktop_colour_census(0x333333U, &text_px);
                 (void)aiueos_desktop_show();
-                if (committed == 5 && refused == 0 && typed == 63 &&
+                if (committed == 5 && refused == 0 && typed == 75 &&
                     text_px == 1068 && text_hash == 0xa92b8f58U) {
                   debug_string("AIUEOS_GUEST_BROWSER_TYPE_OK\n");
-                  serial_string("AIUEOS_GUEST_BROWSER_TYPE_OK presses=19 committed=5 ops=63 text-px=1068 hash=a92b8f58\r\n");
+                  serial_string("AIUEOS_GUEST_BROWSER_TYPE_OK presses=19 committed=5 ops=75 text-px=1068 hash=a92b8f58\r\n");
                   type_ok = 1;
                 } else {
                   debug_string("AIUEOS_GUEST_BROWSER_TYPE leftover=census-miss\n");
@@ -4445,10 +4445,10 @@ qwen_runtime_boot_complete:
                       text_hash = aiueos_desktop_colour_census(0x333333U, &text_px);
                       (void)aiueos_desktop_show();
                     }
-                    if (stray == 0 && shown == 67 && pre_px == 1146 && pre_hash == 0x566a1c8fU &&
-                        landed == 2 && after == 65 && text_px == 1128 && text_hash == 0x193030b3U) {
+                    if (stray == 0 && shown == 79 && pre_px == 1146 && pre_hash == 0x566a1c8fU &&
+                        landed == 2 && after == 77 && text_px == 1128 && text_hash == 0x193030b3U) {
                       debug_string("AIUEOS_GUEST_BROWSER_PREEDIT_OK\n");
-                      serial_string("AIUEOS_GUEST_BROWSER_PREEDIT_OK shown-ops=67 shown-px=1146 shown-hash=566a1c8f committed=2 ops=65 text-px=1128 hash=193030b3\r\n");
+                      serial_string("AIUEOS_GUEST_BROWSER_PREEDIT_OK shown-ops=67 shown-px=1146 shown-hash=566a1c8f committed=2 ops=77 text-px=1128 hash=193030b3\r\n");
                       preedit_ok = 1;
                     } else {
                       debug_string("AIUEOS_GUEST_BROWSER_PREEDIT leftover=census-miss\n");
@@ -4503,10 +4503,10 @@ qwen_runtime_boot_complete:
                       text_hash = aiueos_desktop_colour_census(0x333333U, &text_px);
                       (void)aiueos_desktop_show();
                       if (miss == 0 && off_seen == 0 && latin == 2 && kana == 1 &&
-                          surface[432] == 1 && tog == 68 &&
+                          surface[432] == 1 && tog == 80 &&
                           text_px == 1205 && text_hash == 0x322e206eU) {
                         debug_string("AIUEOS_GUEST_BROWSER_IME_TOGGLE_OK\n");
-                        serial_string("AIUEOS_GUEST_BROWSER_IME_TOGGLE_OK presses=7 off=0 latin=2 committed=1 ime=1 ops=68 text-px=1205 hash=322e206e\r\n");
+                        serial_string("AIUEOS_GUEST_BROWSER_IME_TOGGLE_OK presses=7 off=0 latin=2 committed=1 ime=1 ops=80 text-px=1205 hash=322e206e\r\n");
                         toggle_ok = 1;
                       } else {
                         debug_string("AIUEOS_GUEST_BROWSER_IME_TOGGLE leftover=census-miss\n");
@@ -4572,10 +4572,10 @@ qwen_runtime_boot_complete:
                         (void)aiueos_desktop_show();
                         /* stack [2 1]: window 1 is words 10..14 */
                         if (off == 0 && surface[10] == 1 && surface[11] == 272 &&
-                            surface[12] == 132 && surface[25] == 0 && dragged == 68 &&
+                            surface[12] == 132 && surface[25] == 0 && dragged == 80 &&
                             text_px == 1947 && text_hash == 0x523440e0U) {
                           debug_string("AIUEOS_GUEST_BROWSER_DRAG_OK\n");
-                          serial_string("AIUEOS_GUEST_BROWSER_DRAG_OK events=6 answers=111100 from=32,32 to=272,132 capture=0 ops=68 text-px=1947 hash=523440e0\r\n");
+                          serial_string("AIUEOS_GUEST_BROWSER_DRAG_OK events=6 answers=111100 from=32,32 to=272,132 capture=0 ops=80 text-px=1947 hash=523440e0\r\n");
                           drag_ok = 1;
                         } else {
                           debug_string("AIUEOS_GUEST_BROWSER_DRAG leftover=census-miss\n");
@@ -4646,10 +4646,10 @@ qwen_runtime_boot_complete:
                           if (roff == 0 && cw == 120 && ch == 80 && surface[10] == 1 &&
                               surface[11] == 272 && surface[12] == 132 &&
                               surface[13] == 240 && surface[14] == 200 && surface[25] == 0 &&
-                              resized == 68 && text_px == 1947 &&
+                              resized == 80 && text_px == 1947 &&
                               text_hash == 0x523440e0U) {
                             debug_string("AIUEOS_GUEST_BROWSER_RESIZE_OK\n");
-                            serial_string("AIUEOS_GUEST_BROWSER_RESIZE_OK events=6 answers=111100 clamp=120x80 size=240x200 at=272,132 capture=0 ops=68 text-px=1947 hash=523440e0\r\n");
+                            serial_string("AIUEOS_GUEST_BROWSER_RESIZE_OK events=6 answers=111100 clamp=120x80 size=240x200 at=272,132 capture=0 ops=80 text-px=1947 hash=523440e0\r\n");
                             resize_ok = 1;
                           } else {
                             debug_string("AIUEOS_GUEST_BROWSER_RESIZE leftover=census-miss\n");
@@ -4712,7 +4712,7 @@ qwen_runtime_boot_complete:
                         if (resize_ok) {
                           static const int64_t lwant[9] = {0, 0, 1, 2, 2, 0, 0, 0, 1};
                           static const uint32_t lsrc[9] = {0, 0, 0, 1, 3, 4, 0, 0, 0};
-                          static const uint32_t lops[9] = {70, 70, 69, 69, 69, 69, 71, 71, 70};
+                          static const uint32_t lops[9] = {82, 82, 81, 81, 81, 81, 83, 83, 82};
                           uint32_t n = 0, loff = 0, lpx = 0, lhash = 0, chain = 2166136261U;
                           uint32_t idle = 0, idle_min = 0xffffffffU, frames = 0;
                           int64_t lastops = 0;
@@ -4764,12 +4764,12 @@ qwen_runtime_boot_complete:
                             serial_string("\r\n");
                           }
                           if (n == 9 && frames == 9 && loff == 0 && chain == 0xb185dff1U &&
-                              lastops == 70 && lpx == 901 && lhash == 0x7b0f9b05U &&
+                              lastops == 82 && lpx == 901 && lhash == 0x7b0f9b05U &&
                               surface[2] == 2 && surface[10] == 2 && surface[11] == 196 &&
                               surface[12] == 172 && surface[25] == 0) {
                             loop_ok = 1;
                             debug_string("AIUEOS_GUEST_BROWSER_LOOP_OK\n");
-                            serial_string("AIUEOS_GUEST_BROWSER_LOOP_OK events=9 frames=9 answers=001220001 focus=2 at=196,172 capture=0 chain=b185dff1 ops=70 text-px=901 hash=7b0f9b05 idle-min=");
+                            serial_string("AIUEOS_GUEST_BROWSER_LOOP_OK events=9 frames=9 answers=001220001 focus=2 at=196,172 capture=0 chain=b185dff1 ops=82 text-px=901 hash=7b0f9b05 idle-min=");
                             serial_decimal(idle_min);
                             serial_string("\r\n");
                             browser_hold_for_screendump();
@@ -4815,7 +4815,7 @@ qwen_runtime_boot_complete:
                              frame are os/aiueos/scripts/browser-frame-model.cljk's. */
                           if (loop_ok) {
                             static const uint32_t ccode[5] = {37, 30, 14, 14, 14};
-                            static const uint32_t cops[5] = {72, 72, 70, 69, 68};
+                            static const uint32_t cops[5] = {84, 84, 82, 81, 80};
                             static const uint32_t ccx[5] = {458, 466, 450, 434, 418};
                             uint32_t k = 0, coff = 0, cpx = 0, chash = 0, cchain = 2166136261U;
                             uint32_t cidle = 0, cframes = 0, cx = 0, cy = 0, blen = 0;
@@ -4873,11 +4873,11 @@ qwen_runtime_boot_complete:
                             /* window 2's body: words 224.. up to its 0 */
                             while (blen < 64 && surface[224 + blen] != 0) blen++;
                             if (k == 5 && cframes == 5 && coff == 0 && cchain == 0x62295970U &&
-                                cfo == 68 && cpx == 867 && chash == 0xd039564fU && blen == 13 &&
+                                cfo == 80 && cpx == 867 && chash == 0xd039564fU && blen == 13 &&
                                 surface[433] == 0 && surface[445] == 0 && surface[2] == 2) {
                               caret_ok = 1;
                               debug_string("AIUEOS_GUEST_BROWSER_CARET_OK\n");
-                              serial_string("AIUEOS_GUEST_BROWSER_CARET_OK keys=5 answers=00000 body=13 caret=418,214 chain=62295970 ops=68 text-px=867 hash=d039564f\r\n");
+                              serial_string("AIUEOS_GUEST_BROWSER_CARET_OK keys=5 answers=00000 body=13 caret=418,214 chain=62295970 ops=80 text-px=867 hash=d039564f\r\n");
                               browser_hold_for_screendump();
                             } else if (k < 5) {
                               debug_string("AIUEOS_GUEST_BROWSER_CARET leftover=keys-missing\n");
@@ -4929,7 +4929,7 @@ qwen_runtime_boot_complete:
                                                                  12425, 38283, 12365, 12414, 12375, 12383};
                               static const int64_t awant[8] = {3, 0, 2, 0, 3, 0, 3, 0};
                               static const uint32_t asrc[8] = {1, 4, 1, 4, 1, 4, 1, 4};
-                              static const uint32_t aops[8] = {106, 106, 88, 88, 106, 106, 85, 85};
+                              static const uint32_t aops[8] = {131, 131, 107, 107, 131, 131, 104, 104};
                               static const uint32_t awin[8] = {3, 3, 2, 2, 3, 3, 2, 2};
                               uint32_t e = 0, aoff = 0, apx = 0, ahash = 0, achain = 2166136261U;
                               uint32_t aidle = 0, aframes = 0;
@@ -4987,11 +4987,11 @@ qwen_runtime_boot_complete:
                               }
                               /* stack [1 3]: words 5 and 10; the vacated record is zero */
                               if (e == 8 && aframes == 8 && aoff == 0 && achain == 0x2845aee9U &&
-                                  afo == 85 && apx == 776 && ahash == 0x98b595bdU &&
+                                  afo == 104 && apx == 776 && ahash == 0x98b595bdU &&
                                   surface[1] == 2 && surface[2] == 3 && surface[5] == 1 &&
                                   surface[10] == 3 && surface[15] == 0 && surface[25] == 0) {
                                 debug_string("AIUEOS_GUEST_BROWSER_LAUNCH_OK\n");
-                                serial_string("AIUEOS_GUEST_BROWSER_LAUNCH_OK events=8 answers=30203030 windows=2 stack=1,3 focus=3 chain=2845aee9 ops=85 text-px=776 hash=98b595bd\r\n");
+                                serial_string("AIUEOS_GUEST_BROWSER_LAUNCH_OK events=8 answers=30203030 windows=2 stack=1,3 focus=3 chain=2845aee9 ops=104 text-px=776 hash=98b595bd\r\n");
                                 browser_hold_for_screendump();
                                 /* The dictionary (ADR-0235). The host types
                                    y a m a Space at DICT_GO: Kotoba
@@ -5072,12 +5072,12 @@ qwen_runtime_boot_complete:
                                     }
                                   }
                                   if (dp == 16 && doff == 0 && conv == 1 && rec == 44512 && pre == 1 &&
-                                      pre0 == 23665 && dfo == 87 && cpx == 834 && chash == 0xe85b42b2U &&
-                                      dfo2 == 87 && dpx == 915 && dhash == 0xeaa427b3U &&
+                                      pre0 == 23665 && dfo == 106 && cpx == 834 && chash == 0xe85b42b2U &&
+                                      dfo2 == 106 && dpx == 915 && dhash == 0xeaa427b3U &&
                                       surface[300] == 23665 && surface[301] == 20767 && surface[302] == 0 &&
                                       surface[442] == 0 && surface[445] == 0) {
                                     debug_string("AIUEOS_GUEST_BROWSER_DICT_OK\n");
-                                    serial_string("AIUEOS_GUEST_BROWSER_DICT_OK keys=16 answers=0000000010000001 record=44512 committed=23665,20767 shown-ops=87 shown-px=834 shown-hash=e85b42b2 ops=87 text-px=915 hash=eaa427b3\r\n");
+                                    serial_string("AIUEOS_GUEST_BROWSER_DICT_OK keys=16 answers=0000000010000001 record=44512 committed=23665,20767 shown-ops=87 shown-px=834 shown-hash=e85b42b2 ops=106 text-px=915 hash=eaa427b3\r\n");
                                     browser_hold_for_screendump();
                                     /* The pointer (ADR-0236). Every frame
                                        above was drawn with word 2046 at 0 --
@@ -5098,7 +5098,7 @@ qwen_runtime_boot_complete:
                                        os/aiueos/scripts/browser-frame-model.cljk's. */
                                     {
                                       static const uint32_t csrc[5] = {3, 3, 3, 1, 4};
-                                      static const uint32_t cops[5] = {108, 108, 93, 108, 108};
+                                      static const uint32_t cops[5] = {127, 127, 112, 127, 127};
                                       static const uint32_t cwpx[5] = {948, 948, 922, 948, 948};
                                       static const uint32_t cwhash[5] = {0xbc7b9ebcU, 0x0baecac3U, 0x531100a2U, 0x3e8be657U,
                                                                          0x3e8be657U};
@@ -5172,7 +5172,7 @@ qwen_runtime_boot_complete:
                                           surface[2047] == 600 && surface[2] == 3 && surface[25] == 0 &&
                                           fill == 0xffffffU) {
                                         debug_string("AIUEOS_GUEST_BROWSER_CURSOR_OK\n");
-                                        serial_string("AIUEOS_GUEST_BROWSER_CURSOR_OK events=5 answers=00000 before=0 at=1000,600 tip=111111 fill=ffffff chain=f4bb42d8 ops=108 text-px=948 hash=3e8be657\r\n");
+                                        serial_string("AIUEOS_GUEST_BROWSER_CURSOR_OK events=5 answers=00000 before=0 at=1000,600 tip=111111 fill=ffffff chain=f4bb42d8 ops=127 text-px=948 hash=3e8be657\r\n");
                                         browser_hold_for_screendump();
                                         /* Alt+Tab (ADR-0237). After the
                                            pointer, the host presses launcher
@@ -5257,7 +5257,7 @@ qwen_runtime_boot_complete:
                                               }
                                             }
                                             if (src != fsrc[fe] || key != fkey[fe] || r != fwant[fe] ||
-                                                surface[2] != ffocus[fe] || ffo != 129 ||
+                                                surface[2] != ffocus[fe] || ffo != 154 ||
                                                 fpx2 != fwpx[fe] || fhash2 != fwhash[fe]) foff++;
                                             fe++;
                                             serial_string("AIUEOS_GUEST_BROWSER_FOCUS_FRAME n=");
@@ -5292,7 +5292,7 @@ qwen_runtime_boot_complete:
                                               surface[10] == 3 && surface[15] == 2 && surface[2] == 2 &&
                                               surface[431] == 0 && surface[433] == 0 && surface[445] == 0) {
                                             debug_string("AIUEOS_GUEST_BROWSER_FOCUS_OK\n");
-                                            serial_string("AIUEOS_GUEST_BROWSER_FOCUS_OK events=12 answers=200103020000 wm=3 stack=132 focus=2 bodies=unchanged chain=2254db31 ops=129 text-px=1082 hash=e90ed2bc\r\n");
+                                            serial_string("AIUEOS_GUEST_BROWSER_FOCUS_OK events=12 answers=200103020000 wm=3 stack=132 focus=2 bodies=unchanged chain=2254db31 ops=154 text-px=1082 hash=e90ed2bc\r\n");
                                             browser_hold_for_screendump();
                                             if (browser_scroll_stage(surface, font, font_length))
                                               if (browser_selection_stage(surface, font, font_length, dict, dict_length))

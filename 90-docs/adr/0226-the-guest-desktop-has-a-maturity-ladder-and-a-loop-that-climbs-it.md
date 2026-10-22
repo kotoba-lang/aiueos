@@ -105,3 +105,20 @@ not 20 floors green today. Re-greening is the first job of the ladder, before
 any new floor: update the model, then the pins from the model, then run each
 gate. Until then the honest reading is: frame-level gates green, later gates
 red by stale pins, behaviour unchanged.
+### Re-green, 2026-10-22/23
+
+Done in one change: `browser-frame-model.cljk` learned JUN-143's shadow strips,
+three-rect rounded bodies and titlebars, and the dock (tiles plus white
+initials; census glyphs now carry a colour), then every pinned `ops=` (and the
+damage rectangle 80,80,652,716 / 1,870,144 bytes) in the kernel, classifier,
+tests, README and CHANGELOG was re-derived from the model, not copied from the
+kernel. The model reproduced the kernel's own independent measurements first
+(text 70, flow 182, launch 131/107/104 with the same hashes and chain).
+Measured on macOS arm64 (qemu 10.0.3, zig 0.15.2): `guest-browser-frame`,
+`guest-browser-focus-cycle` and `guest-browser-damage` exit 0; the damage run
+prints the scroll, selection, clipboard and damage OK lines on one serial
+(ops 197 / 201 / 202 / 203) and its ten screendumps agree. The classifier unit
+tests pass (22 tests, 312 assertions). The other gate profiles were not run
+one by one; they read prefixes of the same serial that the damage gate's
+earlier-classifier chain already requires.
+
