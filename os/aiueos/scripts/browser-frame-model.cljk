@@ -195,21 +195,30 @@
   (when-let [[px py] pointer]
     (and (<= x px) (< px (+ x w)) (<= y py) (< py (+ y h)))))
 
+(defn- ring-ops
+  "ADR-0248: the keyboard focus ring, 2 px outside (x y w h): top, bottom, left,
+  right, in #1a56db or, in the high-contrast palette, black."
+  [hc x y w h]
+  (let [c (if hc 0x000000 0x1a56db)]
+    [[:rect (- x 2) (- y 2) (+ w 4) 2 c] [:rect (- x 2) (+ y h) (+ w 4) 2 c]
+     [:rect (- x 2) y 2 h c] [:rect (+ x w) y 2 h c]]))
+
 (defn- launcher
   "ADR-0233: with an app register (:apps, bit k-1 = app k), the launcher row
   under every window -- #edf0f5 across the top 28 px -- and one #e4e8ef
   96 x 24 button per registered app at x 6 + 102(k-1), y 2, its title
   (:titles k) from (x + 6, 6), one line, clipped at x + 90."
-  [{:keys [vw apps titles pointer hc]}]
+  [{:keys [vw apps titles pointer hc ring]}]
   (when (pos? (or apps 0))
     (into [[:rect 0 0 vw 28 (if hc 0xffffff 0xf1f1f2)]]
           (mapcat (fn [k]
                     (let [x (+ 6 (* 102 (dec k)))]
                       (when (pos? (bit-and apps (bit-shift-left 1 (dec k))))
-                        (into [[:rect x 2 96 24 (if (hot? pointer x 2 96 24) (if hc 0xffd400 hot-colour) (if hc 0xe0e0e0 0xe6e6e6))]]
-                              (:ops (lay-line {:x (+ x 6) :y 6 :left (+ x 6) :right (+ x 90)
-                                               :bottom 28 :wrap? false}
-                                              (take 32 (get titles k))))))))
+                        (into (into [[:rect x 2 96 24 (if (hot? pointer x 2 96 24) (if hc 0xffd400 hot-colour) (if hc 0xe0e0e0 0xe6e6e6))]]
+                                    (:ops (lay-line {:x (+ x 6) :y 6 :left (+ x 6) :right (+ x 90)
+                                                     :bottom 28 :wrap? false}
+                                                    (take 32 (get titles k)))))
+                              (when (= ring k) (ring-ops hc x 2 96 24))))))
                   [1 2 3 4]))))
 
 (defn- pointer-sprite
@@ -323,7 +332,9 @@
                        [[:rect (+ x 2) y (- w 4) 28 tc]
                         [:rect (+ x 1) (+ y 1) (- w 2) 28 tc]
                         [:rect x (+ y 2) w 26 tc]])
-                     (:ops t) close (:ops b) (:ops c) caret))))
+                     (:ops t) close
+                     (when (and f? chrome? (= (:ring scene) 5)) (ring-ops hc (- (+ x w) 24) (+ y 6) 16 16))
+                     (:ops b) (:ops c) caret))))
         stack)
         (concat (dock scene) (pointer-sprite scene)))))
 
@@ -603,6 +614,25 @@
         hc (assoc raised :hc true)]
     [["f10" hc] ["f10-up" hc] ["f10" raised] ["f10-up" raised]]))
 
+;; ADR-0248/0249: after the palette there, the host sends F6 down and up twice
+;; (the ring on launcher button 1, then 2), Shift down, F6 down and up, Shift
+;; up (back to 1), F6 down and up (2), Enter down and up (button 2 is pressed:
+;; window 2 is raised and focused), Escape down and up (the focused window is
+;; closed; the one now on top is focused). The ring stays on button 2.
+(def key-frames
+  (let [raised (get-in damage-frames [:frames 4 1])
+        stack0 (:stack raised)
+        w2 (first (filter #(= (:id %) 2) stack0))
+        others (vec (remove #(= (:id %) 2) stack0))
+        launched (assoc raised :ring 2 :focus 2 :stack (conj others w2))
+        closed (assoc raised :ring 2 :focus (:id (last others)) :stack others)]
+    (let [r (fn [ring] (assoc raised :ring ring))]
+      [["f6" (r 1)] ["f6-up" (r 1)] ["f6" (r 2)] ["f6-up" (r 2)]
+       ["shift" (r 2)] ["shift-f6" (r 1)] ["shift-f6-up" (r 1)] ["shift-up" (r 1)]
+       ["f6" (r 2)] ["f6-up" (r 2)]
+       ["enter" launched] ["enter-up" launched]
+       ["esc" closed] ["esc-up" closed]])))
+
 ;; The colours the kernel reads out of a draw list for AIUEOS_GUEST_BROWSER_HC:
 ;; the background (op 0), the first glyph's colour (the ink), and the distinct
 ;; colours of the 28 px rects (titlebars) in the order they first appear.
@@ -867,6 +897,21 @@
                 c (if (:hc scene) (census 0 ops) (census ops))]]
     (println (str "uiux-frame n=" (inc i) " " ev " ops=" (:ops c) " text-px=" (:text-px c)
                   " hash=" (:hash c) " " (hc-line (inc i) (:hc scene) ops))))
+  (doseq [[i [ev scene]] (map-indexed vector key-frames)
+          :let [ops (frame scene)
+                c (census ops)
+                hx #(.padStart (.toString % 16) 8 "0")
+                rings (filter (fn [[k _ _ _ _ col]] (and (= k :rect) (= col 0x1a56db))) ops)
+                face (first (filter (fn [[k _ _ a b _]] (and (= k :rect) (= a 96) (= b 24))) ops))
+                bar (first (filter (fn [[k _ _ _ b _]] (and (= k :rect) (= b 28))) ops))]]
+    (println (str "key-frame n=" (+ 5 i) " " ev " ring=" (or (:ring scene) 0)
+                  " windows=" (count (:stack scene)) " focus=" (:focus scene)
+                  " stack=" (apply str (map :id (:stack scene)))
+                  " rings=" (count rings)
+                  " at=" (if (seq rings) (str (second (first rings)) "," (nth (first rings) 2)) "0,0")
+                  " ringc=" (if (seq rings) (hx (nth (first rings) 5)) "00000000")
+                  " bar=" (hx (nth bar 5)) " face=" (hx (nth face 5))
+                  " ops=" (:ops c) " text-px=" (:text-px c) " hash=" (:hash c))))
   (doseq [[stage frames] [["cursor" cursor-frames] ["focus" focus-frames] ["scroll" scroll-frames]]
           [i [_ scene]] (map-indexed vector frames)]
     (println (str "hot-frame stage=" stage " n=" (inc i) " hot="

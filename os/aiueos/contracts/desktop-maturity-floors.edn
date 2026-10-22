@@ -143,11 +143,11 @@
   {:id :hover :gate "guest-browser-hover" :adr "0246"
    :goal "the control under the pointer (close box, resize handle, launcher) is drawn in a hover state decided by Kotoba from the pointer position, and leaves it when the pointer leaves"
    :why "controls give no sign that they take a click"}
-  {:id :focus-ring :gate nil
-   :goal "keyboard focus on a launcher or window control is drawn as a ring (2 px, contrast >= 3:1 against both neighbours), and Tab / Shift+Tab move it in document order"
+  {:id :focus-ring :gate "guest-browser-focus-ring" :adr "0248"
+   :goal "keyboard focus on a launcher button or the focused window's close control is drawn as a 2 px ring whose contrast against both neighbours is at least 3:1, and F6 / Shift+F6 move it forward and backward through the controls that exist (Tab belongs to the window switcher and the input method)"
    :why "keyboard-only use cannot see or move focus; the hosted shell has focus rings"}
-  {:id :keyboard-activate :gate nil
-   :goal "Enter or Space on the focused control does what a click does (launch, close), and Escape closes the focused window, all as the same actions through browser-reduce as the pointer"
+  {:id :keyboard-activate :gate "guest-browser-keyboard-activate" :adr "0249"
+   :goal "Enter or Space on the ring does what a pointer press at the control's centre does (launch), and Escape closes the focused window, as the same pointer/down through browser-reduce as the pointer's (Space shares Enter's path and is not pressed in the gate)"
    :why "every action but typing needs the pointer"}
   {:id :window-maximize :gate nil
    :goal "a maximize control and a double-click on the titlebar toggle the window between its rectangle and the work area, as a :window/maximize action through browser-reduce; restore returns the exact prior rectangle"

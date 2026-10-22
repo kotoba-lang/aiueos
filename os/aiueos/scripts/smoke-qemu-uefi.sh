@@ -756,14 +756,22 @@ while time.time() < end:
                 recv_obj()
                 globals()["focus_sent"] = k + 1
                 log("focus event " + str(k + 1) + " sent")
-        # High contrast (ADR-0247): after the damage stage, F10 down and up
-        # (the palette on), F10 down and up (off) -- each after the guest's
-        # AIUEOS_GUEST_BROWSER_HC line for the one before.
-        if typing and b"AIUEOS_GUEST_BROWSER_UIUX_GO" in serial_now and globals().get("uiux_sent", 0) < 4:
+        # The keyboard stage (ADR-0247, 0248, 0249): after the damage stage,
+        # F10 down and up twice (the high-contrast palette on, off), F6 down and
+        # up twice (the focus ring on launcher button 1, 2), Shift+F6 (back to 1), F6
+        # (2), Enter down and up (button 2 pressed), Escape down and up (the
+        # focused window closed) --
+        # each after the guest's line for the one before.
+        if typing and b"AIUEOS_GUEST_BROWSER_UIUX_GO" in serial_now and globals().get("uiux_sent", 0) < 18:
             k = globals().get("uiux_sent", 0)
-            if k == 0 or (b"AIUEOS_GUEST_BROWSER_HC n=%d " % k) in serial_now:
+            seen = (b"AIUEOS_GUEST_BROWSER_HC n=%d " % k) if k <= 4 else (b"AIUEOS_GUEST_BROWSER_KEY n=%d " % k)
+            if k == 0 or seen in serial_now:
                 time.sleep(0.5)
-                ev = [{"type": "key", "data": {"down": k % 2 == 0, "key": {"type": "qcode", "data": "f10"}}}]
+                qcode = ("f10", "f10", "f10", "f10", "f6", "f6", "f6", "f6", "shift", "f6", "f6", "shift",
+                         "f6", "f6", "ret", "ret", "esc", "esc")[k]
+                down = (True, False, True, False, True, False, True, False, True, True, False, False,
+                        True, False, True, False, True, False)[k]
+                ev = [{"type": "key", "data": {"down": down, "key": {"type": "qcode", "data": qcode}}}]
                 sock.sendall((json.dumps({"execute": "input-send-event", "arguments": {"events": ev}})
                               + "\n").encode())
                 recv_obj()

@@ -1002,3 +1002,83 @@
       (is (= :no-damage (:reason (guest/classify "guest-browser-high-contrast" {:serial (str hc-lines hc-ok)})))))
     (testing "an unmeasured boot is exit 3"
       (is (= 3 (:exit (guest/classify "guest-browser-high-contrast" {:serial base :qemu-unmeasured? true})))))))
+
+(def ^:private key-rows
+  ;; n key answer reduce ring windows focus stack at ops text-px hash
+  [[5 257 0 "none" 1 4 1 "3241" "4,0" 207 2330 "5581e21a"]
+   [6 256 0 "none" 1 4 1 "3241" "4,0" 207 2330 "5581e21a"]
+   [7 257 0 "none" 2 4 1 "3241" "106,0" 207 2330 "5581e21a"]
+   [8 256 0 "none" 2 4 1 "3241" "106,0" 207 2330 "5581e21a"]
+   [9 169 0 "none" 2 4 1 "3241" "106,0" 207 2330 "5581e21a"]
+   [10 257 0 "none" 1 4 1 "3241" "4,0" 207 2330 "5581e21a"]
+   [11 256 0 "none" 1 4 1 "3241" "4,0" 207 2330 "5581e21a"]
+   [12 168 0 "none" 1 4 1 "3241" "4,0" 207 2330 "5581e21a"]
+   [13 257 0 "none" 2 4 1 "3241" "106,0" 207 2330 "5581e21a"]
+   [14 256 0 "none" 2 4 1 "3241" "106,0" 207 2330 "5581e21a"]
+   [15 113 385038 "2" 2 4 2 "3412" "106,0" 207 1209 "fc93d38d"]
+   [16 112 0 "none" 2 4 2 "3412" "106,0" 207 1209 "fc93d38d"]
+   [17 5 1261662 "1" 2 3 1 "341" "106,0" 180 2330 "5581e21a"]
+   [18 4 0 "none" 2 3 1 "341" "106,0" 180 2330 "5581e21a"]])
+
+(defn- key-line [[n key ans red ring win foc stack at ops px hash] & {:keys [ringc] :or {ringc "001a56db"}}]
+  (str "AIUEOS_GUEST_BROWSER_KEY n=" n " key=" key " answer=" ans " reduce=" red " ring=" ring
+       " windows=" win " focus=" foc " stack=" stack " rings=4 at=" at " ringc=" ringc
+       " bar=00f1f1f2 face=00e6e6e6 ops=" ops " text-px=" px " hash=" hash "\r\n"))
+
+(def ^:private key-lines-ok (apply str (map key-line key-rows)))
+(def ^:private keys-ok
+  "AIUEOS_GUEST_BROWSER_KEYS_OK events=18 ring=2 stack=341 focus=1\r\n")
+
+(deftest guest-browser-focus-ring-classifier
+  (testing "the ring on button 1, 2, back to 1 with Shift, 2, with the model's censuses and contrast >= 3: green"
+    (let [r (guest/classify "guest-browser-focus-ring" {:serial (str key-lines-ok keys-ok)})]
+      (is (= :guest-browser-focus-ring (:reason r)))
+      (is (= 0 (:exit r)))))
+  (testing "Shift+F6 that does not go back (the ring stays on 2) is red, and says which frame"
+    (let [bad (assoc-in (vec key-rows) [5 4] 2)
+          r (guest/classify "guest-browser-focus-ring"
+                            {:serial (str (apply str (map key-line bad)) keys-ok)})]
+      (is (= :guest-browser-focus-ring-differs-from-model (:reason r)))
+      (is (= 10 (:n (:kernel (:first-difference r)))))))
+  (testing "a ring drawn at the wrong control is red"
+    (let [bad (assoc-in (vec key-rows) [2 8] "4,0")]
+      (is (= :guest-browser-focus-ring-differs-from-model
+             (:reason (guest/classify "guest-browser-focus-ring"
+                                      {:serial (str (apply str (map key-line bad)) keys-ok)}))))))
+  (testing "a ring whose colour is too close to the launcher bar is red by the ratio"
+    (let [lines (apply str (map #(key-line % :ringc "00e8e8e8") key-rows))
+          r (guest/classify "guest-browser-focus-ring" {:serial (str lines keys-ok)})]
+      (is (= :ring-contrast-below-3 (:reason r)))))
+  (testing "the OK line missing is not green"
+    (is (= :keys-ok-missing (:reason (guest/classify "guest-browser-focus-ring" {:serial key-lines-ok})))))
+  (testing "no key lines is absent"
+    (is (= :guest-browser-focus-ring-absent (:reason (guest/classify "guest-browser-focus-ring" {:serial keys-ok})))))
+  (testing "an unmeasured boot is exit 3"
+    (is (= 3 (:exit (guest/classify "guest-browser-focus-ring" {:serial (str key-lines-ok keys-ok) :qemu-unmeasured? true}))))))
+
+(deftest guest-browser-keyboard-activate-classifier
+  (testing "Enter presses button 2 (window 2 raised, focused), Escape closes it (the one on top focused): green"
+    (let [r (guest/classify "guest-browser-keyboard-activate" {:serial (str key-lines-ok keys-ok)})]
+      (is (= :guest-browser-keyboard-activate (:reason r)))
+      (is (= 0 (:exit r)))))
+  (testing "Enter that does nothing (the stack and focus unchanged) is red, and says which frame"
+    (let [bad (-> (vec key-rows) (assoc-in [10 6] 1) (assoc-in [10 7] "3241") (assoc-in [10 3] "none"))
+          r (guest/classify "guest-browser-keyboard-activate"
+                            {:serial (str (apply str (map key-line bad)) keys-ok)})]
+      (is (= :guest-browser-keyboard-activate-differs-from-model (:reason r)))
+      (is (= 15 (:n (:kernel (:first-difference r)))))))
+  (testing "Escape that leaves four windows is red"
+    (let [bad (-> (vec key-rows) (assoc-in [12 5] 4) (assoc-in [12 7] "3412"))]
+      (is (= :guest-browser-keyboard-activate-differs-from-model
+             (:reason (guest/classify "guest-browser-keyboard-activate"
+                                      {:serial (str (apply str (map key-line bad)) keys-ok)}))))))
+  (testing "the keyboard answering with a different press than the pointer's is red"
+    (let [bad (assoc-in (vec key-rows) [10 2] 385039)]
+      (is (= :guest-browser-keyboard-activate-differs-from-model
+             (:reason (guest/classify "guest-browser-keyboard-activate"
+                                      {:serial (str (apply str (map key-line bad)) keys-ok)}))))))
+  (testing "no key lines is absent, and an unmeasured boot is exit 3"
+    (is (= :guest-browser-keyboard-activate-absent
+           (:reason (guest/classify "guest-browser-keyboard-activate" {:serial keys-ok}))))
+    (is (= 3 (:exit (guest/classify "guest-browser-keyboard-activate"
+                                    {:serial (str key-lines-ok keys-ok) :qemu-unmeasured? true}))))))
