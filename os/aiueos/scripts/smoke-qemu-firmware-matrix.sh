@@ -88,12 +88,12 @@ blk="$build/virtio-blk-smoke.img"
 # The receipt `build-uefi.sh` writes beside the image is what closes it: the
 # artifacts must be byte-for-byte the ones that build produced, AND the
 # `os/aiueos` subtree must still be the one they were produced from.
-command -v nbb >/dev/null 2>&1 || {
-  echo "COULD-NOT-RUN nbb-missing: the image freshness receipt cannot be checked" >&2
+command -v python3 >/dev/null 2>&1 || {
+  echo "COULD-NOT-RUN python3-missing: the image freshness receipt cannot be checked" >&2
   exit 3
 }
 freshness_status=0
-nbb "$aiueos/scripts/image-freshness.cljk" assert \
+python3 "$aiueos/scripts/image-freshness.py" assert \
   --receipt "$build/image-receipt.edn" --root "$root" || freshness_status=$?
 [ "$freshness_status" = 0 ] || exit "$freshness_status"
 # build-uefi.sh does NOT make this one -- smoke-qemu-uefi.sh does, and only

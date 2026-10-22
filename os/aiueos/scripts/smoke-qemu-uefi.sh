@@ -73,7 +73,7 @@ fi
 #
 #   0  the image booted and every assertion below held
 #   1  a real boot failure -- named, with the marker that was missing
-#   3  COULD-NOT-RUN -- the build failed, or qemu/OVMF/nbb is not here. This is
+#   3  COULD-NOT-RUN -- the build failed, or qemu/OVMF/python3 is not here. This is
 #      NOT a pass and NOT a boot failure: nothing was measured
 #   4  REFUSED stale-image -- the artifact about to boot is not the one this run
 #      produced (propagated from image-freshness.cljs)
@@ -91,10 +91,12 @@ kernel_image="$out/esp/EFI/AIUEOS/KERNEL.ELF"
 initrd_image="$out/esp/EFI/AIUEOS/INITRD.IMG"
 rm -f "$receipt" "$efi_image" "$kernel_image" "$initrd_image" "$log" "$serial_log"
 
-# nbb absent is could-not-run, never a quiet skip: without it the receipt is
-# neither written nor checked, and the boot below would be unattributed again.
-command -v nbb >/dev/null 2>&1 || {
-  echo "COULD-NOT-RUN nbb-missing: the image freshness receipt cannot be checked" >&2
+# python3 absent is could-not-run, never a quiet skip: without it the receipt
+# is neither written nor checked, and the boot below would be unattributed
+# again. The checker is the Node-free port (image-freshness.py); the nbb
+# original is a dev-time oracle only (JUN-31 acceptance).
+command -v python3 >/dev/null 2>&1 || {
+  echo "COULD-NOT-RUN python3-missing: the image freshness receipt cannot be checked" >&2
   exit 3
 }
 
@@ -130,7 +132,7 @@ fi
 # the loader a damaged image on purpose, so they are allowed to move these bytes
 # afterwards. What is asserted is that they damaged a FRESH image.
 freshness_status=0
-nbb "$aiueos/scripts/image-freshness.cljk" assert \
+python3 "$aiueos/scripts/image-freshness.py" assert \
   --receipt "$receipt" --root "$repo" \
   "$efi_image" "$kernel_image" "$initrd_image" || freshness_status=$?
 [ "$freshness_status" = 0 ] || exit "$freshness_status"
