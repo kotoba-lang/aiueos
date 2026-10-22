@@ -315,7 +315,7 @@
 
  :browser-desktop-damage
  {:cmd ["kbb" "--backend" "sci" "--classpath" "src" "scripts/compositor-guest.cljk" "guest-browser-damage"]
-  :doc "Guest browser damage (ADR-0242) on KERNEL.ELF under QEMU: every show of the desktop sends only the rectangle Kotoba browser-damage answers (the bounding box of every op, in the previous list or this one, at a slot where they differ) through virtio-gpu TRANSFER_TO_HOST_2D / RESOURCE_FLUSH. After the clipboard the host moves the tablet, then Alt, Tab (Alt+Tab raises window 1), Tab up, Alt up; after each the display is screendumped, F12 makes the kernel send the whole screen, and it is screendumped again. Green: the five rectangles are browser-frame-model.cljk's (300,300,32,22 / none / 80,80,520,360 / none / none) and every damage screendump is byte-identical to the whole-screen one after it; missing or stale screendumps are exit 3."}
+  :doc "Guest browser damage (ADR-0242) on KERNEL.ELF under QEMU: every show of the desktop sends only the rectangle Kotoba browser-damage answers (the bounding box of every op, in the previous list or this one, at a slot where they differ) through virtio-gpu TRANSFER_TO_HOST_2D / RESOURCE_FLUSH. After the clipboard the host moves the tablet, then Alt, Tab (Alt+Tab raises window 1), Tab up, Alt up; after each the display is screendumped, F12 makes the kernel send the whole screen, and it is screendumped again. Green: the five rectangles are browser-frame-model.cljk's (300,300,32,22 / none / 80,80,652,716 / none / none) and every damage screendump is byte-identical to the whole-screen one after it; missing or stale screendumps are exit 3."}
 
  :browser-desktop-guest
  {:cmd ["kbb" "--backend" "sci" "--classpath" "src" "scripts/compositor-guest.cljk" "guest-browser-input"]
