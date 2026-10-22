@@ -74,7 +74,9 @@
 ;;   2036 2037      the selection, browser-ime.kotoba's (ADR-0240): the window
 ;;                  id it belongs to (0 none) and its length k, the last k code
 ;;                  points of that window's body
-;;   2038 2039      not assigned
+;;   2038           browser-ime.kotoba's: Ctrl held
+;;   2039           ADR-0247: 1 while the high-contrast palette is on (browser-ime
+;;                  .kotoba's F10 flips it); every colour reads it
 ;;   2040..2043     the vertical scroll offset of window id 1..4
 ;;                  (browser-reduce.kotoba's, ADR-0238), at most 65535
 ;;   2044 2045      scratch owned by this object (ADR-0238): the body's top
@@ -180,6 +182,20 @@
 
 (defn sput [s i v]
   (kernel-store-u32 (kernel-subregion s 8192 (* i 4) 4) 4 0 v))
+
+;; ADR-0247: the high-contrast palette. Word 2039 (the surface's last
+;; unassigned word) is 1 while the browser-ime object's F10 toggle has it on;
+;; every colour below then comes from the second column. Black on white is
+;; 21:1; black on the focused titlebar's #ffd400 is 14.7:1; black on the other
+;; titlebars' #d0d0d0 is 13.6:1; black on a button's #e0e0e0 is 15.9:1. (The
+;; default palette is already above 7:1 -- #333333 on #cccccc is 7.9:1 -- so
+;; this palette is the larger margin and the black ink, not the first AAA.)
+(defn hc [s] (sw s 2039))
+(defn ink [s] (if (= (hc s) 1) 0 3355443))
+(defn bg-rgb [s] (if (= (hc s) 1) 16777215 15856114))
+(defn face-rgb [s] (if (= (hc s) 1) 14737632 15132390))
+(defn hot-rgb [s] (if (= (hc s) 1) 16765952 14277081))
+(defn shadow-rgb [s] (if (= (hc s) 1) 8421504 13421772))
 
 (defn fw [s f i]
   ;; Font blobs are larger than the base 512-byte native load window. Narrow
@@ -319,13 +335,13 @@
   (if (> (+ (sw s 418) 16) (sw s 421)) 0
     (if (< (sw s 418) (sw s 2044)) 0
       (if (> (+ (sw s 417) 1) (sw s 3)) 0
-        (do (sput s 422 3355443)
+        (do (sput s 422 (ink s))
             (put-rect s (sw s 417) (- (sw s 418) (sw s 2045)) 1 16))))))
 
 (defn text-block [s f base x y]
   ;; Right limit, bottom, wrap and limit are already in scratch.
   (do (sput s 417 x) (sput s 418 y) (sput s 419 x)
-      (sput s 422 3355443)
+      (sput s 422 (ink s))
       (lay s f base 0)))
 
 ;; --- body flow (ADR-0234) -----------------------------------------------------
@@ -364,7 +380,7 @@
   ;; text colour back for it
   (do (sput s 422 11914737)
       (put-rect s (sw s 417) (- (sw s 418) (sw s 2045)) gw 16)
-      (sput s 422 3355443)))
+      (sput s 422 (ink s))))
 
 (defn place-body [s f cp j]
   ;; the glyph for body code point j at the cursor unless it passes the
@@ -454,7 +470,7 @@
 (defn body-block [s f base x y]
   ;; Right limit, bottom, limit and window width are already in scratch.
   (do (sput s 417 x) (sput s 418 y) (sput s 419 x)
-      (sput s 422 3355443)
+      (sput s 422 (ink s))
       (flow s f base)))
 
 ;; --- launcher and close (ADR-0233) -------------------------------------------
@@ -476,7 +492,7 @@
 (defn button [s f k]
   (if (= (bit-and (sw s 31) (app-bit k)) 0) 0
     (let [x (+ 6 (* 102 (- k 1)))]
-      (do (sput s 422 (if (= (hot s x 2 96 24) 1) 14277081 15132390))
+      (do (sput s 422 (if (= (hot s x 2 96 24) 1) (hot-rgb s) (face-rgb s)))
           (put-rect s x 2 96 24)
           (sput s 420 (+ x 90)) (sput s 421 28)
           (sput s 426 0) (sput s 428 32)
@@ -484,7 +500,7 @@
 
 (defn launcher [s f vw]
   (if (= (sw s 31) 0) 0
-    (do (sput s 422 15856114)
+    (do (sput s 422 (bg-rgb s))
         (put-rect s 0 0 vw 28)
         (button s f 1) (button s f 2) (button s f 3) (button s f 4))))
 
@@ -528,9 +544,9 @@
   (if (= (chrome s w) 0) 0
     (let [gi (glyph-of s f 215)
           gw (glyph-width s f gi)]
-      (do (sput s 422 (if (= (hot s (- (+ x w) 24) (+ y 6) 16 16) 1) 14277081 15132390))
+      (do (sput s 422 (if (= (hot s (- (+ x w) 24) (+ y 6) 16 16) 1) (hot-rgb s) (face-rgb s)))
           (put-rect s (- (+ x w) 24) (+ y 6) 16 16)
-          (sput s 422 3355443)
+          (sput s 422 (ink s))
           (put-glyph s (+ (- (+ x w) 24) (quot (- 16 gw) 2)) (+ y 6) gi gw)))))
 
 ;; --- pointer (ADR-0236) ---------------------------------------------------------
@@ -538,7 +554,7 @@
 (defn arrow-row [s x y r vw]
   ;; row r: the outline (r + 1 wide), then in rows 2..10 the fill (r - 1 wide
   ;; from x + 1); both cut at vw, a fill with no width left not drawn
-  (do (sput s 422 3355443)
+  (do (sput s 422 (ink s))
       (put-rect s x (+ y r) (if (< (+ r 1) (- vw x)) (+ r 1) (- vw x)) 1)
       (if (< r 2) 0
         (if (> r 10) 0
@@ -566,7 +582,10 @@
 ;; --- windows ----------------------------------------------------------------
 
 (defn body-rgb [focused] (if (= focused 1) 16777215 16777215))
-(defn title-rgb [focused] (if (= focused 1) 13421772 15132390))
+(defn title-rgb [s focused]
+  (if (= (hc s) 1)
+    (if (= focused 1) 16765952 13684944)
+    (if (= focused 1) 13421772 15132390)))
 
 (defn window-shadow [s x y w h]
   ;; The shadow belongs to the outside edge only. A filled offset rectangle
@@ -579,11 +598,11 @@
         right-width (if (> right-room 3) 3 right-room)
         bottom-height (if (> bottom-room 3) 3 bottom-room)]
     (do (if (> right-width 0)
-          (do (sput s 422 13421772)
+          (do (sput s 422 (shadow-rgb s))
               (put-rect s (+ x w) (+ y 3) right-width (- h 3)))
           0)
         (if (> bottom-height 0)
-          (do (sput s 422 13421772)
+          (do (sput s 422 (shadow-rgb s))
               (put-rect s (+ x 3) (+ y h) (- w 3) bottom-height))
           0))))
 
@@ -603,7 +622,7 @@
         (put-rect s (+ x 2) y (- w 4) h)
         (put-rect s (+ x 1) (+ y 1) (- w 2) (- h 2))
         (put-rect s x (+ y 2) w (- h 4))
-        (sput s 422 (title-rgb focused))
+        (sput s 422 (title-rgb s focused))
         (put-rect s (+ x 2) y (- w 4) 28)
         (put-rect s (+ x 1) (+ y 1) (- w 2) 28)
         (put-rect s x (+ y 2) w 26)
@@ -698,7 +717,7 @@
                       (if (= (font-ok s f fb) 0) -6
                         (do (sput s 416 0)
                             (sput s 427 0)
-                            (sput s 422 15856114)
+                            (sput s 422 (bg-rgb s))
                             (put-rect s 0 0 vw vh)
                             (launcher s f vw)
                             (emit s f 0)

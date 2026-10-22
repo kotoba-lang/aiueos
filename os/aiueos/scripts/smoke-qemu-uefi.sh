@@ -756,6 +756,19 @@ while time.time() < end:
                 recv_obj()
                 globals()["focus_sent"] = k + 1
                 log("focus event " + str(k + 1) + " sent")
+        # High contrast (ADR-0247): after the damage stage, F10 down and up
+        # (the palette on), F10 down and up (off) -- each after the guest's
+        # AIUEOS_GUEST_BROWSER_HC line for the one before.
+        if typing and b"AIUEOS_GUEST_BROWSER_UIUX_GO" in serial_now and globals().get("uiux_sent", 0) < 4:
+            k = globals().get("uiux_sent", 0)
+            if k == 0 or (b"AIUEOS_GUEST_BROWSER_HC n=%d " % k) in serial_now:
+                time.sleep(0.5)
+                ev = [{"type": "key", "data": {"down": k % 2 == 0, "key": {"type": "qcode", "data": "f10"}}}]
+                sock.sendall((json.dumps({"execute": "input-send-event", "arguments": {"events": ev}})
+                              + "\n").encode())
+                recv_obj()
+                globals()["uiux_sent"] = k + 1
+                log("uiux event " + str(k + 1) + " sent")
         # Wheel scroll (ADR-0238): a press on launcher button 4 at (360, 14),
         # the release, a wheel notch toward the end there (over no window), a
         # move to (300, 300), six notches toward the end, seven toward the

@@ -133,7 +133,8 @@
 ;;   freed by cutting frame2's op capacity from 260 to 259
 ;;   2038 Ctrl held (ADR-0241; 1 held, else not). The clipboard is not in
 ;;   the surface: it is the host's, handed in only with an admitted
-;;   completion. 2039 is the surface's last unassigned word.
+;;   completion. 2039 was the surface's last unassigned word; ADR-0247 took it
+;;   (the high-contrast palette, F10).
 ;;
 ;; ABI: [surface surface-bytes dictionary dictionary-bytes key] where key is
 ;; the evdev key code * 4 + its value (0 release, 1 press, 2 repeat) -- five
@@ -672,16 +673,23 @@
 (defn wm-key [s code]
   (if (= code 15) (if (= (w s 431) 1) 1 0) 0))
 
+;; ADR-0247: F10 (evdev 68) flips the high-contrast palette, word 2039,
+;; browser-frame2.kotoba's. It is no text and no window action: the answer is 0.
+(defn hc-toggle [s]
+  (do (wp s 2039 (if (= (w s 2039) 0) 1 0))
+      0))
+
 (defn press [s d ev]
   (if (= (quot ev 4) 56) (hold-alt s (bit-and ev 3))
     (if (= (shift-code (quot ev 4)) 1) (hold-shift s (bit-and ev 3))
     (if (= (ctrl-code (quot ev 4)) 1) (hold-ctrl s (bit-and ev 3))
     (if (not (= (bit-and ev 3) 1)) 0
+      (if (= (quot ev 4) 68) (hc-toggle s)
       (if (= (wm-key s (quot ev 4)) 1) (+ 256 (w s 5))
         (if (= (w s 2038) 1) (ctrl-key s (quot ev 4))
           (do (wp s 478 0)
               (let [r (key s d (quot ev 4))]
-                (if (= (w s 478) 1) -8 r))))))))))
+                (if (= (w s 478) 1) -8 r)))))))))))
 
 (defn admitted [s d ev]
   ;; after the surface checks: a dictionary that is there must be

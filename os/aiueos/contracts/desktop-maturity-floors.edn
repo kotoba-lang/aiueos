@@ -152,7 +152,7 @@
   {:id :window-maximize :gate nil
    :goal "a maximize control and a double-click on the titlebar toggle the window between its rectangle and the work area, as a :window/maximize action through browser-reduce; restore returns the exact prior rectangle"
    :why "a window can be moved and resized but not filled"}
-  {:id :high-contrast :gate nil
+  {:id :high-contrast :gate "guest-browser-high-contrast" :adr "0247"
    :goal "a keyboard toggle switches the desktop between the default and a high-contrast palette (text/background contrast >= 7:1), chosen by Kotoba, with the choice kept across frames"
    :why "one fixed palette; the hosted shell follows the design tokens"}
   {:id :p5 :gate nil :needs-a-human "a real machine with an aiueos image; QEMU is not P5"

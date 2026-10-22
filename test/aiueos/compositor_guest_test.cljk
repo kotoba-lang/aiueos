@@ -957,3 +957,48 @@
       (is (= :no-scroll (:reason (guest/classify "guest-browser-hover" {:serial (str cursor-ok-line hot-lines)})))))
     (testing "an unmeasured boot is exit 3"
       (is (= 3 (:exit (guest/classify "guest-browser-hover" {:serial base :qemu-unmeasured? true})))))))
+
+(def ^:private hc-lines
+  (str "AIUEOS_GUEST_BROWSER_HC n=1 mode=1 bg=00ffffff ink=00000000 bars=00ffffff,00d0d0d0,00ffd400 ops=203 text-px=2330 hash=5581e21a\r\n"
+       "AIUEOS_GUEST_BROWSER_HC n=2 mode=1 bg=00ffffff ink=00000000 bars=00ffffff,00d0d0d0,00ffd400 ops=203 text-px=2330 hash=5581e21a\r\n"
+       "AIUEOS_GUEST_BROWSER_HC n=3 mode=0 bg=00f1f1f2 ink=00333333 bars=00f1f1f2,00e6e6e6,00cccccc ops=203 text-px=2330 hash=5581e21a\r\n"
+       "AIUEOS_GUEST_BROWSER_HC n=4 mode=0 bg=00f1f1f2 ink=00333333 bars=00f1f1f2,00e6e6e6,00cccccc ops=203 text-px=2330 hash=5581e21a\r\n"))
+
+(def ^:private hc-ok
+  "AIUEOS_GUEST_BROWSER_UIUX_OK events=4 palette=default-high-contrast-default\r\n")
+
+(deftest guest-browser-contrast-arithmetic
+  (testing "WCAG 2 contrast ratios: black on white is 21:1, white on white 1:1"
+    (is (< (js/Math.abs (- 21.0 (guest/contrast-ratio 0x000000 0xffffff))) 1e-9))
+    (is (< (js/Math.abs (- 1.0 (guest/contrast-ratio 0xffffff 0xffffff))) 1e-9)))
+  (testing "the high-contrast pairs are well above 7:1; the default pair is above it too, by less"
+    (is (>= (guest/contrast-ratio 0x000000 0xffd400) 14.6))
+    (is (>= (guest/contrast-ratio 0x000000 0xd0d0d0) 13.6))
+    (is (>= (guest/contrast-ratio 0x000000 0xe0e0e0) 15.9))
+    (is (> (guest/contrast-ratio 0x333333 0xcccccc) 7.0))
+    (is (< (guest/contrast-ratio 0x333333 0xcccccc) 8.0))))
+
+(deftest guest-browser-high-contrast-classifier
+  (let [base damage-ok]
+    (testing "palette on, off, with the model's colours and every ratio >= 7: green"
+      (let [r (guest/classify "guest-browser-high-contrast" {:serial (str base hc-lines hc-ok)})]
+        (is (= :guest-browser-high-contrast (:reason r)))
+        (is (= 0 (:exit r)))))
+    (testing "a palette whose ink is too close to the titlebar is red, by the ratio and not by a list"
+      (let [bad (.replace hc-lines "bars=00ffffff,00d0d0d0,00ffd400" "bars=00ffffff,00d0d0d0,00202020")
+            r (guest/classify "guest-browser-high-contrast" {:serial (str base bad hc-ok)})]
+        (is (= :contrast-below-7 (:reason r)))))
+    (testing "the palette staying on after the second F10 is red, and says where"
+      (let [r (guest/classify "guest-browser-high-contrast"
+                              {:serial (str base (.replace hc-lines "HC n=4 mode=0 bg=00f1f1f2 ink=00333333 bars=00f1f1f2,00e6e6e6,00cccccc"
+                                                           "HC n=4 mode=1 bg=00ffffff ink=00000000 bars=00ffffff,00d0d0d0,00ffd400") hc-ok)})]
+        (is (= :hc-differs-from-model (:reason r)))
+        (is (= 4 (:n (:kernel (:first-difference r)))))))
+    (testing "the OK line missing is not green"
+      (is (= :uiux-ok-missing (:reason (guest/classify "guest-browser-high-contrast" {:serial (str base hc-lines)})))))
+    (testing "no HC lines is absent"
+      (is (= :guest-browser-high-contrast-absent (:reason (guest/classify "guest-browser-high-contrast" {:serial base})))))
+    (testing "it needs the damage gate first"
+      (is (= :no-damage (:reason (guest/classify "guest-browser-high-contrast" {:serial (str hc-lines hc-ok)})))))
+    (testing "an unmeasured boot is exit 3"
+      (is (= 3 (:exit (guest/classify "guest-browser-high-contrast" {:serial base :qemu-unmeasured? true})))))))
