@@ -66,7 +66,10 @@ claimed: P5 and the dictionary stay open until a person acts.
   focus-ring, keyboard-activate, window-maximize, high-contrast. None of them
   exists in the kernel desktop (checked by searching the browser objects and
   kernel for hover / maximize / minimize / inactive / focus-ring / tooltip),
-  and none has a gate, so none counts as closed. Maturity went from 20/22 to
+  and none has a gate, so none counts as closed. **Correction (same day):**
+  title-active's behaviour already exists (`title-rgb` / `body-rgb` in
+  browser-frame2.kotoba take the focus flag), so it is a missing gate, not a
+  missing feature; the other five were absent when searched by behaviour. Maturity went from 20/22 to
   20/28 by the denominator, not by anything reopening.
 
 ## Measurement
