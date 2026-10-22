@@ -1333,6 +1333,11 @@ static uint32_t kbd_recycle(int want_press) {
     kbd_seen++;
     if (id > 3) continue;
     struct virtio_input_event *ev = kbd_event + id;
+    /* Every used entry the reap path touches is counted here, and only here
+       (JUN-34, measured 2026-10-23: the boot probe used to count its own read
+       of ring slot 0 and the poll path then re-read the same entry, so the
+       ring evidence double-counted and lagged what the desktop actually saw). */
+    aiueos_input_ring_events++;
     if (want_press == 1 && !press && ev->type == 1 && ev->value == 1 && ev->code)
       press = ev->code;
     if (want_press == 2 && !press && ev->type == 1 && ev->value <= 2 && ev->code)
@@ -1380,6 +1385,20 @@ uint32_t aiueos_keyboard_next_key(uint32_t budget) {
     __asm__ volatile("pause");
   }
   return 0;
+}
+
+/* The persistent desktop loop's pump (JUN-34): one non-blocking reap of
+   whatever the ring holds right now, as evdev code * 4 + value -- the form
+   Kotoba browser-key takes -- or 0 when nothing is pending. The loop used to
+   call aiueos_keyboard_drain every turn, and drain DISCARDS: every key that
+   arrived between turns was thrown away (measured 2026-10-23: DESKTOP_KEY
+   stuck at 1 while the host ring showed 103 used entries, all reposted).
+   Where no live ring exists (the synthetic smoke build), the boot probe's
+   mailbox is the only key there is, so take that instead. */
+uint32_t aiueos_keyboard_take_key(void) {
+  if (kbd_ready) return kbd_recycle(2);
+  uint32_t code = 0;
+  return aiueos_desktop_input_take_key(&code) ? code : 0;
 }
 
 /* A virtio-input device is a pointer tablet when its config space answers a
@@ -1578,7 +1597,10 @@ static int virtio_input(uint8_t b, uint8_t d, uint8_t f) {
         uint32_t id = used->ring[i].id;
         if (id > 3) continue;
         struct virtio_input_event *ev = event + id;
-        aiueos_input_ring_events++;
+        /* Not counted here (JUN-34, measured 2026-10-23): this probe peeks,
+           it does not reap -- kbd_seen stays 0, so kbd_recycle reaps and
+           counts every entry the probe looked at. Counting here too made the
+           ring evidence double-count slot 0 and lag the desktop. */
         if (ev->type != 1 || ev->value > 2) continue; /* EV_KEY; up/down/repeat */
         desktop_input_event = (struct aiueos_desktop_input_event){
           AIUEOS_DESKTOP_INPUT_ABI, sizeof(desktop_input_event), 1,
