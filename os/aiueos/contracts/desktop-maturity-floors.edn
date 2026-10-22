@@ -152,9 +152,9 @@
   {:id :window-maximize :gate "guest-browser-window-maximize" :adr "0250"
    :goal "a double press on a window's titlebar toggles it between its rect and the work area (0, 28, vw, vh - 80), decided by Kotoba in browser-reduce, and the restore returns the exact prior rect; a double press is two presses on the same titlebar with at most three input events between (the order of events, not milliseconds)"
    :why "a window can be moved and resized but not filled"}
-  {:id :maximize-control :gate nil
-   :goal "a maximize control in the titlebar, left of the close control, toggles the same way as the double press, through the same browser-reduce action; keyboard shortcut for the focused window"
-   :why "split from :window-maximize (2026-10-23, ADR-0250): drawing the control adds ops to every window with a launcher, which moves every pinned ops count and census again; it is its own job. The double press has no visible affordance and no keyboard path until this lands"}
+  {:id :maximize-control :gate "guest-browser-maximize-control" :adr "0251"
+   :goal "a 16 x 16 maximize control in the titlebar, left of the close control, on windows with a launcher at least 160 wide, toggles the window like the double press does, and F11 presses the focused window's control from the keyboard, both through the same browser-reduce pointer/down as the tablet's"
+   :why "split from :window-maximize (2026-10-23, ADR-0250): the double press has no visible affordance and no keyboard path"}
   {:id :high-contrast :gate "guest-browser-high-contrast" :adr "0247"
    :goal "a keyboard toggle switches the desktop between the default and a high-contrast palette (text/background contrast >= 7:1), chosen by Kotoba, with the choice kept across frames"
    :why "one fixed palette; the hosted shell follows the design tokens"}

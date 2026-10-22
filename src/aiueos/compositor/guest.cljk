@@ -23,7 +23,7 @@
    "guest-browser-title-active" "guest-browser-hover"
    "guest-browser-high-contrast" "guest-browser-focus-ring"
    "guest-browser-keyboard-activate"
-   "guest-browser-window-maximize"])
+   "guest-browser-window-maximize" "guest-browser-maximize-control"])
 
 (defn gate-cmd
   "SPA-visible evidence command for a guest profile. Not clojure -M."
@@ -715,7 +715,7 @@
   [{:keys [serial qemu-unmeasured?] :as opts}]
   (let [s (or serial "")
         frames (set (map second (re-seq #"(?m)^AIUEOS_GUEST_BROWSER_LAUNCH_FRAME n=(\d+) " s)))
-        ok (re-find #"(?m)^AIUEOS_GUEST_BROWSER_LAUNCH_OK events=8 answers=30203030 windows=2 stack=1,3 focus=3 chain=2845aee9 ops=104 text-px=776 hash=98b595bd" s)]
+        ok (re-find #"(?m)^AIUEOS_GUEST_BROWSER_LAUNCH_OK events=8 answers=30203030 windows=2 stack=1,3 focus=3 chain=2845aee9 ops=108 text-px=776 hash=98b595bd" s)]
     (cond
       qemu-unmeasured? {:green? false :exit 3 :reason :unmeasured :leftover [:unmeasured]}
       (not (re-find caret-ok-re s))
@@ -745,14 +745,14 @@
 ;; model's census after.
 
 (def ^:private launch-ok-re
-  #"(?m)^AIUEOS_GUEST_BROWSER_LAUNCH_OK events=8 answers=30203030 windows=2 stack=1,3 focus=3 chain=2845aee9 ops=104 text-px=776 hash=98b595bd")
+  #"(?m)^AIUEOS_GUEST_BROWSER_LAUNCH_OK events=8 answers=30203030 windows=2 stack=1,3 focus=3 chain=2845aee9 ops=108 text-px=776 hash=98b595bd")
 
 (defn guest-browser-dictionary-result
   [{:keys [serial qemu-unmeasured?] :as opts}]
   (let [s (or serial "")
         go (re-find #"(?m)^AIUEOS_GUEST_BROWSER_DICT_GO keys=5 dictionary-bytes=189892" s)
-        shown (re-find #"(?m)^AIUEOS_GUEST_BROWSER_DICT_SHOWN keys=5 converting=1 record=44512 preedit=1 cp=23665 ops=106 text-px=834 hash=e85b42b2" s)
-        ok (re-find #"(?m)^AIUEOS_GUEST_BROWSER_DICT_OK keys=16 answers=0000000010000001 record=44512 committed=23665,20767 shown-ops=87 shown-px=834 shown-hash=e85b42b2 ops=106 text-px=915 hash=eaa427b3" s)]
+        shown (re-find #"(?m)^AIUEOS_GUEST_BROWSER_DICT_SHOWN keys=5 converting=1 record=44512 preedit=1 cp=23665 ops=110 text-px=834 hash=e85b42b2" s)
+        ok (re-find #"(?m)^AIUEOS_GUEST_BROWSER_DICT_OK keys=16 answers=0000000010000001 record=44512 committed=23665,20767 shown-ops=87 shown-px=834 shown-hash=e85b42b2 ops=110 text-px=915 hash=eaa427b3" s)]
     (cond
       qemu-unmeasured? {:green? false :exit 3 :reason :unmeasured :leftover [:unmeasured]}
       (not (re-find launch-ok-re s))
@@ -782,7 +782,7 @@
 ;; from the framebuffer, and the census chain.
 
 (def ^:private dict-ok-re
-  #"(?m)^AIUEOS_GUEST_BROWSER_DICT_OK keys=16 answers=0000000010000001 record=44512 committed=23665,20767 shown-ops=87 shown-px=834 shown-hash=e85b42b2 ops=106 text-px=915 hash=eaa427b3")
+  #"(?m)^AIUEOS_GUEST_BROWSER_DICT_OK keys=16 answers=0000000010000001 record=44512 committed=23665,20767 shown-ops=87 shown-px=834 shown-hash=e85b42b2 ops=110 text-px=915 hash=eaa427b3")
 
 (def ^:private cursor-frame-numbers #{"1" "2" "3" "4" "5"})
 
@@ -791,7 +791,7 @@
   (let [s (or serial "")
         go (re-find #"(?m)^AIUEOS_GUEST_BROWSER_CURSOR_GO events=5 before=0" s)
         frames (set (map second (re-seq #"(?m)^AIUEOS_GUEST_BROWSER_CURSOR_FRAME n=(\d+) " s)))
-        ok (re-find #"(?m)^AIUEOS_GUEST_BROWSER_CURSOR_OK events=5 answers=00000 before=0 at=1000,600 tip=111111 fill=ffffff chain=f4bb42d8 ops=127 text-px=948 hash=3e8be657" s)]
+        ok (re-find #"(?m)^AIUEOS_GUEST_BROWSER_CURSOR_OK events=5 answers=00000 before=0 at=1000,600 tip=111111 fill=ffffff chain=f4bb42d8 ops=131 text-px=948 hash=3e8be657" s)]
     (cond
       qemu-unmeasured? {:green? false :exit 3 :reason :unmeasured :leftover [:unmeasured]}
       (not (re-find dict-ok-re s))
@@ -822,7 +822,7 @@
 ;; op count and #111111 census equal to the frame model's, and the chain.
 
 (def ^:private cursor-ok-re
-  #"(?m)^AIUEOS_GUEST_BROWSER_CURSOR_OK events=5 answers=00000 before=0 at=1000,600 tip=111111 fill=ffffff chain=f4bb42d8 ops=127 text-px=948 hash=3e8be657")
+  #"(?m)^AIUEOS_GUEST_BROWSER_CURSOR_OK events=5 answers=00000 before=0 at=1000,600 tip=111111 fill=ffffff chain=f4bb42d8 ops=131 text-px=948 hash=3e8be657")
 
 (def ^:private focus-frame-numbers (set (map str (range 1 13))))
 
@@ -831,7 +831,7 @@
   (let [s (or serial "")
         go (re-find #"(?m)^AIUEOS_GUEST_BROWSER_FOCUS_GO events=12" s)
         frames (set (map second (re-seq #"(?m)^AIUEOS_GUEST_BROWSER_FOCUS_FRAME n=(\d+) " s)))
-        ok (re-find #"(?m)^AIUEOS_GUEST_BROWSER_FOCUS_OK events=12 answers=200103020000 wm=3 stack=132 focus=2 bodies=unchanged chain=2254db31 ops=154 text-px=1082 hash=e90ed2bc" s)]
+        ok (re-find #"(?m)^AIUEOS_GUEST_BROWSER_FOCUS_OK events=12 answers=200103020000 wm=3 stack=132 focus=2 bodies=unchanged chain=2254db31 ops=160 text-px=1082 hash=e90ed2bc" s)]
     (cond
       qemu-unmeasured? {:green? false :exit 3 :reason :unmeasured :leftover [:unmeasured]}
       (not (re-find cursor-ok-re s))
@@ -888,9 +888,9 @@
                      :px (parse-long px) :hash hash})
                   (re-seq #"(?m)^AIUEOS_GUEST_BROWSER_HC n=(\d+) mode=(\d) bg=([0-9a-f]{8}) ink=([0-9a-f]{8}) bars=([0-9a-f,]+) ops=(\d+) text-px=(\d+) hash=([0-9a-f]{8})\s*$" s))
         want (mapv (fn [[n mode bg ink bars]]
-                     {:n n :mode mode :bg bg :ink ink :bars bars :ops 203 :px 2330 :hash "5581e21a"})
+                     {:n n :mode mode :bg bg :ink ink :bars bars :ops 211 :px 2330 :hash "5581e21a"})
                    hc-want)
-        damage-ok? (re-find #"(?m)^AIUEOS_GUEST_BROWSER_DAMAGE_OK events=5 partial=2 empty=3 bytes=1870144 whole-bytes=20480000 focus=1 chain=6653b143 ops=203 text-px=2330 hash=5581e21a" s)
+        damage-ok? (re-find #"(?m)^AIUEOS_GUEST_BROWSER_DAMAGE_OK events=5 partial=2 empty=3 bytes=1870144 whole-bytes=20480000 focus=1 chain=6653b143 ops=211 text-px=2330 hash=5581e21a" s)
         low (fn [g] (when (= 1 (:mode g))
                       (first (filter #(< (contrast-ratio (:ink g) %) 7.0)
                                      (concat [(:bg g) 0xffffff] (:bars g))))))]
@@ -929,20 +929,20 @@
   (let [e (fn [n key ans red ring win foc stack at ops px hash]
             {:n n :key key :answer ans :reduce red :ring ring :windows win :focus foc :stack stack
              :rings 4 :at at :ringc 0x1a56db :bar 0xf1f1f2 :face 0xe6e6e6 :ops ops :px px :hash hash})]
-    [(e 5 257 0 "none" 1 4 1 "3241" "4,0" 207 2330 "5581e21a")
-     (e 6 256 0 "none" 1 4 1 "3241" "4,0" 207 2330 "5581e21a")
-     (e 7 257 0 "none" 2 4 1 "3241" "106,0" 207 2330 "5581e21a")
-     (e 8 256 0 "none" 2 4 1 "3241" "106,0" 207 2330 "5581e21a")
-     (e 9 169 0 "none" 2 4 1 "3241" "106,0" 207 2330 "5581e21a")
-     (e 10 257 0 "none" 1 4 1 "3241" "4,0" 207 2330 "5581e21a")
-     (e 11 256 0 "none" 1 4 1 "3241" "4,0" 207 2330 "5581e21a")
-     (e 12 168 0 "none" 1 4 1 "3241" "4,0" 207 2330 "5581e21a")
-     (e 13 257 0 "none" 2 4 1 "3241" "106,0" 207 2330 "5581e21a")
-     (e 14 256 0 "none" 2 4 1 "3241" "106,0" 207 2330 "5581e21a")
-     (e 15 113 385038 "2" 2 4 2 "3412" "106,0" 207 1209 "fc93d38d")
-     (e 16 112 0 "none" 2 4 2 "3412" "106,0" 207 1209 "fc93d38d")
-     (e 17 5 1261662 "1" 2 3 1 "341" "106,0" 180 2330 "5581e21a")
-     (e 18 4 0 "none" 2 3 1 "341" "106,0" 180 2330 "5581e21a")]))
+    [(e 5 257 0 "none" 1 4 1 "3241" "4,0" 215 2330 "5581e21a")
+     (e 6 256 0 "none" 1 4 1 "3241" "4,0" 215 2330 "5581e21a")
+     (e 7 257 0 "none" 2 4 1 "3241" "106,0" 215 2330 "5581e21a")
+     (e 8 256 0 "none" 2 4 1 "3241" "106,0" 215 2330 "5581e21a")
+     (e 9 169 0 "none" 2 4 1 "3241" "106,0" 215 2330 "5581e21a")
+     (e 10 257 0 "none" 1 4 1 "3241" "4,0" 215 2330 "5581e21a")
+     (e 11 256 0 "none" 1 4 1 "3241" "4,0" 215 2330 "5581e21a")
+     (e 12 168 0 "none" 1 4 1 "3241" "4,0" 215 2330 "5581e21a")
+     (e 13 257 0 "none" 2 4 1 "3241" "106,0" 215 2330 "5581e21a")
+     (e 14 256 0 "none" 2 4 1 "3241" "106,0" 215 2330 "5581e21a")
+     (e 15 113 385038 "2" 2 4 2 "3412" "106,0" 215 1209 "fc93d38d")
+     (e 16 112 0 "none" 2 4 2 "3412" "106,0" 215 1209 "fc93d38d")
+     (e 17 5 1261662 "1" 2 3 1 "341" "106,0" 186 2330 "5581e21a")
+     (e 18 4 0 "none" 2 3 1 "341" "106,0" 186 2330 "5581e21a")]))
 
 (defn- key-lines [serial]
   (mapv (fn [[_ n key ans red ring win foc stack rings at ringc bar face ops px hash]]
@@ -1006,23 +1006,29 @@
   (let [e (fn [n src at red rect ops px hash]
             {:n n :src src :at at :reduce red :windows 3 :focus 1 :stack "341" :rect rect
              :ops ops :px px :hash hash})]
-    [(e 19 1 "380,142" 1 "272,132,240,200" 180 2330 "e5cb1929")
-     (e 20 4 "380,142" 0 "272,132,240,200" 180 2330 "e5cb1929")
-     (e 21 1 "380,142" 1 "0,28,1280,720" 179 1699 "3b18fc9c")
-     (e 22 4 "380,142" 0 "0,28,1280,720" 179 1699 "3b18fc9c")
-     (e 23 1 "380,40" 1 "0,28,1280,720" 179 1699 "71c4138e")
-     (e 24 4 "380,40" 0 "0,28,1280,720" 179 1699 "71c4138e")
-     (e 25 1 "380,40" 1 "272,132,240,200" 180 2330 "b4362763")
-     (e 26 4 "380,40" 0 "272,132,240,200" 180 2330 "b4362763")]))
+    [(e 19 1 "380,142" 1 "272,132,240,200" 186 2330 "e5cb1929")
+     (e 20 4 "380,142" 0 "272,132,240,200" 186 2330 "e5cb1929")
+     (e 21 1 "380,142" 1 "0,28,1280,720" 185 1699 "3b18fc9c")
+     (e 22 4 "380,142" 0 "0,28,1280,720" 185 1699 "3b18fc9c")
+     (e 23 1 "380,40" 1 "0,28,1280,720" 185 1699 "71c4138e")
+     (e 24 4 "380,40" 0 "0,28,1280,720" 185 1699 "71c4138e")
+     (e 25 1 "380,40" 1 "272,132,240,200" 186 2330 "b4362763")
+     (e 26 4 "380,40" 0 "272,132,240,200" 186 2330 "b4362763")
+     (e 27 1 "476,146" 1 "0,28,1280,720" 185 1699 "2eebb0d8")
+     (e 28 4 "476,146" 0 "0,28,1280,720" 185 1699 "2eebb0d8")
+     (e 29 0 "476,146" 1 "272,132,240,200" 186 2330 "7c707d0d")
+     (e 30 0 "476,146" "none" "272,132,240,200" 186 2330 "7c707d0d")]))
 
 (defn guest-browser-window-maximize-result
   [{:keys [serial qemu-unmeasured?]}]
   (let [s (or serial "")
         got (mapv (fn [[_ n src at red windows focus stack rect ops px hash]]
-                    {:n (parse-long n) :src (parse-long src) :at at :reduce (parse-long red)
+                    {:n (parse-long n) :src (parse-long src) :at at :reduce (if (= red "none") "none" (parse-long red))
                      :windows (parse-long windows) :focus (parse-long focus) :stack stack :rect rect
                      :ops (parse-long ops) :px (parse-long px) :hash hash})
-                  (re-seq #"(?m)^AIUEOS_GUEST_BROWSER_MAX n=(\d+) src=(\d+) at=(\d+,\d+) reduce=(\d+) windows=(\d+) focus=(\d+) stack=(\d*) rect=(\d+,\d+,\d+,\d+) ops=(\d+) text-px=(\d+) hash=([0-9a-f]{8})\s*$" s))
+                  (re-seq #"(?m)^AIUEOS_GUEST_BROWSER_MAX n=(\d+) src=(\d+) at=(\d+,\d+) reduce=(none|\d+) windows=(\d+) focus=(\d+) stack=(\d*) rect=(\d+,\d+,\d+,\d+) ops=(\d+) text-px=(\d+) hash=([0-9a-f]{8})\s*$" s))
+        got-all got
+        got (filterv #(<= (:n %) 26) got-all)
         by-n (into {} (map (juxt :n identity) got))
         before (:rect (by-n 19))
         after (:rect (by-n 25))]
@@ -1032,18 +1038,62 @@
                     :leftover [:guest-browser-window-maximize-absent]}
       (not (re-find #"(?m)^AIUEOS_GUEST_BROWSER_MAX_OK events=8 maximized=0,28,1280,720 restored=272,132,240,200" s))
       {:green? false :exit 1 :reason :max-ok-missing :leftover [:max-ok-missing]}
-      (not= got max-want)
+      (not= got (subvec max-want 0 8))
       {:green? false :exit 1 :reason :window-maximize-differs-from-model
        :leftover [:window-maximize-differs-from-model]
        :first-difference (first (remove nil? (map (fn [g w] (when (not= g w) {:kernel g :model w}))
-                                                 (concat got (repeat nil)) max-want)))}
+                                                 (concat got (repeat nil)) (subvec max-want 0 8))))}
       (not= (:rect (by-n 21)) "0,28,1280,720")
       {:green? false :exit 1 :reason :not-the-work-area :leftover [:not-the-work-area]}
       (not= before after)
       {:green? false :exit 1 :reason :restore-differs-from-prior-rect :leftover [:restore-differs-from-prior-rect]}
       :else
       {:green? true :exit 0 :reason :guest-browser-window-maximize
-       :leftover [:no-maximize-control :event-order-not-time :launcher-branch-only :no-keyboard-maximize]})))
+       :leftover [:event-order-not-time :launcher-branch-only]})))
+
+;; Guest browser maximize control (ADR-0251): the same boot, after the double
+;; presses. A press on window 1's maximize control at (476, 146) -- 16 x 16 at
+;; (x + w - 44, y + 6), left of the close control -- maximizes it through the
+;; same browser-reduce pointer/down as the tablet's, and F11 on the maximized
+;; window answers (Kotoba) the press at its control's centre, which restores the
+;; exact rect. The kernel prints AIUEOS_GUEST_BROWSER_MAX for the four events
+;; (the key events with src=0); green needs them equal to the frame model's, the
+;; maximized rect the work area and the rect after F11 the one before the press.
+
+(defn guest-browser-maximize-control-result
+  [{:keys [serial qemu-unmeasured?] :as opts}]
+  (let [s (or serial "")
+        want (subvec max-want 8 12)
+        lines (re-seq #"(?m)^AIUEOS_GUEST_BROWSER_MAX n=(\d+) src=(\d+) at=(\d+,\d+) reduce=(none|\d+) windows=(\d+) focus=(\d+) stack=(\d*) rect=(\d+,\d+,\d+,\d+) ops=(\d+) text-px=(\d+) hash=([0-9a-f]{8})\s*$" s)
+        got (->> lines
+                 (map (fn [[_ n src at red windows focus stack rect ops px hash]]
+                        {:n (parse-long n) :src (parse-long src) :at at
+                         :reduce (if (= red "none") "none" (parse-long red))
+                         :windows (parse-long windows) :focus (parse-long focus) :stack stack :rect rect
+                         :ops (parse-long ops) :px (parse-long px) :hash hash}))
+                 (filter #(>= (:n %) 27))
+                 vec)
+        window-max (guest-browser-window-maximize-result opts)]
+    (cond
+      qemu-unmeasured? {:green? false :exit 3 :reason :unmeasured :leftover [:unmeasured]}
+      (not (:green? window-max))
+      (assoc window-max :reason :no-window-maximize :leftover (into [:no-window-maximize] (:leftover window-max)))
+      (empty? got) {:green? false :exit 1 :reason :guest-browser-maximize-control-absent
+                    :leftover [:guest-browser-maximize-control-absent]}
+      (not (re-find #"(?m)^AIUEOS_GUEST_BROWSER_MAX_CTL_OK events=4 control=press f11=restore" s))
+      {:green? false :exit 1 :reason :max-ctl-ok-missing :leftover [:max-ctl-ok-missing]}
+      (not= got want)
+      {:green? false :exit 1 :reason :maximize-control-differs-from-model
+       :leftover [:maximize-control-differs-from-model]
+       :first-difference (first (remove nil? (map (fn [g w] (when (not= g w) {:kernel g :model w}))
+                                                 (concat got (repeat nil)) want)))}
+      (not= (:rect (first got)) "0,28,1280,720")
+      {:green? false :exit 1 :reason :not-the-work-area :leftover [:not-the-work-area]}
+      (not= (:rect (nth got 2)) "272,132,240,200")
+      {:green? false :exit 1 :reason :f11-restore-differs-from-prior-rect :leftover [:f11-restore-differs-from-prior-rect]}
+      :else
+      {:green? true :exit 0 :reason :guest-browser-maximize-control
+       :leftover [:icon-in-op-list-not-pixels :f11-not-super-up :launcher-branch-only]})))
 
 ;; Guest browser hover (ADR-0246): Kotoba `hot` decides, from the pointer in
 ;; surface words 2046/2047, that a launcher button or a close control under it
@@ -1134,7 +1184,7 @@
 ;; and the chain.
 
 (def ^:private focus-ok-re
-  #"(?m)^AIUEOS_GUEST_BROWSER_FOCUS_OK events=12 answers=200103020000 wm=3 stack=132 focus=2 bodies=unchanged chain=2254db31 ops=154 text-px=1082 hash=e90ed2bc")
+  #"(?m)^AIUEOS_GUEST_BROWSER_FOCUS_OK events=12 answers=200103020000 wm=3 stack=132 focus=2 bodies=unchanged chain=2254db31 ops=160 text-px=1082 hash=e90ed2bc")
 
 (def ^:private scroll-frame-numbers (set (map str (range 1 18))))
 
@@ -1143,7 +1193,7 @@
   (let [s (or serial "")
         go (re-find #"(?m)^AIUEOS_GUEST_BROWSER_SCROLL_GO events=17" s)
         frames (set (map second (re-seq #"(?m)^AIUEOS_GUEST_BROWSER_SCROLL_FRAME n=(\d+) " s)))
-        ok (re-find #"(?m)^AIUEOS_GUEST_BROWSER_SCROLL_OK events=17 answers=40004444444444444 max=120 stack=1324 focus=4 scroll=0 chain=7421f3aa ops=197 text-px=994 hash=78270fda" s)]
+        ok (re-find #"(?m)^AIUEOS_GUEST_BROWSER_SCROLL_OK events=17 answers=40004444444444444 max=120 stack=1324 focus=4 scroll=0 chain=7421f3aa ops=205 text-px=994 hash=78270fda" s)]
     (cond
       qemu-unmeasured? {:green? false :exit 3 :reason :unmeasured :leftover [:unmeasured]}
       (not (re-find focus-ok-re s))
@@ -1177,7 +1227,7 @@
 ;; chains.
 
 (def ^:private scroll-ok-re
-  #"(?m)^AIUEOS_GUEST_BROWSER_SCROLL_OK events=17 answers=40004444444444444 max=120 stack=1324 focus=4 scroll=0 chain=7421f3aa ops=197 text-px=994 hash=78270fda")
+  #"(?m)^AIUEOS_GUEST_BROWSER_SCROLL_OK events=17 answers=40004444444444444 max=120 stack=1324 focus=4 scroll=0 chain=7421f3aa ops=205 text-px=994 hash=78270fda")
 
 (def ^:private selection-frame-numbers (set (map str (range 1 18))))
 
@@ -1186,7 +1236,7 @@
   (let [s (or serial "")
         go (re-find #"(?m)^AIUEOS_GUEST_BROWSER_SELECTION_GO events=17" s)
         frames (set (map second (re-seq #"(?m)^AIUEOS_GUEST_BROWSER_SELECTION_FRAME n=(\d+) " s)))
-        ok (re-find #"(?m)^AIUEOS_GUEST_BROWSER_SELECTION_OK events=17 answers=44444000000000000 max-sel=2 body=48 focus=4 scroll=100 chain=2b46197d sel-chain=cb830579 ops=201 text-px=1058 hash=6ca5ee4a" s)]
+        ok (re-find #"(?m)^AIUEOS_GUEST_BROWSER_SELECTION_OK events=17 answers=44444000000000000 max-sel=2 body=48 focus=4 scroll=100 chain=2b46197d sel-chain=cb830579 ops=209 text-px=1058 hash=6ca5ee4a" s)]
     (cond
       qemu-unmeasured? {:green? false :exit 3 :reason :unmeasured :leftover [:unmeasured]}
       (not (re-find scroll-ok-re s))
@@ -1222,7 +1272,7 @@
 ;; census and #b5cdf1 census equal to the frame model's, and both chains.
 
 (def ^:private selection-ok-re
-  #"(?m)^AIUEOS_GUEST_BROWSER_SELECTION_OK events=17 answers=44444000000000000 max-sel=2 body=48 focus=4 scroll=100 chain=2b46197d sel-chain=cb830579 ops=201 text-px=1058 hash=6ca5ee4a")
+  #"(?m)^AIUEOS_GUEST_BROWSER_SELECTION_OK events=17 answers=44444000000000000 max-sel=2 body=48 focus=4 scroll=100 chain=2b46197d sel-chain=cb830579 ops=209 text-px=1058 hash=6ca5ee4a")
 
 (def ^:private clipboard-frame-numbers (set (map str (range 1 23))))
 
@@ -1231,7 +1281,7 @@
   (let [s (or serial "")
         go (re-find #"(?m)^AIUEOS_GUEST_BROWSER_CLIPBOARD_GO events=22" s)
         frames (set (map second (re-seq #"(?m)^AIUEOS_GUEST_BROWSER_CLIPBOARD_FRAME n=(\d+) " s)))
-        ok (re-find #"(?m)^AIUEOS_GUEST_BROWSER_CLIPBOARD_OK events=22 requests=4 admitted=3 refused=1 copied=3 pasted=3,3 clip=3 body=51 focus=4 chain=9098b95f sel-chain=356612c5 ops=202 text-px=1080 hash=76577905" s)]
+        ok (re-find #"(?m)^AIUEOS_GUEST_BROWSER_CLIPBOARD_OK events=22 requests=4 admitted=3 refused=1 copied=3 pasted=3,3 clip=3 body=51 focus=4 chain=9098b95f sel-chain=356612c5 ops=210 text-px=1080 hash=76577905" s)]
     (cond
       qemu-unmeasured? {:green? false :exit 3 :reason :unmeasured :leftover [:unmeasured]}
       (not (re-find selection-ok-re s))
@@ -1268,7 +1318,7 @@
 ;; exit 3: the display was not measured, which is not a pass.
 
 (def ^:private clipboard-ok-re
-  #"(?m)^AIUEOS_GUEST_BROWSER_CLIPBOARD_OK events=22 requests=4 admitted=3 refused=1 copied=3 pasted=3,3 clip=3 body=51 focus=4 chain=9098b95f sel-chain=356612c5 ops=202 text-px=1080 hash=76577905")
+  #"(?m)^AIUEOS_GUEST_BROWSER_CLIPBOARD_OK events=22 requests=4 admitted=3 refused=1 copied=3 pasted=3,3 clip=3 body=51 focus=4 chain=9098b95f sel-chain=356612c5 ops=210 text-px=1080 hash=76577905")
 
 (def damage-rects
   "The frame model's damage for the stage's five frames (x,y,w,h; 0,0,0,0 is
@@ -1297,7 +1347,7 @@
         rects (vec (map second (re-seq #"(?m)^AIUEOS_GUEST_BROWSER_DAMAGE_FRAME n=\d+ .* damage=(\d+,\d+,\d+,\d+) " s)))
         fulls (set (map second (re-seq #"(?m)^AIUEOS_GUEST_BROWSER_DAMAGE_FULL n=(\d+) shown=whole" s)))
         run (re-find #"(?m)^AIUEOS_GUEST_BROWSER_DAMAGE_RUN shows=\d+ partial=\d+ empty=\d+ whole=\d+ refused=0 " s)
-        ok (re-find #"(?m)^AIUEOS_GUEST_BROWSER_DAMAGE_OK events=5 partial=2 empty=3 bytes=1870144 whole-bytes=20480000 focus=1 chain=6653b143 ops=203 text-px=2330 hash=5581e21a" s)
+        ok (re-find #"(?m)^AIUEOS_GUEST_BROWSER_DAMAGE_OK events=5 partial=2 empty=3 bytes=1870144 whole-bytes=20480000 focus=1 chain=6653b143 ops=211 text-px=2330 hash=5581e21a" s)
         shots (when ok (damage-shots-verdict damage-shots))]
     (cond
       qemu-unmeasured? {:green? false :exit 3 :reason :unmeasured :leftover [:unmeasured]}
@@ -1469,7 +1519,10 @@
                                        "AIUEOS_QEMU_TIMEOUT" "4500"}
     ;; ADR-0250: the tablet's double presses come after the keyboard frames.
     "guest-browser-window-maximize" {"AIUEOS_GUEST_BROWSER" "1"
-                                     "AIUEOS_QEMU_TIMEOUT" "5400"}
+                                     "AIUEOS_QEMU_TIMEOUT" "6000"}
+    ;; ADR-0251: the control press and F11 come after the double presses.
+    "guest-browser-maximize-control" {"AIUEOS_GUEST_BROWSER" "1"
+                                      "AIUEOS_QEMU_TIMEOUT" "6000"}
     "guest-scanout-two" {"AIUEOS_GUEST_SCANOUT_TWO" "1"
                          "AIUEOS_QEMU_TIMEOUT" "90"}
     nil))
@@ -1508,6 +1561,7 @@
     "guest-browser-title-active" (guest-browser-title-active-result opts)
     "guest-browser-hover" (guest-browser-hover-result opts)
     "guest-browser-window-maximize" (guest-browser-window-maximize-result opts)
+    "guest-browser-maximize-control" (guest-browser-maximize-control-result opts)
     "guest-browser-focus-ring" (guest-browser-focus-ring-result opts)
     "guest-browser-keyboard-activate" (guest-browser-keyboard-activate-result opts)
     "guest-browser-high-contrast" (guest-browser-high-contrast-result opts)
@@ -1547,6 +1601,7 @@
     "guest-browser-title-active" "AIUEOS_GUEST_BROWSER_FOCUS_TITLE"
     "guest-browser-hover" "AIUEOS_GUEST_BROWSER_HOT"
     "guest-browser-window-maximize" "AIUEOS_GUEST_BROWSER_MAX"
+    "guest-browser-maximize-control" "AIUEOS_GUEST_BROWSER_MAX"
     "guest-browser-focus-ring" "AIUEOS_GUEST_BROWSER_KEY"
     "guest-browser-keyboard-activate" "AIUEOS_GUEST_BROWSER_KEY"
     "guest-browser-high-contrast" "AIUEOS_GUEST_BROWSER_HC"
@@ -1586,6 +1641,7 @@
     "guest-browser-title-active" "AIUEOS_COMPOSITOR_GUEST_BROWSER_TITLE_ACTIVE_OK"
     "guest-browser-hover" "AIUEOS_COMPOSITOR_GUEST_BROWSER_HOVER_OK"
     "guest-browser-window-maximize" "AIUEOS_COMPOSITOR_GUEST_BROWSER_WINDOW_MAXIMIZE_OK"
+    "guest-browser-maximize-control" "AIUEOS_COMPOSITOR_GUEST_BROWSER_MAXIMIZE_CONTROL_OK"
     "guest-browser-focus-ring" "AIUEOS_COMPOSITOR_GUEST_BROWSER_FOCUS_RING_OK"
     "guest-browser-keyboard-activate" "AIUEOS_COMPOSITOR_GUEST_BROWSER_KEYBOARD_ACTIVATE_OK"
     "guest-browser-high-contrast" "AIUEOS_COMPOSITOR_GUEST_BROWSER_HIGH_CONTRAST_OK"

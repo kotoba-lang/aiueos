@@ -342,10 +342,10 @@
   (str loop-ok-line caret-frames caret-ok))
 
 (def ^:private launch-frames
-  (apply str (for [n (range 1 9)] (str "AIUEOS_GUEST_BROWSER_LAUNCH_FRAME n=" n " src=4 at=820,186 answer=0 windows=2 focus=3 ops=104 text-px=776 hash=98b595bd\r\n"))))
+  (apply str (for [n (range 1 9)] (str "AIUEOS_GUEST_BROWSER_LAUNCH_FRAME n=" n " src=4 at=820,186 answer=0 windows=2 focus=3 ops=108 text-px=776 hash=98b595bd\r\n"))))
 
 (def ^:private launch-ok
-  "AIUEOS_GUEST_BROWSER_LAUNCH_OK events=8 answers=30203030 windows=2 stack=1,3 focus=3 chain=2845aee9 ops=104 text-px=776 hash=98b595bd\r\n")
+  "AIUEOS_GUEST_BROWSER_LAUNCH_OK events=8 answers=30203030 windows=2 stack=1,3 focus=3 chain=2845aee9 ops=108 text-px=776 hash=98b595bd\r\n")
 
 (deftest guest-browser-launch-classifier
   (testing "eight tablet batches, a frame after each, the oracle's answers and the model's chain: green"
@@ -365,7 +365,7 @@
   (testing "a close that did not move the focus (answers 30303030) is not green"
     (is (not (:green? (guest/classify "guest-browser-launch"
                                       {:serial (str caret-ok-line launch-frames
-                                                    "AIUEOS_GUEST_BROWSER_LAUNCH_OK events=8 answers=30303030 windows=2 stack=1,3 focus=3 chain=2845aee9 ops=104 text-px=776 hash=98b595bd\r\n")})))))
+                                                    "AIUEOS_GUEST_BROWSER_LAUNCH_OK events=8 answers=30303030 windows=2 stack=1,3 focus=3 chain=2845aee9 ops=108 text-px=776 hash=98b595bd\r\n")})))))
   (testing "named reds"
     (doseq [[line reason] [["AIUEOS_GUEST_BROWSER_LAUNCH leftover=events-missing events=3 frames=3\r\n" :events-missing]
                            ["AIUEOS_GUEST_BROWSER_LAUNCH leftover=census-miss off=2 frames=8 chain=0badf00d windows=2 stack=1,3 focus=3\r\n" :census-miss]
@@ -380,11 +380,11 @@
 
 (def ^:private dict-lines
   (str "AIUEOS_GUEST_BROWSER_DICT_GO keys=5 dictionary-bytes=189892\r\n"
-       "AIUEOS_GUEST_BROWSER_DICT_SHOWN keys=5 converting=1 record=44512 preedit=1 cp=23665 ops=106 text-px=834 hash=e85b42b2\r\n"
+       "AIUEOS_GUEST_BROWSER_DICT_SHOWN keys=5 converting=1 record=44512 preedit=1 cp=23665 ops=110 text-px=834 hash=e85b42b2\r\n"
        "AIUEOS_GUEST_BROWSER_DICT_NEXT keys=11\r\n"))
 
 (def ^:private dict-ok
-  "AIUEOS_GUEST_BROWSER_DICT_OK keys=16 answers=0000000010000001 record=44512 committed=23665,20767 shown-ops=87 shown-px=834 shown-hash=e85b42b2 ops=106 text-px=915 hash=eaa427b3\r\n")
+  "AIUEOS_GUEST_BROWSER_DICT_OK keys=16 answers=0000000010000001 record=44512 committed=23665,20767 shown-ops=87 shown-px=834 shown-hash=e85b42b2 ops=110 text-px=915 hash=eaa427b3\r\n")
 
 (deftest guest-browser-dictionary-classifier
   (testing "やま converts on its record, 山 and 償 committed, the model's censuses: green"
@@ -407,7 +407,7 @@
            (:reason (guest/classify "guest-browser-dictionary"
                                     {:serial (str launch-ok-line
                                                   "AIUEOS_GUEST_BROWSER_DICT_GO keys=5 dictionary-bytes=0\r\n"
-                                                  "AIUEOS_GUEST_BROWSER_DICT_SHOWN keys=5 converting=0 record=0 preedit=0 cp=0 ops=104 text-px=776 hash=98b595bd\r\n"
+                                                  "AIUEOS_GUEST_BROWSER_DICT_SHOWN keys=5 converting=0 record=0 preedit=0 cp=0 ops=108 text-px=776 hash=98b595bd\r\n"
                                                   dict-ok)})))))
   (testing "named reds"
     (doseq [[line reason] [["AIUEOS_GUEST_BROWSER_DICT leftover=keys-missing keys=5\r\n" :keys-missing]
@@ -423,14 +423,14 @@
 
 (def ^:private cursor-lines
   (str "AIUEOS_GUEST_BROWSER_CURSOR_GO events=5 before=0\r\n"
-       "AIUEOS_GUEST_BROWSER_CURSOR_FRAME n=1 src=3 at=400,300 answer=0 ops=127 text-px=948 hash=bc7b9ebc tip=111111 fill=ffffff\r\n"
-       "AIUEOS_GUEST_BROWSER_CURSOR_FRAME n=2 src=3 at=700,450 answer=0 ops=127 text-px=948 hash=0baecac3 tip=111111 fill=ffffff\r\n"
-       "AIUEOS_GUEST_BROWSER_CURSOR_FRAME n=3 src=3 at=1276,796 answer=0 ops=112 text-px=922 hash=531100a2 tip=111111 fill=ffffff\r\n"
-       "AIUEOS_GUEST_BROWSER_CURSOR_FRAME n=4 src=1 at=1000,600 answer=0 ops=127 text-px=948 hash=3e8be657 tip=111111 fill=ffffff\r\n"
-       "AIUEOS_GUEST_BROWSER_CURSOR_FRAME n=5 src=4 at=1000,600 answer=0 ops=127 text-px=948 hash=3e8be657 tip=111111 fill=ffffff\r\n"))
+       "AIUEOS_GUEST_BROWSER_CURSOR_FRAME n=1 src=3 at=400,300 answer=0 ops=131 text-px=948 hash=bc7b9ebc tip=111111 fill=ffffff\r\n"
+       "AIUEOS_GUEST_BROWSER_CURSOR_FRAME n=2 src=3 at=700,450 answer=0 ops=131 text-px=948 hash=0baecac3 tip=111111 fill=ffffff\r\n"
+       "AIUEOS_GUEST_BROWSER_CURSOR_FRAME n=3 src=3 at=1276,796 answer=0 ops=116 text-px=922 hash=531100a2 tip=111111 fill=ffffff\r\n"
+       "AIUEOS_GUEST_BROWSER_CURSOR_FRAME n=4 src=1 at=1000,600 answer=0 ops=131 text-px=948 hash=3e8be657 tip=111111 fill=ffffff\r\n"
+       "AIUEOS_GUEST_BROWSER_CURSOR_FRAME n=5 src=4 at=1000,600 answer=0 ops=131 text-px=948 hash=3e8be657 tip=111111 fill=ffffff\r\n"))
 
 (def ^:private cursor-ok
-  "AIUEOS_GUEST_BROWSER_CURSOR_OK events=5 answers=00000 before=0 at=1000,600 tip=111111 fill=ffffff chain=f4bb42d8 ops=127 text-px=948 hash=3e8be657\r\n")
+  "AIUEOS_GUEST_BROWSER_CURSOR_OK events=5 answers=00000 before=0 at=1000,600 tip=111111 fill=ffffff chain=f4bb42d8 ops=131 text-px=948 hash=3e8be657\r\n")
 
 (deftest guest-browser-cursor-classifier
   (testing "five frames, each ending with the arrow at the pointer, the model's censuses: green"
@@ -469,21 +469,21 @@
 (def ^:private focus-lines
   (str
        "AIUEOS_GUEST_BROWSER_FOCUS_GO events=12\r\n"
-       "AIUEOS_GUEST_BROWSER_FOCUS_FRAME n=1 src=1 key=0 key-answer=0 answer=2 focus=2 stack=132 ops=154 text-px=1082 hash=e90ed2bc\r\n"
-       "AIUEOS_GUEST_BROWSER_FOCUS_FRAME n=2 src=4 key=0 key-answer=0 answer=0 focus=2 stack=132 ops=154 text-px=1082 hash=e90ed2bc\r\n"
-       "AIUEOS_GUEST_BROWSER_FOCUS_FRAME n=3 src=0 key=225 key-answer=0 answer=0 focus=2 stack=132 ops=154 text-px=1082 hash=e90ed2bc\r\n"
-       "AIUEOS_GUEST_BROWSER_FOCUS_FRAME n=4 src=0 key=61 key-answer=257 answer=1 focus=1 stack=321 ops=154 text-px=2290 hash=47120e77\r\n"
-       "AIUEOS_GUEST_BROWSER_FOCUS_FRAME n=5 src=0 key=60 key-answer=0 answer=0 focus=1 stack=321 ops=154 text-px=2290 hash=47120e77\r\n"
-       "AIUEOS_GUEST_BROWSER_FOCUS_FRAME n=6 src=0 key=61 key-answer=259 answer=3 focus=3 stack=213 ops=154 text-px=946 hash=c461a68f\r\n"
-       "AIUEOS_GUEST_BROWSER_FOCUS_FRAME n=7 src=0 key=60 key-answer=0 answer=0 focus=3 stack=213 ops=154 text-px=946 hash=c461a68f\r\n"
-       "AIUEOS_GUEST_BROWSER_FOCUS_FRAME n=8 src=0 key=61 key-answer=258 answer=2 focus=2 stack=132 ops=154 text-px=1082 hash=e90ed2bc\r\n"
-       "AIUEOS_GUEST_BROWSER_FOCUS_FRAME n=9 src=0 key=60 key-answer=0 answer=0 focus=2 stack=132 ops=154 text-px=1082 hash=e90ed2bc\r\n"
-       "AIUEOS_GUEST_BROWSER_FOCUS_FRAME n=10 src=0 key=224 key-answer=0 answer=0 focus=2 stack=132 ops=154 text-px=1082 hash=e90ed2bc\r\n"
-       "AIUEOS_GUEST_BROWSER_FOCUS_FRAME n=11 src=0 key=61 key-answer=0 answer=0 focus=2 stack=132 ops=154 text-px=1082 hash=e90ed2bc\r\n"
-       "AIUEOS_GUEST_BROWSER_FOCUS_FRAME n=12 src=0 key=60 key-answer=0 answer=0 focus=2 stack=132 ops=154 text-px=1082 hash=e90ed2bc\r\n"))
+       "AIUEOS_GUEST_BROWSER_FOCUS_FRAME n=1 src=1 key=0 key-answer=0 answer=2 focus=2 stack=132 ops=160 text-px=1082 hash=e90ed2bc\r\n"
+       "AIUEOS_GUEST_BROWSER_FOCUS_FRAME n=2 src=4 key=0 key-answer=0 answer=0 focus=2 stack=132 ops=160 text-px=1082 hash=e90ed2bc\r\n"
+       "AIUEOS_GUEST_BROWSER_FOCUS_FRAME n=3 src=0 key=225 key-answer=0 answer=0 focus=2 stack=132 ops=160 text-px=1082 hash=e90ed2bc\r\n"
+       "AIUEOS_GUEST_BROWSER_FOCUS_FRAME n=4 src=0 key=61 key-answer=257 answer=1 focus=1 stack=321 ops=160 text-px=2290 hash=47120e77\r\n"
+       "AIUEOS_GUEST_BROWSER_FOCUS_FRAME n=5 src=0 key=60 key-answer=0 answer=0 focus=1 stack=321 ops=160 text-px=2290 hash=47120e77\r\n"
+       "AIUEOS_GUEST_BROWSER_FOCUS_FRAME n=6 src=0 key=61 key-answer=259 answer=3 focus=3 stack=213 ops=160 text-px=946 hash=c461a68f\r\n"
+       "AIUEOS_GUEST_BROWSER_FOCUS_FRAME n=7 src=0 key=60 key-answer=0 answer=0 focus=3 stack=213 ops=160 text-px=946 hash=c461a68f\r\n"
+       "AIUEOS_GUEST_BROWSER_FOCUS_FRAME n=8 src=0 key=61 key-answer=258 answer=2 focus=2 stack=132 ops=160 text-px=1082 hash=e90ed2bc\r\n"
+       "AIUEOS_GUEST_BROWSER_FOCUS_FRAME n=9 src=0 key=60 key-answer=0 answer=0 focus=2 stack=132 ops=160 text-px=1082 hash=e90ed2bc\r\n"
+       "AIUEOS_GUEST_BROWSER_FOCUS_FRAME n=10 src=0 key=224 key-answer=0 answer=0 focus=2 stack=132 ops=160 text-px=1082 hash=e90ed2bc\r\n"
+       "AIUEOS_GUEST_BROWSER_FOCUS_FRAME n=11 src=0 key=61 key-answer=0 answer=0 focus=2 stack=132 ops=160 text-px=1082 hash=e90ed2bc\r\n"
+       "AIUEOS_GUEST_BROWSER_FOCUS_FRAME n=12 src=0 key=60 key-answer=0 answer=0 focus=2 stack=132 ops=160 text-px=1082 hash=e90ed2bc\r\n"))
 
 (def ^:private focus-ok
-  "AIUEOS_GUEST_BROWSER_FOCUS_OK events=12 answers=200103020000 wm=3 stack=132 focus=2 bodies=unchanged chain=2254db31 ops=154 text-px=1082 hash=e90ed2bc\r\n")
+  "AIUEOS_GUEST_BROWSER_FOCUS_OK events=12 answers=200103020000 wm=3 stack=132 focus=2 bodies=unchanged chain=2254db31 ops=160 text-px=1082 hash=e90ed2bc\r\n")
 
 (def ^:private title-lines
   (apply str
@@ -559,26 +559,26 @@
 
 (def ^:private scroll-lines
   (str "AIUEOS_GUEST_BROWSER_SCROLL_GO events=17\r\n"
-       "AIUEOS_GUEST_BROWSER_SCROLL_FRAME n=1 src=1 answer=4 focus=4 scroll=0 ops=197 text-px=988 hash=16c7e9ce\r\n"
-       "AIUEOS_GUEST_BROWSER_SCROLL_FRAME n=2 src=4 answer=0 focus=4 scroll=0 ops=197 text-px=988 hash=16c7e9ce\r\n"
-       "AIUEOS_GUEST_BROWSER_SCROLL_FRAME n=3 src=6 answer=0 focus=4 scroll=0 ops=197 text-px=988 hash=16c7e9ce\r\n"
-       "AIUEOS_GUEST_BROWSER_SCROLL_FRAME n=4 src=3 answer=0 focus=4 scroll=0 ops=197 text-px=994 hash=78270fda\r\n"
-       "AIUEOS_GUEST_BROWSER_SCROLL_FRAME n=5 src=6 answer=4 focus=4 scroll=20 ops=198 text-px=1017 hash=6c0a4440\r\n"
-       "AIUEOS_GUEST_BROWSER_SCROLL_FRAME n=6 src=6 answer=4 focus=4 scroll=40 ops=199 text-px=1027 hash=b5e126eb\r\n"
-       "AIUEOS_GUEST_BROWSER_SCROLL_FRAME n=7 src=6 answer=4 focus=4 scroll=60 ops=200 text-px=1047 hash=40c08679\r\n"
-       "AIUEOS_GUEST_BROWSER_SCROLL_FRAME n=8 src=6 answer=4 focus=4 scroll=80 ops=201 text-px=1065 hash=f7ee3a0b\r\n"
-       "AIUEOS_GUEST_BROWSER_SCROLL_FRAME n=9 src=6 answer=4 focus=4 scroll=100 ops=203 text-px=1103 hash=5793612f\r\n"
-       "AIUEOS_GUEST_BROWSER_SCROLL_FRAME n=10 src=6 answer=4 focus=4 scroll=120 ops=202 text-px=1080 hash=2d9fc3f6\r\n"
-       "AIUEOS_GUEST_BROWSER_SCROLL_FRAME n=11 src=7 answer=4 focus=4 scroll=100 ops=203 text-px=1103 hash=5793612f\r\n"
-       "AIUEOS_GUEST_BROWSER_SCROLL_FRAME n=12 src=7 answer=4 focus=4 scroll=80 ops=201 text-px=1065 hash=f7ee3a0b\r\n"
-       "AIUEOS_GUEST_BROWSER_SCROLL_FRAME n=13 src=7 answer=4 focus=4 scroll=60 ops=200 text-px=1047 hash=40c08679\r\n"
-       "AIUEOS_GUEST_BROWSER_SCROLL_FRAME n=14 src=7 answer=4 focus=4 scroll=40 ops=199 text-px=1027 hash=b5e126eb\r\n"
-       "AIUEOS_GUEST_BROWSER_SCROLL_FRAME n=15 src=7 answer=4 focus=4 scroll=20 ops=198 text-px=1017 hash=6c0a4440\r\n"
-       "AIUEOS_GUEST_BROWSER_SCROLL_FRAME n=16 src=7 answer=4 focus=4 scroll=0 ops=197 text-px=994 hash=78270fda\r\n"
-       "AIUEOS_GUEST_BROWSER_SCROLL_FRAME n=17 src=7 answer=4 focus=4 scroll=0 ops=197 text-px=994 hash=78270fda\r\n"))
+       "AIUEOS_GUEST_BROWSER_SCROLL_FRAME n=1 src=1 answer=4 focus=4 scroll=0 ops=205 text-px=988 hash=16c7e9ce\r\n"
+       "AIUEOS_GUEST_BROWSER_SCROLL_FRAME n=2 src=4 answer=0 focus=4 scroll=0 ops=205 text-px=988 hash=16c7e9ce\r\n"
+       "AIUEOS_GUEST_BROWSER_SCROLL_FRAME n=3 src=6 answer=0 focus=4 scroll=0 ops=205 text-px=988 hash=16c7e9ce\r\n"
+       "AIUEOS_GUEST_BROWSER_SCROLL_FRAME n=4 src=3 answer=0 focus=4 scroll=0 ops=205 text-px=994 hash=78270fda\r\n"
+       "AIUEOS_GUEST_BROWSER_SCROLL_FRAME n=5 src=6 answer=4 focus=4 scroll=20 ops=206 text-px=1017 hash=6c0a4440\r\n"
+       "AIUEOS_GUEST_BROWSER_SCROLL_FRAME n=6 src=6 answer=4 focus=4 scroll=40 ops=207 text-px=1027 hash=b5e126eb\r\n"
+       "AIUEOS_GUEST_BROWSER_SCROLL_FRAME n=7 src=6 answer=4 focus=4 scroll=60 ops=208 text-px=1047 hash=40c08679\r\n"
+       "AIUEOS_GUEST_BROWSER_SCROLL_FRAME n=8 src=6 answer=4 focus=4 scroll=80 ops=209 text-px=1065 hash=f7ee3a0b\r\n"
+       "AIUEOS_GUEST_BROWSER_SCROLL_FRAME n=9 src=6 answer=4 focus=4 scroll=100 ops=211 text-px=1103 hash=5793612f\r\n"
+       "AIUEOS_GUEST_BROWSER_SCROLL_FRAME n=10 src=6 answer=4 focus=4 scroll=120 ops=210 text-px=1080 hash=2d9fc3f6\r\n"
+       "AIUEOS_GUEST_BROWSER_SCROLL_FRAME n=11 src=7 answer=4 focus=4 scroll=100 ops=211 text-px=1103 hash=5793612f\r\n"
+       "AIUEOS_GUEST_BROWSER_SCROLL_FRAME n=12 src=7 answer=4 focus=4 scroll=80 ops=209 text-px=1065 hash=f7ee3a0b\r\n"
+       "AIUEOS_GUEST_BROWSER_SCROLL_FRAME n=13 src=7 answer=4 focus=4 scroll=60 ops=208 text-px=1047 hash=40c08679\r\n"
+       "AIUEOS_GUEST_BROWSER_SCROLL_FRAME n=14 src=7 answer=4 focus=4 scroll=40 ops=207 text-px=1027 hash=b5e126eb\r\n"
+       "AIUEOS_GUEST_BROWSER_SCROLL_FRAME n=15 src=7 answer=4 focus=4 scroll=20 ops=206 text-px=1017 hash=6c0a4440\r\n"
+       "AIUEOS_GUEST_BROWSER_SCROLL_FRAME n=16 src=7 answer=4 focus=4 scroll=0 ops=205 text-px=994 hash=78270fda\r\n"
+       "AIUEOS_GUEST_BROWSER_SCROLL_FRAME n=17 src=7 answer=4 focus=4 scroll=0 ops=205 text-px=994 hash=78270fda\r\n"))
 
 (def ^:private scroll-ok
-  "AIUEOS_GUEST_BROWSER_SCROLL_OK events=17 answers=40004444444444444 max=120 stack=1324 focus=4 scroll=0 chain=7421f3aa ops=197 text-px=994 hash=78270fda\r\n")
+  "AIUEOS_GUEST_BROWSER_SCROLL_OK events=17 answers=40004444444444444 max=120 stack=1324 focus=4 scroll=0 chain=7421f3aa ops=205 text-px=994 hash=78270fda\r\n")
 
 (deftest guest-browser-scroll-classifier
   (testing "seventeen frames, the offset up to 120 and back to 0, the model's censuses: green"
@@ -696,26 +696,26 @@
 
 (def ^:private selection-lines
   (str "AIUEOS_GUEST_BROWSER_SELECTION_GO events=17\r\n"
-       "AIUEOS_GUEST_BROWSER_SELECTION_FRAME n=1 src=6 key=0 answer=4 scroll=20 sel=0 ops=198 text-px=1017 hash=6c0a4440 sel-px=0 sel-hash=811c9dc5\r\n"
-       "AIUEOS_GUEST_BROWSER_SELECTION_FRAME n=2 src=6 key=0 answer=4 scroll=40 sel=0 ops=199 text-px=1027 hash=b5e126eb sel-px=0 sel-hash=811c9dc5\r\n"
-       "AIUEOS_GUEST_BROWSER_SELECTION_FRAME n=3 src=6 key=0 answer=4 scroll=60 sel=0 ops=200 text-px=1047 hash=40c08679 sel-px=0 sel-hash=811c9dc5\r\n"
-       "AIUEOS_GUEST_BROWSER_SELECTION_FRAME n=4 src=6 key=0 answer=4 scroll=80 sel=0 ops=201 text-px=1065 hash=f7ee3a0b sel-px=0 sel-hash=811c9dc5\r\n"
-       "AIUEOS_GUEST_BROWSER_SELECTION_FRAME n=5 src=6 key=0 answer=4 scroll=100 sel=0 ops=203 text-px=1103 hash=5793612f sel-px=0 sel-hash=811c9dc5\r\n"
-       "AIUEOS_GUEST_BROWSER_SELECTION_FRAME n=6 src=0 key=169 answer=0 scroll=100 sel=0 ops=203 text-px=1103 hash=5793612f sel-px=0 sel-hash=811c9dc5\r\n"
-       "AIUEOS_GUEST_BROWSER_SELECTION_FRAME n=7 src=0 key=421 answer=0 scroll=100 sel=1 ops=203 text-px=1087 hash=2602913b sel-px=104 sel-hash=e4f21595\r\n"
-       "AIUEOS_GUEST_BROWSER_SELECTION_FRAME n=8 src=0 key=420 answer=0 scroll=100 sel=1 ops=203 text-px=1087 hash=2602913b sel-px=104 sel-hash=e4f21595\r\n"
-       "AIUEOS_GUEST_BROWSER_SELECTION_FRAME n=9 src=0 key=421 answer=0 scroll=100 sel=2 ops=204 text-px=1087 hash=2602913b sel-px=211 sel-hash=49ff70dc\r\n"
-       "AIUEOS_GUEST_BROWSER_SELECTION_FRAME n=10 src=0 key=420 answer=0 scroll=100 sel=2 ops=204 text-px=1087 hash=2602913b sel-px=211 sel-hash=49ff70dc\r\n"
-       "AIUEOS_GUEST_BROWSER_SELECTION_FRAME n=11 src=0 key=425 answer=0 scroll=100 sel=1 ops=203 text-px=1087 hash=2602913b sel-px=104 sel-hash=e4f21595\r\n"
-       "AIUEOS_GUEST_BROWSER_SELECTION_FRAME n=12 src=0 key=424 answer=0 scroll=100 sel=1 ops=203 text-px=1087 hash=2602913b sel-px=104 sel-hash=e4f21595\r\n"
-       "AIUEOS_GUEST_BROWSER_SELECTION_FRAME n=13 src=0 key=421 answer=0 scroll=100 sel=2 ops=204 text-px=1087 hash=2602913b sel-px=211 sel-hash=49ff70dc\r\n"
-       "AIUEOS_GUEST_BROWSER_SELECTION_FRAME n=14 src=0 key=420 answer=0 scroll=100 sel=2 ops=204 text-px=1087 hash=2602913b sel-px=211 sel-hash=49ff70dc\r\n"
-       "AIUEOS_GUEST_BROWSER_SELECTION_FRAME n=15 src=0 key=168 answer=0 scroll=100 sel=2 ops=204 text-px=1087 hash=2602913b sel-px=211 sel-hash=49ff70dc\r\n"
-       "AIUEOS_GUEST_BROWSER_SELECTION_FRAME n=16 src=0 key=57 answer=0 scroll=100 sel=0 ops=201 text-px=1058 hash=6ca5ee4a sel-px=0 sel-hash=811c9dc5\r\n"
-       "AIUEOS_GUEST_BROWSER_SELECTION_FRAME n=17 src=0 key=56 answer=0 scroll=100 sel=0 ops=201 text-px=1058 hash=6ca5ee4a sel-px=0 sel-hash=811c9dc5\r\n"))
+       "AIUEOS_GUEST_BROWSER_SELECTION_FRAME n=1 src=6 key=0 answer=4 scroll=20 sel=0 ops=206 text-px=1017 hash=6c0a4440 sel-px=0 sel-hash=811c9dc5\r\n"
+       "AIUEOS_GUEST_BROWSER_SELECTION_FRAME n=2 src=6 key=0 answer=4 scroll=40 sel=0 ops=207 text-px=1027 hash=b5e126eb sel-px=0 sel-hash=811c9dc5\r\n"
+       "AIUEOS_GUEST_BROWSER_SELECTION_FRAME n=3 src=6 key=0 answer=4 scroll=60 sel=0 ops=208 text-px=1047 hash=40c08679 sel-px=0 sel-hash=811c9dc5\r\n"
+       "AIUEOS_GUEST_BROWSER_SELECTION_FRAME n=4 src=6 key=0 answer=4 scroll=80 sel=0 ops=209 text-px=1065 hash=f7ee3a0b sel-px=0 sel-hash=811c9dc5\r\n"
+       "AIUEOS_GUEST_BROWSER_SELECTION_FRAME n=5 src=6 key=0 answer=4 scroll=100 sel=0 ops=211 text-px=1103 hash=5793612f sel-px=0 sel-hash=811c9dc5\r\n"
+       "AIUEOS_GUEST_BROWSER_SELECTION_FRAME n=6 src=0 key=169 answer=0 scroll=100 sel=0 ops=211 text-px=1103 hash=5793612f sel-px=0 sel-hash=811c9dc5\r\n"
+       "AIUEOS_GUEST_BROWSER_SELECTION_FRAME n=7 src=0 key=421 answer=0 scroll=100 sel=1 ops=211 text-px=1087 hash=2602913b sel-px=104 sel-hash=e4f21595\r\n"
+       "AIUEOS_GUEST_BROWSER_SELECTION_FRAME n=8 src=0 key=420 answer=0 scroll=100 sel=1 ops=211 text-px=1087 hash=2602913b sel-px=104 sel-hash=e4f21595\r\n"
+       "AIUEOS_GUEST_BROWSER_SELECTION_FRAME n=9 src=0 key=421 answer=0 scroll=100 sel=2 ops=212 text-px=1087 hash=2602913b sel-px=211 sel-hash=49ff70dc\r\n"
+       "AIUEOS_GUEST_BROWSER_SELECTION_FRAME n=10 src=0 key=420 answer=0 scroll=100 sel=2 ops=212 text-px=1087 hash=2602913b sel-px=211 sel-hash=49ff70dc\r\n"
+       "AIUEOS_GUEST_BROWSER_SELECTION_FRAME n=11 src=0 key=425 answer=0 scroll=100 sel=1 ops=211 text-px=1087 hash=2602913b sel-px=104 sel-hash=e4f21595\r\n"
+       "AIUEOS_GUEST_BROWSER_SELECTION_FRAME n=12 src=0 key=424 answer=0 scroll=100 sel=1 ops=211 text-px=1087 hash=2602913b sel-px=104 sel-hash=e4f21595\r\n"
+       "AIUEOS_GUEST_BROWSER_SELECTION_FRAME n=13 src=0 key=421 answer=0 scroll=100 sel=2 ops=212 text-px=1087 hash=2602913b sel-px=211 sel-hash=49ff70dc\r\n"
+       "AIUEOS_GUEST_BROWSER_SELECTION_FRAME n=14 src=0 key=420 answer=0 scroll=100 sel=2 ops=212 text-px=1087 hash=2602913b sel-px=211 sel-hash=49ff70dc\r\n"
+       "AIUEOS_GUEST_BROWSER_SELECTION_FRAME n=15 src=0 key=168 answer=0 scroll=100 sel=2 ops=212 text-px=1087 hash=2602913b sel-px=211 sel-hash=49ff70dc\r\n"
+       "AIUEOS_GUEST_BROWSER_SELECTION_FRAME n=16 src=0 key=57 answer=0 scroll=100 sel=0 ops=209 text-px=1058 hash=6ca5ee4a sel-px=0 sel-hash=811c9dc5\r\n"
+       "AIUEOS_GUEST_BROWSER_SELECTION_FRAME n=17 src=0 key=56 answer=0 scroll=100 sel=0 ops=209 text-px=1058 hash=6ca5ee4a sel-px=0 sel-hash=811c9dc5\r\n"))
 
 (def ^:private selection-ok
-  "AIUEOS_GUEST_BROWSER_SELECTION_OK events=17 answers=44444000000000000 max-sel=2 body=48 focus=4 scroll=100 chain=2b46197d sel-chain=cb830579 ops=201 text-px=1058 hash=6ca5ee4a\r\n")
+  "AIUEOS_GUEST_BROWSER_SELECTION_OK events=17 answers=44444000000000000 max-sel=2 body=48 focus=4 scroll=100 chain=2b46197d sel-chain=cb830579 ops=209 text-px=1058 hash=6ca5ee4a\r\n")
 
 (deftest guest-browser-selection-classifier
   (testing "seventeen frames, the selection up to 2 and deleted, the model's censuses: green"
@@ -768,31 +768,31 @@
 (def ^:private clipboard-lines
   (str
        "AIUEOS_GUEST_BROWSER_CLIPBOARD_GO events=22\r\n"
-       "AIUEOS_GUEST_BROWSER_CLIPBOARD_FRAME n=1 key=169 answer=0 broker=none done=99 body=48 sel=0 clip=0 ops=201 text-px=1058 hash=6ca5ee4a sel-px=0 sel-hash=811c9dc5\r\n"
-       "AIUEOS_GUEST_BROWSER_CLIPBOARD_FRAME n=2 key=421 answer=0 broker=none done=99 body=48 sel=1 clip=0 ops=200 text-px=1042 hash=a42dfe1a sel-px=0 sel-hash=811c9dc5\r\n"
-       "AIUEOS_GUEST_BROWSER_CLIPBOARD_FRAME n=3 key=420 answer=0 broker=none done=99 body=48 sel=1 clip=0 ops=200 text-px=1042 hash=a42dfe1a sel-px=0 sel-hash=811c9dc5\r\n"
-       "AIUEOS_GUEST_BROWSER_CLIPBOARD_FRAME n=4 key=421 answer=0 broker=none done=99 body=48 sel=2 clip=0 ops=201 text-px=1042 hash=a42dfe1a sel-px=106 sel-hash=e0f5b50f\r\n"
-       "AIUEOS_GUEST_BROWSER_CLIPBOARD_FRAME n=5 key=420 answer=0 broker=none done=99 body=48 sel=2 clip=0 ops=201 text-px=1042 hash=a42dfe1a sel-px=106 sel-hash=e0f5b50f\r\n"
-       "AIUEOS_GUEST_BROWSER_CLIPBOARD_FRAME n=6 key=421 answer=0 broker=none done=99 body=48 sel=3 clip=0 ops=202 text-px=1042 hash=a42dfe1a sel-px=218 sel-hash=c1aab2b2\r\n"
-       "AIUEOS_GUEST_BROWSER_CLIPBOARD_FRAME n=7 key=420 answer=0 broker=none done=99 body=48 sel=3 clip=0 ops=202 text-px=1042 hash=a42dfe1a sel-px=218 sel-hash=c1aab2b2\r\n"
-       "AIUEOS_GUEST_BROWSER_CLIPBOARD_FRAME n=8 key=168 answer=0 broker=none done=99 body=48 sel=3 clip=0 ops=202 text-px=1042 hash=a42dfe1a sel-px=218 sel-hash=c1aab2b2\r\n"
-       "AIUEOS_GUEST_BROWSER_CLIPBOARD_FRAME n=9 key=117 answer=0 broker=none done=99 body=48 sel=3 clip=0 ops=202 text-px=1042 hash=a42dfe1a sel-px=218 sel-hash=c1aab2b2\r\n"
-       "AIUEOS_GUEST_BROWSER_CLIPBOARD_FRAME n=10 key=185 answer=512 broker=admit done=3 body=48 sel=3 clip=3 ops=202 text-px=1042 hash=a42dfe1a sel-px=218 sel-hash=c1aab2b2\r\n"
-       "AIUEOS_GUEST_BROWSER_CLIPBOARD_FRAME n=11 key=184 answer=0 broker=none done=99 body=48 sel=3 clip=3 ops=202 text-px=1042 hash=a42dfe1a sel-px=218 sel-hash=c1aab2b2\r\n"
-       "AIUEOS_GUEST_BROWSER_CLIPBOARD_FRAME n=12 key=116 answer=0 broker=none done=99 body=48 sel=3 clip=3 ops=202 text-px=1042 hash=a42dfe1a sel-px=218 sel-hash=c1aab2b2\r\n"
-       "AIUEOS_GUEST_BROWSER_CLIPBOARD_FRAME n=13 key=57 answer=0 broker=none done=99 body=45 sel=0 clip=3 ops=199 text-px=1020 hash=3f2fb2c5 sel-px=0 sel-hash=811c9dc5\r\n"
-       "AIUEOS_GUEST_BROWSER_CLIPBOARD_FRAME n=14 key=56 answer=0 broker=none done=99 body=45 sel=0 clip=3 ops=199 text-px=1020 hash=3f2fb2c5 sel-px=0 sel-hash=811c9dc5\r\n"
-       "AIUEOS_GUEST_BROWSER_CLIPBOARD_FRAME n=15 key=117 answer=0 broker=none done=99 body=45 sel=0 clip=3 ops=199 text-px=1020 hash=3f2fb2c5 sel-px=0 sel-hash=811c9dc5\r\n"
-       "AIUEOS_GUEST_BROWSER_CLIPBOARD_FRAME n=16 key=189 answer=513 broker=admit done=3 body=48 sel=0 clip=3 ops=201 text-px=1058 hash=6ca5ee4a sel-px=0 sel-hash=811c9dc5\r\n"
-       "AIUEOS_GUEST_BROWSER_CLIPBOARD_FRAME n=17 key=188 answer=0 broker=none done=99 body=48 sel=0 clip=3 ops=201 text-px=1058 hash=6ca5ee4a sel-px=0 sel-hash=811c9dc5\r\n"
-       "AIUEOS_GUEST_BROWSER_CLIPBOARD_FRAME n=18 key=189 answer=513 broker=admit done=3 body=51 sel=0 clip=3 ops=202 text-px=1080 hash=76577905 sel-px=0 sel-hash=811c9dc5\r\n"
-       "AIUEOS_GUEST_BROWSER_CLIPBOARD_FRAME n=19 key=188 answer=0 broker=none done=99 body=51 sel=0 clip=3 ops=202 text-px=1080 hash=76577905 sel-px=0 sel-hash=811c9dc5\r\n"
-       "AIUEOS_GUEST_BROWSER_CLIPBOARD_FRAME n=20 key=189 answer=513 broker=refuse done=99 body=51 sel=0 clip=3 ops=202 text-px=1080 hash=76577905 sel-px=0 sel-hash=811c9dc5\r\n"
-       "AIUEOS_GUEST_BROWSER_CLIPBOARD_FRAME n=21 key=188 answer=0 broker=none done=99 body=51 sel=0 clip=3 ops=202 text-px=1080 hash=76577905 sel-px=0 sel-hash=811c9dc5\r\n"
-       "AIUEOS_GUEST_BROWSER_CLIPBOARD_FRAME n=22 key=116 answer=0 broker=none done=99 body=51 sel=0 clip=3 ops=202 text-px=1080 hash=76577905 sel-px=0 sel-hash=811c9dc5\r\n"))
+       "AIUEOS_GUEST_BROWSER_CLIPBOARD_FRAME n=1 key=169 answer=0 broker=none done=99 body=48 sel=0 clip=0 ops=209 text-px=1058 hash=6ca5ee4a sel-px=0 sel-hash=811c9dc5\r\n"
+       "AIUEOS_GUEST_BROWSER_CLIPBOARD_FRAME n=2 key=421 answer=0 broker=none done=99 body=48 sel=1 clip=0 ops=208 text-px=1042 hash=a42dfe1a sel-px=0 sel-hash=811c9dc5\r\n"
+       "AIUEOS_GUEST_BROWSER_CLIPBOARD_FRAME n=3 key=420 answer=0 broker=none done=99 body=48 sel=1 clip=0 ops=208 text-px=1042 hash=a42dfe1a sel-px=0 sel-hash=811c9dc5\r\n"
+       "AIUEOS_GUEST_BROWSER_CLIPBOARD_FRAME n=4 key=421 answer=0 broker=none done=99 body=48 sel=2 clip=0 ops=209 text-px=1042 hash=a42dfe1a sel-px=106 sel-hash=e0f5b50f\r\n"
+       "AIUEOS_GUEST_BROWSER_CLIPBOARD_FRAME n=5 key=420 answer=0 broker=none done=99 body=48 sel=2 clip=0 ops=209 text-px=1042 hash=a42dfe1a sel-px=106 sel-hash=e0f5b50f\r\n"
+       "AIUEOS_GUEST_BROWSER_CLIPBOARD_FRAME n=6 key=421 answer=0 broker=none done=99 body=48 sel=3 clip=0 ops=210 text-px=1042 hash=a42dfe1a sel-px=218 sel-hash=c1aab2b2\r\n"
+       "AIUEOS_GUEST_BROWSER_CLIPBOARD_FRAME n=7 key=420 answer=0 broker=none done=99 body=48 sel=3 clip=0 ops=210 text-px=1042 hash=a42dfe1a sel-px=218 sel-hash=c1aab2b2\r\n"
+       "AIUEOS_GUEST_BROWSER_CLIPBOARD_FRAME n=8 key=168 answer=0 broker=none done=99 body=48 sel=3 clip=0 ops=210 text-px=1042 hash=a42dfe1a sel-px=218 sel-hash=c1aab2b2\r\n"
+       "AIUEOS_GUEST_BROWSER_CLIPBOARD_FRAME n=9 key=117 answer=0 broker=none done=99 body=48 sel=3 clip=0 ops=210 text-px=1042 hash=a42dfe1a sel-px=218 sel-hash=c1aab2b2\r\n"
+       "AIUEOS_GUEST_BROWSER_CLIPBOARD_FRAME n=10 key=185 answer=512 broker=admit done=3 body=48 sel=3 clip=3 ops=210 text-px=1042 hash=a42dfe1a sel-px=218 sel-hash=c1aab2b2\r\n"
+       "AIUEOS_GUEST_BROWSER_CLIPBOARD_FRAME n=11 key=184 answer=0 broker=none done=99 body=48 sel=3 clip=3 ops=210 text-px=1042 hash=a42dfe1a sel-px=218 sel-hash=c1aab2b2\r\n"
+       "AIUEOS_GUEST_BROWSER_CLIPBOARD_FRAME n=12 key=116 answer=0 broker=none done=99 body=48 sel=3 clip=3 ops=210 text-px=1042 hash=a42dfe1a sel-px=218 sel-hash=c1aab2b2\r\n"
+       "AIUEOS_GUEST_BROWSER_CLIPBOARD_FRAME n=13 key=57 answer=0 broker=none done=99 body=45 sel=0 clip=3 ops=207 text-px=1020 hash=3f2fb2c5 sel-px=0 sel-hash=811c9dc5\r\n"
+       "AIUEOS_GUEST_BROWSER_CLIPBOARD_FRAME n=14 key=56 answer=0 broker=none done=99 body=45 sel=0 clip=3 ops=207 text-px=1020 hash=3f2fb2c5 sel-px=0 sel-hash=811c9dc5\r\n"
+       "AIUEOS_GUEST_BROWSER_CLIPBOARD_FRAME n=15 key=117 answer=0 broker=none done=99 body=45 sel=0 clip=3 ops=207 text-px=1020 hash=3f2fb2c5 sel-px=0 sel-hash=811c9dc5\r\n"
+       "AIUEOS_GUEST_BROWSER_CLIPBOARD_FRAME n=16 key=189 answer=513 broker=admit done=3 body=48 sel=0 clip=3 ops=209 text-px=1058 hash=6ca5ee4a sel-px=0 sel-hash=811c9dc5\r\n"
+       "AIUEOS_GUEST_BROWSER_CLIPBOARD_FRAME n=17 key=188 answer=0 broker=none done=99 body=48 sel=0 clip=3 ops=209 text-px=1058 hash=6ca5ee4a sel-px=0 sel-hash=811c9dc5\r\n"
+       "AIUEOS_GUEST_BROWSER_CLIPBOARD_FRAME n=18 key=189 answer=513 broker=admit done=3 body=51 sel=0 clip=3 ops=210 text-px=1080 hash=76577905 sel-px=0 sel-hash=811c9dc5\r\n"
+       "AIUEOS_GUEST_BROWSER_CLIPBOARD_FRAME n=19 key=188 answer=0 broker=none done=99 body=51 sel=0 clip=3 ops=210 text-px=1080 hash=76577905 sel-px=0 sel-hash=811c9dc5\r\n"
+       "AIUEOS_GUEST_BROWSER_CLIPBOARD_FRAME n=20 key=189 answer=513 broker=refuse done=99 body=51 sel=0 clip=3 ops=210 text-px=1080 hash=76577905 sel-px=0 sel-hash=811c9dc5\r\n"
+       "AIUEOS_GUEST_BROWSER_CLIPBOARD_FRAME n=21 key=188 answer=0 broker=none done=99 body=51 sel=0 clip=3 ops=210 text-px=1080 hash=76577905 sel-px=0 sel-hash=811c9dc5\r\n"
+       "AIUEOS_GUEST_BROWSER_CLIPBOARD_FRAME n=22 key=116 answer=0 broker=none done=99 body=51 sel=0 clip=3 ops=210 text-px=1080 hash=76577905 sel-px=0 sel-hash=811c9dc5\r\n"))
 
 (def ^:private clipboard-ok
-  "AIUEOS_GUEST_BROWSER_CLIPBOARD_OK events=22 requests=4 admitted=3 refused=1 copied=3 pasted=3,3 clip=3 body=51 focus=4 chain=9098b95f sel-chain=356612c5 ops=202 text-px=1080 hash=76577905\r\n")
+  "AIUEOS_GUEST_BROWSER_CLIPBOARD_OK events=22 requests=4 admitted=3 refused=1 copied=3 pasted=3,3 clip=3 body=51 focus=4 chain=9098b95f sel-chain=356612c5 ops=210 text-px=1080 hash=76577905\r\n")
 
 (deftest guest-browser-clipboard-classifier
   (testing "twenty-two frames, four requests, three admitted, one refused: green"
@@ -847,20 +847,20 @@
 (def ^:private damage-lines
   (str
        "AIUEOS_GUEST_BROWSER_DAMAGE_GO events=5\r\n"
-       "AIUEOS_GUEST_BROWSER_DAMAGE_FRAME n=1 src=3 key=0 answer=0 focus=4 ops=202 text-px=1080 hash=362c4193 damage=300,300,32,22 bytes=2816\r\n"
+       "AIUEOS_GUEST_BROWSER_DAMAGE_FRAME n=1 src=3 key=0 answer=0 focus=4 ops=210 text-px=1080 hash=362c4193 damage=300,300,32,22 bytes=2816\r\n"
        "AIUEOS_GUEST_BROWSER_DAMAGE_FULL n=1 shown=whole\r\n"
-       "AIUEOS_GUEST_BROWSER_DAMAGE_FRAME n=2 src=0 key=225 answer=0 focus=4 ops=202 text-px=1080 hash=362c4193 damage=0,0,0,0 bytes=0\r\n"
+       "AIUEOS_GUEST_BROWSER_DAMAGE_FRAME n=2 src=0 key=225 answer=0 focus=4 ops=210 text-px=1080 hash=362c4193 damage=0,0,0,0 bytes=0\r\n"
        "AIUEOS_GUEST_BROWSER_DAMAGE_FULL n=2 shown=whole\r\n"
-       "AIUEOS_GUEST_BROWSER_DAMAGE_FRAME n=3 src=0 key=61 answer=1 focus=1 ops=203 text-px=2330 hash=5581e21a damage=80,80,652,716 bytes=1867328\r\n"
+       "AIUEOS_GUEST_BROWSER_DAMAGE_FRAME n=3 src=0 key=61 answer=1 focus=1 ops=211 text-px=2330 hash=5581e21a damage=80,80,652,716 bytes=1867328\r\n"
        "AIUEOS_GUEST_BROWSER_DAMAGE_FULL n=3 shown=whole\r\n"
-       "AIUEOS_GUEST_BROWSER_DAMAGE_FRAME n=4 src=0 key=60 answer=0 focus=1 ops=203 text-px=2330 hash=5581e21a damage=0,0,0,0 bytes=0\r\n"
+       "AIUEOS_GUEST_BROWSER_DAMAGE_FRAME n=4 src=0 key=60 answer=0 focus=1 ops=211 text-px=2330 hash=5581e21a damage=0,0,0,0 bytes=0\r\n"
        "AIUEOS_GUEST_BROWSER_DAMAGE_FULL n=4 shown=whole\r\n"
-       "AIUEOS_GUEST_BROWSER_DAMAGE_FRAME n=5 src=0 key=224 answer=0 focus=1 ops=203 text-px=2330 hash=5581e21a damage=0,0,0,0 bytes=0\r\n"
+       "AIUEOS_GUEST_BROWSER_DAMAGE_FRAME n=5 src=0 key=224 answer=0 focus=1 ops=211 text-px=2330 hash=5581e21a damage=0,0,0,0 bytes=0\r\n"
        "AIUEOS_GUEST_BROWSER_DAMAGE_FULL n=5 shown=whole\r\n"
        "AIUEOS_GUEST_BROWSER_DAMAGE_RUN shows=110 partial=66 empty=43 whole=1 refused=0 bytes=34076936 whole-bytes=450560000\r\n"))
 
 (def ^:private damage-ok
-  "AIUEOS_GUEST_BROWSER_DAMAGE_OK events=5 partial=2 empty=3 bytes=1870144 whole-bytes=20480000 focus=1 chain=6653b143 ops=203 text-px=2330 hash=5581e21a\r\n")
+  "AIUEOS_GUEST_BROWSER_DAMAGE_OK events=5 partial=2 empty=3 bytes=1870144 whole-bytes=20480000 focus=1 chain=6653b143 ops=211 text-px=2330 hash=5581e21a\r\n")
 
 (defn- shots
   "Five frames' screendumps: damage digest = whole-screen digest unless
@@ -959,10 +959,10 @@
       (is (= 3 (:exit (guest/classify "guest-browser-hover" {:serial base :qemu-unmeasured? true})))))))
 
 (def ^:private hc-lines
-  (str "AIUEOS_GUEST_BROWSER_HC n=1 mode=1 bg=00ffffff ink=00000000 bars=00ffffff,00d0d0d0,00ffd400 ops=203 text-px=2330 hash=5581e21a\r\n"
-       "AIUEOS_GUEST_BROWSER_HC n=2 mode=1 bg=00ffffff ink=00000000 bars=00ffffff,00d0d0d0,00ffd400 ops=203 text-px=2330 hash=5581e21a\r\n"
-       "AIUEOS_GUEST_BROWSER_HC n=3 mode=0 bg=00f1f1f2 ink=00333333 bars=00f1f1f2,00e6e6e6,00cccccc ops=203 text-px=2330 hash=5581e21a\r\n"
-       "AIUEOS_GUEST_BROWSER_HC n=4 mode=0 bg=00f1f1f2 ink=00333333 bars=00f1f1f2,00e6e6e6,00cccccc ops=203 text-px=2330 hash=5581e21a\r\n"))
+  (str "AIUEOS_GUEST_BROWSER_HC n=1 mode=1 bg=00ffffff ink=00000000 bars=00ffffff,00d0d0d0,00ffd400 ops=211 text-px=2330 hash=5581e21a\r\n"
+       "AIUEOS_GUEST_BROWSER_HC n=2 mode=1 bg=00ffffff ink=00000000 bars=00ffffff,00d0d0d0,00ffd400 ops=211 text-px=2330 hash=5581e21a\r\n"
+       "AIUEOS_GUEST_BROWSER_HC n=3 mode=0 bg=00f1f1f2 ink=00333333 bars=00f1f1f2,00e6e6e6,00cccccc ops=211 text-px=2330 hash=5581e21a\r\n"
+       "AIUEOS_GUEST_BROWSER_HC n=4 mode=0 bg=00f1f1f2 ink=00333333 bars=00f1f1f2,00e6e6e6,00cccccc ops=211 text-px=2330 hash=5581e21a\r\n"))
 
 (def ^:private hc-ok
   "AIUEOS_GUEST_BROWSER_UIUX_OK events=4 palette=default-high-contrast-default\r\n")
@@ -1005,20 +1005,20 @@
 
 (def ^:private key-rows
   ;; n key answer reduce ring windows focus stack at ops text-px hash
-  [[5 257 0 "none" 1 4 1 "3241" "4,0" 207 2330 "5581e21a"]
-   [6 256 0 "none" 1 4 1 "3241" "4,0" 207 2330 "5581e21a"]
-   [7 257 0 "none" 2 4 1 "3241" "106,0" 207 2330 "5581e21a"]
-   [8 256 0 "none" 2 4 1 "3241" "106,0" 207 2330 "5581e21a"]
-   [9 169 0 "none" 2 4 1 "3241" "106,0" 207 2330 "5581e21a"]
-   [10 257 0 "none" 1 4 1 "3241" "4,0" 207 2330 "5581e21a"]
-   [11 256 0 "none" 1 4 1 "3241" "4,0" 207 2330 "5581e21a"]
-   [12 168 0 "none" 1 4 1 "3241" "4,0" 207 2330 "5581e21a"]
-   [13 257 0 "none" 2 4 1 "3241" "106,0" 207 2330 "5581e21a"]
-   [14 256 0 "none" 2 4 1 "3241" "106,0" 207 2330 "5581e21a"]
-   [15 113 385038 "2" 2 4 2 "3412" "106,0" 207 1209 "fc93d38d"]
-   [16 112 0 "none" 2 4 2 "3412" "106,0" 207 1209 "fc93d38d"]
-   [17 5 1261662 "1" 2 3 1 "341" "106,0" 180 2330 "5581e21a"]
-   [18 4 0 "none" 2 3 1 "341" "106,0" 180 2330 "5581e21a"]])
+  [[5 257 0 "none" 1 4 1 "3241" "4,0" 215 2330 "5581e21a"]
+   [6 256 0 "none" 1 4 1 "3241" "4,0" 215 2330 "5581e21a"]
+   [7 257 0 "none" 2 4 1 "3241" "106,0" 215 2330 "5581e21a"]
+   [8 256 0 "none" 2 4 1 "3241" "106,0" 215 2330 "5581e21a"]
+   [9 169 0 "none" 2 4 1 "3241" "106,0" 215 2330 "5581e21a"]
+   [10 257 0 "none" 1 4 1 "3241" "4,0" 215 2330 "5581e21a"]
+   [11 256 0 "none" 1 4 1 "3241" "4,0" 215 2330 "5581e21a"]
+   [12 168 0 "none" 1 4 1 "3241" "4,0" 215 2330 "5581e21a"]
+   [13 257 0 "none" 2 4 1 "3241" "106,0" 215 2330 "5581e21a"]
+   [14 256 0 "none" 2 4 1 "3241" "106,0" 215 2330 "5581e21a"]
+   [15 113 385038 "2" 2 4 2 "3412" "106,0" 215 1209 "fc93d38d"]
+   [16 112 0 "none" 2 4 2 "3412" "106,0" 215 1209 "fc93d38d"]
+   [17 5 1261662 "1" 2 3 1 "341" "106,0" 186 2330 "5581e21a"]
+   [18 4 0 "none" 2 3 1 "341" "106,0" 186 2330 "5581e21a"]])
 
 (defn- key-line [[n key ans red ring win foc stack at ops px hash] & {:keys [ringc] :or {ringc "001a56db"}}]
   (str "AIUEOS_GUEST_BROWSER_KEY n=" n " key=" key " answer=" ans " reduce=" red " ring=" ring
@@ -1085,14 +1085,14 @@
 
 (def ^:private max-rows
   ;; n src at reduce rect ops text-px hash
-  [[19 1 "380,142" 1 "272,132,240,200" 180 2330 "e5cb1929"]
-   [20 4 "380,142" 0 "272,132,240,200" 180 2330 "e5cb1929"]
-   [21 1 "380,142" 1 "0,28,1280,720" 179 1699 "3b18fc9c"]
-   [22 4 "380,142" 0 "0,28,1280,720" 179 1699 "3b18fc9c"]
-   [23 1 "380,40" 1 "0,28,1280,720" 179 1699 "71c4138e"]
-   [24 4 "380,40" 0 "0,28,1280,720" 179 1699 "71c4138e"]
-   [25 1 "380,40" 1 "272,132,240,200" 180 2330 "b4362763"]
-   [26 4 "380,40" 0 "272,132,240,200" 180 2330 "b4362763"]])
+  [[19 1 "380,142" 1 "272,132,240,200" 186 2330 "e5cb1929"]
+   [20 4 "380,142" 0 "272,132,240,200" 186 2330 "e5cb1929"]
+   [21 1 "380,142" 1 "0,28,1280,720" 185 1699 "3b18fc9c"]
+   [22 4 "380,142" 0 "0,28,1280,720" 185 1699 "3b18fc9c"]
+   [23 1 "380,40" 1 "0,28,1280,720" 185 1699 "71c4138e"]
+   [24 4 "380,40" 0 "0,28,1280,720" 185 1699 "71c4138e"]
+   [25 1 "380,40" 1 "272,132,240,200" 186 2330 "b4362763"]
+   [26 4 "380,40" 0 "272,132,240,200" 186 2330 "b4362763"]])
 
 (defn- max-line [[n src at red rect ops px hash]]
   (str "AIUEOS_GUEST_BROWSER_MAX n=" n " src=" src " at=" at " reduce=" red
@@ -1124,3 +1124,39 @@
       (is (= :guest-browser-window-maximize-absent
              (:reason (guest/classify "guest-browser-window-maximize" {:serial max-ok}))))
       (is (= 3 (:exit (guest/classify "guest-browser-window-maximize" {:serial ok :qemu-unmeasured? true})))))))
+
+(def ^:private ctl-rows
+  [[27 1 "476,146" 1 "0,28,1280,720" 185 1699 "2eebb0d8"]
+   [28 4 "476,146" 0 "0,28,1280,720" 185 1699 "2eebb0d8"]
+   [29 0 "476,146" 1 "272,132,240,200" 186 2330 "7c707d0d"]
+   [30 0 "476,146" "none" "272,132,240,200" 186 2330 "7c707d0d"]])
+
+(def ^:private ctl-ok
+  "AIUEOS_GUEST_BROWSER_MAX_CTL_OK events=4 control=press f11=restore\r\n")
+
+(deftest guest-browser-maximize-control-classifier
+  (let [base (str (apply str (map max-line max-rows)) max-ok)
+        ctl (apply str (map max-line ctl-rows))
+        ok (str base ctl ctl-ok)]
+    (testing "a press on the control maximizes, F11 restores the exact rect: green"
+      (let [r (guest/classify "guest-browser-maximize-control" {:serial ok})]
+        (is (= :guest-browser-maximize-control (:reason r)))
+        (is (= 0 (:exit r)))))
+    (testing "a control press that does not maximize is red, and says which frame"
+      (let [bad (assoc-in (vec ctl-rows) [0 4] "272,132,240,200")
+            r (guest/classify "guest-browser-maximize-control"
+                              {:serial (str base (apply str (map max-line bad)) ctl-ok)})]
+        (is (= :maximize-control-differs-from-model (:reason r)))
+        (is (= 27 (:n (:kernel (:first-difference r)))))))
+    (testing "an F11 that restores to another rect is red"
+      (let [bad (-> (vec ctl-rows) (assoc-in [2 4] "272,133,240,200") (assoc-in [3 4] "272,133,240,200"))]
+        (is (not (:green? (guest/classify "guest-browser-maximize-control"
+                                          {:serial (str base (apply str (map max-line bad)) ctl-ok)}))))))
+    (testing "it needs the double-press gate green first"
+      (is (= :no-window-maximize
+             (:reason (guest/classify "guest-browser-maximize-control" {:serial (str ctl ctl-ok)})))))
+    (testing "the OK line missing is not green, no lines is absent, unmeasured is exit 3"
+      (is (= :max-ctl-ok-missing (:reason (guest/classify "guest-browser-maximize-control" {:serial (str base ctl)}))))
+      (is (= :guest-browser-maximize-control-absent
+             (:reason (guest/classify "guest-browser-maximize-control" {:serial (str base ctl-ok)}))))
+      (is (= 3 (:exit (guest/classify "guest-browser-maximize-control" {:serial ok :qemu-unmeasured? true})))))))
