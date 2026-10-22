@@ -19,7 +19,8 @@
    "guest-browser-resize" "guest-browser-event-loop" "guest-browser-caret"
    "guest-browser-launch" "guest-browser-flow-parity" "guest-browser-dictionary"
    "guest-browser-cursor" "guest-browser-focus-cycle" "guest-browser-scroll"
-   "guest-browser-selection" "guest-browser-clipboard" "guest-browser-damage"])
+   "guest-browser-selection" "guest-browser-clipboard" "guest-browser-damage"
+   "guest-browser-title-active"])
 
 (defn gate-cmd
   "SPA-visible evidence command for a guest profile. Not clojure -M."
@@ -846,6 +847,43 @@
       {:green? false :exit 1 :reason :guest-browser-focus-cycle-absent
        :leftover [:guest-browser-focus-cycle-absent]})))
 
+;; Guest browser active/inactive titlebars (ADR-0245): on the focus-cycle boot
+;; the kernel counts, in the draw list of each of the twelve focus frames, the
+;; 28 px titlebar rects Kotoba's title-rgb coloured -- #cccccc for the focused
+;; window, #e6e6e6 for every other -- and prints the count of each and the x,y
+;; of the first focused one (AIUEOS_GUEST_BROWSER_FOCUS_TITLE). Green needs the
+;; focus-cycle gate green AND all twelve lines equal to what
+;; os/aiueos/scripts/browser-frame-model.cljk counts in its own op list
+;; ("title-frame"): exactly one window active (2 rects) and the other two
+;; inactive (4 rects) in every frame, the active one at the focused window.
+
+(def ^:private title-frames
+  "[active inactive x,y] per focus frame, from browser-frame-model.cljk."
+  (into [] (concat (repeat 3 [2 4 "82,80"]) (repeat 2 [2 4 "274,132"]) (repeat 7 [2 4 "82,80"]))))
+
+(defn guest-browser-title-active-result
+  [{:keys [serial qemu-unmeasured?] :as opts}]
+  (let [s (or serial "")
+        got (mapv (fn [[_ n a i at]] [(parse-long n) (parse-long a) (parse-long i) at])
+                  (re-seq #"(?m)^AIUEOS_GUEST_BROWSER_FOCUS_TITLE n=(\d+) active=(\d+) inactive=(\d+) at=(\d+,\d+)\s*$" s))
+        want (vec (map-indexed (fn [k [a i at]] [(inc k) a i at]) title-frames))
+        base (guest-browser-focus-cycle-result opts)]
+    (cond
+      qemu-unmeasured? {:green? false :exit 3 :reason :unmeasured :leftover [:unmeasured]}
+      (not (:green? base))
+      (assoc base :reason :no-focus-cycle :leftover (into [:no-focus-cycle] (:leftover base)))
+      (empty? got)
+      {:green? false :exit 1 :reason :guest-browser-title-active-absent
+       :leftover [:guest-browser-title-active-absent]}
+      (not= got want)
+      {:green? false :exit 1 :reason :title-differs-from-model
+       :leftover [:title-differs-from-model]
+       :first-difference (first (remove nil? (map (fn [g w] (when (not= g w) {:kernel g :model w}))
+                                                 (concat got (repeat nil)) want)))}
+      :else
+      {:green? true :exit 0 :reason :guest-browser-title-active
+       :leftover [:colour-census-not-pixels :no-hover :no-inactive-body-style]})))
+
 ;; Guest browser wheel scroll (ADR-0238): after Alt+Tab, the shell registers
 ;; app 4 (its body the lines 1 .. 20) and the host presses launcher button 4
 ;; at (360, 14) (window 4 opens on top, fifteen of its lines inside it),
@@ -1178,6 +1216,9 @@
     ;; ADR-0242: the damage stage's five frames come after the clipboard.
     "guest-browser-damage" {"AIUEOS_GUEST_BROWSER" "1"
                             "AIUEOS_QEMU_TIMEOUT" "3300"}
+    ;; ADR-0245: the titlebar census is printed by the focus stage itself.
+    "guest-browser-title-active" {"AIUEOS_GUEST_BROWSER" "1"
+                                  "AIUEOS_QEMU_TIMEOUT" "1260"}
     "guest-scanout-two" {"AIUEOS_GUEST_SCANOUT_TWO" "1"
                          "AIUEOS_QEMU_TIMEOUT" "90"}
     nil))
@@ -1213,6 +1254,7 @@
     "guest-browser-selection" (guest-browser-selection-result opts)
     "guest-browser-clipboard" (guest-browser-clipboard-result opts)
     "guest-browser-damage" (guest-browser-damage-result opts)
+    "guest-browser-title-active" (guest-browser-title-active-result opts)
     {:green? false :exit 3 :reason :unmeasured :leftover [:unmeasured]}))
 
 (defn serial-marker
@@ -1246,6 +1288,7 @@
     "guest-browser-selection" "AIUEOS_GUEST_BROWSER_SELECTION"
     "guest-browser-clipboard" "AIUEOS_GUEST_BROWSER_CLIPBOARD"
     "guest-browser-damage" "AIUEOS_GUEST_BROWSER_DAMAGE"
+    "guest-browser-title-active" "AIUEOS_GUEST_BROWSER_FOCUS_TITLE"
     nil))
 
 (defn ok-print
@@ -1279,4 +1322,5 @@
     "guest-browser-selection" "AIUEOS_COMPOSITOR_GUEST_BROWSER_SELECTION_OK"
     "guest-browser-clipboard" "AIUEOS_COMPOSITOR_GUEST_BROWSER_CLIPBOARD_OK"
     "guest-browser-damage" "AIUEOS_COMPOSITOR_GUEST_BROWSER_DAMAGE_OK"
+    "guest-browser-title-active" "AIUEOS_COMPOSITOR_GUEST_BROWSER_TITLE_ACTIVE_OK"
     nil))
