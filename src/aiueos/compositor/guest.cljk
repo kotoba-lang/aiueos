@@ -22,7 +22,8 @@
    "guest-browser-selection" "guest-browser-clipboard" "guest-browser-damage"
    "guest-browser-title-active" "guest-browser-hover"
    "guest-browser-high-contrast" "guest-browser-focus-ring"
-   "guest-browser-keyboard-activate"])
+   "guest-browser-keyboard-activate"
+   "guest-browser-window-maximize"])
 
 (defn gate-cmd
   "SPA-visible evidence command for a guest profile. Not clojure -M."
@@ -988,6 +989,62 @@
             [:enter-and-escape-only :space-is-enter-untested :no-menu-activation]
             (fn [_] nil)))
 
+;; Guest browser window maximize (ADR-0250): after the keyboard frames the host
+;; double-presses window 1's titlebar at (380, 142) -- press, release, press,
+;; release -- and then, the window being maximized, its titlebar at (380, 40) the
+;; same way. Kotoba (browser-reduce) decides a double press: a second press on the
+;; same window's titlebar with at most three input events since the first, the
+;; events counted by C in surface word 2029 (the order of events, not
+;; milliseconds). The kernel prints AIUEOS_GUEST_BROWSER_MAX for each of the
+;; eight events: the tablet's source and position, browser-reduce's answer, the
+;; windows, focus, stack, window 1's rect, and the census. Green needs the lines
+;; equal to browser-frame-model.cljk's ("max-frame"), the maximized rect equal to
+;; the work area (0, 28, 1280, 720), and the rect after the restore equal to the
+;; one the window had before it was maximized.
+
+(def ^:private max-want
+  (let [e (fn [n src at red rect ops px hash]
+            {:n n :src src :at at :reduce red :windows 3 :focus 1 :stack "341" :rect rect
+             :ops ops :px px :hash hash})]
+    [(e 19 1 "380,142" 1 "272,132,240,200" 180 2330 "e5cb1929")
+     (e 20 4 "380,142" 0 "272,132,240,200" 180 2330 "e5cb1929")
+     (e 21 1 "380,142" 1 "0,28,1280,720" 179 1699 "3b18fc9c")
+     (e 22 4 "380,142" 0 "0,28,1280,720" 179 1699 "3b18fc9c")
+     (e 23 1 "380,40" 1 "0,28,1280,720" 179 1699 "71c4138e")
+     (e 24 4 "380,40" 0 "0,28,1280,720" 179 1699 "71c4138e")
+     (e 25 1 "380,40" 1 "272,132,240,200" 180 2330 "b4362763")
+     (e 26 4 "380,40" 0 "272,132,240,200" 180 2330 "b4362763")]))
+
+(defn guest-browser-window-maximize-result
+  [{:keys [serial qemu-unmeasured?]}]
+  (let [s (or serial "")
+        got (mapv (fn [[_ n src at red windows focus stack rect ops px hash]]
+                    {:n (parse-long n) :src (parse-long src) :at at :reduce (parse-long red)
+                     :windows (parse-long windows) :focus (parse-long focus) :stack stack :rect rect
+                     :ops (parse-long ops) :px (parse-long px) :hash hash})
+                  (re-seq #"(?m)^AIUEOS_GUEST_BROWSER_MAX n=(\d+) src=(\d+) at=(\d+,\d+) reduce=(\d+) windows=(\d+) focus=(\d+) stack=(\d*) rect=(\d+,\d+,\d+,\d+) ops=(\d+) text-px=(\d+) hash=([0-9a-f]{8})\s*$" s))
+        by-n (into {} (map (juxt :n identity) got))
+        before (:rect (by-n 19))
+        after (:rect (by-n 25))]
+    (cond
+      qemu-unmeasured? {:green? false :exit 3 :reason :unmeasured :leftover [:unmeasured]}
+      (empty? got) {:green? false :exit 1 :reason :guest-browser-window-maximize-absent
+                    :leftover [:guest-browser-window-maximize-absent]}
+      (not (re-find #"(?m)^AIUEOS_GUEST_BROWSER_MAX_OK events=8 maximized=0,28,1280,720 restored=272,132,240,200" s))
+      {:green? false :exit 1 :reason :max-ok-missing :leftover [:max-ok-missing]}
+      (not= got max-want)
+      {:green? false :exit 1 :reason :window-maximize-differs-from-model
+       :leftover [:window-maximize-differs-from-model]
+       :first-difference (first (remove nil? (map (fn [g w] (when (not= g w) {:kernel g :model w}))
+                                                 (concat got (repeat nil)) max-want)))}
+      (not= (:rect (by-n 21)) "0,28,1280,720")
+      {:green? false :exit 1 :reason :not-the-work-area :leftover [:not-the-work-area]}
+      (not= before after)
+      {:green? false :exit 1 :reason :restore-differs-from-prior-rect :leftover [:restore-differs-from-prior-rect]}
+      :else
+      {:green? true :exit 0 :reason :guest-browser-window-maximize
+       :leftover [:no-maximize-control :event-order-not-time :launcher-branch-only :no-keyboard-maximize]})))
+
 ;; Guest browser hover (ADR-0246): Kotoba `hot` decides, from the pointer in
 ;; surface words 2046/2047, that a launcher button or a close control under it
 ;; is drawn #d9d9d9 instead of #e6e6e6. On the scroll boot the kernel counts
@@ -1410,6 +1467,9 @@
                                 "AIUEOS_QEMU_TIMEOUT" "4500"}
     "guest-browser-keyboard-activate" {"AIUEOS_GUEST_BROWSER" "1"
                                        "AIUEOS_QEMU_TIMEOUT" "4500"}
+    ;; ADR-0250: the tablet's double presses come after the keyboard frames.
+    "guest-browser-window-maximize" {"AIUEOS_GUEST_BROWSER" "1"
+                                     "AIUEOS_QEMU_TIMEOUT" "5400"}
     "guest-scanout-two" {"AIUEOS_GUEST_SCANOUT_TWO" "1"
                          "AIUEOS_QEMU_TIMEOUT" "90"}
     nil))
@@ -1447,6 +1507,7 @@
     "guest-browser-damage" (guest-browser-damage-result opts)
     "guest-browser-title-active" (guest-browser-title-active-result opts)
     "guest-browser-hover" (guest-browser-hover-result opts)
+    "guest-browser-window-maximize" (guest-browser-window-maximize-result opts)
     "guest-browser-focus-ring" (guest-browser-focus-ring-result opts)
     "guest-browser-keyboard-activate" (guest-browser-keyboard-activate-result opts)
     "guest-browser-high-contrast" (guest-browser-high-contrast-result opts)
@@ -1485,6 +1546,7 @@
     "guest-browser-damage" "AIUEOS_GUEST_BROWSER_DAMAGE"
     "guest-browser-title-active" "AIUEOS_GUEST_BROWSER_FOCUS_TITLE"
     "guest-browser-hover" "AIUEOS_GUEST_BROWSER_HOT"
+    "guest-browser-window-maximize" "AIUEOS_GUEST_BROWSER_MAX"
     "guest-browser-focus-ring" "AIUEOS_GUEST_BROWSER_KEY"
     "guest-browser-keyboard-activate" "AIUEOS_GUEST_BROWSER_KEY"
     "guest-browser-high-contrast" "AIUEOS_GUEST_BROWSER_HC"
@@ -1523,6 +1585,7 @@
     "guest-browser-damage" "AIUEOS_COMPOSITOR_GUEST_BROWSER_DAMAGE_OK"
     "guest-browser-title-active" "AIUEOS_COMPOSITOR_GUEST_BROWSER_TITLE_ACTIVE_OK"
     "guest-browser-hover" "AIUEOS_COMPOSITOR_GUEST_BROWSER_HOVER_OK"
+    "guest-browser-window-maximize" "AIUEOS_COMPOSITOR_GUEST_BROWSER_WINDOW_MAXIMIZE_OK"
     "guest-browser-focus-ring" "AIUEOS_COMPOSITOR_GUEST_BROWSER_FOCUS_RING_OK"
     "guest-browser-keyboard-activate" "AIUEOS_COMPOSITOR_GUEST_BROWSER_KEYBOARD_ACTIVATE_OK"
     "guest-browser-high-contrast" "AIUEOS_COMPOSITOR_GUEST_BROWSER_HIGH_CONTRAST_OK"

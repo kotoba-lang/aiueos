@@ -633,6 +633,26 @@
        ["enter" launched] ["enter-up" launched]
        ["esc" closed] ["esc-up" closed]])))
 
+;; ADR-0250: after the keyboard frames the host double-presses window 1's
+;; titlebar at (380, 142) -- press, release, press, release -- and then, the
+;; window being maximized to the work area (0, 28, 1280, 720), its titlebar at
+;; (380, 40) the same way, and the window is back in the rect it had. The
+;; pointer is where the tablet last was.
+(def max-frames
+  (let [raised (get-in damage-frames [:frames 4 1])
+        others (vec (remove #(= (:id %) 2) (:stack raised)))
+        w1 (last others)
+        base (assoc raised :ring 2 :focus 1 :stack others)
+        maxed (assoc w1 :x 0 :y 28 :w 1280 :h 720)
+        at (fn [scene p] (assoc scene :pointer p))
+        stack-with (fn [w] (conj (vec (butlast others)) w))
+        s0 (at base [380 142])
+        s1 (at (assoc base :stack (stack-with maxed)) [380 142])
+        s2 (at (assoc base :stack (stack-with maxed)) [380 40])
+        s3 (at base [380 40])]
+    [["press" s0] ["release" s0] ["press-2-max" s1] ["release" s1]
+     ["press" s2] ["release" s2] ["press-2-restore" s3] ["release" s3]]))
+
 ;; The colours the kernel reads out of a draw list for AIUEOS_GUEST_BROWSER_HC:
 ;; the background (op 0), the first glyph's colour (the ink), and the distinct
 ;; colours of the 28 px rects (titlebars) in the order they first appear.
@@ -897,6 +917,16 @@
                 c (if (:hc scene) (census 0 ops) (census ops))]]
     (println (str "uiux-frame n=" (inc i) " " ev " ops=" (:ops c) " text-px=" (:text-px c)
                   " hash=" (:hash c) " " (hc-line (inc i) (:hc scene) ops))))
+  (doseq [[i [ev scene]] (map-indexed vector max-frames)
+          :let [ops (frame scene)
+                c (census ops)
+                w (last (:stack scene))
+                [px py] (:pointer scene)]]
+    (println (str "max-frame n=" (+ 19 i) " " ev " at=" px "," py
+                  " windows=" (count (:stack scene)) " focus=" (:focus scene)
+                  " stack=" (apply str (map :id (:stack scene)))
+                  " rect=" (:x w) "," (:y w) "," (:w w) "," (:h w)
+                  " ops=" (:ops c) " text-px=" (:text-px c) " hash=" (:hash c))))
   (doseq [[i [ev scene]] (map-indexed vector key-frames)
           :let [ops (frame scene)
                 c (census ops)

@@ -1082,3 +1082,45 @@
            (:reason (guest/classify "guest-browser-keyboard-activate" {:serial keys-ok}))))
     (is (= 3 (:exit (guest/classify "guest-browser-keyboard-activate"
                                     {:serial (str key-lines-ok keys-ok) :qemu-unmeasured? true}))))))
+
+(def ^:private max-rows
+  ;; n src at reduce rect ops text-px hash
+  [[19 1 "380,142" 1 "272,132,240,200" 180 2330 "e5cb1929"]
+   [20 4 "380,142" 0 "272,132,240,200" 180 2330 "e5cb1929"]
+   [21 1 "380,142" 1 "0,28,1280,720" 179 1699 "3b18fc9c"]
+   [22 4 "380,142" 0 "0,28,1280,720" 179 1699 "3b18fc9c"]
+   [23 1 "380,40" 1 "0,28,1280,720" 179 1699 "71c4138e"]
+   [24 4 "380,40" 0 "0,28,1280,720" 179 1699 "71c4138e"]
+   [25 1 "380,40" 1 "272,132,240,200" 180 2330 "b4362763"]
+   [26 4 "380,40" 0 "272,132,240,200" 180 2330 "b4362763"]])
+
+(defn- max-line [[n src at red rect ops px hash]]
+  (str "AIUEOS_GUEST_BROWSER_MAX n=" n " src=" src " at=" at " reduce=" red
+       " windows=3 focus=1 stack=341 rect=" rect " ops=" ops " text-px=" px " hash=" hash "\r\n"))
+
+(def ^:private max-ok
+  "AIUEOS_GUEST_BROWSER_MAX_OK events=8 maximized=0,28,1280,720 restored=272,132,240,200\r\n")
+
+(deftest guest-browser-window-maximize-classifier
+  (let [ok (str (apply str (map max-line max-rows)) max-ok)]
+    (testing "a double press maximizes, a second restores the exact rect: green"
+      (let [r (guest/classify "guest-browser-window-maximize" {:serial ok})]
+        (is (= :guest-browser-window-maximize (:reason r)))
+        (is (= 0 (:exit r)))))
+    (testing "a second press that does not maximize is red, and says which frame"
+      (let [bad (assoc-in (vec max-rows) [2 4] "272,132,240,200")
+            r (guest/classify "guest-browser-window-maximize"
+                              {:serial (str (apply str (map max-line bad)) max-ok)})]
+        (is (= :window-maximize-differs-from-model (:reason r)))
+        (is (= 21 (:n (:kernel (:first-difference r)))))))
+    (testing "a restore to a different rect is red even if the list matches itself"
+      (let [bad (-> (vec max-rows) (assoc-in [6 4] "272,133,240,200") (assoc-in [7 4] "272,133,240,200"))]
+        (is (not (:green? (guest/classify "guest-browser-window-maximize"
+                                          {:serial (str (apply str (map max-line bad)) max-ok)}))))))
+    (testing "the OK line missing is not green"
+      (is (= :max-ok-missing (:reason (guest/classify "guest-browser-window-maximize"
+                                                      {:serial (apply str (map max-line max-rows))})))))
+    (testing "no MAX lines is absent, and an unmeasured boot is exit 3"
+      (is (= :guest-browser-window-maximize-absent
+             (:reason (guest/classify "guest-browser-window-maximize" {:serial max-ok}))))
+      (is (= 3 (:exit (guest/classify "guest-browser-window-maximize" {:serial ok :qemu-unmeasured? true})))))))

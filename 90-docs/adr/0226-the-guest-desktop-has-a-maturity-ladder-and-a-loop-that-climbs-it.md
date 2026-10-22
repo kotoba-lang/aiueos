@@ -134,3 +134,7 @@ Enter's path without being pressed. The high-contrast floor's "7:1" was
 already met by the default palette (7.9:1); what the palette adds is a larger
 margin and a black ink, which ADR-0247 says.
 
+`window-maximize` (ADR-0250) is closed for the double press; the floor was split
+in the same change because it was two jobs: the visible control and a keyboard
+shortcut are `:maximize-control`, open. The ladder is 29 floors.
+

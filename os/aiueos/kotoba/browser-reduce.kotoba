@@ -271,6 +271,68 @@
     (if (= (slot-ok id) 1) (sc-put st id 0) 0)
     0))
 
+;; --- maximize (ADR-0250) -------------------------------------------------------
+;; A double press on a window's titlebar toggles it between its rect and the work
+;; area (0, 28, vw, vh - 80: below the launcher bar, above the dock). Whole
+;; surface only. A double press is a second press on the same window's titlebar
+;; with at most three input events since the first: the events are counted by C in
+;; word 2029 (no clock: the distance is the order of events, not milliseconds).
+;; Words: 2010 + 4 (id - 1) .. +3 the rect a maximized window had (x y w h; its
+;; w is 0 while the window is not maximized), 2027 the event count of the last
+;; titlebar press, 2028 the window it was on (0 none), 2029 the event count now.
+(defn sv-at [st i]
+  (kernel-load-u32 (kernel-subregion st 8192 (* i 4) 4) 4 0))
+
+(defn sv-put [st i v]
+  (kernel-store-u32 (kernel-subregion st 8192 (* i 4) 4) 4 0 v))
+
+(defn max-saved [id] (+ 2010 (* 4 (- id 1))))
+
+(defn in-title [st k px py]
+  (let [b (+ 5 (* k 5))
+        y (w-at st (+ b 2))]
+    (if (< py y) 0
+      (if (> py (+ y 28)) 0 1))))
+
+;; The press at (px, py) on stack index k is the second of a double press.
+(defn double-press [st sb k px py]
+  (if (not (= sb 8192)) 0
+    (let [id (w-at st (+ 5 (* k 5)))]
+      (if (= (slot-ok id) 0) 0
+        (if (= (sv-at st 2028) id)
+          (if (> (- (sv-at st 2029) (sv-at st 2027)) 3) 0 1)
+          0)))))
+
+(defn note-title-press [st sb k]
+  (if (not (= sb 8192)) 0
+    (let [id (w-at st (+ 5 (* k 5)))]
+      (if (= (slot-ok id) 0) 0
+        (do (sv-put st 2027 (sv-at st 2029))
+            (sv-put st 2028 id)
+            0)))))
+
+(defn toggle-max [st k]
+  (let [b (+ 5 (* k 5))
+        id (w-at st b)
+        s (max-saved id)]
+    (do (sv-put st 2028 0)
+        (if (= (sv-at st (+ s 2)) 0)
+          (do (sv-put st s (w-at st (+ b 1)))
+              (sv-put st (+ s 1) (w-at st (+ b 2)))
+              (sv-put st (+ s 2) (w-at st (+ b 3)))
+              (sv-put st (+ s 3) (w-at st (+ b 4)))
+              (w-put st (+ b 1) 0)
+              (w-put st (+ b 2) 28)
+              (w-put st (+ b 3) (w-at st 3))
+              (w-put st (+ b 4) (- (w-at st 4) 80)))
+          (do (w-put st (+ b 1) (sv-at st s))
+              (w-put st (+ b 2) (sv-at st (+ s 1)))
+              (w-put st (+ b 3) (sv-at st (+ s 2)))
+              (w-put st (+ b 4) (sv-at st (+ s 3)))
+              (sv-put st (+ s 2) 0)))
+        (release-all st)
+        id)))
+
 (defn clear-rec [st k]
   (let [b (+ 5 (* k 5))]
     (do (w-put st b 0) (w-put st (+ b 1) 0) (w-put st (+ b 2) 0)
@@ -326,6 +388,11 @@
               (release-all st)
               app))))))
 
+(defn title-press [st sb k px py]
+  (if (not (= sb 8192)) 0
+    (if (= (in-title st k px py) 0) 0
+      (if (= (in-handle st k px py) 1) 0 1))))
+
 (defn press-miss [st n px py]
   (if (= (w-at st 31) 0) 0
     (let [app (on-launcher st px py)]
@@ -339,8 +406,15 @@
             (raise st (- k1 1) n))
         (if (= (in-close st (- k1 1) px py) 1)
           (close st sb n (- k1 1))
-          (do (capture st (- k1 1) px py)
-              (raise st (- k1 1) n)))))))
+          (if (= (title-press st sb (- k1 1) px py) 1)
+            (if (= (double-press st sb (- k1 1) px py) 1)
+              (do (raise st (- k1 1) n)
+                  (toggle-max st (- n 1)))
+              (do (note-title-press st sb (- k1 1))
+                  (capture st (- k1 1) px py)
+                  (raise st (- k1 1) n)))
+            (do (capture st (- k1 1) px py)
+                (raise st (- k1 1) n))))))))
 
 (defn move-to [st k nx ny]
   (let [b (+ 5 (* k 5))]

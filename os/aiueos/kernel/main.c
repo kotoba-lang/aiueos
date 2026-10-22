@@ -1733,46 +1733,68 @@ static int browser_damage_stage(uint32_t *surface, const uint8_t *font, uint64_t
      17..18 Escape down and up                (the focused window's close
                                                control is pressed the same way)
    For each frame the kernel prints what it reads out of the draw list it
-   painted. The expected values are the frame model's. */
+   painted. 19..26 are the tablet: a double press on window 1's titlebar at
+   (380, 142) -- press, release, press, release -- maximizes it (ADR-0250), a
+   double press on its titlebar at (380, 40) restores it. Kotoba (browser-reduce)
+   decides a double press; C counts the input events (word 2029) and reports.
+   The expected values are the frame model's. */
 static void browser_hc_hex(uint32_t v) { serial_hex32(v & 0xffffffU); }
 
 static int browser_uiux_stage(uint32_t *surface, const uint8_t *font, uint64_t font_length,
                               uint64_t dict, uint64_t dict_length) {
-  static const uint32_t ukey[18] = {68U * 4U + 1U, 68U * 4U, 68U * 4U + 1U, 68U * 4U,
-                                    64U * 4U + 1U, 64U * 4U, 64U * 4U + 1U, 64U * 4U,
-                                    42U * 4U + 1U, 64U * 4U + 1U, 64U * 4U, 42U * 4U,
-                                    64U * 4U + 1U, 64U * 4U,
-                                    28U * 4U + 1U, 28U * 4U, 1U * 4U + 1U, 1U * 4U};
-  static const int64_t uans[18] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 385038, 0, 1261662, 0};
-  static const int64_t ured[18] = {-100, -100, -100, -100, -100, -100, -100, -100, -100, -100, -100,
-                                   -100, -100, -100, 2, -100, 1, -100};
-  static const uint32_t umode[18] = {1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
-  static const uint32_t uring[18] = {0, 0, 0, 0, 1, 1, 2, 2, 2, 1, 1, 1, 2, 2, 2, 2, 2, 2};
-  static const uint32_t uwin[18] = {4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 3, 3};
-  static const uint32_t ufoc[18] = {1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 1, 1};
-  static const uint32_t uops[18] = {203, 203, 203, 203, 207, 207, 207, 207, 207, 207, 207, 207, 207, 207,
-                                    207, 207, 180, 180};
-  static const uint32_t upx[18] = {2330, 2330, 2330, 2330, 2330, 2330, 2330, 2330, 2330, 2330, 2330, 2330,
-                                   2330, 2330, 1209, 1209, 2330, 2330};
-  static const uint32_t uhash[18] = {0x5581e21aU, 0x5581e21aU, 0x5581e21aU, 0x5581e21aU,
-                                     0x5581e21aU, 0x5581e21aU, 0x5581e21aU, 0x5581e21aU,
-                                     0x5581e21aU, 0x5581e21aU, 0x5581e21aU, 0x5581e21aU,
-                                     0x5581e21aU, 0x5581e21aU, 0xfc93d38dU, 0xfc93d38dU,
-                                     0x5581e21aU, 0x5581e21aU};
+  static const uint32_t ukey[26] = {68U * 4U + 1U, 68U * 4U, 68U * 4U + 1U, 68U * 4U, 64U * 4U + 1U, 64U * 4U, 64U * 4U + 1U, 64U * 4U,
+                                    42U * 4U + 1U, 64U * 4U + 1U, 64U * 4U, 42U * 4U, 64U * 4U + 1U, 64U * 4U,
+                                    28U * 4U + 1U, 28U * 4U, 1U * 4U + 1U, 1U * 4U, 0, 0, 0, 0, 0, 0, 0, 0};
+  static const int64_t uans[26] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 385038, 0, 1261662, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+  static const int64_t ured[26] = {-100, -100, -100, -100, -100, -100, -100, -100, -100, -100, -100,
+                                   -100, -100, -100, 2, -100, 1, -100, 1, 0, 1, 0, 1, 0, 1, 0};
+  static const uint32_t umode[26] = {1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+  static const uint32_t uring[26] = {0, 0, 0, 0, 1, 1, 2, 2, 2, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2};
+  static const uint32_t uwin[26] = {4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3};
+  static const uint32_t ufoc[26] = {1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1};
+  static const uint32_t uops[26] = {203, 203, 203, 203, 207, 207, 207, 207, 207, 207, 207, 207, 207, 207,
+                                    207, 207, 180, 180, 180, 180, 179, 179, 179, 179, 180, 180};
+  static const uint32_t upx[26] = {2330, 2330, 2330, 2330, 2330, 2330, 2330, 2330, 2330, 2330, 2330, 2330,
+                                   2330, 2330, 1209, 1209, 2330, 2330, 2330, 2330, 1699, 1699, 1699, 1699, 2330, 2330};
+  static const uint32_t uhash[26] = {0x5581e21aU, 0x5581e21aU, 0x5581e21aU, 0x5581e21aU, 0x5581e21aU, 0x5581e21aU, 0x5581e21aU, 0x5581e21aU,
+                                     0x5581e21aU, 0x5581e21aU, 0x5581e21aU, 0x5581e21aU, 0x5581e21aU, 0x5581e21aU,
+                                     0xfc93d38dU, 0xfc93d38dU, 0x5581e21aU, 0x5581e21aU, 0xe5cb1929U, 0xe5cb1929U,
+                                     0x3b18fc9cU, 0x3b18fc9cU, 0x71c4138eU, 0x71c4138eU, 0xb4362763U, 0xb4362763U};
+  /* events 19..26: the tablet source (1 press, 4 release), where, and the rect
+     window 1 has afterwards */
+  static const uint32_t usrc[8] = {1, 4, 1, 4, 1, 4, 1, 4};
+  static const uint32_t uat[8][2] = {{380, 142}, {380, 142}, {380, 142}, {380, 142},
+                                     {380, 40}, {380, 40}, {380, 40}, {380, 40}};
+  static const uint32_t urect[8][4] = {{272, 132, 240, 200}, {272, 132, 240, 200}, {0, 28, 1280, 720},
+                                       {0, 28, 1280, 720}, {0, 28, 1280, 720}, {0, 28, 1280, 720},
+                                       {272, 132, 240, 200}, {272, 132, 240, 200}};
   uint64_t sp = (uint64_t)(uintptr_t)surface;
+  uint32_t useq = 0, tpx = 0, tpy = 0, tsrc = 0, ax = 0, ay = 0;
   uint32_t ue = 0, uoff = 0, uidle = 0, uframes = 0, hcoff = 0;
   (void)aiueos_tablet_drain(4000000U);
   (void)aiueos_keyboard_drain(4000000U);
-  serial_string("AIUEOS_GUEST_BROWSER_UIUX_GO events=18\r\n");
-  while (ue < 18 && uidle < 60000U) {
-    uint32_t key = aiueos_keyboard_next_key(1024U);
+  serial_string("AIUEOS_GUEST_BROWSER_UIUX_GO events=26\r\n");
+  while (ue < 26 && uidle < 60000U) {
+    uint32_t key = 0;
     int64_t kr, ufo, red = -100;
     uint32_t upx2 = 0, uhash2 = 0, bars[4], nbars = 0, ink = 0, haveink = 0;
     uint32_t rings = 0, rx = 0, ry = 0, rc = 0, face = 0, haveface = 0;
     uint32_t bad;
-    if (!key) { uidle++; continue; }
+    tsrc = ue >= 18 ? aiueos_tablet_next(1024U, &ax, &ay) : 0;
+    if (!tsrc) key = aiueos_keyboard_next_key(1024U);
+    if (!tsrc && !key) { uidle++; continue; }
     uidle = 0;
-    kr = (int64_t)kotoba_aiueos_browser_key(sp, 8192, dict, dict_length, key);
+    kr = 0;
+    if (tsrc) {
+      tpx = (uint32_t)(((uint64_t)ax * surface[3]) / 32768U);
+      tpy = (uint32_t)(((uint64_t)ay * surface[4]) / 32768U);
+      surface[2046] = tpx + 1U;
+      surface[2047] = tpy;
+      surface[2029] = ++useq;
+      red = (int64_t)kotoba_aiueos_browser_reduce(sp, 8192, tsrc, tpx, tpy);
+    } else {
+      kr = (int64_t)kotoba_aiueos_browser_key(sp, 8192, dict, dict_length, key);
+    }
     if (kr >= 65536) {
       uint32_t at = (uint32_t)(kr - 65536);
       red = (int64_t)kotoba_aiueos_browser_reduce(sp, 128, 1, at >> 11, at & 2047U);
@@ -1799,6 +1821,13 @@ static int browser_uiux_stage(uint32_t *surface, const uint8_t *font, uint64_t f
     }
     bad = (kr != uans[ue] || key != ukey[ue] || surface[2039] != umode[ue] || ufo != (int64_t)uops[ue] ||
            upx2 != upx[ue] || uhash2 != uhash[ue]);
+    if (ue >= 18) {
+      const uint32_t t = ue - 18;
+      const uint32_t *wr = surface + 5 + 5 * (surface[1] - 1) + 1;
+      if (tsrc != usrc[t] || tpx != uat[t][0] || tpy != uat[t][1] || surface[5 + 5 * (surface[1] - 1)] != 1 ||
+          wr[0] != urect[t][0] || wr[1] != urect[t][1] || wr[2] != urect[t][2] || wr[3] != urect[t][3])
+        bad = 1;
+    }
     if (ue >= 4) {
       if (red != ured[ue] || surface[2032] != uring[ue] || surface[1] != uwin[ue] || surface[2] != ufoc[ue])
         bad = 1;
@@ -1834,6 +1863,39 @@ static int browser_uiux_stage(uint32_t *surface, const uint8_t *font, uint64_t f
           serial_string("AIUEOS_GUEST_BROWSER_UIUX leftover=census-miss part=palette\r\n");
         }
       }
+    } else if (ue > 18) {
+      const uint32_t *wr = surface + 5 + 5 * (surface[1] - 1) + 1;
+      serial_string("AIUEOS_GUEST_BROWSER_MAX n=");
+      serial_decimal(ue);
+      serial_string(" src=");
+      serial_decimal(tsrc);
+      serial_string(" at=");
+      serial_decimal(tpx);
+      serial_string(",");
+      serial_decimal(tpy);
+      serial_string(" reduce=");
+      serial_decimal64((uint64_t)red);
+      serial_string(" windows=");
+      serial_decimal(surface[1]);
+      serial_string(" focus=");
+      serial_decimal(surface[2]);
+      serial_string(" stack=");
+      for (uint32_t k = 0; k < surface[1] && k < 4U; k++) serial_decimal(surface[5 + 5 * k]);
+      serial_string(" rect=");
+      serial_decimal(wr[0]);
+      serial_string(",");
+      serial_decimal(wr[1]);
+      serial_string(",");
+      serial_decimal(wr[2]);
+      serial_string(",");
+      serial_decimal(wr[3]);
+      serial_string(" ops=");
+      serial_decimal((uint32_t)(ufo < 0 ? -ufo : ufo));
+      serial_string(" text-px=");
+      serial_decimal(upx2);
+      serial_string(" hash=");
+      serial_hex32(uhash2);
+      serial_string("\r\n");
     } else {
       serial_string("AIUEOS_GUEST_BROWSER_KEY n=");
       serial_decimal(ue);
@@ -1872,10 +1934,18 @@ static int browser_uiux_stage(uint32_t *surface, const uint8_t *font, uint64_t f
       serial_hex32(uhash2);
       serial_string("\r\n");
     }
+    if (ue == 18) {
+      if (uoff == 0 && surface[2039] == 0) {
+        debug_string("AIUEOS_GUEST_BROWSER_KEYS_OK\n");
+        serial_string("AIUEOS_GUEST_BROWSER_KEYS_OK events=18 ring=2 stack=341 focus=1\r\n");
+      } else {
+        serial_string("AIUEOS_GUEST_BROWSER_UIUX leftover=census-miss part=keys\r\n");
+      }
+    }
   }
-  if (ue == 18 && uframes == 18 && uoff == 0 && surface[2039] == 0) {
-    debug_string("AIUEOS_GUEST_BROWSER_KEYS_OK\n");
-    serial_string("AIUEOS_GUEST_BROWSER_KEYS_OK events=18 ring=2 stack=341 focus=1\r\n");
+  if (ue == 26 && uframes == 26 && uoff == 0 && surface[2039] == 0) {
+    debug_string("AIUEOS_GUEST_BROWSER_MAX_OK\n");
+    serial_string("AIUEOS_GUEST_BROWSER_MAX_OK events=8 maximized=0,28,1280,720 restored=272,132,240,200\r\n");
     return 1;
   }
   debug_string("AIUEOS_GUEST_BROWSER_UIUX leftover=census-miss\n");
