@@ -5,6 +5,21 @@ All notable changes to **aiueos** are documented here. The format follows
 
 ## [Unreleased]
 
+### JUN-34: the persistent desktop pumps the key ring; the ring counter counts once
+- The desktop loop's keyboard section called `aiueos_keyboard_drain` every turn,
+  and drain DISCARDS: every key that arrived between turns was thrown away
+  (measured 2026-10-23: `AIUEOS_DESKTOP_KEY` 1, `AIUEOS_INPUT_RING` n=1, while
+  the host virtio ring showed 103 used entries, all reposted). It now takes
+  `aiueos_keyboard_take_key()` -- one non-blocking reap per turn as evdev
+  code * 4 + value, the form Kotoba browser-key takes. No live ring (the
+  synthetic smoke build) falls back to the boot probe's mailbox.
+- The virtio-input boot probe no longer counts ring entries: it peeks
+  (`kbd_seen` stays 0) and `kbd_recycle` reaps and counts what it saw, so the
+  counter lives at the reap and only there -- the double count of ring slot 0
+  is gone. Measured after: `AIUEOS_DESKTOP_KEY` 120 (press/release in ring
+  order), `AIUEOS_INPUT_RING` n=180 = 60 injected batches of
+  [press + release + SYN], each used entry counted exactly once.
+
 ### Guest browser desktop: a frame sends only the rectangle that changed (ADR-0242)
 - browser-damage.kotoba (`kotoba_aiueos_browser_damage`) compares the list just
   painted with the previous one (kept in the caller's 8,192-byte shadow) and

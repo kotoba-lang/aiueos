@@ -6160,10 +6160,9 @@ qwen_runtime_boot_complete:
        (JUN-144, measured 2026-10-20: an else-branch starved it behind a
        tablet path that never idles). */
     {
-      extern int aiueos_desktop_input_take_key(uint32_t *code);
+      extern uint32_t aiueos_keyboard_take_key(void);
       uint64_t dlen = 0;
       const uint8_t *dict = aiueos_initramfs_dictionary(&dlen);
-      (void)aiueos_keyboard_drain(4000000U);
       { extern uint32_t aiueos_input_ring(void);
         static uint32_t ring_seen;
         if (aiueos_input_ring() != ring_seen) {
@@ -6173,8 +6172,12 @@ qwen_runtime_boot_complete:
           serial_decimal(ring_seen);
           serial_string("\r\n");
         } }
-      uint32_t key = 0;
-      if (aiueos_desktop_input_take_key(&key)) {
+      /* PUMP, not drain (JUN-34, measured 2026-10-23): drain here threw away
+         every key that arrived between turns -- DESKTOP_KEY stayed at 1 while
+         the host ring showed 103 used entries. One non-blocking reap per turn
+         hands the keys to the browser in the order the ring delivered them. */
+      uint32_t key = aiueos_keyboard_take_key();
+      if (key) {
         debug_string("AIUEOS_DESKTOP_KEY ");
         serial_string("AIUEOS_DESKTOP_KEY code=");
         serial_decimal(key & 0xffffU);
