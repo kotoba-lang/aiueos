@@ -77,3 +77,31 @@ claimed: P5 and the dictionary stay open until a person acts.
 At adoption (2026-09-24, `origin/main` after ADR-0225): the tick counts
 5 of 16 floors closed (frame, pointer, text, text-raise, typing), 2 needing a
 human, next floor `:preedit`.
+
+## Measurement 2026-10-22: counted closed is not currently green
+
+The tick counts a floor closed from two facts (the gate is registered, its
+README paragraph exists); it does not re-run the gate. Re-running on
+`origin/main` (ea25175 lineage, macOS arm64, qemu 10.0.3, zig 0.15.2; the
+build and boot run natively, no Linux needed):
+
+- `guest-browser-frame` exits 0.
+- `guest-browser-focus-cycle` exits 1 on `origin/main` and on a tree with an
+  unrelated change alike (a control run): the boot prints
+  `AIUEOS_GUEST_BROWSER_TEXT leftover=census-miss ops=70 text-px=1079
+  hash=89910f34` where the classifier and README pin `ops=58` with the same
+  text-px and hash, then the guest stops after the first desktop key.
+- Cause: dd7e849 / 774c407 / 1a2aab9 (2026-10-20, JUN-143: DDS palette,
+  window shadow, rounded corners) changed `browser-frame2.kotoba` and its
+  object. The ink census (text-px, hash) is identical, as that commit says,
+  but the coloured-rect count moved, and the pinned `ops=` values in
+  `src/aiueos/compositor/guest.cljk` (35), `test/aiueos/compositor_guest_test.cljk`
+  (134), `README.md` (18) and the kernel's per-stage checks were not
+  re-measured. `os/aiueos/scripts/browser-frame-model.cljk` is the independent
+  oracle for those counts and has to produce the new rects first.
+
+So the 20 closed floors are 20 floors whose gates were green when they landed,
+not 20 floors green today. Re-greening is the first job of the ladder, before
+any new floor: update the model, then the pins from the model, then run each
+gate. Until then the honest reading is: frame-level gates green, later gates
+red by stale pins, behaviour unchanged.
