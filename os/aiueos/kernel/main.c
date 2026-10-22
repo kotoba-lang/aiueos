@@ -1109,6 +1109,24 @@ static void serial_decimal64(uint64_t value) {
    offset higher, cut to the window. Answers are browser-reduce-v1's
    :the-kernel-scroll-* vectors'; op counts, censuses and the chain
    os/aiueos/scripts/browser-frame-model.cljk's scroll frames. */
+/* ADR-0246: how many rects of the draw list just painted are in the hover
+   colour Kotoba's `hot` chose (#d9d9d9). The pointer's position is Kotoba's
+   input; this only counts, and prints beside the frame it counted. */
+static void browser_hot_line(const char *stage, uint32_t n, const uint32_t *ops, int64_t count) {
+  uint32_t hot = 0;
+  for (uint32_t j = 0; count > 0 && j < (uint32_t)count && j < 261U; j++) {
+    const uint32_t *op = ops + 6U * j;
+    if (op[0] == 1 && op[5] == 14277081U) hot++;
+  }
+  serial_string("AIUEOS_GUEST_BROWSER_HOT stage=");
+  serial_string(stage);
+  serial_string(" n=");
+  serial_decimal(n);
+  serial_string(" hot=");
+  serial_decimal(hot);
+  serial_string("\r\n");
+}
+
 static int browser_scroll_stage(uint32_t *surface, const uint8_t *font, uint64_t font_length) {
   static const uint32_t title4[5] = {12473, 12463, 12525, 12540, 12523};
   static const uint32_t ssrc[17] = {1, 4, 6, 3, 6, 6, 6, 6, 6, 6, 7, 7, 7, 7, 7, 7, 7};
@@ -1164,6 +1182,7 @@ static int browser_scroll_stage(uint32_t *surface, const uint8_t *font, uint64_t
     if (src != ssrc[se] || r != swant[se] || surface[2] != 4 || surface[2043] != sscroll[se] ||
         sfo != (int64_t)sops[se] || spx2 != spx[se] || shash2 != shash[se]) soff++;
     se++;
+    browser_hot_line("scroll", se, surface + 480, sfo);
     serial_string("AIUEOS_GUEST_BROWSER_SCROLL_FRAME n=");
     serial_decimal(se);
     serial_string(" src=");
@@ -5145,6 +5164,7 @@ qwen_runtime_boot_complete:
                                             py != cat[2 * ce + 1] || cfo != (int64_t)cops[ce] ||
                                             cpx2 != cwpx[ce] || chash2 != cwhash[ce] || tip != 0x333333U) coff++;
                                         ce++;
+                                        browser_hot_line("cursor", ce, surface + 480, cfo);
                                         serial_string("AIUEOS_GUEST_BROWSER_CURSOR_FRAME n=");
                                         serial_decimal(ce);
                                         serial_string(" src=");
@@ -5260,6 +5280,7 @@ qwen_runtime_boot_complete:
                                                 surface[2] != ffocus[fe] || ffo != 154 ||
                                                 fpx2 != fwpx[fe] || fhash2 != fwhash[fe]) foff++;
                                             fe++;
+                                            browser_hot_line("focus", fe, surface + 480, ffo);
                                             {
                                               /* ADR-0245: the titlebar rects (height 28) of the list just
                                                  painted, by the colour Kotoba's title-rgb chose: 13421772

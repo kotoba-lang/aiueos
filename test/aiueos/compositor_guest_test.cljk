@@ -924,3 +924,36 @@
     (is (= 3 (:exit (guest/classify "guest-browser-damage" {:qemu-unmeasured? true})))))
   (testing "tablet profile, with the clipboard's wall clock and more"
     (is (= {"AIUEOS_GUEST_BROWSER" "1" "AIUEOS_QEMU_TIMEOUT" "3300"} (guest/extra-env "guest-browser-damage")))))
+
+(def ^:private hot-lines
+  (apply str
+         (concat (map (fn [n] (str "AIUEOS_GUEST_BROWSER_HOT stage=cursor n=" n " hot=0\r\n")) (range 1 6))
+                 (map (fn [n] (str "AIUEOS_GUEST_BROWSER_HOT stage=focus n=" n " hot=1\r\n")) (range 1 13))
+                 (map (fn [n] (str "AIUEOS_GUEST_BROWSER_HOT stage=scroll n=" n " hot=" (if (<= n 3) 1 0) "\r\n"))
+                      (range 1 18)))))
+
+(deftest guest-browser-hover-classifier
+  (let [base (str cursor-ok-line focus-ok scroll-lines scroll-ok)]
+    (testing "none over the background, one over button 2, one over button 4 until the pointer leaves: green"
+      (let [r (guest/classify "guest-browser-hover" {:serial (str base hot-lines)})]
+        (is (= :guest-browser-hover (:reason r)))
+        (is (= 0 (:exit r)))))
+    (testing "a control that stays hot after the pointer left is red, and says where"
+      (let [r (guest/classify "guest-browser-hover"
+                              {:serial (str base (.replace hot-lines "stage=scroll n=9 hot=0" "stage=scroll n=9 hot=1"))})]
+        (is (= :hover-differs-from-model (:reason r)))
+        (is (= ["scroll" 9 1] (:kernel (:first-difference r))))))
+    (testing "a hot control where the pointer never was is red"
+      (is (= :hover-differs-from-model
+             (:reason (guest/classify "guest-browser-hover"
+                                      {:serial (str base (.replace hot-lines "stage=cursor n=2 hot=0" "stage=cursor n=2 hot=1"))})))))
+    (testing "a missing frame is red"
+      (is (= :hover-differs-from-model
+             (:reason (guest/classify "guest-browser-hover"
+                                      {:serial (str base (.replace hot-lines "stage=focus n=12 " "stage=focus n=120 "))})))))
+    (testing "no hot lines is absent, not green"
+      (is (= :guest-browser-hover-absent (:reason (guest/classify "guest-browser-hover" {:serial base})))))
+    (testing "it needs the scroll gate green first"
+      (is (= :no-scroll (:reason (guest/classify "guest-browser-hover" {:serial (str cursor-ok-line hot-lines)})))))
+    (testing "an unmeasured boot is exit 3"
+      (is (= 3 (:exit (guest/classify "guest-browser-hover" {:serial base :qemu-unmeasured? true})))))))

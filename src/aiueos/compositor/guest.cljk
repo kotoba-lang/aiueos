@@ -20,7 +20,7 @@
    "guest-browser-launch" "guest-browser-flow-parity" "guest-browser-dictionary"
    "guest-browser-cursor" "guest-browser-focus-cycle" "guest-browser-scroll"
    "guest-browser-selection" "guest-browser-clipboard" "guest-browser-damage"
-   "guest-browser-title-active"])
+   "guest-browser-title-active" "guest-browser-hover"])
 
 (defn gate-cmd
   "SPA-visible evidence command for a guest profile. Not clojure -M."
@@ -847,6 +847,44 @@
       {:green? false :exit 1 :reason :guest-browser-focus-cycle-absent
        :leftover [:guest-browser-focus-cycle-absent]})))
 
+;; Guest browser hover (ADR-0246): Kotoba `hot` decides, from the pointer in
+;; surface words 2046/2047, that a launcher button or a close control under it
+;; is drawn #d9d9d9 instead of #e6e6e6. On the scroll boot the kernel counts
+;; those rects in the draw list of the cursor (5), focus (12) and scroll (17)
+;; frames and prints AIUEOS_GUEST_BROWSER_HOT stage=<s> n=<k> hot=<h> beside
+;; each. Green needs the scroll gate green AND every count equal to what
+;; browser-frame-model.cljk counts in its own op list ("hot-frame"): none in
+;; the five cursor frames (the pointer is over no control), one in each of the
+;; twelve focus frames (over launcher button 2), one in the first three scroll
+;; frames (over button 4) and none in the fourteen after the pointer left it.
+
+(declare guest-browser-scroll-result)
+
+(def ^:private hot-want
+  (vec (concat (map-indexed (fn [k h] ["cursor" (inc k) h]) (repeat 5 0))
+               (map-indexed (fn [k h] ["focus" (inc k) h]) (repeat 12 1))
+               (map-indexed (fn [k h] ["scroll" (inc k) h]) (concat (repeat 3 1) (repeat 14 0))))))
+
+(defn guest-browser-hover-result
+  [{:keys [serial qemu-unmeasured?] :as opts}]
+  (let [s (or serial "")
+        got (mapv (fn [[_ st n h]] [st (parse-long n) (parse-long h)])
+                  (re-seq #"(?m)^AIUEOS_GUEST_BROWSER_HOT stage=(\w+) n=(\d+) hot=(\d+)\s*$" s))
+        base (guest-browser-scroll-result opts)]
+    (cond
+      qemu-unmeasured? {:green? false :exit 3 :reason :unmeasured :leftover [:unmeasured]}
+      (not (:green? base))
+      (assoc base :reason :no-scroll :leftover (into [:no-scroll] (:leftover base)))
+      (empty? got)
+      {:green? false :exit 1 :reason :guest-browser-hover-absent :leftover [:guest-browser-hover-absent]}
+      (not= got hot-want)
+      {:green? false :exit 1 :reason :hover-differs-from-model :leftover [:hover-differs-from-model]
+       :first-difference (first (remove nil? (map (fn [g w] (when (not= g w) {:kernel g :model w}))
+                                                 (concat got (repeat nil)) hot-want)))}
+      :else
+      {:green? true :exit 0 :reason :guest-browser-hover
+       :leftover [:colour-in-op-list-not-pixels :launcher-and-close-only :no-dock-hover :no-focus-ring]})))
+
 ;; Guest browser active/inactive titlebars (ADR-0245): on the focus-cycle boot
 ;; the kernel counts, in the draw list of each of the twelve focus frames, the
 ;; 28 px titlebar rects Kotoba's title-rgb coloured -- #cccccc for the focused
@@ -1219,6 +1257,9 @@
     ;; ADR-0245: the titlebar census is printed by the focus stage itself.
     "guest-browser-title-active" {"AIUEOS_GUEST_BROWSER" "1"
                                   "AIUEOS_QEMU_TIMEOUT" "1260"}
+    ;; ADR-0246: the hot counts are printed by the cursor, focus and scroll stages.
+    "guest-browser-hover" {"AIUEOS_GUEST_BROWSER" "1"
+                           "AIUEOS_QEMU_TIMEOUT" "2400"}
     "guest-scanout-two" {"AIUEOS_GUEST_SCANOUT_TWO" "1"
                          "AIUEOS_QEMU_TIMEOUT" "90"}
     nil))
@@ -1255,6 +1296,7 @@
     "guest-browser-clipboard" (guest-browser-clipboard-result opts)
     "guest-browser-damage" (guest-browser-damage-result opts)
     "guest-browser-title-active" (guest-browser-title-active-result opts)
+    "guest-browser-hover" (guest-browser-hover-result opts)
     {:green? false :exit 3 :reason :unmeasured :leftover [:unmeasured]}))
 
 (defn serial-marker
@@ -1289,6 +1331,7 @@
     "guest-browser-clipboard" "AIUEOS_GUEST_BROWSER_CLIPBOARD"
     "guest-browser-damage" "AIUEOS_GUEST_BROWSER_DAMAGE"
     "guest-browser-title-active" "AIUEOS_GUEST_BROWSER_FOCUS_TITLE"
+    "guest-browser-hover" "AIUEOS_GUEST_BROWSER_HOT"
     nil))
 
 (defn ok-print
@@ -1323,4 +1366,5 @@
     "guest-browser-clipboard" "AIUEOS_COMPOSITOR_GUEST_BROWSER_CLIPBOARD_OK"
     "guest-browser-damage" "AIUEOS_COMPOSITOR_GUEST_BROWSER_DAMAGE_OK"
     "guest-browser-title-active" "AIUEOS_COMPOSITOR_GUEST_BROWSER_TITLE_ACTIVE_OK"
+    "guest-browser-hover" "AIUEOS_COMPOSITOR_GUEST_BROWSER_HOVER_OK"
     nil))
