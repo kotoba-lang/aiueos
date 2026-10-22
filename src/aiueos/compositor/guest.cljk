@@ -20,7 +20,8 @@
    "guest-browser-launch" "guest-browser-flow-parity" "guest-browser-dictionary"
    "guest-browser-cursor" "guest-browser-focus-cycle" "guest-browser-scroll"
    "guest-browser-selection" "guest-browser-clipboard" "guest-browser-damage"
-   "guest-browser-title-active" "guest-browser-hover"])
+   "guest-browser-title-active" "guest-browser-hover"
+   "guest-browser-high-contrast"])
 
 (defn gate-cmd
   "SPA-visible evidence command for a guest profile. Not clojure -M."
@@ -847,6 +848,69 @@
       {:green? false :exit 1 :reason :guest-browser-focus-cycle-absent
        :leftover [:guest-browser-focus-cycle-absent]})))
 
+;; Guest browser high contrast (ADR-0247): after the damage stage the host sends
+;; F10 down and up (Kotoba flips surface word 2039: the palette on), F10 down
+;; and up (off). For each of the four frames the kernel prints what it reads
+;; out of the draw list it painted -- the mode, the background (op 0), the
+;; first glyph's colour (the ink) and the distinct colours of the 28 px rects
+;; (the launcher bar and the titlebars) -- and the census. Green needs the
+;; damage gate green AND the four lines equal to browser-frame-model.cljk's
+;; ("hc-frame"), AND, in the frames with the palette on, the contrast ratio
+;; (WCAG 2: (L1 + .05) / (L2 + .05)) of the ink against the background, the
+;; white body and every bar at least 7:1. The classifier computes the ratios
+;; itself, from the colours the kernel printed.
+
+(defn- srgb-lum [c]
+  (let [lin (fn [v] (let [x (/ v 255.0)] (if (<= x 0.03928) (/ x 12.92) (js/Math.pow (/ (+ x 0.055) 1.055) 2.4))))
+        r (bit-and (bit-shift-right c 16) 255) g (bit-and (bit-shift-right c 8) 255) b (bit-and c 255)]
+    (+ (* 0.2126 (lin r)) (* 0.7152 (lin g)) (* 0.0722 (lin b)))))
+
+(defn contrast-ratio [a b]
+  (let [la (srgb-lum a) lb (srgb-lum b)]
+    (/ (+ (max la lb) 0.05) (+ (min la lb) 0.05))))
+
+(def ^:private hc-want
+  [[1 1 0xffffff 0x000000 [0xffffff 0xd0d0d0 0xffd400]]
+   [2 1 0xffffff 0x000000 [0xffffff 0xd0d0d0 0xffd400]]
+   [3 0 0xf1f1f2 0x333333 [0xf1f1f2 0xe6e6e6 0xcccccc]]
+   [4 0 0xf1f1f2 0x333333 [0xf1f1f2 0xe6e6e6 0xcccccc]]])
+
+(defn- parse-hex [h] (js/parseInt h 16))
+
+(defn guest-browser-high-contrast-result
+  [{:keys [serial qemu-unmeasured?] :as opts}]
+  (let [s (or serial "")
+        got (mapv (fn [[_ n mode bg ink bars ops px hash]]
+                    {:n (parse-long n) :mode (parse-long mode) :bg (parse-hex bg) :ink (parse-hex ink)
+                     :bars (mapv parse-hex (str/split bars #",")) :ops (parse-long ops)
+                     :px (parse-long px) :hash hash})
+                  (re-seq #"(?m)^AIUEOS_GUEST_BROWSER_HC n=(\d+) mode=(\d) bg=([0-9a-f]{8}) ink=([0-9a-f]{8}) bars=([0-9a-f,]+) ops=(\d+) text-px=(\d+) hash=([0-9a-f]{8})\s*$" s))
+        want (mapv (fn [[n mode bg ink bars]]
+                     {:n n :mode mode :bg bg :ink ink :bars bars :ops 203 :px 2330 :hash "5581e21a"})
+                   hc-want)
+        damage-ok? (re-find #"(?m)^AIUEOS_GUEST_BROWSER_DAMAGE_OK events=5 partial=2 empty=3 bytes=1870144 whole-bytes=20480000 focus=1 chain=6653b143 ops=203 text-px=2330 hash=5581e21a" s)
+        low (fn [g] (when (= 1 (:mode g))
+                      (first (filter #(< (contrast-ratio (:ink g) %) 7.0)
+                                     (concat [(:bg g) 0xffffff] (:bars g))))))]
+    (cond
+      qemu-unmeasured? {:green? false :exit 3 :reason :unmeasured :leftover [:unmeasured]}
+      (not damage-ok?)
+      {:green? false :exit 1 :reason :no-damage :leftover [:no-damage]}
+      (empty? got)
+      {:green? false :exit 1 :reason :guest-browser-high-contrast-absent
+       :leftover [:guest-browser-high-contrast-absent]}
+      (not (re-find #"(?m)^AIUEOS_GUEST_BROWSER_UIUX_OK events=4 palette=default-high-contrast-default" s))
+      {:green? false :exit 1 :reason :uiux-ok-missing :leftover [:uiux-ok-missing]}
+      (some low got)
+      {:green? false :exit 1 :reason :contrast-below-7 :leftover [:contrast-below-7]}
+      (not= got want)
+      {:green? false :exit 1 :reason :hc-differs-from-model :leftover [:hc-differs-from-model]
+       :first-difference (first (remove nil? (map (fn [g w] (when (not= g w) {:kernel g :model w}))
+                                                 (concat got (repeat nil)) want)))}
+      :else
+      {:green? true :exit 0 :reason :guest-browser-high-contrast
+       :leftover [:colours-in-op-list-not-pixels :dock-keeps-its-colours :no-persistence-across-boots]})))
+
 ;; Guest browser hover (ADR-0246): Kotoba `hot` decides, from the pointer in
 ;; surface words 2046/2047, that a launcher button or a close control under it
 ;; is drawn #d9d9d9 instead of #e6e6e6. On the scroll boot the kernel counts
@@ -1260,6 +1324,9 @@
     ;; ADR-0246: the hot counts are printed by the cursor, focus and scroll stages.
     "guest-browser-hover" {"AIUEOS_GUEST_BROWSER" "1"
                            "AIUEOS_QEMU_TIMEOUT" "2400"}
+    ;; ADR-0247: the F10 stage comes after the damage stage.
+    "guest-browser-high-contrast" {"AIUEOS_GUEST_BROWSER" "1"
+                                   "AIUEOS_QEMU_TIMEOUT" "3900"}
     "guest-scanout-two" {"AIUEOS_GUEST_SCANOUT_TWO" "1"
                          "AIUEOS_QEMU_TIMEOUT" "90"}
     nil))
@@ -1297,6 +1364,7 @@
     "guest-browser-damage" (guest-browser-damage-result opts)
     "guest-browser-title-active" (guest-browser-title-active-result opts)
     "guest-browser-hover" (guest-browser-hover-result opts)
+    "guest-browser-high-contrast" (guest-browser-high-contrast-result opts)
     {:green? false :exit 3 :reason :unmeasured :leftover [:unmeasured]}))
 
 (defn serial-marker
@@ -1332,6 +1400,7 @@
     "guest-browser-damage" "AIUEOS_GUEST_BROWSER_DAMAGE"
     "guest-browser-title-active" "AIUEOS_GUEST_BROWSER_FOCUS_TITLE"
     "guest-browser-hover" "AIUEOS_GUEST_BROWSER_HOT"
+    "guest-browser-high-contrast" "AIUEOS_GUEST_BROWSER_HC"
     nil))
 
 (defn ok-print
@@ -1367,4 +1436,5 @@
     "guest-browser-damage" "AIUEOS_COMPOSITOR_GUEST_BROWSER_DAMAGE_OK"
     "guest-browser-title-active" "AIUEOS_COMPOSITOR_GUEST_BROWSER_TITLE_ACTIVE_OK"
     "guest-browser-hover" "AIUEOS_COMPOSITOR_GUEST_BROWSER_HOVER_OK"
+    "guest-browser-high-contrast" "AIUEOS_COMPOSITOR_GUEST_BROWSER_HIGH_CONTRAST_OK"
     nil))

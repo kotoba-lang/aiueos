@@ -73,7 +73,7 @@
 
 ;; --- layout -------------------------------------------------------------------
 
-(def ^:private ink 0x111111)
+(def ^:private ink 0x333333)
 
 (defn- lay-line
   "Lay code points from cursor [x y]; returns {:ops :x :y}. Wrap at `right`
@@ -200,13 +200,13 @@
   under every window -- #edf0f5 across the top 28 px -- and one #e4e8ef
   96 x 24 button per registered app at x 6 + 102(k-1), y 2, its title
   (:titles k) from (x + 6, 6), one line, clipped at x + 90."
-  [{:keys [vw apps titles pointer]}]
+  [{:keys [vw apps titles pointer hc]}]
   (when (pos? (or apps 0))
-    (into [[:rect 0 0 vw 28 0xf1f1f2]]
+    (into [[:rect 0 0 vw 28 (if hc 0xffffff 0xf1f1f2)]]
           (mapcat (fn [k]
                     (let [x (+ 6 (* 102 (dec k)))]
                       (when (pos? (bit-and apps (bit-shift-left 1 (dec k))))
-                        (into [[:rect x 2 96 24 (if (hot? pointer x 2 96 24) hot-colour 0xe6e6e6)]]
+                        (into [[:rect x 2 96 24 (if (hot? pointer x 2 96 24) (if hc 0xffd400 hot-colour) (if hc 0xe0e0e0 0xe6e6e6))]]
                               (:ops (lay-line {:x (+ x 6) :y 6 :left (+ x 6) :right (+ x 90)
                                                :bottom 28 :wrap? false}
                                               (take 32 (get titles k))))))))
@@ -245,12 +245,25 @@
                            [:glyph (+ x (quot (- 36 gw) 2)) (+ top 16) gi gw 0xffffff]])))
                     [1 2 3 4])))))
 
+(defn- hc-ink
+  "ADR-0247: under the high-contrast palette the text colour is black: every
+  glyph that names no colour, and every rect the model draws in the ink, is
+  #000000."
+  [hc ops]
+  (if-not hc
+    ops
+    (mapv (fn [[k x y a b c :as o]]
+            (cond (and (= k :glyph) (nil? c)) [:glyph x y a b 0x000000]
+                  (and (= k :rect) (= c ink)) [:rect x y a b 0x000000]
+                  :else o))
+          ops)))
+
 (defn frame
   "Ops for a scene: {:vw :vh :focus :stack [{:id :x :y :w :h :title :body}]
   :composition [cp ...] :apps register :titles {k [cp ...]} :pointer [x y]
   :selection [id k]} (stack bottom first)."
-  [{:keys [vw vh focus stack composition apps selection] :as scene}]
-  (into (into (into [[:rect 0 0 vw vh 0xf5f6f8]] (launcher scene))
+  [{:keys [vw vh focus stack composition apps selection hc] :as scene}]
+  (hc-ink hc (into (into (into [[:rect 0 0 vw vh (if hc 0xffffff 0xf1f1f2)]] (launcher scene))
         (mapcat
          (fn [{:keys [id x y w h title body scroll]}]
            (let [f? (= id focus)
@@ -267,7 +280,7 @@
                  [xi xw] (glyph 215)
                  close (when chrome?
                          [[:rect (- (+ x w) 24) (+ y 6) 16 16
-                           (if (hot? (:pointer scene) (- (+ x w) 24) (+ y 6) 16 16) hot-colour 0xe6e6e6)]
+                           (if (hot? (:pointer scene) (- (+ x w) 24) (+ y 6) 16 16) (if hc 0xffd400 hot-colour) (if hc 0xe0e0e0 0xe6e6e6))]
                           [:glyph (+ (- (+ x w) 24) (quot (- 16 xw) 2)) (+ y 6) xi xw]])
                  ;; ADR-0234: the body flows as cssom lays out the window's
                  ;; document: text 14 in from the body box (x, y + 28), lines
@@ -301,18 +314,18 @@
              ;; titlebar #cccccc focused / #e6e6e6 otherwise.
              (concat (let [rw (min 3 (- vw (+ x w)))
                            bh (min 3 (- vh (+ y h)))]
-                       (concat (when (pos? rw) [[:rect (+ x w) (+ y 3) rw (- h 3) 0xcccccc]])
-                               (when (pos? bh) [[:rect (+ x 3) (+ y h) (- w 3) bh 0xcccccc]])))
+                       (concat (when (pos? rw) [[:rect (+ x w) (+ y 3) rw (- h 3) (if hc 0x808080 0xcccccc)]])
+                               (when (pos? bh) [[:rect (+ x 3) (+ y h) (- w 3) bh (if hc 0x808080 0xcccccc)]])))
                      [[:rect (+ x 2) y (- w 4) h 0xffffff]
                       [:rect (+ x 1) (+ y 1) (- w 2) (- h 2) 0xffffff]
                       [:rect x (+ y 2) w (- h 4) 0xffffff]]
-                     (let [tc (if f? 0xcccccc 0xe6e6e6)]
+                     (let [tc (if hc (if f? 0xffd400 0xd0d0d0) (if f? 0xcccccc 0xe6e6e6))]
                        [[:rect (+ x 2) y (- w 4) 28 tc]
                         [:rect (+ x 1) (+ y 1) (- w 2) 28 tc]
                         [:rect x (+ y 2) w 26 tc]])
                      (:ops t) close (:ops b) (:ops c) caret))))
         stack)
-        (concat (dock scene) (pointer-sprite scene))))
+        (concat (dock scene) (pointer-sprite scene)))))
 
 ;; --- paint and census -----------------------------------------------------------
 
@@ -582,6 +595,25 @@
     {:before before
      :frames [["move" moved] ["alt" moved] ["tab" raised] ["tab-up" raised] ["alt-up" raised]]}))
 
+;; ADR-0247: after the damage stage the host sends F10 down and up (the
+;; high-contrast palette on), F10 down and up (off). The scene is the damage
+;; stage's last: window 1 raised and focused, the pointer at (320, 310).
+(def uiux-frames
+  (let [raised (get-in damage-frames [:frames 4 1])
+        hc (assoc raised :hc true)]
+    [["f10" hc] ["f10-up" hc] ["f10" raised] ["f10-up" raised]]))
+
+;; The colours the kernel reads out of a draw list for AIUEOS_GUEST_BROWSER_HC:
+;; the background (op 0), the first glyph's colour (the ink), and the distinct
+;; colours of the 28 px rects (titlebars) in the order they first appear.
+(defn- hc-line [n hc ops]
+  (let [hx #(.padStart (.toString % 16) 8 "0")
+        glyphs (filter #(= (first %) :glyph) ops)
+        titles (distinct (map #(nth % 5) (filter (fn [[k _ _ _ b _]] (and (= k :rect) (= b 28))) ops)))]
+    (str "hc-frame n=" n " mode=" (if hc 1 0) " bg=" (hx (nth (first ops) 5))
+         " ink=" (hx (or (nth (first glyphs) 5 nil) ink))
+         " bars=" (apply str (interpose "," (map hx (take 4 titles)))))))
+
 (defn- op-box
   "The pixels an op can set: a rect's own, a glyph's width x 16."
   [[k x y a b]]
@@ -830,6 +862,11 @@
   ;; ADR-0246: the hover colour (#d9d9d9) rects counted in the model's own op
   ;; list for the cursor, focus and scroll frames -- the kernel prints the
   ;; same count beside each frame (AIUEOS_GUEST_BROWSER_HOT).
+  (doseq [[i [ev scene]] (map-indexed vector uiux-frames)
+          :let [ops (frame scene)
+                c (if (:hc scene) (census 0 ops) (census ops))]]
+    (println (str "uiux-frame n=" (inc i) " " ev " ops=" (:ops c) " text-px=" (:text-px c)
+                  " hash=" (:hash c) " " (hc-line (inc i) (:hc scene) ops))))
   (doseq [[stage frames] [["cursor" cursor-frames] ["focus" focus-frames] ["scroll" scroll-frames]]
           [i [_ scene]] (map-indexed vector frames)]
     (println (str "hot-frame stage=" stage " n=" (inc i) " hot="
