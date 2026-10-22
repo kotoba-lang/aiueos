@@ -808,6 +808,16 @@
     (println (str "focus frames=" (count cs) " ops=" (apply str (interpose "," (map :ops cs)))
                   " chain=" (chain (map #(js/parseInt (:hash %) 16) cs))
                   " last-px=" (:text-px (peek cs)) " last-hash=" (:hash (peek cs)))))
+  ;; ADR-0245: the titlebar census the kernel prints per focus frame -- the
+  ;; 28 px rects in the focused colour (#cccccc) and the others' (#e6e6e6), and
+  ;; the x,y of the first focused one (the focused window's x + 2, y). Counted from
+  ;; the model's own op list, not from the kernel's.
+  (doseq [[i [_ scene]] (map-indexed vector focus-frames)
+          :let [t (filter (fn [[k _ _ _ b _]] (and (= k :rect) (= b 28))) (frame scene))
+                act (filter #(= (nth % 5) 0xcccccc) t)
+                ina (filter #(= (nth % 5) 0xe6e6e6) t)]]
+    (println (str "title-frame n=" (inc i) " active=" (count act) " inactive=" (count ina)
+                  " at=" (second (first act)) "," (nth (first act) 2))))
   (let [cs (vec (map-indexed (fn [i [ev scene]]
                                (let [c (census (frame scene))]
                                  (println (str "scroll-frame n=" (inc i) " " ev

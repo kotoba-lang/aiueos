@@ -485,6 +485,40 @@
 (def ^:private focus-ok
   "AIUEOS_GUEST_BROWSER_FOCUS_OK events=12 answers=200103020000 wm=3 stack=132 focus=2 bodies=unchanged chain=2254db31 ops=154 text-px=1082 hash=e90ed2bc\r\n")
 
+(def ^:private title-lines
+  (apply str
+         (map (fn [n at] (str "AIUEOS_GUEST_BROWSER_FOCUS_TITLE n=" n " active=2 inactive=4 at=" at "\r\n"))
+              (range 1 13)
+              (concat (repeat 3 "82,80") (repeat 2 "274,132") (repeat 7 "82,80")))))
+
+(deftest guest-browser-title-active-classifier
+  (let [base (str cursor-ok-line focus-lines focus-ok)]
+    (testing "twelve frames, one focused titlebar and two others in each, at the focused window: green"
+      (let [r (guest/classify "guest-browser-title-active" {:serial (str base title-lines)})]
+        (is (= :guest-browser-title-active (:reason r)))
+        (is (= 0 (:exit r)))))
+    (testing "a frame where two windows are drawn active is red, and says which"
+      (let [r (guest/classify "guest-browser-title-active"
+                              {:serial (str base (.replace title-lines "n=4 active=2 inactive=4" "n=4 active=4 inactive=2"))})]
+        (is (= :title-differs-from-model (:reason r)))
+        (is (= 4 (first (:kernel (:first-difference r)))))))
+    (testing "the active titlebar at the wrong window is red"
+      (is (= :title-differs-from-model
+             (:reason (guest/classify "guest-browser-title-active"
+                                      {:serial (str base (.replace title-lines "n=4 active=2 inactive=4 at=274,132" "n=4 active=2 inactive=4 at=82,80"))})))))
+    (testing "a missing frame is red"
+      (is (= :title-differs-from-model
+             (:reason (guest/classify "guest-browser-title-active"
+                                      {:serial (str base (.replace title-lines "FOCUS_TITLE n=12 " "FOCUS_TITLE n=120 "))})))))
+    (testing "no title lines at all is absent, not green"
+      (is (= :guest-browser-title-active-absent
+             (:reason (guest/classify "guest-browser-title-active" {:serial base})))))
+    (testing "it needs the focus-cycle gate green first"
+      (is (= :no-focus-cycle
+             (:reason (guest/classify "guest-browser-title-active" {:serial (str cursor-ok-line title-lines)})))))
+    (testing "an unmeasured boot is exit 3"
+      (is (= 3 (:exit (guest/classify "guest-browser-title-active" {:serial base :qemu-unmeasured? true})))))))
+
 (deftest guest-browser-focus-cycle-classifier
   (testing "twelve frames, three window-manager focuses, the model's censuses: green"
     (let [r (guest/classify "guest-browser-focus-cycle" {:serial (str cursor-ok-line focus-lines focus-ok)})]

@@ -5260,6 +5260,33 @@ qwen_runtime_boot_complete:
                                                 surface[2] != ffocus[fe] || ffo != 154 ||
                                                 fpx2 != fwpx[fe] || fhash2 != fwhash[fe]) foff++;
                                             fe++;
+                                            {
+                                              /* ADR-0245: the titlebar rects (height 28) of the list just
+                                                 painted, by the colour Kotoba's title-rgb chose: 13421772
+                                                 for the focused window, 15132390 for every other, and the
+                                                 x,y of the first focused one. */
+                                              uint32_t tact = 0, tina = 0, tx = 0, ty = 0;
+                                              for (uint32_t j = 0; j < (uint32_t)ffo && j < 261U; j++) {
+                                                const uint32_t *op = surface + 480 + 6U * j;
+                                                if (op[0] == 1 && op[4] == 28U) {
+                                                  if (op[5] == 13421772U) {
+                                                    if (!tact) { tx = op[1]; ty = op[2]; }
+                                                    tact++;
+                                                  } else if (op[5] == 15132390U) tina++;
+                                                }
+                                              }
+                                              serial_string("AIUEOS_GUEST_BROWSER_FOCUS_TITLE n=");
+                                              serial_decimal(fe);
+                                              serial_string(" active=");
+                                              serial_decimal(tact);
+                                              serial_string(" inactive=");
+                                              serial_decimal(tina);
+                                              serial_string(" at=");
+                                              serial_decimal(tx);
+                                              serial_string(",");
+                                              serial_decimal(ty);
+                                              serial_string("\r\n");
+                                            }
                                             serial_string("AIUEOS_GUEST_BROWSER_FOCUS_FRAME n=");
                                             serial_decimal(fe);
                                             serial_string(" src=");
