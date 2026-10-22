@@ -187,18 +187,26 @@
           {:ops [] :x left :y top}
           (map-indexed vector lines)))
 
+(def ^:private hot-colour 0xd9d9d9)
+
+(defn- hot?
+  "ADR-0246: the pointer [px py] is inside the control rect (x y w h)."
+  [pointer x y w h]
+  (when-let [[px py] pointer]
+    (and (<= x px) (< px (+ x w)) (<= y py) (< py (+ y h)))))
+
 (defn- launcher
   "ADR-0233: with an app register (:apps, bit k-1 = app k), the launcher row
   under every window -- #edf0f5 across the top 28 px -- and one #e4e8ef
   96 x 24 button per registered app at x 6 + 102(k-1), y 2, its title
   (:titles k) from (x + 6, 6), one line, clipped at x + 90."
-  [{:keys [vw apps titles]}]
+  [{:keys [vw apps titles pointer]}]
   (when (pos? (or apps 0))
-    (into [[:rect 0 0 vw 28 0xedf0f5]]
+    (into [[:rect 0 0 vw 28 0xf1f1f2]]
           (mapcat (fn [k]
                     (let [x (+ 6 (* 102 (dec k)))]
                       (when (pos? (bit-and apps (bit-shift-left 1 (dec k))))
-                        (into [[:rect x 2 96 24 0xe4e8ef]]
+                        (into [[:rect x 2 96 24 (if (hot? pointer x 2 96 24) hot-colour 0xe6e6e6)]]
                               (:ops (lay-line {:x (+ x 6) :y 6 :left (+ x 6) :right (+ x 90)
                                                :bottom 28 :wrap? false}
                                               (take 32 (get titles k))))))))
@@ -258,7 +266,8 @@
                               :bottom (+ y 28) :wrap? false} (take 32 title))
                  [xi xw] (glyph 215)
                  close (when chrome?
-                         [[:rect (- (+ x w) 24) (+ y 6) 16 16 0xe4e8ef]
+                         [[:rect (- (+ x w) 24) (+ y 6) 16 16
+                           (if (hot? (:pointer scene) (- (+ x w) 24) (+ y 6) 16 16) hot-colour 0xe6e6e6)]
                           [:glyph (+ (- (+ x w) 24) (quot (- 16 xw) 2)) (+ y 6) xi xw]])
                  ;; ADR-0234: the body flows as cssom lays out the window's
                  ;; document: text 14 in from the body box (x, y + 28), lines
@@ -818,6 +827,13 @@
                 ina (filter #(= (nth % 5) 0xe6e6e6) t)]]
     (println (str "title-frame n=" (inc i) " active=" (count act) " inactive=" (count ina)
                   " at=" (second (first act)) "," (nth (first act) 2))))
+  ;; ADR-0246: the hover colour (#d9d9d9) rects counted in the model's own op
+  ;; list for the cursor, focus and scroll frames -- the kernel prints the
+  ;; same count beside each frame (AIUEOS_GUEST_BROWSER_HOT).
+  (doseq [[stage frames] [["cursor" cursor-frames] ["focus" focus-frames] ["scroll" scroll-frames]]
+          [i [_ scene]] (map-indexed vector frames)]
+    (println (str "hot-frame stage=" stage " n=" (inc i) " hot="
+                  (count (filter (fn [[k _ _ _ _ c]] (and (= k :rect) (= c hot-colour))) (frame scene))))))
   (let [cs (vec (map-indexed (fn [i [ev scene]]
                                (let [c (census (frame scene))]
                                  (println (str "scroll-frame n=" (inc i) " " ev

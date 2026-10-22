@@ -461,10 +461,22 @@
 
 (defn app-bit [k] (if (= k 1) 1 (if (= k 2) 2 (if (= k 3) 4 8))))
 
+;; ADR-0246: a control is hot when the pointer (surface words 2046 = x + 1,
+;; 2047 = y; 0 = no pointer yet) is inside its rectangle. Kotoba decides it;
+;; the colour of a hot control is the only thing it changes.
+(defn hot [s x y w h]
+  (if (= (sw s 2046) 0) 0
+    (let [px (- (sw s 2046) 1)
+          py (sw s 2047)]
+      (if (< px x) 0
+        (if (>= px (+ x w)) 0
+          (if (< py y) 0
+            (if (>= py (+ y h)) 0 1)))))))
+
 (defn button [s f k]
   (if (= (bit-and (sw s 31) (app-bit k)) 0) 0
     (let [x (+ 6 (* 102 (- k 1)))]
-      (do (sput s 422 15132390)
+      (do (sput s 422 (if (= (hot s x 2 96 24) 1) 14277081 15132390))
           (put-rect s x 2 96 24)
           (sput s 420 (+ x 90)) (sput s 421 28)
           (sput s 426 0) (sput s 428 32)
@@ -516,7 +528,7 @@
   (if (= (chrome s w) 0) 0
     (let [gi (glyph-of s f 215)
           gw (glyph-width s f gi)]
-      (do (sput s 422 15132390)
+      (do (sput s 422 (if (= (hot s (- (+ x w) 24) (+ y 6) 16 16) 1) 14277081 15132390))
           (put-rect s (- (+ x w) 24) (+ y 6) 16 16)
           (sput s 422 3355443)
           (put-glyph s (+ (- (+ x w) 24) (quot (- 16 gw) 2)) (+ y 6) gi gw)))))
