@@ -42,11 +42,11 @@
     (.writeFileSync fs f (pr-str receipt))
     f))
 
-(defn- run-uefi! [profile]
+(defn- run-uefi! [profile & [more-env]]
   (when-not (.existsSync fs smoke)
     (die3 (str "AIUEOS_COMPOSITOR leftover=:unmeasured why=:smoke-script-missing path=" smoke)))
   (let [env (js/Object.assign #js {} js/process.env)
-        _ (doseq [[k v] (or (guest/extra-env profile) {})]
+        _ (doseq [[k v] (merge (or (guest/extra-env profile) {}) (or more-env {}))]
             (aset env k v))
         r (.spawnSync cp smoke #js []
                       #js {:cwd repo :encoding "utf8" :env env :shell false
@@ -89,9 +89,16 @@
                                       (:scenes (edn/read-string (.readFileSync fs f "utf8")))))
                        (die3 (str "AIUEOS_COMPOSITOR leftover=:unmeasured why=:no-flow-scene path=" f)))))
         started (.now js/Date)
-        boot (run-uefi! profile)
+        ;; ADR-0260: the settings gate boots the same volume twice; the first serial is kept beside the second
+        boot (if (= profile "guest-browser-settings")
+               (let [b1 (run-uefi! profile {"AIUEOS_SETTINGS_PHASE" "1"})
+                     b2 (run-uefi! profile {"AIUEOS_SETTINGS_PHASE" "2" "AIUEOS_PRESERVE_BLK_IMAGE" "1"})]
+                 (when (:serial b1) (.writeFileSync fs (str serial-path ".boot1") (:serial b1)))
+                 (assoc b2 :serial1 (:serial b1) :exit (if (zero? (:exit b1)) (:exit b2) (:exit b1))))
+               (run-uefi! profile))
         measured? (guest/serial-measured? (:serial boot))
         r (guest/classify profile {:serial (:serial boot)
+                                   :serial1 (:serial1 boot)
                                    :qemu-unmeasured? (not measured?)
                                    :hosted-wm? false
                                    :hosted-ime? false

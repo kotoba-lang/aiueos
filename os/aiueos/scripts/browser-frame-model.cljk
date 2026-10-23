@@ -819,6 +819,13 @@
        ["4" (lk2 3 [456 146])] ["4-up" (lk2 3 [456 146])] ["2" (lk2 4 [456 146])] ["2-up" (lk2 4 [456 146])]
        ["enter-signed-in" (at clean [456 146])] ["enter-up" (at clean [456 146])]])))
 
+;; ADR-0260: after the sign-out stage the settings stage: the clean session (one window 1) with the
+;; high-contrast palette on -- chosen with F10 on the first boot, restored from the volume on the second.
+(def settings-frames
+  (let [clean (second (last max-frames))
+        hc (assoc clean :hc true)]
+    [["f10" hc] ["f10-up" hc]]))
+
 ;; The colours the kernel reads out of a draw list for AIUEOS_GUEST_BROWSER_HC:
 ;; the background (op 0), the first glyph's colour (the ink), and the distinct
 ;; colours of the 28 px rects (titlebars) in the order they first appear.
@@ -1078,6 +1085,11 @@
   ;; ADR-0246: the hover colour (#d9d9d9) rects counted in the model's own op
   ;; list for the cursor, focus and scroll frames -- the kernel prints the
   ;; same count beside each frame (AIUEOS_GUEST_BROWSER_HOT).
+  (doseq [[i [ev scene]] (map-indexed vector settings-frames)
+          :let [ops (frame scene)
+                c (census 0 ops)]]
+    (println (str "settings-frame n=" (inc i) " " ev " ops=" (:ops c) " text-px=" (:text-px c)
+                  " hash=" (:hash c))))
   (doseq [[i [ev scene]] (map-indexed vector uiux-frames)
           :let [ops (frame scene)
                 c (if (:hc scene) (census 0 ops) (census ops))]]

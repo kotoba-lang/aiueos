@@ -1513,3 +1513,56 @@
       (is (= :sign-out-ok-missing (:reason (guest/classify "guest-browser-sign-out" {:serial (str lock-part so so-states (so-state-lines 0))}))))
       (is (= :guest-browser-sign-out-absent (:reason (guest/classify "guest-browser-sign-out" {:serial (str lock-part sign-out-ok)}))))
       (is (= 3 (:exit (guest/classify "guest-browser-sign-out" {:serial ok :qemu-unmeasured? true})))))))
+
+(defn- settings-serial [boot-line keys written stored]
+  (str boot-line
+       (apply str (map-indexed
+                   (fn [i key]
+                     (str "AIUEOS_GUEST_BROWSER_SETTINGS n=" (inc i) " key=" key " hc=1 ops=72 text-px=582 hash=60620c8b"
+                          " written=" written " stored=" stored "\r\n"))
+                   keys))
+       "AIUEOS_GUEST_BROWSER_SETTINGS_OK events=2\r\n"))
+
+(deftest guest-browser-settings-classifier
+  (let [base (str (apply str (map max-line max-rows)) max-ok (apply str (map max-line ctl-rows)) ctl-ok
+                  (apply str (map max-line shape-rows)) shape-ok
+                  (apply str (map max-line press-rows)) press-lines pressed-ok)
+        mn (apply str (map min-line min-rows))
+        pre (str base mn min-reg-lines minimize-ok)
+        lines (apply str (map lock-line lock-rows))
+        states (apply str (map lock-state-line lock-state-rows))
+        lock-part (str pre lines states screen-lock-ok)
+        so (apply str (map so-line so-rows))
+        so-states (apply str (map lock-state-line so-lock-rows))
+        through-sign-out (str lock-part so so-states (so-state-lines 0) sign-out-ok)
+        boot1 (settings-serial "AIUEOS_GUEST_BROWSER_SETTINGS_BOOT valid=0 contrast=0\r\n" [273 272] 1 1)
+        boot2 (str through-sign-out (settings-serial "AIUEOS_GUEST_BROWSER_SETTINGS_BOOT valid=1 contrast=1\r\n" [225 224] 0 1))
+        run (fn [opts] (guest/classify "guest-browser-settings" opts))]
+    (testing "chosen and written on the first boot, read back on the second: green"
+      (let [r (run {:serial boot2 :serial1 boot1})]
+        (is (= :guest-browser-settings (:reason r)))
+        (is (= 0 (:exit r)))))
+    (testing "a second boot that did not find the record is red"
+      (is (= :second-boot-did-not-read-the-choice
+             (:reason (run {:serial (.replace boot2 "valid=1 contrast=1" "valid=0 contrast=0") :serial1 boot1})))))
+    (testing "a second boot that was told by F10 and not by the volume is red"
+      (is (= :second-boot-was-told-or-wrote
+             (:reason (run {:serial (.replace (.replace boot2 "key=225" "key=273") "key=224" "key=272") :serial1 boot1})))))
+    (testing "a second boot that writes again is red"
+      (is (= :second-boot-was-told-or-wrote
+             (:reason (run {:serial (.replace boot2 "written=0" "written=1") :serial1 boot1})))))
+    (testing "a first boot that already had a record proves nothing and is red"
+      (is (= :first-boot-had-a-record
+             (:reason (run {:serial boot2 :serial1 (.replace boot1 "valid=0 contrast=0" "valid=1 contrast=1")})))))
+    (testing "a choice that was not written is red"
+      (is (= :choice-not-written
+             (:reason (run {:serial boot2 :serial1 (.replace boot1 "written=1 stored=1" "written=0 stored=none")})))))
+    (testing "frames off the model are red"
+      (is (= :second-boot-differs-from-model
+             (:reason (run {:serial (.replace boot2 "hc=1 ops=72 text-px=582" "hc=1 ops=76 text-px=582") :serial1 boot1})))))
+    (testing "it needs the sign-out gate green first"
+      (is (= :no-sign-out (:reason (run {:serial (settings-serial "AIUEOS_GUEST_BROWSER_SETTINGS_BOOT valid=1 contrast=1\r\n" [225 224] 0 1)
+                                         :serial1 boot1})))))
+    (testing "no lines is absent, unmeasured is exit 3"
+      (is (= :guest-browser-settings-absent (:reason (run {:serial through-sign-out :serial1 boot1}))))
+      (is (= 3 (:exit (run {:serial boot2 :serial1 boot1 :qemu-unmeasured? true})))))))
