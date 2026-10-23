@@ -575,7 +575,7 @@ int aiueos_crash_receipt_write(uint32_t reason) {
 }
 
 /* ADR-0260: the desktop's settings record. One bounded record in a dedicated sector above the crash
-   receipt's: magic, version, the high-contrast choice, a reserved word and a Kotoba FNV checksum over the
+   receipt's: magic, version, the high-contrast choice, the UI scale in percent (ADR-0265; 0 in an older record means 100) and a Kotoba FNV checksum over the
    preceding 20 bytes. The write requires readback; a sector that is empty, torn or foreign reads as "no
    settings". Like the crash receipt it runs from the boot flow, before user processes, on the standard
    interrupt-driven sector path with no lock. */
@@ -597,33 +597,35 @@ static uint32_t settings_record_checksum(void) {
 static int settings_record_valid(void) {
   struct aiueos_settings_record *record=(void *)blk_backend.sector;
   for (unsigned i=0;i<8;i++) if (record->magic[i]!=settings_magic[i]) return 0;
-  return record->version==1 && record->contrast<2 && record->checksum==settings_record_checksum();
+  return record->version==1 && record->contrast<2 && (record->reserved==0||record->reserved==100||record->reserved==125||record->reserved==150) && record->checksum==settings_record_checksum();
 }
 
 /* Returns 1 and the stored choice when a valid record exists, 0 when there is none. */
-int aiueos_settings_read(uint32_t *contrast) {
-  if (!blk_backend.ready || !contrast || AIUEOS_SETTINGS_SECTOR >= blk_backend.capacity) return 0;
+int aiueos_settings_read(uint32_t *contrast, uint32_t *scale) {
+  if (!blk_backend.ready || !contrast || !scale || AIUEOS_SETTINGS_SECTOR >= blk_backend.capacity) return 0;
   for (unsigned i=0;i<512;i++) blk_backend.sector[i]=0;
   if (!settings_sector_io(VIRTIO_BLK_T_IN)) return 0;
   if (!settings_record_valid()) return 0;
   *contrast=((struct aiueos_settings_record *)(void *)blk_backend.sector)->contrast;
+  *scale=((struct aiueos_settings_record *)(void *)blk_backend.sector)->reserved;
+  if (*scale==0) *scale=100;
   return 1;
 }
 
 /* Writes the record and reads it back; 1 only when the readback is the record written. */
-int aiueos_settings_write(uint32_t contrast) {
-  if (!blk_backend.ready || contrast>1 || AIUEOS_SETTINGS_SECTOR >= blk_backend.capacity) return 0;
+int aiueos_settings_write(uint32_t contrast, uint32_t scale) {
+  if (!blk_backend.ready || contrast>1 || (scale!=100&&scale!=125&&scale!=150) || AIUEOS_SETTINGS_SECTOR >= blk_backend.capacity) return 0;
   for (unsigned i=0;i<512;i++) blk_backend.sector[i]=0;
   struct aiueos_settings_record *record=(void *)blk_backend.sector;
   for (unsigned i=0;i<8;i++) record->magic[i]=settings_magic[i];
-  record->version=1; record->contrast=contrast; record->reserved=0;
+  record->version=1; record->contrast=contrast; record->reserved=scale;
   record->checksum=settings_record_checksum();
   uint32_t wanted=record->checksum;
   if (!settings_sector_io(VIRTIO_BLK_T_OUT)) return 0;
   for (unsigned i=0;i<512;i++) blk_backend.sector[i]=0;
   if (!settings_sector_io(VIRTIO_BLK_T_IN)) return 0;
   record=(void *)blk_backend.sector;
-  return settings_record_valid() && record->contrast==contrast && record->checksum==wanted;
+  return settings_record_valid() && record->contrast==contrast && record->reserved==scale && record->checksum==wanted;
 }
 
 /* Fault-context variant: never sleeps on an interrupt and never blocks on

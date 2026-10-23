@@ -5,6 +5,12 @@ All notable changes to **aiueos** are documented here. The format follows
 
 ## [Unreleased]
 
+### desktop: the UI scale survives a reboot (ADR-0265)
+- The settings record's reserved word now carries the scale (0 = 100); the settings stage applies a stored scale before its first
+  frame and writes when contrast or scale changed. `guest-browser-settings` sends F10 and Ctrl+= on the first boot (six keys) and
+  checks the second boot of the same volume draws the 125 % high-contrast frame from the record alone. Scorecard C8 stays partial
+  (no settings window, no network setting).
+
 ### desktop: the launcher row shows the clock (ADR-0264)
 - C reads the CMOS real-time clock and reports the minute of the day (surface word 1968); browser-frame2 draws HH:MM at the right end
   of the launcher row. `guest-browser-clock` gates it. The op capacity is 248 (words 1968..2003 free). Power and network states are not
